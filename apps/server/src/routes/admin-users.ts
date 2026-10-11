@@ -16,6 +16,9 @@ import { foreignKeyViolationConstraint, notNullViolationColumn, uniqueViolationC
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../auth/tx/admin-site-settings.js";
 import { listSpaceUsage, readSpaceUsage } from "../storage/usage.js";
 import { redactDbError } from "../lib/redact-db-error.js";
+import { TxAbort } from "../http/tx-abort.js";
+import type { AdminTestHook } from "../auth/admin-test-hook.js";
+import { demoteSiteAdminInTx } from "../auth/tx/admin-demote.js";
 
 const createBodySchema = z.object({
   email: z.string().email(),
@@ -33,6 +36,8 @@ export interface AdminUsersRouteDeps {
   db: Db;
   gate: UserGate;
   collabHooks: CollabHooks;
+  /** #247 §9.4 降級的測試注入縫（`auth/admin-test-hook.ts`）；`undefined`＝no-op。 */
+  adminTestHook?: AdminTestHook;
 }
 
 interface AdminUserDto {
@@ -43,6 +48,8 @@ interface AdminUserDto {
   isAdmin: boolean;
   disabledAt: string | null;
   createdAt: string;
+  /** #247 §9.5：最後一次新簽登入 session 的時間；null＝升級後尚未登入過（不回填）。 */
+  lastLoginAt: string | null;
   storage: SpaceStorageDto;
 }
 
@@ -54,9 +61,10 @@ interface AdminUserRow {
   isAdmin: boolean;
   disabledAt: Date | null;
   createdAt: Date;
+  lastLoginAt: Date | null;
 }
 
-// 只選這七欄＋方案（storage 另組）（形狀鎖，#122 起含 handle）：不可帶 passwordHash/tokenVersion——即使只是內部查詢，也不要
+// 只選這八欄＋方案（storage 另組）（形狀鎖，#122 起含 handle、#247 起含 lastLoginAt）：不可帶 passwordHash/tokenVersion——即使只是內部查詢，也不要
 // select 出這兩欄再靠序列化階段刻意漏掉，直接在 SQL 端就不撈，斷絕任何洩漏路徑。
 function toAdminUserDto(row: AdminUserRow, storage: SpaceStorageDto): AdminUserDto {
   return {
@@ -67,6 +75,7 @@ function toAdminUserDto(row: AdminUserRow, storage: SpaceStorageDto): AdminUserD
     isAdmin: row.isAdmin,
     disabledAt: row.disabledAt ? row.disabledAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
+    lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     storage,
   };
 }
@@ -79,6 +88,7 @@ const adminUserColumns = {
   isAdmin: users.isAdmin,
   disabledAt: users.disabledAt,
   createdAt: users.createdAt,
+  lastLoginAt: users.lastLoginAt,
 };
 
 /** 單一使用者的 storage 欄（POST／PATCH 回應用；GET 列表走 GROUP BY 一次）。 */
@@ -91,7 +101,7 @@ async function storageOfUser(db: Db, userId: string): Promise<SpaceStorageDto> {
 /**
  * Admin 使用者管理路由：全部端點皆需 `requireAdmin`。
  *
- * disable/enable/promote 三支操作性端點對 `:id` 皆先以 `UUID_RE` 擋掉格式不合法的
+ * disable/enable/promote/demote 四支操作性端點對 `:id` 皆先以 `UUID_RE` 擋掉格式不合法的
  * 路徑參數（見 notes/service.ts 的 `resolveRole` 同一套理由：pg uuid 欄位對非法格式
  * 字串會直接 throw，讓它冒到全域錯誤 handler 會被誤判成 500），非法格式與「查無此
  * 使用者」統一回同一個 404 `user_not_found`，不特別區分。
@@ -288,6 +298,28 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
       // requireAdmin 認可——invalidate 讓下一次 authenticate 立刻反映新 isAdmin。
       deps.gate.invalidate(id);
 
+      return reply.code(204).send();
+    });
+
+    // #247 §9.4：與 promote 對稱。自降 400（比照 disable 的小寫正規化理由，見上）；交易內鎖全部 admin 列後計數（auth/tx/admin-demote.ts）。
+    app.post("/api/admin/users/:id/demote", { preHandler: app.requireAdmin }, async (request, reply) => {
+      const { id: rawId } = request.params as { id: string };
+      if (!UUID_RE.test(rawId)) {
+        return sendError(reply, 404, "user_not_found", "找不到此使用者");
+      }
+      const id = rawId.toLowerCase();
+      if (id === request.user!.id) {
+        return sendError(reply, 400, "cannot_demote_self", "無法移除自己的管理員身分");
+      }
+      const input = { targetId: id };
+      try {
+        await deps.db.transaction(tx => demoteSiteAdminInTx(tx, input, deps.adminTestHook));
+      } catch (err) {
+        if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
+        throw err;
+      }
+      // 同 promote：gate 快取的 isAdmin 不即時失效的話，被降級者 60 秒內仍過得了 requireAdmin。
+      deps.gate.invalidate(id);
       return reply.code(204).send();
     });
 

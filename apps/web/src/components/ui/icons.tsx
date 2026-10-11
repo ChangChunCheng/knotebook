@@ -47,11 +47,21 @@ export function ArrowLeft(props: SVGProps<SVGSVGElement>) {
 
 export function Trash(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <svg data-icon="trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       <line x1="10" y1="11" x2="10" y2="17" />
       <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
+/** 編輯／重新命名／進入行內編輯（#247 §4.9 列內動作）。路徑取自 lucide `pencil`（ISC），手刻同風格。 */
+export function Pencil(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="pencil" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
     </svg>
   );
 }
@@ -284,6 +294,29 @@ export function ListFilter(props: SVGProps<SVGSVGElement>) {
       <path d="M3 6h18" />
       <path d="M7 12h10" />
       <path d="M10 18h4" />
+    </svg>
+  );
+}
+
+/** 列內「測試連線」（#247 §4.9）。 */
+export function Plug(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="plug" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+    </svg>
+  );
+}
+
+/** 登入服務列的「圖示」對話框觸發鈕（#247 §7.0）。名稱避開 DOM 的 `Image` 全域。 */
+export function ImageIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="image" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
     </svg>
   );
 }

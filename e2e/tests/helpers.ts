@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
  * 疊內建的 env bootstrap admin（見 `docker-compose.e2e.yml` 的 `ADMIN_EMAIL`/
@@ -157,4 +157,43 @@ export async function waitForEditorSelection(page: Page, timeout = 2_000): Promi
       { timeout, message: "ProseMirror 的 state.selection 要跟 DOM selection 對齊（值：no-editor／focusOutside／{pm, dom}）" },
     )
     .toEqual("synced");
+}
+
+/**
+ * #247：站台管理是 modal。UserMenu（觸發鈕名＝displayName「admin」）→「Site admin」→ `/admin/users`，回傳該 dialog。
+ * 關閉用 Esc（或 dialog 的 ✕），回到開啟前的頁面；站台管理已沒有「回筆記」連結。
+ */
+export async function openSiteAdmin(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "admin", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Site admin", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/users$/);
+  const dialog = page.getByRole("dialog", { name: "Site admin" });
+  await expect(dialog).toBeVisible();
+  // §11.3：等左卡目前項次標好 aria-current 才算開好（窄視窗左卡是 display:none，用 CSS locator 才不受隱藏影響）。
+  await expect(dialog.locator('nav a[aria-current="page"]')).toHaveCount(1);
+  return dialog;
+}
+
+/** 站台管理 modal 左卡項次（nav 的可及名稱＝面板標題「Site admin」）。 */
+export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" | "Storage plans" | "AI agents"): Promise<void> {
+  const urls = {
+    Users: /\/admin\/users$/,
+    Groups: /\/admin\/groups$/,
+    "Sign-in": /\/admin\/login$/,
+    "Storage plans": /\/admin\/storage$/,
+    "AI agents": /\/admin\/ai$/,
+  };
+  await page.getByRole("navigation", { name: "Site admin" }).getByRole("link", { name: item, exact: true }).click();
+  await expect(page).toHaveURL(urls[item]);
+}
+
+/** #247：群組 modal。側欄群組列 ⋮ →「Members & settings」→ `/groups/<id>`；回傳 group id。 */
+export async function openGroupPanel(page: Page, groupName: string): Promise<string> {
+  await page.getByRole("complementary").getByRole("button", { name: `Group actions for ${groupName}` }).click();
+  await page.getByRole("menuitem", { name: "Members & settings" }).click();
+  await expect(page).toHaveURL(/\/groups\/[0-9a-f-]{36}$/);
+  const dialog = page.getByRole("dialog", { name: groupName });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('nav a[aria-current="page"]')).toHaveCount(1);
+  return new URL(page.url()).pathname.split("/")[2]!;
 }

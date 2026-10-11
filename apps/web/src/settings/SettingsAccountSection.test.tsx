@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import type { UserDto } from "@knotebook/shared";
@@ -8,8 +8,9 @@ import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 
-// SettingsAccountSection：`hasPassword === false` → 不渲染 `ChangePasswordForm`；帳密登入有效值開時
-// 改渲染「加上密碼」表單、關時只有說明（#187 §8.5）。
+// 密碼三形（#187 §8.5；#247 起在「登入」頁 `/settings/login`＝`SettingsLoginSection`）：`hasPassword === false`
+// → 不渲染 `ChangePasswordForm`；帳密登入有效值開時改渲染「加上密碼」表單、關時只有說明。
+// 帳戶資訊頁（`SettingsAccountSection`）只剩顯示名稱與網址名稱。
 // 走真正的 `AppRoutes`（同 SettingsModal.test.tsx/SettingsUsersSection.test.tsx 慣例，
 // 不拆開重建等價樹）——驗證的是「有沒有接對」。fetch 樁比照
 // `SettingsUsersSection.test.tsx:89-101`。
@@ -77,7 +78,7 @@ function baseFetchHandlers(user: UserDto, passwordLoginEnabled = true, siteOn = 
   };
 }
 
-function renderAccountSettings(user: UserDto, passwordLoginEnabled = true) {
+function renderLoginSettings(user: UserDto, passwordLoginEnabled = true) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -90,7 +91,7 @@ function renderAccountSettings(user: UserDto, passwordLoginEnabled = true) {
   render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={["/settings/account"]}>
+        <MemoryRouter initialEntries={["/settings/login"]}>
           <AppRoutes />
         </MemoryRouter>
       </ThemeProvider>
@@ -100,7 +101,7 @@ function renderAccountSettings(user: UserDto, passwordLoginEnabled = true) {
   return queryClient;
 }
 
-describe("SettingsAccountSection（hasPassword／帳密登入有效值 三形）", () => {
+describe("SettingsLoginSection（hasPassword／帳密登入有效值 三形）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -111,9 +112,9 @@ describe("SettingsAccountSection（hasPassword／帳密登入有效值 三形）
   });
 
   it("hasPassword:true → 渲染 ChangePasswordForm", async () => {
-    const queryClient = renderAccountSettings(PASSWORD_USER);
+    const queryClient = renderLoginSettings(PASSWORD_USER);
 
-    // 本檔第一次載入帳號區塊 lazy chunk
+    // 本檔第一次載入登入頁 lazy chunk
     await waitFor(
       () => expect(screen.getByRole("heading", { name: "Change your password" })).toBeInTheDocument(),
     );
@@ -125,7 +126,7 @@ describe("SettingsAccountSection（hasPassword／帳密登入有效值 三形）
   });
 
   it("hasPassword:false＋有效值開 →「Add a password」表單取代舊的 SSO-only 文案；沒有改密碼表單", async () => {
-    renderAccountSettings(SSO_ONLY_USER);
+    renderLoginSettings(SSO_ONLY_USER);
     expect(await screen.findByRole("heading", { name: "Add a password" })).toBeInTheDocument();
     expect(screen.getByLabelText("New password")).toBeInTheDocument();
     expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
@@ -133,13 +134,13 @@ describe("SettingsAccountSection（hasPassword／帳密登入有效值 三形）
   });
 
   it("hasPassword:false＋有效值關 → 只有說明、沒有表單（B22）", async () => {
-    renderAccountSettings(SSO_ONLY_USER, false);
+    renderLoginSettings(SSO_ONLY_USER, false);
     expect(await screen.findByText("This site only allows signing in through a sign-in service right now.")).toBeInTheDocument();
     expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
   });
 
   it("hasPassword:true＋有效值關 → 改密碼表單仍在＋說明句", async () => {
-    renderAccountSettings(PASSWORD_USER, false);
+    renderLoginSettings(PASSWORD_USER, false);
     expect(await screen.findByLabelText("Current password")).toBeInTheDocument();
     // 說明句要等 identities 落地才出現（改密碼表單先以預設「開」渲染）——用 findBy 等。
     expect(await screen.findByText("This site only allows signing in through a sign-in service right now; your password is only used to prove it's you when linking an account.")).toBeInTheDocument();
@@ -155,7 +156,7 @@ describe("SettingsAccountSection（hasPassword／帳密登入有效值 三形）
  */
 describe("SettingsAccountSection——使用者名欄（#122 Task 5）", () => {
   const HANDLE_WARNING =
-    "Your username appears in every /n/ and /p/ link you share (token links don't include it). After a rename those links stop working immediately, and the old name can never be used again — not even by you.";
+    "The name used in your public links (/p/<handle>/…). It appears in every /n/ and /p/ link you share (token links don't include it). After a rename those links stop working immediately, and the old name can never be used again — not even by you.";
 
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -200,18 +201,37 @@ describe("SettingsAccountSection——使用者名欄（#122 Task 5）", () => {
 
   it("顯示現行 handle 與警語（含 /n/、/p/ 網址形——刻意提前的完整文案）", async () => {
     renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
-    const input = (await screen.findByLabelText("Username")) as HTMLInputElement;
+    const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     expect(input.value).toBe("tester");
     expect(screen.getByText(HANDLE_WARNING)).toBeInTheDocument();
   });
 
   it("SSO-only（hasPassword=false）也看得到、可編輯（早退分支已重構——plan gate M5）", async () => {
     renderWithProfilePatch(SSO_ONLY_USER, () => fakeResponse({ ok: true, status: 200 }));
-    const input = (await screen.findByLabelText("Username")) as HTMLInputElement;
+    const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     expect(input.value).toBe("tester");
     expect(input).not.toBeDisabled();
-    // 「加上密碼」群組仍在（兩者並存，不互斥）
-    expect(await screen.findByRole("heading", { name: "Add a password" })).toBeInTheDocument();
+  });
+
+  it("帳戶資訊頁只有顯示名稱與網址名稱兩區塊（密碼、登入方式、token、用量都搬走了，#247 §5.2）", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const res = baseFetchHandlers(PASSWORD_USER)(String(input), (init?.method ?? "GET").toUpperCase());
+      if (res) return Promise.resolve(res);
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    }));
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ThemeProvider>
+          <MemoryRouter initialEntries={["/settings/account"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+    const h1 = await screen.findByRole("heading", { level: 1, name: "Account info" });
+    // 範圍限在頁面本身（SettingsPage 根＝h1 所在 header 的父層）：Radix DialogTitle 也是 h2，掃全頁會掃到它。
+    const page = h1.closest("header")!.parentElement!;
+    expect(within(page).getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Display name", "URL name"]);
   });
 
   it("改名成功：PATCH body 正規化後送出、invalidateQueries **全清**（無過濾參數）、全清 refetch 後畫面顯示新值＋成功 toast", async () => {
@@ -220,9 +240,9 @@ describe("SettingsAccountSection——使用者名欄（#122 Task 5）", () => {
       userRef.current = updated; // PATCH 落地＝server 端已改——之後的 /me 回新值
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) });
     });
-    const input = (await screen.findByLabelText("Username")) as HTMLInputElement;
+    const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New-Me" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save username" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
     await waitFor(() => expect(patchBodies).toHaveLength(1));
     expect(patchBodies[0]).toEqual({ handle: "new-me" }); // 正規化（小寫）後送出
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
@@ -230,7 +250,7 @@ describe("SettingsAccountSection——使用者名欄（#122 Task 5）", () => {
     // 顯示新值（突變審查 F1）：靠 setValue(null) 回「顯示現值」＋setQueryData 寫入的新
     // session——少了 setValue(null) 欄位會停在原文 "New-Me" 而紅
     await waitFor(() => expect(input.value).toBe("new-me"));
-    await screen.findByText("Username updated."); // 成功 toast（F2）
+    await screen.findByText("URL name saved."); // 成功 toast（F2）
   });
 
   it("M1 釘：PATCH 落地即 setQueryData 更新 session——/me refetch **尚未回應**時也顯示新值（不閃回舊名一個 RTT）", async () => {
@@ -276,48 +296,48 @@ describe("SettingsAccountSection——使用者名欄（#122 Task 5）", () => {
         <Toaster />
       </QueryClientProvider>,
     );
-    const input = (await screen.findByLabelText("Username")) as HTMLInputElement;
+    const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New-Me" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save username" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
     await waitFor(() => expect(input.value).toBe("new-me")); // refetch 懸掛中——值來自 setQueryData
-    await screen.findByText("Username updated.");
+    await screen.findByText("URL name saved.");
   });
 
   it("值未變（含只變大小寫）→ Save 鈕 disabled（no-op 改名不打端點——額度只計成功，前端就該擋）", async () => {
     renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
-    const input = await screen.findByLabelText("Username");
-    expect(screen.getByRole("button", { name: "Save username" })).toBeDisabled();
+    const input = await screen.findByLabelText("URL name");
+    expect(screen.getByRole("button", { name: "Save URL name" })).toBeDisabled();
     fireEvent.change(input, { target: { value: "TESTER" } }); // 正規化後同值
-    expect(screen.getByRole("button", { name: "Save username" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save URL name" })).toBeDisabled();
     fireEvent.change(input, { target: { value: "different" } });
-    expect(screen.getByRole("button", { name: "Save username" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save URL name" })).not.toBeDisabled();
   });
 
   it("409 handle_taken → 顯示對應文案", async () => {
     renderWithProfilePatch(PASSWORD_USER, () =>
       fakeResponse({ ok: false, status: 409, json: () => Promise.resolve({ error: { code: "handle_taken", message: "x" } }) }),
     );
-    const input = await screen.findByLabelText("Username");
+    const input = await screen.findByLabelText("URL name");
     fireEvent.change(input, { target: { value: "occupied" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save username" }));
-    await waitFor(() => expect(screen.getByText("That username is already taken.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
+    await waitFor(() => expect(screen.getByText("That URL name is already taken.")).toBeInTheDocument());
   });
 
   it("429 too_many_requests → 顯示對應文案（plan gate 注意事項 8）", async () => {
     renderWithProfilePatch(PASSWORD_USER, () =>
       fakeResponse({ ok: false, status: 429, json: () => Promise.resolve({ error: { code: "too_many_requests", message: "x" } }) }),
     );
-    const input = await screen.findByLabelText("Username");
+    const input = await screen.findByLabelText("URL name");
     fireEvent.change(input, { target: { value: "again" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save username" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
     await waitFor(() => expect(screen.getByText("Too many requests. Please slow down.")).toBeInTheDocument());
   });
 
   it("非法格式：前端就地呈現、不打 API（plan gate m3）", async () => {
     const { fetchMock } = renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
-    const input = await screen.findByLabelText("Username");
+    const input = await screen.findByLabelText("URL name");
     fireEvent.change(input, { target: { value: "Bad Name!" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save username" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
     await waitFor(() =>
       expect(
         screen.getByText("1–32 characters: lowercase letters, numbers and hyphens; hyphens can't lead, trail, or repeat."),
@@ -348,7 +368,7 @@ describe("SetPasswordForm（#187 §8.4）", () => {
     }));
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ThemeProvider><MemoryRouter initialEntries={["/settings/account"]}><AppRoutes /></MemoryRouter></ThemeProvider>
+        <ThemeProvider><MemoryRouter initialEntries={["/settings/login"]}><AppRoutes /></MemoryRouter></ThemeProvider>
         <Toaster />
       </QueryClientProvider>,
     );
@@ -384,7 +404,7 @@ describe("SetPasswordForm（#187 §8.4）", () => {
     }));
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ThemeProvider><MemoryRouter initialEntries={["/settings/account"]}><AppRoutes /></MemoryRouter></ThemeProvider>
+        <ThemeProvider><MemoryRouter initialEntries={["/settings/login"]}><AppRoutes /></MemoryRouter></ThemeProvider>
         <Toaster />
       </QueryClientProvider>,
     );
@@ -420,7 +440,7 @@ describe("SetPasswordForm——送出後的狀態切換（#187 §8.4）", () => 
     vi.stubGlobal("fetch", fetchMock);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ThemeProvider><MemoryRouter initialEntries={["/settings/account"]}><AppRoutes /></MemoryRouter></ThemeProvider>
+        <ThemeProvider><MemoryRouter initialEntries={["/settings/login"]}><AppRoutes /></MemoryRouter></ThemeProvider>
         <Toaster />
       </QueryClientProvider>,
     );
@@ -480,7 +500,7 @@ function renderAutoVersions({ user, siteOn, profileReply }: { user: UserDto; sit
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={["/settings/account"]}>
+        <MemoryRouter initialEntries={["/settings/storage"]}>
           <AppRoutes />
         </MemoryRouter>
       </ThemeProvider>
@@ -535,5 +555,129 @@ describe("帳號頁 × 自動儲存版本（spec §6.8、§8.5）", () => {
     expect(sw).toBeEnabled();
     expect(screen.queryByText("Automatic saving is turned off for the whole site")).not.toBeInTheDocument();
     expect(screen.getByText("Notes that are open right now pick up the change after everyone has closed them.")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsAccountSection——顯示名稱（#247 §5.2、§9.3）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * 可變的 me 樁（比照本檔 handle describe `:170-172` 的 `userRef`）：成功案在 PATCH 落地時把 userRef 翻成新值，
+   * 之後的 /me 回新值——固定樁下「全清 refetch 後畫面顯示新名」那個宣稱是假的。
+   * `hangMeAfterFirst`：第二次以後的 /me 永不回應——此時畫面上的新值只可能來自 `setQueryData`（M1 形）。
+   */
+  function renderWithDisplayNamePatch(
+    patchResponse: (body: { displayName: string }, userRef: { current: UserDto }) => Response,
+    opts: { hangMeAfterFirst?: boolean } = {},
+  ) {
+    const userRef = { current: PASSWORD_USER };
+    const patchBodies: Array<{ displayName: string }> = [];
+    let meCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/auth/profile" && method === "PATCH") {
+        const body = JSON.parse(String(init?.body)) as { displayName: string };
+        patchBodies.push(body);
+        return Promise.resolve(patchResponse(body, userRef));
+      }
+      if (url === "/api/auth/me" && method === "GET") {
+        meCalls += 1;
+        if (opts.hangMeAfterFirst === true && meCalls > 1) return new Promise<Response>(() => {});
+      }
+      const res = baseFetchHandlers(userRef.current)(url, method);
+      if (res) return Promise.resolve(res);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <MemoryRouter initialEntries={["/settings/account"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </ThemeProvider>
+        <Toaster />
+      </QueryClientProvider>,
+    );
+    return { patchBodies, queryClient, userRef };
+  }
+
+  it("頁首是「Account info」，顯示名稱區塊在網址名稱區塊之前", async () => {
+    renderWithDisplayNamePatch(() => fakeResponse({ ok: true, status: 200 }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument();
+    const h2 = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(h2.indexOf("Display name")).toBeGreaterThanOrEqual(0);
+    expect(h2.indexOf("Display name")).toBeLessThan(h2.indexOf("URL name"));
+  });
+
+  it("成功：PATCH {displayName}（trim 後）→ session 快取為新名、成功 toast、全清 refetch 後欄位顯示新值", async () => {
+    const { patchBodies, queryClient } = renderWithDisplayNamePatch((body, userRef) => {
+      userRef.current = { ...PASSWORD_USER, displayName: body.displayName }; // PATCH 落地＝server 端已改
+      return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(userRef.current) });
+    });
+    const input = (await screen.findByLabelText("Display name")) as HTMLInputElement;
+    expect(input.value).toBe("Alice");
+    fireEvent.change(input, { target: { value: "  Alice W  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    await waitFor(() => expect(patchBodies).toEqual([{ displayName: "Alice W" }]));
+    await screen.findByText("Display name updated.");
+    expect((queryClient.getQueryData(["me"]) as UserDto).displayName).toBe("Alice W");
+    await waitFor(() => expect(input.value).toBe("Alice W"));
+  });
+
+  it("M1 形：/me refetch 永不回應時也顯示新值（新值只可能來自 setQueryData）", async () => {
+    renderWithDisplayNamePatch(
+      (body, userRef) => {
+        userRef.current = { ...PASSWORD_USER, displayName: body.displayName };
+        return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(userRef.current) });
+      },
+      { hangMeAfterFirst: true },
+    );
+    const input = (await screen.findByLabelText("Display name")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Alice W" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    await screen.findByText("Display name updated.");
+    await waitFor(() => expect(input.value).toBe("Alice W"));
+  });
+
+  it("失敗：server 400 invalid_body → 行內 alert、不 toast 成功", async () => {
+    renderWithDisplayNamePatch(() =>
+      fakeResponse({ ok: false, status: 400, json: () => Promise.resolve({ error: { code: "invalid_body", message: "x" } }) }),
+    );
+    const input = await screen.findByLabelText("Display name");
+    fireEvent.change(input, { target: { value: "Bob" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The request was malformed.");
+    expect(screen.queryByText("Display name updated.")).not.toBeInTheDocument();
+  });
+
+  it("長度以 code point 計：100 個 emoji（200 個 UTF-16 單位）可存；101 個就地擋下、不打 API", async () => {
+    const { patchBodies } = renderWithDisplayNamePatch((body) =>
+      fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ ...PASSWORD_USER, displayName: body.displayName }) }),
+    );
+    const input = await screen.findByLabelText("Display name");
+    fireEvent.change(input, { target: { value: "😀".repeat(101) } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Display names must be 1–100 characters.");
+    expect(patchBodies).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "😀".repeat(100) } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    await waitFor(() => expect(patchBodies).toEqual([{ displayName: "😀".repeat(100) }]));
+  });
+
+  it("值未變或全空白 → 儲存鈕 disabled", async () => {
+    renderWithDisplayNamePatch(() => fakeResponse({ ok: true, status: 200 }));
+    const input = await screen.findByLabelText("Display name");
+    expect(screen.getByRole("button", { name: "Save display name" })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "   " } });
+    expect(screen.getByRole("button", { name: "Save display name" })).toBeDisabled();
   });
 });

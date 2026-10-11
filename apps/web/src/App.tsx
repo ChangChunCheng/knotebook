@@ -20,6 +20,8 @@ import { PublicNoteErrorBoundary, PublicNoteFallback } from "./components/Public
 import LoginPage from "./pages/LoginPage";
 import HomePage from "./pages/HomePage";
 import { SettingsModal } from "./settings/SettingsModal";
+import { GroupModal, GroupSubpathRedirect, LegacyGroupRedirect } from "./components/groups/GroupModal";
+import { AdminModal } from "./components/admin/AdminModal";
 
 /**
  * NotePage 走 lazy（issue #19）：BlockNote＋共編整條相依鏈只有這一頁需要，同步 import
@@ -32,8 +34,8 @@ const NotePage = lazy(() => import("./pages/NotePage"));
 
 /**
  * #201：首包又長到逼近 700 KiB 上限，把「不是每次都會用到」的頁面也切出去——
- * - 站台管理（`AdminPage`，連同它三個子區塊，同一個 chunk；理由見 AdminPage.tsx 檔頭）；
- * - 設定 modal 的四個區塊（外殼 `SettingsModal` 留在首包：modal-over-background 機制與
+ * - 站台管理 modal 的五個區塊（聚合模組 `components/admin/AdminSections`，一個 chunk；外殼 `AdminModal` 在首包，#247）；
+ * - 設定 modal 的六個頁面與群組 modal 的區塊（#247；後者共用一個 chunk，見 `GroupMembersSection` 那段）（外殼 `SettingsModal`／`GroupModal` 留在首包：modal-over-background 機制與
  *   開 modal 時外框立刻出現都靠它，只有內容區等 chunk）；
  * - 登入流程的四頁：註冊、帳號連結、強制改密碼、OAuth 同意頁。
  *
@@ -42,10 +44,9 @@ const NotePage = lazy(() => import("./pages/NotePage"));
  *
  * 錯誤處理一律走 #66 那套 `LazyRouteErrorBoundary`（自動 reload 一次＋手動重試），各 route
  * 一個額度別名（`chunk` prop）；Suspense fallback 與 boundary 的載入中畫面是同一份
- * （`LazyRouteLoading`，外框依頁面：站台管理＝AppShell、登入流程頁＝置中 `<main>`、
- * 設定區塊＝modal 內容區）。`scripts/check-bundle-size.mjs` 另釘 AdminPage chunk 存在。
+ * （`LazyRouteLoading`，外框依頁面：站台管理／群組／設定＝modal 右卡、登入流程頁＝置中 `<main>`）。
+ * `scripts/check-bundle-size.mjs` 另釘 AdminSections chunk 存在。
  */
-const AdminPage = lazy(() => import("./pages/AdminPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
 const LinkAccountPage = lazy(() => import("./pages/LinkAccountPage"));
 const ChangePasswordPage = lazy(() => import("./pages/ChangePasswordPage"));
@@ -53,15 +54,44 @@ const AuthorizePage = lazy(() => import("./pages/AuthorizePage"));
 const SettingsAccountSection = lazy(() =>
   import("./settings/SettingsAccountSection").then(m => ({ default: m.SettingsAccountSection })),
 );
-const SettingsGroupsSection = lazy(() =>
-  import("./settings/SettingsGroupsSection").then(m => ({ default: m.SettingsGroupsSection })),
+const SettingsLoginSection = lazy(() =>
+  import("./settings/SettingsLoginSection").then(m => ({ default: m.SettingsLoginSection })),
 );
-const SettingsGroupDetailSection = lazy(() =>
-  import("./settings/SettingsGroupDetailSection").then(m => ({ default: m.SettingsGroupDetailSection })),
+const SettingsAuthorizationSection = lazy(() =>
+  import("./settings/SettingsAuthorizationSection").then(m => ({ default: m.SettingsAuthorizationSection })),
 );
-const SettingsGroupRolesSection = lazy(() =>
-  import("./settings/SettingsGroupRolesSection").then(m => ({ default: m.SettingsGroupRolesSection })),
+const SettingsStorageUsageSection = lazy(() =>
+  import("./settings/SettingsStorageUsageSection").then(m => ({ default: m.SettingsStorageUsageSection })),
 );
+const SettingsGroupsOverview = lazy(() =>
+  import("./settings/SettingsGroupsOverview").then(m => ({ default: m.SettingsGroupsOverview })),
+);
+const SettingsAboutSection = lazy(() =>
+  import("./settings/SettingsAboutSection").then(m => ({ default: m.SettingsAboutSection })),
+);
+/**
+ * #247 §6.1：群組 modal 的四個區塊來自同一個聚合模組 `components/groups/GroupSections`（一個 chunk）；外殼 `GroupModal` 在首包。
+ */
+const GroupMembersSection = lazy(() =>
+  import("./components/groups/GroupSections").then(m => ({ default: m.GroupMembersSection })),
+);
+const GroupRolesSection = lazy(() =>
+  import("./components/groups/GroupSections").then(m => ({ default: m.GroupRolesSection })),
+);
+const GroupStorageSection = lazy(() =>
+  import("./components/groups/GroupSections").then(m => ({ default: m.GroupStorageSection })),
+);
+const GroupAboutSection = lazy(() =>
+  import("./components/groups/GroupSections").then(m => ({ default: m.GroupAboutSection })),
+);
+/**
+ * #247 §7.1：站台管理 modal 的五個區塊來自同一個聚合模組 `components/admin/AdminSections`（一個 chunk）；外殼 `AdminModal` 在首包。
+ */
+const AdminUsersSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminUsersSection })));
+const AdminGroupsSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminGroupsSection })));
+const AdminLoginSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminLoginSection })));
+const AdminStorageSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminStorageSection })));
+const AdminAiSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminAiSection })));
 
 /**
  * 整頁 lazy route 的 element 外包（#201）：boundary＋Suspense＋beacon，結構與 NoteRoute 同款
@@ -74,7 +104,7 @@ const SettingsGroupRolesSection = lazy(() =>
  * boundary（自己的額度、自己的 pending 期），不必重載。`resetKey` 因此固定 undefined——
  * 同一條 route 內沒有「換目的地」的情境。App.lazyPages.test.tsx 末案守著。
  */
-function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "app" | "page"; children: ReactNode }) {
+function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "page"; children: ReactNode }) {
   return (
     <LazyRouteErrorBoundary key={chunk} resetKey={undefined} chunk={chunk} frame={frame}>
       <Suspense fallback={<LazyRouteLoading frame={frame} />}>
@@ -174,25 +204,22 @@ function PublicNoteRoute() {
  *   且後掛載」上**：哪天把某個 modal-over-background 路由移出第二棵樹，`next` 會
  *   **靜默**退化成背景頁。守衛在 `App.test.tsx` 的「未登入開設定 modal → next 取
  *   真實網址」那案。
- * - **第二棵樹**：只含 `/settings/*`（modal 三區＋兩條往 `/admin/*` 的舊網址轉址），
+ * - **第二棵樹**：只含三個面板（`/settings/*`、`/groups/*`、`/admin/*`）與它們的轉址，
  *   吃真實 location（不帶 `location` prop）；
- *   非 `/settings/*` 路徑下整棵 match 不到任何 route → render `null`，樹內的
+ *   非這三個前綴的路徑下整棵 match 不到任何 route → render `null`，樹內的
  *   guard 元件根本不會執行，不會有幽靈重導。guard 元件在這裡
  *   直接複用同一份，以 pathless layout route 掛上——不是塞進主樹。
  *
- * `/settings/*` **絕不可加進主樹**：加進去背景頁就不會渲染，modal-over-background
+ * 三個面板的路徑**絕不可加進主樹**：加進去背景頁就不會渲染，modal-over-background
  * 整個破功。
  *
- * 站台管理（2026-09-30 起）是**一般頁面**、不是 modal：`/admin/*` route
- * （`AdminPage`，子路由 `users`／`ai`／`auth` 是它裡面的 descendant `<Routes>`，其餘轉
- * `/admin/users`）在主樹。舊網址
- * `/settings/users`、`/settings/ai` 在第二棵樹裡 `<Navigate replace>` 過去——掛在
- * `SettingsModal` 外面（不閃 modal）、`RequireAuth` 裡面。方向與 Plan 4 相反
- * （那時是 `/admin/users` 轉 `/settings/users`）。
+ * 站台管理（#247 起）是第二棵樹裡的 modal（`AdminModal`），與設定、群組 modal 同一套 modal-over-background。
+ * 舊網址 `/settings/users`、`/settings/ai` 仍在第二棵樹 `<Navigate replace>` 到 `/admin/users`／`/admin/ai`——
+ * 掛在 `SettingsModal` 外、`RequireAuth` 內，admin 與否交給 `/admin` 那邊的 `RequireAdmin`。
  *
  * 現行守衛集合（主樹）：<RequireAuth> 包住除 /login、/register、/link-account（#187）、/p/* 外的其餘路由（未登入導
  * `/login?next=<目前路徑>`，#131——「目前路徑」的兩棵樹細節見上）；
- * `/admin/*` 再多包一層 <RequireAdmin>（非 admin 導 `/`）——巢狀在 <RequireAuth>
+ * 第二棵樹的 `/admin/*` 再多包一層 <RequireAdmin>（非 admin 導 `/`）——巢狀在 <RequireAuth>
  * 與 <ChangePasswordGate> 底下，即使 <RequireAdmin> 自己也有未登入判斷（見
  * guards.tsx），這裡是雙保險而非依賴它獨立生效。
  *
@@ -268,52 +295,72 @@ export function AppRoutes() {
             <Route path="/notes/:ref" element={<NoteRoute />} />
             <Route path="/n/:handle/:slug" element={<NoteRoute />} />
             {/* #175：群組筆記 `/g/<group_id>/<slug>`（§8.1）——同一個 NoteRoute/NotePage；
-                只掛主樹（第二棵樹只管 /settings/*）。承接由 App.resetKey.test control 4 釘住。 */}
+                只掛主樹（第二棵樹只管三個面板：/settings/*、/groups/*、/admin/*）。承接由 App.resetKey.test control 4 釘住。 */}
             <Route path="/g/:groupId/:slug" element={<NoteRoute />} />
-            {/* 站台管理獨立頁（2026-09-30）：`/admin/*`，子區塊（users／ai／auth）與 index
-                轉址是 AdminPage 裡的 descendant <Routes>（#201：整包一個 lazy chunk，理由見
-                AdminPage.tsx 檔頭）。RequireAdmin 巢狀在 ChangePasswordGate 底下（先強制改密、再判 admin）。 */}
-            <Route element={<RequireAdmin />}>
-              <Route
-                path="/admin/*"
-                element={
-                  <LazyPageRoute chunk="admin" frame="app">
-                    <AdminPage />
-                  </LazyPageRoute>
-                }
-              />
-            </Route>
             <Route path="/*" element={<HomePage />} />
           </Route>
         </Route>
       </Routes>
-      {/* 第二棵樹：只含 /settings/*，吃真實 location；非 /settings/* 路徑下整棵
+      {/* 第二棵樹：只含三個面板（/settings/*、/groups/*、/admin/*）與它們的轉址，吃真實 location；其餘路徑下整棵
           match 不到 → render null，guard 不會跑（無幽靈重導）。guard 元件直接複用。 */}
       <Routes>
         <Route element={<RequireAuth />}>
           <Route element={<ChangePasswordGate />}>
             <Route element={<SettingsModal />}>
-              {/* Dialog 外殼＝layout route，區塊切換不重掛 */}
+              {/* Dialog 外殼＝layout route，項次切換不重掛（#247 §5.1：六項） */}
               <Route path="/settings/account" element={<SettingsAccountSection />} />
-              {/* #103：群組（所有登入者，spec §8.4）——不巢狀在下面的 RequireAdmin 底下。 */}
-              <Route path="/settings/groups" element={<SettingsGroupsSection />} />
-              <Route path="/settings/groups/:id" element={<SettingsGroupDetailSection />} />
-              <Route path="/settings/groups/:id/roles" element={<SettingsGroupRolesSection />} />
+              {/* #247 §5.2／§5.3：密碼＋已連結登入方式（OIDC 連結回程落點，§9.9）／API token */}
+              <Route path="/settings/login" element={<SettingsLoginSection />} />
+              <Route path="/settings/authorization" element={<SettingsAuthorizationSection />} />
+              {/* #247 §5.4：個人儲存空間（用量／依類型／版本歷史） */}
+              <Route path="/settings/storage" element={<SettingsStorageUsageSection />} />
+              {/* #247：群組唯讀總覽（所有登入者） */}
+              <Route path="/settings/groups" element={<SettingsGroupsOverview />} />
+              <Route path="/settings/about" element={<SettingsAboutSection />} />
+            </Route>
+            {/* #247 §6：群組 modal（所有登入者，不在 RequireAdmin 底下）。`/groups/:id` 本身是「成員」項次；
+                未知子路徑在 modal 內轉回 `/groups/:id`（GroupSubpathRedirect）。主樹對 /groups/* 落在 `/*` 的 HomePage。 */}
+            <Route path="/groups/:id" element={<GroupModal />}>
+              <Route index element={<GroupMembersSection />} />
+              <Route path="roles" element={<GroupRolesSection />} />
+              <Route path="storage" element={<GroupStorageSection />} />
+              <Route path="about" element={<GroupAboutSection />} />
+              <Route path="*" element={<GroupSubpathRedirect />} />
+            </Route>
+            {/* #247 §7：站台管理 modal。轉址掛在 AdminModal 外（不閃 modal）、RequireAdmin 內（非 admin 直接導 /，不先轉一次）。
+                RequireAdmin 巢狀在 ChangePasswordGate 底下（先強制改密、再判 admin）。主樹對 /admin/* 落在 `/*` 的 HomePage。 */}
+            <Route element={<RequireAdmin />}>
+              <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+              <Route path="/admin/auth" element={<Navigate to="/admin/login" replace />} />
+              <Route path="/admin/versions" element={<Navigate to="/admin/storage" replace />} />
+              <Route element={<AdminModal />}>
+                <Route path="/admin/users" element={<AdminUsersSection />} />
+                <Route path="/admin/groups" element={<AdminGroupsSection />} />
+                <Route path="/admin/login" element={<AdminLoginSection />} />
+                <Route path="/admin/storage" element={<AdminStorageSection />} />
+                <Route path="/admin/ai" element={<AdminAiSection />} />
+              </Route>
+              <Route path="/admin/*" element={<Navigate to="/admin/users" replace />} />
             </Route>
           </Route>
-          {/* 舊網址（書籤、舊文件連結）：站台管理搬到 /admin/* 後轉址過去。刻意掛在
-              SettingsModal **外面**（不先閃一下 modal 再跳走），仍在 RequireAuth 內；
-              admin 與否交給 /admin 那邊的 RequireAdmin 判。 */}
+          {/* #247 §5.1：舊群組網址（書籤、尚未改到的呼叫點）轉到群組 modal。掛在 ChangePasswordGate 與 SettingsModal 外——
+              不先閃設定面板；轉傳 location.state（LegacyGroupRedirect 內）才不會丟掉 backgroundLocation。 */}
+          <Route path="/settings/groups/:id" element={<LegacyGroupRedirect suffix="" />} />
+          <Route path="/settings/groups/:id/roles" element={<LegacyGroupRedirect suffix="/roles" />} />
+          {/* 轉址一律掛在 SettingsModal **外面**、RequireAuth 裡面（不先閃一下 modal；目的地自己的守衛照常判）。
+              `/settings` → 第一個項次（#247 §5.1）。舊網址 `/settings/users`、`/settings/ai`（書籤、舊文件連結）：
+              站台管理搬到 /admin/* 後轉址過去，admin 與否交給 /admin 那邊的 RequireAdmin 判。 */}
+          <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
           <Route path="/settings/users" element={<Navigate to="/admin/users" replace />} />
           <Route path="/settings/ai" element={<Navigate to="/admin/ai" replace />} />
         </Route>
         {/* 與上面那棵 pathless `<RequireAuth>` 平行（不是它的子路由）：純粹吸收
-            react-router 對非 /settings/* 路徑的「No routes matched」warning——
+            react-router 對三個面板（/settings/*、/groups/*、/admin/*）以外路徑的「No routes matched」warning——
             這棵樹本來就設計成那些路徑下什麼都不 render，這是預期行為，不是漏
             接的路由。element 固定 `null`，**絕不可**塞進任何 guard 底下：guard
-            會在每個非 /settings/* 頁面都執行一次（session query、可能的
+            會在每個非面板頁面都執行一次（session query、可能的
             <Navigate>），那就是貨真價實的幽靈重導，違反本樹「非
-            /settings/* 時 guard 不跑」的設計前提。 */}
+            面板路徑時 guard 不跑」的設計前提。 */}
         <Route path="*" element={null} />
       </Routes>
     </RealLocationContext.Provider>

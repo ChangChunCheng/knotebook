@@ -11,6 +11,8 @@ import {
 } from "@/api/adminStorage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Pencil, Trash } from "@/components/ui/icons";
+import { RowIconButton } from "@/components/ui/row-icon-button";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -25,6 +27,7 @@ import {
 import { toast } from "@/components/ui/toast";
 import { quotaBytesFromInput, quotaInputFromBytes, validPlanName, type QuotaUnit } from "@/lib/storage-plan-form";
 import { SettingsGroup, SettingsPage } from "./SettingsLayout";
+import { SiteVersionsGroups } from "./SettingsVersionsSection";
 
 /** 原生 select（repo 慣例：逐檔宣告，見 ApiTokensSection.tsx:35-41）。 */
 const SELECT_CLASS =
@@ -199,16 +202,13 @@ function DeletePlanButton({ plan, disabled }: { plan: StoragePlanDto; disabled: 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-label={t("admin.storage.deleteLabel", { name: plan.name })}
-          disabled={disabled}
-          title={disabled ? t("admin.storage.deleteBlockedHint") : undefined}
-        >
-          {t("admin.storage.delete")}
-        </Button>
+        <RowIconButton
+          label={t("admin.storage.deleteLabel", { name: plan.name })}
+          tone="destructive"
+          icon={<Trash className="h-4 w-4" />}
+          softDisabled={disabled}
+          softDisabledReason={t("admin.storage.deleteBlockedHint")}
+        />
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -332,14 +332,10 @@ function PlanTable({ plans }: { plans: StoragePlanDto[] }) {
                 {p.overQuotaCount}
               </td>
               <td className={`py-2 ${PLAN_TABLE_LAYOUT.actions}`}>
-                <div className="flex justify-end gap-1">
+                <div className="flex justify-end">
                   <PlanDialog
                     plan={p}
-                    trigger={
-                      <Button type="button" variant="ghost" size="sm" aria-label={t("admin.storage.editLabel", { name: p.name })}>
-                        {t("admin.storage.edit")}
-                      </Button>
-                    }
+                    trigger={<RowIconButton label={t("admin.storage.editLabel", { name: p.name })} icon={<Pencil className="h-4 w-4" />} />}
                   />
                   <DeletePlanButton
                     plan={p}
@@ -357,8 +353,8 @@ function PlanTable({ plans }: { plans: StoragePlanDto[] }) {
 }
 
 /**
- * 站台管理頁的儲存方案區（`/admin/storage`，admin only；spec §9.3）。版面外殼由 `pages/AdminPage.tsx` 提供，
- * 本元件只被它靜態 import（#201：同一個 lazy chunk，不得逐區 lazy）。刪除鈕的 disabled 只是體驗，
+ * 站台管理的「儲存方案」（`/admin/storage`，admin only；spec §9.3、#247 §7.0）：方案表、兩個預設、站台版本設定（`SiteVersionsGroups`）。
+ * 只被站台管理的 lazy 模組靜態 import（#201／#247：同一個 chunk，不得逐區 lazy）。刪除鈕的 disabled 只是體驗，
  * server 仍裁決（並發被指派 → 409 `storage_plan_in_use`，以 toast 顯示）。
  */
 export function SettingsStorageSection() {
@@ -372,7 +368,7 @@ export function SettingsStorageSection() {
       action={
         <PlanDialog
           trigger={
-            <Button type="button" variant="brandDeep">
+            <Button type="button" variant="outline">
               {t("admin.storage.create")}
             </Button>
           }
@@ -391,6 +387,7 @@ export function SettingsStorageSection() {
         )}
       </SettingsGroup>
       {plansQuery.data && <DefaultsGroup data={plansQuery.data} />}
+      <SiteVersionsGroups />
     </SettingsPage>
   );
 }

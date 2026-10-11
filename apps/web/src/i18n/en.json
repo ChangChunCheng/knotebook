@@ -281,23 +281,25 @@
   "admin": {
     "nav": {
       "label": "Site admin",
-      "backToNotes": "Back to notes",
       "users": "Users",
       "groups": "Groups",
       "storage": "Storage plans",
-      "versions": "Version history",
-      "ai": "AI",
+      "ai": "AI agents",
       "auth": "Sign-in"
     },
+    "users": { "user": "User", "lastLogin": "Last sign-in", "enabled": "Enabled", "roleFor": "Role for {{email}}", "neverLoggedIn": "Never" },
     "auth": {
       "title": "Sign-in",
       "description": "Identity providers (OpenID Connect) that people can sign in with. Each sign-in service has its own callback URL to register on the identity provider.",
       "providersHeading": "Sign-in services",
       "empty": "No sign-in services yet.",
-      "enabled": "On",
       "template": { "gitlab": "GitLab", "google": "Google", "oidc": "Custom OIDC" },
       "legacyBadge": "Imported from OIDC_*",
-      "issuerLabel": "Issuer",
+      "tableService": "Service",
+      "tableIssuer": "Issuer",
+      "tableLinked": "Linked",
+      "tableEnabled": "Enabled",
+      "tableActions": "Actions",
       "clientIdLabel": "Client ID",
       "callbackLabel": "Callback URL",
       "copyCallback": "Copy",
@@ -430,23 +432,15 @@
     "create": "Create",
     "creating": "Creating…",
     "tableEmail": "Email",
-    "tableHandle": "Username",
-    "tableDisplayName": "Display name",
     "tableRole": "Role",
-    "tableStatus": "Status",
     "tableStorage": "Storage",
     "tablePlan": "Plan",
     "planFor": "Storage plan for {{email}}",
-    "tableActions": "Actions",
     "roleAdmin": "Admin",
     "roleUser": "User",
-    "statusActive": "Active",
-    "statusDisabled": "Disabled",
     "disable": "Disable",
     "disableTitle": "Disable this user?",
     "disableDescription": "{{email}} will be signed out immediately and lose access until re-enabled.",
-    "enable": "Enable",
-    "promote": "Promote to admin",
     "storage": {
       "title": "Storage plans",
       "description": "A plan limits the total size of the attachments in a personal space or a group. New users and new groups start on the defaults below; changing a default doesn't move anyone who already exists.",
@@ -472,7 +466,6 @@
       "tableActions": "Actions",
       "defaultForUsers": "Default for new users",
       "defaultForGroups": "Default for new groups",
-      "edit": "Edit",
       "editLabel": "Edit {{name}}",
       "delete": "Delete",
       "deleteLabel": "Delete {{name}}",
@@ -488,9 +481,8 @@
     },
     "versions": {
       "title": "Version history",
-      "description": "How notes keep their versions on this site.",
       "autoTitle": "Automatic versions",
-      "autoDescription": "When off, no space saves versions automatically; people can still save versions by hand.",
+      "autoDescription": "When off, no space saves versions automatically; people can still save versions by hand. Versions and note text don't count toward storage; quotas count uploaded files only.",
       "retentionTitle": "Keeping automatic versions",
       "retentionDescription": "All automatic versions from the last {{keepAll}} days are kept; up to {{dailyUntil}} days, one a day; older, one a week. Days and weeks are counted in UTC. Manual versions are never removed.",
       "keepAllLabel": "Keep all for (days)",
@@ -528,6 +520,26 @@
       "title": "Automatic versions",
       "description": "When off, this group's notes only get a new version when someone saves one by hand.",
       "managersOnly": "Only members whose role can manage the group can change this."
+    },
+    "nav": {
+      "label": "Group",
+      "members": "Members",
+      "roles": "Roles",
+      "storage": "Storage",
+      "about": "About"
+    },
+    "storage": {
+      "byMember": "By member",
+      "byMemberDescription": "How much of this group's space each person has taken up: files they uploaded into its notes, plus the files that came with notes they moved or copied into the group.",
+      "byMemberEmpty": "This group's notes have no files yet.",
+      "deletedUser": "Deleted user"
+    },
+    "about": {
+      "infoTitle": "Details",
+      "createdAt": "Created",
+      "members": "Members",
+      "memberCount_one": "{{count}} member",
+      "memberCount_other": "{{count}} members"
     },
     "menu": {
       "label": "Group actions for {{name}}",
@@ -571,21 +583,10 @@
       "admin": "Admin",
       "member": "Member"
     },
-    "settings": {
-      "title": "Groups",
-      "description": "Groups you belong to. Notes in a group are visible to every member.",
-      "empty": "You're not in any group yet.",
-      "newGroup": "New group",
-      "tableName": "Name",
-      "tableRole": "Your role",
-      "tableActions": "Actions"
-    },
     "detail": {
-      "back": "All groups",
       "nameTitle": "Name",
       "nameSave": "Save name",
       "nameSaved": "Group renamed.",
-      "membersTitle": "Members",
       "membersDescriptionAdmin": "Add people by email. Members see every note in this group.",
       "membersDescriptionMember": "Only people whose role can manage members can add or remove members.",
       "tableName": "Name",
@@ -600,18 +601,14 @@
       "add": "Add",
       "dangerTitle": "Delete group",
       "dangerDescription": "Deleting the group either gives its notes to one of its admins or deletes them with it.",
-      "leaveTitle": "Leave group",
-      "tabsLabel": "Group settings sections",
-      "tabMembers": "Members",
-      "storage": "Storage",
-      "tabRoles": "Roles"
+      "leaveTitle": "Leave group"
     },
     "roles": {
-      "title": "Roles",
       "descriptionManage": "Each member has one role, and the role decides what they can do. The built-in Admin role can't be changed; the built-in Member role is what new members get, and it can't be renamed or deleted.",
       "descriptionView": "Each member has one role, and the role decides what they can do. Only people whose role can manage roles and the group can change these.",
       "legendTitle": "What each permission allows",
       "readAlways": "Every role can read the group's notes, their backlinks and their AI edit history.",
+      "readPill": "Read",
       "flags": {
         "create": {
           "label": "Create",
@@ -641,10 +638,9 @@
       "flagFor": "{{flag}} for {{role}}",
       "nameFor": "Name of {{role}}",
       "adminLocked": "The built-in Admin role always has every permission and can't be changed.",
-      "apply": "Apply",
-      "applyFor": "Apply changes to {{role}}",
-      "applied": "Changes applied.",
-      "deleteShort": "Delete",
+      "renameFor": "Rename {{role}}",
+      "save": "Save",
+      "cancel": "Cancel",
       "deleteFor": "Delete {{role}}",
       "delete": {
         "title": "Delete role?",
@@ -663,16 +659,98 @@
       "invalidName": "Role names must be 1–40 characters."
     }
   },
+  "management": {
+    "close": "Close",
+    "back": "Back to sections"
+  },
   "settings": {
     "entry": "Settings",
     "title": "Settings",
     "description": "Manage your account and workspace settings.",
     "nav": {
-      "account": "Account",
-      "groups": "Groups"
+      "account": "Account info",
+      "login": "Sign-in",
+      "authorization": "Authorization",
+      "groups": "Groups",
+      "storage": "Storage",
+      "about": "About"
+    },
+    "login": {
+      "description": "The ways you can sign in to this site."
+    },
+    "authorization": {
+      "description": "Let outside tools, such as Claude, read and write your notes as you.",
+      "mcp": {
+        "title": "Connect Claude with MCP",
+        "description": "Hook this site up to Claude Code or Claude Desktop. Replace <YOUR_TOKEN> in the snippets with a token created above.",
+        "endpoint": "This site's MCP endpoint",
+        "claudeCode": "Claude Code: run in a terminal",
+        "claudeDesktop": "Claude Desktop: add under mcpServers in claude_desktop_config.json",
+        "windowsNote": "On Windows, Claude Desktop usually needs the command wrapped in cmd /c ….",
+        "windowsNoteLink": "See docs/mcp.md",
+        "copy": "Copy",
+        "copied": "Copied.",
+        "copyFailed": "Couldn't copy automatically — select it by hand.",
+        "scopes": "Read: list_notes, search_notes, read_note_outline, read_note_section, read_note_image and create_transfer_token (download). Edit adds edit_note, create_note, copy_note (into your own notes) and create_transfer_token uploads. Move is needed for move_note_to_group and copying into a group (moving into a group can't be undone, so it is a separate permission)."
+      },
+      "tokens": {
+        "name": "Name",
+        "label": "Label",
+        "permissions": "Permissions",
+        "lastUsed": "Last used",
+        "expires": "Expires",
+        "pillRead": "Read",
+        "pillEdit": "Edit",
+        "pillMove": "Move",
+        "edit": "Edit",
+        "save": "Save",
+        "editHint": "1–32 letters, digits, . _ or -. Leave empty to go back to “{{derived}}”, derived from the name.",
+        "labelInvalid": "A label can only use 1–32 letters, digits, . _ or -.",
+        "footnote": "The name is where the token came from when it was created (yours for a token you made, self-reported by the client for an OAuth app) and can't be changed. The label is the short name shown on the AI's name tag and in the edit history; you can change it, and several tokens can share one."
+      }
+    },
+    "storage": {
+      "description": "How much space the files uploaded to your personal notes take.",
+      "usageTitle": "Usage",
+      "byKind": "By type",
+      "byKindDescription": "Uploaded files, grouped by type.",
+      "kinds": {
+        "image": "Images",
+        "audio": "Audio",
+        "video": "Video",
+        "document": "Documents",
+        "other": "Other"
+      },
+      "versionsTitle": "Version history",
+      "versionsNote": "Versions and note text don't count toward storage; quotas count uploaded files only."
+    },
+    "groups": {
+      "overview": "Groups you belong to, and your role in each. Create or manage groups from the sidebar.",
+      "count_one": "You're in {{count}} group",
+      "count_other": "You're in {{count}} groups",
+      "empty": "You're not in any group yet.",
+      "tableGroup": "Group",
+      "tableRole": "My role",
+      "tablePermissions": "Permissions"
+    },
+    "about": {
+      "description": "Knotebook is a self-hosted collaborative notebook.",
+      "version": "Version",
+      "source": "Source code",
+      "docs": "Documentation",
+      "docsLink": "docs/ folder",
+      "license": "License"
     },
     "account": {
-      "description": "Manage your username, password, and API tokens.",
+      "description": "The name others see, and the name in your public links.",
+      "displayName": {
+        "title": "Display name",
+        "description": "The name shown in the share panel, version history and group member lists.",
+        "label": "Display name",
+        "save": "Save display name",
+        "saved": "Display name updated.",
+        "invalid": "Display names must be 1–100 characters."
+      },
       "autoVersions": {
         "title": "Automatic versions",
         "description": "When off, your personal notes only get a new version when you save one by hand."
@@ -688,12 +766,11 @@
         "success": "Password added.",
         "ssoOnlyNotice": "This site only allows signing in through a sign-in service right now."
       },
-      "storage": "Storage",
-      "handleTitle": "Username",
-      "handleDescription": "Your username appears in every /n/ and /p/ link you share (token links don't include it). After a rename those links stop working immediately, and the old name can never be used again — not even by you.",
-      "handleLabel": "Username",
-      "handleSave": "Save username",
-      "handleSaved": "Username updated.",
+      "handleTitle": "URL name",
+      "handleDescription": "The name used in your public links (/p/<handle>/…). It appears in every /n/ and /p/ link you share (token links don't include it). After a rename those links stop working immediately, and the old name can never be used again — not even by you.",
+      "handleLabel": "URL name",
+      "handleSave": "Save URL name",
+      "handleSaved": "URL name saved.",
       "signInMethods": {
         "title": "Sign-in methods",
         "description": "Sign-in services linked to this account. You can link another one, or unlink one as long as you keep at least one way to sign in.",
@@ -718,9 +795,6 @@
       "apiTokensNameLabel": "Name",
       "apiTokensNamePlaceholder": "e.g. Claude Desktop",
       "apiTokensScopeLabel": "Access",
-      "apiTokensScopeRead": "Read notes",
-      "apiTokensScopeWrite": "Read and write notes",
-      "apiTokensScopeWriteMove": "Read and write notes; move or copy notes into groups",
       "apiTokensScopeReadFixed": "Read your notes (always included)",
       "apiTokensScopeEdit": "Create and edit notes",
       "apiTokensScopeMove": "Move or copy notes into groups",
@@ -742,17 +816,12 @@
       "apiTokensKindOauth": "App",
       "apiTokensUnverifiedName": "Name is self-reported by the application and is not verified.",
       "apiTokensNeverUsed": "Never used",
-      "apiTokensLastUsed": "Last used {{when}}",
       "apiTokensExpired": "Expired",
       "apiTokensNoExpiry": "No expiry",
-      "apiTokensExpires": "Expires {{when}}",
       "apiTokensRevoke": "Revoke",
       "apiTokensRevokeTitle": "Revoke this token?",
       "apiTokensRevokeDescription": "Anything using \"{{name}}\" will stop working immediately. This can't be undone.",
       "apiTokensRevokeConfirm": "Revoke token",
-      "apiTokensAgentLabel": "Agent name",
-      "apiTokensRename": "Rename agent",
-      "apiTokensRenameHint": "Shown on the AI's name tag and in the edit history. Letters, numbers, dots, underscores and hyphens only (max 32 characters). Leave empty to go back to the default. Press Cancel to leave it unchanged.",
       "handleInvalid": "1–32 characters: lowercase letters, numbers and hyphens; hyphens can't lead, trail, or repeat."
     },
     "ai": {
@@ -760,6 +829,12 @@
       "description": "Point Knotebook at your own AI endpoint, then choose which quick actions appear in the editor.",
       "edit": "Edit",
       "providersHeading": "Providers",
+      "tableName": "Name",
+      "tableType": "Type",
+      "tableBaseUrl": "Base URL",
+      "tableModels": "Models",
+      "tableEnabled": "Enabled",
+      "tableActions": "Actions",
       "addProvider": "Add provider",
       "editProvider": "Edit provider",
       "providerName": "Name",
@@ -989,10 +1064,12 @@
     "email_taken": "That email is already in use.",
     "user_not_found": "We couldn't find that user.",
     "cannot_disable_self": "You can't disable your own account.",
+    "cannot_demote_self": "You can't remove your own admin role.",
+    "last_site_admin": "The site needs at least one enabled admin.",
     "cannot_share_with_self": "You can't share a note with yourself.",
     "share_not_found": "That share no longer exists.",
     "slug_taken": "That URL is already used by another of your notes.",
-    "handle_taken": "That username is already taken.",
+    "handle_taken": "That URL name is already taken.",
     "public_slug_taken": "That public URL is already used by another of your notes.",
     "not_loaded": "This note isn't ready for that yet. Please try again.",
     "file_too_large": "That file is too large to upload.",

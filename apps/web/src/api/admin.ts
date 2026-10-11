@@ -5,10 +5,10 @@ import { ADMIN_STORAGE_PLANS_QUERY_KEY, STORAGE_USAGE_QUERY_KEY } from "./storag
 
 /**
  * `GET /api/admin/users` 回應形狀（鏡射 `apps/server/src/routes/admin-users.ts` 的
- * `AdminUserDto`——那七欄（外加 `storage`）的 select 形狀鎖，見該檔說明）。刻意不放進
+ * `AdminUserDto`——那八欄（外加 `storage`）的 select 形狀鎖，見該檔說明）。刻意不放進
  * `@knotebook/shared`：與 `NoteDto`/`ShareDto` 不同，這個形狀只有 admin 頁面讀得到，
- * 沒有跨 owner/editor/viewer 角色共用的理由。與 server 端 adminUserColumns 的七欄
- * select 形狀鎖同步（#122 起含 handle）。
+ * 沒有跨 owner/editor/viewer 角色共用的理由。與 server 端 adminUserColumns 的八欄
+ * select 形狀鎖同步（#122 起含 handle、#247 起含 lastLoginAt）。
  */
 export interface AdminUserDto {
   id: string;
@@ -19,6 +19,8 @@ export interface AdminUserDto {
   isAdmin: boolean;
   disabledAt: string | null;
   createdAt: string;
+  /** #247 §9.5：最後一次登入（ISO）；null＝升級後尚未登入過（UI 顯示「從未」）。 */
+  lastLoginAt: string | null;
   /** 儲存配額 §7.2、§7.4：個人空間的方案與用量（GET／POST／PATCH storage-plan 都帶）。 */
   storage: SpaceStorageDto;
 }
@@ -52,19 +54,18 @@ export function useCreateAdminUser() {
   });
 }
 
-/** 三支 `:id` 操作端點共用同一套殼：皆為 bodyless POST、皆回 204、皆只需要
+/** 四支 `:id` 操作端點共用同一套殼：皆為 bodyless POST、皆回 204、皆只需要
  * invalidate 名單。刻意不帶 body（`api()` 只在 `init.body != null` 時才補
  * `Content-Type: application/json`——帶空字串/`{}` 反而可能撞 server 端的
  * `FST_ERR_CTP_EMPTY_JSON_BODY`，見 `client.ts` 的說明與 `useSession.logout`
- * 的既有用法）。 */
-function useAdminUserAction(action: "disable" | "enable" | "promote") {
+ * 的既有用法）。`onSuccess` 回傳失效的 promise，讓呼叫端的 pending 涵蓋重抓（#247）：
+ * `mutateAsync` 等名單重抓完才 resolve，列內剛選的角色／toggle 不會在重抓前彈回舊值。 */
+function useAdminUserAction(action: "disable" | "enable" | "promote" | "demote") {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       api<void>(`/api/admin/users/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ADMIN_USERS_QUERY_KEY });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ADMIN_USERS_QUERY_KEY }),
   });
 }
 
@@ -78,6 +79,11 @@ export function useEnableAdminUser() {
 
 export function usePromoteAdminUser() {
   return useAdminUserAction("promote");
+}
+
+/** #247 §9.4：`POST /api/admin/users/:id/demote`（204；400 `cannot_demote_self`、409 `last_site_admin`）。 */
+export function useDemoteAdminUser() {
+  return useAdminUserAction("demote");
 }
 
 /**

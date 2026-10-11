@@ -62,6 +62,11 @@ export const users = pgTable("users", {
   storagePlanId: uuid("storage_plan_id").notNull().default(sql`public.knotebook_default_storage_plan('user')`),
   // 筆記版本歷史（spec 2026-10-09 §4.3、D8）：個人空間的自動儲存開關。生效值＝站台總開關 且 這欄（A13），筆記載入時查一次。
   autoVersions: boolean("auto_versions").notNull().default(true),
+  // #247 §9.5：最後一次「新簽登入 session」的時間（帳密登入、OIDC 登入與首登建帳、SSO／密碼證明連結、註冊）。顯示用，站台管理使用者表讀它；
+  // 寫入是交易外的單句 `auth/last-login.ts` 的 `touchLastLogin`（不進 `resolveOidcLoginInTx`，不動「先 users 後 identity」鎖序，C24）；
+  // 永不等鎖（`SKIP LOCKED`）：該列正被別的交易鎖著時略過，所以併發下偶爾會漏記這一次登入。
+  // 不回填：升級前的帳號在下次登入前是 NULL。
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
 }, t => [
   uniqueIndex("users_oidc_idx").on(t.oidcIssuer, t.oidcSub),
   // issue #18：email 比對全面走 `lower(users.email) = $1`（登入、分享查人、OIDC 連結，
@@ -536,6 +541,10 @@ export const uploads = pgTable("uploads", {
   id: uuid().primaryKey().defaultRandom(),
   noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
   uploaderId: uuid("uploader_id").references(() => users.id, { onDelete: "set null" }),
+  // #247 §9.2：佔用者——把這筆附件的位元組帶進其空間的人：上傳＝上傳者；移入群組＝移入者（該篇每一筆附件）；複製＝複製者。
+  // 群組用量「依成員」依它分組；`uploader_id` 是出處，兩者並存。NULL＝佔用者帳號已刪除，或在回滾到 v0.9 期間新建的列。
+  // 不加索引（同 uploader_id）：查詢從 notes join 進來，刪帳號時的 SET NULL 掃描成本與 uploader_id 同級。
+  chargedToId: uuid("charged_to_id").references(() => users.id, { onDelete: "set null" }),
   mime: text().notNull(),
   size: integer().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -669,7 +678,7 @@ export const apiTokens = pgTable(
     accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     // #106（migration 0010）：這支 token 在筆記落款上顯示的 agent 名。NULL＝沒有覆寫值，
-    // 讀時由 `deriveAgentLabel(name)` 派生（現值運算式＝`auth/agent-label.ts` 的 `agentLabelOf`）；
+    // 讀時由 `deriveAgentLabel(name)`（`packages/shared/src/agent-label.ts`）派生（現值運算式＝`auth/agent-label.ts` 的 `agentLabelOf`）；
     // 寫入這一欄的唯一入口是 `PATCH /api/auth/tokens/:id`（#138），OAuth 換發時由 I7 搬過去。
     // 形狀 CHECK 與派生規則的字元集一致——這欄會被複製進 `note_ai_edits.agent_label` 與
     // `notes.last_edited_agent_label`，在 DB 端擋住形狀，繞過端點的寫入也騙不進來。
@@ -688,7 +697,7 @@ export const apiTokens = pgTable(
     check("api_tokens_client_chk", sql`(${t.kind} = 'pat') = (${t.clientId} is null)`),
     check("api_tokens_refresh_chk", sql`(${t.kind} = 'pat') = (${t.refreshTokenHash} is null)`),
     check("api_tokens_oauth_expiry_chk", sql`${t.kind} = 'pat' or ${t.accessExpiresAt} is not null`),
-    // #106：agent label 的字元集與長度（同 `deriveAgentLabel` 的輸出形）。NULL 合法＝未覆寫。
+    // #106：agent label 的字元集與長度（同 shared `deriveAgentLabel` 的輸出形；`AGENT_LABEL_RE` 逐字同形）。NULL 合法＝未覆寫。
     check("api_tokens_agent_label_chk", sql`${t.agentLabel} is null or ${t.agentLabel} ~ '^[A-Za-z0-9._-]{1,32}$'`),
     index("api_tokens_user_idx").on(t.userId),
     // FK 的支撐索引（比照 note_shares_user_idx／uploads_note_idx 的既有慣例）：

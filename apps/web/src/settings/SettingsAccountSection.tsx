@@ -1,23 +1,13 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { normalizeHandle, validateHandle } from "@knotebook/shared";
-import { ChangePasswordForm } from "@/auth/ChangePasswordForm";
-import { useIdentities } from "@/api/account";
-import { useAuthConfig } from "@/api/authConfig";
-import { useUpdateAutoVersions } from "@/api/versionSettings";
-import { useUpdateHandle } from "@/api/profile";
-import { useStorageUsage } from "@/api/storage";
+import { MAX_REGISTER_DISPLAY_NAME_LENGTH, normalizeHandle, validateHandle } from "@knotebook/shared";
+import { useUpdateDisplayName, useUpdateHandle } from "@/api/profile";
 import { ApiFail } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/toast";
 import { useSession } from "@/auth/useSession";
-import { ApiTokensSection } from "./ApiTokensSection";
-import { AutoVersionsSwitch } from "./AutoVersionsSwitch";
 import { SettingsGroup, SettingsPage } from "./SettingsLayout";
-import { SetPasswordForm } from "./SetPasswordForm";
-import { SignInMethodsSection } from "./SignInMethodsSection";
-import { StorageUsageGroup } from "./StorageUsageGroup";
 
 /** 逐檔複製的既有慣例（無共用 helper——比照 ShareDialog/SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -28,7 +18,66 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 /**
- * 使用者名（handle，#122）編輯段——**兩個帳號分支（有密碼／SSO-only）都渲染**
+ * 顯示名稱（#247 §5.2、W19）：別人在分享面板、版本歷史、群組成員表看到的名字。與網址名稱分開兩個區塊。
+ * 送出前 client 端只擋「trim 後空白」與「超過 100 個 code point」（`[...s].length`，不是 `.length`——
+ * emoji 一個字佔兩個 UTF-16 單位）；其餘（NUL、落單代理）交給 server 400 `invalid_body`。
+ */
+function DisplayNameSection() {
+  const { t } = useTranslation();
+  const { user } = useSession();
+  const update = useUpdateDisplayName();
+  const [value, setValue] = useState<string | null>(null); // null＝未編輯，顯示現值
+  const [error, setError] = useState<string | null>(null);
+
+  const current = user?.displayName ?? "";
+  const shown = value ?? current;
+  const trimmed = shown.trim();
+
+  async function save(): Promise<void> {
+    if (trimmed === "" || [...trimmed].length > MAX_REGISTER_DISPLAY_NAME_LENGTH) {
+      setError(t("settings.account.displayName.invalid"));
+      return;
+    }
+    setError(null);
+    try {
+      await update.mutateAsync({ displayName: trimmed });
+      setValue(null);
+      toast({ title: t("settings.account.displayName.saved") });
+    } catch (err) {
+      setError(errorMessage(t, err));
+    }
+  }
+
+  return (
+    <SettingsGroup title={t("settings.account.displayName.title")} description={t("settings.account.displayName.description")}>
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <Input
+          value={shown}
+          aria-label={t("settings.account.displayName.label")}
+          onChange={(event) => setValue(event.target.value)}
+          className="max-w-xs"
+        />
+        <Button type="submit" variant="outline" disabled={update.isPending || trimmed === "" || trimmed === current}>
+          {t("settings.account.displayName.save")}
+        </Button>
+      </form>
+      {error !== null && (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </SettingsGroup>
+  );
+}
+
+/**
+ * 網址名稱（handle，#122；#247 起 UI 稱『網址名稱』）編輯段——**兩個帳號分支（有密碼／SSO-only）都渲染**
  * （plan gate M5：SSO 使用者正是 handle 派生自 preferred_username、最可能想改名的
  * 族群；原本的 hasPassword 早退分支已重構）。
  *
@@ -101,81 +150,15 @@ function HandleSection() {
 }
 
 /**
- * 個人空間的「自動儲存版本」開關（spec §6.8、§8.5）：立即生效，只送 `{ autoVersions }`；
- * 站台總開關關閉（`/api/auth/config` 的 `autoVersionsEnabled === false`）時 disabled 並給看得見的說明。
- * `config` 尚未載入時當作開（同 `passwordLoginEnabled` 的 `!== false` 預設，不誤閃「站台已關閉」）。
- */
-function AutoVersionsGroup() {
-  const { t } = useTranslation();
-  const { user } = useSession();
-  const config = useAuthConfig();
-  const update = useUpdateAutoVersions();
-  return (
-    <SettingsGroup>
-      <AutoVersionsSwitch
-        id="account-auto-versions"
-        title={t("settings.account.autoVersions.title")}
-        description={t("settings.account.autoVersions.description")}
-        checked={user?.autoVersions ?? true}
-        siteOff={config.data?.autoVersionsEnabled === false}
-        pending={update.isPending}
-        onCheckedChange={(value) => update.mutate(value, { onError: (err) => toast({ title: errorMessage(t, err), variant: "destructive" }) })}
-      />
-    </SettingsGroup>
-  );
-}
-
-/**
- * 設定 modal 的帳號區（`/settings/account`，所有人可見；spec §13.4）——使用者名
- * 編輯段（#122，兩分支皆渲染）＋自助改密碼。改密成功後**只 toast、不導航**：
- * `navigate("/")` 會關掉 modal，甚至扯掉背景 `/notes/:ref` 的共編 provider，
- * 這裡刻意留在原地（對照 `ChangePasswordPage` 的強制模式 `onSuccess`）。
- *
- * 密碼群組三形（#187 §8.5）：
- * - `hasPassword === false`（OIDC 自動建帳、從未設過密碼；spec §14.4）＋帳密登入有效值開
- *   → 「加上密碼」表單（`SetPasswordForm`）；不渲染改密碼表單（打了也一定 `invalid_credentials`）。
- * - `hasPassword === false`＋有效值關（B22）→ 只有說明、沒有表單。
- * - 有密碼 → 改密碼表單；有效值關時多一句說明。
- * 使用者名段在三形都照常渲染；最後一組是儲存空間用量（spec §9.2；只顯示）。`hasPassword` 仍用 `=== false` 明確比對（而非 `!user.hasPassword`），
- * 讓「query 尚未就緒」（`undefined`）預設落在改密碼表單那條分支，不誤閃加密碼表單；
- * `passwordLoginEnabled` 同理以 `!== false` 預設為開（identities 尚未載入時不誤閃「關」說明）。
- *
- * `changePassword.title`/`.description` 只在有改密碼表單那個分支渲染（fix round 1 MINOR-2）。
+ * 個人設定「帳戶資訊」（`/settings/account`，#247 §5.2、W19）：顯示名稱與網址名稱兩區塊。密碼與已連結登入方式
+ * 在「登入」頁、API token 在「授權」頁、用量與自動版本在「儲存空間」頁。
  */
 export function SettingsAccountSection() {
   const { t } = useTranslation();
-  const { user } = useSession();
-  const identities = useIdentities();
-  const storage = useStorageUsage();
-  const passwordLoginEnabled = identities.data?.passwordLoginEnabled !== false;
-
   return (
     <SettingsPage title={t("settings.nav.account")} description={t("settings.account.description")}>
+      <DisplayNameSection />
       <HandleSection />
-      <SignInMethodsSection />
-      {/* #107：與 HandleSection 同層、在 hasPassword 三元式之外——SSO-only 帳號
-          也要能建 PAT。 */}
-      <ApiTokensSection />
-      <AutoVersionsGroup />
-      {user?.hasPassword === false ? (
-        passwordLoginEnabled ? (
-          <SettingsGroup title={t("settings.account.setPassword.title")} description={t("settings.account.setPassword.description")}>
-            <SetPasswordForm onSuccess={() => toast({ title: t("settings.account.setPassword.success") })} />
-          </SettingsGroup>
-        ) : (
-          // B22：有效值關時不給加密碼表單。
-          <SettingsGroup>
-            <p className="max-w-prose text-sm text-muted-foreground">{t("settings.account.setPassword.ssoOnlyNotice")}</p>
-          </SettingsGroup>
-        )
-      ) : (
-        <SettingsGroup title={t("changePassword.title")} description={t("changePassword.description")}>
-          {!passwordLoginEnabled && <p className="mb-3 max-w-prose text-sm text-muted-foreground">{t("settings.account.passwordLoginOffNote")}</p>}
-          {/* 設定 modal 內：tone="panel" → brandDeep（同一元件在 /change-password 整頁用預設 "page" → brandSolid） */}
-          <ChangePasswordForm tone="panel" onSuccess={() => toast({ title: t("changePassword.successMessage") })} />
-        </SettingsGroup>
-      )}
-      <StorageUsageGroup title={t("settings.account.storage")} query={storage} />
     </SettingsPage>
   );
 }

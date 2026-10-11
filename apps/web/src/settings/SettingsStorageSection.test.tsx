@@ -8,7 +8,7 @@ import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 
-// W4（spec §11.5）：/admin/storage。走真的 AppRoutes（AdminPage lazy chunk＋descendant route）。
+// W4（spec §11.5）：/admin/storage。走真的 AppRoutes（站台管理 modal＋AdminSections lazy chunk）。
 
 function res(status: number, body?: unknown): Response {
   return { ok: status < 400, status, json: () => (body === undefined ? Promise.reject(new Error("no body")) : Promise.resolve(body)) } as unknown as Response;
@@ -36,6 +36,7 @@ function renderStorage(extra: Handler = () => null, client = new QueryClient({ d
     if (url === "/api/auth/me") return Promise.resolve(res(200, ADMIN));
     if (url === "/api/groups" || url === "/api/notes") return Promise.resolve(res(200, []));
     if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(res(200, LIST));
+    if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(res(200, { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true }));
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -77,12 +78,24 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(within(row("Tight")).getByText("1004 B")).toBeInTheDocument();
     const tightCells = within(row("Tight")).getAllByRole("cell").map((c) => c.textContent);
     expect(tightCells.slice(2, 5)).toEqual(["2", "0", "1"]); // 使用者、群組、超過上限
-    expect(screen.getByRole("button", { name: "Delete Basic" })).toBeDisabled(); // 預設（也在用）
-    expect(screen.getByRole("button", { name: "Delete Tight" })).toBeDisabled(); // 只因在用
-    expect(screen.getByRole("button", { name: "Delete Big" })).toBeDisabled(); // 只因在用（1 位使用者）
-    expect(screen.getByRole("button", { name: "Delete Starter" })).toBeDisabled(); // 只因是預設（沒人在用）——M7b 守
-    expect(screen.getByRole("button", { name: "Delete Spare" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Delete Basic" })).toHaveAttribute("aria-disabled", "true"); // 預設（也在用）
+    expect(screen.getByRole("button", { name: "Delete Tight" })).toHaveAttribute("aria-disabled", "true"); // 只因在用
+    expect(screen.getByRole("button", { name: "Delete Big" })).toHaveAttribute("aria-disabled", "true"); // 只因在用（1 位使用者）
+    expect(screen.getByRole("button", { name: "Delete Starter" })).toHaveAttribute("aria-disabled", "true"); // 只因是預設（沒人在用）——M7b 守
+    expect(screen.getByRole("button", { name: "Delete Spare" })).not.toHaveAttribute("aria-disabled");
     expect(screen.getByText("A plan that is a default, or that any user or group is on, can't be deleted.")).toBeInTheDocument();
+  });
+
+  it("P1 方案列的 Edit／Delete 是 icon 鈕（無可見文字、帶 title）、Delete 紅；不可刪的 title 是原因；「New plan」不是實心鈕", async () => {
+    renderStorage();
+    const edit = await screen.findByRole("button", { name: "Edit Basic" });
+    const del = screen.getByRole("button", { name: "Delete Basic" });
+    expect(edit.textContent).toBe("");
+    expect(edit).toHaveAttribute("title", "Edit Basic");
+    expect(del.textContent).toBe("");
+    expect(del).toHaveClass("text-destructive");
+    expect(del).toHaveAttribute("title", "A plan that is a default, or that any user or group is on, can't be deleted.");
+    expect(screen.getByRole("button", { name: "New plan" }).className).not.toMatch(/(^|\s)bg-(primary|brand|brand-deep)(\s|$)/);
   });
 
   it("新增：名稱 trim、1.5 GB → POST {name, quotaBytes: 1610612736}；成功關窗並重抓清單", async () => {
@@ -95,7 +108,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(callsTo(fetchMock, "POST", "/api/admin/storage-plans")).toHaveLength(1));
     expect(bodyOf(callsTo(fetchMock, "POST", "/api/admin/storage-plans")[0])).toEqual({ name: "Team", quotaBytes: 1610612736 });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New storage plan" })).not.toBeInTheDocument());
     await waitFor(() => expect(callsTo(fetchMock, "GET", "/api/admin/storage-plans").length).toBeGreaterThanOrEqual(2));
   });
 
@@ -177,7 +190,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit Tight" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit storage plan" })).not.toBeInTheDocument());
     expect(callsTo(fetchMock, "PATCH", `/api/admin/storage-plans/${TIGHT.id}`)).toHaveLength(0);
   });
 

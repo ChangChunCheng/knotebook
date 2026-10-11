@@ -17,6 +17,7 @@ import { TxAbort } from "../http/tx-abort.js";
 import type { OidcTestHook } from "../auth/oidc-test-hook.js";
 import { resolveSessionUser, signSession, type UserGate } from "../auth/session.js";
 import { setSessionCookie } from "../auth/cookies.js";
+import { touchLastLogin } from "../auth/last-login.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
 
 /** r3-M3：IdP claim 的長度上限——pending cookie 的大小上界靠它（§7.5.1）。 */
@@ -97,7 +98,7 @@ export function oidcRoutes(deps: OidcRouteDeps) {
     // §7.3：cookie 解開之後，SSO 證明途中的失敗回連結頁（同一顆 pending 還能改用密碼或換 provider）；設定頁手動連結的回設定頁（§8.1）；
     // 登入途中的回登入頁（帶 next）。
     const failLocation = (code: string): string =>
-      intent === "prove" ? `/link-account?error=${code}` : intent === "link" ? `/settings/account?link_error=${code}` : loginErrorLocation(code);
+      intent === "prove" ? `/link-account?error=${code}` : intent === "link" ? `/settings/login?link_error=${code}` : loginErrorLocation(code);
 
     try {
       // §7.3 第 2 步：provider 不存在或停用 → oidc_unavailable（cookie 解開之前，不帶 next；C6、C19）。
@@ -187,7 +188,8 @@ export function oidcRoutes(deps: OidcRouteDeps) {
           if (!(err instanceof TxAbort)) throw err;
           return reply.redirect(failLocation(err.errCode));
         }
-        return reply.redirect(`/settings/account?linked=${provider.id}`);
+        // #247 §9.9：已連結登入方式在設定的「登入」頁（讀 ?linked=／?link_error=、toast 後清參數）。
+        return reply.redirect(`/settings/login?linked=${provider.id}`);
       }
 
       if (payload.intent === "prove") {
@@ -219,6 +221,7 @@ export function oidcRoutes(deps: OidcRouteDeps) {
         }
         clearPendingCookie(reply, deps.config);
         deps.gate.invalidate(linked.id);
+        await touchLastLogin(deps.db, linked.id, request.log); // #247 §9.5 寫入點 3：SSO 證明連結
         const proveToken = await signSession(deps.config.appSecret, { userId: linked.id, tv: linked.tokenVersion });
         setSessionCookie(reply, deps.config, proveToken);
         return reply.redirect((pending.next !== undefined ? safeNextPath(pending.next) : null) ?? "/");
@@ -265,8 +268,10 @@ export function oidcRoutes(deps: OidcRouteDeps) {
         setPendingCookie(reply, deps.config, sealed.sealed);
         return reply.redirect("/link-account");
       }
-      // created 寫了 users（新列）：invalidate 讓 gate 不吐舊快取；login 不寫 users（B15），不需要。
+      // created 寫了 users（新列）：invalidate 讓 gate 不吐舊快取。交易內 login 不寫 users（B15）；交易後的 last_login_at 不在 UserDto 裡，
+      // gate 快取不含它，不需 invalidate。
       if (outcome.kind === "created") deps.gate.invalidate(outcome.userId);
+      await touchLastLogin(deps.db, outcome.userId, request.log); // #247 §9.5 寫入點 2：OIDC 登入（login／created）
       const token = await signSession(deps.config.appSecret, { userId: outcome.userId, tv: outcome.tokenVersion });
       setSessionCookie(reply, deps.config, token);
       return reply.redirect(nextPath ?? "/");
