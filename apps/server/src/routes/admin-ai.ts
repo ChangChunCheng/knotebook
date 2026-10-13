@@ -3,10 +3,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
-import type {
-  AdminAiActionDto,
-  AdminAiModelDto,
-  AdminAiProviderDto,
+import {
+  BUILTIN_ACTION_IDS,
+  INSTRUCT_ACTION_ID,
+  aiActionKind,
+  type AdminAiActionDto,
+  type AdminAiModelDto,
+  type AdminAiProviderDto,
 } from "@knotebook/shared";
 import { sendError } from "../http/errors.js";
 import type { Db } from "../db/index.js";
@@ -14,7 +17,6 @@ import type { AppConfig } from "../config.js";
 import { aiActions, aiModels, aiProviders } from "../db/schema.js";
 import { AiKeyDecryptError, decryptApiKey, encryptApiKey, type EncryptedApiKey } from "../ai/crypto.js";
 import type { AiRuntime } from "../ai/runtime.js";
-import { BUILTIN_ACTION_IDS } from "../db/seed-ai.js";
 import { isForeignKeyViolation, isUniqueViolation } from "../db/pg-errors.js";
 import { UUID_RE } from "../notes/service.js";
 import { safeTarget } from "../lib/safe-target.js";
@@ -189,6 +191,7 @@ function toActionDto(row: AiActionRow): AdminAiActionDto {
     sortOrder: row.sortOrder,
     enabled: row.enabled,
     builtin: BUILTIN_ACTION_IDS.includes(row.id),
+    kind: aiActionKind(row.id),
   };
 }
 
@@ -586,6 +589,15 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       const parsed = patchActionSchema.safeParse(request.body);
       if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "請求格式錯誤");
       const { name, systemPrompt, userTemplate, modelId, applyMode, sortOrder, enabled } = parsed.data;
+
+      // #263 §4.4：內建 Instruct 一律預覽（D4）；它的 template 除了 {{text}}（上面 zod 已擋）還必須有 {{instruction}}，{{focus}} 選配。
+      // 以路徑 id（上面已小寫化）對常數判。app 層 http/uuid-params.ts 的 hook 本來就把 UUID 路徑參數小寫化，這裡的小寫化是第二道防線（改成 rawId 測試不會紅，勿以為是守衛缺口）。
+      if (id === INSTRUCT_ACTION_ID) {
+        if (applyMode === "direct") return sendError(reply, 400, "instruct_preview_only", "Instruct 動作只能預覽後套用");
+        if (userTemplate !== undefined && !userTemplate.includes("{{instruction}}")) {
+          return sendError(reply, 400, "invalid_body", "userTemplate 必須包含 {{instruction}} 佔位符");
+        }
+      }
 
       const values: Partial<typeof aiActions.$inferInsert> = {};
       if (name !== undefined) values.name = name;
