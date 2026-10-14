@@ -17,10 +17,17 @@ import {
   BlockNoteSchema, createBlockSpec, createCodeBlockSpec, createInlineContentSpec, defaultBlockSpecs, defaultInlineContentSpecs,
   type CodeBlockOptions,
 } from "@blocknote/core";
+import { normalizeAnchor, wikilinkHref, wikilinkVisibleText } from "./site-link.js";
 
 export const MERMAID_LANGUAGE = "mermaid";
 export const mermaidBlockConfig = { type: MERMAID_LANGUAGE, content: "none", propSchema: { code: { default: "" } } } as const;
-export const wikilinkConfig = { type: "wikilink", content: "none", propSchema: { targetNoteId: { default: "" }, snapshotTitle: { default: "" } } } as const;
+// #269 §4.1：`label` 空 ⇒ 顯示目標現行標題（跟著改名）；`anchorBlockId` 空 ⇒ 整篇，否則目標筆記內區塊 id（BLOCK_ANCHOR_RE，
+// 不合格的值讀端一律當空）。改這裡＝改 note schema：同步升 `note-schema-version.ts` 的 NOTE_SCHEMA_VERSION（digest 守衛會紅）。
+export const wikilinkConfig = {
+  type: "wikilink",
+  content: "none",
+  propSchema: { targetNoteId: { default: "" }, snapshotTitle: { default: "" }, label: { default: "" }, anchorBlockId: { default: "" } },
+} as const;
 
 // 原 code-highlight.ts 的 SUPPORTED_LANGUAGES 整份搬來（值逐字不變、型別同）；web 再疊 createHighlighter。
 export const SUPPORTED_LANGUAGES: NonNullable<CodeBlockOptions["supportedLanguages"]> = {
@@ -99,9 +106,14 @@ export function createHeadlessNoteSchema(base: string) {
   })(); // createBlockSpec 回 factory；createInlineContentSpec 直接回 spec（0.52.1 d.ts 核實）
   const wikilinkSpec = createInlineContentSpec(wikilinkConfig, {
     render: () => ({ dom: document.createElement("span") }),
+    // #269 §7.3：與 web spec 同形——`<span><a href="/notes/<id>[#b-…]">label || snapshotTitle || href</a></span>`
+    // （外層 span 的理由見 web `components/wikilink/spec.tsx` 的 `WikilinkExternalHTML`）。
     toExternalHTML: ic => {
       const span = document.createElement("span");
-      span.textContent = `[[${ic.props.snapshotTitle}]]`;
+      const a = document.createElement("a");
+      a.setAttribute("href", wikilinkHref(ic.props.targetNoteId, normalizeAnchor(ic.props.anchorBlockId)));
+      a.textContent = wikilinkVisibleText(ic.props);
+      span.append(a);
       return { dom: span };
     },
   });

@@ -43,8 +43,8 @@ import type { SlugScope } from "../slug.js";
 import type { NoteVersionRow } from "../tx/versions.js";
 import { applyEdit, type ApplyDeps, type ApplyResult, type EditingTestHooks } from "./apply.js";
 import { applyVersionEdit, type ApplyVersionFailureCode, type ApplyVersionInput } from "./apply-version.js";
-import { visibleNoteTitles } from "./candidates.js";
-import { parseMarkdownForNote, type ParseError } from "./markdown.js";
+import { visibleNoteTargets } from "./candidates.js";
+import { parseMarkdownForNote, siteOriginOf, type ParseError } from "./markdown.js";
 import { presenceIdentity, presenceTargetForWrite, type PresenceRegistry, type PresenceTarget } from "./presence.js";
 import { NoteWriteQueue, QueueBusyError } from "./queue.js";
 import { revertEdit, type RevertResult } from "./revert.js";
@@ -120,6 +120,18 @@ export class NoteWriteService {
   }
 
   /**
+   * #269 §12.1：轉換工作專用——在本 service 的（全樹唯一的）佇列上跑一段，給它 `ApplyDeps`。與 MCP 寫入、套用版本、手動存版
+   * 串行（互動寫入最多等一篇）。等待上限由呼叫端給（轉換工作用 1 s）；逾時丟 `QueueBusyError`。
+   * ⚠ `fn` 內**不得**再呼叫本 service 會進同一篇 `queue.run` 的方法（例如 `saveVersion`）——會等到自己逾時。
+   */
+  async runExclusive<T>(log: ApplyDeps["log"], noteId: string, waitMs: number, fn: (deps: ApplyDeps) => Promise<T>): Promise<T> {
+    const { collab, editing } = this.deps;
+    if (!collab || !editing) throw new Error("NoteWriteService：此部署沒有 collab／editing，呼叫端必須先檢查 available");
+    const deps: ApplyDeps = { db: this.deps.db, collab, editing, log, testHooks: this.deps.testHooks, versions: this.deps.versions };
+    return this.queue.run(noteId, () => fn(deps), waitMs);
+  }
+
+  /**
    * ⚠ 條件逐字照抄 REST 的 `if (tokenId && agentLabel)`：**拿掉它不會有任何測試變紅**
    * （cookie ⇒ tokenId 為 null ⇒ agentLabel 也是 null，第二個條件恰好也擋住；就算兩個都
    * 拿掉，touch 用的 tokenId 不同、clientId 就不同，clock 斷言看不到）。真正擋住它的是
@@ -147,7 +159,8 @@ export class NoteWriteService {
       ifMatch?: string;
     }
   ): Promise<WriteOutcome<ApplyOk, ApplyFailureCode>> {
-    const candidates = await visibleNoteTitles(this.deps.db, input.userId);
+    // #269 §8.5（A9）：lease **之前**預取寫入者可見清單（含 slug／群組／handle）；之後的解析在記憶體內完成、lease 期間零 DB。
+    const candidates = await visibleNoteTargets(this.deps.db, input.userId);
     const agentLabel = input.tokenId ? await currentAgentLabel(this.deps.db, input.tokenId) : null;
     const applyDeps = this.applyDeps(log);
     let result: ApplyResult;
@@ -266,7 +279,8 @@ export class NoteWriteService {
     log: FastifyBaseLogger,
     input: { userId: string; userHandle: string; tokenId: string | null; title: string | undefined; content: string; scope: SlugScope }
   ): Promise<CreateWithContentResult> {
-    const candidates = await visibleNoteTitles(this.deps.db, input.userId);
+    // #269 §8.5（A9）：lease **之前**預取寫入者可見清單（含 slug／群組／handle）；之後的解析在記憶體內完成、lease 期間零 DB。
+    const candidates = await visibleNoteTargets(this.deps.db, input.userId);
     const agentLabel = input.tokenId ? await currentAgentLabel(this.deps.db, input.tokenId) : null;
     const applyDeps = this.applyDeps(log);
     // ⚠ `try { … } finally { s.close() }`（lease 不變量）；且**離開這個區塊之前不得再取得
@@ -274,7 +288,7 @@ export class NoteWriteService {
     const scratch = await EditorSession.open(applyDeps.editing, new Y.Doc());
     let prepared: ReturnType<typeof parseMarkdownForNote>;
     try {
-      prepared = parseMarkdownForNote(scratch.editor, input.content, candidates);
+      prepared = parseMarkdownForNote(scratch.editor, input.content, candidates, siteOriginOf(applyDeps.editing.baseUrl));
     } finally {
       scratch.close();
     }

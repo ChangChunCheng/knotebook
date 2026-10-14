@@ -59,6 +59,11 @@ export interface CutVersionInput {
   vacuumFingerprint: string;
   /** 鎖回來後的第一個同步區段呼叫一次：重算版本指紋並取 `encodeStateAsUpdate`（r7 M-2）。丟例外＝指紋算不出來。 */
   capture: () => { fp: string; ydoc: Uint8Array };
+  /**
+   * #269 §12.3-4（O8）：只影響「基底相同 → 轉 manual」那一支——`name = COALESCE(note_versions.name, $name)`，不覆寫使用者取的名字。
+   * 其他呼叫端一律 false（行為不變）。
+   */
+  keepExistingName: boolean;
   /** #272 §7.3：掃描器的到期界線。有值時交易內的 `version_pending_at` 為 NULL 或晚於它 → not-due（掃描查詢之後、交易之前又有新的落盤）。 */
   dueBy?: Date;
 }
@@ -120,7 +125,13 @@ export async function cutVersionInTx(tx: Tx, input: CutVersionInput): Promise<{ 
     if (input.kind === "auto") throw new VersionCutAbort({ kind: "clean" });
     const [upgraded] = await tx
       .update(noteVersions)
-      .set(input.name !== null ? { kind: "manual", name: input.name } : { kind: "manual" })
+      .set(
+        input.name === null
+          ? { kind: "manual" }
+          : input.keepExistingName
+            ? { kind: "manual", name: sql<string>`coalesce(${noteVersions.name}, ${input.name})` }
+            : { kind: "manual", name: input.name },
+      )
       .where(and(eq(noteVersions.noteId, input.noteId), eq(noteVersions.seq, note.baseSeq)))
       .returning();
     if (upgraded) {

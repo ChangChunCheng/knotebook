@@ -57,6 +57,8 @@ export interface CutOptions {
   extraEditors?: VersionEditor[];
   /** 文件沒載入時呼叫端自己讀出的 doc（`docFor` 讀 note_states 的 doc）。 */
   transient?: Y.Doc;
+  /** #269：見 `CutVersionInput.keepExistingName`。 */
+  keepExistingName?: boolean;
 }
 /** #272 §7.3：切版的完整結果。公開的 `cutIfDirty` 把 clean／stale／not-due 收成 `null`（契約不變）。 */
 export type CutOutcome =
@@ -406,6 +408,7 @@ export function createVersionService(deps: VersionServiceDeps): VersionService {
       loadFingerprint: state.loadFingerprint,
       vacuumFingerprint: VACUUM_VERSION_FINGERPRINT,
       capture: () => ({ fp: versionFingerprint(doc.getXmlFragment(YDOC_FRAGMENT)), ydoc: Y.encodeStateAsUpdate(doc) }),
+      keepExistingName: opts.keepExistingName ?? false,
       ...(opts.dueBy !== undefined ? { dueBy: opts.dueBy } : {}),
     };
     let out: Awaited<ReturnType<typeof cutVersionInTx>>;

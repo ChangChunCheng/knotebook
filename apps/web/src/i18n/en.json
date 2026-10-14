@@ -155,9 +155,25 @@
     "transferSaveFirst": "This item can't be inserted directly here. Save it as a file first, then drag it in.",
     "transferNonImage": "Only image files can be inserted here.",
     "wikilinkBroken": "This linked note no longer exists.",
+    "blockLink": {
+      "copy": "Copy link to block",
+      "copyHeading": "Copy link to this section",
+      "copied": "Block link copied",
+      "copyFailed": "Couldn't copy the link."
+    },
     "wikilink": {
       "createAndLink": "Create \"{{query}}\" and link",
-      "createFailed": "Couldn't create the note. Please try again."
+      "createFailed": "Couldn't create the note. Please try again.",
+      "toolbar": {
+        "label": "Note link",
+        "open": "Open",
+        "editText": "Edit text",
+        "changeTarget": "Change target",
+        "remove": "Remove link",
+        "textLabel": "Link text",
+        "save": "Save",
+        "search": "Find a note"
+      }
     },
     "accessRevoked": "You no longer have access to this note.",
     "deleted": "This note has been deleted.",
@@ -177,7 +193,12 @@
       "offlineUnsynced": "Not loaded — offline",
       "offline": "Offline",
       "kicked": "Access revoked",
-      "deleted": "Note deleted"
+      "deleted": "Note deleted",
+      "outdated": "Reload required"
+    },
+    "outdated": {
+      "message": "Knotebook has been updated. Reload the page to keep editing. Changes in this tab that haven't synced won't be kept after reloading.",
+      "reload": "Reload"
     },
     "filePanel": {
       "upload": {

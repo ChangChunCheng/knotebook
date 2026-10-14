@@ -1,12 +1,16 @@
-import { Suspense, useEffect, useMemo, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
+import type { PublicLinkDto, PublicNoteDto } from "@knotebook/shared";
 import { api, ApiFail } from "@/api/client";
 import { decodePublicYdoc } from "@/collab/public-doc";
 import { PublicNoteEditor } from "@/components/PublicNoteEditor";
+import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { PublicPageFrame } from "@/components/PublicNoteShell";
-import { publicNoteApiPath, publicNoteQueryKey, type PublicNoteRef } from "@/lib/public-note-ref";
+import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
+import { BlockAnchorContext } from "@/hooks/block-anchor-context";
+import { useBlockAnchor } from "@/hooks/useBlockAnchor";
 import { ARTICLE_COLUMN, ARTICLE_COLUMN_PADDING } from "@/components/ui/article-column";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -17,11 +21,8 @@ import { PresentationErrorBoundary, PresentationShell, type PresentationShellSta
 import { exitFullscreenIfLeftPresentation, isPresentingSearch } from "@/present/present-url";
 import { usePresentEntry } from "@/present/usePresentEntry";
 
-/** 公開內容端點的回應形（server 端 routes/public.ts，兩形同形；刻意不含 noteId／updatedAt）。 */
-interface PublicNoteDto {
-  title: string;
-  ydoc: string;
-}
+/** #269：舊 server 沒帶 `links` 時的後備——模組層常數，identity 穩定，PublicNoteEditor 的 links Map 不會每次 render 重建。 */
+const NO_LINKS: readonly PublicLinkDto[] = [];
 
 /**
  * 公開唯讀頁（#72 Task 3；#122 PR3 起雙形）：`/p/:token` 與 `/p/:handle/:slug`
@@ -70,6 +71,13 @@ export default function PublicNotePage() {
   // PublicNoteErrorBoundary 顯示錯誤卡＋重試，而不是被 react-query 當成「查詢失敗」
   // 吃進 error 態誤標成連結問題。
   const doc = useMemo(() => (query.data ? decodePublicYdoc(query.data.ydoc) : null), [query.data]);
+
+  // #269 §10.2：公開頁的段落錨點——noteKey＝公開 ref 的識別字串（與 PublicNoteEditor 共用 publicRefIdentity）；ready＝doc 解碼完成。
+  const [anchorRoot, setAnchorRoot] = useState<HTMLElement | null>(null);
+  const publicKey = publicRefIdentity(publicRef);
+  const blockAnchor = useBlockAnchor({ noteKey: publicKey, ready: doc !== null, root: anchorRoot, ignore: presenting, currentNoteId: null });
+  // #269 §10.3(b)：標題「#」鈕疊在文章欄 wrapper（`relative`）上。
+  const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
 
   // 背景 refetch（react-query 預設 focus/reconnect 會重抓）失敗的呈現規則（讀碼審查
   // 抓到的皺褶）：404 → **翻成失效卡**，即使手上還有內容——這是撤銷的即時傳播，正在
@@ -123,11 +131,12 @@ export default function PublicNotePage() {
             Knotebook
           </Link>
         </header>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {/* 內文沿 NoteEditor 的文章欄常數（#115：`<md` 內距 70→20 的斷點機制在
               article-column.ts／index.css，這裡照吃不另寫）。 */}
-          <div className={cn(ARTICLE_COLUMN, ARTICLE_COLUMN_PADDING, "flex min-h-full flex-col py-6")}>
-            <PublicNoteEditor doc={doc!} publicRef={publicRef} />
+          <div ref={setColumnEl} className={cn(ARTICLE_COLUMN, ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}>
+            <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} />
+            <HeadingAnchorButtons container={columnEl} />
           </div>
         </div>
       </>
@@ -145,7 +154,7 @@ export default function PublicNotePage() {
       : undefined;
 
   return (
-    <>
+    <BlockAnchorContext.Provider value={blockAnchor}>
       <PublicPageFrame inert={shellMounted}>{body}</PublicPageFrame>
       {shellMounted && (
         <PresentationShell title={query.data?.title ?? ""} status={presentStatus} errorMessage={presentError}>
@@ -158,6 +167,6 @@ export default function PublicNotePage() {
           )}
         </PresentationShell>
       )}
-    </>
+    </BlockAnchorContext.Provider>
   );
 }

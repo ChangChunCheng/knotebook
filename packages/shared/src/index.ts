@@ -653,6 +653,12 @@ export const COLLAB_REJECT_INVALID_TOKEN = "invalid-token";
 export const COLLAB_REJECT_FORBIDDEN = "forbidden";
 export const COLLAB_REJECT_SERVER_ERROR = "server-error";
 /**
+ * #269 §5：舊分頁閘門。collab token 的 `sv`（client 送來的 `NOTE_SCHEMA_VERSION`）與 server 的不同（`!==`）就以這個 reason 拒。
+ * 不是授權裁決：本版起的 client 收到它進 `outdated`（唯讀＋提示重整），**不加進 `isTerminal`**、不導頁；
+ * 閘門前的舊 client 不認得它 ⇒ 落入 B 桶一直重試（一次性限制，CHANGELOG 寫明）。不需要 DB、與筆記存不存在無關（不形成 oracle）。
+ */
+export const COLLAB_REJECT_CLIENT_OUTDATED = "client-outdated";
+/**
  * client 在「token 徹底取不到」或「拒連理由不是授權裁決」之後，整條連線重來的退避表（ms，
  * issue #39／#35）與抖動幅度。最後一格重複使用；實際延遲 ＝ 該格 × [0.75, 1.25)。
  *
@@ -700,6 +706,8 @@ export interface CollabTokenClaims {
   userId: string;
   role: Role;
   tv: number;
+  /** #269：client 取 token 時送的 note schema 版本（缺席或非整數＝0）。`onAuthenticate` 以 `!==` 比對 `NOTE_SCHEMA_VERSION`。 */
+  sv: number;
 }
 
 /** email 的單一漏斗（spec §14.3）：所有建帳寫入與所有 email 比對讀取共用；OIDC claims
@@ -870,6 +878,20 @@ export function publicAliasPath(ref: { handle: string; slug: string }): string {
  * 由 server 的 unit 釘住（防兩端 import 同一個錯值的套套邏輯）。
  */
 export const EMPTY_YDOC_UPDATE_B64 = "AAA=";
+
+/** #269 §11.1：公開頁裡指向「有自訂公開網址」的筆記的連結。`path` 只有 `/p/<ownerHandle>/<publicSlug>` 一種形；token 形永不出現。 */
+export interface PublicLinkDto {
+  id: string;
+  title: string;
+  path: string;
+}
+
+/** 公開內容端點（token 形與別名形同形）的回應。刻意不含本篇的 id／token／updatedAt。 */
+export interface PublicNoteDto {
+  title: string;
+  ydoc: string;
+  links: PublicLinkDto[];
+}
 
 /**
  * #107／#239：API token 的 scope。**是集合不是單值**——OAuth 的 scope 參數是空白分隔的
@@ -1133,6 +1155,8 @@ export function safeNextPath(input: string | null | undefined): string | null {
 export * from "./note-schema-config.js";
 export * from "./note-sections.js";
 export * from "./note-markdown.js";
+export * from "./site-link.js";
+export * from "./note-schema-version.js";
 export * from "./group-roles.js";
 export * from "./provider-icon.js";
 export * from "./agent-label.js";

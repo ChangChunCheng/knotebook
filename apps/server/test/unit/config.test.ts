@@ -356,6 +356,16 @@ describe("PASSWORD_LOGIN_FORCE_ENABLE（#187 B18、§14.1-27）", () => {
   });
 });
 
+describe("#269 結構守衛：app.ts 的轉換工作 onClose", () => {
+  it("onClose 以 2 s 寬限（SCAN_STOP_GRACE_MS，與 #272 的掃描 onClose、index.ts 的關機上限共用）race 等 linkConversion.stop()（在途那一篇不得把 app.close()／pool.end() 拖到 SIGKILL）", () => {
+    // 剔掉註解行再找：註解裡的字面不得成為唯一的命中來源。
+    const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/app.ts"), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).toMatch(
+      /app\.addHook\("onClose", async \(\) => \{\s*await Promise\.race\(\[linkConversion\.stop\(\), new Promise<void>\(resolve => setTimeout\(resolve, SCAN_STOP_GRACE_MS\)\.unref\(\)\)\]\);\s*\}\);/,
+    );
+  });
+});
+
 describe("KNOTEBOOK_E2E_TEST_HOOKS（#272 §7.5，案 27）", () => {
   const pick = (c: AppConfig) => ({ testHooks: c.testHooks, testHooksIgnored: c.testHooksIgnored });
   const local = { ...valid, PUBLIC_URL: "http://localhost:3100" };
@@ -397,7 +407,8 @@ describe("KNOTEBOOK_E2E_TEST_HOOKS（#272 §7.5，案 27）", () => {
     expect(destroyAt, "關機要呼叫 collab.destroy()").toBeGreaterThan(-1);
     expect(stopAt, "stopScan 要在 collab.destroy() 之前").toBeLessThan(destroyAt);
     // plan gate r1 M5：等掃描停下有 2 s 上限（卡住的那一篇不得吃掉 docker stop 的寬限期，留給 collab 落盤）。
-    expect(handler).toMatch(/Promise\.race\(\[collab\.versions\.stopScan\(\), stopGrace\(\)\]\)/);
+    // #269 併線（plan Task 8 Step 5）：與站內連結轉換的 stop 並行、共用同一份 2 s 寬限。
+    expect(handler).toMatch(/Promise\.race\(\[Promise\.all\(\[collab\.versions\.stopScan\(\), app\.linkConversion\.stop\(\)\]\), stopGrace\(\)\]\)/);
   });
 
   it("結構守衛：app.ts 的 onClose 等掃描停下也有 SCAN_STOP_GRACE_MS 上限（與 index.ts 的關機上限共用）", () => {

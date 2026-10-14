@@ -155,9 +155,25 @@
     "transferSaveFirst": "無法直接插入此項目，請先另存為檔案再拖曳進來。",
     "transferNonImage": "這裡目前只能插入圖片檔案。",
     "wikilinkBroken": "已連結的筆記不存在。",
+    "blockLink": {
+      "copy": "複製段落連結",
+      "copyHeading": "複製此段落的連結",
+      "copied": "已複製段落連結",
+      "copyFailed": "無法複製連結。"
+    },
     "wikilink": {
       "createAndLink": "建立「{{query}}」並連結",
-      "createFailed": "建立筆記失敗，請再試一次。"
+      "createFailed": "建立筆記失敗，請再試一次。",
+      "toolbar": {
+        "label": "筆記連結",
+        "open": "開啟",
+        "editText": "編輯文字",
+        "changeTarget": "更換目標",
+        "remove": "移除連結",
+        "textLabel": "連結文字",
+        "save": "儲存",
+        "search": "搜尋筆記"
+      }
     },
     "accessRevoked": "已失去存取權",
     "deleted": "此筆記已被刪除",
@@ -177,7 +193,12 @@
       "offlineUnsynced": "尚未載入——離線",
       "offline": "離線",
       "kicked": "已失去存取權",
-      "deleted": "筆記已刪除"
+      "deleted": "筆記已刪除",
+      "outdated": "需要重新整理"
+    },
+    "outdated": {
+      "message": "Knotebook 已更新，請重新整理頁面後繼續編輯。這個分頁尚未同步的變更在重新整理後不會保留。",
+      "reload": "重新整理"
     },
     "filePanel": {
       "upload": {

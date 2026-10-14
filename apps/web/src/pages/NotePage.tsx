@@ -7,7 +7,7 @@ import { api, ApiFail } from "@/api/client";
 import { GROUPS_QUERY_KEY } from "@/api/groups";
 import { invalidateNoteQueries, useNote, useNoteByGroupPath, useNoteByPath } from "@/api/notes";
 import { SESSION_QUERY_KEY, useSession } from "@/auth/useSession";
-import { canEdit, isTerminal, type CollabState } from "@/collab/connection";
+import { canEdit, isTerminal, stopsReconnect, type CollabState } from "@/collab/connection";
 import { useActiveNote } from "@/lib/active-note";
 import {
   useHistoryLocationKey,
@@ -19,6 +19,8 @@ import { NotePageControlsContext, type NotePageControls, type OpenEditsState } f
 import { isOverlayOpen, useVersionsController, VersionsProvider } from "@/lib/versions-context";
 import { createLinkSync, type LinkSync } from "@/collab/link-sync";
 import { useCollab } from "@/collab/useCollab";
+import { BlockAnchorContext } from "@/hooks/block-anchor-context";
+import { useMemberBlockAnchor } from "@/hooks/useBlockAnchor";
 import { AiEditsDialog } from "@/components/AiEditsDialog";
 import { AppShell, SidebarDrawerButton } from "@/components/AppShell";
 import { NarrowTopBar } from "@/components/NarrowTopBar";
@@ -28,6 +30,7 @@ import { ChunkLoadBeacon, LazyRouteErrorBoundary, LazyRouteLoading } from "@/com
 import { LastEditedLabel } from "@/components/LastEditedLabel";
 import { NoteEditor } from "@/components/NoteEditor";
 import { NoteMenu } from "@/components/NoteMenu";
+import { OutdatedClientBanner } from "@/components/OutdatedClientBanner";
 import { ShareDialog } from "@/components/ShareDialog";
 import { TitleInput } from "@/components/TitleInput";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
@@ -327,11 +330,15 @@ export default function NotePage() {
     invalidateNoteQueries(queryClient, note, params.ref ?? note.id);
   }, [note, params.ref, queryClient]);
 
-  const { state, doc, provider, synced } = useCollab({
+  const { state, doc, provider, synced, syncedFor } = useCollab({
     noteId,
     onUnauthorized: handleUnauthorized,
     onDocUpdate,
   });
+
+  // #269 §10.2：段落錨點。root＝NoteEditor 的捲動容器（NoteEditor 以 ref 回報）；組合（ready＝這一篇同步過了）在 useMemberBlockAnchor。
+  const [anchorRoot, setAnchorRoot] = useState<HTMLElement | null>(null);
+  const blockAnchor = useMemberBlockAnchor({ noteId, collab: { synced, syncedFor }, root: anchorRoot, presenting });
 
   // wikilink 連結索引提交器（Task 7，spec §12.3 client 段）。掛載定案在這裡（不是
   // NoteEditor）：`noteId`／`useCollab` 的 `doc`／`provider` 都在這一層。
@@ -349,7 +356,7 @@ export default function NotePage() {
   const linkSyncRef = useRef<LinkSync | null>(null);
 
   // 版本歷史（spec §8.1、§9）：canEdit 判準與標題／分享同一條（REST 角色、非終態；不看 synced——版本 API 走 REST）。
-  const versionsEnabled = note !== undefined && !isTerminal(state) && canEdit(effectiveRole(state, note));
+  const versionsEnabled = note !== undefined && !stopsReconnect(state) && canEdit(effectiveRole(state, note));
   const versions = useVersionsController({
     noteId: noteId ?? null,
     enabled: versionsEnabled,
@@ -644,7 +651,8 @@ export default function NotePage() {
   } else {
     const role = effectiveRole(state, note);
     // 角色允不允許編輯（不看連線）：標題、分享這類**走 REST 的操作**用這個判準。
-    const roleCanEdit = !isTerminal(state) && canEdit(role);
+    // #269 §5.2：outdated（舊分頁閘門）與終態同樣唯讀——編輯器、標題、版本、簡報編輯入口。
+    const roleCanEdit = !stopsReconnect(state) && canEdit(role);
     // issue #48：**Y.Doc 的內容編輯**還要求同步過。第一次 sync 之前本機 Y.Doc 是空的——
     // 這時的「可編輯」是一篇空白但看似正常的筆記，打的字只進本機、重整就沒了（沒有
     // y-indexeddb）。同步過一次之後 `synced` 就 sticky true，斷線仍可編輯（那些離線編輯
@@ -662,11 +670,14 @@ export default function NotePage() {
             editable={editable}
             user={{ id: user.id, name: user.displayName }}
             noteId={noteId!}
+            onScrollRoot={setAnchorRoot}
+            notePath={canonicalNotePath(note)}
             headerSlot={
               // #115：頁首滿卡寬（置左置右）——單層 header 自己就是內容列，標題貼左、
               // 控制項貼右；`px-5`（20px）與 `<md` 的內文左緣共線。#88 的文章欄對齊
               // 已刻意拆除（見 ui/article-column.ts 檔頭）。
               <>
+                {state.phase === "outdated" && <OutdatedClientBanner />}
                 <header className="flex items-center gap-3 border-b border-border px-5 py-3">
                   {/* #115：窄視窗的抽屜入口（md:hidden）——筆記載入成功態不掛
                       NarrowTopBar（頁首自己有這顆）；載入中/錯誤的佔位卡沒有頁首，
@@ -730,33 +741,35 @@ export default function NotePage() {
       : null;
   const overlayReady = !needsResolve && note !== undefined && doc !== null && provider !== null && synced;
   const presentStatus: PresentationShellStatus = presentFailure !== null ? "error" : overlayReady ? "ready" : "loading";
-  const presentRoleCanEdit = note ? !isTerminal(state) && canEdit(effectiveRole(state, note)) : false;
+  const presentRoleCanEdit = note ? !stopsReconnect(state) && canEdit(effectiveRole(state, note)) : false;
   const shellMounted = presenting && !leavingRef.current;
 
   return (
     <NotePageControlsContext.Provider value={controls}>
-      <AppShell inert={presenting}>{body}</AppShell>
-      {shellMounted && (
-        <PresentationShell
-          title={note?.title ?? ""}
-          status={presentStatus}
-          errorMessage={presentFailure !== null ? errorText(presentFailure) : undefined}
-          toolbarExtra={
-            note && (state.phase !== "connected" || !synced) ? (
-              <ConnectionBadge state={state} synced={synced} canEdit={presentRoleCanEdit} />
-            ) : null
-          }
-        >
-          {overlayReady && doc !== null && note !== undefined && (
-            <LazyRouteErrorBoundary resetKey={paramsKey} chunk="present" frame="inline">
-              <Suspense fallback={<LazyRouteLoading frame="inline" />}>
-                <LazyPresentation variant="member" doc={doc} title={note.title} />
-                <ChunkLoadBeacon chunk="present" />
-              </Suspense>
-            </LazyRouteErrorBoundary>
-          )}
-        </PresentationShell>
-      )}
+      <BlockAnchorContext.Provider value={blockAnchor}>
+        <AppShell inert={presenting}>{body}</AppShell>
+        {shellMounted && (
+          <PresentationShell
+            title={note?.title ?? ""}
+            status={presentStatus}
+            errorMessage={presentFailure !== null ? errorText(presentFailure) : undefined}
+            toolbarExtra={
+              note && (state.phase !== "connected" || !synced) ? (
+                <ConnectionBadge state={state} synced={synced} canEdit={presentRoleCanEdit} />
+              ) : null
+            }
+          >
+            {overlayReady && doc !== null && note !== undefined && (
+              <LazyRouteErrorBoundary resetKey={paramsKey} chunk="present" frame="inline">
+                <Suspense fallback={<LazyRouteLoading frame="inline" />}>
+                  <LazyPresentation variant="member" doc={doc} title={note.title} />
+                  <ChunkLoadBeacon chunk="present" />
+                </Suspense>
+              </LazyRouteErrorBoundary>
+            )}
+          </PresentationShell>
+        )}
+      </BlockAnchorContext.Provider>
     </NotePageControlsContext.Provider>
   );
 }

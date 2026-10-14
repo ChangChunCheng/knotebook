@@ -26,7 +26,10 @@ import { backfillSearchIndex } from "./notes/search-index.js";
 // `docker compose logs app` 能同時看到兩邊的輸出，不需要共用同一個 instance。
 const logger = pino();
 
-/** #272 §7.4：關機時等自動切版掃描停下的上限（`SCAN_STOP_GRACE_MS`，與 app.ts onClose 共用；比照 #269 的有界停止）。timer unref：不撐住行程。 */
+/**
+ * 關機時等背景工作停下的共用上限（`SCAN_STOP_GRACE_MS`＝2 s，與 app.ts 的兩個 onClose 共用）：#272 §7.4 自動切版掃描、
+ * #269 §12.1 站內連結轉換——兩者並行、共用這一份寬限。timer unref：不撐住行程。
+ */
 const stopGrace = (): Promise<void> => new Promise(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref());
 
 async function main(): Promise<void> {
@@ -203,6 +206,9 @@ async function main(): Promise<void> {
     logger.error({ err }, "全文索引回填中止"),
   );
 
+  // #269 §12.1：一次性站內連結轉換——與回填並列、listen 之後，再延遲 30 s（unref timer）。結構守衛：test/unit/search-backfill-wiring.test.ts。
+  app.linkConversion.start();
+
   // Graceful shutdown：`docker compose stop`/`down`（以及手動 Ctrl-C）送的都是
   // SIGTERM/SIGINT——不接住的話 Fastify 會被硬殺，進行中的請求與尚未 flush 的
   // pg 連線可能被粗暴中斷。
@@ -221,9 +227,10 @@ async function main(): Promise<void> {
   for (const sig of ["SIGTERM", "SIGINT"] as const) {
     process.once(sig, () => {
       backfillAbort.abort();
-      // #272 §7.4：先停自動切版掃描（進行中那一輪做完手上那一篇就停），但至多等 2 s——卡在列鎖或 DB 的那一篇不得吃掉
-      // docker stop 的寬限期（留給 collab 落盤）。collab 關閉時的 flushPendingStores 讓未落盤的變動照常寫進待切，重啟後掃描器接手。
-      void Promise.race([collab.versions.stopScan(), stopGrace()])
+      // 兩個背景工作並行停、共用一份 2 s 寬限，再落盤關閉——卡在列鎖或 DB 的那一篇不得吃掉 docker stop 的寬限期（留給 collab 落盤）：
+      // #272 §7.4 自動切版掃描（進行中那一輪做完手上那一篇就停；collab 關閉時的 flushPendingStores 讓未落盤的變動照常寫進待切，
+      // 重啟後掃描器接手）；#269 §12.1 站內連結轉換（在拆掉 Hocuspocus 之前停止開新直連並等在途合併）。
+      void Promise.race([Promise.all([collab.versions.stopScan(), app.linkConversion.stop()]), stopGrace()])
         .then(() => collab.destroy())
         .then(() => app.close())
         .then(() => pool.end())

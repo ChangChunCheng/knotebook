@@ -55,7 +55,8 @@ import { moveNoteToGroup } from "../notes/move-note.js";
 import { copyNote } from "../notes/copy-note.js";
 import type { SearchIndexHooks } from "../notes/tx/search-index.js";
 import { patchSlugInTx, type SlugPatchTestHook, type SlugWriteScope } from "../notes/tx/patch-slug.js";
-import { groupNotePath, lookupRedirect, userNotePath } from "../notes/redirects.js";
+import { groupNotePath, userNotePath } from "../notes/redirects.js";
+import { resolveNotePath, type PathRowSource } from "../notes/resolve-path.js";
 import {
   deriveUniqueAutoSlug,
   fallbackAutoSlug,
@@ -66,7 +67,7 @@ import {
   type SlugScope,
 } from "../notes/slug.js";
 import { fetchBacklinks, normalizeLinkTargets, writeNoteLinks, type WriteNoteLinksHooks } from "../notes/links.js";
-import { signCollabToken } from "../collab/token.js";
+import { schemaVersionFromBody, signCollabToken } from "../collab/token.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
 import { isForeignKeyViolation, uniqueViolationConstraint } from "../db/pg-errors.js";
 import { deleteUploadFiles } from "../uploads/service.js";
@@ -453,14 +454,13 @@ export function notesRoutes(deps: NotesRouteDeps) {
         .where(cond);
     }
 
-    /** §6.4 查找序：① 現行 slug → ② 轉址表（過期 → 刪列、當 miss）→ ③ prev_slug（limit 2；0 或 >1 → miss）。 */
+    /** §6.4 查找序（#269：本體抽到 `notes/resolve-path.ts`，轉換工作共用；這裡只給「完整列」的取列法）。 */
+    const pathRows: PathRowSource<NoteFields> = {
+      where: (cond, limit) => selectNotesWhere(cond).limit(limit),
+      byId: loadNoteWithOwner,
+    };
     async function resolvePath(scopeCond: SQL, slug: string, redirectKey: string): Promise<NoteFields | undefined> {
-      const [hit] = await selectNotesWhere(and(scopeCond, eq(notes.slug, slug))!).limit(1);
-      if (hit) return hit;
-      const redirected = await lookupRedirect(deps.db, redirectKey);
-      if (redirected !== null) return loadNoteWithOwner(redirected);
-      const prevHits = await selectNotesWhere(and(scopeCond, eq(notes.prevSlug, slug))!).limit(2);
-      return prevHits.length === 1 ? prevHits[0] : undefined;
+      return resolveNotePath(deps.db, pathRows, scopeCond, slug, redirectKey);
     }
 
     /**
@@ -568,7 +568,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
             deps.presence?.touch(id, request.tokenId, presenceIdentity(request.user!.handle, label), presenceTargetForRead(q.data.section));
           }
         }
-        const result = await readNoteContent({ db: deps.db, collab }, editing, id, q.data.section);
+        const result = await readNoteContent({ db: deps.db, collab }, editing, id, request.user!.id, q.data.section);
         if (result === "section_not_found") return sendError(reply, 404, "section_not_found", "找不到此段落");
         // #137 起 `lastEdited` 是真值（整篇形與段落形都回，`note-content.test.ts` 兩行釘住）。
         // `loadLastEdited` 是純 SELECT，不開直連——讀路徑零副作用的不變量照舊成立。
@@ -619,7 +619,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
             // 不在 transact 內、直連已 disconnect 之後（spec §5）。不帶 section → 不可能是
             // "section_not_found"，但那個哨兵在回傳型別的 union 裡，不收窄的話 spread 一個字串
             // 會靜默送出 {0:"s",1:"e",…}。
-            const current = await readNoteContent({ db: deps.db, collab }, editing, id);
+            const current = await readNoteContent({ db: deps.db, collab }, editing, id, request.user!.id);
             if (current === "section_not_found") throw new Error("readNoteContent 未帶 section 卻回哨兵值");
             const body = { ...current, lastEdited: await loadLastEdited(deps.db, id) } satisfies NoteContentDto | NoteSectionDto;
             return reply.code(409).send({ error: { code: "fingerprint_mismatch", message: "內容已被修改" }, current: body });
@@ -682,7 +682,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
             // 不在 transact 內、直連已 disconnect 之後（同 `/edits` 的 409 形）。不帶 section →
             // 不可能是 "section_not_found"，但那個哨兵在回傳型別的 union 裡，不收窄的話 spread
             // 一個字串會靜默送出 {0:"s",1:"e",…}。
-            const current = await readNoteContent({ db: deps.db, collab }, editing, id);
+            const current = await readNoteContent({ db: deps.db, collab }, editing, id, request.user!.id);
             if (current === "section_not_found") throw new Error("readNoteContent 未帶 section 卻回哨兵值");
             const body = { ...current, lastEdited: await loadLastEdited(deps.db, id) } satisfies NoteContentDto | NoteSectionDto;
             return reply.code(409).send({ error: { code: "stale", message: "這筆修改之後筆記又被改過，已無法撤回" }, current: body });
@@ -1169,6 +1169,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
         userId,
         role,
         tv: request.sessionTv!,
+        // #269 §5.1：client 送的 note schema 版本簽進 `sv`；缺席＝0（閘門前的舊分頁），由 onAuthenticate 拒。
+        sv: schemaVersionFromBody(request.body),
       });
 
       return { token, role };

@@ -146,7 +146,13 @@ vi.mock("@/collab/useCollab", () => ({
     // issue #48：NotePage 用 `synced` 閘住 editable。真實 useCollab 的 `synced` 是 sticky
     // 追蹤 `provider.synced`，測試裡直接反映 stub 的 `provider.synced`——設一處就同時餵
     // editable 與 link-sync 掛載 effect。
-    return { state: collab.state, doc: collab.doc, provider: collab.provider, synced: collab.provider.synced };
+    return {
+      state: collab.state,
+      doc: collab.doc,
+      provider: collab.provider,
+      synced: collab.provider.synced,
+      syncedFor: collab.provider.synced ? (noteId ?? null) : null,
+    };
   },
 }));
 
@@ -580,6 +586,24 @@ describe("NotePage", () => {
 
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     expect(screen.getByText("This note has been deleted.")).toBeInTheDocument();
+  });
+
+  it("#269 outdated：不導頁、不 toast；banner 出現；編輯器與標題唯讀", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    collab.provider.synced = true;
+    collab.state = { phase: "outdated" };
+
+    renderNotePage("my-note");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Knotebook has been updated");
+    expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false");
+    // 標題唯讀＝變純文字（同「connected 且角色是 viewer」那一案的斷言形：範圍化到 header，heading 在、textbox 不在）。
+    const header = document.querySelector("header");
+    expect(header).not.toBeNull();
+    expect(within(header!).getByRole("heading", { name: "My Note" })).toBeInTheDocument();
+    expect(within(header!).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("home landing")).not.toBeInTheDocument();
+    expect(screen.queryByText("This note has been deleted.")).not.toBeInTheDocument();
   });
 
   it("首次解析 404 → **linkInvalid** 文案（A10：不得沿用「筆記已刪」）並導回 /", async () => {
