@@ -14,6 +14,7 @@ import {
   type SideMenuProps,
 } from "@blocknote/react";
 import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
+import { blockIdsForMenuDelete } from "@/collab/columns/selection-delete";
 import { absoluteUrl, blockLinkUrl, copyBlockLink } from "@/lib/copy-block-link";
 
 /** #269 §10.3(a)：這篇筆記的 canonical 路徑（`canonicalNotePath(note)`）——NoteEditorView 提供；沒有（null）就不顯示複製項。 */
@@ -33,10 +34,7 @@ function CopyBlockLinkItem() {
   );
 }
 
-/**
- * 「刪除」項：取 block 與「多選含此 block 就刪整個選取、否則只刪它」的規則照 core 的預設刪除項，
- * 刪除改走 D25 helper——刪欄內的 block 不收欄。
- */
+/** 「刪除」項：刪哪些 block 見 `collab/columns/selection-delete.ts`，刪除走 D25 helper（不收欄）。 */
 function KeepColumnsDeleteItem({ children }: { children: ReactNode }) {
   const Components = useComponentsContext()!;
   const editor = useBlockNoteEditor();
@@ -45,11 +43,7 @@ function KeepColumnsDeleteItem({ children }: { children: ReactNode }) {
   return (
     <Components.Generic.Menu.Item
       className="bn-menu-item"
-      onClick={() => {
-        const selected = editor.getSelection()?.blocks;
-        const blocksToRemove = selected && selected.some((b) => b.id === block.id) ? selected : [block];
-        removeBlocksKeepColumns(editor, blocksToRemove);
-      }}
+      onClick={() => removeBlocksKeepColumns(editor, blockIdsForMenuDelete(editor, block.id))}
     >
       {children}
     </Components.Generic.Menu.Item>

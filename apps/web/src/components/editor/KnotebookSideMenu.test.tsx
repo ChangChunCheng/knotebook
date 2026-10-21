@@ -145,7 +145,7 @@ describe("D25 側選單「Delete」不收欄", () => {
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
   });
 
-  it("SM2：跨兩欄選取後對 a 刪除 → 整個選取（a 與第 2 欄節點）被刪、列仍兩欄", async () => {
+  it("SM2：跨兩欄選取後對 a 刪除 → 整個選取（a 與 b）被刪、列仍兩欄", async () => {
     const editor = mount(R2());
     act(() => editor.setSelection("a1", "b1"));
     // SM2a（事實釘）：跨欄選取的 blocks 第 2 項是 column 節點本身。
@@ -154,24 +154,62 @@ describe("D25 側選單「Delete」不收欄", () => {
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
   });
 
-  it("SM2b：同一選取下對 b 刪除 → b 不在選取的 blocks 裡，只刪 b", async () => {
+  // T3c（spec §5.4 調整 2 補充）：跨欄選取只刪選取範圍、點第 2 欄以後或列內的 block 也算多選。
+  const C1 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
+
+  it("SM2b：同一選取下對 b 刪除 → 展開後的集合含 b，刪 a 與 b（R1）", async () => {
     const editor = mount(R2());
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "b", "b1");
-    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
-  });
-
-  it("SM2c（事實釘）：[a｜b,q] 選 a→b 後對 a 刪除 → 沒選到的 q 也被刪（整個第 2 欄節點）", async () => {
-    const editor = mount([P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")]);
-    act(() => editor.setSelection("a1", "b1"));
-    await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
   });
 
-  it("SM2d（事實釘）：[a｜b｜c] 選 a→b 後對 a 刪除 → 第 2 欄整欄消失、三欄變兩欄", async () => {
+  it("SM2c：[a｜b,q] 選 a→b 後對 a 刪除 → 沒選到的 q 保留（C1）", async () => {
+    const editor = mount(C1());
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
+  });
+
+  it("SM2d：[a｜b｜c] 選 a→b 後對 a 刪除 → 三欄都在、前兩欄補空段落（C4）", async () => {
     const editor = mount([P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")]);
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "a", "a1");
-    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:c)]  paragraph:z");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph) | COL(paragraph:c)]  paragraph:z");
+  });
+
+  it("SM2e：從列上方選到第 2 欄（x→b）後對 x 刪除 → x、a、b 刪掉，q 保留（C7）", async () => {
+    const editor = mount(C1());
+    act(() => editor.setSelection("x", "b1"));
+    await deleteVia(editor, "x", "x");
+    expect(shape(editor)).toBe("ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
+  });
+
+  it("SM2f：同 SM2e 的選取對 a 刪除 → 同 SM2e（R3）", async () => {
+    const editor = mount(C1());
+    act(() => editor.setSelection("x", "b1"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
+  });
+
+  it("SM2g：[a｜b,q] 選 a→b 後對 b 刪除 → 同 SM2c（R2）", async () => {
+    const editor = mount(C1());
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "b", "b1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
+  });
+
+  it("SM2h：從列上方選到列下方（x→z）後對列內的 a 刪除 → 整列連 x、z 刪掉（C10-a）", async () => {
+    const editor = mount(R2());
+    act(() => editor.setSelection("x", "z"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph");
+  });
+
+  it("SM2i：一般筆記（沒有並排）選 a→b 後對 a 刪除 → 刪整個選取，同 core（SD4 N5）", async () => {
+    const editor = mount([P("a", "a1"), P("b", "b1"), P("c", "c1")]);
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph:c");
   });
 });
