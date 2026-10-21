@@ -300,7 +300,7 @@ describe("屬性值等於 schema 預設視同缺席（spec §13-9 方案二，V2
 
   it("預設值表從 shared schema 推出（不是手寫）：類型集合、heading／paragraph／codeBlock／mermaid／wikilink 的值；style 不入表", () => {
     expect(Object.keys(DEFAULT_PROPS_BY_TYPE).sort()).toEqual([
-      "audio", "bulletListItem", "checkListItem", "codeBlock", "file", "heading", "image", "mermaid", "numberedListItem", "paragraph",
+      "audio", "bulletListItem", "checkListItem", "codeBlock", "column", "file", "heading", "image", "mermaid", "numberedListItem", "paragraph",
       "quote", "table", "toggleListItem", "video", "wikilink",
     ]);
     expect(DEFAULT_PROPS_BY_TYPE.heading).toEqual({ backgroundColor: "default", textColor: "default", textAlignment: "left", level: 1, isToggleable: false });
@@ -308,6 +308,7 @@ describe("屬性值等於 schema 預設視同缺席（spec §13-9 方案二，V2
     expect(DEFAULT_PROPS_BY_TYPE.checkListItem!.checked).toBe(false);
     expect(DEFAULT_PROPS_BY_TYPE.codeBlock).toEqual({ language: "text" });
     expect(DEFAULT_PROPS_BY_TYPE.mermaid).toEqual({ code: "" });
+    expect(DEFAULT_PROPS_BY_TYPE.column).toEqual({ width: 1 });
     expect(DEFAULT_PROPS_BY_TYPE.wikilink).toEqual({ targetNoteId: "", snapshotTitle: "", label: "", anchorBlockId: "" });
   });
 
