@@ -52,6 +52,20 @@ export type GroupRacePoint =
    * 四支白名單交易（上傳 U-tx、T3 移動、T4 複製、T6 轉移）都經過它；ctx 由呼叫端帶（上傳 `{noteId}`、移動 `{noteId, groupId}`、
    * 複製 `{noteId: 來源, groupId?: 目標群組}`、轉移 `{groupId: 被刪的群組}`）。
    */
-  | "storage-space-locked";
+  | "storage-space-locked"
+  /** #181（`notes/tx/trash.ts` `trashNotesInTx`）：`FOR UPDATE` 鎖住待移入的筆記列之後、交易內重判刪除權之前。 */
+  | "note-trash-locked"
+  /** #181（`restoreNotesInTx`）：`FOR UPDATE` 鎖住筆記列之後、分類與重判垃圾桶權之前。 */
+  | "note-restore-locked"
+  /** #181（`purgeTrashedNotesInTx`）：`FOR UPDATE` 鎖住筆記列之後、分類與重判垃圾桶權之前。 */
+  | "note-purge-locked"
+  /** #181（`purgeExpiredBatchInTx`）：到期列 `FOR UPDATE SKIP LOCKED` 選完之後、`deleteNotesInTx` 之前（ctx.noteId＝這批第一篇，空批不帶）。 */
+  | "trash-purge-locked"
+  /** #181：REST move／MCP `move_note_to_group`（`notes/move-note.ts`）授權之後、`.transaction(` 之前。 */
+  | "note-move-authorized"
+  /** #181：REST copy／MCP `copy_note`（`notes/copy-note.ts`）授權之後、`.transaction(` 之前（ctx.noteId＝來源）。 */
+  | "note-copy-authorized"
+  /** #181：`POST /api/notes/:id/uploads`（`routes/uploads.ts`）授權之後、`.transaction(` 之前。 */
+  | "upload-authorized";
 
 export type GroupTestHook = (point: GroupRacePoint, ctx: { noteId?: string; groupId?: string; slug?: string }) => Promise<void>;
