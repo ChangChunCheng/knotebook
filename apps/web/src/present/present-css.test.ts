@@ -36,6 +36,11 @@ describe("present.css", () => {
     expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe])")).toContain("touch-action: none;");
   });
 
+  it("PCSS1：並排——堆疊的列 display:block !important、列的 gap 24px !important（蓋過正規形 inline style）", () => {
+    expect(rule(".kn-present .kn-slide-body [data-kb-columns][data-stacked] {")).toContain("display: block !important;");
+    expect(rule(".kn-present .kn-slide-body [data-kb-columns] {")).toContain("gap: 24px !important;");
+  });
+
   it("E6：未溢出投影片裡沒橫向溢出的 <pre> 也 touch-action:none（<pre> 是捲動容器，否則從短程式碼起手的滑動不換頁）", () => {
     expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe])")).toContain("touch-action: none;");
   });

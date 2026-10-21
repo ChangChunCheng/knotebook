@@ -133,6 +133,36 @@ describe("sanitizeSlideFragment：要留下的（spec §13.1）", () => {
   });
 });
 
+describe("sanitizeSlideFragment：並排的列與欄（columns-layout spec §11.8、§13.1）", () => {
+  const ROW = '<div data-kb-columns="" style="display:flex;gap:16px"><div data-kb-column="" style="flex:1.5"><p>A</p></div><div data-kb-column="" style="flex:1"><p>B</p></div></div>';
+
+  it("PS1：正規形的列與欄，三個 div 的 style 與 data-kb-* 都保留", () => {
+    const row = clean(ROW).querySelector("[data-kb-columns]")!;
+    expect(row.getAttribute("style")).toBe("display:flex;gap:16px");
+    expect(Array.from(row.querySelectorAll(":scope > [data-kb-column]")).map((col) => col.getAttribute("style"))).toEqual(["flex:1.5", "flex:1"]);
+  });
+
+  it.each(["display:flex; gap:16px", "display:flex;gap:16px;color:red"])("PS2：列的 style 不是正規形（%j）→ style 被剝、data-kb-columns 留著", (style) => {
+    const row = clean(`<div data-kb-columns="" style="${style}"><div data-kb-column="" style="flex:1"><p>A</p></div></div>`).querySelector("div")!;
+    expect(row.hasAttribute("data-kb-columns")).toBe(true);
+    expect(row.hasAttribute("style")).toBe(false);
+  });
+
+  it.each(["flex:20", "flex:1 1 0", "flex:1.234", "flex:0.05", "flex:0"])("PS3：欄的 style 不是正規形（%j）→ 剝", (style) => {
+    const col = clean(`<div data-kb-columns="" style="display:flex;gap:16px"><div data-kb-column="" style="${style}"><p>A</p></div></div>`).querySelector("[data-kb-column]")!;
+    expect(col.hasAttribute("data-kb-column")).toBe(true);
+    expect(col.hasAttribute("style")).toBe(false);
+  });
+
+  it.each(['<p style="color:red">x</p>', '<span style="flex:1">x</span>', '<p data-kb-columns="" style="display:flex;gap:16px">x</p>', '<span data-kb-column="" style="flex:1">x</span>'])("PS4：其他元素的 style 照舊剝（%s）", (html) => {
+    expect(clean(html).querySelector("[style]")).toBeNull();
+  });
+
+  it("PS5：沒有 data-kb-columns／data-kb-column 的 div 帶正規形 style → 剝", () => {
+    expect(clean('<div style="display:flex;gap:16px"><p>x</p></div><div style="flex:1"><p>y</p></div>').querySelector("[style]")).toBeNull();
+  });
+});
+
 describe("源碼守衛（spec §5.4-3 末段）", () => {
   it("present/sanitize.ts 不碰 DOMPurify 預設單例的 addHook／setConfig／sanitize", () => {
     const source = readFileSync(`${process.cwd()}/src/present/sanitize.ts`, "utf8")

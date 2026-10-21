@@ -54,4 +54,11 @@ describe("L2 columnKindOf", () => {
     const [col] = columnsOf([[withChildren(IMG("i1"), [P("k", "k1")])], [P("b", "b1")]]);
     expect(columnKindOf(col)).toBe("text");
   });
+
+  it("showPreview:false 的圖片（畫成檔案列，簡報匯出成 <a>）→ text", () => {
+    const noPreview = { ...IMG("i1"), props: { ...IMG("i1").props, showPreview: false } } as PartialBlockLike;
+    const [col, preview] = columnsOf([[noPreview], [IMG("i2")]]);
+    expect(columnKindOf(col)).toBe("text");
+    expect(columnKindOf(preview)).toBe("image");
+  });
 });

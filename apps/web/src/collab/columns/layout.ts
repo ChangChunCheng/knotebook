@@ -23,12 +23,16 @@ export interface PMNodeLike {
   forEach(f: (node: PMNodeLike, offset: number) => void): void;
 }
 
-/** 欄的每個直接 block 都是圖片、且沒有子 block → `"image"`；其餘（含空欄、圖片底下縮排了文字）→ `"text"`。 */
+/**
+ * 欄的每個直接 block 都是顯示預覽的圖片、且沒有子 block → `"image"`；其餘（含空欄、圖片底下縮排了文字、`showPreview:false`
+ * 的圖片——畫成檔案列，簡報也匯出成 `<a>`）→ `"text"`。
+ */
 export function columnKindOf(column: PMNodeLike): ColumnKind {
   if (column.type.name !== COLUMN_TYPE || column.childCount === 0) return "text";
   let allImages = true;
   column.forEach((container) => {
-    if (container.childCount !== 1 || container.firstChild?.type.name !== "image") allImages = false;
+    const content = container.firstChild;
+    if (container.childCount !== 1 || content?.type.name !== "image" || content.attrs.showPreview === false) allImages = false;
   });
   return allImages ? "image" : "text";
 }
