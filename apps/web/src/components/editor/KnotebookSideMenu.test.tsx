@@ -213,3 +213,54 @@ describe("D25 側選單「Delete」不收欄", () => {
     expect(shape(editor)).toBe("paragraph:c");
   });
 });
+
+describe("T6 ⋮⋮「取消並排」（spec §7.2）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  function mount(content: PartialBlockLike[]): AnyEditor {
+    const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: content as never }) as AnyEditor;
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <BlockNoteView editor={editor} editable sideMenu={false}>
+            <SideMenuController sideMenu={KnotebookSideMenu} />
+          </BlockNoteView>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return editor;
+  }
+
+  /** 對文字為 `text` 的 block 開 ⋮⋮，等選單出現（以「Delete」為準）。 */
+  async function openMenu(editor: AnyEditor, text: string, id: string): Promise<void> {
+    const el = screen.getByText(text);
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
+    act(() => {
+      fireEvent.mouseMove(el, { clientX: 0, clientY: 0 });
+    });
+    expect(editor.getExtension(SideMenuExtension)!.store.state?.block?.id).toBe(id);
+    fireEvent.click(await screen.findByLabelText("Open block menu"));
+    expect(await screen.findByText("Delete")).toBeInTheDocument();
+  }
+
+  const R2 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")];
+
+  it("SM4：欄內 block 的 ⋮⋮ 有「Ungroup columns」，點了整列攤平成 x a b z", async () => {
+    const editor = mount(R2());
+    await openMenu(editor, "b", "b1");
+    fireEvent.click(screen.getByText("Ungroup columns"));
+    expect(shape(editor)).toBe("paragraph:x  paragraph:a  paragraph:b  paragraph:z");
+    expect(i18n.t("note.columns.ungroup", { lng: "zh-TW" })).toBe("取消並排");
+  });
+
+  it("SM5：頂層 block 的 ⋮⋮ 沒有「Ungroup columns」", async () => {
+    const editor = mount(R2());
+    await openMenu(editor, "x", "x");
+    expect(screen.queryByText("Ungroup columns")).toBeNull();
+  });
+});

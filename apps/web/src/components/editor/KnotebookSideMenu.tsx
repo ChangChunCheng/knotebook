@@ -13,6 +13,7 @@ import {
   useExtensionState,
   type SideMenuProps,
 } from "@blocknote/react";
+import { isInColumn, ungroupColumns } from "@/collab/columns/commands";
 import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { blockIdsForMenuDelete } from "@/collab/columns/selection-delete";
 import { absoluteUrl, blockLinkUrl, copyBlockLink } from "@/lib/copy-block-link";
@@ -50,12 +51,27 @@ function KeepColumnsDeleteItem({ children }: { children: ReactNode }) {
   );
 }
 
-/** 預設的四項（@blocknote/react 的 DragHandleMenu 預設 children，逐項照列；刪除項換成不收欄的版本）＋複製段落連結。 */
+/** 「取消並排」項（spec §7.2）：block 是某欄的直接子 block 才顯示。 */
+function UngroupColumnsItem() {
+  const Components = useComponentsContext()!;
+  const editor = useBlockNoteEditor();
+  const block = useExtensionState(SideMenuExtension, { editor, selector: (state) => state?.block });
+  const { t } = useTranslation();
+  if (block === undefined || !isInColumn(editor, block.id)) return null;
+  return (
+    <Components.Generic.Menu.Item className="bn-menu-item" onClick={() => ungroupColumns(editor, block.id)}>
+      {t("note.columns.ungroup")}
+    </Components.Generic.Menu.Item>
+  );
+}
+
+/** 預設的四項（@blocknote/react 的 DragHandleMenu 預設 children，逐項照列；刪除項換成不收欄的版本）＋取消並排＋複製段落連結。 */
 export function KnotebookDragHandleMenu() {
   const dict = useDictionary();
   return (
     <DragHandleMenu>
       <KeepColumnsDeleteItem>{dict.drag_handle.delete_menuitem}</KeepColumnsDeleteItem>
+      <UngroupColumnsItem />
       <BlockColorsItem>{dict.drag_handle.colors_menuitem}</BlockColorsItem>
       <TableRowHeaderItem>{dict.drag_handle.header_row_menuitem}</TableRowHeaderItem>
       <TableColumnHeaderItem>{dict.drag_handle.header_column_menuitem}</TableColumnHeaderItem>
