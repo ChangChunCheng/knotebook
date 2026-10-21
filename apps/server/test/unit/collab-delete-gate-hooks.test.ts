@@ -148,3 +148,47 @@ describe("beforeNoteDeleted 的閘門 handle", () => {
     expect(calls.release[0]).toEqual([NOTE, 1]);
   });
 });
+
+/** #181 §6.4.3：還原 commit 後收掉刪除閘門。 */
+describe("onNotesRestored", () => {
+  const OTHER = "33333333-3333-3333-3333-333333333333";
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("GH1：收掉閘門並清掉 TTL timer（到期時不再 unmark 第二次）", async () => {
+    vi.useFakeTimers();
+    const { server, calls } = fakeServer();
+    const hooks = createCollabHooks(server, silentLog);
+
+    await hooks.beforeNoteDeleted(NOTE);
+    hooks.onNotesRestored([NOTE]);
+    expect(calls.unmark).toEqual([NOTE]);
+
+    await vi.advanceTimersByTimeAsync(DELETING_GATE_TTL_MS + 1);
+    expect(calls.unmark).toEqual([NOTE]);
+  });
+
+  it("GH2：同一篇重複只 unmark 一次；沒有閘門的 id 照呼叫、不 throw", async () => {
+    const { server, calls } = fakeServer();
+    const hooks = createCollabHooks(server, silentLog);
+
+    await hooks.beforeNoteDeleted(NOTE);
+    expect(() => hooks.onNotesRestored([NOTE, NOTE, OTHER])).not.toThrow();
+    expect(calls.unmark).toEqual([NOTE, OTHER]);
+  });
+
+  it("GH3：unmarkDeleting throw → 不往外 throw、記一次 error（只記 name／code／數量）", () => {
+    const { server } = fakeServer();
+    server.unmarkDeleting = () => {
+      throw Object.assign(new Error("boom"), { cause: { code: "E_TEST" } });
+    };
+    const log = { info: vi.fn(), error: vi.fn() };
+    const hooks = createCollabHooks(server, log);
+
+    expect(() => hooks.onNotesRestored([NOTE])).not.toThrow();
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error.mock.calls[0]![0]).toEqual({ name: "Error", code: "E_TEST", notes: 1 });
+  });
+});

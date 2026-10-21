@@ -10,7 +10,7 @@
  *   2. **刪除閘門**：刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
  *      刪除交易跑在「沒有任何進行中連線」的前提上。
  *
- * 三個 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked` 是同步 fire-and-forget，
+ * 所有 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked` 是同步 fire-and-forget，
  * 呼叫點在 DB commit 之後（見 `routes/notes.ts`、`routes/admin-users.ts`、`routes/auth.ts`），
  * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是 DELETE 交易前的
  * await 點，throw 會讓「筆記刪不掉、卻已經被閘門擋住兩分鐘」（見 `DELETING_GATE_TTL_MS`）——兩種都比記錄錯誤後繼續更糟。
@@ -279,6 +279,23 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       }
 
       return gate;
+    },
+
+    /** #181 §6.4.3：還原 commit 後收掉閘門，連同 TTL timer。日誌只記 `{ name, code }` 與數量（不記原始 err、不記 id 清單）。 */
+    onNotesRestored(noteIds: readonly string[]): void {
+      try {
+        for (const id of new Set(noteIds)) {
+          const armed = gateTimers.get(id);
+          if (armed) {
+            clearTimeout(armed.timer);
+            gateTimers.delete(id);
+          }
+          server.unmarkDeleting(id);
+        }
+      } catch (error) {
+        const e = error as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
+        log.error({ name: e?.name, code: e?.code ?? e?.cause?.code, notes: noteIds.length }, "collab onNotesRestored 收閘門失敗");
+      }
     },
 
     linkSyncGate(noteId: string, userId: string): { ok: true; clock: number } | { ok: false } {

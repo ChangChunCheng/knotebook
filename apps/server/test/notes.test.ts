@@ -345,6 +345,7 @@ describe("DELETE /api/notes/:id", () => {
       onUserRevoked: vi.fn(),
       onGroupAccessChanged: vi.fn(),
       beforeNoteDeleted,
+      onNotesRestored: vi.fn(),
       linkSyncGate: () => ({ ok: false as const }),
     };
     const { app, db } = await buildTestApp({ collabHooks });
@@ -370,6 +371,7 @@ describe("DELETE /api/notes/:id", () => {
       onUserRevoked: vi.fn(),
       onGroupAccessChanged: vi.fn(),
       beforeNoteDeleted,
+      onNotesRestored: vi.fn(),
       linkSyncGate: () => ({ ok: false as const }),
     };
     const { app, db } = await buildTestApp({ collabHooks });
@@ -437,6 +439,7 @@ describe("DELETE /api/notes/:id", () => {
       onUserRevoked: vi.fn(),
       onGroupAccessChanged: vi.fn(),
       beforeNoteDeleted,
+      onNotesRestored: vi.fn(),
       linkSyncGate: () => ({ ok: false as const }),
     };
 
@@ -465,6 +468,7 @@ describe("DELETE /api/notes/:id", () => {
       onUserRevoked: vi.fn(),
       onGroupAccessChanged: vi.fn(),
       beforeNoteDeleted: vi.fn(async () => ({ release })),
+      onNotesRestored: vi.fn(),
       linkSyncGate: () => ({ ok: false as const }),
     };
     const { app, db } = await buildTestApp({ collabHooks });
@@ -496,6 +500,7 @@ describe("DELETE /api/notes/:id", () => {
       beforeNoteDeleted: vi.fn(async (): Promise<never> => {
         throw new Error("collab teardown failed");
       }),
+      onNotesRestored: vi.fn(),
       linkSyncGate: () => ({ ok: false as const }),
     };
     const { app, db } = await buildTestApp({ collabHooks });

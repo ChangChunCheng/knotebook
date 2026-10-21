@@ -89,7 +89,7 @@ import type { UserGate } from "../auth/session.js";
 // `import type`，編譯後整段被抹掉，**沒有執行期循環**（本檔對 session.ts 沒有任何 value import）。
 // 看到「循環」不要繞路改寫。
 import type { DirectCtx } from "../notes/editing/session.js";
-import { loadNoteAudience, resolveRole } from "../notes/service.js";
+import { loadNoteAudience, noteIsLive, resolveRole } from "../notes/service.js";
 import { verifyCollabToken } from "./token.js";
 import { createNoteStore, docClock, type NoteStoreSearchHooks, type StoreLogger } from "./store.js";
 import { createVersionService, type VersionService } from "./versions.js";
@@ -381,6 +381,8 @@ export interface CollabServer {
    */
   releaseDeletingGate(noteId: string, epoch: number): Promise<boolean>;
   unmarkDeleting(noteId: string): void;
+  /** 這篇筆記目前有沒有刪除閘門（記憶體，零 DB）。直連寫入的重確認用（notes/editing/session.ts）。 */
+  isDeleting(noteId: string): boolean;
   /** 關閉所有 socket、flush 待寫入的文件。**必須在 `app.close()` 之前 await。** */
   destroy(): Promise<void>;
 }
@@ -1030,10 +1032,10 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
       // 告知「你已失去存取權」，而真相是筆記真的被刪了。
       if (deleting.get(noteId)?.epoch !== epoch) return false;
 
-      // 第二道：只有「筆記其實還在」才收（審查 round 3）——併發的另一次刪除可能已經 commit。
+      // 第二道：列在且 `deleted_at IS NULL` 才收（審查 round 3；#181 spec §6.4.1 M-D）——否則兩個 DELETE
+      // 併發時，後到、交易內得 404 的那個會收掉先到那次成功移入的閘門。
       try {
-        const audience = await loadNoteAudience(deps.db, noteId);
-        if (audience.size === 0) return false;
+        if (!(await noteIsLive(deps.db, noteId))) return false;
       } catch (err) {
         // 查不出來時以呼叫端的說法為準（它剛剛才刪失敗）：放行比讓一篇還在的筆記被宣告
         // 「已刪除」兩分鐘好。要走到這裡得同時發生「併發刪除」與「DB 查詢失敗」。
@@ -1048,6 +1050,10 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
 
     unmarkDeleting(noteId: string): void {
       deleting.delete(noteId);
+    },
+
+    isDeleting(noteId: string): boolean {
+      return deleting.has(noteId);
     },
 
     async destroy(): Promise<void> {
