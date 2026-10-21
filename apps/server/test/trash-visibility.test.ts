@@ -85,32 +85,39 @@ describe("V2 搜尋", () => {
 });
 
 describe("V3 單篇讀取三形", () => {
-  it("GET /api/notes/:id、/by-path、/by-group-path：移入後 404，body 與不存在的 id 逐位元組相同；還原後 200", async () => {
+  it("GET /api/notes/:id、/by-path、/by-group-path：移入後 404——有垃圾桶權者 in_trash（帶 noteId）、其他人 not_found（與不存在的 id 逐位元組相同）；還原後 200", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
-    const g = await seedGroup(db, "G", [{ userId: owner.id, role: "admin" }]);
+    const friend = await seedUser(db);
+    const member = await seedUser(db);
+    const g = await seedGroup(db, "G", [{ userId: owner.id, role: "admin" }, { userId: member.id, role: "member" }]);
     const n = await seedNote(db, { ownerId: owner.id }, { slug: "v3-personal" });
     const gn = await seedNote(db, { groupId: g.id }, { slug: "v3-group" });
-    const urls = [
-      `/api/notes/${n.id}`,
-      `/api/notes/by-path/${owner.handle}/v3-personal`,
-      `/api/notes/${gn.id}`,
-      `/api/notes/by-group-path/${g.id}/v3-group`,
+    await seedShare(db, n.id, friend.id, "editor");
+    const personal = [`/api/notes/${n.id}`, `/api/notes/by-path/${owner.handle}/v3-personal`];
+    const grouped = [`/api/notes/${gn.id}`, `/api/notes/by-group-path/${g.id}/v3-group`];
+    // 有垃圾桶權者（個人＝owner、群組＝admin）看 in_trash；分享 editor 與一般成員（無刪除權）看 not_found。
+    const views: Array<[string, string, string, string | null]> = [
+      ...personal.map((url): [string, string, string, string | null] => [url, owner.id, "owner", n.id]),
+      ...grouped.map((url): [string, string, string, string | null] => [url, owner.id, "admin", gn.id]),
+      ...personal.map((url): [string, string, string, string | null] => [url, friend.id, "friend", null]),
+      ...grouped.map((url): [string, string, string, string | null] => [url, member.id, "member", null]),
     ];
     const missing = await inject(app, "GET", `/api/notes/${randomUUID()}`, owner.id);
     expect(missing.statusCode).toBe(404);
 
-    for (const url of urls) expect((await inject(app, "GET", url, owner.id)).statusCode, url).toBe(200);
+    for (const [url, userId, who] of views) expect((await inject(app, "GET", url, userId)).statusCode, `${who} ${url}`).toBe(200);
     await markTrashed(pool(db), n.id, owner.id);
     await markTrashed(pool(db), gn.id, owner.id);
-    for (const url of urls) {
-      const res = await inject(app, "GET", url, owner.id);
-      expect(res.statusCode, url).toBe(404);
-      expect(res.body, url).toBe(missing.body);
+    for (const [url, userId, who, trashId] of views) {
+      const res = await inject(app, "GET", url, userId);
+      expect(res.statusCode, `${who} ${url}`).toBe(404);
+      if (trashId) expect(res.json(), `${who} ${url}`).toEqual({ error: { code: "in_trash", message: "這篇筆記在垃圾桶裡" }, noteId: trashId });
+      else expect(res.body, `${who} ${url}`).toBe(missing.body);
     }
     await markRestored(pool(db), n.id);
     await markRestored(pool(db), gn.id);
-    for (const url of urls) expect((await inject(app, "GET", url, owner.id)).statusCode, url).toBe(200);
+    for (const [url, userId, who] of views) expect((await inject(app, "GET", url, userId)).statusCode, `${who} ${url}`).toBe(200);
   });
 });
 
@@ -280,16 +287,23 @@ describe("V9 站內連結解析", () => {
     expect(await resolveWith(db, group, `/notes/${a.id}`)).toEqual({ id: a.id, title: "A" });
   });
 
-  it("查找序不變（M1）：活筆記 B 的 prev_slug 等於垃圾桶筆記 A 的現行 slug → 以 A 的 slug 解析回 null（不解到 B）；by-group-path 也 404", async () => {
+  it("查找序不變（M1）：活筆記 B 的 prev_slug 等於垃圾桶筆記 A 的現行 slug → 以 A 的 slug 解析回 null（不解到 B）；by-group-path 也 404（admin in_trash 指向 A、一般成員 not_found）", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
-    const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
+    const member = await seedUser(db);
+    const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: member.id, role: "member" }]);
     const a = await seedNote(db, { groupId: g.id }, { title: "A", slug: "v9-shared" });
     await seedNote(db, { groupId: g.id }, { title: "B", slug: "v9-b", prevSlug: "v9-shared" });
     await markTrashed(pool(db), a.id, admin.id);
     expect(await resolveWith(db, { kind: "group", groupId: g.id }, `/g/${g.id}/v9-shared`)).toBeNull();
+    // REST 照同一查找序解到垃圾桶裡的 A（不是 B）：admin 有垃圾桶權 → in_trash 帶 A 的 id；一般成員 → not_found。
     const res = await inject(app, "GET", `/api/notes/by-group-path/${g.id}/v9-shared`, admin.id);
     expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: { code: "in_trash", message: "這篇筆記在垃圾桶裡" }, noteId: a.id });
+    const missing = await inject(app, "GET", `/api/notes/${randomUUID()}`, member.id);
+    const byMember = await inject(app, "GET", `/api/notes/by-group-path/${g.id}/v9-shared`, member.id);
+    expect(byMember.statusCode).toBe(404);
+    expect(byMember.body).toBe(missing.body);
   });
 });
 

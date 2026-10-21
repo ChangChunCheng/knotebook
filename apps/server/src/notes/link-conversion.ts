@@ -24,7 +24,7 @@ import { noteLinkConversion, noteLinks, notes } from "../db/schema.js";
 import { visibleTitlesByIds } from "./editing/candidates.js";
 import { FingerprintMismatch, forkAndCheck, mergeDiff, type ApplyDeps } from "./editing/apply.js";
 import { QueueBusyError } from "./editing/queue.js";
-import { EditorSession, type LinkConvertCtx } from "./editing/session.js";
+import { EditorSession, NoteGoneError, type LinkConvertCtx } from "./editing/session.js";
 import type { NoteWriteService } from "./editing/write-service.js";
 import { normalizeLinkTargets } from "./links.js";
 import { createSiteLinkResolver, type SiteLinkScope } from "./site-link-resolver.js";
@@ -197,6 +197,8 @@ async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteI
     try {
       await mergeDiff(applyDeps, noteId, ctx, { targetIds: null, expectFingerprint: f.whole, anchorId: null, diff: prepared.diff, afterIds: [] });
     } catch (err) {
+      // #181 §6.2-11：合併前一刻被移入垃圾桶（或正被移入）→ 同步 1 的 deleted（列留原狀態，還原後下次啟動再處理）。
+      if (err instanceof NoteGoneError) return { kind: "deleted" };
       if (err instanceof FingerprintMismatch) continue; // 從步 1 重來一次；再不符 ⇒ retry
       throw err;
     }

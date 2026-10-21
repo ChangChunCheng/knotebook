@@ -9,6 +9,7 @@ import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { MAX_UPLOAD_BYTES, SESSION_COOKIE } from "@knotebook/shared";
 import { uploads } from "../src/db/schema.js";
 import { signSession } from "../src/auth/session.js";
+import { purgeTrashedNotesInTx } from "../src/notes/tx/trash.js";
 import { buildTestApp, testConfig } from "./helpers.js";
 import { cookieOf, seedGroup, seedNote, seedShare, seedUser } from "./group-helpers.js";
 import { QUOTA_BOUNDARY, filesIn, giveGroupQuota, giveUserQuota, multipartFile, pngOf, quotaBody, seedAttachment, upload, usedOf } from "./storage-helpers.js";
@@ -146,7 +147,7 @@ describe("上傳：無上限與已超額（S4、S5 上傳形）", () => {
     for (let i = 0; i < 3; i++) expect((await upload(app, n.id, u.id, 5 * 1024 * 1024)).statusCode).toBe(201);
   });
 
-  it("S5：直插使 used > quota → 上傳 409；刪掉大附件的筆記後可再上傳", async () => {
+  it("S5：直插使 used > quota → 上傳 409；大附件的筆記移到垃圾桶仍 409（垃圾桶照算，D-W4）；永久刪除後可再上傳", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
@@ -156,6 +157,8 @@ describe("上傳：無上限與已超額（S4、S5 上傳形）", () => {
     expect((await upload(app, n.id, u.id, 8)).statusCode).toBe(409);
     const del = await app.inject({ method: "DELETE", url: `/api/notes/${big.id}`, cookies: await cookieOf(u.id) });
     expect(del.statusCode).toBe(204);
+    expect((await upload(app, n.id, u.id, 8)).statusCode).toBe(409);
+    await db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [big.id], by: u.id }));
     expect((await upload(app, n.id, u.id, 8)).statusCode).toBe(201);
   });
 });

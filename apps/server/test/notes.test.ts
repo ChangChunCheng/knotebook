@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
-import { eq, or, sql } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { SESSION_COOKIE } from "@knotebook/shared";
 import { buildTestApp, testConfig } from "./helpers.js";
 import { notes, noteLinks, noteShares, noteStateBackups, noteStates, uploads, users } from "../src/db/schema.js";
@@ -388,7 +388,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("owner → 204，關聯表（note_states/note_state_backups/note_shares/note_links/uploads）清空，再 GET 404", async () => {
+  it("owner → 204：移到垃圾桶（#181）——notes 列與關聯表（note_states/note_state_backups/note_shares/note_links/uploads）都在、deleted_at 非 NULL；再 GET 404 in_trash", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del3@example.com" });
     const linkedUser = await insertUser(db, { email: "linked-del3@example.com" });
@@ -399,8 +399,7 @@ describe("DELETE /api/notes/:id", () => {
     const otherRes = await app.inject({ method: "POST", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie }, payload: {} });
     const otherNote = otherRes.json();
 
-    // 手動塞好每個關聯表至少一列，驗證 DELETE 交易確實清空這些表（不是只砍 notes 靠
-    // schema 的 FK cascade「順便」清掉——binding 規格要求交易內明確依序刪除）。
+    // 手動塞好每個關聯表至少一列：移入垃圾桶不動子表（還原後一切回到移入前；永久刪除才清，見 trash-tx.test.ts）。
     await db.insert(noteStates).values({ noteId: note.id, ydoc: Buffer.from("state") });
     await db.insert(noteStateBackups).values({ noteId: note.id, ydoc: Buffer.from("backup") });
     await db.insert(noteShares).values({ noteId: note.id, userId: linkedUser.id, role: "viewer" });
@@ -411,20 +410,23 @@ describe("DELETE /api/notes/:id", () => {
     const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
     expect(delRes.statusCode).toBe(204);
 
-    expect(await db.select().from(noteStates).where(eq(noteStates.noteId, note.id))).toHaveLength(0);
-    expect(await db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, note.id))).toHaveLength(0);
-    expect(await db.select().from(noteShares).where(eq(noteShares.noteId, note.id))).toHaveLength(0);
+    expect(await db.select().from(noteStates).where(eq(noteStates.noteId, note.id))).toHaveLength(1);
+    expect(await db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, note.id))).toHaveLength(1);
+    expect(await db.select().from(noteShares).where(eq(noteShares.noteId, note.id))).toHaveLength(1);
     expect(
       await db.select().from(noteLinks).where(or(eq(noteLinks.sourceNoteId, note.id), eq(noteLinks.targetNoteId, note.id)))
-    ).toHaveLength(0);
-    expect(await db.select().from(uploads).where(eq(uploads.noteId, note.id))).toHaveLength(0);
-    expect(await db.select().from(notes).where(eq(notes.id, note.id))).toHaveLength(0);
+    ).toHaveLength(2);
+    expect(await db.select().from(uploads).where(eq(uploads.noteId, note.id))).toHaveLength(1);
+    const [row] = await db.select({ deletedAt: notes.deletedAt, deletedBy: notes.deletedBy }).from(notes).where(eq(notes.id, note.id));
+    expect(row?.deletedAt).not.toBeNull();
+    expect(row?.deletedBy).toBe(owner.id);
 
     const getRes = await app.inject({ method: "GET", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
     expect(getRes.statusCode).toBe(404);
+    expect(getRes.json().error.code).toBe("in_trash");
   });
 
-  it("beforeNoteDeleted 於交易前被 await：hook 內查 DB 時 notes 列仍存在", async () => {
+  it("beforeNoteDeleted 於交易前被 await：hook 內查 DB 時 notes 列仍存在、還沒進垃圾桶", async () => {
     // dbRef 是個可變的 box：beforeNoteDeleted 這個 vi.fn 在 buildTestApp() 回傳「真正
     // 要用的 db」之前就已經被定義（它要作為 overrides 傳進 buildTestApp），只能靠這個
     // box 延遲取得 db——box 本身用 const（只指派一次），box.current 才是可變欄位。
@@ -432,6 +434,7 @@ describe("DELETE /api/notes/:id", () => {
     const beforeNoteDeleted = vi.fn(async (noteId: string) => {
       const rows = await dbRef.current!.select().from(notes).where(eq(notes.id, noteId));
       expect(rows).toHaveLength(1);
+      expect(rows[0]!.deletedAt).toBeNull(); // #181：移入後列也還在，只有 deleted_at 分得出「交易前」
       return { release: () => {} };
     });
     const collabHooks: CollabHooks = {
@@ -458,41 +461,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(beforeNoteDeleted).toHaveBeenCalledWith(note.id);
   });
 
-  it("刪除交易失敗 → 閘門的 release() 被呼叫（否則閘門會對重連者謊稱「已刪除」兩分鐘）", async () => {
-    // 閘門在 beforeNoteDeleted 就開了。交易失敗若不收回去，這篇筆記接下來兩分鐘
-    // （DELETING_GATE_TTL_MS）都會對協作者回 note-deleting，client 據此收斂終態並導頁
-    // ——而筆記其實還在。
-    const release = vi.fn();
-    const collabHooks: CollabHooks = {
-      onShareChanged: vi.fn(),
-      onUserRevoked: vi.fn(),
-      onGroupAccessChanged: vi.fn(),
-      beforeNoteDeleted: vi.fn(async () => ({ release })),
-      onNotesRestored: vi.fn(),
-      linkSyncGate: () => ({ ok: false as const }),
-    };
-    const { app, db } = await buildTestApp({ collabHooks });
-
-    const owner = await insertUser(db, { email: "owner-del6@example.com" });
-    const ownerCookie = await cookieFor(owner.id);
-    const createRes = await app.inject({ method: "POST", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie }, payload: {} });
-    const note = createRes.json();
-
-    // 讓刪除交易真的爆掉：拔掉 uploads 表（同一個交易內會 DELETE 它）。
-    await db.execute(sql`ALTER TABLE uploads RENAME TO uploads_hidden`);
-    try {
-      const res = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
-      expect(res.statusCode).toBe(500);
-    } finally {
-      await db.execute(sql`ALTER TABLE uploads_hidden RENAME TO uploads`);
-    }
-
-    expect(release).toHaveBeenCalledTimes(1);
-    // 交易 rollback：筆記還在。
-    expect(await db.select().from(notes).where(eq(notes.id, note.id))).toHaveLength(1);
-  });
-
-  it("beforeNoteDeleted throw → 交易不執行（notes 仍存在）", async () => {
+  it("beforeNoteDeleted throw → 交易不執行（notes 仍存在且不在垃圾桶）", async () => {
     const collabHooks: CollabHooks = {
       onShareChanged: vi.fn(),
       onUserRevoked: vi.fn(),
@@ -515,6 +484,7 @@ describe("DELETE /api/notes/:id", () => {
 
     const rows = await db.select().from(notes).where(eq(notes.id, note.id));
     expect(rows).toHaveLength(1);
+    expect(rows[0]!.deletedAt).toBeNull();
   });
 
   it("未登入 → 401", async () => {
@@ -528,7 +498,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("owner → 204，交易 commit 後補刪已存在的上傳 blob 檔案（Task 11；含跨筆記引用同一 blob 的情況——intended，該檔案仍隨其唯一歸屬的來源筆記一起被刪，見 task-11-brief）", async () => {
+  it("owner → 204：移到垃圾桶不刪附件（#181）——uploads 列與磁碟檔都在（永久刪除才刪，見 trash 的 purge）", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del6@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -547,26 +517,11 @@ describe("DELETE /api/notes/:id", () => {
     const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
     expect(delRes.statusCode).toBe(204);
 
-    expect(await db.select().from(uploads).where(eq(uploads.id, upload.id))).toHaveLength(0);
-    expect(existsSync(filePath)).toBe(false);
+    expect(await db.select().from(uploads).where(eq(uploads.id, upload.id))).toHaveLength(1);
+    expect(existsSync(filePath)).toBe(true);
   });
 
-  it("上傳列存在但磁碟檔案已不存在 → DELETE 仍 204（best-effort 補刪失敗僅 log，不炸）", async () => {
-    const { app, db } = await buildTestApp();
-    const owner = await insertUser(db, { email: "owner-del7@example.com" });
-    const ownerCookie = await cookieFor(owner.id);
-
-    const createRes = await app.inject({ method: "POST", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie }, payload: {} });
-    const note = createRes.json();
-
-    // 只塞 DB 列、不寫實際檔案——模擬磁碟上該檔案已經不存在（例如 volume 被清過、手動誤刪）。
-    await db.insert(uploads).values({ noteId: note.id, uploaderId: owner.id, mime: "image/png", size: 4 });
-
-    const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
-    expect(delRes.statusCode).toBe(204);
-  });
-
-  it("blob 補刪必須在交易 commit 之後才執行——commit 前的任何失敗（模擬用強制 rollback）都不能提前刪檔（Task 11 審查 Important-1 護欄：若刪檔被誤放進交易 callback 內，rollback 後 DB 列會復活，但檔案已經永久消失，形成資料與磁碟不一致）", async () => {
+  it("移入交易 commit 前失敗（模擬用強制 rollback）→ 500、筆記不在垃圾桶、附件列與磁碟檔都在（#181：DELETE 本來就不刪檔；原 Task 11 的「刪檔只在 commit 後」契約移到永久刪除）", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del8@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -584,7 +539,7 @@ describe("DELETE /api/notes/:id", () => {
     // 強制交易在 callback（DELETE 交易本體）跑完之後 rollback，模擬「commit 前的任何
     // 失敗」（例如 DB 連線在 commit 那一刻斷線）——不是真的走到我們自己程式碼裡任何
     // 已知分支，純粹是測試替身逼出「callback 已跑完、但整個交易最終沒有 commit」這個
-    // 狀態，藉此檢驗「刪檔只能發生在交易確定 commit 之後」這個順序契約本身，而不是檢驗
+    // 狀態，藉此檢驗「callback 跑完但沒 commit 時，移入不生效、附件也不被動到」，而不是檢驗
     // 某個特定的錯誤處理分支。
     //
     // db.transaction 是 drizzle 的泛型 overload（回呼型別與具體 schema/query 型別綁定），
@@ -605,9 +560,10 @@ describe("DELETE /api/notes/:id", () => {
       const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
       expect(delRes.statusCode).toBe(500);
 
-      // rollback 生效：uploads 列復活。
+      // rollback 生效：deleted_at 仍是 NULL。
+      const [row] = await db.select({ deletedAt: notes.deletedAt }).from(notes).where(eq(notes.id, note.id));
+      expect(row?.deletedAt).toBeNull();
       expect(await db.select().from(uploads).where(eq(uploads.id, upload.id))).toHaveLength(1);
-      // 檔案未被提前刪除——這是本測試真正要護的契約：刪檔只能發生在 commit 確定成功之後。
       expect(existsSync(filePath)).toBe(true);
     } finally {
       transactionSpy.mockRestore();

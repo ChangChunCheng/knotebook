@@ -363,8 +363,9 @@ export interface CollabServer {
   /**
    * 刪除閘門：登記期間這篇筆記的連線一律被拒／被關（Task 6 的 beforeNoteDeleted 用）。
    *
-   * ⚠ **必須在刪除交易之前 await**：它會先把「此刻看得到這篇筆記的人」抓下來留著
-   * （`loadNoteAudience`），交易一 commit 那些列就查不到了。這份名單決定 `onAuthenticate`
+   * ⚠ **必須在移入垃圾桶／刪除交易之前 await**：它會先把「此刻看得到這篇筆記的人」抓下來留著
+   * （`loadNoteAudience`），交易一 commit 之後授權就查不到他們了（移入：單篇授權排除垃圾桶筆記；
+   * 刪群組・全刪：那些列不在了。垃圾桶的永久刪除不開閘門）。這份名單決定 `onAuthenticate`
    * 要不要對某個人說出 `note-deleting`——名單上的人、以及此刻仍查得到角色的人聽得到，
    * 其他人一律照 `no-role` 回答，閘門因此不會變成「這個 noteId 存不存在」的 oracle
    * （issue #35 審查）。

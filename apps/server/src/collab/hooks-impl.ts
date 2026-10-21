@@ -208,7 +208,9 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
      * deleting 重查只能擋下「還沒被登記進索引」的連線，擋不掉它在 onAuthenticate 通過後、
      * connected 抵達前那段時間從佇列 drain 出來、已經套用進 Y.Doc 的 update。真正的
      * 資料面保證來自兩件事：刪除本身是一個交易，以及 Task 7 的 `onStoreDocument` 見到
-     * 筆記已不存在就丟棄該次寫入——所以即使有落單的 update，也不會在筆記刪除後復活。
+     * 筆記已不存在就丟棄該次寫入——所以即使有落單的 update，也不會在筆記永久刪除後復活。
+     * #181：移到垃圾桶（`DELETE /api/notes/:id`）之後列還在，落單的 store **會寫進**垃圾桶筆記——
+     * 那是移入前一刻的內容，還原後看得到（spec §6.4.1）；它不會讓筆記回到清單（`deleted_at` 不變）。
      */
     async beforeNoteDeleted(noteId: string): Promise<NoteDeleteGate> {
       // 先關門：此後 onAuthenticate / connected / onTokenSync 三處都會拒絕這篇筆記
@@ -269,12 +271,13 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
 
         if (server.hocuspocus.documents.has(noteId)) {
           // 逾時（上限 5s）：記錯後**放行**，絕不無限等——DELETE 掛死對使用者是更嚴重的
-          // 故障，而資料面已有 Task 7 的「筆記不存在就丟棄 store」兜底，不會復活。
-          log.error({ noteId }, "collab beforeNoteDeleted：文件在期限內未 unload，仍繼續刪除（store 會被 Task 7 丟棄）");
+          // 故障。之後抵達的 store：移入垃圾桶時照寫進垃圾桶筆記（內容不丟、不復活到清單）；
+          // 永久刪除時由 Task 7 的「筆記不存在就丟棄 store」兜底。
+          log.error({ noteId }, "collab beforeNoteDeleted：文件在期限內未 unload，仍繼續刪除（之後的 store：移入垃圾桶照寫、永久刪除丟棄）");
         }
       } catch (error) {
         // 清場失敗不得讓 DELETE 回 500：閘門已經關上，交易照跑，殘留的連線最遲在下一次
-        // 重驗／訊息往返時就會因為筆記不存在而被拒。
+        // 重驗／訊息往返時就會因為授權得 none（筆記在垃圾桶或已不存在）而被拒。
         log.error({ err: error, noteId }, "collab beforeNoteDeleted 清場失敗，仍繼續刪除");
       }
 

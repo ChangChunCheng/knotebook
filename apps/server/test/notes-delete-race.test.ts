@@ -1,8 +1,8 @@
 /**
  * #188：單篇 `DELETE /api/notes/:id` × 上傳的交錯（比照 `groups-v2-delete-race.test.ts` 的 C22，群組全刪形）。
- * `deleteNotesInTx` 先對待刪筆記取 `FOR UPDATE`，之後才 `DELETE uploads … RETURNING`；上傳交易（`insertUploadInTx`）先以
- * `SELECT … FOR KEY SHARE` 讀那篇筆記列，與 FOR UPDATE 互斥 → 等刪除 commit 後讀到 0 列 → TxAbort 404 not_found（路由先 unlink）。
- * 儲存配額 PR1 以前同一把鎖是 INSERT 的 FK 檢查取的（撞 23503 → 404，`b1430b8`）；那條映射仍留作防禦縱深。
+ * #181 起 DELETE 是移到垃圾桶：`trashNotesInTx` 第一步對筆記列取 `FOR UPDATE`；上傳交易（`insertUploadInTx`）以
+ * `SELECT … WHERE deleted_at IS NULL FOR KEY SHARE` 讀那篇筆記列，與 FOR UPDATE 互斥 → 等移入 commit 後重評條件不成立 → 0 列 →
+ * TxAbort 404 not_found（路由先 unlink）。移入不刪 uploads，所以「孤兒檔」那一形只剩永久刪除（垃圾桶筆記本來就上傳不了：授權即 none）。
  */
 import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
@@ -48,47 +48,38 @@ async function waitForWaiters(pool: Pool, n: number, other?: Promise<unknown>, t
 }
 
 describe("#188 單篇刪除 × 上傳", () => {
-  it("單篇 DELETE 持筆記 FOR UPDATE 時上傳到同一篇 → 上傳交易的筆記 KEY SHARE 讀等刪除 commit → 刪除 204、上傳 404 not_found（讀到 0 列 → TxAbort，路由已 unlink）；uploads 0 列、磁碟沒有孤兒檔", async () => {
-    // 把刪除交易停在「`deleteNotesInTx` 的 DELETE uploads 還沒做完」：另一條連線先對該篇既有的附件列 u0 取 FOR UPDATE，
-    // 刪除的 DELETE uploads 就卡在 u0 上（有 #188 的修法時，此時筆記列的 FOR UPDATE 已到手）。在這個窗裡發上傳：
-    // 持筆記 FOR UPDATE 時上傳交易的 `FOR KEY SHARE` 讀 → 互斥 → 等刪除 commit 後 0 列 → 404；沒有那把鎖時上傳直接成功（201），
-    // 之後 DELETE uploads 的快照看不到它、DELETE notes 以 CASCADE 帶走它的列——它不在回傳的 upload id 裡，磁碟檔成了孤兒。
-    // 鑑別：拿掉 `deleteNotesInTx` 的 FOR UPDATE 時本案先紅在 interleave 斷言（上傳沒被擋、`settled`）。
-    const { app, db, uploadsDir } = await buildTestApp({ collabHooks: spyCollabHooks() });
+  it("單篇 DELETE（移入垃圾桶）持筆記 FOR UPDATE 時上傳到同一篇 → 上傳交易的筆記 KEY SHARE 讀等移入 commit → 移入 204、上傳 404 not_found（讀到 0 列 → TxAbort，路由已 unlink）；uploads 只剩原本那列、磁碟沒有孤兒檔", async () => {
+    // 把移入交易停在「已持筆記 FOR UPDATE、還沒 UPDATE」（`note-trash-locked` 縫）：在這個窗裡發上傳——上傳的授權在交易外，
+    // 此時筆記還活著所以通過；交易內 `FOR KEY SHARE` 讀與 FOR UPDATE 互斥 → 等移入 commit 後 `deleted_at IS NULL` 不成立 → 404。
+    // 縫裡**不等**上傳結束（它正等這個交易的鎖），只等它卡進鎖等待。
+    // 鑑別：拿掉 `trashNotesInTx` 的 FOR UPDATE 時本案先紅在 interleave 斷言（上傳沒被擋、`settled`）。
+    const holder: { app?: FastifyInstance; pool?: Pool; noteId?: string; userId?: string; up?: Promise<LightMyRequestResponse>; interleave?: string } = {};
+    const { app, db, uploadsDir } = await buildTestApp({
+      collabHooks: spyCollabHooks(),
+      groupTestHook: async point => {
+        if (point !== "note-trash-locked" || holder.up) return;
+        holder.up = upload(holder.app!, holder.noteId!, holder.userId!);
+        holder.interleave = await waitForWaiters(holder.pool!, 1, holder.up);
+      },
+    });
     const pool = db.$client;
     const a = await seedUser(db);
     const n = await seedNote(db, { ownerId: a.id });
     const u0 = await seedUpload(db, uploadsDir, n.id, a.id);
+    Object.assign(holder, { app, pool, noteId: n.id, userId: a.id });
 
-    const c = await pool.connect();
-    let del: Promise<LightMyRequestResponse> | undefined;
-    let up: Promise<LightMyRequestResponse> | undefined;
-    let deleteBlocked: string | undefined;
-    let interleave: string | undefined;
-    try {
-      await c.query("begin");
-      await c.query("select id from uploads where id = $1 for update", [u0]);
-      del = app.inject({ method: "DELETE", url: `/api/notes/${n.id}`, cookies: await cookieOf(a.id) });
-      deleteBlocked = await waitForWaiters(pool, 1, del);
-      up = upload(app, n.id, a.id);
-      interleave = await waitForWaiters(pool, 2, up);
-    } finally {
-      await c.query("commit");
-      c.release();
-    }
-    const delRes = await del!;
-    const upRes = await up!;
+    const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${n.id}`, cookies: await cookieOf(a.id) });
+    const upRes = await holder.up!;
 
-    expect(deleteBlocked).toBe("blocked");
-    expect(interleave).toBe("blocked");
+    expect(holder.interleave).toBe("blocked");
     expect(delRes.statusCode).toBe(204);
     expect(upRes.statusCode).toBe(404);
     // 與「筆記本來就不存在」的 404 逐位元組相同（uploads.test.ts 的 404 案同形）。
     const missing = await upload(app, "22222222-2222-2222-2222-222222222222", a.id);
     expect(missing.statusCode).toBe(404);
     expect(upRes.body).toBe(missing.body);
-    expect(await db.select().from(notes)).toEqual([]);
-    expect(await db.select().from(uploads)).toEqual([]);
-    expect(await readdir(uploadsDir)).toEqual([]);
+    expect((await db.select({ deletedAt: notes.deletedAt }).from(notes))[0]?.deletedAt).not.toBeNull();
+    expect((await db.select({ id: uploads.id }).from(uploads)).map(r => r.id)).toEqual([u0]);
+    expect(await readdir(uploadsDir)).toEqual([u0]);
   });
 });

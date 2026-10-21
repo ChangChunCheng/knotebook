@@ -5,10 +5,12 @@
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import pg from "pg";
-import { buildTestApp, freshDb } from "./helpers.js";
-import { cookieOf, seedNote, seedUser, waitForBlockedOrSettled } from "./group-helpers.js";
+import { freshDb } from "./helpers.js";
+import { seedNote, seedUser, waitForBlockedOrSettled } from "./group-helpers.js";
 import { noteSearchState } from "../src/db/schema.js";
 import { bumpSearchIndexVersion, writeSearchIndex } from "../src/notes/search-index.js";
+import { purgeTrashedNotesInTx } from "../src/notes/tx/trash.js";
+import { markTrashed } from "./trash-helpers.js";
 import { searchDoc } from "./search-doc.js";
 import { captureLog, extractOf, indexRows, makeGate, seedNoteState, setNoteState, stateRow } from "./search-helpers.js";
 
@@ -120,25 +122,26 @@ describe("S3／S4：首建與版本", () => {
 });
 
 describe("S5：與刪筆記的鎖序", () => {
-  it("索引交易持狀態列鎖期間 DELETE /api/notes/:id → DELETE 卡在 notes 列、放行後 204，兩表無該篇列", async () => {
-    const { app, db } = await buildTestApp();
+  it("索引交易持狀態列鎖期間永久刪除（#181：DELETE 只移入垃圾桶，硬刪走 purgeTrashedNotesInTx）→ 永久刪除卡在 notes 列、放行後完成，兩表無該篇列", async () => {
+    const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
+    await markTrashed(db.$client, n.id, u.id); // 索引寫入不看 deleted_at（spec §6.2-11 includes）：垃圾桶筆記照樣索引
     await seedNoteState(db, n.id, searchDoc(V1), 1);
     await writeSearchIndex(db, n.id, 1, extractOf(V1)); // 狀態列已存在：第 2 步的 ON CONFLICT DO NOTHING 不觸發 FK 檢查
     await setNoteState(db, n.id, searchDoc(V2), 2);
     const gate = makeGate();
     // 停在第 3 步之後＝已持 notes KEY SHARE 與狀態列 FOR UPDATE（plan 裁定）：拿掉第 1 步時，本交易持狀態列鎖、DELETE 持 notes 列，
     // DELETE 的 cascade 已鎖住 sections 列、等狀態列；放行後第 5 步刪 sections 列等 DELETE——走到真正的環（突變 M3 實測：40P01，
-    // 環閉合在 `delete from note_search_sections`，DELETE 回 500）。停在第 2 步之前也紅得了（不持鎖 → DELETE 不被擋 → "settled"），
+    // 環閉合在 `delete from note_search_sections`，當時是 DELETE 回 500；#181 起同一個 `deleteNotesInTx` 由永久刪除呼叫）。停在第 2 步之前也紅得了（不持鎖 → DELETE 不被擋 → "settled"），
     // 但那只證明「沒擋住」，沒走到上面 M3 實測的死結路徑。
     const w = writeSearchIndex(db, n.id, 2, extractOf(V2), { hooks: { afterVersionReadForTest: gate.wait } });
     await gate.reached;
-    const del = app.inject({ method: "DELETE", url: `/api/notes/${n.id}`, cookies: await cookieOf(u.id) });
-    expect(await waitForBlockedOrSettled(db.$client, del)).toBe("blocked");
+    const purge = db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [n.id], by: u.id }));
+    expect(await waitForBlockedOrSettled(db.$client, purge)).toBe("blocked");
     gate.open();
     expect(await w).toBe("written");
-    expect((await del).statusCode).toBe(204);
+    expect((await purge).done).toEqual([n.id]);
     expect(await indexRows(db, n.id)).toEqual([]);
     expect(await stateRow(db, n.id)).toBeUndefined();
   });
