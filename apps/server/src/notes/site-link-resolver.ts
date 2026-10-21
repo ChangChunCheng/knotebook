@@ -3,8 +3,10 @@
  * - `{ kind: "user", userId }`（個人筆記的 owner）：路徑 → 候選 id（`/n/`、`/g/` 走 `resolveNotePath`——含轉址表與 prev_slug；
  *   `/notes/<ref>` 走 `resolveNoteIdFromRef`——含 legacy slug）→ `resolveNoteAccess(owner, id).role !== "none"` 才收。
  * - `{ kind: "group", groupId }`（群組筆記，E9'）：同樣找候選，只收 `target.group_id === groupId`，不做使用者授權。
+ * - #181 §6.2-6（rev 4.2）：候選在垃圾桶裡 → null（兩種範圍都先判）。判在 `lookup` 回傳前、不在 `where`／`byId` 加條件——
+ *   那會改變 `resolveNotePath` 的查找序（精確 slug 命中的垃圾桶筆記被濾掉後往轉址表、prev_slug 解到另一篇）。
  */
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { SiteLinkTarget, SiteNoteHref } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
 import { notes, users } from "../db/schema.js";
@@ -23,13 +25,15 @@ interface Row {
   id: string;
   title: string;
   groupId: string | null;
+  alive: boolean;
 }
 
 export function createSiteLinkResolver(db: Db, scope: SiteLinkScope): SiteLinkResolver {
-  const cols = { id: notes.id, title: notes.title, groupId: notes.groupId };
+  // 每次現造（含 raw `sql` 欄，不跨 builder 重用）。
+  const cols = () => ({ id: notes.id, title: notes.title, groupId: notes.groupId, alive: sql<boolean>`${notes.deletedAt} is null` });
   const rows: PathRowSource<Row> = {
-    where: (cond, limit) => db.select(cols).from(notes).leftJoin(users, eq(users.id, notes.ownerId)).where(cond).limit(limit),
-    byId: async noteId => (await db.select(cols).from(notes).where(eq(notes.id, noteId)).limit(1))[0],
+    where: (cond, limit) => db.select(cols()).from(notes).leftJoin(users, eq(users.id, notes.ownerId)).where(cond).limit(limit),
+    byId: async noteId => (await db.select(cols()).from(notes).where(eq(notes.id, noteId)).limit(1))[0],
   };
 
   async function candidate(parsed: SiteNoteHref): Promise<Row | undefined> {
@@ -43,6 +47,7 @@ export function createSiteLinkResolver(db: Db, scope: SiteLinkScope): SiteLinkRe
   async function lookup(parsed: SiteNoteHref): Promise<SiteLinkTarget | null> {
     const row = await candidate(parsed);
     if (!row) return null;
+    if (!row.alive) return null;
     if (scope.kind === "group") return row.groupId === scope.groupId ? { id: row.id, title: row.title } : null;
     const access = await resolveNoteAccess(db, scope.userId, row.id);
     return access.role !== "none" ? { id: row.id, title: row.title } : null;

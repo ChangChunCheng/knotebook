@@ -140,6 +140,7 @@ export async function syncLinksFromDoc(
  * `notes.updated_at` 只用來排序、不進 `BacklinkDto`（回應形狀是 `{id, title, slug,
  * ownerHandle, groupId}`——三支都 LEFT JOIN `users` 帶出來源筆記 owner 的 username〔群組筆記沒有 owner，
  * 為 null〕，並帶來源筆記的 `groupId`；BacklinksSection 以兩者組 `/n/` 或 `/g/` 連結）。
+ * #181 §6.2-4：**來源**筆記在垃圾桶裡的不列（三支各帶 `deleted_at IS NULL`；`notes` 在這裡是來源）。
  */
 export async function fetchBacklinks(db: Db, targetNoteId: string, userId: string): Promise<BacklinkDto[]> {
   // `ownerHandle` 包 `sql<string | null>` 只為與 `list-query.ts` 的 `baseColumns` 同形——這裡三支都 LEFT JOIN
@@ -158,7 +159,7 @@ export async function fetchBacklinks(db: Db, targetNoteId: string, userId: strin
     .from(noteLinks)
     .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
     .leftJoin(users, eq(users.id, notes.ownerId))
-    .where(and(eq(noteLinks.targetNoteId, targetNoteId), eq(notes.ownerId, userId)));
+    .where(and(eq(noteLinks.targetNoteId, targetNoteId), eq(notes.ownerId, userId), isNull(notes.deletedAt)));
 
   const sharedSelect = db
     .select(columns())
@@ -167,7 +168,7 @@ export async function fetchBacklinks(db: Db, targetNoteId: string, userId: strin
     .innerJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId)))
     .leftJoin(users, eq(users.id, notes.ownerId))
     // 規格落差 2／gate r1 A-M6：群組筆記上的殘留分享列（S5 破裂）不算——同 §5.3 清單的 shared 支。
-    .where(and(eq(noteLinks.targetNoteId, targetNoteId), isNull(notes.groupId)));
+    .where(and(eq(noteLinks.targetNoteId, targetNoteId), isNull(notes.groupId), isNull(notes.deletedAt)));
 
   const groupedSelect = db
     .select(columns())
@@ -176,7 +177,7 @@ export async function fetchBacklinks(db: Db, targetNoteId: string, userId: strin
     .innerJoin(groupMembers, and(eq(groupMembers.groupId, notes.groupId), eq(groupMembers.userId, userId)))
     .innerJoin(groupRoles, and(eq(groupRoles.id, groupMembers.roleId), eq(groupRoles.canRead, true)))
     .leftJoin(users, eq(users.id, notes.ownerId))
-    .where(eq(noteLinks.targetNoteId, targetNoteId));
+    .where(and(eq(noteLinks.targetNoteId, targetNoteId), isNull(notes.deletedAt)));
 
   const rows = await union(ownedSelect, sharedSelect, groupedSelect)
     .orderBy(desc(notes.updatedAt), desc(notes.id))
