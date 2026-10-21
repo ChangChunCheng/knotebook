@@ -290,6 +290,12 @@ describe("buildNoteEditorOptions", () => {
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookCodeBlockCaret");
   });
 
+  // 同上：`edge-keymap.test.ts` 掛的是自己建的編輯器（D24 欄首 Backspace／欄尾 Delete）。
+  it("_tiptapOptions.extensions 掛了並排的欄首／欄尾鍵 extension（D24）", () => {
+    const extensions = build()._tiptapOptions.extensions;
+    expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookColumnEdgeKeys");
+  });
+
   it("攔截掛在 editorProps.handleDOMEvents，**不是** handlePaste/handleDrop", () => {
     const editorProps = build()._tiptapOptions.editorProps;
 

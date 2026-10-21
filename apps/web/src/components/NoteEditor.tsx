@@ -22,6 +22,7 @@ import type { NoteDto } from "@knotebook/shared";
 import { useCreateNote, useNotes } from "@/api/notes";
 import { classifyMediaTransfer, type BlockedTransferReason } from "@/collab/schema";
 import { createCodeBlockCaretExtension } from "@/collab/code-block-caret";
+import { createColumnEdgeKeymapExtension } from "@/collab/columns/edge-keymap";
 import { buildCollabEditorBase } from "@/collab/editor-options";
 import { createMarkdownLinkExtension } from "@/collab/markdown-link";
 import { createMarkdownPasteHandler } from "@/collab/paste";
@@ -171,6 +172,8 @@ export function buildNoteEditorOptions({ doc, provider, user, language, translat
         createMarkdownLinkExtension({ editorRef, siteLinks }),
         createSiteLinkConvertExtension({ envRef: siteLinks }),
         createCodeBlockCaretExtension(),
+        // 並排的欄首 Backspace／欄尾 Delete（D24；理由見 `@/collab/columns/edge-keymap`）。
+        createColumnEdgeKeymapExtension({ editorRef }),
       ],
       editorProps: {
         handleDOMEvents: createMediaBlockingDOMEvents(translate),
