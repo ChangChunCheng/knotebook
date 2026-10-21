@@ -17,7 +17,17 @@ import {
   type AiCall,
   type AnyEditor,
 } from "@/test/ai-host";
+import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { activeAnchorOf, useAiSession, type AiSessionValue } from "./AiSession";
+
+// 包一層照呼叫原實作的 spy（斷言自動套用寫入的陣列身分）；不用 automock——那會讓套用變成什麼都不做。
+vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
+  return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
 const SUMMARIZE: AiActionDto = { id: SUMMARIZE_ACTION_ID, name: "Summarize", applyMode: "preview", kind: "quick" };
@@ -114,7 +124,6 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   it("quick direct：串流完自動套用；activeAnchor 換成 insertedAnchor；before 是套用前凍結的原文；寫入的就是 prepared.blocks", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
-    const spy = vi.spyOn(editor, "replaceBlocks");
     startAction(REWRITE.id);
     expect(ai.calls[0]!.body).toEqual({ action_id: REWRITE.id, note_id: "note-1", text: "alpha beta gamma\n" });
     await finishStream(ai.calls[0]!, "ALPHA REWRITTEN");
@@ -125,7 +134,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     expect(activeAnchorOf(s)).toBe(s.applied.insertedAnchor);
     expect(s.applied.insertedAnchor.blockIds).not.toContain("p1");
     expect(JSON.stringify(s.preview.before)).toContain("alpha beta gamma");
-    expect(spy.mock.calls[0]![1]).toBe(s.prepared.blocks);
+    expect(vi.mocked(replaceBlocksKeepColumns).mock.calls[0]?.[2]).toBe(s.prepared.blocks);
   });
 
   it("Instruct 一律預覽（就算清單把它標成 direct）；送 trim 後的 instruction 與 focus", async () => {
@@ -158,7 +167,6 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   it("RF5 noChange：模型回的與原文只差 CRLF／尾端空白 → 不自動套用、preview.noChange、apply() 回 false、文件不動", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
-    const spy = vi.spyOn(editor, "replaceBlocks");
     startAction(REWRITE.id);
     await finishStream(ai.calls[0]!, "alpha beta gamma  \r\n");
     const s = session.state;
@@ -170,7 +178,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       applied = session.apply(true);
     });
     expect(applied).toBe(false);
-    expect(spy).not.toHaveBeenCalled();
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("外層 <text> 剝除：prepared 與預覽都不含標記", async () => {
@@ -405,13 +413,13 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   });
 
   it("selfWriteRef（自動套用＋還原那半）：串流中在 target 後方做非空選取 → direct 自動套用 → 還原，框仍在、回到未套用；D12 回呼 0 次", async () => {
-    // 白箱斷言 onAutoClose：沒有旗標時 D12 會在還原的 replaceBlocks 期間 close()，但 revert() 隨後的 setState 會蓋掉 idle（同一批次），
+    // 白箱斷言 onAutoClose：沒有旗標時 D12 會在還原的取代期間 close()，但 revert() 隨後的 setState 會蓋掉 idle（同一批次），
     // 框照樣留著——只看 state 抓不到（起草時 jsdom 突變實測：拿掉旗標只有 onAutoClose 斷言會紅）。
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
-    selectInBlock(editor, "p3", 0, 5); // target 後方；長度不同的替換會讓 replaceBlocks 平移這個選取並發 selection change
+    selectInBlock(editor, "p3", 0, 5); // target 後方；長度不同的替換會平移這個選取並發 selection change
     await finishStream(ai.calls[0]!, "A much longer rewritten first paragraph than before");
     expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
     act(() => session.revert());

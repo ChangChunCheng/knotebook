@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { getFormattingToolbarItems, useBlockNoteEditor, useComponentsContext, useEditorState } from "@blocknote/react";
 import { Sparkles } from "@/components/ui/icons";
+import { KnotebookFileDeleteButton } from "@/components/editor/KnotebookFileDeleteButton";
 import { useAiSession } from "./AiSession";
 
 /**
@@ -11,6 +12,8 @@ import { useAiSession } from "./AiSession";
  * 顯示條件：可編輯、有可用動作、且 `getSelection()` 不是 undefined——NodeSelection（選到圖片／檔案區塊）時它回 undefined，
  * 不渲染 AI 項，避免按了沒反應的死鈕。串流中停用（S2）。`useAiSession()` 能直接用：toolbar 經 `editor.portalElement` 的 React portal
  * 渲染，context 穿透 portal。
+ *
+ * 預設按鈕中的檔案刪除鈕（key `fileDeleteButton`）換成自家版：原生的走 `editor.removeBlocks`，刪欄內的圖會收欄（D25）。
  */
 export function AiToolbar() {
   const Components = useComponentsContext()!;
@@ -21,7 +24,7 @@ export function AiToolbar() {
 
   return (
     <Components.FormattingToolbar.Root className="bn-toolbar bn-formatting-toolbar">
-      {getFormattingToolbarItems()}
+      {getFormattingToolbarItems().map((el) => (el.key === "fileDeleteButton" ? <KnotebookFileDeleteButton key="fileDeleteButton" /> : el))}
       {editable && actions.length > 0 && hasBlockSelection && (
         <Components.FormattingToolbar.Button
           mainTooltip={t("ai.toolbar.trigger")}

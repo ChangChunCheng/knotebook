@@ -10,6 +10,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { Toaster } from "@/components/ui/toast";
+import { P, row, shape, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { KnotebookSideMenu, NotePathContext } from "./KnotebookSideMenu";
 import { HeadingAnchorButtons } from "./HeadingAnchorButtons";
 
@@ -99,5 +100,78 @@ describe("#269 KnotebookDragHandleMenu", () => {
     } finally {
       window.history.pushState(null, "", "/");
     }
+  });
+});
+
+describe("D25 側選單「Delete」不收欄", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  function mount(content: PartialBlockLike[]): AnyEditor {
+    const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: content as never }) as AnyEditor;
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <BlockNoteView editor={editor} editable sideMenu={false}>
+            <SideMenuController sideMenu={KnotebookSideMenu} />
+          </BlockNoteView>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return editor;
+  }
+
+  /** 對文字為 `text` 的 block 開 ⋮⋮、點「Delete」。 */
+  async function deleteVia(editor: AnyEditor, text: string, id: string): Promise<void> {
+    const el = screen.getByText(text);
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
+    act(() => {
+      fireEvent.mouseMove(el, { clientX: 0, clientY: 0 });
+    });
+    expect(editor.getExtension(SideMenuExtension)!.store.state?.block?.id).toBe(id);
+    fireEvent.click(await screen.findByLabelText("Open block menu"));
+    fireEvent.click(await screen.findByText("Delete"));
+  }
+
+  const R2 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")];
+
+  it("SM1：欄內唯一 block 刪掉 → 列與兩欄都在、該欄補空段落", async () => {
+    const editor = mount(R2());
+    await deleteVia(editor, "b", "b1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
+  });
+
+  it("SM2：跨兩欄選取後對 a 刪除 → 整個選取（a 與第 2 欄節點）被刪、列仍兩欄", async () => {
+    const editor = mount(R2());
+    act(() => editor.setSelection("a1", "b1"));
+    // SM2a（事實釘）：跨欄選取的 blocks 第 2 項是 column 節點本身。
+    expect(editor.getSelection()!.blocks.map((b) => b.type)).toEqual(["paragraph", "column"]);
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
+  });
+
+  it("SM2b：同一選取下對 b 刪除 → b 不在選取的 blocks 裡，只刪 b", async () => {
+    const editor = mount(R2());
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "b", "b1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
+  });
+
+  it("SM2c（事實釘）：[a｜b,q] 選 a→b 後對 a 刪除 → 沒選到的 q 也被刪（整個第 2 欄節點）", async () => {
+    const editor = mount([P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")]);
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
+  });
+
+  it("SM2d（事實釘）：[a｜b｜c] 選 a→b 後對 a 刪除 → 第 2 欄整欄消失、三欄變兩欄", async () => {
+    const editor = mount([P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")]);
+    act(() => editor.setSelection("a1", "b1"));
+    await deleteVia(editor, "a", "a1");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:c)]  paragraph:z");
   });
 });

@@ -1,5 +1,6 @@
 import type { Block, BlockNoteEditor } from "@blocknote/core";
 import { convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
+import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { verifyAnchor, type AiAnchor } from "./anchor"; // 只 import 有呼叫點的符號——no-unused-vars 是 error 且 root lint --max-warnings=0
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.tsx/wikilink/menu.ts）
@@ -50,13 +51,13 @@ export function hasNonTextBlock(editor: AnyEditor, blockIds: string[]): boolean 
   return blockIds.some((id) => NON_TEXT_TYPES.has(editor.getBlock(id)?.type ?? ""));
 }
 
-/** 守門→replaceBlocks：**全程同步、無 await**（spec §13.3）。寫入的是 `prepared.blocks` 本身（#263：與預覽同一份）。 */
+/** 守門→取代：**全程同步、無 await**（spec §13.3）。寫入的是 `prepared.blocks` 本身（#263：與預覽同一份）；走 D25 helper，欄內套用不收欄。 */
 export function applyAiResult(editor: AnyEditor, anchor: AiAnchor, prepared: PreparedResult): ApplyOutcome {
   const verdict = verifyAnchor(editor, anchor);
   if (verdict !== "ok") return { ok: false, reason: verdict };
   // 守門已保證所有 blockIds 存在（否則已提早 return "missing"），這裡的 `!` 只是把已驗證的事實告訴型別系統。
   const replacedSnapshot = anchor.blockIds.map((id) => editor.getBlock(id)!);
-  const { insertedBlocks } = editor.replaceBlocks(anchor.blockIds, prepared.blocks);
+  const { insertedBlocks } = replaceBlocksKeepColumns(editor, anchor.blockIds, prepared.blocks);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- insertedBlocks 元素為 BlockNote 內部泛型 Block，走 repo 慣例用 any
   return { ok: true, insertedIds: insertedBlocks.map((b: any) => b.id), replacedSnapshot };
 }
@@ -73,6 +74,6 @@ export function revertAiResult(
   replacedSnapshot: Block<any, any, any>[],
 ): RevertOutcome {
   if (verifyAnchor(editor, insertedAnchor) !== "ok") return "stale";
-  editor.replaceBlocks(insertedAnchor.blockIds, replacedSnapshot);
+  replaceBlocksKeepColumns(editor, insertedAnchor.blockIds, replacedSnapshot);
   return "ok";
 }
