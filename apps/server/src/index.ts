@@ -27,8 +27,9 @@ import { backfillSearchIndex } from "./notes/search-index.js";
 const logger = pino();
 
 /**
- * 關機時等背景工作停下的共用上限（`SCAN_STOP_GRACE_MS`＝2 s，與 app.ts 的兩個 onClose 共用）：#272 §7.4 自動切版掃描、
- * #269 §12.1 站內連結轉換——兩者並行、共用這一份寬限。timer unref：不撐住行程。
+ * 關機時等背景工作停下的共用上限（`SCAN_STOP_GRACE_MS`＝2 s，與 app.ts 的三個 onClose 共用）：#272 §7.4 自動切版掃描、
+ * #269 §12.1 站內連結轉換——並行、共用這一份寬限。#181 §6.6 垃圾桶清理在 app.ts 的 onClose（`collab.destroy()` 之後）停，另有同值上限。
+ * timer unref：不撐住行程。
  */
 const stopGrace = (): Promise<void> => new Promise(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref());
 
@@ -185,6 +186,7 @@ async function main(): Promise<void> {
       uploadsDir,
       ai,
       startVersionSweep: true,
+      startTrashPurge: true,
       // #272 §7.5：e2e 測試縫開著時每秒掃一次（X 也會被壓成秒，見 routes/test-hooks.ts）。
       ...(config.testHooks ? { versionAutoScanIntervalMs: 1000 } : {}),
     },

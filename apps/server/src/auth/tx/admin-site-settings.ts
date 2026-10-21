@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { VERSION_DAYS_MAX, type VersionSettingsDto } from "@knotebook/shared";
+import { VERSION_DAYS_MAX, type TrashSettingsDto, type VersionSettingsDto } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
 import { authProviders, siteSettings } from "../../db/schema.js";
 import { TxAbort } from "../../http/tx-abort.js";
@@ -112,4 +112,19 @@ export async function updateVersionSettingsInTx(tx: Tx, input: UpdateVersionSett
     })
     .where(eq(siteSettings.singleton, true));
   return next;
+}
+
+export const TRASH_RETENTION_RANGE_MESSAGE = "保留天數須為 1 到 3650 的整數，或 null（不自動刪除）";
+
+/**
+ * #181 §6.9：垃圾桶保留天數。照 `updateVersionSettingsInTx` 的形：先取 B27 鎖（與其他站台設定寫入序列化）再 UPDATE。
+ * 範圍由路由驗（DB CHECK `site_settings_trash_retention_chk` 是最後防線）；`null`＝不自動永久刪除。改了只影響之後的清理輪次。
+ */
+export async function updateTrashSettingsInTx(tx: Tx, input: { retentionDays: number | null }): Promise<TrashSettingsDto> {
+  await lockSiteSettingsInTx(tx);
+  await tx
+    .update(siteSettings)
+    .set({ trashRetentionDays: input.retentionDays, updatedAt: sql`now()` })
+    .where(eq(siteSettings.singleton, true));
+  return { retentionDays: input.retentionDays };
 }
