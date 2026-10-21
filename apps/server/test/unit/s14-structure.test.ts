@@ -194,7 +194,7 @@ describe("S14 結構性守衛（#175 §4.4）", () => {
       { f: "notes/move-note.ts", all: 1, inTx: 1 }, // #180 T3 move（spec §3.2）
       { f: "routes/admin-password-reset.ts", all: 2, inTx: 2 }, // #286 產生、取消
       { f: "routes/password-reset.ts", all: 1, inTx: 1 }, // #286 完成重設
-      { f: "trash/service.ts", all: 1, inTx: 1 }, // #181 移入（trashNotesInTx）
+      { f: "trash/service.ts", all: 3, inTx: 3 }, // #181 移入（trashNotesInTx）、還原（restoreNotesInTx）、永久刪除（purgeTrashedNotesInTx）
     ]);
   });
 

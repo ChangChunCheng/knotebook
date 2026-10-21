@@ -3,10 +3,20 @@
  * 每支的形一律是「共編閘門／預判 → 交易（`notes/tx/trash.ts`，S14：callback 整段一個 `xInTx`）→ commit 後的 hook／刪檔」；
  * 交易本體只收 `tx` 與純資料，閘門、刪檔、`onNotesRestored` 都在這裡、在交易之外。
  */
+import type { TrashSkipDto } from "@knotebook/shared";
 import type { CollabHooks } from "../collab/hooks.js";
 import type { Db } from "../db/index.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
-import { trashNotesInTx, type TrashIdsInput, type TrashNotesOutcome } from "../notes/tx/trash.js";
+import { resolveTrashedNoteAccess } from "../notes/service.js";
+import {
+  purgeTrashedNotesInTx,
+  restoreNotesInTx,
+  trashNotesInTx,
+  type TrashBatchOutcome,
+  type TrashIdsInput,
+  type TrashNotesOutcome,
+} from "../notes/tx/trash.js";
+import { deleteUploadFiles, type UploadDeleteLogger } from "../uploads/service.js";
 
 export interface TrashServiceDeps {
   db: Db;
@@ -39,4 +49,70 @@ export async function trashNote(deps: TrashServiceDeps, input: { noteId: string;
   // 交易內重判沒過（授權之後被降權、被別人先移入或刪掉）：閘門收回去，否則接下來兩分鐘新連線都會被告知「已刪除」。
   gate.release();
   return out.forbidden.includes(noteId) ? "forbidden" : "not_found";
+}
+
+export interface TrashBatchResult { done: string[]; skipped: TrashSkipDto[] }
+
+/**
+ * 預判（spec §6.3.3-1、§6.3.4-1）：逐 id `resolveTrashedNoteAccess`，false（不存在、活筆記、沒有垃圾桶權）→ 不進交易、記
+ * `not_found`。**這是守 AG2 的承重點**：交易本體的分類順序對任意 id 是存在性 oracle，只能收這裡放行的 id。
+ */
+async function prejudge(db: Db, input: { ids: readonly string[]; by: string }): Promise<{ ok: string[]; denied: Set<string> }> {
+  const ok: string[] = [];
+  const denied = new Set<string>();
+  for (const id of input.ids) {
+    if (await resolveTrashedNoteAccess(db, input.by, id)) ok.push(id);
+    else denied.add(id);
+  }
+  return { ok, denied };
+}
+
+/** 預判略過與交易內略過依**原輸入索引**合併（不是兩段串接）。 */
+function mergeSkipped(ids: readonly string[], denied: ReadonlySet<string>, inTx: readonly TrashSkipDto[]): TrashSkipDto[] {
+  const byId = new Map(inTx.map(s => [s.id, s]));
+  const out: TrashSkipDto[] = [];
+  for (const id of ids) {
+    if (denied.has(id)) out.push({ id, reason: "not_found" });
+    else {
+      const s = byId.get(id);
+      if (s) out.push(s);
+    }
+  }
+  return out;
+}
+
+/**
+ * 還原（spec §6.3.3）。ids：已過 UUID_RE、已轉小寫、已去重（呼叫端負責）。預判 → `restoreNotesInTx`（鎖內重判）→ commit 後
+ * **同步** `onNotesRestored(done)`（只傳實際還原的 id、中間不 await；done 為空不呼叫）。`done`、`skipped` 照輸入順序。
+ * 不檢查容量（§6.3.3-5）。預判全數略過 → 不開交易。
+ */
+export async function restoreTrashed(deps: TrashServiceDeps, input: { ids: readonly string[]; by: string }): Promise<TrashBatchResult> {
+  const { ok, denied } = await prejudge(deps.db, input);
+  let out: TrashBatchOutcome = { done: [], skipped: [] };
+  if (ok.length > 0) {
+    const txInput: TrashIdsInput = { ids: ok, by: input.by };
+    out = await deps.db.transaction(tx => restoreNotesInTx(tx, txInput, deps.groupTestHook));
+    if (out.done.length > 0) deps.collabHooks.onNotesRestored(out.done);
+  }
+  return { done: out.done, skipped: mergeSkipped(input.ids, denied, out.skipped) };
+}
+
+/**
+ * 永久刪除（spec §6.3.4）。ids 的前提同 `restoreTrashed`。預判 → `purgeTrashedNotesInTx`（活筆記一律不刪，AG5）→ commit 後
+ * `deleteUploadFiles`（best-effort；交易 throw 時一個檔都不刪）。不開共編閘門（§6.3.4-4）。預判全數略過 → 不開交易。
+ */
+export async function purgeTrashed(
+  deps: TrashServiceDeps,
+  input: { ids: readonly string[]; by: string },
+  log: UploadDeleteLogger,
+): Promise<TrashBatchResult> {
+  const { ok, denied } = await prejudge(deps.db, input);
+  let out: TrashBatchOutcome = { done: [], skipped: [] };
+  if (ok.length > 0) {
+    const txInput: TrashIdsInput = { ids: ok, by: input.by };
+    const purged = await deps.db.transaction(tx => purgeTrashedNotesInTx(tx, txInput, deps.groupTestHook));
+    await deleteUploadFiles(deps.uploadsDir, purged.uploadIds, log);
+    out = purged;
+  }
+  return { done: out.done, skipped: mergeSkipped(input.ids, denied, out.skipped) };
 }

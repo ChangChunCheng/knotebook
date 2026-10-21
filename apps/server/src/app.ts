@@ -21,6 +21,7 @@ import { SCAN_STOP_GRACE_MS, VERSION_AUTO_SCAN_INTERVAL_MS, VERSION_SWEEP_FIRST_
 import { authRoutes } from "./routes/auth.js";
 import { notesRoutes } from "./routes/notes.js";
 import { noteVersionsRoutes } from "./routes/note-versions.js";
+import { trashRoutes } from "./routes/trash.js";
 import { groupsRoutes } from "./routes/groups.js";
 import type { WriteNoteLinksHooks } from "./notes/links.js";
 import type { SlugPatchTestHook } from "./notes/tx/patch-slug.js";
@@ -789,6 +790,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   );
   // 版本歷史（spec 2026-10-09 §6）：cookie 專用六支；apply 只在 writes.available 時註冊（路由內判）。
   void app.register(noteVersionsRoutes({ db: deps.db, versions, writes, limiters: { edit: limiters.edit } }));
+  // #181：垃圾桶清單／還原／永久刪除（cookie-only，見 routes/trash.ts 檔頭）。
+  void app.register(trashRoutes({ db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, groupTestHook: deps.groupTestHook }));
   // #103：群組管理（session-only，見 routes/groups.ts 檔頭）。
   void app.register(groupsRoutes({ db: deps.db, collabHooks: deps.collabHooks, groupTestHook: deps.groupTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, versions }));
   void app.register(adminUsersRoutes({ db: deps.db, gate: deps.gate, collabHooks: deps.collabHooks, adminTestHook: deps.adminTestHook }));
