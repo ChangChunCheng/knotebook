@@ -242,6 +242,39 @@ describe("不丟例外（A14 (3)）", () => {
   });
 });
 
+describe("並排欄寬（T2）", () => {
+  /** 手造一列：columnList > column(width?) > blockContainer > paragraph。width 為 undefined＝屬性不存在。 */
+  function rowDoc(width: number | undefined): Y.Doc {
+    const doc = new Y.Doc();
+    const g = new Y.XmlElement("blockGroup");
+    F(doc).insert(0, [g]);
+    const list = new Y.XmlElement("columnList");
+    list.setAttribute("id", "r");
+    g.insert(0, [list]);
+    const cols = [0, 1].map(i => {
+      const col = new Y.XmlElement("column");
+      col.setAttribute("id", `rc${i}`);
+      if (i === 0 && width !== undefined) col.setAttribute("width", width as never);
+      const c = new Y.XmlElement("blockContainer");
+      c.setAttribute("id", `rp${i}`);
+      const e = new Y.XmlElement("paragraph");
+      const t = new Y.XmlText();
+      e.insert(0, [t]);
+      c.insert(0, [e]);
+      col.insert(0, [c]);
+      t.insert(0, `欄${i}`);
+      return col;
+    });
+    list.insert(0, cols);
+    return doc;
+  }
+
+  it("V1：column 的 width 屬性不存在 ≡ width:1（預設）；width:2 不同", () => {
+    expect(vfp(rowDoc(undefined))).toBe(vfp(rowDoc(1)));
+    expect(vfp(rowDoc(2))).not.toBe(vfp(rowDoc(1)));
+  });
+});
+
 describe("屬性值等於 schema 預設視同缺席（spec §13-9 方案二，V2）", () => {
   const HEADING_FULL = { level: 2, isToggleable: false, backgroundColor: "default", textColor: "default", textAlignment: "left" };
   const PARA_FULL = { backgroundColor: "default", textAlignment: "left", textColor: "default" };

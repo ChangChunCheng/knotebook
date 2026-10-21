@@ -3,8 +3,9 @@ import * as Y from "yjs";
 import { SESSION_COOKIE } from "@knotebook/shared";
 import { signSession } from "../src/auth/session.js";
 import { presenceClientId } from "../src/notes/editing/presence.js";
-import { buildCollabTestApp, testConfig } from "./helpers.js";
-import { bearer, getContent, seedContent, seedTokenForUser, tick, waitFor } from "./editing-helpers.js";
+import { EditorSession } from "../src/notes/editing/session.js";
+import { buildCollabTestApp, testConfig, testEditingRuntime } from "./helpers.js";
+import { bearer, docText, getContent, seedContent, seedTokenForUser, tick, waitFor } from "./editing-helpers.js";
 
 const PASSWORD = "correct-horse-battery";
 
@@ -32,6 +33,29 @@ async function scene(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
   const outline = async () => (await getContent(ctx.app, note.id, token)).json().outline as Array<{ sectionId: string; heading: string; fingerprint: string }>;
   return { ctx, u, note, session, client, token, tokenId, id, ownerHandle, expectedName, remote, remoteClock, cursorText, outline };
 }
+
+describe("presence：並排", () => {
+  it("PR1：_top 的第一顆是列 → 游標落在第一欄第一顆的文字（不是該欄最後一顆、不是最後一欄）", async () => {
+    const s = await scene();
+    const ses = await EditorSession.open(testEditingRuntime, s.client.doc);
+    try {
+      ses.editor.replaceBlocks(ses.editor.document, [
+        { id: "r", type: "columnList", children: [
+          { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "ra", type: "paragraph", content: "左一" }, { id: "ra2", type: "paragraph", content: "左二" }] },
+          { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "rb", type: "paragraph", content: "右二" }] },
+        ] },
+        { id: "h", type: "heading", props: { level: 1 }, content: "標題文字" },
+        { id: "p", type: "paragraph", content: "段落文字" },
+      ] as never);
+    } finally {
+      ses.close();
+    }
+    await waitFor("server 收到列", 5_000, () => docText(s.ctx.collab.hocuspocus.documents.get(s.note.id)!).includes("段落文字"));
+    await getContent(s.ctx.app, s.note.id, s.token, "_top"); await tick();
+    await waitFor("游標到左一", 2_000, () => s.cursorText() === "左一");
+    s.client.disconnect();
+  });
+});
 
 describe("presence", () => {
   it("token 讀 → provider 出現 `handle (label)` 與顏色、游標在文件開頭；?section= → 該段第一顆；_top → 文件開頭", async () => {
