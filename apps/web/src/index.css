@@ -873,6 +873,45 @@ input[name="share-access"] {
   }
 }
 
+/* ── 並排排版（spec 2026-10-21 columns-layout §6、§8）─────────────────────────
+   列＝core 的 .bn-block-column-list（flex），欄＝.bn-block-column（inline style 的 flex:N 1 0 是欄寬比例，這裡不碰）。
+   全部錨 .bn-editor 提高特異度：BlockNote 的 CSS 在 lazy chunk、晚於本檔，兩邊都未分層，同特異度我們必輸，
+   而且靜默不生效、jsdom 全綠——是否出貨靠 build 後 grep dist/assets/*.css（data-stacked、data-kb-col-kind）。
+   - 欄的左右 padding 歸零（覆寫 core 的 20px 與首尾不對稱規則；上下 12px 照 core）：欄距只靠列的 gap，欄的內容寬才與欄比例成正比。
+   - gap 與兩個 min-width 是 collab/columns/layout.ts 的 COLUMN_GAP_PX／COLUMN_MIN_TEXT_PX／COLUMN_MIN_IMAGE_PX，兩邊要一起改
+     （columns-css.guard.test.ts 比對）。data-kb-col-kind、data-stacked 由 layout-extension.ts 的 node decoration 掛上。
+   - image 欄的 96px 與上面 :first-child／:last-child 的 200px 同特異度，只靠排在後面贏——兩條的順序不能對調（守衛 CSS3）。
+   - 堆疊用 display:block：欄上的 inline flex 自然失效，不必 !important。
+   - 欄內圖片：外框與圖都 max-width:100%，畫面寬＝min(previewWidth 或原圖寬, 欄的內容寬)，欄變窄不寫 previewWidth。 */
+.bn-editor .bn-block-column-list {
+  gap: 24px;
+  align-items: flex-start;
+}
+.bn-editor .bn-block-column,
+.bn-editor .bn-block-column:first-child,
+.bn-editor .bn-block-column:last-child {
+  padding-inline: 0;
+  min-width: 200px;
+}
+.bn-editor .bn-block-column[data-kb-col-kind="image"] {
+  min-width: 96px;
+}
+.bn-editor .bn-block-column-list[data-stacked] {
+  display: block;
+}
+.bn-editor .bn-block-column-list[data-stacked] > .bn-block-column {
+  min-width: 0;
+}
+.bn-editor .bn-block-column-list[data-stacked] > .bn-block-column + .bn-block-column {
+  margin-top: 12px;
+}
+.bn-editor .bn-block-column [data-file-block] .bn-file-block-content-wrapper {
+  max-width: 100%;
+}
+.bn-editor .bn-block-column [data-file-block] .bn-visual-media {
+  max-width: 100%;
+}
+
 /* 版本預覽 diff（spec §8.4）：左邊 3px 色條＋淡底。顏色只在 diff 預覽內（D7「唯一的顏色是綠點」的例外）。
    選擇器掛在 .kb-diff（DiffEditor 的 wrapper）之下，活編輯器不受影響。字面色、不碰 --brand（#154：.bn-root 內 brand token 會被重設）。
    `data-diff` 貼在 `.bn-block-outer[data-id]`，`.bn-block` 是它的直接子（Task 8 Step 1 探針印出的 DOM）。

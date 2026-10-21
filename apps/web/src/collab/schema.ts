@@ -3,6 +3,7 @@ import { columnBlockSpec, columnListBlockSpec, withGuardedExternalHTML } from "@
 import { CODE_BLOCK_OPTIONS } from "@/lib/code-highlight";
 import { mermaidSpec } from "@/components/mermaid/spec";
 import { wikilinkSpec } from "@/components/wikilink/spec";
+import { withColumnsLayout } from "./columns/layout-extension";
 
 // spec §11.1（P2 圖片行為）曾經逐字：上傳是 Plan 3 的範圍，P2 **不啟用 image
 // block**，並且**攔截並拒絕**圖片的貼上／拖放。理由不是 UI 潔癖而是儲存：BlockNote
@@ -78,7 +79,8 @@ export const noteSchema = BlockNoteSchema.create({
     // 東西、無 createHighlighter＝不上色）——選項封在 spec 閉包裡，**沒有** editor 層
     // 的 `codeBlock` 選項可以事後補（已對 0.52.1 dist 核實），唯一接線點就是這裡。
     codeBlock: createCodeBlockSpec(CODE_BLOCK_OPTIONS),
-    columnList: columnListBlockSpec,
+    // 版面外掛（堆疊、欄內圖片把手）只掛在 web 的 schema；回新物件，shared 的 spec 不變（headless schema 也用它）。
+    columnList: withColumnsLayout(columnListBlockSpec),
     column: columnBlockSpec,
   },
   inlineContentSpecs: { ...defaultInlineContentSpecs, wikilink: wikilinkSpec },

@@ -5,11 +5,15 @@ import { absoluteUrl, blockLinkUrl, copyBlockLink } from "@/lib/copy-block-link"
 const HEADING_SELF = ':scope > .bn-block > .bn-block-content[data-content-type="heading"]';
 const HEADING_TEXT = ":scope > .bn-block > .bn-block-content > .bn-inline-content";
 
-/** 從事件目標往上找最近的 `.bn-block-outer`：自己是標題 ⇒ 那顆；是別種區塊 ⇒ null（隱藏）；不在任何區塊裡（例如 # 鈕本身）⇒ undefined（不變）。 */
+/**
+ * 從事件目標往上找最近的 `.bn-block-outer`：自己是標題 ⇒ 那顆；是別種區塊、或在並排的欄內（spec 2026-10-21 columns-layout §7.5）⇒ null（隱藏）；
+ * 不在任何區塊裡（例如 # 鈕本身）⇒ undefined（不變）。
+ */
 function headingOuterOf(node: EventTarget | Node | null): HTMLElement | null | undefined {
   const el = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
   const outer = el?.closest<HTMLElement>(".bn-block-outer") ?? null;
   if (!outer) return undefined;
+  if (outer.closest('[data-node-type="column"]')) return null;
   return outer.querySelector(HEADING_SELF) ? outer : null;
 }
 

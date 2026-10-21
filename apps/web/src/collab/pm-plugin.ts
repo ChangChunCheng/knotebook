@@ -7,6 +7,10 @@ export interface PmPluginSpec {
   appendTransaction?(trs: readonly Any[], oldState: Any, newState: Any): Any;
   /** PM 的 `props`（例：`decorations(state)`，`collab/code-block-caret.ts` 用）。 */
   props?: { decorations?(state: Any): Any; transformPasted?(slice: Any, view: Any): Any };
+  /** PM 的 plugin state（`collab/columns/layout-extension.ts` 用）。 */
+  state?: { init(config: Any, state: Any): Any; apply(tr: Any, value: Any, oldState: Any, newState: Any): Any };
+  /** PM 的 plugin view（同上）。 */
+  view?(view: Any): { update?(view: Any, prevState: Any): void; destroy?(): void };
 }
 
 /**
