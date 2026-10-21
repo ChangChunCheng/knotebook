@@ -1376,11 +1376,12 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // returning 帶回現行 publicSlug／publicWidth 湊全形回應。
       // #175 C13（§6.6 gate r1 M2）：述詞帶授權時讀到的歸屬（`group_id IS NOT DISTINCT FROM $授權時`）——授權之後
       // 被移進／移出群組（PR2）時 UPDATE 落空，不把 token 寫到授權時沒看過的那一種筆記上。
+      // #181 §6.2-11：五支單句 UPDATE 都排除垃圾桶筆記（落空走各自原本的回應）——否則能在垃圾桶裡開公開連結，還原後就公開了。
       await deps.groupTestHook?.("public-link-authorized", { noteId: id });
       const updated = await deps.db
         .update(notes)
         .set({ publicToken: token })
-        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`))
+        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`, isNull(notes.deletedAt)))
         .returning({ id: notes.id, publicSlug: notes.publicSlug, publicWidth: notes.publicWidth });
       if (updated.length === 0) return ownershipChanged(reply, id);
       return { token, slug: updated[0].publicSlug, width: updated[0].publicWidth };
@@ -1397,7 +1398,13 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // 照回 204（對 token 狀態冪等，重複 DELETE 一律 204）。
       // #122 PR3：**同一支 UPDATE 連帶清空 public_slug**（spec §4「DELETE 清兩者」）
       // ——撤公開後別名不得殘留（殘留列會占唯一索引、且在重生 token 後悄悄復活）。
-      const cleared = await deps.db.update(notes).set({ publicToken: null, publicSlug: null }).where(eq(notes.id, id)).returning({ id: notes.id });
+      // #181：垃圾桶筆記＝落空 → 404，token／別名留著（還原後公開連結恢復，D-W2）。
+      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
+      const cleared = await deps.db
+        .update(notes)
+        .set({ publicToken: null, publicSlug: null })
+        .where(and(eq(notes.id, id), isNull(notes.deletedAt)))
+        .returning({ id: notes.id });
       if (cleared.length === 0) return sendError(reply, 404, "not_found", "找不到此筆記");
       return reply.code(204).send();
     });
@@ -1417,7 +1424,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       const updated = await deps.db
         .update(notes)
         .set({ publicWidth: parsed.data.width })
-        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`))
+        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`, isNull(notes.deletedAt)))
         .returning({ publicWidth: notes.publicWidth });
       if (updated.length === 0) return ownershipChanged(reply, id);
       return { width: updated[0].publicWidth };
@@ -1463,7 +1470,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         updated = await deps.db
           .update(notes)
           .set({ publicSlug: result.value })
-          .where(and(eq(notes.id, id), sql`${notes.publicToken} is not null`, eq(notes.ownerId, userId)))
+          .where(and(eq(notes.id, id), sql`${notes.publicToken} is not null`, eq(notes.ownerId, userId), isNull(notes.deletedAt)))
           .returning({ publicToken: notes.publicToken, publicSlug: notes.publicSlug, publicWidth: notes.publicWidth });
       } catch (err) {
         // constraint 名分流（比照 slug_taken）：只認 per-user 別名唯一索引，其他 23505 rethrow。
@@ -1488,8 +1495,10 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // 冪等 DELETE：本無別名也 204；rowcount 0（resolveRole 後筆記被刪）**同收 204**
       // ——DELETE 語意本就 vacuous。⚠ 兩支的 rowcount-0 政策不同（此支 204、姊妹
       // DELETE /public-link 是 I2 的 404）＝各自承接既有慣例；此差異只在 resolveRole
-      // 之後的極窄競態窗成立、測試不可觀測，純文件義務。
-      await deps.db.update(notes).set({ publicSlug: null }).where(eq(notes.id, id));
+      // 之後的競態窗成立，由 `public-link-authorized` 縫釘住（`trash-rereads.test.ts` 的 RR-PL2 404／RR-PS3 204）。
+      // #181：垃圾桶筆記同收 204，但別名不清（還原後恢復）。
+      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
+      await deps.db.update(notes).set({ publicSlug: null }).where(and(eq(notes.id, id), isNull(notes.deletedAt)));
       return reply.code(204).send();
     });
   };
