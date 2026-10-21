@@ -8,7 +8,7 @@
  * - 先鎖列再讀，`old_custom` 是**這次 UPDATE 實際覆寫的那一版**——並發形下也成立（`RETURNING` 帶子查詢的形在 EPQ
  *   下讀到語句開始時的快照，gate r4 A-11 R3 實證會錯）。
  * - scope 條件＝授權當下的歸屬（個人：`owner_id = $me AND group_id IS NULL`；群組：`group_id = $authGroupId`）。
- *   0 列＝授權之後歸屬變了（PR2 的移動）或列被刪 → 回 null，呼叫端再讀一次分流 404／409 `conflict`（gate r5 M-2）。
+ *   0 列＝授權之後歸屬變了（PR2 的移動）、列被刪或被移入垃圾桶（#181，條件含 `deleted_at IS NULL`）→ 回 null，呼叫端再讀一次分流 404／409 `conflict`（gate r5 M-2）。
  * - `old_custom` 為真（舊自訂 slug 真的被寫進 prev）且個人 scope → 同交易刪 `/n/<handle>/<新 prev>` 的轉址（B4：
  *   轉址與 prev 以寫入先後裁決）。群組 scope 不發：`/g/` 轉址只由轉移寫入、而轉移同交易刪掉群組（gate r3 N-2）。
  * - `redirectHandle` 由呼叫端傳入（`request.user.handle`，記憶體中）。**本檔不得查 users**——S14：gate r4 A-10 以
@@ -47,7 +47,7 @@ export async function patchSlugInTx(
     tx
       .select({ id: notes.id, oldCustom: sql<boolean>`${notes.slugIsCustom}`.as("old_custom") })
       .from(notes)
-      .where(and(eq(notes.id, input.noteId), scope))
+      .where(and(eq(notes.id, input.noteId), scope, isNull(notes.deletedAt)))
       .for("update"),
   );
   const [row] = await tx

@@ -4,7 +4,7 @@
  * FK 23503 → 404 的映射都在路由層、交易之外。
  * S5（§4.4）：`FOR SHARE` 讀 `group_id`——與 PR2 移動交易的 `FOR UPDATE` 互鎖；讀到非 NULL（授權之後被移進群組）→ 409。
  */
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { ShareRole } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
 import { noteShares, notes } from "../../db/schema.js";
@@ -16,7 +16,8 @@ export async function upsertShareInTx(
   input: { noteId: string; targetUserId: string; role: ShareRole },
   hook?: GroupTestHook,
 ): Promise<void> {
-  const [locked] = await tx.select({ groupId: notes.groupId }).from(notes).where(eq(notes.id, input.noteId)).for("share");
+  // #181 §6.2-11：授權之後被移入垃圾桶＝列消失，同一條 404。
+  const [locked] = await tx.select({ groupId: notes.groupId }).from(notes).where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt))).for("share");
   if (!locked) throw new TxAbort(404, "not_found", "找不到此筆記");
   if (locked.groupId !== null) throw new TxAbort(409, "note_in_group", "群組筆記不能逐人分享，請將對方加入群組");
   await hook?.("share-group-checked", { noteId: input.noteId });

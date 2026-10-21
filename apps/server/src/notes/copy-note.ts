@@ -108,6 +108,7 @@ export async function copyNote(
   const txInput = { sourceId, userId, scope, copy, uploadsDir: deps.uploadsDir, copiedFileIds, searchExtract, lockTimeoutMs: deps.storageLockTimeoutMs };
   let created;
   try {
+    await deps.groupTestHook?.("note-copy-authorized", { noteId: sourceId });
     created = await deps.db.transaction(tx => copyNoteInTx(tx, txInput, deps.groupTestHook, deps.noteCreateHooks, deps.searchIndexHooks));
   } catch (err) {
     // 交易已 rollback（uploads 列不在了；配額被拒時列根本還沒寫）：best-effort 刪掉已落盤的新檔，失敗只記 log。

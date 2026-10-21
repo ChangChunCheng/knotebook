@@ -5,7 +5,7 @@
  * 空間以交易內讀到的 owner_id／group_id 為準（preHandler 的預檢讀到的可能已被移動改掉——R3）。
  * 檔案已由路由寫好；本交易任何拋出都由路由 unlink（M4）。
  */
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { notes, uploads } from "../../db/schema.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
@@ -27,8 +27,9 @@ export async function insertUploadInTx(tx: Tx, input: InsertUploadInput, hook?: 
   const [note] = await tx
     .select({ ownerId: notes.ownerId, groupId: notes.groupId })
     .from(notes)
-    .where(eq(notes.id, input.noteId))
+    .where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt)))
     .for("key share");
+  // #181 §6.2-11：移入先取 `FOR UPDATE`，與這把 KEY SHARE 互斥；移入先 commit 時這裡重評條件不成立 → 404。
   if (!note) throw new TxAbort(404, "not_found", "找不到此筆記");
   await assertSpaceRoomInTx(tx, spaceOfNote(note), input.size, { lockTimeoutMs: input.lockTimeoutMs, hook, hookCtx: { noteId: input.noteId } });
   // #247 §9.2：佔用者＝上傳者。上傳進個人筆記也照寫（個人空間不看此欄；之後移入群組時由 notes/tx/move.ts 覆寫）。

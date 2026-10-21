@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import {
   MAX_LINK_TARGETS,
@@ -422,9 +422,10 @@ export function notesRoutes(deps: NotesRouteDeps) {
     /**
      * C13 的 rowcount-0 分流（gate r2 N-1）：列不在 → 404（I2 慣例）；列在 → 歸屬在授權之後變了 → 409 conflict。
      * 三處共用：public-link PUT（§6.6）、public-width PUT（#297）與 PATCH 的 T1（§4.3，scope 條件命中 0 列）。
+     * #181 §6.2-11 M-A：垃圾桶筆記算「列不在」→ 404，不是 409。
      */
     const ownershipChanged = async (reply: FastifyReply, noteId: string): Promise<FastifyReply> => {
-      const [row] = await deps.db.select({ id: notes.id }).from(notes).where(eq(notes.id, noteId)).limit(1);
+      const [row] = await deps.db.select({ id: notes.id }).from(notes).where(and(eq(notes.id, noteId), isNull(notes.deletedAt))).limit(1);
       return row ? sendError(reply, 409, "conflict", "筆記的歸屬已變更，請重新整理後再試") : noteNotFound(reply);
     };
 
