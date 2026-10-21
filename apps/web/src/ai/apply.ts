@@ -1,5 +1,5 @@
 import type { Block, BlockNoteEditor } from "@blocknote/core";
-import { convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
+import { COLUMN_BLOCK_TYPES, convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { verifyAnchor, type AiAnchor } from "./anchor"; // 只 import 有呼叫點的符號——no-unused-vars 是 error 且 root lint --max-warnings=0
 
@@ -22,14 +22,21 @@ export interface PreparedResult {
   unboundCount: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同 AnyBlock 的說明，BlockNote 泛型三元組
+function hasColumnBlock(blocks: readonly { type?: string; children?: readonly any[] }[]): boolean {
+  return blocks.some((b) => COLUMN_BLOCK_TYPES.has(b.type as string) || (b.children ? hasColumnBlock(b.children) : false));
+}
+
 /**
- * parse → 空結果判定 → 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。空字串／純空白回 `{ empty: true }`：
+ * parse → 空結果判定 → 並排檢查（PR-1 過渡守衛，回 `{ unsupported: true }`）→ 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。空字串／純空白回 `{ empty: true }`：
  * `tryParseMarkdownToBlocks("")` 回單一空段落而不是 `[]`（`@knotebook/shared` 的 `isBlankParseResult` 實測註記），
  * 不擋的話套用會把原文換成空段落。
  */
-export function prepareAiResult(editor: AnyEditor, markdown: string, deps: ApplyDeps): PreparedResult | { empty: true } {
+export function prepareAiResult(editor: AnyEditor, markdown: string, deps: ApplyDeps): PreparedResult | { empty: true } | { unsupported: true } {
   const parsed = editor.tryParseMarkdownToBlocks(markdown);
   if (isBlankParseResult(parsed)) return { empty: true };
+  // PR-1 過渡守衛（並排 PR-1 T3b）：與 server 的 parseMarkdownForNote 同，PR-2 的正式驗證落地前不收並排；PR-2 整段拿掉。
+  if (hasColumnBlock(parsed)) return { unsupported: true };
   const [rebound, unboundCount] = rebindWikilinks(
     parsed,
     [...deps.notes],

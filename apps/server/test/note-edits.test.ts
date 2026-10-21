@@ -356,7 +356,7 @@ describe("拒絕案假綠守衛", () => {
   // 這一案是那份清單的共用實作——新增任何拒絕碼都要加進 `cases`，不要另開一個沒有守衛的 it。
   // ⚠ `unsupported_block` **整合層刻意不驗**，而且到不了：headless schema ＝ `defaultBlockSpecs`
   // 全集＋mermaid／codeBlock（見 shared 的 `createHeadlessNoteSchema`），BlockNote 的 markdown/HTML
-  // parser 產得出來的 type 一定在白名單裡，所以無法從 markdown 造出這個碼。白名單那條分支由
+  // parser 產得出來的 type 一定在白名單裡，所以無法從 markdown 造出這個碼（PR-1 過渡期並排被拒例外，見 mcp-write-guards GW1／GW2）。白名單那條分支由
   // `test/unit/editing-markdown.test.ts` 的「未知型別整筆拒絕」以收窄的假 schema 驗（刪掉
   // `markdown.ts` 的 `walk` 檢查 → 那一案必須紅）。這裡誠實記下，而不是塞一個到不了的案子。
   it("403 viewer、empty_content、empty_section、too_many_blocks、NUL、未知欄位、fork 側 409、413 content_too_large → note_states 位元組相同、記錄零列", async () => {

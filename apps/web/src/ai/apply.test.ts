@@ -53,7 +53,7 @@ function mountedEditor(initial?: any[]) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
 function prep(editor: any, markdown: string, notes: SiteLinkCandidate[] = []): PreparedResult {
   const prepared = prepareAiResult(editor, markdown, { notes });
-  if ("empty" in prepared) throw new Error("預期非空結果");
+  if ("empty" in prepared || "unsupported" in prepared) throw new Error("預期非空結果");
   return prepared;
 }
 
@@ -162,6 +162,40 @@ describe("AI 套用鏈（spec §13.3）", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
+  // 並排 PR-1 過渡守衛（T3b）：與 server 同，AI 結果含並排一律 { unsupported: true }；PR-2 換成正式驗證。
+  const TWO_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
+  it("GA1：prepareAiResult 遇到兩欄 markdown → { unsupported: true }，文件不變", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const before = JSON.stringify(editor.document);
+    expect(prepareAiResult(editor, TWO_COLS, { notes: [] })).toEqual({ unsupported: true });
+    expect(JSON.stringify(editor.document)).toBe(before);
+  });
+
+  it("GA2：巢狀（清單內）的兩欄同上", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const nested = `- item\n\n${TWO_COLS.split("\n").map((l) => `  ${l}`).join("\n")}`;
+    expect(prepareAiResult(editor, nested, { notes: [] })).toEqual({ unsupported: true });
+  });
+
+  it("GA4：孤立的 columnList／column（parse 結果被換掉）各自都擋", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    for (const type of ["columnList", "column"]) {
+      const spy = vi.spyOn(editor, "tryParseMarkdownToBlocks").mockReturnValue([{ id: "c", type, children: [] }] as never);
+      try {
+        expect(prepareAiResult(editor, "x", { notes: [] })).toEqual({ unsupported: true });
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  it("GA3：不含並排的 markdown 照舊回 PreparedResult", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const p = prepareAiResult(editor, "# T\n\n- a\n- b", { notes: [] });
+    if ("empty" in p || "unsupported" in p) throw new Error("預期 PreparedResult");
+    expect(p.blocks.map((b) => b.type)).toEqual(["heading", "bulletListItem", "bulletListItem"]);
+  });
+
   it("#263：applyAiResult 寫進文件的就是 prepared.blocks 這個陣列（同一物件，預覽與寫入同一份）", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
@@ -223,7 +257,7 @@ describe("#269 W10：站內連結 → wikilink（快取命中才轉，沒有後�
       `see [Alpha](/notes/${notes2[0]!.id}#b-h1) and [mine](/n/alice/alpha) and [gone](/n/alice/missing)\n\n| a |\n| --- |\n| [t](/n/alice/alpha) |`,
       { notes: notes2, siteOrigin: window.location.origin },
     );
-    if ("empty" in p) throw new Error("empty");
+    if ("empty" in p || "unsupported" in p) throw new Error("empty");
     const json = JSON.stringify(p.blocks);
     expect(json.match(/"type":"wikilink"/g)).toHaveLength(3);
     expect(json).toContain('"anchorBlockId":"h1"');
@@ -236,7 +270,7 @@ describe("#269 W10：站內連結 → wikilink（快取命中才轉，沒有後�
     const id = notes2[0]!.id;
     const titled: SiteLinkCandidate[] = [{ ...notes2[0]!, title: "[Draft] Plan *v2*" }];
     const p = prepareAiResult(editor, `a [\\[Draft\\] Plan \\*v2\\*](/notes/${id}) b [a\\]b\\\\](/notes/${id}) c`, { notes: titled, siteOrigin: window.location.origin });
-    if ("empty" in p) throw new Error("empty");
+    if ("empty" in p || "unsupported" in p) throw new Error("empty");
     const links = (p.blocks[0]!.content as Array<{ type: string; props?: Record<string, string> }>).filter((n) => n.type === "wikilink");
     expect(links.map((n) => n.props!.label)).toEqual(["", "a]b\\"]);
     expect(links.map((n) => n.props!.snapshotTitle)).toEqual(["[Draft] Plan *v2*", "a]b\\"]);

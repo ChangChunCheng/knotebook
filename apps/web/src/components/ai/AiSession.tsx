@@ -205,13 +205,17 @@ export function AiSessionProvider(props: {
     setState(IDLE_STATE);
   }, []);
 
-  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
+  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空／含並排→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
   const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
     const ed = editorRef.current;
     const markdown = stripTextWrapper(raw);
     const prepared = prepareAiResult(ed, markdown, { notes: notesRef.current });
     if ("empty" in prepared) {
       setState({ phase: "error", target, request, code: "empty_result" });
+      return;
+    }
+    if ("unsupported" in prepared) {
+      setState({ phase: "error", target, request, code: "unsupported_block" }); // PR-1 過渡守衛：不套用、不留預覽（PR-2 換成正式驗證）
       return;
     }
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));

@@ -200,6 +200,20 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     expect(session.state.phase === "error" && session.state.code).toBe("empty_result");
   });
 
+  // 並排 PR-1 過渡守衛（T3b）：AI 結果含並排 → error 態 unsupported_block，不套用、不留預覽；PR-2 換成正式驗證。
+  it("GS1：串流完成的內容含正規形兩欄 → error 態 unsupported_block、文件不變（direct 模式也不自動套用）", async () => {
+    const { ai } = await mount();
+    openOn("p1", 0, 5);
+    const before = docText();
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`);
+    const s = session.state;
+    expect(s.phase).toBe("error");
+    expect(s.phase === "error" && s.code).toBe("unsupported_block");
+    expect(docText()).toBe(before);
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+  });
+
   it("串流錯誤 → error 態；retry 以同一組 request（含 instruction 與 focus）重送", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
