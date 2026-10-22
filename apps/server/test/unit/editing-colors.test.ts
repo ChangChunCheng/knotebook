@@ -6,7 +6,7 @@ import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
-import { PALETTE_COLORS, blocksToNoteMarkdown, findDisallowedColor } from "@knotebook/shared";
+import { COLUMNS_OPEN_TAG, PALETTE_COLORS, blocksToNoteMarkdown, columnOpenTag, findDisallowedColor } from "@knotebook/shared";
 import { readNoteContentFromDoc } from "../../src/notes/editing/read.js";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" }); rt.installGlobals();
@@ -411,9 +411,9 @@ describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
 
 const md1Of = (ed: Ed) => blocksToNoteMarkdown(ed, ed.document);
 
-describe("並排（PR-1 過渡）", () => {
-  // PR-2 改寫成 §11.1 的 div 形；PR-1 只要求不丟例外、兩欄文字都在輸出裡。
-  it("CL1：含列的 blocks 轉 markdown 不丟例外，輸出含左右欄文字", async () => {
+describe("並排（spec §11.1）", () => {
+  // 逐字形由 note-markdown-goldens 的 G1-* 釘住；這裡只看讀出是 div 形、兩欄文字各在一處。
+  it("CL1：含列的 blocks 讀成 §11.1 的 div 形", async () => {
     const md = await withSession(ed => {
       const blocks = [{
         id: "r", type: "columnList", children: [
@@ -424,7 +424,9 @@ describe("並排（PR-1 過渡）", () => {
       ed.replaceBlocks(ed.document, blocks as never);
       return blocksToNoteMarkdown(ed, ed.document);
     });
-    expect(md).toContain("左");
-    expect(md).toContain("右");
+    expect(md.split("\n")[0]).toBe(COLUMNS_OPEN_TAG);
+    expect(md.split(columnOpenTag(1)).length - 1).toBe(2);
+    expect(md.split("左").length - 1).toBe(1);
+    expect(md.split("右").length - 1).toBe(1);
   });
 });
