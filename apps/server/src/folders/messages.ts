@@ -24,3 +24,5 @@ export const NOTE_NOT_FOUND_MESSAGE = "找不到此筆記";
 export const NOTE_PLACE_FORBIDDEN_MESSAGE = "沒有整理這篇筆記的權限";
 /** 筆記放進／建立在／複製或移入到別空間的資料夾（附錄 C）。 */
 export const NOTE_FOLDER_CROSS_SPACE_MESSAGE = "筆記不能放進其他空間的資料夾";
+/** 建立、複製、移入群組時指定群組資料夾，但角色不能編輯（D13；三處同一句，附錄 C）。 */
+export const NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE = "你在這個群組的角色不能把筆記放進資料夾";

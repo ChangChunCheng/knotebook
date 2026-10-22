@@ -281,7 +281,11 @@ export class NoteWriteService {
    */
   async createWithContent(
     log: FastifyBaseLogger,
-    input: { userId: string; userHandle: string; tokenId: string | null; title: string | undefined; content: string; scope: SlugScope }
+    input: {
+      userId: string; userHandle: string; tokenId: string | null; title: string | undefined; content: string; scope: SlugScope;
+      /** 資料夾 PR-3a：呼叫端已驗過的資料夾（spec §5.7.6）；缺省＝根層（MCP `create_note` 在 PR-3a 不送）。 */
+      folderId?: string | null;
+    }
   ): Promise<CreateWithContentResult> {
     // #269 §8.5（A9）：lease **之前**預取寫入者可見清單（含 slug／群組／handle）；之後的解析在記憶體內完成、lease 期間零 DB。
     const candidates = await visibleNoteTargets(this.deps.db, input.userId);
@@ -300,7 +304,7 @@ export class NoteWriteService {
     // #145：建列（含帶 title 時的 auto slug 派生）收在 `notes/create.ts`。⚠ **它仍必須排在
     // 解析之後**（「解析在建列之前」是契約），而派生的 DB round-trip 也因此不會發生在持有
     // jsdom lease 期間（上面那個 `finally { scratch.close() }` 已經放掉了）。
-    const note = await insertNoteWithAutoSlug(this.deps.db, input.scope, input.title);
+    const note = await insertNoteWithAutoSlug(this.deps.db, { scope: input.scope, folderId: input.folderId ?? null }, input.title);
     try {
       const result = await this.queue.run(
         note.id,

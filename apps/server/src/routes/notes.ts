@@ -72,7 +72,9 @@ import {
 import { fetchBacklinks, normalizeLinkTargets, writeNoteLinks, type WriteNoteLinksHooks } from "../notes/links.js";
 import { schemaVersionFromBody, signCollabToken } from "../collab/token.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
-import { isForeignKeyViolation, uniqueViolationConstraint } from "../db/pg-errors.js";
+import { isForeignKeyViolation, isNoteFolderSpaceViolation, uniqueViolationConstraint } from "../db/pg-errors.js";
+import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_CROSS_SPACE_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../folders/messages.js";
+import { resolveFolderAccess, type FolderAccess } from "../folders/queries.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
 import { precheckDetail, quotaErrorDetail } from "../storage/usage.js";
 
@@ -80,9 +82,10 @@ import { precheckDetail, quotaErrorDetail } from "../storage/usage.js";
 // PATCH 的 body 搬到 `notes/schemas.ts`（#180 W16：`title` 改吃 `TITLE`，契約註解一併搬過去）。
 const putShareBodySchema = z.object({ email: z.string().email(), role: z.enum(["viewer", "editor"]) });
 // #175 §6.3 移動的 body：`groupId` 只驗是字串（非 UUID 由路由回 404 `group_not_found`，與「群組不存在」逐位元組相同——plan 規格落差 5）。
-const moveBodySchema = z.object({ groupId: z.string() }).strict();
-// #175 §6.5 複製的 body：省略 `groupId`＝複製到個人；非 UUID 同移動，由路由回 404 `group_not_found`。
-const copyBodySchema = z.object({ groupId: z.string().optional() }).strict();
+// 資料夾 PR-3a（§5.7.7）：`folderId` 同理只驗是字串（非 UUID 與不存在同形 404 `folder_not_found`）。
+const moveBodySchema = z.object({ groupId: z.string(), folderId: z.string().optional() }).strict();
+// #175 §6.5 複製的 body：省略 `groupId`＝複製到個人；非 UUID 同移動，由路由回 404 `group_not_found`。`folderId` 同上（§5.7.6）。
+const copyBodySchema = z.object({ groupId: z.string().optional(), folderId: z.string().optional() }).strict();
 // #297 公開頁寬度的 body：未知鍵 400（strict）。
 const publicWidthBodySchema = z.object({ width: z.enum(NOTE_WIDTHS) }).strict();
 
@@ -95,6 +98,20 @@ const linksBodySchema = z.object({ link_target_ids: z.array(z.string().uuid()).m
 // #106 不變量 S：`section` 進任何比較之前先在 schema 層擋 NUL 並要求格式；語意見 `notes/schemas.ts` 的 `SEC`。
 // `.strict()`：帶未知查詢參數即 400，不靜默忽略。
 const contentQuerySchema = z.object({ section: SEC.optional() }).strict();
+
+/**
+ * `POST /api/notes` 兩條建立路徑的建列失敗映射；不是 FK 23503／KF001 → null（呼叫端 rethrow）。
+ * 資料夾 PR-3a（spec §5.7.6、§5.1 M5、§5.4 n-2）：帶資料夾時，資料夾在確認之後被刪（`notes_folder_fk`）、換了空間（KF001：
+ * 群組剛被轉移）、或群組被刪（群組資料夾隨之 CASCADE，群組 FK 可能先報）——以資料夾 id 進來的入口一律 404 `folder_not_found`。
+ * 轉移交易未 commit 時建立：INSERT 先過 trigger（資料夾還是群組的），再等群組列鎖、commit 後撞 `notes_group_id_groups_id_fk` 23503
+ * ——帶資料夾時群組消失必然代表資料夾已不在該空間，照 n-2 回 `folder_not_found`；不得收窄成只認 KF001／`notes_folder_fk`。
+ * 不帶資料夾：成員檢查之後群組被刪（spec gate r2 G）→ 既有 404 `group_not_found`。
+ */
+function sendCreateInsertFailure(reply: FastifyReply, err: unknown, withFolder: boolean): FastifyReply | null {
+  if (withFolder && (isNoteFolderSpaceViolation(err) || isForeignKeyViolation(err))) return sendError(reply, 404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+  if (isForeignKeyViolation(err)) return sendError(reply, 404, "group_not_found", "找不到此群組");
+  return null;
+}
 
 /** #222：`unsupported_color` 的 400 訊息列出可用色名（`POST /api/notes` 帶 content 與 `POST …/edits` 共用）。 */
 const UNSUPPORTED_COLOR_MESSAGE = `顏色只接受編輯器內建的色名：${PALETTE_COLORS.join("、")}`;
@@ -208,12 +225,27 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // 群組分支的成員資格與新建旗標在交易外查（C8：撤旗標與建立之間不保證，§15 第 5 條）。
       let target: { scope: SlugScope; access: Pick<NoteAccess, "role" | "permissions">; ownerHandle: string | null; groupName: string | null };
       const groupId = parsed.data.groupId;
+      // 資料夾 PR-3a（spec §5.7.6、§5.5 I2）：資料夾決定空間。可見性（非 UUID／不存在／看不到 → 404，不論有沒有 `groupId`）→
+      // 空間一致性（400）→ 下面既有的群組判準 → 群組資料夾另要 `can_edit`（403，D13）。
+      let folder: FolderAccess | null = null;
+      if (parsed.data.folderId !== undefined) {
+        folder = await resolveFolderAccess(deps.db, userId, parsed.data.folderId);
+        if (folder === null) return sendError(reply, 404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+        const space = folder.space;
+        // 共享私人樹不能建筆記；群組資料夾要給同一個 `groupId`；個人資料夾不能帶 `groupId`（不靜默挑一個）。
+        const consistent = space.kind === "group"
+          ? groupId !== undefined && groupId.toLowerCase() === space.groupId
+          : space.kind === "personal" && groupId === undefined;
+        if (!consistent) return sendError(reply, 400, "folder_cross_space", NOTE_FOLDER_CROSS_SPACE_MESSAGE);
+      }
+      const folderId = folder === null ? null : folder.folder.id;
       if (groupId !== undefined) {
         const m = await loadCreateTarget(deps.db, userId, groupId);
         // 非成員與「不存在」同一條 404——非成員的站台 admin 無豁免（筆記旗標只看角色，§5.5）。
         if (!m) return sendError(reply, 404, "group_not_found", "找不到此群組");
         // 是成員但角色沒有新建旗標 → 403（gate r4 N-2：對成員而言群組存在不是秘密）。
         if (!m.canCreate) return sendError(reply, 403, "forbidden", "你在這個群組的角色不能建立筆記");
+        if (folderId !== null && !m.canEdit) return sendError(reply, 403, "forbidden", NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE);
         await deps.groupTestHook?.("membership-checked", { groupId });
         // role／permissions 照旗標推、不假設 editor：0013 起「新建 ⇒ 編輯」蘊含拿掉，create-only 角色會得到 viewer（plan 規格落差 17）。
         target = { scope: { groupId }, access: { role: roleFromGroupFlags(m), permissions: groupNotePermissions(m) }, ownerHandle: null, groupName: m.name };
@@ -239,10 +271,12 @@ export function notesRoutes(deps: NotesRouteDeps) {
             title: parsed.data.title,
             content: parsed.data.content,
             scope: target.scope,
+            folderId,
           });
         } catch (err) {
-          // 成員檢查之後群組被刪：建列那一發撞 FK 23503（同裸建那條，見下）。建列在 service 的 try 之外，所以原樣拋到這裡。
-          if (isForeignKeyViolation(err)) return sendError(reply, 404, "group_not_found", "找不到此群組");
+          // 成員檢查之後群組或資料夾被刪：建列那一發撞 FK 23503／KF001（同裸建那條，見下）。建列在 service 的 try 之外，所以原樣拋到這裡。
+          const sent = sendCreateInsertFailure(reply, err, folderId !== null);
+          if (sent) return sent;
           throw err;
         }
         if (!out.ok) {
@@ -276,10 +310,12 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // 只是呼叫點在 service 裡、排在解析之後。
       let created;
       try {
-        created = await insertNoteWithAutoSlug(deps.db, target.scope, parsed.data.title, deps.noteCreateHooks);
+        created = await insertNoteWithAutoSlug(deps.db, { scope: target.scope, folderId }, parsed.data.title, deps.noteCreateHooks);
       } catch (err) {
-        // 成員檢查之後群組被刪：INSERT 的 FK 檢查等刪群組交易 commit 後報 23503（spec gate r2 G）。個人建立撞不到 FK（owner 就是自己，而 `src/` 內沒有硬刪 users 的路徑）。
-        if (isForeignKeyViolation(err)) return sendError(reply, 404, "group_not_found", "找不到此群組");
+        // 成員檢查之後群組被刪：INSERT 的 FK 檢查等刪群組交易 commit 後報 23503（spec gate r2 G）。個人建立不帶資料夾時撞不到 FK
+        // （owner 就是自己，而 `src/` 內沒有硬刪 users 的路徑）；帶資料夾的映射見 `sendCreateInsertFailure`。
+        const sent = sendCreateInsertFailure(reply, err, folderId !== null);
+        if (sent) return sent;
         throw err;
       }
 
@@ -929,7 +965,10 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // #180 spec §3.2：本體在 `notes/move-note.ts`（MCP `move_note_to_group` 共用；commit 後的 relocated 與踢線也在裡面）。
       const out = await moveNoteToGroup(
         { db: deps.db, collabHooks: deps.collabHooks, versions: deps.versions, storageLockTimeoutMs: deps.storageLockTimeoutMs, groupTestHook: deps.groupTestHook },
-        { noteId: id, userId, userHandle: request.user!.handle, groupId: parsed.data.groupId },
+        {
+          noteId: id, userId, userHandle: request.user!.handle, groupId: parsed.data.groupId,
+          ...(parsed.data.folderId !== undefined ? { folderId: parsed.data.folderId.toLowerCase() } : {}),
+        },
       );
       switch (out.kind) {
         case "not_found":
@@ -974,7 +1013,10 @@ export function notesRoutes(deps: NotesRouteDeps) {
           limiters: { edit: deps.limiters.edit, upload: deps.limiters.upload },
           groupTestHook: deps.groupTestHook, noteCreateHooks: deps.noteCreateHooks, searchIndexHooks: deps.searchIndexHooks,
         },
-        { sourceId: id, userId, groupId: parsed.data.groupId },
+        {
+          sourceId: id, userId, groupId: parsed.data.groupId,
+          ...(parsed.data.folderId !== undefined ? { folderId: parsed.data.folderId.toLowerCase() } : {}),
+        },
       );
       switch (out.kind) {
         case "not_found":
