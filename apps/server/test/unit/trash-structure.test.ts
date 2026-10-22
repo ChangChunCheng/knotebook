@@ -73,6 +73,10 @@ const REGISTRY: Record<string, Disposition> = {
   "collab/store.ts": { includes: 1, why: "載入時 links_clock 鉗制，與存活無關" },
   // excludes：scanRound（scanDue）。
   "collab/versions.ts": { excludes: 1, includes: 7, why: "版本狀態隨落盤與套用版本後的基底寫回寫入；readVersionMeta 不改（M-G）；sweep 照常" },
+  // 刪資料夾預讀子樹活筆記（資料夾 T8）。
+  "folders/service.ts": { excludes: 1 },
+  // includes：子樹筆記鎖讀；trashOnly：刷新子樹垃圾桶筆記的路徑快照（資料夾 T8）。
+  "folders/tx/delete-folder.ts": { includes: 1, trashOnly: 1, why: "一段式依 id 鎖子樹全部筆記（不分狀態，spec m5）" },
   "groups/queries.ts": { includes: 1, why: "群組全部筆記（踢線、刪群組 P0，§6.5）" },
   // 轉移的鎖、配額 innerJoin、轉移 UPDATE、全刪的鎖。
   "groups/tx/delete-group.ts": { includes: 4, why: "轉移／全刪含垃圾桶（§6.5）" },

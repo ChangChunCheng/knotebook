@@ -4,9 +4,11 @@
  * `xInTx`）→ catch 映射」。失敗一律回 HTTP 對應的錯誤形（REST 直接送；MCP 之後以 code 映射）。HTTP 層訊息中文（附錄 C）。
  * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`（④ 計數）。
  */
-import type { ErrorCode, FolderDto, FolderSpaceDto } from "@knotebook/shared";
-import type { CollabHooks } from "../collab/hooks.js";
+import { and, asc, isNull, sql } from "drizzle-orm";
+import type { ErrorCode, FolderDeleteResultDto, FolderDto, FolderSpaceDto } from "@knotebook/shared";
+import type { CollabHooks, NoteDeleteGate } from "../collab/hooks.js";
 import type { Db } from "../db/index.js";
+import { notes } from "../db/schema.js";
 import { isFolderSpaceViolation, isRetryableTxError, uniqueViolationConstraint } from "../db/pg-errors.js";
 import { GROUP_NOT_FOUND_MESSAGE } from "../groups/queries.js";
 import type { GroupHookCtx, GroupTestHook } from "../groups/test-hook.js";
@@ -16,6 +18,7 @@ import { loadCreateTarget } from "../notes/create-target.js";
 import { UUID_RE } from "../notes/service.js";
 import {
   FOLDER_CROSS_SPACE_MESSAGE,
+  FOLDER_DELETE_BLOCKED_MESSAGE,
   FOLDER_FORBIDDEN_MESSAGE,
   FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE,
   FOLDER_NOT_FOUND_MESSAGE,
@@ -24,7 +27,9 @@ import { normalizeFolderName, type FolderNameResult } from "./names.js";
 import { folderPermissions } from "./permissions.js";
 import { listVisibleFolders, resolveFolderAccess, toFolderDto } from "./queries.js";
 import { sameFolderSpace, type FolderSpace } from "./space.js";
+import { subtreeFolderIdsSql } from "./sql.js";
 import { createFolderInTx, type CreateFolderInput } from "./tx/create-folder.js";
+import { deleteFolderInTx, type DeleteFolderInput } from "./tx/delete-folder.js";
 import { updateFolderInTx, type UpdateFolderInput } from "./tx/update-folder.js";
 
 const NAME_MESSAGES: Record<Extract<FolderNameResult, { ok: false }>["reason"], string> = {
@@ -162,4 +167,63 @@ export async function updateFolder(
     throw err;
   }
   return { kind: "ok", folder: toFolderDto(out.row, out.permissions) };
+}
+
+/**
+ * 刪資料夾（§5.7.4）。`folderId` 由 app 層 `lowercaseUuidParams` 轉小寫；這裡只驗 UUID 形。
+ * 順序：可見性（404）→ 管理權（403）→（個人／群組）預讀子樹活筆記（述詞，M15），非空且無刪除權 → 403 `folder_delete_blocked`
+ * → 扣 `edit` 桶 → `folder-authorized` 縫 → 對預讀到的每篇開共編閘門 → `folder-delete-gated` 縫 → 交易 →
+ * **不論成功或失敗**全部 `release()`（M1：預讀後才搬出子樹的不收門會擋新連線到 TTL；`releaseDeletingGate` 只收活筆記）。
+ * 共享私人：筆記不動（放置 CASCADE），不預讀、不開閘門（F7）。
+ */
+export async function deleteFolder(
+  deps: FolderServiceDeps,
+  input: { by: string; folderId: string },
+): Promise<{ kind: "ok"; result: FolderDeleteResultDto } | FolderFailure> {
+  const access = await resolveFolderAccess(deps.db, input.by, input.folderId);
+  if (access === null) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+  if (!access.permissions.manage) return fail(403, "forbidden", FOLDER_FORBIDDEN_MESSAGE);
+  const folderId = access.folder.id;
+
+  let liveIds: string[] = [];
+  if (access.space.kind !== "shared") {
+    const rows = await deps.db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(and(sql`${notes.folderId} in (${subtreeFolderIdsSql(folderId)})`, isNull(notes.deletedAt)))
+      .orderBy(asc(notes.id));
+    liveIds = rows.map(r => r.id);
+    if (liveIds.length > 0 && !access.permissions.deleteNotes) return fail(403, "folder_delete_blocked", FOLDER_DELETE_BLOCKED_MESSAGE);
+  }
+
+  if (!deps.limiters.edit.consume(input.by)) return fail(429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
+  const hookCtx: GroupHookCtx = { folderId, ...(access.space.kind === "group" ? { groupId: access.space.groupId } : {}) };
+  await deps.groupTestHook?.("folder-authorized", hookCtx);
+
+  // allSettled（比照 `routes/groups.ts` 全刪）：閘門的契約是不 throw；萬一有一個 reject，其他已開的也要 release 再拋。
+  const settled = await Promise.allSettled(liveIds.map(id => deps.collabHooks.beforeNoteDeleted(id)));
+  const gates: NoteDeleteGate[] = settled.flatMap(s => (s.status === "fulfilled" ? [s.value] : []));
+  const releaseAll = (): void => {
+    for (const g of gates) g.release();
+  };
+  const rejected = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+  if (rejected) {
+    releaseAll();
+    throw rejected.reason;
+  }
+
+  const txInput: DeleteFolderInput = { by: input.by, folderId, space: access.space, gatedNoteIds: liveIds, lockTimeoutMs: deps.storageLockTimeoutMs };
+  let result: FolderDeleteResultDto;
+  try {
+    // 縫在 try 內：縫丟錯（測試）也走 finally 的 releaseAll。
+    await deps.groupTestHook?.("folder-delete-gated", hookCtx);
+    result = await deps.db.transaction(tx => deleteFolderInTx(tx, txInput, deps.groupTestHook));
+  } catch (err) {
+    if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
+    if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
+    throw err;
+  } finally {
+    releaseAll();
+  }
+  return { kind: "ok", result };
 }

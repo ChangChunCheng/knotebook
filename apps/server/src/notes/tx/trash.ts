@@ -1,6 +1,6 @@
 /**
  * #181 垃圾桶的交易本體（spec 2026-10-21 §6.3.2-3、§6.3.3-2、§6.3.4-2、§6.6-1）。S14：只收 `tx`、純資料與測試縫；
- * 共編閘門、刪附件檔、`onNotesRestored` 一律由呼叫端（`trash/service.ts`、清理工作）在交易之外做。
+ * 共編閘門、刪附件檔、`onNotesRestored` 一律由呼叫端（`trash/service.ts`、`folders/service.ts`、清理工作）在交易之外做。
  *
  * - `trashNotesInTx` 是**唯一**把 `deleted_at` 寫成非 NULL 的函式，`restoreNotesInTx` 是唯一把它清回 NULL 的函式（AG6）。
  *   兩者都用 DB `now()`／NULL，不碰 `updated_at`（它的語意是標題／網址變更）、不碰子表、不刪檔。
@@ -51,8 +51,9 @@ async function lockNotes(tx: Tx, ids: readonly string[]) {
 type LockedNote = Awaited<ReturnType<typeof lockNotes>> extends Map<string, infer V> ? V : never;
 
 /**
- * ⚠ 呼叫端必須先在交易外預判（單篇授權，並以 `beforeNoteDeleted` 開好共編閘門）才呼叫——這裡的鎖內重判只擋「授權之後、
- * 鎖之前」的變化；分類本身不是存在性 oracle（看不到的與不存在的同為 `notFound`）。唯一呼叫端是 `trash/service.ts`。
+ * ⚠ 前置條件：呼叫端已在交易外授權並開好每篇的共編閘門（`beforeNoteDeleted`）；交易內鎖完重判——這裡只擋「授權之後、
+ * 鎖之前」的變化；分類本身不是存在性 oracle（看不到的與不存在的同為 `notFound`）。兩個呼叫端：`trash/service.ts`（單篇移入）、
+ * `folders/tx/delete-folder.ts`（刪資料夾，子樹活筆記每批一呼叫；`forbidden`／`notFound` 非空即整筆回滾，資料夾 spec §5.7.4）。
  *
  * 移到垃圾桶。鎖完後依 id 升冪逐篇重判：none（含已在垃圾桶、列不在）→ `notFound`；沒有刪除權 → `forbidden`；
  * 其餘一句 UPDATE 移入。三個陣列都依 id 升冪。ids 空 → 不發任何語句。

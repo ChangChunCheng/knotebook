@@ -6,9 +6,9 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { FolderListDto, FolderSpaceDto } from "@knotebook/shared";
+import type { FolderDeleteResultDto, FolderListDto, FolderSpaceDto } from "@knotebook/shared";
 import { sendError } from "../http/errors.js";
-import { createFolder, listFolders, updateFolder, type FolderServiceDeps } from "../folders/service.js";
+import { createFolder, deleteFolder, listFolders, updateFolder, type FolderServiceDeps } from "../folders/service.js";
 
 const spaceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("personal") }).strict(),
@@ -58,6 +58,13 @@ export function foldersRoutes(deps: FolderServiceDeps) {
       });
       if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
       return out.folder;
+    });
+
+    app.delete("/api/folders/:id", { preHandler: app.authenticate }, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const out = await deleteFolder(deps, { by: request.user!.id, folderId: id });
+      if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
+      return out.result satisfies FolderDeleteResultDto;
     });
   };
 }

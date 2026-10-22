@@ -14,3 +14,7 @@ export const FOLDER_LIMIT_MESSAGE = "資料夾數量已達上限";
 /** 搬資料夾：兩者都看得到但不同空間（§5.7.3）。 */
 export const FOLDER_CROSS_SPACE_MESSAGE = "資料夾不能移到其他空間";
 export const FOLDER_CYCLE_MESSAGE = "不能把資料夾移到它自己裡面";
+/** 刪資料夾：子樹有活筆記、呼叫者沒有刪除權（交易外快速路徑與交易內 `trashNotesInTx` 的 forbidden 同一句）。 */
+export const FOLDER_DELETE_BLOCKED_MESSAGE = "資料夾裡有你不能刪除的筆記";
+/** 刪資料夾：子樹有沒開閘門的活筆記、或交易內重判 notFound（§5.7.4 M2）。 */
+export const FOLDER_CONTENT_CHANGED_MESSAGE = "資料夾內容剛變動，請再試一次";
