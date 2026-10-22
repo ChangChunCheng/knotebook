@@ -14,17 +14,18 @@ import type { FixedWindowLimiter } from "../http/rate-limit.js";
 import { TxAbort } from "../http/tx-abort.js";
 import { loadCreateTarget } from "../notes/create-target.js";
 import { UUID_RE } from "../notes/service.js";
-import { normalizeFolderName, type FolderNameResult } from "./names.js";
-import { folderPermissions } from "./permissions.js";
-import { listVisibleFolders, resolveFolderAccess, toFolderDto } from "./queries.js";
-import type { FolderSpace } from "./space.js";
 import {
-  createFolderInTx,
+  FOLDER_CROSS_SPACE_MESSAGE,
   FOLDER_FORBIDDEN_MESSAGE,
   FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE,
   FOLDER_NOT_FOUND_MESSAGE,
-  type CreateFolderInput,
-} from "./tx/create-folder.js";
+} from "./messages.js";
+import { normalizeFolderName, type FolderNameResult } from "./names.js";
+import { folderPermissions } from "./permissions.js";
+import { listVisibleFolders, resolveFolderAccess, toFolderDto } from "./queries.js";
+import { sameFolderSpace, type FolderSpace } from "./space.js";
+import { createFolderInTx, type CreateFolderInput } from "./tx/create-folder.js";
+import { updateFolderInTx, type UpdateFolderInput } from "./tx/update-folder.js";
 
 const NAME_MESSAGES: Record<Extract<FolderNameResult, { ok: false }>["reason"], string> = {
   unstorable: "資料夾名稱含有無法儲存的字元",
@@ -103,6 +104,60 @@ export async function createFolder(
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
     // 防禦縱深：父子空間 trigger（KF002）只在預讀之後空間被改時才可能觸發，與看不到同形。
+    if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+    throw err;
+  }
+  return { kind: "ok", folder: toFolderDto(out.row, out.permissions) };
+}
+
+/**
+ * 改名／搬移（§5.7.2、§5.7.3；只限同空間）。`folderId` 由 app 層 `lowercaseUuidParams`、`parentId` 由路由轉小寫；這裡只驗 UUID 形。
+ * 順序（§5.7.3、§5.5 I2）：名稱 → 自己的可見性（404）→ 新父層的可見性（非 UUID 或看不到 → 404）→ 同空間（400）→ 管理權（403）
+ * → 扣 `edit` 桶 → `folder-authorized` 縫 → 交易（重判全部，再成環、深度、撞名）。
+ */
+export async function updateFolder(
+  deps: FolderServiceDeps,
+  input: { by: string; folderId: string; name?: string; parentId?: string | null },
+): Promise<{ kind: "ok"; folder: FolderDto } | FolderFailure> {
+  let name: string | undefined;
+  if (input.name !== undefined) {
+    const normalized = normalizeFolderName(input.name);
+    if (!normalized.ok) return fail(400, "invalid_body", NAME_MESSAGES[normalized.reason]);
+    name = normalized.name;
+  }
+
+  const access = await resolveFolderAccess(deps.db, input.by, input.folderId);
+  if (access === null) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+
+  let parentId: string | null | undefined = input.parentId;
+  if (input.parentId !== undefined && input.parentId !== null) {
+    const parent = await resolveFolderAccess(deps.db, input.by, input.parentId);
+    if (parent === null) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+    if (!sameFolderSpace(parent.space, access.space)) return fail(400, "folder_cross_space", FOLDER_CROSS_SPACE_MESSAGE);
+    parentId = parent.folder.id;
+  }
+  if (!access.permissions.manage) return fail(403, "forbidden", FOLDER_FORBIDDEN_MESSAGE);
+
+  if (!deps.limiters.edit.consume(input.by)) return fail(429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
+  const folderId = access.folder.id;
+  await deps.groupTestHook?.("folder-authorized", { folderId, ...(access.space.kind === "group" ? { groupId: access.space.groupId } : {}) });
+
+  const txInput: UpdateFolderInput = {
+    by: input.by,
+    folderId,
+    space: access.space,
+    ...(name !== undefined ? { name } : {}),
+    ...(parentId !== undefined ? { parentId } : {}),
+    lockTimeoutMs: deps.storageLockTimeoutMs,
+  };
+  let out: Awaited<ReturnType<typeof updateFolderInTx>>;
+  try {
+    out = await deps.db.transaction(tx => updateFolderInTx(tx, txInput, deps.groupTestHook));
+  } catch (err) {
+    if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
+    if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
+    if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
+    // 防禦縱深：同空間已在交易內判過；KF002 只在預讀之後空間被改時才可能觸發，與看不到同形。
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }

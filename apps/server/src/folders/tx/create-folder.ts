@@ -3,7 +3,7 @@
  * 順序：（群組空間）groups KS → 結構鎖 →（父資料夾形）父列 KS → 依 §5.5 重判可見性、同空間、管理權 → 深度 → 數量 → INSERT。
  * 失敗一律 throw `TxAbort`。同層撞名的 23505 不在這裡接（交易已 abort），交給服務層映射 409 `folder_name_taken`。
  * 呼叫端一律 READ COMMITTED（結構鎖之後的下一句才拿新快照，見 `lock.ts` 檔頭）。
- * 交易內也會丟的錯誤訊息放這裡（服務層的交易外快速路徑 import 同一份，404／403 逐位元組相同）。
+ * 錯誤訊息在 `../messages.ts`（服務層的交易外快速路徑 import 同一份，404／403 逐位元組相同）。
  */
 import { count, sql } from "drizzle-orm";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderPermissionsDto } from "@knotebook/shared";
@@ -12,18 +12,18 @@ import { folders } from "../../db/schema.js";
 import { GROUP_NOT_FOUND_MESSAGE } from "../../groups/queries.js";
 import type { GroupHookCtx, GroupTestHook } from "../../groups/test-hook.js";
 import { TxAbort } from "../../http/tx-abort.js";
+import {
+  FOLDER_FORBIDDEN_MESSAGE,
+  FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE,
+  FOLDER_LIMIT_MESSAGE,
+  FOLDER_NOT_FOUND_MESSAGE,
+  FOLDER_TOO_DEEP_MESSAGE,
+} from "../messages.js";
 import { folderPermissions } from "../permissions.js";
 import type { FolderRow } from "../queries.js";
 import { folderSpaceOfRow, sameFolderSpace, type FolderSpace } from "../space.js";
 import { folderDepthSql, folderSpaceWhere } from "../sql.js";
 import { folderAccessInTx, lockFolderInTx, lockFolderSpacesInTx, lockGroupsKeyShareInTx, memberFlagsInTx } from "./lock.js";
-
-export const FOLDER_NOT_FOUND_MESSAGE = "找不到此資料夾";
-export const FOLDER_FORBIDDEN_MESSAGE = "沒有管理這個資料夾的權限";
-/** 群組根層（以群組 id 進來、沒有具體資料夾）角色不能編輯；句型同 `POST /api/notes {groupId}`。 */
-export const FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE = "你在這個群組的角色不能建立資料夾";
-export const FOLDER_TOO_DEEP_MESSAGE = `資料夾最多 ${FOLDER_DEPTH_MAX} 層`;
-export const FOLDER_LIMIT_MESSAGE = "資料夾數量已達上限";
 
 export interface CreateFolderInput {
   by: string;

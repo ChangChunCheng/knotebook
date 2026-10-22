@@ -8,7 +8,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { FolderListDto, FolderSpaceDto } from "@knotebook/shared";
 import { sendError } from "../http/errors.js";
-import { createFolder, listFolders, type FolderServiceDeps } from "../folders/service.js";
+import { createFolder, listFolders, updateFolder, type FolderServiceDeps } from "../folders/service.js";
 
 const spaceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("personal") }).strict(),
@@ -20,6 +20,11 @@ const createBodySchema = z.union([
   z.object({ name: z.string(), parentId: z.string() }).strict(),
   z.object({ name: z.string(), space: spaceSchema }).strict(),
 ]);
+/** 至少一個；`parentId: null`＝根層。 */
+const updateBodySchema = z
+  .object({ name: z.string().optional(), parentId: z.string().nullable().optional() })
+  .strict()
+  .refine(b => b.name !== undefined || b.parentId !== undefined, "請求格式錯誤：至少需要一個欄位");
 
 export function foldersRoutes(deps: FolderServiceDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
@@ -38,6 +43,21 @@ export function foldersRoutes(deps: FolderServiceDeps) {
       const out = await createFolder(deps, { by: request.user!.id, name: body.name, parent });
       if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
       return reply.code(201).send(out.folder);
+    });
+
+    app.patch("/api/folders/:id", { preHandler: app.authenticate }, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const parsed = updateBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "請求格式錯誤");
+      const { name, parentId } = parsed.data;
+      const out = await updateFolder(deps, {
+        by: request.user!.id,
+        folderId: id,
+        ...(name !== undefined ? { name } : {}),
+        ...(parentId !== undefined ? { parentId: parentId === null ? null : parentId.toLowerCase() } : {}),
+      });
+      if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
+      return out.folder;
     });
   };
 }
