@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, reEscape, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, randomEmail, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 並排排版 PR-1（columns-layout spec §13.2 的 PR-1 部分、§17 #1／#2／#3 側邊把手、plan Review Focus 4）：
@@ -33,9 +33,9 @@ function expectNoPageErrors(errors: string[]): void {
   expect(errors.filter((m) => !m.includes("ResizeObserver loop")), "pageerror").toEqual([]);
 }
 
-async function startNote(page: Page, label: string): Promise<string[]> {
+async function startNote(page: Page, label: string, creds: { email: string; password: string } = ADMIN): Promise<string[]> {
   const errors = collectPageErrors(page);
-  await loginAs(page, ADMIN.email, ADMIN.password);
+  await loginAs(page, creds.email, creds.password);
   await createNote(page, `E2E columns ${label} ${RUN}`);
   return errors;
 }
@@ -519,8 +519,12 @@ test("C8 拖出唯一 block（§13.2、§5.4 M）：[a｜b] 拖 b 到 z 下方 �
 });
 
 /** C9 三案共用：登入、建筆記、貼兩欄（沒有任何標題：整篇含列都在封面），等列出現。回 pageerror 收集與兩欄文字。 */
-async function startSurfacesNote(page: Page, label: string): Promise<{ errors: string[]; left: string; right: string }> {
-  const errors = await startNote(page, label);
+async function startSurfacesNote(
+  page: Page,
+  label: string,
+  creds?: { email: string; password: string },
+): Promise<{ errors: string[]; left: string; right: string }> {
+  const errors = await startNote(page, label, creds);
   const left = `colL${RUN}`;
   const right = `colR${RUN}`;
   await pasteMarkdown(page, rowDoc([left, right]));
@@ -528,15 +532,22 @@ async function startSurfacesNote(page: Page, label: string): Promise<{ errors: s
   return { errors, left, right };
 }
 
-test("C9a 公開頁（驗收 9、§11.7）：匿名開公開連結 → 有一列兩欄、兩欄文字都在", async ({ page, browser }) => {
-  const { errors, left, right } = await startSurfacesNote(page, "public");
+test("C9a 公開頁（驗收 9、§11.7）：匿名開公開連結 → 有一列兩欄、兩欄文字都在", async ({ page, browser, request }) => {
+  // 用新註冊的帳號：public-link 的 PUT 每人 10 次/10 分鐘，整套序跑到這裡 admin 已被用滿 → 429（同 31-note-width E3）。
+  const creds = { email: randomEmail(), password: "e2e-columns-pw" };
+  expect((await request.post("/api/auth/register", { data: creds })).status()).toBe(201);
+  const { errors, left, right } = await startSurfacesNote(page, "public", creds);
   // 同 11-public-share／22-presentation E3 的 ShareDialog 操作
   await page.getByRole("button", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share note" });
   const publicRadio = dialog.getByRole("radio", { name: /^Public link/ });
   await expect(publicRadio).toBeEnabled();
+  const publish = page.waitForResponse((r) => r.url().includes("/public-link") && r.request().method() === "PUT");
   await publicRadio.check();
-  const token = await dialog.getByLabel("Public link URL").inputValue();
+  expect((await publish).status()).toBe(200);
+  const tokenInput = dialog.getByLabel("Public link URL");
+  await expect(tokenInput).toBeVisible();
+  const token = await tokenInput.inputValue();
   expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
   await page.keyboard.press("Escape");
   await expect(async () => {
