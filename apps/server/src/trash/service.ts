@@ -3,9 +3,12 @@
  * 每支的形一律是「共編閘門／預判 → 交易（`notes/tx/trash.ts`，S14：callback 整段一個 `xInTx`）→ commit 後的 hook／刪檔」；
  * 交易本體只收 `tx` 與純資料，閘門、刪檔、`onNotesRestored` 都在這裡、在交易之外。
  */
+import { and, inArray, isNotNull } from "drizzle-orm";
 import type { TrashSkipDto } from "@knotebook/shared";
 import type { CollabHooks } from "../collab/hooks.js";
 import type { Db } from "../db/index.js";
+import { notes } from "../db/schema.js";
+import { folderSpaceLockKey, noteFolderSpace, type FolderSpace } from "../folders/space.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
 import { resolveTrashedNoteAccess } from "../notes/service.js";
 import {
@@ -15,6 +18,7 @@ import {
   type TrashBatchOutcome,
   type TrashIdsInput,
   type TrashNotesOutcome,
+  type TrashRestoreInput,
 } from "../notes/tx/trash.js";
 import { deleteUploadFiles, type UploadDeleteLogger } from "../uploads/service.js";
 
@@ -23,6 +27,8 @@ export interface TrashServiceDeps {
   collabHooks: CollabHooks;
   /** 永久刪除 commit 後刪附件檔用（T9）；移入不刪檔。 */
   uploadsDir: string;
+  /** 還原照路徑重建取結構鎖的等待上限（ms），透傳自 `AppDeps.storageLockTimeoutMs`。 */
+  storageLockTimeoutMs: number;
   groupTestHook?: GroupTestHook;
 }
 
@@ -85,12 +91,27 @@ function mergeSkipped(ids: readonly string[], denied: ReadonlySet<string>, inTx:
  * 還原（spec §6.3.3）。ids：已過 UUID_RE、已轉小寫、已去重（呼叫端負責）。預判 → `restoreNotesInTx`（鎖內重判）→ commit 後
  * **同步** `onNotesRestored(done)`（只傳實際還原的 id、中間不 await；done 為空不呼叫）。`done`、`skipped` 照輸入順序。
  * 不檢查容量（§6.3.3-5）。預判全數略過 → 不開交易。
+ * 資料夾（spec 2026-10-22 §5.8-1）：交易外不持鎖預讀這批筆記的群組與空間，交給交易照序取 groups KS 與結構鎖；預讀之後歸屬才變的
+ * 那篇在交易內不重建。
  */
 export async function restoreTrashed(deps: TrashServiceDeps, input: { ids: readonly string[]; by: string }): Promise<TrashBatchResult> {
   const { ok, denied } = await prejudge(deps.db, input);
   let out: TrashBatchOutcome = { done: [], skipped: [] };
   if (ok.length > 0) {
-    const txInput: TrashIdsInput = { ids: ok, by: input.by };
+    const owners = await deps.db
+      .select({ id: notes.id, ownerId: notes.ownerId, groupId: notes.groupId })
+      .from(notes)
+      .where(and(inArray(notes.id, ok), isNotNull(notes.deletedAt)));
+    const groupIds = [...new Set(owners.flatMap(r => (r.groupId === null ? [] : [r.groupId])))].sort();
+    const spaces = new Map<string, FolderSpace>();
+    for (const r of owners) {
+      const space = noteFolderSpace(r);
+      spaces.set(folderSpaceLockKey(space), space);
+    }
+    await deps.groupTestHook?.("trash-restore-prejudged", { noteId: ok[0]! });
+    const txInput: TrashRestoreInput = {
+      ids: ok, by: input.by, groupIds, spaces: [...spaces.values()], lockTimeoutMs: deps.storageLockTimeoutMs,
+    };
     out = await deps.db.transaction(tx => restoreNotesInTx(tx, txInput, deps.groupTestHook));
     if (out.done.length > 0) deps.collabHooks.onNotesRestored(out.done);
   }

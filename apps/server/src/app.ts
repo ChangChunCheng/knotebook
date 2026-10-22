@@ -817,7 +817,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   // 版本歷史（spec 2026-10-09 §6）：cookie 專用六支；apply 只在 writes.available 時註冊（路由內判）。
   void app.register(noteVersionsRoutes({ db: deps.db, versions, writes, limiters: { edit: limiters.edit } }));
   // #181：垃圾桶清單／還原／永久刪除（cookie-only，見 routes/trash.ts 檔頭）。
-  void app.register(trashRoutes({ db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, groupTestHook: deps.groupTestHook }));
+  void app.register(trashRoutes({ db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, groupTestHook: deps.groupTestHook }));
   // 資料夾（spec 2026-10-22 §5.11）：讀取收 Bearer notes:read、寫入 cookie-only（見 routes/folders.ts 檔頭）。
   void app.register(foldersRoutes({ db: deps.db, collabHooks: deps.collabHooks, storageLockTimeoutMs, groupTestHook: deps.groupTestHook, limiters: { edit: limiters.edit } }));
   // #103：群組管理（session-only，見 routes/groups.ts 檔頭）。

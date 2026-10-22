@@ -1022,7 +1022,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       // #181 §6.3.2：移到垃圾桶（語意改變；回應碼與錯誤形不變）。閘門（`beforeNoteDeleted`：關門、踢線、flush、等 unload）、
       // 交易內重判（TOCTOU）與失敗收門都在 `trashNote`（REST 與 MCP 共用的唯一入口）。不刪附件檔、不動子表——永久刪除才刪。
       const out = await trashNote(
-        { db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, groupTestHook: deps.groupTestHook },
+        { db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, storageLockTimeoutMs: deps.storageLockTimeoutMs, groupTestHook: deps.groupTestHook },
         { noteId: id, by: userId },
       );
       if (out === "forbidden") return sendError(reply, 403, "forbidden", "沒有刪除這篇筆記的權限");

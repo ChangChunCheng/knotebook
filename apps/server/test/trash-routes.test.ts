@@ -11,6 +11,7 @@ import { SITE_SETTINGS_MISSING_MESSAGE } from "../src/auth/tx/admin-site-setting
 import { noopCollabHooks } from "../src/collab/hooks.js";
 import type { Db } from "../src/db/index.js";
 import type { GroupTestHook } from "../src/groups/test-hook.js";
+import { DEFAULT_STORAGE_LOCK_TIMEOUT_MS } from "../src/storage/tx/quota.js";
 import { readSpaceUsage } from "../src/storage/usage.js";
 import { purgeTrashed } from "../src/trash/service.js";
 import { uploadFilePath } from "../src/uploads/service.js";
@@ -412,7 +413,7 @@ describe("TR-P1 永久刪除（A2-10 的釋放面）", () => {
     expect([await noteExists(db, a.id), await uploadExists(db, upA)]).toEqual([false, false]);
 
     const log = { error: vi.fn() };
-    const out = await purgeTrashed({ db, collabHooks: noopCollabHooks, uploadsDir }, { ids: [b.id], by: owner.id }, log);
+    const out = await purgeTrashed({ db, collabHooks: noopCollabHooks, uploadsDir, storageLockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS }, { ids: [b.id], by: owner.id }, log);
     expect(out).toEqual({ done: [b.id], skipped: [] });
     expect([await noteExists(db, b.id), await uploadExists(db, upB)]).toEqual([false, false]);
     expect(log.error).toHaveBeenCalledTimes(1);

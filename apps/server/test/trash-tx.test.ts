@@ -11,7 +11,8 @@ import type { Db } from "../src/db/index.js";
 import type { Tx } from "../src/db/tx.js";
 import { noteStates, notes, uploads } from "../src/db/schema.js";
 import type { GroupRacePoint } from "../src/groups/test-hook.js";
-import { purgeExpiredBatchInTx, purgeTrashedNotesInTx, restoreNotesInTx, trashNotesInTx } from "../src/notes/tx/trash.js";
+import { purgeExpiredBatchInTx, purgeTrashedNotesInTx, restoreNotesInTx, trashNotesInTx, type TrashRestoreInput } from "../src/notes/tx/trash.js";
+import { DEFAULT_STORAGE_LOCK_TIMEOUT_MS } from "../src/storage/tx/quota.js";
 import { freshDb } from "./helpers.js";
 import { noteState, seedNote, seedShare, seedUser, sharesOf, waitForBlockedOrSettled } from "./group-helpers.js";
 import { markTrashed, sixRoleScene, trashCols } from "./trash-helpers.js";
@@ -34,6 +35,9 @@ async function rolledBack<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
   await expect(db.transaction(async tx => { out = await fn(tx); throw new Rollback(); })).rejects.toBeInstanceOf(Rollback);
   return out as T;
 }
+
+/** 還原的輸入：不帶群組與空間（不取 groups KS 與結構鎖；資料夾 PR-3a T7 起的完整鎖序見 `folders-trash.test.ts` TRF-9）。 */
+const restoreIn = (ids: readonly string[], by: string): TrashRestoreInput => ({ ids, by, groupIds: [], spaces: [], lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS });
 
 /** 兩個 uuid 由大到小（輸入順序刻意與 id 升冪相反）。 */
 const desc = (...ids: string[]) => [...ids].sort().reverse();
@@ -131,12 +135,12 @@ describe("#181 trashNotesInTx", () => {
     const queries: string[] = [];
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
     expect(await logged.transaction(tx => trashNotesInTx(tx, { ids: [], by: u.id }))).toEqual({ trashed: [], notFound: [], forbidden: [] });
-    expect(await logged.transaction(tx => restoreNotesInTx(tx, { ids: [], by: u.id }))).toEqual({ done: [], skipped: [] });
+    expect(await logged.transaction(tx => restoreNotesInTx(tx, restoreIn([], u.id)))).toEqual({ done: [], skipped: [] });
     expect(await logged.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [], by: u.id }))).toEqual({ done: [], skipped: [], uploadIds: [] });
     expect(queries.filter(q => !TXN_CONTROL.test(q.trim()))).toEqual([]);
   });
 
-  it("TX-L1 鎖序：移入／還原／永久刪除的第一句 SQL 都是依 id 升冪的 FOR UPDATE", async () => {
+  it("TX-L1 鎖序：移入／還原／永久刪除的第一句 SQL 都是依 id 升冪的 FOR UPDATE（spaces 空）", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [a, b] = await Promise.all([seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id })]);
@@ -149,7 +153,7 @@ describe("#181 trashNotesInTx", () => {
     };
     const firsts = {
       trash: await firstOf(tx => trashNotesInTx(tx, { ids: desc(a.id, b.id), by: u.id })),
-      restore: await firstOf(tx => restoreNotesInTx(tx, { ids: desc(a.id, b.id), by: u.id })),
+      restore: await firstOf(tx => restoreNotesInTx(tx, restoreIn(desc(a.id, b.id), u.id))),
       purge: await firstOf(async tx => {
         await trashNotesInTx(tx, { ids: [a.id, b.id], by: u.id });
         queries.length = 0;
@@ -181,7 +185,7 @@ describe("#181 restoreNotesInTx", () => {
     const sib = await trashCols(pool, trashedSibling.id);
     const oth = await trashCols(pool, trashedOther.id);
 
-    expect(await db.transaction(tx => restoreNotesInTx(tx, { ids: [n.id], by: u.id }))).toEqual({ done: [n.id], skipped: [] });
+    expect(await db.transaction(tx => restoreNotesInTx(tx, restoreIn([n.id], u.id)))).toEqual({ done: [n.id], skipped: [] });
     expect(await trashCols(pool, n.id)).toEqual({ deleted_at: null, deleted_by: null });
     expect(await noteState(pool, n.id)).toEqual(before);
     expect(await sharesOf(db, n.id)).toEqual([{ userId: v.id, role: "viewer" }]);
@@ -200,7 +204,7 @@ describe("#181 restoreNotesInTx", () => {
     const [bigSkip, smallSkip] = desc(live.id, missing);
     const [bigDone, smallDone] = desc(t1.id, t2.id);
 
-    const out = await db.transaction(tx => restoreNotesInTx(tx, { ids: [bigSkip!, bigDone!, smallSkip!, smallDone!], by: s.editDelete.id }));
+    const out = await db.transaction(tx => restoreNotesInTx(tx, restoreIn([bigSkip!, bigDone!, smallSkip!, smallDone!], s.editDelete.id)));
     const reasonOf = (id: string) => (id === live.id ? "not_in_trash" : "not_found");
     expect(out).toEqual({
       done: [bigDone, smallDone],
@@ -210,13 +214,13 @@ describe("#181 restoreNotesInTx", () => {
     const t3 = await seedNote(db, { groupId: s.groupId });
     await markTrashed(pool, t3.id, s.admin.id);
     for (const [name, by] of [["deleteOnly", s.deleteOnly.id], ["editOnly", s.editOnly.id], ["outsider", s.outsider.id]] as const) {
-      expect(await db.transaction(tx => restoreNotesInTx(tx, { ids: [t3.id], by })), name).toEqual({ done: [], skipped: [{ id: t3.id, reason: "not_found" }] });
+      expect(await db.transaction(tx => restoreNotesInTx(tx, restoreIn([t3.id], by))), name).toEqual({ done: [], skipped: [{ id: t3.id, reason: "not_found" }] });
     }
     const owner = await seedUser(db);
     const p = await seedNote(db, { ownerId: owner.id });
     await seedShare(db, p.id, s.editDelete.id, "editor");
     await markTrashed(pool, p.id, owner.id);
-    expect(await db.transaction(tx => restoreNotesInTx(tx, { ids: [p.id], by: s.editDelete.id }))).toEqual({ done: [], skipped: [{ id: p.id, reason: "not_found" }] });
+    expect(await db.transaction(tx => restoreNotesInTx(tx, restoreIn([p.id], s.editDelete.id)))).toEqual({ done: [], skipped: [{ id: p.id, reason: "not_found" }] });
     expect((await trashCols(pool, t3.id))?.deleted_at).not.toBeNull();
     expect((await trashCols(pool, p.id))?.deleted_at).not.toBeNull();
   });
@@ -309,14 +313,14 @@ describe("#181 purgeExpiredBatchInTx", () => {
 });
 
 describe("#181 垃圾桶交易的測試縫", () => {
-  it("TX-H1 四支各在鎖後呼叫自己的點，ctx.noteId＝第一篇", async () => {
+  it("TX-H1 四支各在鎖後呼叫自己的點，ctx.noteId＝第一篇（spaces 空）", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [a, b, c] = [await seedNote(db, { ownerId: u.id }), await seedNote(db, { ownerId: u.id }), await seedNote(db, { ownerId: u.id })];
     const calls: Array<[GroupRacePoint, string | undefined]> = [];
     const hook = async (point: GroupRacePoint, ctx: { noteId?: string }) => { calls.push([point, ctx.noteId]); };
     await db.transaction(tx => trashNotesInTx(tx, { ids: [a.id, b.id], by: u.id }, hook));
-    await db.transaction(tx => restoreNotesInTx(tx, { ids: [b.id], by: u.id }, hook));
+    await db.transaction(tx => restoreNotesInTx(tx, restoreIn([b.id], u.id), hook));
     await db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [a.id], by: u.id }, hook));
     await markTrashed(pool, c.id, u.id, "30 days");
     await db.transaction(tx => purgeExpiredBatchInTx(tx, { retentionDays: 7, limit: 100 }, hook));

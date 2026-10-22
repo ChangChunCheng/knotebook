@@ -100,8 +100,8 @@ const REGISTRY: Record<string, Disposition> = {
   "notes/tx/patch-slug.ts": { write: 2 },
   "notes/tx/search-index.ts": { includes: 1, why: "索引照寫（§6.4）" },
   "notes/tx/shares.ts": { excludes: 1 },
-  // trashOnly：還原 UPDATE、到期查詢；includes：lockNotes；write：移入 UPDATE。
-  "notes/tx/trash.ts": { trashOnly: 2, includes: 1, write: 1, why: "先鎖再判（狀態在鎖後逐篇判）" },
+  // trashOnly：照路徑重建寫 folder_id（資料夾 T7）、還原 UPDATE、到期查詢；includes：lockNotes；write：移入 UPDATE。
+  "notes/tx/trash.ts": { trashOnly: 3, includes: 1, write: 1, why: "先鎖再判（狀態在鎖後逐篇判）" },
   // excludes：切版鎖讀；includes：notBaseVersionSql、reset 兩句；write：cutVersionInTx 內三句 UPDATE。
   "notes/tx/versions.ts": { excludes: 1, includes: 3, write: 3, why: "版本清除照常、轉移 reset 不分狀態" },
   "notes/tx/write-links.ts": { includes: 4, why: "目標在垃圾桶照記（§6.2-4）、CAS 不加條件" },
@@ -116,6 +116,8 @@ const REGISTRY: Record<string, Disposition> = {
   "storage/tx/quota.ts": { includes: 1, why: "容量照算（D-W4）" },
   "storage/usage.ts": { includes: 4, why: "容量照算（D-W4）" },
   "trash/list.ts": { trashOnly: 2 },
+  // 還原的預讀空間（資料夾 T7，spec 2026-10-22 §5.8-1）。
+  "trash/service.ts": { trashOnly: 1 },
   "uploads/tx/insert-upload.ts": { excludes: 1 },
 };
 

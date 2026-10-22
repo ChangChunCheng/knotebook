@@ -13,6 +13,7 @@ import type { NoteDeleteGate } from "../src/collab/hooks.js";
 import type { Db } from "../src/db/index.js";
 import { groupMembers, groupRoles, noteAiEdits, noteLinkConversion, notes, uploads } from "../src/db/schema.js";
 import { runLinkConversion } from "../src/notes/link-conversion.js";
+import { DEFAULT_STORAGE_LOCK_TIMEOUT_MS } from "../src/storage/tx/quota.js";
 import { trashNote } from "../src/trash/service.js";
 import { uploadFilePath } from "../src/uploads/service.js";
 import { loadDoc, seedDoc } from "./copy-helpers.js";
@@ -170,7 +171,7 @@ describe("D7 服務函式收大寫 id（PR-2d 的 MCP 等呼叫端不一定先�
     const owner = await seedUser(db);
     const n = await seedNote(db, { ownerId: owner.id });
 
-    const out = await trashNote({ db, collabHooks: g.hooks, uploadsDir }, { noteId: n.id.toUpperCase(), by: owner.id });
+    const out = await trashNote({ db, collabHooks: g.hooks, uploadsDir, storageLockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS }, { noteId: n.id.toUpperCase(), by: owner.id });
     expect(out).toBe("trashed");
     expect(g.beforeNoteDeleted).toHaveBeenCalledWith(n.id);
     expect(g.release).not.toHaveBeenCalled();
