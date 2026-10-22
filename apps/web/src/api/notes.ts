@@ -163,6 +163,8 @@ export function useDeleteNote() {
       // 前綴失效所有 `["backlinks", noteId]`：側欄 ⋮ 可以留在 A 頁刪掉 B，B 若連到 A，
       // A 底部的 B 晶片要跟著消失。
       void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
+      // #181：刪除＝移入垃圾桶，垃圾桶清單多一筆。
+      void queryClient.invalidateQueries({ queryKey: ["trash"] });
     },
   });
 }

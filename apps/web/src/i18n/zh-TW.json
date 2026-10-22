@@ -44,7 +44,8 @@
     "emptyWorkspace": "還沒有加入任何群組。",
     "emptyShared": "還沒有人與你共享筆記。",
     "locationGroup": "工作坊 › {{group}}",
-    "locationShared": "與我共享 · {{role}}"
+    "locationShared": "與我共享 · {{role}}",
+    "trash": "垃圾桶"
   },
   "roles": {
     "owner": "擁有者",
@@ -608,6 +609,15 @@
       "save": "儲存",
       "saved": "已儲存版本設定"
     },
+    "trash": {
+      "title": "垃圾桶",
+      "autoLabel": "自動永久刪除",
+      "daysLabel": "保留天數",
+      "description": "筆記移到垃圾桶後，超過保留天數會自動永久刪除（每小時檢查一次）。縮短天數時，已超過新天數的筆記會從下一次檢查開始刪除（每次最多 2,000 篇）。",
+      "daysInvalid": "請填 1 到 3650 的整數。",
+      "save": "儲存",
+      "saved": "已儲存垃圾桶設定"
+    },
     "groups": {
       "title": "群組",
       "description": "站台上所有群組的儲存空間用量與方案。",
@@ -682,10 +692,13 @@
       "transferDescription_one": "{{count}} 篇筆記會變成 {{name}} 的個人筆記，網址改為 /n/…，舊網址一個月內自動轉址；其他成員會失去存取，若有公開連結也會關閉。",
       "transferDescription_other": "{{count}} 篇筆記會變成 {{name}} 的個人筆記，網址改為 /n/…，舊網址一個月內自動轉址；其他成員會失去存取，若有公開連結也會關閉。",
       "transferDescriptionNoCount": "群組裡的筆記會變成 {{name}} 的個人筆記，網址改為 /n/…，舊網址一個月內自動轉址；其他成員會失去存取，若有公開連結也會關閉。",
+      "transferTrashNote": "垃圾桶裡的群組筆記會進 {{name}} 的個人垃圾桶，保留期照原刪除時間計算；它們的公開連結同樣會關閉。",
       "deleteLabel": "全部刪除",
-      "deleteDescription_one": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，無法復原。",
-      "deleteDescription_other": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，無法復原。",
+      "deleteDescription_one": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
+      "deleteDescription_other": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "deleteDescriptionNoCount": "群組裡的筆記連同附件與修改紀錄會永久刪除，無法復原。",
+      "deleteDescriptionWithTrash_one": "{{count}} 篇筆記（含垃圾桶裡的 {{trash}} 篇）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
+      "deleteDescriptionWithTrash_other": "{{count}} 篇筆記（含垃圾桶裡的 {{trash}} 篇）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "emptyDescription": "這個群組沒有筆記。",
       "acknowledge": "我了解筆記會永久刪除",
       "adminsUnavailable": "無法載入群組的管理員。",
@@ -737,7 +750,7 @@
         },
         "delete": {
           "label": "刪除",
-          "description": "刪除群組裡任何一篇筆記，包括別人建立的。"
+          "description": "把群組筆記移到垃圾桶。同時有編輯權的話，還能在垃圾桶裡還原或永久刪除。"
         },
         "managePublicLink": {
           "label": "管理公開連結",
@@ -773,7 +786,8 @@
         "nameLabel": "角色名稱",
         "create": "建立"
       },
-      "invalidName": "角色名稱須為 1–40 個字元。"
+      "invalidName": "角色名稱須為 1–40 個字元。",
+      "deleteWithoutEditHint": "沒有編輯權的話，刪掉的筆記自己無法從垃圾桶還原。"
     }
   },
   "management": {
@@ -1188,7 +1202,59 @@
     "usageUnlimited": "已使用 {{used}}（無上限，{{plan}}）",
     "overQuota": "已達上限，無法再新增附件",
     "cell": "{{used}}／{{quota}}",
-    "cellUnlimited": "{{used}}（無上限）"
+    "cellUnlimited": "{{used}}（無上限）",
+    "trashNote": "垃圾桶裡的筆記也計入用量，永久刪除後才會釋放。"
+  },
+  "trash": {
+    "header_one": "垃圾桶 · {{count}} 篇",
+    "header_other": "垃圾桶 · {{count}} 篇",
+    "sectionPersonal": "個人",
+    "sectionWorkspace": "工作坊",
+    "daysLeft_one": "剩 {{count}} 天",
+    "daysLeft_other": "剩 {{count}} 天",
+    "deletedByName": "{{name}} 刪除",
+    "unknownUser": "已刪除的帳號",
+    "deletedOn": "{{date}} 刪除",
+    "titleTimes": "移到垃圾桶：{{deletedAt}}；預計永久刪除：{{purgeAt}}",
+    "titleTimesNoPurge": "移到垃圾桶：{{deletedAt}}",
+    "footer_one": "刪除 {{count}} 天後自動永久刪除",
+    "footer_other": "刪除 {{count}} 天後自動永久刪除",
+    "footerNever": "垃圾桶不會自動清除",
+    "empty": "垃圾桶是空的。",
+    "truncated": "只列出最近移入的 1,000 篇。",
+    "select": "選取",
+    "emptyTrash": "清空",
+    "restore": "還原",
+    "restoreFor": "還原 {{title}}",
+    "menuFor": "{{title}} 的選單",
+    "purge": "永久刪除",
+    "selectAll": "全選",
+    "deselectAll": "取消全選",
+    "done": "完成",
+    "selected_one": "已選 {{count}} 篇",
+    "selected_other": "已選 {{count}} 篇",
+    "purgeTitle_one": "永久刪除 {{count}} 篇筆記？",
+    "purgeTitle_other": "永久刪除 {{count}} 篇筆記？",
+    "purgeDescription": "筆記與附件會永久刪除，無法復原。",
+    "emptyTitle": "清空垃圾桶？",
+    "emptyDescription_one": "將永久刪除 {{count}} 篇筆記與附件，無法復原。",
+    "emptyDescription_other": "將永久刪除 {{count}} 篇筆記與附件，無法復原。",
+    "emptyPersonal_one": "個人 {{count}} 篇",
+    "emptyPersonal_other": "個人 {{count}} 篇",
+    "emptyWorkspace_one": "工作坊 {{count}} 篇",
+    "emptyWorkspace_other": "工作坊 {{count}} 篇",
+    "includesOthers": "（含其他成員刪除的）",
+    "moved": "已移到垃圾桶",
+    "undo": "復原",
+    "movedNoUndoHint": "群組裡同時能編輯與刪除的成員可以還原。",
+    "restored_one": "已還原 {{count}} 篇",
+    "restored_other": "已還原 {{count}} 篇",
+    "purged_one": "已永久刪除 {{count}} 篇",
+    "purged_other": "已永久刪除 {{count}} 篇",
+    "skippedSuffix_one": "，{{count}} 篇已不在垃圾桶",
+    "skippedSuffix_other": "，{{count}} 篇已不在垃圾桶",
+    "inTrashTitle": "這篇筆記在垃圾桶裡",
+    "goToTrash": "前往垃圾桶"
   },
   "errors": {
     "unauthorized": "請先登入才能繼續。",

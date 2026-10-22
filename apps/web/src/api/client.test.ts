@@ -189,6 +189,37 @@ describe("api()", () => {
     expect(err.storage).toBeUndefined();
   });
 
+  it("CL-T1 404 in_trash：收頂層 noteId（spec §6.7）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
+      ok: false, status: 404,
+      json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: "abc" }),
+    })));
+    const err = await api("/api/notes/by-path/a/b").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiFail);
+    expect((err as ApiFail).code).toBe("in_trash");
+    expect((err as ApiFail).noteId).toBe("abc");
+  });
+
+  it("CL-T2 別的錯誤碼帶了 noteId 也不收", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
+      ok: false, status: 404,
+      json: () => Promise.resolve({ error: { code: "not_found", message: "x" }, noteId: "abc" }),
+    })));
+    const err = (await api("/x").catch((e: unknown) => e)) as ApiFail;
+    expect(err.code).toBe("not_found");
+    expect(err.noteId).toBeUndefined();
+  });
+
+  it("CL-T3 in_trash 但 noteId 不是字串 → 不收", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
+      ok: false, status: 404,
+      json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: 42 }),
+    })));
+    const err = (await api("/x").catch((e: unknown) => e)) as ApiFail;
+    expect(err.code).toBe("in_trash");
+    expect(err.noteId).toBeUndefined();
+  });
+
   it("falls back to code 'internal' when the error body is not JSON", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({
