@@ -1240,7 +1240,7 @@
     "emptyPersonal_other": "Personal: {{count}} notes",
     "emptyWorkspace_one": "Workspace: {{count}} note",
     "emptyWorkspace_other": "Workspace: {{count}} notes",
-    "includesOthers": "(including some deleted by other members)",
+    "includesOthers": " (including some deleted by other members)",
     "moved": "Moved to the trash",
     "undo": "Undo",
     "movedNoUndoHint": "Members of the group whose role can both edit and delete notes can restore it.",

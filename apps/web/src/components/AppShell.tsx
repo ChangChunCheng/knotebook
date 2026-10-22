@@ -7,7 +7,7 @@ import { ApiFail } from "@/api/client";
 import { useCreateNote } from "@/api/notes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Menu, Plus, Search, X } from "@/components/ui/icons";
+import { Menu, Search, X } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,9 @@ import { canonicalizedFrom } from "@/lib/real-location";
 import { SidebarTabProvider, useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
+import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
+import { TrashPanel } from "@/components/sidebar/TrashPanel";
 import { UserMenu } from "@/components/UserMenu";
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -62,7 +64,8 @@ interface SidebarContentProps {
   shortcutBadge: string;
 }
 
-/** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList）或搜尋結果／新增鈕／UserMenu）。
+/** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList；垃圾桶 tab 是 TrashPanel）或搜尋結果／底部（SidebarFooter：
+ * 新增鈕，垃圾桶 tab 換成保留天數說明）／UserMenu）。
  * 搜尋字串非空時 tab 列與 tabpanel 都不渲染、改顯示 `SearchResults`（tab state 不變，清空後回原 tab）。
  * 目前 tab 住在 `SidebarTabProvider`（靜態卡與抽屜兩份實例共用一份）。wrapper（靜態
  * `<aside>` 卡或抽屜 Content）由呼叫端提供——兩個 wrapper 都必須給
@@ -158,17 +161,12 @@ function SidebarContent({
             tabIndex={0}
             className="flex min-h-0 flex-1 flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
+            {tab === "trash" ? <TrashPanel /> : <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />}
           </div>
         </>
       )}
 
-      <div className="m-2">
-        <Button variant="brand" className="w-full" onClick={() => onCreateNote()} disabled={newNotePending}>
-          <Plus aria-hidden="true" className="h-4 w-4" />
-          {t("home.newNote")}
-        </Button>
-      </div>
+      <SidebarFooter searching={searching} onCreateNote={() => onCreateNote()} newNotePending={newNotePending} />
 
       <div className="border-t border-border p-2">
         <UserMenu />

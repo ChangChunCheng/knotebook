@@ -2197,7 +2197,8 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     });
     expect(calls).toContain("POST /api/trash/restore");
     // 標題框出現＝重開的頁面已有一個 render 不是 noteGone 佔位卡；React 在它之前已跑完先前 commit 的 effect（含 noteGone 出口），
-    // 所以若曾判成「已刪除」，toast() 此刻必已被呼叫。正面兩則證明 spy 有接上。
+    // 所以若曾判成「已刪除」，toast() 此刻必已被呼叫。正面兩則都來自 trash-undo，只證明那一側的 spy 接上；
+    // NotePage 那一側的呼叫被攔到，由突變 T3-M28（拿掉 seed 且 noteGone 不導頁 → 下一行紅）證明。
     expect(toastTitles()).toEqual(expect.arrayContaining(["Moved to the trash", "Restored 1 note"]));
     expect(toastTitles()).not.toContain("This note has been deleted.");
     expect(screen.queryByText("This note has been deleted.", { exact: true })).toBeNull();

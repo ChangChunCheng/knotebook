@@ -11,6 +11,7 @@ import { ThemeProvider } from "@/theme";
 import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { OWNER_PERMS } from "@/test/fixtures";
+import { trashList } from "@/test/trash-fixtures";
 
 // 側欄 tab 與 AppShell 的接線（plan T2）。骨架抄 AppShell.test.tsx 的「#115 側欄抽屜」describe。
 
@@ -68,6 +69,7 @@ function stubFetchWithNotes(notes: NoteDto[]) {
       if (url === "/api/auth/me") return Promise.resolve(fakeResponse(USER));
       if (url === "/api/notes" && method === "POST") return Promise.resolve(fakeResponse(CREATED, 201));
       if (url === "/api/notes" && method === "GET") return Promise.resolve(fakeResponse(notes));
+      if (url === "/api/trash" && method === "GET") return Promise.resolve(fakeResponse(trashList([])));
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
   );
@@ -333,6 +335,23 @@ describe("AppShell — 側欄 tab 接線", () => {
     expect(screen.getByTestId("selecting")).toHaveTextContent("false");
     fireEvent.keyDown(document.activeElement ?? drawer, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
+  });
+
+  it("AS13 垃圾桶 tab：tabpanel 換成 TrashPanel、底部換成保留天數說明；切回我的筆記 New note 回來", async () => {
+    stubFetchWithNotes([NOTE]);
+    renderShell();
+    fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));
+    const panel = within(aside()).getByRole("tabpanel");
+    expect(await within(panel).findByText("The trash is empty.", { exact: true })).toBeInTheDocument();
+    expect(panel.querySelector("[data-sidebar-header]")).toHaveTextContent("Trash · 0 notes");
+    expect(within(panel).queryByRole("button", { name: "New personal note" })).toBeNull();
+    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull();
+    expect(await within(aside()).findByTestId("trash-footer")).toBeInTheDocument();
+
+    fireEvent.click(within(aside()).getByRole("tab", { name: "My notes" }));
+    expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(within(aside()).queryByTestId("trash-footer")).toBeNull();
+    expect(within(within(aside()).getByRole("tabpanel")).getByRole("button", { name: "New personal note" })).toBeInTheDocument();
   });
 });
 
