@@ -4,7 +4,8 @@
  *   ① `insert(uploads)` 只在 U-tx 與 T4（新增 uploads 列的路徑必須進白名單——§6.7）
  *   ② `assertSpaceRoomInTx(` 呼叫形只在白名單四檔、各恰一次；delete-group.ts 那一次在 `transferGroupInTx` 函式體內；
  *      quota.ts 恰一次宣告形、0 次呼叫形；其他檔 0 次（Q-S1、Q-S3）
- *   ③ `pg_advisory` 只在 quota.ts
+ *   ③ `pg_advisory` 只在 quota.ts 與資料夾結構鎖 folders/tx/lock.ts（第二種 advisory 鎖；鍵前綴 `knotebook.folders:` 與容量鎖的
+ *      `knotebook.storage:` 不同，不共用 key 空間——資料夾 spec 2026-10-22 §5.4）
  *   ④ quota.ts 取鎖那個 `tx.execute(` 呼叫不含 `sum(`；之後另有 SUM 查詢（M3：兩句）
  *   ⑤ 白名單檔裡 `assertSpaceRoomInTx(` 早於同函式的 `writeSlugInTx(`／`insertNoteWithAutoSlug(`（Q-S7 的字面守衛）
  *   ⑥ quota.ts、白名單四檔與其路由檔不出現 isolationLevel／setTransaction／set transaction（限定範圍：#93 的
@@ -88,8 +89,8 @@ describe("儲存配額結構性守衛（spec §11.3）", () => {
     expect(idx > t6.start && idx < t6.end).toBe(true);
   });
 
-  it("③ pg_advisory 只在 storage/tx/quota.ts", () => {
-    expect(files.filter(p => /pg_advisory/.test(code(p))).map(rel)).toEqual(["storage/tx/quota.ts"]);
+  it("③ pg_advisory 只在 storage/tx/quota.ts 與 folders/tx/lock.ts（資料夾結構鎖，鍵前綴不同）", () => {
+    expect(files.filter(p => /pg_advisory/.test(code(p))).map(rel).sort()).toEqual(["folders/tx/lock.ts", "storage/tx/quota.ts"]);
   });
 
   it("④ quota.ts：取鎖那個 tx.execute( 不含 sum(；之後另有 SUM 查詢", () => {
