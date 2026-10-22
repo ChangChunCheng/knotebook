@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
+import { Awareness } from "y-protocols/awareness";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
@@ -10,6 +11,7 @@ import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import type { CursorScroller } from "@/collab/cursor-scroll";
 import { ThemeProvider } from "@/theme";
+import { setRemote } from "@/components/presence/test-awareness";
 import { NoteEditor } from "./NoteEditor";
 
 // #293 §9.4：`NoteEditor` 的 `onCursorScroller` 接線。掛真 `<NoteEditor>`（Host 照 `NoteEditor.layout.test.tsx`）。
@@ -195,6 +197,115 @@ describe("NoteEditor：onCursorScroller（#293 §9.4）", () => {
     );
     expect(second).not.toHaveBeenCalled();
     expect(first).toHaveBeenCalledTimes(1);
+    doc.destroy();
+  });
+});
+
+// #293 T6b：唯讀時本分頁不送游標（spec §4.1 as-built）。真 y-prosemirror cursor plugin＋真 Awareness。
+// jsdom 裡 `.ProseMirror` 帶 BlockNote 無條件給的 tabIndex=0，`focus()` 會讓 `view.hasFocus()` 成立——
+// 與瀏覽器裡 viewer 點進內文同一條路（T7 r2 P1）。
+describe("NoteEditor：唯讀者不送游標（#293 T6b）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function mount(editable: boolean) {
+    const doc = await seededDoc();
+    const awareness = new Awareness(doc);
+    const base = { doc, provider: { awareness } as never, user: { id: "u1", name: "Ann" }, noteId: "note-1" };
+    const { rerender } = render(
+      <Host>
+        <NoteEditor {...base} editable={editable} />
+      </Host>,
+    );
+    await screen.findByText("第二段落文字");
+    const setEditable = (next: boolean) =>
+      rerender(
+        <Host>
+          <NoteEditor {...base} editable={next} />
+        </Host>,
+      );
+    return { doc, awareness, setEditable };
+  }
+
+  // editable 翻面時 BlockNoteView 會重掛 PM view，每次都重新找。
+  function pmDom(): HTMLElement {
+    const el = screen.getByTestId("note-editor").querySelector<HTMLElement>(".ProseMirror");
+    if (!el) throw new Error("no .ProseMirror");
+    return el;
+  }
+
+  function focusAndSelect() {
+    const dom = pmDom();
+    act(() => {
+      dom.focus();
+    });
+    const tiptap = (dom as unknown as { editor: { commands: { setTextSelection(range: { from: number; to: number }): boolean } } }).editor;
+    act(() => {
+      tiptap.commands.setTextSelection({ from: 3, to: 5 });
+    });
+    expect(document.activeElement).toBe(dom);
+  }
+
+  const localCursor = (awareness: Awareness): unknown => (awareness.getLocalState() as { cursor?: unknown } | null)?.cursor ?? null;
+
+  it("RC1：可編輯——聚焦＋選取後 awareness 有 cursor", async () => {
+    const { doc, awareness } = await mount(true);
+    focusAndSelect();
+    expect(localCursor(awareness)).not.toBeNull();
+    awareness.destroy();
+    doc.destroy();
+  });
+
+  it("RC2：唯讀——編輯區照樣可聚焦，但聚焦＋選取後 awareness 沒有 cursor、也不多送更新；user 照寫；別人的游標照樣畫得出來", async () => {
+    const { doc, awareness } = await mount(false);
+    expect(pmDom()).toHaveAttribute("contenteditable", "false");
+    expect((awareness.getLocalState() as { user?: { name?: string } } | null)?.user?.name).toBe("Ann");
+    let updates = 0;
+    const onUpdate = () => {
+      updates += 1;
+    };
+    awareness.on("update", onUpdate);
+    focusAndSelect();
+    awareness.off("update", onUpdate);
+    expect(localCursor(awareness)).toBeNull();
+    expect(updates).toBe(0);
+
+    const text = findXmlText(doc.getXmlFragment(YDOC_FRAGMENT), "第二段落文字")!;
+    act(() => {
+      setRemote(awareness, 4242, { user: { name: "Bob", color: "#ff0000" }, cursor: { anchor: rel(text, 0), head: rel(text, 2) } });
+    });
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    awareness.destroy();
+    doc.destroy();
+  });
+
+  it("RC3：唯讀 → 可編輯——之後聚焦就開始送", async () => {
+    const { doc, awareness, setEditable } = await mount(false);
+    focusAndSelect();
+    expect(localCursor(awareness)).toBeNull();
+    setEditable(true);
+    focusAndSelect();
+    expect(localCursor(awareness)).not.toBeNull();
+    awareness.destroy();
+    doc.destroy();
+  });
+
+  it("RC4：可編輯 → 唯讀——已送出的 cursor 立即清掉，之後再聚焦＋選取也不送", async () => {
+    const { doc, awareness, setEditable } = await mount(true);
+    focusAndSelect();
+    expect(localCursor(awareness)).not.toBeNull();
+    setEditable(false);
+    expect(localCursor(awareness)).toBeNull();
+    focusAndSelect();
+    expect(localCursor(awareness)).toBeNull();
+    awareness.destroy();
     doc.destroy();
   });
 });

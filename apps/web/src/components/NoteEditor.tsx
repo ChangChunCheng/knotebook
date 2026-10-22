@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type * as Y from "yjs";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
 import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scroll";
+import { gateLocalCursor } from "@/collab/cursor-gate";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
@@ -118,6 +119,8 @@ export interface NoteEditorOptionsInput {
   noteId: string;
   /** #269 §8.4：站內連結轉換的 env（late-bound ref：快取與編輯器都在建立之後才有）。 */
   siteLinks: SiteLinkEnvRef;
+  /** #293 T6b：本分頁此刻可否送游標（late-bound：editor 不隨 editable 重建）。省略＝一律可送。 */
+  canSendCursor?: () => boolean;
 }
 
 /**
@@ -127,13 +130,24 @@ export interface NoteEditorOptionsInput {
  * data URL 仍攔截）、共編 fragment 名稱、字典選擇這幾條契約的所在，而且純粹是
  * 資料——測試可以直接呼叫並斷言，不必掛編輯器。
  */
-export function buildNoteEditorOptions({ doc, provider, user, language, translate, editorRef, noteId, siteLinks }: NoteEditorOptionsInput) {
+export function buildNoteEditorOptions({
+  doc,
+  provider,
+  user,
+  language,
+  translate,
+  editorRef,
+  noteId,
+  siteLinks,
+  canSendCursor,
+}: NoteEditorOptionsInput) {
   return withCollaboration({
     // schema／字典／collaboration（fragment 名、provider 形狀）抽在共用底層——公開
     // 唯讀頁（#72 `buildReadonlyNoteEditorOptions`）用同一份，兩邊不各寫一份。
     ...buildCollabEditorBase({
       doc,
-      awareness: provider.awareness ?? undefined,
+      // #293 T6b：唯讀時不送游標（spec §4.1 as-built；理由見 `@/collab/cursor-gate`）。
+      awareness: provider.awareness ? gateLocalCursor(provider.awareness, canSendCursor ?? (() => true)) : undefined,
       language,
       user: { id: user.id, name: user.name, color: collabUserColor(user.id) },
     }),
@@ -389,6 +403,9 @@ export function NoteEditor({
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);
   onCursorScrollerRef.current = onCursorScroller;
+  // #293 T6b：render 當下寫入——editable 翻面時 BlockNoteView 在 commit 重掛 PM view，那時 gate 已讀到新值。
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
 
   // handler 是在 editor 建立時就固定下來的閉包；用 ref 取用最新的 t，語言切換時
   // 不必為了文案而重建整個 editor（重建會扯斷 y-prosemirror 綁定）。
@@ -420,6 +437,7 @@ export function NoteEditor({
       editorRef,
       noteId,
       siteLinks: siteLinksRef,
+      canSendCursor: () => editableRef.current,
     }),
     // 語言不進 deps：字典只在建立時讀一次，換語言要重開頁面才生效（換成
     // 「重建 editor」的代價是共編綁定重掛，不值得）。noteId 同理不進 deps——`useCollab`
