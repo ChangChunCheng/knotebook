@@ -2,7 +2,7 @@
  * #181 PR-2a T12：垃圾桶交易彼此的併發（spec §6.14、A2-16 併發半、M-D）。以拋棄式 pg 實跑：一方卡在 T3 的鎖後縫，
  * 另一方送出後以 `waitForLockWaiters` 確認它真的在等鎖（交錯真的發生），放行後斷言結果只會是指定的那一種。
  * 「移入×上傳」的另一形（個人筆記、既有附件）在 `notes-delete-race.test.ts`；這裡是群組筆記、成員上傳，並接著永久刪除。
- * RC-DL：刪群組（全刪／轉移）× 多 id 永久刪除的鎖序成環——記錄現況（產品缺陷，見各案註解）。
+ * RC-DL：刪群組（全刪／轉移）× 多 id 永久刪除／還原的鎖序（T12b 統一依 id 鎖之後不再成環），以及還原／永久刪除被併發犧牲時的 409。
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
@@ -332,34 +332,34 @@ describe("RC5 角色降級 × 還原", () => {
 });
 
 /**
- * RC-DL：刪群組 × 多 id 永久刪除的鎖序成環（資料夾 spec gate 實跑 5/14 撞到的形）。永久刪除依 id 升冪鎖；全刪以群組述詞
- * 鎖、沒有 ORDER BY（實體順序）；轉移依 created_at, id 鎖。兩篇 a < b（id），但全刪／轉移的鎖序是 b 先。
- * 決定性的造法：測試連線先持 a 的列鎖 → 永久刪除排在 a 上（什麼都還沒鎖）→ 刪群組鎖住 b、排在 a 上 → 測試放掉 a：
- * 永久刪除拿到 a、去等 b；刪群組等 a ⇒ 40P01，犧牲者由 PG 的 deadlock_timeout 先到者決定（兩種都可能）。
- * ⚠ 這是**產品缺陷的現況記錄**：修好（全刪依 id 鎖；轉移依 id 鎖、slug 處理順序在 JS 依 created_at, id 排）之後兩邊都成功，
- * 本案要改成斷言「沒有死結」。犧牲者是刪群組 → 409 server_busy；是永久刪除 → 500 internal（purge 沒有 server_busy 映射）。
+ * RC-DL：刪群組 × 多 id 永久刪除／還原的鎖序（資料夾 spec gate 實跑 5/14 撞到的形；T12 實跑確認會死結，T12b 修）。
+ * 兩篇 a < b（id），但全刪的掃描順序（視 plan：實體或 `notes_group_slug_idx` 的 slug 序）與轉移的 created_at 序都是 b 先。
+ * 修法：全刪、轉移都改依 id 升冪鎖（與垃圾桶三支、`deleteNotesInTx` 同序），轉移的 slug 處理順序另在 JS 依 created_at, id 排。
+ * 決定性的造法：測試連線先持 a 的列鎖 → 永久刪除／還原排在 a 上（什麼都還沒鎖）→ 刪群組也排在 a 上 → 測試放掉 a：
+ * a 的佇列先進先出，永久刪除／還原先拿到 a、再拿 b、commit；刪群組之後才拿到鎖。改回舊鎖序（刪群組先鎖 b 再等 a）就成環 → 40P01。
  */
-async function deadlockScene(order: "physical" | "created") {
+async function deadlockScene(order: "scan" | "created") {
   const seams = new Seams();
   const logs = captureLogs();
-  const built = await buildTestApp({ groupTestHook: seams.group, collabHooks: spyCollabHooks() }, logs.options);
+  const hooks = spyCollabHooks();
+  const built = await buildTestApp({ groupTestHook: seams.group, collabHooks: hooks }, logs.options);
   const { db } = built;
   const pool = db.$client;
   const admin = await seedUser(db);
   const g = await seedGroup(db, "RC-DL", [{ userId: admin.id, role: "admin" }]);
   const [a, b] = [randomUUID(), randomUUID()].sort();
   const now = Date.now();
-  // b 先插（實體順序在前）、slug 較小（`(group_id, slug)` 索引掃描也是 b 先）、created_at 也較早——全刪與轉移的鎖序都是
-  // b 先、a 後；永久刪除是 a 先。
+  // b 先插（實體順序在前）、slug 較小（`(group_id, slug)` 索引掃描也是 b 先）、created_at 也較早——舊的全刪與轉移鎖序都是
+  // b 先、a 後；永久刪除／還原是 a 先。
   await db.insert(notes).values({ id: b!, groupId: g.id, slug: "dl-1", createdAt: new Date(now - 60_000) });
   await db.insert(notes).values({ id: a!, groupId: g.id, slug: "dl-2", createdAt: new Date(now) });
   // 移入是 UPDATE、會寫新的 tuple：照 b、a 的順序寫，新版本的實體順序才維持 b 先。
   for (const id of [b!, a!]) await markTrashed(pool, id, admin.id);
-  if (order === "physical") {
+  if (order === "scan") {
     const { rows } = await pool.query<{ id: string }>(`select id from notes where group_id = $1`, [g.id]);
-    expect(rows.map(r => r.id), "前提：全刪的掃描順序是 b、a").toEqual([b, a]);
+    expect(rows.map(r => r.id), "前提：不帶 ORDER BY 的掃描順序是 b、a").toEqual([b, a]);
   }
-  return { ...built, pool, seams, logs, admin, groupId: g.id, a: a!, b: b! };
+  return { ...built, pool, seams, logs, hooks, admin, groupId: g.id, a: a!, b: b! };
 }
 
 /** 測試連線持 a 的列鎖；回放鎖函式。 */
@@ -379,57 +379,107 @@ async function holdRow(pool: Pool, id: string): Promise<{ client: PoolClient; re
   };
 }
 
-const errCodeOf = (e: unknown): unknown => {
-  const err = e as { code?: unknown; cause?: { code?: unknown } } | undefined;
-  return err?.code ?? err?.cause?.code;
-};
+/** holder 持 a → first 排在 a 上 → 刪群組也排在 a 上 → 放掉 a。回兩條請求。 */
+async function queueBehindA(
+  s: Awaited<ReturnType<typeof deadlockScene>>,
+  first: () => Promise<Res>,
+  body: Record<string, unknown>,
+): Promise<{ firstReq: Promise<Res>; deleting: Promise<Res> }> {
+  const holder = await holdRow(s.pool, s.a);
+  let firstReq: Promise<Res> | undefined;
+  let deleting: Promise<Res> | undefined;
+  try {
+    firstReq = first();
+    await waitForLockWaiters(s.pool, 1);
+    deleting = inject(s.app, "DELETE", `/api/groups/${s.groupId}`, s.admin.id, body);
+    await waitForLockWaiters(s.pool, 2);
+  } finally {
+    await holder.release();
+  }
+  return { firstReq: firstReq!, deleting: deleting! };
+}
+
+const unhandled = (s: { logs: ReturnType<typeof captureLogs> }) => s.logs.lines.filter(l => l.msg === "unhandled error");
 
 for (const mode of ["delete", "transfer"] as const) {
-  describe(`RC-DL ${mode === "delete" ? "全刪" : "轉移"} × 多 id 永久刪除（現況：40P01）`, () => {
-    it("兩條交易以相反順序鎖同兩篇 → 死結，一方 40P01（刪群組 409 server_busy／永久刪除 500），另一方完整生效、資料不壞", async () => {
-      const s = await deadlockScene(mode === "delete" ? "physical" : "created");
-      const holder = await holdRow(s.pool, s.a);
+  describe(`RC-DL ${mode === "delete" ? "全刪" : "轉移"} × 多 id 永久刪除`, () => {
+    it("兩邊都依 id 鎖 → 不死結：永久刪除 200 purged [a, b]、刪群組 204、log 沒有 unhandled error", async () => {
+      const s = await deadlockScene(mode === "delete" ? "scan" : "created");
       const body = mode === "delete" ? { mode } : { mode, transferTo: s.admin.id };
-      let purging: Promise<Res> | undefined;
-      let deleting: Promise<Res> | undefined;
-      try {
-        purging = purge(s.app, s.admin.id, [s.a, s.b]);
-        await waitForLockWaiters(s.pool, 1);
-        deleting = inject(s.app, "DELETE", `/api/groups/${s.groupId}`, s.admin.id, body);
-        await waitForLockWaiters(s.pool, 2);
-      } finally {
-        await holder.release();
-      }
-      const [pr, dr] = await Promise.all([purging!, deleting!]);
-      const groupLeft = (await s.db.select({ id: groups.id }).from(groups).where(eq(groups.id, s.groupId))).length;
+      const { firstReq, deleting } = await queueBehindA(s, () => purge(s.app, s.admin.id, [s.a, s.b]), body);
+      const [pr, dr] = await Promise.all([firstReq, deleting]);
 
-      if (dr.statusCode === 409) {
-        // 刪群組是犧牲者：整個交易回滾（群組還在），永久刪除完整生效。
-        expect(dr.json()).toEqual({ error: { code: "server_busy", message: "伺服器忙碌，請稍後再試" } });
-        expect(pr.statusCode, pr.body).toBe(200);
-        expect(pr.json()).toEqual({ purged: [s.a, s.b], skipped: [] });
-        expect(groupLeft).toBe(1);
-        expect([await exists(s.pool, s.a), await exists(s.pool, s.b)]).toEqual([false, false]);
-      } else {
-        // 永久刪除是犧牲者：500，log 的錯是 40P01；刪群組完整生效。
-        expect(dr.statusCode, dr.body).toBe(204);
-        expect(pr.statusCode, pr.body).toBe(500);
-        expect(pr.json()).toEqual({ error: { code: "internal", message: "伺服器內部錯誤" } });
-        const line = s.logs.lines.find(l => l.msg === "unhandled error");
-        expect(errCodeOf(line?.obj.err)).toBe("40P01");
-        expect(groupLeft).toBe(0);
-        if (mode === "delete") {
-          expect([await exists(s.pool, s.a), await exists(s.pool, s.b)]).toEqual([false, false]);
-        } else {
-          // 轉移：兩篇成了接收者的個人筆記，仍在垃圾桶（deleted_* 不動）。
-          const rows = await s.db.select({ id: notes.id, ownerId: notes.ownerId, groupId: notes.groupId }).from(notes);
-          expect(rows.sort((x, y) => (x.id < y.id ? -1 : 1))).toEqual([
-            { id: s.a, ownerId: s.admin.id, groupId: null },
-            { id: s.b, ownerId: s.admin.id, groupId: null },
-          ]);
-          for (const id of [s.a, s.b]) expect((await trashCols(s.pool, id))?.deleted_by).toBe(s.admin.id);
-        }
-      }
+      expect(pr.statusCode, pr.body).toBe(200);
+      expect(pr.json()).toEqual({ purged: [s.a, s.b], skipped: [] } satisfies TrashPurgeResultDto);
+      expect(dr.statusCode, dr.body).toBe(204);
+      expect(await s.db.select({ id: groups.id }).from(groups).where(eq(groups.id, s.groupId))).toEqual([]);
+      // 轉移也是 0 篇被轉走：兩篇在它拿到鎖之前已被永久刪除。
+      expect([await exists(s.pool, s.a), await exists(s.pool, s.b)]).toEqual([false, false]);
+      expect(unhandled(s)).toEqual([]);
     });
   });
 }
+
+describe("RC-DL 轉移 × 多 id 還原", () => {
+  it("不死結：還原 200 restored [a, b]；轉移 204，兩篇成了接收者的個人筆記且活著；log 沒有 unhandled error", async () => {
+    const s = await deadlockScene("created");
+    // 轉移拿到鎖之後卡在第一個 slug 候選，等還原的回應（還原 commit 後的重讀）回完才放行——否則重讀與轉移 commit 競速。
+    const cand = s.seams.hold("group-transfer-slug-candidate");
+    const { firstReq, deleting } = await queueBehindA(s, () => restore(s.app, s.admin.id, [s.a, s.b]), {
+      mode: "transfer",
+      transferTo: s.admin.id,
+    });
+    let rr: Res;
+    try {
+      rr = await firstReq;
+    } finally {
+      cand.open();
+    }
+    const dr = await deleting;
+
+    expect(rr.statusCode, rr.body).toBe(200);
+    expect(restoredIds(rr)).toEqual([s.a, s.b]);
+    expect((rr.json() as TrashRestoreResultDto).skipped).toEqual([]);
+    expect(s.hooks.onNotesRestored.mock.calls).toEqual([[[s.a, s.b]]]);
+    expect(dr.statusCode, dr.body).toBe(204);
+    expect(await s.db.select({ id: groups.id }).from(groups).where(eq(groups.id, s.groupId))).toEqual([]);
+    const rows = await s.db.select({ id: notes.id, ownerId: notes.ownerId, groupId: notes.groupId }).from(notes);
+    expect(rows.sort((x, y) => (x.id < y.id ? -1 : 1))).toEqual([
+      { id: s.a, ownerId: s.admin.id, groupId: null },
+      { id: s.b, ownerId: s.admin.id, groupId: null },
+    ]);
+    for (const id of [s.a, s.b]) expect(await trashCols(s.pool, id)).toEqual({ deleted_at: null, deleted_by: null });
+    expect(unhandled(s)).toEqual([]);
+  });
+});
+
+describe("RC-DL 的防禦縱深：還原／永久刪除的交易被併發犧牲 → 409 server_busy", () => {
+  for (const code of ["40P01", "40001"]) {
+    for (const op of ["purge", "restore"] as const) {
+      it(`${op} 交易內丟 ${code} → 409 server_busy、什麼都沒做、log 沒有 unhandled error`, async () => {
+        const logs = captureLogs();
+        const hooks = spyCollabHooks();
+        const point = op === "purge" ? "note-purge-locked" : "note-restore-locked";
+        const groupTestHook: GroupTestHook = async p => {
+          if (p === point) throw Object.assign(new Error("concurrent tx failure"), { code });
+        };
+        const { app, db, uploadsDir } = await buildTestApp({ groupTestHook, collabHooks: hooks }, logs.options);
+        const pool = db.$client;
+        const owner = await seedUser(db);
+        const n = await seedNote(db, { ownerId: owner.id });
+        const up = await seedAttachment(db, uploadsDir, n.id, owner.id, 12);
+        await markTrashed(pool, n.id, owner.id);
+
+        const r = op === "purge" ? await purge(app, owner.id, [n.id]) : await restore(app, owner.id, [n.id]);
+
+        expect(r.statusCode, r.body).toBe(409);
+        expect(r.json()).toEqual({ error: { code: "server_busy", message: "伺服器忙碌，請稍後再試" } });
+        expect(await trashCols(pool, n.id)).toEqual({ deleted_at: expect.any(String), deleted_by: owner.id });
+        expect((await db.select({ id: uploads.id }).from(uploads).where(eq(uploads.noteId, n.id))).map(u => u.id)).toEqual([up]);
+        expect(await filesIn(uploadsDir)).toEqual([up]);
+        expect(hooks.onNotesRestored).not.toHaveBeenCalled();
+        expect(logs.lines.filter(l => l.msg === "unhandled error")).toEqual([]);
+      });
+    }
+  }
+});

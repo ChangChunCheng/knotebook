@@ -11,16 +11,19 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { TRASH_BATCH_MAX, type NoteDto, type TrashPurgeResultDto, type TrashRestoreResultDto } from "@knotebook/shared";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../auth/tx/admin-site-settings.js";
+import { isRetryableTxError } from "../db/pg-errors.js";
 import { siteSettings } from "../db/schema.js";
 import { sendError } from "../http/errors.js";
 import { loadNoteFields, toNoteDto } from "../notes/note-dto.js";
 import { UUID_RE, resolveNoteAccess } from "../notes/service.js";
 import { listTrash } from "../trash/list.js";
-import { purgeTrashed, restoreTrashed, type TrashServiceDeps } from "../trash/service.js";
+import { purgeTrashed, restoreTrashed, type TrashBatchResult, type TrashServiceDeps } from "../trash/service.js";
 
 /** 上限算**原始個數**（去重之前；gate r1 M6）。 */
 const idsBodySchema = z.object({ ids: z.array(z.string()).min(1).max(TRASH_BATCH_MAX) }).strict();
 const IDS_INVALID_MESSAGE = `請求格式錯誤：ids 須為 1 到 ${TRASH_BATCH_MAX} 個筆記 id`;
+/** 還原／永久刪除的交易被併發犧牲（40001／40P01／55P03，整個交易回滾、什麼都沒做）→ 409 server_busy，比照刪群組等路由。 */
+const SERVER_BUSY_MESSAGE = "伺服器忙碌，請稍後再試";
 
 /** 驗證後轉小寫、去重（保留首見順序）；任一不合（含 zod 失敗、非 UUID）→ null。 */
 function parseIds(body: unknown): string[] | null {
@@ -48,7 +51,13 @@ export function trashRoutes(deps: TrashServiceDeps) {
       const ids = parseIds(request.body);
       if (ids === null) return sendError(reply, 400, "invalid_body", IDS_INVALID_MESSAGE);
       const userId = request.user!.id;
-      const result = await restoreTrashed(deps, { ids, by: userId });
+      let result: TrashBatchResult;
+      try {
+        result = await restoreTrashed(deps, { ids, by: userId });
+      } catch (err) {
+        if (isRetryableTxError(err)) return sendError(reply, 409, "server_busy", SERVER_BUSY_MESSAGE);
+        throw err;
+      }
       const restored: NoteDto[] = [];
       for (const id of result.done) {
         // 極窄競態：還原 commit 之後、這裡重讀之前又被移入／降權／永久刪除 → 取不到或 none。它確實被還原過，所以不列 skipped；
@@ -64,7 +73,13 @@ export function trashRoutes(deps: TrashServiceDeps) {
     app.post("/api/trash/purge", { preHandler: app.authenticate }, async (request, reply) => {
       const ids = parseIds(request.body);
       if (ids === null) return sendError(reply, 400, "invalid_body", IDS_INVALID_MESSAGE);
-      const result = await purgeTrashed(deps, { ids, by: request.user!.id }, request.log);
+      let result: TrashBatchResult;
+      try {
+        result = await purgeTrashed(deps, { ids, by: request.user!.id }, request.log);
+      } catch (err) {
+        if (isRetryableTxError(err)) return sendError(reply, 409, "server_busy", SERVER_BUSY_MESSAGE);
+        throw err;
+      }
       return reply.send({ purged: result.done, skipped: result.skipped } satisfies TrashPurgeResultDto);
     });
   };

@@ -1,12 +1,13 @@
 /**
  * #175 刪群組的兩支交易本體（§6.8，PR4；PR1–PR3 的 T5「只刪空群組」已退場）：T6 `transferGroupInTx`（轉移給內建管理員）、
- * T7 `deleteGroupWithNotesInTx`（連筆記一起刪）。兩支都先 `lockGroup`（groups FOR UPDATE），再以群組述詞 FOR UPDATE 該群組的筆記；
+ * T7 `deleteGroupWithNotesInTx`（連筆記一起刪）。兩支都先 `lockGroup`（groups FOR UPDATE），再以群組述詞 FOR UPDATE 該群組的筆記，
+ * **依 id 升冪鎖**（與垃圾桶的移入／還原／永久刪除、`deleteNotesInTx` 同序；#181 T12b：依 slug 索引或 created_at 鎖會和多 id 永久刪除／還原成環）；
  * 鎖之後才到的建立／移入／複製進群組都卡在 groups 的 KEY SHARE，commit 後得 23503 或讀到群組不在 → 404。角色與成員由 FK CASCADE 帶走。
  * 儲存配額（spec 2026-10-08 §6.6）：T6 在群組筆記 FOR UPDATE 之後另取接收者個人空間的 advisory 鎖；T7 不取（Q-S5）。
  * S14：本檔只收 `tx`／純資料／測試縫，不 import `Db`、不接 `deps`；全刪的 gate（`beforeNoteDeleted`）、commit 後的刪檔與踢線都在路由。
  * 與其他交易的鎖序（含會成環而回 409 server_busy 的兩形）見 PR4 plan 的鎖序表。
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups, notes, uploads } from "../../db/schema.js";
 import { TxAbort } from "../../http/tx-abort.js";
@@ -38,7 +39,7 @@ export interface GroupDeletionResult {
 /**
  * #175 T6（spec §6.8 transfer）：群組筆記全數改成 transferTo 的個人筆記，再刪群組。S14：只收 `tx`／純資料／測試縫。
  *   lockGroup（不存在 → 404）→ transferTo 是成員且 builtin='admin'（鎖之後查，C9）→ 否則 409 not_admin
- *   → M（CASCADE 前取）→ 該群組筆記 FOR UPDATE，依 created_at, id（撞名時誰拿較小的 -N 是決定性的，RF1；spec 疑點 Q3）
+ *   → M（CASCADE 前取）→ 該群組筆記 FOR UPDATE（依 id 鎖），再在 JS 依 created_at, id 排處理順序（撞名時誰拿較小的 -N 是決定性的，RF1；spec 疑點 Q3）
  *   → 儲存配額：附件總和 → transferTo 個人空間鎖＋判定（writeSlugInTx 之前；放不下 → StorageQuotaExceeded，什麼都沒寫）
  *   → 版本歷史 §9：清空版本（`resetNoteVersionsInTx({ groupId })`，以群組述詞一次處理，必須在改 group_id 之前）
  *   → 每篇 writeSlugInTx（scope＝transferTo 個人、base＝舊 slug，B6）：同一句 UPDATE 換歸屬、清 prev（B12）
@@ -60,12 +61,16 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
   await hook?.("group-delete-locked", { groupId: input.groupId });
 
   const members = await tx.select({ userId: groupMembers.userId }).from(groupMembers).where(eq(groupMembers.groupId, input.groupId));
-  const rows = await tx
-    .select({ id: notes.id, slug: notes.slug })
+  // 鎖序依 id（見檔頭）；處理順序另在 JS 依 created_at, id 排。created_at 取微秒整數（JS Date 只到毫秒，同毫秒內會排錯）。
+  const locked = await tx
+    .select({ id: notes.id, slug: notes.slug, createdUs: sql<string>`(extract(epoch from ${notes.createdAt}) * 1000000)::bigint` })
     .from(notes)
     .where(eq(notes.groupId, input.groupId))
-    .orderBy(asc(notes.createdAt), asc(notes.id))
+    .orderBy(asc(notes.id))
     .for("update");
+  const rows = locked
+    .map(r => ({ ...r, us: BigInt(r.createdUs) }))
+    .sort((x, y) => (x.us < y.us ? -1 : x.us > y.us ? 1 : x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
 
   // 儲存配額 §6.6：群組筆記已全數 FOR UPDATE（Q-S2），incoming＝它們的附件總和（含 P0 之後才進群組的——以群組述詞取到即算）。
   // 接收者個人空間鎖在第一個 writeSlugInTx **之前**（Q-S7：反例見 spec §6.1，R13 釘住）。拒絕 → 什麼都沒寫。
@@ -118,7 +123,7 @@ export async function deleteGroupWithNotesInTx(
 ): Promise<GroupDeletionResult & { uploadIds: string[] }> {
   if (!(await lockGroup(tx, input.groupId))) throw new TxAbort(404, "not_found", GROUP_NOT_FOUND_MESSAGE);
   await hook?.("group-delete-locked", { groupId: input.groupId });
-  const rows = await tx.select({ id: notes.id }).from(notes).where(eq(notes.groupId, input.groupId)).for("update");
+  const rows = await tx.select({ id: notes.id }).from(notes).where(eq(notes.groupId, input.groupId)).orderBy(asc(notes.id)).for("update");
   const members = await tx.select({ userId: groupMembers.userId }).from(groupMembers).where(eq(groupMembers.groupId, input.groupId));
   const noteIds = rows.map(r => r.id);
   const uploadIds = await deleteNotesInTx(tx, noteIds);

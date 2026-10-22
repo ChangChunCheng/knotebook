@@ -111,7 +111,7 @@ export function isLockTimeout(err: unknown): boolean {
   return matchesCode(err, PG_LOCK_NOT_AVAILABLE);
 }
 
-/** 40001／40P01／55P03：upload／copy／move／刪群組四支路由的 `server_busy` 判準（§6.9）。 */
+/** 40001／40P01／55P03：交易被併發犧牲（什麼都沒寫）的路由一律以此映射 409 `server_busy`（§6.9；呼叫端 grep 本函式名）。 */
 export function isRetryableTxError(err: unknown): boolean {
   return isTransientTransactionError(err) || isLockTimeout(err);
 }

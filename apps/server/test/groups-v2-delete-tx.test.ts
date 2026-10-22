@@ -92,10 +92,34 @@ describe("#175 PR4 transferGroupInTx（T6）", () => {
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: b.id, role: "admin" }]);
     await seedNote(db, { ownerId: b.id }, { slug: "a" });
     // 實體插入序 Q→P＝slug 序（a < a-2），與建立序（P 較早）相反——依 slug 序或實體序處理都會得 Q＝a-2、P＝a-2-2。
-    const q = await seedNote(db, { groupId: g.id }, { slug: "a" });
-    const p = await seedNote(db, { groupId: g.id }, { slug: "a-2" });
+    // id 也與建立序相反（q < p）：依 id 處理（鎖序是 id，T12b）同樣會錯。
+    const q = await seedNote(db, { groupId: g.id }, { id: "00000000-0000-4000-8000-000000000001", slug: "a" });
+    const p = await seedNote(db, { groupId: g.id }, { id: "ffffffff-0000-4000-8000-000000000001", slug: "a-2" });
     await pool.query("update notes set created_at = now() - interval '1 hour' where id = $1", [p.id]);
     await pool.query("update notes set created_at = now() where id = $1", [q.id]);
+
+    const out = await db.transaction(tx => transferGroupInTx(tx, { groupId: g.id, transferTo: b.id, lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS }));
+
+    expect((await noteState(pool, p.id)).slug).toBe("a-2");
+    expect((await noteState(pool, q.id)).slug).toBe("a-3");
+    expect(await redirectsOf(db)).toEqual([
+      { oldPath: `/g/${g.id}/a`, noteId: q.id },
+      { oldPath: `/g/${g.id}/a-2`, noteId: p.id },
+    ]);
+    expect(out.noteIds).toEqual([p.id, q.id]);
+  });
+
+  it("RF1b：created_at 只差 1 µs（同一毫秒內）仍依 created_at 處理——較早的 a-2 保留、較晚的 a 得 a-3", async () => {
+    const { db } = await buildTestApp();
+    const pool = db.$client;
+    const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
+    const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: b.id, role: "admin" }]);
+    await seedNote(db, { ownerId: b.id }, { slug: "a" });
+    // id 與 RF1 同一組反序（q < p）：毫秒或秒精度會把兩篇排成同時、退回依 id，q 先處理就錯。
+    const q = await seedNote(db, { groupId: g.id }, { id: "00000000-0000-4000-8000-000000000001", slug: "a" });
+    const p = await seedNote(db, { groupId: g.id }, { id: "ffffffff-0000-4000-8000-000000000001", slug: "a-2" });
+    await pool.query("update notes set created_at = '2026-01-01 00:00:00.000100+00' where id = $1", [p.id]);
+    await pool.query("update notes set created_at = '2026-01-01 00:00:00.000101+00' where id = $1", [q.id]);
 
     const out = await db.transaction(tx => transferGroupInTx(tx, { groupId: g.id, transferTo: b.id, lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS }));
 
