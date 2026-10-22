@@ -37,6 +37,7 @@ function note(id: string, title: string, over: Partial<NoteDto> = {}): NoteDto {
     lastEdited: null,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
     ...over,
   };

@@ -30,7 +30,7 @@ vi.mock("react-router", async (importOriginal) => {
 const NOTE: NoteDto = {
   id: "11111111-1111-1111-1111-111111111111", title: "My Note", ownerId: "u1", role: "owner",
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", slug: "my-note", slugIsCustom: true,
-  prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS,
+  prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS,
 };
 /** 側欄別篇用 viewer 權限：同時涵蓋 RF5 的「側欄 ⋮ 的 viewer」（r1-p3 MINOR 3）。 */
 const OTHER: NoteDto = { ...NOTE, id: "22222222-2222-2222-2222-222222222222", title: "Other", slug: "other", role: "viewer", permissions: VIEWER_PERMS };

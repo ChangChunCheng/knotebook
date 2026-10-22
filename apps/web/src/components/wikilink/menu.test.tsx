@@ -84,6 +84,7 @@ function note(overrides: Partial<NoteDto> = {}): NoteDto {
     lastEdited: null,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
     ...overrides,
   };

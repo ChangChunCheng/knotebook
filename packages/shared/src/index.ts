@@ -132,6 +132,10 @@ export interface NoteDto {
   group: NoteGroupDto | null;
   /** #175 §5.2：呼叫者在這篇上能做什麼。web 一律看這裡，不再用 `role === "owner"` 推。 */
   permissions: NotePermissions;
+  /** 所在資料夾（呼叫者視角）：個人／群組筆記＝`notes.folder_id`；共享給我的筆記＝我自己的放置（擁有者的資料夾不外流）。null＝根層。 */
+  folderId: string | null;
+  /** 內文（Yjs 狀態）＋附件的位元組數，只用於排序；只有 `GET /api/notes` 帶。 */
+  sizeBytes?: number;
 }
 
 /**

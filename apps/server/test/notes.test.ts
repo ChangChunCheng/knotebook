@@ -92,7 +92,7 @@ describe("POST /api/notes", () => {
     // 實際還有 linksClock、deletedAt 兩個內部欄位，NoteDto 组裝必須明確排除，不能讓
     // 未來有人不小心把 `...note` 展開進回應而洩漏出去。
     expect(Object.keys(body).sort()).toEqual([
-      "createdAt", "group", "groupId", "id", "lastEdited", "ownerHandle", "ownerId", "permissions", "prevSlug", "role", "slug", "slugIsCustom", "title", "updatedAt",
+      "createdAt", "folderId", "group", "groupId", "id", "lastEdited", "ownerHandle", "ownerId", "permissions", "prevSlug", "role", "slug", "slugIsCustom", "title", "updatedAt",
     ]);
     expect(body.group).toBeNull();
     expect(body.groupId).toBeNull();
