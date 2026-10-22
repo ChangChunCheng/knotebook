@@ -18,6 +18,10 @@ never nested.
 **Put any block in a column** — text, headings, lists, images, code, tables, diagrams. A table too
 wide for its column scrolls sideways inside the column.
 
+**Blocks in a column have no `+` button.** Their side menu shows only ⋮⋮, because the space between
+columns is too narrow for both buttons. To add a block in a column, press Enter at the end of a block
+there, or type `/`.
+
 **Columns line up at the top.** A row is as tall as its tallest column, so a shorter column leaves
 blank space below its content. That is expected.
 

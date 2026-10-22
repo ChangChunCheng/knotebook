@@ -10,7 +10,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { Toaster } from "@/components/ui/toast";
-import { P, row, shape, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
+import { P, row, shape, withChildren, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { KnotebookSideMenu, NotePathContext } from "./KnotebookSideMenu";
 import { HeadingAnchorButtons } from "./HeadingAnchorButtons";
 
@@ -262,5 +262,74 @@ describe("T6 ⋮⋮「取消並排」（spec §7.2）", () => {
     const editor = mount(R2());
     await openMenu(editor, "x", "x");
     expect(screen.queryByText("Ungroup columns")).toBeNull();
+  });
+});
+
+describe("C7 欄內的側邊選單只留 ⋮⋮（spec §17 #3，Willie 2026-10-22）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  function mount(content: PartialBlockLike[]): AnyEditor {
+    const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: content as never }) as AnyEditor;
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <NotePathContext.Provider value="/n/h/note">
+            <BlockNoteView editor={editor} editable sideMenu={false}>
+              <SideMenuController sideMenu={KnotebookSideMenu} />
+            </BlockNoteView>
+          </NotePathContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return editor;
+  }
+
+  /** 讓 SideMenuView 指向文字為 `text` 的 block，等 ⋮⋮ 出現。 */
+  async function hover(editor: AnyEditor, text: string, id: string): Promise<void> {
+    const el = screen.getByText(text);
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
+    act(() => {
+      fireEvent.mouseMove(el, { clientX: 0, clientY: 0 });
+    });
+    expect(editor.getExtension(SideMenuExtension)!.store.state?.block?.id).toBe(id);
+    expect(await screen.findByLabelText("Open block menu")).toBeInTheDocument();
+  }
+
+  const NESTED = () => [P("x", "x"), row([[withChildren(P("a", "a1"), [P("n", "n1")])], [P("b", "b1")]], "r"), P("z", "z")];
+
+  it("C7-1：欄的直接子 block → 只有 ⋮⋮、沒有 Add block", async () => {
+    const editor = mount(NESTED());
+    await hover(editor, "b", "b1");
+    expect(screen.queryByLabelText("Add block")).toBeNull();
+  });
+
+  it("C7-2：欄內巢狀子 block → 同樣只有 ⋮⋮", async () => {
+    const editor = mount(NESTED());
+    expect(editor.getParentBlock("n1")?.id).toBe("a1");
+    await hover(editor, "n", "n1");
+    expect(screen.queryByLabelText("Add block")).toBeNull();
+  });
+
+  it("C7-3：欄外 block → Add block 與 ⋮⋮ 都在；再移到欄內 → Add block 消失", async () => {
+    const editor = mount(NESTED());
+    await hover(editor, "x", "x");
+    expect(screen.getByLabelText("Add block")).toBeInTheDocument();
+    await hover(editor, "b", "b1");
+    expect(screen.queryByLabelText("Add block")).toBeNull();
+  });
+
+  it("C7-4：欄內 ⋮⋮ 的選單項不變（刪除、取消並排、顏色、複製段落連結）", async () => {
+    const editor = mount(NESTED());
+    await hover(editor, "b", "b1");
+    fireEvent.click(screen.getByLabelText("Open block menu"));
+    expect(await screen.findByText("Delete")).toBeInTheDocument();
+    expect(screen.getByText("Ungroup columns")).toBeInTheDocument();
+    expect(screen.getByText("Colors")).toBeInTheDocument();
+    expect(screen.getByText("Copy link to block")).toBeInTheDocument();
   });
 });

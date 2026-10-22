@@ -1,8 +1,10 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { BlockNoteEditor } from "@blocknote/core";
 import { SideMenuExtension } from "@blocknote/core/extensions";
 import {
   BlockColorsItem,
+  DragHandleButton,
   DragHandleMenu,
   SideMenu,
   TableColumnHeaderItem,
@@ -13,6 +15,7 @@ import {
   useExtensionState,
   type SideMenuProps,
 } from "@blocknote/react";
+import { COLUMN_TYPE } from "@knotebook/shared";
 import { isInColumn, ungroupColumns } from "@/collab/columns/commands";
 import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { blockIdsForMenuDelete } from "@/collab/columns/selection-delete";
@@ -80,7 +83,28 @@ export function KnotebookDragHandleMenu() {
   );
 }
 
-/** 模組層常數元件（身分穩定）：SideMenuController 以元件身分決定要不要重掛。 */
+/** block 在某欄裡（任一層祖先是 column，含欄內巢狀子 block）。 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+function hasColumnAncestor(editor: BlockNoteEditor<any, any, any>, blockId: string): boolean {
+  for (let parent = editor.getParentBlock(blockId); parent; parent = editor.getParentBlock(parent.id)) {
+    if (parent.type === COLUMN_TYPE) return true;
+  }
+  return false;
+}
+
+/**
+ * 模組層常數元件（身分穩定）：SideMenuController 以元件身分決定要不要重掛。
+ * 欄內只放 ⋮⋮（spec §17 #3，Willie 2026-10-22）：欄的選單以欄左緣定位、落在 24px 溝裡，兩顆鈕（48px）會蓋進前一欄。
+ */
 export function KnotebookSideMenu(props: SideMenuProps) {
+  const editor = useBlockNoteEditor();
+  const block = useExtensionState(SideMenuExtension, { editor, selector: (state) => state?.block });
+  if (block !== undefined && hasColumnAncestor(editor, block.id)) {
+    return (
+      <SideMenu {...props}>
+        <DragHandleButton {...props} dragHandleMenu={KnotebookDragHandleMenu} />
+      </SideMenu>
+    );
+  }
   return <SideMenu {...props} dragHandleMenu={KnotebookDragHandleMenu} />;
 }
