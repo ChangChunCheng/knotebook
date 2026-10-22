@@ -476,6 +476,11 @@ test("C7 側邊把手（§17 #3 的 PR-1 部分、§13.2）：第 2 欄的 ⋮�
     expect(Math.abs(m.ys[0]! - m.ys[1]!)).toBeLessThanOrEqual(0.5);
   }).toPass({ timeout: 10_000 });
 
+  // 正向對照：欄外的 block 有 "Add block"，下面斷「不可見」才不會因找不到元素而空真
+  await blockOuter(page, "x").hover();
+  const addBlock = page.getByRole("button", { name: "Add block" });
+  await expect(addBlock).toBeVisible();
+
   let aligned: { menu: Rect; block: Rect } | undefined;
   try {
     aligned = await hoverForSideMenu(page, "second column");
@@ -484,7 +489,7 @@ test("C7 側邊把手（§17 #3 的 PR-1 部分、§13.2）：第 2 欄的 ⋮�
   }
   const { menu, block } = aligned!;
   // 欄內只留 ⋮⋮（Willie 2026-10-22）：兩顆鈕共 48px，比 24px 的溝寬。
-  await expect(page.getByRole("button", { name: "Add block" })).toBeHidden();
+  await expect(addBlock).toBeHidden();
   const col1 = (await row.locator(COL).nth(0).boundingBox())!;
   const col2 = (await row.locator(COL).nth(1).boundingBox())!;
   const measured = {

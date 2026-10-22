@@ -20,7 +20,8 @@ wide for its column scrolls sideways inside the column.
 
 **Blocks in a column have no `+` button.** Their side menu shows only ⋮⋮, because the space between
 columns is too narrow for both buttons. To add a block in a column, press Enter at the end of a block
-there, or type `/`.
+there (or with an image selected, press Enter to add a paragraph below it in the same column), or
+type `/` in a block that has text and pick a block type: the new block goes below it.
 
 **Columns line up at the top.** A row is as tall as its tallest column, so a shorter column leaves
 blank space below its content. That is expected.
