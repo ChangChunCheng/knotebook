@@ -4,7 +4,7 @@ import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LastEditedDto, NoteDto } from "@knotebook/shared";
 import { OWNER_PERMS } from "@/test/fixtures";
-import { patchNotesListLastEdited, useDeleteNote } from "./notes";
+import { patchNotesListLastEdited, useDeleteNote, useNote, useNoteByGroupPath, useNoteByPath } from "./notes";
 
 function note(id: string, lastEdited: LastEditedDto | null): NoteDto {
   return {
@@ -103,5 +103,33 @@ describe("useDeleteNote", () => {
     await result.current.mutateAsync("a");
     const keys = spy.mock.calls.map(([arg]) => JSON.stringify(arg?.queryKey));
     expect([...keys].sort()).toEqual(['["backlinks"]', '["note","a"]', '["notes"]', '["trash"]']);
+  });
+});
+
+describe("單篇查詢的 retry 選項（垃圾桶 T6：解析層 in_trash 不重試）", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const retryOf = (qc: QueryClient, key: readonly unknown[]) => qc.getQueryCache().find({ queryKey: key })?.options.retry;
+
+  it("沒給 retry → 沿用 QueryClient 預設（不得以 undefined 蓋掉，否則 query-core 退回 3 次）；給了就用給的", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const qc = client();
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
+    const custom = () => false;
+    renderHook(
+      () => {
+        useNote("plain");
+        useNote("custom", { retry: custom });
+        useNoteByPath("h", "s", { retry: custom });
+        useNoteByGroupPath("g", "s", { retry: custom });
+      },
+      { wrapper },
+    );
+    expect(retryOf(qc, ["note", "plain"])).toBe(false);
+    expect(retryOf(qc, ["note", "custom"])).toBe(custom);
+    expect(retryOf(qc, ["note-by-path", "h", "s"])).toBe(custom);
+    expect(retryOf(qc, ["note-by-group-path", "g", "s"])).toBe(custom);
   });
 });
