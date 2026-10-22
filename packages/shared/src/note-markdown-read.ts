@@ -1,12 +1,7 @@
 /**
- * #222：MCP／REST 讀寫筆記的文字色／底色。
+ * #222：MCP／REST 讀出筆記、站內 AI 送出的 markdown（server 與 web 共用；寫入的色值檢查是 `findDisallowedColor`）。
  *
- * **寫入**（{@link findDisallowedColor}）：markdown 解析出來的 block 裡，`textColor`／`backgroundColor`
- * 只收編輯器內建的 10 種色名（{@link PALETTE_COLORS}）。其他值（`#hex`、`rgb()`、CSS 合法但不在色盤的
- * 名稱、大小寫不符的 data-*）BlockNote 照樣存進 JSON，但編輯器畫面上不顯示——所以整筆拒絕，不靜默剝除。
- * ⚠ 走訪是**迭代**的（顯式堆疊）：巢狀深度由呼叫端的 markdown 決定，不能遞迴。
- *
- * **讀取**（{@link blocksToMarkdownWithColors}）：`blocksToMarkdownLossy` ＝ 外部 HTML → markdown，
+ * **讀取**（{@link blocksToNoteMarkdown}）：`blocksToMarkdownLossy` ＝ 外部 HTML → markdown，
  * 顏色在 HTML → markdown 那一步全丟。這裡改成：先拿同一份外部 HTML，逐個**頂層節點**判斷——
  * - 有 markdown 表達不了的顏色（整段／清單項／標題／引言的 block 色、表格儲存格色）→ 整個節點輸出成
  *   寫入端認得的 HTML（`data-text-color`／`data-background-color`）；整張清單或整張表格一起。
@@ -17,63 +12,13 @@
  * `cleanHTMLToMarkdown(html)`——與 `blocksToMarkdownLossy` 位元組相同。
  * 以「頂層節點」為單位的理由：外部 HTML 已經做完 BlockNote 的攤平（非清單的子 block 被拉到頂層），
  * 用同一份切，攤平行為與純 markdown 路徑一致，讀 → 寫回 → 再讀才會穩定。
+ *
+ * 函式體用全域 `document`／`Element`（server 由 `EditingRuntime.installGlobals()` 提供、web 是瀏覽器）；import 本檔不碰 DOM。
  */
 import { cleanHTMLToMarkdown } from "@blocknote/core";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { escapeLinkText } from "@knotebook/shared";
-
-export const PALETTE_COLORS = ["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"] as const;
-const PALETTE: ReadonlySet<string> = new Set(PALETTE_COLORS);
-const COLOR_KEYS = ["textColor", "backgroundColor"] as const;
-
-/** 讀寫兩端共用的判準：值是色盤裡的名稱（`default` 也算）。 */
-const isPaletteColor = (v: unknown): v is string => typeof v === "string" && PALETTE.has(v);
-
-function badColorIn(rec: unknown): string | null {
-  if (rec === null || typeof rec !== "object") return null;
-  for (const k of COLOR_KEYS) {
-    const v = (rec as Record<string, unknown>)[k];
-    if (v !== undefined && !isPaletteColor(v)) return String(v);
-  }
-  return null;
-}
-
-/**
- * 回傳 blocks 裡任一個不在色盤的色值（找不到回 `null`）。看三處：block 的 `props`、行內 text 的
- * `styles`（含連結內的 text）、表格儲存格的 `props` 與其行內內容。不保證回的是文件順序上的第一個。
- */
-export function findDisallowedColor(blocks: readonly unknown[]): string | null {
-  const stack: unknown[] = [];
-  const pushAll = (xs: readonly unknown[]) => {
-    for (const x of xs) stack.push(x); // 不用 push(...xs)：超大陣列展開成參數會爆堆疊
-  };
-  pushAll(blocks);
-  while (stack.length > 0) {
-    const n = stack.pop();
-    if (n === null || typeof n !== "object") continue;
-    if (Array.isArray(n)) {
-      pushAll(n); // 舊形表格儲存格：直接是 inline 陣列
-      continue;
-    }
-    const o = n as { props?: unknown; styles?: unknown; content?: unknown; children?: unknown };
-    const hit = badColorIn(o.props) ?? badColorIn(o.styles);
-    if (hit !== null) return hit;
-    if (Array.isArray(o.content)) pushAll(o.content);
-    else if (o.content !== null && typeof o.content === "object") {
-      const rows = (o.content as { rows?: unknown }).rows;
-      if (Array.isArray(rows)) {
-        for (const r of rows) {
-          const cells = r !== null && typeof r === "object" ? (r as { cells?: unknown }).cells : undefined;
-          if (Array.isArray(cells)) pushAll(cells);
-        }
-      }
-    }
-    if (Array.isArray(o.children)) pushAll(o.children);
-  }
-  return null;
-}
-
-// ── 讀取 ──────────────────────────────────────────────────────────────────
+import { isPaletteColor } from "./note-colors.js";
+import { escapeLinkText } from "./site-link.js";
 
 const STYLE_CSS = { textColor: "color", backgroundColor: "background-color" } as const;
 const BLOCK_COLOR_ATTRS = ["data-text-color", "data-background-color"] as const;
@@ -222,7 +167,7 @@ function escapeNoteLinkText(root: Node): boolean {
 /** 讀路徑的 markdown 匯出：沒有顏色、也沒有要跳脫的站內連結文字時，與 `blocksToMarkdownLossy` 位元組相同（見檔頭）。 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例（同 session.ts）
 type AnyEditor = BlockNoteEditor<any, any, any>;
-export function blocksToMarkdownWithColors(editor: AnyEditor, blocks: Parameters<AnyEditor["blocksToHTMLLossy"]>[0]): string {
+export function blocksToNoteMarkdown(editor: AnyEditor, blocks: Parameters<AnyEditor["blocksToHTMLLossy"]>[0]): string {
   const html = editor.blocksToHTMLLossy(blocks);
   const tpl = document.createElement("template");
   tpl.innerHTML = html;

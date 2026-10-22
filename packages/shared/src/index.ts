@@ -1204,6 +1204,8 @@ export * from "./note-schema-config.js";
 export * from "./columns.js";
 export * from "./note-sections.js";
 export * from "./note-markdown.js";
+export * from "./note-colors.js";
+export * from "./note-markdown-read.js";
 export * from "./site-link.js";
 export * from "./note-schema-version.js";
 export * from "./group-roles.js";

@@ -7,7 +7,7 @@
  *
  * 模型看得到的字串一律英文（同 `docs/`；不是 UI 文案，不走 i18n）。
  */
-import { PALETTE_COLORS } from "../notes/editing/colors.js";
+import { PALETTE_COLORS } from "@knotebook/shared";
 import type { ParseError } from "../notes/editing/markdown.js";
 
 /** `edit` 桶（`docs/ai-editing.md` 的 Writes 那一列）擋下來時模型看到的字。 */

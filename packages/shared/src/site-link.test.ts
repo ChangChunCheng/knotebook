@@ -294,7 +294,7 @@ describe("wikilinksToLinks（MCP 讀與站內 AI 的匯出副本改寫）", () =
   });
 
   // RF1（#269 Task 6）：BlockNote 的 markdown 匯出不跳脫文字，跳脫由 `escapeLinkText` 做——但只在真正變成 markdown 的那一步
-  // （server：colors.ts 的 markdown 分支）。`wikilinksToLinks` 本身**不跳脫**：它的輸出在讀路徑上也會走上色區塊的原始 HTML
+  // （note-markdown-read.ts 的 markdown 分支）。`wikilinksToLinks` 本身**不跳脫**：它的輸出在讀路徑上也會走上色區塊的原始 HTML
   // 輸出，那裡跳脫會讓反斜線每往返一次多一層（審查 r0 I1）。`<`、`&` 刻意不收（見 escapeLinkText）。
   it("RF1：escapeLinkText 跳脫 \\ ` * _ [ ] ~、< 與 & 不動；wikilinksToLinks 段落與表格 cell 都輸出原文（不跳脫）", () => {
     expect(escapeLinkText("[Draft] Plan *v2*")).toBe("\\[Draft\\] Plan \\*v2\\*");

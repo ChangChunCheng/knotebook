@@ -6,7 +6,7 @@ import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
-import { PALETTE_COLORS, blocksToMarkdownWithColors, findDisallowedColor } from "../../src/notes/editing/colors.js";
+import { PALETTE_COLORS, blocksToNoteMarkdown, findDisallowedColor } from "@knotebook/shared";
 import { readNoteContentFromDoc } from "../../src/notes/editing/read.js";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" }); rt.installGlobals();
@@ -167,7 +167,7 @@ describe("findDisallowedColor：逐一走訪、不遞迴", () => {
   });
 });
 
-describe("讀取：blocksToMarkdownWithColors", () => {
+describe("讀取：blocksToNoteMarkdown", () => {
   it("沒有任何顏色 → 與 blocksToMarkdownLossy 位元組相同", async () => {
     const doc = await docWith([
       { type: "heading", props: { level: 2 }, content: "T" },
@@ -177,7 +177,7 @@ describe("讀取：blocksToMarkdownWithColors", () => {
       { type: "codeBlock", props: { language: "js" }, content: "a\n\nb" },
     ]);
     await withSession(ed => {
-      expect(blocksToMarkdownWithColors(ed, ed.document)).toBe(ed.blocksToMarkdownLossy(ed.document));
+      expect(blocksToNoteMarkdown(ed, ed.document)).toBe(ed.blocksToMarkdownLossy(ed.document));
     }, doc);
   });
 
@@ -256,7 +256,7 @@ describe("讀取：blocksToMarkdownWithColors", () => {
 
   it("檔案 block 的底色不帶出（它本來就被匯出成連結，HTML 也還原不回檔案 block）", async () => {
     const doc = await docWith([{ type: "file", props: { url: "http://localhost/api/uploads/x.pdf", backgroundColor: "red", name: "f" } }]);
-    await withSession(ed => expect(blocksToMarkdownWithColors(ed, ed.document)).toBe(ed.blocksToMarkdownLossy(ed.document)), doc);
+    await withSession(ed => expect(blocksToNoteMarkdown(ed, ed.document)).toBe(ed.blocksToMarkdownLossy(ed.document)), doc);
   });
 
   it("行內顏色在清單項、標題、無色表格的儲存格裡都留在 markdown 裡", async () => {
@@ -409,7 +409,7 @@ describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
   });
 });
 
-const md1Of = (ed: Ed) => blocksToMarkdownWithColors(ed, ed.document);
+const md1Of = (ed: Ed) => blocksToNoteMarkdown(ed, ed.document);
 
 describe("並排（PR-1 過渡）", () => {
   // PR-2 改寫成 §11.1 的 div 形；PR-1 只要求不丟例外、兩欄文字都在輸出裡。
@@ -422,7 +422,7 @@ describe("並排（PR-1 過渡）", () => {
         ],
       }];
       ed.replaceBlocks(ed.document, blocks as never);
-      return blocksToMarkdownWithColors(ed, ed.document);
+      return blocksToNoteMarkdown(ed, ed.document);
     });
     expect(md).toContain("左");
     expect(md).toContain("右");

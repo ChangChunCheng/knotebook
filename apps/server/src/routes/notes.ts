@@ -9,6 +9,7 @@ import {
   normalizeHandle,
   normalizeSlug,
   NOTE_WIDTHS,
+  PALETTE_COLORS,
   type BacklinkDto,
   type NoteContentDto,
   type NoteDto,
@@ -29,7 +30,6 @@ import type { CollabServer } from "../collab/server.js";
 import type { VersionService } from "../collab/versions.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
 import { loadLastEdited, readNoteContent } from "../notes/editing/read.js";
-import { PALETTE_COLORS } from "../notes/editing/colors.js";
 import { listEdits } from "../notes/editing/revert.js";
 import { presenceIdentity, presenceTargetForRead, type PresenceRegistry } from "../notes/editing/presence.js";
 import { accessFromListRow, editor, lastEditedSelection, visibleNoteBranches } from "../notes/list-query.js";

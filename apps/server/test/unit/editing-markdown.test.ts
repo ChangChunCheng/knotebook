@@ -251,7 +251,7 @@ describe("parseMarkdownForNote", () => {
   });
 });
 
-// #269 Task 6 RF1：讀出（readNoteContentFromDoc → wikilinksToLinks〔不跳脫〕→ colors.ts 的 markdown 分支以 `escapeLinkText`
+// #269 Task 6 RF1：讀出（readNoteContentFromDoc → wikilinksToLinks〔不跳脫〕→ shared note-markdown-read.ts 的 markdown 分支以 `escapeLinkText`
 // 跳脫站內連結文字、上色區塊的原始 HTML 分支不跳脫 → BlockNote markdown）再寫回（parseMarkdownForNote）的往返——BlockNote 的
 // 匯出本身不跳脫文字；這裡用真編輯器量往返結果。
 describe("#269 RF1：wikilink 讀出→寫回，label 逐字相同（段落與表格 cell）", () => {
@@ -322,7 +322,7 @@ describe("#269 RF1：wikilink 讀出→寫回，label 逐字相同（段落與�
     expect(r.md2).toBe(r.md1);
   });
 
-  // 上色的區塊整塊以 HTML 讀出（colors.ts `toBlockHTML`）——裡面的連結是 `<a href="/notes/<id>">`，不是 `[text](…)`；
+  // 上色的區塊整塊以 HTML 讀出（shared note-markdown-read.ts `toBlockHTML`）——裡面的連結是 `<a href="/notes/<id>">`，不是 `[text](…)`；
   // READ_NOTE_LINK_SENTENCE 的括號子句依此寫成。
   it("上色段落裡的 wikilink 讀出為 <a href=\"/notes/<id>\">", async () => {
     const doc = await docWith([{ type: "paragraph", props: { backgroundColor: "yellow" }, content: [wlNode("L")] }]);

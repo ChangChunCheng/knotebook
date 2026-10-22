@@ -31,11 +31,10 @@
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { eq } from "drizzle-orm";
-import { canonicalNotePath, YDOC_FRAGMENT } from "@knotebook/shared";
+import { canonicalNotePath, PALETTE_COLORS, YDOC_FRAGMENT } from "@knotebook/shared";
 import { users } from "../../db/schema.js";
 import { outlineOf } from "../../notes/editing/fingerprint.js";
 import { loadNoteDoc } from "../../notes/editing/read.js";
-import { PALETTE_COLORS } from "../../notes/editing/colors.js";
 import { renameNoteTitle } from "../../notes/rename-note.js";
 import { editBodySchema, FP, MD, NOTE_ID, SEC, TITLE } from "../../notes/schemas.js";
 import { resolveNoteAccess, resolveRole } from "../../notes/service.js";
@@ -79,7 +78,7 @@ export const editNoteInput = {
     .describe("What to do. `replace_section`, `insert_after` and `delete_section` need `section_id`; `append` may omit `if_match`; `rename` takes `title` and nothing else."),
   section_id: SEC.optional()
     .describe("Which section to act on, from read_note_outline. Required for replace_section, insert_after and delete_section."),
-  // #222：色名取自 PALETTE_COLORS（單一真相）；寫法與「讀回同形」在 colors.ts／docs/ai-editing.md#colors 有測試守。
+  // #222：色名取自 PALETTE_COLORS（單一真相）；寫法與「讀回同形」在 shared 的 note-colors／note-markdown-read 與 docs/ai-editing.md#colors 有測試守。
   markdown: MD.optional().describe(
     "The new markdown. Required for every operation except delete_section and rename. Colors are HTML, as read_note_section " +
       `returns them: colored text is <span style="color:red">…</span> inside the markdown; a block's own color is ` +

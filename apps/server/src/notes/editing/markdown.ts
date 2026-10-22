@@ -1,6 +1,5 @@
 import type { BlockNoteEditor, PartialBlock } from "@blocknote/core";
-import { COLUMN_BLOCK_TYPES, convertSiteLinks, isBlankParseResult, rebindWikilinks, restoreMermaidBlocks, targetFromList } from "@knotebook/shared";
-import { findDisallowedColor } from "./colors.js";
+import { COLUMN_BLOCK_TYPES, convertSiteLinks, findDisallowedColor, isBlankParseResult, rebindWikilinks, restoreMermaidBlocks, targetFromList } from "@knotebook/shared";
 import type { VisibleNoteTarget } from "./candidates.js";
 
 export const MAX_BLOCKS = 2000;
@@ -27,7 +26,7 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   const known = new Set(Object.keys(editor.schema.blockSchema).filter(t => !COLUMN_BLOCK_TYPES.has(t)));
   const walk = (bs: AnyPartialBlock[]): boolean => bs.every(b => known.has(b.type as string) && (!b.children || walk(b.children as AnyPartialBlock[])));
   if (!walk(parsed)) return { error: "unsupported_block" };
-  // #222：色值只收內建色名（colors.ts），其他值整筆拒絕——同白名單，不靜默剝除。
+  // #222：色值只收內建色名（shared 的 `findDisallowedColor`），其他值整筆拒絕——同白名單，不靜默剝除。
   if (findDisallowedColor(parsed) !== null) return { error: "unsupported_color" };
   if (isBlankParseResult(parsed)) return { error: "empty_content" };
   const count = (bs: AnyPartialBlock[]): number => bs.reduce((n, b) => n + 1 + (b.children ? count(b.children as AnyPartialBlock[]) : 0), 0);

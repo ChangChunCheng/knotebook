@@ -1,0 +1,102 @@
+{
+  "cases": [
+    {
+      "id": "G0-plain",
+      "roundTrip": "exact",
+      "blocks": [
+        { "id": "g0p-h1", "type": "heading", "props": { "level": 1 }, "content": "Title" },
+        {
+          "id": "g0p-p",
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "b", "styles": { "bold": true } },
+            { "type": "text", "text": " ", "styles": {} },
+            { "type": "text", "text": "i", "styles": { "italic": true } },
+            { "type": "text", "text": " ", "styles": {} },
+            { "type": "link", "href": "https://example.com", "content": "ext" }
+          ]
+        },
+        { "id": "g0p-a", "type": "bulletListItem", "content": "a", "children": [{ "id": "g0p-a1", "type": "bulletListItem", "content": "a1" }] },
+        { "id": "g0p-n1", "type": "numberedListItem", "content": "n1" },
+        { "id": "g0p-code", "type": "codeBlock", "props": { "language": "ts" }, "content": "const x = 1;" },
+        {
+          "id": "g0p-table",
+          "type": "table",
+          "content": { "type": "tableContent", "headerRows": 1, "rows": [{ "cells": ["h1", "h2"] }, { "cells": ["c1", "c2"] }] }
+        },
+        { "id": "g0p-q", "type": "quote", "content": "q" }
+      ],
+      "markdown": "# Title\n\n**b** *i* [ext](https://example.com)\n\n* a\n  * a1\n\n1. n1\n\n```ts\nconst x = 1;\n```\n\n| h1         | h2         |\n| ---------- | ---------- |\n| c1         | c2         |\n\n> q\n"
+    },
+    {
+      "id": "G0-media",
+      "roundTrip": "text",
+      "note": "file 與隱藏預覽的圖片讀成連結、寫回成「段落＋連結」，再讀字面相同、結構不同（現行行為，gate r2 q3）。",
+      "blocks": [
+        { "id": "g0m-img", "type": "image", "props": { "name": "pic", "url": "/api/uploads/u0" } },
+        { "id": "g0m-img2", "type": "image", "props": { "name": "pic2", "caption": "cap", "url": "/api/uploads/u0" } },
+        { "id": "g0m-file", "type": "file", "props": { "name": "doc.pdf", "url": "/api/uploads/f0" } },
+        { "id": "g0m-hidden", "type": "image", "props": { "name": "hidden", "url": "/api/uploads/u0", "showPreview": false } }
+      ],
+      "markdown": "![pic](/api/uploads/u0)\n\n<figure><img alt=\"pic2\" src=\"/api/uploads/u0\"><figcaption>cap</figcaption></figure>\n\n[doc.pdf](/api/uploads/f0)\n\n[hidden](/api/uploads/u0)\n"
+    },
+    {
+      "id": "G0-colors",
+      "roundTrip": "exact",
+      "blocks": [
+        {
+          "id": "g0c-p1",
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "red", "styles": { "textColor": "red" } },
+            { "type": "text", "text": "plain", "styles": {} }
+          ]
+        },
+        { "id": "g0c-p2", "type": "paragraph", "props": { "backgroundColor": "yellow" }, "content": "whole" },
+        {
+          "id": "g0c-table",
+          "type": "table",
+          "content": {
+            "type": "tableContent",
+            "rows": [{ "cells": [{ "type": "tableCell", "props": { "backgroundColor": "red" }, "content": "x" }, "y"] }]
+          }
+        },
+        { "id": "g0c-img", "type": "image", "props": { "name": "c", "url": "/api/uploads/u1", "backgroundColor": "blue" } }
+      ],
+      "markdown": "<span style=\"color:red\">red</span>plain\n\n<p data-background-color=\"yellow\">whole</p>\n\n<table><tr><td data-background-color=\"red\">x</td><td>y</td></tr></table>\n\n<img src=\"/api/uploads/u1\" alt=\"c\" data-background-color=\"blue\" data-name=\"c\">\n"
+    },
+    {
+      "id": "G0-links",
+      "roundTrip": "exact",
+      "blocks": [
+        {
+          "id": "g0l-p",
+          "type": "paragraph",
+          "content": [{ "type": "link", "href": "/notes/11111111-1111-4111-8111-111111111111", "content": "[Draft] a_b" }]
+        },
+        { "id": "g0l-mermaid", "type": "mermaid", "props": { "code": "graph TD; A-->B;" } }
+      ],
+      "markdown": "[\\[Draft\\] a\\_b](/notes/11111111-1111-4111-8111-111111111111)\n\n```mermaid\ngraph TD; A-->B;\n```\n"
+    },
+    {
+      "id": "G0-merged",
+      "roundTrip": "skip",
+      "note": "pipe table 表達不了合併格，寫回本來就丟合併（現行行為）。",
+      "blocks": [
+        {
+          "id": "g0g-table",
+          "type": "table",
+          "content": {
+            "type": "tableContent",
+            "headerRows": 1,
+            "rows": [
+              { "cells": [{ "type": "tableCell", "props": { "colspan": 2 }, "content": "h12" }, "h3"] },
+              { "cells": ["c1", "c2", "c3"] }
+            ]
+          }
+        }
+      ],
+      "markdown": "| h12        |            | h3         |\n| ---------- | ---------- | ---------- |\n| c1         | c2         | c3         |\n"
+    }
+  ]
+}
