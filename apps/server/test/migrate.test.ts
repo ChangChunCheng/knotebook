@@ -1546,7 +1546,7 @@ describe("0009_api-tokens", () => {
       const snapFks = snapTable?.foreignKeys ?? {};
       expect(Object.keys(snapFks).sort(), `${table} 的 FK 名集合`).toEqual(cfg.foreignKeys.map(f => f.getName()).sort());
       for (const f of cfg.foreignKeys) {
-        expect(snapFks[f.getName()]?.onDelete ?? null, `${table}.${f.getName()} 的 onDelete`).toBe(f.onDelete ?? null);
+        expect(snapFks[f.getName()]?.onDelete ?? "no action", `${table}.${f.getName()} 的 onDelete`).toBe(f.onDelete ?? "no action");
       }
     }
 

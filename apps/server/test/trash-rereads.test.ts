@@ -83,6 +83,7 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
 
       expectSeam(s, n.id, trash);
       if (trash) {
+        // 狀態碼不承重：commit 後 authorizeRow 也回 404，rollback 靠下面的狀態斷言守，精簡時勿拿掉
         expect(res.statusCode).toBe(404);
         expect(res.json()).toEqual(NOT_FOUND);
         expect(await noteState(db.$client, n.id)).toEqual(before);
@@ -181,8 +182,8 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
     });
   }
 
-  const cells: Array<[string, { slug: string | null }]> = [["格 1 自訂 slug", { slug: "x-new" }], ["格 4 slug:null", { slug: null }]];
-  for (const [cell, body] of cells) {
+  const cells: Array<[string, { slug: string | null }, string | null]> = [["格 1 自訂 slug", { slug: "x-new" }, "x-new"], ["格 4 slug:null", { slug: null }, null]];
+  for (const [cell, body, wantSlug] of cells) {
     for (const trash of [true, false]) {
       const tag = trash ? "授權後移入 → 404 not_found（不是 409），slug／prev_slug／updated_at 不變" : "對照：縫裡不移入 → 200，slug 改了";
       it(`RR-PS 改網址 ${cell}（slugPatchTestHook authorized）：${tag}`, async () => {
@@ -204,7 +205,9 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
           expect(await noteState(db.$client, n.id)).toEqual(before);
         } else {
           expect(res.statusCode).toBe(200);
-          expect((await noteState(db.$client, n.id)).slug).not.toBe("old-custom");
+          const after = (await noteState(db.$client, n.id)).slug;
+          if (wantSlug) expect(after).toBe(wantSlug);
+          else expect(after).not.toBe("old-custom");
         }
       });
     }
