@@ -914,13 +914,28 @@ input[name="share-access"] {
 
 /* 版本預覽 diff（spec §8.4）：左邊 3px 色條＋淡底。顏色只在 diff 預覽內（D7「唯一的顏色是綠點」的例外）。
    選擇器掛在 .kb-diff（DiffEditor 的 wrapper）之下，活編輯器不受影響。字面色、不碰 --brand（#154：.bn-root 內 brand token 會被重設）。
-   `data-diff` 貼在 `.bn-block-outer[data-id]`，`.bn-block` 是它的直接子（Task 8 Step 1 探針印出的 DOM）。
+   `data-diff` 貼在 `.bn-block-outer[data-id]`，`.bn-block` 是它的直接子（Task 8 Step 1 探針印出的 DOM）；並排的欄與列也貼（見下方那組）。
    未分層：與 BlockNote 自己未分層的 CSS 同層比特性。 */
 .kb-diff [data-diff="added"] > .bn-block { border-left: 3px solid oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
 .kb-diff [data-diff="deleted"] > .bn-block { border-left: 3px solid oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); text-decoration: line-through; opacity: 0.85; }
 .kb-diff [data-diff="changed"] > .bn-block { border-left: 3px solid oklch(0.8 0.15 85); background: oklch(0.8 0.15 85 / 0.1); }
 .kb-diff [data-diff="moved"] > .bn-block { border-left: 3px dashed oklch(0.65 0.02 260); }
 .kb-diff [data-diff="collapsed"] > .bn-block { color: var(--muted-foreground); font-style: italic; }
+/* 並排的欄與列（columns-layout spec §11.9）：`data-diff` 直接貼在欄／列元素上，它們沒有 `.bn-block` 子層（欄的子節點就是
+   `.bn-block-outer`），上面的 `> .bn-block` 套不到，所以色條畫在元素本身。欄用 inset 陰影＋淡底；列的增刪與移動用虛線外框。
+   欄的 moved 虛線畫不出 inset 陰影，改實線同色。
+   標記過的欄留 8px 起始內距，色條不壓欄內首字：上面並排段把欄的 padding-inline 歸零（`.bn-editor .bn-block-column:first-child`
+   (0,3,0)），這條掛 `.kb-diff .bn-editor` 是 (0,4,0)，不靠出現順序；只在有 data-diff 時生效（DiffEditor 給每一欄都貼，含
+   context，所以 diff 預覽裡各欄內距一致），一般編輯與公開頁的欄不受影響。
+   增刪的欄與欄內 block 各自標記，欄的色條與 block 的 border-left 疊成雙條，屬接受。 */
+.kb-diff .bn-editor [data-node-type="column"][data-diff] { padding-inline-start: 8px; }
+.kb-diff [data-node-type="column"][data-diff="added"] { box-shadow: inset 3px 0 0 oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
+.kb-diff [data-node-type="column"][data-diff="deleted"] { box-shadow: inset 3px 0 0 oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); }
+.kb-diff [data-node-type="column"][data-diff="changed"] { box-shadow: inset 3px 0 0 oklch(0.8 0.15 85); background: oklch(0.8 0.15 85 / 0.1); }
+.kb-diff [data-node-type="column"][data-diff="moved"] { box-shadow: inset 3px 0 0 oklch(0.65 0.02 260); }
+.kb-diff [data-node-type="columnList"][data-diff="added"] { outline: 1px dashed oklch(0.72 0.17 152); outline-offset: 4px; }
+.kb-diff [data-node-type="columnList"][data-diff="deleted"] { outline: 1px dashed oklch(0.63 0.2 25); outline-offset: 4px; }
+.kb-diff [data-node-type="columnList"][data-diff="moved"] { outline: 1px dashed oklch(0.65 0.02 260); outline-offset: 4px; }
 
 /* #263 框選 AI 框的預覽（spec 2026-10-12 §5.3、§5.4；只含被改的區塊，前後上下文 2026-10-13 拿掉）。
    預覽寬度＝區塊寬度（D7，換行時機與正文一致）：框內唯讀編輯器左右內距歸零，蓋過上游裸 `.bn-editor`（(0,1,0)）與上面窄視窗的
