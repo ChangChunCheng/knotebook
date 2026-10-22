@@ -3,11 +3,12 @@
 // `@blocknote/core/fonts/inter.css`——那是 latin-only 的自帶字型（9 個 woff 檔），
 // 對以中文為主的介面沒有幫助，只會讓 bundle 變大；字型交給 app 自己的 CSS 決定。
 import "@blocknote/mantine/style.css";
-import { lazy, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import type * as Y from "yjs";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
+import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scroll";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
@@ -327,6 +328,9 @@ export interface NoteEditorProps {
   previewSlot?: ReactNode;
   /** #269 §10.2：捲動容器（段落錨點的 root）。 */
   onScrollRoot?: (el: HTMLElement | null) => void;
+  /** #293 §9.4：editor 建好後交出「捲到某人游標」的函式，卸載時交出 null。呼叫端須給穩定的 identity
+   *  （NotePage 用 useCallback 寫進 ref）；本元件只在 editor 換手時重交。 */
+  onCursorScroller?: (scroller: CursorScroller | null) => void;
   /** #269 §10.3(a)：canonical 路徑（`canonicalNotePath(note)`），複製段落連結用。 */
   notePath?: string;
 }
@@ -359,6 +363,7 @@ export function NoteEditor({
   footerSlot,
   previewSlot,
   onScrollRoot,
+  onCursorScroller,
   notePath,
 }: NoteEditorProps) {
   const { t, i18n } = useTranslation();
@@ -370,6 +375,20 @@ export function NoteEditor({
   // #297：這篇的站內內文寬度（訂閱模組層 Map；換寬度只換欄 class，不重建 editor）。
   const [width] = useNoteWidth(noteId);
   const hasPreview = previewSlot !== undefined && previewSlot !== null;
+
+  // #293 §9.4：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
+  const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  const setScrollRoot = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRootRef.current = el;
+      onScrollRoot?.(el);
+    },
+    [onScrollRoot],
+  );
+  const hasPreviewRef = useRef(hasPreview);
+  hasPreviewRef.current = hasPreview;
+  const onCursorScrollerRef = useRef(onCursorScroller);
+  onCursorScrollerRef.current = onCursorScroller;
 
   // handler 是在 editor 建立時就固定下來的閉包；用 ref 取用最新的 t，語言切換時
   // 不必為了文案而重建整個 editor（重建會扯斷 y-prosemirror 綁定）。
@@ -410,6 +429,12 @@ export function NoteEditor({
     [doc, provider],
   );
   editorRef.current = editor;
+
+  useEffect(() => {
+    const report = onCursorScrollerRef.current; // cleanup 不讀 ref（讀碼發現 14）
+    report?.(createCursorScroller({ editor, getRoot: () => (hasPreviewRef.current ? null : scrollRootRef.current) }));
+    return () => report?.(null);
+  }, [editor]);
 
   // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
   // `useLinkMenuState`（見該函式檔頭，fix round 1 Important 3）方便直接對它
@@ -474,7 +499,7 @@ export function NoteEditor({
       <div className="flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
         <div className={cn(cardSurface, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden")}>
           {headerSlot}
-          <div ref={onScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>
+          <div ref={setScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
                 `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
                 `<html>`，撐出全頁滾軸；wrapper／捲動容器／`.bn-container` 三處等效，選
