@@ -3,7 +3,7 @@ import { memo, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
-import type { NoteDto, UserDto } from "@knotebook/shared";
+import type { NoteDto, TrashItemDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
 import { useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
@@ -11,7 +11,7 @@ import { ThemeProvider } from "@/theme";
 import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { OWNER_PERMS } from "@/test/fixtures";
-import { trashList } from "@/test/trash-fixtures";
+import { trashItem, trashList } from "@/test/trash-fixtures";
 
 // 側欄 tab 與 AppShell 的接線（plan T2）。骨架抄 AppShell.test.tsx 的「#115 側欄抽屜」describe。
 
@@ -59,7 +59,7 @@ const CREATED: NoteDto = {
   slug: "untitled-33333333",
 };
 
-function stubFetchWithNotes(notes: NoteDto[]) {
+function stubFetchWithNotes(notes: NoteDto[], trash: TrashItemDto[] = []) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -69,7 +69,7 @@ function stubFetchWithNotes(notes: NoteDto[]) {
       if (url === "/api/auth/me") return Promise.resolve(fakeResponse(USER));
       if (url === "/api/notes" && method === "POST") return Promise.resolve(fakeResponse(CREATED, 201));
       if (url === "/api/notes" && method === "GET") return Promise.resolve(fakeResponse(notes));
-      if (url === "/api/trash" && method === "GET") return Promise.resolve(fakeResponse(trashList([])));
+      if (url === "/api/trash" && method === "GET") return Promise.resolve(fakeResponse(trashList(trash)));
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
   );
@@ -353,7 +353,152 @@ describe("AppShell — 側欄 tab 接線", () => {
     expect(within(aside()).queryByTestId("trash-footer")).toBeNull();
     expect(within(within(aside()).getByRole("tabpanel")).getByRole("button", { name: "New personal note" })).toBeInTheDocument();
   });
+
+  it("SM11 選取兩份共用：抽屜內進選取、勾 p1 → 靜態卡那份也勾、標題 1 selected", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(drawer.querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    fireEvent.click(within(trashHeader(drawer)).getByRole("button", { name: "Select" }));
+    fireEvent.click(trashBox(drawer, "p1")!);
+
+    expect(trashBox(drawer, "p1")).toBeChecked();
+    expect(trashBox(aside(), "p1")).toBeChecked();
+    expect(trashBox(aside(), "p2")).not.toBeChecked();
+    expect(within(trashHeader(aside())).getByText("1 selected", { exact: true })).toBeInTheDocument();
+  });
+
+  it("SM13 勾選不重繪 children（spec §5.10）：進垃圾桶、Select、勾三篇、Done，只消費 actions 的子樹不重跑", async () => {
+    stubFetchWithNotes([NOTE], TRASH);
+    let renders = 0;
+    const seen: SidebarTabActions[] = [];
+    const Counter = memo(function Counter() {
+      renders += 1;
+      seen.push(useSidebarTabActions());
+      return <div>counter</div>;
+    });
+    renderShell(<Counter />);
+    await screen.findAllByRole("link", { name: "Tab Note" });
+    const baseline = renders;
+    expect(baseline).toBeGreaterThan(0);
+
+    fireEvent.click(within(aside()).getByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(aside().querySelector('li[data-node-id="w1"]')).not.toBeNull());
+    fireEvent.click(within(trashHeader(aside())).getByRole("button", { name: "Select" }));
+    for (const id of ["p1", "p2", "w1"]) fireEvent.click(trashBox(aside(), id)!);
+    expect(within(trashHeader(aside())).getByText("3 selected", { exact: true })).toBeInTheDocument();
+    fireEvent.click(within(trashHeader(aside())).getByRole("button", { name: "Done" }));
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
+
+    expect(renders).toBe(baseline);
+    for (const actions of seen) expect(actions).toBe(seen[0]);
+  });
+
+  it("SM14 選取中切 tab 離開：點 My notes 再點 Trash → 平常標題列", async () => {
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(aside().querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    fireEvent.click(within(trashHeader(aside())).getByRole("button", { name: "Select" }));
+    fireEvent.click(trashBox(aside(), "p1")!);
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Done" })).toBeInTheDocument();
+
+    fireEvent.click(within(aside()).getByRole("tab", { name: "My notes" }));
+    fireEvent.click(within(aside()).getByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(aside().querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
+    expect(within(trashHeader(aside())).queryByRole("button", { name: "Done" })).toBeNull();
+    expect(trashBox(aside(), "p1")).toBeNull();
+  });
+
+  it("SM16 焦點只在發起的那一份：抽屜內 Select → 抽屜的 Done；抽屜內 Done → 抽屜的 Select", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(drawer.querySelector('li[data-node-id="p1"]')).not.toBeNull());
+
+    fireEvent.click(within(trashHeader(drawer)).getByRole("button", { name: "Select" }));
+    const drawerDone = within(trashHeader(drawer)).getByRole("button", { name: "Done" });
+    expect(drawerDone).toHaveFocus();
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Done", hidden: true })).not.toHaveFocus();
+
+    fireEvent.click(drawerDone);
+    expect(within(trashHeader(drawer)).getByRole("button", { name: "Select" })).toHaveFocus();
+  });
+
+  it("SM18 外殼握把（data-sidebar-instance）：底部動作列 Esc 後焦點回同一份的 Select——靜態卡與抽屜各一次", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(aside().querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    // 窄螢幕的 showTab 會開抽屜；先關掉，在靜態卡上做第一輪。
+    const opened = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.keyDown(opened, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
+
+    fireEvent.click(within(trashHeader(aside())).getByRole("button", { name: "Select" }));
+    fireEvent.click(trashBox(aside(), "p1")!);
+    const asideRestore = within(aside()).getByRole("button", { name: "Restore" });
+    asideRestore.focus();
+    fireEvent.keyDown(asideRestore, { key: "Escape" });
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Select" })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.click(within(trashHeader(drawer)).getByRole("button", { name: "Select" }));
+    fireEvent.click(trashBox(drawer, "p1")!);
+    const drawerRestore = within(drawer).getByRole("button", { name: "Restore" });
+    drawerRestore.focus();
+    fireEvent.keyDown(drawerRestore, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBe(drawer);
+    expect(within(trashHeader(drawer)).getByRole("button", { name: "Select" })).toHaveFocus();
+  });
+
+  it("SM19 抽屜 Esc 只經 Radix（派在 document，重現真瀏覽器 React onKeyDown 收不到）：選取結束、抽屜不關、焦點在抽屜的 Select", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(drawer.querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    fireEvent.click(within(trashHeader(drawer)).getByRole("button", { name: "Select" }));
+    fireEvent.click(trashBox(drawer, "p1")!);
+    trashBox(drawer, "p1")!.focus();
+
+    // 派在 document：只有 Radix 的 capture listener 收到，TrashPanel／動作列的 React onKeyDown 不參與。
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBe(drawer);
+    expect(drawer.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    expect(within(trashHeader(drawer)).getByRole("button", { name: "Select" })).toHaveFocus();
+  });
+
+  it("SM16 寬螢幕（沒有抽屜）：靜態卡 Select → 靜態卡的 Done", async () => {
+    stubControllableMatchMedia(false);
+    stubFetchWithNotes([NOTE], TRASH);
+    renderShell();
+    fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));
+    await waitFor(() => expect(aside().querySelector('li[data-node-id="p1"]')).not.toBeNull());
+    fireEvent.click(within(trashHeader(aside())).getByRole("button", { name: "Select" }));
+    expect(within(trashHeader(aside())).getByRole("button", { name: "Done" })).toHaveFocus();
+  });
 });
+
+const TRASH = [
+  trashItem({ id: "p1", title: "p1" }, { deletedDaysAgo: 0 }),
+  trashItem({ id: "p2", title: "p2" }, { deletedDaysAgo: 1 }),
+  trashItem({ id: "w1", title: "w1", group: { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "R&D" } }, { deletedDaysAgo: 2 }),
+];
+const trashHeader = (container: HTMLElement) => container.querySelector("[data-sidebar-header]") as HTMLElement;
+const trashBox = (container: HTMLElement, id: string) =>
+  container.querySelector<HTMLInputElement>(`li[data-node-id="${id}"] input[type="checkbox"]`);
 
 /** 選取 probe：讀 state context 的 `selection.active`，按鈕進入選取模式。抽屜開著時背景被標 aria-hidden，一律以 testid 查。 */
 function SelectionProbe() {

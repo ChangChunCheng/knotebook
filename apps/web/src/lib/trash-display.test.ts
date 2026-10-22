@@ -6,6 +6,7 @@ import {
   canRestoreAfterTrash,
   DAY_MS,
   remainingLabel,
+  selectedTrashIds,
   splitTrashSections,
   trashDetailLine,
   trashItemTitle,
@@ -113,6 +114,18 @@ describe("splitTrashSections", () => {
     expect(sections.workspace).toEqual([w1, w2]);
     expect(sections.order).toEqual(["note:p1", "note:p2", "note:w1", "note:w2"]);
     expect(input).toEqual([w1, p1, w2, p2]);
+  });
+});
+
+describe("selectedTrashIds", () => {
+  it("TD7 照清單順序（個人在前）、略過不在清單的鍵", () => {
+    const w1 = item({ id: "w1", group: GROUP });
+    const p1 = item({ id: "p1" });
+    const p2 = item({ id: "p2" });
+    // 勾選順序 w1 → p2 → p1，外加一個清單上沒有的鍵（重抓後消失）。
+    const keys = new Set(["note:w1", "note:gone", "note:p2", "note:p1"]);
+    expect(selectedTrashIds([w1, p1, p2], keys)).toEqual(["p1", "p2", "w1"]);
+    expect(selectedTrashIds([w1, p1, p2], new Set(["note:gone"]))).toEqual([]);
   });
 });
 

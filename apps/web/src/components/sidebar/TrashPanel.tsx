@@ -1,11 +1,12 @@
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TrashItemDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { usePurgeTrash, useRestoreTrash, useTrash } from "@/api/trash";
 import { useSession } from "@/auth/useSession";
+import { selectionKey } from "@/lib/sidebar-selection";
 import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
-import { splitTrashSections, trashDetailLine, trashItemTitle } from "@/lib/trash-display";
+import { selectedTrashIds, splitTrashSections, trashDetailLine, trashItemTitle } from "@/lib/trash-display";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { EllipsisVertical, RotateCcw, SquareCheck, Trash } from "@/components/ui/icons";
@@ -18,9 +19,12 @@ import { EmptyTrashDialog, PurgeConfirmDialog, toastTrashFailure, toastTrashResu
  * 垃圾桶 tab 的面板（spec 2026-10-21 §6.10.1、§6.10.3）：`AppShell` 在 tab 為 `trash` 時放進 tabpanel，取代 `NoteList`。
  * - 列**不是連結**：垃圾桶裡的筆記不能開（非目標「預覽」，§2.2）；只有 hover 浮出的「還原」與 ⋮（還原／永久刪除）。
  * - 兩區「個人」「工作坊」（某區 0 篇整區不渲染），區內照 server 的順序（`deleted_at DESC`）。
- * - 標題列動作照 `tabSpec("trash").actions` 渲染（spec §9-3）。「選取」只送 `start`；選取模式的畫面在 PR-2b T5。
+ * - 標題列動作照 `tabSpec("trash").actions` 渲染（spec §9-3）。
  * - 清空＝把**清單上**的 id 全部送 purge（spec §6.3.4-5）：之後才移入的不受影響；超過 200 由 `purgeTrashIds` 分批。
  * - 確認框成敗都關，結果走 toast（`trash-dialogs.tsx`）。動作完成後焦點回清單容器（被處理的列會卸載）。
+ * - 選取模式（spec §6.10.2）：狀態在 `SidebarTabProvider`（靜態卡與抽屜兩份共用）；標題列換成「已選 N 篇」＋全選＋完成，
+ *   列換成整列 `<label>`＋勾選框、不渲染「還原」與 ⋮。還原／永久刪除的動作列在 `SidebarFooter` 的 `TrashActionBar`。
+ *   焦點只由發起的那一份實例移動（`focusAfterRef`）。
  */
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -106,7 +110,46 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
   );
 }
 
-function TrashSection({ label, items, now, actions }: { label: string; items: TrashItemDto[]; now: number; actions: RowActions }) {
+/** 選取模式的列：整列是 `<label>`，點文字或勾選框都切換（spec §6.10.2）。 */
+function SelectableTrashRow({
+  item,
+  now,
+  checked,
+  onToggle,
+}: {
+  item: TrashItemDto;
+  now: number;
+  checked: boolean;
+  onToggle: (key: string, shiftKey: boolean) => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
+  return (
+    <li data-node-kind="note" data-node-id={item.id} title={trashItemTitle(item, { t, locale })}>
+      {/* select-none：Shift＋點文字時不順帶選取頁面文字。label 內只能放 phrasing content，兩行用 block span。 */}
+      <label
+        className={cn(
+          "flex cursor-pointer select-none items-start gap-2 rounded-md py-1.5 pl-2 pr-1 text-[13px]",
+          checked ? "bg-brand-soft font-medium text-brand-on-soft" : "hover:bg-brand-soft hover:text-brand-on-soft",
+        )}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          // Shift＝範圍；Ctrl／⌘＋點與一般點選相同（單列切換）。macOS 的 Ctrl＋點是右鍵、不產生 click，用 ⌘。
+          onChange={(event) => onToggle(selectionKey({ kind: "note", id: item.id }), (event.nativeEvent as MouseEvent).shiftKey)}
+          className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{item.title}</span>
+          <span className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground">{trashDetailLine(item, { now, t, locale })}</span>
+        </span>
+      </label>
+    </li>
+  );
+}
+
+function TrashSection({ label, items, renderItem }: { label: string; items: TrashItemDto[]; renderItem: (item: TrashItemDto) => ReactNode }) {
   const headingId = useId();
   return (
     <>
@@ -114,9 +157,7 @@ function TrashSection({ label, items, now, actions }: { label: string; items: Tr
         {label}
       </h3>
       <ul aria-labelledby={headingId} className="space-y-0.5">
-        {items.map((item) => (
-          <TrashRow key={item.id} item={item} now={now} actions={actions} />
-        ))}
+        {items.map(renderItem)}
       </ul>
     </>
   );
@@ -129,10 +170,14 @@ export function TrashPanel() {
   const restore = useRestoreTrash();
   const purge = usePurgeTrash();
   const { selection } = useSidebarTabState();
-  const { updateSelection } = useSidebarTabActions();
+  const { updateSelection, endSelectionIfActive } = useSidebarTabActions();
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const emptyButtonRef = useRef<HTMLButtonElement>(null);
+  const selectButtonRef = useRef<HTMLButtonElement>(null);
+  const doneButtonRef = useRef<HTMLButtonElement>(null);
+  /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
+  const focusAfterRef = useRef<"done" | "select" | null>(null);
   /** 單篇永久刪除的對象（確認框開著）。 */
   const [purgeId, setPurgeId] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
@@ -148,6 +193,28 @@ export function TrashPanel() {
 
   const items = trash.data?.items ?? [];
   const actionsDisabled = !trash.isSuccess || items.length === 0;
+  const selectedIds = selectedTrashIds(items, selection.keys);
+  const allSelected = items.length > 0 && selectedIds.length === items.length;
+
+  useEffect(() => {
+    const target = focusAfterRef.current;
+    if (target === null) return;
+    focusAfterRef.current = null;
+    (target === "done" ? doneButtonRef : selectButtonRef).current?.focus();
+  }, [selection.active]);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    // 靜態卡的 Esc。抽屜裡的 Esc 由 AppShell 的 onEscapeKeyDown（document capture）結束選取並交焦點；真瀏覽器在那之後、
+    // React 的 onKeyDown 之前就 commit，勾選框已卸載，這裡收不到。
+    if (event.key !== "Escape" || !selection.active) return;
+    focusAfterRef.current = "select";
+    endSelectionIfActive();
+  }
+
+  function toggleRow(key: string, shiftKey: boolean): void {
+    const { order } = splitTrashSections(items);
+    updateSelection(shiftKey ? { type: "range", key, order } : { type: "toggle", key });
+  }
 
   async function exclusive(run: () => Promise<void>): Promise<void> {
     if (busyRef.current) return;
@@ -204,15 +271,20 @@ export function TrashPanel() {
         return (
           <Button
             key={action}
+            ref={selectButtonRef}
             type="button"
             variant="ghost"
             size="icon"
             aria-label={t("trash.select")}
             title={t("trash.select")}
             disabled={actionsDisabled}
+            // 握把：底部動作列離開選取模式後，經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦。
+            data-trash-select=""
             // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的；標題列換字樣前那一幀連點兩下也一樣）。
             onClick={() => {
-              if (!selection.active) updateSelection({ type: "start" });
+              if (selection.active) return;
+              focusAfterRef.current = "done";
+              updateSelection({ type: "start" });
             }}
             className="h-6 w-6 shrink-0"
           >
@@ -262,22 +334,75 @@ export function TrashPanel() {
     if (items.length === 0) return <p className={MESSAGE_CLASS}>{t("trash.empty")}</p>;
     const { personal, workspace } = splitTrashSections(items);
     const now = Date.now();
+    const renderItem = (item: TrashItemDto) =>
+      selection.active ? (
+        <SelectableTrashRow
+          key={item.id}
+          item={item}
+          now={now}
+          checked={selection.keys.has(selectionKey({ kind: "note", id: item.id }))}
+          onToggle={toggleRow}
+        />
+      ) : (
+        <TrashRow key={item.id} item={item} now={now} actions={rowActions} />
+      );
     return (
       <>
-        {personal.length > 0 && <TrashSection label={t("trash.sectionPersonal")} items={personal} now={now} actions={rowActions} />}
-        {workspace.length > 0 && <TrashSection label={t("trash.sectionWorkspace")} items={workspace} now={now} actions={rowActions} />}
+        {personal.length > 0 && <TrashSection label={t("trash.sectionPersonal")} items={personal} renderItem={renderItem} />}
+        {workspace.length > 0 && <TrashSection label={t("trash.sectionWorkspace")} items={workspace} renderItem={renderItem} />}
         {trash.data.truncated && <p className="p-2 text-[11px] text-muted-foreground">{t("trash.truncated")}</p>}
       </>
     );
   }
 
-  return (
-    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
-      <div data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
-        <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
-          <span className="truncate">{trash.isSuccess ? t("trash.header", { count: items.length }) : t("sidebar.trash")}</span>
+  function renderHeader(): ReactNode {
+    if (!selection.active) {
+      return (
+        <>
+          <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+            <span className="truncate">{trash.isSuccess ? t("trash.header", { count: items.length }) : t("sidebar.trash")}</span>
+          </span>
+          {tabSpec("trash").actions.map(renderAction)}
+        </>
+      );
+    }
+    return (
+      <>
+        <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-brand-on-soft">
+          <span className="truncate">{t("trash.selected", { count: selectedIds.length })}</span>
         </span>
-        {tabSpec("trash").actions.map(renderAction)}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          // 選取中清單被重抓成 0 篇（別處清掉）：沒有可選的。
+          disabled={items.length === 0}
+          onClick={() => updateSelection(allSelected ? { type: "clear" } : { type: "setAll", keys: splitTrashSections(items).order })}
+          className="h-6 px-2 text-xs"
+        >
+          {allSelected ? t("trash.deselectAll") : t("trash.selectAll")}
+        </Button>
+        <Button
+          ref={doneButtonRef}
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            focusAfterRef.current = "select";
+            updateSelection({ type: "end" });
+          }}
+          className="h-6 px-2 text-xs"
+        >
+          {t("trash.done")}
+        </Button>
+      </>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
+      <div data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+        {renderHeader()}
       </div>
       <div data-sidebar-list="" tabIndex={-1} ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 focus-visible:outline-none">
         {renderBody()}

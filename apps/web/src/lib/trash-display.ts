@@ -52,6 +52,21 @@ export function splitTrashSections(items: readonly TrashItemDto[]): TrashSection
   return { personal, workspace, order };
 }
 
+/**
+ * 一份側欄實例（`AppShell` 的靜態卡或抽屜）裡 `TrashPanel` 的「選取」鈕：離開選取模式後焦點交給它。
+ * `SidebarFooter` 的動作列與 `AppShell` 抽屜的 Esc 共用，免得兩邊的選擇器漂移。
+ */
+export const TRASH_SELECT_BUTTON = "[data-sidebar-header] button[data-trash-select]";
+
+/**
+ * 選取模式要送出的 id：照清單順序（個人在前），只算目前清單上有的（清單重抓後消失的鍵不計、不送，讀碼發現 22）。
+ * 標題列「已選 N 篇」與底部動作列共用。
+ */
+export function selectedTrashIds(items: readonly TrashItemDto[], keys: ReadonlySet<string>): string[] {
+  const { personal, workspace } = splitTrashSections(items);
+  return [...personal, ...workspace].filter((item) => keys.has(selectionKey({ kind: "note", id: item.id }))).map((item) => item.id);
+}
+
 /** spec §6.10.7：個人筆記恆可；群組筆記要 edit 且 delete。 */
 export function canRestoreAfterTrash(note: Pick<NoteDto, "group" | "permissions">): boolean {
   if (note.group === null) return true;

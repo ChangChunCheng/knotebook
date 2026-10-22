@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -13,6 +14,7 @@ import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { NARROW_QUERY, SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom } from "@/lib/real-location";
+import { TRASH_SELECT_BUTTON } from "@/lib/trash-display";
 import { SidebarTabProvider, useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
@@ -65,7 +67,7 @@ interface SidebarContentProps {
 }
 
 /** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList；垃圾桶 tab 是 TrashPanel）或搜尋結果／底部（SidebarFooter：
- * 新增鈕，垃圾桶 tab 換成保留天數說明）／UserMenu）。
+ * 新增鈕，垃圾桶 tab 換成保留天數說明、選取模式換成動作列）／UserMenu）。
  * 搜尋字串非空時 tab 列與 tabpanel 都不渲染、改顯示 `SearchResults`（tab state 不變，清空後回原 tab）。
  * 目前 tab 住在 `SidebarTabProvider`（靜態卡與抽屜兩份實例共用一份）。wrapper（靜態
  * `<aside>` 卡或抽屜 Content）由呼叫端提供——兩個 wrapper 都必須給
@@ -364,7 +366,12 @@ export function AppShell({ children, inert }: AppShellProps) {
     <SidebarDrawerContext.Provider value={{ setOpen: setDrawerOpen }}>
       <SidebarTabProvider actionsRef={tabActionsRef}>
         <div inert={inert} className="flex h-screen gap-3 overflow-hidden bg-background p-3">
-          <aside className={cn(cardSurface, "relative hidden shrink-0 md:flex md:flex-col")} style={{ width: sidebarWidth }}>
+          {/* data-sidebar-instance：SidebarContent 回 fragment、沒有自己的根；垃圾桶動作列靠它找回同一份的「選取」鈕。 */}
+          <aside
+            data-sidebar-instance=""
+            className={cn(cardSurface, "relative hidden shrink-0 md:flex md:flex-col")}
+            style={{ width: sidebarWidth }}
+          >
             <SidebarContent {...sidebarProps} searchRef={searchInputRef} />
             <PaneResizeHandle
               width={sidebarWidth}
@@ -385,13 +392,22 @@ export function AppShell({ children, inert }: AppShellProps) {
               <DialogPrimitive.Content
                 ref={drawerContentRef}
                 data-sidebar-drawer=""
+                data-sidebar-instance=""
                 // 底色與 flex 脈絡缺一不可：沒底色透出 overlay 的黑、沒 flex-col 則
                 // SidebarContent 的 min-h-0 flex-1 清單失去約束（spec §3a）。貼齊
                 // 左緣故意不用 cardSurface 的圓角——抽屜不是卡片。
                 className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card"
-                // Radix 在 document capture 先處理 Esc：選取中先結束選取、抽屜不關。
+                // Radix 在 document capture 先處理 Esc：選取中先結束選取、抽屜不關。真瀏覽器在這個 listener 與 React 的
+                // onKeyDown 之間會跑 microtask，選取的結束先 commit、勾選框／動作列卸載，React 那層的 handler 不會再跑——
+                // 焦點要在這裡交給抽屜裡的「選取」鈕（flushSync 讓它在同一個 task 內出現）。
                 onEscapeKeyDown={(event) => {
-                  if (tabActionsRef.current?.endSelectionIfActive()) event.preventDefault();
+                  let ended = false;
+                  flushSync(() => {
+                    ended = tabActionsRef.current?.endSelectionIfActive() ?? false;
+                  });
+                  if (!ended) return;
+                  event.preventDefault();
+                  drawerContentRef.current?.querySelector<HTMLButtonElement>(TRASH_SELECT_BUTTON)?.focus();
                 }}
                 onOpenAutoFocus={(event) => {
                   event.preventDefault();

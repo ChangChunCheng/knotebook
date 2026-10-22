@@ -13,7 +13,7 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { TRASH_ME, trashItem, trashList } from "@/test/trash-fixtures";
 import { TrashPanel } from "./TrashPanel";
 
-// 垃圾桶 tab 的面板（平常）、確認框（plan T4）。選取模式的畫面在 T5。
+// 垃圾桶 tab 的面板（平常）、確認框（plan T4）；選取模式（plan T5 SM*，動作列在 SidebarFooter.test.tsx）。
 
 afterEach(() => {
   localStorage.clear();
@@ -253,6 +253,9 @@ describe("TrashPanel（平常）", () => {
     fireEvent.click(screen.getByTestId("toggle-p1"));
     expect(screen.getByTestId("selected-count")).toHaveTextContent("1");
 
+    // T5 起選取模式的標題列換成「已選」：「選取」鈕已卸載，再按也送不出 start。
+    expect(select.isConnected).toBe(false);
+    expect(within(header()).queryByRole("button", { name: "Select" })).toBeNull();
     fireEvent.click(select);
     expect(screen.getByTestId("selecting")).toHaveTextContent("true");
     expect(screen.getByTestId("selected-count")).toHaveTextContent("1");
@@ -648,5 +651,155 @@ describe("TrashPanel（平常）", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+});
+
+const W2 = trashItem({ id: "w2", title: "w2", group: RD, deletedBy: AMY }, { deletedDaysAgo: 3 });
+const checkbox = (id: string) => row(id).querySelector('input[type="checkbox"]') as HTMLInputElement;
+const rowLabel = (id: string) => row(id).querySelector("label") as HTMLLabelElement;
+const checkedIds = () => ["p1", "p2", "w1", "w2"].filter((id) => checkbox(id).checked);
+
+/** 個人 p1、p2，工作坊 w1、w2；等清單到了按「選取」。 */
+async function renderSelecting() {
+  const server = stubServer({ items: [P1, P2, W1, W2] });
+  const rendered = renderPanel();
+  await waitFor(() => expect(row("w2")).not.toBeNull());
+  fireEvent.click(within(header()).getByRole("button", { name: "Select" }));
+  return { server, ...rendered };
+}
+
+describe("TrashPanel（選取模式）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("SM1 進入：已選 0 篇、全選、完成；每列一個未勾的勾選框、沒有還原與 ⋮；焦點在完成", async () => {
+    await renderSelecting();
+    const title = within(header()).getByText("0 selected", { exact: true });
+    expect(title.closest("span.flex")).toHaveClass("text-brand-on-soft");
+    expect(within(header()).getByRole("button", { name: "Select all" })).toBeInTheDocument();
+    const done = within(header()).getByRole("button", { name: "Done" });
+    expect(within(header()).queryByRole("button", { name: "Select" })).toBeNull();
+    expect(within(header()).queryByRole("button", { name: "Empty" })).toBeNull();
+
+    const boxes = within(panel()).getAllByRole("checkbox");
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes) expect(box).not.toBeChecked();
+    expect(checkbox("p1")).toHaveClass("accent-brand");
+    expect(within(panel()).queryByRole("button", { name: "Restore p1" })).toBeNull();
+    expect(within(panel()).queryByRole("button", { name: "Actions for p1" })).toBeNull();
+    expect(done).toHaveFocus();
+  });
+
+  it("SM2 點列（label 文字）切換：勾、標題 1 selected、列底色；再點取消", async () => {
+    await renderSelecting();
+    fireEvent.click(within(rowLabel("p1")).getByText("p1", { exact: true }));
+    expect(checkbox("p1")).toBeChecked();
+    expect(within(header()).getByText("1 selected", { exact: true })).toBeInTheDocument();
+    expect(rowLabel("p1")).toHaveClass("bg-brand-soft", "text-brand-on-soft", "font-medium", "select-none");
+    // 已選列整列加粗，第二行（灰字）不跟著變粗（稿）。
+    expect(rowLabel("p1").querySelector("span.text-muted-foreground")).toHaveClass("font-normal");
+    expect(rowLabel("p2")).not.toHaveClass("bg-brand-soft");
+    expect(rowLabel("p2")).toHaveClass("hover:bg-brand-soft", "hover:text-brand-on-soft");
+
+    fireEvent.click(within(rowLabel("p1")).getByText("p1", { exact: true }));
+    expect(checkbox("p1")).not.toBeChecked();
+    expect(within(header()).getByText("0 selected", { exact: true })).toBeInTheDocument();
+    expect(rowLabel("p1")).not.toHaveClass("bg-brand-soft");
+  });
+
+  it("SM3 Shift 跨區：p1 → Shift 點 w1 → p1、p2、w1 勾，w2 未勾", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(checkbox("w1"), { shiftKey: true });
+    expect(checkedIds()).toEqual(["p1", "p2", "w1"]);
+    expect(within(header()).getByText("3 selected", { exact: true })).toBeInTheDocument();
+  });
+
+  it("SM4 Ctrl＋點與一般點選相同：p1 → Ctrl 點 w1 → 只有 p1、w1", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(checkbox("w1"), { ctrlKey: true });
+    expect(checkedIds()).toEqual(["p1", "w1"]);
+    expect(within(header()).getByText("2 selected", { exact: true })).toBeInTheDocument();
+  });
+
+  it("SM5 全選 → 全勾、字變取消全選 → 再按全不勾、字變回", async () => {
+    await renderSelecting();
+    fireEvent.click(within(header()).getByRole("button", { name: "Select all" }));
+    expect(checkedIds()).toEqual(["p1", "p2", "w1", "w2"]);
+    expect(within(header()).getByText("4 selected", { exact: true })).toBeInTheDocument();
+    expect(within(header()).queryByRole("button", { name: "Select all" })).toBeNull();
+
+    fireEvent.click(within(header()).getByRole("button", { name: "Deselect all" }));
+    expect(checkedIds()).toEqual([]);
+    expect(within(header()).getByRole("button", { name: "Select all" })).toBeInTheDocument();
+  });
+
+  it("SM6 Esc：回平常標題列、勾選框消失、焦點在 Select", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.keyDown(checkbox("p1"), { key: "Escape" });
+    const select = within(header()).getByRole("button", { name: "Select" });
+    expect(select).toHaveFocus();
+    expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
+    expect(header()).toHaveTextContent("Trash · 4 notes");
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+  });
+
+  it("SM6 Done：同 Esc；重新進入時已清空（0 selected）", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(within(header()).getByRole("button", { name: "Done" }));
+    const select = within(header()).getByRole("button", { name: "Select" });
+    expect(select).toHaveFocus();
+    expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+
+    fireEvent.click(select);
+    expect(within(header()).getByText("0 selected", { exact: true })).toBeInTheDocument();
+    expect(checkedIds()).toEqual([]);
+  });
+
+  it("SM7 鍵盤：勾選框上的 click（Space）切換；每個勾選框都在 Tab 順序裡", async () => {
+    await renderSelecting();
+    for (const box of within(panel()).getAllByRole("checkbox")) expect(box.tabIndex).toBe(0);
+    checkbox("p2").focus();
+    expect(checkbox("p2")).toHaveFocus();
+    fireEvent.click(checkbox("p2"));
+    expect(checkedIds()).toEqual(["p2"]);
+    fireEvent.click(checkbox("p2"));
+    expect(checkedIds()).toEqual([]);
+  });
+
+  it("SM12 清單重抓後不在的鍵不計入「已選 N 篇」", async () => {
+    const { server, queryClient } = await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(checkbox("p2"));
+    expect(within(header()).getByText("2 selected", { exact: true })).toBeInTheDocument();
+
+    server.setItems([P1, W1, W2]);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["trash"] });
+    });
+    expect(await within(header()).findByText("1 selected", { exact: true })).toBeInTheDocument();
+    expect(row("p2")).toBeNull();
+    // 鍵還在 provider 裡（重抓回來會再算），只是不計。
+    expect(screen.getByTestId("selected-count")).toHaveTextContent("2");
+  });
+
+  it("SM12b 選取中清單被重抓成 0 篇 → 全選 disabled", async () => {
+    const { server, queryClient } = await renderSelecting();
+    expect(within(header()).getByRole("button", { name: "Select all" })).toBeEnabled();
+    server.setItems([]);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["trash"] });
+    });
+    expect(await within(panel()).findByText("The trash is empty.", { exact: true })).toBeInTheDocument();
+    expect(within(header()).getByRole("button", { name: "Select all" })).toBeDisabled();
   });
 });
