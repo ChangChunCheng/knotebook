@@ -96,8 +96,7 @@ function rowName(p: PresencePerson): string {
   return p.kind === "agent" ? `${p.handle} (${p.label})` : shownName(p);
 }
 
-function rowSide(t: TFunction, p: PresencePerson): string {
-  if (!p.hasCursor) return t("note.presence.rowNoCursor");
+function rowRole(t: TFunction, p: PresencePerson): string {
   if (p.kind === "agent") return t("note.presence.agent");
   return p.role === null ? "" : t(`roles.${p.role}`);
 }
@@ -292,7 +291,13 @@ export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: 
               >
                 <PersonAvatar person={p} size={24} offsetColor="var(--color-popover)" />
                 <bdi className="min-w-0 flex-1 truncate">{rowName(p)}</bdi>{" "}
-                <span className="shrink-0 ps-2 text-xs text-muted-foreground">{rowSide(t, p)}</span>
+                <span className="shrink-0 ps-2 text-xs text-muted-foreground">{rowRole(t, p)}</span>
+                {!p.hasCursor && (
+                  <>
+                    {" "}
+                    <span className="shrink-0 text-xs text-muted-foreground">{t("note.presence.rowNoCursor")}</span>
+                  </>
+                )}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

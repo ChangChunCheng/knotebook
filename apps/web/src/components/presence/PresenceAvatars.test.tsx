@@ -311,12 +311,16 @@ describe("PresenceAvatars", () => {
     for (const i of [2, 4, 5]) {
       expect(items[i]).toHaveAttribute("aria-disabled", "true");
       expect(items[i]).toHaveTextContent("No cursor");
+      // 沒有游標也要看得到角色（觸控沒有 Tooltip，名單是唯一處）
+      expect(items[i]).toHaveTextContent(i === 5 ? "Viewer" : "Editor");
     }
+    for (const i of [0, 1, 3]) expect(items[i]).not.toHaveTextContent("No cursor");
     for (const i of [0, 1, 3]) expect(items[i]).not.toHaveAttribute("aria-disabled");
     expect(items[1]).toHaveTextContent("Editor");
     expect(items[0]).toHaveTextContent("AI agent");
     // 名字與右側小字之間有空白，可及名稱不黏成一個字
     expect(items[1]).toHaveAccessibleName("Ann Editor");
+    expect(items[5]).toHaveAccessibleName("Eve Viewer No cursor");
     // 列頭像的分隔圈用選單底色
     expect((items[1]!.querySelector('[aria-hidden="true"]') as HTMLElement).style.boxShadow).toContain("var(--color-popover)");
     fireEvent.click(items[3]!);
@@ -328,6 +332,18 @@ describe("PresenceAvatars", () => {
     fireEvent.click(more);
     fireEvent.keyDown(screen.getByRole("menu", { name: "People on this note (6)" }), { key: "Escape" });
     await waitFor(() => expect(more).toHaveFocus());
+  });
+
+  it("PA7b 沒有游標的 AI 列同時顯示 AI agent 與 No cursor", () => {
+    const aw = newAwareness();
+    six(aw);
+    setRemote(aw, 15, agentState("w", "claude"));
+    mount(aw);
+    fireEvent.click(screen.getByRole("button", { name: "2 more, show everyone" }));
+    const item = within(screen.getByRole("menu")).getAllByRole("menuitem").find((i) => i.dataset.personKey === "agent:15")!;
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveTextContent("AI agent");
+    expect(item).toHaveTextContent("No cursor");
   });
 
   it("PA8 選單列出全部的人（含已顯示的頭像）", () => {
