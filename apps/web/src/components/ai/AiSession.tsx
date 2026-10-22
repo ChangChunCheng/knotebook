@@ -26,7 +26,7 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "@/ai/apply";
+import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, selectionTouchesColumns, type PreparedResult } from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
 import { selectionFocus, selectionInsideAnchor, toolbarWouldShow } from "@/ai/selection";
@@ -282,6 +282,7 @@ export function AiSessionProvider(props: {
     const ed = editorRef.current;
     const blocks = ed.getSelection()?.blocks;
     if (!blocks || blocks.length === 0) return; // 空選取與 NodeSelection 都回 undefined
+    if (selectionTouchesColumns(ed, blocks)) return; // PR-1 過渡碼：跨欄／含列不開（AI 鈕已不出；PR-2 改成擴大成整列時移除）
     const blockIds = blocks.map((block: AnyBlock) => block.id);
     const anchor = captureAnchor(ed, noteIdRef.current, blockIds);
     const focus = ed.transact((tr) => selectionFocus(tr, blockIds, titleOf));

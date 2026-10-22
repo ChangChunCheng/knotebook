@@ -627,6 +627,10 @@ test("C9c 版本（驗收 9、§11.9）：手動存版 → 改右欄 → split v
   const single = page.getByTestId("diff-single");
   await expect(single).toBeVisible();
   await expect(single.locator(ROW)).toHaveCount(1);
+  // final review M-1：data-diff 直接寫在 PM 管的欄 DOM 上，真瀏覽器裡不得被重繪掉（值照 T9：欄本身 context、欄內改過的段落 changed）。
+  await expect(single.locator(`${ROW} > ${COL}`)).toHaveCount(2);
+  await expect(single.locator(`${ROW} > ${COL}[data-diff="context"]`)).toHaveCount(2);
+  await expect(single.locator(`${COL}[data-diff="context"] .bn-block-outer[data-diff="changed"]`, { hasText: right })).toHaveCount(1);
   await expect(page.getByText("Version history couldn't be shown.")).toHaveCount(0);
   expectNoPageErrors(errors);
 });

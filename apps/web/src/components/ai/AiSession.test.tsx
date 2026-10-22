@@ -17,6 +17,7 @@ import {
   type AiCall,
   type AnyEditor,
 } from "@/test/ai-host";
+import { P, row, withChildren } from "@/test/columns-fixtures";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { activeAnchorOf, useAiSession, type AiSessionValue } from "./AiSession";
 
@@ -560,5 +561,45 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       [id, ""],
       [id, "a]b\\"],
     ]);
+  });
+});
+
+// PR-1 過渡碼（PR-2 改成擴大成整列時移除）：跨欄或含整列的選取 `open()` 不開（final review I-1；AI 鈕也不出，見 AiToolbar.test AX*）。
+describe("AiSession open() 與並排（PR-1 過渡）", () => {
+  const TWO = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
+  const THREE = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")];
+  const NESTED = () => [P("x", "x"), row([[P("a", "a1")], [withChildren(P("p", "p1"), [P("c", "c1")])]], "r"), P("z", "z")];
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each<[string, () => unknown[], string, string]>([
+    ["AO1 跨欄 a..b", TWO, "a1", "b1"],
+    ["AO2 三欄 a..c", THREE, "a1", "c1"],
+    ["AO3 從列外 x 選進列內", TWO, "x", "b1"],
+    ["AO4 從欄內選到列外 z", TWO, "b1", "z"],
+    ["AO6 從末欄的巢狀子 block 選到列外 z（欄是祖父節點）", NESTED, "c1", "z"],
+  ])("%s → open() 後仍 idle、沒有標亮", async (_name, doc, from, to) => {
+    await mount({ doc: doc() });
+    act(() => {
+      editor.setSelection(from, to);
+    });
+    act(() => session.open());
+    expect(phase()).toBe("idle");
+    expect(highlighted()).toBe(false);
+  });
+
+  it("AO5 完全在單一欄內（b..q）→ 照常開框、錨點是兩個欄內段落", async () => {
+    await mount({ doc: TWO() });
+    act(() => {
+      editor.setSelection("b1", "q1");
+    });
+    act(() => session.open());
+    const s = session.state;
+    if (s.phase !== "input") throw new Error(`預期 input，實得 ${s.phase}`);
+    expect(s.target.anchor.blockIds).toEqual(["b1", "q1"]);
   });
 });

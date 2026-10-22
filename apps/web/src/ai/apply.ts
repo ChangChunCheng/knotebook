@@ -1,5 +1,5 @@
 import type { Block, BlockNoteEditor } from "@blocknote/core";
-import { COLUMN_BLOCK_TYPES, convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
+import { COLUMN_BLOCK_TYPES, COLUMN_TYPE, convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { verifyAnchor, type AiAnchor } from "./anchor"; // 只 import 有呼叫點的符號——no-unused-vars 是 error 且 root lint --max-warnings=0
 
@@ -52,8 +52,28 @@ export type ApplyOutcome =
   | { ok: true; insertedIds: string[]; replacedSnapshot: AnyBlock[] }
   | { ok: false; reason: "missing" | "changed" };
 
+/**
+ * PR-1 過渡碼（並排 PR-2 改成「擴大成整列」時移除）：選取含欄／列本身（跨欄、從列外選進列）、或各 block 不在同一欄
+ * （從欄內選到列外，core 的清單裡沒有欄節點，見 selection-delete.test.ts C8）→ true，AI 鈕不出、`open()` 不開。
+ * 完全在單一欄內、或不碰並排 → false。
+ * 只比首尾兩個 block 的所在欄：core 的清單是文件順序上連續的一段，跨過整列時清單裡會有那個列（上一行已擋），
+ * 所以首尾同欄（或都不在欄內）時中間的 block 也一樣（每個 block 都查會是 O(N²)，final review r2 m-2）。
+ */
+export function selectionTouchesColumns(editor: Pick<AnyEditor, "getParentBlock">, blocks: readonly AnyBlock[]): boolean {
+  if (blocks.length === 0) return false;
+  if (hasColumnBlock(blocks)) return true;
+  const columnOf = (id: string): string | null => {
+    for (let parent = editor.getParentBlock(id); parent; parent = editor.getParentBlock(parent.id)) {
+      if (parent.type === COLUMN_TYPE) return parent.id;
+    }
+    return null;
+  };
+  return columnOf(blocks[0].id) !== columnOf(blocks[blocks.length - 1].id);
+}
+
 const NON_TEXT_TYPES = new Set(["image", "audio", "video", "file"]);
 
+// 不遞迴（PR-2 範圍）：錨點只來自 `open()`，跨欄／含列的選取在那裡已被 `selectionTouchesColumns` 擋下，錨點不含欄或列。
 export function hasNonTextBlock(editor: AnyEditor, blockIds: string[]): boolean {
   return blockIds.some((id) => NON_TEXT_TYPES.has(editor.getBlock(id)?.type ?? ""));
 }

@@ -57,10 +57,15 @@ const fragmentFrom = (like: SliceLike, nodes: NodeLike[]) =>
 
 let dropPoint: number | null = null;
 
-/** drop 落點（handleDOMEvents.drop 記下，同一個同步呼叫鏈結束時清掉）。view 為 null 時什麼都不做。 */
+/** drop 落點（handleDOMEvents.drop 記下，同一個同步呼叫鏈結束時清掉）。view 為 null 時什麼都不做。
+ * `posAtCoords` 丟例外時記成 null：不得讓例外穿出、跳過其後的媒體阻擋（final review M-3）。 */
 export function recordDropPoint(view: ViewLike | null, event: Pick<DragEvent, "clientX" | "clientY">): void {
   if (!view) return;
-  dropPoint = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? null;
+  try {
+    dropPoint = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? null;
+  } catch {
+    dropPoint = null;
+  }
   queueMicrotask(() => {
     dropPoint = null;
   });

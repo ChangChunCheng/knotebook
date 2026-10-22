@@ -66,7 +66,9 @@ function dragEvent(data: DataTransfer): DragEvent {
 const translate = (key: string) => `t:${key}`;
 
 describe("createMediaBlockingDOMEvents（§12.4 貼上／拖放攔截）", () => {
-  beforeEach(() => toastMock.mockClear());
+  beforeEach(() => {
+    toastMock.mockClear();
+  });
 
   it("同時提供 paste 與 drop 兩個 handler", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
@@ -316,6 +318,20 @@ describe("buildNoteEditorOptions", () => {
     expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(false);
     expect(view.posAtCoords).toHaveBeenCalledWith({ left: 3, top: 4 });
     expect(takeDropPoint()).toBe(9);
+  });
+
+  it("組合後的 drop：posAtCoords 丟例外 → 媒體阻擋照樣生效、落點為 null（final review M-3）", () => {
+    const view = {
+      posAtCoords: vi.fn(() => {
+        throw new Error("posAtCoords failed");
+      }),
+    };
+    const event = Object.assign(dragEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] })), { clientX: 3, clientY: 4 });
+    expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(true);
+    expect(view.posAtCoords).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
+    expect(takeDropPoint()).toBeNull();
   });
 
   it("攔截掛在 editorProps.handleDOMEvents，**不是** handlePaste/handleDrop", () => {

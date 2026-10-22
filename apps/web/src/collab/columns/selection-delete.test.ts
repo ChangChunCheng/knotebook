@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { COLUMN_LIST_TYPE, COLUMN_TYPE } from "@knotebook/shared";
+import { collabUndoManager } from "@/collab/undo";
 import { P, integrity, mountEditor, row, shape, textPos, withChildren, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { removeBlocksKeepColumns } from "./keep-columns";
 import { blockIdsForMenuDelete, blockIdsInSelectionForDelete } from "./selection-delete";
@@ -46,8 +47,8 @@ function selectFirstCharOfBb(editor: AnyEditor): void {
 
 const blocksOf = (editor: AnyEditor) => editor.getSelection()!.blocks.map((b) => `${b.id}:${b.type}`).join(", ");
 
-describe("SD1 blockIdsInSelectionForDelete：表一", () => {
-  it.each<[string, () => PartialBlockLike[], string, string, string, string[], string]>([
+type Sd1Row = [string, () => PartialBlockLike[], string, string, string, string[], string];
+const SD1: Sd1Row[] = [
     ["C1", C1, "a1", "b1", "a1:paragraph, rc1:column", ["a1", "b1"], "paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
     [
       "C2",
@@ -100,7 +101,10 @@ describe("SD1 blockIdsInSelectionForDelete：表一", () => {
       ["b1", "m1", "c1"],
       "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  ROW[COL(paragraph) | COL(paragraph:d)]  paragraph:z",
     ],
-  ])("%s", (_name, content, from, to, blocks, ids, after) => {
+];
+
+describe("SD1 blockIdsInSelectionForDelete：表一", () => {
+  it.each<Sd1Row>(SD1)("%s", (_name, content, from, to, blocks, ids, after) => {
     const editor = mount(content());
     const before = shape(editor);
     editor.setSelection(from, to);
@@ -112,6 +116,32 @@ describe("SD1 blockIdsInSelectionForDelete：表一", () => {
     expect(shape(editor)).toBe(after);
     expect(integrity(editor).valid).toBe(true);
     editor.undo();
+    expect(shape(editor)).toBe(before);
+  });
+});
+
+// T3c review M-2：「撤銷一次就還原」也要在共編 UndoManager 下成立（app 的實際組態）；挑四形，期望與非共編逐字相同。
+describe("SD1-COLLAB 表一四形在共編下：刪除結果相同、manager.undo() 一次回起始", () => {
+  const COLLAB = SD1.filter(([name]) => ["C1", "C7", "C10", "C12"].includes(name));
+  it("挑到的恰是四形（改名時不得靜默少跑）", () => {
+    expect(COLLAB.map(([name]) => name)).toEqual(["C1", "C7", "C10", "C12"]);
+  });
+
+  it.each<Sd1Row>(COLLAB)("%s（共編）", (_name, content, from, to, blocks, ids, after) => {
+    const m = mountEditor(content(), { collab: true });
+    cleanups.push(m.destroy);
+    const editor = m.editor;
+    const manager = collabUndoManager(editor)!;
+    expect(manager).toBeDefined();
+    const before = shape(editor);
+    editor.setSelection(from, to);
+    expect(blocksOf(editor)).toBe(blocks);
+    const got = blockIdsInSelectionForDelete(editor, editor.getSelection()!.blocks);
+    expect(got).toEqual(ids);
+    removeBlocksKeepColumns(editor, got);
+    expect(shape(editor)).toBe(after);
+    expect(integrity(editor).valid).toBe(true);
+    manager.undo();
     expect(shape(editor)).toBe(before);
   });
 });
