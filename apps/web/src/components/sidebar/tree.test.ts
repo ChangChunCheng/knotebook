@@ -147,6 +147,11 @@ describe("buildTabNodes", () => {
     expect(where("myNotes")).toBe(false);
     expect(where("workspace")).toBe(false);
   });
+
+  it("TR5：trash → []（垃圾桶不從 notes 組樹；不落入工作坊兜底）", () => {
+    expect(groups.length).toBeGreaterThan(0);
+    expect(buildTabNodes("trash", notes, groups)).toEqual([]);
+  });
 });
 
 // ── TR4：位置標籤

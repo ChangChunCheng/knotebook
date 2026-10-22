@@ -1,5 +1,6 @@
 import type { NoteDto, TrashItemDto } from "@knotebook/shared";
 import { noteLocationSegments } from "@/components/sidebar/tree";
+import { selectionKey } from "@/lib/sidebar-selection";
 
 /** #181 垃圾桶列的顯示純函式（spec 2026-10-21 §6.10.1、§6.10.3、§6.10.7）。 */
 
@@ -47,8 +48,7 @@ export interface TrashSections {
 export function splitTrashSections(items: readonly TrashItemDto[]): TrashSections {
   const personal = items.filter((item) => item.group === null);
   const workspace = items.filter((item) => item.group !== null);
-  // T2 改用 selectionKey
-  const order = [...personal, ...workspace].map((item) => `note:${item.id}`);
+  const order = [...personal, ...workspace].map((item) => selectionKey({ kind: "note", id: item.id }));
   return { personal, workspace, order };
 }
 

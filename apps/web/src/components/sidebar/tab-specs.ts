@@ -1,13 +1,16 @@
 import type { ReactElement, SVGProps } from "react";
-import { Clock, Share, User, Users } from "@/components/ui/icons";
+import { Clock, Share, Trash, User, Users } from "@/components/ui/icons";
 import { SIDEBAR_TABS, type SidebarTab } from "@/lib/sidebar-tab";
 
-/** 標題列動作是插槽（spec §9-3）：tab 宣告要哪些動作，NoteList 的標題列照 id 渲染；步驟 2、3 往這裡加。 */
-export type HeaderActionId = "newPersonalNote" | "newGroup";
+/**
+ * 標題列動作是插槽（spec §9-3）：tab 宣告要哪些動作，NoteList 的標題列照 id 渲染；步驟 2、3 往這裡加。
+ * `selectMode`／`emptyTrash` 目前只有垃圾桶 tab 宣告（由 `TrashPanel` 渲染）；PR-2c 起一般 tab 也宣告 `selectMode`。
+ */
+export type HeaderActionId = "newPersonalNote" | "newGroup" | "selectMode" | "emptyTrash";
 
 export interface SidebarTabSpec {
   id: SidebarTab;
-  labelKey: "sidebar.recent" | "sidebar.myNotes" | "sidebar.workspace" | "sidebar.shared";
+  labelKey: "sidebar.recent" | "sidebar.myNotes" | "sidebar.workspace" | "sidebar.shared" | "sidebar.trash";
   Icon: (props: SVGProps<SVGSVGElement>) => ReactElement;
   actions: readonly HeaderActionId[];
 }
@@ -18,6 +21,7 @@ const SPEC_BY_ID: Record<SidebarTab, SidebarTabSpec> = {
   myNotes: { id: "myNotes", labelKey: "sidebar.myNotes", Icon: User, actions: ["newPersonalNote"] },
   workspace: { id: "workspace", labelKey: "sidebar.workspace", Icon: Users, actions: ["newGroup"] },
   shared: { id: "shared", labelKey: "sidebar.shared", Icon: Share, actions: [] },
+  trash: { id: "trash", labelKey: "sidebar.trash", Icon: Trash, actions: ["selectMode", "emptyTrash"] },
 };
 
 export const SIDEBAR_TAB_SPECS: readonly SidebarTabSpec[] = SIDEBAR_TABS.map((id) => SPEC_BY_ID[id]);

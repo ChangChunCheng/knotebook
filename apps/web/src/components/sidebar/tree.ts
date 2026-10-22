@@ -65,6 +65,8 @@ export function recentNotes(notes: NoteDto[]): NoteDto[] {
 const noteNode = (note: NoteDto): SidebarNode => ({ kind: "note", id: note.id, note });
 
 export function buildTabNodes(tab: SidebarTab, notes: NoteDto[], groups: GroupDto[]): SidebarNode[] {
+  // 垃圾桶不從 ["notes"] 組樹；先攔，否則會落進最後一支（其餘一律當工作坊）列出全部群組。
+  if (tab === "trash") return [];
   if (tab === "recent") return recentNotes(notes).map(noteNode);
   const parts = partitionNotes(notes, groups);
   if (tab === "myNotes") return parts.myNotes.map(noteNode);

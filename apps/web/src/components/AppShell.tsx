@@ -13,7 +13,7 @@ import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { NARROW_QUERY, SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom } from "@/lib/real-location";
-import { SidebarTabProvider, useSidebarTabState } from "@/lib/sidebar-tab";
+import { SidebarTabProvider, useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
@@ -80,8 +80,13 @@ function SidebarContent({
   // 靜態卡與抽屜各自一份 `useId`，tab／tabpanel 的 id 才不會撞（spec §5.5）。
   const idBase = useId();
   const { tab } = useSidebarTabState();
+  const { updateSelection } = useSidebarTabActions();
   // 空白也算搜尋中（同改版前的判準）。
   const searching = query.length > 0;
+  // spec §6.10.2：開始搜尋也離開選取模式（兩份實例都跑，冪等）。
+  useEffect(() => {
+    if (searching) updateSelection({ type: "end" });
+  }, [searching, updateSelection]);
   return (
     <>
       <div className="flex items-center gap-2 px-3 pt-3">
@@ -211,7 +216,8 @@ interface AppShellProps {
  *
  * 抽屜（Radix Dialog 直組——不用 `ui/dialog.tsx` 的 `DialogContent`，它寫死置中
  * 樣式還強制塞右上 X）：focus trap（**需焦點先落進容器才武裝**，見
- * `onOpenAutoFocus`）／Escape／backdrop 關閉／scroll lock 由 Radix 給；路由變化
+ * `onOpenAutoFocus`）／Escape／backdrop 關閉／scroll lock 由 Radix 給（選取模式中 Esc 先結束選取、
+ * 抽屜不關，見 `onEscapeKeyDown`）；路由變化
  * （點側欄筆記）與跨斷點 resize（change → `matches:false`）時自行關閉。
  *
  * 新增筆記：`POST /api/notes`（`useCreateNote`）成功後直接導向新筆記的
@@ -221,7 +227,8 @@ interface AppShellProps {
  * 用 toast 顯示（不像 LoginPage 用行內 `errorMessage` state——這裡沒有表單可以
  * 掛錯誤文案）。
  *
- * 側欄 tab：state 由 `SidebarTabProvider`（包住整個版面、在抽屜 context 之內）持有；`AppShell` 隨
+ * 側欄 tab：state（目前 tab 與選取狀態）由 `SidebarTabProvider`（包住整個版面、在抽屜 context 之內）持有，
+ * `actionsRef` 給抽屜 Esc 用；`AppShell` 隨
  * 首頁↔筆記頁重掛（各自渲染一份），tab 靠 localStorage 在重掛間帶回，切 tab 不重繪 `AppShell` 本身。
  *
  * 側欄寬度（Task 4）：靜態卡寬度是 `<aside style={{ width }}>` 的 React state，範圍
@@ -255,6 +262,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   const openedByShortcutRef = useRef(false);
   const drawerOpenRef = useRef(drawerOpen);
   drawerOpenRef.current = drawerOpen;
+  const tabActionsRef = useRef<SidebarTabActions | null>(null);
 
   // Ctrl/Cmd+K。deps 刻意留空——handler 只讀 ref（穩定物件）與當下的
   // matchMedia/DOM，不需要隨 state 重新掛聽。
@@ -356,7 +364,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     // `min-h-0 min-w-0 flex-1 flex flex-col` 撐開版面（`min-w-0` 顯式宣告——
     // `main` 沒有 overflow、少了隱含的自我裁切途徑，寬度鏈全靠它）。
     <SidebarDrawerContext.Provider value={{ setOpen: setDrawerOpen }}>
-      <SidebarTabProvider>
+      <SidebarTabProvider actionsRef={tabActionsRef}>
         <div inert={inert} className="flex h-screen gap-3 overflow-hidden bg-background p-3">
           <aside className={cn(cardSurface, "relative hidden shrink-0 md:flex md:flex-col")} style={{ width: sidebarWidth }}>
             <SidebarContent {...sidebarProps} searchRef={searchInputRef} />
@@ -383,6 +391,10 @@ export function AppShell({ children, inert }: AppShellProps) {
                 // SidebarContent 的 min-h-0 flex-1 清單失去約束（spec §3a）。貼齊
                 // 左緣故意不用 cardSurface 的圓角——抽屜不是卡片。
                 className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card"
+                // Radix 在 document capture 先處理 Esc：選取中先結束選取、抽屜不關。
+                onEscapeKeyDown={(event) => {
+                  if (tabActionsRef.current?.endSelectionIfActive()) event.preventDefault();
+                }}
                 onOpenAutoFocus={(event) => {
                   event.preventDefault();
                   if (openedByShortcutRef.current && drawerSearchRef.current) {

@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import type { NoteDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { useSidebarTabActions, type SidebarTabActions } from "@/lib/sidebar-tab";
+import { useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
@@ -176,7 +176,7 @@ describe("AppShell — 側欄 tab 接線", () => {
     expect(drawer.contains(document.getElementById(drawerControls))).toBe(true);
 
     const ids = [...document.querySelectorAll("[role=tab], [role=tabpanel]")].map((el) => el.id);
-    expect(ids).toHaveLength(10);
+    expect(ids).toHaveLength(12);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -282,4 +282,70 @@ describe("AppShell — 側欄 tab 接線", () => {
     fireEvent.click(within(aside()).getByRole("tab", { name: "My notes" }));
     expect(within(aside()).getByRole("tabpanel")).toHaveAttribute("tabindex", "0");
   });
+
+  it("AS10 開始搜尋結束選取（spec §6.10.2）：靜態搜尋框打字 → 選取結束；清空搜尋後仍不在選取", async () => {
+    stubFetchWithNotes([NOTE]);
+    renderShell(<SelectionProbe />);
+    fireEvent.click(await screen.findByTestId("start-select"));
+    expect(screen.getByTestId("selecting")).toHaveTextContent("true");
+
+    const input = within(aside()).getByRole("textbox", { name: "Search notes" });
+    fireEvent.change(input, { target: { value: "tab" } });
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+  });
+
+  it("AS11 抽屜 Esc 先結束選取：第一次 Esc 抽屜仍在、選取結束；第二次 Esc 才關抽屜", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE]);
+    renderShell(
+      <>
+        <SidebarDrawerButton />
+        <SelectionProbe />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    fireEvent.click(screen.getByTestId("start-select"));
+    expect(screen.getByTestId("selecting")).toHaveTextContent("true");
+
+    fireEvent.keyDown(document.activeElement ?? drawer, { key: "Escape" });
+    await act(async () => {});
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBe(drawer);
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+
+    fireEvent.keyDown(document.activeElement ?? drawer, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
+  });
+
+  it("AS12 抽屜 Esc 平常照關（沒有選取時）", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes([NOTE]);
+    renderShell(
+      <>
+        <SidebarDrawerButton />
+        <SelectionProbe />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    expect(screen.getByTestId("selecting")).toHaveTextContent("false");
+    fireEvent.keyDown(document.activeElement ?? drawer, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
+  });
 });
+
+/** 選取 probe：讀 state context 的 `selection.active`，按鈕進入選取模式。抽屜開著時背景被標 aria-hidden，一律以 testid 查。 */
+function SelectionProbe() {
+  const { selection } = useSidebarTabState();
+  const { updateSelection } = useSidebarTabActions();
+  return (
+    <>
+      <span data-testid="selecting">{String(selection.active)}</span>
+      <button type="button" data-testid="start-select" onClick={() => updateSelection({ type: "start" })}>
+        start selecting
+      </button>
+    </>
+  );
+}
