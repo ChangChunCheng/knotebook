@@ -5,7 +5,7 @@ const CURSOR_FIELD = "cursor";
 
 /**
  * #293 T6b：交給 BlockNote collaboration 的 awareness 外包一層——`canSend()` 為 false（唯讀）時，
- * 丟掉非 null 的 `cursor` 寫入，本分頁不送游標。
+ * 丟掉非 null 的 `cursor` 寫入，本分頁不送游標（gate 只攔 `setLocalStateField("cursor", …)`；`setLocalState({ cursor })` 會繞過，目前沒有呼叫端這樣寫）。
  *
  * 為什麼攔在這裡：BlockNote 0.52.1 無條件給 `.ProseMirror` `tabIndex="0"`，唯讀時照樣可聚焦；
  * y-prosemirror 的 cursor plugin 在 `focusin` 與每次 view update 只看 `view.hasFocus()` 就寫 `cursor`
