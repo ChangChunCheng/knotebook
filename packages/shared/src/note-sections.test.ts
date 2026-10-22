@@ -320,3 +320,69 @@ describe("#93 textOf 迭代化（spec §4.1）", () => {
     expect(sectionize(f).map(({ sectionId, heading, chars }) => ({ sectionId, heading, chars }))).toEqual(refSectionize(f));
   });
 });
+
+/** 手建含並排列的頂層：blockGroup > [blockContainer…, columnList(id) > column > blockContainer > <type>]。 */
+type RowSpec = { kind: "row"; id: string; cols: Array<Array<{ type: "paragraph" | "heading"; id: string; text: string }>> };
+function makeRowDoc(top: Array<{ kind: "p" | "h"; id: string; text: string; level?: number } | RowSpec>): Y.Doc {
+  const doc = new Y.Doc();
+  const group = new Y.XmlElement("blockGroup");
+  doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [group]);
+  const leaf = (id: string, type: string, text: string, level?: number): Y.XmlElement => {
+    const c = new Y.XmlElement("blockContainer");
+    c.setAttribute("id", id);
+    const e = new Y.XmlElement(type);
+    if (type === "heading") e.setAttribute("level", String(level ?? 1));
+    const t = new Y.XmlText();
+    e.insert(0, [t]);
+    c.insert(0, [e]);
+    t.insert(0, text);
+    return c;
+  };
+  top.forEach((b, i) => {
+    if (b.kind === "row") {
+      const list = new Y.XmlElement("columnList");
+      list.setAttribute("id", b.id);
+      group.insert(i, [list]);
+      b.cols.forEach((col, ci) => {
+        const column = new Y.XmlElement("column");
+        column.setAttribute("id", `${b.id}c${ci}`);
+        list.insert(ci, [column]);
+        column.insert(0, col.map(x => leaf(x.id, x.type, x.text)));
+      });
+    } else {
+      group.insert(i, [leaf(b.id, b.kind === "h" ? "heading" : "paragraph", b.text, b.level)]);
+    }
+  });
+  return doc;
+}
+
+describe("並排列是頂層單位（spec §11.4）", () => {
+  const row: RowSpec = { kind: "row", id: "r", cols: [[{ type: "paragraph", id: "a1", text: "甲乙" }], [{ type: "heading", id: "h", text: "欄內" }]] };
+
+  it("NS1：topLevelContainers 依序收 blockContainer、columnList；不攤平欄內", () => {
+    const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row, { kind: "h", id: "H2", text: "B" }, { kind: "p", id: "p2", text: "y" }]);
+    const tops = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT));
+    expect(tops.map(c => c.nodeName)).toEqual(["blockContainer", "columnList", "blockContainer", "blockContainer"]);
+    expect(tops.map(c => c.getAttribute("id"))).toEqual(["p1", "r", "H2", "p2"]);
+  });
+
+  it("NS2：sectionize 把列當非標題單位（chars 含欄內全部文字）；欄內 heading 不開新段", () => {
+    const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row, { kind: "h", id: "H2", text: "B" }, { kind: "p", id: "p2", text: "y" }]);
+    const s = sectionize(doc.getXmlFragment(YDOC_FRAGMENT));
+    expect(s[0]).toMatchObject({ sectionId: TOP_SECTION_ID, blockIds: ["p1", "r"], chars: 1 + 2 + 2 });
+    expect(s.map(x => x.heading)).toEqual(["", "B"]);
+    expect(s.some(x => x.heading.includes("欄內"))).toBe(false);
+    // 列的第一欄第一顆就是 heading 也一樣
+    const doc2 = makeRowDoc([{ kind: "row", id: "r", cols: [[{ type: "heading", id: "h0", text: "欄首" }], [{ type: "paragraph", id: "b", text: "z" }]] }]);
+    const s2 = sectionize(doc2.getXmlFragment(YDOC_FRAGMENT));
+    expect(s2).toHaveLength(1);
+    expect(s2[0]).toMatchObject({ blockIds: ["r"], chars: 3 });
+  });
+
+  it("NS3：canonicalizeSection 認得列的 id；順序錯 → null", () => {
+    const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row]);
+    const f = doc.getXmlFragment(YDOC_FRAGMENT);
+    expect(canonicalizeSection(f, ["p1", "r"])).toContain("EcolumnList(");
+    expect(canonicalizeSection(f, ["r", "p1"])).toBeNull();
+  });
+});

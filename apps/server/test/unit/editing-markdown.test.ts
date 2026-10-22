@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
@@ -47,10 +47,73 @@ describe("parseMarkdownForNote", () => {
       // BlockNote 對未知 HTML 元素通常降級為 paragraph；本案釘住「若 parse 產出的 type 不在 schema
       // 白名單 → unsupported_block」，用收窄白名單的假 editor 來驗。真 schema ＝ defaultBlockSpecs
       // 全集＋mermaid／codeBlock（見 shared 的 createHeadlessNoteSchema），markdown/HTML parser 產得
-      // 出來的 type 一定在裡面——所以**整合層造不出這個碼**，那邊的清單要誠實寫明不驗，別硬塞。
+      // 出來的 type 一定在裡面——所以**整合層造不出這個碼**（PR-1 過渡期並排被拒例外，見 mcp-write-guards GW1／GW2），那邊的清單要誠實寫明不驗，別硬塞。
       const narrowed = { ...ed, schema: { blockSchema: { paragraph: ed.schema.blockSchema.paragraph } }, tryParseMarkdownToBlocks: ed.tryParseMarkdownToBlocks.bind(ed) } as unknown as typeof ed;
       expect(parseMarkdownForNote(narrowed, "# heading", notes, ORIGIN)).toEqual({ error: "unsupported_block" });
       expect("error" in r ? r.error : "ok").not.toBe("unsupported_block"); // 真 schema 下純 HTML 不會炸成 500
+    });
+  });
+
+  // ── 並排 PR-1 過渡守衛（T3b）：寫入面不收 columnList／column，任何深度都回 unsupported_block；PR-2 換成 unsupported_columns ──
+  const TWO_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
+  it("GM1：正規形兩欄 markdown → unsupported_block", async () => {
+    await withSession(ed => {
+      expect(parseMarkdownForNote(ed, TWO_COLS, notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+    });
+  });
+  it("GM2：清單項目裡的兩欄（巢狀）也擋", async () => {
+    await withSession(ed => {
+      const nested = `- item\n\n${TWO_COLS.split("\n").map(l => `  ${l}`).join("\n")}`;
+      expect(parseMarkdownForNote(ed, nested, notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+    });
+  });
+  it("GM3：站內形 data-node-type=columnList 兩欄 → unsupported_block", async () => {
+    await withSession(ed => {
+      const siteForm = `<div data-node-type="columnList"><div data-node-type="column" data-width="1"><p>A</p></div><div data-node-type="column" data-width="1"><p>B</p></div></div>`;
+      expect(parseMarkdownForNote(ed, siteForm, notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+    });
+  });
+  it("GM4：單欄外部形 → 不拒（parse 變一般段落）", async () => {
+    await withSession(ed => {
+      const r = parseMarkdownForNote(ed, `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nonly\n\n</div>\n</div>`, notes, ORIGIN);
+      if ("error" in r) throw new Error(r.error);
+      expect(r.blocks.map(b => b.type)).not.toContain("columnList");
+      expect(JSON.stringify(r.blocks)).toContain("only");
+    });
+  });
+  it("GM5：只有 display:flex 的版面 → 不拒、攤平成一般 block", async () => {
+    await withSession(ed => {
+      const r = parseMarkdownForNote(ed, `<div style="display:flex"><div><p>L</p></div><div><p>R</p></div></div>`, notes, ORIGIN);
+      if ("error" in r) throw new Error(r.error);
+      expect(r.blocks.every(b => b.type !== "columnList" && b.type !== "column")).toBe(true);
+    });
+  });
+  it("GM6：不含並排的 markdown（標題、清單、表格、mermaid）照舊通過", async () => {
+    await withSession(ed => {
+      const md = "# T\n\n- a\n- b\n\n| h1 | h2 |\n| -- | -- |\n| 1 | 2 |\n\n```mermaid\ngraph TD\n```";
+      const r = parseMarkdownForNote(ed, md, notes, ORIGIN);
+      if ("error" in r) throw new Error(r.error);
+      expect(r.blocks.map(b => b.type)).toEqual(["heading", "bulletListItem", "bulletListItem", "table", "mermaid"]);
+    });
+  });
+  it("GM7：孤立的 column（parse 結果被換成含 column 的 blocks）也擋——不只過濾 columnList", async () => {
+    await withSession(ed => {
+      const spy = vi.spyOn(ed, "tryParseMarkdownToBlocks").mockReturnValue([{ id: "c", type: "column", children: [{ id: "p", type: "paragraph", content: "x" }] }] as never);
+      try {
+        expect(parseMarkdownForNote(ed, "x", notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+  it("GM8：孤立的 columnList（無 column 子節點）也擋——COLUMN_BLOCK_TYPES 兩個名字各自要擋", async () => {
+    await withSession(ed => {
+      const spy = vi.spyOn(ed, "tryParseMarkdownToBlocks").mockReturnValue([{ id: "r", type: "columnList", children: [] }] as never);
+      try {
+        expect(parseMarkdownForNote(ed, "x", notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

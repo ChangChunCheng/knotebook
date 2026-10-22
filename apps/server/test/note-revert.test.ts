@@ -35,6 +35,9 @@ async function setup(md = "# A\n\n第一段\n\n# B\n\n第二段", opts: Paramete
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
 const ids = (doc: Y.Doc) => topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+/** 直接讀原始 Y 的頂層（不經 shared 的 topLevelContainers，被測函式壞掉時 oracle 不跟著壞）。 */
+const rawTop = (doc: Y.Doc) =>
+  (doc.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement).toArray().map(n => `${(n as Y.XmlElement).nodeName}:${(n as Y.XmlElement).getAttribute("id")}`);
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signSession(testConfig.appSecret, { userId, tv: 0 })}`;
 /** server 上那份 live doc 的文字（斷言併發時**一律看這個**，不看 client.doc——client 的改動要經 WS 才到 server）。 */
 const serverText = (s: Setup) => docText(s.ctx.collab.hocuspocus.documents.get(s.note.id)!);
@@ -228,6 +231,53 @@ describe("撤回", () => {
     expect(await back()).toContain(s.note.id);
     expect((await s.revert((await s.list())[0]!.id)).statusCode).toBe(201);
     expect(await back()).not.toContain(s.note.id);
+  });
+
+  it("RV1：[段落 p, 列] 上 append → 撤回 → 201：追加消失、列與 p 仍在、順序不變", async () => {
+    const s = await setup("");
+    await humanEdit(s, ed => ed.replaceBlocks(ed.document, [
+      { id: "p", type: "paragraph", content: "前段文字" },
+      { id: "r", type: "columnList", children: [
+        { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "ra", type: "paragraph", content: "左欄文字" }] },
+        { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "rb", type: "paragraph", content: "右欄文字" }] },
+      ] },
+    ] as never));
+    await waitFor("server 收到列", 5_000, () => serverText(s).includes("右欄文字"));
+    expect((await s.post({ op: "append", markdown: "追加" })).statusCode).toBe(201);
+    await waitFor("provider 收到追加", 3_000, () => docText(s.client.doc).includes("追加"));
+    expect(rawTop(s.client.doc)).toEqual(["blockContainer:p", "columnList:r", expect.stringMatching(/^blockContainer:/)]);
+    const rv = await s.revert((await s.list())[0]!.id);
+    expect(rv.statusCode).toBe(201);
+    await waitFor("provider 收到還原", 3_000, () => !docText(s.client.doc).includes("追加"));
+    expect(rawTop(s.client.doc)).toEqual(["blockContainer:p", "columnList:r"]);
+    expect(docText(s.client.doc)).toContain("左欄文字");
+    s.client.disconnect();
+  });
+
+  it("RV2：[p, 列 r, # H, q] delete_section H（anchor＝列 r）→ 撤回 → 201，頂層順序 p, r, H, q（oracle 讀原始 Y）", async () => {
+    const s = await setup("");
+    await humanEdit(s, ed => ed.replaceBlocks(ed.document, [
+      { id: "p", type: "paragraph", content: "前段文字" },
+      { id: "r", type: "columnList", children: [
+        { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "ra", type: "paragraph", content: "左欄文字" }] },
+        { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "rb", type: "paragraph", content: "右欄文字" }] },
+      ] },
+      { id: "h", type: "heading", props: { level: 1 }, content: "標題文字" },
+      { id: "q", type: "paragraph", content: "後段文字" },
+    ] as never));
+    await waitFor("server 收到", 5_000, () => serverText(s).includes("後段文字"));
+    const c = await s.content();
+    const sec = c.outline.find((o: { sectionId: string }) => o.sectionId === "h");
+    expect(sec).toBeDefined();
+    expect((await s.post({ op: "delete_section", section_id: "h", if_match: sec.fingerprint })).statusCode).toBe(201);
+    await waitFor("provider 收到刪除", 3_000, () => !docText(s.client.doc).includes("標題文字"));
+    expect(rawTop(s.client.doc)).toEqual(["blockContainer:p", "columnList:r"]);
+    const rv = await s.revert((await s.list())[0]!.id);
+    expect(rv.statusCode).toBe(201);
+    await waitFor("provider 收到還原", 3_000, () => docText(s.client.doc).includes("標題文字"));
+    expect(rawTop(s.client.doc)).toEqual(["blockContainer:p", "columnList:r", "blockContainer:h", "blockContainer:q"]);
+    expect(docText(s.client.doc)).toContain("右欄文字");
+    s.client.disconnect();
   });
 
   it("空筆記 replace_all／insert_after _top／append → 撤回 → 剩一個空 paragraph、結構合法、再讀正常", async () => {

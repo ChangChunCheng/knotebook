@@ -10,7 +10,10 @@ const BLOCKS = `
   <div class="bn-block-outer" data-id="h1"><div class="bn-block"><div class="bn-block-content" data-content-type="heading"><h2 class="bn-inline-content">Title</h2></div></div></div>
   <div class="bn-block-outer" data-id="p1"><div class="bn-block"><div class="bn-block-content" data-content-type="paragraph"><p class="bn-inline-content">Body</p></div></div></div>
   <div class="bn-block-outer" data-id="li"><div class="bn-block"><div class="bn-block-content" data-content-type="bulletListItem"><p class="bn-inline-content">item</p></div>
-    <div class="bn-block-group"><div class="bn-block-outer" data-id="h3"><div class="bn-block"><div class="bn-block-content" data-content-type="heading"><h3 class="bn-inline-content">Nested</h3></div></div></div></div></div></div>`;
+    <div class="bn-block-group"><div class="bn-block-outer" data-id="h3"><div class="bn-block"><div class="bn-block-content" data-content-type="heading"><h3 class="bn-inline-content">Nested</h3></div></div></div></div></div></div>
+  <div class="bn-block-column-list" data-node-type="columnList" data-id="r"><div class="bn-block-column" data-node-type="column" data-id="rc0">
+    <div class="bn-block-outer" data-id="hc"><div class="bn-block"><div class="bn-block-content" data-content-type="heading"><h2 class="bn-inline-content">InColumn</h2></div></div></div></div>
+    <div class="bn-block-column" data-node-type="column" data-id="rc1"><div class="bn-block-outer" data-id="pc"><div class="bn-block"><div class="bn-block-content" data-content-type="paragraph"><p class="bn-inline-content">Beside</p></div></div></div></div></div>`;
 
 /** jsdom 的 rect 全是 0：依 selector 墊幾何（其餘元素照舊回 0）。 */
 function stubRects(rects: Array<[string, DOMRect]>) {
@@ -109,6 +112,16 @@ describe("#269 標題「#」鈕", () => {
     fireEvent.pointerOver(screen.getByText("Title"));
     expect(screen.getByRole("button", { name: "Copy link to this section" })).toBeInTheDocument();
     fireEvent.pointerOver(screen.getByText("item"));
+    expect(screen.queryByRole("button", { name: "Copy link to this section" })).not.toBeInTheDocument();
+  });
+
+  it("HA1 並排的欄內標題（spec 2026-10-21 columns-layout §7.5）→ 沒有 #；從頂層標題移過去 → 收起", () => {
+    render(<Host />);
+    fireEvent.pointerOver(screen.getByText("InColumn"));
+    expect(screen.queryByRole("button", { name: "Copy link to this section" })).not.toBeInTheDocument();
+    fireEvent.pointerOver(screen.getByText("Title"));
+    expect(screen.getByRole("button", { name: "Copy link to this section" })).toBeInTheDocument();
+    fireEvent.pointerOver(screen.getByText("InColumn"));
     expect(screen.queryByRole("button", { name: "Copy link to this section" })).not.toBeInTheDocument();
   });
 

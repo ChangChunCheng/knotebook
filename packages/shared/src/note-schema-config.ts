@@ -17,6 +17,7 @@ import {
   BlockNoteSchema, createBlockSpec, createCodeBlockSpec, createInlineContentSpec, defaultBlockSpecs, defaultInlineContentSpecs,
   type CodeBlockOptions,
 } from "@blocknote/core";
+import { columnBlockSpec, columnListBlockSpec } from "./columns.js";
 import { normalizeAnchor, wikilinkHref, wikilinkVisibleText } from "./site-link.js";
 
 export const MERMAID_LANGUAGE = "mermaid";
@@ -126,6 +127,8 @@ export function createHeadlessNoteSchema(base: string) {
       video: withGuardedExternalHTML(defaultBlockSpecs.video, base),
       mermaid: mermaidSpec,
       codeBlock: createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS),
+      columnList: columnListBlockSpec,
+      column: columnBlockSpec,
     },
     inlineContentSpecs: { ...defaultInlineContentSpecs, wikilink: wikilinkSpec },
   });

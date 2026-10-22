@@ -1,5 +1,6 @@
 import type { Block, BlockNoteEditor } from "@blocknote/core";
-import { convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
+import { COLUMN_BLOCK_TYPES, COLUMN_TYPE, convertSiteLinks, isBlankParseResult, rebindWikilinks, targetFromList, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook/shared";
+import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { verifyAnchor, type AiAnchor } from "./anchor"; // 只 import 有呼叫點的符號——no-unused-vars 是 error 且 root lint --max-warnings=0
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.tsx/wikilink/menu.ts）
@@ -21,14 +22,21 @@ export interface PreparedResult {
   unboundCount: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同 AnyBlock 的說明，BlockNote 泛型三元組
+function hasColumnBlock(blocks: readonly { type?: string; children?: readonly any[] }[]): boolean {
+  return blocks.some((b) => COLUMN_BLOCK_TYPES.has(b.type as string) || (b.children ? hasColumnBlock(b.children) : false));
+}
+
 /**
- * parse → 空結果判定 → 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。空字串／純空白回 `{ empty: true }`：
+ * parse → 空結果判定 → 並排檢查（PR-1 過渡守衛，回 `{ unsupported: true }`）→ 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。空字串／純空白回 `{ empty: true }`：
  * `tryParseMarkdownToBlocks("")` 回單一空段落而不是 `[]`（`@knotebook/shared` 的 `isBlankParseResult` 實測註記），
  * 不擋的話套用會把原文換成空段落。
  */
-export function prepareAiResult(editor: AnyEditor, markdown: string, deps: ApplyDeps): PreparedResult | { empty: true } {
+export function prepareAiResult(editor: AnyEditor, markdown: string, deps: ApplyDeps): PreparedResult | { empty: true } | { unsupported: true } {
   const parsed = editor.tryParseMarkdownToBlocks(markdown);
   if (isBlankParseResult(parsed)) return { empty: true };
+  // PR-1 過渡守衛（並排 PR-1 T3b）：與 server 的 parseMarkdownForNote 同，PR-2 的正式驗證落地前不收並排；PR-2 整段拿掉。
+  if (hasColumnBlock(parsed)) return { unsupported: true };
   const [rebound, unboundCount] = rebindWikilinks(
     parsed,
     [...deps.notes],
@@ -44,19 +52,39 @@ export type ApplyOutcome =
   | { ok: true; insertedIds: string[]; replacedSnapshot: AnyBlock[] }
   | { ok: false; reason: "missing" | "changed" };
 
+/**
+ * PR-1 過渡碼（並排 PR-2 改成「擴大成整列」時移除）：選取含欄／列本身（跨欄、從列外選進列）、或各 block 不在同一欄
+ * （從欄內選到列外，core 的清單裡沒有欄節點，見 selection-delete.test.ts C8）→ true，AI 鈕不出、`open()` 不開。
+ * 完全在單一欄內、或不碰並排 → false。
+ * 只比首尾兩個 block 的所在欄：core 的清單是文件順序上連續的一段，跨過整列時清單裡會有那個列（上一行已擋），
+ * 所以首尾同欄（或都不在欄內）時中間的 block 也一樣（每個 block 都查會是 O(N²)，final review r2 m-2）。
+ */
+export function selectionTouchesColumns(editor: Pick<AnyEditor, "getParentBlock">, blocks: readonly AnyBlock[]): boolean {
+  if (blocks.length === 0) return false;
+  if (hasColumnBlock(blocks)) return true;
+  const columnOf = (id: string): string | null => {
+    for (let parent = editor.getParentBlock(id); parent; parent = editor.getParentBlock(parent.id)) {
+      if (parent.type === COLUMN_TYPE) return parent.id;
+    }
+    return null;
+  };
+  return columnOf(blocks[0].id) !== columnOf(blocks[blocks.length - 1].id);
+}
+
 const NON_TEXT_TYPES = new Set(["image", "audio", "video", "file"]);
 
+// 不遞迴（PR-2 範圍）：錨點只來自 `open()`，跨欄／含列的選取在那裡已被 `selectionTouchesColumns` 擋下，錨點不含欄或列。
 export function hasNonTextBlock(editor: AnyEditor, blockIds: string[]): boolean {
   return blockIds.some((id) => NON_TEXT_TYPES.has(editor.getBlock(id)?.type ?? ""));
 }
 
-/** 守門→replaceBlocks：**全程同步、無 await**（spec §13.3）。寫入的是 `prepared.blocks` 本身（#263：與預覽同一份）。 */
+/** 守門→取代：**全程同步、無 await**（spec §13.3）。寫入的是 `prepared.blocks` 本身（#263：與預覽同一份）；走 D25 helper，欄內套用不收欄。 */
 export function applyAiResult(editor: AnyEditor, anchor: AiAnchor, prepared: PreparedResult): ApplyOutcome {
   const verdict = verifyAnchor(editor, anchor);
   if (verdict !== "ok") return { ok: false, reason: verdict };
   // 守門已保證所有 blockIds 存在（否則已提早 return "missing"），這裡的 `!` 只是把已驗證的事實告訴型別系統。
   const replacedSnapshot = anchor.blockIds.map((id) => editor.getBlock(id)!);
-  const { insertedBlocks } = editor.replaceBlocks(anchor.blockIds, prepared.blocks);
+  const { insertedBlocks } = replaceBlocksKeepColumns(editor, anchor.blockIds, prepared.blocks);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- insertedBlocks 元素為 BlockNote 內部泛型 Block，走 repo 慣例用 any
   return { ok: true, insertedIds: insertedBlocks.map((b: any) => b.id), replacedSnapshot };
 }
@@ -73,6 +101,6 @@ export function revertAiResult(
   replacedSnapshot: Block<any, any, any>[],
 ): RevertOutcome {
   if (verifyAnchor(editor, insertedAnchor) !== "ok") return "stale";
-  editor.replaceBlocks(insertedAnchor.blockIds, replacedSnapshot);
+  replaceBlocksKeepColumns(editor, insertedAnchor.blockIds, replacedSnapshot);
   return "ok";
 }

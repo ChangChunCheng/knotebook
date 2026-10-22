@@ -99,13 +99,19 @@ export class PresenceRegistry {
     const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
     const containers = topLevelContainers(fragment);
     const byId = (id: string | undefined) => containers.find(c => c.getAttribute("id") === id);
-    let block = containers[0];
+    let block: Y.XmlElement | undefined = containers[0];
     if (target.kind === "section") {
       // 零 block `_top`（筆記以 heading 開頭）→ blockIds[0] 是 undefined → 退文件開頭
       block = byId(sectionize(fragment).find(s => s.sectionId === target.sectionId)?.blockIds[0]) ?? block;
     } else if (target.kind === "block") {
       // 併發：這一顆可能在我們 emit 之前又被別人改掉了 → 退文件開頭，不丟錯
       block = byId(target.blockId) ?? block;
+    }
+    // 並排列：往下一層取第一欄的第一個 blockContainer（不遞迴）
+    if (block?.nodeName === "columnList") {
+      const firstColumn = block.get(0);
+      const first = firstColumn instanceof Y.XmlElement ? firstColumn.get(0) : undefined;
+      block = first instanceof Y.XmlElement ? first : undefined;
     }
     // ⚠ 兩層都要判型，但兩層擋的是**不同**情境（實測用真 BlockNote 文件量過，見下）：
     // 第一層（`content instanceof Y.XmlElement`）擋的是**文件連一顆頂層容器都沒有**——尚未被

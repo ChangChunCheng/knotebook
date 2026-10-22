@@ -175,6 +175,27 @@ describe("PresenceRegistry", () => {
     expect(states.get(id)).not.toHaveProperty("cursor");
   });
 
+  it("畸形列：欄的第一個子節點是 XmlText（用戶端可送的畸形 Y）→ 不丟錯、不送 cursor", () => {
+    const yDoc = new Y.Doc();
+    const fragment = yDoc.getXmlFragment(YDOC_FRAGMENT);
+    const group = new Y.XmlElement("blockGroup");
+    const list = new Y.XmlElement("columnList");
+    list.setAttribute("id", "row1");
+    const col = new Y.XmlElement("column");
+    col.insert(0, [new Y.XmlText()]);
+    list.insert(0, [col]);
+    group.insert(0, [list]);
+    fragment.insert(0, [group]);
+    const states = new Map<number, unknown>();
+    const meta = new Map<number, { clock: number; lastUpdated: number }>();
+    const h = { documents: new Map([["n8", { awareness: { states, meta, emit: () => {} }, getXmlFragment: yDoc.getXmlFragment.bind(yDoc) }]]) };
+    const reg = new PresenceRegistry(h as never);
+    const id = presenceClientId("n8", "t8");
+    expect(() => reg.touch("n8", "t8", user, { kind: "block", blockId: "row1" })).not.toThrow();
+    expect(states.get(id)).not.toHaveProperty("cursor");
+    reg.stopAll();
+  });
+
   it("clock map 是 process 生命週期：換一個全新的 registry，同一組鍵的 clock 仍嚴格遞增", () => {
     // ⚠ 這一案是「clock map 不得搬進實例」這條不變量的**唯一**守衛（presence.ts 檔頭指名它）。
     // 把 map 搬進實例、或加一個 reset()，只有這一案會紅，其餘全部照綠。
