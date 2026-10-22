@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -28,6 +28,7 @@ import { ActiveNoteProvider, useActiveNote } from "@/lib/active-note";
 import { RealLocationContext, withCanonicalizedFrom } from "@/lib/real-location";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
+import * as toastModule from "@/components/ui/toast";
 import { canEdit as canEditRole, type CollabState } from "@/collab/connection";
 import { OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 import { invalidateNoteQueries } from "@/api/notes";
@@ -2013,7 +2014,7 @@ function withEditsAndList(inner: ReturnType<typeof mockFetch>, notes: () => Note
 /** `NotePageTree` 只掛 `/notes/:ref` 且沒有位置探針——這組自己組：兩條筆記路由＋首頁＋探針。 */
 function renderWithProbe(initialEntry: string | { pathname: string; state: unknown }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
@@ -2030,6 +2031,7 @@ function renderWithProbe(initialEntry: string | { pathname: string; state: unkno
       </ThemeProvider>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }
 
 async function openSidebarRowMenu(title: string): Promise<HTMLElement> {
@@ -2127,15 +2129,78 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     await screen.findByLabelText("Note title", { selector: "input" });
 
     const menu = await openSidebarRowMenu("My Note");
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
 
     expect(await screen.findByText("home landing")).toBeInTheDocument();
     expect(calls).toContain(`DELETE /api/notes/${NOTE.id}`);
     // 失效後的 `GET /api/notes/<id>` 404 會晚一點回來——等它有機會落地再斷言沒有 toast。
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(screen.queryByText("This note has been deleted.")).toBeNull();
+  });
+
+  // NP-U1（讀碼發現 27）：移入後常駐層 ["note", id] 停在 404 in_trash 的 error 態；復原必須先蓋回常駐層再導回，
+  // 否則重開的 NotePage 讀到舊 error →「此筆記已被刪除」並彈回首頁。
+  // ⚠ 寫死從 `/n/tester/my-note`（by-path）進入：只有 by-path 形（`/g/<groupId>/<slug>` 同理）會留下解析層的
+  // `["note-by-path", …]` 快取，而常駐層在掛載時重抓一次、`dataUpdatedAt` 才比解析層新，復原後 seed effect 不 seed 的條件才成立；
+  // 從 `/notes/<slug>` 或 `/notes/<id>` 進入時重開那篇會重抓 by-path、照常 seed，不 seed 也不會彈回（gate r2 探針實測）。
+  it("NP-U1 頁首 ⋮ 移到垃圾桶 → 回首頁 → 按 Undo：回到該篇、標題框出現，全程沒有「此筆記已被刪除」", async () => {
+    let trashed = false;
+    const inner = mockFetch();
+    const { fn, calls } = withEditsAndList(
+      ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === `/api/notes/${NOTE.id}` && method === "DELETE") {
+          trashed = true;
+          return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
+        }
+        if (url === "/api/trash/restore" && method === "POST") {
+          trashed = false;
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ restored: [NOTE], skipped: [] }) }));
+        }
+        if (trashed && url === `/api/notes/${NOTE.id}` && method === "GET") {
+          return Promise.resolve(
+            fakeResponse({
+              ok: false,
+              status: 404,
+              json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: NOTE.id }),
+            }),
+          );
+        }
+        return inner(input, init);
+      }) as ReturnType<typeof mockFetch>,
+      () => (trashed ? [] : [NOTE]),
+    );
+    vi.stubGlobal("fetch", fn);
+    collab.state = { phase: "connected", role: "owner" };
+    // 「全程沒有」靠 toast 呼叫紀錄、不靠畫面快照：noteGone 出口在 toast() 當下同步記下，與之後哪個 render 先 commit 無關。
+    const toastSpy = vi.spyOn(toastModule, "toast");
+    onTestFinished(() => toastSpy.mockRestore());
+    const toastTitles = () => toastSpy.mock.calls.map(([item]) => item.title);
+
+    const { queryClient } = renderWithProbe("/n/tester/my-note");
+    await screen.findByLabelText("Note title", { selector: "input" });
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to trash" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/\|/));
+    // 等移入後常駐層的重抓（404 in_trash）真的落地成 error 態，才是讀碼發現 27 的起點（不用固定等待）。
+    await waitFor(() => expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("error"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    // 正面條件三者同時成立才算「回到該篇」：網址、標題框、常駐層 success。漏 seed 時重開的頁面讀到舊 error
+    // 就彈回首頁（網址變 /），這裡等不到而紅；常駐層之後才被失效重抓成 success，那時網址早已是 /。
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/my-note\|/);
+      expect(screen.getByLabelText("Note title", { selector: "input" })).toBeInTheDocument();
+      expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("success");
+    });
+    expect(calls).toContain("POST /api/trash/restore");
+    // 標題框出現＝重開的頁面已有一個 render 不是 noteGone 佔位卡；React 在它之前已跑完先前 commit 的 effect（含 noteGone 出口），
+    // 所以若曾判成「已刪除」，toast() 此刻必已被呼叫。正面兩則證明 spy 有接上。
+    expect(toastTitles()).toEqual(expect.arrayContaining(["Moved to the trash", "Restored 1 note"]));
+    expect(toastTitles()).not.toContain("This note has been deleted.");
+    expect(screen.queryByText("This note has been deleted.", { exact: true })).toBeNull();
   });
 });
 

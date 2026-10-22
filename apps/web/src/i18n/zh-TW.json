@@ -17,10 +17,7 @@
     "selectTitle": "尚未選取筆記",
     "selectDescription": "從側欄選取一篇筆記，或建立新筆記。",
     "newNote": "新增筆記",
-    "delete": "刪除",
-    "cancel": "取消",
-    "deleteTitle": "刪除筆記？",
-    "deleteDescription": "這將永久刪除「{{title}}」，此動作無法復原。"
+    "cancel": "取消"
   },
   "sidebar": {
     "resize": "調整側欄寬度",
@@ -158,7 +155,7 @@
       "copyTo": "複製到…",
       "makeCopy": "建立副本",
       "personalSpace": "個人空間",
-      "delete": "刪除筆記"
+      "delete": "移到垃圾桶"
     },
     "width": {
       "label": "寬度",

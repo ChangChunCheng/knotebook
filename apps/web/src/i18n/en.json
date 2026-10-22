@@ -17,10 +17,7 @@
     "selectTitle": "No note selected",
     "selectDescription": "Select a note from the sidebar, or create a new one.",
     "newNote": "New note",
-    "delete": "Delete",
-    "cancel": "Cancel",
-    "deleteTitle": "Delete note?",
-    "deleteDescription": "This will permanently delete \"{{title}}\". This can't be undone."
+    "cancel": "Cancel"
   },
   "sidebar": {
     "resize": "Resize sidebar",
@@ -158,7 +155,7 @@
       "copyTo": "Copy to…",
       "makeCopy": "Make a copy",
       "personalSpace": "Personal space",
-      "delete": "Delete note"
+      "delete": "Move to trash"
     },
     "width": {
       "label": "Width",

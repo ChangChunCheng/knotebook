@@ -18,6 +18,7 @@ const SPEC_COPY: Record<string, string> = {
   "trash.includesOthers": "（含其他成員刪除的）",
   "trash.inTrashTitle": "這篇筆記在垃圾桶裡",
   "trash.goToTrash": "前往垃圾桶",
+  "note.menu.delete": "移到垃圾桶",
   "admin.trash.description":
     "筆記移到垃圾桶後，超過保留天數會自動永久刪除（每小時檢查一次）。縮短天數時，已超過新天數的筆記會從下一次檢查開始刪除（每次最多 2,000 篇）。",
   "storage.trashNote": "垃圾桶裡的筆記也計入用量，永久刪除後才會釋放。",
@@ -43,4 +44,17 @@ describe("TC1 垃圾桶文案＝spec 字面（zh-TW）", () => {
     expect(get(zhTW, "trash.lessThanDay")).toBeUndefined();
     expect(get(en, "trash.lessThanDay")).toBeUndefined();
   });
+
+  it("note.menu.delete 的 en 是「Move to trash」", () => {
+    expect(get(en, "note.menu.delete")).toBe("Move to trash");
+  });
+});
+
+describe("TC2 刪除確認框的文案已移除（spec §6.12：移到垃圾桶不確認）", () => {
+  for (const key of ["home.deleteTitle", "home.deleteDescription", "home.delete"]) {
+    it(key, () => {
+      expect(get(en, key)).toBeUndefined();
+      expect(get(zhTW, key)).toBeUndefined();
+    });
+  }
 });
