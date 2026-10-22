@@ -693,7 +693,7 @@
       "deleteLabel": "Delete everything",
       "deleteDescription_one": "{{count}} note, its attachments and its edit history are permanently deleted — it doesn't go to the trash. This can't be undone.",
       "deleteDescription_other": "{{count}} notes, their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
-      "deleteDescriptionNoCount": "The group's notes, their attachments and their edit history are permanently deleted. This can't be undone.",
+      "deleteDescriptionNoCount": "The group's notes (including those in its trash), their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
       "deleteDescriptionWithTrash_one": "{{count}} note (including {{trash}} in the trash), its attachments and its edit history are permanently deleted — it doesn't go to the trash. This can't be undone.",
       "deleteDescriptionWithTrash_other": "{{count}} notes (including {{trash}} in the trash), their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
       "emptyDescription": "This group has no notes.",

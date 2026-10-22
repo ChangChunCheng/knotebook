@@ -693,7 +693,7 @@
       "deleteLabel": "全部刪除",
       "deleteDescription_one": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "deleteDescription_other": "{{count}} 篇筆記連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
-      "deleteDescriptionNoCount": "群組裡的筆記連同附件與修改紀錄會永久刪除，無法復原。",
+      "deleteDescriptionNoCount": "群組裡的筆記（含垃圾桶裡的）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "deleteDescriptionWithTrash_one": "{{count}} 篇筆記（含垃圾桶裡的 {{trash}} 篇）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "deleteDescriptionWithTrash_other": "{{count}} 篇筆記（含垃圾桶裡的 {{trash}} 篇）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
       "emptyDescription": "這個群組沒有筆記。",

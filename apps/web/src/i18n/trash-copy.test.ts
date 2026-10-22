@@ -25,6 +25,7 @@ const SPEC_COPY: Record<string, string> = {
   "groups.roles.flags.delete.description": "把群組筆記移到垃圾桶。同時有編輯權的話，還能在垃圾桶裡還原或永久刪除。",
   "groups.roles.deleteWithoutEditHint": "沒有編輯權的話，刪掉的筆記自己無法從垃圾桶還原。",
   "groups.delete.transferTrashNote": "垃圾桶裡的群組筆記會進 {{name}} 的個人垃圾桶，保留期照原刪除時間計算；它們的公開連結同樣會關閉。",
+  "groups.delete.deleteDescriptionNoCount": "群組裡的筆記（含垃圾桶裡的）連同附件與修改紀錄會永久刪除，不會進垃圾桶，無法復原。",
 };
 
 function get(obj: unknown, path: string): unknown {
@@ -47,6 +48,12 @@ describe("TC1 垃圾桶文案＝spec 字面（zh-TW）", () => {
 
   it("note.menu.delete 的 en 是「Move to trash」", () => {
     expect(get(en, "note.menu.delete")).toBe("Move to trash");
+  });
+
+  it("groups.delete.deleteDescriptionNoCount 的 en 帶「including those in its trash」與「they don't go to the trash」", () => {
+    expect(get(en, "groups.delete.deleteDescriptionNoCount")).toBe(
+      "The group's notes (including those in its trash), their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
+    );
   });
 });
 
