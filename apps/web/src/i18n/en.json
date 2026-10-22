@@ -1283,6 +1283,7 @@
     "invite_invalid": "This invitation is invalid, already used, revoked, or expired. Ask the site administrator for a new one.",
     "invite_used": "This invitation has already been used and can't be revoked.",
     "invite_not_found": "Invitation not found.",
+    "in_trash": "This note is in the trash.",
     "password_not_set": "This account signs in only through a sign-in service and has no password to reset.",
     "user_disabled": "This account is disabled. Enable it before resetting its password.",
     "empty_result": "The AI returned an empty result.",

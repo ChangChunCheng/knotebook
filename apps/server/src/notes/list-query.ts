@@ -4,6 +4,7 @@
 // `visibleNoteTargets()`、`notes/service.ts` 的 `loadNoteAudience()`、`notes/links.ts` 的 `fetchBacklinks()`、
 // `notes/tx/write-links.ts` 的 `writeLinksInTx()`——各自手寫群組分支（#175 §5.3；連同本檔共五份，
 // 不統一列在 spec §15 第 6 條）。
+// 垃圾桶筆記一律排除（#181 §6.2-3）：三支各在 `and(...)` 裡帶 `deleted_at IS NULL`。
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
@@ -14,7 +15,7 @@ import { OWNER_PERMISSIONS, groupNotePermissions, roleFromGroupFlags, sharePermi
  * 同表不同人，不取別名 drizzle 產不出兩個 FROM 項。一律 LEFT JOIN——沒編輯過（欄位 null）
  * 或編輯者帳號已刪（FK `set null`）時，那一列仍要出現在結果裡。 */
 export const editor = alias(users, "editor");
-/** 三欄一組，三支 select 與 `noteWithOwnerSelection` 共用同一份定義——union 各支的 select shape
+/** 三欄一組，三支 select 與 `noteFieldsSelection`（`note-dto.ts`）共用同一份定義——union 各支的 select shape
  * 必須逐欄同形，抄兩次遲早分岔。 */
 export const lastEditedSelection = {
   lastEditedAt: notes.lastEditedAt,
@@ -92,14 +93,14 @@ export function visibleNoteBranches<E extends Record<string, SQL.Aliased>>(
     .from(notes)
     .innerJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(eq(notes.ownerId, userId), opts.extraWhere));
+    .where(and(eq(notes.ownerId, userId), isNull(notes.deletedAt), opts.extraWhere));
   const shared = db
     .select({ ...baseColumns(), ...nullGroupColumns(), ...extra, role: noteShares.role })
     .from(notes)
     .innerJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId)))
     .innerJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(isNull(notes.groupId), sql`${notes.ownerId} <> ${userId}`, opts.extraWhere));
+    .where(and(isNull(notes.groupId), sql`${notes.ownerId} <> ${userId}`, isNull(notes.deletedAt), opts.extraWhere));
   const grouped = db
     .select({
       ...baseColumns(),
@@ -113,7 +114,7 @@ export function visibleNoteBranches<E extends Record<string, SQL.Aliased>>(
     .innerJoin(groups, eq(groups.id, notes.groupId))
     .leftJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(sql`${notes.groupId} is not null`, opts.extraWhere));
+    .where(and(sql`${notes.groupId} is not null`, isNull(notes.deletedAt), opts.extraWhere));
   return { owned, shared, grouped };
 }
 

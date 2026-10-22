@@ -496,6 +496,9 @@ export const ERROR_CODES = [
   "invite_invalid",
   "invite_used",
   "invite_not_found",
+  // #181（spec 2026-10-21 §6.7）：`in_trash`＝404，單篇讀取（`:ref`／by-path／by-group-path）的目標在垃圾桶、且呼叫者有垃圾桶權；
+  // body 另帶頂層 `noteId`。沒有垃圾桶權者照舊 `not_found`。
+  "in_trash",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -1212,3 +1215,4 @@ export * from "./storage.js";
 export * from "./versions.js";
 export * from "./version-names.js";
 export * from "./ai.js";
+export * from "./trash.js";

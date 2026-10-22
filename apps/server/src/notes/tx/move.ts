@@ -24,7 +24,7 @@
  * (3) 的 UPDATE 不會撞群組 FK 23503；(3a) 對 users 的 FK 只在移入者帳號於交易中被硬刪時才會撞（`src/` 沒有這條路徑）——
  * `notes/move-note.ts` 的 23503 → 404 映射只剩防禦縱深。
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups, noteShares, notes, uploads } from "../../db/schema.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
@@ -51,8 +51,9 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
   const [row] = await tx
     .select({ ownerId: notes.ownerId, slug: notes.slug })
     .from(notes)
-    .where(eq(notes.id, input.noteId))
+    .where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt)))
     .for("update");
+  // #181 §6.2-11：授權之後被移入垃圾桶＝列消失，同一條 404。
   if (!row) throw new TxAbort(404, "not_found", "找不到此筆記");
   // owner 是呼叫者 ⇒ 是個人筆記（`notes_owner_xor_group_chk`，S6）——不必另看 group_id。
   if (row.ownerId !== input.userId) throw new TxAbort(409, "conflict", "筆記的歸屬已變更，請重新整理後再試");

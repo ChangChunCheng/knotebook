@@ -12,9 +12,13 @@ import { apiTokens, authProviders, groupMembers, groupRoles, groups, noteRedirec
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** drizzle 對 `schema.ts` 的序列化；宣告漂移守衛拿最新一支當比對基準（Task 14 rebase 後改成實際檔名）。 */
-const SNAPSHOT_FILE = "meta/0032_snapshot.json";
+const SNAPSHOT_FILE = "meta/0033_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
-  tables: Record<string, { checkConstraints?: Record<string, { name: string; value: string }> }>;
+  tables: Record<string, {
+    checkConstraints?: Record<string, { name: string; value: string }>;
+    columns?: Record<string, { notNull: boolean }>;
+    foreignKeys?: Record<string, { name: string; onDelete?: string }>;
+  }>;
 };
 const pgDialect = new PgDialect();
 
@@ -1450,7 +1454,7 @@ describe("0009_api-tokens", () => {
       site_settings: [
         "singleton", "registration_enabled", "password_login_enabled", "legacy_oidc_env_handled_at", "updated_at",
         "default_user_storage_plan_id", "default_group_storage_plan_id",
-        "version_keep_all_days", "version_daily_until_days", "auto_versions_enabled", "version_auto_wait_minutes",
+        "version_keep_all_days", "version_daily_until_days", "auto_versions_enabled", "version_auto_wait_minutes", "trash_retention_days",
       ],
       note_search_sections: ["id", "note_id", "source_kind", "source_id", "section_id", "ord", "heading", "body"],
       note_search_state: ["note_id", "extractor_version", "source_version", "content_hash", "indexed_units", "capped", "indexed_at"],
@@ -1458,7 +1462,7 @@ describe("0009_api-tokens", () => {
       notes: [
         "id", "owner_id", "title", "slug", "slug_is_custom", "prev_slug", "legacy_slug", "public_token", "public_slug", "public_width",
         "links_clock", "created_at", "updated_at", "last_edited_at", "last_edited_by", "last_edited_token_id",
-        "last_edited_agent_label", "deleted_at", "group_id",
+        "last_edited_agent_label", "deleted_at", "deleted_by", "group_id",
         "version_counter", "version_base_seq", "version_base_fingerprint", "version_pending_at", "version_pending_editors", "version_pending_ref_fingerprint", "version_base_version_id",
       ],
       users: [
@@ -1532,6 +1536,17 @@ describe("0009_api-tokens", () => {
         expect(pgDialect.sqlToQuery(c.value).sql, `${table}.${c.name} 的運算式`).toBe(
           snapshotChecks[c.name]!.value
         );
+      }
+
+      // notNull 與 FK（名稱＋onDelete）也對 snapshot：schema.ts 改了而沒重新 generate 就紅。
+      const snapTable = snapshotLatest.tables[`public.${table}`];
+      for (const c of cfg.columns) {
+        expect(snapTable?.columns?.[c.name]?.notNull, `${table}.${c.name} 的 notNull`).toBe(c.notNull);
+      }
+      const snapFks = snapTable?.foreignKeys ?? {};
+      expect(Object.keys(snapFks).sort(), `${table} 的 FK 名集合`).toEqual(cfg.foreignKeys.map(f => f.getName()).sort());
+      for (const f of cfg.foreignKeys) {
+        expect(snapFks[f.getName()]?.onDelete ?? "no action", `${table}.${f.getName()} 的 onDelete`).toBe(f.onDelete ?? "no action");
       }
     }
 
@@ -2707,5 +2722,95 @@ describe("0025_version-pending-and-base-id（#272 spec §5.1，案 26）", () =>
     const idx = (await pool.query(`select indexdef from pg_indexes where indexname = 'notes_version_pending_idx'`)).rows;
     expect(idx).toHaveLength(1);
     expect(idx[0].indexdef).toMatch(/\(version_pending_at\) WHERE \(version_pending_at IS NOT NULL\)/);
+  });
+});
+
+describe("0033_trash（#181 spec §6.1）", () => {
+  async function seedUser(pool: import("pg").Pool): Promise<string> {
+    const u = await pool.query(`insert into users (email, display_name) values ($1, 'T') returning id`, [`trash-${randomUUID()}@example.com`]);
+    return u.rows[0].id as string;
+  }
+  async function seedNote(pool: import("pg").Pool, owner: string): Promise<string> {
+    return (await pool.query(`insert into notes (owner_id) values ($1) returning id`, [owner])).rows[0].id as string;
+  }
+
+  it("M1 形狀：兩個新欄、FK set null、partial index", async () => {
+    const { pool } = await freshDb();
+    const col = async (table: string, column: string) =>
+      (await pool.query(
+        `select data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name = $1 and column_name = $2`,
+        [table, column],
+      )).rows;
+    expect(await col("notes", "deleted_by")).toEqual([{ data_type: "uuid", is_nullable: "YES", column_default: null }]);
+    expect(await col("site_settings", "trash_retention_days")).toEqual([{ data_type: "integer", is_nullable: "YES", column_default: "7" }]);
+    const fk = (await pool.query(`select confdeltype, confrelid = 'users'::regclass as to_users from pg_constraint where conname = 'notes_deleted_by_fk'`)).rows;
+    expect(fk).toEqual([{ confdeltype: "n", to_users: true }]);
+    const idx = (await pool.query(`select indexdef from pg_indexes where indexname = 'notes_deleted_at_idx'`)).rows;
+    expect(idx).toHaveLength(1);
+    expect(idx[0].indexdef).toMatch(/\(deleted_at\) WHERE \(deleted_at IS NOT NULL\)$/);
+  });
+
+  it("M2 CHECK：deleted_by 必須伴隨 deleted_at；保留天數 NULL 或 1–3650", async () => {
+    const { pool } = await freshDb();
+    const u = await seedUser(pool);
+    const n = await seedNote(pool, u);
+    await expect(pool.query(`update notes set deleted_by = $1 where id = $2`, [u, n]))
+      .rejects.toMatchObject({ code: "23514", constraint: "notes_deleted_by_chk" });
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [u, n]);
+    await pool.query(`update notes set deleted_by = null where id = $1`, [n]);
+    expect((await pool.query(`select deleted_at is not null as d, deleted_by from notes where id = $1`, [n])).rows).toEqual([{ d: true, deleted_by: null }]);
+    for (const d of [0, 3651]) {
+      await expect(pool.query(`update site_settings set trash_retention_days = $1`, [d]))
+        .rejects.toMatchObject({ code: "23514", constraint: "site_settings_trash_retention_chk" });
+    }
+    for (const d of [1, 3650, null]) await pool.query(`update site_settings set trash_retention_days = $1`, [d]);
+    const def = (await pool.query(`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'site_settings_trash_retention_chk'`)).rows;
+    expect(def).toHaveLength(1);
+    expect(def[0].def).toContain("3650");
+  });
+
+  it("M3 升級既有資料：deleted_at 殘值不回填、不清理；deleted_by NULL；保留天數 7；再跑一次不變", async () => {
+    const { db, pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag("0033_trash") - 1);
+    const u = await seedUser(pool);
+    const live = await seedNote(pool, u);
+    const stale = await seedNote(pool, u);
+    await pool.query(`update notes set deleted_at = '2026-01-02T03:04:05Z' where id = $1`, [stale]);
+    await runMigrations(db);
+    const rows = async () => (await pool.query(
+      `select id, to_char(deleted_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') as at, deleted_by from notes order by id`,
+    )).rows;
+    const expected = [
+      { id: live, at: null, deleted_by: null },
+      { id: stale, at: "2026-01-02T03:04:05", deleted_by: null },
+    ].sort((a, b) => (a.id < b.id ? -1 : 1));
+    expect(await rows()).toEqual(expected);
+    expect((await pool.query(`select trash_retention_days from site_settings`)).rows).toEqual([{ trash_retention_days: 7 }]);
+    await runMigrations(db);
+    expect(await rows()).toEqual(expected);
+    expect((await pool.query(`select trash_retention_days from site_settings`)).rows).toEqual([{ trash_retention_days: 7 }]);
+  });
+
+  it("M4 移入者帳號被刪：deleted_by 變 NULL、筆記與 deleted_at 不變", async () => {
+    const { pool } = await freshDb();
+    const owner = await seedUser(pool);
+    const x = await seedUser(pool);
+    const n = await seedNote(pool, owner);
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [x, n]);
+    const bystander = await seedNote(pool, owner);
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [owner, bystander]);
+    const before = (await pool.query(`select deleted_at from notes where id = $1`, [n])).rows[0].deleted_at;
+    await pool.query(`delete from users where id = $1`, [x]);
+    const after = (await pool.query(`select deleted_at, deleted_by from notes where id = $1`, [n])).rows;
+    expect(after).toEqual([{ deleted_at: before, deleted_by: null }]);
+    expect((await pool.query(`select deleted_by from notes where id = $1`, [bystander])).rows).toEqual([{ deleted_by: owner }]);
+  });
+
+  it("M5 trash 的 SQL 檔無 CONCURRENTLY／行首 COMMIT（單一 tx 前提的輔助 grep）", () => {
+    const entries = journalEntries().filter(e => e.tag.endsWith("_trash"));
+    expect(entries, "journal 裡要恰有一支 *_trash").toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${entries[0]!.tag}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
   });
 });

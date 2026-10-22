@@ -2,7 +2,7 @@
  * 筆記版本歷史的交易本體（spec 2026-10-09-note-versions-design.md §5.3 第 3–4 步、§9；#272 spec 2026-10-13 §5.1、§7.3）。
  * S14：只收 `tx`、純資料；`capture` 是呼叫端在交易前備好的**同步**函式（只做 Yjs 序列化與指紋計算，不碰 pool）。
  */
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { noteVersions, notes, type VersionEditorJson } from "../../db/schema.js";
 
@@ -99,7 +99,8 @@ export async function cutVersionInTx(tx: Tx, input: CutVersionInput): Promise<{ 
       pendingEditors: notes.versionPendingEditors,
     })
     .from(notes)
-    .where(eq(notes.id, input.noteId))
+    // #181 §6.2-11（M-G）：垃圾桶筆記＝讀不到 → note-deleted（`readVersionMeta` 刻意不改）。
+    .where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt)))
     .for("update");
   // ⚠ 從這裡到下一個 await 是「鎖回來後的第一個同步區段」（§5.3-3）：fp 與 ydoc 必須在這裡取，之後一律用這份。
   let snap: { fp: string; ydoc: Uint8Array } | null = null;

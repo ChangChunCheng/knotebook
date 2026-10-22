@@ -232,6 +232,13 @@
       "when": 1792552913027,
       "tag": "0032_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792592057799,
+      "tag": "0033_trash",
+      "breakpoints": true
     }
   ]
 }

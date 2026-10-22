@@ -53,6 +53,7 @@ export async function moveNoteToGroup(
   };
   let moved;
   try {
+    await deps.groupTestHook?.("note-move-authorized", { noteId });
     moved = await deps.db.transaction(tx => moveNoteToGroupInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
     // 先判子類（StorageQuotaExceeded extends TxAbort）：呼叫端要先判子類才拿得到數字；數字可見性在交易外判（儲存配額 §8.1）。

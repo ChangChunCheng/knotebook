@@ -33,7 +33,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { copyFile } from "node:fs/promises";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import * as Y from "yjs";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups, noteStates, notes, uploads } from "../../db/schema.js";
@@ -99,7 +99,8 @@ export async function copyNoteInTx(tx: Tx, input: CopyNoteInput, hook?: GroupTes
     await hook?.("note-copy-target-locked", { noteId: input.sourceId, groupId });
   }
 
-  const [src] = await tx.select({ id: notes.id, title: notes.title }).from(notes).where(eq(notes.id, input.sourceId)).for("key share");
+  // #181 §6.2-11：來源在垃圾桶＝列消失，404（與移入的 `FOR UPDATE` 序列化，同上傳）。
+  const [src] = await tx.select({ id: notes.id, title: notes.title }).from(notes).where(and(eq(notes.id, input.sourceId), isNull(notes.deletedAt))).for("key share");
   if (!src) throw new TxAbort(404, "not_found", "找不到此筆記");
   await hook?.("note-copy-locked", { noteId: input.sourceId });
 

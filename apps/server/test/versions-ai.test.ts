@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
 import { noteAiEdits, notes, users } from "../src/db/schema.js";
-import { withDirectConnection, type DirectCtx } from "../src/notes/editing/session.js";
+import { directTarget, withDirectConnection, type DirectCtx } from "../src/notes/editing/session.js";
 import { VACUUM_VERSION_FINGERPRINT } from "../src/notes/version-fingerprint.js";
 import { bearer, docText, getContent, seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
 import { buildCollabTestApp, type CollabTestCtx, type TestClient } from "./helpers.js";
@@ -200,10 +200,10 @@ describe("§7-3 落款閘門：直連一律看 applied", () => {
     await expect.poll(async () => (await lastAt()) !== null, { timeout: 10_000 }).toBe(true);
     const before = await lastAt();
     const ctx: DirectCtx = { source: "version-apply", userId: s.u.id, tokenId: null, agentLabel: null, applied: false };
-    await withDirectConnection(s.ctx.collab.hocuspocus, s.note.id, ctx, () => undefined);
+    await withDirectConnection(directTarget(s.ctx.collab, s.ctx.db), s.note.id, ctx, () => undefined);
     expect(await lastAt()).toEqual(before);
     const ok: DirectCtx = { ...ctx, applied: true };
-    await withDirectConnection(s.ctx.collab.hocuspocus, s.note.id, ok, () => undefined);
+    await withDirectConnection(directTarget(s.ctx.collab, s.ctx.db), s.note.id, ok, () => undefined);
     const [row] = await s.ctx.db
       .select({ by: notes.lastEditedBy, tokenId: notes.lastEditedTokenId, label: notes.lastEditedAgentLabel })
       .from(notes)
@@ -218,13 +218,13 @@ describe("§7-3 落款閘門：直連一律看 applied", () => {
     const order: string[] = [];
     const ctx: DirectCtx = { source: "version-apply", userId: s.u.id, tokenId: null, agentLabel: null, applied: false };
     // 鉤內的斷言會被 withDirectConnection 吞掉（只 log），所以只記錄、出來再斷言。
-    await withDirectConnection(s.ctx.collab.hocuspocus, s.note.id, ctx, () => 42, {
+    await withDirectConnection(directTarget(s.ctx.collab, s.ctx.db), s.note.id, ctx, () => 42, {
       beforeDisconnect: async r => {
         order.push(`bd:${r}:loaded=${s.ctx.collab.hocuspocus.documents.has(s.note.id)}`);
       },
     });
     expect(order).toEqual(["bd:42:loaded=true"]);
-    await expect(withDirectConnection(s.ctx.collab.hocuspocus, s.note.id, ctx, () => { throw new Error("boom"); }, {
+    await expect(withDirectConnection(directTarget(s.ctx.collab, s.ctx.db), s.note.id, ctx, () => { throw new Error("boom"); }, {
       beforeDisconnect: async () => { order.push("不該跑"); },
     })).rejects.toThrow("boom");
     expect(order).toEqual(["bd:42:loaded=true"]);

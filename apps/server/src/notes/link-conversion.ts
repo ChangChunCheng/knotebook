@@ -6,7 +6,7 @@
  * signal 已 abort 時任何結果（含例外）都不寫標記（那篇留 pending，下次啟動再來）。日誌不記 href、標題、文字。
  */
 import { setImmediate as yieldToLoop } from "node:timers/promises";
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as Y from "yjs";
 import {
   MAX_LINK_TARGETS,
@@ -24,7 +24,7 @@ import { noteLinkConversion, noteLinks, notes } from "../db/schema.js";
 import { visibleTitlesByIds } from "./editing/candidates.js";
 import { FingerprintMismatch, forkAndCheck, mergeDiff, type ApplyDeps } from "./editing/apply.js";
 import { QueueBusyError } from "./editing/queue.js";
-import { EditorSession, type LinkConvertCtx } from "./editing/session.js";
+import { EditorSession, NoteGoneError, type LinkConvertCtx } from "./editing/session.js";
 import type { NoteWriteService } from "./editing/write-service.js";
 import { normalizeLinkTargets } from "./links.js";
 import { createSiteLinkResolver, type SiteLinkScope } from "./site-link-resolver.js";
@@ -119,6 +119,7 @@ export async function prepareLinkConversion(
 async function backfillNoteLinks(db: Db, noteId: string, scope: SiteLinkScope, doc: Y.Doc): Promise<void> {
   const norm = normalizeLinkTargets(noteId, extractLinkTargets(doc).slice(0, MAX_LINK_TARGETS));
   if (!norm.ok || norm.targets.length === 0) return;
+  // #181：群組分支刻意不排除垃圾桶目標（spec §6.2-4：目標在垃圾桶照記，還原後反向連結仍在）——勿補 deleted_at 條件。
   const allowed =
     scope.kind === "user"
       ? (await visibleTitlesByIds(db, scope.userId, norm.targets)).map(t => t.id)
@@ -146,7 +147,8 @@ async function cutBeforeConversion(deps: LinkConversionDeps, noteId: string): Pr
 async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteId: string, signal: AbortSignal, stage: { name: string }): Promise<NoteOutcome> {
   if (signal.aborted) return { kind: "aborted" }; // 等佇列期間收到關機：什麼都不做
   stage.name = "scope";
-  const [meta] = await deps.db.select({ ownerId: notes.ownerId, groupId: notes.groupId }).from(notes).where(eq(notes.id, noteId)).limit(1);
+  // #181 §6.2-6：垃圾桶筆記視同 deleted、跳過（列留在原狀態（pending／retry），還原後下次啟動那輪再處理；與 `scanDue` 一致）。
+  const [meta] = await deps.db.select({ ownerId: notes.ownerId, groupId: notes.groupId }).from(notes).where(and(eq(notes.id, noteId), isNull(notes.deletedAt))).limit(1);
   if (!meta) return { kind: "deleted" };
   const scope: SiteLinkScope = meta.groupId !== null ? { kind: "group", groupId: meta.groupId } : { kind: "user", userId: meta.ownerId! };
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -195,6 +197,8 @@ async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteI
     try {
       await mergeDiff(applyDeps, noteId, ctx, { targetIds: null, expectFingerprint: f.whole, anchorId: null, diff: prepared.diff, afterIds: [] });
     } catch (err) {
+      // #181 §6.2-11：合併前一刻被移入垃圾桶（或正被移入）→ 同步 1 的 deleted（列留原狀態，還原後下次啟動再處理）。
+      if (err instanceof NoteGoneError) return { kind: "deleted" };
       if (err instanceof FingerprintMismatch) continue; // 從步 1 重來一次；再不符 ⇒ retry
       throw err;
     }
@@ -227,7 +231,7 @@ async function record(deps: LinkConversionDeps, row: { noteId: string; attempts:
       deps.log.error({ noteId: row.noteId, attempts: row.attempts + 1 }, "站內連結轉換：第 3 次失敗，標 failed、不再自動重試（手動重跑＝把該列改回 pending）");
     } else summary.retry += 1;
   }
-  // deleted：列已隨筆記 cascade 消失（UPDATE 0 列也無妨），不寫；aborted 由呼叫端擋在這之前。
+  // deleted：筆記已不在或在垃圾桶裡——列不寫（垃圾桶那種留在原狀態（pending／retry），還原後下次啟動再處理）；aborted 由呼叫端擋在這之前。
 }
 
 /**

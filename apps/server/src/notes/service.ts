@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { NotePermissions, Role } from "@knotebook/shared";
 import type { DbOrTx } from "../db/tx.js";
 import { groupMembers, groupRoles, noteShares, notes } from "../db/schema.js";
@@ -18,14 +18,12 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  * 刪除某篇筆記**當下**看得到它的所有 userId（owner ∪ 每一筆分享 ∪ 所屬群組裡角色有閱讀旗標的成員，
  * #175 §5.3）。群組筆記的 `owner_id` 是 NULL——濾掉，不讓 null 混進集合。
  *
- * 只有共編的刪除閘門用它（`CollabServer` 的 `markDeleting`／`releaseDeletingGate`）：閘門要能
- * 對「本來就看得到這篇筆記的人」說「它被刪掉了」，又不能對其他人透露這個 id 曾經存在——
- * 所以必須在刪除交易**之前**、那些列還在的時候，把名單抓下來留著（見 `collab/server.ts` 的
- * `deleting`）。⚠ S14：它走呼叫端給的連線；**不得在任何交易內以 pool 呼叫它**（`beforeNoteDeleted`
- * 一律在交易外）。筆記不存在（或 id 格式非法）時回空集合，`releaseDeletingGate` 也拿這一點當
- * 「筆記到底還在不在」的判準（`audience.size === 0` ⇒ 不收閘門）。個人筆記的 owner 恆在名單上；
- * 群組筆記沒有 owner，「還在 ⇒ 非空」要靠 S1（每個群組至少一位內建管理員，而內建管理員恆持
- * `can_read`）——S1 只在應用層守、DB 不擋；它一旦破裂，刪除失敗後的閘門不會收，要等 `DELETING_GATE_TTL_MS`（兩分鐘）到期。
+ * 只有共編刪除閘門的 `markDeleting`（`CollabServer`）用它：閘門要能對「本來就看得到這篇筆記的人」
+ * 說「它被刪掉了」，又不能對其他人透露這個 id 曾經存在——所以必須在移入交易**之前**把名單抓下來
+ * 留著（見 `collab/server.ts` 的 `deleting`）。⚠ S14：它走呼叫端給的連線；**不得在任何交易內以 pool
+ * 呼叫它**（`beforeNoteDeleted` 一律在交易外）。筆記不存在（或 id 格式非法）時回空集合；**不濾
+ * `deleted_at`**（垃圾桶筆記照回名單）。`releaseDeletingGate` 判「筆記還在不在」改用 `noteIsLive`
+ * （#181 spec §6.4.1 M-D：垃圾桶裡的筆記名單非空，拿名單判會收掉別人成功移入的閘門）。
  */
 export async function loadNoteAudience(db: DbOrTx, noteId: string): Promise<Set<string>> {
   if (!UUID_RE.test(noteId)) return new Set();
@@ -118,6 +116,7 @@ const NO_ACCESS: NoteAccess = Object.freeze({ role: "none", ownerId: null, group
  * LEFT JOIN `note_shares (note, $u)`（**只在個人筆記上**——群組筆記的殘留分享列不給任何權限，與清單
  * shared 支的 `group_id IS NULL` 一致；plan 規格落差第 2 條）LEFT JOIN `group_members (group, $u)`
  * LEFT JOIN `group_roles`。呼叫前 `noteId` 必須已過 `UUID_RE`。
+ * #181 §6.2-1：只看活筆記（`deleted_at IS NULL`）——垃圾桶裡的筆記對單篇授權一律 none。
  */
 export function accessQuery(db: DbOrTx, userId: string, noteId: string) {
   return db
@@ -135,17 +134,41 @@ export function accessQuery(db: DbOrTx, userId: string, noteId: string) {
     .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId), isNull(notes.groupId)))
     .leftJoin(groupMembers, and(eq(groupMembers.groupId, notes.groupId), eq(groupMembers.userId, userId)))
     .leftJoin(groupRoles, eq(groupRoles.id, groupMembers.roleId))
-    .where(eq(notes.id, noteId))
+    .where(and(eq(notes.id, noteId), isNull(notes.deletedAt)))
     .limit(1);
 }
 
 /**
- * #175 §5.2（B2）：取代 `resolveRoleWithOwner`。群組筆記的 `role` 從不是 `owner`；非成員的站台 admin
- * 在筆記上**沒有**任何特權（§5.5）。收 `DbOrTx`，交易內可重用（S14：交易內必須傳 `tx`）。
+ * #181 §6.2-2：與 `accessQuery` 同 select／同 join，只看垃圾桶（`deleted_at IS NOT NULL`）。兩支各自一個完整 builder
+ * （守衛分類用，不共用 FROM 片段）；沒有「兩者皆可」的形。呼叫前 `noteId` 必須已過 `UUID_RE`。
  */
-export async function resolveNoteAccess(db: DbOrTx, userId: string, noteId: string): Promise<NoteAccess> {
-  if (!UUID_RE.test(noteId)) return NO_ACCESS;
-  const [row] = await accessQuery(db, userId, noteId);
+export function trashedAccessQuery(db: DbOrTx, userId: string, noteId: string) {
+  return db
+    .select({
+      ownerId: notes.ownerId,
+      groupId: notes.groupId,
+      shareRole: noteShares.role,
+      roleId: groupRoles.id,
+      canRead: groupRoles.canRead,
+      canEdit: groupRoles.canEdit,
+      canDelete: groupRoles.canDelete,
+      canManagePublicLink: groupRoles.canManagePublicLink,
+    })
+    .from(notes)
+    .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId), isNull(notes.groupId)))
+    .leftJoin(groupMembers, and(eq(groupMembers.groupId, notes.groupId), eq(groupMembers.userId, userId)))
+    .leftJoin(groupRoles, eq(groupRoles.id, groupMembers.roleId))
+    .where(and(eq(notes.id, noteId), isNotNull(notes.deletedAt)))
+    .limit(1);
+}
+
+export type AccessRow = Awaited<ReturnType<typeof accessQuery>>[number];
+
+/**
+ * `resolveNoteAccess` 的推導本體（純函式；#181 rev 4.2：`tx/` 檔不准寫 `resolveNoteAccess(` 字面，交易內改寫
+ * `noteAccessFromRow((await accessQuery(tx, by, id))[0], by)`——同一個查詢形、同一份推導）。row 為 undefined → none。
+ */
+export function noteAccessFromRow(row: AccessRow | undefined, userId: string): NoteAccess {
   if (!row) return NO_ACCESS;
 
   if (row.groupId === null) {
@@ -166,6 +189,42 @@ export async function resolveNoteAccess(db: DbOrTx, userId: string, noteId: stri
   const role = roleFromGroupFlags(flags);
   if (role === "none") return NO_ACCESS;
   return { role, ownerId: null, groupId: row.groupId, permissions: groupNotePermissions(flags) };
+}
+
+/**
+ * #175 §5.2（B2）：取代 `resolveRoleWithOwner`。群組筆記的 `role` 從不是 `owner`；非成員的站台 admin
+ * 在筆記上**沒有**任何特權（§5.5）。收 `DbOrTx`，交易內可重用（S14：交易內必須傳 `tx`）。
+ */
+export async function resolveNoteAccess(db: DbOrTx, userId: string, noteId: string): Promise<NoteAccess> {
+  if (!UUID_RE.test(noteId)) return NO_ACCESS;
+  return noteAccessFromRow((await accessQuery(db, userId, noteId))[0], userId);
+}
+
+/**
+ * #181 D-W9：垃圾桶權（看得到／還原／永久刪除三格一致）。個人筆記＝owner（逐人分享不算）；群組筆記＝成員且角色
+ * `can_edit AND can_delete`。row 為 undefined → false。
+ */
+export function trashRightFromRow(row: AccessRow | undefined, userId: string): boolean {
+  if (!row) return false;
+  if (row.groupId === null) return row.ownerId === userId;
+  if (row.roleId === null) return false;
+  return row.canEdit === true && row.canDelete === true;
+}
+
+/**
+ * #181 §6.2-2：**只**回垃圾桶裡的筆記的垃圾桶權（活筆記、不存在、非 UUID 一律 false）。沒有「兩者皆可」的模式——
+ * 一般路由一律走 `resolveNoteAccess`。
+ */
+export async function resolveTrashedNoteAccess(db: DbOrTx, userId: string, noteId: string): Promise<boolean> {
+  if (!UUID_RE.test(noteId)) return false;
+  return trashRightFromRow((await trashedAccessQuery(db, userId, noteId))[0], userId);
+}
+
+/** #181：筆記存在且不在垃圾桶（非 UUID → false，不進 SQL）。 */
+export async function noteIsLive(db: DbOrTx, noteId: string): Promise<boolean> {
+  if (!UUID_RE.test(noteId)) return false;
+  const rows = await db.select({ one: sql`1` }).from(notes).where(and(eq(notes.id, noteId), isNull(notes.deletedAt))).limit(1);
+  return rows.length > 0;
 }
 
 /**

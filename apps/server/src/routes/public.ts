@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { EMPTY_YDOC_UPDATE_B64, normalizeHandle, normalizeSlug, validateHandle, validateSlug, type NoteWidth } from "@knotebook/shared";
 import { sendError } from "../http/errors.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
@@ -148,7 +148,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
     return note;
   }
 
-  /** token 形（#72）。 */
+  /** token 形（#72）。#181 §6.2-5：垃圾桶筆記不命中（走 miss，與「連結不存在」逐位元組相同）——兩形同。 */
   function tokenSpec(token: string): PublicRefSpec<string> {
     return {
       guard: () => (isValidPublicToken(token) ? token : null),
@@ -156,7 +156,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
         deps.db
           .select({ id: notes.id, title: notes.title, publicWidth: notes.publicWidth })
           .from(notes)
-          .where(eq(notes.publicToken, t))
+          .where(and(eq(notes.publicToken, t), isNull(notes.deletedAt)))
           .limit(1)
           .then((rows) => rows[0]),
       hitKey: (t, ip) => `${ip}:${t}`,
@@ -180,7 +180,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
           .select({ id: notes.id, title: notes.title, publicWidth: notes.publicWidth })
           .from(notes)
           .innerJoin(users, eq(users.id, notes.ownerId))
-          .where(and(eq(users.handle, q.handle), eq(notes.publicSlug, q.slug), sql`${notes.publicToken} is not null`))
+          .where(and(eq(users.handle, q.handle), eq(notes.publicSlug, q.slug), sql`${notes.publicToken} is not null`, isNull(notes.deletedAt)))
           .limit(1)
           .then((rows) => rows[0]),
       hitKey: (_q, ip, noteId) => `${ip}:path:${noteId}`,

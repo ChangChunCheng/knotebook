@@ -228,10 +228,16 @@ export const siteSettings = pgTable(
     autoVersionsEnabled: boolean("auto_versions_enabled").notNull().default(true),
     // #272 §8（D4）：自動存版等待 X（整數分鐘 1–60，預設 5）；掃描器每輪現讀（`collab/versions.ts` 的 `scanDue`）。
     versionAutoWaitMinutes: integer("version_auto_wait_minutes").notNull().default(5),
+    // #181：垃圾桶保留天數（1–3650，預設 7）；NULL＝不自動刪。
+    trashRetentionDays: integer("trash_retention_days").default(7),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   t => [
     check("site_settings_singleton_chk", sql`${t.singleton}`),
+    check(
+      "site_settings_trash_retention_chk",
+      sql`${t.trashRetentionDays} is null or (${t.trashRetentionDays} >= 1 and ${t.trashRetentionDays} <= 3650)`,
+    ),
     check("site_settings_version_auto_wait_chk", sql`1 <= ${t.versionAutoWaitMinutes} and ${t.versionAutoWaitMinutes} <= 60`),
     check(
       "site_settings_version_days_chk",
@@ -372,7 +378,10 @@ export const notes = pgTable("notes", {
   // FK RESTRICT：XOR 下 SET NULL 會撞 CHECK；刪群組前群組必須是空的（PR1–PR3）。`group_role` 已廢除（W1）
   // ——權限只看成員的群組角色。
   groupId: uuid("group_id").references(() => groups.id, { onDelete: "restrict" }),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),   // 保留欄位；v0.1 硬刪
+  // #181 垃圾桶：移入時刻（DB `now()`）；NULL＝活筆記；只由 `notes/tx/trash.ts` 寫。
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  // #181：移入者；帳號之後被刪 → NULL（筆記仍在垃圾桶）。有值必有 deleted_at（notes_deleted_by_chk）。
+  deletedBy: uuid("deleted_by"),
   // 筆記版本歷史（spec §4.2）：配號器（A5：原子遞增、清除不倒退；§9 清空時歸零）；基底版號與基底指紋（A15）兩欄同進同出——
   // NULL＝沒有基底。全文判斷一律看 `version_base_seq`，不看版本列數。不加 FK：基底不可刪由應用層守（A6）。
   versionCounter: integer("version_counter").notNull().default(0),
@@ -418,6 +427,11 @@ export const notes = pgTable("notes", {
     "notes_version_pending_chk",
     sql`${t.versionPendingAt} is not null or (${t.versionPendingEditors} = '[]'::jsonb and ${t.versionPendingRefFingerprint} is null)`,
   ),
+  // #181：移入者帳號被刪 → NULL；有移入者必有移入時刻。
+  foreignKey({ name: "notes_deleted_by_fk", columns: [t.deletedBy], foreignColumns: [users.id] }).onDelete("set null"),
+  check("notes_deleted_by_chk", sql`${t.deletedBy} is null or ${t.deletedAt} is not null`),
+  // #181：垃圾桶清單與到期清理只看已移入的列。
+  index("notes_deleted_at_idx").on(t.deletedAt).where(sql`${t.deletedAt} is not null`),
 ]);
 
 /**
@@ -611,7 +625,7 @@ export const uploads = pgTable("uploads", {
   mime: text().notNull(),
   size: integer().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, t => [index("uploads_note_idx").on(t.noteId)]);   // DELETE /api/notes/:id 交易內 `WHERE note_id = $1` 用
+}, t => [index("uploads_note_idx").on(t.noteId)]);   // 永久刪除／到期清理／刪群組・全刪的交易內（`deleteNotesInTx`）`WHERE note_id IN (…)` 用
 
 export const aiProviders = pgTable("ai_providers", {
   id: uuid().primaryKey().defaultRandom(),

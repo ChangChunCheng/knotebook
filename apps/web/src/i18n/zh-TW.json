@@ -1283,6 +1283,7 @@
     "invite_invalid": "這個邀請無效、已使用過、已撤銷或已過期，請向站長索取新的邀請。",
     "invite_used": "這個邀請已經被使用，無法撤銷。",
     "invite_not_found": "找不到這個邀請。",
+    "in_trash": "這篇筆記在垃圾桶裡。",
     "password_not_set": "這個帳號只透過登入服務登入，沒有可重設的密碼。",
     "user_disabled": "這個帳號已停用，請先啟用再重設密碼。",
     "empty_result": "AI 回傳了空結果。",

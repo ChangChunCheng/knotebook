@@ -14,6 +14,7 @@ import type { Db } from "../src/db/index.js";
 import { noteAiEdits, noteLinks, noteShares, notes, uploads } from "../src/db/schema.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 import { nextSlugCandidate } from "../src/notes/slug.js";
+import { purgeTrashedNotesInTx } from "../src/notes/tx/trash.js";
 import { uploadFilePath } from "../src/uploads/service.js";
 import { buildTestApp, freshLimiters } from "./helpers.js";
 import { cookieOf, seedGroup, seedNote, seedRole, seedShare, seedUser, setMemberRole, spyCollabHooks, waitForBlockedOrSettled } from "./group-helpers.js";
@@ -232,7 +233,7 @@ describe("#175 PR2 POST /api/notes/:id/copy（T4）", () => {
     expect(await uploadCount(db)).toBe(uploadsBefore);
   });
 
-  it("C7：複製持 FOR KEY SHARE 時刪除來源 → DELETE 卡在列刪除（blocked）→ 複製 201 → 刪除 204 → 副本的圖對呼叫者仍 200", async () => {
+  it("C7：複製持 FOR KEY SHARE 時刪除來源 → DELETE（移入垃圾桶）卡在列鎖（blocked）→ 複製 201 → 移入 204 → 副本的圖對呼叫者仍 200；來源永久刪除後仍 200", async () => {
     const holder: { app?: FastifyInstance; db?: Db; srcId?: string; cookie?: Record<string, string>; del?: Promise<{ statusCode: number }>; interleave?: string } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       groupTestHook: async point => {
@@ -253,11 +254,17 @@ describe("#175 PR2 POST /api/notes/:id/copy（T4）", () => {
     expect(holder.interleave).toBe("blocked");
     expect(res.statusCode).toBe(201);
     expect((await holder.del!).statusCode).toBe(204);
-    expect(await db.select().from(notes).where(eq(notes.id, src.id))).toEqual([]);
+    const [srcRow] = await db.select({ deletedAt: notes.deletedAt }).from(notes).where(eq(notes.id, src.id));
+    expect(srcRow?.deletedAt).not.toBeNull();
     const [n1] = await uploadsOf(db, res.json().id);
     const img = await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) });
     expect(img.statusCode).toBe(200);
-    expect(await filesIn(uploadsDir)).toEqual([n1!.id]); // 來源的檔隨刪除 commit 後清掉；副本的留著
+    expect(await filesIn(uploadsDir)).toEqual([u1, n1!.id].sort()); // 移入垃圾桶不刪檔（#181）；副本的是自己的一份
+    // 來源永久刪除（交易本體直呼；刪檔是服務層 commit 後的事）：副本的列與圖不受影響。
+    const purged = await db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [src.id], by: owner.id }));
+    expect(purged.uploadIds).toEqual([u1]);
+    expect(await db.select().from(notes).where(eq(notes.id, src.id))).toEqual([]);
+    expect((await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(200);
   });
 
   it("M1：複製持鎖期間，來源的一般 UPDATE（last_edited_at）不被擋", async () => {
@@ -283,7 +290,7 @@ describe("#175 PR2 POST /api/notes/:id/copy（T4）", () => {
     expect(holder.outcome).toBe("done");
   });
 
-  it("副本公開後匿名讀得到圖；來源刪除後副本圖對 owner 仍 200", async () => {
+  it("副本公開後匿名讀得到圖；來源移入垃圾桶、再永久刪除後副本圖對 owner 仍 200", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Plan" });
@@ -307,6 +314,8 @@ describe("#175 PR2 POST /api/notes/:id/copy（T4）", () => {
     expect((await app.inject({ method: "DELETE", url: `/api/notes/${src.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(204);
     const img = await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) });
     expect(img.statusCode).toBe(200);
+    expect((await db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [src.id], by: owner.id }))).done).toEqual([src.id]);
+    expect((await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(200);
   });
 
   it("出向 note_links：以複製者身分寫——他看得到的目標有列、看不到的沒有；看得到的目標的 backlinks 列出副本", async () => {

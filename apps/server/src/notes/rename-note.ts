@@ -19,7 +19,7 @@ import { deriveUniqueAutoSlug, fallbackAutoSlug, isSlugUniqueViolation, MAX_AUTO
 
 export type RenameOutcome =
   | { kind: "renamed"; row: typeof notes.$inferSelect }
-  /** pre-read 無列，或 UPDATE 0 列且列已不在。 */
+  /** pre-read 無列，或 UPDATE 0 列且列已不在（#181：在垃圾桶裡也算不在）。 */
   | { kind: "gone" }
   /** UPDATE 0 列而列仍在（授權後歸屬變了）。 */
   | { kind: "ownership_changed" };
@@ -31,7 +31,8 @@ export async function renameNoteTitle(
 ): Promise<RenameOutcome> {
   const { noteId: id, access, title } = input;
   const slugScope: SlugScope = access.groupId !== null ? { groupId: access.groupId } : { ownerId: access.ownerId! };
-  const [pre] = await db.select({ title: notes.title, slugIsCustom: notes.slugIsCustom }).from(notes).where(eq(notes.id, id)).limit(1);
+  // #181 §6.2-11：三句都排除垃圾桶筆記——在垃圾桶裡＝列不在 → `gone`。
+  const [pre] = await db.select({ title: notes.title, slugIsCustom: notes.slugIsCustom }).from(notes).where(and(eq(notes.id, id), isNull(notes.deletedAt))).limit(1);
   if (!pre) return { kind: "gone" };
   const needsAuto = !pre.slugIsCustom;
 
@@ -50,7 +51,7 @@ export async function renameNoteTitle(
       [updated] = await db
         .update(notes)
         .set({ updatedAt: UPDATED_AT_NOW, title, slug: sql`case when ${notes.slugIsCustom} then ${notes.slug} else ${auto} end` })
-        .where(and(eq(notes.id, id), access.groupId !== null ? eq(notes.groupId, access.groupId) : and(eq(notes.ownerId, access.ownerId!), isNull(notes.groupId))))
+        .where(and(eq(notes.id, id), access.groupId !== null ? eq(notes.groupId, access.groupId) : and(eq(notes.ownerId, access.ownerId!), isNull(notes.groupId)), isNull(notes.deletedAt)))
         .returning();
       break;
     } catch (err) {
@@ -59,6 +60,6 @@ export async function renameNoteTitle(
     }
   }
   if (updated) return { kind: "renamed", row: updated };
-  const [still] = await db.select({ id: notes.id }).from(notes).where(eq(notes.id, id)).limit(1);
+  const [still] = await db.select({ id: notes.id }).from(notes).where(and(eq(notes.id, id), isNull(notes.deletedAt))).limit(1);
   return still ? { kind: "ownership_changed" } : { kind: "gone" };
 }

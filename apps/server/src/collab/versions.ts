@@ -11,7 +11,7 @@
  * 文件沒載入 → 呼叫端給的 `transient` doc 建暫時狀態，用完即丟、不進 Map。兩者沒有基底時的比對對象（`loadFingerprint`）
  * 都由 `loadFingerprintOf` 決定：沒有基底且待切中＝待切段的參考指紋，否則＝當下內容的指紋。
  */
-import { and, asc, eq, gt, inArray, lt, lte, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, lte, notInArray, sql } from "drizzle-orm";
 import * as Y from "yjs";
 import {
   VERSION_AUTO_WAIT_MINUTES_DEFAULT, VERSION_DAILY_UNTIL_DAYS_DEFAULT, VERSION_KEEP_ALL_DAYS_DEFAULT, YDOC_FRAGMENT,
@@ -595,7 +595,8 @@ export function createVersionService(deps: VersionServiceDeps): VersionService {
     const due = await db
       .select({ id: notes.id })
       .from(notes)
-      .where(and(lte(notes.versionPendingAt, dueBy), held.length > 0 ? notInArray(notes.id, held) : undefined))
+      // #181 §6.2-7：跳過垃圾桶筆記（待切留著，還原後下一輪照常）。
+      .where(and(lte(notes.versionPendingAt, dueBy), held.length > 0 ? notInArray(notes.id, held) : undefined, isNull(notes.deletedAt)))
       .orderBy(asc(notes.versionPendingAt), asc(notes.id))
       .limit(VERSION_AUTO_SCAN_BATCH);
     // 「每篇 10 分鐘至多 warn 一次」在現行順序下實際由「每輪先刪到期條目＋notInArray 排除未到期的」保證：被處理的那篇不會在

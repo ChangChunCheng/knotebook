@@ -49,7 +49,7 @@ import { presenceIdentity, presenceTargetForWrite, type PresenceRegistry, type P
 import { NoteWriteQueue, QueueBusyError } from "./queue.js";
 import { revertEdit, type RevertResult } from "./revert.js";
 import type { EditingRuntime } from "./runtime.js";
-import { EditorSession } from "./session.js";
+import { EditorSession, NoteGoneError } from "./session.js";
 
 export type ApplyOk = Extract<ApplyResult, { ok: true }>;
 export type ApplyFailureCode = Extract<ApplyResult, { ok: false }>["code"];
@@ -57,7 +57,7 @@ export type RevertOk = Extract<RevertResult, { ok: true }>;
 export type RevertFailureCode = Extract<RevertResult, { ok: false }>["code"];
 
 /**
- * 寫入的三種結局。**兩個型別參數**：`T`＝成功結果，`C`＝該路徑的失敗碼聯集——`applyEdit`
+ * 寫入的四種結局。**兩個型別參數**：`T`＝成功結果，`C`＝該路徑的失敗碼聯集——`applyEdit`
  * 與 `revertEdit` 的碼**不同**，共用一個 `ApplyFailureCode` 會讓 revert 的 `stale`／
  * `already_reverted`／`not_found` 在呼叫端收窄不到（實跑得到 TS2322）。
  * `agentLabel` 一起回，是因為呼叫端組回應／記錄時還用得到，而它是在 service 裡查的。
@@ -65,6 +65,7 @@ export type RevertFailureCode = Extract<RevertResult, { ok: false }>["code"];
 export type WriteOutcome<T, C> =
   | { ok: true; result: T; agentLabel: string | null }
   | { ok: false; kind: "busy" } // QueueBusyError：等了 `queueWaitMs` 還沒輪到
+  | { ok: false; kind: "gone" } // #181 NoteGoneError：授權之後被移入垃圾桶（或正被移入）；呼叫端映成各自既有的 not_found
   | { ok: false; kind: "apply"; code: C };
 
 /**
@@ -183,6 +184,7 @@ export class NoteWriteService {
       );
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
@@ -209,6 +211,7 @@ export class NoteWriteService {
       );
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
@@ -228,6 +231,7 @@ export class NoteWriteService {
       result = await this.queue.run(input.noteId, () => applyVersionEdit(deps, input), this.deps.queueWaitMs);
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
