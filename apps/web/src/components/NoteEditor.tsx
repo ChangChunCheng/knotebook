@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import type * as Y from "yjs";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
+import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
@@ -53,18 +54,8 @@ const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
 );
 
-/**
- * 共編游標的顏色。同一個使用者在任何裝置、任何筆記都要是同一色，所以不能用亂數——
- * 從 userId 做一個穩定的 32-bit 雜湊再映到色相環。飽和度/亮度寫死，確保深淺兩個
- * 主題下都看得見（y-prosemirror 會把這個顏色同時當游標線與名牌背景）。
- */
-export function collabUserColor(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (Math.imul(hash, 31) + seed.charCodeAt(i)) >>> 0;
-  }
-  return `hsl(${hash % 360} 65% 45%)`;
-}
+// #293 §5.3：搬到 shared，頭像列與 #312 共用同一份；這裡原地 re-export，既有 import 不動。
+export { collabUserColor };
 
 /** {@link classifyMediaTransfer} 的攔截原因 → toast i18n key（§12.4）。 */
 const BLOCKED_TRANSFER_TOAST_KEYS: Record<BlockedTransferReason, string> = {
