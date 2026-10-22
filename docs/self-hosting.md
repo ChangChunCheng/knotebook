@@ -286,11 +286,15 @@ When **Allow password sign-in** is off and no sign-in service creates accounts, 
 
 ## Storage quotas
 
-Every user's personal space and every group has a storage plan. A plan has a name and a limit in bytes (or no limit); a space's usage is the total size of the attachments in its notes, as recorded when they were uploaded or copied — note text doesn't count. A note's attachments are every file uploaded to it or copied into it, whether or not its content still shows them: removing an image from a note doesn't give its space back; deleting the note does. When a space is at or over its limit, no more attachments can be added to it: uploads into it are refused, and so are copies and moves into it, and group transfers to its owner, that would bring attachments. Nothing is deleted when a plan is lowered — a space that is over its new limit simply can't add attachments until it's under it again.
+Every user's personal space and every group has a storage plan. A plan has a name and a limit in bytes (or no limit); a space's usage is the total size of the attachments in its notes, as recorded when they were uploaded or copied — note text doesn't count. A note's attachments are every file uploaded to it or copied into it, whether or not its content still shows them: removing an image from a note doesn't give its space back; permanently deleting the note does (moving it to the trash doesn't — see [Trash](#trash)). When a space is at or over its limit, no more attachments can be added to it: uploads into it are refused, and so are copies and moves into it, and group transfers to its owner, that would bring attachments. Nothing is deleted when a plan is lowered — a space that is over its new limit simply can't add attachments until it's under it again.
 
 A built-in plan named **Basic** (2 GiB) is created by the database migration, on fresh installs and upgrades alike; everyone and every group start on it. Basic can be renamed or resized like any other plan. Two defaults decide the plan of *newly created* users and groups (both Basic at first); changing a default doesn't move anyone who already exists. A plan that is a default, or that any user or group is on, can't be deleted. Site admins manage plans and the two defaults in **Site admin → Storage plans**, and pick each user's and each group's plan in **Site admin → Users** and **Site admin → Groups**, which also show how much of it is used; the same can be done through the admin API (`/api/admin/storage-plans`, `/api/admin/users/:id/storage-plan`, `/api/admin/groups/:id/storage-plan` — see [the API reference](api.md)). Everyone sees their own usage, by type, in **Settings → Storage**, and every member of a group sees the group's — by type and by member — in the group's panel (the group's `⋮` menu in the sidebar → **Members & settings**, or **View members** if your role can't manage members → **Storage**); both show a warning once the usage reaches the limit.
 
 If deleting a group with **transfer** is refused because the receiving admin's personal space has no room, give that person a larger plan, transfer to another admin, or delete the group's notes instead. If the `site_settings` row is ever removed by hand, creating users and groups fails until it's restored.
+
+## Trash
+
+Deleting a note moves it to the trash, where it can be restored or permanently deleted. How long notes stay there is a site setting: 7 days by default, any whole number of days from 1 to 3650, or no limit (notes then stay until someone permanently deletes them). Site admins set it with `PATCH /api/admin/trash/settings` (see [the API reference](api.md)); a new value applies from the next clean-up pass. The server permanently deletes expired notes, with their attachments, in a background pass once an hour, the first one 5 minutes after it starts, at most 2,000 notes per pass (oldest first). A note usually outlasts its retention period by up to an hour; when more than 2,000 are due at once — after shortening the retention period, for example — it takes several passes to clear them all (see [Known limitations](./known-limitations.md)). Attachments of notes in the trash keep counting toward their space's storage plan until the notes are permanently deleted. Site admins have no special access to the trash: like everyone else, they see only their own personal notes there and the group notes that their role in a group can both edit and delete.
 
 ## Content Security Policy
 
@@ -338,6 +342,26 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
 5. **Rolling back to v0.5:** put the three `OIDC_*` variables back into `.env` first — v0.5 only knows SSO from them. Identities linked after the upgrade aren't visible to v0.5, and v0.5 links by verified email again while it runs; whatever it links is picked up again on the next upgrade. So an SSO identity created or linked after the upgrade can sign in under v0.5 only if the identity provider marks its email as verified. When you upgrade again, remove the `OIDC_*` variables you put back — v0.6 doesn't import them a second time and only logs that they're ignored.
 
 **Body-text search.** The first start after upgrading to a version with body-text search indexes the existing notes in the background, after the server is already answering requests. The `app` log shows `全文索引回填開始` when that starts and `全文索引回填完成` when it is done; until then, `search_notes` finds a note it hasn't got to yet by its title only. Rolling back is harmless: an older server ignores the two tables that hold the index, `note_search_sections` and `note_search_state`. When you upgrade again, the first start indexes again whatever was edited or created while the older server ran, because the index has no entry for them, or one built from an older version.
+
+**The trash (migration 0033).**
+
+1. **Migration 0033 only adds columns, an index and constraints** — who moved a note to the trash, and the site's retention period for the trash (7 days to start with); existing notes and settings are left as they are. Back up the database first as usual, for example `docker compose exec -T db pg_dump -U knotebook knotebook > knotebook-before-upgrade.sql`.
+2. **Rolling back:** the previous version doesn't know about the trash, so notes in the trash reappear as ordinary notes — their shares and public links work again — but they keep their trash marks (`deleted_at` and `deleted_by`). Pick one of two ways:
+   - **To keep them as ordinary notes**, clear the marks after rolling back and **before upgrading again**:
+
+     ```sh
+     docker compose exec -T db psql -U knotebook knotebook -c "UPDATE notes SET deleted_at = NULL, deleted_by = NULL WHERE deleted_at IS NOT NULL"
+     ```
+
+   - **To get rid of them**, do it **before rolling back**: each person empties their own trash (a site admin can't see anyone else's), or you delete them in the database. In that case, first list their attachments, which are files named by their id in the `uploads` volume (`/app/uploads` in the `app` container) and have to be removed from it separately, then delete the notes:
+
+     ```sh
+     docker compose exec -T db psql -U knotebook knotebook -c "SELECT u.id FROM uploads u JOIN notes n ON n.id = u.note_id WHERE n.deleted_at IS NOT NULL"
+     docker compose exec -T db psql -U knotebook knotebook -c "DELETE FROM notes WHERE deleted_at IS NOT NULL"
+     ```
+
+   With your own PostgreSQL, run the same SQL with `psql` against it directly.
+3. ⚠ **If you do neither and upgrade again**, every note that still has `deleted_at` set — including ones opened and edited while the previous version ran — goes back into the trash. Those whose original deletion time is already past the retention period are permanently deleted, with their attachments, starting with the first clean-up pass, 5 minutes after the server starts (at most 2,000 per pass, then one pass an hour); edits made to them while rolled back are lost without warning.
 
 **Upgrading to v0.12 (prebuilt images).**
 

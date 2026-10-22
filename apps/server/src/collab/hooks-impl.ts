@@ -7,13 +7,14 @@
  *      client 若回送 token，`onTokenSync`（Task 5）會重跑 `resolveRole` + `gate.check`
  *      決定續留、降級唯讀或關閉，同時觸發 `onNextTokenSync` 回呼撤銷 deadline；client
  *      若不回應（離線、卡住、惡意），deadline 到期就直接關閉——「沒有查證就不放行」。
- *   2. **刪除閘門**：刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
- *      刪除交易跑在「沒有任何進行中連線」的前提上。
+ *   2. **刪除閘門**：移入垃圾桶或刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
+ *      交易跑在「沒有任何進行中連線」的前提上；還原 commit 後由 `onNotesRestored` 收門（#181）。
  *
- * 所有 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked` 是同步 fire-and-forget，
- * 呼叫點在 DB commit 之後（見 `routes/notes.ts`、`routes/admin-users.ts`、`routes/auth.ts`），
- * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是 DELETE 交易前的
+ * 所有 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked`/`onGroupAccessChanged`/`onNotesRestored`
+ * 是同步 fire-and-forget，呼叫點在 DB commit 之後（見 `routes/*`、`notes/move-note.ts`、`trash/service.ts`），
+ * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是移入垃圾桶／刪除交易前的
  * await 點，throw 會讓「筆記刪不掉、卻已經被閘門擋住兩分鐘」（見 `DELETING_GATE_TTL_MS`）——兩種都比記錄錯誤後繼續更糟。
+ * `linkSyncGate` 是同步查詢（委派 `linkSyncState`，只讀記憶體），回 `{ ok: false }` 而不 throw（`POST …/links` 映成 409 `not_loaded`）。
  */
 import { COLLAB_CLOSE_NOTE_DELETED, COLLAB_CLOSE_REVOKED, COLLAB_REVERIFY_DEADLINE_MS } from "@knotebook/shared";
 import type { CollabHooks, NoteDeleteGate } from "./hooks.js";

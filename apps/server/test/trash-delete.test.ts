@@ -11,7 +11,7 @@ import type { Pool } from "pg";
 import { YDOC_FRAGMENT, type NoteDto } from "@knotebook/shared";
 import type { NoteDeleteGate } from "../src/collab/hooks.js";
 import type { Db } from "../src/db/index.js";
-import { groupMembers, groupRoles, noteAiEdits, noteLinkConversion, uploads } from "../src/db/schema.js";
+import { groupMembers, groupRoles, noteAiEdits, noteLinkConversion, notes, uploads } from "../src/db/schema.js";
 import { runLinkConversion } from "../src/notes/link-conversion.js";
 import { trashNote } from "../src/trash/service.js";
 import { uploadFilePath } from "../src/uploads/service.js";
@@ -333,5 +333,49 @@ describe("D6 連結轉換：合併前一刻被移入 → NoteGoneError 收成 de
     expect(after).toBe(before);
     expect(after).not.toContain("wikilink");
     expect((await trashCols(ctx.db.$client, host.id))?.deleted_at).not.toBeNull();
+  });
+});
+
+// docs/known-limitations.md「A note in the trash still holds its URL and its custom public URL」與 api.md Trash 段靠這兩案釘。
+describe("D8 垃圾桶期間 slug 與公開別名仍佔用（§6.1）", () => {
+  it("移入後同一 owner 建同標題筆記 → slug 得 -2；垃圾桶那篇的 slug 不變", async () => {
+    const { app, db } = await buildTestApp();
+    const owner = await seedUser(db);
+    const first = await inject(app, "POST", "/api/notes", owner.id, { title: "Occupied Title" });
+    expect(first.statusCode).toBe(201);
+    const a = first.json() as NoteDto;
+    expect(a.slug).toBe("occupied-title");
+    expect((await del(app, a.id, owner.id)).statusCode).toBe(204);
+
+    const second = await inject(app, "POST", "/api/notes", owner.id, { title: "Occupied Title" });
+    expect(second.statusCode).toBe(201);
+    expect((second.json() as NoteDto).slug).toBe("occupied-title-2");
+    expect(await db.select({ slug: notes.slug }).from(notes).where(eq(notes.id, a.id))).toEqual([{ slug: "occupied-title" }]);
+  });
+
+  it("移入後另一篇把網址改成垃圾桶那篇的 slug → 409 slug_taken；兩篇的 slug 都不變", async () => {
+    const { app, db } = await buildTestApp();
+    const owner = await seedUser(db);
+    const a = await seedNote(db, { ownerId: owner.id }, { slug: "occupied-custom" });
+    const b = await seedNote(db, { ownerId: owner.id }, { slug: "other-note" });
+    expect((await del(app, a.id, owner.id)).statusCode).toBe(204);
+
+    const res = await inject(app, "PATCH", `/api/notes/${b.id}`, owner.id, { slug: "occupied-custom" });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("slug_taken");
+    const slugs = await db.select({ id: notes.id, slug: notes.slug }).from(notes).where(eq(notes.ownerId, owner.id));
+    expect(Object.fromEntries(slugs.map(r => [r.id, r.slug]))).toEqual({ [a.id]: "occupied-custom", [b.id]: "other-note" });
+  });
+
+  it("移入後另一篇設同一個公開別名 → 409 public_slug_taken", async () => {
+    const { app, db } = await buildTestApp();
+    const owner = await seedUser(db);
+    const a = await seedNote(db, { ownerId: owner.id }, { publicToken: "a".repeat(43), publicSlug: "occupied-alias" });
+    const b = await seedNote(db, { ownerId: owner.id }, { publicToken: "b".repeat(43) });
+    expect((await del(app, a.id, owner.id)).statusCode).toBe(204);
+
+    const res = await inject(app, "PUT", `/api/notes/${b.id}/public-link/slug`, owner.id, { slug: "occupied-alias" });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("public_slug_taken");
   });
 });

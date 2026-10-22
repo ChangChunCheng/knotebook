@@ -1,8 +1,10 @@
 /**
- * #175 T14（spec §6.2 row 15、§6 交易表）：刪筆記的交易本體——單篇 `DELETE /api/notes/:id`（PR2 起）與 PR4 的
- * 刪群組・全刪（T7）共用。掛在 notes 上的子表全是 ON DELETE CASCADE（`db/schema.ts`），刪 notes 就帶走它們；
+ * #175 T14（spec §6.2 row 15、§6 交易表）：永久刪筆記的交易本體——#181 起由垃圾桶的永久刪除（`purgeTrashedNotesInTx`）、
+ * 保留期清理（`purgeExpiredBatchInTx`）與 PR4 的刪群組・全刪（T7）三個呼叫端共用；單篇 `DELETE /api/notes/:id` 已改為移入
+ * 垃圾桶，不再用它。掛在 notes 上的子表全是 ON DELETE CASCADE（`db/schema.ts`），刪 notes 就帶走它們；
  * uploads 也會被 CASCADE 刪，但要先顯式刪一次拿 `returning` 的 id——磁碟檔由呼叫端在 **commit 之後** best-effort 刪
- * （DB rollback 救不回已刪的檔）。S14：只收 `tx`；`beforeNoteDeleted`（會借連線）一律在交易**之前**由路由呼叫。
+ * （DB rollback 救不回已刪的檔）。S14：只收 `tx`；`beforeNoteDeleted`（會借連線）只有刪群組・全刪要，在交易**之前**由路由呼叫
+ * （永久刪除與清理的對象已在垃圾桶裡，不開共編閘門，spec §6.3.4-4）。
  *
  * #188：第一步對待刪筆記取 `FOR UPDATE`（依 id 排序，多篇時鎖序固定），之後才 `DELETE uploads … RETURNING`。上傳交易
  * （`insertUploadInTx`）先以 `FOR KEY SHARE` 讀筆記列，與 FOR UPDATE 互斥 → 等本交易 commit 後讀到 0 列 → TxAbort 404（路由先

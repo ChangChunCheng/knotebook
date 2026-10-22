@@ -686,7 +686,8 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         // ⚠ 刪除閘門刻意排在**驗完 token 之後**（審查指出）：它是這個 server 唯一會透露
         // 「某個 noteId 存在（且剛被刪掉）」的地方，擺在最前面等於讓一個連 session 都不需要
         // 的 socket 就能問這個問題。擺在這裡，要問就得先持有一份對這篇筆記合法簽章的 token。
-        // 順序仍必須早於 resolveRole：刪除交易 commit 之後那一列就查不到了，先跑 role 的話
+        // 順序仍必須早於 resolveRole：移入垃圾桶／刪除交易 commit 之後授權就查不到這篇（移入：單篇授權排除垃圾桶筆記；
+        // 刪群組・全刪：那一列不在了），先跑 role 的話
         // 這條路會落到 `no-role`（＝對使用者說「你已失去存取權」），而真相是筆記被刪了。
         // 只有「刪除當下本來就看得到這篇筆記的人」聽得到 note-deleting；其他人往下走，
         // 最終落在 `no-role`——與「這篇筆記存在但不是你的」完全一樣的可觀察行為。

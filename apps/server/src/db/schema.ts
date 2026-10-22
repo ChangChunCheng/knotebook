@@ -625,7 +625,7 @@ export const uploads = pgTable("uploads", {
   mime: text().notNull(),
   size: integer().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, t => [index("uploads_note_idx").on(t.noteId)]);   // DELETE /api/notes/:id 交易內 `WHERE note_id = $1` 用
+}, t => [index("uploads_note_idx").on(t.noteId)]);   // 永久刪除／到期清理／刪群組・全刪的交易內（`deleteNotesInTx`）`WHERE note_id IN (…)` 用
 
 export const aiProviders = pgTable("ai_providers", {
   id: uuid().primaryKey().defaultRandom(),

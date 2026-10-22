@@ -15,7 +15,7 @@ import { OWNER_PERMISSIONS, groupNotePermissions, roleFromGroupFlags, sharePermi
  * 同表不同人，不取別名 drizzle 產不出兩個 FROM 項。一律 LEFT JOIN——沒編輯過（欄位 null）
  * 或編輯者帳號已刪（FK `set null`）時，那一列仍要出現在結果裡。 */
 export const editor = alias(users, "editor");
-/** 三欄一組，三支 select 與 `noteWithOwnerSelection` 共用同一份定義——union 各支的 select shape
+/** 三欄一組，三支 select 與 `noteFieldsSelection`（`note-dto.ts`）共用同一份定義——union 各支的 select shape
  * 必須逐欄同形，抄兩次遲早分岔。 */
 export const lastEditedSelection = {
   lastEditedAt: notes.lastEditedAt,
