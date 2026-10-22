@@ -5,23 +5,27 @@
  * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`（④ 計數）。
  */
 import { and, asc, isNull, sql } from "drizzle-orm";
-import type { ErrorCode, FolderDeleteResultDto, FolderDto, FolderSpaceDto } from "@knotebook/shared";
+import type { ErrorCode, FolderDeleteResultDto, FolderDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
 import type { CollabHooks, NoteDeleteGate } from "../collab/hooks.js";
 import type { Db } from "../db/index.js";
 import { notes } from "../db/schema.js";
-import { isFolderSpaceViolation, isRetryableTxError, uniqueViolationConstraint } from "../db/pg-errors.js";
+import { foreignKeyViolationConstraint, isFolderSpaceViolation, isRetryableTxError, uniqueViolationConstraint } from "../db/pg-errors.js";
 import { GROUP_NOT_FOUND_MESSAGE } from "../groups/queries.js";
 import type { GroupHookCtx, GroupTestHook } from "../groups/test-hook.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
 import { TxAbort } from "../http/tx-abort.js";
 import { loadCreateTarget } from "../notes/create-target.js";
-import { UUID_RE } from "../notes/service.js";
+import { loadNoteFields, toNoteDto } from "../notes/note-dto.js";
+import { resolveNoteAccess, UUID_RE } from "../notes/service.js";
 import {
   FOLDER_CROSS_SPACE_MESSAGE,
   FOLDER_DELETE_BLOCKED_MESSAGE,
   FOLDER_FORBIDDEN_MESSAGE,
   FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE,
   FOLDER_NOT_FOUND_MESSAGE,
+  NOTE_FOLDER_CROSS_SPACE_MESSAGE,
+  NOTE_NOT_FOUND_MESSAGE,
+  NOTE_PLACE_FORBIDDEN_MESSAGE,
 } from "./messages.js";
 import { normalizeFolderName, type FolderNameResult } from "./names.js";
 import { folderPermissions } from "./permissions.js";
@@ -30,6 +34,7 @@ import { sameFolderSpace, type FolderSpace } from "./space.js";
 import { subtreeFolderIdsSql } from "./sql.js";
 import { createFolderInTx, type CreateFolderInput } from "./tx/create-folder.js";
 import { deleteFolderInTx, type DeleteFolderInput } from "./tx/delete-folder.js";
+import { placeNoteInTx, placeTargetSpace, type PlaceMode, type PlaceNoteInput } from "./tx/place-note.js";
 import { updateFolderInTx, type UpdateFolderInput } from "./tx/update-folder.js";
 
 const NAME_MESSAGES: Record<Extract<FolderNameResult, { ok: false }>["reason"], string> = {
@@ -226,4 +231,58 @@ export async function deleteFolder(
     releaseAll();
   }
   return { kind: "ok", result };
+}
+
+/**
+ * 把筆記放進／移出資料夾（§5.7.5）。`noteId` 由 app 層 `lowercaseUuidParams`、`folderId` 由路由轉小寫；這裡只驗 UUID 形。
+ * 順序（§5.5：筆記授權排在資料夾之前）：筆記授權（404／群組筆記無編輯權 403）→ 模式 → 資料夾可見性（404）→ 空間（400）
+ * → 扣 `edit` 桶 → `note-folder-authorized` 縫 → 交易（重判全部）→ 回呼叫者視角的 `NoteDto`。
+ */
+export async function placeNote(
+  deps: FolderServiceDeps,
+  input: { by: string; noteId: string; folderId: string | null },
+): Promise<{ kind: "ok"; note: NoteDto } | FolderFailure> {
+  const { by } = input;
+  const noteAccess = await resolveNoteAccess(deps.db, by, input.noteId);
+  if (noteAccess.role === "none") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);
+  let mode: PlaceMode;
+  if (noteAccess.role === "owner") mode = { kind: "owned" };
+  else if (noteAccess.groupId !== null) {
+    if (!noteAccess.permissions.edit) return fail(403, "forbidden", NOTE_PLACE_FORBIDDEN_MESSAGE);
+    mode = { kind: "group", groupId: noteAccess.groupId };
+  } else mode = { kind: "shared" };
+  const noteId = input.noteId.toLowerCase();
+
+  let folderId: string | null = null;
+  if (input.folderId !== null) {
+    const folder = await resolveFolderAccess(deps.db, by, input.folderId);
+    if (folder === null) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+    if (!sameFolderSpace(folder.space, placeTargetSpace(mode, by))) return fail(400, "folder_cross_space", NOTE_FOLDER_CROSS_SPACE_MESSAGE);
+    folderId = folder.folder.id;
+  }
+
+  if (!deps.limiters.edit.consume(by)) return fail(429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
+  await deps.groupTestHook?.("note-folder-authorized", { noteId, ...(folderId !== null ? { folderId } : {}) });
+
+  const txInput: PlaceNoteInput = { by, noteId, folderId, mode };
+  try {
+    await deps.db.transaction(tx => placeNoteInTx(tx, txInput, deps.groupTestHook));
+  } catch (err) {
+    if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
+    // r3 m-7：交易內重判之後、upsert 之前被撤分享（撤分享不鎖 notes）→ 與看不到這篇同形。
+    const fk = foreignKeyViolationConstraint(err);
+    if (fk === "note_placements_share_fk") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);
+    // 防禦縱深：資料夾已在交易內 KS 鎖住並判過空間；FK／trigger（KF001／KF003）只在那之外的漂移才觸發，與看不到同形。
+    if (fk === "notes_folder_fk" || fk === "note_placements_folder_id_folders_id_fk" || isFolderSpaceViolation(err)) {
+      return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+    }
+    if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
+    throw err;
+  }
+
+  // 極窄競態：commit 之後、重讀之前被移走或降權 → 與看不到同形。
+  const fields = await loadNoteFields(deps.db, noteId, by);
+  const access = await resolveNoteAccess(deps.db, by, noteId);
+  if (fields === undefined || access.role === "none") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);
+  return { kind: "ok", note: toNoteDto(fields, access) };
 }

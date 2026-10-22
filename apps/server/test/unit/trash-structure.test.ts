@@ -77,6 +77,8 @@ const REGISTRY: Record<string, Disposition> = {
   "folders/service.ts": { excludes: 1 },
   // includes：子樹筆記鎖讀；trashOnly：刷新子樹垃圾桶筆記的路徑快照（資料夾 T8）。
   "folders/tx/delete-folder.ts": { includes: 1, trashOnly: 1, why: "一段式依 id 鎖子樹全部筆記（不分狀態，spec m5）" },
+  // excludes：放置的筆記鎖讀（個人／群組 FOR UPDATE、共享 FOR KEY SHARE 同一句，帶 deleted_at IS NULL）；write：UPDATE folder_id（受前一句的 FU 保護）（資料夾 T9）。
+  "folders/tx/place-note.ts": { excludes: 1, write: 1 },
   "groups/queries.ts": { includes: 1, why: "群組全部筆記（踢線、刪群組 P0，§6.5）" },
   // 轉移的鎖、配額 innerJoin、轉移 UPDATE、全刪的鎖。
   "groups/tx/delete-group.ts": { includes: 4, why: "轉移／全刪含垃圾桶（§6.5）" },

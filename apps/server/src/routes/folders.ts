@@ -1,14 +1,14 @@
 /**
  * 資料夾 REST（spec docs/superpowers/specs/2026-10-22-folders-design.md §5.11）。讀取收 `authenticateAny("notes:read")`
  * （同 `GET /api/notes`）；寫入一律 cookie-only（`app.authenticate`；外部程式走 MCP），扣 `edit` 桶（在服務層）。
- * body 裡的 id（`parentId`、`space.groupId`）在這裡轉小寫後交服務層；UUID 形由服務層驗（非 UUID 與不存在同形）。
+ * body 裡的 id（`parentId`、`space.groupId`、`folderId`）在這裡轉小寫後交服務層；UUID 形由服務層驗（非 UUID 與不存在同形）。
  * 本檔沒有交易（S14 不登記）；交易都在 `folders/service.ts`。
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { FolderDeleteResultDto, FolderListDto, FolderSpaceDto } from "@knotebook/shared";
+import type { FolderDeleteResultDto, FolderListDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
 import { sendError } from "../http/errors.js";
-import { createFolder, deleteFolder, listFolders, updateFolder, type FolderServiceDeps } from "../folders/service.js";
+import { createFolder, deleteFolder, listFolders, placeNote, updateFolder, type FolderServiceDeps } from "../folders/service.js";
 
 const spaceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("personal") }).strict(),
@@ -25,6 +25,8 @@ const updateBodySchema = z
   .object({ name: z.string().optional(), parentId: z.string().nullable().optional() })
   .strict()
   .refine(b => b.name !== undefined || b.parentId !== undefined, "請求格式錯誤：至少需要一個欄位");
+/** `folderId: null`＝根層（必填；非 UUID 與不存在同形，由服務層判）。 */
+const placeBodySchema = z.object({ folderId: z.string().nullable() }).strict();
 
 export function foldersRoutes(deps: FolderServiceDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
@@ -65,6 +67,17 @@ export function foldersRoutes(deps: FolderServiceDeps) {
       const out = await deleteFolder(deps, { by: request.user!.id, folderId: id });
       if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
       return out.result satisfies FolderDeleteResultDto;
+    });
+
+    // 放在這裡不放 `routes/notes.ts`：資料夾的入口檢查與錯誤形都在 `folders/service.ts`（§5.7.5）。
+    app.put("/api/notes/:id/folder", { preHandler: app.authenticate }, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const parsed = placeBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "請求格式錯誤");
+      const { folderId } = parsed.data;
+      const out = await placeNote(deps, { by: request.user!.id, noteId: id, folderId: folderId === null ? null : folderId.toLowerCase() });
+      if (out.kind === "error") return sendError(reply, out.status, out.code, out.message);
+      return out.note satisfies NoteDto;
     });
   };
 }
