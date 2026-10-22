@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 /**
  * 設定面板的版面語彙（設定、群組、站台管理三個面板的各頁共用）。
@@ -60,25 +60,36 @@ export function SettingsPage({
  *
  * `title` 可省略（例如 SSO-only 帳號那段提示沒有自己的標題，而且
  * `SettingsAccountSection.test.tsx` 明文要求那時不得出現「修改密碼」標題）。
+ *
+ * `labelledByTitle`（預設關）：`<section aria-labelledby>` 指向自己的 `<h2>`，成為以標題命名的 region。
+ * 同頁有同名控制項時（例如兩顆「儲存」）讓測試與輔助科技能以群組標題圈定；不是每個群組都開，免得整頁都是 landmark。
  */
 export function SettingsGroup({
   title,
   description,
   action,
+  labelledByTitle = false,
   children,
 }: {
   title?: string;
   description?: string;
   action?: ReactNode;
+  labelledByTitle?: boolean;
   children?: ReactNode;
 }) {
+  const titleId = useId();
+  const named = labelledByTitle && title !== undefined;
   const hasHeader = title !== undefined || description !== undefined || action !== undefined;
   return (
-    <section className="py-8 first:pt-0 last:pb-0">
+    <section aria-labelledby={named ? titleId : undefined} className="py-8 first:pt-0 last:pb-0">
       {hasHeader && (
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            {title !== undefined && <h2 className="text-base font-semibold">{title}</h2>}
+            {title !== undefined && (
+              <h2 id={named ? titleId : undefined} className="text-base font-semibold">
+                {title}
+              </h2>
+            )}
             {description !== undefined && (
               <p className="text-sm text-muted-foreground">{description}</p>
             )}
