@@ -2,7 +2,7 @@
  * 資料夾 PR-3a T13：併發（下）——刪群組（轉移、全刪）、共享放置、結構交易彼此（spec docs/superpowers/specs/2026-10-22-folders-design.md
  * §6.18 其餘各組、§5.4、§5.9；plan 附錄 A 鎖序表）。作法同 `folders-race.test.ts`：一方卡在自己交易內的縫，另一方送出後以
  * `waitForLockWaiters` 確認它真的在等鎖（**斷言**，不只是等待），放行後斷言勝方、錯誤碼與 DB 終值。每組兩種先後；每案都斷言沒有
- * 409 `server_busy`（40P01 經 `isRetryableTxError` 會變成它）與資料一致。
+ * 409 `server_busy`（40P01 經 `isRetryableTxError` 會變成它）與資料一致——RG-CN 例外：那組真的會死結，斷言的是 40P01 映成 409。
  * RG-PG／RG-DA 照 trash-race 的 RC-DL：測試連線持一篇的列鎖，讓兩方依序排在它後面（heap 序、created_at 序與 id 序相反的兩篇）。
  */
 import { randomUUID } from "node:crypto";
@@ -561,6 +561,55 @@ describe("RG-DF 全刪與刪群組資料夾", () => {
     expect([await trashCols(s.pool, t.a), await trashCols(s.pool, t.tg)]).toEqual([undefined, undefined]);
     await expectConsistent(s.pool);
   });
+});
+
+describe("RG-CN 全刪與在群組資料夾建立筆記（FK 檢查序是 pg_dump 還原後的樣子，最終審查 m-1）", () => {
+  /**
+   * 同表的 RI 觸發器依名稱（`RI_ConstraintTrigger_c_<oid>`）序觸發。重建群組 FK 讓它的 OID 變大 → INSERT 先檢查資料夾 FK
+   * （pg_dump 依名稱建 FK、還原後就是這個序）。只動本案的資料庫（每案一個新庫）。
+   */
+  async function flipFkOrder(pool: Pool): Promise<void> {
+    await pool.query(`alter table notes drop constraint notes_group_id_groups_id_fk;
+      alter table notes add constraint notes_group_id_groups_id_fk foreign key (group_id) references groups(id) on delete restrict on update no action`);
+    const { rows } = await pool.query<{ conname: string }>(`select c.conname from pg_trigger t join pg_constraint c on c.oid = t.tgconstraint
+      where t.tgrelid = 'notes'::regclass and t.tgisinternal and t.tgtype & 4 = 4 and c.conname in ('notes_folder_fk', 'notes_group_id_groups_id_fk')
+      order by t.tgname`);
+    expect(rows.map(r => r.conname), "前提：INSERT 先檢查資料夾 FK、再檢查群組 FK").toEqual(["notes_folder_fk", "notes_group_id_groups_id_fk"]);
+  }
+
+  for (const withContent of [false, true]) {
+    it(`全刪先（停在 group-delete-locked）${withContent ? "、帶 content" : ""}：INSERT 持 F 的 KS、在 groups KS 上等，全刪 CASCADE 刪 F 等 INSERT → 40P01；犧牲方 409 server_busy、另一方成功，建立方不是 5xx`, async () => {
+      const s = await scene();
+      const t = await groupScene(s);
+      const F = (await seedFolder(s.db, { group: t.g }, { name: "F" })).id;
+      await flipFkOrder(s.pool);
+      const h = s.seams.hold("group-delete-locked");
+      const pd = deleteAll(s.app, t.q, t.g);
+      await entered(h.entered, pd);
+      const pc = inject(s.app, "POST", "/api/notes", t.q, { groupId: t.g, folderId: F, ...(withContent ? { content: "hello" } : {}) });
+      const waited = await sawLockWaiters(s.pool, 1);
+      h.open();
+      const [dr, cr] = [await pd, await pc];
+      expect(waited, "建立在全刪持有的群組列鎖上等").toBe(true);
+      expect(cr.statusCode, cr.body).toBeLessThan(500);
+      expect(dr.statusCode, dr.body).toBeLessThan(500);
+      if (errCode(cr) === "server_busy") {
+        // 一般時序：先開始等的 INSERT 先跑死結偵測、是犧牲者。
+        expect(cr.statusCode, cr.body).toBe(409);
+        expect(dr.statusCode, dr.body).toBe(204);
+        expect(await groupExists(s.pool, t.g)).toBe(false);
+        expect(await folderRow(s.pool, F)).toBeUndefined();
+        expect((await s.pool.query("select 1 from notes where group_id = $1", [t.g])).rowCount).toBe(0);
+      } else {
+        // INSERT 的偵測在成環前就跑過了 → 全刪是犧牲者、什麼都沒刪。
+        failed(dr, 409, "server_busy");
+        const n = okJson<NoteDto>(cr, 201);
+        expect(await noteFolderCols(s.pool, n.id)).toEqual({ folder_id: F, trash_folder_path: null });
+        expect(await groupExists(s.pool, t.g)).toBe(true);
+      }
+      await expectConsistent(s.pool);
+    });
+  }
 });
 
 describe("RP-US 共享放置與撤分享（API 版，r3 m-7）", () => {

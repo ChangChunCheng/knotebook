@@ -72,7 +72,7 @@ import {
 import { fetchBacklinks, normalizeLinkTargets, writeNoteLinks, type WriteNoteLinksHooks } from "../notes/links.js";
 import { schemaVersionFromBody, signCollabToken } from "../collab/token.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
-import { isForeignKeyViolation, isNoteFolderSpaceViolation, uniqueViolationConstraint } from "../db/pg-errors.js";
+import { isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError, uniqueViolationConstraint } from "../db/pg-errors.js";
 import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_CROSS_SPACE_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../folders/messages.js";
 import { resolveFolderAccess, type FolderAccess } from "../folders/queries.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
@@ -100,14 +100,17 @@ const linksBodySchema = z.object({ link_target_ids: z.array(z.string().uuid()).m
 const contentQuerySchema = z.object({ section: SEC.optional() }).strict();
 
 /**
- * `POST /api/notes` 兩條建立路徑的建列失敗映射；不是 FK 23503／KF001 → null（呼叫端 rethrow）。
+ * `POST /api/notes` 兩條建立路徑的建列失敗映射；不是 FK 23503／KF001／40P01 等可重試錯誤 → null（呼叫端 rethrow）。
  * 資料夾 PR-3a（spec §5.7.6、§5.1 M5、§5.4 n-2）：帶資料夾時，資料夾在確認之後被刪（`notes_folder_fk`）、換了空間（KF001：
  * 群組剛被轉移）、或群組被刪（群組資料夾隨之 CASCADE，群組 FK 可能先報）——以資料夾 id 進來的入口一律 404 `folder_not_found`。
  * 轉移交易未 commit 時建立：INSERT 先過 trigger（資料夾還是群組的），再等群組列鎖、commit 後撞 `notes_group_id_groups_id_fk` 23503
  * ——帶資料夾時群組消失必然代表資料夾已不在該空間，照 n-2 回 `folder_not_found`；不得收窄成只認 KF001／`notes_folder_fk`。
  * 不帶資料夾：成員檢查之後群組被刪（spec gate r2 G）→ 既有 404 `group_not_found`。
+ * 40P01（spec §5.4）：INSERT 不在交易內，groups／folders 的 KS 由 RI 觸發器依名稱序取——pg_dump 還原後資料夾在前，
+ * 與刪群組「全部刪除」（持群組 FU、CASCADE 刪資料夾）成環 → 409 `server_busy`（`folders-race-ops` 的 RG-CN 綁）。
  */
 function sendCreateInsertFailure(reply: FastifyReply, err: unknown, withFolder: boolean): FastifyReply | null {
+  if (isRetryableTxError(err)) return sendError(reply, 409, "server_busy", "伺服器忙碌，請稍後再試");
   if (withFolder && (isNoteFolderSpaceViolation(err) || isForeignKeyViolation(err))) return sendError(reply, 404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
   if (isForeignKeyViolation(err)) return sendError(reply, 404, "group_not_found", "找不到此群組");
   return null;
