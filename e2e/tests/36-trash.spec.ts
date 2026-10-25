@@ -112,17 +112,33 @@ test("A2-1／A2-2：頁首 ⋮ 移入不確認、toast 復原回到該篇可共�
   await expect(noteLink(myNotes, title)).toHaveCount(0);
 });
 
-test("A2-11：公開連結在垃圾桶期間 404，從垃圾桶列還原後恢復", async ({ page, request }) => {
+test("A2-11：公開連結在垃圾桶期間 404，從垃圾桶列還原後恢復", async ({ browser, page, request }) => {
   test.setTimeout(120_000);
   const title = `E2E Trash P ${RUN}`;
-  await loginAs(page, ADMIN.email, ADMIN.password);
+  // 用新帳號當 owner：public-link 的 PUT/DELETE 每人 10 次/10 分鐘（PUBLIC_LINK_LIMIT），
+  // 整套序跑到這裡時 admin 已被前面的 spec 用滿，再開公開連結會吃 429（同 31 E3）。
+  const owner = { email: randomEmail(), password: PASSWORD };
+  const adminContext = await browser.newContext();
+  try {
+    const adminPage = await adminContext.newPage();
+    await loginAs(adminPage, ADMIN.email, ADMIN.password);
+    await expect(adminPage).toHaveURL(/\/$/);
+    await createUserViaInvite(adminPage, owner);
+  } finally {
+    await adminContext.close();
+  }
+  await loginAs(page, owner.email, owner.password);
   await expect(page).toHaveURL(/\/$/);
   await createNote(page, title);
 
-  // ShareDialog 開公開連結（同 16；輸入框只放 token）
+  // ShareDialog 開公開連結（同 31 E3；輸入框只放 token）
   await page.getByRole("button", { name: "Share", exact: true }).click();
   const shareDialog = page.getByRole("dialog", { name: "Share note" });
-  await shareDialog.getByRole("radio", { name: /^Public link/ }).click();
+  const publicRadio = shareDialog.getByRole("radio", { name: /^Public link/ });
+  await expect(publicRadio).toBeEnabled(); // latch 完成才可點
+  const publish = page.waitForResponse((res) => res.url().endsWith("/public-link") && res.request().method() === "PUT");
+  await publicRadio.check();
+  expect((await publish).status()).toBe(200);
   const urlInput = shareDialog.getByLabel("Public link URL");
   await expect(urlInput).toBeVisible();
   const token = await urlInput.inputValue();
@@ -246,8 +262,10 @@ test("390 寬抽屜：選取中按 Esc 只結束選取、焦點回抽屜內的�
   const purgeButton = drawer.getByRole("button", { name: "Delete permanently", exact: true });
   await purgeButton.click();
   const confirm = page.getByRole("dialog", { name: "Permanently delete 1 note?" });
-  // 框剛出現的約 9 ms 內 Radix 還沒把最上層的 Esc 換給確認框（下一幀才換），這時按 Esc 會結束選取：等框內 Cancel 拿到焦點再按。
+  // Cancel 在確認框的 DismissableLayer 登記那一輪就拿到焦點，但抽屜的 Esc listener 要等下一次 render（Radix 的 layer 重排）
+  // 才拆掉；那次 render 同時把抽屜設成 pointer-events: none——等到它才按 Esc，否則 Esc 由抽屜處理、選取被結束。
   await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await expect(page.locator("[data-sidebar-drawer]")).toHaveCSS("pointer-events", "none");
   await page.keyboard.press("Escape");
   await expect(confirm).toHaveCount(0);
   await expect(drawer).toBeVisible();

@@ -51,6 +51,7 @@ test("sidebar tabs: roles, persistence, keyboard, search view, narrow drawer", a
   await expect(trashTab).toHaveAttribute("aria-selected", "true");
   await expect(trashTab).toBeFocused();
   await page.keyboard.press("Home");
+  await expect(recentTab).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("End");
   await expect(trashTab).toHaveAttribute("aria-selected", "true");
   await expect(trashTab).toBeFocused();

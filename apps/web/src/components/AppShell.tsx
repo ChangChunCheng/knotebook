@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
@@ -20,7 +20,6 @@ import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
 import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
-import { TrashPanel } from "@/components/sidebar/TrashPanel";
 import { UserMenu } from "@/components/UserMenu";
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -31,6 +30,26 @@ import {
   writeSidebarWidth,
 } from "@/components/sidebar-width";
 import { PaneResizeHandle } from "@/components/PaneResizeHandle";
+
+/** 只有打開垃圾桶 tab 才下載（首包上限）；與 SidebarFooter 的 `TrashFooter` 同一個 chunk（`TrashLazy`）。 */
+const TrashPanel = lazy(() => import("@/components/sidebar/TrashLazy").then((m) => ({ default: m.TrashPanel })));
+
+/** `TrashPanel` 下載中的佔位：與它自己清單載入中的樣子相同（標題列「Trash」＋「Loading…」），chunk 到了不跳。 */
+function TrashPanelFallback() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+        <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+          <span className="truncate">{t("sidebar.trash")}</span>
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2">
+        <p className="p-2 text-sm text-muted-foreground">{t("app.loading")}</p>
+      </div>
+    </div>
+  );
+}
 
 // `<md` 的判準 `NARROW_QUERY` 住在 `lib/sidebar-drawer.ts`（`SidebarTabProvider` 也要用）。
 
@@ -163,7 +182,13 @@ function SidebarContent({
             tabIndex={0}
             className="flex min-h-0 flex-1 flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            {tab === "trash" ? <TrashPanel /> : <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />}
+            {tab === "trash" ? (
+              <Suspense fallback={<TrashPanelFallback />}>
+                <TrashPanel />
+              </Suspense>
+            ) : (
+              <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
+            )}
           </div>
         </>
       )}

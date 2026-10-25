@@ -23,7 +23,7 @@ import { EmptyTrashDialog, PurgeConfirmDialog, toastTrashFailure, toastTrashResu
  * - 清空＝把**清單上**的 id 全部送 purge（spec §6.3.4-5）：之後才移入的不受影響；超過 200 由 `purgeTrashIds` 分批。
  * - 確認框成敗都關，結果走 toast（`trash-dialogs.tsx`）。動作完成後焦點回清單容器（被處理的列會卸載）。
  * - 選取模式（spec §6.10.2）：狀態在 `SidebarTabProvider`（靜態卡與抽屜兩份共用）；標題列換成「已選 N 篇」＋全選＋完成，
- *   列換成整列 `<label>`＋勾選框、不渲染「還原」與 ⋮。還原／永久刪除的動作列在 `SidebarFooter` 的 `TrashActionBar`。
+ *   列換成整列 `<label>`＋勾選框、不渲染「還原」與 ⋮。還原／永久刪除的動作列在 `TrashFooter.tsx` 的 `TrashActionBar`。
  *   焦點只由發起的那一份實例移動（`focusAfterRef`）。
  */
 

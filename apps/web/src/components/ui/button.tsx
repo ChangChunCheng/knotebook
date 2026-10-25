@@ -53,7 +53,7 @@ import { cn } from "@/lib/utils";
  *   ⚠ **`ghost` 只用在「有列可依附」的地方**（表格列、清單列，或緊跟在同列主動作
  *   後面的還原型動作）。平級並排的動作一律 `outline`——ghost 沒有邊框也沒有底色，
  *   單獨站著看不出來是按鈕（「重新產生連結」被這樣回報過一次）。
- *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/SidebarFooter.tsx`）與「還原」平級並排，卻是
+ *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/TrashFooter.tsx`）與「還原」平級並排，卻是
  *   `ghost`＋`border border-input`＋紅字（hover 同 `ROW_ICON_DANGER`）——`outline` 的 hover／按下填 `brand-deep`，
  *   紅字壓深色底不對（#181 PR-2b plan gate r1 M7）。別「修」回 `outline`。
  * - `destructive`——**只用在確認對話框的那一顆提交鈕**。
