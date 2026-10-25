@@ -286,7 +286,7 @@ export function TrashPanel() {
             title={t("trash.select")}
             disabled={actionsDisabled}
             // 握把：底部動作列離開選取模式後，經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦。
-            data-trash-select=""
+            data-sidebar-select=""
             // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的；標題列換字樣前那一幀連點兩下也一樣）。
             onClick={() => {
               if (selection.active) return;
@@ -356,7 +356,7 @@ export function TrashPanel() {
       );
     return (
       <>
-        {personal.length > 0 && <TrashSection label={t("trash.sectionPersonal")} items={personal} renderItem={renderItem} />}
+        {personal.length > 0 && <TrashSection label={t("sidebar.myNotes")} items={personal} renderItem={renderItem} />}
         {workspace.length > 0 && <TrashSection label={t("trash.sectionWorkspace")} items={workspace} renderItem={renderItem} />}
         {trash.data.truncated && <p className="p-2 text-[11px] text-muted-foreground">{t("trash.truncated")}</p>}
       </>

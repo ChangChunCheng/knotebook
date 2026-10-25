@@ -14,6 +14,10 @@ export function selectionKey(node: SelectionNode): string {
   return `${node.kind}:${node.id}`;
 }
 
+/** 一份側欄實例（靜態卡或抽屜）標題列的「選取」鈕。垃圾桶 tab 與一般 tab 共用：離開選取模式後焦點交給它
+ *（`AppShell` 抽屜 Esc、`TrashFooter`／`SelectHeader`／`SelectActionBar` 的離開路徑）。 */
+export const SIDEBAR_SELECT_BUTTON = "[data-sidebar-header] button[data-sidebar-select]";
+
 export interface SidebarSelection {
   active: boolean;
   keys: ReadonlySet<string>;

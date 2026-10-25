@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_SELECTION, reduceSelection, selectionKey, type SelectionOp, type SidebarSelection } from "./sidebar-selection";
+import { EMPTY_SELECTION, reduceSelection, selectionKey, SIDEBAR_SELECT_BUTTON, type SelectionOp, type SidebarSelection } from "./sidebar-selection";
 
 const ORDER = ["a", "b", "c", "d", "e"] as const;
 
@@ -76,5 +76,9 @@ describe("reduceSelection", () => {
 
   it("SL7 selectionKey 是 kind:id", () => {
     expect(selectionKey({ kind: "note", id: "x" })).toBe("note:x");
+  });
+
+  it("SL8 SIDEBAR_SELECT_BUTTON：標題列裡帶 data-sidebar-select 的鈕", () => {
+    expect(SIDEBAR_SELECT_BUTTON).toBe("[data-sidebar-header] button[data-sidebar-select]");
   });
 });

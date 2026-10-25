@@ -13,8 +13,10 @@ import { useSidebarTabState } from "@/lib/sidebar-tab";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { hoverReveal } from "@/components/ui/reveal";
-import { ChevronRight, Plus, Users } from "@/components/ui/icons";
+import { Plus } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
+import { useCollapsed } from "@/components/sidebar/collapse";
+import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
 import { buildTabNodes, noteLocationLabel, type SidebarNode } from "@/components/sidebar/tree";
 
@@ -32,7 +34,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
  * 結果裡（server 只回傳使用者有權限看的筆記）。PR2：側欄改小字化，不再是 pill。
  * #182（Willie 2026-10-02）：群組筆記（`group` 非 null）一律不標——角色看筆記頁頂端徽章；
  * 只有逐人分享給我的個人筆記保留。 */
-function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
+export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
   const { t } = useTranslation();
   if (group) return null;
   if (role !== "editor" && role !== "viewer") return null;
@@ -110,41 +112,6 @@ function NoteRow({ note, variant, groupIds }: NoteRowProps) {
   );
 }
 
-/** 折疊狀態的 localStorage 鍵前綴（spec A6）：`sidebar.collapsed.group:<id>`，
- * 值 `"1"`＝收合、缺鍵＝展開（預設）。頂層四鍵隨 tab 化拿掉（舊值留在 storage 裡無害）。 */
-export const COLLAPSE_STORAGE_PREFIX = "sidebar.collapsed.";
-
-export type SidebarSectionKey = `group:${string}`;
-
-function readCollapsed(key: SidebarSectionKey): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSE_STORAGE_PREFIX + key) === "1";
-  } catch {
-    // Safari 隱私模式／被封鎖的儲存：當作沒存過（預設展開），不讓側欄炸掉。
-    return false;
-  }
-}
-
-function writeCollapsed(key: SidebarSectionKey, collapsed: boolean): void {
-  try {
-    if (collapsed) window.localStorage.setItem(COLLAPSE_STORAGE_PREFIX + key, "1");
-    else window.localStorage.removeItem(COLLAPSE_STORAGE_PREFIX + key);
-  } catch {
-    // 寫不進去就只活在本次 session 的 state 裡。
-  }
-}
-
-/** 每個群組一把折疊狀態：初值讀 localStorage 一次，之後 state 為準、寫入盡力而為。 */
-function useCollapsed(key: SidebarSectionKey): [expanded: boolean, toggle: () => void] {
-  const [collapsed, setCollapsed] = useState(() => readCollapsed(key));
-  const toggle = () => {
-    const next = !collapsed;
-    writeCollapsed(key, next);
-    setCollapsed(next);
-  };
-  return [!collapsed, toggle];
-}
-
 /** 標題列／群組列右側的 24px「＋」圖示鈕。tab 標題列的常駐；群組列的帶 `reveal="grouprow"`
  * （列 hover 或列內有 `:focus-visible` 才顯示——鍵盤 tab 到它時一定看得見（P19）；滑鼠點過留下的
  * 焦點不算（不是 focus-within））。 */
@@ -188,10 +155,8 @@ interface NodeContext {
 }
 
 /**
- * 工作坊 tab 的群組節點：像檔案樹的一個資料夾列。前導圖示槽平常是 `Users`，列 hover／
- * 列內有 `:focus-visible`（鍵盤焦點；滑鼠點完留下的焦點不算）時換成 chevron；觸控裝置（`hover: none`）一律 chevron。兩個圖示都
- * `aria-hidden`，button 的名稱只有群組名。筆記掛在導引線下，線對齊圖示槽中心
- * （px-2 8＋槽寬 14 / 2 ＝ 15px）。折疊共用 `useCollapsed`。
+ * 工作坊 tab 的群組節點：像檔案樹的一個資料夾列（折疊主鈕見 `GroupRowButton`）。筆記掛在導引線下，線對齊圖示槽中心
+ * （px-2 8＋槽寬 14 / 2 ＝ 15px）。折疊狀態是 `sidebar/collapse.ts` 的共用 store（靜態卡、抽屜、選取樹同步）。
  */
 function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }>; ctx: NodeContext }) {
   const { t } = useTranslation();
@@ -200,27 +165,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
   return (
     <li data-node-kind="group" data-node-id={group.id} className="flex flex-col gap-0.5">
       <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={toggle}
-          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-foreground group-hover/grouprow:text-brand-on-soft"
-        >
-          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground group-hover/grouprow:text-brand-on-soft">
-            <Users
-              aria-hidden="true"
-              className="h-3.5 w-3.5 group-hover/grouprow:hidden group-has-[:focus-visible]/grouprow:hidden [@media(hover:none)]:hidden"
-            />
-            <ChevronRight
-              aria-hidden="true"
-              className={cn(
-                "hidden h-3 w-3 transition-transform group-hover/grouprow:block group-has-[:focus-visible]/grouprow:block [@media(hover:none)]:block",
-                open && "rotate-90",
-              )}
-            />
-          </span>
-          <span className="truncate">{group.name}</span>
-        </button>
+        <GroupRowButton name={group.name} open={open} onToggle={toggle} />
         {/* #175 §8.2＋PR3：「＋」只在我的角色能在這個群組建立**且能編輯**筆記時渲染——能建不能改的人建出來的是
             自己也改不了的空白筆記（spec 疑點 11；他仍可經移入／複製把筆記放進群組，PR2）；`myRole` null＝防禦，不渲染。 */}
         {group.myRole?.permissions.create && group.myRole.permissions.edit && (

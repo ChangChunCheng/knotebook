@@ -65,3 +65,20 @@ describe("TC2 刪除確認框的文案已移除（spec §6.12：移到垃圾桶�
     });
   }
 });
+
+describe("TC3 個人目的地與區標統一叫「我的筆記」（Willie 2026-10-26：tab 分頁跟選單統一名稱）", () => {
+  for (const key of ["note.menu.personalSpace", "trash.sectionPersonal"]) {
+    it(`${key} 兩個語系都已刪除（改用 sidebar.myNotes）`, () => {
+      expect(get(en, key)).toBeUndefined();
+      expect(get(zhTW, key)).toBeUndefined();
+    });
+  }
+
+  it("zh trash.emptyPersonal_other（count=3）→「我的筆記 3 篇」", () => {
+    expect(i18n.t("trash.emptyPersonal", { count: 3, lng: "zh-TW" })).toBe("我的筆記 3 篇");
+  });
+
+  it("en trash.emptyPersonal_one（count=1）→「My notes: 1 note」", () => {
+    expect(i18n.t("trash.emptyPersonal", { count: 1, lng: "en" })).toBe("My notes: 1 note");
+  });
+});

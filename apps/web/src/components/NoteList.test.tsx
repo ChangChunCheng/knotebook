@@ -13,10 +13,12 @@ import { SidebarTabList } from "@/components/sidebar/SidebarTabList";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { NoteList, type NoteListProps } from "./NoteList";
 import { adminRole, EDITOR_PERMS, groupDto, memberRole, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
+import { __resetCollapseForTests } from "@/components/sidebar/collapse";
 
-// `sidebar.tab`／`sidebar.collapsed.*` 會往外流到同檔後面的案（亂序跑時尤其），檔案頂層清（plan I3）。
+// `sidebar.tab`／`sidebar.collapsed.*`（含 collapse store 的記憶體覆蓋層）會往外流到同檔後面的案（亂序跑時尤其），檔案頂層清（plan I3）。
 afterEach(() => {
   localStorage.clear();
+  __resetCollapseForTests();
 });
 
 /** 模擬 NotePage 的「解析成功後 set」——測試用的最小 setter（#122 ActiveNoteContext）。 */

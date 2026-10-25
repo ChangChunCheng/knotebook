@@ -51,8 +51,8 @@ async function openTrash(page: Page, scope?: Locator): Promise<Locator> {
   return panel;
 }
 
-/** 垃圾桶列（`<li>`，不是連結）；給 `section` 就限定在「Personal」／「Workspace」那一區。 */
-function trashRow(panel: Locator, title: string, section?: "Personal" | "Workspace"): Locator {
+/** 垃圾桶列（`<li>`，不是連結）；給 `section` 就限定在「My notes」／「Workspace」那一區。 */
+function trashRow(panel: Locator, title: string, section?: "My notes" | "Workspace"): Locator {
   const root = section ? panel.getByRole("list", { name: section, exact: true }) : panel;
   return root.getByRole("listitem").filter({ hasText: title });
 }
@@ -100,7 +100,7 @@ test("A2-1／A2-2：頁首 ⋮ 移入不確認、toast 復原回到該篇可共�
   await moveNoteToTrashFromSidebar(page, title);
   await expect(page).toHaveURL(/\/$/, { timeout: 15_000 });
   const panel = await openTrash(page);
-  const row = trashRow(panel, title, "Personal");
+  const row = trashRow(panel, title, "My notes");
   await expect(row).toBeVisible();
   await expect(row.getByText(DAYS_LEFT)).toBeVisible();
   await expect(row.getByRole("link")).toHaveCount(0); // 垃圾桶列不是連結（spec §6.10.1）
@@ -159,7 +159,7 @@ test("A2-11：公開連結在垃圾桶期間 404，從垃圾桶列還原後恢�
 
   // 垃圾桶列 hover 浮出「還原」
   const panel = await openTrash(page);
-  const row = trashRow(panel, title, "Personal");
+  const row = trashRow(panel, title, "My notes");
   await row.hover();
   await row.getByRole("button", { name: `Restore ${title}`, exact: true }).click();
   await expect(toastWithTitle(page, "Restored 1 note")).toBeVisible({ timeout: 15_000 });
@@ -242,7 +242,7 @@ test("390 寬抽屜：選取中按 Esc 只結束選取、焦點回抽屜內的�
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   await expect(drawer).toBeVisible();
   const panel = await openTrash(page, drawer);
-  const selectButton = drawer.locator("button[data-trash-select]");
+  const selectButton = drawer.locator("button[data-sidebar-select]");
   const checkbox = trashCheckbox(panel, title);
 
   // ── 勾選框上按 Esc：結束選取、抽屜不關、焦點回抽屜內的「選取」鈕 ─────────────────

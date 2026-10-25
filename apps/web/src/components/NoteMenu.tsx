@@ -53,7 +53,7 @@ export interface NoteMenuProps {
 }
 
 /**
- * 內文卡頁頭的 ⋮ 選單（spec D.4）：複製連結（任何角色）＋簡報模式（#229，任何角色）＋AI 修改紀錄＋移動到…／複製到…（#216；選項規則見 `share/GroupTransfer.tsx` 的 `buildTransferOptions`，「複製到我的筆記」已併入「複製到… → 個人空間」）
+ * 內文卡頁頭的 ⋮ 選單（spec D.4）：複製連結（任何角色）＋簡報模式（#229，任何角色）＋AI 修改紀錄＋移動到…／複製到…（#216；選項規則見 `share/GroupTransfer.tsx` 的 `buildTransferOptions`，「複製到我的筆記」已併入「複製到… → 我的筆記」）
  * ＋移到垃圾桶（`permissions.delete`，#175 §8.3；#181 起刪除＝移入垃圾桶）。
  *
  * **移到垃圾桶不確認（spec §6.10.4 D-W7）**：點下選單項即送 DELETE；成功 toast「已移到垃圾桶」，

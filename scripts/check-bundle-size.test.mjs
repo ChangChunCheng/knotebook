@@ -6,7 +6,12 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
+import { MAX_ENTRY_BYTES, VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
+
+// 守 Willie 2026-10-26 裁定的數字（下面兩案明傳 700 * 1024 測判斷本身，與預設值無關）。
+test('BS0 首包上限是 750 KiB', () => {
+  assert.equal(MAX_ENTRY_BYTES, 750 * 1024);
+});
 
 const MARKER_BASE = {
   'index-Abc123.js': 100, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
@@ -105,7 +110,7 @@ test('mermaid chunk 不存在（被靜態 import 併回去）→ throw', () => {
 
 // issue #96：shiki 必須留在自己的 chunk（同 mermaid 那條的理由——唯一允許 import 它的
 // 地方是 lib/code-highlight.ts 的 `import("shiki")`）。它的核心 ~150KB，被靜態 import
-// 併回 entry 的話 entry 會貼著 700KB 上限，症狀是「時而超標」而不是穩定紅。
+// 併回 entry 的話 entry 會貼著首包上限，症狀是「時而超標」而不是穩定紅。
 // ⚠ chunk 名叫 shiki-<hash> 是 vite.config.ts 的 chunkFileNames 改的：shiki 的套件
 // 入口檔叫 index.mjs，Rollup 預設用檔名命名 chunk，會產出第二個 index-<hash>.js、
 // 撞上 entry 偵測（上面「恰一個 entry」那條 fail-closed 就是這樣抓到它的）。

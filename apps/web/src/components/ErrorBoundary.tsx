@@ -39,7 +39,7 @@ import { NarrowTopBar } from "./NarrowTopBar";
  * `versions`；側欄垃圾桶 tab 的 `trash`）。`versions` 是 NotePage 底下的巢狀 lazy：用自己的別名，且五個掛載點都 `import()`
  * 同一個模組 `VersionsLazy`，任一成功後其餘不可能再以 chunk 錯誤失敗，滿足上面的收斂前提
  * （起草裁定 23）。`trash` 同形（#181）：AppShell 的 tabpanel 與 SidebarFooter 兩個掛載點都 `import()` `TrashLazy`、
- * 各包 `TrashLazyBoundary`。測試刻意寫字面 key（釘住 key 名不被改），這裡不匯出常數。
+ * 各包 `SidebarLazyBoundary chunk="trash"`。測試刻意寫字面 key（釘住 key 名不被改），這裡不匯出常數。
  */
 const DEFAULT_CHUNK = "notepage";
 

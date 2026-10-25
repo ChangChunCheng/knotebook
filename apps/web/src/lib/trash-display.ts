@@ -71,12 +71,6 @@ export function splitTrashSections(items: readonly TrashItemDto[]): TrashSection
 }
 
 /**
- * 一份側欄實例（`AppShell` 的靜態卡或抽屜）裡 `TrashPanel` 的「選取」鈕：離開選取模式後焦點交給它。
- * `TrashFooter` 的動作列與 `AppShell` 抽屜的 Esc 共用，免得兩邊的選擇器漂移。
- */
-export const TRASH_SELECT_BUTTON = "[data-sidebar-header] button[data-trash-select]";
-
-/**
  * 選取模式要送出的 id：照清單順序（個人在前），只算目前清單上有的（清單重抓後消失的鍵不計、不送，讀碼發現 22）。
  * 標題列「已選 N 篇」與底部動作列共用。
  */
