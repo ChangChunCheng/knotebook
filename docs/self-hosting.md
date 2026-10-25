@@ -363,6 +363,18 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
    With your own PostgreSQL, run the same SQL with `psql` against it directly.
 3. ⚠ **If you do neither and upgrade again**, every note that still has `deleted_at` set — including ones opened and edited while the previous version ran — goes back into the trash. Those whose original deletion time is already past the retention period are permanently deleted, with their attachments, starting with the first clean-up pass, 5 minutes after the server starts (at most 2,000 per pass, then one pass an hour); edits made to them while rolled back are lost without warning.
 
+**Folders (migration 0034).**
+
+1. **Migration 0034 only adds tables, columns, indexes and triggers**: the `folders` table, the `note_placements` table (where each person filed the notes shared with them), two columns on `notes` that can be empty — `folder_id` (the folder a note is in) and `trash_folder_path` (the folder path kept for a note in the trash) — with their indexes and constraints, and three triggers that keep notes, folders and filed shared notes in the right space. Nothing is filled in: every existing note starts at the top level. Back up the database first as usual, for example `docker compose exec -T db pg_dump -U knotebook knotebook > knotebook-before-upgrade.sql`.
+2. **Rolling back:** the previous version doesn't know about folders, so it lists every note without them. The folders, and where notes are filed, stay in the database and are back after upgrading again — except for what the previous version changes while it runs:
+   - a note moved into a group is taken out of its folder, and is at the group's top level after upgrading again;
+   - deleting a group, with **Give them to an admin** or **Delete everything**, deletes the group's folders too — with **Give them to an admin**, its notes are at the top level of that person's notes after upgrading again;
+   - removing a share, or moving a note into a group, removes where the people it was shared with had filed it;
+   - notes created or copied while rolled back are at the top level.
+
+   A note taken out of the trash while rolled back — by clearing its trash marks as described under **The trash** above — is in its folder after upgrading again if that folder still exists, otherwise at the top level.
+3. **The triggers stay in the database while rolled back** and don't make any of the previous version's writes fail: when it moves a note to another space (into a group, or in a group transfer), they only take the note out of its folder, as described above.
+
 **Upgrading to v0.12 (prebuilt images).**
 
 1. **There is no database migration.** The newest migration is still 0026, from v0.11.0, so nothing in the database changes. Backing up first is still a good habit, for example `docker compose exec -T db pg_dump -U knotebook knotebook > knotebook-before-upgrade.sql` (with your own PostgreSQL, run `pg_dump` against it directly — see [Using your own PostgreSQL](#using-your-own-postgresql)). Coming from v0.10 or earlier, read the sections for the versions in between as well.
