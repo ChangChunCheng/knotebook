@@ -310,7 +310,7 @@ describe("#108 §14.5 拒絕族：四件零副作用逐案照斷", () => {
   //   那條路徑偷 touch」因此零鑑別力，改走 `mcp-edit-note.test.ts:258-268`（D-N 案）的深度
   //   比對：同一顆 clientId 的整個 state（`structuredClone`）逐位元組比對。
   //   突變實測（Task 4 審查輪實跑，`edit-note.ts` 的 `mismatchError` 回傳前偷插一次
-  //   `ctx.presence.touch(args.note_id, ctx.tokenId!, { name: "mut", color: "#000" },
+  //   `ctx.presence.touch(args.note_id, ctx.tokenId!, { name: "mut", color: "#000", handle: "mut", label: "x" },
   //   { kind: "doc-start" })`）：**只有深度比對那一行紅**（`beat` 從 2 變 3、`user.name` 從
   //   `"user-… (claude)"` 變 `"mut"`），`expectNoSideEffects()` 的四件（含 key 集合）排在它
   //   之前先跑、維持全綠——證明 key 集合對「fingerprint_mismatch 偷 touch」這條路徑確定零

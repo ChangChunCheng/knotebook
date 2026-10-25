@@ -1213,3 +1213,5 @@ export * from "./storage.js";
 export * from "./versions.js";
 export * from "./version-names.js";
 export * from "./ai.js";
+export * from "./presence.js";
+export * from "./avatar.js";

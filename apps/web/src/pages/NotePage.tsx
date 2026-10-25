@@ -20,6 +20,7 @@ import {
 import { NotePageControlsContext, type NotePageControls, type OpenEditsState } from "@/lib/note-page-controls";
 import { isOverlayOpen, useVersionsController, VersionsProvider } from "@/lib/versions-context";
 import { createLinkSync, type LinkSync } from "@/collab/link-sync";
+import type { CursorScroller } from "@/collab/cursor-scroll";
 import { useCollab } from "@/collab/useCollab";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { useMemberBlockAnchor } from "@/hooks/useBlockAnchor";
@@ -34,6 +35,8 @@ import { NoteEditor } from "@/components/NoteEditor";
 import { NoteMenu } from "@/components/NoteMenu";
 import { NoteWidthMenu } from "@/components/NoteWidthMenu";
 import { OutdatedClientBanner } from "@/components/OutdatedClientBanner";
+import { useLocalPresenceField } from "@/components/presence/local-field";
+import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
 import { ShareDialog } from "@/components/ShareDialog";
 import { TitleInput } from "@/components/TitleInput";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
@@ -351,6 +354,19 @@ export default function NotePage() {
     noteId,
     onUnauthorized: handleUnauthorized,
     onDocUpdate,
+  });
+
+  // #293 §9.4：scroller 存 ref（函式不能進 setState；頭像列只在點擊當下讀，讀碼發現 9）。
+  const cursorScrollerRef = useRef<CursorScroller | null>(null);
+  const handleCursorScroller = useCallback((scroller: CursorScroller | null) => {
+    cursorScrollerRef.current = scroller;
+  }, []);
+  // #293 §8.1：本分頁在這條連線 awareness 寫 knotebook 欄（PR-1 的 avatar 恆 null；PR-3 改吃 me.avatar）。
+  useLocalPresenceField({
+    provider,
+    role: state.phase === "connected" ? state.role : null,
+    name: user?.displayName ?? null,
+    avatar: null,
   });
 
   // #269 §10.2：段落錨點。root＝NoteEditor 的捲動容器（NoteEditor 以 ref 回報）；組合（ready＝這一篇同步過了）在 useMemberBlockAnchor。
@@ -699,6 +715,7 @@ export default function NotePage() {
             user={{ id: user.id, name: user.displayName }}
             noteId={noteId!}
             onScrollRoot={setAnchorRoot}
+            onCursorScroller={handleCursorScroller}
             notePath={canonicalNotePath(note)}
             headerSlot={
               // #115：頁首滿卡寬（置左置右）——單層 header 自己就是內容列，標題貼左、
@@ -713,6 +730,13 @@ export default function NotePage() {
                   <SidebarDrawerButton />
                   <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
                   <ConnectionBadge state={state} synced={synced} canEdit={roleCanEdit} />
+                  {/* #293：此刻也開著這篇的其他人（spec §9）；只在 connected 時渲染，名單空不佔位。 */}
+                  <PresenceAvatars
+                    provider={provider}
+                    connected={state.phase === "connected"}
+                    myUserId={user.id}
+                    scrollerRef={cursorScrollerRef}
+                  />
                   <LastEditedLabel note={note} onOpenEdits={openEdits} />
                   <ShareDialog note={note} />
                   {/* #297：寬度 icon 只在頁首夠寬時顯示（@container，見 NoteWidthMenu）。 */}
