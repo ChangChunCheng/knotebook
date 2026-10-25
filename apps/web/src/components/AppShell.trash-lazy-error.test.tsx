@@ -99,7 +99,8 @@ describe("AppShell — 垃圾桶 chunk 載入失敗", () => {
     // 底部那份也接住了，但錯誤內容藏起來（面板那份已顯示）
     const footerAlerts = within(aside()).getAllByRole("alert").filter((el) => !panel.contains(el));
     expect(footerAlerts).toHaveLength(1);
-    expect(footerAlerts[0]!.closest(".hidden")).not.toBeNull();
+    // 比對整個 className：沒有 errorClassName 時 alert 直接掛在 aside 下，而桌面 aside 自帶 `hidden md:flex`（toHaveClass 會空真）
+    expect(footerAlerts[0]!.parentElement?.className).toBe("hidden");
 
     expect(screen.queryByText("Something went wrong")).toBeNull();
     expect(within(aside()).getByRole("tablist", { name: "Sidebar sections" })).toBeInTheDocument();
