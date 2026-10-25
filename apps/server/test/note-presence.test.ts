@@ -168,4 +168,14 @@ describe("presence", () => {
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
     s.client.disconnect();
   });
+
+  it("NP-K1 瀏覽器收到的 AI state 帶 `knotebook` agent 標記（#293 §8.2），`user` 只有 name／color", async () => {
+    const s = await scene();
+    await getContent(s.ctx.app, s.note.id, s.token); await tick();
+    await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
+    const st = s.client.provider.awareness!.getStates().get(s.id) as Record<string, unknown>;
+    expect(st.knotebook).toEqual({ v: 1, kind: "agent", handle: s.ownerHandle, label: "claude" });
+    expect(Object.keys(st.user as object).sort()).toEqual(["color", "name"]);
+    s.client.disconnect();
+  });
 });
