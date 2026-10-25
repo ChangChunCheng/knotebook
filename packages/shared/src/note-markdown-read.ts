@@ -23,6 +23,7 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { COLUMNS_OPEN_TAG, columnOpenTag, parseColumnFlex } from "./columns.js";
 import { isPaletteColor } from "./note-colors.js";
 import { clampSizePx } from "./note-sizes.js";
+import { unescapeAttributeAngles } from "./serialized-html.js";
 import { escapeLinkText } from "./site-link.js";
 
 const STYLE_CSS = { textColor: "color", backgroundColor: "background-color" } as const;
@@ -178,7 +179,7 @@ function toBlockHTML(root: Element): string {
   const box = document.createElement("div");
   box.append(root);
   rewrite(box);
-  return box.innerHTML.replace(/\n/g, "&#10;");
+  return unescapeAttributeAngles(box.innerHTML).replace(/\n/g, "&#10;");
 }
 
 /**
