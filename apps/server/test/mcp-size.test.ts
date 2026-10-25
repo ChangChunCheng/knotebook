@@ -175,8 +175,8 @@ describe("#108 tools/list 的脈絡成本（案 11b）", () => {
   // PR1 量的是唯讀憑證（四支工具）；PR2 起讀寫憑證（六支工具）才是最壞情形——`edit_note`／
   // `create_note` 的 input／output schema 一起進脈絡。本案改打讀寫憑證，唯讀憑證只當對照
   // 一起印出來，門檻只釘在讀寫憑證那個數字上。
-  // #239（spec §7.6）：最壞情形換成**讀寫搬移**憑證（十支；`move_note_to_group` 只在 notes:move 時註冊，
-  // `copy_note` 的說明是長版）——被測改它；讀寫（九支）與唯讀（六支）一起印出來當對照，門檻只釘在讀寫搬移那個數字上。
+  // #239（spec §7.6）：最壞情形換成**讀寫搬移**憑證（`move_note_to_group` 只在 notes:move 時註冊，
+  // `copy_note` 的說明是長版）——被測改它；讀寫與唯讀一起印出來當對照，門檻只釘在讀寫搬移那個數字上（支數見下方斷言；#181 起各多 list_trash）。
   it("讀寫搬移憑證的 tools/list 完整 wire 回應 ≤ N_LIST_MAX（讀寫、唯讀憑證當對照）", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
@@ -185,22 +185,22 @@ describe("#108 tools/list 的脈絡成本（案 11b）", () => {
 
     const roRes = await mcpPost(ctx.app, rpc("tools/list"), { token: o.token });
     expect(roRes.statusCode).toBe(200);
-    expect((roRes.json().result.tools as unknown[]).length).toBe(6);
+    expect((roRes.json().result.tools as unknown[]).length).toBe(7);
     const roWire = roRes.body.length;
 
     const rwRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwToken });
     expect(rwRes.statusCode).toBe(200);
-    expect((rwRes.json().result.tools as unknown[]).length).toBe(9);
+    expect((rwRes.json().result.tools as unknown[]).length).toBe(10);
     const rwWire = rwRes.body.length;
 
     const rwmRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwmToken });
     expect(rwmRes.statusCode).toBe(200);
-    expect((rwmRes.json().result.tools as unknown[]).length).toBe(10);
+    expect((rwmRes.json().result.tools as unknown[]).length).toBe(11);
     const rwmWire = rwmRes.body.length;
 
     console.log(
-      `[案 11b] tools/list  唯讀憑證（六支，對照）wire=${roWire}  讀寫憑證（九支，對照）wire=${rwWire}  ` +
-        `讀寫搬移憑證（十支，被測）wire=${rwmWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmWire / N_LIST_MAX) * 100).toFixed(1)}%`
+      `[案 11b] tools/list  唯讀憑證（七支，對照）wire=${roWire}  讀寫憑證（十支，對照）wire=${rwWire}  ` +
+        `讀寫搬移憑證（十一支，被測）wire=${rwmWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmWire / N_LIST_MAX) * 100).toFixed(1)}%`
     );
     expect(rwmWire).toBeLessThanOrEqual(N_LIST_MAX);
   });

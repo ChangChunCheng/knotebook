@@ -13,8 +13,8 @@
  * `{list_notes, read_note_outline, read_note_section, search_notes}`）、PR2 起
  * `mcp-tools-list.test.ts`（P13：`{edit_note, create_note}`）；#200 起 P13 的集合是
  * `{create_note, create_transfer_token, edit_note}`；#180 起加 `copy_note`、`move_note_to_group`，#200 §9.3 M7 再加 `read_note_image`，集合是
- * `{copy_note, create_note, create_transfer_token, edit_note, move_note_to_group, read_note_image}`。**新增工具時要一併把它
- * 加進其中一個名字集合，否則等於沒有守衛。**
+ * `{copy_note, create_note, create_transfer_token, edit_note, move_note_to_group, read_note_image}`；#181 PR-2d 加 `list_trash`。
+ * **新增工具時要一併把它加進其中一個名字集合，否則等於沒有守衛。**
  *
  * ⚠ 新增工具一律 `z.object(<shape>).strict()` 註冊；`test/unit/mcp-register.test.ts`（U-F1，覆蓋 authKind × scope × 有無 collab 的八種組合）的名字常數也要補——它會紅。
  *
@@ -27,9 +27,10 @@
  * ctx.editing` 都在時註冊——沒有 live doc 的來源就沒有「讀最新內容」這回事，寧可整條不宣告
  * 也不要掛一支只會回半套答案的工具（照抄 `routes/notes.ts` 對內容端點的既有判準）。判準存在
  * `canRead` 變數，#93 起 search_notes 的變體（description 與 `sectionId` 的說明）也看它。
- * `list_notes`／`search_notes` 只查 DB，永遠註冊；`read_note_image`（#200）只讀 DB 與磁碟，同樣在閘門外、任何憑證都註冊。
- * **這道閘門由兩案守**（都是無 collab 的 app，斷名字集合）：`test/mcp-tools-list.test.ts` 的 D-A 案（讀寫憑證，六支）、
- * `test/mcp-create-note.test.ts` 的 D-M 案（讀寫搬移憑證，七支，多 `move_note_to_group`）。`create_note`／`copy_note`／
+ * `list_notes`／`search_notes` 只查 DB，永遠註冊；`read_note_image`（#200）只讀 DB 與磁碟，同樣在閘門外、任何憑證都註冊；
+ * `list_trash`（#181）只查 DB，同上。
+ * **這道閘門由兩案守**（都是無 collab 的 app，斷名字集合）：`test/mcp-tools-list.test.ts` 的 D-A 案（讀寫憑證；標題含「D-M 不進閘門，D-A」）、
+ * `test/mcp-create-note.test.ts` 的 D-M 案（讀寫搬移憑證，比 D-A 多 `move_note_to_group`；標題含「（D-M）」）。`create_note`／`copy_note`／
  * `move_note_to_group` 都在閘門外（D-M）。
  * ⚠ 但它們**只擋得住「悄悄搬邊」，擋不住「放錯邊」**：新增一支工具一定會讓那一案紅（名字
  * 集合對不上），可是把名字補進 `LIVE_DOC_TOOLS`／`DB_ONLY_TOOLS` 哪一邊是人判的——
@@ -84,6 +85,7 @@ import {
   readNoteImageInput,
   readNoteImageOutput,
 } from "./tools/read-note-image.js";
+import { LIST_TRASH_DESCRIPTION, listTrash, listTrashInput, listTrashOutput } from "./tools/list-trash.js";
 import { canMoveNotes, canWriteNotes } from "./write-scope.js";
 
 export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
@@ -174,7 +176,7 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
 
   // #180 spec §5.1：move_note_to_group 在 collab 閘門外（只碰 DB；踢線經 collabHooks）。
   // #239：沒 notes:move 不註冊（同 canWrite 慣例：不宣告服務不了的工具）——session 與讀寫搬移 token 才有；讀寫 token 呼叫它
-  // 拿到 SDK 的 Tool not found。守衛＝`mcp-tools-list` 的「#239：讀寫無搬移憑證 → 九支」案。
+  // 拿到 SDK 的 Tool not found。守衛＝`mcp-tools-list` 的「#239：讀寫無搬移憑證」案（標題含「不含 move_note_to_group」）。
   // `.strict()` 註冊（spec §4.7）；annotations 兩值都等於 SDK 預設，寫出來讓 client 不必依賴預設——**不宣稱任何 client 因此改變行為**。
   // 守衛：annotations＝`mcp-tools-list` V11；strict＝`mcp-move` M-G2；runTool＝P13。
   if (canMove) {
@@ -227,6 +229,14 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
       );
     }
   }
+
+  // #181：讀取類，所有閘門外、任何憑證都註冊（只查 DB）；不帶 annotations（同其他讀取工具）。
+  // 守衛：集合＝`mcp-tools-list`、`unit/mcp-register`（U-F1）；runTool＝P13。
+  server.registerTool(
+    "list_trash",
+    { description: LIST_TRASH_DESCRIPTION, inputSchema: z.object(listTrashInput).strict(), outputSchema: listTrashOutput },
+    async args => runTool("list_trash", ctx, () => listTrash(args, ctx))
+  );
 
   // #200 §7.1：read_note_image 在**所有閘門外**——讀寫／唯讀 token 與 session 都註冊（只讀 DB 與磁碟，不讀 live doc）。
   // 描述依 authKind 二選一（session 版不提 create_transfer_token，它在 session 不存在）。#180 §9-3：註冊順序排最後。

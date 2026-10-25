@@ -39,14 +39,14 @@ function expectSameSchema(field: z.ZodTypeAny, base: z.ZodTypeAny): void {
 
 const LIVE = { collab: {} as never, editing: {} as never };
 // #239：讀寫 token 不再註冊 move_note_to_group（要 notes:move）；讀寫搬移 token 與 session 才有。
-export const RWM_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "read_note_image"];
-export const RW_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "copy_note", "create_transfer_token", "read_note_image"];
-export const RO_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "create_transfer_token", "read_note_image"];
-export const SESSION = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "read_note_image"];
-export const RO_NO_COLLAB = ["list_notes", "search_notes", "create_transfer_token", "read_note_image"];
-export const SESSION_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "read_note_image"];
-export const RWM_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "read_note_image"];
-export const RW_NO_COLLAB = ["list_notes", "search_notes", "create_note", "copy_note", "create_transfer_token", "read_note_image"];
+export const RWM_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "list_trash", "read_note_image"];
+export const RW_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "copy_note", "create_transfer_token", "list_trash", "read_note_image"];
+export const RO_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "create_transfer_token", "list_trash", "read_note_image"];
+export const SESSION = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "list_trash", "read_note_image"];
+export const RO_NO_COLLAB = ["list_notes", "search_notes", "create_transfer_token", "list_trash", "read_note_image"];
+export const SESSION_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "list_trash", "read_note_image"];
+export const RWM_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "list_trash", "read_note_image"];
+export const RW_NO_COLLAB = ["list_notes", "search_notes", "create_note", "copy_note", "create_transfer_token", "list_trash", "read_note_image"];
 
 const CASES: Array<[string, Partial<McpToolCtx>, string[]]> = [
   ["讀寫搬移 token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:move" as never }, RWM_TOKEN],

@@ -8,15 +8,13 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
 import { TRASH_BATCH_MAX, type NoteDto, type TrashPurgeResultDto, type TrashRestoreResultDto } from "@knotebook/shared";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../auth/tx/admin-site-settings.js";
 import { isRetryableTxError } from "../db/pg-errors.js";
-import { siteSettings } from "../db/schema.js";
 import { sendError } from "../http/errors.js";
 import { loadNoteFields, toNoteDto } from "../notes/note-dto.js";
 import { UUID_RE, resolveNoteAccess } from "../notes/service.js";
-import { listTrash } from "../trash/list.js";
+import { listTrash, readTrashRetentionDays } from "../trash/list.js";
 import { purgeTrashed, restoreTrashed, type TrashBatchResult, type TrashServiceDeps } from "../trash/service.js";
 
 /** 上限算**原始個數**（去重之前；gate r1 M6）。 */
@@ -35,11 +33,7 @@ function parseIds(body: unknown): string[] | null {
 export function trashRoutes(deps: TrashServiceDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.get("/api/trash", { preHandler: app.authenticate }, async (request, reply) => {
-      const [row] = await deps.db
-        .select({ retentionDays: siteSettings.trashRetentionDays })
-        .from(siteSettings)
-        .where(eq(siteSettings.singleton, true))
-        .limit(1);
+      const row = await readTrashRetentionDays(deps.db);
       if (!row) {
         request.log.error({ table: "site_settings" }, SITE_SETTINGS_MISSING_MESSAGE);
         return sendError(reply, 500, "internal", "伺服器內部錯誤");
