@@ -17,21 +17,39 @@ export function remainingLabel(purgeAt: string | null, now: number, t: Translate
   return t("trash.daysLeft", { count: Math.max(1, Math.ceil((Date.parse(purgeAt) - now) / DAY_MS)) });
 }
 
-/** 列的第二行：個人「剩 N 天」；工作坊「群組名 · X 刪除 · 剩 N 天」。保留天數 NULL 時時間段改成刪除日期。 */
+/**
+ * 每個語系每種格式只建一個 `Intl.DateTimeFormat`（final review M-1：1000 列每次新建約 70 ms）。
+ * `date` 的空 options 與 `toLocaleDateString(locale)` 同預設（年月日）；Invalid Date 照 `toLocale*` 回 "Invalid Date"、不丟錯。
+ */
+const DATE_FORMATS = { date: {}, dateTime: { dateStyle: "short", timeStyle: "short" } } as const;
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatDate(iso: string, kind: keyof typeof DATE_FORMATS, locale: string): string {
+  const key = `${kind}|${locale}`;
+  let formatter = formatters.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat(locale, DATE_FORMATS[kind]);
+    formatters.set(key, formatter);
+  }
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? String(date) : formatter.format(date);
+}
+
+/** 列的第二行：個人「剩 N 天」；工作坊「群組名 · X 刪除 · 剩 N 天」。保留天數 NULL 時時間段改成刪除日期（用到才格式化）。 */
 export function trashDetailLine(item: TrashItemDto, ctx: { now: number; t: Translate; locale: string }): string {
   const { now, t, locale } = ctx;
   const remaining = remainingLabel(item.purgeAt, now, t);
-  const date = new Date(item.deletedAt).toLocaleDateString(locale);
+  const date = () => formatDate(item.deletedAt, "date", locale);
   const segments = noteLocationSegments(item);
-  if (item.group === null) return [...segments, remaining ?? t("trash.deletedOn", { date })].join(" · ");
+  if (item.group === null) return [...segments, remaining ?? t("trash.deletedOn", { date: date() })].join(" · ");
   const deletedBy = t("trash.deletedByName", { name: item.deletedBy?.displayName ?? t("trash.unknownUser") });
   // 前面已有「X 刪除」，NULL 保留天數時只放日期、不重複「刪除」
-  return [...segments, deletedBy, remaining ?? date].join(" · ");
+  return [...segments, deletedBy, remaining ?? date()].join(" · ");
 }
 
 /** 列的 `title`：移入時間與預計永久刪除時間。 */
 export function trashItemTitle(item: TrashItemDto, ctx: { t: Translate; locale: string }): string {
-  const fmt = (iso: string) => new Date(iso).toLocaleString(ctx.locale, { dateStyle: "short", timeStyle: "short" });
+  const fmt = (iso: string) => formatDate(iso, "dateTime", ctx.locale);
   return item.purgeAt !== null
     ? ctx.t("trash.titleTimes", { deletedAt: fmt(item.deletedAt), purgeAt: fmt(item.purgeAt) })
     : ctx.t("trash.titleTimesNoPurge", { deletedAt: fmt(item.deletedAt) });

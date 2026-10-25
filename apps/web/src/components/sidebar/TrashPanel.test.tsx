@@ -11,7 +11,14 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { hoverReveal } from "@/components/ui/reveal";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { TRASH_ME, trashItem, trashList } from "@/test/trash-fixtures";
+import { trashDetailLine } from "@/lib/trash-display";
 import { TrashPanel } from "./TrashPanel";
+
+// 只包一層計數（SM16：勾一列時哪些列重算了第二行），行為照原本。
+vi.mock("@/lib/trash-display", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/trash-display")>();
+  return { ...actual, trashDetailLine: vi.fn(actual.trashDetailLine) };
+});
 
 // 垃圾桶 tab 的面板（平常）、確認框（plan T4）；選取模式（plan T5 SM*，動作列在 SidebarFooter.test.tsx）。
 
@@ -652,6 +659,58 @@ describe("TrashPanel（平常）", () => {
       await i18n.changeLanguage("en");
     }
   });
+
+  // final review N-4：列的還原送出中，確認框的「永久刪除」若可按會被 `exclusive` 靜默吞掉——改成 disabled。
+  it("TP13 列的還原送出中：單篇永久刪除框的確認鈕 disabled、按了不送；還原回來後可按、送一次", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = stubServer({ items: [P1, P2], hold });
+    renderPanel();
+    fireEvent.click(await within(panel()).findByRole("button", { name: "Restore p1" }));
+    await waitFor(() => expect(server.posts("/api/trash/restore")).toEqual([{ ids: ["p1"] }]));
+
+    const menu = await openRowMenu("p2");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete permanently" }));
+    const dialog = await screen.findByRole("dialog", { name: "Permanently delete 1 note?" });
+    const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+    await waitFor(() => expect(confirm).toBeDisabled());
+    fireEvent.click(confirm);
+    await act(async () => {});
+    expect(server.posts("/api/trash/purge")).toEqual([]);
+
+    await act(async () => {
+      release();
+    });
+    expect(await screen.findByText("Restored 1 note", { exact: true })).toBeInTheDocument();
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(server.posts("/api/trash/purge")).toEqual([{ ids: ["p2"] }]);
+  });
+
+  it("TP13b 列的還原送出中：清空框的確認鈕 disabled；還原回來後可按", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = stubServer({ items: [P1, P2], hold });
+    renderPanel();
+    fireEvent.click(await within(panel()).findByRole("button", { name: "Restore p1" }));
+    await waitFor(() => expect(server.posts("/api/trash/restore")).toEqual([{ ids: ["p1"] }]));
+
+    fireEvent.click(within(header()).getByRole("button", { name: "Empty" }));
+    const dialog = await screen.findByRole("dialog", { name: "Empty the trash?" });
+    const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+    await waitFor(() => expect(confirm).toBeDisabled());
+
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(server.posts("/api/trash/purge")).toEqual([]);
+  });
 });
 
 const W2 = trashItem({ id: "w2", title: "w2", group: RD, deletedBy: AMY }, { deletedDaysAgo: 3 });
@@ -801,5 +860,20 @@ describe("TrashPanel（選取模式）", () => {
     });
     expect(await within(panel()).findByText("The trash is empty.", { exact: true })).toBeInTheDocument();
     expect(within(header()).getByRole("button", { name: "Select all" })).toBeDisabled();
+  });
+
+  // final review M-1：1000 篇時每勾一列都重繪全部列＋重算日期。只有勾選狀態變了的列重算第二行。
+  it("SM16 勾一列只重算那一列；Shift 範圍只重算新勾的列", async () => {
+    await renderSelecting();
+    const detailCalls = vi.mocked(trashDetailLine);
+    detailCalls.mockClear();
+    fireEvent.click(checkbox("p1"));
+    expect(checkbox("p1")).toBeChecked();
+    expect(detailCalls.mock.calls.map(([item]) => item.id)).toEqual(["p1"]);
+
+    detailCalls.mockClear();
+    fireEvent.click(checkbox("w1"), { shiftKey: true });
+    expect(checkedIds()).toEqual(["p1", "p2", "w1"]);
+    expect(detailCalls.mock.calls.map(([item]) => item.id)).toEqual(["p2", "w1"]);
   });
 });

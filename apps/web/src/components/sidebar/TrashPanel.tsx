@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TrashItemDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
@@ -110,8 +110,11 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
   );
 }
 
-/** 選取模式的列：整列是 `<label>`，點文字或勾選框都切換（spec §6.10.2）。 */
-function SelectableTrashRow({
+/**
+ * 選取模式的列：整列是 `<label>`，點文字或勾選框都切換（spec §6.10.2）。
+ * memo：勾一列時其他列不重繪、不重算日期（final review M-1）——`now`／`onToggle` 由 `TrashPanel` 保持穩定。
+ */
+const SelectableTrashRow = memo(function SelectableTrashRow({
   item,
   now,
   checked,
@@ -147,7 +150,7 @@ function SelectableTrashRow({
       </label>
     </li>
   );
-}
+});
 
 function TrashSection({ label, items, renderItem }: { label: string; items: TrashItemDto[]; renderItem: (item: TrashItemDto) => ReactNode }) {
   const headingId = useId();
@@ -211,10 +214,14 @@ export function TrashPanel() {
     endSelectionIfActive();
   }
 
-  function toggleRow(key: string, shiftKey: boolean): void {
-    const { order } = splitTrashSections(items);
-    updateSelection(shiftKey ? { type: "range", key, order } : { type: "toggle", key });
-  }
+  // 穩定（清單重抓才換）：選取列 memo 靠它（final review M-1）。
+  const toggleRow = useCallback(
+    (key: string, shiftKey: boolean): void => {
+      const { order } = splitTrashSections(trash.data?.items ?? []);
+      updateSelection(shiftKey ? { type: "range", key, order } : { type: "toggle", key });
+    },
+    [trash.data, updateSelection],
+  );
 
   async function exclusive(run: () => Promise<void>): Promise<void> {
     if (busyRef.current) return;
@@ -333,7 +340,8 @@ export function TrashPanel() {
     }
     if (items.length === 0) return <p className={MESSAGE_CLASS}>{t("trash.empty")}</p>;
     const { personal, workspace } = splitTrashSections(items);
-    const now = Date.now();
+    // 「剩 N 天」以清單抓到的時間計（每次重抓更新）：勾選等重繪不換值，選取列的 memo 才有效。
+    const now = trash.dataUpdatedAt;
     const renderItem = (item: TrashItemDto) =>
       selection.active ? (
         <SelectableTrashRow
@@ -410,7 +418,8 @@ export function TrashPanel() {
       <PurgeConfirmDialog
         count={1}
         open={purgeId !== null}
-        pending={purge.isPending}
+        // 列的還原送出中也 disabled：`exclusive` 會吞掉這一下（final review N-4）。
+        pending={purge.isPending || restore.isPending}
         onConfirm={() => {
           if (purgeId === null) return;
           const target = purgeId;
@@ -426,7 +435,7 @@ export function TrashPanel() {
         items={items}
         meHandle={user?.handle ?? null}
         open={emptyOpen}
-        pending={purge.isPending}
+        pending={purge.isPending || restore.isPending}
         onConfirm={() => {
           // 開框後清單被重抓成 0 篇（別處已清掉）：不送空請求、不報「已永久刪除 0 篇」，直接關框。
           if (items.length === 0) {

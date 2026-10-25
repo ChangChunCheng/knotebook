@@ -88,11 +88,11 @@ export function noteLocationSegments(note: { group: { name: string } | null }): 
 
 /**
  * 筆記的位置標籤（spec §9-2）：搜尋結果與最近 tab 的第二行都只經這一支；
- * 群組段與垃圾桶第二行（`lib/trash-display.ts`）都經 `noteLocationSegments`，步驟 3 只改那一支。
+ * 個人段、群組段與垃圾桶第二行（`lib/trash-display.ts`）都經 `noteLocationSegments`，步驟 3 只改那一支。
  */
 export function noteLocationLabel(note: NoteDto, groupIds: ReadonlySet<string>, t: Translate): string {
   const bucket = noteBucket(note, groupIds);
-  if (bucket.kind === "myNotes") return t("sidebar.myNotes");
+  if (bucket.kind === "myNotes") return [t("sidebar.myNotes"), ...noteLocationSegments(note)].join(" › ");
   if (bucket.kind === "group") return t("sidebar.locationGroup", { group: noteLocationSegments(note).join(" › ") });
   return t("sidebar.locationShared", { role: t(`roles.${note.role}`) });
 }

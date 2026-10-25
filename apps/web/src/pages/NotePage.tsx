@@ -542,8 +542,8 @@ export default function NotePage() {
       const target = focusTitleAfterRestoreRef.current;
       focusTitleAfterRestoreRef.current = null;
       if (target === null || target !== noteId) return;
-      // 頁首唯一的 input 是 TitleInput（唯讀時是 h1，就不移）。
-      header.querySelector<HTMLInputElement>("input")?.focus();
+      // TitleInput 的 input（唯讀時是 h1，就不移）。
+      header.querySelector<HTMLInputElement>("input[data-note-title-input]")?.focus();
     },
     [noteId],
   );

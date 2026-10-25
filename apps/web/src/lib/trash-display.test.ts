@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NoteDto, TrashItemDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { EDITOR_PERMS, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
@@ -99,6 +99,33 @@ describe("trashItemTitle", () => {
     expect(noPurge).toContain(deletedAt);
     expect(noPurge).not.toContain(purgeAt);
     expect(noPurge).not.toContain("to be permanently deleted");
+  });
+});
+
+describe("日期 formatter 快取（final review M-1）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // 每案用別處沒用過的語系：快取是模組層的，用過的語系不會再建。
+  it("TD8 同語系每種格式只建一次 Intl.DateTimeFormat；剩餘天數有值時不格式化刪除日期；輸出同 toLocale*", () => {
+    const ctor = vi.spyOn(Intl, "DateTimeFormat");
+    const items = [item({ id: "a" }), item({ id: "b", deletedAt: iso(NOW - 5 * DAY_MS) }), item({ id: "c", group: GROUP })];
+
+    for (const i of items) trashDetailLine(i, { now: NOW, t, locale: "fr-CA" });
+    expect(ctor).not.toHaveBeenCalled();
+
+    const titles = items.map((i) => trashItemTitle(i, { t, locale: "fr-CA" }));
+    const lines = items.map((i) => trashDetailLine({ ...i, purgeAt: null }, { now: NOW, t, locale: "fr-CA" }));
+    expect(ctor).toHaveBeenCalledTimes(2);
+    items.forEach((i, n) => {
+      expect(titles[n]).toContain(new Date(i.deletedAt).toLocaleString("fr-CA", SHORT));
+      expect(titles[n]).toContain(new Date(i.purgeAt!).toLocaleString("fr-CA", SHORT));
+      expect(lines[n]).toContain(new Date(i.deletedAt).toLocaleDateString("fr-CA"));
+    });
+
+    trashItemTitle(items[0]!, { t, locale: "de-CH" });
+    expect(ctor).toHaveBeenCalledTimes(3);
   });
 });
 
