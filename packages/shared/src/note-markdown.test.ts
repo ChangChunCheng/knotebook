@@ -35,6 +35,14 @@ describe("restoreMermaidBlocks", () => {
     const col0 = (out[0] as { children: Array<{ children: unknown[] }> }).children[0]!;
     expect(col0.children[0]).toEqual({ type: "mermaid", props: { code: "graph TD" } });
   });
+  it("NM-ID：輸入帶字串 id → 還原後保留同一個 id（預覽 diff 才配得到）；非字串 id 不帶", () => {
+    const out = restoreMermaidBlocks([
+      { id: "m1", type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph TD" }] },
+      { id: 7, type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph LR" }] },
+    ]);
+    expect(out[0]).toEqual({ id: "m1", type: "mermaid", props: { code: "graph TD" } });
+    expect(out[1]).toEqual({ type: "mermaid", props: { code: "graph LR" } });
+  });
 });
 
 describe("rebindWikilinks（唯一命中才綁）", () => {

@@ -18,7 +18,7 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, selectionTouchesColumns, type PreparedResult } from "@/ai/apply";
+import { anchorPlacement, applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, selectionTouchesColumns, type PreparedResult } from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { aiMarkdownOf } from "@/ai/note-markdown";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
@@ -179,17 +179,17 @@ export function AiSessionProvider(props: {
     setState(IDLE_STATE);
   }, []);
 
-  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空／含並排→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
+  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空／檢查不過→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
   const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
     const ed = editorRef.current;
     const markdown = stripTextWrapper(raw);
-    const prepared = prepareAiResult(ed, markdown, { notes: notesRef.current });
+    const prepared = prepareAiResult(ed, markdown, { notes: notesRef.current, placement: anchorPlacement(ed, target.anchor.blockIds) });
     if ("empty" in prepared) {
       setState({ phase: "error", target, request, code: "empty_result" });
       return;
     }
-    if ("unsupported" in prepared) {
-      setState({ phase: "error", target, request, code: "unsupported_block" }); // PR-1 過渡守衛：不套用、不留預覽（PR-2 換成正式驗證）
+    if ("invalid" in prepared) {
+      setState({ phase: "error", target, request, code: prepared.invalid }); // 並排 PR-2（spec §11.6）：與 MCP 同一套檢查不過 → 不建預覽、不套用
       return;
     }
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));
@@ -236,7 +236,12 @@ export function AiSessionProvider(props: {
         () => {
           if (abortRef.current !== controller) return;
           abortRef.current = null;
-          finish(target, request, partialRef.current);
+          try {
+            finish(target, request, partialRef.current);
+          } catch {
+            // 下面的失敗回呼接不到這裡丟的例外：任何意外都收成 error 態，框不停在串流中
+            setState({ phase: "error", target, request, code: "internal" });
+          }
         },
         (err: unknown) => {
           if (abortRef.current !== controller) return;

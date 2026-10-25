@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { ShowSelectionExtension } from "@blocknote/core/extensions";
 import { INSTRUCT_ACTION_ID, REWRITE_ACTION_ID, SUMMARIZE_ACTION_ID, type AiActionDto, type NoteDto } from "@knotebook/shared";
 import i18n from "@/i18n";
@@ -17,9 +17,10 @@ import {
   type AiCall,
   type AnyEditor,
 } from "@/test/ai-host";
-import { P, row, withChildren } from "@/test/columns-fixtures";
+import { IMG, P, row, shape, withChildren } from "@/test/columns-fixtures";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { activeAnchorOf, useAiSession, type AiSessionValue } from "./AiSession";
+import { SelectionAiController } from "./SelectionAiController";
 
 // 包一層照呼叫原實作的 spy（斷言自動套用寫入的陣列身分）；不用 automock——那會讓套用變成什麼都不做。
 vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
@@ -201,17 +202,185 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     expect(session.state.phase === "error" && session.state.code).toBe("empty_result");
   });
 
-  // 並排 PR-1 過渡守衛（T3b）：AI 結果含並排 → error 態 unsupported_block，不套用、不留預覽；PR-2 換成正式驗證。
-  it("GS1：串流完成的內容含正規形兩欄 → error 態 unsupported_block、文件不變（direct 模式也不自動套用）", async () => {
+  // 並排 PR-2（spec §11.6 第 1 點）：AI 結果走與 MCP 相同的檢查；不合格 → error 態、不建預覽、不套用。
+  it.each([
+    ["direct", REWRITE],
+    ["preview", SUMMARIZE],
+  ])("GS1（%s）：串流完成的內容含排版用的 flex div（S7）→ error 態 unsupported_columns、文件不變、沒有寫入", async (_mode, action) => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     const before = docText();
-    startAction(REWRITE.id);
-    await finishStream(ai.calls[0]!, `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`);
+    startAction(action.id);
+    await finishStream(ai.calls[0]!, `<div style="display:flex">\n\nA\n\n</div>`);
     const s = session.state;
     expect(s.phase).toBe("error");
-    expect(s.phase === "error" && s.code).toBe("unsupported_block");
+    expect(s.phase === "error" && s.code).toBe("unsupported_columns");
     expect(docText()).toBe(before);
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+  });
+
+  it("GS2：內容含裸 <img width> → error 態 unsupported_size", async () => {
+    const { ai } = await mount();
+    openOn("p1", 0, 5);
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, '<img src="/x" width="300">');
+    expect(session.state.phase === "error" && session.state.code).toBe("unsupported_size");
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+  });
+
+  it("MM3（#94）：選取涵蓋 mermaid 圖、AI 只改段落文字 → 自動套用後圖仍是 mermaid block、code 不變", async () => {
+    const CODE = "graph TD; A-->B";
+    const { ai } = await mount({ doc: [P("old words", "p1"), { id: "m", type: "mermaid", props: { code: CODE } }, P("tail", "p3")] });
+    act(() => {
+      editor.setSelection("p1", "p3"); // 圖在中間（mermaid 沒有 content，不能當選取端點）
+    });
+    act(() => session.open());
+    expect(session.state.phase === "input" && session.state.target.anchor.blockIds).toEqual(["p1", "m", "p3"]);
+    startAction(REWRITE.id);
+    const sent = ai.calls[0]!.body.text;
+    expect(sent).toContain("```mermaid\n" + CODE + "\n```"); // fixture 自檢：送出的是 fence
+    await finishStream(ai.calls[0]!, sent.replace("old", "new"));
+    expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
+    const doc = editor.document as Array<{ type: string; props: Record<string, unknown>; content?: unknown }>;
+    expect(doc.map((b) => b.type)).toEqual(["paragraph", "mermaid", "paragraph"]);
+    expect(JSON.stringify(doc[0]!.content)).toContain("new words");
+    expect(doc[1]!.props.code).toBe(CODE);
+  });
+
+  it("GS7（review r1 N2）：串流完成後 finish 意外丟例外 → error 態 internal（不卡在串流中）、沒有寫入、沒有未處理的 rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { ai } = await mount();
+      openOn("p1", 0, 5);
+      startAction(REWRITE.id);
+      // finish 的第一步 anchorPlacement 讀 getParentBlock：在這裡造一個非預期的例外
+      vi.spyOn(editor, "getParentBlock").mockImplementation(() => {
+        throw new Error("boom");
+      });
+      await finishStream(ai.calls[0]!, "REWRITTEN");
+      expect(session.state.phase === "error" && session.state.code).toBe("internal");
+      expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("GS8（review r1 I1）：預覽期間錨點被縮排、按套用 → 回 false、toast「原文已變更」、文件不變、沒有巢狀列", async () => {
+    const { ai } = await mount({ doc: [P("prev", "p0"), P("x words", "x")] });
+    openOn("x", 0, 1);
+    startAction(SUMMARIZE.id);
+    await finishStream(ai.calls[0]!, ROW2);
+    expect(phase()).toBe("done");
+    act(() => {
+      editor.setTextCursorPosition("x", "end");
+      editor.nestBlock();
+    });
+    expect(phase()).toBe("done"); // 游標在錨點內，D12 不關
+    const before = docText();
+    let applied = true;
+    act(() => {
+      applied = session.apply(true);
+    });
+    expect(applied).toBe(false);
+    expect(await screen.findByText("The original text changed since this result was generated, so it wasn't applied.")).toBeInTheDocument();
+    expect(docText()).toBe(before);
+    expect(shape(editor)).toBe("paragraph:prev{paragraph:x words}");
+  });
+
+  it("GS6：AI 回了 core parse 會丟例外的內容 → error 態 unsupported_block（不卡在串流中）、框顯示錯誤文案、沒有寫入、沒有未處理的 rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // 照 SelectionAiBox.test 的真實掛法：SelectionAiController（渲染框）與 Probe 一起當 host 的 children
+      editor = createTestEditor(DOC);
+      const ai = stubAiFetch({ actions: ACTIONS });
+      renderAiHost({ editor, children: <><SelectionAiController /><Probe /></> });
+      await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
+      openOn("p1", 0, 5);
+      const before = docText();
+      startAction(REWRITE.id);
+      await finishStream(ai.calls[0]!, '<div data-content-type="paragraph">x</div>');
+      expect(session.state.phase === "error" && session.state.code).toBe("unsupported_block");
+      const region = await screen.findByTestId("selection-ai-box");
+      expect(await within(region).findByRole("alert")).toHaveTextContent("That content contains a block type this note can't store.");
+      expect(docText()).toBe(before);
+      expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0)); // 讓 unhandledRejection 有機會先觸發
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  const ROW2 = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1.5">\n\nB\n\n</div>\n</div>`;
+  it("GS5（Q6）：錨點在欄內、AI 回正規形並排 → error 態 unsupported_columns；錨點在頂層 → 自動套用成一列", async () => {
+    const { ai } = await mount({ doc: [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r")] });
+    openOn("b1", 0, 1);
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, ROW2);
+    expect(session.state.phase === "error" && session.state.code).toBe("unsupported_columns");
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+    act(() => session.close());
+    openOn("x", 0, 1);
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[1]!, ROW2);
+    expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
+    expect(shape(editor)).toBe("ROW[COL(paragraph:A) | COL(paragraph:B)]  ROW[COL(paragraph:a) | COL(paragraph:b)]");
+  });
+
+  it("GS3（#305 站內 AI 半）：AI 只改一個字 → 套用後圖片寬度與兩張表的欄寬（含合併表頭的空段）都保留", async () => {
+    const table = (id: string, columnWidths: (number | undefined)[], rows: unknown[]) => ({
+      id,
+      type: "table",
+      content: { type: "tableContent", headerRows: 1, columnWidths, rows },
+    });
+    const t1 = table("t1", [120, undefined], [{ cells: ["a", "b"] }, { cells: ["c", "d"] }]);
+    const t2 = table("t2", [120, undefined, 80], [{ cells: [{ type: "tableCell", props: { colspan: 2 }, content: "ab" }, "c"] }, { cells: ["d", "e", "f"] }]);
+    const { ai } = await mount({ doc: [P("old words", "p1"), IMG("i1", 300), t1, t2] });
+    act(() => {
+      editor.setSelection("p1", "t2");
+    });
+    act(() => session.open());
+    expect(session.state.phase === "input" && session.state.target.anchor.blockIds).toEqual(["p1", "i1", "t1", "t2"]);
+    startAction(SUMMARIZE.id);
+    const sent = ai.calls[0]!.body.text;
+    await finishStream(ai.calls[0]!, sent.replace("old", "new"));
+    expect(phase()).toBe("done");
+    let applied = false;
+    act(() => {
+      applied = session.apply(true);
+    });
+    expect(applied).toBe(true);
+    const doc = editor.document as Array<{ type: string; content?: unknown; props: Record<string, unknown> }>;
+    expect(doc.map((b) => b.type)).toEqual(["paragraph", "image", "table", "table"]);
+    expect(JSON.stringify(doc[0]!.content)).toContain("new words");
+    expect(doc[1]!.props.previewWidth).toBe(300);
+    expect((doc[2]!.content as { columnWidths: unknown[] }).columnWidths[0]).toBe(120);
+    const ws = (doc[3]!.content as { columnWidths: unknown[] }).columnWidths;
+    expect(ws).toHaveLength(3);
+    expect(ws[0]).toBe(120);
+    expect(Object.is(ws[1], undefined)).toBe(true);
+    expect(ws[2]).toBe(80);
+  });
+
+  it("GS4：只選段落的文字、圖片是它的縮排子 block → direct 動作不自動套用（hasNonTextBlock 看子孫）", async () => {
+    const { ai } = await mount({ doc: [withChildren(P("t", "p1"), [IMG("i1")])] });
+    openOn("p1", 0, 1);
+    expect(session.state.phase === "input" && session.state.target.anchor.blockIds).toEqual(["p1"]);
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, "T");
+    const s = session.state;
+    expect(s.phase).toBe("done");
+    expect(s.phase === "done" && s.applied).toBeNull();
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
