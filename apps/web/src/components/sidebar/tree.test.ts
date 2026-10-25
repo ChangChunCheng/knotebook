@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { GroupDto, NoteDto, NotePermissions } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { adminRole, EDITOR_PERMS, groupDto, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
-import { buildTabNodes, noteBucket, noteLocationLabel, noteLocationSegments, partitionNotes, recentNotes } from "./tree";
+import { buildTabNodes, hasNoteNodes, noteBucket, noteLocationLabel, noteLocationSegments, partitionNotes, recentNotes } from "./tree";
 
 function note(id: string, over: Partial<NoteDto> = {}): NoteDto {
   return {
@@ -187,5 +187,24 @@ describe("noteLocationSegments", () => {
   it("群組筆記＝[群組名]；個人＝[]", () => {
     expect(noteLocationSegments({ group: { name: "Workshop A" } })).toEqual(["Workshop A"]);
     expect(noteLocationSegments({ group: null })).toEqual([]);
+  });
+});
+
+// ── TR7：樹裡有沒有筆記（PR-2c 的「選取」鈕可不可按）
+describe("hasNoteNodes", () => {
+  it("[] → false", () => {
+    expect(hasNoteNodes([])).toBe(false);
+  });
+
+  it("只有空群組 → false", () => {
+    expect(hasNoteNodes(buildTabNodes("workspace", [], [GROUP_A, GROUP_B]))).toBe(false);
+  });
+
+  it("群組下一篇 → true", () => {
+    expect(hasNoteNodes(buildTabNodes("workspace", [MY_GROUP_NOTE], [GROUP_A, GROUP_B]))).toBe(true);
+  });
+
+  it("平面一篇 → true", () => {
+    expect(hasNoteNodes(buildTabNodes("myNotes", [OWNER_NOTE], []))).toBe(true);
   });
 });
