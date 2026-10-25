@@ -37,8 +37,12 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   let raw: AnyPartialBlock[];
   try {
     raw = editor.tryParseHTMLToBlocks(syntax.html) as AnyPartialBlock[];
-  } catch {
-    // core 對部分編輯器內部形會丟例外（例：`<div data-content-type="paragraph">`）：當成存不了的內容整筆拒絕，不回 500
+  } catch (err) {
+    // core 對部分編輯器內部形會丟例外（例：`<div data-content-type="paragraph">`）：當成存不了的內容整筆拒絕，不回 500。
+    // warn 一筆讓維運看得到 core 對合法內容開始丟例外（例如升級 BlockNote 後）；只記例外本身，不記 markdown（筆記內容）。
+    // 本模組沒有注入的 logger（簽章不變），比照 `version-fingerprint.ts` 的 console.warn。
+    const e = err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : { name: typeof err };
+    console.warn("parseMarkdownForNote: core parse threw; rejected as unsupported_block", e);
     return { error: "unsupported_block" };
   }
   // 讀碼發現 15：parse 所用 DOM 的 base（server＝`EditingRuntime` 的全域 document，與 siteOrigin 同 origin）

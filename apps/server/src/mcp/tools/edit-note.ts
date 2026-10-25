@@ -83,6 +83,14 @@ export const editNoteInput = {
     "The new markdown. Required for every operation except delete_section and rename. Colors are HTML, as read_note_section " +
       `returns them: colored text is <span style="color:red">…</span> inside the markdown; a block's own color is ` +
       `e.g. <p data-background-color="yellow">…</p>. Only these names are accepted: ${PALETTE_COLORS.join(", ")}. ` +
+      // 並排 PR-2（spec §11.5，docs/ai-editing.md#columns／#sizes）：「Writes take 2 to 4」刻意只講寫入——讀出可能有 5 欄以上（§11.2）；
+      // 尺寸句不提表格格子裡的圖片（Q3，PR-4 才收）；showPreview 關閉的圖片不讀出寬度，所以主詞是「shown at a set width」。
+      `Side-by-side columns are HTML, exactly as read_note_section returns them: <div data-kb-columns style="display:flex;gap:16px"> holding ` +
+      `<div data-kb-column style="flex:N"> columns (N is the relative width, 0.1 to 10, at most two decimals), each of these tags and its </div> ` +
+      "on a line of its own, each column with markdown inside, a blank line after its opening tag and another before its </div>. " +
+      "Writes take 2 to 4 columns. Rewriting a section that holds columns means sending the whole <div> block back. " +
+      `Sizes are HTML too: an image shown at a set width reads as <figure><img … width="W">…</figure>, and a table with set column widths ` +
+      "reads as an HTML table with colwidth on its first row's cells. Widths are whole pixels from 32 to 4000; write them back the same way to keep them. " +
       WRITE_NOTE_LINK_SENTENCE
   ),
   if_match: FP.optional()

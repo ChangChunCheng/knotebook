@@ -256,6 +256,36 @@ describe("parseMarkdownForNote", () => {
       }
     });
   });
+  // T4 審查 Minor-2：core 對合法內容開始丟例外時（例如升級 BlockNote 後），維運要看得到——warn 一筆，帶例外的類名、訊息與 stack，不帶筆記內容。
+  it("GM-THROW-LOG：parse 例外轉成 unsupported_block 時 console.warn 一次，帶 name／message／stack、不含 markdown 內容；正常 parse 不 warn", async () => {
+    await withSession(ed => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const boom = new TypeError("boom-msg");
+      const parse = vi.spyOn(ed, "tryParseHTMLToBlocks").mockImplementationOnce(() => {
+        throw boom;
+      });
+      try {
+        expect(parseMarkdownForNote(ed, "SECRET-NOTE-TEXT", notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+        expect(warn).toHaveBeenCalledTimes(1);
+        const logged = JSON.stringify(warn.mock.calls[0]);
+        expect(logged).toContain("unsupported_block");
+        expect(logged).toContain("TypeError");
+        expect(logged).toContain("boom-msg");
+        expect(warn.mock.calls[0]!.some(a => typeof a === "object" && a !== null && (a as { stack?: unknown }).stack === boom.stack)).toBe(true);
+        expect(logged).not.toContain("SECRET-NOTE-TEXT");
+        // 真輸入（core 真的丟）同樣 warn、同樣不帶內容
+        expect(parseMarkdownForNote(ed, '<div data-content-type="paragraph">SECRET-NOTE-TEXT</div>', notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(JSON.stringify(warn.mock.calls[1])).not.toContain("SECRET-NOTE-TEXT");
+        // 對照：parse 沒丟例外就不 warn
+        expect("error" in parseMarkdownForNote(ed, "plain", notes, ORIGIN)).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(2);
+      } finally {
+        parse.mockRestore();
+        warn.mockRestore();
+      }
+    });
+  });
 
   // ── href 的 scheme 過濾（issue #153）──────────────────────────────────────
   //

@@ -526,9 +526,11 @@ const FIVE_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n${[1, 2,
 const FLEX_DIV = '<div style="display:flex"><div><p>L</p></div><div><p>R</p></div></div>';
 const FIGURE_IMG = '<figure><img alt="p" src="/api/uploads/u9" width="300"></figure>';
 const BARE_IMG = '<img alt="p" src="/api/uploads/u9" width="300">';
-/** REST 400 的訊息（spec §11.3 草稿；`unsupported_size` 依 Q3 拿掉格子半句）——逐字。 */
-const REST_COLUMNS_MESSAGE = "並排區塊的格式不符，沒有寫入任何內容。請照讀出的格式寫：外層 `<div data-kb-columns …>`、2–4 個 `<div data-kb-column style=\"flex:N\">`（N 為 0.1 到 10），每欄開標籤之後與 `</div>` 之前各空一行。";
-const REST_SIZE_MESSAGE = "圖片寬度或表格欄寬的格式不符，沒有寫入任何內容。請照讀出的格式寫：寬度為 32 到 4000 的整數像素；圖片寫在 `<figure>` 內的 `<img width>`，表格欄寬寫在第一列格子的 `colwidth`。";
+/** REST 400 的訊息（spec §11.3 草稿；`unsupported_size` 依 Q3 不提格子；T10 改成每個觸發條件都成立的版本）——逐字。 */
+const REST_COLUMNS_MESSAGE =
+  "版面或編輯器內部用的 HTML 格式不符，沒有寫入任何內容。並排請照讀出的格式寫：外層 `<div data-kb-columns style=\"display:flex;gap:16px\">`、2–4 個 `<div data-kb-column style=\"flex:N\">`（N 為 0.1 到 10、最多兩位小數），每欄開標籤之後與 `</div>` 之前各空一行，放在最外層、不放在清單、引言或其他任何區塊裡；其他 `<div>` 不得用 `display:flex` 或 `display:grid`，任何元素都不得帶 `data-node-type`。";
+const REST_SIZE_MESSAGE =
+  "圖片寬度或表格欄寬的格式不符，沒有寫入任何內容。請照讀出的格式寫：寬度為 32 到 4000 的整數像素；圖片寫在表格之外的 `<figure>` 內的 `<img width>`，`<img>` 只帶 `alt`（可省）、`src`、`width` 且依此順序，表格欄寬寫在第一列格子的 `colwidth`，合併的格子每一欄一個值、以逗號分隔，沒設寬的欄留空。";
 
 describe("並排與尺寸：寫入面拒絕不合格的形", () => {
   const stateOf = async (s: Scene) => {
@@ -568,6 +570,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("unsupported_columns");
     expect(res.json().error.message).toBe(REST_COLUMNS_MESSAGE);
+    expect(res.json().error.message).not.toContain("並排區塊的格式不符"); // 舊句：S10 的非並排元素也回這碼，主詞不能是並排
     expect(await countNotes(s.ctx, s.ownerId)).toBe(before);
     s.disconnect();
   });
@@ -583,6 +586,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     expect(res.json().error.code).toBe("unsupported_size");
     expect(res.json().error.message).toBe(REST_SIZE_MESSAGE);
     expect(res.json().error.message).not.toContain("表格格子");
+    expect(res.json().error.message).not.toContain("圖片寫在 `<figure>` 內"); // 舊句：格子裡的 figure 照樣被拒，不能叫人照寫
 
     await expectNoSideEffects(s.ctx, s.noteId, before);
     expect(await stateOf(s)).toBe(stateBefore);
