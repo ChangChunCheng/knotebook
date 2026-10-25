@@ -196,8 +196,9 @@ Reading gives colors back in the same forms. Content with no color in it reads b
 
 ## Presence
 
-While a program works on a note, it shows up **in the note** — as a remote cursor, the same one another person editing gets.
+While a program works on a note, it shows up **in the note** — as a remote cursor, the same one another person editing gets, and in the note header's row of people.
 
+- In the row it is a sparkle icon ringed in the same violet as its cursor, labelled `username (agent)` and **AI agent**. It is listed on its own, separately from you, even though the credential is yours — so you see your own AI there although you aren't listed yourself — and it shows there even when the note has no text for a cursor to point at.
 - The cursor is labelled `username (agent)`: your username, and the credential's [agent display name](#agent-display-name).
 - It exists only for a note **somebody currently has open**. Presence is attached to the live collaborative document, so if no browser is connected to that note, nothing is created and nothing is broadcast — and there is no record afterwards that a program was there.
 - It appears, and moves, on a **token-authenticated** `GET …/content`, `POST …/edits` and `POST …/edits/:editId/revert` — and on the MCP read tools that go through the same code path (`read_note_outline`, `read_note_section`, `read_note_image`), and on `edit_note` (except `rename`), so an assistant that only *reads* a note still shows up in it. `GET …/edits` deliberately does not: reading the history is not working on the note. `POST /api/notes` with `content` cannot — the note is created by that same request, so nobody can have it open yet.
@@ -235,7 +236,7 @@ One approximation is worth knowing: the browser persists a burst of typing once,
 
 ## Agent display name
 
-Every credential has a short **agent name**. It is the `(agent)` half of the cursor's label, of the title bar's last-edited line, and of every row in the note's edit history.
+Every credential has a short **agent name**. It is the `(agent)` half of the cursor's label, of the note header's row of people, of the title bar's last-edited line, and of every row in the note's edit history.
 
 By default it is derived from the credential's own name: the first whitespace-separated word, Unicode-normalized, lowercased, with everything outside `A-Za-z0-9._-` removed, cut to 32 characters. `Claude Code (knotebook)` becomes `claude`, `MCP CLI Proxy` becomes `mcp`, and a name that leaves nothing usable behind becomes `agent`.
 

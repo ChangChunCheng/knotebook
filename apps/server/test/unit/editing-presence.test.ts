@@ -22,7 +22,7 @@ function fakeHocuspocus() {
   }
   return { documents, makeDoc };
 }
-const user = { name: "w (claude)", color: "#7c3aed" };
+const user = { name: "w (claude)", color: "#7c3aed", handle: "w", label: "claude" };
 type FakeDoc = ReturnType<ReturnType<typeof fakeHocuspocus>["makeDoc"]>;
 const clockOf = (doc: FakeDoc, id: number) => doc.awareness.meta.get(id)!.clock;
 
@@ -65,7 +65,7 @@ describe("PresenceRegistry", () => {
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("n2", "t2");
     reg.touch("n2", "t2", user, { kind: "doc-start" });
-    expect(doc.awareness.states.get(id)).toMatchObject({ user });
+    expect(doc.awareness.states.get(id)).toMatchObject({ user: { name: user.name, color: user.color } });
     expect(clockOf(doc, id)).toBe(1);
     expect(doc.emitted.at(-1)).toEqual(["update", { added: [id], updated: [], removed: [] }, "ai-presence"]);
     reg.touch("nx", "t2", user, { kind: "doc-start" }); // 文件未載入 → 不建 entry
@@ -208,5 +208,29 @@ describe("PresenceRegistry", () => {
     const second = new PresenceRegistry(h as never); // 全新 registry，舊的丟掉
     second.touch("n6", "t6", user, { kind: "doc-start" });
     expect(clockOf(doc, id)).toBeGreaterThan(highWater);
+  });
+
+  it("EP-K1 state 帶 `knotebook` agent 標記；`user` 恰為 name／color 兩欄（handle／label 不漏進 user）", () => {
+    const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("nk1", doc);
+    const reg = new PresenceRegistry(h as never);
+    const id = presenceClientId("nk1", "tk1");
+    reg.touch("nk1", "tk1", user, { kind: "doc-start" });
+    const st = doc.awareness.states.get(id) as { user: unknown; knotebook: unknown };
+    expect(st.knotebook).toEqual({ v: 1, kind: "agent", handle: "w", label: "claude" });
+    expect(st.user).toEqual({ name: "w (claude)", color: "#7c3aed" });
+  });
+
+  it("EP-K2 同一組 (note, token) 再 touch 換身分 → state 跟著換；心跳後仍是新值", () => {
+    const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("nk2", doc);
+    const reg = new PresenceRegistry(h as never);
+    const id = presenceClientId("nk2", "tk2");
+    reg.touch("nk2", "tk2", user, { kind: "doc-start" });
+    reg.touch("nk2", "tk2", { ...user, label: "codex", name: "w (codex)" }, { kind: "doc-start" });
+    const st = () => doc.awareness.states.get(id) as { user: { name: string }; knotebook: { label: string } };
+    expect(st().knotebook.label).toBe("codex");
+    expect(st().user.name).toBe("w (codex)");
+    vi.advanceTimersByTime(10_000);
+    expect(st().knotebook.label).toBe("codex");
+    expect(st().user.name).toBe("w (codex)");
   });
 });
