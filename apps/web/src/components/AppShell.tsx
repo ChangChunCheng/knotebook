@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
@@ -20,6 +20,7 @@ import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
 import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
+import { TrashLazyBoundary } from "@/components/sidebar/TrashLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -34,7 +35,10 @@ import { PaneResizeHandle } from "@/components/PaneResizeHandle";
 /** 只有打開垃圾桶 tab 才下載（首包上限）；與 SidebarFooter 的 `TrashFooter` 同一個 chunk（`TrashLazy`）。 */
 const TrashPanel = lazy(() => import("@/components/sidebar/TrashLazy").then((m) => ({ default: m.TrashPanel })));
 
-/** `TrashPanel` 下載中的佔位：與它自己清單載入中的樣子相同（標題列「Trash」＋「Loading…」），chunk 到了不跳。 */
+/**
+ * `TrashPanel` 下載中的佔位：標題列「Trash」＋「Loading…」，與它自己清單載入中同高、同位置（垂直不跳），只少了標題列右側的
+ * 動作鈕（「選取」「清空」在 chunk 到了才出現）。
+ */
 function TrashPanelFallback() {
   const { t } = useTranslation();
   return (
@@ -183,9 +187,9 @@ function SidebarContent({
             className="flex min-h-0 flex-1 flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {tab === "trash" ? (
-              <Suspense fallback={<TrashPanelFallback />}>
+              <TrashLazyBoundary fallback={<TrashPanelFallback />} errorClassName="p-3">
                 <TrashPanel />
-              </Suspense>
+              </TrashLazyBoundary>
             ) : (
               <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
             )}

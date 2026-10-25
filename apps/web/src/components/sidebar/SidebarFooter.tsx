@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
 import { useTranslation } from "react-i18next";
 import { useSidebarTabState } from "@/lib/sidebar-tab";
 import { Button } from "@/components/ui/button";
 import { Plus } from "@/components/ui/icons";
+import { TrashLazyBoundary } from "@/components/sidebar/TrashLazyBoundary";
 
 /** 只有打開垃圾桶 tab 才下載（首包上限）；與 AppShell 的 `TrashPanel` 同一個 chunk（`TrashLazy`）。 */
 const TrashFooter = lazy(() => import("@/components/sidebar/TrashLazy").then((m) => ({ default: m.TrashFooter })));
@@ -33,10 +34,11 @@ export function SidebarFooter({
       </div>
     );
   }
-  // 佔位與保留天數說明「載入中」同高，chunk 到了版面不跳。
+  // 佔位與保留天數說明「載入中」同高，chunk 到了版面不跳。chunk 載入失敗時錯誤＋重試由面板那份（同一個 chunk）顯示，
+  // 底部的錯誤內容隱藏、不重複一顆重試鈕。
   return (
-    <Suspense fallback={<div className="h-7" />}>
+    <TrashLazyBoundary fallback={<div className="h-7" />} errorClassName="hidden">
       <TrashFooter />
-    </Suspense>
+    </TrashLazyBoundary>
   );
 }
