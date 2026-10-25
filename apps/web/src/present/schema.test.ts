@@ -15,6 +15,13 @@ describe("presentationSchema parity（spec §5.2-4、§13.1）", () => {
     }
   });
 
+  it("有並排兩型 columnList／column，column 的 propSchema 只有 width（columns-layout §5.3）", () => {
+    const blocks = presentationSchema.blockSchema as Record<string, { propSchema: unknown }>;
+    expect(blocks.columnList).toBeDefined();
+    expect(blocks.column).toBeDefined();
+    expect(blocks.column!.propSchema).toEqual({ width: { default: 1 } });
+  });
+
   it("inline content 與 style 型別集合相同", () => {
     expect(Object.keys(presentationSchema.inlineContentSchema).sort()).toEqual(Object.keys(noteSchema.inlineContentSchema).sort());
     expect(Object.keys(presentationSchema.styleSchema).sort()).toEqual(Object.keys(noteSchema.styleSchema).sort());

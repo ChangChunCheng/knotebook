@@ -70,7 +70,13 @@ function ignoreWikilinkSnapshot(_key: string, value: unknown): unknown {
   }
   return value;
 }
-const shallow = (b: DiffBlock) => JSON.stringify({ type: b.type, props: b.props ?? {}, content: b.content ?? null }, ignoreWikilinkSnapshot);
+/**
+ * 並排的列與欄只靠 id 配對（columns-layout spec §11.9）：它們沒有 content，所有列的 shallow 相同、同寬的欄也相同，
+ * 不帶 id 的話 1b 會把「刪一欄加一欄」配成同一欄、「刪一列在別處加一列」配成同一列。鍵含 id 之後 1a 也不會讓位。
+ */
+const ID_PAIRED_TYPES: ReadonlySet<string> = new Set(["columnList", "column"]);
+const shallow = (b: DiffBlock) =>
+  JSON.stringify({ type: b.type, props: b.props ?? {}, content: b.content ?? null, ...(ID_PAIRED_TYPES.has(b.type) ? { id: b.id ?? null } : {}) }, ignoreWikilinkSnapshot);
 
 /** 每個值在序列中的位置；回最長遞增子序列所佔的位置集合（O(n log n)）。 */
 function lisPositions(seq: number[]): Set<number> {
@@ -548,12 +554,18 @@ function hasChange(e: DiffEntry): boolean {
   return markOf(e) !== "context" || e.children.some(hasChange);
 }
 
+/**
+ * `parentType === "columnList"`（這一層是欄）時不收合：佔位段落不能當 `columnList` 的直接子節點（columns-layout spec §11.9）；
+ * 收合只發生在欄內的 block 層與頂層。
+ */
 function renderLevel(
   entries: DiffEntry[],
   marks: Map<string, DiffMarkInfo>,
   opts: { onlyChanges: boolean; collapsedText: (n: number) => string; wikilinkText: WikilinkText },
   ctx: { collapsed: number },
+  parentType?: string,
 ): DiffBlock[] {
+  const collapsible = opts.onlyChanges && parentType !== "columnList";
   const out: DiffBlock[] = [];
   let run = 0;
   const flush = () => {
@@ -565,16 +577,18 @@ function renderLevel(
     run = 0;
   };
   for (const e of entries) {
-    if (opts.onlyChanges && !hasChange(e)) {
+    if (collapsible && !hasChange(e)) {
       run += 1;
       continue;
     }
     flush();
     const src = (e.status === "deleted" ? e.before : e.after)!;
     const mark = markOf(e);
-    const nonText = e.status === "changed" && !INLINE_DIFF_TYPES.has(src.type);
-    const content = e.status === "changed" && !nonText ? inlineDiff(e.before!.content, e.after!.content, opts.wikilinkText) : src.content;
-    out.push({ ...src, id: e.key, content, children: renderLevel(e.children, marks, opts, ctx) });
+    const inline = e.status === "changed" && INLINE_DIFF_TYPES.has(src.type);
+    // 欄寬變更直接標在欄上看得到；「看前後」對話框只能把欄單獨渲染、看不出寬度，所以欄與列不算非文字變更。
+    const nonText = e.status === "changed" && !inline && !ID_PAIRED_TYPES.has(src.type);
+    const content = inline ? inlineDiff(e.before!.content, e.after!.content, opts.wikilinkText) : src.content;
+    out.push({ ...src, id: e.key, content, children: renderLevel(e.children, marks, opts, ctx, src.type) });
     if (mark !== "context") marks.set(e.key, { mark, moved: e.moved, nonText });
   }
   flush();

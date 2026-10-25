@@ -1201,6 +1201,7 @@ export function safeNextPath(input: string | null | undefined): string | null {
 }
 
 export * from "./note-schema-config.js";
+export * from "./columns.js";
 export * from "./note-sections.js";
 export * from "./note-markdown.js";
 export * from "./site-link.js";

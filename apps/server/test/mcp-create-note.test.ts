@@ -103,7 +103,7 @@ describe("#108 create_note", () => {
   // ⚠ **plan 寫的測資（「含不支援的 block」→ `unsupported_block`）在整合層造不出來**，理由與
   //   `note-edits.test.ts:322-328` 逐字寫過的完全相同：headless schema ＝ `defaultBlockSpecs`
   //   全集＋mermaid／codeBlock，**BlockNote 的 markdown parser 產得出來的 type 一定在白名單裡**，
-  //   所以 `unsupported_block` 這個碼從 markdown 到不了。白名單那條分支由
+  //   所以 `unsupported_block` 這個碼從 markdown 到不了（PR-1 過渡期並排被拒例外，見 mcp-write-guards GW1／GW2）。白名單那條分支由
   //   `test/unit/editing-markdown.test.ts` 以收窄的假 schema 驗。這裡改用**同一條管線上到得了**
   //   的 `empty_content`（與 REST 的 `note-create-content.test.ts` 第二案同一份測資），
   //   被測的契約（先解析、後建列）一個字都沒變。

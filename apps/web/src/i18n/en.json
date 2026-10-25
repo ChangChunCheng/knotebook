@@ -270,6 +270,11 @@
       "urlLabel": "URL",
       "insert": "Insert",
       "invalidUrl": "That URL is not valid."
+    },
+    "columns": {
+      "slashTitle": "{{n}} columns",
+      "slashSubtext": "Place blocks side by side",
+      "ungroup": "Ungroup columns"
     }
   },
   "login": {

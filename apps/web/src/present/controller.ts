@@ -8,6 +8,7 @@ import { sameNoteId } from "@/lib/note-id";
 import { publicMediaUrl } from "@/lib/public-media-url";
 import type { PublicNoteRef } from "@/lib/public-note-ref";
 import type { PresentationShellContextValue } from "./PresentationShell";
+import { restackSlideBody } from "./columns";
 import { createDebouncer } from "./debounce";
 import { applyRenderedDeck, createDeckDom, playingMedia, SLIDE_ID_ATTR, watchSwipeGuards, withoutTransition, type SwipeGuards } from "./deck";
 import type { HashWriter } from "./hash-writer";
@@ -166,6 +167,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
       else for (const id of changed) deck.syncSlide(dom.els.get(id)!.section);
       deck.slide(position.h, position.v);
     });
+    for (const id of changed) restackSlideBody(dom.els.get(id)!.body); // 並排堆疊：離目前那張太遠的量到 0、不動，換到時由 onSlideChanged 補
     for (const media of playing) if (media.isConnected && media.paused) void media.play().catch(() => {}); // S5
     currentId = position.id;
     hashWriter.request(position.id);
@@ -198,6 +200,8 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
     currentId = id;
     hashWriter.request(id);
     swipe?.refresh(slide);
+    const body = dom.els.get(id)?.body;
+    if (body) restackSlideBody(body);
   };
 
   const subscribeSource = (): (() => void) | null => {
@@ -289,6 +293,9 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
           instance.slide(0, 0);
         }
         swipe.refreshAll();
+        // 並排堆疊（columns-layout spec §11.8）：reveal 到 initialize() 才讓 present 與鄰近幾張顯示，之前量到的寬度一律是 0；
+        // 量不到的張不動，換到時由 onSlideChanged 補量。只在渲染時量，不跟視窗縮放重算。
+        for (const els of dom.els.values()) restackSlideBody(els.body);
         runMermaid(mermaidJobsIn(dom.slidesEl));
         unsubscribeSource = subscribeSource();
         requestAnimationFrame(() => {

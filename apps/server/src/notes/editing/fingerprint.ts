@@ -17,7 +17,7 @@ export function outlineOf(fragment: Y.XmlFragment): { outline: OutlineEntry[]; w
   const byId = new Map<string, Y.XmlElement>();
   for (const c of topLevelContainers(fragment)) {
     const id = c.getAttribute("id");
-    if (typeof id !== "string" || id === "") throw new Error("outlineOf：頂層 blockContainer 缺 id 屬性（文件不是 BlockNote 結構）");
+    if (typeof id !== "string" || id === "") throw new Error("outlineOf：頂層 block 缺 id 屬性（文件不是 BlockNote 結構）");
     byId.set(id, c);
   }
   const outline = sectionize(fragment).map(s => ({ ...s, fingerprint: fingerprintOf(canonicalizeElements(s.blockIds.map(id => byId.get(id)!))) }));

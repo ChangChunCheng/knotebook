@@ -17,7 +17,18 @@ import {
   type AiCall,
   type AnyEditor,
 } from "@/test/ai-host";
+import { P, row, withChildren } from "@/test/columns-fixtures";
+import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { activeAnchorOf, useAiSession, type AiSessionValue } from "./AiSession";
+
+// 包一層照呼叫原實作的 spy（斷言自動套用寫入的陣列身分）；不用 automock——那會讓套用變成什麼都不做。
+vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
+  return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
 const SUMMARIZE: AiActionDto = { id: SUMMARIZE_ACTION_ID, name: "Summarize", applyMode: "preview", kind: "quick" };
@@ -114,7 +125,6 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   it("quick direct：串流完自動套用；activeAnchor 換成 insertedAnchor；before 是套用前凍結的原文；寫入的就是 prepared.blocks", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
-    const spy = vi.spyOn(editor, "replaceBlocks");
     startAction(REWRITE.id);
     expect(ai.calls[0]!.body).toEqual({ action_id: REWRITE.id, note_id: "note-1", text: "alpha beta gamma\n" });
     await finishStream(ai.calls[0]!, "ALPHA REWRITTEN");
@@ -125,7 +135,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     expect(activeAnchorOf(s)).toBe(s.applied.insertedAnchor);
     expect(s.applied.insertedAnchor.blockIds).not.toContain("p1");
     expect(JSON.stringify(s.preview.before)).toContain("alpha beta gamma");
-    expect(spy.mock.calls[0]![1]).toBe(s.prepared.blocks);
+    expect(vi.mocked(replaceBlocksKeepColumns).mock.calls[0]?.[2]).toBe(s.prepared.blocks);
   });
 
   it("Instruct 一律預覽（就算清單把它標成 direct）；送 trim 後的 instruction 與 focus", async () => {
@@ -158,7 +168,6 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   it("RF5 noChange：模型回的與原文只差 CRLF／尾端空白 → 不自動套用、preview.noChange、apply() 回 false、文件不動", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
-    const spy = vi.spyOn(editor, "replaceBlocks");
     startAction(REWRITE.id);
     await finishStream(ai.calls[0]!, "alpha beta gamma  \r\n");
     const s = session.state;
@@ -170,7 +179,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       applied = session.apply(true);
     });
     expect(applied).toBe(false);
-    expect(spy).not.toHaveBeenCalled();
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("外層 <text> 剝除：prepared 與預覽都不含標記", async () => {
@@ -190,6 +199,20 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     startAction(SUMMARIZE.id);
     await finishStream(ai.calls[0]!, "   ");
     expect(session.state.phase === "error" && session.state.code).toBe("empty_result");
+  });
+
+  // 並排 PR-1 過渡守衛（T3b）：AI 結果含並排 → error 態 unsupported_block，不套用、不留預覽；PR-2 換成正式驗證。
+  it("GS1：串流完成的內容含正規形兩欄 → error 態 unsupported_block、文件不變（direct 模式也不自動套用）", async () => {
+    const { ai } = await mount();
+    openOn("p1", 0, 5);
+    const before = docText();
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`);
+    const s = session.state;
+    expect(s.phase).toBe("error");
+    expect(s.phase === "error" && s.code).toBe("unsupported_block");
+    expect(docText()).toBe(before);
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("串流錯誤 → error 態；retry 以同一組 request（含 instruction 與 focus）重送", async () => {
@@ -405,13 +428,13 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   });
 
   it("selfWriteRef（自動套用＋還原那半）：串流中在 target 後方做非空選取 → direct 自動套用 → 還原，框仍在、回到未套用；D12 回呼 0 次", async () => {
-    // 白箱斷言 onAutoClose：沒有旗標時 D12 會在還原的 replaceBlocks 期間 close()，但 revert() 隨後的 setState 會蓋掉 idle（同一批次），
+    // 白箱斷言 onAutoClose：沒有旗標時 D12 會在還原的取代期間 close()，但 revert() 隨後的 setState 會蓋掉 idle（同一批次），
     // 框照樣留著——只看 state 抓不到（起草時 jsdom 突變實測：拿掉旗標只有 onAutoClose 斷言會紅）。
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
-    selectInBlock(editor, "p3", 0, 5); // target 後方；長度不同的替換會讓 replaceBlocks 平移這個選取並發 selection change
+    selectInBlock(editor, "p3", 0, 5); // target 後方；長度不同的替換會平移這個選取並發 selection change
     await finishStream(ai.calls[0]!, "A much longer rewritten first paragraph than before");
     expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
     act(() => session.revert());
@@ -538,5 +561,45 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       [id, ""],
       [id, "a]b\\"],
     ]);
+  });
+});
+
+// PR-1 過渡碼（PR-2 改成擴大成整列時移除）：跨欄或含整列的選取 `open()` 不開（final review I-1；AI 鈕也不出，見 AiToolbar.test AX*）。
+describe("AiSession open() 與並排（PR-1 過渡）", () => {
+  const TWO = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
+  const THREE = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")];
+  const NESTED = () => [P("x", "x"), row([[P("a", "a1")], [withChildren(P("p", "p1"), [P("c", "c1")])]], "r"), P("z", "z")];
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each<[string, () => unknown[], string, string]>([
+    ["AO1 跨欄 a..b", TWO, "a1", "b1"],
+    ["AO2 三欄 a..c", THREE, "a1", "c1"],
+    ["AO3 從列外 x 選進列內", TWO, "x", "b1"],
+    ["AO4 從欄內選到列外 z", TWO, "b1", "z"],
+    ["AO6 從末欄的巢狀子 block 選到列外 z（欄是祖父節點）", NESTED, "c1", "z"],
+  ])("%s → open() 後仍 idle、沒有標亮", async (_name, doc, from, to) => {
+    await mount({ doc: doc() });
+    act(() => {
+      editor.setSelection(from, to);
+    });
+    act(() => session.open());
+    expect(phase()).toBe("idle");
+    expect(highlighted()).toBe(false);
+  });
+
+  it("AO5 完全在單一欄內（b..q）→ 照常開框、錨點是兩個欄內段落", async () => {
+    await mount({ doc: TWO() });
+    act(() => {
+      editor.setSelection("b1", "q1");
+    });
+    act(() => session.open());
+    const s = session.state;
+    if (s.phase !== "input") throw new Error(`預期 input，實得 ${s.phase}`);
+    expect(s.target.anchor.blockIds).toEqual(["b1", "q1"]);
   });
 });

@@ -410,3 +410,21 @@ describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
 });
 
 const md1Of = (ed: Ed) => blocksToMarkdownWithColors(ed, ed.document);
+
+describe("並排（PR-1 過渡）", () => {
+  // PR-2 改寫成 §11.1 的 div 形；PR-1 只要求不丟例外、兩欄文字都在輸出裡。
+  it("CL1：含列的 blocks 轉 markdown 不丟例外，輸出含左右欄文字", async () => {
+    const md = await withSession(ed => {
+      const blocks = [{
+        id: "r", type: "columnList", children: [
+          { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "ra", type: "paragraph", content: "左" }] },
+          { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "rb", type: "paragraph", content: "右" }] },
+        ],
+      }];
+      ed.replaceBlocks(ed.document, blocks as never);
+      return blocksToMarkdownWithColors(ed, ed.document);
+    });
+    expect(md).toContain("左");
+    expect(md).toContain("右");
+  });
+});

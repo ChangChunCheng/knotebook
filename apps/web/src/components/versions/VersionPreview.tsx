@@ -36,6 +36,8 @@ const NO_MARKS: Map<string, DiffMark> = new Map();
  * `useCreateBlockNote(…, [blocks])` 在 `blocks` 身分一換就重建整顆編輯器——呼叫端傳進來的 `blocks` 必須是記憶化的參照
  * （見 `VersionPreview` 的 useMemo 鏈）。`data-diff` 貼在 `.bn-block-outer[data-id]` 上：Task 8 Step 1 探針在 jsdom 實跑，
  * 屬性經選取、空 meta、改別的區塊、同 id `replaceBlocks` 四種 transaction 都還在（唯讀編輯器本身不會再有 transaction）。
+ * 並排的欄與列（`[data-node-type=column|columnList][data-id]`）也貼（columns-layout spec §11.9）；T9 審查的 jsdom 探針實測，
+ * 堆疊外掛的 decoration 交易後欄與列元素不換、屬性仍在。
  */
 export function DiffEditor({
   blocks,
@@ -64,7 +66,8 @@ export function DiffEditor({
     // 子層的 layout effect 先於父層（VersionPreview）的跑：父層量版面時這裡已交出本次 render 的 root。
     if (rootRef) rootRef.current = root ?? null;
     if (!root) return;
-    root.querySelectorAll<HTMLElement>(".bn-block-outer[data-id]").forEach((el) => {
+    // 並排的欄與列不是 `.bn-block-outer`，另外列進來（columns-layout spec §11.9：欄的增刪與寬度變更、整列增刪）。
+    root.querySelectorAll<HTMLElement>('.bn-block-outer[data-id], [data-node-type="column"][data-id], [data-node-type="columnList"][data-id]').forEach((el) => {
       const info = marks.get(el.dataset.id!);
       const mark = typeof info === "string" ? info : (info?.mark ?? "context");
       el.setAttribute("data-diff", mark);
@@ -136,15 +139,16 @@ interface Spacer {
 }
 
 /**
- * 一顆 diff 編輯器的頂層 `.bn-block-outer`（依文件順序，與傳進去的 blocks 陣列一一對應；陣列為空時 DiffEditor 渲染的那顆
- * 佔位段落是多出來的第 0 顆，`splitRows` 不給它列號）。
+ * 一顆 diff 編輯器的頂層單位（依文件順序，與傳進去的 blocks 陣列一一對應；陣列為空時 DiffEditor 渲染的那顆
+ * 佔位段落是多出來的第 0 顆，`splitRows` 不給它列號）：頂層 `.bn-block-outer` 與頂層並排列。
  * selector 是實測：2026-10-10 在 jsdom 掛 `BlockNoteView` 印 DOM——`editor.domElement` 本身就是 `.bn-editor`
  * （className `tiptap ProseMirror bn-editor bn-default-styles …`），其下 `.bn-block-group > .bn-block-outer[data-id]` 是頂層；
  * 巢狀子區塊在 `.bn-block-outer > .bn-block > .bn-block-group > .bn-block-outer` 更深層（A、B〔子 C〕三顆：
- * `.bn-block-outer` 全抓得 A,B,C；本 selector 得 A,B）。
+ * `.bn-block-outer` 全抓得 A,B,C；本 selector 得 A,B）。頂層的 `columnList` 直接掛在 `.bn-block-group` 下、不包 `.bn-block-outer`，
+ * 一列＝一個對齊列；列內不逐欄對齊（columns-layout spec §11.9，同「巢狀不對齊」）。
  */
 function topLevelOuters(root: HTMLElement | null): HTMLElement[] {
-  return root ? Array.from(root.querySelectorAll<HTMLElement>(":scope > .bn-block-group > .bn-block-outer")) : [];
+  return root ? Array.from(root.querySelectorAll<HTMLElement>(':scope > .bn-block-group > :is(.bn-block-outer, [data-node-type="columnList"])')) : [];
 }
 
 /** 頂層區塊的高度（`getBoundingClientRect().height`，border box、小數）。用小數而不是整數的 `offsetHeight`：h3 行高 31.2px、h5 21.6px、

@@ -201,6 +201,26 @@ describe("POST /api/notes/:id/edits：五 op", () => {
   });
 });
 
+describe("並排（T2）", () => {
+  it("E1：文件只剩一列時 append 不會把列換掉（isEmptyDoc 不把列當空文件）", async () => {
+    const s = await setup(null);
+    await humanEdit(s.ctx, s.note.id, s.client, "右欄文字", ed => ed.replaceBlocks(ed.document, [
+      { id: "r", type: "columnList", children: [
+        { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "ra", type: "paragraph", content: "左欄文字" }] },
+        { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "rb", type: "paragraph", content: "右欄文字" }] },
+      ] },
+    ] as never));
+    const res = await s.post({ op: "append", markdown: "追加" });
+    expect(res.statusCode).toBe(201);
+    await waitFor("provider 收到追加", 3_000, () => docText(s.client.doc).includes("追加"));
+    const top = topLevelContainers(s.client.doc.getXmlFragment(YDOC_FRAGMENT));
+    expect(top.map(c => c.nodeName)).toEqual(["columnList", "blockContainer"]);
+    expect(top[0]!.getAttribute("id")).toBe("r");
+    expect(docText(s.client.doc)).toContain("左欄文字");
+    s.client.disconnect();
+  });
+});
+
 describe("if_match 與併發", () => {
   it("整篇不符 409 且 current 是新內容；段落不符 409；別段被人改該段仍成功", async () => {
     const { ctx, note, client, content, post } = await setup();
@@ -336,7 +356,7 @@ describe("拒絕案假綠守衛", () => {
   // 這一案是那份清單的共用實作——新增任何拒絕碼都要加進 `cases`，不要另開一個沒有守衛的 it。
   // ⚠ `unsupported_block` **整合層刻意不驗**，而且到不了：headless schema ＝ `defaultBlockSpecs`
   // 全集＋mermaid／codeBlock（見 shared 的 `createHeadlessNoteSchema`），BlockNote 的 markdown/HTML
-  // parser 產得出來的 type 一定在白名單裡，所以無法從 markdown 造出這個碼。白名單那條分支由
+  // parser 產得出來的 type 一定在白名單裡，所以無法從 markdown 造出這個碼（PR-1 過渡期並排被拒例外，見 mcp-write-guards GW1／GW2）。白名單那條分支由
   // `test/unit/editing-markdown.test.ts` 的「未知型別整筆拒絕」以收窄的假 schema 驗（刪掉
   // `markdown.ts` 的 `walk` 檢查 → 那一案必須紅）。這裡誠實記下，而不是塞一個到不了的案子。
   it("403 viewer、empty_content、empty_section、too_many_blocks、NUL、未知欄位、fork 側 409、413 content_too_large → note_states 位元組相同、記錄零列", async () => {

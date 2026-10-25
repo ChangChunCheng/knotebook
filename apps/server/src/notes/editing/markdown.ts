@@ -1,5 +1,5 @@
 import type { BlockNoteEditor, PartialBlock } from "@blocknote/core";
-import { convertSiteLinks, isBlankParseResult, rebindWikilinks, restoreMermaidBlocks, targetFromList } from "@knotebook/shared";
+import { COLUMN_BLOCK_TYPES, convertSiteLinks, isBlankParseResult, rebindWikilinks, restoreMermaidBlocks, targetFromList } from "@knotebook/shared";
 import { findDisallowedColor } from "./colors.js";
 import type { VisibleNoteTarget } from "./candidates.js";
 
@@ -22,7 +22,9 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
   type AnyPartialBlock = PartialBlock<any, any, any>;
   const parsed = restoreMermaidBlocks(editor.tryParseMarkdownToBlocks(markdown) as AnyPartialBlock[]);
-  const known = new Set(Object.keys(editor.schema.blockSchema));
+  // PR-1 過渡守衛（並排 PR-1 T3b）：寫入面在 PR-2 的 S1–S10 驗證落地前不收並排，任何深度的 columnList／column 都回 unsupported_block。
+  // PR-2 以 `unsupported_columns` 與正式驗證取代，整段拿掉。
+  const known = new Set(Object.keys(editor.schema.blockSchema).filter(t => !COLUMN_BLOCK_TYPES.has(t)));
   const walk = (bs: AnyPartialBlock[]): boolean => bs.every(b => known.has(b.type as string) && (!b.children || walk(b.children as AnyPartialBlock[])));
   if (!walk(parsed)) return { error: "unsupported_block" };
   // #222：色值只收內建色名（colors.ts），其他值整筆拒絕——同白名單，不靜默剝除。

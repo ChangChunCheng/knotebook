@@ -270,6 +270,11 @@
       "urlLabel": "網址",
       "insert": "插入",
       "invalidUrl": "網址格式不正確"
+    },
+    "columns": {
+      "slashTitle": "並排 {{n}} 欄",
+      "slashSubtext": "把內容分成左右並排的幾欄",
+      "ungroup": "取消並排"
     }
   },
   "login": {

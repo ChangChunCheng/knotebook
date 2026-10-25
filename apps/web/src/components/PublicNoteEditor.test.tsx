@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
@@ -89,5 +89,63 @@ describe("#269 公開頁渲染 wikilink", () => {
     const pub = await screen.findByRole("link", { name: "Public Title" });
     expect(pub).toHaveAttribute("href", "/p/alice/pub");
     expect(screen.queryByText("Snap Pub")).toBeNull();
+  });
+});
+
+describe("並排 PR-1 公開頁（spec 2026-10-21 columns-layout §11.7）", () => {
+  // 可手動觸發的 ResizeObserver 替身（同 collab/columns/layout-extension.test.ts）：只觸發 observe 了該元素的那個 observer。
+  const instances: Array<{ targets: Set<Element>; callback: ResizeObserverCallback }> = [];
+  class FakeResizeObserver {
+    readonly targets = new Set<Element>();
+    constructor(readonly callback: ResizeObserverCallback) {
+      instances.push(this);
+    }
+    observe(target: Element) {
+      this.targets.add(target);
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target);
+    }
+    disconnect() {
+      this.targets.clear();
+    }
+  }
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    instances.length = 0;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("PUB1 Y.Doc 含一列 → 畫出列與兩欄、唯讀；列寬 300 → 整列堆疊（版面外掛在公開頁也生效）", async () => {
+    const doc = new Y.Doc();
+    blocksToYXmlFragment(
+      BlockNoteEditor.create({ schema: noteSchema }),
+      [
+        { id: "x0", type: "paragraph", content: "x" },
+        {
+          id: "r",
+          type: "columnList",
+          children: [
+            { id: "rc0", type: "column", props: { width: 1 }, children: [{ id: "a1", type: "paragraph", content: "Left" }] },
+            { id: "rc1", type: "column", props: { width: 1 }, children: [{ id: "b1", type: "paragraph", content: "Right" }] },
+          ],
+        },
+      ] as never,
+      doc.getXmlFragment(YDOC_FRAGMENT),
+    );
+    renderPublic({ kind: "token", token: "t".repeat(43) }, [], doc);
+    await screen.findByText("Right");
+    const rowEl = document.querySelector<HTMLElement>('[data-node-type="columnList"]')!;
+    expect(rowEl).not.toBeNull();
+    expect(Array.from(rowEl.children).filter((c) => c.matches('[data-node-type="column"]'))).toHaveLength(2);
+    expect(rowEl.closest(".bn-editor")).toHaveAttribute("contenteditable", "false");
+
+    Object.defineProperty(rowEl, "clientWidth", { value: 300, configurable: true });
+    const observers = instances.filter((ro) => ro.targets.has(rowEl));
+    expect(observers).toHaveLength(1);
+    act(() => observers[0].callback([{ target: rowEl } as unknown as ResizeObserverEntry], observers[0] as unknown as ResizeObserver));
+    await waitFor(() => expect(document.querySelector('[data-node-type="columnList"]')).toHaveAttribute("data-stacked"));
   });
 });

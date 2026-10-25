@@ -25,6 +25,8 @@ import type { NoteDto } from "@knotebook/shared";
 import { useCreateNote, useNotes } from "@/api/notes";
 import { classifyMediaTransfer, type BlockedTransferReason } from "@/collab/schema";
 import { createCodeBlockCaretExtension } from "@/collab/code-block-caret";
+import { createColumnEdgeKeymapExtension } from "@/collab/columns/edge-keymap";
+import { createColumnsPasteExtension, withColumnsDropPoint } from "@/collab/columns/paste-rule";
 import { buildCollabEditorBase } from "@/collab/editor-options";
 import { createMarkdownLinkExtension } from "@/collab/markdown-link";
 import { createMarkdownPasteHandler } from "@/collab/paste";
@@ -177,9 +179,14 @@ export function buildNoteEditorOptions({
         createMarkdownLinkExtension({ editorRef, siteLinks }),
         createSiteLinkConvertExtension({ envRef: siteLinks }),
         createCodeBlockCaretExtension(),
+        // 並排的欄首 Backspace／欄尾 Delete（D24；理由見 `@/collab/columns/edge-keymap`）。
+        createColumnEdgeKeymapExtension({ editorRef }),
+        // 貼上／拖放的列：頂層完整、非頂層攤平（§5.4 調整 3；理由見 `@/collab/columns/paste-rule`）。
+        createColumnsPasteExtension(),
       ],
       editorProps: {
-        handleDOMEvents: createMediaBlockingDOMEvents(translate),
+        // drop 先記落點（給上面那條貼上規則判斷位置），再走媒體阻擋。
+        handleDOMEvents: withColumnsDropPoint(createMediaBlockingDOMEvents(translate)),
         // `[[` 觸發偵測（Task 3 §12.2 recipe）。這裡刻意**不**倚賴 `SuggestionMenu`
         // extension 自己對多字元 trigger 的內建偵測：它算的是
         // `textBetween(from - trigger.length, from) + text` 再與 trigger 嚴格相等，
