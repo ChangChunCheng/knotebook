@@ -942,22 +942,28 @@ export interface PublicNoteDto {
 }
 
 /**
- * #107／#239：API token 的 scope。**是集合不是單值**——OAuth 的 scope 參數是空白分隔的
- * 集合，且「write 涵蓋 read」，所以落庫形是一條鏈、共三種：只讀、讀寫、讀寫加搬移
- * （write 一定把 read 顯式寫進字串，move 一定帶著 write，讓 DB CHECK、token 回應 body、
- * 設定頁三處看到同一個值）。順序即權限由小到大——`narrowerScope` 靠索引取較小者。
- * DB 三條 `scope` CHECK、zod enum 都以這份為準（`scope-check-sync.test.ts` 守 CHECK）。
+ * #107／#239／#181：API token 的 scope。是集合不是單值；落庫形固定字面順序 read → write → move → delete，共五形。
+ * #181 起是**格（lattice）不是鏈**：`notes:move` 與 `notes:delete` 互不包含，所以沒有「索引越大權限越大」這回事——
+ * 比大小一律用 `narrowerScope`（交集）或 `hasScope`（成員），不得用 `TOKEN_SCOPES.indexOf`。
+ * move、delete 都必須搭配 write（write 一定把 read 顯式寫進字串）。DB 三條 `scope` CHECK、zod enum 都以這份為準
+ * （`scope-check-sync.test.ts` 守 CHECK）。之後新增 scope 照「切詞、交集、固定順序組字」的形加（spec §9-12）。
  */
-export const TOKEN_SCOPES = ["notes:read", "notes:read notes:write", "notes:read notes:write notes:move"] as const;
+export const TOKEN_SCOPES = [
+  "notes:read",
+  "notes:read notes:write",
+  "notes:read notes:write notes:move",
+  "notes:read notes:write notes:delete",
+  "notes:read notes:write notes:move notes:delete",
+] as const;
 export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
 /** 單一 scope 名（`hasScope` 的第二參數）。 */
-export type ScopeName = "notes:read" | "notes:write" | "notes:move";
+export type ScopeName = "notes:read" | "notes:write" | "notes:move" | "notes:delete";
 
 /**
  * 路由宣告「這個操作至少需要什麼」時用的單值，與落庫形（集合）刻意不同型別。
- * 刻意不含 `notes:move`：`bearer.ts` 的扣桶只分 write／其他，搬移不是路由層的 scope 門檻
- * （由 MCP 的 `canMoveNotes`／`requireMoveScope` 在工具層判定）。
+ * 刻意不含 `notes:move`、`notes:delete`：`bearer.ts` 的扣桶只分 write／其他，搬移與刪除不是路由層的
+ * scope 門檻（由 MCP 的 `canMoveNotes`／`requireMoveScope`、`canDeleteNotes`／`requireDeleteScope` 在工具層判定）。
  */
 export type RequiredScope = "notes:read" | "notes:write";
 
@@ -980,27 +986,38 @@ export type RequiredScope = "notes:read" | "notes:write";
  * 回應裡的 `scope` 一律是這個函式的輸出（我們實際授予的集合），被忽略的值不回聲；
  * client 依 RFC 6749 §5.1 應以回應為準。
  *
- * **要 `notes:move` 不要 `notes:write` → 丟掉 move、給 `notes:read`**（fail-closed）：
+ * **要 `notes:move`／`notes:delete` 不要 `notes:write` → 兩者都丟、給 `notes:read`**（fail-closed）：
  * 1. 自動補 `notes:write` ＝授予沒要求的寫入權（scope 放大）；
- * 2. `notes:read notes:move` 不是合法落庫形（DB CHECK 拒）；
+ * 2. `notes:read notes:move`、`notes:read notes:delete` 不是合法落庫形（DB CHECK 拒）；
  * 3. 回 `invalid_scope`（null）會破壞上面「永不回 null」的契約；RFC 6749 §3.3 允許 AS 部分忽略。
  *
- * 對三種合法落庫形恆等（`bearer.ts`、`api-tokens.ts` 拿它讀 DB 值，不必另判）。
+ * 對五種合法落庫形恆等（`bearer.ts`、`api-tokens.ts` 拿它讀 DB 值，不必另判）。
  */
 export function normalizeScope(input: string | null | undefined): TokenScope {
   const parts = (input ?? "").split(" ");
-  // read 在三種落庫形裡都有，不必另外判斷；move 只在同時有 write 時才算數。
+  // read 在五種落庫形裡都有，不必另外判斷；move、delete 只在同時有 write 時才算數。
   if (!parts.includes("notes:write")) return "notes:read";
-  return parts.includes("notes:move") ? "notes:read notes:write notes:move" : "notes:read notes:write";
+  return [
+    "notes:read",
+    "notes:write",
+    ...(parts.includes("notes:move") ? ["notes:move"] : []),
+    ...(parts.includes("notes:delete") ? ["notes:delete"] : []),
+  ].join(" ") as TokenScope;
 }
 
 /**
- * 兩個落庫形中較小者（三形是鏈，取索引小者）。不在三形內的值視為 `notes:read`——
- * 輸入來自 `text` 欄位的 `as TokenScope` 斷言，不得把垃圾字串原樣傳回去。
+ * 兩個落庫形的交集（格上的 meet）。不在五形內的值先當 `notes:read`（輸入來自 `text` 欄的
+ * `as TokenScope`）——不得把垃圾字串原樣傳回去，也不得讓非正規值（如裸 `notes:write`）被正規化放大。
  */
 export function narrowerScope(a: TokenScope, b: TokenScope): TokenScope {
-  const rank = (s: TokenScope): number => Math.max(0, TOKEN_SCOPES.indexOf(s));
-  return TOKEN_SCOPES[Math.min(rank(a), rank(b))]!;
+  const canon = (s: TokenScope): TokenScope => ((TOKEN_SCOPES as readonly string[]).includes(s) ? s : "notes:read");
+  const pa = new Set(canon(a).split(" "));
+  return normalizeScope(
+    canon(b)
+      .split(" ")
+      .filter((p) => pa.has(p))
+      .join(" "),
+  );
 }
 
 /**
