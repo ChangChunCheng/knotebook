@@ -18,7 +18,7 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { anchorPlacement, applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, selectionTouchesColumns, type PreparedResult } from "@/ai/apply";
+import { anchorPlacement, applyAiResult, expandAnchorForColumns, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { aiMarkdownOf } from "@/ai/note-markdown";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
@@ -194,6 +194,7 @@ export function AiSessionProvider(props: {
     }
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));
     let applied: AiApplied | null = null;
+    let notice: "ai.box.rebindNotice" | "ai.box.applyGuardFailed" | null = null;
     const autoApply =
       request.kind === "quick" &&
       request.applyMode === "direct" &&
@@ -204,12 +205,14 @@ export function AiSessionProvider(props: {
       const outcome = withSelfWrite(selfWriteRef, () => runGuardedApply(ed, noteIdRef.current, target.anchor, prepared));
       if (outcome.ok) {
         applied = { insertedAnchor: outcome.insertedAnchor, replacedSnapshot: outcome.replacedSnapshot };
-        if (prepared.unboundCount > 0) toast({ title: tRef.current("ai.box.rebindNotice") });
+        if (prepared.unboundCount > 0) notice = "ai.box.rebindNotice";
       } else {
-        toast({ title: tRef.current("ai.box.applyGuardFailed") });
+        notice = "ai.box.applyGuardFailed";
       }
     }
+    // 先進 done 再 toast：已套用時還原入口在 done 裡，之後丟的例外不能把它換成 error（呼叫端的 catch 只收還停在串流中的框）
     setState({ phase: "done", target, request, prepared, preview, applied });
+    if (notice !== null) toast({ title: tRef.current(notice) });
   }, []);
 
   const run = useCallback(
@@ -239,8 +242,8 @@ export function AiSessionProvider(props: {
           try {
             finish(target, request, partialRef.current);
           } catch {
-            // 下面的失敗回呼接不到這裡丟的例外：任何意外都收成 error 態，框不停在串流中
-            setState({ phase: "error", target, request, code: "internal" });
+            // 下面的失敗回呼接不到這裡丟的例外：還停在串流中就收成 error 態；finish 已進 done（例：自動套用後的 toast 丟）則不覆蓋，還原入口留著
+            setState((prev) => (prev.phase === "streaming" ? { phase: "error", target, request, code: "internal" } : prev));
           }
         },
         (err: unknown) => {
@@ -261,8 +264,7 @@ export function AiSessionProvider(props: {
     const ed = editorRef.current;
     const blocks = ed.getSelection()?.blocks;
     if (!blocks || blocks.length === 0) return; // 空選取與 NodeSelection 都回 undefined
-    if (selectionTouchesColumns(ed, blocks)) return; // PR-1 過渡碼：跨欄／含列不開（AI 鈕已不出；PR-2 改成擴大成整列時移除）
-    const blockIds = blocks.map((block: AnyBlock) => block.id);
+    const blockIds = expandAnchorForColumns(ed, blocks); // 並排 PR-2（spec §7.5）：碰到並排時擴大成頂層整列，送出與套回都以整列為單位
     const anchor = captureAnchor(ed, noteIdRef.current, blockIds);
     const focus = ed.transact((tr) => selectionFocus(tr, blockIds, titleOf));
     setState({ phase: "input", target: { anchor, focus } });

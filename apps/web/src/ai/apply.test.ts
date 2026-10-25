@@ -388,6 +388,24 @@ describe("AI 套用鏈（spec §13.3）", () => {
     expect("blocks" in ok && ok.blocks[0]!.props.backgroundColor).toBe("red");
   });
 
+  it("GA-C3（T6 re-review Na）：parse 結果是單一帶色盤外底色的空段落 → unsupported_color（同 server：色值檢查在空判準之前）；色盤內底色仍是 empty", () => {
+    const editor = mountedEditor([P("別動我")]);
+    // 事實釘：core 0.52.1 parse 空 <p> 時丟掉段落、補一個預設 props 的空段落，所以真的 markdown 走不到「空且帶色」——以 spy 造 parse 結果（同 GA4）
+    expect(prepareAiResult(editor, '<p data-background-color="chartreuse"></p>', { notes: [], placement: "top" })).toEqual({ empty: true });
+    for (const [color, expected] of [
+      ["chartreuse", { invalid: "unsupported_color" }],
+      ["red", { empty: true }],
+    ] as const) {
+      const spy = vi.spyOn(editor, "tryParseHTMLToBlocks").mockReturnValue([{ id: "e", type: "paragraph", props: { backgroundColor: color }, content: [], children: [] }] as never);
+      try {
+        expect(prepareAiResult(editor, "x", { notes: [], placement: "top" })).toEqual(expected);
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
   it("blockSnapshot：同一 block 兩次呼叫字串相等；block 不存在回 null", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "穩定" }]);
     const id = editor.document[0].id;

@@ -47,8 +47,8 @@ function hasColumnBlock(blocks: readonly { type?: string; children?: readonly an
 }
 
 /**
- * 語法檢查（並排 PR-2，與 MCP 同一套 S1–S10）→ parse → 空結果判定 → mermaid 還原 → 欄寬正規化 → 站內上傳網址還原相對形 → 結構檢查
- * → 色值（#222）→ 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。兩道檢查不過、或 parse 丟例外，回 `{ invalid: 碼 }`。空字串／純空白回 `{ empty: true }`：
+ * 語法檢查（並排 PR-2，與 MCP 同一套 S1–S10）→ parse → mermaid 還原 → 欄寬正規化 → 站內上傳網址還原相對形 → 結構檢查
+ * → 色值（#222）→ 空結果判定（同 server 的順序）→ 重綁 wikilink（#263 從 `applyAiResult` 抽出的純函式，不碰文件）。兩道檢查不過、或 parse 丟例外，回 `{ invalid: 碼 }`。空字串／純空白回 `{ empty: true }`：
  * parse `""` 回單一空段落而不是 `[]`（`@knotebook/shared` 的 `isBlankParseResult` 實測註記），
  * 不擋的話套用會把原文換成空段落。
  */
@@ -66,7 +66,6 @@ export function prepareAiResult(
     // core 對部分編輯器內部形會丟例外（例：`<div data-content-type="paragraph">`）：同 server，當成存不了的內容；不接的話例外丟在串流續體裡、框停在串流中
     return { invalid: "unsupported_block" };
   }
-  if (isBlankParseResult(raw)) return { empty: true };
   // 同 server 管線：mermaid 還原（```mermaid 的 codeBlock → mermaid block，含欄內）→ 欄寬正規化 → 站內上傳網址還原相對形。
   // 讀碼發現 15：parse 所用 DOM 的 base（瀏覽器＝`window.location`）；`deps.siteOrigin` 是站內連結判準，不混用
   const parsed = relativizeSiteUploads(normalizeTableWidths(restoreMermaidBlocks(raw)), new URL(document.baseURI).origin);
@@ -74,6 +73,7 @@ export function prepareAiResult(
   if (shape !== null) return { invalid: shape };
   // #222：同 MCP，色值只收內建色名，其他值整筆拒絕（編輯器畫面不顯示，不能靜默存進去）
   if (findDisallowedColor(parsed) !== null) return { invalid: "unsupported_color" };
+  if (isBlankParseResult(parsed)) return { empty: true };
   const [rebound, unboundCount] = rebindWikilinks(
     parsed,
     [...deps.notes],
@@ -90,8 +90,8 @@ export type ApplyOutcome =
   | { ok: false; reason: "missing" | "changed" };
 
 /**
- * PR-1 過渡碼（並排 PR-2 改成「擴大成整列」時移除）：選取含欄／列本身（跨欄、從列外選進列）、或各 block 不在同一欄
- * （從欄內選到列外，core 的清單裡沒有欄節點，見 selection-delete.test.ts C8）→ true，AI 鈕不出、`open()` 不開。
+ * 框選錨點「擴大成整列」的觸發條件（{@link expandAnchorForColumns}，spec §7.5、Q7）：選取含欄／列本身（跨欄、從列外選進列）、或各 block 不在同一欄
+ * （從欄內選到列外，core 的清單裡沒有欄節點，見 selection-delete.test.ts C8）→ true。
  * 完全在單一欄內、或不碰並排 → false。
  * 只比首尾兩個 block 的所在欄：core 的清單是文件順序上連續的一段，跨過整列時清單裡會有那個列（上一行已擋），
  * 所以首尾同欄（或都不在欄內）時中間的 block 也一樣（每個 block 都查會是 O(N²)，final review r2 m-2）。
@@ -106,6 +106,18 @@ export function selectionTouchesColumns(editor: Pick<AnyEditor, "getParentBlock"
     return null;
   };
   return columnOf(blocks[0].id) !== columnOf(blocks[blocks.length - 1].id);
+}
+
+/** 選取碰到並排（{@link selectionTouchesColumns}）時，每個 block 換成它的頂層祖先（自己就是頂層則不變），去重保序；否則原樣回 ids。 */
+export function expandAnchorForColumns(editor: Pick<AnyEditor, "getParentBlock">, blocks: readonly AnyBlock[]): string[] {
+  if (!selectionTouchesColumns(editor, blocks)) return blocks.map((b) => b.id);
+  const ids = new Set<string>();
+  for (const block of blocks) {
+    let top = block.id;
+    for (let parent = editor.getParentBlock(top); parent; parent = editor.getParentBlock(parent.id)) top = parent.id;
+    ids.add(top);
+  }
+  return [...ids];
 }
 
 /** 錨點每個 block 都在頂層 → "top"；否則 "nested"（Q6：欄內與縮排子 block 都算）。 */

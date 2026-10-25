@@ -4,8 +4,9 @@ import { ShowSelectionExtension } from "@blocknote/core/extensions";
 import { INSTRUCT_ACTION_ID, REWRITE_ACTION_ID, SUMMARIZE_ACTION_ID, type AiActionDto, type NoteDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { OWNER_PERMS } from "@/test/fixtures";
-import { dismissAllToasts } from "@/components/ui/toast";
+import { dismissAllToasts, toast } from "@/components/ui/toast";
 import {
+  contentEnd,
   contentStart,
   createTestEditor,
   placeCursor,
@@ -17,7 +18,7 @@ import {
   type AiCall,
   type AnyEditor,
 } from "@/test/ai-host";
-import { IMG, P, row, shape, withChildren } from "@/test/columns-fixtures";
+import { IMG, P, integrity, row, shape, withChildren } from "@/test/columns-fixtures";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { activeAnchorOf, useAiSession, type AiSessionValue } from "./AiSession";
 import { SelectionAiController } from "./SelectionAiController";
@@ -27,7 +28,13 @@ vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
   const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
   return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
 });
+// 同上手法包 toast（GS9 要讓套用之後的 toast 丟例外）
+vi.mock("@/components/ui/toast", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/components/ui/toast")>();
+  return { ...m, toast: vi.fn(m.toast) };
+});
 beforeEach(() => {
+  vi.mocked(toast).mockReset();
   vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
 });
 
@@ -262,6 +269,34 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       await finishStream(ai.calls[0]!, "REWRITTEN");
       expect(session.state.phase === "error" && session.state.code).toBe("internal");
       expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("GS9（T6 re-review Nb）：direct 自動套用成功之後 toast 丟例外 → 仍是 done＋applied（還原入口在）、還原得回去、沒有未處理的 rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { ai } = await mount();
+      openOn("p1", 0, 5);
+      startAction(REWRITE.id);
+      vi.mocked(toast).mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+      await finishStream(ai.calls[0]!, "see [[No Such Note]]"); // 重綁不到 → unboundCount 1 → 套用後發 rebindNotice toast
+      expect(vi.mocked(toast)).toHaveBeenCalledTimes(1); // fixture 自檢：丟例外的那次 toast 真的被呼叫了
+      const s = session.state;
+      expect(s.phase).toBe("done");
+      expect(s.phase === "done" && s.applied !== null).toBe(true);
+      expect(docText()).toContain("No Such Note");
+      act(() => session.revert());
+      expect(docText()).toContain("alpha beta gamma");
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
@@ -733,42 +768,134 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
   });
 });
 
-// PR-1 過渡碼（PR-2 改成擴大成整列時移除）：跨欄或含整列的選取 `open()` 不開（final review I-1；AI 鈕也不出，見 AiToolbar.test AX*）。
-describe("AiSession open() 與並排（PR-1 過渡）", () => {
+// 並排 PR-2（spec §7.5、§11.6、Q7）：選取碰到並排時，錨點每個 block 換成它的頂層祖先（去重保序）；完全在單一欄內或不碰並排照舊。
+describe("AiSession open() 與並排：擴大成整列", () => {
   const TWO = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
   const THREE = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")];
   const NESTED = () => [P("x", "x"), row([[P("a", "a1")], [withChildren(P("p", "p1"), [P("c", "c1")])]], "r"), P("z", "z")];
-  beforeEach(async () => {
-    await i18n.changeLanguage("en");
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it.each<[string, () => unknown[], string, string]>([
-    ["AO1 跨欄 a..b", TWO, "a1", "b1"],
-    ["AO2 三欄 a..c", THREE, "a1", "c1"],
-    ["AO3 從列外 x 選進列內", TWO, "x", "b1"],
-    ["AO4 從欄內選到列外 z", TWO, "b1", "z"],
-    ["AO6 從末欄的巢狀子 block 選到列外 z（欄是祖父節點）", NESTED, "c1", "z"],
-  ])("%s → open() 後仍 idle、沒有標亮", async (_name, doc, from, to) => {
-    await mount({ doc: doc() });
+  const ROW2 = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1.5">\n\nB\n\n</div>\n</div>`;
+  const anchorIds = () => (session.state.phase === "idle" ? null : session.state.target.anchor.blockIds);
+  function openRange(from: string, to: string): void {
     act(() => {
       editor.setSelection(from, to);
     });
     act(() => session.open());
-    expect(phase()).toBe("idle");
-    expect(highlighted()).toBe(false);
+  }
+  function openInside(blockId: string): void {
+    selectInBlock(editor, blockId, 0, 1);
+    act(() => session.open());
+  }
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each<[string, () => unknown[], string, string, string[]]>([
+    ["AO1 跨欄 a..b", TWO, "a1", "b1", ["r"]],
+    ["AO2 三欄 a..c", THREE, "a1", "c1", ["r"]],
+    ["AO3 從列外 x 選進列內", TWO, "x", "b1", ["x", "r"]],
+    ["AO4 從欄內選到列外 z", TWO, "b1", "z", ["r", "z"]],
+    ["AO6 從末欄的巢狀子 block 選到列外 z（欄是祖父節點）", NESTED, "c1", "z", ["r", "z"]],
+  ])("%s → 進 input、錨點擴大成頂層整列、開標亮", async (_name, doc, from, to, expected) => {
+    await mount({ doc: doc() });
+    openRange(from, to);
+    expect(phase()).toBe("input");
+    expect(anchorIds()).toEqual(expected);
+    await waitFor(() => expect(highlighted()).toBe(true));
   });
 
   it("AO5 完全在單一欄內（b..q）→ 照常開框、錨點是兩個欄內段落", async () => {
     await mount({ doc: TWO() });
-    act(() => {
-      editor.setSelection("b1", "q1");
-    });
-    act(() => session.open());
+    openRange("b1", "q1");
     const s = session.state;
     if (s.phase !== "input") throw new Error(`預期 input，實得 ${s.phase}`);
     expect(s.target.anchor.blockIds).toEqual(["b1", "q1"]);
+  });
+
+  it("AO11 不碰並排時不擴大：縮排子 block 自己、縮排子 block 選到頂層段落 → 錨點照選取清單", async () => {
+    await mount({ doc: [withChildren(P("p", "p"), [P("k", "k1")]), P("z", "z"), row([[P("a", "a1")], [P("b", "b1")]], "r")] });
+    openInside("k1");
+    expect(anchorIds()).toEqual(["k1"]);
+    act(() => session.close());
+    openRange("k1", "z");
+    expect(anchorIds()).toEqual(["k1", "z"]);
+  });
+
+  it("AO12（T7 review r1 Minor-2）focus 以擴大後的錨點算：b1 首到 z 尾 → Instruct 送 focus「b\\nq\\nz」（第 1 欄沒選到）；a1 首到 q1 尾（整列全文）→ 不帶 focus", async () => {
+    const { ai } = await mount({ doc: TWO() });
+    selectText(editor, contentStart(editor, "b1"), contentEnd(editor, "z"));
+    act(() => session.open());
+    expect(anchorIds()).toEqual(["r", "z"]);
+    startAction(INSTRUCT.id, "shorter");
+    expect(ai.calls[0]!.body.focus).toBe("b\nq\nz");
+    act(() => session.close());
+    selectText(editor, contentStart(editor, "a1"), contentEnd(editor, "q1"));
+    act(() => session.open());
+    expect(anchorIds()).toEqual(["r"]);
+    startAction(INSTRUCT.id, "shorter");
+    expect(ai.calls[1]!.body).not.toHaveProperty("focus");
+  });
+
+  it("AO7（Review Focus 5）從縮排的子 block 選進一列、AI 回並排 → 錨點是父段落與列；套用後沒有巢狀列、頂層是新列與 z", async () => {
+    const { ai } = await mount({ doc: [withChildren(P("p", "p"), [P("k", "k1")]), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")] });
+    openRange("k1", "b1");
+    expect(anchorIds()).toEqual(["p", "r"]);
+    startAction(SUMMARIZE.id);
+    await finishStream(ai.calls[0]!, ROW2);
+    expect(phase()).toBe("done");
+    let applied = false;
+    act(() => {
+      applied = session.apply(true);
+    });
+    expect(applied).toBe(true);
+    expect(integrity(editor)).toEqual({ dupIds: 0, nullIds: 0, nestedRows: 0, valid: true });
+    expect(shape(editor)).toBe("ROW[COL(paragraph:A) | COL(paragraph:B)]  paragraph:z");
+  });
+
+  it("AO8 錨點是整列、quick direct 只改一欄的字 → 自動套用後列仍兩欄、第 1 欄是 A；還原 → 回原狀、列仍兩欄", async () => {
+    const { ai } = await mount({ doc: TWO() });
+    const original = shape(editor);
+    openRange("a1", "b1");
+    expect(anchorIds()).toEqual(["r"]);
+    startAction(REWRITE.id);
+    const sent = ai.calls[0]!.body.text;
+    expect(sent).toContain("\n\na\n\n"); // fixture 自檢：送出的是整列（含第 1 欄的 a）
+    await finishStream(ai.calls[0]!, sent.replace("\n\na\n\n", "\n\nA\n\n"));
+    expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:A) | COL(paragraph:b,paragraph:q)]  paragraph:z");
+    act(() => session.revert());
+    expect(session.state.phase === "done" && session.state.applied).toBeNull();
+    expect(shape(editor)).toBe(original);
+    expect(integrity(editor)).toEqual({ dupIds: 0, nullIds: 0, nestedRows: 0, valid: true });
+  });
+
+  it("AO9 錨點擴大成整列後，在列內另選一段（selectionInsideAnchor）→ D12 不關框", async () => {
+    const onAutoClose = vi.fn();
+    await mount({ doc: TWO(), onAutoClose });
+    openRange("a1", "b1");
+    expect(anchorIds()).toEqual(["r"]);
+    selectInBlock(editor, "q1", 0, 1);
+    expect(phase()).toBe("input");
+    expect(onAutoClose).not.toHaveBeenCalled();
+    selectInBlock(editor, "z", 0, 1); // 對照：列外 → 關
+    expect(phase()).toBe("idle");
+  });
+
+  it("AO10 列的第 2 欄有圖片、從 a1 選到 z（擴大成 [r, z]）→ quick direct 不自動套用", async () => {
+    const { ai } = await mount({ doc: [P("x", "x"), row([[P("a", "a1")], [IMG("i1")]], "r"), P("z", "z")] });
+    const before = docText();
+    openRange("a1", "z");
+    expect(anchorIds()).toEqual(["r", "z"]);
+    startAction(REWRITE.id);
+    await finishStream(ai.calls[0]!, "T");
+    const s = session.state;
+    expect(s.phase).toBe("done");
+    expect(s.phase === "done" && s.applied).toBeNull();
+    expect(docText()).toBe(before);
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 });
