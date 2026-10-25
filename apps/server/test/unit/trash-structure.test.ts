@@ -7,6 +7,12 @@
  * 逐檔命中數與表上總和不同就紅；新檔沒登記、登記了但沒命中也紅。
  * 守衛二（AG6）：寫 `deleted_at` 的字面（`deletedAt:`、`deletedBy:`、`deleted_at\s*=`、`set deleted_at`）只准出現在
  * schema、`trashNotesInTx`／`restoreNotesInTx` 所在檔、垃圾桶清單查詢（含 DTO 映射）三檔，各登記處數。
+ * 守衛二 b（資料夾 spec §5.8 末條、§5.13）：`trashFolderPath:`／`trash_folder_path` 字面只准 schema、`notes/tx/trash.ts`、
+ * `folders/tx/delete-folder.ts`、`groups/tx/delete-group.ts`、垃圾桶清單查詢五檔，各登記處數（與守衛二分開兩張表）。
+ * 守衛三（§5.13）：寫 `folders` 表（`.update|insert|delete(folders)`、SQL 字面 `update folders`／`delete from folders`／
+ * `insert into folders`，表名也收引號識別字 `"folders"` 與 `sql` 樣板 `${folders}`）的檔只准在 `folders/tx/*.ts`、`groups/tx/delete-group.ts` 之內（spec §5.13 原列 `notes/tx/trash.ts`，
+ * 實作經 `folders/tx/ensure-path.ts`，故不列；日後 trash.ts 真要直接寫再加回）。
+ * 守衛三 b（§5.13）：寫 `note_placements` 表（同形，含 `"note_placements"`、`${notePlacements}`）的檔只准在 `folders/tx/*.ts` 之內。三與三 b 只比檔集合、不記處數。
  *
  * 選處數不選行內標記：行內標記要訂「命中前後幾行內要有標記」的視窗規則，查詢跨行、標記被格式化工具移位都會誤判；
  * 處數表是純計數，沒有視窗、沒有放置規則，任何處數變動都會讓這張表出現在 diff 裡，審查者一定看得到。
@@ -17,8 +23,16 @@
  *   - 逐處分類是否正確——靠審查與 spec §6.2-12 的測試，不靠守衛。
  *   - 以 note id 直接查子表、不碰 `notes` 的讀取（`uploads`、`note_states`、`note_versions`、`note_links`、`note_shares`、
  *     `note_search_*` 等）——由附錄 B 清單與 A2-5／A2-16 的測試負責。
- *   - SQL 引號識別字 `"notes"` 與 import 別名（`import { notes as n }`）不在比對式內（目前零命中）。
- *   - 守衛二抓不到物件簡寫 `.set({ deletedAt })`（沒有冒號）；兩條守衛都不做括號解析。
+ *   - 守衛一的 SQL 引號識別字 `"notes"` 與 import 別名（`import { notes as n }`）不在比對式內（目前零命中）。
+ *   - 逐行比對：關鍵字與表名分在兩行的 SQL（`update⏎ folders`）抓不到（守衛一的字面 `from⏎ notes` 同此盲點；`${notes}` 不受影響）；
+ *     drizzle 呼叫參數拆行（`.update(⏎ folders⏎ )`）也抓不到。
+ *   - 守衛二／二 b 抓不到物件簡寫 `.set({ deletedAt })`、`.set({ trashFolderPath })`（沒有冒號）；各條守衛都不做括號解析。
+ *   - FK 動作（`ON DELETE CASCADE`／`SET NULL`）造成的寫入不在比對式內：刪資料夾 SET NULL `notes.folder_id`、CASCADE 子資料夾
+ *     與放置，刪筆記／撤分享 CASCADE 放置，刪群組 CASCADE 群組資料夾。
+ *   - `sql.raw` 拼表名、表物件存進區域變數再寫（`const t = folders; tx.update(t)`）、別名 import、schema 限定的表名
+ *     （`${schema.folders}`、`public.folders`）都抓不到（目前零命中）。
+ *   - 守衛三／三 b 不記處數：允許檔裡多寫幾處、守衛二 b 同檔刪一處加一處，處數表都不變。
+ *   - 寫 `notes.folder_id` 不歸守衛三管（那是 `notes` 的寫入，由守衛一的 `write`／`trashOnly` 登記）。
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -134,6 +148,24 @@ const DELETED_AT_WRITERS: Record<string, number> = {
   "trash/list.ts": 3, // 清單選欄、DTO 映射兩欄
 };
 
+/** 守衛二 b：`trash_folder_path` 字面，只准這五檔，值＝處數（字面比對，讀寫不分：清單讀快照、鎖讀選欄也算）。 */
+const TRASH_FOLDER_PATH_WRITE = /trashFolderPath:|trash_folder_path/gi;
+const TRASH_FOLDER_PATH_WRITERS: Record<string, number> = {
+  "db/schema.ts": 3, // 欄位定義（鍵、欄名）、CHECK 名 notes_trash_folder_path_chk
+  "folders/tx/delete-folder.ts": 1, // 刪資料夾刷新子樹垃圾桶筆記的快照
+  "groups/tx/delete-group.ts": 1, // 轉移：快照前接新頂層名
+  "notes/tx/trash.ts": 3, // lockNotes 選欄、移入 set、還原清掉
+  "trash/list.ts": 1, // 清單 folderPath 讀快照
+};
+
+/** 守衛三／三 b：寫 `folders`／`note_placements` 的檔集合。 */
+const FOLDERS_WRITE = /\.(?:update|insert|delete)\(folders\)|\b(?:update|delete\s+from|insert\s+into)\s+(?:"?folders"?(?!\w)|\$\{folders\})/gi;
+const PLACEMENTS_WRITE =
+  /\.(?:update|insert|delete)\(notePlacements\)|\b(?:update|delete\s+from|insert\s+into)\s+(?:"?note_placements"?(?!\w)|\$\{notePlacements\})/gi;
+const inFoldersTx = (f: string) => /^folders\/tx\/[^/]+\.ts$/.test(f);
+// groups/tx/delete-group.ts：轉移改整棵。還原照路徑重建經 folders/tx/ensure-path.ts，notes/tx/trash.ts 不列。
+const FOLDERS_WRITE_OTHERS = new Set(["groups/tx/delete-group.ts"]);
+
 const total = (d: Disposition) => (d.excludes ?? 0) + (d.trashOnly ?? 0) + (d.includes ?? 0) + (d.write ?? 0);
 
 describe("垃圾桶結構守衛（#181 §6.2-10）", () => {
@@ -154,5 +186,18 @@ describe("垃圾桶結構守衛（#181 §6.2-10）", () => {
 
   it("守衛二（AG6）寫 deleted_at 的字面只在三檔、處數凍結", () => {
     expect(hits(DELETED_AT_WRITE)).toEqual(DELETED_AT_WRITERS);
+  });
+
+  it("守衛二 b trash_folder_path 字面只在五檔、處數凍結", () => {
+    expect(hits(TRASH_FOLDER_PATH_WRITE)).toEqual(TRASH_FOLDER_PATH_WRITERS);
+  });
+
+  it("守衛三 寫 folders 只在 folders/tx/*、groups/tx/delete-group.ts", () => {
+    const outside = Object.keys(hits(FOLDERS_WRITE)).filter(f => !inFoldersTx(f) && !FOLDERS_WRITE_OTHERS.has(f));
+    expect(outside).toEqual([]);
+  });
+
+  it("守衛三 b 寫 note_placements 只在 folders/tx/*", () => {
+    expect(Object.keys(hits(PLACEMENTS_WRITE)).filter(f => !inFoldersTx(f))).toEqual([]);
   });
 });
