@@ -251,6 +251,17 @@ describe("S2 convertSiteLinks（inline、巢狀、表格兩種 cell、樣式丟�
     expect(cell.content[0]).toMatchObject({ type: "wikilink", props: { label: "G" } });
   });
 
+  it("SL-COL1（並排 §11.11）：欄內段落的站內連結也轉成 wikilink", () => {
+    const blocks = [{ type: "columnList", children: [
+      { type: "column", props: { width: 1 }, children: [{ type: "paragraph", content: [link("/n/alice/mine", t("Mine"))], children: [] }] },
+      { type: "column", props: { width: 1 }, children: [{ type: "paragraph", content: [t("plain")], children: [] }] },
+    ] }];
+    const [out, stats] = convertSiteLinks(blocks, resolveByList, ORIGIN);
+    expect(stats).toEqual({ converted: 1, unresolved: 0 });
+    const para = (out[0] as { children: Array<{ children: Array<{ content: unknown[] }> }> }).children[0]!.children[0]!;
+    expect(para.content[0]).toEqual({ type: "wikilink", props: { targetNoteId: CANDIDATES[0]!.id, snapshotTitle: "Mine", label: "", anchorBlockId: "" } });
+  });
+
   it("linkText：字串與 StyledText 陣列都收", () => {
     expect(linkText("abc")).toBe("abc");
     expect(linkText([t("a"), t("b", { bold: true })])).toBe("ab");

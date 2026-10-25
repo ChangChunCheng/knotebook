@@ -188,9 +188,10 @@ describe("拒絕：S9 表格欄寬", () => {
 
 // 審查 r3：檢查與 BlockNote 剖析要在同一片段情境下建樹。`<template>` 情境下開頭一個 `<col>` 會丟掉其後所有 token、
 // `<caption>`／`<td>`／`<th>` 開頭會把列收進格子；BlockNote（createHTMLDocument 的 div）都照常剖析其餘內容。
+// `<frameset>` 開頭：整份文件剖析（`DOMParser` 的 body）時 frameset 取代 body、看不到列，div 片段情境照常（T3 審查 r4 Minor-1）。
 const FLEX_DIV = '<div style="display:flex">\n\nx\n\n</div>\n';
 const ROW3_FIG = row(col("1", "a"), col("2.5", "b"), col("1", "c")) + '\n<figure><img src="/x" width="300"></figure>\n';
-const LEADS = ["col", "caption", "td", "th"] as const;
+const LEADS = ["col", "caption", "td", "th", "frameset"] as const;
 
 describe("片段情境：檢查看到的 DOM 與剖析一致", () => {
   it("CTX1：開頭 <col> 接 display:flex 的 div → unsupported_columns", () => {

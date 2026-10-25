@@ -165,6 +165,15 @@ describe("findDisallowedColor：逐一走訪、不遞迴", () => {
     expect(findDisallowedColor(table([{ type: "text", text: "c", styles: { backgroundColor: "#2" } }]))).toBe("#2"); // 舊形：cell 直接是 inline 陣列
     expect(findDisallowedColor(table({ type: "tableCell", props: { backgroundColor: "red" }, content: [] }))).toBeNull();
   });
+
+  it("FC-COL1（並排 §11.11）：欄內段落的壞色值也找得到", () => {
+    const row = (styles: Record<string, unknown>) => [{ type: "columnList", props: {}, content: undefined, children: [
+      { type: "column", props: { width: 1 }, children: [{ type: "paragraph", props: {}, content: [{ type: "text", text: "a", styles: {} }], children: [] }] },
+      { type: "column", props: { width: 1 }, children: [{ type: "paragraph", props: {}, content: [{ type: "text", text: "b", styles }], children: [] }] },
+    ] }];
+    expect(findDisallowedColor(row({ textColor: "#ff0000" }))).toBe("#ff0000");
+    expect(findDisallowedColor(row({ textColor: "red" }))).toBeNull();
+  });
 });
 
 describe("讀取：blocksToNoteMarkdown", () => {

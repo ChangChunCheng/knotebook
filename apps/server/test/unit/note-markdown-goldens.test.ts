@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
+import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
 import { COLUMNS_OPEN_TAG, blocksToNoteMarkdown, columnOpenTag } from "@knotebook/shared";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" }); rt.installGlobals();
@@ -117,5 +118,57 @@ describe("note-markdown goldens（讀出）", () => {
     expect(md).not.toContain("NaN");
     expect(count(md, 'colwidth=","')).toBe(2);
     expect(md).toBe(base.markdown);
+  });
+});
+
+// spec §13.1 round-trip：每個 golden 的 markdown 原樣寫回（parseMarkdownForNote，候選清單一律 []，與讀出端不轉換一致）→ 寫進新文件 → 再讀。
+const ORIGIN = "http://localhost";
+/** 去掉 id 的 block JSON。 */
+const shape = (blocks: unknown): string => JSON.stringify(blocks, (k, v) => (k === "id" ? undefined : v));
+const writeBack = (md: string) => withSession(ed => parseMarkdownForNote(ed, md, [], ORIGIN));
+/** blocks 經真編輯器寫進新文件，回讀出的 markdown 與 `ed.document`。 */
+const readBack = async (blocks: AnyBlocks) => withSession(ed => [blocksToNoteMarkdown(ed, ed.document), ed.document] as const, await docWith(blocks));
+const accepted = (id: string, r: Awaited<ReturnType<typeof writeBack>>): AnyBlocks => {
+  if ("error" in r) throw new Error(`${id} 寫回被拒：${r.error}`);
+  return r.blocks;
+};
+
+describe("note-markdown goldens（原樣寫回 RT）", () => {
+  it.each(goldens.cases.map(c => [c.id, c] as const))("RT %s", async (_id, c) => {
+    const r = await writeBack(c.markdown);
+    if (c.roundTrip.startsWith("reject:")) {
+      expect(r).toEqual({ error: c.roundTrip.slice("reject:".length) });
+      return;
+    }
+    const [md2, doc2] = await readBack(accepted(c.id, r));
+    if (c.roundTrip === "skip") {
+      // 攤平類（不合法結構、pipe table 的合併格）不要求等於原文，但寫回一次就收斂：md2 再寫回、再讀仍是 md2
+      const [md3] = await readBack(accepted(`${c.id}（第二輪）`, await writeBack(md2)));
+      expect(md3, `${c.id} 第二輪：${JSON.stringify(md3)}`).toBe(md2);
+      return;
+    }
+    expect(md2, `${c.id} 再讀：${JSON.stringify(md2)}`).toBe(c.markdown);
+    if (c.roundTrip === "exact") {
+      const [, docOrig] = await readBack(c.blocks);
+      expect(shape(doc2)).toBe(shape(docOrig));
+    }
+  });
+
+  it("RT G3-nan-legacy：既存 NaN 欄寬的讀出原樣寫回被接受，再讀的 markdown 與結構同 G3-table-colored-merged", async () => {
+    const base = byId("G3-table-colored-merged");
+    const blocks = structuredClone(base.blocks);
+    blocks[0].content.columnWidths = [NaN, NaN, undefined];
+    const [md1] = await readBack(blocks);
+    const [md2, doc2] = await readBack(accepted("G3-nan-legacy", await writeBack(md1)));
+    expect(md2).toBe(base.markdown);
+    const [, docBase] = await readBack(base.blocks);
+    expect(shape(doc2)).toBe(shape(docBase));
+  });
+
+  it("RT G2-img-escape：寫回的 name、caption、url 逐字等於原值", async () => {
+    const c = byId("G2-img-escape");
+    const p = accepted(c.id, await writeBack(c.markdown))[0].props;
+    const o = c.blocks[0].props;
+    expect([p.name, p.caption, p.url]).toEqual([o.name, o.caption, o.url]);
   });
 });

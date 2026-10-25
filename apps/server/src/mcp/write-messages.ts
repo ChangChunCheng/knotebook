@@ -15,7 +15,7 @@ export const WRITE_RATE_LIMITED_MESSAGE = "Too many note writes right now. Wait 
 
 /**
  * 解析／套用失敗的逐碼說明。`empty_section` 只有 `edit_note` 產得出來（`create_note` 的失敗
- * 形只有 {@link ParseError} 那四個），但它與另外四個是同一張表，分開就會變成兩份。
+ * 形只有 {@link ParseError} 那六個），但它與另外六個是同一張表，分開就會變成兩份。
  */
 export function writeFailureMessage(code: ParseError | "empty_section"): string {
   switch (code) {
@@ -24,6 +24,12 @@ export function writeFailureMessage(code: ParseError | "empty_section"): string 
     case "unsupported_color":
       // #222：色名清單取自 `PALETTE_COLORS`（單一真相），不手抄。
       return `That markdown uses a color this editor cannot show, so nothing was written. Colors must be one of: ${PALETTE_COLORS.join(", ")}.`;
+    case "unsupported_columns":
+      // 並排 PR-2（spec §11.3）。
+      return "That markdown has side-by-side columns in a form this editor cannot store, so nothing was written. Write them exactly as read_note_section returns them: <div data-kb-columns style=\"display:flex;gap:16px\"> holding 2 to 4 <div data-kb-column style=\"flex:N\"> columns, N from 0.1 to 10, with a blank line after each column's opening tag and another before its </div>.";
+    case "unsupported_size":
+      // 表格格子內的圖片寬度是 PR-4 的事（Q3），這句先不提。
+      return "An image width or table column width in that markdown is not in a form this editor can store, so nothing was written. Write sizes exactly as read_note_section returns them, as whole numbers of pixels from 32 to 4000: an image's width on the <img> inside <figure>, a table's column widths as colwidth on its first row's cells.";
     case "empty_content":
       return "That markdown is empty once parsed. Send at least one non-blank block.";
     case "too_many_blocks":
