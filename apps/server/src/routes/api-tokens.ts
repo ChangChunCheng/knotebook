@@ -14,12 +14,12 @@ import { countBillableGrants, TOKEN_LIMIT_PER_USER } from "../auth/grant-quota.j
 
 const createBodySchema = z.object({
   name: z.string().trim().min(1).max(64),
-  /** 三種落庫形；"notes:write" 是升版前 SPA 的值，保留為別名（spec §6.1）。落庫前一律 normalizeScope。 */
+  /** 五種落庫形（#181）；"notes:write" 是升版前 SPA 的值，保留為別名（spec §6.1）。落庫前一律 normalizeScope。 */
   scope: z.enum([...TOKEN_SCOPES, "notes:write"]),
   expiresInDays: z.union([z.literal(30), z.literal(90), z.literal(365), z.null()]),
 });
 
-/** #106 D7＋#239：`agentLabel`（改 agent 名稱；`null`＝清掉覆寫、回到派生值）與 `scope`（三種落庫形之一，
+/** #106 D7＋#239：`agentLabel`（改 agent 名稱；`null`＝清掉覆寫、回到派生值）與 `scope`（五種落庫形之一，
  * 不收 `"notes:write"` 別名——別名只開在 POST），兩鍵至少給一個。不變量 S：`AGENT_LABEL_RE` 本身就擋掉 NUL
  * 與空字串，所以欄位層不需要 `.refine`；物件層「至少一鍵」的 `.refine` 排在欄位驗證之後
  * （順序照 Global Constraints：`.refine()` 一律排在 `.regex()`／`.max()` 之後，見 routes/notes.ts 的
@@ -33,7 +33,7 @@ function toDto(row: typeof apiTokens.$inferSelect): ApiTokenDto {
   return {
     id: row.id,
     // kind 只 cast（CHECK 只有兩值，沒有正規化的需求）；scope 走 normalizeScope 讓
-    // CHECK 漂移時退化成不大於原值的合法形（fail-closed）。normalizeScope 對三種合法落庫形
+    // CHECK 漂移時退化成不大於原值的合法形（fail-closed）。normalizeScope 對五種合法落庫形
     // （TOKEN_SCOPES）恆等，所以正常情況下這裡回的就是 DB 的值。
     kind: row.kind as ApiTokenDto["kind"],
     name: row.name,
@@ -125,7 +125,7 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
      * ＝**把欄位清成 NULL**，不是把當下的派生值寫進去——回應仍是派生值，兩者只有直接看
      * 欄位才分得出來（守衛：api-tokens.test.ts 第 2 案的 `.toBeNull()`）。
      *
-     * #239：body 可帶 `scope`（三種落庫形之一，spec §6.2）——**可升可降**，PAT 與 oauth 列皆可，
+     * #239：body 可帶 `scope`（五種落庫形之一，spec §6.2；#181 加 delete）——**可升可降**，PAT 與 oauth 列皆可，
      * 不看 client 原本要求過什麼。下一個請求生效：`authenticateAny` 每請求查表、MCP 每請求依 scope
      * 註冊工具；`refresh` 輪替只換 token 與 access 到期時間、不碰 `scope`，所以降權不會被下一次 refresh 洗回去。
      * 帶 `scope` 且 `mustChangePassword` → 403（比照 POST）；純改名不擋（維持現狀）。
