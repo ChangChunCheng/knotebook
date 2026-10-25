@@ -362,6 +362,10 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             onClick={() => setCreateOpen(true)}
           />
         );
+      // 只在垃圾桶 tab 宣告，由 `TrashPanel` 自己渲染；PR-2c 起 `selectMode` 在這裡渲染。
+      case "selectMode":
+      case "emptyTrash":
+        return null;
       default: {
         // 加新動作 id 時這裡編譯不過，不會默默渲染成別顆鈕。
         const exhaustive: never = action;

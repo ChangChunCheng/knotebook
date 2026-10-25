@@ -9,7 +9,7 @@
 //   2. NotePage 的 lazy chunk（NotePage-<hash>.js）存在——entry 上限擋「胖回去」，
 //      這條擋「切分本身被拿掉」（若某天 rollup 改了 chunk 命名慣例，這裡會紅，
 //      屆時把 pattern 跟著改，別直接刪檢查）。
-//   3. 其餘 lazy chunk 存在：mermaid（#94）、shiki（#96）、AdminSections（#201／#247）、簡報層（#229）、版本歷史（筆記版本 spec）——理由各見常數註解。
+//   3. 其餘 lazy chunk 存在：mermaid（#94）、shiki（#96）、AdminSections（#201／#247）、簡報層（#229）、版本歷史（筆記版本 spec）、垃圾桶 tab（#181）——理由各見常數註解。
 //
 // 全程 fail-closed：dist 不存在、找不到 entry、找到多個 entry，一律 throw 而非放行
 // ——「沒東西可檢查」不等於「檢查通過」（比照 check-licenses.mjs 的紀律）。
@@ -60,6 +60,11 @@ export const VERSIONS_RE = /^VersionsLazy-[A-Za-z0-9_-]+\.js$/;
 // 縮小但仍在（r1-p3 B 案）；那一形由下面的
 // REVEAL_MARKER 檢查負責。
 export const PRESENTATION_RE = /^PresentationOverlay-[A-Za-z0-9_-]+\.js$/;
+// #181 垃圾桶：側欄垃圾桶 tab 的面板與底部（TrashPanel、TrashFooter、trash-dialogs）必須是自己的 lazy chunk——只有打開垃圾桶
+// tab 的人才付這個代價。`components/sidebar/TrashLazy.tsx` 是唯一入口（AppShell、SidebarFooter 都 `lazy(() => import(...TrashLazy))`）。
+// ⚠ 同 VERSIONS_RE：存在性只擋「兩個掛載點都改成靜態 import、整組併回 entry」；只改一處時元件被搬進 entry、chunk 仍在，
+// 那一形由 entry 上限擋。
+export const TRASHLAZY_RE = /^TrashLazy-[A-Za-z0-9_-]+\.js$/;
 // 首包 CSS：reveal.css 的 `.reveal-viewport` 規則（寫死黑字白底）若出現在這裡＝reveal.css 被靜態 import 進首包。
 export const ENTRY_CSS_RE = /^index-[A-Za-z0-9_-]+\.css$/;
 // reveal.js 的 JS 會寫 `reveal-viewport` 這個 class 名；入口側的外殼與其他程式碼都不用它。這個字串只准出現在
@@ -188,6 +193,15 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     );
   }
 
+  const trashChunks = names.filter(name => TRASHLAZY_RE.test(name));
+  if (trashChunks.length === 0) {
+    throw new Error(
+      `找不到垃圾桶 tab 的 lazy chunk（TrashLazy-<hash>.js）——最可能的原因是 TrashPanel／TrashFooter 被 ` +
+        `\`lazy(() => import("@/components/sidebar/TrashLazy"))\` 以外的地方靜態 import、整組併回 entry（#181）；` +
+        `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
+    );
+  }
+
   for (const name of names.filter(n => n.endsWith('.js') && !PRESENTATION_RE.test(n))) {
     if (readFileSync(join(assetsDir, name), 'utf8').includes(REVEAL_MARKER)) {
       throw new Error(
@@ -224,7 +238,7 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     }
   }
 
-  return { entryName, entryBytes, notePageChunks, mermaidChunks, shikiChunks, adminSectionsChunks, versionsChunks, presentationChunks };
+  return { entryName, entryBytes, notePageChunks, mermaidChunks, shikiChunks, adminSectionsChunks, versionsChunks, presentationChunks, trashChunks };
 }
 
 // 直接執行（非被 import）時跑真的 dist。
@@ -235,7 +249,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     console.log(
       `bundle OK：entry ${result.entryName} = ${result.entryBytes} bytes（上限 ${MAX_ENTRY_BYTES}）；` +
         `lazy chunk：${result.notePageChunks.join(', ')}、${result.mermaidChunks.join(', ')}、${result.shikiChunks.join(', ')}、` +
-        `${result.adminSectionsChunks.join(', ')}、${result.versionsChunks.join(', ')}、${result.presentationChunks.join(', ')}`
+        `${result.adminSectionsChunks.join(', ')}、${result.versionsChunks.join(', ')}、${result.presentationChunks.join(', ')}、${result.trashChunks.join(', ')}`
     );
   } catch (err) {
     console.error(String(err instanceof Error ? err.message : err));

@@ -65,6 +65,8 @@ export function recentNotes(notes: NoteDto[]): NoteDto[] {
 const noteNode = (note: NoteDto): SidebarNode => ({ kind: "note", id: note.id, note });
 
 export function buildTabNodes(tab: SidebarTab, notes: NoteDto[], groups: GroupDto[]): SidebarNode[] {
+  // 垃圾桶不從 ["notes"] 組樹；先攔，否則會落進最後一支（其餘一律當工作坊）列出全部群組。
+  if (tab === "trash") return [];
   if (tab === "recent") return recentNotes(notes).map(noteNode);
   const parts = partitionNotes(notes, groups);
   if (tab === "myNotes") return parts.myNotes.map(noteNode);
@@ -79,13 +81,18 @@ export function buildTabNodes(tab: SidebarTab, notes: NoteDto[], groups: GroupDt
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
+/** spec §9-2：筆記位置的段落（單一函式）。步驟 2：群組筆記＝[群組名]、個人＝[]；步驟 3 在這裡接資料夾路徑。 */
+export function noteLocationSegments(note: { group: { name: string } | null }): string[] {
+  return note.group ? [note.group.name] : [];
+}
+
 /**
- * 筆記的位置標籤（spec §9-2）：搜尋結果與最近 tab 的第二行都只經這一支，
- * 步驟 3 在這裡加資料夾段。
+ * 筆記的位置標籤（spec §9-2）：搜尋結果與最近 tab 的第二行都只經這一支；
+ * 個人段、群組段與垃圾桶第二行（`lib/trash-display.ts`）都經 `noteLocationSegments`，步驟 3 只改那一支。
  */
 export function noteLocationLabel(note: NoteDto, groupIds: ReadonlySet<string>, t: Translate): string {
   const bucket = noteBucket(note, groupIds);
-  if (bucket.kind === "myNotes") return t("sidebar.myNotes");
-  if (bucket.kind === "group") return t("sidebar.locationGroup", { group: note.group?.name });
+  if (bucket.kind === "myNotes") return [t("sidebar.myNotes"), ...noteLocationSegments(note)].join(" › ");
+  if (bucket.kind === "group") return t("sidebar.locationGroup", { group: noteLocationSegments(note).join(" › ") });
   return t("sidebar.locationShared", { role: t(`roles.${note.role}`) });
 }

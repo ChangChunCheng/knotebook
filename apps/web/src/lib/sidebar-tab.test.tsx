@@ -1,7 +1,8 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useRef, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { NARROW_QUERY, SidebarDrawerContext } from "@/lib/sidebar-drawer";
+import { EMPTY_SELECTION } from "./sidebar-selection";
 import {
   DEFAULT_SIDEBAR_TAB,
   SIDEBAR_TABS,
@@ -49,7 +50,7 @@ function Probe() {
 
 describe("常數", () => {
   it("tab 列順序、窄螢幕判準", () => {
-    expect(SIDEBAR_TABS).toEqual(["recent", "myNotes", "workspace", "shared"]);
+    expect(SIDEBAR_TABS).toEqual(["recent", "myNotes", "workspace", "shared", "trash"]);
     expect(NARROW_QUERY).toBe("(width < 48rem)");
   });
 });
@@ -64,7 +65,12 @@ describe("readSidebarTab", () => {
     expect(readSidebarTab()).toBe(tab);
   });
 
-  it.each(["trash", "bogus", ""])("無效值 %j → 預設（trash 在步驟 1 視同無效）", (raw) => {
+  it("ST1b：trash 是合法值（步驟 2 起）", () => {
+    localStorage.setItem("sidebar.tab", "trash");
+    expect(readSidebarTab()).toBe("trash");
+  });
+
+  it.each(["bogus", ""])("無效值 %j → 預設", (raw) => {
     localStorage.setItem("sidebar.tab", raw);
     expect(readSidebarTab()).toBe("myNotes");
   });
@@ -251,5 +257,158 @@ describe("showTab 窄螢幕開抽屜", () => {
     });
     expect(spy2).toHaveBeenCalledTimes(1);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+function SelectionProbe() {
+  const { selection } = useSidebarTabState();
+  const { showTab, updateSelection } = useSidebarTabActions();
+  return (
+    <>
+      <span data-testid="active">{String(selection.active)}</span>
+      <span data-testid="keys">{[...selection.keys].join(",")}</span>
+      <button type="button" onClick={() => updateSelection({ type: "start" })}>
+        start
+      </button>
+      <button type="button" onClick={() => updateSelection({ type: "toggle", key: "note:a" })}>
+        toggle-a
+      </button>
+      <button type="button" onClick={() => showTab("myNotes")}>
+        show-myNotes
+      </button>
+      <button type="button" onClick={() => showTab("recent")}>
+        show-recent
+      </button>
+    </>
+  );
+}
+
+describe("選取狀態（spec §6.10.2）", () => {
+  function startWithA() {
+    render(
+      <SidebarTabProvider>
+        <SelectionProbe />
+      </SidebarTabProvider>,
+    );
+    expect(screen.getByTestId("active")).toHaveTextContent("false");
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle-a" }));
+    expect(screen.getByTestId("active")).toHaveTextContent("true");
+    expect(screen.getByTestId("keys")).toHaveTextContent("note:a");
+  }
+
+  it("ST8a：選取在 provider；點目前所在的 tab 不結束選取", () => {
+    startWithA(); // 預設在 myNotes
+    fireEvent.click(screen.getByRole("button", { name: "show-myNotes" }));
+    expect(screen.getByTestId("active")).toHaveTextContent("true");
+    expect(screen.getByTestId("keys")).toHaveTextContent("note:a");
+  });
+
+  it("ST8b：換到別的 tab 才結束選取", () => {
+    startWithA();
+    fireEvent.click(screen.getByRole("button", { name: "show-recent" }));
+    expect(screen.getByTestId("active")).toHaveTextContent("false");
+    expect(screen.getByTestId("keys")).toBeEmptyDOMElement();
+  });
+
+  it("ST9：endSelectionIfActive 選取中回 true 並結束；再呼叫回 false", () => {
+    let actions: SidebarTabActions | null = null;
+    const Grab = () => {
+      actions = useSidebarTabActions();
+      return null;
+    };
+    render(
+      <SidebarTabProvider>
+        <Grab />
+        <SelectionProbe />
+      </SidebarTabProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle-a" }));
+    let first: boolean | undefined;
+    act(() => {
+      first = (actions as SidebarTabActions | null)?.endSelectionIfActive();
+    });
+    expect(first).toBe(true);
+    expect(screen.getByTestId("active")).toHaveTextContent("false");
+    let second: boolean | undefined;
+    act(() => {
+      second = (actions as SidebarTabActions | null)?.endSelectionIfActive();
+    });
+    expect(second).toBe(false);
+    expect(screen.getByTestId("active")).toHaveTextContent("false");
+  });
+
+  it("ST10：start、toggle 三次、end 之後，只消費 actions 的 memo 元件不重繪、actions 同一物件", () => {
+    let renders = 0;
+    const seen: SidebarTabActions[] = [];
+    const Counter = memo(function Counter() {
+      renders += 1;
+      seen.push(useSidebarTabActions());
+      return null;
+    });
+    let actions: SidebarTabActions | null = null;
+    const Grab = () => {
+      actions = useSidebarTabActions();
+      return null;
+    };
+    render(
+      <SidebarTabProvider>
+        <Grab />
+        <SelectionProbe />
+        <Counter />
+      </SidebarTabProvider>,
+    );
+    const mounted = renders;
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByRole("button", { name: "toggle-a" }));
+    expect(screen.getByTestId("keys")).toHaveTextContent("note:a");
+    act(() => {
+      (actions as SidebarTabActions | null)?.endSelectionIfActive();
+    });
+    expect(screen.getByTestId("active")).toHaveTextContent("false");
+    expect(renders).toBe(mounted);
+    expect(seen.length).toBe(mounted);
+    for (const a of seen) expect(a).toBe(seen[0]);
+    expect(actions).toBe(seen[0]);
+  });
+
+  it("ST11：actionsRef 指向 useSidebarTabActions() 的同一物件，重繪後不變", () => {
+    let fromHook: SidebarTabActions | null = null;
+    let ref: { current: SidebarTabActions | null } | null = null;
+    const Grab = () => {
+      fromHook = useSidebarTabActions();
+      return null;
+    };
+    function Host() {
+      const actionsRef = useRef<SidebarTabActions | null>(null);
+      ref = actionsRef;
+      const [n, setN] = useState(0);
+      return (
+        <SidebarTabProvider actionsRef={actionsRef}>
+          <button type="button" data-n={n} onClick={() => setN(n + 1)}>
+            host-rerender
+          </button>
+          <Grab />
+          <SelectionProbe />
+        </SidebarTabProvider>
+      );
+    }
+    render(<Host />);
+    const current = () => (ref as { current: SidebarTabActions | null } | null)?.current;
+    expect(fromHook).not.toBeNull();
+    expect(current()).toBe(fromHook);
+    const first = current();
+    fireEvent.click(screen.getByRole("button", { name: "host-rerender" }));
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    expect(current()).toBe(first);
+    expect(current()).toBe(fromHook);
+  });
+
+  it("ST12：無 provider → endSelectionIfActive 回 false 不 throw；selection 是 EMPTY_SELECTION", () => {
+    const actions = renderHook(() => useSidebarTabActions()).result.current;
+    expect(actions.endSelectionIfActive()).toBe(false);
+    expect(() => actions.updateSelection({ type: "start" })).not.toThrow();
+    expect(renderHook(() => useSidebarTabState()).result.current.selection).toBe(EMPTY_SELECTION);
   });
 });

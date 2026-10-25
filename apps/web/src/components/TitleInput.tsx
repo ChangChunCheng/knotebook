@@ -127,6 +127,8 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
 
   return (
     <input
+      // 握把：NotePage 還原後把焦點移到這裡（final review N-3：別靠「頁首第一個 input」）。
+      data-note-title-input=""
       className="min-w-16 flex-1 bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground"
       aria-label={t("note.titleLabel")}
       placeholder={t("note.titlePlaceholder")}

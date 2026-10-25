@@ -36,9 +36,10 @@ import { NarrowTopBar } from "./NarrowTopBar";
  * chunk——失敗是 promise rejection 不經 render，boundary 接不到，不在此列，也因此
  * 不在本機制的涵蓋範圍內。）key 的 route 別名（`chunk` prop，預設 `notepage`）讓每條
  * lazy route 各自有額度（#201 起：`admin`、`group`、`settings`、四個登入流程頁各一個；版本歷史的
- * `versions`）。`versions` 是 NotePage 底下的巢狀 lazy：用自己的別名，且五個掛載點都 `import()`
+ * `versions`；側欄垃圾桶 tab 的 `trash`）。`versions` 是 NotePage 底下的巢狀 lazy：用自己的別名，且五個掛載點都 `import()`
  * 同一個模組 `VersionsLazy`，任一成功後其餘不可能再以 chunk 錯誤失敗，滿足上面的收斂前提
- * （起草裁定 23）。測試刻意寫字面 key（釘住 key 名不被改），這裡不匯出常數。
+ * （起草裁定 23）。`trash` 同形（#181）：AppShell 的 tabpanel 與 SidebarFooter 兩個掛載點都 `import()` `TrashLazy`、
+ * 各包 `TrashLazyBoundary`。測試刻意寫字面 key（釘住 key 名不被改），這裡不匯出常數。
  */
 const DEFAULT_CHUNK = "notepage";
 

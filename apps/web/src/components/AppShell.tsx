@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -7,16 +8,19 @@ import { ApiFail } from "@/api/client";
 import { useCreateNote } from "@/api/notes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Menu, Plus, Search, X } from "@/components/ui/icons";
+import { Menu, Search, X } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { NARROW_QUERY, SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom } from "@/lib/real-location";
-import { SidebarTabProvider, useSidebarTabState } from "@/lib/sidebar-tab";
+import { TRASH_SELECT_BUTTON } from "@/lib/trash-display";
+import { SidebarTabProvider, useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
+import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
+import { TrashLazyBoundary } from "@/components/sidebar/TrashLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -27,6 +31,29 @@ import {
   writeSidebarWidth,
 } from "@/components/sidebar-width";
 import { PaneResizeHandle } from "@/components/PaneResizeHandle";
+
+/** 只有打開垃圾桶 tab 才下載（首包上限）；與 SidebarFooter 的 `TrashFooter` 同一個 chunk（`TrashLazy`）。 */
+const TrashPanel = lazy(() => import("@/components/sidebar/TrashLazy").then((m) => ({ default: m.TrashPanel })));
+
+/**
+ * `TrashPanel` 下載中的佔位：標題列「Trash」＋「Loading…」，與它自己清單載入中同高、同位置（垂直不跳），只少了標題列右側的
+ * 動作鈕（「選取」「清空」在 chunk 到了才出現）。
+ */
+function TrashPanelFallback() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+        <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+          <span className="truncate">{t("sidebar.trash")}</span>
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2">
+        <p className="p-2 text-sm text-muted-foreground">{t("app.loading")}</p>
+      </div>
+    </div>
+  );
+}
 
 // `<md` 的判準 `NARROW_QUERY` 住在 `lib/sidebar-drawer.ts`（`SidebarTabProvider` 也要用）。
 
@@ -62,7 +89,8 @@ interface SidebarContentProps {
   shortcutBadge: string;
 }
 
-/** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList）或搜尋結果／新增鈕／UserMenu）。
+/** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList；垃圾桶 tab 是 TrashPanel）或搜尋結果／底部（SidebarFooter：
+ * 新增鈕，垃圾桶 tab 換成保留天數說明、選取模式換成動作列）／UserMenu）。
  * 搜尋字串非空時 tab 列與 tabpanel 都不渲染、改顯示 `SearchResults`（tab state 不變，清空後回原 tab）。
  * 目前 tab 住在 `SidebarTabProvider`（靜態卡與抽屜兩份實例共用一份）。wrapper（靜態
  * `<aside>` 卡或抽屜 Content）由呼叫端提供——兩個 wrapper 都必須給
@@ -80,8 +108,13 @@ function SidebarContent({
   // 靜態卡與抽屜各自一份 `useId`，tab／tabpanel 的 id 才不會撞（spec §5.5）。
   const idBase = useId();
   const { tab } = useSidebarTabState();
+  const { updateSelection } = useSidebarTabActions();
   // 空白也算搜尋中（同改版前的判準）。
   const searching = query.length > 0;
+  // spec §6.10.2：開始搜尋也離開選取模式（兩份實例都跑，冪等）。
+  useEffect(() => {
+    if (searching) updateSelection({ type: "end" });
+  }, [searching, updateSelection]);
   return (
     <>
       <div className="flex items-center gap-2 px-3 pt-3">
@@ -153,17 +186,18 @@ function SidebarContent({
             tabIndex={0}
             className="flex min-h-0 flex-1 flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
+            {tab === "trash" ? (
+              <TrashLazyBoundary fallback={<TrashPanelFallback />} errorClassName="p-3">
+                <TrashPanel />
+              </TrashLazyBoundary>
+            ) : (
+              <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
+            )}
           </div>
         </>
       )}
 
-      <div className="m-2">
-        <Button variant="brand" className="w-full" onClick={() => onCreateNote()} disabled={newNotePending}>
-          <Plus aria-hidden="true" className="h-4 w-4" />
-          {t("home.newNote")}
-        </Button>
-      </div>
+      <SidebarFooter searching={searching} onCreateNote={() => onCreateNote()} newNotePending={newNotePending} />
 
       <div className="border-t border-border p-2">
         <UserMenu />
@@ -211,7 +245,8 @@ interface AppShellProps {
  *
  * 抽屜（Radix Dialog 直組——不用 `ui/dialog.tsx` 的 `DialogContent`，它寫死置中
  * 樣式還強制塞右上 X）：focus trap（**需焦點先落進容器才武裝**，見
- * `onOpenAutoFocus`）／Escape／backdrop 關閉／scroll lock 由 Radix 給；路由變化
+ * `onOpenAutoFocus`）／Escape／backdrop 關閉／scroll lock 由 Radix 給（選取模式中 Esc 先結束選取、
+ * 抽屜不關，見 `onEscapeKeyDown`）；路由變化
  * （點側欄筆記）與跨斷點 resize（change → `matches:false`）時自行關閉。
  *
  * 新增筆記：`POST /api/notes`（`useCreateNote`）成功後直接導向新筆記的
@@ -221,7 +256,8 @@ interface AppShellProps {
  * 用 toast 顯示（不像 LoginPage 用行內 `errorMessage` state——這裡沒有表單可以
  * 掛錯誤文案）。
  *
- * 側欄 tab：state 由 `SidebarTabProvider`（包住整個版面、在抽屜 context 之內）持有；`AppShell` 隨
+ * 側欄 tab：state（目前 tab 與選取狀態）由 `SidebarTabProvider`（包住整個版面、在抽屜 context 之內）持有，
+ * `actionsRef` 給抽屜 Esc 用；`AppShell` 隨
  * 首頁↔筆記頁重掛（各自渲染一份），tab 靠 localStorage 在重掛間帶回，切 tab 不重繪 `AppShell` 本身。
  *
  * 側欄寬度（Task 4）：靜態卡寬度是 `<aside style={{ width }}>` 的 React state，範圍
@@ -255,6 +291,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   const openedByShortcutRef = useRef(false);
   const drawerOpenRef = useRef(drawerOpen);
   drawerOpenRef.current = drawerOpen;
+  const tabActionsRef = useRef<SidebarTabActions | null>(null);
 
   // Ctrl/Cmd+K。deps 刻意留空——handler 只讀 ref（穩定物件）與當下的
   // matchMedia/DOM，不需要隨 state 重新掛聽。
@@ -356,9 +393,14 @@ export function AppShell({ children, inert }: AppShellProps) {
     // `min-h-0 min-w-0 flex-1 flex flex-col` 撐開版面（`min-w-0` 顯式宣告——
     // `main` 沒有 overflow、少了隱含的自我裁切途徑，寬度鏈全靠它）。
     <SidebarDrawerContext.Provider value={{ setOpen: setDrawerOpen }}>
-      <SidebarTabProvider>
+      <SidebarTabProvider actionsRef={tabActionsRef}>
         <div inert={inert} className="flex h-screen gap-3 overflow-hidden bg-background p-3">
-          <aside className={cn(cardSurface, "relative hidden shrink-0 md:flex md:flex-col")} style={{ width: sidebarWidth }}>
+          {/* data-sidebar-instance：SidebarContent 回 fragment、沒有自己的根；垃圾桶動作列靠它找回同一份的「選取」鈕。 */}
+          <aside
+            data-sidebar-instance=""
+            className={cn(cardSurface, "relative hidden shrink-0 md:flex md:flex-col")}
+            style={{ width: sidebarWidth }}
+          >
             <SidebarContent {...sidebarProps} searchRef={searchInputRef} />
             <PaneResizeHandle
               width={sidebarWidth}
@@ -379,10 +421,23 @@ export function AppShell({ children, inert }: AppShellProps) {
               <DialogPrimitive.Content
                 ref={drawerContentRef}
                 data-sidebar-drawer=""
+                data-sidebar-instance=""
                 // 底色與 flex 脈絡缺一不可：沒底色透出 overlay 的黑、沒 flex-col 則
                 // SidebarContent 的 min-h-0 flex-1 清單失去約束（spec §3a）。貼齊
                 // 左緣故意不用 cardSurface 的圓角——抽屜不是卡片。
                 className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card"
+                // Radix 在 document capture 先處理 Esc：選取中先結束選取、抽屜不關。真瀏覽器在這個 listener 與 React 的
+                // onKeyDown 之間會跑 microtask，選取的結束先 commit、勾選框／動作列卸載，React 那層的 handler 不會再跑——
+                // 焦點要在這裡交給抽屜裡的「選取」鈕（flushSync 讓它在同一個 task 內出現）。
+                onEscapeKeyDown={(event) => {
+                  let ended = false;
+                  flushSync(() => {
+                    ended = tabActionsRef.current?.endSelectionIfActive() ?? false;
+                  });
+                  if (!ended) return;
+                  event.preventDefault();
+                  drawerContentRef.current?.querySelector<HTMLButtonElement>(TRASH_SELECT_BUTTON)?.focus();
+                }}
                 onOpenAutoFocus={(event) => {
                   event.preventDefault();
                   if (openedByShortcutRef.current && drawerSearchRef.current) {

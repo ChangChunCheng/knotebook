@@ -5,6 +5,7 @@ import type { GroupDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { groupMembersKey, useDeleteGroup, useGroupMembers } from "@/api/groups";
 import { useNotes } from "@/api/notes";
+import { useTrash } from "@/api/trash";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -43,8 +44,12 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
  *   避免舊勾選被帶進下一次全刪。
  * - **空群組也顯示兩模式**（主檔 spec 疑點 Q7）：兩者在空群組上效果相同，但介面不分岔，使用者不必猜；
  *   說明句換成「這個群組沒有筆記」。
- * - 篇數取自 `['notes']` 快取（`groupId === group.id`）：側欄本來就載著它，不為對話框多打一發；
- *   尚未載入時說明句改用不含數字的版本，不顯示「0 篇」的假話。
+ * - 篇數＝活筆記＋群組垃圾桶裡的（#181 spec §6.5：兩模式都連垃圾桶裡的一起處理）。活筆記取自 `['notes']` 快取
+ *   （`groupId === group.id`）：側欄本來就載著它；垃圾桶取自 `GET /api/trash` 中 `group.id` 相符的項目。
+ *   垃圾桶篇數在下列情形不可信（spec §6.5 M4）：①自己沒有該群組的垃圾桶權（`edit`＋`delete`；能管群組的自訂角色可能沒有）、
+ *   ②清單 `truncated`（上限 `TRASH_LIST_LIMIT`，會少算）；另外還沒載到或載入失敗也一樣。任一篇數不可信時說明句改用不含數字的版本，
+ *   不顯示「0 篇」的假話；「這個群組沒有筆記」只在兩者都可信且為 0 時說。
+ * - 轉移模式另起一句說明垃圾桶裡的群組筆記去向（進接收者的個人垃圾桶）；垃圾桶篇數可信且為 0 時省略。
  * - 按鈕變體：確認鈕 `destructive`（一個畫面一顆實心鈕，取消是 `outline`；見 `ui/button.tsx`）。
  *
  * 失敗一律 toast 並**留著對話框**（409 `not_admin`、409 `server_busy`、404…）；`not_admin` 另外重抓成員名單，
@@ -66,6 +71,7 @@ export function DeleteGroupDialog({
   const deleteGroup = useDeleteGroup();
   const membersQuery = useGroupMembers(group.id);
   const notesQuery = useNotes();
+  const trashQuery = useTrash();
   const [mode, setMode] = useState<Mode>("transfer");
   const [pickedAdmin, setPickedAdmin] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -75,19 +81,26 @@ export function DeleteGroupDialog({
   const selected = admins.find((m) => m.userId === pickedAdmin) ?? admins[0] ?? null;
   const adminsFailed = membersQuery.isError;
 
-  const noteCount = notesQuery.data ? notesQuery.data.filter((n) => n.groupId === group.id).length : null;
+  const liveCount = notesQuery.data ? notesQuery.data.filter((n) => n.groupId === group.id).length : null;
+  const canSeeGroupTrash = group.myRole?.permissions.edit === true && group.myRole.permissions.delete === true;
+  const trashCount =
+    trashQuery.isSuccess && !trashQuery.data.truncated && canSeeGroupTrash
+      ? trashQuery.data.items.filter((item) => item.group?.id === group.id).length
+      : null;
+  const total = liveCount !== null && trashCount !== null ? liveCount + trashCount : null;
+  const name = selected?.displayName ?? "";
 
   function describe(kind: "transfer" | "delete"): string {
-    if (noteCount === 0) return t("groups.delete.emptyDescription");
-    const name = selected?.displayName ?? "";
+    if (liveCount === 0 && trashCount === 0) return t("groups.delete.emptyDescription");
     if (kind === "transfer") {
-      return noteCount === null
+      return total === null
         ? t("groups.delete.transferDescriptionNoCount", { name })
-        : t("groups.delete.transferDescription", { count: noteCount, name });
+        : t("groups.delete.transferDescription", { count: total, name });
     }
-    return noteCount === null
-      ? t("groups.delete.deleteDescriptionNoCount")
-      : t("groups.delete.deleteDescription", { count: noteCount });
+    if (total === null) return t("groups.delete.deleteDescriptionNoCount");
+    return trashCount === 0
+      ? t("groups.delete.deleteDescription", { count: total })
+      : t("groups.delete.deleteDescriptionWithTrash", { count: total, trash: trashCount });
   }
 
   function switchMode(next: Mode): void {
@@ -173,6 +186,7 @@ export function DeleteGroupDialog({
               </p>
             )}
             <DialogDescription>{describe("transfer")}</DialogDescription>
+            {trashCount !== 0 && <p className="text-sm text-muted-foreground">{t("groups.delete.transferTrashNote", { name })}</p>}
           </div>
         ) : (
           <div className="space-y-3">

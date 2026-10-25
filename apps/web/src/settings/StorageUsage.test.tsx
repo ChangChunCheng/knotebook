@@ -15,9 +15,11 @@ function fakeResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: () => Promise.resolve(body) } as unknown as Response;
 }
 
+const TRASH_NOTE = "Notes in the trash count toward usage too, until they're permanently deleted.";
+
 const ME: UserDto = { id: "u-me", email: "me@example.com", handle: "me", displayName: "Me", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true };
 
-function renderAt(path: string, handlers: (url: string, method: string) => Response | null) {
+function renderAt(path: string, handlers: (url: string, method: string) => Response | Promise<Response> | null) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -85,6 +87,30 @@ describe("W3 帳號頁的儲存空間", () => {
     expect(screen.getByTestId("storage-usage")).not.toHaveClass("text-destructive");
     expect(screen.queryByText("Limit reached — no new attachments can be added")).not.toBeInTheDocument();
   });
+
+  it("SU-T1（#181 D-W4）成功態末尾有垃圾桶計入用量的說明；載入中與錯誤態沒有", async () => {
+    renderAt("/settings/storage", (url) => (url === "/api/groups" ? fakeResponse(200, []) : url === "/api/storage" ? fakeResponse(200, usage({})) : null));
+    await waitFor(() => expect(screen.getByTestId("storage-usage")).toHaveTextContent("1 MB of 2 GB (Basic)"));
+    const note = screen.getByText(TRASH_NOTE, { exact: true });
+    expect(note).toHaveClass("text-xs", "text-muted-foreground");
+    expect(screen.getByTestId("storage-usage").compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("SU-T1b 載入中（/api/storage 懸著）→ 沒有垃圾桶說明", async () => {
+    renderAt("/settings/storage", (url) => (url === "/api/groups" ? fakeResponse(200, []) : url === "/api/storage" ? new Promise<Response>(() => {}) : null));
+    expect(await screen.findByRole("heading", { level: 1, name: "Storage" })).toBeInTheDocument();
+    await screen.findByRole("switch");
+    expect(screen.getAllByText("Loading…").length).toBeGreaterThan(0);
+    expect(screen.queryByText(TRASH_NOTE)).not.toBeInTheDocument();
+  });
+
+  it("SU-T1c 錯誤態（/api/storage 500）→ 沒有垃圾桶說明", async () => {
+    renderAt("/settings/storage", (url) =>
+      url === "/api/groups" ? fakeResponse(200, []) : url === "/api/storage" ? fakeResponse(500, { error: { code: "boom", message: "x" } }) : null,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("errors.fallback"));
+    expect(screen.queryByText(TRASH_NOTE)).not.toBeInTheDocument();
+  });
 });
 
 const ADMIN_ROLE = adminRole({ id: "11111111-1111-1111-1111-111111111111" });
@@ -105,6 +131,7 @@ describe("W3 群組儲存空間頁（/groups/:id/storage，#247 §6.4）", () =>
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     expect(await within(dialog).findByRole("heading", { level: 1, name: "Storage" })).toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByTestId("storage-usage")).toHaveTextContent("1 MB of 2 GB (Team plan)"));
+    expect(within(dialog).getByText(TRASH_NOTE, { exact: true })).toBeInTheDocument(); // SU-T1 群組面板同一句（共用 StorageUsageGroup）
     expect(fetchMock.mock.calls.some(([u]) => String(u) === `/api/groups/${g.id}/storage`)).toBe(true);
   });
 

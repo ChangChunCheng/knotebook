@@ -1,4 +1,5 @@
 import { useRef, useState, type RefObject } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { canonicalNotePath, type NoteDto } from "@knotebook/shared";
@@ -8,19 +9,12 @@ import { isTerminal, type CollabState } from "@/collab/connection";
 import { copyText } from "@/lib/clipboard";
 import { useNotePageControls, type OpenEditsState } from "@/lib/note-page-controls";
 import { useCloseSidebarDrawer } from "@/lib/sidebar-drawer";
+import { showTrashedToast } from "@/lib/trash-undo";
 import { useIsNarrow, useVersions } from "@/lib/versions-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { hoverReveal } from "@/components/ui/reveal";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { EllipsisVertical, History, Link as LinkIcon, MessageCircle, Presentation, Trash } from "@/components/ui/icons";
 import { ManualCopyField } from "@/components/ManualCopyField";
@@ -60,7 +54,11 @@ export interface NoteMenuProps {
 
 /**
  * 內文卡頁頭的 ⋮ 選單（spec D.4）：複製連結（任何角色）＋簡報模式（#229，任何角色）＋AI 修改紀錄＋移動到…／複製到…（#216；選項規則見 `share/GroupTransfer.tsx` 的 `buildTransferOptions`，「複製到我的筆記」已併入「複製到… → 個人空間」）
- * ＋刪除筆記（`permissions.delete`，#175 §8.3）。
+ * ＋移到垃圾桶（`permissions.delete`，#175 §8.3；#181 起刪除＝移入垃圾桶）。
+ *
+ * **移到垃圾桶不確認（spec §6.10.4 D-W7）**：點下選單項即送 DELETE；成功 toast「已移到垃圾桶」，
+ * 能自己還原的才帶「復原」（判準在 `canRestoreAfterTrash`，§6.10.7），toast 與復原見 `lib/trash-undo.ts`
+ * （復原常在選單卸載之後才被按，所以不經這裡的 hook 回呼）。刪除中選單項 disabled，不重送。
  *
  * **focus trap 雷（rev5 定案，⚠ 改動前必讀）**：Radix `DropdownMenu` 預設是 modal，
  * 跟 `Dialog` 共用同一套 `FocusScope` 搶焦點；`lib/clipboard.ts` 的 `execCommand`
@@ -77,9 +75,8 @@ export interface NoteMenuProps {
  * **與共編 `deleted` 終態的互動（M11，⚠ review 修正——舊版方向反了，見下）**：
  * server 的 `beforeNoteDeleted` 會先關掉發起者自己的連線，`close(NOTE_DELETED)`
  * 可能**早於** DELETE 的 HTTP 回應抵達。刪除 handler：
- * - 確認後**先** `leavingRef.current = true`，**再** `await deleteNote.mutateAsync`；
- * - 成功：不另發成功 toast（跟改版前側欄刪除一致，導頁即回饋）→ 無條件
- *   `navigate("/",{replace:true})`；
+ * - 點下後**先** `leavingRef.current = true`，**再** `await deleteNote.mutateAsync`；
+ * - 成功：「已移到垃圾桶」toast（復原會導回這篇）→ 無條件 `navigate("/",{replace:true})`；
  * - **失敗且已進終態**：`NotePage` 的終態 effect 是被 `leavingRef.current` 閘住的
  *   （`if (!isTerminal(state) || leavingRef.current) return;`）——這支 handler
  *   在函式開頭就已經把它設成 `true`，那個 effect **永遠不會再觸發**。「終態 effect
@@ -91,7 +88,7 @@ export interface NoteMenuProps {
  *   閘門吃掉，變成死頁）再顯示錯誤 toast，**不導頁**。
  * - 判斷終態用的是 `stateRef.current`（每次 render 同步寫入的 ref），不是
  *   `state` 這個 closure 參數本身：`close(NOTE_DELETED)` 常常早於 DELETE 回應
- *   抵達，`handleConfirmDelete` 這個 closure 建立當下捕捉到的 `state` 大概率還
+ *   抵達，`handleTrash` 這個 closure 建立當下捕捉到的 `state` 大概率還
  *   是呼叫當時的 `connected`，直接讀它會誤判成「非終態」而走錯分支。
  *
  * **兩個外殼（側欄筆記列 ⋮）**：選單本體是內部的 `NoteMenuCore`，外面兩個薄殼——
@@ -104,7 +101,7 @@ export interface NoteMenuProps {
  *     回首頁）；「AI 修改紀錄」先關抽屜再直接開 NotePage 的對話框、**不導頁**（導到
  *     `canonicalNotePath` 若與 router 目前的路徑不同——舊形 `/notes/:ref`、改過標題——
  *     會重解析、拆共編、閃佔位卡）。
- *   - 別篇：刪除成功只關對話框、不導頁（清單由 `useDeleteNote` 失效重抓）；「AI 修改紀錄」
+ *   - 別篇：刪除成功只出 toast、不導頁（清單由 `useDeleteNote` 失效重抓；復原也不導頁）；「AI 修改紀錄」
  *     `navigate(path, { state: { openEdits: true } })`，NotePage 第一個 commit 讀到就開對話框
  *     並 `replace` 清掉 state（不清的話重整／返回會再跳出來）。
  */
@@ -179,21 +176,21 @@ function VersionsMenuItem({ onActivate }: { onActivate: () => void }) {
 function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef: externalTriggerRef }: NoteMenuCoreProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const deleteNote = useDeleteNote();
   const versions = useVersions();
 
-  // 每次 render 同步寫入——`handleConfirmDelete` 的 catch 分支讀最新值，避開
+  // 每次 render 同步寫入——`handleTrash` 的 catch 分支讀最新值，避開
   // stale closure（見上方檔頭「判斷終態用的是 stateRef.current」的說明）。
   const stateRef = useRef(page?.state);
   stateRef.current = page?.state;
 
   const [menuOpen, setMenuOpen] = useState(false);
-  /** 確認框／刪除框關閉後把焦點還給 ⋮ 觸發鈕（兩個 Dialog 都沒有 DialogTrigger，Radix 預設會掉到 body）。 */
+  /** 群組移動／複製確認框關閉後把焦點還給 ⋮ 觸發鈕（沒有 DialogTrigger，Radix 預設會掉到 body）。 */
   const ownTriggerRef = useRef<HTMLButtonElement>(null);
   const triggerRef = externalTriggerRef ?? ownTriggerRef;
   /** #229 §6.6-6：從這一項進入簡報時，選單關閉別把焦點還給觸發鈕（它即將在 inert 的 AppShell 裡）；簡報層掛上後自己聚焦根。 */
   const enteringPresentationRef = useRef(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   /** #216：選定的「移動／複製到群組」目標；非 null 時掛確認框（選單已關）。 */
   const [transfer, setTransfer] = useState<GroupTransferPick | null>(null);
   /** 窄／觸控的就地展開形展開的是哪一組（flyout 形不用）；Esc 先收合再關選單，見 `onEscapeKeyDown`。 */
@@ -211,14 +208,13 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
     setManualCopyUrl(url);
   }
 
-  async function handleConfirmDelete(): Promise<void> {
+  async function handleTrash(): Promise<void> {
     if (page === null) {
-      // 別篇：沒有頁面要離開，也沒有共編終態可判——成功只關對話框（清單由 useDeleteNote 失效重抓），失敗 toast。
+      // 別篇：沒有頁面要離開，也沒有共編終態可判——成功只出 toast（清單由 useDeleteNote 失效重抓），失敗 toast。
       try {
         await deleteNote.mutateAsync(note.id);
-        setDeleteOpen(false);
+        showTrashedToast({ notes: [note], queryClient, navigate, t, reopen: false });
       } catch (err) {
-        setDeleteOpen(false);
         toast({ title: errorMessage(t, err), variant: "destructive" });
       }
       return;
@@ -227,10 +223,9 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
     leavingRef.current = true;
     try {
       await deleteNote.mutateAsync(note.id);
-      setDeleteOpen(false);
+      showTrashedToast({ notes: [note], queryClient, navigate, t, reopen: true });
       void navigate("/", { replace: true });
     } catch (err) {
-      setDeleteOpen(false);
       const currentState = stateRef.current;
       if (currentState !== undefined && isTerminal(currentState)) {
         // `NotePage` 的終態 effect 被 `leavingRef.current` 閘住——上面已經把它設成
@@ -340,7 +335,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             {t("note.menu.aiEdits")}
           </DropdownMenuItem>
           {/* #216：移動／複製到群組（原分享面板「搬入群組」列）。寬螢幕第二層是 Radix Sub（hover／點擊／方向鍵進出；Esc 由 GroupSub 自接，只關第二層），窄／觸控是就地展開；
-              選定群組 → 先關選單再開確認框，與下面刪除項同一套（確認框的 FocusScope 不與選單互搶）。沒有可選群組整組不渲染。 */}
+              選定群組 → 先關選單再開確認框（確認框的 FocusScope 不與選單互搶）。沒有可選群組整組不渲染。 */}
           <GroupTransferMenuItems
             note={note}
             expanded={groupExpanded}
@@ -352,14 +347,15 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             }}
           />
           {/* #175 §8.3：刪除看 `permissions.delete`（群組筆記的 role 從不是 owner，但角色有
-              `can_delete` 的成員要能刪；個人筆記只有 owner 為真）。 */}
+              `can_delete` 的成員要能刪；個人筆記只有 owner 為真）。#181：點下即移到垃圾桶、不確認；刪除中 disabled 不重送。 */}
           {note.permissions.delete && (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
+              disabled={deleteNote.isPending}
               onSelect={(event) => {
                 event.preventDefault();
                 setMenuOpen(false);
-                setDeleteOpen(true);
+                void handleTrash();
               }}
             >
               <Trash className="mr-2 h-4 w-4" />
@@ -379,37 +375,6 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             <DialogTitle>{t("share.copyLink")}</DialogTitle>
           </DialogHeader>
           {manualCopyUrl !== null && <ManualCopyField value={manualCopyUrl} />}
-        </DialogContent>
-      </Dialog>
-
-      {/* 刪除確認——文案沿用既有 home.* key（跟改版前的側欄刪除鈕同一套）。 */}
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent
-          onCloseAutoFocus={(event) => {
-            // 刪除失敗留在本頁時焦點回 ⋮；成功導頁後 triggerRef 已卸載（null），no-op。
-            event.preventDefault();
-            triggerRef.current?.focus();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t("home.deleteTitle")}</DialogTitle>
-            <DialogDescription>{t("home.deleteDescription", { title: note.title })}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                {t("home.cancel")}
-              </Button>
-            </DialogClose>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleConfirmDelete()}
-              disabled={deleteNote.isPending}
-            >
-              {t("home.delete")}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

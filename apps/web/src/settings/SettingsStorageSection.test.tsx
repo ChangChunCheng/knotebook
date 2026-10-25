@@ -37,6 +37,7 @@ function renderStorage(extra: Handler = () => null, client = new QueryClient({ d
     if (url === "/api/groups" || url === "/api/notes") return Promise.resolve(res(200, []));
     if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(res(200, LIST));
     if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(res(200, { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 5 }));
+    if (url === "/api/admin/trash/settings" && method === "GET") return Promise.resolve(res(200, { retentionDays: 7 }));
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -65,6 +66,17 @@ describe("/admin/storage（儲存方案頁）", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("SS-T1（#181 §6.9）垃圾桶設定接在版本保留之後；兩個 region 內各恰一顆 Save", async () => {
+    renderStorage();
+    await screen.findByRole("switch", { name: "Delete automatically" });
+    const trash = screen.getByRole("region", { name: "Trash" });
+    const versions = await screen.findByRole("region", { name: "Keeping automatic versions" });
+    expect(versions.compareDocumentPosition(trash) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(trash).getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    expect(within(versions).getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    expect(within(trash).getByRole("switch", { name: "Delete automatically" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("方案表：上限（formatBytes／No limit）、使用者數、群組數、超過上限數、預設標記；刪除鈕依兩條件 disabled＋看得見的說明", async () => {

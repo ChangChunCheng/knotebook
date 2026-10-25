@@ -15,13 +15,17 @@ import { cn } from "@/lib/utils";
  * 是**側欄列高**、有等高守衛釘著（帳號列↔backlinks 那排），不屬於這一組，別跟著改。
  *
  * **唯一的例外：側欄上的 24px 圖示鈕（`h-6 w-6` 蓋掉 `icon` 的 `h-8 w-8`）。**
- * 只限四處（前兩處出自 spec #103 §8.1）：`NoteList.tsx` 的 `HeaderActionButton`（tab 標題列的
+ * 只限以下幾處（前兩處出自 spec #103 §8.1）：`NoteList.tsx` 的 `HeaderActionButton`（tab 標題列的
  * 「＋」，常駐；與每個群組列右邊的「＋」，後者仍浮出）、`GroupMenu` 的 `size="sidebar"`（群組列的 ⋮；
  * 設定頁的同一顆 ⋮ 仍是預設 32px、常駐），以及 `NoteMenu.tsx` 的 `SidebarNoteMenu`（每列
  * 筆記的 ⋮；頁首那顆仍是 32px、常駐）。群組列「＋」、群組 ⋮、筆記列 ⋮ 這三顆共用 `ui/reveal.ts` 的 `hoverReveal`：
  * 桌面上平常隱藏，滑過該列或鍵盤聚焦才浮出；⋮ 在選單開著時不消失（「＋」不是選單，
  * 沒有這一條）；觸控裝置常駐。第四處是 `AppShell.tsx` 搜尋框內的「清除搜尋」✕：輸入框內
  * 的附屬鈕、不是同列並排的控制項，不走 hover 浮出（搜尋框有字才出現）。
+ * 垃圾桶 tab（`sidebar/TrashPanel.tsx`，#181）再加四處：標題列的「選取」圖示鈕與「清空」文字鈕（常駐；
+ * 「清空」是 `sm` 文字鈕但同為 24px 高，與「選取」同列），每列的「還原」與 ⋮（與筆記列 ⋮ 共用
+ * `hoverReveal("noterow")`），以及選取模式標題列的「全選／取消全選」（`ghost` `sm` `h-6`）與「完成」
+ * （`outline` `sm` `h-6`）——兩顆同列、取代平常那排，不與 32px 控制項並排。
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
@@ -49,6 +53,9 @@ import { cn } from "@/lib/utils";
  *   ⚠ **`ghost` 只用在「有列可依附」的地方**（表格列、清單列，或緊跟在同列主動作
  *   後面的還原型動作）。平級並排的動作一律 `outline`——ghost 沒有邊框也沒有底色，
  *   單獨站著看不出來是按鈕（「重新產生連結」被這樣回報過一次）。
+ *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/TrashFooter.tsx`）與「還原」平級並排，卻是
+ *   `ghost`＋`border border-input`＋紅字（hover 同 `ROW_ICON_DANGER`）——`outline` 的 hover／按下填 `brand-deep`，
+ *   紅字壓深色底不對（#181 PR-2b plan gate r1 M7）。別「修」回 `outline`。
  * - `destructive`——**只用在確認對話框的那一顆提交鈕**。
  * - `brand`——主色 tint（無邊框），招牌入口：側欄「新增筆記」、AI 主控。
  * - `brandSolid`／`brandDeep`——主色實心，兩階，**依所在表面二選一、不得混用**：

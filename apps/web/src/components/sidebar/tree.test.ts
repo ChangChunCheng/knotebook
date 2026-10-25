@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { GroupDto, NoteDto, NotePermissions } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { adminRole, EDITOR_PERMS, groupDto, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
-import { buildTabNodes, noteBucket, noteLocationLabel, partitionNotes, recentNotes } from "./tree";
+import { buildTabNodes, noteBucket, noteLocationLabel, noteLocationSegments, partitionNotes, recentNotes } from "./tree";
 
 function note(id: string, over: Partial<NoteDto> = {}): NoteDto {
   return {
@@ -147,6 +147,11 @@ describe("buildTabNodes", () => {
     expect(where("myNotes")).toBe(false);
     expect(where("workspace")).toBe(false);
   });
+
+  it("TR5：trash → []（垃圾桶不從 notes 組樹；不落入工作坊兜底）", () => {
+    expect(groups.length).toBeGreaterThan(0);
+    expect(buildTabNodes("trash", notes, groups)).toEqual([]);
+  });
 });
 
 // ── TR4：位置標籤
@@ -174,5 +179,13 @@ describe("noteLocationLabel", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+});
+
+// ── TR6：位置段落（spec §9-2，垃圾桶第二行也經它）
+describe("noteLocationSegments", () => {
+  it("群組筆記＝[群組名]；個人＝[]", () => {
+    expect(noteLocationSegments({ group: { name: "Workshop A" } })).toEqual(["Workshop A"]);
+    expect(noteLocationSegments({ group: null })).toEqual([]);
   });
 });

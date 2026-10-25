@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GroupDto, GroupMemberDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
-import { adminRole, groupDto, memberRole } from "@/test/fixtures";
+import { adminRole, customRole, groupDto, memberRole } from "@/test/fixtures";
+import { trashItem, trashList } from "@/test/trash-fixtures";
 import { DeleteGroupDialog } from "./DeleteGroupDialog";
 
 const GROUP: GroupDto = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Workshop A" }, adminRole({ memberCount: 2 }));
@@ -31,10 +32,23 @@ function fakeResponse(status: number, body?: unknown): Response {
 
 type Calls = Array<{ method: string; url: string; body: unknown }>;
 
+/** #181：垃圾桶項目——GROUP 的、別群組的、個人的。 */
+const inGroup = (id: string) => trashItem({ id, title: id, group: { id: GROUP.id, name: GROUP.name } });
+const OTHER_GROUP_TRASH = trashItem({ id: "t-other", title: "t-other", group: { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "Other" } });
+const PERSONAL_TRASH = trashItem({ id: "t-mine", title: "t-mine" });
+
+/** 能管群組、能刪但不能編輯（自訂角色）：看不到群組垃圾桶（spec §6.5 ①）。 */
+const NO_TRASH_GROUP: GroupDto = groupDto(
+  { id: GROUP.id, name: GROUP.name },
+  customRole({ permissions: { ...customRole().permissions, manageGroup: true, edit: false, delete: true } }),
+);
+
 interface Setup {
   members?: () => Response | Promise<Response>;
   notes?: () => Response | Promise<Response>;
+  trash?: () => Response | Promise<Response>;
   del?: () => Response;
+  group?: GroupDto;
 }
 
 function renderDialog(setup: Setup = {}, props: { onDeleted?: () => void; onOpenChange?: (open: boolean) => void } = {}) {
@@ -47,6 +61,7 @@ function renderDialog(setup: Setup = {}, props: { onDeleted?: () => void; onOpen
       calls.push({ method, url, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
       if (method === "GET" && url === `/api/groups/${GROUP.id}/members`) return Promise.resolve((setup.members ?? (() => fakeResponse(200, MEMBERS)))());
       if (method === "GET" && url === "/api/notes") return Promise.resolve((setup.notes ?? (() => fakeResponse(200, NOTES)))());
+      if (method === "GET" && url === "/api/trash") return Promise.resolve((setup.trash ?? (() => fakeResponse(200, trashList([]))))());
       if (method === "DELETE" && url === `/api/groups/${GROUP.id}`) return Promise.resolve((setup.del ?? (() => fakeResponse(204)))());
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
@@ -55,8 +70,9 @@ function renderDialog(setup: Setup = {}, props: { onDeleted?: () => void; onOpen
   const onDeleted = props.onDeleted ?? vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // 呼叫端的掛載形：`open && <DeleteGroupDialog …/>`——onOpenChange(false) 後卸載
+  const group = setup.group ?? GROUP;
   function Host() {
-    return <DeleteGroupDialog group={GROUP} onOpenChange={onOpenChange} onDeleted={onDeleted} />;
+    return <DeleteGroupDialog group={group} onOpenChange={onOpenChange} onDeleted={onDeleted} />;
   }
   render(
     <QueryClientProvider client={queryClient}>
@@ -64,7 +80,18 @@ function renderDialog(setup: Setup = {}, props: { onDeleted?: () => void; onOpen
       <Toaster />
     </QueryClientProvider>,
   );
-  return { calls, onOpenChange, onDeleted };
+  return { calls, onOpenChange, onDeleted, queryClient };
+}
+
+/**
+ * 等某支 query 離開 pending、再讓 react-query 的通知批次（setTimeout 0）跑完：不可信（NoCount）與「還沒載到」畫面相同，
+ * 不先等它落定，斷言會在載入前就過。
+ */
+async function settled(queryClient: QueryClient, key: readonly string[]): Promise<void> {
+  await waitFor(() => expect(queryClient.getQueryState(key)?.status).not.toBe("pending"));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 const deleteCalls = (calls: Calls) => calls.filter((c) => c.method === "DELETE");
@@ -195,7 +222,7 @@ describe("DeleteGroupDialog（#175 PR4，spec §8.6）", () => {
     expect(screen.getByText(/^The group's notes will become Me's personal notes\./)).toBeInTheDocument();
     expect(screen.queryByText(/\b0 notes?\b/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
-    expect(screen.getByText(/^The group's notes, their attachments and their edit history are permanently deleted/)).toBeInTheDocument();
+    expect(screen.getByText(/^The group's notes \(including those in its trash\), their attachments and their edit history are permanently deleted — they don't go to the trash\./)).toBeInTheDocument();
   });
 
   it("群組 0 篇：說明句是「This group has no notes.」，預設轉移，兩模式仍可選", async () => {
@@ -240,5 +267,180 @@ describe("DeleteGroupDialog（#175 PR4，spec §8.6）", () => {
     expect(screen.getByRole("radio", { name: "Give them to an admin" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
     expect(screen.getByRole("checkbox", { name: "I understand the notes will be permanently deleted" })).toBeInTheDocument();
+  });
+});
+
+const TRASH_NOTE =
+  /^Group notes in the trash go to Me's personal trash, and their retention period still counts from when they were deleted; their public links are turned off too\.$/;
+const queryTrashNote = () => screen.queryByText(/^Group notes in the trash go to /);
+const DELETE_NO_COUNT =
+  /^The group's notes \(including those in its trash\), their attachments and their edit history are permanently deleted — they don't go to the trash\. This can't be undone\.$/;
+const TRANSFER_NO_COUNT = /^The group's notes will become Me's personal notes\./;
+
+async function adminsLoaded(): Promise<void> {
+  const select = await screen.findByLabelText("Admin who gets the notes");
+  await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+}
+const toDeleteMode = () => fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
+
+describe("DeleteGroupDialog：垃圾桶篇數與轉移說明（#181 PR-2b T8，spec §6.5）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("DG-T1 群組垃圾桶 1 篇（別群組、個人的不計）＋活 2：轉移「3 notes」＋垃圾桶句；全刪「3 notes (including 1 in the trash)」", async () => {
+    renderDialog({ trash: () => fakeResponse(200, trashList([inGroup("t1"), OTHER_GROUP_TRASH, PERSONAL_TRASH])) });
+    await adminsLoaded();
+    await waitFor(() => expect(screen.getByText(/^3 notes will become Me's personal notes\./)).toBeInTheDocument());
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(
+      screen.getByText(/^3 notes \(including 1 in the trash\), their attachments and their edit history are permanently deleted — they don't go to the trash\. This can't be undone\.$/),
+    ).toBeInTheDocument();
+  });
+
+  it("DG-T2 群組垃圾桶 0（只有別群組、個人的）＋活 2：轉移沒有垃圾桶句；全刪「2 notes, … — they don't go to the trash.」", async () => {
+    const { queryClient } = renderDialog({ trash: () => fakeResponse(200, trashList([OTHER_GROUP_TRASH, PERSONAL_TRASH])) });
+    await adminsLoaded();
+    await settled(queryClient, ["trash"]);
+    await waitFor(() => expect(screen.getByText(/^2 notes will become Me's personal notes\./)).toBeInTheDocument());
+    expect(queryTrashNote()).not.toBeInTheDocument();
+    toDeleteMode();
+    expect(
+      screen.getByText(/^2 notes, their attachments and their edit history are permanently deleted — they don't go to the trash\. This can't be undone\.$/),
+    ).toBeInTheDocument();
+  });
+
+  it("DG-T3 能管群組、能刪但不能編輯（看不到群組垃圾桶）：不帶數字——轉移「The group's notes will become…」＋垃圾桶句；全刪「(including those in its trash)」", async () => {
+    // server 對這種角色不回群組垃圾桶的項目（spec §6.3.1），清單裡只有自己的個人項目
+    const { queryClient } = renderDialog({ group: NO_TRASH_GROUP, trash: () => fakeResponse(200, trashList([PERSONAL_TRASH])) });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    await settled(queryClient, ["trash"]);
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+  });
+
+  it("DG-T3b 能管群組、能編輯但不能刪（看不到群組垃圾桶）：不帶數字——轉移＋垃圾桶句；全刪「(including those in its trash)」", async () => {
+    const group = groupDto(
+      { id: GROUP.id, name: GROUP.name },
+      customRole({ permissions: { ...customRole().permissions, manageGroup: true, edit: true, delete: false } }),
+    );
+    const { queryClient } = renderDialog({ group, trash: () => fakeResponse(200, trashList([PERSONAL_TRASH])) });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    await settled(queryClient, ["trash"]);
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+  });
+
+  it("非成員的站台管理員（myRole: null；['notes'] 不含該群組筆記）：不帶數字，不說「This group has no notes.」", async () => {
+    const group = groupDto({ id: GROUP.id, name: GROUP.name }, null);
+    const { queryClient } = renderDialog({
+      group,
+      notes: () => fakeResponse(200, [note("n3", null)]),
+      trash: () => fakeResponse(200, trashList([PERSONAL_TRASH])),
+    });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    await settled(queryClient, ["trash"]);
+    expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+  });
+
+  it("DG-T4 垃圾桶清單 truncated：不帶數字（同 DG-T3）", async () => {
+    const { queryClient } = renderDialog({ trash: () => fakeResponse(200, trashList([inGroup("t1")], { truncated: true })) });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    await settled(queryClient, ["trash"]);
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+  });
+
+  it("DG-T5 垃圾桶載入失敗（500）：不帶數字", async () => {
+    const { queryClient } = renderDialog({ trash: () => fakeResponse(500, { error: { code: "internal", message: "x" } }) });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    await settled(queryClient, ["trash"]);
+    expect(queryClient.getQueryState(["trash"])?.status).toBe("error");
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+  });
+
+  it("DG-T5 垃圾桶還在載入（請求懸著）：不帶數字，不出「0 notes」也不出「This group has no notes.」", async () => {
+    const never = new Promise<Response>(() => {});
+    const { queryClient } = renderDialog({ trash: () => never });
+    await adminsLoaded();
+    await settled(queryClient, ["notes"]);
+    expect(queryClient.getQueryState(["trash"])?.status).toBe("pending");
+    expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+    expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+    toDeleteMode();
+    expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+    expect(screen.queryByText(/\b0 notes?\b/)).not.toBeInTheDocument();
+    expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+  });
+
+  describe("DG-T6 活筆記 0", () => {
+    const noLive = () => fakeResponse(200, [note("n3", null)]);
+
+    it("垃圾桶可信且 0 → 「This group has no notes.」（兩模式），轉移沒有垃圾桶句", async () => {
+      const { queryClient } = renderDialog({ notes: noLive });
+      await adminsLoaded();
+      await settled(queryClient, ["trash"]);
+      await waitFor(() => expect(screen.getByText("This group has no notes.")).toBeInTheDocument());
+      expect(queryTrashNote()).not.toBeInTheDocument();
+      toDeleteMode();
+      expect(screen.getByText("This group has no notes.")).toBeInTheDocument();
+    });
+
+    it("垃圾桶不可信（看不到群組垃圾桶）→ 不說「This group has no notes.」，改用不帶數字＋垃圾桶句", async () => {
+      const { queryClient } = renderDialog({ group: NO_TRASH_GROUP, notes: noLive });
+      await adminsLoaded();
+      await settled(queryClient, ["notes"]);
+      await settled(queryClient, ["trash"]);
+      expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+      expect(screen.getByText(TRANSFER_NO_COUNT)).toBeInTheDocument();
+      expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+      toDeleteMode();
+      expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+      expect(screen.getByText(DELETE_NO_COUNT)).toBeInTheDocument();
+    });
+
+    it("垃圾桶 2 篇 → 全刪「2 notes (including 2 in the trash)」；轉移「2 notes」＋垃圾桶句", async () => {
+      renderDialog({ notes: noLive, trash: () => fakeResponse(200, trashList([inGroup("t1"), inGroup("t2")])) });
+      await adminsLoaded();
+      await waitFor(() => expect(screen.getByText(/^2 notes will become Me's personal notes\./)).toBeInTheDocument());
+      expect(screen.getByText(TRASH_NOTE)).toBeInTheDocument();
+      toDeleteMode();
+      expect(screen.getByText(/^2 notes \(including 2 in the trash\), their attachments and their edit history are permanently deleted/)).toBeInTheDocument();
+      expect(screen.queryByText("This group has no notes.")).not.toBeInTheDocument();
+    });
+
+    it("垃圾桶 1 篇 → 全刪用單數「1 note (including 1 in the trash), its attachments … — it doesn't go to the trash.」", async () => {
+      renderDialog({ notes: noLive, trash: () => fakeResponse(200, trashList([inGroup("t1")])) });
+      await adminsLoaded();
+      await waitFor(() => expect(screen.getByText(/^1 note will become Me's personal note\./)).toBeInTheDocument());
+      toDeleteMode();
+      expect(
+        screen.getByText(/^1 note \(including 1 in the trash\), its attachments and its edit history are permanently deleted — it doesn't go to the trash\. This can't be undone\.$/),
+      ).toBeInTheDocument();
+    });
   });
 });
