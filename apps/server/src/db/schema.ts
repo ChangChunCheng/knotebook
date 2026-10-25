@@ -317,6 +317,32 @@ export const groupMembers = pgTable("group_members", {
   index("group_members_role_idx").on(t.roleId),
 ]);
 
+/**
+ * 資料夾（spec 2026-10-22 §5.1，migration 0034）：三種空間——personal（`owner_id`）、group（`group_id`）、shared（`owner_id`，
+ * 被分享者自己的分類）。`parent_id` NULL＝根層。成環、深度、數量不在 DB 守（結構鎖內的應用層，§5.4）。
+ * **只在 0034 手寫、不在這裡宣告**：`folders_sibling_name_idx`（同層名稱不分大小寫唯一，`… lower(name)) NULLS NOT DISTINCT`——
+ * drizzle 的 index builder 沒有 NULLS NOT DISTINCT，spec §5.1 M3 ①）與三支 trigger（`notes_folder_space_trg`、
+ * `folders_parent_space_trg`、`note_placements_folder_trg`；SQLSTATE `KF001`～`KF003`，見 `db/pg-errors.ts`）。
+ */
+export const folders = pgTable("folders", {
+  id: uuid().primaryKey().defaultRandom(),
+  kind: text().notNull(),
+  ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id").references((): AnyPgColumn => folders.id, { onDelete: "cascade" }),
+  name: text().notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  check("folders_kind_chk", sql`${t.kind} in ('personal','group','shared')`),
+  check("folders_space_chk", sql`(${t.kind} = 'group') = (${t.groupId} is not null) and (${t.ownerId} is null) = (${t.groupId} is not null)`),
+  check("folders_name_chk", sql`length(${t.name}) between 1 and 80`),
+  check("folders_parent_not_self_chk", sql`${t.parentId} is distinct from ${t.id}`),
+  index("folders_owner_idx").on(t.ownerId).where(sql`${t.ownerId} is not null`),
+  index("folders_group_idx").on(t.groupId).where(sql`${t.groupId} is not null`),
+  index("folders_parent_idx").on(t.parentId).where(sql`${t.parentId} is not null`),
+]);
+
 export const notes = pgTable("notes", {
   id: uuid().primaryKey().defaultRandom(),
   ownerId: uuid("owner_id").references(() => users.id, { onDelete: "restrict" }),
@@ -395,6 +421,11 @@ export const notes = pgTable("notes", {
   versionPendingRefFingerprint: text("version_pending_ref_fingerprint"),
   // #272 §5.1（D12）：目前基底那一版的 uuid。**無 FK**（基底被刪仍保留身分以顯示「(deleted)」）；與 version_base_seq 同寫同清。
   versionBaseVersionId: uuid("version_base_version_id"),
+  // 資料夾（spec 2026-10-22 §5.1）：擁有者那邊的位置；NULL＝根層。垃圾桶期間不清（還原回原處）。資料夾被刪 → NULL（notes_folder_fk）。
+  folderId: uuid("folder_id"),
+  // 垃圾桶的資料夾路徑快照（名稱陣列，根→葉）：只在垃圾桶期間有意義；寫入者只有 `notes/tx/trash.ts`、`folders/tx/delete-folder.ts`、
+  // `groups/tx/delete-group.ts`。**刻意不加**「有快照必在垃圾桶」CHECK：回滾到步驟 2 的碼還原時只清 `deleted_at`（spec §7）。
+  trashFolderPath: jsonb("trash_folder_path").$type<string[]>(),
 }, t => [
   index("notes_owner_idx").on(t.ownerId),   // GET /api/notes 自有分支（owner_id = $u）用
   // per-user 唯一（#122）：同 owner 不重複、跨 owner 可同名。PATCH 的 slug 寫入
@@ -432,6 +463,10 @@ export const notes = pgTable("notes", {
   check("notes_deleted_by_chk", sql`${t.deletedBy} is null or ${t.deletedAt} is not null`),
   // #181：垃圾桶清單與到期清理只看已移入的列。
   index("notes_deleted_at_idx").on(t.deletedAt).where(sql`${t.deletedAt} is not null`),
+  // 資料夾（spec 2026-10-22 §5.1）：與所在資料夾同空間由 trigger `notes_folder_space_trg`（0034 手寫）守。
+  foreignKey({ name: "notes_folder_fk", columns: [t.folderId], foreignColumns: [folders.id] }).onDelete("set null"),
+  check("notes_trash_folder_path_chk", sql`${t.trashFolderPath} is null or jsonb_typeof(${t.trashFolderPath}) = 'array'`),
+  index("notes_folder_idx").on(t.folderId).where(sql`${t.folderId} is not null`),
 ]);
 
 /**
@@ -564,6 +599,20 @@ export const noteShares = pgTable("note_shares", {
         // 已能服務「查某 note 的分享名單」，但反向「查某 user 被分享的所有 note」需要
         // user_id 開頭的獨立索引，否則會退化成全表掃描。
         index("note_shares_user_idx").on(t.userId)]);
+
+/**
+ * 共享私人放置（spec 2026-10-22 §5.1）：被分享者把別人分享給他的筆記放進自己的 shared 資料夾。分享列消失 → 放置跟著消失
+ * （`note_placements_share_fk` CASCADE）；只能指向放置者自己的 shared 資料夾由 trigger `note_placements_folder_trg`（0034 手寫）守。
+ */
+export const notePlacements = pgTable("note_placements", {
+  userId: uuid("user_id").notNull(),
+  noteId: uuid("note_id").notNull(),
+  folderId: uuid("folder_id").notNull().references(() => folders.id, { onDelete: "cascade" }),
+}, t => [
+  primaryKey({ columns: [t.userId, t.noteId] }),
+  foreignKey({ name: "note_placements_share_fk", columns: [t.noteId, t.userId], foreignColumns: [noteShares.noteId, noteShares.userId] }).onDelete("cascade"),
+  index("note_placements_folder_idx").on(t.folderId),
+]);
 
 export const noteLinks = pgTable("note_links", {
   sourceNoteId: uuid("source_note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),

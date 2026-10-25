@@ -19,6 +19,7 @@ function note(id: string, lastEdited: LastEditedDto | null): NoteDto {
     lastEdited,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
   };
 }

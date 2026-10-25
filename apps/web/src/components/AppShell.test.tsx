@@ -54,6 +54,7 @@ const CREATED: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 
@@ -256,6 +257,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     lastEdited: null,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
   };
 
@@ -273,6 +275,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     lastEdited: null,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
   };
 
@@ -567,6 +570,7 @@ describe("AppShell — #115 側欄抽屜", () => {
     lastEdited: null,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
   };
 

@@ -1,4 +1,4 @@
-// #181 垃圾桶 DTO（spec 2026-10-21 §6.1、§6.7）。spec §9-6：垃圾桶 DTO 只增不改，步驟 3 加 `folderPath`。
+// #181 垃圾桶 DTO（spec 2026-10-21 §6.1、§6.7）。spec §9-6：垃圾桶 DTO 只增不改；資料夾（spec 2026-10-22 §5.8）已加 `folderPath`。
 import type { NoteDto } from "./index.js";
 
 export const TRASH_RETENTION_DAYS_DEFAULT = 7;
@@ -18,6 +18,8 @@ export interface TrashItemDto {
   purgeAt: string | null; // 保留天數 NULL 時 null
   deletedBy: { handle: string; displayName: string } | null; // 帳號已刪 → null
   group: { id: string; name: string } | null; // 個人筆記 null
+  /** 原資料夾路徑（根 → 葉）：資料夾還在 → 即時路徑，否則刪除當下的快照；根層 → []。 */
+  folderPath: string[];
 }
 
 export interface TrashListDto {

@@ -51,6 +51,7 @@ const TARGET: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 

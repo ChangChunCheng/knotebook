@@ -196,7 +196,7 @@ describe("#175 PR4 DELETE /api/groups/:id：轉移（T6）", () => {
     expect(hooks.onGroupAccessChanged).toHaveBeenCalledTimes(2);
     expect(sorted(hooks.onGroupAccessChanged.mock.calls[0]![1])).toEqual(sorted([a.id, c.id]));
     expect(hooks.onGroupAccessChanged.mock.calls[1]![1]).toEqual([b.id]);
-    expect(ctxs).toEqual([{ point: "group-delete-locked", groupId: g.id }, { point: "group-transfer-slug-candidate", groupId: g.id }]);
+    expect(ctxs).toEqual([{ point: "group-delete-locked", groupId: g.id }, { point: "folder-structure-locked", groupId: g.id }, { point: "group-transfer-slug-candidate", groupId: g.id }]);
 
     // 全刪模式的大寫 :id：P0 照樣取得（每篇一個 gate），hook 的 groupId 是小寫。
     ctxs.length = 0;
@@ -207,7 +207,7 @@ describe("#175 PR4 DELETE /api/groups/:id：轉移（T6）", () => {
     expect(hooks.beforeNoteDeleted).toHaveBeenCalledTimes(1);
     expect(hooks.beforeNoteDeleted).toHaveBeenCalledWith(m.id);
     expect(await db.select().from(notes).where(eq(notes.id, m.id))).toEqual([]);
-    expect(ctxs).toEqual([{ point: "group-delete-gated", groupId: h.id }, { point: "group-delete-locked", groupId: h.id }]);
+    expect(ctxs).toEqual([{ point: "group-delete-gated", groupId: h.id }, { point: "group-delete-locked", groupId: h.id }, { point: "folder-structure-locked", groupId: h.id }]);
   });
 
   it("RF4：舊 /g/ 網址——B（transferTo）GET by-group-path 200、ownerHandle＝B、groupId null（轉址命中）；A（原管理員、非 transferTo）與 C → 404，body 與從沒存在過的 /g/<隨機 uuid>/<slug> 逐位元組相同", async () => {

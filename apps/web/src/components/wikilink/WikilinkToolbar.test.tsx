@@ -20,7 +20,7 @@ type AnyEditor = BlockNoteEditor<any, any, any>;
 
 const note = (id: string, title: string, slug: string): NoteDto => ({
   id, title, slug, ownerId: "u1", role: "owner", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
-  slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS,
+  slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS,
 });
 const TARGET = note("22222222-2222-4222-8222-222222222222", "Target", "target");
 const OTHER = note("33333333-3333-4333-8333-333333333333", "Other Note", "other-note");

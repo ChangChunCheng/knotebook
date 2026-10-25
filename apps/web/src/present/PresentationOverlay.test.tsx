@@ -316,7 +316,7 @@ describe("PresentationOverlay（fake reveal）", () => {
 
   it("已登入 wikilink 讀渲染當下的 ['notes'] 快取（命中 → 現行標題）", async () => {
     setup({
-      notes: [{ id: "n1", title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS }],
+      notes: [{ id: "n1", title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }],
     });
     await ready();
     expect(slideEl("_title").querySelector("a")!.textContent).toBe("Renamed meeting");
@@ -326,7 +326,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     // 必須含 a–f：全數字 id 的 toUpperCase() 不變，測不出大小寫（Task 16 M6 的教訓）。
     const hex = "abcdef12-3456-4789-8abc-def123456789";
     expect(hex.toUpperCase()).not.toBe(hex);
-    const note: NoteDto = { id: hex, title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS };
+    const note: NoteDto = { id: hex, title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS };
     const doc = blocksToYDoc(
       createExportEditor(),
       [{ id: "p0", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: hex.toUpperCase(), snapshotTitle: "Meeting Notes" } }] }] as never,

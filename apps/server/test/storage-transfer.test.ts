@@ -110,7 +110,7 @@ describe("busy 映射（S14 刪群組）", () => {
 });
 
 describe("轉移的空間鎖：位置與等待上限", () => {
-  it("Q-S7：storage-space-locked 在第一個 group-transfer-slug-candidate 之前；slug 探測當下本庫已持有 1 把 advisory 鎖", async () => {
+  it("Q-S7：folder-structure-locked、storage-space-locked 依序在第一個 group-transfer-slug-candidate 之前；slug 探測當下本庫已持有 3 把 advisory 鎖", async () => {
     const points: string[] = [];
     const advisoryAtSlug: number[] = [];
     const built = await buildTestApp({
@@ -132,8 +132,9 @@ describe("轉移的空間鎖：位置與等待上限", () => {
     const gn = await seedNote(db, { groupId: g.id });
     await seedAttachment(db, uploadsDir, gn.id, b.id, 5);
     expect((await transfer(app, g.id, b.id, b.id)).statusCode).toBe(204);
-    expect(points).toEqual(["group-delete-locked", "storage-space-locked", "group-transfer-slug-candidate"]);
-    expect(advisoryAtSlug).toEqual([1]);
+    expect(points).toEqual(["group-delete-locked", "folder-structure-locked", "storage-space-locked", "group-transfer-slug-candidate"]);
+    // slug 探測當下本庫持有 3 把 advisory 鎖＝群組與接收者個人空間的 2 把結構鎖＋1 把容量鎖。
+    expect(advisoryAtSlug).toEqual([3]);
   });
 
   it("storageLockTimeoutMs=200：上傳 A 持接收者個人空間鎖（停在縫上）時轉移 → 真的 55P03 → 409 server_busy（< 3000 ms：注入值有傳到轉移交易，不是預設 5000）、群組原封；A 之後 201", async () => {

@@ -98,6 +98,7 @@ const OWNER_NOTE: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 
@@ -115,6 +116,7 @@ const SHARED_NOTE: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: EDITOR_PERMS,
 };
 
@@ -132,6 +134,7 @@ const THIRD_OWNER_NOTE: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 

@@ -32,6 +32,7 @@ import {
   GROUP_NOT_FOUND_MESSAGE, NOT_ADMIN_MESSAGE, groupAccess, groupNoteIdsQuery, groupWithMyRoleQuery, listMyGroupsQuery, listRolesQuery, roleFlagValues,
   toGroupDto, toGroupRoleDto, validateGroupName, validateRoleName,
 } from "../groups/queries.js";
+import { fallbackGroupFolderName } from "../folders/names.js";
 import { createGroupInTx } from "../groups/tx/create-group.js";
 import { deleteGroupWithNotesInTx, transferGroupInTx } from "../groups/tx/delete-group.js";
 import { addMemberInTx, removeMemberInTx, setMemberRoleInTx } from "../groups/tx/members.js";
@@ -72,7 +73,7 @@ export interface GroupsRouteDeps {
   groupTestHook?: GroupTestHook;
   /** 全刪模式 commit 後刪附件檔（`deleteUploadFiles`）。 */
   uploadsDir: string;
-  /** 空間鎖等待上限（ms），透傳自 `AppDeps.storageLockTimeoutMs`（儲存配額 §5.3；轉移交易用）。 */
+  /** 空間鎖等待上限（ms），透傳自 `AppDeps.storageLockTimeoutMs`（儲存配額 §5.3；轉移交易用；資料夾 §5.4 起也是轉移與全刪的結構鎖上限）。 */
   storageLockTimeoutMs: number;
   /** 版本歷史 §9：刪群組・轉移 commit 後重建載入中筆記的版本狀態（`relocated`）。 */
   versions: VersionService;
@@ -154,9 +155,10 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
     // 全刪的 gate（beforeNoteDeleted 會借連線）在交易**之前**對 P0 開完（S14；gate r3 C-1）；gate 之後才進群組的（L \ P0）
     // 不經 gate 被刪，commit 後以 onGroupAccessChanged 讓在線者 5 秒內以 revoked 關閉（§6.8 代價、§15 第 10 條）。
     // 兩模式交易外的錯誤映射相同：FK 23503 → 409 group_not_empty（防禦縱深：lockGroup 之後的建立／移入卡在 FK KEY SHARE，
-    // 理論上撞不到）；40P01／40001 → 409 server_busy（T15 × T6／T7、同一位 transferTo 的兩筆 T6 會成環，PR4 plan 鎖序表）。
+    // 理論上撞不到）；40P01／40001 → 409 server_busy（T15 × T6／T7 仍會成環：`writeLinksInTx` 先鎖來源列再取目標 FK KEY SHARE，與群組筆記 FOR UPDATE 互等，PR4 plan 鎖序表；
+    // 同一位 transferTo 的兩筆轉移自資料夾 §5.9 起在接收者結構鎖上排隊〔取在筆記鎖之前〕，不再成環）。
     // 儲存配額起，transfer 另有 409 `storage_quota_exceeded`（接收者個人空間放不下；數字只給接收者本人與站台 admin——§8.1）；
-    // 55P03（空間鎖逾時）併入 server_busy。
+    // 55P03（空間鎖、資料夾結構鎖逾時）併入 server_busy。
     app.delete("/api/groups/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const access = await groupAccess(deps.db, id, request.user!);
@@ -171,7 +173,14 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
         // 非 UUID 與「不是這個群組的內建管理員」同形（spec 疑點 Q2），也讓非 UUID 不進交易（否則 PG 22P02 → 500）。
         if (!UUID_RE.test(parsed.data.transferTo)) return notAdmin(reply);
         // 小寫化：下面以 `!==` 從 DB 回來的（小寫）memberIds 裡濾掉 transferTo。
-        const input = { groupId, transferTo: parsed.data.transferTo.toLowerCase(), lockTimeoutMs: deps.storageLockTimeoutMs };
+        // 資料夾 §5.9-4：群組名正規化後是空字串時的新頂層名依這個請求的 Accept-Language（server 沒有介面語言欄）。
+        const input = {
+          groupId,
+          transferTo: parsed.data.transferTo.toLowerCase(),
+          by: request.user!.id,
+          fallbackFolderName: fallbackGroupFolderName(request.headers["accept-language"]),
+          lockTimeoutMs: deps.storageLockTimeoutMs,
+        };
         let out;
         try {
           out = await deps.db.transaction(tx => transferGroupInTx(tx, input, deps.groupTestHook));
@@ -205,7 +214,7 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
         releaseAll();
         throw rejected.reason;
       }
-      const input = { groupId };
+      const input = { groupId, lockTimeoutMs: deps.storageLockTimeoutMs };
       let out;
       try {
         // 縫在 try 內：縫丟錯（測試）也走下面的 releaseAll。

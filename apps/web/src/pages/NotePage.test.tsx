@@ -226,6 +226,7 @@ const NOTE: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 

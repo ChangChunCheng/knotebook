@@ -132,6 +132,10 @@ export interface NoteDto {
   group: NoteGroupDto | null;
   /** #175 §5.2：呼叫者在這篇上能做什麼。web 一律看這裡，不再用 `role === "owner"` 推。 */
   permissions: NotePermissions;
+  /** 所在資料夾（呼叫者視角）：個人／群組筆記＝`notes.folder_id`；共享給我的筆記＝我自己的放置（擁有者的資料夾不外流）。null＝根層。 */
+  folderId: string | null;
+  /** 內文（Yjs 狀態）＋附件的位元組數，只用於排序；只有 `GET /api/notes` 帶。 */
+  sizeBytes?: number;
 }
 
 /**
@@ -499,6 +503,17 @@ export const ERROR_CODES = [
   // #181（spec 2026-10-21 §6.7）：`in_trash`＝404，單篇讀取（`:ref`／by-path／by-group-path）的目標在垃圾桶、且呼叫者有垃圾桶權；
   // body 另帶頂層 `noteId`。沒有垃圾桶權者照舊 `not_found`。
   "in_trash",
+  // 資料夾（spec 2026-10-22 §5.11）：`folder_not_found`＝404，資料夾 id 不合形、不存在或看不到（含 trigger 的 KF001 映射）；
+  // `folder_name_taken`＝409，同層不分大小寫撞名；`folder_too_deep`＝409，超過 FOLDER_DEPTH_MAX 層；`folder_cycle`＝409，搬進自己的子樹；
+  // `folder_limit`＝409，該空間資料夾數已達 FOLDERS_PER_SPACE_MAX；`folder_cross_space`＝400，資料夾或筆記跨空間；
+  // `folder_delete_blocked`＝403，子樹有呼叫者不能刪除的活筆記。
+  "folder_not_found",
+  "folder_name_taken",
+  "folder_too_deep",
+  "folder_cycle",
+  "folder_limit",
+  "folder_cross_space",
+  "folder_delete_blocked",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -1216,3 +1231,4 @@ export * from "./versions.js";
 export * from "./version-names.js";
 export * from "./ai.js";
 export * from "./trash.js";
+export * from "./folders.js";

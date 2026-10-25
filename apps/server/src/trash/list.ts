@@ -9,6 +9,7 @@ import { alias, unionAll } from "drizzle-orm/pg-core";
 import { TRASH_LIST_LIMIT, type TrashItemDto, type TrashListDto } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
 import { groupMembers, groupRoles, groups, notes, users } from "../db/schema.js";
+import { folderPathJsonSql, NOTES_FOLDER_ID } from "../folders/sql.js";
 
 /** 刪除者（`notes.deleted_by`）。一律 LEFT JOIN：帳號已刪時欄位是 NULL，那一列仍要列出（`deletedBy: null`）。 */
 const deleter = alias(users, "deleter");
@@ -30,6 +31,9 @@ function baseColumns(retentionDays: number | null) {
     purgeAt: purgeAt.mapWith(notes.deletedAt).as("purge_at"),
     deleterHandle: deleter.handle,
     deleterName: deleter.displayName,
+    // 資料夾（spec 2026-10-22 §5.8）：`folder_id` 非 NULL → 即時路徑（資料夾期間改名、搬動也跟著），否則快照；NULL → []。
+    // 外層欄一律帶表名字面（單表 SELECT 直接插欄位會渲染成裸名，`NOTES_FOLDER_ID` 檔頭）。node-postgres 把 jsonb 解成陣列。
+    folderPath: sql<string[]>`coalesce(case when "notes"."folder_id" is not null then ${folderPathJsonSql(NOTES_FOLDER_ID())} else "notes"."trash_folder_path" end, '[]'::jsonb)`.as("folder_path"),
   };
 }
 
@@ -69,6 +73,7 @@ export async function listTrash(db: Db, userId: string, retentionDays: number | 
     purgeAt: r.purgeAt?.toISOString() ?? null,
     deletedBy: r.deleterHandle === null ? null : { handle: r.deleterHandle, displayName: r.deleterName ?? "" },
     group: r.groupId === null ? null : { id: r.groupId, name: r.groupName ?? "" },
+    folderPath: r.folderPath,
   }));
   return { retentionDays, items, truncated: rows.length > TRASH_LIST_LIMIT };
 }

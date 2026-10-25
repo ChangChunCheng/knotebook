@@ -62,7 +62,7 @@ export function trashRoutes(deps: TrashServiceDeps) {
       for (const id of result.done) {
         // 極窄競態：還原 commit 之後、這裡重讀之前又被移入／降權／永久刪除 → 取不到或 none。它確實被還原過，所以不列 skipped；
         // 也不列 restored（呼叫者此刻看不到它）。
-        const fields = await loadNoteFields(deps.db, id);
+        const fields = await loadNoteFields(deps.db, id, userId);
         const access = await resolveNoteAccess(deps.db, userId, id);
         if (fields === undefined || access.role === "none") continue;
         restored.push(toNoteDto(fields, access));

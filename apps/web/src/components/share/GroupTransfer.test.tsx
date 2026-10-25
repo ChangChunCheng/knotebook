@@ -33,6 +33,7 @@ const NOTE: NoteDto = {
   lastEdited: null,
   groupId: null,
   group: null,
+  folderId: null,
   permissions: { ...OWNER_PERMS },
 };
 

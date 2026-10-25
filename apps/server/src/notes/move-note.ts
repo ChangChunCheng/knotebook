@@ -7,12 +7,17 @@
  * （防禦縱深）、`isRetryableTxError` → `busy`、其餘 rethrow）→ **commit 成功後**依序：`versions.relocated([noteId])`（版本歷史
  * §9：重建載入中筆記的版本狀態；commit 失敗的 catch 分支不呼叫）→ 踢線（被清分享者 ∪ 呼叫者）→ `moved`。
  * 交易內清版本由 `notes/tx/move.ts` 的 `resetNoteVersionsInTx` 自動跟著走。
+ * 資料夾 PR-3a（spec §5.7.7、§5.5 I2）：帶 `folderId` 時，在 UUID 判斷之後依序判可見性（非 UUID／看不到 → 404 `folder_not_found`）
+ * 與空間（不是 `groupId` 那個群組的資料夾 → 400 `folder_cross_space`），都以 `aborted` 回（outcome 聯集不變）；`can_edit`（D13）
+ * 與資料夾鎖在交易內判。
  * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`。
  */
 import type { CollabHooks } from "../collab/hooks.js";
 import type { VersionService } from "../collab/versions.js";
 import type { Db } from "../db/index.js";
-import { isForeignKeyViolation, isRetryableTxError } from "../db/pg-errors.js";
+import { foreignKeyViolationConstraint, isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError } from "../db/pg-errors.js";
+import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_CROSS_SPACE_MESSAGE } from "../folders/messages.js";
+import { resolveFolderAccess } from "../folders/queries.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
 import { TxAbort } from "../http/tx-abort.js";
 import { resolveNoteAccess, UUID_RE } from "./service.js";
@@ -34,22 +39,32 @@ export type MoveOutcome =
   | { kind: "forbidden" }
   /** 非 UUID，或交易外 FK 23503（防禦縱深）。 */
   | { kind: "group_not_found" }
-  /** 交易內的 `TxAbort`（含子類 `StorageQuotaExceeded`）——原樣交給呼叫端。 */
+  /** 交易內的 `TxAbort`（含子類 `StorageQuotaExceeded`）與交易外資料夾預判的失敗——原樣交給呼叫端。 */
   | { kind: "aborted"; err: TxAbort }
   | { kind: "busy" };
 
 export async function moveNoteToGroup(
   deps: MoveNoteDeps,
-  input: { noteId: string; userId: string; userHandle: string; groupId: string },
+  input: { noteId: string; userId: string; userHandle: string; groupId: string; folderId?: string },
 ): Promise<MoveOutcome> {
   const noteId = input.noteId.toLowerCase();
   const access = await resolveNoteAccess(deps.db, input.userId, noteId);
   if (access.role === "none") return { kind: "not_found" };
   if (!access.permissions.moveToGroup) return { kind: "forbidden" };
   if (!UUID_RE.test(input.groupId)) return { kind: "group_not_found" };
+  const groupId = input.groupId.toLowerCase();
+  let folderId: string | null = null;
+  if (input.folderId !== undefined) {
+    const folder = await resolveFolderAccess(deps.db, input.userId, input.folderId);
+    if (folder === null) return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
+    if (folder.space.kind !== "group" || folder.space.groupId !== groupId) {
+      return { kind: "aborted", err: new TxAbort(400, "folder_cross_space", NOTE_FOLDER_CROSS_SPACE_MESSAGE) };
+    }
+    folderId = folder.folder.id;
+  }
   // S14：callback 整段就是 `moveNoteToGroupInTx(tx, …)`，引數是交易前備好的純資料與測試縫。
   const txInput = {
-    noteId, userId: input.userId, userHandle: input.userHandle, groupId: input.groupId.toLowerCase(), lockTimeoutMs: deps.storageLockTimeoutMs,
+    noteId, userId: input.userId, userHandle: input.userHandle, groupId, folderId, lockTimeoutMs: deps.storageLockTimeoutMs,
   };
   let moved;
   try {
@@ -58,6 +73,10 @@ export async function moveNoteToGroup(
   } catch (err) {
     // 先判子類（StorageQuotaExceeded extends TxAbort）：呼叫端要先判子類才拿得到數字；數字可見性在交易外判（儲存配額 §8.1）。
     if (err instanceof TxAbort) return { kind: "aborted", err };
+    // 防禦縱深（資料夾 PR-3a）：目標資料夾在交易內已持 KEY SHARE 並判過群組，UPDATE 撞不到 `notes_folder_fk`／KF001；撞到與看不到同形。
+    if (isNoteFolderSpaceViolation(err) || foreignKeyViolationConstraint(err) === "notes_folder_fk") {
+      return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
+    }
     // 防禦縱深：(1) 已持目標群組列的 KEY SHARE，群組在交易中刪不掉，notes 的 UPDATE 不會撞群組 FK 23503。#247 起交易內另有
     // `uploads.charged_to_id` → users 的 FK（(3a) 寫入移入者）：只有移入者帳號在交易中被硬刪才會撞——`src/` 目前沒有硬刪使用者的路徑。
     // 兩者撞到都回同一條 group_not_found（catch 在交易外）。
