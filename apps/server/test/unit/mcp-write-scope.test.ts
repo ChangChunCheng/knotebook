@@ -25,6 +25,8 @@ import {
   requireWriteScope,
 } from "../../src/mcp/write-scope.js";
 import { moveNoteToGroupTool, MOVE_NEEDS_MOVE_MESSAGE } from "../../src/mcp/tools/move-note-to-group.js";
+import { deleteNoteTool } from "../../src/mcp/tools/delete-note.js";
+import { restoreNoteTool } from "../../src/mcp/tools/restore-note.js";
 import type { McpToolCtx } from "../../src/mcp/context.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
@@ -201,5 +203,34 @@ describe("#239 U3 moveNoteToGroupTool", () => {
       code: "insufficient_scope",
       message: MOVE_NEEDS_MOVE_MESSAGE,
     });
+  });
+});
+
+// #181 D（同 U3）：delete_note／restore_note 的第一個動作是 requireDeleteScope——DELETE_SCOPE_MESSAGE 的「nothing was changed」
+// 與 tokenWrite 拒絕的零副作用都靠這個順序。`db`／`limiters.edit` 是一碰就記下並丟錯的探針：scope 或 tokenWrite 拒絕時一次都不得碰。
+describe("#181 D 兩支垃圾桶工具：requireDeleteScope 在任何 DB 存取與 edit 桶之前", () => {
+  const NOTE = { note_id: "33333333-3333-4333-8333-333333333333" };
+  function probeCtx(tokenScope: TokenScope, tokenWrite: FixedWindowLimiter) {
+    const touched: string[] = [];
+    const trap = (label: string) =>
+      new Proxy({}, { get: (_t, key) => { touched.push(`${label}.${String(key)}`); throw new Error(`touched ${label}.${String(key)}`); } });
+    const ctx = { ...ctxWith({ authKind: "token", tokenScope, tokenWrite }), db: trap("db") } as McpToolCtx;
+    (ctx.limiters as Record<string, unknown>).edit = trap("edit");
+    return { ctx, touched };
+  }
+  const tools = [["delete_note", deleteNoteTool], ["restore_note", restoreNoteTool]] as const;
+  it.each(tools)("%s：讀寫搬移（無 delete）→ insufficient_scope＋DELETE_SCOPE_MESSAGE，沒碰 db／edit、沒啃 tokenWrite", async (_n, tool) => {
+    const tw = oneShot();
+    const { ctx, touched } = probeCtx(RWM, tw);
+    await expect(tool(NOTE, ctx)).resolves.toMatchObject({ isError: true, structuredContent: { code: "insufficient_scope", message: DELETE_SCOPE_MESSAGE } });
+    expect(touched).toEqual([]);
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each(tools)("%s：讀寫刪除但 tokenWrite 用罄 → too_many_requests，沒碰 db／edit", async (_n, tool) => {
+    const tw = oneShot();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+    const { ctx, touched } = probeCtx(RWD, tw);
+    await expect(tool(NOTE, ctx)).resolves.toMatchObject({ isError: true, structuredContent: { code: "too_many_requests" } });
+    expect(touched).toEqual([]);
   });
 });

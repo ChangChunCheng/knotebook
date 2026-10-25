@@ -2,7 +2,7 @@
  * #108：工具本體與 `registerTool` 接線的分界。
  *
  * ⚠ **`tools/list` 的過濾不是安全邊界**：client 可以直接 `tools/call` 一個從沒列過的名字，
- * 所以真正的關是**呼叫時再驗**（D6(b)；PR2 的 `requireWriteScope()`、#239 的 `requireMoveScope()`）。這裡的過濾只是
+ * 所以真正的關是**呼叫時再驗**（D6(b)；PR2 的 `requireWriteScope()`、#239 的 `requireMoveScope()`、#181 的 `requireDeleteScope()`）。這裡的過濾只是
  * 「不宣告服務不了的東西」，讓模型少打一輪。
  *
  * ⚠ **每一支工具都要經過 `runTool()`**：它是 D31／M15 的 try/catch（未捕捉例外不得冒到
@@ -13,10 +13,10 @@
  * `{list_notes, read_note_outline, read_note_section, search_notes}`）、PR2 起
  * `mcp-tools-list.test.ts`（P13：`{edit_note, create_note}`）；#200 起 P13 的集合是
  * `{create_note, create_transfer_token, edit_note}`；#180 起加 `copy_note`、`move_note_to_group`，#200 §9.3 M7 再加 `read_note_image`，集合是
- * `{copy_note, create_note, create_transfer_token, edit_note, move_note_to_group, read_note_image}`；#181 PR-2d 加 `list_trash`。
+ * `{copy_note, create_note, create_transfer_token, edit_note, move_note_to_group, read_note_image}`；#181 PR-2d 加 `list_trash`、`delete_note`、`restore_note`。
  * **新增工具時要一併把它加進其中一個名字集合，否則等於沒有守衛。**
  *
- * ⚠ 新增工具一律 `z.object(<shape>).strict()` 註冊；`test/unit/mcp-register.test.ts`（U-F1，覆蓋 authKind × scope × 有無 collab 的八種組合）的名字常數也要補——它會紅。
+ * ⚠ 新增工具一律 `z.object(<shape>).strict()` 註冊；`test/unit/mcp-register.test.ts`（U-F1，覆蓋 authKind × scope × 有無 collab 的十二種組合）的名字常數也要補——它會紅。
  *
  * ⚠ 呼叫順序是契約（§8.1 D32）：建 `McpServer` → **本函式** → `registerCapabilities` →
  * `connect()`。`registerTool` 內部會無條件把 `listChanged` 設回 `true`。**守衛＝
@@ -31,7 +31,7 @@
  * `list_trash`（#181）只查 DB，同上。
  * **這道閘門由兩案守**（都是無 collab 的 app，斷名字集合）：`test/mcp-tools-list.test.ts` 的 D-A 案（讀寫憑證；標題含「D-M 不進閘門，D-A」）、
  * `test/mcp-create-note.test.ts` 的 D-M 案（讀寫搬移憑證，比 D-A 多 `move_note_to_group`；標題含「（D-M）」）。`create_note`／`copy_note`／
- * `move_note_to_group` 都在閘門外（D-M）。
+ * `move_note_to_group` 都在閘門外（D-M）；`delete_note`／`restore_note`（#181）同樣在閘門外。
  * ⚠ 但它們**只擋得住「悄悄搬邊」，擋不住「放錯邊」**：新增一支工具一定會讓那一案紅（名字
  * 集合對不上），可是把名字補進 `LIVE_DOC_TOOLS`／`DB_ONLY_TOOLS` 哪一邊是人判的——
  * 判錯了測試照樣綠。**放進閘門的判準是「這支工具要不要讀 live doc」，不是「它比較像哪一支」。**
@@ -86,12 +86,14 @@ import {
   readNoteImageOutput,
 } from "./tools/read-note-image.js";
 import { LIST_TRASH_DESCRIPTION, listTrash, listTrashInput, listTrashOutput } from "./tools/list-trash.js";
-import { canMoveNotes, canWriteNotes } from "./write-scope.js";
+import { DELETE_NOTE_DESCRIPTION, deleteNoteInput, deleteNoteOutput, deleteNoteTool } from "./tools/delete-note.js";
+import { RESTORE_NOTE_DESCRIPTION, restoreNoteInput, restoreNoteOutput, restoreNoteTool } from "./tools/restore-note.js";
+import { canDeleteNotes, canMoveNotes, canWriteNotes } from "./write-scope.js";
 
 export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
   // 唯讀工具的最低 scope 都是 `notes:read`，而 L1（`authenticateAny`）已經保證
   // 到得了這裡的憑證至少有它——所以它們沒有 scope 過濾面。寫入工具才有。
-  // ⚠ **這道過濾不是安全邊界**（見檔頭）：真正的關是每支寫入工具第一行的 `requireWriteScope()`／`requireMoveScope()`。
+  // ⚠ **這道過濾不是安全邊界**（見檔頭）：真正的關是每支寫入工具第一行的 `requireWriteScope()`／`requireMoveScope()`／`requireDeleteScope()`。
   //   ⚠ 但反過來說也成立，而且是 PR2 的實測結論：`McpServer` 的「清單」**就是**「註冊表」，
   //   所以沒註冊的名字連 handler 都到不了（`tools/call` 走 SDK 的未知工具名分支）——
   //   **write 檢查的 `insufficient_scope` 在 HTTP 上因此是死碼**（別在整合測試裡去釘它；`move_note_to_group`
@@ -101,6 +103,8 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
   // #239：移入／複製進群組要 `notes:move`（session 恆真；token 要 write 且 move）。只管 move_note_to_group 的註冊與
   // copy_note 的說明二選一；create_note／edit_note 不看它（W9）。
   const canMove = canMoveNotes(ctx);
+  // #181 D-W1：移到垃圾桶／還原要 `notes:delete`（session 恆真；token 要 write 且 delete，與 move 互相獨立）。只管兩支垃圾桶寫入工具的註冊。
+  const canDelete = canDeleteNotes(ctx);
   // #93：讀 live doc 的工具在不在，決定 search_notes 的 description 與 sectionId 說明的變體（spec §8.2 I5）。
   // 與下面讀取工具的閘門是**同一個判準、同一個時間點**（註冊時）。
   const canRead = Boolean(ctx.collab && ctx.editing);
@@ -237,6 +241,34 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
     { description: LIST_TRASH_DESCRIPTION, inputSchema: z.object(listTrashInput).strict(), outputSchema: listTrashOutput },
     async args => runTool("list_trash", ctx, () => listTrash(args, ctx))
   );
+
+  // #181 D-W1：沒 notes:delete 不註冊（同 canMove 慣例）；collab 閘門外（只碰 DB，踢線與收門經 collabHooks）；`.strict()`；
+  // MCP 沒有永久刪除與清空（AG3）。annotations：delete_note 只標 `destructiveHint: true`、restore_note 標 `destructiveHint: false`，
+  // 兩支都**不寫** `idempotentHint`（第二次呼叫回 not_found，不是相同結果；spec gate r1 N2）。
+  // 守衛：集合＝`mcp-tools-list`、`unit/mcp-register`（U-F1）、`mcp-trash-tools` SC1；annotations＝`mcp-tools-list` V11；runTool＝P13。
+  if (canDelete) {
+    server.registerTool(
+      "delete_note",
+      {
+        description: DELETE_NOTE_DESCRIPTION,
+        inputSchema: z.object(deleteNoteInput).strict(),
+        outputSchema: deleteNoteOutput,
+        annotations: { destructiveHint: true },
+      },
+      async args => runTool("delete_note", ctx, () => deleteNoteTool(args, ctx))
+    );
+
+    server.registerTool(
+      "restore_note",
+      {
+        description: RESTORE_NOTE_DESCRIPTION,
+        inputSchema: z.object(restoreNoteInput).strict(),
+        outputSchema: restoreNoteOutput,
+        annotations: { destructiveHint: false },
+      },
+      async args => runTool("restore_note", ctx, () => restoreNoteTool(args, ctx))
+    );
+  }
 
   // #200 §7.1：read_note_image 在**所有閘門外**——讀寫／唯讀 token 與 session 都註冊（只讀 DB 與磁碟，不讀 live doc）。
   // 描述依 authKind 二選一（session 版不提 create_transfer_token，它在 session 不存在）。#180 §9-3：註冊順序排最後。
