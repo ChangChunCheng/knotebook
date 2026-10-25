@@ -832,7 +832,7 @@
         "copy": "Copy",
         "copied": "Copied.",
         "copyFailed": "Couldn't copy automatically — select it by hand.",
-        "scopes": "Read: list_notes, search_notes, read_note_outline, read_note_section, read_note_image and create_transfer_token (download). Edit adds edit_note, create_note, copy_note (into your own notes) and create_transfer_token uploads. Move is needed for move_note_to_group and copying into a group (moving into a group can't be undone, so it is a separate permission)."
+        "scopes": "Read: list_notes, search_notes, read_note_outline, read_note_section, read_note_image, list_trash and create_transfer_token (download). Edit adds edit_note, create_note, copy_note (into your own notes) and create_transfer_token uploads. Move is needed for move_note_to_group and copying into a group (moving into a group can't be undone, so it is a separate permission). Delete is needed for delete_note and restore_note, which move notes to the trash and back; no tool here deletes a note permanently, but a note left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app."
       },
       "tokens": {
         "name": "Name",
@@ -843,6 +843,7 @@
         "pillRead": "Read",
         "pillEdit": "Edit",
         "pillMove": "Move",
+        "pillDelete": "Delete",
         "edit": "Edit",
         "save": "Save",
         "editHint": "1–32 letters, digits, . _ or -. Leave empty to go back to “{{derived}}”, derived from the name.",
@@ -934,7 +935,7 @@
         "empty": "No sign-in services linked."
       },
       "apiTokensTitle": "API tokens",
-      "apiTokensDescription": "Give a script or an AI assistant access to your notes on your behalf. A token can always list and read the notes you can read; creating and writing notes needs \"Create and edit notes\", and moving or copying notes into groups also needs \"Move or copy notes into groups\". Treat it like a password. Tokens are not affected when you change your password; revoke them here instead.",
+      "apiTokensDescription": "Give a script or an AI assistant access to your notes on your behalf. A token can always list and read the notes you can read; creating and writing notes needs \"Create and edit notes\", and moving or copying notes into groups also needs \"Move or copy notes into groups\". Moving notes to the trash or restoring them also needs \"Move notes to the trash and restore them\". Treat it like a password. Tokens are not affected when you change your password; revoke them here instead.",
       "apiTokensCleanupHint": "Apps past their expiry date, and tokens that expired more than 30 days ago, are usually removed automatically the next time anyone creates a token or authorizes an application; you can revoke any that are still listed yourself.",
       "apiTokensEmpty": "No tokens yet.",
       "apiTokensCreate": "Create API token",
@@ -945,6 +946,8 @@
       "apiTokensScopeEdit": "Create and edit notes",
       "apiTokensScopeMove": "Move or copy notes into groups",
       "apiTokensScopeMoveHint": "Moving a note into a group can't be undone: it removes the note's per-person shares, its public link and its version history, the group becomes its owner, and from then on the group's roles decide who can change or delete it. Every member of the group can read what is moved or copied there. Requires \"Create and edit notes\".",
+      "apiTokensScopeDelete": "Move notes to the trash and restore them",
+      "apiTokensScopeDeleteHint": "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app.",
       "apiTokensExpiryLabel": "Expires",
       "apiTokensExpiryNever": "Never",
       "apiTokensExpiryDays": "In {{days}} days",

@@ -15,7 +15,15 @@
 import { describe, expect, it } from "vitest";
 import { FixedWindowLimiter } from "../../src/http/rate-limit.js";
 import type { TokenScope } from "@knotebook/shared";
-import { canMoveNotes, requireMoveScope, requireWriteScope } from "../../src/mcp/write-scope.js";
+import {
+  canDeleteNotes,
+  canMoveNotes,
+  DELETE_SCOPE_MESSAGE,
+  INSUFFICIENT_SCOPE_MESSAGE,
+  requireDeleteScope,
+  requireMoveScope,
+  requireWriteScope,
+} from "../../src/mcp/write-scope.js";
 import { moveNoteToGroupTool, MOVE_NEEDS_MOVE_MESSAGE } from "../../src/mcp/tools/move-note-to-group.js";
 import type { McpToolCtx } from "../../src/mcp/context.js";
 
@@ -122,6 +130,61 @@ describe("#239 requireMoveScope", () => {
     const ts = oneShot();
     expect(requireMoveScope(ctxWith({ authKind: "session", tokenScope: null, tokenWrite: ts }), MSG)).toBeNull();
     expect(ts.consume(`token:${USER_ID}`)).toBe(true);
+  });
+});
+
+const R = "notes:read";
+const RW = "notes:read notes:write";
+const RWM = "notes:read notes:write notes:move";
+const RWD = "notes:read notes:write notes:delete";
+const RWMD = "notes:read notes:write notes:move notes:delete";
+
+// #181 D：requireDeleteScope 的兩個 scope 分支在 HTTP 上到不了（delete_note／restore_note 只在 canDeleteNotes 時註冊），
+// 本段是它們唯一的守衛；tokenWrite 扣點在 HTTP 上活著（另由 mcp-trash-tools.test.ts 的 DN8／RN6 守）。
+describe("#181 D canDeleteNotes", () => {
+  it("五形＋session＋兩種漂移形", () => {
+    expect(canDeleteNotes({ authKind: "session", tokenScope: null })).toBe(true);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: R })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RW })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWM })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWD })).toBe(true);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWMD })).toBe(true);
+    // CHECK 漂移形：有 delete 沒 write → 不得放行（同 canMoveNotes）。
+    expect(canDeleteNotes({ authKind: "token", tokenScope: "notes:read notes:delete" as TokenScope })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: "notes:read notes:move notes:delete" as TokenScope })).toBe(false);
+  });
+});
+
+describe("#181 D requireDeleteScope", () => {
+  it("session：放行，且 tokenWrite 一格都沒動", () => {
+    const tw = oneShot();
+    const ctx = ctxWith({ authKind: "session", tokenScope: null, tokenWrite: tw });
+    expect(requireDeleteScope(ctx)).toBeNull();
+    expect(requireDeleteScope(ctx)).toBeNull();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it("唯讀憑證：insufficient_scope＋write 的處置句，且不啃 tokenWrite", () => {
+    const tw = oneShot();
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: R, tokenWrite: tw }));
+    expect(err?.structuredContent).toEqual({ code: "insufficient_scope", message: INSUFFICIENT_SCOPE_MESSAGE });
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each<TokenScope>([RW, RWM])("%s：insufficient_scope＋DELETE_SCOPE_MESSAGE，且不啃 tokenWrite", (scope) => {
+    const tw = oneShot();
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: scope, tokenWrite: tw }));
+    expect(err?.structuredContent).toEqual({ code: "insufficient_scope", message: DELETE_SCOPE_MESSAGE });
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each<TokenScope>([RWD, RWMD])("%s：放行，且 `token:${userId}` 那一格被扣掉", (scope) => {
+    const tw = oneShot();
+    expect(requireDeleteScope(ctxWith({ authKind: "token", tokenScope: scope, tokenWrite: tw }))).toBeNull();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(false);
+  });
+  it("桶 key 逐字是 `token:${userId}`：REST 那一側先用掉唯一一格 → too_many_requests", () => {
+    const tw = oneShot();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: RWD, tokenWrite: tw }));
+    expect(err?.structuredContent.code).toBe("too_many_requests");
   });
 });
 

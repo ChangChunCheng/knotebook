@@ -832,7 +832,7 @@
         "copy": "複製",
         "copied": "已複製。",
         "copyFailed": "無法自動複製——請手動選取。",
-        "scopes": "讀取：可用 list_notes、search_notes、read_note_outline、read_note_section、read_note_image、create_transfer_token（下載）。編輯：另開 edit_note、create_note、copy_note（複製到個人）與 create_transfer_token 的上傳。搬移：才能用 move_note_to_group 與複製到群組（移入群組不可逆，所以獨立成一個權限）。"
+        "scopes": "讀取：可用 list_notes、search_notes、read_note_outline、read_note_section、read_note_image、list_trash、create_transfer_token（下載）。編輯：另開 edit_note、create_note、copy_note（複製到個人）與 create_transfer_token 的上傳。搬移：才能用 move_note_to_group 與複製到群組（移入群組不可逆，所以獨立成一個權限）。刪除：才能用 delete_note 與 restore_note（移到垃圾桶與還原；這裡沒有工具會永久刪除筆記，但留在垃圾桶的筆記之後仍可能被永久刪除——依站台的垃圾桶設定，或有人在網頁上刪除）。"
       },
       "tokens": {
         "name": "名稱",
@@ -843,6 +843,7 @@
         "pillRead": "讀取",
         "pillEdit": "編輯",
         "pillMove": "搬移",
+        "pillDelete": "刪除",
         "edit": "編輯",
         "save": "儲存",
         "editHint": "1–32 個英數、. _ -；清空則回到從名稱派生的「{{derived}}」",
@@ -934,7 +935,7 @@
         "empty": "尚未連結任何登入服務。"
       },
       "apiTokensTitle": "API token",
-      "apiTokensDescription": "讓腳本或 AI 助理以你的身分存取筆記。token 一律能列出與讀取你看得到的筆記；要建立與寫入筆記需打開「建立與修改筆記」，要把筆記移動或複製到群組還需打開「移動或複製筆記到群組」。請比照密碼保管。改密碼並不會讓既有 token 失效，要停用請在這裡撤銷。",
+      "apiTokensDescription": "讓腳本或 AI 助理以你的身分存取筆記。token 一律能列出與讀取你看得到的筆記；要建立與寫入筆記需打開「建立與修改筆記」，要把筆記移動或複製到群組還需打開「移動或複製筆記到群組」。要把筆記移到垃圾桶或還原，還需打開「移到垃圾桶與還原」。請比照密碼保管。改密碼並不會讓既有 token 失效，要停用請在這裡撤銷。",
       "apiTokensCleanupHint": "過了到期日的應用程式，以及過期超過 30 天的 token，通常會在下一次有人建立 token 或授權應用程式時自動移除；仍留在列表上的可以自行撤銷。",
       "apiTokensEmpty": "尚未建立任何 token。",
       "apiTokensCreate": "建立 API token",
@@ -945,6 +946,8 @@
       "apiTokensScopeEdit": "建立與修改筆記",
       "apiTokensScopeMove": "移動或複製筆記到群組",
       "apiTokensScopeMoveHint": "把筆記移進群組無法復原：會清掉這篇的個人分享、公開連結與版本歷史，改由群組擁有，之後由群組角色決定誰能修改或刪除。移入或複製進群組的內容，群組每位成員都讀得到。需同時勾選「建立與修改筆記」。",
+      "apiTokensScopeDelete": "移到垃圾桶與還原",
+      "apiTokensScopeDeleteHint": "不能永久刪除筆記；但留在垃圾桶的筆記之後仍可能被永久刪除（依站台的垃圾桶設定，或有人在網頁上刪除）。",
       "apiTokensExpiryLabel": "有效期限",
       "apiTokensExpiryNever": "不到期",
       "apiTokensExpiryDays": "{{days}} 天後到期",
