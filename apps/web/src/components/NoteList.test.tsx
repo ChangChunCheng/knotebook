@@ -406,37 +406,42 @@ describe("NoteList", () => {
   // ── tab 標題列（spec §5.1-4／§5.2） ──
 
   describe("NL1 標題列", () => {
-    it("我的筆記：標題＋常駐的「New personal note」鈕（不浮出）", async () => {
+    // PR-2c 起四個一般 tab 的標題列都多一顆「Select」（選取模式本身見 sidebar/SelectPanel.test.tsx）。
+    it("我的筆記：標題＋「Select」＋常駐的「New personal note」鈕（不浮出）", async () => {
       stubNotesFetch([OWNER_NOTE]);
       renderNoteList();
       await within(panel()).findByRole("link", { name: "Has A Slug" });
       expect(within(header()).getByText("My notes")).toHaveClass("truncate"); // ellipsis 要掛在文字元素上
       const plus = within(header()).getByRole("button", { name: "New personal note" });
       expect(plus).not.toHaveClass("opacity-0");
-      expect(within(header()).getAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getAllByRole("button")).toHaveLength(2);
+      expect(within(header()).getAllByRole("button")[0]).toHaveAccessibleName("Select");
     });
 
-    it("工作坊：標題＋「New group」鈕（常駐）", async () => {
+    it("工作坊：標題＋「Select」＋「New group」鈕（常駐）", async () => {
       stubNotesFetch([OWNER_NOTE], [GROUP_A]);
       renderNoteList({}, { tab: "workspace" });
       await within(panel()).findByRole("button", { name: "Workshop A" });
       expect(within(header()).getByText("Workspace")).toBeInTheDocument();
       const plus = within(header()).getByRole("button", { name: "New group" });
       expect(plus).not.toHaveClass("opacity-0");
-      expect(within(header()).getAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getAllByRole("button")).toHaveLength(2);
+      expect(within(header()).getAllByRole("button")[0]).toHaveAccessibleName("Select");
     });
 
-    it("最近、與我共享：標題列沒有任何按鈕", async () => {
+    it("最近、與我共享：標題列只有「Select」", async () => {
       stubNotesFetch([OWNER_NOTE, SHARED_NOTE]);
       renderNoteList({}, { tab: "recent" });
       await within(panel()).findByRole("link", { name: startsWith("Has A Slug") });
       expect(within(header()).getByText("Recent")).toBeInTheDocument();
-      expect(within(header()).queryAllByRole("button")).toHaveLength(0);
+      expect(within(header()).queryAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getByRole("button")).toHaveAccessibleName("Select");
 
       selectTab("Shared with me");
       await within(panel()).findByRole("link", { name: "No Slug Note" });
       expect(within(header()).getByText("Shared with me")).toBeInTheDocument();
-      expect(within(header()).queryAllByRole("button")).toHaveLength(0);
+      expect(within(header()).queryAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getByRole("button")).toHaveAccessibleName("Select");
     });
 
     it("標題列「＋」：個人筆記 → onCreateNote(undefined)；disabled 跟 createNotePending", async () => {

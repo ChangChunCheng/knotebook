@@ -274,7 +274,9 @@ describe("AppShell — 側欄 tab 接線", () => {
     fireEvent.click(await within(aside()).findByRole("tab", { name: "Recent" }));
     const panel = within(aside()).getByRole("tabpanel");
     expect(await within(panel).findByText("No notes yet.")).toBeInTheDocument();
-    expect(panel.querySelector("a, button, input, [tabindex]")).toBeNull(); // 面板內沒有任何可聚焦元素
+    // 面板內沒有任何可聚焦元素（PR-2c 起標題列有「Select」，0 篇時 disabled、不可聚焦）。
+    expect(panel.querySelector("a, button:not(:disabled), input, [tabindex]")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Select" })).toBeDisabled();
     expect(panel).toHaveAttribute("tabindex", "0");
     expect(panel).toHaveClass("focus-visible:ring-2", "focus-visible:ring-ring");
     panel.focus();
@@ -290,6 +292,8 @@ describe("AppShell — 側欄 tab 接線", () => {
     renderShell(<SelectionProbe />);
     fireEvent.click(await screen.findByTestId("start-select"));
     expect(screen.getByTestId("selecting")).toHaveTextContent("true");
+    // PR-2c：我的筆記 tab 真的換成 lazy 的選取標題列與勾選樹，等它到（不然 Suspense 在斷言之後才 resolve）。
+    await within(aside()).findByText("0 selected");
 
     const input = within(aside()).getByRole("textbox", { name: "Search notes" });
     fireEvent.change(input, { target: { value: "tab" } });
@@ -311,7 +315,11 @@ describe("AppShell — 側欄 tab 接線", () => {
     const drawer = await screen.findByRole("dialog", { name: "Navigation" });
     fireEvent.click(screen.getByTestId("start-select"));
     expect(screen.getByTestId("selecting")).toHaveTextContent("true");
+    // 靜態 <aside> 那份也在 DOM，等待圈定在抽屜內。
+    await within(drawer).findByText("0 selected");
 
+    // 本案同時經過抽屜 Radix 的 Esc（document capture，flushSync 結束選取並 preventDefault）與 `SelectHeader` 的 document
+    // bubble 監聽：後者看到 defaultPrevented（而且已隨選取結束卸載）不動作；靜態卡那份在窄螢幕也因看不見不動作（plan 讀碼發現 20）。
     fireEvent.keyDown(document.activeElement ?? drawer, { key: "Escape" });
     await act(async () => {});
     expect(screen.getByRole("dialog", { name: "Navigation" })).toBe(drawer);
