@@ -87,6 +87,7 @@ function RetentionGroup({ data }: { data: VersionSettingsDto }) {
 
   return (
     <SettingsGroup
+      labelledByTitle
       title={t("admin.versions.retentionTitle")}
       description={t("admin.versions.retentionDescription", { keepAll: data.keepAllDays, dailyUntil: data.dailyUntilDays })}
     >

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import type { UserDto, VersionSettingsDto } from "@knotebook/shared";
@@ -39,6 +39,8 @@ function stubAdmin({ settings, patchStatus }: { settings: VersionSettingsDto; pa
       if (url === "/api/notes" && method === "GET") return Promise.resolve(res(200, []));
       if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(res(200, { plans: [], defaults: { userPlanId: "", groupPlanId: "" } }));
       if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(res(200, settings));
+      // 同頁的垃圾桶設定（#181 §6.9）：沒有它會進錯誤態、多出一個 role=alert
+      if (url === "/api/admin/trash/settings" && method === "GET") return Promise.resolve(res(200, { retentionDays: 7 }));
       if (url === "/api/admin/versions/settings" && method === "PATCH") {
         if (patchStatus !== undefined && patchStatus >= 400) {
           return Promise.resolve(res(patchStatus, { error: { code: "invalid_body", message: "x" } }));
@@ -67,6 +69,8 @@ function renderAt(path: string) {
 }
 
 const SETTINGS: VersionSettingsDto = { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 7 };
+/** 同頁還有垃圾桶設定的「Save」——以版本保留群組的 region 圈定（gate r2 I-B）。 */
+const versionsSave = () => within(screen.getByRole("region", { name: "Keeping automatic versions" })).getByRole("button", { name: "Save" });
 
 describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
   beforeEach(async () => {
@@ -131,7 +135,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
       fireEvent.change(daily, { target: { value: b } });
       // 改欄位會清掉上一組的錯誤——所以下面的 alert 是這一組送出才出現的
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(versionsSave());
       expect(await screen.findByRole("alert")).toHaveTextContent("Use whole numbers with 1 ≤ first ≤ second ≤ 3650.");
     }
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
@@ -142,7 +146,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Keep all for (days)"), { target: { value: "14" } });
     fireEvent.change(screen.getByLabelText("One a day until (days)"), { target: { value: "14" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     expect(await screen.findByText("Version settings saved")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ autoWaitMinutes: 7, keepAllDays: 14, dailyUntilDays: 14 });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -153,7 +157,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Keep all for (days)"), { target: { value: "8" } });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("errors.invalid_body"));
   });
 
@@ -164,7 +168,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     for (const value of ["0", "61", "abc", "1.5", ""]) {
       fireEvent.change(wait, { target: { value } });
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(versionsSave());
       expect(await screen.findByRole("alert")).toHaveTextContent("Use a whole number of minutes from 1 to 60.");
     }
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
@@ -175,7 +179,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Wait before saving automatically (minutes)"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("Keep all for (days)"), { target: { value: "40" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     expect(await screen.findByRole("alert")).toHaveTextContent("Use a whole number of minutes from 1 to 60.");
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.queryByText("Use whole numbers with 1 ≤ first ≤ second ≤ 3650.")).not.toBeInTheDocument();
@@ -186,7 +190,7 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Wait before saving automatically (minutes)"), { target: { value: "12" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     expect(await screen.findByText("Version settings saved")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ autoWaitMinutes: 12, keepAllDays: 7, dailyUntilDays: 30 });
   });
@@ -196,14 +200,14 @@ describe("站台版本設定（/admin/storage 內，#247 §7.0）", () => {
     renderAt("/admin/storage");
     const wait = await screen.findByLabelText("Wait before saving automatically (minutes)");
     fireEvent.change(wait, { target: { value: "５" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     expect(await screen.findByRole("alert")).toHaveTextContent("Use a whole number of minutes from 1 to 60.");
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     fireEvent.change(wait, { target: { value: " 9 " } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     await waitFor(() => expect(calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([{ autoWaitMinutes: 9, keepAllDays: 7, dailyUntilDays: 30 }]));
     fireEvent.change(screen.getByLabelText("Wait before saving automatically (minutes)"), { target: { value: "05" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(versionsSave());
     await waitFor(() => expect(calls.filter((c) => c.method === "PATCH").map((c) => (c.body as { autoWaitMinutes: number }).autoWaitMinutes)).toEqual([9, 5]));
   });
 });

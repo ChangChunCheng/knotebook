@@ -1,11 +1,13 @@
 import DOMPurify, { type Config } from "dompurify";
+import { COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, COLUMNS_STYLE } from "@knotebook/shared";
 
 /**
  * #229 簡報投影片的消毒器（spec §5.4-3，承重守衛）。
  *
  * 四層保證（§5.4）：①BlockNote 以 DOM API 產生 HTML，文字一律是文字節點；②`<template>` 解析成 inert
  * fragment；③**這裡**：DOMPurify 私有實例、白名單逐鍵寫死；④唯一的 `innerHTML` 是 mermaid SVG，信任
- * `lib/mermaid.ts` 的鎖定設定、在消毒之後產生（postprocess.ts）。
+ * `lib/mermaid.ts` 的鎖定設定、在消毒之後產生（postprocess.ts）。③的 `style` 只在並排的列與欄上、且逐字是正規形時保留
+ * （columns-layout spec §11.8），其他元素照舊剝。
  *
  * - 私有實例（§2.13-7）：mermaid 11 在 DOMPurify **預設單例**上掛常駐 hook，我們的 hook 若掛單例會反過來
  *   影響 mermaid 的淨化。本檔只准 `DOMPurify(window)`；源碼守衛在 sanitize.test.ts。
@@ -19,7 +21,19 @@ const ALLOWED_DATA = [
   "data-text-alignment", "data-inline-content-type", "data-target-note-id", "data-snapshot-title",
   "data-label", "data-anchor-block-id",
   "data-kn-mermaid", "data-kn-media",
+  "data-kb-columns", "data-kb-column",
 ];
+
+/** 欄的正規形 `flex:N`（N 去尾端 0、至多兩位小數）；數值另夾 [0.1, 10]。 */
+const COLUMN_FLEX_RE = /^flex:(?:0|[1-9][0-9]?)(?:\.[0-9]{1,2})?$/;
+
+function canonicalColumnsStyle(el: Element, value: string): boolean {
+  if (el.nodeName !== "DIV") return false;
+  if (el.hasAttribute("data-kb-columns")) return value === COLUMNS_STYLE;
+  if (!el.hasAttribute("data-kb-column") || !COLUMN_FLEX_RE.test(value)) return false;
+  const width = Number(value.slice("flex:".length));
+  return width >= COLUMN_WIDTH_MIN && width <= COLUMN_WIDTH_MAX;
+}
 
 const purify = DOMPurify(window);
 
@@ -28,7 +42,7 @@ const CFG: Config & { RETURN_DOM_FRAGMENT: true } = {
   ALLOWED_TAGS: ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code",
     "strong", "b", "em", "i", "u", "s", "del", "span", "a", "br", "table", "colgroup", "col", "thead", "tbody",
     "tr", "th", "td", "figure", "figcaption", "img", "video", "audio", "details", "summary", "input", "div", "#text"],
-  ALLOWED_ATTR: ["href", "src", "alt", "width", "type", "checked", "colspan", "rowspan", "start", "open", ...ALLOWED_DATA],
+  ALLOWED_ATTR: ["href", "src", "alt", "width", "type", "checked", "colspan", "rowspan", "start", "open", "style", ...ALLOWED_DATA],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ADD_URI_SAFE_ATTR: ALLOWED_DATA,
@@ -53,6 +67,8 @@ purify.addHook("uponSanitizeAttribute", (node, data) => {
     const scheme = normalizedScheme(data.attrValue);
     if (scheme.startsWith("data:") || scheme.startsWith("mailto:")) data.keepAttr = false;
   } else if (data.attrName === "href" && (node as Element).nodeName.toLowerCase() !== "a") {
+    data.keepAttr = false;
+  } else if (data.attrName === "style" && !canonicalColumnsStyle(node as Element, data.attrValue)) {
     data.keepAttr = false;
   }
 });

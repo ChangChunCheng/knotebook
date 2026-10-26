@@ -219,7 +219,7 @@ export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" 
   await expect(page).toHaveURL(urls[item]);
 }
 
-export type SidebarTabName = "Recent" | "My notes" | "Workspace" | "Shared with me";
+export type SidebarTabName = "Recent" | "My notes" | "Workspace" | "Shared with me" | "Trash";
 
 /**
  * 點側欄某個 tab、等它 aria-selected，回傳同一範圍內的 tabpanel。`scope` 預設靜態側欄（complementary）；窄螢幕傳抽屜。
@@ -232,6 +232,58 @@ export async function showSidebarTab(page: Page, name: SidebarTabName, scope?: L
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
   return root.getByRole("tabpanel");
+}
+
+/**
+ * #181 PR-2c：一般 tab（我的筆記／工作坊／與我共享／最近）標題列的「Select」→ 等選取標題列的「0 selected」（lazy 的 SelectLazy chunk 到了；
+ * 進入時已選一律清空）。`scope` 預設靜態側欄；窄螢幕傳抽屜。回傳 tabpanel（勾選框在裡面；動作列在 tabpanel 外、側欄底部）。
+ * 垃圾桶 tab 的選取是另一套（36）。
+ */
+export async function startSidebarSelection(page: Page, scope?: Locator): Promise<Locator> {
+  const panel = (scope ?? page.getByRole("complementary")).getByRole("tabpanel");
+  await panel.getByRole("button", { name: "Select", exact: true }).click();
+  await expect(panel.getByText("0 selected", { exact: true })).toBeVisible({ timeout: 15_000 });
+  return panel;
+}
+
+/**
+ * #181 PR-2c：選取模式中點某篇的勾選框（整列是 `<label>`，可及名稱以標題開頭；最近 tab 後面接位置行）。
+ * 點的是 checkbox 本身：Shift 範圍讀 click 事件的 `shiftKey`。不帶 `shift` 是單列切換；`shift` 時錨點到這篇整段加入、這篇一定變成已勾。
+ */
+export async function toggleSelectedNote(panel: Locator, title: string, opts?: { shift?: boolean }): Promise<void> {
+  const box = panel.getByRole("checkbox", { name: new RegExp("^" + reEscape(title)) });
+  const wasChecked = await box.isChecked();
+  await box.click(opts?.shift ? { modifiers: ["Shift"] } : undefined);
+  await expect(box).toBeChecked({ checked: opts?.shift ? true : !wasChecked });
+}
+
+/**
+ * 標題為 `title` 的 toast（Radix Toast 的 `<li>`，在「Notifications (F8)」region 裡）。標題用 exact 比對：Radix 另有一份
+ * 「Notification …」朗讀節點（`role="status"`，約 1 秒後移除）會含同樣的子字串。同標題可能同時有好幾則（連續移入），取最新的一則。
+ */
+export function toastWithTitle(page: Page, title: string): Locator {
+  return page
+    .getByRole("region", { name: /^Notifications/ })
+    .getByRole("listitem")
+    .filter({ has: page.getByText(title, { exact: true }) })
+    .last();
+}
+
+/**
+ * #181：側欄（或傳入的範圍）裡某篇筆記列的 ⋮ →「Move to trash」，等該列離開清單、toast 出現；回傳 toast locator。
+ * 移入不確認（spec §6.10.4）。移的是開著的那篇時，頁面會導回 `/`（同頁首 ⋮）。
+ */
+export async function moveNoteToTrashFromSidebar(page: Page, title: string, scope?: Locator): Promise<Locator> {
+  const root = scope ?? page.getByRole("complementary");
+  const actions = root.getByRole("button", { name: `Note actions for ${title}`, exact: true });
+  // ⋮ 是 hover 浮出（hoverReveal），先 hover 再點（同 22 的 E7）。
+  await actions.hover();
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  await expect(actions).toHaveCount(0, { timeout: 15_000 });
+  const toastItem = toastWithTitle(page, "Moved to the trash");
+  await expect(toastItem).toBeVisible();
+  return toastItem;
 }
 
 /** #247：群組 modal。側欄群組列 ⋮ →「Members & settings」→ `/groups/<id>`；回傳 group id。 */

@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 import { oauthClients, oauthRequests } from "../src/db/schema.js";
-import { buildTestApp, freshLimiters, testConfig, type TestApp } from "./helpers.js";
+import { buildTestApp, createUserAndLogin, freshLimiters, testConfig, type TestApp } from "./helpers.js";
 
 const CHALLENGE = "a".repeat(43);
 const ISSUER = testConfig.publicUrl.origin;
@@ -87,6 +87,10 @@ describe("GET /oauth/authorize（§5.3）", () => {
   it.each([
     ["notes:read notes:write notes:move", "notes:read notes:write notes:move"],
     ["notes:read notes:move", "notes:read"],
+    // #181 PR-2d OA：刪除同樣要搭編輯；順序無關、落庫固定 read → write → move → delete。
+    ["notes:read notes:write notes:delete", "notes:read notes:write notes:delete"],
+    ["notes:delete notes:move notes:write", "notes:read notes:write notes:move notes:delete"],
+    ["notes:read notes:delete", "notes:read"],
   ])("#239 scope=%s → 落庫 %s", async (requested, stored) => {
     const { app, db, close } = await buildTestApp();
     try {
@@ -98,6 +102,27 @@ describe("GET /oauth/authorize（§5.3）", () => {
       expect(res.statusCode).toBe(302);
       const [row] = await db.select().from(oauthRequests);
       expect(row!.scope).toBe(stored);
+    } finally {
+      await close();
+    }
+  });
+
+  it("#181 OA：要求讀寫搬移刪除 → 同意頁的 request 端點 scopes 是切詞陣列（含 notes:delete）", async () => {
+    const { app, db, close } = await buildTestApp();
+    try {
+      const { cookie } = await createUserAndLogin(db);
+      const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
+      const res = await app.inject({
+        method: "GET",
+        url: authorizeUrl({ ...baseParams(clientId, "http://127.0.0.1:1234/cb"), scope: "notes:delete notes:write notes:move notes:read" }),
+      });
+      const req = new URL(res.headers.location as string, "http://x").searchParams.get("req")!;
+      const dto = await app.inject({ method: "GET", url: `/api/oauth/request?req=${req}`, headers: { cookie } });
+      expect(dto.statusCode).toBe(200);
+      expect(dto.json()).toMatchObject({
+        scope: "notes:read notes:write notes:move notes:delete",
+        scopes: ["notes:read", "notes:write", "notes:move", "notes:delete"],
+      });
     } finally {
       await close();
     }

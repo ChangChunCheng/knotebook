@@ -8,6 +8,7 @@ import { noteSchema } from "@/collab/schema";
 import { blocknoteZhTW } from "@/i18n/blocknote-zh-TW";
 import type { EditorRef } from "@/components/wikilink/menu";
 import { attachTestElementRenderer } from "@/test/element-renderer";
+import { takeDropPoint } from "@/collab/columns/paste-rule";
 
 // toast 換成 spy：這裡要斷言的是「有沒有提示使用者」，不必把 Radix 整套渲染起來。
 const toastMock = vi.hoisted(() => vi.fn());
@@ -65,7 +66,9 @@ function dragEvent(data: DataTransfer): DragEvent {
 const translate = (key: string) => `t:${key}`;
 
 describe("createMediaBlockingDOMEvents（§12.4 貼上／拖放攔截）", () => {
-  beforeEach(() => toastMock.mockClear());
+  beforeEach(() => {
+    toastMock.mockClear();
+  });
 
   it("同時提供 paste 與 drop 兩個 handler", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
@@ -288,6 +291,47 @@ describe("buildNoteEditorOptions", () => {
   it("_tiptapOptions.extensions 掛了 code block 的 caret 訊號 extension（觸控叫出語言下拉）", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookCodeBlockCaret");
+  });
+
+  // 同上：`edge-keymap.test.ts` 掛的是自己建的編輯器（D24 欄首 Backspace／欄尾 Delete）。
+  it("_tiptapOptions.extensions 掛了並排的欄首／欄尾鍵 extension（D24）", () => {
+    const extensions = build()._tiptapOptions.extensions;
+    expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookColumnEdgeKeys");
+  });
+
+  // 同上：`paste-rule.test.ts` 掛的是自己建的編輯器（§5.4 調整 3 貼上的列）。
+  it("_tiptapOptions.extensions 掛了並排的貼上規則 extension（§5.4 調整 3）", () => {
+    const extensions = build()._tiptapOptions.extensions;
+    expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookColumnsPaste");
+  });
+
+  // 既有的 drop 阻擋案直接呼叫 createMediaBlockingDOMEvents 的 handler、不經 build()——守不到「記落點」那層組合。
+  it("組合後的 drop 仍接到媒體阻擋（經 build()）", () => {
+    const event = dragEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] }));
+    expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(null, event)).toBe(true);
+    expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
+  });
+
+  it("組合後的 drop 先記下落點給貼上規則（經 build()）", () => {
+    const view = { posAtCoords: vi.fn(() => ({ pos: 9, inside: -1 })) };
+    const event = Object.assign(dragEvent(transfer({ html: "<p>moved block</p>" })), { clientX: 3, clientY: 4 });
+    expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(false);
+    expect(view.posAtCoords).toHaveBeenCalledWith({ left: 3, top: 4 });
+    expect(takeDropPoint()).toBe(9);
+  });
+
+  it("組合後的 drop：posAtCoords 丟例外 → 媒體阻擋照樣生效、落點為 null（final review M-3）", () => {
+    const view = {
+      posAtCoords: vi.fn(() => {
+        throw new Error("posAtCoords failed");
+      }),
+    };
+    const event = Object.assign(dragEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] })), { clientX: 3, clientY: 4 });
+    expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(true);
+    expect(view.posAtCoords).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
+    expect(takeDropPoint()).toBeNull();
   });
 
   it("攔截掛在 editorProps.handleDOMEvents，**不是** handlePaste/handleDrop", () => {

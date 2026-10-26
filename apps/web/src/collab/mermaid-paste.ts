@@ -26,6 +26,8 @@
  * 共編時兩個 client 會同時嘗試轉換同一個 block，在 Yjs 上打架。
  */
 
+import { replaceBlocksKeepColumns } from "./columns/keep-columns";
+
 /** 本模組會讀到的 block 形狀（BlockNote 的實際型別泛型太深，這裡只描述用得到的欄位）。 */
 interface MinimalBlock {
   id: string;
@@ -37,7 +39,9 @@ interface MinimalBlock {
 
 export interface MermaidPasteEditor {
   document: MinimalBlock[];
-  replaceBlocks(targetIds: string[], blocks: unknown[]): unknown;
+  // `tr` 寫 any：`paste.ts` 的 `PasteTargetEditor` 以窄型別覆寫 `transact`，寫成 BlockNote 的 Transaction 會在 strictFunctionTypes 下 TS2430。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 見上
+  transact: <T>(callback: (tr: any) => T) => T;
 }
 
 /** 文件內所有 block 的 id（含巢狀 children）。貼上前後各取一次即可界定「新插入的」。 */
@@ -87,7 +91,7 @@ export function findPastedMermaidCodeBlocks(
  *
  * ⚠ **絕不外拋**：呼叫點在貼上**已經完成之後**，這裡再拋會讓一次成功的貼上看起來像壞掉
  * （`collab/paste.ts` 檔頭記載：handler 拋錯的代價是使用者「按了完全沒反應」）。
- * 逐一 `replaceBlocks` 而非一次做完，一個失敗不影響其他。
+ * 逐一取代而非一次做完，一個失敗不影響其他。取代走 D25 helper：欄內的 code block 轉圖不收欄。
  */
 export function convertPastedMermaidBlocks(editor: MermaidPasteEditor, idsBeforePaste: Set<string>): number {
   let converted = 0;
@@ -99,7 +103,7 @@ export function convertPastedMermaidBlocks(editor: MermaidPasteEditor, idsBefore
   }
   for (const target of targets) {
     try {
-      editor.replaceBlocks([target.id], [{ type: "mermaid", props: { code: target.code } }]);
+      replaceBlocksKeepColumns(editor, [target.id], [{ type: "mermaid", props: { code: target.code } }]);
       converted += 1;
     } catch {
       /* 這一個轉不了就算了，繼續下一個 */

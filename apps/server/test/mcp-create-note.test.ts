@@ -103,7 +103,7 @@ describe("#108 create_note", () => {
   // ⚠ **plan 寫的測資（「含不支援的 block」→ `unsupported_block`）在整合層造不出來**，理由與
   //   `note-edits.test.ts:322-328` 逐字寫過的完全相同：headless schema ＝ `defaultBlockSpecs`
   //   全集＋mermaid／codeBlock，**BlockNote 的 markdown parser 產得出來的 type 一定在白名單裡**，
-  //   所以 `unsupported_block` 這個碼從 markdown 到不了。白名單那條分支由
+  //   所以 `unsupported_block` 這個碼從 markdown 到不了（PR-1 過渡期並排被拒例外，見 mcp-write-guards GW1／GW2）。白名單那條分支由
   //   `test/unit/editing-markdown.test.ts` 以收窄的假 schema 驗。這裡改用**同一條管線上到得了**
   //   的 `empty_content`（與 REST 的 `note-create-content.test.ts` 第二案同一份測資），
   //   被測的契約（先解析、後建列）一個字都沒變。
@@ -227,7 +227,7 @@ describe("#108 create_note", () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ edit }) });
     const [user] = await db.insert(users).values({ email: `p-${randomUUID()}@example.com`, displayName: "P" }).returning();
     const userId = user!.id;
-    // #239：讀寫搬移憑證——七名集合含 move_note_to_group，它只在 notes:move 時註冊；期望值不動。
+    // #239：讀寫搬移憑證——集合含 move_note_to_group，它只在 notes:move 時註冊。#181：list_trash 只查 DB，也在閘門外（任何憑證）。
     const { token } = await seedTokenForUser(db, userId, "notes:read notes:write notes:move");
 
     const list = await mcpPost(app, rpc("tools/list"), { token });
@@ -236,7 +236,7 @@ describe("#108 create_note", () => {
     expect(names).toContain("create_note");
     // 讀 live doc 的三支在這個部署形態上整條不宣告——`create_note` 是它們的反例，所以
     // 這一行順帶釘住「它真的在閘門外」。#200：create_transfer_token 也在閘門外（token 限定）；read_note_image 亦然（任何憑證）。#180：copy_note、move_note_to_group 也在閘門外。
-    expect(names).toEqual(["copy_note", "create_note", "create_transfer_token", "list_notes", "move_note_to_group", "read_note_image", "search_notes"]);
+    expect(names).toEqual(["copy_note", "create_note", "create_transfer_token", "list_notes", "list_trash", "move_note_to_group", "read_note_image", "search_notes"]);
 
     // P6：`inputSchema` **只能傳 raw shape 或裸 `ZodObject`（`.strict()` 亦可）**——傳 `ZodEffects`／union 時公告出去的 JSON Schema 會靜默變成
     // `{"type":"object","properties":{}}`（模型看不到任何欄位），而本檔另外五案（全部都自己

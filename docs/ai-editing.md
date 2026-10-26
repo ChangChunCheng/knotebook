@@ -154,7 +154,7 @@ Neither shape is recoverable by retrying; both are consequences of merging befor
 | Recorded edits kept | at most 100 per note | `GET …/edits` | oldest rows are deleted |
 | Linked notes indexed | 1000 per note | every write | extra targets are dropped from the index, the write still succeeds |
 
-A `POST /api/mcp` counts as **one** read call against the "Token calls" row no matter how many tools it invokes, and **each** `edit_note`, `create_note`, `move_note_to_group`, `copy_note` or `create_transfer_token` with `upload` call inside it counts as one write call — including a `create_note` without `content` (#108). `read_note_outline`, `read_note_section`, `read_note_image` and `create_transfer_token` with `download` each count as one content read against the content-read budget above, and `edit_note` (except `rename`), `create_note` (when it carries `content`) and `copy_note` draw on the write one — even though those rows list only the REST endpoints: what a tool answers is never an HTTP status, so MCP's own limits are tabulated separately. `copy_note` also draws on the upload limit, one per image it copies. `list_notes` and `search_notes` draw on neither; `search_notes` draws on a separate search budget of 60 searches per minute per user. For that table see [MCP](./mcp.md#limits); for how MCP answers once one of these budgets runs out, see [API tokens](./api-tokens.md#errors-and-rate-limits).
+A `POST /api/mcp` counts as **one** read call against the "Token calls" row no matter how many tools it invokes, and **each** `edit_note`, `create_note`, `move_note_to_group`, `copy_note`, `delete_note`, `restore_note` or `create_transfer_token` with `upload` call inside it counts as one write call — including a `create_note` without `content` (#108). `read_note_outline`, `read_note_section`, `read_note_image` and `create_transfer_token` with `download` each count as one content read against the content-read budget above, and `edit_note` (except `rename`), `create_note` (when it carries `content`), `copy_note`, `delete_note` and `restore_note` draw on the write one — even though those rows list only the REST endpoints: what a tool answers is never an HTTP status, so MCP's own limits are tabulated separately. `copy_note` also draws on the upload limit, one per image it copies. `list_notes`, `search_notes` and `list_trash` draw on neither; `search_notes` draws on a separate search budget of 60 searches per minute per user. For that table see [MCP](./mcp.md#limits); for how MCP answers once one of these budgets runs out, see [API tokens](./api-tokens.md#errors-and-rate-limits).
 
 `POST /api/notes` (with or without `content`) uses the server's ordinary 1 MiB body limit rather than the 262 144-byte one — the `content` field's own length limit is what bounds it, and a request over the body limit there is still `413 content_too_large`. It shares the same per-note write queue, but it does not answer `503`: if applying the content fails for any reason, including waiting too long for the queue, the note row it just created is removed again and the answer is `500 internal`.
 
@@ -196,8 +196,9 @@ Reading gives colors back in the same forms. Content with no color in it reads b
 
 ## Presence
 
-While a program works on a note, it shows up **in the note** — as a remote cursor, the same one another person editing gets.
+While a program works on a note, it shows up **in the note** — as a remote cursor, the same one another person editing gets, and in the note header's row of people.
 
+- In the row it is a sparkle icon ringed in the same violet as its cursor, labelled `username (agent)` and **AI agent**. It is listed on its own, separately from you, even though the credential is yours — so you see your own AI there although you aren't listed yourself — and it shows there even when the note has no text for a cursor to point at.
 - The cursor is labelled `username (agent)`: your username, and the credential's [agent display name](#agent-display-name).
 - It exists only for a note **somebody currently has open**. Presence is attached to the live collaborative document, so if no browser is connected to that note, nothing is created and nothing is broadcast — and there is no record afterwards that a program was there.
 - It appears, and moves, on a **token-authenticated** `GET …/content`, `POST …/edits` and `POST …/edits/:editId/revert` — and on the MCP read tools that go through the same code path (`read_note_outline`, `read_note_section`, `read_note_image`), and on `edit_note` (except `rename`), so an assistant that only *reads* a note still shows up in it. `GET …/edits` deliberately does not: reading the history is not working on the note. `POST /api/notes` with `content` cannot — the note is created by that same request, so nobody can have it open yet.
@@ -235,7 +236,7 @@ One approximation is worth knowing: the browser persists a burst of typing once,
 
 ## Agent display name
 
-Every credential has a short **agent name**. It is the `(agent)` half of the cursor's label, of the title bar's last-edited line, and of every row in the note's edit history.
+Every credential has a short **agent name**. It is the `(agent)` half of the cursor's label, of the note header's row of people, of the title bar's last-edited line, and of every row in the note's edit history.
 
 By default it is derived from the credential's own name: the first whitespace-separated word, Unicode-normalized, lowercased, with everything outside `A-Za-z0-9._-` removed, cut to 32 characters. `Claude Code (knotebook)` becomes `claude`, `MCP CLI Proxy` becomes `mcp`, and a name that leaves nothing usable behind becomes `agent`.
 

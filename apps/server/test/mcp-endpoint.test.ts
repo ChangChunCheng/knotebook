@@ -117,8 +117,17 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     const res = await mcpRequest(app, "GET");
     expect(res.statusCode).toBe(401);
     const challenge = res.headers["www-authenticate"] as string;
-    expect(challenge).toContain(`scope="notes:read notes:write notes:move"`);
+    expect(challenge).toContain(`scope="notes:read notes:write notes:move notes:delete"`);
     expect(challenge).toContain(`resource_metadata="${ISSUER}/.well-known/oauth-protected-resource/api/mcp"`);
+  });
+
+  // #181 PR-2d CH：challenge 一次給齊四個 scope（漏 notes:delete，守規矩的 client 就不會要刪除權）。
+  it("CH：未帶憑證的 POST initialize → 401，challenge 的 scope 是 read write move delete 四項", async () => {
+    const { app } = await buildTestApp();
+    const res = await mcpPost(app, INITIALIZE);
+    expect(res.statusCode).toBe(401);
+    const challenge = res.headers["www-authenticate"] as string;
+    expect(challenge).toContain(`scope="notes:read notes:write notes:move notes:delete"`);
   });
 
   it("案 5（M7）：401／405／200／403 四種回應都帶 nosniff", async () => {

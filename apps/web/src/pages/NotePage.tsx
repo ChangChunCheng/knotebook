@@ -20,6 +20,7 @@ import {
 import { NotePageControlsContext, type NotePageControls, type OpenEditsState } from "@/lib/note-page-controls";
 import { isOverlayOpen, useVersionsController, VersionsProvider } from "@/lib/versions-context";
 import { createLinkSync, type LinkSync } from "@/collab/link-sync";
+import type { CursorScroller } from "@/collab/cursor-scroll";
 import { useCollab } from "@/collab/useCollab";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { useMemberBlockAnchor } from "@/hooks/useBlockAnchor";
@@ -28,12 +29,15 @@ import { AppShell, SidebarDrawerButton } from "@/components/AppShell";
 import { NarrowTopBar } from "@/components/NarrowTopBar";
 import { BacklinksSection } from "@/components/BacklinksSection";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
+import { InTrashCard } from "@/components/InTrashCard";
 import { ChunkLoadBeacon, LazyRouteErrorBoundary, LazyRouteLoading } from "@/components/ErrorBoundary";
 import { LastEditedLabel } from "@/components/LastEditedLabel";
 import { NoteEditor } from "@/components/NoteEditor";
 import { NoteMenu } from "@/components/NoteMenu";
 import { NoteWidthMenu } from "@/components/NoteWidthMenu";
 import { OutdatedClientBanner } from "@/components/OutdatedClientBanner";
+import { useLocalPresenceField } from "@/components/presence/local-field";
+import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
 import { ShareDialog } from "@/components/ShareDialog";
 import { TitleInput } from "@/components/TitleInput";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
@@ -215,12 +219,24 @@ export default function NotePage() {
   // 解析層依形三擇一（A4：三個 hook 的 query key 各含自己那組 params，data 必屬當下
   // ——此保證依賴 useNote/useNoteByPath/useNoteByGroupPath **沒有** placeholderData/
   // keepPreviousData，見 hook 的禁令）。停用的那兩支 enabled 恆 false、零請求。
-  const resolveByRef = useNote(params.ref ?? "", { enabled: needsResolve && form === "ref" });
+  // 404 `in_trash` 不重試（重試結果不會變，預設退避 1＋2＋4 秒會讓「在垃圾桶裡」卡片晚約 7 秒才出現）；
+  // 其他錯誤照 QueryClient 的預設（全域不動）。
+  const resolveRetry = useMemo(() => {
+    const base = queryClient.getDefaultOptions().queries?.retry ?? 3;
+    return (failureCount: number, error: Error) => {
+      if (error instanceof ApiFail && error.code === "in_trash") return false;
+      if (typeof base === "function") return base(failureCount, error);
+      return typeof base === "number" ? failureCount < base : base;
+    };
+  }, [queryClient]);
+  const resolveByRef = useNote(params.ref ?? "", { enabled: needsResolve && form === "ref", retry: resolveRetry });
   const resolveByPath = useNoteByPath(params.handle ?? "", params.slug ?? "", {
     enabled: needsResolve && form === "user",
+    retry: resolveRetry,
   });
   const resolveByGroupPath = useNoteByGroupPath(params.groupId ?? "", params.slug ?? "", {
     enabled: needsResolve && form === "group",
+    retry: resolveRetry,
   });
   const resolveQuery = form === "group" ? resolveByGroupPath : form === "user" ? resolveByPath : resolveByRef;
   useEffect(() => {
@@ -351,6 +367,19 @@ export default function NotePage() {
     noteId,
     onUnauthorized: handleUnauthorized,
     onDocUpdate,
+  });
+
+  // #293 §9.4：scroller 存 ref（函式不能進 setState；頭像列只在點擊當下讀，讀碼發現 9）。
+  const cursorScrollerRef = useRef<CursorScroller | null>(null);
+  const handleCursorScroller = useCallback((scroller: CursorScroller | null) => {
+    cursorScrollerRef.current = scroller;
+  }, []);
+  // #293 §8.1：本分頁在這條連線 awareness 寫 knotebook 欄（PR-1 的 avatar 恆 null；PR-3 改吃 me.avatar）。
+  useLocalPresenceField({
+    provider,
+    role: state.phase === "connected" ? state.role : null,
+    name: user?.displayName ?? null,
+    avatar: null,
   });
 
   // #269 §10.2：段落錨點。root＝NoteEditor 的捲動容器（NoteEditor 以 ref 回報）；組合（ready＝這一篇同步過了）在 useMemberBlockAnchor。
@@ -518,6 +547,22 @@ export default function NotePage() {
   const leavingRef = useRef(false);
   /** 頁首 ⋮ 觸發鈕（final I-1）：版本歷史整頁關閉時，開啟前的焦點元素（⋮ 選單項）已卸載就退回這裡。 */
   const noteMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  // 「在垃圾桶裡」卡片還原後（卡片卸載、焦點掉到 body），筆記頁首掛上時把焦點移到標題框——
+  // 標題框在 DOM 順序上就是卡片原本的位置，閱讀器也藉此唸出結果（成功不另 toast）。不移到編輯器，免得誤打進內文。
+  // 旗標存「還原的那篇 id」、頁首每次掛上都取出並清掉：還原沒落地就換篇（重抓失敗、POST 未回就離開）時，
+  // 別篇的頁首只會清掉它、不搶焦點。
+  const focusTitleAfterRestoreRef = useRef<string | null>(null);
+  const noteHeaderRef = useCallback(
+    (header: HTMLElement | null) => {
+      if (!header) return;
+      const target = focusTitleAfterRestoreRef.current;
+      focusTitleAfterRestoreRef.current = null;
+      if (target === null || target !== noteId) return;
+      // TitleInput 的 input（唯讀時是 h1，就不移）。
+      header.querySelector<HTMLInputElement>("input[data-note-title-input]")?.focus();
+    },
+    [noteId],
+  );
 
   // 交給側欄筆記列 ⋮ 的「目前開著的那篇」（lib/note-page-controls.ts）：只在已解析出 noteId 時有值——
   // 側欄對這一篇刪除要共用上面這道 `leavingRef`（否則自己刪完會再多一則「筆記已被刪除」toast），
@@ -527,12 +572,34 @@ export default function NotePage() {
     [noteId, state, openEdits],
   );
 
-  // 404 兩個出口分流（#122 A10：文案不得混用）：
+  // 404 三個出口分流（#122 A10：文案不得混用）：
   // ① 解析層 404＝**連結無效**（slug 已改名/從不存在）→ `note.linkInvalid`。A6：導走
   //    前把 active 歸零——本頁從未 set 成功、卸載的條件清除按 id 對不上，NoteList
   //    樂觀 set 的殘留只有這行清得掉。
+  // ② 解析層 404 `in_trash`（帶 `noteId`；只有對它有垃圾桶權的人拿得到）＝**在垃圾桶裡**
+  //    → 卡片（還原／前往垃圾桶），不導頁、不 toast（spec §6.10.5）。缺 `noteId` 無從還原，照①。
+  // ③ 常駐層 404＝真刪除（見下方 `noteGone`）。常駐層**不分流** `in_trash`：它只發生在頁面開著時
+  //    筆記被移入，共編同時以 `deleted` 終態踢線、文案照舊（spec §6.4.1），兩條離場路徑共用 `leavingRef`；
+  //    改顯示卡片會與終態 effect 搶出口。開著時被移入的人要救回，走垃圾桶 tab。
+  const inTrashId =
+    needsResolve &&
+    resolveQuery.isError &&
+    resolveQuery.error instanceof ApiFail &&
+    resolveQuery.error.status === 404 &&
+    resolveQuery.error.code === "in_trash"
+      ? (resolveQuery.error.noteId ?? null)
+      : null;
+  // 卡片目前是不是當下畫面：還原的 POST 未回就換篇時，舊卡片的 onRestored 落地已不屬於畫面（review r3 m-1）。
+  const shownInTrashIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    shownInTrashIdRef.current = inTrashId;
+  }, [inTrashId]);
   const linkInvalid =
-    needsResolve && resolveQuery.isError && resolveQuery.error instanceof ApiFail && resolveQuery.error.status === 404;
+    needsResolve &&
+    resolveQuery.isError &&
+    resolveQuery.error instanceof ApiFail &&
+    resolveQuery.error.status === 404 &&
+    inTrashId === null;
   useEffect(() => {
     if (!linkInvalid || leavingRef.current) return;
     leavingRef.current = true;
@@ -660,9 +727,23 @@ export default function NotePage() {
 
   // A2：四**類**資料來源寫死——①解析中（來源：解析層）②錯誤卡（解析層或常駐層的
   // 非 404 error）③collab 未備妥（來源：常駐層 note）④正常（常駐層）。實碼展開成
-  // 五格 if/else（loading 佔位卡出現在其中三格），分類與格數是兩回事。
+  // 六格 if/else（loading 佔位卡出現在其中三格；第一格是解析層 `in_trash` 的卡片），分類與格數是兩回事。
   let body;
-  if (needsResolve) {
+  if (needsResolve && inTrashId !== null) {
+    // 解析層 404 `in_trash`（出口②）：卡片在 AppShell children 內（「前往垃圾桶」要 actions context）。
+    // 還原後重抓解析層：成功就照常 seed、換成筆記；已被永久刪除則落到連結無效出口。
+    body = placeholderCard(
+      <InTrashCard
+        noteId={inTrashId}
+        onRestored={() => {
+          // 卡片已不在畫面上：不設焦點旗標，也不重抓（閉包裡的解析層已不是當下那篇）。
+          if (shownInTrashIdRef.current !== inTrashId) return;
+          focusTitleAfterRestoreRef.current = inTrashId;
+          void resolveQuery.refetch();
+        }}
+      />,
+    );
+  } else if (needsResolve) {
     // ①（A1）：轉場中**不渲染舊筆記**的 NoteEditor/TitleInput/ShareDialog——舊 note 已
     // 被上面的閘門擋成 undefined，這裡只出佔位/錯誤卡。解析層 404 的那一 render 也落
     // 在這格（m14）：續用佔位卡，靠 leavingRef 出口導頁。
@@ -699,6 +780,7 @@ export default function NotePage() {
             user={{ id: user.id, name: user.displayName }}
             noteId={noteId!}
             onScrollRoot={setAnchorRoot}
+            onCursorScroller={handleCursorScroller}
             notePath={canonicalNotePath(note)}
             headerSlot={
               // #115：頁首滿卡寬（置左置右）——單層 header 自己就是內容列，標題貼左、
@@ -706,13 +788,20 @@ export default function NotePage() {
               // 已刻意拆除（見 ui/article-column.ts 檔頭）。
               <>
                 {state.phase === "outdated" && <OutdatedClientBanner />}
-                <header className="@container flex items-center gap-3 border-b border-border px-5 py-3">
+                <header ref={noteHeaderRef} className="@container flex items-center gap-3 border-b border-border px-5 py-3">
                   {/* #115：窄視窗的抽屜入口（md:hidden）——筆記載入成功態不掛
                       NarrowTopBar（頁首自己有這顆）；載入中/錯誤的佔位卡沒有頁首，
                       由 placeholderCard 裡的 NarrowTopBar 補位。 */}
                   <SidebarDrawerButton />
                   <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
                   <ConnectionBadge state={state} synced={synced} canEdit={roleCanEdit} />
+                  {/* #293：此刻也開著這篇的其他人（spec §9）；只在 connected 時渲染，名單空不佔位。 */}
+                  <PresenceAvatars
+                    provider={provider}
+                    connected={state.phase === "connected"}
+                    myUserId={user.id}
+                    scrollerRef={cursorScrollerRef}
+                  />
                   <LastEditedLabel note={note} onOpenEdits={openEdits} />
                   <ShareDialog note={note} />
                   {/* #297：寬度 icon 只在頁首夠寬時顯示（@container，見 NoteWidthMenu）。 */}
@@ -761,7 +850,7 @@ export default function NotePage() {
 
   // #229 簡報外殼（spec §6.1、§6.2）：presenting 時一律掛（離場出口一設 leavingRef 就不掛）；overlay 要常駐層資料、
   // 共編 doc／provider 都到、且首次 synced 之後才掛（m9）——刻意不跟 body 分支（常駐層一時錯誤時 body 是錯誤卡，
-  // 簡報層不受影響，§12）。
+  // 簡報層不受影響，§12）。解析層 `in_trash` 不是 linkInvalid：外殼顯示錯誤態 `errors.in_trash`（與沒有權限同形）。
   const presentFailure: unknown = needsResolve
     ? resolveQuery.isError && !linkInvalid
       ? resolveQuery.error

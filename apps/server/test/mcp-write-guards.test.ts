@@ -18,15 +18,15 @@
  *   案 24／25／26／27／28(a)／32／32b——這些案要嘛目標筆記從沒被任何呼叫碰過，要嘛
  *   `before` snapshot 拍在任何成功呼叫之前。
  * - **before 時 awareness 已非空**（key 集合比較對「偷 touch」零鑑別力，必須走深比對）：
- *   案 30——`before` 之前先有一發**成功**的 `append`（「先改一次」）讓這顆 token 的名牌現身，
+ *   案 30、並排 GW1（同樣先有一發成功的 append）——`before` 之前先有一發**成功**的 `append`（「先改一次」）讓這顆 token 的名牌現身，
  *   之後若 handler 偷跑一次 touch，只會「就地更新同一個 clientId 的 state」（`presence.ts:147`
  *   的 `emit(existing,"updated")`），key 集合一個字都不變——`mcp-edit-note.test.ts` D-N 案
- *   （`:258-268`）那個雷本檔只有案 30 會踩到，見該案內的深度比對與突變記述。
+ *   （`:258-268`）那個雷本檔只有案 30 與 GW1 會踩到，見案 30 內的深度比對與突變記述（GW1 走 expectNoSideEffects 的 key 集合比較，其 presence 面由案 30 的深比對涵蓋）。
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { noteAiEdits, notes } from "../src/db/schema.js";
+import { noteAiEdits, noteStates, notes } from "../src/db/schema.js";
 import { EDIT_LIMIT, FixedWindowLimiter } from "../src/http/rate-limit.js";
 import { NOTE_NOT_FOUND_MESSAGE } from "../src/mcp/note-read.js";
 import { presenceClientId } from "../src/notes/editing/presence.js";
@@ -310,7 +310,7 @@ describe("#108 §14.5 拒絕族：四件零副作用逐案照斷", () => {
   //   那條路徑偷 touch」因此零鑑別力，改走 `mcp-edit-note.test.ts:258-268`（D-N 案）的深度
   //   比對：同一顆 clientId 的整個 state（`structuredClone`）逐位元組比對。
   //   突變實測（Task 4 審查輪實跑，`edit-note.ts` 的 `mismatchError` 回傳前偷插一次
-  //   `ctx.presence.touch(args.note_id, ctx.tokenId!, { name: "mut", color: "#000" },
+  //   `ctx.presence.touch(args.note_id, ctx.tokenId!, { name: "mut", color: "#000", handle: "mut", label: "x" },
   //   { kind: "doc-start" })`）：**只有深度比對那一行紅**（`beat` 從 2 變 3、`user.name` 從
   //   `"user-… (claude)"` 變 `"mut"`），`expectNoSideEffects()` 的四件（含 key 集合）排在它
   //   之前先跑、維持全綠——證明 key 集合對「fingerprint_mismatch 偷 touch」這條路徑確定零
@@ -515,6 +515,46 @@ describe("#108 案 14c 後半／14d（§8.4／§8.10）", () => {
       await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "replace_all", markdown: "# X\n\nxxx", if_match: appended.fingerprint })
     );
     expect(replaced.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    s.disconnect();
+  });
+});
+
+// 並排 PR-1 過渡守衛（T3b）：寫入面不收並排，MCP／REST 共用 parseMarkdownForNote。PR-2 換成 unsupported_columns 時整段改寫。
+const TWO_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
+
+describe("並排 PR-1 過渡守衛：寫入面拒絕並排（T3b）", () => {
+  it("GW1：MCP edit_note append 正規形兩欄 → unsupported_block，note_states 位元組相同、edit 記錄零列（拒絕案假綠守衛：同一條路徑的一般 append 成功）", async () => {
+    const s = await scene();
+    const stateOf = async () => {
+      const [r] = await s.ctx.db.select({ y: noteStates.ydoc }).from(noteStates).where(eq(noteStates.noteId, s.noteId));
+      return r ? Buffer.from(r.y).toString("base64") : null;
+    };
+    // 對照：不含並排的 append 走同一路徑會成功，才證明下面的拒絕是並排造成的
+    const ok = payloadOf<EditPayload>(await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: "普通的一段" }));
+    expect(ok.editId).toBeTruthy();
+    const editsBefore = (await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.noteId))).length;
+    expect(editsBefore).toBeGreaterThan(0);
+    const before = await snapshot(s.ctx, s.noteId);
+    const stateBefore = await stateOf();
+
+    const err = errorOf(await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: TWO_COLS }));
+    expect(err.code).toBe("unsupported_block");
+
+    await expectNoSideEffects(s.ctx, s.noteId, before);
+    expect(await stateOf()).toBe(stateBefore);
+    s.disconnect();
+  });
+
+  it("GW2：REST POST /api/notes 帶同一段 content → 400 unsupported_block，沒有建出筆記", async () => {
+    const s = await scene();
+    const okRes = await s.ctx.app.inject({ method: "POST", url: "/api/notes", headers: bearer(s.token), payload: { title: "OK", content: "普通的一段" } });
+    expect(okRes.statusCode).toBe(201);
+    const before = await countNotes(s.ctx, s.ownerId);
+
+    const res = await s.ctx.app.inject({ method: "POST", url: "/api/notes", headers: bearer(s.token), payload: { title: "Cols", content: TWO_COLS } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("unsupported_block");
+    expect(await countNotes(s.ctx, s.ownerId)).toBe(before);
     s.disconnect();
   });
 });

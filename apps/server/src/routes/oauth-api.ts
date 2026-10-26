@@ -21,7 +21,7 @@ const CODE_TTL_MS = 10 * 60_000;
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
 /**
- * #239：allow 必帶同意頁的勾選結果 `scope`（三種落庫形之一），缺或錯一律 400——在 body 解析這關擋下，早於消費。
+ * #239：allow 必帶同意頁的勾選結果 `scope`（五種落庫形之一，#181），缺或錯一律 400——在 body 解析這關擋下，早於消費。
  * 這也擋住升版前開著的舊分頁（舊 bundle 不送 `scope`），不推定成 pending。deny 忽略 `scope`。
  */
 const decisionBodySchema = z.discriminatedUnion("decision", [
@@ -142,6 +142,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
       }
 
       // #239：授予值＝要求 ∩ 勾選。超出 pending 的 body 被夾回、不報錯。
+      // #181：交集——不超過 client 要求、也不超過使用者勾的（move 與 delete 互不包含，不是鏈上取小）。
       const granted = narrowerScope(pending.scope as TokenScope, parsed.data.scope);
       const code = randomBytes(32).toString("base64url");
       await deps.db.insert(oauthCodes).values({

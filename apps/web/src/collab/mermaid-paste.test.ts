@@ -1,5 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CB, P, mountEditor, row, shape, type AnyEditor } from "@/test/columns-fixtures";
+import { replaceBlocksKeepColumns } from "./columns/keep-columns";
 import { collectBlockIds, convertPastedMermaidBlocks, findPastedMermaidCodeBlocks } from "./mermaid-paste";
+
+// 包一層照呼叫原實作的 spy；不用 automock——那會讓 MP1 的真編輯器轉換變成什麼都不做。
+vi.mock("./columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("./columns/keep-columns")>();
+  return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 /** 測試用的 block 形狀（只含本模組會讀的欄位）。 */
 interface TestBlock {
@@ -70,34 +81,53 @@ describe("findPastedMermaidCodeBlocks", () => {
 });
 
 describe("convertPastedMermaidBlocks", () => {
+  // 假 editor 的 `transact` 不執行回呼：helper 照呼叫原實作，但不碰文件；斷言對 helper 的 spy 做。
   it("把找到的 code block 換成 mermaid block", () => {
-    const replaceBlocks = vi.fn();
     const doc = [codeBlock("new", "mermaid", "graph TD; A-->B;")];
-    const count = convertPastedMermaidBlocks({ document: doc, replaceBlocks }, new Set());
+    const editor = { document: doc, transact: vi.fn() };
+    const count = convertPastedMermaidBlocks(editor, new Set());
     expect(count).toBe(1);
-    expect(replaceBlocks).toHaveBeenCalledWith(["new"], [{ type: "mermaid", props: { code: "graph TD; A-->B;" } }]);
+    expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["new"], [{ type: "mermaid", props: { code: "graph TD; A-->B;" } }]);
   });
 
   it("沒有可轉的就完全不碰編輯器", () => {
-    const replaceBlocks = vi.fn();
-    expect(convertPastedMermaidBlocks({ document: [paragraph("p")], replaceBlocks }, new Set())).toBe(0);
-    expect(replaceBlocks).not.toHaveBeenCalled();
+    const editor = { document: [paragraph("p")], transact: vi.fn() };
+    expect(convertPastedMermaidBlocks(editor, new Set())).toBe(0);
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("⚠ replaceBlocks 拋錯不外傳（貼上已經完成，不能因為轉換失敗而讓整個貼上看起來壞掉）", () => {
-    const replaceBlocks = vi.fn(() => {
+  it("⚠ 取代拋錯不外傳（貼上已經完成，不能因為轉換失敗而讓整個貼上看起來壞掉）", () => {
+    vi.mocked(replaceBlocksKeepColumns).mockImplementationOnce(() => {
       throw new Error("boom");
     });
     const doc = [codeBlock("new", "mermaid", "graph TD; A-->B;")];
-    expect(() => convertPastedMermaidBlocks({ document: doc, replaceBlocks }, new Set())).not.toThrow();
+    expect(() => convertPastedMermaidBlocks({ document: doc, transact: vi.fn() }, new Set())).not.toThrow();
   });
 
   it("多個一起轉，且逐一替換（一個失敗不影響其他）", () => {
-    const replaceBlocks = vi.fn().mockImplementationOnce(() => {
+    vi.mocked(replaceBlocksKeepColumns).mockImplementationOnce(() => {
       throw new Error("boom");
     });
     const doc = [codeBlock("a", "mermaid", "graph TD; A-->B;"), codeBlock("b", "mermaid", "graph LR; X-->Y;")];
-    convertPastedMermaidBlocks({ document: doc, replaceBlocks }, new Set());
-    expect(replaceBlocks).toHaveBeenCalledTimes(2);
+    convertPastedMermaidBlocks({ document: doc, transact: vi.fn() }, new Set());
+    expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledTimes(2);
+  });
+
+  describe("真編輯器（D25）", () => {
+    let destroy: (() => void) | undefined;
+    afterEach(() => destroy?.());
+
+    // 同列另一欄是空的：core 的 fixColumnList 會刪掉所有空欄、把剩一欄的列攤平——D25 不收。
+    it("MP1：欄內唯一 block 是 ```mermaid codeBlock → 轉成 mermaid、列仍兩欄", () => {
+      const m = mountEditor([
+        P("x", "x"),
+        row([[{ ...CB("m", "graph TD; A-->B;"), props: { language: "mermaid" } }], [P("", "e")]], "r"),
+        P("z", "z"),
+      ]);
+      destroy = m.destroy;
+      const editor: AnyEditor = m.editor;
+      expect(convertPastedMermaidBlocks(editor, new Set(["x", "r", "rc0", "rc1", "e", "z"]))).toBe(1);
+      expect(shape(editor)).toBe("paragraph:x  ROW[COL(mermaid) | COL(paragraph)]  paragraph:z");
+    });
   });
 });

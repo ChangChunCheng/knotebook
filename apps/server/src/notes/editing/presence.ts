@@ -2,7 +2,10 @@
 import { createHash } from "node:crypto";
 import type { Hocuspocus } from "@hocuspocus/server";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, sectionize, topLevelContainers, type EditOp } from "@knotebook/shared";
+import {
+  AGENT_PRESENCE_COLOR, PRESENCE_FIELD, YDOC_FRAGMENT, sectionize, topLevelContainers,
+  type AgentPresenceField, type EditOp,
+} from "@knotebook/shared";
 import type { CollabContext } from "../../collab/server.js";
 
 // D8：只對已載入文件掛 awareness，直接發事件（clock 不大於 meta 的項目會被整筆跳過，
@@ -13,18 +16,22 @@ import type { CollabContext } from "../../collab/server.js";
 // ⚠ state 一定要帶 `beat`：change 只在 state 深度不等時才發（awareness.js:278），而名牌只吃
 // change 的 `updated`（@blocknote/core/dist/yjs.js:80）——少了它，名牌一次都不會亮。
 // 每個 beat 都重取 documents.get，絕不快取 Awareness（unload 會 destroy、reload 是新物件）。
+// state 帶 `knotebook` agent 標記（#293 §8.2）：web 頭像列只認它判斷 AI，不從名字猜。
 const clocks = new Map<number, number>();
 const ORIGIN = "ai-presence";
-export const PRESENCE_COLOR = "#7c3aed";
+export const PRESENCE_COLOR = AGENT_PRESENCE_COLOR;
+
+/** presence 的身分：`name`／`color` 進 awareness 的 `user`（BlockNote 名牌照舊）；`handle`／`label` 進 `knotebook` 的 agent 標記（#293 §8.2）。 */
+export interface PresenceIdentity { name: string; color: string; handle: string; label: string }
 
 /**
- * presence 顯示名的**唯一**組字點（#108 PR2）。原本 `routes/notes.ts` 三處（`/content` 讀、
+ * presence 顯示名的**唯一**組字點（#108 PR2），同時帶出 handle／label。原本 `routes/notes.ts` 三處（`/content` 讀、
  * `/edits` 寫、`/revert`）＋ `mcp/note-read.ts` 一處各有一份逐字相同的字面量，四份都改吃這裡。
  * ⚠ **組字只有一份了，但「它組得對不對」仍然只有兩條逐字斷言守著**（`note-presence.test.ts`
  * 與 `mcp-content.test.ts` 的 presence 案）——把 `<handle> (<label>)` 前後顛倒兩者都會紅。
  */
-export function presenceIdentity(userHandle: string, agentLabel: string): { name: string; color: string } {
-  return { name: `${userHandle} (${agentLabel})`, color: PRESENCE_COLOR };
+export function presenceIdentity(userHandle: string, agentLabel: string): PresenceIdentity {
+  return { name: `${userHandle} (${agentLabel})`, color: PRESENCE_COLOR, handle: userHandle, label: agentLabel };
 }
 
 export function presenceClientId(noteId: string, tokenId: string): number {
@@ -62,7 +69,7 @@ export function presenceTargetForWrite(op: EditOp, afterBlockIds: readonly strin
 export interface PresenceOptions { now?: () => number; capacity?: number; idleMs?: number; heartbeatMs?: number }
 interface Entry {
   noteId: string; tokenId: string; clientId: number;
-  user: { name: string; color: string }; target: PresenceTarget; lastBeat: number;
+  identity: PresenceIdentity; target: PresenceTarget; lastBeat: number;
   timer: ReturnType<typeof setInterval>; idle: ReturnType<typeof setTimeout>;
 }
 
@@ -99,13 +106,19 @@ export class PresenceRegistry {
     const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
     const containers = topLevelContainers(fragment);
     const byId = (id: string | undefined) => containers.find(c => c.getAttribute("id") === id);
-    let block = containers[0];
+    let block: Y.XmlElement | undefined = containers[0];
     if (target.kind === "section") {
       // 零 block `_top`（筆記以 heading 開頭）→ blockIds[0] 是 undefined → 退文件開頭
       block = byId(sectionize(fragment).find(s => s.sectionId === target.sectionId)?.blockIds[0]) ?? block;
     } else if (target.kind === "block") {
       // 併發：這一顆可能在我們 emit 之前又被別人改掉了 → 退文件開頭，不丟錯
       block = byId(target.blockId) ?? block;
+    }
+    // 並排列：往下一層取第一欄的第一個 blockContainer（不遞迴）
+    if (block?.nodeName === "columnList") {
+      const firstColumn = block.get(0);
+      const first = firstColumn instanceof Y.XmlElement ? firstColumn.get(0) : undefined;
+      block = first instanceof Y.XmlElement ? first : undefined;
     }
     // ⚠ 兩層都要判型，但兩層擋的是**不同**情境（實測用真 BlockNote 文件量過，見下）：
     // 第一層（`content instanceof Y.XmlElement`）擋的是**文件連一顆頂層容器都沒有**——尚未被
@@ -144,7 +157,9 @@ export class PresenceRegistry {
       // ⚠ `beat: clock` 不是裝飾品：state 深度相等時 provider 不發 change，BlockNote 的名牌
       //   就永遠不會亮（Global Constraints 專條）。守衛＝單元檔的「state 深度不等」那一案。
       const cursor = this.cursorFor(doc, entry.target);
-      doc.awareness.states.set(entry.clientId, { user: entry.user, beat: clock, ...(cursor ? { cursor } : {}) });
+      const { name, color, handle, label } = entry.identity;
+      const knotebook: AgentPresenceField = { v: 1, kind: "agent", handle, label };
+      doc.awareness.states.set(entry.clientId, { user: { name, color }, [PRESENCE_FIELD]: knotebook, beat: clock, ...(cursor ? { cursor } : {}) });
     }
     doc.awareness.meta.set(entry.clientId, { clock, lastUpdated: this.now() });
     doc.awareness.emit("update", [{
@@ -154,12 +169,12 @@ export class PresenceRegistry {
     }, ORIGIN]);
   }
 
-  touch(noteId: string, tokenId: string, user: { name: string; color: string }, target: PresenceTarget): void {
+  touch(noteId: string, tokenId: string, identity: PresenceIdentity, target: PresenceTarget): void {
     if (!this.hocuspocus?.documents.get(noteId)) return; // 未載入＝沒人看得到
     const key = `${noteId}:${tokenId}`;
     const existing = this.entries.get(key);
     if (existing) {
-      existing.user = user; existing.target = target; existing.lastBeat = this.now();
+      existing.identity = identity; existing.target = target; existing.lastBeat = this.now();
       clearTimeout(existing.idle);
       existing.idle = setTimeout(() => this.stop(noteId, tokenId), this.idleMs);
       this.emit(existing, "updated");
@@ -169,7 +184,7 @@ export class PresenceRegistry {
       const oldest = [...this.entries.values()].sort((a, b) => a.lastBeat - b.lastBeat)[0]!;
       this.stop(oldest.noteId, oldest.tokenId);
     }
-    const entry = { noteId, tokenId, clientId: presenceClientId(noteId, tokenId), user, target, lastBeat: this.now() } as Entry;
+    const entry = { noteId, tokenId, clientId: presenceClientId(noteId, tokenId), identity, target, lastBeat: this.now() } as Entry;
     entry.timer = setInterval(() => { entry.lastBeat = this.now(); this.emit(entry, "updated"); }, this.heartbeatMs);
     entry.idle = setTimeout(() => this.stop(noteId, tokenId), this.idleMs);
     this.entries.set(key, entry);

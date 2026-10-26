@@ -86,4 +86,10 @@ describe("noteToSlides：spec §4.3 表（封面章一律保留，§4.2-5／-7�
     const withLink: SlideBlock = { id: "l", type: "paragraph", props: {}, content: [{ type: "link", href: "https://x", content: [] }], children: [] };
     expect(show(noteToSlides("T", [d("d"), withLink]))).toBe("_title:[_title]  d:[d(l)]");
   });
+
+  it("PSL1：列的欄內有標題 → 不為它切頁（只看頂層；columns-layout spec §11.8）", () => {
+    const col = (id: string, children: SlideBlock[]): SlideBlock => ({ id, type: "column", props: { width: 1 }, children });
+    const row: SlideBlock = { id: "r", type: "columnList", props: {}, children: [col("rc0", [h("in", 1), p("a")]), col("rc1", [p("b")])] };
+    expect(show(noteToSlides("T", [h("A", 1), row]))).toBe("_title:[_title]  A:[A(r)]");
+  });
 });

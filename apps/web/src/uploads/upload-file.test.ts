@@ -2,6 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { MAX_UPLOAD_BYTES } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
+import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
+import { IMG, P, mountEditor, row, shape } from "@/test/columns-fixtures";
+
+// 包一層照呼叫原實作的 spy；不用 automock——那會讓 UP1 的真編輯器清除變成什麼都不做。
+vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
+  return { ...m, removeBlocksKeepColumns: vi.fn(m.removeBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(removeBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 // toast 換成 spy——同 `NoteEditor.test.ts` 的手法：這裡要斷言的是「有沒有提示、
 // 提示了幾次、文案是什麼」，不必把 Radix 整套渲染起來。
@@ -109,12 +120,11 @@ describe("createUploadFile", () => {
     vi.useRealTimers();
   });
 
+  // `transact` 不執行回呼：helper 照呼叫原實作但不碰文件；刪除的實際效果由 UP1（真編輯器）驗。
   function fakeEditor(blocks: Set<string>) {
     return {
       getBlock: vi.fn((id: string) => (blocks.has(id) ? { id } : undefined)),
-      removeBlocks: vi.fn((ids: string[]) => {
-        for (const id of ids) blocks.delete(id);
-      }),
+      transact: vi.fn(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試替身，同 repo 慣例的 BlockNoteEditor<any,any,any>
     } as unknown as BlockNoteEditor<any, any, any>;
   }
@@ -137,8 +147,7 @@ describe("createUploadFile", () => {
     expect(url).toBe("/api/uploads/u1");
     await flushMacrotask();
     expect(toastMock).not.toHaveBeenCalled();
-    expect(editor.removeBlocks).not.toHaveBeenCalled();
-    expect(blocks.has("b1")).toBe(true);
+    expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("失敗（4xx）：絕不 reject，回傳空字串 sentinel", async () => {
@@ -165,12 +174,11 @@ describe("createUploadFile", () => {
     // 剛 resolve 完（等同 handleFileInsertion 的 `await editor.uploadFile(...)` 那一行剛
     // 跑完），此時同步接續的 `editor.updateBlock(...)` 尚未有機會執行，我們的清除也還
     // 沒發生——因為它排在 macrotask。
-    expect(editor.removeBlocks).not.toHaveBeenCalled();
+    expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
 
     await flushMacrotask();
 
-    expect(editor.removeBlocks).toHaveBeenCalledWith(["b1"]);
-    expect(blocks.has("b1")).toBe(false);
+    expect(vi.mocked(removeBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["b1"]);
   });
 
   it("失敗且沒有 blockId（例如呼叫端沒有 insertedBlockId）：不嘗試移除任何 block", async () => {
@@ -184,7 +192,7 @@ describe("createUploadFile", () => {
     await uploadFile(file());
     await flushMacrotask();
 
-    expect(editor.removeBlocks).not.toHaveBeenCalled();
+    expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("失敗但 block 已被使用者手動刪除（getBlock 找不到）：靜默略過，不丟例外", async () => {
@@ -198,7 +206,7 @@ describe("createUploadFile", () => {
     await uploadFile(file(), "b1");
     await flushMacrotask();
 
-    expect(editor.removeBlocks).not.toHaveBeenCalled();
+    expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
   it("失敗但 editorRef.current 為 null（editor 已卸載）：靜默略過，不丟例外", async () => {
@@ -329,5 +337,28 @@ describe("createUploadFile", () => {
     await uploadFile(file(), "b2");
     await flushMacrotask();
     expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createUploadFile 真編輯器（D25）", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("UP1：欄內的圖片 placeholder 上傳失敗 → macrotask 後該欄剩空段落、列仍在", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
+      ),
+    );
+    const m = mountEditor([P("x", "x"), row([[P("a", "a")], [{ ...IMG("img"), props: { url: "" } }]], "r"), P("z", "z")]);
+    try {
+      const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: m.editor }, translate });
+      await uploadFile(file(), "img");
+      expect(shape(m.editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(image)]  paragraph:z");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(shape(m.editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
+    } finally {
+      m.destroy();
+    }
   });
 });

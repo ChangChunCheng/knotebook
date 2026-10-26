@@ -4,14 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { CollabState } from "@/collab/connection";
-import type { NoteDto } from "@knotebook/shared";
+import { canonicalNotePath, type NoteDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { NoteMenu, SidebarNoteMenu } from "./NoteMenu";
 import { EDITOR_PERMS, OWNER_PERMS } from "@/test/fixtures";
 import { NARROW_QUERY, useVersionsController, VersionsProvider } from "@/lib/versions-context";
 
-// ⋮ 選單（spec D.4）：複製連結（任何角色）＋刪除筆記（#175 起看 `permissions.delete`，含 M11 的
+// ⋮ 選單（spec D.4）：複製連結（任何角色）＋移到垃圾桶（#181：不確認、成功 toast＋復原；#175 起看 `permissions.delete`，含 M11 的
 // leavingRef 時序：刪除失敗且已進終態時，`NoteMenu` 必須自己補一套「同文案同
 // 終點」的終態出口——`NotePage` 的終態 effect 被這支 handler 自己設的
 // `leavingRef.current=true` 閘住，永遠不會再觸發，見 `NoteMenu.tsx` 檔頭）。
@@ -79,6 +79,65 @@ function renderMenu(
   );
 }
 
+/** 移到垃圾桶＋復原的假 server：DELETE 204、restore 回 `{ restored: [note] }`；`GET /api/notes`、`/api/groups` 回空。每筆記進 `calls`。 */
+function trashFetch(note: NoteDto, opts: { onDelete?: () => void } = {}) {
+  const calls: string[] = [];
+  const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    calls.push(`${method} ${url}`);
+    if (url === `/api/notes/${note.id}` && method === "DELETE") {
+      opts.onDelete?.();
+      return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
+    }
+    if (url === "/api/trash/restore" && method === "POST") {
+      return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ restored: [note], skipped: [] }) }));
+    }
+    if ((url === "/api/notes" || url === "/api/groups") && method === "GET") {
+      return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
+    }
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  });
+  return { fetchSpy, calls };
+}
+
+/** `NoteMenu` 只在筆記路由下渲染，`/` 是不含它的頁——導回首頁＝選單卸載（Toaster 在 router 之外，同 App.tsx）。 */
+function renderRoutedMenu(
+  note: NoteDto,
+  leavingRef: { current: boolean },
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+) {
+  vi.stubGlobal("fetch", fetchImpl);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const menu = <NoteMenu note={note} state={CONNECTED} leavingRef={leavingRef} onOpenEdits={() => {}} />;
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[canonicalNotePath(note)]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/n/:handle/:slug" element={menu} />
+          <Route path="/g/:groupId/:slug" element={menu} />
+          <Route path="/" element={<div>home landing</div>} />
+        </Routes>
+      </MemoryRouter>
+      <Toaster />
+    </QueryClientProvider>,
+  );
+}
+
+function groupMenuNote(perms: { edit: boolean; delete: boolean }): NoteDto {
+  const groupId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  return {
+    ...OWNER_NOTE,
+    ownerId: null,
+    ownerHandle: null,
+    role: perms.edit ? "editor" : "viewer",
+    groupId,
+    group: { id: groupId, name: "Workshop A" },
+    permissions: { ...EDITOR_PERMS, ...perms },
+  };
+}
+
 describe("NoteMenu（⋮ 選單，spec D.4）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -89,12 +148,14 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("owner：選單含複製連結與刪除筆記兩項", () => {
+  it("owner：選單含複製連結與「移到垃圾桶」兩項（垃圾桶圖示；沒有舊字「Delete note」）", () => {
     renderMenu(OWNER_NOTE, CONNECTED, { current: false });
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Delete note/ })).toBeInTheDocument();
+    const trashItem = screen.getByRole("menuitem", { name: "Move to trash" });
+    expect(trashItem.querySelector("svg")).toHaveAttribute("data-icon", "trash");
+    expect(screen.queryByText(/Delete note/)).toBeNull();
   });
 
   it("#297 D10：⋮ 選單沒有寬度（寬度只在頁首 icon）", () => {
@@ -125,7 +186,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Delete note/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move to trash" })).not.toBeInTheDocument();
   });
 
   // #175 §8.3：刪除項看 `note.permissions.delete`，不再由 `role === "owner"` 推——群組筆記的 role
@@ -143,7 +204,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     renderMenu(groupNote, { phase: "connected", role: "editor" }, { current: false });
     openMenu();
 
-    expect(screen.getByRole("menuitem", { name: /Delete note/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Move to trash" })).toBeInTheDocument();
   });
 
   it("#175：個人筆記 role owner 但 permissions.delete false（刻意造的不一致 fixture）→ 沒有刪除項——看的是 permissions", () => {
@@ -151,7 +212,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Delete note/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move to trash" })).not.toBeInTheDocument();
   });
 
   it("#175：群組筆記的複製連結是 /g/<groupId>/<slug>", async () => {
@@ -205,45 +266,105 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     Reflect.deleteProperty(document, "execCommand");
   });
 
-  it("owner 刪除：確認 → DELETE → 導回 /（leavingRef 在送出請求當下已是 true）", async () => {
+  it("NM-T2 owner 移到垃圾桶：不確認、點下即送（leavingRef 同步已是 true）→ 導回 / → toast 有 Undo", async () => {
     const leavingRef = { current: false };
     // M1（複審修正）：`waitFor` 內綁兩個各自單調的條件（fetchSpy 被呼叫過＋
     // leavingRef 現在是 true）是恆真式——不管 `leavingRef.current = true` 擺在
     // 送出請求「之前」還是「之後」，兩個條件最終都會同時成立，測不出時序。
-    // 真正有牙齒的做法：在 fetch spy 的 DELETE 分支**內側**（也就是請求真的被
-    // 送出的那一瞬間）side-record 當下的 `leavingRef.current`——若實作把設定
-    // 搬到 `await deleteNote.mutateAsync(...)` 之後才做，這裡側錄到的值必然是
-    // false，測試會紅。
+    // 真正有牙齒的做法：點下選單項之後**同步**斷言，並在 fetch spy 的 DELETE 分支**內側**
+    // （也就是請求真的被送出的那一瞬間）side-record 當下的 `leavingRef.current`——若實作把設定
+    // 搬到 `await deleteNote.mutateAsync(...)` 之後才做，這兩處讀到的值必然是 false，測試會紅。
     let leavingAtFetch: boolean | undefined;
-    const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (String(input) === `/api/notes/${OWNER_NOTE.id}` && method === "DELETE") {
+    const { fetchSpy } = trashFetch(OWNER_NOTE, {
+      onDelete: () => {
         leavingAtFetch = leavingRef.current;
-        return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
-      }
-      if (String(input) === "/api/notes" && method === "GET") {
-        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
-      }
-      throw new Error(`unexpected fetch: ${method} ${String(input)}`);
+      },
     });
 
-    renderMenu(OWNER_NOTE, CONNECTED, leavingRef, fetchSpy);
+    renderRoutedMenu(OWNER_NOTE, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete note/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
 
-    const dialog = await screen.findByRole("dialog");
-    expect(leavingRef.current).toBe(false); // 只是打開確認框，還沒真的送出
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    // spec §6.10.4 D-W7：不確認——沒有對話框，點下就送出。
+    expect(leavingRef.current).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
 
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(`/api/notes/${OWNER_NOTE.id}`, expect.objectContaining({ method: "DELETE" })),
     );
     expect(leavingAtFetch).toBe(true);
 
-    await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/"));
     expect(leavingRef.current).toBe(true);
-    // 成功時不另發成功 toast（跟改版前側欄刪除一致，導頁即回饋）。
-    expect(screen.queryByText("Delete note?")).not.toBeInTheDocument();
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
+  it("NM-T3 選單已卸載（導回 / 之後）才按 Undo：照樣還原並導回該篇", async () => {
+    const { fetchSpy, calls } = trashFetch(OWNER_NOTE);
+    renderRoutedMenu(OWNER_NOTE, { current: false }, fetchSpy);
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/"));
+    // `/` 不渲染 NoteMenu——toast 的「復原」只能靠建立 toast 時捕捉的 queryClient／navigate。
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe(canonicalNotePath(OWNER_NOTE)));
+    expect(calls).toContain("POST /api/trash/restore");
+  });
+
+  it("NM-T4 群組筆記只有刪除權（edit 假）：成功 toast 沒有 Undo、有說明誰能還原", async () => {
+    const note = groupMenuNote({ edit: false, delete: true });
+    const { fetchSpy } = trashFetch(note);
+    renderRoutedMenu(note, { current: false }, fetchSpy);
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Members of the group whose role can both edit and delete notes can restore it.", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("NM-T5 群組筆記有編輯＋刪除權：成功 toast 有 Undo", async () => {
+    const note = groupMenuNote({ edit: true, delete: true });
+    const { fetchSpy } = trashFetch(note);
+    renderRoutedMenu(note, { current: false }, fetchSpy);
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
+  it("NM-T6 DELETE 掛起中：連點、再開選單點「Move to trash」都不重送（項目 disabled，DELETE 恰一次）", async () => {
+    const pending = new Promise<Response>(() => {});
+    const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (String(input) === `/api/notes/${OWNER_NOTE.id}` && method === "DELETE") return pending;
+      throw new Error(`unexpected fetch: ${method} ${String(input)}`);
+    });
+    const deleteCount = () =>
+      fetchSpy.mock.calls.filter(
+        ([input, init]) => String(input) === `/api/notes/${OWNER_NOTE.id}` && (init?.method ?? "GET").toUpperCase() === "DELETE",
+      ).length;
+    renderMenu(OWNER_NOTE, CONNECTED, { current: false }, fetchSpy as unknown as typeof fetch);
+    openMenu();
+    const first = screen.getByRole("menuitem", { name: "Move to trash" });
+    fireEvent.click(first);
+    fireEvent.click(first);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(deleteCount()).toBe(1));
+
+    openMenu();
+    const again = await screen.findByRole("menuitem", { name: "Move to trash" });
+    expect(again).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(again);
+    fireEvent.keyDown(again, { key: "Enter" });
+    // 重送的話 mutateAsync → fetch 只隔幾個微任務；等一個 macrotask 讓它有機會落地再數。
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(deleteCount()).toBe(1);
   });
 
   it("刪除失敗且非終態 → leavingRef 撥回 false，顯示錯誤 toast，不導頁", async () => {
@@ -260,13 +381,12 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, CONNECTED, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete note/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
 
     await waitFor(() => expect(screen.getByText("Something went wrong. Please try again.")).toBeInTheDocument());
     expect(leavingRef.current).toBe(false);
     expect(screen.queryByText("home landing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
   // review B1 修正：刪除失敗但已進終態時，`NotePage` 的終態 effect 被這支
@@ -283,9 +403,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, { phase: "deleted" }, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete note/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText("This note has been deleted.")).toBeInTheDocument());
@@ -294,6 +412,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     expect(leavingRef.current).toBe(true);
     // 不是非終態那條「Something went wrong」的錯誤映射——文案要對得上終態出口。
     expect(screen.queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
   it("刪除失敗但已進終態（kicked）→ 就地 toast「已失去存取權」＋導回 /", async () => {
@@ -306,14 +425,13 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, { phase: "kicked" }, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete note/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText("You no longer have access to this note.")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     expect(leavingRef.current).toBe(true);
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
   // 複審 B1-a：覆蓋真實競態，回歸釘死「必須讀 stateRef.current，不能讀 closure
@@ -324,7 +442,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
   // 裡的 `state`（呼叫當下的 connected），會誤判成「非終態」走錯分支
   // （leavingRef 撥回 false＋「Something went wrong」），跟正確的終態出口
   // （toast「已刪除」＋導頁）文案/行為都不同，兩者不會混淆——這案能真的分辨。
-  it("stateRef 零守衛回歸案：確認當下 state=connected，DELETE 掛起期間收到終態 → 失敗時仍走終態出口", async () => {
+  it("stateRef 零守衛回歸案：點下當下 state=connected，DELETE 掛起期間收到終態 → 失敗時仍走終態出口", async () => {
     const leavingRef = { current: false };
     let rejectDelete!: (err: unknown) => void;
     const deletePromise = new Promise<Response>((_resolve, reject) => {
@@ -361,11 +479,11 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     const { rerender } = render(tree(CONNECTED));
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete note/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(`/api/notes/${OWNER_NOTE.id}`, expect.objectContaining({ method: "DELETE" })),
+    );
 
     // DELETE 仍在飛行中（deferred，尚未 settle）——這時共編收到
     // close(NOTE_DELETED)，state prop 變成 deleted。
@@ -379,10 +497,11 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     expect(leavingRef.current).toBe(true);
     expect(screen.queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 });
 
-// ── #175 PR2 ⋮「複製到我的筆記」（Task 10），#216 起併入「複製到… → 個人空間」──
+// ── #175 PR2 ⋮「複製到我的筆記」（Task 10），#216 起併入「複製到… → 我的筆記」──
 // 兩個外殼（頁首 NoteMenu、側欄 SidebarNoteMenu）共用 NoteMenuCore，各一案守「可見性」。
 
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -393,7 +512,7 @@ const GROUP_NOTE: NoteDto = {
   role: "viewer",
   groupId: GROUP_ID,
   group: { id: GROUP_ID, name: "Workshop A" },
-  // 只讀角色：不能編輯也不能刪除，仍可複製到個人空間（看得到即可讀）。
+  // 只讀角色：不能編輯也不能刪除，仍可複製到我的筆記（看得到即可讀）。
   permissions: { ...EDITOR_PERMS, edit: false, delete: false },
 };
 
@@ -434,7 +553,7 @@ function openAnyMenu(shell: "header" | "sidebar"): void {
   fireEvent.pointerDown(screen.getByRole("button", { name }), { button: 0 });
 }
 
-describe("NoteMenu：複製到我的筆記已併入「複製到… → 個人空間」（#216）", () => {
+describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆記」（#216）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -456,10 +575,10 @@ describe("NoteMenu：複製到我的筆記已併入「複製到… → 個人空
     expect(screen.queryByRole("menuitem", { name: "Copy to my notes" })).not.toBeInTheDocument();
   });
 
-  it("群組筆記（有刪除權限）：Delete note 照舊在選單裡", async () => {
+  it("群組筆記（有刪除權限）：Move to trash 照舊在選單裡", async () => {
     renderCopyMenu("header", { ...GROUP_NOTE, role: "editor", permissions: { ...EDITOR_PERMS, edit: true, delete: true } });
     openAnyMenu("header");
-    expect(await screen.findByRole("menuitem", { name: /Delete note/ })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Move to trash" })).toBeInTheDocument();
   });
 });
 

@@ -20,8 +20,14 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
   // ⚠ `getByLabel` 預設是「不分大小寫的子字串比對」——exact 保留：#247 前 token 與
   // HandleSection（aria-label "Username"）同在帳號資訊頁時兩者撞名、strict mode violation。
   await page.getByLabel("Name", { exact: true }).fill(tokenName);
-  // #239／#247：存取權是兩個開關（預設都關，`ScopeTogglesField`）；開「編輯」＝notes:read notes:write。
+  // #239／#247／#181：存取權是三個開關（預設都關，`ScopeTogglesField`）；開「編輯」＝notes:read notes:write。
+  // #181：「刪除」開關在編輯關著時 disabled，開了編輯才可切（本案不開它，token 仍是讀寫）。
+  const deleteSwitch = page.getByRole("switch", { name: "Move notes to the trash and restore them", exact: true });
+  await expect(deleteSwitch).toBeDisabled();
+  await expect(deleteSwitch).not.toBeChecked();
   await page.getByRole("switch", { name: "Create and edit notes", exact: true }).click();
+  await expect(deleteSwitch).toBeEnabled();
+  await expect(deleteSwitch).not.toBeChecked();
   await page.getByRole("button", { name: "Create token" }).click();
 
   // 明文只出現這一次，用它自己的 aria-label 讀出來（不要用模糊比對）
@@ -76,13 +82,30 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
       expect(((await res.json()) as { scope: string }).scope).toBe(scope);
     };
     const before = await toolNames();
-    // 對照：讀寫憑證確實列得到寫入工具，`move_note_to_group` 不在是因為少了 notes:move。
+    // 對照：讀寫憑證確實列得到寫入工具，`move_note_to_group` 不在是因為少了 notes:move；
+    // #181：`list_trash` 任何憑證都有，`delete_note`／`restore_note` 不在是因為少了 notes:delete。
     expect(before).toContain("copy_note");
+    expect(before).toContain("list_trash");
     expect(before).not.toContain("move_note_to_group");
+    expect(before).not.toContain("delete_note");
+    expect(before).not.toContain("restore_note");
     await setScope("notes:read notes:write notes:move");
-    expect(await toolNames()).toContain("move_note_to_group");
+    const withMove = await toolNames();
+    expect(withMove).toContain("move_note_to_group");
+    expect(withMove).not.toContain("delete_note");
+    // #181：讀寫刪除——兩支垃圾桶寫入工具出現，搬移不在（move 與 delete 互相獨立）。
+    await setScope("notes:read notes:write notes:delete");
+    const withDelete = await toolNames();
+    expect(withDelete).toContain("delete_note");
+    expect(withDelete).toContain("restore_note");
+    expect(withDelete).toContain("list_trash");
+    expect(withDelete).not.toContain("move_note_to_group");
     await setScope("notes:read notes:write");
-    expect(await toolNames()).not.toContain("move_note_to_group");
+    const after = await toolNames();
+    expect(after).not.toContain("move_note_to_group");
+    expect(after).not.toContain("delete_note");
+    expect(after).not.toContain("restore_note");
+    expect(after).toContain("list_trash");
 
     // 撤銷——鎖定這一輪建的那一列（名稱已隨機化，前一輪殘留不會同名）。#247：token 是表格列，
     // 撤銷是列尾紅垃圾桶 icon 鈕（aria-label「Revoke」）。
@@ -146,7 +169,7 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       const verifier = randomBytes(32).toString("base64url");
       const challenge = createHash("sha256").update(verifier).digest("base64url");
       const state = `st-${Date.now()}`;
-      // #239：要求三個 scope（MCP 的 challenge 就是這三個），同意頁才會出現兩個勾選框。
+      // #239／#181：要求四個 scope（MCP 的 challenge 就是這四個），同意頁才會出現三個勾選框。
       const authorizeUrlFor = (s: string): string =>
         `${baseURL}/oauth/authorize?${new URLSearchParams({
           response_type: "code",
@@ -155,7 +178,7 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
           code_challenge: challenge,
           code_challenge_method: "S256",
           resource: `${baseURL}/api/mcp`,
-          scope: "notes:read notes:write notes:move",
+          scope: "notes:read notes:write notes:move notes:delete",
           state: s,
         }).toString()}`;
       const authorizeUrl = authorizeUrlFor(state);
@@ -171,12 +194,18 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       await expect(page).toHaveURL(/\/authorize\?req=/);
 
       await expect(page.getByText(`127.0.0.1:${port}`)).toBeVisible();
-      // #239 W4'：第一次授權兩框預設都不勾——直接按 Allow 只拿到 notes:read。勾「編輯」再 Allow。
+      // #239 W4'／#181：第一次授權三框預設都不勾——直接按 Allow 只拿到 notes:read。勾「編輯」再 Allow。
+      // 「刪除」框在編輯沒勾時 disabled，勾了編輯才可勾（本案不勾，授予的仍是讀寫）。
       const edit = page.getByRole("checkbox", { name: "Create and edit notes" });
       const move = page.getByRole("checkbox", { name: "Move or copy notes into groups" });
+      const del = page.getByRole("checkbox", { name: "Move notes to the trash and restore them" });
       await expect(edit).not.toBeChecked();
       await expect(move).not.toBeChecked();
+      await expect(del).not.toBeChecked();
+      await expect(del).toBeDisabled();
       await edit.click();
+      await expect(del).toBeEnabled();
+      await expect(del).not.toBeChecked();
       await page.getByRole("button", { name: "Allow" }).click();
 
       await expect.poll(() => received.length).toBeGreaterThan(0);
@@ -210,12 +239,13 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       await expect(page.getByRole("row", { name: /^E2E client \d+$/ }).first()).toBeVisible();
 
       // #239 W8：同一個 client 再授權一次——編輯框沿用目前已授予的權限（預設勾）並標「Currently
-      // granted」，搬移框仍不勾。按 Deny，不留第二支憑證（舊憑證不受影響：deny 不碰 api_tokens）。
+      // granted」，搬移框與刪除框仍不勾。按 Deny，不留第二支憑證（舊憑證不受影響：deny 不碰 api_tokens）。
       const state2 = `st2-${Date.now()}`;
       await page.goto(authorizeUrlFor(state2));
       await expect(page).toHaveURL(/\/authorize\?req=/);
       await expect(edit).toBeChecked();
       await expect(move).not.toBeChecked();
+      await expect(del).not.toBeChecked();
       await expect(page.getByText("Currently granted")).toHaveCount(1);
       await page.getByRole("button", { name: "Deny" }).click();
       await expect.poll(() => received.length).toBeGreaterThan(1);

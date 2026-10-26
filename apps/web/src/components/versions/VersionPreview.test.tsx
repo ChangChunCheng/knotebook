@@ -17,7 +17,8 @@ import { ThemeProvider } from "@/theme";
 import { versionListKey } from "@/api/versions";
 import { KIND_FILTER_STORAGE_KEY } from "@/lib/versions-context";
 import { VersionsProvider, useVersions, useVersionsController } from "@/lib/versions-context";
-import { VersionPreview } from "./VersionPreview";
+import { diffBlocks, renderDiff, type DiffBlock } from "@/lib/version-diff";
+import { DiffEditor, VersionPreview } from "./VersionPreview";
 import { PreviewBanner } from "./PreviewBanner";
 
 vi.mock("@/lib/use-container-width", () => ({ useContainerWidth: () => widthRef.current }));
@@ -857,5 +858,82 @@ describe("VersionPreview（spec §8.4）", () => {
     });
     await waitFor(() => expect(banner).toHaveTextContent(`Previewing ${vlabel(1, "改好的名字")}`));
     expect(within(banner).getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1, "改好的名字"));
+  });
+
+  describe("並排的 diff 標記與 split 頂層單位（columns-layout spec §11.9）", () => {
+    // fixture 形同 version-diff.test.ts 的 VD 案（探針 vd-plan.mts）；列與欄一律帶 id。
+    const P = (text: string, id: string): DiffBlock => ({ id, type: "paragraph", props: {}, content: [{ type: "text", text, styles: {} }], children: [] });
+    const col = (id: string, kids: DiffBlock[], width = 1): DiffBlock => ({ id, type: "column", props: { width }, children: kids });
+    const row = (id: string, cols: DiffBlock[]): DiffBlock => ({ id, type: "columnList", props: {}, children: cols });
+    const base = () => [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+    const mountDiff = (a: DiffBlock[], b: DiffBlock[], onlyChanges = false) => {
+      const { blocks, marks } = renderDiff(diffBlocks(a, b), { onlyChanges });
+      render(
+        <ThemeProvider>
+          <DiffEditor blocks={blocks} marks={marks} />
+        </ThemeProvider>,
+      );
+      return screen.getByTestId("diff-pane");
+    };
+    const colEl = (pane: Element, id: string) => pane.querySelector<HTMLElement>(`[data-node-type="column"][data-id="${id}"]`);
+
+    it("VP1 VD1 的只看變更結果建得起來（列的直接子節點全是欄）；c1 欄標 context、欄內 b1 標 changed", async () => {
+      const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b2", "b1")])]), P("z", "z9")];
+      const pane = mountDiff(base(), b, true);
+      await waitFor(() => expect(colEl(pane, "c1")).toHaveAttribute("data-diff", "context"));
+      expect(colEl(pane, "c0")).toHaveAttribute("data-diff", "context");
+      const rowEl = pane.querySelector('[data-node-type="columnList"][data-id="r"]')!;
+      expect(Array.from(rowEl.children).map((el) => el.getAttribute("data-node-type"))).toEqual(["column", "column"]);
+      expect(colEl(pane, "c1")!.querySelector('.bn-block-outer[data-id="b1"]')).toHaveAttribute("data-diff", "changed");
+    });
+
+    it("VP2 VD2（欄寬 1→2）→ c1 欄 data-diff=changed、c0 欄 context", async () => {
+      const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
+      const pane = mountDiff(base(), b);
+      await waitFor(() => expect(colEl(pane, "c1")).toHaveAttribute("data-diff", "changed"));
+      expect(colEl(pane, "c0")).toHaveAttribute("data-diff", "context");
+    });
+
+    it("VP4 VD6（刪一列、別處加一列，不收合）→ 被刪的列 data-diff=deleted、r2 data-diff=added，各一", async () => {
+      const a = [P("x", "x0"), row("r1", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+      const b = [P("x", "x0"), P("z", "z9"), row("r2", [col("d0", [P("p", "p1")]), col("d1", [P("q", "q1")])])];
+      const pane = mountDiff(a, b);
+      await waitFor(() => expect(pane.querySelectorAll('[data-node-type="columnList"][data-id="r2"][data-diff="added"]')).toHaveLength(1));
+      expect(pane.querySelectorAll('[data-node-type="columnList"][data-diff="deleted"]')).toHaveLength(1);
+    });
+
+    it("VP5 VD4（刪 c1、加 c2）合併渲染的列有 3 欄、建得起來：被刪的欄 deleted、c2 added", async () => {
+      const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c2", [P("n", "n1")])]), P("z", "z9")];
+      const pane = mountDiff(base(), b);
+      await waitFor(() => expect(colEl(pane, "c2")).toHaveAttribute("data-diff", "added"));
+      expect(colEl(pane, "diff-del-1")).toHaveAttribute("data-diff", "deleted");
+      expect(colEl(pane, "c0")).toHaveAttribute("data-diff", "context");
+      expect(pane.querySelectorAll('[data-node-type="columnList"] > [data-node-type="column"]')).toHaveLength(3);
+    });
+
+    it("VP3 並排：兩側各 [x, 列, z] → 兩欄頂層單位的 data-diff-row 依序 0、1、2（列算一個頂層單位，列內不逐欄對齊）", async () => {
+      stub({
+        [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
+        [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(base()) },
+      });
+      widthRef.current = 900;
+      renderPreview({ seq: 1, live: [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b2", "b1")])]), P("z", "z9")] });
+      const split = await screen.findByTestId("diff-split");
+      const rowsOf = (pane: Element) => Array.from(pane.querySelectorAll<HTMLElement>("[data-diff-row]")).map((el) => [el.dataset.id, el.dataset.diffRow]);
+      const [left, right] = within(split).getAllByTestId("diff-pane");
+      await waitFor(() => expect(rowsOf(right)).toEqual([["x0", "0"], ["r", "1"], ["z9", "2"]]));
+      expect(rowsOf(left)).toEqual([["x0", "0"], ["r", "1"], ["z9", "2"]]);
+    });
+
+    it("VP6 單欄預覽、只改欄寬 → 欄標 changed，但沒有「看前後」鈕（對話框只能單獨渲染那一欄、看不出寬度）", async () => {
+      stub({
+        [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
+        [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(base()) },
+      });
+      renderPreview({ seq: 1, live: [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")], 2)]), P("z", "z9")] });
+      const view = await screen.findByTestId("diff-single");
+      await waitFor(() => expect(colEl(view, "c1")).toHaveAttribute("data-diff", "changed"));
+      expect(screen.queryByRole("button", { name: "Changed · see before and after" })).not.toBeInTheDocument();
+    });
   });
 });

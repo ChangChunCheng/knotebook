@@ -16,7 +16,43 @@ async function docWith(blocks: Array<Record<string, unknown>>): Promise<Y.Doc> {
   return doc;
 }
 
+const COL = (id: string, children: Array<Record<string, unknown>>, width = 1) => ({ id, type: "column", props: { width }, children });
+const ROW = (id: string, cols: Array<Record<string, unknown>>) => ({ id, type: "columnList", children: cols });
+const para = (id: string, text: string) => ({ id, type: "paragraph", content: text });
+// 在未改 topLevelContainers 的碼上實跑取得（T2 Step 1）
+const GOLDEN_OUTLINE = [["_top", 0, "e3b0c44298fc1c14"], ["ha", 12, "70cfcd4d638d7496"], ["hb", 4, "69c7d471720fc8fd"]];
+const GOLDEN_WHOLE = "02384cdbb1c6229a";
+const GOLDEN_BLOCKS = [
+  { id: "ha", type: "heading", props: { level: 1 }, content: "A" },
+  para("p1", "段落一"),
+  { id: "li", type: "bulletListItem", content: "清單", children: [{ id: "li2", type: "bulletListItem", content: "子項" }] },
+  { id: "tb", type: "table", content: { type: "tableContent", rows: [{ cells: ["a", "b"] }, { cells: ["c", "d"] }] } },
+  { id: "hb", type: "heading", props: { level: 1 }, content: "B" },
+  para("p2", "段落二"),
+];
+
 describe("fingerprint", () => {
+  it("F0：不含並排的既有文件指紋逐位元組不變（spec §11.4 golden）", async () => {
+    const doc = await docWith(GOLDEN_BLOCKS);
+    const { outline, whole } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
+    expect(outline.map(o => [o.sectionId, o.chars, o.fingerprint])).toEqual(GOLDEN_OUTLINE);
+    expect(whole).toBe(GOLDEN_WHOLE);
+  });
+
+  it("F1：只有一列的文件 → outlineOf 不丟例外，_top.blockIds 為該列 id", async () => {
+    const doc = await docWith([ROW("r", [COL("r1", [para("a", "左")]), COL("r2", [para("b", "右")])])]);
+    const { outline } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
+    expect(outline[0]!.blockIds).toEqual(["r"]);
+    expect(outline[0]!.chars).toBe(2);
+  });
+
+  it("F2：只差某欄 width → _top 指紋不同；只差欄 id → 相同", async () => {
+    const mk = (w: number, c1: string) => docWith([ROW("r", [COL(c1, [para("a", "左")], w), COL("r2", [para("b", "右")])])]);
+    const top = async (d: Promise<Y.Doc>) => outlineOf((await d).getXmlFragment(YDOC_FRAGMENT)).outline[0]!.fingerprint;
+    expect(await top(mk(1, "r1"))).not.toBe(await top(mk(2, "r1")));
+    expect(await top(mk(1, "r1"))).toBe(await top(mk(1, "other")));
+  });
+
   it("16 hex；空正規字串有固定值；空 _top 用它且計入整篇", async () => {
     expect(fingerprintOf("")).toMatch(/^[0-9a-f]{16}$/);
     expect(EMPTY_SECTION_FINGERPRINT).toBe(fingerprintOf(""));

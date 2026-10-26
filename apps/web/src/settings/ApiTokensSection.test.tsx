@@ -662,3 +662,129 @@ describe("ApiTokensSection 表格與行內編輯（#247 §5.3、W22）", () => {
     expect(dialog.queryByText(hint)).toBeNull();
   });
 });
+
+// #181 PR-2d（spec §6.8.2）：第三個 toggle「刪除」（notes:delete）——建立、pill、行內編輯。
+describe("ApiTokensSection #181 刪除 toggle", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const R = "notes:read";
+  const RW = "notes:read notes:write";
+  const RWD = "notes:read notes:write notes:delete";
+  const RWMD = "notes:read notes:write notes:move notes:delete";
+  const EDIT = "Create and edit notes";
+  const DELETE = "Move notes to the trash and restore them";
+  // 刪除 toggle 的說明＝S2＋「需同時勾選編輯」一句（fix round 1 m1，比照搬移說明的結尾）。
+  const DELETE_HINT_EN =
+    "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
+  const DELETE_HINT_ZH =
+    "不能永久刪除筆記；但留在垃圾桶的筆記之後仍可能被永久刪除（依站台的垃圾桶設定，或有人在網頁上刪除）。需同時勾選「建立與修改筆記」。";
+  const ALL: ApiTokenDto = { ...PAT_ROW, id: "t-all", name: "All bot", agentLabel: "all-bot", scope: RWMD };
+  const DEL: ApiTokenDto = { ...PAT_ROW, id: "t-del", name: "Trash bot", agentLabel: "trash-bot", scope: RWD };
+  const WRITER: ApiTokenDto = { ...PAT_ROW, id: "t-w", name: "n8n bot", agentLabel: "n8n", scope: RW };
+  const ROWS = [ALL, DEL, WRITER];
+  const rowOf = (name: string) => screen.getByRole("row", { name });
+  const pills = (row: HTMLElement) => Array.from(row.querySelectorAll("[data-pill]")).map((p) => p.textContent);
+
+  function withPatch() {
+    const bodies: Array<{ id: string; body: Record<string, unknown> }> = [];
+    renderSettings(PASSWORD_USER, ROWS, (url, method, init) => {
+      const m = /^\/api\/auth\/tokens\/([^/]+)$/.exec(url);
+      if (m && method === "PATCH") {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        bodies.push({ id: decodeURIComponent(m[1]!), body });
+        return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ ...ROWS.find((t) => t.id === m[1])!, ...body }) });
+      }
+      return null;
+    });
+    return bodies;
+  }
+
+  it("建立對話框：「刪除」預設關、編輯關時 disabled；開編輯＋刪除送出 scope RWD", async () => {
+    const created = { ...PAT_ROW, id: "t-n", name: "D", token: "knb_" + "d".repeat(43) };
+    const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
+      url === "/api/auth/tokens" && method === "POST"
+        ? fakeResponse({ ok: true, status: 201, json: () => Promise.resolve(created) })
+        : null
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Create API token" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Create API token" }));
+    fireEvent.change(dialog.getByLabelText(i18n.t("settings.account.apiTokensNameLabel")), { target: { value: "D" } });
+    const edit = dialog.getByRole("switch", { name: EDIT });
+    const del = dialog.getByRole("switch", { name: DELETE });
+    expect(del).toHaveAttribute("aria-checked", "false");
+    expect(del).toBeDisabled();
+    fireEvent.click(edit);
+    expect(del).toBeEnabled();
+    fireEvent.click(del);
+    expect(del).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(dialog.getByRole("button", { name: i18n.t("settings.account.apiTokensSubmit") }));
+    await screen.findByLabelText(i18n.t("settings.account.apiTokensValueLabel"));
+    const post = calls.find((c) => c.url === "/api/auth/tokens" && c.method === "POST");
+    expect(post?.body).toEqual({ name: "D", scope: RWD, expiresInDays: null });
+  });
+
+  it("建立對話框：「刪除」開時出現說明並以 aria-describedby 帶上、關時不在", async () => {
+    renderSettings(PASSWORD_USER, []);
+    fireEvent.click(await screen.findByRole("button", { name: "Create API token" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Create API token" }));
+    const hint = DELETE_HINT_EN;
+    const del = dialog.getByRole("switch", { name: DELETE });
+    fireEvent.click(dialog.getByRole("switch", { name: EDIT }));
+    expect(dialog.queryByText(hint)).toBeNull();
+    fireEvent.click(del);
+    expect(dialog.getByText(hint)).toBeInTheDocument();
+    expect(del).toHaveAccessibleDescription(hint);
+    fireEvent.click(del);
+    expect(dialog.queryByText(hint)).toBeNull();
+  });
+
+  it("建立對話框（zh-TW）：「刪除」開時的說明以「需同時勾選「建立與修改筆記」。」收尾，並是 switch 的可及描述", async () => {
+    await i18n.changeLanguage("zh-TW");
+    renderSettings(PASSWORD_USER, []);
+    fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
+    const dialog = within(await screen.findByRole("dialog", { name: i18n.t("settings.account.apiTokensCreate") }));
+    fireEvent.click(dialog.getByRole("switch", { name: "建立與修改筆記" }));
+    const del = dialog.getByRole("switch", { name: "移到垃圾桶與還原" });
+    fireEvent.click(del);
+    expect(dialog.getByText(DELETE_HINT_ZH)).toBeInTheDocument();
+    expect(del).toHaveAccessibleDescription(DELETE_HINT_ZH);
+  });
+
+  it("pill：RWMD 依序 Read、Edit、Move、Delete（Delete 是預設 tone）；RWD 沒有 Move", async () => {
+    withPatch();
+    await screen.findByText("All bot");
+    expect(pills(rowOf("All bot"))).toEqual(["Read", "Edit", "Move", "Delete"]);
+    expect(pills(rowOf("Trash bot"))).toEqual(["Read", "Edit", "Delete"]);
+    expect(pills(rowOf("n8n bot"))).toEqual(["Read", "Edit"]);
+    expect(within(rowOf("Trash bot")).getByText("Delete")).not.toHaveClass("text-destructive");
+  });
+
+  it("行內編輯：打開「刪除」→ PATCH { scope: RWD }", async () => {
+    const bodies = withPatch();
+    await screen.findByText("n8n bot");
+    fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
+    const del = within(rowOf("n8n bot")).getByRole("switch", { name: DELETE });
+    expect(del).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(del);
+    fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodies).toEqual([{ id: "t-w", body: { scope: RWD } }]));
+  });
+
+  it("行內編輯：關掉「編輯」→「刪除」disabled 且清為關；儲存送 notes:read", async () => {
+    const bodies = withPatch();
+    await screen.findByText("Trash bot");
+    fireEvent.click(within(rowOf("Trash bot")).getByRole("button", { name: "Edit" }));
+    const row = within(rowOf("Trash bot"));
+    expect(row.getByRole("switch", { name: DELETE })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(row.getByRole("switch", { name: EDIT }));
+    const del = row.getByRole("switch", { name: DELETE });
+    expect(del).toHaveAttribute("aria-checked", "false");
+    expect(del).toBeDisabled();
+    fireEvent.click(row.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodies).toEqual([{ id: "t-del", body: { scope: R } }]));
+  });
+});

@@ -459,7 +459,7 @@ function AccessSection({ note }: { note: NoteDto }) {
  * #175 §8.4：群組筆記的分享面板——**無 radio、無成員區**。存取由群組角色決定，所以這裡只說明＋帶去群組設定
  * （點了先關分享面板，否則兩個 Dialog 疊著）；能管公開連結的角色才看得到公開連結開關（群組筆記沒有公開別名，W7）。
  * `useShares` 一律不發（群組筆記沒有逐人分享，S5）；`usePublicLink` 只在 `managePublicLink` 為真時發（否則 server 回 403）。
- * 複製到我的筆記不在這裡：統一在 ⋮ 選單「複製到… → 個人空間」（#216，`share/GroupTransfer.tsx`）。
+ * 複製到我的筆記不在這裡：統一在 ⋮ 選單「複製到… → 我的筆記」（#216，`share/GroupTransfer.tsx`）。
  * 角色一律讀 `note.permissions`：移動成功後這份 `NoteDto` 是 server 回應，「能新建、不能編輯」的角色搬完是 viewer
  * （沒有公開連結開關、只剩說明與複製），不得假設搬完是 editor（規格落差 17）。
  *
