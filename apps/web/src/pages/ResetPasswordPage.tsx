@@ -120,7 +120,8 @@ function ResetPasswordContent({ token, forget, session }: { token: string | null
         )}
         <Button
           type="button"
-          variant="outline" size="lg"
+          variant="outline"
+          size="lg"
           className="w-full"
           onClick={() => {
             setFormError(null);

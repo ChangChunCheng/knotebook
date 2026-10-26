@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
+import { expectCardControls44 } from "@/test/card-controls";
 
 interface Call { method: string; url: string; body: unknown }
 
@@ -184,6 +185,7 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
     renderAt("/link-account");
     expect(await screen.findByText(/has no other way to confirm it's you/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back to sign in" })).toBeInTheDocument();
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Password for this account")).not.toBeInTheDocument();
   });
 
@@ -279,6 +281,7 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("An unexpected error occurred.");
       expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
       const back = screen.getByRole("button", { name: "Back to sign in" });
+      expect(expectCardControls44()).toBeGreaterThan(0);
       expect(SOLID_BG.test(back.className)).toBe(false);
       fireEvent.click(back);
       await waitFor(() => expect(loc()).toBe("/login"));

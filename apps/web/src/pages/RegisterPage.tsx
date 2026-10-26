@@ -237,7 +237,8 @@ function InviteRegistration({ token, forget, user, sessionError, refetch, logout
         )}
         <Button
           type="button"
-          variant="outline" size="lg"
+          variant="outline"
+          size="lg"
           className="w-full"
           onClick={() => {
             setErrorMessage(null);

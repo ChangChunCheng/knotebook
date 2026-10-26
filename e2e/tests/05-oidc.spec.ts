@@ -106,7 +106,7 @@ test("情境二：SSO 首登 email 命中邀請建的帳號 → 輸入該帳號�
 });
 
 /**
- * 未登入四張卡片頁的控制項是全站 32px 規則的例外：登入頁的「Sign in」與 SSO 鈕 44px（`size="lg"`），
+ * 同款卡片頁（登入、註冊、重設密碼、連結帳號、強制改密、OAuth 授權）的控制項是預設 32px 規則的例外：登入頁的「Sign in」與 SSO 鈕 44px（`size="lg"`），
  * 兩個輸入框跟著 44px，才好快速點中（見 `apps/web/src/components/ui/button.tsx` 規範）。jsdom 不套 CSS、算不出高度，只能在這裡量。
  */
 test("登入頁：Sign in 鈕、SSO 鈕與兩個輸入框都是 44px 高", async ({ browser }) => {

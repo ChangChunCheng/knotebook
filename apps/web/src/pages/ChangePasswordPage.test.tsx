@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
+import { expectCardControls44 } from "@/test/card-controls";
 
 // 同 SettingsUsersSection.test.tsx 的約定：mock 全域 fetch，走真正的 `AppRoutes`
 // （App.tsx 的唯一真相樹），不 mock ChangePasswordPage 本身——驗證的是「有沒有接對」
@@ -102,6 +103,19 @@ describe("ChangePasswordPage（spec rev 5.7）", () => {
     await waitFor(
       () => expect(screen.getByRole("heading", { name: "Change your password" })).toBeInTheDocument(),
     );
+  });
+
+  it("卡片頁例外：登出、三個密碼欄、送出鈕都是 44px（h-11）", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const base = baseFetchHandlers(() => USER_MUST_CHANGE)(url, method);
+      if (base) return Promise.resolve(base);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    renderAt("/change-password", fetchMock);
+    await screen.findByRole("heading", { name: "Change your password" });
+    expect(expectCardControls44()).toBe(5);
   });
 
   it("新密碼 <12 字元 → client 端擋下，不打 API", async () => {

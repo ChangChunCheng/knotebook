@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
  * 全 app 83 顆按鈕長出 12 種 variant×size 組合、8 個檔案在同一畫面混用尺寸）。
  *
  * **預設高度 32px（h-8）；例外有兩類，見下。**
- * `Button`（三個 size）、`Input`、各檔自訂的 `SELECT_CLASS` 全部 h-8——同一列的
+ * `Button`（`icon`／`sm`／`default` 三個 size；`lg` 見例外二）、`Input`、各檔自訂的 `SELECT_CLASS` 預設都是 h-8——同一列的
  * 控制項才會等高。改版過程試過「輸入框 36、按鈕 32」與「全部 36」，前者使用者一眼
  * 看出不等高，後者被嫌笨重；最後定在全部 32。
  * ⚠ 動這三個地方任何一個，另外兩個要一起動。`ui/rows.ts` 的 `SIDEBAR_ROW_HEIGHT`
@@ -31,20 +31,26 @@ import { cn } from "@/lib/utils";
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
- * **例外二：未登入的四張卡片頁用 44px（`size="lg"`，h-11）。** `pages/LoginPage.tsx`、`RegisterPage.tsx`、
- * `ResetPasswordPage.tsx`、`LinkAccountPage.tsx` 的按鈕（含登入頁每顆 SSO 鈕與「註冊新帳號」）都用 `lg`，
- * 輸入框以 `className="h-11"` 跟著拉高，卡片裡同一欄的控制項等高。
- * 理由：這幾頁是每天都會經過、只為了按一顆鈕的整頁，也是觸控裝置上最常被點的目標，32px 太難快速點中；
- * 四頁共用同款卡片，從登入頁點進其他三頁不該換尺寸，所以一起放大。頁面上沒有任何
- * 32px 控制項與它們同列，所以不違背「同列等高」。電腦與手機同一尺寸，不做斷點縮回。
- * ⚠ `lg` 只准出現在這四頁，守衛：`ui/button.lg-scope.guard.test.ts`（連 `"lg"` 字串字面都擋）。
+ * **例外二：未登入／帳號流程的同款卡片頁用 44px（`size="lg"`，h-11）。** `pages/LoginPage.tsx`、`RegisterPage.tsx`、
+ * `ResetPasswordPage.tsx`、`LinkAccountPage.tsx`、`ChangePasswordPage.tsx`（強制改密；表單 `auth/ChangePasswordForm.tsx`
+ * 在 `tone="page"` 時 44px，`tone="outline"` 的設定面板內仍是 32px）、`AuthorizePage.tsx`（OAuth 授權）的按鈕
+ * （含登入頁每顆 SSO 鈕與「註冊新帳號」）都用 `lg`，輸入框以 `className="h-11"` 跟著拉高，卡片裡同一欄的控制項等高。
+ * 勾選框與勾選列（授權頁的 scope 勾選）不放大。
+ * 理由：同款卡片頁一律 44px，頁面之間跳轉不換尺寸；登入頁是每天都會經過、只為了按一顆鈕的整頁（觸控目標），
+ * 32px 太難快速點中。頁面上沒有任何 32px 控制項與這些 `lg` 控制項同列，所以不違背「同列等高」。
+ * 電腦與手機同一尺寸，不做斷點縮回。
+ * 字級：`lg` 是 16px（`text-base`），比卡片內標籤與輸入框文字（14px）大一號，是刻意的
+ * （Willie 2026-10-27 看過畫面定案）。
+ * ⚠ `lg` 只准出現在上述頁面，守衛 `ui/button.lg-scope.guard.test.ts` 有兩道：`LG_SIZE` 是
+ * 「各頁確實直接寫了 `size="lg"`」的正向檢查；`LG_LITERAL` 擋任何其他地方的 `"lg"` 字串字面
+ * （`ChangePasswordForm.tsx` 以 tone 條件式寫 `lg`，只在這一道的允許清單裡）。
  * 要擴到別頁，先改這段再改守衛清單。
  *
  * **size 現在只差在內距與字級，不差高度**（`lg` 除外，見上方例外二）**：**
  * - `icon`（h-8 w-8）——純圖示鈕（可及名稱由 `aria-label` 提供）。
  * - `sm`（px-3、12px 字）——清單列與表格列裡的動作，密度高的地方。
  * - `default`（px-4、14px 字）——其餘一切：對話框底部、與輸入框同列、獨立區塊。
- * - `lg`（h-11、px-6、16px 字）——**只限未登入的四張卡片頁**，見上方例外二。
+ * - `lg`（h-11、px-6、16px 字）——**只限同款卡片頁**，見上方例外二。
  *   ⚠ **尺寸不得用來編碼嚴重度**。改版前錯誤畫面就是這樣：全頁崩潰的「重新整理」
  *   用一種、區域性錯誤的「重試」用另一種——那是一條沒寫下來的規則，讀碼的人只能猜。
  *
@@ -123,7 +129,7 @@ const buttonVariants = cva(
         default: "h-8 px-4",
         sm: "h-8 rounded-md px-3 text-xs",
         icon: "h-8 w-8",
-        // 只給未登入的四張卡片頁（見上方規範「例外二」；守衛：`button.lg-scope.guard.test.ts`）。
+        // 只給同款卡片頁（見上方規範「例外二」；守衛：`button.lg-scope.guard.test.ts`）。
         lg: "h-11 px-6 text-base",
       },
     },

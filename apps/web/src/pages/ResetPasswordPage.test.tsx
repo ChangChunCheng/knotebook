@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/theme";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { AppRoutes } from "@/App";
 import ResetPasswordPage from "./ResetPasswordPage";
+import { expectCardControls44 } from "@/test/card-controls";
 
 function fakeResponse(status: number, body?: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: body === undefined ? () => Promise.reject(new Error("no body")) : () => Promise.resolve(body) } as unknown as Response;
@@ -184,6 +185,7 @@ describe("ResetPasswordPage（#286 §5.2、A-16）", () => {
     expect(await screen.findByText(SIGNED_IN_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
     const signOut = screen.getByRole("button", { name: "Sign out" });
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/);
     await tick();
     expect(inspectCalls(calls)).toHaveLength(0);
@@ -284,6 +286,7 @@ describe("ResetPasswordPage（#286 §5.2、A-16）", () => {
     const { calls } = setup(`/reset-password#token=${TOKEN}`, { me: () => me() });
     expect(await screen.findByText("Couldn't load your session.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(inspectCalls(calls)).toHaveLength(0);
     me = () => fail(401, "unauthorized");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));

@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { AUTH_CONFIG_QUERY_KEY } from "@/api/authConfig";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import RegisterPage from "./RegisterPage";
+import { expectCardControls44 } from "@/test/card-controls";
 
 function fakeResponse(status: number, body?: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: body === undefined ? () => Promise.reject(new Error("no body")) : () => Promise.resolve(body) } as unknown as Response;
@@ -386,6 +387,7 @@ describe("邀請模式（#285 B-18）", () => {
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByLabelText("Confirm password")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
+    expect(expectCardControls44()).toBeGreaterThan(0); // 邀請表單
   });
 
   it("V2 重新整理：鍵已存在、網址只有 /register → inspect 帶存的 token、出現表單", async () => {
@@ -400,6 +402,7 @@ describe("邀請模式（#285 B-18）", () => {
     const { calls, state } = setupInvite(`/register#invite=${TOKEN}`, { me: () => fakeResponse(200, USER) });
     const signOut = await screen.findByRole("button", { name: "Sign out" });
     expect(screen.getByText("You're signed in as new@example.com. Sign out to use this invitation.")).toBeInTheDocument();
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(inspectCalls(calls)).toHaveLength(0);
     expect(sessionStorage.getItem(KEY)).toBeNull();
     await waitFor(() => expect(fullPath()).toBe("/register"));
@@ -489,6 +492,7 @@ describe("邀請模式（#285 B-18）", () => {
     const retry = await screen.findByRole("button", { name: "Try again" });
     expect(screen.queryByText("Checking the invitation…")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(screen.queryByText("Couldn't load your session.")).not.toBeInTheDocument();
     state.me = () => fail(401, "unauthorized");
     fireEvent.click(retry);
