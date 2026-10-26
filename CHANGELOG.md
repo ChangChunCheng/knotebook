@@ -7,7 +7,9 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- The sidebar's **Workspace** tab lists groups by your role in them: groups where you hold the built-in **Admin** role first, then those where you hold the built-in **Member** role, then those where you have a custom role, each by name. Before, all groups were listed by name, so groups you created could end up below ones others added you to. `GET /api/groups` returns them in the same order, and so do **Settings → Groups**, the group lists in **Move to…** and **Copy to…**, and **Move to** and **Copy to** in the sidebar's selection mode.
 
 ## [0.13.0] - 2026-10-26
 
