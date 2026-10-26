@@ -49,7 +49,7 @@ import { presenceIdentity, presenceTargetForWrite, type PresenceRegistry, type P
 import { NoteWriteQueue, QueueBusyError } from "./queue.js";
 import { revertEdit, type RevertResult } from "./revert.js";
 import type { EditingRuntime } from "./runtime.js";
-import { EditorSession } from "./session.js";
+import { EditorSession, NoteGoneError } from "./session.js";
 
 export type ApplyOk = Extract<ApplyResult, { ok: true }>;
 export type ApplyFailureCode = Extract<ApplyResult, { ok: false }>["code"];
@@ -57,7 +57,7 @@ export type RevertOk = Extract<RevertResult, { ok: true }>;
 export type RevertFailureCode = Extract<RevertResult, { ok: false }>["code"];
 
 /**
- * 寫入的三種結局。**兩個型別參數**：`T`＝成功結果，`C`＝該路徑的失敗碼聯集——`applyEdit`
+ * 寫入的四種結局。**兩個型別參數**：`T`＝成功結果，`C`＝該路徑的失敗碼聯集——`applyEdit`
  * 與 `revertEdit` 的碼**不同**，共用一個 `ApplyFailureCode` 會讓 revert 的 `stale`／
  * `already_reverted`／`not_found` 在呼叫端收窄不到（實跑得到 TS2322）。
  * `agentLabel` 一起回，是因為呼叫端組回應／記錄時還用得到，而它是在 service 裡查的。
@@ -65,6 +65,7 @@ export type RevertFailureCode = Extract<RevertResult, { ok: false }>["code"];
 export type WriteOutcome<T, C> =
   | { ok: true; result: T; agentLabel: string | null }
   | { ok: false; kind: "busy" } // QueueBusyError：等了 `queueWaitMs` 還沒輪到
+  | { ok: false; kind: "gone" } // #181 NoteGoneError：授權之後被移入垃圾桶（或正被移入）；呼叫端映成各自既有的 not_found
   | { ok: false; kind: "apply"; code: C };
 
 /**
@@ -183,6 +184,7 @@ export class NoteWriteService {
       );
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
@@ -209,6 +211,7 @@ export class NoteWriteService {
       );
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
@@ -228,6 +231,7 @@ export class NoteWriteService {
       result = await this.queue.run(input.noteId, () => applyVersionEdit(deps, input), this.deps.queueWaitMs);
     } catch (err) {
       if (err instanceof QueueBusyError) return { ok: false, kind: "busy" };
+      if (err instanceof NoteGoneError) return { ok: false, kind: "gone" };
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code };
@@ -277,7 +281,11 @@ export class NoteWriteService {
    */
   async createWithContent(
     log: FastifyBaseLogger,
-    input: { userId: string; userHandle: string; tokenId: string | null; title: string | undefined; content: string; scope: SlugScope }
+    input: {
+      userId: string; userHandle: string; tokenId: string | null; title: string | undefined; content: string; scope: SlugScope;
+      /** 資料夾 PR-3a：呼叫端已驗過的資料夾（spec §5.7.6）；缺省＝根層（MCP `create_note` 在 PR-3a 不送）。 */
+      folderId?: string | null;
+    }
   ): Promise<CreateWithContentResult> {
     // #269 §8.5（A9）：lease **之前**預取寫入者可見清單（含 slug／群組／handle）；之後的解析在記憶體內完成、lease 期間零 DB。
     const candidates = await visibleNoteTargets(this.deps.db, input.userId);
@@ -296,7 +304,7 @@ export class NoteWriteService {
     // #145：建列（含帶 title 時的 auto slug 派生）收在 `notes/create.ts`。⚠ **它仍必須排在
     // 解析之後**（「解析在建列之前」是契約），而派生的 DB round-trip 也因此不會發生在持有
     // jsdom lease 期間（上面那個 `finally { scratch.close() }` 已經放掉了）。
-    const note = await insertNoteWithAutoSlug(this.deps.db, input.scope, input.title);
+    const note = await insertNoteWithAutoSlug(this.deps.db, { scope: input.scope, folderId: input.folderId ?? null }, input.title);
     try {
       const result = await this.queue.run(
         note.id,

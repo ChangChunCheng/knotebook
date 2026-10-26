@@ -88,12 +88,13 @@ export async function setMemberRole(db: Db, groupId: string, userId: string, rol
 export async function seedNote(
   db: Db,
   owner: { ownerId: string } | { groupId: string },
-  opts: { title?: string; slug?: string; slugIsCustom?: boolean; prevSlug?: string; legacySlug?: string; publicToken?: string; publicSlug?: string; publicWidth?: NoteWidth } = {},
+  opts: { id?: string; title?: string; slug?: string; slugIsCustom?: boolean; prevSlug?: string; legacySlug?: string; publicToken?: string; publicSlug?: string; publicWidth?: NoteWidth } = {},
 ): Promise<{ id: string; slug: string }> {
   const slug = opts.slug ?? `n-${randomUUID().slice(0, 12)}`;
   const [n] = await db
     .insert(notes)
     .values({
+      ...(opts.id !== undefined ? { id: opts.id } : {}),
       ...("groupId" in owner ? { groupId: owner.groupId } : { ownerId: owner.ownerId }),
       title: opts.title ?? "Untitled",
       slug,
@@ -169,13 +170,14 @@ export async function seedPlannerData(pool: Pool): Promise<{ userId: string; not
   return { userId: "00000000-0000-4000-8000-000000000001", noteId: rows[0].id as string };
 }
 
-/** 五個成員全是 spy 的 `CollabHooks`（`linkSyncGate` 恆拒，比照既有測試的 stub）。 */
+/** 六個成員是 spy 的 `CollabHooks`（`linkSyncGate` 恆拒，比照既有測試的 stub）。 */
 export function spyCollabHooks() {
   return {
     onShareChanged: vi.fn<(noteId: string, userId: string) => void>(),
     onUserRevoked: vi.fn<(userId: string) => void>(),
     onGroupAccessChanged: vi.fn<(noteIds: readonly string[], userIds: readonly string[]) => void>(),
     beforeNoteDeleted: vi.fn(async () => ({ release: () => {} })),
+    onNotesRestored: vi.fn<(noteIds: readonly string[]) => void>(),
     linkSyncGate: () => ({ ok: false as const }),
   } satisfies CollabHooks;
 }

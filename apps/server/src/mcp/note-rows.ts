@@ -54,3 +54,17 @@ export async function rereadVisibleNote(
   const [row] = await ("groupId" in scope ? branches.grouped : branches.owned);
   return row;
 }
+
+/**
+ * #181 restore_note：還原者對個人筆記必是 owner、對群組筆記必有 can_edit（⇒ can_read），先 owned 支、落空再 grouped 支（各自現造）。
+ * 兩支都只看活筆記；落空＝還原 commit 之後又被移入、永久刪除或降權的競態。
+ */
+export async function rereadOwnOrGroupNote(
+  ctx: Pick<McpToolCtx, "db" | "userId">,
+  noteId: string
+): Promise<(NoteSummaryRow & { role: string }) | undefined> {
+  const [owned] = await visibleNoteBranches(ctx.db, ctx.userId, { extraWhere: eq(notes.id, noteId) }).owned;
+  if (owned) return owned;
+  const [grouped] = await visibleNoteBranches(ctx.db, ctx.userId, { extraWhere: eq(notes.id, noteId) }).grouped;
+  return grouped;
+}

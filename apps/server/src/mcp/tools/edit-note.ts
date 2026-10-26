@@ -239,6 +239,8 @@ export async function editNote(args: EditNoteArgs, ctx: McpToolCtx): Promise<Cal
 
   if (!out.ok) {
     if (out.kind === "busy") return toolError("server_busy", "Another write to this note is in progress. Try again in a moment.");
+    // #181：授權之後被移入垃圾桶（或正被移入）——與不存在同一句（AG2）。
+    if (out.kind === "gone") return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
     if (out.code === "fingerprint_mismatch") return mismatchError(ctx, args);
     // `section_not_found` **不帶 outline**——取頁規則對它沒有定義，不發明第二條。
     if (out.code === "section_not_found") return toolError("section_not_found", SECTION_NOT_FOUND_MESSAGE);

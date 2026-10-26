@@ -154,7 +154,8 @@ export function createAuthenticateAny(deps: BearerDeps) {
       // ⚠ #108 §15.1：`/api/mcp` 是全站**唯一**一條「宣告的 `required`（這裡固定是
       // `notes:read`）與實際執行的操作類別脫鉤」的路由——一發請求裡可能夾帶讀也可能夾帶寫，
       // 這裡只扣得到 `tokenRead`；寫入那顆桶（`tokenWrite`）由 `mcp/write-scope.ts` 的
-      // `requireWriteScope()` 在每支寫入工具第一行補扣（§10.2 D23）。`routes/notes.ts` 的
+      // `requireWriteScope()`／`requireMoveScope()`／`requireDeleteScope()` 在每支寫入工具第一行補扣
+      // （§10.2 D23；#239 搬移、#181 垃圾桶）。`routes/notes.ts` 的
       // 七個呼叫點每一個都是「宣告即實際」（GET 系一律 `notes:read`、POST 系一律
       // `notes:write`），唯獨 `/api/mcp` 那條路由有這道二階段扣桶。
       const bucket = required === "notes:write" ? deps.limiters.tokenWrite : deps.limiters.tokenRead;

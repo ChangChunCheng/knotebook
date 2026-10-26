@@ -36,7 +36,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 
 export type GroupTransferKind = "move" | "copy";
 
-/** 目標：某個群組（移動／複製進去）、個人空間（複製到我的筆記）、或就地建立副本（群組筆記複製進它自己的群組）。 */
+/** 目標：某個群組（移動／複製進去）、我的筆記（複製成自己的個人筆記）、或就地建立副本（群組筆記複製進它自己的群組）。 */
 export type TransferTarget =
   | { type: "group"; group: GroupDto }
   | { type: "inPlace"; group: GroupDto }
@@ -55,18 +55,19 @@ export interface TransferOption {
 
 type Translate = (key: string) => string;
 
-/** 與側欄群組「＋」同一條規則（`NoteList`）：角色同時有新建與編輯。 */
-function canCreateAndEdit(group: GroupDto): boolean {
+/** 與側欄群組「＋」同一條規則（`NoteList`）：角色同時有新建與編輯。PR-2c 批次目的地框共用。 */
+export function canCreateAndEdit(group: GroupDto): boolean {
   return group.myRole?.permissions.create === true && group.myRole.permissions.edit === true;
 }
 
 /**
- * #216（Willie 2026-10-08 定案）：⋮ 選單的「移動到…」「複製到…」第二層清單。**純函式**，目標清單＝個人空間＋群組，
+ * #216（Willie 2026-10-08 定案）：⋮ 選單的「移動到…」「複製到…」第二層清單。**純函式**，目標清單＝我的筆記＋群組，
  * 之後要加目標只改這裡。群組候選一律要 create 且 edit（與側欄「＋」同規則）：
- * - 自己的個人筆記：移動＝候選群組；複製＝「建立副本」（個人空間）＋候選群組。
- * - 群組筆記：不能移動；複製＝「建立副本」（原群組，我在該群組需 create＋edit）、「個人空間」、其餘候選群組。
- *   只讀成員（無 create／edit）看不到「建立副本」，仍有「個人空間」。
- * - 別人分享給我的個人筆記（viewer 或 editor，「看得到就能複製」）：複製到「個人空間」＋候選群組；不能移動。
+ * - 自己的個人筆記：移動＝候選群組；複製＝「建立副本」（我的筆記）＋候選群組。
+ * - 群組筆記：不能移動；複製＝「建立副本」（原群組，我在該群組需 create＋edit）、「我的筆記」、其餘候選群組。
+ *   只讀成員（無 create／edit）看不到「建立副本」，仍有「我的筆記」。
+ * - 別人分享給我的個人筆記（viewer 或 editor，「看得到就能複製」）：複製到「我的筆記」＋候選群組；不能移動。
+ * 個人目的地的字＝側欄 tab 名 `sidebar.myNotes`（Willie 2026-10-26「tab 分頁跟選單統一名稱」）。
  * 空清單 → 該項整個不渲染。server 對每個目標都收（`POST /copy` 無 groupId＝個人、群組要成員＋can_create；
  * 移動只收個人筆記 owner），UI 只比 server 更嚴。
  */
@@ -95,15 +96,15 @@ export function buildTransferOptions(
       move: [],
       copy: [
         ...(current ? [{ key: "inPlace", label: t("note.menu.makeCopy"), target: { type: "inPlace" as const, group: current } }] : []),
-        { key: "personal", label: t("note.menu.personalSpace"), target: { type: "personal" as const } },
+        { key: "personal", label: t("sidebar.myNotes"), target: { type: "personal" as const } },
         ...usable.filter((group) => group.id !== note.groupId).map(asGroup),
       ],
     };
   }
-  // 別人分享給我的個人筆記（viewer 或 editor）：看得到就能複製——個人空間，再加我 create＋edit 的群組；不能移動。
+  // 別人分享給我的個人筆記（viewer 或 editor）：看得到就能複製——我的筆記，再加我 create＋edit 的群組；不能移動。
   return {
     move: [],
-    copy: [{ key: "personal", label: t("note.menu.personalSpace"), target: { type: "personal" } }, ...usable.map(asGroup)],
+    copy: [{ key: "personal", label: t("sidebar.myNotes"), target: { type: "personal" } }, ...usable.map(asGroup)],
   };
 }
 
@@ -450,7 +451,7 @@ function CopyDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
   const copy = useCopyNote(note.id);
   const [submitting, setSubmitting] = useState(false);
   const busy = submitting || copy.isPending;
-  // 自己的個人筆記複製到個人空間＝選單上的「建立副本」，確認框標題／按鈕同字；其餘來源是「複製到我的筆記」。
+  // 自己的個人筆記複製到我的筆記＝選單上的「建立副本」，確認框標題／按鈕同字；其餘來源是「複製到我的筆記」。
   const duplicate = note.groupId === null && note.permissions.moveToGroup;
   const submitLabel =
     target.type === "group"

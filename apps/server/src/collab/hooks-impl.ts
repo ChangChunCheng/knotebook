@@ -7,13 +7,14 @@
  *      client 若回送 token，`onTokenSync`（Task 5）會重跑 `resolveRole` + `gate.check`
  *      決定續留、降級唯讀或關閉，同時觸發 `onNextTokenSync` 回呼撤銷 deadline；client
  *      若不回應（離線、卡住、惡意），deadline 到期就直接關閉——「沒有查證就不放行」。
- *   2. **刪除閘門**：刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
- *      刪除交易跑在「沒有任何進行中連線」的前提上。
+ *   2. **刪除閘門**：移入垃圾桶或刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
+ *      交易跑在「沒有任何進行中連線」的前提上；還原 commit 後由 `onNotesRestored` 收門（#181）。
  *
- * 三個 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked` 是同步 fire-and-forget，
- * 呼叫點在 DB commit 之後（見 `routes/notes.ts`、`routes/admin-users.ts`、`routes/auth.ts`），
- * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是 DELETE 交易前的
+ * 所有 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked`/`onGroupAccessChanged`/`onNotesRestored`
+ * 是同步 fire-and-forget，呼叫點在 DB commit 之後（見 `routes/*`、`notes/move-note.ts`、`trash/service.ts`），
+ * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是移入垃圾桶／刪除交易前的
  * await 點，throw 會讓「筆記刪不掉、卻已經被閘門擋住兩分鐘」（見 `DELETING_GATE_TTL_MS`）——兩種都比記錄錯誤後繼續更糟。
+ * `linkSyncGate` 是同步查詢（委派 `linkSyncState`，只讀記憶體），回 `{ ok: false }` 而不 throw（`POST …/links` 映成 409 `not_loaded`）。
  */
 import { COLLAB_CLOSE_NOTE_DELETED, COLLAB_CLOSE_REVOKED, COLLAB_REVERIFY_DEADLINE_MS } from "@knotebook/shared";
 import type { CollabHooks, NoteDeleteGate } from "./hooks.js";
@@ -208,7 +209,9 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
      * deleting 重查只能擋下「還沒被登記進索引」的連線，擋不掉它在 onAuthenticate 通過後、
      * connected 抵達前那段時間從佇列 drain 出來、已經套用進 Y.Doc 的 update。真正的
      * 資料面保證來自兩件事：刪除本身是一個交易，以及 Task 7 的 `onStoreDocument` 見到
-     * 筆記已不存在就丟棄該次寫入——所以即使有落單的 update，也不會在筆記刪除後復活。
+     * 筆記已不存在就丟棄該次寫入——所以即使有落單的 update，也不會在筆記永久刪除後復活。
+     * #181：移到垃圾桶（`DELETE /api/notes/:id`）之後列還在，落單的 store **會寫進**垃圾桶筆記——
+     * 那是移入前一刻的內容，還原後看得到（spec §6.4.1）；它不會讓筆記回到清單（`deleted_at` 不變）。
      */
     async beforeNoteDeleted(noteId: string): Promise<NoteDeleteGate> {
       // 先關門：此後 onAuthenticate / connected / onTokenSync 三處都會拒絕這篇筆記
@@ -269,16 +272,34 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
 
         if (server.hocuspocus.documents.has(noteId)) {
           // 逾時（上限 5s）：記錯後**放行**，絕不無限等——DELETE 掛死對使用者是更嚴重的
-          // 故障，而資料面已有 Task 7 的「筆記不存在就丟棄 store」兜底，不會復活。
-          log.error({ noteId }, "collab beforeNoteDeleted：文件在期限內未 unload，仍繼續刪除（store 會被 Task 7 丟棄）");
+          // 故障。之後抵達的 store：移入垃圾桶時照寫進垃圾桶筆記（內容不丟、不復活到清單）；
+          // 永久刪除時由 Task 7 的「筆記不存在就丟棄 store」兜底。
+          log.error({ noteId }, "collab beforeNoteDeleted：文件在期限內未 unload，仍繼續刪除（之後的 store：移入垃圾桶照寫、永久刪除丟棄）");
         }
       } catch (error) {
         // 清場失敗不得讓 DELETE 回 500：閘門已經關上，交易照跑，殘留的連線最遲在下一次
-        // 重驗／訊息往返時就會因為筆記不存在而被拒。
+        // 重驗／訊息往返時就會因為授權得 none（筆記在垃圾桶或已不存在）而被拒。
         log.error({ err: error, noteId }, "collab beforeNoteDeleted 清場失敗，仍繼續刪除");
       }
 
       return gate;
+    },
+
+    /** #181 §6.4.3：還原 commit 後收掉閘門，連同 TTL timer。日誌只記 `{ name, code }` 與數量（不記原始 err、不記 id 清單）。 */
+    onNotesRestored(noteIds: readonly string[]): void {
+      try {
+        for (const id of new Set(noteIds)) {
+          const armed = gateTimers.get(id);
+          if (armed) {
+            clearTimeout(armed.timer);
+            gateTimers.delete(id);
+          }
+          server.unmarkDeleting(id);
+        }
+      } catch (error) {
+        const e = error as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
+        log.error({ name: e?.name, code: e?.code ?? e?.cause?.code, notes: noteIds.length }, "collab onNotesRestored 收閘門失敗");
+      }
     },
 
     linkSyncGate(noteId: string, userId: string): { ok: true; clock: number } | { ok: false } {

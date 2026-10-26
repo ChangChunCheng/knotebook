@@ -132,6 +132,10 @@ export interface NoteDto {
   group: NoteGroupDto | null;
   /** #175 §5.2：呼叫者在這篇上能做什麼。web 一律看這裡，不再用 `role === "owner"` 推。 */
   permissions: NotePermissions;
+  /** 所在資料夾（呼叫者視角）：個人／群組筆記＝`notes.folder_id`；共享給我的筆記＝我自己的放置（擁有者的資料夾不外流）。null＝根層。 */
+  folderId: string | null;
+  /** 內文（Yjs 狀態）＋附件的位元組數，只用於排序；只有 `GET /api/notes` 帶。 */
+  sizeBytes?: number;
 }
 
 /**
@@ -496,6 +500,20 @@ export const ERROR_CODES = [
   "invite_invalid",
   "invite_used",
   "invite_not_found",
+  // #181（spec 2026-10-21 §6.7）：`in_trash`＝404，單篇讀取（`:ref`／by-path／by-group-path）的目標在垃圾桶、且呼叫者有垃圾桶權；
+  // body 另帶頂層 `noteId`。沒有垃圾桶權者照舊 `not_found`。
+  "in_trash",
+  // 資料夾（spec 2026-10-22 §5.11）：`folder_not_found`＝404，資料夾 id 不合形、不存在或看不到（含 trigger 的 KF001 映射）；
+  // `folder_name_taken`＝409，同層不分大小寫撞名；`folder_too_deep`＝409，超過 FOLDER_DEPTH_MAX 層；`folder_cycle`＝409，搬進自己的子樹；
+  // `folder_limit`＝409，該空間資料夾數已達 FOLDERS_PER_SPACE_MAX；`folder_cross_space`＝400，資料夾或筆記跨空間；
+  // `folder_delete_blocked`＝403，子樹有呼叫者不能刪除的活筆記。
+  "folder_not_found",
+  "folder_name_taken",
+  "folder_too_deep",
+  "folder_cycle",
+  "folder_limit",
+  "folder_cross_space",
+  "folder_delete_blocked",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -939,22 +957,28 @@ export interface PublicNoteDto {
 }
 
 /**
- * #107／#239：API token 的 scope。**是集合不是單值**——OAuth 的 scope 參數是空白分隔的
- * 集合，且「write 涵蓋 read」，所以落庫形是一條鏈、共三種：只讀、讀寫、讀寫加搬移
- * （write 一定把 read 顯式寫進字串，move 一定帶著 write，讓 DB CHECK、token 回應 body、
- * 設定頁三處看到同一個值）。順序即權限由小到大——`narrowerScope` 靠索引取較小者。
- * DB 三條 `scope` CHECK、zod enum 都以這份為準（`scope-check-sync.test.ts` 守 CHECK）。
+ * #107／#239／#181：API token 的 scope。是集合不是單值；落庫形固定字面順序 read → write → move → delete，共五形。
+ * #181 起是**格（lattice）不是鏈**：`notes:move` 與 `notes:delete` 互不包含，所以沒有「索引越大權限越大」這回事——
+ * 比大小一律用 `narrowerScope`（交集）或 `hasScope`（成員），不得用 `TOKEN_SCOPES.indexOf`。
+ * move、delete 都必須搭配 write（write 一定把 read 顯式寫進字串）。DB 三條 `scope` CHECK、zod enum 都以這份為準
+ * （`scope-check-sync.test.ts` 守 CHECK）。之後新增 scope 照「切詞、交集、固定順序組字」的形加（spec §9-12）。
  */
-export const TOKEN_SCOPES = ["notes:read", "notes:read notes:write", "notes:read notes:write notes:move"] as const;
+export const TOKEN_SCOPES = [
+  "notes:read",
+  "notes:read notes:write",
+  "notes:read notes:write notes:move",
+  "notes:read notes:write notes:delete",
+  "notes:read notes:write notes:move notes:delete",
+] as const;
 export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
 /** 單一 scope 名（`hasScope` 的第二參數）。 */
-export type ScopeName = "notes:read" | "notes:write" | "notes:move";
+export type ScopeName = "notes:read" | "notes:write" | "notes:move" | "notes:delete";
 
 /**
  * 路由宣告「這個操作至少需要什麼」時用的單值，與落庫形（集合）刻意不同型別。
- * 刻意不含 `notes:move`：`bearer.ts` 的扣桶只分 write／其他，搬移不是路由層的 scope 門檻
- * （由 MCP 的 `canMoveNotes`／`requireMoveScope` 在工具層判定）。
+ * 刻意不含 `notes:move`、`notes:delete`：`bearer.ts` 的扣桶只分 write／其他，搬移與刪除不是路由層的
+ * scope 門檻（由 MCP 的 `canMoveNotes`／`requireMoveScope`、`canDeleteNotes`／`requireDeleteScope` 在工具層判定）。
  */
 export type RequiredScope = "notes:read" | "notes:write";
 
@@ -977,27 +1001,38 @@ export type RequiredScope = "notes:read" | "notes:write";
  * 回應裡的 `scope` 一律是這個函式的輸出（我們實際授予的集合），被忽略的值不回聲；
  * client 依 RFC 6749 §5.1 應以回應為準。
  *
- * **要 `notes:move` 不要 `notes:write` → 丟掉 move、給 `notes:read`**（fail-closed）：
+ * **要 `notes:move`／`notes:delete` 不要 `notes:write` → 兩者都丟、給 `notes:read`**（fail-closed）：
  * 1. 自動補 `notes:write` ＝授予沒要求的寫入權（scope 放大）；
- * 2. `notes:read notes:move` 不是合法落庫形（DB CHECK 拒）；
+ * 2. `notes:read notes:move`、`notes:read notes:delete` 不是合法落庫形（DB CHECK 拒）；
  * 3. 回 `invalid_scope`（null）會破壞上面「永不回 null」的契約；RFC 6749 §3.3 允許 AS 部分忽略。
  *
- * 對三種合法落庫形恆等（`bearer.ts`、`api-tokens.ts` 拿它讀 DB 值，不必另判）。
+ * 對五種合法落庫形恆等（`bearer.ts`、`api-tokens.ts` 拿它讀 DB 值，不必另判）。
  */
 export function normalizeScope(input: string | null | undefined): TokenScope {
   const parts = (input ?? "").split(" ");
-  // read 在三種落庫形裡都有，不必另外判斷；move 只在同時有 write 時才算數。
+  // read 在五種落庫形裡都有，不必另外判斷；move、delete 只在同時有 write 時才算數。
   if (!parts.includes("notes:write")) return "notes:read";
-  return parts.includes("notes:move") ? "notes:read notes:write notes:move" : "notes:read notes:write";
+  return [
+    "notes:read",
+    "notes:write",
+    ...(parts.includes("notes:move") ? ["notes:move"] : []),
+    ...(parts.includes("notes:delete") ? ["notes:delete"] : []),
+  ].join(" ") as TokenScope;
 }
 
 /**
- * 兩個落庫形中較小者（三形是鏈，取索引小者）。不在三形內的值視為 `notes:read`——
- * 輸入來自 `text` 欄位的 `as TokenScope` 斷言，不得把垃圾字串原樣傳回去。
+ * 兩個落庫形的交集（格上的 meet）。不在五形內的值先當 `notes:read`（輸入來自 `text` 欄的
+ * `as TokenScope`）——不得把垃圾字串原樣傳回去，也不得讓非正規值（如裸 `notes:write`）被正規化放大。
  */
 export function narrowerScope(a: TokenScope, b: TokenScope): TokenScope {
-  const rank = (s: TokenScope): number => Math.max(0, TOKEN_SCOPES.indexOf(s));
-  return TOKEN_SCOPES[Math.min(rank(a), rank(b))]!;
+  const canon = (s: TokenScope): TokenScope => ((TOKEN_SCOPES as readonly string[]).includes(s) ? s : "notes:read");
+  const pa = new Set(canon(a).split(" "));
+  return normalizeScope(
+    canon(b)
+      .split(" ")
+      .filter((p) => pa.has(p))
+      .join(" "),
+  );
 }
 
 /**
@@ -1213,5 +1248,7 @@ export * from "./storage.js";
 export * from "./versions.js";
 export * from "./version-names.js";
 export * from "./ai.js";
+export * from "./trash.js";
+export * from "./folders.js";
 export * from "./presence.js";
 export * from "./avatar.js";

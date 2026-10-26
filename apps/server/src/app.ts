@@ -21,6 +21,8 @@ import { SCAN_STOP_GRACE_MS, VERSION_AUTO_SCAN_INTERVAL_MS, VERSION_SWEEP_FIRST_
 import { authRoutes } from "./routes/auth.js";
 import { notesRoutes } from "./routes/notes.js";
 import { noteVersionsRoutes } from "./routes/note-versions.js";
+import { trashRoutes } from "./routes/trash.js";
+import { foldersRoutes } from "./routes/folders.js";
 import { groupsRoutes } from "./routes/groups.js";
 import type { WriteNoteLinksHooks } from "./notes/links.js";
 import type { SlugPatchTestHook } from "./notes/tx/patch-slug.js";
@@ -32,6 +34,7 @@ import { storageRoutes } from "./routes/storage.js";
 import { adminAiRoutes } from "./routes/admin-ai.js";
 import { adminAuthRoutes } from "./routes/admin-auth.js";
 import { adminVersionsRoutes } from "./routes/admin-versions.js";
+import { adminTrashRoutes } from "./routes/admin-trash.js";
 import { testHookRoutes } from "./routes/test-hooks.js";
 import { accountRoutes } from "./routes/account.js";
 import { passwordResetRoutes } from "./routes/password-reset.js";
@@ -65,7 +68,8 @@ import { createEditingRuntime, type EditingRuntime } from "./notes/editing/runti
 import type { EditingTestHooks } from "./notes/editing/apply.js";
 import { PresenceRegistry, type PresenceOptions } from "./notes/editing/presence.js";
 import { NoteWriteService } from "./notes/editing/write-service.js";
-import { createLinkConversion, NOOP_LINK_CONVERSION, type LinkConversion } from "./notes/link-conversion.js";
+import { createLinkConversion, errorSummary, NOOP_LINK_CONVERSION, type LinkConversion } from "./notes/link-conversion.js";
+import { TRASH_PURGE_FIRST_DELAY_MS, TRASH_PURGE_INTERVAL_MS, createTrashPurger } from "./trash/purge.js";
 import type { NoteCreateHooks } from "./notes/create.js";
 import type { GroupTestHook } from "./groups/test-hook.js";
 import type { SearchIndexHooks } from "./notes/tx/search-index.js";
@@ -242,6 +246,13 @@ export interface AppDeps {
    * `index.ts` 傳 true；測試 app 不傳＝都不啟動、直接呼叫 `sweep`／`scanDue`。
    */
   startVersionSweep?: boolean;
+  /**
+   * #181 §6.6：垃圾桶保留期清理（啟動後 5 分鐘首跑、之後每小時）。`index.ts` 傳 true；測試 app 不傳＝不啟動、直接用 `createTrashPurger`。
+   * `trashPurgeFirstDelayMs`／`trashPurgeIntervalMs` 只給測試縮短。
+   */
+  startTrashPurge?: boolean;
+  trashPurgeFirstDelayMs?: number;
+  trashPurgeIntervalMs?: number;
   /** #272 §7.4／§7.5：自動切版掃描間隔（毫秒）。未設＝`VERSION_AUTO_SCAN_INTERVAL_MS`（30 s）；e2e 測試縫開著時 `index.ts` 傳 1000。 */
   versionAutoScanIntervalMs?: number;
   /**
@@ -682,6 +693,22 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
+  if (deps.startTrashPurge) {
+    const purger = createTrashPurger({ db: deps.db, log: app.log, uploadsDir: deps.uploadsDir, groupTestHook: deps.groupTestHook });
+    const run = (): void => {
+      void purger.runOnce().catch(err => app.log.warn({ err: errorSummary(err) }, "垃圾桶清理背景工作失敗"));
+    };
+    const first = setTimeout(run, deps.trashPurgeFirstDelayMs ?? TRASH_PURGE_FIRST_DELAY_MS);
+    first.unref();
+    const every = setInterval(run, deps.trashPurgeIntervalMs ?? TRASH_PURGE_INTERVAL_MS);
+    every.unref();
+    app.addHook("onClose", async () => {
+      clearTimeout(first);
+      clearInterval(every);
+      await Promise.race([purger.stop(), new Promise<void>(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref())]);
+    });
+  }
+
   // #107：`limiters` 在上面才算出來，所以這個 decorate 必須排在它之後、任何
   // `app.register(路由)` 之前——路由模組的 register 內會呼叫 app.authenticateAny。
   // （`limiters` 為此上移到 authRoutes 之前；已查證 `AuthRouteDeps` 沒有 limiters 欄，
@@ -789,6 +816,10 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   );
   // 版本歷史（spec 2026-10-09 §6）：cookie 專用六支；apply 只在 writes.available 時註冊（路由內判）。
   void app.register(noteVersionsRoutes({ db: deps.db, versions, writes, limiters: { edit: limiters.edit } }));
+  // #181：垃圾桶清單／還原／永久刪除（cookie-only，見 routes/trash.ts 檔頭）。
+  void app.register(trashRoutes({ db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, groupTestHook: deps.groupTestHook }));
+  // 資料夾（spec 2026-10-22 §5.11）：讀取收 Bearer notes:read、寫入 cookie-only（見 routes/folders.ts 檔頭）。
+  void app.register(foldersRoutes({ db: deps.db, collabHooks: deps.collabHooks, storageLockTimeoutMs, groupTestHook: deps.groupTestHook, limiters: { edit: limiters.edit } }));
   // #103：群組管理（session-only，見 routes/groups.ts 檔頭）。
   void app.register(groupsRoutes({ db: deps.db, collabHooks: deps.collabHooks, groupTestHook: deps.groupTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, versions }));
   void app.register(adminUsersRoutes({ db: deps.db, gate: deps.gate, collabHooks: deps.collabHooks, adminTestHook: deps.adminTestHook }));
@@ -804,6 +835,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(adminAuthRoutes({ db: deps.db, config: deps.config, registry: oidcRegistry }));
   // 版本歷史 §6.7：站台清除天數與自動儲存總開關。
   void app.register(adminVersionsRoutes({ db: deps.db }));
+  // #181 §6.9：垃圾桶保留天數。
+  void app.register(adminTrashRoutes({ db: deps.db }));
   // #272 §7.5：e2e 測試縫（只在 KNOTEBOOK_E2E_TEST_HOOKS=1 且 PUBLIC_URL 是 loopback 時；見 config.ts 的 `testHooks`）。
   if (deps.config.testHooks) void app.register(testHookRoutes({ versions }));
   // #187 PR3：註冊、個人設定的登入方式與加上密碼（spec §8、§9.1）。

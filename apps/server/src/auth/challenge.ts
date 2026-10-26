@@ -17,9 +17,9 @@
  *
  * MCP 規格要求 client 把 challenge 上的 scope 當作本次操作的**權威值**、只會要
  * 這麼多；server SHOULD 一次給齊該資源需要的全部 scope。所以 `/api/mcp` 的
- * challenge 必須是 `notes:read notes:write notes:move`（#239：搬移也在內）——照上面
+ * challenge 必須是 `notes:read notes:write notes:move notes:delete`（#239 搬移、#181 刪除也在內）——照上面
  * 那條規格，沒列的 scope 守規矩的 client 不會要求，同意頁也就不會出現那一項勾選（漏
- * `notes:write` 只拿得到唯讀 token、漏 `notes:move` 就拿不到搬移）。授權判定用的
+ * `notes:write` 只拿得到唯讀 token、漏 `notes:move` 就拿不到搬移、漏 `notes:delete` 就拿不到刪除）。授權判定用的
  * `required` 是另一個參數，見 `auth/bearer.ts`。
  *
  * ## 組字紀律

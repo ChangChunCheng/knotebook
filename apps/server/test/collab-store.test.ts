@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { noteStateBackups, noteStates } from "../src/db/schema.js";
 import { createNoteStore } from "../src/collab/store.js";
+import { purgeTrashedNotesInTx } from "../src/notes/tx/trash.js";
 import { buildCollabTestApp } from "./helpers.js";
 
 const PASSWORD = "correct-horse-battery";
@@ -145,11 +146,13 @@ describe("Task 7：onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", (
     expect(row?.version).toBe(2);
   });
 
-  it("刪除期間 pending store 不復活資料列（用預設 noop hooks：DELETE 落地時 store debounce 仍 pending）", async () => {
+  it("永久刪除期間 pending store 不復活資料列（用預設 noop hooks：DELETE 移入＋永久刪除落地時 store debounce 仍 pending）", async () => {
     // 刻意用預設（noop）collabHooks，不是 Task 6 的真實作——真實作的 beforeNoteDeleted
     // 會在刪除交易前 flush+unload，讓 store 早於 DELETE 落地，測不到「資料列被復活」
     // 這個競態；noop 才會讓 DELETE 在 store debounce 仍 pending 時搶先落地，正是本規則
     // 存在的理由（Task 6 的 gate 依賴這條規則成立）。
+    // #181：DELETE 只移入垃圾桶（列還在，落單的 store 照寫，spec §6.4.1）——「筆記不存在就丟棄」要靠永久刪除才走得到，
+    // 所以移入後同一個 debounce 窗內直接呼叫永久刪除的交易本體。
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-store5@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -161,6 +164,8 @@ describe("Task 7：onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", (
     // 立刻刪除，趕在 2000ms 的 store debounce 觸發之前。
     const delRes = await session.fetch(`/api/notes/${note.id}`, { method: "DELETE" });
     expect(delRes.status).toBe(204);
+    const purged = await ctx.db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [note.id], by: owner.id }));
+    expect(purged.done).toEqual([note.id]);
 
     // 等過 debounce + 保險餘裕，讓 pending store 真的跑一次。
     await sleep(3_000);

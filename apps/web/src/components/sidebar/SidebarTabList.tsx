@@ -24,6 +24,7 @@ export function SidebarTabList({ idBase }: { idBase: string }) {
     myNotes: null,
     workspace: null,
     shared: null,
+    trash: null,
   });
 
   function moveTo(tab: SidebarTab): void {

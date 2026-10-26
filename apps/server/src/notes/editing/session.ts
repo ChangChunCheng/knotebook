@@ -6,12 +6,19 @@
 // 授權檢查——呼叫端（路由層）必須自己先確認呼叫者對這篇筆記有寫入權限。
 // `disconnect()` 就是落盤點（`onStoreDocument` 立刻把文件寫回 DB）：一定要 disconnect，否則改動
 // 根本沒落地；但 `fn` 必須全有全無——中途 throw 時 yjs 已套用的部分 op 不會撤銷，一樣會被落盤。
+// #181 §6.2-11（M-B）：授權之後筆記可能被移入垃圾桶，直連寫入的重確認統一在 `withDirectConnection`
+// （記憶體刪除閘門＋DB 存活），不過 → `NoteGoneError`。開之前查一次：不替垃圾桶筆記把文件載回記憶體；
+// 開之後再查一次：擋「開連線的那一刻剛好被移入」。前提是直連持有文件時 Hocuspocus 不 unload，移入的
+// unload 輪詢會等到這次寫入落盤才 commit（由 `trash-direct-write.test.ts` 的 DW3 驗證）；剩下的窗口是
+// unload 輪詢 5 s 逾時——寫入會落進垃圾桶裡的筆記，內容不丟（known-limitations）。
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
-import type { Document, Hocuspocus } from "@hocuspocus/server";
+import type { DirectConnection, Document, Hocuspocus } from "@hocuspocus/server";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT, createHeadlessNoteSchema } from "@knotebook/shared";
-import type { CollabContext } from "../../collab/server.js";
+import type { CollabContext, CollabServer } from "../../collab/server.js";
+import type { DbOrTx } from "../../db/tx.js";
+import { noteIsLive } from "../service.js";
 import type { EditingRuntime, SessionLease } from "./runtime.js";
 
 export function forkFrom(source: Y.Doc | Uint8Array): { fork: Y.Doc; sv: Uint8Array } {
@@ -86,20 +93,66 @@ export interface LinkConvertCtx {
 /** `withDirectConnection`／`mergeDiff` 吃的 ctx：AI／版本套用（帶 userId）或轉換工作（不帶）。以 `source` 判別。 */
 export type DirectConnectionCtx = DirectCtx | LinkConvertCtx;
 
+/** 直連寫入時筆記已不在或已在垃圾桶（或正被移入：記憶體閘門開著）。呼叫端映射成該路徑既有的 not_found。 */
+export class NoteGoneError extends Error {
+  override name = "NoteGoneError";
+}
+
+/** 直連寫入的對象：開直連用的 hocuspocus＋重確認的兩個判準（#181 §6.2-11）。 */
+export interface DirectTarget {
+  hocuspocus: Hocuspocus<CollabContext>;
+  isDeleting(noteId: string): boolean;
+  noteIsLive(noteId: string): Promise<boolean>;
+}
+
+export function directTarget(collab: Pick<CollabServer, "hocuspocus" | "isDeleting">, db: DbOrTx): DirectTarget {
+  return {
+    hocuspocus: collab.hocuspocus,
+    isDeleting: noteId => collab.isDeleting(noteId),
+    noteIsLive: noteId => noteIsLive(db, noteId),
+  };
+}
+
+async function goneNow(target: DirectTarget, noteId: string): Promise<boolean> {
+  return target.isDeleting(noteId) || !(await target.noteIsLive(noteId));
+}
+
+async function disconnectQuietly(direct: DirectConnection): Promise<void> {
+  try {
+    await direct.disconnect();
+  } catch (err) {
+    console.error("withDirectConnection: disconnect after recheck failed", err);
+  }
+}
+
 /** 唯一開直連的地方，只為合併開；fn 在單一同步 transact 內；一定 disconnect（＝落盤點）。
+ * 開之前、開之後各重確認一次（`isDeleting`、`noteIsLive`），不過 → `NoteGoneError`（開之後的失敗先 disconnect，不 transact）。
  * `fn` 的原始錯誤優先於 disconnect 的錯誤（m4）：disconnect 失敗只 log，不取代 fn 丟出的錯誤，
  * 否則 Task 4 的錯誤分類會拿到錯的 error（例如把「AI 內容不合法」誤判成「落盤失敗」）。
  * 版本歷史（spec 2026-10-09 §7-2d）：`opts.beforeDisconnect` 在 transact **成功**之後、disconnect 之前 await，收到 `fn` 的回傳；
  * 它失敗只 log、不影響 disconnect 與回傳（套用的基底寫回失敗＝內容已套、基底未更新，§11.2 接受）。fn 失敗時不呼叫。 */
 export async function withDirectConnection<T>(
-  hocuspocus: Hocuspocus<CollabContext>,
+  target: DirectTarget,
   noteId: string,
   ctx: DirectConnectionCtx,
   fn: (doc: Document) => T,
   opts?: { beforeDisconnect?: (result: T) => Promise<void> }
 ): Promise<T> {
+  if (await goneNow(target, noteId)) throw new NoteGoneError();
   // Hocuspocus 的 context 型別是 CollabContext（`{ userId }`）；`LinkConvertCtx` 刻意沒有 userId（見上）。context 對 Hocuspocus 是不透明的。
-  const direct = await hocuspocus.openDirectConnection(noteId, ctx as unknown as CollabContext);
+  const direct = await target.hocuspocus.openDirectConnection(noteId, ctx as unknown as CollabContext);
+  let gone: boolean;
+  try {
+    gone = await goneNow(target, noteId);
+  } catch (err) {
+    await disconnectQuietly(direct);
+    throw err;
+  }
+  if (gone) {
+    // Hocuspocus 4.5 的 `disconnect()` 沒有不落盤的選項：這裡會把未改的文件存一次（無害，同 `fn` 拒絕路徑）。
+    await disconnectQuietly(direct);
+    throw new NoteGoneError();
+  }
   let result!: T;
   let fnFailed = false;
   let fnError: unknown;

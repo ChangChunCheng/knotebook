@@ -28,6 +28,7 @@ import { toast } from "@/components/ui/toast";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
 import { quotaBytesFromInput, quotaInputFromBytes, validPlanName, type QuotaUnit } from "@/lib/storage-plan-form";
 import { SettingsGroup, SettingsPage } from "./SettingsLayout";
+import { SiteTrashGroup } from "./SettingsTrashSection";
 import { SiteVersionsGroups } from "./SettingsVersionsSection";
 
 /** 原生 select（repo 慣例：逐檔宣告，見 ApiTokensSection.tsx:35-41）。 */
@@ -344,7 +345,8 @@ function PlanTable({ plans }: { plans: StoragePlanDto[] }) {
 }
 
 /**
- * 站台管理的「儲存方案」（`/admin/storage`，admin only；spec §9.3、#247 §7.0）：方案表、兩個預設、站台版本設定（`SiteVersionsGroups`）。
+ * 站台管理的「儲存方案」（`/admin/storage`，admin only；spec §9.3、#247 §7.0）：方案表、兩個預設、站台版本設定（`SiteVersionsGroups`）、
+ * 站台垃圾桶設定（`SiteTrashGroup`，#181 §6.9）。
  * 只被站台管理的 lazy 模組靜態 import（#201／#247：同一個 chunk，不得逐區 lazy）。刪除鈕的 disabled 只是體驗，
  * server 仍裁決（並發被指派 → 409 `storage_plan_in_use`，以 toast 顯示）。
  */
@@ -379,6 +381,7 @@ export function SettingsStorageSection() {
       </SettingsGroup>
       {plansQuery.data && <DefaultsGroup data={plansQuery.data} />}
       <SiteVersionsGroups />
+      <SiteTrashGroup />
     </SettingsPage>
   );
 }

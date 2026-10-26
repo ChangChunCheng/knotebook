@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
-import { withDirectConnection, type DirectCtx } from "../src/notes/editing/session.js";
+import { directTarget, withDirectConnection, type DirectCtx } from "../src/notes/editing/session.js";
 import { buildCollabTestApp } from "./helpers.js";
 
 describe("withDirectConnection", () => {
@@ -9,12 +9,12 @@ describe("withDirectConnection", () => {
     const u = await ctx.createUser({ email: "a@example.com", password: "correct-horse-battery" });
     const note = await ctx.createNote(u.id);
     const ctxObj: DirectCtx = { source: "ai-edit", userId: u.id, tokenId: null, agentLabel: null, applied: false };
-    const seen = await withDirectConnection(ctx.collab.hocuspocus, note.id, ctxObj, doc => doc.getXmlFragment(YDOC_FRAGMENT).length);
+    const seen = await withDirectConnection(directTarget(ctx.collab, ctx.db), note.id, ctxObj, doc => doc.getXmlFragment(YDOC_FRAGMENT).length);
     expect(seen).toBe(0);
     await new Promise(r => setImmediate(r));
     expect(ctx.collab.hocuspocus.documents.size).toBe(0);
     await expect(
-      withDirectConnection(ctx.collab.hocuspocus, note.id, ctxObj, () => {
+      withDirectConnection(directTarget(ctx.collab, ctx.db), note.id, ctxObj, () => {
         throw new Error("boom");
       })
     ).rejects.toThrow("boom");

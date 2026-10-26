@@ -32,3 +32,8 @@ export function sendLoginThrottled(reply: FastifyReply, retryAfterMs: number): F
 export function sendStorageQuotaExceeded(reply: FastifyReply, detail: StorageQuotaErrorDetail): FastifyReply {
   return reply.code(409).send({ error: { code: "storage_quota_exceeded", message: STORAGE_QUOTA_EXCEEDED_MESSAGE }, storage: detail });
 }
+
+/** #181 §6.7：404 in_trash——頂層第三個額外欄位出口（先例 sendLoginThrottled／sendStorageQuotaExceeded）。只給有垃圾桶權的人。 */
+export function sendInTrash(reply: FastifyReply, noteId: string): FastifyReply {
+  return reply.code(404).send({ error: { code: "in_trash", message: "這篇筆記在垃圾桶裡" }, noteId });
+}

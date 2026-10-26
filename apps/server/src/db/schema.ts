@@ -228,10 +228,16 @@ export const siteSettings = pgTable(
     autoVersionsEnabled: boolean("auto_versions_enabled").notNull().default(true),
     // #272 §8（D4）：自動存版等待 X（整數分鐘 1–60，預設 5）；掃描器每輪現讀（`collab/versions.ts` 的 `scanDue`）。
     versionAutoWaitMinutes: integer("version_auto_wait_minutes").notNull().default(5),
+    // #181：垃圾桶保留天數（1–3650，預設 7）；NULL＝不自動刪。
+    trashRetentionDays: integer("trash_retention_days").default(7),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   t => [
     check("site_settings_singleton_chk", sql`${t.singleton}`),
+    check(
+      "site_settings_trash_retention_chk",
+      sql`${t.trashRetentionDays} is null or (${t.trashRetentionDays} >= 1 and ${t.trashRetentionDays} <= 3650)`,
+    ),
     check("site_settings_version_auto_wait_chk", sql`1 <= ${t.versionAutoWaitMinutes} and ${t.versionAutoWaitMinutes} <= 60`),
     check(
       "site_settings_version_days_chk",
@@ -311,6 +317,32 @@ export const groupMembers = pgTable("group_members", {
   index("group_members_role_idx").on(t.roleId),
 ]);
 
+/**
+ * 資料夾（spec 2026-10-22 §5.1，migration 0034）：三種空間——personal（`owner_id`）、group（`group_id`）、shared（`owner_id`，
+ * 被分享者自己的分類）。`parent_id` NULL＝根層。成環、深度、數量不在 DB 守（結構鎖內的應用層，§5.4）。
+ * **只在 0034 手寫、不在這裡宣告**：`folders_sibling_name_idx`（同層名稱不分大小寫唯一，`… lower(name)) NULLS NOT DISTINCT`——
+ * drizzle 的 index builder 沒有 NULLS NOT DISTINCT，spec §5.1 M3 ①）與三支 trigger（`notes_folder_space_trg`、
+ * `folders_parent_space_trg`、`note_placements_folder_trg`；SQLSTATE `KF001`～`KF003`，見 `db/pg-errors.ts`）。
+ */
+export const folders = pgTable("folders", {
+  id: uuid().primaryKey().defaultRandom(),
+  kind: text().notNull(),
+  ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id").references((): AnyPgColumn => folders.id, { onDelete: "cascade" }),
+  name: text().notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  check("folders_kind_chk", sql`${t.kind} in ('personal','group','shared')`),
+  check("folders_space_chk", sql`(${t.kind} = 'group') = (${t.groupId} is not null) and (${t.ownerId} is null) = (${t.groupId} is not null)`),
+  check("folders_name_chk", sql`length(${t.name}) between 1 and 80`),
+  check("folders_parent_not_self_chk", sql`${t.parentId} is distinct from ${t.id}`),
+  index("folders_owner_idx").on(t.ownerId).where(sql`${t.ownerId} is not null`),
+  index("folders_group_idx").on(t.groupId).where(sql`${t.groupId} is not null`),
+  index("folders_parent_idx").on(t.parentId).where(sql`${t.parentId} is not null`),
+]);
+
 export const notes = pgTable("notes", {
   id: uuid().primaryKey().defaultRandom(),
   ownerId: uuid("owner_id").references(() => users.id, { onDelete: "restrict" }),
@@ -372,7 +404,10 @@ export const notes = pgTable("notes", {
   // FK RESTRICT：XOR 下 SET NULL 會撞 CHECK；刪群組前群組必須是空的（PR1–PR3）。`group_role` 已廢除（W1）
   // ——權限只看成員的群組角色。
   groupId: uuid("group_id").references(() => groups.id, { onDelete: "restrict" }),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),   // 保留欄位；v0.1 硬刪
+  // #181 垃圾桶：移入時刻（DB `now()`）；NULL＝活筆記；只由 `notes/tx/trash.ts` 寫。
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  // #181：移入者；帳號之後被刪 → NULL（筆記仍在垃圾桶）。有值必有 deleted_at（notes_deleted_by_chk）。
+  deletedBy: uuid("deleted_by"),
   // 筆記版本歷史（spec §4.2）：配號器（A5：原子遞增、清除不倒退；§9 清空時歸零）；基底版號與基底指紋（A15）兩欄同進同出——
   // NULL＝沒有基底。全文判斷一律看 `version_base_seq`，不看版本列數。不加 FK：基底不可刪由應用層守（A6）。
   versionCounter: integer("version_counter").notNull().default(0),
@@ -386,6 +421,11 @@ export const notes = pgTable("notes", {
   versionPendingRefFingerprint: text("version_pending_ref_fingerprint"),
   // #272 §5.1（D12）：目前基底那一版的 uuid。**無 FK**（基底被刪仍保留身分以顯示「(deleted)」）；與 version_base_seq 同寫同清。
   versionBaseVersionId: uuid("version_base_version_id"),
+  // 資料夾（spec 2026-10-22 §5.1）：擁有者那邊的位置；NULL＝根層。垃圾桶期間不清（還原回原處）。資料夾被刪 → NULL（notes_folder_fk）。
+  folderId: uuid("folder_id"),
+  // 垃圾桶的資料夾路徑快照（名稱陣列，根→葉）：只在垃圾桶期間有意義；寫入者只有 `notes/tx/trash.ts`、`folders/tx/delete-folder.ts`、
+  // `groups/tx/delete-group.ts`。**刻意不加**「有快照必在垃圾桶」CHECK：回滾到步驟 2 的碼還原時只清 `deleted_at`（spec §7）。
+  trashFolderPath: jsonb("trash_folder_path").$type<string[]>(),
 }, t => [
   index("notes_owner_idx").on(t.ownerId),   // GET /api/notes 自有分支（owner_id = $u）用
   // per-user 唯一（#122）：同 owner 不重複、跨 owner 可同名。PATCH 的 slug 寫入
@@ -418,6 +458,15 @@ export const notes = pgTable("notes", {
     "notes_version_pending_chk",
     sql`${t.versionPendingAt} is not null or (${t.versionPendingEditors} = '[]'::jsonb and ${t.versionPendingRefFingerprint} is null)`,
   ),
+  // #181：移入者帳號被刪 → NULL；有移入者必有移入時刻。
+  foreignKey({ name: "notes_deleted_by_fk", columns: [t.deletedBy], foreignColumns: [users.id] }).onDelete("set null"),
+  check("notes_deleted_by_chk", sql`${t.deletedBy} is null or ${t.deletedAt} is not null`),
+  // #181：垃圾桶清單與到期清理只看已移入的列。
+  index("notes_deleted_at_idx").on(t.deletedAt).where(sql`${t.deletedAt} is not null`),
+  // 資料夾（spec 2026-10-22 §5.1）：與所在資料夾同空間由 trigger `notes_folder_space_trg`（0034 手寫）守。
+  foreignKey({ name: "notes_folder_fk", columns: [t.folderId], foreignColumns: [folders.id] }).onDelete("set null"),
+  check("notes_trash_folder_path_chk", sql`${t.trashFolderPath} is null or jsonb_typeof(${t.trashFolderPath}) = 'array'`),
+  index("notes_folder_idx").on(t.folderId).where(sql`${t.folderId} is not null`),
 ]);
 
 /**
@@ -551,6 +600,20 @@ export const noteShares = pgTable("note_shares", {
         // user_id 開頭的獨立索引，否則會退化成全表掃描。
         index("note_shares_user_idx").on(t.userId)]);
 
+/**
+ * 共享私人放置（spec 2026-10-22 §5.1）：被分享者把別人分享給他的筆記放進自己的 shared 資料夾。分享列消失 → 放置跟著消失
+ * （`note_placements_share_fk` CASCADE）；只能指向放置者自己的 shared 資料夾由 trigger `note_placements_folder_trg`（0034 手寫）守。
+ */
+export const notePlacements = pgTable("note_placements", {
+  userId: uuid("user_id").notNull(),
+  noteId: uuid("note_id").notNull(),
+  folderId: uuid("folder_id").notNull().references(() => folders.id, { onDelete: "cascade" }),
+}, t => [
+  primaryKey({ columns: [t.userId, t.noteId] }),
+  foreignKey({ name: "note_placements_share_fk", columns: [t.noteId, t.userId], foreignColumns: [noteShares.noteId, noteShares.userId] }).onDelete("cascade"),
+  index("note_placements_folder_idx").on(t.folderId),
+]);
+
 export const noteLinks = pgTable("note_links", {
   sourceNoteId: uuid("source_note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
   targetNoteId: uuid("target_note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
@@ -611,7 +674,7 @@ export const uploads = pgTable("uploads", {
   mime: text().notNull(),
   size: integer().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, t => [index("uploads_note_idx").on(t.noteId)]);   // DELETE /api/notes/:id 交易內 `WHERE note_id = $1` 用
+}, t => [index("uploads_note_idx").on(t.noteId)]);   // 永久刪除／到期清理／刪群組・全刪的交易內（`deleteNotesInTx`）`WHERE note_id IN (…)` 用
 
 export const aiProviders = pgTable("ai_providers", {
   id: uuid().primaryKey().defaultRandom(),
@@ -752,9 +815,9 @@ export const apiTokens = pgTable(
   t => [
     check("api_tokens_kind_chk", sql`${t.kind} in ('pat','oauth')`),
     // 落庫形是正規化過的**集合**字串，不是裸的單值：
-    // 三種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
+    // 五種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
     // （scope-check-sync.test.ts 守 snapshot ≡ TOKEN_SCOPES；schema.ts ≡ snapshot 由 migrate.test.ts 的漂移守衛守）。
-    check("api_tokens_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move')`),
+    check("api_tokens_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move','notes:read notes:write notes:delete','notes:read notes:write notes:move notes:delete')`),
     check("api_tokens_name_chk", sql`length(${t.name}) between 1 and 64`),
     // 兩條都是**雙向**蘊含：pat ⇔ 沒有 client／refresh，oauth ⇔ 兩者都有。單向版
     // （只擋 pat 那半邊）會讓 #132 少塞一欄時靜默放行半截列——測試四格矩陣都釘住了。
@@ -803,9 +866,9 @@ export const oauthRequests = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
   t => [
-    // 三種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
+    // 五種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
     // （scope-check-sync.test.ts 守 snapshot ≡ TOKEN_SCOPES；schema.ts ≡ snapshot 由 migrate.test.ts 的漂移守衛守）。
-    check("oauth_requests_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move')`),
+    check("oauth_requests_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move','notes:read notes:write notes:delete','notes:read notes:write notes:move notes:delete')`),
     check("oauth_requests_state_chk", sql`${t.state} is null or length(${t.state}) <= 2048`),
     index("oauth_requests_client_idx").on(t.clientId),
   ]
@@ -842,9 +905,9 @@ export const oauthCodes = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
   t => [
-    // 三種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
+    // 五種合法落庫形（`normalizeScope` 的輸出），與 `TOKEN_SCOPES` 同值
     // （scope-check-sync.test.ts 守 snapshot ≡ TOKEN_SCOPES；schema.ts ≡ snapshot 由 migrate.test.ts 的漂移守衛守）。
-    check("oauth_codes_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move')`),
+    check("oauth_codes_scope_chk", sql`${t.scope} in ('notes:read','notes:read notes:write','notes:read notes:write notes:move','notes:read notes:write notes:delete','notes:read notes:write notes:move notes:delete')`),
     index("oauth_codes_client_idx").on(t.clientId),
     index("oauth_codes_user_idx").on(t.userId),
   ]

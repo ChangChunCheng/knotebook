@@ -423,3 +423,123 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 });
+
+// #181 PR-2d（spec §6.8.2）：第三框「刪除」——client 沒要求不渲染、預設不勾、取消編輯一起清、既有權限取交集。
+describe("AuthorizePage #181 刪除勾選", () => {
+  const R = "notes:read" as const;
+  const RW = "notes:read notes:write" as const;
+  const RWM = "notes:read notes:write notes:move" as const;
+  const RWD = "notes:read notes:write notes:delete" as const;
+  const RWMD = "notes:read notes:write notes:move notes:delete" as const;
+  const EDIT = "Create and edit notes";
+  const MOVE = "Move or copy notes into groups";
+  const DELETE = "Move notes to the trash and restore them";
+  // 刪除框的常駐說明＝S2＋「需同時勾選編輯」一句（fix round 1 m1，比照搬移說明的結尾）。兩語系逐字釘。
+  const DELETE_HINT_EN =
+    "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
+  const DELETE_HINT_ZH =
+    "不能永久刪除筆記；但留在垃圾桶的筆記之後仍可能被永久刪除（依站台的垃圾桶設定，或有人在網頁上刪除）。需同時勾選「建立與修改筆記」。";
+  const ASK_RWM = { scope: RWM, scopes: ["notes:read", "notes:write", "notes:move"] };
+  const ASK_ALL = { scope: RWMD, scopes: ["notes:read", "notes:write", "notes:move", "notes:delete"] };
+  const requestWith = (patch: Partial<OauthRequestDto>) => (): Response =>
+    ({ ok: true, status: 200, json: async () => ({ ...REQUEST, ...patch }) }) as unknown as Response;
+  function setup(patch: Partial<OauthRequestDto>) {
+    vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
+    const fetchMock = mockFetch(requestWith(patch), () => redirectResponse("http://127.0.0.1:5678/cb?code=x"));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt("/authorize?req=abc");
+    return fetchMock;
+  }
+  async function decisionBody(fetchMock: ReturnType<typeof mockFetch>): Promise<unknown> {
+    const isDecision = ([url]: [RequestInfo | URL, RequestInit?]) => String(url).startsWith("/api/oauth/decision");
+    await waitFor(() => expect(fetchMock.mock.calls.some(isDecision)).toBe(true));
+    return JSON.parse(fetchMock.mock.calls.find(isDecision)![1]!.body as string);
+  }
+
+  it("AP-D1：client 沒要求 notes:delete → 沒有刪除勾選框", async () => {
+    setup({ ...ASK_RWM, existingScope: null });
+    expect(await screen.findByRole("checkbox", { name: EDIT })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: MOVE })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: DELETE })).toBeNull();
+  });
+
+  it("AP-D2：要求四項、第一次授權 → 三框不勾；刪除在勾編輯前 disabled、帶後果說明；勾編輯＋刪除 → Allow 送 RWD", async () => {
+    const fetchMock = setup({ ...ASK_ALL, existingScope: null });
+    const edit = await screen.findByRole("checkbox", { name: EDIT });
+    const move = screen.getByRole("checkbox", { name: MOVE });
+    const del = screen.getByRole("checkbox", { name: DELETE });
+    expect(edit).not.toBeChecked();
+    expect(move).not.toBeChecked();
+    expect(del).not.toBeChecked();
+    expect(del).toBeDisabled();
+    expect(del).toHaveAccessibleDescription(DELETE_HINT_EN);
+    fireEvent.click(edit);
+    expect(del).toBeEnabled();
+    fireEvent.click(del);
+    expect(del).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RWD });
+  });
+
+  it("AP-D3：既有 RWD、要求 RWM → 只勾編輯、沒有刪除框、出現 replacesWithLess；Allow 送 RW", async () => {
+    const fetchMock = setup({ ...ASK_RWM, existingScope: RWD, replacesExisting: true });
+    expect(await screen.findByRole("checkbox", { name: EDIT })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: MOVE })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: DELETE })).toBeNull();
+    expect(screen.getByText(i18n.t("authorize.replacesWithLess"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RW });
+  });
+
+  it("AP-D4：既有 RWMD、要求四項 → 三框全勾、三處 Currently granted、沒有 replacesWithLess", async () => {
+    setup({ ...ASK_ALL, existingScope: RWMD, replacesExisting: true });
+    const del = await screen.findByRole("checkbox", { name: DELETE });
+    expect(screen.getByRole("checkbox", { name: EDIT })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: MOVE })).toBeChecked();
+    expect(del).toBeChecked();
+    const granted = screen.getAllByText("Currently granted");
+    expect(granted).toHaveLength(3);
+    expect(granted.some(g => g.parentElement!.contains(del))).toBe(true);
+    expect(screen.queryByText(i18n.t("authorize.replacesWithLess"))).not.toBeInTheDocument();
+  });
+
+  it("AP-D5：三框全勾後取消編輯 → 搬移、刪除都清掉且 disabled；Allow 送 R", async () => {
+    const fetchMock = setup({ ...ASK_ALL, existingScope: null });
+    const edit = await screen.findByRole("checkbox", { name: EDIT });
+    const move = screen.getByRole("checkbox", { name: MOVE });
+    const del = screen.getByRole("checkbox", { name: DELETE });
+    fireEvent.click(edit);
+    fireEvent.click(move);
+    fireEvent.click(del);
+    expect(move).toBeChecked();
+    expect(del).toBeChecked();
+    fireEvent.click(edit);
+    expect(move).not.toBeChecked();
+    expect(move).toBeDisabled();
+    expect(del).not.toBeChecked();
+    expect(del).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: R });
+  });
+
+  it("AP-D6：既有 RWM、要求 RWD（格上不可比）→ 只勾編輯、刪除不勾、Currently granted 只在編輯列、出現 replacesWithLess；勾刪除 → Allow 送 RWD", async () => {
+    const fetchMock = setup({ scope: RWD, scopes: ["notes:read", "notes:write", "notes:delete"], existingScope: RWM, replacesExisting: true });
+    const del = await screen.findByRole("checkbox", { name: DELETE });
+    expect(screen.getByRole("checkbox", { name: EDIT })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: MOVE })).toBeNull();
+    expect(del).not.toBeChecked();
+    expect(screen.getAllByText("Currently granted")).toHaveLength(1);
+    expect(screen.getByText(i18n.t("authorize.replacesWithLess"))).toBeInTheDocument();
+    fireEvent.click(del);
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RWD });
+  });
+
+  it("AP-D7（zh-TW）：刪除框的常駐說明以「需同時勾選「建立與修改筆記」。」收尾，並是框的可及描述", async () => {
+    await i18n.changeLanguage("zh-TW");
+    setup({ ...ASK_ALL, existingScope: null });
+    const del = await screen.findByRole("checkbox", { name: "移到垃圾桶與還原" });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAccessibleDescription(DELETE_HINT_ZH);
+  });
+});

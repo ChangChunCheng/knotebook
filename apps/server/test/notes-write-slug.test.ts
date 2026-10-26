@@ -126,7 +126,7 @@ describe("#175 insertNoteWithAutoSlug 的 inTx 模式（§6.5 (4)）", () => {
     await seedNote(db, { groupId: g.id }, { slug: "plan" });
     let first = true;
     const row = await db.transaction(async tx => {
-      const created = await insertNoteWithAutoSlug(tx, { groupId: g.id }, "Plan", {
+      const created = await insertNoteWithAutoSlug(tx, { scope: { groupId: g.id }, folderId: null }, "Plan", {
         beforeInsert: async c => { if (first) { first = false; await seedNote(db, { groupId: g.id }, { slug: c }); } },
       }, { inTx: true });
       await tx.update(notes).set({ title: "Plan!" }).where(eq(notes.id, created.id));

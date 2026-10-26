@@ -373,7 +373,7 @@ describe("撤權 SLA：CollabHooks（Task 6）", () => {
     expect(tokenBody.role).toBe("none");
 
     // 閘門過期之後（模擬 TTL 到期）這份 token 仍然連不上：擋下它的是 onAuthenticate
-    // 重跑 resolveRole（筆記已不存在 → 'none'），不是刪除閘門。理由因此是 `forbidden`
+    // 重跑 resolveRole（筆記在垃圾桶 → 'none'，#181），不是刪除閘門。理由因此是 `forbidden`
     // ——與「這篇筆記存在、但你沒有權限」完全一樣，問不出存在性（issue #35 的取捨：
     // 「筆記被刪了」這句話由閘門在 TTL 內負責，見 DELETING_GATE_TTL_MS）。
     ctx.collab.unmarkDeleting(note.id);

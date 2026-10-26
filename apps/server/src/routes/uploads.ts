@@ -233,6 +233,7 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
       // 交易前備好的純資料與測試縫（屬性存取）。
       const input = { id, noteId: noteId.toLowerCase(), uploaderId: userId, mime, size: fileBuf.length, lockTimeoutMs: deps.storageLockTimeoutMs };
       try {
+        await deps.groupTestHook?.("upload-authorized", { noteId: input.noteId });
         await deps.db.transaction(tx => insertUploadInTx(tx, input, deps.groupTestHook));
       } catch (err) {
         // 交易任何拋出都先清檔（M4）：DB 沒有列的檔不該留在磁碟。清檔本身失敗（理論上不太可能，寫入才剛成功）

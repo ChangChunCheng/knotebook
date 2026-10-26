@@ -75,7 +75,7 @@ export async function deleteUploadFiles(uploadsDir: string, ids: readonly string
       try {
         await unlink(uploadFilePath(uploadsDir, id));
       } catch (err) {
-        log.error({ err, uploadId: id }, "刪除上傳檔案失敗（best-effort，DB 列已刪除，磁碟孤兒檔案需維運排查）");
+        log.error({ name: (err as Error).name, code: (err as NodeJS.ErrnoException).code, uploadId: id }, "刪除上傳檔案失敗（best-effort，DB 列已刪除，磁碟孤兒檔案需維運排查）");
       }
     })
   );

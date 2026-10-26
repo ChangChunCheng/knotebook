@@ -163,6 +163,7 @@ function RoleCard({ groupId, role, canManage }: { groupId: string; role: GroupRo
   const locked = isAdmin || !canManage;
   const pending = update.isPending;
   const sent = pending ? update.variables?.permissions : undefined;
+  const shown = sent ?? role.permissions;
   const trimmed = name.trim();
 
   function handleToggle(flag: GroupRoleFlag, value: boolean): void {
@@ -242,6 +243,11 @@ function RoleCard({ groupId, role, canManage }: { groupId: string; role: GroupRo
           />
         ))}
       </div>
+      {/* #181 §6.10.7：能刪不能編輯＝刪掉的自己救不回。只提示、不阻擋；pending 時以送出的值判斷。
+          唯讀視角（沒有 canManageGroup）也顯示是刻意的：掛這個角色的成員自己會被這個後果影響。 */}
+      {!isAdmin && shown.delete && !shown.edit && (
+        <p className="mt-2 text-xs text-muted-foreground">{t("groups.roles.deleteWithoutEditHint")}</p>
+      )}
       {/* disabled 的元件 `title` 浮不出來——用看得見的文字（成員頁 `lastAdminHint` 同一個理由）。 */}
       {isAdmin && canManage && (
         <p id={lockedHintId} className="mt-2 text-xs text-muted-foreground">
@@ -306,6 +312,7 @@ function NewRoleDialog({ groupId, open, onOpenChange }: { groupId: string; open:
               />
             ))}
           </div>
+          {flags.delete && !flags.edit && <p className="text-xs text-muted-foreground">{t("groups.roles.deleteWithoutEditHint")}</p>}
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}

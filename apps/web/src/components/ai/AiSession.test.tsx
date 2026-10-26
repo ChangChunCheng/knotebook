@@ -492,7 +492,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
     ]);
-    const ai = stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS }] });
+    const ai = stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }] });
     const host = renderAiHost({ editor, children: <Probe /> });
     await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
     await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined()); // AiSessionProvider 的 useNotes 把快取填好
@@ -509,7 +509,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
     ]);
-    stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS }] });
+    stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }] });
     const host = renderAiHost({ editor, children: <Probe /> });
     await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
     await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined());
@@ -525,7 +525,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: upper, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
     ]);
-    const ai = stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS }] });
+    const ai = stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }] });
     const host = renderAiHost({ editor, children: <Probe /> });
     await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
     await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined());
@@ -538,7 +538,7 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
 
   it("#269 RF1：送出的 /notes/ 連結文字經 markdown 跳脫；AI 原樣回寫後 label 逐字保留（文字＝現行標題者 label 仍空）", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
-    const note: NoteDto = { id, title: "[Draft] Plan *v2*", slug: "draft", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, permissions: OWNER_PERMS };
+    const note: NoteDto = { id, title: "[Draft] Plan *v2*", slug: "draft", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS };
     const wl = (label: string) => ({ type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label, anchorBlockId: "" } });
     const external = { type: "link", href: "https://example.com/x", content: "k*z" };
     editor = createTestEditor([{ id: "w1", type: "paragraph", content: ["a ", wl(""), " b ", wl("a]b\\"), " end"] }, { id: "w2", type: "paragraph", content: [external] }]);

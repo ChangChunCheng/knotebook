@@ -19,7 +19,15 @@ function writeMovedNote(queryClient: QueryClient, note: NoteDto): void {
   void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
 }
 
-async function refetchAfterFailure(queryClient: QueryClient, noteId: string): Promise<void> {
+/** 移入群組成功後的快取寫入（PR1 交接不變量⑥：先 shares／public-link，再 note）。單篇 hook 與 PR-2c 批次共用。 */
+export function applyMovedNote(queryClient: QueryClient, noteId: string, note: NoteDto): void {
+  queryClient.setQueryData<ShareDto[]>(["shares", noteId], []);
+  queryClient.setQueryData<PublicLinkDto>(["public-link", noteId], prev => (prev ? { ...prev, token: null, slug: null } : prev));
+  writeMovedNote(queryClient, note);
+}
+
+/** 失敗的對帳序（先 await shares／public-link，再失效 note 與 groups）。呼叫端一律 `void`，不得從 onError 回傳。 */
+export async function refetchAfterFailure(queryClient: QueryClient, noteId: string): Promise<void> {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["shares", noteId] }),
     queryClient.invalidateQueries({ queryKey: ["public-link", noteId] }),
@@ -34,11 +42,7 @@ export function useMoveNoteToGroup(noteId: string) {
     mutationFn: (groupId: string) =>
       api<NoteDto>(`/api/notes/${encodeURIComponent(noteId)}/move`, { method: "POST", body: JSON.stringify({ groupId }) }),
     onSuccess: note => {
-      queryClient.setQueryData<ShareDto[]>(["shares", noteId], []);
-      queryClient.setQueryData<PublicLinkDto>(["public-link", noteId], prev =>
-        prev ? { ...prev, token: null, slug: null } : prev,
-      );
-      writeMovedNote(queryClient, note);
+      applyMovedNote(queryClient, noteId, note);
     },
     onError: () => {
       void refetchAfterFailure(queryClient, noteId);

@@ -3,6 +3,11 @@
  * （gate r2 M-6）。S14：只收 `tx`、純資料、型別明示的測試縫；檔案 I/O（`copyFile`）不借連線。
  *   (g) 目標是群組時（**第一把鎖**）：目標 `groups` 列 `FOR KEY SHARE`，再在交易內重讀呼叫者的成員資格與 `can_create`
  *       → 群組不存在、非成員、無 can_create → 404 `group_not_found`（與路由交易外的快速檢查同形；同 `move.ts` (1)）。
+ *       帶 `folderId` 時：群組不在 → 404 `folder_not_found`（以資料夾 id 進來的入口，spec §5.4 n-2）；另要 `can_edit` → 403（D13）。
+ *   (f) 資料夾 PR-3a（I-1，spec §5.4、§5.7.6）：帶 `folderId` 時**在 (0) 之前**顯式對目標資料夾取 `FOR KEY SHARE`，不靠 (7) INSERT
+ *       的 FK 隱含鎖——同空間複製（「建立副本」）時來源就在該資料夾子樹裡，資料夾鎖若排在來源之後，會與刪資料夾的「子樹資料夾 FU
+ *       → 子樹筆記 FU」成環。不在、或空間與 scope 不符 → 404 `folder_not_found`（§5.5 第 2、3 步重判；群組資料夾的空間由 (g) 的
+ *       groups KS 穩住，個人資料夾的空間永遠不變）。
  *   (0) 來源 `FOR KEY SHARE`（不擋一般 UPDATE、仍擋刪列——gate r1 M1）；讀不到 → 404
  *   (3) 只留**屬於來源**的附件（他篇的附件原樣引用）
  *   (4) 每個附件：新 id → 記入 `copiedFileIds` → copyFile；檔不在（ENOENT）→ 跳過（plan 規格落差 8）——**不持空間鎖**
@@ -16,7 +21,8 @@
  * 被拒（`StorageQuotaExceeded`）或任何失敗：已落盤的新檔 id 在 `input.copiedFileIds`，路由在交易外 best-effort 刪。
  * 副本的 notes 列經 `insertNoteWithAutoSlug`（`create.ts`）寫入——那條 INSERT 不在本檔，S14 守衛 ① 掃不到它。
  * 副本的 `updated_at` 不在這裡寫：吃 DB default（新筆記＝本交易的 `now()`，必晚於來源；`test/unit/copy-doc.test.ts` 源碼守衛）。
- * 鎖序（spec §11；T4 review r1 I-1 改）：**目標 groups KEY SHARE → 來源筆記 KEY SHARE**（目標是個人時只有後者）。
+ * 鎖序（spec §11；T4 review r1 I-1 改；資料夾 PR-3a I-1 再改）：**目標 groups KEY SHARE → 目標資料夾 KEY SHARE → 來源筆記 KEY SHARE**
+ * （目標是個人時沒有第一把；不帶資料夾時沒有第二把）。
  * 為什麼 groups 要在來源之前：來源與目標同在群組 G 時，若先鎖來源（G 的筆記）、再由 (7) INSERT 的 FK 檢查取 G 的
  * KEY SHARE，會與「groups FOR UPDATE → 該群組筆記 FOR UPDATE」（PR4 全刪的形）成環（review r1 實測 40P01；
  * `groups-v2-copy.test.ts` C19b 釘住）。現序下 `lockGroup` 方與 (g) 在各自的第一把鎖就互斥，後到者等的時候不持任何鎖。
@@ -33,10 +39,13 @@
  */
 import { randomUUID } from "node:crypto";
 import { copyFile } from "node:fs/promises";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import * as Y from "yjs";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups, noteStates, notes, uploads } from "../../db/schema.js";
+import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../../folders/messages.js";
+import { folderSpaceOfRow, sameFolderSpace, type FolderSpace } from "../../folders/space.js";
+import { lockFolderInTx } from "../../folders/tx/lock.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
 import { TxAbort } from "../../http/tx-abort.js";
 import { uploadFilePath } from "../../uploads/service.js";
@@ -53,6 +62,8 @@ export interface CopyNoteInput {
   sourceId: string;
   userId: string;
   scope: SlugScope;
+  /** 資料夾 PR-3a：已過 UUID_RE、已轉小寫、交易外判過可見性與空間；null＝根層。 */
+  folderId: string | null;
   copy: CopyDoc;
   uploadsDir: string;
   /** out：已落盤的新附件 id（失敗時由路由清檔）。 */
@@ -94,12 +105,25 @@ export async function copyNoteInTx(tx: Tx, input: CopyNoteInput, hook?: GroupTes
       .innerJoin(groupRoles, eq(groupRoles.id, groupMembers.roleId))
       .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, input.userId)))
       .limit(1);
+    if (!g && input.folderId !== null) throw new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     if (!g || !member || !member.canCreate) throw new TxAbort(404, "group_not_found", "找不到此群組");
+    if (input.folderId !== null && !member.canEdit) throw new TxAbort(403, "forbidden", NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE);
     target = { name: g.name, canRead: member.canRead, canEdit: member.canEdit, canDelete: member.canDelete, canManagePublicLink: member.canManagePublicLink };
     await hook?.("note-copy-target-locked", { noteId: input.sourceId, groupId });
   }
 
-  const [src] = await tx.select({ id: notes.id, title: notes.title }).from(notes).where(eq(notes.id, input.sourceId)).for("key share");
+  // (f) I-1：目標資料夾 KS 在來源 KS 之前。
+  if (input.folderId !== null) {
+    const folder = await lockFolderInTx(tx, input.folderId, "key share");
+    const wanted: FolderSpace = "groupId" in input.scope
+      ? { kind: "group", groupId: input.scope.groupId }
+      : { kind: "personal", ownerId: input.scope.ownerId };
+    if (!folder || !sameFolderSpace(folderSpaceOfRow(folder), wanted)) throw new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+    await hook?.("note-copy-folder-locked", { noteId: input.sourceId, folderId: input.folderId, ...("groupId" in input.scope ? { groupId: input.scope.groupId } : {}) });
+  }
+
+  // #181 §6.2-11：來源在垃圾桶＝列消失，404（與移入的 `FOR UPDATE` 序列化，同上傳）。
+  const [src] = await tx.select({ id: notes.id, title: notes.title }).from(notes).where(and(eq(notes.id, input.sourceId), isNull(notes.deletedAt))).for("key share");
   if (!src) throw new TxAbort(404, "not_found", "找不到此筆記");
   await hook?.("note-copy-locked", { noteId: input.sourceId });
 
@@ -137,7 +161,7 @@ export async function copyNoteInTx(tx: Tx, input: CopyNoteInput, hook?: GroupTes
   });
 
   // (7)
-  const created = await insertNoteWithAutoSlug(tx, input.scope, src.title, createHooks, { inTx: true });
+  const created = await insertNoteWithAutoSlug(tx, { scope: input.scope, folderId: input.folderId }, src.title, createHooks, { inTx: true });
 
   // (8)
   const mapping = new Map<string, string>();

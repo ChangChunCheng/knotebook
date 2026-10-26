@@ -9,11 +9,14 @@ import type { ErrorCode, StorageQuotaErrorDetail } from "@knotebook/shared";
  *   有值才賦值，其餘情況維持 `undefined`。刻意不放進 constructor 參數列——
  *   這個型別是 Task 11+ 逐字依賴的介面，constructor 簽章不可變動。
  * - `storage`：僅 409 `storage_quota_exceeded` 會在 body 頂層附這個欄位（`incomingBytes` 恆在，`usedBytes`／`quotaBytes` 依可見性）；逐欄驗型別，不合就整個不收。
+ * - `noteId`：僅 404 `in_trash` 會在 body 頂層附這個欄位（#181）。
  */
 export class ApiFail extends Error {
   public retryAfterMs?: number;
   /** 409 `storage_quota_exceeded` 的頂層 `storage`（spec §8.1）；形狀不合（或別的碼）一律不收——web 只取已知欄位。 */
   public storage?: StorageQuotaErrorDetail;
+  /** 僅 404 `in_trash` 的頂層 `noteId`（spec §6.7）；型別不是字串就不收。 */
+  public noteId?: string;
 
   constructor(
     public status: number,
@@ -29,6 +32,7 @@ interface ApiErrorBody {
   error: { code: string; message: string };
   retryAfterMs?: number;
   storage?: unknown;
+  noteId?: unknown;
 }
 
 function isApiErrorBody(value: unknown): value is ApiErrorBody {
@@ -111,6 +115,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
         const storage = parseStorageDetail(body.storage);
         if (storage) fail.storage = storage;
       }
+      if (body.error.code === "in_trash" && typeof body.noteId === "string") fail.noteId = body.noteId;
       throw fail;
     }
 

@@ -7,6 +7,9 @@
  * 預檢目標空間已滿 → `space_full`（不扣 upload 桶）→ **`upload` 桶 `consumeMany(userId, toCopy)`** → 交易 → catch：先 best-effort
  * 刪已落盤的新檔，再分類（`TxAbort`（含 `StorageQuotaExceeded`）→ `aborted`、FK → 群組 `group_not_found`／個人 `fk_personal`、
  * `isRetryableTxError` → `busy`、其餘 rethrow）→ commit 後 `syncLinksFromDoc`。
+ * 資料夾 PR-3a（spec §5.7.6、§5.5 I2）：帶 `folderId` 時，在 `not_found` 之後、群組判準之前依序判可見性（非 UUID／看不到 → 404
+ * `folder_not_found`）與空間一致性（400 `folder_cross_space`），群組判準之後再判群組資料夾的 `can_edit`（403，D13）——三者都以
+ * `{ kind: "aborted", err: TxAbort }` 回（outcome 聯集不變，讀碼發現 16）；交易內 `copyNoteInTx` 重判並顯式鎖資料夾（I-1）。
  * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`（④ `{all:1, inTx:1}`、⑤ 引數只有識別字／屬性存取）。
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -14,7 +17,9 @@ import type { FastifyBaseLogger } from "fastify";
 import type { CollabServer } from "../collab/server.js";
 import { docClock } from "../collab/store.js";
 import type { Db } from "../db/index.js";
-import { isForeignKeyViolation, isRetryableTxError } from "../db/pg-errors.js";
+import { foreignKeyViolationConstraint, isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError } from "../db/pg-errors.js";
+import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_CROSS_SPACE_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../folders/messages.js";
+import { resolveFolderAccess } from "../folders/queries.js";
 import { notes, uploads } from "../db/schema.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
@@ -54,7 +59,7 @@ export type CopyOutcome =
   | { kind: "upload_rate_limited" }
   /** 交易前不持鎖的「已滿」預檢（`incomingBytes` 未知）。 */
   | { kind: "space_full"; space: StorageSpace; usage: SpaceUsage & { quotaBytes: number } }
-  /** 交易內的 `TxAbort`（含子類 `StorageQuotaExceeded`）——原樣交給呼叫端。 */
+  /** 交易內的 `TxAbort`（含子類 `StorageQuotaExceeded`）與交易外資料夾預判的失敗——原樣交給呼叫端。 */
   | { kind: "aborted"; err: TxAbort }
   /** 個人目標的 23503（理論路徑：複製者帳號在交易中被硬刪，`src/` 沒有這條路徑）。 */
   | { kind: "fk_personal" }
@@ -62,13 +67,28 @@ export type CopyOutcome =
 
 export async function copyNote(
   deps: CopyNoteDeps,
-  input: { sourceId: string; userId: string; groupId?: string },
+  input: { sourceId: string; userId: string; groupId?: string; folderId?: string },
 ): Promise<CopyOutcome> {
   const sourceId = input.sourceId.toLowerCase();
   const userId = input.userId;
 
   // 看得到就能讀（規格落差 16：role 非 none ⇒ permissions.read 恆真），不另看 read 旗標。
   if ((await resolveNoteAccess(deps.db, userId, sourceId)).role === "none") return { kind: "not_found" };
+
+  // 資料夾 PR-3a：可見性 → 空間一致性（與 `POST /api/notes` 同一套判準，§5.7.6 第 1、2 步）。
+  let folderId: string | null = null;
+  let groupFolder = false;
+  if (input.folderId !== undefined) {
+    const folder = await resolveFolderAccess(deps.db, userId, input.folderId);
+    if (folder === null) return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
+    const space = folder.space;
+    const consistent = space.kind === "group"
+      ? input.groupId !== undefined && input.groupId.toLowerCase() === space.groupId
+      : space.kind === "personal" && input.groupId === undefined;
+    if (!consistent) return { kind: "aborted", err: new TxAbort(400, "folder_cross_space", NOTE_FOLDER_CROSS_SPACE_MESSAGE) };
+    folderId = folder.folder.id;
+    groupFolder = space.kind === "group";
+  }
 
   let scope: SlugScope;
   if (input.groupId === undefined) {
@@ -79,6 +99,8 @@ export async function copyNote(
     // 快速 404 only：結果不用來組 DTO（降級可能落在這裡與 (g) 之間——review r2 M-2）。
     const m = await loadCreateTarget(deps.db, userId, groupId);
     if (!m || !m.canCreate) return { kind: "group_not_found" };
+    // D13：群組資料夾另要 `can_edit`（交易內 (g) 重判）。
+    if (groupFolder && !m.canEdit) return { kind: "aborted", err: new TxAbort(403, "forbidden", NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE) };
     scope = { groupId };
   }
   if (!deps.limiters.edit.consume(userId)) return { kind: "edit_rate_limited" };
@@ -105,15 +127,20 @@ export async function copyNote(
 
   // S14：callback 整段就是 `copyNoteInTx(tx, …)`，引數是交易前備好的純資料（`copiedFileIds` 是 out 參數）與測試縫。
   const copiedFileIds: string[] = [];
-  const txInput = { sourceId, userId, scope, copy, uploadsDir: deps.uploadsDir, copiedFileIds, searchExtract, lockTimeoutMs: deps.storageLockTimeoutMs };
+  const txInput = { sourceId, userId, scope, folderId, copy, uploadsDir: deps.uploadsDir, copiedFileIds, searchExtract, lockTimeoutMs: deps.storageLockTimeoutMs };
   let created;
   try {
+    await deps.groupTestHook?.("note-copy-authorized", { noteId: sourceId });
     created = await deps.db.transaction(tx => copyNoteInTx(tx, txInput, deps.groupTestHook, deps.noteCreateHooks, deps.searchIndexHooks));
   } catch (err) {
     // 交易已 rollback（uploads 列不在了；配額被拒時列根本還沒寫）：best-effort 刪掉已落盤的新檔，失敗只記 log。
     await deleteUploadFiles(deps.uploadsDir, copiedFileIds, deps.log);
     // `TxAbort` 含子類 `StorageQuotaExceeded`：原樣交給呼叫端，由呼叫端先判子類（反序會失去數字）。
     if (err instanceof TxAbort) return { kind: "aborted", err };
+    // 防禦縱深（資料夾 PR-3a）：目標資料夾在交易內已持 KEY SHARE 並重判過空間，INSERT 撞不到 `notes_folder_fk`／KF001；撞到與看不到同形。
+    if (isNoteFolderSpaceViolation(err) || foreignKeyViolationConstraint(err) === "notes_folder_fk") {
+      return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
+    }
     if (isForeignKeyViolation(err)) {
       // 防禦縱深：群組目標在 (g) 已持 groups KEY SHARE，群組在交易中刪不掉，INSERT 不會撞 FK 23503；撞到也回同一條 404。
       if ("groupId" in scope) return { kind: "group_not_found" };

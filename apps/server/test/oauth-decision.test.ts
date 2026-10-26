@@ -49,8 +49,10 @@ function decide(app: TestApp["app"], cookie: string, body: object) {
   return app.inject({ method: "POST", url: "/api/oauth/decision", headers: { cookie }, payload: body });
 }
 
-/** #239：allow 一律要帶 `scope`。既有案送第三形，由 server 的 narrowerScope 夾回 pending（等價 #239 前的行為）。 */
+/** #239：allow 一律要帶 `scope`。既有案送讀寫搬移，由 server 的 narrowerScope 夾回 pending（等價 #239 前的行為）。 */
 const RWM = "notes:read notes:write notes:move";
+const RWD = "notes:read notes:write notes:delete";
+const RWMD = "notes:read notes:write notes:move notes:delete";
 
 const getRequest = (app: TestApp["app"], cookie: string, req: string) =>
   app.inject({ method: "GET", url: `/api/oauth/request?req=${req}`, headers: { cookie } });
@@ -473,8 +475,8 @@ describe("#239 decision scope", () => {
     }
   });
 
-  // spec §5.5「不在三形內」那一半：別名與不成鏈的組合一律 400，不正規化、不消費。
-  it.each(["notes:write", "notes:read notes:move", "notes:move"])(
+  // spec §5.5「不在落庫形內」那一半：別名與缺 write 的組合一律 400，不正規化、不消費（#181 起是五形）。
+  it.each(["notes:write", "notes:read notes:move", "notes:move", "notes:read notes:delete"])(
     "(a') allow 帶非落庫形 scope=%s → 400，pending 仍在；同一 req 帶合法 scope 仍可 allow",
     async scope => {
       const { app, db, close } = await buildTestApp();
@@ -496,6 +498,13 @@ describe("#239 decision scope", () => {
     [RWM, "notes:read notes:write", "notes:read notes:write"], // (b)
     ["notes:write", RWM, "notes:read notes:write"], // (c) 夾回 pending
     [RWM, "notes:read", "notes:read"], // (d)
+    // #181 PR-2d OD（A2-13）：授予＝要求 ∩ 勾選（格上的交集，不是鏈上取小）。
+    [RWM, RWD, "notes:read notes:write"], // move 與 delete 互不包含 → 只剩讀寫
+    [RWMD, RWMD, RWMD],
+    [RWD, RWMD, RWD], // 不超過要求
+    [RWMD, "notes:read", "notes:read"],
+    [RWD, "notes:read notes:write", "notes:read notes:write"], // 同意頁取消「刪除」、保留「編輯」
+    [RWMD, RWM, RWM], // 取消「刪除」、保留「搬移」
   ])("pending=%s、body=%s → code.scope=%s", async (requested, body, granted) => {
     const { app, db, close } = await buildTestApp();
     try {
@@ -554,6 +563,21 @@ describe("#239 O2b existingScope", () => {
         existingScope: "notes:read notes:write",
         replacesExisting: true,
       });
+    } finally {
+      await close();
+    }
+  });
+
+  // #181 PR-2d：existingScope 原樣回五形之一；它只是同意頁的預設勾選，decision 照「要求 ∩ 勾選」授予、不看它。
+  it("既有讀寫刪除列、本次要求讀寫搬移 → existingScope 是讀寫刪除；allow 讀寫搬移 → code 是讀寫搬移", async () => {
+    const { app, db, close } = await buildTestApp();
+    try {
+      const me = await createUserAndLogin(db);
+      const { clientId, req } = await startFlow(app, { scope: RWM });
+      await seedGrant(db, me.userId, clientId, RWD, "d1");
+      expect((await getRequest(app, me.cookie, req)).json()).toMatchObject({ existingScope: RWD, replacesExisting: true });
+      expect((await decide(app, me.cookie, { req, decision: "allow", scope: RWM })).statusCode).toBe(200);
+      expect((await db.select().from(oauthCodes)).map(c => c.scope)).toEqual([RWM]);
     } finally {
       await close();
     }
