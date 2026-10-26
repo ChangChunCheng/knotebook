@@ -148,12 +148,12 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("owner：選單含複製連結與「移到垃圾桶」兩項（垃圾桶圖示；沒有舊字「Delete note」）", () => {
+  it("owner：選單含複製連結與「刪除」兩項（移到垃圾桶）（垃圾桶圖示；沒有舊字「Delete note」）", () => {
     renderMenu(OWNER_NOTE, CONNECTED, { current: false });
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    const trashItem = screen.getByRole("menuitem", { name: "Move to trash" });
+    const trashItem = screen.getByRole("menuitem", { name: "Delete" });
     expect(trashItem.querySelector("svg")).toHaveAttribute("data-icon", "trash");
     expect(screen.queryByText(/Delete note/)).toBeNull();
   });
@@ -186,7 +186,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Move to trash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   // #175 §8.3：刪除項看 `note.permissions.delete`，不再由 `role === "owner"` 推——群組筆記的 role
@@ -204,7 +204,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     renderMenu(groupNote, { phase: "connected", role: "editor" }, { current: false });
     openMenu();
 
-    expect(screen.getByRole("menuitem", { name: "Move to trash" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 
   it("#175：個人筆記 role owner 但 permissions.delete false（刻意造的不一致 fixture）→ 沒有刪除項——看的是 permissions", () => {
@@ -212,7 +212,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     openMenu();
 
     expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Move to trash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("#175：群組筆記的複製連結是 /g/<groupId>/<slug>", async () => {
@@ -283,7 +283,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderRoutedMenu(OWNER_NOTE, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     // spec §6.10.4 D-W7：不確認——沒有對話框，點下就送出。
     expect(leavingRef.current).toBe(true);
@@ -304,7 +304,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     const { fetchSpy, calls } = trashFetch(OWNER_NOTE);
     renderRoutedMenu(OWNER_NOTE, { current: false }, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/"));
     // `/` 不渲染 NoteMenu——toast 的「復原」只能靠建立 toast 時捕捉的 queryClient／navigate。
@@ -320,7 +320,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     const { fetchSpy } = trashFetch(note);
     renderRoutedMenu(note, { current: false }, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
     expect(screen.getByText("Members of the group whose role can both edit and delete notes can restore it.", { exact: true })).toBeInTheDocument();
@@ -332,13 +332,13 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
     const { fetchSpy } = trashFetch(note);
     renderRoutedMenu(note, { current: false }, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("NM-T6 DELETE 掛起中：連點、再開選單點「Move to trash」都不重送（項目 disabled，DELETE 恰一次）", async () => {
+  it("NM-T6 DELETE 掛起中：連點、再開選單點「Delete」都不重送（項目 disabled，DELETE 恰一次）", async () => {
     const pending = new Promise<Response>(() => {});
     const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -351,14 +351,14 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
       ).length;
     renderMenu(OWNER_NOTE, CONNECTED, { current: false }, fetchSpy as unknown as typeof fetch);
     openMenu();
-    const first = screen.getByRole("menuitem", { name: "Move to trash" });
+    const first = screen.getByRole("menuitem", { name: "Delete" });
     fireEvent.click(first);
     fireEvent.click(first);
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await waitFor(() => expect(deleteCount()).toBe(1));
 
     openMenu();
-    const again = await screen.findByRole("menuitem", { name: "Move to trash" });
+    const again = await screen.findByRole("menuitem", { name: "Delete" });
     expect(again).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(again);
     fireEvent.keyDown(again, { key: "Enter" });
@@ -381,7 +381,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, CONNECTED, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(screen.getByText("Something went wrong. Please try again.")).toBeInTheDocument());
     expect(leavingRef.current).toBe(false);
@@ -403,7 +403,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, { phase: "deleted" }, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText("This note has been deleted.")).toBeInTheDocument());
@@ -425,7 +425,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     renderMenu(OWNER_NOTE, { phase: "kicked" }, leavingRef, fetchSpy);
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText("You no longer have access to this note.")).toBeInTheDocument());
@@ -479,7 +479,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
 
     const { rerender } = render(tree(CONNECTED));
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(`/api/notes/${OWNER_NOTE.id}`, expect.objectContaining({ method: "DELETE" })),
@@ -575,10 +575,10 @@ describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆
     expect(screen.queryByRole("menuitem", { name: "Copy to my notes" })).not.toBeInTheDocument();
   });
 
-  it("群組筆記（有刪除權限）：Move to trash 照舊在選單裡", async () => {
+  it("群組筆記（有刪除權限）：Delete 照舊在選單裡", async () => {
     renderCopyMenu("header", { ...GROUP_NOTE, role: "editor", permissions: { ...EDITOR_PERMS, edit: true, delete: true } });
     openAnyMenu("header");
-    expect(await screen.findByRole("menuitem", { name: "Move to trash" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 });
 

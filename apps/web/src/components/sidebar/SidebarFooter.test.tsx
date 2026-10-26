@@ -95,6 +95,24 @@ describe("SidebarFooter", () => {
     expect(onCreateNote).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["myNotes", "recent"] as const)("SF7 %s tab：有 New note", (tab) => {
+    stubTrash();
+    renderFooter(tab);
+    expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+  });
+
+  it.each(["workspace", "shared"] as const)("SF7 %s tab：沒有 New note（它只建個人筆記）", (tab) => {
+    stubTrash();
+    renderFooter(tab);
+    expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+  });
+
+  it.each(["workspace", "shared"] as const)("SF7 %s tab 但搜尋中 → 仍有 New note（搜尋結果不分 tab）", (tab) => {
+    stubTrash();
+    renderFooter(tab, { searching: true });
+    expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+  });
+
   it("SF2 newNotePending → disabled", () => {
     stubTrash();
     renderFooter("myNotes", { newNotePending: true });

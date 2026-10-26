@@ -7,7 +7,7 @@ import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, openGro
  * C 開著那篇 → A 從 ⋮「Move to…」第二層選單選群組把它移進群組（確認框列出 C、說公開連結會關）→
  * A 的網址列變 `/g/<group id>/<slug>`、面板換成群組版；C ≤10 秒被踢回首頁；公開網址 404 →
  * B 開**舊的** `/n/<A handle>/<slug>` → 網址列變 `/g/…`、內容正確 → B 在 ⋮「Copy to… → My notes」→ toast「Open copy」→
- * 副本頁的圖是**新的**上傳網址、真的載得出來 → A 從 ⋮「Move to trash」刪群組筆記（原圖的上傳端點 403）→ B 重整副本頁，圖仍載得出來。
+ * 副本頁的圖是**新的**上傳網址、真的載得出來 → A 從 ⋮「Delete」刪群組筆記（原圖的上傳端點 403）→ B 重整副本頁，圖仍載得出來。
  *
  * 不斷言 A 搬完的角色（主檔規格落差 17：create-only 角色搬完是 viewer；A 是群組建立者＝內建管理員，本支不測
  * create-only——那條由 server Task 3 案 9 與 web Task 9 案 14 守）。v2 沒有「移出群組」（W4），舊版的移出段整段刪除。
@@ -227,9 +227,9 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     expect(copySrc).not.toBe(originalSrc); // 附件複製成新 id、網址改寫
     await expectImageLoaded(copyImg);
 
-    // ── A：刪群組筆記（⋮ → Move to trash，不確認）→ 原圖的上傳端點 403（#181：筆記進垃圾桶，附件仍在、看不到的上傳是 403）
+    // ── A：刪群組筆記（⋮ → Delete，不確認）→ 原圖的上傳端點 403（#181：筆記進垃圾桶，附件仍在、看不到的上傳是 403）
     await adminPage.getByRole("button", { name: "More", exact: true }).click();
-    await adminPage.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+    await adminPage.getByRole("menuitem", { name: "Delete", exact: true }).click();
     await expect(adminPage).toHaveURL(/\/$/, { timeout: 15_000 });
     await expect(async () => {
       expect((await adminContext.request.get(originalSrc!)).status()).toBe(403);

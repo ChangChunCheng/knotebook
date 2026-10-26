@@ -154,7 +154,7 @@
       "moveTo": "移動到…",
       "copyTo": "複製到…",
       "makeCopy": "建立副本",
-      "delete": "移到垃圾桶"
+      "delete": "刪除"
     },
     "width": {
       "label": "寬度",

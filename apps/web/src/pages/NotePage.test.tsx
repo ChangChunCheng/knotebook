@@ -2142,7 +2142,7 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     await screen.findByLabelText("Note title", { selector: "input" });
 
     const menu = await openSidebarRowMenu("My Note");
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByText("home landing")).toBeInTheDocument();
     expect(calls).toContain(`DELETE /api/notes/${NOTE.id}`);
@@ -2195,7 +2195,7 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     await screen.findByLabelText("Note title", { selector: "input" });
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/\|/));
     // 等移入後常駐層的重抓（404 in_trash）真的落地成 error 態，才是讀碼發現 27 的起點（不用固定等待）。
     await waitFor(() => expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("error"));

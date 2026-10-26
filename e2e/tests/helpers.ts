@@ -81,6 +81,10 @@ export async function createUserViaInvite(
  * `createNote`；所有走 `createNote` 的 page（流程 1／2／3 的 adminPage／4）都由這裡涵蓋。）
  */
 export async function createNote(page: Page, title: string): Promise<void> {
+  // 頁尾「New note」只在 My notes／Recent／搜尋中顯示；呼叫端可能停在 Workspace／Shared with me，先切回 My notes。
+  if (!(await page.getByRole("button", { name: "New note", exact: true }).isVisible())) {
+    await showSidebarTab(page, "My notes");
+  }
   await page.getByRole("button", { name: "New note", exact: true }).click();
   // #122 首跳：新筆記的 canonical 是 /n/<handle>/untitled-<uuid8>（slug 吃 DB default）
   await page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
@@ -270,7 +274,7 @@ export function toastWithTitle(page: Page, title: string): Locator {
 }
 
 /**
- * #181：側欄（或傳入的範圍）裡某篇筆記列的 ⋮ →「Move to trash」，等該列離開清單、toast 出現；回傳 toast locator。
+ * #181：側欄（或傳入的範圍）裡某篇筆記列的 ⋮ →「Delete」，等該列離開清單、toast 出現；回傳 toast locator。
  * 移入不確認（spec §6.10.4）。移的是開著的那篇時，頁面會導回 `/`（同頁首 ⋮）。
  */
 export async function moveNoteToTrashFromSidebar(page: Page, title: string, scope?: Locator): Promise<Locator> {
@@ -279,7 +283,7 @@ export async function moveNoteToTrashFromSidebar(page: Page, title: string, scop
   // ⋮ 是 hover 浮出（hoverReveal），先 hover 再點（同 22 的 E7）。
   await actions.hover();
   await actions.click();
-  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await expect(actions).toHaveCount(0, { timeout: 15_000 });
   const toastItem = toastWithTitle(page, "Moved to the trash");
   await expect(toastItem).toBeVisible();

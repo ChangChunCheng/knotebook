@@ -11,7 +11,7 @@ const TrashFooter = lazy(() => import("@/components/sidebar/TrashLazy").then((m)
 const SelectActionBar = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectActionBar })));
 
 /**
- * 側欄底部（tab 列與 UserMenu 之間）：平常是「新增筆記」；垃圾桶 tab 換成保留天數說明（spec §6.10.1），
+ * 側欄底部（tab 列與 UserMenu 之間）：「我的筆記」「最近」tab 是「新增筆記」（永遠建個人筆記，所以「工作區」「與我共用」tab 不顯示）；垃圾桶 tab 換成保留天數說明（spec §6.10.1），
  * 垃圾桶選取模式換成動作列（spec §6.10.2），兩者在 `TrashFooter.tsx`；一般 tab 的選取模式換成 `SelectActionBar`（spec §6.11，PR-2c）。
  * 搜尋中一律「新增筆記」（搜尋視圖不是任何 tab 的清單）。
  * ⚠ 本體不呼叫 `useTrash()`／`useNotes()`（讀碼發現 28）：只有對應狀態才渲染的子元件呼叫，其他 tab 不多打 `GET /api/trash`。
@@ -44,7 +44,8 @@ export function SidebarFooter({
       </SidebarLazyBoundary>
     );
   }
-  if (tab !== "trash") return newNote;
+  if (tab === "myNotes" || tab === "recent") return newNote;
+  if (tab !== "trash") return null;
   // 佔位與保留天數說明「載入中」同高，chunk 到了版面不跳。chunk 載入失敗時錯誤＋重試由面板那份（同一個 chunk）顯示，
   // 底部的錯誤內容隱藏、不重複一顆重試鈕。
   return (
