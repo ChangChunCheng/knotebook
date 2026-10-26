@@ -12,6 +12,8 @@ import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { trashItem, trashList } from "@/test/trash-fixtures";
+import { personalNote } from "@/test/select-fixtures";
+import { __resetCollapseForTests } from "@/components/sidebar/collapse";
 import { clickOutside } from "@/test/outside-click";
 
 // 側欄 tab 與 AppShell 的接線（plan T2）。骨架抄 AppShell.test.tsx 的「#115 側欄抽屜」describe。
@@ -655,5 +657,128 @@ describe("AppShell — 批次進行中關掉抽屜（PR-2c T5）", () => {
     await server.release();
     await waitFor(() => expect(within(header(drawer)).getByRole("button", { name: "Select" })).toBeInTheDocument());
     expect(server.deletes).toEqual(["n1", "n2", "n3"]);
+  });
+});
+
+/** 一般 tab 選取模式與 AppShell 的接線（#181 PR-2c T6，spec §6.10.2 M6、§5.10、抽屜 Esc）。 */
+describe("AppShell — 一般 tab 選取模式（PR-2c T6）", () => {
+  const notes = ["p1", "p2", "p3"].map((id) => personalNote({ id, title: id }));
+  const header = (container: HTMLElement) => container.querySelector("[data-sidebar-header]") as HTMLElement;
+  const noteBox = (container: HTMLElement, id: string) =>
+    container.querySelector<HTMLInputElement>(`input[type="checkbox"][data-selection-key="note:${id}"]`);
+
+  /** 等清單到了（「Select」可按）再按，等勾選樹換上。 */
+  async function startSelecting(container: HTMLElement): Promise<void> {
+    await waitFor(() => expect(within(header(container)).getByRole("button", { name: "Select" })).toBeEnabled());
+    fireEvent.click(within(header(container)).getByRole("button", { name: "Select" }));
+    await waitFor(() => expect(noteBox(container, "p1")).not.toBeNull());
+  }
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetCollapseForTests();
+  });
+
+  it("AS-S1 兩份共用：窄螢幕抽屜內 Select、勾 p1 → 靜態卡那份也勾、1 selected", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes(notes);
+    renderShell();
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    await startSelecting(drawer);
+    fireEvent.click(noteBox(drawer, "p1")!);
+
+    expect(noteBox(drawer, "p1")).toBeChecked();
+    expect(noteBox(aside(), "p1")).toBeChecked();
+    expect(noteBox(aside(), "p2")).not.toBeChecked();
+    expect(within(header(aside())).getByText("1 selected", { exact: true })).toBeInTheDocument();
+    expect(within(header(drawer)).getByText("1 selected", { exact: true })).toBeInTheDocument();
+  });
+
+  it("AS-S2 不重繪 children（spec §5.10）：Select、勾三篇、Done，只消費 actions 的子樹不重跑", async () => {
+    stubFetchWithNotes(notes);
+    let renders = 0;
+    const seen: SidebarTabActions[] = [];
+    const Counter = memo(function Counter() {
+      renders += 1;
+      seen.push(useSidebarTabActions());
+      return <div>counter</div>;
+    });
+    renderShell(<Counter />);
+    await within(aside()).findByRole("link", { name: "p1" });
+    const baseline = renders;
+    expect(baseline).toBeGreaterThan(0);
+
+    await startSelecting(aside());
+    for (const id of ["p1", "p2", "p3"]) fireEvent.click(noteBox(aside(), id)!);
+    expect(within(header(aside())).getByText("3 selected", { exact: true })).toBeInTheDocument();
+    fireEvent.click(within(header(aside())).getByRole("button", { name: "Done" }));
+    expect(within(header(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
+
+    expect(renders).toBe(baseline);
+    for (const actions of seen) expect(actions).toBe(seen[0]);
+  });
+
+  it("AS-S3 抽屜 Esc（派在 document，同 SM19）：選取結束、抽屜不關、焦點在抽屜我的筆記標題列的 Select", async () => {
+    stubControllableMatchMedia(true);
+    stubFetchWithNotes(notes);
+    renderShell();
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    await startSelecting(drawer);
+    fireEvent.click(noteBox(drawer, "p1")!);
+    noteBox(drawer, "p1")!.focus();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBe(drawer);
+    expect(drawer.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    const select = header(drawer).querySelector("button[data-sidebar-select]");
+    expect(select).toHaveAccessibleName("Select");
+    expect(select).toHaveFocus();
+  });
+
+  it("AS-S4 選取中切 tab 離開：點 Workspace → 平常標題列、底部 New note", async () => {
+    stubFetchWithNotes(notes);
+    renderShell();
+    await startSelecting(aside());
+    fireEvent.click(noteBox(aside(), "p1")!);
+    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull();
+
+    fireEvent.click(within(aside()).getByRole("tab", { name: "Workspace" }));
+    expect(within(header(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
+    expect(within(header(aside())).queryByRole("button", { name: "Done" })).toBeNull();
+    expect(within(header(aside())).queryByText(/selected/)).toBeNull();
+    expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
+  });
+
+  it("AS-S5 搜尋離開：選取中在搜尋框打字 → 選取結束；清空後我的筆記是平常的列與標題列", async () => {
+    stubFetchWithNotes(notes);
+    renderShell();
+    await startSelecting(aside());
+    fireEvent.click(noteBox(aside(), "p1")!);
+
+    const input = within(aside()).getByRole("textbox", { name: "Search notes" });
+    fireEvent.change(input, { target: { value: "p" } });
+    expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(await within(aside()).findByRole("link", { name: "p1" })).toBeInTheDocument();
+    expect(within(header(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
+    expect(within(header(aside())).queryByRole("button", { name: "Done" })).toBeNull();
+    expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
+    expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
+  });
+
+  it("AS-S6 寬螢幕焦點：靜態卡 Select → 焦點在靜態卡的 Done", async () => {
+    stubControllableMatchMedia(false);
+    stubFetchWithNotes(notes);
+    renderShell();
+    await startSelecting(aside());
+    const done = await within(header(aside())).findByRole("button", { name: "Done" });
+    await waitFor(() => expect(done).toHaveFocus());
   });
 });
