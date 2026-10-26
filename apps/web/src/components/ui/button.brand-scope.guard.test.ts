@@ -63,7 +63,7 @@ describe("brandSolid 呼叫端範圍守衛（N10）", () => {
     expect(tsxFiles.some((p) => p.endsWith("/auth/guards.tsx"))).toBe(true);
 
     const offenders = tsxFiles
-      .filter((file) => /\bbrandSolid\b/.test(stripComments(readFileSync(file, "utf8"))))
+      .filter((file) => /\bbrandSolid\b/.test(stripComments(readFileSync(file, "utf8"), file)))
       .map((file) => file.slice(root.length + 1));
 
     expect(offenders.sort()).toEqual([...ALLOWED_FILES].sort());

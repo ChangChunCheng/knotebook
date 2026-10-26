@@ -72,7 +72,7 @@ describe("Button size=lg 呼叫端範圍守衛（同款卡片頁例外）", () =
     expect(files.some((p) => p.endsWith("/auth/guards.tsx"))).toBe(true); // 遞迴確實走到子目錄
 
     const offenders = files
-      .filter((file) => LG_SIZE.test(stripComments(readFileSync(file, "utf8"))))
+      .filter((file) => LG_SIZE.test(stripComments(readFileSync(file, "utf8"), file)))
       .map((file) => file.slice(root.length + 1));
 
     expect(offenders.sort()).toEqual([...ALLOWED_FILES].sort());
@@ -81,7 +81,7 @@ describe("Button size=lg 呼叫端範圍守衛（同款卡片頁例外）", () =
   it("任何 \"lg\" 字串字面（剝註解後）也只出現在允許清單", () => {
     const root = `${process.cwd()}/src`;
     const offenders = listTsxFiles(root)
-      .filter((file) => LG_LITERAL.test(stripComments(readFileSync(file, "utf8"))))
+      .filter((file) => LG_LITERAL.test(stripComments(readFileSync(file, "utf8"), file)))
       .map((file) => file.slice(root.length + 1));
 
     expect(offenders.sort(), '"lg" 字串只准給 Button 的 size 用在同款卡片頁；別的元件要用 lg 名稱請改名，或更新 button.tsx 規範與本守衛的允許清單').toEqual([...LITERAL_FILES].sort());
