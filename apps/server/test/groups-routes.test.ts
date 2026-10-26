@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import type { GroupDto, GroupMemberDto, GroupRoleDto } from "@knotebook/shared";
@@ -104,16 +105,13 @@ describe("#103／#175 POST／GET /api/groups", () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db);
     const other = await seedUser(db);
-    const beta = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
-    await setMemberRole(db, beta.id, me.id, await seedRole(db, beta.id, "Reader", { canRead: true }));
-    // 刻意讓「建立順序」與「id 順序」相反：uuid 隨機，重建到 id 比 beta 小的同名群組為止；
+    // 刻意讓「建立順序」與「id 順序」相反：先用較大的 id 建 beta、後用較小的 id 建 beta2（固定 id，不靠隨機重試）；
     // 沒有 asc(groups.id) 時結果會照建立（heap）順序給 beta、beta2，斷言必紅。
-    let beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
-    for (let tries = 0; beta2.id > beta.id; tries++) {
-      if (tries >= 20) throw new Error("取不到 id 比 beta 小的同名群組");
-      await db.delete(groups).where(eq(groups.id, beta2.id));
-      beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
-    }
+    // 小寫 uuid 字串的字典序與 Postgres uuid（16 bytes 由高到低比較）的順序一致。
+    const [lo, hi] = [randomUUID(), randomUUID()].sort();
+    const beta = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }], { id: hi });
+    await setMemberRole(db, beta.id, me.id, await seedRole(db, beta.id, "Reader", { canRead: true }));
+    const beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }], { id: lo });
     await setMemberRole(db, beta2.id, me.id, await seedRole(db, beta2.id, "Reader", { canRead: true }));
     const delta = await seedGroup(db, "Delta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
     const zeta = await seedGroup(db, "Zeta", [{ userId: me.id, role: "admin" }]);
