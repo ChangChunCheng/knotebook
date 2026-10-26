@@ -14,7 +14,7 @@ export function useApiTokens(): UseQueryResult<ApiTokenDto[]> {
 
 export interface CreateApiTokenInput {
   name: string;
-  /** #239：三種落庫形之一，由建立對話框的兩個 toggle（`ScopeTogglesField`）經 `scopeFromChecks` 算出（#247）。 */
+  /** #239／#181：五種落庫形之一，由建立對話框的三個 toggle（`ScopeTogglesField`）經 `scopeFromChecks` 算出（#247）。 */
   scope: TokenScope;
   expiresInDays: 30 | 90 | 365 | null;
 }

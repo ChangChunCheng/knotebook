@@ -948,6 +948,7 @@
       "apiTokensScopeMoveHint": "Moving a note into a group can't be undone: it removes the note's per-person shares, its public link and its version history, the group becomes its owner, and from then on the group's roles decide who can change or delete it. Every member of the group can read what is moved or copied there. Requires \"Create and edit notes\".",
       "apiTokensScopeDelete": "Move notes to the trash and restore them",
       "apiTokensScopeDeleteHint": "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app.",
+      "apiTokensScopeDeleteHintRequiresEdit": "{{hint}} Requires \"Create and edit notes\".",
       "apiTokensExpiryLabel": "Expires",
       "apiTokensExpiryNever": "Never",
       "apiTokensExpiryDays": "In {{days}} days",

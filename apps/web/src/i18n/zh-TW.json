@@ -948,6 +948,7 @@
       "apiTokensScopeMoveHint": "把筆記移進群組無法復原：會清掉這篇的個人分享、公開連結與版本歷史，改由群組擁有，之後由群組角色決定誰能修改或刪除。移入或複製進群組的內容，群組每位成員都讀得到。需同時勾選「建立與修改筆記」。",
       "apiTokensScopeDelete": "移到垃圾桶與還原",
       "apiTokensScopeDeleteHint": "不能永久刪除筆記；但留在垃圾桶的筆記之後仍可能被永久刪除（依站台的垃圾桶設定，或有人在網頁上刪除）。",
+      "apiTokensScopeDeleteHintRequiresEdit": "{{hint}}需同時勾選「建立與修改筆記」。",
       "apiTokensExpiryLabel": "有效期限",
       "apiTokensExpiryNever": "不到期",
       "apiTokensExpiryDays": "{{days}} 天後到期",

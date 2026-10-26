@@ -41,6 +41,12 @@ describe("#239 W3", () => {
     expect(en.settings.account.apiTokensDescription).toContain(`"${MOVE}"`);
     expect(en.settings.account.apiTokensDescription).toContain(`also needs "${DELETE}"`);
   });
+  // #181 T7 fix round 1 m1：刪除的說明比照搬移，以同一句「需同時勾選編輯」收尾（S2 本身不改，由模板接在後面）。
+  it("搬移、刪除說明都以同一句「需同時勾選編輯」收尾", () => {
+    const tail = `Requires "${EDIT}".`;
+    expect(en.settings.account.apiTokensScopeMoveHint!.endsWith(` ${tail}`)).toBe(true);
+    expect(en.settings.account.apiTokensScopeDeleteHintRequiresEdit).toBe(`{{hint}} ${tail}`);
+  });
 });
 
 describe("#181 zh-TW 標籤與引用", () => {
@@ -48,6 +54,11 @@ describe("#181 zh-TW 標籤與引用", () => {
     expect(ZH_DELETE).toBe("移到垃圾桶與還原");
     for (const l of [ZH_EDIT, ZH_MOVE, ZH_DELETE]) expect(zh.settings.account.apiTokensDescription).toContain(`「${l}」`);
     expect(zh.settings.account.apiTokensScopeMoveHint).toContain(`「${ZH_EDIT}」`);
+  });
+  it("zh 搬移、刪除說明都以同一句「需同時勾選編輯」收尾（T7 fix round 1 m1）", () => {
+    const tail = `需同時勾選「${ZH_EDIT}」。`;
+    expect(zh.settings.account.apiTokensScopeMoveHint!.endsWith(`。${tail}`)).toBe(true);
+    expect(zh.settings.account.apiTokensScopeDeleteHintRequiresEdit).toBe(`{{hint}}${tail}`);
   });
 });
 
