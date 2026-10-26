@@ -154,7 +154,6 @@
       "moveTo": "移動到…",
       "copyTo": "複製到…",
       "makeCopy": "建立副本",
-      "personalSpace": "個人空間",
       "delete": "移到垃圾桶"
     },
     "width": {
@@ -1209,7 +1208,6 @@
   "trash": {
     "header_one": "垃圾桶 · {{count}} 篇",
     "header_other": "垃圾桶 · {{count}} 篇",
-    "sectionPersonal": "個人",
     "sectionWorkspace": "工作坊",
     "daysLeft_one": "剩 {{count}} 天",
     "daysLeft_other": "剩 {{count}} 天",
@@ -1240,8 +1238,8 @@
     "emptyTitle": "清空垃圾桶？",
     "emptyDescription_one": "將永久刪除 {{count}} 篇筆記與附件，無法復原。",
     "emptyDescription_other": "將永久刪除 {{count}} 篇筆記與附件，無法復原。",
-    "emptyPersonal_one": "個人 {{count}} 篇",
-    "emptyPersonal_other": "個人 {{count}} 篇",
+    "emptyPersonal_one": "我的筆記 {{count}} 篇",
+    "emptyPersonal_other": "我的筆記 {{count}} 篇",
     "emptyWorkspace_one": "工作坊 {{count}} 篇",
     "emptyWorkspace_other": "工作坊 {{count}} 篇",
     "includesOthers": "（含其他成員刪除的）",

@@ -56,6 +56,9 @@ export interface SidebarTabActions {
   updateSelection: (op: SelectionOp) => void;
   /** 在選取模式就結束並回 true；否則回 false、不動 state。抽屜 Esc 用。 */
   endSelectionIfActive: () => boolean;
+  /** 目前這一輪選取的序號：每次 `updateSelection({ type: "start" })` 遞增；不在選取模式回 null。穩定函式（讀 ref）。
+   *  批次動作開跑時記下，結束時相同才套用選取結果——與元件是否還掛著無關（抽屜關掉會卸載動作列，但選取還在）。 */
+  getSelectionSession: () => number | null;
 }
 export interface SidebarTabState {
   tab: SidebarTab;
@@ -69,6 +72,7 @@ const NOOP_ACTIONS: SidebarTabActions = {
   showTab: () => {},
   updateSelection: () => {},
   endSelectionIfActive: () => false,
+  getSelectionSession: () => null,
 };
 const DEFAULT_STATE: SidebarTabState = { tab: DEFAULT_SIDEBAR_TAB, selection: EMPTY_SELECTION };
 
@@ -85,6 +89,7 @@ export function SidebarTabProvider({
   const [selection, dispatchSelection] = useReducer(reduceSelection, EMPTY_SELECTION);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const sessionRef = useRef(0);
   const drawer = useContext(SidebarDrawerContext);
   const drawerRef = useRef(drawer);
   drawerRef.current = drawer;
@@ -102,9 +107,16 @@ export function SidebarTabProvider({
     return true;
   }, []);
 
+  const updateSelection = useCallback((op: SelectionOp) => {
+    if (op.type === "start") sessionRef.current += 1;
+    dispatchSelection(op);
+  }, []);
+
+  const getSelectionSession = useCallback(() => (selectionRef.current.active ? sessionRef.current : null), []);
+
   const actions = useMemo<SidebarTabActions>(
-    () => ({ showTab, updateSelection: dispatchSelection, endSelectionIfActive }),
-    [showTab, dispatchSelection, endSelectionIfActive],
+    () => ({ showTab, updateSelection, endSelectionIfActive, getSelectionSession }),
+    [showTab, updateSelection, endSelectionIfActive, getSelectionSession],
   );
   if (actionsRef) actionsRef.current = actions;
   const state = useMemo<SidebarTabState>(() => ({ tab, selection }), [tab, selection]);

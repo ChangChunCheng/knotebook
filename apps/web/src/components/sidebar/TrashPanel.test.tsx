@@ -268,13 +268,13 @@ describe("TrashPanel（平常）", () => {
     expect(screen.getByTestId("selected-count")).toHaveTextContent("1");
   });
 
-  it("TP2 兩區：Personal 在前、區內照 server 順序；只有一區時另一區的區標不渲染", async () => {
+  it("TP2 兩區：My notes 在前、區內照 server 順序；只有一區時另一區的區標不渲染", async () => {
     stubServer({ items: [P1, P2, W1] });
     renderPanel();
     await waitFor(() => expect(row("w1")).not.toBeNull());
     const headings = within(panel()).getAllByRole("heading", { level: 3 });
-    expect(headings.map((h) => h.textContent)).toEqual(["Personal", "Workspace"]);
-    const personal = within(panel()).getByRole("list", { name: "Personal" });
+    expect(headings.map((h) => h.textContent)).toEqual(["My notes", "Workspace"]);
+    const personal = within(panel()).getByRole("list", { name: "My notes" });
     expect([...personal.querySelectorAll("li[data-node-id]")].map((li) => li.getAttribute("data-node-id"))).toEqual(["p1", "p2"]);
     const workspace = within(panel()).getByRole("list", { name: "Workspace" });
     expect([...workspace.querySelectorAll("li[data-node-id]")].map((li) => li.getAttribute("data-node-id"))).toEqual(["w1"]);
@@ -284,10 +284,10 @@ describe("TrashPanel（平常）", () => {
     stubServer({ items: [P1, P2] });
     renderPanel();
     await waitFor(() => expect(row("p2")).not.toBeNull());
-    expect(within(panel()).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Personal"]);
+    expect(within(panel()).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["My notes"]);
   });
 
-  it("TP2 只有工作坊項目 → 沒有 Personal 區標；清空框也沒有 Personal 列", async () => {
+  it("TP2 只有工作坊項目 → 沒有 My notes 區標；清空框也沒有 My notes 列", async () => {
     stubServer({ items: [W1] });
     renderPanel();
     await waitFor(() => expect(row("w1")).not.toBeNull());
@@ -493,7 +493,7 @@ describe("TrashPanel（平常）", () => {
     let dialog = await screen.findByRole("dialog", { name: "Empty the trash?" });
     expect(within(dialog).getByText("3 notes and their attachments will be permanently deleted. This can't be undone.", { exact: true })).toBeInTheDocument();
     const lines = within(dialog).getAllByRole("listitem").map((li) => li.textContent);
-    expect(lines).toEqual(["Personal: 2 notes", "Workspace: 1 note (including some deleted by other members)"]);
+    expect(lines).toEqual(["My notes: 2 notes", "Workspace: 1 note (including some deleted by other members)"]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.posts("/api/trash/purge")).toEqual([]);
@@ -561,7 +561,7 @@ describe("TrashPanel（平常）", () => {
     await waitFor(() => expect(header()).toHaveTextContent("Trash · 250 notes"));
     fireEvent.click(within(header()).getByRole("button", { name: "Empty" }));
     const dialog = await screen.findByRole("dialog", { name: "Empty the trash?" });
-    expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Personal: 250 notes"]);
+    expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["My notes: 250 notes"]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
     await waitFor(() => expect(server.posts("/api/trash/purge")).toHaveLength(2));
     const [a, b] = server.posts("/api/trash/purge") as { ids: string[] }[];
@@ -570,7 +570,7 @@ describe("TrashPanel（平常）", () => {
     expect(await screen.findByText("Permanently deleted 250 notes", { exact: true })).toBeInTheDocument();
   });
 
-  it("TP7 個人區有一篇刪除者帳號已刪（deletedBy: null）→ Personal 列帶「含其他成員」", async () => {
+  it("TP7 個人區有一篇刪除者帳號已刪（deletedBy: null）→ My notes 列帶「含其他成員」", async () => {
     const orphan = trashItem({ id: "p3", title: "p3", deletedBy: null }, { deletedDaysAgo: 3 });
     stubServer({ items: [P1, orphan] });
     renderPanel();
@@ -578,7 +578,7 @@ describe("TrashPanel（平常）", () => {
     fireEvent.click(within(header()).getByRole("button", { name: "Empty" }));
     const dialog = await screen.findByRole("dialog", { name: "Empty the trash?" });
     expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "Personal: 2 notes (including some deleted by other members)",
+      "My notes: 2 notes (including some deleted by other members)",
     ]);
   });
 
@@ -654,7 +654,20 @@ describe("TrashPanel（平常）", () => {
       const empty = within(header()).getByRole("button", { name: "清空" });
       fireEvent.click(empty);
       const dialog = await screen.findByRole("dialog", { name: "清空垃圾桶？" });
-      expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["個人 2 篇", "工作坊 1 篇（含其他成員刪除的）"]);
+      expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["我的筆記 2 篇", "工作坊 1 篇（含其他成員刪除的）"]);
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("TC4 zh-TW：個人區的區標與清單名稱是「我的筆記」（與側欄 tab 同名）", async () => {
+    await i18n.changeLanguage("zh-TW");
+    try {
+      stubServer({ items: [P1, W1] });
+      renderPanel();
+      await waitFor(() => expect(row("w1")).not.toBeNull());
+      expect(within(panel()).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["我的筆記", "工作坊"]);
+      expect(within(panel()).getByRole("list", { name: "我的筆記" })).toBeInTheDocument();
     } finally {
       await i18n.changeLanguage("en");
     }
@@ -777,6 +790,15 @@ describe("TrashPanel（選取模式）", () => {
     fireEvent.click(checkbox("w1"), { shiftKey: true });
     expect(checkedIds()).toEqual(["p1", "p2", "w1"]);
     expect(within(header()).getByText("3 selected", { exact: true })).toBeInTheDocument();
+  });
+
+  it("SM3b 點列文字帶修飾鍵（Firefox 不轉送給勾選框，由 label 自己切換）：Shift 走範圍、Ctrl 只切一次", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(within(rowLabel("w1")).getByText("w1", { exact: true }), { shiftKey: true });
+    expect(checkedIds()).toEqual(["p1", "p2", "w1"]);
+    fireEvent.click(within(rowLabel("p2")).getByText("p2", { exact: true }), { ctrlKey: true });
+    expect(checkedIds()).toEqual(["p1", "w1"]);
   });
 
   it("SM4 Ctrl＋點與一般點選相同：p1 → Ctrl 點 w1 → 只有 p1、w1", async () => {

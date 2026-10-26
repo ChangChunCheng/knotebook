@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { usePurgeTrash, useRestoreTrash, useTrash } from "@/api/trash";
+import { SIDEBAR_SELECT_BUTTON } from "@/lib/sidebar-selection";
 import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
-import { selectedTrashIds, TRASH_SELECT_BUTTON } from "@/lib/trash-display";
+import { selectedTrashIds } from "@/lib/trash-display";
 import { Button } from "@/components/ui/button";
 import { RotateCcw, Trash } from "@/components/ui/icons";
 import { PurgeConfirmDialog, toastTrashFailure, toastTrashResult } from "@/components/sidebar/trash-dialogs";
@@ -80,7 +81,7 @@ function TrashActionBar() {
     if (!mountedRef.current) return;
     flushSync(end);
     const active = document.activeElement;
-    if (active === null || active === document.body || shell?.contains(active)) shell?.querySelector<HTMLButtonElement>(TRASH_SELECT_BUTTON)?.focus();
+    if (active === null || active === document.body || shell?.contains(active)) shell?.querySelector<HTMLButtonElement>(SIDEBAR_SELECT_BUTTON)?.focus();
   }
 
   /**
@@ -94,7 +95,7 @@ function TrashActionBar() {
     flushSync(() => {
       ended = endSelectionIfActive();
     });
-    if (ended) shell?.querySelector<HTMLButtonElement>(TRASH_SELECT_BUTTON)?.focus();
+    if (ended) shell?.querySelector<HTMLButtonElement>(SIDEBAR_SELECT_BUTTON)?.focus();
   }
 
   return (

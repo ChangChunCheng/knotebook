@@ -500,7 +500,7 @@ describe("NoteMenu（⋮ 選單，spec D.4）", () => {
   });
 });
 
-// ── #175 PR2 ⋮「複製到我的筆記」（Task 10），#216 起併入「複製到… → 個人空間」──
+// ── #175 PR2 ⋮「複製到我的筆記」（Task 10），#216 起併入「複製到… → 我的筆記」──
 // 兩個外殼（頁首 NoteMenu、側欄 SidebarNoteMenu）共用 NoteMenuCore，各一案守「可見性」。
 
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -511,7 +511,7 @@ const GROUP_NOTE: NoteDto = {
   role: "viewer",
   groupId: GROUP_ID,
   group: { id: GROUP_ID, name: "Workshop A" },
-  // 只讀角色：不能編輯也不能刪除，仍可複製到個人空間（看得到即可讀）。
+  // 只讀角色：不能編輯也不能刪除，仍可複製到我的筆記（看得到即可讀）。
   permissions: { ...EDITOR_PERMS, edit: false, delete: false },
 };
 
@@ -552,7 +552,7 @@ function openAnyMenu(shell: "header" | "sidebar"): void {
   fireEvent.pointerDown(screen.getByRole("button", { name }), { button: 0 });
 }
 
-describe("NoteMenu：複製到我的筆記已併入「複製到… → 個人空間」（#216）", () => {
+describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆記」（#216）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();

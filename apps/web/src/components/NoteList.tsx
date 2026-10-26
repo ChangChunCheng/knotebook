@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { canonicalNotePath, type NoteDto } from "@knotebook/shared";
+import { canonicalNotePath, type GroupDto, type NoteDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { useGroups } from "@/api/groups";
 import { GroupMenu } from "@/components/groups/GroupMenu";
@@ -9,14 +9,24 @@ import { GroupNameDialog } from "@/components/groups/GroupNameDialog";
 import { SidebarNoteMenu } from "@/components/NoteMenu";
 import { useNotes } from "@/api/notes";
 import { useActiveNote } from "@/lib/active-note";
-import { useSidebarTabState } from "@/lib/sidebar-tab";
+import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { hoverReveal } from "@/components/ui/reveal";
-import { ChevronRight, Plus, Users } from "@/components/ui/icons";
+import { Plus, SquareCheck } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
+import { useCollapsed } from "@/components/sidebar/collapse";
+import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
+import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
-import { buildTabNodes, noteLocationLabel, type SidebarNode } from "@/components/sidebar/tree";
+import { buildTabNodes, hasNoteNodes, noteLocationLabel, type SidebarNode } from "@/components/sidebar/tree";
+
+// 一般 tab 選取模式（PR-2c）：只准經 SelectLazy 這個 lazy 入口（首包上限）。兩個掛點共用同一個 chunk。
+const SelectHeader = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectHeader })));
+const SelectableTree = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectableTree })));
+
+const EMPTY_GROUPS: GroupDto[] = [];
+const EMPTY_NODES: SidebarNode[] = [];
 
 /** ApiFail → errors.<code>；其餘（網路失敗等）→ errors.fallback。與 LoginPage
  * 逐字同一套對映規則（見 client.ts 的說明）。 */
@@ -32,7 +42,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
  * 結果裡（server 只回傳使用者有權限看的筆記）。PR2：側欄改小字化，不再是 pill。
  * #182（Willie 2026-10-02）：群組筆記（`group` 非 null）一律不標——角色看筆記頁頂端徽章；
  * 只有逐人分享給我的個人筆記保留。 */
-function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
+export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
   const { t } = useTranslation();
   if (group) return null;
   if (role !== "editor" && role !== "viewer") return null;
@@ -110,41 +120,6 @@ function NoteRow({ note, variant, groupIds }: NoteRowProps) {
   );
 }
 
-/** 折疊狀態的 localStorage 鍵前綴（spec A6）：`sidebar.collapsed.group:<id>`，
- * 值 `"1"`＝收合、缺鍵＝展開（預設）。頂層四鍵隨 tab 化拿掉（舊值留在 storage 裡無害）。 */
-export const COLLAPSE_STORAGE_PREFIX = "sidebar.collapsed.";
-
-export type SidebarSectionKey = `group:${string}`;
-
-function readCollapsed(key: SidebarSectionKey): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSE_STORAGE_PREFIX + key) === "1";
-  } catch {
-    // Safari 隱私模式／被封鎖的儲存：當作沒存過（預設展開），不讓側欄炸掉。
-    return false;
-  }
-}
-
-function writeCollapsed(key: SidebarSectionKey, collapsed: boolean): void {
-  try {
-    if (collapsed) window.localStorage.setItem(COLLAPSE_STORAGE_PREFIX + key, "1");
-    else window.localStorage.removeItem(COLLAPSE_STORAGE_PREFIX + key);
-  } catch {
-    // 寫不進去就只活在本次 session 的 state 裡。
-  }
-}
-
-/** 每個群組一把折疊狀態：初值讀 localStorage 一次，之後 state 為準、寫入盡力而為。 */
-function useCollapsed(key: SidebarSectionKey): [expanded: boolean, toggle: () => void] {
-  const [collapsed, setCollapsed] = useState(() => readCollapsed(key));
-  const toggle = () => {
-    const next = !collapsed;
-    writeCollapsed(key, next);
-    setCollapsed(next);
-  };
-  return [!collapsed, toggle];
-}
-
 /** 標題列／群組列右側的 24px「＋」圖示鈕。tab 標題列的常駐；群組列的帶 `reveal="grouprow"`
  * （列 hover 或列內有 `:focus-visible` 才顯示——鍵盤 tab 到它時一定看得見（P19）；滑鼠點過留下的
  * 焦點不算（不是 focus-within））。 */
@@ -188,10 +163,8 @@ interface NodeContext {
 }
 
 /**
- * 工作坊 tab 的群組節點：像檔案樹的一個資料夾列。前導圖示槽平常是 `Users`，列 hover／
- * 列內有 `:focus-visible`（鍵盤焦點；滑鼠點完留下的焦點不算）時換成 chevron；觸控裝置（`hover: none`）一律 chevron。兩個圖示都
- * `aria-hidden`，button 的名稱只有群組名。筆記掛在導引線下，線對齊圖示槽中心
- * （px-2 8＋槽寬 14 / 2 ＝ 15px）。折疊共用 `useCollapsed`。
+ * 工作坊 tab 的群組節點：像檔案樹的一個資料夾列（折疊主鈕見 `GroupRowButton`）。筆記掛在導引線下，線對齊圖示槽中心
+ * （px-2 8＋槽寬 14 / 2 ＝ 15px）。折疊狀態是 `sidebar/collapse.ts` 的共用 store（靜態卡、抽屜、選取樹同步）。
  */
 function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }>; ctx: NodeContext }) {
   const { t } = useTranslation();
@@ -200,27 +173,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
   return (
     <li data-node-kind="group" data-node-id={group.id} className="flex flex-col gap-0.5">
       <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={toggle}
-          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-foreground group-hover/grouprow:text-brand-on-soft"
-        >
-          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground group-hover/grouprow:text-brand-on-soft">
-            <Users
-              aria-hidden="true"
-              className="h-3.5 w-3.5 group-hover/grouprow:hidden group-has-[:focus-visible]/grouprow:hidden [@media(hover:none)]:hidden"
-            />
-            <ChevronRight
-              aria-hidden="true"
-              className={cn(
-                "hidden h-3 w-3 transition-transform group-hover/grouprow:block group-has-[:focus-visible]/grouprow:block [@media(hover:none)]:block",
-                open && "rotate-90",
-              )}
-            />
-          </span>
-          <span className="truncate">{group.name}</span>
-        </button>
+        <GroupRowButton name={group.name} open={open} onToggle={toggle} />
         {/* #175 §8.2＋PR3：「＋」只在我的角色能在這個群組建立**且能編輯**筆記時渲染——能建不能改的人建出來的是
             自己也改不了的空白筆記（spec 疑點 11；他仍可經移入／複製把筆記放進群組，PR2）；`myRole` null＝防禦，不渲染。 */}
         {group.myRole?.permissions.create && group.myRole.permissions.edit && (
@@ -277,19 +230,45 @@ const MESSAGE_CLASS = "p-2 text-sm text-muted-foreground";
  * 工作坊 tab（與「零筆記時要等群組才知道是不是全空」），群組筆記在那期間依兜底列落與我共享、
  * 資料到了再歸位。搜尋由 `sidebar/SearchResults` 負責。
  * tabpanel 的 `tabIndex={0}` 在 `AppShell`（WAI-ARIA APG：面板第一個有內容的元素不可聚焦時，Tab 要能停在面板上）。
+ *
+ * 選取模式（PR-2c，spec §6.11）：標題列「選取」由這裡渲染；進入後標題列內容換成 lazy 的 `SelectHeader`、清單內容換成
+ * `SelectableTree`（`SelectLazy` chunk，fallback 是平常的名稱與列）。捲動容器 `[data-sidebar-list]` 不換（捲動位置不跳）。
+ * `nodes`／`groupIds` 以 `useMemo` 穩定，選取列的 memo 才有效。焦點只由發起的那一份實例移動（`focusAfterRef`：進入→「完成」、
+ * 離開→「選取」）。Esc 由 `SelectHeader` 在 document 層處理（本元件不掛）。群組折疊與選取樹共用 `sidebar/collapse.ts`。
  */
 export function NoteList({ onCreateNote, createNotePending = false }: NoteListProps) {
   const { t } = useTranslation();
-  const { tab } = useSidebarTabState();
+  const { tab, selection } = useSidebarTabState();
+  const { updateSelection } = useSidebarTabActions();
   const notesQuery = useNotes();
   const groupsQuery = useGroups();
   const [createOpen, setCreateOpen] = useState(false);
   const addGroupRef = useRef<HTMLButtonElement>(null);
+  const selectButtonRef = useRef<HTMLButtonElement>(null);
+  /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
+  const focusAfterRef = useRef<"done" | "select" | null>(null);
 
   const spec = tabSpec(tab);
-  const groups = groupsQuery.data ?? [];
-  const groupIds: ReadonlySet<string> = new Set(groups.map((group) => group.id));
+  const groups = groupsQuery.data ?? EMPTY_GROUPS;
+  // memo（plan gate r1 I2）：不 memo 的話每次勾選都換 `nodes`／`groupIds`，選取樹的 `onToggle` 隨之換、所有列重繪。
+  const groupIds = useMemo<ReadonlySet<string>>(() => new Set((groupsQuery.data ?? EMPTY_GROUPS).map((group) => group.id)), [groupsQuery.data]);
+  const nodes = useMemo(
+    () =>
+      notesQuery.isSuccess && (tab !== "workspace" || groupsQuery.data !== undefined)
+        ? buildTabNodes(tab, notesQuery.data, groupsQuery.data ?? EMPTY_GROUPS)
+        : null,
+    [tab, notesQuery.isSuccess, notesQuery.data, groupsQuery.data],
+  );
+  const selectable = nodes !== null && hasNoteNodes(nodes);
   const ctx: NodeContext = { tab, groupIds, onCreateNote, createNotePending };
+
+  useEffect(() => {
+    if (selection.active) return;
+    // 選取結束：發起的那一份把焦點交回「選取」；沒掛上 SelectHeader 就結束的「done」旗標一併清掉。
+    const target = focusAfterRef.current;
+    focusAfterRef.current = null;
+    if (target === "select") selectButtonRef.current?.focus();
+  }, [selection.active]);
   const groupsAlert = groupsQuery.isError ? (
     <p role="alert" className="p-2 text-sm text-destructive">
       {errorMessage(t, groupsQuery.error)}
@@ -323,7 +302,8 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
       }
     }
 
-    const nodes = buildTabNodes(tab, notes, groups);
+    // 上面已處理 pending／error（工作坊另含群組），到這裡 `nodes` 一定有值。
+    if (nodes === null) return null;
     if (nodes.length === 0) {
       if (tab === "recent") return emptyState;
       if (tab === "shared") return <p className={MESSAGE_CLASS}>{t("sidebar.emptyShared")}</p>;
@@ -362,8 +342,32 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             onClick={() => setCreateOpen(true)}
           />
         );
-      // 只在垃圾桶 tab 宣告，由 `TrashPanel` 自己渲染；PR-2c 起 `selectMode` 在這裡渲染。
       case "selectMode":
+        // 同 `TrashPanel` 那顆（24px 例外，button.tsx 檔頭）；字沿用首包的 `trash.select`（一般 tab 也叫「選取」，改鍵名要動首包兩語系）。
+        return (
+          <Button
+            key={action}
+            ref={selectButtonRef}
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("trash.select")}
+            title={t("trash.select")}
+            disabled={!selectable}
+            // 握把：離開選取模式後經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦（`SIDEBAR_SELECT_BUTTON`）。
+            data-sidebar-select=""
+            // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的）。
+            onClick={() => {
+              if (selection.active) return;
+              focusAfterRef.current = "done";
+              updateSelection({ type: "start" });
+            }}
+            className="h-6 w-6 shrink-0"
+          >
+            <SquareCheck aria-hidden="true" className="h-3.5 w-3.5" />
+          </Button>
+        );
+      // 只在垃圾桶 tab 宣告，由 `TrashPanel` 自己渲染。
       case "emptyTrash":
         return null;
       default: {
@@ -374,17 +378,49 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     }
   }
 
+  const tabLabel = (
+    <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+      <span className="truncate">{t(spec.labelKey)}</span>
+    </span>
+  );
+
   return (
     <>
       <div data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
-        <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
-          <span className="truncate">{t(spec.labelKey)}</span>
-        </span>
-        {spec.actions.map(renderAction)}
+        {selection.active ? (
+          // chunk 還沒到：只有名稱（不含動作鈕）。
+          <SidebarLazyBoundary chunk="select" fallback={tabLabel} errorClassName="hidden">
+            <SelectHeader
+              nodes={nodes ?? EMPTY_NODES}
+              onMounted={(done) => {
+                if (focusAfterRef.current !== "done") return;
+                focusAfterRef.current = null;
+                done?.focus();
+              }}
+              onDone={() => {
+                focusAfterRef.current = "select";
+                updateSelection({ type: "end" });
+              }}
+            />
+          </SidebarLazyBoundary>
+        ) : (
+          <>
+            {tabLabel}
+            {spec.actions.map(renderAction)}
+          </>
+        )}
       </div>
-      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端（spec §5.3）。 */}
+      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端（spec §5.3）。進出選取模式不換（捲動位置不跳）。 */}
       <div key={tab} data-sidebar-list="" className="min-h-0 flex-1 overflow-y-auto px-2">
-        {renderBody()}
+        {selection.active && nodes !== null && nodes.length > 0 && tab !== "trash" ? (
+          // chunk 還沒到：照常顯示平常的列，到了才換勾選框。選取中清單重抓後變得沒有可勾的篇（只剩空群組）也留在勾選樹：
+          // 群組列不帶「＋」與 ⋮，與選取標題列一致；完全沒有節點時是平常的空狀態句（沒有動作鈕）。
+          <SidebarLazyBoundary chunk="select" fallback={<SidebarNodeList nodes={nodes} ctx={ctx} />} errorClassName="p-2">
+            <SelectableTree nodes={nodes} tab={tab} groupIds={groupIds} />
+          </SidebarLazyBoundary>
+        ) : (
+          renderBody()
+        )}
       </div>
       {/* 對話框只在開啟時掛載，關閉時焦點還給標題列「＋」（`returnFocusRef`）。 */}
       {createOpen && <GroupNameDialog mode="create" open onOpenChange={setCreateOpen} returnFocusRef={addGroupRef} />}

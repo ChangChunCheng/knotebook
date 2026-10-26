@@ -17,6 +17,7 @@ function errorMessage(t: Translate, err: unknown): string {
 /**
  * 「已移到垃圾桶」toast（spec §6.10.4／§6.10.7）。`reopen`＝原本開著那篇——復原成功後導回它的 canonical 路徑。
  * 復原鈕的 handler 只用參數捕捉的 queryClient／navigate 與 api/trash.ts 的純函式：toast 常在選單卸載後才被按（讀碼發現 5）。
+ * 後四欄給 PR-2c 多選刪除用，不給＝單篇的行為。
  */
 export function showTrashedToast(args: {
   notes: ReadonlyArray<Pick<NoteDto, "id" | "group" | "permissions">>;
@@ -24,19 +25,31 @@ export function showTrashedToast(args: {
   navigate: NavigateFunction;
   t: Translate;
   reopen: boolean;
+  /** 預設 `t("trash.moved")`。 */
+  title?: string;
+  /** 不可復原時與 `trash.movedNoUndoHint` 以「 」接在後面（description 在前）。 */
+  description?: string;
+  variant?: "default" | "destructive";
+  /** 給了就覆蓋由 `reopen` 推算的那篇（`reopen` 只在單篇時推出它）。 */
+  reopenId?: string | null;
 }): void {
-  const { notes, queryClient, navigate, t, reopen } = args;
+  const { notes, queryClient, navigate, t, reopen, description, variant } = args;
+  const title = args.title ?? t("trash.moved");
   if (!notes.every(canRestoreAfterTrash)) {
     // 群組筆記只有刪除權、沒有編輯權：自己還原不了，只說明誰可以（spec §6.10.7）。
-    toast({ title: t("trash.moved"), description: t("trash.movedNoUndoHint") });
+    const hint = t("trash.movedNoUndoHint");
+    toast({ title, description: description === undefined ? hint : `${description} ${hint}`, variant });
     return;
   }
   const ids = notes.map((note) => note.id);
+  const reopenId = args.reopenId !== undefined ? args.reopenId : reopen && ids.length === 1 ? ids[0] : null;
   toast({
-    title: t("trash.moved"),
+    title,
+    description,
+    variant,
     action: {
       label: t("trash.undo"),
-      onClick: () => void undoTrash({ ids, queryClient, navigate, t, reopenId: reopen && ids.length === 1 ? ids[0] : null }),
+      onClick: () => void undoTrash({ ids, queryClient, navigate, t, reopenId }),
     },
   });
 }
