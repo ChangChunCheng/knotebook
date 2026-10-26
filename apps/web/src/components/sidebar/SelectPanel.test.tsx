@@ -569,6 +569,37 @@ describe("一般 tab 的選取模式（PR-2c T4）", () => {
     expect(checkbox("p2")).toBeNull();
   });
 
+  it("NS15 選取中清單重抓後沒有可勾的篇（工作坊只剩空群組）：仍是選取標題列與勾選樹，群組列沒有「＋」與 ⋮（T4 review Nit-3）", async () => {
+    const { queryClient, box } = await renderSelecting({ tab: "workspace" });
+    fireEvent.click(checkbox("g1a"));
+    expect(within(header()).getByText("1 selected")).toBeInTheDocument();
+    box.notes = ALL_NOTES.filter((note) => note.groupId === null);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["notes"] });
+    });
+    expect(await within(header()).findByText("0 selected")).toBeInTheDocument();
+    expect(within(header()).getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(within(panel()).getByRole("button", { name: "G1" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(panel()).queryByRole("button", { name: "New note in G1" })).toBeNull();
+    expect(within(panel()).queryByRole("button", { name: "Group actions for G1" })).toBeNull();
+    expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
+    // 對照：離開選取後是平常的群組列（有群組 ⋮）。
+    fireEvent.click(within(header()).getByRole("button", { name: "Done" }));
+    expect(await within(panel()).findByRole("button", { name: "Group actions for G1" })).toBeInTheDocument();
+  });
+
+  it("NS15b 選取中清單重抓後完全沒有節點（我的筆記清空）：選取標題列＋平常的空狀態句，沒有勾選框（T5 review r1 M2）", async () => {
+    const { queryClient, box } = await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    box.notes = ALL_NOTES.filter((note) => note.groupId !== null || note.role !== "owner");
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["notes"] });
+    });
+    expect(await within(panel()).findByText("No personal notes yet.")).toBeInTheDocument();
+    expect(within(header()).getByText("0 selected")).toBeInTheDocument();
+    expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
+  });
+
   it("NS11 捲動容器不換、捲動位置保留（進入與完成）", async () => {
     stubFetch({ notes: ALL_NOTES });
     renderPanel();

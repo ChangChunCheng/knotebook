@@ -412,8 +412,9 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
       </div>
       {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端（spec §5.3）。進出選取模式不換（捲動位置不跳）。 */}
       <div key={tab} data-sidebar-list="" className="min-h-0 flex-1 overflow-y-auto px-2">
-        {selection.active && selectable && nodes !== null && tab !== "trash" ? (
-          // chunk 還沒到：照常顯示平常的列，到了才換勾選框。
+        {selection.active && nodes !== null && nodes.length > 0 && tab !== "trash" ? (
+          // chunk 還沒到：照常顯示平常的列，到了才換勾選框。選取中清單重抓後變得沒有可勾的篇（只剩空群組）也留在勾選樹：
+          // 群組列不帶「＋」與 ⋮，與選取標題列一致；完全沒有節點時是平常的空狀態句（沒有動作鈕）。
           <SidebarLazyBoundary chunk="select" fallback={<SidebarNodeList nodes={nodes} ctx={ctx} />} errorClassName="p-2">
             <SelectableTree nodes={nodes} tab={tab} groupIds={groupIds} />
           </SidebarLazyBoundary>

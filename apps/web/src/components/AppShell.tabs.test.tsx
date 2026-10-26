@@ -12,6 +12,7 @@ import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { trashItem, trashList } from "@/test/trash-fixtures";
+import { clickOutside } from "@/test/outside-click";
 
 // 側欄 tab 與 AppShell 的接線（plan T2）。骨架抄 AppShell.test.tsx 的「#115 側欄抽屜」describe。
 
@@ -521,3 +522,138 @@ function SelectionProbe() {
     </>
   );
 }
+
+/**
+ * 一般 tab 批次動作進行中關掉抽屜（#181 PR-2c T5，SA23／SA23b，plan gate r2 m-D、Rev 4 裁定 2）：抽屜內的動作列卸載，
+ * 批次照跑；選取結果看 session（不看掛載）照套；重開抽屜新掛的動作列看得到進行中那輪。
+ */
+describe("AppShell — 批次進行中關掉抽屜（PR-2c T5）", () => {
+  const notes = ["n1", "n2", "n3"].map((id) => ({ ...NOTE, id, title: id, slug: id }));
+
+  function stubBatchServer(opts: { failSecond?: boolean } = {}) {
+    let list = [...notes];
+    const deletes: string[] = [];
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/groups" && method === "GET") return Promise.resolve(fakeResponse([]));
+        if (url === "/api/auth/me") return Promise.resolve(fakeResponse(USER));
+        if (url === "/api/notes" && method === "GET") return Promise.resolve(fakeResponse(list));
+        if (method === "DELETE") {
+          const id = url.split("/").pop() as string;
+          deletes.push(id);
+          const respond = () => {
+            if (opts.failSecond && id === "n2") return fakeResponse({ error: { code: "too_many_requests", message: "x" } }, 429);
+            list = list.filter((note) => note.id !== id);
+            return fakeResponse(undefined, 204);
+          };
+          return id === "n1" ? gate.then(respond) : Promise.resolve(respond());
+        }
+        return Promise.resolve(fakeResponse({ error: { code: "not_found", message: "x" } }, 404));
+      }),
+    );
+    return {
+      deletes,
+      release: async () => {
+        await act(async () => {
+          open();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      },
+    };
+  }
+
+  const header = (container: HTMLElement) => container.querySelector("[data-sidebar-header]") as HTMLElement;
+  const noteBox = (container: HTMLElement, id: string) =>
+    container.querySelector<HTMLInputElement>(`input[type="checkbox"][data-selection-key="note:${id}"]`) as HTMLInputElement;
+  const drawerNow = () => screen.queryByRole("dialog", { name: "Navigation" });
+
+  /** 開抽屜 → 抽屜內我的筆記進選取 → 勾三篇 → 刪除（第一支掛起）。 */
+  async function startBatchInDrawer(): Promise<void> {
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" });
+    await waitFor(() => expect(within(header(drawer)).getByRole("button", { name: "Select" })).toBeEnabled());
+    fireEvent.click(within(header(drawer)).getByRole("button", { name: "Select" }));
+    await within(header(drawer)).findByText("0 selected");
+    await waitFor(() => expect(noteBox(drawer, "n3")).not.toBeNull());
+    for (const id of ["n1", "n2", "n3"]) fireEvent.click(noteBox(drawer, id));
+    fireEvent.click(await within(drawer).findByRole("button", { name: "Delete 3 selected items" }));
+  }
+
+  async function closeDrawerByOutsideClick(): Promise<void> {
+    await clickOutside();
+    await waitFor(() => expect(drawerNow()).toBeNull());
+    // 正向檢查：選取還在（靜態卡那份標題列）。
+    expect(within(header(aside())).getByText("3 selected")).toBeInTheDocument();
+  }
+
+  async function reopenDrawer(): Promise<HTMLElement> {
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation", hidden: true }));
+    return screen.findByRole("dialog", { name: "Navigation" });
+  }
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    act(() => dismissAllToasts());
+  });
+
+  it("SA23 成功：抽屜在批次中關掉 → 跑完後選取照樣結束（重開抽屜是平常標題列）", async () => {
+    stubControllableMatchMedia(true);
+    const server = stubBatchServer();
+    renderShell();
+    await startBatchInDrawer();
+    await waitFor(() => expect(server.deletes).toEqual(["n1"]));
+    await closeDrawerByOutsideClick();
+    await server.release();
+    await waitFor(() => expect(server.deletes).toEqual(["n1", "n2", "n3"]));
+    await waitFor(() => expect(within(header(aside())).queryByText("3 selected")).toBeNull());
+    const drawer = await reopenDrawer();
+    expect(within(header(drawer)).getByRole("button", { name: "Select" })).toBeInTheDocument();
+    expect(within(header(drawer)).queryByRole("button", { name: "Done" })).toBeNull();
+  });
+
+  it("SA23 停下（第二支 429）：重開抽屜仍在選取、只留未處理的 2 篇", async () => {
+    stubControllableMatchMedia(true);
+    const server = stubBatchServer({ failSecond: true });
+    renderShell();
+    await startBatchInDrawer();
+    await waitFor(() => expect(server.deletes).toEqual(["n1"]));
+    await closeDrawerByOutsideClick();
+    await server.release();
+    await waitFor(() => expect(within(header(aside())).getByText("2 selected")).toBeInTheDocument());
+    expect(server.deletes).toEqual(["n1", "n2"]);
+    const drawer = await reopenDrawer();
+    expect(await within(header(drawer)).findByText("2 selected")).toBeInTheDocument();
+    expect(noteBox(drawer, "n2")).toBeChecked();
+    expect(noteBox(drawer, "n3")).toBeChecked();
+  });
+
+  it("SA23b 第一支仍掛起時重開抽屜 → 新掛的動作列顯示進度、三顆鈕 disabled；放行後恢復平常標題列", async () => {
+    stubControllableMatchMedia(true);
+    const server = stubBatchServer();
+    renderShell();
+    await startBatchInDrawer();
+    await waitFor(() => expect(server.deletes).toEqual(["n1"]));
+    await closeDrawerByOutsideClick();
+    const drawer = await reopenDrawer();
+    await waitFor(() => expect(drawer.querySelector("[data-select-action-bar]")).not.toBeNull());
+    const bar = drawer.querySelector("[data-select-action-bar]") as HTMLElement;
+    expect(within(bar).getByRole("status")).toHaveTextContent("Working… 0 of 3");
+    for (const button of within(bar).getAllByRole("button")) expect(button).toBeDisabled();
+    expect(within(bar).getAllByRole("button")).toHaveLength(3);
+    await server.release();
+    await waitFor(() => expect(within(header(drawer)).getByRole("button", { name: "Select" })).toBeInTheDocument());
+    expect(server.deletes).toEqual(["n1", "n2", "n3"]);
+  });
+});

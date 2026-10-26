@@ -5,3 +5,4 @@
 import "@/i18n/select-strings";
 export { SelectHeader } from "./SelectHeader";
 export { SelectableTree } from "./SelectableTree";
+export { SelectActionBar } from "./SelectActionBar";
