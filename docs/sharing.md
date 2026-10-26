@@ -10,6 +10,8 @@ The Share dialog on a **personal** note (owner only) presents one choice with th
 - **Members only** — people the owner invites by email, each with a role (**editor** can change content, **viewer** can only read). An editor's uploads into the note count against the owner's storage space, not theirs. Members use their own accounts, see the note in their sidebar, and get live collaboration. While a note is open, its header shows who else has it open right now — editors, viewers, the owner, and any AI agent working on it. Picking this while a public link exists turns the link off; the member list is untouched.
 - **Public link** — anyone who has the link can **read** the note, no account needed. Members keep working exactly as before; the link is an addition, not a replacement.
 
+When you add someone — in the **Members only** form here, or on a group's **Members** page — type a few characters of their email or name and a list of matching people you already know drops down; pick one with the mouse, or with ↑/↓ and Enter, and their email is filled in. "People you already know" means the members of every group you're in and the people you've shared one of your own notes with — people whose email you can already see in Knotebook. Nobody else is suggested: not other accounts on the site, not the owner of a note someone shared with you (you see their username, not their email), and not disabled accounts. To add anyone else, type their full email; that works as before. Someone you stop sharing with, or who leaves your last shared group, stops being suggested right away.
+
 The selector is an action trigger, not a live mirror: the choice you make sticks until you close the dialog.
 
 ## Notes in a group
