@@ -411,4 +411,32 @@ describe("選取狀態（spec §6.10.2）", () => {
     expect(() => actions.updateSelection({ type: "start" })).not.toThrow();
     expect(renderHook(() => useSidebarTabState()).result.current.selection).toBe(EMPTY_SELECTION);
   });
+
+  it("ST13：getSelectionSession 非選取中為 null；start 後為 n、toggle 不變、end 後 null；再 start 是不同的 n+1", () => {
+    let actions: SidebarTabActions | null = null;
+    const Grab = () => {
+      actions = useSidebarTabActions();
+      return null;
+    };
+    render(
+      <SidebarTabProvider>
+        <Grab />
+        <SelectionProbe />
+      </SidebarTabProvider>,
+    );
+    const session = () => (actions as SidebarTabActions | null)?.getSelectionSession();
+    expect(session()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    const n = session();
+    expect(typeof n).toBe("number");
+    fireEvent.click(screen.getByRole("button", { name: "toggle-a" }));
+    expect(session()).toBe(n);
+    act(() => {
+      (actions as SidebarTabActions | null)?.endSelectionIfActive();
+    });
+    expect(session()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    expect(session()).toBe((n as number) + 1);
+    expect(renderHook(() => useSidebarTabActions()).result.current.getSelectionSession()).toBeNull();
+  });
 });

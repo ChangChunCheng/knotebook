@@ -26,6 +26,8 @@ import { cn } from "@/lib/utils";
  * 「清空」是 `sm` 文字鈕但同為 24px 高，與「選取」同列），每列的「還原」與 ⋮（與筆記列 ⋮ 共用
  * `hoverReveal("noterow")`），以及選取模式標題列的「全選／取消全選」（`ghost` `sm` `h-6`）與「完成」
  * （`outline` `sm` `h-6`）——兩顆同列、取代平常那排，不與 32px 控制項並排。
+ * 一般 tab（#181 PR-2c）沿用同樣兩處：`NoteList.tsx` 標題列的「選取」圖示鈕（在「＋」之前），與選取模式標題列
+ * （`sidebar/SelectHeader.tsx`）的「全選／取消全選」「完成」，class 與垃圾桶那幾顆逐字相同。
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
@@ -55,7 +57,8 @@ import { cn } from "@/lib/utils";
  *   單獨站著看不出來是按鈕（「重新產生連結」被這樣回報過一次）。
  *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/TrashFooter.tsx`）與「還原」平級並排，卻是
  *   `ghost`＋`border border-input`＋紅字（hover 同 `ROW_ICON_DANGER`）——`outline` 的 hover／按下填 `brand-deep`，
- *   紅字壓深色底不對（#181 PR-2b plan gate r1 M7）。別「修」回 `outline`。
+ *   紅字壓深色底不對（#181 PR-2b plan gate r1 M7）。別「修」回 `outline`。一般 tab 選取模式動作列的紅色刪除圖示鈕
+ *   （`sidebar/SelectActionBar.tsx`，#181 PR-2c）同此例外：與「移動到」「複製到」平級並排。
  * - `destructive`——**只用在確認對話框的那一顆提交鈕**。
  * - `brand`——主色 tint（無邊框），招牌入口：側欄「新增筆記」、AI 主控。
  * - `brandSolid`／`brandDeep`——主色實心，兩階，**依所在表面二選一、不得混用**：

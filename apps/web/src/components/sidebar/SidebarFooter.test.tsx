@@ -7,10 +7,11 @@ import type { SidebarTab } from "@/lib/sidebar-tab";
 import i18n from "@/i18n";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { SidebarTabProvider } from "@/lib/sidebar-tab";
+import { SidebarTabProvider, useSidebarTabActions } from "@/lib/sidebar-tab";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { TRASH_ME, trashItem, trashList } from "@/test/trash-fixtures";
+import { personalNote } from "@/test/select-fixtures";
 import { SidebarTabList } from "./SidebarTabList";
 import { SidebarFooter } from "./SidebarFooter";
 import { TrashPanel } from "./TrashPanel";
@@ -131,6 +132,75 @@ describe("SidebarFooter", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Trash" }));
     expect(await screen.findByTestId("trash-footer")).toBeInTheDocument();
     await waitFor(() => expect(urls.filter((url) => url === "GET /api/trash")).toHaveLength(1));
+  });
+});
+
+/** 一般 tab 選取模式的底部（PR-2c T5，SF5／SF6）：選取由探針鈕開始／結束，動作列是 lazy 的 `SelectActionBar`。 */
+describe("SidebarFooter — 一般 tab 選取模式", () => {
+  function SelectionProbe() {
+    const { updateSelection } = useSidebarTabActions();
+    return (
+      <>
+        <button type="button" onClick={() => updateSelection({ type: "start" })}>
+          probe-start
+        </button>
+        <button type="button" onClick={() => updateSelection({ type: "end" })}>
+          probe-end
+        </button>
+      </>
+    );
+  }
+
+  function renderSelectFooter(props: { searching?: boolean } = {}) {
+    localStorage.setItem("sidebar.tab", "myNotes");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/notes") return Promise.resolve(fakeResponse([personalNote({ id: "p1", title: "p1" })]));
+        if (url === "/api/groups") return Promise.resolve(fakeResponse([]));
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <SidebarTabProvider>
+            <SelectionProbe />
+            <SidebarFooter searching={props.searching ?? false} onCreateNote={() => {}} newNotePending={false} />
+          </SidebarTabProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("SF5 我的筆記、選取中 → 沒有 New note、動作列；結束選取 → New note 回來", async () => {
+    renderSelectFooter();
+    expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "probe-start" }));
+    expect(await screen.findByRole("button", { name: "Copy to" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "probe-end" }));
+    expect(await screen.findByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy to" })).toBeNull();
+  });
+
+  it("SF6 搜尋中＋選取中 → New note、沒有動作列", async () => {
+    renderSelectFooter({ searching: true });
+    fireEvent.click(screen.getByRole("button", { name: "probe-start" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy to" })).toBeNull();
   });
 });
 

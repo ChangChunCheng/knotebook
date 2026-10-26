@@ -229,7 +229,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     ]);
   });
 
-  it("矩陣：群組筆記 -> 沒有移動；複製＝建立副本（原群組）、個人空間、其餘群組（不含原群組）", async () => {
+  it("矩陣：群組筆記 -> 沒有移動；複製＝建立副本（原群組）、我的筆記、其餘群組（不含原群組）", async () => {
     stub({ groups: [GROUP_A, GROUP_C] });
     renderMenu(GROUP_NOTE);
     await openMenuReady();
@@ -237,12 +237,23 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     const sub = await openFlyout(screen.getByTestId("note-menu-copy-to"));
     expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual([
       "Make a copy",
-      "Personal space",
+      "My notes",
       "Workshop C",
     ]);
   });
 
-  it("矩陣：群組筆記、我在該群組只能讀（無 create／edit）-> 沒有建立副本、仍有個人空間（與其餘可用群組）", async () => {
+  it("TC4 zh-TW：群組筆記的複製第二層有「我的筆記」、沒有「個人空間」（與側欄 tab 同名）", async () => {
+    await i18n.changeLanguage("zh-TW");
+    stub({ groups: [GROUP_A, GROUP_C] });
+    renderMenu(GROUP_NOTE);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "更多" }), { button: 0 });
+    const sub = await openFlyout(await screen.findByTestId("note-menu-copy-to"));
+    const labels = within(sub).getAllByRole("menuitem").map((e) => e.textContent);
+    expect(labels).toContain("我的筆記");
+    expect(labels).not.toContain("個人空間");
+  });
+
+  it("矩陣：群組筆記、我在該群組只能讀（無 create／edit）-> 沒有建立副本、仍有我的筆記（與其餘可用群組）", async () => {
     const READER_A = groupDto(
       { id: GA, name: "Workshop A" },
       memberRole({ permissions: { ...memberRole().permissions, create: false, edit: false } }),
@@ -250,19 +261,19 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     stub({ groups: [READER_A, GROUP_C] });
     renderMenu(GROUP_NOTE);
     const sub = await openFlyout(await openMenuReady());
-    expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["Personal space", "Workshop C"]);
+    expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["My notes", "Workshop C"]);
   });
 
   it.each([
     ["viewer", VIEWER_PERMS],
     ["editor", { ...EDITOR_PERMS, moveToGroup: false }],
-  ] as const)("矩陣：別人分享給我的個人筆記（%s）-> 沒有移動；複製＝個人空間＋我 create＋edit 的群組", async (role, permissions) => {
+  ] as const)("矩陣：別人分享給我的個人筆記（%s）-> 沒有移動；複製＝我的筆記＋我 create＋edit 的群組", async (role, permissions) => {
     stub({ groups: [GROUP_A, GROUP_B, GROUP_C] });
     renderMenu({ ...NOTE, role, ownerId: "someone", ownerHandle: "someone", permissions: { ...permissions } });
     const sub = await openFlyout(await openMenuReady());
     expect(screen.queryByTestId("note-menu-move-to")).toBeNull();
     expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual([
-      "Personal space",
+      "My notes",
       "Workshop A",
       "Workshop C",
     ]);
@@ -285,10 +296,10 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["Workshop A", "Workshop C"]);
   });
 
-  it("個人空間／建立副本：複製確認文案與 POST body（個人 {}、原群組 {groupId}）", async () => {
+  it("我的筆記／建立副本：複製確認文案與 POST body（個人 {}、原群組 {groupId}）", async () => {
     const s = stub();
     renderMenu(GROUP_NOTE);
-    await pickFlyout("note-menu-copy-to", "Personal space");
+    await pickFlyout("note-menu-copy-to", "My notes");
     let dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("This creates a copy in your own notes; the original stays as it is.");
     fireEvent.click(within(dialog).getByRole("button", { name: "Copy to my notes" }));

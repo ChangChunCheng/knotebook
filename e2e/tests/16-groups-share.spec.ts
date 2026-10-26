@@ -6,7 +6,7 @@ import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, openGro
  * A 建群組、從設定加 B（內建一般成員）→ A 建個人筆記（打字＋**真上傳**一張圖）、逐人分享給 C、開公開連結 →
  * C 開著那篇 → A 從 ⋮「Move to…」第二層選單選群組把它移進群組（確認框列出 C、說公開連結會關）→
  * A 的網址列變 `/g/<group id>/<slug>`、面板換成群組版；C ≤10 秒被踢回首頁；公開網址 404 →
- * B 開**舊的** `/n/<A handle>/<slug>` → 網址列變 `/g/…`、內容正確 → B 在 ⋮「Copy to… → Personal space」→ toast「Open copy」→
+ * B 開**舊的** `/n/<A handle>/<slug>` → 網址列變 `/g/…`、內容正確 → B 在 ⋮「Copy to… → My notes」→ toast「Open copy」→
  * 副本頁的圖是**新的**上傳網址、真的載得出來 → A 從 ⋮「Move to trash」刪群組筆記（原圖的上傳端點 403）→ B 重整副本頁，圖仍載得出來。
  *
  * 不斷言 A 搬完的角色（主檔規格落差 17：create-only 角色搬完是 viewer；A 是群組建立者＝內建管理員，本支不測
@@ -207,9 +207,9 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await expect(member.page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 }); // B 是 editor：標題是輸入框
     await expect(member.page.locator('[data-testid="note-editor"]')).toContainText(sentence, { timeout: 15_000 });
 
-    // ── B：⋮ → Copy to… → Personal space → 確認 → toast「Open copy」→ 副本頁的圖是新上傳、載得出來 ─────────
+    // ── B：⋮ → Copy to… → My notes → 確認 → toast「Open copy」→ 副本頁的圖是新上傳、載得出來 ─────────
     await member.page.getByRole("button", { name: "More", exact: true }).click();
-    await pickFromSubmenu(member.page, "Copy to…", "Personal space");
+    await pickFromSubmenu(member.page, "Copy to…", "My notes");
     await member.page.getByRole("dialog").getByRole("button", { name: "Copy to my notes", exact: true }).click();
     await expect(member.page.getByText("Copied to your notes", { exact: true })).toBeVisible({ timeout: 15_000 });
     await member.page.getByRole("button", { name: "Open copy", exact: true }).click();

@@ -154,7 +154,6 @@
       "moveTo": "Move to…",
       "copyTo": "Copy to…",
       "makeCopy": "Make a copy",
-      "personalSpace": "Personal space",
       "delete": "Move to trash"
     },
     "width": {
@@ -1205,7 +1204,6 @@
   "trash": {
     "header_one": "Trash · {{count}} note",
     "header_other": "Trash · {{count}} notes",
-    "sectionPersonal": "Personal",
     "sectionWorkspace": "Workspace",
     "daysLeft_one": "{{count}} day left",
     "daysLeft_other": "{{count}} days left",
@@ -1236,8 +1234,8 @@
     "emptyTitle": "Empty the trash?",
     "emptyDescription_one": "{{count}} note and its attachments will be permanently deleted. This can't be undone.",
     "emptyDescription_other": "{{count}} notes and their attachments will be permanently deleted. This can't be undone.",
-    "emptyPersonal_one": "Personal: {{count}} note",
-    "emptyPersonal_other": "Personal: {{count}} notes",
+    "emptyPersonal_one": "My notes: {{count}} note",
+    "emptyPersonal_other": "My notes: {{count}} notes",
     "emptyWorkspace_one": "Workspace: {{count}} note",
     "emptyWorkspace_other": "Workspace: {{count}} notes",
     "includesOthers": " (including some deleted by other members)",

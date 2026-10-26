@@ -235,6 +235,29 @@ export async function showSidebarTab(page: Page, name: SidebarTabName, scope?: L
 }
 
 /**
+ * #181 PR-2c：一般 tab（我的筆記／工作坊／與我共享／最近）標題列的「Select」→ 等選取標題列的「0 selected」（lazy 的 SelectLazy chunk 到了；
+ * 進入時已選一律清空）。`scope` 預設靜態側欄；窄螢幕傳抽屜。回傳 tabpanel（勾選框在裡面；動作列在 tabpanel 外、側欄底部）。
+ * 垃圾桶 tab 的選取是另一套（36）。
+ */
+export async function startSidebarSelection(page: Page, scope?: Locator): Promise<Locator> {
+  const panel = (scope ?? page.getByRole("complementary")).getByRole("tabpanel");
+  await panel.getByRole("button", { name: "Select", exact: true }).click();
+  await expect(panel.getByText("0 selected", { exact: true })).toBeVisible({ timeout: 15_000 });
+  return panel;
+}
+
+/**
+ * #181 PR-2c：選取模式中點某篇的勾選框（整列是 `<label>`，可及名稱以標題開頭；最近 tab 後面接位置行）。
+ * 點的是 checkbox 本身：Shift 範圍讀 click 事件的 `shiftKey`。不帶 `shift` 是單列切換；`shift` 時錨點到這篇整段加入、這篇一定變成已勾。
+ */
+export async function toggleSelectedNote(panel: Locator, title: string, opts?: { shift?: boolean }): Promise<void> {
+  const box = panel.getByRole("checkbox", { name: new RegExp("^" + reEscape(title)) });
+  const wasChecked = await box.isChecked();
+  await box.click(opts?.shift ? { modifiers: ["Shift"] } : undefined);
+  await expect(box).toBeChecked({ checked: opts?.shift ? true : !wasChecked });
+}
+
+/**
  * 標題為 `title` 的 toast（Radix Toast 的 `<li>`，在「Notifications (F8)」region 裡）。標題用 exact 比對：Radix 另有一份
  * 「Notification …」朗讀節點（`role="status"`，約 1 秒後移除）會含同樣的子字串。同標題可能同時有好幾則（連續移入），取最新的一則。
  */

@@ -14,13 +14,13 @@ import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { NARROW_QUERY, SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom } from "@/lib/real-location";
-import { TRASH_SELECT_BUTTON } from "@/lib/trash-display";
+import { SIDEBAR_SELECT_BUTTON } from "@/lib/sidebar-selection";
 import { SidebarTabProvider, useSidebarTabActions, useSidebarTabState, type SidebarTabActions } from "@/lib/sidebar-tab";
 import { NoteList } from "@/components/NoteList";
 import { SearchResults } from "@/components/sidebar/SearchResults";
 import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
-import { TrashLazyBoundary } from "@/components/sidebar/TrashLazyBoundary";
+import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -187,9 +187,9 @@ function SidebarContent({
             className="flex min-h-0 flex-1 flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {tab === "trash" ? (
-              <TrashLazyBoundary fallback={<TrashPanelFallback />} errorClassName="p-3">
+              <SidebarLazyBoundary chunk="trash" fallback={<TrashPanelFallback />} errorClassName="p-3">
                 <TrashPanel />
-              </TrashLazyBoundary>
+              </SidebarLazyBoundary>
             ) : (
               <NoteList onCreateNote={onCreateNote} createNotePending={newNotePending} />
             )}
@@ -436,7 +436,7 @@ export function AppShell({ children, inert }: AppShellProps) {
                   });
                   if (!ended) return;
                   event.preventDefault();
-                  drawerContentRef.current?.querySelector<HTMLButtonElement>(TRASH_SELECT_BUTTON)?.focus();
+                  drawerContentRef.current?.querySelector<HTMLButtonElement>(SIDEBAR_SELECT_BUTTON)?.focus();
                 }}
                 onOpenAutoFocus={(event) => {
                   event.preventDefault();

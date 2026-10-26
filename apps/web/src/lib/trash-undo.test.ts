@@ -212,4 +212,51 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.queryByText("An unexpected error occurred.", { exact: true })).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  // PR-2c 多選刪除用的四個可選欄（plan 的 TU9–TU12；本檔 TU9 已被 server_busy 佔用，順延成 TU10–TU13）。
+  it("TU10 title：標題逐字、仍有 Undo", async () => {
+    const { queryClient, navigate, t } = setup();
+    act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, title: "Moved 2 notes to the trash" }));
+
+    expect(await screen.findByText("Moved 2 notes to the trash", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
+  it("TU11 不可復原＋description：描述是「X 」接 hint、沒有 Undo", async () => {
+    const { queryClient, navigate, t } = setup();
+    act(() => showTrashedToast({ notes: [GROUP_DELETE_ONLY], queryClient, navigate, t, reopen: false, description: "X" }));
+
+    expect(await screen.findByText(`X ${HINT}`, { exact: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("TU12 reopenId 覆蓋推算：兩篇、reopenId=b → 復原後以 b 的 canonical 路徑導回一次", async () => {
+    const { queryClient, navigate, t } = setup();
+    stubRestore({ status: 200, body: { restored: [PERSONAL, GROUP_EDIT_DELETE], skipped: [] } });
+    act(() =>
+      showTrashedToast({ notes: [PERSONAL, GROUP_EDIT_DELETE], queryClient, navigate, t, reopen: false, reopenId: GROUP_EDIT_DELETE.id }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(navigate).toHaveBeenCalledWith(canonicalNotePath(GROUP_EDIT_DELETE));
+  });
+
+  it("TU13 variant destructive：toast 根節點 bg-destructive", async () => {
+    const { queryClient, navigate, t } = setup();
+    act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, variant: "destructive" }));
+
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
+    expect(toastRoot("Moved to the trash")).toHaveClass("bg-destructive");
+  });
+
+  it("TU14 可復原＋description：描述照原字顯示（不接 hint）、仍有 Undo", async () => {
+    const { queryClient, navigate, t } = setup();
+    act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, description: "X" }));
+
+    expect(await screen.findByText("X", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText(`X ${HINT}`, { exact: true })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
 });

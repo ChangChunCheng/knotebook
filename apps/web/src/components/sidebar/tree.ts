@@ -79,6 +79,11 @@ export function buildTabNodes(tab: SidebarTab, notes: NoteDto[], groups: GroupDt
   }));
 }
 
+/** 樹裡有沒有筆記節點（含群組下的；空群組不算）：一般 tab 標題列「選取」鈕可不可按（PR-2c）。 */
+export function hasNoteNodes(nodes: readonly SidebarNode[]): boolean {
+  return nodes.some((node) => node.kind === "note" || hasNoteNodes(node.children));
+}
+
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /** spec §9-2：筆記位置的段落（單一函式）。步驟 2：群組筆記＝[群組名]、個人＝[]；步驟 3 在這裡接資料夾路徑。 */

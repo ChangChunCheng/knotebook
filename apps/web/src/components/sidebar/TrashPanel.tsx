@@ -135,6 +135,13 @@ const SelectableTrashRow = memo(function SelectableTrashRow({
           "flex cursor-pointer select-none items-start gap-2 rounded-md py-1.5 pl-2 pr-1 text-[13px]",
           checked ? "bg-brand-soft font-medium text-brand-on-soft" : "hover:bg-brand-soft hover:text-brand-on-soft",
         )}
+        // Firefox 有修飾鍵時不把 label 的 click 轉給勾選框（留給文字選取），Shift／Ctrl＋點列文字會沒反應：有修飾鍵且點的不是
+        // 勾選框本身時，取消轉送、自己切換（三引擎一致；Chromium／WebKit 不會因此切兩次）。
+        onClick={(event) => {
+          if (!(event.shiftKey || event.ctrlKey || event.metaKey) || event.target instanceof HTMLInputElement) return;
+          event.preventDefault();
+          onToggle(selectionKey({ kind: "note", id: item.id }), event.shiftKey);
+        }}
       >
         <input
           type="checkbox"
@@ -286,7 +293,7 @@ export function TrashPanel() {
             title={t("trash.select")}
             disabled={actionsDisabled}
             // 握把：底部動作列離開選取模式後，經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦。
-            data-trash-select=""
+            data-sidebar-select=""
             // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的；標題列換字樣前那一幀連點兩下也一樣）。
             onClick={() => {
               if (selection.active) return;
@@ -356,7 +363,7 @@ export function TrashPanel() {
       );
     return (
       <>
-        {personal.length > 0 && <TrashSection label={t("trash.sectionPersonal")} items={personal} renderItem={renderItem} />}
+        {personal.length > 0 && <TrashSection label={t("sidebar.myNotes")} items={personal} renderItem={renderItem} />}
         {workspace.length > 0 && <TrashSection label={t("trash.sectionWorkspace")} items={workspace} renderItem={renderItem} />}
         {trash.data.truncated && <p className="p-2 text-[11px] text-muted-foreground">{t("trash.truncated")}</p>}
       </>
