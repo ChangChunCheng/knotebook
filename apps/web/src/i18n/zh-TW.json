@@ -752,6 +752,34 @@
       "dangerDescription": "刪除群組時，筆記可以轉移給其中一位管理員，或連同群組一起刪除。",
       "leaveTitle": "退出群組"
     },
+    "bulk": {
+      "addEmailsPlaceholder": "電子郵件地址（多個請以逗號分隔）",
+      "invalidSingle": "「{{value}}」看起來不是電子郵件地址。",
+      "progress": "正在加入成員…（{{done}}／{{total}}）",
+      "stopped": "已停止：{{reason}}沒加成的地址已放回電子郵件欄。",
+      "stoppedRateLimit": "伺服器暫時限制請求，已停止。請稍候一分鐘再加入其餘的人——他們的地址已放回電子郵件欄。",
+      "outcome": {
+        "added": "已加入（{{count}}）：",
+        "alreadyMember": "已經是成員（{{count}}）：",
+        "notFound": "找不到這個帳號（{{count}}）：",
+        "invalid": "不是電子郵件地址（{{count}}）：",
+        "failed": "失敗（{{count}}）：",
+        "notProcessed": "未處理（{{count}}）："
+      },
+      "dismiss": "關閉",
+      "importOpen": "從其他群組匯入成員…",
+      "importTitle": "從其他群組匯入成員",
+      "importDescription": "勾選的人會以「{{role}}」加入這個群組。這是一次性複製：之後另一個群組的成員異動不會同步過來。",
+      "importNoGroups": "你沒有加入其他群組。",
+      "importSourceLabel": "要匯入的群組",
+      "importSourcePlaceholder": "選擇群組…",
+      "importNobody": "那個群組的人都已經在這裡了。",
+      "importSelectAll": "全選（{{count}} 人）",
+      "importListLabel": "要加入的人",
+      "importExcludedHint": "已在這個群組的人與你自己不會列出。",
+      "importConfirm_one": "加入 {{count}} 人",
+      "importConfirm_other": "加入 {{count}} 人"
+    },
     "roles": {
       "descriptionManage": "每位成員各有一個角色，角色決定他能做什麼。內建「管理員」角色不能修改；內建「一般成員」是新成員預設的角色，不能改名或刪除。",
       "descriptionView": "每位成員各有一個角色，角色決定他能做什麼。只有角色能管理角色與群組的人可以修改。",

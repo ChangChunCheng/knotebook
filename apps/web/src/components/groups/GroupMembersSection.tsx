@@ -1,8 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useState, type ClipboardEvent, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { GroupDto, GroupMemberDto, GroupRoleDto } from "@knotebook/shared";
+import { normalizeEmail, type GroupDto, type GroupMemberDto, type GroupRoleDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
-import { useAddMember, useGroupMembers, useGroupRoles, useRemoveMember, useSetMemberRole } from "@/api/groups";
+import {
+  addGroupMember, useAddMember, useGroupMembers, useGroupRoles, useInvalidateGroupsAndNotes, useRemoveMember, useSetMemberRole,
+} from "@/api/groups";
+import { useSession } from "@/auth/useSession";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
 import { Button } from "@/components/ui/button";
 import { Trash } from "@/components/ui/icons";
@@ -12,6 +15,9 @@ import { toast } from "@/components/ui/toast";
 import { roleLabel } from "@/lib/group-role";
 import { SettingsGroup, SettingsPage } from "@/settings/SettingsLayout";
 import { useGroupOutlet } from "./group-outlet";
+import { BulkAddStatus, type BulkAddState } from "./BulkAddStatus";
+import { parseEmailList, runBulkAdd, type BulkAddResult } from "./bulk-add";
+import { ImportMembersDialog } from "./ImportMembersDialog";
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
@@ -52,12 +58,17 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
   // null＝還沒選過：用內建一般成員那一個的 id；roles 還沒到時不送 roleId（server 預設內建一般成員）
   const [pickedRoleId, setPickedRoleId] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  const [bulk, setBulk] = useState<BulkAddState | null>(null);
+  const invalidateAfterBulk = useInvalidateGroupsAndNotes();
+  const myUserId = useSession().user?.id;
 
   const members = membersQuery.data ?? [];
   const roles = rolesQuery.data ?? [];
   const adminCount = countAdmins(members);
   const isLastAdmin = (member: GroupMemberDto) => member.builtin === "admin" && adminCount === 1;
   const newRoleId = pickedRoleId ?? roles.find((role) => role.builtin === "member")?.id;
+  const newRole = roles.find((role) => role.id === newRoleId);
+  const bulkRunning = bulk !== null && bulk.report === null;
 
   async function handleRole(member: GroupMemberDto, roleId: string): Promise<void> {
     try {
@@ -75,11 +86,64 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
     }
   }
 
+  /**
+   * 批次加入（貼多個地址、或從其他群組匯入）：已在名單裡的先記「已是成員」不送；其餘依序 `PUT`（`bulk-add.ts`），
+   * 全部用加人表單目前選的角色。整批結束才失效一次快取（同單人加入的三把 key）。停下時把沒加成的地址放回輸入框，方便再按一次。
+   */
+  async function runBulk(emails: string[], pre: BulkAddResult[], fromInput: boolean): Promise<void> {
+    if (bulkRunning) return;
+    const existing = new Set(members.map((member) => normalizeEmail(member.email)));
+    const already = emails.filter((address) => existing.has(normalizeEmail(address)));
+    const toSend = emails.filter((address) => !existing.has(normalizeEmail(address)));
+    const skipped: BulkAddResult[] = [...pre, ...already.map((address) => ({ email: address, outcome: "alreadyMember" as const }))];
+    const roleId = newRoleId;
+    setAddError(null);
+    setBulk({ done: 0, total: toSend.length, report: null });
+    let report;
+    try {
+      report = await runBulkAdd(
+        toSend,
+        (address) => addGroupMember(group.id, roleId === undefined ? { email: address } : { email: address, roleId }),
+        (done, total) => setBulk({ done, total, report: null }),
+      );
+    } finally {
+      if (toSend.length > 0) invalidateAfterBulk();
+    }
+    setBulk({ done: toSend.length, total: toSend.length, report: { results: [...skipped, ...report.results], stopped: report.stopped } });
+    if (report.stopped) {
+      setEmail(report.results.filter((r) => r.outcome === "failed" || r.outcome === "notProcessed").map((r) => r.email).join(", "));
+    } else if (fromInput) {
+      setEmail("");
+      setPickedRoleId(null);
+    }
+  }
+
+  /** 從試算表或信件貼一欄地址：單行輸入框會把換行吃掉（地址黏在一起），這裡改成逗號。 */
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>): void {
+    const text = event.clipboardData.getData("text");
+    if (!/[\r\n]/.test(text)) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    setEmail(input.value.slice(0, start) + text.trim().split(/[\r\n]+/).join(", ") + input.value.slice(end));
+  }
+
   async function handleAdd(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setAddError(null);
-    const trimmed = email.trim();
-    if (trimmed.length === 0) return;
+    const parsed = parseEmailList(email);
+    if (parsed.emails.length + parsed.invalid.length > 1) {
+      setBulk(null);
+      await runBulk(parsed.emails, parsed.invalid.map((token) => ({ email: token, outcome: "invalid" as const })), true);
+      return;
+    }
+    if (parsed.invalid.length === 1) {
+      setAddError(t("groups.bulk.invalidSingle", { value: parsed.invalid[0] }));
+      return;
+    }
+    const trimmed = parsed.emails[0];
+    if (trimmed === undefined) return;
     try {
       await addMember.mutateAsync(newRoleId === undefined ? { email: trimmed } : { email: trimmed, roleId: newRoleId });
       setEmail("");
@@ -162,13 +226,16 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       {canManageMembers && (
         <>
           <form onSubmit={(event) => void handleAdd(event)} className="mt-4 flex items-center gap-2">
+            {/* 收多個地址（逗號／分號／空白／換行分隔），所以是 text 而不是 email：後者的原生驗證會擋下多個地址 */}
             <Input
-              type="email"
+              type="text"
+              inputMode="email"
               required
-              placeholder={t("groups.detail.addEmailLabel")}
+              placeholder={t("groups.bulk.addEmailsPlaceholder")}
               aria-label={t("groups.detail.addEmailLabel")}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              onPaste={handlePaste}
               className="min-w-0 max-w-md flex-1"
             />
             <select
@@ -184,7 +251,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
                 </option>
               ))}
             </select>
-            <Button type="submit" variant="outline" disabled={addMember.isPending}>
+            <Button type="submit" variant="outline" disabled={addMember.isPending || bulkRunning}>
               {t("groups.detail.add")}
             </Button>
           </form>
@@ -193,6 +260,20 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
               {addError}
             </p>
           )}
+          <div className="mt-2">
+            <ImportMembersDialog
+              groupId={group.id}
+              currentMemberIds={new Set(members.map((member) => member.userId))}
+              myUserId={myUserId}
+              roleName={newRole ? roleLabel(t, newRole) : roleLabel(t, { builtin: "member", name: null })}
+              disabled={bulkRunning || membersQuery.isPending}
+              onImport={(emails) => {
+                setBulk(null);
+                void runBulk(emails, [], false);
+              }}
+            />
+          </div>
+          {bulk && <BulkAddStatus state={bulk} onDismiss={() => setBulk(null)} />}
         </>
       )}
     </SettingsGroup>
