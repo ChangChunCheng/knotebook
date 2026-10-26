@@ -9,7 +9,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ### Changed
 
-- The buttons and the email, password and other text fields on the sign-in, create-account, reset-password, link-account, change-password and app-authorization pages are taller (44 pixels instead of 32) and the button text is larger (16 px instead of 14 px), so they are easier to hit; this includes each **Sign in with …** button. Other pages keep the 32-pixel controls.
+- The main buttons and the email, password and other text fields on the sign-in, create-account, reset-password, link-account and app-authorization pages, and on the change-password page you're sent to when a password change is required, are taller (44 pixels instead of 32) and the button text is larger (16 px instead of 14 px), so they are easier to hit; this includes each **Sign in with …** button. Other pages, including the change-password form in Settings, keep the 32-pixel controls.
 
 ## [0.13.0] - 2026-10-26
 

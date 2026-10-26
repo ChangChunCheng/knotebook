@@ -36,13 +36,13 @@ import { cn } from "@/lib/utils";
  * 在 `tone="page"` 時 44px，`tone="outline"` 的設定面板內仍是 32px）、`AuthorizePage.tsx`（OAuth 授權）的按鈕
  * （含登入頁每顆 SSO 鈕與「註冊新帳號」）都用 `lg`，輸入框以 `className="h-11"` 跟著拉高，卡片裡同一欄的控制項等高。
  * 勾選框與勾選列（授權頁的 scope 勾選）不放大。
- * 理由：同款卡片頁一律 44px，頁面之間跳轉不換尺寸；登入頁是每天都會經過、只為了按一顆鈕的整頁（觸控目標），
+ * 理由：同款卡片頁一律 44px，頁面之間跳轉不換尺寸（AuthorizePage 的卡片是 `max-w-md`，依 Willie 點名納入）；登入頁是每天都會經過、只為了按一顆鈕的整頁（觸控目標），
  * 32px 太難快速點中。頁面上沒有任何 32px 控制項與這些 `lg` 控制項同列，所以不違背「同列等高」。
  * 電腦與手機同一尺寸，不做斷點縮回。
  * 字級：`lg` 是 16px（`text-base`），比卡片內標籤與輸入框文字（14px）大一號，是刻意的
  * （Willie 2026-10-27 看過畫面定案）。
- * ⚠ `lg` 只准出現在上述頁面，守衛 `ui/button.lg-scope.guard.test.ts` 有兩道：`LG_SIZE` 是
- * 「各頁確實直接寫了 `size="lg"`」的正向檢查；`LG_LITERAL` 擋任何其他地方的 `"lg"` 字串字面
+ * ⚠ `lg` 只准出現在上述頁面，守衛 `ui/button.lg-scope.guard.test.ts` 有兩道：`LG_SIZE` 檢查
+ * 恰好這些頁直接寫了 `size="lg"`（多一頁或少一頁都會紅）；`LG_LITERAL` 擋任何其他地方的 `"lg"` 字串字面
  * （`ChangePasswordForm.tsx` 以 tone 條件式寫 `lg`，只在這一道的允許清單裡）。
  * 要擴到別頁，先改這段再改守衛清單。
  *
