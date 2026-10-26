@@ -75,6 +75,16 @@ describe("RegisterPage（#187 §9.4、S2）", () => {
     expect(solid.map(el => el.textContent)).toEqual(["Create account"]);
   });
 
+  it("卡片頁例外：Create account 鈕 lg（h-11），四個輸入框也 h-11（整欄等高）", async () => {
+    setup("/register", OPEN);
+    const submit = await screen.findByRole("button", { name: "Create account" });
+    const targets = [submit, ...["#register-email", "#register-display-name", "#register-password", "#register-confirm"].map((sel) => document.querySelector(sel)!)];
+    for (const el of targets) {
+      expect(el).toHaveClass("h-11");
+      expect(el).not.toHaveClass("h-8");
+    }
+  });
+
   it("送出成功 → POST {email, password, displayName}、導向 /", async () => {
     const { calls } = setup("/register", OPEN);
     await fillAndSubmit({ email: "new@example.com", displayName: "New", password: "correct-horse-battery", confirm: "correct-horse-battery" });

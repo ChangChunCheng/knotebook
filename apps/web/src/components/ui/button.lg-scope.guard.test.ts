@@ -4,18 +4,26 @@ import { describe, expect, it } from "vitest";
 import { buttonVariants } from "./button";
 
 /**
- * 來源層守衛：`Button` 的 `size="lg"`（h-11，44px）是全站「高度只有 32px」規則的第二個例外，
- * **只准用在登入頁**（理由見 `ui/button.tsx` 規範）。這裡機械釘住唯一合法的呼叫端；
- * 別的檔案一用 `lg` 就先紅，逼寫的人回頭改規範與這份清單，而不是讓 44px 靜默外擴。
+ * 來源層守衛：`Button` 的 `size="lg"`（h-11，44px）是全站「預設高度 32px」規則的例外二，
+ * **只准用在未登入的四張卡片頁**（登入、註冊、重設密碼、連結帳號；理由見 `ui/button.tsx` 規範）。
+ * 這裡機械釘住唯一合法的呼叫端；別的檔案一用 `lg` 就先紅，逼寫的人回頭改規範與這份清單，
+ * 而不是讓 44px 靜默外擴。
  *
- * 掃描語意比照 `button.brand-scope.guard.test.ts`：剝註解（註解裡解釋 `lg` 是文件不是呼叫端）、
- * 排除 `.test.` 檔與定義處 `ui/button.tsx`。抓的寫法：`size="lg"`、`size={"lg"}`、
- * `size: "lg"`（`buttonVariants({ size: "lg" })`）。
+ * 兩道掃描，語意比照 `button.brand-scope.guard.test.ts`（剝註解、排除 `.test.` 檔與定義處 `ui/button.tsx`）：
+ * 1. `size="lg"`、`size={"lg"}`、`size: "lg"`（`buttonVariants({ size: "lg" })`）這類直接寫法；
+ * 2. 任何 `"lg"`／`'lg'`／`` `lg` `` 字串字面——擋住 `size={x ? "lg" : "default"}`、
+ *    `const S = "lg"; <Button size={S}>` 這類繞過第 1 道的間接寫法。
  */
 
-const ALLOWED_FILES = ["pages/LoginPage.tsx"];
+const ALLOWED_FILES = [
+  "pages/LinkAccountPage.tsx",
+  "pages/LoginPage.tsx",
+  "pages/RegisterPage.tsx",
+  "pages/ResetPasswordPage.tsx",
+];
 
 const LG_SIZE = /\bsize\s*[=:]\s*\{?\s*["'`]lg["'`]/;
+const LG_LITERAL = /["'`]lg["'`]/;
 
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
@@ -35,7 +43,7 @@ function listTsxFiles(dir: string): string[] {
   return files;
 }
 
-describe("Button size=lg 呼叫端範圍守衛（登入頁例外）", () => {
+describe("Button size=lg 呼叫端範圍守衛（四張未登入卡片頁例外）", () => {
   it("lg 是 44px（h-11）", () => {
     expect(buttonVariants({ size: "lg" })).toContain("h-11");
   });
@@ -48,13 +56,30 @@ describe("Button size=lg 呼叫端範圍守衛（登入頁例外）", () => {
     expect(LG_SIZE.test(`<Button size="icon">`)).toBe(false);
   });
 
-  it("size=lg（剝註解後）只出現在登入頁", () => {
+  it("偵測式 2 抓得到間接寫法、放過其他字串", () => {
+    expect(LG_LITERAL.test(`size={x ? "lg" : "default"}`)).toBe(true);
+    expect(LG_LITERAL.test(`const S = 'lg';`)).toBe(true);
+    expect(LG_LITERAL.test("const S = `lg`;")).toBe(true);
+    expect(LG_LITERAL.test(`className="lg:flex"`)).toBe(false);
+    expect(LG_LITERAL.test(`size="sm"`)).toBe(false);
+  });
+
+  it("size=lg（剝註解後）只出現在四張未登入卡片頁", () => {
     const root = `${process.cwd()}/src`;
     const files = listTsxFiles(root);
     expect(files.some((p) => p.endsWith("/auth/guards.tsx"))).toBe(true); // 遞迴確實走到子目錄
 
     const offenders = files
       .filter((file) => LG_SIZE.test(stripComments(readFileSync(file, "utf8"))))
+      .map((file) => file.slice(root.length + 1));
+
+    expect(offenders.sort()).toEqual([...ALLOWED_FILES].sort());
+  });
+
+  it("任何 \"lg\" 字串字面（剝註解後）也只出現在這四頁", () => {
+    const root = `${process.cwd()}/src`;
+    const offenders = listTsxFiles(root)
+      .filter((file) => LG_LITERAL.test(stripComments(readFileSync(file, "utf8"))))
       .map((file) => file.slice(root.length + 1));
 
     expect(offenders.sort()).toEqual([...ALLOWED_FILES].sort());

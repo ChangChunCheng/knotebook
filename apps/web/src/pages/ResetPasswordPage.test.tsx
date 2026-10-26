@@ -126,6 +126,20 @@ describe("ResetPasswordPage（#286 §5.2、A-16）", () => {
     expect(screen.getByLabelText("Confirm new password")).toHaveAttribute("type", "password");
   });
 
+  it("卡片頁例外：Set password 鈕 lg（h-11），兩個密碼欄也 h-11（整欄等高）", async () => {
+    setup(`/reset-password#token=${TOKEN}`);
+    await screen.findByLabelText("New password");
+    const targets = [
+      screen.getByRole("button", { name: "Set password" }),
+      screen.getByLabelText("New password"),
+      screen.getByLabelText("Confirm new password"),
+    ];
+    for (const el of targets) {
+      expect(el).toHaveClass("h-11");
+      expect(el).not.toHaveClass("h-8");
+    }
+  });
+
   it("P2 重新整理（沒有 fragment、鍵還在）→ inspect 帶存的 token、出現表單", async () => {
     sessionStorage.setItem(KEY, TOKEN);
     const { calls } = setup("/reset-password");

@@ -88,6 +88,21 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
     expect(solid.map(b => b.textContent)).toEqual(["Confirm with password and link"]);
   });
 
+  it("卡片頁例外：密碼確認、SSO 證明、取消三顆鈕都是 lg（h-11），密碼欄也 h-11（整欄等高）", async () => {
+    mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
+    renderAt("/link-account");
+    const targets = [
+      await screen.findByRole("button", { name: "Confirm with password and link" }),
+      screen.getByRole("button", { name: "Confirm by signing in with GitLab" }),
+      screen.getByRole("button", { name: "Cancel" }),
+      screen.getByLabelText("Password for this account"),
+    ];
+    for (const el of targets) {
+      expect(el).toHaveClass("h-11");
+      expect(el).not.toHaveClass("h-8");
+    }
+  });
+
   it("methods.password=false → 沒有密碼欄，只有 SSO 鈕", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, { ...PENDING, methods: { password: false, providers: PENDING.methods.providers } }) });
     renderAt("/link-account");
