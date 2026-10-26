@@ -344,7 +344,10 @@ describe("AiSession 狀態機（#263 spec §5.2）", () => {
       await finishStream(ai.calls[0]!, '<div data-content-type="paragraph">x</div>');
       expect(session.state.phase === "error" && session.state.code).toBe("unsupported_block");
       const region = await screen.findByTestId("selection-ai-box");
-      expect(await within(region).findByRole("alert")).toHaveTextContent("That content contains a block type this note can't store.");
+      // final review cleanup：文案泛化（這碼也代表剖析例外與事件處理屬性，不只「區塊類型」）
+      const alert = await within(region).findByRole("alert");
+      expect(alert).toHaveTextContent("That content contains something this note can't store.");
+      expect(alert).not.toHaveTextContent("block type");
       expect(docText()).toBe(before);
       expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
       await act(async () => {

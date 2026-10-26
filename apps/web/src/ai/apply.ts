@@ -13,7 +13,7 @@ import {
   restoreMermaidBlocks,
   targetFromList,
   type MarkdownPlacement,
-  type MarkdownShapeError,
+  type MarkdownSyntaxError,
   type SiteLinkCandidate,
   type WikilinkTarget,
 } from "@knotebook/shared";
@@ -56,7 +56,7 @@ export function prepareAiResult(
   editor: AnyEditor,
   markdown: string,
   deps: ApplyDeps,
-): PreparedResult | { empty: true } | { invalid: MarkdownShapeError | "unsupported_block" | "unsupported_color" } {
+): PreparedResult | { empty: true } | { invalid: MarkdownSyntaxError | "unsupported_color" } {
   const syntax = checkNoteMarkdownSyntax(markdown, deps.placement);
   if (!syntax.ok) return { invalid: syntax.error };
   let raw: AnyBlock[];

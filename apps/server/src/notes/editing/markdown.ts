@@ -39,9 +39,15 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
     raw = editor.tryParseHTMLToBlocks(syntax.html) as AnyPartialBlock[];
   } catch (err) {
     // core 對部分編輯器內部形會丟例外（例：`<div data-content-type="paragraph">`）：當成存不了的內容整筆拒絕，不回 500。
-    // warn 一筆讓維運看得到 core 對合法內容開始丟例外（例如升級 BlockNote 後）；只記例外本身，不記 markdown（筆記內容）。
+    // warn 一筆讓維運看得到 core 對合法內容開始丟例外（例如升級 BlockNote 後）；只記例外的類名與 stack 的呼叫框（`    at …` 行），
+    // 不記 message——PM 的 `RangeError: Invalid content for node …` 之類會把內容片段拼進訊息（final review Nit 5），也不記 markdown。
     // 本模組沒有注入的 logger（簽章不變），比照 `version-fingerprint.ts` 的 console.warn。
-    const e = err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : { name: typeof err };
+    // 先丟掉 stack 開頭的「類名: message」那幾行（message 有幾行就丟幾行），再挑呼叫框——message 裡以「    at 」開頭的行不會混進來（cleanup r2 Nit 2）
+    const frames =
+      err instanceof Error
+        ? (err.stack ?? "").split("\n").slice(err.message.split("\n").length).filter(l => /^\s+at /.test(l))
+        : [];
+    const e = { name: err instanceof Error ? err.name : typeof err, frames };
     console.warn("parseMarkdownForNote: core parse threw; rejected as unsupported_block", e);
     return { error: "unsupported_block" };
   }

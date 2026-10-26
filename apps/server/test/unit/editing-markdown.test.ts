@@ -256,11 +256,32 @@ describe("parseMarkdownForNote", () => {
       }
     });
   });
-  // T4 審查 Minor-2：core 對合法內容開始丟例外時（例如升級 BlockNote 後），維運要看得到——warn 一筆，帶例外的類名、訊息與 stack，不帶筆記內容。
-  it("GM-THROW-LOG：parse 例外轉成 unsupported_block 時 console.warn 一次，帶 name／message／stack、不含 markdown 內容；正常 parse 不 warn", async () => {
+  // final review Nit 1：帶事件處理屬性的 HTML 在 core parse 之前就整筆拒絕（unsupported_block），不進 `tryParseHTMLToBlocks`
+  it("GM-EH：<details> 內、figure 內的 <img onerror> → unsupported_block，core parse 沒被呼叫", async () => {
+    await withSession(ed => {
+      const parse = vi.spyOn(ed, "tryParseHTMLToBlocks");
+      try {
+        for (const md of [
+          '<details><summary>s</summary><img src="x" onerror="alert(1)"></details>\n',
+          '<figure><img alt="a" src="/api/uploads/00000000-0000-4000-8000-000000000001" width="300" onerror="alert(1)"></figure>\n',
+        ]) {
+          expect(parseMarkdownForNote(ed, md, notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+        }
+        expect(parse).not.toHaveBeenCalled();
+        // 對照：拿掉 onerror 就照收
+        expect("error" in parseMarkdownForNote(ed, '<figure><img alt="a" src="/api/uploads/00000000-0000-4000-8000-000000000001" width="300"></figure>\n', notes, ORIGIN)).toBe(false);
+      } finally {
+        parse.mockRestore();
+      }
+    });
+  });
+  // T4 審查 Minor-2：core 對合法內容開始丟例外時（例如升級 BlockNote 後），維運要看得到——warn 一筆，帶例外的類名與 stack 的呼叫框。
+  // final review Nit 5：不帶 message（PM 的錯誤訊息可能拼進內容片段），也不帶筆記內容。
+  it("GM-THROW-LOG：parse 例外轉成 unsupported_block 時 console.warn 一次，帶 name 與 stack 呼叫框、不含 message 與 markdown 內容；正常 parse 不 warn", async () => {
     await withSession(ed => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const boom = new TypeError("boom-msg");
+      // 訊息裡放內容片段，模擬 PM 的 `Invalid content for node …`
+      const boom = new RangeError("Invalid content for node paragraph: <SECRET-IN-MESSAGE>");
       const parse = vi.spyOn(ed, "tryParseHTMLToBlocks").mockImplementationOnce(() => {
         throw boom;
       });
@@ -269,17 +290,28 @@ describe("parseMarkdownForNote", () => {
         expect(warn).toHaveBeenCalledTimes(1);
         const logged = JSON.stringify(warn.mock.calls[0]);
         expect(logged).toContain("unsupported_block");
-        expect(logged).toContain("TypeError");
-        expect(logged).toContain("boom-msg");
-        expect(warn.mock.calls[0]!.some(a => typeof a === "object" && a !== null && (a as { stack?: unknown }).stack === boom.stack)).toBe(true);
+        expect(logged).toContain("RangeError");
+        const frames = boom.stack!.split("\n").filter(l => /^\s+at /.test(l));
+        expect(frames.length).toBeGreaterThan(0);
+        expect(warn.mock.calls[0]![1]).toEqual({ name: "RangeError", frames });
+        expect(logged).not.toContain("SECRET-IN-MESSAGE");
         expect(logged).not.toContain("SECRET-NOTE-TEXT");
         // 真輸入（core 真的丟）同樣 warn、同樣不帶內容
         expect(parseMarkdownForNote(ed, '<div data-content-type="paragraph">SECRET-NOTE-TEXT</div>', notes, ORIGIN)).toEqual({ error: "unsupported_block" });
         expect(warn).toHaveBeenCalledTimes(2);
         expect(JSON.stringify(warn.mock.calls[1])).not.toContain("SECRET-NOTE-TEXT");
+        // cleanup r2 Nit 2：多行 message 裡以「    at 」開頭的行不得被當成呼叫框記下
+        const tricky = new Error("first\n    at SECRET-LINE (x)");
+        parse.mockImplementationOnce(() => {
+          throw tricky;
+        });
+        expect(parseMarkdownForNote(ed, "y", notes, ORIGIN)).toEqual({ error: "unsupported_block" });
+        expect(warn).toHaveBeenCalledTimes(3);
+        expect(JSON.stringify(warn.mock.calls[2])).not.toContain("SECRET-LINE");
+        expect((warn.mock.calls[2]![1] as { frames: string[] }).frames.length).toBeGreaterThan(0);
         // 對照：parse 沒丟例外就不 warn
         expect("error" in parseMarkdownForNote(ed, "plain", notes, ORIGIN)).toBe(false);
-        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledTimes(3);
       } finally {
         parse.mockRestore();
         warn.mockRestore();

@@ -232,6 +232,26 @@ describe("AI 套用鏈（spec §13.3）", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
+  // final review Nit 1：core 剖析 <details> 時把子節點 clone 進活文件，瀏覽器裡 <img onerror> 會觸發——語法檢查先擋，不進 core parse
+  it("GA10：<details> 內、figure 內的 <img onerror> → { invalid: unsupported_block }，core parse 沒被呼叫；top 與 nested 同", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const parse = vi.spyOn(editor, "tryParseHTMLToBlocks");
+    try {
+      for (const md of [
+        '<details><summary>s</summary><img src="x" onerror="alert(1)"></details>',
+        '<figure><img alt="a" src="/x" width="300" onerror="alert(1)"></figure>',
+      ]) {
+        for (const placement of ["top", "nested"] as const) {
+          expect(prepareAiResult(editor, md, { notes: [], placement })).toEqual({ invalid: "unsupported_block" });
+        }
+      }
+      expect(parse).not.toHaveBeenCalled();
+      expect(prepareAiResult(editor, '<figure><img alt="a" src="/x" width="300"></figure>', { notes: [], placement: "top" })).not.toHaveProperty("invalid");
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
   // 同 server 管線（#94）：```mermaid 的 codeBlock 還原成 mermaid block，否則 AI 套回會把圖變成程式碼區塊
   const FENCE = "```mermaid\ngraph TD; A-->B\n```";
   const mermaidOf = (markdown: string, placement: "top" | "nested") => {

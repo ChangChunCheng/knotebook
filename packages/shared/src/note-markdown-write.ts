@@ -2,7 +2,8 @@
  * 並排 PR-2：MCP／REST／站內 AI 寫入 markdown 的兩道檢查（spec 2026-10-21 columns-layout §11.3；server 與 web 共用）。
  *
  * **語法檢查**（{@link checkNoteMarkdownSyntax}，第一道）：在 `markdownToHTML` 的 DOM 上做 S1–S10——並排只收 §11.1 的
- * 正規 div 形、圖片寬度只收 `<figure><img … width></figure>`、表格欄寬只收第一列的 `colwidth`。不合格整筆拒絕。
+ * 正規 div 形、圖片寬度只收 `<figure><img … width></figure>`、表格欄寬只收第一列的 `colwidth`；在這些之前先拒帶事件處理屬性的
+ * HTML（`unsupported_block`）。不合格整筆拒絕。
  * S1「並排標記獨佔一行」用逐行標記判：`markdownToHTML` 把各 token 的 HTML 直接串接、不留換行，輸出字串上分不出
  * 「同一行」與「另起一行」——所以先在 markdown 上把逐字等於正規行的行換成帶一次性標記屬性的同行版本（行結構不變，
  * 兩次 tokenize 結果相同；程式碼區塊裡的行被 escape、不成元素），DOM 裡帶並排屬性卻沒有標記的元素一律不收。
@@ -19,6 +20,17 @@ import { SIZE_PX_MAX, SIZE_PX_MIN, isSizePx } from "./note-sizes.js";
 
 export type MarkdownPlacement = "top" | "nested";
 export type MarkdownShapeError = "unsupported_columns" | "unsupported_size";
+/** 語法檢查多一碼：帶事件處理屬性（`onerror` 等）的 HTML 回 `unsupported_block`（不屬於版面，見 {@link hasEventHandlerAttr}）。 */
+export type MarkdownSyntaxError = MarkdownShapeError | "unsupported_block";
+
+/**
+ * 元素帶事件處理屬性：屬性名以 `on` 開頭、長度大於 2（`onerror`、`onclick`、`<svg onload>`、`<math onclick>`…）。只看名字、不問執行中的
+ * DOM 有沒有這個 IDL 成員——jsdom 少很多處理器（`onanimationstart`、SVG 動畫的 `onbegin`、MathML 全部），問 DOM 會讓 server 與瀏覽器
+ * 拒的集合不同（cleanup r2 Minor 1）。代價是 `<span only>` 這類自造屬性也被拒；讀出形不會產生它們。
+ * 防線之外的一層（final review Nit 1）：core 剖析 `<details>` 時把子節點 clone 進活文件，瀏覽器裡 `<img onerror>` 會在剖析時觸發
+ *（CSP 擋 inline handler）；檢查用的 DOM 本身是惰性的。
+ */
+const hasEventHandlerAttr = (el: Element): boolean => el.getAttributeNames().some(n => n.length > 2 && n.startsWith("on"));
 
 const COLUMN_LINE_RE = /^<div data-kb-column style="flex:((?:0|[1-9][0-9]?)(?:\.[0-9]{1,2})?)">$/;
 
@@ -118,8 +130,11 @@ export function syntaxCheckRoot(html: string): Element {
   return root;
 }
 
-/** 通過時回 `html`＝`markdownToHTML(markdown)`（未標記的原文），呼叫端拿它 `tryParseHTMLToBlocks`。 */
-export function checkNoteMarkdownSyntax(markdown: string, placement: MarkdownPlacement): { ok: true; html: string } | { ok: false; error: MarkdownShapeError } {
+/**
+ * 通過時回 `html`＝`markdownToHTML(markdown)`（未標記的原文），呼叫端拿它 `tryParseHTMLToBlocks`。
+ * 順序：事件處理屬性（`unsupported_block`）→ 並排（S10、S1–S7）→ 尺寸（S8、S9）。
+ */
+export function checkNoteMarkdownSyntax(markdown: string, placement: MarkdownPlacement): { ok: true; html: string } | { ok: false; error: MarkdownSyntaxError } {
   // 標記屬性名避開原文裡出現過的字串（不分大小寫：HTML 屬性名不分大小寫），模型偽造不出來
   const lower = markdown.toLowerCase();
   let mark = "data-kb-line";
@@ -137,6 +152,7 @@ export function checkNoteMarkdownSyntax(markdown: string, placement: MarkdownPla
     .join("\n");
   const root = syntaxCheckRoot(markdownToHTML(marked));
   const els = Array.from(root.querySelectorAll("*"));
+  if (els.some(hasEventHandlerAttr)) return { ok: false, error: "unsupported_block" };
   if (placement === "nested" && els.some(el => isRowEl(el) || isColEl(el))) return { ok: false, error: "unsupported_columns" };
   if (COLUMNS_CHECKS.some(check => check(els, root, mark))) return { ok: false, error: "unsupported_columns" };
   if (SIZE_CHECKS.some(check => check(els, root, mark))) return { ok: false, error: "unsupported_size" };

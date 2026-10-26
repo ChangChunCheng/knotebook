@@ -261,6 +261,47 @@ describe("拒絕：S10、placement、順序", () => {
   });
 });
 
+// final review Nit 1（總管裁定）：HTML 帶事件處理屬性（`onerror` 等）→ `unsupported_block`，在並排與尺寸檢查之前。
+// 碼用 unsupported_block：unsupported_columns 的訊息是「layout or editor-internal HTML」，事件處理屬性兩者都不是。
+describe("事件處理屬性", () => {
+  const BLOCK = { ok: false, error: "unsupported_block" } as const;
+  it.each([
+    ["EH1 段落裡的 img onerror", '<img src="x" onerror="alert(1)">\n'],
+    ["EH2 <details> 裡的 img onerror", '<details><summary>s</summary><img src="x" onerror="alert(1)"></details>\n'],
+    ["EH3 figure 裡的 img onerror（其餘照正規形）", '<figure><img alt="a" src="/x" width="300" onerror="alert(1)"></figure>\n'],
+    ["EH4 p onclick", '<p onclick="x()">t</p>\n'],
+    ["EH5 svg onload", '<svg onload="x()"></svg>\n'],
+    ["EH6 大寫 ONERROR", '<IMG SRC="x" ONERROR="x()">\n'],
+    ["EH7 欄內的 onmouseover", row(col("1", '<p onmouseover="x()">a</p>'), col("1", "b"))],
+    ["EH8 同一筆另有 S7 的 div（事件處理屬性先判）", '<div style="display:flex"><img src="x" onerror="x()"></div>\n'],
+    // cleanup r2 Minor 1：只看名字——自造的 on 開頭屬性也拒（讀出形不產生它們），server 與瀏覽器拒同一組
+    ["EH9 自造的 on 開頭屬性名（only、one）", '<span only="1" one="2">x</span>\n'],
+    // 以下三形 jsdom 沒有對應的 IDL 成員（舊的 `n in el` 在 server 上照收）
+    ["EH10 p onanimationstart", '<p onanimationstart="x()">t</p>\n'],
+    ["EH11 math onclick", '<math onclick="x()"><mi>x</mi></math>\n'],
+    ["EH12 svg animate onbegin", '<svg><animate onbegin="x()"></animate></svg>\n'],
+  ])("%s → unsupported_block", (_name, md) => {
+    expect(chk(md)).toEqual(BLOCK);
+    expect(chk(md, "nested")).toEqual(BLOCK);
+  });
+  it.each([
+    ["EH-OK1 <details open>", "<details open><summary>s</summary><p>x</p></details>\n"],
+    ["EH-OK3 文字裡的 only= 與 onerror=", "only=1 and onerror=alert(1) as text\n"],
+    ["EH-OK4 程式碼區塊與行內 code 裡的 img onerror", '```\n<img src="x" onerror="x()">\n```\n\n`<img onerror="x()">`\n'],
+    ["EH-OK5 網址裡的 ?onload=（屬性值，不是屬性名）", '![x](/a.png?onload=1)\n\n[l](/x?onload=1)\n\n<a href="/x?onload=1">l</a>\n\n<figure><img alt="a" src="/x?onload=1" width="300"></figure>\n'],
+    ["EH-OK6 屬性值裡的 only= 與 onerror=", '<span title="only=1 onerror=x">t</span>\n'],
+  ])("%s → ok", (_name, md) => {
+    expect(chk(md).ok).toBe(true);
+  });
+  it("EH-GOLD：沒有任何 golden 的 markdown 被這道檢查擋下", () => {
+    const hits = goldens.cases.filter(c => {
+      const r = chk(c.markdown);
+      return !r.ok && r.error === "unsupported_block";
+    });
+    expect(hits.map(c => c.id)).toEqual([]);
+  });
+});
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 手造 Block JSON
 type B = any;
 const P = (text = "p", children: B[] = []): B => ({ type: "paragraph", props: {}, content: [{ type: "text", text, styles: {} }], children });

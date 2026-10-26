@@ -261,7 +261,8 @@ export function escapeLinkText(text: string): string {
  * 輸入不改寫（copy-on-write）；不依賴 `toExternalHTML` 的形，所以 PR1／PR2 任一狀態下 MCP 讀出的形都相同。
  * ⚠ RF1：顯示文字**不在這裡跳脫**——同一份副本在 server 的讀路徑上，上色區塊會走原始 HTML 輸出（`note-markdown-read.ts` 的
  * `toBlockHTML`），HTML 不需要也不會反跳脫 markdown（Task 6 審查 r0 I1）。跳脫做在真正變成 markdown 的那一步：
- * server 在 `note-markdown-read.ts` 的 markdown 分支呼叫 `escapeLinkText`；站內 AI（§9.4）的呼叫端要自己在 markdown 序列化前處理。
+ * `note-markdown-read.ts` 的 markdown 分支呼叫 `escapeLinkText`，只做這一次。server 讀路徑與站內 AI（§9.4，web 的 `ai/note-markdown.ts`）
+ * 都走同一支 `blocksToNoteMarkdown`，呼叫端**不得**另行跳脫，否則會跳脫兩次（spec 2026-10-21 columns-layout §11.6 M-4）。
  */
 export function wikilinksToLinks<B>(blocks: readonly B[], titleOf: (id: string) => string | undefined): B[] {
   const rewrite: InlineArrayMapper = (inline) => {
