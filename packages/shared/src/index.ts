@@ -291,6 +291,25 @@ export interface ShareDto {
   role: ShareRole;
 }
 
+/**
+ * `GET /api/users/suggest?q=` 的一筆建議：只會是呼叫者「已經認識」的人——與他同在某個群組的成員，或他把自己的筆記
+ * 逐人分享過的對象（這兩群人的 email 呼叫者在介面上本來就看得到）。不是全站名錄；排除自己與停用帳號。
+ */
+export interface UserSuggestionDto {
+  userId: string;
+  email: string;
+  displayName: string;
+}
+
+export interface UserSuggestResponse {
+  users: UserSuggestionDto[];
+}
+
+/** `q` trim 後的長度下限／上限（含），與每次最多回幾筆。web 的輸入框也用同一組數字決定何時發請求。 */
+export const USER_SUGGEST_MIN_QUERY = 2;
+export const USER_SUGGEST_MAX_QUERY = 100;
+export const USER_SUGGEST_MAX_RESULTS = 8;
+
 /** 反向連結清單項目（Plan 3）：連到目前筆記的來源筆記摘要，供 backlinks 面板渲染。 */
 export interface BacklinkDto {
   id: string;
