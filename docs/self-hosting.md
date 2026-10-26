@@ -365,7 +365,7 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
 
 **Folders (migration 0034).**
 
-1. **Migration 0034 only adds tables, columns, indexes and triggers**: the `folders` table, the `note_placements` table (where each person filed the notes shared with them), two columns on `notes` that can be empty — `folder_id` (the folder a note is in) and `trash_folder_path` (the folder path kept for a note in the trash) — with their indexes and constraints, and three triggers that keep notes, folders and filed shared notes in the right space. Nothing is filled in: every existing note starts at the top level. Back up the database first as usual, for example `docker compose exec -T db pg_dump -U knotebook knotebook > knotebook-before-upgrade.sql`.
+1. **Migration 0034 only adds tables, columns, indexes, triggers and the functions they run**: the `folders` table, the `note_placements` table (where each person filed the notes shared with them), two columns on `notes` that can be empty — `folder_id` (the folder a note is in) and `trash_folder_path` (the folder path kept for a note in the trash) — with their indexes and constraints, and three triggers, each with its own function, that keep notes, folders and filed shared notes in the right space. Nothing is filled in: every existing note starts at the top level. Back up the database first as usual, for example `docker compose exec -T db pg_dump -U knotebook knotebook > knotebook-before-upgrade.sql`.
 2. **Rolling back:** the previous version doesn't know about folders, so it lists every note without them. The folders, and where notes are filed, stay in the database and are back after upgrading again — except for what the previous version changes while it runs:
    - a note moved into a group is taken out of its folder, and is at the group's top level after upgrading again;
    - deleting a group, with **Give them to an admin** or **Delete everything**, deletes the group's folders too — with **Give them to an admin**, its notes are at the top level of that person's notes after upgrading again;
@@ -373,7 +373,7 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
    - notes created or copied while rolled back are at the top level.
 
    A note taken out of the trash while rolled back — by clearing its trash marks as described under **The trash** above — is in its folder after upgrading again if that folder still exists, otherwise at the top level.
-3. **The triggers stay in the database while rolled back** and don't make any of the previous version's writes fail: when it moves a note to another space (into a group, or in a group transfer), they only take the note out of its folder, as described above.
+3. **The triggers and their functions stay in the database while rolled back** and don't make any of the previous version's writes fail: when it moves a note to another space (into a group, or in a group transfer), they only take the note out of its folder, as described above.
 
 **The `notes:delete` scope (migration 0035).**
 
