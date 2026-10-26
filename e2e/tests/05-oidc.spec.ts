@@ -8,6 +8,7 @@ import { ADMIN, createUserViaInvite, loginAs, randomEmail } from "./helpers.js";
  *
  * control endpoint 走 `http://localhost:9400/control/next-login`（`request` fixture 不吃瀏覽器的 host-resolver-rules）。
  * 識別值一律隨機化（sub、email）：腳本失敗時不 down 疊，重跑會吃到髒資料（[[knotebook-local-workflow]]）。
+ * 另有一支量登入頁控制項高度（44px）：jsdom 不套 CSS，只能借這支的 SSO 按鈕在真瀏覽器量。
  */
 
 const CONTROL_URL = "http://localhost:9400/control/next-login";
@@ -101,5 +102,31 @@ test("情境二：SSO 首登 email 命中邀請建的帳號 → 輸入該帳號�
     await expect(page.getByRole("button", { name: displayName, exact: true })).toBeVisible();
   } finally {
     await passwordContext.close();
+  }
+});
+
+/**
+ * 同款卡片頁（登入、註冊、重設密碼、連結帳號、強制改密、OAuth 授權）的控制項是預設 32px 規則的例外：登入頁的「Sign in」與 SSO 鈕 44px（`size="lg"`），
+ * 兩個輸入框跟著 44px，才好快速點中（見 `apps/web/src/components/ui/button.tsx` 規範）。jsdom 不套 CSS、算不出高度，只能在這裡量。
+ */
+test("登入頁：Sign in 鈕、SSO 鈕與兩個輸入框都是 44px 高", async ({ browser }) => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto("/login");
+    const targets = [
+      { label: "Sign in", locator: page.getByRole("button", { name: "Sign in", exact: true }) },
+      { label: SSO_BUTTON, locator: page.getByRole("link", { name: SSO_BUTTON }) },
+      { label: "#login-email", locator: page.locator("#login-email") },
+      { label: "#login-password", locator: page.locator("#login-password") },
+    ];
+    for (const { label, locator } of targets) {
+      await expect(locator).toBeVisible();
+      const box = await locator.boundingBox();
+      expect(box, `${label} 應有 bounding box`).not.toBeNull();
+      expect(Math.round(box!.height), `${label} 高度`).toBe(44);
+    }
+  } finally {
+    await context.close();
   }
 });

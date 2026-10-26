@@ -100,7 +100,7 @@ function ResetPasswordContent({ token, forget, session }: { token: string | null
     return frame(
       <>
         {message(t("app.sessionError"))}
-        <Button type="button" variant="brandSolid" className="w-full" onClick={() => void query.refetch()}>
+        <Button type="button" variant="brandSolid" size="lg" className="w-full" onClick={() => void query.refetch()}>
           {t("app.retry")}
         </Button>
       </>,
@@ -121,6 +121,7 @@ function ResetPasswordContent({ token, forget, session }: { token: string | null
         <Button
           type="button"
           variant="outline"
+          size="lg"
           className="w-full"
           onClick={() => {
             setFormError(null);
@@ -185,16 +186,16 @@ function ResetPasswordContent({ token, forget, session }: { token: string | null
           <label htmlFor="reset-password-new" className="text-sm font-medium">
             {t("resetPassword.newPassword")}
           </label>
-          <Input id="reset-password-new" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input id="reset-password-new" type="password" autoComplete="new-password" required className="h-11" value={password} onChange={(e) => setPassword(e.target.value)} />
           <p className="text-xs text-muted-foreground">{t("changePassword.passwordHint", { min: MIN_PASSWORD_LENGTH })}</p>
         </div>
         <div className="space-y-1">
           <label htmlFor="reset-password-confirm" className="text-sm font-medium">
             {t("resetPassword.confirmPassword")}
           </label>
-          <Input id="reset-password-confirm" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          <Input id="reset-password-confirm" type="password" autoComplete="new-password" required className="h-11" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </div>
-        <Button type="submit" variant="brandSolid" className="w-full" disabled={submitting}>
+        <Button type="submit" variant="brandSolid" size="lg" className="w-full" disabled={submitting}>
           {submitting ? t("resetPassword.submitting") : t("resetPassword.submit")}
         </Button>
       </form>

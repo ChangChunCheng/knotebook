@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
+import { expectCardControls44 } from "@/test/card-controls";
 
 // 同 ChangePasswordPage.test.tsx 的約定：mock 全域 fetch，走真正的 AppRoutes——驗的是
 // 「route 有沒有接對」（掛在 RequireAuth 底下）而不只是元件單獨渲染。
@@ -113,6 +114,13 @@ describe("AuthorizePage", () => {
     expect(screen.getByRole("button", { name: "Not you? Sign out" })).toBeInTheDocument();
     expect(screen.getByText(/Only allow this if a program you just started/)).toBeInTheDocument();
     expect(screen.queryByText(/replace the previous authorization/)).not.toBeInTheDocument();
+  });
+
+  it("卡片頁例外：Allow、Deny 是 44px（h-11）；勾選框與「Not you?」文字鈕不放大", async () => {
+    vi.stubGlobal("fetch", mockFetch(okRequest));
+    renderAt("/authorize?req=abc");
+    await screen.findByRole("button", { name: "Allow" });
+    expect(expectCardControls44(undefined, "button.underline")).toBe(2);
   });
 
   // I-3：route 掛哪一層要有守衛。兩案分別殺「移到 RequireAuth 外」與「移到 ChangePasswordGate 外」。

@@ -10,6 +10,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 ### Changed
 
 - The sidebar's **Workspace** tab lists groups by your role in them: groups where you hold the built-in **Admin** role first, then those where you hold the built-in **Member** role, then those where you have a custom role, each by name. Before, all groups were listed by name, so groups you created could end up below ones others added you to. `GET /api/groups` returns them in the same order, and so do **Settings → Groups**, the group lists in **Move to…** and **Copy to…**, and **Move to** and **Copy to** in the sidebar's selection mode.
+- The main buttons and the email, password and other text fields on the sign-in, create-account, reset-password, link-account and app-authorization pages, and on the change-password page you're sent to when a password change is required, are taller (44 pixels instead of 32) and the button text is larger (16 px instead of 14 px), so they are easier to hit; this includes each **Sign in with …** button. Other pages, including the change-password form in Settings, keep the 32-pixel controls.
 
 ## [0.13.0] - 2026-10-26
 

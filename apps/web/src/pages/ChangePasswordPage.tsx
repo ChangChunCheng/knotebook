@@ -41,7 +41,7 @@ export default function ChangePasswordPage() {
     <main className="flex min-h-screen items-center justify-center p-8">
       <div className="w-full max-w-sm space-y-4">
         <div className="flex justify-end">
-          <Button type="button" variant="ghost" onClick={() => void handleLogout()}>
+          <Button type="button" variant="ghost" size="lg" onClick={() => void handleLogout()}>
             {t("userMenu.logout")}
           </Button>
         </div>
