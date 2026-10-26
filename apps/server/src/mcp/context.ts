@@ -40,7 +40,7 @@ export interface McpToolCtx {
   writes: NoteWriteService;
   /**
    * `contentRead` 給兩支讀取工具；`edit`／`tokenWrite` 給寫入工具——`tokenWrite` 由
-   * `requireWriteScope(ctx)` 扣（在 `resolveRole` **之前**，對齊 REST 的 preHandler），
+   * `requireWriteScope(ctx)`／`requireMoveScope(ctx, …)`／`requireDeleteScope(ctx)` 扣（在 `resolveRole` **之前**，對齊 REST 的 preHandler），
    * `edit` 由工具自己在角色檢查**之後**扣（`role === "none"` 的 404 不啃它）；
    * `search` 給 `search_notes`（#93）；`upload` 給 `copy_note`（#180）。
    */
@@ -64,7 +64,8 @@ export interface McpToolCtx {
    * 到得了這裡的憑證至少有它）。**消費端是 `mcp/write-scope.ts`**（規格 §10.2 D23／M13）：
    * `canWriteNotes(...)` 拿它們判有沒有 `notes:write`（`register.ts` 的註冊時過濾、
    * `routes/mcp.ts` 挑 per-request `instructions`、`requireWriteScope` 三處共用同一份判準；#239 起
-   * `canMoveNotes(...)`／`requireMoveScope` 也拿它們判有沒有 `notes:move`），
+   * `canMoveNotes(...)`／`requireMoveScope` 也拿它們判有沒有 `notes:move`；#181 起 `canDeleteNotes(...)`／
+   * `requireDeleteScope` 判有沒有 `notes:delete`），
    * `authKind === "session"` 則整條跳過 scope 檢查與 token 桶。
    */
   authKind: "token" | "session";

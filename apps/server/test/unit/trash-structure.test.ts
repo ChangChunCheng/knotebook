@@ -6,7 +6,8 @@
  * `.delete(notes)`、SQL 字面 `from notes`／`join notes`／`update notes`、`${notes}`），以「檔案 → 各處置的處數」登記，
  * 逐檔命中數與表上總和不同就紅；新檔沒登記、登記了但沒命中也紅。
  * 守衛二（AG6）：寫 `deleted_at` 的字面（`deletedAt:`、`deletedBy:`、`deleted_at\s*=`、`set deleted_at`）只准出現在
- * schema、`trashNotesInTx`／`restoreNotesInTx` 所在檔、垃圾桶清單查詢（含 DTO 映射）三檔，各登記處數。
+ * schema、`trashNotesInTx`／`restoreNotesInTx` 所在檔、垃圾桶清單查詢（含 DTO 映射）、MCP `list_trash`（outputSchema 與 DTO 映射）
+ * 四檔，各登記處數。
  * 守衛二 b（資料夾 spec §5.8 末條、§5.13）：`trashFolderPath:`／`trash_folder_path` 字面只准 schema、`notes/tx/trash.ts`、
  * `folders/tx/delete-folder.ts`、`groups/tx/delete-group.ts`、垃圾桶清單查詢五檔，各登記處數（與守衛二分開兩張表）。
  * 守衛三（§5.13）：寫 `folders` 表（`.update|insert|delete(folders)`、SQL 字面 `update folders`／`delete from folders`／
@@ -135,15 +136,17 @@ const REGISTRY: Record<string, Disposition> = {
   "routes/public.ts": { excludes: 2 },
   "storage/tx/quota.ts": { includes: 1, why: "容量照算（D-W4）" },
   "storage/usage.ts": { includes: 4, why: "容量照算（D-W4）" },
-  "trash/list.ts": { trashOnly: 2 },
+  // trashOnly：清單兩支、loadTrashedMeta（delete_note 移入後的重讀）。
+  "trash/list.ts": { trashOnly: 3 },
   // 還原的預讀空間（資料夾 T7，spec 2026-10-22 §5.8-1）。
   "trash/service.ts": { trashOnly: 1 },
   "uploads/tx/insert-upload.ts": { excludes: 1 },
 };
 
-/** 守衛二：只准這三檔，值＝處數。 */
+/** 守衛二：只准這四檔，值＝處數。 */
 const DELETED_AT_WRITERS: Record<string, number> = {
   "db/schema.ts": 2, // 欄位定義 deleted_at、deleted_by
+  "mcp/tools/list-trash.ts": 4, // outputSchema 兩鍵、DTO 映射一鍵、型別註記 `let deletedBy:` 一處（都是讀取，非寫入）
   "notes/tx/trash.ts": 5, // 鎖讀選欄、移入 set 兩欄、還原 set 兩欄
   "trash/list.ts": 3, // 清單選欄、DTO 映射兩欄
 };
@@ -184,7 +187,7 @@ describe("垃圾桶結構守衛（#181 §6.2-10）", () => {
     expect(missing).toEqual([]);
   });
 
-  it("守衛二（AG6）寫 deleted_at 的字面只在三檔、處數凍結", () => {
+  it("守衛二（AG6）寫 deleted_at 的字面只在四檔、處數凍結", () => {
     expect(hits(DELETED_AT_WRITE)).toEqual(DELETED_AT_WRITERS);
   });
 

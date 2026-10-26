@@ -1,5 +1,6 @@
 /**
- * 側欄 24px 圖示鈕的「滑過才浮出」（button.tsx 規範的 24px 例外那幾顆共用）。
+ * 側欄 24px 圖示鈕的「滑過才浮出」（button.tsx 規範的 24px 例外那幾顆共用）。`noterow` 的使用者：筆記列 ⋮
+ * （`NoteMenu.tsx`）與垃圾桶列的「還原」、⋮（`sidebar/TrashPanel.tsx`）；列 `<li>` 帶 `group/noterow`。
  * - 桌面：平常 `opacity-0`；滑過該列（`group-hover/<scope>`）、列內有鍵盤焦點
  *   （`group-has-[:focus-visible]/<scope>`——不用 focus-within，滑鼠點完留下的焦點會讓它殘留，
  *   全域 memory hover-reveal-focus-visible）、自己被鍵盤聚焦時浮出。

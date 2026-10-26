@@ -4,23 +4,25 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { ScopeChecks } from "@/lib/token-scope";
 
 /**
- * #239：「編輯」「移動或複製到群組」兩框（spec §9.1）。現在只剩 OAuth 同意頁用（#247 W22 起建立 token
- * 對話框與行內編輯改用 `ScopeTogglesField`）；兩者用同一套
- * 標籤（W10：`settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`——MCP 模型面字串引用的
- * 就是這兩句，server 單元 `scope-labels-sync.test.ts` 逐字比對）與同一套連動：
- * 取消編輯 → 搬移 disabled 且清掉勾選。
+ * #239／#181：「編輯」「移動或複製到群組」「移到垃圾桶與還原」三框（spec §9.1、§6.8.2）。現在只剩 OAuth 同意頁用
+ * （#247 W22 起建立 token 對話框與行內編輯改用 `ScopeTogglesField`）；兩者用同一套
+ * 標籤（W10：`settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`——MCP 模型面字串引用的
+ * 就是這幾句，server 單元 `scope-labels-sync.test.ts` 逐字比對）與同一套連動：
+ * 取消編輯 → 搬移、刪除 disabled 且清掉勾選。
  */
 export function ScopeChecksField({
   value,
   onChange,
   showWrite = true,
   showMove = true,
+  showDelete = true,
   granted,
 }: {
   value: ScopeChecks;
   onChange: (next: ScopeChecks) => void;
   showWrite?: boolean;
   showMove?: boolean;
+  showDelete?: boolean;
   /** 同意頁 W8：已授予的項目旁標「目前已授予」。 */
   granted?: ScopeChecks;
 }) {
@@ -28,6 +30,8 @@ export function ScopeChecksField({
   const writeId = useId();
   const moveId = useId();
   const moveHintId = useId();
+  const deleteId = useId();
+  const deleteHintId = useId();
   return (
     <div className="space-y-2">
       {showWrite && (
@@ -35,7 +39,10 @@ export function ScopeChecksField({
           <Checkbox
             id={writeId}
             checked={value.write}
-            onCheckedChange={c => onChange({ write: c === true, move: c === true ? value.move : false })}
+            onCheckedChange={c => {
+              const on = c === true;
+              onChange({ write: on, move: on ? value.move : false, delete: on ? value.delete : false });
+            }}
           />
           <label htmlFor={writeId} className="text-sm">
             {t("settings.account.apiTokensScopeEdit")}
@@ -61,6 +68,28 @@ export function ScopeChecksField({
           </div>
           <p id={moveHintId} className="text-xs text-muted-foreground">
             {t("settings.account.apiTokensScopeMoveHint")}
+          </p>
+        </div>
+      )}
+      {showDelete && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id={deleteId}
+              checked={value.delete}
+              disabled={!value.write}
+              aria-describedby={deleteHintId}
+              onCheckedChange={c => onChange({ ...value, delete: c === true && value.write })}
+            />
+            <label htmlFor={deleteId} className="text-sm peer-disabled:cursor-not-allowed peer-disabled:opacity-50">
+              {t("settings.account.apiTokensScopeDelete")}
+            </label>
+            {granted?.delete && <span className="text-xs text-muted-foreground">{t("authorize.currentlyGranted")}</span>}
+          </div>
+          <p id={deleteHintId} className="text-xs text-muted-foreground">
+            {t("settings.account.apiTokensScopeDeleteHintRequiresEdit", {
+              hint: t("settings.account.apiTokensScopeDeleteHint"),
+            })}
           </p>
         </div>
       )}

@@ -82,7 +82,7 @@ Anyone who can edit a note can see its history and save, preview, apply, rename 
 
 - **Copying** a note doesn't copy its versions; the copy starts with none.
 - **Moving** a personal note into a group, and **transferring** a group's notes to a person when the group is deleted, deletes the note's versions: the history of a note's earlier life isn't shown to its new owners.
-- **Deleting** a note deletes its versions.
+- **Moving a note to the trash** keeps its versions, and they are back when the note is restored. **Permanently deleting** it — from the trash, when its retention period runs out, or with its group (**Delete everything**) — deletes them.
 
 ## Retention
 

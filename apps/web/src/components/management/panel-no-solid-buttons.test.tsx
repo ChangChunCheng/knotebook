@@ -73,6 +73,7 @@ const PANEL3_GETS: Record<string, unknown> = {
   "/api/admin/storage-plans": { plans: [PLAN], defaults: { userPlanId: PLAN.id, groupPlanId: PLAN.id } },
   "/api/admin/groups": [{ id: GROUP_ID, name: "Team Alpha", createdAt: T, memberCount: 2, storage: PLAN_STORAGE }],
   "/api/admin/versions/settings": { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 5 },
+  "/api/admin/trash/settings": { retentionDays: 7 },
   "/api/admin/auth/providers": {
     providers: [{
       id: PROVIDER_ID, template: "oidc", displayName: "SSO", issuerUrl: "https://idp.example", clientId: "kb", hasSecret: true,
@@ -169,7 +170,7 @@ export const PANEL_PAGES: PanelPageCase[] = [
   { name: "站台：使用者", path: "/admin/users", ready: async () => { await screen.findByText("b@example.com"); return screen.findByText("Alice"); }, minButtons: 7 }, // 實測 7：Create invitation＋兩列重設鈕＋兩列啟用 switch＋兩列撤銷垃圾桶（邀請表兩列 pending）
   { name: "站台：群組", path: "/admin/groups", ready: () => screen.findByRole("combobox", { name: "Storage plan for Team Alpha" }), minButtons: 0 }, // 實測 0：只有方案下拉（spec §7.0 不改、沒有刪除鈕），0 是真值
   { name: "站台：登入", path: "/admin/login", ready: adminLoginReady, minButtons: 10 }, // 實測 10：兩個存取 switch、Add sign-in service、列內自動建帳 switch、插頭／鉛筆／圖示／紅垃圾桶、啟用 switch、明細區 Copy
-  { name: "站台：儲存方案", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); return screen.findByLabelText("Keep all for (days)"); }, minButtons: 6 }, // 實測 6：New plan、Edit／Delete Basic、Save defaults、自動版本 switch、版本設定 Save
+  { name: "站台：儲存方案", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 8 }, // 實測 8：New plan、Edit／Delete Basic、Save defaults、自動版本 switch、版本設定 Save、垃圾桶開關、垃圾桶 Save
   { name: "站台：AI 代理", path: "/admin/ai", ready: adminAiReady, minButtons: 15 }, // 實測 15：供應商（Add provider＋插頭／鉛筆／垃圾桶＋switch）、模型（Add model＋switch＋鉛筆／垃圾桶）、動作（Add action＋上移／下移＋switch＋鉛筆／垃圾桶）
 ];
 

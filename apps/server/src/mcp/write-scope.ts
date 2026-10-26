@@ -1,5 +1,5 @@
 /**
- * #108 §10.2 D23／不變量 M13：需要 `notes:write` 的工具的執行許可入口（`requireWriteScope`；#239 起搬移類走同形的 `requireMoveScope`）。
+ * #108 §10.2 D23／不變量 M13：需要 `notes:write` 的工具的執行許可入口（`requireWriteScope`；#239 起搬移類走同形的 `requireMoveScope`，#181 起垃圾桶類走 `requireDeleteScope`）。
  *
  * 三件事**不可分割**——scope 檢查、session 跳過、`tokenWrite` 扣點——所以收成一支，每一支
  * 寫入工具的**第一個動作**就是呼叫它。目的：讓「token 寫入 60 次／10 分鐘」這條既有承諾
@@ -26,6 +26,9 @@
  * ⚠ **誠實缺口**：write 分支（`INSUFFICIENT_SCOPE_MESSAGE`）的 `insufficient_scope` 模型永遠看不到
  * （copy 帶 `group_id` 的 `COPY_NEEDS_MOVE_MESSAGE` 是看得到的）——D7 的
  * 意圖改由 per-request 的 `instructions` 承接（唯讀憑證那一版逐字寫了同樣的處置，D-Q）。
+ * #181：`requireDeleteScope` 的 write 與 delete 兩個 scope 分支在 HTTP 上都是死碼（`delete_note`／`restore_note`
+ * 只在 `canDeleteNotes` 時註冊；唯一的守衛＝本檔單元測試的 #181 D 案）；**tokenWrite 扣點是活的**（RWD／RWMD 憑證
+ * 每次呼叫都扣；守衛＝`test/mcp-trash-tools.test.ts` 的 DN8／RN6）。
  * ⚠ **M13 是紀律不是繞不過的事實**：第七支寫入工具漏呼叫它不會有任何測試變紅（今天全部的
  * 守衛是「兩支工具各跑一次」那一族）。要變成繞不過就得走註冊器形，規格 §10.2 已延後。
  */
@@ -84,6 +87,29 @@ export function requireMoveScope(ctx: McpToolCtx, message: string): ToolErrorRes
   if (ctx.authKind === "session") return null;
   if (!canWriteNotes(ctx)) return toolError("insufficient_scope", INSUFFICIENT_SCOPE_MESSAGE);
   if (!canMoveNotes(ctx)) return toolError("insufficient_scope", message);
+  if (!ctx.limiters.tokenWrite.consume(`token:${ctx.userId}`)) return toolError("too_many_requests", RATE_LIMITED_MESSAGE);
+  return null;
+}
+
+/**
+ * #181 D-W1：「這份憑證能把筆記移到垃圾桶／從垃圾桶還原嗎」——`register.ts` 的註冊時過濾與 `requireDeleteScope` 共用。
+ * 寫成「write **且** delete」（CHECK 漂移成 `notes:read notes:delete` 時不得放行，同 `canMoveNotes`）。與 move 互相獨立。
+ */
+export function canDeleteNotes(auth: Pick<McpToolCtx, "authKind" | "tokenScope">): boolean {
+  return auth.authKind === "session" || (canWriteNotes(auth) && hasScope(auth.tokenScope ?? "notes:read", "notes:delete"));
+}
+
+/** spec §6.8.2；HTTP 上是死碼（沒 notes:delete 時兩支工具都不註冊；唯一的守衛＝本檔單元測試的 #181 D 案）。引號內＝en toggle 字樣（W3）。 */
+export const DELETE_SCOPE_MESSAGE =
+  'Moving notes to the trash and restoring them needs the notes:delete scope, and this credential doesn\'t have it, so nothing was changed. ' +
+  'Ask the user to turn on "Move notes to the trash and restore them" for this credential via the pencil on its row in ' +
+  "Settings → Authorization, then reconnect.";
+
+/** 同 `requireMoveScope` 的形：session 跳過；沒 write → INSUFFICIENT_SCOPE_MESSAGE；有 write 沒 delete → DELETE_SCOPE_MESSAGE；兩道都在扣 tokenWrite 之前。 */
+export function requireDeleteScope(ctx: McpToolCtx): ToolErrorResult | null {
+  if (ctx.authKind === "session") return null;
+  if (!canWriteNotes(ctx)) return toolError("insufficient_scope", INSUFFICIENT_SCOPE_MESSAGE);
+  if (!canDeleteNotes(ctx)) return toolError("insufficient_scope", DELETE_SCOPE_MESSAGE);
   if (!ctx.limiters.tokenWrite.consume(`token:${ctx.userId}`)) return toolError("too_many_requests", RATE_LIMITED_MESSAGE);
   return null;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -28,6 +28,7 @@ import { ActiveNoteProvider, useActiveNote } from "@/lib/active-note";
 import { RealLocationContext, withCanonicalizedFrom } from "@/lib/real-location";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
+import * as toastModule from "@/components/ui/toast";
 import { canEdit as canEditRole, type CollabState } from "@/collab/connection";
 import { OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 import { invalidateNoteQueries } from "@/api/notes";
@@ -2014,7 +2015,7 @@ function withEditsAndList(inner: ReturnType<typeof mockFetch>, notes: () => Note
 /** `NotePageTree` 只掛 `/notes/:ref` 且沒有位置探針——這組自己組：兩條筆記路由＋首頁＋探針。 */
 function renderWithProbe(initialEntry: string | { pathname: string; state: unknown }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
@@ -2031,6 +2032,7 @@ function renderWithProbe(initialEntry: string | { pathname: string; state: unkno
       </ThemeProvider>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }
 
 async function openSidebarRowMenu(title: string): Promise<HTMLElement> {
@@ -2128,15 +2130,443 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     await screen.findByLabelText("Note title", { selector: "input" });
 
     const menu = await openSidebarRowMenu("My Note");
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
 
     expect(await screen.findByText("home landing")).toBeInTheDocument();
     expect(calls).toContain(`DELETE /api/notes/${NOTE.id}`);
     // 失效後的 `GET /api/notes/<id>` 404 會晚一點回來——等它有機會落地再斷言沒有 toast。
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(screen.queryByText("This note has been deleted.")).toBeNull();
+  });
+
+  // NP-U1（讀碼發現 27）：移入後常駐層 ["note", id] 停在 404 in_trash 的 error 態；復原必須先蓋回常駐層再導回，
+  // 否則重開的 NotePage 讀到舊 error →「此筆記已被刪除」並彈回首頁。
+  // ⚠ 寫死從 `/n/tester/my-note`（by-path）進入：只有 by-path 形（`/g/<groupId>/<slug>` 同理）會留下解析層的
+  // `["note-by-path", …]` 快取，而常駐層在掛載時重抓一次、`dataUpdatedAt` 才比解析層新，復原後 seed effect 不 seed 的條件才成立；
+  // 從 `/notes/<slug>` 或 `/notes/<id>` 進入時重開那篇會重抓 by-path、照常 seed，不 seed 也不會彈回（gate r2 探針實測）。
+  it("NP-U1 頁首 ⋮ 移到垃圾桶 → 回首頁 → 按 Undo：回到該篇、標題框出現，全程沒有「此筆記已被刪除」", async () => {
+    let trashed = false;
+    const inner = mockFetch();
+    const { fn, calls } = withEditsAndList(
+      ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === `/api/notes/${NOTE.id}` && method === "DELETE") {
+          trashed = true;
+          return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
+        }
+        if (url === "/api/trash/restore" && method === "POST") {
+          trashed = false;
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ restored: [NOTE], skipped: [] }) }));
+        }
+        if (trashed && url === `/api/notes/${NOTE.id}` && method === "GET") {
+          return Promise.resolve(
+            fakeResponse({
+              ok: false,
+              status: 404,
+              json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: NOTE.id }),
+            }),
+          );
+        }
+        return inner(input, init);
+      }) as ReturnType<typeof mockFetch>,
+      () => (trashed ? [] : [NOTE]),
+    );
+    vi.stubGlobal("fetch", fn);
+    collab.state = { phase: "connected", role: "owner" };
+    // 「全程沒有」靠 toast 呼叫紀錄、不靠畫面快照：noteGone 出口在 toast() 當下同步記下，與之後哪個 render 先 commit 無關。
+    const toastSpy = vi.spyOn(toastModule, "toast");
+    onTestFinished(() => toastSpy.mockRestore());
+    const toastTitles = () => toastSpy.mock.calls.map(([item]) => item.title);
+
+    const { queryClient } = renderWithProbe("/n/tester/my-note");
+    await screen.findByLabelText("Note title", { selector: "input" });
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to trash" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/\|/));
+    // 等移入後常駐層的重抓（404 in_trash）真的落地成 error 態，才是讀碼發現 27 的起點（不用固定等待）。
+    await waitFor(() => expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("error"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    // 正面條件三者同時成立才算「回到該篇」：網址、標題框、常駐層 success。漏 seed 時重開的頁面讀到舊 error
+    // 就彈回首頁（網址變 /），這裡等不到而紅；常駐層之後才被失效重抓成 success，那時網址早已是 /。
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/my-note\|/);
+      expect(screen.getByLabelText("Note title", { selector: "input" })).toBeInTheDocument();
+      expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("success");
+    });
+    expect(calls).toContain("POST /api/trash/restore");
+    // 標題框出現＝重開的頁面已有一個 render 不是 noteGone 佔位卡；React 在它之前已跑完先前 commit 的 effect（含 noteGone 出口），
+    // 所以若曾判成「已刪除」，toast() 此刻必已被呼叫。正面兩則都來自 trash-undo，只證明那一側的 spy 接上；
+    // NotePage 那一側的呼叫被攔到，由突變 T3-M28（拿掉 seed 且 noteGone 不導頁 → 下一行紅）證明。
+    expect(toastTitles()).toEqual(expect.arrayContaining(["Moved to the trash", "Restored 1 note"]));
+    expect(toastTitles()).not.toContain("This note has been deleted.");
+    expect(screen.queryByText("This note has been deleted.", { exact: true })).toBeNull();
+  });
+});
+
+// 解析層 404 `in_trash`（帶頂層 noteId）→ 卡片、不導頁；其餘 404 照舊連結無效（plan T6 NP-T*）。
+// NP-T4 回歸另見既有案：「首次解析 404 → linkInvalid」（舊形）、「新形 by-path 404 → linkInvalid 出口」、「⑤by-group-path 404」。
+describe("NotePage × 在垃圾桶裡（spec §6.10.5）", () => {
+  const GROUP_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const G_NOTE: NoteDto = {
+    ...NOTE,
+    id: "66666666-6666-4666-8666-666666666666",
+    title: "Group Note",
+    slug: "group-note",
+    slugIsCustom: false,
+    ownerId: null,
+    ownerHandle: null,
+    role: "editor",
+    groupId: GROUP_ID,
+    group: { id: GROUP_ID, name: "Workshop A" },
+    permissions: { ...OWNER_PERMS, manageShares: false, moveToGroup: false },
+  };
+  /** 不在垃圾桶的另一篇（換篇用）。 */
+  const OTHER_NOTE: NoteDto = { ...NOTE, id: "77777777-7777-4777-8777-777777777777", title: "Other Note", slug: "other-note" };
+  const LINK_INVALID = "This link is invalid or the note doesn't exist.";
+  const IN_TRASH = "This note is in the trash";
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    collab.state = { phase: "connected", role: "owner" };
+    collab.doc = new Y.Doc();
+    collab.provider = createStubProvider();
+    collab.provider.synced = true;
+    collab.onUnauthorized = undefined;
+    window.history.replaceState(null, "", "/");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    collab.doc.destroy();
+    vi.unstubAllGlobals();
+    navSpy.current = undefined;
+  });
+
+  /**
+   * 假 server：兩篇（個人 NOTE、群組 G_NOTE）一開始都在垃圾桶——三種解析端點（by-path、by-group-path、`/api/notes/:ref`）
+   * 都回 404 `code`（預設 in_trash；`noteId: false` 時不帶頂層 noteId）；`POST /api/trash/restore` 之後改回 200。
+   * `initiallyTrashed: false`＝一開始就是一般筆記；`restoreKeepsTrashed`＝restore 回成功、但解析層重抓仍是 in_trash。
+   * `holdRestore`＝restore 的回應等 `release()` 才回。OTHER_NOTE 恆 200（by-path 與 id）。
+   */
+  function stubTrashed(
+    opts: {
+      code?: string;
+      noteId?: boolean;
+      initiallyTrashed?: boolean;
+      restoreKeepsTrashed?: boolean;
+      holdRestore?: boolean;
+    } = {},
+  ) {
+    let trashed = opts.initiallyTrashed ?? true;
+    const calls: string[] = [];
+    let releaseRestore: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      releaseRestore = resolve;
+    });
+    const reply = (note: NoteDto) =>
+      trashed
+        ? fakeResponse({
+            ok: false,
+            status: 404,
+            json: () =>
+              Promise.resolve({
+                error: { code: opts.code ?? "in_trash", message: "x" },
+                ...(opts.noteId === false ? {} : { noteId: note.id }),
+              }),
+          })
+        : fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(note) });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        calls.push(`${method} ${url}`);
+        if (url === "/api/groups" && method === "GET") {
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
+        }
+        if (url === "/api/auth/me") {
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(USER) }));
+        }
+        if (url === "/api/notes" && method === "GET") {
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
+        }
+        if (url.endsWith("/backlinks") && method === "GET") {
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ backlinks: [] }) }));
+        }
+        if (url.endsWith("/links") && method === "POST") {
+          return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
+        }
+        if (url === "/api/trash/restore" && method === "POST") {
+          const { ids } = JSON.parse(String(init?.body)) as { ids: string[] };
+          const restored = [NOTE, G_NOTE].filter((note) => ids.includes(note.id));
+          const done = () => {
+            if (!opts.restoreKeepsTrashed) trashed = false;
+            return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ restored, skipped: [] }) });
+          };
+          return opts.holdRestore ? held.then(done) : Promise.resolve(done());
+        }
+        if (url === `/api/notes/by-path/${NOTE.ownerHandle}/${NOTE.slug}` && method === "GET") {
+          return Promise.resolve(reply(NOTE));
+        }
+        if (url === `/api/notes/by-group-path/${GROUP_ID}/${G_NOTE.slug}` && method === "GET") {
+          return Promise.resolve(reply(G_NOTE));
+        }
+        if ((url === `/api/notes/${NOTE.id}` || url === `/api/notes/${NOTE.slug}`) && method === "GET") {
+          return Promise.resolve(reply(NOTE));
+        }
+        if (url === `/api/notes/${G_NOTE.id}` && method === "GET") {
+          return Promise.resolve(reply(G_NOTE));
+        }
+        if (
+          (url === `/api/notes/by-path/${OTHER_NOTE.ownerHandle}/${OTHER_NOTE.slug}` || url === `/api/notes/${OTHER_NOTE.id}`) &&
+          method === "GET"
+        ) {
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(OTHER_NOTE) }));
+        }
+        throw new Error(`unexpected fetch: ${method} ${url}`);
+      }),
+    );
+    return {
+      calls,
+      untrash: () => {
+        trashed = false;
+      },
+      release: () => releaseRestore?.(),
+    };
+  }
+
+  function renderAt(entry: string, queries: { retry?: number | false; retryDelay?: number } = { retry: false }) {
+    const queryClient = new QueryClient({ defaultOptions: { queries } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <MemoryRouter initialEntries={[entry]}>
+            <NotePageTree />
+            <NavButtons />
+          </MemoryRouter>
+          <Toaster />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  /** 同一個 NotePage 內換篇（fireEvent.click 不移焦點）。 */
+  function NavButtons() {
+    const nav = useNavigate();
+    return (
+      <>
+        <button type="button" onClick={() => void nav(`/n/tester/${OTHER_NOTE.slug}`)}>
+          go-other
+        </button>
+        <button type="button" onClick={() => void nav(`/n/tester/${NOTE.slug}`)}>
+          go-my-note
+        </button>
+      </>
+    );
+  }
+
+  const titleInput = () => screen.getByLabelText("Note title", { selector: "input" });
+
+  /** toast 呼叫紀錄（同步記下，不靠畫面快照）。 */
+  function spyToasts() {
+    const toastSpy = vi.spyOn(toastModule, "toast");
+    onTestFinished(() => toastSpy.mockRestore());
+    return () => toastSpy.mock.calls.map(([item]) => item.title);
+  }
+
+  /** 卡片出現後讓出口 effect（若誤判成連結無效）有機會跑完導頁。 */
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+  }
+
+  async function expectCardStays(entry: string) {
+    const toastTitles = spyToasts();
+    renderAt(entry);
+    expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to trash" })).toBeInTheDocument();
+    // 卡片包在 placeholderCard 裡：窄螢幕的導覽出口（NarrowTopBar 的漢堡鈕，#115）也在（jsdom 不套 md:hidden）。
+    expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+    await settle();
+    expect(toastTitles()).not.toContain(LINK_INVALID);
+    expect(screen.queryByText(LINK_INVALID)).toBeNull();
+    expect(screen.queryByText("home landing")).toBeNull();
+    expect(routerPath()).toBe(entry);
+    expect(screen.getByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
+  }
+
+  async function expectLinkInvalid(entry: string) {
+    renderAt(entry);
+    await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
+    expect(screen.getByText(LINK_INVALID)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: IN_TRASH })).toBeNull();
+  }
+
+  it("NP-T1 by-path 回 404 in_trash（帶 noteId）→ 卡片；沒有連結無效 toast、不導回首頁", async () => {
+    stubTrashed();
+    await expectCardStays("/n/tester/my-note");
+  });
+
+  // 用 `/notes/<slug>` 形（gate r1 M1）：解析層 key 是 `["note", slug]`，不在 invalidateTrashRelated 的前綴清單裡。
+  it("NP-T2 /notes/<slug> 形：卡片 → 按 Restore → 送 restore、解析層重抓 200 → 卡片消失、標題框出現且拿到焦點", async () => {
+    const { calls } = stubTrashed();
+    renderAt(`/notes/${NOTE.slug}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Note title", { selector: "input" })).toHaveValue("My Note");
+      expect(screen.queryByRole("heading", { level: 2, name: IN_TRASH })).toBeNull();
+    });
+    expect(calls).toContain("POST /api/trash/restore");
+    await waitFor(() => expect(routerPath()).toBe("/n/tester/my-note"));
+    expect(screen.queryByText(LINK_INVALID)).toBeNull();
+    // 卡片卸載後焦點不落在 body：移到標題框（review r1 M-1）。
+    await waitFor(() => expect(screen.getByLabelText("Note title", { selector: "input" })).toHaveFocus());
+  });
+
+  // ── 焦點只給「那一次還原的那一篇」（review r2 I-1） ──
+
+  it("NP-T8 一般開筆記（不在垃圾桶）：標題框不拿焦點", async () => {
+    stubTrashed({ initiallyTrashed: false });
+    renderAt("/n/tester/my-note");
+    await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+  });
+
+  it("NP-T9 還原拿到焦點後換篇、再換回來：兩次開頁標題框都不拿焦點（旗標用過即清）", async () => {
+    stubTrashed();
+    renderAt(`/notes/${NOTE.slug}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(titleInput()).toHaveFocus());
+    act(() => titleInput().blur());
+
+    fireEvent.click(screen.getByRole("button", { name: "go-other" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("Other Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+  });
+
+  it("NP-T10 restore 成功但解析層重抓仍是 in_trash（卡片留著）→ 換到別篇：別篇標題框不拿焦點", async () => {
+    const { calls, untrash } = stubTrashed({ restoreKeepsTrashed: true });
+    renderAt(`/notes/${NOTE.slug}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(calls.filter((call) => call === `GET /api/notes/${NOTE.slug}`).length).toBeGreaterThanOrEqual(2));
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "go-other" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("Other Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+
+    // 之後還原真的落地、再換回那篇：旗標早該在別篇頁首掛上時清掉（review r3 m-2）。
+    untrash();
+    fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+  });
+
+  it("NP-T11 restore 送出未回就換到別篇 → 回應落地 → 換回被還原的那篇：標題框不拿焦點", async () => {
+    const { release } = stubTrashed({ holdRestore: true });
+    renderAt(`/notes/${NOTE.slug}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    fireEvent.click(screen.getByRole("button", { name: "go-other" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("Other Note"));
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
+    await settle();
+    expect(titleInput()).not.toHaveFocus();
+  });
+
+  it("NP-T11b restore 送出未回就換走、回應落地前又換回（新卡片）→ 回應落地：標題框拿到焦點", async () => {
+    const { release } = stubTrashed({ holdRestore: true });
+    renderAt(`/notes/${NOTE.slug}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    fireEvent.click(screen.getByRole("button", { name: "go-other" }));
+    await waitFor(() => expect(titleInput()).toHaveValue("Other Note"));
+    fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
+    expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(titleInput()).toHaveFocus());
+  });
+
+  it("NP-T3 by-group-path 形同 NP-T1：卡片、不導頁", async () => {
+    stubTrashed();
+    await expectCardStays(`/g/${GROUP_ID}/${G_NOTE.slug}`);
+  });
+
+  it("NP-T3 /notes/:ref（id）形同 NP-T1：卡片、不導頁", async () => {
+    stubTrashed();
+    await expectCardStays(`/notes/${NOTE.id}`);
+  });
+
+  it("NP-T4 回歸：404 not_found（即使 body 帶了頂層 noteId）→ 照舊連結無效 toast＋回首頁", async () => {
+    stubTrashed({ code: "not_found" });
+    await expectLinkInvalid("/n/tester/my-note");
+  });
+
+  it("NP-T5 404 in_trash 但沒有 noteId → 無從還原，走連結無效出口", async () => {
+    stubTrashed({ noteId: false });
+    await expectLinkInvalid("/n/tester/my-note");
+  });
+
+  // 正式環境的 QueryClient 會重試（預設 3 次、退避 1＋2＋4 秒）：這裡給「會重試、但不等」的預設，數解析端點被打幾次。
+  const RETRYING = { retry: 2, retryDelay: 0 };
+  const byPathGets = (calls: string[]) => calls.filter((call) => call === "GET /api/notes/by-path/tester/my-note").length;
+
+  // 三支解析層 hook 各自要傳 retry（by-path、舊形 `/notes/:ref`、群組形），一形一案、數該形的解析端點。
+  it.each([
+    { form: "by-path", entry: "/n/tester/my-note", endpoint: "GET /api/notes/by-path/tester/my-note" },
+    { form: "by-ref", entry: `/notes/${NOTE.id}`, endpoint: `GET /api/notes/${NOTE.id}` },
+    {
+      form: "by-group-path",
+      entry: `/g/${GROUP_ID}/${G_NOTE.slug}`,
+      endpoint: `GET /api/notes/by-group-path/${GROUP_ID}/${G_NOTE.slug}`,
+    },
+  ])("NP-T7 解析層 404 in_trash 不重試（$form）：解析端點只打一次、卡片直接出現", async ({ entry, endpoint }) => {
+    const { calls } = stubTrashed();
+    renderAt(entry, RETRYING);
+    expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
+    await settle();
+    expect(calls.filter((call) => call === endpoint)).toHaveLength(1);
+  });
+
+  it("NP-T7b 其他 404 照 QueryClient 預設重試（retry 2 → 共 3 次）後才走連結無效", async () => {
+    const { calls } = stubTrashed({ code: "not_found" });
+    renderAt("/n/tester/my-note", RETRYING);
+    await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
+    expect(screen.getByText(LINK_INVALID)).toBeInTheDocument();
+    expect(byPathGets(calls)).toBe(3);
+  });
+
+  // 正式環境（`main.tsx` 的 `new QueryClient()`）沒設 retry：沿用 query-core 的預設 3 次（review r1 M-2）。
+  it("NP-T7c QueryClient 沒設 retry：其他 404 照 query-core 預設重試 3 次（共 4 次）", async () => {
+    const { calls } = stubTrashed({ code: "not_found" });
+    renderAt("/n/tester/my-note", { retryDelay: 0 });
+    await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
+    expect(screen.getByText(LINK_INVALID)).toBeInTheDocument();
+    expect(byPathGets(calls)).toBe(4);
   });
 });
 

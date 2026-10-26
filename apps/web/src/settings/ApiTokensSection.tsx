@@ -98,14 +98,14 @@ function CreateTokenDialog() {
   const create = useCreateApiToken();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  // #239 W7'：兩個開關預設都關（＝唯讀）；#247 W22 起用 toggle（ScopeTogglesField）。
-  const [checks, setChecks] = useState<ScopeChecks>({ write: false, move: false });
+  // #239 W7'／#181：開關預設都關（＝唯讀）；#247 W22 起用 toggle（ScopeTogglesField）。
+  const [checks, setChecks] = useState<ScopeChecks>({ write: false, move: false, delete: false });
   const [expiresInDays, setExpiresInDays] = useState<CreateApiTokenInput["expiresInDays"]>(null);
   const [issued, setIssued] = useState<string | null>(null);
 
   function reset(): void {
     setName("");
-    setChecks({ write: false, move: false });
+    setChecks({ write: false, move: false, delete: false });
     setExpiresInDays(null);
     setIssued(null);
   }
@@ -114,7 +114,7 @@ function CreateTokenDialog() {
     try {
       const created = await create.mutateAsync({
         name: name.trim(),
-        scope: scopeFromChecks(checks.write, checks.move),
+        scope: scopeFromChecks(checks.write, checks.move, checks.delete),
         expiresInDays,
       });
       setIssued(created.token);
@@ -251,7 +251,7 @@ function CreateTokenDialog() {
   );
 }
 
-/** 權限 pill（只列有的）：讀取每列都有；編輯＝含 notes:write；搬移＝第三形（destructive 淡底）。 */
+/** 權限 pill（只列有的）：讀取每列都有；編輯＝含 notes:write；搬移＝含 notes:move（destructive 淡底）；刪除＝含 notes:delete（預設 tone，可還原）。 */
 function TokenScopePills({ scope }: { scope: TokenScope }) {
   const { t } = useTranslation();
   const checks = checksFromScope(scope);
@@ -260,6 +260,7 @@ function TokenScopePills({ scope }: { scope: TokenScope }) {
       <Pill>{t("settings.authorization.tokens.pillRead")}</Pill>
       {checks.write && <Pill>{t("settings.authorization.tokens.pillEdit")}</Pill>}
       {checks.move && <Pill tone="destructive">{t("settings.authorization.tokens.pillMove")}</Pill>}
+      {checks.delete && <Pill>{t("settings.authorization.tokens.pillDelete")}</Pill>}
     </div>
   );
 }
@@ -281,7 +282,7 @@ function tokenDates(token: ApiTokenDto, t: (key: string, opts?: Record<string, u
 
 /**
  * 行內編輯的表單（§5.3；放進 `SettingsTable` 的 editing 列：主欄保留、其餘欄合併成這一格，spec 2026-10-13 settings-table §2.6）。
- * 名稱不可改，只有 label 一個輸入框＋兩個權限 toggle。label 改了才帶 `agentLabel`（清空＝`null`：把欄位清成 NULL、回到派生值；
+ * 名稱不可改，只有 label 一個輸入框＋三個權限 toggle。label 改了才帶 `agentLabel`（清空＝`null`：把欄位清成 NULL、回到派生值；
  * server 的 `AGENT_LABEL_RE` 也不收空字串）、權限改了才帶 `scope`；都沒改就直接回顯示態。存檔／取消是表單最右的兩顆 icon 鈕（勾、叉）。
  * Enter＝儲存。**沒有 Esc 取消**：這一列坐在設定面板的 `DialogContent` 裡，Radix 在 document 的 capture 階段
  * 監聽 Escape，input 的 `onKeyDown`（bubble）永遠來不及擋，結果是整個面板被關掉——「取消」鈕是唯一的退路。
@@ -307,7 +308,7 @@ function TokenEditForm({ token, onDone }: { token: ApiTokenDto; onDone: () => vo
     // 清空：只有現值不是派生值（＝有覆寫）時才需要送 null。
     const labelChanged = nextLabel === null ? token.agentLabel !== derivedLabel : nextLabel !== token.agentLabel;
     if (labelChanged) patch.agentLabel = nextLabel;
-    const scope = scopeFromChecks(checks.write, checks.move);
+    const scope = scopeFromChecks(checks.write, checks.move, checks.delete);
     if (scope !== token.scope) patch.scope = scope;
     if (Object.keys(patch).length === 0) {
       onDone();

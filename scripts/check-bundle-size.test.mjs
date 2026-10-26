@@ -6,11 +6,16 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
+import { MAX_ENTRY_BYTES, SELECT_I18N_MARKER, VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
+
+// 守 Willie 2026-10-26 裁定的數字（下面兩案明傳 700 * 1024 測判斷本身，與預設值無關）。
+test('BS0 首包上限是 750 KiB', () => {
+  assert.equal(MAX_ENTRY_BYTES, 750 * 1024);
+});
 
 const MARKER_BASE = {
   'index-Abc123.js': 100, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
-  'PresentationOverlay-Pqr678.js': 10,
+  'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10, 'SelectLazy-Sss000.js': 10,
 };
 
 function fakeAssets(files) {
@@ -32,6 +37,8 @@ test('entry 在上限內且 NotePage chunk 存在 → 通過並回報摘要', ()
     'AdminSections-Mno345.js': 60_000,
     'VersionsLazy-Pqr678.js': 40_000,
     'PresentationOverlay-Pqr678.js': 200_000,
+    'TrashLazy-Ttt000.js': 10_000,
+    'SelectLazy-Sss000.js': 20_000,
     'index-Abc123.css': 50_000, // css 不是 entry chunk，pattern 只認 .js
   });
   try {
@@ -44,6 +51,8 @@ test('entry 在上限內且 NotePage chunk 存在 → 通過並回報摘要', ()
     assert.deepEqual(result.adminSectionsChunks, ['AdminSections-Mno345.js']);
     assert.deepEqual(result.versionsChunks, ['VersionsLazy-Pqr678.js']);
     assert.deepEqual(result.presentationChunks, ['PresentationOverlay-Pqr678.js']);
+    assert.deepEqual(result.trashChunks, ['TrashLazy-Ttt000.js']);
+    assert.deepEqual(result.selectChunks, ['SelectLazy-Sss000.js']);
   } finally {
     cleanup();
   }
@@ -103,7 +112,7 @@ test('mermaid chunk 不存在（被靜態 import 併回去）→ throw', () => {
 
 // issue #96：shiki 必須留在自己的 chunk（同 mermaid 那條的理由——唯一允許 import 它的
 // 地方是 lib/code-highlight.ts 的 `import("shiki")`）。它的核心 ~150KB，被靜態 import
-// 併回 entry 的話 entry 會貼著 700KB 上限，症狀是「時而超標」而不是穩定紅。
+// 併回 entry 的話 entry 會貼著首包上限，症狀是「時而超標」而不是穩定紅。
 // ⚠ chunk 名叫 shiki-<hash> 是 vite.config.ts 的 chunkFileNames 改的：shiki 的套件
 // 入口檔叫 index.mjs，Rollup 預設用檔名命名 chunk，會產出第二個 index-<hash>.js、
 // 撞上 entry 偵測（上面「恰一個 entry」那條 fail-closed 就是這樣抓到它的）。
@@ -162,10 +171,69 @@ test('簡報層 chunk 不存在（#229 迴歸：PresentationOverlay 被靜態 im
   }
 });
 
+// #181：垃圾桶 tab 的面板與底部必須是自己的 lazy chunk（TrashLazy 是唯一入口）
+test('TrashLazy chunk 不存在（兩個掛載點都改成靜態 import、整組併回 entry）→ throw', () => {
+  const { assets, cleanup } = fakeAssets({
+    'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
+    'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10,
+  });
+  try {
+    assert.throws(() => checkBundleSize(assets), /TrashLazy[\s\S]*#181/);
+  } finally {
+    cleanup();
+  }
+});
+
+// #181 PR-2c：一般 tab 選取模式必須是自己的 lazy chunk（SelectLazy 是唯一入口）
+test('BS1 SelectLazy chunk 不存在（整組併回 entry）→ throw', () => {
+  const { assets, cleanup } = fakeAssets({
+    'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
+    'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10,
+  });
+  try {
+    assert.throws(() => checkBundleSize(assets), /SelectLazy[\s\S]*PR-2c/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('BS2 entry 含選取字串包的鍵名（字串包或 import 它的模組被首包靜態 import）→ throw', () => {
+  const { assets, cleanup } = fakeAssets({
+    ...MARKER_BASE, 'index-Abc123.js': `const s={${SELECT_I18N_MARKER}:"Delete 1 selected item"}`, 'NotePage-Def456.js': 'x',
+    'VersionsLazy-Vvv000.js': 'x',
+  });
+  try {
+    assert.throws(() => checkBundleSize(assets), /index-Abc123\.js[\s\S]*deleteSelected_one[\s\S]*PR-2c/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('BS3 鍵名只在 SelectLazy 裡 → 通過、回傳 selectChunks', () => {
+  const { assets, cleanup } = fakeAssets({
+    ...MARKER_BASE, 'SelectLazy-Sss000.js': `const s={${SELECT_I18N_MARKER}:"Delete 1 selected item"}`, 'NotePage-Def456.js': 'x',
+    'VersionsLazy-Vvv000.js': 'x',
+  });
+  try {
+    assert.deepEqual(checkBundleSize(assets).selectChunks, ['SelectLazy-Sss000.js']);
+  } finally {
+    cleanup();
+  }
+});
+
+// marker 改名即靜默失效——綁回 select.en.json（比照下面 VERSIONS_MARKERS 綁 en.json）。
+test('BS4 SELECT_I18N_MARKER 是 select.en.json 裡 select.* 的鍵', () => {
+  const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/select.en.json', import.meta.url)), 'utf8'));
+  let node = bundle;
+  for (const part of `select.${SELECT_I18N_MARKER}`.split('.')) node = node?.[part];
+  assert.equal(typeof node, 'string', `select.${SELECT_I18N_MARKER} 不在 select.en.json——鍵改名了，請同步更新 SELECT_I18N_MARKER`);
+});
+
 test('entry CSS 含 .reveal-viewport（reveal.css 進了首包）→ throw；lazy chunk 的 CSS 含它不算', () => {
   const base = {
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10,
-    'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10,
+    'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10,
+    'SelectLazy-Sss000.js': 10,
   };
   const bad = fakeAssets({ ...base, 'index-Css111.css': '.x{}.reveal-viewport{color:#000}' });
   try {
@@ -184,6 +252,7 @@ test('entry CSS 含 .reveal-viewport（reveal.css 進了首包）→ throw；laz
 test('reveal-viewport 字串只准在 PresentationOverlay-*.js：在 overlay 裡通過、在 NotePage 裡 throw（reveal.js 被靜態 import 進 NotePage）', () => {
   const base = {
     'index-Abc123.js': 100, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10,
+    'TrashLazy-Ttt000.js': 10, 'SelectLazy-Sss000.js': 10,
   };
   const ok = fakeAssets({ ...base, 'NotePage-Def456.js': 'x', 'PresentationOverlay-Pqr678.js': 'e.classList.add("reveal-viewport")' });
   try {
@@ -202,7 +271,8 @@ test('reveal-viewport 字串只准在 PresentationOverlay-*.js：在 overlay 裡
 test('Q1：簡報 chunk 的靜態 import 閉包（含間接）碰到 shiki → throw；只有動態 import("./shiki-…") 不算', () => {
   const base = {
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10,
-    'shiki-Jkl012.js': 'export const s=1', 'bundle-full-Zz9.js': 'export const b=1',
+    'shiki-Jkl012.js': 'export const s=1', 'bundle-full-Zz9.js': 'export const b=1', 'TrashLazy-Ttt000.js': 10,
+    'SelectLazy-Sss000.js': 10,
   };
   const indirect = fakeAssets({ ...base, 'PresentationOverlay-Pqr678.js': 'import{a}from"./mid-Q1.js";', 'mid-Q1.js': 'import{b}from"./bundle-full-Zz9.js";export const a=1' });
   try {

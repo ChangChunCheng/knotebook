@@ -13,10 +13,12 @@ import { SidebarTabList } from "@/components/sidebar/SidebarTabList";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { NoteList, type NoteListProps } from "./NoteList";
 import { adminRole, EDITOR_PERMS, groupDto, memberRole, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
+import { __resetCollapseForTests } from "@/components/sidebar/collapse";
 
-// `sidebar.tab`／`sidebar.collapsed.*` 會往外流到同檔後面的案（亂序跑時尤其），檔案頂層清（plan I3）。
+// `sidebar.tab`／`sidebar.collapsed.*`（含 collapse store 的記憶體覆蓋層）會往外流到同檔後面的案（亂序跑時尤其），檔案頂層清（plan I3）。
 afterEach(() => {
   localStorage.clear();
+  __resetCollapseForTests();
 });
 
 /** 模擬 NotePage 的「解析成功後 set」——測試用的最小 setter（#122 ActiveNoteContext）。 */
@@ -407,37 +409,42 @@ describe("NoteList", () => {
   // ── tab 標題列（spec §5.1-4／§5.2） ──
 
   describe("NL1 標題列", () => {
-    it("我的筆記：標題＋常駐的「New personal note」鈕（不浮出）", async () => {
+    // PR-2c 起四個一般 tab 的標題列都多一顆「Select」（選取模式本身見 sidebar/SelectPanel.test.tsx）。
+    it("我的筆記：標題＋「Select」＋常駐的「New personal note」鈕（不浮出）", async () => {
       stubNotesFetch([OWNER_NOTE]);
       renderNoteList();
       await within(panel()).findByRole("link", { name: "Has A Slug" });
       expect(within(header()).getByText("My notes")).toHaveClass("truncate"); // ellipsis 要掛在文字元素上
       const plus = within(header()).getByRole("button", { name: "New personal note" });
       expect(plus).not.toHaveClass("opacity-0");
-      expect(within(header()).getAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getAllByRole("button")).toHaveLength(2);
+      expect(within(header()).getAllByRole("button")[0]).toHaveAccessibleName("Select");
     });
 
-    it("工作坊：標題＋「New group」鈕（常駐）", async () => {
+    it("工作坊：標題＋「Select」＋「New group」鈕（常駐）", async () => {
       stubNotesFetch([OWNER_NOTE], [GROUP_A]);
       renderNoteList({}, { tab: "workspace" });
       await within(panel()).findByRole("button", { name: "Workshop A" });
       expect(within(header()).getByText("Workspace")).toBeInTheDocument();
       const plus = within(header()).getByRole("button", { name: "New group" });
       expect(plus).not.toHaveClass("opacity-0");
-      expect(within(header()).getAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getAllByRole("button")).toHaveLength(2);
+      expect(within(header()).getAllByRole("button")[0]).toHaveAccessibleName("Select");
     });
 
-    it("最近、與我共享：標題列沒有任何按鈕", async () => {
+    it("最近、與我共享：標題列只有「Select」", async () => {
       stubNotesFetch([OWNER_NOTE, SHARED_NOTE]);
       renderNoteList({}, { tab: "recent" });
       await within(panel()).findByRole("link", { name: startsWith("Has A Slug") });
       expect(within(header()).getByText("Recent")).toBeInTheDocument();
-      expect(within(header()).queryAllByRole("button")).toHaveLength(0);
+      expect(within(header()).queryAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getByRole("button")).toHaveAccessibleName("Select");
 
       selectTab("Shared with me");
       await within(panel()).findByRole("link", { name: "No Slug Note" });
       expect(within(header()).getByText("Shared with me")).toBeInTheDocument();
-      expect(within(header()).queryAllByRole("button")).toHaveLength(0);
+      expect(within(header()).queryAllByRole("button")).toHaveLength(1);
+      expect(within(header()).getByRole("button")).toHaveAccessibleName("Select");
     });
 
     it("標題列「＋」：個人筆記 → onCreateNote(undefined)；disabled 跟 createNotePending", async () => {
@@ -1082,6 +1089,12 @@ function renderRowMenu(
         }
         return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
       }
+      // 「已移到垃圾桶」toast 的復原（#181）：把送來的 id 原樣當作還原成功。
+      if (url === "/api/trash/restore" && method === "POST") {
+        const ids = (JSON.parse(String(init?.body)) as { ids: string[] }).ids;
+        const restored = notes.filter((n) => ids.includes(n.id));
+        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ restored, skipped: [] }) }));
+      }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
   );
@@ -1173,13 +1186,13 @@ describe("筆記列 ⋮", () => {
     );
   });
 
-  it("別篇：刪除 → 打 DELETE、關對話框、不導頁", async () => {
+  it("別篇：移到垃圾桶 → 不確認、打 DELETE、不導頁、toast 有 Undo", async () => {
     const { calls } = renderRowMenu(null);
     const menu = await openRowMenu(await ownerRowTrigger());
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete note?" })).toBeNull());
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
     expect(calls).toContain(`DELETE /api/notes/${OWNER_NOTE.id}`);
     // 位置斷言之前必須有一個 `await waitFor(...)`：少了它，「刪除後多補一次 navigate("/")」
     // 的錯法會存活〔棚內實測〕。
@@ -1187,14 +1200,24 @@ describe("筆記列 ⋮", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/somewhere\|null$/);
   });
 
-  it("別篇：刪除失敗（403）→ 錯誤 toast、關對話框、不導頁", async () => {
+  it("NM-T7 別篇：按 toast 的 Undo → 送 restore、網址不變（不是開著的那篇，不導過去）", async () => {
+    const { calls } = renderRowMenu(null);
+    const menu = await openRowMenu(await ownerRowTrigger());
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Restored 1 note", { exact: true })).toBeInTheDocument();
+    expect(calls).toContain("POST /api/trash/restore");
+    // 復原後清單失效重抓（第 3 次 GET /api/notes）——等它落地再看網址，多補的 navigate 早已生效。
+    await waitFor(() => expect(calls.filter((c) => c === "GET /api/notes")).toHaveLength(3));
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/somewhere\|null$/);
+  });
+
+  it("別篇：刪除失敗（403）→ 錯誤 toast、沒有「已移到垃圾桶」、不導頁", async () => {
     const { calls } = renderRowMenu(null, [OWNER_NOTE, SHARED_NOTE], true);
     const menu = await openRowMenu(await ownerRowTrigger());
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
     expect(await screen.findByText("You don't have permission to do that.")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Delete note?" })).toBeNull();
+    expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
     expect(calls).toContain(`DELETE /api/notes/${OWNER_NOTE.id}`);
     // 位置斷言之前必須有一個 `await waitFor(...)`：少了它，「刪除後多補一次 navigate("/")」
     // 的錯法會存活〔棚內實測〕。
@@ -1209,10 +1232,8 @@ describe("筆記列 ⋮", () => {
     expect(queryClient.getQueryState(["backlinks", SHARED_NOTE.id])?.isInvalidated).toBe(false);
 
     const menu = await openRowMenu(await ownerRowTrigger());
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete note?" })).toBeNull());
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
     expect(queryClient.getQueryState(["backlinks", SHARED_NOTE.id])?.isInvalidated).toBe(true);
   });
 
@@ -1234,11 +1255,9 @@ describe("筆記列 ⋮", () => {
     expect(openEdits).not.toHaveBeenCalled();
 
     menu = await openRowMenu(await ownerRowTrigger());
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
     expect(leavingRef.current).toBe(false);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete note?" })).toBeNull());
+    expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
     await waitFor(() => expect(calls.filter((c) => c === "GET /api/notes")).toHaveLength(2));
     expect(calls).toContain(`DELETE /api/notes/${OWNER_NOTE.id}`);
     expect(leavingRef.current).toBe(false);
@@ -1262,10 +1281,8 @@ describe("筆記列 ⋮", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/somewhere|null");
 
     menu = await openRowMenu(await ownerRowTrigger());
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
     expect(calls.some((c) => c.startsWith("DELETE"))).toBe(false);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
     // 同步：handler 的第一行就設閘門（早於 DELETE 回應）。
     expect(leavingRef.current).toBe(true);
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/\|null$/));
@@ -1274,7 +1291,7 @@ describe("筆記列 ⋮", () => {
 
   // #175 §8.3（gate r1 B-N10）：側欄 ⋮ 與頁首共用 NoteMenuCore，但清單列的 `permissions` 來自
   // `GET /api/notes` 的 grouped 支欄位（規格落差 4）——另一條資料路徑，所以在清單列上各釘一次。
-  it("#175：群組筆記列（role editor、permissions.delete true）的 ⋮ 有「Delete note」，按下打 DELETE", async () => {
+  it("#175：群組筆記列（role editor、permissions.delete true）的 ⋮ 有「Move to trash」，按下打 DELETE", async () => {
     const deletable = groupNote(
       { id: "77777777-7777-7777-7777-777777777777", title: "Group Deletable", slug: "group-deletable", groupId: GROUP_A.id, groupName: GROUP_A.name },
       "editor",
@@ -1282,13 +1299,11 @@ describe("筆記列 ⋮", () => {
     );
     const { calls } = renderRowMenu(null, [deletable], false, [GROUP_A], "workspace");
     const menu = await openRowMenu(await within(panel()).findByRole("button", { name: "Note actions for Group Deletable" }));
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
     await waitFor(() => expect(calls).toContain(`DELETE /api/notes/${deletable.id}`));
   });
 
-  it("#175：同一種群組筆記列但 permissions.delete false → ⋮ 沒有「Delete note」（其餘項照舊）", async () => {
+  it("#175：同一種群組筆記列但 permissions.delete false → ⋮ 沒有「Move to trash」（其餘項照舊）", async () => {
     const notDeletable = groupNote(
       { id: "88888888-8888-8888-8888-888888888888", title: "Group Kept", slug: "group-kept", groupId: GROUP_A.id, groupName: GROUP_A.name },
       "editor",
@@ -1297,16 +1312,14 @@ describe("筆記列 ⋮", () => {
     renderRowMenu(null, [notDeletable], false, [GROUP_A], "workspace");
     const menu = await openRowMenu(await within(panel()).findByRole("button", { name: "Note actions for Group Kept" }));
     expect(within(menu).getByRole("menuitem", { name: "AI edit history" })).toBeInTheDocument();
-    expect(within(menu).queryByRole("menuitem", { name: "Delete note" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Move to trash" })).toBeNull();
   });
 
-  it("最近 tab 的列也有 ⋮（Link 外的兄弟），刪除照打 DELETE", async () => {
+  it("最近 tab 的列也有 ⋮（Link 外的兄弟），移到垃圾桶照打 DELETE", async () => {
     const { calls } = renderRowMenu(null, [OWNER_NOTE], false, [], "recent");
     const trigger = await within(panel()).findByRole("button", { name: "Note actions for Has A Slug" });
     const menu = await openRowMenu(trigger);
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete note" }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to trash" }));
     await waitFor(() => expect(calls).toContain(`DELETE /api/notes/${OWNER_NOTE.id}`));
   });
 });

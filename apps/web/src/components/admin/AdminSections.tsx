@@ -9,7 +9,8 @@
  * （memory knotebook-lazy-pages 的收斂前提）：五個區塊是同一個 chunk。
  *
  * ⚠ 下列元件**不得被任何首包模組靜態 import**——否則 Rollup 把它們併回 entry、這個 chunk 消失。
- * 儲存方案頁就是 `SettingsStorageSection`，它自己在方案表之後渲染站台版本設定（`SiteVersionsGroups`，§7.0）。
+ * 儲存方案頁就是 `SettingsStorageSection`，它自己在方案表之後渲染站台版本設定（`SiteVersionsGroups`，§7.0）、
+ * 站台垃圾桶設定（`SiteTrashGroup`，#181 §6.9）。
  */
 export { SettingsUsersSection as AdminUsersSection } from "@/settings/SettingsUsersSection";
 export { SettingsAdminGroupsSection as AdminGroupsSection } from "@/settings/SettingsAdminGroupsSection";

@@ -127,8 +127,8 @@ function respond(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) } as unknown as Response;
 }
 
-/** 假 server：`notes` 可以是一篇、或某支端點回錯；`list` 是側欄清單。 */
-function stubFetch({ note = NOTE as NoteDto | { status: number; code: string }, list = [NOTE] as NoteDto[] } = {}) {
+/** 假 server：`notes` 可以是一篇、或某支端點回錯（`noteId` 有給時放在 body 頂層，同 404 in_trash）；`list` 是側欄清單。 */
+function stubFetch({ note = NOTE as NoteDto | { status: number; code: string; noteId?: string }, list = [NOTE] as NoteDto[] } = {}) {
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -138,7 +138,11 @@ function stubFetch({ note = NOTE as NoteDto | { status: number; code: string }, 
     if (url.endsWith("/backlinks")) return Promise.resolve(respond(200, { backlinks: [] }));
     if (url.endsWith("/links") && method === "POST") return Promise.resolve(respond(204, null));
     if (url.startsWith("/api/notes/") && method === "GET") {
-      return Promise.resolve("status" in note ? respond(note.status, { error: { code: note.code, message: "x" } }) : respond(200, note));
+      return Promise.resolve(
+        "status" in note
+          ? respond(note.status, { error: { code: note.code, message: "x" }, ...(note.noteId !== undefined ? { noteId: note.noteId } : {}) })
+          : respond(200, note),
+      );
     }
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
@@ -340,6 +344,19 @@ describe("NotePage × 簡報（spec §6.1、§6.5、§13.2）", () => {
     expect(await within(shellDialog).findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
     fireEvent.click(screen.getByRole("button", { name: "Exit presentation" }));
     await waitFor(() => expect(loc()).toBe("/notes/x"));
+  });
+
+  it("NP-T6（垃圾桶 T6）：?present 開一篇 in_trash → 外殼錯誤態 errors.in_trash、不導頁", async () => {
+    stubFetch({ note: { status: 404, code: "in_trash", noteId: NOTE.id } });
+    renderPresent(["/n/tester/my-note?present"]);
+    const shellDialog = await screen.findByRole("dialog");
+    expect(await within(shellDialog).findByRole("alert")).toHaveTextContent(/^This note is in the trash\.$/);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(loc()).toBe("/n/tester/my-note?present");
+    expect(nav.fn).not.toHaveBeenCalled();
+    expect(screen.queryByText("This link is invalid or the note doesn't exist.")).toBeNull();
   });
 
   it("test 20：chunk 載入失敗（額度已用）→ 錯誤卡在外殼內；Esc 一樣離開", async () => {

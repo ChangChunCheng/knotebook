@@ -17,10 +17,7 @@
     "selectTitle": "No note selected",
     "selectDescription": "Select a note from the sidebar, or create a new one.",
     "newNote": "New note",
-    "delete": "Delete",
-    "cancel": "Cancel",
-    "deleteTitle": "Delete note?",
-    "deleteDescription": "This will permanently delete \"{{title}}\". This can't be undone."
+    "cancel": "Cancel"
   },
   "sidebar": {
     "resize": "Resize sidebar",
@@ -44,7 +41,8 @@
     "emptyWorkspace": "You're not in any group yet.",
     "emptyShared": "Nothing has been shared with you yet.",
     "locationGroup": "Workspace › {{group}}",
-    "locationShared": "Shared with me · {{role}}"
+    "locationShared": "Shared with me · {{role}}",
+    "trash": "Trash"
   },
   "roles": {
     "owner": "Owner",
@@ -156,8 +154,7 @@
       "moveTo": "Move to…",
       "copyTo": "Copy to…",
       "makeCopy": "Make a copy",
-      "personalSpace": "Personal space",
-      "delete": "Delete note"
+      "delete": "Move to trash"
     },
     "width": {
       "label": "Width",
@@ -608,6 +605,15 @@
       "save": "Save",
       "saved": "Version settings saved"
     },
+    "trash": {
+      "title": "Trash",
+      "autoLabel": "Delete automatically",
+      "daysLabel": "Days to keep",
+      "description": "Notes moved to the trash are permanently deleted once they've been there longer than this (checked once an hour). If you shorten it, notes already past the new limit are deleted starting at the next check (up to 2,000 per check).",
+      "daysInvalid": "Use a whole number from 1 to 3650.",
+      "save": "Save",
+      "saved": "Trash settings saved"
+    },
     "groups": {
       "title": "Groups",
       "description": "Every group on this site, with its storage use and plan.",
@@ -682,10 +688,13 @@
       "transferDescription_one": "{{count}} note will become {{name}}'s personal note. Its address changes to /n/…, and the old address forwards to it for a month. Everyone else in the group loses access, and any public link it has is turned off.",
       "transferDescription_other": "{{count}} notes will become {{name}}'s personal notes. Their addresses change to /n/…, and the old addresses forward to them for a month. Everyone else in the group loses access, and any public links on them are turned off.",
       "transferDescriptionNoCount": "The group's notes will become {{name}}'s personal notes. Their addresses change to /n/…, and the old addresses forward to them for a month. Everyone else in the group loses access, and any public links on them are turned off.",
+      "transferTrashNote": "Group notes in the trash go to {{name}}'s personal trash, and their retention period still counts from when they were deleted; their public links are turned off too.",
       "deleteLabel": "Delete everything",
-      "deleteDescription_one": "{{count}} note, its attachments and its edit history are permanently deleted. This can't be undone.",
-      "deleteDescription_other": "{{count}} notes, their attachments and their edit history are permanently deleted. This can't be undone.",
-      "deleteDescriptionNoCount": "The group's notes, their attachments and their edit history are permanently deleted. This can't be undone.",
+      "deleteDescription_one": "{{count}} note, its attachments and its edit history are permanently deleted — it doesn't go to the trash. This can't be undone.",
+      "deleteDescription_other": "{{count}} notes, their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
+      "deleteDescriptionNoCount": "The group's notes (including those in its trash), their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
+      "deleteDescriptionWithTrash_one": "{{count}} note (including {{trash}} in the trash), its attachments and its edit history are permanently deleted — it doesn't go to the trash. This can't be undone.",
+      "deleteDescriptionWithTrash_other": "{{count}} notes (including {{trash}} in the trash), their attachments and their edit history are permanently deleted — they don't go to the trash. This can't be undone.",
       "emptyDescription": "This group has no notes.",
       "acknowledge": "I understand the notes will be permanently deleted",
       "adminsUnavailable": "Couldn't load the group's admins.",
@@ -737,7 +746,7 @@
         },
         "delete": {
           "label": "Delete",
-          "description": "Delete any note in the group, including ones other people created."
+          "description": "Move the group's notes to the trash. With Edit as well, also restore them from the trash or delete them permanently."
         },
         "managePublicLink": {
           "label": "Manage public links",
@@ -773,7 +782,8 @@
         "nameLabel": "Role name",
         "create": "Create"
       },
-      "invalidName": "Role names must be 1–40 characters."
+      "invalidName": "Role names must be 1–40 characters.",
+      "deleteWithoutEditHint": "Without Edit, notes deleted with this role can't be restored from the trash by its holders."
     }
   },
   "management": {
@@ -821,7 +831,7 @@
         "copy": "Copy",
         "copied": "Copied.",
         "copyFailed": "Couldn't copy automatically — select it by hand.",
-        "scopes": "Read: list_notes, search_notes, read_note_outline, read_note_section, read_note_image and create_transfer_token (download). Edit adds edit_note, create_note, copy_note (into your own notes) and create_transfer_token uploads. Move is needed for move_note_to_group and copying into a group (moving into a group can't be undone, so it is a separate permission)."
+        "scopes": "Read: list_notes, search_notes, read_note_outline, read_note_section, read_note_image, list_trash and create_transfer_token (download). Edit adds edit_note, create_note, copy_note (into your own notes) and create_transfer_token uploads. Move is needed for move_note_to_group and copying into a group (moving into a group can't be undone, so it is a separate permission). Delete is needed for delete_note and restore_note, which move notes to the trash and back; no tool here deletes a note permanently, but a note left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app."
       },
       "tokens": {
         "name": "Name",
@@ -832,6 +842,7 @@
         "pillRead": "Read",
         "pillEdit": "Edit",
         "pillMove": "Move",
+        "pillDelete": "Delete",
         "edit": "Edit",
         "save": "Save",
         "editHint": "1–32 letters, digits, . _ or -. Leave empty to go back to “{{derived}}”, derived from the name.",
@@ -923,7 +934,7 @@
         "empty": "No sign-in services linked."
       },
       "apiTokensTitle": "API tokens",
-      "apiTokensDescription": "Give a script or an AI assistant access to your notes on your behalf. A token can always list and read the notes you can read; creating and writing notes needs \"Create and edit notes\", and moving or copying notes into groups also needs \"Move or copy notes into groups\". Treat it like a password. Tokens are not affected when you change your password; revoke them here instead.",
+      "apiTokensDescription": "Give a script or an AI assistant access to your notes on your behalf. A token can always list and read the notes you can read; creating and writing notes needs \"Create and edit notes\", and moving or copying notes into groups also needs \"Move or copy notes into groups\". Moving notes to the trash or restoring them also needs \"Move notes to the trash and restore them\". Treat it like a password. Tokens are not affected when you change your password; revoke them here instead.",
       "apiTokensCleanupHint": "Apps past their expiry date, and tokens that expired more than 30 days ago, are usually removed automatically the next time anyone creates a token or authorizes an application; you can revoke any that are still listed yourself.",
       "apiTokensEmpty": "No tokens yet.",
       "apiTokensCreate": "Create API token",
@@ -934,6 +945,9 @@
       "apiTokensScopeEdit": "Create and edit notes",
       "apiTokensScopeMove": "Move or copy notes into groups",
       "apiTokensScopeMoveHint": "Moving a note into a group can't be undone: it removes the note's per-person shares, its public link and its version history, the group becomes its owner, and from then on the group's roles decide who can change or delete it. Every member of the group can read what is moved or copied there. Requires \"Create and edit notes\".",
+      "apiTokensScopeDelete": "Move notes to the trash and restore them",
+      "apiTokensScopeDeleteHint": "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app.",
+      "apiTokensScopeDeleteHintRequiresEdit": "{{hint}} Requires \"Create and edit notes\".",
       "apiTokensExpiryLabel": "Expires",
       "apiTokensExpiryNever": "Never",
       "apiTokensExpiryDays": "In {{days}} days",
@@ -1188,7 +1202,58 @@
     "usageUnlimited": "{{used}} used (unlimited, {{plan}})",
     "overQuota": "Limit reached — no new attachments can be added",
     "cell": "{{used}} of {{quota}}",
-    "cellUnlimited": "{{used}} (no limit)"
+    "cellUnlimited": "{{used}} (no limit)",
+    "trashNote": "Notes in the trash count toward usage too, until they're permanently deleted."
+  },
+  "trash": {
+    "header_one": "Trash · {{count}} note",
+    "header_other": "Trash · {{count}} notes",
+    "sectionWorkspace": "Workspace",
+    "daysLeft_one": "{{count}} day left",
+    "daysLeft_other": "{{count}} days left",
+    "deletedByName": "Deleted by {{name}}",
+    "unknownUser": "a deleted account",
+    "deletedOn": "Deleted {{date}}",
+    "titleTimes": "Moved to the trash {{deletedAt}} · to be permanently deleted around {{purgeAt}}",
+    "titleTimesNoPurge": "Moved to the trash {{deletedAt}}",
+    "footer_one": "Permanently deleted {{count}} day after deletion",
+    "footer_other": "Permanently deleted {{count}} days after deletion",
+    "footerNever": "The trash isn't emptied automatically",
+    "empty": "The trash is empty.",
+    "truncated": "Only the 1,000 most recently deleted notes are listed.",
+    "select": "Select",
+    "emptyTrash": "Empty",
+    "restore": "Restore",
+    "restoreFor": "Restore {{title}}",
+    "menuFor": "Actions for {{title}}",
+    "purge": "Delete permanently",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "done": "Done",
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "purgeTitle_one": "Permanently delete {{count}} note?",
+    "purgeTitle_other": "Permanently delete {{count}} notes?",
+    "purgeDescription": "The notes and their attachments will be permanently deleted. This can't be undone.",
+    "emptyTitle": "Empty the trash?",
+    "emptyDescription_one": "{{count}} note and its attachments will be permanently deleted. This can't be undone.",
+    "emptyDescription_other": "{{count}} notes and their attachments will be permanently deleted. This can't be undone.",
+    "emptyPersonal_one": "My notes: {{count}} note",
+    "emptyPersonal_other": "My notes: {{count}} notes",
+    "emptyWorkspace_one": "Workspace: {{count}} note",
+    "emptyWorkspace_other": "Workspace: {{count}} notes",
+    "includesOthers": " (including some deleted by other members)",
+    "moved": "Moved to the trash",
+    "undo": "Undo",
+    "movedNoUndoHint": "Members of the group whose role can both edit and delete notes can restore it.",
+    "restored_one": "Restored {{count}} note",
+    "restored_other": "Restored {{count}} notes",
+    "purged_one": "Permanently deleted {{count}} note",
+    "purged_other": "Permanently deleted {{count}} notes",
+    "skippedSuffix_one": ", {{count}} no longer in the trash",
+    "skippedSuffix_other": ", {{count}} no longer in the trash",
+    "inTrashTitle": "This note is in the trash",
+    "goToTrash": "Go to trash"
   },
   "errors": {
     "unauthorized": "You need to sign in to continue.",

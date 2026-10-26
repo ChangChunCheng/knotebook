@@ -396,7 +396,7 @@ describe("POST /oauth/token — refresh_token", () => {
   });
 
   // #239 O3（迴歸守衛）：exchange 回的是 decision 夾出來的授予值；refresh 不碰 scope——列上被改過的值原樣回傳。
-  it("#239：要求三形、只勾讀寫 → exchange 回讀寫；列改成三形後 refresh 回三形、列 id 不變", async () => {
+  it("#239：要求讀寫搬移、只勾讀寫 → exchange 回讀寫；列改成讀寫搬移後 refresh 回讀寫搬移、列 id 不變", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -416,6 +416,48 @@ describe("POST /oauth/token — refresh_token", () => {
       expect(rotated.json().scope).toBe("notes:read notes:write notes:move");
       const after = await db.select({ id: apiTokens.id }).from(apiTokens);
       expect(after.map(r => r.id)).toEqual([before!.id]);
+    } finally {
+      await close();
+    }
+  });
+
+  // #181 PR-2d OT：讀寫刪除照原值換發、refresh 輪替不動 scope。
+  it("#181：要求並勾讀寫刪除 → exchange 回讀寫刪除、列也是；refresh 輪替後仍是讀寫刪除", async () => {
+    const RWD = "notes:read notes:write notes:delete";
+    const { app, db, close } = await buildTestApp();
+    try {
+      const { cookie } = await createUserAndLogin(db);
+      const c = await obtainCode(app, cookie, { scope: RWD, grant: RWD });
+      const first = await exchange(app, codeGrant(c));
+      expect(first.statusCode).toBe(200);
+      expect(first.json().scope).toBe(RWD);
+      expect((await db.select({ scope: apiTokens.scope }).from(apiTokens)).map(r => r.scope)).toEqual([RWD]);
+      const rotated = await exchange(app, {
+        grant_type: "refresh_token",
+        refresh_token: first.json().refresh_token as string,
+        client_id: c.clientId,
+      });
+      expect(rotated.statusCode).toBe(200);
+      expect(rotated.json().scope).toBe(RWD);
+      expect((await db.select({ scope: apiTokens.scope }).from(apiTokens)).map(r => r.scope)).toEqual([RWD]);
+    } finally {
+      await close();
+    }
+  });
+
+  // #181 PR-2d OD 的端到端那一半：要求讀寫搬移、勾讀寫刪除 → 交集讀寫，token 回應與列都是讀寫。
+  it("#181：要求讀寫搬移、勾讀寫刪除 → exchange 回讀寫、列也是讀寫", async () => {
+    const { app, db, close } = await buildTestApp();
+    try {
+      const { cookie } = await createUserAndLogin(db);
+      const c = await obtainCode(app, cookie, {
+        scope: "notes:read notes:write notes:move",
+        grant: "notes:read notes:write notes:delete",
+      });
+      const res = await exchange(app, codeGrant(c));
+      expect(res.statusCode).toBe(200);
+      expect(res.json().scope).toBe("notes:read notes:write");
+      expect((await db.select({ scope: apiTokens.scope }).from(apiTokens)).map(r => r.scope)).toEqual(["notes:read notes:write"]);
     } finally {
       await close();
     }

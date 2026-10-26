@@ -1,4 +1,11 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseQueryOptions,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import type { BacklinkDto, LastEditedDto, NoteDto } from "@knotebook/shared";
 import { api } from "./client";
 
@@ -59,6 +66,16 @@ export function useNotes(): UseQueryResult<NoteDto[]> {
   });
 }
 
+/** `retry` 有給才覆寫（給 `undefined` 會蓋掉 QueryClient 的預設，query-core 再退回 3 次）。 */
+export interface NoteQueryOptions {
+  enabled?: boolean;
+  retry?: UseQueryOptions<NoteDto>["retry"];
+}
+
+function retryOption(options: NoteQueryOptions): Pick<UseQueryOptions<NoteDto>, "retry"> {
+  return options.retry === undefined ? {} : { retry: options.retry };
+}
+
 /**
  * `GET /api/notes/:ref`。#122 起 NotePage 用它扮兩個角色（spec §3b）：
  * - **解析層**（ref＝路由參數，slug 或 uuid）：`enabled` 由呼叫端以 paramsKey 判斷
@@ -72,11 +89,12 @@ export function useNotes(): UseQueryResult<NoteDto[]> {
  * 給了 placeholder，導航瞬間 data 會是**上一篇**的 note，seed 會寫出
  * `{key: 新, id: 舊}`，頁面停在錯的筆記上、網址卻是新的，而且沒有測試會紅（A4）。
  */
-export function useNote(ref: string, options: { enabled?: boolean } = {}): UseQueryResult<NoteDto> {
+export function useNote(ref: string, options: NoteQueryOptions = {}): UseQueryResult<NoteDto> {
   return useQuery({
     queryKey: ["note", ref],
     queryFn: () => api<NoteDto>(`/api/notes/${encodeURIComponent(ref)}`),
     enabled: (options.enabled ?? true) && ref.length > 0,
+    ...retryOption(options),
   });
 }
 
@@ -88,12 +106,13 @@ export function useNote(ref: string, options: { enabled?: boolean } = {}): UseQu
 export function useNoteByPath(
   handle: string,
   slug: string,
-  options: { enabled?: boolean } = {},
+  options: NoteQueryOptions = {},
 ): UseQueryResult<NoteDto> {
   return useQuery({
     queryKey: ["note-by-path", handle, slug],
     queryFn: () => api<NoteDto>(`/api/notes/by-path/${encodeURIComponent(handle)}/${encodeURIComponent(slug)}`),
     enabled: (options.enabled ?? true) && handle.length > 0 && slug.length > 0,
+    ...retryOption(options),
   });
 }
 
@@ -105,13 +124,14 @@ export function useNoteByPath(
 export function useNoteByGroupPath(
   groupId: string,
   slug: string,
-  options: { enabled?: boolean } = {},
+  options: NoteQueryOptions = {},
 ): UseQueryResult<NoteDto> {
   return useQuery({
     queryKey: ["note-by-group-path", groupId, slug],
     queryFn: () =>
       api<NoteDto>(`/api/notes/by-group-path/${encodeURIComponent(groupId)}/${encodeURIComponent(slug)}`),
     enabled: (options.enabled ?? true) && groupId.length > 0 && slug.length > 0,
+    ...retryOption(options),
   });
 }
 
@@ -163,6 +183,8 @@ export function useDeleteNote() {
       // 前綴失效所有 `["backlinks", noteId]`：側欄 ⋮ 可以留在 A 頁刪掉 B，B 若連到 A，
       // A 底部的 B 晶片要跟著消失。
       void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
+      // #181：刪除＝移入垃圾桶，垃圾桶清單多一筆。
+      void queryClient.invalidateQueries({ queryKey: ["trash"] });
     },
   });
 }

@@ -60,6 +60,9 @@ describe("App route tree — /settings/users → /admin/users（站台管理 mod
       if (url === "/api/admin/storage-plans" && method === "GET") {
         return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ plans: [], defaults: { userPlanId: "", groupPlanId: "" } }) }));
       }
+      if (url === "/api/admin/trash/settings" && method === "GET") {
+        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ retentionDays: 7 }) }));
+      }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
   }
