@@ -660,14 +660,17 @@ describe("#239 PATCH scope", () => {
     expect((await patch(app, cookie, row!.id, { scope: RWM })).statusCode).toBe(403);
     expect((await patch(app, cookie, row!.id, { agentLabel: "bot" })).statusCode).toBe(200);
   });
-  it("改完下一個請求生效：同一支 token 的 tools/list 6 ↔ 7（buildTestApp 無共編，spec §7.1）", async () => {
+  it("改完下一個請求生效：同一支 token 的 tools/list 7 ↔ 8，讀寫刪除 9（buildTestApp 無共編，spec §7.1；#181 起含 list_trash）", async () => {
     const { app, cookie } = await signedInApp();
     const created = (await create(app, cookie, { name: "live", scope: "notes:read notes:write", expiresInDays: null })).json();
     const count = async () => ((await mcpPost(app, rpc("tools/list"), { token: created.token })).json().result.tools as unknown[]).length;
-    expect(await count()).toBe(6);
-    await patch(app, cookie, created.id, { scope: RWM });
     expect(await count()).toBe(7);
+    await patch(app, cookie, created.id, { scope: RWM });
+    expect(await count()).toBe(8);
     await patch(app, cookie, created.id, { scope: "notes:read notes:write" });
-    expect(await count()).toBe(6);
+    expect(await count()).toBe(7);
+    // #181：RW → RWD 同樣下一個請求生效（多 delete_note、restore_note）。
+    await patch(app, cookie, created.id, { scope: RWD });
+    expect(await count()).toBe(9);
   });
 });
