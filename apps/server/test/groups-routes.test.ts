@@ -72,7 +72,7 @@ describe("#103／#175 POST／GET /api/groups", () => {
     }
   });
 
-  it("GET /api/groups：只列我所屬的、依 name 再依 id；myRole 物件形（memberCount＝掛該角色的人數）；站台 admin 的 canManage* 恆真、也看不到非所屬群組", async () => {
+  it("GET /api/groups：只列我所屬的、先依我的角色（內建管理員 → 一般成員）再依 name、id；myRole 物件形（memberCount＝掛該角色的人數）；站台 admin 的 canManage* 恆真、也看不到非所屬群組", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db, { isAdmin: true });
     const other = await seedUser(db);
@@ -85,8 +85,8 @@ describe("#103／#175 POST／GET /api/groups", () => {
     const res = await app.inject({ method: "GET", url: "/api/groups", cookies: await cookieOf(me.id) });
     expect(res.statusCode).toBe(200);
     const list = res.json() as GroupDto[];
-    const sameIds = [same1.id, same2.id].sort();
-    expect(list.map(g => g.id)).toEqual([alpha.id, ...sameIds]);
+    // 我在 Alpha、same2 是管理員，在 same1 是一般成員：管理員的兩個在前（依 name），一般成員的在後。
+    expect(list.map(g => g.id)).toEqual([alpha.id, same2.id, same1.id]);
     const s1 = list.find(g => g.id === same1.id)!;
     expect(s1.myRole).toEqual({ id: same1.memberRoleId, builtin: "member", name: null, memberCount: 2, permissions: MEMBER_PERMISSIONS });
     // 站台 admin（§5.5）：角色是一般成員，兩個 canManage* 仍為真。
@@ -98,6 +98,35 @@ describe("#103／#175 POST／GET /api/groups", () => {
     expect(plainList).toHaveLength(1);
     expect(plainList[0]).toMatchObject({ id: same1.id, canManageMembers: false, canManageGroup: false });
     expect(plainList[0]!.myRole!.permissions.manageGroup).toBe(false);
+  });
+
+  it("GET /api/groups 排序：內建管理員的群組在前、再內建一般成員、再自訂角色；同一類依 name 再依 id（一般成員的 Delta 在字母上排在自訂角色的 Beta／Gamma 之後；兩個同名 Beta 靠 id 定序；側欄工作坊 tab 的順序）", async () => {
+    const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
+    const me = await seedUser(db);
+    const other = await seedUser(db);
+    const beta = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    await setMemberRole(db, beta.id, me.id, await seedRole(db, beta.id, "Reader", { canRead: true }));
+    // 刻意讓「建立順序」與「id 順序」相反：uuid 隨機，重建到 id 比 beta 小的同名群組為止；
+    // 沒有 asc(groups.id) 時結果會照建立（heap）順序給 beta、beta2，斷言必紅。
+    let beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    for (let tries = 0; beta2.id > beta.id; tries++) {
+      if (tries >= 20) throw new Error("取不到 id 比 beta 小的同名群組");
+      await db.delete(groups).where(eq(groups.id, beta2.id));
+      beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    }
+    await setMemberRole(db, beta2.id, me.id, await seedRole(db, beta2.id, "Reader", { canRead: true }));
+    const delta = await seedGroup(db, "Delta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    const zeta = await seedGroup(db, "Zeta", [{ userId: me.id, role: "admin" }]);
+    const gamma = await seedGroup(db, "Gamma", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    await setMemberRole(db, gamma.id, me.id, await seedRole(db, gamma.id, "Editor", { canRead: true, canEdit: true }));
+    await seedGroup(db, "Aardvark", [{ userId: other.id, role: "admin" }]);
+
+    const res = await app.inject({ method: "GET", url: "/api/groups", cookies: await cookieOf(me.id) });
+    expect(res.statusCode).toBe(200);
+    const list = res.json() as GroupDto[];
+    expect(list.map(g => g.name)).toEqual(["Zeta", "Delta", "Beta", "Beta", "Gamma"]);
+    expect(list.map(g => g.id)).toEqual([zeta.id, delta.id, beta2.id, beta.id, gamma.id]);
+    expect(list.map(g => g.myRole?.builtin ?? null)).toEqual(["admin", "member", null, null, null]);
   });
 });
 
