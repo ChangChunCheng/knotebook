@@ -294,6 +294,16 @@ describe("一般 tab 的選取模式（PR-2c T4）", () => {
     expect(checkedIds()).toEqual(["p1", "p3"]);
   });
 
+  it("NS4c 點列文字帶修飾鍵（Firefox 不轉送給勾選框，由 label 自己切換）：Shift 走範圍、Ctrl 只切一次", async () => {
+    await renderSelecting();
+    const title = (id: string) => within(checkbox(id).closest("label") as HTMLElement).getByText(id, { exact: true });
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(title("p3"), { shiftKey: true });
+    expect(checkedIds()).toEqual(["p1", "p2", "p3"]);
+    fireEvent.click(title("p2"), { ctrlKey: true });
+    expect(checkedIds()).toEqual(["p1", "p3"]);
+  });
+
   it("NS5 工作坊：群組列是 button[aria-expanded]、沒有勾選框；只有三篇有勾選框；沒有群組的「＋」與 ⋮", async () => {
     await renderSelecting({ tab: "workspace" });
     for (const name of ["G1", "G2"]) {

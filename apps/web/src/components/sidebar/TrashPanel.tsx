@@ -135,6 +135,13 @@ const SelectableTrashRow = memo(function SelectableTrashRow({
           "flex cursor-pointer select-none items-start gap-2 rounded-md py-1.5 pl-2 pr-1 text-[13px]",
           checked ? "bg-brand-soft font-medium text-brand-on-soft" : "hover:bg-brand-soft hover:text-brand-on-soft",
         )}
+        // Firefox 有修飾鍵時不把 label 的 click 轉給勾選框（留給文字選取），Shift／Ctrl＋點列文字會沒反應：有修飾鍵且點的不是
+        // 勾選框本身時，取消轉送、自己切換（三引擎一致；Chromium／WebKit 不會因此切兩次）。
+        onClick={(event) => {
+          if (!(event.shiftKey || event.ctrlKey || event.metaKey) || event.target instanceof HTMLInputElement) return;
+          event.preventDefault();
+          onToggle(selectionKey({ kind: "note", id: item.id }), event.shiftKey);
+        }}
       >
         <input
           type="checkbox"

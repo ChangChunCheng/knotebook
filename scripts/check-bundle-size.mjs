@@ -68,7 +68,7 @@ export const PRESENTATION_RE = /^PresentationOverlay-[A-Za-z0-9_-]+\.js$/;
 export const TRASHLAZY_RE = /^TrashLazy-[A-Za-z0-9_-]+\.js$/;
 // #181 PR-2c：一般 tab 選取模式必須是自己的 lazy chunk；`components/sidebar/SelectLazy.tsx` 是唯一入口。
 // ⚠ 同 TRASHLAZY_RE：存在性只擋「三個掛載點（NoteList 兩處、SidebarFooter）都改成靜態 import」或 chunk 改名；只改一處時
-// 元件被搬進 entry、chunk 仍在（T6 實測：只改 SidebarFooter 時 entry 732,748、chunk 仍在），那一形由下面的 SELECT_I18N_MARKER 擋。
+// 元件被搬進 entry、chunk 仍在（T6 實測：只改 SidebarFooter 時 entry 734,825、chunk 仍在），那一形由下面的 SELECT_I18N_MARKER 擋。
 export const SELECTLAZY_RE = /^SelectLazy-[A-Za-z0-9_-]+\.js$/;
 // select.*.json 只能進 SelectLazy 鏈：這把鍵名出現在 entry＝字串包（或 import 它的模組）被首包靜態 import。
 // ⚠ 涵蓋 import `@/i18n/select-strings` 的模組與以值 import 它們的模組（含 `lib/select-batch.ts`）；只做型別 import 的不在範圍（gate r2 n-C）。

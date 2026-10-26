@@ -792,6 +792,15 @@ describe("TrashPanel（選取模式）", () => {
     expect(within(header()).getByText("3 selected", { exact: true })).toBeInTheDocument();
   });
 
+  it("SM3b 點列文字帶修飾鍵（Firefox 不轉送給勾選框，由 label 自己切換）：Shift 走範圍、Ctrl 只切一次", async () => {
+    await renderSelecting();
+    fireEvent.click(checkbox("p1"));
+    fireEvent.click(within(rowLabel("w1")).getByText("w1", { exact: true }), { shiftKey: true });
+    expect(checkedIds()).toEqual(["p1", "p2", "w1"]);
+    fireEvent.click(within(rowLabel("p2")).getByText("p2", { exact: true }), { ctrlKey: true });
+    expect(checkedIds()).toEqual(["p1", "w1"]);
+  });
+
   it("SM4 Ctrl＋點與一般點選相同：p1 → Ctrl 點 w1 → 只有 p1、w1", async () => {
     await renderSelecting();
     fireEvent.click(checkbox("p1"));
