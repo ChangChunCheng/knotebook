@@ -296,7 +296,7 @@ Links in `content` are saved the same way as in `edit_note` (see [Links to notes
 
 ### `delete_note`
 
-**Takes** `note_id`. It moves a note to the trash — what **Move to trash** does in the web app. A token or app credential needs `notes:delete` for it; one without it isn't offered this tool at all.
+**Takes** `note_id`. It moves a note to the trash — what **Delete** in a note's `⋮` menu does in the web app. A token or app credential needs `notes:delete` for it; one without it isn't offered this tool at all.
 
 **Answers** `id`, `title` (cut like every other title, with `titleTruncated: true` when it was) and `purgeAt` — when the note becomes due to be deleted permanently, as described under [`list_trash`](#list_trash), under the site's trash setting at the moment of the reply, or `null` when the site doesn't empty the trash on its own. A site admin can change that setting afterwards; for the notes you can restore, `list_trash` shows the current date.
 

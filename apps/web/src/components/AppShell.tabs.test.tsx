@@ -742,7 +742,7 @@ describe("AppShell — 一般 tab 選取模式（PR-2c T6）", () => {
     expect(select).toHaveFocus();
   });
 
-  it("AS-S4 選取中切 tab 離開：點 Workspace → 平常標題列、底部 New note", async () => {
+  it("AS-S4 選取中切 tab 離開：點 Workspace → 平常標題列、底部動作列消失（工作區 tab 沒有 New note）", async () => {
     stubFetchWithNotes(notes);
     renderShell();
     await startSelecting(aside());
@@ -753,7 +753,7 @@ describe("AppShell — 一般 tab 選取模式（PR-2c T6）", () => {
     expect(within(header(aside())).getByRole("button", { name: "Select" })).toBeInTheDocument();
     expect(within(header(aside())).queryByRole("button", { name: "Done" })).toBeNull();
     expect(within(header(aside())).queryByText(/selected/)).toBeNull();
-    expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull();
     expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
   });
 

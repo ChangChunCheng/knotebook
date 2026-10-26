@@ -169,6 +169,6 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     expect(within(header()).getByRole("button", { name: "Select" })).toBeEnabled();
     expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
     expect(within(aside()).queryByRole("alert")).toBeNull();
-    expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
+    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull(); // 工作區 tab 沒有個人的新增鈕
   });
 });

@@ -15,7 +15,7 @@ import {
 
 /**
  * #181 垃圾桶 PR-2b（spec 2026-10-21 §6.14 e2e 段；A2-1、A2-2、A2-3、A2-11、A2-12）：
- * 1. 頁首 ⋮「Move to trash」不確認、toast「Undo」回到該篇且可共編；側欄 ⋮ 再移入 → 垃圾桶 tab 個人區、「剩 N 天」、底部天數。
+ * 1. 頁首 ⋮「Delete」不確認、toast「Undo」回到該篇且可共編；側欄 ⋮ 再移入 → 垃圾桶 tab 個人區、「剩 N 天」、底部天數。
  * 2. 公開連結在垃圾桶期間 404，從垃圾桶列「還原」後恢復。
  * 3. 選取模式：Shift 範圍選三篇還原；勾兩篇永久刪除（確認框）後原網址連結無效。
  * 4. 390 寬抽屜：選取中按 Esc 只結束選取、焦點回抽屜內的「選取」鈕；確認框 Esc 只關框（jsdom 對這條假綠過，只有真瀏覽器守得住）。
@@ -72,9 +72,9 @@ test("A2-1／A2-2：頁首 ⋮ 移入不確認、toast 復原回到該篇可共�
   await createNote(page, title);
   const noteUrl = page.url();
 
-  // ── A2-1：頁首 ⋮ → Move to trash：不跳確認框、回首頁、toast 帶 Undo ─────────────────
+  // ── A2-1：頁首 ⋮ → Delete：不跳確認框、回首頁、toast 帶 Undo ─────────────────
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await expect(page).toHaveURL(/\/$/, { timeout: 15_000 });
   const moved = toastWithTitle(page, "Moved to the trash");
   await expect(moved).toBeVisible();

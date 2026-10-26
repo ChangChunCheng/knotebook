@@ -154,7 +154,7 @@
       "moveTo": "Move to…",
       "copyTo": "Copy to…",
       "makeCopy": "Make a copy",
-      "delete": "Move to trash"
+      "delete": "Delete"
     },
     "width": {
       "label": "Width",
