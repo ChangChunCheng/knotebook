@@ -49,6 +49,9 @@
     "editor": "Editor",
     "viewer": "Viewer"
   },
+  "userSuggest": {
+    "listLabel": "People you know"
+  },
   "share": {
     "button": "Share",
     "title": "Share note",

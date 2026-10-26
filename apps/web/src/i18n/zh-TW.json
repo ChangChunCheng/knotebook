@@ -49,6 +49,9 @@
     "editor": "可編輯",
     "viewer": "檢視者"
   },
+  "userSuggest": {
+    "listLabel": "你認識的人"
+  },
   "share": {
     "button": "分享",
     "title": "分享筆記",

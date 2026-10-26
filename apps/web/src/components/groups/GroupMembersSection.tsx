@@ -6,9 +6,9 @@ import { useAddMember, useGroupMembers, useGroupRoles, useRemoveMember, useSetMe
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
 import { Button } from "@/components/ui/button";
 import { Trash } from "@/components/ui/icons";
-import { Input } from "@/components/ui/input";
 import { RowIconButton } from "@/components/ui/row-icon-button";
 import { toast } from "@/components/ui/toast";
+import { UserEmailCombobox } from "@/components/UserEmailCombobox";
 import { roleLabel } from "@/lib/group-role";
 import { SettingsGroup, SettingsPage } from "@/settings/SettingsLayout";
 import { useGroupOutlet } from "./group-outlet";
@@ -162,13 +162,11 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       {canManageMembers && (
         <>
           <form onSubmit={(event) => void handleAdd(event)} className="mt-4 flex items-center gap-2">
-            <Input
-              type="email"
-              required
-              placeholder={t("groups.detail.addEmailLabel")}
-              aria-label={t("groups.detail.addEmailLabel")}
+            <UserEmailCombobox
+              label={t("groups.detail.addEmailLabel")}
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={setEmail}
+              excludeUserIds={members.map((member) => member.userId)}
               className="min-w-0 max-w-md flex-1"
             />
             <select
