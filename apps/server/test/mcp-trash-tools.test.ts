@@ -5,7 +5,7 @@
  * 造垃圾桶狀態打 `DELETE /api/notes/:id` 或 `markTrashed`；大量資料與病態字串直改 DB。斷言共編閘門（`isDeleting`）的案接真的 hooks。
  */
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { SESSION_COOKIE, type TokenScope, type TrashListDto } from "@knotebook/shared";
@@ -418,7 +418,7 @@ describe("DN6 TOCTOU：鎖後在交易內被降權", () => {
     const r = await call(ctx.app, await tokenOf(ctx, s.editDelete.id, RWD), "delete_note", { note_id: n.id });
     expect(r.structuredContent).toEqual({ code: "forbidden", message: DELETE_FORBIDDEN_MESSAGE });
     expect(await trashCols(ctx.db.$client, n.id)).toEqual({ deleted_at: null, deleted_by: null });
-    expect(ctx.collab.isDeleting(n.id)).toBe(false);
+    await vi.waitFor(() => expect(ctx.collab.isDeleting(n.id)).toBe(false));
   });
 });
 
@@ -492,7 +492,7 @@ describe("DN9 交易被併發犧牲（gate r1 m5）", () => {
     const r = await call(ctx.app, await tokenOf(ctx, me.id, RWD), "delete_note", { note_id: n.id });
     expect(r.structuredContent).toEqual({ code: "server_busy", message: DELETE_BUSY_MESSAGE });
     expect(await trashCols(ctx.db.$client, n.id)).toEqual({ deleted_at: null, deleted_by: null });
-    expect(ctx.collab.isDeleting(n.id)).toBe(false);
+    await vi.waitFor(() => expect(ctx.collab.isDeleting(n.id)).toBe(false));
   });
 
   // DN9b：busy 句宣稱「沒移入」只對可重試的交易中止成立；其他例外交給 runTool 收成 internal（不得一律 server_busy）。
@@ -607,7 +607,7 @@ describe("RN1 owner 還原", () => {
     const note = await restoreOk(ctx.app, auth, n.id);
     expect(note).toMatchObject({ id: n.id, title: "RN1", role: "owner", url: before.url, owner: { kind: "user" } });
     expect(await trashCols(ctx.db.$client, n.id)).toEqual({ deleted_at: null, deleted_by: null });
-    expect(ctx.collab.isDeleting(n.id)).toBe(false);
+    await vi.waitFor(() => expect(ctx.collab.isDeleting(n.id)).toBe(false));
     expect((await listNotesIds(ctx.app, auth)).map(x => x.id)).toContain(n.id);
   });
 });
