@@ -390,6 +390,8 @@ These are the MCP-specific entries in the shared [Known limitations](./known-lim
 - [On a plain-http `PUBLIC_URL` (for example a LAN deployment), transfer tokens cross the network unencrypted](./known-limitations.md)
 - [An MCP connection made with the browser's sign-in session has no `create_transfer_token`](./known-limitations.md)
 - [Only the editor's ten built-in colors can be written, and a list or table with block or cell colors reads back as HTML as a whole](./known-limitations.md)
+- [Some image widths don't travel over the API and MCP, and sizes not written in the form reading gives are refused](./known-limitations.md)
+- [A pasted row keeps all of its columns, even more than four](./known-limitations.md)
 
 ## See also
 
