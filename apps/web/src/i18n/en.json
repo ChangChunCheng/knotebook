@@ -211,6 +211,24 @@
       "deleted": "Note deleted",
       "outdated": "Reload required"
     },
+    "presence": {
+      "label": "Also viewing this note",
+      "avatarCursor": "{{name}}, {{role}}, go to their cursor",
+      "avatarNoCursor": "{{name}}, {{role}}, no cursor right now",
+      "avatarNameCursor": "{{name}}, go to their cursor",
+      "avatarNameNoCursor": "{{name}}, no cursor right now",
+      "agentCursor": "{{handle}} ({{label}}), AI agent, go to its cursor",
+      "agentNoCursor": "{{handle}} ({{label}}), AI agent, no cursor right now",
+      "agent": "AI agent",
+      "tipRole": "{{name}} · {{role}}",
+      "tipAgent": "{{handle}} ({{label}}) · AI agent",
+      "hintCursor": "Click to go to their cursor",
+      "hintCursorAgent": "Click to go to its cursor",
+      "hintNoCursor": "No cursor right now",
+      "more": "{{count}} more, show everyone",
+      "menuTitle": "People on this note ({{count}})",
+      "rowNoCursor": "No cursor"
+    },
     "outdated": {
       "message": "Knotebook has been updated. Reload the page to keep editing. Changes in this tab that haven't synced won't be kept after reloading.",
       "reload": "Reload"
@@ -249,6 +267,11 @@
       "urlLabel": "URL",
       "insert": "Insert",
       "invalidUrl": "That URL is not valid."
+    },
+    "columns": {
+      "slashTitle": "{{n}} columns",
+      "slashSubtext": "Place blocks side by side",
+      "ungroup": "Ungroup columns"
     }
   },
   "login": {

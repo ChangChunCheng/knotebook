@@ -231,7 +231,9 @@ describe("PresentationOverlay（fake reveal）", () => {
       });
       rerenderWith({ variant: "public", doc: makeDoc(), title: "Renamed", publicRef });
       expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong on this page.");
-      expect(deck.destroy).toHaveBeenCalledTimes(1);
+      // 錯誤訊息與 overlay 卸載同一個 commit，但 effect cleanup（dispose → destroy）排在之後的 scheduler task；
+      // 事件迴圈卡 ≥1 ms 時 findByRole 收尾的 setTimeout(0) 會先到（CI 負載下紅過）。
+      await waitFor(() => expect(deck.destroy).toHaveBeenCalledTimes(1));
       expect(document.querySelector(".reveal")).toBeNull();
       expect(uncaught).not.toHaveBeenCalled();
       expect(consoleError).toHaveBeenCalledWith(failure);

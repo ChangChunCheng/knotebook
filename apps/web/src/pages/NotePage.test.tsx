@@ -32,6 +32,9 @@ import * as toastModule from "@/components/ui/toast";
 import { canEdit as canEditRole, type CollabState } from "@/collab/connection";
 import { OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 import { invalidateNoteQueries } from "@/api/notes";
+import { Awareness } from "y-protocols/awareness";
+import { resetLocalPresenceFieldForTest } from "@/components/presence/local-field";
+import { setRemote, userState } from "@/components/presence/test-awareness";
 
 // BlockNote 需要一整套 jsdom 沒有的 DOM/Range API，掛進單元測試只會測到環境；
 // 這裡只驗證「頁面有沒有把正確的 props 交給編輯器」，編輯器本身留給手動驗證。
@@ -54,8 +57,11 @@ const VERSION_1 = vi.hoisted(() => ({
   base: null,
   createdAt: "2026-01-01T00:00:00.000Z",
 }));
+// #293：替身交給 NotePage 的 scroller（`onCursorScroller`）；預設 null＝同真編輯器尚未交出。
+const editorMock = vi.hoisted(() => ({ scroller: null as null | ((c: unknown) => boolean) }));
 // #297：`mock-column` 用真的 `useNoteWidth(noteId)`，P3 靠它驗 NotePage 交給頁首選單與編輯器的是同一個 id。
 vi.mock("@/components/NoteEditor", async () => {
+  const React = await import("react");
   const { useVersions } = await import("@/lib/versions-context");
   const { useNoteWidth } = await import("@/components/note-width");
   function NoteEditorMock({
@@ -64,15 +70,21 @@ vi.mock("@/components/NoteEditor", async () => {
     headerSlot,
     footerSlot,
     previewSlot,
+    onCursorScroller,
   }: {
     editable: boolean;
     noteId: string;
     headerSlot?: ReactNode;
     footerSlot?: ReactNode;
     previewSlot?: ReactNode;
+    onCursorScroller?: (s: unknown) => void;
   }) {
     const versions = useVersions();
     const [width] = useNoteWidth(noteId);
+    React.useEffect(() => {
+      onCursorScroller?.(editorMock.scroller);
+      return () => onCursorScroller?.(null);
+    }, [onCursorScroller]);
     return (
       <div data-testid="note-editor" data-editable={String(editable)}>
         {headerSlot}
@@ -3101,5 +3113,128 @@ describe("NotePage × 最近 tab 跟上開著那篇（spec §5.2）", () => {
 
     expect(listWrites).toEqual([]);
     expect(orders.filter((o) => o !== [NOTE.id, noteB.id].join(","))).toEqual([]);
+  });
+});
+
+describe("頁頭頭像列（#293 PR-1）", () => {
+  const GROUP = { name: "Also viewing this note" } as const;
+  let awareness: Awareness;
+
+  beforeEach(async () => {
+    resetLocalPresenceFieldForTest();
+    await i18n.changeLanguage("en");
+    collab.state = { phase: "connected", role: "owner" };
+    collab.doc = new Y.Doc();
+    awareness = new Awareness(new Y.Doc());
+    collab.provider = Object.assign(createStubProvider(), { awareness });
+    collab.onUnauthorized = undefined;
+    editorMock.scroller = null;
+    window.history.replaceState(null, "", "/");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    awareness.destroy();
+    collab.doc.destroy();
+    editorMock.scroller = null;
+    vi.unstubAllGlobals();
+    navSpy.current = undefined;
+  });
+
+  async function openPage(note: NoteDto = NOTE) {
+    vi.stubGlobal("fetch", mockFetch(note));
+    const rendered = renderNotePage("my-note");
+    // 頁頭在編輯器替身的 headerSlot 裡；viewer 的標題是 h1（沒有 "Note title" 輸入框），以替身為準。
+    await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
+    return rendered;
+  }
+
+  it("NP-P1 位置：ConnectionBadge 之後、LastEditedLabel 之前", async () => {
+    setRemote(awareness, 10, userState("u2", "Bea"));
+    await openPage({ ...NOTE, lastEdited: { at: "2026-10-01T00:00:00.000Z", byHandle: "tester", agentLabel: null } });
+
+    await waitFor(() => expect(screen.getByRole("group", GROUP)).toBeInTheDocument());
+    const header = document.querySelector("header")!;
+    const group = within(header).getByRole("group", GROUP);
+    const badge = within(header)
+      .getAllByRole("status")
+      .find((el) => el.textContent?.includes("Connected"));
+    const last = within(header).getByTestId("last-edited");
+    expect(badge).toBeDefined();
+    expect(badge!.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(group.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("NP-P2 本分頁寫 knotebook 欄（PR-1 avatar 恆 null）", async () => {
+    await openPage();
+
+    await waitFor(() =>
+      expect(awareness.getLocalState()?.knotebook).toEqual({
+        v: 1,
+        kind: "user",
+        role: "owner",
+        avatar: null,
+        since: expect.any(Number),
+      }),
+    );
+  });
+
+  it.each([
+    ["connecting", /Connecting/],
+    ["reconnecting-once", /Reconnecting/],
+    ["outdated", /Reload required/],
+  ] as const)("NP-P3 非 connected（%s）：沒有頭像列、本機不寫 knotebook 欄", async (phase, badgeText) => {
+    collab.state = { phase };
+    setRemote(awareness, 10, userState("u2", "Bea"));
+    await openPage();
+    // 連線徽章出現＝頁頭與 effect 都已跑完，再斷言「沒有」。
+    await waitFor(() => expect(within(document.querySelector("header")!).getByText(badgeText)).toBeInTheDocument());
+
+    expect(screen.queryByRole("group", GROUP)).toBeNull();
+    expect(awareness.getLocalState()).not.toHaveProperty("knotebook");
+  });
+
+  it("NP-P4 scroller 接線：點頭像 → NoteEditor 交出的 scroller 收到那份 cursor", async () => {
+    const scroller = vi.fn<(cursor: unknown) => boolean>(() => true);
+    editorMock.scroller = scroller;
+    const cursor = { anchor: { tag: "a" }, head: { tag: "a" } };
+    setRemote(awareness, 10, userState("u2", "Cat", { cursor }));
+    await openPage();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cat, Editor, go to their cursor" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Cat, Editor, go to their cursor" }));
+    expect(scroller).toHaveBeenCalledTimes(1);
+    expect(scroller).toHaveBeenCalledWith(cursor);
+  });
+
+  it("NP-P5 我自己（另一個分頁，同 user.id）不出現", async () => {
+    setRemote(awareness, 10, userState(USER.id, USER.displayName));
+    await openPage();
+    await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
+
+    expect(screen.queryByRole("group", GROUP)).toBeNull();
+  });
+
+  it("NP-P6 viewer：本機 knotebook.role 是 viewer", async () => {
+    collab.state = { phase: "connected", role: "viewer" };
+    await openPage({ ...NOTE, role: "viewer" });
+
+    await waitFor(() => expect(awareness.getLocalState()?.knotebook).toMatchObject({ role: "viewer" }));
+  });
+
+  it("NP-P7 改顯示名稱：knotebook.since 跟著更新", async () => {
+    const { queryClient } = await openPage();
+    await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
+    const first = (awareness.getLocalState()!.knotebook as { since: number }).since;
+
+    const now = vi.spyOn(Date, "now").mockReturnValue(first + 60_000);
+    try {
+      act(() => {
+        queryClient.setQueryData(["me"], { ...USER, displayName: "Bea" });
+      });
+      await waitFor(() => expect((awareness.getLocalState()?.knotebook as { since: number }).since).toBe(first + 60_000));
+    } finally {
+      now.mockRestore();
+    }
   });
 });

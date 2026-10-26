@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bigramDice, diffBlocks, markOf, renderDiff, sideBySideMarks, splitRows, type DiffBlock, type SplitRow } from "./version-diff";
+import { bigramDice, diffBlocks, markOf, renderDiff, sideBySideMarks, splitRows, type DiffBlock, type DiffEntry, type SplitRow } from "./version-diff";
 
 const p = (id: string, text: string, children: DiffBlock[] = []): DiffBlock => ({
   id,
@@ -663,5 +663,130 @@ describe("#269 W9 wikilink 的 diff（§13.2）", () => {
     renderDiff(entries, { titleOf: () => "T" });
     expect([a, b]).toEqual(before);
     expect(splitRows(a, b, entries)).toEqual([{ left: 0, right: 0 }, { left: 1, right: 1 }]);
+  });
+});
+
+describe("並排的 diff（columns-layout spec §11.9）：列配列、欄依 id 配欄、欄層不收合", () => {
+  // fixture 形同探針 vd-plan.mts；期望值是探針 VD=fixed 的輸出。
+  const P = (text: string, id: string): DiffBlock => ({ id, type: "paragraph", props: {}, content: [{ type: "text", text, styles: {} }], children: [] });
+  const col = (id: string, kids: DiffBlock[], width = 1): DiffBlock => ({ id, type: "column", props: { width }, children: kids });
+  const row = (id: string, cols: DiffBlock[]): DiffBlock => ({ id, type: "columnList", props: {}, children: cols });
+  /** 探針的 show：每個 entry 一行 `key status[/moved] type`，子層縮兩格。 */
+  const show = (es: DiffEntry[], d = 0): string[] =>
+    es.flatMap((e) => [`${"  ".repeat(d)}${e.key} ${e.status}${e.moved ? "/moved" : ""} ${(e.after ?? e.before)!.type}`, ...show(e.children, d + 1)]);
+  const base = () => [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+
+  it("VD1 只看變更、列裡只有一欄有變 → 列的直接子節點全是欄（欄層不收合）；c0 內收成一個佔位段落、c1 內是 changed 的 b1", () => {
+    const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b2", "b1")])]), P("z", "z9")];
+    const { blocks, marks } = renderDiff(diffBlocks(base(), b), { onlyChanges: true });
+    const r = blocks.find((x) => x.type === "columnList")!;
+    expect(r.children!.map((c) => c.type)).toEqual(["column", "column"]);
+    const [c0, c1] = r.children!;
+    expect(c0.id).toBe("c0");
+    expect(c0.children).toHaveLength(1);
+    expect(c0.children![0].type).toBe("paragraph");
+    expect(marks.get(c0.children![0].id!)?.mark).toBe("collapsed");
+    expect(c1.id).toBe("c1");
+    expect(c1.children!.map((k) => k.id)).toEqual(["b1"]);
+    expect(marks.get("b1")?.mark).toBe("changed");
+  });
+
+  it("VD2 欄寬 1→2、內容不變 → c1 changed、b1 unchanged、列不是 changed；marks 的 c1 是 changed", () => {
+    const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
+    const entries = diffBlocks(base(), b);
+    expect(show(entries)).toEqual([
+      "x0 unchanged paragraph",
+      "r unchanged columnList",
+      "  c0 unchanged column",
+      "    a1 unchanged paragraph",
+      "  c1 changed column",
+      "    b1 unchanged paragraph",
+      "z9 unchanged paragraph",
+    ]);
+    const { blocks, marks } = renderDiff(entries);
+    expect(marks.get("c1")).toEqual({ mark: "changed", moved: false, nonText: false });
+    expect(marks.has("r")).toBe(false);
+    // 欄沒有 inline content：渲染時不做 inline diff、content 照原樣（undefined）。
+    expect(blocks[1].children![1].content).toBeUndefined();
+  });
+
+  it("VD3 只看變更、整列沒變 → 整列在頂層與其後未變的 z 一起收成一個佔位段落（頂層的佔位合法）", () => {
+    const b = [P("x2", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+    const { blocks, marks } = renderDiff(diffBlocks(base(), b), { onlyChanges: true });
+    expect(blocks.map((x) => x.type)).toEqual(["paragraph", "paragraph"]);
+    expect(blocks[0].id).toBe("x0");
+    expect(marks.get(blocks[1].id!)?.mark).toBe("collapsed");
+    expect(blocks[1].content).toEqual([{ type: "text", text: "… 2 …", styles: {} }]);
+  });
+
+  it("VD4 刪 c1、加 c2（同寬）→ 不配成同一欄：c0 unchanged、被刪的欄 deleted、c2 added；合併渲染的列有 3 欄", () => {
+    const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c2", [P("n", "n1")])]), P("z", "z9")];
+    const entries = diffBlocks(base(), b);
+    expect(show(entries)).toEqual([
+      "x0 unchanged paragraph",
+      "r unchanged columnList",
+      "  c0 unchanged column",
+      "    a1 unchanged paragraph",
+      "  diff-del-1 deleted column",
+      "    diff-del-2 deleted paragraph",
+      "  c2 added column",
+      "    n1 added paragraph",
+      "z9 unchanged paragraph",
+    ]);
+    const r = renderDiff(entries).blocks.find((x) => x.type === "columnList")!;
+    expect(r.children!.map((c) => [c.id, c.type])).toEqual([
+      ["c0", "column"],
+      ["diff-del-1", "column"],
+      ["c2", "column"],
+    ]);
+  });
+
+  it("VD5 a1 從 c0 移到 c1 → 跨欄＝刪＋增（c0 下一顆 deleted、c1 下 a1 added）", () => {
+    const a = [P("x", "x0"), row("r", [col("c0", [P("a", "a1"), P("k", "k1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+    const b = [P("x", "x0"), row("r", [col("c0", [P("k", "k1")]), col("c1", [P("b", "b1"), P("a", "a1")])]), P("z", "z9")];
+    expect(show(diffBlocks(a, b))).toEqual([
+      "x0 unchanged paragraph",
+      "r unchanged columnList",
+      "  c0 unchanged column",
+      "    diff-del-1 deleted paragraph",
+      "    k1 unchanged paragraph",
+      "  c1 unchanged column",
+      "    b1 unchanged paragraph",
+      "    a1 added paragraph",
+      "z9 unchanged paragraph",
+    ]);
+  });
+
+  it("VD6 刪一列、在別處加一列（欄 id 全新）→ 不配成同一列：被刪的列 deleted、z9 unchanged（不是 moved）、r2 added", () => {
+    const a = [P("x", "x0"), row("r1", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
+    const b = [P("x", "x0"), P("z", "z9"), row("r2", [col("d0", [P("p", "p1")]), col("d1", [P("q", "q1")])])];
+    expect(show(diffBlocks(a, b))).toEqual([
+      "x0 unchanged paragraph",
+      "diff-del-1 deleted columnList",
+      "  diff-del-2 deleted column",
+      "    diff-del-3 deleted paragraph",
+      "  diff-del-4 deleted column",
+      "    diff-del-5 deleted paragraph",
+      "z9 unchanged paragraph",
+      "r2 added columnList",
+      "  d0 added column",
+      "    p1 added paragraph",
+      "  d1 added column",
+      "    q1 added paragraph",
+    ]);
+  });
+
+  it("VD7（事實釘）兩個欄寬不同的欄互換順序 → c1 unchanged/moved、c0 unchanged（欄沒有 changed）", () => {
+    const a = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")], 1), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
+    const b = [P("x", "x0"), row("r", [col("c1", [P("b", "b1")], 2), col("c0", [P("a", "a1")], 1)]), P("z", "z9")];
+    expect(show(diffBlocks(a, b))).toEqual([
+      "x0 unchanged paragraph",
+      "r unchanged columnList",
+      "  c1 unchanged/moved column",
+      "    b1 unchanged paragraph",
+      "  c0 unchanged column",
+      "    a1 unchanged paragraph",
+      "z9 unchanged paragraph",
+    ]);
   });
 });

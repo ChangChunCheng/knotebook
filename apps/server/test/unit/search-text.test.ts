@@ -12,9 +12,60 @@ import {
   searchContentHash,
 } from "../../src/notes/search-text.js";
 import { frag, searchDoc, type Blk } from "../search-doc.js";
+import { EditingRuntime } from "../../src/notes/editing/runtime.js";
+import { EditorSession } from "../../src/notes/editing/session.js";
+
+const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
+rt.installGlobals();
+async function editorDoc(blocks: Array<Record<string, unknown>>): Promise<Y.Doc> {
+  const doc = new Y.Doc();
+  const s = await EditorSession.open(rt, doc);
+  try {
+    s.editor.replaceBlocks(s.editor.document, blocks as never);
+  } finally {
+    s.close();
+  }
+  return doc;
+}
+// 在未改 topLevelContainers 的碼上實跑取得（T2 Step 1）
+const GOLDEN_HASH = "01dbcb87f9d4075de27636b598be9980503470e31176ba28a45069a7cad984d6";
+const colRow = (id: string, cols: Array<Array<Record<string, unknown>>>) => ({
+  id,
+  type: "columnList",
+  children: cols.map((children, i) => ({ id: `${id}c${i}`, type: "column", props: { width: 1 }, children })),
+});
 
 const ids = (b: Blk[]) => extractSearchSections(frag(searchDoc(b))).rows.map(r => r.sectionId);
 const bodyOf = (b: Blk[], sectionId: string) => extractSearchSections(frag(searchDoc(b))).rows.find(r => r.sectionId === sectionId)?.body;
+
+describe("並排（T2 頂層單位擴充）", () => {
+  it("Q0：不含並排的既有文件 contentHash 逐位元組不變（golden）", async () => {
+    const doc = await editorDoc([
+      { id: "ha", type: "heading", props: { level: 1 }, content: "A" },
+      { id: "p1", type: "paragraph", content: "段落一" },
+      { id: "li", type: "bulletListItem", content: "清單", children: [{ id: "li2", type: "bulletListItem", content: "子項" }] },
+      { id: "tb", type: "table", content: { type: "tableContent", rows: [{ cells: ["a", "b"] }, { cells: ["c", "d"] }] } },
+      { id: "hb", type: "heading", props: { level: 1 }, content: "B" },
+      { id: "p2", type: "paragraph", content: "段落二" },
+    ]);
+    expect(extractSearchSections(frag(doc)).contentHash).toBe(GOLDEN_HASH);
+  });
+
+  it("Q1：列的兩欄文字都進 _top 的 body；欄內 heading 的字也在 body、不另成段", async () => {
+    const doc = await editorDoc([
+      colRow("r", [
+        [{ id: "a", type: "paragraph", content: "左欄字" }],
+        [{ id: "h", type: "heading", props: { level: 1 }, content: "欄內標題" }, { id: "b", type: "paragraph", content: "右欄字" }],
+      ]),
+    ]);
+    const { rows } = extractSearchSections(frag(doc));
+    expect(rows.map(r => r.sectionId)).toEqual(["_top"]);
+    const body = rows[0]!.body;
+    expect(body).toContain("左欄字");
+    expect(body).toContain("右欄字");
+    expect(body).toContain("欄內標題");
+  });
+});
 
 describe("T2 深度（抽取器）", () => {
   // 建鏈必須包在單一 doc.transact 裡：逐筆 insert 每次各開一個 transaction、收尾成本隨深度長，整條鏈是 O(n²)

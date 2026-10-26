@@ -211,6 +211,24 @@
       "deleted": "筆記已刪除",
       "outdated": "需要重新整理"
     },
+    "presence": {
+      "label": "目前也在這篇的人",
+      "avatarCursor": "{{name}}，{{role}}，捲到游標位置",
+      "avatarNoCursor": "{{name}}，{{role}}，目前沒有游標位置",
+      "avatarNameCursor": "{{name}}，捲到游標位置",
+      "avatarNameNoCursor": "{{name}}，目前沒有游標位置",
+      "agentCursor": "{{handle}}（{{label}}），AI 代理，捲到游標位置",
+      "agentNoCursor": "{{handle}}（{{label}}），AI 代理，目前沒有游標位置",
+      "agent": "AI 代理",
+      "tipRole": "{{name}} · {{role}}",
+      "tipAgent": "{{handle}} ({{label}}) · AI 代理",
+      "hintCursor": "點一下捲到游標",
+      "hintCursorAgent": "點一下捲到游標",
+      "hintNoCursor": "目前沒有游標位置",
+      "more": "還有 {{count}} 人，顯示完整名單",
+      "menuTitle": "目前在這篇的人（{{count}}）",
+      "rowNoCursor": "沒有游標位置"
+    },
     "outdated": {
       "message": "Knotebook 已更新，請重新整理頁面後繼續編輯。這個分頁尚未同步的變更在重新整理後不會保留。",
       "reload": "重新整理"
@@ -249,6 +267,11 @@
       "urlLabel": "網址",
       "insert": "插入",
       "invalidUrl": "網址格式不正確"
+    },
+    "columns": {
+      "slashTitle": "並排 {{n}} 欄",
+      "slashSubtext": "把內容分成左右並排的幾欄",
+      "ungroup": "取消並排"
     }
   },
   "login": {

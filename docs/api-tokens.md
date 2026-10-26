@@ -115,7 +115,7 @@ The exact command for each client, and what you should see once you press Allow,
 
 ## Agent display name
 
-Each credential carries a short **agent name** — the name a program is shown under inside the app. It appears on the AI's cursor label while it is working on a note, on that note's last-edited line, and on every row of its **AI edit history**.
+Each credential carries a short **agent name** — the name a program is shown under inside the app. It appears on the AI's cursor label while it is working on a note, in the note header's row of people, on that note's last-edited line, and on every row of its **AI edit history**.
 
 By default it is derived from the credential's own name: the first word, lowercased, with anything outside letters, digits, `.`, `_` and `-` removed — so `Claude Code (knotebook)` becomes `claude`, and an app registered as `MCP CLI Proxy` becomes `mcp`. If nothing usable is left (a name written entirely in Chinese, say) it becomes `agent`.
 

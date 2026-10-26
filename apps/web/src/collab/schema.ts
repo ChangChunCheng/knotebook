@@ -1,8 +1,9 @@
 import { BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
-import { withGuardedExternalHTML } from "@knotebook/shared";
+import { columnBlockSpec, columnListBlockSpec, withGuardedExternalHTML } from "@knotebook/shared";
 import { CODE_BLOCK_OPTIONS } from "@/lib/code-highlight";
 import { mermaidSpec } from "@/components/mermaid/spec";
 import { wikilinkSpec } from "@/components/wikilink/spec";
+import { withColumnsLayout } from "./columns/layout-extension";
 
 // spec §11.1（P2 圖片行為）曾經逐字：上傳是 Plan 3 的範圍，P2 **不啟用 image
 // block**，並且**攔截並拒絕**圖片的貼上／拖放。理由不是 UI 潔癖而是儲存：BlockNote
@@ -55,7 +56,7 @@ import { wikilinkSpec } from "@/components/wikilink/spec";
  * 本專案的 BlockNote schema：預設 block **全套**（Plan 3 Task 14 起含 image；
  * audio／file／image／video 四個檔案類 block 的 `toExternalHTML` 套上 #43 的 URL
  * 守衛，見上方 `withGuardedExternalHTML`），inline content 全套**加上** `wikilink`
- * （Plan 3）。
+ * （Plan 3）。並排排版的 `columnList`／`column` 兩型來自 `@knotebook/shared` 的 `columns.ts`（與 headless schema 同一份）。
  *
  * ⚠ `BlockNoteSchema.create` 傳入 `inlineContentSpecs` 是**整組覆寫**，不是「疊加在
  * 預設值上」——`BlockNoteSchema.create` 本體只有在完全不傳這個欄位時才會落回
@@ -78,6 +79,9 @@ export const noteSchema = BlockNoteSchema.create({
     // 東西、無 createHighlighter＝不上色）——選項封在 spec 閉包裡，**沒有** editor 層
     // 的 `codeBlock` 選項可以事後補（已對 0.52.1 dist 核實），唯一接線點就是這裡。
     codeBlock: createCodeBlockSpec(CODE_BLOCK_OPTIONS),
+    // 版面外掛（堆疊、欄內圖片把手）只掛在 web 的 schema；回新物件，shared 的 spec 不變（headless schema 也用它）。
+    columnList: withColumnsLayout(columnListBlockSpec),
+    column: columnBlockSpec,
   },
   inlineContentSpecs: { ...defaultInlineContentSpecs, wikilink: wikilinkSpec },
 });

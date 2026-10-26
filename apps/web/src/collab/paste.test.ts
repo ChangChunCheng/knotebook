@@ -1,13 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT, type SiteLinkCandidate } from "@knotebook/shared";
+import { replaceBlocksKeepColumns } from "./columns/keep-columns";
 import { createMarkdownPasteHandler, decideMarkdownPaste, hasMarkdownStructure, isSingleCodeBlockHtml } from "./paste";
 import { noteSchema } from "./schema";
 import { collabUndoManager } from "./undo";
 import { createSiteLinkConvertExtension, createSiteLinkPasteHook, type SiteLinkEnv, type SiteLinkEnvRef } from "./site-link-convert";
 import { attachTestElementRenderer } from "@/test/element-renderer";
+
+// 包一層照呼叫原實作的 spy（mermaid 轉換走 D25 helper）；不用 automock——同檔的真編輯器案要照常寫入。
+vi.mock("./columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("./columns/keep-columns")>();
+  return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 /** 只實作 `decideMarkdownPaste` 會摸到的那幾個 DataTransfer 成員。 */
 function clipboard(data: Record<string, string>): DataTransfer {
@@ -218,7 +228,6 @@ describe("createMarkdownPasteHandler", () => {
   } = {}) {
     const editor = {
       document: documentBefore,
-      replaceBlocks: vi.fn(),
       pasteMarkdown: vi.fn(() => {
         if (throwOnPaste) throw new Error("paste boom");
         if (documentAfterInsert !== null) editor.document = documentAfterInsert;
@@ -393,7 +402,8 @@ describe("createMarkdownPasteHandler", () => {
       defaultPasteHandler: vi.fn(() => true),
     });
 
-    expect(editor.replaceBlocks).toHaveBeenCalledWith(["new"], [{ type: "mermaid", props: { code: "graph TD; A-->B;" } }]);
+    // 假 tr 上 helper 的原實作會丟例外、被轉換的 try/catch 吞掉；呼叫仍被 spy 記到。
+    expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["new"], [{ type: "mermaid", props: { code: "graph TD; A-->B;" } }]);
   });
 
   it("預設流程路徑（剪貼簿帶 text/html 的單一 code block）：一樣會轉", () => {
@@ -413,7 +423,7 @@ describe("createMarkdownPasteHandler", () => {
     });
 
     expect(defaultPasteHandler).toHaveBeenCalledTimes(1);
-    expect(editor.replaceBlocks).toHaveBeenCalledWith(["new"], [{ type: "mermaid", props: { code: "graph LR; P-->Q;" } }]);
+    expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["new"], [{ type: "mermaid", props: { code: "graph LR; P-->Q;" } }]);
   });
 
   it("貼上前就存在的 mermaid code block 不會被轉（使用者刻意留成程式碼的那些）", () => {
@@ -429,7 +439,7 @@ describe("createMarkdownPasteHandler", () => {
       defaultPasteHandler: vi.fn(() => true),
     });
 
-    expect(editor.replaceBlocks).not.toHaveBeenCalled();
+    expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 });
 

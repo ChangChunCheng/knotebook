@@ -26,7 +26,7 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "@/ai/apply";
+import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, selectionTouchesColumns, type PreparedResult } from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
 import { selectionFocus, selectionInsideAnchor, toolbarWouldShow } from "@/ai/selection";
@@ -205,13 +205,17 @@ export function AiSessionProvider(props: {
     setState(IDLE_STATE);
   }, []);
 
-  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
+  /** 串流完成（§5.2，順序固定）：0 剝外殼 → 1 prepare（空／含並排→error）→ 2 先凍結 Preview → 3 noChange → 4 決定自動套用 → 5 done。 */
   const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
     const ed = editorRef.current;
     const markdown = stripTextWrapper(raw);
     const prepared = prepareAiResult(ed, markdown, { notes: notesRef.current });
     if ("empty" in prepared) {
       setState({ phase: "error", target, request, code: "empty_result" });
+      return;
+    }
+    if ("unsupported" in prepared) {
+      setState({ phase: "error", target, request, code: "unsupported_block" }); // PR-1 過渡守衛：不套用、不留預覽（PR-2 換成正式驗證）
       return;
     }
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));
@@ -278,6 +282,7 @@ export function AiSessionProvider(props: {
     const ed = editorRef.current;
     const blocks = ed.getSelection()?.blocks;
     if (!blocks || blocks.length === 0) return; // 空選取與 NodeSelection 都回 undefined
+    if (selectionTouchesColumns(ed, blocks)) return; // PR-1 過渡碼：跨欄／含列不開（AI 鈕已不出；PR-2 改成擴大成整列時移除）
     const blockIds = blocks.map((block: AnyBlock) => block.id);
     const anchor = captureAnchor(ed, noteIdRef.current, blockIds);
     const focus = ed.transact((tr) => selectionFocus(tr, blockIds, titleOf));

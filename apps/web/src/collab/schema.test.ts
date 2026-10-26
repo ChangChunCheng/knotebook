@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { BlockNoteEditor, defaultBlockSpecs, defaultInlineContentSpecs, type PartialBlock } from "@blocknote/core";
 import { createHeadlessNoteSchema } from "@knotebook/shared";
 import { classifyMediaTransfer, containsMediaDataUrl, noteSchema } from "./schema";
+import { integrity, mountEditor, P, row, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 
 /**
  * 最小的 DataTransfer 替身——jsdom 沒有可建構的 DataTransfer。
@@ -61,7 +62,7 @@ describe("noteSchema（Plan 3 Task 14：image block 恢復啟用）", () => {
   it("自訂 block 有掛上，且僅限刻意新增的那些", () => {
     // 與上一條互補：上一條擋「預設的被拿掉」，這一條擋「不小心多掛了東西」。
     const custom = Object.keys(noteSchema.blockSpecs).filter((type) => !(type in defaultBlockSpecs));
-    expect(custom.sort()).toEqual(["mermaid"]);
+    expect(custom.sort()).toEqual(["column", "columnList", "mermaid"]);
   });
 
   it("段落與標題這些基本 block 仍在（防止整份 schema 建錯）", () => {
@@ -561,5 +562,135 @@ describe("#106 parity：headless schema 與 noteSchema 匯出逐位元組相同"
   it("相對 /api/uploads/<id> 經 headless schema 匯出原樣保留（base 對了才會過）", async () => {
     const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema("http://localhost/"), initialContent: [{ type: "image", props: { url: "/api/uploads/abc123", name: "x" } }] });
     expect(await headless.blocksToMarkdownLossy(headless.document)).toContain("/api/uploads/abc123");
+  });
+});
+
+describe("並排節點（spec §5.1）", () => {
+  type Blk = { id: string; type: string; props: Record<string, unknown>; content?: unknown; children: Blk[] };
+  const allTypes = (bs: Blk[]): string[] => bs.flatMap((b) => [b.type, ...allTypes(b.children)]);
+  const textOf = (b: Blk) => (Array.isArray(b.content) ? b.content.map((c: { text?: string }) => c.text).join("") : "");
+  const parse = (html: string) => (BlockNoteEditor.create({ schema: noteSchema }) as AnyEditor).tryParseHTMLToBlocks(html) as Blk[];
+  const mounted: { destroy(): void }[] = [];
+  const mount = (content: PartialBlockLike[]) => {
+    const m = mountEditor(content);
+    mounted.push(m);
+    return m;
+  };
+  afterEach(() => {
+    for (const m of mounted.splice(0)) m.destroy();
+  });
+
+  it("S1 noteSchema 與 headless schema 都有 columnList／column，column 的 propSchema 只有 width（預設 1）", () => {
+    for (const schema of [noteSchema, createHeadlessNoteSchema(window.location.href)]) {
+      const blocks = schema.blockSchema as Record<string, { propSchema: unknown }>;
+      expect(blocks.columnList).toBeDefined();
+      expect(blocks.column).toBeDefined();
+      expect(blocks.column!.propSchema).toEqual({ width: { default: 1 } });
+    }
+  });
+
+  it("S2 編輯器 DOM：列與欄的 class、data-id、欄寬 style（flex:N 1 0）", () => {
+    const { container } = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]), P("z", "z9")]);
+    const list = container.querySelector('[data-node-type="columnList"]');
+    expect(list).not.toBeNull();
+    expect(list!.classList.contains("bn-block-column-list")).toBe(true);
+    expect(list!.getAttribute("data-id")).toBe("r");
+    const cols = [...container.querySelectorAll('[data-node-type="column"]')];
+    expect(cols.map((c) => c.getAttribute("style"))).toEqual(["flex:1.5 1 0", "flex:1 1 0"]);
+    expect(cols.map((c) => c.getAttribute("data-id"))).toEqual(["rc0", "rc1"]);
+  });
+
+  it("S3 external HTML：web 與 headless 相同；列與欄只帶 §11.1 的屬性、依序", () => {
+    const ROW = row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]);
+    const web = BlockNoteEditor.create({ schema: noteSchema }) as AnyEditor;
+    const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema(window.location.href) }) as AnyEditor;
+    const html = web.blocksToHTMLLossy([ROW]);
+    expect(headless.blocksToHTMLLossy([ROW])).toBe(html);
+    const attrs = (el: Element) => [...el.attributes].filter((a) => a.name !== "data-nesting-level").map((a) => [a.name, a.value]);
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const outer = tpl.content.firstElementChild!;
+    expect(attrs(outer)).toEqual([["data-kb-columns", ""], ["style", "display:flex;gap:16px"]]);
+    const cols = [...outer.children];
+    expect(cols.map(attrs)).toEqual([
+      [["data-kb-column", ""], ["style", "flex:1.5"]],
+      [["data-kb-column", ""], ["style", "flex:1"]],
+    ]);
+    for (const banned of ["bn-block-column", "data-node-type", "data-id"]) expect(html).not.toContain(banned);
+  });
+
+  describe("S4 parse", () => {
+    it("兩欄外部形 → 一列，寬度取自 flex", () => {
+      const bs = parse('<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:2"><p>A</p></div><div data-kb-column style="flex:0.5"><p>B</p></div></div>');
+      expect(bs.map((b) => b.type)).toEqual(["columnList"]);
+      expect(bs[0]!.children.map((c) => c.props.width)).toEqual([2, 0.5]);
+      expect(bs[0]!.children.map((c) => c.children.map(textOf))).toEqual([["A"], ["B"]]);
+    });
+
+    it("flex:20 夾成 10、沒有 style 為 1", () => {
+      const bs = parse('<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:20"><p>A</p></div><div data-kb-column><p>B</p></div></div>');
+      expect(bs[0]!.children.map((c) => c.props.width)).toEqual([10, 1]);
+    });
+
+    it.each([
+      ["單欄外部形", '<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:1"><p>X</p></div></div>'],
+      ["孤立欄", '<div data-kb-column style="flex:1"><p>X</p></div>'],
+    ])("%s → 一般段落、不長出列（讀碼發現 1）", (_name, html) => {
+      const bs = parse(html);
+      expect(allTypes(bs)).not.toContain("columnList");
+      expect(allTypes(bs)).not.toContain("column");
+      expect(bs.filter((b) => b.type === "paragraph" && textOf(b) === "X")).toHaveLength(1);
+    });
+
+    it("只有 display:flex 的 div 不是列（spec §11.10）", () => {
+      expect(allTypes(parse('<div style="display:flex"><div><p>A</p></div><div><p>B</p></div></div>'))).not.toContain("columnList");
+    });
+
+    it("站內形兩欄 → 一列，id 與寬度保留（T1-M16）", () => {
+      const bs = parse('<div data-node-type="columnList" data-id="R"><div data-node-type="column" data-id="C0" style="flex:3 1 0"><p>A</p></div><div data-node-type="column"><p>B</p></div></div>');
+      expect(bs.map((b) => b.type)).toEqual(["columnList"]);
+      expect(bs[0]!.id).toBe("R");
+      expect(bs[0]!.children[0]!.id).toBe("C0");
+      expect(bs[0]!.children.map((c) => c.props.width)).toEqual([3, 1]);
+    });
+  });
+
+  it("S5 id：未 mount 的 headless 編輯器連讀兩次 id 相同；insertBlocks 的列與欄都拿到 id", () => {
+    const editor = BlockNoteEditor.create({
+      schema: createHeadlessNoteSchema("http://localhost/"),
+      initialContent: [row([[P("a")], [P("b")]])],
+    }) as AnyEditor;
+    const ids = () => {
+      const r = editor.document[0] as Blk;
+      return [r.id, ...r.children.map((c) => c.id)];
+    };
+    const first = ids();
+    expect(first.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+    expect(ids()).toEqual(first);
+    const [inserted] = editor.insertBlocks([row([[P("c")], [P("d")]])], editor.document[0]!, "after") as Blk[];
+    const insertedIds = [inserted!.id, ...inserted!.children.map((c) => c.id)];
+    expect(insertedIds.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+    expect(new Set(insertedIds).size).toBe(3);
+  });
+
+  it("S6 站內複製整列再貼上：兩列、新列寬度保留、id 不重複", () => {
+    const { editor } = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]), P("z", "z9")]);
+    const view = editor.prosemirrorView!;
+    let rowPos = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (rowPos < 0 && node.type.name === "columnList") rowPos = pos;
+    });
+    editor._tiptapEditor.commands.setNodeSelection(rowPos);
+    const html = view.serializeForClipboard(view.state.selection.content()).dom.innerHTML;
+    editor.setTextCursorPosition("z9", "end");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Plugin.key 與 props.handleDOMEvents 的型別不公開（同探針 paste7.mjs）
+    for (const plugin of view.state.plugins.filter((p) => (p as any).key.startsWith("uniqueID"))) (plugin.props.handleDOMEvents as any).paste(view, new Event("paste"));
+    editor.pasteHTML(html, true);
+    const rows = (editor.document as Blk[]).filter((b) => b.type === "columnList");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]!.children.map((c) => c.props.width)).toEqual([1.5, 1]);
+    const result = integrity(editor);
+    expect(result.dupIds).toBe(0);
+    expect(result.nullIds).toBe(0);
   });
 });

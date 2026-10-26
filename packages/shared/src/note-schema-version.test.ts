@@ -6,9 +6,10 @@ import { NOTE_SCHEMA_VERSION } from "./note-schema-version.js";
 // 舊分頁閘門（§5）只認這個整數；schema 改了卻沒升，閘門前後的分頁會被當成同版，舊分頁照樣剝掉新屬性。
 // 起草時（新 props 加上之後）以同一份正規化實算：digest = 3467380a（BlockNote 0.52.1）。
 // 守衛範圍（§4.5）：只看 headless schema 的 block／inline／style 型別、prop 名與預設值；web noteSchema 的另組、PM 層屬性（blockContainer attrs、link mark attrs）不在 digest 內。
+// 2：並排 columnList／column（columns-layout §5.3），digest = bcaeadd4。
 
 /** 已記錄的 schema 版本與 digest。schema 改了：升 NOTE_SCHEMA_VERSION，並把這裡換成新的 { version, digest }。 */
-const RECORDED = { version: 1, digest: "3467380a" } as const;
+const RECORDED = { version: 2, digest: "bcaeadd4" } as const;
 
 type PropSpec = { default?: unknown; values?: unknown };
 function propsOf(propSchema: unknown): string {
@@ -56,5 +57,10 @@ describe("S3 NOTE_SCHEMA_VERSION 與 schema digest", () => {
   });
   it("正規化形含 wikilink 的四個 props（守 canonical 本身沒漏掉 inline content）", () => {
     expect(canonical(createHeadlessNoteSchema("http://localhost/"))).toContain('I:wikilink:none:anchorBlockId="",label="",snapshotTitle="",targetNoteId=""');
+  });
+  it("C5 正規化形含並排兩型（columns-layout §5.3）", () => {
+    const text = canonical(createHeadlessNoteSchema("http://localhost/"));
+    expect(text).toContain("B:column:none:width=1");
+    expect(text).toContain("B:columnList:none:");
   });
 });

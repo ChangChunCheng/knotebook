@@ -2,7 +2,7 @@ import * as Y from "yjs";
 
 // 結構層：fragment > blockGroup > blockContainer > blockContent [+ blockGroup]。nodeName 是 camelCase
 // （toString() 印小寫——apps/web/src/collab/undo.ts:200-211 的雷）。段落只定義在唯一 blockGroup 的
-// 直接 blockContainer 子節點；更深的是內容。正規序列化排除 id；指紋（server 端 hash）不是安全邊界。
+// 直接 blockContainer／columnList 子節點（並排列是一個頂層單位，欄內是內容）；更深的是內容。正規序列化排除 id；指紋（server 端 hash）不是安全邊界。
 export const TOP_SECTION_ID = "_top";
 export const SECTION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -14,17 +14,19 @@ export interface SectionInfo {
   blockIds: string[];
 }
 
+/** 頂層 bnBlock：`blockContainer` 與 `columnList`（spec §11.4）。名稱沿用，語意擴大。 */
 export function topLevelContainers(fragment: Y.XmlFragment): Y.XmlElement[] {
   const group = fragment.get(0);
   if (!(group instanceof Y.XmlElement) || group.nodeName !== "blockGroup") return [];
   const out: Y.XmlElement[] = [];
   for (let i = 0; i < group.length; i += 1) {
     const child = group.get(i);
-    if (child instanceof Y.XmlElement && child.nodeName === "blockContainer") out.push(child);
+    if (child instanceof Y.XmlElement && (child.nodeName === "blockContainer" || child.nodeName === "columnList")) out.push(child);
   }
   return out;
 }
 
+// columnList 也會走到這裡（第一個子節點是 column、不是 blockGroup）：回第一欄，headingLevel 只認 heading，列不會被當標題。
 function blockContent(container: Y.XmlElement): Y.XmlElement | null {
   const first = container.get(0);
   return first instanceof Y.XmlElement && first.nodeName !== "blockGroup" ? first : null;

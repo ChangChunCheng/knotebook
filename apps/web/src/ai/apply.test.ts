@@ -1,12 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { BlockNoteEditor } from "@blocknote/core";
 import type { SiteLinkCandidate } from "@knotebook/shared";
 import { noteSchema } from "@/collab/schema";
+import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { createTestEditor } from "@/test/ai-host";
+import { P, row, shape } from "@/test/columns-fixtures";
 import { blockSnapshot, captureAnchor, verifyAnchor } from "./anchor";
 import { applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "./apply";
+
+// 包一層照呼叫原實作的 spy（斷言寫入的陣列身分）；不用 automock——那會讓同檔真編輯器案的寫入變成什麼都不做。
+vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
+  return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
+});
+beforeEach(() => {
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+});
 
 // ⚠ 自我審查發現（不在 brief 的逐字程式碼裡，brief 只驗過 anchor/apply 邏輯本身；
 // fix round 1 M-1 已用 fetch spy probe 驗證下述因果，見 task-1-report.md）：
@@ -42,7 +53,7 @@ function mountedEditor(initial?: any[]) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
 function prep(editor: any, markdown: string, notes: SiteLinkCandidate[] = []): PreparedResult {
   const prepared = prepareAiResult(editor, markdown, { notes });
-  if ("empty" in prepared) throw new Error("預期非空結果");
+  if ("empty" in prepared || "unsupported" in prepared) throw new Error("預期非空結果");
   return prepared;
 }
 
@@ -81,7 +92,7 @@ describe("AI 套用鏈（spec §13.3）", () => {
     expect(out).toEqual({ ok: false, reason: "changed" });
   });
 
-  it("revert：replaceBlocks(插入ids, 快照) 還原原文；插入 block 被改/被刪後 revert 皆回 'stale' 且不動文件", () => {
+  it("revert：取代(插入ids, 快照) 還原原文；插入 block 被改/被刪後 revert 皆回 'stale' 且不動文件", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const out = applyAiResult(editor, anchor, prep(editor, "新文"));
@@ -151,14 +162,59 @@ describe("AI 套用鏈（spec §13.3）", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
+  // 並排 PR-1 過渡守衛（T3b）：與 server 同，AI 結果含並排一律 { unsupported: true }；PR-2 換成正式驗證。
+  const TWO_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
+  it("GA1：prepareAiResult 遇到兩欄 markdown → { unsupported: true }，文件不變", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const before = JSON.stringify(editor.document);
+    expect(prepareAiResult(editor, TWO_COLS, { notes: [] })).toEqual({ unsupported: true });
+    expect(JSON.stringify(editor.document)).toBe(before);
+  });
+
+  it("GA2：巢狀（清單內）的兩欄同上", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const nested = `- item\n\n${TWO_COLS.split("\n").map((l) => `  ${l}`).join("\n")}`;
+    expect(prepareAiResult(editor, nested, { notes: [] })).toEqual({ unsupported: true });
+  });
+
+  it("GA4：孤立的 columnList／column（parse 結果被換掉）各自都擋", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    for (const type of ["columnList", "column"]) {
+      const spy = vi.spyOn(editor, "tryParseMarkdownToBlocks").mockReturnValue([{ id: "c", type, children: [] }] as never);
+      try {
+        expect(prepareAiResult(editor, "x", { notes: [] })).toEqual({ unsupported: true });
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  it("GA3：不含並排的 markdown 照舊回 PreparedResult", () => {
+    const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
+    const p = prepareAiResult(editor, "# T\n\n- a\n- b", { notes: [] });
+    if ("empty" in p || "unsupported" in p) throw new Error("預期 PreparedResult");
+    expect(p.blocks.map((b) => b.type)).toEqual(["heading", "bulletListItem", "bulletListItem"]);
+  });
+
   it("#263：applyAiResult 寫進文件的就是 prepared.blocks 這個陣列（同一物件，預覽與寫入同一份）", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const prepared = prep(editor, "新文");
-    const spy = vi.spyOn(editor, "replaceBlocks");
     const out = applyAiResult(editor, anchor, prepared);
-    expect(spy.mock.calls[0]![1]).toBe(prepared.blocks);
+    expect(vi.mocked(replaceBlocksKeepColumns).mock.calls[0]?.[2]).toBe(prepared.blocks);
     expect(out.ok).toBe(true);
+  });
+
+  // 同列另一欄是空的：core 的 fixColumnList 會刪掉所有空欄、把剩一欄的列攤平——D25 不收。
+  it("AP1（D25）：錨點是欄內唯一 block → 套用與撤回都不收欄", () => {
+    const editor = mountedEditor([P("x", "x"), row([[P("原文", "b")], [P("", "e")]], "r"), P("z", "z")]);
+    const anchor = captureAnchor(editor, "note-1", ["b"]);
+    const out = applyAiResult(editor, anchor, prep(editor, "新一\n\n新二"));
+    if (!out.ok) throw new Error("apply 應成功");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:新一,paragraph:新二) | COL(paragraph)]  paragraph:z");
+    const inserted = captureAnchor(editor, "note-1", out.insertedIds);
+    expect(revertAiResult(editor, inserted, out.replacedSnapshot)).toBe("ok");
+    expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:原文) | COL(paragraph)]  paragraph:z");
   });
 
   it("hasNonTextBlock：image block 在錨點內 → true（降級 preview 判定）", () => {
@@ -201,7 +257,7 @@ describe("#269 W10：站內連結 → wikilink（快取命中才轉，沒有後�
       `see [Alpha](/notes/${notes2[0]!.id}#b-h1) and [mine](/n/alice/alpha) and [gone](/n/alice/missing)\n\n| a |\n| --- |\n| [t](/n/alice/alpha) |`,
       { notes: notes2, siteOrigin: window.location.origin },
     );
-    if ("empty" in p) throw new Error("empty");
+    if ("empty" in p || "unsupported" in p) throw new Error("empty");
     const json = JSON.stringify(p.blocks);
     expect(json.match(/"type":"wikilink"/g)).toHaveLength(3);
     expect(json).toContain('"anchorBlockId":"h1"');
@@ -214,7 +270,7 @@ describe("#269 W10：站內連結 → wikilink（快取命中才轉，沒有後�
     const id = notes2[0]!.id;
     const titled: SiteLinkCandidate[] = [{ ...notes2[0]!, title: "[Draft] Plan *v2*" }];
     const p = prepareAiResult(editor, `a [\\[Draft\\] Plan \\*v2\\*](/notes/${id}) b [a\\]b\\\\](/notes/${id}) c`, { notes: titled, siteOrigin: window.location.origin });
-    if ("empty" in p) throw new Error("empty");
+    if ("empty" in p || "unsupported" in p) throw new Error("empty");
     const links = (p.blocks[0]!.content as Array<{ type: string; props?: Record<string, string> }>).filter((n) => n.type === "wikilink");
     expect(links.map((n) => n.props!.label)).toEqual(["", "a]b\\"]);
     expect(links.map((n) => n.props!.snapshotTitle)).toEqual(["[Draft] Plan *v2*", "a]b\\"]);

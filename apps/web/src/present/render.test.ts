@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { blocksToYDoc } from "@blocknote/core/yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { P, row } from "@/test/columns-fixtures";
 import { createExportEditor, renderDeck, type RenderedSection } from "./render";
 import type { PostprocessContext, WikilinkResolution } from "./postprocess";
 
@@ -169,5 +170,17 @@ describe("renderDeck：封面、比對鍵", () => {
       { id: "p", type: "paragraph", content: "x" },
     ]);
     expect(sections.map((s) => s.slides[0].titleOnly)).toEqual([true, true, false]);
+  });
+});
+
+describe("renderDeck：並排（columns-layout spec §11.8）", () => {
+  it("PR1：含列的 Y.Doc → 投影片內有 [data-kb-columns]，列與兩欄的正規形 style 保留、沒有 data-nesting-level", () => {
+    const host = slideHost(deck([row([[P("L", "l")], [P("R", "r")]], "row", [1.5, 1])]), 0);
+    const list = host.querySelector("[data-kb-columns]");
+    expect(list).not.toBeNull();
+    expect(list!.getAttribute("style")).toBe("display:flex;gap:16px");
+    const cols = Array.from(list!.querySelectorAll(":scope > [data-kb-column]"));
+    expect(cols.map((col) => [col.getAttribute("style"), col.textContent])).toEqual([["flex:1.5", "L"], ["flex:1", "R"]]);
+    expect(host.querySelector("[data-nesting-level]")).toBeNull();
   });
 });

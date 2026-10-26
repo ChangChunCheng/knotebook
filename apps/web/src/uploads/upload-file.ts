@@ -1,5 +1,6 @@
 import { MAX_UPLOAD_BYTES, formatBytes } from "@knotebook/shared";
 import { api, ApiFail } from "@/api/client";
+import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { toast } from "@/components/ui/toast";
 import type { EditorRef } from "@/components/wikilink/menu";
 
@@ -107,7 +108,7 @@ export function createUploadFile(
         try {
           const ed = editorRef.current;
           if (blockId && ed && ed.getBlock(blockId)) {
-            ed.removeBlocks([blockId]);
+            removeBlocksKeepColumns(ed, [blockId]); // D25：欄內的 placeholder 清掉不收欄
           }
         } catch {
           // block 已消失（或 editor 已卸載）等——靜默略過，不讓清理動作反過來炸掉呼叫端。
