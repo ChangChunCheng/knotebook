@@ -81,6 +81,10 @@ export async function createUserViaInvite(
  * `createNote`；所有走 `createNote` 的 page（流程 1／2／3 的 adminPage／4）都由這裡涵蓋。）
  */
 export async function createNote(page: Page, title: string): Promise<void> {
+  // 頁尾「New note」只在 My notes／Recent／搜尋中顯示；呼叫端可能停在 Workspace／Shared with me，先切回 My notes。
+  if (!(await page.getByRole("button", { name: "New note", exact: true }).isVisible())) {
+    await showSidebarTab(page, "My notes");
+  }
   await page.getByRole("button", { name: "New note", exact: true }).click();
   // #122 首跳：新筆記的 canonical 是 /n/<handle>/untitled-<uuid8>（slug 吃 DB default）
   await page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
