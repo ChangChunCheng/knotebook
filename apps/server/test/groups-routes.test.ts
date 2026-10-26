@@ -100,13 +100,22 @@ describe("#103／#175 POST／GET /api/groups", () => {
     expect(plainList[0]!.myRole!.permissions.manageGroup).toBe(false);
   });
 
-  it("GET /api/groups 排序：內建管理員的群組在前、再內建一般成員、再自訂角色；同一類依 name 再依 id（側欄工作坊 tab 的順序）", async () => {
+  it("GET /api/groups 排序：內建管理員的群組在前、再內建一般成員、再自訂角色；同一類依 name 再依 id（一般成員的 Delta 在字母上排在自訂角色的 Beta／Gamma 之後；兩個同名 Beta 靠 id 定序；側欄工作坊 tab 的順序）", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db);
     const other = await seedUser(db);
     const beta = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
     await setMemberRole(db, beta.id, me.id, await seedRole(db, beta.id, "Reader", { canRead: true }));
-    const alpha = await seedGroup(db, "Alpha", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    // 刻意讓「建立順序」與「id 順序」相反：uuid 隨機，重建到 id 比 beta 小的同名群組為止；
+    // 沒有 asc(groups.id) 時結果會照建立（heap）順序給 beta、beta2，斷言必紅。
+    let beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    for (let tries = 0; beta2.id > beta.id; tries++) {
+      if (tries >= 20) throw new Error("取不到 id 比 beta 小的同名群組");
+      await db.delete(groups).where(eq(groups.id, beta2.id));
+      beta2 = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
+    }
+    await setMemberRole(db, beta2.id, me.id, await seedRole(db, beta2.id, "Reader", { canRead: true }));
+    const delta = await seedGroup(db, "Delta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
     const zeta = await seedGroup(db, "Zeta", [{ userId: me.id, role: "admin" }]);
     const gamma = await seedGroup(db, "Gamma", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }]);
     await setMemberRole(db, gamma.id, me.id, await seedRole(db, gamma.id, "Editor", { canRead: true, canEdit: true }));
@@ -115,9 +124,9 @@ describe("#103／#175 POST／GET /api/groups", () => {
     const res = await app.inject({ method: "GET", url: "/api/groups", cookies: await cookieOf(me.id) });
     expect(res.statusCode).toBe(200);
     const list = res.json() as GroupDto[];
-    expect(list.map(g => g.name)).toEqual(["Zeta", "Alpha", "Beta", "Gamma"]);
-    expect(list.map(g => g.id)).toEqual([zeta.id, alpha.id, beta.id, gamma.id]);
-    expect(list.map(g => g.myRole?.builtin ?? null)).toEqual(["admin", "member", null, null]);
+    expect(list.map(g => g.name)).toEqual(["Zeta", "Delta", "Beta", "Beta", "Gamma"]);
+    expect(list.map(g => g.id)).toEqual([zeta.id, delta.id, beta2.id, beta.id, gamma.id]);
+    expect(list.map(g => g.myRole?.builtin ?? null)).toEqual(["admin", "member", null, null, null]);
   });
 });
 
