@@ -65,6 +65,8 @@ Over MCP, `move_note_to_group` and `copy_note` do the same; the only group condi
 
 Deleting a note moves it to the trash (the sidebar's **Trash** tab) instead of deleting it for good. It stays there for the site's retention period — 7 days unless a site admin changed it — and is then permanently deleted automatically, unless a site admin turned automatic deletion off (see [Trash](./self-hosting.md#trash) for the schedule). Until then it can be restored, or deleted permanently, from the Trash tab.
 
+Over MCP, `delete_note` and `restore_note` move a note to the trash and bring it back, with the same role rules as the web app; they need the `notes:delete` scope, and no MCP tool deletes a note permanently.
+
 - **Who sees it.** A personal note is in the trash only for its owner. A group note is in the trash only for members whose role can **both** edit and delete notes; they can restore it or delete it permanently. Someone whose role can delete notes but not edit them can't get back a note they deleted, because after the deletion they can't see it — give the **Delete** permission together with **Edit**.
 - **While it is in the trash,** people it was shared with one by one lose access to it, and its public link (including a custom public URL) answers like a link that doesn't exist. Restoring the note brings both back as they were.
 - **Attachments** still count toward storage until the note is permanently deleted, and only then are they freed.

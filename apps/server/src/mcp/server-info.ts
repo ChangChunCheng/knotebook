@@ -41,10 +41,13 @@ export const versionReadFailed = pkg.failed;
  * 只描述**這個憑證真的用得到的東西**。英文——與 `docs/` 及工具 `.describe()` 同語言；
  * 它進的是模型脈絡不是 UI，不走 i18n。
  *
- * ⚠ **兩支尾巴是二選一，不是相加**（#108 D-Q）。讀寫那支實測 **969** 字元，餘裕 **31**
+ * ⚠ **兩支尾巴是二選一，不是相加**（#108 D-Q）。讀寫那支實測 **975** 字元，餘裕 **25**；唯讀那支實測 **976**，餘裕 **24**
+ * （#181：縮 `there is no tool that returns` −14 與 `(id, heading, length)` −22 共換出 36 字元，BASE 尾端補垃圾桶一句
+ * `Only list_trash lists notes in the trash.`（含換行）+42；之前讀寫 969、唯讀 970。這句只講「列出」：`restore_note`
+ * 與 `delete_note` 的回應都不是列出，也沒宣稱所有垃圾桶筆記都在 list_trash——兩版共用，不依 notes:delete 分版）
  * （#177：`cut at 200 characters` 改成 `cut at 200 characters as written in JSON` +19，刪「; each tool's `limit`
  * describes its own ceiling」−47；之前是 987；#180：five ops → six ops; all but append and rename +10）
- * （上限 1000；唯讀那支 970／餘裕 30——#175：`owner` 比 `ownerHandle` 短 6、可見性句改寫又省 1，當時 867；#239：處置句改成
+ * （上限 1000；唯讀那支 #181 之前 970／餘裕 30——#175：`owner` 比 `ownerHandle` 短 6、可見性句改寫又省 1，當時 867；#239：處置句改成
  * 「建一支勾了 Create and edit notes 的 token 並用它連線」+59，當時 926；#247：處置句改成「在設定 → 授權的 token 列上
  * 以鉛筆開啟 Create and edit notes、重新連線讓寫入工具出現」+44），追加第二段必破線；而唯讀憑證用不到寫入工具的說明，
  * 換成處置說明總長反而更短。⚠ **這個數字只有這裡一份**（#146：測試那邊原本也抄一份、已過期成
@@ -57,14 +60,15 @@ export const versionReadFailed = pkg.failed;
  * 是 D7 的意圖唯一到得了模型的落點**。守衛＝`mcp-edit-note.test.ts` 的 S3 ＋ 本檔的單元案。
  * ⚠ **改了一個字就要重量**（兩支各自都有 ≤ 1000 的斷言，且各自都要過禁令詞正則）。
  */
-const BASE_INSTRUCTIONS = `Knotebook notes over MCP. Reading is always sectioned: there is no tool that returns a whole
-note. Call read_note_outline first to see a note's sections (id, heading, length), then
+const BASE_INSTRUCTIONS = `Knotebook notes over MCP. Reading is always sectioned: no tool returns a whole
+note. Call read_note_outline first to see a note's sections, then
 read_note_section for one section's text, 4000 characters per call — page with \`offset\`
 until \`truncated\` is false. list_notes returns at most 100 notes per call, search_notes at most
 50, and an outline at most 100 sections.
 Headings and titles are cut at 200 characters as written in JSON. What is capped is a single response,
 not the total you can read. Notes you can see include ones shared with you and your groups' notes: each
-result carries \`owner\` and \`role\` so you can tell whose content you are reading.`;
+result carries \`owner\` and \`role\` so you can tell whose content you are reading.
+Only list_trash lists notes in the trash.`;
 
 /**
  * 讀寫憑證的尾段。

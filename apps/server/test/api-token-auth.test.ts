@@ -21,6 +21,7 @@ import { signSession } from "../src/auth/session.js";
 import { generateAccessToken } from "../src/auth/api-token.js";
 import type { Db } from "../src/db/index.js";
 import { buildTestApp, freshLimiters, testConfig } from "./helpers.js";
+import { INITIALIZE, mcpPost } from "./mcp-helpers.js";
 
 /** testConfig 的 PUBLIC_URL 是 http://localhost:3000，issuer 取其 origin。 */
 const ISSUER = "http://localhost:3000";
@@ -45,7 +46,7 @@ async function waitFor(check: () => Promise<boolean>): Promise<void> {
 async function seedToken(
   db: Db,
   over: {
-    scope?: "notes:read" | "notes:read notes:write";
+    scope?: "notes:read" | "notes:read notes:write" | "notes:read notes:write notes:delete";
     expiresAt?: Date | null;
     disabled?: boolean;
     mustChangePassword?: boolean;
@@ -76,14 +77,14 @@ async function seedToken(
 }
 
 describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
-  it("三個 method 無憑證 → 401，challenge 帶 resource_metadata 與三個 scope、不帶 error", async () => {
+  it("三個 method 無憑證 → 401，challenge 帶 resource_metadata 與四個 scope、不帶 error", async () => {
     const { app } = await buildTestApp();
     for (const method of ["GET", "POST", "DELETE"] as const) {
       const res = await app.inject({ method, url: "/api/mcp", ...(method === "POST" ? { payload: {} } : {}) });
       expect(res.statusCode, method).toBe(401);
       const challenge = res.headers["www-authenticate"] as string;
       expect(challenge, method).toContain(`resource_metadata="${ISSUER}/.well-known/oauth-protected-resource/api/mcp"`);
-      expect(challenge, method).toContain(`scope="notes:read notes:write notes:move"`);
+      expect(challenge, method).toContain(`scope="notes:read notes:write notes:move notes:delete"`);
       expect(challenge, method).not.toContain("error=");
     }
   });
@@ -407,6 +408,20 @@ describe("notes 路由收 Bearer（D2 的允許清單）", () => {
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("insufficient_scope");
     expect(res.headers["www-authenticate"]).toContain('error="insufficient_scope"');
+  });
+
+  // #181 PR-2d AB：notes:delete 只多一個成員，REST 的 notes:write 判定與 /api/mcp 認證照常。
+  it("AB：讀寫刪除 token 打 POST /api/notes → 201、打 POST /api/mcp initialize → 200", async () => {
+    const { app, db } = await buildTestApp();
+    const { token } = await seedToken(db, { scope: "notes:read notes:write notes:delete" });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/notes",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { title: "x" },
+    });
+    expect(created.statusCode).toBe(201);
+    expect((await mcpPost(app, INITIALIZE, { token })).statusCode).toBe(200);
   });
 
   it("無憑證打 GET /api/notes → 401 帶 challenge，scope 只有 notes:read（鑑別力由 scope 值承擔）", async () => {

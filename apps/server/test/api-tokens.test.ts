@@ -538,7 +538,7 @@ function patch(app: FastifyInstance, cookie: string, id: string, payload: unknow
 }
 
 describe("#239 POST scope", () => {
-  it("收三種落庫形與舊別名 notes:write；拒 notes:move 單值", async () => {
+  it("收讀、讀寫、讀寫搬移與舊別名 notes:write；拒 notes:move 單值", async () => {
     const { app, cookie } = await signedInApp();
     for (const [sent, stored] of [
       ["notes:read", "notes:read"],
@@ -551,6 +551,46 @@ describe("#239 POST scope", () => {
       expect(res.json().scope).toBe(stored);
     }
     expect((await create(app, cookie, { name: "bad", scope: "notes:move" as never, expiresInDays: null })).statusCode).toBe(400);
+  });
+});
+
+const RWD = "notes:read notes:write notes:delete";
+const RWMD = "notes:read notes:write notes:move notes:delete";
+
+describe("#181 PR-2d scope（notes:delete）", () => {
+  it("POST 收讀寫刪除、讀寫搬移刪除：201，回應、列、GET 列表皆原值；缺 write 的刪除 → 400", async () => {
+    const { app, db, cookie } = await signedInApp();
+    const ids: Record<string, string> = {};
+    for (const scope of [RWD, RWMD]) {
+      const res = await create(app, cookie, { name: `n-${scope}`, scope: scope as never, expiresInDays: null });
+      expect(res.statusCode, scope).toBe(201);
+      expect(res.json().scope, scope).toBe(scope);
+      ids[scope] = res.json().id as string;
+      const [row] = await db.select().from(apiTokens).where(eq(apiTokens.id, ids[scope]!));
+      expect(row!.scope, scope).toBe(scope);
+    }
+    const listed = (await app.inject({ method: "GET", url: "/api/auth/tokens", cookies: { [SESSION_COOKIE]: cookie } })).json().tokens as Array<{ id: string; scope: string }>;
+    expect(listed.find(t => t.id === ids[RWD])!.scope).toBe(RWD);
+    expect(listed.find(t => t.id === ids[RWMD])!.scope).toBe(RWMD);
+    for (const scope of ["notes:read notes:delete", "notes:delete", "notes:read notes:write notes:delete notes:move"]) {
+      expect((await create(app, cookie, { name: "bad", scope: scope as never, expiresInDays: null })).statusCode, scope).toBe(400);
+    }
+  });
+  it("PATCH 改成讀寫刪除、讀寫搬移刪除 → 200 回原值、列也是；別名 notes:write 與缺 write 的刪除 → 400", async () => {
+    const { app, db, cookie } = await signedInApp();
+    const id = (await create(app, cookie, READ_FOREVER)).json().id as string;
+    for (const scope of [RWD, RWMD]) {
+      const res = await patch(app, cookie, id, { scope });
+      expect(res.statusCode, scope).toBe(200);
+      expect(res.json().scope, scope).toBe(scope);
+      const [row] = await db.select().from(apiTokens).where(eq(apiTokens.id, id));
+      expect(row!.scope, scope).toBe(scope);
+    }
+    for (const scope of ["notes:write", "notes:read notes:delete"]) {
+      const bad = await patch(app, cookie, id, { scope });
+      expect(bad.statusCode, scope).toBe(400);
+      expect(bad.json().error.message, scope).toBe("scope 格式錯誤");
+    }
   });
 });
 
@@ -579,7 +619,7 @@ describe("#239 PATCH scope", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: "oauth", scope: RWM });
   });
-  it("{} → 400；未知鍵 → 400；scope 非三形 → 400 且訊息是 scope 格式錯誤", async () => {
+  it("{} → 400；未知鍵 → 400；scope 非落庫形 → 400 且訊息是 scope 格式錯誤", async () => {
     const { app, cookie } = await signedInApp();
     const id = (await create(app, cookie, READ_FOREVER)).json().id as string;
     expect((await patch(app, cookie, id, {})).statusCode).toBe(400);
@@ -620,14 +660,17 @@ describe("#239 PATCH scope", () => {
     expect((await patch(app, cookie, row!.id, { scope: RWM })).statusCode).toBe(403);
     expect((await patch(app, cookie, row!.id, { agentLabel: "bot" })).statusCode).toBe(200);
   });
-  it("改完下一個請求生效：同一支 token 的 tools/list 6 ↔ 7（buildTestApp 無共編，spec §7.1）", async () => {
+  it("改完下一個請求生效：同一支 token 的 tools/list 7 ↔ 8，讀寫刪除 9（buildTestApp 無共編，spec §7.1；#181 起含 list_trash）", async () => {
     const { app, cookie } = await signedInApp();
     const created = (await create(app, cookie, { name: "live", scope: "notes:read notes:write", expiresInDays: null })).json();
     const count = async () => ((await mcpPost(app, rpc("tools/list"), { token: created.token })).json().result.tools as unknown[]).length;
-    expect(await count()).toBe(6);
-    await patch(app, cookie, created.id, { scope: RWM });
     expect(await count()).toBe(7);
+    await patch(app, cookie, created.id, { scope: RWM });
+    expect(await count()).toBe(8);
     await patch(app, cookie, created.id, { scope: "notes:read notes:write" });
-    expect(await count()).toBe(6);
+    expect(await count()).toBe(7);
+    // #181：RW → RWD 同樣下一個請求生效（多 delete_note、restore_note）。
+    await patch(app, cookie, created.id, { scope: RWD });
+    expect(await count()).toBe(9);
   });
 });

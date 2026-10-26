@@ -16,7 +16,8 @@ export function pkce(): { verifier: string; challenge: string } {
  * 對既有 client 走一輪 authorize → decision allow，回 code 與 verifier。
  *
  * `scope` 是 authorize 請求的 scope，`grant` 是 decision body 的 scope（同意頁的勾選結果），兩者不得混用。
- * 預設送第三形，由 server 的 narrowerScope 夾回 pending——等價於 #239 前的行為；要窄授予的案顯式傳 `grant`。
+ * 預設送五形中最寬的（#181 起是格的頂端），由 server 的 narrowerScope（交集）夾回 pending——等價於 #239 前的行為；
+ * 要窄授予的案顯式傳 `grant`。
  */
 export async function authorizeAndConsent(
   app: FastifyInstance,
@@ -24,7 +25,7 @@ export async function authorizeAndConsent(
   clientId: string,
   redirectUri: string,
   scope?: string,
-  grant: string = "notes:read notes:write notes:move"
+  grant: string = "notes:read notes:write notes:move notes:delete"
 ): Promise<{ code: string; verifier: string }> {
   const { verifier, challenge } = pkce();
   const params = new URLSearchParams({

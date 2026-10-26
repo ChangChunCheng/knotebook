@@ -12,7 +12,7 @@ import { apiTokens, authProviders, groupMembers, groupRoles, groups, noteRedirec
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** drizzle 對 `schema.ts` 的序列化；宣告漂移守衛拿最新一支當比對基準（Task 14 rebase 後改成實際檔名）。 */
-const SNAPSHOT_FILE = "meta/0033_snapshot.json";
+const SNAPSHOT_FILE = "meta/0035_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
   tables: Record<string, {
     checkConstraints?: Record<string, { name: string; value: string }>;
@@ -2812,5 +2812,125 @@ describe("0033_trash（#181 spec §6.1）", () => {
     const sqlText = readFileSync(path.join(drizzleDirForTest, `${entries[0]!.tag}.sql`), "utf8");
     expect(sqlText).not.toMatch(/CONCURRENTLY/i);
     expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+  });
+});
+
+describe("0035_notes-delete-scope（#181 spec §6.8.2）", () => {
+  const TAG = "0035_notes-delete-scope";
+  // 前一支用 journal 的相對位置取：跳號期間（0034 保留給 feat/folders）`idxOfTag(TAG) - 1` 不存在。
+  const es = journalEntries();
+  const prevIdx = es[es.findIndex(e => e.tag === TAG) - 1]!.idx;
+  const R = "notes:read";
+  const RW = "notes:read notes:write";
+  const RWM = "notes:read notes:write notes:move";
+  const RWD = "notes:read notes:write notes:delete";
+  const RWMD = "notes:read notes:write notes:move notes:delete";
+  const CH = "a".repeat(43);
+  const CB = "http://127.0.0.1:1/cb";
+  const TABLES = ["api_tokens", "oauth_requests", "oauth_codes"] as const;
+
+  async function seedBase(pool: import("pg").Pool): Promise<string> {
+    const userId = (await pool.query(`insert into users (email, display_name) values ($1,'D') returning id`, [`del-${randomUUID()}@example.com`])).rows[0].id as string;
+    await pool.query(`insert into oauth_clients (client_id, client_name, redirect_uris) values ('c35','C','["${CB}"]'::jsonb)`);
+    return userId;
+  }
+  function insertScope(pool: import("pg").Pool, table: (typeof TABLES)[number], userId: string, scope: string, key: string) {
+    if (table === "api_tokens")
+      return pool.query(`insert into api_tokens (user_id, kind, name, scope, access_token_hash) values ($1,'pat','n',$2,$3)`, [userId, scope, key]);
+    if (table === "oauth_requests")
+      return pool.query(
+        `insert into oauth_requests (id, client_id, redirect_uri, code_challenge, scope, expires_at) values ($1,'c35','${CB}','${CH}',$2, now() + interval '1 minute')`,
+        [key, scope],
+      );
+    return pool.query(
+      `insert into oauth_codes (code_hash, client_id, user_id, scope, redirect_uri, code_challenge, expires_at) values ($1,'c35',$2,$3,'${CB}','${CH}', now() + interval '1 minute')`,
+      [key, userId, scope],
+    );
+  }
+  const scopes = async (pool: import("pg").Pool) =>
+    (await pool.query(
+      `select 'api_tokens' as t, access_token_hash as k, scope from api_tokens
+       union all select 'oauth_requests', id, scope from oauth_requests
+       union all select 'oauth_codes', code_hash, scope from oauth_codes order by 1, 2`,
+    )).rows;
+  const constraintDefs = async (pool: import("pg").Pool) =>
+    (await pool.query(
+      `select conname, pg_get_constraintdef(oid) as def from pg_constraint where conname in ('api_tokens_scope_chk','oauth_requests_scope_chk','oauth_codes_scope_chk') order by conname`,
+    )).rows;
+  async function seedOldForms(pool: import("pg").Pool): Promise<string> {
+    const userId = await seedBase(pool);
+    await insertScope(pool, "api_tokens", userId, R, "h-r");
+    await insertScope(pool, "api_tokens", userId, RW, "h-rw");
+    await insertScope(pool, "api_tokens", userId, RWM, "h-rwm");
+    await insertScope(pool, "oauth_requests", userId, RWM, "r-rwm");
+    await insertScope(pool, "oauth_codes", userId, RWM, "k-rwm");
+    return userId;
+  }
+  const OLD = [
+    { t: "api_tokens", k: "h-r", scope: R },
+    { t: "api_tokens", k: "h-rw", scope: RW },
+    { t: "api_tokens", k: "h-rwm", scope: RWM },
+    { t: "oauth_codes", k: "k-rwm", scope: RWM },
+    { t: "oauth_requests", k: "r-rwm", scope: RWM },
+  ];
+
+  it("M1 既有列原樣（A2-15）：三種舊形升級後逐一原值，不取得 notes:delete", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, prevIdx);
+    await seedOldForms(pool);
+    await applyMigrationsThrough(pool, idxOfTag(TAG), idxOfTag(TAG));
+    expect(await scopes(pool)).toEqual(OLD);
+  });
+
+  it("M2 三表收兩個新形（RWD、RWMD）", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(TAG));
+    const userId = await seedBase(pool);
+    for (const table of TABLES)
+      for (const [scope, key] of [[RWD, "rwd"], [RWMD, "rwmd"]] as const) await insertScope(pool, table, userId, scope, `${table}-${key}`);
+    const got = await scopes(pool);
+    expect(got).toHaveLength(6);
+    for (const table of TABLES) {
+      expect(got).toContainEqual({ t: table, k: `${table}-rwd`, scope: RWD });
+      expect(got).toContainEqual({ t: table, k: `${table}-rwmd`, scope: RWMD });
+    }
+  });
+
+  it("M3 三表拒絕：read＋delete、裸 delete、read＋move＋delete、順序錯的四項", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(TAG));
+    const userId = await seedBase(pool);
+    for (const bad of ["notes:read notes:delete", "notes:delete", "notes:read notes:move notes:delete", "notes:read notes:write notes:delete notes:move"])
+      for (const table of TABLES)
+        await expect(insertScope(pool, table, userId, bad, `${table}-${bad}`), `${table} ← ${bad}`).rejects.toMatchObject({
+          code: "23514",
+          constraint: `${table}_scope_chk`,
+        });
+  });
+
+  it("M4 0035 的 SQL 檔無 CONCURRENTLY／行首 COMMIT，且三句 DROP 都在三句 ADD 之前", () => {
+    const entries = journalEntries().filter(e => e.tag === TAG);
+    expect(entries, `journal 裡要恰有一支 ${TAG}`).toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${TAG}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+    const drops = TABLES.map(t => sqlText.indexOf(`DROP CONSTRAINT "${t}_scope_chk"`));
+    const adds = TABLES.map(t => sqlText.indexOf(`ADD CONSTRAINT "${t}_scope_chk"`));
+    for (const d of drops) expect(d).toBeGreaterThanOrEqual(0);
+    for (const a of adds) expect(a).toBeGreaterThan(Math.max(...drops));
+  });
+
+  it("M5 經 runMigrations 套 0035 後再跑一次：五列 scope 與三條 constraint 定義不變", async () => {
+    const { pool, db } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, prevIdx);
+    await seedOldForms(pool);
+    await runMigrations(db);
+    const defs = await constraintDefs(pool);
+    expect(defs).toHaveLength(3);
+    for (const d of defs) expect(d.def).toContain(RWMD);
+    expect(await scopes(pool)).toEqual(OLD);
+    await runMigrations(db);
+    expect(await scopes(pool)).toEqual(OLD);
+    expect(await constraintDefs(pool)).toEqual(defs);
   });
 });
