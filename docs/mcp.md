@@ -1,6 +1,6 @@
 # MCP
 
-Knotebook speaks [MCP](https://modelcontextprotocol.io) at `POST /api/mcp`, so an AI client — Claude Code, Claude Desktop, or anything else that speaks the protocol — can read and write your notes **as you**, through ten tools. This page is the reference for that surface: how to connect, what each tool takes and answers, what the limits are, and where the edges are.
+Knotebook speaks [MCP](https://modelcontextprotocol.io) at `POST /api/mcp`, so an AI client — Claude Code, Claude Desktop, or anything else that speaks the protocol — can read and write your notes **as you**, through thirteen tools. This page is the reference for that surface: how to connect, what each tool takes and answers, what the limits are, and where the edges are.
 
 The credential is an ordinary Knotebook credential. How one is issued, listed and revoked — a Personal API token, or one an app obtains for itself over OAuth — is in [API tokens](./api-tokens.md). What a write actually does to a note — what a section is, what fingerprints mean, the five operations, how a change is undone — is in [AI editing](./ai-editing.md). This page does not repeat either; it covers what is different about reaching them over MCP.
 
@@ -12,16 +12,16 @@ The credential is an ordinary Knotebook credential. How one is issued, listed an
 | Transport | Streamable HTTP, stateless, JSON responses — no SSE stream, no session id |
 | Methods | `POST` only. `GET` and `DELETE` are authenticated and Origin-checked first, then answered with `405` and `Allow: POST`. |
 | Capabilities | `tools` only — no resources, no prompts, no sampling. `tools.listChanged` is `false`. |
-| Scope | `notes:read` gets you in; `edit_note`, `create_note`, `move_note_to_group` and `copy_note` additionally need `notes:write`, and so does `create_transfer_token` when you ask it for an upload token. `move_note_to_group`, and `copy_note` with `group_id`, also need `notes:move`, which only comes together with `notes:write`. |
+| Scope | `notes:read` gets you in; `edit_note`, `create_note`, `move_note_to_group` and `copy_note` additionally need `notes:write`, and so does `create_transfer_token` when you ask it for an upload token. `move_note_to_group`, and `copy_note` with `group_id`, also need `notes:move`, which only comes together with `notes:write`. `delete_note` and `restore_note` need `notes:delete`, which also only comes together with `notes:write`. |
 
-Authentication happens before the MCP transport sees the request, so a request with no credential gets `401` with a `WWW-Authenticate` challenge advertising `scope="notes:read notes:write notes:move"` — that challenge is what an OAuth client follows to find the authorization server. A few things are refused by the HTTP layer earlier still, before any credential is looked at: a `Content-Type` that is not `application/json`, a body over the size limit, and a body that is not valid JSON. Those answer without a challenge — see [Errors](#errors).
+Authentication happens before the MCP transport sees the request, so a request with no credential gets `401` with a `WWW-Authenticate` challenge advertising `scope="notes:read notes:write notes:move notes:delete"` — that challenge is what an OAuth client follows to find the authorization server. A few things are refused by the HTTP layer earlier still, before any credential is looked at: a `Content-Type` that is not `application/json`, a body over the size limit, and a body that is not valid JSON. Those answer without a challenge — see [Errors](#errors).
 
 Two things trip up hand-written clients:
 
 - **`Accept` must contain both `application/json` and `text/event-stream`.** The MCP transport rejects anything else with `406`, and a bare `*/*` does **not** count. Real MCP clients send both; a `curl` by hand usually does not.
 - **If the request carries an `Origin` header, it must match the host in `PUBLIC_URL`** — and so must the request's own `Host`. Anything else is `403 forbidden`, which is the DNS-rebinding guard the MCP specification requires. A request with no `Origin` at all — which is what command-line and desktop MCP clients normally send — is not subject to it. If a correctly-configured client suddenly gets `403`, check `PUBLIC_URL` first; see [Deployment prerequisites](./self-hosting.md#deployment-prerequisites).
 
-The server announces itself as `knotebook`, and most clients use that name to namespace the tools (`knotebook:list_notes`, and so on). Each connection is also handed a short set of instructions describing how reading is paged; a read-only credential gets a different set, which does not mention the writing tools at all.
+The server announces itself as `knotebook`, and most clients use that name to namespace the tools (`knotebook:list_notes`, and so on). Each connection is also handed a short set of instructions describing how reading is paged and which tool lists the notes in the trash; a read-only credential gets a different set, which does not mention the writing tools at all.
 
 ## How to connect
 
@@ -50,9 +50,9 @@ MCP requires the server and its authorization endpoints to be `https://` (see [S
 
   Quit Claude Desktop completely and start it again; `mcp-remote` opens the browser for you to authorize. The consent page shows the app as **"MCP CLI Proxy"**. This needs Node.js, and `mcp-remote` caches its registration and tokens under `~/.mcp-auth/mcp-remote-v1/` on the machine running the client.
 
-On the consent page, tick *Create and edit notes* if the assistant should write: the first time you authorize a client, the boxes start unticked, and pressing **Allow** straight away gives it read-only access. Tick *Move or copy notes into groups* as well, if the page offers it, for `move_note_to_group` and for copying into a group. A client that only connects through OAuth and got less than you want can be authorized again, ticking the boxes this time — the consent page then starts from the access it already has (see [Authorizing an app instead](./api-tokens.md#authorizing-an-app-instead-oauth)); or connect it with a token instead, as below (see [With a personal API token](#with-a-personal-api-token)).
+On the consent page, tick *Create and edit notes* if the assistant should write: the first time you authorize a client, the boxes start unticked, and pressing **Allow** straight away gives it read-only access. Tick *Move or copy notes into groups* as well, if the page offers it, for `move_note_to_group` and for copying into a group, and *Move notes to the trash and restore them*, if the page offers it, for `delete_note` and `restore_note`; both can only be ticked together with *Create and edit notes*. A client that only connects through OAuth and got less than you want can be authorized again, ticking the boxes this time — the consent page then starts from the access it already has (see [Authorizing an app instead](./api-tokens.md#authorizing-an-app-instead-oauth)); or connect it with a token instead, as below (see [With a personal API token](#with-a-personal-api-token)).
 
-After you press Allow, the client has its credential — once it reconnects it will list Knotebook's tools; how many it sees depends on the credential's scope and on the deployment, see [The ten tools](#the-ten-tools). A `401` at this point would mean the credential never arrived. The access token lasts 24 hours, and the client renews it by itself with its refresh token; an app that has not been used for 30 days is removed (see [Revoking](./api-tokens.md#revoking)).
+After you press Allow, the client has its credential — once it reconnects it will list Knotebook's tools; how many it sees depends on the credential's scope and on the deployment, see [The thirteen tools](#the-thirteen-tools). A `401` at this point would mean the credential never arrived. The access token lasts 24 hours, and the client renews it by itself with its refresh token; an app that has not been used for 30 days is removed (see [Revoking](./api-tokens.md#revoking)).
 
 **Plain `http://` deployments.** OAuth does not work there: Claude Code and current versions of `mcp-remote` both refuse to send the token exchange to a server that is not `https://` (loopback excepted), and `--allow-http` only lets the connection through, not the token exchange. Use a personal API token instead (#159).
 
@@ -60,13 +60,13 @@ After you press Allow, the client has its credential — once it reconnects it w
 
 A personal token suits scripts and clients that don't support OAuth, and it is the only way to connect to a plain `http://` deployment.
 
-`/api/mcp` takes an ordinary Knotebook credential as a Bearer token, so a client that lets you set an `Authorization` header yourself can point at it with a Personal API token — [Creating one](./api-tokens.md#creating-one) covers issuing it. Tick *Create and edit notes* when you create it if the assistant should write, and *Move or copy notes into groups* as well if it should be able to move notes into your groups or copy them there. With Claude Code, for example:
+`/api/mcp` takes an ordinary Knotebook credential as a Bearer token, so a client that lets you set an `Authorization` header yourself can point at it with a Personal API token — [Creating one](./api-tokens.md#creating-one) covers issuing it. Tick *Create and edit notes* when you create it if the assistant should write, and *Move or copy notes into groups* as well if it should be able to move notes into your groups or copy them there, and *Move notes to the trash and restore them* if it should be able to move notes to the trash and bring them back. With Claude Code, for example:
 
 ```sh
 claude mcp add -s user knotebook https://<your-host>/api/mcp -t http -H "Authorization: Bearer knb_…"
 ```
 
-A static header involves no OAuth token exchange, so this also works on a plain `http://` deployment. The `claude mcp add` command only writes the client's configuration, with the token in it as you typed it; a Claude Code session that is already running doesn't pick it up, so start a new one. To change what the assistant can do later, turn **Edit** or **Move** on or off for the token with the pencil button on its row in **Settings → Authorization → API tokens**; the header stays the same, and the client picks up the new tool list once it is restarted (see [Changing a token's access](./api-tokens.md#changing-a-tokens-access)).
+A static header involves no OAuth token exchange, so this also works on a plain `http://` deployment. The `claude mcp add` command only writes the client's configuration, with the token in it as you typed it; a Claude Code session that is already running doesn't pick it up, so start a new one. To change what the assistant can do later, turn **Edit**, **Move** or **Delete** on or off for the token with the pencil button on its row in **Settings → Authorization → API tokens**; the header stays the same, and the client picks up the new tool list once it is restarted (see [Changing a token's access](./api-tokens.md#changing-a-tokens-access)).
 
 **Claude Desktop with a personal access token.** Claude Desktop reaches `/api/mcp` through `mcp-remote`, which can send the same header. Put the header's value in `env` rather than in `args`: mcp-remote's README notes that Cursor, Codex CLI and Claude Desktop on Windows don't escape spaces inside `args` when they invoke `npx`, so `Authorization: Bearer knb_…` written as one argument would be split apart. Add this under `mcpServers` in `claude_desktop_config.json`:
 
@@ -88,7 +88,7 @@ On a plain `http://` deployment, add `"--allow-http"` at the end of `args`. On W
 }
 ```
 
-## The ten tools
+## The thirteen tools
 
 | Tool | Scope | What it does |
 |---|---|---|
@@ -101,20 +101,24 @@ On a plain `http://` deployment, add `"--allow-http"` at the end of `args`. On W
 | `move_note_to_group` | `notes:move` (with `notes:write`) | Move one of your personal notes into one of your groups |
 | `copy_note` | `notes:write`; with `group_id`, `notes:move` as well | Copy a note you can read into a new note, yours or a group's |
 | `create_transfer_token` | `notes:read` (`download`), `notes:write` (`upload`) | A short-lived token that lets a shell command upload an image to a note, or download its images |
+| `list_trash` | `notes:read` | List the notes in your trash |
+| `delete_note` | `notes:delete` (with `notes:write`) | Move a note to the trash |
+| `restore_note` | `notes:delete` (with `notes:write`) | Bring a note back from the trash |
 | `read_note_image` | `notes:read` | Look at an image uploaded to a note |
 
 The permission summary under **Settings → Authorization → Connect Claude with MCP** is copied from this table; keep the two in sync.
 
-Four things decide how many of these a client actually sees, and all four are settled when the request is served rather than when the tool is called:
+Five things decide how many of these a client actually sees, and all five are settled when the request is served rather than when the tool is called:
 
-- **A read-only credential never sees `edit_note`, `create_note`, `move_note_to_group` or `copy_note`.** They are not registered for that request at all, so — on a deployment with the collaboration component — `tools/list` returns six tools (only four on one without it; see below), and calling `create_note` anyway gets the SDK's own "Tool create_note not found" (an `isError` result, HTTP `200`) rather than a permission error. There is no scope error to handle here, because there is no tool to call. A read-only credential does see `create_transfer_token`, but it can only ask for a `download` token. To get the writing tools and upload tokens, turn on **Edit** (*Create and edit notes*, `notes:write`) for the credential on its row in **Settings → Authorization → API tokens** (the pencil), then reconnect — the client only picks up the new tools on a fresh connection.
-- **A credential without `notes:move` never sees `move_note_to_group`.** A `notes:write` token or app credential without it gets nine tools on a deployment with the collaboration component (six without), and all ten (seven) once it has `notes:move` as well. It still sees `copy_note`, whose description then says that copying into a group needs `notes:move`, and a call with `group_id` answers `insufficient_scope` without copying anything. To get `move_note_to_group`, turn on **Move** (*Move or copy notes into groups*) for the credential the same way, then reconnect; `copy_note` with `group_id` works from the credential's next request without reconnecting, though its description keeps saying that it needs `notes:move` until the client reconnects. A connection made with the web app's own sign-in session isn't limited by scope; it gets nine tools (six), because it has no `create_transfer_token` (see the last point).
-- **`read_note_outline`, `read_note_section` and `edit_note` need the collaboration component.** A deployment running without it never registers those three; a `notes:write` credential still sees `create_note`, but a call to it carrying `content` answers `invalid_body` and tells you to create the note without it — unless the call also carries a `group_id` that is refused first (`group_not_found` or `forbidden`). A read-only credential on such a deployment sees only `list_notes`, `search_notes`, `create_transfer_token` and `read_note_image` — `create_note` needs `notes:write` regardless of the deployment. `move_note_to_group`, `copy_note` and `read_note_image` don't need the collaboration component.
+- **A read-only credential never sees `edit_note`, `create_note`, `move_note_to_group`, `copy_note`, `delete_note` or `restore_note`.** They are not registered for that request at all, so — on a deployment with the collaboration component — `tools/list` returns seven tools (only five on one without it; see below), and calling `create_note` anyway gets the SDK's own "Tool create_note not found" (an `isError` result, HTTP `200`) rather than a permission error. There is no scope error to handle here, because there is no tool to call. A read-only credential does see `create_transfer_token`, but it can only ask for a `download` token. To get the writing tools and upload tokens, turn on **Edit** (*Create and edit notes*, `notes:write`) for the credential on its row in **Settings → Authorization → API tokens** (the pencil), then reconnect — the client only picks up the new tools on a fresh connection.
+- **A credential without `notes:move` never sees `move_note_to_group`.** A `notes:write` token or app credential with neither `notes:move` nor `notes:delete` gets ten tools on a deployment with the collaboration component (seven without), and eleven (eight) once it has `notes:move` as well. It still sees `copy_note`, whose description then says that copying into a group needs `notes:move`, and a call with `group_id` answers `insufficient_scope` without copying anything. To get `move_note_to_group`, turn on **Move** (*Move or copy notes into groups*) for the credential the same way, then reconnect; `copy_note` with `group_id` works from the credential's next request without reconnecting, though its description keeps saying that it needs `notes:move` until the client reconnects. A connection made with the web app's own sign-in session isn't limited by scope; it gets twelve tools (nine), because it has no `create_transfer_token` (see the last point).
+- **A credential without `notes:delete` never sees `delete_note` or `restore_note`.** A `notes:write` token or app credential that has `notes:delete` but not `notes:move` gets twelve tools on a deployment with the collaboration component (nine without), and all thirteen (ten) with `notes:move` as well — the two scopes are independent of each other, and both need `notes:write`. `list_trash` doesn't depend on any of this: every credential sees it, a read-only one included. To get `delete_note` and `restore_note`, turn on **Delete** (*Move notes to the trash and restore them*) for the credential the same way, then reconnect.
+- **`read_note_outline`, `read_note_section` and `edit_note` need the collaboration component.** A deployment running without it never registers those three; a `notes:write` credential still sees `create_note`, but a call to it carrying `content` answers `invalid_body` and tells you to create the note without it — unless the call also carries a `group_id` that is refused first (`group_not_found` or `forbidden`). A read-only credential on such a deployment sees only `list_notes`, `search_notes`, `create_transfer_token`, `list_trash` and `read_note_image` — `create_note` needs `notes:write` regardless of the deployment. `move_note_to_group`, `copy_note`, `list_trash`, `delete_note`, `restore_note` and `read_note_image` don't need the collaboration component.
 - **`create_transfer_token` is only offered to a token or app credential.** A request made with the web app's own sign-in session never sees it — the browser can already upload and fetch images itself.
 
 A result Knotebook itself produces — success or one of its own errors — comes back twice, identically: as `structuredContent` and, as a JSON string, in `content[0].text`. Read whichever your client prefers. (An error the MCP SDK produces itself, rather than a tool, is the exception — see [Errors](#errors).)
 
-Every tool that takes a `note_id` — `read_note_outline`, `read_note_section`, `edit_note`, `move_note_to_group`, `copy_note`, `create_transfer_token` and `read_note_image` — answers a note you cannot see and a note that does not exist with the **same** `not_found`, byte for byte, so they cannot be used to find out which note ids exist.
+Every tool that takes a `note_id` — `read_note_outline`, `read_note_section`, `edit_note`, `move_note_to_group`, `copy_note`, `create_transfer_token`, `delete_note`, `restore_note` and `read_note_image` — answers a note you cannot see and a note that does not exist with the **same** `not_found`, byte for byte, so they cannot be used to find out which note ids exist.
 
 Tool inputs are snake_case (`note_id`, `group_id`); replies use camelCase. Every tool rejects an argument it doesn't know instead of ignoring it — `ifMatch` for `if_match`, for example, fails the tool's input check (see [Errors](#errors) — that answer carries no `code`).
 
@@ -276,6 +280,46 @@ Links in `content` are saved the same way as in `edit_note` (see [Links to notes
 - **Three budgets apply**: with a token, one token write (60 per 10 minutes); one write from the 30-writes-per-minute budget; and, when the copy will include images, one upload per image from the 120-per-10-minutes upload budget it shares with uploading images, counted before anything is copied.
 - **Errors** `insufficient_scope` (`group_id` was passed and the credential doesn't have `notes:move`; this is checked before the note is looked up or any of the three budgets above is spent, so nothing is copied, and a `note_id` that doesn't exist answers the same), `not_found`, `group_not_found`, `storage_quota_exceeded` (the target space has no room for the note's images — a copy without images is never refused for space; someone who can see that space's usage also gets `usedBytes` and `quotaBytes`, and `incomingBytes` when the server got as far as measuring the images), `too_many_requests` (any of the three budgets), `server_busy` (nothing was copied — try again in a moment).
 
+### `list_trash`
+
+**Takes** no arguments; like every tool, it rejects one it doesn't know. Every credential is offered it, a read-only one included.
+
+**Answers** `retentionDays`, `items` and `truncated`.
+
+- `items` are the notes in your trash: your own personal notes, and the notes of groups where your role can both edit and delete notes. A note you moved to the trash from a group where your role can delete notes but not edit them isn't listed — see [`delete_note`](#delete_note).
+- They are newest first, by when they were moved to the trash. Only the newest 100 are returned and there is no paging: `truncated` is `true` when older ones were left out (see [Known limitations](#known-limitations)).
+- Each entry is `{id, title, titleTruncated?, deletedAt, purgeAt, deletedBy, group}`. `title` is cut like every other title (see [Limits](#limits)). `deletedBy` is `{handle, displayName, displayNameTruncated?}` of whoever moved the note to the trash, with `displayName` cut the same way, or `null` when that account no longer exists. `group` is `{id, name, nameTruncated?}`, or `null` for a personal note.
+- `retentionDays` is the site's current trash setting — how many days a note stays in the trash before it becomes due to be deleted permanently — or `null` when the site doesn't empty the trash on its own at the moment. `purgeAt` is `deletedAt` plus that many days, or `null`. Both follow the setting as it is now: a site admin can change it, including from not deleting automatically to a number of days, and that moves every note's date, possibly to one that has already passed. A note that is due is usually deleted within the next hour, by the server's clean-up pass (see [Trash](./self-hosting.md#trash)), and someone can delete it permanently sooner in the web app — from the trash, by emptying the trash, or by deleting its group with **Delete everything**.
+- Notes in the trash don't appear in `list_notes` or `search_notes`, and every other tool that takes a `note_id` except `restore_note` answers `not_found` for one.
+
+`list_trash` draws on none of the per-tool budgets in [Limits](#limits); a token request to `/api/mcp` still counts against the 300-reads-per-minute token budget, as every request does.
+
+### `delete_note`
+
+**Takes** `note_id`. It moves a note to the trash — what **Move to trash** does in the web app. A token or app credential needs `notes:delete` for it; one without it isn't offered this tool at all.
+
+**Answers** `id`, `title` (cut like every other title, with `titleTruncated: true` when it was) and `purgeAt` — when the note becomes due to be deleted permanently, as described under [`list_trash`](#list_trash), under the site's trash setting at the moment of the reply, or `null` when the site doesn't empty the trash on its own. A site admin can change that setting afterwards; for the notes you can restore, `list_trash` shows the current date.
+
+- **Who can move a note to the trash:** the owner of a personal note, and, for a group note, a member whose role can delete notes. A note shared with you, even as an editor, and a group note your role can see but not delete answer `forbidden`.
+- **What moving it does** is the same as in the web app: the note stops appearing in `list_notes` and `search_notes`, reading or editing it answers `not_found`, its per-person shares and public link stop working, and anyone who has it open is disconnected. Nothing is deleted: shares, the public link, versions, the AI edit history and attachments are kept (attachments keep counting toward storage), and `restore_note` brings them back with the note.
+- **Bringing a group note back** needs a role that can both edit and delete notes. If your role can delete but not edit, you can move a group note to the trash, but then neither `list_trash` nor `restore_note` reaches it — a member whose role has both, such as an Admin, can restore it.
+- **This tool deletes nothing permanently, but a note in the trash can still be deleted permanently.** No tool deletes a note permanently or empties the trash. A note in the trash is deleted permanently once it is due under the site's trash setting, when the site empties the trash on its own, or sooner if someone deletes it permanently in the web app.
+- A note that is already in the trash answers `not_found`, the same as one that doesn't exist; `list_trash` shows the ones you can restore.
+- Moving a note to the trash is not recorded in any note's history; `restore_note` is how to undo it.
+- **Two budgets apply**: with a token, one token write (60 per 10 minutes), spent before the note is looked up; and, once the access check has passed, one write from the 30-writes-per-minute budget — both spent even when the call then fails without moving the note (see [Known limitations](#known-limitations)).
+- **Errors** `not_found`, `forbidden`, `too_many_requests` (either budget), `server_busy` (a lock or serialization conflict; nothing was moved — try again in a moment).
+
+### `restore_note`
+
+**Takes** `note_id` — a note in the trash, as `list_trash` or `delete_note`'s reply gives it. It works on any note in your trash — your own personal notes, and the notes of groups where your role can both edit and delete notes — including ones older than the 100 `list_trash` returns. It is what **Restore** does in the web app. A token or app credential needs `notes:delete` for it; one without it isn't offered this tool at all.
+
+**Answers** `note` — the note after it was restored, in the entry shape `list_notes` returns.
+
+- The note appears in `list_notes` and `search_notes` again, and the per-person shares and public link it kept while in the trash work again.
+- **A note whose group was deleted while it was in the trash** — with its notes handed over to one of the group's admins — comes back as that admin's personal note, so its `owner` and `url` are not what they were, and it has no public link any more.
+- **Two budgets apply**, the same two as for `delete_note`.
+- **Errors** `not_found` (no note with that id in a trash you can restore from: it may not exist, may not be in the trash, may have been deleted permanently, may be someone else's, may belong to a group you aren't in, or may be in the trash of a group where your role can't both edit and delete notes — all answer the same), `too_many_requests` (either budget), `server_busy` (a lock or serialization conflict; nothing was restored — try again in a moment).
+
 ### `read_note_image`
 
 **Takes** `note_id` and `upload_id` — the id from `/api/uploads/<id>` in the note's markdown; the whole `/api/uploads/<id>` is accepted too.
@@ -306,23 +350,24 @@ After a successful `edit_note` you do not have to go back to step 2: the reply a
 
 **Reading is always sectioned, and what that caps is a single response, not a total.** One call returns at most 4000 characters of body text, at most 100 sections, at most 100 notes; headings and titles are cut at 200 characters as written in JSON. Nothing caps the total — only the rate at which a client can ask; see the reading-budget entry in [Known limitations](#known-limitations).
 
-**Writing does not require reading first.** `if_match` is a concurrency check: it refuses a write built on a stale read. It is not a record of what this agent has read, and an `append` sent without `if_match` skips the check by design. What actually bounds an agent is the credential's scope, the sharing on each note (for a group note, your role in its group), and the fact that most writes that put content into a note are recorded in that note's **AI edit history**, where such a write can be undone — while it is still one of the note's 100 most recent recorded writes and nothing has changed those blocks since. A `create_note` with no `content` records nothing, so there is nothing to undo; what keeps a recorded write undoable, and what takes that away, is in [AI editing](./ai-editing.md#revert). Some writes aren't in that history, for example a `rename` (rename it back instead), `move_note_to_group` (a single note can't be moved back out, and the shares, public link and version history it loses don't come back) and `copy_note` (the copy starts with no history).
+**Writing does not require reading first.** `if_match` is a concurrency check: it refuses a write built on a stale read. It is not a record of what this agent has read, and an `append` sent without `if_match` skips the check by design. What actually bounds an agent is the credential's scope, the sharing on each note (for a group note, your role in its group), and the fact that most writes that put content into a note are recorded in that note's **AI edit history**, where such a write can be undone — while it is still one of the note's 100 most recent recorded writes and nothing has changed those blocks since. A `create_note` with no `content` records nothing, so there is nothing to undo; what keeps a recorded write undoable, and what takes that away, is in [AI editing](./ai-editing.md#revert). Some writes aren't in that history, for example a `rename` (rename it back instead), `move_note_to_group` (a single note can't be moved back out, and the shares, public link and version history it loses don't come back), `copy_note` (the copy starts with no history) and `delete_note` (`restore_note` brings the note back, while it is still in the trash and only for someone who can restore it).
 
 ## Limits
 
 | Limit | Value | Applies to | What you get |
 |---|---|---|---|
-| Heading, title and group name length | 200 characters as written in JSON: `"`, `\` and the control characters JSON writes as `\n`, `\t`, `\r`, `\b`, `\f` count as two each, every other control character (U+0000–U+001F) and an unpaired surrogate as six | every tool that returns one | cut, with `headingTruncated` / `titleTruncated` / `nameTruncated: true` |
+| Heading, title and group name length, and the display name of whoever moved a note to the trash | 200 characters as written in JSON: `"`, `\` and the control characters JSON writes as `\n`, `\t`, `\r`, `\b`, `\f` count as two each, every other control character (U+0000–U+001F) and an unpaired surrogate as six | every tool that returns one; the display name, `list_trash` | cut, with `headingTruncated` / `titleTruncated` / `nameTruncated` / `displayNameTruncated: true` |
 | Section text per call | 4000 UTF-16 code units | `read_note_section` | `truncated: true` and a `nextOffset` |
 | Snippet length | 160 characters as written in JSON, counted as in the first row | `search_notes` | cut, with `…` |
 | Matches per note | 3 | `search_notes` | the rest aren't listed |
 | Sections per page | 100 | `read_note_outline`, and `edit_note`'s reply | `truncated: true` (plus `nextSectionOffset` on `read_note_outline`) |
+| Notes per `list_trash` call | 100, newest first | `list_trash` | `truncated: true`; there is no paging |
 | Blocks after parsing | 2000, counting nested blocks | `edit_note`, `create_note` with `content` | tool error `too_many_blocks` |
 | Content reads | 120 per minute per user | `read_note_outline`, `read_note_section`, `read_note_image`, `create_transfer_token` with `download` | tool error `too_many_requests` |
 | Searches | 60 per minute per user | `search_notes` | tool error `too_many_requests` |
-| Writes | 30 per minute per user | `edit_note` (except `rename`), `create_note` **with `content`**, `copy_note` | tool error `too_many_requests` |
+| Writes | 30 per minute per user | `edit_note` (except `rename`), `create_note` **with `content`**, `copy_note`, `delete_note`, `restore_note` | tool error `too_many_requests` |
 | Uploads | 120 files per 10 minutes per user | `copy_note` (one per attached image the copy will include, counted before copying), shared with uploads | tool error `too_many_requests` |
-| Token writes | 60 per 10 minutes per user | `edit_note`, `create_note` **with or without `content`**, `move_note_to_group`, `copy_note`, and `create_transfer_token` with `upload`, made with a token | tool error `too_many_requests` |
+| Token writes | 60 per 10 minutes per user | `edit_note`, `create_note` **with or without `content`**, `move_note_to_group`, `copy_note`, `delete_note`, `restore_note`, and `create_transfer_token` with `upload`, made with a token | tool error `too_many_requests` |
 | Concurrent writes to one note | serialised, 10 s wait | `edit_note` (except `rename`) | tool error `server_busy` |
 | Concurrent writes to one note | serialised | `create_note` with `content` | not observable in practice — a note this call just created has no other writer to contend with, so the 10 s wait never fires |
 | Token reads | 300 per minute per user | every `POST /api/mcp` made with a token, and each image download made with a transfer token | **HTTP `429`** |
@@ -382,6 +427,11 @@ These are the MCP-specific entries in the shared [Known limitations](./known-lim
 - [Right after an upgrade, older notes can be found by title only until the server has indexed them](./known-limitations.md)
 - [An assistant tricked by a prompt injection can send your notes' images off-site](./known-limitations.md)
 - [An assistant tricked by a prompt injection can move your personal notes into a group, or copy notes into one](./known-limitations.md)
+- [An assistant tricked by a prompt injection can move your notes to the trash](./known-limitations.md)
+- [Someone whose role can delete notes but not edit them can't get back a note they deleted](./known-limitations.md)
+- [`list_trash` returns only the 100 notes most recently moved to the trash, with no paging](./known-limitations.md)
+- [The date a note in the trash is due to be deleted can change](./known-limitations.md)
+- [`delete_note` and `restore_note` can use up their budgets without changing anything](./known-limitations.md)
 - [`read_note_image` shows an image only if you can read the note it was uploaded to](./known-limitations.md)
 - [An image uploaded but never written into a note is still an attachment](./known-limitations.md)
 - [The `curl` command `create_transfer_token` returns is built from `PUBLIC_URL`](./known-limitations.md)
