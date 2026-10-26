@@ -33,6 +33,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ### Changed
 
+- The sign-in page's buttons — **Sign in**, each **Sign in with …** button and **Create an account** — and its email and password fields are taller (44 pixels instead of 32), so they are easier to hit. Other pages keep the 32-pixel controls.
 - The sidebar's **New note** button, which always creates a note of your own, now shows only on the **My notes** and **Recent** tabs (and while searching); it is gone from **Workspace** and **Shared with me**. To create a note in a group, use the **+** next to the group's name.
 - Renaming your username now frees the old name: anyone, including you, can take it — going back to an earlier name counts as a rename against the limit of 5 per rolling 24 hours. Old links are still not forwarded to your new name; once someone else takes the name, old `/n/` and `/p/` links under it lead to their notes where the address matches (for `/n/`, only for people who can read the note). Includes a database migration that clears the names held by past renames (#291).
 - Settings → Authorization → API tokens: an app's (OAuth) **Expires** date is now 30 days after the app was last used — or after you authorized it, if it hasn't been used yet — instead of when its current access token runs out, which is never more than a day away and made an app unused for a day show as *Expired*. The date moves forward on its own while the app is in use; an app unused for 30 days is removed (#298).

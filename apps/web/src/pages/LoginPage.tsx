@@ -168,7 +168,7 @@ export default function LoginPage() {
               <label htmlFor="login-email" className="text-sm font-medium">
                 {t("login.email")}
               </label>
-              <Input id="login-email" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input id="login-email" name="email" type="email" autoComplete="email" required className="h-11" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="space-y-1">
               <label htmlFor="login-password" className="text-sm font-medium">
@@ -180,11 +180,12 @@ export default function LoginPage() {
                 type="password"
                 autoComplete="current-password"
                 required
+                className="h-11"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            <Button type="submit" variant="brandSolid" className="w-full" disabled={submitting}>
+            <Button type="submit" variant="brandSolid" size="lg" className="w-full" disabled={submitting}>
               {submitting ? t("login.submitting") : t("login.submit")}
             </Button>
           </form>
@@ -195,7 +196,7 @@ export default function LoginPage() {
             {passwordLoginEnabled && <div className="border-t" aria-hidden="true" />}
             {providers.map((provider) => (
               // displayName 是管理員輸入：t() 插值後只進文字節點（escapeValue:false，r1-M6）。
-              <Button key={provider.id} asChild variant="outline" className="w-full">
+              <Button key={provider.id} asChild variant="outline" size="lg" className="w-full">
                 <a href={ssoHref(provider.id)}>
                   <ProviderIcon icon={provider.icon} />
                   {t("login.signInWith", { name: provider.displayName })}
@@ -214,7 +215,7 @@ export default function LoginPage() {
 
         {passwordSignup && (
           // #187 spec §3.1 S1（Willie 原話「註冊」鈕）→ outline 按鈕（總管裁定疑點 12）；不得是實心鈕——頁面的唯一實心鈕是「Sign in」。
-          <Button asChild variant="outline" className="w-full">
+          <Button asChild variant="outline" size="lg" className="w-full">
             <Link to={registerHref}>{t("login.register")}</Link>
           </Button>
         )}

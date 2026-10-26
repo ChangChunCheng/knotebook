@@ -465,6 +465,22 @@ describe("LoginPage——#187 PR3：帳密開關、註冊鈕、零方法", () =>
     expect(link.className).not.toMatch(/(^|\s)bg-(primary|destructive|brand|brand-deep)(\s|$)/);
   });
 
+  it("登入頁例外：Sign in、SSO、註冊鈕都是 lg（h-11），兩個輸入框也 h-11（整欄等高）", async () => {
+    renderAt("/login", fetchMockWithAuthConfig(TWO));
+    const sso = await screen.findByRole("link", { name: "Sign in with GitLab" });
+    const targets = [
+      screen.getByRole("button", { name: "Sign in" }),
+      sso,
+      screen.getByRole("link", { name: "Create an account" }),
+      document.querySelector("#login-email")!,
+      document.querySelector("#login-password")!,
+    ];
+    for (const el of targets) {
+      expect(el).toHaveClass("h-11");
+      expect(el).not.toHaveClass("h-8");
+    }
+  });
+
   it("不帶 next → 註冊鈕連到裸 /register", async () => {
     renderAt("/login", fetchMockWithAuthConfig({ providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: true }));
     const link = await screen.findByRole("link", { name: "Create an account" });

@@ -103,3 +103,29 @@ test("情境二：SSO 首登 email 命中邀請建的帳號 → 輸入該帳號�
     await passwordContext.close();
   }
 });
+
+/**
+ * 登入頁的鈕是全站 32px 規則的例外：「Sign in」與 SSO 鈕 44px（`size="lg"`），兩個輸入框跟著 44px，
+ * 才好快速點中（見 `apps/web/src/components/ui/button.tsx` 規範）。jsdom 不套 CSS、算不出高度，只能在這裡量。
+ */
+test("登入頁：Sign in 鈕、SSO 鈕與兩個輸入框都至少 44px 高", async ({ browser }) => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto("/login");
+    const targets = [
+      { label: "Sign in", locator: page.getByRole("button", { name: "Sign in", exact: true }) },
+      { label: SSO_BUTTON, locator: page.getByRole("link", { name: SSO_BUTTON }) },
+      { label: "#login-email", locator: page.locator("#login-email") },
+      { label: "#login-password", locator: page.locator("#login-password") },
+    ];
+    for (const { label, locator } of targets) {
+      await expect(locator).toBeVisible();
+      const box = await locator.boundingBox();
+      expect(box, `${label} 應有 bounding box`).not.toBeNull();
+      expect(box!.height, `${label} 高度`).toBeGreaterThanOrEqual(44);
+    }
+  } finally {
+    await context.close();
+  }
+});
