@@ -94,6 +94,9 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
     }
   }
 
+  // 整頁（強制改密）是卡片頁，控制項 44px；面板內（tone="outline"）維持預設 32px，見 ui/button.tsx 規範例外二。
+  const fieldClass = tone === "page" ? "h-11" : undefined;
+
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
       <div className="space-y-1">
@@ -105,6 +108,7 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
           name="currentPassword"
           type="password"
           autoComplete="current-password"
+          className={fieldClass}
           required
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
@@ -120,6 +124,7 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
           name="newPassword"
           type="password"
           autoComplete="new-password"
+          className={fieldClass}
           required
           minLength={MIN_PASSWORD_LENGTH}
           value={newPassword}
@@ -137,6 +142,7 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
           name="confirmNewPassword"
           type="password"
           autoComplete="new-password"
+          className={fieldClass}
           required
           minLength={MIN_PASSWORD_LENGTH}
           value={confirmNewPassword}
@@ -153,6 +159,7 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
       <Button
         type="submit"
         variant={tone === "outline" ? "outline" : "brandSolid"}
+        size={tone === "page" ? "lg" : "default"}
         className={tone === "page" ? "w-full" : undefined}
         disabled={submitting}
       >

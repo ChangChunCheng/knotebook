@@ -152,7 +152,7 @@ export default function LinkAccountPage() {
         {noProofMethod && (
           <>
             <p>{t("errors.oidc_link_no_proof_method")}</p>
-            <Button type="button" variant="outline" className="w-full" onClick={() => void handleCancel(false)}>
+            <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => void handleCancel(false)}>
               {t("linkAccount.backToLogin")}
             </Button>
           </>
@@ -163,7 +163,7 @@ export default function LinkAccountPage() {
             <p role="alert" className="text-sm text-destructive">
               {t("errors.fallback")}
             </p>
-            <Button type="button" variant="outline" className="w-full" onClick={() => void handleCancel(false)}>
+            <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => void handleCancel(false)}>
               {t("linkAccount.backToLogin")}
             </Button>
           </>
@@ -187,21 +187,21 @@ export default function LinkAccountPage() {
                 <label htmlFor="link-account-password" className="text-sm font-medium">
                   {t("linkAccount.passwordLabel")}
                 </label>
-                <Input id="link-account-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
-                <Button type="submit" variant="brandSolid" className="w-full" disabled={busy}>
+                <Input id="link-account-password" type="password" autoComplete="current-password" required className="h-11" value={password} onChange={e => setPassword(e.target.value)} />
+                <Button type="submit" variant="brandSolid" size="lg" className="w-full" disabled={busy}>
                   {busy ? t("linkAccount.confirming") : t("linkAccount.confirmWithPassword")}
                 </Button>
               </form>
             )}
 
             {pending.methods.providers.map(provider => (
-              <Button key={provider.id} type="button" variant="outline" className="w-full" disabled={busy} onClick={() => void handleProve(provider.id)}>
+              <Button key={provider.id} type="button" variant="outline" size="lg" className="w-full" disabled={busy} onClick={() => void handleProve(provider.id)}>
                 <ProviderIcon icon={provider.icon} />
                 {t("linkAccount.proveWith", { name: provider.displayName })}
               </Button>
             ))}
 
-            <Button type="button" variant="outline" className="w-full" disabled={busy} onClick={() => void handleCancel(true)}>
+            <Button type="button" variant="outline" size="lg" className="w-full" disabled={busy} onClick={() => void handleCancel(true)}>
               {t("linkAccount.cancel")}
             </Button>
           </>

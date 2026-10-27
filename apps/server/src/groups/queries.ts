@@ -170,7 +170,10 @@ export async function builtinRoleId(db: DbOrTx, groupId: string, builtin: Builti
   return row.id;
 }
 
-/** `GET /api/groups`：我所屬的群組，依 name 再依 id（只組不執行——路由與 EXPLAIN 測試共用同一個形）。 */
+/**
+ * `GET /api/groups`：我所屬的群組，先依我在群組的角色（內建管理員 → 內建一般成員 → 自訂角色，與 `listRolesQuery` 同一個 CASE），
+ * 同角色內依 name 再依 id（只組不執行——路由與 EXPLAIN 測試共用同一個形）。側欄工作坊 tab 照這個順序列群組。
+ */
 export function listMyGroupsQuery(db: DbOrTx, userId: string) {
   return db
     .select({ id: groups.id, name: groups.name, createdAt: groups.createdAt, autoVersions: groups.autoVersions, ...roleColumns() })
@@ -178,7 +181,11 @@ export function listMyGroupsQuery(db: DbOrTx, userId: string) {
     .innerJoin(groups, eq(groups.id, groupMembers.groupId))
     .innerJoin(groupRoles, eq(groupRoles.id, groupMembers.roleId))
     .where(eq(groupMembers.userId, userId))
-    .orderBy(asc(groups.name), asc(groups.id));
+    .orderBy(
+      sql`case ${groupRoles.builtin} when 'admin' then 0 when 'member' then 1 else 2 end`,
+      asc(groups.name),
+      asc(groups.id),
+    );
 }
 
 /**
