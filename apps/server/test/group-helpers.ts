@@ -49,8 +49,9 @@ export async function seedGroup(
   db: Db,
   name: string,
   members: ReadonlyArray<{ userId: string; role: "admin" | "member" }>,
+  opts?: { id?: string },
 ): Promise<{ id: string; adminRoleId: string; memberRoleId: string }> {
-  const [g] = await db.insert(groups).values({ name, createdBy: members[0]?.userId ?? null }).returning({ id: groups.id });
+  const [g] = await db.insert(groups).values({ id: opts?.id, name, createdBy: members[0]?.userId ?? null }).returning({ id: groups.id });
   const [admin] = await db
     .insert(groupRoles)
     .values({ groupId: g!.id, builtin: "admin", canRead: true, canCreate: true, canEdit: true, canDelete: true, canManagePublicLink: true, canManageMembers: true, canManageGroup: true })
