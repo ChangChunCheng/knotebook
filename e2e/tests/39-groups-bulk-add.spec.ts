@@ -3,8 +3,9 @@ import { ADMIN, createUserViaInvite, loginAs, openGroupPanel, randomEmail } from
 
 /**
  * 群組成員批次加入（純前端，逐一呼叫既有的 `PUT /api/groups/:id/members`）：
- * 1. 在加人輸入框一次填三個地址（其中一個沒有帳號）→ 加入 2 人、結果列出「沒有這個帳號」那一個。
- * 2. 「從其他群組匯入」：選另一個群組 → 勾選清單只列不在這裡、也不是自己的人 → 確認 → 名單人數正確。
+ * 1. 在加人輸入框一次填三個地址（其中一個沒有帳號）→ 開「Add members」對話框 → 加入 2 人、結果列出「沒有這個帳號」那一個
+ *    （那個地址留在輸入框）→ 完成。
+ * 2. 「從其他群組匯入」：選另一個群組 → 勾選清單只列不在這裡、也不是自己的人 → 確認 → 同一個對話框換成結果 → 完成 → 名單人數正確。
  * 群組以 API 建（`page.request` 與頁面共用 session cookie），人用邀請建；疊每次 `stack:down -v` 重置，不清。
  */
 
@@ -46,15 +47,18 @@ test("群組成員批次加入：貼三個地址（一個沒帳號）→ 加 2 �
   await dialog.getByLabel("Email address", { exact: true }).fill(`${first}, ${ghost}; ${second}`);
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
 
-  const summary = dialog.getByRole("status").filter({ hasText: "Added (2):" });
-  await expect(summary).toBeVisible({ timeout: 15_000 });
-  await expect(summary.locator('[data-outcome="added"]')).toContainText(first);
-  await expect(summary.locator('[data-outcome="added"]')).toContainText(second);
-  await expect(summary.locator('[data-outcome="notFound"]')).toHaveText(`No account with this email (1): ${ghost}`);
+  const addDialog = page.getByRole("dialog", { name: "Add members" });
+  await expect(addDialog.getByRole("button", { name: "Done" })).toBeVisible({ timeout: 15_000 });
+  await expect(addDialog.locator('[data-outcome="added"]')).toContainText(first);
+  await expect(addDialog.locator('[data-outcome="added"]')).toContainText(second);
+  await expect(addDialog.locator('[data-outcome="notFound"]')).toHaveText(`No account with this email (1): ${ghost}`);
+  await addDialog.getByRole("button", { name: "Done" }).click();
+  await expect(addDialog).not.toBeVisible();
   await expect(dialog.getByRole("button", { name: `Remove ${first}` })).toBeVisible();
   await expect(dialog.getByRole("button", { name: `Remove ${second}` })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(3); // admin＋2
-  await expect(dialog.getByLabel("Email address", { exact: true })).toHaveValue("");
+  // 沒有帳號的那個留在輸入框（方便修正）
+  await expect(dialog.getByLabel("Email address", { exact: true })).toHaveValue(ghost);
 
   // ── 2. 從其他群組匯入 ─────────────────────────────────────────
   await dialog.getByRole("button", { name: "Import from another group…" }).click();
@@ -66,9 +70,12 @@ test("群組成員批次加入：貼三個地址（一個沒帳號）→ 加 2 �
   await expect(list.getByRole("checkbox")).toHaveCount(1);
   await expect(list.getByRole("checkbox", { name: third })).toBeChecked();
   await importDialog.getByRole("button", { name: "Add 1 person" }).click();
-  await expect(importDialog).not.toBeVisible();
 
-  await expect(dialog.getByRole("status").filter({ hasText: "Added (1):" })).toBeVisible({ timeout: 15_000 });
+  // 對話框不關：同一個對話框換成結果
+  await expect(importDialog.getByRole("button", { name: "Done" })).toBeVisible({ timeout: 15_000 });
+  await expect(importDialog.locator('[data-outcome="added"]')).toHaveText(`Added (1): ${third}`);
+  await importDialog.getByRole("button", { name: "Done" }).click();
+  await expect(importDialog).not.toBeVisible();
   await expect(dialog.getByRole("button", { name: `Remove ${third}` })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(4); // admin＋first＋second＋third
 });

@@ -754,10 +754,17 @@
     },
     "bulk": {
       "addEmailsPlaceholder": "電子郵件地址（多個請以逗號分隔）",
+      "addEmailsHint": "可以一次輸入多個地址，以逗號、分號、頓號、空白或換行分隔（全形、半形都可以）。",
+      "addTitle": "加入成員",
+      "addDescription": "這些地址會以「{{role}}」加入這個群組。",
       "invalidSingle": "「{{value}}」看起來不是電子郵件地址。",
-      "progress": "正在加入成員…（{{done}}／{{total}}）",
+      "progress": "已處理 {{done}}／共 {{total}}",
+      "stop": "停止",
+      "stopping": "正在停止…",
       "stopped": "已停止：{{reason}}沒加成的地址已放回電子郵件欄。",
       "stoppedRateLimit": "伺服器暫時限制請求，已停止。請稍候一分鐘再加入其餘的人——他們的地址已放回電子郵件欄。",
+      "cancelled": "已停止。沒加成的地址已放回電子郵件欄。",
+      "keptInBox": "沒加成的地址留在電子郵件欄，方便修正後再試。",
       "outcome": {
         "added": "已加入（{{count}}）：",
         "alreadyMember": "已經是成員（{{count}}）：",
@@ -766,7 +773,15 @@
         "failed": "失敗（{{count}}）：",
         "notProcessed": "未處理（{{count}}）："
       },
-      "dismiss": "關閉",
+      "summary": {
+        "added": "已加入：{{count}}。",
+        "alreadyMember": "已經是成員：{{count}}。",
+        "notFound": "找不到這個帳號：{{count}}。",
+        "invalid": "不是電子郵件地址：{{count}}。",
+        "failed": "失敗：{{count}}。",
+        "notProcessed": "未處理：{{count}}。"
+      },
+      "done": "完成",
       "importOpen": "從其他群組匯入成員…",
       "importTitle": "從其他群組匯入成員",
       "importDescription": "勾選的人會以「{{role}}」加入這個群組。這是一次性複製：之後另一個群組的成員異動不會同步過來。",

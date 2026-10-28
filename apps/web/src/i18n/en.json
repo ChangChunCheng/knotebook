@@ -754,10 +754,17 @@
     },
     "bulk": {
       "addEmailsPlaceholder": "Email addresses (separate several with commas)",
+      "addEmailsHint": "You can enter several addresses at once, separated by commas, semicolons, spaces or line breaks (full-width commas and semicolons and the enumeration comma “、” work too).",
+      "addTitle": "Add members",
+      "addDescription": "These addresses are added to this group as {{role}}.",
       "invalidSingle": "“{{value}}” doesn't look like an email address.",
-      "progress": "Adding members… {{done}} of {{total}}",
+      "progress": "Processed {{done}} of {{total}}",
+      "stop": "Stop",
+      "stopping": "Stopping…",
       "stopped": "Stopped: {{reason}} The addresses that weren't added are back in the email box.",
       "stoppedRateLimit": "Stopped because the server is limiting requests. Wait a minute, then add the rest — they're back in the email box.",
+      "cancelled": "Stopped. The addresses that weren't added are back in the email box.",
+      "keptInBox": "The addresses that weren't added are left in the email box so you can fix them and try again.",
       "outcome": {
         "added": "Added ({{count}}):",
         "alreadyMember": "Already members ({{count}}):",
@@ -766,7 +773,15 @@
         "failed": "Failed ({{count}}):",
         "notProcessed": "Not processed ({{count}}):"
       },
-      "dismiss": "Dismiss",
+      "summary": {
+        "added": "Added: {{count}}.",
+        "alreadyMember": "Already members: {{count}}.",
+        "notFound": "No account with this email: {{count}}.",
+        "invalid": "Not an email address: {{count}}.",
+        "failed": "Failed: {{count}}.",
+        "notProcessed": "Not processed: {{count}}."
+      },
+      "done": "Done",
       "importOpen": "Import from another group…",
       "importTitle": "Import members from another group",
       "importDescription": "The people you pick are added to this group as {{role}}. This is a one-time copy: later changes to the other group won't carry over.",
