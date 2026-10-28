@@ -7,28 +7,50 @@ import { cn } from "@/lib/utils";
  * 按鈕的使用規範（2026-09-16 訂；在此之前只有變體清單、沒有「何時用哪個」，
  * 全 app 83 顆按鈕長出 12 種 variant×size 組合、8 個檔案在同一畫面混用尺寸）。
  *
- * **高度只有一種：32px（h-8）。**
- * `Button`（三個 size）、`Input`、各檔自訂的 `SELECT_CLASS` 全部 h-8——同一列的
+ * **預設高度 32px（h-8）；例外有兩類，見下。**
+ * `Button`（`icon`／`sm`／`default` 三個 size；`lg` 見例外二）、`Input`、各檔自訂的 `SELECT_CLASS` 預設都是 h-8——同一列的
  * 控制項才會等高。改版過程試過「輸入框 36、按鈕 32」與「全部 36」，前者使用者一眼
  * 看出不等高，後者被嫌笨重；最後定在全部 32。
  * ⚠ 動這三個地方任何一個，另外兩個要一起動。`ui/rows.ts` 的 `SIDEBAR_ROW_HEIGHT`
  * 是**側欄列高**、有等高守衛釘著（帳號列↔backlinks 那排），不屬於這一組，別跟著改。
  *
- * **唯一的例外：側欄上的 24px 圖示鈕（`h-6 w-6` 蓋掉 `icon` 的 `h-8 w-8`）。**
- * 只限四處（前兩處出自 spec #103 §8.1）：`NoteList.tsx` 的 `HeaderActionButton`（tab 標題列的
+ * **例外一：側欄上的 24px 圖示鈕（`h-6 w-6` 蓋掉 `icon` 的 `h-8 w-8`）。**
+ * 只限以下幾處（前兩處出自 spec #103 §8.1）：`NoteList.tsx` 的 `HeaderActionButton`（tab 標題列的
  * 「＋」，常駐；與每個群組列右邊的「＋」，後者仍浮出）、`GroupMenu` 的 `size="sidebar"`（群組列的 ⋮；
  * 設定頁的同一顆 ⋮ 仍是預設 32px、常駐），以及 `NoteMenu.tsx` 的 `SidebarNoteMenu`（每列
  * 筆記的 ⋮；頁首那顆仍是 32px、常駐）。群組列「＋」、群組 ⋮、筆記列 ⋮ 這三顆共用 `ui/reveal.ts` 的 `hoverReveal`：
  * 桌面上平常隱藏，滑過該列或鍵盤聚焦才浮出；⋮ 在選單開著時不消失（「＋」不是選單，
  * 沒有這一條）；觸控裝置常駐。第四處是 `AppShell.tsx` 搜尋框內的「清除搜尋」✕：輸入框內
  * 的附屬鈕、不是同列並排的控制項，不走 hover 浮出（搜尋框有字才出現）。
+ * 垃圾桶 tab（`sidebar/TrashPanel.tsx`，#181）再加四處：標題列的「選取」圖示鈕與「清空」文字鈕（常駐；
+ * 「清空」是 `sm` 文字鈕但同為 24px 高，與「選取」同列），每列的「還原」與 ⋮（與筆記列 ⋮ 共用
+ * `hoverReveal("noterow")`），以及選取模式標題列的「全選／取消全選」（`ghost` `sm` `h-6`）與「完成」
+ * （`outline` `sm` `h-6`）——兩顆同列、取代平常那排，不與 32px 控制項並排。
+ * 一般 tab（#181 PR-2c）沿用同樣兩處：`NoteList.tsx` 標題列的「選取」圖示鈕（在「＋」之前），與選取模式標題列
+ * （`sidebar/SelectHeader.tsx`）的「全選／取消全選」「完成」，class 與垃圾桶那幾顆逐字相同。
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
- * **size 現在只差在內距與字級，不差高度：**
+ * **例外二：未登入／帳號流程的同款卡片頁用 44px（`size="lg"`，h-11）。** `pages/LoginPage.tsx`、`RegisterPage.tsx`、
+ * `ResetPasswordPage.tsx`、`LinkAccountPage.tsx`、`ChangePasswordPage.tsx`（強制改密；表單 `auth/ChangePasswordForm.tsx`
+ * 在 `tone="page"` 時 44px，`tone="outline"` 的設定面板內仍是 32px）、`AuthorizePage.tsx`（OAuth 授權）的按鈕
+ * （含登入頁每顆 SSO 鈕與「註冊新帳號」）都用 `lg`，輸入框以 `className="h-11"` 跟著拉高，卡片裡同一欄的控制項等高。
+ * 勾選框與勾選列（授權頁的 scope 勾選）不放大。
+ * 理由：同款卡片頁一律 44px，頁面之間跳轉不換尺寸（AuthorizePage 的卡片是 `max-w-md`，依 Willie 點名納入）；登入頁是每天都會經過、只為了按一顆鈕的整頁（觸控目標），
+ * 32px 太難快速點中。頁面上沒有任何 32px 控制項與這些 `lg` 控制項同列，所以不違背「同列等高」。
+ * 電腦與手機同一尺寸，不做斷點縮回。
+ * 字級：`lg` 是 16px（`text-base`），比卡片內標籤與輸入框文字（14px）大一號，是刻意的
+ * （Willie 2026-10-27 看過畫面定案）。
+ * ⚠ `lg` 只准出現在上述頁面，守衛 `ui/button.lg-scope.guard.test.ts` 有兩道：`LG_SIZE` 檢查
+ * 恰好這些頁直接寫了 `size="lg"`（多一頁或少一頁都會紅）；`LG_LITERAL` 擋任何其他地方的 `"lg"` 字串字面
+ * （`ChangePasswordForm.tsx` 以 tone 條件式寫 `lg`，只在這一道的允許清單裡）。
+ * 要擴到別頁，先改這段再改守衛清單。
+ *
+ * **size 現在只差在內距與字級，不差高度**（`lg` 除外，見上方例外二）**：**
  * - `icon`（h-8 w-8）——純圖示鈕（可及名稱由 `aria-label` 提供）。
  * - `sm`（px-3、12px 字）——清單列與表格列裡的動作，密度高的地方。
  * - `default`（px-4、14px 字）——其餘一切：對話框底部、與輸入框同列、獨立區塊。
+ * - `lg`（h-11、px-6、16px 字）——**只限同款卡片頁**，見上方例外二。
  *   ⚠ **尺寸不得用來編碼嚴重度**。改版前錯誤畫面就是這樣：全頁崩潰的「重新整理」
  *   用一種、區域性錯誤的「重試」用另一種——那是一條沒寫下來的規則，讀碼的人只能猜。
  *
@@ -49,6 +71,10 @@ import { cn } from "@/lib/utils";
  *   ⚠ **`ghost` 只用在「有列可依附」的地方**（表格列、清單列，或緊跟在同列主動作
  *   後面的還原型動作）。平級並排的動作一律 `outline`——ghost 沒有邊框也沒有底色，
  *   單獨站著看不出來是按鈕（「重新產生連結」被這樣回報過一次）。
+ *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/TrashFooter.tsx`）與「還原」平級並排，卻是
+ *   `ghost`＋`border border-input`＋紅字（hover 同 `ROW_ICON_DANGER`）——`outline` 的 hover／按下填 `brand-deep`，
+ *   紅字壓深色底不對（#181 PR-2b plan gate r1 M7）。別「修」回 `outline`。一般 tab 選取模式動作列的紅色刪除圖示鈕
+ *   （`sidebar/SelectActionBar.tsx`，#181 PR-2c）同此例外：與「移動到」「複製到」平級並排。
  * - `destructive`——**只用在確認對話框的那一顆提交鈕**。
  * - `brand`——主色 tint（無邊框），招牌入口：側欄「新增筆記」、AI 主控。
  * - `brandSolid`／`brandDeep`——主色實心，兩階，**依所在表面二選一、不得混用**：
@@ -103,6 +129,8 @@ const buttonVariants = cva(
         default: "h-8 px-4",
         sm: "h-8 rounded-md px-3 text-xs",
         icon: "h-8 w-8",
+        // 只給同款卡片頁（見上方規範「例外二」；守衛：`button.lg-scope.guard.test.ts`）。
+        lg: "h-11 px-6 text-base",
       },
     },
     defaultVariants: {

@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
+import { expectCardControls44 } from "@/test/card-controls";
 
 interface Call { method: string; url: string; body: unknown }
 
@@ -86,6 +87,21 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
     // 一個畫面至多一顆實心鈕（button.tsx 檔頭規範；gate r1 t8-13 M4）：只有密碼確認是實心，SSO 與取消是 outline。
     const solid = screen.getAllByRole("button").filter(b => SOLID_BG.test(b.className));
     expect(solid.map(b => b.textContent)).toEqual(["Confirm with password and link"]);
+  });
+
+  it("卡片頁例外：密碼確認、SSO 證明、取消三顆鈕都是 lg（h-11），密碼欄也 h-11（整欄等高）", async () => {
+    mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
+    renderAt("/link-account");
+    const targets = [
+      await screen.findByRole("button", { name: "Confirm with password and link" }),
+      screen.getByRole("button", { name: "Confirm by signing in with GitLab" }),
+      screen.getByRole("button", { name: "Cancel" }),
+      screen.getByLabelText("Password for this account"),
+    ];
+    for (const el of targets) {
+      expect(el).toHaveClass("h-11");
+      expect(el).not.toHaveClass("h-8");
+    }
   });
 
   it("methods.password=false → 沒有密碼欄，只有 SSO 鈕", async () => {
@@ -169,6 +185,7 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
     renderAt("/link-account");
     expect(await screen.findByText(/has no other way to confirm it's you/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back to sign in" })).toBeInTheDocument();
+    expect(expectCardControls44()).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Password for this account")).not.toBeInTheDocument();
   });
 
@@ -264,6 +281,7 @@ describe("LinkAccountPage（#187 §9.4 /link-account）", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("An unexpected error occurred.");
       expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
       const back = screen.getByRole("button", { name: "Back to sign in" });
+      expect(expectCardControls44()).toBeGreaterThan(0);
       expect(SOLID_BG.test(back.className)).toBe(false);
       fireEvent.click(back);
       await waitFor(() => expect(loc()).toBe("/login"));

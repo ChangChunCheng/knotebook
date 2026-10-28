@@ -448,7 +448,8 @@ describe("#175 PR4 全刪 × 上傳（C22，Task 2 review r1 M1）", () => {
     // 鑑別（Task 4–6 review r1 N6）：PR4 時拿掉 T7 的 FOR UPDATE（M8），本案先紅在 interleave 斷言（上傳沒被擋、得 201），
     // 跑不到最後的 readdir；孤兒檔本身是靠測試側變體（拿掉 interleave 斷言後）才實際看到——readdir 那條不是 M8 的守衛。
     // #188 起 `deleteNotesInTx` 在 DELETE uploads 之前也對 L 取 FOR UPDATE：單拿掉 M8 或單拿掉那一把，本案都仍綠（等價）；
-    // 兩把都拿掉才紅在 interleave。單篇刪除的同形由 `notes-delete-race.test.ts` 守（拿掉 `deleteNotesInTx` 那一把即紅）。
+    // 兩把都拿掉才紅在 interleave。#181 起單篇 DELETE 改為移入垃圾桶、不再走 `deleteNotesInTx`；那一把在三個呼叫端都冗餘
+    // （永久刪除先 `lockNotes`、清理先 `FOR UPDATE SKIP LOCKED`、全刪先鎖 L），沒有案能單獨殺掉它（等價）。
     // 上傳交易被拒（0 列 TxAbort；防禦縱深的 FK 23503 同）時路由先 unlink 再回 404 not_found（Task 4–6 review r1 M1）；本案的 readdir 斷言同時守住「先 unlink」。
     const holder: {
       app?: FastifyInstance; pool?: Pool; noteId?: string; userId?: string; u0?: string;

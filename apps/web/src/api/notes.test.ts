@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement, type ReactNode } from "react";
+import { renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LastEditedDto, NoteDto } from "@knotebook/shared";
 import { OWNER_PERMS } from "@/test/fixtures";
-import { patchNotesListLastEdited } from "./notes";
+import { patchNotesListLastEdited, useDeleteNote, useNote, useNoteByGroupPath, useNoteByPath } from "./notes";
 
 function note(id: string, lastEdited: LastEditedDto | null): NoteDto {
   return {
@@ -19,6 +21,7 @@ function note(id: string, lastEdited: LastEditedDto | null): NoteDto {
     lastEdited,
     group: null,
     groupId: null,
+    folderId: null,
     permissions: OWNER_PERMS,
   };
 }
@@ -84,5 +87,50 @@ describe("patchNotesListLastEdited（spec §5.2）", () => {
     patchNotesListLastEdited(qc, "a", null);
     expect(spy).not.toHaveBeenCalled();
     expect(qc.getQueryData<NoteDto[]>(["notes"])![0]!.lastEdited).toEqual(NEW);
+  });
+});
+
+describe("useDeleteNote", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("AT8 移入成功後失效 ['trash']，原有 ['notes']／['note', id]／['backlinks'] 照舊", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 204, json: () => Promise.reject(new Error("no body")) } as unknown as Response));
+    const qc = client();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
+    const { result } = renderHook(() => useDeleteNote(), { wrapper });
+    await result.current.mutateAsync("a");
+    const keys = spy.mock.calls.map(([arg]) => JSON.stringify(arg?.queryKey));
+    expect([...keys].sort()).toEqual(['["backlinks"]', '["note","a"]', '["notes"]', '["trash"]']);
+  });
+});
+
+describe("單篇查詢的 retry 選項（垃圾桶 T6：解析層 in_trash 不重試）", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const retryOf = (qc: QueryClient, key: readonly unknown[]) => qc.getQueryCache().find({ queryKey: key })?.options.retry;
+
+  it("沒給 retry → 沿用 QueryClient 預設（不得以 undefined 蓋掉，否則 query-core 退回 3 次）；給了就用給的", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const qc = client();
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
+    const custom = () => false;
+    renderHook(
+      () => {
+        useNote("plain");
+        useNote("custom", { retry: custom });
+        useNoteByPath("h", "s", { retry: custom });
+        useNoteByGroupPath("g", "s", { retry: custom });
+      },
+      { wrapper },
+    );
+    expect(retryOf(qc, ["note", "plain"])).toBe(false);
+    expect(retryOf(qc, ["note", "custom"])).toBe(custom);
+    expect(retryOf(qc, ["note-by-path", "h", "s"])).toBe(custom);
+    expect(retryOf(qc, ["note-by-group-path", "g", "s"])).toBe(custom);
   });
 });

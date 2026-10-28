@@ -206,6 +206,8 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
         });
         if (!out.ok) {
           if (out.kind === "busy") return sendError(reply, 503, "server_busy", "筆記正在被寫入，請稍後再試");
+          // #181 §6.2-11：授權之後被移入垃圾桶（或正被移入）→ 同授權 none 的 404。
+          if (out.kind === "gone") return sendError(reply, 404, "not_found", NOTE_NOT_FOUND);
           if (out.code === "not_found") return sendError(reply, 404, "not_found", VERSION_NOT_FOUND);
           if (out.code === "version_mismatch") return sendError(reply, 409, "version_mismatch", "這一版已經不存在或已被取代，請重新整理");
           return sendError(reply, 409, "version_unsaved_changes", "目前有未儲存的修改");

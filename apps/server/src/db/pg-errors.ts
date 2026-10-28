@@ -111,7 +111,7 @@ export function isLockTimeout(err: unknown): boolean {
   return matchesCode(err, PG_LOCK_NOT_AVAILABLE);
 }
 
-/** 40001／40P01／55P03：upload／copy／move／刪群組四支路由的 `server_busy` 判準（§6.9）。 */
+/** 40001／40P01／55P03：交易被併發犧牲（什麼都沒寫）的路由一律以此映射 409 `server_busy`（§6.9；呼叫端 grep 本函式名）。 */
 export function isRetryableTxError(err: unknown): boolean {
   return isTransientTransactionError(err) || isLockTimeout(err);
 }
@@ -134,4 +134,24 @@ function columnOf(e: unknown): string | null {
 export function notNullViolationColumn(err: unknown): string | null {
   if (!matchesCode(err, PG_NOT_NULL_VIOLATION)) return null;
   return columnOf(err) ?? columnOf(err instanceof Error ? err.cause : undefined);
+}
+
+// 資料夾（spec 2026-10-22 §5.1）：0034 三支手寫 trigger 的自訂 SQLSTATE。
+export const PG_NOTE_FOLDER_SPACE = "KF001";   // notes_folder_space_trg：筆記與所在資料夾不同空間
+export const PG_FOLDER_PARENT_SPACE = "KF002"; // folders_parent_space_trg：父子不同空間
+export const PG_PLACEMENT_FOLDER = "KF003";    // note_placements_folder_trg：放置不是放置者自己的 shared 資料夾
+
+/**
+ * KF001（兩種錯誤形狀都認）。spec §5.1 M5：新碼走得到 KF001 的只有 `POST /api/notes {folderId}`（不在交易內）——
+ * 授權之後、INSERT 之前那個群組剛完成轉移（資料夾已變 personal）；帶 `folderId` 的寫入入口一律映成 404 `folder_not_found`。
+ */
+export function isNoteFolderSpaceViolation(err: unknown): boolean {
+  return matchesCode(err, PG_NOTE_FOLDER_SPACE);
+}
+
+/** KF001／KF002／KF003 任一（兩種錯誤形狀都認）。 */
+export function isFolderSpaceViolation(err: unknown): boolean {
+  return (
+    matchesCode(err, PG_NOTE_FOLDER_SPACE) || matchesCode(err, PG_FOLDER_PARENT_SPACE) || matchesCode(err, PG_PLACEMENT_FOLDER)
+  );
 }

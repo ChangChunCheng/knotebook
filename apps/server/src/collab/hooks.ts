@@ -42,6 +42,17 @@ export interface CollabHooks {
    */
   beforeNoteDeleted(noteId: string): Promise<NoteDeleteGate>;
   /**
+   * #181 §6.4.3：還原 commit 後呼叫——對每篇收掉刪除閘門（unmarkDeleting）並清 TTL 計時器。同步、不 throw、不借連線。
+   *
+   * ⚠ 它**不看 epoch**、一律收門，正確性押在呼叫端兩條規則上：
+   *   1. 只傳還原交易**實際還原**的 id——傳進別的 id 等於讓 restore 端點收掉別人移入中的閘門；
+   *   2. commit 之後**同步**呼叫，中間不得有其他 await——否則窗口內開始的新移入會被收門、清掉 timer，
+   *      unload 輪詢期間重連的人會留在垃圾桶筆記上繼續寫。
+   * 殘留的窄窗：兩個 DELETE 併發、先到的已移入，後到的還在 unload 輪詢（≤5 秒）時就被還原——後到那次的閘門會被收掉，
+   * 它接著的移入就沒有閘門（實務上可忽略）。
+   */
+  onNotesRestored(noteIds: readonly string[]): void;
+  /**
    * Plan 3：wikilink 索引器的同步點——委派 `CollabServer.linkSyncState`。`ok:false` 涵蓋
    * 「文件不在記憶體裡」與「該使用者在這篇筆記上沒有開啟中的連線」兩種情況；呼叫方一律回
    * 409 `not_loaded`，收斂交由 client 重試與載入後自我修復——沒有 `note_states` 回退路徑。
@@ -54,5 +65,6 @@ export const noopCollabHooks: CollabHooks = {
   onUserRevoked: () => {},
   onGroupAccessChanged: () => {},
   beforeNoteDeleted: async () => ({ release: () => {} }),
+  onNotesRestored: () => {},
   linkSyncGate: () => ({ ok: false }),
 };

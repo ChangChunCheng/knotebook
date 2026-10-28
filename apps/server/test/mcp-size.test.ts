@@ -29,6 +29,7 @@ import { getContent, seedContent, seedTokenForUser } from "./editing-helpers.js"
 import { mcpPost, rpc } from "./mcp-helpers.js";
 import { seedUpload } from "./copy-helpers.js";
 import { seedGroup } from "./group-helpers.js";
+import { markTrashed } from "./trash-helpers.js";
 import type { Db } from "../src/db/index.js";
 import type { FastifyInstance } from "fastify";
 
@@ -90,9 +91,20 @@ export const MCP_MAX_WIRE = 262_144;
  * 審查 r1 前是 31 472，r1 把 read_note_section 圖片句改成舉例寫法 +32）。
  * +1 067 來自 `edit_note` 的 markdown `.describe()` 加並排與尺寸兩句、`create_note` content 一句改寫、`read_note_section` 的圖片句與
  * markdown `.describe()` 改寫（後兩者唯讀憑證也有，+248）。未破 38 700，門檻不動（照配方重推會是 31 744 × 1.3 ＝ 41 267.2 → 41 300，
- * 但規則是破了才重訂）。
+ * 但規則是破了才重訂）。並排 PR-2 與 #181 PR-2d 是平行分支，各自量的是自己那一邊；兩邊合流後的數字見下方「合流複量」。
  *
- * 最近一次依原配方重訂：2026-10-10（#180＋#200 PR2，見上；前一次 2026-10-08 是 #200 PR1）；下次逼近時同樣回頭重訂連同推導，不是逕自調大。
+ * **#181 PR-2d（2026-10-26，feat/trash-mcp，T5 之上）：被測改讀寫搬移刪除憑證**（`delete_note`／`restore_note` 只在 notes:delete
+ * 時註冊；`list_trash` 任何憑證都有）。實測讀寫搬移刪除十三支 wire ＝ **37 125**（現行門檻 38 700 的 95.9%）；對照組：讀寫刪除十二支
+ * 34 618、讀寫搬移十一支 32 998、讀寫十支 30 491、唯讀七支 18 271（相對 #239 的 29 437／26 930／15 383：list_trash 讓每一組各多一支，
+ * 兩支新工具讓 RWM → RWMD 再多 4 127）。依原配方重訂：37 125 向上取整到 1024 的倍數＝37 888 → ×1.3 ＝ 49 254.4 → 進位 **49 300**。
+ *
+ * **合流複量（2026-10-29，main @ 3922479（含 #181 PR-2d）合進 feat/columns-rw @ ff60929 之後實測）**：讀寫搬移刪除十三支 wire ＝ **38 192**
+ * （門檻 49 300 的 77.5%）；對照組：讀寫刪除十二支 35 685、讀寫搬移十一支 34 065、讀寫十支 31 558、唯讀七支 18 519。相對 #181 PR-2d 的五個數字
+ * 各多 1 067、1 067、1 067、1 067、248——恰好是並排 PR-2 Task 10 那段量到的增量（唯讀那組只吃 read_note_section 的兩處），兩邊的字串互不重疊。
+ * 未破 49 300，門檻不動（照配方重推會是 38 912 × 1.3 ＝ 50 585.6 → 50 600，但規則是破了才重訂）；下方 #181 PR-2d 突變追記的
+ * 「+12 275 → 49 400」是以 37 125 為基線，現在要撞牆得加長 `N_LIST_MAX − W + 100` ＝ 11 208（舊數字不得沿用）。
+ *
+ * 最近一次依原配方重訂：2026-10-26（#181 PR-2d，見上；前一次 2026-10-10 是 #180＋#200 PR2）；下次逼近時同樣回頭重訂連同推導，不是逕自調大。
  *
  * **什麼樣的迴歸會撞牆**（**突變實跑，2026-09-09**）：把 `edit_note` 的 `if_match`
  * 欄位 `.describe()` 加長 6000 字元（`"x".repeat(6000)` 接在句尾）→ wire 變成 **21 362**，
@@ -105,8 +117,17 @@ export const MCP_MAX_WIRE = 262_144;
  * #180＋#200 PR2 追記（**突變實跑，2026-10-10**，門檻 38 700、基線 29 437；舊數字不得沿用，spec §8）：同一條 +6000 的迴歸現在是 **35 437、不再撞牆**
  * （用掉 91.6%）；要撞牆得加長 `N_LIST_MAX − W + 100` ＝ 9 363 → **38 800**，紅（`expected 38800 to be less than or equal to 38700`）。
  * 兩發都已 revert（棚內突變，md5 還原確認）。
+ * #181 PR-2d 追記（**突變實跑，2026-10-26**，門檻 49 300、基線 37 125）：把 `delete_note` 的 description 加長
+ * `N_LIST_MAX − W + 100` ＝ 12 275 字元（`x`，接在句尾）→ **49 400**，紅（`expected 49400 to be less than or equal to 49300`）；已 revert（棚內突變，md5 還原確認）。
  */
-export const N_LIST_MAX = 38_700;
+export const N_LIST_MAX = 49_300;
+
+/**
+ * 案 (vii) 第一發（#181 `list_trash` 最壞形）的下界哨兵。2026-10-26 實測 **236 598**（群組名 80 個 `"`；第二發 67＋13 形 247 498；
+ * 恰好 100 篇時 `truncated:false` 比 `true` 多 1 字元、鏡像兩份再多 2 → **247 500**，餘裕 ×1.06，剩 14 644）。落到 230 000 以下代表
+ * 測資沒造滿（刪除者或群組沒帶上、標題沒截到逃脫後 200），或 `truncateText` 截得比「逃脫後 200」還兇——回頭查 fixture，不要改這個數字遷就（用意同 MIN_WORST_GROUP_WIRE）。
+ */
+const MIN_WORST_TRASH_WIRE = 230_000;
 
 /**
  * 案 (iv) 第一發（#177 之後的群組形最壞情形）的下界哨兵。2026-10-07 實測 **247 056**（餘裕 ×1.06，剩 15 088）；
@@ -182,34 +203,49 @@ describe("#108 tools/list 的脈絡成本（案 11b）", () => {
   // PR1 量的是唯讀憑證（四支工具）；PR2 起讀寫憑證（六支工具）才是最壞情形——`edit_note`／
   // `create_note` 的 input／output schema 一起進脈絡。本案改打讀寫憑證，唯讀憑證只當對照
   // 一起印出來，門檻只釘在讀寫憑證那個數字上。
-  // #239（spec §7.6）：最壞情形換成**讀寫搬移**憑證（十支；`move_note_to_group` 只在 notes:move 時註冊，
-  // `copy_note` 的說明是長版）——被測改它；讀寫（九支）與唯讀（六支）一起印出來當對照，門檻只釘在讀寫搬移那個數字上。
-  it("讀寫搬移憑證的 tools/list 完整 wire 回應 ≤ N_LIST_MAX（讀寫、唯讀憑證當對照）", async () => {
+  // #239（spec §7.6）：最壞情形換成**讀寫搬移**憑證（`move_note_to_group` 只在 notes:move 時註冊，
+  // `copy_note` 的說明是長版）——被測改它；讀寫與唯讀一起印出來當對照，門檻只釘在讀寫搬移那個數字上（支數見下方斷言；#181 起各多 list_trash）。
+  // #181 PR-2d：最壞情形換成**讀寫搬移刪除**憑證（`delete_note`／`restore_note` 只在 notes:delete 時註冊）——被測改它；
+  // 讀寫刪除、讀寫搬移、讀寫、唯讀一起印出來當對照，門檻只釘在 RWMD 那個數字上。
+  it("讀寫搬移刪除憑證的 tools/list 完整 wire 回應 ≤ N_LIST_MAX（RWD、RWM、RW、R 當對照）", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
     const { token: rwmToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move");
+    const { token: rwdToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:delete");
+    const { token: rwmdToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move notes:delete");
 
     const roRes = await mcpPost(ctx.app, rpc("tools/list"), { token: o.token });
     expect(roRes.statusCode).toBe(200);
-    expect((roRes.json().result.tools as unknown[]).length).toBe(6);
+    expect((roRes.json().result.tools as unknown[]).length).toBe(7);
     const roWire = roRes.body.length;
 
     const rwRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwToken });
     expect(rwRes.statusCode).toBe(200);
-    expect((rwRes.json().result.tools as unknown[]).length).toBe(9);
+    expect((rwRes.json().result.tools as unknown[]).length).toBe(10);
     const rwWire = rwRes.body.length;
 
     const rwmRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwmToken });
     expect(rwmRes.statusCode).toBe(200);
-    expect((rwmRes.json().result.tools as unknown[]).length).toBe(10);
+    expect((rwmRes.json().result.tools as unknown[]).length).toBe(11);
     const rwmWire = rwmRes.body.length;
 
+    const rwdRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwdToken });
+    expect(rwdRes.statusCode).toBe(200);
+    expect((rwdRes.json().result.tools as unknown[]).length).toBe(12);
+    const rwdWire = rwdRes.body.length;
+
+    const rwmdRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwmdToken });
+    expect(rwmdRes.statusCode).toBe(200);
+    expect((rwmdRes.json().result.tools as unknown[]).length).toBe(13);
+    const rwmdWire = rwmdRes.body.length;
+
     console.log(
-      `[案 11b] tools/list  唯讀憑證（六支，對照）wire=${roWire}  讀寫憑證（九支，對照）wire=${rwWire}  ` +
-        `讀寫搬移憑證（十支，被測）wire=${rwmWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmWire / N_LIST_MAX) * 100).toFixed(1)}%`
+      `[案 11b] tools/list  唯讀憑證（七支，對照）wire=${roWire}  讀寫憑證（十支，對照）wire=${rwWire}  ` +
+        `讀寫搬移憑證（十一支，對照）wire=${rwmWire}  讀寫刪除憑證（十二支，對照）wire=${rwdWire}  ` +
+        `讀寫搬移刪除憑證（十三支，被測）wire=${rwmdWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmdWire / N_LIST_MAX) * 100).toFixed(1)}%`
     );
-    expect(rwmWire).toBeLessThanOrEqual(N_LIST_MAX);
+    expect(rwmdWire).toBeLessThanOrEqual(N_LIST_MAX);
   });
 });
 
@@ -478,6 +514,41 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
     const [over] = await ctx.db.insert(uploads).values({ noteId: note.id, uploaderId: o.id, mime: "image/png", size: MCP_IMAGE_MAX_BYTES + 1 }).returning({ id: uploads.id });
     const r2 = await mcpPost(ctx.app, rpc("tools/call", { name: "read_note_image", arguments: { note_id: note.id, upload_id: over!.id } }), { token: o.token });
     expect(r2.json().result.structuredContent.code).toBe("file_too_large");
+  });
+
+  /**
+   * 測資 (vii)（#181 PR-2d，plan 讀碼發現 4）：`list_trash` 的最壞形。一頁 100 項（101 篇 → `truncated: true`），每項的
+   * `title`（DB 不限長）與刪除者 `displayName`（DB 不限長）都以 300 個 `"` 截成 100 個 `"` ＋ `*Truncated`（理由同 (iv)：`"` 的
+   * wire／預算比最大）、`handle` 32、群組形（`group` 物件）、`retentionDays` 3650（`purgeAt` 非 null）。
+   * 第一發照 plan 用群組名 80 個 `"`（不截）；第二發換成 (iv) 的 67 個 `"` ＋ 13 個 U+0001（截過＋`nameTruncated`，群組名的真正最壞形）。
+   * 突變（`toTrashItemForModel` 不截標題、outputSchema 同時放寬；2026-10-26 實跑）→ 第一發 351 998 > N，紅。
+   * `delete_note`／`restore_note` 各量一發（同一篇、最壞標題；`restore_note` 回的是 noteSummary 形，群組名是第二發那個）。
+   * 實測見 `[案 11c]` 那幾行 log。
+   */
+  it("(vii) #181 list_trash：101 篇最壞垃圾桶群組筆記（標題、刪除者名各 300 個 `\"`，handle 32，保留 3650 天）→ ≤ N；delete_note／restore_note 最壞標題 → ≤ N", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    const handle = `h${"a".repeat(31)}`;
+    await ctx.db.update(users).set({ handle, displayName: '"'.repeat(300) }).where(eq(users.id, o.id));
+    await ctx.db.$client.query(`update site_settings set trash_retention_days = 3650`);
+    const g = await seedGroup(ctx.db, '"'.repeat(80), [{ userId: o.id, role: "admin" }]);
+    const ids: string[] = [];
+    for (let i = 0; i < MCP_PAGE_MAX + 1; i += 1) {
+      const n = String(i).padStart(4, "0");
+      const id = await seedMaxNote(ctx.db, { groupId: g.id }, o.id, { title: '"'.repeat(300), slug: `${n}-${"s".repeat(95)}`, agentLabel: "g".repeat(32) });
+      await markTrashed(ctx.db.$client, id, o.id);
+      ids.push(id);
+    }
+    const wire = await callWire(ctx.app, o.token, "(vii) list_trash 101 篇（群組名 80 個 \"）", "list_trash", {});
+    expect(wire).toBeGreaterThan(MIN_WORST_TRASH_WIRE); // 「測資沒造滿／截過頭」的哨兵，見常數註解
+
+    await ctx.db.update(groups).set({ name: `${'"'.repeat(67)}${"\u0001".repeat(13)}` }).where(eq(groups.id, g.id));
+    const wire2 = await callWire(ctx.app, o.token, "(vii) list_trash 101 篇（群組名 67+13）", "list_trash", {});
+    expect(wire2).toBeGreaterThan(wire); // 群組名真的換成截過的形（沒換到就是重量第一發）
+
+    const { token: rwmdToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move notes:delete");
+    await callWire(ctx.app, rwmdToken, "(vii) restore_note（最壞標題）", "restore_note", { note_id: ids[0] });
+    await callWire(ctx.app, rwmdToken, "(vii) delete_note（最壞標題）", "delete_note", { note_id: ids[0] });
   });
 
   // 整張表印一次（PR 描述要貼）。**刻意是 hook 不是 `it`**：它只彙整前面幾案已經斷言過的

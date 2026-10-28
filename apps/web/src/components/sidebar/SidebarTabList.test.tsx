@@ -16,14 +16,14 @@ function renderList() {
   );
 }
 
-const TAB_IDS = ["recent", "myNotes", "workspace", "shared"] as const;
+const TAB_IDS = ["recent", "myNotes", "workspace", "shared", "trash"] as const;
 
 describe("SidebarTabList", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  it("TL1：tablist 名、四顆 tab 的名稱／title／圖示／預設選中", () => {
+  it("TL1：tablist 名、五顆 tab 的名稱／title／圖示／預設選中", () => {
     renderList();
     expect(screen.getByRole("tablist", { name: "Sidebar sections" })).toBeInTheDocument();
     const tabs = screen.getAllByRole("tab");
@@ -32,6 +32,7 @@ describe("SidebarTabList", () => {
       "My notes",
       "Workspace",
       "Shared with me",
+      "Trash",
     ]);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual(
       tabs.map((tab) => tab.getAttribute("title")),
@@ -41,13 +42,14 @@ describe("SidebarTabList", () => {
       "user",
       "users",
       "share",
+      "trash",
     ]);
-    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true", "false", "false"]);
+    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true", "false", "false", "false"]);
   });
 
   it("TL2 roving：只有選中那顆 tabIndex 0", () => {
     renderList();
-    expect(screen.getAllByRole("tab").map((tab) => tab.tabIndex)).toEqual([-1, 0, -1, -1]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.tabIndex)).toEqual([-1, 0, -1, -1, -1]);
   });
 
   it("TL3 點擊：切選中、tabIndex、並寫進 localStorage", () => {
@@ -77,15 +79,15 @@ describe("SidebarTabList", () => {
 
     // 循環：第一顆往左 → 最後一顆；最後一顆往右 → 第一顆。
     expect(fireEvent.keyDown(tab("Recent"), { key: "ArrowLeft" })).toBe(false);
-    expect(selected()).toBe(tab("Shared with me"));
-    expect(tab("Shared with me")).toHaveFocus();
-    expect(fireEvent.keyDown(tab("Shared with me"), { key: "ArrowRight" })).toBe(false);
+    expect(selected()).toBe(tab("Trash"));
+    expect(tab("Trash")).toHaveFocus();
+    expect(fireEvent.keyDown(tab("Trash"), { key: "ArrowRight" })).toBe(false);
     expect(selected()).toBe(tab("Recent"));
 
     expect(fireEvent.keyDown(tab("Recent"), { key: "End" })).toBe(false);
-    expect(selected()).toBe(tab("Shared with me"));
-    expect(tab("Shared with me")).toHaveFocus();
-    expect(fireEvent.keyDown(tab("Shared with me"), { key: "Home" })).toBe(false);
+    expect(selected()).toBe(tab("Trash"));
+    expect(tab("Trash")).toHaveFocus();
+    expect(fireEvent.keyDown(tab("Trash"), { key: "Home" })).toBe(false);
     expect(selected()).toBe(tab("Recent"));
     expect(tab("Recent")).toHaveFocus();
 
@@ -103,7 +105,7 @@ describe("SidebarTabList", () => {
   it("TL6 class：選中／未選的配色與共用的高度、焦點環", () => {
     renderList();
     expect(screen.getByRole("tab", { name: "My notes" })).toHaveClass("border-brand", "text-brand-on-soft");
-    for (const name of ["Recent", "Workspace", "Shared with me"]) {
+    for (const name of ["Recent", "Workspace", "Shared with me", "Trash"]) {
       expect(screen.getByRole("tab", { name })).toHaveClass("border-transparent", "text-muted-foreground");
     }
     for (const tab of screen.getAllByRole("tab")) {
@@ -120,6 +122,7 @@ describe("SidebarTabList", () => {
       "我的筆記",
       "工作坊",
       "與我共享",
+      "垃圾桶",
     ]);
   });
 });

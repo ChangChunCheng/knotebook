@@ -7,24 +7,28 @@ import { MAX_PROVIDER_ICON_BYTES, autoSlugFromTitle, validateHandle, validateSlu
 import { applyMigrationsThrough, freshDb, freshEmptyDb, idxOfTag, journalEntries } from "./helpers.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
-import { apiTokens, authProviders, groupMembers, groupRoles, groups, noteRedirects, notes, oauthClients, oauthCodes, noteSearchSections, noteSearchState, noteLinkConversion, noteVersions, handleRenames, oauthRequests, oneTimeLinks, siteSettings, storagePlans, transferTokens, userIdentities, users } from "../src/db/schema.js";
+import { apiTokens, authProviders, folders, groupMembers, groupRoles, groups, notePlacements, noteRedirects, notes, oauthClients, oauthCodes, noteSearchSections, noteSearchState, noteLinkConversion, noteVersions, handleRenames, oauthRequests, oneTimeLinks, siteSettings, storagePlans, transferTokens, userIdentities, users } from "../src/db/schema.js";
 
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** drizzle 對 `schema.ts` 的序列化；宣告漂移守衛拿最新一支當比對基準（Task 14 rebase 後改成實際檔名）。 */
-const SNAPSHOT_FILE = "meta/0032_snapshot.json";
+const SNAPSHOT_FILE = "meta/0035_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
-  tables: Record<string, { checkConstraints?: Record<string, { name: string; value: string }> }>;
+  tables: Record<string, {
+    checkConstraints?: Record<string, { name: string; value: string }>;
+    columns?: Record<string, { notNull: boolean }>;
+    foreignKeys?: Record<string, { name: string; onDelete?: string }>;
+  }>;
 };
 const pgDialect = new PgDialect();
 
 describe("runMigrations", () => {
-  it("migrate 兩次 idempotent 且 32 張表存在", async () => {
+  it("migrate 兩次 idempotent 且 34 張表存在", async () => {
     const { db, pool } = await freshDb();
     await runMigrations(db); // freshDb 已跑過一次——此為第二次
     const r = await pool.query(`select table_name from information_schema.tables where table_schema='public'`);
     const tableNames = r.rows.map(x => x.table_name);
-    for (const t of ["users", "instance_setup", "notes", "note_states", "note_state_backups", "note_shares", "note_links", "uploads", "ai_providers", "ai_models", "ai_actions", "handles", "api_tokens", "oauth_clients", "oauth_requests", "oauth_codes", "note_ai_edits", "groups", "group_members", "group_roles", "note_redirects", "auth_providers", "user_identities", "site_settings", "note_search_sections", "note_search_state", "transfer_tokens", "storage_plans", "note_versions", "note_link_conversion", "handle_renames", "one_time_links"])
+    for (const t of ["users", "instance_setup", "notes", "note_states", "note_state_backups", "note_shares", "note_links", "uploads", "ai_providers", "ai_models", "ai_actions", "handles", "api_tokens", "oauth_clients", "oauth_requests", "oauth_codes", "note_ai_edits", "groups", "group_members", "group_roles", "note_redirects", "auth_providers", "user_identities", "site_settings", "note_search_sections", "note_search_state", "transfer_tokens", "storage_plans", "note_versions", "note_link_conversion", "handle_renames", "one_time_links", "folders", "note_placements"])
       expect(tableNames).toContain(t);
   });
 
@@ -1404,7 +1408,7 @@ describe("0009_api-tokens", () => {
       expect(names, i).toContain(i);
   });
 
-  it("schema.ts 的二十一個宣告沒有靜默漂移（四個 OAuth／token 宣告零 import；#103／#175 的四張表的 CHECK 也在這裡逐字比對、#187 的三張表、#93 的兩張表、#200 的一張表、容量上限的 users／storage_plans、版本歷史的 note_versions、#269 的 note_link_conversion、#291 的 handle_renames、#286 的 one_time_links（#285 擴充））", async () => {
+  it("schema.ts 的二十三個宣告沒有靜默漂移（四個 OAuth／token 宣告零 import；#103／#175 的四張表的 CHECK 也在這裡逐字比對、#187 的三張表、#93 的兩張表、#200 的一張表、容量上限的 users／storage_plans、版本歷史的 note_versions、#269 的 note_link_conversion、#291 的 handle_renames、#286 的 one_time_links（#285 擴充）、資料夾的 folders／note_placements）", async () => {
     // 比照 0008 的同族守衛：把 schema.ts 的宣告與 migration 造出來的 DB 對起來。
     // 沒有這一案的話，把 schema.ts 的四段 pgTable 整個刪掉，全套測試照樣綠——
     // 只有下一次 db:generate 會產出 DROP TABLE。
@@ -1450,7 +1454,7 @@ describe("0009_api-tokens", () => {
       site_settings: [
         "singleton", "registration_enabled", "password_login_enabled", "legacy_oidc_env_handled_at", "updated_at",
         "default_user_storage_plan_id", "default_group_storage_plan_id",
-        "version_keep_all_days", "version_daily_until_days", "auto_versions_enabled", "version_auto_wait_minutes",
+        "version_keep_all_days", "version_daily_until_days", "auto_versions_enabled", "version_auto_wait_minutes", "trash_retention_days",
       ],
       note_search_sections: ["id", "note_id", "source_kind", "source_id", "section_id", "ord", "heading", "body"],
       note_search_state: ["note_id", "extractor_version", "source_version", "content_hash", "indexed_units", "capped", "indexed_at"],
@@ -1458,9 +1462,12 @@ describe("0009_api-tokens", () => {
       notes: [
         "id", "owner_id", "title", "slug", "slug_is_custom", "prev_slug", "legacy_slug", "public_token", "public_slug", "public_width",
         "links_clock", "created_at", "updated_at", "last_edited_at", "last_edited_by", "last_edited_token_id",
-        "last_edited_agent_label", "deleted_at", "group_id",
+        "last_edited_agent_label", "deleted_at", "deleted_by", "group_id",
         "version_counter", "version_base_seq", "version_base_fingerprint", "version_pending_at", "version_pending_editors", "version_pending_ref_fingerprint", "version_base_version_id",
+        "folder_id", "trash_folder_path",
       ],
+      folders: ["id", "kind", "owner_id", "group_id", "parent_id", "name", "created_by", "created_at"],
+      note_placements: ["user_id", "note_id", "folder_id"],
       users: [
         "id", "email", "handle", "password_hash", "oidc_issuer", "oidc_sub", "display_name", "avatar_url", "is_admin",
         "disabled_at", "token_version", "must_change_password", "created_at", "storage_plan_id", "auto_versions",
@@ -1495,6 +1502,8 @@ describe("0009_api-tokens", () => {
       ["note_link_conversion", noteLinkConversion],
       ["handle_renames", handleRenames],
       ["one_time_links", oneTimeLinks],
+      ["folders", folders],
+      ["note_placements", notePlacements],
     ] as const) {
       const cfg = getTableConfig(decl);
       // 宣告的欄名 = DB 的欄名 = 這裡寫死的期望（三方對齊，任一邊漂移就紅）
@@ -1532,6 +1541,17 @@ describe("0009_api-tokens", () => {
         expect(pgDialect.sqlToQuery(c.value).sql, `${table}.${c.name} 的運算式`).toBe(
           snapshotChecks[c.name]!.value
         );
+      }
+
+      // notNull 與 FK（名稱＋onDelete）也對 snapshot：schema.ts 改了而沒重新 generate 就紅。
+      const snapTable = snapshotLatest.tables[`public.${table}`];
+      for (const c of cfg.columns) {
+        expect(snapTable?.columns?.[c.name]?.notNull, `${table}.${c.name} 的 notNull`).toBe(c.notNull);
+      }
+      const snapFks = snapTable?.foreignKeys ?? {};
+      expect(Object.keys(snapFks).sort(), `${table} 的 FK 名集合`).toEqual(cfg.foreignKeys.map(f => f.getName()).sort());
+      for (const f of cfg.foreignKeys) {
+        expect(snapFks[f.getName()]?.onDelete ?? "no action", `${table}.${f.getName()} 的 onDelete`).toBe(f.onDelete ?? "no action");
       }
     }
 
@@ -2707,5 +2727,495 @@ describe("0025_version-pending-and-base-id（#272 spec §5.1，案 26）", () =>
     const idx = (await pool.query(`select indexdef from pg_indexes where indexname = 'notes_version_pending_idx'`)).rows;
     expect(idx).toHaveLength(1);
     expect(idx[0].indexdef).toMatch(/\(version_pending_at\) WHERE \(version_pending_at IS NOT NULL\)/);
+  });
+});
+
+describe("0033_trash（#181 spec §6.1）", () => {
+  async function seedUser(pool: import("pg").Pool): Promise<string> {
+    const u = await pool.query(`insert into users (email, display_name) values ($1, 'T') returning id`, [`trash-${randomUUID()}@example.com`]);
+    return u.rows[0].id as string;
+  }
+  async function seedNote(pool: import("pg").Pool, owner: string): Promise<string> {
+    return (await pool.query(`insert into notes (owner_id) values ($1) returning id`, [owner])).rows[0].id as string;
+  }
+
+  it("M1 形狀：兩個新欄、FK set null、partial index", async () => {
+    const { pool } = await freshDb();
+    const col = async (table: string, column: string) =>
+      (await pool.query(
+        `select data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name = $1 and column_name = $2`,
+        [table, column],
+      )).rows;
+    expect(await col("notes", "deleted_by")).toEqual([{ data_type: "uuid", is_nullable: "YES", column_default: null }]);
+    expect(await col("site_settings", "trash_retention_days")).toEqual([{ data_type: "integer", is_nullable: "YES", column_default: "7" }]);
+    const fk = (await pool.query(`select confdeltype, confrelid = 'users'::regclass as to_users from pg_constraint where conname = 'notes_deleted_by_fk'`)).rows;
+    expect(fk).toEqual([{ confdeltype: "n", to_users: true }]);
+    const idx = (await pool.query(`select indexdef from pg_indexes where indexname = 'notes_deleted_at_idx'`)).rows;
+    expect(idx).toHaveLength(1);
+    expect(idx[0].indexdef).toMatch(/\(deleted_at\) WHERE \(deleted_at IS NOT NULL\)$/);
+  });
+
+  it("M2 CHECK：deleted_by 必須伴隨 deleted_at；保留天數 NULL 或 1–3650", async () => {
+    const { pool } = await freshDb();
+    const u = await seedUser(pool);
+    const n = await seedNote(pool, u);
+    await expect(pool.query(`update notes set deleted_by = $1 where id = $2`, [u, n]))
+      .rejects.toMatchObject({ code: "23514", constraint: "notes_deleted_by_chk" });
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [u, n]);
+    await pool.query(`update notes set deleted_by = null where id = $1`, [n]);
+    expect((await pool.query(`select deleted_at is not null as d, deleted_by from notes where id = $1`, [n])).rows).toEqual([{ d: true, deleted_by: null }]);
+    for (const d of [0, 3651]) {
+      await expect(pool.query(`update site_settings set trash_retention_days = $1`, [d]))
+        .rejects.toMatchObject({ code: "23514", constraint: "site_settings_trash_retention_chk" });
+    }
+    for (const d of [1, 3650, null]) await pool.query(`update site_settings set trash_retention_days = $1`, [d]);
+    const def = (await pool.query(`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'site_settings_trash_retention_chk'`)).rows;
+    expect(def).toHaveLength(1);
+    expect(def[0].def).toContain("3650");
+  });
+
+  it("M3 升級既有資料：deleted_at 殘值不回填、不清理；deleted_by NULL；保留天數 7；再跑一次不變", async () => {
+    const { db, pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag("0033_trash") - 1);
+    const u = await seedUser(pool);
+    const live = await seedNote(pool, u);
+    const stale = await seedNote(pool, u);
+    await pool.query(`update notes set deleted_at = '2026-01-02T03:04:05Z' where id = $1`, [stale]);
+    await runMigrations(db);
+    const rows = async () => (await pool.query(
+      `select id, to_char(deleted_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') as at, deleted_by from notes order by id`,
+    )).rows;
+    const expected = [
+      { id: live, at: null, deleted_by: null },
+      { id: stale, at: "2026-01-02T03:04:05", deleted_by: null },
+    ].sort((a, b) => (a.id < b.id ? -1 : 1));
+    expect(await rows()).toEqual(expected);
+    expect((await pool.query(`select trash_retention_days from site_settings`)).rows).toEqual([{ trash_retention_days: 7 }]);
+    await runMigrations(db);
+    expect(await rows()).toEqual(expected);
+    expect((await pool.query(`select trash_retention_days from site_settings`)).rows).toEqual([{ trash_retention_days: 7 }]);
+  });
+
+  it("M4 移入者帳號被刪：deleted_by 變 NULL、筆記與 deleted_at 不變", async () => {
+    const { pool } = await freshDb();
+    const owner = await seedUser(pool);
+    const x = await seedUser(pool);
+    const n = await seedNote(pool, owner);
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [x, n]);
+    const bystander = await seedNote(pool, owner);
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1 where id = $2`, [owner, bystander]);
+    const before = (await pool.query(`select deleted_at from notes where id = $1`, [n])).rows[0].deleted_at;
+    await pool.query(`delete from users where id = $1`, [x]);
+    const after = (await pool.query(`select deleted_at, deleted_by from notes where id = $1`, [n])).rows;
+    expect(after).toEqual([{ deleted_at: before, deleted_by: null }]);
+    expect((await pool.query(`select deleted_by from notes where id = $1`, [bystander])).rows).toEqual([{ deleted_by: owner }]);
+  });
+
+  it("M5 trash 的 SQL 檔無 CONCURRENTLY／行首 COMMIT（單一 tx 前提的輔助 grep）", () => {
+    const entries = journalEntries().filter(e => e.tag.endsWith("_trash"));
+    expect(entries, "journal 裡要恰有一支 *_trash").toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${entries[0]!.tag}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+  });
+});
+
+describe("0034_folders（spec 2026-10-22 §5.1）", () => {
+  type Pool = import("pg").Pool;
+  async function seedUser(pool: Pool): Promise<string> {
+    const u = await pool.query(`insert into users (email, display_name) values ($1, 'F') returning id`, [`folders-${randomUUID()}@example.com`]);
+    return u.rows[0].id as string;
+  }
+  async function seedGroup(pool: Pool): Promise<string> {
+    return (await pool.query(`insert into groups (name) values ('G') returning id`)).rows[0].id as string;
+  }
+  async function seedNote(pool: Pool, owner: { ownerId: string } | { groupId: string }, folderId: string | null = null): Promise<string> {
+    const [col, val] = "ownerId" in owner ? ["owner_id", owner.ownerId] : ["group_id", owner.groupId];
+    return (await pool.query(`insert into notes (${col}, folder_id) values ($1, $2) returning id`, [val, folderId])).rows[0].id as string;
+  }
+  type Space = { personal: string } | { shared: string } | { group: string };
+  async function seedFolder(pool: Pool, space: Space, name: string, parentId: string | null = null): Promise<string> {
+    const [kind, ownerId, groupId] =
+      "personal" in space ? ["personal", space.personal, null] : "shared" in space ? ["shared", space.shared, null] : ["group", null, space.group];
+    return (await pool.query(
+      `insert into folders (kind, owner_id, group_id, parent_id, name) values ($1, $2, $3, $4, $5) returning id`,
+      [kind, ownerId, groupId, parentId, name],
+    )).rows[0].id as string;
+  }
+  const folderIdOf = async (pool: Pool, noteId: string) =>
+    (await pool.query(`select folder_id from notes where id = $1`, [noteId])).rows[0]?.folder_id as string | null | undefined;
+  const byId = <T extends { id: string }>(rows: T[]) => rows.slice().sort((x, y) => (x.id < y.id ? -1 : 1));
+
+  it("F-M1 形狀：新欄、FK 的 onDelete、放置的複合 FK", async () => {
+    const { pool } = await freshDb();
+    const cols = async (table: string, only: string[] | null = null) =>
+      (await pool.query(
+        `select column_name, data_type, is_nullable, column_default from information_schema.columns
+          where table_schema = 'public' and table_name = $1 and ($2::text[] is null or column_name = any($2)) order by ordinal_position`,
+        [table, only],
+      )).rows;
+    expect(await cols("folders")).toEqual([
+      { column_name: "id", data_type: "uuid", is_nullable: "NO", column_default: "gen_random_uuid()" },
+      { column_name: "kind", data_type: "text", is_nullable: "NO", column_default: null },
+      { column_name: "owner_id", data_type: "uuid", is_nullable: "YES", column_default: null },
+      { column_name: "group_id", data_type: "uuid", is_nullable: "YES", column_default: null },
+      { column_name: "parent_id", data_type: "uuid", is_nullable: "YES", column_default: null },
+      { column_name: "name", data_type: "text", is_nullable: "NO", column_default: null },
+      { column_name: "created_by", data_type: "uuid", is_nullable: "YES", column_default: null },
+      { column_name: "created_at", data_type: "timestamp with time zone", is_nullable: "NO", column_default: "now()" },
+    ]);
+    expect(await cols("note_placements")).toEqual([
+      { column_name: "user_id", data_type: "uuid", is_nullable: "NO", column_default: null },
+      { column_name: "note_id", data_type: "uuid", is_nullable: "NO", column_default: null },
+      { column_name: "folder_id", data_type: "uuid", is_nullable: "NO", column_default: null },
+    ]);
+    expect(await cols("notes", ["folder_id", "trash_folder_path"])).toEqual([
+      { column_name: "folder_id", data_type: "uuid", is_nullable: "YES", column_default: null },
+      { column_name: "trash_folder_path", data_type: "jsonb", is_nullable: "YES", column_default: null },
+    ]);
+    const fks = (await pool.query(
+      `select c.conname, c.confdeltype, c.confrelid::regclass::text as ref,
+              (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality as k(attnum, ord)
+                 join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as cols
+         from pg_constraint c
+        where c.contype = 'f' and c.conrelid in ('folders'::regclass, 'note_placements'::regclass, 'notes'::regclass)
+          and (c.conrelid <> 'notes'::regclass or c.conname = 'notes_folder_fk')
+        order by c.conname`,
+    )).rows;
+    expect(fks).toEqual([
+      { conname: "folders_created_by_users_id_fk", confdeltype: "n", ref: "users", cols: ["created_by"] },
+      { conname: "folders_group_id_groups_id_fk", confdeltype: "c", ref: "groups", cols: ["group_id"] },
+      { conname: "folders_owner_id_users_id_fk", confdeltype: "c", ref: "users", cols: ["owner_id"] },
+      { conname: "folders_parent_id_folders_id_fk", confdeltype: "c", ref: "folders", cols: ["parent_id"] },
+      { conname: "note_placements_folder_id_folders_id_fk", confdeltype: "c", ref: "folders", cols: ["folder_id"] },
+      { conname: "note_placements_share_fk", confdeltype: "c", ref: "note_shares", cols: ["note_id", "user_id"] },
+      { conname: "notes_folder_fk", confdeltype: "n", ref: "folders", cols: ["folder_id"] },
+    ]);
+  });
+
+  it("F-M2 CHECK：kind、空間、名稱長度、不指向自己、快照形狀", async () => {
+    const { pool } = await freshDb();
+    const u = await seedUser(pool);
+    const g = await seedGroup(pool);
+    const ins = (kind: string, ownerId: string | null, groupId: string | null, name = "N") =>
+      pool.query(`insert into folders (kind, owner_id, group_id, name) values ($1, $2, $3, $4)`, [kind, ownerId, groupId, name]);
+    await expect(ins("x", u, null)).rejects.toMatchObject({ code: "23514", constraint: "folders_kind_chk" });
+    await expect(ins("personal", null, g)).rejects.toMatchObject({ code: "23514", constraint: "folders_space_chk" });
+    await expect(ins("group", u, null)).rejects.toMatchObject({ code: "23514", constraint: "folders_space_chk" });
+    await expect(ins("personal", null, null)).rejects.toMatchObject({ code: "23514", constraint: "folders_space_chk" });
+    await expect(ins("personal", u, null, "")).rejects.toMatchObject({ code: "23514", constraint: "folders_name_chk" });
+    await expect(ins("personal", u, null, "a".repeat(81))).rejects.toMatchObject({ code: "23514", constraint: "folders_name_chk" });
+    await ins("personal", u, null, "\u{1F600}".repeat(80));
+    const self = randomUUID();
+    await expect(
+      pool.query(`insert into folders (id, kind, owner_id, parent_id, name) values ($1, 'personal', $2, $1, 'S')`, [self, u]),
+    ).rejects.toMatchObject({ code: "23514", constraint: "folders_parent_not_self_chk" });
+    const n = await seedNote(pool, { ownerId: u });
+    await expect(pool.query(`update notes set trash_folder_path = '{}'::jsonb where id = $1`, [n]))
+      .rejects.toMatchObject({ code: "23514", constraint: "notes_trash_folder_path_chk" });
+    await pool.query(`update notes set trash_folder_path = '[]'::jsonb where id = $1`, [n]);
+  });
+
+  it("F-M3 同層名稱不分大小寫唯一（根層也算）；不同空間或父層可同名", async () => {
+    const { pool } = await freshDb();
+    const u1 = await seedUser(pool);
+    const u2 = await seedUser(pool);
+    const g1 = await seedGroup(pool);
+    const g2 = await seedGroup(pool);
+    await seedFolder(pool, { personal: u1 }, "Docs");
+    await expect(seedFolder(pool, { personal: u1 }, "docs")).rejects.toMatchObject({ code: "23505", constraint: "folders_sibling_name_idx" });
+    await seedFolder(pool, { personal: u2 }, "docs");
+    const p = await seedFolder(pool, { personal: u1 }, "P");
+    await seedFolder(pool, { personal: u1 }, "docs", p);
+    await seedFolder(pool, { shared: u1 }, "Docs");
+    await seedFolder(pool, { group: g1 }, "Docs");
+    await seedFolder(pool, { group: g2 }, "Docs");
+    await expect(seedFolder(pool, { group: g1 }, "DOCS")).rejects.toMatchObject({ code: "23505", constraint: "folders_sibling_name_idx" });
+    const idx = (await pool.query(`select indexdef from pg_indexes where indexname = 'folders_sibling_name_idx'`)).rows;
+    expect(idx).toHaveLength(1);
+    expect(idx[0].indexdef).toContain("NULLS NOT DISTINCT");
+    expect(idx[0].indexdef).toContain("lower(name)");
+  });
+
+  it("F-M4 trigger 1：筆記與資料夾同空間（KF001）；歸屬變了而 folder_id 沒變 → 自癒成 NULL", async () => {
+    const { pool } = await freshDb();
+    const u1 = await seedUser(pool);
+    const u2 = await seedUser(pool);
+    const g = await seedGroup(pool);
+    const f1 = await seedFolder(pool, { personal: u1 }, "Mine");
+    const f2 = await seedFolder(pool, { personal: u2 }, "Theirs");
+    const s1 = await seedFolder(pool, { shared: u1 }, "SharedMine");
+    const gf = await seedFolder(pool, { group: g }, "GroupF");
+    await expect(seedNote(pool, { ownerId: u1 }, f2)).rejects.toMatchObject({ code: "KF001" });
+    await expect(seedNote(pool, { ownerId: u1 }, s1)).rejects.toMatchObject({ code: "KF001" });
+    await expect(seedNote(pool, { groupId: g }, f1)).rejects.toMatchObject({ code: "KF001" });
+    const mine = await seedNote(pool, { ownerId: u1 }, f1);
+    const inGroup = await seedNote(pool, { groupId: g }, gf);
+    expect(await folderIdOf(pool, mine)).toBe(f1);
+    expect(await folderIdOf(pool, inGroup)).toBe(gf);
+    const loose = await seedNote(pool, { ownerId: u1 });
+    await expect(pool.query(`update notes set folder_id = $1 where id = $2`, [f2, loose])).rejects.toMatchObject({ code: "KF001" });
+    // 資料夾不存在：trigger 1 放行，交給 FK 報 23503
+    await expect(seedNote(pool, { ownerId: u1 }, randomUUID())).rejects.toMatchObject({ code: "23503", constraint: "notes_folder_fk" });
+    // 自癒：舊版碼的移入群組（owner → group）與轉移形（owner 換人），folder_id 沒動 → NULL
+    await pool.query(`update notes set owner_id = null, group_id = $1 where id = $2`, [g, mine]);
+    expect(await folderIdOf(pool, mine)).toBeNull();
+    const mine2 = await seedNote(pool, { ownerId: u1 }, f1);
+    await pool.query(`update notes set owner_id = $1 where id = $2`, [u2, mine2]);
+    expect(await folderIdOf(pool, mine2)).toBeNull();
+  });
+
+  it("F-M5 trigger 2：父子同空間（KF002）；一句 UPDATE 轉整棵可過；只改子層在那一句就 reject", async () => {
+    const { pool } = await freshDb();
+    const u1 = await seedUser(pool);
+    const u2 = await seedUser(pool);
+    const g1 = await seedGroup(pool);
+    const g2 = await seedGroup(pool);
+    const gParent = await seedFolder(pool, { group: g1 }, "GP");
+    await expect(seedFolder(pool, { group: g2 }, "C", gParent)).rejects.toMatchObject({ code: "KF002" });
+    const pParent = await seedFolder(pool, { personal: u1 }, "PP");
+    await expect(seedFolder(pool, { shared: u1 }, "C", pParent)).rejects.toMatchObject({ code: "KF002" });
+    const other = await seedFolder(pool, { personal: u2 }, "Other");
+    await expect(pool.query(`update folders set parent_id = $1 where id = $2`, [pParent, other])).rejects.toMatchObject({ code: "KF002" });
+    expect((await pool.query(`select parent_id from folders where id = $1`, [other])).rows).toEqual([{ parent_id: null }]);
+
+    const top = await seedFolder(pool, { group: g2 }, "Top");
+    const mid = await seedFolder(pool, { group: g2 }, "Mid", top);
+    const leaf = await seedFolder(pool, { group: g2 }, "Leaf", mid);
+    // 在 begin 之內斷言「那一句本身」reject：autocommit 下 DEFERRABLE 版的錯誤也會在緊接的 COMMIT 冒出，分不出來
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await expect(
+        c.query(`update folders set kind = 'personal', owner_id = $1, group_id = null where id = $2`, [u1, leaf]),
+      ).rejects.toMatchObject({ code: "KF002" });
+    } finally {
+      await c.query("rollback");
+      c.release();
+    }
+    await pool.query(`update folders set kind = 'personal', owner_id = $1, group_id = null where group_id = $2`, [u1, g2]);
+    const tree = (await pool.query(`select id, kind, owner_id, group_id from folders where id = any($1)`, [[top, mid, leaf]])).rows;
+    expect(byId(tree)).toEqual(byId([top, mid, leaf].map(id => ({ id, kind: "personal", owner_id: u1, group_id: null }))));
+  });
+
+  it("F-M6 trigger 3 與放置 FK：只能放進自己的 shared 資料夾（KF003）；分享列、筆記或資料夾消失 → 放置消失", async () => {
+    const { pool } = await freshDb();
+    const owner = await seedUser(pool);
+    const u2 = await seedUser(pool);
+    const u3 = await seedUser(pool);
+    const n = await seedNote(pool, { ownerId: owner });
+    const n2 = await seedNote(pool, { ownerId: owner });
+    for (const [note, user] of [[n, u2], [n2, u2], [n, u3]] as const) {
+      await pool.query(`insert into note_shares (note_id, user_id, role) values ($1, $2, 'viewer')`, [note, user]);
+    }
+    const personal2 = await seedFolder(pool, { personal: u2 }, "P2");
+    const shared2 = await seedFolder(pool, { shared: u2 }, "S2");
+    const shared2b = await seedFolder(pool, { shared: u2 }, "S2b");
+    const shared3 = await seedFolder(pool, { shared: u3 }, "S3");
+    const place = (user: string, note: string, folder: string) =>
+      pool.query(`insert into note_placements (user_id, note_id, folder_id) values ($1, $2, $3)`, [user, note, folder]);
+    const placements = async () =>
+      (await pool.query(`select user_id, note_id, folder_id from note_placements order by user_id, note_id`)).rows;
+    const sorted = (rows: Array<{ user_id: string; note_id: string; folder_id: string }>) =>
+      rows.slice().sort((a, b) => (a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : a.note_id < b.note_id ? -1 : 1));
+    await expect(place(u2, n, personal2)).rejects.toMatchObject({ code: "KF003" });
+    await expect(place(u2, n, shared3)).rejects.toMatchObject({ code: "KF003" });
+    await place(u2, n, shared2);
+    await place(u2, n2, shared2b);
+    await expect(pool.query(`update note_placements set folder_id = $1 where user_id = $2 and note_id = $3`, [personal2, u2, n]))
+      .rejects.toMatchObject({ code: "KF003" });
+    const owner3 = await seedUser(pool);
+    const unshared = await seedNote(pool, { ownerId: owner3 });
+    await expect(place(u3, unshared, shared3)).rejects.toMatchObject({ code: "23503", constraint: "note_placements_share_fk" });
+    await place(u3, n, shared3);
+
+    await pool.query(`delete from note_shares where note_id = $1 and user_id = $2`, [n, u2]);
+    expect(await placements()).toEqual(sorted([
+      { user_id: u2, note_id: n2, folder_id: shared2b },
+      { user_id: u3, note_id: n, folder_id: shared3 },
+    ]));
+    await pool.query(`delete from notes where id = $1`, [n2]);
+    expect((await pool.query(`select count(*)::int as c from note_shares where note_id = $1`, [n2])).rows).toEqual([{ c: 0 }]);
+    expect(await placements()).toEqual([{ user_id: u3, note_id: n, folder_id: shared3 }]);
+    await pool.query(`delete from folders where id = $1`, [shared3]);
+    expect(await placements()).toEqual([]);
+  });
+
+  it("F-M7 刪資料夾：子資料夾 CASCADE，指向子樹的筆記（活的、垃圾桶的）folder_id → NULL；旁觀者不動", async () => {
+    const { pool } = await freshDb();
+    const u = await seedUser(pool);
+    const a = await seedFolder(pool, { personal: u }, "A");
+    const b = await seedFolder(pool, { personal: u }, "B", a);
+    const c = await seedFolder(pool, { personal: u }, "C");
+    const live = await seedNote(pool, { ownerId: u }, a);
+    const trashed = await seedNote(pool, { ownerId: u }, a);
+    await pool.query(`update notes set deleted_at = now() where id = $1`, [trashed]);
+    const inChild = await seedNote(pool, { ownerId: u }, b);
+    const bystander = await seedNote(pool, { ownerId: u }, c);
+    await pool.query(`delete from folders where id = $1`, [a]);
+    expect((await pool.query(`select id from folders where id = any($1)`, [[a, b, c]])).rows).toEqual([{ id: c }]);
+    const rows = (await pool.query(`select id, folder_id from notes where id = any($1)`, [[live, trashed, inChild, bystander]])).rows;
+    expect(byId(rows)).toEqual(byId([
+      { id: live, folder_id: null },
+      { id: trashed, folder_id: null },
+      { id: inChild, folder_id: null },
+      { id: bystander, folder_id: c },
+    ]));
+  });
+
+  it("F-M8 升級既有資料：既有筆記（含垃圾桶）全在根層、無快照；再跑一次不變", async () => {
+    const { db, pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag("0034_folders") - 1);
+    const u = await seedUser(pool);
+    const v = await seedUser(pool);
+    const live = (await pool.query(`insert into notes (owner_id) values ($1) returning id`, [u])).rows[0].id as string;
+    const stale = (await pool.query(`insert into notes (owner_id, deleted_at, deleted_by) values ($1, now(), $1) returning id`, [u])).rows[0].id as string;
+    await pool.query(`insert into note_shares (note_id, user_id, role) values ($1, $2, 'editor')`, [live, v]);
+    await runMigrations(db);
+    const rows = async () => byId((await pool.query(`select id, folder_id, trash_folder_path from notes`)).rows);
+    const expected = byId([
+      { id: live, folder_id: null, trash_folder_path: null },
+      { id: stale, folder_id: null, trash_folder_path: null },
+    ]);
+    expect(await rows()).toEqual(expected);
+    expect((await pool.query(`select count(*)::int as c from note_placements`)).rows).toEqual([{ c: 0 }]);
+    await runMigrations(db);
+    expect(await rows()).toEqual(expected);
+  });
+
+  it("F-M9 回滾形：舊碼的還原（只清 deleted_at）在帶快照的筆記上成功；SQL 檔無 CONCURRENTLY／行首 COMMIT", async () => {
+    const { pool } = await freshDb();
+    const u = await seedUser(pool);
+    const n = await seedNote(pool, { ownerId: u });
+    await pool.query(`update notes set deleted_at = now(), deleted_by = $1, trash_folder_path = '["A","B"]'::jsonb where id = $2`, [u, n]);
+    await pool.query(`update notes set deleted_at = null, deleted_by = null where id = $1`, [n]);
+    expect((await pool.query(`select deleted_at, trash_folder_path from notes where id = $1`, [n])).rows).toEqual([
+      { deleted_at: null, trash_folder_path: ["A", "B"] },
+    ]);
+    const entries = journalEntries().filter(e => e.tag.endsWith("_folders"));
+    expect(entries, "journal 裡要恰有一支 *_folders").toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${entries[0]!.tag}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+  });
+});
+
+describe("0035_notes-delete-scope（#181 spec §6.8.2）", () => {
+  const TAG = "0035_notes-delete-scope";
+  // 前一支用 journal 的相對位置取（合流後是 0034_folders）：跳號期間 `idxOfTag(TAG) - 1` 不存在。
+  const es = journalEntries();
+  const prevIdx = es[es.findIndex(e => e.tag === TAG) - 1]!.idx;
+  const R = "notes:read";
+  const RW = "notes:read notes:write";
+  const RWM = "notes:read notes:write notes:move";
+  const RWD = "notes:read notes:write notes:delete";
+  const RWMD = "notes:read notes:write notes:move notes:delete";
+  const CH = "a".repeat(43);
+  const CB = "http://127.0.0.1:1/cb";
+  const TABLES = ["api_tokens", "oauth_requests", "oauth_codes"] as const;
+
+  async function seedBase(pool: import("pg").Pool): Promise<string> {
+    const userId = (await pool.query(`insert into users (email, display_name) values ($1,'D') returning id`, [`del-${randomUUID()}@example.com`])).rows[0].id as string;
+    await pool.query(`insert into oauth_clients (client_id, client_name, redirect_uris) values ('c35','C','["${CB}"]'::jsonb)`);
+    return userId;
+  }
+  function insertScope(pool: import("pg").Pool, table: (typeof TABLES)[number], userId: string, scope: string, key: string) {
+    if (table === "api_tokens")
+      return pool.query(`insert into api_tokens (user_id, kind, name, scope, access_token_hash) values ($1,'pat','n',$2,$3)`, [userId, scope, key]);
+    if (table === "oauth_requests")
+      return pool.query(
+        `insert into oauth_requests (id, client_id, redirect_uri, code_challenge, scope, expires_at) values ($1,'c35','${CB}','${CH}',$2, now() + interval '1 minute')`,
+        [key, scope],
+      );
+    return pool.query(
+      `insert into oauth_codes (code_hash, client_id, user_id, scope, redirect_uri, code_challenge, expires_at) values ($1,'c35',$2,$3,'${CB}','${CH}', now() + interval '1 minute')`,
+      [key, userId, scope],
+    );
+  }
+  const scopes = async (pool: import("pg").Pool) =>
+    (await pool.query(
+      `select 'api_tokens' as t, access_token_hash as k, scope from api_tokens
+       union all select 'oauth_requests', id, scope from oauth_requests
+       union all select 'oauth_codes', code_hash, scope from oauth_codes order by 1, 2`,
+    )).rows;
+  const constraintDefs = async (pool: import("pg").Pool) =>
+    (await pool.query(
+      `select conname, pg_get_constraintdef(oid) as def from pg_constraint where conname in ('api_tokens_scope_chk','oauth_requests_scope_chk','oauth_codes_scope_chk') order by conname`,
+    )).rows;
+  async function seedOldForms(pool: import("pg").Pool): Promise<string> {
+    const userId = await seedBase(pool);
+    await insertScope(pool, "api_tokens", userId, R, "h-r");
+    await insertScope(pool, "api_tokens", userId, RW, "h-rw");
+    await insertScope(pool, "api_tokens", userId, RWM, "h-rwm");
+    await insertScope(pool, "oauth_requests", userId, RWM, "r-rwm");
+    await insertScope(pool, "oauth_codes", userId, RWM, "k-rwm");
+    return userId;
+  }
+  const OLD = [
+    { t: "api_tokens", k: "h-r", scope: R },
+    { t: "api_tokens", k: "h-rw", scope: RW },
+    { t: "api_tokens", k: "h-rwm", scope: RWM },
+    { t: "oauth_codes", k: "k-rwm", scope: RWM },
+    { t: "oauth_requests", k: "r-rwm", scope: RWM },
+  ];
+
+  it("M1 既有列原樣（A2-15）：三種舊形升級後逐一原值，不取得 notes:delete", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, prevIdx);
+    await seedOldForms(pool);
+    await applyMigrationsThrough(pool, idxOfTag(TAG), idxOfTag(TAG));
+    expect(await scopes(pool)).toEqual(OLD);
+  });
+
+  it("M2 三表收兩個新形（RWD、RWMD）", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(TAG));
+    const userId = await seedBase(pool);
+    for (const table of TABLES)
+      for (const [scope, key] of [[RWD, "rwd"], [RWMD, "rwmd"]] as const) await insertScope(pool, table, userId, scope, `${table}-${key}`);
+    const got = await scopes(pool);
+    expect(got).toHaveLength(6);
+    for (const table of TABLES) {
+      expect(got).toContainEqual({ t: table, k: `${table}-rwd`, scope: RWD });
+      expect(got).toContainEqual({ t: table, k: `${table}-rwmd`, scope: RWMD });
+    }
+  });
+
+  it("M3 三表拒絕：read＋delete、裸 delete、read＋move＋delete、順序錯的四項", async () => {
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(TAG));
+    const userId = await seedBase(pool);
+    for (const bad of ["notes:read notes:delete", "notes:delete", "notes:read notes:move notes:delete", "notes:read notes:write notes:delete notes:move"])
+      for (const table of TABLES)
+        await expect(insertScope(pool, table, userId, bad, `${table}-${bad}`), `${table} ← ${bad}`).rejects.toMatchObject({
+          code: "23514",
+          constraint: `${table}_scope_chk`,
+        });
+  });
+
+  it("M4 0035 的 SQL 檔無 CONCURRENTLY／行首 COMMIT，且三句 DROP 都在三句 ADD 之前", () => {
+    const entries = journalEntries().filter(e => e.tag === TAG);
+    expect(entries, `journal 裡要恰有一支 ${TAG}`).toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${TAG}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+    const drops = TABLES.map(t => sqlText.indexOf(`DROP CONSTRAINT "${t}_scope_chk"`));
+    const adds = TABLES.map(t => sqlText.indexOf(`ADD CONSTRAINT "${t}_scope_chk"`));
+    for (const d of drops) expect(d).toBeGreaterThanOrEqual(0);
+    for (const a of adds) expect(a).toBeGreaterThan(Math.max(...drops));
+  });
+
+  it("M5 經 runMigrations 套 0035 後再跑一次：五列 scope 與三條 constraint 定義不變", async () => {
+    const { pool, db } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, prevIdx);
+    await seedOldForms(pool);
+    await runMigrations(db);
+    const defs = await constraintDefs(pool);
+    expect(defs).toHaveLength(3);
+    for (const d of defs) expect(d.def).toContain(RWMD);
+    expect(await scopes(pool)).toEqual(OLD);
+    await runMigrations(db);
+    expect(await scopes(pool)).toEqual(OLD);
+    expect(await constraintDefs(pool)).toEqual(defs);
   });
 });

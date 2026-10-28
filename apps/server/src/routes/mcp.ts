@@ -119,7 +119,7 @@ export function mcpRoutes(deps: McpRouteDeps) {
     const endpointUrl = `${publicOrigin}/api/mcp`;
     const publicHost = deps.config.publicUrl.host;
 
-    const authenticate = app.authenticateAny("notes:read", "notes:read notes:write notes:move");
+    const authenticate = app.authenticateAny("notes:read", "notes:read notes:write notes:move notes:delete");
 
     /**
      * 第二支 preHandler，**排在認證之後**（不帶憑證的請求一律先拿 401 ＋ challenge）。
@@ -155,6 +155,7 @@ export function mcpRoutes(deps: McpRouteDeps) {
       // （`canWriteNotes`），否則會出現「清單裡有工具但 instructions 說你是唯讀的」這種漂移。
       // #239：`canMoveNotes` 不影響 instructions（仍二選一）——讀寫版首句只講 notes:write 這個必要條件，
       // 有沒有 notes:move 都為真（spec §7.4）；搬移權只決定註冊（`register.ts`）。
+      // #181：`canDeleteNotes` 同樣不影響 instructions——刪除權只決定 delete_note／restore_note 的註冊。
       const canWrite = canWriteNotes({
         authKind: request.authKind === "session" ? "session" : "token",
         tokenScope: request.tokenScope ?? null,

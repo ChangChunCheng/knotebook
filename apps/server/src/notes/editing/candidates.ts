@@ -15,20 +15,21 @@ export type VisibleNoteTarget = SiteLinkCandidate;
  * 為 NULL 也會擋住，但不靠 NULL 語意（gate r1 A-M6）。不改吃 `visibleNoteBranches`（欄位集不同，它在 wikilink 重綁路徑上）。
  * `ownerHandle`：LEFT JOIN owner——群組筆記為 NULL。
  * #269 §6.6／§9.1：`ids` 有給時三支各加 `inArray(notes.id, ids)`（只查這些）；給了空集合（或全是非 uuid）⇒ 不發任何查詢。
+ * #181 §6.2-4：三支都排除垃圾桶筆記（`deleted_at IS NULL`）。
  */
 export async function visibleNoteTargets(db: Db, userId: string, ids?: readonly string[]): Promise<VisibleNoteTarget[]> {
   const only = ids === undefined ? undefined : ids.filter(id => UUID_RE.test(id)).map(id => id.toLowerCase());
   if (only !== undefined && only.length === 0) return [];
   const idCond = only === undefined ? undefined : inArray(notes.id, only);
   const cols = { id: notes.id, title: notes.title, slug: notes.slug, groupId: notes.groupId, ownerHandle: users.handle };
-  const owned = await db.select(cols).from(notes).leftJoin(users, eq(users.id, notes.ownerId)).where(and(eq(notes.ownerId, userId), idCond));
+  const owned = await db.select(cols).from(notes).leftJoin(users, eq(users.id, notes.ownerId)).where(and(eq(notes.ownerId, userId), isNull(notes.deletedAt), idCond));
   const shared = await db.select(cols).from(notes).leftJoin(users, eq(users.id, notes.ownerId))
     .innerJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId)))
-    .where(and(ne(notes.ownerId, userId), isNull(notes.groupId), idCond));
+    .where(and(ne(notes.ownerId, userId), isNull(notes.groupId), isNull(notes.deletedAt), idCond));
   const grouped = await db.select(cols).from(notes).leftJoin(users, eq(users.id, notes.ownerId))
     .innerJoin(groupMembers, and(eq(groupMembers.groupId, notes.groupId), eq(groupMembers.userId, userId)))
     .innerJoin(groupRoles, and(eq(groupRoles.id, groupMembers.roleId), eq(groupRoles.canRead, true)))
-    .where(idCond);
+    .where(and(isNull(notes.deletedAt), idCond));
   const byId = new Map<string, VisibleNoteTarget>();
   for (const t of [...owned, ...shared, ...grouped]) if (!byId.has(t.id)) byId.set(t.id, t);
   return [...byId.values()];

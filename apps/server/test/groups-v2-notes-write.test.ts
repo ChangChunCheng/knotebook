@@ -109,14 +109,18 @@ describe("#175 POST /api/notes {groupId}（§6.2，gate r1 I3、r4 N-2）", () =
 });
 
 describe("#175 DELETE／shares／public-link 的新判準（§2.4 #15、#17–19、#22）", () => {
-  it("DELETE：群組筆記看 permissions.delete（一般成員 403、非成員 404、管理員 204）", async () => {
+  it("DELETE：群組筆記看 permissions.delete（一般成員 403、非成員 404、管理員 204；#181 起是移到垃圾桶——列還在、deleted_at 非 NULL）", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const gn = await seedNote(db, { groupId: s.g.id });
     expect((await call(app, "DELETE", `/api/notes/${gn.id}`, s.member.id)).statusCode).toBe(403);
     expect((await call(app, "DELETE", `/api/notes/${gn.id}`, s.outsider.id)).statusCode).toBe(404);
+    expect((await db.select({ deletedAt: notes.deletedAt }).from(notes).where(eq(notes.id, gn.id)))[0]?.deletedAt).toBeNull();
     expect((await call(app, "DELETE", `/api/notes/${gn.id}`, s.admin.id)).statusCode).toBe(204);
-    expect(await db.select().from(notes).where(eq(notes.id, gn.id))).toEqual([]);
+    const rows = await db.select({ deletedAt: notes.deletedAt, deletedBy: notes.deletedBy }).from(notes).where(eq(notes.id, gn.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.deletedAt).not.toBeNull();
+    expect(rows[0]!.deletedBy).toBe(s.admin.id);
   });
 
   it("shares 三支：群組筆記一律 403（manageShares 恆 false，連管理員也是）；RF2 殘留列 404；S5 窗——授權為個人 owner、之後被移進群組 → PUT 409 note_in_group、不留分享列", async () => {

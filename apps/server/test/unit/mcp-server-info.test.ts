@@ -103,3 +103,19 @@ describe("#180 U5：讀寫版 instructions 改為 six ops", () => {
     expect(mcpInstructions(false)).not.toContain("rename");
   });
 });
+
+// #181 N1：垃圾桶句進兩版共用的 BASE（list_trash 唯讀憑證也有）；換預算縮掉的兩處舊字一起釘「不在」。
+// 不依 notes:delete 分版——兩支工具可能不存在，所以兩版都不得提它們的名字。
+describe("#181：instructions 的垃圾桶句", () => {
+  it.each([
+    ["讀寫", true],
+    ["唯讀", false],
+  ])("%s版含 list_trash 句、不含縮掉的舊字、不提 delete_note／restore_note", (_label, canWrite) => {
+    const text = mcpInstructions(canWrite as boolean);
+    expect(text).toContain("Only list_trash lists notes in the trash.");
+    expect(text).not.toContain("there is no tool that returns a whole");
+    expect(text).not.toContain("(id, heading, length)");
+    expect(text).not.toContain("delete_note");
+    expect(text).not.toContain("restore_note");
+  });
+});

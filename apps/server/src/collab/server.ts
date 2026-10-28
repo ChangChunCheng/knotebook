@@ -89,7 +89,7 @@ import type { UserGate } from "../auth/session.js";
 // `import type`，編譯後整段被抹掉，**沒有執行期循環**（本檔對 session.ts 沒有任何 value import）。
 // 看到「循環」不要繞路改寫。
 import type { DirectCtx } from "../notes/editing/session.js";
-import { loadNoteAudience, resolveRole } from "../notes/service.js";
+import { loadNoteAudience, noteIsLive, resolveRole } from "../notes/service.js";
 import { verifyCollabToken } from "./token.js";
 import { createNoteStore, docClock, type NoteStoreSearchHooks, type StoreLogger } from "./store.js";
 import { createVersionService, type VersionService } from "./versions.js";
@@ -363,8 +363,9 @@ export interface CollabServer {
   /**
    * 刪除閘門：登記期間這篇筆記的連線一律被拒／被關（Task 6 的 beforeNoteDeleted 用）。
    *
-   * ⚠ **必須在刪除交易之前 await**：它會先把「此刻看得到這篇筆記的人」抓下來留著
-   * （`loadNoteAudience`），交易一 commit 那些列就查不到了。這份名單決定 `onAuthenticate`
+   * ⚠ **必須在移入垃圾桶／刪除交易之前 await**：它會先把「此刻看得到這篇筆記的人」抓下來留著
+   * （`loadNoteAudience`），交易一 commit 之後授權就查不到他們了（移入：單篇授權排除垃圾桶筆記；
+   * 刪群組・全刪：那些列不在了。垃圾桶的永久刪除不開閘門）。這份名單決定 `onAuthenticate`
    * 要不要對某個人說出 `note-deleting`——名單上的人、以及此刻仍查得到角色的人聽得到，
    * 其他人一律照 `no-role` 回答，閘門因此不會變成「這個 noteId 存不存在」的 oracle
    * （issue #35 審查）。
@@ -381,6 +382,8 @@ export interface CollabServer {
    */
   releaseDeletingGate(noteId: string, epoch: number): Promise<boolean>;
   unmarkDeleting(noteId: string): void;
+  /** 這篇筆記目前有沒有刪除閘門（記憶體，零 DB）。直連寫入的重確認用（notes/editing/session.ts）。 */
+  isDeleting(noteId: string): boolean;
   /** 關閉所有 socket、flush 待寫入的文件。**必須在 `app.close()` 之前 await。** */
   destroy(): Promise<void>;
 }
@@ -683,7 +686,8 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         // ⚠ 刪除閘門刻意排在**驗完 token 之後**（審查指出）：它是這個 server 唯一會透露
         // 「某個 noteId 存在（且剛被刪掉）」的地方，擺在最前面等於讓一個連 session 都不需要
         // 的 socket 就能問這個問題。擺在這裡，要問就得先持有一份對這篇筆記合法簽章的 token。
-        // 順序仍必須早於 resolveRole：刪除交易 commit 之後那一列就查不到了，先跑 role 的話
+        // 順序仍必須早於 resolveRole：移入垃圾桶／刪除交易 commit 之後授權就查不到這篇（移入：單篇授權排除垃圾桶筆記；
+        // 刪群組・全刪：那一列不在了），先跑 role 的話
         // 這條路會落到 `no-role`（＝對使用者說「你已失去存取權」），而真相是筆記被刪了。
         // 只有「刪除當下本來就看得到這篇筆記的人」聽得到 note-deleting；其他人往下走，
         // 最終落在 `no-role`——與「這篇筆記存在但不是你的」完全一樣的可觀察行為。
@@ -1030,10 +1034,10 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
       // 告知「你已失去存取權」，而真相是筆記真的被刪了。
       if (deleting.get(noteId)?.epoch !== epoch) return false;
 
-      // 第二道：只有「筆記其實還在」才收（審查 round 3）——併發的另一次刪除可能已經 commit。
+      // 第二道：列在且 `deleted_at IS NULL` 才收（審查 round 3；#181 spec §6.4.1 M-D）——否則兩個 DELETE
+      // 併發時，後到、交易內得 404 的那個會收掉先到那次成功移入的閘門。
       try {
-        const audience = await loadNoteAudience(deps.db, noteId);
-        if (audience.size === 0) return false;
+        if (!(await noteIsLive(deps.db, noteId))) return false;
       } catch (err) {
         // 查不出來時以呼叫端的說法為準（它剛剛才刪失敗）：放行比讓一篇還在的筆記被宣告
         // 「已刪除」兩分鐘好。要走到這裡得同時發生「併發刪除」與「DB 查詢失敗」。
@@ -1048,6 +1052,10 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
 
     unmarkDeleting(noteId: string): void {
       deleting.delete(noteId);
+    },
+
+    isDeleting(noteId: string): boolean {
+      return deleting.has(noteId);
     },
 
     async destroy(): Promise<void> {

@@ -15,8 +15,18 @@
 import { describe, expect, it } from "vitest";
 import { FixedWindowLimiter } from "../../src/http/rate-limit.js";
 import type { TokenScope } from "@knotebook/shared";
-import { canMoveNotes, requireMoveScope, requireWriteScope } from "../../src/mcp/write-scope.js";
+import {
+  canDeleteNotes,
+  canMoveNotes,
+  DELETE_SCOPE_MESSAGE,
+  INSUFFICIENT_SCOPE_MESSAGE,
+  requireDeleteScope,
+  requireMoveScope,
+  requireWriteScope,
+} from "../../src/mcp/write-scope.js";
 import { moveNoteToGroupTool, MOVE_NEEDS_MOVE_MESSAGE } from "../../src/mcp/tools/move-note-to-group.js";
+import { deleteNoteTool } from "../../src/mcp/tools/delete-note.js";
+import { restoreNoteTool } from "../../src/mcp/tools/restore-note.js";
 import type { McpToolCtx } from "../../src/mcp/context.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
@@ -125,6 +135,61 @@ describe("#239 requireMoveScope", () => {
   });
 });
 
+const R = "notes:read";
+const RW = "notes:read notes:write";
+const RWM = "notes:read notes:write notes:move";
+const RWD = "notes:read notes:write notes:delete";
+const RWMD = "notes:read notes:write notes:move notes:delete";
+
+// #181 D：requireDeleteScope 的兩個 scope 分支在 HTTP 上到不了（delete_note／restore_note 只在 canDeleteNotes 時註冊），
+// 本段是它們唯一的守衛；tokenWrite 扣點在 HTTP 上活著（另由 mcp-trash-tools.test.ts 的 DN8／RN6 守）。
+describe("#181 D canDeleteNotes", () => {
+  it("五形＋session＋兩種漂移形", () => {
+    expect(canDeleteNotes({ authKind: "session", tokenScope: null })).toBe(true);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: R })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RW })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWM })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWD })).toBe(true);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: RWMD })).toBe(true);
+    // CHECK 漂移形：有 delete 沒 write → 不得放行（同 canMoveNotes）。
+    expect(canDeleteNotes({ authKind: "token", tokenScope: "notes:read notes:delete" as TokenScope })).toBe(false);
+    expect(canDeleteNotes({ authKind: "token", tokenScope: "notes:read notes:move notes:delete" as TokenScope })).toBe(false);
+  });
+});
+
+describe("#181 D requireDeleteScope", () => {
+  it("session：放行，且 tokenWrite 一格都沒動", () => {
+    const tw = oneShot();
+    const ctx = ctxWith({ authKind: "session", tokenScope: null, tokenWrite: tw });
+    expect(requireDeleteScope(ctx)).toBeNull();
+    expect(requireDeleteScope(ctx)).toBeNull();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it("唯讀憑證：insufficient_scope＋write 的處置句，且不啃 tokenWrite", () => {
+    const tw = oneShot();
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: R, tokenWrite: tw }));
+    expect(err?.structuredContent).toEqual({ code: "insufficient_scope", message: INSUFFICIENT_SCOPE_MESSAGE });
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each<TokenScope>([RW, RWM])("%s：insufficient_scope＋DELETE_SCOPE_MESSAGE，且不啃 tokenWrite", (scope) => {
+    const tw = oneShot();
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: scope, tokenWrite: tw }));
+    expect(err?.structuredContent).toEqual({ code: "insufficient_scope", message: DELETE_SCOPE_MESSAGE });
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each<TokenScope>([RWD, RWMD])("%s：放行，且 `token:${userId}` 那一格被扣掉", (scope) => {
+    const tw = oneShot();
+    expect(requireDeleteScope(ctxWith({ authKind: "token", tokenScope: scope, tokenWrite: tw }))).toBeNull();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(false);
+  });
+  it("桶 key 逐字是 `token:${userId}`：REST 那一側先用掉唯一一格 → too_many_requests", () => {
+    const tw = oneShot();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+    const err = requireDeleteScope(ctxWith({ authKind: "token", tokenScope: RWD, tokenWrite: tw }));
+    expect(err?.structuredContent.code).toBe("too_many_requests");
+  });
+});
+
 // U3：move_note_to_group 的 scope 分支在 HTTP 上到不了（未註冊），這是它唯一的守衛。
 // `ctxWith` 沒有 `db`：若實作在 scope 檢查之前碰了 DB，這案會炸 `undefined`——這正是要釘的順序。
 describe("#239 U3 moveNoteToGroupTool", () => {
@@ -138,5 +203,34 @@ describe("#239 U3 moveNoteToGroupTool", () => {
       code: "insufficient_scope",
       message: MOVE_NEEDS_MOVE_MESSAGE,
     });
+  });
+});
+
+// #181 D（同 U3）：delete_note／restore_note 的第一個動作是 requireDeleteScope——DELETE_SCOPE_MESSAGE 的「nothing was changed」
+// 與 tokenWrite 拒絕的零副作用都靠這個順序。`db`／`limiters.edit` 是一碰就記下並丟錯的探針：scope 或 tokenWrite 拒絕時一次都不得碰。
+describe("#181 D 兩支垃圾桶工具：requireDeleteScope 在任何 DB 存取與 edit 桶之前", () => {
+  const NOTE = { note_id: "33333333-3333-4333-8333-333333333333" };
+  function probeCtx(tokenScope: TokenScope, tokenWrite: FixedWindowLimiter) {
+    const touched: string[] = [];
+    const trap = (label: string) =>
+      new Proxy({}, { get: (_t, key) => { touched.push(`${label}.${String(key)}`); throw new Error(`touched ${label}.${String(key)}`); } });
+    const ctx = { ...ctxWith({ authKind: "token", tokenScope, tokenWrite }), db: trap("db") } as McpToolCtx;
+    (ctx.limiters as Record<string, unknown>).edit = trap("edit");
+    return { ctx, touched };
+  }
+  const tools = [["delete_note", deleteNoteTool], ["restore_note", restoreNoteTool]] as const;
+  it.each(tools)("%s：讀寫搬移（無 delete）→ insufficient_scope＋DELETE_SCOPE_MESSAGE，沒碰 db／edit、沒啃 tokenWrite", async (_n, tool) => {
+    const tw = oneShot();
+    const { ctx, touched } = probeCtx(RWM, tw);
+    await expect(tool(NOTE, ctx)).resolves.toMatchObject({ isError: true, structuredContent: { code: "insufficient_scope", message: DELETE_SCOPE_MESSAGE } });
+    expect(touched).toEqual([]);
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+  });
+  it.each(tools)("%s：讀寫刪除但 tokenWrite 用罄 → too_many_requests，沒碰 db／edit", async (_n, tool) => {
+    const tw = oneShot();
+    expect(tw.consume(`token:${USER_ID}`)).toBe(true);
+    const { ctx, touched } = probeCtx(RWD, tw);
+    await expect(tool(NOTE, ctx)).resolves.toMatchObject({ isError: true, structuredContent: { code: "too_many_requests" } });
+    expect(touched).toEqual([]);
   });
 });

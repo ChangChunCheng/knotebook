@@ -35,6 +35,7 @@ function mockFetch(getUser: () => UserDto | null) {
     }
     if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(fakeResponse(200, { plans: [], defaults: { userPlanId: "", groupPlanId: "" } }));
     if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(fakeResponse(200, { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 5 }));
+    if (url === "/api/admin/trash/settings" && method === "GET") return Promise.resolve(fakeResponse(200, { retentionDays: 7 }));
     if (url.startsWith("/api/admin/ai/") && method === "GET") {
       const key = url.slice("/api/admin/ai/".length);
       return Promise.resolve(fakeResponse(200, { [key]: [] }));

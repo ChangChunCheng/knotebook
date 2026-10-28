@@ -59,16 +59,18 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
   const { user, logout } = useSession();
   const decision = useOauthDecision();
   const scopesTitleId = useId();
-  // #239 W4'／W8：第一次授權全不勾；重新授權沿用既有權限，但不超過本次要求。
+  // #239 W4'／W8：第一次授權全不勾；重新授權沿用既有權限，但不超過本次要求（交集）。
   const [checks, setChecks] = useState<ScopeChecks>(() =>
     data.existingScope === null
-      ? { write: false, move: false }
+      ? { write: false, move: false, delete: false }
       : checksFromScope(narrowerScope(data.existingScope, data.scope))
   );
   // 依 `scopes` 逐項判斷，未知值不渲染（spec §9.2）。
   const offersWrite = data.scopes.includes("notes:write");
   const offersMove = data.scopes.includes("notes:move");
-  // 既有權限比本次要求寬：按 Allow 會靜默降權，要說出來（spec §9.2【作者補】）。
+  const offersDelete = data.scopes.includes("notes:delete");
+  // 既有權限不是本次要求的子集：按 Allow 會靜默降權，要說出來（spec §9.2【作者補】）。交集版 `narrowerScope`
+  // 下 `narrower(existing, request) !== existing` ⇔ existing ⊄ request（#181 起 scope 是格，不再是鏈上比大小）。
   const wider = data.existingScope !== null && narrowerScope(data.existingScope, data.scope) !== data.existingScope;
 
   function submit(choice: "allow" | "deny"): void {
@@ -78,7 +80,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
         ? {
             req,
             decision: "allow" as const,
-            scope: scopeFromChecks(checks.write && offersWrite, checks.move && offersMove),
+            scope: scopeFromChecks(checks.write && offersWrite, checks.move && offersMove, checks.delete && offersDelete),
           }
         : { req, decision: "deny" as const };
     decision.mutate(body, {
@@ -123,7 +125,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
       {/* 勾選組以標題命名（比照建立 token 對話框的 fieldset）；preflight 已清掉 fieldset 的預設框線與內距。 */}
       <fieldset aria-labelledby={scopesTitleId} className="space-y-2">
         <p id={scopesTitleId} className="text-sm font-medium">
-          {offersWrite || offersMove ? t("authorize.scopesTitleChoose") : t("authorize.scopesTitle")}
+          {offersWrite || offersMove || offersDelete ? t("authorize.scopesTitleChoose") : t("authorize.scopesTitle")}
         </p>
         <p className="text-sm">{t("authorize.scopeRead")}</p>
         <ScopeChecksField
@@ -131,6 +133,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
           onChange={setChecks}
           showWrite={offersWrite}
           showMove={offersMove}
+          showDelete={offersDelete}
           granted={data.existingScope ? checksFromScope(data.existingScope) : undefined}
         />
         {wider && (
@@ -152,6 +155,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
         <Button
           type="button"
           variant="brandSolid"
+          size="lg"
           disabled={decision.isPending || decision.isSuccess}
           onClick={() => submit("allow")}
         >
@@ -160,6 +164,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
         <Button
           type="button"
           variant="outline"
+          size="lg"
           disabled={decision.isPending || decision.isSuccess}
           onClick={() => submit("deny")}
         >

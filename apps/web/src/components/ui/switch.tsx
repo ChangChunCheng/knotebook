@@ -9,6 +9,10 @@ import { cn } from "@/lib/utils";
  * JSDoc（`settings/SettingsAiSection.tsx` 的 isDefault vs enabled 分野）。
  * 例外：建立 API token 對話框的「編輯」「搬移」用這顆、按送出才生效——#247 W22 的明文例外（與行內編輯共用
  * `settings/ScopeTogglesField.tsx`，同一組控制項不在兩處長成兩種樣子）。
+ * 例外二：站台垃圾桶設定的「自動永久刪除」（`settings/SettingsTrashSection.tsx`）用這顆、按「儲存」才生效——#181 §6.9
+ * 指定「開關」，即時送出預設 7 天可能在一小時內清掉一批舊垃圾（PR-2b 讀碼發現 25）。
+ * 例外三：新增角色對話框的六個權限旗標（`settings/SettingsGroupRolesSection.tsx` 的 `NewRoleDialog`）用這顆、按「建立」才生效——
+ * 與角色卡（按下即生效）共用 `FlagSwitchRow`，同一組控制項不在兩處長成兩種樣子。
  *
  * ⚠ **可及性角色是 `role="switch"`，不是 `role="checkbox"`**——原生
  * `<input type="checkbox">` 換成這顆之後，任何用 `getByRole("checkbox", …)` 找它

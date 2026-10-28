@@ -8,11 +8,16 @@
  *       group_members 列與其 role_id，group_roles 的旗標靠各路徑自守）。不擋改群組名（非鍵 UPDATE＝`FOR NO KEY UPDATE`，
  *       groups 只有 PK 一個唯一索引；C18d 守著，改成 `FOR SHARE` 會讓它卡住）。它也是 (3) 的 FK
  *       檢查本來就會取的同一把鎖，只是提前；鎖序仍是筆記 → groups（spec §11 鎖序段），上述路徑都不在持 groups 鎖後再鎖個人筆記，不成環。
+ *   (1f) 資料夾 PR-3a（spec §5.7.7、§5.4「移入群組帶資料夾」）：帶 `folderId` 時，群組列不在 → 404 `folder_not_found`（以資料夾 id
+ *       進來的入口，n-2）；成員重驗之後另要 `can_edit` → 403（D13）；再對目標資料夾取 `FOR KEY SHARE`，不在或不屬於該群組 → 404
+ *       `folder_not_found`。這段在 `note-move-locked` 縫**之前**（停在縫上時已持資料夾 KS）。鎖序「來源筆記 FU → groups KS → 資料夾
+ *       KS」是 §5.4 的例外：來源必是個人筆記、目標必是群組資料夾，不在任何群組空間資料夾交易要鎖的筆記集合裡，不成環。
  *   (1a) 儲存配額（spec 2026-10-08 §6.5）：本篇附件總和（筆記已持 FOR UPDATE）＝移入的位元組 → 目標群組空間鎖＋判定
  *       （`assertSpaceRoomInTx`；在 (0)／(1) 兩把列鎖之後——Q-S2；在 (2) 刪 shares 與 (3) 群組範圍 slug 寫入之前——Q-S6 (g)、
  *       Q-S7）。超過 → `StorageQuotaExceeded`，什麼都沒改；附件總和 0 時不取鎖（A4）。來源（個人空間）只會變少，不取鎖
  *   (2) 刪光逐人分享（S5／D16）並記下對象（commit 後踢線）
- *   (3) writeSlugInTx：以舊 slug 為基底在群組範圍去重（B6）；同一句 UPDATE 清 owner、prev（B12）、token（Q4）、別名（S11）
+ *   (3) writeSlugInTx：以舊 slug 為基底在群組範圍去重（B6）；同一句 UPDATE 清 owner、prev（B12）、token（Q4）、別名（S11），
+ *       並明寫 `folder_id`（不給資料夾＝群組根層 NULL，不靠 trigger 自癒，§5.7.7）
  *       ——`slug_is_custom` 不動（B6）、`updated_at` 不動（§6.3）
  *   (3a) #247 §9.2：`UPDATE uploads SET charged_to_id = 呼叫者 WHERE note_id = 本篇`——佔用者＝移入者，該篇每一筆附件，不論原上傳者。
  *        在 writeSlugInTx **回傳之後**、callback 之外：callback 撞 slug 唯一索引時會在 savepoint 回滾後以新候選重跑，這句只該跑一次。
@@ -24,9 +29,11 @@
  * (3) 的 UPDATE 不會撞群組 FK 23503；(3a) 對 users 的 FK 只在移入者帳號於交易中被硬刪時才會撞（`src/` 沒有這條路徑）——
  * `notes/move-note.ts` 的 23503 → 404 映射只剩防禦縱深。
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups, noteShares, notes, uploads } from "../../db/schema.js";
+import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../../folders/messages.js";
+import { lockFolderInTx } from "../../folders/tx/lock.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
 import { TxAbort } from "../../http/tx-abort.js";
 import { sumUploadSizeSql } from "../../storage/space.js";
@@ -43,6 +50,8 @@ export interface MoveNoteInput {
   userHandle: string;
   /** 已過 UUID_RE、已轉小寫。 */
   groupId: string;
+  /** 資料夾 PR-3a：已過 UUID_RE、已轉小寫、交易外判過可見性與群組；null＝群組根層。 */
+  folderId: string | null;
   /** 空間鎖等待上限（ms），路由從 deps 帶入。 */
   lockTimeoutMs: number;
 }
@@ -51,20 +60,28 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
   const [row] = await tx
     .select({ ownerId: notes.ownerId, slug: notes.slug })
     .from(notes)
-    .where(eq(notes.id, input.noteId))
+    .where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt)))
     .for("update");
+  // #181 §6.2-11：授權之後被移入垃圾桶＝列消失，同一條 404。
   if (!row) throw new TxAbort(404, "not_found", "找不到此筆記");
   // owner 是呼叫者 ⇒ 是個人筆記（`notes_owner_xor_group_chk`，S6）——不必另看 group_id。
   if (row.ownerId !== input.userId) throw new TxAbort(409, "conflict", "筆記的歸屬已變更，請重新整理後再試");
 
   const [target] = await tx.select({ id: groups.id }).from(groups).where(eq(groups.id, input.groupId)).for("key share");
   const [member] = await tx
-    .select({ canCreate: groupRoles.canCreate })
+    .select({ canCreate: groupRoles.canCreate, canEdit: groupRoles.canEdit })
     .from(groupMembers)
     .innerJoin(groupRoles, eq(groupRoles.id, groupMembers.roleId))
     .where(and(eq(groupMembers.groupId, input.groupId), eq(groupMembers.userId, input.userId)))
     .limit(1);
+  if (!target && input.folderId !== null) throw new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
   if (!target || !member || !member.canCreate) throw new TxAbort(404, "group_not_found", "找不到此群組");
+  // (1f) 資料夾：can_edit → 資料夾 KS，都在 `note-move-locked` 縫之前。
+  if (input.folderId !== null) {
+    if (!member.canEdit) throw new TxAbort(403, "forbidden", NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE);
+    const folder = await lockFolderInTx(tx, input.folderId, "key share");
+    if (!folder || folder.kind !== "group" || folder.groupId !== input.groupId) throw new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
+  }
   await hook?.("note-move-locked", { noteId: input.noteId, groupId: input.groupId });
 
   // (1a) 儲存配額 §6.5：筆記已持 FOR UPDATE，附件總和就是移入的位元組；目標群組空間鎖在 (0)／(1) 之後（Q-S2）、刪 shares 與
@@ -83,7 +100,7 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
     async slug => {
       await tx
         .update(notes)
-        .set({ ownerId: null, groupId: input.groupId, slug, prevSlug: null, publicToken: null, publicSlug: null })
+        .set({ ownerId: null, groupId: input.groupId, folderId: input.folderId, slug, prevSlug: null, publicToken: null, publicSlug: null })
         .where(eq(notes.id, input.noteId));
     },
     { excludeNoteId: input.noteId, beforeWrite: slug => hook?.("note-move-slug-candidate", { noteId: input.noteId, groupId: input.groupId, slug }) },

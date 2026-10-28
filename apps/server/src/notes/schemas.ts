@@ -67,8 +67,10 @@ export const GROUP_ID = z.string().uuid();
 // `PATCH /api/notes/:id` 的 `updateBodySchema.title` 原本有同一個洞，#180 W16 改成 `TITLE.optional()`（搬到本檔檔尾）。
 // `.refine` 排在 `.min(1)` 之後（ZodEffects 上沒有 `.min`）。
 // #103 §6.4：`groupId` 建在群組裡；#175 Q13：與 `content` 可以並存（帶內容建在群組裡）。
+// 資料夾 PR-3a（spec §5.7.6）：`folderId` 只驗是字串，**刻意不用** `z.string().uuid()`（與 `GROUP_ID` 的 uuid → 400 不同）：
+// 非 UUID 的資料夾 id 要與不存在、看不到同形回 404 `folder_not_found`（§5.5 I2 第 1 步、AG-F3），由路由以 `UUID_RE` 判。
 export const createBodySchema = z
-  .object({ title: TITLE.optional(), content: MD.optional(), groupId: GROUP_ID.optional() })
+  .object({ title: TITLE.optional(), content: MD.optional(), groupId: GROUP_ID.optional(), folderId: z.string().optional() })
   .strict();
 
 // `POST /api/notes/:id/edits` 的 body（spec §5）：`op` 決定其餘欄位，逐格 `.strict()`。

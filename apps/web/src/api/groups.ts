@@ -72,6 +72,8 @@ function useInvalidateGroupsAndNotes() {
   return () => {
     void queryClient.invalidateQueries({ queryKey: GROUPS_QUERY_KEY });
     void queryClient.invalidateQueries({ queryKey: ["notes"] });
+    // D-W9：角色旗標變了，誰看得到群組垃圾桶也跟著變
+    void queryClient.invalidateQueries({ queryKey: ["trash"] });
   };
 }
 
@@ -208,6 +210,8 @@ export function useUpdateRole(groupId: string) {
       queryClient.setQueryData<GroupRoleDto[]>(groupRolesKey(groupId), (rows) => rows?.map((row) => (row.id === updated.id ? updated : row)));
       void invalidateSingleNoteKeys(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["notes"] });
+      // D-W9：不經 useInvalidateGroupsAndNotes，另外失效垃圾桶（edit／delete 旗標決定誰看得到群組垃圾桶）
+      void queryClient.invalidateQueries({ queryKey: ["trash"] });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: GROUPS_QUERY_KEY }),
   });

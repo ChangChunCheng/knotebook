@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { NoteDto, ShareDto } from "@knotebook/shared";
-import { useCopyNote, useConfirmNoteStillPersonal, useMoveNoteToGroup } from "./note-move";
+import { applyMovedNote, refetchAfterFailure, useCopyNote, useConfirmNoteStillPersonal, useMoveNoteToGroup } from "./note-move";
 import { usePublicLink } from "./public-link";
 import { useShares } from "./shares";
 
@@ -216,6 +216,47 @@ describe("useMoveNoteToGroup", () => {
       expect(after).toContainEqual(["note", ID]);
       expect(after).toContainEqual(["groups"]);
     });
+  });
+});
+
+describe("applyMovedNote／refetchAfterFailure（PR-2c 批次共用）", () => {
+  it("AM1 applyMovedNote：shares＝[]、public-link 清 token／slug、note 寫入；順序 shares → public-link → note；失效 ['notes']", () => {
+    const client = makeClient();
+    client.setQueryData(["shares", ID], [SHARE]);
+    client.setQueryData(["public-link", ID], { token: "T", slug: "s", width: "full" });
+    const moved = noteDto({ groupId: GID });
+    const setSpy = vi.spyOn(client, "setQueryData");
+    const invSpy = vi.spyOn(client, "invalidateQueries");
+
+    applyMovedNote(client, ID, moved);
+
+    expect(setSpy.mock.calls.map(c => c[0])).toEqual([["shares", ID], ["public-link", ID], ["note", ID]]);
+    expect(client.getQueryData(["shares", ID])).toEqual([]);
+    expect(client.getQueryData(["public-link", ID])).toEqual({ token: null, slug: null, width: "full" });
+    expect(client.getQueryData(["note", ID])).toEqual(moved);
+    expect(keysOf(invSpy as never)).toContainEqual(["notes"]);
+  });
+
+  it("AM2 refetchAfterFailure：shares 與 public-link 兩支失效都 resolve 之後才失效 note", async () => {
+    const client = makeClient();
+    const releases: Record<string, () => void> = {};
+    const invSpy = vi.spyOn(client, "invalidateQueries").mockImplementation(((filters: { queryKey: unknown[] }) => {
+      const name = String(filters.queryKey[0]);
+      if (name === "shares" || name === "public-link") return new Promise<void>(r => (releases[name] = r));
+      return Promise.resolve();
+    }) as never);
+    const flush = () => new Promise(r => setTimeout(r, 0));
+
+    const done = refetchAfterFailure(client, ID);
+    await flush();
+    expect(keysOf(invSpy as never)).not.toContainEqual(["note", ID]);
+    releases.shares!();
+    await flush();
+    expect(keysOf(invSpy as never)).not.toContainEqual(["note", ID]);
+    releases["public-link"]!();
+    await done;
+    expect(keysOf(invSpy as never)).toContainEqual(["note", ID]);
+    expect(keysOf(invSpy as never)).toContainEqual(["groups"]);
   });
 });
 

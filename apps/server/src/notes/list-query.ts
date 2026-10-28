@@ -4,17 +4,18 @@
 // `visibleNoteTargets()`、`notes/service.ts` 的 `loadNoteAudience()`、`notes/links.ts` 的 `fetchBacklinks()`、
 // `notes/tx/write-links.ts` 的 `writeLinksInTx()`——各自手寫群組分支（#175 §5.3；連同本檔共五份，
 // 不統一列在 spec §15 第 6 條）。
+// 垃圾桶筆記一律排除（#181 §6.2-3）：三支各在 `and(...)` 裡帶 `deleted_at IS NULL`。
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
-import { groupMembers, groupRoles, groups, noteShares, notes, users } from "../db/schema.js";
+import { groupMembers, groupRoles, groups, notePlacements, noteShares, notes, users } from "../db/schema.js";
 import { OWNER_PERMISSIONS, groupNotePermissions, roleFromGroupFlags, sharePermissions, type NoteAccess } from "./service.js";
 
 /** `users` 的第二個別名：JOIN 的是**編輯者**（`notes.last_edited_by`），與 owner 那次 JOIN
  * 同表不同人，不取別名 drizzle 產不出兩個 FROM 項。一律 LEFT JOIN——沒編輯過（欄位 null）
  * 或編輯者帳號已刪（FK `set null`）時，那一列仍要出現在結果裡。 */
 export const editor = alias(users, "editor");
-/** 三欄一組，三支 select 與 `noteWithOwnerSelection` 共用同一份定義——union 各支的 select shape
+/** 三欄一組，三支 select 與 `noteFieldsSelection`（`note-dto.ts`）共用同一份定義——union 各支的 select shape
  * 必須逐欄同形，抄兩次遲早分岔。 */
 export const lastEditedSelection = {
   lastEditedAt: notes.lastEditedAt,
@@ -66,6 +67,17 @@ function groupColumns() {
 }
 
 /**
+ * 位置欄（呼叫者視角，AG-F1；spec M9）：**不放進 `baseColumns()`**——共用欄位集只有一份運算式，放進去 shared 支就會輸出擁有者的
+ * `notes.folder_id`。owned、grouped 支＝`notes.folder_id`；shared 支＝呼叫者自己的放置（LEFT JOIN `note_placements (note, $u)`）。
+ */
+function ownFolderColumn() {
+  return { viewerFolderId: sql<string | null>`${notes.folderId}`.as("viewer_folder_id") };
+}
+function placementFolderColumn() {
+  return { viewerFolderId: sql<string | null>`${notePlacements.folderId}`.as("viewer_folder_id") };
+}
+
+/**
  * 呼叫者看得見的筆記＝owned ∪ shared ∪ grouped，三支**結構性互斥**（#175 §5.3）：owned＝`owner_id = $u`；
  * shared＝`group_id IS NULL` 且有 `note_shares(note, $u)` 且 `owner_id <> $u`；grouped＝`group_id IS NOT NULL`
  * （INNER JOIN `group_members` 已隱含）且角色 `can_read`。群組筆記上若有殘留分享列（S5 破裂），shared 支
@@ -74,7 +86,7 @@ function groupColumns() {
  * grouped 支的 `role`＝`CASE WHEN can_edit THEN 'editor' ELSE 'viewer' END`，與 `roleFromGroupFlags` 同規則
  * （`groups-v2-visibility.test.ts` 的「TS／SQL 兩處推導等價」案逐列比對兩者）。
  *
- * ⚠ 三支的 select 物件**欄位順序必須一致**（基礎欄位 → 群組四欄 → `extra` → `role`）：union 按位置對欄。
+ * ⚠ 三支的 select 物件**欄位順序必須一致**（基礎欄位 → 群組四欄 → 位置 → `extra` → `role`）：union 按位置對欄。
  * **每次呼叫現造三支全新的 select builder**（drizzle 的 builder 可變且單次使用，重用會產出畸形
  * 查詢且不報錯）；`extraWhere` 由呼叫端提供，內部用 `and()` 合進去——**不要在回傳值上再
  * `.where()`**（是取代不是 AND，而且污染是回溯的）。`extra` 只收**額外的輸出欄**（`SQL.Aliased`，
@@ -88,22 +100,24 @@ export function visibleNoteBranches<E extends Record<string, SQL.Aliased>>(
 ) {
   const extra = (opts.extra ?? {}) as E;
   const owned = db
-    .select({ ...baseColumns(), ...nullGroupColumns(), ...extra, role: sql<string>`'owner'`.as("role") })
+    .select({ ...baseColumns(), ...nullGroupColumns(), ...ownFolderColumn(), ...extra, role: sql<string>`'owner'`.as("role") })
     .from(notes)
     .innerJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(eq(notes.ownerId, userId), opts.extraWhere));
+    .where(and(eq(notes.ownerId, userId), isNull(notes.deletedAt), opts.extraWhere));
   const shared = db
-    .select({ ...baseColumns(), ...nullGroupColumns(), ...extra, role: noteShares.role })
+    .select({ ...baseColumns(), ...nullGroupColumns(), ...placementFolderColumn(), ...extra, role: noteShares.role })
     .from(notes)
     .innerJoin(noteShares, and(eq(noteShares.noteId, notes.id), eq(noteShares.userId, userId)))
     .innerJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(isNull(notes.groupId), sql`${notes.ownerId} <> ${userId}`, opts.extraWhere));
+    .leftJoin(notePlacements, and(eq(notePlacements.noteId, notes.id), eq(notePlacements.userId, userId)))
+    .where(and(isNull(notes.groupId), sql`${notes.ownerId} <> ${userId}`, isNull(notes.deletedAt), opts.extraWhere));
   const grouped = db
     .select({
       ...baseColumns(),
       ...groupColumns(),
+      ...ownFolderColumn(),
       ...extra,
       role: sql<string>`case when ${groupRoles.canEdit} then 'editor' else 'viewer' end`.as("role"),
     })
@@ -113,7 +127,7 @@ export function visibleNoteBranches<E extends Record<string, SQL.Aliased>>(
     .innerJoin(groups, eq(groups.id, notes.groupId))
     .leftJoin(users, eq(users.id, notes.ownerId))
     .leftJoin(editor, eq(editor.id, notes.lastEditedBy))
-    .where(and(sql`${notes.groupId} is not null`, opts.extraWhere));
+    .where(and(sql`${notes.groupId} is not null`, isNull(notes.deletedAt), opts.extraWhere));
   return { owned, shared, grouped };
 }
 

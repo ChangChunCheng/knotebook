@@ -413,3 +413,77 @@ describe("SettingsGroupRolesSection（/groups/:id/roles，#247 §6.3）", () => 
     expect(bodyOf(callsTo(fetchMock, "PATCH", `/api/groups/${group.id}/roles/${LEADS.id}`)[0])).toEqual({ permissions: ALL_OFF });
   });
 });
+
+// #181 PR-2b T7：「刪除」旗標的新說明（§6.5 末條）與「能刪不能編輯」提示（§6.10.7 末條：只提示、不阻擋）。
+const DELETE_DESCRIPTION = "Move the group's notes to the trash. With Edit as well, also restore them from the trash or delete them permanently.";
+const DELETE_HINT = "Without Edit, notes deleted with this role can't be restored from the trash by its holders.";
+const DELETER = customRole({ id: "66666666-6666-6666-6666-666666666666", name: "Deleter", permissions: { ...READER.permissions, delete: true } });
+const EDIT_DELETER = customRole({ id: "77777777-7777-7777-7777-777777777777", name: "Curators", permissions: { ...READER.permissions, edit: true, delete: true } });
+/** 不會出現的資料（內建管理員恆有全部旗標），只用來釘住 `!isAdmin`：管理員卡永遠不顯示提示。 */
+const ODD_ADMIN = adminRole({ id: ADMIN_ROLE.id, permissions: { ...ADMIN_ROLE.permissions, edit: false } });
+
+describe("SettingsGroupRolesSection：垃圾桶相關說明與提示（#181 §6.5、§6.10.7）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("GR-T1 說明區的 Delete 說明是新字（移到垃圾桶；同時有 Edit 才能還原／永久刪除）", async () => {
+    const dialog = await openRoles(GROUP_ADMIN, fetchFor(() => [GROUP_ADMIN], () => ROLES), "Reader");
+    const legend = within(dialog).getByRole("heading", { level: 2, name: "What each permission allows" }).closest("section");
+    expect(legend).not.toBeNull();
+    const term = within(legend as HTMLElement).getByText("Delete", { selector: "dt" });
+    expect(term.nextElementSibling).toHaveTextContent(DELETE_DESCRIPTION);
+  });
+
+  it("GR-T2 delete 且無 edit 的自訂角色卡有提示；edit＋delete 沒有；內建管理員（即使資料是 delete 無 edit）沒有；只有 Edit 的 Member 沒有", async () => {
+    const roles = [ODD_ADMIN, MEMBER_ROLE, DELETER, EDIT_DELETER];
+    const dialog = await openRoles(GROUP_ADMIN, fetchFor(() => [GROUP_ADMIN], () => roles), "Curators");
+    expect(within(region(dialog, "Deleter")).getByText(DELETE_HINT, { exact: true })).toHaveClass("text-xs", "text-muted-foreground");
+    expect(within(region(dialog, "Curators")).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+    expect(within(region(dialog, "Admin")).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+    expect(within(region(dialog, "Member")).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+    expect(within(dialog).getAllByText(DELETE_HINT)).toHaveLength(1);
+    // 只提示、不阻擋：Deleter 的旗標照常可切
+    expect(flagSwitch(region(dialog, "Deleter"), "Edit", "Deleter")).not.toBeDisabled();
+  });
+
+  it("GR-T2b 唯讀視角（沒有 canManageGroup）：Deleter 卡仍有提示（刻意：掛這個角色的成員自己會被這個後果影響）", async () => {
+    const roles = [ADMIN_ROLE, MEMBER_ROLE, DELETER];
+    const dialog = await openRoles(GROUP_MEMBER, fetchFor(() => [GROUP_MEMBER], () => roles), "Deleter");
+    expect(flagSwitch(region(dialog, "Deleter"), "Delete", "Deleter")).toBeDisabled();
+    expect(within(region(dialog, "Deleter")).getByText(DELETE_HINT, { exact: true })).toBeInTheDocument();
+  });
+
+  it("GR-T3 pending 時以送出的值判斷：Curators 關掉 Edit、PATCH 懸著 → 提示立刻出現；settle 後照 server 值", async () => {
+    let roles = [ADMIN_ROLE, MEMBER_ROLE, EDIT_DELETER];
+    let release: (r: Response) => void = () => {};
+    const fetchMock = fetchFor(() => [GROUP_ADMIN], () => roles, (url, method) =>
+      url === roleUrl(GROUP_ADMIN, EDIT_DELETER) && method === "PATCH" ? new Promise<Response>((resolve) => (release = resolve)) : null,
+    );
+    const dialog = await openRoles(GROUP_ADMIN, fetchMock, "Curators");
+    expect(within(region(dialog, "Curators")).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+    fireEvent.click(flagSwitch(region(dialog, "Curators"), "Edit", "Curators"));
+    await waitFor(() => expect(callsTo(fetchMock, "PATCH", roleUrl(GROUP_ADMIN, EDIT_DELETER))).toHaveLength(1));
+    expect(within(region(dialog, "Curators")).getByText(DELETE_HINT, { exact: true })).toBeInTheDocument();
+    const updated = { ...EDIT_DELETER, permissions: { ...EDIT_DELETER.permissions, edit: false } };
+    roles = [ADMIN_ROLE, MEMBER_ROLE, updated];
+    release(ok(updated));
+    await waitFor(() => expect(flagSwitch(region(dialog, "Curators"), "Edit", "Curators")).not.toHaveAttribute("aria-disabled"));
+    expect(within(region(dialog, "Curators")).getByText(DELETE_HINT, { exact: true })).toBeInTheDocument();
+  });
+
+  it("GR-T4 新增角色對話框：開 Delete → 提示出現；再開 Edit → 消失", async () => {
+    const dialog = await openRoles(GROUP_ADMIN, fetchFor(() => [GROUP_ADMIN], () => ROLES));
+    fireEvent.click(within(dialog).getByRole("button", { name: "New role" }));
+    const newDialog = await screen.findByRole("dialog", { name: "New role" });
+    expect(within(newDialog).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+    fireEvent.click(within(newDialog).getByRole("switch", { name: "Delete" }));
+    expect(within(newDialog).getByText(DELETE_HINT, { exact: true })).toBeInTheDocument();
+    fireEvent.click(within(newDialog).getByRole("switch", { name: "Edit" }));
+    expect(within(newDialog).queryByText(DELETE_HINT)).not.toBeInTheDocument();
+  });
+});

@@ -166,6 +166,7 @@ const NOTE: NoteDto = {
   lastEdited: null,
   group: null,
   groupId: null,
+  folderId: null,
   permissions: OWNER_PERMS,
 };
 
@@ -217,6 +218,9 @@ function baseFetchHandlers(getLoggedInAs: () => UserDto | null) {
     }
     if (url === "/api/admin/storage-plans" && method === "GET") {
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ plans: [], defaults: { userPlanId: "", groupPlanId: "" } }) });
+    }
+    if (url === "/api/admin/trash/settings" && method === "GET") {
+      return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ retentionDays: 7 }) });
     }
     return null;
   };

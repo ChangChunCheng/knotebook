@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./strip-comments.test-helper";
+
 /**
  * 來源層守衛（N10，2026-09-17 審查）：`brandSolid`／`brandDeep` 是主色實心鈕的
  * 兩階，見 `ui/button.tsx` 規範——**依所在表面二選一、不得混用**：`brandSolid`
@@ -39,10 +41,6 @@ const ALLOWED_FILES = [
   "pages/ResetPasswordPage.tsx",
 ];
 
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-}
-
 function listTsxFiles(dir: string): string[] {
   const entries = readdirSync(dir, { recursive: true, withFileTypes: true });
   const files: string[] = [];
@@ -65,7 +63,7 @@ describe("brandSolid 呼叫端範圍守衛（N10）", () => {
     expect(tsxFiles.some((p) => p.endsWith("/auth/guards.tsx"))).toBe(true);
 
     const offenders = tsxFiles
-      .filter((file) => /\bbrandSolid\b/.test(stripComments(readFileSync(file, "utf8"))))
+      .filter((file) => /\bbrandSolid\b/.test(stripComments(readFileSync(file, "utf8"), file)))
       .map((file) => file.slice(root.length + 1));
 
     expect(offenders.sort()).toEqual([...ALLOWED_FILES].sort());

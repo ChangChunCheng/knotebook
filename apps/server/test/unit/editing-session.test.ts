@@ -6,7 +6,7 @@ import type { Hocuspocus } from "@hocuspocus/server";
 import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelContainers } from "@knotebook/shared";
 import type { CollabContext } from "../../src/collab/server.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
-import { EditorSession, forkFrom, withDirectConnection, type DirectCtx } from "../../src/notes/editing/session.js";
+import { EditorSession, NoteGoneError, forkFrom, withDirectConnection, type DirectCtx, type DirectTarget } from "../../src/notes/editing/session.js";
 
 // m2：rebuildEvery／heapGrowthLimit 刻意調到不可能觸發——本檔最後一案會另建一個 rebuildEvery:1 的
 // runtime 並用它自己 installGlobals() 換掉 globalThis 的 window/document；若這顆模組層 rt 中途也
@@ -102,6 +102,9 @@ function fakeHocuspocus(disconnect: () => Promise<void>): Hocuspocus<CollabConte
   } as unknown as Hocuspocus<CollabContext>;
 }
 
+/** 閘門關著、筆記活著：重確認一律放行（本 describe 只驗錯誤優先順序）。 */
+const live = (hocuspocus: Hocuspocus<CollabContext>): DirectTarget => ({ hocuspocus, isDeleting: () => false, noteIsLive: async () => true });
+
 const directCtx = (): DirectCtx => ({ source: "ai-edit", userId: "u1", tokenId: null, agentLabel: null, applied: false });
 
 describe("withDirectConnection 的錯誤優先順序", () => {
@@ -110,7 +113,7 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     const disconnect = vi.fn().mockRejectedValue(disconnectErr);
     const hocuspocus = fakeHocuspocus(disconnect);
 
-    await expect(withDirectConnection(hocuspocus, "note-1", directCtx(), () => "ok")).rejects.toBe(disconnectErr);
+    await expect(withDirectConnection(live(hocuspocus), "note-1", directCtx(), () => "ok")).rejects.toBe(disconnectErr);
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -124,7 +127,7 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await expect(
-        withDirectConnection(hocuspocus, "note-1", directCtx(), () => {
+        withDirectConnection(live(hocuspocus), "note-1", directCtx(), () => {
           throw fnErr;
         })
       ).rejects.toBe(fnErr);
@@ -142,7 +145,7 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     const disconnect = vi.fn().mockResolvedValue(undefined);
     const hocuspocus = fakeHocuspocus(disconnect);
 
-    await expect(withDirectConnection(hocuspocus, "note-1", directCtx(), () => "ok")).resolves.toBe("ok");
+    await expect(withDirectConnection(live(hocuspocus), "note-1", directCtx(), () => "ok")).resolves.toBe("ok");
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -156,7 +159,7 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await expect(
-        withDirectConnection(hocuspocus, "note-1", directCtx(), () => {
+        withDirectConnection(live(hocuspocus), "note-1", directCtx(), () => {
           throw fnErr;
         })
       ).rejects.toBe(fnErr);
@@ -178,7 +181,7 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await expect(
-        withDirectConnection(hocuspocus, "note-1", directCtx(), () => {
+        withDirectConnection(live(hocuspocus), "note-1", directCtx(), () => {
           throw undefined;
         })
       ).rejects.toBeUndefined();
@@ -187,5 +190,76 @@ describe("withDirectConnection 的錯誤優先順序", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+// #181 §6.2-11（M-B）：直連寫入的重確認——開之前、開之後各查一次閘門與存活。
+function spiedTarget(isDeleting: () => boolean, noteIsLive: () => Promise<boolean>) {
+  const transact = vi.fn(async (cb: (doc: never) => void) => cb({} as never));
+  const disconnect = vi.fn().mockResolvedValue(undefined);
+  const open = vi.fn(async () => ({ transact, disconnect }));
+  const target: DirectTarget = {
+    hocuspocus: { openDirectConnection: open } as unknown as Hocuspocus<CollabContext>,
+    isDeleting: vi.fn(isDeleting),
+    noteIsLive: vi.fn(noteIsLive),
+  };
+  return { target, open, transact, disconnect };
+}
+
+describe("withDirectConnection 的重確認（DirectTarget）", () => {
+  it("ES1：閘門開著 → reject NoteGoneError，不開直連", async () => {
+    const s = spiedTarget(() => true, async () => true);
+    await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBeInstanceOf(NoteGoneError);
+    expect(s.open).not.toHaveBeenCalled();
+  });
+
+  it("ES0：筆記不在或已在垃圾桶（第一次查就 false）→ reject NoteGoneError，不開直連", async () => {
+    const s = spiedTarget(() => false, async () => false);
+    await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBeInstanceOf(NoteGoneError);
+    expect(s.open).not.toHaveBeenCalled();
+  });
+
+  it("ES2：開之後閘門才開 → reject NoteGoneError，disconnect 一次、不 transact", async () => {
+    let n = 0;
+    const s = spiedTarget(() => ++n > 1, async () => true);
+    await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBeInstanceOf(NoteGoneError);
+    expect(s.open).toHaveBeenCalledTimes(1);
+    expect(s.disconnect).toHaveBeenCalledTimes(1);
+    expect(s.transact).not.toHaveBeenCalled();
+  });
+
+  it("ES2b：開之後判 gone、disconnect 也失敗 → 仍丟 NoteGoneError，disconnect 的錯只 log 一次", async () => {
+    let n = 0;
+    const s = spiedTarget(() => ++n > 1, async () => true);
+    s.disconnect.mockRejectedValue(new Error("dc boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBeInstanceOf(NoteGoneError);
+      expect(s.disconnect).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("ES3：開之後才移入垃圾桶（第二次 noteIsLive 回 false）→ 同 ES2", async () => {
+    let n = 0;
+    const s = spiedTarget(() => false, async () => ++n === 1);
+    await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBeInstanceOf(NoteGoneError);
+    expect(s.open).toHaveBeenCalledTimes(1);
+    expect(s.disconnect).toHaveBeenCalledTimes(1);
+    expect(s.transact).not.toHaveBeenCalled();
+  });
+
+  it("ES4：開之後的存活查詢本身失敗 → 原錯冒出，仍 disconnect 一次、不 transact", async () => {
+    const dbErr = new Error("db down");
+    let n = 0;
+    const s = spiedTarget(() => false, async () => {
+      if (++n > 1) throw dbErr;
+      return true;
+    });
+    await expect(withDirectConnection(s.target, "note-1", directCtx(), () => "ok")).rejects.toBe(dbErr);
+    expect(s.disconnect).toHaveBeenCalledTimes(1);
+    expect(s.transact).not.toHaveBeenCalled();
   });
 });

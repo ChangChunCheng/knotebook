@@ -208,7 +208,7 @@ export async function createNote(args: CreateNoteArgs, ctx: McpToolCtx): Promise
   //    標題走（#145），所以回應裡的 `url` 不必二次寫入就已經是最終網址。
   let created;
   try {
-    created = await insertNoteWithAutoSlug(ctx.db, target.scope, args.title);
+    created = await insertNoteWithAutoSlug(ctx.db, { scope: target.scope, folderId: null }, args.title);
   } catch (err) {
     return mapGroupFk(err);
   }
