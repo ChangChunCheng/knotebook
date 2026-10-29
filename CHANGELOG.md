@@ -16,6 +16,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 ### Added
 
 - MCP, the REST API and the in-app AI read and write side-by-side columns as `<div data-kb-columns …>` and `<div data-kb-column …>` lines with Markdown inside each column (see [AI editing](docs/ai-editing.md#columns)); reading used to give the columns' blocks one after another without the column tags, and writing columns was refused. On a selection that reaches across columns, or into or out of a row, the in-app AI now works on the whole row, where it used to show no **AI** button. Dragging to make columns or change their widths is still not part of this. See [Side-by-side columns](docs/columns.md).
+- Add several people to a group at once: on the group's **Members** page, type or paste many email addresses into the email box (separated by commas, semicolons, spaces or line breaks — full-width `，` `；` and `、` work too; `Name <address>` copied from an email's recipients works too), or press **Import from another group…** to pick people from another group you're in. Everyone gets the role picked next to the email box. A dialog counts them as it goes, with **Stop** to end it after the one being added, and then lists who was added, who was already a member, which addresses have no account and which aren't email addresses; the addresses that weren't added are put in the email box. There is no limit on how many at a time. Importing is a one-time copy — the groups don't stay in sync. See [Notes in a group](docs/sharing.md#notes-in-a-group).
 
 ### Changed
 
