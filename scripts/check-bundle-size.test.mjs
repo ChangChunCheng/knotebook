@@ -19,7 +19,7 @@ const MGMT_PACK = { 'management-strings-Mgt000.js': `const m={${MANAGEMENT_I18N_
 const MARKER_BASE = {
   ...MGMT_PACK,
   'index-Abc123.js': 100, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
-  'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10, 'SelectLazy-Sss000.js': 10, ...MGMT_PACK,
+  'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10, 'SelectLazy-Sss000.js': 10,
 };
 
 function fakeAssets(files) {
