@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiFail } from "@/api/client";
 import { useGroupMembers, useGroups } from "@/api/groups";
@@ -56,6 +56,9 @@ type BulkAddDialogProps = {
 /** 結果的分類與顯示順序。 */
 const OUTCOMES: BulkAddOutcome[] = ["added", "alreadyMember", "notFound", "invalid", "failed", "notProcessed"];
 
+/** 結果裡每一類的 email 清單最多直接露出幾列，超過就在該類自己的清單裡捲動。 */
+const RESULT_VISIBLE_ROWS = 5;
+
 const SELECT_CLASS =
   "h-8 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -65,7 +68,7 @@ const SELECT_CLASS =
  * - `import`：挑人（來源群組 → 勾選清單）→ 按「加入 n 人」→ 同一個對話框換成進度。
  * - `input`：在加人輸入框一次填多個地址按「加入」→ 直接開在進度。
  * 進度是「已處理 n／共 m」＋「停止」（正在送的那一筆跑完就停，其餘記「未處理」）；跑完換成結果（停下的原因、
- * 各類的 email，清單可捲動）＋「完成」。設定 modal 裡不再另外顯示結果，也不發 toast。
+ * 各類的 email 一行一個，超過 5 個的那一類在自己的清單裡捲動；外層另有高度上限當保險）＋「完成」。設定 modal 裡不再另外顯示結果，也不發 toast。
  *
  * 無障礙：一個常駐的 `role="status"`（sr-only）從對話框打開就在，跑完才填入「停下的原因＋各類人數」；
  * email 清單放在 live region 外（不會整串念出來）。進入進度時焦點移到「停止」，進入結果時移到「完成」。
@@ -73,6 +76,7 @@ const SELECT_CLASS =
  */
 export function BulkAddDialog(props: BulkAddDialogProps) {
   const { t } = useTranslation();
+  const listId = useId();
   const { open, mode, bulk, onClose, returnFocusRef } = props;
   const phase = bulk === null ? "pick" : bulk.report === null ? "running" : "result";
   const stopRef = useRef<HTMLButtonElement>(null);
@@ -158,15 +162,38 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
                 {message.text}
               </p>
             )}
-            <ul className="max-h-64 space-y-2 overflow-y-auto rounded-md border border-input p-3 text-sm">
-              {groups.map((group) => (
-                <li key={group.outcome} data-outcome={group.outcome} className="wrap-anywhere">
-                  <span className={group.outcome === "added" || group.outcome === "alreadyMember" ? "font-medium" : "font-medium text-destructive"}>
-                    {t(`groups.bulk.outcome.${group.outcome}`, { count: group.emails.length })}
-                  </span>{" "}
-                  <span className="text-muted-foreground">{group.emails.join(", ")}</span>
-                </li>
-              ))}
+            {/* 外層的上限只是保險（6 類各 5 列也不會把「完成」推出畫面）：DialogContent 本身不捲動 */}
+            <ul className="max-h-[50vh] space-y-3 overflow-y-auto rounded-md border border-input p-3 text-sm">
+              {groups.map((group) => {
+                const labelId = `${listId}-${group.outcome}`;
+                const scrolls = group.emails.length > RESULT_VISIBLE_ROWS;
+                return (
+                  <li key={group.outcome} data-outcome={group.outcome}>
+                    <div
+                      id={labelId}
+                      className={group.outcome === "added" || group.outcome === "alreadyMember" ? "font-medium" : "font-medium text-destructive"}
+                    >
+                      {t(`groups.bulk.outcome.${group.outcome}`, { count: group.emails.length })}
+                    </div>
+                    {/* 每類各自捲動：超過 5 個才捲（列高固定 1.25rem，5 列＝6.25rem；長 email 折行會多佔列，所以是「約 5 列」）；
+                        會捲才可聚焦並以類別標題命名，鍵盤使用者才捲得到 */}
+                    <ul
+                      tabIndex={scrolls ? 0 : undefined}
+                      aria-labelledby={scrolls ? labelId : undefined}
+                      className={
+                        "leading-5 text-muted-foreground " +
+                        (scrolls ? "max-h-[6.25rem] overflow-y-auto focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" : "")
+                      }
+                    >
+                      {group.emails.map((email, index) => (
+                        <li key={`${index}-${email}`} className="wrap-anywhere">
+                          {email}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
             </ul>
             <DialogFooter>
               <Button ref={doneRef} type="button" variant="brandDeep" onClick={onClose}>

@@ -51,7 +51,8 @@ test("群組成員批次加入：貼三個地址（一個沒帳號）→ 加 2 �
   await expect(addDialog.getByRole("button", { name: "Done" })).toBeVisible({ timeout: 15_000 });
   await expect(addDialog.locator('[data-outcome="added"]')).toContainText(first);
   await expect(addDialog.locator('[data-outcome="added"]')).toContainText(second);
-  await expect(addDialog.locator('[data-outcome="notFound"]')).toHaveText(`No account with this email (1): ${ghost}`);
+  await expect(addDialog.locator('[data-outcome="notFound"]')).toContainText("No account with this email (1):");
+  await expect(addDialog.locator('[data-outcome="notFound"] li')).toHaveText([ghost]);
   await addDialog.getByRole("button", { name: "Done" }).click();
   await expect(addDialog).not.toBeVisible();
   await expect(dialog.getByRole("button", { name: `Remove ${first}` })).toBeVisible();
@@ -73,7 +74,8 @@ test("群組成員批次加入：貼三個地址（一個沒帳號）→ 加 2 �
 
   // 對話框不關：同一個對話框換成結果
   await expect(importDialog.getByRole("button", { name: "Done" })).toBeVisible({ timeout: 15_000 });
-  await expect(importDialog.locator('[data-outcome="added"]')).toHaveText(`Added (1): ${third}`);
+  await expect(importDialog.locator('[data-outcome="added"]')).toContainText("Added (1):");
+  await expect(importDialog.locator('[data-outcome="added"] li')).toHaveText([third]);
   await importDialog.getByRole("button", { name: "Done" }).click();
   await expect(importDialog).not.toBeVisible();
   await expect(dialog.getByRole("button", { name: `Remove ${third}` })).toBeVisible();

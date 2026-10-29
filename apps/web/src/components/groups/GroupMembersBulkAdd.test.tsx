@@ -86,6 +86,16 @@ function outcomeRow(bulkDialog: HTMLElement, outcome: string): HTMLElement | nul
   return bulkDialog.querySelector(`[data-outcome="${outcome}"]`);
 }
 
+/** 某一類的標題與 email 清單（一行一個）；沒有這一類 → null。 */
+function outcomeSummary(bulkDialog: HTMLElement, outcome: string): { label: string; emails: string[] } | null {
+  const row = outcomeRow(bulkDialog, outcome);
+  if (!row) return null;
+  return {
+    label: row.firstElementChild?.textContent ?? "",
+    emails: within(row).queryAllByRole("listitem").map((li) => li.textContent ?? ""),
+  };
+}
+
 const ME_ADMIN = () => member(ME.id, ME.email, "Me", ADMIN_ROLE);
 
 describe("成員批次加入", () => {
@@ -114,10 +124,10 @@ describe("成員批次加入", () => {
       { email: "ghost@example.com", roleId: ADMIN_ROLE.id },
       { email: "dave@example.com", roleId: ADMIN_ROLE.id },
     ]);
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (2): carol@example.com, dave@example.com");
-    expect(outcomeRow(bulkDialog, "notFound")).toHaveTextContent("No account with this email (1): ghost@example.com");
-    expect(outcomeRow(bulkDialog, "alreadyMember")).toHaveTextContent("Already members (1): BOB@example.com");
-    expect(outcomeRow(bulkDialog, "invalid")).toHaveTextContent("Not an email address (1): nope");
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (2):", emails: ["carol@example.com", "dave@example.com"] });
+    expect(outcomeSummary(bulkDialog, "notFound")).toEqual({ label: "No account with this email (1):", emails: ["ghost@example.com"] });
+    expect(outcomeSummary(bulkDialog, "alreadyMember")).toEqual({ label: "Already members (1):", emails: ["BOB@example.com"] });
+    expect(outcomeSummary(bulkDialog, "invalid")).toEqual({ label: "Not an email address (1):", emails: ["nope"] });
     expect(resultMessage(bulkDialog)).toHaveTextContent(/^The addresses that weren't added are left in the email box/);
     // 沒有帳號與格式不對的留在輸入框（依原輸入順序），角色不重設（還要再加）
     expect(input).toHaveValue("ghost@example.com, nope");
@@ -163,7 +173,7 @@ describe("成員批次加入", () => {
     fireEvent.change(within(dialog).getByLabelText("Role for new member"), { target: { value: ADMIN_ROLE.id } });
     submitEmails(dialog, "carol@example.com\tdave@example.com");
     const bulkDialog = await resultDialog();
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (2): carol@example.com, dave@example.com");
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (2):", emails: ["carol@example.com", "dave@example.com"] });
     expect(resultMessage(bulkDialog)).toBeNull();
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("");
     expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(MEMBER_ROLE.id);
@@ -176,8 +186,8 @@ describe("成員批次加入", () => {
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "carol@example.com nope");
     const bulkDialog = await resultDialog();
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (1): carol@example.com");
-    expect(outcomeRow(bulkDialog, "invalid")).toHaveTextContent("Not an email address (1): nope");
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (1):", emails: ["carol@example.com"] });
+    expect(outcomeSummary(bulkDialog, "invalid")).toEqual({ label: "Not an email address (1):", emails: ["nope"] });
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("nope");
   });
@@ -198,7 +208,7 @@ describe("成員批次加入", () => {
 
     await act(async () => put.release(ok(member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE), 201)));
     const result = await resultDialog();
-    expect(outcomeRow(result, "added")).toHaveTextContent("Added (2): carol@example.com, dave@example.com");
+    expect(outcomeSummary(result, "added")?.emails).toEqual(["carol@example.com", "dave@example.com"]);
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com", "dave@example.com"]);
   });
 
@@ -208,8 +218,8 @@ describe("成員批次加入", () => {
     submitEmails(dialog, "dup@example.com, carol@example.com");
     const bulkDialog = await resultDialog();
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["dup@example.com", "carol@example.com"]);
-    expect(outcomeRow(bulkDialog, "alreadyMember")).toHaveTextContent("Already members (1): dup@example.com");
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (1): carol@example.com");
+    expect(outcomeSummary(bulkDialog, "alreadyMember")).toEqual({ label: "Already members (1):", emails: ["dup@example.com"] });
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (1):", emails: ["carol@example.com"] });
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("");
   });
 
@@ -306,8 +316,8 @@ describe("成員批次加入", () => {
     await resultDialog();
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com", "dave@example.com"]);
     expect(resultMessage(bulkDialog)).toHaveTextContent("Stopped. The addresses that weren't added are back in the email box.");
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (2): carol@example.com, dave@example.com");
-    expect(outcomeRow(bulkDialog, "notProcessed")).toHaveTextContent("Not processed (1): erin@example.com");
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (2):", emails: ["carol@example.com", "dave@example.com"] });
+    expect(outcomeSummary(bulkDialog, "notProcessed")).toEqual({ label: "Not processed (1):", emails: ["erin@example.com"] });
     expect(input).toHaveValue("erin@example.com");
     expect(input).not.toHaveAttribute("readonly");
   });
@@ -366,8 +376,34 @@ describe("成員批次加入", () => {
       fireEvent.submit(form);
     });
     const bulkDialog = await resultDialog();
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (2): carol@example.com, dave@example.com");
+    expect(outcomeSummary(bulkDialog, "added")?.emails).toEqual(["carol@example.com", "dave@example.com"]);
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com", "dave@example.com"]);
+  });
+
+  it("結果清單：email 一行一個；超過 5 個的那一類才可捲動（tabIndex＋以類別標題命名），5 個以內不捲", async () => {
+    const six = Array.from({ length: 6 }, (_, i) => `u${i + 1}@example.com`);
+    const five = Array.from({ length: 5 }, (_, i) => `g${i + 1}@nowhere.test`);
+    const fetchMock = membersServer([ME_ADMIN()], six);
+    const { dialog } = await openMembers(fetchMock);
+    submitEmails(dialog, [...six, ...five].join(" "));
+    const bulkDialog = await resultDialog();
+
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (6):", emails: six });
+    expect(outcomeSummary(bulkDialog, "notFound")).toEqual({ label: "No account with this email (5):", emails: five });
+
+    const scrolling = within(outcomeRow(bulkDialog, "added")!).getByRole("list");
+    expect(scrolling).toHaveAttribute("tabindex", "0");
+    expect(scrolling).toHaveAccessibleName("Added (6):");
+    expect(scrolling.className).toContain("overflow-y-auto");
+    expect(scrolling).toHaveClass("leading-5", "text-muted-foreground");
+
+    const plain = within(outcomeRow(bulkDialog, "notFound")!).getByRole("list");
+    expect(plain).not.toHaveAttribute("tabindex");
+    expect(plain).not.toHaveAttribute("aria-labelledby");
+    expect(plain.className).not.toContain("overflow-y-auto");
+    expect(plain).toHaveClass("leading-5", "text-muted-foreground");
+    // email 不進 live region
+    expect(within(bulkDialog).getByRole("status")).not.toHaveTextContent("@");
   });
 
   it("從其他群組匯入：列其他群組 → 選一個 → 勾選清單（預設全勾，排除已在這裡的人與自己）→ 取消一位 → 確認 → 同一個對話框換成進度與結果 → 完成、焦點回匯入鈕", async () => {
@@ -405,7 +441,7 @@ describe("成員批次加入", () => {
     // 對話框不關：同一個對話框換成結果
     const bulkDialog = await resultDialog("Import members from another group");
     expect(bulkDialog).toBe(importDialog);
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (2): carol@example.com, erin@example.com");
+    expect(outcomeSummary(bulkDialog, "added")?.emails).toEqual(["carol@example.com", "erin@example.com"]);
     expect(putBodies(fetchMock)).toEqual([
       { email: "carol@example.com", roleId: ADMIN_ROLE.id },
       { email: "erin@example.com", roleId: ADMIN_ROLE.id },
@@ -461,7 +497,7 @@ describe("成員批次加入", () => {
     fireEvent.click(await within(importDialog).findByRole("button", { name: "Add 1 person" }));
 
     const bulkDialog = await resultDialog("Import members from another group");
-    expect(outcomeRow(bulkDialog, "added")).toHaveTextContent("Added (1): carol@example.com");
+    expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (1):", emails: ["carol@example.com"] });
     expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(ADMIN_ROLE.id);
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("typed@example.com ");
   });
