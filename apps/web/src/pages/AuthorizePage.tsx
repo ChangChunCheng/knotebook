@@ -155,6 +155,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
         <Button
           type="button"
           variant="brandSolid"
+          size="lg"
           disabled={decision.isPending || decision.isSuccess}
           onClick={() => submit("allow")}
         >
@@ -163,6 +164,7 @@ function ConsentBody({ req, data }: { req: string; data: OauthRequestDto }) {
         <Button
           type="button"
           variant="outline"
+          size="lg"
           disabled={decision.isPending || decision.isSuccess}
           onClick={() => submit("deny")}
         >

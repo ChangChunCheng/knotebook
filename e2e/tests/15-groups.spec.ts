@@ -4,7 +4,7 @@ import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, openGro
 /**
  * #175 群組 v2（spec §12.3 第 15 條，PR1 改寫自 #103 版）：A 建群組 → A 在群組建筆記（群組持有、
  * 網址 `/g/<group_id>/<slug>`）→ 分享面板是群組版（無 radio、只說明＋連到群組設定）→ A 從側欄群組 ⋮ →
- *『成員與設定』（群組面板）以 email 加 B（內建一般成員）→ B 側欄看得到、能編輯（共編互見）、也有分享鈕 → A 移除 B → B 連線
+ *『成員與設定』（群組面板）以 email 加 B（內建一般成員）→ B 側欄看得到（B 自建的群組排在前：工作坊依角色排）、能編輯（共編互見）、也有分享鈕 → A 移除 B → B 連線
  * 被踢、該篇從 B 的側欄消失 → A 開刪除群組對話框：兩模式、預設「轉移給管理員」→ Cancel → 群組與該篇仍在
  * （PR4 起非空群組也刪得掉，真的刪除由 18-groups-delete 測）。
  * 斷言形沿用 03-share-revoke（兩個 context、邀請建第二使用者、10 秒 SLA、exact toast）。
@@ -81,6 +81,18 @@ test("群組：建立 → 群組建筆記（/g/ 網址）→ 設定加人 → �
     const userSidebar = userPage.getByRole("complementary");
     const userWorkspace = await showSidebarTab(userPage, "Workspace", userSidebar);
     await expect(userWorkspace.getByRole("button", { name: groupName, exact: true })).toBeVisible({ timeout: 15_000 });
+
+    // ── B：自己建一個名稱排在後面的群組 → 工作坊依我的角色排：我是管理員的在前、一般成員的在後（不依名稱）──
+    const ownGroupName = `Zz E2E own group ${Date.now()}`;
+    await userSidebar.getByRole("button", { name: "New group", exact: true }).click();
+    const ownGroupDialog = userPage.getByRole("dialog", { name: "New group" });
+    await ownGroupDialog.getByLabel("Group name").fill(ownGroupName);
+    await ownGroupDialog.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(ownGroupDialog).not.toBeVisible();
+    const userGroupNodes = userWorkspace.locator(`[data-node-kind="group"]`);
+    await expect(userGroupNodes).toHaveCount(2);
+    await expect(userGroupNodes.nth(0).getByRole("button", { name: ownGroupName, exact: true })).toBeVisible();
+    await expect(userGroupNodes.nth(1).getByRole("button", { name: groupName, exact: true })).toBeVisible();
     await userWorkspace.getByRole("link", { name: title }).click();
     await expect(userPage).toHaveURL(noteUrl);
     const userBadge = userPage.getByRole("status").filter({ hasText: /^Connected/ });
