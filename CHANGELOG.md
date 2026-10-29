@@ -7,6 +7,10 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ## [Unreleased]
 
+### Added
+
+- Add several people to a group at once: on the group's **Members** page, type or paste many email addresses into the email box (separated by commas, semicolons, spaces or line breaks — full-width `，` `；` and `、` work too; `Name <address>` copied from an email's recipients works too), or press **Import from another group…** to pick people from another group you're in. Everyone gets the role picked next to the email box. A dialog counts them as it goes, with **Stop** to end it after the one being added, and then lists who was added, who was already a member, which addresses have no account and which aren't email addresses; the addresses that weren't added are put in the email box. There is no limit on how many at a time. Importing is a one-time copy — the groups don't stay in sync. See [Notes in a group](docs/sharing.md#notes-in-a-group).
+
 ### Changed
 
 - The sidebar's **Workspace** tab lists groups by your role in them: groups where you hold the built-in **Admin** role first, then those where you hold the built-in **Member** role, then those where you have a custom role, each by name. Before, all groups were listed by name, so groups you created could end up below ones others added you to. `GET /api/groups` returns them in the same order, and so do **Settings → Groups**, the group lists in **Move to…** and **Copy to…**, and **Move to** and **Copy to** in the sidebar's selection mode.
