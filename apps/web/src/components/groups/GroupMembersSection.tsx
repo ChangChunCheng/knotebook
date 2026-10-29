@@ -9,9 +9,9 @@ import { useSession } from "@/auth/useSession";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
 import { Button } from "@/components/ui/button";
 import { Trash } from "@/components/ui/icons";
-import { Input } from "@/components/ui/input";
 import { RowIconButton } from "@/components/ui/row-icon-button";
 import { toast } from "@/components/ui/toast";
+import { UserEmailCombobox } from "@/components/UserEmailCombobox";
 import { roleLabel } from "@/lib/group-role";
 import { SettingsGroup, SettingsPage } from "@/settings/SettingsLayout";
 import { useGroupOutlet } from "./group-outlet";
@@ -229,7 +229,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       id: member.userId,
       primary: { name: member.displayName },
       cells: {
-        // A8：成員彼此看得到 email——要收回就刪這一欄（連同 nameColumn 改回主欄）
+        // A8：成員彼此看得到 email——要收回就刪這一欄（連同 nameColumn 改回主欄；server 建議的 ① 同群組成員也要一起收，見 routes/users.ts）
         email: { content: member.email, tone: "muted" },
         role: canManageMembers ? (
           <select
@@ -290,21 +290,21 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       {canManageMembers && (
         <>
           <form onSubmit={(event) => void handleAdd(event)} className="mt-4 flex items-center gap-2">
-            {/* 收多個地址（逗號／分號／空白／換行分隔），所以是 text 而不是 email：後者的原生驗證會擋下多個地址 */}
+            {/* 收多個地址（逗號／分號／空白／換行分隔），所以是 multiple（text 而不是 email：後者的原生驗證會擋下多個地址）；
+                「認識的人」建議只查、只換游標所在的那一個地址，已是成員與框裡已有的不再建議 */}
             {/* 跑的期間 readOnly（不是 disabled）：跑完要把沒加成的地址寫回來，使用者這時打的字會被蓋掉；
-                對話框跑到一半被關掉時焦點還回這裡，disabled 收不到焦點 */}
-            <Input
+                對話框跑到一半被關掉時焦點還回這裡，disabled 收不到焦點。唯讀時也不開建議清單 */}
+            <UserEmailCombobox
               ref={emailInputRef}
-              type="text"
-              inputMode="email"
-              required
+              multiple
               readOnly={running}
+              label={t("groups.detail.addEmailLabel")}
               placeholder={t("groups.bulk.addEmailsPlaceholder")}
-              aria-label={t("groups.detail.addEmailLabel")}
               aria-describedby={emailHintId}
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={setEmail}
               onPaste={handlePaste}
+              excludeUserIds={members.map((member) => member.userId)}
               className="min-w-0 max-w-md flex-1"
             />
             <span id={emailHintId} className="sr-only">

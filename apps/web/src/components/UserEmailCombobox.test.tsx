@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { createRef, useState, type RefObject } from "react";
 import type { UserSuggestionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -171,5 +171,117 @@ describe("UserEmailCombobox", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(input()).toHaveValue("an");
+  });
+});
+
+/** 群組加成員那格（#331 收多個地址）：`multiple`；`locked` 勾起來＝批次加入跑的期間（readOnly）。 */
+function MultiHarness({ inputRef }: { inputRef?: RefObject<HTMLInputElement | null> }) {
+  const [value, setValue] = useState("");
+  const [locked, setLocked] = useState(false);
+  return (
+    <form onSubmit={(event) => event.preventDefault()}>
+      <UserEmailCombobox ref={inputRef} multiple readOnly={locked} label="Email address" value={value} onChange={setValue} />
+      <label>
+        <input type="checkbox" checked={locked} onChange={(event) => setLocked(event.target.checked)} />
+        Lock
+      </label>
+    </form>
+  );
+}
+
+function renderMulti(props: Parameters<typeof MultiHarness>[0] = {}) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MultiHarness {...props} />
+    </QueryClientProvider>,
+  );
+}
+
+/** 打字：值與游標一起換（游標預設在最後）。 */
+function typeAt(text: string, caret = text.length): void {
+  fireEvent.change(input(), { target: { value: text, selectionStart: caret, selectionEnd: caret } });
+}
+
+describe("UserEmailCombobox multiple（群組加成員的多地址框）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("text＋inputMode email（不是 type=email：原生驗證會擋多個地址）；ref 指向輸入框", () => {
+    suggestFetch();
+    const ref = createRef<HTMLInputElement>();
+    renderMulti({ inputRef: ref });
+    expect(input()).toHaveAttribute("type", "text");
+    expect(input()).toHaveAttribute("inputmode", "email");
+    expect(ref.current).toBe(input());
+  });
+
+  it("改中間那個地址：只拿游標所在的地址去查；選取只換那一個、不多補分隔，游標放在分隔後面", async () => {
+    const fetchMock = suggestFetch();
+    renderMulti();
+    typeAt("a@x.com, an, c@y.com", "a@x.com, an".length);
+    const list = await screen.findByRole("listbox", { name: "People you know" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/users/suggest?q=an", expect.anything());
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(["/api/users/suggest?q=an"]);
+    const option = within(list).getByRole("option", { name: /Ann Example/ });
+    fireEvent.mouseDown(option);
+    fireEvent.click(option);
+    expect(input()).toHaveValue("a@x.com, ann@example.com, c@y.com");
+    expect(input().selectionStart).toBe("a@x.com, ann@example.com, ".length);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("全形分隔（，；、與全形空白）也算邊界；在最後一個地址選取 → 補「, 」，其他地址原樣不動", async () => {
+    const fetchMock = suggestFetch();
+    renderMulti();
+    typeAt("a@x.com，b@y.com；c@z.com、d@w.com　an");
+    await screen.findByRole("listbox", { name: "People you know" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/users/suggest?q=an", expect.anything());
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input()).toHaveValue("a@x.com，b@y.com；c@z.com、d@w.com　ann@example.com, ");
+    expect(input().selectionStart).toBe(input().value.length);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("選完接著打下一個：查的是新打的那一段，框裡已有的地址不再建議（不分大小寫）", async () => {
+    const fetchMock = suggestFetch();
+    renderMulti();
+    typeAt("ANN@example.com, an");
+    const list = await screen.findByRole("listbox", { name: "People you know" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/users/suggest?q=an", expect.anything());
+    expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual(["Andy Exampleandy@example.com"]);
+  });
+
+  it("游標在分隔上（前後都不是地址）→ 不查、不開清單", async () => {
+    const fetchMock = suggestFetch();
+    renderMulti();
+    typeAt("ann@example.com, ");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("readOnly（批次加入跑的期間）：開著的清單收起，↓ 不開、改值也不開，不能選取", async () => {
+    suggestFetch();
+    renderMulti();
+    typeAt("a@x.com, an");
+    await screen.findByRole("listbox", { name: "People you know" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Lock" }));
+    expect(input()).toHaveAttribute("readonly");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input()).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    typeAt("a@x.com, and");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input()).toHaveValue("a@x.com, and");
   });
 });

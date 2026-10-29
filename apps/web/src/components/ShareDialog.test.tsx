@@ -204,6 +204,9 @@ describe("ShareDialog", () => {
     await selectMembers();
 
     const box = screen.getByRole("combobox", { name: "Email address" });
+    // 分享一次一個地址：仍是 type="email"（不是群組加成員那格的多地址 text）
+    expect(box).toHaveAttribute("type", "email");
+    expect(box).not.toHaveAttribute("inputmode");
     fireEvent.change(box, { target: { value: "bo" } });
     const option = await screen.findByRole("option", { name: /bob@example\.com/ });
     fireEvent.mouseDown(option);
@@ -1095,7 +1098,7 @@ function expectGroupPanelShape() {
   expect(within(dialog).queryAllByRole("radio")).toHaveLength(0);
   expect(within(dialog).queryByText("Group members")).not.toBeInTheDocument();
   expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
-  expect(within(dialog).queryByRole("textbox", { name: "Email address" })).not.toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Email address")).not.toBeInTheDocument();
   expect(within(dialog).getByText(/In "Workshop A", every member whose role can read has access\./)).toBeInTheDocument();
   const link = within(dialog).getByRole("link", { name: "Group settings" });
   expect(link).toHaveAttribute("href", `/groups/${GROUP_ID}`);

@@ -2,7 +2,8 @@
  * 加成員／分享對話框的使用者建議：`GET /api/users/suggest?q=`。
  *
  * **隱私邊界**：這**不是**全站名錄——全站搜尋會讓任何登入者列舉所有帳號的 email。只在呼叫者「已經認識」的人裡找：
- * ① 與呼叫者同在至少一個群組的成員（`GET /api/groups/:id/members` 本來就把他們的 email 給任何成員看）；
+ * ① 與呼叫者同在至少一個群組的成員（`GET /api/groups/:id/members` 本來就把他們的 email 給任何成員看——A8；
+ *    那支哪天收回成員的 email，① 要一起拿掉，見 routes/groups.ts 該路由上的註解）；
  * ② 呼叫者把**自己的**筆記逐人分享過的對象（`GET /api/notes/:id/shares` 本來就給 owner 看）。垃圾桶裡的筆記不算（`deleted_at IS NULL`；
  *    那時分享名單在介面上看不到，還原後就又算了）。
  * 刻意**不含**「把筆記分享給我的人」：被分享者在介面上只看得到 owner 的 handle，看不到 email（`NoteDto` 只帶

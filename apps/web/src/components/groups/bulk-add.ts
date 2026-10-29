@@ -1,5 +1,6 @@
 import { normalizeEmail } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
+import { PIECE_RE, SEGMENT_SEPARATOR_RE } from "@/lib/email-list";
 
 /**
  * 群組成員的批次加入（一次加很多人；純前端、沿用單人的 `PUT /api/groups/:id/members`）。
@@ -14,11 +15,8 @@ const EMAIL_LIKE_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+$/;
 
 /** 信件收件人欄的 `"Lee, Ann" <ann@x.com>`：引號裡的顯示名可能含逗號，先拿掉（只拿掉緊接著 `<` 的那種，單獨一個 `"ann@x.com"` 不動）。 */
 const QUOTED_NAME_BEFORE_ANGLE_RE = /"[^"]*"\s*(?=<)/g;
-/** 分段：半形與全形的逗號、分號，頓號，換行（中文輸入法下很容易打成全形）。 */
-const SEGMENT_SEPARATOR_RE = /[,;，；、\r\n]+/;
 const HAS_ANGLES_RE = /<[^<>]*>/;
-/** 段內的片段：一個 `<…>` 整個算一片（括號內的就是地址），其餘依空白切（JS 的 `\s` 含全形空白）。 */
-const PIECE_RE = /<([^<>]*)>|[^\s<>]+/g;
+// 分段（SEGMENT_SEPARATOR_RE）與段內切片（PIECE_RE）在 lib/email-list.ts：與加成員框的建議（UserEmailCombobox multiple）共用一份
 
 /**
  * 把貼上的一串地址拆開：先依逗號、分號（半形、全形）、頓號、換行切段，段內再依空白切。
