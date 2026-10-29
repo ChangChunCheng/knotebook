@@ -1,5 +1,6 @@
 import {
   useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type Ref,
+  type SyntheticEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { autoUpdate, flip, offset, size, useFloating } from "@floating-ui/react";
@@ -143,9 +144,14 @@ export function UserEmailCombobox({
     if (readOnly) return;
     if (span) {
       const replaced = replaceToken(value, span.start, span.end, user.email);
-      pendingCaretRef.current = replaced.caret;
       setCaret(replaced.caret);
-      onChange(replaced.text);
+      if (replaced.text === value) {
+        // 值沒變（選的就是已經打完整的那個、後面也已有分隔）：外層不會重繪，直接放游標
+        inputRef.current?.setSelectionRange(replaced.caret, replaced.caret);
+      } else {
+        pendingCaretRef.current = replaced.caret;
+        onChange(replaced.text);
+      }
     } else {
       onChange(user.email);
     }
@@ -154,7 +160,29 @@ export function UserEmailCombobox({
     inputRef.current?.focus();
   }
 
+  /** multiple：游標移到另一個地址時，清單（還是舊地址的建議）收起——不然選了會換掉游標所在的那個。 */
+  function handleSelect(event: SyntheticEvent<HTMLInputElement>): void {
+    const input = event.currentTarget;
+    const next = input.selectionStart ?? input.value.length;
+    if (tokenAt(input.value, next).start !== tokenAt(input.value, caret).start) {
+      setOpen(false);
+      setActive(-1);
+    }
+    setCaret(next);
+  }
+
+  /** #331 的貼上（換行改逗號）在外層直接改值、不經過 onChange：清單也要收起。 */
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>): void {
+    onPaste?.(event);
+    if (event.defaultPrevented) {
+      setOpen(false);
+      setActive(-1);
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    // 輸入法選字中的 ↑／↓／Enter 是給輸入法的（同 FilePanel、SelectionAiBox）
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "ArrowDown") {
       if (!open) {
         if (!readOnly) setOpen(true);
@@ -198,14 +226,16 @@ export function UserEmailCombobox({
         aria-label={label}
         value={value}
         onChange={(event) => {
+          // 使用者自己改了值：上一次選取留下、還沒放的游標位置作廢
+          pendingCaretRef.current = null;
           onChange(event.target.value);
           if (multiple) setCaret(event.target.selectionStart ?? event.target.value.length);
           setOpen(true);
           setActive(-1);
         }}
-        // 只換游標所在的地址：游標移到別的地址（方向鍵、點一下）時跟著換查詢
-        onSelect={multiple ? (event) => setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length) : undefined}
-        onPaste={onPaste}
+        // 只換游標所在的地址：游標移到別的地址（方向鍵、點一下）時收起清單、跟著換查詢
+        onSelect={multiple ? handleSelect : undefined}
+        onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         onBlur={() => {
           setOpen(false);

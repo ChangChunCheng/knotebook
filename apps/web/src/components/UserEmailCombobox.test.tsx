@@ -174,13 +174,31 @@ describe("UserEmailCombobox", () => {
   });
 });
 
-/** 群組加成員那格（#331 收多個地址）：`multiple`；`locked` 勾起來＝批次加入跑的期間（readOnly）。 */
-function MultiHarness({ inputRef }: { inputRef?: RefObject<HTMLInputElement | null> }) {
+/**
+ * 群組加成員那格（#331 收多個地址）：`multiple`；`locked` 勾起來＝批次加入跑的期間（readOnly）。
+ * `pasteAs`：比照 #331 的 handlePaste——擋掉預設貼上、在外層直接改值（不經過 onChange）。
+ */
+function MultiHarness({ inputRef, pasteAs }: { inputRef?: RefObject<HTMLInputElement | null>; pasteAs?: string }) {
   const [value, setValue] = useState("");
   const [locked, setLocked] = useState(false);
   return (
     <form onSubmit={(event) => event.preventDefault()}>
-      <UserEmailCombobox ref={inputRef} multiple readOnly={locked} label="Email address" value={value} onChange={setValue} />
+      <UserEmailCombobox
+        ref={inputRef}
+        multiple
+        readOnly={locked}
+        label="Email address"
+        value={value}
+        onChange={setValue}
+        onPaste={
+          pasteAs === undefined
+            ? undefined
+            : (event) => {
+                event.preventDefault();
+                setValue(pasteAs);
+              }
+        }
+      />
       <label>
         <input type="checkbox" checked={locked} onChange={(event) => setLocked(event.target.checked)} />
         Lock
@@ -283,5 +301,56 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(input()).toHaveValue("a@x.com, and");
+  });
+
+  it("游標移到另一個地址 → 舊地址的清單收起，Enter 不會換掉游標所在的地址", async () => {
+    suggestFetch();
+    renderMulti();
+    // React 的 onSelect 要先看到 focusin（記下作用中的輸入框），之後 mouseup／keyup 時比對選取範圍有沒有變
+    input().focus();
+    fireEvent.focusIn(input());
+    typeAt("bob@example.com, an");
+    await screen.findByRole("listbox", { name: "People you know" });
+    // 點一下把游標放進 bob 那個地址（用 mouseup：前面的測試按過選項的 mousedown，React 要等 mouseup 才再算選取）
+    input().setSelectionRange(2, 2);
+    fireEvent.mouseUp(input());
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input()).toHaveValue("bob@example.com, an");
+  });
+
+  it("外層接手的貼上（擋掉預設、直接改值）→ 清單收起", async () => {
+    suggestFetch();
+    renderMulti({ pasteAs: "a@x.com, b@y.com" });
+    typeAt("an");
+    await screen.findByRole("listbox", { name: "People you know" });
+    fireEvent.paste(input(), { clipboardData: { getData: () => "a@x.com\nb@y.com" } });
+    expect(input()).toHaveValue("a@x.com, b@y.com");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("選取後值沒變（選的就是打完整的那個、後面已有分隔）→ 游標放到分隔後；接著打字游標不會被拉回去", async () => {
+    suggestFetch();
+    renderMulti();
+    typeAt("ann@example.com, c@y.com", 2);
+    const list = await screen.findByRole("listbox", { name: "People you know" });
+    const option = within(list).getByRole("option", { name: /Ann Example/ });
+    fireEvent.mouseDown(option);
+    fireEvent.click(option);
+    expect(input()).toHaveValue("ann@example.com, c@y.com");
+    expect(input().selectionStart).toBe("ann@example.com, ".length);
+    typeAt("ann@example.com, c@y.comx");
+    expect(input().selectionStart).toBe("ann@example.com, c@y.comx".length);
+  });
+
+  it("輸入法選字中的 Enter 不選取（交給輸入法）", async () => {
+    suggestFetch();
+    renderMulti();
+    typeAt("an");
+    await screen.findByRole("listbox", { name: "People you know" });
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    fireEvent.keyDown(input(), { key: "Enter", isComposing: true });
+    expect(input()).toHaveValue("an");
+    expect(screen.getByRole("listbox", { name: "People you know" })).toBeInTheDocument();
   });
 });

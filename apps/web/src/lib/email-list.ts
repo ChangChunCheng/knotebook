@@ -40,11 +40,16 @@ export function otherTokens(text: string, start: number, end: number): string[] 
 
 /**
  * 把 `[start, end)` 換成 `email`，其他地址原樣不動。後面還沒接分段字元就補 `, `（原本隔開下一個地址的空白收掉）；
- * 已經接著（改的是中間那個地址）就沿用，不再多補一個。回傳新字串與游標位置（落在分隔之後，可以接著打下一個）。
+ * 已經接著（改的是中間那個地址）就沿用，不再多補一個。`名字 <地址>` 括號裡的地址（後面緊接 `>`）不補，游標放到 `>`
+ * （與其後的分隔）後面。回傳新字串與游標位置（落在分隔之後，可以接著打下一個）。
  */
 export function replaceToken(text: string, start: number, end: number, email: string): { text: string; caret: number } {
   const before = text.slice(0, start) + email;
   const after = text.slice(end);
+  if (after.startsWith(">")) {
+    const separator = LEADING_SEPARATOR_RE.exec(after.slice(1));
+    return { text: before + after, caret: before.length + 1 + (separator?.[0].length ?? 0) };
+  }
   const existing = LEADING_SEPARATOR_RE.exec(after);
   if (existing) return { text: before + after, caret: before.length + existing[0].length };
   return { text: `${before}, ${after.replace(/^\s+/, "")}`, caret: before.length + 2 };

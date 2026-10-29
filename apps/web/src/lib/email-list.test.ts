@@ -33,4 +33,10 @@ describe("lib/email-list", () => {
     // 只靠空白隔開的下一個地址：補「, 」並收掉原本的空白
     expect(replaceToken("an c@y.com", 0, 2, "ann@x.com")).toEqual({ text: "ann@x.com, c@y.com", caret: 11 });
   });
+
+  it("replaceToken：`名字 <地址>` 括號裡的地址（後面緊接 `>`）不補分隔，游標放到 `>`（與其後的分隔）後面", () => {
+    expect(replaceToken("Ann <an>", 5, 7, "ann@x.com")).toEqual({ text: "Ann <ann@x.com>", caret: 15 });
+    expect(replaceToken("Ann <an>, c@y.com", 5, 7, "ann@x.com")).toEqual({ text: "Ann <ann@x.com>, c@y.com", caret: 17 });
+    expect(parseEmailList("Ann <ann@x.com>, c@y.com").all).toEqual(["ann@x.com", "c@y.com"]);
+  });
 });
