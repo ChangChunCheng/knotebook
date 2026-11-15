@@ -6,6 +6,7 @@ import { ApiFail } from "@/api/client";
 import { useRemoveMember } from "@/api/groups";
 import { useSession } from "@/auth/useSession";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT } from "@/components/ui/hit-area";
 import {
   Dialog,
   DialogClose,
@@ -113,7 +114,7 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
             variant="ghost"
             size="icon"
             aria-label={t("groups.menu.label", { name: group.name })}
-            className={size === "sidebar" ? cn("h-6 w-6 shrink-0", hoverReveal("grouprow")) : "shrink-0"}
+            className={size === "sidebar" ? cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("grouprow")) : "shrink-0"}
           >
             <EllipsisVertical aria-hidden="true" className={size === "sidebar" ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </Button>

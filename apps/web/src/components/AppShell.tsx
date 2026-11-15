@@ -10,6 +10,7 @@ import { FOLDERS_QUERY_KEY, folderErrorMessage, invalidateFolderRelated, isFolde
 import { useCreateNote } from "@/api/notes";
 import { expandFolderChain, indexFolders } from "@/components/sidebar/folder-index";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { Input } from "@/components/ui/input";
 import { PanelLeft, Search, X } from "@/components/ui/icons";
 import { toast, toastViewportHostRef } from "@/components/ui/toast";
@@ -89,7 +90,7 @@ export function SidebarDrawerButton() {
       size="icon"
       aria-label={t("sidebar.openDrawer")}
       onClick={() => setOpen(true)}
-      className="h-8 w-8 shrink-0 xl:hidden"
+      className={cn("h-8 w-8 shrink-0 xl:hidden", HEADER_ICON_HIT)}
     >
       <PanelLeft aria-hidden="true" className="h-4 w-4" />
     </Button>

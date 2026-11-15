@@ -689,6 +689,8 @@ describe("NotePage", () => {
       const header = document.querySelector("header") as HTMLElement;
       const top = within(header).getByTestId("note-header-title-row");
       const sub = within(header).getByTestId("note-header-subline");
+      // 觸控時標題列下緣留 6px，「‹」與 ⋮ 的 44px 點擊範圍才不會被下一行的位置鈕蓋掉。
+      expect(top).toHaveClass("pointer-coarse:pb-1.5");
       expect(within(top).getByRole("button", { name: "Back to notes" })).toBeInTheDocument();
       expect(within(top).getByLabelText("Note title")).toBeInTheDocument();
       expect(within(top).getByRole("button", { name: "Favorite" })).toBeInTheDocument();

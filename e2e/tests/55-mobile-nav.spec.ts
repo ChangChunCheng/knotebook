@@ -66,6 +66,15 @@ async function openAs(browser: Browser, account: Account, viewport: { width: num
   return { context, page };
 }
 
+/** 觸控手機（`pointer: coarse`）context：列高、點擊範圍都走觸控那一套。 */
+async function openTouchAs(browser: Browser, account: Account): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: PHONE });
+  const page = await context.newPage();
+  await loginAs(page, account.email, PASSWORD);
+  await expect(page).toHaveURL(/\/$/);
+  return { context, page };
+}
+
 interface Created {
   id: string;
   slug: string;
@@ -223,11 +232,16 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
 test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系統返回與「‹」同一條歷史", async ({ browser }) => {
   test.setTimeout(180_000);
   const alice = await createAccount(browser, "alice");
-  const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
+  // 筆記在桌面 context 建好；清單捲動與點擊在觸控手機 context 裡做（列高 44，滑鼠的窄視窗列只有 28）。
+  const titles = Array.from({ length: 30 }, (_, i) => `E2E mn scroll ${String(i + 1).padStart(2, "0")} ${RUN}`);
+  const desktop = await openAs(browser, alice, { width: 1280, height: 800 });
   try {
-    const titles = Array.from({ length: 30 }, (_, i) => `E2E mn scroll ${String(i + 1).padStart(2, "0")} ${RUN}`);
-    for (const t of titles) await apiNote(page, t);
-    await page.setViewportSize(PHONE);
+    for (const t of titles) await apiNote(desktop.page, t);
+  } finally {
+    await desktop.context.close();
+  }
+  const { context, page } = await openTouchAs(browser, alice);
+  try {
     await page.goto("/");
     const sidebar = sidebarOf(page);
     await showSidebarTab(page, "My notes");

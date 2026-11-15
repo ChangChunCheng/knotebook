@@ -52,7 +52,7 @@ export function ComparePicker({ side }: { side: "left" | "right" }) {
   };
 
   const itemClass =
-    "relative flex items-center rounded-sm py-1.5 pl-8 pr-2 text-sm transition-colors focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent";
+    "relative flex items-center rounded-sm py-1.5 pl-8 pr-2 pointer-coarse:py-2.5 text-sm transition-colors focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent";
 
   return (
     <DropdownMenu>

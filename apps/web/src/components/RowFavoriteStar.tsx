@@ -5,6 +5,7 @@ import { errorMessage, useAddFavorite, useRemoveFavorite } from "@/api/favorites
 import { FavoriteRemoveDialog } from "@/components/FavoriteRemoveDialog";
 import { Button } from "@/components/ui/button";
 import { Star } from "@/components/ui/icons";
+import { ROW_ICON_HIT } from "@/components/ui/hit-area";
 import { hoverRevealOnly } from "@/components/ui/reveal";
 import { toast } from "@/components/ui/toast";
 import { captureRemoveContext, focusAfterRemoveLater, type RemoveContext } from "@/lib/favorite-focus";
@@ -58,7 +59,7 @@ export function RowFavoriteStar({ note, favorite, pending }: { note: NoteDto; fa
         type="button"
         variant="ghost"
         size="icon"
-        className={cn("h-6 w-6 shrink-0", favorite ? "text-brand hover:text-brand" : cn("text-muted-foreground hover:text-brand", hoverRevealOnly("noterow")))}
+        className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, favorite ? "text-brand hover:text-brand" : cn("text-muted-foreground hover:text-brand", hoverRevealOnly("noterow")))}
         aria-label={t("note.favorite.label")}
         aria-pressed={favorite}
         aria-disabled={pending ? true : undefined}

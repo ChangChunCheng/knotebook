@@ -91,6 +91,20 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("grid-rows-[minmax(0,1fr)]");
   });
 
+  it("內建 Close：視覺 16px，粗指標下點擊範圍擴到 44（after 向外各 14px）", async () => {
+    render(<Harness />);
+    await settle();
+    const close = screen.getByRole("button", { name: "Close" });
+    for (const token of [
+      "absolute",
+      "pointer-coarse:after:absolute",
+      "pointer-coarse:after:-inset-3.5",
+      "pointer-coarse:after:content-['']",
+    ]) {
+      expect(close).toHaveClass(token);
+    }
+  });
+
   it('size="panel"：不渲染內建 Close（由 ManagementShell 自己放一顆）', async () => {
     render(<Harness size="panel" />);
     await settle();

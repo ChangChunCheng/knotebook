@@ -322,11 +322,12 @@ describe("NoteList", () => {
     );
     expect(canonicalNotePath(SHARED_NOTE)).toBe("/n/owner-nine/no-slug-note"); // 新形字面（原 not.toBe 在 slug 恆字串後恆真）
 
-    // #115：列高 `<md` 44px（觸控目標）、`md+` 回 28px——h-11 md:h-7 缺一即壞
-    // （缺 md:h-7 寬螢幕列變胖；缺 h-11 窄視窗點不準）。
+    // 列高：觸控 44px、滑鼠 28px——h-11 pointer-fine:h-7 缺一即壞
+    // （缺 pointer-fine:h-7 滑鼠的列變胖；缺 h-11 觸控點不準）。
     selectTab("My notes");
     const touchRow = within(panel()).getByRole("link", { name: "Has A Slug" });
-    expect(touchRow.closest("li")).toHaveClass("h-11", "md:h-7");
+    expect(touchRow.closest("li")).toHaveClass("h-11", "pointer-fine:h-7");
+    expect(touchRow.closest("li")).not.toHaveClass("md:h-7");
     // 觸控目標是 <Link> 不是 <li>：li 撐 44 高但 items-center 下錨點只有內容高
     // （~20px），上下各 12px 是死區——Link 要 self-stretch 吃滿列高才是真的 44px
     // 目標（「宣稱到不了的行為」形）。
@@ -640,9 +641,9 @@ describe("NoteList", () => {
       renderNoteList({}, { tab: "workspace" });
       const button = await within(panel()).findByRole("button", { name: "Workshop A", expanded: true });
       expect(button).toHaveAccessibleName("Workshop A");
-      expect(button).toHaveClass("h-7", "gap-1.5", "px-2", "text-[13px]", "font-medium", "text-foreground");
+      expect(button).toHaveClass("h-full", "gap-1.5", "px-2", "text-[13px]", "font-medium", "text-foreground");
       expect(button).not.toHaveClass("text-muted-foreground");
-      expect(button.parentElement).toHaveClass("group/grouprow", "hover:bg-brand-soft");
+      expect(button.parentElement).toHaveClass("group/grouprow", "hover:bg-brand-soft", "h-11", "pointer-fine:h-7");
 
       const users = button.querySelector('svg[data-icon="users"]');
       const chevron = button.querySelector('svg[data-icon="chevron-right"]');
@@ -1423,7 +1424,7 @@ describe("NoteList × 資料夾", () => {
     vi.unstubAllGlobals();
   });
 
-  it("FR1 我的筆記：第一層 A、B、p3；A 下 A1、p1；A1 下 p2；主鈕 aria-expanded、可及名稱只有名稱、圖示 aria-hidden、title、列高 h-11 md:h-7", async () => {
+  it("FR1 我的筆記：第一層 A、B、p3；A 下 A1、p1；A1 下 p2；主鈕 aria-expanded、可及名稱只有名稱、圖示 aria-hidden、title、列高 h-11 pointer-fine:h-7", async () => {
     stubTree();
     renderNoteList();
     await waitFor(() => expect(folderRow("A")).not.toBeNull());
@@ -1438,7 +1439,8 @@ describe("NoteList × 資料夾", () => {
     for (const icon of icons) expect(icon).toHaveAttribute("aria-hidden", "true");
     expect(button.querySelector('[title="A"]')).toHaveTextContent("A");
     expect(button).toHaveClass("font-medium");
-    expect(folderRow("A")!.firstElementChild).toHaveClass("h-11", "md:h-7");
+    expect(folderRow("A")!.firstElementChild).toHaveClass("h-11", "pointer-fine:h-7");
+    expect(folderRow("A")!.firstElementChild).not.toHaveClass("md:h-7");
   });
 
   it("FR2 群組 tab：G 下 GF、GF2（資料夾）與 g2；GF 下 g1；導引線 class 逐字", async () => {

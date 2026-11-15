@@ -2,7 +2,9 @@ import { useTranslation } from "react-i18next";
 import { NOTE_WIDTHS } from "@knotebook/shared";
 import { useNoteWidth } from "@/components/note-width";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { NoteWidthIcon } from "@/components/ui/icons";
+import { cn } from "@/lib/utils";
 
 /**
  * #297：頁首寬度鈕（站內、每篇各自記，見 `note-width.ts`）。按一下換成下一種寬度：
@@ -24,7 +26,7 @@ export function NoteWidthToggle({ noteId }: { noteId: string }) {
       aria-label={name}
       title={name}
       onClick={() => setWidth(next)}
-      className="hidden shrink-0 text-brand hover:text-brand @min-[43.5rem]:inline-flex"
+      className={cn("hidden shrink-0 text-brand hover:text-brand @min-[43.5rem]:inline-flex", HEADER_ICON_HIT)}
     >
       <NoteWidthIcon width={width} className="h-4 w-4" />
     </Button>

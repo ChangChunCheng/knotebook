@@ -79,8 +79,8 @@ export function SidebarTabList({ idBase }: { idBase: string }) {
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={
               selected
-                ? "flex h-11 flex-1 items-center justify-center border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:h-9 border-brand text-brand-on-soft"
-                : "flex h-11 flex-1 items-center justify-center border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:h-9 border-transparent text-muted-foreground hover:text-foreground"
+                ? "flex h-11 flex-1 items-center justify-center border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 pointer-fine:h-9 border-brand text-brand-on-soft"
+                : "flex h-11 flex-1 items-center justify-center border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 pointer-fine:h-9 border-transparent text-muted-foreground hover:text-foreground"
             }
           >
             <Icon aria-hidden="true" className="h-4 w-4" />

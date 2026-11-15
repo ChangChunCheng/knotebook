@@ -24,6 +24,7 @@ import {
 } from "@/api/public-link";
 import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -38,6 +39,7 @@ import { Globe, Lock, Share, Trash, Users } from "@/components/ui/icons";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import { ManualCopyField } from "@/components/ManualCopyField";
 import { UserEmailCombobox } from "@/components/UserEmailCombobox";
 
@@ -992,7 +994,7 @@ export function ShareDialog({ note }: ShareDialogProps) {
           size="icon"
           aria-label={t("share.button")}
           title={triggerTitle}
-          className="shrink-0 text-brand hover:text-brand"
+          className={cn("shrink-0 text-brand hover:text-brand", HEADER_ICON_HIT)}
         >
           <TriggerIcon className="h-4 w-4" />
         </Button>
