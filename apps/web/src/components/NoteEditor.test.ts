@@ -9,6 +9,7 @@ import { blocknoteZhTW } from "@/i18n/blocknote-zh-TW";
 import type { EditorRef } from "@/components/wikilink/menu";
 import { attachTestElementRenderer } from "@/test/element-renderer";
 import { takeDropPoint } from "@/collab/columns/paste-rule";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // toast 換成 spy：這裡要斷言的是「有沒有提示使用者」，不必把 Radix 整套渲染起來。
 const toastMock = vi.hoisted(() => vi.fn());
@@ -796,14 +797,14 @@ describe("insertLinkAtSavedSelection", () => {
 describe("NoteEditor JSX：<LinkDialog> 掛載守衛", () => {
   const source = readFileSync(`${process.cwd()}/src/components/NoteEditor.tsx`, "utf8");
 
-  it("掛載且四個 prop 都接對線（editor/open/onOpenChange/onSubmit）", () => {
+  it("掛載且四個 prop 都接對線（editor/open/onOpenChange/onSubmit），預填值也接上", () => {
     expect(source).toMatch(
-      /<LinkDialog\s+editor=\{editor\}\s+open=\{linkDialogOpen\}\s+onOpenChange=\{setLinkDialogOpen\}\s+onSubmit=\{handleLinkInsert\}\s*\/>/,
+      /<LinkDialog\s+editor=\{editor\}\s+open=\{linkDialogOpen\}\s+onOpenChange=\{setLinkDialogOpen\}\s+onSubmit=\{handleLinkInsert\}\s+initialText=\{linkPrefill\.text\}\s+initialUrl=\{linkPrefill\.url\}\s*\/>/,
     );
   });
 
   it("handleLinkInsert 本體真的呼叫了 insertLinkAtSavedSelection（不是被拔成 no-op）", () => {
-    expect(source).toMatch(/insertLinkAtSavedSelection\(currentEditor,\s*linkSelectionRef\.current,\s*\{\s*text,\s*href\s*\}\)/);
+    expect(source).toMatch(/insertLinkAtSavedSelection\(currentEditor,\s*linkSelectionRef\.current,\s*\{\s*text:\s*keepText \? "" : text,\s*href\s*\}\)/);
   });
 });
 
@@ -877,6 +878,33 @@ describe("useLinkMenuState", () => {
 
     realEditor.unmount();
     container.remove();
+  });
+});
+
+describe("useLinkMenuState 的 getSlashItems 在手機不帶快捷鍵欄", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const translate = (key: string) => key;
+  async function slashItems(tier: "phone" | "docked") {
+    stubLayoutTier(tier);
+    const realEditor = BlockNoteEditor.create({ schema: noteSchema });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    realEditor.mount(container);
+    const { result } = renderHook(() => useLinkMenuState({ current: realEditor } as EditorRef, translate));
+    const items = await result.current.getSlashItems("");
+    realEditor.unmount();
+    container.remove();
+    return items as { title: string; badge?: string }[];
+  }
+
+  it("手機：沒有任何一項有 badge，項目集合與 docked 相同", async () => {
+    const docked = await slashItems("docked");
+    const phone = await slashItems("phone");
+    expect(docked.some((item) => item.badge)).toBe(true);
+    expect(phone.some((item) => item.badge)).toBe(false);
+    expect(phone.map((item) => item.title)).toEqual(docked.map((item) => item.title));
   });
 });
 

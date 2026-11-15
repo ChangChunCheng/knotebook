@@ -832,6 +832,7 @@ export default function NotePage() {
               doc={doc}
               provider={provider}
               editable={editable}
+              mobileToolbar={phone && editable && editingFocus}
               user={{ id: user.id, name: user.displayName }}
               noteId={noteId!}
               onScrollRoot={setAnchorRoot}

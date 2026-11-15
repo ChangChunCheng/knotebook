@@ -239,3 +239,75 @@ export function NoteWidthIcon({ width, ...props }: { width: NoteWidth } & SVGPro
     </svg>
   );
 }
+
+/** 重做（手機編輯工具列）。路徑取自 lucide `rotate-cw`（ISC），手刻同風格。 */
+export function RotateCw(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="redo" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
+
+/** 轉換區塊類型（手機編輯工具列）。路徑取自 lucide `pilcrow`（ISC），手刻同風格。 */
+export function Pilcrow(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="pilcrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M13 4v16" />
+      <path d="M17 4v16" />
+      <path d="M19 4H9.5a4.5 4.5 0 0 0 0 9H13" />
+    </svg>
+  );
+}
+
+/** 收起鍵盤（手機編輯工具列）：鍵盤外框、一排鍵、往下的箭頭。 */
+export function KeyboardDown(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="keyboard-down" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="2" y="3" width="20" height="12" rx="2" />
+      <path d="M7 8h.01M12 8h.01M17 8h.01M8 11.5h8" />
+      <path d="m9 18 3 3 3-3" />
+    </svg>
+  );
+}
+
+const STROKE = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+/** 行內程式碼。路徑取自 lucide `code`（ISC）。 */
+export function CodeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="code" aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      <path d="m16 18 6-6-6-6" />
+      <path d="m8 6-6 6 6 6" />
+    </svg>
+  );
+}
+
+/** 文字對齊（靠左／置中／靠右）。路徑取自 lucide `align-left`／`align-center`／`align-right`（ISC）。 */
+export function AlignIcon({ align, ...props }: { align: "left" | "center" | "right" } & SVGProps<SVGSVGElement>) {
+  const lines = {
+    left: ["M21 6H3", "M15 12H3", "M17 18H3"],
+    center: ["M21 6H3", "M17 12H7", "M19 18H5"],
+    right: ["M21 6H3", "M21 12H9", "M21 18H7"],
+  }[align];
+  return (
+    <svg data-icon={`align-${align}`} aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      {lines.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
+}
+
+/** 縮排與取消縮排。路徑取自 lucide `indent-increase`／`indent-decrease`（ISC）。 */
+export function IndentIcon({ direction, ...props }: { direction: "in" | "out" } & SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon={direction === "in" ? "indent" : "outdent"} aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      <path d="M21 12H11" />
+      <path d="M21 6H11" />
+      <path d="M21 18H11" />
+      <path d={direction === "in" ? "m3 8 4 4-4 4" : "m7 8-4 4 4 4"} />
+    </svg>
+  );
+}

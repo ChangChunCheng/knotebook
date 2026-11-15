@@ -12,9 +12,11 @@ import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scrol
 import { gateLocalCursor } from "@/collab/cursor-gate";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
+import { SideMenuExtension } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   FilePanelController,
+  GridSuggestionMenuController,
   SideMenuController,
   SuggestionMenuController,
   TableHandlesController,
@@ -36,13 +38,15 @@ import { createMarkdownPasteHandler } from "@/collab/paste";
 import { createSiteLinkConvertExtension, createSiteLinkEnv, createSiteLinkPasteHook, withSiteLinkDrop, type SiteLinkEnvRef } from "@/collab/site-link-convert";
 import { useCollabUndoLifeline } from "@/collab/undo";
 import { usePageUndoShortcut } from "@/collab/page-undo";
-import { buildSlashMenuItems } from "@/components/slash-menu";
+import { PHONE_SLASH_MENU_FLOATING_OPTIONS, buildSlashMenuItems, withoutSlashBadges } from "@/components/slash-menu";
 import { LinkDialog } from "@/components/LinkDialog";
+import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
 import { safeMediaUrl } from "@/lib/media-url";
@@ -56,6 +60,8 @@ import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/version
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
 import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { MobileEditToolbar } from "@/components/editor/mobile/MobileEditToolbar";
+import { MobileToolbarSpacer } from "@/components/editor/mobile/MobileToolbarSpacer";
 import { KnotebookSideMenu, NotePathContext, SIDE_MENU_FLOATING_OPTIONS } from "@/components/editor/KnotebookSideMenu";
 import { useDragActiveClass } from "@/components/editor/use-drag-active-class";
 import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/editor/colors/KnotebookTableMenus";
@@ -335,17 +341,30 @@ export function insertLinkAtSavedSelection(
  * 那支，見下面 `NoteEditor` 本體）。
  */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
+  // 手機的選單不帶快捷鍵欄；跨 640 時 `getSlashItems` 換身分，選單重載一次。
+  const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   // 開對話框當下存下的 selection（驗出來的做法）：對話框搶走瀏覽器
   // focus 後 ProseMirror selection 本身不會變，但送出時仍明確還原一次，不倚賴
   // 「反正沒變」這個隱含事實。放 ref 不進 state——它不影響任何畫面輸出。
   const linkSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  // 開對話框當下選取的字與所在連結的網址：預填進對話框；送出時顯示文字沒改就不重打字，保留原本的粗體等樣式。
+  const [linkPrefill, setLinkPrefill] = useState({ text: "", url: "" });
 
   const openLinkDialog = useCallback(() => {
     const currentEditor = editorRef.current;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
     const sel = (currentEditor as any)?._tiptapEditor?.state?.selection;
-    linkSelectionRef.current = sel ? { from: sel.from, to: sel.to } : null;
+    // 選取（或游標）整個落在一個既有連結裡：編輯那個連結——套用範圍設成整個連結、文字預填成連結文字，
+    // 文字沒改就只換網址；不然收合的游標會把網址字串插進連結中間。
+    const link = linkAtSelection(currentEditor);
+    const editingLink = link !== undefined;
+    linkSelectionRef.current = editingLink ? { from: link.from, to: link.to } : sel ? { from: sel.from, to: sel.to } : null;
+    setLinkPrefill(
+      editingLink
+        ? { text: link.text, url: link.href }
+        : { text: currentEditor?.getSelectedText?.() ?? "", url: currentEditor?.getSelectedLinkUrl?.() ?? "" },
+    );
     setLinkDialogOpen(true);
   }, [editorRef]);
 
@@ -356,18 +375,24 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
     ({ text, href }: { text: string; href: string }) => {
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
-      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text, href });
+      // 顯示文字與選取的字一樣：只加連結、不重打字（重打會丟掉粗體等樣式）。
+      // `LinkDialog` 送出時會 trim 顯示文字，所以預填值也 trim 後再比，不然選取帶前後空白時永遠算「改過」而丟掉空白。
+      const prefilled = linkPrefill.text.trim();
+      const keepText = prefilled !== "" && text === prefilled;
+      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text: keepText ? "" : text, href });
     },
-    [editorRef],
+    [editorRef, linkPrefill.text],
   );
 
   const getSlashItems = useCallback(
-    (query: string) =>
-      Promise.resolve(filterSuggestionItems(buildSlashMenuItems(editorRef.current, translate, openLinkDialog), query)),
-    [editorRef, translate, openLinkDialog],
+    (query: string) => {
+      const items = buildSlashMenuItems(editorRef.current, translate, openLinkDialog);
+      return Promise.resolve(filterSuggestionItems(phone ? withoutSlashBadges(items) : items, query));
+    },
+    [editorRef, translate, openLinkDialog, phone],
   );
 
-  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, handleLinkInsert, getSlashItems };
+  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems };
 }
 
 export interface NoteEditorProps {
@@ -385,6 +410,8 @@ export interface NoteEditorProps {
   headerSlot?: ReactNode;
   /** 內文卡頁尾——`NotePage` 組裝 backlinks chips 後傳入。同上，普通 slot props。 */
   footerSlot?: ReactNode;
+  /** 手機編輯中：渲染浮在鍵盤上方的編輯工具列（`NotePage` 依焦點與段位決定）。 */
+  mobileToolbar?: boolean;
   /** 版本預覽：有值時**捲動容器加 `hidden`**、同一張卡內在捲動容器之後渲染這個 slot；
    * 頁首（含預覽橫幅）、頁尾照常。⚠ 活編輯器**不 unmount**：`NoteEditorView` 的重掛會殺掉 y-prosemirror 的
    * UndoManager 訂閱；放在 `hidden` 容器裡的活編輯器仍收得到遠端更新。 */
@@ -430,6 +457,7 @@ export function NoteEditor({
   noteId,
   headerSlot,
   footerSlot,
+  mobileToolbar = false,
   previewSlot,
   onScrollRoot,
   onCursorScroller,
@@ -543,7 +571,7 @@ export function NoteEditor({
   // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
   // `useLinkMenuState`（見該函式檔頭）方便直接對它
   // `renderHook`，不必掛真編輯器整棵渲染。
-  const { linkDialogOpen, setLinkDialogOpen, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
+  const { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
 
   const notes = useNotes().data;
   const { mutateAsync: createNote } = useCreateNote();
@@ -647,6 +675,7 @@ export function NoteEditor({
               <HeadingAnchorButtons container={columnEl} />
               {/* 欄間分隔線（拖曳／鍵盤調欄寬）只在可編輯時掛；唯讀時沒有東西可調。 */}
               {editable && <ColumnDividers container={columnEl} editor={editor} />}
+              {mobileToolbar && <MobileToolbarSpacer />}
             </div>
           </div>
           {hasPreview && (
@@ -673,11 +702,19 @@ export function NoteEditor({
           </div>
         )}
         <CornerStack />
+        {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
           給 `getSlashItems` 用），`LinkDialog` 自己不持有——關閉與焦點回歸的完整
           說明見該檔檔頭。 */}
-      <LinkDialog editor={editor} open={linkDialogOpen} onOpenChange={setLinkDialogOpen} onSubmit={handleLinkInsert} />
+      <LinkDialog
+        editor={editor}
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        onSubmit={handleLinkInsert}
+        initialText={linkPrefill.text}
+        initialUrl={linkPrefill.url}
+      />
     </AiSessionProvider>
   );
 }
@@ -714,6 +751,13 @@ export interface NoteEditorViewProps {
  * #263 起 formatting toolbar 不在這裡掛：它與框選 AI 框由 children（`SelectionAiController`）擁有。
  */
 export function NoteEditorView({ editor, editable, theme, noteId, getItems, getSlashItems, children, notePath }: NoteEditorViewProps) {
+  const phone = useIsPhone();
+  // 區塊選單開著時變窄到手機寬度：側選單 controller 卸載，但 core 那份仍停在凍結狀態；解凍（先確認 state 已建立，否則 core 會丟例外）。
+  useEffect(() => {
+    if (!phone) return;
+    const sideMenu = editor.getExtension(SideMenuExtension);
+    if (sideMenu?.store.state?.show) sideMenu.unfreezeMenu();
+  }, [phone, editor]);
   // `createFilePanel(noteId)` 回傳一個新的元件型別——`FilePanelController`
   // 拿它跟前一輪比對身分，身分一變就會整個卸載重掛（見 `createFilePanel` 檔頭的完整
   // 說明），所以這裡必須 `useMemo` 釘住，只在 `noteId` 真的換手時才重建。`noteId`
@@ -755,10 +799,27 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         sideMenu={false}
         // 關掉內建的表格把手，自掛一份：儲存格與列／欄把手的顏色選單多了「自訂…」。不明確設 false 會疊兩份把手。
         tableHandles={false}
+        // 同理關掉內建的 `:` 表情選單，自掛一份（內容與預設相同）：手機時要套 floating 選項，才不會蓋到編輯工具列。
+        emojiPicker={false}
       >
-        <SuggestionMenuController triggerCharacter="[[" getItems={getItems} />
-        <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} />
-        <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />
+        <SuggestionMenuController
+          triggerCharacter="[["
+          getItems={getItems}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        <GridSuggestionMenuController
+          triggerCharacter=":"
+          columns={10}
+          minQueryLength={2}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        <SuggestionMenuController
+          triggerCharacter="/"
+          getItems={getSlashItems}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
+        {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}
         <TableHandlesController tableHandle={KnotebookTableHandle} tableCellHandle={KnotebookTableCellButton} />
         <FilePanelController filePanel={filePanel} />
         {/* 觸控長按一般連結 ⇒ BlockNote 原生連結工具列（wikilink 的長按在它自己的元件裡）。 */}

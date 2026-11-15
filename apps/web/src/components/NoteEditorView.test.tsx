@@ -3,14 +3,26 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BlockNoteEditor, SuggestionMenu } from "@blocknote/core";
-import { FilePanelExtension } from "@blocknote/core/extensions";
+import { FilePanelExtension, SideMenuExtension } from "@blocknote/core/extensions";
 import type { DefaultReactSuggestionItem } from "@blocknote/react";
 import type { AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { createTestEditor, renderAiHost, selectInBlock, stubAiFetch } from "@/test/ai-host";
 import { NoteEditorView } from "./NoteEditor";
+
+// 表情資料是 JSON 模組，node 端直接 import 會失敗；`:` 選單的測試只看外層定位，所以換掉預設的資料來源（定位選項照實傳進去）。
+vi.mock("@blocknote/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@blocknote/react")>();
+  const Original = actual.GridSuggestionMenuController as (props: Record<string, unknown>) => ReactNode;
+  return {
+    ...actual,
+    GridSuggestionMenuController: (props: Record<string, unknown>) =>
+      Original({ ...props, getItems: async () => [{ id: "x", onItemClick: () => {} }] }),
+  };
+});
 
 /**
  * 曾以 mutation 實測（拿掉 `filePanel={false}`、
@@ -122,6 +134,11 @@ describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
 // controller，按 `/` 會看到兩份選單疊在一起」，這裡就是釘住那句話的地方。
 
 describe("NoteEditorView（issue #94：/ 選單接管）", () => {
+  /** `[[` 選單的來源，用來確認它也套手機的 floating 選項。 */
+  async function getWikilinkItems(): Promise<DefaultReactSuggestionItem[]> {
+    return [{ title: "Linked note", onItemClick: () => {} }] as DefaultReactSuggestionItem[];
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
@@ -137,6 +154,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     editor.unmount();
     container.remove();
   });
@@ -160,6 +178,82 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
 
     expect(await screen.findByText("Diagram")).toBeInTheDocument();
   });
+
+  /** 選單外層（floating-ui 定位的那一層）的最大高度；等 size middleware 套用後才有值。 */
+  async function floatingMaxHeight(itemText = "Diagram"): Promise<string> {
+    await screen.findByText(itemText);
+    const floating = document.querySelector(".bn-suggestion-menu")!.closest<HTMLElement>("[style*='z-index']")!;
+    await waitFor(() => expect(floating.style.maxHeight).not.toBe(""));
+    return floating.style.maxHeight;
+  }
+
+  it("手機：選單最大高度是 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("/");
+    });
+    expect(await floatingMaxHeight()).toMatch(/^min\(50vh, /);
+  });
+
+  it("手機：[[ 選單同樣套 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("[[");
+    });
+    expect(await floatingMaxHeight("Linked note")).toMatch(/^min\(50vh, /);
+  });
+
+  /** `:` 表情選單：要輸入兩個字才會出現（minQueryLength 2），格子內容是 emoji 不是文字，所以改看外層元素。 */
+  async function emojiFloatingMaxHeight(): Promise<string> {
+    editor.focus();
+    editor.setTextCursorPosition(editor.document[0]!, "end");
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu(":");
+    });
+    act(() => {
+      editor.insertInlineContent(["sm"]);
+    });
+    const grid = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>(".bn-grid-suggestion-menu");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    const floating = grid.closest<HTMLElement>("[style*='z-index']")!;
+    await waitFor(() => expect(floating.style.maxHeight).not.toBe(""));
+    return floating.style.maxHeight;
+  }
+
+  it("手機：: 表情選單同樣套 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    expect(await emojiFloatingMaxHeight()).toMatch(/^min\(50vh, /);
+  });
+
+  it("寬度 >= 640：: 表情選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    expect(await emojiFloatingMaxHeight()).not.toContain("50vh");
+  });
+
+  it("寬度 >= 640：[[ 選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("[[");
+    });
+    expect(await floatingMaxHeight("Linked note")).not.toContain("50vh");
+  });
+
+  it("寬度 >= 640：選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("/");
+    });
+    expect(await floatingMaxHeight()).not.toContain("50vh");
+  });
 });
 
 // ── #263：formatting toolbar 由 children 裡的 SelectionAiController 擁有──────────────
@@ -168,6 +262,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
 // `components/ai/SelectionAiController.test.tsx`。這裡只釘接線：沒有 children 就沒有工具列；children 是 controller 時才有。
 const AI_ACTION: AiActionDto = { id: "action-1", name: "Summarize", applyMode: "preview", kind: "quick" };
 const ONE_PARAGRAPH = [{ id: "p1", type: "paragraph", content: "hello world" }];
+const TWO_PARAGRAPHS = [...ONE_PARAGRAPH, { id: "p2", type: "paragraph", content: "second line" }];
 
 describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiController 擁有）", () => {
   beforeEach(async () => {
@@ -210,5 +305,77 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
     selectInBlock(editor, "p1", 0, 5);
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
+  });
+});
+
+describe("NoteEditorView（區塊把手：手機不掛側選單）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  async function hoverFirstParagraph() {
+    const editor = createTestEditor(ONE_PARAGRAPH);
+    stubAiFetch({ actions: [] });
+    renderAiHost({ editor });
+    const paragraph = await screen.findByText("hello world");
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [paragraph] });
+    act(() => {
+      fireEvent.mouseMove(paragraph, { clientX: 0, clientY: 0 });
+    });
+    await act(async () => {});
+  }
+
+  it("docked：滑過區塊出現拖曳把手", async () => {
+    stubLayoutTier("docked");
+    await hoverFirstParagraph();
+    expect(await screen.findByLabelText("Open block menu")).toBeInTheDocument();
+  });
+
+  it("phone：滑過區塊也沒有拖曳把手", async () => {
+    stubLayoutTier("phone");
+    await hoverFirstParagraph();
+    expect(screen.queryByLabelText("Open block menu")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-kb-side-menu-popover]")).toBeNull();
+  });
+});
+
+describe("NoteEditorView（區塊選單開著時變窄到手機寬度）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  it("側選單凍結中切到 phone：解凍、不丟例外；切回 docked 後滑到別的區塊，把手跟過去", async () => {
+    const tier = stubLayoutTier("docked");
+    const editor = createTestEditor(TWO_PARAGRAPHS);
+    stubAiFetch({ actions: [] });
+    renderAiHost({ editor });
+    const first = await screen.findByText("hello world");
+    const second = await screen.findByText("second line");
+    let hovered: HTMLElement = first;
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [hovered] });
+    act(() => {
+      fireEvent.mouseMove(first, { clientX: 0, clientY: 0 });
+    });
+    fireEvent.click(await screen.findByLabelText("Open block menu"));
+    const sideMenu = editor.getExtension(SideMenuExtension)!;
+    await waitFor(() => expect(sideMenu.store.state?.show).toBe(true));
+    act(() => tier.setLayoutTier("phone"));
+    await waitFor(() => expect(sideMenu.store.state?.show).toBe(false));
+    expect(screen.queryByLabelText("Open block menu")).not.toBeInTheDocument();
+    act(() => tier.setLayoutTier("docked"));
+    hovered = second;
+    act(() => {
+      fireEvent.mouseMove(second, { clientX: 0, clientY: 20 });
+    });
+    await waitFor(() => expect(sideMenu.store.state?.block.id).toBe("p2"));
+    expect(sideMenu.store.state?.show).toBe(true);
   });
 });

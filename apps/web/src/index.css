@@ -459,6 +459,17 @@ input[name="share-access"] {
   text-decoration-line: underline;
 }
 
+/* 手機編輯工具列的色盤開著時，編輯器已失焦，選取靠 ShowSelectionExtension 的 `[data-show-selection]` 補畫。
+   BlockNote 預設把它畫成 `background-color: highlight`，而這個 span 在最內層，會蓋住剛套上的背景色，
+   使用者就看不到套色的效果；所以只在編輯器根節點帶 `data-mobile-color-open` 時改畫外框。
+   AI 框等其他用途的反白不帶這個屬性，樣式不變。`.bn-editor` 祖先錨的理由同上。 */
+.bn-editor[data-mobile-color-open] [data-show-selection] {
+  background-color: transparent;
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 /* 可編輯時觸控長按連結＝開工具列，關掉 iOS 的長按連結選單；唯讀（contenteditable="false"）保留系統選單。
    套到可編輯編輯器裡所有 `<a>`（一般連結、wikilink，也含 mermaid 圖裡的連結）；Android 的 contextmenu 由 JS 攔（`lib/long-press.ts`）。
    不改成 link 屬性選擇器：`theme.link-guard.test.ts` 規定那種規則恰好兩條。 */
@@ -880,12 +891,20 @@ input[name="share-access"] {
    媒體查詢用 `width < 48rem`＝Tailwind v4 `max-md:` 的實編形——與 wrapper 的
    `max-md:px-0`（ui/article-column.ts）同界，兩邊必須一起動。
 
-   已知代價：<768 的 hover 裝置上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
-   容器裁掉一部分——<768 幾乎都是無 hover 的觸控裝置（側選單本來就不出現），
-   接受（docs/known-limitations.md 有記）。 */
+   已知代價：640–767 寬的視窗上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
+   容器裁掉一部分（< 640 不掛側選單），接受（docs/known-limitations.md 有記）。 */
 @media (width < 48rem) {
   .bn-editor.bn-editor {
     padding-inline: 1.25rem;
+  }
+}
+
+/* 手機：選單列不被擠扁。上游給每列 height: 52px，但選單是有高度上限（50vh）的直欄 flex，列預設可收縮，
+   沒有副標的 [[ 筆記清單列被擠到內容高度 33px（有副標的 / 列約 49px），不夠一個觸控目標。flex-shrink: 0 讓列保持 52px，超出的部分在選單內捲動。
+   疊 .bn-mantine 是為了不輸給晚載入的同特異度規則。媒體查詢 width < 40rem 與 PHONE_QUERY 同界。 */
+@media (width < 40rem) {
+  .bn-mantine .bn-suggestion-menu-item {
+    flex-shrink: 0;
   }
 }
 

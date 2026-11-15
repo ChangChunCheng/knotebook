@@ -33,7 +33,13 @@ beforeEach(async () => {
   editor = BlockNoteEditor.create({ schema: noteSchema }) as BlockNoteEditor<any, any, any>;
 });
 
-function renderDialog(props: { open: boolean; onOpenChange: (open: boolean) => void; onSubmit: (v: { text: string; href: string }) => void }) {
+function renderDialog(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (v: { text: string; href: string }) => void;
+  initialText?: string;
+  initialUrl?: string;
+}) {
   return render(
     <I18nextProvider i18n={i18n}>
       <LinkDialog editor={editor} {...props} />
@@ -88,6 +94,16 @@ describe("LinkDialog", () => {
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByText(i18n.t("note.link.invalidUrl"))).toBeInTheDocument();
+  });
+
+  it("initialText／initialUrl 預填兩欄；沒傳就是空的", () => {
+    const view = renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit: vi.fn(), initialText: "picked", initialUrl: "https://example.com" });
+    expect(screen.getByLabelText(i18n.t("note.link.textLabel"))).toHaveValue("picked");
+    expect(screen.getByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("https://example.com");
+    view.unmount();
+    renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit: vi.fn() });
+    expect(screen.getByLabelText(i18n.t("note.link.textLabel"))).toHaveValue("");
+    expect(screen.getByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("");
   });
 
   it("取消 → 不呼叫 onSubmit", () => {
