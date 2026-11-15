@@ -39,6 +39,7 @@ import { useCollabUndoLifeline } from "@/collab/undo";
 import { usePageUndoShortcut } from "@/collab/page-undo";
 import { buildSlashMenuItems } from "@/components/slash-menu";
 import { LinkDialog } from "@/components/LinkDialog";
+import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
@@ -344,12 +345,23 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
   // focus 後 ProseMirror selection 本身不會變，但送出時仍明確還原一次，不倚賴
   // 「反正沒變」這個隱含事實。放 ref 不進 state——它不影響任何畫面輸出。
   const linkSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  // 開對話框當下選取的字與所在連結的網址：預填進對話框；送出時顯示文字沒改就不重打字，保留原本的粗體等樣式。
+  const [linkPrefill, setLinkPrefill] = useState({ text: "", url: "" });
 
   const openLinkDialog = useCallback(() => {
     const currentEditor = editorRef.current;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
     const sel = (currentEditor as any)?._tiptapEditor?.state?.selection;
-    linkSelectionRef.current = sel ? { from: sel.from, to: sel.to } : null;
+    // 選取（或游標）整個落在一個既有連結裡：編輯那個連結——套用範圍設成整個連結、文字預填成連結文字，
+    // 文字沒改就只換網址；不然收合的游標會把網址字串插進連結中間。
+    const link = linkAtSelection(currentEditor);
+    const editingLink = link !== undefined;
+    linkSelectionRef.current = editingLink ? { from: link.from, to: link.to } : sel ? { from: sel.from, to: sel.to } : null;
+    setLinkPrefill(
+      editingLink
+        ? { text: link.text, url: link.href }
+        : { text: currentEditor?.getSelectedText?.() ?? "", url: currentEditor?.getSelectedLinkUrl?.() ?? "" },
+    );
     setLinkDialogOpen(true);
   }, [editorRef]);
 
@@ -360,9 +372,13 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
     ({ text, href }: { text: string; href: string }) => {
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
-      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text, href });
+      // 顯示文字與選取的字一樣：只加連結、不重打字（重打會丟掉粗體等樣式）。
+      // `LinkDialog` 送出時會 trim 顯示文字，所以預填值也 trim 後再比，不然選取帶前後空白時永遠算「改過」而丟掉空白。
+      const prefilled = linkPrefill.text.trim();
+      const keepText = prefilled !== "" && text === prefilled;
+      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text: keepText ? "" : text, href });
     },
-    [editorRef],
+    [editorRef, linkPrefill.text],
   );
 
   const getSlashItems = useCallback(
@@ -371,7 +387,7 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
     [editorRef, translate, openLinkDialog],
   );
 
-  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, handleLinkInsert, getSlashItems };
+  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems };
 }
 
 export interface NoteEditorProps {
@@ -550,7 +566,7 @@ export function NoteEditor({
   // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
   // `useLinkMenuState`（見該函式檔頭）方便直接對它
   // `renderHook`，不必掛真編輯器整棵渲染。
-  const { linkDialogOpen, setLinkDialogOpen, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
+  const { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
 
   const notes = useNotes().data;
   const { mutateAsync: createNote } = useCreateNote();
@@ -681,12 +697,19 @@ export function NoteEditor({
           </div>
         )}
         <CornerStack />
-        {mobileToolbar && <MobileEditToolbar editor={editor} />}
+        {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
           給 `getSlashItems` 用），`LinkDialog` 自己不持有——關閉與焦點回歸的完整
           說明見該檔檔頭。 */}
-      <LinkDialog editor={editor} open={linkDialogOpen} onOpenChange={setLinkDialogOpen} onSubmit={handleLinkInsert} />
+      <LinkDialog
+        editor={editor}
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        onSubmit={handleLinkInsert}
+        initialText={linkPrefill.text}
+        initialUrl={linkPrefill.url}
+      />
     </AiSessionProvider>
   );
 }

@@ -796,14 +796,14 @@ describe("insertLinkAtSavedSelection", () => {
 describe("NoteEditor JSX：<LinkDialog> 掛載守衛", () => {
   const source = readFileSync(`${process.cwd()}/src/components/NoteEditor.tsx`, "utf8");
 
-  it("掛載且四個 prop 都接對線（editor/open/onOpenChange/onSubmit）", () => {
+  it("掛載且四個 prop 都接對線（editor/open/onOpenChange/onSubmit），預填值也接上", () => {
     expect(source).toMatch(
-      /<LinkDialog\s+editor=\{editor\}\s+open=\{linkDialogOpen\}\s+onOpenChange=\{setLinkDialogOpen\}\s+onSubmit=\{handleLinkInsert\}\s*\/>/,
+      /<LinkDialog\s+editor=\{editor\}\s+open=\{linkDialogOpen\}\s+onOpenChange=\{setLinkDialogOpen\}\s+onSubmit=\{handleLinkInsert\}\s+initialText=\{linkPrefill\.text\}\s+initialUrl=\{linkPrefill\.url\}\s*\/>/,
     );
   });
 
   it("handleLinkInsert 本體真的呼叫了 insertLinkAtSavedSelection（不是被拔成 no-op）", () => {
-    expect(source).toMatch(/insertLinkAtSavedSelection\(currentEditor,\s*linkSelectionRef\.current,\s*\{\s*text,\s*href\s*\}\)/);
+    expect(source).toMatch(/insertLinkAtSavedSelection\(currentEditor,\s*linkSelectionRef\.current,\s*\{\s*text:\s*keepText \? "" : text,\s*href\s*\}\)/);
   });
 });
 

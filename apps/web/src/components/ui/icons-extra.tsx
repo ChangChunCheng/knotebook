@@ -271,3 +271,43 @@ export function KeyboardDown(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+const STROKE = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+/** 行內程式碼。路徑取自 lucide `code`（ISC）。 */
+export function CodeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="code" aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      <path d="m16 18 6-6-6-6" />
+      <path d="m8 6-6 6 6 6" />
+    </svg>
+  );
+}
+
+/** 文字對齊（靠左／置中／靠右）。路徑取自 lucide `align-left`／`align-center`／`align-right`（ISC）。 */
+export function AlignIcon({ align, ...props }: { align: "left" | "center" | "right" } & SVGProps<SVGSVGElement>) {
+  const lines = {
+    left: ["M21 6H3", "M15 12H3", "M17 18H3"],
+    center: ["M21 6H3", "M17 12H7", "M19 18H5"],
+    right: ["M21 6H3", "M21 12H9", "M21 18H7"],
+  }[align];
+  return (
+    <svg data-icon={`align-${align}`} aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      {lines.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
+}
+
+/** 縮排與取消縮排。路徑取自 lucide `indent-increase`／`indent-decrease`（ISC）。 */
+export function IndentIcon({ direction, ...props }: { direction: "in" | "out" } & SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon={direction === "in" ? "indent" : "outdent"} aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
+      <path d="M21 12H11" />
+      <path d="M21 6H11" />
+      <path d="M21 18H11" />
+      <path d={direction === "in" ? "m3 8 4 4-4 4" : "m7 8-4 4 4 4"} />
+    </svg>
+  );
+}
