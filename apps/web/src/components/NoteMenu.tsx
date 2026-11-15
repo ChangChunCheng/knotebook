@@ -16,6 +16,7 @@ import { useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT, ROW_ICON_HIT } from "@/components/ui/hit-area";
 import { hoverReveal } from "@/components/ui/reveal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { NoteWidthItemsControl } from "@/components/NoteWidthMenuItems";
@@ -377,7 +378,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
       >
         <DropdownMenuTrigger asChild>
           {trigger === "header" ? (
-            <Button ref={triggerRef} type="button" variant="ghost" size="icon" className="shrink-0" aria-label={t("note.menu.label")}>
+            <Button ref={triggerRef} type="button" variant="ghost" size="icon" className={cn("shrink-0", HEADER_ICON_HIT)} aria-label={t("note.menu.label")}>
               <EllipsisVertical className="h-4 w-4" />
             </Button>
           ) : (
@@ -388,7 +389,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
               variant="ghost"
               size="icon"
               aria-label={t("note.menu.labelFor", { title: note.title })}
-              className={cn("h-6 w-6 shrink-0", hoverReveal("noterow"))}
+              className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("noterow"))}
             >
               <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
             </Button>

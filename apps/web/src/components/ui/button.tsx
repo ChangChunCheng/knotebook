@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
  * `ghost` 圖示鈕（移出最愛／移動／複製／刪除，依 tab 而定，`h-6 w-6`）與三態全選框（`ui/selection-checkbox.tsx`）；垃圾桶寬形標題列（`TrashPanel.tsx`＋`TrashFooter.tsx` 的 `TrashWideToolbar`）的 ✕、
  * 還原／永久刪除兩顆 `ghost` 圖示鈕（`h-6 w-6`）與全選框。它們取代平常那排、與「選取」圖示鈕同為 24px，不與 32px 控制項並排。
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
+ * 觸控裝置上這些 24px 鈕的視覺不變，點擊範圍用 `ui/hit-area.ts` 的 `ROW_ICON_HIT` 撐到 44px。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
  * **例外二：未登入／帳號流程的同款卡片頁用 44px（`size="lg"`，h-11）。** `pages/LoginPage.tsx`、`RegisterPage.tsx`、

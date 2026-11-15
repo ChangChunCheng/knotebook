@@ -10,6 +10,7 @@ import { FOLDERS_QUERY_KEY, folderErrorMessage, invalidateFolderRelated, isFolde
 import { useCreateNote } from "@/api/notes";
 import { expandFolderChain, indexFolders } from "@/components/sidebar/folder-index";
 import { Button } from "@/components/ui/button";
+import { FIELD_ICON_HIT, HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { Input } from "@/components/ui/input";
 import { PanelLeft, Search, X } from "@/components/ui/icons";
 import { toast, toastViewportHostRef } from "@/components/ui/toast";
@@ -89,7 +90,7 @@ export function SidebarDrawerButton() {
       size="icon"
       aria-label={t("sidebar.openDrawer")}
       onClick={() => setOpen(true)}
-      className="h-8 w-8 shrink-0 xl:hidden"
+      className={cn("h-8 w-8 shrink-0 xl:hidden", HEADER_ICON_HIT)}
     >
       <PanelLeft aria-hidden="true" className="h-4 w-4" />
     </Button>
@@ -197,7 +198,7 @@ function SidebarContent({
           }}
           aria-label={t("sidebar.searchLabel")}
           placeholder={t("sidebar.searchPlaceholder")}
-          className="h-8 pl-7 pr-11 text-[13px]"
+          className="h-8 pl-7 pr-11 pointer-coarse:pr-10 text-[13px]"
         />
         {searching ? (
           <Button
@@ -206,7 +207,7 @@ function SidebarContent({
             size="icon"
             aria-label={t("sidebar.clearSearch")}
             title={t("sidebar.clearSearch")}
-            className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2"
+            className={cn("absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2", FIELD_ICON_HIT)}
             onClick={() => {
               onQueryChange("");
               searchRef.current?.focus();
@@ -217,7 +218,7 @@ function SidebarContent({
         ) : (
           <kbd
             aria-hidden="true"
-            className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 rounded border border-border px-1 text-[10px] text-muted-foreground"
+            className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 pointer-coarse:hidden rounded border border-border px-1 text-[10px] text-muted-foreground"
           >
             {shortcutBadge}
           </kbd>

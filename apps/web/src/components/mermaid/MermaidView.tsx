@@ -263,7 +263,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
             onKeyDown={handleKeyDown}
-            className="w-full resize-y rounded-md border border-input bg-muted/40 p-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full resize-y rounded-md border border-input bg-muted/40 p-3 font-mono text-sm pointer-coarse:text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <p className="mt-1 text-right text-xs text-muted-foreground">{t("note.mermaid.escHint")}</p>
         </>

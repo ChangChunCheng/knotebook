@@ -59,7 +59,7 @@ const SelectableNoteRow = memo(function SelectableNoteRow({
       <label
         className={cn(
           "flex cursor-pointer select-none gap-2 rounded-md px-2 text-[13px]",
-          variant === "recent" ? "items-start py-1.5" : "h-11 items-center md:h-7",
+          variant === "recent" ? "items-start py-1.5" : "h-11 items-center pointer-fine:h-7",
           checked ? "bg-brand-soft font-medium text-brand-on-soft" : "hover:bg-brand-soft hover:text-brand-on-soft",
         )}
         onClick={(event) => onLabelClick(event, key, onToggle)}
@@ -137,7 +137,7 @@ function SelectableFolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind
   const [open, toggle] = useCollapsed(`folder:${node.folder.id}`);
   return (
     <li data-node-kind="folder" data-node-id={node.folder.id} className="flex flex-col gap-0.5">
-      <div className="group/folderrow flex h-11 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong md:h-7">
+      <div className="group/folderrow flex h-11 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong pointer-fine:h-7">
         <button
           type="button"
           aria-expanded={open}
@@ -152,7 +152,7 @@ function SelectableFolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind
       {open && (
         <div className="ml-[15px] border-l border-muted-foreground/35 pl-2">
           {node.children.length === 0 ? (
-            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground md:h-7">{t("sidebar.folderEmpty")}</p>
+            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground pointer-fine:h-7">{t("sidebar.folderEmpty")}</p>
           ) : (
             <SelectableNodeList nodes={node.children} ctx={ctx} inGroup />
           )}
@@ -166,7 +166,7 @@ function SelectableGroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind:
   const [open, toggle] = useCollapsed(`group:${node.group.id}`);
   return (
     <li data-node-kind="group" data-node-id={node.group.id} className="flex flex-col gap-0.5">
-      <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
+      <div className="group/grouprow flex h-11 items-center gap-0.5 pointer-fine:h-7 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
         <GroupRowButton name={node.group.name} open={open} onToggle={toggle} />
       </div>
       {open && (

@@ -867,7 +867,7 @@ export default function NotePage() {
                     {phone ? (
                       <>
                         {/* 手機兩行：第一行是標題與動作，第二行是連線點、位置、在線者。連線狀態、在線者、最後編輯只渲染在這一處（不是 CSS 藏一份）。 */}
-                        <div data-testid="note-header-title-row" className="flex items-center gap-2">
+                        <div data-testid="note-header-title-row" className="flex items-center gap-2 pointer-coarse:pb-1.5">
                           <BackToListButton />
                           <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
                           <FavoriteToggle note={note} />

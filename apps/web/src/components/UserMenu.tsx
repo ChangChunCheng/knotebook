@@ -158,14 +158,16 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         <DropdownMenuLabel id={accentLabelId} className="text-xs font-normal text-muted-foreground">
           {t("userMenu.accent")}
         </DropdownMenuLabel>
-        {/* gap-2 是承重值：16px 圓點（h-4 w-4）＋8px 間距＝圓心距 24px，恰合
+        {/* gap 是承重值。滑鼠：16px 圓點（h-4 w-4）＋8px 間距（gap-2）＝圓心距 24px，恰合
             WCAG 2.5.8 Target Size (Minimum) 的間距例外下限——縮小 gap 即不合格，
-            不得因為「看起來擠一點沒差」隨手調整。 */}
+            不得因為「看起來擠一點沒差」隨手調整。觸控：圓點放大到 28px，並用 after 把點擊範圍擴到
+            44px（見色點的 class），所以間距拉到 16px（gap-4）＝圓心距 44px，相鄰兩顆的點擊範圍剛好不重疊，
+            不再靠 24px 例外成立。 */}
         <DropdownMenuRadioGroup
           value={accent}
           onValueChange={(value) => setAccent(value as Accent)}
           aria-labelledby={accentLabelId}
-          className="flex gap-2 px-2 py-1.5"
+          className="flex gap-2 pointer-coarse:gap-4 px-2 py-1.5"
         >
           {ACCENTS.map((color) => (
             <DropdownMenuRadioItem
@@ -185,7 +187,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
                 // 可見。wrapper 的 outline-none 清掉了瀏覽器原生 focus ring，
                 // 鍵盤在六點間移動需要自己補：Radix 在 roving focus 目前停留
                 // 的項目上放 data-highlighted，用 ring-foreground 顯示。
-                "flex h-4 w-4 items-center justify-center rounded-full ring-offset-2 ring-offset-popover data-[highlighted]:ring-2 data-[highlighted]:ring-foreground",
+                "relative flex h-4 w-4 items-center justify-center rounded-full pointer-coarse:h-7 pointer-coarse:w-7 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] ring-offset-2 ring-offset-popover data-[highlighted]:ring-2 data-[highlighted]:ring-foreground",
               )}
               style={{ backgroundColor: `var(--brand-swatch-${color})` }}
             >

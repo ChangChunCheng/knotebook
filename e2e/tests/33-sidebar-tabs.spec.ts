@@ -107,8 +107,9 @@ test("sidebar tabs: roles, persistence, keyboard, search view, phone list and na
     for (let i = 0; i < 6; i++) {
       const box = await phoneTabs.nth(i).boundingBox();
       expect(box, `${width} 寬第 ${i} 顆 tab`).not.toBeNull();
-      expect(box!.height).toBeGreaterThanOrEqual(43.5);
-      expect(box!.height).toBeLessThanOrEqual(44.5);
+      // 這是滑鼠 context（細指標）：窄視窗的 tab 與桌面同高 36；觸控裝置的 44 高在觸控 context 的尺寸測試裡量。
+      expect(box!.height).toBeGreaterThanOrEqual(35.5);
+      expect(box!.height).toBeLessThanOrEqual(36.5);
       expect(box!.x, `${width} 寬第 ${i} 顆 tab 的左緣`).toBeGreaterThanOrEqual(tablistBox.x - 0.5);
       expect(box!.x + box!.width, `${width} 寬第 ${i} 顆 tab 的右緣`).toBeLessThanOrEqual(tablistBox.x + tablistBox.width + 0.5);
     }
@@ -137,8 +138,9 @@ test("sidebar tabs: roles, persistence, keyboard, search view, phone list and na
   for (let i = 0; i < 6; i++) {
     const box = await drawerTabs.nth(i).boundingBox();
     expect(box).not.toBeNull();
-    expect(box!.height).toBeGreaterThanOrEqual(43.5);
-    expect(box!.height).toBeLessThanOrEqual(44.5);
+    // 滑鼠 context：細指標的 tab 是 36 高（觸控的 44 不在這支量）。
+    expect(box!.height).toBeGreaterThanOrEqual(35.5);
+    expect(box!.height).toBeLessThanOrEqual(36.5);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(700);
   const drawerPanel = await showSidebarTab(page, "My notes", drawer);

@@ -672,3 +672,45 @@ export function solidPng(width: number, height: number): Buffer {
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }
+
+export interface TapArea {
+  /** 畫出來的框（寬、高）。 */
+  visual: [number, number];
+  /** 點擊範圍（寬、高）：框的中心往上下左右找，最遠還點得到這顆元素（或它裡面的東西）的位置。 */
+  tap: [number, number];
+  /** 框的中心（視窗座標）。 */
+  center: [number, number];
+}
+
+/**
+ * 量一個元素實際點得到的範圍。從框的中心往四個方向每 0.5px 用 `elementFromPoint` 取樣，最多往外 24px；
+ * 用 `::after` 擴大點擊範圍的鈕會量到比畫出來的框大，被別的元素蓋住或碰到視窗邊緣的那一側會變短。
+ * 區間是左上含、右下不含，所以每一側最多少算 0.5px（兩側合計 1px）。
+ */
+export async function tapAreaOf(target: Locator): Promise<TapArea> {
+  const handle = await target.first().elementHandle({ timeout: 10_000 });
+  if (handle === null) throw new Error("tapAreaOf: element not found");
+  return handle.evaluate((el): TapArea => {
+    const box = el.getBoundingClientRect();
+    const hits = (x: number, y: number): boolean => {
+      const hit = document.elementFromPoint(x, y);
+      return hit !== null && (el === hit || el.contains(hit));
+    };
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const reach = (dx: number, dy: number, start: number): number => {
+      let d = 0;
+      while (d < 24 && hits(cx + dx * (start + d + 0.5), cy + dy * (start + d + 0.5))) d += 0.5;
+      return d;
+    };
+    const left = reach(-1, 0, box.width / 2);
+    const right = reach(1, 0, box.width / 2);
+    const up = reach(0, -1, box.height / 2);
+    const down = reach(0, 1, box.height / 2);
+    return {
+      visual: [box.width, box.height],
+      tap: [box.width + left + right, box.height + up + down],
+      center: [cx, cy],
+    };
+  });
+}

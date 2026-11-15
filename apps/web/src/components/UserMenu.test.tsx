@@ -125,6 +125,29 @@ describe("UserMenu 主題色選擇器", () => {
     }
   });
 
+  // 色點視覺 16px；粗指標下放大到 28px，並用 after 擴到 44px 點擊範圍，間距跟著拉到圓心距 44。
+  it("色點在粗指標下放大並擴大點擊範圍，間距同步拉開", async () => {
+    renderMenu();
+    await openMenu();
+
+    for (const radio of screen.getAllByRole("menuitemradio")) {
+      for (const token of [
+        "h-4",
+        "w-4",
+        "relative",
+        "pointer-coarse:h-7",
+        "pointer-coarse:w-7",
+        "pointer-coarse:after:absolute",
+        "pointer-coarse:after:-inset-2",
+        "pointer-coarse:after:content-['']",
+      ]) {
+        expect(radio).toHaveClass(token);
+      }
+    }
+    const group = screen.getAllByRole("menuitemradio")[0]!.parentElement!;
+    expect(group).toHaveClass("gap-2", "pointer-coarse:gap-4");
+  });
+
   it("點選色點 → 更新 <html> 的 data-accent 與 localStorage，且選單不關閉", async () => {
     renderMenu();
     await openMenu();

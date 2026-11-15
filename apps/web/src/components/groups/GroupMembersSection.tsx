@@ -35,7 +35,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 名單裡掛內建管理員角色的人數（看 `builtin === "admin"` 計數）。 */

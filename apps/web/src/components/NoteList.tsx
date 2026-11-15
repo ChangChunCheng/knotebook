@@ -14,6 +14,7 @@ import { useActiveNote } from "@/lib/active-note";
 import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT, ROW_ICON_ROW } from "@/components/ui/hit-area";
 import { hoverReveal, type RevealScope } from "@/components/ui/reveal";
 import { FolderPlus, Plus, SquareCheck } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
@@ -110,7 +111,8 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
       data-node-id={note.id}
       className={cn(
         "group/noterow flex items-center gap-1 rounded-md pr-2 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
-        variant === "recent" ? "pl-2" : "h-11 md:h-7",
+        ROW_ICON_ROW,
+        variant === "recent" ? "pl-2" : "h-11 pointer-fine:h-7",
         variant === "plain" && "pl-2",
         variant === "group" && "pl-3",
         // #247：非 active 的列走主題色四態（與管理面板左卡項次同）：平常無底、hover
@@ -198,7 +200,7 @@ function HeaderActionButton({
       onClick={onClick}
       disabled={disabled}
       // 24px。hover 浮出與觸控（`hover: none`）常駐見 `ui/reveal.ts`。
-      className={cn("h-6 w-6 shrink-0", reveal && hoverReveal(reveal))}
+      className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, reveal && hoverReveal(reveal))}
     >
       <Icon aria-hidden="true" className="h-3.5 w-3.5" />
     </Button>
@@ -240,7 +242,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
       data-drop-scope={dropScoped ? "" : undefined}
       className={cn("flex flex-col gap-0.5", dropScoped && DROP_SCOPE_CLASS)}
     >
-      <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
+      <div className={cn("group/grouprow flex h-11 items-center gap-0.5 pointer-coarse:pr-0.5 pointer-fine:h-7 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong", ROW_ICON_ROW)}>
         <GroupRowButton name={group.name} open={open} onToggle={toggle} />
         {/* 資料夾：能編輯群組筆記才能建資料夾；排在「＋」之前（稿 `Workshop`）。 */}
         {group.myRole?.permissions.edit && (
@@ -293,7 +295,7 @@ function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder"
       data-drop-scope={dropScoped ? "" : undefined}
       className={cn("flex flex-col gap-0.5", dropScoped && DROP_SCOPE_CLASS)}
     >
-      <div className="group/folderrow flex h-11 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong md:h-7">
+      <div className={cn("group/folderrow flex h-11 items-center gap-0.5 pointer-coarse:pr-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong pointer-fine:h-7", ROW_ICON_ROW)}>
         <FolderRowButton name={folder.name} open={open} onToggle={toggle} />
         {folder.permissions.createNote && (
           <HeaderActionButton
@@ -315,7 +317,7 @@ function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder"
       {open && (
         <div className="ml-[15px] border-l border-muted-foreground/35 pl-2">
           {node.children.length === 0 ? (
-            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground md:h-7">{t("sidebar.folderEmpty")}</p>
+            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground pointer-fine:h-7">{t("sidebar.folderEmpty")}</p>
           ) : (
             <SidebarNodeList nodes={node.children} ctx={ctx} inGroup />
           )}
@@ -601,7 +603,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
               focusAfterRef.current = "done";
               updateSelection({ type: "start" });
             }}
-            className="h-6 w-6 shrink-0"
+            className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT)}
           >
             <SquareCheck aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
@@ -625,7 +627,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   return (
     <>
-      <div data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+      <div data-sidebar-header="" className={cn("flex items-center gap-0.5 px-2 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW)}>
         {selection.active ? (
           // chunk 還沒到：只有名稱（不含動作鈕）。
           <SidebarLazyBoundary chunk="select" fallback={tabLabel} errorClassName="hidden">
