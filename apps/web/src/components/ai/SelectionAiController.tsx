@@ -7,7 +7,8 @@ import {
   useExtensionState,
   type FloatingUIOptions,
 } from "@blocknote/react";
-import { selectionInsideAnchor } from "@/ai/selection";
+import { isNonTextSelection, selectionInsideAnchor } from "@/ai/selection";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { activeAnchorOf, useAiSession } from "./AiSession";
 import { AiToolbar } from "./AiToolbar";
 import { SelectionAiBox } from "./SelectionAiBox";
@@ -23,12 +24,15 @@ export const FORMATTING_TOOLBAR_ELEMENT_PROPS = { "data-kb-formatting-toolbar-po
  * 框選 AI 的掛載點（#263）：`NoteEditor` 把它當 `NoteEditorView` 的 children 傳進 `<BlockNoteView>`，它是 **formatting toolbar
  * controller 與 `SelectionAiBox` 的唯一擁有者**——`NoteEditorView` 不碰 AI context。
  *
- * 工具列壓制：`toolbarOpen = toolbarStoreOpen && !(boxOpen && selectionInsideTarget)`。`toolbarStoreOpen` 是上游 store
+ * 手機（< 640）選文字時不出浮動格式工具列（觸控選取時它會蓋住選取與系統選單）；選到圖片、檔案、儲存格時照舊出。框選 AI 框照常，由手機編輯工具列的 AI 鈕開。
+ *
+ * 工具列壓制：`toolbarOpen = toolbarStoreOpen && !(phone && !nonTextSelection) && !(boxOpen && selectionInsideTarget)`。`toolbarStoreOpen` 是上游 store
  * （pointerdown 期間恆為 false），**只用於這條壓制公式**；框的自動關閉用 `ai/selection.ts` 的 `toolbarWouldShow`（在 AiSession 裡）。
  * 覆寫 `useFloatingOptions.open` 即可收起：GenericPopover 以 floating 的 open 決定掛不掛（jsdom 實測，收合有約 270ms 轉場）。
  */
 export function SelectionAiController() {
   const editor = useBlockNoteEditor();
+  const phone = useIsPhone();
   const { state } = useAiSession();
   const toolbarStoreOpen = useExtensionState(FormattingToolbarExtension, { editor });
   const anchor = activeAnchorOf(state);
@@ -38,7 +42,13 @@ export function SelectionAiController() {
     selector: ({ editor: current }) =>
       current !== null && anchor !== null && current.transact((tr) => selectionInsideAnchor(tr, anchor.blockIds)),
   });
-  const toolbarOpen = toolbarStoreOpen && !(boxOpen && insideTarget);
+  const nonTextSelection = useEditorState({
+    editor,
+    selector: ({ editor: current }) => current !== null && current.transact((tr) => isNonTextSelection(tr)),
+  });
+  // 手機上選文字不出浮動工具列；選到圖片、檔案或儲存格時照舊出（那排的替換、刪除、合併等項沒有別的入口）。
+  const hiddenOnPhone = phone && !nonTextSelection;
+  const toolbarOpen = toolbarStoreOpen && !hiddenOnPhone && !(boxOpen && insideTarget);
   // FormattingToolbarController 內部的 useMemo 以這個物件的身分為依賴——每次 render 新建會讓它每次重算。
   const floatingUIOptions = useMemo<FloatingUIOptions>(
     () => ({ useFloatingOptions: { open: toolbarOpen }, elementProps: FORMATTING_TOOLBAR_ELEMENT_PROPS }),

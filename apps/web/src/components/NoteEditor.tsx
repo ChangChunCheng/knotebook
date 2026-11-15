@@ -12,6 +12,7 @@ import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scrol
 import { gateLocalCursor } from "@/collab/cursor-gate";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
+import { SideMenuExtension } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   FilePanelController,
@@ -43,6 +44,7 @@ import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
 import { safeMediaUrl } from "@/lib/media-url";
@@ -714,6 +716,13 @@ export interface NoteEditorViewProps {
  * #263 起 formatting toolbar 不在這裡掛：它與框選 AI 框由 children（`SelectionAiController`）擁有。
  */
 export function NoteEditorView({ editor, editable, theme, noteId, getItems, getSlashItems, children, notePath }: NoteEditorViewProps) {
+  const phone = useIsPhone();
+  // 區塊選單開著時變窄到手機寬度：側選單 controller 卸載，但 core 那份仍停在凍結狀態；解凍（先確認 state 已建立，否則 core 會丟例外）。
+  useEffect(() => {
+    if (!phone) return;
+    const sideMenu = editor.getExtension(SideMenuExtension);
+    if (sideMenu?.store.state?.show) sideMenu.unfreezeMenu();
+  }, [phone, editor]);
   // `createFilePanel(noteId)` 回傳一個新的元件型別——`FilePanelController`
   // 拿它跟前一輪比對身分，身分一變就會整個卸載重掛（見 `createFilePanel` 檔頭的完整
   // 說明），所以這裡必須 `useMemo` 釘住，只在 `noteId` 真的換手時才重建。`noteId`
@@ -758,7 +767,8 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
       >
         <SuggestionMenuController triggerCharacter="[[" getItems={getItems} />
         <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} />
-        <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />
+        {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
+        {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}
         <TableHandlesController tableHandle={KnotebookTableHandle} tableCellHandle={KnotebookTableCellButton} />
         <FilePanelController filePanel={filePanel} />
         {/* 觸控長按一般連結 ⇒ BlockNote 原生連結工具列（wikilink 的長按在它自己的元件裡）。 */}

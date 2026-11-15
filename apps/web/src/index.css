@@ -880,9 +880,8 @@ input[name="share-access"] {
    媒體查詢用 `width < 48rem`＝Tailwind v4 `max-md:` 的實編形——與 wrapper 的
    `max-md:px-0`（ui/article-column.ts）同界，兩邊必須一起動。
 
-   已知代價：<768 的 hover 裝置上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
-   容器裁掉一部分——<768 幾乎都是無 hover 的觸控裝置（側選單本來就不出現），
-   接受（docs/known-limitations.md 有記）。 */
+   已知代價：640–767 寬的視窗上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
+   容器裁掉一部分（< 640 不掛側選單），接受（docs/known-limitations.md 有記）。 */
 @media (width < 48rem) {
   .bn-editor.bn-editor {
     padding-inline: 1.25rem;

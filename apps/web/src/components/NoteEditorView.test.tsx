@@ -3,12 +3,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BlockNoteEditor, SuggestionMenu } from "@blocknote/core";
-import { FilePanelExtension } from "@blocknote/core/extensions";
+import { FilePanelExtension, SideMenuExtension } from "@blocknote/core/extensions";
 import type { DefaultReactSuggestionItem } from "@blocknote/react";
 import type { AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { createTestEditor, renderAiHost, selectInBlock, stubAiFetch } from "@/test/ai-host";
 import { NoteEditorView } from "./NoteEditor";
 
@@ -168,6 +169,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
 // `components/ai/SelectionAiController.test.tsx`。這裡只釘接線：沒有 children 就沒有工具列；children 是 controller 時才有。
 const AI_ACTION: AiActionDto = { id: "action-1", name: "Summarize", applyMode: "preview", kind: "quick" };
 const ONE_PARAGRAPH = [{ id: "p1", type: "paragraph", content: "hello world" }];
+const TWO_PARAGRAPHS = [...ONE_PARAGRAPH, { id: "p2", type: "paragraph", content: "second line" }];
 
 describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiController 擁有）", () => {
   beforeEach(async () => {
@@ -210,5 +212,77 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
     selectInBlock(editor, "p1", 0, 5);
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
+  });
+});
+
+describe("NoteEditorView（區塊把手：手機不掛側選單）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  async function hoverFirstParagraph() {
+    const editor = createTestEditor(ONE_PARAGRAPH);
+    stubAiFetch({ actions: [] });
+    renderAiHost({ editor });
+    const paragraph = await screen.findByText("hello world");
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [paragraph] });
+    act(() => {
+      fireEvent.mouseMove(paragraph, { clientX: 0, clientY: 0 });
+    });
+    await act(async () => {});
+  }
+
+  it("docked：滑過區塊出現拖曳把手", async () => {
+    stubLayoutTier("docked");
+    await hoverFirstParagraph();
+    expect(await screen.findByLabelText("Open block menu")).toBeInTheDocument();
+  });
+
+  it("phone：滑過區塊也沒有拖曳把手", async () => {
+    stubLayoutTier("phone");
+    await hoverFirstParagraph();
+    expect(screen.queryByLabelText("Open block menu")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-kb-side-menu-popover]")).toBeNull();
+  });
+});
+
+describe("NoteEditorView（區塊選單開著時變窄到手機寬度）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  });
+
+  it("側選單凍結中切到 phone：解凍、不丟例外；切回 docked 後滑到別的區塊，把手跟過去", async () => {
+    const tier = stubLayoutTier("docked");
+    const editor = createTestEditor(TWO_PARAGRAPHS);
+    stubAiFetch({ actions: [] });
+    renderAiHost({ editor });
+    const first = await screen.findByText("hello world");
+    const second = await screen.findByText("second line");
+    let hovered: HTMLElement = first;
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [hovered] });
+    act(() => {
+      fireEvent.mouseMove(first, { clientX: 0, clientY: 0 });
+    });
+    fireEvent.click(await screen.findByLabelText("Open block menu"));
+    const sideMenu = editor.getExtension(SideMenuExtension)!;
+    await waitFor(() => expect(sideMenu.store.state?.show).toBe(true));
+    act(() => tier.setLayoutTier("phone"));
+    await waitFor(() => expect(sideMenu.store.state?.show).toBe(false));
+    expect(screen.queryByLabelText("Open block menu")).not.toBeInTheDocument();
+    act(() => tier.setLayoutTier("docked"));
+    hovered = second;
+    act(() => {
+      fireEvent.mouseMove(second, { clientX: 0, clientY: 20 });
+    });
+    await waitFor(() => expect(sideMenu.store.state?.block.id).toBe("p2"));
+    expect(sideMenu.store.state?.show).toBe(true);
   });
 });
