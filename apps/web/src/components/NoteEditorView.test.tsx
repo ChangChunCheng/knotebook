@@ -13,6 +13,17 @@ import { stubLayoutTier } from "@/test/layout-tier";
 import { createTestEditor, renderAiHost, selectInBlock, stubAiFetch } from "@/test/ai-host";
 import { NoteEditorView } from "./NoteEditor";
 
+// 表情資料是 JSON 模組，node 端直接 import 會失敗；`:` 選單的測試只看外層定位，所以換掉預設的資料來源（定位選項照實傳進去）。
+vi.mock("@blocknote/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@blocknote/react")>();
+  const Original = actual.GridSuggestionMenuController as (props: Record<string, unknown>) => ReactNode;
+  return {
+    ...actual,
+    GridSuggestionMenuController: (props: Record<string, unknown>) =>
+      Original({ ...props, getItems: async () => [{ id: "x", onItemClick: () => {} }] }),
+  };
+});
+
 /**
  * 曾以 mutation 實測（拿掉 `filePanel={false}`、
  * 或把 `useMemo` 換成每 render 新建）能讓 268 個既有測試全綠通過——`NoteEditorView`
@@ -123,6 +134,11 @@ describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
 // controller，按 `/` 會看到兩份選單疊在一起」，這裡就是釘住那句話的地方。
 
 describe("NoteEditorView（issue #94：/ 選單接管）", () => {
+  /** `[[` 選單的來源，用來確認它也套手機的 floating 選項。 */
+  async function getWikilinkItems(): Promise<DefaultReactSuggestionItem[]> {
+    return [{ title: "Linked note", onItemClick: () => {} }] as DefaultReactSuggestionItem[];
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
@@ -138,6 +154,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     editor.unmount();
     container.remove();
   });
@@ -160,6 +177,82 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     });
 
     expect(await screen.findByText("Diagram")).toBeInTheDocument();
+  });
+
+  /** 選單外層（floating-ui 定位的那一層）的最大高度；等 size middleware 套用後才有值。 */
+  async function floatingMaxHeight(itemText = "Diagram"): Promise<string> {
+    await screen.findByText(itemText);
+    const floating = document.querySelector(".bn-suggestion-menu")!.closest<HTMLElement>("[style*='z-index']")!;
+    await waitFor(() => expect(floating.style.maxHeight).not.toBe(""));
+    return floating.style.maxHeight;
+  }
+
+  it("手機：選單最大高度是 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("/");
+    });
+    expect(await floatingMaxHeight()).toMatch(/^min\(50vh, /);
+  });
+
+  it("手機：[[ 選單同樣套 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("[[");
+    });
+    expect(await floatingMaxHeight("Linked note")).toMatch(/^min\(50vh, /);
+  });
+
+  /** `:` 表情選單：要輸入兩個字才會出現（minQueryLength 2），格子內容是 emoji 不是文字，所以改看外層元素。 */
+  async function emojiFloatingMaxHeight(): Promise<string> {
+    editor.focus();
+    editor.setTextCursorPosition(editor.document[0]!, "end");
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu(":");
+    });
+    act(() => {
+      editor.insertInlineContent(["sm"]);
+    });
+    const grid = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>(".bn-grid-suggestion-menu");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    const floating = grid.closest<HTMLElement>("[style*='z-index']")!;
+    await waitFor(() => expect(floating.style.maxHeight).not.toBe(""));
+    return floating.style.maxHeight;
+  }
+
+  it("手機：: 表情選單同樣套 min(50vh, 可用高度)", async () => {
+    stubLayoutTier("phone");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    expect(await emojiFloatingMaxHeight()).toMatch(/^min\(50vh, /);
+  });
+
+  it("寬度 >= 640：: 表情選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    expect(await emojiFloatingMaxHeight()).not.toContain("50vh");
+  });
+
+  it("寬度 >= 640：[[ 選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("[[");
+    });
+    expect(await floatingMaxHeight("Linked note")).not.toContain("50vh");
+  });
+
+  it("寬度 >= 640：選單最大高度維持預設（不套 50vh）", async () => {
+    stubLayoutTier("docked");
+    render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
+    act(() => {
+      editor.getExtension(SuggestionMenu)!.openSuggestionMenu("/");
+    });
+    expect(await floatingMaxHeight()).not.toContain("50vh");
   });
 });
 

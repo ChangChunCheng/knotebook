@@ -9,6 +9,7 @@ import { blocknoteZhTW } from "@/i18n/blocknote-zh-TW";
 import type { EditorRef } from "@/components/wikilink/menu";
 import { attachTestElementRenderer } from "@/test/element-renderer";
 import { takeDropPoint } from "@/collab/columns/paste-rule";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // toast 換成 spy：這裡要斷言的是「有沒有提示使用者」，不必把 Radix 整套渲染起來。
 const toastMock = vi.hoisted(() => vi.fn());
@@ -877,6 +878,33 @@ describe("useLinkMenuState", () => {
 
     realEditor.unmount();
     container.remove();
+  });
+});
+
+describe("useLinkMenuState 的 getSlashItems 在手機不帶快捷鍵欄", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const translate = (key: string) => key;
+  async function slashItems(tier: "phone" | "docked") {
+    stubLayoutTier(tier);
+    const realEditor = BlockNoteEditor.create({ schema: noteSchema });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    realEditor.mount(container);
+    const { result } = renderHook(() => useLinkMenuState({ current: realEditor } as EditorRef, translate));
+    const items = await result.current.getSlashItems("");
+    realEditor.unmount();
+    container.remove();
+    return items as { title: string; badge?: string }[];
+  }
+
+  it("手機：沒有任何一項有 badge，項目集合與 docked 相同", async () => {
+    const docked = await slashItems("docked");
+    const phone = await slashItems("phone");
+    expect(docked.some((item) => item.badge)).toBe(true);
+    expect(phone.some((item) => item.badge)).toBe(false);
+    expect(phone.map((item) => item.title)).toEqual(docked.map((item) => item.title));
   });
 });
 

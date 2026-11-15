@@ -16,6 +16,7 @@ import { SideMenuExtension } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   FilePanelController,
+  GridSuggestionMenuController,
   SideMenuController,
   SuggestionMenuController,
   TableHandlesController,
@@ -37,7 +38,7 @@ import { createMarkdownPasteHandler } from "@/collab/paste";
 import { createSiteLinkConvertExtension, createSiteLinkEnv, createSiteLinkPasteHook, withSiteLinkDrop, type SiteLinkEnvRef } from "@/collab/site-link-convert";
 import { useCollabUndoLifeline } from "@/collab/undo";
 import { usePageUndoShortcut } from "@/collab/page-undo";
-import { buildSlashMenuItems } from "@/components/slash-menu";
+import { PHONE_SLASH_MENU_FLOATING_OPTIONS, buildSlashMenuItems, withoutSlashBadges } from "@/components/slash-menu";
 import { LinkDialog } from "@/components/LinkDialog";
 import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
@@ -340,6 +341,8 @@ export function insertLinkAtSavedSelection(
  * 那支，見下面 `NoteEditor` 本體）。
  */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
+  // 手機的選單不帶快捷鍵欄；跨 640 時 `getSlashItems` 換身分，選單重載一次。
+  const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   // 開對話框當下存下的 selection（驗出來的做法）：對話框搶走瀏覽器
   // focus 後 ProseMirror selection 本身不會變，但送出時仍明確還原一次，不倚賴
@@ -382,9 +385,11 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
   );
 
   const getSlashItems = useCallback(
-    (query: string) =>
-      Promise.resolve(filterSuggestionItems(buildSlashMenuItems(editorRef.current, translate, openLinkDialog), query)),
-    [editorRef, translate, openLinkDialog],
+    (query: string) => {
+      const items = buildSlashMenuItems(editorRef.current, translate, openLinkDialog);
+      return Promise.resolve(filterSuggestionItems(phone ? withoutSlashBadges(items) : items, query));
+    },
+    [editorRef, translate, openLinkDialog, phone],
   );
 
   return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems };
@@ -794,9 +799,25 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         sideMenu={false}
         // 關掉內建的表格把手，自掛一份：儲存格與列／欄把手的顏色選單多了「自訂…」。不明確設 false 會疊兩份把手。
         tableHandles={false}
+        // 同理關掉內建的 `:` 表情選單，自掛一份（內容與預設相同）：手機時要套 floating 選項，才不會蓋到編輯工具列。
+        emojiPicker={false}
       >
-        <SuggestionMenuController triggerCharacter="[[" getItems={getItems} />
-        <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} />
+        <SuggestionMenuController
+          triggerCharacter="[["
+          getItems={getItems}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        <GridSuggestionMenuController
+          triggerCharacter=":"
+          columns={10}
+          minQueryLength={2}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        <SuggestionMenuController
+          triggerCharacter="/"
+          getItems={getSlashItems}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
         {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
         {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}
         <TableHandlesController tableHandle={KnotebookTableHandle} tableCellHandle={KnotebookTableCellButton} />
