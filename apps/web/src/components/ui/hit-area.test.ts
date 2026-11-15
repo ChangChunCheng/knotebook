@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { FIELD_ICON_HIT, HEADER_ICON_HIT, ROW_ICON_HIT, ROW_ICON_ROW } from "./hit-area";
+import { FIELD_ICON_HIT, HEADER_ICON_HIT, ROW_ICON_HIT, ROW_ICON_HIT_BORDERED, ROW_ICON_ROW } from "./hit-area";
 
 /**
  * 觸控點擊範圍的來源層守衛。jsdom 不套 CSS，這裡只守「字面在、被正確的元件用到」；
@@ -52,6 +52,17 @@ describe("觸控點擊範圍常數", () => {
     );
   });
 
+  it("ROW_ICON_HIT_BORDERED：補回 1px 框線，四邊各 11px，仍帶 row-icon 標記", () => {
+    expect(tokens(ROW_ICON_HIT_BORDERED)).toEqual(
+      new Set(["row-icon", "relative", "pointer-coarse:after:absolute", "pointer-coarse:after:-inset-[11px]", "pointer-coarse:after:content-['']"]),
+    );
+  });
+
+  it("有框線的「Done」（outline）用 BORDERED", () => {
+    expect(count("components/sidebar/SelectHeader.tsx", "ROW_ICON_HIT_BORDERED")).toBe(2);
+    expect(count("components/sidebar/TrashPanel.tsx", "ROW_ICON_HIT_BORDERED")).toBe(2);
+  });
+
   it("ROW_ICON_ROW：只在相鄰兩顆 row-icon 之間加間距", () => {
     expect(tokens(ROW_ICON_ROW)).toEqual(new Set(["pointer-coarse:[&>.row-icon:has(+.row-icon)]:me-4.5"]));
   });
@@ -95,10 +106,24 @@ describe("所有 24px 高（h-6／size-6，含文字鈕）的按鈕都有觸控�
       const source = code(path);
       for (const match of source.matchAll(/<Button\b[\s\S]*?(?:<\/Button>|\/>\s*\n)/g)) {
         const block = match[0];
-        if (/\bh-6\b|\bsize-6\b/.test(block) && !/\b(?:ROW|FIELD)_ICON_HIT\b/.test(block)) found[path] = (found[path] ?? 0) + 1;
+        if (/\bh-6\b|\bsize-6\b/.test(block) && !/\b(?:ROW|FIELD)_ICON_HIT(?:_BORDERED)?\b/.test(block)) found[path] = (found[path] ?? 0) + 1;
       }
     }
     expect(found).toEqual(EXCEPTIONS);
+  });
+
+  it("有框線（variant=\"outline\"）的 24px 鈕一定用 ROW_ICON_HIT_BORDERED", () => {
+    const wrong: string[] = [];
+    for (const path of sourceFiles()) {
+      const source = code(path);
+      for (const match of source.matchAll(/<Button\b[\s\S]*?(?:<\/Button>|\/>\s*\n)/g)) {
+        const block = match[0];
+        if (!/\bh-6\b|\bsize-6\b/.test(block) || !/variant="outline"/.test(block)) continue;
+        // `\b` 後面接 `_BORDERED` 不算邊界，所以這個正規式只抓沒有框線補償的 ROW_ICON_HIT／FIELD_ICON_HIT。
+        if (/\b(?:ROW|FIELD)_ICON_HIT\b/.test(block)) wrong.push(path);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 });
 
@@ -109,8 +134,8 @@ describe("側欄 24px 圖示鈕套 ROW_ICON_HIT 的次數", () => {
     ["components/RowFavoriteStar.tsx", 1],
     ["components/sidebar/FolderMenu.tsx", 1],
     ["components/groups/GroupMenu.tsx", 1],
-    ["components/sidebar/TrashPanel.tsx", 6],
-    ["components/sidebar/SelectHeader.tsx", 2],
+    ["components/sidebar/TrashPanel.tsx", 5],
+    ["components/sidebar/SelectHeader.tsx", 1],
   ];
   it.each(SITES)("%s：import 並套用 %i 次", (path, uses) => {
     expect(read(path)).toMatch(/import \{[^}]*ROW_ICON_HIT[^}]*\} from "@\/components\/ui\/hit-area";/);

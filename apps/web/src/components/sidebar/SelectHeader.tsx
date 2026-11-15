@@ -2,7 +2,7 @@ import "@/i18n/select-strings";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { ROW_ICON_HIT } from "@/components/ui/hit-area";
+import { ROW_ICON_HIT, ROW_ICON_HIT_BORDERED } from "@/components/ui/hit-area";
 import { cn } from "@/lib/utils";
 import { X } from "@/components/ui/icons";
 import { SelectAllCheckbox } from "@/components/ui/selection-checkbox";
@@ -162,7 +162,7 @@ export function SelectHeader({
       <Button type="button" variant="ghost" size="sm" disabled={visible.length === 0} onClick={toggleAll} className={cn("h-6 px-2 text-xs", ROW_ICON_HIT)}>
         {allState === "all" ? t("trash.deselectAll") : t("trash.selectAll")}
       </Button>
-      <Button ref={doneRef} type="button" variant="outline" size="sm" onClick={onDone} className={cn("h-6 px-2 text-xs", ROW_ICON_HIT)}>
+      <Button ref={doneRef} type="button" variant="outline" size="sm" onClick={onDone} className={cn("h-6 px-2 text-xs", ROW_ICON_HIT_BORDERED)}>
         {t("trash.done")}
       </Button>
     </>

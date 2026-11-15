@@ -9,7 +9,7 @@ import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { selectedTrashIds, splitTrashSections, trashDetailLine, trashItemTitle, trashLocationLine } from "@/lib/trash-display";
 import { useWidePointer } from "@/lib/wide-pointer";
 import { Button } from "@/components/ui/button";
-import { ROW_ICON_HIT, ROW_ICON_ROW } from "@/components/ui/hit-area";
+import { ROW_ICON_HIT, ROW_ICON_HIT_BORDERED, ROW_ICON_ROW } from "@/components/ui/hit-area";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { EllipsisVertical, RotateCcw, SquareCheck, Trash, X } from "@/components/ui/icons";
 import { hoverReveal } from "@/components/ui/reveal";
@@ -469,7 +469,7 @@ export function TrashPanel() {
           variant="outline"
           size="sm"
           onClick={endSelecting}
-          className={cn("h-6 px-2 text-xs", ROW_ICON_HIT)}
+          className={cn("h-6 px-2 text-xs", ROW_ICON_HIT_BORDERED)}
         >
           {t("trash.done")}
         </Button>

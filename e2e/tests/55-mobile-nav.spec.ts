@@ -8,6 +8,7 @@ import {
   randomEmail,
   reEscape,
   showSidebarTab,
+  tapAreaOf,
   waitForEditorSelection,
 } from "./helpers.js";
 
@@ -24,7 +25,7 @@ import {
  *      擁有者、群組成員有；群組檢視者、共享給我的沒有；唯讀筆記點內文不影響它。
  * 55-8 編輯器取得焦點時瀏覽列整條不在，點頂列標題後回來。
  * 55-9 #313：NotePage 的 chunk 還在載入時開的抽屜，chunk 到了之後不會自己關。
- * 55-10 觸控尺寸：只量並印成 MEASURE 行（畫出來的框與實際點得到的範圍），不斷言。
+ * 55-10 觸控尺寸：觸控 context 下量點得到的範圍並斷言（頁首圖示鈕 ≥ 40×44、清單與瀏覽列的控制項 ≥ 44），同時印成 MEASURE 行。
  * 55-11 清單→筆記→重新整理→「‹」：照樣退回清單那一格（序號少一、歷史長度不變）。
  * 55-12 筆記上開著全螢幕搜尋層時按系統返回：回到清單，層是關的、搜尋框沒有焦點。
  *
@@ -662,74 +663,50 @@ test("55-9 #313：NotePage 的程式碼還在載入時開的抽屜，載入完�
   }
 });
 
-test("55-10 觸控尺寸只量不斷言：清單與筆記畫面的主要控制項印成 MEASURE 行", async ({ browser }) => {
+test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝置上點得到的範圍夠大", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
-  const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
+  const { context, page } = await openTouchAs(browser, alice);
   try {
     const title = `E2E mn measure ${RUN}`;
     await apiNote(page, title);
-    await page.setViewportSize(PHONE);
     await page.goto("/");
     const sidebar = sidebarOf(page);
     await expect(sidebar).toBeVisible({ timeout: 15_000 });
     const lines: string[] = [];
-    /**
-     * `visual`＝畫出來的框；`tap`＝點擊範圍：從框的中心往四個方向一格一格找，最遠還點得到這顆鈕（或它裡面的東西）的位置
-     * （`elementFromPoint`，最多往外 24px），所以用 `after:` 擴大點擊範圍的鈕會量到比 visual 大。
-     */
-    const measure = async (screen: string, name: string, target: Locator): Promise<void> => {
-      const handle = await target.first().elementHandle({ timeout: 10_000 });
-      const result = await handle!.evaluate((el) => {
-        const box = el.getBoundingClientRect();
-        const hits = (x: number, y: number): boolean => {
-          const hit = document.elementFromPoint(x, y);
-          return hit !== null && (el === hit || el.contains(hit));
-        };
-        const cx = box.x + box.width / 2;
-        const cy = box.y + box.height / 2;
-        const reach = (dx: number, dy: number, start: number): number => {
-          let d = 0;
-          while (d < 24 && hits(cx + dx * (start + d + 1), cy + dy * (start + d + 1))) d += 1;
-          return d;
-        };
-        const extra = {
-          left: reach(-1, 0, box.width / 2),
-          right: reach(1, 0, box.width / 2),
-          up: reach(0, -1, box.height / 2),
-          down: reach(0, 1, box.height / 2),
-        };
-        return {
-          visual: [box.width, box.height],
-          tap: [box.width + extra.left + extra.right, box.height + extra.up + extra.down],
-        };
-      });
+    /** 點擊範圍（`tapAreaOf`）至少 `minWidth`×`minHeight`（取樣每側最多少算 0.5px，所以容許差 1）；量到的值也印成 MEASURE 行。 */
+    const expectTap = async (screen: string, name: string, target: Locator, minWidth: number, minHeight: number): Promise<void> => {
+      const area = await tapAreaOf(target);
       const fmt = (v: number[]): string => `${v[0]!.toFixed(1)}x${v[1]!.toFixed(1)}`;
-      lines.push(`MEASURE ${screen} ${name} visual ${fmt(result.visual)} tap ${fmt(result.tap)}`);
+      lines.push(`MEASURE ${screen} ${name} visual ${fmt(area.visual)} tap ${fmt(area.tap)}`);
+      expect(area.tap[0], `${screen} ${name} 點擊寬`).toBeGreaterThanOrEqual(minWidth - 1);
+      expect(area.tap[1], `${screen} ${name} 點擊高`).toBeGreaterThanOrEqual(minHeight - 1);
     };
     const tabs = sidebar.getByRole("tablist", { name: "Sidebar sections" }).getByRole("tab");
-    await measure("list", "tab", tabs);
-    await measure("list", "avatar", page.locator("[data-phone-top-bar]").getByRole("button"));
-    await measure("list", "search", listBar(page).getByRole("textbox"));
-    await measure("list", "new-note", listBar(page).getByRole("button", { name: "New note", exact: true }));
-    await showSidebarTab(page, "My notes");
+    await expectTap("list", "tab", tabs, 44, 44);
+    await expectTap("list", "avatar", page.locator("[data-phone-top-bar]").getByRole("button"), 44, 44);
+    await expectTap("list", "search", listBar(page).getByRole("textbox"), 44, 44);
+    await expectTap("list", "new-note", listBar(page).getByRole("button", { name: "New note", exact: true }), 44, 44);
+    await showSidebarTab(page, "My notes", sidebar);
     await noteLink(sidebar, title).click();
     await waitForTitle(page, title);
-    await measure("note", "back", backButton(page));
-    await measure("note", "star", page.locator("header").getByRole("button", { name: "Favorite", exact: true }));
-    await measure("note", "share", page.locator("header").getByRole("button", { name: "Share", exact: true }));
-    await measure("note", "more", page.locator("header").getByRole("button", { name: "More", exact: true }));
+    // 頁首圖示鈕：32px 畫出來的框，點擊範圍撐到 40×44
+    await expectTap("note", "back", backButton(page), 40, 44);
+    await expectTap("note", "star", page.locator("header").getByRole("button", { name: "Favorite", exact: true }), 40, 44);
+    await expectTap("note", "share", page.locator("header").getByRole("button", { name: "Share", exact: true }), 40, 44);
+    await expectTap("note", "more", page.locator("header").getByRole("button", { name: "More", exact: true }), 40, 44);
     const locationButton = page.getByTestId("note-header-subline").getByRole("button", { name: /^Show in list: / });
-    await measure("note", "location", locationButton);
-    await measure("note", "browse-search", browseBar(page).getByRole("button", { name: "Search notes", exact: true }));
-    await measure("note", "browse-new-note", browseBar(page).getByRole("button", { name: "New note", exact: true }));
+    // 位置副標是一行文字鈕（高 32、整行寬），上面是標題框
+    await expectTap("note", "location", locationButton, 44, 32);
+    await expectTap("note", "browse-search", browseBar(page).getByRole("button", { name: "Search notes", exact: true }), 44, 44);
+    await expectTap("note", "browse-new-note", browseBar(page).getByRole("button", { name: "New note", exact: true }), 44, 44);
     // 標題框加位置副標合起來的高度（兩者上下相鄰，點哪一個都開對應的東西）。
     const titleRect = (await titleBox(page).boundingBox())!;
     const locationRect = (await locationButton.boundingBox())!;
     const union = { width: Math.max(titleRect.x + titleRect.width, locationRect.x + locationRect.width) - Math.min(titleRect.x, locationRect.x), height: locationRect.y + locationRect.height - titleRect.y };
     lines.push(`MEASURE note title+location visual ${union.width.toFixed(1)}x${union.height.toFixed(1)}`);
+    expect(union.height, "note title+location 合起來的高").toBeGreaterThanOrEqual(44);
     for (const line of lines) console.log(line);
-    expect(lines.filter((line) => line.includes("missing"))).toEqual([]);
   } finally {
     await context.close();
   }
