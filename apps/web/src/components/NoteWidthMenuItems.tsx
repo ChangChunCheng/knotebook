@@ -12,7 +12,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, ChevronDown, NoteWidthIcon } from "@/components/ui/icons";
+import { Check, ChevronDown } from "@/components/ui/icons";
+import { NoteWidthIcon } from "@/components/ui/icons-extra";
 
 /** 頁首 ⋮ 交給寬度項的控制：展開狀態由選單持有（Esc 先收合要看得到它）。 */
 export interface NoteWidthItemsControl {

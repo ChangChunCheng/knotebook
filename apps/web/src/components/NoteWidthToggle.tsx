@@ -3,7 +3,7 @@ import { NOTE_WIDTHS } from "@knotebook/shared";
 import { useNoteWidth } from "@/components/note-width";
 import { Button } from "@/components/ui/button";
 import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
-import { NoteWidthIcon } from "@/components/ui/icons";
+import { NoteWidthIcon } from "@/components/ui/icons-extra";
 import { cn } from "@/lib/utils";
 
 /**
