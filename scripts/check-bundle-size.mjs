@@ -96,6 +96,8 @@ export const SHORTCUTSLAZY_RE = /^ShortcutsLazy-[A-Za-z0-9_-]+\.js$/;
 // shortcuts.*.json 只能進 ShortcutsLazy 鏈：這把鍵名（`shortcutsGuide.items.columnBackspace`，清單 id）出現在 entry＝字串包或清單被首包靜態 import。
 // 選它而不選 heading／wikilink 這類 id：那些字在 entry 本來就有（block 名稱）。check-bundle-size.test.mjs 驗它是 shortcuts.en.json 的鍵、不在主 en.json。
 export const SHORTCUTS_I18N_MARKER = 'columnBackspace';
+// 手機編輯工具列的字串（mobile-toolbar.*.json）只能進 NotePage 鏈：這把鍵名出現在 entry＝字串包或工具列被首包靜態 import。
+export const MOBILE_TOOLBAR_I18N_MARKER = 'hideKeyboard';
 // #93：側欄搜尋的「內文符合」區（BodySearchResults、查詢 hook、片段與點擊處理）必須是自己的 lazy chunk；
 // `components/sidebar/BodySearchLazy.tsx` 是唯一入口（SearchResults 的 `lazy(() => import("@/components/sidebar/BodySearchLazy"))`）。
 // ⚠ 同 SELECTLAZY_RE：存在性只擋「整組被併回 entry」或 chunk 改名；SearchResults 是唯一呼叫端，改成靜態 import 時整組併回 entry、chunk 消失。
@@ -332,6 +334,14 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     throw new Error(
       `entry chunk ${entryName} 含快捷鍵字串包的鍵名 ${SHORTCUTS_I18N_MARKER}——\`@/i18n/shortcuts-strings\`（或 import 它的清單／內容模組）` +
         `被首包靜態 import；快捷鍵介紹頁的內容只能經 ShortcutsLazy 載入（快捷鍵介紹）`
+    );
+  }
+
+  // 只掃 entry：NotePage 等 lazy chunk 帶這把鍵名不影響首包。
+  if (readFileSync(join(assetsDir, entryName), 'utf8').includes(MOBILE_TOOLBAR_I18N_MARKER)) {
+    throw new Error(
+      `entry chunk ${entryName} 含手機編輯工具列字串包的鍵名 ${MOBILE_TOOLBAR_I18N_MARKER}——\`@/i18n/mobile-toolbar-strings\`（或 import 它的工具列模組）` +
+        `被首包靜態 import；手機編輯工具列只能放在 NotePage chunk`
     );
   }
 

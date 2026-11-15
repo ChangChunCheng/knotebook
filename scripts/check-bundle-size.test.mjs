@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { AVATAR_ENCODE_RE, GROUP_LAZY_DIALOGS, AVATAR_IMAGE_MARKER, BODY_SEARCH_MARKER, FOLDER_I18N_MARKER, MANAGEMENT_I18N_MARKERS, MAX_ENTRY_BYTES, SELECT_I18N_MARKER, SHORTCUTS_I18N_MARKER, VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
+import { AVATAR_ENCODE_RE, GROUP_LAZY_DIALOGS, AVATAR_IMAGE_MARKER, BODY_SEARCH_MARKER, FOLDER_I18N_MARKER, MANAGEMENT_I18N_MARKERS, MAX_ENTRY_BYTES, MOBILE_TOOLBAR_I18N_MARKER, SELECT_I18N_MARKER, SHORTCUTS_I18N_MARKER, VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
 
 // 守預設上限 750 KiB（理由見 check-bundle-size.mjs 的常數註解；下面兩案明傳 700 * 1024 測判斷本身，與預設值無關）。
 test('BS0 首包上限是 750 KiB', () => {
@@ -249,6 +249,38 @@ test('BS4 SELECT_I18N_MARKER 是 select.en.json 裡 select.* 的鍵', () => {
   let node = bundle;
   for (const part of `select.${SELECT_I18N_MARKER}`.split('.')) node = node?.[part];
   assert.equal(typeof node, 'string', `select.${SELECT_I18N_MARKER} 不在 select.en.json——鍵改名了，請同步更新 SELECT_I18N_MARKER`);
+});
+
+test('BS-M1 entry 含手機編輯工具列字串包的鍵名 → throw', () => {
+  const { assets, cleanup } = fakeAssets({
+    ...MARKER_BASE, 'index-Abc123.js': `const s={${MOBILE_TOOLBAR_I18N_MARKER}:"Hide keyboard"}`, 'NotePage-Def456.js': 'x',
+    'VersionsLazy-Vvv000.js': 'x',
+  });
+  try {
+    assert.throws(() => checkBundleSize(assets), /index-Abc123\.js[\s\S]*hideKeyboard[\s\S]*NotePage chunk/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('BS-M2 鍵名只在 NotePage 裡 → 通過', () => {
+  const { assets, cleanup } = fakeAssets({
+    ...MARKER_BASE, 'NotePage-Def456.js': `const s={${MOBILE_TOOLBAR_I18N_MARKER}:"Hide keyboard"}`,
+    'VersionsLazy-Vvv000.js': 'x',
+  });
+  try {
+    assert.doesNotThrow(() => checkBundleSize(assets));
+  } finally {
+    cleanup();
+  }
+});
+
+test('BS-M3 MOBILE_TOOLBAR_I18N_MARKER 是 mobile-toolbar.en.json 裡 mobileToolbar.* 的鍵、不在主 en.json', () => {
+  const dir = new URL('../apps/web/src/i18n/', import.meta.url);
+  const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('mobile-toolbar.en.json', dir)), 'utf8'));
+  assert.equal(typeof bundle.mobileToolbar?.[MOBILE_TOOLBAR_I18N_MARKER], 'string');
+  const main = JSON.parse(readFileSync(fileURLToPath(new URL('en.json', dir)), 'utf8'));
+  assert.equal(main.mobileToolbar, undefined);
 });
 
 // 資料夾：資料夾對話框必須是自己的 lazy chunk（FolderLazy 是唯一入口）

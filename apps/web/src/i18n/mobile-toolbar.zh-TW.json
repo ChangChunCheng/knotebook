@@ -1,0 +1,13 @@
+{
+  "mobileToolbar": {
+    "label": "編輯工具列",
+    "insert": "插入區塊",
+    "format": "文字格式",
+    "image": "插入圖片",
+    "blockType": "變更區塊類型",
+    "undo": "復原",
+    "redo": "重做",
+    "hideKeyboard": "收起鍵盤",
+    "back": "返回"
+  }
+}

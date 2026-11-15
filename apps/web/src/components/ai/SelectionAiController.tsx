@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { flip, offset, shift } from "@floating-ui/react";
 import { FormattingToolbarExtension } from "@blocknote/core/extensions";
 import {
   FormattingToolbarController,
@@ -20,6 +21,17 @@ import { SelectionAiBox } from "./SelectionAiBox";
  */
 export const FORMATTING_TOOLBAR_ELEMENT_PROPS = { "data-kb-formatting-toolbar-popover": "" } as FloatingUIOptions["elementProps"];
 
+/** 手機編輯工具列的外框高度（膠囊 52＋下方留白 8）：浮動格式工具列翻到下方、編輯器捲動時要避開它。 */
+export const PHONE_EDIT_TOOLBAR_CLEARANCE_PX = 60;
+
+/**
+ * 浮動格式工具列的定位：與 BlockNote 預設相同（offset 10、shift、flip），但手機時 flip 的下緣內縮 `bottomPadding`，
+ * 工具列不會翻到手機編輯工具列底下。floating-ui 的視窗邊界本來就取視覺視窗，止於螢幕鍵盤上緣，所以這裡只扣工具列本身、不再加鍵盤高。
+ */
+export function formattingToolbarMiddleware(bottomPadding: number) {
+  return [offset(10), shift(), bottomPadding > 0 ? flip({ padding: { bottom: bottomPadding } }) : flip()];
+}
+
 /**
  * 框選 AI 的掛載點（#263）：`NoteEditor` 把它當 `NoteEditorView` 的 children 傳進 `<BlockNoteView>`，它是 **formatting toolbar
  * controller 與 `SelectionAiBox` 的唯一擁有者**——`NoteEditorView` 不碰 AI context。
@@ -34,6 +46,7 @@ export function SelectionAiController() {
   const editor = useBlockNoteEditor();
   const phone = useIsPhone();
   const { state } = useAiSession();
+  const flipBottomPadding = phone ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0;
   const toolbarStoreOpen = useExtensionState(FormattingToolbarExtension, { editor });
   const anchor = activeAnchorOf(state);
   const boxOpen = state.phase !== "idle";
@@ -51,8 +64,11 @@ export function SelectionAiController() {
   const toolbarOpen = toolbarStoreOpen && !hiddenOnPhone && !(boxOpen && insideTarget);
   // FormattingToolbarController 內部的 useMemo 以這個物件的身分為依賴——每次 render 新建會讓它每次重算。
   const floatingUIOptions = useMemo<FloatingUIOptions>(
-    () => ({ useFloatingOptions: { open: toolbarOpen }, elementProps: FORMATTING_TOOLBAR_ELEMENT_PROPS }),
-    [toolbarOpen],
+    () => ({
+      useFloatingOptions: { open: toolbarOpen, ...(flipBottomPadding > 0 && { middleware: formattingToolbarMiddleware(flipBottomPadding) }) },
+      elementProps: FORMATTING_TOOLBAR_ELEMENT_PROPS,
+    }),
+    [toolbarOpen, flipBottomPadding],
   );
 
   return (

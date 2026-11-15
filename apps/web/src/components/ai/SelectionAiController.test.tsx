@@ -5,8 +5,21 @@ import i18n from "@/i18n";
 import { contentStart, createTestEditor, renderAiHost, selectInBlock, stubAiFetch, type AnyEditor } from "@/test/ai-host";
 import { createRequire } from "node:module";
 import { useAiSession, type AiSessionValue } from "./AiSession";
-import { SelectionAiController } from "./SelectionAiController";
+import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "./SelectionAiController";
 import { stubLayoutTier } from "@/test/layout-tier";
+
+// flip 換成會記錄呼叫參數的直通版本：驗證手機時傳了下緣內縮。
+const flipSpy = vi.hoisted(() => vi.fn());
+vi.mock("@floating-ui/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@floating-ui/react")>();
+  return {
+    ...actual,
+    flip: (options?: Parameters<typeof actual.flip>[0]) => {
+      flipSpy(options);
+      return actual.flip(options);
+    },
+  };
+});
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
 const SUMMARIZE: AiActionDto = { id: SUMMARIZE_ACTION_ID, name: "Summarize", applyMode: "preview", kind: "quick" };
@@ -187,5 +200,44 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
     selectInBlock(editor, "p1", 0, 5);
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(toolbar()).not.toBeNull();
+  });
+});
+
+describe("SelectionAiController（手機：浮動工具列翻到下方時避開編輯工具列）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    flipSpy.mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
+  });
+
+  function stubKeyboard(inset: number) {
+    const viewport = Object.assign(new EventTarget(), { height: 800 - inset, offsetTop: 0, scale: 1 });
+    vi.stubGlobal("innerHeight", 800);
+    Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
+  }
+  const bottoms = () => flipSpy.mock.calls.map(([options]) => (options as { padding?: { bottom?: number } } | undefined)?.padding?.bottom);
+
+  it("phone：flip 的下緣內縮編輯工具列的外框高度，不加鍵盤高（視窗邊界本來就是視覺視窗）", async () => {
+    stubLayoutTier("phone");
+    stubKeyboard(300);
+    await mount();
+    act(() => {
+      editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
+    });
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(bottoms()).toContain(PHONE_EDIT_TOOLBAR_CLEARANCE_PX);
+    expect(bottoms().filter((bottom) => bottom !== undefined && bottom !== PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual([]);
+  });
+
+  it("docked：flip 沿用預設（沒有內縮）", async () => {
+    stubLayoutTier("docked");
+    stubKeyboard(300);
+    await mount();
+    selectInBlock(editor, "p1", 0, 5);
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(bottoms().filter((bottom) => bottom !== undefined)).toEqual([]);
   });
 });

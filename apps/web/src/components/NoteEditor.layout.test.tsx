@@ -344,3 +344,40 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc.destroy();
   });
 });
+
+describe("NoteEditor 手機編輯工具列", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderEditor(mobileToolbar: boolean | undefined) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("mobileToolbar：工具列在、文章欄尾端有 aria-hidden 的空白（讓文件尾端也能捲到工具列之上）", async () => {
+    renderEditor(true);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    expect(document.querySelector("[data-mobile-edit-toolbar]")).not.toBeNull();
+    const spacer = column.querySelector("[data-mobile-toolbar-spacer]");
+    expect(spacer).not.toBeNull();
+    expect(column.lastElementChild).toBe(spacer);
+  });
+
+  it.each([false, undefined])("mobileToolbar=%s（桌機、或手機沒在編輯）：沒有工具列也沒有空白", async (flag) => {
+    renderEditor(flag);
+    await screen.findByTestId("article-column");
+    expect(document.querySelector("[data-mobile-edit-toolbar]")).toBeNull();
+    expect(document.querySelector("[data-mobile-toolbar-spacer]")).toBeNull();
+  });
+});

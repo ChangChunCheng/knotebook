@@ -1,0 +1,13 @@
+{
+  "mobileToolbar": {
+    "label": "Editing toolbar",
+    "insert": "Insert block",
+    "format": "Text formatting",
+    "image": "Insert image",
+    "blockType": "Change block type",
+    "undo": "Undo",
+    "redo": "Redo",
+    "hideKeyboard": "Hide keyboard",
+    "back": "Back"
+  }
+}

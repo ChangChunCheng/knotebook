@@ -58,6 +58,8 @@ import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/version
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
 import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { MobileEditToolbar } from "@/components/editor/mobile/MobileEditToolbar";
+import { MobileToolbarSpacer } from "@/components/editor/mobile/MobileToolbarSpacer";
 import { KnotebookSideMenu, NotePathContext, SIDE_MENU_FLOATING_OPTIONS } from "@/components/editor/KnotebookSideMenu";
 import { useDragActiveClass } from "@/components/editor/use-drag-active-class";
 import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/editor/colors/KnotebookTableMenus";
@@ -387,6 +389,8 @@ export interface NoteEditorProps {
   headerSlot?: ReactNode;
   /** 內文卡頁尾——`NotePage` 組裝 backlinks chips 後傳入。同上，普通 slot props。 */
   footerSlot?: ReactNode;
+  /** 手機編輯中：渲染浮在鍵盤上方的編輯工具列（`NotePage` 依焦點與段位決定）。 */
+  mobileToolbar?: boolean;
   /** 版本預覽：有值時**捲動容器加 `hidden`**、同一張卡內在捲動容器之後渲染這個 slot；
    * 頁首（含預覽橫幅）、頁尾照常。⚠ 活編輯器**不 unmount**：`NoteEditorView` 的重掛會殺掉 y-prosemirror 的
    * UndoManager 訂閱；放在 `hidden` 容器裡的活編輯器仍收得到遠端更新。 */
@@ -432,6 +436,7 @@ export function NoteEditor({
   noteId,
   headerSlot,
   footerSlot,
+  mobileToolbar = false,
   previewSlot,
   onScrollRoot,
   onCursorScroller,
@@ -649,6 +654,7 @@ export function NoteEditor({
               <HeadingAnchorButtons container={columnEl} />
               {/* 欄間分隔線（拖曳／鍵盤調欄寬）只在可編輯時掛；唯讀時沒有東西可調。 */}
               {editable && <ColumnDividers container={columnEl} editor={editor} />}
+              {mobileToolbar && <MobileToolbarSpacer />}
             </div>
           </div>
           {hasPreview && (
@@ -675,6 +681,7 @@ export function NoteEditor({
           </div>
         )}
         <CornerStack />
+        {mobileToolbar && <MobileEditToolbar editor={editor} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
           給 `getSlashItems` 用），`LinkDialog` 自己不持有——關閉與焦點回歸的完整

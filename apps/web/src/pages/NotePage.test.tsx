@@ -78,7 +78,9 @@ vi.mock("@/components/NoteEditor", async () => {
     onCursorScroller,
     noteMaxBytes,
     maxUploadBytes,
+    mobileToolbar,
   }: {
+    mobileToolbar?: boolean;
     editable: boolean;
     noteId: string;
     headerSlot?: ReactNode;
@@ -109,6 +111,11 @@ vi.mock("@/components/NoteEditor", async () => {
         </button>
         {previewSlot !== undefined && <div data-testid="mock-preview-slot">{previewSlot}</div>}
         {footerSlot}
+        {mobileToolbar === true && (
+          <div data-mobile-edit-toolbar="" data-testid="mock-mobile-toolbar">
+            <button type="button">mock-toolbar-button</button>
+          </div>
+        )}
       </div>
     );
   }
@@ -788,6 +795,59 @@ describe("NotePage", () => {
       // 焦點真的離開到別處：回來。
       fireEvent.blur(content, { relatedTarget: screen.getByLabelText("Note title") });
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("可編輯：焦點進編輯區 → 編輯工具列出現；焦點到頁首標題 → 消失", async () => {
+      await renderEditable();
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      act(() => screen.getByLabelText("Note title").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it("焦點移到工具列的鈕上：工具列還在、瀏覽列不閃回來", async () => {
+      await renderEditable();
+      act(() => screen.getByTestId("mock-content").focus());
+      act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      expect(screen.queryByTestId(BAR)).toBeNull();
+    });
+
+    it("焦點在工具列的鈕上時被降成唯讀：編輯工具列不留著（旗標還在也不渲染）", async () => {
+      const { rerender, queryClient } = await renderEditable();
+      act(() => screen.getByTestId("mock-content").focus());
+      act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      collab.state = { phase: "connected", role: "viewer" };
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={["/notes/my-note"]}>
+              <NotePageTree />
+            </MemoryRouter>
+          </ThemeProvider>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it("唯讀：點內文沒有編輯工具列", async () => {
+      await renderEditable({ ...NOTE, role: "viewer", ownerId: "u2", permissions: VIEWER_PERMS }, "viewer");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it.each(["overlay", "docked"] as const)("%s：聚焦編輯區也不出編輯工具列", async (tier) => {
+      stubLayoutTier(tier);
+      collab.state = { phase: "connected", role: "owner" };
+      collab.provider.synced = true;
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
     });
 
     it("編輯區在焦點還在裡面時被卸載（點連結換篇）：新畫面的瀏覽列不會被舊的編輯旗標藏住", async () => {
