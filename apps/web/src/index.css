@@ -899,6 +899,15 @@ input[name="share-access"] {
   }
 }
 
+/* 手機：選單列不被擠扁。上游給每列 height: 52px，但選單是有高度上限（50vh）的直欄 flex，列預設可收縮，
+   沒有副標的 [[ 筆記清單列被擠到內容高度 33px（有副標的 / 列約 49px），不夠一個觸控目標。flex-shrink: 0 讓列保持 52px，超出的部分在選單內捲動。
+   疊 .bn-mantine 是為了不輸給晚載入的同特異度規則。媒體查詢 width < 40rem 與 PHONE_QUERY 同界。 */
+@media (width < 40rem) {
+  .bn-mantine .bn-suggestion-menu-item {
+    flex-shrink: 0;
+  }
+}
+
 /* ── 並排排版 ─────────────────────────
    列＝core 的 .bn-block-column-list（flex），欄＝.bn-block-column（inline style 的 flex:N 1 0 是欄寬比例，這裡不碰）。
    全部錨 .bn-editor 提高特異度：BlockNote 的 CSS 在 lazy chunk、晚於本檔，兩邊都未分層，同特異度我們必輸，

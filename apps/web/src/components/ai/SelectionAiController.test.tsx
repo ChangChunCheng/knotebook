@@ -5,7 +5,7 @@ import i18n from "@/i18n";
 import { contentStart, createTestEditor, renderAiHost, selectInBlock, stubAiFetch, type AnyEditor } from "@/test/ai-host";
 import { createRequire } from "node:module";
 import { useAiSession, type AiSessionValue } from "./AiSession";
-import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "./SelectionAiController";
+import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX, formattingToolbarMiddleware } from "./SelectionAiController";
 import { stubLayoutTier } from "@/test/layout-tier";
 
 // flip 換成會記錄呼叫參數的直通版本：驗證手機時傳了下緣內縮。
@@ -239,5 +239,17 @@ describe("SelectionAiController（手機：浮動工具列翻到下方時避開�
     selectInBlock(editor, "p1", 0, 5);
     await waitFor(() => expect(toolbar()).not.toBeNull());
     expect(bottoms().filter((bottom) => bottom !== undefined)).toEqual([]);
+  });
+});
+
+describe("formattingToolbarMiddleware", () => {
+  const names = (bottomPadding: number) => formattingToolbarMiddleware(bottomPadding).map((middleware) => middleware.name);
+
+  it("手機：先限制寬度（size），shift 左右各留 8px 並以整個視窗為邊界，才輪到 flip", () => {
+    expect(names(PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual(["offset", "size", "shift", "flip"]);
+  });
+
+  it("桌機：與 BlockNote 預設相同，不限制寬度", () => {
+    expect(names(0)).toEqual(["offset", "shift", "flip"]);
   });
 });

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { flip, offset, shift } from "@floating-ui/react";
+import { flip, offset, shift, size } from "@floating-ui/react";
 import { FormattingToolbarExtension } from "@blocknote/core/extensions";
 import {
   FormattingToolbarController,
@@ -24,12 +24,29 @@ export const FORMATTING_TOOLBAR_ELEMENT_PROPS = { "data-kb-formatting-toolbar-po
 /** 手機編輯工具列的外框高度（膠囊 52＋下方留白 8）：浮動格式工具列翻到下方、編輯器捲動時要避開它。 */
 export const PHONE_EDIT_TOOLBAR_CLEARANCE_PX = 60;
 
+/** 手機浮動格式工具列離視窗左右邊緣至少留這麼多。 */
+export const PHONE_FLOATING_TOOLBAR_EDGE_PX = 8;
+
 /**
  * 浮動格式工具列的定位：與 BlockNote 預設相同（offset 10、shift、flip），但手機時 flip 的下緣內縮 `bottomPadding`，
  * 工具列不會翻到手機編輯工具列底下。floating-ui 的視窗邊界本來就取視覺視窗，止於螢幕鍵盤上緣，所以這裡只扣工具列本身、不再加鍵盤高。
+ *
+ * 手機另外限制寬度：工具列的按鈕排成一列，比窄視窗（320）還寬時會伸出視窗右緣；寬度上限 `100vw - 16px`，放不下的部分由內層 `.bn-toolbar` 自己橫捲（這裡不能設 overflow：overflow-x 不是 visible 時 overflow-y 也不再是 visible，下拉選單與面板會被裁掉），
+ * 並讓 shift 左右各留 8px。size 排在 shift 前面，shift 才用限制後的寬度算位置。shift 的邊界取整個視窗（`document.documentElement`），
+ * 不取預設的裁切祖先：內文卡左右各有一段外距，工具列放進卡的內側會比卡還寬而無處可放。
  */
 export function formattingToolbarMiddleware(bottomPadding: number) {
-  return [offset(10), shift(), bottomPadding > 0 ? flip({ padding: { bottom: bottomPadding } }) : flip()];
+  if (bottomPadding <= 0) return [offset(10), shift(), flip()];
+  return [
+    offset(10),
+    size({
+      apply({ elements }) {
+        elements.floating.style.maxWidth = `calc(100vw - ${PHONE_FLOATING_TOOLBAR_EDGE_PX * 2}px)`;
+      },
+    }),
+    shift({ boundary: document.documentElement, padding: { left: PHONE_FLOATING_TOOLBAR_EDGE_PX, right: PHONE_FLOATING_TOOLBAR_EDGE_PX } }),
+    flip({ padding: { bottom: bottomPadding } }),
+  ];
 }
 
 /**
