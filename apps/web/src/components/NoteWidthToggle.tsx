@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { NOTE_WIDTHS } from "@knotebook/shared";
 import { useNoteWidth } from "@/components/note-width";
 import { Button } from "@/components/ui/button";
-import { NoteWidthIcon } from "@/components/ui/icons";
+import { NoteWidthIcon } from "@/components/ui/icons-extra";
 
 /**
  * #297：頁首寬度鈕（站內、每篇各自記，見 `note-width.ts`）。按一下換成下一種寬度：
