@@ -309,7 +309,7 @@ export function SelectionAiBox() {
                           submit();
                         }
                       }}
-                      className="field-sizing-content max-h-[5.75rem] min-h-8 min-w-40 flex-1 resize-none bg-transparent px-2 py-1.5 outline-none"
+                      className="field-sizing-content max-h-[5.75rem] min-h-8 min-w-40 flex-1 resize-none bg-transparent px-2 py-1.5 pointer-coarse:text-base outline-none"
                     />
                     <Button type="button" variant="ghost" size="icon" aria-label={t("ai.box.send")} title={t("ai.box.send")} onClick={submit}>
                       <Send aria-hidden="true" className="h-4 w-4" />

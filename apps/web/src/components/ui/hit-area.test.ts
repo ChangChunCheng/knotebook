@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { HEADER_ICON_HIT, ROW_ICON_HIT, ROW_ICON_ROW } from "./hit-area";
+import { FIELD_ICON_HIT, HEADER_ICON_HIT, ROW_ICON_HIT, ROW_ICON_ROW } from "./hit-area";
 
 /**
  * 觸控點擊範圍的來源層守衛。jsdom 不套 CSS，這裡只守「字面在、被正確的元件用到」；
@@ -29,6 +29,21 @@ function count(path: string, name: string): number {
 function tokens(value: string): Set<string> {
   return new Set(value.split(/\s+/).filter(Boolean));
 }
+
+describe("輸入框內圖示鈕的點擊範圍", () => {
+  it("FIELD_ICON_HIT：不帶 relative（鈕已是 absolute），只在粗指標撐 44", () => {
+    expect(tokens(FIELD_ICON_HIT)).toEqual(
+      new Set(["pointer-coarse:after:absolute", "pointer-coarse:after:-inset-2.5", "pointer-coarse:after:content-['']"]),
+    );
+  });
+
+  it("搜尋框的清除 ✕ 套用它；觸控時右內距縮到 pr-10（點擊範圍左緣 38px，字止於 41px）、Ctrl K 提示隱藏", () => {
+    expect(count("components/AppShell.tsx", "FIELD_ICON_HIT")).toBe(2);
+    const shell = code("components/AppShell.tsx");
+    expect(shell).toContain("pr-11 pointer-coarse:pr-10");
+    expect(shell).toMatch(/<kbd[\s\S]*?pointer-coarse:hidden[\s\S]*?<\/kbd>/);
+  });
+});
 
 describe("觸控點擊範圍常數", () => {
   it("ROW_ICON_HIT：24px 圖示鈕四邊各 10px 擴到 44，只在粗指標生效，帶 row-icon 標記", () => {
@@ -68,8 +83,6 @@ function sourceFiles(dir = "components"): string[] {
 describe("所有 24px 高（h-6／size-6，含文字鈕）的按鈕都有觸控點擊範圍", () => {
   // 沒套 ROW_ICON_HIT 的 `<Button … h-6 …>`（或 `size-6`；class 順序、拆行、寫在 cn(...) 裡都算）只准是下面這些，每筆寫理由；多一顆或少一顆都紅。
   const EXCEPTIONS: Record<string, number> = {
-    // 搜尋框裡的清除 ✕：附屬於輸入框，另案處理。
-    "components/AppShell.tsx": 1,
     // 選取模式的寬螢幕（可 hover）工具列：只在滑鼠環境渲染，觸控走窄形底部動作列。
     "components/sidebar/SelectHeader.tsx": 1,
     "components/sidebar/TrashFooter.tsx": 2,
@@ -82,7 +95,7 @@ describe("所有 24px 高（h-6／size-6，含文字鈕）的按鈕都有觸控�
       const source = code(path);
       for (const match of source.matchAll(/<Button\b[\s\S]*?(?:<\/Button>|\/>\s*\n)/g)) {
         const block = match[0];
-        if (/\bh-6\b|\bsize-6\b/.test(block) && !/\bROW_ICON_HIT\b/.test(block)) found[path] = (found[path] ?? 0) + 1;
+        if (/\bh-6\b|\bsize-6\b/.test(block) && !/\b(?:ROW|FIELD)_ICON_HIT\b/.test(block)) found[path] = (found[path] ?? 0) + 1;
       }
     }
     expect(found).toEqual(EXCEPTIONS);

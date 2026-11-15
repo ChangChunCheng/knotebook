@@ -20,3 +20,10 @@ export const ROW_ICON_ROW = "pointer-coarse:[&>.row-icon:has(+.row-icon)]:me-4.5
 
 export const HEADER_ICON_HIT =
   "relative pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-1.5 pointer-coarse:after:content-['']";
+
+/**
+ * 蓋在輸入框裡面的 24px 圖示鈕（搜尋框的清除 ✕）。鈕本身已是 `absolute`（定位錨點），所以不帶 `relative`，
+ * 否則兩個定位 class 互相蓋掉。四邊各撐 10px＝44×44。鈕靠右 4px、寬 24px，點擊範圍的左緣離輸入框右緣 38px；
+ * 所以觸控時輸入框右內距要 ≥ 41px（`pointer-coarse:pr-10`＝40px 加 1px 邊框），字才不會被點擊範圍蓋到。
+ */
+export const FIELD_ICON_HIT = "pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5 pointer-coarse:after:content-['']";

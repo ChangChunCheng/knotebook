@@ -18,7 +18,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 
 /** 與 `PasswordResetDialog` 的 `SELECT_CLASS` 同一份（各檔各自宣告是既有慣例，見 ApiTokensSection）。 */
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7];

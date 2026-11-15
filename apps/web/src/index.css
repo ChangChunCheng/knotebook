@@ -706,6 +706,14 @@ input[name="share-access"] {
   font-family: inherit;
 }
 
+/* 觸控：程式碼區塊的語言下拉是 BlockNote 內建的原生 select，字級 12px 時 iOS 聚焦會放大整頁。
+   與上一條同樣不放 layer、選擇器與它一致，才壓得過它的 `text-xs`。 */
+@media (pointer: coarse) {
+  .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
+    font-size: var(--text-base);
+  }
+}
+
 /* 現身：hover 整個 block、游標在這塊程式碼裡（`data-caret-inside`）、或焦點在下拉上——
    與 mermaid 的 `group-hover`／`group-focus-within`／`focus-visible` 同語意。
    清單展開的那段（焦點已移進 option）另由 `@supports (appearance: base-select)` 裡的
