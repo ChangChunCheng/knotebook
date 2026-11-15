@@ -18,7 +18,7 @@ Before 1.0, a release with new features or with upgrade notes (anything that nee
 
 ## 2. Merge
 
-**Squash-merge** the pull request into `main`, always. The Release workflow only releases from a commit that itself changes the version (see below); with a rebase merge of several commits, the last commit — the one the workflow looks at — usually doesn't, and the release is skipped (the run shows a warning). The push to `main` runs the CI workflow with all of its jobs: `build-unit` and `integration` (the tests, in parallel), `ci` (succeeds only if both of those did; it is the status check the `main` ruleset requires), and `e2e`.
+**Squash-merge** the pull request into `main`, always. The Release workflow only releases from a commit that itself changes the version (see below); with a rebase merge of several commits, the last commit — the one the workflow looks at — usually doesn't, and the release is skipped (the run shows a warning). The push to `main` runs the CI workflow with all of its jobs: `build-unit`, `integration` (the tests, in parallel), and `e2e` (the Playwright suite, split into 4 parallel shards), plus `ci` (succeeds only if all of those did; it is the status check the `main` ruleset requires). Pull requests run the same jobs, e2e included.
 
 ## 3. What happens automatically
 
