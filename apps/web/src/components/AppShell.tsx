@@ -43,6 +43,7 @@ import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
 import { ShortcutsDialog } from "@/components/shortcuts/ShortcutsDialog";
 import { AvatarDisplayFiller } from "@/avatars/AvatarDisplayFiller";
+import { useCardPage } from "@/theme";
 import {
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MAX,
@@ -380,6 +381,8 @@ interface AppShellProps {
  */
 export function AppShell({ children, inert }: AppShellProps) {
   const { t } = useTranslation();
+  // 手機上清單與筆記是卡片底：瀏覽器上方列跟著用卡片色。
+  useCardPage();
   const navigate = useNavigate();
   const location = useLocation();
   const createNote = useCreateNote();

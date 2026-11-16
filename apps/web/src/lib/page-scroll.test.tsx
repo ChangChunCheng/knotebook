@@ -13,6 +13,7 @@ import {
   stickyTopInset,
   useStickyTopInset,
   useStickyTopVar,
+  ANCHOR_IDLE_MS,
   useTierScrollAnchor,
   visibleHeightOf,
 } from "./page-scroll";
@@ -88,11 +89,33 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(stickyTopInset()).toBe(0);
   });
 
-  function Header({ enabled, height }: { enabled: boolean; height: number }) {
+  function Header({ enabled, height, framed = true, name = STICKY_TOP_VAR }: { enabled: boolean; height: number; framed?: boolean; name?: string }) {
     const ref = useRef<HTMLDivElement>(null);
-    useStickyTopVar(ref, enabled);
-    return <div ref={ref} data-height={height} />;
+    useStickyTopVar(ref, enabled, name);
+    const header = <div ref={ref} data-height={height} />;
+    return framed ? <div {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}>{header}</div> : header;
   }
+
+  it("useStickyTopVar：不在文件代為捲動的外框裡（抽屜裡的清單）就不寫", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
+    });
+    render(<Header enabled height={70} framed={false} />);
+    expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("");
+  });
+
+  it("useStickyTopVar：卸載時只移除自己寫的值；同名變數已被另一份改寫就不動", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
+    });
+    const first = render(<Header enabled height={88} />);
+    const second = render(<Header enabled height={100} />);
+    expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("100px");
+    first.unmount();
+    expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("100px");
+    second.unmount();
+    expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("");
+  });
 
   it("useStickyTopVar：開著時把頁首外框的高度（四捨五入）寫進 <html>，關掉或卸載時移除", () => {
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
@@ -113,7 +136,11 @@ describe("useStickyTopInset：頁首高度變了就重繪", () => {
   function Header({ height }: { height: number }) {
     const ref = useRef<HTMLDivElement>(null);
     useStickyTopVar(ref, height > 0);
-    return <div ref={ref} data-height={height} />;
+    return (
+      <div {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}>
+        <div ref={ref} data-height={height} />
+      </div>
+    );
   }
   function Reader() {
     return <p data-testid="inset">{useStickyTopInset()}</p>;
@@ -179,31 +206,35 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
   let frames: FrameRequestCallback[] = [];
   const PHONE_TOP = 50;
 
-  function Host() {
+  function Host({ framed = true }: { framed?: boolean }) {
     const ref = useRef<HTMLDivElement>(null);
     useTierScrollAnchor({ containerRef: ref, itemSelector: "[data-i]", idAttr: "data-i", phoneTop: () => PHONE_TOP });
-    return (
+    const list = (
       <div ref={ref} data-container="">
         {Array.from({ length: 10 }, (_, i) => (
           <div key={i} data-i={i} />
         ))}
       </div>
     );
+    return framed ? <div {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}>{list}</div> : list;
   }
 
-  function setup(): { container: HTMLElement; tier: ReturnType<typeof stubLayoutTier>; beforeReact: (fn: () => void) => void } {
+  let rects: ReturnType<typeof vi.spyOn>;
+  function setup(framed = true): { container: HTMLElement; tier: ReturnType<typeof stubLayoutTier>; beforeReact: (fn: () => void) => void } {
     layout = "phone";
     pageY = 0;
     boxTop = 0;
     hidden = false;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const tier = stubLayoutTier("phone");
     frames = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
     vi.stubGlobal("cancelAnimationFrame", () => {});
+    Object.defineProperty(window, "scrollY", { configurable: true, get: () => pageY });
     vi.spyOn(window, "scrollTo").mockImplementation(((x: number, y: number) => {
       pageY = y;
     }) as typeof window.scrollTo);
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    rects = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       if (this.hasAttribute("data-container")) return new DOMRect(0, layout === "phone" ? 100 - pageY : 60, 390, 400);
       const i = Number(this.getAttribute("data-i"));
       return layout === "phone" ? new DOMRect(0, 100 + i * 100 - pageY, 390, 100) : new DOMRect(0, 60 + i * 40 - boxTop, 844, 40);
@@ -214,7 +245,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     // 媒體查詢翻轉後、React 收到通知前要做的事（排版換掉、文件被夾回 0 並發出 scroll）：比 React 先登記監聽，先跑。
     const pending: Array<() => void> = [];
     window.matchMedia(PHONE_QUERY).addEventListener("change", () => pending.splice(0).forEach((fn) => fn()));
-    const { container } = render(<Host />);
+    const { container } = render(<Host framed={framed} />);
     const box = container.querySelector<HTMLElement>("[data-container]")!;
     Object.defineProperty(box, "scrollTop", {
       configurable: true,
@@ -225,22 +256,26 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     });
     return { container: box, tier, beforeReact: (fn) => pending.push(fn) };
   }
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (window as { scrollY?: number }).scrollY;
+  });
 
-  // scroll 事件，接著跑掉排進下一個 frame 的記錄。
-  const scrollEvent = () =>
-    act(() => {
-      window.dispatchEvent(new Event("scroll"));
-      frames.splice(0).forEach((cb) => cb(0));
-    });
+  /** 文件（或 `target`）發出一次 scroll。 */
+  const scrollOn = (target: EventTarget = document) => act(() => void target.dispatchEvent(new Event("scroll")));
+  /** 捲動停下：等過記位置的延遲。 */
+  const idle = () => act(() => void vi.advanceTimersByTime(ANCHOR_IDLE_MS));
 
   it("手機 → 640 起 → 手機：同一項停在頂端附近；換段途中被夾回 0 的那次 scroll 不記", () => {
     const { tier, beforeReact } = setup();
     pageY = 320; // 項 2 上緣在 -20，離線（50）-70
-    scrollEvent();
+    scrollOn();
+    idle();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
-      scrollEvent();
+      scrollOn();
+      idle();
     });
     act(() => tier.setLayoutTier("overlay"));
     // 640 起：項 2 捲過 70／100 → 新高度 40 捲過 28 → 上緣在 60 − 28 = 32 → 容器 scrollTop = 60 + 80 − 32 = 108
@@ -252,10 +287,57 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(pageY).toBe(320);
   });
 
-  it("容器看不到（例如收起的抽屜）時不記也不還；位置留到回來時再還", () => {
+  it("捲動中不量版面，停下 ANCHOR_IDLE_MS 才量；換段時還沒量的那段捲動用捲動量補上", () => {
     const { tier, beforeReact } = setup();
+    pageY = 320;
+    scrollOn();
+    idle(); // 量到：項 2、-70（捲動量 320）
+    rects.mockClear();
+    pageY = 370;
+    scrollOn(); // 還沒停：不量
+    expect(rects).not.toHaveBeenCalled();
+    beforeReact(() => {
+      layout = "wide";
+      pageY = 0;
+    });
+    act(() => tier.setLayoutTier("overlay"));
+    // 換段前又捲了 50：項 2 離線 -120 → 新高度 40 捲過 48 → 上緣在 12 → scrollTop = 60 + 80 − 12 = 128
+    expect(boxTop).toBe(128);
+  });
+
+  it("別的元素（表格、選單）的捲動不理", () => {
+    const { tier, beforeReact } = setup();
+    const other = document.createElement("div");
+    document.body.append(other);
+    pageY = 320;
+    scrollOn(other);
+    idle();
+    beforeReact(() => {
+      layout = "wide";
+      pageY = 0;
+    });
+    act(() => tier.setLayoutTier("overlay"));
+    expect(boxTop).toBe(0);
+  });
+
+  it("容器不在文件代為捲動的外框裡（抽屜裡那份清單）：不記也不還", () => {
+    const { tier, beforeReact } = setup(false);
+    pageY = 320;
+    scrollOn();
+    idle();
+    beforeReact(() => {
+      layout = "wide";
+      pageY = 0;
+    });
+    act(() => tier.setLayoutTier("overlay"));
+    expect(boxTop).toBe(0);
+  });
+
+  it("容器看不到（例如收起的抽屜）時不記也不還；位置留到回來時再還", () => {
+    const { container, tier, beforeReact } = setup();
     pageY = 520;
-    scrollEvent();
+    scrollOn();
+    idle();
     beforeReact(() => {
       layout = "wide";
       hidden = true;
@@ -263,7 +345,8 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     });
     act(() => tier.setLayoutTier("overlay"));
     expect(boxTop).toBe(0);
-    scrollEvent();
+    scrollOn(container);
+    idle();
     beforeReact(() => {
       layout = "phone";
       hidden = false;

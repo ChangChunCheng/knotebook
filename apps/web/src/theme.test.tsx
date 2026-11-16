@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import { PHONE_THEME_COLOR, THEME_COLOR, ThemeProvider, useTheme } from "./theme";
+import { PHONE_THEME_COLOR, THEME_COLOR, ThemeProvider, useCardPage, useTheme } from "./theme";
 import { stubLayoutTier } from "@/test/layout-tier";
 
 const STORAGE_KEY = "knotebook:theme";
@@ -408,11 +408,20 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     expect(cards.slice(0, 2)).toEqual([PHONE_THEME_COLOR.light, PHONE_THEME_COLOR.dark]);
   });
 
-  it("手機寬度（< 640）：兩個 meta 是卡片色（頁面與釘在頂端的頂列都是卡片色）；轉到 640 起換回頁底色，再轉回來又是卡片色", () => {
+  it("手機寬度（< 640）、卡片底的頁面（清單與筆記、公開頁）掛著時：兩個 meta 是卡片色；轉到 640 起換回頁底色，再轉回來又是卡片色", () => {
     const tier = stubLayoutTier("phone", (query) => query.includes("dark"));
+    function CardPage() {
+      useCardPage();
+      return null;
+    }
     try {
       window.localStorage.setItem(STORAGE_KEY, "dark");
-      renderProvider();
+      render(
+        <ThemeProvider>
+          <Probe />
+          <CardPage />
+        </ThemeProvider>,
+      );
       expectBoth(PHONE_THEME_COLOR.dark);
       act(() => tier.setLayoutTier("overlay"));
       expectBoth(THEME_COLOR.dark);
@@ -420,6 +429,31 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
       expectBoth(PHONE_THEME_COLOR.dark);
       act(() => screen.getByRole("button", { name: "light" }).click());
       expectBoth(PHONE_THEME_COLOR.light);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("手機寬度、但不是卡片底的頁面（登入、註冊、授權、載入中）：照舊是頁底色；卡片底的頁面掛上才換、卸下就換回", () => {
+    stubLayoutTier("phone", (query) => query.includes("dark"));
+    function CardPage() {
+      useCardPage();
+      return null;
+    }
+    try {
+      window.localStorage.setItem(STORAGE_KEY, "dark");
+      const tree = (card: boolean) => (
+        <ThemeProvider>
+          <Probe />
+          {card && <CardPage />}
+        </ThemeProvider>
+      );
+      const view = render(tree(false));
+      expectBoth(THEME_COLOR.dark);
+      view.rerender(tree(true));
+      expectBoth(PHONE_THEME_COLOR.dark);
+      view.rerender(tree(false));
+      expectBoth(THEME_COLOR.dark);
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, type InitialEntry } from "react-router";
@@ -134,7 +134,7 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("播放時背後的文件不捲（html overflow hidden、外殼 overscroll-contain）；離開時還原原本的 overflow 與捲動位置", () => {
+  it("播放時背後的文件不捲（html overflow hidden）；離開後還在同一篇：還原原本的 overflow 與捲動位置", () => {
     const root = document.documentElement;
     root.style.overflow = "clip";
     let y = 640;
@@ -145,7 +145,6 @@ describe("PresentationShell", () => {
     try {
       const view = renderShell(["/n/tester/my-note?present"]);
       expect(root.style.overflow).toBe("hidden");
-      expect(screen.getByRole("dialog")).toHaveClass("overscroll-contain");
       // 播放期間位置被動到（例如瀏覽器自己捲）：離開時捲回原處
       vi.stubGlobal("scrollY", 0);
       view.unmount();
@@ -157,6 +156,50 @@ describe("PresentationShell", () => {
       scrollTo.mockRestore();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("離開時已換到別頁（筆記被刪、連結失效、返回到清單）：只解除鎖定、不捲，位置交給那一頁", () => {
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    vi.stubGlobal("scrollY", 640);
+    try {
+      const view = renderShell(["/n/tester/my-note?present"]);
+      vi.stubGlobal("scrollY", 0);
+      window.history.replaceState(null, "", "/");
+      view.unmount();
+      expect(document.documentElement.style.overflow).toBe("");
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      scrollTo.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("解除鎖定在下一個畫面的 layout effect 之前（那裡會還原清單位置，不能被蓋掉）", () => {
+    let seen: string | null = null;
+    function Next() {
+      useLayoutEffect(() => {
+        seen = document.documentElement.style.overflow;
+      }, []);
+      return <div>list</div>;
+    }
+    function Swap({ presenting }: { presenting: boolean }) {
+      return presenting ? (
+        <PresentationShell title="My Note" status="ready">
+          <Child />
+        </PresentationShell>
+      ) : (
+        <Next />
+      );
+    }
+    const tree = (presenting: boolean) => (
+      <MemoryRouter initialEntries={["/n/tester/my-note?present"]}>
+        <Swap presenting={presenting} />
+      </MemoryRouter>
+    );
+    const view = render(tree(true));
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    view.rerender(tree(false));
+    expect(seen).toBe("");
   });
 
   it("內容區與工具列都避開瀏海與 Home 指示條（class 斷言，jsdom 無 env）", () => {

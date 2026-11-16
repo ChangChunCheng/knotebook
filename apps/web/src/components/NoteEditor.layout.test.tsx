@@ -361,7 +361,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode, fabClearance?: boolean) {
+  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode, fabClearance?: boolean, container?: HTMLElement) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={queryClient}>
@@ -369,6 +369,7 @@ describe("NoteEditor 手機編輯工具列", () => {
           <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} footerSlot={footerSlot} fabClearance={fabClearance} />
         </ThemeProvider>
       </QueryClientProvider>,
+      container === undefined ? undefined : { container },
     );
   }
 
@@ -502,14 +503,19 @@ describe("NoteEditor 手機編輯工具列", () => {
       return new DOMRect(0, 0, 390, this.hasAttribute("data-note-header-slot") ? 97.4 : 0);
     });
     onTestFinished(() => rect.mockRestore());
+    // 筆記在 AppShell 的外框（文件代為捲動）裡才寫
+    const frame = document.createElement("div");
+    frame.setAttribute("data-phone-page-scroll", "");
+    document.body.append(frame);
+    onTestFinished(() => frame.remove());
     stubLayoutTier("phone");
-    const view = renderEditor(false, FOOTER);
+    const view = renderEditor(false, FOOTER, undefined, frame);
     await screen.findByTestId("article-column");
     await waitFor(() => expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("97px"));
     view.unmount();
     expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("");
     stubLayoutTier("overlay");
-    renderEditor(false, FOOTER);
+    renderEditor(false, FOOTER, undefined, frame.appendChild(document.createElement("div")));
     await screen.findByTestId("article-column");
     expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("");
   });
