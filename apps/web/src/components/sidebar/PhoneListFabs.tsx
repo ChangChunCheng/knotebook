@@ -19,9 +19,9 @@ interface PhoneListFabsProps {
  */
 const FROSTED =
   "z-10 h-14 w-14 rounded-full border border-black/10 bg-card/95 dark:border-white/20 shadow-lg " +
-  "supports-[backdrop-filter]:bg-card/40 supports-[backdrop-filter]:backdrop-blur-sm supports-[backdrop-filter]:backdrop-saturate-150 " +
-  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/45 " +
-  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/55";
+  "supports-[backdrop-filter]:bg-card/25 supports-[backdrop-filter]:backdrop-blur-xs supports-[backdrop-filter]:backdrop-saturate-150 " +
+  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/30 " +
+  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/40";
 
 /**
  * 手機清單與筆記畫面底部的兩顆圓形毛玻璃浮動鈕（各 56px）：左下「Search」、右下「New note」（筆圖示、brand 色），距邊 16px 加 safe area。

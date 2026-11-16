@@ -888,8 +888,8 @@ test("58-17 手機筆記頁（390）：兩顆毛玻璃浮動鈕與清單同位�
     for (const st of [sStyle, cStyle]) {
       expect(st.filter, "backdrop-filter").toContain("blur");
       expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeLessThan(1);
-      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeGreaterThan(0.3);
-      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeLessThan(0.5);
+      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeGreaterThan(0.15);
+      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeLessThan(0.35);
       expect(st.border).toBe("1px");
       expect(st.shadow).not.toBe("none");
     }

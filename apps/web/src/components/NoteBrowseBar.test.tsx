@@ -62,7 +62,7 @@ describe("NoteBrowseBar", () => {
   it("左下是 56px 圓形 Search 鈕（同清單畫面那一顆），按了開搜尋層", () => {
     renderBar(note());
     const search = screen.getByRole("button", { name: "Search notes" });
-    expect(search).toHaveClass("h-14", "w-14", "rounded-full", "fixed", "left-[calc(1rem+env(safe-area-inset-left))]", "supports-[backdrop-filter]:backdrop-blur-sm");
+    expect(search).toHaveClass("h-14", "w-14", "rounded-full", "fixed", "left-[calc(1rem+env(safe-area-inset-left))]", "supports-[backdrop-filter]:backdrop-blur-xs");
     fireEvent.click(search);
     expect(openSearch).toHaveBeenCalledTimes(1);
   });
