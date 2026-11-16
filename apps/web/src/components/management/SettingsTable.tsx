@@ -216,7 +216,8 @@ const PHONE_CELL: Record<SettingsTableColumnKind, string> = {
   fixed: "max-sm:basis-full max-sm:items-start max-sm:has-[>div:empty]:sr-only",
   control: "max-sm:basis-full max-sm:has-[>div:empty]:sr-only",
   actions: "max-sm:flex-1 max-sm:has-[>div:empty]:sr-only",
-  enabled: "max-sm:ml-auto max-sm:has-[>div:empty]:sr-only",
+  // 觸控：開關的點擊範圍上下各撐 16px（共 46px），格子至少 48px 高，才不會伸進上一行的控制項。
+  enabled: "max-sm:ml-auto max-sm:pointer-coarse:min-h-12 max-sm:has-[>div:empty]:sr-only",
 };
 const PHONE_LABELLED: ReadonlySet<SettingsTableColumnKind> = new Set(["text", "url", "fixed", "control"]);
 

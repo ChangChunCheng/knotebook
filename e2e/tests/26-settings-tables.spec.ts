@@ -6,9 +6,9 @@ import { ADMIN, createUserViaInvite, loginAs, randomEmail } from "./helpers.js";
 /**
  * 設定表格幾何守衛。
  *
- * 一支測試、四段：自建資料 → 1280×800 對齊 → 1024×768／390×844 框內捲動、sticky、遮擋、Tab → 清理。
- * 量測都在頁內一次 evaluate 完成（getBoundingClientRect；表頭文字範圍用 Range）。cell 的「內容左緣」＝cell 唯一子元素的左緣
- * （cell 內容一律包成單一個 flex-1 min-w-0 子元素）。欄種由欄序推：有啟用欄時它是最後一欄、操作欄在它左邊；
+ * 一支測試、五段：自建資料 → 1280×800 對齊 → 1024×768 框內捲動、sticky、遮擋、Tab → 390×844 卡片（不橫捲、操作鈕在視窗內、Tab 走完）→ 清理。
+ * 量測都在頁內一次 evaluate 完成（getBoundingClientRect；表頭文字範圍用 Range）。cell 的「內容左緣」＝cell 最後一個子元素的左緣
+ * （cell 內容一律包成單一個 flex-1 min-w-0 子元素；手機用的欄名排在它前面、sm 起不顯示）。欄種由欄序推：有啟用欄時它是最後一欄、操作欄在它左邊；
  * 沒有啟用欄時操作欄是最後一欄。
  * 個人設定的三張表以一個 SSO 首登建立的新使用者量：e2e 疊只有一個讓新帳號首登的 OIDC 服務（「SSO」），所以「登入方式」只有 1 列；PAT 建立額度是每人計，新使用者不吃 admin 的額度。
  * 清理：結尾以 API 刪掉自建的 token、群組、方案、登入服務、AI 動作與供應商、撤銷自建的邀請；使用者沒有刪除 API，留著（名稱帶隨機碼）。
@@ -263,7 +263,8 @@ async function measure(table: Locator): Promise<TableGeometry> {
         return {
           width: cr.width,
           height: cr.height,
-          innerLeft: cell.firstElementChild!.getBoundingClientRect().left,
+          // 內容包裝是最後一個子元素：手機用的欄名（sm 起 display:none）排在它前面。
+          innerLeft: cell.lastElementChild!.getBoundingClientRect().left,
           buttonCount: rights.length,
           buttonsRight: rights.length > 0 ? Math.max(...rights) : null,
           switchCenter: sr === undefined ? null : sr.left + sr.width / 2,
@@ -451,6 +452,62 @@ async function expectNotCovered(page: Page, spec: TableSpec, where: string): Pro
   }
 }
 
+/**
+ * 手機卡片：捲動框不溢出、沒有 sticky 格；每列（含子表列）的每顆按鈕與開關整顆在視窗內；
+ * 從表內第一個控制項連按 Tab，走得到表內每個可聚焦的按鈕與開關（含子表）。
+ */
+async function expectPhoneCards(page: Page, spec: TableSpec, where: string): Promise<void> {
+  const viewportWidth = page.viewportSize()!.width;
+  const m = await boxOf(page, spec).evaluate((box) => {
+    const table = box.querySelector(':scope > [role="table"]')!;
+    const controls = Array.from(table.querySelectorAll("button, [role=switch]")).filter((el) => el.getClientRects().length > 0);
+    return {
+      scrollWidth: box.scrollWidth,
+      clientWidth: box.clientWidth,
+      sticky: Array.from(table.querySelectorAll('[role="cell"], [role="columnheader"]')).filter((cell) => getComputedStyle(cell).position === "sticky").length,
+      rows: table.querySelectorAll('[role="row"][aria-labelledby]').length,
+      controls: controls.map((el) => {
+        const r = el.getBoundingClientRect();
+        const row = el.closest('[role="row"][aria-labelledby]');
+        return {
+          row: row === null ? "" : (document.getElementById(row.getAttribute("aria-labelledby")!)?.textContent ?? ""),
+          control: el.getAttribute("aria-label") ?? el.getAttribute("role") ?? el.tagName,
+          left: r.left,
+          right: r.right,
+        };
+      }),
+    };
+  });
+  expect(m.scrollWidth, `${where}「${spec.label}」不得橫捲（scrollWidth ${m.scrollWidth}、clientWidth ${m.clientWidth}）`).toBeLessThanOrEqual(m.clientWidth);
+  expect(m.sticky, `${where}「${spec.label}」手機沒有 sticky 格`).toBe(0);
+  expect(m.rows, `${where}「${spec.label}」要有列`).toBeGreaterThan(0);
+  // 有操作欄或啟用欄的表一定要有控制項（沒有的表，例如只有連結的列，只驗不橫捲）
+  if (spec.buttons > 0 || spec.enabled) expect(m.controls.length, `${where}「${spec.label}」要有控制項可檢查`).toBeGreaterThan(0);
+  for (const control of m.controls) {
+    expect(control.left, `${where}「${spec.label}」列「${control.row}」的「${control.control}」左緣`).toBeGreaterThanOrEqual(0);
+    expect(control.right, `${where}「${spec.label}」列「${control.row}」的「${control.control}」右緣`).toBeLessThanOrEqual(viewportWidth);
+  }
+
+  // Tab：把每個可聚焦（非原生 disabled）的控制項編號，從第一個開始連按，直到全部走過或超過上限。
+  const total = await tableOf(page, spec).evaluate((table) => {
+    const focusable = Array.from(table.querySelectorAll("button:not([disabled]), [role=switch]:not([disabled])")).filter((el) => el.getClientRects().length > 0);
+    table.ownerDocument.querySelectorAll("[data-e2e-stop]").forEach((el) => el.removeAttribute("data-e2e-stop"));
+    focusable.forEach((el, index) => el.setAttribute("data-e2e-stop", String(index)));
+    (focusable[0] as HTMLElement | undefined)?.focus();
+    return focusable.length;
+  });
+  if (total === 0) return;
+  const visited = new Set<string>();
+  const first = await page.evaluate(() => document.activeElement?.getAttribute("data-e2e-stop") ?? null);
+  if (first !== null) visited.add(first);
+  for (let i = 0; i < total * 3 + 5 && visited.size < total; i += 1) {
+    await page.keyboard.press("Tab");
+    const stop = await page.evaluate(() => document.activeElement?.getAttribute("data-e2e-stop") ?? null);
+    if (stop !== null) visited.add(stop);
+  }
+  expect(visited.size, `${where}「${spec.label}」Tab 要走到全部 ${total} 個控制項`).toBe(total);
+}
+
 /** 目前焦點元素與「它所在列的主欄格」的水平重疊；焦點不在表內回 null。 */
 async function focusedStop(table: Locator): Promise<Stop | null> {
   return table.evaluate((tableEl) => {
@@ -481,32 +538,32 @@ async function tabStops(page: Page, table: Locator, max: number, stopAfter: (sto
   return stops;
 }
 
-/** 390：使用者表捲到最右、從第一列 switch 連按 Tab 走過後續列。 */
-async function expectUsersTabUncovered(page: Page): Promise<void> {
+/** 使用者表捲到最右、從第一列 switch 連按 Tab 走過後續列。 */
+async function expectUsersTabUncovered(page: Page, width: number): Promise<void> {
   await boxOf(page, T.users).evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
   const table = tableOf(page, T.users);
   await table.locator(':scope > [role="row"][aria-labelledby]').first().getByRole("switch").focus();
   const stops = await tabStops(page, table, 40, () => false);
-  expect(new Set(stops.map((stop) => stop.row)).size, "390「Users」Tab 要走過至少兩列").toBeGreaterThanOrEqual(2);
+  expect(new Set(stops.map((stop) => stop.row)).size, `${width}「Users」Tab 要走過至少兩列`).toBeGreaterThanOrEqual(2);
   for (const stop of stops) {
-    expect(stop.overlap, `390「Users」Tab 到列「${stop.row}」的「${stop.control}」與 sticky 主欄水平重疊`).toBeLessThanOrEqual(0.5);
+    expect(stop.overlap, `${width}「Users」Tab 到列「${stop.row}」的「${stop.control}」與 sticky 主欄水平重疊`).toBeLessThanOrEqual(0.5);
   }
 }
 
 /**
- * 390：AI 動作表捲到最右，從捲動框連按 Tab 走到自建動作那一列（4 顆鈕）的「Move up」——整個操作欄最左的一顆鈕
+ * AI 動作表捲到最右，從捲動框連按 Tab 走到自建動作那一列（4 顆鈕）的「Move up」——整個操作欄最左的一顆鈕
  * （內建列只有 3 顆、靠右放，操作欄第 1 格只有自建列用到；最右時這一格左半壓在 sticky 名稱欄底下、整顆仍在
  * 捲動框內，瀏覽器聚焦時不捲，要靠 SettingsTable 捲動框的聚焦補捲才露出）。第一列的 Move up 在清單邊界是原生 disabled，Tab 會跳過，所以第一站是第一列的 Move down。
  * 每一站都量與 sticky 主欄的水平重疊。
  */
-async function expectActionsTabUncovered(page: Page): Promise<void> {
+async function expectActionsTabUncovered(page: Page, width: number): Promise<void> {
   const box = boxOf(page, T.actions);
   await box.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
-  await expect(box, "390「Actions」捲動框溢出時要可聚焦").toHaveAttribute("tabindex", "0");
+  await expect(box, `${width}「Actions」捲動框溢出時要可聚焦`).toHaveAttribute("tabindex", "0");
   const table = tableOf(page, T.actions);
   // 終點的前提：自建列操作欄的第一顆是 Move up，而且它是整個操作欄最左的鈕（左緣＝各列第一顆鈕左緣的最小值）。
   const target = await table.evaluate((tableEl, ownName) => {
@@ -522,21 +579,21 @@ async function expectActionsTabUncovered(page: Page): Promise<void> {
     const own = firsts.find((item) => item.row === ownName);
     return { control: own?.control ?? null, left: own?.left ?? null, minLeft: Math.min(...firsts.map((item) => item.left)) };
   }, N.action);
-  expect(target.control, `390「Actions」自建列「${N.action}」操作欄的第一顆要是 Move up`).toMatch(/^Move up/);
-  expect(target.left! - target.minLeft, "390「Actions」自建列的 Move up 要是操作欄最左的鈕").toBeLessThanOrEqual(0.5);
+  expect(target.control, `${width}「Actions」自建列「${N.action}」操作欄的第一顆要是 Move up`).toMatch(/^Move up/);
+  expect(target.left! - target.minLeft, `${width}「Actions」自建列的 Move up 要是操作欄最左的鈕`).toBeLessThanOrEqual(0.5);
   await box.focus();
   const firstRow = await table
     .locator(':scope > [role="row"][aria-labelledby]')
     .first()
     .evaluate((row) => document.getElementById(row.getAttribute("aria-labelledby")!)?.textContent ?? "");
   const stops = await tabStops(page, table, 40, (stop) => stop.row === N.action && stop.control === target.control);
-  expect(stops[0]?.row, "390「Actions」從捲動框按 Tab 的第一站在第一列").toBe(firstRow);
+  expect(stops[0]?.row, `${width}「Actions」從捲動框按 Tab 的第一站在第一列`).toBe(firstRow);
   expect(
     stops.some((stop) => stop.row === N.action && stop.control === target.control),
-    `390「Actions」要走到自建列「${N.action}」最左的「Move up」`,
+    `${width}「Actions」要走到自建列「${N.action}」最左的「Move up」`,
   ).toBe(true);
   for (const stop of stops) {
-    expect(stop.overlap, `390「Actions」Tab 到列「${stop.row}」的「${stop.control}」與 sticky 主欄水平重疊`).toBeLessThanOrEqual(0.5);
+    expect(stop.overlap, `${width}「Actions」Tab 到列「${stop.row}」的「${stop.control}」與 sticky 主欄水平重疊`).toBeLessThanOrEqual(0.5);
   }
 }
 
@@ -621,41 +678,47 @@ test("26 設定表格幾何守衛", async ({ browser }) => {
       }
     });
 
-    for (const viewport of [
-      { width: 1024, height: 768 },
-      { width: 390, height: 844 },
-    ]) {
-      const where = `${viewport.width}`;
-      await test.step(`${viewport.width}×${viewport.height}：內容區不橫捲、必須溢出、sticky、遮擋、Tab`, async () => {
-        await adminPage.setViewportSize(viewport);
-        await ssoPage.setViewportSize(viewport);
-        for (const [page, pages] of [
-          [adminPage, adminPages],
-          [ssoPage, ssoPages],
-        ] as const) {
-          for (const { path, tables } of pages) {
-            await openPanel(page, path, tables.map((table) => table.spec));
-            await expectNoPanelHScroll(page, `${where} ${path}`);
-            if (path === "/admin/users") await expectOverflowing(page, T.users, where);
-            if (path === "/admin/ai" && viewport.width === 390) {
-              await expectOverflowing(page, T.providers, where);
-              await expectOverflowing(page, T.actions, where);
-            }
-            const checked = await expectStickyAfterScrollRight(page, `${where} ${path}`);
-            if (path === "/admin/users") {
-              expect(checked, `${where} sticky 檢查要涵蓋「Users」`).toContain(T.users.label);
-              await expectNotCovered(page, T.users, where);
-              if (viewport.width === 390) await expectUsersTabUncovered(page);
-            }
-            if (path === "/admin/ai" && viewport.width === 390) {
-              expect(checked, "390 sticky 檢查要涵蓋「Providers」").toContain(T.providers.label);
-              await expectNotCovered(page, T.providers, where);
-              await expectActionsTabUncovered(page);
-            }
+    await test.step("1024×768：內容區不橫捲、必須溢出、sticky、遮擋、Tab", async () => {
+      await adminPage.setViewportSize({ width: 1024, height: 768 });
+      await ssoPage.setViewportSize({ width: 1024, height: 768 });
+      for (const [page, pages] of [
+        [adminPage, adminPages],
+        [ssoPage, ssoPages],
+      ] as const) {
+        for (const { path, tables } of pages) {
+          await openPanel(page, path, tables.map((table) => table.spec));
+          await expectNoPanelHScroll(page, `1024 ${path}`);
+          if (path === "/admin/users") await expectOverflowing(page, T.users, "1024");
+          const checked = await expectStickyAfterScrollRight(page, `1024 ${path}`);
+          if (path === "/admin/users") {
+            expect(checked, "1024 sticky 檢查要涵蓋「Users」").toContain(T.users.label);
+            await expectNotCovered(page, T.users, "1024");
+            await expectUsersTabUncovered(page, 1024);
+          }
+          if (path === "/admin/ai") {
+            await expectOverflowing(page, T.providers, "1024");
+            expect(checked, "1024 sticky 檢查要涵蓋「Providers」").toContain(T.providers.label);
+            await expectNotCovered(page, T.providers, "1024");
+            if (checked.includes(T.actions.label)) await expectActionsTabUncovered(page, 1024);
           }
         }
-      });
-    }
+      }
+    });
+
+    await test.step("390×844：每張表都是卡片：不橫捲、沒有 sticky、每列的操作鈕都在視窗內、Tab 走得到每個控制項", async () => {
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      await ssoPage.setViewportSize({ width: 390, height: 844 });
+      for (const [page, pages] of [
+        [adminPage, adminPages],
+        [ssoPage, ssoPages],
+      ] as const) {
+        for (const { path, tables } of pages) {
+          await openPanel(page, path, tables.map((table) => table.spec));
+          await expectNoPanelHScroll(page, `390 ${path}`);
+          for (const { spec } of tables) await expectPhoneCards(page, spec, `390 ${path}`);
+        }
+      }
+    });
   } finally {
     await cleanup(adminPage, ssoPage, created);
     await adminContext.close();

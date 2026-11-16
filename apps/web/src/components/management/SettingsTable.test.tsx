@@ -607,11 +607,18 @@ describe("SettingsTable 手機卡片版面（max-sm）", () => {
     const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
     for (const index of [1, 5]) {
       expect(cells[index]).toHaveClass("max-sm:has-[>div:empty]:sr-only");
-      expect(cells[index]!.className).not.toContain("has-[>div:empty]:hidden");
+      // 以拼接組字串：Tailwind 會掃測試檔，整串寫出來會多生一條沒人用的 CSS 規則。
+      expect(cells[index]!.className).not.toContain(["has-[>div:empty]", "hidden"].join(":"));
       // 選擇器要真的對得上 DOM：空內容的格子命中，有內容的不命中。
       expect(cells[index]!.matches(":has(> div:empty)")).toBe(true);
     }
     for (const index of [0, 2, 3, 4, 6]) expect(cells[index]!.matches(":has(> div:empty)")).toBe(false);
+  });
+
+  it("啟用開關單獨一行時（沒有操作鈕），觸控下格子至少 48px 高，點擊範圍不伸進上一行", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha", { actions: undefined })]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    expect(cells[6]).toHaveClass("max-sm:pointer-coarse:min-h-12");
   });
 
   it("editing：合併格與主欄各占一行", () => {
@@ -626,6 +633,7 @@ describe("SettingsTable 手機卡片版面（max-sm）", () => {
     expect(screen.getByRole("row", { name: "Model one" })).toHaveClass("max-sm:flex");
     expect(within(screen.getByRole("row", { name: "Model one" })).getAllByRole("cell")[1]!.firstElementChild).toHaveTextContent("Email");
   });
+
   it("url 欄手機可換行（不截斷成省略號、全文看得到）；桌機仍是 truncate", () => {
     render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
     const inner = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell")[2]!.lastElementChild!;
