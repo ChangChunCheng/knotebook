@@ -6,7 +6,7 @@ import { fetchAiActions } from "@/api/ai";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
 import { ArrowLeft, ChevronLeft } from "@/components/ui/icons";
-import { managementNavItemClass } from "@/components/management/tray";
+import { managementCardPhone, managementCardPhoneInset, managementListPaddingPhone, managementNavItemClass } from "@/components/management/tray";
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
@@ -207,17 +207,27 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
     setFocusRequest(null);
   }, [focusRequest]);
 
-  // 開啟：chunk 比 Dialog 晚到時，外殼的 onOpenAutoFocus 當下找不到內容區、只能先把焦點放在對話框本身——這裡接手。
+  // 開啟：chunk 比 Dialog 晚到時，外殼的 onOpenAutoFocus 當下找不到落點、只能先把焦點放在對話框本身——這裡接手。
+  // 落點是看得見的那一層的 `[data-shortcuts-focus]`：內容層＝內容區；手機停在分類清單時＝清單的「‹」（沒有就是目前的分類）。
   useEffect(() => {
     const focused = document.activeElement;
-    if (!focused || focused === document.body || focused.getAttribute("role") === "dialog") contentRef.current?.focus();
+    if (!focused || focused === document.body || focused.getAttribute("role") === "dialog") {
+      document.querySelector<HTMLElement>("[data-shortcuts-focus]")?.focus();
+    }
   }, []);
 
   return (
     <>
       <div
         data-shortcuts-card="items"
-        className={cn(cardSurface, "relative w-full shrink-0 flex-col overflow-hidden p-4 md:w-64", layer === "items" ? "flex" : "hidden", "md:flex")}
+        className={cn(
+          cardSurface,
+          "relative w-full shrink-0 flex-col overflow-hidden p-4 md:w-64",
+          managementCardPhone,
+          managementListPaddingPhone,
+          layer === "items" ? "flex" : "hidden",
+          "md:flex",
+        )}
       >
         {/* 對話框的名稱在外殼的 sr-only DialogTitle；這裡的字只是視覺標題。 */}
         <div className={cn("mb-3 flex h-10 items-center gap-2 px-3", listBack && "pl-10")}>
@@ -226,6 +236,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
               type="button"
               variant="ghost"
               size="icon"
+              data-shortcuts-focus={layer === "items" ? "" : undefined}
               className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_HIT)}
               aria-label={listBack.label}
               onClick={listBack.onBack}
@@ -244,6 +255,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
               type="button"
               data-shortcuts-category={category}
               aria-current={category === active.category ? "true" : undefined}
+              data-shortcuts-focus={layer === "items" && !listBack && category === active.category ? "" : undefined}
               aria-controls={contentId}
               onClick={() => {
                 setSelected(category);
@@ -273,7 +285,14 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
       </div>
       <div
         data-shortcuts-card="content"
-        className={cn(cardSurface, "relative min-w-0 flex-1 flex-col overflow-hidden", layer === "content" ? "flex" : "hidden", "md:flex")}
+        className={cn(
+          cardSurface,
+          "relative min-w-0 flex-1 flex-col overflow-hidden",
+          managementCardPhone,
+          managementCardPhoneInset,
+          layer === "content" ? "flex" : "hidden",
+          "md:flex",
+        )}
       >
         {/* 子節點順序承重：返回鈕（窄）→ 內容容器（✕ 在外殼、DOM 上更前面）。 */}
         <Button
@@ -290,6 +309,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
           ref={contentRef}
           id={contentId}
           data-shortcuts-content=""
+          data-shortcuts-focus={layer === "content" ? "" : undefined}
           role="region"
           aria-labelledby={headingId}
           tabIndex={0}

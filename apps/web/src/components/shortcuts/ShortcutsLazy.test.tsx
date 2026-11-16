@@ -358,6 +358,8 @@ describe("手機（< 640）", () => {
     expect(content.className).toMatch(/(^| )hidden( |$)/);
     const listBack = within(items).getByRole("button", { name: "Back to menu" });
     expect(listBack).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    // 掛上時焦點交給看得見的那一層（清單的「‹」），不是藏起來的內容區
+    await waitFor(() => expect(listBack).toHaveFocus());
     fireEvent.click(listBack);
     expect(onBack).toHaveBeenCalledTimes(1);
 

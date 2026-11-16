@@ -810,7 +810,26 @@ async function expectPanelSheet(page: Page, dialog: Locator): Promise<number> {
   }).toPass({ timeout: 5_000 });
   expect(await dialog.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe("0px");
   expect(await dialog.evaluate((el) => getComputedStyle(el).borderBottomLeftRadius)).toBe("0px");
+  await expectCardEdgeToEdge(page, dialog, "第一眼");
   return gap;
+}
+
+/** 看得見的那張卡（面板外框是透明的，看得到的是裡面的卡）：左右貼齊視窗、底緣貼齊外框底，同選單 sheet 一樣滿版。 */
+async function expectCardEdgeToEdge(page: Page, dialog: Locator, label: string): Promise<void> {
+  const width = page.viewportSize()!.width;
+  const edges = await dialog.evaluate((el) => {
+    const outer = el.getBoundingClientRect();
+    const card = Array.from(el.querySelectorAll<HTMLElement>("[data-management-card], [data-shortcuts-card]")).find((c) => c.getBoundingClientRect().width > 0);
+    if (!card) return null;
+    const r = card.getBoundingClientRect();
+    return { left: r.left, right: r.right, bottomGap: outer.bottom - r.bottom, topGap: r.top - outer.top };
+  });
+  expect(edges, `${label}：要有一張看得見的卡`).not.toBeNull();
+  console.log(`MEASURE card ${label} left ${edges!.left} right ${edges!.right} top ${edges!.topGap} bottom ${edges!.bottomGap}`);
+  expect(edges!.left, `${label}：卡的左緣`).toBe(0);
+  expect(edges!.right, `${label}：卡的右緣`).toBe(width);
+  expect(edges!.topGap, `${label}：卡的上緣貼齊外框`).toBe(0);
+  expect(edges!.bottomGap, `${label}：卡的底緣貼齊外框`).toBe(0);
 }
 
 test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選單開先停在項次清單；「‹」一路退回帳號選單；沒有 ✕；深連結停在那一頁、清單的「‹」只關；點上方的縫關掉", async ({ browser }) => {
@@ -855,6 +874,7 @@ test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選�
     await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeHidden();
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     const contentBack = await box(toList);
+    await expectCardEdgeToEdge(page, dialog, "內容層");
     expect(Math.abs(contentBack.x - listBack.x), "兩層「‹」的 x").toBeLessThanOrEqual(1);
     expect(Math.abs(contentBack.y - listBack.y), "兩層「‹」的 y").toBeLessThanOrEqual(1);
     const contentArea = await tapAreaOf(toList);

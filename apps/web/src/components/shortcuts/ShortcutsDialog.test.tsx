@@ -1,7 +1,7 @@
 import { createRef, useRef, useState, type RefObject } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stubLayoutTier } from "@/test/layout-tier";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import i18n from "@/i18n";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
@@ -25,11 +25,11 @@ vi.mock("@/components/shortcuts/ShortcutsLazy", () => {
     ShortcutsContent: ({ listBack }: { listBack?: { label: string; onBack: () => void } }) => (
       <>
         {listBack && (
-          <button type="button" onClick={listBack.onBack}>
+          <button type="button" data-shortcuts-focus="" onClick={listBack.onBack}>
             {listBack.label}
           </button>
         )}
-        <div data-shortcuts-content="" role="region" aria-label="stub region" tabIndex={0}>
+        <div data-shortcuts-content="" data-shortcuts-focus={listBack ? undefined : ""} role="region" aria-label="stub region" tabIndex={0}>
           stub shortcuts content
         </div>
       </>
@@ -135,6 +135,28 @@ describe("ShortcutsDialog", () => {
         </>
       );
     }
+
+    it("開啟時焦點落在清單的「‹」（對話框裡、看得見的那一層），不是藏起來的內容區", async () => {
+      stubLayoutTier("phone");
+      render(<Controlled reopen={vi.fn()} returnFocusRef={newRef()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+      const back = await screen.findByRole("button", { name: "Back to menu" });
+      await waitFor(() => expect(back).toHaveFocus());
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+
+    it("在 640 以上打開、之後縮到手機寬度：清單的「‹」名稱是 Close，按了只關、不重開選單", async () => {
+      const tier = stubLayoutTier("overlay");
+      const reopen = vi.fn();
+      render(<Controlled reopen={reopen} returnFocusRef={newRef()} />);
+      await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+      act(() => tier.setLayoutTier("phone"));
+      expect(screen.queryByRole("button", { name: "Back to menu" })).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await new Promise((r) => setTimeout(r, 20));
+      expect(reopen).not.toHaveBeenCalled();
+    });
 
     it("從選單開：「Back to menu」關掉，收完後重開選單（不還焦點）", async () => {
       stubLayoutTier("phone");

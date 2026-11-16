@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import i18n from "@/i18n";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
  * 外殼（ShortcutsDialog）＋真的內容元件（ShortcutsLazy）合在一起的行為：開啟落點、Tab 循環、選分類不關對話框。
@@ -72,5 +73,20 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+});
+
+describe("手機（< 640）", () => {
+  it("W-P1 開啟時停在分類清單，焦點落在清單的「‹」：在對話框裡、所在的卡不是藏起來的那一層（內容區在藏起來的卡裡、沒有拿到焦點）", async () => {
+    stubLayoutTier("phone");
+    renderOpen();
+    const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    const back = await within(dialog).findByRole("button", { name: "Close" });
+    await waitFor(() => expect(back).toHaveFocus());
+    const active = document.activeElement as HTMLElement;
+    expect(dialog.contains(active)).toBe(true);
+    expect(active.closest("[data-shortcuts-card]")?.className).not.toMatch(/(^| )hidden( |$)/);
+    const content = dialog.querySelector<HTMLElement>("[data-shortcuts-content]")!;
+    expect(content.closest("[data-shortcuts-card]")?.className).toMatch(/(^| )hidden( |$)/);
   });
 });

@@ -281,6 +281,24 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
+  it("手機：按下後被捲動接手（pointercancel）、或沒放開就失去捕捉（拖走）：之後的 click 不會打開；觸控正常放開（pointerup 後才 lostpointercapture）照樣開", () => {
+    stubLayoutTier("phone");
+    render(<Harness />);
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    fireEvent.pointerCancel(trigger());
+    fireEvent.click(trigger(), { detail: 1 });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    fireEvent.lostPointerCapture(trigger());
+    fireEvent.click(trigger(), { detail: 1 });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    fireEvent.pointerUp(trigger());
+    fireEvent.lostPointerCapture(trigger());
+    fireEvent.click(trigger(), { detail: 1 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
   it("手機：鍵盤 Enter／ArrowDown 照常打開（keydown），之後的 click 不會把它關掉", () => {
     stubLayoutTier("phone");
     render(<Harness />);
