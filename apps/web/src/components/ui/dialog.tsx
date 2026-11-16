@@ -30,7 +30,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
  * 未傳 `size` 時行為零變）；`lg` 已於 #247 刪除：再用會直接型別錯誤，比照 `button.tsx` 刪 `secondary`
  * 的做法，不靠 grep 測試；`size="panel"`＝三個管理面板（`components/management/ManagementShell.tsx`，#247）
  * 與快捷鍵介紹頁（`components/shortcuts/ShortcutsDialog.tsx`，單卡、寬度另以 className 收窄）：
- * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；640～767 為 `96vw × 92dvh`，手機（< 640）是滿版整頁（`inset-0 h-dvh`），
+ * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；640～767 為 `96vw × 92dvh`，手機（< 640）是貼底、幾乎滿高的 sheet（上方留一道縫，見下），
  * `md:` 以上 `92vw × 88dvh` 夾在 896×672～1360×896 之間（高度一律用 `dvh`：iOS Safari 的 `vh` 比看得見的高度高）；`max-w` 讓兩側各至少留 2vw 與左右 safe area 的較大者（橫拿時面板邊緣不進感應器區）。`panel` 時**不渲染內建 Close**——
  * 面板在右卡自己放一顆帶 i18n 名稱的 ✕，這裡再放就會有兩顆 Close。
  * `panel` 的 grid 軌道是 `minmax(0,1fr)`：預設的 `auto` 軌道會依托盤內容撐大，托盤就會在高度與寬度上都長出外框、右卡永遠不捲動。 */
@@ -54,9 +54,13 @@ const dialogContentVariants = cva(
           "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92dvh] " +
           "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
           "grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] " +
-          // 手機（< 640）：整頁。`dvh` 跟著 iOS Safari 看得見的高度（`vh` 用的是工具列收起時的高度，置中後頂端會跑出畫面）；
-          // 上下 safe area 由托盤的內距給（`management/tray.ts`）。
-          "max-sm:inset-0 max-sm:h-dvh max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none " +
+          // 手機（< 640）：貼底、滿寬、幾乎滿高的 sheet，由下往上升起（`kb-sheet`）。上方留一道縫（至少 28px，有瀏海時是 safe area 再加 8px），
+          // 點它關掉：再窄的話，觸控的目標修正會把點在縫上的一下歸給旁邊的 sheet，等於點不到。
+          // 看得到後面變暗的頁面；高度＝看得見的高度（`--kb-visible-h`，沒有視覺視窗時 `dvh`）減去那道縫，鍵盤升起時底緣抬到鍵盤上方。
+          // 底與左右 safe area 由托盤的內距給（`management/tray.ts`）。不過場：理由同預設尺寸。
+          "max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-(--kb-inset,0px) max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 " +
+          "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))] max-sm:transition-none " +
+          "max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:overflow-hidden kb-sheet " +
           "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       },
     },
@@ -94,7 +98,7 @@ export const DialogContent = forwardRef<
   const renderBuiltInClose = size !== "panel";
   return (
     <DialogPortal>
-      <DialogOverlay className={size === "panel" ? undefined : "kb-sheet-overlay"} />
+      <DialogOverlay className="kb-sheet-overlay" />
       <DialogPrimitive.Content
         ref={setRefs}
         style={style}
@@ -105,7 +109,7 @@ export const DialogContent = forwardRef<
           if (!dismissOnOutside) event.preventDefault();
         }}
       >
-        {renderBuiltInClose && <SheetViewportVars target={contentRef} />}
+        <SheetViewportVars target={contentRef} />
         {children}
         {renderBuiltInClose && (
           <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-[''] opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, type Location } from "react-router";
 import i18n from "@/i18n";
-import { settle } from "@/test/outside-click";
+import { clickOutside, settle } from "@/test/outside-click";
 import { ManagementShell, type ManagementNavItemSpec } from "./ManagementShell";
+import { rememberPanelReturn, type PanelLocationState } from "@/lib/panel-return";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // #247。jsdom 不套 Tailwind：`hidden`／`flex` 只能以 class 斷言，真實顯示由 e2e 截圖驗。
 // matchMedia：`src/test/setup.ts:28-40` 的全域 stub 恆回 matches:false（＝窄視窗）；寬視窗案自己 stubGlobal。
@@ -242,5 +244,101 @@ describe("ManagementShell（#247）", () => {
     await settle();
     expect(document.activeElement).not.toBe(contentBox());
     expect(window.matchMedia).toHaveBeenCalledWith("(min-width: 768px)");
+  });
+});
+
+describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("MS-P1 從選單開（panelStart＋panelReturn）：停在項次清單；左上角「Back to menu」、沒有 ✕；點它 → sheet 收完後 onOpenChange(false)，再重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const state: PanelLocationState = { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) };
+    const { onOpenChange } = renderShell({ state });
+    await settle();
+    expect(itemsCard().classList).toContain("flex");
+    expect(contentCard().classList).toContain("hidden");
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    const back = within(itemsCard()).getByRole("button", { name: "Back to menu" });
+    expect(back).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:after:absolute");
+    expect(document.activeElement).toBe(back);
+    fireEvent.click(back);
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(reopen).toHaveBeenCalledTimes(1));
+    expect(onOpenChange.mock.invocationCallOrder[0]!).toBeLessThan(reopen.mock.invocationCallOrder[0]!);
+  });
+
+  it("MS-P2 選項次 → 內容層：左上角同一個位置是「Back to sections」、仍沒有 ✕；按它回項次清單", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } satisfies PanelLocationState });
+    await settle();
+    fireEvent.click(screen.getByRole("link", { name: "Sign-in" }));
+    expect(contentCard().classList).toContain("flex");
+    expect(itemsCard().classList).toContain("hidden");
+    const back = within(contentCard()).getByRole("button", { name: "Back to sections" });
+    expect(back).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    fireEvent.click(back);
+    expect(itemsCard().classList).toContain("flex");
+    expect(within(itemsCard()).getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
+  it("MS-P3 深連結（沒有 panelStart）：直接停在那一頁；退到項次清單後的「‹」名稱是 Close、只關不重開", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    rememberPanelReturn(reopen);
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P4 內容層按 Esc：整個關掉、不重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    fireEvent.click(screen.getByRole("link", { name: "Sign-in" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P6 點 sheet 外（上方的縫）：手機整個關掉、不重開選單；640 以上點外面不關（有未存輸入的表單）", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    await clickOutside();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stubLayoutTier("overlay");
+    const wide = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    await clickOutside();
+    expect(wide.onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("MS-P5 640 以上：panelStart 不作用（照舊停在內容層），有 ✕、沒有「Back to menu」", async () => {
+    stubLayoutTier("overlay");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(() => {}) } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to menu" })).toBeNull();
   });
 });

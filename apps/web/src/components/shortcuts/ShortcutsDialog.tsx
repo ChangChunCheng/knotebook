@@ -1,4 +1,4 @@
-import { lazy, Suspense, type RefObject } from "react";
+import { lazy, Suspense, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
@@ -6,6 +6,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { X } from "@/components/ui/icons";
 import { ChunkLoadBeacon, LazyRouteErrorBoundary, LazyRouteLoading } from "@/components/ErrorBoundary";
 import { managementTray } from "@/components/management/tray";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,18 +31,28 @@ const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12"
  * - ⚠ `DialogTitle` 不得傳 `id`：Radix 的 Title 是 `{ id: context.titleId, ...props }`，傳了會蓋掉 context 的 id，
  *   Content 的 `aria-labelledby` 仍指 `context.titleId` → 對話框沒有名稱。
  *
+ * 手機（< 640）：貼底的 sheet，沒有 ✕，與管理面板同一套返回堆疊（`ManagementShell` 檔頭）：打開時先停在分類清單；
+ * 內容層的「‹」回分類清單，分類清單的「‹」關掉——從選單開的（`reopenMenuRef`）在收下去之後重開那個選單（名稱「返回選單」），
+ * 否則只關（名稱「關閉」）。點上方變暗的縫或 Esc 整個關掉。
+ *
  * ⚠ `ChunkLoadBeacon` 必須在 `<Suspense>` 內（擺放不變量見 ErrorBoundary.tsx）。卡面一律 `cn(cardSurface, …)`（card.guard.test.ts）。
  */
 export function ShortcutsDialog({
   open,
   onOpenChange,
   returnFocusRef,
+  reopenMenuRef,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnFocusRef: RefObject<HTMLElement | null>;
+  /** 開啟它的選單怎麼重開（`ShortcutsDialogApi.open` 的 `reopenMenu`）；null＝不是從選單開的。 */
+  reopenMenuRef?: RefObject<(() => void) | null>;
 }) {
   const { t } = useTranslation();
+  const phone = useIsPhone();
+  /** 分類清單的「‹」按下：收完之後重開選單（而不是還焦點）。 */
+  const backToMenuRef = useRef(false);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,24 +68,30 @@ export function ShortcutsDialog({
           event.preventDefault();
           const el = returnFocusRef.current;
           returnFocusRef.current = null;
-          if (el?.isConnected) el.focus();
+          const reopen = backToMenuRef.current ? (reopenMenuRef?.current ?? null) : null;
+          backToMenuRef.current = false;
+          if (reopenMenuRef) reopenMenuRef.current = null;
+          if (reopen) reopen();
+          else if (el?.isConnected) el.focus();
         }}
       >
         <DialogTitle className="sr-only">{t("shortcuts.title")}</DialogTitle>
         <DialogDescription className="sr-only">{t("shortcuts.description")}</DialogDescription>
         <div className={cn(managementTray, "relative")}>
           {/* 唯讀說明頁：不需要設定那種「點外面不關」的保護，✕／Esc／點外面都能關。✕ 在 DOM 最前面（落在托盤右上角）。 */}
-          <DialogClose asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute right-4 top-4 z-20 h-7 w-7 bg-card max-sm:right-[calc(max(0.5rem,env(safe-area-inset-right))+0.5rem)] max-sm:top-[calc(max(0.5rem,env(safe-area-inset-top))+0.5rem)] md:right-5 md:top-5"
-              aria-label={t("management.close")}
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </Button>
-          </DialogClose>
+          {!phone && (
+            <DialogClose asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-4 top-4 z-20 h-7 w-7 bg-card md:right-5 md:top-5"
+                aria-label={t("management.close")}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </DialogClose>
+          )}
           <LazyRouteErrorBoundary resetKey={undefined} chunk="shortcuts" frame="inline" inlineErrorClassName={FALLBACK_CARD}>
             <Suspense
               fallback={
@@ -84,7 +101,19 @@ export function ShortcutsDialog({
               }
             >
               <ChunkLoadBeacon chunk="shortcuts" />
-              <ShortcutsContent />
+              <ShortcutsContent
+                listBack={
+                  phone
+                    ? {
+                        label: reopenMenuRef?.current ? t("management.backToMenu") : t("management.close"),
+                        onBack: () => {
+                          backToMenuRef.current = true;
+                          onOpenChange(false);
+                        },
+                      }
+                    : undefined
+                }
+              />
             </Suspense>
           </LazyRouteErrorBoundary>
         </div>

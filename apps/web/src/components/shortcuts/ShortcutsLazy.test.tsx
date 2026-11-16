@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ShortcutsContent } from "./ShortcutsLazy";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
  * 快捷鍵介紹頁的內容：左卡列分類、右卡只顯示所選分類；
@@ -335,5 +336,34 @@ describe("語系", () => {
     renderContent();
     await waitFor(() => expect(navNames()[0]).toBe("通用"));
     expect(heading()).toBe("通用");
+  });
+});
+
+describe("手機（< 640）", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("P7 先停在分類清單；清單左上角是外殼給的「‹」（名稱、動作照傳）；選分類 → 內容層，同一個位置是「Back to sections」", async () => {
+    stubActions([]);
+    stubLayoutTier("phone");
+    const onBack = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ShortcutsContent listBack={{ label: "Back to menu", onBack }} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(navNames()).toEqual(NO_AI_EN));
+    const items = document.querySelector<HTMLElement>('[data-shortcuts-card="items"]')!;
+    const content = document.querySelector<HTMLElement>('[data-shortcuts-card="content"]')!;
+    expect(items.className).toMatch(/(^| )flex( |$)/);
+    expect(content.className).toMatch(/(^| )hidden( |$)/);
+    const listBack = within(items).getByRole("button", { name: "Back to menu" });
+    expect(listBack).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    fireEvent.click(listBack);
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    openCategory("Sidebar");
+    await waitFor(() => expect(content.className).toMatch(/(^| )flex( |$)/));
+    expect(within(content).getByRole("button", { name: "Back to sections" })).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    expect(within(items).queryByRole("button", { name: "Back to menu" })).toBeNull();
   });
 });

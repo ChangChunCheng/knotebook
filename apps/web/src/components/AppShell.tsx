@@ -410,10 +410,13 @@ export function AppShell({ children, inert }: AppShellProps) {
   shortcutsOpenRef.current = shortcutsOpen;
   /** 關閉時要還焦點的元素：鍵盤開的＝開啟當下的焦點元素；選單開的＝UserMenu 觸發鈕（`open(returnFocusTo)`）。 */
   const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null);
+  /** 從選單開的：手機上項次清單的「‹」關掉之後重開那個選單（`ShortcutsDialog`）。 */
+  const shortcutsReopenMenuRef = useRef<(() => void) | null>(null);
   const shortcutsApi = useMemo<ShortcutsDialogApi>(
     () => ({
-      open: (returnFocusTo) => {
+      open: (returnFocusTo, reopenMenu) => {
         shortcutsReturnFocusRef.current = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        shortcutsReopenMenuRef.current = reopenMenu ?? null;
         setShortcutsOpen(true);
       },
     }),
@@ -829,7 +832,12 @@ export function AppShell({ children, inert }: AppShellProps) {
             </main>
           </div>
           {/* 放在 inert 的 div 外面：portal 本來就在 body，放外面是讓閱讀者不必推理 inert。 */}
-          <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} returnFocusRef={shortcutsReturnFocusRef} />
+          <ShortcutsDialog
+            open={shortcutsOpen}
+            onOpenChange={setShortcutsOpen}
+            returnFocusRef={shortcutsReturnFocusRef}
+            reopenMenuRef={shortcutsReopenMenuRef}
+          />
           <AvatarDisplayFiller />
         </SidebarTabProvider>
       </ShortcutsDialogContext.Provider>

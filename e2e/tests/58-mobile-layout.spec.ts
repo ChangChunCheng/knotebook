@@ -26,6 +26,10 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  * 58-19 寬螢幕（1280）：筆記頁 ⋮ 仍是貼著按鈕的小選單（右緣對齊按鈕、在按鈕下方），沒有背板。
  * 58-20 開 ⋮ 的那一下（390×560，清單最低的一列；放開的那一點在 sheet 升起後落在選單項上）：觸控按住 250ms（含減少動態）、滑鼠按住 250ms 放開後，sheet 開在主選單，
  *      沒有選到任何項目（沒有寫入請求、網址不變、沒有對話框）。觸控用 CDP 的 touchStart／touchEnd，Playwright 的 tap 是瞬間放開。
+ * 58-16 管理面板（390 觸控）：從帳號選單開的設定是幾乎滿高的 sheet（左右與底貼齊、上方 0～40 的縫、上圓角），先停在項次清單，
+ *      左上角「‹」（Back to menu、點擊範圍 44）；選項次後同一個位置是 Back to sections；沒有 ✕；視窗變矮時跟著變矮；
+ *      清單的「‹」關掉並重開帳號選單；點上方的縫整個關掉；深連結停在那一頁，清單的「‹」（Close）只關。
+ * 58-21 站台管理、快捷鍵頁從帳號選單開、群組面板從群組列 ⋮ 開：清單的「‹」重開開啟它的那個選單。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -791,12 +795,31 @@ test("58-15 手機筆記頁首（390）：位置在標題正下方、左緣與�
   }
 });
 
-test("58-16 手機（390）管理面板是整頁：Close 在畫面內、兩層（內容、項次清單）都關得掉；視窗變矮時仍在畫面內", async ({ browser }) => {
-  test.setTimeout(120_000);
+/** 手機管理面板 sheet：等進場動畫跑完，量貼齊左右與底、上方留一道縫（0 < 縫 < 40）、上圓角。回傳縫的高度。 */
+async function expectPanelSheet(page: Page, dialog: Locator): Promise<number> {
+  const size = page.viewportSize()!;
+  let gap = 0;
+  await expect(async () => {
+    const b = (await dialog.boundingBox())!;
+    expect(b.x).toBe(0);
+    expect(b.width).toBe(size.width);
+    expect(Math.abs(b.y + b.height - size.height), "底緣貼齊視窗底").toBeLessThanOrEqual(1);
+    gap = b.y;
+    expect(gap, "上方的縫").toBeGreaterThan(0);
+    expect(gap, "上方的縫").toBeLessThan(40);
+  }).toPass({ timeout: 5_000 });
+  expect(await dialog.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe("0px");
+  expect(await dialog.evaluate((el) => getComputedStyle(el).borderBottomLeftRadius)).toBe("0px");
+  return gap;
+}
+
+test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選單開先停在項次清單；「‹」一路退回帳號選單；沒有 ✕；深連結停在那一頁、清單的「‹」只關；點上方的縫關掉", async ({ browser }) => {
+  test.setTimeout(150_000);
   const { context, page } = await openList(browser, 390, true);
   try {
-    const openSettings = async (): Promise<Locator> => {
-      await page.locator("[data-phone-top-bar]").getByRole("button", { name: alice.displayName, exact: true }).click();
+    const avatarButton = page.locator("[data-phone-top-bar]").getByRole("button", { name: alice.displayName, exact: true });
+    const openSettingsFromMenu = async (): Promise<Locator> => {
+      await avatarButton.click();
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Settings" });
       await expect(dialog).toBeVisible({ timeout: 15_000 });
@@ -811,42 +834,76 @@ test("58-16 手機（390）管理面板是整頁：Close 在畫面內、兩層�
       expect(b.y + b.height, `${label} 下`).toBeLessThanOrEqual(size.height);
     };
 
-    let dialog = await openSettings();
-    // 整頁：貼齊視窗四邊、高度＝innerHeight（dvh）
-    const full = await box(dialog);
-    expect(full.x).toBe(0);
-    expect(full.y).toBe(0);
-    expect(full.width).toBe(390);
-    expect(Math.abs(full.height - 844)).toBeLessThanOrEqual(1);
+    // ── 帳號選單 → Settings：sheet、第一層（項次清單）、左上角「Back to menu」、沒有 ✕ ──
+    let dialog = await openSettingsFromMenu();
+    const gap = await expectPanelSheet(page, dialog);
+    await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    const toMenu = dialog.getByRole("button", { name: "Back to menu", exact: true });
+    await expect(toMenu).toBeVisible();
+    await expect(toMenu).toBeFocused();
+    await insideViewport(toMenu, "清單的「‹」");
+    const listBack = await box(toMenu);
+    const listArea = await tapAreaOf(toMenu);
+    expect(listArea.tap[0]).toBeGreaterThanOrEqual(43);
+    expect(listArea.tap[1]).toBeGreaterThanOrEqual(43);
 
-    // 內容層：Close 在畫面內、點擊範圍 ≥ 44；視窗變矮（模擬工具列佔掉高度）後仍在畫面內
-    const close = dialog.getByRole("button", { name: "Close", exact: true });
-    await expect(close).toBeVisible();
-    await insideViewport(close, "內容層 Close");
-    const contentCloseBox = await box(close);
+    // ── 選項次 → 第二層：同一個位置是「Back to sections」、仍沒有 ✕ ──
+    await dialog.getByRole("link", { name: "Sign-in", exact: true }).click();
+    const toList = dialog.getByRole("button", { name: "Back to sections", exact: true });
+    await expect(toList).toBeVisible();
+    await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeHidden();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    const contentBack = await box(toList);
+    expect(Math.abs(contentBack.x - listBack.x), "兩層「‹」的 x").toBeLessThanOrEqual(1);
+    expect(Math.abs(contentBack.y - listBack.y), "兩層「‹」的 y").toBeLessThanOrEqual(1);
+    const contentArea = await tapAreaOf(toList);
+    expect(contentArea.tap[0]).toBeGreaterThanOrEqual(43);
+    expect(contentArea.tap[1]).toBeGreaterThanOrEqual(43);
+
+    // 視窗變矮（模擬工具列佔掉高度）：sheet 跟著變矮、底緣仍貼底、「‹」仍在畫面內
     await page.setViewportSize({ width: 390, height: 740 });
     await expect(async () => {
-      expect(Math.abs((await box(dialog)).height - 740)).toBeLessThanOrEqual(1);
+      const b = await box(dialog);
+      expect(Math.abs(b.y + b.height - 740)).toBeLessThanOrEqual(1);
+      expect(Math.abs(b.y - gap)).toBeLessThanOrEqual(1);
     }).toPass({ timeout: 5_000 });
-    await insideViewport(close, "矮視窗 Close");
+    await insideViewport(toList, "矮視窗的「‹」");
     await page.setViewportSize({ width: 390, height: 844 });
 
-    // 回項次清單：左卡有 Close
-    await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
-    const listClose = dialog.getByRole("button", { name: "Close", exact: true });
-    await expect(listClose).toHaveCount(1);
-    await expect(listClose).toBeVisible();
-    await insideViewport(listClose, "項次層 Close");
-    const listCloseBox = await box(listClose);
-    expect(Math.abs(listCloseBox.x - contentCloseBox.x), "兩層 Close 的 x").toBeLessThanOrEqual(1);
-    expect(Math.abs(listCloseBox.y - contentCloseBox.y), "兩層 Close 的 y").toBeLessThanOrEqual(1);
-    await listClose.click();
+    // ── 「‹」→ 第一層 → 「‹」→ sheet 收下去、帳號選單（sheet）重新打開 ──
+    await toList.click();
+    await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("data-menu-sheet");
+    await expect(menu.getByRole("menuitem", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
 
-    // 內容層也關得掉
-    dialog = await openSettings();
+    // ── 點上方的縫：整個關掉，不重開選單 ──
+    dialog = await openSettingsFromMenu();
+    await expectPanelSheet(page, dialog);
+    // 縫的上三分之一：觸控的目標修正會把太靠近 sheet 的一下歸給 sheet（縫太窄時就點不到，見 `ui/dialog.tsx`）
+    await page.touchscreen.tap(195, Math.max(2, gap / 3));
+    await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    // ── 深連結：直接停在那一頁；退到清單後的「‹」名稱是 Close、只關 ──
+    await page.goto("/settings/login");
+    dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog.getByRole("button", { name: "Back to sections", exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeHidden();
+    await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "Back to menu", exact: true })).toHaveCount(0);
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await expect(page.getByRole("menu")).toHaveCount(0);
   } finally {
     await context.close();
   }
@@ -1173,3 +1230,75 @@ for (const variant of [
     }
   });
 }
+
+test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單開，群組面板從群組列 ⋮ 開——清單的「‹」關掉後重開開啟它的那個選單", async ({ browser }) => {
+  test.setTimeout(150_000);
+  const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await loginAs(page, ADMIN.email, ADMIN.password);
+    await expect(page).toHaveURL(/\/$/);
+    const groupName = `E2E sheet group ${RUN}`;
+    const created = await page.request.post("/api/groups", { headers: { Origin: ORIGIN }, data: { name: groupName } });
+    expect(created.status(), await created.text()).toBe(201);
+    await page.reload();
+    const avatarButton = page.locator("[data-phone-top-bar]").getByRole("button", { name: /.+/ }).last();
+    const menu = page.getByRole("menu");
+
+    // ── 站台管理 ──
+    await avatarButton.click();
+    await menu.getByRole("menuitem", { name: "Site admin", exact: true }).click();
+    let dialog = page.getByRole("dialog", { name: "Site admin" });
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expectPanelSheet(page, dialog);
+    await expect(dialog.getByRole("navigation", { name: "Site admin" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    await dialog.getByRole("link", { name: "Groups", exact: true }).click();
+    await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
+    await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Site admin" })).toHaveCount(0);
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Site admin", exact: true })).toBeVisible();
+
+    // ── 快捷鍵頁（同一個帳號選單）──
+    await menu.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expectPanelSheet(page, dialog);
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    const shortcutsBack = dialog.getByRole("button", { name: "Back to menu", exact: true });
+    await expect(shortcutsBack).toBeVisible({ timeout: 15_000 });
+    const listBox = await box(shortcutsBack);
+    await dialog.getByRole("button", { name: "Sidebar", exact: true }).click();
+    const sectionsBack = dialog.getByRole("button", { name: "Back to sections", exact: true });
+    await expect(sectionsBack).toBeVisible();
+    const contentBox = await box(sectionsBack);
+    expect(Math.abs(contentBox.x - listBox.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(contentBox.y - listBox.y)).toBeLessThanOrEqual(1);
+    await sectionsBack.click();
+    await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toHaveCount(0);
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    // ── 群組面板：群組列 ⋮ → Members & settings → 清單的「‹」→ 回到那個 ⋮ ──
+    const panel = await showSidebarTab(page, "Groups");
+    await panel.getByRole("button", { name: `Group actions for ${groupName}`, exact: true }).click();
+    await expect(menu).toHaveAttribute("data-menu-sheet");
+    await menu.getByRole("menuitem", { name: "Members & settings", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: groupName });
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expectPanelSheet(page, dialog);
+    await expect(dialog.getByRole("navigation", { name: groupName })).toBeVisible();
+    await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: groupName })).toHaveCount(0);
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText(groupName, { exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Members & settings", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});

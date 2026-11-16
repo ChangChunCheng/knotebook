@@ -6,8 +6,9 @@ import { cn } from "@/lib/utils";
  */
 export const managementTray =
   "flex h-full min-h-0 w-full min-w-0 gap-2 rounded-2xl bg-background/45 p-2 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md md:gap-3 md:p-3 " +
-  // 手機（< 640）面板是整頁：托盤貼齊螢幕，四邊自己退開 safe area（瀏海、Home 指示條、橫拿時的側邊）。
-  "max-sm:rounded-none max-sm:pt-[max(0.5rem,env(safe-area-inset-top))] max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))] " +
+  // 手機（< 640）面板是貼底的 sheet（`ui/dialog.tsx` 的 panel）：上方的縫已經避開瀏海，托盤只有上圓角，底與左右自己退開 safe area
+  // （Home 指示條、橫拿時的側邊）。
+  "max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pt-2 max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))] " +
   "max-sm:pl-[max(0.5rem,env(safe-area-inset-left))] max-sm:pr-[max(0.5rem,env(safe-area-inset-right))]";
 
 /**
