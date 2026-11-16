@@ -174,9 +174,11 @@ const ROW_BORDER = "border-b border-border";
 const CELL = "flex items-center";
 /** 頂層表主欄（表頭格與每列主欄格）：sticky、z-index 1、不透明底；右緣分隔線只在捲動框溢出時畫（捲動框帶 `data-overflowing`）。 */
 const STICKY_CELL =
-  "sticky left-0 z-[1] border-border bg-card group-data-[overflowing]/box:border-r max-sm:static max-sm:group-data-[overflowing]/box:border-r-0";
+  "sticky left-0 z-[1] border-border bg-card group-data-[overflowing]/box:border-r max-sm:static max-sm:bg-transparent max-sm:group-data-[overflowing]/box:border-r-0 " +
+  // 手機沒有 sticky：格子透明、露出卡片自己的表面（popover）；編輯中列的疊色底也改疊在 popover 上。
+  "max-sm:[--kb-sticky-surface:var(--popover)]";
 /** 編輯中列的 sticky 主欄：淡色疊在卡片色上（`--brand-soft` 是半透明；用 inline style，不用 `bg-[…]` arbitrary 值）。 */
-const EDITING_STICKY_BACKGROUND = "linear-gradient(var(--brand-soft), var(--brand-soft)), var(--card)";
+const EDITING_STICKY_BACKGROUND = "linear-gradient(var(--brand-soft), var(--brand-soft)), var(--kb-sticky-surface, var(--card))";
 /** 頂層表的橫向捲動框。 */
 const SCROLL_BOX = "group/box overflow-x-auto max-sm:overflow-x-visible scroll-ps-(--kb-sticky-w) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** 明細 cell：不加水平內距（子表要與父表同寬；非表格內容自己帶 px-3）。 */

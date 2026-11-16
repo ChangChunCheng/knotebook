@@ -65,4 +65,14 @@ describe("SettingsGroup labelledByTitle", () => {
     expect(header).toHaveClass("flex", "justify-between", "pr-6", "max-sm:flex-col", "max-sm:gap-3");
     expect(screen.getByRole("button", { name: "Create" }).parentElement).toHaveClass("shrink-0");
   });
+
+  it("頁標題手機 18px、與左上角的「‹」同高（48px 列、左側讓出「‹」）；sm 起維持 20px", () => {
+    render(
+      <SettingsPage title="Users" description="Manage users">
+        <p>x</p>
+      </SettingsPage>,
+    );
+    const h1 = screen.getByRole("heading", { level: 1, name: "Users" });
+    expect(h1).toHaveClass("text-xl", "font-semibold", "max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10", "max-sm:-mt-12");
+  });
 });

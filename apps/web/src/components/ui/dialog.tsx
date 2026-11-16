@@ -61,7 +61,7 @@ const dialogContentVariants = cva(
           // `managementListPaddingPhone`），卡左上角的「‹」也自己退開左側 safe area。不過場：理由同預設尺寸。
           "max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-(--kb-inset,0px) max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 " +
           "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))] max-sm:transition-none " +
-          "max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:overflow-hidden kb-sheet " +
+          "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:overflow-hidden max-sm:shadow-lg kb-sheet " +
           "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       },
     },
