@@ -10,6 +10,7 @@ import { ImageIcon, KeyboardDown, Pilcrow, RotateCcw, RotateCw } from "@/compone
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { cn } from "@/lib/utils";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
+import { useStickyTopInset } from "@/lib/page-scroll";
 import { MobileToolbarButton } from "./MobileToolbarButton";
 import { ColorPanel } from "./ColorPanel";
 import { panelHeightPx, rememberKeyboardInset, setColorPanelHeight } from "./toolbar-footprint";
@@ -37,20 +38,25 @@ const CARET_BREATHING_PX = 8;
  * 工具列在時，編輯器為了讓游標可見而捲動時，下緣要多留「鍵盤高＋工具列外框高＋游標到該行下緣的幾 px（`CARET_BREATHING_PX`）」，
  * 不然打到可視區最下面時游標那一行會被工具列蓋住。用 ProseMirror 的 `scrollMargin`／`scrollThreshold`
  * （不是 CSS `scroll-padding`：ProseMirror 自己算捲動量，不讀 scroll-padding）。
- * 只改 bottom：其餘邊保留 BlockNote 原本設的值，卸載時兩個 prop 照原樣還原（原本沒設就還原成沒設）。
+ * 改 bottom，top 在原本的值上加頁首高（`stickyTopInset`，手機上頁首釘在頂端）；左右保留 BlockNote 原本設的值，
+ * 卸載時兩個 prop 照原樣還原（原本沒設就還原成沒設）。
  * 文件尾端沒有可捲的空間時靠 `MobileToolbarSpacer` 補。
  *
  * 鍵盤升起（inset 變大）且編輯器有焦點時補一次捲動到游標，不然要等下一次輸入游標才離開工具列。
  */
 function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void {
   const bottom = inset + PHONE_EDIT_TOOLBAR_CLEARANCE_PX + CARET_BREATHING_PX;
+  // 手機上捲的是文件，筆記頁首釘在頁面頂端：上緣也要讓開頁首，往上移動時游標那一行才不會鑽到頁首底下。
+  const header = useStickyTopInset();
   useEffect(() => {
     const view = editor.prosemirrorView;
     if (!view) return;
     const previous = { scrollMargin: view.props.scrollMargin, scrollThreshold: view.props.scrollThreshold };
+    const margin = edgesOf(previous.scrollMargin, PM_DEFAULT_SCROLL_MARGIN_PX);
+    const threshold = edgesOf(previous.scrollThreshold, 0);
     view.setProps({
-      scrollMargin: { ...edgesOf(previous.scrollMargin, PM_DEFAULT_SCROLL_MARGIN_PX), bottom },
-      scrollThreshold: { ...edgesOf(previous.scrollThreshold, 0), bottom },
+      scrollMargin: { ...margin, top: margin.top + header, bottom },
+      scrollThreshold: { ...threshold, top: threshold.top + header, bottom },
     });
     return () => {
       try {
@@ -59,7 +65,7 @@ function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void
         // 整個編輯器一起卸載時 view 已銷毀，沒有東西可還原。
       }
     };
-  }, [editor, bottom]);
+  }, [editor, bottom, header]);
 
   const previousInset = useRef(inset);
   useEffect(() => {

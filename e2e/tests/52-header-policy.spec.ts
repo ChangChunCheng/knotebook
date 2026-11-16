@@ -91,14 +91,14 @@ interface Frame {
   innerWidth: number;
 }
 
-/** 頁首 content box 的右緣與寬、卡片內緣（最近一層 overflow 為 hidden 的祖先）、橫向溢出。 */
+/** 頁首 content box 的右緣與寬、內文卡（頁首槽位 `[data-note-header-slot]` 的父層）的右緣、橫向溢出。 */
 async function frameOf(header: Locator): Promise<Frame> {
   return header.evaluate((h) => {
     const style = getComputedStyle(h);
     const r = h.getBoundingClientRect();
     const px = (v: string) => parseFloat(v) || 0;
-    let card: Element | null = h.parentElement;
-    while (card && getComputedStyle(card).overflowX !== "hidden") card = card.parentElement;
+    // 內文卡＝頁首槽位的父層（640 起它 overflow 為 hidden、裁掉溢出的東西；手機上文件在捲，卡不裁切，但頁首仍在卡內）。
+    const card: Element | null = h.closest("[data-note-header-slot]")?.parentElement ?? null;
     return {
       contentRight: r.right - px(style.paddingRight) - px(style.borderRightWidth),
       cardRight: card ? card.getBoundingClientRect().right : null,
@@ -141,7 +141,7 @@ async function checkHeader(page: Page, tag: string, vw: number, policy: Policy =
   const detail = JSON.stringify({ tag, vw, contentW: frame.contentW, contentRight: frame.contentRight, cardRight: frame.cardRight, boxes });
   console.log(`MEASURE ${tag} vw=${vw} innerWidth=${frame.innerWidth} contentW=${frame.contentW.toFixed(2)} contentRight=${frame.contentRight.toFixed(2)} cardRight=${frame.cardRight?.toFixed(2)} ${JSON.stringify(boxes)}`);
 
-  expect(frame.cardRight, `沒有找到 overflow 為 hidden 的卡片 ${detail}`).not.toBeNull();
+  expect(frame.cardRight, `沒有找到內文卡 ${detail}`).not.toBeNull();
   if (vw >= 640 && vw < 1280) expect(Math.abs(frame.contentW - (vw - FLOATING_CHROME)), `浮動段 content box 應為視窗寬 − ${FLOATING_CHROME} ${detail}`).toBeLessThanOrEqual(1);
   expect(frame.scrollW, `頁首有橫向溢出 ${detail}`).toBeLessThanOrEqual(frame.clientW);
   for (const [name, box] of Object.entries(boxes)) {

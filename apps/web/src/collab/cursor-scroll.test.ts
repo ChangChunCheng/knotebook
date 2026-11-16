@@ -6,6 +6,8 @@ import { withCollaboration } from "@blocknote/core/yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { noteSchema } from "./schema";
 import { createCursorScroller, cursorHeadPosition } from "./cursor-scroll";
+import { PHONE_PAGE_SCROLL_ATTR, STICKY_TOP_VAR } from "@/lib/page-scroll";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // 真編輯器＋真 Y.Doc（`collabEditor` 照 `undo.test.tsx`、掛載照 `code-block-caret.test.ts`）：
 // 換算吃的是 ySync 的 binding.mapping，只在 view 掛上、Y 內容畫進 PM 之後才有，mock 量不到。
@@ -208,6 +210,51 @@ describe("cursor-scroll：遠端游標換算與捲動（#293）", () => {
       expect(createCursorScroller({ editor, getRoot: () => root })({ anchor: rel(text, 0), head: rel(text, 2) })).toBe(true);
       expect(root.scrollTo.mock.calls[0]![0]).toEqual({ top: 0, behavior: "smooth" });
       root.remove();
+    });
+
+    it("CS5b：手機上文件在捲（容器在 data-phone-page-scroll 的外框裡）→ 捲文件到頁首下方可視高度的 1/3 處，容器不捲", async () => {
+      stubLayoutTier("phone");
+      const text = await mountWithThree();
+      const frame = document.createElement("div");
+      frame.setAttribute(PHONE_PAGE_SCROLL_ATTR, "");
+      document.body.appendChild(frame);
+      const root = makeRoot(0);
+      frame.appendChild(root);
+      document.documentElement.style.setProperty(STICKY_TOP_VAR, "100px");
+      vi.stubGlobal("innerHeight", 700);
+      vi.stubGlobal("scrollY", 1000);
+      const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+      vi.spyOn(editor.prosemirrorView!, "coordsAtPos").mockReturnValue({ top: 500, bottom: 520, left: 0, right: 0 });
+      try {
+        expect(createCursorScroller({ editor, getRoot: () => root })({ anchor: rel(text, 0), head: rel(text, 2) })).toBe(true);
+        // 1000 + 500 − 100 − (700 − 100) / 3 = 1200
+        expect(windowScroll).toHaveBeenCalledWith({ top: 1200, behavior: "smooth" });
+        expect(root.scrollTo).not.toHaveBeenCalled();
+      } finally {
+        document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+        frame.remove();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("CS5c：同樣在外框裡但不是手機寬度 → 照舊捲容器", async () => {
+      stubLayoutTier("overlay");
+      const text = await mountWithThree();
+      const frame = document.createElement("div");
+      frame.setAttribute(PHONE_PAGE_SCROLL_ATTR, "");
+      document.body.appendChild(frame);
+      const root = makeRoot(100);
+      frame.appendChild(root);
+      const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+      vi.spyOn(editor.prosemirrorView!, "coordsAtPos").mockReturnValue({ top: 450, bottom: 470, left: 0, right: 0 });
+      try {
+        expect(createCursorScroller({ editor, getRoot: () => root })({ anchor: rel(text, 0), head: rel(text, 2) })).toBe(true);
+        expect(root.scrollTo.mock.calls[0]![0]).toEqual({ top: 400, behavior: "smooth" });
+        expect(windowScroll).not.toHaveBeenCalled();
+      } finally {
+        frame.remove();
+        vi.unstubAllGlobals();
+      }
     });
 
     it("CS6：getRoot 回 null → false、不捲", async () => {

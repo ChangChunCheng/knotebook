@@ -1,4 +1,5 @@
 import { useContext, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { NoteDto } from "@knotebook/shared";
 import { useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
@@ -30,7 +31,7 @@ export function NoteBrowseBar({ note }: { note: NoteDto }) {
     void (browse?.createNote(target.groupId, target.folderId) ?? Promise.resolve()).finally(() => setPending(false));
   }
 
-  return (
+  const bar = (
     <div data-testid="note-browse-bar" className="contents">
       <PhoneListFabs
         onSearch={() => browse?.openSearch()}
@@ -40,4 +41,7 @@ export function NoteBrowseBar({ note }: { note: NoteDto }) {
       />
     </div>
   );
+  // 掛到 AppShell 在主內容區外面留的那一格：筆記滑入時位移的是主內容區，鈕不跟著動（見 `PhoneBrowseState.fabSlot`）。
+  const slot = browse?.fabSlot ?? null;
+  return slot === null ? bar : createPortal(bar, slot);
 }

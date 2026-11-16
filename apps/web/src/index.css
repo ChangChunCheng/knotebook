@@ -1211,7 +1211,10 @@ input[name="share-access"] {
   background-color: color-mix(in oklch, var(--color-brand) 38%, transparent);
   animation: kn-anchor-mark 1.6s linear;
 }
-/* 手機：從清單點進筆記時，筆記畫面從右側滑入（只在 AppShell 判定為「清單 → 筆記的 PUSH」時加上這個 class）。 */
+/* 手機：從清單點進筆記時，筆記畫面從右側滑入（只在 AppShell 判定為「清單 → 筆記的 PUSH」時加上這個 class）。
+   用 transform（合成層，不在主執行緒重排）。transform 會讓裡面 fixed 的元素改以這個元素為準定位，所以筆記頁的浮動鈕
+   不放在主內容區裡，而是 portal 到 AppShell 在主內容區外面留的一格（`data-phone-fab-slot`）。滑入時的橫向溢出由外框的
+   overflow-x: clip 裁掉。 */
 @keyframes kb-phone-enter {
   from {
     transform: translateX(100%);
@@ -1222,6 +1225,34 @@ input[name="share-access"] {
 }
 .kb-phone-enter {
   animation: kb-phone-enter 200ms ease-out;
+}
+
+/* 手機（< 640）：清單與筆記捲的是文件，不是內層容器（見 lib/page-scroll.ts；AppShell 外框帶 data-phone-page-scroll）。
+   - html／body 的底色換成手機版面的底色（卡片色）：Safari 半透明的底部工具列後面、回彈時露出來的區域與內容同色，沒有色帶。
+   - 筆記的區塊帶 scroll-margin-top：捲到段落、搜尋結果與提及時讓開釘在頂端的筆記頁首（高度由 NoteEditor 量好寫在 --kb-sticky-top）。
+     不用 html 的 scroll-padding-top：那會連頁首自己的鈕也算成被擋住，關掉 ⋮ 選單把焦點還給 ⋮ 時，文件會被捲回上面。
+   - 下拉重新整理：清單畫面（含全螢幕搜尋層，aside 帶 data-phone-list-shown）與編輯中的筆記（有編輯工具列）擋掉，免得誤觸重載；
+     瀏覽中的筆記照舊可以下拉重新整理。overscroll-behavior 寫在 html 與 body 兩處：各瀏覽器取視窗的值的位置不一致。 */
+@media (width < 40rem) {
+  html:has([data-phone-page-scroll]),
+  html:has([data-phone-page-scroll]) body {
+    background-color: var(--color-card);
+  }
+  [data-phone-page-scroll] .bn-block-outer,
+  [data-phone-page-scroll] .bn-block-content {
+    scroll-margin-top: var(--kb-sticky-top, 0px);
+  }
+  /* 清單列（連同列裡會拿到焦點的連結與按鈕）：鍵盤或螢幕閱讀器把焦點移過去時讓開釘住的頂列與標題列（下緣由清單量好寫在 --kb-list-sticky-top）。 */
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind],
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind] * {
+    scroll-margin-top: var(--kb-list-sticky-top, 0px);
+  }
+  html:has([data-phone-list-shown]),
+  html:has([data-phone-list-shown]) body,
+  html:has([data-mobile-edit-toolbar]),
+  html:has([data-mobile-edit-toolbar]) body {
+    overscroll-behavior-y: contain;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

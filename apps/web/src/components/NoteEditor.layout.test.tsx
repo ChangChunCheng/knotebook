@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
@@ -361,7 +361,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode, fabClearance?: boolean) {
+  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode, fabClearance?: boolean, container?: HTMLElement) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={queryClient}>
@@ -369,6 +369,7 @@ describe("NoteEditor 手機編輯工具列", () => {
           <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} footerSlot={footerSlot} fabClearance={fabClearance} />
         </ThemeProvider>
       </QueryClientProvider>,
+      container === undefined ? undefined : { container },
     );
   }
 
@@ -394,7 +395,7 @@ describe("NoteEditor 手機編輯工具列", () => {
   const FOOTER = <div data-testid="footer-probe">mentions</div>;
   const scrollRootOf = (column: HTMLElement) => column.closest(".overflow-y-auto") as HTMLElement;
 
-  it("手機：欄、頁尾、工具列空白包在 min-h-full 的直欄裡（依序），欄撐滿剩下的高度；捲動容器本身仍是一般區塊", async () => {
+  it("手機：欄、頁尾、工具列空白包在 min-h-full 的直欄裡（依序），欄撐滿剩下的高度；捲動容器在手機上是撐滿卡的直欄、流程包裝跟著撐", async () => {
     stubLayoutTier("phone");
     renderEditor(true, FOOTER);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
@@ -405,7 +406,10 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(flow.parentElement).toBe(scrollRoot);
     expect(flow).toHaveClass("flex", "min-h-full", "flex-col");
     expect(flow).not.toHaveClass("contents");
+    // 640 起仍是一般區塊；手機上卡至少一個視窗高，這層與流程包裝要把高度往下傳（短筆記點下方空白仍聚焦到最後）。
     expect(scrollRoot).not.toHaveClass("flex");
+    expect(scrollRoot).toHaveClass("max-sm:flex", "max-sm:flex-col");
+    expect(flow).toHaveClass("max-sm:grow");
     expect(column).toHaveClass("grow", "shrink-0", "relative");
     expect(column).not.toHaveClass("min-h-full");
     expect(Array.from(flow.children)).toEqual([column, footer, spacer]);
@@ -460,6 +464,60 @@ describe("NoteEditor 手機編輯工具列", () => {
     renderEditor(false);
     await screen.findByTestId("article-column");
     expect(document.querySelector("[data-note-header-slot]")).toHaveClass("max-sm:pt-[env(safe-area-inset-top)]");
+  });
+
+  it("手機上捲的是文件：卡不裁切、至少一個視窗高（svh）；捲動容器縱向 visible；頁首槽位 sticky 釘在頂端、不透明底；640 起照舊", async () => {
+    renderEditor(false, FOOTER, true);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    const scrollRoot = scrollRootOf(column);
+    const card = scrollRoot.parentElement as HTMLElement;
+    const header = document.querySelector("[data-note-header-slot]") as HTMLElement;
+    expect(card).toHaveClass("overflow-hidden", "max-sm:overflow-visible", "max-sm:min-h-svh");
+    expect(card.className).not.toMatch(/(^|\s)max-sm:min-h-dvh(\s|$)/);
+    expect(scrollRoot).toHaveClass("overflow-y-auto", "max-sm:overflow-y-visible", "overflow-x-clip");
+    // 手機上高度從內容長出來（flex-basis auto），編輯器（className 也套到 BlockNote 的 portal 根節點）不靠 min-h-full。
+    expect(scrollRoot).toHaveClass("max-sm:flex-auto");
+    expect(screen.getByTestId("note-editor")).toHaveClass("min-h-full", "flex-1", "max-sm:min-h-0", "max-sm:flex-auto");
+    expect(header).toHaveClass("max-sm:sticky", "max-sm:top-0", "max-sm:bg-card");
+    expect(header.className).toMatch(/max-sm:z-\d+/);
+    // 頁首的祖先（到卡為止）在手機上都不能是捲動容器，sticky 才黏得住文件。
+    expect(header.parentElement).toBe(card);
+  });
+
+  it("版本預覽中：捲動容器只有 hidden，不帶手機的 flex（否則手機上預覽與活編輯器會同時出現）", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" previewSlot={<div>preview</div>} />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+    const scrollRoot = scrollRootOf((await screen.findByTestId("article-column")) as HTMLElement);
+    expect(scrollRoot).toHaveClass("hidden");
+    expect(scrollRoot).not.toHaveClass("max-sm:flex");
+  });
+
+  it("手機：頁首槽位的高度寫進 <html> 的 --kb-sticky-top，卸載時移除；非手機不寫", async () => {
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return new DOMRect(0, 0, 390, this.hasAttribute("data-note-header-slot") ? 97.4 : 0);
+    });
+    onTestFinished(() => rect.mockRestore());
+    // 筆記在 AppShell 的外框（文件代為捲動）裡才寫
+    const frame = document.createElement("div");
+    frame.setAttribute("data-phone-page-scroll", "");
+    document.body.append(frame);
+    onTestFinished(() => frame.remove());
+    stubLayoutTier("phone");
+    const view = renderEditor(false, FOOTER, undefined, frame);
+    await screen.findByTestId("article-column");
+    await waitFor(() => expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("97px"));
+    view.unmount();
+    expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("");
+    stubLayoutTier("overlay");
+    renderEditor(false, FOOTER, undefined, frame.appendChild(document.createElement("div")));
+    await screen.findByTestId("article-column");
+    expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("");
   });
 
   it.each([false, true])("fabClearance：捲動內容最後有 aria-hidden 的空白（5rem＋safe area，浮動鈕之上）；欄撐滿高度（頁尾有無 %s 都一樣）", async (withFooter) => {

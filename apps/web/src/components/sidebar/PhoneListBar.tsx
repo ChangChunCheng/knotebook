@@ -20,7 +20,8 @@ interface PhoneListBarProps {
 /**
  * 手機搜尋層開著時的底部搜尋列：搜尋框加「Cancel」。沒在搜尋時清單底部沒有這一列（入口是 `PhoneListFabs` 的搜尋鈕）。
  * 列高 56（內距 6＋控制項 44＋6）加底部 safe area；搜尋框 16px 字級，iOS 才不會聚焦就放大。
- * 螢幕鍵盤開著時列仍在文件流裡，只加 `marginBottom`（視覺視窗的高度差）把它頂到鍵盤正上方，上面的結果區跟著縮短；
+ * 手機上捲的是文件：列是搜尋層最後一個子元素、`sticky` 釘在視窗底（`PHONE_BAR_FRAME`）。螢幕鍵盤開著時 `bottom`（鍵盤高，
+ * 視覺視窗的高度差）把它頂到鍵盤正上方，同高的 `marginBottom` 讓文件多出這一段，最後幾筆結果捲得到它上方；
  * 只留搜尋框，Cancel 收起。離開搜尋：收起鍵盤後視覺視窗變高、Cancel 回來，按 Cancel；外接鍵盤可按 Esc。
  * 鍵盤蓋住了底部 safe area，所以這時不留那段內距。
  */
@@ -31,7 +32,7 @@ export function PhoneListBar({ query, onQueryChange, searchRef, onOpen, onClose 
   return (
     <div
       data-phone-list-bar=""
-      style={keyboardOpen ? { marginBottom: inset } : undefined}
+      style={keyboardOpen ? { bottom: inset, marginBottom: inset } : undefined}
       className={cn("flex items-center gap-2", PHONE_BAR_FRAME, phoneBarBottomPadding(keyboardOpen))}
     >
       <div className="relative min-w-0 flex-1">

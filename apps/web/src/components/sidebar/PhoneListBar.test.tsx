@@ -99,19 +99,21 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
       return document.querySelector<HTMLElement>("[data-phone-list-bar]")!;
     }
 
-    it("鍵盤收著：列在文件流裡（沒有 margin-bottom），有 Cancel 與 safe area", () => {
+    it("鍵盤收著：列在文件流裡（沒有 margin-bottom），手機上 sticky 釘在視窗底；有 Cancel 與 safe area", () => {
       renderBar();
       expect(bar()).not.toHaveClass("fixed");
+      expect(bar()).toHaveClass("max-sm:sticky", "max-sm:bottom-0");
       expect(bar().style.bottom).toBe("");
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
       expect(bar().className).toContain("env(safe-area-inset-bottom)");
     });
 
-    it("鍵盤升起：列仍在文件流裡、margin-bottom＝鍵盤高（結果區跟著縮短），只留搜尋框，沒有 Cancel、沒有 safe area 內距", () => {
+    it("鍵盤升起：列仍在文件流裡、sticky 的 bottom＝鍵盤高（頂到鍵盤上方）、同高的 margin-bottom（最後的結果捲得到列上方），只留搜尋框，沒有 Cancel、沒有 safe area 內距", () => {
       renderBar();
       setKeyboard(300);
       expect(bar()).not.toHaveClass("fixed");
       expect(bar()).toHaveClass("shrink-0");
+      expect(bar().style.bottom).toBe("300px");
       expect(bar().style.marginBottom).toBe("300px");
       expect(screen.getByRole("textbox", { name: "Search notes" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
@@ -130,6 +132,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
       setKeyboard(300);
       setKeyboard(0);
       expect(bar().style.marginBottom).toBe("");
+      expect(bar().style.bottom).toBe("");
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
   });

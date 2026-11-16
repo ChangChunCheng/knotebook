@@ -287,15 +287,16 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
 
     const frames = await star(page).evaluate((el) => {
       const header = el.closest("header")!;
+      // 最近一個橫向會裁切的祖先（640 起是內文卡；手機上卡不裁切，文件在捲，裁切的是外框的 overflow-x: clip）。
       let card: Element | null = header.parentElement;
-      while (card && getComputedStyle(card).overflowX !== "hidden") card = card.parentElement;
+      while (card && !["hidden", "clip"].includes(getComputedStyle(card).overflowX)) card = card.parentElement;
       const style = getComputedStyle(header);
       return {
         cardRight: card ? card.getBoundingClientRect().right : null,
         contentRight: header.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
       };
     });
-    expect(frames.cardRight, "沒有找到 overflow 為 hidden 的卡片").not.toBeNull();
+    expect(frames.cardRight, "沒有找到橫向會裁切的祖先").not.toBeNull();
     for (const [name, button] of [["Favorite", star(page)], ["Share", share], ["More", more]] as const) {
       const box = (await button.boundingBox())!;
       const right = box.x + box.width;

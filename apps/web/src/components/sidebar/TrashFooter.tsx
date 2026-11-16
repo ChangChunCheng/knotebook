@@ -26,7 +26,7 @@ export function TrashFooter() {
 
 /**
  * 保留天數說明；載入中／失敗時只留同高的空位，版面不跳。
- * 手機：左下的浮動 Search 鈕蓋在清單底部，說明整段抬到鈕的上緣之上（底部留 56＋16＋8 加 safe area），清單與說明都不被蓋住。
+ * 手機：說明排在清單之後、跟著文件捲；左下的浮動 Search 鈕蓋在畫面底部，所以說明底下留 56＋16＋8 加 safe area，捲到底時清單與說明都在鈕的上緣之上。
  */
 function TrashFooterNote() {
   const { t } = useTranslation();
@@ -188,7 +188,11 @@ function TrashActionBar() {
 
   return (
     <>
-      <div className="m-2 flex gap-1" onKeyDown={handleKeyDown}>
+      {/* 手機上捲的是文件：動作列與其他底部列同一款外框，`sticky` 釘在視窗底、避開 Home 指示條，清單捲到它下面時不透出來。 */}
+      <div
+        className="m-2 flex gap-1 max-sm:sticky max-sm:bottom-0 max-sm:z-20 max-sm:m-0 max-sm:border-t max-sm:border-border max-sm:bg-card max-sm:px-2 max-sm:pt-1.5 max-sm:pb-[calc(0.375rem+env(safe-area-inset-bottom))]"
+        onKeyDown={handleKeyDown}
+      >
         <Button type="button" variant="brand" className="min-w-0 flex-1 px-1.5" aria-label={t("trash.restore")} title={t("trash.restore")} disabled={disabled} onClick={onRestore}>
           <RotateCcw aria-hidden="true" className="h-4 w-4 shrink-0" />
         </Button>

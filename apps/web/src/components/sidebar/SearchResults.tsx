@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { BODY_SEARCH_DEBOUNCE_MS, bodySearchGate } from "@/components/sidebar/body-search-gate";
 import { indexFolders } from "@/components/sidebar/folder-index";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
+import { PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
 import { noteLocationLabel, type LocationContext } from "@/components/sidebar/tree";
 
 // 內文區（#93）整塊在 lazy chunk；唯一入口見 BodySearchLazy.tsx。
@@ -180,7 +181,7 @@ export function SearchResults({ query }: { query: string }) {
       <p role="status" className="px-4 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
         {statusText}
       </p>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2">
+      <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2", PHONE_LIST_SCROLLER)}>
         {gate !== "search" && titleRows}
         {gate !== "search" && results.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">{t("sidebar.noMatch")}</p>}
         {gate === "tooShort" && <p className="px-2 py-2 text-[11px] text-muted-foreground">{t("sidebar.bodySearchTooShort")}</p>}

@@ -1,6 +1,7 @@
 import { SAFE_INSETS } from "@/components/ui/safe-area";
 import { Component, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useCardPage } from "@/theme";
 import { useOnline } from "./ErrorBoundary";
 import { Button } from "./ui/button";
 
@@ -37,6 +38,8 @@ import { Button } from "./ui/button";
  * `inert`（#229）：簡報外殼掛著時背景不可互動；外殼是它的兄弟。
  */
 export function PublicPageFrame({ children, inert }: { children: ReactNode; inert?: boolean }) {
+  // 卡片底的頁面：手機寬度時瀏覽器上方列跟著用卡片色。
+  useCardPage();
   return (
     <div inert={inert} className={`flex h-dvh flex-col overflow-hidden bg-card ${SAFE_INSETS}`}>
       {children}

@@ -10,6 +10,7 @@ import {
 } from "@blocknote/react";
 import { isNonTextSelection, selectionInsideAnchor } from "@/ai/selection";
 import { useIsPhone } from "@/lib/layout-tiers";
+import { stickyTopInset } from "@/lib/page-scroll";
 import { activeAnchorOf, useAiSession } from "./AiSession";
 import { AiToolbar } from "./AiToolbar";
 import { SelectionAiBox } from "./SelectionAiBox";
@@ -45,7 +46,8 @@ export function formattingToolbarMiddleware(bottomPadding: number) {
       },
     }),
     shift({ boundary: document.documentElement, padding: { left: PHONE_FLOATING_TOOLBAR_EDGE_PX, right: PHONE_FLOATING_TOOLBAR_EDGE_PX } }),
-    flip({ padding: { bottom: bottomPadding } }),
+    // 手機上捲的是文件、筆記頁首釘在頂端：上緣也內縮頁首的高度（每次定位時讀），工具列不會躲到頁首底下，上方放不下就翻到下方。
+    flip(() => ({ padding: { top: stickyTopInset(), bottom: bottomPadding } })),
   ];
 }
 

@@ -9,7 +9,7 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  *      手機寬度下筆記標題框仍是 20px。
  * 58-2 貼邊（390、800）：390 時內文卡的 x＝0、寬＝視窗寬，AppShell 外框的 padding 四邊都是 0；800 時外框仍是 12px、內文卡不貼邊。
  * 58-3 簡報（390）：投影片的 h1 > h2 > h3，h1 是它所在容器字級的 1.75 倍。
- * 58-4 短筆記沒有多餘的捲動範圍（390，鍵盤收起）：一行字的筆記，捲動容器 scrollHeight − clientHeight ＝ 0——沒有提及時沒有提及列；
+ * 58-4 短筆記沒有多餘的捲動範圍（390，鍵盤收起）：一行字的筆記，文件 scrollHeight − 視窗高 ＝ 0（手機上捲的是文件）——沒有提及時沒有提及列；
  *      有提及時提及列在第一屏內、排在文章欄之後；編輯中（工具列在）時工具列的空白是捲動內容的最後一個子節點，範圍仍是 0。
  * 58-5 寬表格右緣提示（390）：表格還能往右捲時 `--kb-table-fade` 是 1.5rem（24px），捲到底變 0；沒有溢出的表格是 0。
  * 58-6 不支援捲動驅動動畫時的後備（390）：委派的捲動監聽在還能往右捲的表格上標 `data-kb-more-right`，捲到底拿掉，
@@ -34,14 +34,25 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  *      第二層標題 18px/600 並與「‹」垂直置中。
  * 58-21 站台管理、快捷鍵頁從帳號選單開、群組面板從群組列 ⋮ 開：清單的「‹」重開開啟它的那個選單；三個面板同樣量上述表面、清單與標題，
  *      快捷鍵條目名稱 16px、說明 14px。
- * 58-28 寬螢幕（1280）：管理面板維持原樣——列 36px／14px／8px 圓角、目前的項次有品牌底、沒有「›」、托盤有毛玻璃、第二層標題 20px；700 的清單層仍是 ← 與 ✕、36px／14px。
- * 58-30 手機（390）深色：表格卡的主欄格與「‹」的底色跟卡一致。
- * 58-31 矮的手機螢幕（568×320）：項次清單自己捲動、列頭不動，最後一列捲得到、點得到。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
+ * 58-22～58-31 手機上捲的是文件、不是內層容器（58-22～58-27、58-29），以及管理面板的表面（58-28、58-30、58-31）：
+ *      58-22 清單（390×844）：滑輪捲動的是文件（window.scrollY 變、清單容器沒有捲動範圍）；頂列貼在頂端、標題列緊接在下、兩者底色不透明；
+ *            最後一列捲得到浮動鈕上方；html／body 的底色與清單相同、清單延伸到視窗底；清單 → 筆記時 scrollY 是 0，系統返回回到原本的 scrollY。
+ *      58-23 短清單：文件沒有捲動範圍，清單仍延伸到視窗底。
+ *      58-24 長筆記（390×844）：滑輪捲動的是文件；頁首貼在頂端（標題、「‹」在視窗內）、底色不透明、高度等於區塊的 scroll-margin-top；
+ *            最後一段捲得到浮動鈕上方；html／body 與內文卡同色、卡延伸到視窗底；開關 ⋮ 選單與分享對話框（Radix 鎖捲動）時 scrollY 不變；
+ *            搜尋層從頂端開始，Cancel 回到原本的 scrollY。
+ *      58-25 下拉重新整理：清單與編輯中的筆記 html／body 的 overscroll-behavior-y 是 contain，瀏覽中的筆記是 auto。
+ *      58-26 寬螢幕（1280×800）：文件沒有捲動範圍，滑輪捲動的是內文容器，scrollY 恆為 0。
+ *      58-27 轉向跨過 640（390×844 → 844×390 → 390×844）：長筆記停在同一段（橫拿時在內文容器頂端、轉回時在頁首正下方）。
+ *      58-28 寬螢幕（1280）：管理面板維持原樣——列 36px／14px／8px 圓角、目前的項次有品牌底、沒有「›」、托盤有毛玻璃、第二層標題 20px；700 的清單層仍是 ← 與 ✕、36px／14px。
+ *      58-29 轉向跨過 640：清單轉回直拿時同一列仍在標題列正下方（橫拿時清單收在抽屜裡）。
+ *      58-30 手機（390）深色：表格卡的主欄格與「‹」的底色跟卡一致。
+ *      58-31 矮的手機螢幕（568×320）：項次清單自己捲動、列頭不動，最後一列捲得到、點得到。
  *
- * 量不到、列在實機清單：iOS Safari 的瀏覽器工具列伸縮時 `dvh` 的實際行為與底部不被蓋住、瀏海與 Home 指示條的 safe area、
- * 真實螢幕鍵盤升起時的捲動範圍。
+ * 量不到、列在實機清單：iOS Safari 的工具列是否隨捲動收起、內容是否延伸到半透明的底部工具列後面、瀏海與 Home 指示條的 safe area、
+ * 真實螢幕鍵盤升起時的捲動範圍與釘住的頁首位置、下拉重新整理是否真的被擋。
  *
  * 帳號與資料：用邀請建一個帳號（alice），資料以 API 建一次，之後各案例開新 context。
  */
@@ -256,9 +267,14 @@ test("58-3 簡報（390）：h1 > h2 > h3，h1 是所在容器字級的 1.75 倍
   }
 });
 
+/** 手機上捲的是文件：文件比視窗高出多少。 */
 async function scrollRange(page: Page): Promise<number> {
-  return scrollerOf(page).evaluate((el) => el.scrollHeight - el.clientHeight);
+  return page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
 }
+
+/** 手機上把文件捲到底／頂。 */
+const scrollPageToEnd = (page: Page): Promise<void> => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+const scrollPageToTop = (page: Page): Promise<void> => page.evaluate(() => window.scrollTo(0, 0));
 
 test("58-4 短筆記沒有多餘的捲動範圍：沒有提及時沒有提及列", async ({ browser }) => {
   const { context, page } = await open(browser, 390, "short", { backlinks: true });
@@ -287,12 +303,11 @@ test("58-4b 短筆記有提及時：提及列在第一屏內、排在文章欄�
     const geometry = await scrollerOf(page).evaluate((scroller) => {
       const column = scroller.querySelector('[data-testid="article-column"]') as HTMLElement;
       const footer = column.nextElementSibling as HTMLElement;
-      const s = scroller.getBoundingClientRect();
       const f = footer.getBoundingClientRect();
-      return { footerText: footer.textContent ?? "", footerBottom: f.bottom, footerTop: f.top, scrollerBottom: s.bottom, columnBottom: column.getBoundingClientRect().bottom };
+      return { footerText: footer.textContent ?? "", footerBottom: f.bottom, footerTop: f.top, viewportBottom: window.innerHeight, columnBottom: column.getBoundingClientRect().bottom };
     });
     expect(geometry.footerText).toContain("Mentioned in 1 note");
-    expect(geometry.footerBottom).toBeLessThanOrEqual(geometry.scrollerBottom + 0.5);
+    expect(geometry.footerBottom).toBeLessThanOrEqual(geometry.viewportBottom + 0.5);
     expect(geometry.footerTop).toBeGreaterThanOrEqual(geometry.columnBottom - 0.5);
     // 編輯中：頁尾之後才是工具列的空白，頁尾仍在可視範圍內
     await editorLocator(page).getByText("mentioned text").click();
@@ -592,9 +607,7 @@ test("58-12 手機清單（390）：最後一列能捲到浮動鈕上方；搜�
     const list = page.locator("[data-sidebar-list]").first();
     const notes = list.locator('[data-node-kind="note"]');
     await expect(notes.nth(15)).toBeAttached({ timeout: 15_000 });
-    await list.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
+    await scrollPageToEnd(page);
     const fabTop = Math.min((await box(fabs.getByRole("button", { name: "Search notes", exact: true }))).y, (await box(fabs.getByRole("button", { name: "New note", exact: true }))).y);
     await expect(async () => {
       const last = await box(notes.last());
@@ -630,9 +643,7 @@ test("58-12 手機清單（390）：最後一列能捲到浮動鈕上方；搜�
     const trashList = page.locator("[data-sidebar-list]").first();
     const trashRows = trashList.locator('[data-node-kind="note"]');
     await expect(trashRows.nth(11)).toBeAttached({ timeout: 15_000 });
-    await trashList.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
+    await scrollPageToEnd(page);
     const footer = page.getByTestId("trash-footer");
     await expect(footer).toBeVisible();
     const searchTop = (await box(searchFab)).y;
@@ -1178,19 +1189,14 @@ test("58-17 手機筆記頁（390）：兩顆毛玻璃浮動鈕與清單同位�
     await expect(create.locator("svg")).toHaveAttribute("data-icon", "pen-line");
 
     // 長筆記：最後一段捲得到鈕上方
-    const scroller = scrollerOf(page);
-    await scroller.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
+    await scrollPageToEnd(page);
     const last = editorLocator(page).getByText(LONG_LAST, { exact: true });
     await expect(async () => {
       const lastBox = await box(last);
       const top = Math.min((await box(search)).y, (await box(create)).y);
       expect(lastBox.y + lastBox.height, "最後一段的下緣在浮動鈕上緣之上").toBeLessThanOrEqual(top);
     }).toPass({ timeout: 5_000 });
-    await scroller.evaluate((el) => {
-      el.scrollTop = 0;
-    });
+    await scrollPageToTop(page);
 
     // 編輯中沒有；離開編輯回來
     // 編輯器連上共編之前點不進去（唯讀期間的點擊不算編輯中），所以點到浮動鈕消失為止。
@@ -1544,6 +1550,324 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     await expect(menu.getByRole("menuitem", { name: "Members & settings", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+// ── 手機上捲的是文件（58-22～58-26）─────────────────────────────────────────
+
+/** 文件目前的捲動位置。 */
+const pageScrollY = (page: Page): Promise<number> => page.evaluate(() => window.scrollY);
+
+/** 元素在視窗座標裡的上下緣。 */
+const edgesOf = (target: Locator): Promise<{ top: number; bottom: number }> =>
+  target.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom };
+  });
+
+/** 用滑輪捲（使用者的捲動，不是程式設 scrollTop）：落在 `x, y` 那一點底下會捲的東西上。 */
+async function wheelAt(page: Page, x: number, y: number, dy: number): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.wheel(0, dy);
+}
+
+test("58-22 手機清單（390）：文件在捲（清單容器不自己捲）；頂列與標題列釘在頂端；最後一列捲得到浮動鈕上方；底色到視窗底；清單 → 筆記從頂端開始、返回回到原位", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page } = await openList(browser, 390, false);
+  try {
+    for (let i = 0; i < 24; i++) await createNoteVia(page, `E2E page scroll row ${RUN} ${String(i).padStart(2, "0")}`);
+    await page.reload();
+    await showSidebarTab(page, "My notes");
+    const list = page.locator("[data-sidebar-list]").first();
+    const rows = list.locator('[data-node-kind="note"]');
+    await expect(rows.nth(23)).toBeAttached({ timeout: 15_000 });
+
+    // 文件比視窗高、清單容器自己沒有捲動範圍
+    expect(await scrollRange(page), "文件要能捲").toBeGreaterThan(300);
+    expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight), "清單容器不自己捲").toBeLessThanOrEqual(1);
+
+    // 滑輪捲：動的是文件
+    await wheelAt(page, 195, 500, 600);
+    await expect.poll(() => pageScrollY(page)).toBeGreaterThan(100);
+    expect(await list.evaluate((el) => el.scrollTop)).toBe(0);
+
+    // 頂列釘在頂端、不透明；標題列緊接在它下方
+    const topBar = page.locator("[data-phone-top-bar]");
+    const header = page.locator("[data-sidebar-header]").first();
+    const topEdges = await edgesOf(topBar);
+    expect(topEdges.top).toBeCloseTo(0, 0);
+    expect(topEdges.bottom).toBeCloseTo(48, 0);
+    expect((await edgesOf(header)).top).toBeCloseTo(topEdges.bottom, 0);
+    expect(alphaOf(await topBar.evaluate((el) => getComputedStyle(el).backgroundColor)), "頂列底色不透明").toBe(1);
+    expect(alphaOf(await header.evaluate((el) => getComputedStyle(el).backgroundColor)), "標題列底色不透明").toBe(1);
+    await expect(topBar.getByRole("button").last()).toBeInViewport();
+
+    // 捲到底：最後一列在浮動鈕上緣之上
+    await scrollPageToEnd(page);
+    const fabs = page.locator("[data-phone-list-fabs]");
+    const fabTop = Math.min((await box(fabs.getByRole("button", { name: "Search notes", exact: true }))).y, (await box(fabs.getByRole("button", { name: "New note", exact: true }))).y);
+    await expect(async () => {
+      const last = await box(rows.last());
+      expect(last.y + last.height, "最後一列的下緣在浮動鈕上緣之上").toBeLessThanOrEqual(fabTop);
+    }).toPass({ timeout: 5_000 });
+
+    // 底色：html 與 body 都是清單的底色（卡片色），清單延伸到視窗底，最底那一點是清單
+    const colors = await page.evaluate(() => ({
+      html: getComputedStyle(document.documentElement).backgroundColor,
+      body: getComputedStyle(document.body).backgroundColor,
+      aside: getComputedStyle(document.querySelector("aside[data-sidebar-instance]")!).backgroundColor,
+      asideBottom: document.querySelector("aside[data-sidebar-instance]")!.getBoundingClientRect().bottom,
+      bottomHit: document.elementFromPoint(195, window.innerHeight - 1)?.closest("aside[data-sidebar-instance]") !== null,
+    }));
+    expect(colors.html).toBe(colors.aside);
+    expect(colors.body).toBe(colors.aside);
+    expect(colors.asideBottom).toBeGreaterThanOrEqual(844 - 0.5);
+    expect(colors.bottomHit, "視窗最底那一點落在清單上").toBe(true);
+
+    // 清單 → 筆記：從頂端開始；系統返回：回到原位
+    await page.evaluate(() => window.scrollTo(0, 400));
+    const before = await pageScrollY(page);
+    expect(before).toBe(400);
+    const target = await list.evaluate((el) => {
+      const headerBottom = document.querySelector("[data-sidebar-header]")!.getBoundingClientRect().bottom;
+      const link = Array.from(el.querySelectorAll<HTMLAnchorElement>("a[href^='/n/']")).find((a) => {
+        const r = a.getBoundingClientRect();
+        return r.top >= headerBottom + 4 && r.bottom <= window.innerHeight - 100;
+      });
+      return link?.getAttribute("href") ?? null;
+    });
+    expect(target).not.toBeNull();
+    await list.locator(`a[href="${target}"]`).click();
+    await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible({ timeout: 15_000 });
+    expect(await pageScrollY(page), "筆記從頂端開始").toBe(0);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect.poll(() => pageScrollY(page), { message: "回到清單原本的位置" }).toBe(before);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-23 手機短清單（390）：沒有多餘的捲動範圍，清單仍延伸到視窗底", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await openList(browser, 390, false);
+  try {
+    // 這個帳號沒有人分享筆記給它：與我共享是空的
+    await showSidebarTab(page, "Shared with me");
+    await expect(page.locator("[data-sidebar-header]").first()).toBeVisible();
+    expect(await scrollRange(page)).toBeLessThanOrEqual(1);
+    const asideBottom = await page.locator("aside[data-sidebar-instance]").first().evaluate((el) => el.getBoundingClientRect().bottom);
+    expect(asideBottom).toBeCloseTo(844, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-24 手機長筆記（390）：文件在捲；頁首釘在頂端、不透明；最後一段捲得到浮動鈕上方；對話框與選單開關不跳；搜尋層 Cancel 回到原位", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page } = await open(browser, 390, "long", { touch: false });
+  try {
+    const last = editorLocator(page).getByText(LONG_LAST, { exact: true });
+    await expect(last).toBeAttached({ timeout: 15_000 });
+    expect(await scrollRange(page), "文件要能捲").toBeGreaterThan(300);
+    expect(await scrollerOf(page).evaluate((el) => el.scrollHeight - el.clientHeight), "內文容器不自己捲").toBeLessThanOrEqual(1);
+    expect(await pageScrollY(page), "筆記從頂端開始").toBe(0);
+
+    // 滑輪捲：動的是文件，頁首留在頂端
+    await wheelAt(page, 195, 500, 700);
+    await expect.poll(() => pageScrollY(page)).toBeGreaterThan(100);
+    const slot = page.locator("[data-note-header-slot]");
+    expect((await edgesOf(slot)).top).toBeCloseTo(0, 0);
+    await expect(page.getByRole("textbox", { name: "Note title" })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Back to notes", exact: true })).toBeInViewport();
+    expect(alphaOf(await slot.evaluate((el) => getComputedStyle(el).backgroundColor)), "頁首底色不透明").toBe(1);
+    // 頁首高度寫進 --kb-sticky-top，區塊的 scroll-margin-top 跟著它（捲到段落時讓開頁首）
+    const slotHeight = await slot.evaluate((el) => Math.round(el.getBoundingClientRect().height));
+    expect(await last.evaluate((el) => getComputedStyle(el.closest(".bn-block-outer")!).scrollMarginTop)).toBe(`${slotHeight}px`);
+
+    // 捲到底：最後一段在浮動鈕上緣之上；底色到視窗底
+    await scrollPageToEnd(page);
+    const fabs = page.getByTestId("note-browse-bar").locator("[data-phone-list-fabs]");
+    const fabTop = Math.min((await box(fabs.getByRole("button", { name: "Search notes", exact: true }))).y, (await box(fabs.getByRole("button", { name: "New note", exact: true }))).y);
+    await expect(async () => {
+      const b = await box(last);
+      expect(b.y + b.height, "最後一段的下緣在浮動鈕上緣之上").toBeLessThanOrEqual(fabTop);
+      // 尾端沒有多出的空白：捲到底時最後一段離視窗底只差浮動鈕的空位與欄的下內距
+      expect(844 - (b.y + b.height), "最後一段離視窗底").toBeLessThanOrEqual(200);
+    }).toPass({ timeout: 5_000 });
+    const colors = await page.evaluate(() => {
+      const card = document.querySelector("[data-note-header-slot]")!.parentElement!;
+      return {
+        html: getComputedStyle(document.documentElement).backgroundColor,
+        body: getComputedStyle(document.body).backgroundColor,
+        card: getComputedStyle(card).backgroundColor,
+        cardBottom: card.getBoundingClientRect().bottom,
+      };
+    });
+    expect(colors.html).toBe(colors.card);
+    expect(colors.body).toBe(colors.card);
+    expect(colors.cardBottom).toBeGreaterThanOrEqual(844 - 0.5);
+
+    // 選單（Radix 鎖捲動，關掉時焦點還給 ⋮）開著與關掉後，位置都不變。用座標點：只量 app 自己的行為，
+    // 不讓 Playwright 點之前的「捲進視窗」介入。
+    const clickAt = async (target: Locator) => {
+      const b = await box(target);
+      await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    };
+    await page.evaluate(() => window.scrollTo(0, 500));
+    const y = await pageScrollY(page);
+    expect(y).toBe(500);
+    await clickAt(page.locator("header").getByRole("button", { name: "More", exact: true }));
+    await expect(page.getByRole("menu")).toBeVisible();
+    expect(await pageScrollY(page), "選單開著時不跳").toBe(y);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    expect(await pageScrollY(page), "選單關掉後不跳").toBe(y);
+    // 對話框（分享）同樣
+    await clickAt(page.locator("header").getByRole("button", { name: "Share", exact: true }));
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await pageScrollY(page), "對話框開著時不跳").toBe(y);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await pageScrollY(page), "對話框關掉後不跳").toBe(y);
+
+    // 搜尋層：從頂端開始；Cancel 回到這篇原本的位置
+    await clickAt(page.getByTestId("note-browse-bar").getByRole("button", { name: "Search notes", exact: true }));
+    await expect(page.getByRole("textbox", { name: "Search notes", exact: true })).toBeFocused();
+    expect(await pageScrollY(page)).toBe(0);
+    await page.locator("[data-phone-list-bar]").getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible();
+    await expect.poll(() => pageScrollY(page)).toBe(y);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-25 下拉重新整理：清單與編輯中的筆記擋掉（overscroll-behavior-y: contain），瀏覽中的筆記照舊", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await open(browser, 390, "long");
+  try {
+    const overscroll = () => page.evaluate(() => ({ html: getComputedStyle(document.documentElement).overscrollBehaviorY, body: getComputedStyle(document.body).overscrollBehaviorY }));
+    await expect(editorLocator(page).getByText("paragraph number 0", { exact: true })).toBeVisible({ timeout: 15_000 });
+    expect(await overscroll()).toEqual({ html: "auto", body: "auto" });
+    // 編輯中（工具列在）；編輯器連上共編之前點不進去，所以點到工具列出現為止
+    await expect(async () => {
+      await editorLocator(page).getByText("paragraph number 0", { exact: true }).tap({ position: { x: 2, y: 4 } });
+      await expect(page.locator("[data-mobile-edit-toolbar]")).toBeVisible({ timeout: 1_500 });
+    }).toPass({ timeout: 15_000 });
+    expect(await overscroll()).toEqual({ html: "contain", body: "contain" });
+    // 清單
+    await page.getByRole("button", { name: "Back to notes", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    expect(await overscroll()).toEqual({ html: "contain", body: "contain" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-26 寬螢幕（1280×800）：頁面本身不捲（scrollY 恆為 0），筆記的內文容器在捲", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await open(browser, 1280, "long", { touch: false, height: 800 });
+  try {
+    await expect(editorLocator(page).getByText(LONG_LAST, { exact: true })).toBeAttached({ timeout: 15_000 });
+    expect(await scrollRange(page), "文件沒有捲動範圍").toBeLessThanOrEqual(0);
+    const scroller = scrollerOf(page);
+    const scrollerBox = await box(scroller);
+    await wheelAt(page, scrollerBox.x + scrollerBox.width / 2, scrollerBox.y + scrollerBox.height / 2, 700);
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(100);
+    expect(await pageScrollY(page)).toBe(0);
+    // 外框仍鎖在視窗高；body 照舊是頁底色（不是手機的卡片色）
+    expect(await page.locator("[data-phone-page-scroll]").evaluate((el) => el.getBoundingClientRect().height)).toBeCloseTo(800, 0);
+    const colors = await page.evaluate(() => ({ body: getComputedStyle(document.body).backgroundColor, card: getComputedStyle(document.querySelector("[data-note-header-slot]")!.parentElement!).backgroundColor }));
+    expect(colors.body).not.toBe(colors.card);
+  } finally {
+    await context.close();
+  }
+});
+
+// ── 轉向跨過 640 時保住閱讀位置（58-27、58-29）────────────────────────────────
+
+/** 筆記裡含 `text` 的那一段離「看得到的上緣」多遠：手機是頁首下緣，640 起是內文容器的上緣。 */
+async function blockOffset(page: Page, text: string): Promise<number> {
+  return page.evaluate((needle) => {
+    const block = Array.from(document.querySelectorAll<HTMLElement>(".bn-block-content")).find((el) => el.textContent === needle)!;
+    const scroller = document.querySelector('[data-testid="article-column"]')!.closest(".overflow-y-auto") as HTMLElement;
+    const scrolls = getComputedStyle(scroller).overflowY !== "visible";
+    const top = scrolls ? scroller.getBoundingClientRect().top : document.querySelector("[data-note-header-slot]")!.getBoundingClientRect().bottom;
+    return block.getBoundingClientRect().top - top;
+  }, text);
+}
+
+test("58-27 轉向（390×844 → 844×390 → 390×844）：長筆記停在同一段（手機捲文件、橫拿捲內文容器）", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await open(browser, 390, "long", { touch: false });
+  try {
+    const target = "paragraph number 20";
+    await expect(editorLocator(page).getByText(target, { exact: true })).toBeAttached({ timeout: 15_000 });
+    // 把那一段捲到頁首正下方
+    await page.evaluate(async (needle) => {
+      const block = Array.from(document.querySelectorAll<HTMLElement>(".bn-block-content")).find((el) => el.textContent === needle)!;
+      const header = document.querySelector("[data-note-header-slot]")!.getBoundingClientRect().bottom;
+      window.scrollTo(0, window.scrollY + block.getBoundingClientRect().top - header);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, target);
+    expect(Math.abs(await blockOffset(page, target)), "那一段在頁首正下方附近").toBeLessThanOrEqual(8);
+    expect(await pageScrollY(page)).toBeGreaterThan(300);
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect.poll(() => scrollerOf(page).evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
+    await expect.poll(() => blockOffset(page, target).then((d) => Math.abs(d) <= 40), { message: "橫拿：那一段在內文容器頂端附近" }).toBe(true);
+    expect(await pageScrollY(page), "橫拿：文件不捲").toBe(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => scrollerOf(page).evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible");
+    await expect.poll(() => blockOffset(page, target).then((d) => Math.abs(d) <= 40), { message: "轉回直拿：那一段在頁首正下方附近" }).toBe(true);
+    expect(await pageScrollY(page)).toBeGreaterThan(300);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-29 轉向（390×844 → 844×390 → 390×844）：清單停在同一列（橫拿時清單收在抽屜裡）", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page } = await openList(browser, 390, false);
+  try {
+    for (let i = 0; i < 24; i++) await createNoteVia(page, `E2E rotate row ${RUN} ${String(i).padStart(2, "0")}`);
+    await page.reload();
+    await showSidebarTab(page, "My notes");
+    const list = page.locator("[data-sidebar-list]").first();
+    await expect(list.locator('[data-node-kind="note"]').nth(23)).toBeAttached({ timeout: 15_000 });
+    const rowOffset = (href: string) =>
+      page.evaluate((h) => {
+        const row = document.querySelector(`[data-sidebar-list] a[href="${h}"]`)!.closest("[data-node-kind]")!.firstElementChild!;
+        return row.getBoundingClientRect().top - document.querySelector("[data-sidebar-header]")!.getBoundingClientRect().bottom;
+      }, href);
+    // 往下捲，取標題列下方的第一列，把它對齊標題列下緣
+    await page.evaluate(() => window.scrollTo(0, 500));
+    const href = await list.evaluate((el) => {
+      const headerBottom = document.querySelector("[data-sidebar-header]")!.getBoundingClientRect().bottom;
+      const link = Array.from(el.querySelectorAll<HTMLAnchorElement>("a[href^='/n/']")).find((a) => a.getBoundingClientRect().top >= headerBottom);
+      return link!.getAttribute("href")!;
+    });
+    await page.evaluate(async (d) => {
+      window.scrollTo(0, window.scrollY + d);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, await rowOffset(href));
+    const offset = await rowOffset(href);
+    expect(Math.abs(offset), "那一列在標題列正下方附近").toBeLessThanOrEqual(30);
+    const before = await pageScrollY(page);
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.getByRole("button", { name: "Open sidebar", exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("[data-phone-top-bar]")).toBeVisible();
+    await expect(async () => {
+      const d = await rowOffset(href);
+      expect(Math.abs(d - offset), `轉回直拿：同一列回到原本的位置（原 ${offset}、現 ${d}、scrollY ${await pageScrollY(page)}／${before}）`).toBeLessThanOrEqual(2);
+    }).toPass({ timeout: 5_000 });
+    expect(Math.abs((await pageScrollY(page)) - before)).toBeLessThanOrEqual(2);
   } finally {
     await context.close();
   }

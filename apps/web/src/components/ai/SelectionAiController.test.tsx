@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { useAiSession, type AiSessionValue } from "./AiSession";
 import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX, formattingToolbarMiddleware } from "./SelectionAiController";
 import { stubLayoutTier } from "@/test/layout-tier";
+import { STICKY_TOP_VAR } from "@/lib/page-scroll";
 
 // flip 換成會記錄呼叫參數的直通版本：驗證手機時傳了下緣內縮。
 const flipSpy = vi.hoisted(() => vi.fn());
@@ -218,7 +219,12 @@ describe("SelectionAiController（手機：浮動工具列翻到下方時避開�
     vi.stubGlobal("innerHeight", 800);
     Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
   }
-  const bottoms = () => flipSpy.mock.calls.map(([options]) => (options as { padding?: { bottom?: number } } | undefined)?.padding?.bottom);
+  // flip 的選項可以是函式（定位當下才算，手機上要讀釘在頂端的頁首高）：先求值再讀。
+  const bottoms = () =>
+    flipSpy.mock.calls.map(([options]) => {
+      const resolved = typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options;
+      return (resolved as { padding?: { bottom?: number } } | undefined)?.padding?.bottom;
+    });
 
   it("phone：flip 的下緣內縮編輯工具列的外框高度，不加鍵盤高（視窗邊界本來就是視覺視窗）", async () => {
     stubLayoutTier("phone");
@@ -247,6 +253,23 @@ describe("formattingToolbarMiddleware", () => {
 
   it("手機：先限制寬度（size），shift 左右各留 8px 並以整個視窗為邊界，才輪到 flip", () => {
     expect(names(PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual(["offset", "size", "shift", "flip"]);
+  });
+
+  it("手機：flip 的上緣內縮釘在頂端的頁首高（定位當下讀 --kb-sticky-top），下緣內縮編輯工具列", () => {
+    const flipOf = () => formattingToolbarMiddleware(PHONE_EDIT_TOOLBAR_CLEARANCE_PX).find((middleware) => middleware.name === "flip")!;
+    const padding = () => {
+      // @floating-ui/react 包過的 middleware 把原本的選項放在 options[0]。
+      const options = (flipOf().options as unknown[])[0];
+      const resolved = (typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options) as { padding: { top: number; bottom: number } };
+      return resolved.padding;
+    };
+    expect(padding()).toEqual({ top: 0, bottom: PHONE_EDIT_TOOLBAR_CLEARANCE_PX });
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "96px");
+    try {
+      expect(padding()).toEqual({ top: 96, bottom: PHONE_EDIT_TOOLBAR_CLEARANCE_PX });
+    } finally {
+      document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+    }
   });
 
   it("桌機：與 BlockNote 預設相同，不限制寬度", () => {
