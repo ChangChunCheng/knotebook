@@ -158,7 +158,8 @@ function rootItem(source: DestSource, index: FolderIndex, space: DestSpace, t: T
   };
 }
 
-function backItem(t: Translate): DestItem {
+/** 「返回」項（第二層起恆為第一項）；手機 sheet 的第一層也用它當回主選單的那一列（`share/GroupTransfer.tsx`）。 */
+export function backItem(t: Translate): DestItem {
   const label = t("folders.dest.back");
   return { kind: "back", key: "back", label, accessibleName: label };
 }

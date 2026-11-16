@@ -37,6 +37,8 @@ import { resetLocalPresenceFieldForTest } from "@/components/presence/local-fiel
 import { setRemote, userState } from "@/components/presence/test-awareness";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { findDrawerButton, findTourTarget } from "@/lib/tour-targets";
+import { AppShellLayout } from "@/components/AppShellLayout";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // BlockNote 需要一整套 jsdom 沒有的 DOM/Range API，掛進單元測試只會測到環境；
 // 這裡只驗證「頁面有沒有把正確的 props 交給編輯器」，編輯器本身留給手動驗證。
@@ -77,7 +79,11 @@ vi.mock("@/components/NoteEditor", async () => {
     onCursorScroller,
     noteMaxBytes,
     maxUploadBytes,
+    mobileToolbar,
+    fabClearance,
   }: {
+    mobileToolbar?: boolean;
+    fabClearance?: boolean;
     editable: boolean;
     noteId: string;
     headerSlot?: ReactNode;
@@ -96,9 +102,10 @@ vi.mock("@/components/NoteEditor", async () => {
       return () => onCursorScroller?.(null);
     }, [onCursorScroller]);
     return (
-      <div data-testid="note-editor" data-editable={String(editable)}>
+      <div data-testid="note-editor" data-editable={String(editable)} data-fab-clearance={String(fabClearance === true)}>
         {headerSlot}
         <div data-testid="mock-column" data-width={width} />
+        <div data-testid="mock-content" contentEditable={editable} suppressContentEditableWarning tabIndex={0} />
         <button type="button" onClick={() => versions.startPreview({ seq: 1, id: VERSION_1.id, name: null })}>
           mock-start-preview
         </button>
@@ -107,6 +114,11 @@ vi.mock("@/components/NoteEditor", async () => {
         </button>
         {previewSlot !== undefined && <div data-testid="mock-preview-slot">{previewSlot}</div>}
         {footerSlot}
+        {mobileToolbar === true && (
+          <div data-mobile-edit-toolbar="" data-testid="mock-mobile-toolbar">
+            <button type="button">mock-toolbar-button</button>
+          </div>
+        )}
       </div>
     );
   }
@@ -233,6 +245,7 @@ const USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 const NOTE: NoteDto = {
@@ -378,6 +391,15 @@ function RouterPathProbe() {
   );
 }
 
+function GoToOther() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate("/notes/other-note")}>
+      go-b
+    </button>
+  );
+}
+
 function routerPath(): string | null {
   return screen.getByTestId("router-path").textContent;
 }
@@ -392,10 +414,12 @@ function NotePageTree({ seedActiveId }: { seedActiveId?: string }) {
       <ActiveProbe />
       <RouterPathProbe />
       <Routes>
-        <Route path="/notes/:ref" element={<NotePage />} />
-        <Route path="/n/:handle/:slug" element={<NotePage />} />
-        <Route path="/g/:groupId/:slug" element={<NotePage />} />
-        <Route path="/" element={<div>home landing</div>} />
+        <Route element={<AppShellLayout />}>
+          <Route path="/notes/:ref" element={<NotePage />} />
+          <Route path="/n/:handle/:slug" element={<NotePage />} />
+          <Route path="/g/:groupId/:slug" element={<NotePage />} />
+          <Route path="/" element={<div>home landing</div>} />
+        </Route>
       </Routes>
     </ActiveNoteProvider>
   );
@@ -638,9 +662,295 @@ describe("NotePage", () => {
     expect(header).not.toBeNull();
     expect(header).toHaveClass("flex", "items-center", "gap-3", "border-b", "border-border", "px-5", "py-3");
     expect(header).toContainElement(screen.getByLabelText("Note title"));
-    // #115：頁首最前面是 `md:hidden` 的漢堡鈕（窄視窗開抽屜的入口——筆記頁沒有
+    // #115：頁首最前面是 `xl:hidden` 的側欄鈕（浮動側欄的入口——筆記頁沒有
     // NarrowTopBar，這顆就是唯一入口）。
-    expect(header).toContainElement(screen.getByRole("button", { name: "Open navigation" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Open sidebar" }));
+  });
+
+  it("手機（< 640）：頁首最前面是「Back to notes」，沒有「Open sidebar」（抽屜在手機上不可達）", async () => {
+    stubLayoutTier("phone");
+    vi.stubGlobal("fetch", mockFetch());
+
+    renderNotePage("my-note");
+    await screen.findByTestId("note-editor");
+
+    const header = document.querySelector("header") as HTMLElement;
+    expect(header.querySelector("button")).toBe(screen.getByRole("button", { name: "Back to notes" }));
+    expect(screen.queryByRole("button", { name: "Open sidebar" })).toBeNull();
+  });
+
+  describe("手機頁首兩行（標題＋位置副標）", () => {
+    function setupPhone() {
+      resetLocalPresenceFieldForTest();
+      const awareness = new Awareness(new Y.Doc());
+      onTestFinished(() => awareness.destroy());
+      collab.state = { phase: "connected", role: "owner" };
+      collab.provider = Object.assign(createStubProvider(), { awareness });
+      setRemote(awareness, 10, userState("u2", "Bea"));
+      stubLayoutTier("phone");
+      vi.stubGlobal("fetch", mockFetch({ ...NOTE, lastEdited: { at: "2026-02-03T04:05:06.000Z", byHandle: "alice", agentLabel: null } }));
+    }
+
+    it("第一行：返回、標題、星號、分享、⋮；沒有寬度鈕；第二行：連線點、位置、在線者、最後編輯", async () => {
+      setupPhone();
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+
+      const header = document.querySelector("header") as HTMLElement;
+      const top = within(header).getByTestId("note-header-title-row");
+      const sub = within(header).getByTestId("note-header-subline");
+      // 標題與它下方一行（連線點、位置、在線者）是同一個區塊；「‹」與右側動作鈕是它的兄弟，列用 items-center 對齊整個區塊的垂直中心。
+      const block = within(top).getByTestId("note-header-block");
+      expect(top).toHaveClass("items-center");
+      expect(block.parentElement).toBe(top);
+      expect(block).toHaveClass("flex", "flex-col", "min-w-0", "flex-1");
+      expect(block.children[0]).toBe(within(top).getByLabelText("Note title"));
+      expect(block.children[1]).toBe(sub);
+      expect(top.children[0]).toBe(within(top).getByRole("button", { name: "Back to notes" }));
+      // 瀏海的退讓由 NoteEditor 的頁首槽位給（橫幅也在它之下），頁首自己維持 12px 上內距。
+      expect(header).toHaveClass("pt-3");
+      expect(header.className).not.toContain("safe-area-inset");
+      expect(within(top).getByRole("button", { name: "Back to notes" })).toBeInTheDocument();
+      expect(within(top).getByRole("button", { name: "Favorite" })).toBeInTheDocument();
+      expect(within(top).getByRole("button", { name: "Share" })).toBeInTheDocument();
+      expect(within(top).getByRole("button", { name: "More" })).toBeInTheDocument();
+      expect(within(header).queryByRole("button", { name: /^Width/ })).toBeNull();
+
+      expect(top).toContainElement(sub);
+      expect(within(sub).getByRole("status")).toBeInTheDocument();
+      const location = within(sub).getByRole("button", { name: "Show in list: My notes" });
+      expect(await within(sub).findByRole("group", { name: "Also viewing this note" })).toBeInTheDocument();
+      expect(within(sub).getByTestId("last-edited")).toBeInTheDocument();
+      const order = [location, within(sub).getByRole("status"), within(sub).getByRole("group", { name: "Also viewing this note" }), within(sub).getByTestId("last-edited")];
+      for (let i = 0; i < order.length - 1; i++) {
+        expect(order[i]!.compareDocumentPosition(order[i + 1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    });
+
+    it("連線狀態與在線者整頁各只有一份（不是 CSS 藏一份）", async () => {
+      setupPhone();
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      await screen.findByRole("group", { name: "Also viewing this note" });
+
+      const header = document.querySelector("header") as HTMLElement;
+      expect(within(header).getAllByRole("status")).toHaveLength(1);
+      expect(within(header).getAllByRole("group", { name: "Also viewing this note" })).toHaveLength(1);
+      expect(within(header).getAllByTestId("last-edited")).toHaveLength(1);
+    });
+
+    it("位置按鈕的點擊高度：副標列有垂直 padding，加標題列合計 ≥ 44（class 斷言，jsdom 無版面）", async () => {
+      setupPhone();
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+
+      expect(screen.getByRole("button", { name: /^Show in list/ })).toHaveClass("py-2");
+      expect(screen.getByLabelText("Note title")).toHaveClass("text-xl");
+    });
+
+    it("固定段：維持單行頁首，沒有副標列也沒有位置按鈕", async () => {
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+
+      const header = document.querySelector("header") as HTMLElement;
+      expect(within(header).queryByTestId("note-header-subline")).toBeNull();
+      expect(within(header).queryByTestId("note-header-title-row")).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Show in list/ })).toBeNull();
+    });
+
+    it("浮動段：同樣維持單行頁首", async () => {
+      stubLayoutTier("overlay");
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+
+      expect(document.querySelector("header [data-testid='note-header-subline']")).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Show in list/ })).toBeNull();
+    });
+  });
+
+  describe("手機底部瀏覽列", () => {
+    const BAR = "note-browse-bar";
+
+    async function renderEditable(note: NoteDto = NOTE, role: "owner" | "viewer" = "owner") {
+      stubLayoutTier("phone");
+      collab.state = { phase: "connected", role };
+      collab.provider.synced = true;
+      vi.stubGlobal("fetch", mockFetch(note));
+      const view = renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      await screen.findByTestId(BAR);
+      return view;
+    }
+
+    it("可編輯：焦點進編輯區 → 瀏覽列消失；焦點到頁首標題 → 回來", async () => {
+      await renderEditable();
+      expect(within(screen.getByTestId(BAR)).getByRole("button", { name: "New note" })).toBeInTheDocument();
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId(BAR)).toBeNull();
+      act(() => screen.getByLabelText("Note title").focus());
+      expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("焦點移到編輯工具列（blur 帶 relatedTarget）：仍算編輯中，瀏覽列不閃回來", async () => {
+      await renderEditable();
+      const content = screen.getByTestId("mock-content");
+      act(() => content.focus());
+      expect(screen.queryByTestId(BAR)).toBeNull();
+      const toolbar = document.createElement("div");
+      toolbar.setAttribute("data-mobile-edit-toolbar", "");
+      document.body.appendChild(toolbar);
+      onTestFinished(() => toolbar.remove());
+      fireEvent.blur(content, { relatedTarget: toolbar });
+      expect(screen.queryByTestId(BAR)).toBeNull();
+      // 焦點真的離開到別處：回來。
+      fireEvent.blur(content, { relatedTarget: screen.getByLabelText("Note title") });
+      expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("底部空白（fabClearance）跟浮動鈕同進退：沒在編輯有；焦點進編輯區沒有；回標題又有", async () => {
+      await renderEditable();
+      const editor = () => screen.getByTestId("note-editor");
+      expect(editor()).toHaveAttribute("data-fab-clearance", "true");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(editor()).toHaveAttribute("data-fab-clearance", "false");
+      act(() => screen.getByLabelText("Note title").focus());
+      expect(editor()).toHaveAttribute("data-fab-clearance", "true");
+    });
+
+    it("可編輯：焦點進編輯區 → 編輯工具列出現；焦點到頁首標題 → 消失", async () => {
+      await renderEditable();
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      act(() => screen.getByLabelText("Note title").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it("焦點移到工具列的鈕上：工具列還在、瀏覽列不閃回來", async () => {
+      await renderEditable();
+      act(() => screen.getByTestId("mock-content").focus());
+      act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      expect(screen.queryByTestId(BAR)).toBeNull();
+    });
+
+    it("焦點在工具列的鈕上時被降成唯讀：編輯工具列不留著（旗標還在也不渲染）", async () => {
+      const { rerender, queryClient } = await renderEditable();
+      act(() => screen.getByTestId("mock-content").focus());
+      act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
+      expect(screen.getByTestId("mock-mobile-toolbar")).toBeInTheDocument();
+      collab.state = { phase: "connected", role: "viewer" };
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={["/notes/my-note"]}>
+              <NotePageTree />
+            </MemoryRouter>
+          </ThemeProvider>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it("唯讀：點內文沒有編輯工具列", async () => {
+      await renderEditable({ ...NOTE, role: "viewer", ownerId: "u2", permissions: VIEWER_PERMS }, "viewer");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it.each(["overlay", "docked"] as const)("%s：聚焦編輯區也不出編輯工具列", async (tier) => {
+      stubLayoutTier(tier);
+      collab.state = { phase: "connected", role: "owner" };
+      collab.provider.synced = true;
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
+    });
+
+    it("編輯區在焦點還在裡面時被卸載（點連結換篇）：新畫面的瀏覽列不會被舊的編輯旗標藏住", async () => {
+      stubLayoutTier("phone");
+      collab.state = { phase: "connected", role: "owner" };
+      collab.provider.synced = true;
+      vi.stubGlobal("fetch", mockFetch());
+      render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={["/notes/my-note"]}>
+              <GoToOther />
+              <NotePageTree />
+            </MemoryRouter>
+          </ThemeProvider>
+        </QueryClientProvider>,
+      );
+      await screen.findByTestId(BAR);
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId(BAR)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "go-b" }));
+      await waitFor(() => expect(routerPath()).not.toBe("/notes/my-note"));
+      expect(await screen.findByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("編輯中被降成唯讀（焦點旗標還在）：瀏覽列回來", async () => {
+      const { rerender, queryClient } = await renderEditable();
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(screen.queryByTestId(BAR)).toBeNull();
+      collab.state = { phase: "connected", role: "viewer" };
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={["/notes/my-note"]}>
+              <NotePageTree />
+            </MemoryRouter>
+          </ThemeProvider>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
+      expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("唯讀：點內文瀏覽列仍在，沒有「New note」，搜尋還在", async () => {
+      await renderEditable({ ...NOTE, role: "viewer", ownerId: "u2", permissions: VIEWER_PERMS }, "viewer");
+      act(() => screen.getByTestId("mock-content").focus());
+      fireEvent.focus(screen.getByTestId("mock-content"));
+      expect(screen.getByTestId(BAR)).toBeInTheDocument();
+      expect(within(screen.getByTestId(BAR)).queryByRole("button", { name: "New note" })).toBeNull();
+      expect(within(screen.getByTestId(BAR)).getByRole("button", { name: "Search notes" })).toBeInTheDocument();
+    });
+
+    it("首次同步完成前（還不能編輯）：是瀏覽列，不是編輯狀態", async () => {
+      stubLayoutTier("phone");
+      collab.state = { phase: "connected", role: "owner" };
+      collab.provider.synced = false;
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      fireEvent.focus(screen.getByTestId("mock-content"));
+      expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it.each(["overlay", "docked"] as const)("%s：沒有瀏覽列", async (tier) => {
+      stubLayoutTier(tier);
+      vi.stubGlobal("fetch", mockFetch());
+      renderNotePage("my-note");
+      await screen.findByTestId("note-editor");
+      expect(screen.queryByTestId(BAR)).toBeNull();
+    });
+  });
+
+  it("浮動段（640–1279）：頁首是「Open sidebar」，沒有「Back to notes」", async () => {
+    stubLayoutTier("overlay");
+    vi.stubGlobal("fetch", mockFetch());
+
+    renderNotePage("my-note");
+    await screen.findByTestId("note-editor");
+
+    expect(within(document.querySelector("header") as HTMLElement).getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to notes" })).toBeNull();
   });
 
   // class 斷言，不是行為斷言：jsdom 無版面。頁首收縮順序（標題讓到 64px → 標籤截斷 → 其餘不縮）
@@ -663,7 +973,7 @@ describe("NotePage", () => {
     await screen.findByTestId("note-editor");
 
     const header = within(document.querySelector("header")!);
-    expect(findDrawerButton()).toBe(header.getByRole("button", { name: "Open navigation" }));
+    expect(findDrawerButton()).toBe(header.getByRole("button", { name: "Open sidebar" }));
     expect(findTourTarget("share")).toBe(header.getByRole("button", { name: "Share" }));
     expect(findTourTarget("noteMenu")).toBe(header.getByRole("button", { name: "More" }));
   });
@@ -681,6 +991,54 @@ describe("NotePage", () => {
     const more = within(header).getByRole("button", { name: "More" });
     expect(share.compareDocumentPosition(width) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(width.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("頁首 ⋮ 裡有「Width」（任何寬度都能改寬度，頁首鈕在窄寬會隱藏）", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    renderNotePage("my-note");
+    await screen.findByTestId("note-editor");
+
+    fireEvent.pointerDown(within(document.querySelector("header")!).getByRole("button", { name: "More" }), { button: 0 });
+    expect(await screen.findByRole("menuitem", { name: "Width" })).toBeInTheDocument();
+  });
+
+  it("頁首 gap 在手機寬收成 gap-2（容器查詢套不到 header 自己的 gap）", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    renderNotePage("my-note");
+    await screen.findByTestId("note-editor");
+
+    expect(document.querySelector("header")).toHaveClass("gap-3", "max-sm:gap-2");
+  });
+
+  it("頁首子節點順序：導覽鈕、標題、連線、在線者、最後編輯、星號、分享、寬度、⋮", async () => {
+    resetLocalPresenceFieldForTest();
+    const awareness = new Awareness(new Y.Doc());
+    onTestFinished(() => awareness.destroy());
+    collab.state = { phase: "connected", role: "owner" };
+    collab.provider = Object.assign(createStubProvider(), { awareness });
+    setRemote(awareness, 10, userState("u2", "Bea"));
+    vi.stubGlobal("fetch", mockFetch({ ...NOTE, lastEdited: { at: "2026-02-03T04:05:06.000Z", byHandle: "alice", agentLabel: null } }));
+
+    renderNotePage("my-note");
+    await screen.findByTestId("note-editor");
+
+    const header = document.querySelector("header")!;
+    const order = [
+      within(header).getByRole("button", { name: "Open sidebar" }),
+      within(header).getByLabelText("Note title"),
+      within(header).getByRole("status"),
+      await within(header).findByRole("group", { name: "Also viewing this note" }),
+      within(header).getByTestId("last-edited"),
+      within(header).getByRole("button", { name: "Favorite" }),
+      within(header).getByRole("button", { name: "Share" }),
+      within(header).getByRole("button", { name: /^Width/ }),
+      within(header).getByRole("button", { name: "More" }),
+    ];
+    for (let i = 0; i < order.length - 1; i++) {
+      expect(order[i]!.compareDocumentPosition(order[i + 1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 
   it("頁首有最愛星號，位置在 Share 之前（#334）", async () => {
@@ -833,10 +1191,12 @@ describe("NotePage", () => {
               <ActiveProbe />
               {withPage ? (
                 <Routes>
-                  <Route path="/notes/:ref" element={<NotePage />} />
-                  {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
-                  <Route path="/n/:handle/:slug" element={<NotePage />} />
-                  <Route path="/" element={<div>home landing</div>} />
+                  <Route element={<AppShellLayout />}>
+                    <Route path="/notes/:ref" element={<NotePage />} />
+                    {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
+                    <Route path="/n/:handle/:slug" element={<NotePage />} />
+                    <Route path="/" element={<div>home landing</div>} />
+                  </Route>
                 </Routes>
               ) : (
                 <div />
@@ -1028,9 +1388,11 @@ describe("NotePage", () => {
               <RouterPathProbe />
               <NavToB />
               <Routes>
-                <Route path="/notes/:ref" element={<NotePage />} />
-                <Route path="/n/:handle/:slug" element={<NotePage />} />
-                <Route path="/" element={<div>home landing</div>} />
+                <Route element={<AppShellLayout />}>
+                  <Route path="/notes/:ref" element={<NotePage />} />
+                  <Route path="/n/:handle/:slug" element={<NotePage />} />
+                  <Route path="/" element={<div>home landing</div>} />
+                </Route>
               </Routes>
             </ActiveNoteProvider>
           </MemoryRouter>
@@ -1111,20 +1473,19 @@ describe("NotePage", () => {
       await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
       expect(screen.getByTestId("mock-column")).toHaveAttribute("data-width", "standard");
 
-      fireEvent.pointerDown(screen.getByRole("button", { name: /^Width/ }), { button: 0 });
-      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full width" }));
-      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Full width");
+      fireEvent.click(screen.getByRole("button", { name: /^Width/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Width/ }));
+      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Full width — click for Standard");
       expect(screen.getByTestId("mock-column")).toHaveAttribute("data-width", "full");
 
       fireEvent.click(screen.getByRole("button", { name: "go-b-new" }));
       await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Note B"));
-      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Standard");
+      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Standard — click for Wide");
       expect(screen.getByTestId("mock-column")).toHaveAttribute("data-width", "standard");
 
       fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
       await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
-      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Full width");
+      expect(screen.getByRole("button", { name: /^Width/ })).toHaveAccessibleName("Width: Full width — click for Standard");
       expect(screen.getByTestId("mock-column")).toHaveAttribute("data-width", "full");
 
       expect(widthKeys()).toEqual([`note.width.${NOTE.id}`]);
@@ -1291,7 +1652,7 @@ describe("NotePage", () => {
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/my-note"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
     await screen.findByRole("dialog", { name: "Navigation" });
 
     await act(async () => {
@@ -1428,9 +1789,11 @@ describe("NotePage", () => {
       return (
         <RealLocationContext.Provider value={real}>
           <Routes location={background ?? location}>
-            <Route path="/notes/:ref" element={<NotePage />} />
-            <Route path="/n/:handle/:slug" element={<NotePage />} />
-            <Route path="/" element={<div>home landing</div>} />
+            <Route element={<AppShellLayout />}>
+              <Route path="/notes/:ref" element={<NotePage />} />
+              <Route path="/n/:handle/:slug" element={<NotePage />} />
+              <Route path="/" element={<div>home landing</div>} />
+            </Route>
           </Routes>
         </RealLocationContext.Provider>
       );
@@ -1654,7 +2017,7 @@ describe("NotePage", () => {
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
     // #115：佔位卡也要有窄視窗抽屜入口——isError 是會**停住**的狀態（筆記被刪、
     // 沒權限），沒有這顆，`<md` 的使用者在錯誤畫面上零導覽出口。
-    expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
   });
 
   // note 本身載入成功，但 `doc|provider|user` 還沒全部備妥（這裡卡住
@@ -1683,6 +2046,8 @@ describe("NotePage", () => {
     expect(document.querySelector("header")).toBeNull();
     const card = screen.getByText("Loading…").parentElement;
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
+    // 手機：佔位卡貼齊螢幕（沒有圓角與框）。
+    expect(card).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
 
     resolveMe();
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
@@ -1699,10 +2064,12 @@ describe("NotePage", () => {
           <MemoryRouter initialEntries={["/notes/my-note"]}>
             <ActiveNoteProvider>
               <Routes>
-                <Route path="/notes/:ref" element={<NotePage />} />
-                {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
-                <Route path="/n/:handle/:slug" element={<NotePage />} />
-                <Route path="/login" element={<div>login page</div>} />
+                <Route element={<AppShellLayout />}>
+                  <Route path="/notes/:ref" element={<NotePage />} />
+                  {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
+                  <Route path="/n/:handle/:slug" element={<NotePage />} />
+                  <Route path="/login" element={<div>login page</div>} />
+                </Route>
               </Routes>
             </ActiveNoteProvider>
           </MemoryRouter>
@@ -1874,10 +2241,12 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
               <RouterPathProbe />
               <NavToGroupNote2 />
               <Routes>
-                <Route path="/notes/:ref" element={<NotePage />} />
-                <Route path="/n/:handle/:slug" element={<NotePage />} />
-                <Route path="/g/:groupId/:slug" element={<NotePage />} />
-                <Route path="/" element={<div>home landing</div>} />
+                <Route element={<AppShellLayout />}>
+                  <Route path="/notes/:ref" element={<NotePage />} />
+                  <Route path="/n/:handle/:slug" element={<NotePage />} />
+                  <Route path="/g/:groupId/:slug" element={<NotePage />} />
+                  <Route path="/" element={<div>home landing</div>} />
+                </Route>
               </Routes>
             </ActiveNoteProvider>
           </MemoryRouter>
@@ -1947,7 +2316,9 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
           <MemoryRouter initialEntries={[`/g/${GROUP_ID}/group-note`]}>
             <ActiveNoteProvider>
               <Routes>
-                <Route path="/g/:groupId/:slug" element={<NotePage />} />
+                <Route element={<AppShellLayout />}>
+                  <Route path="/g/:groupId/:slug" element={<NotePage />} />
+                </Route>
               </Routes>
             </ActiveNoteProvider>
           </MemoryRouter>
@@ -1996,7 +2367,9 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
             <ActiveNoteProvider>
               <NavToGroupNote2 />
               <Routes>
-                <Route path="/g/:groupId/:slug" element={<NotePage />} />
+                <Route element={<AppShellLayout />}>
+                  <Route path="/g/:groupId/:slug" element={<NotePage />} />
+                </Route>
               </Routes>
             </ActiveNoteProvider>
           </MemoryRouter>
@@ -2142,7 +2515,7 @@ function withEditsAndList(inner: ReturnType<typeof mockFetch>, notes: () => Note
 }
 
 /** `NotePageTree` 只掛 `/notes/:ref` 且沒有位置探針——這組自己組：兩條筆記路由＋首頁＋探針。 */
-function renderWithProbe(initialEntry: string | { pathname: string; state: unknown }) {
+function renderWithProbe(initialEntry: string | { pathname: string; state: unknown }, extra?: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const result = render(
     <QueryClientProvider client={queryClient}>
@@ -2150,10 +2523,13 @@ function renderWithProbe(initialEntry: string | { pathname: string; state: unkno
         <MemoryRouter initialEntries={[initialEntry]}>
           <ActiveNoteProvider>
             <SidebarLocationProbe />
+            {extra}
             <Routes>
-              <Route path="/notes/:ref" element={<NotePage />} />
-              <Route path="/n/:handle/:slug" element={<NotePage />} />
-              <Route path="/" element={<div>home landing</div>} />
+              <Route element={<AppShellLayout />}>
+                <Route path="/notes/:ref" element={<NotePage />} />
+                <Route path="/n/:handle/:slug" element={<NotePage />} />
+                <Route path="/" element={<div>home landing</div>} />
+              </Route>
             </Routes>
           </ActiveNoteProvider>
         </MemoryRouter>
@@ -2337,6 +2713,49 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
 
 // 解析層 404 `in_trash`（帶頂層 noteId）→ 卡片、不導頁；其餘 404 照舊連結無效（NP-T*）。
 // NP-T4 回歸另見既有案：「首次解析 404 → linkInvalid」（舊形）、「新形 by-path 404 → linkInvalid 出口」、「⑤by-group-path 404」。
+describe("NotePage × 側欄內文搜尋的同篇片段", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    collab.state = { phase: "connecting" };
+    collab.doc = new Y.Doc();
+    collab.provider = createStubProvider();
+    window.history.replaceState(null, "", "/");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    collab.doc.destroy();
+    vi.unstubAllGlobals();
+    navSpy.current = undefined;
+  });
+
+  it("開著這一篇時點側欄裡同篇的片段 → 走段落錨點（留在原網址、只換 hash），不是 push 到片段的 href", async () => {
+    // 錨點 API 由頁面登記給外層的側欄殼；沒登記上去時側欄把它當別篇、導向 href（會丟掉目前網址的 query）。
+    const { fn } = withEditsAndList(
+      ((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).startsWith("/api/search?")) {
+          const hit = { note: NOTE, matchedOn: "body", matches: [{ sectionId: "h1", heading: "Gamma", snippet: "the needle is here" }] };
+          return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ hits: [hit], nextCursor: null }) }));
+        }
+        return mockFetch()(input, init);
+      }) as ReturnType<typeof mockFetch>,
+      () => [NOTE],
+    );
+    vi.stubGlobal("fetch", fn);
+    collab.state = { phase: "connected", role: "owner" };
+    collab.provider.synced = true;
+
+    renderWithProbe("/n/tester/my-note?keep=1", <FullLocationProbe />);
+    await screen.findByLabelText("Note title", { selector: "input" });
+
+    const aside = screen.getByRole("complementary");
+    fireEvent.change(within(aside).getByRole("textbox", { name: "Search notes" }), { target: { value: "needle" } });
+    fireEvent.click(await within(aside).findByTestId("body-match"));
+
+    await waitFor(() => expect(screen.getByTestId("full-location")).toHaveTextContent("/n/tester/my-note?keep=1#b-h1"));
+  });
+});
+
 describe("NotePage × 在垃圾桶裡", () => {
   const GROUP_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const G_NOTE: NoteDto = {
@@ -2521,8 +2940,8 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go to trash" })).toBeInTheDocument();
-    // 卡片包在 placeholderCard 裡：窄螢幕的導覽出口（NarrowTopBar 的漢堡鈕，#115）也在（jsdom 不套 md:hidden）。
-    expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+    // 卡片包在 placeholderCard 裡：窄螢幕的導覽出口（NarrowTopBar 的側欄鈕，#115）也在（jsdom 不套 xl:hidden）。
+    expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
     await settle();
     expect(toastTitles()).not.toContain(LINK_INVALID);
     expect(screen.queryByText(LINK_INVALID)).toBeNull();
@@ -2843,9 +3262,11 @@ function renderAtEntry(entry: string) {
           <ActiveNoteProvider>
             <FullLocationProbe />
             <Routes>
-              <Route path="/notes/:ref" element={<NotePage />} />
-              <Route path="/n/:handle/:slug" element={<NotePage />} />
-              <Route path="/" element={<div>home landing</div>} />
+              <Route element={<AppShellLayout />}>
+                <Route path="/notes/:ref" element={<NotePage />} />
+                <Route path="/n/:handle/:slug" element={<NotePage />} />
+                <Route path="/" element={<div>home landing</div>} />
+              </Route>
             </Routes>
           </ActiveNoteProvider>
         </MemoryRouter>
@@ -3287,7 +3708,7 @@ describe("頁頭頭像列（#293）", () => {
     expect(group.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("NP-P2 本分頁寫 knotebook 欄（avatar 恆 null）", async () => {
+  it("NP-P2 沒有頭貼時本分頁寫 knotebook 欄、avatar 為 null", async () => {
     await openPage();
 
     await waitFor(() =>
@@ -3299,6 +3720,40 @@ describe("頁頭頭像列（#293）", () => {
         since: expect.any(Number),
       }),
     );
+  });
+
+  it("NP-P2a 有頭貼時 avatar 寫 { id, v }、不含 pending", async () => {
+    const { queryClient } = await openPage();
+    await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
+
+    act(() => {
+      queryClient.setQueryData(["me"], { ...USER, avatar: { id: "av-1", v: 3, pending: true } });
+    });
+
+    await waitFor(() => expect((awareness.getLocalState()?.knotebook as { avatar: unknown }).avatar).toEqual({ id: "av-1", v: 3 }));
+    const field = awareness.getLocalState()?.knotebook as { avatar: Record<string, unknown> };
+    expect(Object.keys(field.avatar).sort()).toEqual(["id", "v"]);
+  });
+
+  it("NP-P2b 換頭貼、清除頭貼後 awareness 的 avatar 跟著變", async () => {
+    const { queryClient } = await openPage();
+    await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
+    const avatarOf = () => (awareness.getLocalState()?.knotebook as { avatar: unknown }).avatar;
+
+    act(() => {
+      queryClient.setQueryData(["me"], { ...USER, avatar: { id: "av-1", v: 1, pending: false } });
+    });
+    await waitFor(() => expect(avatarOf()).toEqual({ id: "av-1", v: 1 }));
+
+    act(() => {
+      queryClient.setQueryData(["me"], { ...USER, avatar: { id: "av-2", v: 1, pending: false } });
+    });
+    await waitFor(() => expect(avatarOf()).toEqual({ id: "av-2", v: 1 }));
+
+    act(() => {
+      queryClient.setQueryData(["me"], { ...USER, avatar: null });
+    });
+    await waitFor(() => expect(avatarOf()).toBeNull());
   });
 
   it.each([

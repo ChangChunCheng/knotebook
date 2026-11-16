@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { lazy, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, type Location } from "react-router";
 import type { GroupDto } from "@knotebook/shared";
@@ -6,6 +6,7 @@ import { ApiFail } from "@/api/client";
 import { useRemoveMember } from "@/api/groups";
 import { useSession } from "@/auth/useSession";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT } from "@/components/ui/hit-area";
 import {
   Dialog,
   DialogClose,
@@ -26,8 +27,12 @@ import { EllipsisVertical, LogOut, Pencil, Trash, Users } from "@/components/ui/
 import { hoverReveal } from "@/components/ui/reveal";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { DeleteGroupDialog } from "./DeleteGroupDialog";
-import { GroupNameDialog } from "./GroupNameDialog";
+import { panelEntryState } from "@/lib/panel-return";
+import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
+
+// 改名／刪除對話框只在開啟時才需要：各自 lazy（首包瘦身），掛載點包 `SidebarLazyBoundary chunk="groupDialog"`。
+const DeleteGroupDialog = lazy(() => import("./DeleteGroupDialog").then((m) => ({ default: m.DeleteGroupDialog })));
+const GroupNameDialog = lazy(() => import("./GroupNameDialog").then((m) => ({ default: m.GroupNameDialog })));
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
@@ -47,7 +52,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
  *
  * 選單項一律 `onSelect` 三步形（`event.preventDefault()` → 關選單 → 動作），`DropdownMenu`
  * controlled——理由見 `NoteMenu.tsx` 檔頭的 focus trap 規矩。改名對話框在開啟時才掛載
- * （`renameOpen &&`），每次開都是新的預填。
+ * （`dialog === "rename" &&`），每次開都是新的預填。
  *
  * 「成員與設定」／「查看成員」都導到群組 modal `/groups/:id`（#247），帶目前 location 當
  * `backgroundLocation`，關閉群組 modal 時回得來。
@@ -65,8 +70,9 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
   const { user } = useSession();
   const removeMember = useRemoveMember(group.id);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // 一次只開一個對話框：chunk 慢時使用者可能先點改名再點刪除，兩個布林會讓兩個 modal 疊在一起。
+  const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
+  const dialogOpenChange = (kind: "rename" | "delete") => (open: boolean) => setDialog((cur) => (open ? kind : cur === kind ? null : cur));
   const [leaveOpen, setLeaveOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -87,9 +93,8 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
     const state = location.state as { backgroundLocation?: Location } | null;
     const inPanel = /^\/(settings|groups|admin)\//.test(location.pathname);
     const backgroundLocation = state?.backgroundLocation ?? (inPanel ? undefined : location);
-    navigate(`/groups/${encodeURIComponent(group.id)}`, {
-      state: backgroundLocation ? { backgroundLocation } : undefined,
-    });
+    // 從 ⋮ 開：手機從項次清單開始，清單的「‹」關掉面板後重開這個 ⋮（`lib/panel-return.ts`）。
+    navigate(`/groups/${encodeURIComponent(group.id)}`, { state: panelEntryState(backgroundLocation, () => setMenuOpen(true)) });
   }
 
   async function handleLeave(): Promise<void> {
@@ -105,7 +110,7 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
 
   return (
     <>
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             ref={triggerRef}
@@ -113,12 +118,12 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
             variant="ghost"
             size="icon"
             aria-label={t("groups.menu.label", { name: group.name })}
-            className={size === "sidebar" ? cn("h-6 w-6 shrink-0", hoverReveal("grouprow")) : "shrink-0"}
+            className={size === "sidebar" ? cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("grouprow")) : "shrink-0"}
           >
             <EllipsisVertical aria-hidden="true" className={size === "sidebar" ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" sheetTitle={group.name}>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
@@ -134,7 +139,7 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
               onSelect={(event) => {
                 event.preventDefault();
                 setMenuOpen(false);
-                setRenameOpen(true);
+                setDialog("rename");
               }}
             >
               <Pencil aria-hidden="true" className="mr-2 h-4 w-4" />
@@ -148,7 +153,7 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
               onSelect={(event) => {
                 event.preventDefault();
                 setMenuOpen(false);
-                setDeleteOpen(true);
+                setDialog("delete");
               }}
             >
               <Trash aria-hidden="true" className="mr-2 h-4 w-4" />
@@ -170,9 +175,17 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {renameOpen && <GroupNameDialog mode="rename" group={group} open onOpenChange={setRenameOpen} returnFocusRef={triggerRef} />}
+      {dialog === "rename" && (
+        <SidebarLazyBoundary chunk="groupDialog" fallback={null} errorClassName="p-2">
+          <GroupNameDialog mode="rename" group={group} open onOpenChange={dialogOpenChange("rename")} returnFocusRef={triggerRef} />
+        </SidebarLazyBoundary>
+      )}
 
-      {deleteOpen && <DeleteGroupDialog group={group} onOpenChange={setDeleteOpen} returnFocusRef={triggerRef} />}
+      {dialog === "delete" && (
+        <SidebarLazyBoundary chunk="groupDialog" fallback={null} errorClassName="p-2">
+          <DeleteGroupDialog group={group} onOpenChange={dialogOpenChange("delete")} returnFocusRef={triggerRef} />
+        </SidebarLazyBoundary>
+      )}
 
       <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
         <DialogContent onCloseAutoFocus={returnFocusToTrigger}>

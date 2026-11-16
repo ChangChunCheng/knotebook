@@ -1068,14 +1068,15 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toHaveCount(0);
   });
 
+  // 700 寬是浮動側欄的版面（640～1279，側欄是抽屜）；比 640 窄的手機版面沒有抽屜也沒有側欄鈕，不在這一案。
   test("narrow window: Help and the drawer close first, sidebar stops point at the menu button, and focus ends on it", async ({
     page,
     browser,
   }) => {
     test.setTimeout(120_000);
     await signUpFreshUser(browser, page);
-    await page.setViewportSize({ width: 390, height: 844 });
-    const drawerButton = page.getByRole("button", { name: "Open navigation", exact: true });
+    await page.setViewportSize({ width: 700, height: 844 });
+    const drawerButton = page.getByRole("button", { name: "Open sidebar", exact: true });
     await drawerButton.click();
     const drawer = page.getByRole("dialog", { name: "Navigation" });
     await expect(drawer).toBeVisible();
@@ -1087,19 +1088,22 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
     await expect(help).toHaveCount(0);
 
-    // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）也在 ⋮ 裡，站 7、8 指編輯器裡真的 [[ 與 / 選單；
+    // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）指右下角的版本泡泡（640 以上都有），站 7、8 指編輯器裡真的 [[ 與 / 選單；
     // 其餘指開側欄的漢堡鈕。抽屜整輪都不再出現。
-    const label = (n: number): string => (n === 5 || n === 6 ? "More" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open navigation");
+    const label = (n: number): string =>
+      n === 5 ? "More" : n === 6 ? "the versions bubble" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar";
     await walkToLastStop(page, async (n) => {
       await expect(page.locator("[data-sidebar-drawer]")).toHaveCount(0);
       const target =
-        n === 5 || n === 6
+        n === 5
           ? page.getByRole("button", { name: "More", exact: true })
-          : n === 7
-            ? page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()
-            : n === 8
-              ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
-              : drawerButton;
+          : n === 6
+            ? page.locator('[data-kb-tour-target="versions"]:visible').first()
+            : n === 7
+              ? page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()
+              : n === 8
+                ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
+                : drawerButton;
       await expect.poll(async () => {
         const [hole, box] = [await holeBox(page), await target.boundingBox()];
         if (box === null) return false;

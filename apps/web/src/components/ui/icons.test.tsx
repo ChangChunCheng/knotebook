@@ -2,29 +2,32 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { NOTE_WIDTHS } from "@knotebook/shared";
 import {
-  ArrowDown,
-  ArrowUp,
-  Columns2,
   CornerDownRight,
   FilePlus,
   Folder,
   FolderPlus,
   History,
   House,
+  LogOut,
+  Pencil,
+  PanelLeft,
+  SquareCheck,
+  Star,
+  Users,
+} from "./icons";
+import {
+  ArrowDown,
+  ArrowUp,
+  Columns2,
   ImageIcon,
   KeyRound,
   ListFilter,
-  LogOut,
   NoteWidthIcon,
-  Pencil,
   Plug,
   RotateCcw,
   Rows3,
-  SquareCheck,
-  Star,
   StarOff,
-  Users,
-} from "./icons";
+} from "./icons-extra";
 
 describe("icons", () => {
   it("Users 帶 data-icon=\"users\"（ShareDialog 測試靠它斷觸發鈕圖示）且吃 className", () => {
@@ -63,6 +66,8 @@ describe("icons", () => {
     ["star", Star],
     // 最愛 tab 選取模式的「移出最愛」
     ["star-off", StarOff],
+    // 浮動側欄的入口鈕
+    ["panel-left", PanelLeft],
   ] as const)("圖示 %s：帶 data-icon、預設 aria-hidden、吃 className", (name, Icon) => {
     const { container } = render(<Icon className="h-4 w-4" />);
     const svg = container.querySelector("svg");

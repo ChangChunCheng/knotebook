@@ -27,7 +27,7 @@ export function KindFilter({ className }: { className?: string }) {
           variant="ghost"
           size="sm"
           aria-pressed={kindFilter === value}
-          className={cn("h-7", kindFilter === value && PRESSED_CLASS)}
+          className={cn("h-7 max-sm:h-9", kindFilter === value && PRESSED_CLASS)}
           onClick={() => setKindFilter(value)}
         >
           {t(labelKey)}

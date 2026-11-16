@@ -2,6 +2,7 @@ import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
 import { useSession } from "@/auth/useSession";
+import { Avatar } from "@/components/Avatar";
 import { useTheme, ACCENTS, type Accent, type Theme } from "@/theme";
 import { Check, Settings } from "@/components/ui/icons";
 import { SIDEBAR_ROW_HEIGHT } from "@/components/ui/rows";
@@ -11,6 +12,7 @@ import { useSidebarQuery } from "@/lib/sidebar-query";
 import { useShortcutsDialog } from "@/lib/shortcuts-dialog";
 import { useTour } from "@/lib/tour-context";
 import { openSettings } from "@/lib/open-settings";
+import { panelEntryState } from "@/lib/panel-return";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +49,7 @@ const THEMES: Theme[] = ["light", "dark", "system"];
  * `getByRole("button",{name:user.displayName,exact:true})` 這類既有查詢在改版
  * 前後行為不變。
  */
-export function UserMenu() {
+export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -79,37 +81,59 @@ export function UserMenu() {
     void i18n.changeLanguage(code);
   }
 
+  const avatar = variant === "avatar";
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
-        <button
-          ref={triggerRef}
-          type="button"
-          aria-label={user.displayName}
-          {...tourTarget("userMenu")}
-          className={cn(
-            // 列高吃 SIDEBAR_ROW_HEIGHT：與內文卡底部的 backlinks 列等高
-            // （兩者左右相鄰，見該常數註解）。p-1.5＋24px avatar 的自然高度
-            // 本來就等於它，這裡明寫出來是為了讓兩邊有機械連結、不會各改各的。
-            "flex w-full items-center gap-2 rounded-md p-1.5 text-left text-sm hover:bg-accent/60",
-            SIDEBAR_ROW_HEIGHT,
-          )}
-        >
-          <span
-            aria-hidden="true"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground"
+        {avatar ? (
+          // 頭像形（手機清單頂列）：只有共用頭像（圖或首字）；視覺 32、點擊範圍 44。
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-label={user.displayName}
+            {...tourTarget("userMenu")}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
           >
-            {user.displayName.charAt(0).toUpperCase()}
-          </span>
-          <span aria-hidden="true" className="min-w-0 flex-1 truncate">
-            {user.displayName}
-          </span>
-          <Settings aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
-        </button>
+            <Avatar
+              name={user.displayName}
+              avatar={user.avatar ? { id: user.avatar.id, v: user.avatar.v } : null}
+              size={32}
+              className="bg-primary text-primary-foreground"
+            />
+          </button>
+        ) : (
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-label={user.displayName}
+            {...tourTarget("userMenu")}
+            className={cn(
+              // 列高吃 SIDEBAR_ROW_HEIGHT：與內文卡底部的 backlinks 列等高
+              // （兩者左右相鄰，見該常數註解）。p-1.5＋24px avatar 的自然高度
+              // 本來就等於它，這裡明寫出來是為了讓兩邊有機械連結、不會各改各的。
+              "flex w-full items-center gap-2 rounded-md p-1.5 text-left text-sm hover:bg-accent/60",
+              SIDEBAR_ROW_HEIGHT,
+            )}
+          >
+            <Avatar
+              name={user.displayName}
+              avatar={user.avatar ? { id: user.avatar.id, v: user.avatar.v } : null}
+              size={24}
+              className="bg-primary text-primary-foreground"
+            />
+            <span aria-hidden="true" className="min-w-0 flex-1 truncate">
+              {user.displayName}
+            </span>
+            <Settings aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </button>
+        )}
       </DropdownMenuTrigger>
       {/* 寬度跟著觸發它的帳號列走（Radix 在 Content 上曝露 trigger 量到的寬度），
-          選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。 */}
-      <DropdownMenuContent align="end" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
+          選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。頭像形的觸發鈕只有 44 寬，改用固定下限。 */}
+      <DropdownMenuContent
+        align="end"
+        className={avatar ? "min-w-56" : "min-w-[var(--radix-dropdown-menu-trigger-width)]"}
+      >
         <DropdownMenuLabel>{user.displayName}</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
@@ -140,14 +164,16 @@ export function UserMenu() {
         <DropdownMenuLabel id={accentLabelId} className="text-xs font-normal text-muted-foreground">
           {t("userMenu.accent")}
         </DropdownMenuLabel>
-        {/* gap-2 是承重值：16px 圓點（h-4 w-4）＋8px 間距＝圓心距 24px，恰合
+        {/* gap 是承重值。滑鼠：16px 圓點（h-4 w-4）＋8px 間距（gap-2）＝圓心距 24px，恰合
             WCAG 2.5.8 Target Size (Minimum) 的間距例外下限——縮小 gap 即不合格，
-            不得因為「看起來擠一點沒差」隨手調整。 */}
+            不得因為「看起來擠一點沒差」隨手調整。觸控：圓點放大到 28px，並用 after 把點擊範圍擴到
+            44px（見色點的 class），所以間距拉到 16px（gap-4）＝圓心距 44px，相鄰兩顆的點擊範圍剛好不重疊，
+            不再靠 24px 例外成立。 */}
         <DropdownMenuRadioGroup
           value={accent}
           onValueChange={(value) => setAccent(value as Accent)}
           aria-labelledby={accentLabelId}
-          className="flex gap-2 px-2 py-1.5"
+          className="flex gap-2 pointer-coarse:gap-4 px-2 py-1.5"
         >
           {ACCENTS.map((color) => (
             <DropdownMenuRadioItem
@@ -167,7 +193,7 @@ export function UserMenu() {
                 // 可見。wrapper 的 outline-none 清掉了瀏覽器原生 focus ring，
                 // 鍵盤在六點間移動需要自己補：Radix 在 roving focus 目前停留
                 // 的項目上放 data-highlighted，用 ring-foreground 顯示。
-                "flex h-4 w-4 items-center justify-center rounded-full ring-offset-2 ring-offset-popover data-[highlighted]:ring-2 data-[highlighted]:ring-foreground",
+                "relative flex h-4 w-4 items-center justify-center rounded-full pointer-coarse:h-7 pointer-coarse:w-7 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] ring-offset-2 ring-offset-popover data-[highlighted]:ring-2 data-[highlighted]:ring-foreground",
               )}
               style={{ backgroundColor: `var(--brand-swatch-${color})` }}
             >
@@ -186,7 +212,7 @@ export function UserMenu() {
             提示字 aria-hidden：不進選單項的可及名稱（e2e 以名稱找項）。開法與 AppShell 的 Ctrl+, 同一條路（`openSettings`）。 */}
         <DropdownMenuItem
           aria-keyshortcuts={shortcuts ? (mac ? "Meta+," : "Control+,") : undefined}
-          onSelect={() => openSettings(navigate, location)}
+          onSelect={() => openSettings(navigate, location, () => setMenuOpen(true))}
         >
           {t("settings.entry")}
           {shortcuts && (
@@ -205,7 +231,7 @@ export function UserMenu() {
               event.preventDefault();
               setMenuOpen(false);
               // 有導覽 context 就停在「功能導覽」頁；沒有（導覽不在這棵樹上）那頁不列，停在快捷鍵的「通用」。
-              shortcuts.open(triggerRef.current, tour ? "tour" : "global");
+              shortcuts.open(triggerRef.current, tour ? "tour" : "global", () => setMenuOpen(true));
             }}
           >
             {t("userMenu.help")}
@@ -217,7 +243,7 @@ export function UserMenu() {
         )}
         {/* 站台管理是 modal（#247）：帶 backgroundLocation，關閉時回到原頁。非 admin 不渲染；/admin 的 RequireAdmin 才是防線。 */}
         {user.isAdmin && (
-          <DropdownMenuItem onSelect={() => navigate("/admin/users", { state: { backgroundLocation: location } })}>{t("userMenu.siteAdmin")}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate("/admin/users", { state: panelEntryState(location, () => setMenuOpen(true)) })}>{t("userMenu.siteAdmin")}</DropdownMenuItem>
         )}
 
         <DropdownMenuSeparator />

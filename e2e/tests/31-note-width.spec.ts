@@ -1,11 +1,13 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { ADMIN, createNote, editorLocator, loginAs, randomEmail } from "./helpers.js";
+import { ADMIN, clickByPointer, createNote, editorLocator, loginAs, randomEmail } from "./helpers.js";
 
 /**
  * #297 內文欄三段寬度（真瀏覽器量測）：
- * - E1 站內：頁首寬度選單切標準／寬／全寬，多個視窗寬下欄寬＝`expected()`（clamp 公式，代入實量的 W）；重整後仍記得。
- * - E2 頁首：768 px × {預設側欄, 320 px 側欄} × {en, zh-TW} 頁首不被裁、寬度鈕隱藏；
- *   寬度鈕恰在頁首 content box ≥ 696 px（`@min-[43.5rem]`）時出現，門檻兩側各量一格，⋮ 都不被裁。
+ * - E1 站內：頁首寬度鈕按一下換下一種（標準 → 寬 → 全寬 → 標準），多個視窗寬下欄寬＝`expected()`（clamp 公式，代入實量的 W）；重整後仍記得。
+ * - E2 頁首：{en, zh-TW} 下頁首都不被裁。視窗 640–1279 側欄浮在筆記上、不佔寬，寬度鈕只看頁首 content box：
+ *   恰在 ≥ 696 px（`@min-[43.5rem]`）時出現，門檻兩側各量一格，⋮ 都不被裁；視窗 ≥ 1280 側欄固定在左側
+ *   （預設與 320 px 兩種寬度），1280、1440 兩格同樣不被裁、可見性與 content box 一致。
+ * - E4 站內：⋮ 選單的「Width」子選單（Radix 巢狀選單）選寬度，欄寬照公式、寬度鈕的名稱跟著換。
  * - E3 公開頁（e2e）：owner 在分享對話框設全寬 → 匿名讀者的欄寬＝W、超過標準上限 1056。
  *
  * W＝欄的父層（捲動容器，無 padding）的 clientWidth：max-width 的百分比以它解析；以實量 W 對公式，捲軸只改變 W、不影響判定。
@@ -23,14 +25,20 @@ function expected(mode: Mode, W: number): number {
   return Math.min(W, Math.min(cap, Math.max(680, ratio * W)));
 }
 
-const MENU_LABEL: Record<Mode, string> = { standard: "Standard", wide: "Wide", full: "Full width" };
+const MODE_LABEL: Record<Mode, string> = { standard: "Standard", wide: "Wide", full: "Full width" };
+/** 寬度鈕的可及名稱：目前值與按下去會變成的下一種。 */
+const CYCLE_LABEL: Record<Mode, string> = {
+  standard: "Width: Standard — click for Wide",
+  wide: "Width: Wide — click for Full width",
+  full: "Width: Full width — click for Standard",
+};
 /** 頁首寬度鈕的門檻：header content box ≥ 43.5rem。 */
 const HEADER_EDGE = 696;
 
 async function measureColumn(page: Page): Promise<{ col: number; W: number }> {
   return page.getByTestId("article-column").evaluate((el) => ({
     col: el.getBoundingClientRect().width,
-    W: el.parentElement!.clientWidth,
+    W: el.closest<HTMLElement>(".overflow-y-auto")!.clientWidth,
   }));
 }
 
@@ -53,16 +61,15 @@ test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得",
   await loginAndCreateNote(page, `E2E note width E1 ${RUN_ID}`);
   await setViewport(page, 1920, 1000);
   const button = page.getByRole("button", { name: /^Width/ });
-  await expect(button).toHaveAttribute("aria-label", "Width: Standard");
+  await expect(button).toHaveAttribute("aria-label", CYCLE_LABEL.standard);
 
   const seenW: number[] = [];
   for (const mode of ["standard", "wide", "full"] as const) {
     await setViewport(page, 1920, 1000);
-    await button.click();
-    await page.getByRole("menuitemradio", { name: MENU_LABEL[mode], exact: true }).click();
-    await expect(page.getByRole("menu")).toHaveCount(0);
-    await expect(button).toHaveAttribute("aria-label", `Width: ${MENU_LABEL[mode]}`);
-    for (const vw of [1920, 1440, 1200, 1000, 900]) {
+    // 按一下換下一種；起點已經是標準，第一輪不按。
+    if (mode !== "standard") await button.click();
+    await expect(button).toHaveAttribute("aria-label", CYCLE_LABEL[mode]);
+    for (const vw of [1920, 1440, 1280, 1200, 900, 700, 640]) {
       await setViewport(page, vw, 1000);
       const { col, W } = await measureColumn(page);
       const want = expected(mode, W);
@@ -77,10 +84,28 @@ test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得",
 
   await setViewport(page, 1920, 1000);
   await page.reload();
-  await expect(page.getByRole("button", { name: /^Width/ })).toHaveAttribute("aria-label", "Width: Full width");
+  await expect(page.getByRole("button", { name: /^Width/ })).toHaveAttribute("aria-label", CYCLE_LABEL.full);
   const after = await measureColumn(page);
   console.log(`MEASURE E1 reload vw=1920 W=${after.W} col=${after.col.toFixed(2)}`);
   expect(Math.abs(after.col - after.W)).toBeLessThanOrEqual(1);
+});
+
+test("E4 ⋮ 的 Width 子選單：選 Wide / Full width，欄寬照公式、寬度鈕名稱跟著換", async ({ page }) => {
+  test.setTimeout(90_000);
+  await loginAndCreateNote(page, `E2E note width E4 ${RUN_ID}`);
+  await setViewport(page, 1440, 1000);
+  const button = page.getByRole("button", { name: /^Width/ });
+  await expect(button).toHaveAttribute("aria-label", CYCLE_LABEL.standard);
+  for (const mode of ["wide", "full", "standard"] as const) {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Width", exact: true }).click();
+    await clickByPointer(page, page.getByRole("menuitemradio", { name: MODE_LABEL[mode], exact: true }));
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(button).toHaveAttribute("aria-label", CYCLE_LABEL[mode]);
+    const { col, W } = await measureColumn(page);
+    console.log(`MEASURE E4 mode=${mode} vw=1440 W=${W} col=${col.toFixed(2)} expected=${expected(mode, W).toFixed(2)}`);
+    expect(Math.abs(col - expected(mode, W)), `E4 ${mode} W=${W}`).toBeLessThanOrEqual(1);
+  }
 });
 
 type HeaderMeasure = { contentW: number; clientW: number; scrollW: number; right: number; moreRight: number; visible: boolean };
@@ -101,7 +126,7 @@ async function measureHeader(header: Locator, widthButton: Locator, more: Locato
   return { ...box, moreRight: moreBox.x + moreBox.width, visible: await widthButton.isVisible() };
 }
 
-test("E2 頁首不裁切：768 × 兩種側欄 × 中英文；寬度鈕恰在 content box ≥ 696 時出現", async ({ page }) => {
+test("E2 頁首不裁切：浮動段（640–1279）與固定段（≥ 1280）× 中英文；寬度鈕恰在 content box ≥ 696 時出現", async ({ page }) => {
   test.setTimeout(180_000);
   await loginAndCreateNote(page, `E2E note width E2 ${RUN_ID}`);
   // 等「最後編輯」出現，讓頁首最擠。
@@ -145,14 +170,18 @@ test("E2 頁首不裁切：768 × 兩種側欄 × 中英文；寬度鈕恰在 co
         return m;
       };
 
-      const narrow = await check(768);
-      expect(narrow.visible, `${tag}：768 時寬度鈕要隱藏`).toBe(false);
-      const wide = await check(1200);
-      expect(wide.visible, `${tag}: width button must be visible at 1200`).toBe(true);
+      // 固定段：側欄在左側佔寬，兩格都要不裁切，可見性與 content box 一致。
+      for (const vw of [1280, 1440]) await check(vw);
 
-      // 邊界：在 (768, 1200] 二分找最小可見 vw，兩側各量一格（check 內已斷言不裁切、可見性與 contentW 一致）。
-      let lo = 768;
-      let hi = 1200;
+      // 浮動段：側欄不佔寬，content box ≈ 視窗 − 66，寬度鈕只看它。640 時不夠寬（隱藏），1279 時夠寬（可見）。
+      const narrow = await check(640);
+      expect(narrow.visible, `${tag}：640 時寬度鈕要隱藏`).toBe(false);
+      const wide = await check(1279);
+      expect(wide.visible, `${tag}: width button must be visible at 1279`).toBe(true);
+
+      // 邊界：在 (640, 1279] 二分找最小可見 vw，兩側各量一格（check 內已斷言不裁切、可見性與 contentW 一致）。
+      let lo = 640;
+      let hi = 1279;
       while (hi - lo > 1) {
         const mid = Math.floor((lo + hi) / 2);
         await setViewport(page, mid, 900);
@@ -161,7 +190,7 @@ test("E2 頁首不裁切：768 × 兩種側欄 × 中英文；寬度鈕恰在 co
       }
       const edge = await check(hi);
       const below = await check(hi - 1);
-      const predicted = 1200 - (wide.contentW - HEADER_EDGE);
+      const predicted = 1279 - (wide.contentW - HEADER_EDGE);
       console.log(`MEASURE E2 ${tag} edgeVw=${hi} predictedVw=${predicted} contentW@edge=${edge.contentW} contentW@edge-1=${below.contentW}`);
       expect(edge.visible).toBe(true);
       expect(below.visible).toBe(false);
@@ -225,7 +254,7 @@ test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄
     // 站內寬度是 owner 自己這台瀏覽器的偏好，不跟著公開頁走。
     await owner.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
-    await expect(owner.getByRole("button", { name: /^Width/ })).toHaveAttribute("aria-label", "Width: Standard");
+    await expect(owner.getByRole("button", { name: /^Width/ })).toHaveAttribute("aria-label", CYCLE_LABEL.standard);
   } finally {
     await anonContext.close();
     await ownerContext.close();

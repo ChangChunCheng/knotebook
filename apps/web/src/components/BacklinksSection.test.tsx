@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router";
 import { canonicalNotePath, type BacklinkDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { BACKLINKS_SCROLL_ROW, SIDEBAR_ROW_HEIGHT } from "@/components/ui/rows";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { BacklinksSection } from "./BacklinksSection";
 
 interface FakeResponseInit {
@@ -100,6 +101,40 @@ describe("BacklinksSection", () => {
     );
     expect(screen.queryByText("No mentions yet")).not.toBeInTheDocument();
     expect(container.textContent).toBe("");
+  });
+
+  it("手機：0 篇、查詢未完成、查詢失敗都整列不渲染", async () => {
+    stubLayoutTier("phone");
+    vi.stubGlobal("fetch", mockFetch([]));
+    const empty = renderSection(NOTE_ID);
+    await waitFor(() => expect(empty.queryClient.getQueryState(["backlinks", NOTE_ID])?.status).toBe("success"));
+    expect(empty.container).toBeEmptyDOMElement();
+    empty.unmount();
+
+    vi.stubGlobal("fetch", vi.fn());
+    const unknown = renderSection(undefined);
+    expect(unknown.container).toBeEmptyDOMElement();
+    unknown.unmount();
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(fakeResponse({ ok: false, status: 500 }))));
+    const failed = renderSection(NOTE_ID);
+    await waitFor(() => expect(failed.queryClient.getQueryState(["backlinks", NOTE_ID])?.status).toBe("error"));
+    expect(failed.container).toBeEmptyDOMElement();
+  });
+
+  it("手機：有提及時照常顯示標題與 chips", async () => {
+    stubLayoutTier("phone");
+    vi.stubGlobal("fetch", mockFetch(BACKLINKS));
+    renderSection(NOTE_ID);
+    expect(await screen.findByText("Mentioned in 2 notes")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Alpha" })).toBeInTheDocument();
+  });
+
+  it.each(["overlay", "docked"] as const)("%s：0 篇仍顯示空狀態文案", async (tier) => {
+    stubLayoutTier(tier);
+    vi.stubGlobal("fetch", mockFetch([]));
+    renderSection(NOTE_ID);
+    expect(await screen.findByText("No mentions yet")).toBeInTheDocument();
   });
 
   it("N 篇 → 標題含篇數，逐條渲染標題文字與正確的 canonicalNotePath href", async () => {

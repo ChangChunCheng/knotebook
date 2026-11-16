@@ -459,6 +459,17 @@ input[name="share-access"] {
   text-decoration-line: underline;
 }
 
+/* 手機編輯工具列的色盤開著時，編輯器已失焦，選取靠 ShowSelectionExtension 的 `[data-show-selection]` 補畫。
+   BlockNote 預設把它畫成 `background-color: highlight`，而這個 span 在最內層，會蓋住剛套上的背景色，
+   使用者就看不到套色的效果；所以只在編輯器根節點帶 `data-mobile-color-open` 時改畫外框。
+   AI 框等其他用途的反白不帶這個屬性，樣式不變。`.bn-editor` 祖先錨的理由同上。 */
+.bn-editor[data-mobile-color-open] [data-show-selection] {
+  background-color: transparent;
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 /* 可編輯時觸控長按連結＝開工具列，關掉 iOS 的長按連結選單；唯讀（contenteditable="false"）保留系統選單。
    套到可編輯編輯器裡所有 `<a>`（一般連結、wikilink，也含 mermaid 圖裡的連結）；Android 的 contextmenu 由 JS 攔（`lib/long-press.ts`）。
    不改成 link 屬性選擇器：`theme.link-guard.test.ts` 規定那種規則恰好兩條。 */
@@ -706,6 +717,14 @@ input[name="share-access"] {
   font-family: inherit;
 }
 
+/* 觸控：程式碼區塊的語言下拉是 BlockNote 內建的原生 select，字級 12px 時 iOS 聚焦會放大整頁。
+   與上一條同樣不放 layer、選擇器與它一致，才壓得過它的 `text-xs`。 */
+@media (pointer: coarse) {
+  .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
+    font-size: var(--text-base);
+  }
+}
+
 /* 現身：hover 整個 block、游標在這塊程式碼裡（`data-caret-inside`）、或焦點在下拉上——
    與 mermaid 的 `group-hover`／`group-focus-within`／`focus-visible` 同語意。
    清單展開的那段（焦點已移進 option）另由 `@supports (appearance: base-select)` 裡的
@@ -872,12 +891,117 @@ input[name="share-access"] {
    媒體查詢用 `width < 48rem`＝Tailwind v4 `max-md:` 的實編形——與 wrapper 的
    `max-md:px-0`（ui/article-column.ts）同界，兩邊必須一起動。
 
-   已知代價：<768 的 hover 裝置上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
-   容器裁掉一部分——<768 幾乎都是無 hover 的觸控裝置（側選單本來就不出現），
-   接受（docs/known-limitations.md 有記）。 */
+   已知代價：640–767 寬的視窗上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
+   容器裁掉一部分（< 640 不掛側選單），接受（docs/known-limitations.md 有記）。 */
 @media (width < 48rem) {
   .bn-editor.bn-editor {
     padding-inline: 1.25rem;
+  }
+}
+
+/* 內文標題字級用 Markdown 慣例：H1 2em、H2 1.5em、H3 1.25em（BlockNote 預設是 3em／2em／1.3em），所有寬度一致。
+   H4–H6（1em 以下）不動。
+
+   BlockNote 的標題字級是兩步：`[data-content-type=heading]`（H1，沒有 data-level——預設值不輸出屬性）與
+   `[data-content-type=heading][data-level="2"|"3"]` 設自訂屬性 `--level`（特異性 (0,1,0)／(0,2,0)），再由
+   `.bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type=heading]`（(0,5,0)）寫
+   `font-size: var(--level)`。所以這裡改的是 `--level` 而不是 font-size：自訂屬性只跟同樣宣告 `--level` 的規則比特異性，
+   不必去贏那條 (0,5,0)；那條規則照樣吃到我們的值。疊 `.bn-editor.bn-editor` 墊到 (0,4,0)，高於 BlockNote 的 (0,1,0)／(0,2,0)
+   ——它的 CSS 在 lazy chunk、載入較晚，兩邊都未分層，同特異性我們必輸（同上一段的雷）。 */
+.bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
+  --level: 2em;
+}
+.bn-editor.bn-editor [data-content-type="heading"][data-level="2"] {
+  --level: 1.5em;
+}
+.bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
+  --level: 1.25em;
+}
+/* 標題換類型的轉場：下一個區塊從「前一個標題」的字級起算（`--prev-level`，BlockNote 設在 `[data-prev-level="n"]`、特異性 (0,1,0)），
+   同樣改成這組字級，動畫才不會從 BlockNote 預設的大小開始。 */
+.bn-editor.bn-editor [data-prev-level="1"] {
+  --prev-level: 2em;
+}
+.bn-editor.bn-editor [data-prev-level="2"] {
+  --prev-level: 1.5em;
+}
+.bn-editor.bn-editor [data-prev-level="3"] {
+  --prev-level: 1.25em;
+}
+
+/* 拖曳預覽：BlockNote 把被拖的區塊複製到 <body> 下（`.bn-drag-preview`，沒有 `bn-editor`），上面那組選擇器碰不到，
+   不補的話被拖的 H1 仍以 48px 顯示。 */
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"]:not([data-level]) {
+  --level: 2em;
+}
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"][data-level="2"] {
+  --level: 1.5em;
+}
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"][data-level="3"] {
+  --level: 1.25em;
+}
+
+/* 桌面側邊選單（`+`／拖曳把手）的高度：BlockNote 依標題字級寫死（H1 108px、H2 84px、H3 67px），
+   讓按鈕落在首行文字中線。高度＝36px ＋ 1.5 × 字級（BlockNote 的 108／84／67 對 48／32／20.8px 正是這個式子；標題 padding-top 18px、行高 1.5）。
+   字級縮小後要跟著縮：H1 32px → 84px、H2 24px → 72px、H3 20px → 66px。
+   側邊選單是浮在 `.bn-editor` 外的元素，疊兩次自己的 class 墊到 (0,4,0)，高於 BlockNote 的 (0,3,0)，不管載入先後。
+   H1 的側邊選單帶 `data-level="1"`（與區塊本身不同，區塊的 H1 沒有 data-level）。 */
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="1"] {
+  height: 84px;
+}
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="2"] {
+  height: 72px;
+}
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="3"] {
+  height: 66px;
+}
+
+/* 手機：寬表格在右緣還能往右捲時淡出，提示「這裡還有」。淡出寬度走 --kb-table-fade（預設 0＝不淡出）。
+   支援捲動驅動動畫（animation-timeline）的瀏覽器純 CSS：動畫以表格自己的橫向捲動位置為時間軸，捲到最右前（95%）維持 1.5rem、
+   最後 5% 收到 0；表格沒有溢出時時間軸不作用、動畫不生效，自然沒有淡出。不支援的瀏覽器由 NoteEditor 的委派監聽
+   （lib/table-scroll-hint.ts）在還能往右捲的表格上加 data-kb-more-right。
+   疊 .bn-editor.bn-editor 墊到 (0,4,0)，高於 BlockNote 的 `.bn-editor [data-content-type=table] .tableWrapper`（0,3,0）
+   （它的 CSS 晚載入、未分層，同特異性我們必輸）。媒體查詢 width < 40rem 與 PHONE_QUERY 同界；其他寬度不碰表格。 */
+@property --kb-table-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes kb-table-fade {
+  0%,
+  95% {
+    --kb-table-fade: 1.5rem;
+  }
+  100% {
+    --kb-table-fade: 0px;
+  }
+}
+@media (width < 40rem) {
+  .bn-editor.bn-editor [data-content-type="table"] .tableWrapper {
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--kb-table-fade)), transparent);
+  }
+  @supports (animation-timeline: scroll(self inline)) {
+    .bn-editor.bn-editor [data-content-type="table"] .tableWrapper {
+      animation-name: kb-table-fade;
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+  @supports not (animation-timeline: scroll(self inline)) {
+    .bn-editor.bn-editor [data-content-type="table"] .tableWrapper[data-kb-more-right] {
+      --kb-table-fade: 1.5rem;
+    }
+  }
+}
+
+/* 手機：選單列不被擠扁。上游給每列 height: 52px，但選單是有高度上限（50vh）的直欄 flex，列預設可收縮，
+   沒有副標的 [[ 筆記清單列被擠到內容高度 33px（有副標的 / 列約 49px），不夠一個觸控目標。flex-shrink: 0 讓列保持 52px，超出的部分在選單內捲動。
+   疊 .bn-mantine 是為了不輸給晚載入的同特異度規則。媒體查詢 width < 40rem 與 PHONE_QUERY 同界。 */
+@media (width < 40rem) {
+  .bn-mantine .bn-suggestion-menu-item {
+    flex-shrink: 0;
   }
 }
 
@@ -1087,6 +1211,126 @@ input[name="share-access"] {
   background-color: color-mix(in oklch, var(--color-brand) 38%, transparent);
   animation: kn-anchor-mark 1.6s linear;
 }
+/* 手機：從清單點進筆記時，筆記畫面從右側滑入（只在 AppShell 判定為「清單 → 筆記的 PUSH」時加上這個 class）。
+   用 transform（合成層，不在主執行緒重排）。transform 會讓裡面 fixed 的元素改以這個元素為準定位，所以筆記頁的浮動鈕
+   不放在主內容區裡，而是 portal 到 AppShell 在主內容區外面留的一格（`data-phone-fab-slot`）。滑入時的橫向溢出由外框的
+   overflow-x: clip 裁掉。 */
+@keyframes kb-phone-enter {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.kb-phone-enter {
+  animation: kb-phone-enter 200ms ease-out;
+}
+
+/* 手機（< 640）：清單與筆記捲的是文件，不是內層容器（見 lib/page-scroll.ts；AppShell 外框帶 data-phone-page-scroll）。
+   - html／body 的底色換成手機版面的底色（卡片色）：Safari 半透明的底部工具列後面、回彈時露出來的區域與內容同色，沒有色帶。
+   - 筆記的區塊帶 scroll-margin-top：捲到段落、搜尋結果與提及時讓開釘在頂端的筆記頁首（高度由 NoteEditor 量好寫在 --kb-sticky-top）。
+     不用 html 的 scroll-padding-top：那會連頁首自己的鈕也算成被擋住，關掉 ⋮ 選單把焦點還給 ⋮ 時，文件會被捲回上面。
+   - 下拉重新整理：清單畫面（含全螢幕搜尋層，aside 帶 data-phone-list-shown）與編輯中的筆記（有編輯工具列）擋掉，免得誤觸重載；
+     瀏覽中的筆記照舊可以下拉重新整理。overscroll-behavior 寫在 html 與 body 兩處：各瀏覽器取視窗的值的位置不一致。 */
+@media (width < 40rem) {
+  html:has([data-phone-page-scroll]),
+  html:has([data-phone-page-scroll]) body {
+    background-color: var(--color-card);
+  }
+  [data-phone-page-scroll] .bn-block-outer,
+  [data-phone-page-scroll] .bn-block-content {
+    scroll-margin-top: var(--kb-sticky-top, 0px);
+  }
+  /* 清單列（連同列裡會拿到焦點的連結與按鈕）：鍵盤或螢幕閱讀器把焦點移過去時讓開釘住的頂列與標題列（下緣由清單量好寫在 --kb-list-sticky-top）。 */
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind],
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind] * {
+    scroll-margin-top: var(--kb-list-sticky-top, 0px);
+  }
+  html:has([data-phone-list-shown]),
+  html:has([data-phone-list-shown]) body,
+  html:has([data-mobile-edit-toolbar]),
+  html:has([data-mobile-edit-toolbar]) body {
+    overscroll-behavior-y: contain;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb-phone-enter {
+    animation: none;
+  }
+}
+
+/* 手機：對話框（預設尺寸）與帶 `phoneSheet` 的選單是貼底的 sheet，由下往上升起、關閉時往下收，背板淡入淡出。只在手機寬度動畫；
+   減少動態時不動畫（Radix 會直接卸載）。 */
+@keyframes kb-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes kb-sheet-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes kb-sheet-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes kb-sheet-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* 手機：帶 `phoneSheet` 的選單（⋮ 選單、帳號選單）是貼底滿寬的 sheet（`.kb-menu-sheet` 只在手機寬度由 JS 加上）。
+   Radix 把選單內容包在定位用的 wrapper 裡，以行內樣式把它貼到觸發鈕旁（left／top／transform，高解析度螢幕另有 will-change: transform），
+   這裡蓋掉那些定位，改成貼齊視窗底與左右。will-change 也要清掉：它會讓 wrapper 變成 fixed 子孫的包含區塊，背板就蓋不滿視窗。
+   背板畫在 wrapper 的 ::before（z-index -1：在選單底下）；點背板＝在選單外按下，Radix 照常關閉選單。 */
+[data-radix-popper-content-wrapper]:has(> .kb-menu-sheet) {
+  position: fixed !important;
+  inset: auto 0 0 0 !important;
+  transform: none !important;
+  will-change: auto !important;
+  min-width: 0 !important;
+}
+[data-radix-popper-content-wrapper]:has(> .kb-menu-sheet)::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: rgb(0 0 0 / 0.5);
+}
+@media (width < 40rem) and (prefers-reduced-motion: no-preference) {
+  .kb-sheet-overlay[data-state="closed"] {
+    animation: kb-sheet-overlay-out 150ms ease-in forwards;
+  }
+  [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet[data-state="open"])::before {
+    animation: kb-sheet-overlay-in 200ms ease-out;
+  }
+  [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet[data-state="closed"])::before {
+    animation: kb-sheet-overlay-out 150ms ease-in forwards;
+  }
+  .kb-sheet[data-state="open"] {
+    animation: kb-sheet-in 200ms ease-out;
+  }
+  .kb-sheet[data-state="closed"] {
+    animation: kb-sheet-out 150ms ease-in forwards;
+  }
+}
+
 /* 一般錨點的 2 s 高亮在 reduced-motion 下不動畫、靜態底色。搜尋標記（.kn-anchor-mark）刻意不在這裡關動畫：它是「你要找的字在這裡」的
    定位提示，只閃 2 次、頻率遠低於每秒 3 次（WCAG 2.3.1 閃光門檻），而且最後停在亮的；關掉動畫就只剩一個恆亮的底色，使用者看不出
    是跳轉的結果（曾有使用者在系統關閉動畫的機器上回報「沒有閃兩下、是恆亮」）。 */

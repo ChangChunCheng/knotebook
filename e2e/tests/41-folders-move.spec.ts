@@ -7,6 +7,7 @@ import {
   expectWidePointer,
   folderRow,
   loginAs,
+  openListOnCompact,
   openedSubmenu,
   pickDestination,
   pickNoteMenuDestination,
@@ -82,10 +83,10 @@ function noteLink(scope: Locator, title: string): Locator {
   return scope.getByRole("link", { name: new RegExp("^" + reEscape(title)) });
 }
 
-/** 側欄筆記列的 ⋮（hover 浮出，先 hover 再點）；同名多篇時取第一篇。等選單出現。 */
+/** 側欄筆記列的 ⋮（滑鼠下滑過整列才長出來：先 hover 整列再點）；同名多篇時取第一篇。等選單出現。 */
 async function openNoteActions(page: Page, scope: Locator, title: string): Promise<void> {
   const button = scope.getByRole("button", { name: `Note actions for ${title}`, exact: true }).first();
-  await button.hover();
+  await button.locator("xpath=ancestor::li[1]").hover();
   await button.click();
   await expect(page.getByRole("menu")).toBeVisible();
 }
@@ -340,7 +341,7 @@ test("41-5 選取模式：勾兩篇 → Move to → F → Move here（不確認�
   await expect(copyTo).toHaveAttribute("title", "Folders can't be copied");
 });
 
-test("41-6 390 抽屜：⋮ Move to… 就地展開、點「F, open」縮排區出現 Back → 選 F1；同抽屜選取模式移到 F", async ({ page }) => {
+test("41-6 390 手機清單：⋮ Move to… 在 sheet 裡逐層（換掉整個內容、最上面 Back）、點「F, open」→ 選 F1；同清單選取模式移到 F", async ({ page }) => {
   test.setTimeout(150_000);
   const F = `F ${RUN}`;
   const F1 = `F1 ${RUN}`;
@@ -354,17 +355,16 @@ test("41-6 390 抽屜：⋮ Move to… 就地展開、點「F, open」縮排區�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expectWidePointer(page, false);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
-  await expect(drawer).toBeVisible();
+  const drawer = await openListOnCompact(page);
   const drawerPanel = await showSidebarTab(page, "My notes", drawer);
   await expect(noteLink(drawerPanel, N)).toBeVisible({ timeout: 15_000 });
 
-  // ── ⋮ → Move to…（就地展開，不是 flyout）→「F, open」→ 縮排區出現 Back → F1 → toast ────────────
+  // ── ⋮ → Move to…（手機 sheet：換掉整個內容，不是 flyout）→「F, open」→ Back 在最上面 → F1 → toast ────────────
   await openNoteActions(page, drawerPanel, N);
   await expect(page.getByRole("menuitem", { name: "Move to…", exact: true })).not.toHaveAttribute("aria-haspopup", "menu");
   await pickNoteMenuDestination(page, "Move to…", [`${F}, open`]);
   await expect(page.getByRole("menuitem", { name: "Back", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toHaveCount(0);
   await page.getByRole("menuitem", { name: F1, exact: true }).click();
   await expect(toastWithTitle(page, `Moved to “${F1}”`)).toBeVisible({ timeout: 15_000 });
   await expect(drawer).toBeVisible();
@@ -606,9 +606,7 @@ test("41-12 390 窄形：勾資料夾 → 底部 Copy to 反灰（aria-disabled�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expectWidePointer(page, false);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
-  await expect(drawer).toBeVisible();
+  const drawer = await openListOnCompact(page);
   const drawerPanel = await showSidebarTab(page, "My notes", drawer);
   await expect(folderRow(drawerPanel, F)).toBeVisible({ timeout: 15_000 });
 
@@ -635,7 +633,7 @@ test("41-12 390 窄形：勾資料夾 → 底部 Copy to 反灰（aria-disabled�
   expect(await moveTo.getAttribute("class")).toBe(await copyTo.getAttribute("class"));
 });
 
-test("41-13 跨寬窄判準：⋮ 層疊開著時縮到 700 → 選單全關；選取中縮到 390 → 抽屜裡是窄形（1 selected、Done、底部動作列）", async ({ page }) => {
+test("41-13 跨寬窄判準：⋮ 層疊開著時縮到 700 → 選單全關；選取中縮到 390 → 手機清單裡是窄形（1 selected、Done、底部動作列）", async ({ page }) => {
   test.setTimeout(150_000);
   const F = `F ${RUN}`;
   const N = `E2E Mv Flip ${RUN}`;
@@ -656,7 +654,7 @@ test("41-13 跨寬窄判準：⋮ 層疊開著時縮到 700 → 選單全關；�
   await expectWidePointer(page, false);
   await expect(page.getByRole("menu")).toHaveCount(0);
 
-  // ── 回 1280 → Select → 勾 N → 縮到 390 → 開抽屜：選取與已勾保留、標題列是窄形、底部動作列在 ─────────────────
+  // ── 回 1280 → Select → 勾 N → 縮到 390 → 看手機清單：選取與已勾保留、標題列是窄形、底部動作列在 ─────────────────
   await page.setViewportSize({ width: 1280, height: 720 });
   await expectWidePointer(page, true);
   const selecting = await startSidebarSelection(page);
@@ -664,9 +662,7 @@ test("41-13 跨寬窄判準：⋮ 層疊開著時縮到 700 → 選單全關；�
   await expect(selecting.getByText("1 selected", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expectWidePointer(page, false);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
-  await expect(drawer).toBeVisible();
+  const drawer = await openListOnCompact(page);
   const drawerPanel = drawer.getByRole("tabpanel");
   await expect(drawerPanel.getByText("1 selected", { exact: true })).toBeVisible();
   await expect(drawerPanel.getByRole("button", { name: "Done", exact: true })).toBeVisible();

@@ -806,9 +806,9 @@ test("C10 觸控裝置：套用色碼與最近用過都可用，開面板時色�
   test.setTimeout(150_000);
   // 筆記在桌面 context 建好打字，觸控 context 只開它
   const { context: desktop, page: owner, title } = await startColorNote(browser, "touch", ["first words", "second words"]);
-  const mobile = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 640 } });
+  const touch = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 800, height: 1000 } });
   try {
-    const page = await mobile.newPage();
+    const page = await touch.newPage();
     await loginAs(page, ADMIN.email, ADMIN.password);
     await page.goto(owner.url());
     await expect(page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
@@ -826,7 +826,7 @@ test("C10 觸控裝置：套用色碼與最近用過都可用，開面板時色�
       expect(await panel.evaluate((el) => el.contains(document.activeElement)), "焦點要留在面板裡").toBe(true);
     });
   } finally {
-    await Promise.all([desktop.close(), mobile.close()]);
+    await Promise.all([desktop.close(), touch.close()]);
   }
 });
 

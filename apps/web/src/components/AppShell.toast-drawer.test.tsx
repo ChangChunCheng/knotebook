@@ -38,6 +38,7 @@ const USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 const NOTE: NoteDto = {
@@ -105,7 +106,7 @@ function hasAriaHiddenAncestor(el: HTMLElement): boolean {
 }
 
 async function openDrawer(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
   return screen.findByRole("dialog", { name: "Navigation" });
 }
 
@@ -216,7 +217,7 @@ describe("AppShell — 抽屜容器不畫焦點環", () => {
     vi.unstubAllGlobals();
   });
 
-  it("漢堡開抽屜時焦點落在 Content 本身，Content 有 outline-none", async () => {
+  it("側欄鈕開抽屜時焦點落在 Content 本身，Content 有 outline-none", async () => {
     renderApp();
     const drawer = await openDrawer();
     expect(drawer).toHaveClass("outline-none");

@@ -1,8 +1,9 @@
-import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
+import { forwardRef, useCallback, useRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "./icons";
 import { cn } from "@/lib/utils";
+import { SheetViewportVars } from "./sheet-viewport";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -29,8 +30,8 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
  * 未傳 `size` 時行為零變）；`lg` 已於 #247 刪除：再用會直接型別錯誤，比照 `button.tsx` 刪 `secondary`
  * 的做法，不靠 grep 測試；`size="panel"`＝三個管理面板（`components/management/ManagementShell.tsx`，#247）
  * 與快捷鍵介紹頁（`components/shortcuts/ShortcutsDialog.tsx`，單卡、寬度另以 className 收窄）：
- * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；窄視窗 `96vw × 92vh`，
- * `md:` 以上 `92vw × 88vh` 夾在 896×672～1360×896 之間。`panel` 時**不渲染內建 Close**——
+ * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；640～767 為 `96vw × 92dvh`，手機（< 640）是貼底、幾乎滿高的 sheet（上方留一道縫，見下），
+ * `md:` 以上 `92vw × 88dvh` 夾在 896×672～1360×896 之間（高度一律用 `dvh`：iOS Safari 的 `vh` 比看得見的高度高）；`max-w` 讓兩側各至少留 2vw 與左右 safe area 的較大者（橫拿時面板邊緣不進感應器區）。`panel` 時**不渲染內建 Close**——
  * 面板在右卡自己放一顆帶 i18n 名稱的 ✕，這裡再放就會有兩顆 Close。
  * `panel` 的 grid 軌道是 `minmax(0,1fr)`：預設的 `auto` 軌道會依托盤內容撐大，托盤就會在高度與寬度上都長出外框、右卡永遠不捲動。 */
 const dialogContentVariants = cva(
@@ -41,11 +42,27 @@ const dialogContentVariants = cva(
   {
     variants: {
       size: {
-        default: "max-w-lg p-6",
+        default:
+          "max-w-lg p-6 " +
+          // 手機（< 640）：貼底的 sheet。鍵盤升起時 `--kb-inset` 把 sheet 抬到鍵盤上方、`--kb-visible-h`（視覺視窗高）決定高度上限，
+          // 這樣 iOS 平移視覺視窗時 sheet 的頂端也不會跑出可見範圍；內容高過上限就在 sheet 內捲動。
+          // 不過場：bottom／max-height 若跟著 `duration-200` 過渡，sheet 會落後鍵盤並在平移時晃動。
+          "max-sm:inset-x-0 max-sm:bottom-(--kb-inset,0px) max-sm:top-auto max-sm:translate-x-0 max-sm:translate-y-0 " +
+          "max-sm:max-w-none max-sm:max-h-[calc(var(--kb-visible-h,100dvh)*0.9)] max-sm:overflow-y-auto max-sm:transition-none " +
+          "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))] kb-sheet",
         panel:
-          "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92vh] " +
+          "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92dvh] " +
+          "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
           "grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] " +
-          "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92vh),88vh,56rem)]",
+          // 手機（< 640）：貼底、滿寬、幾乎滿高的 sheet，由下往上升起（`kb-sheet`）。上方留一道縫（至少 28px，有瀏海時是 safe area 再加 8px），
+          // 看得到後面變暗的頁面，點它關掉：再窄的話，觸控的目標修正會把點在縫上的一下歸給旁邊的 sheet，等於點不到。
+          // 高度＝看得見的高度（`--kb-visible-h`，沒有視覺視窗時 `dvh`）減去那道縫，鍵盤升起時底緣抬到鍵盤上方。
+          // 托盤在手機上不留內距，卡貼齊 sheet；底與左右的 safe area 是卡自己的內距（`management/tray.ts` 的 `managementCardPhoneInset`／
+          // `managementListPaddingPhone`），卡左上角的「‹」也自己退開左側 safe area。不過場：理由同預設尺寸。
+          "max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-(--kb-inset,0px) max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 " +
+          "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))] max-sm:transition-none " +
+          "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:overflow-hidden max-sm:shadow-lg kb-sheet " +
+          "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       },
     },
     defaultVariants: { size: "default" },
@@ -68,14 +85,24 @@ export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &
     VariantProps<typeof dialogContentVariants> & { dismissOnOutside?: boolean }
->(({ className, children, size, dismissOnOutside = true, onInteractOutside, ...props }, ref) => {
+>(({ className, children, size, dismissOnOutside = true, onInteractOutside, style, ...props }, ref) => {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const setRefs = useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref],
+  );
   // #247：panel 由 ManagementShell 在右卡放自己的 ✕；這裡只決定要不要渲染，不新增 prop。
   const renderBuiltInClose = size !== "panel";
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className="kb-sheet-overlay" />
       <DialogPrimitive.Content
-        ref={ref}
+        ref={setRefs}
+        style={style}
         className={cn(dialogContentVariants({ size }), className)}
         {...props}
         onInteractOutside={(event) => {
@@ -83,9 +110,10 @@ export const DialogContent = forwardRef<
           if (!dismissOnOutside) event.preventDefault();
         }}
       >
+        <SheetViewportVars target={contentRef} />
         {children}
         {renderBuiltInClose && (
-          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-[''] opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>

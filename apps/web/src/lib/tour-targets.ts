@@ -13,7 +13,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 
 export type TourTargetId =
   | "tabs"
@@ -75,13 +75,16 @@ export function findUserMenuTrigger(): Element | null {
   return findTourTarget("userMenu");
 }
 
-/** 導覽的寬窄判準：窄＝側欄是抽屜。 */
+/**
+ * 導覽的寬窄判準：窄＝側欄不固定（`OVERLAY_QUERY`，視窗窄於 1280px），640～1279 的側欄是抽屜。
+ * 比 640 窄的手機版面沒有抽屜也沒有開抽屜的鈕：指著它的站在那裡找不到目標、會被跳過，手機還沒有自己的站點。
+ */
 export function isNarrowViewport(): boolean {
-  return window.matchMedia(NARROW_QUERY).matches;
+  return window.matchMedia(OVERLAY_QUERY).matches;
 }
 
 function subscribeNarrowViewport(onChange: () => void): () => void {
-  const mql = window.matchMedia(NARROW_QUERY);
+  const mql = window.matchMedia(OVERLAY_QUERY);
   mql.addEventListener("change", onChange);
   return () => mql.removeEventListener("change", onChange);
 }

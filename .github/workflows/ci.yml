@@ -22,7 +22,8 @@ jobs:
   #   integration：server 的整合測試（test/*.test.ts，testcontainers 起 PostgreSQL），用 vitest --shard 切 3 片平行跑；
   #     每片是獨立 runner，各自由 globalSetup 起一座 PostgreSQL 容器，互不干擾。三片合起來＝同一組測試檔。
   # 兩邊合起來＝`pnpm test` 跑的同一組測試檔（server：vitest.config.ts 收到的檔＝vitest.unit.config.ts ∪ test/*.test.ts）。
-  # main ruleset 要求的 status check 是 `ci`：保留同名 job，兩個 job 都成功它才成功。
+  #   e2e：Playwright 端到端測試，用 --shard 切 4 片平行跑；每片是獨立 runner，各自起一座 compose 疊，互不干擾。
+  # main ruleset 要求的 status check 是 `ci`：保留同名 job，三組 job 都成功它才成功。
   build-unit:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -42,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
@@ -109,7 +110,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
@@ -122,7 +123,7 @@ jobs:
   # main ruleset 的 required status check（context `ci`）。`always()`：前面的 job 失敗或取消時也要跑，
   # 才會回報失敗（否則它被 skip，而 skipped 的 required check 會被當成通過）。
   ci:
-    needs: [build-unit, integration]
+    needs: [build-unit, integration, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -131,16 +132,20 @@ jobs:
         env:
           BUILD_UNIT: ${{ needs.build-unit.result }}
           INTEGRATION: ${{ needs.integration.result }}  # matrix 彙整：任一片失敗／取消則非 success
+          E2E: ${{ needs.e2e.result }}  # 同上；e2e 在每種觸發都會跑，skipped 也算失敗
         run: |
-          echo "build-unit: $BUILD_UNIT, integration: $INTEGRATION"
-          test "$BUILD_UNIT" = success && test "$INTEGRATION" = success
+          echo "build-unit: $BUILD_UNIT, integration: $INTEGRATION, e2e: $E2E"
+          test "$BUILD_UNIT" = success && test "$INTEGRATION" = success && test "$E2E" = success
 
-  # 此 job 在 PR 上恆 skipped——絕不可加入 main ruleset 的 required checks（加了每個 PR 永遠等不到綠）
-  # 觸發＝push main 或手動 dispatch
+  # 每種觸發（PR、push、手動）都跑。playwright.config 是 workers: 1、沒開 fullyParallel，--shard 依測試檔切分。
   e2e:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    name: e2e (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -150,7 +155,7 @@ jobs:
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version-file: .nvmrc, cache: pnpm }
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -164,8 +169,8 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @knotebook/e2e exec playwright install --with-deps chromium
 
-      - name: Run e2e tests
-        run: pnpm --filter @knotebook/e2e run test:e2e
+      - name: Run e2e tests (shard ${{ matrix.shard }}/4)
+        run: pnpm --filter @knotebook/e2e exec playwright test --shard=${{ matrix.shard }}/4
 
       - name: Dump compose logs on failure
         if: failure()
@@ -175,7 +180,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-failure
+          name: e2e-failure-${{ matrix.shard }}
           path: |
             e2e/test-results/
             compose-logs.txt

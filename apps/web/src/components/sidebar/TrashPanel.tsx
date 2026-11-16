@@ -9,14 +9,18 @@ import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { selectedTrashIds, splitTrashSections, trashDetailLine, trashItemTitle, trashLocationLine } from "@/lib/trash-display";
 import { useWidePointer } from "@/lib/wide-pointer";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT, ROW_ICON_HIT_BORDERED, ROW_ICON_ROW } from "@/components/ui/hit-area";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { EllipsisVertical, RotateCcw, SquareCheck, Trash, X } from "@/components/ui/icons";
+import { EllipsisVertical, SquareCheck, Trash, X } from "@/components/ui/icons";
+import { RotateCcw } from "@/components/ui/icons-extra";
 import { hoverReveal } from "@/components/ui/reveal";
 import { SelectAllCheckbox, SelectionCheckbox } from "@/components/ui/selection-checkbox";
 import { cn } from "@/lib/utils";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
 import { EmptyTrashDialog, PurgeConfirmDialog, toastTrashFailure, toastTrashResult } from "@/components/sidebar/trash-dialogs";
 import { TrashWideToolbar } from "@/components/sidebar/TrashFooter";
+import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
+import { usePhoneListScroll } from "@/components/sidebar/phone-list-scroll";
 
 /**
  * 垃圾桶 tab 的面板：`AppShell` 在 tab 為 `trash` 時放進 tabpanel，取代 `NoteList`。
@@ -54,7 +58,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
       data-node-kind="note"
       data-node-id={item.id}
       title={trashItemTitle(item, { t, locale })}
-      className="group/noterow flex items-center gap-0.5 rounded-md py-1.5 pl-2 pr-1 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft"
+      className={cn("group/noterow flex items-center gap-0.5 rounded-md py-1.5 pl-2 pr-0.75 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft", ROW_ICON_ROW)}
     >
       {/* 兩行一律 <div>（同 NoteList 最近 tab 的兩行列）。 */}
       <div className="min-w-0 flex-1">
@@ -72,12 +76,12 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
         aria-label={t("trash.restoreFor", { title: item.title })}
         title={t("trash.restore")}
         onClick={() => actions.onRestore(item.id)}
-        className={cn("h-6 w-6 shrink-0", hoverReveal("noterow"))}
+        className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("noterow"))}
       >
         <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
       </Button>
       {/* controlled＋三步（preventDefault → 關選單 → 動作）：同 NoteMenu 檔頭的 focus trap 規矩。 */}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             ref={triggerRef}
@@ -85,12 +89,12 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
             variant="ghost"
             size="icon"
             aria-label={t("trash.menuFor", { title: item.title })}
-            className={cn("h-6 w-6 shrink-0", hoverReveal("noterow"))}
+            className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("noterow"))}
           >
             <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" sheetTitle={item.title}>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
@@ -194,6 +198,7 @@ export function TrashPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  usePhoneListScroll(listRef, headerRef);
   const emptyButtonRef = useRef<HTMLButtonElement>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);
@@ -325,7 +330,7 @@ export function TrashPanel() {
               focusAfterRef.current = "done";
               updateSelection({ type: "start" });
             }}
-            className="h-6 w-6 shrink-0"
+            className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT)}
           >
             <SquareCheck aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
@@ -345,7 +350,7 @@ export function TrashPanel() {
               emptyRoundRef.current += 1;
               setEmptyOpen(true);
             }}
-            className="h-6 shrink-0 px-2 text-xs text-destructive hover:text-destructive"
+            className={cn("h-6 shrink-0 px-2 text-xs text-destructive hover:text-destructive", ROW_ICON_HIT)}
           >
             {t("trash.emptyTrash")}
           </Button>
@@ -458,7 +463,7 @@ export function TrashPanel() {
           // 選取中清單被重抓成 0 篇（別處清掉）：沒有可選的。
           disabled={items.length === 0}
           onClick={() => updateSelection(allSelected ? { type: "clear" } : { type: "setAll", keys: splitTrashSections(items).order })}
-          className="h-6 px-2 text-xs"
+          className={cn("h-6 px-2 text-xs", ROW_ICON_HIT)}
         >
           {allSelected ? t("trash.deselectAll") : t("trash.selectAll")}
         </Button>
@@ -468,7 +473,7 @@ export function TrashPanel() {
           variant="outline"
           size="sm"
           onClick={endSelecting}
-          className="h-6 px-2 text-xs"
+          className={cn("h-6 px-2 text-xs", ROW_ICON_HIT_BORDERED)}
         >
           {t("trash.done")}
         </Button>
@@ -478,10 +483,10 @@ export function TrashPanel() {
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
-      <div ref={headerRef} data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW, PHONE_LIST_HEADER_STICKY)}>
         {renderHeader()}
       </div>
-      <div data-sidebar-list="" tabIndex={-1} ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 focus-visible:outline-none">
+      <div data-sidebar-list="" tabIndex={-1} ref={listRef} className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 focus-visible:outline-none", PHONE_LIST_SCROLLER)}>
         {renderBody()}
       </div>
       <PurgeConfirmDialog

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * 資料夾列的折疊主鈕：`aria-expanded`、前導 chevron（展開旋轉 90°）＋`Folder` 圖示（皆 aria-hidden）＋名稱
- * （truncate、title＝名稱）。可及名稱只有資料夾名。外層列要帶 `group/folderrow`；高度跟外層列（h-11 md:h-7）。
+ * （truncate、title＝名稱）。可及名稱只有資料夾名。外層列要帶 `group/folderrow`；高度跟外層列（h-11 pointer-fine:h-7）。
  * NoteList 用它；選取樹的資料夾列另有只畫 chevron 的折疊鈕（`SelectableTree`，名稱與圖示在勾選框的 label 裡）。
  */
 export function FolderRowButton({ name, open, onToggle }: { name: string; open: boolean; onToggle: () => void }) {
@@ -12,7 +12,7 @@ export function FolderRowButton({ name, open, onToggle }: { name: string; open: 
       type="button"
       aria-expanded={open}
       onClick={onToggle}
-      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-foreground group-hover/folderrow:text-brand-on-soft"
+      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] max-sm:text-[15px] font-medium text-foreground group-hover/folderrow:text-brand-on-soft"
     >
       <ChevronRight
         aria-hidden="true"

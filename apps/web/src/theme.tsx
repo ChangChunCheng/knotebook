@@ -3,10 +3,13 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useIsPhone } from "@/lib/layout-tiers";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -20,6 +23,33 @@ export type Accent = (typeof ACCENTS)[number];
  * manifest 的 theme_color（淺色）須與此一致，由 pwa-manifest.test.ts 守住。
  */
 export const THEME_COLOR = { light: "#f3f4f6", dark: "#0e1013" } as const;
+
+/**
+ * 手機寬度（< 640）、而且畫面是卡片底的頁面（`useCardPage`：清單與筆記、公開頁）時的 theme-color：那裡的頁面與
+ * 釘在頂端的頂列、頁首都是卡片色（index.css 的 --card），瀏覽器塗在上方列的顏色要與它們相同，否則頂端會多一條不同色的帶子。
+ * 其他頁面（登入、註冊、重設密碼、授權、載入中）是頁底色，照舊用 `THEME_COLOR`；640 起也一律用 `THEME_COLOR`。
+ */
+export const PHONE_THEME_COLOR = { light: "#ffffff", dark: "#1a1d23" } as const;
+
+let cardPages = 0;
+const cardPageListeners = new Set<() => void>();
+
+function subscribeCardPage(listener: () => void): () => void {
+  cardPageListeners.add(listener);
+  return () => cardPageListeners.delete(listener);
+}
+
+/** 宣告「這一頁在手機上是卡片底」（AppShell、公開頁的外框）：掛著時手機寬度的 theme-color 改用卡片色。 */
+export function useCardPage(): void {
+  useLayoutEffect(() => {
+    cardPages += 1;
+    cardPageListeners.forEach((listener) => listener());
+    return () => {
+      cardPages -= 1;
+      cardPageListeners.forEach((listener) => listener());
+    };
+  }, []);
+}
 
 const STORAGE_KEY = "knotebook:theme";
 const ACCENT_STORAGE_KEY = "knotebook:accent";
@@ -52,13 +82,14 @@ function resolveTheme(theme: Theme): "light" | "dark" {
   return theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
 }
 
-function applyResolvedTheme(resolved: "light" | "dark"): void {
+function applyResolvedTheme(resolved: "light" | "dark", phone: boolean): void {
   if (typeof document === "undefined") return;
   document.documentElement.classList.toggle("dark", resolved === "dark");
-  // 兩個 <meta name="theme-color">（淺／深，靠 media 查詢只認 OS）都改成 app 實際主題的頁底色，
+  // 兩個 <meta name="theme-color">（淺／深，靠 media 查詢只認 OS）都改成 app 實際主題的頁底色（手機寬度是卡片色），
   // 讓 PWA 上方列跟 app 內選的主題。找不到 meta 就靜默略過。
+  const color = (phone ? PHONE_THEME_COLOR : THEME_COLOR)[resolved];
   for (const meta of document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-    meta.setAttribute("content", THEME_COLOR[resolved]);
+    meta.setAttribute("content", color);
   }
 }
 
@@ -80,9 +111,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setResolvedTheme(resolveTheme(theme));
   }, [theme]);
 
+  // 手機寬度、卡片底的頁面用卡片色（見 PHONE_THEME_COLOR）：轉向跨過 640、換到別種頁面時重寫。
+  const phone = useIsPhone();
+  const cardPage = useSyncExternalStore(subscribeCardPage, () => cardPages > 0, () => false);
   useEffect(() => {
-    applyResolvedTheme(resolvedTheme);
-  }, [resolvedTheme]);
+    applyResolvedTheme(resolvedTheme, phone && cardPage);
+  }, [resolvedTheme, phone, cardPage]);
 
   // theme === 'system' 時追隨作業系統切換（例如使用者在系統設定切換深色模式）：
   // 直接讀 change 事件當下的 media.matches 寫回 state，而不是重新呼叫

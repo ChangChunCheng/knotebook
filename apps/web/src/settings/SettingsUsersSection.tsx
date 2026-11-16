@@ -14,6 +14,7 @@ import {
 } from "@/api/admin";
 import { useAdminStoragePlans } from "@/api/adminStorage";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
+import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -54,7 +55,7 @@ function lastActiveLabel(lastActiveAt: string | null, t: (key: string) => string
 }
 
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
@@ -218,7 +219,7 @@ export function SettingsUsersSection() {
     const isSelf = row.id === currentUserId;
     return {
       id: row.id,
-      primary: { name: row.displayName, subtitles: [`@${row.handle}`] },
+      primary: { name: row.displayName, icon: <Avatar name={row.displayName} avatar={row.avatar ?? null} size={24} />, subtitles: [`@${row.handle}`] },
       cells: {
         email: row.email,
         storage: <StorageCell storage={row.storage} />,

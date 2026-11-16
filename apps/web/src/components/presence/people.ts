@@ -201,7 +201,7 @@ export function presenceSignature(people: readonly PresencePerson[]): string {
   );
 }
 
-export const PRESENCE_CAPACITY = { wide: 5, narrow: 2 } as const;
+export const PRESENCE_CAPACITY = { wide: 5, narrow: 2, compact: 0 } as const;
 
 function fit(total: number, capacity: number): { shown: number; more: number } {
   if (total > capacity) {
@@ -211,30 +211,20 @@ function fit(total: number, capacity: number): { shown: number; more: number } {
   return { shown: total, more: 0 };
 }
 
-/** 超過容量時 shown＝容量−1、more＝total−shown；未超過時 shown＝total、more＝0。 */
+/**
+ * 超過容量時 shown＝容量−1、more＝total−shown；未超過時 shown＝total、more＝0。
+ * 精簡形（手機寬）一顆頭像都不放，只有「+N」，N＝所有人；沒有其他人時 more 是 0、不渲染。
+ */
 export function presenceLayout(total: number): {
   wide: { shown: number; more: number };
   narrow: { shown: number; more: number };
+  compact: { shown: number; more: number };
 } {
-  return { wide: fit(total, PRESENCE_CAPACITY.wide), narrow: fit(total, PRESENCE_CAPACITY.narrow) };
+  return {
+    wide: fit(total, PRESENCE_CAPACITY.wide),
+    narrow: fit(total, PRESENCE_CAPACITY.narrow),
+    compact: { shown: 0, more: total },
+  };
 }
 
-const segmenter: Intl.Segmenter | null =
-  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
-
-/** 控制、格式（RLO、零寬字元、BOM…）與空白字元：看不見，不能當首字。 */
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Z}]/gu;
-const LEADING_INVISIBLE = /^[\p{Cc}\p{Cf}\p{Z}]+/u;
-
-/** 名字裡有沒有任何看得見的字；全是空白／格式字元時，介面上改用 "?"。 */
-export function hasVisibleText(name: string): boolean {
-  return name.replace(INVISIBLE, "") !== "";
-}
-
-/** 第一個看得見的字素（Intl.Segmenter；不支援時 `[...s][0]`）轉大寫；沒有看得見的字 → "?"。只去掉開頭的不可見字元，ZWJ 合字不受影響。 */
-export function firstGrapheme(name: string): string {
-  if (!hasVisibleText(name)) return "?";
-  const s = name.replace(LEADING_INVISIBLE, "");
-  const first = segmenter ? segmenter.segment(s)[Symbol.iterator]().next().value?.segment : [...s][0];
-  return (first ?? "?").toUpperCase();
-}
+export { firstGrapheme, hasVisibleText } from "@/lib/first-grapheme";

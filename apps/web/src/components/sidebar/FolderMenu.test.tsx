@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
-import type { FolderDto, GroupDto, NoteDto } from "@knotebook/shared";
+import type { FolderDto, GroupDto, NoteDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
 import { SidebarTabProvider, type SidebarTab } from "@/lib/sidebar-tab";
@@ -13,9 +13,11 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { adminRole, customRole, groupDto } from "@/test/fixtures";
 import { folderChain, folderDto, groupFolder, sharedFolder } from "@/test/folder-fixtures";
 import { groupNote, personalNote } from "@/test/select-fixtures";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { __resetCollapseForTests, isCollapsed, setCollapsed } from "./collapse";
 import { liveNotesUnder } from "./folder-index";
 import { __resetFolderSortForTests, setFolderSort } from "./folder-sort";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // 數 `liveNotesUnder` 呼叫次數（FM10：選單關著時不掃筆記）；行為照原本（包真函式）。
 vi.mock("@/components/sidebar/folder-index", async (importOriginal) => {
@@ -30,7 +32,7 @@ afterEach(() => {
   __resetFolderSortForTests();
 });
 
-const ME = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true };
+const ME = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null } satisfies UserDto;
 const G: GroupDto = groupDto({ id: "G", name: "G" }, adminRole());
 const R: GroupDto = groupDto({ id: "R", name: "R" }, customRole());
 
@@ -101,7 +103,7 @@ function renderList(props: Partial<NoteListProps> = {}, opts: { tab?: SidebarTab
 const trigger = (name: string) => screen.findByRole("button", { name: `Folder menu for ${name}` });
 async function openMenu(name: string): Promise<HTMLElement> {
   // Radix DropdownMenu 的 trigger 只聽 pointerdown。
-  fireEvent.pointerDown(await trigger(name), { button: 0 });
+  pressTrigger(await trigger(name));
   return screen.findByRole("menu");
 }
 /** 選單內容的骨架：menuitem／menuitemradio 用名稱，分隔線 `—`、小標 `[label]`。 */
@@ -332,7 +334,7 @@ describe("FolderMenu", () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ folders: folderChain("L", 5) });
     renderList();
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "L5 的資料夾選單" }), { button: 0 });
+    pressTrigger(await screen.findByRole("button", { name: "L5 的資料夾選單" }));
     const menu = await screen.findByRole("menu");
     expect(within(menu).getAllByRole("menuitemradio").map((el) => el.textContent)).toEqual(["名稱", "最近修改", "文件大小"]);
     expect(within(menu).getByRole("menuitem", { name: "新增子資料夾" })).toHaveAccessibleDescription("已達最多 5 層");
@@ -384,5 +386,38 @@ describe("FolderMenu × AppShell：⋮ 新增筆記展開祖先", () => {
     await waitFor(() => expect(screen.getByTestId("note-route")).toHaveTextContent("tester/note-created"));
     expect(isCollapsed("folder:A")).toBe(false);
     expect(isCollapsed("folder:A1")).toBe(false);
+  });
+});
+
+describe("FolderMenu 手機 sheet", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    act(() => dismissAllToasts());
+  });
+
+  it("FM-S1 手機：貼底 sheet、最上面是資料夾名稱；動作列與排序列都是 48px；640 以上沒有標題、列照舊", async () => {
+    stubLayoutTier("phone");
+    stubServer({ folders: [A] });
+    const { view } = renderList();
+    const menu = await openMenu("A");
+    expect(menu).toHaveAttribute("data-menu-sheet");
+    expect(menu.firstElementChild).toHaveTextContent("A");
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveClass("min-h-12", "text-base");
+    for (const item of within(menu).getAllByRole("menuitemradio")) expect(item).toHaveClass("min-h-12", "text-base");
+    view.unmount();
+    vi.unstubAllGlobals();
+
+    stubLayoutTier("docked");
+    stubServer({ folders: [A] });
+    renderList();
+    const popover = await openMenu("A");
+    expect(popover).not.toHaveAttribute("data-menu-sheet");
+    expect(skeleton(popover)[0]).toBe("New note");
+    expect(within(popover).getByRole("menuitemradio", { name: "Name" })).not.toHaveClass("min-h-12");
   });
 });

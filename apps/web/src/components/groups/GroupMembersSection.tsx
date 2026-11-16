@@ -8,6 +8,7 @@ import {
 } from "@/api/groups";
 import { useSession } from "@/auth/useSession";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
+import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -34,7 +35,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 名單裡掛內建管理員角色的人數（看 `builtin === "admin"` 計數）。 */
@@ -240,7 +241,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
     const locked = isLastAdmin(member);
     return {
       id: member.userId,
-      primary: { name: member.displayName },
+      primary: { name: member.displayName, icon: <Avatar name={member.displayName} avatar={member.avatar ?? null} size={24} /> },
       cells: {
         // 成員彼此看得到 email——要收回就刪這一欄（連同 nameColumn 改回主欄；server 建議的 ① 同群組成員也要一起收，見 routes/users.ts）
         email: { content: member.email, tone: "muted" },

@@ -26,10 +26,11 @@
     "favorites": "最愛",
     "myNotes": "我的筆記",
     "shared": "與我共享",
-    "openDrawer": "開啟導覽選單",
+    "openDrawer": "開啟側欄",
     "drawerTitle": "導覽",
     "searchLabel": "搜尋筆記",
     "searchPlaceholder": "搜尋…",
+    "searchHint": "搜尋筆記標題與內文。",
     "noMatch": "沒有符合搜尋的筆記。",
     "workspace": "群組",
     "newGroup": "新增群組",
@@ -169,6 +170,8 @@
     }
   },
   "note": {
+    "backToList": "返回筆記清單",
+    "showInList": "在清單中顯示：{{path}}",
     "titleLabel": "筆記標題",
     "sizeLimitBlocked": "加進去會超過這篇筆記的大小上限（{{size}}），內容沒有加進去。",
     "overSizeLimit": "這篇筆記超過大小上限，編輯可能變慢。刪掉一些內容可以讓它變小。",
@@ -197,7 +200,7 @@
     },
     "width": {
       "label": "寬度",
-      "current": "寬度：{{name}}",
+      "cycle": "寬度：{{name}}（按一下改為{{next}}）",
       "standard": "標準",
       "wide": "寬",
       "full": "全寬"
@@ -664,7 +667,8 @@
   },
   "management": {
     "close": "關閉",
-    "back": "返回項次"
+    "back": "返回項次",
+    "backToMenu": "返回選單"
   },
   "settings": {
     "entry": "設定",
@@ -986,6 +990,8 @@
     "storage_plan_is_default": "這個方案是預設方案，請先改選其他預設",
     "storage_plan_name_taken": "已有同名的方案",
     "storage_plan_not_found": "找不到這個方案",
+    "avatar_outdated": "這張頭貼已在別處更新，請重新開啟再調整。",
+    "avatar_fetch_failed": "無法從登入服務取得頭貼。",
     "version_is_base": "這是目前內容的基底版本，不能刪除",
     "version_unsaved_changes": "目前有未儲存的修改",
     "version_mismatch": "這一版已經不存在或已被取代，請重新整理",

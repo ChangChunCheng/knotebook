@@ -17,6 +17,8 @@ import "@/i18n/management-strings";
  *   落在 sticky 欄右側（WCAG 2.4.11）；目標已在框內、只是壓在 sticky 欄底下時瀏覽器不捲，由捲動框的 focus 處理補捲。
  * - 明細列與錯誤列是緊接在資料列後的獨立 row（不是 subgrid）。子表以 `nested` 宣告：沒有捲動框、主欄不 sticky（sticky 盒
  *   不能離開所屬列，子表主欄軌很寬，黏住會蓋掉同列的操作鈕與開關）、表頭列 sr-only（供開關的 aria-labelledby 引用）。
+ * - 手機（< 640）：不用 subgrid 也不橫捲，每列是一張卡片（見 `PHONE_CELL`）：主欄不 sticky、表頭列只給螢幕閱讀器、
+ *   資訊欄與可編輯欄前面加可見的欄名（aria-hidden）；明細列、錯誤列、子表與編輯中的合併格沿用同一套（本來就是整列寬）。
  * - 編輯中：主欄 cell 保留，其餘欄合併成一格放呼叫端的表單。
  *
  * ⚠ 版面 class／inline style 的斷言只准寫在本元件的測試；各頁測試一律語意查詢。
@@ -165,29 +167,62 @@ export function settingsTableTracks(ordered: SettingsTableColumn[]): string {
 }
 
 /** 表頭列與資料列：同一張表內這一層的 subgrid。列不得加 gap、水平內距或 items-*。 */
-const ROW_GRID = "col-span-full grid grid-cols-subgrid";
+const ROW_GRID = "col-span-full grid grid-cols-subgrid max-sm:flex max-sm:flex-wrap";
 /** 列間分隔：畫在列上（欄距處不斷線）。 */
 const ROW_BORDER = "border-b border-border";
 /** 儲存格：撐滿列的內容高、內容垂直置中。 */
 const CELL = "flex items-center";
 /** 頂層表主欄（表頭格與每列主欄格）：sticky、z-index 1、不透明底；右緣分隔線只在捲動框溢出時畫（捲動框帶 `data-overflowing`）。 */
-const STICKY_CELL = "sticky left-0 z-[1] border-border bg-card group-data-[overflowing]/box:border-r";
+const STICKY_CELL =
+  "sticky left-0 z-[1] border-border bg-card group-data-[overflowing]/box:border-r max-sm:static max-sm:bg-transparent max-sm:group-data-[overflowing]/box:border-r-0 " +
+  // 手機沒有 sticky：格子透明、露出卡片自己的表面（popover）；編輯中列的疊色底也改疊在 popover 上。
+  "max-sm:[--kb-sticky-surface:var(--popover)]";
 /** 編輯中列的 sticky 主欄：淡色疊在卡片色上（`--brand-soft` 是半透明；用 inline style，不用 `bg-[…]` arbitrary 值）。 */
-const EDITING_STICKY_BACKGROUND = "linear-gradient(var(--brand-soft), var(--brand-soft)), var(--card)";
+const EDITING_STICKY_BACKGROUND = "linear-gradient(var(--brand-soft), var(--brand-soft)), var(--kb-sticky-surface, var(--card))";
 /** 頂層表的橫向捲動框。 */
-const SCROLL_BOX = "group/box overflow-x-auto scroll-ps-(--kb-sticky-w) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const SCROLL_BOX = "group/box overflow-x-auto max-sm:overflow-x-visible scroll-ps-(--kb-sticky-w) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** 明細 cell：不加水平內距（子表要與父表同寬；非表格內容自己帶 px-3）。 */
 const DETAIL_CELL = "pb-3";
+/**
+ * 手機＋觸控的點擊範圍（做法同 `ui/hit-area.ts`：視覺不變，`::after` 向外撐）。只在這張表的手機卡片上生效，不改共用元件。
+ * 圖示鈕 32px 四邊各撐 6px＝44，鈕距拉到 12px（圓心距 44）才不互相蓋住；開關 26×14，左右各撐 10px、上下各撐 16px。
+ */
+const TOUCH_ICON_BUTTONS =
+  "max-sm:pointer-coarse:gap-3 max-sm:pointer-coarse:[&_button]:relative max-sm:pointer-coarse:[&_button]:after:absolute " +
+  "max-sm:pointer-coarse:[&_button]:after:-inset-1.5 max-sm:pointer-coarse:[&_button]:after:content-['']";
+const TOUCH_SWITCH =
+  "max-sm:pointer-coarse:[&_[role=switch]]:relative max-sm:pointer-coarse:[&_[role=switch]]:after:absolute " +
+  "max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-x-2.5 max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-y-4 " +
+  "max-sm:pointer-coarse:[&_[role=switch]]:after:content-['']";
 /** cell 內容子元素依欄種的文字行為與水平對齊。 */
 const INNER: Record<SettingsTableColumnKind, string> = {
   primary: "wrap-anywhere",
   text: "wrap-anywhere",
-  url: "truncate",
+  // 手機：不截斷（觸控看不到 title 的全文），改成任意處換行。
+  url: "truncate max-sm:overflow-visible max-sm:whitespace-normal max-sm:text-clip max-sm:wrap-anywhere",
   fixed: "whitespace-nowrap",
   control: "whitespace-nowrap",
-  actions: "flex justify-end gap-1",
-  enabled: "flex justify-center",
+  actions: "flex justify-end gap-1 " + TOUCH_ICON_BUTTONS,
+  enabled: "flex justify-center " + TOUCH_SWITCH,
 };
+/**
+ * 手機（< 640）的卡片版面：資料列改成自動換行的 flex，主欄、資訊欄、可編輯欄各占一行（資訊欄與可編輯欄前面加可見的欄名），
+ * 操作鈕與啟用開關排在最後一行；表頭列只留給螢幕閱讀器。DOM 與 ARIA 角色不變。
+ * 格子內容是空的（沒有操作、沒有值）就收成 sr-only：不留一行只有欄名的空列，又不把格子從版面樹拿掉（否則螢幕閱讀器的表頭對應會位移）。
+ * 欄名對齊值的第一行（多行值不垂直置中）；可編輯欄是高控制項，維持置中。
+ */
+const PHONE_CELL: Record<SettingsTableColumnKind, string> = {
+  primary: "max-sm:basis-full",
+  text: "max-sm:basis-full max-sm:items-start max-sm:has-[>div:empty]:sr-only",
+  url: "max-sm:basis-full max-sm:items-start max-sm:has-[>div:empty]:sr-only",
+  fixed: "max-sm:basis-full max-sm:items-start max-sm:has-[>div:empty]:sr-only",
+  control: "max-sm:basis-full max-sm:has-[>div:empty]:sr-only",
+  actions: "max-sm:flex-1 max-sm:has-[>div:empty]:sr-only",
+  // 觸控：開關的點擊範圍上下各撐 16px（共 46px），格子至少 48px 高，才不會伸進上一行的控制項。
+  enabled: "max-sm:ml-auto max-sm:pointer-coarse:min-h-12 max-sm:has-[>div:empty]:sr-only",
+};
+const PHONE_LABELLED: ReadonlySet<SettingsTableColumnKind> = new Set(["text", "url", "fixed", "control"]);
+
 /** 表頭文字與該欄內容同側：啟用置中、操作靠右、其餘靠左。 */
 const HEADER_INNER: Partial<Record<SettingsTableColumnKind, string>> = { actions: "text-right", enabled: "text-center" };
 
@@ -354,9 +389,14 @@ export function SettingsTable({ label, columns, rows, nameColumn, empty, title, 
       <div
         key={column.id}
         role="cell"
-        className={cn(CELL, cellPadding(column.kind, index, ordered.length, false), sticky && STICKY_CELL)}
+        className={cn(CELL, cellPadding(column.kind, index, ordered.length, false), "max-sm:px-3 max-sm:py-1", PHONE_CELL[column.kind], sticky && STICKY_CELL)}
         style={sticky && editing ? { background: EDITING_STICKY_BACKGROUND } : undefined}
       >
+        {PHONE_LABELLED.has(column.kind) && (
+          <span aria-hidden="true" className="shrink-0 pr-2 text-xs leading-5 text-muted-foreground sm:hidden">
+            {column.header}
+          </span>
+        )}
         <div
           id={isName && column.kind !== "primary" ? nameId(row) : undefined}
           title={cellTitle}
@@ -386,12 +426,12 @@ export function SettingsTable({ label, columns, rows, nameColumn, empty, title, 
         <div
           role="row"
           aria-labelledby={nameId(row)}
-          className={cn(ROW_GRID, editing && "bg-brand-soft", !hasError && !hasDetail && groupBorder)}
+          className={cn(ROW_GRID, "max-sm:py-2", editing && "bg-brand-soft", !hasError && !hasDetail && groupBorder)}
         >
           {editing ? (
             <>
               {renderCell(row, ordered[0]!, 0, true)}
-              <div role="cell" aria-colspan={ordered.length - 1} className={cn(CELL, "col-[2/-1] py-2.5 pr-3")}>
+              <div role="cell" aria-colspan={ordered.length - 1} className={cn(CELL, "col-[2/-1] py-2.5 pr-3 max-sm:basis-full max-sm:px-3 max-sm:py-1")}>
                 <div className="min-w-0 flex-1">{row.editing}</div>
               </div>
             </>
@@ -423,10 +463,10 @@ export function SettingsTable({ label, columns, rows, nameColumn, empty, title, 
     <div
       role="table"
       aria-label={label}
-      className="grid grid-cols-(--kb-table-cols) gap-x-3 text-sm"
+      className="grid grid-cols-(--kb-table-cols) gap-x-3 text-sm max-sm:grid-cols-1"
       style={{ "--kb-table-cols": tracks } as CSSProperties}
     >
-      <div role="row" ref={box.headerRowRef} className={cn(ROW_GRID, ROW_BORDER, nested && "sr-only")}>
+      <div role="row" ref={box.headerRowRef} className={cn(ROW_GRID, ROW_BORDER, "max-sm:sr-only", nested && "sr-only")}>
         {ordered.map((column, index) => (
           <div
             key={column.id}

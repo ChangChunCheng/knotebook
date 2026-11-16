@@ -12,9 +12,11 @@ import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scrol
 import { gateLocalCursor } from "@/collab/cursor-gate";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
+import { SideMenuExtension } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   FilePanelController,
+  GridSuggestionMenuController,
   SideMenuController,
   SuggestionMenuController,
   TableHandlesController,
@@ -38,13 +40,17 @@ import { createSiteLinkConvertExtension, createSiteLinkEnv, createSiteLinkPasteH
 import { createTourTransactionFilterExtension } from "@/collab/tour-transaction-filter";
 import { useCollabUndoLifeline } from "@/collab/undo";
 import { usePageUndoShortcut } from "@/collab/page-undo";
-import { buildSlashMenuItems } from "@/components/slash-menu";
+import { PHONE_SLASH_MENU_FLOATING_OPTIONS, buildSlashMenuItems, withoutSlashBadges } from "@/components/slash-menu";
 import { LinkDialog } from "@/components/LinkDialog";
+import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
+import { useIsPhone } from "@/lib/layout-tiers";
+import { useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
+import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
 import { safeMediaUrl } from "@/lib/media-url";
@@ -58,7 +64,10 @@ import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
 import { tourTarget } from "@/lib/tour-targets";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
+import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { MobileEditToolbar } from "@/components/editor/mobile/MobileEditToolbar";
+import { MobileToolbarSpacer } from "@/components/editor/mobile/MobileToolbarSpacer";
 import { KnotebookSideMenu, NotePathContext, SIDE_MENU_FLOATING_OPTIONS } from "@/components/editor/KnotebookSideMenu";
 import { useDragActiveClass } from "@/components/editor/use-drag-active-class";
 import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/editor/colors/KnotebookTableMenus";
@@ -341,17 +350,30 @@ export function insertLinkAtSavedSelection(
  * 那支，見下面 `NoteEditor` 本體）。
  */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
+  // 手機的選單不帶快捷鍵欄；跨 640 時 `getSlashItems` 換身分，選單重載一次。
+  const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   // 開對話框當下存下的 selection（驗出來的做法）：對話框搶走瀏覽器
   // focus 後 ProseMirror selection 本身不會變，但送出時仍明確還原一次，不倚賴
   // 「反正沒變」這個隱含事實。放 ref 不進 state——它不影響任何畫面輸出。
   const linkSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  // 開對話框當下選取的字與所在連結的網址：預填進對話框；送出時顯示文字沒改就不重打字，保留原本的粗體等樣式。
+  const [linkPrefill, setLinkPrefill] = useState({ text: "", url: "" });
 
   const openLinkDialog = useCallback(() => {
     const currentEditor = editorRef.current;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
     const sel = (currentEditor as any)?._tiptapEditor?.state?.selection;
-    linkSelectionRef.current = sel ? { from: sel.from, to: sel.to } : null;
+    // 選取（或游標）整個落在一個既有連結裡：編輯那個連結——套用範圍設成整個連結、文字預填成連結文字，
+    // 文字沒改就只換網址；不然收合的游標會把網址字串插進連結中間。
+    const link = linkAtSelection(currentEditor);
+    const editingLink = link !== undefined;
+    linkSelectionRef.current = editingLink ? { from: link.from, to: link.to } : sel ? { from: sel.from, to: sel.to } : null;
+    setLinkPrefill(
+      editingLink
+        ? { text: link.text, url: link.href }
+        : { text: currentEditor?.getSelectedText?.() ?? "", url: currentEditor?.getSelectedLinkUrl?.() ?? "" },
+    );
     setLinkDialogOpen(true);
   }, [editorRef]);
 
@@ -362,18 +384,24 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
     ({ text, href }: { text: string; href: string }) => {
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
-      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text, href });
+      // 顯示文字與選取的字一樣：只加連結、不重打字（重打會丟掉粗體等樣式）。
+      // `LinkDialog` 送出時會 trim 顯示文字，所以預填值也 trim 後再比，不然選取帶前後空白時永遠算「改過」而丟掉空白。
+      const prefilled = linkPrefill.text.trim();
+      const keepText = prefilled !== "" && text === prefilled;
+      insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text: keepText ? "" : text, href });
     },
-    [editorRef],
+    [editorRef, linkPrefill.text],
   );
 
   const getSlashItems = useCallback(
-    (query: string) =>
-      Promise.resolve(filterSuggestionItems(buildSlashMenuItems(editorRef.current, translate, openLinkDialog), query)),
-    [editorRef, translate, openLinkDialog],
+    (query: string) => {
+      const items = buildSlashMenuItems(editorRef.current, translate, openLinkDialog);
+      return Promise.resolve(filterSuggestionItems(phone ? withoutSlashBadges(items) : items, query));
+    },
+    [editorRef, translate, openLinkDialog, phone],
   );
 
-  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, handleLinkInsert, getSlashItems };
+  return { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems };
 }
 
 export interface NoteEditorProps {
@@ -391,6 +419,10 @@ export interface NoteEditorProps {
   headerSlot?: ReactNode;
   /** 內文卡頁尾——`NotePage` 組裝 backlinks chips 後傳入。同上，普通 slot props。 */
   footerSlot?: ReactNode;
+  /** 手機編輯中：渲染浮在鍵盤上方的編輯工具列（`NotePage` 依焦點與段位決定）。 */
+  mobileToolbar?: boolean;
+  /** 手機沒在編輯、右下左下有浮動鈕時：捲動內容尾端留一段空白，最後一行才捲得到浮動鈕之上。 */
+  fabClearance?: boolean;
   /** 版本預覽：有值時**捲動容器加 `hidden`**、同一張卡內在捲動容器之後渲染這個 slot；
    * 頁首（含預覽橫幅）、頁尾照常。⚠ 活編輯器**不 unmount**：`NoteEditorView` 的重掛會殺掉 y-prosemirror 的
    * UndoManager 訂閱；放在 `hidden` 容器裡的活編輯器仍收得到遠端更新。 */
@@ -408,6 +440,11 @@ export interface NoteEditorProps {
   maxUploadBytes?: number;
   /** 焦點不在編輯器時，頁面上的 Ctrl/Cmd+Z、重做鍵也作用在這篇（`@/collab/page-undo`）；版本預覽中一律關。省略＝關。 */
   pageUndoShortcut?: boolean;
+}
+
+/** 區塊自己那一行（不含巢狀子區塊）；量閱讀位置用。 */
+function blockLine(block: HTMLElement): Element {
+  return block.querySelector(":scope > .bn-block > .bn-block-content") ?? block;
 }
 
 /**
@@ -436,6 +473,8 @@ export function NoteEditor({
   noteId,
   headerSlot,
   footerSlot,
+  mobileToolbar = false,
+  fabClearance = false,
   previewSlot,
   onScrollRoot,
   onCursorScroller,
@@ -452,9 +491,19 @@ export function NoteEditor({
   const { panelOpen } = useVersions();
   // #274：版本面板寬度。state 放在面板與錯誤外框的最近共同祖先（下方列容器），以 CSS 變數往下傳。
   const panelWidth = useVersionsPanelWidth();
+  // 640-1279：面板浮在筆記上（列容器 `relative`、面板 `absolute`），上緣讓出頁首；收起規則見 `floating-panel.ts`。
+  const rowRef = useRef<HTMLDivElement>(null);
+  const headerSlotRef = useRef<HTMLDivElement>(null);
+  useNoteHeaderHeight(rowRef, headerSlotRef);
+  const { onKeyDown: onRowKeyDown } = useFloatingPanelDismiss();
   // #297：這篇的站內內文寬度（訂閱模組層 Map；換寬度只換欄 class，不重建 editor）。
   const [width] = useNoteWidth(noteId);
   const hasPreview = previewSlot !== undefined && previewSlot !== null;
+  // 手機：頁尾（提及列）不佔卡底，改放進捲動容器、文章欄之後，跟著內文捲；編輯工具列的空白仍排在最後。
+  const phone = useIsPhone();
+  const footerInScroll = phone && footerSlot !== undefined && footerSlot !== null;
+  // 手機上捲的是文件、頁首釘在頂端：它的高度給區塊的 `scroll-margin-top` 與捲到段落、捲到游標的計算（`lib/page-scroll.ts`）。
+  useStickyTopVar(headerSlotRef, phone);
 
   // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
@@ -465,6 +514,17 @@ export function NoteEditor({
     },
     [onScrollRoot],
   );
+  // 手機：寬表格右緣還能往右捲時的提示（不支援捲動驅動動畫的瀏覽器才需要；委派在捲動容器上）。
+  useTableScrollHint(scrollRootRef, phone);
+  // 跨 640（轉橫拿）時保住閱讀位置：以畫面頂端第一個區塊（量它自己那一行）為準，兩邊的排版不同也停在同一段。
+  // 手機上的上緣直接量頁首（換段的這一刻 `--kb-sticky-top` 還沒寫好）。
+  useTierScrollAnchor({
+    containerRef: scrollRootRef,
+    itemSelector: ".bn-block-outer",
+    idAttr: "data-id",
+    measure: blockLine,
+    phoneTop: () => headerSlotRef.current?.getBoundingClientRect().height ?? 0,
+  });
   const hasPreviewRef = useRef(hasPreview);
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);
@@ -552,7 +612,7 @@ export function NoteEditor({
   // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
   // `useLinkMenuState`（見該函式檔頭）方便直接對它
   // `renderHook`，不必掛真編輯器整棵渲染。
-  const { linkDialogOpen, setLinkDialogOpen, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
+  const { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
 
   const notes = useNotes().data;
   const { mutateAsync: createNote } = useCreateNote();
@@ -586,13 +646,16 @@ export function NoteEditor({
   //
   // 卡片版面：內文卡在這裡。DOM 樹（
   // 寬度鏈的起點）：
-  //   根 row（flex h-full min-h-0 min-w-0 flex-1 gap-3）
+  //   根 row（relative flex h-full min-h-0 min-w-0 flex-1 gap-3；640-1279 時是浮動版本面板的定位基準）
   //     內文卡（cardSurface，flex-col）
-  //       {headerSlot}                              ← NotePage 組裝
+  //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
-  //         `overflow-x-clip`＝#162，見下方 JSX 註解）
-  //         置中 wrapper（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
-  //           min-h-full flex-col py-6，`relative`＝#160，見下方 JSX 註解）
+  //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
+  //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
+  //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
+  //         置中 wrapper＝文章欄（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
+  //           flex-col py-6；非手機再加 `min-h-full`，手機（頁尾在捲動容器內）改 `grow shrink-0` 撐滿流程包裝；
+  //           `relative`＝#160，見下方 JSX 註解）
   //           ← 欄寬／內距一律取自 `ui/article-column.ts`：#297 起三段寬度（標準／寬／
   //             全寬），單一真相在該檔；headerSlot／footerSlot 是滿卡寬（置左置右），
   //             不套欄。欄寬下限承重的理由與 `<md` 內距 70→20 的斷點機制全寫在該檔；
@@ -601,18 +664,39 @@ export function NoteEditor({
   //             wrapper 的 min-h-full 無法把百分比高度傳給孫層，唯一有效解是讓
   //             BlockNoteView 自己成為 flex-col wrapper 的成長項；除 className 外零改動）
   //       {previewSlot}                               ← 版本預覽時才渲染；此時上面的捲動容器加 hidden（活編輯器不 unmount）
-  //       {footerSlot}                                ← NotePage 組裝（backlinks chips）
-  //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）
+  //       {footerSlot}                                ← NotePage 組裝（backlinks chips）；手機改放進上面的捲動容器、置中 wrapper 之後（後面再接編輯工具列的空白）
+  //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）；1280 起是第三欄，640-1279 是 absolute 浮在卡上，
+  //                                                      兩段是同一個節點（不搬進卡片，跨 1280 才不重掛、不丟清單捲動位置）
   //     CornerStack                                   ← 右下歷史泡泡（fixed，不佔 row 的 flex 空間）
   // `data-testid="note-editor"` 留在 `NoteEditorView`／`BlockNoteView` 上，不隨這次
   // 改版搬家——e2e 的 `[data-testid="note-editor"] [contenteditable]` 與
   // `NoteEditor.layout.test.tsx` 的節點鏈都吊在這裡。
   return (
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
-      <div className="flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
-        <div className={cn(cardSurface, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden")}>
-          {headerSlot}
-          <div ref={setScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>
+      <div ref={rowRef} onKeyDown={onRowKeyDown} className="relative flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
+        <div className={cn(
+          cardSurface,
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
+          // 手機上捲的是文件（`lib/page-scroll.ts`）：卡不裁切（頁首的 sticky 才黏得住），至少一個視窗高（`svh`：工具列伸縮時不變），
+          // 短筆記的文章欄仍延伸到畫面底、點下方空白照樣聚焦到最後。
+          "max-sm:min-h-svh max-sm:overflow-visible",
+          // 浮在鍵盤上的編輯工具列自己帶底部 safe area；捲動容器的下緣要在那段之上，
+          // 鍵盤收起時工具列頂端才恰在容器下緣上方 60px（游標捲動邊界與 AI 框翻轉都以此為準；
+          // 鍵盤或色盤開著時留白多出幾 px，無妨）。
+          mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
+        )}>
+          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。
+              手機上整個槽位釘在頁面頂端（不透明底，內文捲到它下面不透出來）。 */}
+          <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:sticky max-sm:top-0 max-sm:z-30 max-sm:bg-card max-sm:pt-[env(safe-area-inset-top)]">
+            {headerSlot}
+          </div>
+          {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
+              手機上的高度要從內容長出來（flex-basis auto，不是 flex-1 的 0%）：卡的高度不固定，0% 的基準加上
+              `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
+          <div
+            ref={setScrollRoot}
+            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
+          >
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
                 `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
                 `<html>`，撐出全頁滾軸；wrapper／捲動容器／`.bn-container` 三處等效，選
@@ -633,10 +717,14 @@ export function NoteEditor({
                 `scrollIntoView` 在我們自己的碼零呼叫，已查到的程式化捲動
                 （prosemirror-view caret-follow）先被 `.tableWrapper` 吃掉。細節見
                 `14-table-hover.spec.ts`。 */}
+            {/* 手機且頁尾放在捲動容器內時：欄、頁尾、工具列空白包在一個至少與捲動容器等高的直欄裡，
+                欄自己撐滿剩下的高度（短筆記不會因為頁尾與空白而多出可捲的範圍，點欄下方空白仍聚焦到最後）。
+                其他情形這層是 `display: contents`，不產生盒子，欄照舊自己 `min-h-full`。 */}
+            <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col max-sm:grow" : "contents"}>
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
+              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
             >
               <NoteEditorView
                 editor={editor}
@@ -653,26 +741,52 @@ export function NoteEditor({
               <HeadingAnchorButtons container={columnEl} />
               {/* 欄間分隔線（拖曳／鍵盤調欄寬）只在可編輯時掛；唯讀時沒有東西可調。 */}
               {editable && <ColumnDividers container={columnEl} editor={editor} />}
+              {mobileToolbar && !footerInScroll && <MobileToolbarSpacer />}
+            </div>
+            {/* 手機的頁尾在文章欄之後；工具列的空白再排在它後面，頁尾才捲得到工具列之上，游標那一行（在欄內）的避讓不受影響。 */}
+            {footerInScroll && footerSlot}
+            {mobileToolbar && footerInScroll && <MobileToolbarSpacer />}
+            {/* 浮動鈕高 56＋離底 16＋safe area，再留 8px 的縫。 */}
+            {fabClearance && <div aria-hidden="true" data-fab-clearance="" className="h-[calc(5rem+env(safe-area-inset-bottom))] shrink-0" />}
             </div>
           </div>
           {hasPreview && (
-            <div data-testid="preview-slot" className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            // 640-1279 面板浮在卡上：開著時右側讓出面板的寬度，預覽的並排門檻量到的是剩下的寬度，右欄不會被面板蓋住。
+            // 用 margin 而不是 padding：預覽區自己是捲動容器，padding 會讓捲軸留在最右緣、被面板蓋住。
+            <div
+              data-testid="preview-slot"
+              className={cn(
+                "min-h-0 min-w-0 flex-1 overflow-y-auto",
+                panelOpen && "max-xl:mr-[min(var(--versions-panel-width),calc(100%_-_3rem))]",
+              )}
+            >
               {previewSlot}
             </div>
           )}
-          {footerSlot}
+          {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
-          <VersionsLazyBoundary noteId={noteId} errorClassName={VERSIONS_ERROR_FRAME.panel}>
-            <VersionsPanel doc={doc} width={panelWidth.width} onWidthChange={panelWidth.onChange} />
-          </VersionsLazyBoundary>
+          // `display: contents`：不產生盒子，面板的定位基準仍是列容器；收起與 Esc 的「在面板內」判斷認這個節點（錯誤外框也在裡面）。
+          <div data-versions-panel-slot="" className="contents">
+            <VersionsLazyBoundary noteId={noteId} errorClassName={VERSIONS_ERROR_FRAME.panel}>
+              <VersionsPanel doc={doc} width={panelWidth.width} onWidthChange={panelWidth.onChange} />
+            </VersionsLazyBoundary>
+          </div>
         )}
         <CornerStack />
+        {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
           給 `getSlashItems` 用），`LinkDialog` 自己不持有——關閉與焦點回歸的完整
           說明見該檔檔頭。 */}
-      <LinkDialog editor={editor} open={linkDialogOpen} onOpenChange={setLinkDialogOpen} onSubmit={handleLinkInsert} />
+      <LinkDialog
+        editor={editor}
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        onSubmit={handleLinkInsert}
+        initialText={linkPrefill.text}
+        initialUrl={linkPrefill.url}
+      />
     </AiSessionProvider>
   );
 }
@@ -687,6 +801,15 @@ const WIKILINK_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
 };
 const SLASH_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
   elementProps: tourTarget("slashMenu") as FloatingUIOptions["elementProps"],
+};
+/** 手機上的同兩份：再加上手機 `/` 選單的定位（`PHONE_SLASH_MENU_FLOATING_OPTIONS`）。 */
+const WIKILINK_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  ...PHONE_SLASH_MENU_FLOATING_OPTIONS,
+  ...WIKILINK_MENU_FLOATING_OPTIONS,
+};
+const SLASH_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  ...PHONE_SLASH_MENU_FLOATING_OPTIONS,
+  ...SLASH_MENU_FLOATING_OPTIONS,
 };
 
 export interface NoteEditorViewProps {
@@ -721,6 +844,13 @@ export interface NoteEditorViewProps {
  * #263 起 formatting toolbar 不在這裡掛：它與框選 AI 框由 children（`SelectionAiController`）擁有。
  */
 export function NoteEditorView({ editor, editable, theme, noteId, getItems, getSlashItems, children, notePath }: NoteEditorViewProps) {
+  const phone = useIsPhone();
+  // 區塊選單開著時變窄到手機寬度：側選單 controller 卸載，但 core 那份仍停在凍結狀態；解凍（先確認 state 已建立，否則 core 會丟例外）。
+  useEffect(() => {
+    if (!phone) return;
+    const sideMenu = editor.getExtension(SideMenuExtension);
+    if (sideMenu?.store.state?.show) sideMenu.unfreezeMenu();
+  }, [phone, editor]);
   // `createFilePanel(noteId)` 回傳一個新的元件型別——`FilePanelController`
   // 拿它跟前一輪比對身分，身分一變就會整個卸載重掛（見 `createFilePanel` 檔頭的完整
   // 說明），所以這裡必須 `useMemo` 釘住，只在 `noteId` 真的換手時才重建。`noteId`
@@ -744,7 +874,10 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         editable={editable}
         theme={theme}
         data-testid="note-editor"
-        className="min-h-full flex-1"
+        // 手機上文章欄的高度從內容長出來（`flex-auto`，短筆記靠 grow 撐滿欄、不靠 `min-h-full`）：欄的高度不固定時，
+        // `flex-1` 的 0% 基準加上 `min-h-full` 會讓內文溢出欄外。className 也會套到 BlockNote 放浮層的 portal 根節點（在容器裡、
+        // 排在內文之後），它的 `min-h-full` 在手機上會解成整篇的高度、在文件尾端多出一整段空白，所以手機上一併歸零。
+        className="min-h-full flex-1 max-sm:min-h-0 max-sm:flex-auto"
         // 關掉 BlockNote 內建的 FilePanelController：下面接管的是我們自家的
         // `filePanel`（自家 Upload tab 呼叫 `postUpload`，不用 `editor.uploadFile`，
         // 理由見 `components/FilePanel.tsx` 檔頭）。不明確設 `false` 這裡會同時掛兩個
@@ -762,10 +895,27 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         sideMenu={false}
         // 關掉內建的表格把手，自掛一份：儲存格與列／欄把手的顏色選單多了「自訂…」。不明確設 false 會疊兩份把手。
         tableHandles={false}
+        // 同理關掉內建的 `:` 表情選單，自掛一份（內容與預設相同）：手機時要套 floating 選項，才不會蓋到編輯工具列。
+        emojiPicker={false}
       >
-        <SuggestionMenuController triggerCharacter="[[" getItems={getItems} floatingUIOptions={WIKILINK_MENU_FLOATING_OPTIONS} />
-        <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} floatingUIOptions={SLASH_MENU_FLOATING_OPTIONS} />
-        <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />
+        <SuggestionMenuController
+          triggerCharacter="[["
+          getItems={getItems}
+          floatingUIOptions={phone ? WIKILINK_MENU_PHONE_FLOATING_OPTIONS : WIKILINK_MENU_FLOATING_OPTIONS}
+        />
+        <GridSuggestionMenuController
+          triggerCharacter=":"
+          columns={10}
+          minQueryLength={2}
+          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+        />
+        <SuggestionMenuController
+          triggerCharacter="/"
+          getItems={getSlashItems}
+          floatingUIOptions={phone ? SLASH_MENU_PHONE_FLOATING_OPTIONS : SLASH_MENU_FLOATING_OPTIONS}
+        />
+        {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
+        {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}
         <TableHandlesController tableHandle={KnotebookTableHandle} tableCellHandle={KnotebookTableCellButton} />
         <FilePanelController filePanel={filePanel} />
         {/* 觸控長按一般連結 ⇒ BlockNote 原生連結工具列（wikilink 的長按在它自己的元件裡）。 */}

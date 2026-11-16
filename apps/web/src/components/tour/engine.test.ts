@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import type { AiActionDto } from "@knotebook/shared";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import {
   fetchTourAiActions,
   focusReturnTarget,
@@ -76,7 +76,7 @@ function stubViewport(narrow: boolean) {
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => ({
-      matches: query === NARROW_QUERY ? narrow : false,
+      matches: query === OVERLAY_QUERY ? narrow : false,
       media: query,
       onchange: null,
       addEventListener: () => {},

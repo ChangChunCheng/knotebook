@@ -140,10 +140,8 @@ export const STOPS: Readonly<Record<StopId, StopDef>> = {
     id: "versions",
     titleKey: "tourGuide.stops.versions.title",
     bodyKey: "tourGuide.stops.versions.body",
-    narrowBodyKey: "tourGuide.stops.versions.narrowBody",
+    // 右下角的泡泡在 640 以上都在（側欄浮動時也一樣），不跟著側欄的寬窄判準換目標；比 640 窄的手機才沒有泡泡。
     target: () => all(findTourTarget("versions")),
-    // 窄視窗沒有右下角的泡泡，版本歷史在頁首 ⋮ 裡。
-    narrowTarget: () => all(noteMenu()),
   },
   wikilink: {
     id: "wikilink",

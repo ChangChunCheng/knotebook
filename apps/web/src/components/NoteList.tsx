@@ -7,7 +7,6 @@ import { useFavoriteLookup } from "@/api/favorites";
 import { folderErrorMessage, useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
 import { GroupMenu } from "@/components/groups/GroupMenu";
-import { GroupNameDialog } from "@/components/groups/GroupNameDialog";
 import { SidebarNoteMenu } from "@/components/NoteMenu";
 import { RowFavoriteStar } from "@/components/RowFavoriteStar";
 import { useNotes } from "@/api/notes";
@@ -15,8 +14,9 @@ import { useActiveNote } from "@/lib/active-note";
 import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT, ROW_ICON_ROW } from "@/components/ui/hit-area";
 import { hoverReveal, type RevealScope } from "@/components/ui/reveal";
-import { FolderPlus, Plus, SquareCheck } from "@/components/ui/icons";
+import { FolderPlus, Plus, SquareCheck, Star } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
 import { useCollapsed } from "@/components/sidebar/collapse";
 import { indexFolders, liveNotesUnder } from "@/components/sidebar/folder-index";
@@ -25,6 +25,8 @@ import { useFolderSortOf } from "@/components/sidebar/folder-sort";
 import { FolderRowButton } from "@/components/sidebar/FolderRowButton";
 import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
+import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
+import { usePhoneListScroll } from "@/components/sidebar/phone-list-scroll";
 import type { StackPreviewState } from "@/components/sidebar/drag-session";
 import { StackPreview } from "@/components/sidebar/StackPreview";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
@@ -35,6 +37,8 @@ import { tourTarget, type TourTargetId } from "@/lib/tour-targets";
 // 一般 tab 選取模式：只准經 SelectLazy 這個 lazy 入口（首包上限）。兩個掛點共用同一個 chunk。
 const SelectHeader = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectHeader })));
 const SelectableTree = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectableTree })));
+// 新增群組對話框：只在開啟時才需要，lazy（首包瘦身）。
+const GroupNameDialog = lazy(() => import("@/components/groups/GroupNameDialog").then((m) => ({ default: m.GroupNameDialog })));
 // 資料夾對話框（新增／改名／刪除）：只准經 FolderLazy 這個 lazy 入口（首包上限）。
 const FolderDialogs = lazy(() => import("@/components/sidebar/FolderLazy").then((m) => ({ default: m.FolderDialogs })));
 
@@ -77,7 +81,7 @@ export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteD
   const { t } = useTranslation();
   if (group) return null;
   if (role !== "editor" && role !== "viewer") return null;
-  return <span className="shrink-0 text-[11px] text-muted-foreground">{t(`roles.${role}`)}</span>;
+  return <span className="shrink-0 text-[11px] text-muted-foreground max-sm:text-xs">{t(`roles.${role}`)}</span>;
 }
 
 /** `plain`：頂層清單（我的筆記／與我共享），`pl-2`；`group`：群組導引線內，文字離線 12px；
@@ -94,7 +98,26 @@ interface NoteRowProps {
   favoritePending: boolean;
 }
 
-/** 一列筆記：標題、徽章、最愛星星（`RowFavoriteStar`）、⋮（`SidebarNoteMenu`），DOM 順序＝視覺順序；
+/**
+ * 觸控與沒有 hover 的裝置上最愛列的星標：不是按鈕、不吃點擊，排在 ⋮ 的左邊（⋮ 一律是最右一格，各列的 ⋮ 上下對齊）；
+ * 加入、移出走 ⋮ 選單。滑鼠下不顯示（那裡是最右一格的星號鈕）。星形 14px、與 ⋮ 的圖示間隔約 8px；
+ * 左邊 `ms-2`（加列 gap 共 12px）與標題／角色字隔開。
+ */
+function FavoriteMarker() {
+  const { t } = useTranslation();
+  return (
+    <span
+      role="img"
+      aria-label={t("note.favorite.label")}
+      data-favorite-marker=""
+      className="pointer-events-none ms-2 hidden h-6 w-3.5 shrink-0 items-center justify-center text-brand [@media(hover:none)]:flex [@media(pointer:coarse)]:flex"
+    >
+      <Star aria-hidden="true" className="h-3.5 w-3.5 shrink-0" fill="currentColor" />
+    </span>
+  );
+}
+
+/** 一列筆記：標題、徽章、⋮（`SidebarNoteMenu`）、最愛星星（`RowFavoriteStar`，最右一格），DOM 順序＝視覺順序；
  * 星星與 ⋮ 的 hover 浮出靠 `<li>` 的 `group/noterow`。
  * 靜態卡與抽屜各一份 NoteList，所以一篇筆記的星星與 ⋮ 最多各兩份 DOM——測試一律 `within(...)` 鎖定面板。 */
 function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRowProps) {
@@ -109,8 +132,8 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
       data-node-kind="note"
       data-node-id={note.id}
       className={cn(
-        "group/noterow flex items-center gap-1 rounded-md pr-2 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
-        variant === "recent" ? "pl-2" : "h-11 md:h-7",
+        "group/noterow flex items-center gap-1 rounded-md pr-0.75 text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
+        variant === "recent" ? "pl-2" : "h-11 pointer-fine:h-7",
         variant === "plain" && "pl-2",
         variant === "group" && "pl-3",
         // #247：非 active 的列走主題色四態（與管理面板左卡項次同）：平常無底、hover
@@ -143,7 +166,7 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         {variant === "recent" ? (
           // 兩行一律 <div>：可及名稱靠 UA 預設 block 之間補空白（jsdom 不載 Tailwind，span 會黏成「標題位置」）。
           <>
-            <div className="truncate text-[13px]">{note.title}</div>
+            <div className="truncate text-[13px] max-sm:text-[15px]">{note.title}</div>
             <LocationLine label={noteLocationLabel(note, location, t)} />
           </>
         ) : (
@@ -151,8 +174,9 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         )}
       </Link>
       {variant !== "recent" && <RoleBadge role={note.role} group={note.group} />}
-      {favorite !== null && <RowFavoriteStar note={note} favorite={favorite} pending={favoritePending} />}
+      {favorite === true && <FavoriteMarker />}
       <SidebarNoteMenu note={note} />
+      {favorite !== null && <RowFavoriteStar note={note} favorite={favorite} pending={favoritePending} />}
     </li>
   );
 }
@@ -160,7 +184,7 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
 /** 最近 tab 的第二行：太長時 CSS truncate，`title` 給完整路徑。 */
 function LocationLine({ label }: { label: string }) {
   return (
-    <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={label}>
+    <div className="mt-0.5 truncate text-[11px] text-muted-foreground max-sm:text-xs" title={label}>
       {label}
     </div>
   );
@@ -202,7 +226,7 @@ function HeaderActionButton({
       onClick={onClick}
       disabled={disabled}
       // 24px。hover 浮出與觸控（`hover: none`）常駐見 `ui/reveal.ts`。
-      className={cn("h-6 w-6 shrink-0", reveal && hoverReveal(reveal))}
+      className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, reveal && hoverReveal(reveal))}
     >
       <Icon aria-hidden="true" className="h-3.5 w-3.5" />
     </Button>
@@ -244,7 +268,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
       data-drop-scope={dropScoped ? "" : undefined}
       className={cn("flex flex-col gap-0.5", dropScoped && DROP_SCOPE_CLASS)}
     >
-      <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
+      <div className={cn("group/grouprow flex h-11 items-center gap-0.5 pr-0.75 pointer-fine:h-7 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong", ROW_ICON_ROW)}>
         <GroupRowButton name={group.name} open={open} onToggle={toggle} />
         {/* 資料夾：能編輯群組筆記才能建資料夾；排在「＋」之前（稿 `Workshop`）。 */}
         {group.myRole?.permissions.edit && (
@@ -297,7 +321,7 @@ function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder"
       data-drop-scope={dropScoped ? "" : undefined}
       className={cn("flex flex-col gap-0.5", dropScoped && DROP_SCOPE_CLASS)}
     >
-      <div className="group/folderrow flex h-11 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong md:h-7">
+      <div className={cn("group/folderrow flex h-11 items-center gap-0.5 pr-0.75 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong pointer-fine:h-7", ROW_ICON_ROW)}>
         <FolderRowButton name={folder.name} open={open} onToggle={toggle} />
         {folder.permissions.createNote && (
           <HeaderActionButton
@@ -319,7 +343,7 @@ function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder"
       {open && (
         <div className="ml-[15px] border-l border-muted-foreground/35 pl-2">
           {node.children.length === 0 ? (
-            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground md:h-7">{t("sidebar.folderEmpty")}</p>
+            <p className="flex h-11 items-center pl-3 text-[11px] text-muted-foreground pointer-fine:h-7">{t("sidebar.folderEmpty")}</p>
           ) : (
             <SidebarNodeList nodes={node.children} ctx={ctx} inGroup />
           )}
@@ -404,6 +428,9 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
   const focusAfterRef = useRef<"done" | "select" | null>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  usePhoneListScroll(listRef, headerRef);
 
   const spec = tabSpec(tab);
   const groups = groupsQuery.data ?? EMPTY_GROUPS;
@@ -606,7 +633,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
               focusAfterRef.current = "done";
               updateSelection({ type: "start" });
             }}
-            className="h-6 w-6 shrink-0"
+            className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT)}
           >
             <SquareCheck aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
@@ -630,7 +657,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   return (
     <>
-      <div data-sidebar-header="" className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW, PHONE_LIST_HEADER_STICKY)}>
         {selection.active ? (
           // chunk 還沒到：只有名稱（不含動作鈕）。
           <SidebarLazyBoundary chunk="select" fallback={tabLabel} errorClassName="hidden">
@@ -654,13 +681,19 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           </>
         )}
       </div>
-      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端。進出選取模式不換（捲動位置不跳）。 */}
+      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端。進出選取模式不換（捲動位置不跳）。手機上不自己捲，捲的是文件（切 tab 回頂端由 `AppShell` 做）。 */}
       {/* 安全網：橫向裁切放在內層包層——放在清單本身會因另一軸是 `overflow-y-auto` 算成 `hidden`，仍可被捲動橫移。 */}
       {/* 拖曳的 dragstart／dragover／drop／dragend 都委派在這個容器；包層 `min-h-full`：清單下方空白也算根目錄的標示範圍。 */}
-      <div key={tab} data-sidebar-list="" className="min-h-0 flex-1 overflow-y-auto" {...drag.containerProps}>
+      <div key={tab} ref={listRef} data-sidebar-list="" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain", PHONE_LIST_SCROLLER)} {...drag.containerProps}>
         <div
           data-drop-scope={listDropScoped ? "" : undefined}
-          className={cn("min-h-full overflow-x-clip px-2", listDropScoped && DROP_SCOPE_CLASS)}
+          className={cn(
+            "min-h-full overflow-x-clip px-2",
+            // 手機：底部兩顆浮動鈕（56px＋16px 邊距＋safe area）蓋在清單上，最後一列要能捲到它們上方。
+            // 選取模式沒有浮動鈕也照留：進出選取模式時捲動範圍不變，捲在底部的位置才不跳。
+            "max-sm:pb-[calc(5rem+env(safe-area-inset-bottom))]",
+            listDropScoped && DROP_SCOPE_CLASS,
+          )}
         >
           {selection.active && nodes !== null && nodes.length > 0 && tab !== "trash" ? (
             // chunk 還沒到：照常顯示平常的列，到了才換勾選框。選取中清單重抓後變得沒有可勾的篇（只剩空群組）也留在勾選樹：
@@ -674,7 +707,11 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
         </div>
       </div>
       {/* 對話框只在開啟時掛載，關閉時焦點還給標題列「＋」（`returnFocusRef`）。 */}
-      {createOpen && <GroupNameDialog mode="create" open onOpenChange={setCreateOpen} returnFocusRef={addGroupRef} />}
+      {createOpen && (
+        <SidebarLazyBoundary chunk="groupDialog" fallback={null} errorClassName="p-2">
+          <GroupNameDialog mode="create" open onOpenChange={setCreateOpen} returnFocusRef={addGroupRef} />
+        </SidebarLazyBoundary>
+      )}
       {/* 資料夾對話框：只在開啟時掛載；chunk 載入失敗時顯示 inline 錯誤（不藏起來，否則是一排沒反應的鈕）。 */}
       {folderRequest && (
         <SidebarLazyBoundary chunk="folder" fallback={null} errorClassName="p-2">

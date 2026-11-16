@@ -24,8 +24,10 @@
   width: 100%;
   height: 100%;
 }
+/* overscroll-behavior：捲到投影片頭尾時不帶動背後的頁面（手機上筆記是文件在捲）。 */
 .kn-present .reveal .slides section[data-kn-slide-id] {
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: clamp(1.5rem, 5vh, 4rem) clamp(1rem, 6vw, 6rem);
   font-size: clamp(1rem, 0.6rem + 1.2vw, 1.75rem);
   line-height: 1.5;
@@ -66,6 +68,12 @@
 .kn-present .kn-slide-body h1 { font-size: 2.25em; font-weight: 700; line-height: 1.2; margin: 0 0 0.5em; }
 .kn-present .kn-slide-body h2 { font-size: 1.75em; font-weight: 700; line-height: 1.25; margin: 0 0 0.5em; }
 .kn-present .kn-slide-body h3 { font-size: 1.4em; font-weight: 600; margin: 0.8em 0 0.4em; }
+/* 手機：標題縮小，寫在桌面規則之後（同特異性，後者勝）。 */
+@media (width < 40rem) {
+  .kn-present .kn-slide-body h1 { font-size: 1.75em; }
+  .kn-present .kn-slide-body h2 { font-size: 1.5em; }
+  .kn-present .kn-slide-body h3 { font-size: 1.25em; }
+}
 .kn-present .kn-slide-body h4 { font-size: 1.2em; font-weight: 600; margin: 0.8em 0 0.4em; }
 .kn-present .kn-slide-body h5,
 .kn-present .kn-slide-body h6 { font-size: 1em; font-weight: 600; margin: 0.8em 0 0.4em; }
