@@ -219,7 +219,7 @@ describe("AppShell — 手機清單畫面", () => {
     for (const fab of [search, create]) {
       expect(fab).toHaveClass("fixed", "h-14", "w-14", "rounded-full", "shadow-lg", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
     }
-    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card/95", "supports-[backdrop-filter]:backdrop-blur-xl");
+    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card/95", "supports-[backdrop-filter]:backdrop-blur-sm");
     expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]");
     // 圖示鈕沒有可見文字。
     expect(create.textContent).toBe("");
