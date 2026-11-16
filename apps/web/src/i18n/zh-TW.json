@@ -667,7 +667,8 @@
   },
   "management": {
     "close": "關閉",
-    "back": "返回項次"
+    "back": "返回項次",
+    "backToMenu": "返回選單"
   },
   "settings": {
     "entry": "設定",

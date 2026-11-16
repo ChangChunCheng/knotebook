@@ -153,7 +153,7 @@ export function FolderMenu({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu phoneSheet open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           ref={triggerRef}
@@ -168,6 +168,7 @@ export function FolderMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
+        sheetTitle={folder.name}
         onCloseAutoFocus={(event) => {
           if (!openingDialogRef.current) return;
           openingDialogRef.current = false;
@@ -205,7 +206,7 @@ export function FolderMenu({
           aria-labelledby={sortLabelId}
         >
           {SORTS.map(({ value, key }) => (
-            <DropdownMenuRadioItem key={value} value={value} className={RADIO_ROW} onSelect={(event) => event.preventDefault()}>
+            <DropdownMenuRadioItem key={value} value={value} className={RADIO_ROW} sheetRow onSelect={(event) => event.preventDefault()}>
               <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
                 <DropdownMenuItemIndicator>
                   <Check className="h-4 w-4" />

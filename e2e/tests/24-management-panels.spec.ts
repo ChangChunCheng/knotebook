@@ -118,9 +118,10 @@ test.describe.serial("24 管理面板（#247）", () => {
       await expect(back).toBeFocused();
       await expect(dialog.getByRole("navigation", { name: "Site admin" })).toBeHidden();
       await expect(dialog.getByRole("heading", { level: 1, name: "User management" })).toBeVisible();
-      // 窄視窗內容層：使用者表比 390 寬，曾把右卡（連同 ✕）推出視窗右緣——✕ 要整顆在視窗內。
+      // 窄視窗內容層：使用者表比 390 寬，曾把右卡推出視窗右緣——左上角的返回鈕要整顆在視窗內。手機的 sheet 沒有 ✕（返回堆疊）。
       await expect(dialog.getByText(ADMIN.email, { exact: true })).toBeVisible();
-      await expectInViewport(page, dialog.getByRole("button", { name: "Close" }));
+      await expectInViewport(page, back);
+      await expect(dialog.getByRole("button", { name: "Close" })).toHaveCount(0);
       // 手機上表格是卡片：不橫捲（各列控制項的位置由 26 逐列量）。
       const region = dialog.getByRole("region", { name: "Users", exact: true });
       expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

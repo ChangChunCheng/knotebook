@@ -5,8 +5,9 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchAiActions } from "@/api/ai";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
-import { ArrowLeft } from "@/components/ui/icons";
-import { managementNavItemClass } from "@/components/management/tray";
+import { ArrowLeft, ChevronLeft } from "@/components/ui/icons";
+import { managementCardPhone, managementCardPhoneInset, managementListPaddingPhone, managementNavItemClass } from "@/components/management/tray";
+import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
 import { visibleShortcuts, type KeyToken, type ShortcutCategory, type ShortcutEntry, type ShortcutKeys } from "./shortcut-list";
@@ -162,7 +163,17 @@ function isNarrowViewport(): boolean {
   return !window.matchMedia("(min-width: 768px)").matches;
 }
 
-export function ShortcutsContent() {
+/** 手機的卡貼齊 sheet 左緣：「‹」自己退開左側 safe area（同 `ManagementShell`）。 */
+const PHONE_BACK_LEFT = "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]";
+
+/** 手機的「‹」不分指標一律 44×44（同 `ManagementShell`）。 */
+const PHONE_BACK_HIT = "max-sm:after:absolute max-sm:after:-inset-2 max-sm:after:content-[''] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
+
+/**
+ * `listBack`：手機（外殼傳入）分類清單左上角的「‹」——關掉快捷鍵頁（從選單開的會重開選單，名稱由外殼給）。
+ * 手機打開時先停在分類清單；內容層的「‹」回分類清單，與它在同一個位置。
+ */
+export function ShortcutsContent({ listBack }: { listBack?: { label: string; onBack: () => void } } = {}) {
   const { t } = useTranslation();
   const mac = isMacPlatform();
   const uid = useId();
@@ -174,8 +185,9 @@ export function ShortcutsContent() {
   // 預設停在「通用」；所選分類若消失（例如 AI 查詢回來才知道站台沒有 AI）就退回第一個。
   const [selected, setSelected] = useState<ShortcutCategory>("global");
   const active = groups.find((g) => g.category === selected) ?? groups[0]!;
-  // 初值 "content"：窄螢幕打開就直接看到內容（同設定：深連結在手機上直接看到那一頁）。
-  const [layer, setLayer] = useState<Layer>("content");
+  // 初值 "content"：640～767 的窄螢幕打開就直接看到內容；手機（< 640）先停在分類清單（同設定從選單打開）。
+  const [layer, setLayer] = useState<Layer>(() => (isPhone() ? "items" : "content"));
+  const phone = useIsPhone();
   const [focusRequest, setFocusRequest] = useState<{ target: Layer; seq: number } | null>(null);
   const seqRef = useRef(0);
   const navRef = useRef<HTMLElement>(null);
@@ -198,20 +210,43 @@ export function ShortcutsContent() {
     setFocusRequest(null);
   }, [focusRequest]);
 
-  // 開啟：chunk 比 Dialog 晚到時，外殼的 onOpenAutoFocus 當下找不到內容區、只能先把焦點放在對話框本身——這裡接手。
+  // 開啟：chunk 比 Dialog 晚到時，外殼的 onOpenAutoFocus 當下找不到落點、只能先把焦點放在對話框本身——這裡接手。
+  // 落點是看得見的那一層的 `[data-shortcuts-focus]`：內容層＝內容區；手機停在分類清單時＝清單的「‹」（沒有就是目前的分類）。
   useEffect(() => {
     const focused = document.activeElement;
-    if (!focused || focused === document.body || focused.getAttribute("role") === "dialog") contentRef.current?.focus();
+    if (!focused || focused === document.body || focused.getAttribute("role") === "dialog") {
+      document.querySelector<HTMLElement>("[data-shortcuts-focus]")?.focus();
+    }
   }, []);
 
   return (
     <>
       <div
         data-shortcuts-card="items"
-        className={cn(cardSurface, "w-full shrink-0 flex-col overflow-hidden p-4 md:w-64", layer === "items" ? "flex" : "hidden", "md:flex")}
+        className={cn(
+          cardSurface,
+          "relative w-full shrink-0 flex-col overflow-hidden p-4 md:w-64",
+          managementCardPhone,
+          managementListPaddingPhone,
+          layer === "items" ? "flex" : "hidden",
+          "md:flex",
+        )}
       >
         {/* 對話框的名稱在外殼的 sr-only DialogTitle；這裡的字只是視覺標題。 */}
-        <div className="mb-3 flex h-10 items-center gap-2 px-3">
+        <div className={cn("mb-3 flex h-10 items-center gap-2 px-3", listBack && "pl-10")}>
+          {listBack && layer === "items" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              data-shortcuts-focus={layer === "items" ? "" : undefined}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
+              aria-label={listBack.label}
+              onClick={listBack.onBack}
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
           <p aria-hidden="true" className="truncate text-[15px] font-semibold leading-tight tracking-normal">
             {t("shortcuts.title")}
           </p>
@@ -223,6 +258,7 @@ export function ShortcutsContent() {
               type="button"
               data-shortcuts-category={category}
               aria-current={category === active.category ? "true" : undefined}
+              data-shortcuts-focus={layer === "items" && !listBack && category === active.category ? "" : undefined}
               aria-controls={contentId}
               onClick={() => {
                 setSelected(category);
@@ -252,23 +288,31 @@ export function ShortcutsContent() {
       </div>
       <div
         data-shortcuts-card="content"
-        className={cn(cardSurface, "relative min-w-0 flex-1 flex-col overflow-hidden", layer === "content" ? "flex" : "hidden", "md:flex")}
+        className={cn(
+          cardSurface,
+          "relative min-w-0 flex-1 flex-col overflow-hidden",
+          managementCardPhone,
+          managementCardPhoneInset,
+          layer === "content" ? "flex" : "hidden",
+          "md:flex",
+        )}
       >
         {/* 子節點順序承重：返回鈕（窄）→ 內容容器（✕ 在外殼、DOM 上更前面）。 */}
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden"
+          className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
           aria-label={t("management.back")}
           onClick={() => switchTo("items")}
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          {phone ? <ChevronLeft className="h-4 w-4" aria-hidden="true" /> : <ArrowLeft className="h-4 w-4" aria-hidden="true" />}
         </Button>
         <div
           ref={contentRef}
           id={contentId}
           data-shortcuts-content=""
+          data-shortcuts-focus={layer === "content" ? "" : undefined}
           role="region"
           aria-labelledby={headingId}
           tabIndex={0}

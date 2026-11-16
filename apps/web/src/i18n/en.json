@@ -667,7 +667,8 @@
   },
   "management": {
     "close": "Close",
-    "back": "Back to sections"
+    "back": "Back to sections",
+    "backToMenu": "Back to menu"
   },
   "settings": {
     "entry": "Settings",

@@ -19,7 +19,8 @@ import {
  * 56-5 輸入框字級（觸控）：登入頁、清單搜尋框、筆記頁（標題框、程式碼區塊語言下拉）、分享對話框、設定頁，
  *      每個看得到的 input／select／textarea 的 computed font-size 都不小於 16px（搜尋框與程式碼區塊語言下拉量到剛好 16px）。
  * 56-6 搜尋框（800、1280 觸控）：沒有 Ctrl K 提示；清除 ✕ 的點擊範圍 44×44，但輸入框文字區右緣內 1px 點下去仍是輸入框。
- * 56-7 滑鼠不變（390、1280 滑鼠）：列 28、tab 36、選單項 32、列內鈕的點擊範圍就是 24×24；1280 的側欄搜尋框 13px、Ctrl K 提示還在。
+ * 56-7 滑鼠不變（390、1280 滑鼠）：列 28、tab 36、列內鈕的點擊範圍就是 24×24；選單項 1280 是 32，390 的 ⋮ 是貼底的 sheet（不分指標）所以是 48；
+ *      1280 的側欄搜尋框 13px、Ctrl K 提示還在。
  *
  * 不在範圍內（原因）：
  * - Mantine／BlockNote 內建的輸入框與下拉（例如連結工具列的網址框）：字級由該套件的樣式決定，不是我們的 class。
@@ -246,6 +247,8 @@ for (const phone of PHONES) {
       await page.locator("[data-phone-top-bar]").getByRole("button", { name: alice.displayName, exact: true }).click();
       const menu = page.getByRole("menu");
       await expect(menu).toBeVisible();
+      // 手機的選單是由下往上升起的 sheet：進場動畫跑完再量（還在畫面外的部分 elementFromPoint 打不到）
+      await expect.poll(() => menu.evaluate((el) => el.getAnimations().length)).toBe(0);
       const userItems = await menuItemHeights(page);
       const swatchNames = await menu.evaluate((el) =>
         Array.from(el.querySelectorAll<HTMLElement>('[role="menuitemradio"]'))
@@ -458,7 +461,8 @@ for (const phone of [PHONES[0], { width: 1280, height: 900 }] as const) {
       await more.click();
       const items = await menuItemHeights(page);
       expect(items.length, "選單項數").toBeGreaterThanOrEqual(5);
-      for (const item of items) expect(item.height, `選單「${item.name}」高`).toBeCloseTo(32, 0);
+      const rowHeight = phone.width < 640 ? 48 : 32;
+      for (const item of items) expect(item.height, `選單「${item.name}」高`).toBeCloseTo(rowHeight, 0);
       console.log(`MEASURE 56-7 ${phone.width} tab 36 row 28 menu ${items.length} items tap ${area.tap.join("x")}`);
     } finally {
       await context.close();

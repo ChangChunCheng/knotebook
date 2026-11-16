@@ -341,7 +341,7 @@ test("41-5 選取模式：勾兩篇 → Move to → F → Move here（不確認�
   await expect(copyTo).toHaveAttribute("title", "Folders can't be copied");
 });
 
-test("41-6 390 手機清單：⋮ Move to… 就地展開、點「F, open」縮排區出現 Back → 選 F1；同清單選取模式移到 F", async ({ page }) => {
+test("41-6 390 手機清單：⋮ Move to… 在 sheet 裡逐層（換掉整個內容、最上面 Back）、點「F, open」→ 選 F1；同清單選取模式移到 F", async ({ page }) => {
   test.setTimeout(150_000);
   const F = `F ${RUN}`;
   const F1 = `F1 ${RUN}`;
@@ -359,11 +359,12 @@ test("41-6 390 手機清單：⋮ Move to… 就地展開、點「F, open」縮�
   const drawerPanel = await showSidebarTab(page, "My notes", drawer);
   await expect(noteLink(drawerPanel, N)).toBeVisible({ timeout: 15_000 });
 
-  // ── ⋮ → Move to…（就地展開，不是 flyout）→「F, open」→ 縮排區出現 Back → F1 → toast ────────────
+  // ── ⋮ → Move to…（手機 sheet：換掉整個內容，不是 flyout）→「F, open」→ Back 在最上面 → F1 → toast ────────────
   await openNoteActions(page, drawerPanel, N);
   await expect(page.getByRole("menuitem", { name: "Move to…", exact: true })).not.toHaveAttribute("aria-haspopup", "menu");
   await pickNoteMenuDestination(page, "Move to…", [`${F}, open`]);
   await expect(page.getByRole("menuitem", { name: "Back", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toHaveCount(0);
   await page.getByRole("menuitem", { name: F1, exact: true }).click();
   await expect(toastWithTitle(page, `Moved to “${F1}”`)).toBeVisible({ timeout: 15_000 });
   await expect(drawer).toBeVisible();

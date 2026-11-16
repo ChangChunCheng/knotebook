@@ -11,6 +11,7 @@ import { isMacPlatform } from "@/lib/platform";
 import { useSidebarQuery } from "@/lib/sidebar-query";
 import { useShortcutsDialog } from "@/lib/shortcuts-dialog";
 import { openSettings } from "@/lib/open-settings";
+import { panelEntryState } from "@/lib/panel-return";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -79,7 +80,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
 
   const avatar = variant === "avatar";
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         {avatar ? (
           // 頭像形（手機清單頂列）：只有共用頭像（圖或首字）；視覺 32、點擊範圍 44。
@@ -206,7 +207,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             提示字 aria-hidden：不進選單項的可及名稱（e2e 以名稱找項）。開法與 AppShell 的 Ctrl+, 同一條路（`openSettings`）。 */}
         <DropdownMenuItem
           aria-keyshortcuts={shortcuts ? (mac ? "Meta+," : "Control+,") : undefined}
-          onSelect={() => openSettings(navigate, location)}
+          onSelect={() => openSettings(navigate, location, () => setMenuOpen(true))}
         >
           {t("settings.entry")}
           {shortcuts && (
@@ -224,7 +225,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             onSelect={(event) => {
               event.preventDefault();
               setMenuOpen(false);
-              shortcuts.open(triggerRef.current);
+              shortcuts.open(triggerRef.current, () => setMenuOpen(true));
             }}
           >
             {t("userMenu.shortcuts")}
@@ -236,7 +237,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         )}
         {/* 站台管理是 modal（#247）：帶 backgroundLocation，關閉時回到原頁。非 admin 不渲染；/admin 的 RequireAdmin 才是防線。 */}
         {user.isAdmin && (
-          <DropdownMenuItem onSelect={() => navigate("/admin/users", { state: { backgroundLocation: location } })}>{t("userMenu.siteAdmin")}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate("/admin/users", { state: panelEntryState(location, () => setMenuOpen(true)) })}>{t("userMenu.siteAdmin")}</DropdownMenuItem>
         )}
 
         <DropdownMenuSeparator />

@@ -16,6 +16,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { trashList } from "@/test/trash-fixtures";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { NoteBrowseBar } from "./NoteBrowseBar";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // 手機（< 640）的清單畫面：`/` 與非筆記路由時側欄滿版、筆記路由時藏起來並 inert；頂列、只有圖示的 tab 列、底部列與全螢幕搜尋。
 
@@ -170,7 +171,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(trigger).toHaveClass("h-11", "w-11");
     expect(trigger.textContent).toBe("A");
     expect(within(aside(container)).getByText("Knotebook")).toBeInTheDocument();
-    fireEvent.pointerDown(trigger, { button: 0 });
+    pressTrigger(trigger);
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
   });

@@ -134,10 +134,23 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("w-full");
   });
 
-  it('size="panel"：手機是整頁（inset-0、h-dvh、滿寬、不位移、不圓角）；高度不再用 vh', async () => {
+  it('size="panel"：手機是貼底、幾乎滿高的 sheet（滿寬、不位移、上圓角、上方留縫、跟著鍵盤）；高度不再用 vh', async () => {
     render(<Harness size="panel" />);
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveClass("max-sm:inset-0", "max-sm:h-dvh", "max-sm:w-full", "max-sm:max-w-none", "max-sm:translate-x-0", "max-sm:translate-y-0", "max-sm:rounded-none");
+    expect(dialog).toHaveClass(
+      "max-sm:inset-x-0",
+      "max-sm:top-auto",
+      "max-sm:bottom-(--kb-inset,0px)",
+      "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))]",
+      "max-sm:w-full",
+      "max-sm:max-w-none",
+      "max-sm:translate-x-0",
+      "max-sm:translate-y-0",
+      "max-sm:rounded-t-2xl",
+      "max-sm:rounded-b-none",
+      "kb-sheet",
+    );
+    expect(dialog.className).not.toMatch(/max-sm:inset-0|max-sm:h-dvh|max-sm:rounded-none/);
     // iOS Safari 的 vh 是工具列收起時的高度：高度類一律 dvh（寬度的 vw 不受影響）。
     expect(dialog.className).not.toMatch(/\d+vh\b/);
   });
@@ -181,18 +194,18 @@ describe("DialogContent 手機底部 sheet", () => {
     expect(screen.getByRole("dialog")).toHaveClass("max-w-lg", "max-sm:max-w-none");
   });
 
-  it('size="panel"：沒有任何 sheet class', () => {
+  it('size="panel" 的 sheet 不帶預設尺寸的那些（高度上限、內距）：它是幾乎滿高、高度固定的', () => {
     render(<Harness size="panel" />);
     const dialog = screen.getByRole("dialog");
-    expect(dialog.className).not.toMatch(/kb-sheet|max-sm:bottom|max-sm:top-auto|max-sm:rounded-t/);
+    expect(dialog.className).not.toMatch(/max-sm:max-h-|max-sm:pb-\[max\(1\.5rem/);
   });
 
-  it("sheet 的背景遮罩手機有淡出（panel 沒有）", () => {
+  it("sheet 的背景遮罩手機有淡出（預設與 panel 都有）", () => {
     render(<Harness />);
     expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
     cleanup();
     render(<Harness size="panel" />);
-    expect(document.querySelector(".kb-sheet-overlay")).toBeNull();
+    expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
   });
 
   describe("螢幕鍵盤", () => {
@@ -313,11 +326,12 @@ describe("DialogContent 手機底部 sheet", () => {
       expect(viewport.listeners).toBe(0);
     });
 
-    it('size="panel"：鍵盤升起也不設變數、不訂閱', () => {
+    it('size="panel"：同樣跟著鍵盤（手機的面板也是貼底的 sheet）', () => {
       viewport.height = 500;
       render(<Harness size="panel" />);
-      expect(screen.getByRole("dialog").style.getPropertyValue("--kb-inset")).toBe("");
-      expect(viewport.listeners).toBe(0);
+      expect(screen.getByRole("dialog").style.getPropertyValue("--kb-inset")).toBe("500px");
+      expect(screen.getByRole("dialog").style.getPropertyValue("--kb-visible-h")).toBe("500px");
+      expect(viewport.listeners).toBe(2);
     });
   });
 });

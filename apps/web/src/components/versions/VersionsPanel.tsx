@@ -58,16 +58,16 @@ export function VersionRowMenu({ version, isBase, onApply }: { version: VersionD
   const { t } = useTranslation();
   const { openDialog } = useVersions();
   return (
-    <DropdownMenu>
+    <DropdownMenu phoneSheet>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label={t("versions.rowMenu", { label: versionLabel(version) })}>
           <EllipsisVertical aria-hidden="true" className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" sheetTitle={versionLabel(version)}>
         <DropdownMenuItem onSelect={() => onApply(version)}>{t("versions.menu.apply")}</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => openDialog({ kind: "rename", version })}>{t("versions.menu.rename")}</DropdownMenuItem>
-        <DropdownMenuItem disabled={isBase} className="flex-col items-start" onSelect={() => openDialog({ kind: "delete", version })}>
+        <DropdownMenuItem disabled={isBase} className="flex-col items-start justify-center" onSelect={() => openDialog({ kind: "delete", version })}>
           <span>{t("versions.menu.delete")}</span>
           {isBase && <span className="text-xs text-muted-foreground">{t("versions.menu.baseNotDeletable")}</span>}
         </DropdownMenuItem>
