@@ -111,7 +111,7 @@ describe("NarrowTopBar 消費端（#115）", () => {
     const bar = back.parentElement;
     expect(bar).toHaveClass("py-2", "max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))]");
     // 內文卡本身手機貼邊：沒有圓角與框。
-    expect(back.closest("main")?.firstElementChild).toHaveClass("max-sm:rounded-none", "max-sm:border-0");
+    expect(back.closest("main")?.firstElementChild).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 
   it("浮動段：頂列是「Open sidebar」，沒有「Back to notes」", async () => {

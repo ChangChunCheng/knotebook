@@ -38,7 +38,7 @@ const HEADER_EDGE = 696;
 async function measureColumn(page: Page): Promise<{ col: number; W: number }> {
   return page.getByTestId("article-column").evaluate((el) => ({
     col: el.getBoundingClientRect().width,
-    W: el.parentElement!.clientWidth,
+    W: el.closest<HTMLElement>(".overflow-y-auto")!.clientWidth,
   }));
 }
 

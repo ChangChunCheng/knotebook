@@ -2016,7 +2016,7 @@ describe("NotePage", () => {
     const card = screen.getByText("Loading…").parentElement;
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
     // 手機：佔位卡貼齊螢幕（沒有圓角與框）。
-    expect(card).toHaveClass("max-sm:rounded-none", "max-sm:border-0");
+    expect(card).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
 
     resolveMe();
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());

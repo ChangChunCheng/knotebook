@@ -741,7 +741,7 @@ export default function NotePage() {
   // `flex flex-col`）底下的子項，不必額外包一層 row。
   const placeholderCard = (content: ReactNode) => (
     <div className="flex min-h-0 flex-1">
-      <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0")}>
+      <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]")}>
         {/* #115：佔位卡沒有 headerSlot（也就沒有頁首的側欄鈕）——`<xl` 時靜態側欄
             是 hidden，缺這條的話 isError 這種**會停住**的狀態（筆記被刪、沒權限）
             在手機上就是一行紅字＋零導覽出口（死路）。 */}

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { canonicalNotePath } from "@knotebook/shared";
 import { useBacklinks } from "@/api/notes";
 import { BACKLINKS_SCROLL_ROW, SIDEBAR_ROW_HEIGHT } from "@/components/ui/rows";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,6 +50,10 @@ import { cn } from "@/lib/utils";
  * 代價是反向連結這個功能完全沒有存在感（沒被連過的筆記看不出有這回事），
  * 且內文卡高度會隨有無 backlinks 跳動。
  *
+ * **手機**（< 640）：這一列在內文捲動容器裡、文章欄之後，沒有提及（含查詢未完成、失敗）時整列不渲染，
+ * 不留一條空白或「尚無筆記提及」佔掉手機的畫面。版本預覽開著時內文捲動容器整個藏起來，這一列跟著藏
+ * （桌面版它留在預覽下方）；關掉預覽就回來。
+ *
  * 查詢未完成（pending）或失敗時**只保留空列、不顯示任何文案**：此時「有幾筆」
  * 未知，寫「尚無筆記提及」會是謊報，噴錯誤訊息則對這個次要區塊太吵
  * （本頁主體已有自己的 loading/error 顯示）。
@@ -58,6 +63,8 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
   const backlinksQuery = useBacklinks(noteId);
   const backlinks = backlinksQuery.data;
   const settled = backlinks !== undefined;
+  const phone = useIsPhone();
+  if (phone && (!settled || backlinks.length === 0)) return null;
 
   return (
     <div className="shrink-0 border-t border-border py-2 text-sm">

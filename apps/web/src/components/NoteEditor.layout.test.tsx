@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/theme";
 import { NoteEditor } from "./NoteEditor";
 import { NoteWidthToggle } from "./NoteWidthToggle";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 interface FakeResponseInit {
   ok: boolean;
@@ -112,7 +113,11 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
 
     const editorRoot = await screen.findByTestId("note-editor");
     const centerWrapper = editorRoot.parentElement;
-    const scrollWrapper = centerWrapper?.parentElement;
+    // 欄外一層是 display: contents 的流程包裝（手機頁尾在捲動容器時才變成直欄），不產生盒子。
+    const flow = centerWrapper?.parentElement;
+    expect(flow).toHaveAttribute("data-article-flow");
+    expect(flow).toHaveClass("contents");
+    const scrollWrapper = flow?.parentElement;
     const contentCard = scrollWrapper?.parentElement;
     const root = contentCard?.parentElement;
 
@@ -187,7 +192,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       </QueryClientProvider>,
     );
     const editorRoot = await screen.findByTestId("note-editor");
-    const scrollWrapper = editorRoot.parentElement!.parentElement!;
+    const scrollWrapper = editorRoot.parentElement!.parentElement!.parentElement!;
     const contentCard = scrollWrapper.parentElement!;
     expect(scrollWrapper).toHaveClass("hidden", "overflow-y-auto");
     const slot = screen.getByTestId("preview-slot");
@@ -211,7 +216,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       </QueryClientProvider>,
     );
     const editorRoot = await screen.findByTestId("note-editor");
-    expect(editorRoot.parentElement!.parentElement).not.toHaveClass("hidden");
+    expect(editorRoot.parentElement!.parentElement!.parentElement).not.toHaveClass("hidden");
     expect(screen.queryByTestId("preview-slot")).not.toBeInTheDocument();
     doc.destroy();
   });
@@ -356,12 +361,12 @@ describe("NoteEditor 手機編輯工具列", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderEditor(mobileToolbar: boolean | undefined) {
+  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} />
+          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} footerSlot={footerSlot} />
         </ThemeProvider>
       </QueryClientProvider>,
     );
@@ -384,6 +389,71 @@ describe("NoteEditor 手機編輯工具列", () => {
     renderEditor(false);
     const cardOff = (await screen.findByTestId("article-column")).closest(".overflow-hidden") as HTMLElement;
     expect(cardOff).not.toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]");
+  });
+
+  const FOOTER = <div data-testid="footer-probe">mentions</div>;
+  const scrollRootOf = (column: HTMLElement) => column.closest(".overflow-y-auto") as HTMLElement;
+
+  it("手機：欄、頁尾、工具列空白包在 min-h-full 的直欄裡（依序），欄撐滿剩下的高度；捲動容器本身仍是一般區塊", async () => {
+    stubLayoutTier("phone");
+    renderEditor(true, FOOTER);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    const scrollRoot = scrollRootOf(column);
+    const flow = column.parentElement as HTMLElement;
+    const footer = screen.getByTestId("footer-probe");
+    const spacer = document.querySelector("[data-mobile-toolbar-spacer]") as HTMLElement;
+    expect(flow.parentElement).toBe(scrollRoot);
+    expect(flow).toHaveClass("flex", "min-h-full", "flex-col");
+    expect(flow).not.toHaveClass("contents");
+    expect(scrollRoot).not.toHaveClass("flex");
+    expect(column).toHaveClass("grow", "shrink-0", "relative");
+    expect(column).not.toHaveClass("min-h-full");
+    expect(Array.from(flow.children)).toEqual([column, footer, spacer]);
+    expect(scrollRoot.children).toHaveLength(1);
+    expect(column.contains(spacer)).toBe(false);
+  });
+
+  it("手機沒在編輯（沒有工具列）：頁尾仍在捲動容器的最後", async () => {
+    stubLayoutTier("phone");
+    renderEditor(false, FOOTER);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    expect(column.parentElement!.lastElementChild).toBe(screen.getByTestId("footer-probe"));
+  });
+
+  it("手機：捲動容器委派表格的右緣提示（後來才出現的寬表格也標得到；非手機不標）", async () => {
+    vi.stubGlobal("CSS", { supports: () => false });
+    stubLayoutTier("phone");
+    const view = renderEditor(false, FOOTER);
+    const scrollRoot = scrollRootOf((await screen.findByTestId("article-column")) as HTMLElement);
+    const table = document.createElement("div");
+    table.className = "tableWrapper";
+    for (const [key, value] of Object.entries({ scrollWidth: 900, clientWidth: 300, scrollLeft: 0 })) Object.defineProperty(table, key, { value, configurable: true });
+    scrollRoot.appendChild(table);
+    await waitFor(() => expect(table).toHaveAttribute("data-kb-more-right"));
+    view.unmount();
+    expect(table).not.toHaveAttribute("data-kb-more-right");
+  });
+
+  it.each(["overlay", "docked"] as const)("%s：表格不標右緣提示", async (tier) => {
+    vi.stubGlobal("CSS", { supports: () => false });
+    stubLayoutTier(tier);
+    renderEditor(false, FOOTER);
+    const scrollRoot = scrollRootOf((await screen.findByTestId("article-column")) as HTMLElement);
+    const table = document.createElement("div");
+    table.className = "tableWrapper";
+    for (const [key, value] of Object.entries({ scrollWidth: 900, clientWidth: 300, scrollLeft: 0 })) Object.defineProperty(table, key, { value, configurable: true });
+    scrollRoot.appendChild(table);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(table).not.toHaveAttribute("data-kb-more-right");
+  });
+
+  it.each(["overlay", "docked"] as const)("%s：頁尾照舊在卡底、不在捲動容器內", async (tier) => {
+    stubLayoutTier(tier);
+    renderEditor(false, FOOTER);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    const footer = screen.getByTestId("footer-probe");
+    expect(scrollRootOf(column).contains(footer)).toBe(false);
+    expect(footer.previousElementSibling).toBe(scrollRootOf(column));
   });
 
   it("頁首槽位在手機給上緣 safe area（橫幅與頁首都在它之下）", async () => {

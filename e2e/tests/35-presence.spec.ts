@@ -13,7 +13,7 @@ import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, noteIdF
 const RUN = Date.now();
 
 function scrollerOf(page: Page): Locator {
-  return page.getByTestId("article-column").locator("..");
+  return page.getByTestId("article-column").locator("xpath=ancestor::div[contains(@class,'overflow-y-auto')][1]");
 }
 
 const scrollTopOf = (page: Page) => scrollerOf(page).evaluate((el) => el.scrollTop);
