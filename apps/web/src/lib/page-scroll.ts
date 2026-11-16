@@ -133,12 +133,39 @@ function visibleBox(el: Element): DOMRect | null {
   return rect.width === 0 && rect.height === 0 ? null : rect;
 }
 
-/** `container` 裡下緣在 `top` 之下的第一個項目（文件順序）；沒有就 null。 */
+/**
+ * `container` 裡下緣在 `top` 之下的第一個項目（文件順序）；沒有就 null。
+ * 項目照文件順序排，量的那一行的下緣跟著遞增，所以用二分搜尋：每次只量 O(log n) 個項目，捲動中每個 frame 量也不貴。
+ * 看不到的項目（收合的子項，量到 0×0）不算，碰到時往後找第一個看得到的。並排的欄位打破遞增（第二欄從上面重新開始），
+ * 那裡找到的不一定是最上面那一項，但一定在畫面頂端附近。
+ */
 export function captureScrollAnchor(container: Element, items: AnchorItems, top: number): ScrollAnchor | null {
-  for (const item of container.querySelectorAll<HTMLElement>(items.itemSelector)) {
-    const rect = visibleBox(items.measure?.(item) ?? item);
-    if (rect === null || rect.bottom <= top) continue;
-    const id = item.getAttribute(items.idAttr);
+  const list = Array.from(container.querySelectorAll<HTMLElement>(items.itemSelector));
+  const rects = new Map<number, DOMRect | null>();
+  const rectAt = (i: number): DOMRect | null => {
+    if (!rects.has(i)) rects.set(i, visibleBox(items.measure?.(list[i]!) ?? list[i]!));
+    return rects.get(i)!;
+  };
+  /** `i` 起第一個看得到的項目；沒有就 `list.length`。 */
+  const visibleFrom = (i: number): number => {
+    let j = i;
+    while (j < list.length && rectAt(j) === null) j += 1;
+    return j;
+  };
+  // 找最小的、看得到、下緣在線之下的項目：答案一直落在 [lo, hi] 裡。
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const v = visibleFrom(mid);
+    if (v >= hi) hi = mid;
+    else if (rectAt(v)!.bottom > top) hi = v;
+    else lo = v + 1;
+  }
+  for (let i = visibleFrom(lo); i < list.length; i = visibleFrom(i + 1)) {
+    const rect = rectAt(i)!;
+    if (rect.bottom <= top) continue;
+    const id = list[i]!.getAttribute(items.idAttr);
     if (id !== null && id !== "") return { id, offset: rect.top - top, height: rect.height };
   }
   return null;
@@ -159,9 +186,6 @@ export function restoreScrollAnchor(container: Element, items: AnchorItems, anch
   return true;
 }
 
-/** 捲動停下多久之後才記位置（ms）：捲動中不逐 frame 量版面。 */
-export const ANCHOR_IDLE_MS = 150;
-
 export interface TierScrollAnchorOptions extends AnchorItems {
   /** 項目所在的容器；640 起它就是自己捲動的那一層。 */
   containerRef: RefObject<HTMLElement | null>;
@@ -174,10 +198,9 @@ export interface TierScrollAnchorOptions extends AnchorItems {
  * 而且兩種寬度的排版不同，所以記的不是捲動量，而是「頂端第一個看得到的項目＋離頂端多遠」，換段之後把同一項捲回同一處。
  *
  * - 只看這一份自己的捲動：手機上是文件的 scroll，640 起是容器的 scroll；其他元素（表格、選單）的捲動不理。
- * - 捲動停下 `ANCHOR_IDLE_MS` 之後（或瀏覽器的 `scrollend`）才量一次位置，捲動中只記捲動量（不讀版面）。
- *   換段時若還有一次沒量，換段後的版面已經不是原來的，不能補量；改用上次量的位置，扣掉之後又捲了多少（同一種排版下捲動量就是位移）。
+ * - 每個 frame 最多量一次（`captureScrollAnchor` 是二分搜尋，只量 O(log n) 個項目），換段前最後一個 frame 的位置就是要還的位置。
  * - 媒體查詢已經翻過去、React 還沒換段的那段時間（文件此刻被夾回 0）不記：`isPhone()` 與目前排版所屬的段不一致就跳過。
- * - 容器看不到（例如 640–1279 的清單在收起的抽屜裡）時不記也不還，位置留到下次看得到時再還。
+ * - 容器看不到（例如在筆記頁時藏起來的清單、640–1279 收在抽屜裡的清單）時不記也不還，位置留到下次看得到時再還。
  * - 容器不在文件代為捲動的外框裡（例如抽屜裡那份清單）時整個不作用。
  */
 export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
@@ -185,53 +208,28 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const tierRef = useRef(phone);
-  /** 上次量到的位置，與量的當下的捲動量。 */
-  const savedRef = useRef<{ container: HTMLElement; anchor: ScrollAnchor; scroll: number } | null>(null);
-  /** 量過之後又捲到哪（還沒量的那一段）；null＝沒有待量的捲動。 */
-  const pendingRef = useRef<number | null>(null);
-
-  const scrollOf = (container: HTMLElement, onPhone: boolean) => (onPhone ? window.scrollY : container.scrollTop);
+  const savedRef = useRef<{ container: HTMLElement; anchor: ScrollAnchor } | null>(null);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const usable = () => {
-      const container = optionsRef.current.containerRef.current;
-      if (container === null || !inPageScrollFrame(container) || isPhone() !== tierRef.current || container.getClientRects().length === 0) return null;
-      return container;
-    };
+    let frame = 0;
     const capture = () => {
-      clearTimeout(timer);
-      timer = undefined;
-      pendingRef.current = null;
-      const container = usable();
-      if (container === null) return;
-      const { containerRef: _containerRef, phoneTop, ...items } = optionsRef.current;
+      frame = 0;
+      const { containerRef, phoneTop, ...items } = optionsRef.current;
+      const container = containerRef.current;
+      if (container === null || !inPageScrollFrame(container) || isPhone() !== tierRef.current || container.getClientRects().length === 0) return;
       const top = tierRef.current ? phoneTop() : container.getBoundingClientRect().top;
       const anchor = captureScrollAnchor(container, items, top);
-      savedRef.current = anchor === null ? null : { container, anchor, scroll: scrollOf(container, tierRef.current) };
-    };
-    const ours = (event: Event) => {
-      const container = optionsRef.current.containerRef.current;
-      return tierRef.current ? event.target === document : container !== null && event.target === container;
+      savedRef.current = anchor === null ? null : { container, anchor };
     };
     const onScroll = (event: Event) => {
-      if (!ours(event)) return;
-      // 捲動中不讀版面（看不看得到等停下來量的時候再看）。
       const container = optionsRef.current.containerRef.current;
-      if (container === null || !inPageScrollFrame(container) || isPhone() !== tierRef.current) return;
-      pendingRef.current = scrollOf(container, tierRef.current);
-      clearTimeout(timer);
-      timer = setTimeout(capture, ANCHOR_IDLE_MS);
-    };
-    const onScrollEnd = (event: Event) => {
-      if (ours(event) && pendingRef.current !== null) capture();
+      const ours = tierRef.current ? event.target === document : container !== null && event.target === container;
+      if (ours && frame === 0) frame = requestAnimationFrame(capture);
     };
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    window.addEventListener("scrollend", onScrollEnd, { capture: true, passive: true });
     return () => {
       window.removeEventListener("scroll", onScroll, { capture: true });
-      window.removeEventListener("scrollend", onScrollEnd, { capture: true });
-      clearTimeout(timer);
+      if (frame !== 0) cancelAnimationFrame(frame);
     };
   }, []);
 
@@ -239,17 +237,12 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     if (tierRef.current === phone) return;
     tierRef.current = phone;
     const saved = savedRef.current;
-    const pending = pendingRef.current;
-    pendingRef.current = null;
     const { containerRef, phoneTop, ...items } = optionsRef.current;
     const container = containerRef.current;
     if (saved === null || container === null || saved.container !== container || !inPageScrollFrame(container) || container.getClientRects().length === 0) return;
-    // 換段前還沒量的那段捲動：同一種排版下，捲了多少項目就往上移多少。
-    const anchor = pending === null ? saved.anchor : { ...saved.anchor, offset: saved.anchor.offset - (pending - saved.scroll) };
-    savedRef.current = { ...saved, anchor };
     const restore = () => {
-      if (phone) restoreScrollAnchor(container, items, anchor, phoneTop(), (dy) => window.scrollTo(0, window.scrollY + dy));
-      else restoreScrollAnchor(container, items, anchor, container.getBoundingClientRect().top, (dy) => (container.scrollTop += dy));
+      if (phone) restoreScrollAnchor(container, items, saved.anchor, phoneTop(), (dy) => window.scrollTo(0, window.scrollY + dy));
+      else restoreScrollAnchor(container, items, saved.anchor, container.getBoundingClientRect().top, (dy) => (container.scrollTop += dy));
     };
     restore();
     // 換段那次 render 之後還有元件在 effect 裡改版面（換段時才掛上的東西），下一個 frame 用同一個位置再對一次；

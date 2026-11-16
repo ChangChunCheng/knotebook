@@ -13,7 +13,6 @@ import {
   stickyTopInset,
   useStickyTopInset,
   useStickyTopVar,
-  ANCHOR_IDLE_MS,
   useTierScrollAnchor,
   visibleHeightOf,
 } from "./page-scroll";
@@ -197,6 +196,68 @@ describe("captureScrollAnchor／restoreScrollAnchor", () => {
   });
 });
 
+describe("captureScrollAnchor：二分搜尋", () => {
+  /** 量測：第 i 項的上緣與高度（null＝看不到，0×0）。 */
+  function fixture(boxes: Array<{ top: number; height: number } | null>): HTMLElement {
+    const container = document.createElement("div");
+    boxes.forEach((_, i) => {
+      const item = document.createElement("div");
+      item.setAttribute("data-i", String(i));
+      container.append(item);
+    });
+    document.body.append(container);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const box = boxes[Number(this.getAttribute("data-i"))];
+      return box ? new DOMRect(0, box.top, 390, box.height) : new DOMRect(0, 0, 0, 0);
+    });
+    return container;
+  }
+  const ITEMS = { itemSelector: "[data-i]", idAttr: "data-i" };
+  /** 對照組：逐項找下緣在線之下的第一個看得到的項目。 */
+  function linear(boxes: Array<{ top: number; height: number } | null>, top: number) {
+    const i = boxes.findIndex((b) => b !== null && b.top + b.height > top);
+    return i < 0 ? null : { id: String(i), offset: boxes[i]!.top - top, height: boxes[i]!.height };
+  }
+  function layout(heights: number[], hidden: Set<number>, start: number) {
+    let y = start;
+    return heights.map((h, i) => {
+      if (hidden.has(i)) return null;
+      const box = { top: y, height: h };
+      y += h;
+      return box;
+    });
+  }
+
+  it("高度不一、有看不到的項目、第一項一部分在頁首底下：與逐項找的結果相同", () => {
+    let seed = 7;
+    const rand = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    const heights = Array.from({ length: 257 }, () => 12 + Math.floor(rand() * 180));
+    const hidden = new Set([3, 4, 5, 40, 41, 42, 43, 44, 120, 256]);
+    for (const scroll of [0, 30, 999, 4321, 12345, 22000]) {
+      const boxes = layout(heights, hidden, 100 - scroll);
+      vi.restoreAllMocks();
+      document.body.innerHTML = "";
+      const container = fixture(boxes);
+      for (const top of [0, 48, 88, 97.5]) {
+        expect(captureScrollAnchor(container, ITEMS, top), `scroll ${scroll} top ${top}`).toEqual(linear(boxes, top));
+      }
+    }
+  });
+
+  it("長清單：每次只量 O(log n) 個項目", () => {
+    const heights = Array.from({ length: 2000 }, (_, i) => 30 + (i % 7) * 5);
+    const container = fixture(layout(heights, new Set(), -40000));
+    const rects = vi.mocked(Element.prototype.getBoundingClientRect);
+    rects.mockClear();
+    expect(captureScrollAnchor(container, ITEMS, 60)).not.toBeNull();
+    // log2(2000) 約 11：二分的每一步量一項，最後確認一次
+    expect(rects.mock.calls.length).toBeLessThanOrEqual(14);
+  });
+});
+
 describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
   // 兩種排版：手機（文件在捲，項高 100、文件裡從 100 開始）與 640 起（容器在捲，容器頂在 60、項高 40）。
   let layout: "phone" | "wide" = "phone";
@@ -219,22 +280,19 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     return framed ? <div {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}>{list}</div> : list;
   }
 
-  let rects: ReturnType<typeof vi.spyOn>;
   function setup(framed = true): { container: HTMLElement; tier: ReturnType<typeof stubLayoutTier>; beforeReact: (fn: () => void) => void } {
     layout = "phone";
     pageY = 0;
     boxTop = 0;
     hidden = false;
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const tier = stubLayoutTier("phone");
     frames = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
     vi.stubGlobal("cancelAnimationFrame", () => {});
-    Object.defineProperty(window, "scrollY", { configurable: true, get: () => pageY });
     vi.spyOn(window, "scrollTo").mockImplementation(((x: number, y: number) => {
       pageY = y;
     }) as typeof window.scrollTo);
-    rects = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       if (this.hasAttribute("data-container")) return new DOMRect(0, layout === "phone" ? 100 - pageY : 60, 390, 400);
       const i = Number(this.getAttribute("data-i"));
       return layout === "phone" ? new DOMRect(0, 100 + i * 100 - pageY, 390, 100) : new DOMRect(0, 60 + i * 40 - boxTop, 844, 40);
@@ -256,26 +314,22 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     });
     return { container: box, tier, beforeReact: (fn) => pending.push(fn) };
   }
-  afterEach(() => {
-    vi.useRealTimers();
-    delete (window as { scrollY?: number }).scrollY;
-  });
 
-  /** 文件（或 `target`）發出一次 scroll。 */
-  const scrollOn = (target: EventTarget = document) => act(() => void target.dispatchEvent(new Event("scroll")));
-  /** 捲動停下：等過記位置的延遲。 */
-  const idle = () => act(() => void vi.advanceTimersByTime(ANCHOR_IDLE_MS));
+  /** `target`（預設文件）發出一次 scroll，接著跑下一個 frame（記位置在那裡）。 */
+  const scrollOn = (target: EventTarget = document) =>
+    act(() => {
+      target.dispatchEvent(new Event("scroll"));
+      frames.splice(0).forEach((cb) => cb(0));
+    });
 
   it("手機 → 640 起 → 手機：同一項停在頂端附近；換段途中被夾回 0 的那次 scroll 不記", () => {
     const { tier, beforeReact } = setup();
     pageY = 320; // 項 2 上緣在 -20，離線（50）-70
     scrollOn();
-    idle();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
       scrollOn();
-      idle();
     });
     act(() => tier.setLayoutTier("overlay"));
     // 640 起：項 2 捲過 70／100 → 新高度 40 捲過 28 → 上緣在 60 − 28 = 32 → 容器 scrollTop = 60 + 80 − 32 = 108
@@ -287,22 +341,19 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(pageY).toBe(320);
   });
 
-  it("捲動中不量版面，停下 ANCHOR_IDLE_MS 才量；換段時還沒量的那段捲動用捲動量補上", () => {
+  it("捲完緊接著轉向（只隔一個 frame、沒有停頓）：還的是最後捲到的那一項", () => {
     const { tier, beforeReact } = setup();
     pageY = 320;
     scrollOn();
-    idle(); // 量到：項 2、-70（捲動量 320）
-    rects.mockClear();
-    pageY = 370;
-    scrollOn(); // 還沒停：不量
-    expect(rects).not.toHaveBeenCalled();
+    pageY = 650; // 項 5 下緣在 50（剛好在線上，不算）→ 項 6 上緣在 50
+    scrollOn();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
     });
     act(() => tier.setLayoutTier("overlay"));
-    // 換段前又捲了 50：項 2 離線 -120 → 新高度 40 捲過 48 → 上緣在 12 → scrollTop = 60 + 80 − 12 = 128
-    expect(boxTop).toBe(128);
+    // 項 6 離線 0 → 640 起上緣在 60 → scrollTop = 60 + 240 − 60 = 240
+    expect(boxTop).toBe(240);
   });
 
   it("別的元素（表格、選單）的捲動不理", () => {
@@ -311,7 +362,6 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     document.body.append(other);
     pageY = 320;
     scrollOn(other);
-    idle();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
@@ -324,7 +374,6 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     const { tier, beforeReact } = setup(false);
     pageY = 320;
     scrollOn();
-    idle();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
@@ -333,20 +382,21 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(boxTop).toBe(0);
   });
 
-  it("容器看不到（例如收起的抽屜）時不記也不還；位置留到回來時再還", () => {
+  it("容器看不到（筆記頁時藏起來的清單、收起的抽屜）時不記也不還；位置留到回來時再還", () => {
     const { container, tier, beforeReact } = setup();
     pageY = 520;
     scrollOn();
-    idle();
+    // 清單藏起來時文件的捲動（例如在筆記頁）不改它記的位置
+    hidden = true;
+    pageY = 900;
+    scrollOn();
     beforeReact(() => {
       layout = "wide";
-      hidden = true;
       pageY = 0;
     });
     act(() => tier.setLayoutTier("overlay"));
     expect(boxTop).toBe(0);
     scrollOn(container);
-    idle();
     beforeReact(() => {
       layout = "phone";
       hidden = false;
