@@ -134,38 +134,15 @@ function visibleBox(el: Element): DOMRect | null {
 }
 
 /**
- * `container` 裡下緣在 `top` 之下的第一個項目（文件順序）；沒有就 null。
- * 項目照文件順序排，量的那一行的下緣跟著遞增，所以用二分搜尋：每次只量 O(log n) 個項目，捲動中每個 frame 量也不貴。
- * 看不到的項目（收合的子項，量到 0×0）不算，碰到時往後找第一個看得到的。並排的欄位打破遞增（第二欄從上面重新開始），
- * 那裡找到的不一定是最上面那一項，但一定在畫面頂端附近。
+ * `container` 裡下緣在 `top` 之下的第一個項目（照文件順序逐項看）；沒有就 null。看不到的項目（收合的子項，量到 0×0）不算。
+ * 逐項而不是二分：並排的欄位裡，第二欄的區塊在文件裡排在第一欄之後、位置卻從上面重新開始，位置不隨文件順序遞增。
+ * 成本由呼叫時機控制（`useTierScrollAnchor` 只在可能跨 640 的裝置上、每個 frame 最多一次）。
  */
 export function captureScrollAnchor(container: Element, items: AnchorItems, top: number): ScrollAnchor | null {
-  const list = Array.from(container.querySelectorAll<HTMLElement>(items.itemSelector));
-  const rects = new Map<number, DOMRect | null>();
-  const rectAt = (i: number): DOMRect | null => {
-    if (!rects.has(i)) rects.set(i, visibleBox(items.measure?.(list[i]!) ?? list[i]!));
-    return rects.get(i)!;
-  };
-  /** `i` 起第一個看得到的項目；沒有就 `list.length`。 */
-  const visibleFrom = (i: number): number => {
-    let j = i;
-    while (j < list.length && rectAt(j) === null) j += 1;
-    return j;
-  };
-  // 找最小的、看得到、下緣在線之下的項目：答案一直落在 [lo, hi] 裡。
-  let lo = 0;
-  let hi = list.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    const v = visibleFrom(mid);
-    if (v >= hi) hi = mid;
-    else if (rectAt(v)!.bottom > top) hi = v;
-    else lo = v + 1;
-  }
-  for (let i = visibleFrom(lo); i < list.length; i = visibleFrom(i + 1)) {
-    const rect = rectAt(i)!;
-    if (rect.bottom <= top) continue;
-    const id = list[i]!.getAttribute(items.idAttr);
+  for (const item of container.querySelectorAll<HTMLElement>(items.itemSelector)) {
+    const rect = visibleBox(items.measure?.(item) ?? item);
+    if (rect === null || rect.bottom <= top) continue;
+    const id = item.getAttribute(items.idAttr);
     if (id !== null && id !== "") return { id, offset: rect.top - top, height: rect.height };
   }
   return null;
@@ -186,11 +163,21 @@ export function restoreScrollAnchor(container: Element, items: AnchorItems, anch
   return true;
 }
 
+/**
+ * 這台裝置會不會在 640 兩側切換：螢幕的短邊比 640 窄＝手機（轉橫拿時寬度超過 640）。桌機與平板的短邊都比 640 寬，
+ * 只有手動把視窗拉過 640 才會切換，那種情況不保位置（見 docs/known-limitations.md）。
+ */
+export function phoneSizedScreen(): boolean {
+  return typeof screen !== "undefined" && Math.min(screen.width, screen.height) < 640;
+}
+
 export interface TierScrollAnchorOptions extends AnchorItems {
   /** 項目所在的容器；640 起它就是自己捲動的那一層。 */
   containerRef: RefObject<HTMLElement | null>;
   /** 手機上（文件在捲）可視範圍的上緣：釘在頂端的頁首下緣。 */
   phoneTop: () => number;
+  /** 640 起要不要記位置（裝置會不會轉回手機寬度）；預設 `phoneSizedScreen`。 */
+  mayCrossTiers?: () => boolean;
 }
 
 /**
@@ -198,7 +185,8 @@ export interface TierScrollAnchorOptions extends AnchorItems {
  * 而且兩種寬度的排版不同，所以記的不是捲動量，而是「頂端第一個看得到的項目＋離頂端多遠」，換段之後把同一項捲回同一處。
  *
  * - 只看這一份自己的捲動：手機上是文件的 scroll，640 起是容器的 scroll；其他元素（表格、選單）的捲動不理。
- * - 每個 frame 最多量一次（`captureScrollAnchor` 是二分搜尋，只量 O(log n) 個項目），換段前最後一個 frame 的位置就是要還的位置。
+ * - 每個 frame 最多量一次，換段前最後一個 frame 的位置就是要還的位置。手機寬度時一律記；640 起只在短邊比 640 窄的裝置（轉橫拿的手機）上記，
+ *   桌機與平板的視窗捲動時不做這件事。
  * - 媒體查詢已經翻過去、React 還沒換段的那段時間（文件此刻被夾回 0）不記：`isPhone()` 與目前排版所屬的段不一致就跳過。
  * - 容器看不到（例如在筆記頁時藏起來的清單、640–1279 收在抽屜裡的清單）時不記也不還，位置留到下次看得到時再還。
  * - 容器不在文件代為捲動的外框裡（例如抽屜裡那份清單）時整個不作用。
@@ -214,7 +202,7 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     let frame = 0;
     const capture = () => {
       frame = 0;
-      const { containerRef, phoneTop, ...items } = optionsRef.current;
+      const { containerRef, phoneTop, mayCrossTiers: _mayCrossTiers, ...items } = optionsRef.current;
       const container = containerRef.current;
       if (container === null || !inPageScrollFrame(container) || isPhone() !== tierRef.current || container.getClientRects().length === 0) return;
       const top = tierRef.current ? phoneTop() : container.getBoundingClientRect().top;
@@ -224,7 +212,9 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     const onScroll = (event: Event) => {
       const container = optionsRef.current.containerRef.current;
       const ours = tierRef.current ? event.target === document : container !== null && event.target === container;
-      if (ours && frame === 0) frame = requestAnimationFrame(capture);
+      if (!ours || frame !== 0) return;
+      if (!tierRef.current && !(optionsRef.current.mayCrossTiers ?? phoneSizedScreen)()) return;
+      frame = requestAnimationFrame(capture);
     };
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
     return () => {
@@ -237,7 +227,9 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     if (tierRef.current === phone) return;
     tierRef.current = phone;
     const saved = savedRef.current;
-    const { containerRef, phoneTop, ...items } = optionsRef.current;
+    const { containerRef, phoneTop, mayCrossTiers, ...items } = optionsRef.current;
+    // 換到 640 起、而這台裝置在那裡不記位置：手機寬度時記的那一份還完就作廢，之後窄回手機寬度時不會跳回很久以前的地方。
+    if (!phone && !(mayCrossTiers ?? phoneSizedScreen)()) savedRef.current = null;
     const container = containerRef.current;
     if (saved === null || container === null || saved.container !== container || !inPageScrollFrame(container) || container.getClientRects().length === 0) return;
     const restore = () => {

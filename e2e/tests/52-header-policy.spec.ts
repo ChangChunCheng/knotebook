@@ -91,7 +91,7 @@ interface Frame {
   innerWidth: number;
 }
 
-/** 頁首 content box 的右緣與寬、卡片內緣（最近一層 overflow 為 hidden 的祖先）、橫向溢出。 */
+/** 頁首 content box 的右緣與寬、內文卡（頁首槽位 `[data-note-header-slot]` 的父層）的右緣、橫向溢出。 */
 async function frameOf(header: Locator): Promise<Frame> {
   return header.evaluate((h) => {
     const style = getComputedStyle(h);
