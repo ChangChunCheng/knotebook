@@ -24,6 +24,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuMainLevel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EllipsisVertical, History, Link as LinkIcon, MessageCircle, Presentation, Star, Trash } from "@/components/ui/icons";
@@ -397,8 +398,11 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             </Button>
           )}
         </DropdownMenuTrigger>
+        {/* 手機是貼底的 sheet（`phoneSheet`）：最上面一行是筆記標題，移動到…／複製到…展開時換成那一組的名稱。 */}
         <DropdownMenuContent
           align="end"
+          phoneSheet
+          sheetTitle={groupExpanded === "move" ? t("note.menu.moveTo") : groupExpanded === "copy" ? t("note.menu.copyTo") : note.title}
           className="max-h-[var(--radix-dropdown-menu-content-available-height)] max-w-[min(20rem,calc(100vw-1rem))] overflow-y-auto"
           onEscapeKeyDown={(event) => {
             if (widthExpanded) {
@@ -418,64 +422,67 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             event.preventDefault();
           }}
         >
-          <FavoriteMenuItem
-            noteId={note.id}
-            onAdd={() => void handleAddFavorite()}
-            onRemove={() => {
-              setMenuOpen(false);
-              setRemoving(captureRemoveContext(triggerRef.current));
-            }}
-          />
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault();
-              void handleCopyLink();
-            }}
-          >
-            <LinkIcon className="mr-2 h-4 w-4" />
-            {t("share.copyLink")}
-          </DropdownMenuItem>
-          {/* #229 簡報模式（任何能讀的角色；預設在「複製連結」之後）。三步形同下面兩項；onPresent 在這個
-              使用者事件裡同步要求全螢幕再導頁（usePresentEntry）。 */}
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault();
-              enteringPresentationRef.current = true;
-              setMenuOpen(false);
-              onPresent();
-            }}
-          >
-            <Presentation className="mr-2 h-4 w-4" />
-            {t("note.menu.present")}
-          </DropdownMenuItem>
-          {/* 寬度：只在頁首 ⋮（側欄每列沒有頁首寬度鈕要補）。兩種形與展開狀態見 `NoteWidthMenuItems`。 */}
-          {trigger === "header" && !phone && widthItems?.({ expanded: widthExpanded, onExpandedChange: setWidthExpanded, onModeChange: closeAndReset })}
-          {/* 版本歷史：只在 `useVersions().enabled`（＝canEdit，且在 NotePage 的 VersionsProvider 之內）時渲染——
-              側欄每列的 ⋮ 在 provider 之外，拿到的是 no-op 預設（enabled=false），所以只出現在頁首 ⋮。
-              項目本身只在窄視窗渲染（見 `VersionsMenuItem`）；「儲存當前版本」不在 ⋮（入口是 Ctrl+S 與版本面板／整頁底部的按鈕）。
-              三步形同下方 AI 修改紀錄項（focus trap 規矩，見檔頭）。 */}
-          {versions.enabled && (
-            <VersionsMenuItem
-              onActivate={() => {
+          {/* 手機 sheet 裡移動到…／複製到…展開時，子選單換掉整個內容：主選單其他項不渲染（`DropdownMenuMainLevel`）。 */}
+          <DropdownMenuMainLevel drilled={groupExpanded !== null}>
+            <FavoriteMenuItem
+              noteId={note.id}
+              onAdd={() => void handleAddFavorite()}
+              onRemove={() => {
                 setMenuOpen(false);
-                versions.open();
+                setRemoving(captureRemoveContext(triggerRef.current));
               }}
             />
-          )}
-          {/* AI 修改紀錄（#106）。三步形與下面的刪除項逐字同形：⚠ 少了
-              `event.preventDefault()` 選單一樣會關、新案照樣綠——**沒有任何測試守著
-              這一行**，它是照本檔檔頭那條 focus trap 規矩留的（Radix 預設的關閉路徑
-              會把焦點交還給 trigger，跟 Dialog 的 FocusScope 互搶）。 */}
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault();
-              setMenuOpen(false);
-              onOpenEdits();
-            }}
-          >
-            <MessageCircle className="mr-2 h-4 w-4" />
-            {t("note.menu.aiEdits")}
-          </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                void handleCopyLink();
+              }}
+            >
+              <LinkIcon className="mr-2 h-4 w-4" />
+              {t("share.copyLink")}
+            </DropdownMenuItem>
+            {/* #229 簡報模式（任何能讀的角色；預設在「複製連結」之後）。三步形同下面兩項；onPresent 在這個
+                使用者事件裡同步要求全螢幕再導頁（usePresentEntry）。 */}
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                enteringPresentationRef.current = true;
+                setMenuOpen(false);
+                onPresent();
+              }}
+            >
+              <Presentation className="mr-2 h-4 w-4" />
+              {t("note.menu.present")}
+            </DropdownMenuItem>
+            {/* 寬度：只在頁首 ⋮（側欄每列沒有頁首寬度鈕要補）。兩種形與展開狀態見 `NoteWidthMenuItems`。 */}
+            {trigger === "header" && !phone && widthItems?.({ expanded: widthExpanded, onExpandedChange: setWidthExpanded, onModeChange: closeAndReset })}
+            {/* 版本歷史：只在 `useVersions().enabled`（＝canEdit，且在 NotePage 的 VersionsProvider 之內）時渲染——
+                側欄每列的 ⋮ 在 provider 之外，拿到的是 no-op 預設（enabled=false），所以只出現在頁首 ⋮。
+                項目本身只在窄視窗渲染（見 `VersionsMenuItem`）；「儲存當前版本」不在 ⋮（入口是 Ctrl+S 與版本面板／整頁底部的按鈕）。
+                三步形同下方 AI 修改紀錄項（focus trap 規矩，見檔頭）。 */}
+            {versions.enabled && (
+              <VersionsMenuItem
+                onActivate={() => {
+                  setMenuOpen(false);
+                  versions.open();
+                }}
+              />
+            )}
+            {/* AI 修改紀錄（#106）。三步形與下面的刪除項逐字同形：⚠ 少了
+                `event.preventDefault()` 選單一樣會關、新案照樣綠——**沒有任何測試守著
+                這一行**，它是照本檔檔頭那條 focus trap 規矩留的（Radix 預設的關閉路徑
+                會把焦點交還給 trigger，跟 Dialog 的 FocusScope 互搶）。 */}
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setMenuOpen(false);
+                onOpenEdits();
+              }}
+            >
+              <MessageCircle className="mr-2 h-4 w-4" />
+              {t("note.menu.aiEdits")}
+            </DropdownMenuItem>
+          </DropdownMenuMainLevel>
           {/* #216：移動到…／複製到…。寬螢幕是往旁層疊的 Radix 巢狀子選單（hover／點擊／方向鍵進出；Esc 各層自接，只收一層），
               窄／觸控是就地展開逐層（點 `>` 項換層、選單不關）。選定目的地 → handlePick。第一層為空的那一組整項不渲染。
               選單開著時跨過寬窄判準 → 關整個選單、回收合態與第一層。 */}
@@ -491,18 +498,20 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
           {/* #175：刪除看 `permissions.delete`（群組筆記的 role 從不是 owner，但角色有
               `can_delete` 的成員要能刪；個人筆記只有 owner 為真）。#181：點下即移到垃圾桶、不確認；刪除中 disabled 不重送。 */}
           {note.permissions.delete && (
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              disabled={deleteNote.isPending}
-              onSelect={(event) => {
-                event.preventDefault();
-                setMenuOpen(false);
-                void handleTrash();
-              }}
-            >
-              <Trash className="mr-2 h-4 w-4" />
-              {t("note.menu.delete")}
-            </DropdownMenuItem>
+            <DropdownMenuMainLevel drilled={groupExpanded !== null}>
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={deleteNote.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setMenuOpen(false);
+                  void handleTrash();
+                }}
+              >
+                <Trash className="mr-2 h-4 w-4" />
+                {t("note.menu.delete")}
+              </DropdownMenuItem>
+            </DropdownMenuMainLevel>
           )}
         </DropdownMenuContent>
       </DropdownMenu>

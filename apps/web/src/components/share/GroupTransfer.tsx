@@ -4,6 +4,7 @@ import type { FolderDto, GroupDto, NoteDto } from "@knotebook/shared";
 import { useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
 import {
+  backItem,
   buildDestinationLevel,
   destinationPathLabel,
   isEmptyDestination,
@@ -27,6 +28,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
+  useMenuSheet,
 } from "@/components/ui/dropdown-menu";
 
 export type GroupTransferKind = "move" | "copy";
@@ -125,22 +127,24 @@ interface LevelNav {
 /**
  * 就地展開形的層內容：每個 `DestItem` 一個選單項，分隔線＝`DropdownMenuSeparator`。
  * 只在展開時掛載，期間持續存在（**不以 path 當 key**）；換層後（掛載後 path 改變）把焦點交給新層第一個未停用的項目
- * （第二層起即「返回」）。
+ * （第二層起即「返回」）。`focusOnMount`：掛載當下也交一次（手機 sheet：開啟它的觸發項隨之卸載，焦點不能掉到選單外）。
  * 返回項前導 `ChevronLeft` 圖示（`aria-hidden`）、可及名稱是「返回」；帶 `>` 的項目可及名稱＝「{{name}}，開啟下一層」。
  */
 function DestinationLevelItems({
   level,
   itemClassName,
   onLeft,
+  focusOnMount = false,
 }: {
   level: LevelNav;
   itemClassName?: string;
   /** 項目上的 ArrowLeft（第二層起回上一層、第一層收合）。 */
   onLeft: () => void;
+  focusOnMount?: boolean;
 }) {
   const { items, path } = level;
   const firstRef = useRef<HTMLDivElement>(null);
-  const prevPath = useRef(path);
+  const prevPath = useRef<readonly DestPathStep[] | null>(focusOnMount ? null : path);
   useLayoutEffect(() => {
     if (prevPath.current === path) return;
     prevPath.current = path;
@@ -251,6 +255,67 @@ function GroupInline({
         </DropdownMenuGroup>
       )}
     </>
+  );
+}
+
+/**
+ * 手機 sheet 形的一組：子選單換掉整個 sheet 內容（主選單其他項由呼叫端以 `DropdownMenuMainLevel` 收起）。
+ * - 收合時只有觸發項（右側 `>`）；點它、Enter／Space 或 ArrowRight 進入這一組。另一組展開中時整組不渲染。
+ * - 展開時沒有觸發項，最上面一列恆是「返回」：第一層的返回回主選單（收合），第二層起是那一層自己的返回項（回上一層）。
+ *   進入時焦點交給返回列；ArrowLeft 同返回。點 `>` 項換層、選定其他項回報（與就地展開形同一份 `DestinationLevelItems`）。
+ * Esc 的收合仍由 `NoteMenu` 的 `onEscapeKeyDown` 接；收合後焦點回觸發項見 `GroupTransferMenuItems`。
+ */
+function GroupSheet({
+  kind,
+  label,
+  level,
+  open,
+  hidden,
+  onOpenChange,
+  testId,
+  triggerRef,
+}: {
+  kind: GroupTransferKind;
+  label: string;
+  level: LevelNav;
+  open: boolean;
+  /** 另一組展開中。 */
+  hidden: boolean;
+  onOpenChange: (open: boolean) => void;
+  testId: string;
+  triggerRef: (el: HTMLDivElement | null) => void;
+}) {
+  const { t } = useTranslation();
+  if (hidden) return null;
+  if (!open) {
+    return (
+      <DropdownMenuItem
+        ref={triggerRef}
+        data-testid={testId}
+        onSelect={(event) => {
+          event.preventDefault(); // 選單保持開著，換成這一組
+          onOpenChange(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
+            onOpenChange(true);
+          }
+        }}
+      >
+        <TransferIcon kind={kind} />
+        {label}
+        <ChevronRight aria-hidden="true" className="ml-auto h-4 w-4 shrink-0" />
+      </DropdownMenuItem>
+    );
+  }
+  const sheetLevel: LevelNav = level.nested
+    ? level
+    : { ...level, items: [backItem(t), ...level.items], nested: true, back: () => onOpenChange(false) };
+  return (
+    <DropdownMenuGroup aria-label={label}>
+      <DestinationLevelItems level={sheetLevel} onLeft={sheetLevel.back} focusOnMount />
+    </DropdownMenuGroup>
   );
 }
 
@@ -378,7 +443,8 @@ function CascadeSub({ item, source, path, index, onPick }: CascadeProps & { item
  * ⋮ 選單的「移動到…」「複製到…」兩個子選單項（#216）。內容是逐層目的地清單（`buildDestinationLevel`，
  * 規則全在 `components/sidebar/destination-level.ts`），群組＝`useGroups()`、資料夾＝`useFolders()`：還沒到時先列不需要資料夾的項目
  * （群組不帶 `>`），到了再補。第一層為空（`isEmptyDestination`）的那一組整項不渲染。
- * 兩種形態（判準 `lib/wide-pointer.ts`）：寬且可 hover＝往旁層疊的 Radix 巢狀子選單（`CascadeRoot`）；窄或觸控＝就地展開逐層（`GroupInline`）。
+ * 兩種形態（判準 `lib/wide-pointer.ts`）：寬且可 hover＝往旁層疊的 Radix 巢狀子選單（`CascadeRoot`）；窄或觸控＝就地展開逐層（`GroupInline`）；
+ * 手機 sheet 裡是同一套逐層，但換掉整個 sheet 內容、最上面一列返回（`GroupSheet`）。
  * 選單開著時跨過判準 → `onModeChange`，呼叫端關掉整個選單。
  * 選定非 `>` 項只回報（`onPick`）：同空間移動或確認框由呼叫端決定（`transferTargetOf`）。
  */
@@ -411,6 +477,8 @@ export function GroupTransferMenuItems({
   // 窄視窗或觸控 -> 就地向下展開（手風琴）；寬且可 hover -> 往旁層疊（判準見 `lib/wide-pointer.ts`）。
   const wide = useWidePointer();
   const inline = !wide;
+  // 手機 sheet 形（`DropdownMenuContent` 的 `phoneSheet`）：子選單換掉整個 sheet 內容（`GroupSheet`）。
+  const sheet = useMenuSheet();
   // 掛載後判準翻轉（拖視窗寬度、外接滑鼠、平板轉向）-> 通知呼叫端關整個選單；掛載當下不呼叫。
   const prevWide = useRef(wide);
   useEffect(() => {
@@ -448,10 +516,31 @@ export function GroupTransferMenuItems({
       pick: (target) => onPick({ kind, target, groups, index }),
     };
   };
+  const openChangeOf = (kind: GroupTransferKind) => (open: boolean) => {
+    // 收合回第一層；展開另一組時，被收起的那一組也回第一層（同時只展開一組）。
+    if (!open) onPathChange(kind, NO_STEPS);
+    else if (expanded !== null && expanded !== kind) onPathChange(expanded, NO_STEPS);
+    onExpandedChange(open ? kind : null);
+  };
+  const triggerRefOf = (kind: GroupTransferKind) => (el: HTMLDivElement | null) => {
+    triggers.current[kind] = el;
+  };
   return (
     <>
       {kinds.map(({ kind, label, testId, source }) =>
-        inline ? (
+        sheet ? (
+          <GroupSheet
+            key={kind}
+            kind={kind}
+            label={label}
+            testId={testId}
+            level={levelOf(kind, source)}
+            open={expanded === kind}
+            hidden={expanded !== null && expanded !== kind}
+            onOpenChange={openChangeOf(kind)}
+            triggerRef={triggerRefOf(kind)}
+          />
+        ) : inline ? (
           <GroupInline
             key={kind}
             kind={kind}
@@ -459,15 +548,8 @@ export function GroupTransferMenuItems({
             testId={testId}
             level={levelOf(kind, source)}
             open={expanded === kind}
-            onOpenChange={(open) => {
-              // 收合回第一層；展開另一組時，被收起的那一組也回第一層（同時只展開一組）。
-              if (!open) onPathChange(kind, NO_STEPS);
-              else if (expanded !== null && expanded !== kind) onPathChange(expanded, NO_STEPS);
-              onExpandedChange(open ? kind : null);
-            }}
-            triggerRef={(el) => {
-              triggers.current[kind] = el;
-            }}
+            onOpenChange={openChangeOf(kind)}
+            triggerRef={triggerRefOf(kind)}
           />
         ) : (
           <CascadeRoot

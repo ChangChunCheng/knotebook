@@ -110,7 +110,7 @@ function CandidateMenu({
           <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" phoneSheet sheetTitle={label}>
         <DropdownMenuItem
           onSelect={event => {
             event.preventDefault();

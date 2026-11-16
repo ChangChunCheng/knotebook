@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation, type Location } from "react-router";
 import { avatarUrl, type UserDto } from "@knotebook/shared";
@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { ShortcutsDialogContext, type ShortcutsDialogApi } from "@/lib/shortcuts-dialog";
 import { UserMenu } from "./UserMenu";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // 主題色選擇器：六個 RadioItem 渲染／role=menuitemradio／aria-checked、
 // 點選→data-accent＋localStorage＋選單不關閉、鍵盤方向鍵移動焦點。
@@ -597,5 +598,56 @@ describe("UserMenu 帳號列頭像", () => {
     const trigger = await renderTrigger({ ...USER, displayName, avatar: null });
     const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === expected);
     expect(letter).toBeDefined();
+  });
+});
+
+describe("UserMenu 手機 sheet", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderAvatarMenu() {
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ThemeProvider>
+          <MemoryRouter>
+            <UserMenu variant="avatar" />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("UM-S1 手機：貼底 sheet、列 48px／16px 字（色點不變大）、最上面仍是名字（不另加標題）；選項目後關閉、焦點回頭像", async () => {
+    stubLayoutTier("phone");
+    renderAvatarMenu();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-menu-sheet");
+    expect(menu).toHaveClass("kb-menu-sheet", "w-full");
+    expect(menu).not.toHaveClass("min-w-56");
+    expect(menu.firstElementChild).toHaveTextContent("Plain");
+    expect(within(menu).getAllByText("Plain")).toHaveLength(1);
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveClass("min-h-12", "text-base");
+    for (const dot of within(menu).getAllByRole("menuitemradio")) expect(dot).not.toHaveClass("min-h-12");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Dark" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("UM-S2 640 以上：照舊是貼著觸發鈕的小選單", async () => {
+    stubLayoutTier("overlay");
+    renderAvatarMenu();
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "Plain" }), { button: 0 });
+    const menu = await screen.findByRole("menu");
+    expect(menu).not.toHaveAttribute("data-menu-sheet");
+    expect(menu).toHaveClass("min-w-56");
+    expect(within(menu).getByRole("menuitem", { name: "Settings" })).not.toHaveClass("min-h-12");
   });
 });

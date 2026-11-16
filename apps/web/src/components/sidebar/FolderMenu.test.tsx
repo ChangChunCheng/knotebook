@@ -13,6 +13,7 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { adminRole, customRole, groupDto } from "@/test/fixtures";
 import { folderChain, folderDto, groupFolder, sharedFolder } from "@/test/folder-fixtures";
 import { groupNote, personalNote } from "@/test/select-fixtures";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { __resetCollapseForTests, isCollapsed, setCollapsed } from "./collapse";
 import { liveNotesUnder } from "./folder-index";
 import { __resetFolderSortForTests, setFolderSort } from "./folder-sort";
@@ -384,5 +385,38 @@ describe("FolderMenu × AppShell：⋮ 新增筆記展開祖先", () => {
     await waitFor(() => expect(screen.getByTestId("note-route")).toHaveTextContent("tester/note-created"));
     expect(isCollapsed("folder:A")).toBe(false);
     expect(isCollapsed("folder:A1")).toBe(false);
+  });
+});
+
+describe("FolderMenu 手機 sheet", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    dismissAllToasts();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    act(() => dismissAllToasts());
+  });
+
+  it("FM-S1 手機：貼底 sheet、最上面是資料夾名稱；動作列與排序列都是 48px；640 以上沒有標題、列照舊", async () => {
+    stubLayoutTier("phone");
+    stubServer({ folders: [A] });
+    const { view } = renderList();
+    const menu = await openMenu("A");
+    expect(menu).toHaveAttribute("data-menu-sheet");
+    expect(menu.firstElementChild).toHaveTextContent("A");
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveClass("min-h-12", "text-base");
+    for (const item of within(menu).getAllByRole("menuitemradio")) expect(item).toHaveClass("min-h-12", "text-base");
+    view.unmount();
+    vi.unstubAllGlobals();
+
+    stubLayoutTier("docked");
+    stubServer({ folders: [A] });
+    renderList();
+    const popover = await openMenu("A");
+    expect(popover).not.toHaveAttribute("data-menu-sheet");
+    expect(skeleton(popover)[0]).toBe("New note");
+    expect(within(popover).getByRole("menuitemradio", { name: "Name" })).not.toHaveClass("min-h-12");
   });
 });

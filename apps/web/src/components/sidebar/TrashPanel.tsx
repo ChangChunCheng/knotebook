@@ -92,7 +92,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
             <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" phoneSheet sheetTitle={item.title}>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();

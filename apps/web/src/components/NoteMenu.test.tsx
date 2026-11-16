@@ -815,6 +815,103 @@ describe("NoteMenu × 逐層子選單", () => {
     expect(screen.getByTestId("loc").textContent).toBe(canonicalNotePath(OWNER_NOTE));
     expect(screen.queryByText("home landing")).toBeNull();
   });
+
+  // 手機（< 640）：⋮ 是貼底的 sheet；移動到…換掉整個 sheet 內容，最上面一列返回。頁首與側欄 ⋮ 同一套。
+  const sheetRows = (): string[] =>
+    within(screen.getByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((el) => el.getAttribute("aria-label") ?? el.textContent ?? "");
+
+  it.each(["header", "sidebar"] as const)("NM-S1 手機 %s ⋮：sheet、最上面是筆記標題、列 48px；640 以上照舊是小選單", async (shell) => {
+    stubLayoutTier("phone");
+    const { fetchSpy } = folderFetch(OWNER_NOTE);
+    renderCopyMenu(shell, OWNER_NOTE, fetchSpy as unknown as typeof fetch);
+    openAnyMenu(shell);
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-menu-sheet");
+    expect(menu).toHaveClass("kb-menu-sheet", "w-full", "rounded-t-xl");
+    expect(menu.firstElementChild).toHaveTextContent(OWNER_NOTE.title);
+    await within(menu).findByTestId("note-menu-move-to");
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveClass("min-h-12", "text-base");
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stubLayoutTier("overlay");
+    renderCopyMenu(shell, OWNER_NOTE, folderFetch(OWNER_NOTE).fetchSpy as unknown as typeof fetch);
+    openAnyMenu(shell);
+    const popover = await screen.findByRole("menu");
+    expect(popover).not.toHaveAttribute("data-menu-sheet");
+    expect(within(popover).queryByText(OWNER_NOTE.title)).toBeNull();
+    // 640 以上（觸控／窄）仍是就地展開：觸發項帶 aria-expanded，展開後主選單其他項還在
+    const trigger = await screen.findByTestId("note-menu-move-to");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(within(popover).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+  });
+
+  it.each(["header", "sidebar"] as const)("NM-S2 手機 %s ⋮：Move to… 換掉整個內容（返回列在最上、拿到焦點，標題換成 Move to…）；逐層進出；第一層的返回回主選單、焦點回 Move to…", async (shell) => {
+    stubLayoutTier("phone");
+    const { fetchSpy } = folderFetch(OWNER_NOTE);
+    renderCopyMenu(shell, OWNER_NOTE, fetchSpy as unknown as typeof fetch);
+    openAnyMenu(shell);
+    fireEvent.click(await screen.findByTestId("note-menu-move-to"));
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "A, open", "B"]));
+    const menu = screen.getByRole("menu");
+    expect(menu.firstElementChild).toHaveTextContent("Move to…");
+    expect(within(menu).queryByText(OWNER_NOTE.title)).toBeNull();
+    expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: "Back" }));
+    expect(screen.queryByTestId("note-menu-move-to")).toBeNull();
+    expect(screen.queryByTestId("note-menu-copy-to")).toBeNull();
+    expect(within(menu).getByRole("group", { name: "Move to…" })).toBeInTheDocument();
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "A, open" }));
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "Move here", "A1"]));
+    expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: "Back" }));
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Back" }));
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "A, open", "B"]));
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Back" }));
+    await waitFor(() => expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument());
+    expect(sheetRows()).not.toContain("Back");
+    expect(menu.firstElementChild).toHaveTextContent(OWNER_NOTE.title);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("note-menu-move-to")));
+  });
+
+  it("NM-S3 手機：子選單裡 Esc 先回主選單（選單不關），再按 Esc 才關、焦點回 ⋮；ArrowLeft 同返回", async () => {
+    stubLayoutTier("phone");
+    const { fetchSpy } = folderFetch(OWNER_NOTE);
+    renderCopyMenu("header", OWNER_NOTE, fetchSpy as unknown as typeof fetch);
+    openAnyMenu("header");
+    fireEvent.click(await screen.findByTestId("note-menu-move-to"));
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "A, open", "B"]));
+    const a = screen.getByRole("menuitem", { name: "A, open" });
+    fireEvent.keyDown(a, { key: "ArrowRight" });
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "Move here", "A1"]));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "A1" }), { key: "ArrowLeft" });
+    await waitFor(() => expect(sheetRows()).toEqual(["Back", "A, open", "B"]));
+
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "More" }));
+  });
+
+  it("NM-S4 手機：子選單裡選目的地 → 選單關、同空間移動照常送出；重開是主選單", async () => {
+    stubLayoutTier("phone");
+    const { fetchSpy, calls } = folderFetch(OWNER_NOTE);
+    renderCopyMenu("header", OWNER_NOTE, fetchSpy as unknown as typeof fetch);
+    openAnyMenu("header");
+    fireEvent.click(await screen.findByTestId("note-menu-move-to"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "B" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1));
+    openAnyMenu("header");
+    expect(await screen.findByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Back" })).toBeNull();
+  });
 });
 
 // ── 最愛：⋮ 的「加入最愛／移出最愛」與移出確認框 ──

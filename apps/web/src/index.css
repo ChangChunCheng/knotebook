@@ -1230,7 +1230,8 @@ input[name="share-access"] {
   }
 }
 
-/* 手機：對話框（預設尺寸）是貼底的 sheet，由下往上升起、關閉時往下收。只在手機寬度動畫；減少動態時不動畫（Radix 會直接卸載）。 */
+/* 手機：對話框（預設尺寸）與帶 `phoneSheet` 的選單是貼底的 sheet，由下往上升起、關閉時往下收，背板淡入淡出。只在手機寬度動畫；
+   減少動態時不動畫（Radix 會直接卸載）。 */
 @keyframes kb-sheet-in {
   from {
     transform: translateY(100%);
@@ -1255,8 +1256,40 @@ input[name="share-access"] {
     opacity: 0;
   }
 }
+@keyframes kb-sheet-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* 手機：帶 `phoneSheet` 的選單（⋮ 選單、帳號選單）是貼底滿寬的 sheet（`.kb-menu-sheet` 只在手機寬度由 JS 加上）。
+   Radix 把選單內容包在定位用的 wrapper 裡，以行內樣式把它貼到觸發鈕旁（left／top／transform，高解析度螢幕另有 will-change: transform），
+   這裡蓋掉那些定位，改成貼齊視窗底與左右。will-change 也要清掉：它會讓 wrapper 變成 fixed 子孫的包含區塊，背板就蓋不滿視窗。
+   背板畫在 wrapper 的 ::before（z-index -1：在選單底下）；點背板＝在選單外按下，Radix 照常關閉選單。 */
+[data-radix-popper-content-wrapper]:has(> .kb-menu-sheet) {
+  position: fixed !important;
+  inset: auto 0 0 0 !important;
+  transform: none !important;
+  will-change: auto !important;
+  min-width: 0 !important;
+}
+[data-radix-popper-content-wrapper]:has(> .kb-menu-sheet)::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: rgb(0 0 0 / 0.5);
+}
 @media (width < 40rem) and (prefers-reduced-motion: no-preference) {
   .kb-sheet-overlay[data-state="closed"] {
+    animation: kb-sheet-overlay-out 150ms ease-in forwards;
+  }
+  [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet[data-state="open"])::before {
+    animation: kb-sheet-overlay-in 200ms ease-out;
+  }
+  [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet[data-state="closed"])::before {
     animation: kb-sheet-overlay-out 150ms ease-in forwards;
   }
   .kb-sheet[data-state="open"] {

@@ -21,6 +21,9 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  * 58-10 公開頁頁首（390）：標題比改前寬（≥ 180px）、「Present」只剩圖示、唯讀只剩一個點（文字只給螢幕閱讀器）。
  * 58-17 手機筆記頁（390）：沒在編輯時左下 Search、右下 New note 兩顆毛玻璃浮動鈕（位置與清單畫面相同；背景半透明加 backdrop-filter 模糊）；
  *      開始編輯時不在、離開編輯回來；Search 開搜尋層（層開著時不在）；New note 建新筆記；長筆記最後一段能捲到鈕之上。
+ * 58-18 選單 sheet（390 觸控）：筆記頁 ⋮、清單列 ⋮、資料夾 ⋮、頭像選單貼齊視窗左右與底（x＝0、寬＝390、底＝844），文字列高 ≥ 48，
+ *      背板蓋滿視窗；移動到…換掉整個 sheet 內容、最上面一列 Back，逐層進出、Back 回主選單；假鍵盤升起時底緣跟著升；點背板關閉。
+ * 58-19 寬螢幕（1280）：筆記頁 ⋮ 仍是貼著按鈕的小選單（右緣對齊按鈕、在按鈕下方），沒有背板。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -946,6 +949,140 @@ test("58-17 手機筆記頁（390）：兩顆毛玻璃浮動鈕與清單同位�
     await page.getByTestId("note-browse-bar").getByRole("button", { name: "New note", exact: true }).click();
     await page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
     await expect(page.getByRole("textbox", { name: "Note title" })).toHaveValue("Untitled", { timeout: 15_000 });
+  } finally {
+    await context.close();
+  }
+});
+
+/** 手機選單 sheet：等進場動畫跑完，量貼齊視窗左右與底（x＝0、寬＝視窗寬、底＝視窗底）；每個文字列（menuitem、`rows` 另加 menuitemradio）高 ≥ 48。 */
+async function expectMenuSheet(page: Page, opts: { width?: number; height?: number; radioRows?: boolean } = {}): Promise<Locator> {
+  const width = opts.width ?? 390;
+  const height = opts.height ?? 844;
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(async () => {
+    const b = (await menu.boundingBox())!;
+    expect(b.x).toBe(0);
+    expect(b.width).toBe(width);
+    expect(b.y + b.height).toBeCloseTo(height, 0);
+  }).toPass({ timeout: 5_000 });
+  const selector = opts.radioRows ? '[role="menuitem"], [role="menuitemradio"]' : '[role="menuitem"]';
+  const rows = await menu.evaluate((el, sel) => Array.from(el.querySelectorAll(sel)).map((item) => ({ name: item.textContent ?? "", height: item.getBoundingClientRect().height })), selector);
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) expect(row.height, `「${row.name}」列高`).toBeGreaterThanOrEqual(48 - 0.5);
+  return menu;
+}
+
+/** sheet 目前的列（可及名稱：帶 aria-label 的取它，否則文字）。 */
+const sheetRowNames = (menu: Locator): Promise<string[]> =>
+  menu.evaluate((el) => Array.from(el.querySelectorAll('[role="menuitem"]')).map((item) => item.getAttribute("aria-label") ?? item.textContent ?? ""));
+
+test("58-18 手機（390 觸控）：筆記頁 ⋮、清單列 ⋮、資料夾 ⋮、頭像選單都是貼底滿寬的 sheet，列高 ≥ 48；Move to… 在 sheet 裡逐層進出；鍵盤升起時跟著升；點背板關閉", async ({ browser }) => {
+  test.setTimeout(150_000);
+  const { context, page } = await open(browser, 390, "short", { init: stubVisualViewport });
+  try {
+    // 移動到…的第一層要有資料夾才有「, open」可點：建 F ⊃ F1
+    const F = `E2E sheet folder ${RUN}`;
+    const F1 = `E2E sheet sub ${RUN}`;
+    const created = await page.request.post("/api/folders", { headers: { Origin: ORIGIN }, data: { name: F, space: { kind: "personal" } } });
+    expect(created.status(), await created.text()).toBe(201);
+    const fId = ((await created.json()) as { id: string }).id;
+    const sub = await page.request.post("/api/folders", { headers: { Origin: ORIGIN }, data: { name: F1, parentId: fId } });
+    expect(sub.status(), await sub.text()).toBe(201);
+    await page.reload();
+    await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible({ timeout: 15_000 });
+
+    // ── 筆記頁 ⋮ ──
+    await page.locator("header").getByRole("button", { name: "More", exact: true }).click();
+    let menu = await expectMenuSheet(page);
+    expect(await menu.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe("0px");
+    expect(await menu.evaluate((el) => getComputedStyle(el).borderBottomLeftRadius)).toBe("0px");
+    await expect(menu.getByText(TITLES.short, { exact: true })).toBeVisible();
+    // 背板：wrapper 的 ::before 蓋滿視窗、半透明黑
+    const backdrop = await menu.evaluate((el) => {
+      const style = getComputedStyle(el.parentElement!, "::before");
+      return { position: style.position, top: style.top, left: style.left, width: style.width, height: style.height, color: style.backgroundColor };
+    });
+    expect(backdrop).toEqual({ position: "fixed", top: "0px", left: "0px", width: "390px", height: "844px", color: "rgba(0, 0, 0, 0.5)" });
+
+    // 鍵盤升起 300px：sheet 底緣在鍵盤上方；收起後回到視窗底
+    await setKeyboard(page, 300);
+    await expect(async () => {
+      const b = (await menu.boundingBox())!;
+      expect(b.y + b.height).toBeCloseTo(844 - 300, 0);
+    }).toPass({ timeout: 5_000 });
+    await setKeyboard(page, 0);
+    await expect(async () => {
+      const b = (await menu.boundingBox())!;
+      expect(b.y + b.height).toBeCloseTo(844, 0);
+    }).toPass({ timeout: 5_000 });
+
+    // Move to…：換掉整個 sheet 內容，最上面一列 Back；逐層進出；Back 回主選單
+    await menu.getByRole("menuitem", { name: "Move to…", exact: true }).click();
+    await expect.poll(() => sheetRowNames(menu)).toEqual(["Back", `${F}, open`]);
+    await expect(menu.getByRole("menuitem", { name: "Back", exact: true })).toBeFocused();
+    await expect(menu.getByText("Move to…", { exact: true })).toBeVisible();
+    await expectMenuSheet(page);
+    await menu.getByRole("menuitem", { name: `${F}, open`, exact: true }).click();
+    await expect.poll(() => sheetRowNames(menu)).toEqual(["Back", "Move here", F1]);
+    await expectMenuSheet(page);
+    await menu.getByRole("menuitem", { name: "Back", exact: true }).click();
+    await expect.poll(() => sheetRowNames(menu)).toEqual(["Back", `${F}, open`]);
+    await menu.getByRole("menuitem", { name: "Back", exact: true }).click();
+    await expect(menu.getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Move to…", exact: true })).toBeFocused();
+    await expect(menu.getByText(TITLES.short, { exact: true })).toBeVisible();
+
+    // 點背板（sheet 上方）關閉
+    await page.touchscreen.tap(195, 60);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Note title" })).toHaveValue(TITLES.short);
+
+    // ── 清單列 ⋮、資料夾 ⋮ ──
+    await page.goto("/");
+    const panel = await showSidebarTab(page, "My notes");
+    await panel.getByRole("button", { name: `Note actions for ${TITLES.short}`, exact: true }).click();
+    menu = await expectMenuSheet(page);
+    await expect(menu.getByText(TITLES.short, { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    await panel.getByRole("button", { name: `Folder menu for ${F}`, exact: true }).click();
+    menu = await expectMenuSheet(page, { radioRows: true });
+    await page.touchscreen.tap(195, 60);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    // ── 頭像選單 ──
+    await page.locator("[data-phone-top-bar]").getByRole("button", { name: alice.displayName, exact: true }).click();
+    menu = await expectMenuSheet(page);
+    await expect(menu.getByRole("menuitem", { name: "Log out", exact: true })).toBeVisible();
+    await page.touchscreen.tap(195, 30);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-19 寬螢幕（1280）：筆記頁 ⋮ 仍是貼著按鈕的小選單（不是 sheet、沒有背板）", async ({ browser }) => {
+  const { context, page } = await open(browser, 1280, "short", { touch: false });
+  try {
+    const more = page.locator("header").getByRole("button", { name: "More", exact: true });
+    // 先量按鈕：選單開著時 Radix 把選單外的內容標成 aria-hidden，getByRole 就找不到它
+    const button = await box(more);
+    await more.click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(menu).not.toHaveAttribute("data-menu-sheet");
+    await expect(async () => {
+      const b = (await menu.boundingBox())!;
+      expect(b.width).toBeLessThan(400);
+      // align="end"：右緣對齊按鈕右緣；在按鈕下方 4px
+      expect(Math.abs(b.x + b.width - (button.x + button.width))).toBeLessThanOrEqual(1);
+      expect(b.y).toBeCloseTo(button.y + button.height + 4, 0);
+    }).toPass({ timeout: 5_000 });
+    expect(await menu.evaluate((el) => getComputedStyle(el.parentElement!, "::before").content)).toBe("none");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
   } finally {
     await context.close();
   }

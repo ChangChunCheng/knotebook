@@ -123,7 +123,7 @@ export function GroupMenu({ group, size = "default" }: { group: GroupDto; size?:
             <EllipsisVertical aria-hidden="true" className={size === "sidebar" ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" phoneSheet sheetTitle={group.name}>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
