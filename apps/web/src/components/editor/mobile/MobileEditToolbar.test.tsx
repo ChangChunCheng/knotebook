@@ -289,11 +289,11 @@ describe("MobileEditToolbar", () => {
           </>
         ),
       });
-      expect(props().scrollMargin).toEqual({ top: 72, right: 0, bottom: 60, left: 0 });
+      expect(props().scrollMargin).toEqual({ top: 72, right: 0, bottom: 68, left: 0 });
       setKeyboard(300);
-      expect(props().scrollMargin?.bottom).toBe(360);
+      expect(props().scrollMargin?.bottom).toBe(368);
       expect(props().scrollMargin?.top).toBe(before.scrollMargin?.top);
-      expect(props().scrollThreshold?.bottom).toBe(360);
+      expect(props().scrollThreshold?.bottom).toBe(368);
       rerenderHost({ children: <Probe /> });
       expect(root_()).toBeNull();
       expect({ scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold }).toEqual(before);
