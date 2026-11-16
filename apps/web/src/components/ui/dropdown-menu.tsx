@@ -86,10 +86,12 @@ export function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, phoneS
 export const DropdownMenuTrigger = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Trigger>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger>
->(({ onPointerDown, onClick, ...props }, ref) => {
+>(({ onPointerDown, onPointerUp, onPointerCancel, onLostPointerCapture, onClick, ...props }, ref) => {
   const root = useContext(MenuRootContext);
   const sheetNow = () => root !== null && root.phoneSheet && isPhone();
-  const pressedRef = useRef(false);
+  // 這一下按在觸發鈕上的進度："down"＝按下、"up"＝在鈕上放開；捲動接手（pointercancel）或沒放開就失去捕捉（拖走）時清掉。
+  // 觸控放開時瀏覽器也會在 pointerup 之後發 lostpointercapture，所以只在還沒放開時才因它清掉。
+  const pressRef = useRef<"down" | "up" | null>(null);
   return (
     <DropdownMenuPrimitive.Trigger
       ref={ref}
@@ -98,17 +100,29 @@ export const DropdownMenuTrigger = forwardRef<
         onPointerDown?.(event);
         if (event.defaultPrevented || props.disabled) return;
         // 擋下後 Radix 自己的 pointerdown 處理就不跑（composeEventHandlers 看 defaultPrevented）。
-        pressedRef.current = false;
+        pressRef.current = null;
         if (event.button !== 0 || event.ctrlKey) return;
         if (!root?.openRef.current && sheetNow()) {
           event.preventDefault();
-          pressedRef.current = true;
+          pressRef.current = "down";
         }
+      }}
+      onPointerUp={(event) => {
+        onPointerUp?.(event);
+        if (pressRef.current === "down") pressRef.current = "up";
+      }}
+      onPointerCancel={(event) => {
+        onPointerCancel?.(event);
+        pressRef.current = null;
+      }}
+      onLostPointerCapture={(event) => {
+        onLostPointerCapture?.(event);
+        if (pressRef.current === "down") pressRef.current = null;
       }}
       onClick={(event) => {
         onClick?.(event);
-        const pressed = pressedRef.current;
-        pressedRef.current = false;
+        const pressed = pressRef.current !== null;
+        pressRef.current = null;
         if (event.defaultPrevented || props.disabled) return;
         if (!pressed && event.detail !== 0) return;
         if (!root?.openRef.current && sheetNow()) root?.setOpen(true);

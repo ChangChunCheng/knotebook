@@ -1,12 +1,12 @@
-import { lazy, Suspense, useRef, type RefObject } from "react";
+import { lazy, Suspense, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { X } from "@/components/ui/icons";
 import { ChunkLoadBeacon, LazyRouteErrorBoundary, LazyRouteLoading } from "@/components/ErrorBoundary";
-import { managementTray } from "@/components/management/tray";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { managementCardPhone, managementTray } from "@/components/management/tray";
+import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,7 +16,8 @@ import { cn } from "@/lib/utils";
 const ShortcutsContent = lazy(() => import("@/components/shortcuts/ShortcutsLazy").then((m) => ({ default: m.ShortcutsContent })));
 
 /** chunk 下載中與載入失敗時佔住右邊整塊托盤的一張卡（標題、✕、Esc 都在外殼，所以這兩個狀態下對話框一樣關得掉）。 */
-const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12");
+// 手機：卡貼齊 sheet 底緣，底部內距與 Home 指示條的 safe area 取大。
+const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12 max-sm:pb-[max(2rem,env(safe-area-inset-bottom))]", managementCardPhone);
 
 /**
  * 快捷鍵介紹頁的對話框外殼（Ctrl+/ 或使用者選單「快捷鍵介紹」；開關 state 與監聽器在 `AppShell`）。
@@ -53,6 +54,11 @@ export function ShortcutsDialog({
   const phone = useIsPhone();
   /** 分類清單的「‹」按下：收完之後重開選單（而不是還焦點）。 */
   const backToMenuRef = useRef(false);
+  // 打開當下是不是手機寬度：「返回選單」只給在手機上從選單打開的情形（在 640 以上打開、之後縮到手機寬度的，清單的「‹」只關）。
+  const [phoneAtOpen, setPhoneAtOpen] = useState<boolean | null>(null);
+  if (open && phoneAtOpen === null) setPhoneAtOpen(isPhone());
+  else if (!open && phoneAtOpen !== null) setPhoneAtOpen(null);
+  const canReturnToMenu = phoneAtOpen === true && (reopenMenuRef?.current ?? null) !== null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -62,7 +68,8 @@ export function ShortcutsDialog({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           const dialog = event.currentTarget as HTMLElement;
-          (dialog.querySelector<HTMLElement>("[data-shortcuts-content]") ?? dialog).focus();
+          // 看得見的那一層的落點（內容區，或手機停在分類清單時清單的「‹」），見 `ShortcutsLazy`。
+          (dialog.querySelector<HTMLElement>("[data-shortcuts-focus]") ?? dialog).focus();
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
@@ -105,9 +112,9 @@ export function ShortcutsDialog({
                 listBack={
                   phone
                     ? {
-                        label: reopenMenuRef?.current ? t("management.backToMenu") : t("management.close"),
+                        label: canReturnToMenu ? t("management.backToMenu") : t("management.close"),
                         onBack: () => {
-                          backToMenuRef.current = true;
+                          backToMenuRef.current = canReturnToMenu;
                           onOpenChange(false);
                         },
                       }

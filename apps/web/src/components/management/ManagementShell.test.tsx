@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, type Location } from "react-router";
 import i18n from "@/i18n";
 import { clickOutside, settle } from "@/test/outside-click";
@@ -22,7 +22,7 @@ function LocationProbe() {
   const location = useLocation();
   const bg = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation;
   return (
-    <div data-testid="location" data-bg={bg?.pathname ?? ""}>
+    <div data-testid="location" data-bg={bg?.pathname ?? ""} data-state-keys={Object.keys((location.state as object | null) ?? {}).sort().join(",")}>
       {location.pathname}
     </div>
   );
@@ -340,5 +340,64 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(contentCard().classList).toContain("flex");
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back to menu" })).toBeNull();
+  });
+});
+
+describe("ManagementShell 手機：「返回選單」只給真的從選單打開的那一次", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("MS-P7 打開後 panelStart／panelReturn 從這一筆歷史拿掉（只留 backgroundLocation）；重新整理或上一頁／下一頁回到這一筆＝深連結：停在那一頁，清單的「‹」是 Close、不重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } satisfies PanelLocationState });
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveAttribute("data-state-keys", "backgroundLocation"));
+    // 這一筆仍是從選單開的那一次：清單上的「‹」照樣是 Back to menu
+    expect(within(itemsCard()).getByRole("button", { name: "Back to menu" })).toBeInTheDocument();
+    cleanup();
+
+    // 同一筆歷史再掛一次（重新整理、上一頁／下一頁）：state 只剩 backgroundLocation
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    expect(within(itemsCard()).queryByRole("button", { name: "Back to menu" })).toBeNull();
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P8 在 640 以上從選單打開、之後縮到手機寬度：清單的「‹」是 Close，按了只關、不重開選單", async () => {
+    const tier = stubLayoutTier("overlay");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    act(() => tier.setLayoutTier("phone"));
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    expect(within(itemsCard()).queryByRole("button", { name: "Back to menu" })).toBeNull();
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P9 手機上卡貼齊 sheet：托盤不留內距，卡只有上圓角、左右與底沒有邊框，safe area 是卡的內距", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const tray = itemsCard().parentElement!;
+    expect(tray).toHaveClass("max-sm:p-0", "max-sm:gap-0");
+    expect(tray.className).not.toMatch(/max-sm:p[lrb]-\[/);
+    for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-2xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
+    expect(itemsCard()).toHaveClass("max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]", "max-sm:pl-[max(1rem,env(safe-area-inset-left))]");
+    expect(contentCard()).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]", "max-sm:pl-[env(safe-area-inset-left)]");
+    // 卡貼齊 sheet 左緣：兩層的「‹」自己退開左側 safe area
+    expect(within(itemsCard()).getByRole("button", { name: "Close" })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+    expect(within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
   });
 });

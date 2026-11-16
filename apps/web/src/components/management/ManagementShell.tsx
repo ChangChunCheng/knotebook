@@ -1,11 +1,17 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { NavLink, useLocation, type Location } from "react-router";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { NavLink, useLocation, useNavigate, type Location } from "react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ArrowLeft, ChevronLeft, X } from "@/components/ui/icons";
-import { managementNavItemClass, managementTray } from "@/components/management/tray";
+import {
+  managementCardPhone,
+  managementCardPhoneInset,
+  managementListPaddingPhone,
+  managementNavItemClass,
+  managementTray,
+} from "@/components/management/tray";
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { forgetPanelReturn, panelReturnFor, type PanelLocationState } from "@/lib/panel-return";
 import { cn } from "@/lib/utils";
@@ -14,6 +20,8 @@ import { cn } from "@/lib/utils";
 const PANEL_CLOSE_HIT = "pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
 /** 手機的「‹」不分指標一律 44×44（滑鼠縮到手機寬度也一樣）。 */
 const PHONE_BACK_HIT = "max-sm:after:absolute max-sm:after:-inset-2 max-sm:after:content-['']";
+/** 手機的卡貼齊 sheet 左緣：「‹」自己退開左側 safe area（橫拿時的側邊），至少與其他寬度一樣離卡緣 8px。 */
+const PHONE_BACK_LEFT = "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]";
 
 /**
  * 三個設定管理類面板（個人設定、群組、站台管理）的共用外殼（#247）：托盤上兩張卡——
@@ -126,7 +134,19 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
   const [open, setOpen] = useState(true);
   /** 手機關閉中：sheet 收完後要做的事（null＝不是由這裡關的）。 */
   const afterCloseRef = useRef<{ reopen: (() => void) | null } | null>(null);
-  const canReturnToMenu = panelReturnFor(entry.returnToken) !== null;
+  // 「返回選單」只給在手機上從選單打開、而且那個選單還能重開的情形；在 640 以上打開、之後縮到手機寬度的，清單的「‹」只關。
+  const canReturnToMenu = entry.startList && phone && panelReturnFor(entry.returnToken) !== null;
+  const navigate = useNavigate();
+  // 讀過之後把 `panelStart`／`panelReturn` 從這一筆歷史拿掉（replace）：重新整理或上一頁／下一頁回到這一筆時當成深連結
+  // （停在網址那一頁、清單的「‹」只關），不會再停在清單或重開一個早就不在的選單。
+  useEffect(() => {
+    const state = location.state as PanelLocationState | null;
+    if (state?.panelStart === undefined && state?.panelReturn === undefined) return;
+    void navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: state.backgroundLocation ? { backgroundLocation: state.backgroundLocation } : null },
+    );
+  }, [location, navigate]);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const seqRef = useRef(0);
   const navRef = useRef<HTMLElement>(null);
@@ -141,7 +161,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
 
   /** 關掉面板；`backToMenu`＝項次清單的「‹」（從選單開的就重開那個選單）。 */
   function close(backToMenu: boolean): void {
-    const reopen = backToMenu ? panelReturnFor(entry.returnToken) : null;
+    const reopen = backToMenu && entry.startList ? panelReturnFor(entry.returnToken) : null;
     forgetPanelReturn(entry.returnToken);
     if (!isPhone()) {
       onOpenChange(false);
@@ -192,6 +212,8 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
             className={cn(
               cardSurface,
               "relative w-full shrink-0 flex-col overflow-hidden p-4 md:w-64",
+              managementCardPhone,
+              managementListPaddingPhone,
               layer === "items" ? "flex" : "hidden",
               "md:flex",
             )}
@@ -203,7 +225,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
                   aria-label={canReturnToMenu ? t("management.backToMenu") : t("management.close")}
                   onClick={() => close(true)}
                 >
@@ -240,6 +262,8 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
             className={cn(
               cardSurface,
               "relative min-w-0 flex-1 flex-col overflow-hidden",
+              managementCardPhone,
+              managementCardPhoneInset,
               layer === "content" ? "flex" : "hidden",
               "md:flex",
             )}
@@ -249,7 +273,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               type="button"
               variant="ghost"
               size="icon"
-              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
               aria-label={t("management.back")}
               onClick={() => switchTo("items")}
             >

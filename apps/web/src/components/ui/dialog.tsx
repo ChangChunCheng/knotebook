@@ -55,9 +55,10 @@ const dialogContentVariants = cva(
           "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
           "grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] " +
           // 手機（< 640）：貼底、滿寬、幾乎滿高的 sheet，由下往上升起（`kb-sheet`）。上方留一道縫（至少 28px，有瀏海時是 safe area 再加 8px），
-          // 點它關掉：再窄的話，觸控的目標修正會把點在縫上的一下歸給旁邊的 sheet，等於點不到。
-          // 看得到後面變暗的頁面；高度＝看得見的高度（`--kb-visible-h`，沒有視覺視窗時 `dvh`）減去那道縫，鍵盤升起時底緣抬到鍵盤上方。
-          // 底與左右 safe area 由托盤的內距給（`management/tray.ts`）。不過場：理由同預設尺寸。
+          // 看得到後面變暗的頁面，點它關掉：再窄的話，觸控的目標修正會把點在縫上的一下歸給旁邊的 sheet，等於點不到。
+          // 高度＝看得見的高度（`--kb-visible-h`，沒有視覺視窗時 `dvh`）減去那道縫，鍵盤升起時底緣抬到鍵盤上方。
+          // 托盤在手機上不留內距，卡貼齊 sheet；底與左右的 safe area 是卡自己的內距（`management/tray.ts` 的 `managementCardPhoneInset`／
+          // `managementListPaddingPhone`），卡左上角的「‹」也自己退開左側 safe area。不過場：理由同預設尺寸。
           "max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-(--kb-inset,0px) max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 " +
           "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))] max-sm:transition-none " +
           "max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:overflow-hidden kb-sheet " +

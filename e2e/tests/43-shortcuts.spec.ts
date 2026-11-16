@@ -870,14 +870,18 @@ test.describe("shortcuts dialog", () => {
     await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
     const dialog = shortcutsDialog(page);
     await expect(dialog).toBeVisible();
+    // 手機上快捷鍵頁是由下往上升起的 sheet：進場動畫跑完再量（升起途中外框有一部分還在視窗下方）
+    await expect.poll(() => dialog.evaluate((el) => el.getAnimations().length)).toBe(0);
     const box = (await dialog.boundingBox())!;
     const viewport = page.viewportSize()!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+    // Esc 只關快捷鍵頁（不是清單的「Back to menu」，所以不重開帳號選單），焦點回頭像鈕
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(trigger).toBeFocused();
   });
 
