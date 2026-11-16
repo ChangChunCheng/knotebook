@@ -76,8 +76,8 @@ export function findUserMenuTrigger(): Element | null {
 }
 
 /**
- * 導覽的寬窄判準：窄＝側欄不固定（`OVERLAY_QUERY`，視窗窄於 1280px）。640 以上是抽屜；比 640 窄的手機版面沒有抽屜，
- * 清單本身就是首頁，導覽在手機上還是照抽屜的站點走，手機的站點另外處理。
+ * 導覽的寬窄判準：窄＝側欄不固定（`OVERLAY_QUERY`，視窗窄於 1280px），640～1279 的側欄是抽屜。
+ * 比 640 窄的手機版面沒有抽屜也沒有開抽屜的鈕：指著它的站在那裡找不到目標、會被跳過，手機還沒有自己的站點。
  */
 export function isNarrowViewport(): boolean {
   return window.matchMedia(OVERLAY_QUERY).matches;

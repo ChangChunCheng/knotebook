@@ -234,7 +234,7 @@ describe("寬視窗：目標", () => {
 describe("窄視窗：目標", () => {
   beforeEach(() => stubViewport(true));
 
-  it("側欄裡的站改指頁首的漢堡鈕；版本改指 ⋮；頁首不變", async () => {
+  it("側欄裡的站改指頁首的漢堡鈕；版本仍指右下角的泡泡（640 以上都有）；頁首不變", async () => {
     await renderPage();
     const header = within(pageHeader());
     const hamburger = header.getByRole("button", { name: "Open sidebar" });
@@ -245,7 +245,7 @@ describe("窄視窗：目標", () => {
       folders: [hamburger],
       search: [hamburger],
       header: [header.getByRole("button", { name: "Share" }), more],
-      versions: [more],
+      versions: [screen.getByTestId("versions-bubble")],
       wikilink: [screen.getByRole("link", { name: "linked note" })],
       ai: [screen.getByRole("button", { name: "AI" })],
       slash: [screen.getByText("a flowchart")],
@@ -256,7 +256,7 @@ describe("窄視窗：目標", () => {
 
   it("說明：有窄視窗那一句的站用它", () => {
     const narrowOnes = Object.values(STOPS).filter((s) => s.narrowBodyKey !== undefined).map((s) => s.id);
-    expect(narrowOnes.sort()).toEqual(["folders", "newNote", "search", "tabs", "userMenu", "versions"]);
+    expect(narrowOnes.sort()).toEqual(["folders", "newNote", "search", "tabs", "userMenu"]);
     const t = i18n.getFixedT("en");
     for (const stop of Object.values(STOPS)) expect(stopBody(t, stop), stop.id).toBe(stopBody(t, stop, true));
   });
@@ -334,8 +334,8 @@ describe("背景不可互動（簡報模式的 AppShell inert）", () => {
   it.each([false, true])("窄視窗＝%s：十一個目標都查不到", async (narrow) => {
     stubViewport(narrow);
     await renderPage({ inert: true });
-    // 元素都還在 DOM 裡（帶著屬性），只是在 inert 範圍內。窄視窗沒有版本泡泡。
-    for (const id of narrow ? ALL_IDS.filter((i) => i !== "versions") : ALL_IDS) {
+    // 元素都還在 DOM 裡（帶著屬性），只是在 inert 範圍內。版本泡泡在側欄浮動時（640～1279）也在。
+    for (const id of ALL_IDS) {
       expect(document.querySelector(`[data-kb-tour-target="${id}"]`), id).not.toBeNull();
     }
     for (const id of ALL_IDS) expect(findTourTarget(id), id).toBeNull();
@@ -507,7 +507,6 @@ describe("說明文字", () => {
       newNote: ["bottom of the sidebar", "Open the sidebar from here"],
       folders: ["Move to…", "Open the sidebar from here"],
       search: ["{mod}K", "open the sidebar from here"],
-      versions: ["in the ⋮ menu"],
       userMenu: ["{mod}/", "open Help from the menu at the bottom-left of the sidebar", "Open the sidebar from here"],
     },
     "zh-TW": {
@@ -515,7 +514,6 @@ describe("說明文字", () => {
       newNote: ["側欄底部", "點這裡打開側欄"],
       folders: ["移動到…", "點這裡打開側欄"],
       search: ["{mod}K", "點這裡打開側欄"],
-      versions: ["在 ⋮ 裡"],
       userMenu: ["{mod}/", "從側欄左下角的選單打開「說明」", "點這裡打開側欄"],
     },
   };
@@ -546,12 +544,12 @@ describe("說明文字", () => {
     }
   });
 
-  it.each(["en", "zh-TW"] as const)("%s：站 6 在寬視窗指右下角、在窄視窗指 ⋮，兩邊不混", (lng) => {
+  it.each(["en", "zh-TW"] as const)("%s：站 6 在側欄浮動時也指右下角的泡泡（640 以上都有），說明不提 ⋮", (lng) => {
     const t = i18n.getFixedT(lng);
     const wide = stopBody(t, STOPS.versions, false);
-    const narrow = stopBody(t, STOPS.versions, true);
+    expect(stopBody(t, STOPS.versions, true)).toBe(wide);
+    expect(wide).toMatch(/右下角|bottom-right/);
     expect(wide).not.toContain("⋮");
-    expect(narrow).not.toMatch(/右下角|bottom-right/);
   });
 
   it.each(["en", "zh-TW"] as const)("%s：Mac 顯示 ⌘、其他平台顯示 Ctrl+，沒有未代入的 {{mod}}", (lng) => {

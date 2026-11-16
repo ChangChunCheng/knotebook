@@ -1088,19 +1088,22 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
     await expect(help).toHaveCount(0);
 
-    // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）也在 ⋮ 裡，站 7、8 指編輯器裡真的 [[ 與 / 選單；
+    // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）指右下角的版本泡泡（640 以上都有），站 7、8 指編輯器裡真的 [[ 與 / 選單；
     // 其餘指開側欄的漢堡鈕。抽屜整輪都不再出現。
-    const label = (n: number): string => (n === 5 || n === 6 ? "More" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar");
+    const label = (n: number): string =>
+      n === 5 ? "More" : n === 6 ? "the versions bubble" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar";
     await walkToLastStop(page, async (n) => {
       await expect(page.locator("[data-sidebar-drawer]")).toHaveCount(0);
       const target =
-        n === 5 || n === 6
+        n === 5
           ? page.getByRole("button", { name: "More", exact: true })
-          : n === 7
-            ? page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()
-            : n === 8
-              ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
-              : drawerButton;
+          : n === 6
+            ? page.locator('[data-kb-tour-target="versions"]:visible').first()
+            : n === 7
+              ? page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()
+              : n === 8
+                ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
+                : drawerButton;
       await expect.poll(async () => {
         const [hole, box] = [await holeBox(page), await target.boundingBox()];
         if (box === null) return false;
