@@ -537,7 +537,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     searchInputRef.current?.blur();
     setPhoneSearchOpen(false);
   }, [location.key, location.pathname, location.state]);
-  // 搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給開它的搜尋鈕——清單上是左下的浮動 Search 鈕，筆記頁上是右下同一組浮動鈕的 Search。
+  // 搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給開它的搜尋鈕——清單上是左下的浮動 Search 鈕，筆記頁上是同一組浮動鈕左下的 Search。
   const searchOpenedKeyRef = useRef<string | null>(null);
   const wasSearchOpenRef = useRef(false);
   useEffect(() => {
@@ -682,7 +682,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   // 平台偵測（只決定徽章顯示文字，不影響行為）見 lib/platform.ts。
   const shortcutBadge = isMacPlatform() ? "⌘K" : "Ctrl K";
 
-  // 筆記頁底部浮動鈕用：開搜尋層（選取模式先結束，搜尋框才掛得上）與建立筆記。只讀 ref，物件身分恆定。
+  // 筆記頁底部浮動鈕用：開搜尋層（選取模式先結束，搜尋框才掛得上）與建立筆記。建立走 ref；物件只在搜尋層開關（`phoneSearchOpen`）時換新。
   const handleNewNoteRef = useRef(handleNewNote);
   handleNewNoteRef.current = handleNewNote;
   const browseState = useMemo(
@@ -724,7 +724,7 @@ export function AppShell({ children, inert }: AppShellProps) {
       <ShortcutsDialogContext.Provider value={shortcutsApi}>
         <SidebarTabProvider actionsRef={tabActionsRef}>
           {/* 手機（< 640）內容貼齊螢幕邊：外框內距與間距歸零，safe area 改由碰到螢幕邊的元件自己給
-              （筆記頁首的上緣、底部瀏覽列的下緣、主內容區的左右）。 */}
+              （筆記頁首的上緣、底部浮動鈕的下緣、主內容區的左右）。 */}
           <div inert={inert} className={cn("flex h-dvh gap-3 overflow-hidden bg-background max-sm:p-0", SAFE_FRAME_PADDING)}>
             {/* data-sidebar-instance：SidebarContent 回 fragment、沒有自己的根；垃圾桶動作列靠它找回同一份的「選取」鈕。 */}
             <aside

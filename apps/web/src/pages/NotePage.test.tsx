@@ -808,7 +808,7 @@ describe("NotePage", () => {
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
     });
 
-    it("底部空白（fabClearance）跟浮動鈕同進退：沒在編輯有；焦點進編輯區沒有；回標題又有；唯讀有", async () => {
+    it("底部空白（fabClearance）跟浮動鈕同進退：沒在編輯有；焦點進編輯區沒有；回標題又有", async () => {
       await renderEditable();
       const editor = () => screen.getByTestId("note-editor");
       expect(editor()).toHaveAttribute("data-fab-clearance", "true");

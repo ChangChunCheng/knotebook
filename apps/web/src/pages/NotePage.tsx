@@ -177,7 +177,7 @@ export default function NotePage() {
   const queryClient = useQueryClient();
   const { user } = useSession();
   const phone = useIsPhone();
-  // 手機：焦點在編輯區或編輯工具列內＝編輯中，底部瀏覽列讓位；其餘（頁首標題、頁面空白處）不算。
+  // 手機：焦點在編輯區或編輯工具列內＝編輯中，底部浮動鈕讓位；其餘（頁首標題、頁面空白處）不算。
   const [editingFocus, setEditingFocus] = useState(false);
   // 編輯區在焦點還在裡面時被卸載（點 wikilink 換篇、共編佔位換成編輯器）不會觸發 blur：每次 commit 後核對一次。
   // 刻意不帶依賴：卸載不改變 editingFocus，只有每次 commit 後重查才抓得到；只在旗標為真且焦點已不在編輯區時才設值，不會連環更新。
