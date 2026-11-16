@@ -448,19 +448,22 @@ test("A2c-8（窄形 390 手機清單）：清單捲到底時進入選取模式�
   const myNotes = await showSidebarTab(page, "My notes", drawer);
   await expect(noteLink(myNotes, titles[0]!)).toBeVisible({ timeout: 15_000 });
   const list = drawer.locator("[data-sidebar-list]");
-  await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
-  await list.evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
-  });
-  const before = await list.evaluate((el) => el.scrollTop);
+  // 手機上捲的是文件（清單容器不自己捲）：捲到文件底。
+  const pageScrollY = () => page.evaluate(() => window.scrollY);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)).toBeGreaterThan(100);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const before = await pageScrollY();
   expect(before).toBeGreaterThan(100);
 
   await startSidebarSelection(page, drawer);
   await expect(list.getByRole("checkbox").first()).toBeAttached(); // 勾選樹已換上（chunk 到了）
   await expect(actionBar(page, drawer)).toBeVisible(); // 底部動作列已換上（同一個 chunk；之前是同高的佔位）
-  // 進出選取模式時清單的可視高度與捲動範圍都不變（清單底部內距一直在、動作列與佔位同高），捲動位置一格不差。
+  // 進入選取模式時捲動位置一格不差；動作列釘在視窗底，清單最後一列仍在它上方（清單底部內距一直在）。
   await expect(async () => {
-    expect(await list.evaluate((el) => el.scrollTop)).toBe(before);
+    expect(await pageScrollY()).toBe(before);
+    const last = await list.locator('[data-node-kind="note"]').last().boundingBox();
+    const bar = await actionBar(page, drawer).boundingBox();
+    expect(last!.y + last!.height).toBeLessThanOrEqual(bar!.y);
   }).toPass({ timeout: 5_000 });
 });
 
