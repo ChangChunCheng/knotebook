@@ -38,7 +38,7 @@ export function SettingsPage({
 }) {
   return (
     <div>
-      <header className="flex items-start justify-between gap-4 pr-6">
+      <header className="flex items-start justify-between gap-4 pr-6 max-sm:flex-col max-sm:gap-3">
         <div className="space-y-1">
           <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
           {description !== undefined && (
@@ -83,7 +83,7 @@ export function SettingsGroup({
   return (
     <section aria-labelledby={named ? titleId : undefined} className="py-8 first:pt-0 last:pb-0">
       {hasHeader && (
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 max-sm:flex-col max-sm:gap-3">
           <div className="space-y-1">
             {title !== undefined && (
               <h2 id={named ? titleId : undefined} className="text-base font-semibold">

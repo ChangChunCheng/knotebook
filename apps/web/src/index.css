@@ -1230,6 +1230,43 @@ input[name="share-access"] {
   }
 }
 
+/* 手機：對話框（預設尺寸）是貼底的 sheet，由下往上升起、關閉時往下收。只在手機寬度動畫；減少動態時不動畫（Radix 會直接卸載）。 */
+@keyframes kb-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes kb-sheet-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes kb-sheet-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (width < 40rem) and (prefers-reduced-motion: no-preference) {
+  .kb-sheet-overlay[data-state="closed"] {
+    animation: kb-sheet-overlay-out 150ms ease-in forwards;
+  }
+  .kb-sheet[data-state="open"] {
+    animation: kb-sheet-in 200ms ease-out;
+  }
+  .kb-sheet[data-state="closed"] {
+    animation: kb-sheet-out 150ms ease-in forwards;
+  }
+}
+
 /* 一般錨點的 2 s 高亮在 reduced-motion 下不動畫、靜態底色。搜尋標記（.kn-anchor-mark）刻意不在這裡關動畫：它是「你要找的字在這裡」的
    定位提示，只閃 2 次、頻率遠低於每秒 3 次（WCAG 2.3.1 閃光門檻），而且最後停在亮的；關掉動畫就只剩一個恆亮的底色，使用者看不出
    是跳轉的結果（曾有使用者在系統關閉動畫的機器上回報「沒有閃兩下、是恆亮」）。 */

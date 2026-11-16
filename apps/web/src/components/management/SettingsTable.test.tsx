@@ -91,7 +91,7 @@ describe("SettingsTable", () => {
     render(<SettingsTable label="Things" columns={[ENABLED, ROLE, SIZE, ACTIONS, EMAIL, NAME]} rows={[row("a", "Alpha")]} />);
     expect(headersOf(tableNamed()).map((cell) => cell.textContent)).toEqual(["Name", "Size", "Email", "Role", "Actions", "Enabled"]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("欄位宣告順序"));
-    expect(within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+    expect(within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell").map((cell) => cell.lastElementChild!.textContent)).toEqual([
       "Alpha",
       "1 MB",
       "a@example.com",
@@ -450,16 +450,17 @@ describe("SettingsTable", () => {
     const cells = within(dataRow).getAllByRole("cell");
     for (const cell of cells) {
       expect(cell).toHaveClass("flex", "items-center");
-      expect(cell.children).toHaveLength(1);
-      expect(cell.firstElementChild).toHaveClass("min-w-0", "flex-1");
+      // 內容永遠是最後一個子元素；資訊欄與可編輯欄前面另有一個只在手機顯示的欄名。
+      expect(cell.lastElementChild).toHaveClass("min-w-0", "flex-1");
+      expect(cell.children.length).toBeLessThanOrEqual(2);
     }
-    expect(cells[5]!.firstElementChild).toHaveClass("flex", "justify-end", "gap-1");
-    expect(cells[6]!.firstElementChild).toHaveClass("flex", "justify-center");
-    expect(cells[1]!.firstElementChild).toHaveClass("wrap-anywhere");
-    expect(cells[0]!.firstElementChild).toHaveClass("wrap-anywhere");
-    expect(cells[2]!.firstElementChild).toHaveClass("truncate");
-    expect(cells[2]!.firstElementChild).toHaveAttribute("title", "https://example.com/a");
-    expect(cells[3]!.firstElementChild).toHaveClass("whitespace-nowrap");
+    expect(cells[5]!.lastElementChild).toHaveClass("flex", "justify-end", "gap-1");
+    expect(cells[6]!.lastElementChild).toHaveClass("flex", "justify-center");
+    expect(cells[1]!.lastElementChild).toHaveClass("wrap-anywhere");
+    expect(cells[0]!.lastElementChild).toHaveClass("wrap-anywhere");
+    expect(cells[2]!.lastElementChild).toHaveClass("truncate");
+    expect(cells[2]!.lastElementChild).toHaveAttribute("title", "https://example.com/a");
+    expect(cells[3]!.lastElementChild).toHaveClass("whitespace-nowrap");
   });
 
   it("內距只在儲存格：第一格 pl-3、資料列 py-2.5、表頭 py-2；最後一格 pr-3，但最後一格是 enabled 時不加；表頭 text-xs 灰、啟用置中、操作靠右且 sr-only", () => {
@@ -554,4 +555,126 @@ describe("SettingsTable", () => {
     expect(screen.queryByRole("region")).toBeNull();
     expect(screen.getByText("Nothing")).toBeInTheDocument();
   });
+});
+
+describe("SettingsTable 手機卡片版面（max-sm）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("頂層表：表頭列手機 sr-only、捲動框手機不橫捲、主欄不 sticky 也沒有右緣框線", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const header = headersOf(tableNamed())[0]!;
+    expect(header.parentElement).toHaveClass("max-sm:sr-only");
+    expect(screen.getByRole("region", { name: "Things" })).toHaveClass("max-sm:overflow-x-visible");
+    const primary = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell")[0]!;
+    for (const el of [header, primary]) expect(el).toHaveClass("max-sm:static", "max-sm:group-data-[overflowing]/box:border-r-0");
+  });
+
+  it("資料列手機是自動換行的 flex（卡片）；表是單欄", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    expect(tableNamed()).toHaveClass("max-sm:grid-cols-1");
+    expect(screen.getByRole("row", { name: "Alpha" })).toHaveClass("max-sm:flex", "max-sm:flex-wrap", "max-sm:py-2");
+  });
+
+  it("每格的手機寬度：主欄、資訊欄、可編輯欄各占一行；操作欄撐滿剩下的、啟用欄靠右", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    for (const index of [0, 1, 2, 3, 4]) expect(cells[index]).toHaveClass("max-sm:basis-full");
+    expect(cells[5]).toHaveClass("max-sm:flex-1");
+    expect(cells[6]).toHaveClass("max-sm:ml-auto");
+    for (const cell of cells) expect(cell).toHaveClass("max-sm:px-3", "max-sm:py-1");
+  });
+
+  it("資訊欄與可編輯欄前面有可見的欄名（aria-hidden、只在手機顯示）；主欄、操作、啟用沒有；語意查詢不受影響", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    for (const [index, text] of [[1, "Email"], [2, "URL"], [3, "Size"], [4, "Role"]] as const) {
+      const label = cells[index]!.firstElementChild!;
+      expect(label).toHaveTextContent(text);
+      expect(label).toHaveAttribute("aria-hidden", "true");
+      expect(label).toHaveClass("sm:hidden");
+      expect(cells[index]!.lastElementChild).toHaveClass("min-w-0", "flex-1");
+    }
+    for (const index of [0, 5, 6]) expect(cells[index]!.querySelector("[aria-hidden='true'][class*='sm:hidden']")).toBeNull();
+    // aria-hidden 的欄名不進可及名稱，表頭仍是唯一的 columnheader。
+    expect(within(tableNamed()).getAllByRole("columnheader")).toHaveLength(7);
+    expect(screen.getByRole("combobox", { name: "Role for Alpha" })).toBeInTheDocument();
+  });
+
+  it("內容是空的格子（沒有操作、沒有值）手機收成 sr-only（仍在版面樹裡，表頭對應不位移），不留一行只有欄名的空列", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha", { actions: undefined, cells: { ...row("a", "Alpha").cells, email: undefined } })]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    for (const index of [1, 5]) {
+      expect(cells[index]).toHaveClass("max-sm:has-[>div:empty]:sr-only");
+      // 以拼接組字串：Tailwind 會掃測試檔，整串寫出來會多生一條沒人用的 CSS 規則。
+      expect(cells[index]!.className).not.toContain(["has-[>div:empty]", "hidden"].join(":"));
+      // 選擇器要真的對得上 DOM：空內容的格子命中，有內容的不命中。
+      expect(cells[index]!.matches(":has(> div:empty)")).toBe(true);
+    }
+    for (const index of [0, 2, 3, 4, 6]) expect(cells[index]!.matches(":has(> div:empty)")).toBe(false);
+  });
+
+  it("啟用開關單獨一行時（沒有操作鈕），觸控下格子至少 48px 高，點擊範圍不伸進上一行", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha", { actions: undefined })]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    expect(cells[6]).toHaveClass("max-sm:pointer-coarse:min-h-12");
+  });
+
+  it("editing：合併格與主欄各占一行", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha", { editing: <input aria-label="Label" /> })]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    expect(cells[0]).toHaveClass("max-sm:basis-full");
+    expect(cells[1]).toHaveClass("max-sm:basis-full", "max-sm:px-3");
+  });
+
+  it("子表（nested）同樣用卡片版面，表頭本來就 sr-only", () => {
+    render(<SettingsTable nested label="Sub" columns={[NAME, EMAIL, ACTIONS]} rows={[row("m", "Model one")]} />);
+    expect(screen.getByRole("row", { name: "Model one" })).toHaveClass("max-sm:flex");
+    expect(within(screen.getByRole("row", { name: "Model one" })).getAllByRole("cell")[1]!.firstElementChild).toHaveTextContent("Email");
+  });
+
+  it("url 欄手機可換行（不截斷成省略號、全文看得到）；桌機仍是 truncate", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const inner = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell")[2]!.lastElementChild!;
+    expect(inner).toHaveClass("truncate", "max-sm:overflow-visible", "max-sm:whitespace-normal", "max-sm:text-clip", "max-sm:wrap-anywhere");
+  });
+
+  it("欄名對齊值的第一行（多行值時不垂直置中）；可編輯欄（高控制項）與操作、啟用欄維持置中", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    for (const index of [1, 2, 3]) {
+      expect(cells[index]).toHaveClass("max-sm:items-start");
+      expect(cells[index]!.firstElementChild).toHaveClass("leading-5");
+    }
+    for (const index of [4, 5, 6]) expect(cells[index]!.className).not.toContain("max-sm:items-start");
+  });
+
+  it("觸控（粗指標）的手機：操作鈕與開關各自向外撐出 44 的點擊範圍，鈕距拉開到不互相蓋住；桌機與平板不變", () => {
+    render(<SettingsTable label="Things" columns={ALL} rows={[row("a", "Alpha")]} />);
+    const cells = within(screen.getByRole("row", { name: "Alpha" })).getAllByRole("cell");
+    const actions = cells[5]!.lastElementChild!;
+    expect(actions).toHaveClass("gap-1", "max-sm:pointer-coarse:gap-3");
+    for (const token of [
+      "max-sm:pointer-coarse:[&_button]:relative",
+      "max-sm:pointer-coarse:[&_button]:after:absolute",
+      "max-sm:pointer-coarse:[&_button]:after:-inset-1.5",
+      "max-sm:pointer-coarse:[&_button]:after:content-['']",
+    ]) {
+      expect(actions).toHaveClass(token);
+    }
+    const enabled = cells[6]!.lastElementChild!;
+    for (const token of [
+      "max-sm:pointer-coarse:[&_[role=switch]]:relative",
+      "max-sm:pointer-coarse:[&_[role=switch]]:after:absolute",
+      "max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-x-2.5",
+      "max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-y-4",
+      "max-sm:pointer-coarse:[&_[role=switch]]:after:content-['']",
+    ]) {
+      expect(enabled).toHaveClass(token);
+    }
+    // 只在手機寬度＋粗指標：沒有不帶 max-sm 的觸控 class。
+    expect(actions.className).not.toMatch(/(^|\s)pointer-coarse:/);
+  });
+
 });

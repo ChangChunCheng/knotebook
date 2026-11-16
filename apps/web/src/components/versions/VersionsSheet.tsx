@@ -64,7 +64,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
   const renderList = () => (
     <>
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Button type="button" variant="ghost" size="sm" aria-label={t("versions.sheet.back")} onClick={shut}>
+        <Button type="button" variant="ghost" size="sm" className="h-11" aria-label={t("versions.sheet.back")} onClick={shut}>
           <span aria-hidden="true">‹</span> {t("versions.sheet.back")}
         </Button>
         <h2 className="text-sm font-semibold">{t("versions.title")}</h2>
@@ -114,7 +114,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
       <>
         <header className="space-y-1 border-b border-border px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" className="min-w-0 max-w-[60%]" onClick={stopPreview}>
+            <Button type="button" variant="ghost" size="sm" className="h-11 min-w-0 max-w-[60%]" onClick={stopPreview}>
               <span aria-hidden="true">‹</span> <span className="truncate">{t("versions.sheet.backToList")} · {label}</span>
             </Button>
             <span className="min-w-0 truncate text-xs text-muted-foreground">

@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { E2E_ORIGIN } from "../ports.js";
-import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, tapAreaOf, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 內文標題字級（所有寬度）與手機（< 640）版面：內容貼齊畫面邊緣、提及列在內文捲動容器裡、寬表格的右緣提示。全部量瀏覽器算出來的值，不看 class 名稱。
@@ -15,6 +15,10 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, waitFo
  * 58-6 不支援捲動驅動動畫時的後備（390）：委派的捲動監聽在還能往右捲的表格上標 `data-kb-more-right`，捲到底拿掉，
  *      沒有溢出的表格不標；非手機寬度不標。
  * 58-7 桌面側邊選單（1280，滑鼠）：hover H1／H2／H3 時，拖曳把手的垂直中線與標題首行文字的中線差 ≤ 1px。
+ * 58-8 對話框是貼底的 sheet（390）：分享框的底緣＝視窗底、左右貼齊視窗、上緣有圓角；✕ 的點擊範圍 44×44；
+ *      螢幕鍵盤（假的 `visualViewport`）升起時 sheet 的底緣跟著升到鍵盤上方，收起後回到視窗底。
+ * 58-9 版本整頁（390）：「Back」鈕高 44。
+ * 58-10 公開頁頁首（390）：標題比改前寬（≥ 180px）、「Present」只剩圖示、唯讀只剩一個點（文字只給螢幕閱讀器）。
  *
  * 量不到、列在實機清單：iOS Safari 的瀏覽器工具列伸縮時 `dvh` 的實際行為與底部不被蓋住、瀏海與 Home 指示條的 safe area、
  * 真實螢幕鍵盤升起時的捲動範圍。
@@ -36,6 +40,7 @@ const TITLES = {
   mentioner: `E2E layout mentioner ${RUN}`,
   wide: `E2E layout wide table ${RUN}`,
   deck: `E2E layout deck ${RUN}`,
+  published: `E2E layout public ${RUN}`,
 };
 
 const HEADINGS_MD = ["# Heading one", "", "## Heading two", "", "### Heading three", "", "body text"].join("\n");
@@ -54,7 +59,7 @@ const TABLE_MD = [
 ].join("\n");
 
 let alice: { email: string; displayName: string };
-const paths: Record<keyof typeof TITLES, string> = { headings: "", short: "", mentioned: "", mentioner: "", wide: "", deck: "" };
+const paths: Record<keyof typeof TITLES, string> = { headings: "", short: "", mentioned: "", mentioner: "", wide: "", deck: "", published: "" };
 
 async function createNoteVia(page: Page, title: string, content?: string): Promise<{ id: string; path: string }> {
   const res = await page.request.post("/api/notes", { headers: { Origin: ORIGIN }, data: content === undefined ? { title } : { title, content } });
@@ -374,5 +379,125 @@ test("58-7 桌面側邊選單：拖曳把手與 H1／H2／H3 首行文字垂直�
     }
   } finally {
     await desktop.context.close();
+  }
+});
+
+/** 螢幕鍵盤的替身：把 `window.visualViewport` 換成可調高度的假物件（版面視窗不縮，同 iOS）。 */
+function stubVisualViewport(): void {
+  const target = new EventTarget();
+  const state = { keyboard: 0 };
+  Object.defineProperties(target, {
+    height: { get: () => window.innerHeight - state.keyboard },
+    width: { get: () => window.innerWidth },
+    offsetTop: { value: 0 },
+    offsetLeft: { value: 0 },
+    pageTop: { value: 0 },
+    pageLeft: { value: 0 },
+    scale: { value: 1 },
+  });
+  Object.defineProperty(window, "visualViewport", { get: () => target, configurable: true });
+  (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard = (px) => {
+    state.keyboard = px;
+    target.dispatchEvent(new Event("resize"));
+  };
+}
+
+async function setKeyboard(page: Page, px: number): Promise<void> {
+  await page.evaluate((value) => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(value), px);
+  await nextFrame(page);
+}
+
+test("58-8 對話框是貼底的 sheet：貼齊視窗底與左右、✕ 點擊範圍 44；鍵盤升起時跟著升", async ({ browser }) => {
+  const { context, page } = await open(browser, 390, "short", { init: stubVisualViewport });
+  try {
+    await page.locator("header").getByRole("button", { name: "Share", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Share note" });
+    await expect(dialog).toBeVisible();
+    // 進場動畫跑完再量（位置在動時 boundingBox 不準）
+    await expect(async () => {
+      const box = (await dialog.boundingBox())!;
+      expect(box.x).toBe(0);
+      expect(box.width).toBe(390);
+      expect(box.y + box.height).toBeCloseTo(844, 0);
+    }).toPass({ timeout: 5_000 });
+    expect(await dialog.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe("0px");
+    expect(await dialog.evaluate((el) => getComputedStyle(el).borderBottomLeftRadius)).toBe("0px");
+    const close = dialog.getByRole("button", { name: "Close" });
+    const area = await tapAreaOf(close);
+    expect(area.tap[0], "✕ 點擊寬").toBeGreaterThanOrEqual(43);
+    expect(area.tap[1], "✕ 點擊高").toBeGreaterThanOrEqual(43);
+
+    // 鍵盤升起 300px：sheet 底緣在視覺視窗底（844 − 300）；收起後回到視窗底
+    await setKeyboard(page, 300);
+    await expect(async () => {
+      const box = (await dialog.boundingBox())!;
+      expect(box.y + box.height).toBeCloseTo(844 - 300, 0);
+    }).toPass({ timeout: 5_000 });
+    await setKeyboard(page, 0);
+    await expect(async () => {
+      const box = (await dialog.boundingBox())!;
+      expect(box.y + box.height).toBeCloseTo(844, 0);
+    }).toPass({ timeout: 5_000 });
+
+    await close.click();
+    // 離場動畫期間 body 還有 pointer-events: none，等對話框真的移除再做下一件事
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-9 版本整頁（390）：「Back」鈕高 44", async ({ browser }) => {
+  const { context, page } = await open(browser, 390, "short");
+  try {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Version history" }).click();
+    const sheet = page.getByRole("dialog", { name: "Version history" });
+    await expect(sheet).toBeVisible();
+    const back = sheet.getByRole("button", { name: "Back", exact: true });
+    await expect(back).toBeVisible();
+    await expect(async () => {
+      const box = (await back.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(43.5);
+    }).toPass({ timeout: 5_000 });
+    await back.click();
+    await expect(sheet).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-10 公開頁頁首（390）：標題 ≥ 180px、Present 只剩圖示、唯讀只剩一個點", async ({ browser }) => {
+  const owner = await open(browser, 390, "short");
+  let token: string;
+  try {
+    const note = await createNoteVia(owner.page, TITLES.published, "public text");
+    const res = await owner.page.request.put(`/api/notes/${note.id}/public-link`, { headers: { Origin: ORIGIN } });
+    expect(res.status(), await res.text()).toBe(200);
+    token = ((await res.json()) as { token: string }).token;
+  } finally {
+    await owner.context.close();
+  }
+  const anonymous = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  try {
+    const page = await anonymous.newPage();
+    await page.goto(`/p/${token}`);
+    const heading = page.getByRole("heading", { name: TITLES.published, level: 1 });
+    await expect(heading).toBeVisible({ timeout: 15_000 });
+    const present = page.getByRole("button", { name: "Present", exact: true });
+    await expect(present).toBeVisible();
+    // 名稱還在（螢幕閱讀器讀得到），但鈕只剩圖示的寬度，沒有可見文字
+    expect((await present.boundingBox())!.width, "Present 鈕只剩圖示").toBeLessThanOrEqual(48);
+    const dot = page.locator("[data-readonly-dot]");
+    await expect(dot).toBeVisible();
+    expect((await dot.boundingBox())!.width).toBeLessThanOrEqual(8);
+    // 唯讀文字仍在（螢幕閱讀器讀得到），但看不見
+    const readonlyText = page.getByText("Read-only", { exact: false }).first();
+    expect(await readonlyText.evaluate((el) => el.getBoundingClientRect().width <= 1)).toBe(true);
+    await expect(async () => {
+      expect((await heading.boundingBox())!.width).toBeGreaterThanOrEqual(180);
+    }).toPass({ timeout: 5_000 });
+  } finally {
+    await anonymous.close();
   }
 });

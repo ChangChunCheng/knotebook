@@ -121,6 +121,9 @@ test.describe.serial("24 管理面板（#247）", () => {
       // 窄視窗內容層：使用者表比 390 寬，曾把右卡（連同 ✕）推出視窗右緣——✕ 要整顆在視窗內。
       await expect(dialog.getByText(ADMIN.email, { exact: true })).toBeVisible();
       await expectInViewport(page, dialog.getByRole("button", { name: "Close" }));
+      // 手機上表格是卡片：不橫捲（各列控制項的位置由 26 逐列量）。
+      const region = dialog.getByRole("region", { name: "Users", exact: true });
+      expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       await shot(page, "24-admin-390-content.png");
 
       await back.click();
