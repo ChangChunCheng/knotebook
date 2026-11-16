@@ -97,7 +97,8 @@ interface NoteRowProps {
 
 /**
  * 觸控與沒有 hover 的裝置上最愛列的星標：不是按鈕、不吃點擊，排在 ⋮ 的左邊（⋮ 一律是最右一格，各列的 ⋮ 上下對齊）；
- * 加入、移出走 ⋮ 選單。滑鼠下不顯示（那裡是最右一格的星號鈕）。星形 14px、與 ⋮ 的圖示間隔約 8px。
+ * 加入、移出走 ⋮ 選單。滑鼠下不顯示（那裡是最右一格的星號鈕）。星形 14px、與 ⋮ 的圖示間隔約 8px；
+ * 左邊 `ms-2`（加列 gap 共 12px）與標題／角色字隔開。
  */
 function FavoriteMarker() {
   const { t } = useTranslation();
@@ -106,7 +107,7 @@ function FavoriteMarker() {
       role="img"
       aria-label={t("note.favorite.label")}
       data-favorite-marker=""
-      className="pointer-events-none hidden h-6 w-3.5 shrink-0 items-center justify-center text-brand [@media(hover:none)]:flex [@media(pointer:coarse)]:flex"
+      className="pointer-events-none ms-2 hidden h-6 w-3.5 shrink-0 items-center justify-center text-brand [@media(hover:none)]:flex [@media(pointer:coarse)]:flex"
     >
       <Star aria-hidden="true" className="h-3.5 w-3.5 shrink-0" fill="currentColor" />
     </span>

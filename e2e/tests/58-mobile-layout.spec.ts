@@ -715,6 +715,14 @@ test("58-14 手機（390）：列右內距＝左內距；星號與 ⋮ 的點擊
     const moreBox = await box(more);
     const markerBox = await box(marker);
     expect(moreBox.x, "⋮ 在標記右邊").toBeGreaterThanOrEqual(markerBox.x + markerBox.width - 0.5);
+    // 標記與標題可見尾端（截斷後的連結框右緣；有角色字時再加上它）之間要有留白
+    const linkBox = await box(link);
+    expect(markerBox.x - (linkBox.x + linkBox.width), "標記與標題右緣").toBeGreaterThanOrEqual(11);
+    const roleLabel = row.getByText(/^(Editor|Viewer)$/);
+    if ((await roleLabel.count()) > 0) {
+      const roleBox = await box(roleLabel.first());
+      expect(markerBox.x - (roleBox.x + roleBox.width), "標記與角色字右緣").toBeGreaterThanOrEqual(11);
+    }
     // 沒加入最愛的列：只有 ⋮；它的右緣與最愛列的 ⋮ 上下對齊（差 1px 以內）
     const plainRow = page.locator('li[data-node-kind="note"]').filter({ hasNot: page.getByRole("img", { name: "Favorite", exact: true }) }).first();
     const plainMore = await box(plainRow.getByRole("button", { name: /^Note actions for / }));

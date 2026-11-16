@@ -2143,7 +2143,7 @@ describe("NoteList × 列上星星", () => {
     const marker = within(row).getByRole("img", { name: "Favorite" });
     const actions = within(row).getByRole("button", { name: `Note actions for ${LOOSE.title}` });
     expect(marker.tagName).toBe("SPAN");
-    expect(marker).toHaveClass("pointer-events-none", "hidden", "[@media(hover:none)]:flex", "[@media(pointer:coarse)]:flex", "w-3.5");
+    expect(marker).toHaveClass("pointer-events-none", "hidden", "[@media(hover:none)]:flex", "[@media(pointer:coarse)]:flex", "w-3.5", "ms-2");
     expect(marker.closest("button")).toBeNull();
     expect(marker.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(marker.nextElementSibling).toBe(actions);
