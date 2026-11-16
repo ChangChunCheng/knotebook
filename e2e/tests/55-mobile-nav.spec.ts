@@ -112,6 +112,8 @@ const fabs = (page: Page): Locator => page.locator("[data-phone-list-fabs]");
 const searchFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "Search notes", exact: true });
 const newNoteFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "New note", exact: true });
 const browseBar = (page: Page): Locator => page.getByTestId("note-browse-bar");
+/** 筆記頁底部的浮動 Search 鈕（外層容器是 display: contents，自己沒有版面，可見性看鈕）。 */
+const browseSearch = (page: Page): Locator => browseBar(page).getByRole("button", { name: "Search notes", exact: true });
 const searchBox = (page: Page): Locator => page.getByRole("textbox", { name: "Search notes", exact: true });
 const sidebarOf = (page: Page): Locator => page.getByRole("complementary").filter({ has: page.getByRole("tablist", { name: "Sidebar sections" }) });
 const drawerOf = (page: Page): Locator => page.getByRole("dialog", { name: "Navigation" });
@@ -398,7 +400,7 @@ test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定�
     await setWidth(639);
     await expect(backButton(page)).toBeVisible();
     await expect(openSidebar(page)).toHaveCount(0);
-    await expect(browseBar(page)).toBeVisible();
+    await expect(browseSearch(page)).toBeVisible();
 
     // 手機 → 640：搜尋層開著（蓋在筆記上）時跨過去，層收起、側欄不是滿版
     await browseBar(page).getByRole("button", { name: "Search notes", exact: true }).click();
@@ -553,7 +555,7 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     await a.page.setViewportSize(PHONE);
     await a.page.goto(pathOf(owned));
     await waitForTitle(a.page, `E2E mn owned ${RUN}`);
-    await expect(browseBar(a.page)).toBeVisible();
+    await expect(browseSearch(a.page)).toBeVisible();
     await expect(newNote(a.page)).toBeVisible();
     await searchButton(a.page).click();
     await expect(searchBox(a.page)).toBeFocused();
@@ -587,18 +589,18 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     // ── 共享給我的（bob 是編輯者）：瀏覽列在、沒有 New note ────────────────────────────────
     await b.page.goto(pathOf(sharedNote));
     await waitForTitle(b.page, `E2E mn bshared ${RUN}`);
-    await expect(browseBar(b.page)).toBeVisible();
+    await expect(browseSearch(b.page)).toBeVisible();
     await expect(searchButton(b.page)).toBeVisible();
     await expect(newNote(b.page)).toHaveCount(0);
 
     // ── 群組檢視者（carol）：沒有 New note；唯讀筆記點內文瀏覽列仍在 ─────────────────────────
     await c.page.goto(pathOf(groupNote, groupId));
     await expect(c.page.getByRole("heading", { name: `E2E mn gnote ${RUN}`, level: 1 })).toBeVisible({ timeout: 15_000 });
-    await expect(browseBar(c.page)).toBeVisible();
+    await expect(browseSearch(c.page)).toBeVisible();
     await expect(newNote(c.page)).toHaveCount(0);
     // 唯讀筆記沒有可編輯的內文節點：直接點內文區域的座標（頁首之下、瀏覽列之上）。
     await c.page.mouse.click(PHONE.width / 2, 400);
-    await expect(browseBar(c.page)).toBeVisible();
+    await expect(browseSearch(c.page)).toBeVisible();
     await expect(newNote(c.page)).toHaveCount(0);
   } finally {
     await a.context.close();
@@ -616,7 +618,7 @@ test("55-8 編輯時瀏覽列讓位：編輯器取得焦點整條不在，點頂
     const note = await apiNote(page, title);
     await page.goto(pathOf(note));
     await waitForTitle(page, title);
-    await expect(browseBar(page)).toBeVisible();
+    await expect(browseSearch(page)).toBeVisible();
 
     // 編輯器可編輯後點進去（唯讀期間的點擊不算編輯中）
     await expect(editorLocator(page)).toBeVisible({ timeout: 15_000 });
@@ -626,7 +628,7 @@ test("55-8 編輯時瀏覽列讓位：編輯器取得焦點整條不在，點頂
 
     // 點頂列標題（焦點離開編輯器）：瀏覽列回來
     await titleBox(page).click();
-    await expect(browseBar(page)).toBeVisible();
+    await expect(browseSearch(page)).toBeVisible();
   } finally {
     await context.close();
   }

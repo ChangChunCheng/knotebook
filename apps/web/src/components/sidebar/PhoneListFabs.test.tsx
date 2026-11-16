@@ -31,11 +31,31 @@ describe("PhoneListFabs", () => {
     expect(onCreateNote).toHaveBeenCalledTimes(1);
   });
 
-  it("Search 在左下（中性卡片底＋框線），New note 在右下（brand）；都貼 16px 加 safe area", () => {
+  it("兩顆同款毛玻璃：半透明卡片底（不支援模糊時退回近乎不透明）＋背景模糊＋細框＋陰影；New note 只靠圖示的 brand 色強調、不是實心底", () => {
     renderFabs();
     const search = screen.getByRole("button", { name: "Search notes" });
     const create = screen.getByRole("button", { name: "New note" });
-    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]", "bg-card", "border");
+    for (const fab of [search, create]) {
+      expect(fab).toHaveClass("bg-card/95", "supports-[backdrop-filter]:bg-card/70", "supports-[backdrop-filter]:backdrop-blur-md", "border", "border-border", "shadow-lg");
+      expect(fab.className).not.toMatch(/(^|\s)bg-brand/);
+    }
+    expect(create).toHaveClass("text-brand-on-soft");
+    expect(search).toHaveClass("text-foreground");
+  });
+
+  it("New note 的圖示是筆（pen-line），Search 是放大鏡；圖示都 aria-hidden", () => {
+    renderFabs();
+    const create = screen.getByRole("button", { name: "New note" });
+    expect(create.querySelector("svg")).toHaveAttribute("data-icon", "pen-line");
+    expect(create.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Search notes" }).querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("Search 在左下、New note 在右下；都貼 16px 加 safe area", () => {
+    renderFabs();
+    const search = screen.getByRole("button", { name: "Search notes" });
+    const create = screen.getByRole("button", { name: "New note" });
+    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
     expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
     expect(search.className).not.toContain("right-[");
     expect(create.className).not.toContain("left-[");

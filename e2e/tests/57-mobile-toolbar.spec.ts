@@ -195,7 +195,7 @@ for (const phone of [P390, P320]) {
     const { context, page } = await openPhoneNote(browser, phone, `appear ${phone.width}`, "alpha bravo charlie\n\ndelta echo", "alpha bravo charlie");
     try {
       // 還沒碰內文：瀏覽列在、工具列不在
-      await expect(page.locator(BROWSE_BAR)).toBeVisible();
+      await expect(page.locator(`${BROWSE_BAR} [data-phone-fab=\"search\"]`)).toBeVisible();
       await expect(toolbarOf(page)).toHaveCount(0);
 
       await selectBlock(page, blockText(page, "alpha bravo charlie"));
@@ -229,7 +229,7 @@ for (const phone of [P390, P320]) {
 
       // 收起鍵盤：工具列走、瀏覽列回來
       await toolbarButton(page, "Hide keyboard").tap();
-      await expect(page.locator(BROWSE_BAR)).toBeVisible();
+      await expect(page.locator(`${BROWSE_BAR} [data-phone-fab=\"search\"]`)).toBeVisible();
       await expect(toolbarOf(page)).toHaveCount(0);
     } finally {
       await context.close();

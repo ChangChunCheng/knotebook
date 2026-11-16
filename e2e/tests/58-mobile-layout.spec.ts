@@ -19,6 +19,8 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  *      螢幕鍵盤（假的 `visualViewport`）升起時 sheet 的底緣跟著升到鍵盤上方，收起後回到視窗底。
  * 58-9 版本整頁（390）：「Back」鈕高 44。
  * 58-10 公開頁頁首（390）：標題比改前寬（≥ 180px）、「Present」只剩圖示、唯讀只剩一個點（文字只給螢幕閱讀器）。
+ * 58-17 手機筆記頁（390）：沒在編輯時左下 Search、右下 New note 兩顆毛玻璃浮動鈕（位置與清單畫面相同；背景半透明加 backdrop-filter 模糊）；
+ *      開始編輯時不在、離開編輯回來；Search 開搜尋層（層開著時不在）；New note 建新筆記；長筆記最後一段能捲到鈕之上。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -43,10 +45,13 @@ const TITLES = {
   wide: `E2E layout wide table ${RUN}`,
   deck: `E2E layout deck ${RUN}`,
   published: `E2E layout public ${RUN}`,
+  long: `E2E layout long ${RUN}`,
 };
 
 const HEADINGS_MD = ["# Heading one", "", "## Heading two", "", "### Heading three", "", "body text"].join("\n");
 const DECK_MD = ["# Slide one", "", "## Slide two", "", "### Slide three", "", "slide text"].join("\n");
+const LONG_LAST = "the very last paragraph";
+const LONG_MD = [...Array.from({ length: 40 }, (_, i) => `paragraph number ${i}`), LONG_LAST].join("\n\n");
 const WIDE_ROW = Array.from({ length: 10 }, (_, i) => `a rather long cell ${i}`);
 const TABLE_MD = [
   "wide and narrow",
@@ -61,7 +66,7 @@ const TABLE_MD = [
 ].join("\n");
 
 let alice: { email: string; displayName: string };
-const paths: Record<keyof typeof TITLES, string> = { headings: "", short: "", mentioned: "", mentioner: "", wide: "", deck: "", published: "" };
+const paths: Record<keyof typeof TITLES, string> = { headings: "", short: "", mentioned: "", mentioner: "", wide: "", deck: "", published: "", long: "" };
 
 async function createNoteVia(page: Page, title: string, content?: string): Promise<{ id: string; path: string }> {
   const res = await page.request.post("/api/notes", { headers: { Origin: ORIGIN }, data: content === undefined ? { title } : { title, content } });
@@ -89,6 +94,7 @@ test.beforeAll(async ({ browser }) => {
     paths.short = (await createNoteVia(page, TITLES.short, "one line")).path;
     paths.wide = (await createNoteVia(page, TITLES.wide, TABLE_MD)).path;
     paths.deck = (await createNoteVia(page, TITLES.deck, DECK_MD)).path;
+    paths.long = (await createNoteVia(page, TITLES.long, LONG_MD)).path;
     const mentioned = await createNoteVia(page, TITLES.mentioned, "mentioned text");
     paths.mentioned = mentioned.path;
     // 提及：在另一篇裡打 `[[` 連到上面那篇，等反向連結出現
@@ -836,6 +842,109 @@ test("58-16 手機（390）管理面板是整頁：Close 在畫面內、兩層�
     dialog = await openSettings();
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+/** computed 顏色（rgb／rgba／color()／oklab／oklch…）的 alpha；沒寫 alpha 就是 1。 */
+function alphaOf(color: string): number {
+  const slash = color.match(/\/\s*([\d.]+)(%?)\s*\)$/);
+  if (slash) return parseFloat(slash[1]) / (slash[2] === "%" ? 100 : 1);
+  const rgba = color.match(/^rgba\(\s*[\d.]+,\s*[\d.]+,\s*[\d.]+,\s*([\d.]+)\)$/);
+  return rgba ? parseFloat(rgba[1]) : 1;
+}
+
+test("58-17 手機筆記頁（390）：兩顆毛玻璃浮動鈕與清單同位置；編輯時不在；Search 開搜尋層；New note 建筆記；最後一段捲得到鈕上方", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page } = await open(browser, 390, "long");
+  try {
+    // 筆記頁底部這一組（側欄裡那一組藏在後面，也有同一個屬性）
+    const fabs = page.getByTestId("note-browse-bar").locator("[data-phone-list-fabs]");
+    const search = fabs.getByRole("button", { name: "Search notes", exact: true });
+    const create = fabs.getByRole("button", { name: "New note", exact: true });
+    await expect(search).toBeVisible();
+    await expect(create).toBeVisible();
+    await expect(fabs).toHaveCount(1);
+
+    // 位置：56×56、離邊 16px、同底；與清單畫面逐像素相同
+    const onNote = { s: await box(search), c: await box(create) };
+    for (const b of [onNote.s, onNote.c]) {
+      expect(b.width).toBeCloseTo(56, 0);
+      expect(b.height).toBeCloseTo(56, 0);
+      expect(844 - (b.y + b.height), "離視窗下緣").toBeCloseTo(16, 0);
+    }
+    expect(onNote.s.x, "Search 左緣").toBeCloseTo(16, 0);
+    expect(390 - (onNote.c.x + onNote.c.width), "New note 右緣").toBeCloseTo(16, 0);
+
+    // 毛玻璃：半透明背景＋背景模糊＋細框；New note 靠圖示的 brand 色強調，不是實心底
+    const style = (target: Locator) =>
+      target.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { bg: cs.backgroundColor, filter: cs.backdropFilter || cs.getPropertyValue("-webkit-backdrop-filter"), border: cs.borderTopWidth, color: cs.color, shadow: cs.boxShadow };
+      });
+    const sStyle = await style(search);
+    const cStyle = await style(create);
+    for (const st of [sStyle, cStyle]) {
+      expect(st.filter, "backdrop-filter").toContain("blur");
+      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeLessThan(1);
+      expect(alphaOf(st.bg), `背景 ${st.bg} 的 alpha`).toBeGreaterThan(0.4);
+      expect(st.border).toBe("1px");
+      expect(st.shadow).not.toBe("none");
+    }
+    expect(cStyle.bg, "兩顆同一款底").toBe(sStyle.bg);
+    expect(cStyle.color, "New note 的圖示是 brand 色、與 Search 不同").not.toBe(sStyle.color);
+    await expect(create.locator("svg")).toHaveAttribute("data-icon", "pen-line");
+
+    // 長筆記：最後一段捲得到鈕上方
+    const scroller = scrollerOf(page);
+    await scroller.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const last = editorLocator(page).getByText(LONG_LAST, { exact: true });
+    await expect(async () => {
+      const lastBox = await box(last);
+      const top = Math.min((await box(search)).y, (await box(create)).y);
+      expect(lastBox.y + lastBox.height, "最後一段的下緣在浮動鈕上緣之上").toBeLessThanOrEqual(top);
+    }).toPass({ timeout: 5_000 });
+    await scroller.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+
+    // 編輯中沒有；離開編輯回來
+    // 編輯器連上共編之前點不進去（唯讀期間的點擊不算編輯中），所以點到浮動鈕消失為止。
+    await expect(async () => {
+      await editorLocator(page).getByText("paragraph number 0", { exact: true }).tap({ position: { x: 2, y: 4 } });
+      await expect(fabs).toHaveCount(0, { timeout: 1_500 });
+    }).toPass({ timeout: 15_000 });
+    await page.getByRole("textbox", { name: "Note title" }).click();
+    await expect(fabs).toHaveCount(1);
+
+    // Search：開搜尋層（鈕不在）、Cancel 回這篇、焦點回 Search
+    await search.click();
+    await expect(page.getByRole("textbox", { name: "Search notes", exact: true })).toBeFocused();
+    await expect(fabs).toHaveCount(0);
+    await page.locator("[data-phone-list-bar]").getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(search).toBeFocused();
+    await expect(page.getByRole("textbox", { name: "Note title" })).toHaveValue(TITLES.long);
+
+    // 與清單畫面同位置
+    await page.goto("/");
+    await showSidebarTab(page, "My notes");
+    const listFabs = page.locator("[data-phone-list-fabs]");
+    const listS = await box(listFabs.getByRole("button", { name: "Search notes", exact: true }));
+    const listC = await box(listFabs.getByRole("button", { name: "New note", exact: true }));
+    for (const [a, b] of [[onNote.s, listS], [onNote.c, listC]] as const) {
+      expect(Math.abs(a.x - b.x)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(0.5);
+    }
+
+    // New note：從筆記頁建新筆記
+    await page.goto(paths.long);
+    await expect(page.getByRole("textbox", { name: "Note title" })).toHaveValue(TITLES.long, { timeout: 15_000 });
+    await page.getByTestId("note-browse-bar").getByRole("button", { name: "New note", exact: true }).click();
+    await page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
+    await expect(page.getByRole("textbox", { name: "Note title" })).toHaveValue("Untitled", { timeout: 15_000 });
   } finally {
     await context.close();
   }

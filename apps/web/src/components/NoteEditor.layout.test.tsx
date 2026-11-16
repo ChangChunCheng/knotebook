@@ -361,12 +361,12 @@ describe("NoteEditor 手機編輯工具列", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode) {
+  function renderEditor(mobileToolbar: boolean | undefined, footerSlot?: ReactNode, fabClearance?: boolean) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} footerSlot={footerSlot} />
+          <NoteEditor doc={new Y.Doc()} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "Ann" }} noteId="note-1" mobileToolbar={mobileToolbar} footerSlot={footerSlot} fabClearance={fabClearance} />
         </ThemeProvider>
       </QueryClientProvider>,
     );
@@ -460,6 +460,26 @@ describe("NoteEditor 手機編輯工具列", () => {
     renderEditor(false);
     await screen.findByTestId("article-column");
     expect(document.querySelector("[data-note-header-slot]")).toHaveClass("max-sm:pt-[env(safe-area-inset-top)]");
+  });
+
+  it.each([false, true])("fabClearance：捲動內容最後有 aria-hidden 的空白（5rem＋safe area，浮動鈕之上）；欄撐滿高度（頁尾有無 %s 都一樣）", async (withFooter) => {
+    stubLayoutTier("phone");
+    renderEditor(false, withFooter ? FOOTER : undefined, true);
+    const column = (await screen.findByTestId("article-column")) as HTMLElement;
+    const flow = column.parentElement as HTMLElement;
+    const clearance = document.querySelector("[data-fab-clearance]") as HTMLElement;
+    expect(clearance).toHaveAttribute("aria-hidden", "true");
+    expect(clearance).toHaveClass("h-[calc(5rem+env(safe-area-inset-bottom))]");
+    expect(flow.lastElementChild).toBe(clearance);
+    expect(flow).toHaveClass("flex", "min-h-full", "flex-col");
+    expect(column).toHaveClass("grow", "shrink-0");
+  });
+
+  it("沒有 fabClearance：沒有這段空白", async () => {
+    stubLayoutTier("phone");
+    renderEditor(false, FOOTER);
+    await screen.findByTestId("article-column");
+    expect(document.querySelector("[data-fab-clearance]")).toBeNull();
   });
 
   it.each([false, undefined])("mobileToolbar=%s（桌機、或手機沒在編輯）：沒有工具列也沒有空白", async (flag) => {

@@ -182,6 +182,16 @@ export function Plus(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 新增筆記（手機浮動鈕）：一支正在寫字的筆。路徑取自 lucide `pen-line`（ISC），手刻同風格。 */
+export function PenLine(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="pen-line" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 20h9" />
+      <path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z" />
+    </svg>
+  );
+}
+
 export function Link(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>

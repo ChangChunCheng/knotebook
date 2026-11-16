@@ -59,20 +59,34 @@ describe("NoteBrowseBar", () => {
     vi.unstubAllGlobals();
   });
 
-  it("左邊是看起來像搜尋框的按鈕（44 高），按了開搜尋層", () => {
+  it("左下是 56px 圓形 Search 鈕（同清單畫面那一顆），按了開搜尋層", () => {
     renderBar(note());
     const search = screen.getByRole("button", { name: "Search notes" });
-    expect(search).toHaveClass("h-11");
-    expect(search).toHaveTextContent("Search…");
+    expect(search).toHaveClass("h-14", "w-14", "rounded-full", "fixed", "left-[calc(1rem+env(safe-area-inset-left))]", "supports-[backdrop-filter]:backdrop-blur-md");
     fireEvent.click(search);
     expect(openSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("列高 56 加底部 safe area：外框貼齊螢幕邊，Home 指示條的退讓由這一列自己給", () => {
+  it("兩顆浮動鈕不佔版面：外層 display: contents，Home 指示條的退讓由鈕自己的 safe area 給", () => {
     renderBar(note());
     const bar = screen.getByTestId("note-browse-bar");
-    expect(bar).toHaveClass("pt-1.5", "pb-[calc(0.375rem+env(safe-area-inset-bottom))]");
-    expect(bar).not.toHaveClass("pb-1.5");
+    expect(bar).toHaveClass("contents");
+    expect(screen.getByRole("button", { name: "New note" })).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
+  });
+
+  it("搜尋層開著：整組不渲染；關了回來", () => {
+    const view = render(
+      <PhoneBrowseContext.Provider value={{ openSearch, createNote, searchOpen: true }}>
+        <NoteBrowseBar note={note()} />
+      </PhoneBrowseContext.Provider>,
+    );
+    expect(screen.queryByTestId("note-browse-bar")).toBeNull();
+    view.rerender(
+      <PhoneBrowseContext.Provider value={{ openSearch, createNote, searchOpen: false }}>
+        <NoteBrowseBar note={note()} />
+      </PhoneBrowseContext.Provider>,
+    );
+    expect(screen.getByTestId("note-browse-bar")).toBeInTheDocument();
   });
 
   it("個人根層：「New note」→ createNote() 不帶參數", () => {

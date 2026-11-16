@@ -79,8 +79,10 @@ vi.mock("@/components/NoteEditor", async () => {
     noteMaxBytes,
     maxUploadBytes,
     mobileToolbar,
+    fabClearance,
   }: {
     mobileToolbar?: boolean;
+    fabClearance?: boolean;
     editable: boolean;
     noteId: string;
     headerSlot?: ReactNode;
@@ -99,7 +101,7 @@ vi.mock("@/components/NoteEditor", async () => {
       return () => onCursorScroller?.(null);
     }, [onCursorScroller]);
     return (
-      <div data-testid="note-editor" data-editable={String(editable)}>
+      <div data-testid="note-editor" data-editable={String(editable)} data-fab-clearance={String(fabClearance === true)}>
         {headerSlot}
         <div data-testid="mock-column" data-width={width} />
         <div data-testid="mock-content" contentEditable={editable} suppressContentEditableWarning tabIndex={0} />
@@ -804,6 +806,16 @@ describe("NotePage", () => {
       // 焦點真的離開到別處：回來。
       fireEvent.blur(content, { relatedTarget: screen.getByLabelText("Note title") });
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
+    });
+
+    it("底部空白（fabClearance）跟浮動鈕同進退：沒在編輯有；焦點進編輯區沒有；回標題又有；唯讀有", async () => {
+      await renderEditable();
+      const editor = () => screen.getByTestId("note-editor");
+      expect(editor()).toHaveAttribute("data-fab-clearance", "true");
+      act(() => screen.getByTestId("mock-content").focus());
+      expect(editor()).toHaveAttribute("data-fab-clearance", "false");
+      act(() => screen.getByLabelText("Note title").focus());
+      expect(editor()).toHaveAttribute("data-fab-clearance", "true");
     });
 
     it("可編輯：焦點進編輯區 → 編輯工具列出現；焦點到頁首標題 → 消失", async () => {

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { Plus, Search } from "@/components/ui/icons";
+import { PenLine, Search } from "@/components/ui/icons";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
 
 interface PhoneListFabsProps {
@@ -13,9 +13,20 @@ interface PhoneListFabsProps {
 }
 
 /**
- * 手機清單畫面底部的兩顆圓形浮動鈕（各 56px）：左下「Search」、右下「New note」，距邊 16px 加 safe area，陰影同 `CornerStack`。
- * 兩顆都是 `fixed`，不佔版面；清單自己留底部內距讓最後一列能捲到它們上方。
- * 螢幕鍵盤開著時整組不渲染（搜尋中的搜尋列才是鍵盤上方的那條）；選取模式與搜尋層由呼叫端不渲染。
+ * 兩顆鈕共用的毛玻璃面：半透明卡片底加背景模糊、細框、陰影同 `CornerStack`。
+ * 不支援 `backdrop-filter` 的瀏覽器退回幾乎不透明的底（沒有模糊，透明就會讓下面的字干擾圖示）。
+ * 用 `ghost` 當底（沒有自帶的底色與框），hover 與按下只微調透明度，不換成 brand 實心。
+ */
+const FROSTED =
+  "z-10 h-14 w-14 rounded-full border border-border bg-card/95 shadow-lg " +
+  "supports-[backdrop-filter]:bg-card/70 supports-[backdrop-filter]:backdrop-blur-md " +
+  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/80 " +
+  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/90";
+
+/**
+ * 手機清單與筆記畫面底部的兩顆圓形毛玻璃浮動鈕（各 56px）：左下「Search」、右下「New note」（筆圖示、brand 色），距邊 16px 加 safe area。
+ * 兩顆都是 `fixed`，不佔版面；捲動內容自己留底部空白讓最後一列／一行能捲到它們上方。
+ * 螢幕鍵盤開著時整組不渲染（搜尋中的搜尋列才是鍵盤上方的那條）；選取模式、搜尋層與編輯中由呼叫端不渲染。
  */
 export function PhoneListFabs({ onSearch, showNewNote, onCreateNote, newNotePending }: PhoneListFabsProps) {
   const { t } = useTranslation();
@@ -25,27 +36,27 @@ export function PhoneListFabs({ onSearch, showNewNote, onCreateNote, newNotePend
     <div data-phone-list-fabs="">
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         size="icon"
         data-phone-fab="search"
         aria-label={t("sidebar.searchLabel")}
         onClick={onSearch}
-        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] z-10 h-14 w-14 rounded-full border border-border bg-card shadow-lg"
+        className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] text-foreground hover:text-foreground ${FROSTED}`}
       >
         <Search aria-hidden="true" className="h-5 w-5" />
       </Button>
       {showNewNote && (
         <Button
           type="button"
-          variant="brand"
+          variant="ghost"
           size="icon"
           data-phone-fab="new-note"
           aria-label={t("home.newNote")}
           onClick={onCreateNote}
           disabled={newNotePending}
-          className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-[calc(1rem+env(safe-area-inset-right))] z-10 h-14 w-14 rounded-full border border-border shadow-lg"
+          className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-[calc(1rem+env(safe-area-inset-right))] text-brand-on-soft hover:text-brand-on-soft ${FROSTED}`}
         >
-          <Plus aria-hidden="true" className="h-5 w-5" />
+          <PenLine aria-hidden="true" className="h-[22px] w-[22px]" />
         </Button>
       )}
     </div>

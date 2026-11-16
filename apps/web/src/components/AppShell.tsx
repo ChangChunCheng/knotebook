@@ -537,7 +537,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     searchInputRef.current?.blur();
     setPhoneSearchOpen(false);
   }, [location.key, location.pathname, location.state]);
-  // 搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給開它的搜尋鈕——清單上是左下的浮動 Search 鈕，筆記頁上是瀏覽列的搜尋鈕。
+  // 搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給開它的搜尋鈕——清單上是左下的浮動 Search 鈕，筆記頁上是右下同一組浮動鈕的 Search。
   const searchOpenedKeyRef = useRef<string | null>(null);
   const wasSearchOpenRef = useRef(false);
   useEffect(() => {
@@ -552,7 +552,7 @@ export function AppShell({ children, inert }: AppShellProps) {
       asideRef.current?.querySelector<HTMLElement>('[data-phone-fab="search"]')?.focus({ preventScroll: true });
       return;
     }
-    document.querySelector<HTMLElement>("main [data-note-browse-search]")?.focus();
+    document.querySelector<HTMLElement>('main [data-phone-fab="search"]')?.focus({ preventScroll: true });
   }, [searchOpen, onList, location.key]);
   // 搜尋框只在搜尋層開著時才掛上：先開搜尋層，等它掛上再聚焦。
   const focusSearchWhenOpenRef = useRef(false);
@@ -682,7 +682,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   // 平台偵測（只決定徽章顯示文字，不影響行為）見 lib/platform.ts。
   const shortcutBadge = isMacPlatform() ? "⌘K" : "Ctrl K";
 
-  // 筆記頁底部瀏覽列用：開搜尋層（選取模式先結束，搜尋框才掛得上）與建立筆記。只讀 ref，物件身分恆定。
+  // 筆記頁底部浮動鈕用：開搜尋層（選取模式先結束，搜尋框才掛得上）與建立筆記。只讀 ref，物件身分恆定。
   const handleNewNoteRef = useRef(handleNewNote);
   handleNewNoteRef.current = handleNewNote;
   const browseState = useMemo(
@@ -695,8 +695,9 @@ export function AppShell({ children, inert }: AppShellProps) {
         searchInputRef.current?.focus();
       },
       createNote: (groupId?: string, folderId?: string) => handleNewNoteRef.current(groupId, folderId),
+      searchOpen: phoneSearchOpen,
     }),
-    [],
+    [phoneSearchOpen],
   );
 
   const sidebarProps = {

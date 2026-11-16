@@ -219,7 +219,7 @@ describe("AppShell — 手機清單畫面", () => {
     for (const fab of [search, create]) {
       expect(fab).toHaveClass("fixed", "h-14", "w-14", "rounded-full", "shadow-lg", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
     }
-    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card");
+    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card/95", "supports-[backdrop-filter]:backdrop-blur-md");
     expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]");
     // 圖示鈕沒有可見文字。
     expect(create.textContent).toBe("");
@@ -509,6 +509,8 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     const input = within(node).getByRole("textbox", { name: "Search notes" });
     await waitFor(() => expect(input).toHaveFocus());
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
+    // 搜尋層開著：筆記頁的浮動鈕不渲染。
+    expect(screen.queryByTestId("note-browse-bar")).toBeNull();
 
     // 筆記在搜尋層後面：不可達。
     expect(container.querySelector("main")).toHaveAttribute("inert");
