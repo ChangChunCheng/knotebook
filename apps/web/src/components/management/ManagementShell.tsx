@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 const PANEL_CLOSE_HIT = "pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
 /** 手機的「‹」不分指標一律 44×44（滑鼠縮到手機寬度也一樣）。 */
 const PHONE_BACK_HIT = "max-sm:after:absolute max-sm:after:-inset-2 max-sm:after:content-['']";
+/** 手機的卡貼齊 sheet 左緣：「‹」自己退開左側 safe area（橫拿時的側邊），至少與其他寬度一樣離卡緣 8px。 */
+const PHONE_BACK_LEFT = "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]";
 
 /**
  * 三個設定管理類面板（個人設定、群組、站台管理）的共用外殼（#247）：托盤上兩張卡——
@@ -223,7 +225,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
                   aria-label={canReturnToMenu ? t("management.backToMenu") : t("management.close")}
                   onClick={() => close(true)}
                 >
@@ -271,7 +273,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               type="button"
               variant="ghost"
               size="icon"
-              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
               aria-label={t("management.back")}
               onClick={() => switchTo("items")}
             >

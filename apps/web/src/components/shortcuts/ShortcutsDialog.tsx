@@ -16,7 +16,8 @@ import { cn } from "@/lib/utils";
 const ShortcutsContent = lazy(() => import("@/components/shortcuts/ShortcutsLazy").then((m) => ({ default: m.ShortcutsContent })));
 
 /** chunk 下載中與載入失敗時佔住右邊整塊托盤的一張卡（標題、✕、Esc 都在外殼，所以這兩個狀態下對話框一樣關得掉）。 */
-const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12", managementCardPhone);
+// 手機：卡貼齊 sheet 底緣，底部內距與 Home 指示條的 safe area 取大。
+const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12 max-sm:pb-[max(2rem,env(safe-area-inset-bottom))]", managementCardPhone);
 
 /**
  * 快捷鍵介紹頁的對話框外殼（Ctrl+/ 或使用者選單「快捷鍵介紹」；開關 state 與監聽器在 `AppShell`）。

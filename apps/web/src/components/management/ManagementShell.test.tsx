@@ -396,5 +396,8 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-2xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
     expect(itemsCard()).toHaveClass("max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]", "max-sm:pl-[max(1rem,env(safe-area-inset-left))]");
     expect(contentCard()).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]", "max-sm:pl-[env(safe-area-inset-left)]");
+    // 卡貼齊 sheet 左緣：兩層的「‹」自己退開左側 safe area
+    expect(within(itemsCard()).getByRole("button", { name: "Close" })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+    expect(within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
   });
 });

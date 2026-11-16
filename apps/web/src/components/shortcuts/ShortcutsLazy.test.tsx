@@ -357,7 +357,7 @@ describe("手機（< 640）", () => {
     expect(items.className).toMatch(/(^| )flex( |$)/);
     expect(content.className).toMatch(/(^| )hidden( |$)/);
     const listBack = within(items).getByRole("button", { name: "Back to menu" });
-    expect(listBack).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    expect(listBack).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
     // 掛上時焦點交給看得見的那一層（清單的「‹」），不是藏起來的內容區
     await waitFor(() => expect(listBack).toHaveFocus());
     fireEvent.click(listBack);
@@ -365,7 +365,7 @@ describe("手機（< 640）", () => {
 
     openCategory("Sidebar");
     await waitFor(() => expect(content.className).toMatch(/(^| )flex( |$)/));
-    expect(within(content).getByRole("button", { name: "Back to sections" })).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    expect(within(content).getByRole("button", { name: "Back to sections" })).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
     expect(within(items).queryByRole("button", { name: "Back to menu" })).toBeNull();
   });
 });

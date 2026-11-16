@@ -163,6 +163,9 @@ function isNarrowViewport(): boolean {
   return !window.matchMedia("(min-width: 768px)").matches;
 }
 
+/** 手機的卡貼齊 sheet 左緣：「‹」自己退開左側 safe area（同 `ManagementShell`）。 */
+const PHONE_BACK_LEFT = "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]";
+
 /** 手機的「‹」不分指標一律 44×44（同 `ManagementShell`）。 */
 const PHONE_BACK_HIT = "max-sm:after:absolute max-sm:after:-inset-2 max-sm:after:content-[''] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
 
@@ -237,7 +240,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
               variant="ghost"
               size="icon"
               data-shortcuts-focus={layer === "items" ? "" : undefined}
-              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_HIT)}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
               aria-label={listBack.label}
               onClick={listBack.onBack}
             >
@@ -299,7 +302,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
           type="button"
           variant="ghost"
           size="icon"
-          className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_HIT)}
+          className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
           aria-label={t("management.back")}
           onClick={() => switchTo("items")}
         >
