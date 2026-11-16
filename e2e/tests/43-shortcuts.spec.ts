@@ -890,7 +890,7 @@ test.describe("shortcuts dialog", () => {
 
     const trigger = page.locator("[data-phone-top-bar]").getByRole("button", { name: "admin", exact: true });
     await trigger.click();
-    await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
     const dialog = shortcutsDialog(page);
     await expect(dialog).toBeVisible();
     // 手機上快捷鍵頁是由下往上升起的 sheet：進場動畫跑完再量（升起途中外框有一部分還在視窗下方）

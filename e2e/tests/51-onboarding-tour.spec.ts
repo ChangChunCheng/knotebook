@@ -1068,13 +1068,14 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toHaveCount(0);
   });
 
+  // 700 寬是浮動側欄的版面（640～1279，側欄是抽屜）；比 640 窄的手機版面沒有抽屜也沒有側欄鈕，不在這一案。
   test("narrow window: Help and the drawer close first, sidebar stops point at the menu button, and focus ends on it", async ({
     page,
     browser,
   }) => {
     test.setTimeout(120_000);
     await signUpFreshUser(browser, page);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 700, height: 844 });
     const drawerButton = page.getByRole("button", { name: "Open sidebar", exact: true });
     await drawerButton.click();
     const drawer = page.getByRole("dialog", { name: "Navigation" });
