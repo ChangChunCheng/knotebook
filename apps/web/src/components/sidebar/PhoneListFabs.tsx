@@ -18,10 +18,10 @@ interface PhoneListFabsProps {
  * 用 `ghost` 當底（沒有自帶的底色與框），hover 與按下只微調透明度，不換成 brand 實心。
  */
 const FROSTED =
-  "z-10 h-14 w-14 rounded-full border border-border bg-card/95 shadow-lg " +
-  "supports-[backdrop-filter]:bg-card/70 supports-[backdrop-filter]:backdrop-blur-md " +
-  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/80 " +
-  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/90";
+  "z-10 h-14 w-14 rounded-full border border-black/10 bg-card/95 dark:border-white/20 shadow-lg " +
+  "supports-[backdrop-filter]:bg-card/50 supports-[backdrop-filter]:backdrop-blur-xl supports-[backdrop-filter]:backdrop-saturate-150 " +
+  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/55 " +
+  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/65";
 
 /**
  * 手機清單與筆記畫面底部的兩顆圓形毛玻璃浮動鈕（各 56px）：左下「Search」、右下「New note」（筆圖示、brand 色），距邊 16px 加 safe area。

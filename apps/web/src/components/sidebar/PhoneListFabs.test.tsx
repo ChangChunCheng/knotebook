@@ -36,7 +36,7 @@ describe("PhoneListFabs", () => {
     const search = screen.getByRole("button", { name: "Search notes" });
     const create = screen.getByRole("button", { name: "New note" });
     for (const fab of [search, create]) {
-      expect(fab).toHaveClass("bg-card/95", "supports-[backdrop-filter]:bg-card/70", "supports-[backdrop-filter]:backdrop-blur-md", "border", "border-border", "shadow-lg");
+      expect(fab).toHaveClass("bg-card/95", "supports-[backdrop-filter]:bg-card/50", "supports-[backdrop-filter]:backdrop-blur-xl", "supports-[backdrop-filter]:backdrop-saturate-150", "border", "border-black/10", "dark:border-white/20", "shadow-lg");
       expect(fab.className).not.toMatch(/(^|\s)bg-brand/);
     }
     expect(create).toHaveClass("text-brand-on-soft");
