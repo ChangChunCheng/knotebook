@@ -171,12 +171,20 @@ export function phoneSizedScreen(): boolean {
   return typeof screen !== "undefined" && Math.min(screen.width, screen.height) < 640;
 }
 
+/**
+ * 640 起預設要不要記位置：手機（`phoneSizedScreen`），或主要指標是手指的裝置——平板分割畫面加上轉向、放大顯示的小平板、
+ * 摺疊機，短邊不比 640 窄也會跨過 640。只有滑鼠這類精確指標的桌機視窗不付這份成本。
+ */
+export function mayCrossTiersByDefault(): boolean {
+  return phoneSizedScreen() || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
+}
+
 export interface TierScrollAnchorOptions extends AnchorItems {
   /** 項目所在的容器；640 起它就是自己捲動的那一層。 */
   containerRef: RefObject<HTMLElement | null>;
   /** 手機上（文件在捲）可視範圍的上緣：釘在頂端的頁首下緣。 */
   phoneTop: () => number;
-  /** 640 起要不要記位置（裝置會不會轉回手機寬度）；預設 `phoneSizedScreen`。 */
+  /** 640 起要不要記位置（裝置會不會轉回手機寬度）；預設 `mayCrossTiersByDefault`。 */
   mayCrossTiers?: () => boolean;
 }
 
@@ -185,8 +193,8 @@ export interface TierScrollAnchorOptions extends AnchorItems {
  * 而且兩種寬度的排版不同，所以記的不是捲動量，而是「頂端第一個看得到的項目＋離頂端多遠」，換段之後把同一項捲回同一處。
  *
  * - 只看這一份自己的捲動：手機上是文件的 scroll，640 起是容器的 scroll；其他元素（表格、選單）的捲動不理。
- * - 每個 frame 最多量一次，換段前最後一個 frame 的位置就是要還的位置。手機寬度時一律記；640 起只在短邊比 640 窄的裝置（轉橫拿的手機）上記，
- *   桌機與平板的視窗捲動時不做這件事。
+ * - 每個 frame 最多量一次，換段前最後一個 frame 的位置就是要還的位置。手機寬度時一律記；640 起只在可能轉回手機寬度的裝置（`mayCrossTiersByDefault`：
+ *   手機、觸控的平板與摺疊機）上記，滑鼠操作的桌機視窗捲動時不做這件事。
  * - 媒體查詢已經翻過去、React 還沒換段的那段時間（文件此刻被夾回 0）不記：`isPhone()` 與目前排版所屬的段不一致就跳過。
  * - 容器看不到（例如在筆記頁時藏起來的清單、640–1279 收在抽屜裡的清單）時不記也不還，位置留到下次看得到時再還。
  * - 容器不在文件代為捲動的外框裡（例如抽屜裡那份清單）時整個不作用。
@@ -213,7 +221,7 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
       const container = optionsRef.current.containerRef.current;
       const ours = tierRef.current ? event.target === document : container !== null && event.target === container;
       if (!ours || frame !== 0) return;
-      if (!tierRef.current && !(optionsRef.current.mayCrossTiers ?? phoneSizedScreen)()) return;
+      if (!tierRef.current && !(optionsRef.current.mayCrossTiers ?? mayCrossTiersByDefault)()) return;
       frame = requestAnimationFrame(capture);
     };
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
@@ -229,7 +237,7 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     const saved = savedRef.current;
     const { containerRef, phoneTop, mayCrossTiers, ...items } = optionsRef.current;
     // 換到 640 起、而這台裝置在那裡不記位置：手機寬度時記的那一份還完就作廢，之後窄回手機寬度時不會跳回很久以前的地方。
-    if (!phone && !(mayCrossTiers ?? phoneSizedScreen)()) savedRef.current = null;
+    if (!phone && !(mayCrossTiers ?? mayCrossTiersByDefault)()) savedRef.current = null;
     const container = containerRef.current;
     if (saved === null || container === null || saved.container !== container || !inPageScrollFrame(container) || container.getClientRects().length === 0) return;
     const restore = () => {

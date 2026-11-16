@@ -7,6 +7,7 @@ import {
   PHONE_PAGE_SCROLL_ATTR,
   STICKY_TOP_VAR,
   captureScrollAnchor,
+  mayCrossTiersByDefault,
   restoreScrollAnchor,
   scrollToTopOf,
   scrollsPage,
@@ -197,13 +198,9 @@ describe("captureScrollAnchor／restoreScrollAnchor", () => {
 });
 
 describe("captureScrollAnchor：並排欄位", () => {
-  it("兩欄長短不一（第二欄的區塊在文件裡排在第一欄之後、位置從上面重新開始）：整段範圍內都取到文件順序裡第一個下緣在線之下的區塊", () => {
-    // 文件順序：第一欄 c1-0…c1-3（各高 100，從 0 起）、第二欄 c2-0…c2-3（各高 60，從 0 起）、欄位之後 b0…b29（各高 50，從 400 起）
-    const boxes: Array<{ id: string; top: number; height: number }> = [
-      ...Array.from({ length: 4 }, (_, i) => ({ id: `c1-${i}`, top: i * 100, height: 100 })),
-      ...Array.from({ length: 4 }, (_, i) => ({ id: `c2-${i}`, top: i * 60, height: 60 })),
-      ...Array.from({ length: 30 }, (_, i) => ({ id: `b${i}`, top: 400 + i * 50, height: 50 })),
-    ];
+  type Box = { id: string; top: number; height: number };
+  /** 照文件順序放好項目，每一條線都要拿到文件順序裡第一個下緣在線之下的那一項。 */
+  function expectDocumentOrder(boxes: Box[], lines: number[]): void {
     const container = document.createElement("div");
     for (const box of boxes) {
       const item = document.createElement("div");
@@ -216,10 +213,38 @@ describe("captureScrollAnchor：並排欄位", () => {
       return box ? new DOMRect(0, box.top, 180, box.height) : new DOMRect(0, 0, 0, 0);
     });
     const items = { itemSelector: "[data-id]", idAttr: "data-id" };
-    for (let line = 0; line < 1900; line += 23) {
+    for (const line of lines) {
       const expected = boxes.find((b) => b.top + b.height > line)!;
       expect(captureScrollAnchor(container, items, line), `線在 ${line}`).toEqual({ id: expected.id, offset: expected.top - line, height: expected.height });
     }
+  }
+  const linesUpTo = (end: number, step: number) => Array.from({ length: Math.ceil(end / step) }, (_, i) => i * step);
+
+  it("兩欄長短不一（第二欄的區塊在文件裡排在第一欄之後、位置從上面重新開始）：整段範圍內都取到文件順序裡第一個下緣在線之下的區塊", () => {
+    // 文件順序：第一欄 c1-0…c1-3（各高 100，從 0 起）、第二欄 c2-0…c2-3（各高 60，從 0 起）、欄位之後 b0…b29（各高 50，從 400 起）
+    expectDocumentOrder(
+      [
+        ...Array.from({ length: 4 }, (_, i) => ({ id: `c1-${i}`, top: i * 100, height: 100 })),
+        ...Array.from({ length: 4 }, (_, i) => ({ id: `c2-${i}`, top: i * 60, height: 60 })),
+        ...Array.from({ length: 30 }, (_, i) => ({ id: `b${i}`, top: 400 + i * 50, height: 50 })),
+      ],
+      linesUpTo(1900, 23),
+    );
+  });
+
+  it("第二欄比較長：線過了第一欄的底、還在第二欄裡時，取到第二欄的那一塊", () => {
+    // 第一欄 c1-0、c1-1（各高 100，到 200）、第二欄 c2-0…c2-5（各高 60，到 360）、欄位之後 b0…b9（各高 50，從 360 起）
+    const boxes = [
+      ...Array.from({ length: 2 }, (_, i) => ({ id: `c1-${i}`, top: i * 100, height: 100 })),
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `c2-${i}`, top: i * 60, height: 60 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `b${i}`, top: 360 + i * 50, height: 50 })),
+    ];
+    expectDocumentOrder(boxes, linesUpTo(800, 17));
+    // 明確：線在 250（第一欄已結束）→ 第二欄的 c2-4（240～300）
+    vi.restoreAllMocks();
+    document.body.innerHTML = "";
+    expectDocumentOrder(boxes, [250]);
+    expect(boxes.find((b) => b.top + b.height > 250)!.id).toBe("c2-4");
   });
 });
 
@@ -232,10 +257,16 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
   let frames: FrameRequestCallback[] = [];
   const PHONE_TOP = 50;
 
-  let phoneSized = true;
+  let phoneSized: boolean | "default" = true;
   function Host({ framed = true }: { framed?: boolean }) {
     const ref = useRef<HTMLDivElement>(null);
-    useTierScrollAnchor({ containerRef: ref, itemSelector: "[data-i]", idAttr: "data-i", phoneTop: () => PHONE_TOP, mayCrossTiers: () => phoneSized });
+    useTierScrollAnchor({
+      containerRef: ref,
+      itemSelector: "[data-i]",
+      idAttr: "data-i",
+      phoneTop: () => PHONE_TOP,
+      mayCrossTiers: phoneSized === "default" ? undefined : () => phoneSized === true,
+    });
     const list = (
       <div ref={ref} data-container="">
         {Array.from({ length: 10 }, (_, i) => (
@@ -248,14 +279,14 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
 
   function setup(
     framed = true,
-    start: { tier: "phone" | "overlay"; phoneSized: boolean } = { tier: "phone", phoneSized: true },
+    start: { tier: "phone" | "overlay"; phoneSized: boolean | "default"; others?: (query: string) => boolean } = { tier: "phone", phoneSized: true },
   ): { container: HTMLElement; tier: ReturnType<typeof stubLayoutTier>; beforeReact: (fn: () => void) => void } {
     layout = start.tier === "phone" ? "phone" : "wide";
     phoneSized = start.phoneSized;
     pageY = 0;
     boxTop = 0;
     hidden = false;
-    const tier = stubLayoutTier(start.tier);
+    const tier = stubLayoutTier(start.tier, start.others);
     frames = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
     vi.stubGlobal("cancelAnimationFrame", () => {});
@@ -420,5 +451,28 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     act(() => tier.setLayoutTier("phone"));
     // 手機：項 2 上緣 300 − pageY 要在 50 → pageY = 250
     expect(pageY).toBe(250);
+  });
+  it("預設判斷：640 起、短邊不比 640 窄、但主要指標是手指（平板分割畫面、摺疊機）→ 照樣記；滑鼠的桌機視窗不記", () => {
+    vi.stubGlobal("screen", { width: 1024, height: 768 });
+    const touch = setup(true, { tier: "overlay", phoneSized: "default", others: (query) => query === "(pointer: coarse)" });
+    boxTop = 80;
+    scrollOn(touch.container);
+    expect(mayCrossTiersByDefault()).toBe(true);
+    touch.beforeReact(() => {
+      layout = "phone";
+    });
+    act(() => touch.tier.setLayoutTier("phone"));
+    expect(pageY).toBe(250);
+  });
+
+  it("預設判斷：滑鼠的桌機（短邊 ≥ 640、指標精確）不記；手機尺寸的螢幕記", () => {
+    stubLayoutTier("overlay");
+    vi.stubGlobal("screen", { width: 1440, height: 900 });
+    expect(mayCrossTiersByDefault()).toBe(false);
+    vi.stubGlobal("screen", { width: 390, height: 844 });
+    expect(mayCrossTiersByDefault()).toBe(true);
+    stubLayoutTier("overlay", (query) => query === "(pointer: coarse)");
+    vi.stubGlobal("screen", { width: 1180, height: 820 });
+    expect(mayCrossTiersByDefault()).toBe(true);
   });
 });
