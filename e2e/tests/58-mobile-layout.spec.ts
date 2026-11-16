@@ -3,10 +3,10 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 手機（< 640）版面：內容貼齊畫面邊緣、標題字級、提及列在內文捲動容器裡、寬表格的右緣提示。全部量瀏覽器算出來的值，不看 class 名稱。
+ * 內文標題字級（所有寬度）與手機（< 640）版面：內容貼齊畫面邊緣、提及列在內文捲動容器裡、寬表格的右緣提示。全部量瀏覽器算出來的值，不看 class 名稱。
  *
- * 58-1 標題字級（390）：內文 H1／H2／H3 的 computed font-size 是基準字級的 2／1.5／1.17 倍（基準 16px）；筆記標題框仍是 20px；
- *      800 寬仍是桌面的 3／2／1.3 倍。
+ * 58-1 標題字級（390、800）：內文 H1／H2／H3 的 computed font-size 是基準字級的 2／1.5／1.25 倍（基準 16px），兩種寬度一樣；
+ *      手機寬度下筆記標題框仍是 20px。
  * 58-2 貼邊（390、800）：390 時內文卡的 x＝0、寬＝視窗寬，AppShell 外框的 padding 四邊都是 0；800 時外框仍是 12px、內文卡不貼邊。
  * 58-3 簡報（390）：投影片的 h1 > h2 > h3，h1 是它所在容器字級的 1.75 倍。
  * 58-4 短筆記沒有多餘的捲動範圍（390，鍵盤收起）：一行字的筆記，捲動容器 scrollHeight − clientHeight ＝ 0——沒有提及時沒有提及列；
@@ -14,6 +14,7 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, waitFo
  * 58-5 寬表格右緣提示（390）：表格還能往右捲時 `--kb-table-fade` 是 1.5rem（24px），捲到底變 0；沒有溢出的表格是 0。
  * 58-6 不支援捲動驅動動畫時的後備（390）：委派的捲動監聽在還能往右捲的表格上標 `data-kb-more-right`，捲到底拿掉，
  *      沒有溢出的表格不標；非手機寬度不標。
+ * 58-7 桌面側邊選單（1280，滑鼠）：hover H1／H2／H3 時，拖曳把手的垂直中線與標題首行文字的中線差 ≤ 1px。
  *
  * 量不到、列在實機清單：iOS Safari 的瀏覽器工具列伸縮時 `dvh` 的實際行為與底部不被蓋住、瀏海與 Home 指示條的 safe area、
  * 真實螢幕鍵盤升起時的捲動範圍。
@@ -143,14 +144,14 @@ async function headingSizes(page: Page): Promise<{ base: number; h1: number; h2:
 const scrollerOf = (page: Page): Locator => page.getByTestId("article-column").locator("xpath=ancestor::div[contains(@class,'overflow-y-auto')][1]");
 const nextFrame = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
-test("58-1 標題字級：390 縮小、800 維持桌面", async ({ browser }) => {
+test("58-1 標題字級：390 與 800 都是 2／1.5／1.25 倍", async ({ browser }) => {
   const phone = await open(browser, 390, "headings");
   try {
     const sizes = await headingSizes(phone.page);
     expect(sizes.base).toBe(BASE_FONT_PX);
     expect(sizes.h1).toBeCloseTo(BASE_FONT_PX * 2, 1);
     expect(sizes.h2).toBeCloseTo(BASE_FONT_PX * 1.5, 1);
-    expect(sizes.h3).toBeCloseTo(BASE_FONT_PX * 1.17, 1);
+    expect(sizes.h3).toBeCloseTo(BASE_FONT_PX * 1.25, 1);
     expect(await fontPx(phone.page.getByRole("textbox", { name: "Note title" }))).toBe(20);
   } finally {
     await phone.context.close();
@@ -159,9 +160,9 @@ test("58-1 標題字級：390 縮小、800 維持桌面", async ({ browser }) =>
   try {
     const sizes = await headingSizes(wide.page);
     expect(sizes.base).toBe(BASE_FONT_PX);
-    expect(sizes.h1).toBeCloseTo(BASE_FONT_PX * 3, 1);
-    expect(sizes.h2).toBeCloseTo(BASE_FONT_PX * 2, 1);
-    expect(sizes.h3).toBeCloseTo(BASE_FONT_PX * 1.3, 1);
+    expect(sizes.h1).toBeCloseTo(BASE_FONT_PX * 2, 1);
+    expect(sizes.h2).toBeCloseTo(BASE_FONT_PX * 1.5, 1);
+    expect(sizes.h3).toBeCloseTo(BASE_FONT_PX * 1.25, 1);
   } finally {
     await wide.context.close();
   }
@@ -344,6 +345,33 @@ test("58-6 後備：不支援捲動驅動動畫時，委派監聽標 data-kb-mor
     await nextFrame(desktop.page);
     await expect.poll(async () => (await tableStates(desktop.page)).map((s) => s.marked)).toEqual([false, false]);
     await expect.poll(async () => (await tableStates(desktop.page)).map((s) => s.fade)).toEqual([0, 0]);
+  } finally {
+    await desktop.context.close();
+  }
+});
+
+test("58-7 桌面側邊選單：拖曳把手與 H1／H2／H3 首行文字垂直置中", async ({ browser }) => {
+  const desktop = await open(browser, 1280, "headings", { touch: false });
+  try {
+    const { page } = desktop;
+    await expect(headingText(page, "Heading three")).toBeVisible({ timeout: 15_000 });
+    for (const text of ["Heading one", "Heading two", "Heading three"]) {
+      const inline = headingText(page, text);
+      await inline.hover();
+      const handle = page.getByRole("button", { name: "Open block menu" });
+      await expect(handle).toBeVisible();
+      // 側邊選單位置有轉場，等把手的中線穩定再量
+      await expect(async () => {
+        const geo = await inline.evaluate((el) => {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const line = range.getClientRects()[0]!;
+          const button = document.querySelector('button[aria-label="Open block menu"]')!.getBoundingClientRect();
+          return { lineMid: line.top + line.height / 2, buttonMid: button.top + button.height / 2 };
+        });
+        expect(Math.abs(geo.buttonMid - geo.lineMid), text).toBeLessThanOrEqual(1);
+      }).toPass({ timeout: 5_000 });
+    }
   } finally {
     await desktop.context.close();
   }

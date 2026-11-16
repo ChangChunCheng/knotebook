@@ -899,37 +899,61 @@ input[name="share-access"] {
   }
 }
 
-/* 手機（< 640）：內文標題縮小（H1 3em → 2em、H2 2em → 1.5em、H3 1.3em → 1.17em），窄螢幕上不佔掉半行。
-   上面那段的內距是內容欄寬的事（< 768），字級是手機的事（< 640），所以兩段斷點不同；640 與 `PHONE_QUERY`／`max-sm:` 同界。
+/* 內文標題字級用 Markdown 慣例：H1 2em、H2 1.5em、H3 1.25em（BlockNote 預設是 3em／2em／1.3em），所有寬度一致。
+   H4–H6（1em 以下）不動。
 
    BlockNote 的標題字級是兩步：`[data-content-type=heading]`（H1，沒有 data-level——預設值不輸出屬性）與
    `[data-content-type=heading][data-level="2"|"3"]` 設自訂屬性 `--level`（特異性 (0,1,0)／(0,2,0)），再由
    `.bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type=heading]`（(0,5,0)）寫
    `font-size: var(--level)`。所以這裡改的是 `--level` 而不是 font-size：自訂屬性只跟同樣宣告 `--level` 的規則比特異性，
    不必去贏那條 (0,5,0)；那條規則照樣吃到我們的值。疊 `.bn-editor.bn-editor` 墊到 (0,4,0)，高於 BlockNote 的 (0,1,0)／(0,2,0)
-   ——它的 CSS 在 lazy chunk、載入較晚，兩邊都未分層，同特異性我們必輸（同上一段的雷）。
-   H4–H6（1em 以下）不動。 */
-@media (width < 40rem) {
-  .bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
-    --level: 2em;
-  }
-  .bn-editor.bn-editor [data-content-type="heading"][data-level="2"] {
-    --level: 1.5em;
-  }
-  .bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
-    --level: 1.17em;
-  }
-  /* 標題換類型的轉場：下一個區塊從「前一個標題」的字級起算（`--prev-level`，BlockNote 設在 `[data-prev-level="n"]`、特異性 (0,1,0)），
-     同樣改成手機字級，動畫才不會從桌面大小開始。 */
-  .bn-editor.bn-editor [data-prev-level="1"] {
-    --prev-level: 2em;
-  }
-  .bn-editor.bn-editor [data-prev-level="2"] {
-    --prev-level: 1.5em;
-  }
-  .bn-editor.bn-editor [data-prev-level="3"] {
-    --prev-level: 1.17em;
-  }
+   ——它的 CSS 在 lazy chunk、載入較晚，兩邊都未分層，同特異性我們必輸（同上一段的雷）。 */
+.bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
+  --level: 2em;
+}
+.bn-editor.bn-editor [data-content-type="heading"][data-level="2"] {
+  --level: 1.5em;
+}
+.bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
+  --level: 1.25em;
+}
+/* 標題換類型的轉場：下一個區塊從「前一個標題」的字級起算（`--prev-level`，BlockNote 設在 `[data-prev-level="n"]`、特異性 (0,1,0)），
+   同樣改成這組字級，動畫才不會從 BlockNote 預設的大小開始。 */
+.bn-editor.bn-editor [data-prev-level="1"] {
+  --prev-level: 2em;
+}
+.bn-editor.bn-editor [data-prev-level="2"] {
+  --prev-level: 1.5em;
+}
+.bn-editor.bn-editor [data-prev-level="3"] {
+  --prev-level: 1.25em;
+}
+
+/* 拖曳預覽：BlockNote 把被拖的區塊複製到 <body> 下（`.bn-drag-preview`，沒有 `bn-editor`），上面那組選擇器碰不到，
+   不補的話被拖的 H1 仍以 48px 顯示。 */
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"]:not([data-level]) {
+  --level: 2em;
+}
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"][data-level="2"] {
+  --level: 1.5em;
+}
+.bn-drag-preview.bn-drag-preview [data-content-type="heading"][data-level="3"] {
+  --level: 1.25em;
+}
+
+/* 桌面側邊選單（`+`／拖曳把手）的高度：BlockNote 依標題字級寫死（H1 108px、H2 84px、H3 67px），
+   讓按鈕落在首行文字中線。高度＝36px ＋ 1.5 × 字級（BlockNote 的 108／84／67 對 48／32／20.8px 正是這個式子；標題 padding-top 18px、行高 1.5）。
+   字級縮小後要跟著縮：H1 32px → 84px、H2 24px → 72px、H3 20px → 66px。
+   側邊選單是浮在 `.bn-editor` 外的元素，疊兩次自己的 class 墊到 (0,4,0)，高於 BlockNote 的 (0,3,0)，不管載入先後。
+   H1 的側邊選單帶 `data-level="1"`（與區塊本身不同，區塊的 H1 沒有 data-level）。 */
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="1"] {
+  height: 84px;
+}
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="2"] {
+  height: 72px;
+}
+.bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="3"] {
+  height: 66px;
 }
 
 /* 手機：寬表格在右緣還能往右捲時淡出，提示「這裡還有」。淡出寬度走 --kb-table-fade（預設 0＝不淡出）。
