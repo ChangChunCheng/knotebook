@@ -153,7 +153,7 @@ export function FolderMenu({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu phoneSheet open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           ref={triggerRef}
@@ -168,7 +168,6 @@ export function FolderMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        phoneSheet
         sheetTitle={folder.name}
         onCloseAutoFocus={(event) => {
           if (!openingDialogRef.current) return;

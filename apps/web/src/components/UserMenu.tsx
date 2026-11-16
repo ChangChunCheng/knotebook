@@ -79,7 +79,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
 
   const avatar = variant === "avatar";
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         {avatar ? (
           // 頭像形（手機清單頂列）：只有共用頭像（圖或首字）；視覺 32、點擊範圍 44。
@@ -126,7 +126,6 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
           選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。頭像形的觸發鈕只有 44 寬，改用固定下限。 */}
       <DropdownMenuContent
         align="end"
-        phoneSheet
         className={avatar ? "min-w-56" : "min-w-[var(--radix-dropdown-menu-trigger-width)]"}
       >
         <DropdownMenuLabel>{user.displayName}</DropdownMenuLabel>

@@ -372,6 +372,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
   return (
     <>
       <DropdownMenu
+        phoneSheet
         open={menuOpen}
         onOpenChange={(open) => {
           setMenuOpen(open);
@@ -398,10 +399,9 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             </Button>
           )}
         </DropdownMenuTrigger>
-        {/* 手機是貼底的 sheet（`phoneSheet`）：最上面一行是筆記標題，移動到…／複製到…展開時換成那一組的名稱。 */}
+        {/* 手機是貼底的 sheet（根層的 `phoneSheet`）：最上面一行是筆記標題，移動到…／複製到…展開時換成那一組的名稱。 */}
         <DropdownMenuContent
           align="end"
-          phoneSheet
           sheetTitle={groupExpanded === "move" ? t("note.menu.moveTo") : groupExpanded === "copy" ? t("note.menu.copyTo") : note.title}
           className="max-h-[var(--radix-dropdown-menu-content-available-height)] max-w-[min(20rem,calc(100vw-1rem))] overflow-y-auto"
           onEscapeKeyDown={(event) => {

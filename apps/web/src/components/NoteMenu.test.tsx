@@ -20,6 +20,7 @@ import { ActiveNoteProvider } from "@/lib/active-note";
 import { SidebarTabProvider } from "@/lib/sidebar-tab";
 import { personalNote } from "@/test/select-fixtures";
 import { NoteList } from "./NoteList";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // ⋮ 選單：複製連結（任何角色）＋移到垃圾桶（#181：不確認、成功 toast＋復原；#175 起看 `permissions.delete`，含
 // leavingRef 時序：刪除失敗且已進終態時，`NoteMenu` 必須自己補一套「同文案同
@@ -59,7 +60,7 @@ const OWNER_NOTE: NoteDto = {
 const CONNECTED: CollabState = { phase: "connected", role: "owner" };
 
 function openMenu(): void {
-  fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
+  pressTrigger(screen.getByRole("button", { name: "More" }));
 }
 
 // `onOpenEdits`（#138）在 `NoteMenuProps` 上是必填——這裡給一個 no-op 預設值，只有
@@ -171,8 +172,8 @@ describe("NoteMenu（⋮ 選單）", () => {
 
   // #138：AI 修改紀錄項。狀態住在 `NotePage`（兩個觸發點共用），選單只負責關自己再
   // 通知父層——`onSelect` 的三步形與刪除項逐字同形，見 `NoteMenu.tsx` 檔頭的 focus trap 說明。
-  // ⚠ 開選單一律用 `openMenu()`（pointerDown）：Radix 的 trigger 只掛 onPointerDown，
-  // 純 `fireEvent.click` 開不了（本檔檔頭已記載）。
+  // ⚠ 開選單一律用 `openMenu()`（`pressTrigger`：pointerdown 再 click）：Radix 的 trigger 在 pointerdown 開，
+  // 手機 sheet 形改在同一下的 click 開（本檔檔頭已記載）。
   it("⋮ → AI 修改紀錄：關閉選單並呼叫 onOpenEdits", async () => {
     const onOpenEdits = vi.fn();
     renderMenu(OWNER_NOTE, CONNECTED, { current: false }, undefined, onOpenEdits);
@@ -552,7 +553,7 @@ function renderCopyMenu(
 
 function openAnyMenu(shell: "header" | "sidebar"): void {
   const name = shell === "header" ? "More" : `Note actions for ${OWNER_NOTE.title}`;
-  fireEvent.pointerDown(screen.getByRole("button", { name }), { button: 0 });
+  pressTrigger(screen.getByRole("button", { name }));
 }
 
 describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆記」（#216）", () => {
@@ -610,7 +611,7 @@ describe("NoteMenu × 版本歷史", () => {
   }
 
   async function openVersionsMenu(): Promise<HTMLElement> {
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
+    pressTrigger(screen.getByRole("button", { name: "More" }));
     return screen.findByRole("menu");
   }
 
@@ -651,17 +652,21 @@ describe("NoteMenu × 版本歷史", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Save current version" })).not.toBeInTheDocument();
   });
 
-  // 替身只翻版面段（`WIDE_POINTER_QUERY` 恆不成立）：描述的是觸控裝置（寬判準不翻）跨寬度的路徑，選單保持開著、項目就地增減。
-  // 有滑鼠的裝置跨寬度時寬判準也會翻，整個選單會先關（由 GroupTransfer.test 與本檔守）。
-  it("視窗跨斷點：選單開著時窄→寬項目消失、寬→窄項目出現", async () => {
+  // 替身只翻版面段（`WIDE_POINTER_QUERY` 恆不成立）：描述的是觸控裝置（寬判準不翻）跨寬度的路徑。
+  // 手機的 ⋮ 是 sheet：開著時跨過 640 整個選單關掉（`DropdownMenu` 的 `phoneSheet`），重開時項目照新寬度。
+  it("視窗跨斷點：選單開著時跨過 640 → 選單關；寬側重開沒有「Version history」、回到窄重開又有", async () => {
     const setNarrow = installMatchMedia(true);
     renderVersionsMenu("enabled");
     const menu = await openVersionsMenu();
     expect(within(menu).getByRole("menuitem", { name: "Version history" })).toBeInTheDocument();
     setNarrow(false);
-    expect(within(menu).queryByRole("menuitem", { name: "Version history" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    const wide = await openVersionsMenu();
+    expect(within(wide).queryByRole("menuitem", { name: "Version history" })).not.toBeInTheDocument();
     setNarrow(true);
-    expect(within(menu).getByRole("menuitem", { name: "Version history" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    const narrow = await openVersionsMenu();
+    expect(within(narrow).getByRole("menuitem", { name: "Version history" })).toBeInTheDocument();
   });
 
   it("卸載後 change 監聽被移除（不留訂閱）", async () => {
@@ -985,7 +990,7 @@ describe("NoteMenu × 最愛", () => {
   }
 
   const triggerName = (shell: "header" | "sidebar") => (shell === "header" ? "More" : `Note actions for ${FAV_NOTE.title}`);
-  const openShellMenu = (shell: "header" | "sidebar") => fireEvent.pointerDown(screen.getByRole("button", { name: triggerName(shell) }), { button: 0 });
+  const openShellMenu = (shell: "header" | "sidebar") => pressTrigger(screen.getByRole("button", { name: triggerName(shell) }));
   const favItem = (name: "Add to favorites" | "Remove from favorites") => screen.findByRole("menuitem", { name });
   /** 清單到了（項目不再 disabled）。 */
   const ready = (item: HTMLElement) => waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
@@ -1173,7 +1178,7 @@ describe("NoteMenu × 最愛", () => {
       await Promise.resolve();
     });
     expect(count(server, "GET /api/favorites")).toBe(0);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Note actions for Note 3" }), { button: 0 });
+    pressTrigger(screen.getByRole("button", { name: "Note actions for Note 3" }));
     await favItem("Add to favorites");
     await waitFor(() => expect(count(server, "GET /api/favorites")).toBe(1));
   });
@@ -1242,7 +1247,7 @@ describe("NoteMenu × 最愛 tab 的焦點", () => {
     async function removeFrom(note: NoteDto) {
       const menuButton = screen.getByRole("button", { name: `Note actions for ${note.title}` });
       menuButton.focus();
-      fireEvent.pointerDown(menuButton, { button: 0 });
+      pressTrigger(menuButton);
       const item = await screen.findByRole("menuitem", { name: "Remove from favorites" });
       await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
       fireEvent.click(item);
@@ -1313,7 +1318,7 @@ describe("NoteMenu × 最愛 tab 的焦點", () => {
 
     const menuButton = within(drawer).getByRole("button", { name: `Note actions for ${B.title}` });
     menuButton.focus();
-    fireEvent.pointerDown(menuButton, { button: 0 });
+    pressTrigger(menuButton);
     const item = await screen.findByRole("menuitem", { name: "Remove from favorites" });
     await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(item);
@@ -1374,7 +1379,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByRole("menuitem", { name: "Width" })).toBeInTheDocument();
     cleanup();
     renderWidthMenu("sidebar", false);
-    fireEvent.pointerDown(screen.getByRole("button", { name: `Note actions for ${OWNER_NOTE.title}` }), { button: 0 });
+    pressTrigger(screen.getByRole("button", { name: `Note actions for ${OWNER_NOTE.title}` }));
     expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Width" })).toBeNull();
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);

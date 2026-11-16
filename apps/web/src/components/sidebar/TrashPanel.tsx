@@ -79,7 +79,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
         <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
       </Button>
       {/* controlled＋三步（preventDefault → 關選單 → 動作）：同 NoteMenu 檔頭的 focus trap 規矩。 */}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             ref={triggerRef}
@@ -92,7 +92,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
             <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" phoneSheet sheetTitle={item.title}>
+        <DropdownMenuContent align="end" sheetTitle={item.title}>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();

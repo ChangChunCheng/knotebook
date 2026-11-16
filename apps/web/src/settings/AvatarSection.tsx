@@ -93,7 +93,7 @@ function CandidateMenu({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu phoneSheet open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -110,7 +110,7 @@ function CandidateMenu({
           <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" phoneSheet sheetTitle={label}>
+      <DropdownMenuContent align="end" sheetTitle={label}>
         <DropdownMenuItem
           onSelect={event => {
             event.preventDefault();

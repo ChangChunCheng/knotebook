@@ -24,6 +24,8 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  * 58-18 選單 sheet（390 觸控）：筆記頁 ⋮、清單列 ⋮、資料夾 ⋮、頭像選單貼齊視窗左右與底（x＝0、寬＝390、底＝844），文字列高 ≥ 48，
  *      背板蓋滿視窗；移動到…換掉整個 sheet 內容、最上面一列 Back，逐層進出、Back 回主選單；假鍵盤升起時底緣跟著升；點背板關閉。
  * 58-19 寬螢幕（1280）：筆記頁 ⋮ 仍是貼著按鈕的小選單（右緣對齊按鈕、在按鈕下方），沒有背板。
+ * 58-20 開 ⋮ 的那一下（390×560，清單最低的一列；放開的那一點在 sheet 升起後落在選單項上）：觸控按住 250ms（含減少動態）、滑鼠按住 250ms 放開後，sheet 開在主選單，
+ *      沒有選到任何項目（沒有寫入請求、網址不變、沒有對話框）。觸控用 CDP 的 touchStart／touchEnd，Playwright 的 tap 是瞬間放開。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -1087,3 +1089,87 @@ test("58-19 寬螢幕（1280）：筆記頁 ⋮ 仍是貼著按鈕的小選單�
     await context.close();
   }
 });
+
+/** 清單裡最低的一顆列 ⋮（避開底部浮動鈕）：sheet 從底部升起，越低的列，按住時手指底下越可能出現選單項。 */
+async function lowestRowMenu(page: Page, opts: { hover: boolean }): Promise<{ button: Locator; x: number; y: number }> {
+  const viewport = page.viewportSize()!;
+  const buttons = page.getByRole("complementary").getByRole("button", { name: /^Note actions for / });
+  const count = await buttons.count();
+  let best = -1;
+  let bestY = -1;
+  for (let i = 0; i < count; i += 1) {
+    const button = buttons.nth(i);
+    if (opts.hover) await button.locator("xpath=ancestor::li[1]").hover();
+    const b = await button.boundingBox();
+    if (b === null || b.width === 0 || b.y + b.height > viewport.height - 96) continue;
+    if (b.y > bestY) {
+      best = i;
+      bestY = b.y;
+    }
+  }
+  expect(best, "清單裡要有看得見的列 ⋮").toBeGreaterThanOrEqual(0);
+  expect(bestY, "那顆 ⋮ 要在畫面下半部（sheet 會升到它底下）").toBeGreaterThan(viewport.height * 0.4);
+  const button = buttons.nth(best);
+  if (opts.hover) await button.locator("xpath=ancestor::li[1]").hover();
+  const b = (await button.boundingBox())!;
+  return { button, x: b.x + b.width / 2, y: b.y + b.height / 2 };
+}
+
+/** 按住 `ms` 再放開：觸控走 CDP 的 touchStart／touchEnd（Playwright 的 tap／click 是瞬間放開，量不到這個問題），滑鼠走 down／up。 */
+async function pressAndHold(page: Page, point: { x: number; y: number }, ms: number, kind: "touch" | "mouse"): Promise<void> {
+  if (kind === "touch") {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y }] });
+    await page.waitForTimeout(ms);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.detach();
+    return;
+  }
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  await page.mouse.up();
+}
+
+for (const variant of [
+  { label: "觸控按住 250ms", kind: "touch", reduced: false, ms: 250 },
+  { label: "觸控按住 250ms、減少動態", kind: "touch", reduced: true, ms: 250 },
+  { label: "滑鼠按住 250ms", kind: "mouse", reduced: false, ms: 250 },
+] as const) {
+  test(`58-20 手機（390×560）${variant.label}：開 ⋮ 的那一下不會選到 sheet 升起後在手指底下的項目`, async ({ browser }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await openList(browser, 390, variant.kind === "touch");
+    try {
+      await page.setViewportSize({ width: 390, height: 560 });
+      if (variant.reduced) await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(page.getByRole("complementary").getByRole("button", { name: /^Note actions for / }).first()).toBeAttached({ timeout: 15_000 });
+      const writes: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() !== "GET" && request.url().includes("/api/")) writes.push(`${request.method()} ${request.url()}`);
+      });
+      const url = page.url();
+      const target = await lowestRowMenu(page, { hover: variant.kind === "mouse" });
+      await pressAndHold(page, target, variant.ms, variant.kind);
+
+      const menu = page.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await expect(menu).toHaveAttribute("data-menu-sheet");
+      // 讓進場動畫與任何延遲的 click 都跑完，再看狀態
+      await page.waitForTimeout(400);
+      await expect(menu).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Back", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      expect(page.url()).toBe(url);
+      // 這一案有意義的前提：放開的那一點現在落在 sheet 的選單項上（舊行為下那一下就會選到它）
+      const under = await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest('[role="menuitem"]')?.textContent ?? null, [target.x, target.y] as const);
+      expect(under, "按下的那一點在 sheet 的選單項上").not.toBeNull();
+      expect(writes, "開 ⋮ 不該送出任何寫入").toEqual([]);
+
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+}

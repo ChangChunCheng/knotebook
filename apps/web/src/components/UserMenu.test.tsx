@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/theme";
 import { ShortcutsDialogContext, type ShortcutsDialogApi } from "@/lib/shortcuts-dialog";
 import { UserMenu } from "./UserMenu";
 import { stubLayoutTier } from "@/test/layout-tier";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // 主題色選擇器：六個 RadioItem 渲染／role=menuitemradio／aria-checked、
 // 點選→data-accent＋localStorage＋選單不關閉、鍵盤方向鍵移動焦點。
@@ -75,7 +76,7 @@ function renderMenu(shortcuts: ShortcutsDialogApi | null = null) {
  * `fireEvent.click` 開不了——見 SettingsModal.test.tsx 的 `openUserMenu`。 */
 async function openMenu(): Promise<void> {
   await waitFor(() => expect(screen.getByRole("button", { name: "Plain" })).toBeInTheDocument());
-  fireEvent.pointerDown(screen.getByRole("button", { name: "Plain" }), { button: 0 });
+  pressTrigger(screen.getByRole("button", { name: "Plain" }));
   await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
 }
 
@@ -496,7 +497,7 @@ describe("UserMenu 頭像形（avatar）", () => {
 
   it("UA2 選單內容不變：開得起來、有 Settings 與 Log out", async () => {
     renderAvatar();
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Plain" }), { button: 0 });
+    pressTrigger(await screen.findByRole("button", { name: "Plain" }));
     await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
     expect(screen.getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
@@ -627,7 +628,7 @@ describe("UserMenu 手機 sheet", () => {
     stubLayoutTier("phone");
     renderAvatarMenu();
     const trigger = await screen.findByRole("button", { name: "Plain" });
-    fireEvent.pointerDown(trigger, { button: 0 });
+    pressTrigger(trigger);
     const menu = await screen.findByRole("menu");
     expect(menu).toHaveAttribute("data-menu-sheet");
     expect(menu).toHaveClass("kb-menu-sheet", "w-full");
@@ -644,7 +645,7 @@ describe("UserMenu 手機 sheet", () => {
   it("UM-S2 640 以上：照舊是貼著觸發鈕的小選單", async () => {
     stubLayoutTier("overlay");
     renderAvatarMenu();
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Plain" }), { button: 0 });
+    pressTrigger(await screen.findByRole("button", { name: "Plain" }));
     const menu = await screen.findByRole("menu");
     expect(menu).not.toHaveAttribute("data-menu-sheet");
     expect(menu).toHaveClass("min-w-56");

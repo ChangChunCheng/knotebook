@@ -3,7 +3,10 @@ import {
   forwardRef,
   useCallback,
   useContext,
+  useEffect,
+  useMemo,
   useRef,
+  useState,
   type ComponentPropsWithoutRef,
   type ElementRef,
   type ReactNode,
@@ -11,11 +14,11 @@ import {
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { Check, ChevronRight } from "./icons";
 import { SheetViewportVars } from "./sheet-viewport";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
- * 手機 sheet 形（`DropdownMenuContent` 帶 `phoneSheet`、視窗比 640 窄）的選單內容裡為 true，其餘 false。
+ * 手機 sheet 形（`DropdownMenu` 帶 `phoneSheet`、視窗比 640 窄）的選單內容裡為 true，其餘 false。
  * 選單項依它換成 48px 高、16px 字的列；子選單依它改成「換掉整個 sheet 內容、最上面一列返回」（見 `DropdownMenuMainLevel`）。
  */
 const MenuSheetContext = createContext(false);
@@ -28,8 +31,92 @@ export function useMenuSheet(): boolean {
 /** sheet 裡一列：至少 48px 高、16px 字；粗指標原本的 `py-2.5` 一併換掉（高度改由 `min-h-12` 撐）。 */
 const SHEET_ROW = "min-h-12 py-2 pointer-coarse:py-2 text-base";
 
-export const DropdownMenu = DropdownMenuPrimitive.Root;
-export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
+/** 選單根層交給觸發鈕與內容的東西：是否用手機 sheet、目前開關（ref：事件處理當下讀最新值）與開關。 */
+interface MenuRootValue {
+  phoneSheet: boolean;
+  openRef: { readonly current: boolean };
+  setOpen: (open: boolean) => void;
+}
+const MenuRootContext = createContext<MenuRootValue | null>(null);
+
+type MenuRootProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root> & {
+  /**
+   * 手機（< 640，`useIsPhone()`）改成貼底的 sheet：滿寬、上圓角、底部留 safe area、由下往上升起（`kb-sheet`），背後有淡入淡出的背板，
+   * 鍵盤升起時抬到鍵盤上方；列高 48、字 16。640 以上照常是貼著觸發鈕的小選單。
+   * 仍是同一個 Radix 選單（role=menu／menuitem、方向鍵、typeahead、Esc、點外面關、焦點回觸發鈕都不變），只換位置、樣式與指標開啟的時機
+   * （見 `DropdownMenuTrigger`）。開著時跨過 640 整個選單關掉。
+   */
+  phoneSheet?: boolean;
+};
+
+/**
+ * Radix `Root` 的包裝：受控與非受控都照 Radix 的用法；內部一律以受控方式交給 Radix，觸發鈕才能在 click 時自己打開（sheet 形）。
+ */
+export function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, phoneSheet = false, ...props }: MenuRootProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen ?? false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : uncontrolledOpen;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      openRef.current = next;
+      if (!controlled) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [controlled, onOpenChange],
+  );
+  const value = useMemo<MenuRootValue>(() => ({ phoneSheet, openRef, setOpen }), [phoneSheet, setOpen]);
+  return (
+    <MenuRootContext.Provider value={value}>
+      <DropdownMenuPrimitive.Root open={open} onOpenChange={setOpen} {...props} />
+    </MenuRootContext.Provider>
+  );
+}
+
+/**
+ * Radix 的觸發鈕在 pointerdown 就打開選單。手機 sheet 形不行：sheet 會在手指底下升起，同一次按壓的 pointerup／click（按住稍久也一樣）
+ * 落在剛出現的選單項上，就直接選了它（例如移到垃圾桶）。所以 sheet 形（`phoneSheet` 且這一刻視窗比 640 窄，滑鼠、觸控、筆都一樣）
+ * 擋下 pointerdown 的預設開啟，改在 click 才打開：click 由觸發鈕自己收掉，之後才有 sheet。
+ * click 只在「這顆鈕自己收到了那一下的 pointerdown」時才開：在背板上按下關掉選單、放開時剛好落在觸發鈕上的 click 不會又把它打開。
+ * 沒有 pointerdown 的 click（`detail` 0：輔助技術的啟用、程式觸發）照樣開。
+ * 鍵盤（Enter／Space／ArrowDown）照 Radix 原本的 keydown 開啟；那時已經開著，隨後若有 click 也不會再切換。
+ * 手機判斷在事件當下讀（`isPhone()`），不訂閱：側欄每一列都有一顆。
+ */
+export const DropdownMenuTrigger = forwardRef<
+  ElementRef<typeof DropdownMenuPrimitive.Trigger>,
+  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger>
+>(({ onPointerDown, onClick, ...props }, ref) => {
+  const root = useContext(MenuRootContext);
+  const sheetNow = () => root !== null && root.phoneSheet && isPhone();
+  const pressedRef = useRef(false);
+  return (
+    <DropdownMenuPrimitive.Trigger
+      ref={ref}
+      {...props}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        if (event.defaultPrevented || props.disabled) return;
+        // 擋下後 Radix 自己的 pointerdown 處理就不跑（composeEventHandlers 看 defaultPrevented）。
+        pressedRef.current = false;
+        if (event.button !== 0 || event.ctrlKey) return;
+        if (!root?.openRef.current && sheetNow()) {
+          event.preventDefault();
+          pressedRef.current = true;
+        }
+      }}
+      onClick={(event) => {
+        onClick?.(event);
+        const pressed = pressedRef.current;
+        pressedRef.current = false;
+        if (event.defaultPrevented || props.disabled) return;
+        if (!pressed && event.detail !== 0) return;
+        if (!root?.openRef.current && sheetNow()) root?.setOpen(true);
+      }}
+    />
+  );
+});
+DropdownMenuTrigger.displayName = DropdownMenuPrimitive.Trigger.displayName;
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
@@ -80,13 +167,7 @@ export const DropdownMenuSubContent = forwardRef<
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 
 type MenuContentProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
-  /**
-   * 手機（< 640，`useIsPhone()`）改成貼底的 sheet：滿寬、上圓角、底部留 safe area、由下往上升起（`kb-sheet`），背後有淡入淡出的背板，
-   * 鍵盤升起時抬到鍵盤上方；列高 48、字 16。640 以上照常是貼著觸發鈕的小選單。
-   * 仍是同一個 Radix 選單（role=menu／menuitem、方向鍵、typeahead、Esc、點外面關、焦點回觸發鈕都不變），只換位置與樣式。
-   */
-  phoneSheet?: boolean;
-  /** sheet 形最上面一行的小標題（例如筆記標題）；其他寬度不渲染。 */
+  /** sheet 形（`DropdownMenu` 的 `phoneSheet`）最上面一行的小標題（例如筆記標題）；其他寬度不渲染。 */
   sheetTitle?: ReactNode;
 };
 
@@ -107,9 +188,18 @@ const SHEET_CONTENT =
  * 側欄每一列的 ⋮ 平常不各掛一份。
  */
 const MenuContent = forwardRef<ElementRef<typeof DropdownMenuPrimitive.Content>, MenuContentProps>(
-  ({ className, sideOffset = 4, phoneSheet = false, sheetTitle, children, ...props }, ref) => {
+  ({ className, sideOffset = 4, sheetTitle, children, ...props }, ref) => {
+    const root = useContext(MenuRootContext);
+    const phoneSheet = root?.phoneSheet ?? false;
     const phone = useIsPhone();
     const sheet = phoneSheet && phone;
+    // 開著時跨過 640（轉向、拖視窗）：sheet 與小選單的版面、焦點互換不了，整個選單關掉（下次照新寬度開）。
+    const prevPhone = useRef(phone);
+    useEffect(() => {
+      if (prevPhone.current === phone) return;
+      prevPhone.current = phone;
+      if (phoneSheet) root?.setOpen(false);
+    }, [phone, phoneSheet, root]);
     const contentRef = useRef<HTMLDivElement | null>(null);
     const setRefs = useCallback(
       (node: HTMLDivElement | null) => {

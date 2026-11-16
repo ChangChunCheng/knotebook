@@ -477,7 +477,7 @@ export function GroupTransferMenuItems({
   // 窄視窗或觸控 -> 就地向下展開（手風琴）；寬且可 hover -> 往旁層疊（判準見 `lib/wide-pointer.ts`）。
   const wide = useWidePointer();
   const inline = !wide;
-  // 手機 sheet 形（`DropdownMenuContent` 的 `phoneSheet`）：子選單換掉整個 sheet 內容（`GroupSheet`）。
+  // 手機 sheet 形（`DropdownMenu` 的 `phoneSheet`）：子選單換掉整個 sheet 內容（`GroupSheet`）。
   const sheet = useMenuSheet();
   // 掛載後判準翻轉（拖視窗寬度、外接滑鼠、平板轉向）-> 通知呼叫端關整個選單；掛載當下不呼叫。
   const prevWide = useRef(wide);

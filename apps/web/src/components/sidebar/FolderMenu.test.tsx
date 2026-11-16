@@ -17,6 +17,7 @@ import { stubLayoutTier } from "@/test/layout-tier";
 import { __resetCollapseForTests, isCollapsed, setCollapsed } from "./collapse";
 import { liveNotesUnder } from "./folder-index";
 import { __resetFolderSortForTests, setFolderSort } from "./folder-sort";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // 數 `liveNotesUnder` 呼叫次數（FM10：選單關著時不掃筆記）；行為照原本（包真函式）。
 vi.mock("@/components/sidebar/folder-index", async (importOriginal) => {
@@ -102,7 +103,7 @@ function renderList(props: Partial<NoteListProps> = {}, opts: { tab?: SidebarTab
 const trigger = (name: string) => screen.findByRole("button", { name: `Folder menu for ${name}` });
 async function openMenu(name: string): Promise<HTMLElement> {
   // Radix DropdownMenu 的 trigger 只聽 pointerdown。
-  fireEvent.pointerDown(await trigger(name), { button: 0 });
+  pressTrigger(await trigger(name));
   return screen.findByRole("menu");
 }
 /** 選單內容的骨架：menuitem／menuitemradio 用名稱，分隔線 `—`、小標 `[label]`。 */
@@ -333,7 +334,7 @@ describe("FolderMenu", () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ folders: folderChain("L", 5) });
     renderList();
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "L5 的資料夾選單" }), { button: 0 });
+    pressTrigger(await screen.findByRole("button", { name: "L5 的資料夾選單" }));
     const menu = await screen.findByRole("menu");
     expect(within(menu).getAllByRole("menuitemradio").map((el) => el.textContent)).toEqual(["名稱", "最近修改", "文件大小"]);
     expect(within(menu).getByRole("menuitem", { name: "新增子資料夾" })).toHaveAccessibleDescription("已達最多 5 層");

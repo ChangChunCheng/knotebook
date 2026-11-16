@@ -53,9 +53,9 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
 
   function Harness({ phoneSheet = true, onSelect }: { phoneSheet?: boolean; onSelect?: () => void }) {
     return (
-      <DropdownMenu>
+      <DropdownMenu phoneSheet={phoneSheet}>
         <DropdownMenuTrigger>open</DropdownMenuTrigger>
-        <DropdownMenuContent phoneSheet={phoneSheet} sheetTitle="Row title" className="max-w-72 min-w-56">
+        <DropdownMenuContent sheetTitle="Row title" className="max-w-72 min-w-56">
           <DropdownMenuItem onSelect={onSelect}>first</DropdownMenuItem>
           <DropdownMenuSeparator data-testid="sep" />
           <DropdownMenuItem>second</DropdownMenuItem>
@@ -70,9 +70,11 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     );
   }
 
-  /** Radix 的觸發鈕只掛 pointerdown（純 click 開不了）。 */
+  /** 瀏覽器的一下：pointerdown 再 click（Radix 原本在 pointerdown 開；sheet 形改在 click 開）。 */
   function open(): HTMLElement {
-    fireEvent.pointerDown(screen.getByRole("button", { name: "open" }), { button: 0 });
+    const trigger = screen.getByRole("button", { name: "open" });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
     return screen.getByRole("menu");
   }
 
@@ -211,9 +213,9 @@ describe("DropdownMenuMainLevel：手機 sheet 裡子選單展開時主層不渲
 
   function renderLevel(drilled: boolean) {
     render(
-      <DropdownMenu open>
+      <DropdownMenu open phoneSheet>
         <DropdownMenuTrigger>open</DropdownMenuTrigger>
-        <DropdownMenuContent phoneSheet>
+        <DropdownMenuContent>
           <DropdownMenuMainLevel drilled={drilled}>
             <DropdownMenuItem>main item</DropdownMenuItem>
           </DropdownMenuMainLevel>
@@ -237,5 +239,100 @@ describe("DropdownMenuMainLevel：手機 sheet 裡子選單展開時主層不渲
     stubLayoutTier("overlay");
     renderLevel(true);
     expect(screen.getByRole("menuitem", { name: "main item" })).toBeInTheDocument();
+  });
+});
+
+describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一下的 click 不會落到剛升起的選單項上）", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function Harness({ phoneSheet = true, onSelect, onOpenChange, open }: { phoneSheet?: boolean; onSelect?: () => void; onOpenChange?: (open: boolean) => void; open?: boolean }) {
+    return (
+      <DropdownMenu phoneSheet={phoneSheet} open={open} onOpenChange={onOpenChange}>
+        <DropdownMenuTrigger>open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem onSelect={onSelect}>first</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+  // 選單開著時 Radix 把選單外標成 aria-hidden：要在開之前拿觸發鈕。
+  const trigger = () => screen.getByRole("button", { name: "open", hidden: true });
+
+  it("手機：pointerdown 被擋下、不開；同一下的 click 才開，而且不選任何項目", () => {
+    stubLayoutTier("phone");
+    const onSelect = vi.fn();
+    render(<Harness onSelect={onSelect} />);
+    expect(fireEvent.pointerDown(trigger(), { button: 0 })).toBe(false);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toHaveAttribute("data-menu-sheet");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("手機：pointerdown 不是在這顆鈕上按下的 click（例如在背板按下關掉選單、放開時落在鈕上）不會打開；輔助技術的 click（detail 0）照樣開", () => {
+    stubLayoutTier("phone");
+    render(<Harness />);
+    fireEvent.click(trigger(), { detail: 1 });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(trigger(), { detail: 0 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("手機：鍵盤 Enter／ArrowDown 照常打開（keydown），之後的 click 不會把它關掉", () => {
+    stubLayoutTier("phone");
+    render(<Harness />);
+    fireEvent.keyDown(trigger(), { key: "Enter" });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    cleanup();
+    render(<Harness />);
+    fireEvent.keyDown(trigger(), { key: "ArrowDown" });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("受控：click 開啟經過 onOpenChange(true)", () => {
+    stubLayoutTier("phone");
+    const onOpenChange = vi.fn();
+    render(<Harness open={false} onOpenChange={onOpenChange} />);
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    fireEvent.click(trigger());
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it.each([["640 以上帶 phoneSheet", "overlay", true], ["手機但沒帶 phoneSheet", "phone", false]] as const)("%s：照 Radix 原本在 pointerdown 開", (_label, tier, phoneSheet) => {
+    stubLayoutTier(tier);
+    render(<Harness phoneSheet={phoneSheet} />);
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("sheet 開著時跨過 640 → 整個選單關掉（受控的收到 onOpenChange(false)）；沒帶 phoneSheet 的照舊開著", () => {
+    const handle = stubLayoutTier("phone");
+    const onOpenChange = vi.fn();
+    render(<Harness open onOpenChange={onOpenChange} />);
+    act(() => handle.setLayoutTier("overlay"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    cleanup();
+
+    const again = stubLayoutTier("phone");
+    render(<Harness />);
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    act(() => again.setLayoutTier("docked"));
+    expect(screen.queryByRole("menu")).toBeNull();
+    cleanup();
+
+    const plain = stubLayoutTier("phone");
+    render(<Harness phoneSheet={false} />);
+    fireEvent.pointerDown(trigger(), { button: 0 });
+    act(() => plain.setLayoutTier("overlay"));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 });
