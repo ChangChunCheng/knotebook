@@ -144,6 +144,17 @@ describe("VersionsSheet", () => {
     expect(within(sheet).getByRole("button", { name: "Save current version" })).toBeInTheDocument();
   });
 
+  it("步一：「返回」與篩選鈕在手機夠大（返回高 44、篩選高 36）；步二的「清單」鈕也是 44", async () => {
+    stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
+    renderSheet();
+    const sheet = await screen.findByRole("dialog", { name: "Version history" });
+    expect(within(sheet).getByRole("button", { name: "Back" })).toHaveClass("h-11");
+    const filter = within(sheet).getByRole("group", { name: "Filter versions" });
+    for (const button of within(filter).getAllByRole("button")) expect(button).toHaveClass("max-sm:h-9");
+    fireEvent.click(await within(sheet).findByRole("button", { name: vrow(1) }));
+    expect(await within(sheet).findByRole("button", { name: /^List/ })).toHaveClass("h-11");
+  });
+
   it("步一的列內有編輯者頭貼群，可及名稱不變", async () => {
     const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
     stub({ [LIST]: list([ver(2, { editors: [{ handle: "alice", agentLabel: "Claude", avatar: { id: ID, v: 2 } }, { handle: "bob", agentLabel: null, avatar: null }] }), ver(1)]) });

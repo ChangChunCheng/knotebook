@@ -1,8 +1,9 @@
-import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
+import { forwardRef, useCallback, useEffect, useRef, type ComponentPropsWithoutRef, type ElementRef, type RefObject } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "./icons";
 import { cn } from "@/lib/utils";
+import { readKeyboardInset } from "@/lib/visual-viewport";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -41,7 +42,14 @@ const dialogContentVariants = cva(
   {
     variants: {
       size: {
-        default: "max-w-lg p-6",
+        default:
+          "max-w-lg p-6 " +
+          // 手機（< 640）：貼底的 sheet。鍵盤升起時 `--kb-inset` 把 sheet 抬到鍵盤上方、`--kb-visible-h`（視覺視窗高）決定高度上限，
+          // 這樣 iOS 平移視覺視窗時 sheet 的頂端也不會跑出可見範圍；內容高過上限就在 sheet 內捲動。
+          // 不過場：bottom／max-height 若跟著 `duration-200` 過渡，sheet 會落後鍵盤並在平移時晃動。
+          "max-sm:inset-x-0 max-sm:bottom-(--kb-inset,0px) max-sm:top-auto max-sm:translate-x-0 max-sm:translate-y-0 " +
+          "max-sm:max-w-none max-sm:max-h-[calc(var(--kb-visible-h,100dvh)*0.9)] max-sm:overflow-y-auto max-sm:transition-none " +
+          "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))] kb-sheet",
         panel:
           "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92vh] " +
           "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
@@ -52,6 +60,44 @@ const dialogContentVariants = cva(
     defaultVariants: { size: "default" },
   },
 );
+
+/**
+ * 手機 sheet 跟著螢幕鍵盤：只在對話框開著（內容有掛載）時訂閱 `visualViewport`，直接把 `--kb-inset`（鍵盤高）與
+ * `--kb-visible-h`（視覺視窗高）寫到內容元素上，不觸發 React 重繪；沒有視覺視窗或雙指放大中時兩個變數都移除。
+ * 同一幀的多次事件合併成一次讀值。
+ */
+function SheetViewportVars({ target }: { target: RefObject<HTMLElement | null> }) {
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const element = target.current;
+      if (!element) return;
+      // 以縮放判斷而不是以鍵盤高度：iOS 把視覺視窗平移到底時鍵盤高度剛好是 0，但可見高度仍比版面視窗矮。
+      if (Math.abs(viewport.scale - 1) <= 0.01) {
+        element.style.setProperty("--kb-inset", `${readKeyboardInset()}px`);
+        element.style.setProperty("--kb-visible-h", `${viewport.height}px`);
+      } else {
+        element.style.removeProperty("--kb-inset");
+        element.style.removeProperty("--kb-visible-h");
+      }
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(apply);
+    };
+    apply();
+    viewport.addEventListener("resize", schedule);
+    viewport.addEventListener("scroll", schedule);
+    return () => {
+      viewport.removeEventListener("resize", schedule);
+      viewport.removeEventListener("scroll", schedule);
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, [target]);
+  return null;
+}
 
 /**
  * `dismissOnOutside`（預設 `true`＝Radix 預設行為，零變）：設為 `false` 時，**只**擋「點對話框外面」
@@ -69,14 +115,24 @@ export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &
     VariantProps<typeof dialogContentVariants> & { dismissOnOutside?: boolean }
->(({ className, children, size, dismissOnOutside = true, onInteractOutside, ...props }, ref) => {
+>(({ className, children, size, dismissOnOutside = true, onInteractOutside, style, ...props }, ref) => {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const setRefs = useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref],
+  );
   // #247：panel 由 ManagementShell 在右卡放自己的 ✕；這裡只決定要不要渲染，不新增 prop。
   const renderBuiltInClose = size !== "panel";
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={size === "panel" ? undefined : "kb-sheet-overlay"} />
       <DialogPrimitive.Content
-        ref={ref}
+        ref={setRefs}
+        style={style}
         className={cn(dialogContentVariants({ size }), className)}
         {...props}
         onInteractOutside={(event) => {
@@ -84,6 +140,7 @@ export const DialogContent = forwardRef<
           if (!dismissOnOutside) event.preventDefault();
         }}
       >
+        {renderBuiltInClose && <SheetViewportVars target={contentRef} />}
         {children}
         {renderBuiltInClose && (
           <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-[''] opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
