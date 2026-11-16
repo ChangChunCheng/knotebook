@@ -874,12 +874,46 @@ test.describe("shortcuts dialog", () => {
     test.info().annotations.push({ type: "e5-site", description: `actions=${actions.length} instruct=${actions.some((a) => a.kind === "instruct")}` });
   });
 
-  test("E6 窄螢幕：Ctrl+K 先打開側欄；從抽屜裡的使用者選單開快捷鍵頁，抽屜仍在，Esc 只關快捷鍵頁 [sc:search] [sc:openShortcuts]", async ({ page }) => {
+  test("E6b 手機（390 寬）：筆記畫面按 Ctrl+K 回到清單並聚焦底部搜尋框、Esc 收起搜尋；從頂列頭像開快捷鍵頁，Esc 只關快捷鍵頁 [sc:search] [sc:openShortcuts]", async ({ page }) => {
+    test.setTimeout(90_000);
+    await startNote(page, "dlg-phone");
+    await page.setViewportSize({ width: 390, height: 844 });
+    const search = page.getByRole("textbox", { name: "Search notes", exact: true });
+    await expect(page.getByRole("button", { name: "Open sidebar" })).toHaveCount(0);
+    await expect(search).toBeHidden();
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(search).toBeFocused();
+    await expect(page.getByRole("dialog", { name: "Navigation" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+    await expect(page.locator("[data-phone-list-fabs]").getByRole("button", { name: "New note", exact: true })).toBeVisible();
+
+    const trigger = page.locator("[data-phone-top-bar]").getByRole("button", { name: "admin", exact: true });
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+    const dialog = shortcutsDialog(page);
+    await expect(dialog).toBeVisible();
+    // 手機上快捷鍵頁是由下往上升起的 sheet：進場動畫跑完再量（升起途中外框有一部分還在視窗下方）
+    await expect.poll(() => dialog.evaluate((el) => el.getAnimations().length)).toBe(0);
+    const box = (await dialog.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+    // Esc 只關快捷鍵頁（不是清單的「Back to menu」，所以不重開帳號選單），焦點回頭像鈕
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test("E6 浮動側欄（700 寬）：Ctrl+K 先打開側欄；從抽屜裡的使用者選單開快捷鍵頁，抽屜仍在，Esc 只關快捷鍵頁 [sc:search] [sc:openShortcuts]", async ({ page }) => {
     test.setTimeout(90_000);
     await startNote(page, "dlg-narrow");
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 700, height: 844 });
     // search 說明的「窄螢幕會先打開側欄」：Ctrl+K 開抽屜並把焦點放進抽屜裡的搜尋框
-    await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
     await page.keyboard.press("ControlOrMeta+k");
     const drawer = page.getByRole("dialog", { name: "Navigation" });
     await expect(drawer).toBeVisible();
@@ -887,7 +921,7 @@ test.describe("shortcuts dialog", () => {
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: "Open sidebar" }).click();
     await expect(drawer).toBeVisible();
     const trigger = drawer.getByRole("button", { name: "admin", exact: true });
     await trigger.click();

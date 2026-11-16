@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { findUserMenuReturnTarget, isNarrowViewport } from "./tour-targets";
 
 function stubNarrow(narrow: boolean) {
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => ({
-      matches: query === NARROW_QUERY ? narrow : false,
+      matches: query === OVERLAY_QUERY ? narrow : false,
       media: query,
       onchange: null,
       addEventListener: () => {},
@@ -26,7 +26,7 @@ afterEach(() => {
 describe("導覽結束後要聚焦的使用者選單觸發鈕", () => {
   function mount() {
     document.body.innerHTML = `
-      <button data-kb-tour-target="drawerButton">Open navigation</button>
+      <button data-kb-tour-target="drawerButton">Open sidebar</button>
       <aside><button data-kb-tour-target="userMenu">Ann</button></aside>
     `;
     return {

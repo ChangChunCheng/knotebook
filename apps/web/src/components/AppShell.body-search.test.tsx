@@ -8,7 +8,7 @@ import i18n from "@/i18n";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { onSearchMarkClear } from "@/hooks/search-mark";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "./AppShell";
@@ -19,7 +19,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
  * #93：窄視窗抽屜裡點內文區的片段 → 抽屜一律關（別篇靠 pathname 也會關；同篇 pathname 不變，要靠點擊時主動關）。
  * 防抖 300 ms 與 lazy chunk 都用真的（全域 asyncUtilTimeout 10 s，test/setup.ts）。
  */
-const USER = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true } as UserDto;
+const USER = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null } satisfies UserDto;
 const NOTE: NoteDto = {
   id: "44444444-4444-4444-8444-444444444444", title: "Drawer Note", ownerId: "u1", role: "owner", createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z", slug: "drawer-note", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null,
@@ -44,8 +44,8 @@ function stubFetch() {
 }
 
 function stubNarrow() {
-  const mql = { matches: true, media: NARROW_QUERY, addEventListener: () => {}, removeEventListener: () => {}, onchange: null, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false };
-  vi.stubGlobal("matchMedia", vi.fn((query: string) => (query === NARROW_QUERY ? mql : { ...mql, matches: false })));
+  const mql = { matches: true, media: OVERLAY_QUERY, addEventListener: () => {}, removeEventListener: () => {}, onchange: null, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false };
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => (query === OVERLAY_QUERY ? mql : { ...mql, matches: false })));
 }
 
 function renderShell(wrap: (shell: ReactNode) => ReactNode = (s) => s, initialEntry = "/") {
@@ -61,7 +61,7 @@ function renderShell(wrap: (shell: ReactNode) => ReactNode = (s) => s, initialEn
 }
 
 async function openDrawerAndSearch() {
-  fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
   const drawer = await screen.findByRole("dialog", { name: "Navigation" });
   fireEvent.change(within(drawer).getByRole("textbox", { name: "Search notes" }), { target: { value: "needle" } });
   return within(drawer).findByTestId("body-match");
@@ -120,7 +120,7 @@ describe("W3 搜尋跳轉的常駐標記：只有「關閉搜尋」會清", () =
       fireEvent.click(await openDrawerAndSearch());
       await drawerGone();
       expect(cleared).not.toHaveBeenCalled();
-      fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
       const drawer = await screen.findByRole("dialog", { name: "Navigation" });
       expect(within(drawer).getByRole("textbox", { name: "Search notes" })).toHaveValue("needle");
       fireEvent.click(within(drawer).getByRole("button", { name: "Clear search" }));
@@ -136,7 +136,7 @@ describe("W3 搜尋跳轉的常駐標記：只有「關閉搜尋」會清", () =
     try {
       renderShell();
       expect(cleared).not.toHaveBeenCalled();
-      fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
       const box = within(await screen.findByRole("dialog", { name: "Navigation" })).getByRole("textbox", { name: "Search notes" });
       fireEvent.change(box, { target: { value: "ne" } });
       fireEvent.change(box, { target: { value: "nee" } });

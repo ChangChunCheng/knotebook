@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { TourContext } from "@/lib/tour-context";
 import type { ShortcutsStartPage } from "@/lib/shortcuts-dialog";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
  * 外殼（ShortcutsDialog）＋真的內容元件（ShortcutsLazy）合在一起的行為：開啟落點、Tab 循環、選分類不關對話框。
@@ -154,5 +155,20 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     await host.setOpen(true, "global");
     expect(await screen.findByRole("region", { name: "General" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "General" })).toHaveAttribute("aria-current", "true");
+  });
+});
+
+describe("手機（< 640）", () => {
+  it("W-P1 開啟時停在分類清單，焦點落在清單的「‹」：在對話框裡、所在的卡不是藏起來的那一層（內容區在藏起來的卡裡、沒有拿到焦點）", async () => {
+    stubLayoutTier("phone");
+    renderOpen();
+    const dialog = await screen.findByRole("dialog", { name: "Help" });
+    const back = await within(dialog).findByRole("button", { name: "Close" });
+    await waitFor(() => expect(back).toHaveFocus());
+    const active = document.activeElement as HTMLElement;
+    expect(dialog.contains(active)).toBe(true);
+    expect(active.closest("[data-shortcuts-card]")?.className).not.toMatch(/(^| )hidden( |$)/);
+    const content = dialog.querySelector<HTMLElement>("[data-shortcuts-content]")!;
+    expect(content.closest("[data-shortcuts-card]")?.className).toMatch(/(^| )hidden( |$)/);
   });
 });

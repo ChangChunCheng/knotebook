@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { AppShellLayout } from "./AppShellLayout";
 import type { UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
@@ -22,7 +23,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
  * App.appBoundary.test.tsx——這裡手組的形狀對，不代表 App.tsx 的對，兩邊都要有。
  *
  * 鑑別力紀律（本 repo 慣性缺陷形）：
- * - B 畫面與 NotePageFallback 都包 AppShell——只斷言 AppShell 招牌元素不鑑別；
+ * - B 畫面與 NotePageFallback 都在 layout route 的 AppShell 裡——只斷言 AppShell 招牌元素不鑑別；
  *   斷言載入畫面＝載入文案在場「且」兩支錯誤文案皆不在場，斷言 B＝分支文案/重試鈕。
  * - 凡斷言旗標狀態的案子，起始值顯式設成與期望終態相反（beforeEach 清空後直接
  *   斷言「被清」是恆真式）。
@@ -49,6 +50,7 @@ const ADMIN_USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 interface FakeResponseInit {
@@ -65,7 +67,7 @@ function fakeResponse({ ok, status, json }: FakeResponseInit): Response {
   } as unknown as Response;
 }
 
-// AppShell（B 畫面與 NotePageFallback 都包）需要 Router + QueryClientProvider +
+// B 畫面與 NotePageFallback 在 layout route 的 AppShell 裡渲染，AppShell 需要 Router + QueryClientProvider +
 // useSession 的 fetch——boundary 不接自己 fallback 丟的錯，缺任一項會以難解方式炸。
 function Providers({ children }: { children: ReactNode }) {
   // useState 惰性初始化：案 8a–8d 走 rerender，直接 new 會每次重建 client
@@ -73,7 +75,13 @@ function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={["/notes/n1"]}>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={["/notes/n1"]}>
+          <Routes>
+            <Route element={<AppShellLayout />}>
+              <Route path="*" element={children} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
       </ThemeProvider>
     </QueryClientProvider>
   );
@@ -164,9 +172,11 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: RETRY_TEXT })).toBeInTheDocument();
-    // #115：B 畫面包 AppShell → 窄視窗要有開抽屜的入口（NarrowTopBar 消費端
+    // #115：B 畫面在 layout route 的 AppShell 裡 → 窄視窗要有開抽屜的入口（NarrowTopBar 消費端
     // 明確清單之一，見 NarrowTopBar.test.tsx 檔頭）。
-    expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
+    // 內文卡 640 起有圓角與框，手機貼齊螢幕邊。
+    expect(screen.getByText(CHUNK_ERROR_TEXT).closest(".overflow-y-auto")).toHaveClass("rounded-xl", "border", "max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 
   it("案 3：chunk 錯誤（offline）→ 不 reload、直接 B，且旗標未被設（離線不燒額度）", () => {
@@ -542,7 +552,7 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     );
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open sidebar" })).not.toBeInTheDocument();
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     screen.getByRole("button", { name: RETRY_TEXT }).click();
     expect(reload).toHaveBeenCalledTimes(1);
@@ -557,7 +567,7 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     );
     expect(reload).toHaveBeenCalledTimes(1);
     expectLoadingScreen();
-    expect(screen.queryByRole("button", { name: "Open navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open sidebar" })).not.toBeInTheDocument();
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
@@ -605,7 +615,7 @@ describe("AppErrorBoundary（案 10）", () => {
     // 它的不變量是零 context 相依（不用 AppShell；錯誤可能正來自 auth/query），
     // 掛上去要嘛在兜底畫面裡再拋 context 錯誤、要嘛是死鈕。日後「順手補一致性」
     // 把它加上來，這條就紅。
-    expect(screen.queryByRole("button", { name: "Open navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open sidebar" })).not.toBeInTheDocument();
     screen.getByRole("button", { name: RELOAD_TEXT }).click();
     expect(reload).toHaveBeenCalledTimes(1);
   });

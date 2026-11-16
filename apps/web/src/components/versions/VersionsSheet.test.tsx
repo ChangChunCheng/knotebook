@@ -12,7 +12,8 @@ import { noteSchema } from "@/collab/schema";
 import { Toaster, dismissAllToasts } from "@/components/ui/toast";
 import { ThemeProvider } from "@/theme";
 import { versionListKey } from "@/api/versions";
-import { KIND_FILTER_STORAGE_KEY, NARROW_QUERY, VersionsProvider, useVersionsController } from "@/lib/versions-context";
+import { stubLayoutTier } from "@/test/layout-tier";
+import { KIND_FILTER_STORAGE_KEY, VersionsProvider, useVersionsController } from "@/lib/versions-context";
 import { VersionsSheet } from "./VersionsSheet";
 
 vi.mock("@/lib/use-container-width", () => ({ useContainerWidth: () => widthRef.current }));
@@ -29,7 +30,7 @@ function b64(blocks: unknown[]): string {
   blocksToYXmlFragment(BlockNoteEditor.create({ schema: noteSchema }), blocks as any, doc.getXmlFragment(YDOC_FRAGMENT));
   return btoa(String.fromCharCode(...Y.encodeStateAsUpdate(doc)));
 }
-const ver = (seq: number, over: Partial<VersionDto> = {}): VersionDto => ({ id: vid(seq), seq, kind: "auto", name: null, editors: [{ handle: "ann", agentLabel: null }], baseSeq: null, base: baseRefOrNull(over.baseSeq), createdAt: "2026-10-09T00:00:00.000Z", ...over });
+const ver = (seq: number, over: Partial<VersionDto> = {}): VersionDto => ({ id: vid(seq), seq, kind: "auto", name: null, editors: [{ handle: "ann", agentLabel: null, avatar: null }], baseSeq: null, base: baseRefOrNull(over.baseSeq), createdAt: "2026-10-09T00:00:00.000Z", ...over });
 const V1 = [{ id: "A", type: "paragraph", content: "甲" }, { id: "B", type: "paragraph", content: "乙" }];
 const V2 = [{ id: "A", type: "paragraph", content: "甲改" }, { id: "C", type: "paragraph", content: "丙" }];
 
@@ -52,21 +53,11 @@ const list = (versions: VersionDto[], nextBefore: number | null = null): Version
   nextBefore,
 });
 
-/** 同 versions-context.test 的 installMatchMedia：只有 `NARROW_QUERY` 回 `narrow`。 */
-function installMatchMedia(narrow: boolean) {
-  const original = window.matchMedia;
-  window.matchMedia = ((query: string) => ({
-    matches: query === NARROW_QUERY ? narrow : false,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
+/** 整頁只在手機（< 640）出現：版面段固定在 phone。 */
+function installMatchMedia() {
+  stubLayoutTier("phone");
   return () => {
-    window.matchMedia = original;
+    vi.unstubAllGlobals();
   };
 }
 
@@ -134,7 +125,7 @@ describe("VersionsSheet", () => {
     window.localStorage.clear();
     dismissAllToasts();
     widthRef.current = 800;
-    restoreMatchMedia = installMatchMedia(true);
+    restoreMatchMedia = installMatchMedia();
   });
   afterEach(() => {
     restoreMatchMedia();
@@ -151,6 +142,41 @@ describe("VersionsSheet", () => {
     expect(await within(sheet).findByText("Based on amber-bison (0002aaa) · no changes")).toBeInTheDocument();
     expect(within(sheet).getByRole("button", { name: vrow(1) })).toBeInTheDocument();
     expect(within(sheet).getByRole("button", { name: "Save current version" })).toBeInTheDocument();
+  });
+
+  it("步一：「返回」與篩選鈕在手機夠大（返回高 44、篩選高 36）；步二的「清單」鈕也是 44", async () => {
+    stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
+    renderSheet();
+    const sheet = await screen.findByRole("dialog", { name: "Version history" });
+    expect(within(sheet).getByRole("button", { name: "Back" })).toHaveClass("h-11");
+    const filter = within(sheet).getByRole("group", { name: "Filter versions" });
+    for (const button of within(filter).getAllByRole("button")) expect(button).toHaveClass("max-sm:h-9");
+    fireEvent.click(await within(sheet).findByRole("button", { name: vrow(1) }));
+    expect(await within(sheet).findByRole("button", { name: /^List/ })).toHaveClass("h-11");
+  });
+
+  it("步一的列內有編輯者頭貼群，可及名稱不變", async () => {
+    const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    stub({ [LIST]: list([ver(2, { editors: [{ handle: "alice", agentLabel: "Claude", avatar: { id: ID, v: 2 } }, { handle: "bob", agentLabel: null, avatar: null }] }), ver(1)]) });
+    renderSheet();
+    const sheet = await screen.findByRole("dialog", { name: "Version history" });
+    const row = await within(sheet).findByRole("button", { name: vrow(2) });
+    expect(row.querySelectorAll("img")).toHaveLength(1);
+    expect(row.querySelectorAll("[data-editor-avatar]")).toHaveLength(2);
+    expect(row).toHaveTextContent("alice (Claude), bob ·");
+  });
+
+  it("步二頁首摘要旁有編輯者頭貼群（文字摘要不變）", async () => {
+    const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    stub({ [LIST]: list([ver(2, { editors: [{ handle: "alice", agentLabel: null, avatar: { id: ID, v: 2 } }] }), ver(1)]) });
+    renderSheet();
+    const sheet = await screen.findByRole("dialog", { name: "Version history" });
+    fireEvent.click(await within(sheet).findByRole("button", { name: vrow(2) }));
+    const compare = await within(sheet).findByTestId("sheet-compare-row");
+    const header = compare.parentElement!;
+    expect(header.querySelectorAll("[data-editor-avatar]")).toHaveLength(1);
+    expect(header.querySelector("img")).not.toBeNull();
+    expect(header).toHaveTextContent("· alice");
   });
 
   it("點列 → 步二：標題「List · 名稱 (短 id)」、單欄 diff（沒有並排鈕；容器寬 1600 仍單欄）、底部 上一版｜套用 名稱 (短 id)｜下一版", async () => {

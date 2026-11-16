@@ -4,6 +4,7 @@ import { BLOCK_ANCHOR_RE, TOP_SECTION_ID } from "@knotebook/shared";
 import type { BlockAnchorApi } from "./block-anchor-context";
 import { findMatchBlock, topUnits } from "./block-find";
 import { onSearchMarkClear, watchSearchEscape } from "./search-mark";
+import { scrollToTopOf, visibleHeightOf } from "@/lib/page-scroll";
 
 /**
  * #93：側欄搜尋點片段時，router navigation state 帶的查詢字（`navigate(href, { state: { kbFind } })`）。不進網址，免得複製出去的連結被污染。
@@ -91,8 +92,10 @@ function contentLine(el: HTMLElement): HTMLElement | null {
 function scrollPlan(root: HTMLElement, el: HTMLElement, align: ScrollLogicalPosition): { target: HTMLElement; block: ScrollLogicalPosition } {
   if (align !== "center") return { target: el, block: align };
   const line = contentLine(el);
-  if (line === null) return { target: el, block: el.getBoundingClientRect().height > root.clientHeight ? "start" : "center" };
-  return { target: line, block: line.getBoundingClientRect().height > root.clientHeight ? "start" : "center" };
+  // 手機上 root 不自己捲（文件在捲），它的 clientHeight 是整篇的高度；比的是實際看得到的高度。
+  const visible = visibleHeightOf(root);
+  if (line === null) return { target: el, block: el.getBoundingClientRect().height > visible ? "start" : "center" };
+  return { target: line, block: line.getBoundingClientRect().height > visible ? "start" : "center" };
 }
 
 /** 要捲到哪：`block` ＝目標 block（高亮它）；`top` ＝捲回頂端（`_top` 段落找不到命中字）；null ＝還沒好，繼續等。 */
@@ -207,8 +210,7 @@ function runScroll(root: HTMLElement, resolve: () => Resolved, align: ScrollLogi
     if (target === null) return;
     stopWaiting();
     if (target.kind === "top") {
-      if (typeof root.scrollTo === "function") root.scrollTo({ top: 0 });
-      else root.scrollTop = 0;
+      scrollToTopOf(root);
       return;
     }
     const el = target.el;
@@ -307,7 +309,7 @@ export interface UseBlockAnchorOptions {
   noteKey: string | undefined;
   /** 這一篇可以渲染了（member：memberAnchorReady；公開頁：doc 解碼完成）。 */
   ready: boolean;
-  /** 捲動容器（NoteEditor 的內層 overflow-y-auto；公開頁的內文容器）。 */
+  /** 捲動容器（NoteEditor 的內層 overflow-y-auto；公開頁的內文容器）。手機上 NoteEditor 那層不捲、文件在捲，捲回頂端改捲文件（`lib/page-scroll.ts`）。 */
   root: HTMLElement | null;
   /** 簡報播放中（`?present`）忽略 `#b-`。 */
   ignore?: boolean;
@@ -401,8 +403,7 @@ export function useBlockAnchor(opts: UseBlockAnchorOptions): BlockAnchorApi {
   const scrollToTop = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
-    if (typeof root.scrollTo === "function") root.scrollTo({ top: 0 });
-    else root.scrollTop = 0;
+    scrollToTopOf(root);
   }, []);
 
   return useMemo(() => ({ currentNoteId: opts.currentNoteId, requestAnchor, scrollToTop }), [opts.currentNoteId, requestAnchor, scrollToTop]);

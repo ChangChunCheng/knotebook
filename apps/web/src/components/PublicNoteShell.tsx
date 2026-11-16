@@ -1,5 +1,7 @@
+import { SAFE_INSETS } from "@/components/ui/safe-area";
 import { Component, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useCardPage } from "@/theme";
 import { useOnline } from "./ErrorBoundary";
 import { Button } from "./ui/button";
 
@@ -7,9 +9,9 @@ import { Button } from "./ui/button";
  * `/p/:token` 公開唯讀頁的頁面外殼（#72）——fallback／錯誤邊界／頁面本體
  * 共用的單卡版面。
  *
- * **刻意不重用 `NotePageFallback`／`NoteRouteErrorBoundary`**：那兩個都包
- * `AppShell`——會對匿名訪客打 `/api/auth/me`、露出側欄（筆記清單、New note、
- * 搜尋）。公開頁的不變量是「整條路由零 auth 相依」，`App.publicRoute.test.tsx`
+ * **刻意不重用 `NotePageFallback`／`NoteRouteErrorBoundary`**：那兩個必須在
+ * `AppShellLayout` 底下用（NarrowTopBar 要 AppShell 的 context），而那份 AppShell
+ * 會對匿名訪客打 `/api/auth/me`、露出側欄（筆記清單、New note、搜尋）。公開頁的不變量是「整條路由零 auth 相依」，`App.publicRoute.test.tsx`
  * 用『fetch 從未被呼叫』釘住。
  *
  * 這個模組必須留在 entry bundle（App.tsx 直接 import）：fallback 是在 lazy chunk
@@ -36,8 +38,10 @@ import { Button } from "./ui/button";
  * `inert`（#229）：簡報外殼掛著時背景不可互動；外殼是它的兄弟。
  */
 export function PublicPageFrame({ children, inert }: { children: ReactNode; inert?: boolean }) {
+  // 卡片底的頁面：手機寬度時瀏覽器上方列跟著用卡片色。
+  useCardPage();
   return (
-    <div inert={inert} className="flex h-screen flex-col overflow-hidden bg-card">
+    <div inert={inert} className={`flex h-dvh flex-col overflow-hidden bg-card ${SAFE_INSETS}`}>
       {children}
     </div>
   );

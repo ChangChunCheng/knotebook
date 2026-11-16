@@ -1075,7 +1075,7 @@ test.describe("feature tour (manual start)", () => {
     test.setTimeout(120_000);
     await signUpFreshUser(browser, page);
     await page.setViewportSize({ width: 390, height: 844 });
-    const drawerButton = page.getByRole("button", { name: "Open navigation", exact: true });
+    const drawerButton = page.getByRole("button", { name: "Open sidebar", exact: true });
     await drawerButton.click();
     const drawer = page.getByRole("dialog", { name: "Navigation" });
     await expect(drawer).toBeVisible();
@@ -1089,7 +1089,7 @@ test.describe("feature tour (manual start)", () => {
 
     // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）也在 ⋮ 裡，站 7、8 指編輯器裡真的 [[ 與 / 選單；
     // 其餘指開側欄的漢堡鈕。抽屜整輪都不再出現。
-    const label = (n: number): string => (n === 5 || n === 6 ? "More" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open navigation");
+    const label = (n: number): string => (n === 5 || n === 6 ? "More" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar");
     await walkToLastStop(page, async (n) => {
       await expect(page.locator("[data-sidebar-drawer]")).toHaveCount(0);
       const target =

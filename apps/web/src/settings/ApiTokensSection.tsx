@@ -47,7 +47,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
  * 刻意不抽共用常數：那幾處的尺寸各自跟著所在版面調過，抽出來會變成「改一處動三處」。
  */
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 撤銷確認（比照 SettingsAiSection 的 DeleteProviderDialog）。觸發鈕是列尾的紅垃圾桶 `RowIconButton`。 */

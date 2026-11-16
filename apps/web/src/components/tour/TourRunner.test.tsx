@@ -7,7 +7,7 @@ import { canonicalNotePath, type AiActionDto, type NoteDto, type UserDto } from 
 import type { CollabState } from "@/collab/connection";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { SidebarQueryProvider } from "@/lib/sidebar-query";
 import { getShellControls, registerEditor, type TourEditor } from "@/lib/tour-bridge";
 import { findDrawerButton, findTourTarget, findUserMenuTrigger, tourTarget, type TourTargetId } from "@/lib/tour-targets";
@@ -38,6 +38,7 @@ const USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 function noteDto(id: string, title: string, slug: string): NoteDto {
@@ -112,7 +113,7 @@ function stubFetch() {
 
 type MediaListener = (event: { matches: boolean }) => void;
 let narrowNow = false;
-/** 只收 `NARROW_QUERY` 的監聽；其他查詢（例如主題的深色模式）恆不符合、不會變。 */
+/** 只收 `OVERLAY_QUERY` 的監聽；其他查詢（例如主題的深色模式）恆不符合、不會變。 */
 const mediaListeners = new Set<MediaListener>();
 
 function stubViewport(narrow: boolean) {
@@ -120,10 +121,10 @@ function stubViewport(narrow: boolean) {
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => {
-      const listeners = query === NARROW_QUERY ? mediaListeners : new Set<MediaListener>();
+      const listeners = query === OVERLAY_QUERY ? mediaListeners : new Set<MediaListener>();
       return {
         get matches() {
-          return query === NARROW_QUERY ? narrowNow : false;
+          return query === OVERLAY_QUERY ? narrowNow : false;
         },
         media: query,
         onchange: null,
@@ -258,7 +259,7 @@ async function fakePrepareSample(signal: AbortSignal): Promise<NoteDto | null> {
 }
 
 /** 使用者選單入口傳的查找函式：寬視窗是側欄的帳號列、窄視窗是漢堡鈕。 */
-const lookupTrigger = () => (window.matchMedia(NARROW_QUERY).matches ? findDrawerButton() : findUserMenuTrigger());
+const lookupTrigger = () => (window.matchMedia(OVERLAY_QUERY).matches ? findDrawerButton() : findUserMenuTrigger());
 
 interface StartOptions {
   initial?: string;
@@ -866,7 +867,7 @@ describe("窄視窗：開始時抽屜開著", () => {
       initial: "/",
       props: { prepareSample },
       before: async () => {
-        fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+        fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
         await screen.findByRole("dialog", { name: "Navigation" });
       },
     });
@@ -950,7 +951,7 @@ describe("結束後的焦點", () => {
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
     expect(currentPath).toBe(OTHER_PATH);
-    expect(document.activeElement).toBe(within(document.querySelector(`[data-note-id="${OTHER.id}"]`)!).getByRole("button", { name: "Open navigation" }));
+    expect(document.activeElement).toBe(within(document.querySelector(`[data-note-id="${OTHER.id}"]`)!).getByRole("button", { name: "Open sidebar" }));
   });
 
   it("查找函式回 null → 回到的那頁的標題框", async () => {

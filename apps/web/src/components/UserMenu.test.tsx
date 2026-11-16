@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation, type Location } from "react-router";
-import type { UserDto } from "@knotebook/shared";
+import { avatarUrl, type UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { ShortcutsDialogContext, type ShortcutsDialogApi } from "@/lib/shortcuts-dialog";
 import { TourContext, type TourApi } from "@/lib/tour-context";
 import { UserMenu } from "./UserMenu";
+import { stubLayoutTier } from "@/test/layout-tier";
+import { pressTrigger } from "@/test/menu-trigger";
 
 // 主題色選擇器：六個 RadioItem 渲染／role=menuitemradio／aria-checked、
 // 點選→data-accent＋localStorage＋選單不關閉、鍵盤方向鍵移動焦點。
@@ -39,6 +41,7 @@ const USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 function stubFetch(user: UserDto = USER) {
@@ -76,7 +79,7 @@ function renderMenu(shortcuts: ShortcutsDialogApi | null = null, tour: TourApi |
  * `fireEvent.click` 開不了——見 SettingsModal.test.tsx 的 `openUserMenu`。 */
 async function openMenu(): Promise<void> {
   await waitFor(() => expect(screen.getByRole("button", { name: "Plain" })).toBeInTheDocument());
-  fireEvent.pointerDown(screen.getByRole("button", { name: "Plain" }), { button: 0 });
+  pressTrigger(screen.getByRole("button", { name: "Plain" }));
   await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
 }
 
@@ -125,6 +128,29 @@ describe("UserMenu 主題色選擇器", () => {
       expect(radio.className).toContain("data-[highlighted]:ring-2");
       expect(radio.className).toContain("data-[highlighted]:ring-foreground");
     }
+  });
+
+  // 色點視覺 16px；粗指標下放大到 28px，並用 after 擴到 44px 點擊範圍，間距跟著拉到圓心距 44。
+  it("色點在粗指標下放大並擴大點擊範圍，間距同步拉開", async () => {
+    renderMenu();
+    await openMenu();
+
+    for (const radio of screen.getAllByRole("menuitemradio")) {
+      for (const token of [
+        "h-4",
+        "w-4",
+        "relative",
+        "pointer-coarse:h-7",
+        "pointer-coarse:w-7",
+        "pointer-coarse:after:absolute",
+        "pointer-coarse:after:-inset-2",
+        "pointer-coarse:after:content-['']",
+      ]) {
+        expect(radio).toHaveClass(token);
+      }
+    }
+    const group = screen.getAllByRole("menuitemradio")[0]!.parentElement!;
+    expect(group).toHaveClass("gap-2", "pointer-coarse:gap-4");
   });
 
   it("點選色點 → 更新 <html> 的 data-accent 與 localStorage，且選單不關閉", async () => {
@@ -472,5 +498,196 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/account"));
     const state = lastLocation?.state as { backgroundLocation?: { pathname: string } } | null;
     expect(state?.backgroundLocation?.pathname).toBe("/n/tester/some-note");
+  });
+});
+
+const AVATAR_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+describe("UserMenu 頭像形（avatar）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderAvatar() {
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ThemeProvider>
+          <MemoryRouter>
+            <UserMenu variant="avatar" />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("UA1 觸發鈕只有頭像：名稱仍是 displayName、點擊範圍 44、視覺 32、沒有名字文字與齒輪", async () => {
+    renderAvatar();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    expect(trigger).toHaveClass("h-11", "w-11");
+    expect(trigger.textContent).toBe("P");
+    expect(trigger.querySelector("svg")).toBeNull();
+    expect((trigger.querySelector("span") as HTMLElement).style.width).toBe("32px");
+  });
+
+  it("UA2 選單內容不變：開得起來、有 Settings 與 Log out", async () => {
+    renderAvatar();
+    pressTrigger(await screen.findByRole("button", { name: "Plain" }));
+    await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
+  });
+
+  it("UA3 預設（row）形不變：有名字文字", async () => {
+    renderMenu();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    expect(trigger.textContent).toContain("Plain");
+    expect(trigger).not.toHaveClass("w-11");
+  });
+
+  it("UA4 有頭貼：觸發鈕內是共用頭像的 img（src 是 avatarUrl），名稱與 44 點擊範圍不變", async () => {
+    stubFetch({ ...USER, avatar: { id: AVATAR_ID, v: 4, pending: false } });
+    renderAvatar();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    expect(trigger).toHaveClass("h-11", "w-11");
+    const imgs = trigger.querySelectorAll("img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].getAttribute("src")).toBe(avatarUrl(AVATAR_ID, 4));
+    expect((imgs[0].parentElement as HTMLElement).style.width).toBe("32px");
+  });
+
+  it("UA5 頭貼 pending 也顯示 img；沒有頭貼則是首字", async () => {
+    stubFetch({ ...USER, avatar: { id: AVATAR_ID, v: 1, pending: true } });
+    const view = renderAvatar();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    expect(trigger.querySelectorAll("img")).toHaveLength(1);
+    view.unmount();
+    stubFetch({ ...USER, avatar: null });
+    renderAvatar();
+    const plain = await screen.findByRole("button", { name: "Plain" });
+    expect(plain.querySelector("img")).toBeNull();
+    expect(plain.textContent).toBe("P");
+  });
+});
+
+describe("UserMenu 帳號列頭像", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function renderTrigger(user: UserDto): Promise<HTMLElement> {
+    stubFetch(user);
+    renderMenu();
+    return screen.findByRole("button", { name: user.displayName });
+  }
+
+  it.each([false, true])("有頭貼（pending=%s）：觸發鈕內有一個 img，src 是 avatarUrl(id, v)", async pending => {
+    const trigger = await renderTrigger({ ...USER, avatar: { id: AVATAR_ID, v: 4, pending } });
+    const imgs = trigger.querySelectorAll("img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].getAttribute("src")).toBe(avatarUrl(AVATAR_ID, 4));
+  });
+
+  it("沒有頭貼：沒有 img，顯示首字", async () => {
+    const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
+    expect(trigger.querySelector("img")).toBeNull();
+    expect(trigger).toHaveTextContent(/^A/);
+  });
+
+  it("img 載入失敗：退回首字", async () => {
+    const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: { id: AVATAR_ID, v: 1, pending: false } });
+    fireEvent.error(trigger.querySelector("img")!);
+    expect(trigger.querySelector("img")).toBeNull();
+    const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === "A");
+    expect(letter).toBeDefined();
+  });
+
+  it("首字的 inline font-size 是 10px（24px 頭像）", async () => {
+    const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
+    const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === "A")!;
+    expect(letter.style.fontSize).toBe("10px");
+  });
+
+  it("首字狀態的底色是 bg-primary、字色是 text-primary-foreground，不被 bg-muted 蓋掉", async () => {
+    const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
+    const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === "A")!;
+    expect(letter).toHaveClass("bg-primary", "text-primary-foreground");
+    expect(letter).not.toHaveClass("bg-muted");
+    expect(letter).not.toHaveClass("text-foreground");
+  });
+
+  it("觸發鈕的可及名稱仍是 displayName（有頭貼時也一樣）", async () => {
+    stubFetch({ ...USER, displayName: "Alice Lin", avatar: { id: AVATAR_ID, v: 1, pending: false } });
+    renderMenu();
+    expect(await screen.findByRole("button", { name: "Alice Lin" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["王小明", "王"],
+    ["👩‍💻 dev", "👩‍💻"],
+    ["éclair", "É"],
+  ])("名字 %j 的首字顯示完整一字 %j", async (displayName, expected) => {
+    const trigger = await renderTrigger({ ...USER, displayName, avatar: null });
+    const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === expected);
+    expect(letter).toBeDefined();
+  });
+});
+
+describe("UserMenu 手機 sheet", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderAvatarMenu() {
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ThemeProvider>
+          <MemoryRouter>
+            <UserMenu variant="avatar" />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("UM-S1 手機：貼底 sheet、列 48px／16px 字（色點不變大）、最上面仍是名字（不另加標題）；選項目後關閉、焦點回頭像", async () => {
+    stubLayoutTier("phone");
+    renderAvatarMenu();
+    const trigger = await screen.findByRole("button", { name: "Plain" });
+    pressTrigger(trigger);
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-menu-sheet");
+    expect(menu).toHaveClass("kb-menu-sheet", "w-full");
+    expect(menu).not.toHaveClass("min-w-56");
+    expect(menu.firstElementChild).toHaveTextContent("Plain");
+    expect(within(menu).getAllByText("Plain")).toHaveLength(1);
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveClass("min-h-12", "text-base");
+    for (const dot of within(menu).getAllByRole("menuitemradio")) expect(dot).not.toHaveClass("min-h-12");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Dark" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("UM-S2 640 以上：照舊是貼著觸發鈕的小選單", async () => {
+    stubLayoutTier("overlay");
+    renderAvatarMenu();
+    pressTrigger(await screen.findByRole("button", { name: "Plain" }));
+    const menu = await screen.findByRole("menu");
+    expect(menu).not.toHaveAttribute("data-menu-sheet");
+    expect(menu).toHaveClass("min-w-56");
+    expect(within(menu).getByRole("menuitem", { name: "Settings" })).not.toHaveClass("min-h-12");
   });
 });

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { foldedIndexOf } from "@/lib/search-match";
+import { PHONE_PAGE_SCROLL_ATTR, STICKY_TOP_VAR } from "@/lib/page-scroll";
+import { stubLayoutTier } from "@/test/layout-tier";
 import indexCssRaw from "../index.css?raw";
 import { ANCHOR_FLASH_ATTR, ANCHOR_MARK_CLASS, ANCHOR_PENDING_CLASS, ANCHOR_SETTLE_MAX_MS, findTextFromState, scrollToBlock, useBlockAnchor } from "./useBlockAnchor";
 import { clearSearchMark } from "./search-mark";
@@ -285,6 +287,67 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     root = buildRoot([H("h1", 1, "One"), P("b", "x")]);
     scrollToBlock(root, "b")();
     expect(spy.mock.contexts[0]).toBe(root.querySelector('[data-id="b"]'));
+  });
+
+  describe("手機：文件在捲（root 在 data-phone-page-scroll 的外框裡，不自己捲）", () => {
+    let frame: HTMLElement;
+    beforeEach(() => {
+      stubLayoutTier("phone");
+      vi.stubGlobal("innerHeight", 844);
+      document.documentElement.style.setProperty(STICKY_TOP_VAR, "100px");
+    });
+    afterEach(() => {
+      frame?.remove();
+      document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+      vi.unstubAllGlobals();
+    });
+    function framed(r: HTMLElement): HTMLElement {
+      frame = document.createElement("div");
+      frame.setAttribute(PHONE_PAGE_SCROLL_ATTR, "");
+      document.body.appendChild(frame);
+      frame.appendChild(r);
+      // root 撐成整篇的高度：比的必須是看得到的高度（視窗 844 − 頁首 100 = 744），不是它。
+      Object.defineProperty(r, "clientHeight", { configurable: true, value: 5000 });
+      return r;
+    }
+
+    it("P10 那一行比「視窗扣掉頁首」高 → start；不高於 → center", () => {
+      root = framed(buildRoot([H("h1", 1, "One"), P("b", "the needle")]));
+      const line = root.querySelector<HTMLElement>('[data-id="b"] > .bn-block > .bn-block-content')!;
+      line.getBoundingClientRect = () => ({ height: 745 }) as DOMRect;
+      scrollToBlock(root, "h1", "needle")();
+      expect(blocks()).toEqual([{ block: "start" }]);
+      spy.mockClear();
+      line.getBoundingClientRect = () => ({ height: 744 }) as DOMRect;
+      scrollToBlock(root, "h1", "needle")();
+      expect(blocks()).toEqual([{ block: "center" }]);
+    });
+
+    it("P11 _top 沒命中 → 捲文件回頂端，root 不動", () => {
+      const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+      root = framed(buildRoot([P("t1", "plain"), H("h1", 1, "One")]));
+      root.scrollTo = vi.fn() as unknown as typeof root.scrollTo;
+      scrollToBlock(root, "_top", "needle")();
+      expect(windowScroll).toHaveBeenCalledWith({ top: 0 });
+      expect(root.scrollTo).not.toHaveBeenCalled();
+      windowScroll.mockRestore();
+    });
+
+    it("P12 useBlockAnchor 的 scrollToTop（同篇的頂端連結）→ 捲文件回頂端", () => {
+      const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+      root = framed(buildRoot([P("t1", "plain")]));
+      root.scrollTo = vi.fn() as unknown as typeof root.scrollTo;
+      let api!: ReturnType<typeof useBlockAnchor>;
+      render(
+        <MemoryRouter initialEntries={["/n"]}>
+          <Host root={root} onApi={(x) => (api = x)} />
+        </MemoryRouter>,
+      );
+      api.scrollToTop();
+      expect(windowScroll).toHaveBeenCalledWith({ top: 0 });
+      expect(root.scrollTo).not.toHaveBeenCalled();
+      windowScroll.mockRestore();
+    });
   });
 
   function Host({ root: r, onApi }: { root: HTMLElement; onApi?: (api: ReturnType<typeof useBlockAnchor>) => void }) {

@@ -22,7 +22,7 @@ import { toast } from "@/components/ui/toast";
 
 /** 與 `ShareDialog.tsx` 的 `SELECT_CLASS` 同形（原生 `<select>`），但撐滿寬度、長 email 以 `truncate` 吃掉不撐破對話框。 */
 const SELECT_CLASS =
-  "h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 type Mode = "transfer" | "delete";

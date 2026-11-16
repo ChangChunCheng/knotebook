@@ -22,7 +22,9 @@ import {
   useSetPublicSlug,
   useSetPublicWidth,
 } from "@/api/public-link";
+import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -33,10 +35,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toNoteWidth } from "@/components/note-width";
-import { Globe, Lock, Share, Trash, Users } from "@/components/ui/icons";
+import { Share, Trash, Users } from "@/components/ui/icons";
+import { Globe, Lock } from "@/components/ui/icons-extra";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import { ManualCopyField } from "@/components/ManualCopyField";
 import { UserEmailCombobox } from "@/components/UserEmailCombobox";
 import { tourTarget } from "@/lib/tour-targets";
@@ -51,7 +55,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
@@ -105,6 +109,7 @@ function ShareRow({ noteId, share }: { noteId: string; share: ShareDto }) {
 
   return (
     <li className="flex flex-wrap items-center gap-2">
+      <Avatar name={share.displayName} avatar={share.avatar ?? null} size={28} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{share.displayName}</p>
         <p className="truncate text-xs text-muted-foreground">{share.email}</p>
@@ -992,7 +997,7 @@ export function ShareDialog({ note }: ShareDialogProps) {
           aria-label={t("share.button")}
           {...tourTarget("share")}
           title={triggerTitle}
-          className="shrink-0 text-brand hover:text-brand"
+          className={cn("shrink-0 text-brand hover:text-brand", HEADER_ICON_HIT)}
         >
           <TriggerIcon className="h-4 w-4" />
         </Button>

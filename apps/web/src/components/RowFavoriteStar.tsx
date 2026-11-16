@@ -5,14 +5,15 @@ import { errorMessage, useAddFavorite, useRemoveFavorite } from "@/api/favorites
 import { FavoriteRemoveDialog } from "@/components/FavoriteRemoveDialog";
 import { Button } from "@/components/ui/button";
 import { Star } from "@/components/ui/icons";
-import { hoverRevealOnly } from "@/components/ui/reveal";
+import { ROW_ICON_HIT } from "@/components/ui/hit-area";
+import { hoverRevealOnly, NOTE_STAR_TOUCH_HIDDEN } from "@/components/ui/reveal";
 import { toast } from "@/components/ui/toast";
 import { captureRemoveContext, focusAfterRemoveLater, type RemoveContext } from "@/lib/favorite-focus";
 import { cn } from "@/lib/utils";
 
 /**
- * 側欄筆記列右側的最愛星星（24px 圖示鈕，緊接在 `RoleBadge` 之後、⋮ 之前）。
- * - 已是最愛：實心、一直顯示；點下先開確認框，確認後移出。
+ * 側欄筆記列最右側的最愛星星（24px 圖示鈕，在 ⋮ 之後、整列最右一格，位置固定不動）。
+ * - 已是最愛：實心、一直顯示；點下先開確認框，確認後移出。觸控與沒有 hover 的裝置上這顆鈕隱藏，改由 `FavoriteMarker`（NoteList）在 ⋮ 左邊顯示不可點的標記，加入、移出走 ⋮。
  * - 不是最愛：空心、平常 `opacity-0`，列被 hover 或列內有鍵盤焦點時浮出；觸控裝置整顆隱藏（加入走 ⋮）；點下直接加入。
  * - 可及名稱固定 `note.favorite.label`（同頁首星號），狀態只由 `aria-pressed` 表達；`title` 是目前動作的提示。
  *
@@ -58,7 +59,7 @@ export function RowFavoriteStar({ note, favorite, pending }: { note: NoteDto; fa
         type="button"
         variant="ghost"
         size="icon"
-        className={cn("h-6 w-6 shrink-0", favorite ? "text-brand hover:text-brand" : cn("text-muted-foreground hover:text-brand", hoverRevealOnly("noterow")))}
+        className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, favorite ? cn("text-brand hover:text-brand", NOTE_STAR_TOUCH_HIDDEN) : cn("text-muted-foreground hover:text-brand", hoverRevealOnly("noterow")))}
         aria-label={t("note.favorite.label")}
         aria-pressed={favorite}
         aria-disabled={pending ? true : undefined}

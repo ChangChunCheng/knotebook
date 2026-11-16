@@ -26,10 +26,11 @@
     "favorites": "Favorites",
     "myNotes": "My notes",
     "shared": "Shared with me",
-    "openDrawer": "Open navigation",
+    "openDrawer": "Open sidebar",
     "drawerTitle": "Navigation",
     "searchLabel": "Search notes",
     "searchPlaceholder": "Search…",
+    "searchHint": "Search note titles and text.",
     "noMatch": "No notes match your search.",
     "workspace": "Groups",
     "newGroup": "New group",
@@ -169,6 +170,8 @@
     }
   },
   "note": {
+    "backToList": "Back to notes",
+    "showInList": "Show in list: {{path}}",
     "titleLabel": "Note title",
     "sizeLimitBlocked": "Adding this would exceed the note's size limit ({{size}}). The content wasn't added.",
     "overSizeLimit": "This note is over the size limit; editing may be slow. Delete content to shrink it.",
@@ -197,7 +200,7 @@
     },
     "width": {
       "label": "Width",
-      "current": "Width: {{name}}",
+      "cycle": "Width: {{name}} — click for {{next}}",
       "standard": "Standard",
       "wide": "Wide",
       "full": "Full width"
@@ -664,7 +667,8 @@
   },
   "management": {
     "close": "Close",
-    "back": "Back to sections"
+    "back": "Back to sections",
+    "backToMenu": "Back to menu"
   },
   "settings": {
     "entry": "Settings",
@@ -986,6 +990,8 @@
     "storage_plan_is_default": "This plan is a default. Choose another default first.",
     "storage_plan_name_taken": "A plan with this name already exists",
     "storage_plan_not_found": "Plan not found",
+    "avatar_outdated": "This picture was updated elsewhere. Open it again to adjust.",
+    "avatar_fetch_failed": "Couldn't get your picture from the sign-in service.",
     "version_is_base": "This version is what the current content is based on, so it can't be deleted",
     "version_unsaved_changes": "There are unsaved changes",
     "version_mismatch": "This version no longer exists or has been replaced. Refresh and try again.",

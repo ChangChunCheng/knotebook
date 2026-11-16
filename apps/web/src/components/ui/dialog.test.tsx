@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { clickOutside, settle } from "@/test/outside-click";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 
@@ -91,6 +91,20 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("grid-rows-[minmax(0,1fr)]");
   });
 
+  it("內建 Close：視覺 16px，粗指標下點擊範圍擴到 44（after 向外各 14px）", async () => {
+    render(<Harness />);
+    await settle();
+    const close = screen.getByRole("button", { name: "Close" });
+    for (const token of [
+      "absolute",
+      "pointer-coarse:after:absolute",
+      "pointer-coarse:after:-inset-3.5",
+      "pointer-coarse:after:content-['']",
+    ]) {
+      expect(close).toHaveClass(token);
+    }
+  });
+
   it('size="panel"：不渲染內建 Close（由 ManagementShell 自己放一顆）', async () => {
     render(<Harness size="panel" />);
     await settle();
@@ -107,9 +121,10 @@ describe("DialogContent size（#247）", () => {
       "shadow-none",
       "overflow-visible",
       "w-[96vw]",
-      "h-[92vh]",
+      "h-[92dvh]",
+      "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))]",
       "md:w-[clamp(min(56rem,96vw),92vw,85rem)]",
-      "md:h-[clamp(min(42rem,92vh),88vh,56rem)]",
+      "md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       "grid-cols-[minmax(0,1fr)]",
       "grid-rows-[minmax(0,1fr)]",
     );
@@ -117,6 +132,29 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("bg-popover");
     expect(dialog).not.toHaveClass("shadow-lg");
     expect(dialog).not.toHaveClass("w-full");
+  });
+
+  it('size="panel"：手機是貼底、幾乎滿高的 sheet（滿寬、不位移、上圓角、上方留縫、跟著鍵盤）；高度不再用 vh', async () => {
+    render(<Harness size="panel" />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveClass(
+      "max-sm:inset-x-0",
+      "max-sm:top-auto",
+      "max-sm:bottom-(--kb-inset,0px)",
+      "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))]",
+      "max-sm:w-full",
+      "max-sm:max-w-none",
+      "max-sm:translate-x-0",
+      "max-sm:translate-y-0",
+      "max-sm:rounded-t-xl",
+      "max-sm:rounded-b-none",
+      "max-sm:shadow-lg",
+      "kb-sheet",
+    );
+    expect(dialog.className).not.toMatch(/max-sm:rounded-t-2xl/);
+    expect(dialog.className).not.toMatch(/max-sm:inset-0|max-sm:h-dvh|max-sm:rounded-none/);
+    // iOS Safari 的 vh 是工具列收起時的高度：高度類一律 dvh（寬度的 vw 不受影響）。
+    expect(dialog.className).not.toMatch(/\d+vh\b/);
   });
 });
 
@@ -131,5 +169,171 @@ describe("DialogContent 容器不畫焦點環", () => {
   it("未傳 size（預設）：Content 有 outline-none", () => {
     render(<Harness />);
     expect(screen.getByRole("dialog")).toHaveClass("outline-none");
+  });
+});
+
+describe("DialogContent 手機底部 sheet", () => {
+  it("預設 size：手機貼底、可捲、上圓角、底部留 safe area；進出場用 kb-sheet", () => {
+    render(<Harness />);
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-sm:inset-x-0",
+      "max-sm:bottom-(--kb-inset,0px)",
+      "max-sm:top-auto",
+      "max-sm:translate-x-0",
+      "max-sm:translate-y-0",
+      "max-sm:max-h-[calc(var(--kb-visible-h,100dvh)*0.9)]",
+      "max-sm:transition-none",
+      "max-sm:overflow-y-auto",
+      "max-sm:rounded-t-xl",
+      "max-sm:rounded-b-none",
+      "max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+      "kb-sheet",
+    );
+  });
+
+  it("className 的 max-w 覆寫在手機不讓 sheet 縮窄（max-sm:max-w-none 與 max-w-lg 並存）", () => {
+    render(<Harness className="max-w-lg" />);
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-lg", "max-sm:max-w-none");
+  });
+
+  it('size="panel" 的 sheet 不帶預設尺寸的那些（高度上限、內距）：它是幾乎滿高、高度固定的', () => {
+    render(<Harness size="panel" />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).not.toMatch(/max-sm:max-h-|max-sm:pb-\[max\(1\.5rem/);
+  });
+
+  it("sheet 的背景遮罩手機有淡出（預設與 panel 都有）", () => {
+    render(<Harness />);
+    expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
+    cleanup();
+    render(<Harness size="panel" />);
+    expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
+  });
+
+  describe("螢幕鍵盤", () => {
+    class FakeViewport extends EventTarget {
+      height = 800;
+      offsetTop = 0;
+      scale = 1;
+      listeners = 0;
+      addEventListener(type: string, cb: EventListenerOrEventListenerObject | null, opts?: boolean | AddEventListenerOptions) {
+        this.listeners += 1;
+        super.addEventListener(type, cb, opts);
+      }
+      removeEventListener(type: string, cb: EventListenerOrEventListenerObject | null, opts?: boolean | EventListenerOptions) {
+        this.listeners -= 1;
+        super.removeEventListener(type, cb, opts);
+      }
+    }
+    const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    let viewport: FakeViewport;
+    let frames: Array<() => void> = [];
+    const flushFrames = () => {
+      const pending = frames;
+      frames = [];
+      act(() => pending.forEach((run) => run()));
+    };
+    beforeEach(() => {
+      viewport = new FakeViewport();
+      Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
+      vi.stubGlobal("innerHeight", 1000);
+      frames = [];
+      vi.stubGlobal("requestAnimationFrame", (cb: () => void) => frames.push(cb));
+      vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      if (original) Object.defineProperty(window, "visualViewport", original);
+      else delete (window as { visualViewport?: unknown }).visualViewport;
+    });
+
+    it("--kb-inset 與 --kb-visible-h 跟著視覺視窗：沒有鍵盤時是 0 與整個視窗高，升起後變動；雙指放大時移除", () => {
+      viewport.height = 1000;
+      render(<Harness />);
+      const dialog = screen.getByRole("dialog");
+      expect(dialog.style.getPropertyValue("--kb-inset")).toBe("0px");
+      expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("1000px");
+      viewport.height = 500;
+      act(() => void viewport.dispatchEvent(new Event("resize")));
+      flushFrames();
+      expect(dialog.style.getPropertyValue("--kb-inset")).toBe("500px");
+      expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("500px");
+      viewport.height = 1000;
+      act(() => void viewport.dispatchEvent(new Event("resize")));
+      flushFrames();
+      expect(dialog.style.getPropertyValue("--kb-inset")).toBe("0px");
+      expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("1000px");
+      viewport.scale = 2;
+      act(() => void viewport.dispatchEvent(new Event("resize")));
+      flushFrames();
+      expect(dialog.style.getPropertyValue("--kb-inset")).toBe("");
+      expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("");
+    });
+
+    it.each([0, 200, 344])("版面視窗 844、視覺高 500、offsetTop %i（含平移到底、鍵盤高度為 0）：sheet 頂端不高過視覺視窗頂端、底邊貼視覺視窗底邊", (offsetTop) => {
+      vi.stubGlobal("innerHeight", 844);
+      viewport.height = 500;
+      viewport.offsetTop = offsetTop;
+      render(<Harness />);
+      const style = screen.getByRole("dialog").style;
+      const inset = parseFloat(style.getPropertyValue("--kb-inset"));
+      const visible = parseFloat(style.getPropertyValue("--kb-visible-h"));
+      expect(visible).toBe(500);
+      const sheetBottom = 844 - inset;
+      expect(sheetBottom).toBe(offsetTop + 500);
+      expect(sheetBottom - 0.9 * visible).toBeGreaterThanOrEqual(offsetTop);
+    });
+
+    it("呼叫端傳的 style 到得了內容元素，與動態寫入的變數並存", () => {
+      viewport.height = 500;
+      render(<Harness style={{ color: "rgb(1, 2, 3)" }} />);
+      const dialog = screen.getByRole("dialog");
+      expect(dialog.style.color).toBe("rgb(1, 2, 3)");
+      expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("500px");
+    });
+
+    it.each([0, 200, 344])("iOS 平移視覺視窗（offsetTop %i）：sheet 頂端不會高過視覺視窗頂端", (offsetTop) => {
+      viewport.height = 500;
+      viewport.offsetTop = offsetTop;
+      render(<Harness />);
+      const style = screen.getByRole("dialog").style;
+      const inset = parseFloat(style.getPropertyValue("--kb-inset"));
+      const visible = parseFloat(style.getPropertyValue("--kb-visible-h"));
+      expect(visible).toBe(500);
+      // 版面視窗高 1000：sheet 底＝1000 - inset，高度上限＝0.9 × visible。
+      const sheetTop = 1000 - inset - 0.9 * visible;
+      expect(sheetTop).toBeGreaterThanOrEqual(offsetTop);
+    });
+
+    it("只在開著時訂閱：關閉的對話框不掛 visualViewport 監聽，開著的有、卸載後移除", () => {
+      const { rerender, unmount } = render(
+        <Dialog open={false}>
+          <DialogContent>
+            <DialogTitle>T</DialogTitle>
+            <DialogDescription>D</DialogDescription>
+          </DialogContent>
+        </Dialog>,
+      );
+      expect(viewport.listeners).toBe(0);
+      rerender(
+        <Dialog open>
+          <DialogContent>
+            <DialogTitle>T</DialogTitle>
+            <DialogDescription>D</DialogDescription>
+          </DialogContent>
+        </Dialog>,
+      );
+      expect(viewport.listeners).toBe(2);
+      unmount();
+      expect(viewport.listeners).toBe(0);
+    });
+
+    it('size="panel"：同樣跟著鍵盤（手機的面板也是貼底的 sheet）', () => {
+      viewport.height = 500;
+      render(<Harness size="panel" />);
+      expect(screen.getByRole("dialog").style.getPropertyValue("--kb-inset")).toBe("500px");
+      expect(screen.getByRole("dialog").style.getPropertyValue("--kb-visible-h")).toBe("500px");
+      expect(viewport.listeners).toBe(2);
+    });
   });
 });

@@ -115,9 +115,13 @@ describe("RowFavoriteStar", () => {
     expect(star()).toHaveAttribute("title", "Remove from favorites");
     expect(star().querySelector("svg")).toHaveAttribute("fill", "currentColor");
     expect(star().className).not.toContain("opacity-0");
-    expect(star().className).not.toContain("hidden");
+    // 滑鼠：一直顯示；觸控與沒有 hover 的裝置：這顆鈕整顆隱藏，換成同一格的不可點標記。
+    expect(star().className).toContain("[@media(hover:none)]:hidden");
+    expect(star().className).toContain("[@media(pointer:coarse)]:hidden");
     expect(star().className).toContain("text-brand");
   });
+
+
 
   it("不在最愛：名稱仍是 Favorite、aria-pressed=false、title 是加入、空心星、帶浮出 class（觸控隱藏）", async () => {
     stubServer();

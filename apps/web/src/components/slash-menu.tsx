@@ -1,7 +1,10 @@
 import { insertOrUpdateBlockForSlashMenu } from "@blocknote/core";
-import { getDefaultReactSlashMenuItems, type DefaultReactSuggestionItem } from "@blocknote/react";
+import { autoPlacement, offset, shift, size } from "@floating-ui/react";
+import { getDefaultReactSlashMenuItems, type DefaultReactSuggestionItem, type FloatingUIOptions } from "@blocknote/react";
+import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { canInsertColumns, insertColumns } from "@/collab/columns/commands";
-import { Columns2, Diagram, Link } from "@/components/ui/icons";
+import { Link } from "@/components/ui/icons";
+import { Columns2, Diagram } from "@/components/ui/icons-extra";
 
 /** `/` 選單裡自訂項的分組鍵。
  *
@@ -10,6 +13,43 @@ import { Columns2, Diagram, Link } from "@/components/ui/icons";
  * 要動兩份翻譯檔＋一條既有測試契約，收益為零。抽成常數是為了讓「連結項與圖表項必須同組」
  * 在原始碼層級看得見。 */
 export const SLASH_EXTRA_GROUP_KEY = "note.mermaid.slashGroup";
+
+/** 手機：選單下緣離可視區底邊至少留這麼多——鍵盤上方那條編輯工具列的外框高度，再加 8px 空隙。 */
+export const SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX = PHONE_EDIT_TOOLBAR_CLEARANCE_PX + 8;
+
+/** 手機不顯示快捷鍵欄（觸控沒有鍵盤快捷鍵可按）：回傳去掉 `badge` 的新項目，項目數、順序與其餘欄位不變，不動來源項目。 */
+export function withoutSlashBadges<T extends DefaultReactSuggestionItem>(items: T[]): T[] {
+  return items.map((item) => {
+    const copy = { ...item };
+    delete copy.badge;
+    return copy;
+  });
+}
+
+/**
+ * 手機的 `/` 選單定位：與 BlockNote 預設相同（offset 10、上下擇一、shift、size），差在
+ * ①四周留白 8（含 shift），下緣再多留編輯工具列的高度——翻上翻下的判斷與可用高度都以工具列上緣為底；
+ * ②高度上限是 `min(50vh, 可用高度)`。floating-ui 的視窗邊界本來就取視覺視窗（止於螢幕鍵盤上緣），所以這裡不再扣鍵盤高。
+ */
+export function slashMenuPhoneMiddleware() {
+  const padding = { top: 8, left: 8, right: 8, bottom: SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX };
+  return [
+    offset(10),
+    autoPlacement({ allowedPlacements: ["bottom-start", "top-start"], padding }),
+    shift({ padding: 8 }),
+    size({
+      apply({ elements, availableHeight }) {
+        elements.floating.style.maxHeight = `min(50vh, ${Math.max(0, availableHeight)}px)`;
+      },
+      padding,
+    }),
+  ];
+}
+
+/** 手機 `/` 選單的 floating 選項；固定一份物件，免得 `SuggestionMenuController` 內部的 memo 每次 render 重算。 */
+export const PHONE_SLASH_MENU_FLOATING_OPTIONS: FloatingUIOptions = {
+  useFloatingOptions: { placement: "bottom-start", middleware: slashMenuPhoneMiddleware() },
+};
 
 /**
  * `/` slash 選單的項目清單：**內建項目全數保留 ＋ 追加 mermaid 圖表 ＋ 連結 ＋ 並排 2／3／4 欄**（issue #94、#99；並排見下方 `columnItems`）。

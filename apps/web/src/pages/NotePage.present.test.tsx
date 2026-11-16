@@ -7,7 +7,7 @@ import * as Y from "yjs";
 import type { NoteDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import type { CollabState } from "@/collab/connection";
@@ -15,6 +15,7 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { installFakeFullscreen, type FakeFullscreen } from "@/test/fake-fullscreen";
 import { enterPresentationFullscreen } from "@/present/fullscreen";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { AppShellLayout } from "@/components/AppShellLayout";
 
 vi.mock("@/components/NoteEditor", () => ({
   NoteEditor: ({ editable, headerSlot, footerSlot }: { editable: boolean; headerSlot?: ReactNode; footerSlot?: ReactNode }) => (
@@ -118,7 +119,7 @@ vi.mock("@/present/lazy", async () => {
 
 const { default: NotePage } = await import("./NotePage");
 
-const USER: UserDto = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true };
+const USER: UserDto = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null };
 const NOTE: NoteDto = {
   id: "11111111-1111-1111-1111-111111111111", title: "My Note", ownerId: "u1", role: "owner",
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", slug: "my-note", slugIsCustom: true,
@@ -165,10 +166,12 @@ function Routed() {
     <ActiveNoteProvider>
       <LocationProbe />
       <Routes>
-        <Route path="/notes/:ref" element={<NotePage />} />
-        <Route path="/n/:handle/:slug" element={<NotePage />} />
-        <Route path="/login" element={<div>login page</div>} />
-        <Route path="/" element={<div>home landing</div>} />
+        <Route element={<AppShellLayout />}>
+          <Route path="/notes/:ref" element={<NotePage />} />
+          <Route path="/n/:handle/:slug" element={<NotePage />} />
+          <Route path="/login" element={<div>login page</div>} />
+          <Route path="/" element={<div>home landing</div>} />
+        </Route>
       </Routes>
     </ActiveNoteProvider>
   );
@@ -262,7 +265,7 @@ describe("NotePage × 簡報", () => {
     const search = screen.getAllByLabelText("Search notes")[0];
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(document.activeElement).not.toBe(search);
-    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ matches: query === NARROW_QUERY, addEventListener() {}, removeEventListener() {} })));
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ matches: query === OVERLAY_QUERY, addEventListener() {}, removeEventListener() {} })));
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(document.querySelector("[data-sidebar-drawer]")).toBeNull();
   });

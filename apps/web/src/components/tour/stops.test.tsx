@@ -10,7 +10,7 @@ import tourZhTW from "@/i18n/tour.zh-TW.json";
 import shortcutsEn from "@/i18n/shortcuts.en.json";
 import shortcutsZhTW from "@/i18n/shortcuts.zh-TW.json";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { NARROW_QUERY } from "@/lib/sidebar-drawer";
+import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { getShellControls } from "@/lib/tour-bridge";
 import { findDrawerButton, findTourTarget, findUserMenuTrigger, tourTarget, type TourTargetId } from "@/lib/tour-targets";
 import { useVersionsController, VersionsProvider } from "@/lib/versions-context";
@@ -38,6 +38,7 @@ const USER: UserDto = {
   mustChangePassword: false,
   hasPassword: true,
   autoVersions: true,
+  avatar: null,
 };
 
 const NOTE: NoteDto = {
@@ -79,12 +80,12 @@ function stubFetch(folders: FolderListDto = FOLDER_LIST_EMPTY) {
   );
 }
 
-/** `NARROW_QUERY` 回 `narrow`，其他查詢一律不符合（同 setup.ts 的預設）。 */
+/** `OVERLAY_QUERY` 回 `narrow`，其他查詢一律不符合（同 setup.ts 的預設）。 */
 function stubViewport(narrow: boolean) {
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => ({
-      matches: query === NARROW_QUERY ? narrow : false,
+      matches: query === OVERLAY_QUERY ? narrow : false,
       media: query,
       onchange: null,
       addEventListener: () => {},
@@ -236,7 +237,7 @@ describe("窄視窗：目標", () => {
   it("側欄裡的站改指頁首的漢堡鈕；版本改指 ⋮；頁首不變", async () => {
     await renderPage();
     const header = within(pageHeader());
-    const hamburger = header.getByRole("button", { name: "Open navigation" });
+    const hamburger = header.getByRole("button", { name: "Open sidebar" });
     const more = header.getByRole("button", { name: "More" });
     const expected: Record<StopId, HTMLElement[]> = {
       tabs: [hamburger],
@@ -262,7 +263,7 @@ describe("窄視窗：目標", () => {
 });
 
 // 資料夾名稱是使用者自己取的：取成跟任何目標同名，也不能把目標搶走。
-const COLLIDING_NAMES = [USER.displayName, "New note", "New folder", "Search notes", "Share", "More", "Open navigation", "Sidebar sections", "Version history"];
+const COLLIDING_NAMES = [USER.displayName, "New note", "New folder", "Search notes", "Share", "More", "Open sidebar", "Sidebar sections", "Version history"];
 
 describe("使用者內容撞名", () => {
   beforeEach(() => {
@@ -347,7 +348,7 @@ describe("漢堡鈕", () => {
     stubViewport(true);
     await renderPage({ home: true });
     expect(document.querySelector("main header")).toBeNull();
-    expect(findDrawerButton()).toBe(within(document.querySelector("main")!).getByRole("button", { name: "Open navigation" }));
+    expect(findDrawerButton()).toBe(within(document.querySelector("main")!).getByRole("button", { name: "Open sidebar" }));
     expect(stopTarget(STOPS.userMenu, ctx())).toEqual([findDrawerButton()]);
   });
 });
@@ -360,9 +361,9 @@ describe("側欄兩份：抽屜開著取抽屜那份，關著取固定卡片那�
     const card = aside();
     expect(findUserMenuTrigger()?.closest("aside")).toBe(card);
     expect(findTourTarget("search")?.closest("aside")).toBe(card);
-    expect(findDrawerButton()).toBe(within(pageHeader()).getByRole("button", { name: "Open navigation" }));
+    expect(findDrawerButton()).toBe(within(pageHeader()).getByRole("button", { name: "Open sidebar" }));
 
-    act(() => within(pageHeader()).getByRole("button", { name: "Open navigation" }).click());
+    act(() => within(pageHeader()).getByRole("button", { name: "Open sidebar" }).click());
     const drawer = await screen.findByRole("dialog", { name: "Navigation" });
     await within(drawer).findByRole("button", { name: USER.displayName });
     for (const id of ["userMenu", "search", "tabs"] as const) {
