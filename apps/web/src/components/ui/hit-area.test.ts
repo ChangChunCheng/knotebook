@@ -64,7 +64,7 @@ describe("觸控點擊範圍常數", () => {
   });
 
   it("ROW_ICON_ROW：只在相鄰兩顆 row-icon 之間加間距", () => {
-    expect(tokens(ROW_ICON_ROW)).toEqual(new Set(["pointer-coarse:[&>.row-icon:has(+.row-icon)]:me-4.5"]));
+    expect(tokens(ROW_ICON_ROW)).toEqual(new Set(["pointer-coarse:gap-1", "pointer-coarse:[&>.row-icon:has(+.row-icon)]:me-4"]));
   });
 
   it("HEADER_ICON_HIT：32px 圖示鈕擴到 40 寬 44 高，只在粗指標生效", () => {
@@ -161,8 +161,8 @@ describe("頁首 32px 圖示鈕都套 HEADER_ICON_HIT", () => {
 
 describe("含兩顆以上 24px 圖示鈕的列：容器套 ROW_ICON_ROW（只隔開相鄰圖示鈕）", () => {
   it.each([
-    // 群組列、資料夾列、標題列、筆記列（星號＋⋮）
-    ["components/NoteList.tsx", 4],
+    // 群組列、資料夾列、標題列（筆記列只剩一顆 ⋮：星號在觸控裝置不顯示）
+    ["components/NoteList.tsx", 3],
     // 垃圾桶列、標題列
     ["components/sidebar/TrashPanel.tsx", 2],
   ] as const)("%s：%i 個容器", (path, rows) => {
@@ -209,7 +209,11 @@ describe("觸控時多留的內距", () => {
     expect(code("components/NoteList.tsx").match(/pointer-coarse:pb-2\.5/g)).toHaveLength(1);
     expect(code("components/sidebar/TrashPanel.tsx").match(/pointer-coarse:pb-2\.5/g)).toHaveLength(1);
   });
-  it("資料夾列與群組列右緣 pr-0.5：最右那顆 ⋮ 的點擊範圍才不被捲動容器裁掉", () => {
-    expect(code("components/NoteList.tsx").match(/pointer-coarse:pr-0\.5/g)).toHaveLength(2);
+  it("筆記、資料夾、群組列右緣 pr-0.75（3px）：最右那顆鈕的圖示右緣離清單邊 16px（同左側文字起點），點擊範圍（外撐 10px）又不被捲動容器裁掉", () => {
+    const source = code("components/NoteList.tsx");
+    expect(source.match(/\bpr-0\.75\b/g)).toHaveLength(3);
+    expect(source).not.toContain("pointer-coarse:pr-0.5");
+    expect(source.match(/\bpr-2\.75\b/g)).toHaveLength(1);
+    expect(code("components/sidebar/TrashPanel.tsx").match(/\bpr-2\.75\b/g)).toHaveLength(1);
   });
 });

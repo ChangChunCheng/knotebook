@@ -177,7 +177,7 @@ export default function NotePage() {
   const queryClient = useQueryClient();
   const { user } = useSession();
   const phone = useIsPhone();
-  // 手機：焦點在編輯區或編輯工具列內＝編輯中，底部瀏覽列讓位；其餘（頁首標題、頁面空白處）不算。
+  // 手機：焦點在編輯區或編輯工具列內＝編輯中，底部浮動鈕讓位；其餘（頁首標題、頁面空白處）不算。
   const [editingFocus, setEditingFocus] = useState(false);
   // 編輯區在焦點還在裡面時被卸載（點 wikilink 換篇、共編佔位換成編輯器）不會觸發 blur：每次 commit 後核對一次。
   // 刻意不帶依賴：卸載不改變 editingFocus，只有每次 commit 後重查才抓得到；只在旗標為真且焦點已不在編輯區時才設值，不會連環更新。
@@ -833,6 +833,7 @@ export default function NotePage() {
               provider={provider}
               editable={editable}
               mobileToolbar={phone && editable && editingFocus}
+              fabClearance={phone && !(editable && editingFocus)}
               user={{ id: user.id, name: user.displayName }}
               noteId={noteId!}
               onScrollRoot={setAnchorRoot}
@@ -867,19 +868,21 @@ export default function NotePage() {
                         由 placeholderCard 裡的 NarrowTopBar 補位。 */}
                     {phone ? (
                       <>
-                        {/* 手機兩行：第一行是標題與動作，第二行是連線點、位置、在線者。連線狀態、在線者、最後編輯只渲染在這一處（不是 CSS 藏一份）。 */}
-                        <div data-testid="note-header-title-row" className="flex items-center gap-2 pointer-coarse:pb-1.5">
+                        {/* 手機：標題與它下方一行（連線點、位置、在線者）是同一個區塊；「‹」與右側動作鈕對齊整個區塊的垂直中心。連線狀態、在線者、最後編輯只渲染在這一處（不是 CSS 藏一份）。 */}
+                        <div data-testid="note-header-title-row" className="flex items-center gap-2">
                           <BackToListButton />
-                          <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
+                          <div data-testid="note-header-block" className="flex min-w-0 flex-1 flex-col">
+                            <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
+                            <div data-testid="note-header-subline" className="flex items-center gap-2">
+                              {/* 位置排第一：它的左緣要與上面的標題對齊；連線點緊跟在位置文字後面（路徑太長時只截路徑），在線者在右邊。 */}
+                              <NoteLocation note={note} trailing={<ConnectionBadge state={state} synced={synced} canEdit={roleCanEdit} />} />
+                              {presenceAvatars}
+                              <LastEditedLabel note={note} onOpenEdits={openEdits} />
+                            </div>
+                          </div>
                           <FavoriteToggle note={note} />
                           <ShareDialog note={note} />
                           {noteMenu}
-                        </div>
-                        <div data-testid="note-header-subline" className="flex items-center gap-2">
-                          <ConnectionBadge state={state} synced={synced} canEdit={roleCanEdit} />
-                          <NoteLocation note={note} />
-                          {presenceAvatars}
-                          <LastEditedLabel note={note} onOpenEdits={openEdits} />
                         </div>
                       </>
                     ) : (

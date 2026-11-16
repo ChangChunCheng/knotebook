@@ -30,8 +30,8 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
  * 未傳 `size` 時行為零變）；`lg` 已於 #247 刪除：再用會直接型別錯誤，比照 `button.tsx` 刪 `secondary`
  * 的做法，不靠 grep 測試；`size="panel"`＝三個管理面板（`components/management/ManagementShell.tsx`，#247）
  * 與快捷鍵介紹頁（`components/shortcuts/ShortcutsDialog.tsx`，單卡、寬度另以 className 收窄）：
- * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；窄視窗 `96vw × 92vh`，
- * `md:` 以上 `92vw × 88vh` 夾在 896×672～1360×896 之間；`max-w` 讓兩側各至少留 2vw 與左右 safe area 的較大者（橫拿時面板邊緣不進感應器區）。`panel` 時**不渲染內建 Close**——
+ * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；640～767 為 `96vw × 92dvh`，手機（< 640）是滿版整頁（`inset-0 h-dvh`），
+ * `md:` 以上 `92vw × 88dvh` 夾在 896×672～1360×896 之間（高度一律用 `dvh`：iOS Safari 的 `vh` 比看得見的高度高）；`max-w` 讓兩側各至少留 2vw 與左右 safe area 的較大者（橫拿時面板邊緣不進感應器區）。`panel` 時**不渲染內建 Close**——
  * 面板在右卡自己放一顆帶 i18n 名稱的 ✕，這裡再放就會有兩顆 Close。
  * `panel` 的 grid 軌道是 `minmax(0,1fr)`：預設的 `auto` 軌道會依托盤內容撐大，托盤就會在高度與寬度上都長出外框、右卡永遠不捲動。 */
 const dialogContentVariants = cva(
@@ -51,10 +51,13 @@ const dialogContentVariants = cva(
           "max-sm:max-w-none max-sm:max-h-[calc(var(--kb-visible-h,100dvh)*0.9)] max-sm:overflow-y-auto max-sm:transition-none " +
           "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))] kb-sheet",
         panel:
-          "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92vh] " +
+          "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92dvh] " +
           "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
           "grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] " +
-          "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92vh),88vh,56rem)]",
+          // 手機（< 640）：整頁。`dvh` 跟著 iOS Safari 看得見的高度（`vh` 用的是工具列收起時的高度，置中後頂端會跑出畫面）；
+          // 上下 safe area 由托盤的內距給（`management/tray.ts`）。
+          "max-sm:inset-0 max-sm:h-dvh max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none " +
+          "md:w-[clamp(min(56rem,96vw),92vw,85rem)] md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       },
     },
     defaultVariants: { size: "default" },

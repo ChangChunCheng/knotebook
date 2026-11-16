@@ -106,6 +106,8 @@ describe("safe area 來源層守衛", () => {
     ["components/ui/toast.tsx", /pb-\[max\(1rem,env\(safe-area-inset-bottom\)\)\]/, 1],
     ["components/CornerStack.tsx", /bottom-\[calc\(1\.25rem\+env\(safe-area-inset-bottom\)\)\]/, 1],
     ["components/versions/VersionsLazyBoundary.tsx", /bottom-\[calc\(1\.25rem\+env\(safe-area-inset-bottom\)\)\]/, 1],
+    ["components/sidebar/PhoneListFabs.tsx", /bottom-\[calc\(1rem\+env\(safe-area-inset-bottom\)\)\]/, 2],
+    ["components/sidebar/PhoneListFabs.tsx", /(left|right)-\[calc\(1rem\+env\(safe-area-inset-(left|right)\)\)\]/, 2],
     ["components/sidebar/phone-bar.ts", /pb-\[calc\(0\.375rem\+env\(safe-area-inset-bottom\)\)\]/, 1],
     ["pages/LoginPage.tsx", /\bSAFE_PAGE_PADDING\b/, 2],
     ["pages/RegisterPage.tsx", /\bSAFE_PAGE_PADDING\b/, 3],

@@ -163,7 +163,7 @@ interface RunResult {
 
 /**
  * @param layout `bar`＝窄形底部列（預設）；`toolbar`＝寬形標題列裡的圖示鈕（不渲染進度句，由 `SelectHeader` 顯示）。
- * @param safeBottom `bar` 形是手機清單滿版的底部列時為 true：外框與搜尋列（`PhoneListBar`）同一組 class（`phone-bar.ts`），兩列同高、都含底部 `safe-area-inset-bottom`。側欄在外框裡（外框已給底邊）時不給，免得疊兩次。
+ * @param safeBottom `bar` 形是手機清單滿版的底部列時為 true：外框與搜尋層的搜尋列（`PhoneListBar`）同一組 class（`phone-bar.ts`），兩列同高、都含底部 `safe-area-inset-bottom`。側欄在外框裡（外框已給底邊）時不給，免得疊兩次。
  */
 export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout?: "bar" | "toolbar"; safeBottom?: boolean }) {
   const { t } = useTranslation();

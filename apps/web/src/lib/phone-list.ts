@@ -20,9 +20,11 @@ export const PhoneListContext = createContext<PhoneListState | null>(null);
 export interface PhoneBrowseState {
   /** 手機筆記頁開全螢幕搜尋層（蓋在筆記上；Cancel 回到這篇，選結果就開那篇）。 */
   openSearch: () => void;
+  /** 搜尋層是否開著（開著時筆記頁的浮動鈕不渲染）。 */
+  searchOpen?: boolean;
   /** 建立筆記並導向（與清單底部的「New note」同一支）；錯誤已在內部 toast。 */
   createNote: (groupId?: string, folderId?: string) => Promise<void>;
 }
 
-/** 由 `AppShell` 提供給筆記頁底部的瀏覽列。沒有 provider＝no-op。 */
+/** 由 `AppShell` 提供給筆記頁底部的浮動鈕。沒有 provider＝no-op。 */
 export const PhoneBrowseContext = createContext<PhoneBrowseState | null>(null);

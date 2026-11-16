@@ -77,6 +77,8 @@ describe("SidebarFooter", () => {
     renderFooter("trash");
     expect(await screen.findByTestId("trash-footer")).toHaveTextContent(/^Permanently deleted 7 days after deletion$/);
     expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+    // 手機：說明抬到左下浮動 Search 鈕（56＋16）與 safe area 之上。
+    expect(screen.getByTestId("trash-footer")).toHaveClass("max-sm:pb-[calc(5rem+env(safe-area-inset-bottom))]");
   });
 
   it("SF1 保留 1 天：單數", async () => {

@@ -12,7 +12,7 @@ export function GroupRowButton({ name, open, onToggle }: { name: string; open: b
       type="button"
       aria-expanded={open}
       onClick={onToggle}
-      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-foreground group-hover/grouprow:text-brand-on-soft"
+      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] max-sm:text-[15px] font-medium text-foreground group-hover/grouprow:text-brand-on-soft"
     >
       <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground group-hover/grouprow:text-brand-on-soft">
         <Users

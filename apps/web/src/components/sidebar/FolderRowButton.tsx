@@ -12,7 +12,7 @@ export function FolderRowButton({ name, open, onToggle }: { name: string; open: 
       type="button"
       aria-expanded={open}
       onClick={onToggle}
-      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-foreground group-hover/folderrow:text-brand-on-soft"
+      className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[13px] max-sm:text-[15px] font-medium text-foreground group-hover/folderrow:text-brand-on-soft"
     >
       <ChevronRight
         aria-hidden="true"

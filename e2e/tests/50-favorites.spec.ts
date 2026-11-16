@@ -123,7 +123,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
 
     // 2. 側欄 ⋮ 移出 B：取消不動，再來一次按確認；沒有 Undo，焦點落在上一列（A）
     const actionsB = favorites.getByRole("button", { name: `Note actions for ${b}`, exact: true });
-    await actionsB.hover();
+    await actionsB.locator("xpath=ancestor::li[1]").hover();
     await actionsB.click();
     await page.getByRole("menuitem", { name: "Remove from favorites", exact: true }).click();
     const dialog = page.getByRole("dialog");
@@ -132,7 +132,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     await expect(dialog).toBeHidden();
     await expect(noteLink(favorites, b)).toBeVisible();
 
-    await actionsB.hover();
+    await actionsB.locator("xpath=ancestor::li[1]").hover();
     await actionsB.click();
     await page.getByRole("menuitem", { name: "Remove from favorites", exact: true }).click();
     await expect(dialog).toBeVisible();
@@ -562,7 +562,7 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
   }
 });
 
-test("列上星星（鍵盤）：Tab 順序是連結、星星、⋮；聚焦的空心星 opacity 為 1；Enter 加入後焦點仍在星星", async ({ browser }) => {
+test("列上星星（鍵盤）：Tab 順序是連結、⋮、星星；聚焦的 ⋮ 與空心星 opacity 為 1；Enter 加入後焦點仍在星星", async ({ browser }) => {
   test.setTimeout(90_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -579,11 +579,14 @@ test("列上星星（鍵盤）：Tab 順序是連結、星星、⋮；聚焦的�
     await expect(star).toHaveCSS("opacity", "0");
     await noteLink(mine, title).focus();
     await page.keyboard.press("Tab");
+    await expect(actions).toBeFocused();
+    await expect(actions).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Tab");
     await expect(star).toBeFocused();
     await expect(star).toHaveCSS("opacity", "1");
-    await page.keyboard.press("Tab");
-    await expect(actions).toBeFocused();
     await page.keyboard.press("Shift+Tab");
+    await expect(actions).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(star).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(star).toHaveAttribute("aria-pressed", "true");
@@ -615,14 +618,21 @@ test("列上星星（觸控）：沒加入的列看不到星星，最愛列的�
     await expect(noteLink(mine, faved)).toBeVisible();
     await expect(rowStar(noteRowOf(mine, loose))).toHaveCount(0);
 
-    const favedStar = rowStar(noteRowOf(mine, faved));
-    await expect(favedStar).toBeVisible();
-    await expect(favedStar).toHaveAttribute("aria-pressed", "true");
-    await favedStar.click();
-    const confirm = page.getByRole("dialog", { name: "Remove from favorites?" });
-    await expect(confirm).toBeVisible();
-    await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(confirm).toBeHidden();
+    // 觸控：最愛列上沒有星號鈕，只有一顆不能點的標記（role=img、名稱 Favorite），在 ⋮ 左邊；點它什麼都不發生，移出走 ⋮ 選單
+    const favedRow = noteRowOf(mine, faved);
+    await expect(rowStar(favedRow)).toHaveCount(0);
+    const marker = favedRow.getByRole("img", { name: "Favorite", exact: true });
+    await expect(marker).toBeVisible();
+    await expect(marker).toHaveCSS("pointer-events", "none");
+    const markerBox = (await marker.boundingBox())!;
+    await page.mouse.click(markerBox.x + markerBox.width / 2, markerBox.y + markerBox.height / 2);
+    await expect(page.getByRole("dialog", { name: "Remove from favorites?" })).toHaveCount(0);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await favedRow.getByRole("button", { name: `Note actions for ${faved}`, exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Remove from favorites", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(noteRowOf(mine, loose).getByRole("img", { name: "Favorite", exact: true })).toHaveCount(0);
 
     await noteRowOf(mine, loose).getByRole("button", { name: `Note actions for ${loose}`, exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "Add to favorites", exact: true })).toBeVisible();

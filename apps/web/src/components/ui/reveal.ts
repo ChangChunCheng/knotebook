@@ -36,6 +36,19 @@ const REVEAL_ONLY = {
     "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/noterow:opacity-100 group-has-[:focus-visible]/noterow:opacity-100 [@media(hover:none)]:hidden [@media(pointer:coarse)]:hidden",
 } as const;
 
+/**
+ * 筆記列 ⋮ 專用（滑鼠）：在 flex 流裡，順序是標題、⋮、星號（星號永遠在最右一格不動）。沒浮出時寬度 0（`-ms-1` 抵掉多出的一個 gap），不佔位；
+ * 列被滑過、列內有鍵盤焦點、自己被聚焦或選單開著時長成 24px，標題因此更早截斷，不會被蓋住。
+ * 零寬的鈕仍可被 Tab 聚焦（不是 `display: none`），聚焦後 `focus-visible` 讓它長出來。沒有星號時 ⋮ 自己是最右一格。
+ * 觸控與沒有 hover 的裝置（`hover: none`，⋮ 常駐）一律 24px（`!` 蓋過上面的寬度 0）。
+ * 指標沒滑過列時 Playwright 對零寬的鈕沒辦法 hover／click：測試先 hover 整列再點 ⋮。
+ */
+export const NOTE_MENU_COLLAPSE =
+  "pointer-fine:w-0 pointer-fine:-ms-1 pointer-fine:overflow-hidden pointer-fine:group-hover/noterow:w-6 pointer-fine:group-hover/noterow:ms-0 pointer-fine:group-has-[:focus-visible]/noterow:w-6 pointer-fine:group-has-[:focus-visible]/noterow:ms-0 pointer-fine:focus-visible:w-6 pointer-fine:focus-visible:ms-0 pointer-fine:data-[state=open]:w-6 pointer-fine:data-[state=open]:ms-0 [@media(hover:none)]:w-6! [@media(hover:none)]:ms-0!";
+
+/** 筆記列的最愛星號在觸控（`pointer: coarse`）與沒有 hover 的裝置上整顆不顯示（不佔位、不在 Tab 順序與無障礙樹）：加入、移出最愛都走 ⋮。 */
+export const NOTE_STAR_TOUCH_HIDDEN = "[@media(hover:none)]:hidden [@media(pointer:coarse)]:hidden";
+
 export function hoverRevealOnly(scope: keyof typeof REVEAL_ONLY): string {
   return REVEAL_ONLY[scope];
 }

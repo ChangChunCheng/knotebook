@@ -4,72 +4,32 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "@/i18n";
 import { PhoneListBar } from "./PhoneListBar";
 
-interface BarOverrides {
-  query?: string;
-  active?: boolean;
-  showNewNote?: boolean;
-  newNotePending?: boolean;
-}
-
-function renderBar(overrides: BarOverrides = {}) {
+function renderBar(overrides: { query?: string } = {}) {
   const onQueryChange = vi.fn();
   const onOpen = vi.fn();
   const onClose = vi.fn();
-  const onCreateNote = vi.fn();
   const searchRef = createRef<HTMLInputElement>();
-  render(
-    <PhoneListBar
-      query={overrides.query ?? ""}
-      onQueryChange={onQueryChange}
-      searchRef={searchRef}
-      active={overrides.active ?? false}
-      onOpen={onOpen}
-      onClose={onClose}
-      showNewNote={overrides.showNewNote ?? true}
-      onCreateNote={onCreateNote}
-      newNotePending={overrides.newNotePending ?? false}
-    />,
-  );
-  return { onQueryChange, onOpen, onClose, onCreateNote, searchRef };
+  render(<PhoneListBar query={overrides.query ?? ""} onQueryChange={onQueryChange} searchRef={searchRef} onOpen={onOpen} onClose={onClose} />);
+  return { onQueryChange, onOpen, onClose, searchRef };
 }
 
-describe("PhoneListBar", () => {
+describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  it("搜尋框 44 高、16px 字級（防 iOS 放大），沒有 Ctrl K 徽章", () => {
+  it("搜尋框 44 高、16px 字級（防 iOS 放大），沒有 Ctrl K 徽章，沒有 New note", () => {
     renderBar();
     const input = screen.getByRole("textbox", { name: "Search notes" });
     expect(input).toHaveClass("h-11");
     expect(input).toHaveClass("text-base");
     expect(input.className).not.toContain("text-[13px]");
     expect(screen.queryByText("Ctrl K")).toBeNull();
-  });
-
-  it("沒在搜尋：右側是 44 高的「New note」，按了呼叫 onCreateNote；建立中停用", () => {
-    const { onCreateNote } = renderBar();
-    const button = screen.getByRole("button", { name: "New note" });
-    expect(button).toHaveClass("h-11");
-    fireEvent.click(button);
-    expect(onCreateNote).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
-  });
-
-  it("建立中：New note 停用", () => {
-    renderBar({ newNotePending: true });
-    expect(screen.getByRole("button", { name: "New note" })).toBeDisabled();
-  });
-
-  it("showNewNote 為 false（垃圾桶）：沒有 New note，只剩搜尋框", () => {
-    renderBar({ showNewNote: false });
     expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
-    expect(screen.getByRole("textbox", { name: "Search notes" })).toBeInTheDocument();
   });
 
-  it("搜尋層開著：Cancel 取代 New note；點了清空字、讓搜尋框失焦並關搜尋層", () => {
-    const { onQueryChange, onClose, searchRef } = renderBar({ active: true, query: "alp" });
-    expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+  it("右側是 44 高的 Cancel：點了清空字、讓搜尋框失焦並關搜尋層", () => {
+    const { onQueryChange, onClose, searchRef } = renderBar({ query: "alp" });
     const cancel = screen.getByRole("button", { name: "Cancel" });
     expect(cancel).toHaveClass("h-11");
     const input = screen.getByRole("textbox", { name: "Search notes" });
@@ -81,7 +41,7 @@ describe("PhoneListBar", () => {
     expect(input).not.toHaveFocus();
   });
 
-  it("聚焦開搜尋層；失焦不關（點結果、收鍵盤都會失焦）", () => {
+  it("聚焦呼叫 onOpen；失焦不關（點結果、收鍵盤都會失焦）", () => {
     const { onOpen, onClose } = renderBar();
     const input = screen.getByRole("textbox", { name: "Search notes" });
     fireEvent.focus(input);
@@ -139,45 +99,38 @@ describe("PhoneListBar", () => {
       return document.querySelector<HTMLElement>("[data-phone-list-bar]")!;
     }
 
-    it("鍵盤收著：列在文件流裡（沒有 margin-bottom），有 New note 與 safe area", () => {
+    it("鍵盤收著：列在文件流裡（沒有 margin-bottom），有 Cancel 與 safe area", () => {
       renderBar();
       expect(bar()).not.toHaveClass("fixed");
       expect(bar().style.bottom).toBe("");
-      expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
       expect(bar().className).toContain("env(safe-area-inset-bottom)");
     });
 
-    it("鍵盤升起：列仍在文件流裡、margin-bottom＝鍵盤高（結果區跟著縮短），只留搜尋框，沒有 New note、沒有 safe area 內距", () => {
+    it("鍵盤升起：列仍在文件流裡、margin-bottom＝鍵盤高（結果區跟著縮短），只留搜尋框，沒有 Cancel、沒有 safe area 內距", () => {
       renderBar();
       setKeyboard(300);
       expect(bar()).not.toHaveClass("fixed");
       expect(bar()).toHaveClass("shrink-0");
       expect(bar().style.marginBottom).toBe("300px");
       expect(screen.getByRole("textbox", { name: "Search notes" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
-      expect(bar().className).not.toContain("env(safe-area-inset-bottom)");
-    });
-
-    it("鍵盤升起且搜尋層開著：Cancel 也收起", () => {
-      renderBar({ active: true });
-      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-      setKeyboard(300);
       expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(bar().className).not.toContain("env(safe-area-inset-bottom)");
     });
 
     it("高度差在門檻以內：不算鍵盤，列照舊", () => {
       renderBar();
       setKeyboard(60);
       expect(bar()).not.toHaveClass("fixed");
-      expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
 
-    it("鍵盤收起：回到文件流、按鈕回來", () => {
+    it("鍵盤收起：回到文件流、Cancel 回來", () => {
       renderBar();
       setKeyboard(300);
       setKeyboard(0);
       expect(bar().style.marginBottom).toBe("");
-      expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
   });
 });

@@ -12,7 +12,7 @@ const TrashFooter = lazy(() => import("@/components/sidebar/TrashLazy").then((m)
 const SelectActionBar = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectActionBar })));
 
 /**
- * 手機清單畫面（`phone`）：不渲染「新增筆記」（底部列有），其餘（選取動作列、垃圾桶的說明與動作列）照舊。
+ * 手機清單畫面（`phone`）：不渲染「新增筆記」（左右下角的浮動鈕有），其餘（選取動作列、垃圾桶的說明與動作列）照舊。
  * 側欄底部（tab 列與 UserMenu 之間）：「我的筆記」「最近」tab 是「新增筆記」（永遠建個人筆記，所以「群組」「與我共享」tab 不顯示）；垃圾桶 tab 換成保留天數說明，
  * 垃圾桶選取模式換成動作列，兩者在 `TrashFooter.tsx`；一般 tab 的選取模式換成 `SelectActionBar`（
  * 寬螢幕不顯示，動作列在標題列）。
@@ -28,7 +28,7 @@ export function SidebarFooter({
   searching: boolean;
   onCreateNote: () => void;
   newNotePending: boolean;
-  /** 手機清單畫面：「新增筆記」在底部列（`PhoneListBar`），這裡只留選取動作列與垃圾桶的說明／動作列。 */
+  /** 手機清單畫面：「新增筆記」在左右下角的浮動鈕（`PhoneListFabs`），這裡只留選取動作列與垃圾桶的說明／動作列。 */
   phone?: boolean;
 }) {
   const { t } = useTranslation();
@@ -48,7 +48,7 @@ export function SidebarFooter({
     // 清單可視高度因此多約一列：捲在最底附近時進入選取會位移約一列（不留同高空白）。
     // 跨判準時兩處各自依判準掛／卸，同一份實例同時只有一個 `SelectActionBar`。
     if (wide) return null;
-    // 佔位與動作列同高（手機：與搜尋列同高，57＋底部 safe area）；chunk 失敗時錯誤＋重試由清單那份（同一個 chunk）顯示，這裡隱藏。
+    // 佔位與動作列同高（手機：57＋底部 safe area）；chunk 失敗時錯誤＋重試由清單那份（同一個 chunk）顯示，這裡隱藏。
     return (
       <SidebarLazyBoundary
         chunk="select"
@@ -64,7 +64,7 @@ export function SidebarFooter({
   // 佔位與保留天數說明「載入中」同高，chunk 到了版面不跳。chunk 載入失敗時錯誤＋重試由面板那份（同一個 chunk）顯示，
   // 底部的錯誤內容隱藏、不重複一顆重試鈕。
   return (
-    <SidebarLazyBoundary chunk="trash" fallback={<div className="h-7" />} errorClassName="hidden">
+    <SidebarLazyBoundary chunk="trash" fallback={<div className="h-7 max-sm:h-[calc(6.375rem+env(safe-area-inset-bottom))]" />} errorClassName="hidden">
       <TrashFooter />
     </SidebarLazyBoundary>
   );

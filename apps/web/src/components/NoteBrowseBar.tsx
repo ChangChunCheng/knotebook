@@ -1,30 +1,28 @@
 import { useContext, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import type { NoteDto } from "@knotebook/shared";
 import { useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
-import { Button } from "@/components/ui/button";
-import { Plus, Search } from "@/components/ui/icons";
+import { PhoneListFabs } from "@/components/sidebar/PhoneListFabs";
 import { indexFolders } from "@/components/sidebar/folder-index";
 import { createTargetFor } from "@/lib/note-create-target";
 import { PhoneBrowseContext } from "@/lib/phone-list";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
 
 /**
- * 手機筆記頁的底部瀏覽列：左邊像搜尋框的按鈕（開全螢幕搜尋層）、右邊「New note」（建在這篇所在的空間與資料夾；
- * 這篇不能在那裡建就不顯示）。列高 56（內距 6＋控制項 44＋6）加底部 safe area（外框貼齊螢幕邊，Home 指示條的退讓由這一列自己給）。
- * 螢幕鍵盤開著（例如正在改標題）時整條不渲染，免得被鍵盤頂著或蓋住。
+ * 手機筆記頁底部的兩顆毛玻璃浮動鈕（與清單畫面同一組 `PhoneListFabs`）：左下「Search」（開全螢幕搜尋層）、
+ * 右下「New note」（建在這篇所在的空間與資料夾；這篇不能在那裡建就不顯示）。
+ * 螢幕鍵盤開著（例如正在改標題）或搜尋層開著時整組不渲染；編輯中由 `NotePage` 不掛。內容的底部空白由 `NoteEditor` 的 `fabClearance` 給。
  */
 export function NoteBrowseBar({ note }: { note: NoteDto }) {
-  const { t } = useTranslation();
   const browse = useContext(PhoneBrowseContext);
   const foldersQuery = useFolders();
   const groupsQuery = useGroups();
   const keyboardOpen = isKeyboardOpen(useKeyboardInset());
+  const searchOpen = browse?.searchOpen === true;
   const [pending, setPending] = useState(false);
   const folderIndex = useMemo(() => indexFolders(foldersQuery.data ?? []), [foldersQuery.data]);
   const target = createTargetFor(note, { groups: groupsQuery.data ?? [], folders: folderIndex });
-  if (keyboardOpen) return null;
+  if (keyboardOpen || searchOpen) return null;
 
   function handleCreate(): void {
     if (target === null || pending) return;
@@ -33,26 +31,13 @@ export function NoteBrowseBar({ note }: { note: NoteDto }) {
   }
 
   return (
-    <div
-      data-testid="note-browse-bar"
-      className="flex shrink-0 items-center gap-2 border-t border-border bg-card px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))]"
-    >
-      <button
-        type="button"
-        data-note-browse-search=""
-        aria-label={t("sidebar.searchLabel")}
-        onClick={() => browse?.openSearch()}
-        className="relative flex h-11 min-w-0 flex-1 items-center rounded-md border border-input bg-background pl-9 pr-3 text-left text-base text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
-        <span className="truncate">{t("sidebar.searchPlaceholder")}</span>
-      </button>
-      {target !== null && (
-        <Button type="button" variant="brand" className="h-11 shrink-0" onClick={handleCreate} disabled={pending}>
-          <Plus aria-hidden="true" className="h-4 w-4" />
-          {t("home.newNote")}
-        </Button>
-      )}
+    <div data-testid="note-browse-bar" className="contents">
+      <PhoneListFabs
+        onSearch={() => browse?.openSearch()}
+        showNewNote={target !== null}
+        onCreateNote={handleCreate}
+        newNotePending={pending}
+      />
     </div>
   );
 }

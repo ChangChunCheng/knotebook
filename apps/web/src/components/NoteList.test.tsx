@@ -497,6 +497,19 @@ describe("NoteList", () => {
 
   // ── 我的筆記／與我共享／群組 ──
 
+  it("最愛清單還沒到：沒有星號，⋮ 佔最右一格（離列緣 3px）", async () => {
+    stubNotesFetch([OWNER_NOTE], []);
+    const inner = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => (String(input) === "/api/favorites" ? new Promise<Response>(() => {}) : inner(input, init)));
+    renderNoteList();
+    await within(panel()).findByRole("link", { name: "Has A Slug" });
+    const row = noteRow(OWNER_NOTE.id)!;
+    expect(within(row).queryByRole("button", { name: "Favorite" })).toBeNull();
+    const menu = within(row).getByRole("button", { name: `Note actions for ${OWNER_NOTE.title}` });
+    // 沒有星號時 ⋮ 自己是最右一格（流裡的最後一個子元素）。
+    expect(row.lastElementChild).toBe(menu);
+  });
+
   it("NL2 我的筆記：只列個人筆記、順序同 server、每列 pl-2、每列有 ⋮；不含群組與共享筆記", async () => {
     stubNotesFetch([THIRD_OWNER_NOTE, MY_GROUP_NOTE, SHARED_NOTE, OWNER_NOTE], [GROUP_A]);
 
@@ -507,9 +520,25 @@ describe("NoteList", () => {
     expect(titles).toEqual(["Third Owner Note", "Has A Slug"]); // server 順序，不依標題排
     for (const note of [THIRD_OWNER_NOTE, OWNER_NOTE]) {
       const row = noteRow(note.id)!;
-      expect(row).toHaveClass("pl-2", "pr-2");
-      expect(row).not.toHaveClass("pl-6");
-      expect(within(row).getByRole("button", { name: `Note actions for ${note.title}` })).toBeInTheDocument();
+      // 右內距 3px：最右那顆鈕的圖示右緣離清單邊 16px，與左側文字起點對稱；手機標題 15px。
+      expect(row).toHaveClass("pl-2", "pr-0.75", "text-[13px]", "max-sm:text-[15px]");
+      expect(row).not.toHaveClass("pl-6", "pr-2");
+      const menu = within(row).getByRole("button", { name: `Note actions for ${note.title}` });
+      // 滑鼠：⋮ 在流裡，沒浮出時寬度 0（不佔位、-ms-1 抵掉多的 gap）；滑過、鍵盤焦點、選單開著時長成 24px，標題更早截斷；
+      // hover:none（⋮ 常駐）以 ! 蓋回 24px；不帶任何底色。
+      expect(menu).toHaveClass(
+        "pointer-fine:w-0",
+        "pointer-fine:-ms-1",
+        "pointer-fine:overflow-hidden",
+        "pointer-fine:group-hover/noterow:w-6",
+        "pointer-fine:group-has-[:focus-visible]/noterow:w-6",
+        "pointer-fine:focus-visible:w-6",
+        "pointer-fine:data-[state=open]:w-6",
+        "[@media(hover:none)]:w-6!",
+        "w-6",
+        "opacity-0",
+      );
+      expect(menu.className).not.toMatch(/pointer-fine:absolute|bg-card|bg-inherit/);
     }
     expect(within(panel()).queryByRole("link", { name: "Mine In A" })).toBeNull();
     expect(within(panel()).queryByRole("link", { name: "No Slug Note" })).toBeNull();
@@ -524,7 +553,7 @@ describe("NoteList", () => {
     const orphan = await within(panel()).findByRole("link", { name: "Orphan" });
     expect(orphan).toHaveAttribute("href", `/g/${ORPHAN_GROUP_NOTE.group!.id}/orphan`);
     expect(within(noteRow(SHARED_NOTE.id)!).getByText("Editor")).toBeInTheDocument();
-    expect(within(noteRow(viewerShared.id)!).getByText("Viewer")).toBeInTheDocument();
+    expect(within(noteRow(viewerShared.id)!).getByText("Viewer")).toHaveClass("text-[11px]", "max-sm:text-xs");
     // 孤兒群組筆記不標角色（#182）。
     expect(within(noteRow(ORPHAN_GROUP_NOTE.id)!).queryByText("Editor")).toBeNull();
     expect(within(panel()).queryByRole("link", { name: "Has A Slug" })).toBeNull();
@@ -615,7 +644,7 @@ describe("NoteList", () => {
       expect(guide).toHaveClass("ml-[15px]", "border-l", "border-muted-foreground/35", "pl-2");
       const group = groupNode(GROUP_A.id)!;
       expect(group).toContainElement(guide);
-      expect(row).toHaveClass("pl-3", "pr-2");
+      expect(row).toHaveClass("pl-3", "pr-0.75");
       expect(row).not.toHaveClass("pl-6");
       // 群組節點直接掛在清單的 ul 底下，沒有 pl-4 外包。
       expect(group.parentElement?.tagName).toBe("UL");
@@ -1193,19 +1222,22 @@ describe("筆記列 ⋮", () => {
       "group-hover/noterow:opacity-100",
       "group-has-[:focus-visible]/noterow:opacity-100",
     );
-    // owner 列沒有徽章，⋮ 是列的最後一個子元素。
-    expect(row.lastElementChild).toBe(trigger);
+    // owner 列沒有徽章：⋮ 緊接在標題連結之後；最愛清單載入後星號才在它右邊（最右一格），沒載入時 ⋮ 是最後一個子元素。
+    expect(trigger.previousElementSibling).toBe(row.querySelector("a"));
+    const last = row.lastElementChild;
+    expect(last === trigger || last?.getAttribute("aria-pressed") !== null).toBe(true);
     // 單一面板裡同一篇只有一顆 ⋮。
     expect(within(panel()).getAllByRole("button", { name: "Note actions for Has A Slug" })).toHaveLength(1);
 
-    // 與我共享（editor）那列：順序＝標題、徽章、星星（最愛清單載入後才有）、⋮。
+    // 與我共享（editor）那列：順序＝標題、徽章、⋮、星星（最愛清單載入後才有，最右一格）；有星號時 ⋮ 浮在星號左邊一格。
     selectTab("Shared with me");
     const sharedTrigger = within(panel()).getByRole("button", { name: "Note actions for No Slug Note" });
     const badge = within(panel()).getByText("Editor");
     const star = await within(panel()).findByRole("button", { name: "Favorite" });
-    expect(badge.nextElementSibling).toBe(star);
-    expect(star.nextElementSibling).toBe(sharedTrigger);
-    expect(sharedTrigger.closest("li")?.lastElementChild).toBe(sharedTrigger);
+    expect(badge.nextElementSibling).toBe(sharedTrigger);
+    expect(sharedTrigger.nextElementSibling).toBe(star);
+    expect(star.className).not.toContain("me-7");
+    expect(sharedTrigger.closest("li")?.lastElementChild).toBe(star);
   });
 
   it("開選單時 trigger 帶 data-state=open（hover 浮出的「開著不消失」靠它；CSS 生效要瀏覽器看）", async () => {
@@ -1804,6 +1836,15 @@ describe("NoteList × 最愛", () => {
     vi.unstubAllGlobals();
   });
 
+  it("手機字級：兩行列的標題 15px、第二行 12px（桌機 13／11 不變）", async () => {
+    stubServer({ favorites: [fav(SHARED.id, T3)] });
+    renderNoteList({}, { tab: "favorites" });
+    await waitFor(() => expect(noteRow(SHARED.id)).not.toBeNull());
+    const link = noteRow(SHARED.id)!.querySelector("a")!;
+    expect(link.children[0]).toHaveClass("text-[13px]", "max-sm:text-[15px]");
+    expect(link.children[1]).toHaveClass("text-[11px]", "max-sm:text-xs");
+  });
+
   it("列出 favorites 與 notes 的交集、順序照 favorites；每列兩行，第二行＝noteLocationLabel", async () => {
     stubServer({ favorites: [fav(SHARED.id, T3), fav("gone", T3), fav(GROUPED.id, T2), fav(IN_FOLDER.id, T1)] });
     renderNoteList({}, { tab: "favorites" });
@@ -2077,7 +2118,7 @@ describe("NoteList × 列上星星", () => {
     expect(favoritesGets(server)).toBe(1);
   });
 
-  it("列內 DOM 順序是連結、角色標記、星星、⋮；星星不在連結內", async () => {
+  it("列內 DOM 順序是連結、角色標記、⋮、星星（最右）；星星不在連結內", async () => {
     stubStars();
     renderNoteList({}, { tab: "shared" });
     await waitFor(() => expect(starOf(SHARED.id)).not.toBeNull());
@@ -2088,10 +2129,26 @@ describe("NoteList × 列上星星", () => {
     const actions = within(row).getByRole("button", { name: "Note actions for Delta" });
     const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     expect(before(link, badge)).toBe(true);
-    expect(before(badge, star)).toBe(true);
-    expect(before(star, actions)).toBe(true);
+    expect(before(badge, actions)).toBe(true);
+    expect(before(actions, star)).toBe(true);
     expect(star.closest("a")).toBeNull();
     expect(star.parentElement).toBe(row);
+  });
+
+  it("觸控用的星標：只有最愛的列有，role=img、名稱 Favorite、不吃點擊、不是按鈕，排在 ⋮ 左邊（⋮ 仍是最右一格）；沒加入的列沒有", async () => {
+    stubStars();
+    renderNoteList({}, { tab: "recent" });
+    await waitFor(() => expect(stars().length).toBe(4));
+    const row = noteRow(LOOSE.id)!;
+    const marker = within(row).getByRole("img", { name: "Favorite" });
+    const actions = within(row).getByRole("button", { name: `Note actions for ${LOOSE.title}` });
+    expect(marker.tagName).toBe("SPAN");
+    expect(marker).toHaveClass("pointer-events-none", "hidden", "[@media(hover:none)]:flex", "[@media(pointer:coarse)]:flex", "w-3.5", "ms-2");
+    expect(marker.closest("button")).toBeNull();
+    expect(marker.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(marker.nextElementSibling).toBe(actions);
+    expect(within(noteRow(IN_FOLDER.id)!).queryByRole("img", { name: "Favorite" })).toBeNull();
+    expect(within(panel()).getAllByRole("img", { name: "Favorite" })).toHaveLength(1);
   });
 
   it("只有送出中的那一篇是 aria-disabled，其他列照常", async () => {

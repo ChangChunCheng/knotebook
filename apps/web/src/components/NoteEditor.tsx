@@ -413,6 +413,8 @@ export interface NoteEditorProps {
   footerSlot?: ReactNode;
   /** 手機編輯中：渲染浮在鍵盤上方的編輯工具列（`NotePage` 依焦點與段位決定）。 */
   mobileToolbar?: boolean;
+  /** 手機沒在編輯、右下左下有浮動鈕時：捲動內容尾端留一段空白，最後一行才捲得到浮動鈕之上。 */
+  fabClearance?: boolean;
   /** 版本預覽：有值時**捲動容器加 `hidden`**、同一張卡內在捲動容器之後渲染這個 slot；
    * 頁首（含預覽橫幅）、頁尾照常。⚠ 活編輯器**不 unmount**：`NoteEditorView` 的重掛會殺掉 y-prosemirror 的
    * UndoManager 訂閱；放在 `hidden` 容器裡的活編輯器仍收得到遠端更新。 */
@@ -459,6 +461,7 @@ export function NoteEditor({
   headerSlot,
   footerSlot,
   mobileToolbar = false,
+  fabClearance = false,
   previewSlot,
   onScrollRoot,
   onCursorScroller,
@@ -675,11 +678,11 @@ export function NoteEditor({
             {/* 手機且頁尾放在捲動容器內時：欄、頁尾、工具列空白包在一個至少與捲動容器等高的直欄裡，
                 欄自己撐滿剩下的高度（短筆記不會因為頁尾與空白而多出可捲的範圍，點欄下方空白仍聚焦到最後）。
                 其他情形這層是 `display: contents`，不產生盒子，欄照舊自己 `min-h-full`。 */}
-            <div data-article-flow="" className={footerInScroll ? "flex min-h-full flex-col" : "contents"}>
+            <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col" : "contents"}>
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll ? "grow shrink-0" : "min-h-full")}
+              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
             >
               <NoteEditorView
                 editor={editor}
@@ -701,6 +704,8 @@ export function NoteEditor({
             {/* 手機的頁尾在文章欄之後；工具列的空白再排在它後面，頁尾才捲得到工具列之上，游標那一行（在欄內）的避讓不受影響。 */}
             {footerInScroll && footerSlot}
             {mobileToolbar && footerInScroll && <MobileToolbarSpacer />}
+            {/* 浮動鈕高 56＋離底 16＋safe area，再留 8px 的縫。 */}
+            {fabClearance && <div aria-hidden="true" data-fab-clearance="" className="h-[calc(5rem+env(safe-area-inset-bottom))] shrink-0" />}
             </div>
           </div>
           {hasPreview && (

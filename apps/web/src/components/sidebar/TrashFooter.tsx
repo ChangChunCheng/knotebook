@@ -24,14 +24,17 @@ export function TrashFooter() {
   return wide ? null : <TrashActionBar />;
 }
 
-/** 保留天數說明；載入中／失敗時只留同高的空位，版面不跳。 */
+/**
+ * 保留天數說明；載入中／失敗時只留同高的空位，版面不跳。
+ * 手機：左下的浮動 Search 鈕蓋在清單底部，說明整段抬到鈕的上緣之上（底部留 56＋16＋8 加 safe area），清單與說明都不被蓋住。
+ */
 function TrashFooterNote() {
   const { t } = useTranslation();
   const trash = useTrash();
-  if (!trash.isSuccess) return <div className="h-7" />;
+  if (!trash.isSuccess) return <div className="h-7 max-sm:h-[calc(6.375rem+env(safe-area-inset-bottom))]" />;
   const days = trash.data.retentionDays;
   return (
-    <p data-testid="trash-footer" className="px-4 py-1.5 text-center text-[11px] text-muted-foreground">
+    <p data-testid="trash-footer" className="px-4 py-1.5 text-center text-[11px] text-muted-foreground max-sm:pb-[calc(5rem+env(safe-area-inset-bottom))]">
       {days !== null ? t("trash.footer", { count: days }) : t("trash.footerNever")}
     </p>
   );

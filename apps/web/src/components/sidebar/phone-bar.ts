@@ -1,6 +1,6 @@
 /**
- * 手機清單畫面底部兩種列（搜尋列 `PhoneListBar`、選取動作列 `SelectActionBar`）共用的外框 class：
- * 內距 6＋控制項 44＋6、上框線，加底部 safe area。兩列同高，進出選取模式時清單的可視高度不跳。
+ * 手機清單畫面底部兩種列（搜尋層開著時的搜尋列 `PhoneListBar`、選取動作列 `SelectActionBar`）共用的外框 class：
+ * 內距 6＋控制項 44＋6、上框線，加底部 safe area。兩列同高；沒在搜尋也沒在選取時清單底部沒有列（入口是 `PhoneListFabs`）。
  * 螢幕鍵盤開著時鍵盤蓋住了底部 safe area，所以不留那段內距。
  */
 export const PHONE_BAR_FRAME = "shrink-0 border-t border-border bg-card px-2 pt-1.5";

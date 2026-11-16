@@ -17,7 +17,7 @@ import { useVersions } from "@/lib/versions-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { HEADER_ICON_HIT, ROW_ICON_HIT } from "@/components/ui/hit-area";
-import { hoverReveal } from "@/components/ui/reveal";
+import { hoverReveal, NOTE_MENU_COLLAPSE } from "@/components/ui/reveal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { NoteWidthItemsControl } from "@/components/NoteWidthMenuItems";
 import {
@@ -233,6 +233,8 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
   const addFavorite = useAddFavorite();
   const removeFavorite = useRemoveFavorite();
   const versions = useVersions();
+  // 手機的文章欄本來就滿寬，寬度設定在那裡沒有作用：只在 640 以上提供。
+  const phone = useIsPhone();
 
   // 每次 render 同步寫入——`handleTrash` 的 catch 分支讀最新值，避開
   // stale closure（見上方檔頭「判斷終態用的是 stateRef.current」的說明）。
@@ -389,7 +391,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
               variant="ghost"
               size="icon"
               aria-label={t("note.menu.labelFor", { title: note.title })}
-              className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("noterow"))}
+              className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("noterow"), NOTE_MENU_COLLAPSE)}
             >
               <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
             </Button>
@@ -447,7 +449,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             {t("note.menu.present")}
           </DropdownMenuItem>
           {/* 寬度：只在頁首 ⋮（側欄每列沒有頁首寬度鈕要補）。兩種形與展開狀態見 `NoteWidthMenuItems`。 */}
-          {trigger === "header" && widthItems?.({ expanded: widthExpanded, onExpandedChange: setWidthExpanded, onModeChange: closeAndReset })}
+          {trigger === "header" && !phone && widthItems?.({ expanded: widthExpanded, onExpandedChange: setWidthExpanded, onModeChange: closeAndReset })}
           {/* 版本歷史：只在 `useVersions().enabled`（＝canEdit，且在 NotePage 的 VersionsProvider 之內）時渲染——
               側欄每列的 ⋮ 在 provider 之外，拿到的是 no-op 預設（enabled=false），所以只出現在頁首 ⋮。
               項目本身只在窄視窗渲染（見 `VersionsMenuItem`）；「儲存當前版本」不在 ⋮（入口是 Ctrl+S 與版本面板／整頁底部的按鈕）。

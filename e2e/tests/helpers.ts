@@ -370,8 +370,8 @@ export function toastWithTitle(page: Page, title: string): Locator {
 export async function moveNoteToTrashFromSidebar(page: Page, title: string, scope?: Locator): Promise<Locator> {
   const root = scope ?? page.getByRole("complementary");
   const actions = root.getByRole("button", { name: `Note actions for ${title}`, exact: true });
-  // ⋮ 是 hover 浮出（hoverReveal），先 hover 再點（同 22）。
-  await actions.hover();
+  // ⋮ 是 hover 才長出來的（滑鼠下沒滑過時寬度 0，Playwright 對零寬的鈕無法 hover／click）：先 hover 整列，再點。
+  await actions.locator("xpath=ancestor::li[1]").hover();
   await actions.click();
   await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await expect(actions).toHaveCount(0, { timeout: 15_000 });

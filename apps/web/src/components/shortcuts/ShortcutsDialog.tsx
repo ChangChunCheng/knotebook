@@ -69,7 +69,7 @@ export function ShortcutsDialog({
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-4 top-4 z-20 h-7 w-7 bg-card md:right-5 md:top-5"
+              className="absolute right-4 top-4 z-20 h-7 w-7 bg-card max-sm:right-[calc(max(0.5rem,env(safe-area-inset-right))+0.5rem)] max-sm:top-[calc(max(0.5rem,env(safe-area-inset-top))+0.5rem)] md:right-5 md:top-5"
               aria-label={t("management.close")}
             >
               <X className="h-4 w-4" aria-hidden="true" />

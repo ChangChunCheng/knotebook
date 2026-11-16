@@ -8,6 +8,9 @@ import { ArrowLeft, X } from "@/components/ui/icons";
 import { managementNavItemClass, managementTray } from "@/components/management/tray";
 import { cn } from "@/lib/utils";
 
+/** 28px 的 ✕／返回鈕在觸控裝置撐出 44×44 的點擊範圍（四邊各 8px）；用在 `absolute` 的鈕，`relative` 由呼叫端視需要加。 */
+const PANEL_CLOSE_HIT = "pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
+
 /**
  * 三個設定管理類面板（個人設定、群組、站台管理）的共用外殼（#247）：托盤上兩張卡——
  * 左卡項次、右卡內容，與筆記頁「側欄卡＋內文卡」同一語彙。Dialog 由這裡持有；三個薄包裝
@@ -138,16 +141,24 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
             data-management-card="items"
             className={cn(
               cardSurface,
-              "w-full shrink-0 flex-col overflow-hidden p-4 md:w-64",
+              "relative w-full shrink-0 flex-col overflow-hidden p-4 md:w-64",
               layer === "items" ? "flex" : "hidden",
               "md:flex",
             )}
           >
-            <div className="mb-3 flex h-10 items-center gap-2 px-3">
+            <div className="mb-3 flex h-10 items-center gap-2 px-3 max-md:pr-10">
               <div className="min-w-0">
                 <DialogTitle className="truncate text-[15px] font-semibold leading-tight tracking-normal">{title}</DialogTitle>
                 {subtitle !== undefined && <p className="truncate text-xs font-normal text-muted-foreground">{subtitle}</p>}
               </div>
+              {/* 窄寬度停在項次清單時右卡是 hidden，這裡補一顆 ✕，兩層都關得掉；位置與右卡的 ✕ 相同（卡的右上角 8px），兩層切換時不跳；只在這一層渲染，免得同時有兩顆同名的 Close。 */}
+              {layer === "items" && (
+                <DialogClose asChild>
+                  <Button type="button" variant="ghost" size="icon" className={cn("absolute right-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PANEL_CLOSE_HIT)} aria-label={t("management.close")}>
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </DialogClose>
+              )}
             </div>
             <DialogDescription className="sr-only">{description ?? title}</DialogDescription>
             <nav ref={navRef} aria-label={title} className="flex flex-col gap-1">
@@ -175,7 +186,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden"
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PANEL_CLOSE_HIT)}
               aria-label={t("management.back")}
               onClick={() => switchTo("items")}
             >
@@ -186,7 +197,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="absolute right-2 top-2 z-10 h-7 w-7 bg-card"
+                className={cn("absolute right-2 top-2 z-10 h-7 w-7 bg-card", PANEL_CLOSE_HIT)}
                 aria-label={t("management.close")}
               >
                 <X className="h-4 w-4" aria-hidden="true" />
