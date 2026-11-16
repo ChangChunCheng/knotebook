@@ -73,6 +73,6 @@ describe("SettingsGroup labelledByTitle", () => {
       </SettingsPage>,
     );
     const h1 = screen.getByRole("heading", { level: 1, name: "Users" });
-    expect(h1).toHaveClass("text-xl", "font-semibold", "max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10");
+    expect(h1).toHaveClass("text-xl", "font-semibold", "max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10", "max-sm:-mt-12");
   });
 });

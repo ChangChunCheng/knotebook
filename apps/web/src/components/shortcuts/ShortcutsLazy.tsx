@@ -8,6 +8,8 @@ import { cardSurface } from "@/components/ui/card";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "@/components/ui/icons";
 import {
   managementBackTopPhone,
+  managementContentTopPhone,
+  managementHeadingUpPhone,
   managementCardPhone,
   managementCardPhoneInset,
   managementListHeaderPhone,
@@ -272,7 +274,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
                 setSelected(category);
                 switchTo("content");
               }}
-              className={cn(managementNavItemClass(category === active.category), "w-full text-left")}
+              className={cn(managementNavItemClass(category === active.category), "w-full text-left max-sm:w-auto")}
             >
               <span className="min-w-0 truncate">{t(`shortcutsGuide.categories.${category}`)}</span>
               <ChevronRight aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 sm:hidden" />
@@ -325,10 +327,10 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
           role="region"
           aria-labelledby={headingId}
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto p-4 pt-12 max-sm:pt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:p-8"
+          className={cn("min-h-0 flex-1 overflow-y-auto p-4 pt-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:p-8", managementContentTopPhone)}
         >
           <section data-shortcut-category={active.category}>
-            <h3 id={headingId} className="mb-1 text-base font-semibold max-sm:flex max-sm:min-h-12 max-sm:items-center max-sm:pl-10 max-sm:text-lg">
+            <h3 id={headingId} className={cn("mb-1 text-base font-semibold max-sm:text-lg", managementHeadingUpPhone)}>
               {t(`shortcutsGuide.categories.${active.category}`)}
             </h3>
             <ul className="divide-y divide-border">

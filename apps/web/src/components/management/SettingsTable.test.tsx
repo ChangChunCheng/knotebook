@@ -239,7 +239,7 @@ describe("SettingsTable", () => {
     expect(cells[1]).toHaveClass("col-[2/-1]");
     expect(within(cells[1]!).getByRole("textbox", { name: "Label" })).toBeInTheDocument();
     expect(editingRow).toHaveClass("bg-brand-soft");
-    expect(cells[0]!.style.background).toBe("linear-gradient(var(--brand-soft), var(--brand-soft)), var(--card)");
+    expect(cells[0]!.style.background).toBe("linear-gradient(var(--brand-soft), var(--brand-soft)), var(--kb-sticky-surface, var(--card))");
     expect(within(editingRow).queryByRole("switch")).toBeNull();
   });
 
@@ -297,6 +297,8 @@ describe("SettingsTable", () => {
     for (const cell of [stickyHeader, stickyRowCell]) {
       expect(cell).toHaveClass("sticky", "group-data-[overflowing]/box:border-r");
       expect(cell).not.toHaveClass("border-r");
+      // 手機（卡片）沒有 sticky：格子透明、露出卡片的表面；編輯中列的疊色底改疊在 popover 上
+      expect(cell).toHaveClass("bg-card", "max-sm:bg-transparent", "max-sm:[--kb-sticky-surface:var(--popover)]");
     }
     expect(box).not.toHaveAttribute("data-overflowing");
 

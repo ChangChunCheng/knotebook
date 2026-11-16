@@ -9,6 +9,7 @@ import {
   managementCardPhone,
   managementCardPhoneInset,
   managementBackTopPhone,
+  managementContentTopPhone,
   managementListHeaderPhone,
   managementListPaddingPhone,
   managementNavItemClass,
@@ -302,7 +303,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               ref={contentRef}
               data-management-content=""
               tabIndex={-1}
-              className="flex-1 overflow-y-auto p-4 pt-12 focus:outline-none max-sm:pt-4 md:p-8"
+              className={cn("flex-1 overflow-y-auto p-4 pt-12 focus:outline-none md:p-8", managementContentTopPhone)}
             >
               {children}
             </div>

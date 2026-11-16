@@ -427,6 +427,8 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
         "max-sm:text-base",
         "max-sm:font-normal",
         "max-sm:rounded-sm",
+        "max-sm:-mx-2",
+        "max-sm:px-2",
         "max-sm:hover:bg-accent",
         "max-sm:active:bg-accent",
         "max-sm:focus-visible:bg-accent",
@@ -458,8 +460,11 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(header).toHaveClass("max-sm:h-12", "max-sm:border-b", "max-sm:border-border");
     const listBack = within(itemsCard()).getByRole("button", { name: "Close" });
     const contentBack = within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true });
-    for (const back of [listBack, contentBack]) expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-transparent");
-    expect(contentBox()).toHaveClass("max-sm:pt-4");
+    // 「‹」的底色是 sheet 的表面（看起來透明，但捲動的內容經過時遮住）；內容區頂端讓出「‹」的位置
+    for (const back of [listBack, contentBack]) expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-popover");
+    expect(contentBox()).toHaveClass("pt-12", "max-sm:pt-16");
+    // 列頭的髮絲線拉滿卡的全寬（往兩側退掉卡的內距），標題左緣不動
+    expect(header).toHaveClass("max-sm:-ml-[max(1rem,env(safe-area-inset-left))]", "max-sm:-mr-[max(1rem,env(safe-area-inset-right))]", "max-sm:pl-[calc(max(1rem,env(safe-area-inset-left))+2.5rem)]");
   });
 
   it("MS-P13 640 以上的列、標題與卡維持原樣：36px 高、14px、品牌色的目前項次、沒有手機專屬的底色", async () => {

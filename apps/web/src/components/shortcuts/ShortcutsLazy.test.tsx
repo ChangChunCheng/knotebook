@@ -384,7 +384,9 @@ describe("手機（< 640）", () => {
     const rows = Array.from(items.querySelectorAll<HTMLElement>("[data-shortcuts-category]"));
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      expect(row).toHaveClass("max-sm:min-h-12", "max-sm:text-base", "max-sm:font-normal", "max-sm:rounded-sm", "max-sm:hover:bg-accent");
+      expect(row).toHaveClass("max-sm:min-h-12", "max-sm:text-base", "max-sm:font-normal", "max-sm:rounded-sm", "max-sm:hover:bg-accent", "max-sm:-mx-2", "max-sm:px-2");
+      // `w-full` 會讓負邊距只把列往左推：手機改回自動寬度，列才向兩側各撐出 8px
+      expect(row).toHaveClass("w-full", "max-sm:w-auto");
       expect(row.querySelector("svg")).toHaveClass("sm:hidden", "ml-auto");
       expect(row.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     }
@@ -397,15 +399,15 @@ describe("手機（< 640）", () => {
     expect(title.parentElement).toHaveClass("max-sm:border-b", "max-sm:border-border", "max-sm:h-12");
     // 內容層：標題 18px、與「‹」同高；條目名稱 16px、說明維持 14px 灰字
     const heading = content.querySelector("h3")!;
-    expect(heading).toHaveClass("max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10");
-    expect(content.querySelector("[data-shortcuts-content]")).toHaveClass("max-sm:pt-4");
+    expect(heading).toHaveClass("max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10", "max-sm:-mt-12");
+    expect(content.querySelector("[data-shortcuts-content]")).toHaveClass("pt-12", "max-sm:pt-16");
     const entry = content.querySelector("li")!;
     expect(entry.querySelector("p.font-medium")).toHaveClass("max-sm:text-base");
     expect(entry.querySelector("p.text-muted-foreground")).toHaveClass("text-sm");
     expect(entry.querySelector("p.text-muted-foreground")!.className).not.toMatch(/max-sm:text-/);
     expect(content.querySelector("ul")).toHaveClass("divide-y");
     for (const back of [within(items).getByRole("button", { name: "Back to menu" }), within(content).getByRole("button", { name: "Back to sections", hidden: true })]) {
-      expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-transparent");
+      expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-popover");
     }
   });
 });
