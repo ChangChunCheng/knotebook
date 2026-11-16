@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, ChevronLeft, X } from "@/components/ui/icons";
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from "@/components/ui/icons";
 import {
   managementCardPhone,
   managementCardPhoneInset,
+  managementBackTopPhone,
+  managementListHeaderPhone,
   managementListPaddingPhone,
   managementNavItemClass,
+  managementNavListClass,
   managementTray,
 } from "@/components/management/tray";
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
@@ -114,6 +117,8 @@ export function ManagementNavItem({
           {count}
         </span>
       )}
+      {/* 手機：列尾的「›」表示點進去（同選單 sheet 的子選單列），640 以上不顯示。 */}
+      <ChevronRight aria-hidden="true" className={cn("h-4 w-4 shrink-0 sm:hidden", count === undefined && "ml-auto")} />
     </NavLink>
   );
 }
@@ -218,14 +223,14 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               "md:flex",
             )}
           >
-            <div className="mb-3 flex h-10 items-center gap-2 px-3 max-md:pr-10 max-sm:pl-10 max-sm:pr-3">
+            <div className={cn("mb-3 flex h-10 items-center gap-2 px-3 max-md:pr-10 max-sm:pl-10 max-sm:pr-3", managementListHeaderPhone)}>
               {/* 手機：項次清單的「‹」，與內容層的「‹」同一個位置（卡的左上角 8px）。DOM 在標題之前：開啟時的焦點落點。 */}
               {phone && layer === "items" && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+                  className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, managementBackTopPhone, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
                   aria-label={canReturnToMenu ? t("management.backToMenu") : t("management.close")}
                   onClick={() => close(true)}
                 >
@@ -233,7 +238,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
                 </Button>
               )}
               <div className="min-w-0">
-                <DialogTitle className="truncate text-[15px] font-semibold leading-tight tracking-normal">{title}</DialogTitle>
+                <DialogTitle className="truncate text-[15px] font-semibold leading-tight tracking-normal max-sm:text-lg">{title}</DialogTitle>
                 {subtitle !== undefined && <p className="truncate text-xs font-normal text-muted-foreground">{subtitle}</p>}
               </div>
               {/* 窄寬度停在項次清單時右卡是 hidden，這裡補一顆 ✕，兩層都關得掉；位置與右卡的 ✕ 相同（卡的右上角 8px），兩層切換時不跳；只在這一層渲染，免得同時有兩顆同名的 Close。 */}
@@ -246,7 +251,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               )}
             </div>
             <DialogDescription className="sr-only">{description ?? title}</DialogDescription>
-            <nav ref={navRef} aria-label={title} className="flex flex-col gap-1">
+            <nav ref={navRef} aria-label={title} className={managementNavListClass}>
               {items.map((item) => (
                 <ManagementNavItem
                   key={item.to}
@@ -273,7 +278,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               type="button"
               variant="ghost"
               size="icon"
-              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, managementBackTopPhone, PANEL_CLOSE_HIT, PHONE_BACK_HIT)}
               aria-label={t("management.back")}
               onClick={() => switchTo("items")}
             >
@@ -297,7 +302,7 @@ export function ManagementShell({ title, subtitle, description, items, onOpenCha
               ref={contentRef}
               data-management-content=""
               tabIndex={-1}
-              className="flex-1 overflow-y-auto p-4 pt-12 focus:outline-none md:p-8"
+              className="flex-1 overflow-y-auto p-4 pt-12 focus:outline-none max-sm:pt-4 md:p-8"
             >
               {children}
             </div>

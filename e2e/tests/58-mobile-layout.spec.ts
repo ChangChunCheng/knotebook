@@ -29,7 +29,12 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  * 58-16 管理面板（390 觸控）：從帳號選單開的設定是幾乎滿高的 sheet（左右與底貼齊、上方 0～40 的縫、上圓角），先停在項次清單，
  *      左上角「‹」（Back to menu、點擊範圍 44）；選項次後同一個位置是 Back to sections；沒有 ✕；視窗變矮時跟著變矮；
  *      清單的「‹」關掉並重開帳號選單；點上方的縫整個關掉；深連結停在那一頁，清單的「‹」（Close）只關。
- * 58-21 站台管理、快捷鍵頁從帳號選單開、群組面板從群組列 ⋮ 開：清單的「‹」重開開啟它的那個選單。
+ *      面板與同一個畫面的選單 sheet 是同一家族（淺色、深色各量一次）：卡的底色與陰影等於選單 sheet 的、上圓角 12px、托盤沒有模糊與底色；
+ *      項次清單的列高 ≥ 48、16px 一般字重、列與列相貼、4px 圓角、沒有常駐底色、列尾 16px 的「›」；標題 18px/600、列頭有髮絲線；
+ *      第二層標題 18px/600 並與「‹」垂直置中。
+ * 58-21 站台管理、快捷鍵頁從帳號選單開、群組面板從群組列 ⋮ 開：清單的「‹」重開開啟它的那個選單；三個面板同樣量上述表面、清單與標題，
+ *      快捷鍵條目名稱 16px、說明 14px。
+ * 58-28 寬螢幕（1280）：管理面板維持原樣——列 36px／14px／8px 圓角、目前的項次有品牌底、沒有「›」、托盤有毛玻璃、第二層標題 20px。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -832,6 +837,114 @@ async function expectCardEdgeToEdge(page: Page, dialog: Locator, label: string):
   expect(edges!.bottomGap, `${label}：卡的底緣貼齊外框`).toBe(0);
 }
 
+interface SurfaceMetrics {
+  bg: string;
+  radius: string;
+  shadow: string;
+}
+interface PanelMetrics extends SurfaceMetrics {
+  trayBg: string;
+  trayBlur: string;
+}
+interface ListMetrics {
+  title: { fontSize: number; fontWeight: number };
+  headerBorder: number;
+  rows: { height: number; fontSize: number; fontWeight: number; bgAlpha: number; top: number; radius: number; chevronWidth: number; chevronDisplay: string; chevronColor: string }[];
+  navBg: string;
+}
+
+/** 選單 sheet（role=menu）的表面：底色、左上圓角、陰影。 */
+const menuSurface = (menu: Locator): Promise<SurfaceMetrics> =>
+  menu.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { bg: s.backgroundColor, radius: s.borderTopLeftRadius, shadow: s.boxShadow };
+  });
+
+/** 面板 sheet 看得見的那張卡的底色與左上圓角、外框（Dialog 內容）的陰影，加上托盤的底色與模糊。 */
+const panelSurface = (dialog: Locator): Promise<PanelMetrics> =>
+  dialog.evaluate((el) => {
+    const card = Array.from(el.querySelectorAll<HTMLElement>("[data-management-card], [data-shortcuts-card]")).find((c) => c.getBoundingClientRect().width > 0)!;
+    const c = getComputedStyle(card);
+    const tray = getComputedStyle(card.parentElement!);
+    return { bg: c.backgroundColor, radius: c.borderTopLeftRadius, shadow: getComputedStyle(el).boxShadow, trayBg: tray.backgroundColor, trayBlur: tray.backdropFilter };
+  });
+
+/** 項次清單層：標題字級、列頭髮絲線、每一列的高／字級／字重／底色 alpha／圓角／「›」。 */
+const listMetrics = (dialog: Locator): Promise<ListMetrics> =>
+  dialog.evaluate((el) => {
+    const card = Array.from(el.querySelectorAll<HTMLElement>("[data-management-card='items'], [data-shortcuts-card='items']")).find((c) => c.getBoundingClientRect().width > 0)!;
+    const header = card.firstElementChild as HTMLElement;
+    const title = (header.querySelector("h2") ?? header.querySelector("p")) as HTMLElement;
+    const nav = card.querySelector("nav") as HTMLElement;
+    const alpha = (color: string): number => {
+      const m = color.match(/\/\s*([\d.]+)(%?)\s*\)$/) ?? color.match(/rgba\([^)]*,\s*([\d.]+)\)$/);
+      return m ? parseFloat(m[1]) / (m[2] === "%" ? 100 : 1) : 1;
+    };
+    return {
+      title: { fontSize: parseFloat(getComputedStyle(title).fontSize), fontWeight: parseInt(getComputedStyle(title).fontWeight, 10) },
+      headerBorder: parseFloat(getComputedStyle(header).borderBottomWidth),
+      navBg: getComputedStyle(nav).backgroundColor,
+      rows: Array.from(nav.children).map((row) => {
+        const s = getComputedStyle(row);
+        const svg = row.querySelector("svg") as SVGElement | null;
+        return {
+          height: row.getBoundingClientRect().height,
+          fontSize: parseFloat(s.fontSize),
+          fontWeight: parseInt(s.fontWeight, 10),
+          bgAlpha: alpha(s.backgroundColor),
+          top: row.getBoundingClientRect().top,
+          radius: parseFloat(s.borderTopLeftRadius),
+          chevronWidth: svg ? svg.getBoundingClientRect().width : 0,
+          chevronDisplay: svg ? getComputedStyle(svg).display : "none",
+          chevronColor: svg ? getComputedStyle(svg).color : "",
+        };
+      }),
+    };
+  });
+
+/** 手機：面板的表面（卡底色、上圓角、陰影）與同一個畫面的選單 sheet 一模一樣；托盤沒有模糊與底色。 */
+function expectSameSurface(panel: PanelMetrics, menu: SurfaceMetrics, label: string): void {
+  console.log(`MEASURE surface ${label} panel ${panel.bg} ${panel.radius} | menu ${menu.bg} ${menu.radius} | shadow ${panel.shadow}`);
+  expect(panel.bg, `${label}：卡的底色＝選單 sheet 的底色`).toBe(menu.bg);
+  expect(panel.radius, `${label}：上圓角`).toBe("12px");
+  expect(menu.radius, `${label}：選單的上圓角`).toBe("12px");
+  expect(panel.shadow, `${label}：陰影＝選單 sheet 的陰影`).toBe(menu.shadow);
+  expect(panel.shadow, `${label}：有陰影`).not.toBe("none");
+  expect(panel.trayBlur, `${label}：托盤沒有模糊`).toBe("none");
+  expect(alphaOf(panel.trayBg), `${label}：托盤沒有底色`).toBe(0);
+}
+
+/** 手機：項次清單的列像選單的列——至少 48 高、16px、一般字重、相貼、4px 圓角、沒有常駐底色、列尾有 16px 的「›」；標題 18px/600、列頭有 1px 髮絲線。 */
+function expectPhoneList(list: ListMetrics, label: string): void {
+  console.log(`MEASURE list ${label} title ${list.title.fontSize}/${list.title.fontWeight} border ${list.headerBorder} row0 ${JSON.stringify(list.rows[0])}`);
+  expect(list.title.fontSize, `${label}：標題字級`).toBe(18);
+  expect(list.title.fontWeight, `${label}：標題字重`).toBe(600);
+  expect(list.headerBorder, `${label}：列頭髮絲線`).toBe(1);
+  expect(list.rows.length, `${label}：有列`).toBeGreaterThan(1);
+  list.rows.forEach((row, i) => {
+    expect(row.height, `${label}：列 ${i} 高`).toBeGreaterThanOrEqual(48);
+    expect(row.fontSize, `${label}：列 ${i} 字級`).toBe(16);
+    expect(row.fontWeight, `${label}：列 ${i} 字重`).toBe(400);
+    expect(row.radius, `${label}：列 ${i} 圓角`).toBe(4);
+    expect(row.bgAlpha, `${label}：列 ${i} 沒有常駐底色（目前的項次也一樣）`).toBe(0);
+    expect(row.chevronWidth, `${label}：列 ${i} 的「›」`).toBe(16);
+    expect(row.chevronDisplay).not.toBe("none");
+    if (i > 0) expect(row.top - (list.rows[i - 1].top + list.rows[i - 1].height), `${label}：列 ${i} 與上一列相貼`).toBeCloseTo(0, 0);
+  });
+}
+
+/** 手機第二層：標題（h1／h3）18px/600，且與左上角的「‹」垂直置中對齊。 */
+async function expectPhoneContentHeading(dialog: Locator, heading: Locator, label: string): Promise<void> {
+  await expect(heading).toBeVisible();
+  // 區段頁載入時標題節點可能被換掉（舊節點量到空字串）：輪詢到量得到數字為止。
+  await expect.poll(() => fontPx(heading), { message: `${label}：第二層標題字級` }).toBe(18);
+  expect(await heading.evaluate((el) => parseInt(getComputedStyle(el).fontWeight, 10)), `${label}：第二層標題字重`).toBe(600);
+  const back = await box(dialog.getByRole("button", { name: "Back to sections", exact: true }));
+  const title = await box(heading);
+  expect(Math.abs(title.y + title.height / 2 - (back.y + back.height / 2)), `${label}：標題與「‹」垂直置中`).toBeLessThanOrEqual(1);
+  expect(await dialog.getByRole("button", { name: "Back to sections", exact: true }).evaluate((el) => getComputedStyle(el).backgroundColor), `${label}：「‹」透明底`).toBe("rgba(0, 0, 0, 0)");
+}
+
 test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選單開先停在項次清單；「‹」一路退回帳號選單；沒有 ✕；深連結停在那一頁、清單的「‹」只關；點上方的縫關掉", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page } = await openList(browser, 390, true);
@@ -856,6 +969,8 @@ test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選�
     // ── 帳號選單 → Settings：sheet、第一層（項次清單）、左上角「Back to menu」、沒有 ✕ ──
     let dialog = await openSettingsFromMenu();
     const gap = await expectPanelSheet(page, dialog);
+    const lightPanel = await panelSurface(dialog);
+    expectPhoneList(await listMetrics(dialog), "Settings 清單");
     await expect(dialog.getByRole("navigation", { name: "Settings" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     const toMenu = dialog.getByRole("button", { name: "Back to menu", exact: true });
@@ -875,6 +990,7 @@ test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選�
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     const contentBack = await box(toList);
     await expectCardEdgeToEdge(page, dialog, "內容層");
+    await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 1 }), "Settings 第二層");
     expect(Math.abs(contentBack.x - listBack.x), "兩層「‹」的 x").toBeLessThanOrEqual(1);
     expect(Math.abs(contentBack.y - listBack.y), "兩層「‹」的 y").toBeLessThanOrEqual(1);
     const contentArea = await tapAreaOf(toList);
@@ -901,7 +1017,30 @@ test("58-16 手機（390）管理面板是幾乎滿高的 sheet：從帳號選�
     await expect(menu).toHaveAttribute("data-menu-sheet");
     await expect(menu.getByRole("menuitem", { name: "Settings", exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/$/);
+    const lightMenu = await menuSurface(menu);
+    expectSameSurface(lightPanel, lightMenu, "淺色");
     await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    // ── 深色：同一個畫面的選單 sheet 與面板，表面仍一模一樣（底色換了、仍相同）──
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await avatarButton.click();
+    await expect(menu).toHaveAttribute("data-menu-sheet");
+    const darkMenu = await menuSurface(menu);
+    expect(darkMenu.bg, "深色底色與淺色不同").not.toBe(lightMenu.bg);
+    await menu.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expectPanelSheet(page, dialog);
+    expectSameSurface(await panelSurface(dialog), darkMenu, "深色");
+    expectPhoneList(await listMetrics(dialog), "深色 Settings 清單");
+    await dialog.getByRole("link", { name: "Sign-in", exact: true }).click();
+    await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 1 }), "深色 Settings 第二層");
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
     await expect(menu).toHaveCount(0);
 
     // ── 點上方的縫：整個關掉，不重開選單 ──
@@ -1267,13 +1406,18 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
 
     // ── 站台管理 ──
     await avatarButton.click();
+    await expect(menu).toHaveAttribute("data-menu-sheet");
+    const accountSheet = await menuSurface(menu);
     await menu.getByRole("menuitem", { name: "Site admin", exact: true }).click();
     let dialog = page.getByRole("dialog", { name: "Site admin" });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expectPanelSheet(page, dialog);
+    expectSameSurface(await panelSurface(dialog), accountSheet, "Site admin");
+    expectPhoneList(await listMetrics(dialog), "Site admin 清單");
     await expect(dialog.getByRole("navigation", { name: "Site admin" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     await dialog.getByRole("link", { name: "Groups", exact: true }).click();
+    await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 1 }), "Site admin 第二層");
     await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
     await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Site admin" })).toHaveCount(0);
@@ -1285,6 +1429,8 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expectPanelSheet(page, dialog);
+    expectSameSurface(await panelSurface(dialog), accountSheet, "快捷鍵");
+    expectPhoneList(await listMetrics(dialog), "快捷鍵清單");
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     const shortcutsBack = dialog.getByRole("button", { name: "Back to menu", exact: true });
     await expect(shortcutsBack).toBeVisible({ timeout: 15_000 });
@@ -1292,6 +1438,13 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     await dialog.getByRole("button", { name: "Sidebar", exact: true }).click();
     const sectionsBack = dialog.getByRole("button", { name: "Back to sections", exact: true });
     await expect(sectionsBack).toBeVisible();
+    await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 3 }), "快捷鍵第二層");
+    const entryFonts = await dialog.locator("[data-shortcut-id]").first().evaluate((li) => ({
+      name: parseFloat(getComputedStyle(li.querySelector("p.font-medium")!).fontSize),
+      desc: parseFloat(getComputedStyle(li.querySelector("p.text-muted-foreground")!).fontSize),
+      divider: parseFloat(getComputedStyle(li).borderBottomWidth),
+    }));
+    expect(entryFonts).toEqual({ name: 16, desc: 14, divider: 1 });
     const contentBox = await box(sectionsBack);
     expect(Math.abs(contentBox.x - listBox.x)).toBeLessThanOrEqual(1);
     expect(Math.abs(contentBox.y - listBox.y)).toBeLessThanOrEqual(1);
@@ -1306,11 +1459,17 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     const panel = await showSidebarTab(page, "Groups");
     await panel.getByRole("button", { name: `Group actions for ${groupName}`, exact: true }).click();
     await expect(menu).toHaveAttribute("data-menu-sheet");
+    const groupSheet = await menuSurface(menu);
     await menu.getByRole("menuitem", { name: "Members & settings", exact: true }).click();
     dialog = page.getByRole("dialog", { name: groupName });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expectPanelSheet(page, dialog);
     await expect(dialog.getByRole("navigation", { name: groupName })).toBeVisible();
+    expectSameSurface(await panelSurface(dialog), groupSheet, "群組");
+    expectPhoneList(await listMetrics(dialog), "群組清單");
+    await dialog.getByRole("link", { name: "About", exact: true }).click();
+    await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 1 }), "群組第二層");
+    await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
     await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
     await expect(page.getByRole("dialog", { name: groupName })).toHaveCount(0);
     await expect(menu).toBeVisible();
@@ -1318,6 +1477,48 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     await expect(menu.getByRole("menuitem", { name: "Members & settings", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-28 寬螢幕（1280）：管理面板的列、標題、卡與托盤維持原樣——列 36px／14px、目前的項次有品牌底、沒有「›」、托盤有毛玻璃", async ({ browser }) => {
+  test.setTimeout(90_000);
+  const { context, page } = await openList(browser, 1280, false);
+  try {
+    await page.goto("/settings/login");
+    const dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    const items = dialog.locator("[data-management-card='items']");
+    await expect(items.getByRole("link", { name: "Sign-in", exact: true })).toBeVisible();
+    const list = await listMetrics(dialog);
+    expect(list.title.fontSize).toBe(15);
+    expect(list.title.fontWeight).toBe(600);
+    expect(list.headerBorder, "沒有列頭髮絲線").toBe(0);
+    for (const [i, row] of list.rows.entries()) {
+      expect(row.height, `列 ${i} 高`).toBe(36);
+      expect(row.fontSize, `列 ${i} 字級`).toBe(14);
+      expect(row.radius, `列 ${i} 圓角`).toBe(8);
+      expect(row.chevronDisplay, `列 ${i} 沒有「›」`).toBe("none");
+      if (i > 0) expect(row.top - (list.rows[i - 1].top + list.rows[i - 1].height), `列 ${i} 與上一列的間距`).toBe(4);
+    }
+    const current = await items.getByRole("link", { name: "Sign-in", exact: true }).evaluate((el) => ({ weight: parseInt(getComputedStyle(el).fontWeight, 10), bg: getComputedStyle(el).backgroundColor }));
+    expect(current.weight, "目前的項次 500").toBe(500);
+    expect(alphaOf(current.bg), "目前的項次有品牌底").toBeGreaterThan(0);
+    const surface = await dialog.evaluate((el) => {
+      const card = el.querySelector<HTMLElement>("[data-management-card='items']")!;
+      const tray = getComputedStyle(card.parentElement!);
+      return { cardBg: getComputedStyle(card).backgroundColor, cardRadius: getComputedStyle(card).borderTopLeftRadius, trayRadius: tray.borderTopLeftRadius, trayBlur: tray.backdropFilter, trayShadow: tray.boxShadow };
+    });
+    expect(surface.cardRadius).toBe("12px");
+    expect(surface.trayRadius).toBe("16px");
+    expect(surface.trayBlur).toMatch(/blur/);
+    expect(surface.trayShadow).not.toBe("none");
+    // 卡仍是 card 色（深色下比選單的 popover 暗；這裡只量不是透明）
+    expect(alphaOf(surface.cardBg)).toBe(1);
+    const h1 = dialog.getByRole("heading", { level: 1 });
+    await expect(h1).toBeVisible();
+    expect(await fontPx(h1), "第二層標題 20px").toBe(20);
   } finally {
     await context.close();
   }

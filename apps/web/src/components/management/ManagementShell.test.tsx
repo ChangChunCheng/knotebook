@@ -393,11 +393,82 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     const tray = itemsCard().parentElement!;
     expect(tray).toHaveClass("max-sm:p-0", "max-sm:gap-0");
     expect(tray.className).not.toMatch(/max-sm:p[lrb]-\[/);
-    for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-2xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
+    for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
     expect(itemsCard()).toHaveClass("max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]", "max-sm:pl-[max(1rem,env(safe-area-inset-left))]");
     expect(contentCard()).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]", "max-sm:pl-[env(safe-area-inset-left)]");
     // 卡貼齊 sheet 左緣：兩層的「‹」自己退開左側 safe area
     expect(within(itemsCard()).getByRole("button", { name: "Close" })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
     expect(within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+  });
+
+  it("MS-P10 手機上面板與選單 sheet 同一個表面：卡用 popover 底色、上圓角 12px，托盤不再有毛玻璃與品牌底", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const tray = itemsCard().parentElement!;
+    for (const card of [itemsCard(), contentCard()]) {
+      expect(card).toHaveClass("max-sm:bg-popover", "max-sm:rounded-t-xl");
+      expect(card.className).not.toMatch(/max-sm:rounded-t-2xl/);
+    }
+    expect(tray).toHaveClass("max-sm:rounded-t-xl", "max-sm:bg-transparent", "max-sm:backdrop-blur-none");
+    expect(tray.className).not.toMatch(/max-sm:rounded-t-2xl/);
+  });
+
+  it("MS-P11 手機上項次清單的列像選單的列：48px 高、16px 一般字重、相貼、4px 圓角、灰色按壓／焦點底色，目前項次也沒有常駐品牌色；列尾有「›」", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const rows = within(itemsCard()).getAllByRole("link");
+    expect(rows).toHaveLength(ITEMS.length);
+    for (const row of rows) {
+      expect(row).toHaveClass(
+        "max-sm:min-h-12",
+        "max-sm:h-auto",
+        "max-sm:text-base",
+        "max-sm:font-normal",
+        "max-sm:rounded-sm",
+        "max-sm:hover:bg-accent",
+        "max-sm:active:bg-accent",
+        "max-sm:focus-visible:bg-accent",
+      );
+    }
+    expect(within(itemsCard()).getByRole("navigation")).toHaveClass("max-sm:gap-0");
+    // 目前所在的項次（/settings/login）：手機把品牌底與粗體都蓋掉
+    const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
+    expect(current).toHaveClass("max-sm:bg-transparent", "max-sm:font-normal", "max-sm:text-foreground");
+    expect(rows.filter((row) => row !== current).some((row) => /max-sm:bg-transparent/.test(row.className))).toBe(false);
+    // 「›」只在手機顯示、不進可及名稱；有計數的列（Storage）計數在「›」之前
+    for (const row of rows) {
+      const chevron = row.querySelector("svg");
+      expect(chevron).not.toBeNull();
+      expect(chevron).toHaveAttribute("aria-hidden", "true");
+      expect(chevron).toHaveClass("h-4", "w-4", "shrink-0", "sm:hidden");
+    }
+    expect(within(itemsCard()).getByRole("link", { name: "Account info" }).querySelector("svg")).toHaveClass("ml-auto");
+    expect(within(itemsCard()).getByRole("link", { name: "Storage" }).querySelector("svg")).not.toHaveClass("ml-auto");
+  });
+
+  it("MS-P12 手機上標題 18px、列頭有髮絲線，兩層的「‹」落在同一個位置且透明底", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const title = within(itemsCard()).getByText("Settings");
+    expect(title).toHaveClass("max-sm:text-lg", "font-semibold");
+    const header = title.parentElement!.parentElement!;
+    expect(header).toHaveClass("max-sm:h-12", "max-sm:border-b", "max-sm:border-border");
+    const listBack = within(itemsCard()).getByRole("button", { name: "Close" });
+    const contentBack = within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true });
+    for (const back of [listBack, contentBack]) expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-transparent");
+    expect(contentBox()).toHaveClass("max-sm:pt-4");
+  });
+
+  it("MS-P13 640 以上的列、標題與卡維持原樣：36px 高、14px、品牌色的目前項次、沒有手機專屬的底色", async () => {
+    stubWideViewport();
+    renderShell();
+    await settle();
+    const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
+    expect(current).toHaveClass("h-9", "text-sm", "rounded-lg", "bg-brand-soft", "text-brand-on-soft");
+    expect(itemsCard().parentElement).toHaveClass("backdrop-blur-md", "bg-background/45");
+    expect(itemsCard()).toHaveClass("bg-card");
   });
 });

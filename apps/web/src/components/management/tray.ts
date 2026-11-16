@@ -8,10 +8,10 @@ export const managementTray =
   "flex h-full min-h-0 w-full min-w-0 gap-2 rounded-2xl bg-background/45 p-2 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md md:gap-3 md:p-3 " +
   // 手機（< 640）面板是貼底的 sheet（`ui/dialog.tsx` 的 panel），一次只顯示一張卡：托盤不留內距、不投影，卡直接貼齊 sheet 的左右與底，
   // 與選單的 sheet 一樣滿版；左右與底的 safe area 由卡自己當內距（見下面三個常數）。
-  "max-sm:gap-0 max-sm:p-0 max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:shadow-none";
+  "max-sm:gap-0 max-sm:p-0 max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:shadow-none max-sm:bg-transparent max-sm:backdrop-blur-none";
 
 /** 手機：卡就是 sheet 的表面——貼齊左右與底，只留上圓角，左右與底沒有邊框（同選單 sheet）。 */
-export const managementCardPhone = "max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0";
+export const managementCardPhone = "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:bg-popover";
 
 /** 手機：本身沒有內距的卡（內容卡）把左右與底的 safe area 當內距（橫拿時的側邊、Home 指示條），不往外退。 */
 export const managementCardPhoneInset =
@@ -30,5 +30,19 @@ export function managementNavItemClass(active: boolean): string {
     "flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors " +
       "hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
     active && "bg-brand-soft font-medium text-brand-on-soft hover:bg-brand-soft-strong",
+    // 手機：項次清單是「點進去」的清單、不是選取中的導覽，長相同選單 sheet 的列——至少 48px 高、16px 一般字重、列與列相貼、4px 圓角、
+    // 灰色的按壓／焦點底色，沒有常駐的品牌色（目前所在的項次也一樣）。列的底色往兩側多出 8px，文字仍離卡緣 16px（同選單的列）。
+    "max-sm:-mx-2 max-sm:h-auto max-sm:min-h-12 max-sm:rounded-sm max-sm:px-4 max-sm:text-base max-sm:font-normal max-sm:text-foreground " +
+      "max-sm:hover:bg-accent max-sm:hover:text-foreground max-sm:active:bg-accent max-sm:focus-visible:bg-accent",
+    active && "max-sm:bg-transparent max-sm:font-normal max-sm:text-foreground max-sm:hover:bg-accent",
   );
 }
+
+/** 手機項次清單的列互相貼齊（桌面是 4px 的間距）。 */
+export const managementNavListClass = "flex flex-col gap-1 max-sm:gap-0";
+
+/** 手機項次清單最上面一列（「‹」＋標題）與清單之間的髮絲線，同選單 sheet 的分隔線；列高讓「‹」與標題垂直置中。 */
+export const managementListHeaderPhone = "max-sm:mb-2 max-sm:h-12 max-sm:border-b max-sm:border-border";
+
+/** 手機：「‹」與項次清單標題（高 48px，卡內距 16px）垂直置中；內容層的標題同高，兩層的「‹」才落在同一個位置。透明底，直接坐在 sheet 的表面上。 */
+export const managementBackTopPhone = "max-sm:top-[26px] max-sm:bg-transparent";

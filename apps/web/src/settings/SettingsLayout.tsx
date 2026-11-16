@@ -40,7 +40,7 @@ export function SettingsPage({
     <div>
       <header className="flex items-start justify-between gap-4 pr-6 max-sm:flex-col max-sm:gap-3">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+          <h1 className="text-xl font-semibold tracking-tight max-sm:flex max-sm:min-h-12 max-sm:items-center max-sm:pl-10 max-sm:text-lg">{title}</h1>
           {description !== undefined && (
             <p className="text-sm text-muted-foreground">{description}</p>
           )}
