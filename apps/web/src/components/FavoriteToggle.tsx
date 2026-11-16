@@ -4,6 +4,8 @@ import type { NoteDto } from "@knotebook/shared";
 import { errorMessage, useAddFavorite, useFavoriteStatus, useRemoveFavorite } from "@/api/favorites";
 import { FavoriteRemoveDialog } from "@/components/FavoriteRemoveDialog";
 import { Button } from "@/components/ui/button";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
+import { cn } from "@/lib/utils";
 import { Star } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
 
@@ -54,7 +56,10 @@ export function FavoriteToggle({ note }: { note: NoteDto }) {
         type="button"
         variant="ghost"
         size="icon"
-        className="shrink-0 text-brand hover:text-brand aria-disabled:cursor-not-allowed aria-disabled:opacity-50 @max-[18rem]:hidden"
+        className={cn(
+          "shrink-0 text-brand hover:text-brand aria-disabled:cursor-not-allowed aria-disabled:opacity-50 @max-[18rem]:hidden",
+          HEADER_ICON_HIT,
+        )}
         aria-label={t("note.favorite.label")}
         aria-pressed={favorite}
         aria-disabled={pending ? true : undefined}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { filterSuggestionItems } from "@blocknote/core";
 import i18n from "@/i18n";
+import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { P, mountEditor, row, shape, type AnyEditor } from "@/test/columns-fixtures";
 
 /**
@@ -32,7 +33,7 @@ vi.mock("@blocknote/core", async (importOriginal) => ({
   insertOrUpdateBlockForSlashMenu: insertMock,
 }));
 
-const { buildSlashMenuItems } = await import("./slash-menu");
+const { PHONE_SLASH_MENU_FLOATING_OPTIONS, SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX, buildSlashMenuItems, slashMenuPhoneMiddleware, withoutSlashBadges } = await import("./slash-menu");
 
 /** 真編輯器，游標在頂層段落（並排項會出現）。「不插入 block」類斷言仍打在被 mock 的 insertMock 上。 */
 let editor: AnyEditor;
@@ -202,5 +203,59 @@ describe("並排項 /grid N", () => {
       .find((item) => item.title === "note.columns.slashTitle:2")!
       .onItemClick();
     expect(shape(target)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph");
+  });
+});
+
+describe("withoutSlashBadges（手機不顯示快捷鍵欄）", () => {
+  const items = [
+    { title: "Heading 1", badge: "Ctrl-Alt-1", onItemClick: () => {} },
+    { title: "Table", onItemClick: () => {} },
+  ];
+
+  it("每一項都沒有 badge，項目數與順序不變，其餘欄位照舊", () => {
+    const stripped = withoutSlashBadges(items);
+    expect(stripped.map((item) => item.title)).toEqual(["Heading 1", "Table"]);
+    expect(stripped.every((item) => !("badge" in item))).toBe(true);
+    expect(stripped[0]!.onItemClick).toBe(items[0]!.onItemClick);
+  });
+
+  it("不改原本的項目（docked 與手機共用同一份來源）", () => {
+    withoutSlashBadges(items);
+    expect(items[0]!.badge).toBe("Ctrl-Alt-1");
+  });
+});
+
+describe("slashMenuPhoneMiddleware（手機的高度與翻轉）", () => {
+  type SizeOptions = { apply: (args: { elements: { floating: { style: Record<string, string> } }; availableHeight: number }) => void; padding: { bottom: number } };
+  type PlacementOptions = { padding: { bottom: number; top: number }; allowedPlacements: string[] };
+  const byName = (name: string) => slashMenuPhoneMiddleware().find((entry) => entry.name === name) as unknown as { options: [never, unknown] };
+
+  it("size：最大高度 ＝ min(50vh, 可用高度)，可用高度為負時夾到 0", () => {
+    const options = byName("size").options[0] as SizeOptions;
+    const floating = { style: {} as Record<string, string> };
+    options.apply({ elements: { floating }, availableHeight: 312 });
+    expect(floating.style.maxHeight).toBe("min(50vh, 312px)");
+    options.apply({ elements: { floating }, availableHeight: -5 });
+    expect(floating.style.maxHeight).toBe("min(50vh, 0px)");
+  });
+
+  it("shift 的邊界留白也是 8（與註解的四周留白一致）", () => {
+    expect((byName("shift").options[0] as { padding: number }).padding).toBe(8);
+  });
+
+  it("size 與 autoPlacement 的下緣都扣掉編輯工具列（可用高度與翻轉判斷同一條線）", () => {
+    const size = byName("size").options[0] as SizeOptions;
+    const placement = byName("autoPlacement").options[0] as PlacementOptions;
+    expect(size.padding.bottom).toBeGreaterThanOrEqual(SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX);
+    expect(placement.padding.bottom).toBe(size.padding.bottom);
+    expect(placement.allowedPlacements).toEqual(["bottom-start", "top-start"]);
+  });
+
+  it("下緣留白 ＝ 編輯工具列外框高度 ＋ 8", () => {
+    expect(SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX).toBe(PHONE_EDIT_TOOLBAR_CLEARANCE_PX + 8);
+  });
+
+  it("PHONE_SLASH_MENU_FLOATING_OPTIONS 把它放進 useFloatingOptions.middleware", () => {
+    expect(PHONE_SLASH_MENU_FLOATING_OPTIONS.useFloatingOptions?.middleware?.map((entry) => entry && "name" in entry && entry.name)).toEqual(["offset", "autoPlacement", "shift", "size"]);
   });
 });

@@ -1,5 +1,6 @@
+import { SAFE_INSETS } from "@/components/ui/safe-area";
 import {
-  Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore,
+  Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type MouseEvent as ReactMouseEvent, type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -131,6 +132,21 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
 
   useEffect(() => () => exitFullscreenIfLeftPresentation(), []);
 
+  // 播放時背後的文件不捲：手機上捲的是文件，滑過投影片尾端會帶動背後的筆記、收起瀏覽器的工具列。
+  // 離開後還在同一篇（Esc、×）才捲回原本的位置；換到別頁（筆記被刪、連結失效、深連結進來後返回）由那一頁自己決定位置。
+  // layout effect：解除與還原要在下一個畫面的 layout effect（AppShell 還原清單位置）之前，不能蓋掉它。
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const y = window.scrollY;
+    const pathname = window.location.pathname;
+    const previous = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => {
+      root.style.overflow = previous;
+      if (window.location.pathname === pathname && window.scrollY !== y) window.scrollTo(0, y);
+    };
+  }, []);
+
   useEffect(() => {
     rootRef.current?.focus();
   }, []);
@@ -166,7 +182,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
         {/* 閒置淡出：不用 focus-visible 浮現；這裡用 focus-within——鍵盤焦點在任一顆按鈕上時整列都浮現，範圍較寬、符合意圖。 */}
         <div
           className={cn(
-            "absolute right-3 top-3 z-10 flex items-center gap-2 transition-opacity hover:opacity-100 focus-within:opacity-100",
+            "absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-10 flex items-center gap-2 transition-opacity hover:opacity-100 focus-within:opacity-100",
             idle ? "opacity-0" : "opacity-100",
           )}
         >
@@ -197,7 +213,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
         ) : status === "loading" ? (
           <p className="m-auto text-sm text-muted-foreground">{t("app.loading")}</p>
         ) : (
-          <div className="relative min-h-0 flex-1">{children}</div>
+          <div className={`relative min-h-0 flex-1 ${SAFE_INSETS}`}>{children}</div>
         )}
       </div>
     </PresentationShellContext.Provider>

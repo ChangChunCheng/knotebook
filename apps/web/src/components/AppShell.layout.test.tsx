@@ -62,7 +62,7 @@ describe("AppShell 版面 smoke", () => {
     vi.unstubAllGlobals();
   });
 
-  it("根＝flex h-screen overflow-hidden gap-3 bg-background p-3；main＝flex min-h-0 min-w-0 flex-1 flex-col", async () => {
+  it("根＝flex h-screen overflow-hidden gap-3 bg-background＋四邊 safe area 內距；main＝flex min-h-0 min-w-0 flex-1 flex-col", async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ThemeProvider>
@@ -77,14 +77,25 @@ describe("AppShell 版面 smoke", () => {
     const root = main.closest("main")?.parentElement;
 
     expect(main.closest("main")).toHaveClass("flex", "min-h-0", "min-w-0", "flex-1", "flex-col");
-    expect(root).toHaveClass("flex", "h-screen", "overflow-hidden", "gap-3", "bg-background", "p-3");
+    // 高度跟著瀏覽器工具列伸縮（dvh），不是固定的 100vh。
+    expect(root).toHaveClass("flex", "h-dvh", "overflow-hidden", "gap-3", "bg-background");
+    expect(root).not.toHaveClass("h-screen");
+    // 外框四邊都是 max(12px, safe area)：瀏海與圓角下不貼邊，沒有 inset 的裝置仍是 12px。
+    expect(root).not.toHaveClass("p-3");
+    for (const [prefix, side] of [["pt", "top"], ["pr", "right"], ["pb", "bottom"], ["pl", "left"]]) {
+      expect(root).toHaveClass(`${prefix}-[max(0.75rem,env(safe-area-inset-${side}))]`);
+    }
+    // 手機（< 640）內容貼齊螢幕邊：外框內距歸零（上面的非手機 class 仍在，640 起不變）。
+    expect(root).toHaveClass("max-sm:p-0");
+    // 手機的左右 safe area（橫拿的瀏海）改由主內容區自己退開。
+    expect(main.closest("main")).toHaveClass("max-sm:pl-[env(safe-area-inset-left)]", "max-sm:pr-[env(safe-area-inset-right)]");
 
-    // #115：靜態側欄卡 `<md` 藏起來（抽屜接手）、`md+` 才以卡片顯示——`hidden`
-    // 搭配 `md:flex md:flex-col` 缺一即壞（缺 md:flex 寬螢幕也消失；缺 md:flex-col
+    // 靜態側欄卡 `<xl` 藏起來（浮動抽屜接手）、`xl+` 才以卡片顯示——`hidden`
+    // 搭配 `xl:flex xl:flex-col` 缺一即壞（缺 xl:flex 寬螢幕也消失；缺 xl:flex-col
     // 內部堆疊失去方向）。
     const aside = root?.querySelector("aside");
     expect(aside).not.toBeNull();
-    expect(aside).toHaveClass("relative", "hidden", "shrink-0", "md:flex", "md:flex-col");
+    expect(aside).toHaveClass("relative", "hidden", "shrink-0", "xl:flex", "xl:flex-col");
     // 寬度改 inline style（可拖曳），不再是 `w-64`；未存過寬度＝預設 256。
     expect(aside).not.toHaveClass("w-64");
     expect(aside?.style.width).toBe("256px");

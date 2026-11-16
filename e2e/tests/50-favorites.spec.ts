@@ -5,6 +5,7 @@ import {
   createUserViaInvite,
   expectWidePointer,
   loginAs,
+  openListOnCompact,
   moveNoteToTrashFromSidebar,
   noteIdFromUrl,
   randomEmail,
@@ -20,12 +21,12 @@ import {
  * 1. 頁首星號加入、最愛 tab 依加入時間新到舊、每列第二行是位置；側欄 ⋮ 移出要先確認（取消不移、確認後沒有 Undo、焦點落在相鄰的一列）；
  *    頁首星號移出同樣先確認，再加入不確認；移到垃圾桶的最愛從側欄消失，toast 的 Undo 讓它回到原位。
  * 2. 最愛是每個人自己的：群組成員 alice 加入的群組筆記，同群組的 bob 看不到。
- * 3. 窄寬：390 寬抽屜裡六顆 tab 放得下不橫向捲動；側欄縮到最窄（200）時六顆都在 tab 列內。
+ * 3. 窄寬：390 手機清單裡六顆 tab 放得下不橫向捲動；側欄縮到最窄（200）時六顆都在 tab 列內。
  * 4. 390 寬、兩位其他人在同一篇時，頁首的星號、分享、⋮ 都不被卡片裁掉、也不擠進頁首的右內距；鍵盤 Space 切換後焦點仍在星號；
  *    320 寬星號收起，⋮ 選單的第一項接手。
  * 5. 公開分享頁沒有星號。
  * 6. 最愛 tab 的選取模式：勾兩篇移出（先確認、沒有 Undo、動作列沒有 Move to）；剩下的全部移出後清單空了，焦點留在面板而不是掉到 body；
- *    390 寬抽屜的動作列（只放圖示、靠可及名稱找鈕）同樣先確認再移出。
+ *    390 手機清單的動作列（只放圖示、靠可及名稱找鈕）同樣先確認再移出。
  * 7. 筆記列右側的星星：hover／鍵盤焦點才浮出空心星、點了直接加入；最愛 tab 的實心星移出先確認、焦點落到鄰近的列；Tab 順序是連結、星星、⋮；
  *    觸控裝置沒加入的列沒有星星；選取模式、資料夾列、垃圾桶沒有星星；側欄縮到最窄時星星與 ⋮ 都在列內。
  *    列上星星與頁首星號同名（Favorite），頁首的查詢限定在 `<header>` 內。
@@ -122,7 +123,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
 
     // 2. 側欄 ⋮ 移出 B：取消不動，再來一次按確認；沒有 Undo，焦點落在上一列（A）
     const actionsB = favorites.getByRole("button", { name: `Note actions for ${b}`, exact: true });
-    await actionsB.hover();
+    await actionsB.locator("xpath=ancestor::li[1]").hover();
     await actionsB.click();
     await page.getByRole("menuitem", { name: "Remove from favorites", exact: true }).click();
     const dialog = page.getByRole("dialog");
@@ -131,7 +132,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     await expect(dialog).toBeHidden();
     await expect(noteLink(favorites, b)).toBeVisible();
 
-    await actionsB.hover();
+    await actionsB.locator("xpath=ancestor::li[1]").hover();
     await actionsB.click();
     await page.getByRole("menuitem", { name: "Remove from favorites", exact: true }).click();
     await expect(dialog).toBeVisible();
@@ -208,22 +209,18 @@ test("最愛是每個人自己的：同群組的 bob 看不到 alice 加入的�
   }
 });
 
-test("窄寬：390 抽屜與側欄縮到最窄時六顆 tab 都放得下", async ({ browser }) => {
+test("窄寬：390 手機清單與側欄縮到最窄時六顆 tab 都放得下", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 390, height: 844 });
   try {
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
-    await expect(drawer).toBeVisible();
+    const drawer = await openListOnCompact(page);
     const drawerTabs = drawer.getByRole("tablist", { name: "Sidebar sections" });
     await expect(drawerTabs.getByRole("tab")).toHaveCount(6);
     const overflow = await drawerTabs.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
     expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth);
 
-    // 靜態側欄要視窗 ≥ 768 才有：改成 1280×800，把分隔線一路拖到最窄
-    await page.keyboard.press("Escape");
-    await expect(drawer).toBeHidden();
+    // 靜態側欄要視窗 ≥ 1280 才有：改成 1280×800，把分隔線一路拖到最窄
     await page.setViewportSize({ width: 1280, height: 800 });
     const sidebar = page.getByRole("complementary");
     const handle = page.getByRole("separator", { name: "Resize sidebar" });
@@ -278,8 +275,8 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(noteUrl);
     await waitForNoteTitle(page, title);
-    // 兩位其他人：窄螢幕頭像列有兩格，是頁首最擠的情況
-    await expect(page.getByRole("group", { name: "Also viewing this note" }).getByRole("button")).toHaveCount(2, { timeout: 15_000 });
+    // 兩位其他人：手機寬的在線者只剩一顆「+2」
+    await expect(page.getByRole("group", { name: "Also viewing this note" }).getByRole("button", { name: "2 more, show everyone" })).toHaveCount(1, { timeout: 15_000 });
     await expect(star(page)).toBeEnabled();
 
     const share = page.getByRole("button", { name: "Share", exact: true });
@@ -290,15 +287,16 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
 
     const frames = await star(page).evaluate((el) => {
       const header = el.closest("header")!;
+      // 最近一個橫向會裁切的祖先（640 起是內文卡；手機上卡不裁切，文件在捲，裁切的是外框的 overflow-x: clip）。
       let card: Element | null = header.parentElement;
-      while (card && getComputedStyle(card).overflowX !== "hidden") card = card.parentElement;
+      while (card && !["hidden", "clip"].includes(getComputedStyle(card).overflowX)) card = card.parentElement;
       const style = getComputedStyle(header);
       return {
         cardRight: card ? card.getBoundingClientRect().right : null,
         contentRight: header.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
       };
     });
-    expect(frames.cardRight, "沒有找到 overflow 為 hidden 的卡片").not.toBeNull();
+    expect(frames.cardRight, "沒有找到橫向會裁切的祖先").not.toBeNull();
     for (const [name, button] of [["Favorite", star(page)], ["Share", share], ["More", more]] as const) {
       const box = (await button.boundingBox())!;
       const right = box.x + box.width;
@@ -423,7 +421,7 @@ test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒�
   }
 });
 
-test("最愛 tab 選取模式：390 寬抽屜的動作列先確認再移出", async ({ browser }) => {
+test("最愛 tab 選取模式：390 手機清單的動作列先確認再移出", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 390, height: 844 });
@@ -433,9 +431,7 @@ test("最愛 tab 選取模式：390 寬抽屜的動作列先確認再移出", as
     for (const title of titles) await apiCreateFavorite(page, title);
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
-    await expect(drawer).toBeVisible();
+    const drawer = await openListOnCompact(page);
     const panel = await showSidebarTab(page, "Favorites", drawer);
     await expect(panel.getByRole("link")).toHaveCount(2);
     await startSidebarSelection(page, drawer);
@@ -567,7 +563,7 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
   }
 });
 
-test("列上星星（鍵盤）：Tab 順序是連結、星星、⋮；聚焦的空心星 opacity 為 1；Enter 加入後焦點仍在星星", async ({ browser }) => {
+test("列上星星（鍵盤）：Tab 順序是連結、⋮、星星；聚焦的 ⋮ 與空心星 opacity 為 1；Enter 加入後焦點仍在星星", async ({ browser }) => {
   test.setTimeout(90_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -584,11 +580,14 @@ test("列上星星（鍵盤）：Tab 順序是連結、星星、⋮；聚焦的�
     await expect(star).toHaveCSS("opacity", "0");
     await noteLink(mine, title).focus();
     await page.keyboard.press("Tab");
+    await expect(actions).toBeFocused();
+    await expect(actions).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Tab");
     await expect(star).toBeFocused();
     await expect(star).toHaveCSS("opacity", "1");
-    await page.keyboard.press("Tab");
-    await expect(actions).toBeFocused();
     await page.keyboard.press("Shift+Tab");
+    await expect(actions).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(star).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(star).toHaveAttribute("aria-pressed", "true");
@@ -614,22 +613,27 @@ test("列上星星（觸控）：沒加入的列看不到星星，最愛列的�
     await apiCreateFavorite(page, faved);
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
-    await expect(drawer).toBeVisible();
+    const drawer = await openListOnCompact(page);
     const mine = await showSidebarTab(page, "My notes", drawer);
     await expect(noteLink(mine, loose)).toBeVisible();
     await expect(noteLink(mine, faved)).toBeVisible();
     await expect(rowStar(noteRowOf(mine, loose))).toHaveCount(0);
 
-    const favedStar = rowStar(noteRowOf(mine, faved));
-    await expect(favedStar).toBeVisible();
-    await expect(favedStar).toHaveAttribute("aria-pressed", "true");
-    await favedStar.click();
-    const confirm = page.getByRole("dialog", { name: "Remove from favorites?" });
-    await expect(confirm).toBeVisible();
-    await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(confirm).toBeHidden();
+    // 觸控：最愛列上沒有星號鈕，只有一顆不能點的標記（role=img、名稱 Favorite），在 ⋮ 左邊；點它什麼都不發生，移出走 ⋮ 選單
+    const favedRow = noteRowOf(mine, faved);
+    await expect(rowStar(favedRow)).toHaveCount(0);
+    const marker = favedRow.getByRole("img", { name: "Favorite", exact: true });
+    await expect(marker).toBeVisible();
+    await expect(marker).toHaveCSS("pointer-events", "none");
+    const markerBox = (await marker.boundingBox())!;
+    await page.mouse.click(markerBox.x + markerBox.width / 2, markerBox.y + markerBox.height / 2);
+    await expect(page.getByRole("dialog", { name: "Remove from favorites?" })).toHaveCount(0);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await favedRow.getByRole("button", { name: `Note actions for ${faved}`, exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Remove from favorites", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(noteRowOf(mine, loose).getByRole("img", { name: "Favorite", exact: true })).toHaveCount(0);
 
     await noteRowOf(mine, loose).getByRole("button", { name: `Note actions for ${loose}`, exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "Add to favorites", exact: true })).toBeVisible();

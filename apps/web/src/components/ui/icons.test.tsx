@@ -10,6 +10,7 @@ import {
   House,
   LogOut,
   Pencil,
+  PanelLeft,
   SquareCheck,
   Star,
   Users,
@@ -65,6 +66,8 @@ describe("icons", () => {
     ["star", Star],
     // 最愛 tab 選取模式的「移出最愛」
     ["star-off", StarOff],
+    // 浮動側欄的入口鈕
+    ["panel-left", PanelLeft],
   ] as const)("圖示 %s：帶 data-icon、預設 aria-hidden、吃 className", (name, Icon) => {
     const { container } = render(<Icon className="h-4 w-4" />);
     const svg = container.querySelector("svg");

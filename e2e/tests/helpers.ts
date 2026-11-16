@@ -287,7 +287,35 @@ export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" 
 export type SidebarTabName = "Recent" | "Favorites" | "My notes" | "Groups" | "Shared with me" | "Trash";
 
 /**
- * 點側欄某個 tab、等它 aria-selected，回傳同一範圍內的 tabpanel。`scope` 預設靜態側欄（complementary）；窄螢幕傳抽屜。
+ * 窄視窗（< 1280）把側欄帶到眼前，回傳可放進 `showSidebarTab` 等 helper 的範圍：
+ * - 手機（< 640）：清單就是整個側欄（滿版的 `complementary`）；在筆記畫面就按「Back to notes」，已在清單就不動。
+ * - 640–1279：側欄是抽屜；按「Open sidebar」開（已開就不動），回傳抽屜 dialog。
+ * 手機看寬度決定走哪一支，不看畫面上有什麼按鈕。
+ */
+export async function openListOnCompact(page: Page): Promise<Locator> {
+  const width = page.viewportSize()?.width ?? 1280;
+  if (width < 640) {
+    // 不用「含 tab 列」過濾：全螢幕搜尋層開著時 tab 列不在，清單仍是這個 aside。
+    const sidebar = page.getByRole("complementary");
+    const back = page.getByRole("button", { name: "Back to notes", exact: true });
+    // 換頁走 transition：網址先換、畫面晚一點才跟上，isVisible 不會等。
+    // 先等清單或筆記畫面其中之一出現，再判斷要不要按返回。
+    await expect(sidebar.or(back).first()).toBeVisible({ timeout: 15_000 });
+    if (!(await sidebar.isVisible())) await back.click();
+    await expect(sidebar).toBeVisible({ timeout: 15_000 });
+    return sidebar;
+  }
+  const drawer = page.getByRole("dialog", { name: "Navigation" });
+  if (!(await drawer.isVisible())) {
+    await page.getByRole("button", { name: "Open sidebar", exact: true }).click();
+  }
+  await expect(drawer).toBeVisible();
+  return drawer;
+}
+
+/**
+ * 點側欄某個 tab、等它 aria-selected，回傳同一範圍內的 tabpanel。`scope` 預設靜態側欄（complementary）：1280 以上是固定側欄，
+ * 手機（< 640）是滿版的清單（也是那個 `<aside>`）；640–1279 的抽屜要傳抽屜（`openListOnCompact` 的回傳值）。
  * 側欄一次只渲染目前 tab 的內容：負向斷言（`toHaveCount(0)`）在看不到該類筆記的 tab 會空轉成綠，
  * 所以每個負向斷言前都要重新呼叫一次。
  */
@@ -342,8 +370,8 @@ export function toastWithTitle(page: Page, title: string): Locator {
 export async function moveNoteToTrashFromSidebar(page: Page, title: string, scope?: Locator): Promise<Locator> {
   const root = scope ?? page.getByRole("complementary");
   const actions = root.getByRole("button", { name: `Note actions for ${title}`, exact: true });
-  // ⋮ 是 hover 浮出（hoverReveal），先 hover 再點（同 22）。
-  await actions.hover();
+  // ⋮ 是 hover 才長出來的（滑鼠下沒滑過時寬度 0，Playwright 對零寬的鈕無法 hover／click）：先 hover 整列，再點。
+  await actions.locator("xpath=ancestor::li[1]").hover();
   await actions.click();
   await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await expect(actions).toHaveCount(0, { timeout: 15_000 });
@@ -433,11 +461,17 @@ export async function expectWidePointer(page: Page, wide: boolean): Promise<void
  * `scope`：層疊各層同時開著，「Move here」等同名項可能在好幾層都有——傳 `openedSubmenu` 回傳的那一層限定範圍。
  */
 export async function clickMenuItemByPointer(page: Page, name: string, scope?: Locator): Promise<void> {
-  const target = (scope ?? page).getByRole("menuitem", { name, exact: true });
+  await clickByPointer(page, (scope ?? page).getByRole("menuitem", { name, exact: true }));
+}
+
+/**
+ * 滑鼠分段移到 `target` 中心再點（選單的 radio 項等：一步瞬移離開 SubTrigger，Radix 會判定沒往子選單走而關掉它）。
+ */
+export async function clickByPointer(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible();
   await target.scrollIntoViewIfNeeded();
   const box = await target.boundingBox();
-  expect(box, `menuitem「${name}」量不到位置`).not.toBeNull();
+  expect(box, "要點的元素量不到位置").not.toBeNull();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, { steps: 10 });
   await target.click();
 }
@@ -637,4 +671,46 @@ export function solidPng(width: number, height: number): Buffer {
     pngChunk("IDAT", deflateSync(raw)),
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
+}
+
+export interface TapArea {
+  /** 畫出來的框（寬、高）。 */
+  visual: [number, number];
+  /** 點擊範圍（寬、高）：框的中心往上下左右找，最遠還點得到這顆元素（或它裡面的東西）的位置。 */
+  tap: [number, number];
+  /** 框的中心（視窗座標）。 */
+  center: [number, number];
+}
+
+/**
+ * 量一個元素實際點得到的範圍。從框的中心往四個方向每 0.5px 用 `elementFromPoint` 取樣，最多往外 24px；
+ * 用 `::after` 擴大點擊範圍的鈕會量到比畫出來的框大，被別的元素蓋住或碰到視窗邊緣的那一側會變短。
+ * 區間是左上含、右下不含，所以每一側最多少算 0.5px（兩側合計 1px）。
+ */
+export async function tapAreaOf(target: Locator): Promise<TapArea> {
+  const handle = await target.first().elementHandle({ timeout: 10_000 });
+  if (handle === null) throw new Error("tapAreaOf: element not found");
+  return handle.evaluate((el): TapArea => {
+    const box = el.getBoundingClientRect();
+    const hits = (x: number, y: number): boolean => {
+      const hit = document.elementFromPoint(x, y);
+      return hit !== null && (el === hit || el.contains(hit));
+    };
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const reach = (dx: number, dy: number, start: number): number => {
+      let d = 0;
+      while (d < 24 && hits(cx + dx * (start + d + 0.5), cy + dy * (start + d + 0.5))) d += 0.5;
+      return d;
+    };
+    const left = reach(-1, 0, box.width / 2);
+    const right = reach(1, 0, box.width / 2);
+    const up = reach(0, -1, box.height / 2);
+    const down = reach(0, 1, box.height / 2);
+    return {
+      visual: [box.width, box.height],
+      tap: [box.width + left + right, box.height + up + down],
+      center: [cx, cy],
+    };
+  });
 }

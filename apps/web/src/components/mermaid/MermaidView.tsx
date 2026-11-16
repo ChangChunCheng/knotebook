@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { cachedMermaid, preloadMermaid, renderMermaid, type MermaidRenderResult, type MermaidTheme } from "@/lib/mermaid";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +21,7 @@ function hasIntersectionObserver(): boolean {
  * ⚠ 不能省：筆記頁捲動的是內層的 `overflow-y-auto` 容器，不是視窗。`root` 用預設（視窗）時，
  * `rootMargin` 只放寬視窗那一層，目標先被內層捲動容器的可見框裁掉——600px 的預先範圍**完全不生效**，
  * 圖要真的露出來才開始畫（e2e 疊上實測：捲動容器底緣下方 42px 的圖一直沒被請求）。
+ * 手機（< 640）上那一層是 `overflow-y: visible`、捲的是文件，這裡找不到會捲的祖先、回 null，正好就是視窗。
  *
  * ⚠ **從編輯器（`.bn-editor`）外面開始找**：BlockNote 的並排欄 `.bn-block-column` 設了
  * `overflow-x:auto`，依 CSS 規則另一軸的 `visible` 會算成 `auto`，所以欄的 computed `overflowY` 也是
@@ -98,7 +100,8 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     if (hasSource) preloadMermaid();
   }, [hasSource]);
 
-  // #344 C：只在視窗附近才請求渲染。
+  // #344 C：只在視窗附近才請求渲染。捲動的那一層跨 640 會換（手機上是文件、640 起是內文容器），換段時重找 root。
+  const phone = useIsPhone();
   useEffect(() => {
     const el = rootRef.current;
     if (el === null || !hasIntersectionObserver()) return;
@@ -111,7 +114,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [phone]);
 
   // 要不要畫：在視窗附近就畫；不在附近時，只有「畫過、而且原始碼換了」才照常重畫。
   // **只換了主題**的遠處圖先留著舊主題的圖，等進到附近再重畫——換主題時畫面上的圖先換，
@@ -263,7 +266,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
             onKeyDown={handleKeyDown}
-            className="w-full resize-y rounded-md border border-input bg-muted/40 p-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full resize-y rounded-md border border-input bg-muted/40 p-3 font-mono text-sm pointer-coarse:text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <p className="mt-1 text-right text-xs text-muted-foreground">{t("note.mermaid.escHint")}</p>
         </>

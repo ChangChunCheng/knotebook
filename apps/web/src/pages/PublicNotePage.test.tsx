@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import * as Y from "yjs";
@@ -117,6 +117,24 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(screen.getByRole("link", { name: /Knotebook/ })).toHaveAttribute("href", "/");
     // 整頁只打過公開端點——尤其不得打 /api/auth/me（匿名頁零 auth 相依）
     expect(calls).toEqual([`GET /api/public/notes/${TOKEN}`]);
+  });
+
+  it("手機頁首：簡報鈕只剩圖示（可及名稱不變）、唯讀徽章收成一個點（文字只給螢幕閱讀器）", async () => {
+    const body: PublicNoteBody = { title: "公開的筆記", ydoc: EMPTY_YDOC_UPDATE_B64 };
+    vi.stubGlobal("fetch", mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null)).fn);
+    renderPage();
+    const present = await screen.findByRole("button", { name: "Present" });
+    expect(present).toHaveClass("pointer-coarse:after:-inset-y-1.5");
+    const label = within(present).getByText("Present");
+    expect(label).toHaveClass("max-sm:sr-only");
+    const readonly = screen.getByText("Read-only");
+    expect(readonly).toHaveClass("max-sm:sr-only");
+    const badge = readonly.parentElement!;
+    expect(badge).toHaveClass("sm:border");
+    expect(badge).not.toHaveClass("border");
+    const dot = badge.querySelector("[data-readonly-dot]");
+    expect(dot).toHaveAttribute("aria-hidden", "true");
+    expect(dot).toHaveClass("sm:hidden");
   });
 
   it("公開頁沒有最愛星號，也不打最愛清單（#334）", async () => {

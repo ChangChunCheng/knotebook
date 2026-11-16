@@ -1,6 +1,7 @@
-import { createRef, type RefObject } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createRef, useRef, useState, type RefObject } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stubLayoutTier } from "@/test/layout-tier";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import i18n from "@/i18n";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
@@ -18,12 +19,20 @@ const mockState = vi.hoisted(() => ({ loaded: false }));
 vi.mock("@/components/shortcuts/ShortcutsLazy", () => {
   mockState.loaded = true;
   // 替身只重現外殼依賴的契約：一個 `[data-shortcuts-content]` 的可聚焦內容區；不得含別的可聚焦元素（否則它不再是最後一個 tabbable）。
+  // 手機時外殼傳 `listBack`（分類清單的「‹」），替身才多畫那一顆。
   // 真內容元件的版面、分類切換與焦點在 ShortcutsLazy.test.tsx 與 ShortcutsDialog.panel.test.tsx。
   return {
-    ShortcutsContent: () => (
-      <div data-shortcuts-content="" role="region" aria-label="stub region" tabIndex={0}>
-        stub shortcuts content
-      </div>
+    ShortcutsContent: ({ listBack }: { listBack?: { label: string; onBack: () => void } }) => (
+      <>
+        {listBack && (
+          <button type="button" data-shortcuts-focus="" onClick={listBack.onBack}>
+            {listBack.label}
+          </button>
+        )}
+        <div data-shortcuts-content="" data-shortcuts-focus={listBack ? undefined : ""} role="region" aria-label="stub region" tabIndex={0}>
+          stub shortcuts content
+        </div>
+      </>
     ),
   };
 });
@@ -111,6 +120,76 @@ describe("ShortcutsDialog", () => {
     view.rerender(ui(true, onOpenChange, ref));
     const region = await screen.findByRole("region", { name: "stub region" });
     await waitFor(() => expect(region).toHaveFocus());
+  });
+
+  describe("手機（< 640）：沒有 ✕，分類清單的「‹」", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    function Controlled({ reopen, returnFocusRef }: { reopen: (() => void) | null; returnFocusRef: RefObject<HTMLElement | null> }) {
+      const reopenRef = useRef<(() => void) | null>(reopen);
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button">target</button>
+          <ShortcutsDialog open={open} onOpenChange={setOpen} returnFocusRef={returnFocusRef} reopenMenuRef={reopenRef} />
+        </>
+      );
+    }
+
+    it("開啟時焦點落在清單的「‹」（對話框裡、看得見的那一層），不是藏起來的內容區", async () => {
+      stubLayoutTier("phone");
+      render(<Controlled reopen={vi.fn()} returnFocusRef={newRef()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+      const back = await screen.findByRole("button", { name: "Back to menu" });
+      await waitFor(() => expect(back).toHaveFocus());
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+
+    it("在 640 以上打開、之後縮到手機寬度：清單的「‹」名稱是 Close，按了只關、不重開選單", async () => {
+      const tier = stubLayoutTier("overlay");
+      const reopen = vi.fn();
+      render(<Controlled reopen={reopen} returnFocusRef={newRef()} />);
+      await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+      act(() => tier.setLayoutTier("phone"));
+      expect(screen.queryByRole("button", { name: "Back to menu" })).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await new Promise((r) => setTimeout(r, 20));
+      expect(reopen).not.toHaveBeenCalled();
+    });
+
+    it("從選單開：「Back to menu」關掉，收完後重開選單（不還焦點）", async () => {
+      stubLayoutTier("phone");
+      const reopen = vi.fn();
+      const returnFocusRef = newRef();
+      render(<Controlled reopen={reopen} returnFocusRef={returnFocusRef} />);
+      returnFocusRef.current = screen.getByRole("button", { name: "target", hidden: true });
+      await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+      expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: "Back to menu" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(reopen).toHaveBeenCalledTimes(1));
+      expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "target" }));
+    });
+
+    it("不是從選單開：「‹」的名稱是 Close、只關、焦點照常還回去；Esc 也關、不重開選單", async () => {
+      stubLayoutTier("phone");
+      const returnFocusRef = newRef();
+      render(<Controlled reopen={null} returnFocusRef={returnFocusRef} />);
+      returnFocusRef.current = screen.getByRole("button", { name: "target", hidden: true });
+      fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "target" })));
+      cleanup();
+
+      const reopen = vi.fn();
+      const ref2 = newRef();
+      render(<Controlled reopen={reopen} returnFocusRef={ref2} />);
+      fireEvent.keyDown(await screen.findByRole("dialog", { name: "Keyboard shortcuts" }), { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await new Promise((r) => setTimeout(r, 20));
+      expect(reopen).not.toHaveBeenCalled();
+    });
   });
 
   it("D7 Tab 在內容區與 ✕ 之間循環（FocusScope loop；✕ 在 DOM 最前面）", async () => {

@@ -1,3 +1,4 @@
+import { SAFE_INSETS } from "@/components/ui/safe-area";
 import { useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -16,7 +17,7 @@ import { currentSubtitle, editorsText, formatVersionTime, versionLabel } from ".
 import { useApplyFlow } from "./use-apply-flow";
 
 /**
- * 窄視窗（`<md`）的版本歷史：全螢幕 Radix Dialog、不改網址。
+ * 手機（< 640）的版本歷史：全螢幕 Radix Dialog、不改網址。
  * 步一＝清單（「‹ 返回 · 版本歷史」、最後編輯、目前狀態、清單、底部「儲存當前版本」）；
  * 步二＝預覽（「‹ 清單 · 名稱 (短 id) · 時間」、單欄 diff、底部「‹ 上一版 ｜ 套用 名稱 (短 id) ｜ 下一版 ›」）。步數就是 `preview` 是否為 null。
  * 底部「較舊的版本」＝seq 較小的下一筆、「較新的版本」＝較大的那筆（文案刻意不用「前一版」，免得與比較對象撞名）；
@@ -63,7 +64,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
   const renderList = () => (
     <>
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Button type="button" variant="ghost" size="sm" aria-label={t("versions.sheet.back")} onClick={shut}>
+        <Button type="button" variant="ghost" size="sm" className="h-11" aria-label={t("versions.sheet.back")} onClick={shut}>
           <span aria-hidden="true">‹</span> {t("versions.sheet.back")}
         </Button>
         <h2 className="text-sm font-semibold">{t("versions.title")}</h2>
@@ -113,7 +114,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
       <>
         <header className="space-y-1 border-b border-border px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" className="min-w-0 max-w-[60%]" onClick={stopPreview}>
+            <Button type="button" variant="ghost" size="sm" className="h-11 min-w-0 max-w-[60%]" onClick={stopPreview}>
               <span aria-hidden="true">‹</span> <span className="truncate">{t("versions.sheet.backToList")} · {label}</span>
             </Button>
             <span className="min-w-0 truncate text-xs text-muted-foreground">
@@ -152,7 +153,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
     <DialogPrimitive.Root open onOpenChange={(open) => !open && shut()}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Content
-          className="fixed inset-0 z-50 flex flex-col bg-card outline-none"
+          className={`fixed inset-0 z-50 flex flex-col bg-card outline-none ${SAFE_INSETS}`}
           aria-describedby={undefined}
           onCloseAutoFocus={(event) => {
             const target = returnFocus?.isConnected ? returnFocus : returnFocusRef?.current;

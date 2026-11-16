@@ -3,8 +3,24 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { REWRITE_ACTION_ID, SUMMARIZE_ACTION_ID, type AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { contentStart, createTestEditor, renderAiHost, selectInBlock, stubAiFetch, type AnyEditor } from "@/test/ai-host";
+import { createRequire } from "node:module";
 import { useAiSession, type AiSessionValue } from "./AiSession";
-import { SelectionAiController } from "./SelectionAiController";
+import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX, formattingToolbarMiddleware } from "./SelectionAiController";
+import { stubLayoutTier } from "@/test/layout-tier";
+import { STICKY_TOP_VAR } from "@/lib/page-scroll";
+
+// flip 換成會記錄呼叫參數的直通版本：驗證手機時傳了下緣內縮。
+const flipSpy = vi.hoisted(() => vi.fn());
+vi.mock("@floating-ui/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@floating-ui/react")>();
+  return {
+    ...actual,
+    flip: (options?: Parameters<typeof actual.flip>[0]) => {
+      flipSpy(options);
+      return actual.flip(options);
+    },
+  };
+});
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
 const SUMMARIZE: AiActionDto = { id: SUMMARIZE_ACTION_ID, name: "Summarize", applyMode: "preview", kind: "quick" };
@@ -16,6 +32,10 @@ const DOC = [
   { id: "img", type: "image", props: { url: "https://example.com/a.png" } },
 ];
 
+// prosemirror-tables 不是 app 的直接依賴：從 @blocknote/core 的位置解析，拿到它實際用的那份 CellSelection。
+const coreRequire = createRequire(createRequire(import.meta.url).resolve("@blocknote/core"));
+const { CellSelection } = coreRequire("prosemirror-tables") as { CellSelection: { create(doc: unknown, anchor: number, head: number): never } };
+
 let session!: AiSessionValue;
 function Probe() {
   session = useAiSession();
@@ -25,8 +45,8 @@ function Probe() {
 let editor: AnyEditor;
 const toolbar = () => document.querySelector(".bn-formatting-toolbar");
 
-async function mount() {
-  editor = createTestEditor(DOC);
+async function mount(doc: unknown[] = DOC) {
+  editor = createTestEditor(doc);
   const ai = stubAiFetch({ actions: [REWRITE, SUMMARIZE] });
   renderAiHost({
     editor,
@@ -100,5 +120,159 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     fireEvent.click(button);
     // 舊版的下拉清單畫在工具列根元素裡；新版按下只開框（框裡才有動作 chip）。
     expect(within(toolbarRoot).queryByRole("button", { name: REWRITE.name })).not.toBeInTheDocument();
+  });
+});
+
+describe("SelectionAiController（手機：一律掛 controller，選文字時壓住工具列）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("phone：非空選取也沒有 formatting toolbar，AI session 仍可開", async () => {
+    stubLayoutTier("phone");
+    await mount();
+    selectInBlock(editor, "p1", 0, 5);
+    await act(async () => {});
+    expect(toolbar()).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
+    act(() => session.open());
+    await waitFor(() => expect(session.state.phase).toBe("input"));
+    expect(await screen.findByTestId("selection-ai-box")).toBeInTheDocument();
+  });
+
+  it("phone：選到圖片區塊 → 工具列照舊出現（含刪除鈕）；改選文字 → 收起；再選圖片 → 又出現，只有一份", async () => {
+    stubLayoutTier("phone");
+    await mount();
+    act(() => {
+      editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
+    });
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(toolbar()!.querySelector('[aria-label*="elete"]')).not.toBeNull();
+    selectInBlock(editor, "p1", 0, 5);
+    await waitFor(() => expect(toolbar()).toBeNull());
+    act(() => {
+      editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
+    });
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(document.querySelectorAll(".bn-formatting-toolbar")).toHaveLength(1);
+  });
+
+  it("phone：選到跨儲存格（CellSelection）→ 工具列出現；游標在儲存格內選文字 → 沒有", async () => {
+    stubLayoutTier("phone");
+    await mount([
+      { id: "t1", type: "table", content: { type: "tableContent", rows: [{ cells: ["cell a", "cell b"] }, { cells: ["cell c", "cell d"] }] } },
+      { id: "p9", type: "paragraph", content: "after" },
+    ]);
+    const cellPositions: number[] = [];
+    editor.transact((tr) => {
+      tr.doc.descendants((node, pos) => {
+        if (node.type.name === "tableCell" || node.type.name === "tableHeader") cellPositions.push(pos);
+      });
+    });
+    expect(cellPositions.length).toBeGreaterThanOrEqual(2);
+    act(() => {
+      editor.transact((tr) => {
+        tr.setSelection(CellSelection.create(tr.doc, cellPositions[0]!, cellPositions[1]!));
+      });
+    });
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    act(() => {
+      editor._tiptapEditor.commands.setTextSelection({ from: cellPositions[0]! + 3, to: cellPositions[0]! + 6 });
+    });
+    await waitFor(() => expect(toolbar()).toBeNull());
+  });
+
+  it("docked → phone → docked：工具列消失再恢復，最後只有一份", async () => {
+    const tier = stubLayoutTier("docked");
+    await mount();
+    selectInBlock(editor, "p1", 0, 5);
+    expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
+    act(() => tier.setLayoutTier("phone"));
+    await waitFor(() => expect(toolbar()).toBeNull());
+    act(() => tier.setLayoutTier("docked"));
+    await waitFor(() => expect(document.querySelectorAll(".bn-formatting-toolbar")).toHaveLength(1));
+    expect(screen.getAllByRole("button", { name: "Bold" })).toHaveLength(1);
+  });
+
+  it("docked：同樣的選取出現 formatting toolbar", async () => {
+    stubLayoutTier("docked");
+    await mount();
+    selectInBlock(editor, "p1", 0, 5);
+    expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(toolbar()).not.toBeNull();
+  });
+});
+
+describe("SelectionAiController（手機：浮動工具列翻到下方時避開編輯工具列）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    flipSpy.mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
+  });
+
+  function stubKeyboard(inset: number) {
+    const viewport = Object.assign(new EventTarget(), { height: 800 - inset, offsetTop: 0, scale: 1 });
+    vi.stubGlobal("innerHeight", 800);
+    Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
+  }
+  // flip 的選項可以是函式（定位當下才算，手機上要讀釘在頂端的頁首高）：先求值再讀。
+  const bottoms = () =>
+    flipSpy.mock.calls.map(([options]) => {
+      const resolved = typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options;
+      return (resolved as { padding?: { bottom?: number } } | undefined)?.padding?.bottom;
+    });
+
+  it("phone：flip 的下緣內縮編輯工具列的外框高度，不加鍵盤高（視窗邊界本來就是視覺視窗）", async () => {
+    stubLayoutTier("phone");
+    stubKeyboard(300);
+    await mount();
+    act(() => {
+      editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
+    });
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(bottoms()).toContain(PHONE_EDIT_TOOLBAR_CLEARANCE_PX);
+    expect(bottoms().filter((bottom) => bottom !== undefined && bottom !== PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual([]);
+  });
+
+  it("docked：flip 沿用預設（沒有內縮）", async () => {
+    stubLayoutTier("docked");
+    stubKeyboard(300);
+    await mount();
+    selectInBlock(editor, "p1", 0, 5);
+    await waitFor(() => expect(toolbar()).not.toBeNull());
+    expect(bottoms().filter((bottom) => bottom !== undefined)).toEqual([]);
+  });
+});
+
+describe("formattingToolbarMiddleware", () => {
+  const names = (bottomPadding: number) => formattingToolbarMiddleware(bottomPadding).map((middleware) => middleware.name);
+
+  it("手機：先限制寬度（size），shift 左右各留 8px 並以整個視窗為邊界，才輪到 flip", () => {
+    expect(names(PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual(["offset", "size", "shift", "flip"]);
+  });
+
+  it("手機：flip 的上緣內縮釘在頂端的頁首高（定位當下讀 --kb-sticky-top），下緣內縮編輯工具列", () => {
+    const flipOf = () => formattingToolbarMiddleware(PHONE_EDIT_TOOLBAR_CLEARANCE_PX).find((middleware) => middleware.name === "flip")!;
+    const padding = () => {
+      // @floating-ui/react 包過的 middleware 把原本的選項放在 options[0]。
+      const options = (flipOf().options as unknown[])[0];
+      const resolved = (typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options) as { padding: { top: number; bottom: number } };
+      return resolved.padding;
+    };
+    expect(padding()).toEqual({ top: 0, bottom: PHONE_EDIT_TOOLBAR_CLEARANCE_PX });
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "96px");
+    try {
+      expect(padding()).toEqual({ top: 96, bottom: PHONE_EDIT_TOOLBAR_CLEARANCE_PX });
+    } finally {
+      document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+    }
+  });
+
+  it("桌機：與 BlockNote 預設相同，不限制寬度", () => {
+    expect(names(0)).toEqual(["offset", "shift", "flip"]);
   });
 });

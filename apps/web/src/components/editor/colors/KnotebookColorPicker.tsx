@@ -5,7 +5,7 @@ import { useComponentsContext, useDictionary } from "@blocknote/react";
 import { KeepOpenMenuItem } from "./KeepOpenMenuItem";
 import type { ColorSection } from "./types";
 
-const NAMED_COLORS = ["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"] as const;
+export const NAMED_COLORS = ["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"] as const;
 
 export interface ColorSectionProps {
   color: string;

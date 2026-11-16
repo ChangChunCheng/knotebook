@@ -1,5 +1,5 @@
 import { getNodeById, type BlockNoteEditor } from "@blocknote/core";
-import { isTextSelection } from "@tiptap/core";
+import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import { escapeLinkText, FOCUS_MAX_CODE_POINTS, normalizeAnchor, truncateCodePoints, wikilinkHref, wikilinkVisibleText } from "@knotebook/shared";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
@@ -44,6 +44,14 @@ export function toolbarWouldShow({ doc, selection }: PMLike): boolean {
     return !spansCode;
   });
   return !spansCode;
+}
+
+/**
+ * 選取是不是「文字以外的目標」：選到整個區塊（圖片、檔案等，NodeSelection）或跨儲存格（CellSelection，以 `$anchorCell` 辨認——
+ * `prosemirror-tables` 不是本 app 的直接依賴）。這兩種選取的格式工具列帶著文字選取沒有的項目（替換、下載、刪除、合併儲存格…）。
+ */
+export function isNonTextSelection({ selection }: Pick<PMLike, "selection">): boolean {
+  return isNodeSelection(selection) || "$anchorCell" in selection;
 }
 
 /**

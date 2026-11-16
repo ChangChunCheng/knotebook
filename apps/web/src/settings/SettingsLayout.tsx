@@ -1,4 +1,6 @@
 import { useId, type ReactNode } from "react";
+import { managementHeadingUpPhone } from "@/components/management/tray";
+import { cn } from "@/lib/utils";
 
 /**
  * 設定面板的版面語彙（設定、群組、站台管理三個面板的各頁共用）。
@@ -38,9 +40,9 @@ export function SettingsPage({
 }) {
   return (
     <div>
-      <header className="flex items-start justify-between gap-4 pr-6">
+      <header className="flex items-start justify-between gap-4 pr-6 max-sm:flex-col max-sm:gap-3">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+          <h1 className={cn("text-xl font-semibold tracking-tight max-sm:text-lg", managementHeadingUpPhone)}>{title}</h1>
           {description !== undefined && (
             <p className="text-sm text-muted-foreground">{description}</p>
           )}
@@ -83,7 +85,7 @@ export function SettingsGroup({
   return (
     <section aria-labelledby={named ? titleId : undefined} className="py-8 first:pt-0 last:pb-0">
       {hasHeader && (
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 max-sm:flex-col max-sm:gap-3">
           <div className="space-y-1">
             {title !== undefined && (
               <h2 id={named ? titleId : undefined} className="text-base font-semibold">

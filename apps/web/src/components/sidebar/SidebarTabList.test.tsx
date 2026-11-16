@@ -123,7 +123,8 @@ describe("SidebarTabList", () => {
       expect(screen.getByRole("tab", { name })).toHaveClass("border-transparent", "text-muted-foreground");
     }
     for (const tab of screen.getAllByRole("tab")) {
-      expect(tab).toHaveClass("h-11", "md:h-9", "focus-visible:ring-2");
+      expect(tab).toHaveClass("h-11", "pointer-fine:h-9", "focus-visible:ring-2");
+      expect(tab).not.toHaveClass("md:h-9");
     }
   });
 

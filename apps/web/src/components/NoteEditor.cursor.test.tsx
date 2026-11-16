@@ -183,7 +183,8 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
     const el = onScrollRoot.mock.calls.find(([arg]) => arg !== null)?.[0] as HTMLElement | undefined;
     expect(el).toBeDefined();
     expect(el).toHaveClass("overflow-y-auto");
-    expect(column.parentElement).toBe(el);
+    // 欄外還有一層流程包裝（不產生盒子），再外一層才是捲動容器。
+    expect(column.parentElement?.parentElement).toBe(el);
     doc.destroy();
   });
 

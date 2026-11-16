@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { FOLDER_DEPTH_MAX, type FolderDto } from "@knotebook/shared";
 import type { FolderDialogRequest } from "@/components/NoteList";
 import { Button } from "@/components/ui/button";
+import { ROW_ICON_HIT } from "@/components/ui/hit-area";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,9 +20,9 @@ import { hoverReveal } from "@/components/ui/reveal";
 import { cn } from "@/lib/utils";
 import { setFolderSort, useFolderSort, type FolderSort } from "./folder-sort";
 
-/** 排序列樣式照 `NoteWidthMenu`（RadioItem 是不帶樣式的最小包裝）。 */
+/** 排序列樣式照 `DropdownMenuCheckboxItem`（RadioItem 是不帶樣式的最小包裝）。 */
 const RADIO_ROW =
-  "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none " +
+  "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
 const SORTS: readonly { value: FolderSort; key: "sortName" | "sortRecent" | "sortSize" }[] = [
   { value: "name", key: "sortName" },
@@ -152,7 +153,7 @@ export function FolderMenu({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu phoneSheet open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           ref={triggerRef}
@@ -160,13 +161,14 @@ export function FolderMenu({
           variant="ghost"
           size="icon"
           aria-label={t("folders.menu.label", { name: folder.name })}
-          className={cn("h-6 w-6 shrink-0", hoverReveal("folderrow"))}
+          className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, hoverReveal("folderrow"))}
         >
           <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
+        sheetTitle={folder.name}
         onCloseAutoFocus={(event) => {
           if (!openingDialogRef.current) return;
           openingDialogRef.current = false;
@@ -204,7 +206,7 @@ export function FolderMenu({
           aria-labelledby={sortLabelId}
         >
           {SORTS.map(({ value, key }) => (
-            <DropdownMenuRadioItem key={value} value={value} className={RADIO_ROW} onSelect={(event) => event.preventDefault()}>
+            <DropdownMenuRadioItem key={value} value={value} className={RADIO_ROW} sheetRow onSelect={(event) => event.preventDefault()}>
               <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
                 <DropdownMenuItemIndicator>
                   <Check className="h-4 w-4" />

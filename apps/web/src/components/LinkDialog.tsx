@@ -11,6 +11,10 @@ export interface LinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (value: { text: string; href: string }) => void;
+  /** 開啟時預填的顯示文字（選取了文字時是那段字，送出時沒改就保留原本的樣式）；省略是空的。 */
+  initialText?: string;
+  /** 開啟時預填的網址（游標在既有連結裡時是它的網址）；省略是空的。 */
+  initialUrl?: string;
 }
 
 /**
@@ -39,7 +43,7 @@ export interface LinkDialogProps {
  * 還原蓋掉（真編輯器實測過，三條關閉路徑——送出成功、取消鈕、Esc／點背景——
  * 都釘在 `LinkDialog.test.tsx` 裡）。
  */
-export function LinkDialog({ editor, open, onOpenChange, onSubmit }: LinkDialogProps) {
+export function LinkDialog({ editor, open, onOpenChange, onSubmit, initialText = "", initialUrl = "" }: LinkDialogProps) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
@@ -53,10 +57,12 @@ export function LinkDialog({ editor, open, onOpenChange, onSubmit }: LinkDialogP
   // 每次開啟都是全新的一輪——不帶上一次殘留的文字或錯誤訊息。
   useEffect(() => {
     if (open) {
-      setText("");
-      setUrl("");
+      setText(initialText);
+      setUrl(initialUrl);
       setError(null);
     }
+    // 只在開啟的那一刻取一次預填值
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {

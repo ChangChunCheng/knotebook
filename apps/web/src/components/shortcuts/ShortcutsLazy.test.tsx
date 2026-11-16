@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ShortcutsContent } from "./ShortcutsLazy";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
  * 快捷鍵介紹頁的內容：左卡列分類、右卡只顯示所選分類；
@@ -335,5 +336,78 @@ describe("語系", () => {
     renderContent();
     await waitFor(() => expect(navNames()[0]).toBe("通用"));
     expect(heading()).toBe("通用");
+  });
+});
+
+describe("手機（< 640）", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("P7 先停在分類清單；清單左上角是外殼給的「‹」（名稱、動作照傳）；選分類 → 內容層，同一個位置是「Back to sections」", async () => {
+    stubActions([]);
+    stubLayoutTier("phone");
+    const onBack = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ShortcutsContent listBack={{ label: "Back to menu", onBack }} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(navNames()).toEqual(NO_AI_EN));
+    const items = document.querySelector<HTMLElement>('[data-shortcuts-card="items"]')!;
+    const content = document.querySelector<HTMLElement>('[data-shortcuts-card="content"]')!;
+    expect(items.className).toMatch(/(^| )flex( |$)/);
+    expect(content.className).toMatch(/(^| )hidden( |$)/);
+    const listBack = within(items).getByRole("button", { name: "Back to menu" });
+    expect(listBack).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+    // 掛上時焦點交給看得見的那一層（清單的「‹」），不是藏起來的內容區
+    await waitFor(() => expect(listBack).toHaveFocus());
+    fireEvent.click(listBack);
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    openCategory("Sidebar");
+    await waitFor(() => expect(content.className).toMatch(/(^| )flex( |$)/));
+    expect(within(content).getByRole("button", { name: "Back to sections" })).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+    expect(within(items).queryByRole("button", { name: "Back to menu" })).toBeNull();
+  });
+
+  it("P8 手機上與選單 sheet 同一家族：卡 popover 底色與 12px 上圓角、分類列 48px／16px／相貼／灰底、列尾「›」、標題 18px 與髮絲線、條目名稱 16px", async () => {
+    stubActions([]);
+    stubLayoutTier("phone");
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ShortcutsContent listBack={{ label: "Back to menu", onBack: vi.fn() }} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(navNames()).toEqual(NO_AI_EN));
+    const items = document.querySelector<HTMLElement>('[data-shortcuts-card="items"]')!;
+    const content = document.querySelector<HTMLElement>('[data-shortcuts-card="content"]')!;
+    for (const card of [items, content]) expect(card).toHaveClass("max-sm:bg-popover", "max-sm:rounded-t-xl");
+    const rows = Array.from(items.querySelectorAll<HTMLElement>("[data-shortcuts-category]"));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveClass("max-sm:min-h-12", "max-sm:text-base", "max-sm:font-normal", "max-sm:rounded-sm", "max-sm:hover:bg-accent", "max-sm:-mx-2", "max-sm:px-2");
+      // `w-full` 會讓負邊距只把列往左推：手機改回自動寬度，列才向兩側各撐出 8px
+      expect(row).toHaveClass("w-full", "max-sm:w-auto");
+      expect(row.querySelector("svg")).toHaveClass("sm:hidden", "ml-auto");
+      expect(row.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    }
+    // 目前的分類沒有常駐品牌色
+    const current = rows.find((row) => row.getAttribute("aria-current") === "true")!;
+    expect(current).toHaveClass("max-sm:bg-transparent");
+    expect(items.querySelector("nav")).toHaveClass("max-sm:gap-0", "max-sm:min-h-0", "max-sm:flex-1", "max-sm:overflow-y-auto", "max-sm:-mx-2", "max-sm:px-2");
+    const title = within(items).getByText("Keyboard shortcuts");
+    expect(title).toHaveClass("max-sm:text-lg", "font-semibold");
+    expect(title.parentElement).toHaveClass("max-sm:border-b", "max-sm:border-border", "max-sm:h-12");
+    // 內容層：標題 18px、與「‹」同高；條目名稱 16px、說明維持 14px 灰字
+    const heading = content.querySelector("h3")!;
+    expect(heading).toHaveClass("max-sm:text-lg", "max-sm:min-h-12", "max-sm:items-center", "max-sm:pl-10", "max-sm:-mt-12");
+    expect(content.querySelector("[data-shortcuts-content]")).toHaveClass("pt-12", "max-sm:pt-16");
+    const entry = content.querySelector("li")!;
+    expect(entry.querySelector("p.font-medium")).toHaveClass("max-sm:text-base");
+    expect(entry.querySelector("p.text-muted-foreground")).toHaveClass("text-sm");
+    expect(entry.querySelector("p.text-muted-foreground")!.className).not.toMatch(/max-sm:text-/);
+    expect(content.querySelector("ul")).toHaveClass("divide-y");
+    for (const back of [within(items).getByRole("button", { name: "Back to menu" }), within(content).getByRole("button", { name: "Back to sections", hidden: true })]) {
+      expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-popover");
+    }
   });
 });

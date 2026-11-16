@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { canonicalNotePath } from "@knotebook/shared";
 import { useBacklinks } from "@/api/notes";
 import { BACKLINKS_SCROLL_ROW, SIDEBAR_ROW_HEIGHT } from "@/components/ui/rows";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,6 +50,10 @@ import { cn } from "@/lib/utils";
  * 代價是反向連結這個功能完全沒有存在感（沒被連過的筆記看不出有這回事），
  * 且內文卡高度會隨有無 backlinks 跳動。
  *
+ * **手機**（< 640）：這一列在內文捲動容器裡、文章欄之後，沒有提及（含查詢未完成、失敗）時整列不渲染，
+ * 不留一條空白或「尚無筆記提及」佔掉手機的畫面。版本預覽開著時內文捲動容器整個藏起來，這一列跟著藏
+ * （桌面版它留在預覽下方）；關掉預覽就回來。
+ *
  * 查詢未完成（pending）或失敗時**只保留空列、不顯示任何文案**：此時「有幾筆」
  * 未知，寫「尚無筆記提及」會是謊報，噴錯誤訊息則對這個次要區塊太吵
  * （本頁主體已有自己的 loading/error 顯示）。
@@ -58,6 +63,8 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
   const backlinksQuery = useBacklinks(noteId);
   const backlinks = backlinksQuery.data;
   const settled = backlinks !== undefined;
+  const phone = useIsPhone();
+  if (phone && (!settled || backlinks.length === 0)) return null;
 
   return (
     <div className="shrink-0 border-t border-border py-2 text-sm">
@@ -73,7 +80,7 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
           </p>
         )}
         {settled && backlinks.length > 0 && (
-          // `pr-14`（56px 末端內距）：右下角歷史泡泡（`CornerStack`，48px、距**視窗**右緣 md+ 24px；`<md` 不渲染）——
+          // `pr-14`（56px 末端內距）：右下角歷史泡泡（`CornerStack`，48px、距**視窗**右緣 640 起 24px；< 640 不渲染）——
           // #263 拿掉 AI 泡泡後它落到容器最底格，正好在 AI 泡泡原本的位置，壓在本 strip 右端（卡右緣在視窗內 12px、本列再內縮
           // `px-5`，泡泡侵入 chips 區 40px）；末端 padding 完整進 scrollable overflow，捲到底時最後一顆 chip 才能完全捲出泡泡
           // 覆蓋區（56 > 40）。

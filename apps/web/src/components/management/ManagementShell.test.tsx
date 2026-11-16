@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, type Location } from "react-router";
 import i18n from "@/i18n";
-import { settle } from "@/test/outside-click";
+import { clickOutside, settle } from "@/test/outside-click";
 import { ManagementShell, type ManagementNavItemSpec } from "./ManagementShell";
+import { rememberPanelReturn, type PanelLocationState } from "@/lib/panel-return";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 // #247。jsdom 不套 Tailwind：`hidden`／`flex` 只能以 class 斷言，真實顯示由 e2e 截圖驗。
 // matchMedia：`src/test/setup.ts:28-40` 的全域 stub 恆回 matches:false（＝窄視窗）；寬視窗案自己 stubGlobal。
@@ -20,7 +22,7 @@ function LocationProbe() {
   const location = useLocation();
   const bg = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation;
   return (
-    <div data-testid="location" data-bg={bg?.pathname ?? ""}>
+    <div data-testid="location" data-bg={bg?.pathname ?? ""} data-state-keys={Object.keys((location.state as object | null) ?? {}).sort().join(",")}>
       {location.pathname}
     </div>
   );
@@ -130,6 +132,33 @@ describe("ManagementShell（#247）", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("窄寬度停在項次層：左卡也有一顆 Close（md:hidden），點了關；內容層只有右卡那一顆", async () => {
+    const { onOpenChange } = renderShell();
+    await settle();
+    // 內容層：只有右卡的 ✕。
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    const closes = screen.getAllByRole("button", { name: "Close" });
+    expect(closes).toHaveLength(2);
+    const itemsCard = document.querySelector<HTMLElement>('[data-management-card="items"]')!;
+    const left = within(itemsCard).getByRole("button", { name: "Close" });
+    expect(left).toHaveClass("md:hidden");
+    fireEvent.click(left);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("兩顆 ✕ 與返回鈕在觸控裝置都撐出 44px 的點擊範圍", async () => {
+    renderShell();
+    await settle();
+    const right = screen.getByRole("button", { name: "Close" });
+    const back = screen.getByRole("button", { name: "Back to sections" });
+    for (const button of [right, back]) expect(button).toHaveClass("pointer-coarse:after:-inset-2", "pointer-coarse:after:absolute");
+    fireEvent.click(back);
+    const itemsCard = document.querySelector<HTMLElement>('[data-management-card="items"]')!;
+    // 與右卡的 ✕ 同一個位置（卡的右上角 right-2 top-2），兩層切換時不跳。
+    expect(within(itemsCard).getByRole("button", { name: "Close" })).toHaveClass("pointer-coarse:after:-inset-2", "absolute", "right-2", "top-2");
+  });
+
   it("Esc 呼叫 onOpenChange(false)", async () => {
     const { onOpenChange } = renderShell();
     await settle();
@@ -215,5 +244,239 @@ describe("ManagementShell（#247）", () => {
     await settle();
     expect(document.activeElement).not.toBe(contentBox());
     expect(window.matchMedia).toHaveBeenCalledWith("(min-width: 768px)");
+  });
+});
+
+describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("MS-P1 從選單開（panelStart＋panelReturn）：停在項次清單；左上角「Back to menu」、沒有 ✕；點它 → sheet 收完後 onOpenChange(false)，再重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const state: PanelLocationState = { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) };
+    const { onOpenChange } = renderShell({ state });
+    await settle();
+    expect(itemsCard().classList).toContain("flex");
+    expect(contentCard().classList).toContain("hidden");
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    const back = within(itemsCard()).getByRole("button", { name: "Back to menu" });
+    expect(back).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2", "max-sm:after:absolute");
+    expect(document.activeElement).toBe(back);
+    fireEvent.click(back);
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(reopen).toHaveBeenCalledTimes(1));
+    expect(onOpenChange.mock.invocationCallOrder[0]!).toBeLessThan(reopen.mock.invocationCallOrder[0]!);
+  });
+
+  it("MS-P2 選項次 → 內容層：左上角同一個位置是「Back to sections」、仍沒有 ✕；按它回項次清單", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } satisfies PanelLocationState });
+    await settle();
+    fireEvent.click(screen.getByRole("link", { name: "Sign-in" }));
+    expect(contentCard().classList).toContain("flex");
+    expect(itemsCard().classList).toContain("hidden");
+    const back = within(contentCard()).getByRole("button", { name: "Back to sections" });
+    expect(back).toHaveClass("absolute", "left-2", "top-2", "max-sm:after:-inset-2");
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    fireEvent.click(back);
+    expect(itemsCard().classList).toContain("flex");
+    expect(within(itemsCard()).getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
+  it("MS-P3 深連結（沒有 panelStart）：直接停在那一頁；退到項次清單後的「‹」名稱是 Close、只關不重開", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    rememberPanelReturn(reopen);
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P4 內容層按 Esc：整個關掉、不重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    fireEvent.click(screen.getByRole("link", { name: "Sign-in" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P6 點 sheet 外（上方的縫）：手機整個關掉、不重開選單；640 以上點外面不關（有未存輸入的表單）", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    await clickOutside();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stubLayoutTier("overlay");
+    const wide = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    await clickOutside();
+    expect(wide.onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("MS-P5 640 以上：panelStart 不作用（照舊停在內容層），有 ✕、沒有「Back to menu」", async () => {
+    stubLayoutTier("overlay");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(() => {}) } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to menu" })).toBeNull();
+  });
+});
+
+describe("ManagementShell 手機：「返回選單」只給真的從選單打開的那一次", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("MS-P7 打開後 panelStart／panelReturn 從這一筆歷史拿掉（只留 backgroundLocation）；重新整理或上一頁／下一頁回到這一筆＝深連結：停在那一頁，清單的「‹」是 Close、不重開選單", async () => {
+    stubLayoutTier("phone");
+    const reopen = vi.fn();
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } satisfies PanelLocationState });
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveAttribute("data-state-keys", "backgroundLocation"));
+    // 這一筆仍是從選單開的那一次：清單上的「‹」照樣是 Back to menu
+    expect(within(itemsCard()).getByRole("button", { name: "Back to menu" })).toBeInTheDocument();
+    cleanup();
+
+    // 同一筆歷史再掛一次（重新整理、上一頁／下一頁）：state 只剩 backgroundLocation
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG } });
+    await settle();
+    expect(contentCard().classList).toContain("flex");
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    expect(within(itemsCard()).queryByRole("button", { name: "Back to menu" })).toBeNull();
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P8 在 640 以上從選單打開、之後縮到手機寬度：清單的「‹」是 Close，按了只關、不重開選單", async () => {
+    const tier = stubLayoutTier("overlay");
+    const reopen = vi.fn();
+    const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
+    await settle();
+    act(() => tier.setLayoutTier("phone"));
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    expect(within(itemsCard()).queryByRole("button", { name: "Back to menu" })).toBeNull();
+    fireEvent.click(within(itemsCard()).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await settle();
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("MS-P9 手機上卡貼齊 sheet：托盤不留內距，卡只有上圓角、左右與底沒有邊框，safe area 是卡的內距", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const tray = itemsCard().parentElement!;
+    expect(tray).toHaveClass("max-sm:p-0", "max-sm:gap-0");
+    expect(tray.className).not.toMatch(/max-sm:p[lrb]-\[/);
+    for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
+    expect(itemsCard()).toHaveClass("max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]", "max-sm:pl-[max(1rem,env(safe-area-inset-left))]");
+    expect(contentCard()).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]", "max-sm:pl-[env(safe-area-inset-left)]");
+    // 卡貼齊 sheet 左緣：兩層的「‹」自己退開左側 safe area
+    expect(within(itemsCard()).getByRole("button", { name: "Close" })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+    expect(within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
+  });
+
+  it("MS-P10 手機上面板與選單 sheet 同一個表面：卡用 popover 底色、上圓角 12px，托盤不再有毛玻璃與品牌底", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const tray = itemsCard().parentElement!;
+    for (const card of [itemsCard(), contentCard()]) {
+      expect(card).toHaveClass("max-sm:bg-popover", "max-sm:rounded-t-xl");
+      expect(card.className).not.toMatch(/max-sm:rounded-t-2xl/);
+    }
+    expect(tray).toHaveClass("max-sm:rounded-t-xl", "max-sm:bg-transparent", "max-sm:backdrop-blur-none");
+    expect(tray.className).not.toMatch(/max-sm:rounded-t-2xl/);
+  });
+
+  it("MS-P11 手機上項次清單的列像選單的列：48px 高、16px 一般字重、相貼、4px 圓角、灰色按壓／焦點底色，目前項次也沒有常駐品牌色；列尾有「›」", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const rows = within(itemsCard()).getAllByRole("link");
+    expect(rows).toHaveLength(ITEMS.length);
+    for (const row of rows) {
+      expect(row).toHaveClass(
+        "max-sm:min-h-12",
+        "max-sm:h-auto",
+        "max-sm:text-base",
+        "max-sm:font-normal",
+        "max-sm:rounded-sm",
+        "max-sm:-mx-2",
+        "max-sm:px-2",
+        "max-sm:hover:bg-accent",
+        "max-sm:active:bg-accent",
+        "max-sm:focus-visible:bg-accent",
+      );
+    }
+    // 清單區自己捲動（矮螢幕放不下的列要捲得到），列頭在它之外
+    const nav = within(itemsCard()).getByRole("navigation");
+    expect(nav).toHaveClass("max-sm:gap-0", "max-sm:min-h-0", "max-sm:flex-1", "max-sm:overflow-y-auto", "max-sm:-mx-2", "max-sm:px-2");
+    expect(nav.contains(within(itemsCard()).getByText("Settings"))).toBe(false);
+    // 目前所在的項次（/settings/login）：手機把品牌底與粗體都蓋掉
+    const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
+    expect(current).toHaveClass("max-sm:bg-transparent", "max-sm:font-normal", "max-sm:text-foreground");
+    expect(rows.filter((row) => row !== current).some((row) => /max-sm:bg-transparent/.test(row.className))).toBe(false);
+    // 「›」只在手機顯示、不進可及名稱；有計數的列（Storage）計數在「›」之前
+    for (const row of rows) {
+      const chevron = row.querySelector("svg");
+      expect(chevron).not.toBeNull();
+      expect(chevron).toHaveAttribute("aria-hidden", "true");
+      expect(chevron).toHaveClass("h-4", "w-4", "shrink-0", "sm:hidden");
+    }
+    expect(within(itemsCard()).getByRole("link", { name: "Account info" }).querySelector("svg")).toHaveClass("ml-auto");
+    expect(within(itemsCard()).getByRole("link", { name: "Storage" }).querySelector("svg")).not.toHaveClass("ml-auto");
+  });
+
+  it("MS-P12 手機上標題 18px、列頭有髮絲線，兩層的「‹」落在同一個位置且透明底", async () => {
+    stubLayoutTier("phone");
+    renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
+    await settle();
+    const title = within(itemsCard()).getByText("Settings");
+    expect(title).toHaveClass("max-sm:text-lg", "font-semibold");
+    const header = title.parentElement!.parentElement!;
+    expect(header).toHaveClass("max-sm:h-12", "max-sm:border-b", "max-sm:border-border");
+    const listBack = within(itemsCard()).getByRole("button", { name: "Close" });
+    const contentBack = within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true });
+    // 「‹」的底色是 sheet 的表面（看起來透明，但捲動的內容經過時遮住）；內容區頂端讓出「‹」的位置
+    for (const back of [listBack, contentBack]) expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-popover");
+    expect(contentBox()).toHaveClass("pt-12", "max-sm:pt-16");
+    // 列頭的髮絲線拉滿卡的全寬（往兩側退掉卡的內距），標題左緣不動
+    expect(header).toHaveClass("max-sm:-ml-[max(1rem,env(safe-area-inset-left))]", "max-sm:-mr-[max(1rem,env(safe-area-inset-right))]", "max-sm:pl-[calc(max(1rem,env(safe-area-inset-left))+2.5rem)]");
+  });
+
+  it("MS-P13 640 以上的列、標題與卡維持原樣：36px 高、14px、品牌色的目前項次、沒有手機專屬的底色", async () => {
+    stubWideViewport();
+    renderShell();
+    await settle();
+    const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
+    expect(current).toHaveClass("h-9", "text-sm", "rounded-lg", "bg-brand-soft", "text-brand-on-soft");
+    expect(itemsCard().parentElement).toHaveClass("backdrop-blur-md", "bg-background/45");
+    expect(itemsCard()).toHaveClass("bg-card");
   });
 });

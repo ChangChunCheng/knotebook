@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
  * `ghost` 圖示鈕（移出最愛／移動／複製／刪除，依 tab 而定，`h-6 w-6`）與三態全選框（`ui/selection-checkbox.tsx`）；垃圾桶寬形標題列（`TrashPanel.tsx`＋`TrashFooter.tsx` 的 `TrashWideToolbar`）的 ✕、
  * 還原／永久刪除兩顆 `ghost` 圖示鈕（`h-6 w-6`）與全選框。它們取代平常那排、與「選取」圖示鈕同為 24px，不與 32px 控制項並排。
  * 都不與輸入框或其他 32px 控制項同列（✕ 在輸入框裡面），所以不違背「同列等高」的本意。
+ * 觸控裝置上這些 24px 鈕的視覺不變，點擊範圍用 `ui/hit-area.ts` 的 `ROW_ICON_HIT` 撐到 44px。
  * ⚠ **例外不外擴**：側欄以外、或與其他控制項同列的圖示鈕，一律用 `icon`（32px）。
  *
  * **例外二：未登入／帳號流程的同款卡片頁用 44px（`size="lg"`，h-11）。** `pages/LoginPage.tsx`、`RegisterPage.tsx`、
@@ -75,6 +76,8 @@ import { cn } from "@/lib/utils";
  *   單獨站著看不出來是按鈕（「重新產生連結」被這樣回報過一次）。
  *   刻意的例外（寬螢幕工具列）：選取模式標題列的 ✕、移動／複製／刪除與垃圾桶的還原／永久刪除，都是 `ghost` `icon` 單獨站在標題列上、
  *   旁邊沒有 `outline` 主動作——它們依附在「標題列」這一列，且每顆有 `title` 與 `aria-label`（滑過看得到名稱），所以不違背上一句的本意。
+ *   刻意的例外：手機清單與筆記頁底部的兩顆圓形浮動鈕（`sidebar/PhoneListFabs.tsx`，Search／New note）是 `ghost` `icon` 單獨站著；
+ *   它們的 class 字串整個覆寫 ghost 的樣式（圓形、半透明毛玻璃底、細框、陰影），所以看得出是按鈕，且各有 `aria-label`。
  *   刻意的例外：垃圾桶選取模式底部動作列的「永久刪除」（`sidebar/TrashFooter.tsx`）與「還原」平級並排，卻是
  *   `ghost`＋`border border-input`＋紅字（hover 同 `ROW_ICON_DANGER`）——`outline` 的 hover／按下填 `brand-deep`，
  *   紅字壓深色底不對（#181）。別「修」回 `outline`。一般 tab 選取模式動作列的紅色刪除圖示鈕

@@ -34,21 +34,21 @@ async function writeParagraphs(page: Page, paragraphs: string[]): Promise<void> 
 
 async function scrollContainerTop(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const scroller = document.querySelector('[data-testid="note-editor"]')?.parentElement?.parentElement;
+    const scroller = document.querySelector('[data-testid="note-editor"]')?.closest(".overflow-y-auto");
     return scroller ? scroller.getBoundingClientRect().top : Number.NaN;
   });
 }
 
 async function scrollContainerBy(page: Page, dy: number): Promise<void> {
   await page.evaluate((delta) => {
-    const scroller = document.querySelector('[data-testid="note-editor"]')?.parentElement?.parentElement as HTMLElement | null | undefined;
+    const scroller = document.querySelector('[data-testid="note-editor"]')?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
     if (scroller) scroller.scrollTop += delta;
   }, dy);
 }
 
 async function scrollContainerRect(page: Page): Promise<{ top: number; bottom: number }> {
   return page.evaluate(() => {
-    const scroller = document.querySelector('[data-testid="note-editor"]')?.parentElement?.parentElement;
+    const scroller = document.querySelector('[data-testid="note-editor"]')?.closest(".overflow-y-auto");
     const r = scroller?.getBoundingClientRect();
     return r ? { top: r.top, bottom: r.bottom } : { top: Number.NaN, bottom: Number.NaN };
   });
@@ -75,7 +75,7 @@ async function runInstruction(box: Locator): Promise<void> {
 
 async function scrollContainerScrollTop(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const scroller = document.querySelector('[data-testid="note-editor"]')?.parentElement?.parentElement;
+    const scroller = document.querySelector('[data-testid="note-editor"]')?.closest(".overflow-y-auto");
     return scroller ? scroller.scrollTop : Number.NaN;
   });
 }

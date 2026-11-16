@@ -16,6 +16,7 @@ import { toNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Presentation } from "@/components/ui/icons";
+import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { exitOwnedFullscreen } from "@/present/fullscreen";
 import { LazyPresentation } from "@/present/lazy";
 import { PresentationErrorBoundary, PresentationShell, type PresentationShellStatus } from "@/present/PresentationShell";
@@ -129,12 +130,14 @@ export default function PublicNotePage() {
             導去 /login——那就是這顆連結的用途：從分享頁通往產品本身）。 */}
         <header className="flex items-center gap-3 border-b border-border px-5 py-3">
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{data.title}</h1>
-          <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={presentHere}>
+          <Button type="button" variant="ghost" size="sm" className={cn("shrink-0", HEADER_ICON_HIT)} onClick={presentHere}>
             <Presentation className="h-4 w-4" />
-            {t("note.menu.present")}
+            <span className="max-sm:sr-only">{t("note.menu.present")}</span>
           </Button>
-          <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-            {t("public.readonly")}
+          {/* 手機：徽章收成一個點，文字只給螢幕閱讀器；sm 起是原本的邊框標籤。 */}
+          <span className="inline-flex shrink-0 items-center text-xs text-muted-foreground sm:rounded sm:border sm:border-border sm:px-1.5 sm:py-0.5">
+            <span data-readonly-dot="" aria-hidden="true" className="h-2 w-2 rounded-full bg-muted-foreground sm:hidden" />
+            <span className="max-sm:sr-only">{t("public.readonly")}</span>
           </span>
           <Link to="/" className="shrink-0 text-sm font-semibold text-brand">
             Knotebook

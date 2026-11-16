@@ -13,7 +13,7 @@ import { authErrorMessage } from "./auth-error-message";
 import "@/i18n/management-strings";
 
 const SELECT_CLASS =
-  "h-8 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none " +
+  "h-8 w-full rounded-md border border-input bg-background px-3 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
   "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 範本只預填 issuer 與顯示名（GitLab 可改成自架網址）。Microsoft 不做。 */

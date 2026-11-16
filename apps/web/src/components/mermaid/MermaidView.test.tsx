@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
  * `MermaidView` 的單元測試。
@@ -205,6 +206,30 @@ describe("MermaidView — 只畫視窗附近的圖（#344 C）", () => {
     document.body.append(scroller);
     try {
       render(<MermaidView code="graph TD; A-->B;" editable theme="light" onChange={vi.fn()} />, { container: inner });
+      expect(observer().options?.root).toBe(scroller);
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it("跨 640 時重找 root：640 起捲的是內文容器，手機上那一層不捲（文件在捲）→ 換成視窗；轉回來再換回容器", () => {
+    const tier = stubLayoutTier("overlay");
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    const inner = document.createElement("div");
+    scroller.append(inner);
+    document.body.append(scroller);
+    try {
+      render(<MermaidView code="graph TD; A-->B;" editable theme="light" onChange={vi.fn()} />, { container: inner });
+      expect(observer().options?.root).toBe(scroller);
+      const first = observer();
+      scroller.style.overflowY = "visible";
+      act(() => tier.setLayoutTier("phone"));
+      expect(first.disconnect).toHaveBeenCalled();
+      expect(observer()).not.toBe(first);
+      expect(observer().options?.root).toBeNull();
+      scroller.style.overflowY = "auto";
+      act(() => tier.setLayoutTier("overlay"));
       expect(observer().options?.root).toBe(scroller);
     } finally {
       scroller.remove();
