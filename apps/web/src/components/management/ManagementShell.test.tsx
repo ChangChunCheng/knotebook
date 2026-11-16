@@ -130,6 +130,33 @@ describe("ManagementShell（#247）", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("窄寬度停在項次層：左卡也有一顆 Close（md:hidden），點了關；內容層只有右卡那一顆", async () => {
+    const { onOpenChange } = renderShell();
+    await settle();
+    // 內容層：只有右卡的 ✕。
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
+    const closes = screen.getAllByRole("button", { name: "Close" });
+    expect(closes).toHaveLength(2);
+    const itemsCard = document.querySelector<HTMLElement>('[data-management-card="items"]')!;
+    const left = within(itemsCard).getByRole("button", { name: "Close" });
+    expect(left).toHaveClass("md:hidden");
+    fireEvent.click(left);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("兩顆 ✕ 與返回鈕在觸控裝置都撐出 44px 的點擊範圍", async () => {
+    renderShell();
+    await settle();
+    const right = screen.getByRole("button", { name: "Close" });
+    const back = screen.getByRole("button", { name: "Back to sections" });
+    for (const button of [right, back]) expect(button).toHaveClass("pointer-coarse:after:-inset-2", "pointer-coarse:after:absolute");
+    fireEvent.click(back);
+    const itemsCard = document.querySelector<HTMLElement>('[data-management-card="items"]')!;
+    // 與右卡的 ✕ 同一個位置（卡的右上角 right-2 top-2），兩層切換時不跳。
+    expect(within(itemsCard).getByRole("button", { name: "Close" })).toHaveClass("pointer-coarse:after:-inset-2", "absolute", "right-2", "top-2");
+  });
+
   it("Esc 呼叫 onOpenChange(false)", async () => {
     const { onOpenChange } = renderShell();
     await settle();

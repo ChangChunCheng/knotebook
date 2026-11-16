@@ -107,6 +107,10 @@ const titleBox = (page: Page): Locator => page.locator('[aria-label="Note title"
 const backButton = (page: Page): Locator => page.getByRole("button", { name: "Back to notes", exact: true });
 const openSidebar = (page: Page): Locator => page.getByRole("button", { name: "Open sidebar", exact: true });
 const listBar = (page: Page): Locator => page.locator("[data-phone-list-bar]");
+/** 清單畫面底部兩顆圓形浮動鈕（搜尋層開著時不存在）。 */
+const fabs = (page: Page): Locator => page.locator("[data-phone-list-fabs]");
+const searchFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "Search notes", exact: true });
+const newNoteFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "New note", exact: true });
 const browseBar = (page: Page): Locator => page.getByTestId("note-browse-bar");
 const searchBox = (page: Page): Locator => page.getByRole("textbox", { name: "Search notes", exact: true });
 const sidebarOf = (page: Page): Locator => page.getByRole("complementary").filter({ has: page.getByRole("tablist", { name: "Sidebar sections" }) });
@@ -119,7 +123,7 @@ async function waitForTitle(page: Page, title: string): Promise<void> {
   await expect(titleBox(page)).toHaveValue(title, { timeout: 15_000 });
 }
 
-test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部列貼著下緣、沒有側欄鈕；筆記畫面藏起來", async ({ browser }) => {
+test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮動鈕貼著下緣、沒有側欄鈕；筆記畫面藏起來", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -152,12 +156,13 @@ test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部列貼著�
     expect(tops.size, `六顆 tab 的上緣 ${[...tops].join(",")}`).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(PHONE.width);
 
-    // 底部列：搜尋框與 New note，下緣貼著視窗下緣（桌面 Chromium 沒有 safe area）
-    const bar = listBar(page);
-    await expect(bar.getByRole("textbox", { name: "Search notes", exact: true })).toBeVisible();
-    await expect(bar.getByRole("button", { name: "New note", exact: true })).toBeVisible();
-    const barBox = (await bar.boundingBox())!;
-    expect(Math.abs(barBox.y + barBox.height - PHONE.height)).toBeLessThanOrEqual(1);
+    // 沒在搜尋：清單底部沒有搜尋列、也沒有搜尋框；左下 Search、右下 New note，下緣離視窗下緣 16px（桌面 Chromium 沒有 safe area）
+    await expect(listBar(page)).toHaveCount(0);
+    await expect(searchBox(page)).toHaveCount(0);
+    for (const fab of [searchFab(page), newNoteFab(page)]) {
+      const box = (await fab.boundingBox())!;
+      expect(Math.abs(PHONE.height - (box.y + box.height) - 16), "浮動鈕離下緣").toBeLessThanOrEqual(1);
+    }
 
     // 點筆記：清單藏起來、筆記畫面出現、有「‹」
     await showSidebarTab(page, "My notes");
@@ -186,12 +191,12 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
     // 搜尋層裡沒有 tab 列，所以不能用 sidebarOf（它要求含 tab 列）。
     const sidebar = page.getByRole("complementary");
     const tablist = sidebar.getByRole("tablist", { name: "Sidebar sections" });
-    const newNote = listBar(page).getByRole("button", { name: "New note", exact: true });
+    const newNote = newNoteFab(page);
     const cancel = listBar(page).getByRole("button", { name: "Cancel", exact: true });
     await expect(tablist).toBeVisible({ timeout: 15_000 });
 
     // 開層：tab 列與清單換成提示句、Cancel 取代 New note
-    await searchBox(page).click();
+    await searchFab(page).click();
     await expect(cancel).toBeVisible();
     await expect(newNote).toHaveCount(0);
     await expect(tablist).toHaveCount(0);
@@ -201,22 +206,22 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
     await searchBox(page).fill(title);
     await expect(noteLink(sidebar, title)).toBeVisible({ timeout: 15_000 });
     await cancel.click();
-    await expect(searchBox(page)).toHaveValue("");
+    await expect(searchBox(page)).toHaveCount(0);
     await expect(cancel).toHaveCount(0);
     await expect(newNote).toBeVisible();
     await expect(tablist).toBeVisible();
 
     // Esc：同上
-    await searchBox(page).click();
+    await searchFab(page).click();
     await searchBox(page).fill(title);
     await expect(noteLink(sidebar, title)).toBeVisible({ timeout: 15_000 });
     await page.keyboard.press("Escape");
-    await expect(searchBox(page)).toHaveValue("");
+    await expect(searchBox(page)).toHaveCount(0);
     await expect(cancel).toHaveCount(0);
     await expect(tablist).toBeVisible();
 
     // 點結果：進筆記、層關；系統返回回到清單，這時層不開（Cancel 不在、New note 在）
-    await searchBox(page).click();
+    await searchFab(page).click();
     await searchBox(page).fill(title);
     await noteLink(sidebar, title).click();
     await waitForTitle(page, title);
@@ -293,12 +298,15 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
 
     // 搜尋框的字：點結果進筆記、「‹」回來，字還在
     const query = titles[4]!;
-    await searchBox(page).click();
+    await searchFab(page).click();
     await searchBox(page).fill(query);
     await noteLink(page.getByRole("complementary"), query).click();
     await waitForTitle(page, query);
     await backButton(page).click();
     await expect(page).toHaveURL(/\/$/);
+    // 搜尋層已收起（沒有搜尋框）；再點 Search，剛才的字還在。
+    await expect(searchBox(page)).toHaveCount(0);
+    await searchFab(page).click();
     await expect(searchBox(page)).toHaveValue(query);
   } finally {
     await context.close();
@@ -685,8 +693,8 @@ test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝�
     const tabs = sidebar.getByRole("tablist", { name: "Sidebar sections" }).getByRole("tab");
     await expectTap("list", "tab", tabs, 44, 44);
     await expectTap("list", "avatar", page.locator("[data-phone-top-bar]").getByRole("button"), 44, 44);
-    await expectTap("list", "search", listBar(page).getByRole("textbox"), 44, 44);
-    await expectTap("list", "new-note", listBar(page).getByRole("button", { name: "New note", exact: true }), 44, 44);
+    await expectTap("list", "search", searchFab(page), 44, 44);
+    await expectTap("list", "new-note", newNoteFab(page), 44, 44);
     await showSidebarTab(page, "My notes", sidebar);
     await noteLink(sidebar, title).click();
     await waitForTitle(page, title);
@@ -763,8 +771,8 @@ test("55-12 筆記上開著全螢幕搜尋層時按系統返回：回到清單�
     await expect(page).toHaveURL(/\/$/);
     await expect(sidebarOf(page)).toBeVisible();
     await expect(listBar(page).getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
-    await expect(listBar(page).getByRole("button", { name: "New note", exact: true })).toBeVisible();
-    await expect(searchBox(page)).not.toBeFocused();
+    await expect(newNoteFab(page)).toBeVisible();
+    await expect(searchBox(page)).toHaveCount(0);
   } finally {
     await context.close();
   }

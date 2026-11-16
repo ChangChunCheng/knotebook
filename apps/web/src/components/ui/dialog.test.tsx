@@ -121,10 +121,10 @@ describe("DialogContent size（#247）", () => {
       "shadow-none",
       "overflow-visible",
       "w-[96vw]",
-      "h-[92vh]",
+      "h-[92dvh]",
       "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))]",
       "md:w-[clamp(min(56rem,96vw),92vw,85rem)]",
-      "md:h-[clamp(min(42rem,92vh),88vh,56rem)]",
+      "md:h-[clamp(min(42rem,92dvh),88dvh,56rem)]",
       "grid-cols-[minmax(0,1fr)]",
       "grid-rows-[minmax(0,1fr)]",
     );
@@ -132,6 +132,14 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("bg-popover");
     expect(dialog).not.toHaveClass("shadow-lg");
     expect(dialog).not.toHaveClass("w-full");
+  });
+
+  it('size="panel"：手機是整頁（inset-0、h-dvh、滿寬、不位移、不圓角）；高度不再用 vh', async () => {
+    render(<Harness size="panel" />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveClass("max-sm:inset-0", "max-sm:h-dvh", "max-sm:w-full", "max-sm:max-w-none", "max-sm:translate-x-0", "max-sm:translate-y-0", "max-sm:rounded-none");
+    // iOS Safari 的 vh 是工具列收起時的高度：高度類一律 dvh（寬度的 vw 不受影響）。
+    expect(dialog.className).not.toMatch(/\d+vh\b/);
   });
 });
 
@@ -176,7 +184,7 @@ describe("DialogContent 手機底部 sheet", () => {
   it('size="panel"：沒有任何 sheet class', () => {
     render(<Harness size="panel" />);
     const dialog = screen.getByRole("dialog");
-    expect(dialog.className).not.toMatch(/max-sm:|kb-sheet/);
+    expect(dialog.className).not.toMatch(/kb-sheet|max-sm:bottom|max-sm:top-auto|max-sm:rounded-t/);
   });
 
   it("sheet 的背景遮罩手機有淡出（panel 沒有）", () => {

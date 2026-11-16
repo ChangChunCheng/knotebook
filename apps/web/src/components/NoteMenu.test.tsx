@@ -1283,6 +1283,20 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
+  it("手機（< 640）：頁首 ⋮ 沒有「Width」，其他項照舊；640 以上仍有", () => {
+    stubLayoutTier("phone");
+    renderWidthMenu("header");
+    openMenu();
+    expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Width" })).toBeNull();
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    cleanup();
+    stubLayoutTier("overlay");
+    renderWidthMenu("header");
+    openMenu();
+    expect(screen.getByRole("menuitem", { name: "Width" })).toBeInTheDocument();
+  });
+
   it("寬形：Width 是子選單觸發項，展開後三個 menuitemradio、目前那個 aria-checked", async () => {
     mockWidePointer(true);
     renderWidthMenu();

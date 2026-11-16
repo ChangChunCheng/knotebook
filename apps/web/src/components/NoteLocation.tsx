@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { NoteDto } from "@knotebook/shared";
 import { useFolders } from "@/api/folders";
@@ -78,7 +78,7 @@ interface Measure {
  * 手機筆記頁首的位置副標：「我的筆記 › 資料夾 › …」。整行是一顆按鈕，點了回到清單、切到這篇所在的 tab、
  * 展開資料夾鏈並把這一列捲到中央。放不下時留首尾、中間換成「…」。
  */
-export function NoteLocation({ note }: { note: NoteDto }) {
+export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在位置文字右邊的小元件（連線點）；路徑太長時只截路徑，它一直貼在文字後面。 */ trailing?: ReactNode }) {
   const { t } = useTranslation();
   const foldersQuery = useFolders();
   const groupsQuery = useGroups();
@@ -93,7 +93,11 @@ export function NoteLocation({ note }: { note: NoteDto }) {
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
-  const available = useContainerWidth(wrapRef);
+  const trailingRef = useRef<HTMLSpanElement>(null);
+  const trailingWidth = useContainerWidth(trailingRef);
+  const wrapWidth = useContainerWidth(wrapRef);
+  // 路徑可用的寬度＝整行寬扣掉右邊的小元件與它前面的間距（wrapper 的 gap-2＝8px）。
+  const available = wrapWidth === 0 ? 0 : Math.max(1, wrapWidth - (trailing ? trailingWidth + 8 : 0));
   const [measure, setMeasure] = useState<Measure | null>(null);
   // 量一份不可見的完整路徑；路徑（語言換了段名也會變）變了才重量。
   useLayoutEffect(() => {
@@ -121,13 +125,13 @@ export function NoteLocation({ note }: { note: NoteDto }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative min-w-0 flex-1">
+    <div ref={wrapRef} className="relative flex min-w-0 flex-1 items-center gap-2">
       <button
         type="button"
         aria-label={t("note.showInList", { path: fullPath })}
         onClick={handleClick}
         // 標題列 + 這一列合計要 ≥ 44px 的點擊高度，所以用 py 撐高、不用負 margin 壓到標題上。
-        className="flex w-full min-w-0 items-center overflow-hidden whitespace-nowrap rounded py-2 text-left text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex min-w-0 items-center overflow-hidden whitespace-nowrap rounded py-2 text-left text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         {fit.shown.map((segment, i) => {
           const last = i === fit.shown.length - 1;
@@ -154,6 +158,11 @@ export function NoteLocation({ note }: { note: NoteDto }) {
           </>
         )}
       </button>
+      {trailing && (
+        <span ref={trailingRef} className="shrink-0">
+          {trailing}
+        </span>
+      )}
       {/* 量測用的隱藏副本：關在自己的 overflow-hidden 盒子裡，長路徑不會撐大頁首的 scrollWidth。 */}
       <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         <span ref={measureRef} className="invisible absolute start-0 top-0 whitespace-pre text-xs">

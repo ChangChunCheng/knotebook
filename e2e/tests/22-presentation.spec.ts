@@ -590,7 +590,7 @@ test("E7：側欄別篇 ⋮「簡報模式」→ 直接打開那篇的簡報；E
   await createNote(page, `E2E present other ${Date.now()}`);
 
   const row = page.getByRole("button", { name: `Note actions for ${target}` }).first();
-  await row.hover();
+  await row.locator("xpath=ancestor::li[1]").hover();
   await row.click();
   await page.getByRole("menuitem", { name: "Present" }).click();
   await expect(page.getByRole("dialog", { name: `${target} — presentation` })).toBeVisible({ timeout: 15_000 });

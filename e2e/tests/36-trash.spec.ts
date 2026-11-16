@@ -536,9 +536,9 @@ test("手機（390）清單：垃圾桶 tab 底部只有搜尋框（沒有 New n
   await page.goto("/");
   const list = await openListOnCompact(page);
   const panel = await openTrash(page, list);
-  const bar = page.locator("[data-phone-list-bar]");
-  await expect(bar.getByRole("textbox", { name: "Search notes", exact: true })).toBeVisible();
-  await expect(bar.getByRole("button", { name: "New note", exact: true })).toHaveCount(0);
+  const fabs = page.locator("[data-phone-list-fabs]");
+  await expect(fabs.getByRole("button", { name: "Search notes", exact: true })).toBeVisible();
+  await expect(fabs.getByRole("button", { name: "New note", exact: true })).toHaveCount(0);
   await expect(list.getByText(/^Permanently deleted \d+ days? after deletion$|^The trash isn't emptied automatically$/)).toBeVisible();
 
   // 選取：勾這一篇 → 清單底部出現「Restore」「Delete permanently」；Done 離開

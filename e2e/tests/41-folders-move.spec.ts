@@ -83,10 +83,10 @@ function noteLink(scope: Locator, title: string): Locator {
   return scope.getByRole("link", { name: new RegExp("^" + reEscape(title)) });
 }
 
-/** 側欄筆記列的 ⋮（hover 浮出，先 hover 再點）；同名多篇時取第一篇。等選單出現。 */
+/** 側欄筆記列的 ⋮（滑鼠下滑過整列才長出來：先 hover 整列再點）；同名多篇時取第一篇。等選單出現。 */
 async function openNoteActions(page: Page, scope: Locator, title: string): Promise<void> {
   const button = scope.getByRole("button", { name: `Note actions for ${title}`, exact: true }).first();
-  await button.hover();
+  await button.locator("xpath=ancestor::li[1]").hover();
   await button.click();
   await expect(page.getByRole("menu")).toBeVisible();
 }

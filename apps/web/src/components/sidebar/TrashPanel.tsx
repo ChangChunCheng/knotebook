@@ -56,7 +56,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
       data-node-kind="note"
       data-node-id={item.id}
       title={trashItemTitle(item, { t, locale })}
-      className={cn("group/noterow flex items-center gap-0.5 rounded-md py-1.5 pl-2 pr-1 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft", ROW_ICON_ROW)}
+      className={cn("group/noterow flex items-center gap-0.5 rounded-md py-1.5 pl-2 pr-0.75 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft", ROW_ICON_ROW)}
     >
       {/* 兩行一律 <div>（同 NoteList 最近 tab 的兩行列）。 */}
       <div className="min-w-0 flex-1">
@@ -480,7 +480,7 @@ export function TrashPanel() {
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
-      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 px-2 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW)}>
+      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW)}>
         {renderHeader()}
       </div>
       <div data-sidebar-list="" tabIndex={-1} ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 focus-visible:outline-none">

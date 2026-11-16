@@ -458,7 +458,7 @@ test("A2c-8（窄形 390 手機清單）：清單捲到底時進入選取模式�
   await startSidebarSelection(page, drawer);
   await expect(list.getByRole("checkbox").first()).toBeAttached(); // 勾選樹已換上（chunk 到了）
   await expect(actionBar(page, drawer)).toBeVisible(); // 底部動作列已換上（同一個 chunk；之前是同高的佔位）
-  // 手機清單底部的搜尋列與動作列同高（同一組外框 class），清單可視高度不變、捲動位置一格不差。
+  // 進出選取模式時清單的可視高度與捲動範圍都不變（清單底部內距一直在、動作列與佔位同高），捲動位置一格不差。
   await expect(async () => {
     expect(await list.evaluate((el) => el.scrollTop)).toBe(before);
   }).toPass({ timeout: 5_000 });

@@ -123,9 +123,9 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         )}
       </DropdownMenuTrigger>
       {/* 寬度跟著觸發它的帳號列走（Radix 在 Content 上曝露 trigger 量到的寬度），
-          選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。頭像形的觸發鈕只有 44 寬，改用固定下限、靠左對齊。 */}
+          選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。頭像形的觸發鈕只有 44 寬，改用固定下限。 */}
       <DropdownMenuContent
-        align={avatar ? "start" : "end"}
+        align="end"
         className={avatar ? "min-w-56" : "min-w-[var(--radix-dropdown-menu-trigger-width)]"}
       >
         <DropdownMenuLabel>{user.displayName}</DropdownMenuLabel>

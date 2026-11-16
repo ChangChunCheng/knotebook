@@ -117,6 +117,15 @@ function aside(container: HTMLElement): HTMLElement {
 }
 
 const BAR = "[data-phone-list-bar]";
+const FABS = "[data-phone-list-fabs]";
+
+/** 點底部左側的圓形「Search notes」鈕：開搜尋層、搜尋框掛上並取得焦點。 */
+async function openSearchLayer(): Promise<HTMLInputElement> {
+  fireEvent.click(await screen.findByRole("button", { name: "Search notes" }));
+  const input = (await screen.findByRole("textbox", { name: "Search notes" })) as HTMLInputElement;
+  expect(input).toHaveFocus();
+  return input;
+}
 
 describe("AppShell — 手機清單畫面", () => {
   beforeEach(async () => {
@@ -174,6 +183,10 @@ describe("AppShell — 手機清單畫面", () => {
     const top = container.querySelector("[data-phone-top-bar]");
     expect(top?.className).toContain("env(safe-area-inset-top)");
     expect(top?.firstElementChild).toHaveClass("h-12");
+    // 標題在左、頭像在右：標題左緣離邊 16px（同列文字起點）、頭像視覺右緣離邊 16px（點擊範圍 44、視覺 32 → 右內距 10px）。
+    expect(top?.firstElementChild).toHaveClass("justify-between", "pl-4", "pr-2.5");
+    expect(top?.firstElementChild?.firstElementChild).toHaveTextContent("Knotebook");
+    expect(top?.firstElementChild?.lastElementChild).toBe(screen.getByRole("button", { name: "Ann" }));
     // 滿版清單蓋住外框：左右（橫拿的瀏海）由清單自己退開；上下由頂列與底部列給，不在這一層重複。
     const list = aside(container);
     expect(list).toHaveClass("max-sm:pl-[env(safe-area-inset-left)]", "max-sm:pr-[env(safe-area-inset-right)]");
@@ -193,20 +206,23 @@ describe("AppShell — 手機清單畫面", () => {
     expect(tablist.className).not.toContain("overflow-x");
   });
 
-  it("PH7 底部列：搜尋框 h-11＋text-base、右側 New note；頂端沒有第二個搜尋框、沒有 Ctrl K 徽章", async () => {
+  it("PH7 沒在搜尋：清單底部沒有搜尋列、沒有搜尋框；左下圓形 Search、右下圓形 New note（各 56px、距邊 16px＋safe area、fixed）", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
-    const inputs = screen.getAllByRole("textbox", { name: "Search notes" });
-    expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toHaveClass("h-11", "text-base");
-    expect(inputs[0].className).not.toContain("text-[13px]");
+    expect(container.querySelector(BAR)).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search notes" })).toBeNull();
     expect(screen.queryByText("Ctrl K")).toBeNull();
-    const bar = container.querySelector(BAR) as HTMLElement;
-    expect(bar).toContainElement(inputs[0]);
-    expect(within(bar).getByRole("button", { name: "New note" })).toBeInTheDocument();
-    // 底部列在 tablist 之後（清單畫面最底）。
-    expect(screen.getByRole("tablist").compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const fabs = container.querySelector(FABS) as HTMLElement;
+    const search = within(fabs).getByRole("button", { name: "Search notes" });
+    const create = within(fabs).getByRole("button", { name: "New note" });
+    for (const fab of [search, create]) {
+      expect(fab).toHaveClass("fixed", "h-14", "w-14", "rounded-full", "shadow-lg", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
+    }
+    expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card");
+    expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]");
+    // 圖示鈕沒有可見文字。
+    expect(create.textContent).toBe("");
   });
 
   it("PH8 按 New note：建個人筆記並導向", async () => {
@@ -217,32 +233,32 @@ describe("AppShell — 手機清單畫面", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/untitled-99999999"));
   });
 
-  it("PH9 聚焦搜尋框：tab 列與清單換成搜尋層（空字顯示提示）、Cancel 取代 New note", async () => {
+  it("PH9 點 Search：tab 列與清單換成搜尋層（空字顯示提示）、搜尋列（搜尋框＋Cancel）出現、兩顆浮動鈕消失", async () => {
     stubFetch([NOTE]);
-    renderAt("/");
-    const input = await screen.findByRole("textbox", { name: "Search notes" });
-    expect(screen.getByRole("tablist")).toBeInTheDocument();
-    fireEvent.focus(input);
+    const { container } = renderAt("/");
+    await screen.findByRole("tablist");
+    const input = await openSearchLayer();
     expect(screen.queryByRole("tablist")).toBeNull();
+    expect(container.querySelector(FABS)).toBeNull();
     expect(screen.queryByRole("tabpanel")).toBeNull();
     expect(screen.getByTestId("phone-search-hint")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+    expect(container.querySelector(BAR)).toContainElement(input);
+    expect(input).toHaveClass("h-11", "text-base");
   });
 
   it("PH10 打字出結果；按 Cancel 清空、離開搜尋層回到 tab 列與 New note", async () => {
     stubFetch([NOTE]);
     renderAt("/");
-    const input = await screen.findByRole("textbox", { name: "Search notes" });
-    input.focus();
-    fireEvent.focus(input);
+    const input = await openSearchLayer();
     fireEvent.change(input, { target: { value: "alpha" } });
     const results = await screen.findByTestId("sidebar-search");
     expect(await within(results).findByRole("link", { name: /^Alpha Note/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(input).toHaveValue("");
     await screen.findByRole("tablist");
+    expect(screen.queryByRole("textbox", { name: "Search notes" })).toBeNull();
     expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
@@ -250,8 +266,7 @@ describe("AppShell — 手機清單畫面", () => {
   it("PH11 失焦不關搜尋層（有字、沒字都一樣）；Esc 才關並清空", async () => {
     stubFetch([NOTE]);
     renderAt("/");
-    const input = await screen.findByRole("textbox", { name: "Search notes" });
-    fireEvent.focus(input);
+    const input = await openSearchLayer();
     fireEvent.change(input, { target: { value: "al" } });
     fireEvent.blur(input);
     expect(screen.queryByRole("tablist")).toBeNull();
@@ -264,7 +279,6 @@ describe("AppShell — 手機清單畫面", () => {
 
     fireEvent.change(input, { target: { value: "al" } });
     fireEvent.keyDown(input, { key: "Escape" });
-    expect(input).toHaveValue("");
     expect(await screen.findByRole("tablist")).toBeInTheDocument();
     expect(screen.queryByTestId("phone-search-hint")).toBeNull();
   });
@@ -273,8 +287,7 @@ describe("AppShell — 手機清單畫面", () => {
     stubFetch([NOTE]);
     const tier = stubLayoutTier("phone");
     renderAt("/");
-    const input = await screen.findByRole("textbox", { name: "Search notes" });
-    fireEvent.focus(input);
+    await openSearchLayer();
     expect(screen.queryByRole("tablist")).toBeNull();
 
     act(() => tier.setLayoutTier("overlay"));
@@ -292,18 +305,19 @@ describe("AppShell — 手機清單畫面", () => {
     await within(aside(container)).findByText("0 selected");
     await waitFor(() => expect(container.querySelector("[data-select-action-bar]")).not.toBeNull());
     expect(container.querySelector(BAR)).toBeNull();
+    // 選取模式沒有浮動鈕（動作列在底部）。
+    expect(container.querySelector(FABS)).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Search notes" })).toBeNull();
   });
 
-  it("PH14 垃圾桶 tab：沒有 New note、搜尋框還在、保留天數說明在底部列上方", async () => {
+  it("PH14 垃圾桶 tab：沒有 New note、Search 鈕還在", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     fireEvent.click(await screen.findByRole("tab", { name: "Trash" }));
-    const footer = await screen.findByTestId("trash-footer");
-    const bar = container.querySelector(BAR) as HTMLElement;
-    expect(within(bar).queryByRole("button", { name: "New note" })).toBeNull();
-    expect(within(bar).getByRole("textbox", { name: "Search notes" })).toBeInTheDocument();
-    expect(footer.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await screen.findByTestId("trash-footer");
+    const fabs = container.querySelector(FABS) as HTMLElement;
+    expect(within(fabs).queryByRole("button", { name: "New note" })).toBeNull();
+    expect(within(fabs).getByRole("button", { name: "Search notes" })).toBeInTheDocument();
   });
 
   it("PH15 清單捲動容器帶 overscroll-y-contain（Android 獨立視窗下拉不誤重整）", async () => {
@@ -342,14 +356,21 @@ describe("AppShell — 手機清單畫面", () => {
     expect(container.querySelector("[data-select-action-bar]")).toBeNull();
   });
 
-  it("PH19 筆記路由上搜尋層開著：側欄滿版蓋住筆記、不 inert；有字時失焦（收鍵盤、點結果前的 blur）仍留著、結果看得到", async () => {
+  it("PH19 筆記路由上用瀏覽列的搜尋鈕開搜尋層：側欄滿版蓋住筆記、不 inert、網址不變；有字時失焦（收鍵盤、點結果前的 blur）仍留著、結果看得到", async () => {
     stubFetch([NOTE]);
-    const { container } = renderAt("/n/tester/alpha-note");
+    const { container } = renderAt(
+      "/n/tester/alpha-note",
+      <>
+        <LocationProbe />
+        <NoteBrowseBar note={NOTE} />
+      </>,
+    );
     const node = aside(container);
-    const input = within(node).getByRole("textbox", { name: "Search notes", hidden: true });
     expect(node).toHaveAttribute("inert");
-    fireEvent.focus(input);
+    fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" }));
     expect(node).not.toHaveAttribute("inert");
+    expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
+    const input = within(node).getByRole("textbox", { name: "Search notes" });
     expect(node).toHaveClass("max-sm:fixed", "max-sm:inset-0");
     fireEvent.change(input, { target: { value: "alpha" } });
     fireEvent.blur(input);
@@ -361,8 +382,7 @@ describe("AppShell — 手機清單畫面", () => {
   it("PH21 清單上聚焦、打字、點結果（沒有 blur）：進入筆記路由後搜尋層關、側欄藏起來並 inert", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
-    const input = await screen.findByRole("textbox", { name: "Search notes" });
-    fireEvent.focus(input);
+    const input = await openSearchLayer();
     fireEvent.change(input, { target: { value: "alpha" } });
     const results = await screen.findByTestId("sidebar-search");
     fireEvent.click(await within(results).findByRole("link", { name: /^Alpha Note/ }));
@@ -373,6 +393,21 @@ describe("AppShell — 手機清單畫面", () => {
     expect(node).not.toHaveClass("max-sm:fixed");
     expect(screen.queryByTestId("sidebar-search")).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel", hidden: true })).toBeNull();
+  });
+
+  it("PH22 在清單上 Cancel／Esc 關搜尋層：焦點回到左下的 Search 鈕（不掉到 body）", async () => {
+    stubFetch([NOTE]);
+    renderAt("/");
+    const input = await openSearchLayer();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const fab = await screen.findByRole("button", { name: "Search notes" });
+    await waitFor(() => expect(fab).toHaveFocus());
+
+    const again = await openSearchLayer();
+    expect(again).not.toBe(input);
+    fireEvent.keyDown(again, { key: "Escape" });
+    const fab2 = await screen.findByRole("button", { name: "Search notes" });
+    await waitFor(() => expect(fab2).toHaveFocus());
   });
 
   it("PH20 浮動段開著的抽屜：窄到手機時關掉（不留舊抽屜與遮罩蓋住滿版清單）", async () => {

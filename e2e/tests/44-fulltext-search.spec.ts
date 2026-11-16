@@ -209,7 +209,9 @@ test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面
   // 手機：筆記畫面先回清單，在底部搜尋框打字（全螢幕搜尋層），結果的片段就在清單裡。
   async function searchInDrawer(): Promise<Locator> {
     const list = await openListOnCompact(page);
-    await list.getByRole("textbox", { name: "Search notes" }).fill(kw);
+    const input = list.getByRole("textbox", { name: "Search notes" });
+    if (!(await input.isVisible())) await list.getByRole("button", { name: "Search notes", exact: true }).click();
+    await input.fill(kw);
     const s = snippetOf(list, href);
     await expect(s).toBeVisible({ timeout: 15_000 });
     return s;

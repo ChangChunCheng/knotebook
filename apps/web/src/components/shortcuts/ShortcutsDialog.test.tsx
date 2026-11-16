@@ -113,6 +113,15 @@ describe("ShortcutsDialog", () => {
     await waitFor(() => expect(region).toHaveFocus());
   });
 
+  it("手機（整頁）：✕ 離頂與右緣＝托盤的 safe area 內距加 8px，不會落進瀏海", async () => {
+    render(ui(true, () => {}));
+    const close = await screen.findByRole("button", { name: "Close" });
+    expect(close).toHaveClass(
+      "max-sm:top-[calc(max(0.5rem,env(safe-area-inset-top))+0.5rem)]",
+      "max-sm:right-[calc(max(0.5rem,env(safe-area-inset-right))+0.5rem)]",
+    );
+  });
+
   it("D7 Tab 在內容區與 ✕ 之間循環（FocusScope loop；✕ 在 DOM 最前面）", async () => {
     render(ui(true, () => {}));
     const region = await screen.findByRole("region", { name: "stub region" });

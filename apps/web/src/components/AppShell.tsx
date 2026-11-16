@@ -34,6 +34,7 @@ import { SearchResults } from "@/components/sidebar/SearchResults";
 import { clearSearchMark } from "@/hooks/search-mark";
 import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { PhoneListBar } from "@/components/sidebar/PhoneListBar";
+import { PhoneListFabs } from "@/components/sidebar/PhoneListFabs";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
@@ -140,11 +141,9 @@ function SidebarContent({
   // 空白也算搜尋中（同改版前的判準）。
   const searching = query.length > 0;
   const phoneLayout = layout === "phone";
-  // 手機的全螢幕搜尋層：底部搜尋框聚焦或有字時，tab 列與清單換成搜尋結果。
+  // 手機的全螢幕搜尋層：點左下的搜尋鈕（或 Ctrl+K）開啟，tab 列與清單換成搜尋結果，底部換成搜尋列。
   const searchLayer = phoneLayout && searchOpen;
   const showSearchView = phoneLayout ? searchLayer : searching;
-  // 選取模式（一般 tab）的動作列取代整條底部列。
-  const selectionBar = phoneLayout && tab !== "trash" && selection.active && !searchLayer;
   // 開始搜尋也離開選取模式（兩份實例都跑，冪等）。
   useEffect(() => {
     if (searching) updateSelection({ type: "end" });
@@ -153,9 +152,9 @@ function SidebarContent({
     <>
       {phoneLayout ? (
         <div data-phone-top-bar="" className="shrink-0 pt-[env(safe-area-inset-top)]">
-          <div className="grid h-12 grid-cols-[2.75rem_1fr_2.75rem] items-center px-1">
-            <UserMenu variant="avatar" />
-            <div className="flex items-center justify-center gap-2">
+          {/* 標題左緣與清單列的文字同在離螢幕邊 16px；頭像（視覺 32、點擊範圍 44）的視覺右緣與列尾圖示同在離邊 16px。 */}
+          <div className="flex h-12 items-center justify-between pl-4 pr-2.5">
+            <div className="flex items-center gap-2">
               <span
                 aria-hidden="true"
                 className="text-2xl font-bold italic text-brand"
@@ -165,6 +164,7 @@ function SidebarContent({
               </span>
               <span className="text-sm font-semibold">Knotebook</span>
             </div>
+            <UserMenu variant="avatar" />
           </div>
         </div>
       ) : (
@@ -260,18 +260,27 @@ function SidebarContent({
       {phoneLayout ? (
         <>
           {!searchLayer && <SidebarFooter phone searching={searching} onCreateNote={() => onCreateNote()} newNotePending={newNotePending} />}
-          {!selectionBar && (
+          {searchLayer ? (
             <PhoneListBar
               query={query}
               onQueryChange={onQueryChange}
               searchRef={searchRef}
-              active={searchLayer}
               onOpen={() => onSearchOpenChange?.(true)}
               onClose={() => onSearchOpenChange?.(false)}
-              showNewNote={tab !== "trash"}
-              onCreateNote={() => onCreateNote()}
-              newNotePending={newNotePending}
             />
+          ) : (
+            !selection.active && (
+              <PhoneListFabs
+                onSearch={() => {
+                  // 同一個點擊裡先掛上搜尋框再聚焦（iOS 只在使用者手勢內才肯彈鍵盤）。
+                  flushSync(() => onSearchOpenChange?.(true));
+                  searchRef.current?.focus();
+                }}
+                showNewNote={tab !== "trash"}
+                onCreateNote={() => onCreateNote()}
+                newNotePending={newNotePending}
+              />
+            )
           )}
         </>
       ) : (
@@ -528,7 +537,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     searchInputRef.current?.blur();
     setPhoneSearchOpen(false);
   }, [location.key, location.pathname, location.state]);
-  // 從筆記頁開的搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給瀏覽列的搜尋鈕。
+  // 搜尋層：Cancel／Esc 關掉後（沒換網址）把焦點還給開它的搜尋鈕——清單上是左下的浮動 Search 鈕，筆記頁上是瀏覽列的搜尋鈕。
   const searchOpenedKeyRef = useRef<string | null>(null);
   const wasSearchOpenRef = useRef(false);
   useEffect(() => {
@@ -538,14 +547,26 @@ export function AppShell({ children, inert }: AppShellProps) {
       if (!wasOpen) searchOpenedKeyRef.current = location.key;
       return;
     }
-    if (!wasOpen || onList || searchOpenedKeyRef.current !== location.key) return;
+    if (!wasOpen || searchOpenedKeyRef.current !== location.key) return;
+    if (onList) {
+      asideRef.current?.querySelector<HTMLElement>('[data-phone-fab="search"]')?.focus({ preventScroll: true });
+      return;
+    }
     document.querySelector<HTMLElement>("main [data-note-browse-search]")?.focus();
   }, [searchOpen, onList, location.key]);
+  // 搜尋框只在搜尋層開著時才掛上：先開搜尋層，等它掛上再聚焦。
+  const focusSearchWhenOpenRef = useRef(false);
   useEffect(() => {
     if (!listVisible || !pendingSearchFocusRef.current) return;
     pendingSearchFocusRef.current = false;
-    searchInputRef.current?.focus();
+    focusSearchWhenOpenRef.current = true;
+    setPhoneSearchOpen(true);
   }, [listVisible]);
+  useEffect(() => {
+    if (!searchOpen || !focusSearchWhenOpenRef.current) return;
+    focusSearchWhenOpenRef.current = false;
+    searchInputRef.current?.focus();
+  }, [searchOpen]);
   useEffect(() => {
     function handleSettingsKey(event: KeyboardEvent): void {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key !== ",") return;
@@ -568,12 +589,13 @@ export function AppShell({ children, inert }: AppShellProps) {
       // 非抽屜的 dialog 開著（設定 modal、分享 dialog…）→ 放棄，不搶 focus trap。
       if (document.querySelector('[role="dialog"]:not([data-sidebar-drawer])')) return;
       if (isPhone()) {
-        // 手機：到清單並聚焦底部搜尋框（接實體鍵盤時用得到）；不開抽屜。
+        // 手機：到清單並開搜尋層、聚焦底部搜尋框（接實體鍵盤時用得到）；不開抽屜。
         event.preventDefault();
-        // 選取模式時底部是動作列、沒有搜尋框：先結束選取，搜尋框才掛得上。清單或搜尋層已經滿版（含蓋在筆記上）就直接聚焦。
+        // 搜尋框只在搜尋層開著時才掛上：先結束選取（底部是動作列）並開搜尋層，再聚焦。清單或搜尋層已經滿版（含蓋在筆記上）就直接做。
         if (asideShownRef.current) {
           flushSync(() => {
             tabActionsRef.current?.endSelectionIfActive();
+            setPhoneSearchOpen(true);
           });
           searchInputRef.current?.focus();
         } else {

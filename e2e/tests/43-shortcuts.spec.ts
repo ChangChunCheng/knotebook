@@ -862,8 +862,8 @@ test.describe("shortcuts dialog", () => {
     await expect(search).toBeFocused();
     await expect(page.getByRole("dialog", { name: "Navigation" })).toHaveCount(0);
     await page.keyboard.press("Escape");
-    await expect(search).not.toBeFocused();
-    await expect(page.locator("[data-phone-list-bar]").getByRole("button", { name: "New note", exact: true })).toBeVisible();
+    await expect(search).toHaveCount(0);
+    await expect(page.locator("[data-phone-list-fabs]").getByRole("button", { name: "New note", exact: true })).toBeVisible();
 
     const trigger = page.locator("[data-phone-top-bar]").getByRole("button", { name: "admin", exact: true });
     await trigger.click();

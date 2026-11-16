@@ -327,10 +327,17 @@ test("C4 1440 寬度鈕：按三下循環；⋮ → Width 子選單切回 Standa
   await expect(toggle).toHaveAttribute("aria-label", CYCLE.standard);
 });
 
-test("C5 390 觸控：⋮ → Width 就地展開，選了選單不關，Esc 先收合再關", async () => {
+test("C5 觸控：390 的 ⋮ 沒有 Width；700 的 ⋮ → Width 就地展開，選了選單不關，Esc 先收合再關", async () => {
   test.setTimeout(90_000);
   const header = headerOf(touch);
   await expect(widthButtonIn(header)).toHaveCount(0);
+  await buttonIn(header, "More").click();
+  await expect(touch.getByRole("menu")).toHaveCount(1);
+  await expect(touch.getByRole("menuitem", { name: "Width", exact: true })).toHaveCount(0);
+  await touch.keyboard.press("Escape");
+  await expect(touch.getByRole("menu")).toHaveCount(0);
+  // 640 以上才有 Width（浮動段的觸控裝置，例如平板直拿）
+  await touch.setViewportSize({ width: 700, height: 844 });
   await buttonIn(header, "More").click();
   const menu = touch.getByRole("menu");
   await expect(menu).toHaveCount(1);
@@ -358,4 +365,5 @@ test("C5 390 觸控：⋮ → Width 就地展開，選了選單不關，Esc 先�
   await touch.keyboard.press("Escape");
   await touch.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
+  await touch.setViewportSize({ width: 390, height: 844 });
 });

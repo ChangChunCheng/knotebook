@@ -182,11 +182,15 @@ for (const phone of PHONES) {
         expect(more.tap[0], `${title} ⋮ 點擊寬`).toBeGreaterThanOrEqual(44 - TOL);
         expect(more.tap[1], `${title} ⋮ 點擊高`).toBeGreaterThanOrEqual(44 - TOL);
         if (title === TITLES.fav) {
-          const star = await tapAreaOf(row.getByRole("button", { name: "Favorite", exact: true }));
-          lines.push(`star tap ${star.tap.map((v) => v.toFixed(1)).join("x")} gap ${Math.abs(more.center[0] - star.center[0]).toFixed(1)}`);
-          expect(star.tap[0], "星號點擊寬").toBeGreaterThanOrEqual(44 - TOL);
-          expect(star.tap[1], "星號點擊高").toBeGreaterThanOrEqual(44 - TOL);
-          expect(Math.abs(more.center[0] - star.center[0]), "星號與 ⋮ 圓心距").toBeGreaterThanOrEqual(44 - TOL);
+          // 觸控：最愛是一顆不能點的標記（不是按鈕，沒有點擊範圍），在 ⋮ 左邊一格；⋮ 永遠是最右一格
+          await expect(row.getByRole("button", { name: "Favorite", exact: true })).toHaveCount(0);
+          const marker = row.getByRole("img", { name: "Favorite", exact: true });
+          await expect(marker).toBeVisible();
+          expect(await marker.evaluate((el) => getComputedStyle(el).pointerEvents), "標記不吃點擊").toBe("none");
+          const markerBox = (await marker.boundingBox())!;
+          lines.push(`marker ${markerBox.width.toFixed(1)}x${markerBox.height.toFixed(1)} gap ${(more.center[0] - (markerBox.x + markerBox.width / 2)).toFixed(1)}`);
+          expect(more.center[0] - (markerBox.x + markerBox.width / 2), "標記在 ⋮ 左邊約一格").toBeGreaterThan(14);
+          expect(more.center[0] - (markerBox.x + markerBox.width / 2), "標記與 ⋮ 相鄰").toBeLessThan(30);
         }
       }
 
@@ -344,9 +348,13 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     await page.goto("/");
     const sidebar = page.getByRole("complementary");
     await expect(sidebar).toBeVisible({ timeout: 15_000 });
+    // 手機清單沒在搜尋時沒有搜尋框：先點 Search 開搜尋層。
+    await sidebar.getByRole("button", { name: "Search notes", exact: true }).click();
+    await expect(sidebar.getByRole("textbox", { name: "Search notes", exact: true })).toBeVisible();
     const list = await fieldFontSizes(page);
     expect(list.count, "清單輸入框數（搜尋框）").toBeGreaterThanOrEqual(1);
     expect(list.bad, "清單").toEqual([]);
+    await sidebar.getByRole("button", { name: "Cancel", exact: true }).click();
 
     // 筆記頁：標題框與程式碼區塊語言下拉
     await openNote(page, sidebar, TITLES.code);

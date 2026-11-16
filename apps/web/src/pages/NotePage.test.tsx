@@ -696,23 +696,29 @@ describe("NotePage", () => {
       const header = document.querySelector("header") as HTMLElement;
       const top = within(header).getByTestId("note-header-title-row");
       const sub = within(header).getByTestId("note-header-subline");
-      // 觸控時標題列下緣留 6px，「‹」與 ⋮ 的 44px 點擊範圍才不會被下一行的位置鈕蓋掉。
-      expect(top).toHaveClass("pointer-coarse:pb-1.5");
+      // 標題與它下方一行（連線點、位置、在線者）是同一個區塊；「‹」與右側動作鈕是它的兄弟，列用 items-center 對齊整個區塊的垂直中心。
+      const block = within(top).getByTestId("note-header-block");
+      expect(top).toHaveClass("items-center");
+      expect(block.parentElement).toBe(top);
+      expect(block).toHaveClass("flex", "flex-col", "min-w-0", "flex-1");
+      expect(block.children[0]).toBe(within(top).getByLabelText("Note title"));
+      expect(block.children[1]).toBe(sub);
+      expect(top.children[0]).toBe(within(top).getByRole("button", { name: "Back to notes" }));
       // 瀏海的退讓由 NoteEditor 的頁首槽位給（橫幅也在它之下），頁首自己維持 12px 上內距。
       expect(header).toHaveClass("pt-3");
       expect(header.className).not.toContain("safe-area-inset");
       expect(within(top).getByRole("button", { name: "Back to notes" })).toBeInTheDocument();
-      expect(within(top).getByLabelText("Note title")).toBeInTheDocument();
       expect(within(top).getByRole("button", { name: "Favorite" })).toBeInTheDocument();
       expect(within(top).getByRole("button", { name: "Share" })).toBeInTheDocument();
       expect(within(top).getByRole("button", { name: "More" })).toBeInTheDocument();
       expect(within(header).queryByRole("button", { name: /^Width/ })).toBeNull();
 
+      expect(top).toContainElement(sub);
       expect(within(sub).getByRole("status")).toBeInTheDocument();
       const location = within(sub).getByRole("button", { name: "Show in list: My notes" });
       expect(await within(sub).findByRole("group", { name: "Also viewing this note" })).toBeInTheDocument();
       expect(within(sub).getByTestId("last-edited")).toBeInTheDocument();
-      const order = [within(sub).getByRole("status"), location, within(sub).getByRole("group", { name: "Also viewing this note" }), within(sub).getByTestId("last-edited")];
+      const order = [location, within(sub).getByRole("status"), within(sub).getByRole("group", { name: "Also viewing this note" }), within(sub).getByTestId("last-edited")];
       for (let i = 0; i < order.length - 1; i++) {
         expect(order[i]!.compareDocumentPosition(order[i + 1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       }
