@@ -47,6 +47,7 @@ import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-c
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { useIsPhone } from "@/lib/layout-tiers";
+import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
 import { safeMediaUrl } from "@/lib/media-url";
@@ -482,6 +483,9 @@ export function NoteEditor({
   // #297：這篇的站內內文寬度（訂閱模組層 Map；換寬度只換欄 class，不重建 editor）。
   const [width] = useNoteWidth(noteId);
   const hasPreview = previewSlot !== undefined && previewSlot !== null;
+  // 手機：頁尾（提及列）不佔卡底，改放進捲動容器、文章欄之後，跟著內文捲；編輯工具列的空白仍排在最後。
+  const phone = useIsPhone();
+  const footerInScroll = phone && footerSlot !== undefined && footerSlot !== null;
 
   // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
@@ -492,6 +496,8 @@ export function NoteEditor({
     },
     [onScrollRoot],
   );
+  // 手機：寬表格右緣還能往右捲時的提示（不支援捲動驅動動畫的瀏覽器才需要；委派在捲動容器上）。
+  useTableScrollHint(scrollRootRef, phone);
   const hasPreviewRef = useRef(hasPreview);
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);
@@ -610,8 +616,11 @@ export function NoteEditor({
   //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
   //         `overflow-x-clip`＝#162，見下方 JSX 註解）
-  //         置中 wrapper（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
-  //           min-h-full flex-col py-6，`relative`＝#160，見下方 JSX 註解）
+  //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
+  //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
+  //         置中 wrapper＝文章欄（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
+  //           flex-col py-6；非手機再加 `min-h-full`，手機（頁尾在捲動容器內）改 `grow shrink-0` 撐滿流程包裝；
+  //           `relative`＝#160，見下方 JSX 註解）
   //           ← 欄寬／內距一律取自 `ui/article-column.ts`：#297 起三段寬度（標準／寬／
   //             全寬），單一真相在該檔；headerSlot／footerSlot 是滿卡寬（置左置右），
   //             不套欄。欄寬下限承重的理由與 `<md` 內距 70→20 的斷點機制全寫在該檔；
@@ -620,7 +629,7 @@ export function NoteEditor({
   //             wrapper 的 min-h-full 無法把百分比高度傳給孫層，唯一有效解是讓
   //             BlockNoteView 自己成為 flex-col wrapper 的成長項；除 className 外零改動）
   //       {previewSlot}                               ← 版本預覽時才渲染；此時上面的捲動容器加 hidden（活編輯器不 unmount）
-  //       {footerSlot}                                ← NotePage 組裝（backlinks chips）
+  //       {footerSlot}                                ← NotePage 組裝（backlinks chips）；手機改放進上面的捲動容器、置中 wrapper 之後（後面再接編輯工具列的空白）
   //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）；1280 起是第三欄，640-1279 是 absolute 浮在卡上，
   //                                                      兩段是同一個節點（不搬進卡片，跨 1280 才不重掛、不丟清單捲動位置）
   //     CornerStack                                   ← 右下歷史泡泡（fixed，不佔 row 的 flex 空間）
@@ -630,8 +639,16 @@ export function NoteEditor({
   return (
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
       <div ref={rowRef} onKeyDown={onRowKeyDown} className="relative flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
-        <div className={cn(cardSurface, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden")}>
-          <div ref={headerSlotRef} data-note-header-slot="">
+        <div className={cn(
+          cardSurface,
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
+          // 浮在鍵盤上的編輯工具列自己帶底部 safe area；捲動容器的下緣要在那段之上，
+          // 鍵盤收起時工具列頂端才恰在容器下緣上方 60px（游標捲動邊界與 AI 框翻轉都以此為準；
+          // 鍵盤或色盤開著時留白多出幾 px，無妨）。
+          mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
+        )}>
+          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。 */}
+          <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
           <div ref={setScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>
@@ -655,10 +672,14 @@ export function NoteEditor({
                 `scrollIntoView` 在我們自己的碼零呼叫，已查到的程式化捲動
                 （prosemirror-view caret-follow）先被 `.tableWrapper` 吃掉。細節見
                 `14-table-hover.spec.ts`。 */}
+            {/* 手機且頁尾放在捲動容器內時：欄、頁尾、工具列空白包在一個至少與捲動容器等高的直欄裡，
+                欄自己撐滿剩下的高度（短筆記不會因為頁尾與空白而多出可捲的範圍，點欄下方空白仍聚焦到最後）。
+                其他情形這層是 `display: contents`，不產生盒子，欄照舊自己 `min-h-full`。 */}
+            <div data-article-flow="" className={footerInScroll ? "flex min-h-full flex-col" : "contents"}>
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
+              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll ? "grow shrink-0" : "min-h-full")}
             >
               <NoteEditorView
                 editor={editor}
@@ -675,7 +696,11 @@ export function NoteEditor({
               <HeadingAnchorButtons container={columnEl} />
               {/* 欄間分隔線（拖曳／鍵盤調欄寬）只在可編輯時掛；唯讀時沒有東西可調。 */}
               {editable && <ColumnDividers container={columnEl} editor={editor} />}
-              {mobileToolbar && <MobileToolbarSpacer />}
+              {mobileToolbar && !footerInScroll && <MobileToolbarSpacer />}
+            </div>
+            {/* 手機的頁尾在文章欄之後；工具列的空白再排在它後面，頁尾才捲得到工具列之上，游標那一行（在欄內）的避讓不受影響。 */}
+            {footerInScroll && footerSlot}
+            {mobileToolbar && footerInScroll && <MobileToolbarSpacer />}
             </div>
           </div>
           {hasPreview && (
@@ -691,7 +716,7 @@ export function NoteEditor({
               {previewSlot}
             </div>
           )}
-          {footerSlot}
+          {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
           // `display: contents`：不產生盒子，面板的定位基準仍是列容器；收起與 Esc 的「在面板內」判斷認這個節點（錯誤外框也在裡面）。

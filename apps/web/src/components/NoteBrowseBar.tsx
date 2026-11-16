@@ -12,7 +12,7 @@ import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
 
 /**
  * 手機筆記頁的底部瀏覽列：左邊像搜尋框的按鈕（開全螢幕搜尋層）、右邊「New note」（建在這篇所在的空間與資料夾；
- * 這篇不能在那裡建就不顯示）。列高 56（內距 6＋控制項 44＋6）加底部 safe area。
+ * 這篇不能在那裡建就不顯示）。列高 56（內距 6＋控制項 44＋6）加底部 safe area（外框貼齊螢幕邊，Home 指示條的退讓由這一列自己給）。
  * 螢幕鍵盤開著（例如正在改標題）時整條不渲染，免得被鍵盤頂著或蓋住。
  */
 export function NoteBrowseBar({ note }: { note: NoteDto }) {
@@ -35,7 +35,7 @@ export function NoteBrowseBar({ note }: { note: NoteDto }) {
   return (
     <div
       data-testid="note-browse-bar"
-      className="flex shrink-0 items-center gap-2 border-t border-border bg-card px-2 pt-1.5 pb-1.5"
+      className="flex shrink-0 items-center gap-2 border-t border-border bg-card px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))]"
     >
       <button
         type="button"

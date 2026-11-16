@@ -551,11 +551,11 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     stubFetchWithNotes([ALPHA_NOTE]);
     const first = renderShell(true);
     await screen.findByRole("textbox", { name: "Search notes" });
-    expect(first.container.querySelector(".h-screen")).toHaveAttribute("inert");
+    expect(first.container.querySelector(".h-dvh")).toHaveAttribute("inert");
     first.unmount();
     const second = renderShell();
     await screen.findByRole("textbox", { name: "Search notes" });
-    expect(second.container.querySelector(".h-screen")).not.toHaveAttribute("inert");
+    expect(second.container.querySelector(".h-dvh")).not.toHaveAttribute("inert");
   });
 });
 

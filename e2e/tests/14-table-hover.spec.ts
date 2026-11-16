@@ -126,7 +126,7 @@ async function waitForScrollEventsToSettle(page: Page) {
 async function scrollEditorToTop(page: Page) {
   await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
-    const scrollWrapper = editorRoot?.parentElement?.parentElement as HTMLElement | null | undefined;
+    const scrollWrapper = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
     if (scrollWrapper) scrollWrapper.scrollTop = 0;
   });
   await waitForScrollEventsToSettle(page);
@@ -246,7 +246,7 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
   // 孿生案的表格本身就超寬，那條測試在它自己的核心斷言裡驗這一層（見 #162）。
   const scrollWrapperGeo = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
-    const scrollWrapper = editorRoot?.parentElement?.parentElement as HTMLElement | null | undefined;
+    const scrollWrapper = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
     return { scrollWidth: scrollWrapper?.scrollWidth ?? 0, clientWidth: scrollWrapper?.clientWidth ?? 0 };
   });
   expect(scrollWrapperGeo.scrollWidth, "修法不得把全頁滾軸換成內文的橫向滾軸").toBeLessThanOrEqual(
@@ -351,7 +351,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   //     重跑本檔（突變驗證）量到 `Received: "auto"`。
   const scrollWrapperOverflowX = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
-    const scrollWrapper = editorRoot?.parentElement?.parentElement as HTMLElement | null | undefined;
+    const scrollWrapper = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
     return scrollWrapper ? getComputedStyle(scrollWrapper).overflowX : null;
   });
   expect(scrollWrapperOverflowX, "捲動容器必須有幾何（已渲染），否則下面兩條斷言恆綠").not.toBeNull();
@@ -372,7 +372,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   //     0，`auto` 下同動作是 300。
   const scrollWrapperBox = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
-    const sw = editorRoot?.parentElement?.parentElement as HTMLElement | null;
+    const sw = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null;
     const r = sw?.getBoundingClientRect();
     return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
   });
@@ -464,7 +464,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   }
   const scrollLeftAfterWheel = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
-    const sw = editorRoot?.parentElement?.parentElement as HTMLElement | null;
+    const sw = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null;
     return sw?.scrollLeft ?? -1;
   });
   expect(scrollLeftAfterWheel, "使用者不得能把內文區橫向捲走").toBe(0);

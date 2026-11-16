@@ -175,6 +175,8 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     // #115：B 畫面在 layout route 的 AppShell 裡 → 窄視窗要有開抽屜的入口（NarrowTopBar 消費端
     // 明確清單之一，見 NarrowTopBar.test.tsx 檔頭）。
     expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
+    // 內文卡 640 起有圓角與框，手機貼齊螢幕邊。
+    expect(screen.getByText(CHUNK_ERROR_TEXT).closest(".overflow-y-auto")).toHaveClass("rounded-xl", "border", "max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 
   it("案 3：chunk 錯誤（offline）→ 不 reload、直接 B，且旗標未被設（離線不燒額度）", () => {

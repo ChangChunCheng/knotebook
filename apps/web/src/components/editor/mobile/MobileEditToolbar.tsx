@@ -30,8 +30,11 @@ function edgesOf(value: number | Partial<ScrollEdges> | undefined, fallback: num
   return { top: fallback, right: fallback, bottom: fallback, left: fallback, ...value };
 }
 
+/** 游標矩形比它那一行的下緣短幾 px；多留這一段，整行（不只游標）都在工具列之上。 */
+const CARET_BREATHING_PX = 8;
+
 /**
- * 工具列在時，編輯器為了讓游標可見而捲動時，下緣要多留「鍵盤高＋工具列外框高」，
+ * 工具列在時，編輯器為了讓游標可見而捲動時，下緣要多留「鍵盤高＋工具列外框高＋游標到該行下緣的幾 px（`CARET_BREATHING_PX`）」，
  * 不然打到可視區最下面時游標那一行會被工具列蓋住。用 ProseMirror 的 `scrollMargin`／`scrollThreshold`
  * （不是 CSS `scroll-padding`：ProseMirror 自己算捲動量，不讀 scroll-padding）。
  * 只改 bottom：其餘邊保留 BlockNote 原本設的值，卸載時兩個 prop 照原樣還原（原本沒設就還原成沒設）。
@@ -40,7 +43,7 @@ function edgesOf(value: number | Partial<ScrollEdges> | undefined, fallback: num
  * 鍵盤升起（inset 變大）且編輯器有焦點時補一次捲動到游標，不然要等下一次輸入游標才離開工具列。
  */
 function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void {
-  const bottom = inset + PHONE_EDIT_TOOLBAR_CLEARANCE_PX;
+  const bottom = inset + PHONE_EDIT_TOOLBAR_CLEARANCE_PX + CARET_BREATHING_PX;
   useEffect(() => {
     const view = editor.prosemirrorView;
     if (!view) return;

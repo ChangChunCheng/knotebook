@@ -38,7 +38,7 @@ import { Button } from "./ui/button";
  */
 export function PublicPageFrame({ children, inert }: { children: ReactNode; inert?: boolean }) {
   return (
-    <div inert={inert} className={`flex h-screen flex-col overflow-hidden bg-card ${SAFE_INSETS}`}>
+    <div inert={inert} className={`flex h-dvh flex-col overflow-hidden bg-card ${SAFE_INSETS}`}>
       {children}
     </div>
   );

@@ -41,7 +41,9 @@ describe("HomePage 手機", () => {
 
   it.each(["overlay", "docked"] as const)("%s：照舊顯示空狀態", async (tier) => {
     stubLayoutTier(tier);
-    renderHome();
+    const { container } = renderHome();
     expect(await screen.findByText("No notes yet.")).toBeInTheDocument();
+    // 內文卡 640 起有圓角與框，手機（這一段不渲染）才貼邊。
+    expect(container.firstElementChild).toHaveClass("rounded-xl", "border", "max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 });

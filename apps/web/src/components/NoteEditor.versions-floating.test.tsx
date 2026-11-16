@@ -100,7 +100,8 @@ async function renderAt(tier: LayoutTier) {
     </QueryClientProvider>,
   );
   const editor = await screen.findByTestId("note-editor");
-  const row = editor.parentElement!.parentElement!.parentElement!.parentElement!;
+  // 欄 → 流程包裝 → 捲動容器 → 內文卡 → 列容器。
+  const row = editor.parentElement!.parentElement!.parentElement!.parentElement!.parentElement!;
   return { ...tierHandle, doc, row, ...utils };
 }
 

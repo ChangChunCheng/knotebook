@@ -469,7 +469,7 @@ describe("色盤", () => {
       expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("370px");
       fireEvent.click(colorsButton());
       expect(panel()).toBeNull();
-      expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("calc(60px + env(safe-area-inset-bottom))");
+      expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("60px");
     });
 
     it("鍵盤高度還在變動（收起動畫中途）不記", async () => {
@@ -532,11 +532,11 @@ describe("色盤", () => {
   it("色盤開著時，游標避讓的下緣預留色盤高加工具列外框高", async () => {
     await mountSelected();
     const margin = () => (editor.prosemirrorView!.props as { scrollMargin?: { bottom?: number } }).scrollMargin?.bottom;
-    expect(margin()).toBe(60);
+    expect(margin()).toBe(68);
     openColors();
-    expect(margin()).toBe(280 + 60);
+    expect(margin()).toBe(280 + 68);
     fireEvent.click(colorsButton());
-    expect(margin()).toBe(60);
+    expect(margin()).toBe(68);
   });
 
   it("「自訂…」頁比記下的高度高：spacer 與游標避讓改用量到的高度", async () => {
@@ -559,7 +559,7 @@ describe("色盤", () => {
     Object.defineProperty(panel()!, "offsetHeight", { value: 420, configurable: true });
     act(() => report());
     expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("480px");
-    expect((editor.prosemirrorView!.props as { scrollMargin?: { bottom?: number } }).scrollMargin?.bottom).toBe(480);
+    expect((editor.prosemirrorView!.props as { scrollMargin?: { bottom?: number } }).scrollMargin?.bottom).toBe(488);
   });
 
   it("minHeight 不超過可視高度扣掉工具列；轉向後重算", async () => {

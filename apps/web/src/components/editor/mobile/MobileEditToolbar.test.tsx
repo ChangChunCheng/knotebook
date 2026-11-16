@@ -289,11 +289,11 @@ describe("MobileEditToolbar", () => {
           </>
         ),
       });
-      expect(props().scrollMargin).toEqual({ top: 72, right: 0, bottom: 60, left: 0 });
+      expect(props().scrollMargin).toEqual({ top: 72, right: 0, bottom: 68, left: 0 });
       setKeyboard(300);
-      expect(props().scrollMargin?.bottom).toBe(360);
+      expect(props().scrollMargin?.bottom).toBe(368);
       expect(props().scrollMargin?.top).toBe(before.scrollMargin?.top);
-      expect(props().scrollThreshold?.bottom).toBe(360);
+      expect(props().scrollThreshold?.bottom).toBe(368);
       rerenderHost({ children: <Probe /> });
       expect(root_()).toBeNull();
       expect({ scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold }).toEqual(before);
@@ -348,11 +348,11 @@ describe("MobileToolbarSpacer", () => {
     Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
   });
 
-  it("aria-hidden；鍵盤收起：工具列外框高加 safe area；鍵盤開著：鍵盤高加工具列外框高", () => {
+  it("aria-hidden；高度＝鍵盤高加工具列外框高（safe area 由內文卡的下內距給，這裡不加）", () => {
     const view = render(<MobileToolbarSpacer />);
     const spacer = () => view.container.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!;
     expect(spacer()).toHaveAttribute("aria-hidden", "true");
-    expect(spacer().style.height).toBe("calc(60px + env(safe-area-inset-bottom))");
+    expect(spacer().style.height).toBe("60px");
     viewport.height = 500;
     act(() => {
       viewport.dispatchEvent(new Event("resize"));

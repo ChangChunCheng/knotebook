@@ -899,6 +899,79 @@ input[name="share-access"] {
   }
 }
 
+/* 手機（< 640）：內文標題縮小（H1 3em → 2em、H2 2em → 1.5em、H3 1.3em → 1.17em），窄螢幕上不佔掉半行。
+   上面那段的內距是內容欄寬的事（< 768），字級是手機的事（< 640），所以兩段斷點不同；640 與 `PHONE_QUERY`／`max-sm:` 同界。
+
+   BlockNote 的標題字級是兩步：`[data-content-type=heading]`（H1，沒有 data-level——預設值不輸出屬性）與
+   `[data-content-type=heading][data-level="2"|"3"]` 設自訂屬性 `--level`（特異性 (0,1,0)／(0,2,0)），再由
+   `.bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type=heading]`（(0,5,0)）寫
+   `font-size: var(--level)`。所以這裡改的是 `--level` 而不是 font-size：自訂屬性只跟同樣宣告 `--level` 的規則比特異性，
+   不必去贏那條 (0,5,0)；那條規則照樣吃到我們的值。疊 `.bn-editor.bn-editor` 墊到 (0,4,0)，高於 BlockNote 的 (0,1,0)／(0,2,0)
+   ——它的 CSS 在 lazy chunk、載入較晚，兩邊都未分層，同特異性我們必輸（同上一段的雷）。
+   H4–H6（1em 以下）不動。 */
+@media (width < 40rem) {
+  .bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
+    --level: 2em;
+  }
+  .bn-editor.bn-editor [data-content-type="heading"][data-level="2"] {
+    --level: 1.5em;
+  }
+  .bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
+    --level: 1.17em;
+  }
+  /* 標題換類型的轉場：下一個區塊從「前一個標題」的字級起算（`--prev-level`，BlockNote 設在 `[data-prev-level="n"]`、特異性 (0,1,0)），
+     同樣改成手機字級，動畫才不會從桌面大小開始。 */
+  .bn-editor.bn-editor [data-prev-level="1"] {
+    --prev-level: 2em;
+  }
+  .bn-editor.bn-editor [data-prev-level="2"] {
+    --prev-level: 1.5em;
+  }
+  .bn-editor.bn-editor [data-prev-level="3"] {
+    --prev-level: 1.17em;
+  }
+}
+
+/* 手機：寬表格在右緣還能往右捲時淡出，提示「這裡還有」。淡出寬度走 --kb-table-fade（預設 0＝不淡出）。
+   支援捲動驅動動畫（animation-timeline）的瀏覽器純 CSS：動畫以表格自己的橫向捲動位置為時間軸，捲到最右前（95%）維持 1.5rem、
+   最後 5% 收到 0；表格沒有溢出時時間軸不作用、動畫不生效，自然沒有淡出。不支援的瀏覽器由 NoteEditor 的委派監聽
+   （lib/table-scroll-hint.ts）在還能往右捲的表格上加 data-kb-more-right。
+   疊 .bn-editor.bn-editor 墊到 (0,4,0)，高於 BlockNote 的 `.bn-editor [data-content-type=table] .tableWrapper`（0,3,0）
+   （它的 CSS 晚載入、未分層，同特異性我們必輸）。媒體查詢 width < 40rem 與 PHONE_QUERY 同界；其他寬度不碰表格。 */
+@property --kb-table-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes kb-table-fade {
+  0%,
+  95% {
+    --kb-table-fade: 1.5rem;
+  }
+  100% {
+    --kb-table-fade: 0px;
+  }
+}
+@media (width < 40rem) {
+  .bn-editor.bn-editor [data-content-type="table"] .tableWrapper {
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--kb-table-fade)), transparent);
+  }
+  @supports (animation-timeline: scroll(self inline)) {
+    .bn-editor.bn-editor [data-content-type="table"] .tableWrapper {
+      animation-name: kb-table-fade;
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+  @supports not (animation-timeline: scroll(self inline)) {
+    .bn-editor.bn-editor [data-content-type="table"] .tableWrapper[data-kb-more-right] {
+      --kb-table-fade: 1.5rem;
+    }
+  }
+}
+
 /* 手機：選單列不被擠扁。上游給每列 height: 52px，但選單是有高度上限（50vh）的直欄 flex，列預設可收縮，
    沒有副標的 [[ 筆記清單列被擠到內容高度 33px（有副標的 / 列約 49px），不夠一個觸控目標。flex-shrink: 0 讓列保持 52px，超出的部分在選單內捲動。
    疊 .bn-mantine 是為了不輸給晚載入的同特異度規則。媒體查詢 width < 40rem 與 PHONE_QUERY 同界。 */

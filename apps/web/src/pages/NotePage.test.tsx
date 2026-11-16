@@ -698,6 +698,9 @@ describe("NotePage", () => {
       const sub = within(header).getByTestId("note-header-subline");
       // 觸控時標題列下緣留 6px，「‹」與 ⋮ 的 44px 點擊範圍才不會被下一行的位置鈕蓋掉。
       expect(top).toHaveClass("pointer-coarse:pb-1.5");
+      // 瀏海的退讓由 NoteEditor 的頁首槽位給（橫幅也在它之下），頁首自己維持 12px 上內距。
+      expect(header).toHaveClass("pt-3");
+      expect(header.className).not.toContain("safe-area-inset");
       expect(within(top).getByRole("button", { name: "Back to notes" })).toBeInTheDocument();
       expect(within(top).getByLabelText("Note title")).toBeInTheDocument();
       expect(within(top).getByRole("button", { name: "Favorite" })).toBeInTheDocument();
@@ -2012,6 +2015,8 @@ describe("NotePage", () => {
     expect(document.querySelector("header")).toBeNull();
     const card = screen.getByText("Loading…").parentElement;
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
+    // 手機：佔位卡貼齊螢幕（沒有圓角與框）。
+    expect(card).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
 
     resolveMe();
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());

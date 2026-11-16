@@ -689,7 +689,8 @@ export function AppShell({ children, inert }: AppShellProps) {
     // 高度/捲動鏈（卡片版面）：三個面板要各自固定高度、內文獨立捲動，
     // 頁面本身不得整體捲動。`min-h-screen` 只設下限——內容一旦比視口高，這個 row
     // 容器（連帶 `main`）就會跟著撐高，逼出**文件層級**的捲動，下游各卡片的
-    // `overflow-y-auto` 因此永遠沒機會真的裁切。必須 `h-screen`（鎖視口）＋
+    // `overflow-y-auto` 因此永遠沒機會真的裁切。必須 `h-dvh`（鎖視口；dvh 跟著手機瀏覽器網址列的伸縮，
+    // 100vh 會在網址列顯示時比可視區高、把底部列推出螢幕外）＋
     // `overflow-hidden`（防殘留捲軸），`h-full`／`min-h-0` 這條鏈才從這裡開始鎖住
     // 視口高度。捲動全部內移到各卡片自己的捲動容器，`main` 只留
     // `min-h-0 min-w-0 flex-1 flex flex-col` 撐開版面（`min-w-0` 顯式宣告——
@@ -699,7 +700,9 @@ export function AppShell({ children, inert }: AppShellProps) {
       <PhoneBrowseContext.Provider value={browseState}>
       <ShortcutsDialogContext.Provider value={shortcutsApi}>
         <SidebarTabProvider actionsRef={tabActionsRef}>
-          <div inert={inert} className={cn("flex h-screen gap-3 overflow-hidden bg-background", SAFE_FRAME_PADDING)}>
+          {/* 手機（< 640）內容貼齊螢幕邊：外框內距與間距歸零，safe area 改由碰到螢幕邊的元件自己給
+              （筆記頁首的上緣、底部瀏覽列的下緣、主內容區的左右）。 */}
+          <div inert={inert} className={cn("flex h-dvh gap-3 overflow-hidden bg-background max-sm:p-0", SAFE_FRAME_PADDING)}>
             {/* data-sidebar-instance：SidebarContent 回 fragment、沒有自己的根；垃圾桶動作列靠它找回同一份的「選取」鈕。 */}
             <aside
               ref={asideRef}
@@ -798,7 +801,7 @@ export function AppShell({ children, inert }: AppShellProps) {
               </DialogPrimitive.Portal>
             </DialogPrimitive.Root>
 
-            <main inert={searchOpen && !onList} className={cn("flex min-h-0 min-w-0 flex-1 flex-col", enterNote && "kb-phone-enter")}>
+            <main inert={searchOpen && !onList} className={cn("flex min-h-0 min-w-0 flex-1 flex-col max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)]", enterNote && "kb-phone-enter")}>
               {children}
             </main>
           </div>

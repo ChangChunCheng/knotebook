@@ -115,7 +115,7 @@ describe("PublicPageFrame（滿版外框）", () => {
     // （index.css）——frame 用更深的 bg-background 時，文章欄寬的卡色長條浮在頁底
     // 上、看起來仍像一張內文卡（user 二次回報實證）。整頁同卡色才是「滿版一色」。
     const tokens = frame.className.split(/\s+/);
-    for (const cls of ["h-screen", "flex", "flex-col", "overflow-hidden", "bg-card"]) {
+    for (const cls of ["h-dvh", "flex", "flex-col", "overflow-hidden", "bg-card"]) {
       expect(tokens).toContain(cls);
     }
     // 卡面退場：無 max-w 上限、無圓角、無邊框（滿版——不是置中卡）

@@ -104,6 +104,16 @@ describe("NarrowTopBar 消費端（#115）", () => {
     expect(screen.queryByRole("button", { name: "Open sidebar" })).toBeNull();
   });
 
+  it("手機：頂列貼齊螢幕上緣，上內距加 safe area；非手機的 py-2 不變", async () => {
+    stubLayoutTier("phone");
+    renderWithProviders(<NotePageFallback />);
+    const back = await screen.findByRole("button", { name: "Back to notes" });
+    const bar = back.parentElement;
+    expect(bar).toHaveClass("py-2", "max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))]");
+    // 內文卡本身手機貼邊：沒有圓角與框。
+    expect(back.closest("main")?.firstElementChild).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
+  });
+
   it("浮動段：頂列是「Open sidebar」，沒有「Back to notes」", async () => {
     stubLayoutTier("overlay");
     renderWithProviders(<NotePageFallback />);
