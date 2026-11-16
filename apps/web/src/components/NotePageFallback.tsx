@@ -19,7 +19,7 @@ export function NotePageFallback() {
   return (
     // 跟 NotePage/HomePage 同一款佔位/內文卡——main 已無自身捲動，
     // overflow-y-auto 掛在卡自己身上。
-    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto")}>
+    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0")}>
       <NarrowTopBar />
       <p className="p-6 text-sm text-muted-foreground">{t("app.loading")}</p>
     </div>

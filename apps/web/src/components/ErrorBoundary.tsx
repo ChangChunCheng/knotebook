@@ -349,7 +349,7 @@ function LazyRouteErrorFallback({
     // 跟 NotePage/HomePage/NotePageFallback 同一款
     // 內文卡——main 已無自身捲動，長錯誤內容改由卡自己捲（overflow-y-auto）。
     // 內容本身不動。側欄殼由外層的 AppShellLayout 提供。
-    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto")}>
+    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0")}>
       {/* #115：窄視窗的抽屜入口（AppErrorFallback 刻意不掛——零 context 相依，
           見 NarrowTopBar 檔頭）。 */}
       <NarrowTopBar />

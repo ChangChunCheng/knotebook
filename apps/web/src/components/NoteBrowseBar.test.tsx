@@ -68,11 +68,11 @@ describe("NoteBrowseBar", () => {
     expect(openSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("列高 56；底部 safe area 由 AppShell 外框的底邊給，這一列自己不再加（不重複）", () => {
+  it("列高 56 加底部 safe area：外框貼齊螢幕邊，Home 指示條的退讓由這一列自己給", () => {
     renderBar(note());
     const bar = screen.getByTestId("note-browse-bar");
-    expect(bar).toHaveClass("pt-1.5", "pb-1.5");
-    expect(bar.className).not.toContain("safe-area-inset");
+    expect(bar).toHaveClass("pt-1.5", "pb-[calc(0.375rem+env(safe-area-inset-bottom))]");
+    expect(bar).not.toHaveClass("pb-1.5");
   });
 
   it("個人根層：「New note」→ createNote() 不帶參數", () => {

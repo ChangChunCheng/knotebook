@@ -136,6 +136,8 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       "border-border",
       "bg-card",
     );
+    // 手機（< 640）內容卡貼齊螢幕：沒有圓角與框；640 起的 rounded-xl／border 仍在（上面）。
+    expect(contentCard).toHaveClass("max-sm:rounded-none", "max-sm:border-0");
     expect(scrollWrapper).toHaveClass("min-h-0", "min-w-0", "flex-1", "overflow-y-auto", "overflow-x-clip");
     // 欄寬與內距取自 `ui/article-column.ts`（#115：內文是唯一消費端，頁首/頁尾
     // 滿卡寬）。結構守衛在 `ui/article-column.guard.test.ts`。
@@ -372,6 +374,22 @@ describe("NoteEditor 手機編輯工具列", () => {
     const spacer = column.querySelector("[data-mobile-toolbar-spacer]");
     expect(spacer).not.toBeNull();
     expect(column.lastElementChild).toBe(spacer);
+  });
+
+  it("mobileToolbar：內文卡手機下緣留 safe area（工具列頂端恰在捲動容器下緣上方 60px）；沒有工具列時不留", async () => {
+    const on = renderEditor(true);
+    const cardOn = (await screen.findByTestId("article-column")).closest(".overflow-hidden") as HTMLElement;
+    expect(cardOn).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]");
+    on.unmount();
+    renderEditor(false);
+    const cardOff = (await screen.findByTestId("article-column")).closest(".overflow-hidden") as HTMLElement;
+    expect(cardOff).not.toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]");
+  });
+
+  it("頁首槽位在手機給上緣 safe area（橫幅與頁首都在它之下）", async () => {
+    renderEditor(false);
+    await screen.findByTestId("article-column");
+    expect(document.querySelector("[data-note-header-slot]")).toHaveClass("max-sm:pt-[env(safe-area-inset-top)]");
   });
 
   it.each([false, undefined])("mobileToolbar=%s（桌機、或手機沒在編輯）：沒有工具列也沒有空白", async (flag) => {

@@ -630,8 +630,15 @@ export function NoteEditor({
   return (
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
       <div ref={rowRef} onKeyDown={onRowKeyDown} className="relative flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
-        <div className={cn(cardSurface, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden")}>
-          <div ref={headerSlotRef} data-note-header-slot="">
+        <div className={cn(
+          cardSurface,
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
+          // 浮在鍵盤上的編輯工具列自己帶底部 safe area；捲動容器的下緣要在那段之上，
+          // 工具列頂端才恰在容器下緣上方 60px（游標捲動邊界與 AI 框翻轉都以此為準）。
+          mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
+        )}>
+          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。 */}
+          <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
           <div ref={setScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>

@@ -14,7 +14,8 @@ import { BackToListButton } from "@/components/BackToListButton";
  */
 export function NarrowTopBar() {
   return (
-    <div className="flex items-center gap-2 border-b border-border px-3 py-2 xl:hidden">
+    // 手機的內文卡貼齊螢幕上緣，所以上內距要加瀏海的 safe area。
+    <div className="flex items-center gap-2 border-b border-border px-3 py-2 max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))] xl:hidden">
       {/* 手機是「‹」（回清單），浮動段是側欄鈕，固定段整列 `xl:hidden`；兩顆各自只在自己的寬度渲染。 */}
       <BackToListButton />
       <SidebarDrawerButton />

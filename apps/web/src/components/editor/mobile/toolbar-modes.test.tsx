@@ -469,7 +469,7 @@ describe("色盤", () => {
       expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("370px");
       fireEvent.click(colorsButton());
       expect(panel()).toBeNull();
-      expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("calc(60px + env(safe-area-inset-bottom))");
+      expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("60px");
     });
 
     it("鍵盤高度還在變動（收起動畫中途）不記", async () => {

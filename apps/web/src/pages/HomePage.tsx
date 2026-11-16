@@ -26,7 +26,7 @@ export default function HomePage() {
   return (
     // 側欄殼由外層的 AppShellLayout 提供；這裡只渲染主區插槽：一張全寬內文卡，跟 NotePage 的內文卡／佔位卡
     // 同一套視覺——main 已無自身捲動（見 AppShell.tsx），overflow-y-auto 掛在卡自己身上。
-    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto")}>
+    <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0")}>
       <NarrowTopBar />
       <EmptyState
         title={hasNotes ? t("home.selectTitle") : t("home.empty")}
