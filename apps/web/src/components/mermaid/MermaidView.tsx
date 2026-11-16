@@ -20,6 +20,7 @@ function hasIntersectionObserver(): boolean {
  * ⚠ 不能省：筆記頁捲動的是內層的 `overflow-y-auto` 容器，不是視窗。`root` 用預設（視窗）時，
  * `rootMargin` 只放寬視窗那一層，目標先被內層捲動容器的可見框裁掉——600px 的預先範圍**完全不生效**，
  * 圖要真的露出來才開始畫（e2e 疊上實測：捲動容器底緣下方 42px 的圖一直沒被請求）。
+ * 手機（< 640）上那一層是 `overflow-y: visible`、捲的是文件，這裡找不到會捲的祖先、回 null，正好就是視窗。
  *
  * ⚠ **從編輯器（`.bn-editor`）外面開始找**：BlockNote 的並排欄 `.bn-block-column` 設了
  * `overflow-x:auto`，依 CSS 規則另一軸的 `visible` 會算成 `auto`，所以欄的 computed `overflowY` 也是

@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { relativePositionToAbsolutePosition } from "y-prosemirror";
 import type { BlockNoteEditor } from "@blocknote/core";
+import { scrollsPage, stickyTopInset } from "@/lib/page-scroll";
 
 /**
  * #293：點頭像捲到對方游標。
@@ -62,6 +63,7 @@ export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number |
 
 /**
  * getRoot 回 null（含版本預覽中）→ false；換算不到 → false；否則捲動容器 smooth 捲到「該行在容器高度 1/3 處」、回 true。
+ * 手機上捲動容器不自己捲（文件在捲，`lib/page-scroll.ts`）：改捲文件，位置是頁首下方可視高度的 1/3 處。
  * 不動選取、不搶焦點。
  */
 export function createCursorScroller({ editor, getRoot }: { editor: AnyEditor; getRoot: () => HTMLElement | null }): CursorScroller {
@@ -75,6 +77,12 @@ export function createCursorScroller({ editor, getRoot }: { editor: AnyEditor; g
       coords = editor.prosemirrorView.coordsAtPos(pos);
     } catch {
       return false;
+    }
+    if (scrollsPage(root)) {
+      const header = stickyTopInset();
+      const top = window.scrollY + coords.top - header - (window.innerHeight - header) / 3;
+      window.scrollTo({ top: Math.max(0, Math.round(top)), behavior: "smooth" });
+      return true;
     }
     const top = root.scrollTop + (coords.top - root.getBoundingClientRect().top) - root.clientHeight / 3;
     root.scrollTo({ top: Math.max(0, Math.round(top)), behavior: "smooth" });

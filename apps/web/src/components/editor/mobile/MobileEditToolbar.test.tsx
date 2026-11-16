@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { useAiSession, type AiSessionValue } from "@/components/ai/AiSession";
 import { contentStart, createTestEditor, placeCursor, renderAiHost, selectInBlock, stubAiFetch, type AnyEditor } from "@/test/ai-host";
 import { CB, IMG, P } from "@/test/columns-fixtures";
+import { STICKY_TOP_VAR } from "@/lib/page-scroll";
 import { MobileEditToolbar } from "./MobileEditToolbar";
 import { MobileToolbarButton } from "./MobileToolbarButton";
 import { MobileToolbarSpacer } from "./MobileToolbarSpacer";
@@ -297,6 +298,31 @@ describe("MobileEditToolbar", () => {
       rerenderHost({ children: <Probe /> });
       expect(root_()).toBeNull();
       expect({ scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold }).toEqual(before);
+    });
+
+    it("頁首釘在頁面頂端（手機上捲的是文件）：上緣的 margin 與 threshold 都加上頁首高；卸載後還原", async () => {
+      document.documentElement.style.setProperty(STICKY_TOP_VAR, "90px");
+      try {
+        editor = createTestEditor([P("hello world", "a")]);
+        stubAiFetch({ actions: [] });
+        ({ rerenderHost } = renderAiHost({ editor, children: <Probe /> }));
+        const props = () => editor.prosemirrorView!.props as { scrollMargin?: Partial<Record<string, number>>; scrollThreshold?: Partial<Record<string, number>> };
+        const before = { scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold };
+        rerenderHost({
+          children: (
+            <>
+              <MobileEditToolbar editor={editor} />
+              <Probe />
+            </>
+          ),
+        });
+        expect(props().scrollMargin).toEqual({ top: 162, right: 0, bottom: 68, left: 0 });
+        expect(props().scrollThreshold?.top).toBe(90);
+        rerenderHost({ children: <Probe /> });
+        expect({ scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold }).toEqual(before);
+      } finally {
+        document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+      }
     });
 
     it("鍵盤升起且編輯器有焦點：補一次捲動到游標；沒有焦點、或鍵盤收起時不補", async () => {

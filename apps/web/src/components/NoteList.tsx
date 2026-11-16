@@ -25,6 +25,7 @@ import { useFolderSortOf } from "@/components/sidebar/folder-sort";
 import { FolderRowButton } from "@/components/sidebar/FolderRowButton";
 import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
+import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
 import type { StackPreviewState } from "@/components/sidebar/drag-session";
 import { StackPreview } from "@/components/sidebar/StackPreview";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
@@ -646,7 +647,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   return (
     <>
-      <div data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW)}>
+      <div data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW, PHONE_LIST_HEADER_STICKY)}>
         {selection.active ? (
           // chunk 還沒到：只有名稱（不含動作鈕）。
           <SidebarLazyBoundary chunk="select" fallback={tabLabel} errorClassName="hidden">
@@ -670,10 +671,10 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           </>
         )}
       </div>
-      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端。進出選取模式不換（捲動位置不跳）。 */}
+      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端。進出選取模式不換（捲動位置不跳）。手機上不自己捲，捲的是文件（切 tab 回頂端由 `AppShell` 做）。 */}
       {/* 安全網：橫向裁切放在內層包層——放在清單本身會因另一軸是 `overflow-y-auto` 算成 `hidden`，仍可被捲動橫移。 */}
       {/* 拖曳的 dragstart／dragover／drop／dragend 都委派在這個容器；包層 `min-h-full`：清單下方空白也算根目錄的標示範圍。 */}
-      <div key={tab} data-sidebar-list="" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain" {...drag.containerProps}>
+      <div key={tab} data-sidebar-list="" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain", PHONE_LIST_SCROLLER)} {...drag.containerProps}>
         <div
           data-drop-scope={listDropScoped ? "" : undefined}
           className={cn(

@@ -254,20 +254,20 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     const sidebar = sidebarOf(page);
     await showSidebarTab(page, "My notes");
     await expect(noteLink(sidebar, titles[0]!)).toBeVisible({ timeout: 15_000 });
+    // 手機上捲的是文件（不是清單容器）。
     const list = sidebar.locator("[data-sidebar-list]");
-    await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(300);
-    await list.evaluate((el) => {
-      el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2);
-    });
-    const before = await list.evaluate((el) => el.scrollTop);
+    const pageScrollY = () => page.evaluate(() => window.scrollY);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)).toBeGreaterThan(300);
+    await page.evaluate(() => window.scrollTo(0, Math.round((document.documentElement.scrollHeight - window.innerHeight) / 2)));
+    const before = await pageScrollY();
     expect(before).toBeGreaterThan(100);
 
-    // 點目前畫面上的某一篇（捲動後第一篇看得見的）
+    // 點目前畫面上的某一篇（捲動後第一篇看得見的：在釘住的頂列與標題列之下、浮動鈕之上）
     const target = await list.evaluate((el) => {
-      const box = el.getBoundingClientRect();
+      const header = document.querySelector("[data-sidebar-header]")!.getBoundingClientRect();
       const link = Array.from(el.querySelectorAll<HTMLAnchorElement>("a[href^='/n/']")).find((a) => {
         const r = a.getBoundingClientRect();
-        return r.top >= box.top + 4 && r.bottom <= box.bottom - 4;
+        return r.top >= header.bottom + 4 && r.bottom <= window.innerHeight - 100;
       });
       return { href: link?.getAttribute("href") ?? null, text: link?.textContent ?? "" };
     });
@@ -285,7 +285,7 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     expect(await historyIdx(page)).toBe(listIdx);
     expect(await page.evaluate(() => history.length)).toBe(historyBefore + 1);
     // 捲動位置還在
-    await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(before);
+    await expect.poll(pageScrollY).toBe(before);
     // 焦點回到剛點的那一列
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("href") ?? null)).toBe(target.href);
 
@@ -296,7 +296,7 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     await expect(page).toHaveURL(/\/$/);
     await expect(sidebarOf(page)).toBeVisible();
     expect(await historyIdx(page)).toBe(listIdx);
-    await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(before);
+    await expect.poll(pageScrollY).toBe(before);
 
     // 搜尋框的字：點結果進筆記、「‹」回來，字還在
     const query = titles[4]!;

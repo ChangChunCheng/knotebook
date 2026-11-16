@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
 import { EmptyTrashDialog, PurgeConfirmDialog, toastTrashFailure, toastTrashResult } from "@/components/sidebar/trash-dialogs";
 import { TrashWideToolbar } from "@/components/sidebar/TrashFooter";
+import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
 
 /**
  * 垃圾桶 tab 的面板：`AppShell` 在 tab 為 `trash` 時放進 tabpanel，取代 `NoteList`。
@@ -480,10 +481,10 @@ export function TrashPanel() {
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
-      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW)}>
+      <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW, PHONE_LIST_HEADER_STICKY)}>
         {renderHeader()}
       </div>
-      <div data-sidebar-list="" tabIndex={-1} ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 focus-visible:outline-none">
+      <div data-sidebar-list="" tabIndex={-1} ref={listRef} className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 focus-visible:outline-none", PHONE_LIST_SCROLLER)}>
         {renderBody()}
       </div>
       <PurgeConfirmDialog

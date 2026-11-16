@@ -65,6 +65,10 @@ Element.prototype.getBoundingClientRect = function () {
   return new DOMRect(0, 0, 0, 0);
 };
 
+// jsdom 的 `window.scrollTo` 只會印「Not implemented」。手機上清單與筆記捲的是文件，換畫面時 `AppShell` 會呼叫它；
+// 換成不做事的函式，要量呼叫的測試自己 spy。
+window.scrollTo = (() => {}) as typeof window.scrollTo;
+
 // jsdom 完全沒實作 Range.getClientRects()/getBoundingClientRect()（不是回傳空值，
 // 是整個方法不存在）。真正掛載的 BlockNote 編輯器呼叫 `.focus()`/`scrollIntoView`
 // 時，ProseMirror 的 coordsAtPos 會對游標位置的文字節點建一個 Range 來量測座標

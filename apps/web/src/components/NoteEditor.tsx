@@ -47,6 +47,7 @@ import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-c
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { useIsPhone } from "@/lib/layout-tiers";
+import { useStickyTopVar } from "@/lib/page-scroll";
 import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
@@ -489,6 +490,8 @@ export function NoteEditor({
   // 手機：頁尾（提及列）不佔卡底，改放進捲動容器、文章欄之後，跟著內文捲；編輯工具列的空白仍排在最後。
   const phone = useIsPhone();
   const footerInScroll = phone && footerSlot !== undefined && footerSlot !== null;
+  // 手機上捲的是文件、頁首釘在頂端：它的高度給區塊的 `scroll-margin-top` 與捲到段落、捲到游標的計算（`lib/page-scroll.ts`）。
+  useStickyTopVar(headerSlotRef, phone);
 
   // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
@@ -618,7 +621,7 @@ export function NoteEditor({
   //     內文卡（cardSurface，flex-col）
   //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
-  //         `overflow-x-clip`＝#162，見下方 JSX 註解）
+  //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
   //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
   //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
   //         置中 wrapper＝文章欄（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
@@ -645,16 +648,26 @@ export function NoteEditor({
         <div className={cn(
           cardSurface,
           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
+          // 手機上捲的是文件（`lib/page-scroll.ts`）：卡不裁切（頁首的 sticky 才黏得住），至少一個視窗高（`svh`：工具列伸縮時不變），
+          // 短筆記的文章欄仍延伸到畫面底、點下方空白照樣聚焦到最後。
+          "max-sm:min-h-svh max-sm:overflow-visible",
           // 浮在鍵盤上的編輯工具列自己帶底部 safe area；捲動容器的下緣要在那段之上，
           // 鍵盤收起時工具列頂端才恰在容器下緣上方 60px（游標捲動邊界與 AI 框翻轉都以此為準；
           // 鍵盤或色盤開著時留白多出幾 px，無妨）。
           mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
         )}>
-          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。 */}
-          <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:pt-[env(safe-area-inset-top)]">
+          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。
+              手機上整個槽位釘在頁面頂端（不透明底，內文捲到它下面不透出來）。 */}
+          <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:sticky max-sm:top-0 max-sm:z-30 max-sm:bg-card max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
-          <div ref={setScrollRoot} className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip", hasPreview && "hidden")}>
+          {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
+              手機上的高度要從內容長出來（flex-basis auto，不是 flex-1 的 0%）：卡的高度不固定，0% 的基準加上
+              `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
+          <div
+            ref={setScrollRoot}
+            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
+          >
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
                 `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
                 `<html>`，撐出全頁滾軸；wrapper／捲動容器／`.bn-container` 三處等效，選
@@ -678,7 +691,7 @@ export function NoteEditor({
             {/* 手機且頁尾放在捲動容器內時：欄、頁尾、工具列空白包在一個至少與捲動容器等高的直欄裡，
                 欄自己撐滿剩下的高度（短筆記不會因為頁尾與空白而多出可捲的範圍，點欄下方空白仍聚焦到最後）。
                 其他情形這層是 `display: contents`，不產生盒子，欄照舊自己 `min-h-full`。 */}
-            <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col" : "contents"}>
+            <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col max-sm:grow" : "contents"}>
             <div
               ref={setColumnEl}
               data-testid="article-column"
@@ -811,7 +824,10 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         editable={editable}
         theme={theme}
         data-testid="note-editor"
-        className="min-h-full flex-1"
+        // 手機上文章欄的高度從內容長出來（`flex-auto`，短筆記靠 grow 撐滿欄、不靠 `min-h-full`）：欄的高度不固定時，
+        // `flex-1` 的 0% 基準加上 `min-h-full` 會讓內文溢出欄外。className 也會套到 BlockNote 放浮層的 portal 根節點（在容器裡、
+        // 排在內文之後），它的 `min-h-full` 在手機上會解成整篇的高度、在文件尾端多出一整段空白，所以手機上一併歸零。
+        className="min-h-full flex-1 max-sm:min-h-0 max-sm:flex-auto"
         // 關掉 BlockNote 內建的 FilePanelController：下面接管的是我們自家的
         // `filePanel`（自家 Upload tab 呼叫 `postUpload`，不用 `editor.uploadFile`，
         // 理由見 `components/FilePanel.tsx` 檔頭）。不明確設 `false` 這裡會同時掛兩個

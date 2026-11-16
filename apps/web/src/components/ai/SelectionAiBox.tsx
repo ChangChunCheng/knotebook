@@ -27,6 +27,7 @@ import { blockRange, type BlockRange } from "@/ai/selection";
 import { Button } from "@/components/ui/button";
 import { Sparkles, X } from "@/components/ui/icons";
 import { ChevronsRight, Languages, ListCollapse, PenLine, Send } from "@/components/ui/icons-extra";
+import { stickyTopInset } from "@/lib/page-scroll";
 import { activeAnchorOf, useAiSession, type AiTarget } from "./AiSession";
 import { SelectionAiResult, type BoxFocusTarget, type RunWithFocus } from "./SelectionAiResult";
 
@@ -55,7 +56,7 @@ function anchorBlockElement(root: Element | null | undefined, id: string): HTMLE
   );
 }
 
-/** 最近一個會捲動的祖先（筆記卡 `overflow-y-auto`）；沒有就回 null。 */
+/** 最近一個會捲動的祖先（筆記卡 `overflow-y-auto`）；沒有就回 null（手機上筆記那層不捲、文件在捲）。 */
 function scrollParentOf(el: Element | null | undefined): HTMLElement | null {
   for (let node = el?.parentElement ?? null; node; node = node.parentElement) {
     if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY)) return node;
@@ -140,7 +141,8 @@ export function SelectionAiBox() {
       const block = blockId ? anchorBlockElement(editor.domElement, blockId) : null;
       const rect = block ? block.getBoundingClientRect() : atAnchor();
       if (scroller === undefined || (scroller && !scroller.isConnected)) scroller = scrollParentOf(editor.domElement);
-      const clipTop = scroller ? scroller.getBoundingClientRect().top : 0;
+      // 沒有會捲的祖先＝文件在捲（手機）：頂邊夾在釘在頂端的頁首下緣，不蓋頁首。
+      const clipTop = scroller ? scroller.getBoundingClientRect().top : stickyTopInset();
       return new DOMRect(rect.left, Math.max(rect.top, clipTop), rect.width, 0);
     };
     return {

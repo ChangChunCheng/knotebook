@@ -135,15 +135,17 @@ describe("AppShell — 手機清單畫面", () => {
     stubLayoutTier("phone");
   });
 
-  it("PH1 `/`：側欄滿版（fixed inset-0、沒有圓角與框）、沒有 inert、沒有拖曳把手", async () => {
+  it("PH1 `/`：側欄滿寬、在文件流裡（不是 fixed）、至少一個視窗高、沒有圓角與框；主內容區藏起來；沒有 inert、沒有拖曳把手", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const node = aside(container);
     await screen.findByRole("tablist");
     expect(node).not.toHaveAttribute("inert");
-    for (const name of ["max-sm:fixed", "max-sm:inset-0", "max-sm:flex", "max-sm:rounded-none", "max-sm:border-0"]) {
+    for (const name of ["max-sm:flex", "max-sm:w-full", "max-sm:min-h-svh", "max-sm:rounded-none", "max-sm:border-0"]) {
       expect(node).toHaveClass(name);
     }
+    expect(node.className).not.toMatch(/max-sm:(fixed|inset-0)\b/);
+    expect(container.querySelector("main")).toHaveClass("max-sm:hidden");
     expect(within(node).queryByRole("separator")).toBeNull();
     expect(node.style.width).toBe("");
   });
@@ -161,7 +163,7 @@ describe("AppShell — 手機清單畫面", () => {
     const { container } = renderAt("/groups/g1");
     const node = aside(container);
     expect(node).not.toHaveAttribute("inert");
-    expect(node).toHaveClass("max-sm:fixed", "max-sm:inset-0");
+    expect(node).toHaveClass("max-sm:flex", "max-sm:min-h-svh");
   });
 
   it("PH4 頂列：頭像鈕開使用者選單、選單有 Settings；中間是 Knotebook 字標；沒有選單列的名字文字", async () => {
@@ -372,7 +374,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(node).not.toHaveAttribute("inert");
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
     const input = within(node).getByRole("textbox", { name: "Search notes" });
-    expect(node).toHaveClass("max-sm:fixed", "max-sm:inset-0");
+    expect(node).toHaveClass("max-sm:flex", "max-sm:min-h-svh");
     fireEvent.change(input, { target: { value: "alpha" } });
     fireEvent.blur(input);
     expect(node).not.toHaveAttribute("inert");
@@ -391,7 +393,7 @@ describe("AppShell — 手機清單畫面", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note"));
     const node = aside(container);
     await waitFor(() => expect(node).toHaveAttribute("inert"));
-    expect(node).not.toHaveClass("max-sm:fixed");
+    expect(node).not.toHaveClass("max-sm:min-h-svh");
     expect(screen.queryByTestId("sidebar-search")).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel", hidden: true })).toBeNull();
   });
@@ -506,7 +508,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(node).toHaveAttribute("inert");
     fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" }));
     expect(node).not.toHaveAttribute("inert");
-    expect(node).toHaveClass("max-sm:fixed", "max-sm:inset-0");
+    expect(node).toHaveClass("max-sm:flex", "max-sm:min-h-svh");
     const input = within(node).getByRole("textbox", { name: "Search notes" });
     await waitFor(() => expect(input).toHaveFocus());
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
@@ -576,7 +578,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
 
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/beta-note"));
     await waitFor(() => expect(node).toHaveAttribute("inert"));
-    expect(node).not.toHaveClass("max-sm:fixed");
+    expect(node).not.toHaveClass("max-sm:min-h-svh");
     expect(screen.queryByTestId("sidebar-search")).toBeNull();
   });
 

@@ -19,6 +19,8 @@ import { cn } from "@/lib/utils";
 import { OVERLAY_QUERY, isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { PhoneBrowseContext, PhoneListContext, isNoteRoutePath } from "@/lib/phone-list";
 import { backTarget, clearListIdx, historyIdx, readListIdx, recordListIdx } from "@/lib/phone-nav";
+import { PHONE_PAGE_SCROLL_ATTR } from "@/lib/page-scroll";
+import { createPhoneScrollMemory, enterPhoneScreen, phoneScreenKey, rememberPhoneScroll, type PhoneScreen } from "@/lib/phone-scroll";
 import { SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom, useRealNavigationType } from "@/lib/real-location";
 import { isMacPlatform } from "@/lib/platform";
@@ -35,6 +37,7 @@ import { clearSearchMark } from "@/hooks/search-mark";
 import { SidebarFooter } from "@/components/sidebar/SidebarFooter";
 import { PhoneListBar } from "@/components/sidebar/PhoneListBar";
 import { PhoneListFabs } from "@/components/sidebar/PhoneListFabs";
+import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER, PHONE_TOP_BAR_STICKY } from "@/components/sidebar/phone-bar";
 import { SidebarTabList, sidebarPanelId, sidebarTabId } from "@/components/sidebar/SidebarTabList";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { UserMenu } from "@/components/UserMenu";
@@ -61,12 +64,12 @@ function TrashPanelFallback() {
   const { t } = useTranslation();
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-0.5 px-2 pt-3 pb-1">
+      <div className={cn("flex items-center gap-0.5 px-2 pt-3 pb-1", PHONE_LIST_HEADER_STICKY)}>
         <span className="flex h-6 min-w-0 flex-1 items-center px-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
           <span className="truncate">{t("sidebar.trash")}</span>
         </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
+      <div className={cn("min-h-0 flex-1 overflow-y-auto px-2", PHONE_LIST_SCROLLER)}>
         <p className="p-2 text-sm text-muted-foreground">{t("app.loading")}</p>
       </div>
     </div>
@@ -113,6 +116,8 @@ interface SidebarContentProps {
   /** 手機：全螢幕搜尋層是否開著（狀態在 `AppShell`，這裡的排列與側欄的可見性都看這一個值）。 */
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
+  /** 手機：換了 tab（`phone` 排列才呼叫；不含第一次掛上）。手機上捲的是文件，新 tab 的清單要從頂端開始，由 `AppShell` 處理。 */
+  onPhoneTabChange?: () => void;
 }
 
 /** 側欄的內層堆疊（logo 列／搜尋／tab 列＋tabpanel（NoteList；垃圾桶 tab 是 TrashPanel）或搜尋結果／底部（SidebarFooter：
@@ -132,6 +137,7 @@ function SidebarContent({
   layout = "classic",
   searchOpen = false,
   onSearchOpenChange,
+  onPhoneTabChange,
 }: SidebarContentProps) {
   const { t } = useTranslation();
   // 靜態卡與抽屜各自一份 `useId`，tab／tabpanel 的 id 才不會撞。
@@ -148,10 +154,18 @@ function SidebarContent({
   useEffect(() => {
     if (searching) updateSelection({ type: "end" });
   }, [searching, updateSelection]);
+  // layout effect：清單捲回頂端要在新 tab 第一次繪製之前，否則會先畫一格停在舊位置的新清單。
+  const seenTabRef = useRef(tab);
+  useLayoutEffect(() => {
+    if (seenTabRef.current === tab) return;
+    seenTabRef.current = tab;
+    if (phoneLayout) onPhoneTabChange?.();
+  }, [tab, phoneLayout, onPhoneTabChange]);
   return (
     <>
       {phoneLayout ? (
-        <div data-phone-top-bar="" className="shrink-0 pt-[env(safe-area-inset-top)]">
+        // 手機上捲的是文件：頂列釘在頁面頂端（含瀏海的 safe area），底色不透明。
+        <div data-phone-top-bar="" className={cn("shrink-0 pt-[env(safe-area-inset-top)]", PHONE_TOP_BAR_STICKY)}>
           {/* 標題左緣與清單列的文字同在離螢幕邊 16px；頭像（視覺 32、點擊範圍 44）的視覺右緣與列尾圖示同在離邊 16px。 */}
           <div className="flex h-12 items-center justify-between pl-4 pr-2.5">
             <div className="flex items-center gap-2">
@@ -309,8 +323,10 @@ interface AppShellProps {
  * `HomePage`（`/`）、`NotePage`（`/n/:handle/:slug`、`/g/:groupId/:slug`（#175）與舊形 `/notes/:ref` 三條 route 共用）、
  * `NotePageFallback`、`NoteRouteErrorFallback` 都只渲染主內容區，經 `<Outlet />` 進 `children`；換路由時側欄不重掛。
  *
- * 手機（< 640）：靜態 `<aside>` 在清單畫面（任何非筆記路由）是滿版的清單，換成手機排列（頂列頭像、只有圖示的 tab、底部搜尋列、
- * 全螢幕搜尋）；筆記路由時它仍在 DOM、`hidden` 加 `inert`，捲動位置與選取模式保留。抽屜維持寬版排列。
+ * 手機（< 640）：靜態 `<aside>` 在清單畫面（任何非筆記路由）是滿寬的清單，換成手機排列（頂列頭像、只有圖示的 tab、底部搜尋列、
+ * 全螢幕搜尋）；筆記路由時它仍在 DOM、`hidden` 加 `inert`，選取模式保留。手機上捲的是文件，不是各區的內層容器：
+ * 清單或搜尋層在畫面上時主內容區藏起來，換畫面時的捲動位置由 `lib/phone-scroll.ts` 的規則還原（回清單回到原位、筆記從頂端開始）。
+ * 抽屜維持寬版排列。
  *
  * 側欄內容抽成 `SidebarContent`，靜態卡與抽屜共用；抽屜開著時 DOM 上同時有兩份
  * （靜態那份 `hidden`——真實瀏覽器 display:none 不進 a11y tree、不可聚焦；jsdom
@@ -485,6 +501,41 @@ export function AppShell({ children, inert }: AppShellProps) {
   const asideShown = onList || searchOpen;
   const asideShownRef = useRef(asideShown);
   asideShownRef.current = asideShown;
+  // 手機上清單、搜尋層、筆記共用文件的捲動（見 `lib/page-scroll.ts`）：換畫面時照 `lib/phone-scroll.ts` 的規則還原或歸零，
+  // 停在一個畫面時持續記下它的位置。layout effect：還原要在新畫面第一次繪製之前；舊畫面的監聽也在這裡同步拆掉，
+  // 換畫面造成的捲動（文件變短被夾住）不會被記成舊畫面的位置。瀏覽器自己的捲動還原關掉，免得它在返回時搶先捲。
+  const phoneScreen: PhoneScreen | null = !phone ? null : searchOpen ? { kind: "search" } : onList ? { kind: "list" } : { kind: "note", path: location.pathname };
+  const phoneScreenNowRef = useRef(phoneScreen);
+  phoneScreenNowRef.current = phoneScreen;
+  const phoneScreenRef = useRef<PhoneScreen | null>(null);
+  const scrollMemoryRef = useRef(createPhoneScrollMemory());
+  const screenKey = phoneScreenKey(phoneScreen);
+  useLayoutEffect(() => {
+    const prev = phoneScreenRef.current;
+    const next = phoneScreenNowRef.current;
+    phoneScreenRef.current = next;
+    if (next === null) return;
+    const memory = scrollMemoryRef.current;
+    const target = enterPhoneScreen(memory, prev, next, canonicalizedFrom(settingsRouteRef.current.location.state) ?? null);
+    if (target !== null) window.scrollTo(0, target);
+    const record = () => rememberPhoneScroll(memory, next, window.scrollY);
+    record();
+    window.addEventListener("scroll", record, { passive: true });
+    return () => window.removeEventListener("scroll", record);
+  }, [screenKey]);
+  useEffect(() => {
+    if (!("scrollRestoration" in window.history)) return;
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    return () => {
+      window.history.scrollRestoration = previous;
+    };
+  }, []);
+  /** 手機換了 tab：新 tab 的清單從頂端開始（清單不在畫面上時，等回到清單才生效）。 */
+  const handlePhoneTabChange = () => {
+    scrollMemoryRef.current.list = 0;
+    if (phoneScreenNowRef.current?.kind === "list") window.scrollTo(0, 0);
+  };
   // 清單可見時記下它在 history 裡的序號，「‹」才知道要退幾格。
   useEffect(() => {
     backFromKeyRef.current = null;
@@ -712,7 +763,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   };
 
   return (
-    // 高度/捲動鏈（卡片版面）：三個面板要各自固定高度、內文獨立捲動，
+    // 高度/捲動鏈（卡片版面，640 起）：三個面板要各自固定高度、內文獨立捲動，
     // 頁面本身不得整體捲動。`min-h-screen` 只設下限——內容一旦比視口高，這個 row
     // 容器（連帶 `main`）就會跟著撐高，逼出**文件層級**的捲動，下游各卡片的
     // `overflow-y-auto` 因此永遠沒機會真的裁切。必須 `h-dvh`（鎖視口；dvh 跟著手機瀏覽器網址列的伸縮，
@@ -721,6 +772,10 @@ export function AppShell({ children, inert }: AppShellProps) {
     // 視口高度。捲動全部內移到各卡片自己的捲動容器，`main` 只留
     // `min-h-0 min-w-0 flex-1 flex flex-col` 撐開版面（`min-w-0` 顯式宣告——
     // `main` 沒有 overflow、少了隱含的自我裁切途徑，寬度鏈全靠它）。
+    // 手機（< 640）反過來：外框不鎖高度、不裁切縱向（`max-sm:h-auto`／`overflow-y-visible`），清單與筆記撐高文件、
+    // **文件本身**在捲（`PHONE_PAGE_SCROLL_ATTR`，見 `lib/page-scroll.ts`）——Safari 只在文件捲動時收起工具列，
+    // 內容也才能延伸到半透明的底部工具列後面。橫向用 `overflow-x-clip`（不是 hidden：hidden 會讓縱向也變成捲動容器，
+    // 頁首的 sticky 就黏不住），筆記滑入時的位移不會撐出橫向捲動。各區內層的 `overflow-y-auto` 在手機上都改成 visible。
     <SidebarDrawerContext.Provider value={{ setOpen: setDrawerOpen }}>
       <PhoneListContext.Provider value={phoneState}>
       <PhoneBrowseContext.Provider value={browseState}>
@@ -728,7 +783,14 @@ export function AppShell({ children, inert }: AppShellProps) {
         <SidebarTabProvider actionsRef={tabActionsRef}>
           {/* 手機（< 640）內容貼齊螢幕邊：外框內距與間距歸零，safe area 改由碰到螢幕邊的元件自己給
               （筆記頁首的上緣、底部浮動鈕的下緣、主內容區的左右）。 */}
-          <div inert={inert} className={cn("flex h-dvh gap-3 overflow-hidden bg-background max-sm:p-0", SAFE_FRAME_PADDING)}>
+          <div
+            inert={inert}
+            {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}
+            className={cn(
+              "flex h-dvh gap-3 overflow-hidden bg-background max-sm:h-auto max-sm:overflow-x-clip max-sm:overflow-y-visible max-sm:bg-card max-sm:p-0",
+              SAFE_FRAME_PADDING,
+            )}
+          >
             {/* data-sidebar-instance：SidebarContent 回 fragment、沒有自己的根；垃圾桶動作列靠它找回同一份的「選取」鈕。 */}
             <aside
               ref={asideRef}
@@ -736,18 +798,28 @@ export function AppShell({ children, inert }: AppShellProps) {
                 if (phone && event.target instanceof Element) lastRowHrefRef.current = event.target.closest("a[href]")?.getAttribute("href") ?? null;
               }}
               data-sidebar-instance=""
+              // 手機上清單（或搜尋層）在畫面上：`index.css` 據此擋掉下拉重新整理。
+              data-phone-list-shown={asideShown ? "" : undefined}
               className={cn(
                 cardSurface,
                 "relative hidden shrink-0 xl:flex xl:flex-col",
-                // 手機的清單畫面：滿版蓋住整個視窗；筆記路由維持 `hidden`（加 inert）。
-                asideShown && "max-sm:fixed max-sm:inset-0 max-sm:z-40 max-sm:flex max-sm:flex-col max-sm:rounded-none max-sm:border-0",
-                // 滿版清單蓋住外框，橫拿時左右自己退開瀏海（頂列與底部列各自處理上下）。
+                // 手機的清單畫面：滿寬、在文件流裡撐高文件（文件在捲），至少一個視窗高（`svh`：工具列伸縮時不變，
+                // 捲動中不跳），底部的動作列與搜尋列才貼在視窗底；筆記路由維持 `hidden`（加 inert）。
+                asideShown && "max-sm:flex max-sm:min-h-svh max-sm:w-full max-sm:flex-col max-sm:rounded-none max-sm:border-0",
+                // 橫拿時左右自己退開瀏海（頂列與底部列各自處理上下）。
                 asideShown && "max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)]",
               )}
               style={phone ? undefined : { width: sidebarWidth }}
               inert={phone && !asideShown}
             >
-              <SidebarContent {...sidebarProps} searchRef={searchInputRef} layout={phone ? "phone" : "classic"} searchOpen={searchOpen} onSearchOpenChange={setPhoneSearchOpen} />
+              <SidebarContent
+                {...sidebarProps}
+                searchRef={searchInputRef}
+                layout={phone ? "phone" : "classic"}
+                searchOpen={searchOpen}
+                onSearchOpenChange={setPhoneSearchOpen}
+                onPhoneTabChange={handlePhoneTabChange}
+              />
               {!phone && (
                 <PaneResizeHandle
                   width={sidebarWidth}
@@ -827,7 +899,16 @@ export function AppShell({ children, inert }: AppShellProps) {
               </DialogPrimitive.Portal>
             </DialogPrimitive.Root>
 
-            <main inert={searchOpen && !onList} className={cn("flex min-h-0 min-w-0 flex-1 flex-col max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)]", enterNote && "kb-phone-enter")}>
+            {/* 手機上清單（含蓋在筆記上的搜尋層）在文件流裡，主內容區同時只能有一個在撐高文件：清單或搜尋層在時藏起來
+                （筆記不卸載；搜尋層 Cancel 回來時位置由上面的捲動記憶還原）。 */}
+            <main
+              inert={searchOpen && !onList}
+              className={cn(
+                "flex min-h-0 min-w-0 flex-1 flex-col max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)]",
+                asideShown && "max-sm:hidden",
+                enterNote && "kb-phone-enter",
+              )}
+            >
               {children}
             </main>
           </div>
