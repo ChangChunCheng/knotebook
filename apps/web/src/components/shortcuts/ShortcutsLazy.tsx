@@ -5,8 +5,18 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchAiActions } from "@/api/ai";
 import { Button } from "@/components/ui/button";
 import { cardSurface } from "@/components/ui/card";
-import { ArrowLeft, ChevronLeft } from "@/components/ui/icons";
-import { managementCardPhone, managementCardPhoneInset, managementListPaddingPhone, managementNavItemClass } from "@/components/management/tray";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "@/components/ui/icons";
+import {
+  managementBackTopPhone,
+  managementContentTopPhone,
+  managementHeadingUpPhone,
+  managementCardPhone,
+  managementCardPhoneInset,
+  managementListHeaderPhone,
+  managementListPaddingPhone,
+  managementNavItemClass,
+  managementNavListClass,
+} from "@/components/management/tray";
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
@@ -233,25 +243,25 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
         )}
       >
         {/* 對話框的名稱在外殼的 sr-only DialogTitle；這裡的字只是視覺標題。 */}
-        <div className={cn("mb-3 flex h-10 items-center gap-2 px-3", listBack && "pl-10")}>
+        <div className={cn("mb-3 flex h-10 items-center gap-2 px-3", listBack && "pl-10", managementListHeaderPhone)}>
           {listBack && layer === "items" && (
             <Button
               type="button"
               variant="ghost"
               size="icon"
               data-shortcuts-focus={layer === "items" ? "" : undefined}
-              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
+              className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card", PHONE_BACK_LEFT, managementBackTopPhone, PHONE_BACK_HIT)}
               aria-label={listBack.label}
               onClick={listBack.onBack}
             >
               <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             </Button>
           )}
-          <p aria-hidden="true" className="truncate text-[15px] font-semibold leading-tight tracking-normal">
+          <p aria-hidden="true" className="truncate text-[15px] font-semibold leading-tight tracking-normal max-sm:text-lg">
             {t("shortcuts.title")}
           </p>
         </div>
-        <nav ref={navRef} aria-label={t("shortcuts.title")} className="flex flex-col gap-1">
+        <nav ref={navRef} aria-label={t("shortcuts.title")} className={managementNavListClass}>
           {groups.map(({ category }) => (
             <button
               key={category}
@@ -264,9 +274,10 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
                 setSelected(category);
                 switchTo("content");
               }}
-              className={cn(managementNavItemClass(category === active.category), "w-full text-left")}
+              className={cn(managementNavItemClass(category === active.category), "w-full text-left max-sm:w-auto")}
             >
               <span className="min-w-0 truncate">{t(`shortcutsGuide.categories.${category}`)}</span>
+              <ChevronRight aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 sm:hidden" />
             </button>
           ))}
         </nav>
@@ -302,7 +313,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
           type="button"
           variant="ghost"
           size="icon"
-          className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, PHONE_BACK_HIT)}
+          className={cn("absolute left-2 top-2 z-10 h-7 w-7 bg-card md:hidden", PHONE_BACK_LEFT, managementBackTopPhone, PHONE_BACK_HIT)}
           aria-label={t("management.back")}
           onClick={() => switchTo("items")}
         >
@@ -316,10 +327,10 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
           role="region"
           aria-labelledby={headingId}
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto p-4 pt-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:p-8"
+          className={cn("min-h-0 flex-1 overflow-y-auto p-4 pt-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:p-8", managementContentTopPhone)}
         >
           <section data-shortcut-category={active.category}>
-            <h3 id={headingId} className="mb-1 text-base font-semibold">
+            <h3 id={headingId} className={cn("mb-1 text-base font-semibold max-sm:text-lg", managementHeadingUpPhone)}>
               {t(`shortcutsGuide.categories.${active.category}`)}
             </h3>
             <ul className="divide-y divide-border">
@@ -329,7 +340,7 @@ export function ShortcutsContent({ listBack }: { listBack?: { label: string; onB
                     <EntryKeys entry={entry} mac={mac} t={tt} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">{t(`shortcutsGuide.items.${entry.id}.name`)}</p>
+                    <p className="text-sm font-medium max-sm:text-base">{t(`shortcutsGuide.items.${entry.id}.name`)}</p>
                     <p className="text-sm text-muted-foreground">{t(`shortcutsGuide.items.${entry.id}.desc`)}</p>
                   </div>
                 </li>

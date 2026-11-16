@@ -146,10 +146,12 @@ describe("DialogContent size（#247）", () => {
       "max-sm:max-w-none",
       "max-sm:translate-x-0",
       "max-sm:translate-y-0",
-      "max-sm:rounded-t-2xl",
+      "max-sm:rounded-t-xl",
       "max-sm:rounded-b-none",
+      "max-sm:shadow-lg",
       "kb-sheet",
     );
+    expect(dialog.className).not.toMatch(/max-sm:rounded-t-2xl/);
     expect(dialog.className).not.toMatch(/max-sm:inset-0|max-sm:h-dvh|max-sm:rounded-none/);
     // iOS Safari 的 vh 是工具列收起時的高度：高度類一律 dvh（寬度的 vw 不受影響）。
     expect(dialog.className).not.toMatch(/\d+vh\b/);
