@@ -36,6 +36,7 @@ import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, showSi
  *      快捷鍵條目名稱 16px、說明 14px。
  * 58-28 寬螢幕（1280）：管理面板維持原樣——列 36px／14px／8px 圓角、目前的項次有品牌底、沒有「›」、托盤有毛玻璃、第二層標題 20px；700 的清單層仍是 ← 與 ✕、36px／14px。
  * 58-30 手機（390）深色：表格卡的主欄格與「‹」的底色跟卡一致。
+ * 58-31 矮的手機螢幕（568×320）：項次清單自己捲動、列頭不動，最後一列捲得到、點得到。
  * 58-11～58-15 手機清單（390）：兩顆 56px 浮動鈕的位置、最後一列捲得到鈕上方、搜尋中／選取／垃圾桶的顯示；桌面星號與 ⋮ 的位置；
  *      列的左右內距相等、星號與 ⋮ 的點擊範圍不重疊、字級 15／12、頂列標題與頭像對齊；筆記頁首位置在標題正下方、「‹」置中於區塊。
  *
@@ -1628,6 +1629,48 @@ test("58-30 手機（390）深色：表格卡的主欄格底色＝卡的底色�
     console.log(`MEASURE table cell dark card ${surface.bg} cell ${cellBg}`);
     expect(alphaOf(cellBg) === 0 || cellBg === surface.bg, "主欄格透明或與卡同色").toBe(true);
     await expectPhoneContentHeading(dialog, dialog.getByRole("heading", { level: 1 }), "深色 Site admin Users");
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-31 矮的手機螢幕（568×320 橫拿）：設定的項次清單自己捲動，列頭不動，最後一列捲得到、點得到", async ({ browser }) => {
+  test.setTimeout(90_000);
+  const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 568, height: 320 } });
+  try {
+    const page = await context.newPage();
+    await loginAs(page, alice.email, PASSWORD);
+    await page.goto("/settings/login");
+    const dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog.getByRole("button", { name: "Back to sections", exact: true })).toBeVisible({ timeout: 15_000 });
+    await dialog.getByRole("button", { name: "Back to sections", exact: true }).click();
+    const nav = dialog.getByRole("navigation", { name: "Settings" });
+    await expect(nav).toBeVisible();
+    const scroll = await nav.evaluate((el) => ({ client: el.clientHeight, scrollHeight: el.scrollHeight, overflowY: getComputedStyle(el).overflowY, overflowX: el.scrollWidth - el.clientWidth }));
+    console.log(`MEASURE short list ${JSON.stringify(scroll)}`);
+    expect(scroll.overflowY).toBe("auto");
+    expect(scroll.scrollHeight, "清單比可見高度高（要捲）").toBeGreaterThan(scroll.client);
+    expect(scroll.overflowX, "沒有橫向捲動").toBeLessThanOrEqual(0);
+    const headerTop = await dialog.getByRole("heading", { name: "Settings" }).evaluate((el) => el.getBoundingClientRect().top);
+    const links = nav.getByRole("link");
+    const last = links.last();
+    await last.evaluate((el) => el.scrollIntoView({ block: "end" }));
+    const after = await nav.evaluate((el, lastEl) => {
+      const n = el.getBoundingClientRect();
+      const r = (lastEl as HTMLElement).getBoundingClientRect();
+      return { scrollTop: el.scrollTop, rowTop: r.top, rowBottom: r.bottom, navTop: n.top, navBottom: n.bottom, height: window.innerHeight };
+    }, await last.elementHandle());
+    console.log(`MEASURE short list after ${JSON.stringify(after)}`);
+    expect(after.scrollTop, "清單捲過了").toBeGreaterThan(0);
+    expect(after.rowBottom, "最後一列在清單可見範圍內").toBeLessThanOrEqual(after.navBottom + 1);
+    expect(after.rowTop).toBeGreaterThanOrEqual(after.navTop - 1);
+    expect(after.rowBottom, "最後一列在畫面內").toBeLessThanOrEqual(after.height);
+    expect(await dialog.getByRole("heading", { name: "Settings" }).evaluate((el) => el.getBoundingClientRect().top), "列頭沒有跟著捲").toBe(headerTop);
+    const name = (await last.innerText()).trim();
+    await last.tap();
+    await expect(dialog.getByRole("button", { name: "Back to sections", exact: true })).toBeVisible();
+    await expect(nav).toBeHidden();
+    expect(name.length).toBeGreaterThan(0);
   } finally {
     await context.close();
   }

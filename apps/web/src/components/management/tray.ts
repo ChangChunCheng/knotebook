@@ -38,8 +38,12 @@ export function managementNavItemClass(active: boolean): string {
   );
 }
 
-/** 手機項次清單的列互相貼齊（桌面是 4px 的間距）。 */
-export const managementNavListClass = "flex flex-col gap-1 max-sm:gap-0";
+/**
+ * 手機項次清單的列互相貼齊（桌面是 4px 的間距）。清單區在手機上自己捲動：卡是 `overflow-hidden`，矮螢幕（橫拿）放不下的列要捲得到；
+ * 列頭（髮絲線以上）在清單之外，不跟著捲。`min-h-0 flex-1` 讓清單拿到卡剩下的有限高度；`overflow-y-auto` 會讓橫向也裁切，
+ * 所以清單自己往兩側多出 8px 再用 8px 內距補回，列的 `-mx-2` 剛好落在清單邊界內、不產生橫向捲動。
+ */
+export const managementNavListClass = "flex flex-col gap-1 max-sm:-mx-2 max-sm:min-h-0 max-sm:flex-1 max-sm:gap-0 max-sm:overflow-y-auto max-sm:px-2";
 
 /**
  * 手機項次清單最上面一列（「‹」＋標題）與清單之間的髮絲線，同選單 sheet 的分隔線——線拉滿卡的全寬（往兩側退掉卡的內距，內距含 safe area）；

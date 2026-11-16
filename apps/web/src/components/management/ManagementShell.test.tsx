@@ -434,7 +434,10 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
         "max-sm:focus-visible:bg-accent",
       );
     }
-    expect(within(itemsCard()).getByRole("navigation")).toHaveClass("max-sm:gap-0");
+    // 清單區自己捲動（矮螢幕放不下的列要捲得到），列頭在它之外
+    const nav = within(itemsCard()).getByRole("navigation");
+    expect(nav).toHaveClass("max-sm:gap-0", "max-sm:min-h-0", "max-sm:flex-1", "max-sm:overflow-y-auto", "max-sm:-mx-2", "max-sm:px-2");
+    expect(nav.contains(within(itemsCard()).getByText("Settings"))).toBe(false);
     // 目前所在的項次（/settings/login）：手機把品牌底與粗體都蓋掉
     const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
     expect(current).toHaveClass("max-sm:bg-transparent", "max-sm:font-normal", "max-sm:text-foreground");

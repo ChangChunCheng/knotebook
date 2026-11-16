@@ -393,7 +393,7 @@ describe("手機（< 640）", () => {
     // 目前的分類沒有常駐品牌色
     const current = rows.find((row) => row.getAttribute("aria-current") === "true")!;
     expect(current).toHaveClass("max-sm:bg-transparent");
-    expect(items.querySelector("nav")).toHaveClass("max-sm:gap-0");
+    expect(items.querySelector("nav")).toHaveClass("max-sm:gap-0", "max-sm:min-h-0", "max-sm:flex-1", "max-sm:overflow-y-auto", "max-sm:-mx-2", "max-sm:px-2");
     const title = within(items).getByText("Keyboard shortcuts");
     expect(title).toHaveClass("max-sm:text-lg", "font-semibold");
     expect(title.parentElement).toHaveClass("max-sm:border-b", "max-sm:border-border", "max-sm:h-12");
