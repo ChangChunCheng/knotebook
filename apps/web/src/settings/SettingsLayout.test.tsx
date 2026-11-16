@@ -47,4 +47,11 @@ describe("SettingsGroup labelledByTitle", () => {
     expect(screen.queryByRole("region")).toBeNull();
     expect(container.querySelector("section")).not.toHaveAttribute("aria-labelledby");
   });
+  it("手機：標題與說明在上、動作鈕疊在下面（不擠窄說明文字）；sm 起並排", () => {
+    render(<SettingsGroup title="A" description="desc" action={<button type="button">Add</button>} />);
+    const header = screen.getByRole("heading", { level: 2, name: "A" }).parentElement!.parentElement!;
+    expect(header).toHaveClass("flex", "justify-between", "max-sm:flex-col", "max-sm:gap-3");
+    expect(screen.getByRole("button", { name: "Add" }).parentElement).toHaveClass("shrink-0");
+  });
+
 });
