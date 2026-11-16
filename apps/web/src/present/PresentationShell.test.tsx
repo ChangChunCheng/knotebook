@@ -134,6 +134,31 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
+  it("播放時背後的文件不捲（html overflow hidden、外殼 overscroll-contain）；離開時還原原本的 overflow 與捲動位置", () => {
+    const root = document.documentElement;
+    root.style.overflow = "clip";
+    let y = 640;
+    vi.stubGlobal("scrollY", y);
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(((_x: number, top: number) => {
+      y = top;
+    }) as typeof window.scrollTo);
+    try {
+      const view = renderShell(["/n/tester/my-note?present"]);
+      expect(root.style.overflow).toBe("hidden");
+      expect(screen.getByRole("dialog")).toHaveClass("overscroll-contain");
+      // 播放期間位置被動到（例如瀏覽器自己捲）：離開時捲回原處
+      vi.stubGlobal("scrollY", 0);
+      view.unmount();
+      expect(root.style.overflow).toBe("clip");
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+      expect(y).toBe(640);
+    } finally {
+      root.style.removeProperty("overflow");
+      scrollTo.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("內容區與工具列都避開瀏海與 Home 指示條（class 斷言，jsdom 無 env）", () => {
     renderShell(["/n/tester/my-note?present"]);
     const content = screen.getByTestId("shell-child").parentElement!;

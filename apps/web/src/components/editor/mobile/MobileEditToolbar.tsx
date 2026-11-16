@@ -10,7 +10,7 @@ import { ImageIcon, KeyboardDown, Pilcrow, RotateCcw, RotateCw } from "@/compone
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { cn } from "@/lib/utils";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
-import { stickyTopInset } from "@/lib/page-scroll";
+import { useStickyTopInset } from "@/lib/page-scroll";
 import { MobileToolbarButton } from "./MobileToolbarButton";
 import { ColorPanel } from "./ColorPanel";
 import { panelHeightPx, rememberKeyboardInset, setColorPanelHeight } from "./toolbar-footprint";
@@ -47,7 +47,7 @@ const CARET_BREATHING_PX = 8;
 function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void {
   const bottom = inset + PHONE_EDIT_TOOLBAR_CLEARANCE_PX + CARET_BREATHING_PX;
   // 手機上捲的是文件，筆記頁首釘在頁面頂端：上緣也要讓開頁首，往上移動時游標那一行才不會鑽到頁首底下。
-  const header = stickyTopInset();
+  const header = useStickyTopInset();
   useEffect(() => {
     const view = editor.prosemirrorView;
     if (!view) return;

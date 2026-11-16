@@ -298,6 +298,47 @@ describe("AppShell — 手機上文件在捲", () => {
     view.unmount();
     expect(window.history.scrollRestoration).toBe("auto");
   });
+
+  it("PS9 寬度剛越過 640、React 還沒換段時文件被夾回 0 的那次 scroll 不記成清單的位置", async () => {
+    stubFetch([NOTE]);
+    const { container } = renderAt(
+      "/",
+      <>
+        <LocationProbe />
+        <Back />
+      </>,
+    );
+    const link = await within(asideOf(container)).findByRole("link", { name: /^Alpha Note/ });
+    scrollPage(420);
+    // 媒體查詢已經不是手機、React 還沒收到通知：此刻的 scroll（被夾回 0）不算使用者的位置
+    vi.stubGlobal("matchMedia", () => ({ matches: false, media: "", addEventListener: () => {}, removeEventListener: () => {} }));
+    scrollPage(0);
+    stubLayoutTier("phone");
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note"));
+    fireEvent.click(screen.getByRole("button", { name: "history-back", hidden: true }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
+    expect(lastScrollY()).toBe(420);
+  });
+
+  it("PS10 筆記頁的浮動鈕掛在主內容區外面（主內容區滑入時位移，fixed 的鈕不能跟著被帶走）", async () => {
+    stubFetch([NOTE]);
+    const { container } = renderAt(
+      "/n/tester/alpha-note",
+      <>
+        <LocationProbe />
+        <NoteBrowseBar note={NOTE} />
+      </>,
+    );
+    const bar = screen.getByTestId("note-browse-bar");
+    const main = container.querySelector("main")!;
+    const slot = container.querySelector("[data-phone-fab-slot]")!;
+    expect(main).not.toContainElement(bar);
+    expect(slot).toContainElement(bar);
+    expect(main.contains(slot)).toBe(false);
+    // 不在外框（flex 列）裡：鈕的包層若成了 flex 項目，外框的 gap 會讓主內容區少一截寬度
+    expect(frameOf(container).contains(slot)).toBe(false);
+  });
 });
 
 describe.each(["overlay", "docked"] as const)("AppShell — %s：頁面本身不捲", (tier) => {

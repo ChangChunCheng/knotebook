@@ -132,6 +132,18 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
 
   useEffect(() => () => exitFullscreenIfLeftPresentation(), []);
 
+  // 播放時背後的文件不捲：手機上捲的是文件，滑過投影片尾端會帶動背後的筆記、收起瀏覽器的工具列。離開時還原原本的位置。
+  useEffect(() => {
+    const root = document.documentElement;
+    const y = window.scrollY;
+    const previous = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => {
+      root.style.overflow = previous;
+      if (window.scrollY !== y) window.scrollTo(0, y);
+    };
+  }, []);
+
   useEffect(() => {
     rootRef.current?.focus();
   }, []);
@@ -162,7 +174,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
         aria-label={t("present.dialogLabel", { title: label })}
         tabIndex={-1}
         onMouseMove={wake}
-        className="fixed inset-0 z-[60] flex flex-col bg-card text-foreground outline-none"
+        className="fixed inset-0 z-[60] flex flex-col overscroll-contain bg-card text-foreground outline-none"
       >
         {/* 閒置淡出：不用 focus-visible 浮現；這裡用 focus-within——鍵盤焦點在任一顆按鈕上時整列都浮現，範圍較寬、符合意圖。 */}
         <div

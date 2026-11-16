@@ -27,6 +27,7 @@ import { blockRange, type BlockRange } from "@/ai/selection";
 import { Button } from "@/components/ui/button";
 import { Sparkles, X } from "@/components/ui/icons";
 import { ChevronsRight, Languages, ListCollapse, PenLine, Send } from "@/components/ui/icons-extra";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { stickyTopInset } from "@/lib/page-scroll";
 import { activeAnchorOf, useAiSession, type AiTarget } from "./AiSession";
 import { SelectionAiResult, type BoxFocusTarget, type RunWithFocus } from "./SelectionAiResult";
@@ -132,24 +133,26 @@ export function SelectionAiBox() {
   firstBlockIdRef.current = firstBlockId;
   const from = position?.from;
   const to = position?.to;
+  const phone = useIsPhone();
   const reference = useMemo<GenericPopoverReference | undefined>(() => {
     if (from === undefined || to === undefined) return undefined;
     const atAnchor = () => posToDOMRect(editor.prosemirrorView, from, to);
-    let scroller: HTMLElement | null | undefined;
+    let scroller: HTMLElement | null = null;
     const overlayRect = () => {
       const blockId = firstBlockIdRef.current;
       const block = blockId ? anchorBlockElement(editor.domElement, blockId) : null;
       const rect = block ? block.getBoundingClientRect() : atAnchor();
-      if (scroller === undefined || (scroller && !scroller.isConnected)) scroller = scrollParentOf(editor.domElement);
+      // 沒找到（手機上文件在捲）不記住：null 不快取，每次重找；跨 640 時 reference 跟著 `phone` 換新，找到的那一層也重找。
+      if (!scroller || !scroller.isConnected) scroller = scrollParentOf(editor.domElement);
       // 沒有會捲的祖先＝文件在捲（手機）：頂邊夾在釘在頂端的頁首下緣，不蓋頁首。
-      const clipTop = scroller ? scroller.getBoundingClientRect().top : stickyTopInset();
+      const clipTop = scroller ? scroller.getBoundingClientRect().top : phone ? stickyTopInset() : 0;
       return new DOMRect(rect.left, Math.max(rect.top, clipTop), rect.width, 0);
     };
     return {
       element: editor.domElement?.firstElementChild ?? undefined,
       getBoundingClientRect: () => (overlayRef.current ? overlayRect() : atAnchor()),
     };
-  }, [editor, from, to]);
+  }, [editor, from, to, phone]);
 
   const floatingOptions = useMemo<UseFloatingOptions>(() => {
     const maxHeight = size({

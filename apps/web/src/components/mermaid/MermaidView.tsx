@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { cachedMermaid, preloadMermaid, renderMermaid, type MermaidRenderResult, type MermaidTheme } from "@/lib/mermaid";
+import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -99,7 +100,8 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     if (hasSource) preloadMermaid();
   }, [hasSource]);
 
-  // #344 C：只在視窗附近才請求渲染。
+  // #344 C：只在視窗附近才請求渲染。捲動的那一層跨 640 會換（手機上是文件、640 起是內文容器），換段時重找 root。
+  const phone = useIsPhone();
   useEffect(() => {
     const el = rootRef.current;
     if (el === null || !hasIntersectionObserver()) return;
@@ -112,7 +114,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [phone]);
 
   // 要不要畫：在視窗附近就畫；不在附近時，只有「畫過、而且原始碼換了」才照常重畫。
   // **只換了主題**的遠處圖先留著舊主題的圖，等進到附近再重畫——換主題時畫面上的圖先換，

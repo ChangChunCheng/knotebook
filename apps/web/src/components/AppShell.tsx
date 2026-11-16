@@ -518,7 +518,11 @@ export function AppShell({ children, inert }: AppShellProps) {
     const memory = scrollMemoryRef.current;
     const target = enterPhoneScreen(memory, prev, next, canonicalizedFrom(settingsRouteRef.current.location.state) ?? null);
     if (target !== null) window.scrollTo(0, target);
-    const record = () => rememberPhoneScroll(memory, next, window.scrollY);
+    // 寬度剛越過 640、React 還沒換段時，文件會被夾回 0 並發出 scroll：那不是使用者的位置，不記（跨段的位置由
+    // `useTierScrollAnchor` 處理）。
+    const record = () => {
+      if (isPhone()) rememberPhoneScroll(memory, next, window.scrollY);
+    };
     record();
     window.addEventListener("scroll", record, { passive: true });
     return () => window.removeEventListener("scroll", record);
@@ -606,7 +610,7 @@ export function AppShell({ children, inert }: AppShellProps) {
       asideRef.current?.querySelector<HTMLElement>('[data-phone-fab="search"]')?.focus({ preventScroll: true });
       return;
     }
-    document.querySelector<HTMLElement>('main [data-phone-fab="search"]')?.focus({ preventScroll: true });
+    document.querySelector<HTMLElement>('[data-phone-fab-slot] [data-phone-fab="search"]')?.focus({ preventScroll: true });
   }, [searchOpen, onList, location.key]);
   // 搜尋框只在搜尋層開著時才掛上：先開搜尋層，等它掛上再聚焦。
   const focusSearchWhenOpenRef = useRef(false);
@@ -739,6 +743,9 @@ export function AppShell({ children, inert }: AppShellProps) {
   // 筆記頁底部浮動鈕用：開搜尋層（選取模式先結束，搜尋框才掛得上）與建立筆記。建立走 ref；物件只在搜尋層開關（`phoneSearchOpen`）時換新。
   const handleNewNoteRef = useRef(handleNewNote);
   handleNewNoteRef.current = handleNewNote;
+  // 筆記頁的浮動鈕掛在主內容區外面的這一格（portal）：筆記滑入時位移的是主內容區，fixed 的鈕若在裡面，
+  // 會改以整篇筆記為準定位、在長筆記滑入的那段時間跑到筆記最底下。
+  const [fabSlot, setFabSlot] = useState<HTMLElement | null>(null);
   const browseState = useMemo(
     () => ({
       openSearch: () => {
@@ -750,8 +757,9 @@ export function AppShell({ children, inert }: AppShellProps) {
       },
       createNote: (groupId?: string, folderId?: string) => handleNewNoteRef.current(groupId, folderId),
       searchOpen: phoneSearchOpen,
+      fabSlot,
     }),
-    [phoneSearchOpen],
+    [phoneSearchOpen, fabSlot],
   );
 
   const sidebarProps = {
@@ -912,6 +920,9 @@ export function AppShell({ children, inert }: AppShellProps) {
               {children}
             </main>
           </div>
+          {/* 筆記頁浮動鈕的掛載點：在外框（flex 列）外面，鈕的包層才不會變成 flex 項目、吃掉外框的 gap；
+              鈕都是 fixed，這一格本身沒有高度。跟外框一樣在簡報時 inert。 */}
+          <div ref={setFabSlot} data-phone-fab-slot="" inert={inert} />
           {/* 放在 inert 的 div 外面：portal 本來就在 body，放外面是讓閱讀者不必推理 inert。 */}
           <ShortcutsDialog
             open={shortcutsOpen}

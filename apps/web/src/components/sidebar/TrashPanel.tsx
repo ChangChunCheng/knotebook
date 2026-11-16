@@ -20,6 +20,7 @@ import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
 import { EmptyTrashDialog, PurgeConfirmDialog, toastTrashFailure, toastTrashResult } from "@/components/sidebar/trash-dialogs";
 import { TrashWideToolbar } from "@/components/sidebar/TrashFooter";
 import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/sidebar/phone-bar";
+import { usePhoneListScroll } from "@/components/sidebar/phone-list-scroll";
 
 /**
  * 垃圾桶 tab 的面板：`AppShell` 在 tab 為 `trash` 時放進 tabpanel，取代 `NoteList`。
@@ -197,6 +198,7 @@ export function TrashPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  usePhoneListScroll(listRef, headerRef);
   const emptyButtonRef = useRef<HTMLButtonElement>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);

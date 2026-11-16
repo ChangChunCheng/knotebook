@@ -1212,18 +1212,18 @@ input[name="share-access"] {
   animation: kn-anchor-mark 1.6s linear;
 }
 /* 手機：從清單點進筆記時，筆記畫面從右側滑入（只在 AppShell 判定為「清單 → 筆記的 PUSH」時加上這個 class）。
-   動的是 `left`（相對定位），不是 transform：手機上筆記撐高文件，transform 會讓筆記裡 fixed 的浮動鈕改以整篇筆記為準定位，
-   長筆記滑入的那 200ms 鈕會跑到筆記最底下、不在畫面上。滑入時的橫向溢出由 AppShell 外框的 overflow-x: clip 裁掉。 */
+   用 transform（合成層，不在主執行緒重排）。transform 會讓裡面 fixed 的元素改以這個元素為準定位，所以筆記頁的浮動鈕
+   不放在主內容區裡，而是 portal 到 AppShell 在主內容區外面留的一格（`data-phone-fab-slot`）。滑入時的橫向溢出由外框的
+   overflow-x: clip 裁掉。 */
 @keyframes kb-phone-enter {
   from {
-    left: 100%;
+    transform: translateX(100%);
   }
   to {
-    left: 0;
+    transform: translateX(0);
   }
 }
 .kb-phone-enter {
-  position: relative;
   animation: kb-phone-enter 200ms ease-out;
 }
 
@@ -1241,6 +1241,11 @@ input[name="share-access"] {
   [data-phone-page-scroll] .bn-block-outer,
   [data-phone-page-scroll] .bn-block-content {
     scroll-margin-top: var(--kb-sticky-top, 0px);
+  }
+  /* 清單列（連同列裡會拿到焦點的連結與按鈕）：鍵盤或螢幕閱讀器把焦點移過去時讓開釘住的頂列與標題列（下緣由清單量好寫在 --kb-list-sticky-top）。 */
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind],
+  [data-phone-page-scroll] [data-sidebar-list] [data-node-kind] * {
+    scroll-margin-top: var(--kb-list-sticky-top, 0px);
   }
   html:has([data-phone-list-shown]),
   html:has([data-phone-list-shown]) body,

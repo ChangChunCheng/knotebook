@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import { THEME_COLOR, ThemeProvider, useTheme } from "./theme";
+import { PHONE_THEME_COLOR, THEME_COLOR, ThemeProvider, useTheme } from "./theme";
+import { stubLayoutTier } from "@/test/layout-tier";
 
 const STORAGE_KEY = "knotebook:theme";
 const ACCENT_STORAGE_KEY = "knotebook:accent";
@@ -182,7 +183,9 @@ describe("ThemeProvider / useTheme", () => {
       },
     };
     const originalMatchMedia = window.matchMedia;
-    window.matchMedia = (() => fakeMql) as unknown as typeof window.matchMedia;
+    // 只有深淺查詢用這個假的；版面寬度的查詢（手機寬度另有 theme-color）一律不成立。
+    const wide = { matches: false, addEventListener: () => {}, removeEventListener: () => {} };
+    window.matchMedia = ((query: string) => (query.includes("prefers-color-scheme") ? fakeMql : wide)) as unknown as typeof window.matchMedia;
     const metas = ["light", "dark"].map((scheme) => {
       const meta = document.createElement("meta");
       meta.name = "theme-color";
@@ -397,6 +400,29 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
 
   it("THEME_COLOR 是淺 #f3f4f6／深 #0e1013", () => {
     expect(THEME_COLOR).toEqual({ light: "#f3f4f6", dark: "#0e1013" });
+  });
+
+  it("PHONE_THEME_COLOR 是 index.css 卡片色 --card 註解的 hex（淺／深）", () => {
+    const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8");
+    const cards = [...css.matchAll(/--card:\s*[^;]+;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1]!.toLowerCase());
+    expect(cards.slice(0, 2)).toEqual([PHONE_THEME_COLOR.light, PHONE_THEME_COLOR.dark]);
+  });
+
+  it("手機寬度（< 640）：兩個 meta 是卡片色（頁面與釘在頂端的頂列都是卡片色）；轉到 640 起換回頁底色，再轉回來又是卡片色", () => {
+    const tier = stubLayoutTier("phone", (query) => query.includes("dark"));
+    try {
+      window.localStorage.setItem(STORAGE_KEY, "dark");
+      renderProvider();
+      expectBoth(PHONE_THEME_COLOR.dark);
+      act(() => tier.setLayoutTier("overlay"));
+      expectBoth(THEME_COLOR.dark);
+      act(() => tier.setLayoutTier("phone"));
+      expectBoth(PHONE_THEME_COLOR.dark);
+      act(() => screen.getByRole("button", { name: "light" }).click());
+      expectBoth(PHONE_THEME_COLOR.light);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("系統淺色、app 選深色：兩個 meta 都是深色頁底色", () => {

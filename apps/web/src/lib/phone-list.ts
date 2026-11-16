@@ -22,6 +22,8 @@ export interface PhoneBrowseState {
   openSearch: () => void;
   /** 搜尋層是否開著（開著時筆記頁的浮動鈕不渲染）。 */
   searchOpen?: boolean;
+  /** 筆記頁浮動鈕的掛載點，在主內容區外面（主內容區滑入時會位移）；沒有就留在原處。 */
+  fabSlot?: HTMLElement | null;
   /** 建立筆記並導向（與清單底部的「New note」同一支）；錯誤已在內部 toast。 */
   createNote: (groupId?: string, folderId?: string) => Promise<void>;
 }

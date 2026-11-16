@@ -47,7 +47,7 @@ import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-c
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { useIsPhone } from "@/lib/layout-tiers";
-import { useStickyTopVar } from "@/lib/page-scroll";
+import { useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
 import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
@@ -435,6 +435,11 @@ export interface NoteEditorProps {
   pageUndoShortcut?: boolean;
 }
 
+/** 區塊自己那一行（不含巢狀子區塊）；量閱讀位置用。 */
+function blockLine(block: HTMLElement): Element {
+  return block.querySelector(":scope > .bn-block > .bn-block-content") ?? block;
+}
+
 /**
  * 編輯器建立時就固定下來的閉包要讀「當下」的 `t`（語言切換不重建編輯器），所以包一層 late-bound。
  * **必須轉傳 `opts`**：上傳 409 的說明句帶 `{{used}}`／`{{quota}}` 插值；丟掉它，真 app 會印出原樣佔位，
@@ -504,6 +509,15 @@ export function NoteEditor({
   );
   // 手機：寬表格右緣還能往右捲時的提示（不支援捲動驅動動畫的瀏覽器才需要；委派在捲動容器上）。
   useTableScrollHint(scrollRootRef, phone);
+  // 跨 640（轉橫拿）時保住閱讀位置：以畫面頂端第一個區塊（量它自己那一行）為準，兩邊的排版不同也停在同一段。
+  // 手機上的上緣直接量頁首（換段的這一刻 `--kb-sticky-top` 還沒寫好）。
+  useTierScrollAnchor({
+    containerRef: scrollRootRef,
+    itemSelector: ".bn-block-outer",
+    idAttr: "data-id",
+    measure: blockLine,
+    phoneTop: () => headerSlotRef.current?.getBoundingClientRect().height ?? 0,
+  });
   const hasPreviewRef = useRef(hasPreview);
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);

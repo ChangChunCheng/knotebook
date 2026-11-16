@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { PHONE_PAGE_SCROLL_ATTR, STICKY_TOP_VAR } from "@/lib/page-scroll";
+import { LIST_STICKY_TOP_VAR, PHONE_PAGE_SCROLL_ATTR, STICKY_TOP_VAR } from "@/lib/page-scroll";
 
 /**
  * 手機（< 640）上清單與筆記捲的是文件（`lib/page-scroll.ts`）。頁面層的樣式在 `index.css`：html／body 的底色、
@@ -54,11 +54,24 @@ describe("手機頁面捲動的頁面層樣式", () => {
     expect(outside).not.toContain("data-phone-list-shown");
   });
 
-  it("筆記滑入動的是 left（相對定位），不是 transform：transform 會讓筆記裡 fixed 的浮動鈕改以整篇筆記定位", () => {
+  it("筆記滑入動的是 transform（合成層），不動 left 之類會重排的屬性；浮動鈕不在滑動的元素裡（AppShell.page-scroll PS10）", () => {
     const frames = css.match(/@keyframes kb-phone-enter \{[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(frames).toMatch(/from \{\s*left:\s*100%;\s*\}/);
-    expect(frames).toMatch(/to \{\s*left:\s*0;\s*\}/);
-    expect(frames).not.toContain("transform");
-    expect(css).toMatch(/\.kb-phone-enter \{\s*position:\s*relative;\s*animation:\s*kb-phone-enter 200ms ease-out;/);
+    expect(frames).toMatch(/from \{\s*transform:\s*translateX\(100%\);\s*\}/);
+    expect(frames).toMatch(/to \{\s*transform:\s*translateX\(0\);\s*\}/);
+    expect(frames).not.toMatch(/\bleft:/);
+    expect(css).toMatch(/\.kb-phone-enter \{\s*animation:\s*kb-phone-enter 200ms ease-out;\s*\}/);
+  });
+
+  it("清單列（連同列裡的連結與按鈕）帶 scroll-margin-top＝清單量好的釘住高度，焦點移過去時讓開頂列與標題列", () => {
+    const rule = phoneRule([
+      `[${PHONE_PAGE_SCROLL_ATTR}] [data-sidebar-list] [data-node-kind]`,
+      `[${PHONE_PAGE_SCROLL_ATTR}] [data-sidebar-list] [data-node-kind] *`,
+    ]);
+    expect(rule).toMatch(new RegExp(`scroll-margin-top:\\s*var\\(${LIST_STICKY_TOP_VAR},\\s*0px\\);`));
+  });
+
+  it("簡報的投影片捲到頭尾不帶動背後的頁面（overscroll-behavior: contain）", () => {
+    const present = readFileSync(`${process.cwd()}/src/present/present.css`, "utf8").replaceAll("\r\n", "\n").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(present).toMatch(/\.kn-present \.reveal \.slides section\[data-kn-slide-id\] \{[^}]*overscroll-behavior:\s*contain;/);
   });
 });
