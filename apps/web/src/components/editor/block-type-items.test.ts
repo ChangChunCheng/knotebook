@@ -3,7 +3,8 @@ import { act } from "@testing-library/react";
 import { editorHasBlockWithType } from "@blocknote/core";
 import { blockTypeSelectItems } from "@blocknote/react";
 import { createTestEditor, placeCursor, renderAiHost, selectWholeBlocks, stubAiFetch, type AnyEditor } from "@/test/ai-host";
-import { P, textPos } from "@/test/columns-fixtures";
+import { collabUndoManager } from "@/collab/undo";
+import { P, mountEditor, textPos } from "@/test/columns-fixtures";
 import { applyBlockType, blockTypeItemsFor, currentBlockTypeIndex, targetBlocks } from "./block-type-items";
 
 const TABLE = { id: "t", type: "table", content: { type: "tableContent", rows: [{ cells: ["x", "y"] }, { cells: ["z", "w"] }] } } as never;
@@ -80,5 +81,27 @@ describe("block-type-items", () => {
     const actual = blockTypeItemsFor(editor);
     expect(actual.length).toBeGreaterThan(0);
     expect(actual.map((item) => [item.type, item.name])).toEqual(expected.map((item) => [item.type, item.name]));
+  });
+});
+
+describe("applyBlockType 的撤銷步（共編）", () => {
+  it("剛打完字就換類型：換類型自成一步，一次 undo 只還原類型、字還在", () => {
+    const cleanups: (() => void)[] = [];
+    const m = mountEditor([P("alice", "a"), P("bob", "b")], { collab: true });
+    cleanups.push(m.destroy);
+    const editor = m.editor;
+    const manager = collabUndoManager(editor)!;
+    expect(manager).toBeDefined();
+    editor.setTextCursorPosition("a", "end");
+    const view = editor.prosemirrorView!;
+    view.dispatch(view.state.tr.insertText("Q"));
+    const items = blockTypeItemsFor(editor);
+    const h1 = items.find((item) => item.type === "heading" && item.props?.level === 1)!;
+    act(() => applyBlockType(editor, h1, items));
+    expect(editor.getBlock("a")!.type).toBe("heading");
+    manager.undo();
+    expect(editor.getBlock("a")!.type).toBe("paragraph");
+    expect(JSON.stringify(editor.getBlock("a")!.content)).toContain("aliceQ");
+    cleanups.forEach((fn) => fn());
   });
 });

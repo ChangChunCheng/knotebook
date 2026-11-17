@@ -1,6 +1,7 @@
 import { editorHasBlockWithType } from "@blocknote/core";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { blockTypeSelectItems } from "@blocknote/react";
+import { asUndoStep } from "@/collab/columns/undo-step";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
 type AnyBlockNoteEditor = BlockNoteEditor<any, any, any>;
@@ -36,14 +37,16 @@ export function currentBlockTypeIndex(editor: AnyBlockNoteEditor, items: BlockTy
 }
 
 /**
- * 把 `item` 套用到目標區塊（選取，沒有選取就是游標所在的區塊），在同一個 transaction 內完成。
+ * 把 `item` 套用到目標區塊（選取，沒有選取就是游標所在的區塊），在同一個 transaction 內完成，且自成一個撤銷步（不跟前面的打字併在一起）。
  * 只改本身型別就在 `items` 裡的區塊；表格、程式碼區塊、圖片不動，不然內容會被清掉。
  */
 export function applyBlockType(editor: AnyBlockNoteEditor, item: BlockTypeItem, items: BlockTypeItem[]): void {
-  editor.transact(() => {
-    for (const block of targetBlocks(editor)) {
-      if (!items.some((candidate) => candidate.type === block.type)) continue;
-      editor.updateBlock(block, { type: item.type as never, props: item.props as never });
-    }
-  });
+  asUndoStep(editor, () =>
+    editor.transact(() => {
+      for (const block of targetBlocks(editor)) {
+        if (!items.some((candidate) => candidate.type === block.type)) continue;
+        editor.updateBlock(block, { type: item.type as never, props: item.props as never });
+      }
+    }),
+  );
 }
