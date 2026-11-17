@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AdminAiActionDto, AdminAiModelDto, AdminAiProviderDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { SettingsAiSection } from "./SettingsAiSection";
 
@@ -642,6 +643,162 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
       expect(body.sortOrder).not.toBe(ACTION_BUILTIN.sortOrder);
       expect(body).toHaveProperty("sortOrder");
     });
+  });
+
+  it("新增 action：模型下拉預設顯示 Auto，選某模型後送出的 body 帶該模型 id；套用模式選 Preview 後 body.applyMode 為 preview", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const res = defaultGetHandlers({ providers: [], models: [MODEL_A1, MODEL_B1], actions: [ACTION_CUSTOM] })(url, method);
+      if (res) return Promise.resolve(res);
+      if (url === "/api/admin/ai/actions" && method === "POST") {
+        return Promise.resolve(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ ...ACTION_CUSTOM, id: "a-new" }) }));
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    renderSection(fetchMock);
+
+    await waitFor(() => expect(screen.getByText(ACTION_CUSTOM.name)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Add action" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add action" });
+    const modelTrigger = within(dialog).getByLabelText("Model");
+    const applyTrigger = within(dialog).getByLabelText("Apply mode");
+
+    expect(selectedValue(modelTrigger)).toBe("");
+    expect(displayedLabel(modelTrigger)).toBe("Auto (prefers the default model)");
+    expect(selectedValue(applyTrigger)).toBe("direct");
+    expect(await optionLabels(modelTrigger)).toEqual(["Auto (prefers the default model)", "Claude Sonnet", "Llama 3"]);
+
+    await chooseOption(modelTrigger, "Llama 3");
+    expect(displayedLabel(modelTrigger)).toBe("Llama 3");
+    await chooseOption(applyTrigger, "Preview");
+    expect(selectedValue(applyTrigger)).toBe("preview");
+
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "New action" } });
+    fireEvent.change(within(dialog).getByLabelText("System prompt"), { target: { value: "You are helpful." } });
+    fireEvent.change(within(dialog).getByLabelText("User template"), { target: { value: "Do something with:\n{{text}}" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([reqUrl, reqInit]) => String(reqUrl) === "/api/admin/ai/actions" && (reqInit as RequestInit | undefined)?.method === "POST",
+      );
+      expect(call).toBeDefined();
+      const body = JSON.parse(String((call as [RequestInfo, RequestInit])[1].body)) as Record<string, unknown>;
+      expect(body.modelId).toBe(MODEL_B1.id);
+      expect(body.applyMode).toBe("preview");
+    });
+  });
+
+  it("編輯 action：選回 Auto 後送出 modelId 為 null", async () => {
+    const withModel: AdminAiActionDto = { ...ACTION_CUSTOM, modelId: MODEL_A1.id };
+    let patchBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const res = defaultGetHandlers({ providers: [], models: [MODEL_A1], actions: [withModel] })(url, method);
+      if (res) return Promise.resolve(res);
+      if (url === `/api/admin/ai/actions/${withModel.id}` && method === "PATCH") {
+        patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(withModel) }));
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    renderSection(fetchMock);
+
+    await waitFor(() => expect(screen.getByText(withModel.name)).toBeInTheDocument());
+    fireEvent.click(within(screen.getByRole("row", { name: withModel.name })).getByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit action" });
+    const modelTrigger = within(dialog).getByLabelText("Model");
+    expect(displayedLabel(modelTrigger)).toBe("Claude Sonnet");
+    await chooseOption(modelTrigger, "Auto (prefers the default model)");
+    expect(selectedValue(modelTrigger)).toBe("");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patchBody).toBeDefined());
+    expect(patchBody?.modelId).toBeNull();
+  });
+
+  it("編輯 action：模型清單較晚才到時，已存的模型不會被重設成 Auto，送出仍帶原模型 id", async () => {
+    const withModel: AdminAiActionDto = { ...ACTION_CUSTOM, modelId: MODEL_A1.id };
+    let releaseModels: () => void = () => {};
+    const modelsGate = new Promise<void>((resolve) => {
+      releaseModels = resolve;
+    });
+    let patchBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/admin/ai/models" && method === "GET") {
+        return modelsGate.then(() => fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ models: [MODEL_A1] }) }));
+      }
+      const res = defaultGetHandlers({ providers: [], models: [MODEL_A1], actions: [withModel] })(url, method);
+      if (res) return Promise.resolve(res);
+      if (url === `/api/admin/ai/actions/${withModel.id}` && method === "PATCH") {
+        patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(withModel) }));
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    renderSection(fetchMock);
+
+    await waitFor(() => expect(screen.getByText(withModel.name)).toBeInTheDocument());
+    fireEvent.click(within(screen.getByRole("row", { name: withModel.name })).getByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit action" });
+    const modelTrigger = within(dialog).getByLabelText("Model");
+    expect(selectedValue(modelTrigger)).toBe(MODEL_A1.id);
+
+    releaseModels();
+    await waitFor(() => expect(displayedLabel(modelTrigger)).toBe("Claude Sonnet"));
+    expect(selectedValue(modelTrigger)).toBe(MODEL_A1.id);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patchBody).toBeDefined());
+    expect(patchBody?.modelId).toBe(MODEL_A1.id);
+  });
+
+  it("新增與編輯供應商：類型下拉可選 OpenAI-compatible，送出的 type 為 openai_compatible", async () => {
+    let postBody: Record<string, unknown> | undefined;
+    let patchBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const res = defaultGetHandlers({ providers: [PROVIDER_A], models: [], actions: [] })(url, method);
+      if (res) return Promise.resolve(res);
+      if (url === "/api/admin/ai/providers" && method === "POST") {
+        postBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Promise.resolve(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ ...PROVIDER_A, id: "p-new" }) }));
+      }
+      if (url === `/api/admin/ai/providers/${PROVIDER_A.id}` && method === "PATCH") {
+        patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(PROVIDER_A) }));
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    renderSection(fetchMock);
+
+    await waitFor(() => expect(screen.getByText(PROVIDER_A.name)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    const addDialog = await screen.findByRole("dialog", { name: "Add provider" });
+    await chooseOption(within(addDialog).getByLabelText("Type"), "OpenAI-compatible");
+    fireEvent.change(within(addDialog).getByLabelText("Name"), { target: { value: "Local" } });
+    fireEvent.change(within(addDialog).getByLabelText("Base URL"), { target: { value: "http://host.example.com/v1" } });
+    fireEvent.click(within(addDialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(postBody).toBeDefined());
+    expect(postBody?.type).toBe("openai_compatible");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add provider" })).toBeNull());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    const editDialog = await screen.findByRole("dialog", { name: "Edit provider" });
+    const editType = within(editDialog).getByLabelText("Type");
+    expect(displayedLabel(editType)).toBe("Anthropic");
+    await chooseOption(editType, "OpenAI-compatible");
+    fireEvent.click(within(editDialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patchBody).toBeDefined());
+    expect(patchBody?.type).toBe("openai_compatible");
   });
 
   it("上下移鈕：PATCH sortOrder 對調", async () => {

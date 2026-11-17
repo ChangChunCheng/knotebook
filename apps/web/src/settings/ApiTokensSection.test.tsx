@@ -12,6 +12,7 @@ import { MemoryRouter } from "react-router";
 import { OAUTH_APP_IDLE_DAYS, type ApiTokenDto, type UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption } from "@/test/ui-select";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
@@ -277,7 +278,10 @@ describe("ApiTokensSection", () => {
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
     fireEvent.change(screen.getByLabelText(i18n.t("settings.account.apiTokensNameLabel")), { target: { value: "New" } });
     fireEvent.click(screen.getByRole("switch",{ name: i18n.t("settings.account.apiTokensScopeEdit") }));
-    fireEvent.change(screen.getByLabelText(i18n.t("settings.account.apiTokensExpiryLabel")), { target: { value: "90" } });
+    await chooseOption(
+      screen.getByLabelText(i18n.t("settings.account.apiTokensExpiryLabel")),
+      i18n.t("settings.account.apiTokensExpiryDays", { days: 90 }),
+    );
     fireEvent.click(screen.getByRole("button", { name: i18n.t("settings.account.apiTokensSubmit") }));
 
     const field = await screen.findByLabelText(i18n.t("settings.account.apiTokensValueLabel"));

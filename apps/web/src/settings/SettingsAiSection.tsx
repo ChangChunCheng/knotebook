@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { AdminAiActionDto, AdminAiModelDto, AdminAiProviderDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
+import { Select } from "@/components/ui/select";
 import {
   useAdminAiActions,
   useAdminAiModels,
@@ -47,10 +48,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   }
   return t("errors.fallback");
 }
-
-const SELECT_CLASS =
-  "h-8 w-full rounded-md border border-input bg-background px-3 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const TEXTAREA_CLASS =
   "flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm pointer-coarse:text-base shadow-sm transition-colors " +
@@ -145,15 +142,17 @@ function CreateProviderDialog() {
             <label htmlFor="ai-provider-type" className="text-sm font-medium">
               {t("settings.ai.providerType")}
             </label>
-            <select
+            <Select
+              variant="field"
               id="ai-provider-type"
+              className="w-full"
               value={type}
-              onChange={(event) => setType(event.target.value as AdminAiProviderDto["type"])}
-              className={SELECT_CLASS}
-            >
-              <option value="anthropic">{t("settings.ai.providerTypeAnthropic")}</option>
-              <option value="openai_compatible">{t("settings.ai.providerTypeOpenAiCompatible")}</option>
-            </select>
+              onValueChange={(next) => setType(next as AdminAiProviderDto["type"])}
+              options={[
+                { value: "anthropic", label: t("settings.ai.providerTypeAnthropic") },
+                { value: "openai_compatible", label: t("settings.ai.providerTypeOpenAiCompatible") },
+              ]}
+            />
           </div>
 
           <div className="space-y-1">
@@ -278,15 +277,17 @@ function EditProviderDialog({ provider }: { provider: AdminAiProviderDto }) {
             <label htmlFor={`ai-provider-edit-type-${provider.id}`} className="text-sm font-medium">
               {t("settings.ai.providerType")}
             </label>
-            <select
+            <Select
+              variant="field"
               id={`ai-provider-edit-type-${provider.id}`}
+              className="w-full"
               value={type}
-              onChange={(event) => setType(event.target.value as AdminAiProviderDto["type"])}
-              className={SELECT_CLASS}
-            >
-              <option value="anthropic">{t("settings.ai.providerTypeAnthropic")}</option>
-              <option value="openai_compatible">{t("settings.ai.providerTypeOpenAiCompatible")}</option>
-            </select>
+              onValueChange={(next) => setType(next as AdminAiProviderDto["type"])}
+              options={[
+                { value: "anthropic", label: t("settings.ai.providerTypeAnthropic") },
+                { value: "openai_compatible", label: t("settings.ai.providerTypeOpenAiCompatible") },
+              ]}
+            />
           </div>
 
           <div className="space-y-1">
@@ -821,14 +822,17 @@ function ModelSelectField({
 }) {
   const { t } = useTranslation();
   return (
-    <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className={SELECT_CLASS}>
-      <option value="">{t("settings.ai.modelAuto")}</option>
-      {models.map((model) => (
-        <option key={model.id} value={model.id}>
-          {model.displayName}
-        </option>
-      ))}
-    </select>
+    <Select
+      variant="field"
+      id={id}
+      className="w-full"
+      value={value}
+      onValueChange={onChange}
+      options={[
+        { value: "", label: t("settings.ai.modelAuto") },
+        ...models.map((model) => ({ value: model.id, label: model.displayName })),
+      ]}
+    />
   );
 }
 
@@ -937,15 +941,17 @@ function CreateActionDialog({ models, nextSortOrder }: { models: AdminAiModelDto
             <label htmlFor="ai-action-apply-mode" className="text-sm font-medium">
               {t("settings.ai.actionApplyMode")}
             </label>
-            <select
+            <Select
+              variant="field"
               id="ai-action-apply-mode"
+              className="w-full"
               value={applyMode}
-              onChange={(event) => setApplyMode(event.target.value as AdminAiActionDto["applyMode"])}
-              className={SELECT_CLASS}
-            >
-              <option value="direct">{t("settings.ai.actionApplyModeDirect")}</option>
-              <option value="preview">{t("settings.ai.actionApplyModePreview")}</option>
-            </select>
+              onValueChange={(next) => setApplyMode(next as AdminAiActionDto["applyMode"])}
+              options={[
+                { value: "direct", label: t("settings.ai.actionApplyModeDirect") },
+                { value: "preview", label: t("settings.ai.actionApplyModePreview") },
+              ]}
+            />
           </div>
 
           <div className="space-y-1">
@@ -1077,15 +1083,17 @@ function EditActionDialog({ action, models }: { action: AdminAiActionDto; models
               <label htmlFor={`ai-action-edit-apply-mode-${action.id}`} className="text-sm font-medium">
                 {t("settings.ai.actionApplyMode")}
               </label>
-              <select
+              <Select
+                variant="field"
                 id={`ai-action-edit-apply-mode-${action.id}`}
+                className="w-full"
                 value={applyMode}
-                onChange={(event) => setApplyMode(event.target.value as AdminAiActionDto["applyMode"])}
-                className={SELECT_CLASS}
-              >
-                <option value="direct">{t("settings.ai.actionApplyModeDirect")}</option>
-                <option value="preview">{t("settings.ai.actionApplyModePreview")}</option>
-              </select>
+                onValueChange={(next) => setApplyMode(next as AdminAiActionDto["applyMode"])}
+                options={[
+                  { value: "direct", label: t("settings.ai.actionApplyModeDirect") },
+                  { value: "preview", label: t("settings.ai.actionApplyModePreview") },
+                ]}
+              />
             </div>
           )}
 
