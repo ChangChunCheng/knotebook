@@ -18,7 +18,7 @@ Three non-negotiables:
 
 It runs as one app container and a PostgreSQL database with `docker compose`, from prebuilt images for linux/amd64 and linux/arm64. The web app is in English and Traditional Chinese, with light and dark themes.
 
-**Status:** the latest release is v0.16.0 (2026-11-17). Every version and its files are on [Releases](https://github.com/sw-willie-wu/knotebook/releases); what changed, and what is on `main` but not released yet, is in the [CHANGELOG](CHANGELOG.md).
+**Status:** the latest release is v0.17.0 (2026-11-18). Every version and its files are on [Releases](https://github.com/sw-willie-wu/knotebook/releases); what changed, and what is on `main` but not released yet, is in the [CHANGELOG](CHANGELOG.md).
 
 ## Screenshots
 
@@ -42,7 +42,7 @@ On a phone, the note list is the home screen and a note opens over it:
 - **Side-by-side columns** — rows of two to four columns, made with `/grid` or by dragging a block beside another, resized by dragging the divider ([Side-by-side columns](docs/columns.md)).
 - **Diagrams** — Mermaid diagrams, stored as their source text, drawn in the note, and zoomable full screen ([Diagrams](docs/diagrams.md)).
 - **Note width** — Standard, Wide or Full width, per note.
-- **Heading outline** — a thin line on the right of a note with one tick per heading (H1 to H3); hover or tap it to see the headings, and click one to jump to it. When the window is wide enough to leave a comfortable text column next to it, the outline can be pinned open beside the text. On a phone or a narrow window (below 768px), a bubble showing where you are appears while you scroll and opens the list; in a note's ⋮ menu, **Heading outline** opens it too (shared public pages have no ⋮ menu).
+- **Heading outline** — a thin line on the right of a note with one tick per heading (H1 to H3); hover or tap it to see the headings, and click one to jump to it. When the window is wide enough to leave a comfortable text column next to it, the outline of a Standard-width note can be pinned open beside the text. On a phone or a narrow window (below 768px), a bubble showing where you are appears while you scroll and opens the list; in a note's ⋮ menu, **Heading outline** opens it too (shared public pages have no ⋮ menu).
 - **Version history** — versions saved automatically after a pause in editing, or by hand; preview one, compare two side by side, and apply an older one ([Version history](docs/versions.md)).
 - **Presentation mode** — play a note as a slide show whose slides are its headings, from the note or from its public link.
 - **Search** — the sidebar finds notes by title and body text and opens a note at the matching section; the REST API and MCP search the same way ([API](docs/api.md), [MCP](docs/mcp.md#search_notes)).
