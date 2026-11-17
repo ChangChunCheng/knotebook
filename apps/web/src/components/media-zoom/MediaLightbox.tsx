@@ -73,7 +73,7 @@ function withFreshRootId(svg: string): string {
 }
 
 /**
- * 圖片與 mermaid 圖的全螢幕放大畫面（#462）。只經 `MediaZoomProvider` 的 `lazy()` 載入。
+ * 圖片與 mermaid 圖的全螢幕放大畫面（#462）。只經 `lightbox-chunk.ts` 的動態 `import()` 載入（`MediaZoomProvider` 的 `lazy()` 與預取共用）。
  *
  * 縮放改寬高而不是 `transform: scale()`：transform 會用點陣快照放大，SVG 會糊；只有平移用 `translate`。
  */
@@ -308,16 +308,21 @@ export function MediaLightbox({
     source.kind === "image" ? source.caption || source.alt || t("note.zoom.imageTitle") : t("note.zoom.diagramTitle");
   const caption = source.kind === "image" ? source.caption : "";
 
+  // 內容比視窗大（任一軸）才拖得動：游標是 grab／grabbing；剛好放得下就維持預設游標。
+  // 指標被捕捉在視窗元素上，所以視窗本身也要帶同一個游標，背板與邊緣才與內容上一致。
+  const canPan =
+    geo !== null &&
+    (natural.width * geo.view.scale > geo.viewport.width + 0.5 || natural.height * geo.view.scale > geo.viewport.height + 0.5);
+  const panCursor = canPan ? (dragging ? "grabbing" : "grab") : undefined;
+
   let content: JSX.Element | null = null;
   if (geo !== null) {
     const { scale, offset } = geo.view;
-    // 內容比視窗大（任一軸）才拖得動：游標是 grab／grabbing；剛好放得下就維持預設游標。
-    const canPan = natural.width * scale > geo.viewport.width + 0.5 || natural.height * scale > geo.viewport.height + 0.5;
     const style = {
       width: `${natural.width * scale}px`,
       height: `${natural.height * scale}px`,
       transform: `translate(${offset.x}px, ${offset.y}px)`,
-      ...(canPan ? { cursor: dragging ? "grabbing" : "grab" } : {}),
+      ...(panCursor !== undefined ? { cursor: panCursor } : {}),
     };
     // 內容坐在跟筆記裡一樣的卡面（`bg-card`，編輯器的底色）上：mermaid 的淺色主題用深灰畫線與字、根元素沒有底色，
     // 直接放在半透明黑背板上會看不見；圖片的卡面只會從透明像素透出來。
@@ -367,6 +372,7 @@ export function MediaLightbox({
             ref={setViewportNode}
             data-zoom-viewport=""
             className="absolute inset-0 touch-none select-none overflow-hidden"
+            style={panCursor !== undefined ? { cursor: panCursor } : undefined}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

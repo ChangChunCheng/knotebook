@@ -13,6 +13,7 @@ afterEach(cleanup);
 
 describe("LightboxFallback", () => {
   it("一渲染就有對話框、依原尺寸比例的灰塊與關閉鈕，焦點在關閉鈕", () => {
+    vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(1024);
     const { container } = render(<LightboxFallback source={SOURCE} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "bob.png" })).toBeInTheDocument();
     // 掛在 body 下（portal），不在 render 的容器裡；比例與「符合視窗」算法一致（jsdom 視窗 1024×768：400×200 不放大）。
@@ -37,5 +38,17 @@ describe("LightboxFallback", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(dialog);
     expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it("Tab 不離開關閉鈕", () => {
+    render(<LightboxFallback source={SOURCE} onClose={() => {}} />);
+    const close = screen.getByRole("button", { name: "Close" });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
   });
 });
