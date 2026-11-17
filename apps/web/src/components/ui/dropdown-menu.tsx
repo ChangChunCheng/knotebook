@@ -188,8 +188,8 @@ type MenuContentProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Co
 /** 選單內容的表面（背景、邊框、圓角、陰影、內距）；其他浮動面板要同款外觀時共用。 */
 export const MENU_CONTENT_BASE = "z-50 min-w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
 
-/** 選單項一列的外觀（內距、字級、圓角、焦點／懸停高亮、無外框）；其他列表項要同款外觀時共用。 */
-export const MENU_ITEM_BASE =
+/** 選單項一列的外觀（內距、字級、圓角、焦點高亮、無外框）。 */
+const MENU_ITEM_BASE =
   "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
 

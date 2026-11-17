@@ -78,8 +78,8 @@ export function OutlineList({ headings, activeId, onSelect, focusActiveOnMount, 
               }}
               className={cn(
                 // Rows look and react like the sidebar's note rows: brand tint on hover, a stronger one while pressed,
-                // the browser's own focus ring for the keyboard.
-                "block w-full rounded-md py-1 pr-2 pointer-coarse:py-2.5 text-left text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
+                // an inset focus outline for the keyboard (an outer one would be clipped by the scrolling list).
+                "block w-full rounded-md py-1 pr-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring pointer-coarse:py-2.5 text-left text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
                 INDENT[h.level],
                 active ? "bg-brand-soft font-medium text-brand-on-soft hover:bg-brand-soft-strong" : "text-foreground",
               )}

@@ -36,11 +36,21 @@ describe("outlinePlacement", () => {
   it("puts rail and panel at the same left edge in a wide container", () => {
     const p = outlinePlacement(2000, 1528);
     expect(p.railLeft).toBe(1946);
-    expect(p.panelLeft).toBe(1544);
+    // The panel is moved right to cover the rail; the pinned panel stays beside the column.
+    expect(p.panelLeft).toBe(1730);
+    expect(p.pinnedPanelLeft).toBe(1544);
   });
 
   it("never gives a negative panel left", () => {
     expect(outlinePlacement(200, 190).panelLeft).toBe(0);
+  });
+});
+
+describe("panel covers the rail", () => {
+  it.each([[800, 790], [1072, 991.5], [1360, 1092], [2000, 1528], [3000, 1528]])("width %i column %f", (w, col) => {
+    const p = outlinePlacement(w, col);
+    expect(p.panelLeft).toBeLessThanOrEqual(p.railLeft);
+    expect(p.panelLeft + 240).toBeGreaterThanOrEqual(p.railLeft + 24);
   });
 });
 

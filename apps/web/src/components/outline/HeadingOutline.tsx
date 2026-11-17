@@ -254,9 +254,9 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
           className={cn(
             MENU_CONTENT_BASE,
             "pointer-events-auto absolute z-auto flex flex-col outline-none",
-            // Pinned: part of the page at rest; the menu surface fades in while the pointer is over it.
+            // Pinned: part of the page at rest; the menu surface fades in while the pointer is over it or focus is inside.
             pinned &&
-              "group/pin border-transparent bg-transparent shadow-none transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none hover:border-border hover:bg-popover hover:shadow-md",
+              "group/pin border-transparent bg-transparent shadow-none transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none hover:border-border hover:bg-popover hover:shadow-md focus-within:border-border focus-within:bg-popover focus-within:shadow-md",
           )}
           style={{ top: 0, left: pinned ? placement.pinnedPanelLeft : placement.panelLeft, width: OUTLINE_PANEL_WIDTH, maxHeight }}
         >

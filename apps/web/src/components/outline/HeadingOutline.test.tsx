@@ -63,7 +63,7 @@ describe("HeadingOutline surface", () => {
     setup({ pinned: true });
     expect(panel()).toHaveClass("bg-transparent", "border-transparent", "shadow-none", "rounded-md");
     expect(panel()).not.toHaveClass("bg-popover", "border-border", "shadow-md");
-    expect(panel()).toHaveClass("hover:bg-popover", "hover:border-border", "hover:shadow-md", "motion-reduce:transition-none");
+    expect(panel()).toHaveClass("hover:bg-popover", "hover:border-border", "hover:shadow-md", "focus-within:bg-popover", "focus-within:border-border", "focus-within:shadow-md", "motion-reduce:transition-none");
   });
 
   it("pinned panel hides the pin button until hover or focus, but keeps it reachable without hover", () => {

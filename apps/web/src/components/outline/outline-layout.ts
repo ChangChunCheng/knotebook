@@ -30,7 +30,9 @@ export interface OutlinePlacement {
 }
 
 /**
- * 細線固定在版本泡泡正上方的直欄（見 `railLeft`）；浮動面板緊貼內文欄右緣外側，放不下時退到容器右緣內側（會蓋在內文上）。
+ * 細線固定在版本泡泡正上方的直欄（見 `railLeft`）：跟著捲動區可視寬度的右緣走（版本面板靠右展開時卡片變窄、細線隨之左移），
+ * 除此之外沒有任何面板的開關會移動它。浮動面板緊貼內文欄右緣外側，放不下時退到容器右緣內側（會蓋在內文上）；
+ * 而且一定蓋住細線（寬容器裡右移到細線處），指標從細線進面板不會經過空隙。
  *
  * 釘住的面板同樣在欄右側一個間距處，但右緣不超過「容器右緣 − 半份餘量」。釘住的欄
  * （`ui/article-column.ts` 的 `standard-pinned`）右緣離容器右緣至少 面板＋間距＋半份餘量，
@@ -44,7 +46,9 @@ export function outlinePlacement(containerWidth: number, columnRight: number): O
   // （捲軸槽已不在可視寬度內）。與泡泡是否顯示、版本面板與大綱面板是否開著都無關。
   const bubbleCenter = W - CORNER_STACK_RIGHT_INSET_PX - CORNER_STACK_SIZE_PX / 2;
   const railLeft = Math.min(bubbleCenter - OUTLINE_RAIL_WIDTH / 2, W - OUTLINE_EDGE_INSET - OUTLINE_RAIL_WIDTH);
-  const panelLeft = next + OUTLINE_PANEL_WIDTH > W - OUTLINE_EDGE_INSET ? Math.max(0, W - OUTLINE_EDGE_INSET - OUTLINE_PANEL_WIDTH) : next;
+  const besideColumn = next + OUTLINE_PANEL_WIDTH > W - OUTLINE_EDGE_INSET ? Math.max(0, W - OUTLINE_EDGE_INSET - OUTLINE_PANEL_WIDTH) : next;
+  // The panel always covers the rail, so the pointer never crosses a gap that would start the close timer.
+  const panelLeft = Math.max(besideColumn, railLeft + OUTLINE_RAIL_WIDTH - OUTLINE_PANEL_WIDTH);
   const pinnedPanelLeft = Math.min(next, W - OUTLINE_PIN_SLACK / 2 - OUTLINE_PANEL_WIDTH);
   return { railLeft, panelLeft, pinnedPanelLeft };
 }

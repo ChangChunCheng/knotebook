@@ -31,7 +31,8 @@ describe("OutlineList", () => {
   it("reacts like a sidebar note row and draws no custom focus frame", () => {
     render(<OutlineList headings={headings} activeId="a" onSelect={() => {}} />);
     expect(item("b")).toHaveClass("rounded-md", "hover:bg-brand-soft", "hover:text-brand-on-soft", "active:bg-brand-soft-strong");
-    expect(item("b").className).not.toMatch(/ring|outline-none|hover:bg-accent/);
+    expect(item("b")).toHaveClass("focus-visible:outline-2", "focus-visible:-outline-offset-2", "focus-visible:outline-ring");
+    expect(item("b").className).not.toMatch(/ring-|outline-none|hover:bg-accent/);
   });
 
   it("marks the current section with the sidebar's open-note row tint", () => {
