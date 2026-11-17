@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { getFormattingToolbarItems, useBlockNoteEditor, useComponentsContext, useEditorState } from "@blocknote/react";
 import { Sparkles } from "@/components/ui/icons";
+import { KnotebookBlockTypeSelect } from "@/components/editor/KnotebookBlockTypeSelect";
 import { KnotebookFileDeleteButton } from "@/components/editor/KnotebookFileDeleteButton";
 import { KnotebookColorStyleButton } from "@/components/editor/colors/KnotebookColorStyleButton";
 import { useAiSession } from "./AiSession";
@@ -16,6 +17,7 @@ import { useAiSession } from "./AiSession";
  *
  * 預設按鈕中的檔案刪除鈕（key `fileDeleteButton`）換成自家版：原生的走 `editor.removeBlocks`，刪欄內的圖會收欄。
  * 顏色鈕（key `colorStyleButton`）也換成自家版：10 種內建色之外每段多一個「自訂…」，可套任意色碼（#378）。
+ * 區塊類型選單（key `blockTypeSelect`）也換成自家版：多區塊選取時只改本身是選單項目類型的區塊，表格、圖片等不在選單內的區塊不被清空（#464）。
  */
 export function AiToolbar() {
   const Components = useComponentsContext()!;
@@ -34,6 +36,8 @@ export function AiToolbar() {
           <KnotebookFileDeleteButton key="fileDeleteButton" />
         ) : el.key === "colorStyleButton" ? (
           <KnotebookColorStyleButton key="colorStyleButton" />
+        ) : el.key === "blockTypeSelect" ? (
+          <KnotebookBlockTypeSelect key="blockTypeSelect" />
         ) : (
           el
         ),

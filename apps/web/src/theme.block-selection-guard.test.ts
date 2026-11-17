@@ -20,7 +20,7 @@ function selectionRule(): { selectors: string[]; body: string } {
   const css = readIndexCss();
   // 全檔掃描而不是只取第一條：日後若有人在前面又加一條 selectednode 規則，
   // 只取第一條的寫法會改去驗那條、對真正的覆寫規則失去鑑別力。
-  const matches = [...css.matchAll(/([^}]*ProseMirror-selectednode[^{}]*)\{([^}]*)\}/g)];
+  const matches = [...css.matchAll(/([^}]*ProseMirror-selectednode[^{}]*)\{([^}]*)\}/g)].filter((m) => /outline/.test(m[2]!));
   expect(matches, "index.css 應**只有一條** ProseMirror-selectednode 的覆寫規則").toHaveLength(1);
   const match = matches[0]!;
   return {
@@ -46,6 +46,22 @@ describe("block 選取外框覆寫", () => {
     }
   });
 
+  it("只在焦點還在編輯器容器內才上色：預設透明，`.bn-container:focus-within` 才把變數設成主題色（失焦後不留外框，也不退回內建亮藍）", () => {
+    const { body } = selectionRule();
+    expect(body).toMatch(/outline:\s*2px solid var\(--kb-node-frame,\s*transparent\)/);
+    const css = readIndexCss();
+    expect(css).toMatch(/\.bn-container:focus-within\s*\{[^}]*--kb-node-frame:\s*var\(--color-brand\)/);
+  });
+
+  it("檔案 block 選取時的檔名底色：失焦後蓋回透明，hover 不受影響", () => {
+    const css = readIndexCss();
+    const rule = css.match(/([^{}]*ProseMirror-selectednode[^{}]*bn-file-name-with-icon[^{}]*)\{([^}]*)\}/);
+    expect(rule, "少了檔名底色的失焦規則").not.toBeNull();
+    expect(rule![1]).toMatch(/\.bn-container:not\(:focus-within\)\s+\.bn-editor\s/);
+    expect(rule![1]).toContain(":not(:hover)");
+    expect(rule![2]).toMatch(/background-color:\s*transparent/);
+  });
+
   it("套用到所有 block，不綁單一 block 型別", () => {
     for (const selector of selectionRule().selectors) {
       expect(selector, `選取外框要全 app 統一，不該只挑某種 block：${selector}`).not.toContain("[data-content-type");
@@ -54,7 +70,7 @@ describe("block 選取外框覆寫", () => {
 
   it("外框用主題色 token、且外框本身不得被移除（選取態要看得見）", () => {
     const { body } = selectionRule();
-    expect(body).toContain("var(--color-brand)");
+    expect(readIndexCss()).toContain("--kb-node-frame: var(--color-brand)");
     expect(body).not.toMatch(/outline:\s*none/);
     expect(body, "不該把 BlockNote 寫死的藍抄過來").not.toContain("#64a0ff");
   });

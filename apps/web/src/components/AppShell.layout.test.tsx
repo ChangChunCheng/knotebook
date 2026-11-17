@@ -6,6 +6,7 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { SIDEBAR_WIDTH_DEFAULT } from "@/components/sidebar-width";
 
 interface FakeResponseInit {
   ok: boolean;
@@ -96,9 +97,9 @@ describe("AppShell 版面 smoke", () => {
     const aside = root?.querySelector("aside");
     expect(aside).not.toBeNull();
     expect(aside).toHaveClass("relative", "hidden", "shrink-0", "xl:flex", "xl:flex-col");
-    // 寬度改 inline style（可拖曳），不再是 `w-64`；未存過寬度＝預設 256。
+    // 寬度改 inline style（可拖曳），不再是 `w-64`；未存過寬度＝預設寬度。
     expect(aside).not.toHaveClass("w-64");
-    expect(aside?.style.width).toBe("256px");
+    expect(aside?.style.width).toBe(`${SIDEBAR_WIDTH_DEFAULT}px`);
   });
 
   // K logo 與新增筆記鈕跟主題色。K 的 <span> 是 aria-hidden——getByText 不受

@@ -26,13 +26,13 @@ const ZH_DELETE = zh.settings.account.apiTokensScopeDelete!;
 describe("#239 W3", () => {
   it("標籤字面值", () => {
     expect(EDIT).toBe("Create and edit notes");
-    expect(MOVE).toBe("Move or copy notes into groups");
-    expect(DELETE).toBe("Move notes to the trash and restore them");
+    expect(MOVE).toBe("Move to groups (can't be undone)");
+    expect(DELETE).toBe("Move to trash (can be restored)");
   });
   it("模型面字串引用的名稱與標籤逐字一致", () => {
-    expect(COPY_NEEDS_MOVE_MESSAGE).toContain(`turn on "${MOVE}"`);
-    expect(MOVE_NEEDS_MOVE_MESSAGE).toContain(`turn on "${MOVE}"`);
-    expect(DELETE_SCOPE_MESSAGE).toContain(`turn on "${DELETE}"`);
+    expect(COPY_NEEDS_MOVE_MESSAGE).toContain(`turn on "${MOVE}" (notes:move)`);
+    expect(MOVE_NEEDS_MOVE_MESSAGE).toContain(`turn on "${MOVE}" (notes:move)`);
+    expect(DELETE_SCOPE_MESSAGE).toContain(`turn on "${DELETE}" (notes:delete)`);
     expect(INSUFFICIENT_SCOPE_MESSAGE).toContain(`"${EDIT}"`);
     expect(mcpInstructions(false, false)).toContain(`"${EDIT}"`);
     expect(mcpInstructions(false, true)).toContain(`"${EDIT}"`);
@@ -53,7 +53,8 @@ describe("#239 W3", () => {
 
 describe("#181 zh-TW 標籤與引用", () => {
   it("zh 標籤字面與說明句引用一致", () => {
-    expect(ZH_DELETE).toBe("移到垃圾桶與還原");
+    expect(ZH_MOVE).toBe("移到群組（無法復原）");
+    expect(ZH_DELETE).toBe("移到垃圾桶（可還原）");
     for (const l of [ZH_EDIT, ZH_MOVE, ZH_DELETE]) expect(zh.settings.account.apiTokensDescription).toContain(`「${l}」`);
     expect(zh.settings.account.apiTokensScopeMoveHint).toContain(`「${ZH_EDIT}」`);
   });

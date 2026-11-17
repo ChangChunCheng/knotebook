@@ -48,7 +48,7 @@ test.beforeAll(async ({ browser }) => {
   } finally {
     await adminCtx.close();
   }
-  // 1400 寬：E3 開版本面板時預覽自動並排（同 22），左欄就是那一版的內容。
+  // 桌面寬度的視窗（側欄固定顯示）。
   userCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   page = await userCtx.newPage();
   await loginAs(page, email, password);
