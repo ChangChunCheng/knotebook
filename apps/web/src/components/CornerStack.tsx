@@ -1,18 +1,33 @@
-import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { History } from "@/components/ui/icons";
 import { useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
-import { cn } from "@/lib/utils";
 import { tourTarget } from "@/lib/tour-targets";
 
 /**
- * 右下角泡泡容器。#263 起 AI 泡泡拿掉（改由框選 AI 框處理），容器裡只剩歷史泡泡；容器留著，因為定位與捲動淡出都掛在它上面。
+ * 滑鼠 hover 要看得出來：毛玻璃面的 hover／按下只差幾個百分點（給手機浮動鈕用，那裡 hover 無關緊要），
+ * 這顆泡泡在桌面上改成明顯變實，再加深一點陰影。放在同一個 class 字串最後，同變體的前一個值會被 twMerge 蓋掉。
+ * `hover:` 只在可 hover 的指標上生效（Tailwind 預設包在 `@media (hover: hover)`），觸控不受影響。
+ */
+const BUBBLE_HOVER = "hover:shadow-xl supports-[backdrop-filter]:hover:bg-card/80 supports-[backdrop-filter]:active:bg-card/90";
+
+/**
+ * 文章欄底部的留白（640 起）：泡泡佔捲動區下緣往上 12–60px 這一段，欄底多留 72px，捲到底時最後一行（含打字的那一行）
+ * 停在泡泡上緣之上、不被蓋住。640–767 的欄沒有額外的左右內距，文字會一路排到卡片右緣，最需要這段。
+ */
+export const BUBBLE_CLEARANCE = "sm:pb-[4.5rem]";
+
+/**
+ * 筆記右下角的歷史泡泡（< 640 沒有；那裡版本歷史在 ⋮ 選單）。
  *
- * 位置沿用 #115 的值：< 640 距右下 20px、640 起 24px。捲動淡出：scroll 不冒泡，掛 window 的 **capture** 監聽才收得到內文捲動容器；
- * 只在泡泡渲染時掛（effect guard 與渲染守門同一個條件）。鍵盤焦點落在泡泡上時強制現形。
- * 版本面板開著時泡泡不渲染，所以不再需要「讓到面板外側」的位移 class（那是 AI 泡泡與面板並存時才用得到）。
+ * 渲染在內文卡裡、捲動區與頁尾（提及列）之間：外層是零高度的定位基準，貼在捲動區的下緣，
+ * 泡泡再往上 12px、離右緣 24px（讓出捲軸）。這樣它釘在筆記區域的右下角、不隨內文捲走，也不會壓到下方的提及列，
+ * 不再落在視窗角落蓋到卡片外。三段筆記寬度與固定／浮動兩種版本面板都在同一張卡裡，位置一致。
+ * 毛玻璃面與手機浮動鈕同一份（`ui/frosted.ts`）。
+ *
+ * 只在兩種情形不渲染：沒有版本功能（唯讀檢視者）、版本面板開著（面板本身就是入口）。捲動時不淡出。
  */
 export function CornerStack() {
   const { t } = useTranslation();
@@ -20,48 +35,27 @@ export function CornerStack() {
   const phone = useIsPhone();
   // 手機（< 640）沒有泡泡；與 ⋮ 的「版本歷史」項讀同一個 `useIsPhone()`，同一寬度恰好一個入口。
   const showVersions = versions.enabled && !versions.panelOpen && !phone;
-
-  const [scrolling, setScrolling] = useState(false);
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => {
-    if (!showVersions) return;
-    const handleScroll = () => {
-      setScrolling(true);
-      clearTimeout(fadeTimerRef.current);
-      fadeTimerRef.current = setTimeout(() => setScrolling(false), 800);
-    };
-    window.addEventListener("scroll", handleScroll, { capture: true, passive: true });
-    return () => {
-      window.removeEventListener("scroll", handleScroll, { capture: true });
-      clearTimeout(fadeTimerRef.current);
-      setScrolling(false);
-    };
-  }, [showVersions]);
-
   if (!showVersions) return null;
 
   return (
-    <div
-      data-testid="corner-stack"
-      className={cn(
-        "fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] right-[calc(1.25rem+env(safe-area-inset-right))] z-30 flex flex-col-reverse gap-3",
-        "sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom))] sm:right-[calc(1.5rem+env(safe-area-inset-right))]",
-        "transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100",
-        scrolling && "pointer-events-none opacity-0",
-      )}
-    >
-      <Button
-        type="button"
-        variant="brand"
-        size="icon"
-        data-testid="versions-bubble"
-        {...tourTarget("versions")}
-        aria-label={t("versions.bubble")}
-        onClick={versions.open}
-        className="h-12 w-12 rounded-full border border-border shadow-lg"
+    <div data-testid="corner-anchor" className="pointer-events-none relative z-20 h-0 shrink-0">
+      <div
+        data-testid="corner-stack"
+        className="pointer-events-auto absolute bottom-3 right-6 flex flex-col-reverse gap-3"
       >
-        <History aria-hidden="true" className="h-5 w-5" />
-      </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          data-testid="versions-bubble"
+          {...tourTarget("versions")}
+          aria-label={t("versions.bubble")}
+          onClick={versions.open}
+          className={`h-12 w-12 rounded-full text-brand-on-soft hover:text-brand-on-soft ${FROSTED_SURFACE} ${BUBBLE_HOVER}`}
+        >
+          <History aria-hidden="true" className="h-5 w-5" />
+        </Button>
+      </div>
     </div>
   );
 }

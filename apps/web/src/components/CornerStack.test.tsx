@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import i18n from "@/i18n";
+import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { VersionsProvider, useVersions, useVersionsController } from "@/lib/versions-context";
 import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
 import { CornerStack } from "./CornerStack";
@@ -37,32 +38,23 @@ function renderStack(enabled: boolean) {
   );
 }
 
-const SHIFT = "md:right-[calc(20rem+2.25rem)]";
-
-describe("CornerStack（#263 起只剩歷史泡泡）", () => {
+describe("CornerStack（筆記右下角的歷史泡泡）", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("容器：fixed 右下（< 640 為 20px、640 起 24px）、由下往上排、z-30；唯一子項是歷史泡泡，沒有 AI 泡泡、沒有讓位 class", async () => {
+  it("容器：零高度錨點（relative、h-0）貼在捲動區下緣，堆疊 absolute 在錨點上方右側；不是 fixed、不吃 safe area；唯一子項是歷史泡泡", async () => {
     renderStack(true);
     const stack = await screen.findByTestId("corner-stack");
     expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble"]);
     expect(screen.queryByTestId("ai-bubble")).not.toBeInTheDocument();
-    // 20／24 px 之外再加 safe area（Home 指示條、橫拿時的側邊）。
-    expect(stack).toHaveClass(
-      "fixed",
-      "bottom-[calc(1.25rem+env(safe-area-inset-bottom))]",
-      "right-[calc(1.25rem+env(safe-area-inset-right))]",
-      "sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom))]",
-      "sm:right-[calc(1.5rem+env(safe-area-inset-right))]",
-      "flex",
-      "flex-col-reverse",
-      "gap-3",
-      "z-30",
-    );
-    expect(stack).not.toHaveClass(SHIFT);
+    expect(stack).toHaveClass("absolute", "bottom-3", "right-6", "flex", "flex-col-reverse", "gap-3");
+    expect(stack).not.toHaveClass("fixed");
+    expect(stack.className).not.toMatch(/safe-area|sm:right|sm:bottom/);
+    const anchor = screen.getByTestId("corner-anchor");
+    expect(anchor).toContainElement(stack);
+    expect(anchor).toHaveClass("relative", "h-0", "shrink-0", "z-20");
   });
 
   function installTier(tier: LayoutTier): (next: LayoutTier) => void {
@@ -75,6 +67,7 @@ describe("CornerStack（#263 起只剩歷史泡泡）", () => {
     renderStack(true);
     expect(screen.queryByTestId("versions-bubble")).not.toBeInTheDocument();
     expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
     setTier("overlay");
     expect(await screen.findByTestId("versions-bubble")).toBeInTheDocument();
     setTier("docked");
@@ -86,46 +79,38 @@ describe("CornerStack（#263 起只剩歷史泡泡）", () => {
   it("viewer（versions enabled=false）→ 整個容器不渲染", () => {
     renderStack(false);
     expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
-  it("歷史泡泡：brand icon 鈕同形、aria-label；點了開面板，開著時整個容器消失", async () => {
+  it("歷史泡泡：毛玻璃面（與手機浮動鈕同一份）、brand 圖示色、aria-label；點了開面板，開著時整個容器消失", async () => {
     renderStack(true);
     const bubble = await screen.findByTestId("versions-bubble");
     expect(bubble).toHaveAttribute("aria-label", "Version history");
-    expect(bubble).toHaveClass("h-12", "w-12", "rounded-full", "bg-brand-soft");
+    expect(bubble).toHaveClass("h-12", "w-12", "rounded-full", "text-brand-on-soft");
+    // 共用面的 token 都在（hover／按下的透明度由泡泡自己加深，見下）。
+    for (const token of FROSTED_SURFACE.split(" ").filter((c) => !/hover:bg-card|active:bg-card/.test(c))) expect(bubble).toHaveClass(token);
+    expect(bubble).toHaveClass("supports-[backdrop-filter]:backdrop-blur-xs", "supports-[backdrop-filter]:backdrop-saturate-150", "bg-card/95", "shadow-lg");
+    expect(bubble).not.toHaveClass("bg-brand-soft");
+    // 桌面 hover 明顯變實：只剩 /80（按下 /90），舊的 /30、/40 被合併掉；陰影加深。
+    expect(bubble).toHaveClass("supports-[backdrop-filter]:hover:bg-card/80", "supports-[backdrop-filter]:active:bg-card/90", "hover:shadow-xl");
+    expect(bubble).not.toHaveClass("supports-[backdrop-filter]:hover:bg-card/30", "supports-[backdrop-filter]:active:bg-card/40");
     fireEvent.click(bubble);
     expect(screen.getByTestId("panel-open")).toHaveTextContent("true");
     expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
-  it("捲動淡出掛在容器：capture 收內層捲動、800ms 後恢復；鍵盤焦點強制現形", async () => {
+  it("捲動時不淡出：任何捲動事件後容器沒有 opacity-0／pointer-events-none、沒有計時器", async () => {
     renderStack(true);
     const stack = await screen.findByTestId("corner-stack");
-    expect(stack).toHaveClass("focus-within:opacity-100", "focus-within:pointer-events-auto");
+    const anchor = screen.getByTestId("corner-anchor");
     vi.useFakeTimers();
     try {
       fireEvent.scroll(document.body);
-      expect(stack).toHaveClass("opacity-0", "pointer-events-none");
-      act(() => {
-        vi.advanceTimersByTime(799);
-      });
-      expect(stack).toHaveClass("opacity-0");
-      act(() => {
-        vi.advanceTimersByTime(1);
-      });
+      fireEvent.scroll(window);
       expect(stack).not.toHaveClass("opacity-0");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("淡出監聽的掛載條件：版本面板開著（容器不渲染）→ 不掛監聽，捲動不起計時器", async () => {
-    renderStack(true);
-    fireEvent.click(await screen.findByText("probe-open-versions"));
-    expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
-    vi.useFakeTimers();
-    try {
-      fireEvent.scroll(document.body);
+      expect(stack.className).not.toMatch(/opacity-0|transition-opacity|pointer-events-none/);
+      expect(anchor).not.toHaveClass("opacity-0");
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

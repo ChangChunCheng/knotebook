@@ -72,9 +72,9 @@ function stubFetch() {
  *             的 min-h-full 無法把百分比高度傳給孫層，必須讓 BlockNoteView 自己
  *             成為置中 wrapper 的成長項。**兩者都要斷言，缺一即假守衛**）
  *       {previewSlot}（有值時才渲染，data-testid="preview-slot"；此時捲動容器多一個 hidden）
+ *       CornerStack（歷史泡泡的零高度錨點，在卡內、頁尾之前；本檔無 provider＝不渲染）
  *       {footerSlot}
  *     VersionsPanel（panelOpen 時，經 VersionsLazyBoundary；本檔無 provider＝恆不渲染）
- *     CornerStack
  *
  * 這裡刻意掛**真正的** `<NoteEditor>`（不是 `NotePage.test.tsx`/`NoteEditorView.test.tsx`
  * 用的 mock 或只測 `NoteEditorView` 半層），驗證 `NoteEditor.tsx` 實際渲染出來的容器
@@ -159,6 +159,8 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       "flex-col",
       "py-6",
     );
+    // 640 起欄底多留 72px，捲到底時最後一行在歷史泡泡之上。
+    expect(centerWrapper).toHaveClass("sm:pb-[4.5rem]");
     // 雙層斷言（缺一即假守衛）：置中 wrapper 的 min-h-full/flex-col **與** BlockNoteView
     // 的 flex-1，兩者都要在——高度鏈只有兩者同時存在才成立。
     expect(editorRoot).toHaveClass("min-h-full", "flex-1");

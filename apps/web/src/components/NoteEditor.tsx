@@ -58,7 +58,7 @@ import { createUploadFile, type Translate } from "@/uploads/upload-file";
 import { createFilePanel } from "@/components/FilePanel";
 import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
-import { CornerStack } from "@/components/CornerStack";
+import { BUBBLE_CLEARANCE, CornerStack } from "@/components/CornerStack";
 import { useVersions } from "@/lib/versions-context";
 import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
 import { tourTarget } from "@/lib/tour-targets";
@@ -664,10 +664,10 @@ export function NoteEditor({
   //             wrapper 的 min-h-full 無法把百分比高度傳給孫層，唯一有效解是讓
   //             BlockNoteView 自己成為 flex-col wrapper 的成長項；除 className 外零改動）
   //       {previewSlot}                               ← 版本預覽時才渲染；此時上面的捲動容器加 hidden（活編輯器不 unmount）
+  //       CornerStack                                 ← 歷史泡泡：零高度錨點，貼在捲動區下緣、頁尾之上（不佔高度）
   //       {footerSlot}                                ← NotePage 組裝（backlinks chips）；手機改放進上面的捲動容器、置中 wrapper 之後（後面再接編輯工具列的空白）
   //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）；1280 起是第三欄，640-1279 是 absolute 浮在卡上，
   //                                                      兩段是同一個節點（不搬進卡片，跨 1280 才不重掛、不丟清單捲動位置）
-  //     CornerStack                                   ← 右下歷史泡泡（fixed，不佔 row 的 flex 空間）
   // `data-testid="note-editor"` 留在 `NoteEditorView`／`BlockNoteView` 上，不隨這次
   // 改版搬家——e2e 的 `[data-testid="note-editor"] [contenteditable]` 與
   // `NoteEditor.layout.test.tsx` 的節點鏈都吊在這裡。
@@ -724,7 +724,7 @@ export function NoteEditor({
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
+              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", BUBBLE_CLEARANCE, footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
             >
               <NoteEditorView
                 editor={editor}
@@ -763,6 +763,8 @@ export function NoteEditor({
               {previewSlot}
             </div>
           )}
+          {/* 歷史泡泡：零高度錨點貼在捲動區下緣（提及列之上），見 `CornerStack`。 */}
+          <CornerStack />
           {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
@@ -773,7 +775,6 @@ export function NoteEditor({
             </VersionsLazyBoundary>
           </div>
         )}
-        <CornerStack />
         {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`

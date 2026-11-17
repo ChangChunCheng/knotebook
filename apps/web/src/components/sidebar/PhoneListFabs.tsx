@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { PenLine, Search } from "@/components/ui/icons";
 import { tourTarget } from "@/lib/tour-targets";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
@@ -13,16 +14,8 @@ interface PhoneListFabsProps {
   newNotePending: boolean;
 }
 
-/**
- * 兩顆鈕共用的毛玻璃面：半透明卡片底加背景模糊、細框、陰影同 `CornerStack`。
- * 不支援 `backdrop-filter` 的瀏覽器退回幾乎不透明的底（沒有模糊，透明就會讓下面的字干擾圖示）。
- * 用 `ghost` 當底（沒有自帶的底色與框），hover 與按下只微調透明度，不換成 brand 實心。
- */
-const FROSTED =
-  "z-10 h-14 w-14 rounded-full border border-black/10 bg-card/95 dark:border-white/20 shadow-lg " +
-  "supports-[backdrop-filter]:bg-card/25 supports-[backdrop-filter]:backdrop-blur-xs supports-[backdrop-filter]:backdrop-saturate-150 " +
-  "hover:bg-card/95 supports-[backdrop-filter]:hover:bg-card/30 " +
-  "active:bg-card/95 supports-[backdrop-filter]:active:bg-card/40";
+/** 兩顆鈕共用的毛玻璃面（與寬視窗的歷史泡泡同一份，見 `ui/frosted.ts`），加上 56px 圓形與層級。 */
+const FROSTED = `z-10 h-14 w-14 rounded-full ${FROSTED_SURFACE}`;
 
 /**
  * 手機清單與筆記畫面底部的兩顆圓形毛玻璃浮動鈕（各 56px）：左下「Search」、右下「New note」（筆圖示、brand 色），距邊 16px 加 safe area。

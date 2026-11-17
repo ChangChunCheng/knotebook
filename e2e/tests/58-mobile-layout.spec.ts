@@ -1792,6 +1792,133 @@ test("58-26 寬螢幕（1280×800）：頁面本身不捲（scrollY 恆為 0）�
   }
 });
 
+async function bubbleGeometry(page: Page): Promise<{ bubble: Rect; scroller: Rect; footer: Rect; blur: string; opacity: string; hit: boolean }> {
+  return page.evaluate(() => {
+    const bubbleEl = document.querySelector('[data-testid="versions-bubble"]') as HTMLElement;
+    const anchor = document.querySelector('[data-testid="corner-anchor"]') as HTMLElement;
+    const card = anchor.parentElement!;
+    const scrollEl = card.querySelector('[data-testid="article-column"]')!.closest(".overflow-y-auto") as HTMLElement;
+    const footerEl = anchor.nextElementSibling as HTMLElement;
+    const r = (el: Element) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.x, y: b.y, width: b.width, height: b.height, right: b.right, bottom: b.bottom };
+    };
+    const b = bubbleEl.getBoundingClientRect();
+    const hitEl = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+    const cs = getComputedStyle(bubbleEl);
+    return { bubble: r(bubbleEl), scroller: r(scrollEl), footer: r(footerEl), blur: cs.backdropFilter || cs.getPropertyValue("-webkit-backdrop-filter"), opacity: getComputedStyle(anchor.firstElementChild!).opacity, hit: hitEl === bubbleEl || bubbleEl.contains(hitEl) };
+  });
+}
+
+interface Rect { x: number; y: number; width: number; height: number; right: number; bottom: number }
+
+function expectBubbleInNoteArea(g: Awaited<ReturnType<typeof bubbleGeometry>>, label: string): void {
+  console.log(`MEASURE ${label} ${JSON.stringify(g)}`);
+  expect(g.blur, `${label}：毛玻璃`).toMatch(/blur\(/);
+  expect(g.bubble.right, `${label}：在內文區右緣內`).toBeLessThanOrEqual(g.scroller.right);
+  expect(g.bubble.right, `${label}：離右緣有空隙（讓出捲軸）`).toBeLessThanOrEqual(g.scroller.right - 16);
+  expect(g.bubble.bottom, `${label}：在內文區下緣內`).toBeLessThanOrEqual(g.scroller.bottom);
+  expect(g.bubble.x).toBeGreaterThanOrEqual(g.scroller.x);
+  expect(g.bubble.y).toBeGreaterThanOrEqual(g.scroller.y);
+  expect(g.bubble.bottom, `${label}：不壓到提及列`).toBeLessThanOrEqual(g.footer.y + 0.5);
+  expect(Math.abs(g.footer.y - g.bubble.bottom - 12), `${label}：泡泡在內文區最底，離提及列上緣 12px（實 ${g.footer.y - g.bubble.bottom}）`).toBeLessThanOrEqual(1);
+}
+
+test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻璃、釘在內文區右下角（提及列之上）；捲動時不消失；三種寬度、短／長筆記、有／無提及都一樣；390 沒有泡泡", async ({ browser }) => {
+  test.setTimeout(480_000);
+  for (const width of [1280, 900, 767, 700]) {
+    for (const [key, backlinks] of [["long", false], ["short", false], ["mentioned", true]] as const) {
+      const { context, page } = await open(browser, width, key, { touch: false, height: 800, backlinks });
+      try {
+        await expect(page.getByTestId("versions-bubble")).toBeVisible({ timeout: 15_000 });
+        if (backlinks) await expect(page.getByText(/^Mentioned in 1 note$/)).toBeVisible();
+        const widthButton = page.getByRole("button", { name: /^Width:/ });
+        for (const mode of ["standard", "wide", "full"]) {
+          if (mode !== "standard") {
+            // 700 的頁首沒有寬度鈕（在 ⋮ 裡）：到 1280 換寬度，再回到原視窗；寬度設定是跨視窗保留的。
+            if (width < 768) await page.setViewportSize({ width: 1280, height: 800 });
+            await widthButton.click();
+            if (width < 768) await page.setViewportSize({ width, height: 800 });
+          }
+          const label = `${width} ${key} ${mode}`;
+          const g = await bubbleGeometry(page);
+          expectBubbleInNoteArea(g, label);
+          expect(g.hit, `${label}：點得到`).toBe(true);
+          if (key === "long") {
+            // 捲到底：最後一段文字與最後一個區塊都在泡泡上緣之上，打字的那一行不被蓋住。
+            const scroller = scrollerOf(page);
+            await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+            await page.waitForTimeout(300);
+            const end = await bubbleGeometry(page);
+            const lastText = (await editorLocator(page).getByText(LONG_LAST, { exact: true }).boundingBox())!;
+            const lastBlock = (await editorLocator(page).locator(".bn-block-outer").last().boundingBox())!;
+            console.log(`MEASURE ${label} end lastText.bottom ${lastText.y + lastText.height} lastBlock.bottom ${lastBlock.y + lastBlock.height} bubble.top ${end.bubble.y} column pb ${await page.getByTestId("article-column").evaluate((el) => getComputedStyle(el).paddingBottom)}`);
+            expect(lastText.y + lastText.height, `${label}：最後一段在泡泡之上`).toBeLessThanOrEqual(end.bubble.y);
+            expect(lastBlock.y + lastBlock.height, `${label}：最後一個區塊在泡泡之上`).toBeLessThanOrEqual(end.bubble.y);
+            await scroller.evaluate((el) => { el.scrollTop = 0; });
+          }
+          if (key === "long" && mode === "standard") {
+            const scroller = scrollerOf(page);
+            await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+            await page.waitForTimeout(1_200);
+            const after = await bubbleGeometry(page);
+            expect(after.opacity, "捲動後沒有淡出").toBe("1");
+            expect(after.hit, "捲動後仍點得到").toBe(true);
+            expect(Math.abs(after.bubble.y - g.bubble.y), "泡泡不隨內文捲走").toBeLessThanOrEqual(0.5);
+            await scroller.evaluate((el) => { el.scrollTop = 0; });
+          }
+        }
+        if (key === "mentioned") {
+          const g = await bubbleGeometry(page);
+          expect(g.footer.height, "有提及列").toBeGreaterThan(20);
+          expect(g.bubble.bottom).toBeLessThanOrEqual(g.footer.y + 0.5);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+  }
+  const { context, page } = await open(browser, 390, "long");
+  try {
+    await expect(page.getByTestId("versions-bubble")).toHaveCount(0);
+    await expect(page.getByTestId("corner-anchor")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+/** `rgba(r, g, b, a)`／`color(srgb r g b / a)` 的 alpha（沒寫 alpha 就是 1）。 */
+function bgAlpha(color: string): number {
+  const m = /\/\s*([\d.]+)\s*\)$/.exec(color) ?? /,\s*([\d.]+)\s*\)$/.exec(color);
+  return m ? parseFloat(m[1]!) : 1;
+}
+
+test("58-33 寬螢幕（1280×800）：歷史泡泡 hover 時底色明顯變實（淺色與深色，alpha 增加 ≥ 0.5），移開後回到毛玻璃", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await open(browser, 1280, "long", { touch: false, height: 800 });
+  try {
+    const bubble = page.getByTestId("versions-bubble");
+    await expect(bubble).toBeVisible({ timeout: 15_000 });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.mouse.move(5, 5);
+      await page.waitForTimeout(400);
+      const bg = () => bubble.evaluate((el) => getComputedStyle(el).backgroundColor);
+      const rest = await bg();
+      await bubble.hover();
+      await page.waitForTimeout(400);
+      const hover = await bg();
+      console.log(`MEASURE bubble bg ${scheme} rest ${rest} hover ${hover}`);
+      expect(bgAlpha(hover) - bgAlpha(rest), `${scheme}：hover 比平時實 ≥ 0.5`).toBeGreaterThanOrEqual(0.5);
+      await page.mouse.move(5, 5);
+      await page.waitForTimeout(400);
+      expect(await bg(), `${scheme}：移開後回到平時`).toBe(rest);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 // ── 轉向跨過 640 時保住閱讀位置（58-27、58-29）────────────────────────────────
 
 /** 筆記裡含 `text` 的那一段離「看得到的上緣」多遠：手機是頁首下緣，640 起是內文容器的上緣。 */
