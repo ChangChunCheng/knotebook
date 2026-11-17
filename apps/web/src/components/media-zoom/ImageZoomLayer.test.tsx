@@ -84,6 +84,17 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(layer.style.left).toBe("576px"); // 圖右緣 700 − 欄左緣 100 − 鈕寬 20 − 4
   });
 
+  it("欄內 .kb-diff 預覽裡的圖：hover 沒有鈕、唯讀時不加 tabindex、點了不開", () => {
+    const html = `<div class="kb-diff">${IMAGE("dimg")}</div>`;
+    render(<Host zoom={zoom} html={html} editable={false} />);
+    setLoaded(img("dimg"));
+    fireEvent.pointerOver(img("dimg"), { pointerType: "mouse" });
+    expect(zoomBtn()).toBeNull();
+    expect(img("dimg")).not.toHaveAttribute("tabindex");
+    fireEvent.click(img("dimg"));
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("觸控的 pointer 不顯示鈕", () => {
     render(<Host zoom={zoom} />);
     setLoaded(img());

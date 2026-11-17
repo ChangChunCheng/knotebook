@@ -7,6 +7,8 @@ import { api, ApiFail } from "@/api/client";
 import { decodePublicYdoc } from "@/collab/public-doc";
 import { PublicNoteEditor } from "@/components/PublicNoteEditor";
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
+import { MediaZoomProvider } from "@/components/media-zoom/MediaZoomProvider";
+import { ImageZoomLayer } from "@/components/media-zoom/ImageZoomLayer";
 import { PublicPageFrame } from "@/components/PublicNoteShell";
 import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
@@ -152,8 +154,11 @@ export default function PublicNotePage() {
             data-testid="article-column"
             className={cn(articleColumn(toNoteWidth(data.width)), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
           >
-            <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} />
-            <HeadingAnchorButtons container={columnEl} />
+            <MediaZoomProvider>
+              <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} />
+              <HeadingAnchorButtons container={columnEl} />
+              <ImageZoomLayer container={columnEl} editable={false} />
+            </MediaZoomProvider>
           </div>
         </div>
       </>

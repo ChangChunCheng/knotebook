@@ -6,6 +6,8 @@ import { useMediaZoom } from "./context";
 import { selectedImageOf } from "./selected-image";
 
 const IMAGE_SELECTOR = '.bn-block-content[data-content-type="image"] img.bn-visual-media';
+/** 欄內的 diff 預覽（例如 AI 建議的比對）是唯讀預覽，裡面的圖不提供放大。 */
+const IN_DIFF = ".kb-diff";
 const INSET = 4;
 /** 圖兩側中段調寬把手高度的一半。 */
 const HANDLE_HALF = 15;
@@ -35,6 +37,7 @@ function isLoaded(img: HTMLImageElement): boolean {
 function imageUnder(node: EventTarget | null): HTMLImageElement | null | undefined {
   const el = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
   if (!el) return undefined;
+  if (el.closest(IN_DIFF)) return undefined;
   const wrapper = el.closest(".bn-visual-media-wrapper");
   if (wrapper) {
     const img = wrapper.querySelector<HTMLImageElement>("img.bn-visual-media");
@@ -158,6 +161,7 @@ export function ImageZoomLayer({
     if (!container || !active || editable) return;
     const mark = () => {
       container.querySelectorAll<HTMLImageElement>(IMAGE_SELECTOR).forEach((img) => {
+        if (img.closest(IN_DIFF)) return;
         img.setAttribute("tabindex", "0");
         img.setAttribute("data-kb-zoomable", "");
         // 可聚焦的圖念出「圖名，放大檢視」：開得了放大檢視要讓鍵盤與讀屏使用者知道。
@@ -168,7 +172,10 @@ export function ImageZoomLayer({
       if (!isLoaded(img)) return;
       zoomRef.current?.open(sourceOf(img), { button: null, media: img });
     };
-    const imageOf = (e: Event): HTMLImageElement | null => (e.target instanceof Element ? e.target.closest<HTMLImageElement>(IMAGE_SELECTOR) : null);
+    const imageOf = (e: Event): HTMLImageElement | null => {
+      const found = e.target instanceof Element ? e.target.closest<HTMLImageElement>(IMAGE_SELECTOR) : null;
+      return found && !found.closest(IN_DIFF) ? found : null;
+    };
     const onClick = (e: MouseEvent) => {
       const img = imageOf(e);
       if (!img || (e.target as Element).closest("a") !== null) return;
