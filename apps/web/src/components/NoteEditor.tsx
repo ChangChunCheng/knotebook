@@ -22,6 +22,7 @@ import {
   TableHandlesController,
   useCreateBlockNote,
   type DefaultReactSuggestionItem,
+  type FloatingUIOptions,
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import type { NoteDto } from "@knotebook/shared";
@@ -36,6 +37,7 @@ import { buildCollabEditorBase } from "@/collab/editor-options";
 import { createMarkdownLinkExtension } from "@/collab/markdown-link";
 import { createMarkdownPasteHandler } from "@/collab/paste";
 import { createSiteLinkConvertExtension, createSiteLinkEnv, createSiteLinkPasteHook, withSiteLinkDrop, type SiteLinkEnvRef } from "@/collab/site-link-convert";
+import { createTourTransactionFilterExtension } from "@/collab/tour-transaction-filter";
 import { useCollabUndoLifeline } from "@/collab/undo";
 import { usePageUndoShortcut } from "@/collab/page-undo";
 import { PHONE_SLASH_MENU_FLOATING_OPTIONS, buildSlashMenuItems, withoutSlashBadges } from "@/components/slash-menu";
@@ -58,6 +60,8 @@ import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
 import { CornerStack } from "@/components/CornerStack";
 import { useVersions } from "@/lib/versions-context";
+import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
+import { tourTarget } from "@/lib/tour-targets";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
 import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
@@ -214,6 +218,9 @@ export function buildNoteEditorOptions({
         createColumnEdgeKeymapExtension({ editorRef }),
         // 貼上／拖放的列：頂層完整、非頂層攤平（理由見 `@/collab/columns/paste-rule`）。
         createColumnsPasteExtension(),
+        // 功能導覽演示時擋下使用者改文件的交易（含輸入法組字）；預設放行。要在建編輯器時就掛上，演示中不能再註冊外掛
+        // （理由見 `@/collab/tour-transaction-filter`），開關經 `lib/tour-bridge.ts`。
+        createTourTransactionFilterExtension(),
       ],
       editorProps: {
         // drop：最外層先由 `withSiteLinkDrop` 判斷要不要轉站內連結（#352）；再由 `withGutterFileDrop` 把落在欄與欄之間的拖放
@@ -594,6 +601,14 @@ export function NoteEditor({
     return () => report?.(null);
   }, [editor]);
 
+  // 功能導覽經登記處拿這份編輯器（`lib/tour-bridge.ts`）。
+  useEffect(() => registerEditor(noteId, editor), [noteId, editor]);
+  // 每個編輯器實例第一次可編輯時通知一次（登記處自己記「已通知」）。放在登記之後：同一次 commit 裡先登記、再通知。
+  // BlockNoteView 在 commit 階段的 ref callback 裡設 `editor.isEditable`，比這個 effect 早，所以通知時它已是新值。
+  useEffect(() => {
+    if (editable) notifyEditorEditable(noteId, editor);
+  }, [noteId, editor, editable]);
+
   // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
   // `useLinkMenuState`（見該函式檔頭）方便直接對它
   // `renderHook`，不必掛真編輯器整棵渲染。
@@ -776,6 +791,27 @@ export function NoteEditor({
   );
 }
 
+/**
+ * 給 `[[` 與 `/` 選單的 `floatingUIOptions`：選單外面那層 popover 掛導覽的目標屬性，功能導覽才找得到真的選單。
+ * 兩個選單各用自己的 id：上一站剛關的選單還會在 DOM 裡多留一下，共用 id 會讓導覽挖亮到舊的那個。
+ * 模組層常數：`SuggestionMenuController` 的 `useMemo` 依賴它的身分。只加屬性，不動預設的 `style`／`onMouseDownCapture`。
+ */
+const WIKILINK_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  elementProps: tourTarget("wikilinkMenu") as FloatingUIOptions["elementProps"],
+};
+const SLASH_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  elementProps: tourTarget("slashMenu") as FloatingUIOptions["elementProps"],
+};
+/** 手機上的同兩份：再加上手機 `/` 選單的定位（`PHONE_SLASH_MENU_FLOATING_OPTIONS`）。 */
+const WIKILINK_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  ...PHONE_SLASH_MENU_FLOATING_OPTIONS,
+  ...WIKILINK_MENU_FLOATING_OPTIONS,
+};
+const SLASH_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
+  ...PHONE_SLASH_MENU_FLOATING_OPTIONS,
+  ...SLASH_MENU_FLOATING_OPTIONS,
+};
+
 export interface NoteEditorViewProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 EditorRef/wikilink/menu.ts）
   editor: BlockNoteEditor<any, any, any>;
@@ -865,7 +901,7 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         <SuggestionMenuController
           triggerCharacter="[["
           getItems={getItems}
-          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+          floatingUIOptions={phone ? WIKILINK_MENU_PHONE_FLOATING_OPTIONS : WIKILINK_MENU_FLOATING_OPTIONS}
         />
         <GridSuggestionMenuController
           triggerCharacter=":"
@@ -876,7 +912,7 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         <SuggestionMenuController
           triggerCharacter="/"
           getItems={getSlashItems}
-          floatingUIOptions={phone ? PHONE_SLASH_MENU_FLOATING_OPTIONS : undefined}
+          floatingUIOptions={phone ? SLASH_MENU_PHONE_FLOATING_OPTIONS : SLASH_MENU_FLOATING_OPTIONS}
         />
         {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
         {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}

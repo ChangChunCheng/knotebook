@@ -738,7 +738,8 @@ test.describe.serial("ai facts", () => {
 
 // ── 快捷鍵介紹頁（Ctrl+/ modal）本身的行為──────────────────────────────────────────────────
 
-const shortcutsDialog = (page: Page): Locator => page.getByRole("dialog", { name: "Keyboard shortcuts" });
+/** 說明視窗（快捷鍵、功能導覽、這一版新增在同一個視窗）。 */
+const shortcutsDialog = (page: Page): Locator => page.getByRole("dialog", { name: "Help", exact: true });
 
 /** 簡報：頁首 ⋮「Present」進入，等 reveal 就緒。 */
 async function presentFromHeaderMenuForDialog(page: Page, title: string): Promise<void> {
@@ -800,13 +801,35 @@ test.describe("shortcuts dialog", () => {
     await startNote(page, "dlg-menu");
     const trigger = page.getByRole("button", { name: "admin", exact: true });
     await trigger.click();
-    const item = page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true });
+    // 選單裡只有「Help」一項：舊的「Keyboard shortcuts」與單獨的「Feature tour」都不在
+    await expect(page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Feature tour", exact: true })).toHaveCount(0);
+    const item = page.getByRole("menuitem", { name: "Help", exact: true });
     await expect(item).toContainText("Ctrl+/");
     await item.click();
     await expect(shortcutsDialog(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(shortcutsDialog(page)).toHaveCount(0);
     await expect(trigger).toBeFocused();
+  });
+
+  test("從使用者選單打開停在「Feature tour」頁，有 Start tour 鈕；「What's new」頁有版本標題；Ctrl+/ 打開則停在 General", async ({ page }) => {
+    test.setTimeout(90_000);
+    await startNote(page, "dlg-help-pages");
+    await page.getByRole("button", { name: "admin", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
+    const dialog = shortcutsDialog(page);
+    await expect(dialog.getByRole("button", { name: "Feature tour", exact: true })).toHaveAttribute("aria-current", "true");
+    await expect(dialog.getByRole("region", { name: "Feature tour" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Start tour", exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "What's new", exact: true }).click();
+    await expect(dialog.getByRole("heading", { level: 3, name: /^New in v\d+\.\d+\.\d+$/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    await page.keyboard.press("ControlOrMeta+/");
+    await expect(dialog.getByRole("button", { name: "General", exact: true })).toHaveAttribute("aria-current", "true");
+    await expect(dialog.getByRole("region", { name: "General" })).toBeVisible();
   });
 
   test("E3 再按一次 Ctrl+/ 關閉 [sc:openShortcuts]", async ({ page }) => {
@@ -867,7 +890,7 @@ test.describe("shortcuts dialog", () => {
 
     const trigger = page.locator("[data-phone-top-bar]").getByRole("button", { name: "admin", exact: true });
     await trigger.click();
-    await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
     const dialog = shortcutsDialog(page);
     await expect(dialog).toBeVisible();
     // 手機上快捷鍵頁是由下往上升起的 sheet：進場動畫跑完再量（升起途中外框有一部分還在視窗下方）
@@ -902,7 +925,7 @@ test.describe("shortcuts dialog", () => {
     await expect(drawer).toBeVisible();
     const trigger = drawer.getByRole("button", { name: "admin", exact: true });
     await trigger.click();
-    await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
     const dialog = shortcutsDialog(page);
     await expect(dialog).toBeVisible();
     // 快捷鍵頁開著時抽屜被 Radix 標成 aria-hidden（預期行為），所以用屬性選擇器、不用 getByRole
@@ -913,14 +936,14 @@ test.describe("shortcuts dialog", () => {
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
-    // 窄螢幕一次只顯示一塊：打開先看到右卡（通用）；左卡（分類＋提示句）在「返回」之後
-    await expect(dialog.getByRole("region", { name: "General" })).toBeVisible();
+    // 窄螢幕一次只顯示一塊：從選單打開先看到右卡（功能導覽）；左卡（兩頁＋分類＋提示句）在「返回」之後
+    await expect(dialog.getByRole("region", { name: "Feature tour" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Text formatting" })).toBeHidden();
     await dialog.getByRole("button", { name: "Back to sections" }).click();
     const footer = dialog.locator("[data-shortcuts-footer]");
     await footer.scrollIntoViewIfNeeded();
     await expect(footer).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "General" })).toBeFocused(); // 焦點回到目前項次
+    await expect(dialog.getByRole("button", { name: "Feature tour", exact: true })).toBeFocused(); // 焦點回到目前項次
     await dialog.getByRole("button", { name: "Mouse" }).click();
     const mouseRegion = dialog.getByRole("region", { name: "Mouse" });
     await expect(mouseRegion).toBeVisible();

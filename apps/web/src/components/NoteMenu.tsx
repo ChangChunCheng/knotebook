@@ -44,6 +44,7 @@ import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { destinationShortLabel } from "@/components/sidebar/destination-level";
 import { toast } from "@/components/ui/toast";
 import { usePresentEntry } from "@/present/usePresentEntry";
+import { tourTarget } from "@/lib/tour-targets";
 
 // 移動／複製的確認框只在選定目的地後才需要：lazy（首包瘦身）；選單項（GroupTransferMenuItems）仍同步。
 const GroupTransferDialog = lazy(() => import("@/components/share/GroupTransferDialog").then((m) => ({ default: m.GroupTransferDialog })));
@@ -382,7 +383,15 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
       >
         <DropdownMenuTrigger asChild>
           {trigger === "header" ? (
-            <Button ref={triggerRef} type="button" variant="ghost" size="icon" className={cn("shrink-0", HEADER_ICON_HIT)} aria-label={t("note.menu.label")}>
+            <Button
+              ref={triggerRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn("shrink-0", HEADER_ICON_HIT)}
+              aria-label={t("note.menu.label")}
+              {...tourTarget("noteMenu")}
+            >
               <EllipsisVertical className="h-4 w-4" />
             </Button>
           ) : (

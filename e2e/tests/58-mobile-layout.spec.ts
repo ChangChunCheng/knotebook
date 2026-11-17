@@ -879,6 +879,8 @@ interface ListMetrics {
     chevronWidth: number;
     chevronDisplay: string;
     chevronColor: string;
+    /** 緊接在上一列後面（DOM 上相鄰）；說明視窗的清單裡，分隔線與「快捷鍵」小標題前後的列不相鄰。 */
+    joined: boolean;
   }[];
   navBg: string;
 }
@@ -913,6 +915,8 @@ const listMetrics = (dialog: Locator): Promise<ListMetrics> =>
     const header = card.firstElementChild as HTMLElement;
     const title = (header.querySelector("h2") ?? header.querySelector("p")) as HTMLElement;
     const nav = card.querySelector("nav") as HTMLElement;
+    // 列＝清單裡的連結與按鈕（說明視窗的清單另有分隔線與分組小標題，不算列）。
+    const rowEls = Array.from(nav.querySelectorAll<HTMLElement>("a, button"));
     const alpha = (color: string): number => {
       const m = color.match(/\/\s*([\d.]+)(%?)\s*\)$/) ?? color.match(/rgba\([^)]*,\s*([\d.]+)\)$/);
       return m ? parseFloat(m[1]) / (m[2] === "%" ? 100 : 1) : 1;
@@ -924,7 +928,7 @@ const listMetrics = (dialog: Locator): Promise<ListMetrics> =>
       headerRight: header.getBoundingClientRect().right,
       viewportWidth: window.innerWidth,
       navBg: getComputedStyle(nav).backgroundColor,
-      rows: Array.from(nav.children).map((row) => {
+      rows: rowEls.map((row, i) => {
         const s = getComputedStyle(row);
         const svg = row.querySelector("svg") as SVGElement | null;
         return {
@@ -941,6 +945,7 @@ const listMetrics = (dialog: Locator): Promise<ListMetrics> =>
           chevronWidth: svg ? svg.getBoundingClientRect().width : 0,
           chevronDisplay: svg ? getComputedStyle(svg).display : "none",
           chevronColor: svg ? getComputedStyle(svg).color : "",
+          joined: i > 0 && row.previousElementSibling === rowEls[i - 1],
         };
       }),
     };
@@ -980,7 +985,7 @@ function expectPhoneList(list: ListMetrics, label: string): void {
     expect(row.left, `${label}：列 ${i} 底色離邊緣 8px`).toBe(8);
     expect(row.textLeft, `${label}：列 ${i} 文字離邊緣 16px`).toBe(16);
     expect(list.viewportWidth - row.chevronRight, `${label}：列 ${i}「›」離邊緣 16px`).toBe(16);
-    if (i > 0) expect(row.top - (list.rows[i - 1].top + list.rows[i - 1].height), `${label}：列 ${i} 與上一列相貼`).toBeCloseTo(0, 0);
+    if (row.joined) expect(row.top - (list.rows[i - 1].top + list.rows[i - 1].height), `${label}：列 ${i} 與上一列相貼`).toBeCloseTo(0, 0);
   });
 }
 
@@ -1492,9 +1497,9 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     await expect(menu).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Site admin", exact: true })).toBeVisible();
 
-    // ── 快捷鍵頁（同一個帳號選單）──
-    await menu.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
-    dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    // ── 說明視窗（同一個帳號選單）──
+    await menu.getByRole("menuitem", { name: "Help", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Help" });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expectPanelSheet(page, dialog);
     expectSameSurface(await panelSurface(dialog), accountSheet, "快捷鍵");
@@ -1520,7 +1525,7 @@ test("58-21 手機（390 觸控）：站台管理、快捷鍵頁從帳號選單�
     expect(Math.abs(contentBox.y - listBox.y)).toBeLessThanOrEqual(1);
     await sectionsBack.click();
     await dialog.getByRole("button", { name: "Back to menu", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Help" })).toHaveCount(0);
     await expect(menu).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);

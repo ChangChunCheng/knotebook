@@ -65,7 +65,7 @@ describe("fitSegments", () => {
 
 describe("NoteLocation", () => {
   const showTab = vi.fn();
-  const actions: SidebarTabActions = { showTab, updateSelection: vi.fn(), endSelectionIfActive: vi.fn(() => false), getSelectionSession: vi.fn(() => null) };
+  const actions: SidebarTabActions = { showTab, updateSelection: vi.fn(), endSelectionIfActive: vi.fn(() => false), getSelectionSession: vi.fn(() => null), getTab: vi.fn(() => "myNotes" as const) };
 
   function renderLocation(n: NoteDto) {
     return render(

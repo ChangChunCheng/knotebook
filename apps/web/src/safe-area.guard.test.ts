@@ -25,6 +25,7 @@ function isEdgeLine(line: string): boolean {
 /** 檔 → 為什麼不需要。 */
 const ALLOWED: Record<string, string> = {
   "components/ui/dialog.tsx": "只有半透明背板（不放內容）與置中的對話框；panel 尺寸的寬度上限已避開左右 safe area",
+  "components/tour/TourOverlay.tsx": "貼邊的只有蓋滿視窗的遮罩層（變暗與挖洞，不放內容）；說明卡依目標位置算座標，不貼邊",
 };
 
 function listTsx(dir: string): string[] {
