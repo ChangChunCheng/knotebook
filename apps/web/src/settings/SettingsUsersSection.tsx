@@ -16,6 +16,7 @@ import { useAdminStoragePlans } from "@/api/adminStorage";
 import { SettingsTable, type SettingsTableColumn, type SettingsTableRow } from "@/components/management/SettingsTable";
 import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -54,10 +55,6 @@ function lastActiveLabel(lastActiveAt: string | null, t: (key: string) => string
   return at.toLocaleString(language, { dateStyle: "short", timeStyle: "short" });
 }
 
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
 /**
  * 角色下拉（#247：管理員／一般；升級送 `promote`、降級送 `demote`）。
  * 自己那列 disabled＋`title`（server 另以 400 `cannot_demote_self` 把關）；pending 時 disabled 並顯示剛選的值；
@@ -85,17 +82,18 @@ function UserRoleSelect({ row, isSelf, onError }: { row: AdminUserDto; isSelf: b
   }
 
   return (
-    <select
+    <Select
+      variant="inline"
       aria-label={t("admin.users.roleFor", { email: row.email })}
       value={roleValue}
       disabled={isSelf || rolePending}
       title={isSelf ? t("errors.cannot_demote_self") : undefined}
-      onChange={(event) => void handleRole(event.target.value as "admin" | "user")}
-      className={SELECT_CLASS}
-    >
-      <option value="admin">{t("admin.roleAdmin")}</option>
-      <option value="user">{t("admin.roleUser")}</option>
-    </select>
+      onValueChange={(next) => void handleRole(next as "admin" | "user")}
+      options={[
+        { value: "admin", label: t("admin.roleAdmin") },
+        { value: "user", label: t("admin.roleUser") },
+      ]}
+    />
   );
 }
 
