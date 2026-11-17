@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { GroupDto, GroupMemberDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
+import { selectedValue } from "@/test/ui-select";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { adminRole, groupDto, memberRole } from "@/test/fixtures";
 import { GroupMenu } from "./GroupMenu";
@@ -201,7 +202,7 @@ describe("GroupMenu", () => {
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete group" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete group?" });
     expect(within(dialog).getByRole("radio", { name: "Give them to an admin" })).toBeChecked();
-    await waitFor(() => expect(within(dialog).getByLabelText("Admin who gets the notes")).toHaveValue(ME.id));
+    await waitFor(() => expect(selectedValue(within(dialog).getByLabelText("Admin who gets the notes"))).toBe(ME.id));
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url === `/api/groups/${ADMIN_GROUP.id}`)).toBe(true));
@@ -216,7 +217,7 @@ describe("GroupMenu", () => {
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete group" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete group?" });
-    await waitFor(() => expect(within(dialog).getByLabelText("Admin who gets the notes")).toHaveValue(ME.id));
+    await waitFor(() => expect(selectedValue(within(dialog).getByLabelText("Admin who gets the notes"))).toBe(ME.id));
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
     await waitFor(() => expect(calls.filter((c) => c.method === "DELETE" && c.url === `/api/groups/${ADMIN_GROUP.id}`)).toHaveLength(1));
     await waitFor(() => expect(screen.getByText("The notes can only be handed to one of the group's admins. Pick someone who is still an admin.", { exact: true })).toBeInTheDocument());

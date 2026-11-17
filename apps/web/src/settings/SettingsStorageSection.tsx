@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Pencil, Trash } from "@/components/ui/icons";
 import { RowIconButton } from "@/components/ui/row-icon-button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogClose,
@@ -31,11 +32,6 @@ import { SettingsGroup, SettingsPage } from "./SettingsLayout";
 import { SiteTrashGroup } from "./SettingsTrashSection";
 import { SiteVersionsGroups } from "./SettingsVersionsSection";
 import "@/i18n/management-strings";
-
-/** 原生 select（repo 慣例：逐檔宣告，見 ApiTokensSection.tsx:35-41）。 */
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** errors.<code>；方案端點的 invalid_name 改用方案版文案（errors.invalid_name 是群組的「1–80」）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -138,19 +134,21 @@ function PlanDialog({ plan, trigger }: { plan?: StoragePlanDto; trigger: ReactNo
                   setQuotaTouched(true);
                 }}
               />
-              <select
+              <Select
+                variant="field"
                 aria-label={t("admin.storage.unitLabel")}
-                className={SELECT_CLASS}
+                className="shrink-0"
                 value={unit}
                 disabled={unlimited}
-                onChange={(e) => {
-                  setUnit(e.target.value as QuotaUnit);
+                onValueChange={(v) => {
+                  setUnit(v as QuotaUnit);
                   setQuotaTouched(true);
                 }}
-              >
-                <option value="MB">MB</option>
-                <option value="GB">GB</option>
-              </select>
+                options={[
+                  { value: "MB", label: "MB" },
+                  { value: "GB", label: "GB" },
+                ]}
+              />
               <Checkbox
                 id={`${ids}-unlimited`}
                 checked={unlimited}
@@ -264,23 +262,25 @@ function DefaultsGroup({ data }: { data: StoragePlansResponse }) {
         <label htmlFor="storage-default-user" className="text-sm">
           {t("admin.storage.defaultUserLabel")}
         </label>
-        <select id="storage-default-user" className={SELECT_CLASS} value={shownUser} onChange={(e) => setUserPlanId(e.target.value)}>
-          {data.plans.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          variant="field"
+          id="storage-default-user"
+          className="shrink-0"
+          value={shownUser}
+          onValueChange={setUserPlanId}
+          options={data.plans.map((p) => ({ value: p.id, label: p.name }))}
+        />
         <label htmlFor="storage-default-group" className="text-sm">
           {t("admin.storage.defaultGroupLabel")}
         </label>
-        <select id="storage-default-group" className={SELECT_CLASS} value={shownGroup} onChange={(e) => setGroupPlanId(e.target.value)}>
-          {data.plans.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          variant="field"
+          id="storage-default-group"
+          className="shrink-0"
+          value={shownGroup}
+          onValueChange={setGroupPlanId}
+          options={data.plans.map((p) => ({ value: p.id, label: p.name }))}
+        />
         <Button
           type="button"
           variant="outline"

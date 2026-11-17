@@ -16,11 +16,13 @@ import {
  * 56-2 選單（390、360 觸控）：⋮ 選單與使用者選單每一項 ≥ 40 高；主題色票點擊範圍 44×44、相鄰圓心距 ≥ 44。
  * 56-3 筆記頁頁首（390、360 觸控）：‹、星號、分享、⋮ 的點擊範圍 ≥ 40×44。
  * 56-4 選取模式（390 觸控）：標題列的「Select all」「Done」（有框線）點擊範圍 ≥ 44 高。
- * 56-5 輸入框字級（觸控）：登入頁、清單搜尋框、筆記頁（標題框、程式碼區塊語言下拉）、分享對話框、設定頁，
+ * 56-5 輸入框字級（觸控）：登入頁、清單搜尋框、筆記頁（標題框、程式碼區塊語言下拉）、分享對話框（含共用 Select 的角色觸發鈕）、設定頁，
  *      每個看得到的 input／select／textarea 的 computed font-size 都不小於 16px（搜尋框與程式碼區塊語言下拉量到剛好 16px）。
  * 56-6 搜尋框（800、1280 觸控）：沒有 Ctrl K 提示；清除 ✕ 的點擊範圍 44×44，但輸入框文字區右緣內 1px 點下去仍是輸入框。
  * 56-7 滑鼠不變（390、1280 滑鼠）：列 28、tab 36、列內鈕的點擊範圍就是 24×24；選單項 1280 是 32，390 的 ⋮ 是貼底的 sheet（不分指標）所以是 48；
  *      1280 的側欄搜尋框 13px、Ctrl K 提示還在。
+ * 56-8 共用 Select（分享對話框的角色觸發鈕）：390 觸控字級 16px、點擊高不比同列輸入框矮、每個選項點擊範圍 ≥ 40 高；
+ *      1280 滑鼠觸發鈕視覺高 32、選項高 32。
  *
  * 不在範圍內（原因）：
  * - Mantine／BlockNote 內建的輸入框與下拉（例如連結工具列的網址框）：字級由該套件的樣式決定，不是我們的 class。
@@ -118,12 +120,14 @@ async function openNote(page: Page, sidebar: Locator, title: string): Promise<vo
   await expect(titleBox(page)).toHaveValue(title, { timeout: 15_000 });
 }
 
-/** 看得見的 input／select／textarea 裡，字級小於 16px 的（排除第三方元件；iOS 只在小於 16px 時聚焦放大）。回傳「共幾個、哪幾個太小」。 */
+/** 看得見的 input／select／textarea／Select 觸發鈕裡，字級小於 16px 的（排除第三方元件；iOS 只在小於 16px 時聚焦放大）。回傳「共幾個、哪幾個太小」。 */
 async function fieldFontSizes(page: Page): Promise<{ count: number; bad: string[] }> {
   return page.evaluate(() => {
     const bad: string[] = [];
     let count = 0;
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, select, textarea"))) {
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, select, textarea, [role=combobox]:not(input)"))) {
+      // Radix Select 在表單內渲染 aria-hidden 的原生 select 做表單同步，不是使用者看得到的欄位。
+      if (el instanceof HTMLSelectElement && el.getAttribute("aria-hidden") === "true") continue;
       if (el instanceof HTMLInputElement && ["checkbox", "radio", "hidden", "file", "button", "submit", "range", "color"].includes(el.type)) continue;
       if (el.closest('[class*="mantine-"], .bn-toolbar, .bn-form-popover') !== null) continue;
       const style = getComputedStyle(el);
@@ -372,6 +376,9 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     await page.locator("header").getByRole("button", { name: "Share", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible({ timeout: 15_000 });
+    // 「Members only」才會出現新增分享表單，裡面有共用 Select 的角色觸發鈕。
+    await dialog.getByRole("radio", { name: /^Members only/ }).click();
+    await expect(dialog.getByRole("combobox", { name: "Role for new share", exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(dialog.locator("input, select, textarea").first()).toBeVisible({ timeout: 15_000 });
     const share = await fieldFontSizes(page);
     expect(share.count, "分享對話框輸入框數").toBeGreaterThanOrEqual(2);
@@ -469,3 +476,64 @@ for (const phone of [PHONES[0], { width: 1280, height: 900 }] as const) {
     }
   });
 }
+
+/** 打開 TITLES.plain 的分享對話框，回傳「Role for new share」觸發鈕。 */
+async function openShareRoleTrigger(page: Page): Promise<Locator> {
+  await page.goto("/");
+  const sidebar = await listScope(page, page.viewportSize()!.width);
+  await openNote(page, sidebar, TITLES.plain);
+  await page.locator("header").getByRole("button", { name: "Share", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+  await dialog.getByRole("radio", { name: /^Members only/ }).click();
+  const trigger = dialog.getByRole("combobox", { name: "Role for new share", exact: true });
+  await expect(trigger).toBeVisible({ timeout: 15_000 });
+  return trigger;
+}
+
+test("56-8 共用 Select 390 觸控：分享對話框的角色觸發鈕字級 16px、不比同列輸入框矮，每個選項點擊範圍 ≥ 40 高", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await openAs(browser, PHONES[0], true);
+  try {
+    const trigger = await openShareRoleTrigger(page);
+    expect(await trigger.evaluate((el) => getComputedStyle(el).fontSize), "觸發鈕字級").toBe("16px");
+    const triggerArea = await tapAreaOf(trigger);
+    // field 變體與同列輸入框同高（輸入框觸控下也是 32），不另外撐高；點擊面要等於輸入框，不能更矮。
+    const emailArea = await tapAreaOf(page.getByRole("dialog").getByLabel("Email address", { exact: true }));
+    expect(triggerArea.tap[1], "觸發鈕點擊高").toBeGreaterThanOrEqual(emailArea.tap[1] - TOL);
+    await trigger.click();
+    await expect(page.getByRole("listbox")).toBeVisible();
+    const options = page.getByRole("option");
+    const count = await options.count();
+    expect(count, "選項數").toBeGreaterThanOrEqual(2);
+    for (let i = 0; i < count; i++) {
+      const option = options.nth(i);
+      const area = await tapAreaOf(option);
+      expect(area.tap[1], `選項「${await option.innerText()}」點擊高`).toBeGreaterThanOrEqual(40 - TOL);
+    }
+    console.log(`MEASURE 56-8 390 trigger tap ${triggerArea.tap.join("x")} options ${count}`);
+  } finally {
+    await context.close();
+  }
+});
+
+test("56-8 共用 Select 1280 滑鼠：觸發鈕視覺高 32、選項高是桌面值 32", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await openAs(browser, { width: 1280, height: 900 }, false);
+  try {
+    const trigger = await openShareRoleTrigger(page);
+    const triggerArea = await tapAreaOf(trigger);
+    expect(triggerArea.visual[1], "觸發鈕視覺高").toBeCloseTo(32, 0);
+    await trigger.click();
+    await expect(page.getByRole("listbox")).toBeVisible();
+    const options = page.getByRole("option");
+    const count = await options.count();
+    expect(count, "選項數").toBeGreaterThanOrEqual(2);
+    for (let i = 0; i < count; i++) {
+      const box = (await options.nth(i).boundingBox())!;
+      expect(box.height, `選項 ${i} 高`).toBeCloseTo(32, 0);
+    }
+  } finally {
+    await context.close();
+  }
+});

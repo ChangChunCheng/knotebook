@@ -89,6 +89,12 @@ if (typeof globalThis.ClipboardEvent === "undefined") {
   globalThis.ClipboardEvent = class extends Event {} as unknown as typeof ClipboardEvent;
 }
 
+// jsdom 沒有 pointer capture 與 `scrollIntoView`；Radix Select 開面板時會呼叫它們（不做事即可，不影響斷言）。
+if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false;
+if (!Element.prototype.setPointerCapture) Element.prototype.setPointerCapture = () => {};
+if (!Element.prototype.releasePointerCapture) Element.prototype.releasePointerCapture = () => {};
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 afterEach(() => {
   cleanup();
   // #297：站內寬度的模組 Map 跨案存活，不重置會依測試順序互相汙染。

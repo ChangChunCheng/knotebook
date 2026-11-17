@@ -26,6 +26,7 @@ import {
 import { Check, Pencil, Trash, X } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import { RowIconButton } from "@/components/ui/row-icon-button";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { displayExpiry } from "@/lib/token-expiry";
@@ -40,15 +41,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
-
-/**
- * repo 沒有 `ui/select.tsx`——原生 `<select>` 加一條 tailwind 字串是既有慣例，
- * 每個用到的檔案各自宣告一份（`ShareDialog.tsx`、`SettingsAiSection.tsx` 同形）。
- * 刻意不抽共用常數：那幾處的尺寸各自跟著所在版面調過，抽出來會變成「改一處動三處」。
- */
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 撤銷確認（比照 SettingsAiSection 的 DeleteProviderDialog）。觸發鈕是列尾的紅垃圾桶 `RowIconButton`。 */
 function RevokeDialog({ token }: { token: ApiTokenDto }) {
@@ -176,21 +168,20 @@ function CreateTokenDialog() {
                 <p className="text-sm">{t("settings.account.apiTokensScopeReadFixed")}</p>
                 <ScopeTogglesField value={checks} onChange={setChecks} />
               </fieldset>
-              <select
-                className={SELECT_CLASS}
+              <Select
+                variant="field"
+                className="w-fit"
                 aria-label={t("settings.account.apiTokensExpiryLabel")}
                 value={expiresInDays === null ? "never" : String(expiresInDays)}
-                onChange={event =>
-                  setExpiresInDays(event.target.value === "never" ? null : (Number(event.target.value) as 30 | 90 | 365))
-                }
-              >
-                <option value="never">{t("settings.account.apiTokensExpiryNever")}</option>
-                {[30, 90, 365].map(days => (
-                  <option key={days} value={days}>
-                    {t("settings.account.apiTokensExpiryDays", { days })}
-                  </option>
-                ))}
-              </select>
+                onValueChange={next => setExpiresInDays(next === "never" ? null : (Number(next) as 30 | 90 | 365))}
+                options={[
+                  { value: "never", label: t("settings.account.apiTokensExpiryNever") },
+                  ...[30, 90, 365].map(days => ({
+                    value: String(days),
+                    label: t("settings.account.apiTokensExpiryDays", { days }),
+                  })),
+                ]}
+              />
             </div>
             <DialogFooter>
               <DialogClose asChild>

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ADMIN, createUserViaInvite, loginAs, openGroupPanel, randomEmail } from "./helpers.js";
+import { ADMIN, chooseSelectOption, createUserViaInvite, loginAs, openGroupPanel, randomEmail } from "./helpers.js";
 
 /**
  * 群組成員批次加入（純前端，逐一呼叫既有的 `PUT /api/groups/:id/members`）：
@@ -65,7 +65,7 @@ test("群組成員批次加入：貼三個地址（一個沒帳號）→ 加 2 �
   await dialog.getByRole("button", { name: "Import from another group…" }).click();
   const importDialog = page.getByRole("dialog", { name: "Import members from another group" });
   await expect(importDialog).toBeVisible();
-  await importDialog.getByLabel("Group to import from").selectOption({ label: sourceName });
+  await chooseSelectOption(page, importDialog.getByLabel("Group to import from"), sourceName);
   const list = importDialog.getByRole("list", { name: "People to add" });
   // admin 是自己、first 已在目標群組 → 只剩 third，預設勾選
   await expect(list.getByRole("checkbox")).toHaveCount(1);

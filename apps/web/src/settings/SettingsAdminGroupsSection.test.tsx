@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -11,6 +11,7 @@ import { AppRoutes } from "@/App";
 import { useAssignGroupPlan } from "@/api/adminStorage";
 import { ADMIN_GROUPS_QUERY_KEY, ADMIN_STORAGE_PLANS_QUERY_KEY, STORAGE_USAGE_QUERY_KEY, groupStorageKey } from "@/api/storage";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 
 // /admin/groups。群組名一律純文字（站台管理員管方案、不看群組成員與詳情）。
 
@@ -84,7 +85,7 @@ describe("/admin/groups", () => {
       expect(within(beta).getByRole("cell", { name: text })).toBeInTheDocument();
     }
     expect(within(beta).getByText("3 MB of 2 MB")).toHaveClass("text-destructive");
-    expect(within(beta).getByRole("combobox", { name: "Storage plan for Beta" })).toHaveValue(TIGHT_ID);
+    expect(selectedValue(within(beta).getByRole("combobox", { name: "Storage plan for Beta" }))).toBe(TIGHT_ID);
     expect(within(await rowByDropdown("Alpha")).getByText("1 MB of 2 GB")).not.toHaveClass("text-destructive");
   });
 
@@ -124,8 +125,8 @@ describe("/admin/groups", () => {
     const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648 } };
     const fetchMock = renderGroups([BETA], (url, method) => (url === patchUrl(BETA) && method === "PATCH" ? res(200, updated) : null));
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
-    fireEvent.change(select, { target: { value: BASIC_ID } });
-    await waitFor(() => expect(select).toHaveValue(BASIC_ID));
+    await chooseOption(select, "Basic");
+    await waitFor(() => expect(selectedValue(select)).toBe(BASIC_ID));
     const patch = fetchMock.mock.calls.find(([u, i]) => String(u) === patchUrl(BETA) && (i as RequestInit).method === "PATCH");
     expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({ planId: BASIC_ID });
     expect(screen.getByText("3 MB of 2 GB")).not.toHaveClass("text-destructive");
@@ -140,18 +141,19 @@ describe("/admin/groups", () => {
   it("儲存中（PATCH 未回）：下拉 disabled 且顯示剛選的方案，不彈回舊方案", async () => {
     renderGroups([BETA], (url, method) => (url === patchUrl(BETA) && method === "PATCH" ? (new Promise(() => undefined) as unknown as Promise<Response>) : null));
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
-    fireEvent.change(select, { target: { value: BASIC_ID } });
+    await chooseOption(select, "Basic");
     await waitFor(() => expect(select).toBeDisabled());
-    expect(select).toHaveValue(BASIC_ID);
+    expect(selectedValue(select)).toBe(BASIC_ID);
+    expect(displayedLabel(select)).toBe("Basic");
   });
 
   it("改方案失敗（404 group_not_found，群組剛被刪）→ toast，下拉留在原方案，方案清單重抓", async () => {
     const fetchMock = renderGroups([BETA], (url, method) =>
       url === patchUrl(BETA) && method === "PATCH" ? res(404, { error: { code: "group_not_found", message: "x" } }) : null);
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
-    fireEvent.change(select, { target: { value: BASIC_ID } });
+    await chooseOption(select, "Basic");
     expect(await screen.findByText("We couldn't find that group.")).toBeInTheDocument();
-    await waitFor(() => expect(select).toHaveValue(TIGHT_ID));
+    await waitFor(() => expect(selectedValue(select)).toBe(TIGHT_ID));
     expect(select).not.toBeDisabled();
     // 失敗也重抓方案清單（方案可能剛被刪）
     await waitFor(() => expect(plansGets(fetchMock)).toBeGreaterThanOrEqual(2));
@@ -162,8 +164,9 @@ describe("/admin/groups", () => {
     const row: AdminGroupDto = { ...ALPHA, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
     renderGroups([row]);
     const select = await screen.findByRole("combobox", { name: "Storage plan for Alpha" });
-    await waitFor(() => expect(select).toHaveValue(NEWPLAN_ID));
-    expect(within(select).getByRole("option", { name: "Brand new" })).toBeInTheDocument();
+    await waitFor(() => expect(selectedValue(select)).toBe(NEWPLAN_ID));
+    expect(displayedLabel(select)).toBe("Brand new");
+    expect(await optionLabels(select)).toContain("Brand new");
   });
 
   it("方案清單失敗：方案欄只顯示方案名、沒有下拉", async () => {

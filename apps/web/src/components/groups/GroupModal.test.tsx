@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import i18n from "@/i18n";
+import { selectedValue } from "@/test/ui-select";
 import type { Location } from "react-router";
 import { dismissAllToasts } from "@/components/ui/toast";
 import {
@@ -259,7 +260,7 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     const dialog = await openAbout(`/groups/${GROUP_ADMIN.id}/about`, fetchMock, "Team Alpha");
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
     const confirm = await screen.findByRole("dialog", { name: "Delete group?" });
-    await waitFor(() => expect(within(confirm).getByLabelText("Admin who gets the notes")).toHaveValue(ME.id));
+    await waitFor(() => expect(selectedValue(within(confirm).getByLabelText("Admin who gets the notes"))).toBe(ME.id));
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete group" }));
     expect(
       await screen.findByText("The notes can only be handed to one of the group's admins. Pick someone who is still an admin.", { exact: true }),

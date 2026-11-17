@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { chooseOption, selectedValue } from "@/test/ui-select";
 
 // /admin/storage。走真的 AppRoutes（站台管理 modal＋AdminSections lazy chunk）。
 
@@ -129,7 +130,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     const dialog = await screen.findByRole("dialog", { name: "New storage plan" });
     fireEvent.change(within(dialog).getByLabelText("Name", { exact: true }), { target: { value: "  Team  " } });
     fireEvent.change(within(dialog).getByLabelText("Limit", { exact: true }), { target: { value: "1.5" } });
-    fireEvent.change(within(dialog).getByLabelText("Unit"), { target: { value: "GB" } });
+    await chooseOption(within(dialog).getByLabelText("Unit"), "GB");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(callsTo(fetchMock, "POST", "/api/admin/storage-plans")).toHaveLength(1));
     expect(bodyOf(callsTo(fetchMock, "POST", "/api/admin/storage-plans")[0])).toEqual({ name: "Team", quotaBytes: 1610612736 });
@@ -189,7 +190,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
     expect(within(dialog).getByLabelText("Name", { exact: true })).toHaveValue("Basic");
     expect(within(dialog).getByLabelText("Limit", { exact: true })).toHaveValue("2");
-    expect(within(dialog).getByLabelText("Unit")).toHaveValue("GB");
+    expect(selectedValue(within(dialog).getByLabelText("Unit"))).toBe("GB");
     expect(within(dialog).queryByText(/Lowering the limit doesn't delete any files/)).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("Limit", { exact: true }), { target: { value: "3" } });
     expect(within(dialog).queryByText(/Lowering the limit doesn't delete any files/)).not.toBeInTheDocument(); // 調高不顯示
@@ -266,9 +267,9 @@ describe("/admin/storage（儲存方案頁）", () => {
     const fetchMock = renderStorage((url, method) =>
       url === "/api/admin/storage-plans/defaults" && method === "PATCH" ? res(200, { userPlanId: BIG.id, groupPlanId: STARTER.id }) : null);
     const userSelect = await screen.findByLabelText("New users");
-    expect(userSelect).toHaveValue(BASIC.id);
+    expect(selectedValue(userSelect)).toBe(BASIC.id);
     expect(screen.getByRole("button", { name: "Save defaults" })).toBeDisabled(); // 沒改過
-    fireEvent.change(userSelect, { target: { value: BIG.id } });
+    await chooseOption(userSelect, "Big");
     fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", "/api/admin/storage-plans/defaults")).toHaveLength(1));
     expect(bodyOf(callsTo(fetchMock, "PATCH", "/api/admin/storage-plans/defaults")[0])).toEqual({ userPlanId: BIG.id });

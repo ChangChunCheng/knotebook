@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import { isRateLimited, type BulkAddOutcome, type BulkAddReport } from "./bulk-add";
 
 /** 輸入框一次貼多個地址（`input`），或「從其他群組匯入」（`import`）。 */
@@ -58,10 +59,6 @@ const OUTCOMES: BulkAddOutcome[] = ["added", "alreadyMember", "notFound", "inval
 
 /** 結果裡每一類的 email 清單最多直接露出幾列，超過就在該類自己的清單裡捲動。 */
 const RESULT_VISIBLE_ROWS = 5;
-
-const SELECT_CLASS =
-  "h-8 w-full rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * 批次加入的對話框（群組 modal 之上的第三層）：兩條路徑共用。
@@ -263,24 +260,18 @@ function ImportPicker({ groupId, currentMemberIds, myUserId, onImport }: BulkAdd
         ) : sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("groups.bulk.importNoGroups")}</p>
         ) : (
-          <select
+          <Select
+            variant="field"
             aria-label={t("groups.bulk.importSourceLabel")}
             value={sourceId}
-            onChange={(event) => {
-              setSourceId(event.target.value);
+            onValueChange={(value) => {
+              setSourceId(value);
               setUnchecked(new Set());
             }}
-            className={SELECT_CLASS}
-          >
-            <option value="" disabled>
-              {t("groups.bulk.importSourcePlaceholder")}
-            </option>
-            {sources.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
+            placeholder={t("groups.bulk.importSourcePlaceholder")}
+            options={sources.map((group) => ({ value: group.id, label: group.name }))}
+            className="w-full"
+          />
         )}
 
         {sourceId !== "" &&

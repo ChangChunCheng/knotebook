@@ -7,14 +7,11 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { Pencil } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import { RowIconButton } from "@/components/ui/row-icon-button";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { authErrorMessage } from "./auth-error-message";
 import "@/i18n/management-strings";
-
-const SELECT_CLASS =
-  "h-8 w-full rounded-md border border-input bg-background px-3 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 範本只預填 issuer 與顯示名（GitLab 可改成自架網址）。Microsoft 不做。 */
 const TEMPLATE_DEFAULTS: Record<AuthProviderTemplate, { displayName: string; issuerUrl: string }> = {
@@ -275,16 +272,18 @@ export function CreateProviderDialog() {
                 <label htmlFor="auth-provider-template" className="text-sm font-medium">
                   {t("admin.auth.create.template")}
                 </label>
-                <select
+                <Select
+                  variant="field"
                   id="auth-provider-template"
+                  className="w-full"
                   value={template}
-                  onChange={event => chooseTemplate(event.target.value as AuthProviderTemplate)}
-                  className={SELECT_CLASS}
-                >
-                  <option value="gitlab">{t("admin.auth.template.gitlab")}</option>
-                  <option value="google">{t("admin.auth.template.google")}</option>
-                  <option value="oidc">{t("admin.auth.template.oidc")}</option>
-                </select>
+                  onValueChange={next => chooseTemplate(next as AuthProviderTemplate)}
+                  options={[
+                    { value: "gitlab", label: t("admin.auth.template.gitlab") },
+                    { value: "google", label: t("admin.auth.template.google") },
+                    { value: "oidc", label: t("admin.auth.template.oidc") },
+                  ]}
+                />
               </div>
               <div className="space-y-1">
                 <label htmlFor="auth-provider-display-name" className="text-sm font-medium">

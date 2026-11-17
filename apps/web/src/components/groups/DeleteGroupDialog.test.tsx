@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GroupDto, GroupMemberDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption, optionLabels, selectedValue } from "@/test/ui-select";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { adminRole, customRole, groupDto, memberRole } from "@/test/fixtures";
 import { trashItem, trashList } from "@/test/trash-fixtures";
@@ -114,19 +115,19 @@ describe("DeleteGroupDialog（#175）", () => {
   it("點對話框外面不關閉、已選的接手者仍在（表單型守衛）", async () => {
     const { onOpenChange } = renderDialog();
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
-    fireEvent.change(select, { target: { value: "u-bob" } });
+    await waitForAdminOptions(select);
+    await chooseOption(select, "Bob (bob@example.com)");
     await clickOutside();
     expect(onOpenChange).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Admin who gets the notes")).toHaveValue("u-bob");
+    expect(selectedValue(screen.getByLabelText("Admin who gets the notes"))).toBe("u-bob");
   });
 
   it("預設：轉移選中、下拉只列兩位內建管理員且第一位選中（可以是自己）；說明句帶篇數 2 與選中者名字；確認鈕可按", async () => {
     renderDialog();
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Me (me@example.com)", "Bob (bob@example.com)"]);
-    expect(select).toHaveValue("u-me");
+    await waitForAdminOptions(select);
+    expect(await optionLabels(select)).toEqual(["Me (me@example.com)", "Bob (bob@example.com)"]);
+    expect(selectedValue(select)).toBe("u-me");
     expect(screen.getByRole("radio", { name: "Give them to an admin" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Delete everything" })).not.toBeChecked();
     await waitFor(() => expect(screen.getByText(/^2 notes will become Me's personal notes\./)).toBeInTheDocument());
@@ -136,8 +137,8 @@ describe("DeleteGroupDialog（#175）", () => {
   it("選 Bob → 送 DELETE {mode:'transfer', transferTo: Bob 的 userId} → 成功：對話框關閉（onOpenChange(false)）、onDeleted 呼叫一次", async () => {
     const { calls, onOpenChange, onDeleted } = renderDialog();
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
-    fireEvent.change(select, { target: { value: "u-bob" } });
+    await waitForAdminOptions(select);
+    await chooseOption(select, "Bob (bob@example.com)");
     await waitFor(() => expect(screen.getByText(/^2 notes will become Bob's personal notes\./)).toBeInTheDocument());
     fireEvent.click(confirmButton());
     await waitFor(() => expect(deleteCalls(calls)).toHaveLength(1));
@@ -179,7 +180,7 @@ describe("DeleteGroupDialog（#175）", () => {
       del: () => fakeResponse(409, { error: { code: "not_admin", message: "x" } }),
     });
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+    await waitForAdminOptions(select);
     const membersGets = () => calls.filter((c) => c.method === "GET" && c.url === `/api/groups/${GROUP.id}/members`).length;
     expect(membersGets()).toBe(1);
     fireEvent.click(confirmButton());
@@ -195,7 +196,7 @@ describe("DeleteGroupDialog（#175）", () => {
       del: () => fakeResponse(409, { error: { code: "server_busy", message: "x" } }),
     });
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+    await waitForAdminOptions(select);
     fireEvent.click(confirmButton());
     await waitFor(() => expect(screen.getByText("The server is busy. Please try again shortly.")).toBeInTheDocument());
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -212,7 +213,7 @@ describe("DeleteGroupDialog（#175）", () => {
       del: () => fakeResponse(404, { error: { code: "not_found", message: "x" } }),
     });
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+    await waitForAdminOptions(select);
     fireEvent.click(confirmButton());
     await waitFor(() => expect(screen.getByText(i18n.t("errors.not_found"))).toBeInTheDocument());
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -225,7 +226,7 @@ describe("DeleteGroupDialog（#175）", () => {
     const never = new Promise<Response>(() => {});
     renderDialog({ notes: () => never as unknown as Response });
     const select = await screen.findByLabelText("Admin who gets the notes");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+    await waitForAdminOptions(select);
     expect(screen.getByText(/^The group's notes will become Me's personal notes\./)).toBeInTheDocument();
     expect(screen.queryByText(/\b0 notes?\b/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
@@ -245,7 +246,7 @@ describe("DeleteGroupDialog（#175）", () => {
   it("成員名單錯誤：顯示 adminsUnavailable、轉移模式的確認鈕 disabled；切到全刪勾選後可送出", async () => {
     const { calls } = renderDialog({ members: () => fakeResponse(500, { error: { code: "internal", message: "x" } }) });
     await waitFor(() => expect(screen.getByText("Couldn't load the group's admins.")).toBeInTheDocument());
-    expect(within(screen.getByLabelText("Admin who gets the notes")).queryAllByRole("option")).toHaveLength(0);
+    expect(await optionLabels(screen.getByLabelText("Admin who gets the notes"))).toEqual([]);
     expect(confirmButton()).toBeDisabled();
     fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "I understand the notes will be permanently deleted" }));
@@ -284,9 +285,15 @@ const DELETE_NO_COUNT =
   /^The group's notes \(including those in its trash\), their attachments and their edit history are permanently deleted — they don't go to the trash\. This can't be undone\.$/;
 const TRANSFER_NO_COUNT = /^The group's notes will become Me's personal notes\./;
 
+/** 兩位內建管理員都進了下拉。 */
+async function waitForAdminOptions(select: HTMLElement): Promise<void> {
+  await waitFor(() => expect(selectedValue(select)).not.toBe(""));
+  expect(await optionLabels(select)).toHaveLength(2);
+}
+
 async function adminsLoaded(): Promise<void> {
   const select = await screen.findByLabelText("Admin who gets the notes");
-  await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+  await waitForAdminOptions(select);
 }
 const toDeleteMode = () => fireEvent.click(screen.getByRole("radio", { name: "Delete everything" }));
 
@@ -482,7 +489,7 @@ describe("DeleteGroupDialog：群組資料夾的轉移說明", () => {
     await i18n.changeLanguage("zh-TW");
     renderDialog({ folders: WITH_GROUP_FOLDER });
     const select = await screen.findByRole("combobox");
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+    await waitForAdminOptions(select);
     expect(await screen.findByText(FOLDERS_NOTE_ZH, { exact: true })).toBeInTheDocument();
   });
 

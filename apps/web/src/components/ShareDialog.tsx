@@ -37,6 +37,7 @@ import {
 import { toNoteWidth } from "@/components/note-width";
 import { Share, Trash, Users } from "@/components/ui/icons";
 import { Globe, Lock } from "@/components/ui/icons-extra";
+import { Select, type SelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
@@ -54,9 +55,12 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+function roleOptions(t: (key: string) => string): SelectOption[] {
+  return [
+    { value: "viewer", label: t("roles.viewer") },
+    { value: "editor", label: t("roles.editor") },
+  ];
+}
 
 /**
  * 分享面板的一組設定＝**一件事**。內部自訂網址下架之後，面板只剩
@@ -68,7 +72,7 @@ const SELECT_CLASS =
  *
  * 刻意在本檔自己寫一份、不去 import `settings/SettingsLayout` 的同名元件：方向上
  * `components/` 不該依賴 `settings/`，而且這裡的密度要比設定面板緊（`py-4` 對
- * `py-8`）。逐檔各寫一份是這個 repo 的既有慣例（同檔 `errorMessage`、`SELECT_CLASS`）。
+ * `py-8`）。逐檔各寫一份是這個 repo 的既有慣例（同檔 `errorMessage`）。
  */
 function ShareGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -114,16 +118,15 @@ function ShareRow({ noteId, share }: { noteId: string; share: ShareDto }) {
         <p className="truncate text-sm font-medium">{share.displayName}</p>
         <p className="truncate text-xs text-muted-foreground">{share.email}</p>
       </div>
-      <select
+      <Select
+        variant="inline"
         aria-label={t("share.roleLabel", { email: share.email })}
         value={share.role}
         disabled={putShare.isPending}
-        onChange={(event) => void handleRoleChange(event.target.value as ShareRole)}
-        className={SELECT_CLASS}
-      >
-        <option value="viewer">{t("roles.viewer")}</option>
-        <option value="editor">{t("roles.editor")}</option>
-      </select>
+        onValueChange={(value) => void handleRoleChange(value as ShareRole)}
+        options={roleOptions(t)}
+        className="w-fit shrink-0"
+      />
       <Button
         ref={trashRef}
         type="button"
@@ -210,15 +213,14 @@ function SharesSection({ noteId, title }: { noteId: string; title: string }) {
           excludeUserIds={sharesQuery.data?.map((share) => share.userId)}
           className="min-w-0 flex-1"
         />
-        <select
+        <Select
+          variant="field"
           aria-label={t("share.newRoleLabel")}
           value={role}
-          onChange={(event) => setRole(event.target.value as ShareRole)}
-          className={SELECT_CLASS}
-        >
-          <option value="viewer">{t("roles.viewer")}</option>
-          <option value="editor">{t("roles.editor")}</option>
-        </select>
+          onValueChange={(value) => setRole(value as ShareRole)}
+          options={roleOptions(t)}
+          className="w-fit shrink-0"
+        />
         <Button type="submit" variant="outline" disabled={putShare.isPending}>
           {t("share.add")}
         </Button>
@@ -836,19 +838,15 @@ function PublicLinkPanel({
         <label htmlFor="share-public-width" className="text-sm font-medium">
           {t("share.publicWidth.label")}
         </label>
-        <select
+        <Select
           id="share-public-width"
-          className={SELECT_CLASS}
+          variant="field"
+          className="w-fit shrink-0"
           value={pendingWidth ?? width}
           disabled={busy}
-          onChange={(event) => void handleWidth(toNoteWidth(event.target.value))}
-        >
-          {NOTE_WIDTHS.map((w) => (
-            <option key={w} value={w}>
-              {t(`note.width.${w}`)}
-            </option>
-          ))}
-        </select>
+          onValueChange={(value) => void handleWidth(toNoteWidth(value))}
+          options={NOTE_WIDTHS.map((w) => ({ value: w, label: t(`note.width.${w}`) }))}
+        />
       </div>
 
       {!anonymous && (

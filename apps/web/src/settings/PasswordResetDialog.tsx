@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { KeyRound } from "@/components/ui/icons-extra";
 import { RowIconButton } from "@/components/ui/row-icon-button";
+import { Select } from "@/components/ui/select";
 import { OneTimeLinkResult } from "./OneTimeLinkResult";
 import "@/i18n/management-strings";
 
@@ -15,11 +16,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
-
-/** 與 `SettingsUsersSection` 的 `SELECT_CLASS` 同一份（各檔各自宣告是既有慣例，見 ApiTokensSection）。 */
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => i + 1);
 
@@ -116,18 +112,14 @@ function PasswordResetDialogBody({
           {t("admin.passwordReset.expiresField")}
         </label>
         <div>
-          <select
+          <Select
+            variant="field"
             id="admin-password-reset-hours"
-            className={SELECT_CLASS}
-            value={hours}
-            onChange={(event) => setHours(Number(event.target.value))}
-          >
-            {HOUR_OPTIONS.map((n) => (
-              <option key={n} value={n}>
-                {t("admin.passwordReset.hours", { count: n })}
-              </option>
-            ))}
-          </select>
+            className="w-fit"
+            value={String(hours)}
+            onValueChange={(v) => setHours(Number(v))}
+            options={HOUR_OPTIONS.map((n) => ({ value: String(n), label: t("admin.passwordReset.hours", { count: n }) }))}
+          />
         </div>
       </div>
       <DialogFooter>

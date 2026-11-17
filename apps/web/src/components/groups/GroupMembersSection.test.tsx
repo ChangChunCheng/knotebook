@@ -3,23 +3,14 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { avatarUrl, type GroupDto, type GroupRoleDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { dismissAllToasts } from "@/components/ui/toast";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 import { ADMIN_ROLE, BG_NOTE, GROUP_ADMIN, GROUP_CO_ADMIN, GROUP_MEMBER, ME, MEMBER_ROLE, ROLES, callsTo, fail, fakeResponse, groupFetch, locationText, member, ok, renderGroupRoute } from "./group-test-utils";
 
 // 群組 modal「成員」（`/groups/:id`，#247）：案子逐案搬自 main 版 `settings/SettingsGroupDetailSection.test.tsx`
 // （#103；#175）。背景側欄的群組分段吃同一份 `useGroups()` 快取會渲染同樣的群組名字——
 // 一律 `within(dialog)` 才不誤命中背景層。
 
-/** 角色下拉的選項（value、顯示文字）。 */
-function optionsOf(select: HTMLElement): Array<[string, string | null]> {
-  return within(select)
-    .getAllByRole("option")
-    .map((option) => [(option as HTMLOptionElement).value, option.textContent]);
-}
-
-const ROLE_OPTIONS: Array<[string, string]> = [
-  [ADMIN_ROLE.id, "Admin"],
-  [MEMBER_ROLE.id, "Member"],
-];
+const ROLE_LABELS = ["Admin", "Member"];
 
 describe("GroupMembersSection（/groups/:id，#247）", () => {
   beforeEach(async () => {
@@ -58,15 +49,16 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(within(dialog).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(dialog).getByText("me@example.com")).toBeInTheDocument();
     const bobSelect = within(dialog).getByLabelText("Role for bob@example.com");
-    await waitFor(() => expect(optionsOf(bobSelect)).toEqual(ROLE_OPTIONS));
-    expect(bobSelect).toHaveValue(MEMBER_ROLE.id);
-    expect(within(dialog).getByLabelText("Role for me@example.com")).toHaveValue(ADMIN_ROLE.id);
+    await waitFor(() => expect(bobSelect).not.toBeDisabled());
+    expect(await optionLabels(bobSelect)).toEqual(ROLE_LABELS);
+    expect(selectedValue(bobSelect)).toBe(MEMBER_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for me@example.com"))).toBe(ADMIN_ROLE.id);
     expect(within(dialog).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
     expect(callsTo(fetchMock, "GET", `/api/groups/${GROUP_ADMIN.id}/roles`).length).toBeGreaterThanOrEqual(1);
 
     // 加人表單：角色下拉同樣列 roles。
     expect(within(dialog).getByLabelText("Email address")).toBeInTheDocument();
-    expect(optionsOf(within(dialog).getByLabelText("Role for new member"))).toEqual(ROLE_OPTIONS);
+    expect(await optionLabels(within(dialog).getByLabelText("Role for new member"))).toEqual(ROLE_LABELS);
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
 
@@ -144,18 +136,18 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
     const roleSelect = await within(dialog).findByLabelText("Role for new member");
     // 預設選內建一般成員那一個的 id
-    await waitFor(() => expect(roleSelect).toHaveValue(MEMBER_ROLE.id));
+    await waitFor(() => expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id));
 
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "carol@example.com" } });
-    fireEvent.change(roleSelect, { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(roleSelect, "Admin");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 
     const url = `/api/groups/${GROUP_ADMIN.id}/members`;
     await waitFor(() => expect(callsTo(fetchMock, "PUT", url)).toHaveLength(1));
     expect(JSON.parse(String(callsTo(fetchMock, "PUT", url)[0].body))).toEqual({ email: "carol@example.com", roleId: ADMIN_ROLE.id });
     await waitFor(() => expect(within(dialog).getByText("carol@example.com")).toBeInTheDocument());
-    expect(within(dialog).getByLabelText("Role for carol@example.com")).toHaveValue(ADMIN_ROLE.id);
-    expect(roleSelect).toHaveValue(MEMBER_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for carol@example.com"))).toBe(ADMIN_ROLE.id);
+    expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id);
 
     // 409 already_member → 表單下 alert；這一發用的是重設後的預設角色。
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "dup@example.com" } });
@@ -183,7 +175,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
     const roleSelect = await within(dialog).findByLabelText("Role for new member");
-    await waitFor(() => expect(roleSelect).toHaveValue(MEMBER_ROLE.id));
+    await waitFor(() => expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id));
     const box = within(dialog).getByRole("combobox", { name: "Email address" });
     // #331 收多個地址：text＋inputMode email、#331 的 placeholder 與說明
     expect(box).toHaveAttribute("type", "text");
@@ -246,9 +238,10 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     renderGroupRoute(`/groups/${GROUP_CO_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
     const carolSelect = await within(dialog).findByLabelText("Role for carol@example.com");
-    await waitFor(() => expect(optionsOf(carolSelect)).toEqual(ROLE_OPTIONS));
+    await waitFor(() => expect(carolSelect).not.toBeDisabled());
+    expect(await optionLabels(carolSelect)).toEqual(ROLE_LABELS);
 
-    fireEvent.change(carolSelect, { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(carolSelect, "Admin");
     const patchUrl = `/api/groups/${GROUP_CO_ADMIN.id}/members/u-carol`;
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", patchUrl)).toHaveLength(1));
     expect(JSON.parse(String(callsTo(fetchMock, "PATCH", patchUrl)[0].body))).toEqual({ roleId: ADMIN_ROLE.id });
@@ -274,16 +267,30 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
     const bobSelect = await within(dialog).findByLabelText("Role for bob@example.com");
     // 名單裡沒有任何一般成員——一般成員角色的 id 只可能來自 GET …/roles
-    await waitFor(() => expect(optionsOf(bobSelect)).toEqual(ROLE_OPTIONS));
+    await waitFor(() => expect(bobSelect).not.toBeDisabled());
+    expect(await optionLabels(bobSelect)).toEqual(ROLE_LABELS);
     expect(bobSelect).not.toBeDisabled();
 
-    fireEvent.change(bobSelect, { target: { value: MEMBER_ROLE.id } });
+    await chooseOption(bobSelect, "Member");
     const patchUrl = `/api/groups/${GROUP_CO_ADMIN.id}/members/u-bob`;
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", patchUrl)).toHaveLength(1));
     expect(JSON.parse(String(callsTo(fetchMock, "PATCH", patchUrl)[0].body))).toEqual({ roleId: MEMBER_ROLE.id });
     // 降級後只剩我一位管理員：我的列鎖住
     await waitFor(() => expect(within(dialog).getByLabelText("Role for me@example.com")).toBeDisabled());
-    expect(within(dialog).getByLabelText("Role for bob@example.com")).toHaveValue(MEMBER_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for bob@example.com"))).toBe(MEMBER_ROLE.id);
+  });
+
+  it("roles 還沒到：列的角色觸發鈕顯示目前角色文字並 disabled，只有那一個選項", async () => {
+    const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)], (url, method) => {
+      if (url === `/api/groups/${GROUP_ADMIN.id}/roles` && method === "GET") return new Promise<Response>(() => {}) as unknown as Response;
+      return null;
+    });
+    renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
+    const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
+    const bobSelect = await within(dialog).findByLabelText("Role for bob@example.com");
+    expect(displayedLabel(bobSelect)).toBe("Member");
+    expect(selectedValue(bobSelect)).toBe(MEMBER_ROLE.id);
+    expect(bobSelect).toBeDisabled();
   });
 
   it("一般成員視角：成員表唯讀（角色名走 roles：內建 i18n、自訂用 name）、沒有加人表單", async () => {

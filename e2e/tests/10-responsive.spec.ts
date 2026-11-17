@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ADMIN, adminNav, createNote, editorLocator, loginAs, openListOnCompact, openSelectionAiBox, openSiteAdmin } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, openListOnCompact, openSelectionAiBox, openSiteAdmin } from "./helpers.js";
 
 /**
  * #115 版面改版：窄視窗的導覽（手機＜640 是清單畫面與「Back to notes」，640–1279 是抽屜）；#263 起 AI 段驗框選 AI 框的寬度。
@@ -41,7 +41,7 @@ test("窄視窗：靜態側欄隱藏、抽屜導覽、框選 AI 框不超出視�
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     const createProviderDialog = page.getByRole("dialog", { name: "Add provider" });
     await createProviderDialog.locator("#ai-provider-name").fill(PROVIDER_NAME);
-    await createProviderDialog.locator("#ai-provider-type").selectOption("openai_compatible");
+    await chooseSelectOption(page, createProviderDialog.locator("#ai-provider-type"), "OpenAI-compatible");
     await createProviderDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/fast");
     await createProviderDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(createProviderDialog).not.toBeVisible();

@@ -735,6 +735,18 @@ export async function tapAreaOf(target: Locator): Promise<TapArea> {
   });
 }
 
+/**
+ * 共用 Select 元件（`components/ui/select.tsx`）選一項：點觸發鈕、點選項、等選單收起。
+ * 選項面板在 portal（對話框之外），所以選項一律從 `page` 查。`optionName` 與選項文字全等比對。
+ * 觸發鈕目前選中的值看 `data-value`；顯示文字看 `[data-select-text]`（觸發鈕內還有隱藏的全選項文字，不能對整顆鈕斷言文字）。
+ */
+export async function chooseSelectOption(page: Page, trigger: Locator, optionName: string | RegExp): Promise<void> {
+  await trigger.click();
+  await page.getByRole("option", { name: optionName, exact: true }).click();
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+}
+
+
 /** 欄比例寫進文件時四捨五入到兩位小數（`apps/web/src/collab/columns/widths.ts` 的 `ratiosFromPixels`）。 */
 export const COLUMN_RATIO_STEP = 0.01;
 

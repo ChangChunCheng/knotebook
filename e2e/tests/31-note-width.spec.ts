@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { ADMIN, clickByPointer, createNote, editorLocator, loginAs, randomEmail } from "./helpers.js";
+import { ADMIN, chooseSelectOption, clickByPointer, createNote, editorLocator, loginAs, randomEmail } from "./helpers.js";
 
 /**
  * #297 內文欄三段寬度（真瀏覽器量測）：
@@ -227,7 +227,7 @@ test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄
     const token = await tokenInput.inputValue();
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const widthSelect = dialog.getByLabel("Public page width");
-    await expect(widthSelect).toHaveValue("standard");
+    await expect(widthSelect).toHaveAttribute("data-value", "standard");
 
     const anon = await anonContext.newPage();
     // 內容 flush 是非同步的（collab 2 s debounce）：重載到看見內文為止。
@@ -240,9 +240,9 @@ test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄
     expect(Math.abs(before.col - expected("standard", before.W))).toBeLessThanOrEqual(1);
 
     const put = owner.waitForResponse((res) => res.url().endsWith("/public-width") && res.request().method() === "PUT");
-    await widthSelect.selectOption("full");
+    await chooseSelectOption(owner, widthSelect, "Full width");
     expect((await put).status()).toBe(200);
-    await expect(widthSelect).toHaveValue("full");
+    await expect(widthSelect).toHaveAttribute("data-value", "full");
 
     await anon.reload();
     await expect(anon.getByText("Width measurement paragraph.")).toBeVisible({ timeout: 15_000 });
