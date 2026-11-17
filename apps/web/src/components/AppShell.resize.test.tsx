@@ -6,6 +6,12 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { SIDEBAR_WIDTH_DEFAULT } from "@/components/sidebar-width";
+
+const DEFAULT_PX = `${SIDEBAR_WIDTH_DEFAULT}px`;
+// 從預設寬度往右拖 80px（clientX 100 → 180）後的寬度。
+const DRAGGED = SIDEBAR_WIDTH_DEFAULT + 80;
+const DRAGGED_PX = `${DRAGGED}px`;
 
 interface FakeResponseInit {
   ok: boolean;
@@ -83,11 +89,11 @@ describe("AppShell 側欄寬度把手", () => {
     document.documentElement.removeAttribute("data-accent");
   });
 
-  it("預設：256px、aria-valuenow/min/max、可聚焦、把手在 aside 內（把手位置是 class 斷言）", async () => {
+  it("預設：320px、aria-valuenow/min/max、可聚焦、把手在 aside 內（把手位置是 class 斷言）", async () => {
     const { handle, aside } = await renderShell();
 
-    expect(aside.style.width).toBe("256px");
-    expect(handle).toHaveAttribute("aria-valuenow", "256");
+    expect(aside.style.width).toBe(DEFAULT_PX);
+    expect(handle).toHaveAttribute("aria-valuenow", String(SIDEBAR_WIDTH_DEFAULT));
     expect(handle).toHaveAttribute("aria-valuemin", "200");
     expect(handle).toHaveAttribute("aria-valuemax", "480");
     expect(handle).toHaveAttribute("aria-orientation", "vertical");
@@ -106,8 +112,8 @@ describe("AppShell 側欄寬度把手", () => {
     expect(document.body.style.cursor).toBe("col-resize");
 
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    expect(aside.style.width).toBe("336px");
-    expect(handle).toHaveAttribute("aria-valuenow", "336");
+    expect(aside.style.width).toBe(DRAGGED_PX);
+    expect(handle).toHaveAttribute("aria-valuenow", String(DRAGGED));
     expect(window.localStorage.getItem(KEY)).toBeNull();
 
     fireEvent.pointerMove(handle, { clientX: 5000, pointerId: 1 });
@@ -122,8 +128,8 @@ describe("AppShell 側欄寬度把手", () => {
     expect(document.body.style.userSelect).toBe("");
     expect(document.body.style.cursor).toBe("");
 
-    // 拖曳已結束：之後的 move 不再改寬度。clientX 刻意選 180——若拖曳沒結束會算出 336、
-    // 與 200 不同值；選 0 的話算出來恰好也夾在 200，斷言分不出來。
+    // 拖曳已結束：之後的 move 不再改寬度。clientX 刻意選 180——若拖曳沒結束會算出
+    // 預設寬度加 80，與已夾到的下限 200 不同值，斷言才分得出來。
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
     expect(aside.style.width).toBe("200px");
   });
@@ -133,15 +139,15 @@ describe("AppShell 側欄寬度把手", () => {
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    expect(aside.style.width).toBe("336px");
+    expect(aside.style.width).toBe(DRAGGED_PX);
 
     fireEvent.pointerCancel(handle, { pointerId: 1 });
-    expect(window.localStorage.getItem(KEY)).toBe("336");
+    expect(window.localStorage.getItem(KEY)).toBe(String(DRAGGED));
     expect(document.body.style.userSelect).toBe("");
     expect(document.body.style.cursor).toBe("");
 
     fireEvent.pointerMove(handle, { clientX: 300, pointerId: 1 });
-    expect(aside.style.width).toBe("336px");
+    expect(aside.style.width).toBe(DRAGGED_PX);
   });
 
   it("lostpointercapture 也收尾（系統奪走 capture、沒有 pointerup／cancel 的那條路）", async () => {
@@ -149,15 +155,15 @@ describe("AppShell 側欄寬度把手", () => {
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    expect(aside.style.width).toBe("336px");
+    expect(aside.style.width).toBe(DRAGGED_PX);
 
     fireEvent.lostPointerCapture(handle, { pointerId: 1 });
-    expect(window.localStorage.getItem(KEY)).toBe("336");
+    expect(window.localStorage.getItem(KEY)).toBe(String(DRAGGED));
     expect(document.body.style.userSelect).toBe("");
     expect(document.body.style.cursor).toBe("");
 
     fireEvent.pointerMove(handle, { clientX: 300, pointerId: 1 });
-    expect(aside.style.width).toBe("336px");
+    expect(aside.style.width).toBe(DRAGGED_PX);
   });
 
   it.each([
@@ -171,7 +177,7 @@ describe("AppShell 側欄寬度把手", () => {
     expect(document.body.style.userSelect).toBe("");
 
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    expect(aside.style.width).toBe("256px");
+    expect(aside.style.width).toBe(DEFAULT_PX);
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
@@ -199,8 +205,8 @@ describe("AppShell 側欄寬度把手", () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.keyDown(handle, { key: "ArrowRight" });
-    expect(aside.style.width).toBe("272px");
-    expect(window.localStorage.getItem(KEY)).toBe("272");
+    expect(aside.style.width).toBe(`${SIDEBAR_WIDTH_DEFAULT + 16}px`);
+    expect(window.localStorage.getItem(KEY)).toBe(String(SIDEBAR_WIDTH_DEFAULT + 16));
 
     fireEvent.keyDown(handle, { key: "Home" });
     expect(aside.style.width).toBe("200px");
@@ -225,16 +231,22 @@ describe("AppShell 側欄寬度把手", () => {
     expect(window.localStorage.getItem(KEY)).toBe("480");
 
     fireEvent.doubleClick(handle);
-    expect(aside.style.width).toBe("256px");
+    expect(aside.style.width).toBe(DEFAULT_PX);
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
+  it("已存舊預設 256 → 維持 256px，不被改成新預設", async () => {
+    window.localStorage.setItem(KEY, "256");
+    const { aside } = await renderShell();
+    expect(aside.style.width).toBe("256px");
+  });
+
   it.each([
-    ["abc", "256px"],
-    ["9999", "256px"],
-    ["150", "256px"],
-    ["300.5", "256px"],
-    ["", "256px"],
+    ["abc", DEFAULT_PX],
+    ["9999", DEFAULT_PX],
+    ["150", DEFAULT_PX],
+    ["300.5", DEFAULT_PX],
+    ["", DEFAULT_PX],
     ["300", "300px"],
   ])("讀到 %j → %s", async (raw, expected) => {
     window.localStorage.setItem(KEY, raw);
@@ -252,7 +264,7 @@ describe("AppShell 側欄寬度把手", () => {
     });
     const { aside } = await renderShell();
     expect(spy).toHaveBeenCalledWith(KEY);
-    expect(aside.style.width).toBe("256px");
+    expect(aside.style.width).toBe(DEFAULT_PX);
     expect(screen.getByText("content")).toBeInTheDocument();
   });
 });

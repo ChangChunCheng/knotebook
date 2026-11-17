@@ -132,7 +132,7 @@ test("23a：舊 schema 形的筆記——開了就關、在 heading／paragraph�
 
 test("23b：2000 區塊筆記，點版本列到 diff 標記出現的耗時（真瀏覽器）", async ({ page }) => {
   test.setTimeout(180_000);
-  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.setViewportSize({ width: 1500, height: 900 });
   await loginAs(page, ADMIN.email, ADMIN.password);
   const content = Array.from({ length: 2000 }, (_, i) => `第 ${i} 段 measure 內容內容內容內容`).join("\n\n");
   const created = await page.request.post("/api/notes", { data: { title: `E2E 2000 ${Date.now()}`, content } });
@@ -156,7 +156,7 @@ test("23b：2000 區塊筆記，點版本列到 diff 標記出現的耗時（真
   await expect(row).toBeVisible({ timeout: 15_000 });
   const t0 = Date.now();
   await row.click();
-  // 看並排（diff-split）而不是單欄：1400 px 視窗開著面板時預覽區約 774 px，≥ 720 px 門檻就自動並排，DOM 上沒有 diff-single。
+  // 看並排（diff-split）而不是單欄：1500 px 視窗開著面板時預覽區約 810 px，≥ 720 px 門檻就自動並排，DOM 上沒有 diff-single。
   // 等並排欄內第一個非 context 的 data-diff 標記可見（並排兩側各自標記，不一定是 "changed"）。
   await expect(page.locator('[data-testid="diff-split"] [data-diff]:not([data-diff="context"])').first()).toBeVisible({
     timeout: 60_000,

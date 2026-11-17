@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { ADMIN, clickEndOfParagraph, createNote, editorLocator, loginAs, noteIdFromUrl, reEscape, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, clickEndOfParagraph, createNote, editorLocator, loginAs, noteIdFromUrl, ratioQuantPx, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 並排的拖曳：⋮⋮ 拖到 block 左右緣建列、加欄，拖曳中的直線提示，自動等高，溝裡的檔案拖放，拖放中 ⋮⋮ 不吃指標；
@@ -20,6 +20,8 @@ const RUN = Date.now();
 const ROW = '[data-node-type="columnList"]';
 /** 欄間的溝（`collab/columns/layout.ts` 的 COLUMN_GAP_PX；e2e 不能 import web，兩邊要一起改）。 */
 const COLUMN_GAP_PX = 24;
+/** 文字欄最小寬度（同上，`COLUMN_MIN_TEXT_PX`）。 */
+const COLUMN_MIN_TEXT_PX = 200;
 const VERTICAL = ".prosemirror-dropcursor-vertical";
 const ANY_CURSOR = ".prosemirror-dropcursor-vertical, .prosemirror-dropcursor-block, .prosemirror-dropcursor-inline";
 
@@ -1145,8 +1147,8 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
       expect(during.widths, "拖曳中文件不變").toEqual([1, 1]);
       expect(during.updates, "拖曳中沒有 Y update").toBe(0);
       expect(during.state, "拖曳中 body 不能選字、預覽表在").toEqual({ userSelect: "none", dragging: 1, preview: 1 });
-      expect(during.cols[0]!.width, "左欄停在 200px").toBeGreaterThanOrEqual(199);
-      expect(during.cols[0]!.width).toBeLessThanOrEqual(201);
+      expect(during.cols[0]!.width, "左欄停在文字欄最小寬度").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - ratioQuantPx(during.cols));
+      expect(during.cols[0]!.width).toBeLessThanOrEqual(COLUMN_MIN_TEXT_PX + ratioQuantPx(during.cols));
     },
   });
   await expect.poll(() => docWidths(page)).not.toEqual([1, 1]);
@@ -1156,8 +1158,8 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
   record.after = after;
   expect(written[0]!).toBeLessThan(written[1]!);
   expect(Math.round((written[0]! + written[1]!) * 100) / 100).toBe(2);
-  expect(after[0]!.width, "放開後左欄仍是 200px").toBeGreaterThanOrEqual(199);
-  expect(after[0]!.width).toBeLessThanOrEqual(201);
+  expect(after[0]!.width, "放開後左欄仍是文字欄最小寬度").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - ratioQuantPx(after));
+  expect(after[0]!.width).toBeLessThanOrEqual(COLUMN_MIN_TEXT_PX + ratioQuantPx(after));
   expect(await dragState(page), "放開後清掉預覽與 user-select").toEqual(IDLE);
   // 寫入只發生一次：放開那一下一個 Y update，之後沒有再改。
   await page.waitForTimeout(500);
@@ -1357,18 +1359,21 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
     await moveInSteps(page, far, { x: far.x + 100, y: start.y }, 2);
     const step4 = await snap();
     record.far = { step3, step4 };
-    expect(step3.cols[1]!.width, "文字欄停在 200px").toBeGreaterThanOrEqual(199);
-    expect(step3.cols[1]!.width).toBeLessThanOrEqual(201);
+    expect(step3.cols[1]!.width, "文字欄停在最小寬度").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - ratioQuantPx(step3.cols));
+    expect(step3.cols[1]!.width).toBeLessThanOrEqual(COLUMN_MIN_TEXT_PX + ratioQuantPx(step3.cols));
     expect(Math.abs(step4.img - step3.img), "再拉也不變").toBeLessThanOrEqual(0.5);
     await page.mouse.up();
 
     await expect.poll(() => docWidths(page)).not.toEqual([1, 1]);
     const written = { widths: await docWidths(page), previewWidth: await imageBlock.getAttribute("data-preview-width") };
     record.written = written;
-    expect(Math.abs(Number(written.previewWidth) - step4.img), "寫入的 previewWidth＝放開時的圖寬").toBeLessThanOrEqual(1);
     const afterUp = (await rowGeometry(page)).cols;
-    expect(afterUp[1]!.width, "放開後文字欄仍是 200px").toBeGreaterThanOrEqual(199);
-    expect(afterUp[1]!.width).toBeLessThanOrEqual(201);
+    // previewWidth 由捨入前的 `ck + granted` 算出，欄卻依捨入後的比例排版、把圖片夾在欄寬內；差距不超過一格比例對應的像素寬。
+    expect(Math.abs(Number(written.previewWidth) - step4.img), "寫入的 previewWidth＝放開時的圖寬").toBeLessThanOrEqual(
+      Math.max(1, ratioQuantPx(afterUp)),
+    );
+    expect(afterUp[1]!.width, "放開後文字欄仍是最小寬度").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - ratioQuantPx(afterUp));
+    expect(afterUp[1]!.width).toBeLessThanOrEqual(COLUMN_MIN_TEXT_PX + ratioQuantPx(afterUp));
   } finally {
     test.info().annotations.push({ type: "image-expands-column", description: JSON.stringify(record) });
   }
