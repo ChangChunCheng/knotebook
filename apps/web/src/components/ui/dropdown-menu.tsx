@@ -185,7 +185,13 @@ type MenuContentProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Co
   sheetTitle?: ReactNode;
 };
 
-const CONTENT_BASE = "z-50 min-w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
+/** 選單內容的表面（背景、邊框、圓角、陰影、內距）；其他浮動面板要同款外觀時共用。 */
+export const MENU_CONTENT_BASE = "z-50 min-w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
+
+/** 選單項一列的外觀（內距、字級、圓角、焦點高亮、無外框）。 */
+const MENU_ITEM_BASE =
+  "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 pointer-coarse:py-2.5 text-sm outline-none " +
+  "transition-colors focus:bg-accent focus:text-accent-foreground";
 
 /**
  * sheet 形的內容。定位靠 `index.css` 的 `.kb-menu-sheet` 規則：Radix 把內容包在一層定位用的 wrapper 裡（行內 transform 貼到觸發鈕旁），
@@ -229,7 +235,7 @@ const MenuContent = forwardRef<ElementRef<typeof DropdownMenuPrimitive.Content>,
         ref={setRefs}
         sideOffset={sideOffset}
         data-menu-sheet={sheet ? "" : undefined}
-        className={cn(CONTENT_BASE, className, sheet && SHEET_CONTENT)}
+        className={cn(MENU_CONTENT_BASE, className, sheet && SHEET_CONTENT)}
         {...props}
       >
         <MenuSheetContext.Provider value={sheet}>
@@ -276,9 +282,7 @@ export const DropdownMenuItem = forwardRef<
     <DropdownMenuPrimitive.Item
       ref={ref}
       className={cn(
-        "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 pointer-coarse:py-2.5 text-sm outline-none " +
-          "transition-colors focus:bg-accent focus:text-accent-foreground " +
-          "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        MENU_ITEM_BASE + " data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         inset && "pl-8",
         className,
         sheet && SHEET_ROW,

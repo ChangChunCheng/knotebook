@@ -19,7 +19,7 @@ import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
 import { ARTICLE_COLUMN_MAX, articleColumn, type ArticleColumnState } from "@/components/ui/article-column";
 import { NoteEditor } from "./NoteEditor";
 
-const WIDE_BOX: OutlineBox = { width: 1072, height: 700, columnRight: 991.5 };
+const WIDE_BOX: OutlineBox = { width: 1072, height: 700, firstLineTop: null };
 
 const outline = vi.hoisted(() => ({
   headings: [] as OutlineHeading[],
@@ -226,7 +226,7 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     const props = lastProps();
     expect(props.scrollEl).toBe(scroll);
     expect(props.headings).toBe(HEADINGS);
-    expect(props.box).toEqual({ width: 1072, height: 700, columnRight: 991.5 });
+    expect(props.box).toEqual({ width: 1072, height: 700, firstLineTop: null });
     expect(props.bubbleShown).toBe(true);
     // 沒有釘住偏好：標準寬、容器夠寬，可以釘但沒釘。
     expect(props.pinned).toBe(false);
@@ -309,7 +309,14 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("640-1279 版本面板浮在卡上 → 沒有大綱，欄回到未釘住的標準寬、沒有過場", async () => {
+  it("640-767（大綱用手機形）：就算偏好釘住也不釘，欄是未釘住的標準寬", async () => {
+    const { doc } = await renderAt("compact");
+    expect(stub()).toBeNull();
+    expectColumn("standard", false);
+    doc.destroy();
+  });
+
+  it("768-1279 版本面板浮在卡上 → 沒有大綱，欄回到未釘住的標準寬、沒有過場", async () => {
     const { doc } = await renderAt("overlay", { panelOpen: true, mode: "panel" });
     expect(stub()).toBeNull();
     expectColumn("standard", false);
@@ -388,7 +395,7 @@ describe("NoteEditor：釘住大綱", () => {
   });
 
   it("容器 912 放不下 640 的欄 → 退回細線、偏好照舊；寬回 1072 → 自動再釘", async () => {
-    outline.box = { ...WIDE_BOX, width: 912, columnRight: 836 };
+    outline.box = { ...WIDE_BOX, width: 912 };
     const { doc, update } = await renderAt("docked");
     expectColumn("standard");
     expect(lastProps().pinAvailable).toBe(false);
@@ -406,7 +413,7 @@ describe("NoteEditor：釘住大綱", () => {
     const { doc, update } = await renderAt("docked");
     expectColumn("standard-pinned");
 
-    outline.box = { ...WIDE_BOX, width: 740, columnRight: 710 };
+    outline.box = { ...WIDE_BOX, width: 740 };
     update({ panelOpen: true, mode: "panel" });
     expect(stub()).not.toBeNull();
     expect(lastProps().pinned).toBe(false);
@@ -521,6 +528,41 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     expect(lastBubble().inputRoot).toBe(column());
     expect(probe()).toHaveAttribute("data-available", "true");
     expect(scroll.contains(screen.getByTestId("bubble-stub"))).toBe(false);
+    expect(lastSheet().open).toBe(false);
+    doc.destroy();
+  });
+
+  it("640-767：同樣沒有細線；泡泡浮在容器上緣的錨點層、聽容器的捲動（文件不捲）；⋮ 拿到 available", async () => {
+    const { doc, scroll } = await renderPhone({ tier: "compact" });
+    expect(stub()).toBeNull();
+    expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
+    expect(lastBubble().placement).toBe("anchor");
+    expect(lastBubble().scrollTarget).toBe(scroll);
+    expect(lastBubble().scrollTarget).not.toBe(window);
+    expect(probe()).toHaveAttribute("data-available", "true");
+    doc.destroy();
+  });
+
+  it("767 → 768：從手機形換成細線，面板收起；回到 767 再換回泡泡", async () => {
+    const { doc, tier } = await renderPhone({ tier: "compact" });
+    expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
+    act(() => tier.setLayoutTier("overlay"));
+    await waitFor(() => expect(stub()).not.toBeNull());
+    expect(screen.queryByTestId("bubble-stub")).toBeNull();
+    act(() => tier.setLayoutTier("compact"));
+    await waitFor(() => expect(screen.getByTestId("bubble-stub")).toBeInTheDocument());
+    expect(stub()).toBeNull();
+    doc.destroy();
+  });
+
+  it("640-767 開著面板時變寬到 768：面板收起", async () => {
+    const { doc, tier } = await renderPhone({ tier: "compact" });
+    fireEvent.click(probe());
+    expect(lastSheet().open).toBe(true);
+    act(() => tier.setLayoutTier("overlay"));
+    await waitFor(() => expect(stub()).not.toBeNull());
+    act(() => tier.setLayoutTier("compact"));
+    await waitFor(() => expect(screen.getByTestId("bubble-stub")).toBeInTheDocument());
     expect(lastSheet().open).toBe(false);
     doc.destroy();
   });

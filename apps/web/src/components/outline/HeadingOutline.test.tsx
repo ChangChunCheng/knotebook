@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MENU_CONTENT_BASE } from "@/components/ui/dropdown-menu";
 import { NO_HOVER_QUERY } from "@/lib/layout-tiers";
 import { stubLayoutTier } from "@/test/layout-tier";
 import type { OutlineHeading } from "./headings";
@@ -10,7 +11,7 @@ const headings: OutlineHeading[] = [
   { id: "b", level: 2, text: "Bob" },
   { id: "c", level: 3, text: "Carol" },
 ];
-const placement = { railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 832 };
+const placement = { railLeft: 1018, panelLeft: 802 };
 
 let noHover = false;
 
@@ -46,6 +47,48 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("HeadingOutline top", () => {
+  it("the wrapper (rail, floating and pinned panel) sits at the given top, with a fallback", () => {
+    setup({ top: 52 });
+    expect(wrapper().style.top).toBe("52px");
+  });
+  it("falls back to the default offset without a measured top", () => {
+    setup();
+    expect(wrapper().style.top).toBe("28px");
+  });
+});
+
+describe("HeadingOutline surface", () => {
+  it("floating panel shares the note menu surface and has no extra frame", () => {
+    setup();
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    expect(panel()).toHaveClass(...MENU_CONTENT_BASE.split(" ").filter((c) => c !== "z-50"));
+    expect(panel()).toHaveClass("shadow-md", "outline-none");
+    expect(panel()).not.toHaveClass("rounded-lg", "shadow-lg");
+  });
+
+  it("pinned panel rests on the page and shows the menu surface on hover", () => {
+    setup({ pinned: true });
+    expect(panel()).toHaveClass("bg-transparent", "border-transparent", "shadow-none", "rounded-md");
+    expect(panel()).not.toHaveClass("bg-popover", "border-border", "shadow-md");
+    expect(panel()).toHaveClass("hover:bg-popover", "hover:border-border", "hover:shadow-md", "focus-within:bg-popover", "focus-within:border-border", "focus-within:shadow-md", "motion-reduce:transition-none");
+  });
+
+  it("pinned panel hides the pin button until hover or focus, but keeps it reachable without hover", () => {
+    setup({ pinned: true });
+    const pin = screen.getByRole("button", { name: "Unpin outline" });
+    expect(pin).toHaveClass("opacity-0", "group-hover/pin:opacity-100", "group-focus-within/pin:opacity-100", "[@media(hover:none)]:opacity-60");
+  });
+
+  it("floating panel keeps the pin button visible", () => {
+    setup();
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    expect(screen.getByRole("button", { name: "Pin outline" })).not.toHaveClass("opacity-0");
+  });
 });
 
 describe("HeadingOutline hover", () => {
@@ -282,17 +325,17 @@ describe("HeadingOutline pin", () => {
 });
 
 describe("HeadingOutline geometry", () => {
-  it("places the rail, the floating panel and the pinned panel", () => {
+  it("places the rail and puts the floating and pinned panel at the same left", () => {
     const { view } = setup({ maxHeight: 321 });
-    expect(rail().style.left).toBe("1007.5px");
+    expect(rail().style.left).toBe("1018px");
     expect(rail().style.maxHeight).toBe("321px");
     mouseEnter(wrapper());
     advance(OUTLINE_OPEN_DELAY_MS);
-    expect(panel()!.style.left).toBe("828px");
+    expect(panel()!.style.left).toBe("802px");
     expect(panel()!.style.maxHeight).toBe("321px");
     expect(panel()!.style.width).toBe("240px");
     view.rerender(<HeadingOutline {...({ headings, activeId: "b", placement, maxHeight: 321, pinned: true, pinAvailable: true, onPinnedChange: vi.fn(), onJump: vi.fn() } satisfies HeadingOutlineProps)} />);
-    expect(panel()!.style.left).toBe("832px");
+    expect(panel()!.style.left).toBe("802px");
     expect(panel()!.style.maxHeight).toBe("321px");
   });
 

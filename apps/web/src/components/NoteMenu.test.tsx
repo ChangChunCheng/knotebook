@@ -764,7 +764,14 @@ describe("NoteMenu × 標題導覽（#465）", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
   });
 
-  it.each([["固定（>= 1280）", "docked"], ["浮動（640-1279）", "overlay"]] as const)("%s（有右側細線）→ 沒有", async (_label, tier) => {
+  it("640-767：大綱已是手機形 → ⋮ 有「Heading outline」", async () => {
+    stubLayoutTier("compact");
+    renderOutlineMenu({ value: { available: true, open: vi.fn() } });
+    const menu = await openOutlineMenu();
+    expect(within(menu).getByRole("menuitem", { name: "Heading outline" })).toBeInTheDocument();
+  });
+
+  it.each([["固定（>= 1280）", "docked"], ["浮動（>= 768）", "overlay"]] as const)("%s（有右側細線）→ 沒有", async (_label, tier) => {
     stubLayoutTier(tier);
     renderOutlineMenu({ value: { available: true, open: vi.fn() } });
     const menu = await openOutlineMenu();

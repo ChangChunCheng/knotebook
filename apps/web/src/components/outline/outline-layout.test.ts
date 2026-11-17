@@ -1,55 +1,74 @@
 import { describe, expect, it } from "vitest";
-import { canPinOutline, outlineMaxHeight, outlinePlacement } from "./outline-layout";
+import {
+  OUTLINE_PANEL_RIGHT_INSET,
+  OUTLINE_PIN_RESERVED_WIDTH,
+  canPinOutline,
+  outlineMaxHeight,
+  outlinePlacement,
+  outlineTop,
+} from "./outline-layout";
+
+describe("reserved width", () => {
+  it("is panel 240 + gap 16 + the panel's right inset 30 = 286", () => {
+    expect(OUTLINE_PANEL_RIGHT_INSET).toBe(30);
+    expect(OUTLINE_PIN_RESERVED_WIDTH).toBe(286);
+  });
+});
 
 describe("canPinOutline", () => {
-  it.each([998, 1072, 1168, 1312, 920])("width %i can pin", (w) => {
+  it.each([926, 998, 1072, 1168, 1312])("width %i can pin", (w) => {
     expect(canPinOutline(w)).toBe(true);
   });
-  it.each([912, 919])("width %i cannot pin", (w) => {
+  it.each([912, 925])("width %i cannot pin", (w) => {
     expect(canPinOutline(w)).toBe(false);
   });
 });
 
 describe("outlinePlacement", () => {
-  it("places rail and panel beside the column when there is room", () => {
-    expect(outlinePlacement(1072, 991.5)).toEqual({ railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 820 });
+  it("puts the rail on the bubble's column and the panel's right edge on the rail's right edge", () => {
+    for (const w of [1072, 1360, 2000, 3000]) {
+      const p = outlinePlacement(w);
+      expect(p.railLeft + 12).toBe(w - 42);
+      expect(p.panelLeft + 240).toBe(p.railLeft + 24);
+      expect(w - (p.panelLeft + 240)).toBe(OUTLINE_PANEL_RIGHT_INSET);
+    }
   });
 
-  it("puts the pinned panel beside the column when the column already leaves room", () => {
-    // 2000 wide, standard column right at 1528: same place as the floating panel.
-    expect(outlinePlacement(2000, 1528).pinnedPanelLeft).toBe(1544);
+  it("is the same for floating and pinned: only one panel position exists", () => {
+    expect(Object.keys(outlinePlacement(1440)).sort()).toEqual(["panelLeft", "railLeft"]);
+    expect(outlinePlacement(1440)).toEqual({ railLeft: 1386, panelLeft: 1170 });
   });
 
-  it("keeps the pinned panel half the slack inside the right edge while the column moves aside", () => {
-    // Settled: the pinned column ends 268 from the right edge, the panel follows 16 later and ends 12 from it.
-    expect(outlinePlacement(1360, 1092).pinnedPanelLeft).toBe(1108);
-    // Mid-transition the column is still further right; the panel already sits where it will end up.
-    expect(outlinePlacement(1360, 1150).pinnedPanelLeft).toBe(1108);
+  it("keeps the rail inside the right edge and never gives a negative panel left", () => {
+    expect(outlinePlacement(200).panelLeft).toBe(0);
+    expect(outlinePlacement(60).railLeft).toBe(6);
   });
 
-  it("keeps the rail inside the right edge and floats the panel over the column in a narrow container", () => {
-    const p = outlinePlacement(800, 790);
-    expect(p.railLeft).toBe(772);
-    expect(p.panelLeft).toBe(556);
+  it("leaves a 16px gap between the pinned column's right edge and the panel", () => {
+    const W = 1440;
+    const columnRightMax = W - OUTLINE_PIN_RESERVED_WIDTH;
+    expect(outlinePlacement(W).panelLeft - columnRightMax).toBe(16);
   });
+});
 
-  it("puts rail and panel at the same left edge in a wide container", () => {
-    const p = outlinePlacement(2000, 1528);
-    expect(p.railLeft).toBe(1544);
-    expect(p.panelLeft).toBe(1544);
-  });
-
-  it("never gives a negative panel left", () => {
-    expect(outlinePlacement(200, 190).panelLeft).toBe(0);
+describe("outlineTop", () => {
+  it("is the measured first line, or the fallback offset without one", () => {
+    expect(outlineTop({ firstLineTop: 64 })).toBe(64);
+    expect(outlineTop({ firstLineTop: null })).toBe(28);
   });
 });
 
 describe("outlineMaxHeight", () => {
-  it("stops above the version bubble when it is shown", () => {
-    expect(outlineMaxHeight(700, true)).toBe(610);
+  it("is two thirds of the container when that is the smaller limit", () => {
+    expect(outlineMaxHeight(900, true, 64)).toBe(600);
+    expect(outlineMaxHeight(900, false, 64)).toBe(600);
   });
-  it("leaves only the bottom gap without the bubble", () => {
-    expect(outlineMaxHeight(700, false)).toBe(676);
+  it("stops above the version bubble when that is the smaller limit", () => {
+    expect(outlineMaxHeight(400, true, 64)).toBe(400 - 64 - 78);
+  });
+  it("leaves only the bottom gap without the bubble, still capped at two thirds", () => {
+    expect(outlineMaxHeight(400, false, 28)).toBe(400 * (2 / 3));
+    expect(outlineMaxHeight(200, false, 28)).toBe(200 * (2 / 3));
   });
   it("never goes negative", () => {
     expect(outlineMaxHeight(80, true)).toBe(0);

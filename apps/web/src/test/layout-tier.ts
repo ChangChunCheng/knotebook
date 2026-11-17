@@ -1,19 +1,24 @@
 import { vi } from "vitest";
-import { OVERLAY_QUERY, PHONE_QUERY } from "@/lib/layout-tiers";
+import { OUTLINE_COMPACT_QUERY, OVERLAY_QUERY, PHONE_QUERY } from "@/lib/layout-tiers";
 
-/** `"overlay"` 只指 640-1279px 的浮動段；手機（< 640）另列 `"phone"`，兩者在 `OVERLAY_QUERY` 下都成立。 */
-export type LayoutTier = "phone" | "overlay" | "docked";
+/**
+ * `"phone"` < 640；`"compact"` 640-767（浮動段，但標題大綱已用手機形）；`"overlay"` 768-1279；`"docked"` >= 1280。
+ * 手機與 compact 在 `OVERLAY_QUERY` 下都成立。
+ */
+export type LayoutTier = "phone" | "compact" | "overlay" | "docked";
 
 /** 各段下 `PHONE_QUERY`／`OVERLAY_QUERY` 是否成立：手機兩者皆成立，浮動只有後者，固定皆不成立。 */
 export function tierMatches(tier: LayoutTier, query: string): boolean {
   if (query === PHONE_QUERY) return tier === "phone";
   if (query === OVERLAY_QUERY) return tier !== "docked";
+  if (query === OUTLINE_COMPACT_QUERY) return tier === "phone" || tier === "compact";
   return false;
 }
 
 /** 視窗寬度（px）落在哪一段：與 CSS 的 `sm`（640）、`xl`（1280）同界。 */
 export function tierForWidth(widthPx: number): LayoutTier {
   if (widthPx < 640) return "phone";
+  if (widthPx < 768) return "compact";
   if (widthPx < 1280) return "overlay";
   return "docked";
 }
@@ -44,7 +49,7 @@ export function stubLayoutTier(
     const set = listenersOf(query);
     return {
       get matches() {
-        return query === PHONE_QUERY || query === OVERLAY_QUERY ? tierMatches(current, query) : (others?.(query) ?? false);
+        return query === PHONE_QUERY || query === OVERLAY_QUERY || query === OUTLINE_COMPACT_QUERY ? tierMatches(current, query) : (others?.(query) ?? false);
       },
       media: query,
       onchange: null,
@@ -67,7 +72,7 @@ export function stubLayoutTier(
     setLayoutTier(next: LayoutTier) {
       const previous = current;
       current = next;
-      for (const query of [PHONE_QUERY, OVERLAY_QUERY]) {
+      for (const query of [PHONE_QUERY, OVERLAY_QUERY, OUTLINE_COMPACT_QUERY]) {
         const before = tierMatches(previous, query);
         const after = tierMatches(next, query);
         if (before === after) continue;

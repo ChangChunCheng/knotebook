@@ -2,7 +2,7 @@ import { useCallback, type ReactNode } from "react";
 import { useActiveHeading } from "./active-heading";
 import type { OutlineHeading } from "./headings";
 import { HeadingOutline } from "./HeadingOutline";
-import { outlineMaxHeight, outlinePlacement } from "./outline-layout";
+import { outlineMaxHeight, outlinePlacement, outlineTop } from "./outline-layout";
 import type { OutlineBox } from "./use-outline-box";
 import { useOutlineJump } from "./use-outline-jump";
 
@@ -65,8 +65,9 @@ export function NoteOutline({ headings, scrollEl, box, bubbleShown, pinned, pinA
       <HeadingOutline
         headings={headings}
         activeId={activeId}
-        placement={outlinePlacement(box.width, box.columnRight)}
-        maxHeight={outlineMaxHeight(box.height, bubbleShown)}
+        placement={outlinePlacement(box.width)}
+        top={outlineTop(box)}
+        maxHeight={outlineMaxHeight(box.height, bubbleShown, outlineTop(box))}
         pinned={pinned}
         pinAvailable={pinAvailable}
         onPinnedChange={onPinnedChange}

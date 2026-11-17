@@ -12,6 +12,8 @@ import { useSyncExternalStore } from "react";
 export const PHONE_QUERY = "not all and (min-width: 40rem)";
 export const OVERLAY_QUERY = "not all and (min-width: 80rem)";
 export const NO_HOVER_QUERY = "(hover: none)";
+/** Heading outline only: below 48rem (768px, Tailwind `md`) it is the position bubble and bottom sheet instead of the rail. Not a layout tier. */
+export const OUTLINE_COMPACT_QUERY = "not all and (min-width: 48rem)";
 
 function matches(query: string): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
@@ -25,6 +27,11 @@ export function isPhone(): boolean {
 /** 視窗比 1280px 窄（含手機）。沒有 matchMedia 回 false。 */
 export function isOverlay(): boolean {
   return matches(OVERLAY_QUERY);
+}
+
+/** 視窗比 768px 窄（標題大綱用手機形）。沒有 matchMedia 回 false。 */
+export function isOutlineCompact(): boolean {
+  return matches(OUTLINE_COMPACT_QUERY);
 }
 
 /** 主要指標不能 hover（觸控）。沒有 matchMedia 回 false。 */
@@ -43,6 +50,7 @@ function subscribeTo(query: string) {
 
 const subscribePhone = subscribeTo(PHONE_QUERY);
 const subscribeOverlay = subscribeTo(OVERLAY_QUERY);
+const subscribeOutlineCompact = subscribeTo(OUTLINE_COMPACT_QUERY);
 const subscribeNoHover = subscribeTo(NO_HOVER_QUERY);
 
 /** 訂閱 `PHONE_QUERY` 的 change，翻轉即重繪。 */
@@ -53,6 +61,11 @@ export function useIsPhone(): boolean {
 /** 訂閱 `OVERLAY_QUERY` 的 change，翻轉即重繪。 */
 export function useIsOverlay(): boolean {
   return useSyncExternalStore(subscribeOverlay, isOverlay, () => false);
+}
+
+/** 訂閱 `OUTLINE_COMPACT_QUERY` 的 change，翻轉即重繪。 */
+export function useIsOutlineCompact(): boolean {
+  return useSyncExternalStore(subscribeOutlineCompact, isOutlineCompact, () => false);
 }
 
 /** 訂閱 `NO_HOVER_QUERY` 的 change，翻轉即重繪。 */

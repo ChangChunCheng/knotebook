@@ -12,7 +12,7 @@ import { placeNoteWithUndo } from "@/lib/note-place";
 import { useNotePageControls, type OpenEditsState } from "@/lib/note-page-controls";
 import { useCloseSidebarDrawer } from "@/lib/sidebar-drawer";
 import { showTrashedToast } from "@/lib/trash-undo";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { useIsOutlineCompact, useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -201,14 +201,14 @@ function VersionsMenuItem({ onActivate }: { onActivate: () => void }) {
   );
 }
 
-/** 「標題導覽」項（#465）：只在手機、而且這篇有 H1–H3 時渲染（`OutlineMenuContext` 由筆記編輯器提供，側欄每列的 ⋮ 在 provider 之外，拿到的是
+/** 「標題導覽」項（#465）：只在大綱用手機形的寬度（< 768，`OUTLINE_COMPACT_QUERY`）、而且這篇有 H1–H3 時渲染（`OutlineMenuContext` 由筆記編輯器提供，側欄每列的 ⋮ 在 provider 之外，拿到的是
  * 「不提供」的預設）。其餘寬度有右側細線，手機上的位置泡泡只在捲動時出現、螢幕閱讀器也抓不到，所以 ⋮ 也放一個入口。
  * 條件渲染與 matchMedia 訂閱的理由同 `VersionsMenuItem`；三步形同 AI 修改紀錄項（focus trap 規矩，見檔頭）。 */
 function OutlineMenuItem({ onActivate }: { onActivate: (open: OutlineMenuValue["open"]) => void }) {
   const { t } = useTranslation();
-  const phone = useIsPhone();
+  const compact = useIsOutlineCompact();
   const { available, open } = useOutlineMenu();
-  if (!phone || !available) return null;
+  if (!compact || !available) return null;
   return (
     <DropdownMenuItem
       onSelect={(event) => {

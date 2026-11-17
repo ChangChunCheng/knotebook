@@ -35,11 +35,10 @@ export const ARTICLE_COLUMN_BASE = "mx-auto w-full";
  * - 寬：同一個下限、92.5%、上限 88rem（1408px）；父層寬約 735px 以下時兩者都落在下限、與標準相同。
  * - 全寬：不設上限。
  *
- * - 標準＋釘住：欄寬＝min(標準欄寬, 容器 − 17.5rem)。17.5rem＝280px＝面板 240＋間距 16＋
- *   餘量 24。位移＝min(0, 置中後右側空白 − 16.75rem)，16.75rem＝268px＝240＋16＋24/2：
- *   欄右緣離容器右緣至少 268px（面板放在欄右側 16px 處，右邊還留 12px）。置中後右側空白
- *   本來就夠，`left` 是 0、內文不動；不夠時只往左讓到剛好。欄被壓窄時這條恰好等於
- *   「在扣掉 256px 的空間裡置中」（左右各留 12px）。
+ * - 標準＋釘住：欄寬＝min(標準欄寬, 容器 − 17.875rem)。17.875rem＝286px＝面板 240＋間距 16＋
+ *   面板右緣離容器右緣 30（與浮動面板同一個位置，釘住時面板不動）。位移＝min(0, 置中後右側空白 − 17.875rem)：
+ *   欄右緣離容器右緣至少 286px，與面板之間留 16px。置中後右側空白本來就夠，`left` 是 0、內文不動；
+ *   不夠時只往左讓到剛好。欄被壓窄時欄左緣恰好貼著容器左緣。
  *   位移用 `left`（欄本身是 `relative`）：margin 的 `auto` 不能過場；transform 會讓欄成為
  *   裡面 fixed 浮層的 containing block。
  *
@@ -51,7 +50,7 @@ export const ARTICLE_COLUMN_MAX: Record<ArticleColumnState, string> = {
   wide: "max-w-[clamp(42.5rem,92.5%,88rem)]",
   full: "max-w-none",
   "standard-pinned":
-    "max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))]",
+    "max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem)))/2_-_17.875rem))]",
 };
 
 /** 釘住／取消釘住時欄寬與位移的過場（約 150ms；減少動態時不過場）。 */

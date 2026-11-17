@@ -14,7 +14,7 @@ import { focusBackTo } from "@/components/outline/OutlineSheet";
 import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
 import { useOutlineBox } from "@/components/outline/use-outline-box";
 import { useOutlineHeadings, type OutlineEditorLike } from "@/components/outline/use-outline-headings";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { useIsOutlineCompact } from "@/lib/layout-tiers";
 import { PublicPageFrame } from "@/components/PublicNoteShell";
 import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
@@ -93,8 +93,8 @@ export default function PublicNotePage() {
   // 只在大綱可能出現時量版面（同筆記頁）。
   const [publicEditor, setPublicEditor] = useState<OutlineEditorLike | null>(null);
   const outlineHeadings = useOutlineHeadings(publicEditor);
-  const phone = useIsPhone();
-  const outlineCanShow = !phone && !presenting && outlineHeadings.length > 0;
+  const compact = useIsOutlineCompact();
+  const outlineCanShow = !compact && !presenting && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? anchorRoot : null, outlineCanShow ? columnEl : null);
   const showOutline = outlineCanShow && outlineBox !== null;
   // 釘住規則同筆記頁；寬度由公開端點給（缺值或不認得＝標準），只有標準寬能釘。
@@ -104,7 +104,7 @@ export default function PublicNotePage() {
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
   // 手機：只有捲動時的位置泡泡（公開頁沒有 ⋮），點它開底部面板。公開頁不在文件代為捲動的外框裡，手機上仍是捲動容器自己在捲。
-  const phoneOutline = phone && !presenting && outlineHeadings.length > 0;
+  const phoneOutline = compact && !presenting && outlineHeadings.length > 0;
   const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
   useEffect(() => {
     if (!phoneOutline) setOutlineSheetOpen(false);
