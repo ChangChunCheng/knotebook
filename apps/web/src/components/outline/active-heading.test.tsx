@@ -166,6 +166,31 @@ describe("useActiveHeading", () => {
     expect(get()).toBe("h2");
   });
 
+  it("releases the pin on a pointer press in the scrolling area", () => {
+    const { target, get, api } = setup();
+    flush();
+    act(() => api().markJumped("h3"));
+    expect(get()).toBe("h3");
+    act(() => {
+      target.dispatchEvent(new Event("pointerdown"));
+    });
+    flush();
+    expect(get()).toBe("h2");
+  });
+
+  it("keeps the pin for scroll keys another control already handled", () => {
+    const { get, api } = setup();
+    flush();
+    act(() => api().markJumped("h3"));
+    act(() => {
+      const e = new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true });
+      e.preventDefault();
+      window.dispatchEvent(e);
+    });
+    flush();
+    expect(get()).toBe("h3");
+  });
+
   it("releases the pin on scroll keys but not on other keys", () => {
     const { get, api } = setup();
     flush();

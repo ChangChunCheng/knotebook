@@ -45,7 +45,7 @@ export interface ActiveHeadingApi {
   activeId: string | null;
   /**
    * Pins `id` as the current heading after a jump, even when it cannot reach the top (the last headings
-   * of a note). The pin holds until the reader scrolls by hand (wheel, touch, scroll keys); the jump's own
+   * of a note). The pin holds until the reader scrolls by hand (wheel, touch, scroll keys, a press in the scrolling area); the jump's own
    * programmatic scroll does not clear it.
    */
   markJumped: (id: string) => void;
@@ -88,11 +88,15 @@ export function useActiveHeading(opts: UseActiveHeadingOptions): ActiveHeadingAp
       schedule();
     };
     const onKey = (e: KeyboardEvent) => {
+      // Keys another control already handled (arrows inside the outline list) are not scrolling.
+      if (e.defaultPrevented) return;
       if (SCROLL_KEYS.has(e.key)) release();
     };
     scrollTarget.addEventListener("scroll", schedule, { passive: true });
     scrollTarget.addEventListener("wheel", release, { passive: true });
     scrollTarget.addEventListener("touchmove", release, { passive: true });
+    // A press inside the scrolling area (scrollbar drag, an in-note link) can scroll without a wheel or key.
+    scrollTarget.addEventListener("pointerdown", release, { passive: true });
     window.addEventListener("resize", schedule);
     window.addEventListener("keydown", onKey);
     let observer: ResizeObserver | null = null;
@@ -107,6 +111,7 @@ export function useActiveHeading(opts: UseActiveHeadingOptions): ActiveHeadingAp
       scrollTarget.removeEventListener("scroll", schedule);
       scrollTarget.removeEventListener("wheel", release);
       scrollTarget.removeEventListener("touchmove", release);
+      scrollTarget.removeEventListener("pointerdown", release);
       window.removeEventListener("resize", schedule);
       window.removeEventListener("keydown", onKey);
       observer?.disconnect();

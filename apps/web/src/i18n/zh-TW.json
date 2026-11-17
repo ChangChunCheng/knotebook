@@ -213,6 +213,13 @@
     "transferSaveFirst": "無法直接插入此項目，請先另存為檔案再拖曳進來。",
     "transferNonImage": "這裡目前只能插入圖片檔案。",
     "wikilinkBroken": "已連結的筆記不存在。",
+    "outline": {
+      "label": "標題導覽",
+      "untitled": "（無標題）",
+      "pin": "釘住標題導覽",
+      "unpin": "取消釘住",
+      "close": "收起標題導覽"
+    },
     "blockLink": {
       "copy": "複製段落連結",
       "copyHeading": "複製此段落的連結",
