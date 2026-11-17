@@ -49,6 +49,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("HeadingOutline top", () => {
+  it("the wrapper (rail, floating and pinned panel) sits at the given top, with a fallback", () => {
+    setup({ top: 52 });
+    expect(wrapper().style.top).toBe("52px");
+  });
+  it("falls back to the default offset without a measured top", () => {
+    setup();
+    expect(wrapper().style.top).toBe("28px");
+  });
+});
+
 describe("HeadingOutline surface", () => {
   it("floating panel shares the note menu surface and has no extra frame", () => {
     setup();

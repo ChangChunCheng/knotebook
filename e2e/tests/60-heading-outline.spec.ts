@@ -397,11 +397,11 @@ async function headingBelowHeader(page: Page, id: string): Promise<number> {
  * 捲一下讓泡泡出現，馬上點它，直到底部面板打開。泡泡停止捲動 1.5 秒就消失，慢的機器上捲完到點之間可能已經不在：整段重來。
  * 面板已經開著就不再捲、不再點（開著時頁面鎖住捲動，泡泡也在面板底下）。
  */
-async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>): Promise<void> {
+async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>, pointer: "tap" | "click" = "tap"): Promise<void> {
   await expect(async () => {
     if (await sheet(page).isVisible()) return;
     await scroll();
-    await bubble(page).tap({ timeout: 1_000 });
+    await (pointer === "tap" ? bubble(page).tap({ timeout: 1_000 }) : bubble(page).click({ timeout: 1_000 }));
     await expect(sheet(page)).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 15_000 });
 }
@@ -608,6 +608,92 @@ test("60-10 點最後一個標題：捲不到頂端也仍是它亮", async ({ br
         }),
     );
     await expectActiveLine(page, 1);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-12 700 寬（640-767）：沒有細線；捲容器出現泡泡，開底部面板，點 Section D 捲到容器頂端", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long, { viewport: { width: 700, height: 900 } });
+  try {
+    await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
+    await expect(rail(page)).toHaveCount(0);
+    // The page itself does not scroll here: the card's scroll container does.
+    const scrollContainerBy = (dy: number) =>
+      page.evaluate((dy) => {
+        for (let n = document.querySelector(".bn-block-content")!.parentElement; n; n = n.parentElement) {
+          const o = getComputedStyle(n).overflowY;
+          if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) {
+            n.scrollBy(0, dy);
+            return;
+          }
+        }
+      }, dy);
+    await expect(bubble(page)).toHaveCount(0);
+    await scrollContainerBy(600);
+    await expect(bubble(page)).toBeVisible();
+    await expect(bubble(page)).toContainText("/5");
+    // The bubble sits inside the scroll container's box, not above it.
+    const topGap = await bubble(page).evaluate((el) => {
+      for (let n = document.querySelector(".bn-block-content")!.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowY;
+        if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) return el.getBoundingClientRect().top - n.getBoundingClientRect().top;
+      }
+      return null;
+    });
+    expect(topGap).not.toBeNull();
+    expect(topGap!).toBeGreaterThanOrEqual(0);
+    await openSheetFromBubble(page, () => scrollContainerBy(1), "click");
+    await expect(sheet(page).locator("[data-outline-item]")).toHaveText(LONG_HEADINGS);
+    const id = await headingId(page, "Section D");
+    await sheetItem(page, "Section D").click();
+    await expect(sheet(page)).toBeHidden();
+    const offset = () =>
+      page.evaluate((id) => {
+        const block = document.querySelector(`.bn-block-outer[data-id="${id}"]`)!;
+        for (let n = block.parentElement; n; n = n.parentElement) {
+          const o = getComputedStyle(n).overflowY;
+          if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) return block.getBoundingClientRect().top - n.getBoundingClientRect().top;
+        }
+        return null;
+      }, id);
+    await expect.poll(offset, { timeout: 5_000, message: "標題頂端與捲動容器上緣的差（px）" }).toBeGreaterThanOrEqual(-2);
+    await expect.poll(offset, { timeout: 5_000, message: "標題頂端與捲動容器上緣的差（px）" }).toBeLessThanOrEqual(60);
+    // The ⋮ menu has the entry at this width as well.
+    await moreButton(page).click();
+    await expect(page.getByRole("menuitem", { name: "Heading outline" })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-13 細線與面板的上緣＝第一行內文的上緣，捲動時不動；寬視窗裡面板蓋住細線", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long);
+  try {
+    await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
+    const firstLineTop = () => page.evaluate(() => document.querySelector(".bn-block-content")!.getBoundingClientRect().top);
+    const railTop = () => rail(page).evaluate((el) => el.getBoundingClientRect().top);
+    await expect.poll(async () => Math.abs((await railTop()) - (await firstLineTop())), { timeout: 5_000, message: "細線上緣與第一行內文上緣的差（px）" }).toBeLessThanOrEqual(2);
+    const before = await railTop();
+    await page.evaluate(() => {
+      const block = document.querySelector(".bn-block-content")!;
+      for (let n = block.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowY;
+        if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) {
+          n.scrollTop = 300;
+          return;
+        }
+      }
+    });
+    await twoFrames(page);
+    expect(await railTop()).toBe(before);
+    await rail(page).hover();
+    await expect(panel(page)).toBeVisible();
+    const panelBox = (await panel(page).boundingBox())!;
+    const railBox = (await rail(page).boundingBox())!;
+    expect(Math.abs(panelBox.y - railBox.y)).toBeLessThanOrEqual(1);
+    expect(panelBox.x).toBeLessThanOrEqual(railBox.x);
+    expect(panelBox.x + panelBox.width).toBeGreaterThanOrEqual(railBox.x + railBox.width);
   } finally {
     await context.close();
   }

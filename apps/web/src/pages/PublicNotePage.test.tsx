@@ -474,6 +474,15 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBe("1");
     });
 
+    it("640-767：同樣是手機形（泡泡、底部面板），沒有細線；768 以上才是細線", async () => {
+      stubLayoutTier("compact");
+      phoneStubs.bubble = [];
+      await renderWithHeadings();
+      await screen.findByTestId("bubble-stub");
+      expect(outlineProps).toHaveLength(0);
+      expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.scrollTarget).toBe(screen.getByTestId("article-column").parentElement!);
+    });
+
     it("手機：沒有細線；位置泡泡在捲動容器之外的零高度錨點裡、聽捲動容器的捲動，有底部面板；頁面沒有 ⋮", async () => {
       stubLayoutTier("phone");
       phoneStubs.bubble = [];

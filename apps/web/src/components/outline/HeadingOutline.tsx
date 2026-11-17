@@ -20,6 +20,8 @@ export interface HeadingOutlineProps {
   headings: readonly OutlineHeading[];
   activeId: string | null;
   placement: OutlinePlacement;
+  /** Distance from the top of the note area to the top of the rail and panels: the note's first text line. */
+  top?: number;
   /** Tallest the rail or panel may be; the caller keeps it above the version bubble. */
   maxHeight: number;
   pinned: boolean;
@@ -46,7 +48,7 @@ function canScrollToward(el: HTMLElement, deltaY: number): boolean {
  * Positions are in the scroll container's coordinates: the caller places this in a zero-height layer outside the
  * scroll container whose top-left corner matches the container's (`OutlineAnchor`), so it does not scroll with the note.
  */
-export function HeadingOutline({ headings, activeId, placement, maxHeight, pinned, pinAvailable, onPinnedChange, onJump, onForwardWheel }: HeadingOutlineProps) {
+export function HeadingOutline({ headings, activeId, placement, top = OUTLINE_TOP_OFFSET, maxHeight, pinned, pinAvailable, onPinnedChange, onJump, onForwardWheel }: HeadingOutlineProps) {
   const { t } = useTranslation();
   const noHover = useNoHover();
   const panelId = useId();
@@ -200,7 +202,7 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
     <div
       ref={wrapperRef}
       className="pointer-events-none absolute left-0 h-0 w-0"
-      style={{ top: OUTLINE_TOP_OFFSET }}
+      style={{ top }}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onBlur={onBlur}

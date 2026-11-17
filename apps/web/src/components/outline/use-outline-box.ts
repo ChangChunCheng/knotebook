@@ -5,6 +5,11 @@ export interface OutlineBox {
   width: number;
   height: number;
   columnRight: number;
+  /**
+   * 第一個區塊內容頂端離容器上緣的距離，以捲到最上面時的位置算（與目前捲動無關）；量不到（還沒有區塊）為 null。
+   * 標題大綱的上緣對齊它。
+   */
+  firstLineTop: number | null;
 }
 
 /**
@@ -24,13 +29,16 @@ export function useOutlineBox(scrollEl: HTMLElement | null, columnEl: HTMLElemen
     }
     const measure = () => {
       measuredClass.current = columnEl.className;
+      const scrollRect = scrollEl.getBoundingClientRect();
+      const firstBlock = columnEl.querySelector(".bn-block-content");
       const next: OutlineBox = {
         width: scrollEl.clientWidth,
         height: scrollEl.clientHeight,
-        columnRight: columnEl.getBoundingClientRect().right - scrollEl.getBoundingClientRect().left,
+        columnRight: columnEl.getBoundingClientRect().right - scrollRect.left,
+        firstLineTop: firstBlock === null ? null : Math.round(firstBlock.getBoundingClientRect().top - scrollRect.top + scrollEl.scrollTop),
       };
       setBox((prev) =>
-        prev !== null && prev.width === next.width && prev.height === next.height && prev.columnRight === next.columnRight ? prev : next,
+        prev !== null && prev.width === next.width && prev.height === next.height && prev.columnRight === next.columnRight && prev.firstLineTop === next.firstLineTop ? prev : next,
       );
     };
     measureRef.current = measure;

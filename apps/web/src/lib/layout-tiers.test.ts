@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stubLayoutTier, tierForWidth } from "@/test/layout-tier";
-import { isNoHover, isOverlay, isPhone, NO_HOVER_QUERY, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone, useNoHover } from "./layout-tiers";
+import { stubLayoutTier, tierForWidth, tierMatches } from "@/test/layout-tier";
+import { OUTLINE_COMPACT_QUERY, isNoHover, isOverlay, isPhone, NO_HOVER_QUERY, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone, useNoHover } from "./layout-tiers";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -40,9 +40,15 @@ describe("layout-tiers: JS queries share a boundary with the Tailwind variants",
     expect(remOf(OVERLAY_QUERY)).toBe(tailwindBreakpoint("xl"));
   });
 
+  it("OUTLINE_COMPACT_QUERY is the Tailwind md breakpoint", () => {
+    expect(remOf(OUTLINE_COMPACT_QUERY)).toBe(tailwindBreakpoint("md"));
+  });
+
   it.each([
     [639, "phone"],
-    [640, "overlay"],
+    [640, "compact"],
+    [767, "compact"],
+    [768, "overlay"],
     [1279, "overlay"],
     [1280, "docked"],
   ] as const)("width %i px is the %s tier (rem boundary at 16 px/rem)", (px, tier) => {
@@ -52,6 +58,8 @@ describe("layout-tiers: JS queries share a boundary with the Tailwind variants",
     // `not all and (min-width: Nrem)` matches when the width is below N rem
     expect(!(rem >= remOf(PHONE_QUERY))).toBe(tier === "phone");
     expect(!(rem >= remOf(OVERLAY_QUERY))).toBe(tier !== "docked");
+    expect(!(rem >= remOf(OUTLINE_COMPACT_QUERY))).toBe(tier === "phone" || tier === "compact");
+    expect(tierMatches(tier, OUTLINE_COMPACT_QUERY)).toBe(tier === "phone" || tier === "compact");
   });
 });
 

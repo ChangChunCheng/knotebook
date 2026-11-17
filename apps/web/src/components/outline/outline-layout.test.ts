@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canPinOutline, outlineMaxHeight, outlinePlacement } from "./outline-layout";
+import { canPinOutline, outlineMaxHeight, outlinePlacement, outlineTop } from "./outline-layout";
 
 describe("canPinOutline", () => {
   it.each([998, 1072, 1168, 1312, 920])("width %i can pin", (w) => {
@@ -63,7 +63,17 @@ describe("rail column", () => {
   });
 });
 
+describe("outlineTop", () => {
+  it("is the measured first line, or the fallback offset without one", () => {
+    expect(outlineTop({ firstLineTop: 64 })).toBe(64);
+    expect(outlineTop({ firstLineTop: null })).toBe(28);
+  });
+});
+
 describe("outlineMaxHeight", () => {
+  it("uses the given top", () => {
+    expect(outlineMaxHeight(700, true, 64)).toBe(558);
+  });
   it("stops above the version bubble when it is shown", () => {
     expect(outlineMaxHeight(700, true)).toBe(594);
   });

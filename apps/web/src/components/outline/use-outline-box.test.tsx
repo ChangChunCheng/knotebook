@@ -36,12 +36,32 @@ function el(rect: { left: number; right: number }, size?: { w: number; h: number
   return node;
 }
 
+describe("useOutlineBox first line", () => {
+  it("measures the first block's top relative to the container, independent of the current scroll", () => {
+    const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
+    scroll.getBoundingClientRect = () => ({ left: 0, right: 1000, top: 100 }) as DOMRect;
+    const column = el({ left: 100, right: 800 });
+    const block = document.createElement("div");
+    block.className = "bn-block-content";
+    column.appendChild(block);
+    let scrolled = 0;
+    Object.defineProperty(scroll, "scrollTop", { configurable: true, get: () => scrolled });
+    // First block sits 60px under the container's top when scrolled to the top.
+    block.getBoundingClientRect = () => ({ top: 100 + 60 - scrolled }) as DOMRect;
+    const { result } = renderHook(() => useOutlineBox(scroll, column));
+    expect(result.current?.firstLineTop).toBe(60);
+    scrolled = 200;
+    act(() => observers[0]!.cb());
+    expect(result.current?.firstLineTop).toBe(60);
+  });
+});
+
 describe("useOutlineBox", () => {
   it("reports size and the column's right edge relative to the scroll container", () => {
     const scroll = el({ left: 300, right: 1300 }, { w: 1000, h: 700 });
     const column = el({ left: 600, right: 1100 });
     const { result } = renderHook(() => useOutlineBox(scroll, column));
-    expect(result.current).toEqual({ width: 1000, height: 700, columnRight: 800 });
+    expect(result.current).toEqual({ width: 1000, height: 700, columnRight: 800, firstLineTop: null });
   });
 
   it("follows resize notifications", () => {

@@ -48,7 +48,7 @@ import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn, articleColumnState } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
-import { useIsOverlay, useIsPhone } from "@/lib/layout-tiers";
+import { useIsOutlineCompact, useIsOverlay, useIsPhone } from "@/lib/layout-tiers";
 import { stickyTopInset, useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
 import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
@@ -606,12 +606,13 @@ export function NoteEditor({
   // 版本預覽中活編輯器藏起來了，撤銷會改到看不見的內容。
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
-  // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；640-1279 版本面板浮在卡上時會蓋住它，也不顯示。
+  // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；768-1279 版本面板浮在卡上時會蓋住它，也不顯示。
   // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
   // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗與釘住過場中是每個畫格一次。
   const outlineHeadings = useOutlineHeadings(editor);
   const overlay = useIsOverlay();
-  const outlineCanShow = !phone && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
+  const outlineCompact = useIsOutlineCompact();
+  const outlineCanShow = !outlineCompact && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
   const showOutline = outlineCanShow && outlineBox !== null;
   // 釘住：偏好是全站一個；只有大綱在、標準寬、容器扣掉面板還放得下 640 的欄時才真的釘（欄換成 `standard-pinned`）。
@@ -620,9 +621,11 @@ export function NoteEditor({
   const outlinePinAvailable = width === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
-  // 手機（< 640）沒有細線：捲動時的位置泡泡與底部面板；⋮ 的「標題導覽」經 context 開同一個面板，所以 provider 包住整張卡（含頁首槽位）。
+  // 窄於 768 沒有細線：捲動時的位置泡泡與底部面板；⋮ 的「標題導覽」經 context 開同一個面板，所以 provider 包住整張卡（含頁首槽位）。
   // 手機上捲的是文件：泡泡與目前位置聽視窗的捲動，上緣是釘住的頁首下緣。
-  const phoneOutline = phone && !hasPreview && outlineHeadings.length > 0;
+  // 640–767 也用這一形，但那一段文件不捲、捲的是容器：泡泡與目前位置聽容器、泡泡浮在容器上緣的錨點層（同細線）。
+  const phoneOutline = outlineCompact && !hasPreview && outlineHeadings.length > 0;
+  const containerTopEdge = useCallback(() => scrollEl?.getBoundingClientRect().top ?? 0, [scrollEl]);
   const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
   // 面板不在（離開手機寬度、開版本預覽、標題刪光）時一併關掉，條件回來時不會自己再跳出來。
   useEffect(() => {
@@ -700,7 +703,7 @@ export function NoteEditor({
   //     內文卡（cardSurface，flex-col）
   //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
   //       NoteOutline                                 ← #465 標題大綱：零高度錨點（data-outline-anchor），貼在捲動容器上緣；細線與面板不隨內文捲、不佔高度
-  //       PhoneNoteOutline                            ← #465 手機：位置泡泡（fixed，頁首下方）＋底部面板（Dialog，portal）；與上一項不同時出現
+  //       PhoneNoteOutline                            ← #465 窄版（< 768）：位置泡泡（< 640 fixed 在頁首下方；640–767 浮在卡內錨點層）＋底部面板（Dialog，portal）；與上一項不同時出現
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
   //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
   //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
@@ -758,9 +761,9 @@ export function NoteEditor({
             <PhoneNoteOutline
               headings={outlineHeadings}
               root={scrollEl}
-              scrollTarget={window}
-              topEdge={stickyTopInset}
-              placement="page"
+              scrollTarget={phone ? window : scrollEl}
+              topEdge={phone ? stickyTopInset : containerTopEdge}
+              placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}

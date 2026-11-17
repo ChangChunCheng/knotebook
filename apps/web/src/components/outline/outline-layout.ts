@@ -8,7 +8,7 @@ export const OUTLINE_RAIL_WIDTH = 24;
 /** 釘住時，內文欄右緣與面板之間再多留的餘量。 */
 export const OUTLINE_PIN_SLACK = 24;
 export const OUTLINE_MIN_PINNED_COLUMN = 640;
-/** 細線區塊離容器上緣的距離。 */
+/** 量不到第一個區塊（文件還沒有內容）時，大綱離容器上緣的距離。 */
 export const OUTLINE_TOP_OFFSET = 28;
 /** 細線與浮動面板離容器右緣至少這麼多（釘住的面板離右緣半份 `OUTLINE_PIN_SLACK`，見 `outlinePlacement`）。 */
 export const OUTLINE_EDGE_INSET = 4;
@@ -53,8 +53,13 @@ export function outlinePlacement(containerWidth: number, columnRight: number): O
   return { railLeft, panelLeft, pinnedPanelLeft };
 }
 
-/** 面板可用的最大高度；版本泡泡顯示時底部要停在泡泡上方。 */
-export function outlineMaxHeight(containerHeight: number, bubbleShown: boolean): number {
+/** 大綱上緣離容器上緣的距離：第一行內文的頂端；量不到時退回 `OUTLINE_TOP_OFFSET`。 */
+export function outlineTop(box: { firstLineTop: number | null }): number {
+  return box.firstLineTop ?? OUTLINE_TOP_OFFSET;
+}
+
+/** 面板可用的最大高度（`top` 為大綱上緣離容器上緣的距離）；版本泡泡顯示時底部要停在泡泡上方。 */
+export function outlineMaxHeight(containerHeight: number, bubbleShown: boolean, top: number = OUTLINE_TOP_OFFSET): number {
   const bottom = bubbleShown ? CORNER_STACK_FOOTPRINT_PX + OUTLINE_BOTTOM_GAP : OUTLINE_BOTTOM_GAP;
-  return Math.max(0, containerHeight - OUTLINE_TOP_OFFSET - bottom);
+  return Math.max(0, containerHeight - top - bottom);
 }

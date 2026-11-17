@@ -20,7 +20,7 @@ const HEADINGS: OutlineHeading[] = [
   { id: "h-linux", level: 3, text: "Linux" },
   { id: "h-usage", level: 2, text: "Usage" },
 ];
-const BOX = { width: 1072, height: 700, columnRight: 991.5 };
+const BOX = { width: 1072, height: 700, columnRight: 991.5, firstLineTop: 64 };
 
 let scrollEl: HTMLElement;
 
@@ -74,12 +74,14 @@ describe("NoteOutline", () => {
     expect(anchor.contains(rail())).toBe(true);
     const placement = outlinePlacement(BOX.width, BOX.columnRight);
     expect(rail().style.left).toBe(`${placement.railLeft}px`);
-    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(BOX.height, true)}px`);
+    // The rail, floating panel and pinned panel share one top: the note's first line.
+    expect(rail().parentElement!.style.top).toBe("64px");
+    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(BOX.height, true, 64)}px`);
   });
 
   it("without the version bubble the rail may reach lower", () => {
     setup({ bubbleShown: false });
-    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(BOX.height, false)}px`);
+    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(BOX.height, false, 64)}px`);
   });
 
   it("jumps inside the scroll container, cancels the previous jump on the next one and the last one on unmount", () => {

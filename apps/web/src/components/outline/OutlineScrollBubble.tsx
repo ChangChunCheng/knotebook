@@ -53,6 +53,17 @@ export function OutlineScrollBubble({ headings, activeId, scrollTarget, placemen
   const arm = useRef<() => void>(() => {});
   /** `performance.now()` of the last typing or focus inside `inputRoot`; -Infinity before any. */
   const lastInput = useRef(Number.NEGATIVE_INFINITY);
+  // The anchored bubble sits over the card, whose scroll container may have a classic scrollbar: keep clear of it.
+  const [gutter, setGutter] = useState(0);
+  useEffect(() => {
+    if (placement !== "anchor" || scrollTarget === null || scrollTarget === window || typeof ResizeObserver === "undefined") return;
+    const el = scrollTarget as HTMLElement;
+    const measure = () => setGutter(Math.max(0, el.offsetWidth - el.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [placement, scrollTarget]);
 
   useEffect(() => {
     if (!inputRoot) return;
@@ -119,8 +130,9 @@ export function OutlineScrollBubble({ headings, activeId, scrollTarget, placemen
         "pointer-events-auto z-30 flex h-9 max-w-[60vw] animate-in fade-in-0 duration-150",
         placement === "page"
           ? "fixed right-[max(0.5rem,env(safe-area-inset-right))] top-[calc(var(--kb-sticky-top,0px)+0.5rem)]"
-          : "absolute right-2 top-2",
+          : "absolute top-2",
       )}
+      style={placement === "anchor" ? { right: `calc(0.5rem + ${gutter}px)` } : undefined}
     >
       <button
         type="button"
