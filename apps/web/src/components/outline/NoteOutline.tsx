@@ -65,7 +65,7 @@ export function NoteOutline({ headings, scrollEl, box, bubbleShown, pinned, pinA
       <HeadingOutline
         headings={headings}
         activeId={activeId}
-        placement={outlinePlacement(box.width, box.columnRight)}
+        placement={outlinePlacement(box.width)}
         top={outlineTop(box)}
         maxHeight={outlineMaxHeight(box.height, bubbleShown, outlineTop(box))}
         pinned={pinned}

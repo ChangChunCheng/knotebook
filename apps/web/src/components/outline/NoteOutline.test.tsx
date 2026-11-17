@@ -20,7 +20,7 @@ const HEADINGS: OutlineHeading[] = [
   { id: "h-linux", level: 3, text: "Linux" },
   { id: "h-usage", level: 2, text: "Usage" },
 ];
-const BOX = { width: 1072, height: 700, columnRight: 991.5, firstLineTop: 64 };
+const BOX = { width: 1072, height: 700, firstLineTop: 64 };
 
 let scrollEl: HTMLElement;
 
@@ -72,7 +72,7 @@ describe("NoteOutline", () => {
     const anchor = document.querySelector<HTMLElement>("[data-outline-anchor]")!;
     expect(anchor).toHaveClass("pointer-events-none", "relative", "z-20", "h-0", "shrink-0");
     expect(anchor.contains(rail())).toBe(true);
-    const placement = outlinePlacement(BOX.width, BOX.columnRight);
+    const placement = outlinePlacement(BOX.width);
     expect(rail().style.left).toBe(`${placement.railLeft}px`);
     // The rail, floating panel and pinned panel share one top: the note's first line.
     expect(rail().parentElement!.style.top).toBe("64px");
@@ -80,8 +80,11 @@ describe("NoteOutline", () => {
   });
 
   it("without the version bubble the rail may reach lower", () => {
-    setup({ bubbleShown: false });
-    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(BOX.height, false, 64)}px`);
+    // A short container: the bubble limit, not the two-thirds cap, decides.
+    const short = { ...BOX, height: 300 };
+    expect(outlineMaxHeight(short.height, true, 64)).toBeLessThan(outlineMaxHeight(short.height, false, 64));
+    setup({ bubbleShown: false, box: short });
+    expect(rail().style.maxHeight).toBe(`${outlineMaxHeight(short.height, false, 64)}px`);
   });
 
   it("jumps inside the scroll container, cancels the previous jump on the next one and the last one on unmount", () => {

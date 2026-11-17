@@ -11,7 +11,7 @@ const headings: OutlineHeading[] = [
   { id: "b", level: 2, text: "Bob" },
   { id: "c", level: 3, text: "Carol" },
 ];
-const placement = { railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 832 };
+const placement = { railLeft: 1018, panelLeft: 802 };
 
 let noHover = false;
 
@@ -325,17 +325,17 @@ describe("HeadingOutline pin", () => {
 });
 
 describe("HeadingOutline geometry", () => {
-  it("places the rail, the floating panel and the pinned panel", () => {
+  it("places the rail and puts the floating and pinned panel at the same left", () => {
     const { view } = setup({ maxHeight: 321 });
-    expect(rail().style.left).toBe("1007.5px");
+    expect(rail().style.left).toBe("1018px");
     expect(rail().style.maxHeight).toBe("321px");
     mouseEnter(wrapper());
     advance(OUTLINE_OPEN_DELAY_MS);
-    expect(panel()!.style.left).toBe("828px");
+    expect(panel()!.style.left).toBe("802px");
     expect(panel()!.style.maxHeight).toBe("321px");
     expect(panel()!.style.width).toBe("240px");
     view.rerender(<HeadingOutline {...({ headings, activeId: "b", placement, maxHeight: 321, pinned: true, pinAvailable: true, onPinnedChange: vi.fn(), onJump: vi.fn() } satisfies HeadingOutlineProps)} />);
-    expect(panel()!.style.left).toBe("832px");
+    expect(panel()!.style.left).toBe("802px");
     expect(panel()!.style.maxHeight).toBe("321px");
   });
 

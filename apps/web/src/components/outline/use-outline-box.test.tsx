@@ -57,28 +57,26 @@ describe("useOutlineBox first line", () => {
 });
 
 describe("useOutlineBox", () => {
-  it("reports size and the column's right edge relative to the scroll container", () => {
+  it("reports the container's visible size", () => {
     const scroll = el({ left: 300, right: 1300 }, { w: 1000, h: 700 });
     const column = el({ left: 600, right: 1100 });
     const { result } = renderHook(() => useOutlineBox(scroll, column));
-    expect(result.current).toEqual({ width: 1000, height: 700, columnRight: 800, firstLineTop: null });
+    expect(result.current).toEqual({ width: 1000, height: 700, firstLineTop: null });
   });
 
   it("follows resize notifications", () => {
     const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
-    let right = 800;
-    const column = el({ left: 100, right });
-    column.getBoundingClientRect = () => ({ left: 100, right }) as DOMRect;
+    const column = el({ left: 100, right: 800 });
     const { result } = renderHook(() => useOutlineBox(scroll, column));
-    expect(result.current?.columnRight).toBe(800);
-    right = 700;
-    act(() => observers[0]!.cb());
-    expect(result.current?.columnRight).toBe(700);
+    expect(result.current?.width).toBe(1000);
     Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 900 });
+    act(() => observers[0]!.cb());
+    expect(result.current?.width).toBe(900);
+    Object.defineProperty(scroll, "clientHeight", { configurable: true, value: 500 });
     act(() => {
       window.dispatchEvent(new Event("resize"));
     });
-    expect(result.current?.width).toBe(900);
+    expect(result.current?.height).toBe(500);
   });
 
   it("keeps the same object when nothing changed", () => {
@@ -106,60 +104,13 @@ describe("useOutlineBox", () => {
     expect(observers[0]!.disconnect).toHaveBeenCalled();
   });
 
-  it("re-measures when the column's transition ends (position moved, size unchanged)", () => {
-    const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
-    let right = 800;
-    const column = el({ left: 100, right });
-    column.getBoundingClientRect = () => ({ left: 100, right }) as DOMRect;
-    const child = document.createElement("span");
-    column.append(child);
-    const { result } = renderHook(() => useOutlineBox(scroll, column));
-    expect(result.current?.columnRight).toBe(800);
-    right = 700;
-    act(() => {
-      child.dispatchEvent(new Event("transitionend", { bubbles: true }));
-    });
-    expect(result.current?.columnRight).toBe(800);
-    act(() => {
-      column.dispatchEvent(new Event("transitionend"));
-    });
-    expect(result.current?.columnRight).toBe(700);
-  });
-
-  it("re-measures in the commit that changes the column's class (no transition with reduced motion), not on other commits", () => {
-    const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
-    let right = 800;
-    const column = el({ left: 100, right });
-    column.getBoundingClientRect = () => ({ left: 100, right }) as DOMRect;
-    column.className = "standard-pinned";
-    // The host renders the column's class, like the note page and the public page do.
-    const { result, rerender } = renderHook(
-      ({ cls }: { cls: string }) => {
-        column.className = cls;
-        return useOutlineBox(scroll, column);
-      },
-      { initialProps: { cls: "standard-pinned" } },
-    );
-    expect(result.current?.columnRight).toBe(800);
-    // Same class, column moved by something else: no layout read on this commit.
-    right = 750;
-    rerender({ cls: "standard-pinned" });
-    expect(result.current?.columnRight).toBe(800);
-    // Unpinning: the column jumps to its new place with no transitionend.
-    right = 700;
-    rerender({ cls: "standard" });
-    expect(result.current?.columnRight).toBe(700);
-  });
-
-  it("removes the window resize and transitionend listeners on unmount", () => {
+  it("removes the window resize listener on unmount", () => {
     const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
     const column = el({ left: 100, right: 800 });
     const winSpy = vi.spyOn(window, "removeEventListener");
-    const colSpy = vi.spyOn(column, "removeEventListener");
     const { unmount } = renderHook(() => useOutlineBox(scroll, column));
     unmount();
     expect(winSpy).toHaveBeenCalledWith("resize", expect.any(Function));
-    expect(colSpy).toHaveBeenCalledWith("transitionend", expect.any(Function));
     winSpy.mockRestore();
   });
 

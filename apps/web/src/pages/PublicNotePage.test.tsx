@@ -86,7 +86,7 @@ vi.mock("@/components/outline/OutlineSheet", async (importOriginal) => ({
   },
 }));
 // jsdom 沒有版面：容器寬度由測試指定（同真的 hook，兩個元素都掛上才有值）。
-const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, columnRight: 991.5 } }));
+const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, firstLineTop: null } }));
 vi.mock("@/components/outline/use-outline-box", () => ({
   useOutlineBox: (scrollEl: HTMLElement | null, columnEl: HTMLElement | null) => (scrollEl !== null && columnEl !== null ? outlineBox.value : null),
 }));

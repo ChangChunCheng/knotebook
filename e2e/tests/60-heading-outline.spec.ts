@@ -10,8 +10,8 @@ import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs
  * 60-1 跳轉：hover 細線 → 面板出現 5 項 → 點「Section D」→ 段落錨點的高亮浮層馬上出現（只留約 2 秒）；
  *      該標題的 `.bn-block-outer` 頂端與捲動容器頂端差在 [-2, 4] px；網址（含 hash）不變；面板收起、細線仍在。
  * 60-2 目前位置：把「Usage」捲過容器頂端 → 細線亮的是 Usage 那條；展開面板時 `aria-current` 也在 Usage。
- * 60-3 釘住：hover → 按「Pin outline」→ 滑鼠移開後面板仍在、細線不在；文字寬＝min(clamp(680, 85%W, 1056), W − 280) − 140
- *      （W＝捲動容器可視寬，誤差 ±1），且與 652 差 ≤ 4；面板左緣離欄右緣 ≥ 16；reload 後仍釘住、`outline.pinned` 是 "1"。
+ * 60-3 釘住：hover → 按「Pin outline」→ 滑鼠移開後面板仍在、細線不在；文字寬＝min(clamp(680, 85%W, 1056), W − 286) − 140
+ *      （W＝捲動容器可視寬，誤差 ±1），且與 646 差 ≤ 4；面板左緣離欄右緣 ≥ 16；reload 後仍釘住、`outline.pinned` 是 "1"。
  * 60-4 全寬筆記（偏好釘住）：沒有釘住的面板、細線在；hover 展開的面板沒有釘選鈕。
  * 60-5 1280×800（偏好釘住）：側欄 320 時放不下 640 的欄 → 細線、展開的面板沒有釘選鈕；視窗拉到 1440×900 → 自動變成釘住的面板。
  * 60-6 打字新增標題：在最後一段後面 Enter、打 `## New section` → 5 秒內細線多一條，面板裡有「New section」。
@@ -247,18 +247,22 @@ async function textAndContainerWidth(page: Page): Promise<{ text: number; contai
   return { text, container };
 }
 
-/** 釘住時欄寬＝min(標準欄寬, 容器 − 280)，文字寬再扣欄內距 16×2 與編輯器內距 54×2。 */
-const pinnedTextWidth = (container: number): number => Math.min(Math.min(Math.max(680, 0.85 * container), 1056), container - 280) - 140;
+/** 釘住時欄寬＝min(標準欄寬, 容器 − 286)，文字寬再扣欄內距 16×2 與編輯器內距 54×2。 */
+const pinnedTextWidth = (container: number): number => Math.min(Math.min(Math.max(680, 0.85 * container), 1056), container - 286) - 140;
 
 test("60-3 釘住：面板常駐、細線不在，內文欄往左讓出面板，reload 後仍釘住", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
     await openPanel(page);
+    const floatingBox = (await panel(page).boundingBox())!;
     await pinButton(page).click();
     // 滑鼠移到側欄上：浮動面板會在收起延遲後收掉，釘住的不會。
     await page.mouse.move(10, 450);
     await expectPinnedPanel(page);
+    // The pinned panel sits exactly where the floating one did.
+    const pinnedBox = (await panel(page).boundingBox())!;
+    for (const key of ["x", "y", "width"] as const) expect(Math.abs(pinnedBox[key] - floatingBox[key]), `釘住前後面板的 ${key}`).toBeLessThanOrEqual(1);
 
     await expect
       .poll(
@@ -266,11 +270,11 @@ test("60-3 釘住：面板常駐、細線不在，內文欄往左讓出面板，
           const { text, container } = await textAndContainerWidth(page);
           return Math.abs(text - pinnedTextWidth(container));
         },
-        { timeout: 5_000, message: "文字寬與 min(clamp(680, 85%, 1056), 容器 − 280) − 140 的差（px）" },
+        { timeout: 5_000, message: "文字寬與 min(clamp(680, 85%, 1056), 容器 − 286) − 140 的差（px）" },
       )
       .toBeLessThanOrEqual(1);
     const { text } = await textAndContainerWidth(page);
-    expect(Math.abs(text - 652), `1440 寬、側欄 320 時文字寬約 652（實際 ${text}）`).toBeLessThanOrEqual(4);
+    expect(Math.abs(text - 646), `1440 寬、側欄 320 時文字寬約 646（實際 ${text}）`).toBeLessThanOrEqual(4);
     await expect
       .poll(
         async () => {
@@ -280,7 +284,9 @@ test("60-3 釘住：面板常駐、細線不在，內文欄往左讓出面板，
         },
         { timeout: 5_000, message: "面板左緣 − 內文欄右緣（px）" },
       )
-      .toBeGreaterThanOrEqual(16);
+      .toBeGreaterThanOrEqual(15);
+    const gap = await page.evaluate(() => document.querySelector('[data-testid="outline-panel"]')!.getBoundingClientRect().left - document.querySelector('[data-testid="article-column"]')!.getBoundingClientRect().right);
+    expect(gap).toBeLessThanOrEqual(17);
 
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible({ timeout: 15_000 });

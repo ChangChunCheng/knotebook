@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { OUTLINE_GAP, OUTLINE_MIN_PINNED_COLUMN, OUTLINE_PANEL_WIDTH, OUTLINE_PIN_SLACK, canPinOutline } from "@/components/outline/outline-layout";
+import { OUTLINE_MIN_PINNED_COLUMN, OUTLINE_PIN_RESERVED_WIDTH, canPinOutline } from "@/components/outline/outline-layout";
 import {
   ARTICLE_COLUMN,
   ARTICLE_COLUMN_MAX,
@@ -31,7 +31,7 @@ import {
  *       這條 20↔20 就是新的無守衛缺口——這裡把三邊的字面綁在一起。
  *
  *   (f) #465 釘住大綱時欄讓出的寬度（`standard-pinned` 字面裡的 rem）與大綱的面板寬、
- *       間距、餘量常數綁在一起；`canPinOutline` 的門檻也從同一個保留寬度推得。
+ *       間距、面板右緣離容器右緣的常數綁在一起；`canPinOutline` 的門檻也從同一個保留寬度推得。
  *
  * 守不到的（誠實邊界）：
  *   - 把常數本身改成別的值——單一消費端下仍是合法操作。
@@ -79,7 +79,7 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
       wide: "max-w-[clamp(42.5rem,92.5%,88rem)]",
       full: "max-w-none",
       "standard-pinned":
-        "max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))]",
+        "max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem)))/2_-_17.875rem))]",
     });
     expect(articleColumn()).toBe(ARTICLE_COLUMN);
     expect(articleColumn()).toBe("mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)]");
@@ -89,13 +89,13 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     // #465 釘住：不帶選項時與上面同形；過場只加在標準寬的兩態，未釘住要明寫 left-0（`left: auto` 不能過場）。
     expect(ARTICLE_COLUMN_PIN_MOTION).toBe("transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none");
     expect(articleColumn("standard-pinned")).toBe(
-      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))]",
+      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem)))/2_-_17.875rem))]",
     );
     expect(articleColumn("standard", { pinMotion: true })).toBe(
       "mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)] left-0 transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none",
     );
     expect(articleColumn("standard-pinned", { pinMotion: true })).toBe(
-      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))] transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none",
+      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem)))/2_-_17.875rem))] transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none",
     );
     expect(articleColumn("wide", { pinMotion: true })).toBe("mx-auto w-full max-w-[clamp(42.5rem,92.5%,88rem)]");
     expect(articleColumn("full", { pinMotion: true })).toBe("mx-auto w-full max-w-none");
@@ -187,18 +187,19 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     const [, columnWidth, innerClamp, reserveRem] = maxPart!;
     expect(innerClamp, "釘住時欄寬上限仍是標準寬的 clamp").toBe(standardClamp);
     const reservePx = Number(reserveRem) * 16;
-    expect(reservePx, "保留＝面板＋間距＋餘量").toBe(OUTLINE_PANEL_WIDTH + OUTLINE_GAP + OUTLINE_PIN_SLACK);
+    expect(reservePx, "保留＝面板＋間距＋面板右緣離容器右緣").toBe(OUTLINE_PIN_RESERVED_WIDTH);
+    expect(reservePx).toBe(286);
 
-    // 位移：置中後右側空白不到「面板＋間距＋半份餘量」才往左讓，且用的是同一個欄寬式。
+    // 位移：置中後右側空白不到「面板＋間距＋面板右緣離容器右緣」才往左讓，且用的是同一個欄寬式。
     const leftPart = /left-\[min\(0px,calc\(\(100%_-_(.+)\)\/2_-_([\d.]+)rem\)\)\]$/.exec(pinned);
     expect(leftPart, "standard-pinned 應以 left-[min(0px, calc((100% - 欄寬)/2 - Nrem))] 結尾").not.toBeNull();
     expect(leftPart![1], "left 的欄寬式應與 max-w 相同").toBe(columnWidth);
-    expect(Number(leftPart![2]) * 16, "欄右緣離容器右緣至少面板＋間距＋半份餘量").toBe(OUTLINE_PANEL_WIDTH + OUTLINE_GAP + OUTLINE_PIN_SLACK / 2);
+    expect(Number(leftPart![2]) * 16, "欄右緣離容器右緣至少面板＋間距＋面板右緣離容器右緣").toBe(OUTLINE_PIN_RESERVED_WIDTH);
 
     // 能不能釘：剩下的欄寬至少 OUTLINE_MIN_PINNED_COLUMN。
     expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx - 1)).toBe(false);
     expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx)).toBe(true);
-    expect(canPinOutline(919)).toBe(false);
-    expect(canPinOutline(920)).toBe(true);
+    expect(canPinOutline(925)).toBe(false);
+    expect(canPinOutline(926)).toBe(true);
   });
 });

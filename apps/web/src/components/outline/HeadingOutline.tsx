@@ -260,7 +260,7 @@ export function HeadingOutline({ headings, activeId, placement, top = OUTLINE_TO
             pinned &&
               "group/pin border-transparent bg-transparent shadow-none transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none hover:border-border hover:bg-popover hover:shadow-md focus-within:border-border focus-within:bg-popover focus-within:shadow-md",
           )}
-          style={{ top: 0, left: pinned ? placement.pinnedPanelLeft : placement.panelLeft, width: OUTLINE_PANEL_WIDTH, maxHeight }}
+          style={{ top: 0, left: placement.panelLeft, width: OUTLINE_PANEL_WIDTH, maxHeight }}
         >
           {(pinAvailable || pinned || showClose) && (
             <div className="flex shrink-0 justify-end gap-1 pointer-coarse:gap-0">

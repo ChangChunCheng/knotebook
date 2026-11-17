@@ -19,7 +19,7 @@ import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
 import { ARTICLE_COLUMN_MAX, articleColumn, type ArticleColumnState } from "@/components/ui/article-column";
 import { NoteEditor } from "./NoteEditor";
 
-const WIDE_BOX: OutlineBox = { width: 1072, height: 700, columnRight: 991.5, firstLineTop: null };
+const WIDE_BOX: OutlineBox = { width: 1072, height: 700, firstLineTop: null };
 
 const outline = vi.hoisted(() => ({
   headings: [] as OutlineHeading[],
@@ -226,7 +226,7 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     const props = lastProps();
     expect(props.scrollEl).toBe(scroll);
     expect(props.headings).toBe(HEADINGS);
-    expect(props.box).toEqual({ width: 1072, height: 700, columnRight: 991.5, firstLineTop: null });
+    expect(props.box).toEqual({ width: 1072, height: 700, firstLineTop: null });
     expect(props.bubbleShown).toBe(true);
     // 沒有釘住偏好：標準寬、容器夠寬，可以釘但沒釘。
     expect(props.pinned).toBe(false);
@@ -395,7 +395,7 @@ describe("NoteEditor：釘住大綱", () => {
   });
 
   it("容器 912 放不下 640 的欄 → 退回細線、偏好照舊；寬回 1072 → 自動再釘", async () => {
-    outline.box = { ...WIDE_BOX, width: 912, columnRight: 836 };
+    outline.box = { ...WIDE_BOX, width: 912 };
     const { doc, update } = await renderAt("docked");
     expectColumn("standard");
     expect(lastProps().pinAvailable).toBe(false);
@@ -413,7 +413,7 @@ describe("NoteEditor：釘住大綱", () => {
     const { doc, update } = await renderAt("docked");
     expectColumn("standard-pinned");
 
-    outline.box = { ...WIDE_BOX, width: 740, columnRight: 710 };
+    outline.box = { ...WIDE_BOX, width: 740 };
     update({ panelOpen: true, mode: "panel" });
     expect(stub()).not.toBeNull();
     expect(lastProps().pinned).toBe(false);
