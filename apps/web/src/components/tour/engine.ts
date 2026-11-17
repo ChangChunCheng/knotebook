@@ -1,9 +1,12 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { AiActionDto } from "@knotebook/shared";
 import { fetchAiActions } from "@/api/ai";
-import { unionRect, type Rect } from "./geometry";
+import { listStickyTopInset, stickyTopInset } from "@/lib/page-scroll";
+import { tourLayout, type TourLayout } from "@/lib/tour-find";
+import { readKeyboardInset } from "@/lib/visual-viewport";
+import { NO_INSETS, unionRect, type Insets, type Rect } from "./geometry";
 import { buildSequence } from "./sequence";
-import { FULL_TOUR, prepareStop, STOPS, stopTarget, type StopContext, type StopDef } from "./stops";
+import { FULL_TOUR, prepareStop, STOPS, stopScreen, stopShownIn, stopTarget, type StopContext, type StopDef } from "./stops";
 
 /**
  * 功能導覽的引擎：站序、換站、等目標、結束後找回焦點。不碰 React，畫面與導頁由 `TourRunner` 處理。
@@ -11,6 +14,11 @@ import { FULL_TOUR, prepareStop, STOPS, stopTarget, type StopContext, type StopD
 
 /** 進站後等目標出現（而且有尺寸）的上限；等不到就跳過這一站。 */
 export const TARGET_TIMEOUT_MS = 3000;
+/**
+ * 手機換畫面（清單與示範筆記之間）之後等它出來的上限。清單等不到照樣進站（目標由引擎去等）；示範筆記等不到
+ * （例如它在別處被移到垃圾桶，頁面換成「在垃圾桶裡」的卡片）就當成離開示範筆記，結束導覽。
+ */
+export const SCREEN_TIMEOUT_MS = 5000;
 /** 結束後找使用者選單觸發鈕的上限；導回原頁後新的側欄要一兩格畫面才掛上。 */
 export const RETURN_FOCUS_TIMEOUT_MS = 1000;
 
@@ -47,6 +55,72 @@ export function measureTargets(els: readonly Element[]): Rect | null {
   const rects = els.map((el) => el.getBoundingClientRect());
   if (rects.some((r) => r.width <= 0 || r.height <= 0)) return null;
   return unionRect(rects.map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height })));
+}
+
+/**
+ * 卡片上的「n / N」：只數在 `layout` 這種版面上會出現的站（手機上沒有的站立刻跳過，不佔號，中途不跳號）。
+ * 畫面上那一站一定算進去：導覽中換到沒有它的版面時，卡片還停在那一站。
+ */
+export function tourProgress(stops: readonly TourStopEntry[], index: number, layout: TourLayout): { step: number; total: number } {
+  const counted = stops.map((e, i) => i === index || stopShownIn(e.stop, layout));
+  return {
+    step: counted.slice(0, index + 1).filter(Boolean).length,
+    total: counted.filter(Boolean).length,
+  };
+}
+
+export interface CardBands {
+  /** 卡片最好讓開的邊帶：釘住的頂列或頁首、底部的圓形鈕。畫面太小時可以疊上去（見 `cardInsets`）。 */
+  keepOut: Insets;
+  /** 畫面被蓋住、卡片放進去就看不到的部分：螢幕鍵盤、鍵盤上方的編輯工具列。一律讓開。 */
+  blocked: Insets;
+}
+
+const NO_BANDS: CardBands = { keepOut: NO_INSETS, blocked: NO_INSETS };
+
+/** 看得到、不在 inert 範圍內的 `selector` 元素裡，最高的上緣；沒有就回 `fallback`。 */
+function highestTop(selector: string, fallback: number): number {
+  let top = fallback;
+  for (const el of document.querySelectorAll(selector)) {
+    if (el.closest("[inert]") !== null) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) top = Math.min(top, r.top);
+  }
+  return top;
+}
+
+/**
+ * 鍵盤升起時 iOS 會把版面往上推（視覺視窗的 `offsetTop` 變大）：版面最上面那一段被推出畫面外，卡片放在那裡看不到。
+ * 雙指放大時 `offsetTop` 也會變，但那不是鍵盤，不算。
+ */
+function keyboardPanTop(): number {
+  const viewport = window.visualViewport;
+  if (!viewport || Math.abs(viewport.scale - 1) > 0.01) return 0;
+  return Math.max(0, viewport.offsetTop);
+}
+
+/**
+ * 卡片要避開的畫面邊帶（px，從視窗各邊量起；瀏海等 safe area 由卡片自己另外讀）。其他版面沒有這類東西，回全 0。手機上：
+ * - `keepOut` 上：清單畫面是釘住的頂列與清單標題列，筆記畫面是釘住的筆記頁首。下：看得到的圓形鈕（搜尋、新增筆記）。
+ * - `blocked` 下：螢幕鍵盤與鍵盤上方的編輯工具列，取高的那個。鍵盤升起時 `window.innerHeight` 不會變小，
+ *   只有視覺視窗變矮（`readKeyboardInset`），不扣掉的話卡片會落在鍵盤後面。`blocked` 上：鍵盤把版面往上推出畫面的那一段。
+ */
+export function measureCardBands(layout: TourLayout): CardBands {
+  if (layout !== "phone") return NO_BANDS;
+  const height = window.innerHeight;
+  const blockedEdge = highestTop("[data-mobile-edit-toolbar]", height - readKeyboardInset());
+  const fabEdge = highestTop("[data-phone-fab]", height);
+  let top: number;
+  if (document.querySelector("[data-phone-list-shown]") !== null) {
+    const bar = document.querySelector("[data-phone-top-bar]")?.getBoundingClientRect();
+    top = Math.max(listStickyTopInset(), bar !== undefined && bar.height > 0 ? bar.bottom : 0);
+  } else {
+    top = stickyTopInset();
+  }
+  return {
+    keepOut: { top, right: 0, bottom: Math.max(0, height - fabEdge), left: 0 },
+    blocked: { top: keyboardPanTop(), right: 0, bottom: Math.max(0, height - blockedEdge), left: 0 },
+  };
 }
 
 /**
@@ -110,6 +184,7 @@ function interactive(el: Element | null): el is HTMLElement {
 /**
  * 結束後的焦點：每格畫面呼叫一次 `returnFocus()`，查到還掛在 DOM 上的元素就聚焦它（最多 `RETURN_FOCUS_TIMEOUT_MS`）；
  * 查不到退到筆記標題框，再退到主內容區（`<main>` 本來不能聚焦，補 `tabindex="-1"`）。回傳聚焦的元素。
+ * 手機不退到標題框（聚焦文字框會叫出鍵盤），改退到筆記頁首回清單的「‹」。
  */
 export async function focusReturnTarget(returnFocus: () => Element | null, signal: AbortSignal): Promise<HTMLElement | null> {
   const found = await waitForFrames(() => {
@@ -117,9 +192,10 @@ export async function focusReturnTarget(returnFocus: () => Element | null, signa
     return interactive(el) ? el : null;
   }, signal, RETURN_FOCUS_TIMEOUT_MS);
   if (signal.aborted) return null;
+  const fallback = tourLayout() === "phone" ? '[data-kb-tour-target="backToList"]' : "input[data-note-title-input]";
   const target =
     found ??
-    Array.from(document.querySelectorAll("input[data-note-title-input]")).find(interactive) ??
+    Array.from(document.querySelectorAll(fallback)).find(interactive) ??
     Array.from(document.querySelectorAll("main")).find(interactive) ??
     null;
   if (target === null) return null;
@@ -144,8 +220,12 @@ function runPrepare(entry: TourStopEntry, ctx: StopContext): void {
   }
 }
 
-/** 等這一站的目標出現而且有尺寸，最多 `TARGET_TIMEOUT_MS`。目標每格畫面重查（prepare 切 tab 之後要下一格才畫出來）。 */
+/**
+ * 等這一站的目標出現而且有尺寸，最多 `TARGET_TIMEOUT_MS`。目標每格畫面重查（prepare 切 tab 之後要下一格才畫出來）。
+ * 目前的版面上沒有這一站（例如手機上的 AI 站）就不等，立刻回 false。
+ */
 export async function waitForStopTarget(entry: TourStopEntry, ctx: StopContext, signal: AbortSignal): Promise<boolean> {
+  if (!stopShownIn(entry.stop)) return false;
   return (await waitForFrames(() => measureTargets(stopTarget(entry.stop, ctx)), signal, TARGET_TIMEOUT_MS)) !== null;
 }
 
@@ -180,11 +260,12 @@ export type WaitForTarget = (entry: TourStopEntry, ctx: StopContext, signal: Abo
 /**
  * 導覽的狀態機。站序在建立時就定好（`planStops` 濾過）；`ctx` 也是開始時那一份。
  *
- * - 進站：先 `prepare`，再等目標（`waitForTarget`），等到才算進站；等不到就往同一個方向跳下一站。
+ * - 進站：先換到這一站的畫面（`StopContext.showScreen`，手機的清單／示範筆記），再 `prepare`，再等目標（`waitForTarget`），
+ *   等到才算進站；等不到就往同一個方向跳下一站。
  *   往回走一路都等不到，就從原本那站往後找。最後一站不跳：它帶著〔保留示範筆記〕〔刪除〕，等不到目標也照樣進站（卡片置中）。
  * - 離站：先呼叫畫面上那站的 `leave`，再 `prepare` 下一站——演示站開的選單要先收掉，下一站才開得了自己的。
  *   開始進一站（呼叫 `prepareStop`）就一定會再呼叫一次 `leave`，跳過的、等目標等到一半就結束的也一樣。
- *   窄視窗下 `prepareStop` 不跑站點的 `prepare`，`leave` 仍會被呼叫，所以站點的 `leave` 要能在 `prepare` 沒跑過時安全執行。
+ *   寬視窗以外 `prepareStop` 多半不跑站點的 `prepare`，`leave` 仍會被呼叫，所以站點的 `leave` 要能在 `prepare` 沒跑過時安全執行。
  */
 export class TourEngine {
   private snapshot: EngineSnapshot;
@@ -255,6 +336,16 @@ export class TourEngine {
     if (shown !== null) runLeave(shown, this.ctx);
   }
 
+  /**
+   * 換到這一站的畫面；這個版面上沒有的站不換（它會立刻被跳過）。換畫面失敗只記 console，照樣往下等目標。
+   * 不用換（沒有 `showScreen`）時回 null，進站的其餘步驟同步接著跑。
+   */
+  private enterScreen(entry: TourStopEntry, signal: AbortSignal): Promise<void> | null {
+    const show = this.ctx.showScreen;
+    if (show === undefined || !stopShownIn(entry.stop)) return null;
+    return show(stopScreen(entry.stop), signal).catch((err: unknown) => console.error(err));
+  }
+
   private async seek(start: number, direction: 1 | -1, from: number): Promise<void> {
     const generation = ++this.generation;
     const waiting = new AbortController();
@@ -270,6 +361,14 @@ export class TourEngine {
       }
       const entry = this.stops[i]!;
       this.set({ preparing: entry });
+      const entering = this.enterScreen(entry, waiting.signal);
+      if (entering !== null) {
+        await entering;
+        if (generation !== this.generation) {
+          runLeave(entry, this.ctx);
+          return;
+        }
+      }
       runPrepare(entry, this.ctx);
       const found = await this.waitForTarget(entry, this.ctx, waiting.signal);
       if (generation !== this.generation) {

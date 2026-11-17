@@ -4,6 +4,7 @@ import { useNoteWidth } from "@/components/note-width";
 import { Button } from "@/components/ui/button";
 import { HEADER_ICON_HIT } from "@/components/ui/hit-area";
 import { NoteWidthIcon } from "@/components/ui/icons-extra";
+import { tourTarget } from "@/lib/tour-targets";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,6 +26,7 @@ export function NoteWidthToggle({ noteId }: { noteId: string }) {
       size="icon"
       aria-label={name}
       title={name}
+      {...tourTarget("noteWidth")}
       onClick={() => setWidth(next)}
       className={cn("hidden shrink-0 text-brand hover:text-brand @min-[43.5rem]:inline-flex", HEADER_ICON_HIT)}
     >

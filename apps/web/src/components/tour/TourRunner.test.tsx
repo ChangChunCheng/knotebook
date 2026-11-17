@@ -1,28 +1,47 @@
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useLayoutEffect, useReducer, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams, type NavigateFunction } from "react-router";
+import {
+  createPath,
+  MemoryRouter,
+  NavigationType,
+  parsePath,
+  Route,
+  Router,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+  type Location,
+  type NavigateFunction,
+  type Navigator,
+  type To,
+} from "react-router";
 import { canonicalNotePath, type AiActionDto, type NoteDto, type UserDto } from "@knotebook/shared";
 import type { CollabState } from "@/collab/connection";
 import i18n from "@/i18n";
 import { ActiveNoteProvider } from "@/lib/active-note";
-import { OVERLAY_QUERY } from "@/lib/layout-tiers";
 import { SidebarQueryProvider } from "@/lib/sidebar-query";
 import { getShellControls, registerEditor, type TourEditor } from "@/lib/tour-bridge";
-import { findDrawerButton, findTourTarget, findUserMenuTrigger, tourTarget, type TourTargetId } from "@/lib/tour-targets";
+import { useIsPhone } from "@/lib/layout-tiers";
+import { findTourTarget, findUserMenuReturnTarget, findUserMenuTrigger } from "@/lib/tour-find";
+import { tourTarget, type TourTargetId } from "@/lib/tour-targets";
 import { useVersionsController, VersionsProvider } from "@/lib/versions-context";
 import { ThemeProvider } from "@/theme";
 import { Toaster } from "@/components/ui/toast";
 import { AppShell, SidebarDrawerButton } from "@/components/AppShell";
+import { BackToListButton } from "@/components/BackToListButton";
+import { NoteBrowseBar } from "@/components/NoteBrowseBar";
 import { CornerStack } from "@/components/CornerStack";
 import { NarrowTopBar } from "@/components/NarrowTopBar";
 import { NoteMenu } from "@/components/NoteMenu";
 import { ShareDialog } from "@/components/ShareDialog";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
+import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
 import { HOLE_PADDING } from "./geometry";
-import { TARGET_TIMEOUT_MS, waitForFrames, type TourStopEntry } from "./engine";
+import { SCREEN_TIMEOUT_MS, TARGET_TIMEOUT_MS, waitForFrames, type TourStopEntry } from "./engine";
 import type { StopContext, StopDef, StopId } from "./stops";
 import { TourRunner, type TourRunnerProps } from "./TourRunner";
 
@@ -111,38 +130,24 @@ function stubFetch() {
 
 // ── 視窗寬窄與元素尺寸 ────────────────────────────────────────────────────────
 
-type MediaListener = (event: { matches: boolean }) => void;
-let narrowNow = false;
-/** 只收 `OVERLAY_QUERY` 的監聽；其他查詢（例如主題的深色模式）恆不符合、不會變。 */
-const mediaListeners = new Set<MediaListener>();
+// 版面一律經 `stubLayoutTier` 換：`docked`＝寬視窗、`overlay`＝側欄浮動（640～1279）、`phone`＝手機（比 640 窄）。
+let tierControl: ReturnType<typeof stubLayoutTier> | null = null;
 
+function stubTier(tier: LayoutTier) {
+  tierControl = stubLayoutTier(tier);
+}
+
+/** 寬視窗或側欄浮動。 */
 function stubViewport(narrow: boolean) {
-  narrowNow = narrow;
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn((query: string) => {
-      const listeners = query === OVERLAY_QUERY ? mediaListeners : new Set<MediaListener>();
-      return {
-        get matches() {
-          return query === OVERLAY_QUERY ? narrowNow : false;
-        },
-        media: query,
-        onchange: null,
-        addEventListener: (_type: string, fn: MediaListener) => listeners.add(fn),
-        removeEventListener: (_type: string, fn: MediaListener) => listeners.delete(fn),
-        addListener: (fn: MediaListener) => listeners.add(fn),
-        removeListener: (fn: MediaListener) => listeners.delete(fn),
-        dispatchEvent: () => false,
-      };
-    }),
-  );
+  stubTier(narrow ? "overlay" : "docked");
+}
+
+function setTier(tier: LayoutTier) {
+  act(() => tierControl!.setLayoutTier(tier));
 }
 
 function setNarrow(narrow: boolean) {
-  narrowNow = narrow;
-  act(() => {
-    for (const fn of [...mediaListeners]) fn({ matches: narrow });
-  });
+  setTier(narrow ? "overlay" : "docked");
 }
 
 const RECTS: Record<TourTargetId, [number, number, number, number]> = {
@@ -152,9 +157,13 @@ const RECTS: Record<TourTargetId, [number, number, number, number]> = {
   search: [10, 20, 200, 30],
   share: [900, 10, 60, 30],
   noteMenu: [970, 10, 30, 30],
+  noteWidth: [935, 10, 30, 30],
   versions: [1200, 650, 40, 40],
   userMenu: [10, 650, 200, 40],
   drawerButton: [5, 5, 32, 32],
+  backToList: [8, 12, 32, 32],
+  phoneNewNote: [320, 760, 56, 56],
+  phoneSearch: [16, 760, 56, 56],
   wikilinkMenu: [400, 300, 220, 60],
   slashMenu: [400, 300, 220, 60],
   wikilink: [300, 200, 120, 20],
@@ -201,20 +210,27 @@ function HomeStandIn() {
   );
 }
 
+/** 筆記頁的標題框掛不掛（拿掉＝示範筆記的畫面「出不來」，換畫面會一直等）。 */
+let noteTitleShown = true;
+
 function NoteStandIn() {
   const { slug } = useParams();
   const note = NOTES.find((n) => n.slug === slug)!;
   const versions = useVersionsController({ noteId: note.id, enabled: true });
+  const phone = useIsPhone();
   return (
     <AppShell>
       <VersionsProvider value={versions}>
         <header data-note-id={note.id}>
+          <BackToListButton />
           <SidebarDrawerButton />
-          <input data-note-title-input="" aria-label="Note title" defaultValue={note.title} />
+          {noteTitleShown && <input data-note-title-input="" aria-label="Note title" defaultValue={note.title} />}
           <ShareDialog note={note} />
           <NoteMenu note={note} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />
         </header>
         <CornerStack />
+        {/* 手機筆記畫面底部的圓形鈕（同 NotePage，只在手機掛）。 */}
+        {phone && <NoteBrowseBar note={note} />}
         {/* 示範筆記裡現成的 `[[` 連結（沒有編輯器時，演示站改指它）。 */}
         <a href="/somewhere" {...tourTarget("wikilink")}>
           linked note
@@ -228,11 +244,81 @@ function NoteStandIn() {
 
 let queryClient: QueryClient;
 
-function Host({ initial, runner }: { initial: string; runner: ReactNode }) {
+/**
+ * 可以延後生效的 history：導頁先記下來，`manual` 時要測試呼叫 `commit()` 才換位置（模擬 BrowserRouter 在 transition 裡才跟上的空檔）。
+ * 只做這些測試用得到的：push／replace，沒有 go。
+ */
+class DeferredHistory {
+  location: Location;
+  type: NavigationType = NavigationType.Pop;
+  manual = false;
+  /** 每一次 push／replace 的目標路徑，依呼叫順序。 */
+  readonly calls: { action: NavigationType; pathname: string }[] = [];
+  private pending: { action: NavigationType; location: Location }[] = [];
+  private seq = 0;
+  listener: (() => void) | null = null;
+
+  constructor(initial: string) {
+    this.location = this.make(initial);
+  }
+
+  private make(to: To, state?: unknown): Location {
+    const path = typeof to === "string" ? parsePath(to) : to;
+    return { pathname: path.pathname ?? this.location.pathname, search: path.search ?? "", hash: path.hash ?? "", state: state ?? null, key: `k${++this.seq}` };
+  }
+
+  private record(action: NavigationType, to: To, state?: unknown): void {
+    const location = this.make(to, state);
+    this.calls.push({ action, pathname: location.pathname });
+    this.pending.push({ action, location });
+    if (!this.manual) this.commit();
+  }
+
+  commit(): void {
+    const last = this.pending.at(-1);
+    this.pending = [];
+    if (last === undefined) return;
+    this.location = last.location;
+    this.type = last.action;
+    this.listener?.();
+  }
+
+  readonly navigator: Navigator = {
+    createHref: (to) => (typeof to === "string" ? to : createPath(to)),
+    go: () => {},
+    push: (to, state) => this.record(NavigationType.Push, to, state),
+    replace: (to, state) => this.record(NavigationType.Replace, to, state),
+  };
+}
+
+function DeferredRouter({ history, children }: { history: DeferredHistory; children: ReactNode }) {
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  useLayoutEffect(() => {
+    history.listener = rerender;
+    return () => {
+      history.listener = null;
+    };
+  }, [history]);
+  return (
+    <Router location={history.location} navigationType={history.type} navigator={history.navigator}>
+      {children}
+    </Router>
+  );
+}
+
+function RouterShell({ initial, history, children }: { initial: string; history?: DeferredHistory; children: ReactNode }) {
+  return history === undefined ? (
+    <MemoryRouter initialEntries={[initial]}>{children}</MemoryRouter>
+  ) : (
+    <DeferredRouter history={history}>{children}</DeferredRouter>
+  );
+}
+
+function Host({ initial, runner, history }: { initial: string; runner: ReactNode; history?: DeferredHistory }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={[initial]}>
+        <RouterShell initial={initial} history={history}>
           <SidebarQueryProvider>
             <ActiveNoteProvider>
               <Routes>
@@ -244,7 +330,7 @@ function Host({ initial, runner }: { initial: string; runner: ReactNode }) {
               <LocationProbe />
             </ActiveNoteProvider>
           </SidebarQueryProvider>
-        </MemoryRouter>
+        </RouterShell>
         <Toaster />
       </ThemeProvider>
     </QueryClientProvider>
@@ -258,8 +344,6 @@ async function fakePrepareSample(signal: AbortSignal): Promise<NoteDto | null> {
   return ready === null ? null : SAMPLE;
 }
 
-/** 使用者選單入口傳的查找函式：寬視窗是側欄的帳號列、窄視窗是漢堡鈕。 */
-const lookupTrigger = () => (window.matchMedia(OVERLAY_QUERY).matches ? findDrawerButton() : findUserMenuTrigger());
 
 interface StartOptions {
   initial?: string;
@@ -268,26 +352,28 @@ interface StartOptions {
   strict?: boolean;
   /** 開始前在畫面上做的事（打開抽屜、打搜尋字）。 */
   before?: () => Promise<void> | void;
+  /** 用可以延後生效的 history 代替 MemoryRouter。 */
+  history?: DeferredHistory;
 }
 
-async function startTour({ initial = OTHER_PATH, returnTo = initial, props = {}, strict = false, before }: StartOptions = {}) {
+async function startTour({ initial = OTHER_PATH, returnTo = initial, props = {}, strict = false, before, history }: StartOptions = {}) {
   const onFinished = vi.fn();
   const prepareSample = vi.fn(fakePrepareSample);
   const onStarted = vi.fn();
-  const runnerProps: TourRunnerProps = { returnTo, returnFocus: lookupTrigger, prepareSample, onStarted, onFinished, ...props };
+  const runnerProps: TourRunnerProps = { returnTo, returnFocus: findUserMenuReturnTarget, prepareSample, onStarted, onFinished, ...props };
   const wrap = (node: ReactNode) => (strict ? <StrictMode>{node}</StrictMode> : node);
-  const view = render(wrap(<Host initial={initial} runner={null} />));
+  const view = render(wrap(<Host initial={initial} runner={null} history={history} />));
   await screen.findByRole("button", { name: USER.displayName });
   await before?.();
   const startedWith = { trigger: findUserMenuTrigger() };
-  view.rerender(wrap(<Host initial={initial} runner={<TourRunner {...runnerProps} />} />));
+  view.rerender(wrap(<Host initial={initial} runner={<TourRunner {...runnerProps} />} history={history} />));
   return {
     ...view,
     onStarted,
     onFinished,
     prepareSample: runnerProps.prepareSample,
     startedWith,
-    unmountRunner: () => view.rerender(wrap(<Host initial={initial} runner={null} />)),
+    unmountRunner: () => view.rerender(wrap(<Host initial={initial} runner={null} history={history} />)),
   };
 }
 
@@ -336,7 +422,6 @@ beforeEach(async () => {
   deleteStatus = 204;
   aiGate = null;
   hiddenTargets = new Set();
-  mediaListeners.clear();
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   stubFetch();
   stubViewport(false);
@@ -1002,5 +1087,277 @@ describe("卸載", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(onFinished).not.toHaveBeenCalled();
     expect(currentPath).toBe(SAMPLE_PATH);
+  });
+});
+
+describe("手機（比 640 窄）", () => {
+  beforeEach(() => stubTier("phone"));
+
+  /** 手機各站：標題、挖洞、該在的位置（清單是 `/`，其餘在示範筆記上）。 */
+  const PHONE_STOPS: [string, { x: number; y: number; width: number; height: number }, string][] = [
+    ["Lists of notes", padded(RECTS.tabs), "/"],
+    ["New note", padded(RECTS.phoneNewNote), "/"],
+    ["Folders", padded(RECTS.newFolder), "/"],
+    ["Search", padded(RECTS.phoneSearch), "/"],
+    // 分享鈕與 ⋮ 的聯集。
+    ["Share and more", padded([900, 10, 100, 30]), SAMPLE_PATH],
+    ["Version history", padded(RECTS.noteMenu), SAMPLE_PATH],
+    ["Link to another note", padded(RECTS.wikilink), SAMPLE_PATH],
+    ["Insert blocks with /", padded(RECTS.flowchart), SAMPLE_PATH],
+    ["Forgot how something works?", padded(RECTS.userMenu), "/"],
+  ];
+
+  const avatar = () => within(document.querySelector<HTMLElement>("[data-phone-top-bar]")!).getByRole("button", { name: USER.displayName });
+
+  it("清單上的站在清單指真的東西，筆記上的站回示範筆記，最後一站回清單指頭像；AI 站立刻跳過、不佔號；結束停在清單、焦點在頭像", async () => {
+    aiActions = [AI_ACTION];
+    const { onFinished } = await startTour({ initial: "/" });
+    for (const [i, [title, rect, path]] of PHONE_STOPS.entries()) {
+      // AI 站要是等了 TARGET_TIMEOUT_MS 才跳，findCard 的預設等待（1 秒）會先逾時。
+      if (i === 0) await findCard(title);
+      else await next(title);
+      expect(progress(), title).toBe(`${i + 1} / ${PHONE_STOPS.length}`);
+      expect(currentPath, title).toBe(path);
+      await waitFor(() => expect(hole(), title).toEqual(rect));
+      expect(card(), title).not.toHaveAccessibleDescription(/\{\{|Ctrl|sidebar|‹/);
+    }
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.userMenu.phoneBody"));
+    fireEvent.click(within(card()).getByRole("button", { name: "Keep sample note" }));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "completed" }));
+    expect(currentPath).toBe("/");
+    expect(document.activeElement).toBe(avatar());
+  });
+
+  it("從筆記開始：先回清單走清單上的站；中途在筆記上的站按 Esc → 回清單、焦點在頭像（不是標題框），tab 切回開始前的", async () => {
+    localStorage.setItem("sidebar.tab", "workspace");
+    const { onFinished } = await startTour();
+    await findCard("Lists of notes");
+    expect(currentPath).toBe("/");
+    for (const title of ["New note", "Folders", "Search", "Share and more"]) await next(title);
+    expect(currentPath).toBe(SAMPLE_PATH);
+    expect(getShellControls()!.getTab()).toBe("myNotes");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
+    expect(currentPath).toBe("/");
+    expect(document.activeElement).toBe(avatar());
+    expect(getShellControls()!.getTab()).toBe("workspace");
+  });
+
+  it("往回走：第一個筆記上的站按 Back 回到清單上的搜尋站，再 Next 回示範筆記", async () => {
+    await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search", "Share and more"]) await next(title);
+    fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
+    await findCard("Search");
+    expect(currentPath).toBe("/");
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.phoneSearch)));
+    await next("Share and more");
+    expect(currentPath).toBe(SAMPLE_PATH);
+    await waitFor(() => expect(hole()).toEqual(padded([900, 10, 100, 30])));
+  });
+
+  it("換畫面期間卡片藏起來、不挖洞，畫面出來才現身", async () => {
+    await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search"]) await next(title);
+    // 記下換畫面期間每次 DOM 變動時卡片的樣子。
+    const seen: { hidden: boolean; hole: boolean }[] = [];
+    const observer = new MutationObserver(() => {
+      const el = document.querySelector("[data-tour-card]");
+      if (el !== null) seen.push({ hidden: el.classList.contains("invisible"), hole: document.querySelector("[data-tour-hole]") !== null });
+    });
+    observer.observe(document.body, { subtree: true, attributes: true, childList: true });
+    await next("Share and more");
+    observer.disconnect();
+    expect(seen.some((s) => s.hidden && !s.hole)).toBe(true);
+    expect(card()).not.toHaveClass("invisible");
+  });
+
+  it("在清單上的站時位置跑到別篇筆記 → 結束（left）", async () => {
+    const { onFinished } = await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    act(() => void routerNavigate!(OTHER_PATH));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" }));
+  });
+});
+
+describe("手機：換畫面與離開", () => {
+  beforeEach(() => stubTier("phone"));
+  afterEach(() => {
+    noteTitleShown = true;
+  });
+
+  const avatar = () => within(document.querySelector<HTMLElement>("[data-phone-top-bar]")!).getByRole("button", { name: USER.displayName });
+
+  it("清單上的站按上一頁（同一個路徑的清單）→ 結束（left）", async () => {
+    const { onFinished } = await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    expect(currentPath).toBe("/");
+    act(() => void routerNavigate!(-1));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" }));
+    expect(overlay()).toBeNull();
+  });
+
+  it("換畫面是取代歷史：清單與示範筆記來回幾次後按上一頁，回到開始導覽前的那一頁", async () => {
+    const { onFinished } = await startTour();
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search", "Share and more"]) await next(title);
+    fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
+    await findCard("Search");
+    await next("Share and more");
+    expect(currentPath).toBe(SAMPLE_PATH);
+    act(() => void routerNavigate!(-1));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" }));
+    expect(currentPath).toBe(OTHER_PATH);
+  });
+
+  it("回到清單時捲回頂端", async () => {
+    const scrollY = vi.spyOn(window, "scrollY", "get").mockReturnValue(300);
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+    scrollY.mockRestore();
+  });
+
+  it("螢幕鍵盤蓋住的部分卡片一律讓開（視覺視窗變矮）", async () => {
+    vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 0, scale: 1, addEventListener: () => {}, removeEventListener: () => {} });
+    await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    await waitFor(() => expect(Number.parseFloat(card().style.maxHeight)).toBeLessThanOrEqual(window.innerHeight - 300 - 16));
+  });
+
+  it(`示範筆記的畫面 ${SCREEN_TIMEOUT_MS} ms 內出不來（例如在別處被移到垃圾桶）→ 結束（left），遮罩收掉`, async () => {
+    const { onFinished } = await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search"]) await next(title);
+    noteTitleShown = false;
+    fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(currentPath).toBe(SAMPLE_PATH));
+    expect(card()).toHaveClass("invisible");
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" }), { timeout: SCREEN_TIMEOUT_MS + 3000 });
+    expect(overlay()).toBeNull();
+  }, SCREEN_TIMEOUT_MS * 3);
+
+  it("換畫面途中按 Esc（正從清單換到示範筆記）→ 回清單、焦點在頭像", async () => {
+    const { onFinished } = await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search"]) await next(title);
+    noteTitleShown = false;
+    fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(card()).toHaveClass("invisible"));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "closed" }));
+    expect(currentPath).toBe("/");
+    expect(document.activeElement).toBe(avatar());
+  });
+
+  it("換畫面的導頁還沒生效（畫面上仍是清單）就按 Esc：照樣取代成清單，不會停在示範筆記上", async () => {
+    const history = new DeferredHistory("/");
+    const { onFinished } = await startTour({ initial: "/", history });
+    await findCard("Lists of notes");
+    for (const title of ["New note", "Folders", "Search"]) await next(title);
+    history.manual = true;
+    fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(history.calls.at(-1)).toEqual({ action: NavigationType.Replace, pathname: SAMPLE_PATH }));
+    expect(currentPath).toBe("/");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(history.calls.at(-1)).toEqual({ action: NavigationType.Replace, pathname: "/" }));
+    act(() => history.commit());
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "closed" }));
+    expect(currentPath).toBe("/");
+  });
+
+  it("離開到別篇筆記：不拉回清單，但側欄 tab 還原成開始前的", async () => {
+    localStorage.setItem("sidebar.tab", "workspace");
+    const { onFinished } = await startTour({ initial: "/" });
+    await findCard("Lists of notes");
+    await next("New note");
+    expect(getShellControls()!.getTab()).toBe("myNotes");
+    act(() => void routerNavigate!(OTHER_PATH));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" }));
+    expect(currentPath).toBe(OTHER_PATH);
+    expect(getShellControls()!.getTab()).toBe("workspace");
+  });
+});
+
+describe("導覽中跨過 640 與 1280", () => {
+  it("第 1 站：側欄鈕 ↔ 清單畫面的 tab 列（換到清單）↔ 側欄鈕（回示範筆記）↔ 側欄的 tab 列，標題與說明跟著換", async () => {
+    stubTier("overlay");
+    await startTour();
+    await findCard("Sidebar sections");
+    expect(hole()).toEqual(padded(RECTS.drawerButton));
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.narrowBody"));
+
+    setTier("phone");
+    await findCard("Lists of notes");
+    await waitFor(() => expect(currentPath).toBe("/"));
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.tabs)));
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.phoneBody"));
+
+    setTier("overlay");
+    await findCard("Sidebar sections");
+    await waitFor(() => expect(currentPath).toBe(SAMPLE_PATH));
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.drawerButton)));
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.narrowBody"));
+
+    setTier("docked");
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.tabs)));
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.body"));
+  });
+
+  it("版本站：寬與側欄浮動都指泡泡，手機改指 ⋮", async () => {
+    stubTier("docked");
+    await startTour();
+    await findCard("Sidebar sections");
+    for (const title of ["New note", "Folders", "Search", "Share and more", "Version history"]) await next(title);
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.versions)));
+    setTier("overlay");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(card()).toHaveAccessibleDescription(/bottom-right corner/);
+    expect(hole()).toEqual(padded(RECTS.versions));
+    setTier("phone");
+    await waitFor(() => expect(hole()).toEqual(padded(RECTS.noteMenu)));
+    expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.versions.phoneBody"));
+  });
+
+  it("「n / N」跟著版面數：有 AI 站時手機少數一站", async () => {
+    aiActions = [AI_ACTION];
+    stubTier("overlay");
+    await startTour();
+    await findCard("Sidebar sections");
+    for (const title of ["New note", "Folders", "Search", "Share and more", "Version history", "Link to another note"]) await next(title);
+    expect(progress()).toBe("7 / 10");
+    setTier("phone");
+    await waitFor(() => expect(progress()).toBe("7 / 9"));
+    setTier("overlay");
+    await waitFor(() => expect(progress()).toBe("7 / 10"));
+  });
+
+  it("停在手機上沒有的站時換到手機：卡片留在原站（不挖洞），「n / N」把它算進去；往回走照常", async () => {
+    const skipped = fakeEntry("two", "share", { skipOnPhone: true });
+    await startTour({ props: { stops: [fakeEntry("one", "noteMenu"), skipped, fakeEntry("three", "userMenu")] } });
+    await findCard("fake.one");
+    await next("fake.two");
+    expect(progress()).toBe("2 / 3");
+    setTier("phone");
+    await waitFor(() => expect(hole()).toBeNull());
+    expect(progress()).toBe("2 / 3");
+    fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
+    await findCard("fake.one");
+    expect(progress()).toBe("1 / 2");
+  });
+
+  it("往回走時跳過手機上沒有的站也是立刻的", async () => {
+    stubTier("phone");
+    const skipped = fakeEntry("two", "share", { skipOnPhone: true });
+    await startTour({ props: { stops: [fakeEntry("one", "noteMenu"), skipped, fakeEntry("three", "userMenu")] } });
+    await findCard("fake.one");
+    expect(progress()).toBe("1 / 2");
+    await next("fake.three");
+    expect(progress()).toBe("2 / 2");
+    fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
+    await findCard("fake.one");
+    expect(skipped.leave).toHaveBeenCalledTimes(2);
   });
 });

@@ -54,8 +54,11 @@ export function writeSidebarTab(tab: SidebarTab): void {
 }
 
 export interface SidebarTabActions {
-  /** 換到別的 tab 時另外結束選取；點目前那顆不結束。 */
-  showTab: (tab: SidebarTab) => void;
+  /**
+   * 換到別的 tab 時另外結束選取；點目前那顆不結束。預設會把清單帶到眼前（手機回清單畫面、側欄浮動時開抽屜）；
+   * `reveal: false` 只換 tab，不動畫面（例如功能導覽結束時把 tab 還原成開始前的）。
+   */
+  showTab: (tab: SidebarTab, options?: { reveal?: boolean }) => void;
   updateSelection: (op: SelectionOp) => void;
   /** 在選取模式就結束並回 true；否則回 false、不動 state。抽屜 Esc 用。 */
   endSelectionIfActive: () => boolean;
@@ -103,13 +106,14 @@ export function SidebarTabProvider({
   const phoneListRef = useRef(phoneList);
   phoneListRef.current = phoneList;
 
-  const showTab = useCallback((next: SidebarTab) => {
+  const showTab = useCallback((next: SidebarTab, options?: { reveal?: boolean }) => {
     setTab(next);
     writeSidebarTab(next);
     if (next !== tabRef.current) {
       dispatchSelection({ type: "end" });
       clearSearchMark(); // 搜尋框已空時切到別的 tab ＝離開搜尋：清掉搜尋跳轉留在筆記裡的標記
     }
+    if (options?.reveal === false) return;
     // 手機：清單本身就是全螢幕畫面，換 tab 後要回到清單；浮動段：開抽屜；固定段：側欄一直在，不做事。
     if (isPhone()) phoneListRef.current?.backToList();
     else if (window.matchMedia(OVERLAY_QUERY).matches) drawerRef.current?.setOpen(true);

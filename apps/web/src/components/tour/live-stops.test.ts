@@ -23,7 +23,9 @@ import {
   startLiveSelection,
   stopLiveSelection,
 } from "./live-stops";
-import { isNarrowViewport, prepareStop, STOPS, stopTarget, type StopContext } from "./stops";
+import { tourLayout } from "@/lib/tour-find";
+import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
+import { prepareStop, STOPS, stopTarget, type StopContext } from "./stops";
 
 const NOTE_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -32,6 +34,7 @@ afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()!();
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -416,21 +419,22 @@ describe("wikilink 站點接進引擎", () => {
   });
 
   it.each([
-    ["wikilink", "[["],
-    ["slash", "/"],
-  ] as const)("窄視窗也跑 prepare（%s 站）：選單開、過濾開；一般站在窄視窗仍不跑", async (stopId, trigger) => {
+    ["wikilink", "[[", "overlay", "floating"],
+    ["slash", "/", "overlay", "floating"],
+    ["wikilink", "[[", "phone", "phone"],
+    ["slash", "/", "phone", "phone"],
+  ] as const)("寬視窗以外也跑 prepare（%s 站，%s）：選單開、過濾開；一般站只有側欄浮動時不跑", async (stopId, trigger, tier: LayoutTier, layout) => {
     const { editor } = await setup();
-    vi.spyOn(window, "matchMedia").mockImplementation(
-      (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList,
-    );
-    expect(isNarrowViewport()).toBe(true);
+    stubLayoutTier(tier);
+    expect(tourLayout()).toBe(layout);
     prepareStop(STOPS[stopId], CTX_BASE);
     expect(isTriggerMenuShown(editor, trigger)).toBe(true);
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(true);
     stopLiveTrigger(NOTE_ID);
     const plain = vi.fn();
     prepareStop({ id: "tabs", titleKey: "x", bodyKey: "x", target: () => [], prepare: plain }, CTX_BASE);
-    expect(plain).not.toHaveBeenCalled();
+    // 側欄浮動時切 tab 會打開抽屜，所以一般站不跑；手機沒有抽屜，照跑。
+    expect(plain).toHaveBeenCalledTimes(layout === "phone" ? 1 : 0);
   });
 });
 
@@ -817,14 +821,114 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     }
   });
 
-  it("窄視窗也跑 prepare；沒有示範筆記的編輯器就不是演示", async () => {
+  it("側欄浮動時也跑 prepare；沒有示範筆記的編輯器就不是演示", async () => {
     const { editor } = await setup(BLOCKS);
-    vi.spyOn(window, "matchMedia").mockImplementation(
-      (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList,
-    );
+    stubLayoutTier("overlay");
     prepareStop(STOPS.ai, AI_CTX);
     expect(selectedText(editor)).toBe(SENTENCE);
     stopLiveSelection(NOTE_ID);
     expect(STOPS.ai.live?.({ ...AI_CTX, sampleNoteId: "other" })).toBe(false);
+  });
+
+  it("手機不跑：不框選、不開過濾，也沒有目標（手機選取文字不浮出格式工具列）", async () => {
+    const { editor } = await setup(BLOCKS);
+    stubLayoutTier("phone");
+    const before = editor._tiptapEditor.state.selection.toJSON();
+    prepareStop(STOPS.ai, AI_CTX);
+    expect(editor._tiptapEditor.state.selection.toJSON()).toEqual(before);
+    expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(false);
+    expect(stopTarget(STOPS.ai, AI_CTX)).toEqual([]);
+  });
+});
+
+describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
+  const CTX_LIVE: StopContext = { searchQuery: "", aiActions: [], sampleNoteId: NOTE_ID, liveStops: true };
+  const SENTENCE = i18n.t("tourGuide.sample.aiSentence");
+  const view = (editor: TourEditor) => editor._tiptapEditor.view.dom;
+
+  it("[[ 與 / 站：聚焦之前就設成 none、選單照開，離站拿掉（原本沒有）且編輯器失焦", async () => {
+    const { editor } = await setup();
+    const dom = view(editor);
+    let atFocus: string | null = "unset";
+    dom.addEventListener("focus", () => (atFocus = dom.getAttribute("inputmode")), true);
+    for (const trigger of ["[[", "/"] as const) {
+      expect(dom.hasAttribute("inputmode")).toBe(false);
+      startLiveTrigger(NOTE_ID, trigger);
+      expect(dom.getAttribute("inputmode"), trigger).toBe("none");
+      expect(isTriggerMenuShown(editor, trigger)).toBe(true);
+      // 演示中送出的交易（例如選單關閉前的狀態更新）不會把屬性洗掉。
+      editor._tiptapEditor.view.dispatch(editor._tiptapEditor.state.tr.setMeta("probe", true));
+      expect(dom.getAttribute("inputmode"), trigger).toBe("none");
+      stopLiveTrigger(NOTE_ID);
+      expect(dom.hasAttribute("inputmode"), trigger).toBe(false);
+      expect(dom.contains(document.activeElement), trigger).toBe(false);
+    }
+    expect(atFocus).toBe("none");
+  });
+
+  it("原本就有值：還原成原本的值；重複開始、重複結束都不會弄丟", async () => {
+    const { editor } = await setup();
+    const dom = view(editor);
+    dom.setAttribute("inputmode", "text");
+    startLiveTrigger(NOTE_ID, "[[");
+    startLiveTrigger(NOTE_ID, "[[");
+    expect(dom.getAttribute("inputmode")).toBe("none");
+    stopLiveTrigger(NOTE_ID);
+    stopLiveTrigger(NOTE_ID);
+    expect(dom.getAttribute("inputmode")).toBe("text");
+  });
+
+  it("離站時編輯器已經從登記處撤掉，或回報已銷毀（暫時卸載）：照樣還原在當初那個元素上", async () => {
+    const { editor } = await setup();
+    const dom = view(editor);
+    startLiveTrigger(NOTE_ID, "[[");
+    expect(dom.getAttribute("inputmode")).toBe("none");
+    // 登記處換成別篇：stopLiveTrigger 從登記處拿不到這篇的編輯器。
+    const unregister = registerEditor("another-note", editor);
+    stopLiveTrigger(NOTE_ID);
+    expect(dom.hasAttribute("inputmode")).toBe(false);
+    unregister();
+
+    cleanups.push(registerEditor(NOTE_ID, editor));
+    startLiveSelection(NOTE_ID);
+    startLiveTrigger(NOTE_ID, "/");
+    expect(dom.getAttribute("inputmode")).toBe("none");
+    vi.spyOn(editor._tiptapEditor, "isDestroyed", "get").mockReturnValue(true);
+    stopLiveTrigger(NOTE_ID);
+    expect(dom.hasAttribute("inputmode")).toBe(false);
+  });
+
+  it("AI 站（框選演示句）一樣：設成 none，離站還原", async () => {
+    const { editor } = await setup([{ type: "paragraph", content: SENTENCE }, { type: "paragraph" }]);
+    const dom = view(editor);
+    startLiveSelection(NOTE_ID);
+    expect(dom.getAttribute("inputmode")).toBe("none");
+    stopLiveSelection(NOTE_ID);
+    expect(dom.hasAttribute("inputmode")).toBe(false);
+  });
+
+  it("走引擎：下一步、上一步、結束（✕／Esc／跳過）、卸載，每一種離站都還原", async () => {
+    const { editor } = await setup();
+    const dom = view(editor);
+    fakeTargetEl("wikilinkMenu");
+    fakeTargetEl("slashMenu");
+    const after = fakeTargetEl("userMenu");
+    const entries = [{ stop: STOPS.wikilink }, { stop: { id: "userMenu" as const, titleKey: "x", bodyKey: "x", target: () => [after] } }];
+    for (const leaveBy of ["next", "close", "unmount"] as const) {
+      const engine = new TourEngine(entries, CTX_LIVE);
+      await engine.begin();
+      expect(dom.getAttribute("inputmode"), leaveBy).toBe("none");
+      if (leaveBy === "next") engine.next();
+      else engine.end(leaveBy);
+      await vi.waitFor(() => expect(dom.hasAttribute("inputmode"), leaveBy).toBe(false));
+      if (leaveBy === "next") {
+        await vi.waitFor(() => expect(engine.getSnapshot().index).toBe(1));
+        engine.back();
+        await vi.waitFor(() => expect(engine.getSnapshot().index).toBe(0));
+        expect(dom.getAttribute("inputmode")).toBe("none");
+        engine.end("close");
+        expect(dom.hasAttribute("inputmode")).toBe(false);
+      }
+    }
   });
 });

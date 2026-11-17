@@ -23,7 +23,7 @@ import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
 import { useTour } from "@/lib/tour-context";
-import { findUserMenuReturnTarget } from "@/lib/tour-targets";
+import { findUserMenuReturnTarget } from "@/lib/tour-find";
 import type { ShortcutsStartPage } from "@/lib/shortcuts-dialog";
 import { RELEASE_HIGHLIGHTS, visibleHighlightItems } from "./release-highlights";
 import { visibleShortcuts, type KeyToken, type ShortcutCategory, type ShortcutEntry, type ShortcutKeys } from "./shortcut-list";
@@ -47,7 +47,8 @@ import { visibleShortcuts, type KeyToken, type ShortcutCategory, type ShortcutEn
  * （`aria-current` 與右卡的 region 名稱＝分類名，報讀器據此知道內容換了）；窄螢幕選分類後焦點移進內容區、返回後回到目前項次。
  *
  * 左卡底部 `<div data-shortcuts-footer>` 只有提示句、沒有按鈕：導覽的入口是「功能導覽」頁的〔開始導覽〕。
- * 「功能導覽」頁經首包的 `useTour()` 開始導覽，這個檔只 import 首包裡的 `lib/tour-context`、`lib/tour-targets`，不 import `components/tour/` 底下的模組與導覽字串包（字串包與站點表不進這個 chunk）。
+ * 「功能導覽」頁經首包的 `useTour()` 開始導覽。這個檔 import 首包裡的 `lib/tour-context` 與不在首包的 `lib/tour-find`（結束後找使用者選單觸發鈕），
+ * 不 import `components/tour/` 底下的模組與導覽字串包（字串包與站點表不進這個 chunk）。
  */
 
 type TFn = (key: string) => string;

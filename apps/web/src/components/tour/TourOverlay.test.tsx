@@ -168,6 +168,15 @@ describe("換站時報讀器讀得到新的一站", () => {
     expect(region).toHaveTextContent("3 / 5: Folders. Create folders here.");
   });
 
+  it("換站看 stopKey：同一站只換了號碼與說明（跨過版面）不再報；換站時號碼沒變也照報", () => {
+    const view = renderOverlay({ step: 7, stopKey: 6, total: 10, title: "Link", body: "Type [[." });
+    const region = stepRegion();
+    view.rerenderWith({ step: 7, stopKey: 7, total: 9, title: "Slash", body: "Type /." });
+    expect(region).toHaveTextContent("7 / 9: Slash. Type /.");
+    view.rerenderWith({ step: 8, stopKey: 7, total: 10, title: "Slash", body: "Type / anywhere." });
+    expect(region).toHaveTextContent("7 / 9: Slash. Type /.");
+  });
+
   it("往回走也報；live region 一直是同一個元素（不重掛）", () => {
     const view = renderOverlay({ step: 3, total: 5, title: "Folders", body: "Create folders here." });
     const region = stepRegion();
@@ -587,5 +596,70 @@ describe("卡片位置", () => {
     expect(card().style.left).toBe(`${(600 - 320) / 2}px`);
     expect(card().style.left).not.toBe(before);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
+  });
+});
+
+describe("卡片避開 safe area 與呼叫端給的邊帶", () => {
+  function sized() {
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
+  }
+
+  it("keepOut：沒有挖洞時在邊帶之間置中，最大高度扣掉邊帶", () => {
+    sized();
+    renderOverlay({ target: null, keepOut: { top: 100, right: 0, bottom: 200, left: 0 } });
+    const top = 100 + 8;
+    const bottom = window.innerHeight - 200 - 8;
+    expect(card().style.top).toBe(`${(top + bottom - 160) / 2}px`);
+    expect(card().style.maxHeight).toBe(`${bottom - top}px`);
+  });
+
+  it("safe area（讀 env() 的量測元素）：卡片不進瀏海與 Home 指示條", () => {
+    sized();
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element, pseudo?: string | null) => {
+      const style = real(el, pseudo);
+      if (!(el instanceof HTMLElement) || !el.className.includes("safe-area-inset-top")) return style;
+      return { ...style, paddingTop: "47px", paddingRight: "0px", paddingBottom: "34px", paddingLeft: "0px" } as CSSStyleDeclaration;
+    });
+    // 挖洞貼在視窗頂端：沒有 safe area 時卡片會放在挖洞正下方。
+    renderOverlay({ target: { left: 20, top: 0, width: 40, height: 10 } });
+    expect(Number.parseFloat(card().style.top)).toBeGreaterThanOrEqual(47 + 8);
+    expect(card().style.maxHeight).toBe(`${window.innerHeight - 47 - 34 - 16}px`);
+  });
+
+  it("safe area 與 keepOut 每邊取大的", () => {
+    sized();
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element, pseudo?: string | null) => {
+      const style = real(el, pseudo);
+      if (!(el instanceof HTMLElement) || !el.className.includes("safe-area-inset-top")) return style;
+      return { ...style, paddingTop: "47px", paddingRight: "0px", paddingBottom: "34px", paddingLeft: "0px" } as CSSStyleDeclaration;
+    });
+    renderOverlay({ target: null, keepOut: { top: 20, right: 0, bottom: 90, left: 0 } });
+    expect(card().style.maxHeight).toBe(`${window.innerHeight - 47 - 90 - 16}px`);
+  });
+});
+
+describe("換畫面時藏起卡片", () => {
+  it("hidden：卡片不可見、遮罩還在；現身後焦點回到主要動作", () => {
+    const view = renderOverlay({ hidden: true, target: null });
+    expect(card()).toHaveClass("invisible");
+    expect(document.querySelector("[data-tour-overlay]")).not.toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    view.rerenderWith({ hidden: false, target: null });
+    expect(card()).not.toHaveClass("invisible");
+    expect(screen.getByRole("button", { name: "Next" })).toHaveFocus();
+  });
+});
+
+describe("被蓋住的部分（螢幕鍵盤）", () => {
+  it("blocked：卡片一律讓開，畫面小到放掉 keepOut 時也一樣", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
+    const keepOut = { top: window.innerHeight / 2, right: 0, bottom: window.innerHeight / 2, left: 0 };
+    renderOverlay({ target: null, keepOut, blocked: { top: 0, right: 0, bottom: 300, left: 0 } });
+    expect(card().style.maxHeight).toBe(`${window.innerHeight - 300 - 16}px`);
+    expect(Number.parseFloat(card().style.top) + 160).toBeLessThanOrEqual(window.innerHeight - 300 - 8);
   });
 });

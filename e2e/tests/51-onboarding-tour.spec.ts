@@ -340,6 +340,100 @@ async function expectHoleCoversLocator(page: Page, target: Locator, message: str
 const aiToolbarButton = (page: Page): Locator =>
   page.locator("[data-kb-formatting-toolbar-popover]").getByRole("button", { name: "AI", exact: true });
 
+/** 手機（比 640 窄）清單頂列的頭像：使用者選單的觸發鈕。 */
+const phoneAvatar = (page: Page): Locator => page.locator("[data-phone-top-bar]").getByRole("button", { name: USER_NAME, exact: true });
+
+/**
+ * 手機上各站要挖亮的目標（`data-kb-tour-target`）與該在的畫面，順序同導覽的站序。清單上的站（tab 列、右下的新增筆記鈕、
+ * 新增資料夾鈕、左下的搜尋鈕、頂列的頭像）在清單（`/`）上指真的東西，其餘在示範筆記上；AI 站手機不停（沒有浮出的格式工具列）。
+ */
+const PHONE_STOPS: readonly { ids: readonly string[]; on: "list" | "note" }[] = [
+  { ids: ["tabs"], on: "list" },
+  { ids: ["phoneNewNote"], on: "list" },
+  { ids: ["newFolder"], on: "list" },
+  { ids: ["phoneSearch"], on: "list" },
+  { ids: ["share", "noteMenu"], on: "note" },
+  { ids: ["noteMenu"], on: "note" },
+  { ids: ["wikilinkMenu"], on: "note" },
+  { ids: ["slashMenu"], on: "note" },
+  { ids: ["userMenu"], on: "list" },
+];
+
+/** 換站的上限：導覽等不到目標要等 3 秒才跳站；手機上每一站（含換畫面）都該在這之前出現。 */
+const PHONE_STEP_LIMIT_MS = 2_500;
+
+/** 手機上說明卡在畫面內，而且不蓋住釘住的頂列（清單）或筆記頁首、底部看得到的圓形鈕（容差 1 px）。 */
+async function expectCardClearOfPhoneChrome(page: Page, message: string): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const card = document.querySelector("[data-tour-card]")?.getBoundingClientRect();
+          if (!card) return "no card";
+          if (card.left < 0 || card.top < 0 || card.right > window.innerWidth + 1 || card.bottom > window.innerHeight + 1) return "outside the screen";
+          for (const selector of ["main header", "[data-phone-top-bar]"]) {
+            for (const el of document.querySelectorAll(selector)) {
+              if (el.closest("[inert]") !== null) continue;
+              const r = el.getBoundingClientRect();
+              if (r.height > 0 && r.bottom > 0 && card.top < r.bottom - 1) return `over ${selector}`;
+            }
+          }
+          for (const fab of document.querySelectorAll("[data-phone-fab]")) {
+            if (fab.closest("[inert]") !== null) continue;
+            const r = fab.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && card.bottom > r.top + 1) return "over the round buttons";
+          }
+          return "ok";
+        }),
+      { message },
+    )
+    .toBe("ok");
+}
+
+/** 示範筆記的網址（`/n/<handle>/welcome-to-knotebook`）。 */
+const SAMPLE_URL = /\/n\/[^/]+\/welcome-to-knotebook/;
+
+/**
+ * 手機上逐站按 Next 走到最後一站（不按最後一站的鈕）：每站在該在的畫面（清單是 `/`、其餘是示範筆記）、挖洞蓋住目標、
+ * 卡片避開頂列、頁首與圓形鈕、卡片在最上層，換站（含換畫面）都在 `PHONE_STEP_LIMIT_MS` 內。回傳總站數。
+ */
+async function walkPhoneTour(page: Page): Promise<number> {
+  const { total } = await readProgress(page);
+  for (let n = 1; n <= total; n++) {
+    await expect(tourCard(page).getByText(`${n} / ${total}`, { exact: true })).toBeVisible();
+    const stop = PHONE_STOPS[n - 1]!;
+    if (stop.on === "list") await expect.poll(() => originPath(page), { message: `第 ${n} 站要在清單上` }).toBe("/");
+    else await expect(page, `第 ${n} 站要在示範筆記上`).toHaveURL(SAMPLE_URL);
+    for (const id of stop.ids) {
+      await expectHoleCoversLocator(page, page.locator(`[data-kb-tour-target="${id}"]:visible`).first(), `第 ${n} 站的挖洞要蓋住 ${id}`);
+    }
+    // [[ 與 / 站把焦點放進編輯器：編輯器設成 inputmode="none"，觸控裝置不叫出螢幕鍵盤；其他筆記上的站沒有這個屬性。
+    if (stop.on === "note") {
+      const live = stop.ids.includes("wikilinkMenu") || stop.ids.includes("slashMenu");
+      if (live) await expect(editorLocator(page), `第 ${n} 站`).toHaveAttribute("inputmode", "none");
+      else await expect(editorLocator(page), `第 ${n} 站`).not.toHaveAttribute("inputmode");
+    }
+    await expectCardClearOfPhoneChrome(page, `第 ${n} 站的說明卡要在畫面內、不蓋住頂列、頁首與圓形鈕`);
+    if (n === total) break;
+    await expectCardContentOnTop(page);
+    const before = Date.now();
+    await tourCard(page).getByRole("button", { name: "Next", exact: true }).click();
+    await expect(tourCard(page).getByText(`${n + 1} / ${total}`, { exact: true })).toBeVisible();
+    expect(Date.now() - before, `第 ${n} 站到第 ${n + 1} 站`).toBeLessThan(PHONE_STEP_LIMIT_MS);
+  }
+  return total;
+}
+
+/** 手機：頭像 → Help（停在項次清單）→ Feature tour → Start tour，等第 1 站。 */
+async function openTourOnPhone(page: Page): Promise<void> {
+  await phoneAvatar(page).click();
+  await page.getByRole("menuitem", { name: "Help", exact: true }).click();
+  const help = page.getByRole("dialog", { name: "Help", exact: true });
+  await help.getByRole("button", { name: "Feature tour", exact: true }).click();
+  await help.getByRole("button", { name: "Start tour", exact: true }).click();
+  await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
+}
+
 test.describe("feature tour (manual start)", () => {
   // 疊上別的測試可能設過 AI 動作（導覽會多出 AI 站）。預設固定成沒有 AI；要 AI 的案例自己再 `stubAiActions(page, "some")`，後註冊的路由優先。
   test.beforeEach(async ({ page }) => {
@@ -1068,14 +1162,14 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toHaveCount(0);
   });
 
-  // 700 寬是浮動側欄的版面（640～1279，側欄是抽屜）；比 640 窄的手機版面沒有抽屜也沒有側欄鈕，不在這一案。
-  test("narrow window: Help and the drawer close first, sidebar stops point at the menu button, and focus ends on it", async ({
+  // 768 寬是浮動側欄的版面（640～1279，側欄是抽屜）；比 640 窄的手機版面沒有抽屜也沒有側欄鈕，另見下面的手機案。
+  test("floating sidebar (768): Help and the drawer close first, sidebar stops point at the sidebar button, and focus ends on it", async ({
     page,
     browser,
   }) => {
     test.setTimeout(120_000);
     await signUpFreshUser(browser, page);
-    await page.setViewportSize({ width: 700, height: 844 });
+    await page.setViewportSize({ width: 768, height: 844 });
     const drawerButton = page.getByRole("button", { name: "Open sidebar", exact: true });
     await drawerButton.click();
     const drawer = page.getByRole("dialog", { name: "Navigation" });
@@ -1089,7 +1183,7 @@ test.describe("feature tour (manual start)", () => {
     await expect(help).toHaveCount(0);
 
     // 站 5（Share and more）指頁首的 ⋮，站 6（Version history）指右下角的版本泡泡（640 以上都有），站 7、8 指編輯器裡真的 [[ 與 / 選單；
-    // 其餘指開側欄的漢堡鈕。抽屜整輪都不再出現。
+    // 其餘指開側欄的側欄鈕。抽屜整輪都不再出現。
     const label = (n: number): string =>
       n === 5 ? "More" : n === 6 ? "the versions bubble" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar";
     await walkToLastStop(page, async (n) => {
@@ -1104,21 +1198,202 @@ test.describe("feature tour (manual start)", () => {
               : n === 8
                 ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
                 : drawerButton;
-      await expect.poll(async () => {
-        const [hole, box] = [await holeBox(page), await target.boundingBox()];
-        if (box === null) return false;
-        try {
-          expectHoleCovers(hole, box);
-          return true;
-        } catch {
-          return false;
-        }
-      }, { message: `第 ${n} 站的挖洞要蓋住 ${label(n)}` }).toBe(true);
+      await expectHoleCoversLocator(page, target, `第 ${n} 站的挖洞要蓋住 ${label(n)}`);
       // 選單撐滿整個窄畫面，卡片會疊在選單上；導覽層在選單之上，所以卡片的標題與〔Next〕要在最上層（不被選單蓋住）。
       if (n === 8) await expectCardContentOnTop(page);
     });
     await tourCard(page).getByRole("button", { name: "Keep sample note", exact: true }).click();
     await expect(tourCard(page)).toHaveCount(0);
     await expectBackAtStart(page, { path: "/" }, drawerButton);
+  });
+
+  test("phone (390): Help from the avatar sheet opens at its list; Start tour closes both sheets; list stops highlight the real tab row, buttons and avatar, note stops run on the sample note, and the tour ends on the list with focus on the avatar", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(150_000);
+    // 有 AI 動作：手機上沒有浮出的格式工具列，AI 站要立刻跳過、不佔號（寬視窗是 10 站）。
+    await stubAiActions(page, "some");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signUpFreshUser(browser, page);
+    await expect(page.getByRole("button", { name: "Open sidebar", exact: true })).toHaveCount(0);
+    const avatar = phoneAvatar(page);
+    await avatar.click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
+    const help = page.getByRole("dialog", { name: "Help", exact: true });
+    // 手機的說明視窗先停在項次清單。
+    await expect(help.getByRole("button", { name: "Feature tour", exact: true })).toBeVisible();
+    await expect(help.getByRole("region", { name: "Feature tour" })).toBeHidden();
+    await help.getByRole("button", { name: "Feature tour", exact: true }).click();
+    await expect(help.getByRole("region", { name: "Feature tour" })).toBeVisible();
+    await help.getByRole("button", { name: "Start tour", exact: true }).click();
+    await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
+    // 說明視窗與頭像選單都收掉了，沒有被「返回選單」重開；畫面上唯一的 dialog 是說明卡，卡片在最上層。
+    await expect(help).toHaveCount(0);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expectCardContentOnTop(page);
+
+    const total = await walkPhoneTour(page);
+    expect(total).toBe(PHONE_STOPS.length);
+
+    await tourCard(page).getByRole("button", { name: "Keep sample note", exact: true }).click();
+    await expect(tourCard(page)).toHaveCount(0);
+    await expect(page.locator("[data-tour-overlay]")).toHaveCount(0);
+    await expectBackAtStart(page, { path: "/" }, avatar);
+    // 沒有留下擋住畫面的層：頭像中心點上最上層的就是頭像。
+    const avatarOnTop = await avatar.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return top !== null && el.contains(top);
+    });
+    expect(avatarOnTop).toBe(true);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.waitForTimeout(1_500);
+    const notes = (await (await page.request.get("/api/notes")).json()) as { title: string }[];
+    expect(notes.filter((n) => n.title === SAMPLE_TITLE)).toHaveLength(1);
+    // 導覽結束後打開示範筆記：編輯器沒有 inputmode，點進去照常叫出鍵盤。
+    await page.locator("aside").getByText(SAMPLE_TITLE, { exact: true }).first().click();
+    await expect(page).toHaveURL(SAMPLE_URL);
+    await expect(editorLocator(page)).toBeVisible();
+    await expect(editorLocator(page)).not.toHaveAttribute("inputmode");
+  });
+
+  test("phone (390): started on a note, the tour goes to the list first; Back from the first note stop returns to the list; Esc on a note stop ends on the list with focus on the avatar", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signUpFreshUser(browser, page);
+    await createNote(page, `E2E phone tour from note ${Date.now()}`);
+    // 筆記畫面上沒有頭像：用 Ctrl+/ 打開說明（接實體鍵盤的手機），一樣先停在項次清單。
+    await page.keyboard.press("ControlOrMeta+/");
+    const help = page.getByRole("dialog", { name: "Help", exact: true });
+    await help.getByRole("button", { name: "Feature tour", exact: true }).click();
+    await help.getByRole("button", { name: "Start tour", exact: true }).click();
+    await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
+    await expect(tourCard(page).getByText(/^1 \/ \d+$/)).toBeVisible();
+    await expect.poll(() => originPath(page)).toBe("/");
+    await expectHoleCoversLocator(page, page.locator('[data-kb-tour-target="tabs"]:visible').first(), "第 1 站在清單上指 tab 列");
+
+    await goToTitle(page, "Share and more");
+    await expect(page).toHaveURL(SAMPLE_URL);
+    await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Search");
+    await expect.poll(() => originPath(page)).toBe("/");
+    await expectHoleCoversLocator(page, page.locator('[data-kb-tour-target="phoneSearch"]:visible').first(), "往回走：清單左下的搜尋鈕");
+    await tourCard(page).getByRole("button", { name: "Next", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Share and more");
+    await expect(page).toHaveURL(SAMPLE_URL);
+
+    // 演示站不叫出螢幕鍵盤：[[ 站時編輯器是 inputmode="none"，往回走到版本站就拿掉（原本沒有這個屬性）。
+    await goToTitle(page, "Link to another note");
+    await expect(editorLocator(page)).toHaveAttribute("inputmode", "none");
+    await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Version history");
+    await expect(editorLocator(page)).not.toHaveAttribute("inputmode");
+
+    await page.keyboard.press("Escape");
+    await expect(tourCard(page)).toHaveCount(0);
+    await expect.poll(() => originPath(page)).toBe("/");
+    await expect(phoneAvatar(page)).toBeFocused();
+  });
+
+  test("phone (390): the browser's Back on a list stop ends the tour and stays in the app, even though the page before is the list too", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signUpFreshUser(browser, page);
+    await openTourOnPhone(page);
+    await expect(tourCard(page).getByText(/^1 \/ \d+$/)).toBeVisible();
+    await expect.poll(() => originPath(page)).toBe("/");
+    await page.goBack();
+    await expect(tourCard(page)).toHaveCount(0);
+    await expect(page.locator("[data-tour-overlay]")).toHaveCount(0);
+    await expect.poll(() => originPath(page)).toBe("/");
+    await expect(phoneAvatar(page)).toBeVisible();
+  });
+
+  test("phone (320): the card stays inside the screen and clear of the top bar, the note header and the round buttons", async ({ page, browser }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: 320, height: 568 });
+    await signUpFreshUser(browser, page);
+    await openTourOnPhone(page);
+    const total = await walkPhoneTour(page);
+    expect(total).toBe(PHONE_STOPS.length);
+    await tourCard(page).getByRole("button", { name: "Keep sample note", exact: true }).click();
+    await expect(tourCard(page)).toHaveCount(0);
+    await expect(phoneAvatar(page)).toBeFocused();
+  });
+
+  test("crossing 1280 and 640 in the middle of a stop moves the cut-out to that layout's target", async ({ page, browser }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await signUpFreshUser(browser, page);
+    await openTour(page, USER_NAME);
+    const tabs = page.locator('[data-kb-tour-target="tabs"]:visible').first();
+    const drawerButton = page.getByRole("button", { name: "Open sidebar", exact: true });
+    const bubble = page.locator('[data-kb-tour-target="versions"]:visible').first();
+    const more = page.getByRole("button", { name: "More", exact: true });
+    const body = tourCard(page).locator("p").first();
+
+    await expect(tourCard(page).getByText(/^1 \/ \d+$/)).toBeVisible();
+    await expectHoleCoversLocator(page, tabs, "1280：第 1 站指側欄的 tab 列");
+    await page.setViewportSize({ width: 1279, height: 844 });
+    await expectHoleCoversLocator(page, drawerButton, "1279：第 1 站改指側欄鈕");
+    await expect(body).toContainText("Open the sidebar from here");
+    await page.setViewportSize({ width: 640, height: 844 });
+    await expectHoleCoversLocator(page, drawerButton, "640：仍指側欄鈕");
+    await page.setViewportSize({ width: 639, height: 844 });
+    await expect.poll(() => originPath(page), { message: "639：第 1 站回到清單畫面" }).toBe("/");
+    await expectHoleCoversLocator(page, tabs, "639：指清單畫面的 tab 列");
+    await expect(cardTitle(page)).toHaveText("Lists of notes");
+    await expect(body).toContainText("This row of icons");
+    await page.setViewportSize({ width: 640, height: 844 });
+    await expect(page, "640：回到示範筆記").toHaveURL(SAMPLE_URL);
+    await expectHoleCoversLocator(page, drawerButton, "640：回到側欄鈕");
+    await expect(cardTitle(page)).toHaveText("Sidebar sections");
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await expectHoleCoversLocator(page, tabs, "1280：回到 tab 列");
+    await expect(body).not.toContainText("sidebar from here");
+
+    // 版本站：640 以上指右下角的泡泡，639 改指頁首的 ⋮。
+    await page.setViewportSize({ width: 640, height: 844 });
+    const { total } = await readProgress(page);
+    await goToTitle(page, "Version history");
+    await expectHoleCoversLocator(page, bubble, "640：版本站指泡泡");
+    await page.setViewportSize({ width: 639, height: 844 });
+    await expectHoleCoversLocator(page, more, "639：版本站改指 ⋮");
+    await expect(body).toContainText('"Version history" in the ⋮ menu');
+    await page.setViewportSize({ width: 640, height: 844 });
+    await expectHoleCoversLocator(page, bubble, "640：版本站回到泡泡");
+    expect((await readProgress(page)).total).toBe(total);
+
+    await page.keyboard.press("Escape");
+    await expect(tourCard(page)).toHaveCount(0);
+    await expectBackAtStart(page, { path: "/" }, drawerButton);
+  });
+
+  test("phone (390): What's new opens from the Help list and ‹ returns to the list", async ({ page, browser }) => {
+    test.setTimeout(90_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signUpFreshUser(browser, page);
+    await phoneAvatar(page).click();
+    await page.getByRole("menuitem", { name: "Help", exact: true }).click();
+    const help = page.getByRole("dialog", { name: "Help", exact: true });
+    const whatsNew = help.getByRole("button", { name: "What's new", exact: true });
+    await expect(whatsNew).toBeVisible();
+    const content = help.locator('[data-help-page-content="whatsNew"]');
+    await expect(content).toBeHidden();
+    await whatsNew.click();
+    await expect(content).toBeVisible();
+    await expect(whatsNew).toBeHidden();
+    await help.getByRole("button", { name: "Back to sections", exact: true }).click();
+    await expect(whatsNew).toBeVisible();
+    await expect(content).toBeHidden();
+    await expect(help).toBeVisible();
   });
 });

@@ -433,7 +433,7 @@ export function AppShell({ children, inert }: AppShellProps) {
   useEffect(
     () =>
       registerShellControls({
-        showTab: (tab) => tabActionsRef.current?.showTab(tab),
+        showTab: (tab, options) => tabActionsRef.current?.showTab(tab, options),
         endSelectionIfActive: () => tabActionsRef.current?.endSelectionIfActive() ?? false,
         closeDrawer: () => setDrawerOpen(false),
         getTab: () => tabActionsRef.current?.getTab() ?? DEFAULT_SIDEBAR_TAB,

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PenLine, Search } from "@/components/ui/icons";
+import { tourTarget } from "@/lib/tour-targets";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
 
 interface PhoneListFabsProps {
@@ -39,6 +40,7 @@ export function PhoneListFabs({ onSearch, showNewNote, onCreateNote, newNotePend
         variant="ghost"
         size="icon"
         data-phone-fab="search"
+        {...tourTarget("phoneSearch")}
         aria-label={t("sidebar.searchLabel")}
         onClick={onSearch}
         className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] text-foreground hover:text-foreground ${FROSTED}`}
@@ -51,6 +53,7 @@ export function PhoneListFabs({ onSearch, showNewNote, onCreateNote, newNotePend
           variant="ghost"
           size="icon"
           data-phone-fab="new-note"
+          {...tourTarget("phoneNewNote")}
           aria-label={t("home.newNote")}
           onClick={onCreateNote}
           disabled={newNotePending}
