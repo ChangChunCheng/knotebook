@@ -8,6 +8,8 @@ import { decodePublicYdoc } from "@/collab/public-doc";
 import { PublicNoteEditor } from "@/components/PublicNoteEditor";
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { NoteOutline } from "@/components/outline/NoteOutline";
+import { canPinOutline } from "@/components/outline/outline-layout";
+import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
 import { useOutlineBox } from "@/components/outline/use-outline-box";
 import { useOutlineHeadings, type OutlineEditorLike } from "@/components/outline/use-outline-headings";
 import { useIsPhone } from "@/lib/layout-tiers";
@@ -15,7 +17,7 @@ import { PublicPageFrame } from "@/components/PublicNoteShell";
 import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { useBlockAnchor } from "@/hooks/useBlockAnchor";
-import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
+import { ARTICLE_COLUMN_PADDING, articleColumn, articleColumnState } from "@/components/ui/article-column";
 import { toNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,9 +31,6 @@ import { usePresentEntry } from "@/present/usePresentEntry";
 
 /** #269：舊 server 沒帶 `links` 時的後備——模組層常數，identity 穩定，PublicNoteEditor 的 links Map 不會每次 render 重建。 */
 const NO_LINKS: readonly PublicLinkDto[] = [];
-
-/** 大綱的 `onPinnedChange`：釘選鈕不出現（`pinAvailable={false}`），不會被呼叫。 */
-const noop = () => {};
 
 /**
  * 公開唯讀頁（#72；#122 起雙形）：`/p/:token` 與 `/p/:handle/:slug`
@@ -89,10 +88,19 @@ export default function PublicNotePage() {
   // #269：標題「#」鈕疊在文章欄 wrapper（`relative`）上。
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
   // #465 右側標題大綱（桌機、平板；手機另有入口）。公開頁沒有版本泡泡；簡報時頁面被簡報層蓋住，不掛。
+  // 只在大綱可能出現時量版面（同筆記頁）。
   const [publicEditor, setPublicEditor] = useState<OutlineEditorLike | null>(null);
   const outlineHeadings = useOutlineHeadings(publicEditor);
-  const outlineBox = useOutlineBox(anchorRoot, columnEl);
   const phone = useIsPhone();
+  const outlineCanShow = !phone && !presenting && outlineHeadings.length > 0;
+  const outlineBox = useOutlineBox(outlineCanShow ? anchorRoot : null, outlineCanShow ? columnEl : null);
+  const showOutline = outlineCanShow && outlineBox !== null;
+  // 釘住規則同筆記頁；寬度由公開端點給（缺值或不認得＝標準），只有標準寬能釘。
+  const noteWidth = toNoteWidth(query.data?.width);
+  const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
+  const outlinePinAvailable = noteWidth === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
+  const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
+  const pinMotionReady = usePinMotionReady(showOutline);
 
   // 背景 refetch（react-query 預設 focus/reconnect 會重抓）失敗的呈現規則：
   // 404 → **翻成失效卡**，即使手上還有內容——這是撤銷的即時傳播，正在
@@ -156,25 +164,26 @@ export default function PublicNotePage() {
           </Link>
         </header>
         {/* 零高度錨點在捲動容器之外、貼它的上緣（同 NoteEditor）。 */}
-        {!phone && !presenting && outlineHeadings.length > 0 && outlineBox !== null && (
+        {showOutline && (
           <NoteOutline
             headings={outlineHeadings}
             scrollEl={anchorRoot}
             box={outlineBox}
             bubbleShown={false}
-            pinned={false}
-            pinAvailable={false}
-            onPinnedChange={noop}
+            pinned={outlinePinned}
+            pinAvailable={outlinePinAvailable}
+            onPinnedChange={setOutlinePinPref}
           />
         )}
-        <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        {/* 捲軸的位置固定保留：捲軸出現與否不改容器寬度，能不能釘大綱（依容器寬判斷）才不會在門檻附近來回切。 */}
+        <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto sm:[scrollbar-gutter:stable]">
           {/* 內文沿 NoteEditor 的文章欄（#115：`<md` 內距 70→20 的斷點機制在
               article-column.ts／index.css，這裡照吃不另寫）。#297：寬度取公開端點的
               `width`（管理公開連結的人設定）；缺值或不認得 → 標準（舊 server）。 */}
           <div
             ref={setColumnEl}
             data-testid="article-column"
-            className={cn(articleColumn(toNoteWidth(data.width)), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
+            className={cn(articleColumn(articleColumnState(noteWidth, outlinePinned), { pinMotion: pinMotionReady }), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
           >
             <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} onEditor={setPublicEditor} />
             <HeadingAnchorButtons container={columnEl} />

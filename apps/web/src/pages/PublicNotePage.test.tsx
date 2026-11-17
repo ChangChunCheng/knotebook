@@ -6,6 +6,8 @@ import * as Y from "yjs";
 import { EMPTY_YDOC_UPDATE_B64, YDOC_FRAGMENT } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { stubLayoutTier } from "@/test/layout-tier";
+import { OUTLINE_PINNED_STORAGE_KEY } from "@/components/outline/outline-pin";
+import { ARTICLE_COLUMN_MAX, articleColumn } from "@/components/ui/article-column";
 import { ThemeProvider } from "@/theme";
 import PublicNotePage from "./PublicNotePage";
 
@@ -61,6 +63,11 @@ vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
     },
   };
 });
+// jsdom 沒有版面：容器寬度由測試指定（同真的 hook，兩個元素都掛上才有值）。
+const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, columnRight: 991.5 } }));
+vi.mock("@/components/outline/use-outline-box", () => ({
+  useOutlineBox: (scrollEl: HTMLElement | null, columnEl: HTMLElement | null) => (scrollEl !== null && columnEl !== null ? outlineBox.value : null),
+}));
 
 const TOKEN = "abcDEF123_-".repeat(4).slice(0, 43);
 
@@ -365,15 +372,23 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
   });
 
   describe("#465 右側標題大綱", () => {
-    async function renderWithHeadings(entry?: string) {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    async function renderWithHeadings(entry?: string, width?: string) {
       outlineProps.length = 0;
-      const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body: { title: "N", ydoc: EMPTY_YDOC_UPDATE_B64 } } : null));
+      const body: PublicNoteBody = { title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, ...(width !== undefined ? { width } : {}) };
+      const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null));
       vi.stubGlobal("fetch", fn);
       renderPage(entry);
       await screen.findByTestId("public-note-editor");
     }
 
-    it("桌機：掛在頁首之後、捲動容器之前（不在捲動容器裡）；拿到捲動容器與標題，沒有泡泡、不能釘", async () => {
+    it("桌機：掛在頁首之後、捲動容器之前（不在捲動容器裡）；拿到捲動容器與標題，沒有泡泡；沒有偏好時可以釘但沒釘", async () => {
       stubLayoutTier("docked");
       await renderWithHeadings();
       const stub = await screen.findByTestId("outline-stub");
@@ -389,7 +404,52 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(props.headings).toEqual([{ id: "h-intro", level: 2, text: "Intro" }]);
       expect(props.bubbleShown).toBe(false);
       expect(props.pinned).toBe(false);
+      expect(props.pinAvailable).toBe(true);
+      await waitFor(() => expect(column).toHaveClass(...articleColumn("standard", { pinMotion: true }).split(" ")));
+    });
+
+    it("標準寬＋釘住偏好 → 欄一出現就是釘住寬度、那一次沒有過場；一個畫格後才有過場；大綱拿到 pinned", async () => {
+      window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
+      stubLayoutTier("docked");
+      // 欄每一次 class 的值（屬性變動紀錄的舊值，加上最後的現值）。
+      const records: MutationRecord[] = [];
+      const observer = new MutationObserver((list) => records.push(...list));
+      observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+      await renderWithHeadings(undefined, "standard");
+      await screen.findByTestId("outline-stub");
+      const column = screen.getByTestId("article-column");
+      await waitFor(() => expect(column).toHaveClass(...articleColumn("standard-pinned", { pinMotion: true }).split(" ")));
+      records.push(...observer.takeRecords());
+      observer.disconnect();
+      const values = [...records.filter((r) => r.target === column).map((r) => r.oldValue ?? ""), column.className];
+      const pinnedMax = ARTICLE_COLUMN_MAX["standard-pinned"].split(" ")[0]!;
+      const firstPinned = values.find((c) => c.split(" ").includes(pinnedMax));
+      expect(firstPinned, values.join("\n")).toBeDefined();
+      expect(firstPinned!.split(" ")).not.toContain("transition-[max-width,left]");
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.pinned).toBe(true);
+      expect(props.pinAvailable).toBe(true);
+    });
+
+    it("捲動容器固定保留捲軸位置（捲軸出現與否不改寬度，能不能釘不會在門檻附近來回切）", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings();
+      expect(screen.getByTestId("article-column").parentElement).toHaveClass("sm:[scrollbar-gutter:stable]");
+    });
+
+    it("全寬＋釘住偏好 → 欄是全寬、不能釘（只有細線）", async () => {
+      window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
+      stubLayoutTier("docked");
+      await renderWithHeadings(undefined, "full");
+      await screen.findByTestId("outline-stub");
+      const column = screen.getByTestId("article-column");
+      expect(column).toHaveClass(...articleColumn("full").split(" "));
+      expect(column).not.toHaveClass("left-0");
+      for (const c of ARTICLE_COLUMN_MAX["standard-pinned"].split(" ")) expect(column).not.toHaveClass(c);
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.pinned).toBe(false);
       expect(props.pinAvailable).toBe(false);
+      expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBe("1");
     });
 
     it("手機：不掛", async () => {

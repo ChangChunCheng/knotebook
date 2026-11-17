@@ -439,4 +439,16 @@ describe("HeadingOutline wheel forwarding", () => {
     fireEvent.wheel(item("a"), { deltaY: 40 });
     expect(onForwardWheel).toHaveBeenCalledWith(40, 0);
   });
+
+  it("over the panel's header (the pin button), forwards even while the list could still scroll", () => {
+    const onForwardWheel = vi.fn();
+    setup({ pinned: true, onForwardWheel });
+    const list = panel()!.querySelector("ol")!;
+    scrollMetrics(list, { top: 0, client: 100, height: 300 });
+    fireEvent.wheel(screen.getByRole("button", { name: "Unpin outline" }), { deltaY: 40 });
+    expect(onForwardWheel).toHaveBeenCalledWith(40, 0);
+    onForwardWheel.mockClear();
+    fireEvent.wheel(item("a"), { deltaY: 40 });
+    expect(onForwardWheel).not.toHaveBeenCalled();
+  });
 });

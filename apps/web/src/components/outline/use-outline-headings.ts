@@ -14,7 +14,8 @@ const EMPTY: readonly OutlineHeading[] = [];
 /**
  * Heading list of the editor document. The change listener only (re)arms a timer, so typing never
  * walks the document; the list is recomputed once typing pauses, and the previous array is kept
- * when nothing visible changed so consumers do not re-render.
+ * when nothing visible changed so consumers do not re-render. The one exception is the first change
+ * of an editor whose list is still empty (its initial content arriving), which is computed at once.
  */
 export function useOutlineHeadings(editor: OutlineEditorLike | null): readonly OutlineHeading[] {
   const [headings, setHeadings] = useState<readonly OutlineHeading[]>(EMPTY);
@@ -39,9 +40,19 @@ export function useOutlineHeadings(editor: OutlineEditorLike | null): readonly O
     };
     recompute();
 
+    // A collaborative note's editor starts empty and its content arrives as the first change. That first
+    // change is computed right away, so the outline (and a pinned column) shows with the content instead of
+    // a quiet period later. Only while the list is still empty, and only once: an editor that already had
+    // headings, and everything after the first change, stays on the timer.
+    let first = latest.current.length === 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = editor.onChange(() => {
       clearTimeout(timer);
+      if (first) {
+        first = false;
+        recompute();
+        return;
+      }
       timer = setTimeout(recompute, OUTLINE_RECOMPUTE_MS);
     });
     return () => {

@@ -12,7 +12,19 @@ describe("canPinOutline", () => {
 
 describe("outlinePlacement", () => {
   it("places rail and panel beside the column when there is room", () => {
-    expect(outlinePlacement(1072, 991.5)).toEqual({ railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 832 });
+    expect(outlinePlacement(1072, 991.5)).toEqual({ railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 820 });
+  });
+
+  it("puts the pinned panel beside the column when the column already leaves room", () => {
+    // 2000 wide, standard column right at 1528: same place as the floating panel.
+    expect(outlinePlacement(2000, 1528).pinnedPanelLeft).toBe(1544);
+  });
+
+  it("keeps the pinned panel half the slack inside the right edge while the column moves aside", () => {
+    // Settled: the pinned column ends 268 from the right edge, the panel follows 16 later and ends 12 from it.
+    expect(outlinePlacement(1360, 1092).pinnedPanelLeft).toBe(1108);
+    // Mid-transition the column is still further right; the panel already sits where it will end up.
+    expect(outlinePlacement(1360, 1150).pinnedPanelLeft).toBe(1108);
   });
 
   it("keeps the rail inside the right edge and floats the panel over the column in a narrow container", () => {

@@ -1,7 +1,16 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { ARTICLE_COLUMN, ARTICLE_COLUMN_MAX, ARTICLE_COLUMN_PADDING, BN_EDITOR_INLINE_PADDING_PX, articleColumn } from "./article-column";
+import { OUTLINE_GAP, OUTLINE_MIN_PINNED_COLUMN, OUTLINE_PANEL_WIDTH, OUTLINE_PIN_SLACK, canPinOutline } from "@/components/outline/outline-layout";
+import {
+  ARTICLE_COLUMN,
+  ARTICLE_COLUMN_MAX,
+  ARTICLE_COLUMN_PADDING,
+  ARTICLE_COLUMN_PIN_MOTION,
+  BN_EDITOR_INLINE_PADDING_PX,
+  articleColumn,
+  articleColumnState,
+} from "./article-column";
 
 /**
  * 文章欄的**共用守衛**（#115 改版後；體例比照 `rows.equal-height.test.ts`）。
@@ -20,6 +29,9 @@ import { ARTICLE_COLUMN, ARTICLE_COLUMN_MAX, ARTICLE_COLUMN_PADDING, BN_EDITOR_I
  *   (e) `<md` 的對齊耦合：index.css 覆寫的 `1.25rem`（20px）＝頁首/頁尾的 `px-5`
  *       （20px）。#88 時代這種推導由案 (b) 釘住（70 = 16 + 54），拆掉 (b) 之後
  *       這條 20↔20 就是新的無守衛缺口——這裡把三邊的字面綁在一起。
+ *
+ *   (f) #465 釘住大綱時欄讓出的寬度（`standard-pinned` 字面裡的 rem）與大綱的面板寬、
+ *       間距、餘量常數綁在一起；`canPinOutline` 的門檻也從同一個保留寬度推得。
  *
  * 守不到的（誠實邊界）：
  *   - 把常數本身改成別的值——單一消費端下仍是合法操作。
@@ -61,15 +73,39 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
   it("(a) 常數字面固定", () => {
     expect(ARTICLE_COLUMN).toBe("mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)]");
     expect(ARTICLE_COLUMN_PADDING).toBe("px-4 max-md:px-0");
-    // #297：三段寬度；標準＝上面那條舊字串。
+    // #297：三段寬度；標準＝上面那條舊字串。#465：再加釘住大綱時的標準寬。
     expect(ARTICLE_COLUMN_MAX).toEqual({
       standard: "max-w-[clamp(42.5rem,85%,66rem)]",
       wide: "max-w-[clamp(42.5rem,92.5%,88rem)]",
       full: "max-w-none",
+      "standard-pinned":
+        "max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))]",
     });
     expect(articleColumn()).toBe(ARTICLE_COLUMN);
+    expect(articleColumn()).toBe("mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)]");
     expect(articleColumn("wide")).toBe("mx-auto w-full max-w-[clamp(42.5rem,92.5%,88rem)]");
     expect(articleColumn("full")).toBe("mx-auto w-full max-w-none");
+
+    // #465 釘住：不帶選項時與上面同形；過場只加在標準寬的兩態，未釘住要明寫 left-0（`left: auto` 不能過場）。
+    expect(ARTICLE_COLUMN_PIN_MOTION).toBe("transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none");
+    expect(articleColumn("standard-pinned")).toBe(
+      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))]",
+    );
+    expect(articleColumn("standard", { pinMotion: true })).toBe(
+      "mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)] left-0 transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none",
+    );
+    expect(articleColumn("standard-pinned", { pinMotion: true })).toBe(
+      "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.5rem)))/2_-_16.75rem))] transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none",
+    );
+    expect(articleColumn("wide", { pinMotion: true })).toBe("mx-auto w-full max-w-[clamp(42.5rem,92.5%,88rem)]");
+    expect(articleColumn("full", { pinMotion: true })).toBe("mx-auto w-full max-w-none");
+    expect(articleColumn("standard", { pinMotion: false })).toBe(ARTICLE_COLUMN);
+
+    // 釘住只對標準寬有效。
+    expect(articleColumnState("standard", true)).toBe("standard-pinned");
+    expect(articleColumnState("standard", false)).toBe("standard");
+    expect(articleColumnState("wide", true)).toBe("wide");
+    expect(articleColumnState("full", true)).toBe("full");
   });
 
   it("(c) BlockNote `.bn-editor` 的 padding-inline 仍是常數宣告的 54px（升版哨兵）", () => {
@@ -107,10 +143,11 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
       expect(code, `${label} 不得自寫全寬 class`).not.toMatch(/max-w-none/);
     }
 
-    // 全 src 掃一次：article-column.ts 之外沒有人寫文章欄的 clamp（下限 42.5rem 是它的指紋）。
+    // 全 src 掃一次：article-column.ts 之外沒有人寫文章欄的 clamp（下限 42.5rem 是它的指紋；
+    // 釘住那態把 clamp 包在 min() 裡，所以不限定 `max-w-[` 開頭）。
     const offenders = listSources()
       .filter((p) => !/\.test\./.test(p) && p !== "src/components/ui/article-column.ts")
-      .filter((p) => /max-w-\[clamp\(42\.5rem/.test(stripComments(readSource(p))));
+      .filter((p) => /clamp\(42\.5rem/.test(stripComments(readSource(p))));
     expect(offenders).toEqual([]);
 
     for (const { label, path } of NON_CONSUMERS) {
@@ -138,5 +175,30 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
       expect(/\bpx-5\b/.test(stripComments(readSource(path))), `${label} 應用 px-5 滿卡寬內距`).toBe(true);
     }
     expect(overridePx, "`<md` 內文左緣應與頁首/頁尾的 px-5（20px）共線").toBe(5 * 4);
+  });
+
+  it("(f) 釘住保留的寬度與大綱常數綁在一起", () => {
+    const pinned = ARTICLE_COLUMN_MAX["standard-pinned"];
+    const standardClamp = /^max-w-\[(clamp\([^)]*\))\]$/.exec(ARTICLE_COLUMN_MAX.standard)![1];
+
+    // 欄寬：min(標準欄寬, 容器 − 保留)。
+    const maxPart = /^max-w-\[(min\((clamp\([^)]*\)),calc\(100%_-_([\d.]+)rem\)\))\] /.exec(pinned);
+    expect(maxPart, "standard-pinned 應以 max-w-[min(標準 clamp, calc(100% - Nrem))] 開頭").not.toBeNull();
+    const [, columnWidth, innerClamp, reserveRem] = maxPart!;
+    expect(innerClamp, "釘住時欄寬上限仍是標準寬的 clamp").toBe(standardClamp);
+    const reservePx = Number(reserveRem) * 16;
+    expect(reservePx, "保留＝面板＋間距＋餘量").toBe(OUTLINE_PANEL_WIDTH + OUTLINE_GAP + OUTLINE_PIN_SLACK);
+
+    // 位移：置中後右側空白不到「面板＋間距＋半份餘量」才往左讓，且用的是同一個欄寬式。
+    const leftPart = /left-\[min\(0px,calc\(\(100%_-_(.+)\)\/2_-_([\d.]+)rem\)\)\]$/.exec(pinned);
+    expect(leftPart, "standard-pinned 應以 left-[min(0px, calc((100% - 欄寬)/2 - Nrem))] 結尾").not.toBeNull();
+    expect(leftPart![1], "left 的欄寬式應與 max-w 相同").toBe(columnWidth);
+    expect(Number(leftPart![2]) * 16, "欄右緣離容器右緣至少面板＋間距＋半份餘量").toBe(OUTLINE_PANEL_WIDTH + OUTLINE_GAP + OUTLINE_PIN_SLACK / 2);
+
+    // 能不能釘：剩下的欄寬至少 OUTLINE_MIN_PINNED_COLUMN。
+    expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx - 1)).toBe(false);
+    expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx)).toBe(true);
+    expect(canPinOutline(919)).toBe(false);
+    expect(canPinOutline(920)).toBe(true);
   });
 });
