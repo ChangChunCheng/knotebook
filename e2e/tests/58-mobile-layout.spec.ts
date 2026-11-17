@@ -1792,6 +1792,142 @@ test("58-26 寬螢幕（1280×800）：頁面本身不捲（scrollY 恆為 0）�
   }
 });
 
+async function bubbleGeometry(page: Page): Promise<{ bubble: Rect; scrollbar: number; clientRight: number; scroller: Rect; footer: Rect; blur: string; opacity: string; hit: boolean }> {
+  return page.evaluate(() => {
+    const bubbleEl = document.querySelector('[data-testid="versions-bubble"]') as HTMLElement;
+    const anchor = document.querySelector('[data-testid="corner-anchor"]') as HTMLElement;
+    const card = anchor.parentElement!;
+    const scrollEl = card.querySelector('[data-testid="article-column"]')!.closest(".overflow-y-auto") as HTMLElement;
+    const footerEl = anchor.nextElementSibling as HTMLElement;
+    const r = (el: Element) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.x, y: b.y, width: b.width, height: b.height, right: b.right, bottom: b.bottom };
+    };
+    const sb = scrollEl.getBoundingClientRect();
+    const scrollbar = scrollEl.offsetWidth - scrollEl.clientWidth;
+    const clientRight = sb.x + scrollEl.clientLeft + scrollEl.clientWidth;
+    const b = bubbleEl.getBoundingClientRect();
+    const hitEl = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+    const cs = getComputedStyle(bubbleEl);
+    return { bubble: r(bubbleEl), scrollbar, clientRight, scroller: r(scrollEl), footer: r(footerEl), blur: cs.backdropFilter || cs.getPropertyValue("-webkit-backdrop-filter"), opacity: getComputedStyle(anchor.firstElementChild!).opacity, hit: hitEl === bubbleEl || bubbleEl.contains(hitEl) };
+  });
+}
+
+interface Rect { x: number; y: number; width: number; height: number; right: number; bottom: number }
+
+function expectBubbleInNoteArea(g: Awaited<ReturnType<typeof bubbleGeometry>>, label: string): void {
+  console.log(`MEASURE ${label} ${JSON.stringify(g)}`);
+  expect(g.blur, `${label}：毛玻璃`).toMatch(/blur\(/);
+  expect(g.bubble.right, `${label}：在內文區右緣內`).toBeLessThanOrEqual(g.scroller.right);
+  expect(g.bubble.right, `${label}：離右緣有空隙（讓出捲軸）`).toBeLessThanOrEqual(g.scroller.right - 16);
+  expect(g.bubble.bottom, `${label}：在內文區下緣內`).toBeLessThanOrEqual(g.scroller.bottom);
+  expect(g.bubble.x).toBeGreaterThanOrEqual(g.scroller.x);
+  expect(g.bubble.y).toBeGreaterThanOrEqual(g.scroller.y);
+  expect(g.bubble.bottom, `${label}：不壓到提及列`).toBeLessThanOrEqual(g.footer.y + 0.5);
+  const gapBottom = g.footer.y - g.bubble.bottom;
+  // 右邊量到捲軸槽的左緣；捲動區固定預留捲軸槽，所以短筆記也有，兩邊空隙相等。
+  const gapRight = g.clientRight - g.bubble.right;
+  expect(g.scrollbar, `${label}：預留捲軸槽`).toBeGreaterThan(0);
+  expect(Math.abs(gapRight - gapBottom), `${label}：右邊空隙 ${gapRight}、下邊 ${gapBottom}、槽寬 ${g.scrollbar}`).toBeLessThanOrEqual(1);
+  expect(Math.abs(gapBottom - 18), `${label}：離提及列上緣 18px（實 ${gapBottom}）`).toBeLessThanOrEqual(1);
+}
+
+test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻璃、釘在內文區右下角（提及列之上）；捲動時不消失；三種寬度、短／長筆記、有／無提及都一樣；390 沒有泡泡", async ({ browser }) => {
+  test.setTimeout(480_000);
+  for (const width of [1280, 900, 767, 700]) {
+    const columnLeft: Record<string, number> = {};
+    for (const [key, backlinks] of [["long", false], ["short", false], ["mentioned", true]] as const) {
+      const { context, page } = await open(browser, width, key, { touch: false, height: 800, backlinks });
+      try {
+        await expect(page.getByTestId("versions-bubble")).toBeVisible({ timeout: 15_000 });
+        if (backlinks) await expect(page.getByText(/^Mentioned in 1 note$/)).toBeVisible();
+        const widthButton = page.getByRole("button", { name: /^Width:/ });
+        for (const mode of ["standard", "wide", "full"]) {
+          if (mode !== "standard") {
+            // 700 的頁首沒有寬度鈕（在 ⋮ 裡）：到 1280 換寬度，再回到原視窗；寬度設定是跨視窗保留的。
+            if (width < 768) await page.setViewportSize({ width: 1280, height: 800 });
+            await widthButton.click();
+            if (width < 768) await page.setViewportSize({ width, height: 800 });
+          }
+          const label = `${width} ${key} ${mode}`;
+          const g = await bubbleGeometry(page);
+          expectBubbleInNoteArea(g, label);
+          if (mode === "standard") columnLeft[key] = (await page.getByTestId("article-column").boundingBox())!.x;
+          expect(g.hit, `${label}：點得到`).toBe(true);
+          // 文章欄底部沒有為泡泡額外留白：下內距等於上內距。
+          const pad = await page.getByTestId("article-column").evaluate((el) => ({ top: getComputedStyle(el).paddingTop, bottom: getComputedStyle(el).paddingBottom }));
+          expect(pad.bottom, `${label}：欄的下內距等於上內距`).toBe(pad.top);
+          if (key === "long" && mode === "standard") {
+            const scroller = scrollerOf(page);
+            await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+            await page.waitForTimeout(1_200);
+            const after = await bubbleGeometry(page);
+            expect(after.opacity, "捲動後沒有淡出").toBe("1");
+            expect(after.hit, "捲動後仍點得到").toBe(true);
+            expect(Math.abs(after.bubble.y - g.bubble.y), "泡泡不隨內文捲走").toBeLessThanOrEqual(0.5);
+            await scroller.evaluate((el) => { el.scrollTop = 0; });
+          }
+        }
+        if (key === "mentioned") {
+          const g = await bubbleGeometry(page);
+          expect(g.footer.height, "有提及列").toBeGreaterThan(20);
+          expect(g.bubble.bottom).toBeLessThanOrEqual(g.footer.y + 0.5);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    // 捲軸槽固定預留：長筆記（有捲軸）與短筆記（沒有）的文章欄左緣在同一個位置。
+    console.log(`MEASURE ${width} article column left ${JSON.stringify(columnLeft)}`);
+    expect(Math.abs(columnLeft.long! - columnLeft.short!), `${width}：長短筆記的文章欄左緣不動`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(columnLeft.long! - columnLeft.mentioned!), `${width}：有提及時也不動`).toBeLessThanOrEqual(0.5);
+  }
+  const { context, page } = await open(browser, 390, "long");
+  try {
+    await expect(page.getByTestId("versions-bubble")).toHaveCount(0);
+    await expect(page.getByTestId("corner-anchor")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("58-33 寬螢幕（1280×800）：歷史泡泡 hover 時底色是淺品牌色（淺色與深色，等於 bg-brand-soft）、游標是手指，移開後回到毛玻璃", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page } = await open(browser, 1280, "long", { touch: false, height: 800 });
+  try {
+    const bubble = page.getByTestId("versions-bubble");
+    await expect(bubble).toBeVisible({ timeout: 15_000 });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.mouse.move(5, 5);
+      await page.waitForTimeout(400);
+      const bg = () => bubble.evaluate((el) => getComputedStyle(el).backgroundColor);
+      const rest = await bg();
+      await bubble.hover();
+      await page.waitForTimeout(400);
+      const hover = await bg();
+      console.log(`MEASURE bubble bg ${scheme} rest ${rest} hover ${hover}`);
+      const soft = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.className = "bg-brand-soft";
+        document.body.appendChild(probe);
+        const c = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return c;
+      });
+      console.log(`MEASURE bubble bg-brand-soft ${scheme} ${soft}`);
+      expect(hover, `${scheme}：hover 底色等於 bg-brand-soft`).toBe(soft);
+      expect(hover, `${scheme}：hover 與平時不同`).not.toBe(rest);
+      expect(await bubble.evaluate((el) => getComputedStyle(el).cursor), `${scheme}：游標是手指`).toBe("pointer");
+      await page.mouse.move(5, 5);
+      await page.waitForTimeout(400);
+      expect(await bg(), `${scheme}：移開後回到平時`).toBe(rest);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 // ── 轉向跨過 640 時保住閱讀位置（58-27、58-29）────────────────────────────────
 
 /** 筆記裡含 `text` 的那一段離「看得到的上緣」多遠：手機是頁首下緣，640 起是內文容器的上緣。 */

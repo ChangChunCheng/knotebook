@@ -80,6 +80,7 @@ function Host({ doc }: { doc: Y.Doc }) {
         user={{ id: "u1", name: "Ann" }}
         noteId={NOTE}
         headerSlot={<div data-testid="header-marker">header</div>}
+        footerSlot={<div data-testid="footer-marker">footer</div>}
         previewSlot={versions.preview !== null ? <div data-testid="preview-marker">preview</div> : undefined}
       />
     </VersionsProvider>
@@ -136,6 +137,19 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     expect(panel).toHaveClass("w-[min(var(--versions-panel-width),calc(100%_-_3rem))]");
     expect(panel).not.toHaveClass("fixed");
     doc.destroy();
+  });
+
+  it("歷史泡泡的錨點在內文卡裡、頁尾之前（提及列之上，不在視窗角落）；面板開著時消失，收起後回來；手機沒有", async () => {
+    const { row, setLayoutTier } = await renderAt("docked");
+    const anchor = await screen.findByTestId("corner-anchor");
+    const card = row.firstElementChild!;
+    expect(anchor.parentElement).toBe(card);
+    expect(anchor.nextElementSibling).toBe(screen.getByTestId("footer-marker"));
+    expect(screen.getByTestId("corner-stack").closest(".fixed")).toBeNull();
+    await openPanel();
+    expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
+    act(() => setLayoutTier("phone"));
+    expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
   it("--note-header-h：列容器量頁首外包層的高度（ResizeObserver 回報 57 -> 57px）", async () => {

@@ -1,67 +1,72 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { History } from "@/components/ui/icons";
 import { useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
-import { cn } from "@/lib/utils";
 import { tourTarget } from "@/lib/tour-targets";
 
 /**
- * 右下角泡泡容器。#263 起 AI 泡泡拿掉（改由框選 AI 框處理），容器裡只剩歷史泡泡；容器留著，因為定位與捲動淡出都掛在它上面。
- *
- * 位置沿用 #115 的值：< 640 距右下 20px、640 起 24px。捲動淡出：scroll 不冒泡，掛 window 的 **capture** 監聽才收得到內文捲動容器；
- * 只在泡泡渲染時掛（effect guard 與渲染守門同一個條件）。鍵盤焦點落在泡泡上時強制現形。
- * 版本面板開著時泡泡不渲染，所以不再需要「讓到面板外側」的位移 class（那是 AI 泡泡與面板並存時才用得到）。
+ * 滑鼠 hover：泡泡下面沒有東西，調透明度看不出差別，所以 hover 改成淺品牌色底（與 `brand` 鈕、`bg-brand-soft` 同一個色），按下再深一階；游標變手指。
+ * 放在同一個 class 字串最後，同變體的毛玻璃 hover／按下值會被 twMerge 蓋掉。
+ * `hover:` 只在可 hover 的指標上生效（Tailwind 預設包在 `@media (hover: hover)`），觸控不受影響。
  */
-export function CornerStack() {
+const BUBBLE_HOVER =
+  "cursor-pointer hover:bg-brand-soft supports-[backdrop-filter]:hover:bg-brand-soft active:bg-brand-soft-strong supports-[backdrop-filter]:active:bg-brand-soft-strong";
+
+/**
+ * 筆記右下角的歷史泡泡（< 640 沒有；那裡版本歷史在 ⋮ 選單）。
+ *
+ * 渲染在內文卡裡、捲動區與頁尾（提及列）之間：外層是零高度的定位基準，貼在捲動區的下緣，
+ * 泡泡再往上 18px、離右邊捲軸槽的左緣 18px（捲動區在 640 起固定預留捲軸槽，短筆記也一樣；槽寬量出來，Firefox 的細捲軸較窄也對得上）。
+ * 它釘在筆記區域的右下角、不隨內文捲走，也不會壓到下方的提及列，
+ * 不再落在視窗角落蓋到卡片外。三段筆記寬度與固定／浮動兩種版本面板都在同一張卡裡，位置一致。
+ * 毛玻璃面與手機浮動鈕同一份（`ui/frosted.ts`）。
+ *
+ * 只在兩種情形不渲染：沒有版本功能（唯讀檢視者）、版本面板開著（面板本身就是入口）。捲動時不淡出。
+ */
+export function CornerStack({ scrollRef }: { scrollRef?: RefObject<HTMLElement | null> }) {
   const { t } = useTranslation();
   const versions = useVersions();
   const phone = useIsPhone();
   // 手機（< 640）沒有泡泡；與 ⋮ 的「版本歷史」項讀同一個 `useIsPhone()`，同一寬度恰好一個入口。
   const showVersions = versions.enabled && !versions.panelOpen && !phone;
-
-  const [scrolling, setScrolling] = useState(false);
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => {
-    if (!showVersions) return;
-    const handleScroll = () => {
-      setScrolling(true);
-      clearTimeout(fadeTimerRef.current);
-      fadeTimerRef.current = setTimeout(() => setScrolling(false), 800);
-    };
-    window.addEventListener("scroll", handleScroll, { capture: true, passive: true });
-    return () => {
-      window.removeEventListener("scroll", handleScroll, { capture: true });
-      clearTimeout(fadeTimerRef.current);
-      setScrolling(false);
-    };
-  }, [showVersions]);
+  // 捲動區的捲軸槽寬（offsetWidth − clientWidth）：Chromium 是 `--scrollbar-size`，Firefox 的細捲軸較窄，所以用量的。
+  // 量不到（沒有 ref、區塊被藏起來、jsdom）就退回 `--scrollbar-size`。
+  const [gutter, setGutter] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = scrollRef?.current;
+    if (!showVersions || !el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setGutter(el.offsetWidth > 0 ? el.offsetWidth - el.clientWidth : null);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showVersions, scrollRef]);
 
   if (!showVersions) return null;
 
   return (
-    <div
-      data-testid="corner-stack"
-      className={cn(
-        "fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] right-[calc(1.25rem+env(safe-area-inset-right))] z-30 flex flex-col-reverse gap-3",
-        "sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom))] sm:right-[calc(1.5rem+env(safe-area-inset-right))]",
-        "transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100",
-        scrolling && "pointer-events-none opacity-0",
-      )}
-    >
-      <Button
-        type="button"
-        variant="brand"
-        size="icon"
-        data-testid="versions-bubble"
-        {...tourTarget("versions")}
-        aria-label={t("versions.bubble")}
-        onClick={versions.open}
-        className="h-12 w-12 rounded-full border border-border shadow-lg"
+    <div data-testid="corner-anchor" className="pointer-events-none relative z-20 h-0 shrink-0">
+      <div
+        data-testid="corner-stack"
+        className="pointer-events-auto absolute bottom-[18px] right-[calc(18px+var(--bubble-gutter,var(--scrollbar-size)))] flex flex-col-reverse gap-3"
+        style={gutter !== null && gutter > 0 ? ({ "--bubble-gutter": `${gutter}px` } as CSSProperties) : undefined}
       >
-        <History aria-hidden="true" className="h-5 w-5" />
-      </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          data-testid="versions-bubble"
+          {...tourTarget("versions")}
+          aria-label={t("versions.bubble")}
+          onClick={versions.open}
+          className={`h-12 w-12 rounded-full text-brand-on-soft hover:text-brand-on-soft ${FROSTED_SURFACE} ${BUBBLE_HOVER}`}
+        >
+          <History aria-hidden="true" className="h-5 w-5" />
+        </Button>
+      </div>
     </div>
   );
 }

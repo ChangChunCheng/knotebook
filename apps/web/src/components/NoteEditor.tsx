@@ -664,10 +664,10 @@ export function NoteEditor({
   //             wrapper 的 min-h-full 無法把百分比高度傳給孫層，唯一有效解是讓
   //             BlockNoteView 自己成為 flex-col wrapper 的成長項；除 className 外零改動）
   //       {previewSlot}                               ← 版本預覽時才渲染；此時上面的捲動容器加 hidden（活編輯器不 unmount）
+  //       CornerStack                                 ← 歷史泡泡：零高度錨點，貼在捲動區下緣、頁尾之上（不佔高度）
   //       {footerSlot}                                ← NotePage 組裝（backlinks chips）；手機改放進上面的捲動容器、置中 wrapper 之後（後面再接編輯工具列的空白）
   //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）；1280 起是第三欄，640-1279 是 absolute 浮在卡上，
   //                                                      兩段是同一個節點（不搬進卡片，跨 1280 才不重掛、不丟清單捲動位置）
-  //     CornerStack                                   ← 右下歷史泡泡（fixed，不佔 row 的 flex 空間）
   // `data-testid="note-editor"` 留在 `NoteEditorView`／`BlockNoteView` 上，不隨這次
   // 改版搬家——e2e 的 `[data-testid="note-editor"] [contenteditable]` 與
   // `NoteEditor.layout.test.tsx` 的節點鏈都吊在這裡。
@@ -695,7 +695,7 @@ export function NoteEditor({
               `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
           <div
             ref={setScrollRoot}
-            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
+            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible sm:[scrollbar-gutter:stable]", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
           >
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
                 `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
@@ -763,6 +763,8 @@ export function NoteEditor({
               {previewSlot}
             </div>
           )}
+          {/* 歷史泡泡：零高度錨點貼在捲動區下緣（提及列之上），見 `CornerStack`。 */}
+          <CornerStack scrollRef={scrollRootRef} />
           {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
@@ -773,7 +775,6 @@ export function NoteEditor({
             </VersionsLazyBoundary>
           </div>
         )}
-        <CornerStack />
         {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
       {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
