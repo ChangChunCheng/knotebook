@@ -3,7 +3,7 @@ import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 import { Select, type SelectOption } from "./select";
-import { chooseOption, optionLabels, selectedValue } from "@/test/ui-select";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 
 const ROLES: SelectOption[] = [
   { value: "viewer", label: "Viewer" },
@@ -35,7 +35,7 @@ describe("ui/select", () => {
     for (const variant of ["field", "inline"] as const) {
       const { trigger, unmount } = renderSelect({ variant, value: "editor" });
       expect(selectedValue(trigger())).toBe("editor");
-      expect(trigger()).toHaveTextContent("Editor");
+      expect(displayedLabel(trigger())).toBe("Editor");
       unmount();
     }
   });
@@ -63,7 +63,7 @@ describe("ui/select", () => {
     expect(onValueChange).toHaveBeenCalledTimes(1);
     expect(onValueChange).toHaveBeenCalledWith("editor");
     expect(selectedValue(trigger())).toBe("viewer");
-    expect(trigger()).toHaveTextContent("Viewer");
+    expect(displayedLabel(trigger())).toBe("Viewer");
   });
 
   it("disabled 的選項點不到、disabled 的元件開不了", async () => {
@@ -114,7 +114,7 @@ describe("ui/select", () => {
 
   it('value 為空字串且有 "" 選項：顯示該選項 label，選它回呼收到 ""', async () => {
     const { trigger, onValueChange } = renderSelect({ options: WITH_AUTO, value: "" });
-    expect(trigger()).toHaveTextContent("Auto");
+    expect(displayedLabel(trigger())).toBe("Auto");
     expect(trigger()).toHaveAttribute("data-value", "");
     fireEvent.keyDown(trigger(), { key: "Enter" });
     expect(await screen.findByRole("option", { name: "Auto" })).toHaveAttribute("aria-selected", "true");
@@ -131,11 +131,11 @@ describe("ui/select", () => {
 
   it('value 為空字串且沒有 "" 選項：顯示 placeholder；value 不在 options：顯示 placeholder', () => {
     const a = renderSelect({ value: "", placeholder: "Pick one" });
-    expect(a.trigger()).toHaveTextContent("Pick one");
+    expect(displayedLabel(a.trigger())).toBe("Pick one");
     expect(selectedValue(a.trigger())).toBe("");
     a.unmount();
     const b = renderSelect({ value: "nope", placeholder: "Pick one" });
-    expect(b.trigger()).toHaveTextContent("Pick one");
+    expect(displayedLabel(b.trigger())).toBe("Pick one");
     expect(selectedValue(b.trigger())).toBe("nope");
   });
 
@@ -194,6 +194,19 @@ describe("ui/select", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
     await chooseOption(trigger, "Editor");
     expect(selectedValue(trigger)).toBe("editor");
+  });
+
+  it("每個選項在觸發鈕內有隱藏的撐寬副本（aria-hidden），可及名稱與 data-value 不變", () => {
+    const { trigger } = renderSelect({ value: "viewer" });
+    const sizers = Array.from(trigger().querySelectorAll("[data-select-sizer]"));
+    expect(sizers.map((s) => s.textContent)).toEqual(["Viewer", "Editor"]);
+    for (const s of sizers) {
+      expect(s).toHaveAttribute("aria-hidden", "true");
+      expect(s).toHaveClass("invisible");
+    }
+    expect(displayedLabel(trigger())).toBe("Viewer");
+    expect(trigger()).toHaveAccessibleName("Role");
+    expect(selectedValue(trigger())).toBe("viewer");
   });
 
   it("長 label：觸發鈕文字所在元素有 truncate", () => {

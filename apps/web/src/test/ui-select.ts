@@ -41,3 +41,10 @@ export async function optionLabels(trigger: HTMLElement): Promise<string[]> {
   await closed();
   return labels;
 }
+
+/** 觸發鈕目前顯示的文字（只取可見那一格，不含撐寬用的隱藏副本）。 */
+export function displayedLabel(trigger: HTMLElement): string {
+  const el = trigger.querySelector("[data-select-text]");
+  if (!el) throw new Error("displayedLabel: element has no [data-select-text] (not a ui/select trigger)");
+  return el.textContent ?? "";
+}

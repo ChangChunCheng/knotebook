@@ -74,6 +74,8 @@ export function Select({
   const matched = options.find((o) => o.value === value);
   // 值不在選項裡（含空字串但沒有空字串選項）：交給 Radix 顯示 placeholder。
   const radixValue = matched ? toRadix(value) : "";
+  // 撐寬用：全部選項文字，加上 placeholder（從 placeholder 換成值時寬度也不變）。
+  const sizerLabels = [...options.map((o) => o.label), ...(placeholder ? [placeholder] : [])];
 
   return (
     <SelectPrimitive.Root
@@ -90,8 +92,22 @@ export function Select({
         className={cn(TRIGGER_BASE, variant === "field" ? TRIGGER_FIELD : TRIGGER_INLINE, className)}
         {...aria}
       >
-        <span className="min-w-0 truncate" data-select-text="">
-          <SelectPrimitive.Value placeholder={placeholder ?? ""}>{matched?.label}</SelectPrimitive.Value>
+        {/* 所有選項文字疊在同一格（隱藏）撐出最長的寬度，換值時觸發鈕寬度不跳；
+            固定／滿版寬度下 min-w-0 讓它們不影響截斷。 */}
+        <span className="grid min-w-0">
+          <span className="min-w-0 truncate [grid-area:1/1]" data-select-text="">
+            <SelectPrimitive.Value placeholder={placeholder ?? ""}>{matched?.label}</SelectPrimitive.Value>
+          </span>
+          {sizerLabels.map((label, i) => (
+            <span
+              key={i}
+              aria-hidden="true"
+              data-select-sizer=""
+              className="invisible min-w-0 truncate [grid-area:1/1]"
+            >
+              {label}
+            </span>
+          ))}
         </span>
         <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
       </SelectPrimitive.Trigger>
