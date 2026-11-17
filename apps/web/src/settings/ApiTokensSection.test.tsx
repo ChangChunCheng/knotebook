@@ -449,8 +449,8 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await screen.findByText("Claude Desktop");
     expect(pills(rowOf("Claude Desktop"))).toEqual(["Read"]);
     expect(pills(rowOf("n8n bot"))).toEqual(["Read", "Edit"]);
-    expect(pills(rowOf("Claude Code laptop"))).toEqual(["Read", "Edit", "Move"]);
-    expect(within(rowOf("Claude Code laptop")).getByText("Move")).toHaveClass("text-destructive");
+    expect(pills(rowOf("Claude Code laptop"))).toEqual(["Read", "Edit", "Move to groups"]);
+    expect(within(rowOf("Claude Code laptop")).getByText("Move to groups")).toHaveClass("text-destructive");
   });
 
   it("label 等於 deriveAgentLabel(name) 時灰字、不等時一般字", async () => {
@@ -602,9 +602,9 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await screen.findByText("Claude Code laptop");
     fireEvent.click(within(rowOf("Claude Code laptop")).getByRole("button", { name: "Edit" }));
     const row = within(rowOf("Claude Code laptop"));
-    expect(row.getByRole("switch", { name: "Move or copy notes into groups" })).toHaveAttribute("aria-checked", "true");
+    expect(row.getByRole("switch", { name: "Move to groups (can't be undone)" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(row.getByRole("switch", { name: "Create and edit notes" }));
-    const move = row.getByRole("switch", { name: "Move or copy notes into groups" });
+    const move = row.getByRole("switch", { name: "Move to groups (can't be undone)" });
     expect(move).toHaveAttribute("aria-checked", "false");
     expect(move).toBeDisabled();
     fireEvent.click(row.getByRole("button", { name: "Save" }));
@@ -617,7 +617,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
     const hint = i18n.t("settings.account.apiTokensScopeMoveHint");
     expect(within(rowOf("n8n bot")).queryByText(hint)).toBeNull();
-    fireEvent.click(within(rowOf("n8n bot")).getByRole("switch", { name: "Move or copy notes into groups" }));
+    fireEvent.click(within(rowOf("n8n bot")).getByRole("switch", { name: "Move to groups (can't be undone)" }));
     expect(within(rowOf("n8n bot")).getByText(hint)).toBeInTheDocument();
   });
 
@@ -653,10 +653,13 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create API token" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Create API token" }));
     const edit = dialog.getByRole("switch", { name: "Create and edit notes" });
-    const move = dialog.getByRole("switch", { name: "Move or copy notes into groups" });
+    const move = dialog.getByRole("switch", { name: "Move to groups (can't be undone)" });
     expect(edit).toHaveAttribute("aria-checked", "false");
     expect(move).toHaveAttribute("aria-checked", "false");
     const hint = i18n.t("settings.account.apiTokensScopeMoveHint");
+    // 兩個 toggle 各有一行不重複名稱的說明，一直在。
+    expect(dialog.getByText(i18n.t("settings.account.apiTokensScopeMoveDesc"))).toBeInTheDocument();
+    expect(dialog.getByText(i18n.t("settings.account.apiTokensScopeDeleteDesc"))).toBeInTheDocument();
     expect(dialog.queryByText(hint)).toBeNull();
     fireEvent.click(edit);
     fireEvent.click(move);
@@ -679,7 +682,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
   const RWD = "notes:read notes:write notes:delete";
   const RWMD = "notes:read notes:write notes:move notes:delete";
   const EDIT = "Create and edit notes";
-  const DELETE = "Move notes to the trash and restore them";
+  const DELETE = "Move to trash (can be restored)";
   // 刪除 toggle 的說明＝S2＋「需同時勾選編輯」一句（比照搬移說明的結尾）。
   const DELETE_HINT_EN =
     "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
@@ -751,19 +754,19 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
     const dialog = within(await screen.findByRole("dialog", { name: i18n.t("settings.account.apiTokensCreate") }));
     fireEvent.click(dialog.getByRole("switch", { name: "建立與修改筆記" }));
-    const del = dialog.getByRole("switch", { name: "移到垃圾桶與還原" });
+    const del = dialog.getByRole("switch", { name: "移到垃圾桶（可還原）" });
     fireEvent.click(del);
     expect(dialog.getByText(DELETE_HINT_ZH)).toBeInTheDocument();
     expect(del).toHaveAccessibleDescription(DELETE_HINT_ZH);
   });
 
-  it("pill：RWMD 依序 Read、Edit、Move、Delete（Delete 是預設 tone）；RWD 沒有 Move", async () => {
+  it("pill：RWMD 依序 Read、Edit、Move to groups、Move to trash（Move to trash 是預設 tone）；RWD 沒有 Move to groups", async () => {
     withPatch();
     await screen.findByText("All bot");
-    expect(pills(rowOf("All bot"))).toEqual(["Read", "Edit", "Move", "Delete"]);
-    expect(pills(rowOf("Trash bot"))).toEqual(["Read", "Edit", "Delete"]);
+    expect(pills(rowOf("All bot"))).toEqual(["Read", "Edit", "Move to groups", "Move to trash"]);
+    expect(pills(rowOf("Trash bot"))).toEqual(["Read", "Edit", "Move to trash"]);
     expect(pills(rowOf("n8n bot"))).toEqual(["Read", "Edit"]);
-    expect(within(rowOf("Trash bot")).getByText("Delete")).not.toHaveClass("text-destructive");
+    expect(within(rowOf("Trash bot")).getByText("Move to trash")).not.toHaveClass("text-destructive");
   });
 
   it("行內編輯：打開「刪除」→ PATCH { scope: RWD }", async () => {

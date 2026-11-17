@@ -5,7 +5,7 @@ import type { ScopeChecks } from "@/lib/token-scope";
 import "@/i18n/management-strings";
 
 /**
- * #239／#181：「編輯」「移動或複製到群組」「移到垃圾桶與還原」三框。現在只剩 OAuth 同意頁用
+ * #239／#181：「編輯」「移到群組（無法復原）」「移到垃圾桶（可還原）」三框。現在只剩 OAuth 同意頁用
  * （#247 起建立 token 對話框與行內編輯改用 `ScopeTogglesField`）；兩者用同一套
  * 標籤（`settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`——MCP 模型面字串引用的
  * 就是這幾句，server 單元 `scope-labels-sync.test.ts` 逐字比對）與同一套連動：

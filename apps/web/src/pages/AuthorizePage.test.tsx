@@ -295,7 +295,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
   const RWM = "notes:read notes:write notes:move" as const;
   const RW = "notes:read notes:write" as const;
   const EDIT = "Create and edit notes";
-  const MOVE = "Move or copy notes into groups";
+  const MOVE = "Move to groups (can't be undone)";
   const requestWith = (patch: Partial<OauthRequestDto>) => (): Response =>
     ({ ok: true, status: 200, json: async () => ({ ...REQUEST, ...patch }) }) as unknown as Response;
   const THREE = { scope: RWM, scopes: ["notes:read", "notes:write", "notes:move"] };
@@ -452,8 +452,8 @@ describe("AuthorizePage #181 刪除勾選", () => {
   const RWD = "notes:read notes:write notes:delete" as const;
   const RWMD = "notes:read notes:write notes:move notes:delete" as const;
   const EDIT = "Create and edit notes";
-  const MOVE = "Move or copy notes into groups";
-  const DELETE = "Move notes to the trash and restore them";
+  const MOVE = "Move to groups (can't be undone)";
+  const DELETE = "Move to trash (can be restored)";
   // 刪除框的常駐說明＝基本說明＋「需同時勾選編輯」一句（比照搬移說明的結尾）。兩語系逐字釘。
   const DELETE_HINT_EN =
     "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
@@ -558,7 +558,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
   it("AP-D7（zh-TW）：刪除框的常駐說明以「需同時勾選「建立與修改筆記」。」收尾，並是框的可及描述", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ ...ASK_ALL, existingScope: null });
-    const del = await screen.findByRole("checkbox", { name: "移到垃圾桶與還原" });
+    const del = await screen.findByRole("checkbox", { name: "移到垃圾桶（可還原）" });
     expect(del).toBeDisabled();
     expect(del).toHaveAccessibleDescription(DELETE_HINT_ZH);
   });
