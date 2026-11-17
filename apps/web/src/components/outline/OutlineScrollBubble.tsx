@@ -30,19 +30,26 @@ export interface OutlineScrollBubbleProps {
    * and scrolls as it goes) counts as input too.
    */
   inputRoot?: HTMLElement | null;
-  /** Tapped; gets the chip itself, somewhere to return focus while it is still in the page. */
-  onOpen: (anchor: HTMLElement) => void;
+  /** While true the chip does not count down (e.g. while the sheet it opened is up); when it turns false the countdown starts again. */
+  hold?: boolean;
+  /**
+   * Tapped or activated. Gets the chip as the place to return focus to only when it had focus (keyboard or screen reader);
+   * a touch tap leaves focus where it was (the chip does not take it), so then `null`.
+   */
+  onOpen: (returnFocusTo: HTMLElement | null) => void;
 }
 
 /**
  * Phone-only chip showing the current section while the page scrolls. It appears on scroll, leaves the tree
  * {@link OUTLINE_BUBBLE_HIDE_MS} after the last scroll, and is tap-only (no drag).
  */
-export function OutlineScrollBubble({ headings, activeId, scrollTarget, placement, inputRoot = null, onOpen }: OutlineScrollBubbleProps) {
+export function OutlineScrollBubble({ headings, activeId, scrollTarget, placement, inputRoot = null, hold = false, onOpen }: OutlineScrollBubbleProps) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focused = useRef(false);
+  const held = useRef(hold);
+  held.current = hold;
   const arm = useRef<() => void>(() => {});
   /** `performance.now()` of the last typing or focus inside `inputRoot`; -Infinity before any. */
   const lastInput = useRef(Number.NEGATIVE_INFINITY);
@@ -70,7 +77,7 @@ export function OutlineScrollBubble({ headings, activeId, scrollTarget, placemen
     const schedule = () => {
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = null;
-      if (focused.current) return;
+      if (focused.current || held.current) return;
       timer.current = setTimeout(() => {
         timer.current = null;
         setVisible(false);
@@ -89,6 +96,11 @@ export function OutlineScrollBubble({ headings, activeId, scrollTarget, placemen
       timer.current = null;
     };
   }, [scrollTarget]);
+
+  // Holding stops the countdown; letting go starts it again (unless the chip has focus by then).
+  useEffect(() => {
+    arm.current();
+  }, [hold]);
 
   if (!visible || headings.length === 0) return null;
   const found = activeId === null ? -1 : headings.findIndex((h) => h.id === activeId);
@@ -113,7 +125,7 @@ export function OutlineScrollBubble({ headings, activeId, scrollTarget, placemen
       <button
         type="button"
         aria-label={t("note.outline.openAt", { position })}
-        onClick={(e) => onOpen(e.currentTarget)}
+        onClick={(e) => onOpen(document.activeElement === e.currentTarget ? e.currentTarget : null)}
         // Tapping must not blur the editor: the mobile toolbar and keyboard state stay as they are.
         onPointerDown={(e) => e.preventDefault()}
         onMouseDown={(e) => e.preventDefault()}

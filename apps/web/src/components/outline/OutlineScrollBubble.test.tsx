@@ -109,8 +109,31 @@ describe("OutlineScrollBubble", () => {
     scroll();
     fireEvent.click(bubble()!);
     expect(onOpen).toHaveBeenCalledTimes(1);
-    // The chip itself: somewhere to return focus to when the sheet closes.
-    expect(onOpen).toHaveBeenCalledWith(bubble());
+  });
+
+  it("hands itself over as the focus-return target only when it had focus (keyboard), not on a touch tap", () => {
+    const { onOpen } = setup();
+    scroll();
+    // A tap: pointer down is prevented, so the chip never takes focus.
+    fireEvent.pointerDown(bubble()!);
+    fireEvent.click(bubble()!);
+    expect(onOpen).toHaveBeenLastCalledWith(null);
+    act(() => bubble()!.focus());
+    fireEvent.click(bubble()!);
+    expect(onOpen).toHaveBeenLastCalledWith(bubble());
+  });
+
+  it("does not count down while held; letting go starts the 1500 ms again", () => {
+    const { onOpen, view } = setup();
+    scroll();
+    view.rerender(<OutlineScrollBubble headings={headings} activeId="h-install" scrollTarget={box} placement="page" hold onOpen={onOpen} />);
+    advance(5000);
+    expect(bubble()).not.toBeNull();
+    view.rerender(<OutlineScrollBubble headings={headings} activeId="h-install" scrollTarget={box} placement="page" hold={false} onOpen={onOpen} />);
+    advance(1499);
+    expect(bubble()).not.toBeNull();
+    advance(1);
+    expect(bubble()).toBeNull();
   });
 
   it("works with window as the scroll target", () => {

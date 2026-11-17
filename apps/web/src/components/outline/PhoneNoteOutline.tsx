@@ -19,8 +19,8 @@ export interface PhoneNoteOutlineProps {
   inputRoot?: HTMLElement | null;
   sheetOpen: boolean;
   onSheetOpenChange: (open: boolean) => void;
-  /** Tapping the bubble; gets the bubble, somewhere to return focus while it is still in the page. */
-  onOpenSheet: (returnFocusTo: HTMLElement) => void;
+  /** The bubble was activated; gets the bubble as the place to return focus to when it had focus, otherwise `null`. */
+  onOpenSheet: (returnFocusTo: HTMLElement | null) => void;
   /** Given to the sheet: where focus goes when it closes (picked or dismissed). */
   restoreFocus?: () => void;
 }
@@ -50,6 +50,8 @@ export function PhoneNoteOutline({
       scrollTarget={scrollTarget}
       placement={placement}
       inputRoot={inputRoot}
+      // While the sheet is up the bubble stays: it may be where focus returns when the sheet closes.
+      hold={sheetOpen}
       onOpen={onOpenSheet}
     />
   );

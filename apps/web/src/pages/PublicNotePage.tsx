@@ -110,9 +110,9 @@ export default function PublicNotePage() {
     if (!phoneOutline) setOutlineSheetOpen(false);
   }, [phoneOutline]);
   const scrollerTop = useCallback(() => anchorRoot?.getBoundingClientRect().top ?? 0, [anchorRoot]);
-  // 面板沒有觸發鈕：關閉時焦點回到點開它的泡泡（還在畫面上的話），否則落在 body。
+  // 面板沒有觸發鈕：用鍵盤或螢幕閱讀器從泡泡開的，關閉時焦點回到泡泡；手指點的（泡泡不拿焦點）不移動焦點。
   const [outlineReturnTo, setOutlineReturnTo] = useState<HTMLElement | null>(null);
-  const openOutlineSheet = useCallback((returnFocusTo: HTMLElement) => {
+  const openOutlineSheet = useCallback((returnFocusTo: HTMLElement | null) => {
     setOutlineReturnTo(returnFocusTo);
     setOutlineSheetOpen(true);
   }, []);

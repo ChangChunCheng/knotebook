@@ -630,7 +630,8 @@ export function NoteEditor({
   }, [phoneOutline]);
   // 面板關閉（選了標題或直接關掉）時焦點去哪：面板沒有觸發鈕，不指定的話焦點會掉到 body。
   // 開的當下在編輯（編輯工具列在；只有點泡泡會這樣，泡泡不搶焦點）→ 還給編輯器（不捲動、選取不變），工具列才會回來。面板開著時焦點在
-  // 面板裡、工具列已收起，所以在開的那一刻記下。否則回到開它的元素（⋮ 的觸發鈕、還在畫面上的泡泡）。
+  // 面板裡、工具列已收起，所以在開的那一刻記下。否則回到開它的元素：⋮ 的觸發鈕，或用鍵盤、螢幕閱讀器
+  // 開的泡泡（面板開著時泡泡不倒數，還在）；手指點泡泡時泡泡沒拿到焦點，不交元素，焦點不移動。
   const [outlineFocusReturn, setOutlineFocusReturn] = useState<{ editing: boolean; el: HTMLElement | null }>({ editing: false, el: null });
   const mobileToolbarRef = useRef(mobileToolbar);
   mobileToolbarRef.current = mobileToolbar;

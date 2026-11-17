@@ -393,6 +393,19 @@ async function headingBelowHeader(page: Page, id: string): Promise<number> {
   }, id);
 }
 
+/**
+ * 捲一下讓泡泡出現，馬上點它，直到底部面板打開。泡泡停止捲動 1.5 秒就消失，慢的機器上捲完到點之間可能已經不在：整段重來。
+ * 面板已經開著就不再捲、不再點（開著時頁面鎖住捲動，泡泡也在面板底下）。
+ */
+async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>): Promise<void> {
+  await expect(async () => {
+    if (await sheet(page).isVisible()) return;
+    await scroll();
+    await bubble(page).tap({ timeout: 1_000 });
+    await expect(sheet(page)).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
 /** 等兩個畫格：捲動事件與它造成的重繪都過去了。 */
 async function twoFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -429,9 +442,7 @@ test("60-7b 手機泡泡：捲動時出現、停下約 1.5 秒後消失，點它
     await expect(bubble(page)).toBeVisible();
     await expect(bubble(page)).toContainText("/5");
     await expect(bubble(page)).toHaveCount(0, { timeout: 3_000 });
-    await page.evaluate(() => window.scrollBy(0, 600));
-    await bubble(page).tap();
-    await expect(sheet(page)).toBeVisible();
+    await openSheetFromBubble(page, () => page.evaluate(() => window.scrollBy(0, 300)));
     await expect(sheet(page).locator("[data-outline-item]")).toHaveCount(5);
   } finally {
     await context.close();
@@ -471,8 +482,7 @@ test("60-7d 公開頁手機：捲動容器出現泡泡，點它開面板，點 U
     await scrollerOf(page).evaluate((el) => el.scrollBy(0, 600));
     await expect(bubble(page)).toBeVisible();
     await expect(bubble(page)).toContainText("/5");
-    await bubble(page).tap();
-    await expect(sheet(page)).toBeVisible();
+    await openSheetFromBubble(page, () => scrollerOf(page).evaluate((el) => el.scrollBy(0, 300)));
     const id = await headingId(page, "Usage");
     await sheetItem(page, "Usage").click();
     await expect(sheet(page)).toBeHidden();
@@ -517,13 +527,8 @@ test("60-7f 手機編輯中：從泡泡開面板再直接關掉，焦點回到�
     await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^intro filler paragraph 0$/ }));
     const toolbar = page.locator("[data-mobile-edit-toolbar]");
     await expect(toolbar).toBeVisible();
-    // 讀者自己捲（不是打字造成的）：泡泡才出現。
-    await expect(async () => {
-      await page.evaluate(() => window.scrollBy(0, 400));
-      await expect(bubble(page)).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 10_000 });
-    await bubble(page).tap();
-    await expect(sheet(page)).toBeVisible();
+    // 讀者自己捲（不是打字造成的）：泡泡才出現。點泡泡不搶焦點，工具列留著。
+    await openSheetFromBubble(page, () => page.evaluate(() => window.scrollBy(0, 300)));
     await page.keyboard.press("Escape");
     await expect(sheet(page)).toBeHidden();
     await expect.poll(() => editorLocator(page).evaluate((el) => el.contains(document.activeElement)), { timeout: 5_000, message: "焦點回到編輯器" }).toBe(true);

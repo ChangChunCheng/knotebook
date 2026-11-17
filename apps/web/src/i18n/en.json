@@ -220,7 +220,6 @@
       "unpin": "Unpin outline",
       "close": "Close outline",
       "position": "{{title}} · {{index}}/{{total}}",
-      "open": "Open heading outline",
       "openAt": "Open heading outline: {{position}}"
     },
     "blockLink": {
