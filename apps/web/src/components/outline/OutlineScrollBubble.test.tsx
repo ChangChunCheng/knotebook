@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OutlineHeading } from "./headings";
-import { OUTLINE_BUBBLE_HIDE_MS, OutlineScrollBubble } from "./OutlineScrollBubble";
+import { OUTLINE_BUBBLE_HIDE_MS, OUTLINE_BUBBLE_INPUT_QUIET_MS, OutlineScrollBubble } from "./OutlineScrollBubble";
 
 const headings: OutlineHeading[] = [
   { id: "h1", level: 1, text: "" },
@@ -109,6 +109,8 @@ describe("OutlineScrollBubble", () => {
     scroll();
     fireEvent.click(bubble()!);
     expect(onOpen).toHaveBeenCalledTimes(1);
+    // The chip itself: somewhere to return focus to when the sheet closes.
+    expect(onOpen).toHaveBeenCalledWith(bubble());
   });
 
   it("works with window as the scroll target", () => {
@@ -138,6 +140,109 @@ describe("OutlineScrollBubble", () => {
     setup({ placement: "anchor" });
     scroll();
     expect(bubble()!.parentElement!.className).toContain("absolute");
+    // The anchor layer lets the pointer through; the chip itself must take taps.
+    expect(bubble()!.parentElement!).toHaveClass("pointer-events-auto");
+  });
+
+  describe("scrolls caused by typing in the editor", () => {
+    let editor: HTMLDivElement;
+    let now = 10_000;
+    beforeEach(() => {
+      editor = document.createElement("div");
+      editor.append(document.createElement("p"));
+      document.body.appendChild(editor);
+      now = 10_000;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+    });
+    afterEach(() => {
+      vi.mocked(performance.now).mockRestore();
+      editor.remove();
+    });
+
+    it.each(["keydown", "beforeinput", "input", "paste", "focusin"])("a scroll within 300 ms of %s inside the editor does not show it; later ones do", (type) => {
+      expect(OUTLINE_BUBBLE_INPUT_QUIET_MS).toBe(300);
+      setup({ inputRoot: editor });
+      act(() => void editor.firstElementChild!.dispatchEvent(new Event(type, { bubbles: true })));
+      now += 299;
+      scroll();
+      expect(bubble()).toBeNull();
+      now += 1;
+      scroll();
+      expect(bubble()).not.toBeNull();
+    });
+
+    it("a typing scroll while the bubble is up does not keep it up (the 1500 ms are not restarted)", () => {
+      setup({ inputRoot: editor });
+      scroll();
+      advance(1000);
+      act(() => void editor.dispatchEvent(new Event("keydown", { bubbles: true })));
+      scroll();
+      advance(500);
+      expect(bubble()).toBeNull();
+    });
+
+    it("typing outside the editor does not hold it back", () => {
+      setup({ inputRoot: editor });
+      act(() => void document.body.dispatchEvent(new Event("keydown", { bubbles: true })));
+      scroll();
+      expect(bubble()).not.toBeNull();
+    });
+
+    it("without an editor every scroll shows it", () => {
+      setup();
+      act(() => void editor.dispatchEvent(new Event("keydown", { bubbles: true })));
+      scroll();
+      expect(bubble()).not.toBeNull();
+    });
+
+    it("stops listening to the editor on unmount", () => {
+      const spy = vi.spyOn(editor, "removeEventListener");
+      const { view } = setup({ inputRoot: editor });
+      view.unmount();
+      for (const type of ["keydown", "beforeinput", "input", "paste", "focusin"]) expect(spy).toHaveBeenCalledWith(type, expect.any(Function), { capture: true });
+    });
+
+    describe("visual viewport resizes (the keyboard opening or closing)", () => {
+      let viewport: EventTarget;
+      beforeEach(() => {
+        viewport = new EventTarget();
+        vi.stubGlobal("visualViewport", viewport);
+      });
+      afterEach(() => vi.unstubAllGlobals());
+
+      it("count as input while focus is inside the editor", () => {
+        const field = document.createElement("textarea");
+        editor.append(field);
+        setup({ inputRoot: editor });
+        act(() => field.focus());
+        now += 1000;
+        act(() => void viewport.dispatchEvent(new Event("resize")));
+        now += 299;
+        scroll();
+        expect(bubble()).toBeNull();
+        now += 1;
+        scroll();
+        expect(bubble()).not.toBeNull();
+      });
+
+      it("do not while focus is elsewhere", () => {
+        const outside = document.createElement("input");
+        document.body.appendChild(outside);
+        setup({ inputRoot: editor });
+        act(() => outside.focus());
+        act(() => void viewport.dispatchEvent(new Event("resize")));
+        scroll();
+        expect(bubble()).not.toBeNull();
+        outside.remove();
+      });
+
+      it("stops listening on unmount", () => {
+        const spy = vi.spyOn(viewport, "removeEventListener");
+        const { view } = setup({ inputRoot: editor });
+        view.unmount();
+        expect(spy).toHaveBeenCalledWith("resize", expect.any(Function));
+      });
+    });
   });
 
   it("stops listening and clears its timer on unmount", () => {

@@ -10,8 +10,19 @@ export interface OutlineSheetProps {
   headings: readonly OutlineHeading[];
   activeId: string | null;
   onJump: (id: string) => void;
-  /** Called when the sheet closed after a pick, before the jump (e.g. return focus to the editor without scrolling). */
+  /**
+   * Where focus goes when the sheet closes, picked or dismissed (e.g. back to the editor without scrolling); after a pick it runs
+   * before the jump. Without it focus is left on the page body: the sheet has no trigger for the dialog to return to.
+   */
   restoreFocus?: () => void;
+}
+
+/** A {@link OutlineSheetProps.restoreFocus} that focuses `el` without scrolling, if it is still in the page; `undefined` without an element. */
+export function focusBackTo(el: HTMLElement | null | undefined): (() => void) | undefined {
+  if (!el) return undefined;
+  return () => {
+    if (el.isConnected) el.focus({ preventScroll: true });
+  };
 }
 
 /** Phone bottom sheet listing the headings; the current section is highlighted and focused on open. */
@@ -33,12 +44,13 @@ export function OutlineSheet({ open, onOpenChange, headings, activeId, onJump, r
         onCloseAutoFocus={(e) => {
           const id = picked.current;
           picked.current = null;
-          if (id === null) return;
-          // Without a custom restore, Radix returns focus to the element that opened the sheet.
+          // Any close, picked or dismissed: with no trigger the dialog would leave focus on the body (on a phone that also
+          // drops the editing toolbar), so the caller decides where focus goes.
           if (restoreFocus) {
             e.preventDefault();
             restoreFocus();
           }
+          if (id === null) return;
           // The scroll lock is released only after the sheet is gone; jumping while it holds scrolls nothing.
           requestAnimationFrame(() => onJump(id));
         }}

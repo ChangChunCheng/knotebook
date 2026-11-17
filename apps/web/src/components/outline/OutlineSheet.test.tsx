@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OutlineHeading } from "./headings";
-import { OutlineSheet } from "./OutlineSheet";
+import { focusBackTo, OutlineSheet } from "./OutlineSheet";
 
 const headings: OutlineHeading[] = [
   { id: "h-intro", level: 1, text: "Intro" },
@@ -81,26 +81,48 @@ describe("OutlineSheet", () => {
     expect(props.onJump).toHaveBeenCalledTimes(1);
   });
 
-  it("does not jump on Escape", async () => {
-    const { props, view } = setup();
+  it("Escape: restores focus but does not jump", async () => {
+    const { props, calls, view } = setup();
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
     view.rerender(<OutlineSheet {...props} open={false} />);
     await flushRaf();
     expect(props.onJump).not.toHaveBeenCalled();
-    expect(props.restoreFocus).not.toHaveBeenCalled();
+    expect(calls).toEqual(["restore"]);
   });
 
-  it("jumps without a custom restoreFocus and leaves focus return to Radix", async () => {
+  it("restoreFocus decides where focus lands, also on a dismissal", async () => {
+    const target = document.createElement("button");
+    document.body.appendChild(target);
+    const { props, view } = setup({ restoreFocus: () => target.focus() });
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    view.rerender(<OutlineSheet {...props} open={false} />);
+    await flushRaf();
+    expect(document.activeElement).toBe(target);
+    target.remove();
+  });
+
+  it("jumps without a restoreFocus", async () => {
     const { props, view } = setup({ restoreFocus: undefined });
-    const opener = document.createElement("button");
-    document.body.appendChild(opener);
-    opener.focus();
     fireEvent.click(screen.getByText("Usage"));
     view.rerender(<OutlineSheet {...props} restoreFocus={undefined} open={false} />);
     await flushRaf();
     expect(props.onJump).toHaveBeenCalledWith("h-usage");
-    opener.remove();
+  });
+
+  it("focusBackTo: focuses the element without scrolling while it is in the page, does nothing once it is gone, undefined without one", () => {
+    expect(focusBackTo(null)).toBeUndefined();
+    expect(focusBackTo(undefined)).toBeUndefined();
+    const el = document.createElement("button");
+    document.body.appendChild(el);
+    const focus = vi.spyOn(el, "focus");
+    const back = focusBackTo(el)!;
+    back();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    el.remove();
+    focus.mockClear();
+    back();
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it("does not jump on a later close after an earlier pick", async () => {
