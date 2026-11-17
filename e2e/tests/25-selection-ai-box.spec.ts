@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { ADMIN, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
 
 /**
  * #263 框選 AI 框的幾何守衛（e2e「幾何」）。provider 自建（流程照 10-responsive）——「Default model」的勾選承重：
@@ -99,7 +99,7 @@ test("建 provider（/fast，勾 Default model）", async ({ browser }) => {
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     const providerDialog = page.getByRole("dialog", { name: "Add provider" });
     await providerDialog.locator("#ai-provider-name").fill(PROVIDER_NAME);
-    await providerDialog.locator("#ai-provider-type").selectOption("openai_compatible");
+    await chooseSelectOption(page, providerDialog.locator("#ai-provider-type"), "OpenAI-compatible");
     await providerDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/fast");
     await providerDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(providerDialog).not.toBeVisible();

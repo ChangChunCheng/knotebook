@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
-import { ADMIN, adminNav, createNote, createUserViaInvite, editorLocator, loginAs, openSiteAdmin, randomEmail } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, createNote, createUserViaInvite, editorLocator, loginAs, openSiteAdmin, randomEmail } from "./helpers.js";
 
 /**
  * 儲存配額 E1：管理員在 Site admin → Storage plans 建一個 1 MB 方案、在 Site admin → Users 指派給新建的
@@ -51,7 +51,7 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
     const planDialog = adminPage.getByRole("dialog", { name: "New storage plan" });
     await planDialog.getByLabel("Name", { exact: true }).fill(PLAN_NAME);
     await planDialog.getByLabel("Limit", { exact: true }).fill("1");
-    await planDialog.getByLabel("Unit", { exact: true }).selectOption("MB");
+    await chooseSelectOption(adminPage, planDialog.getByLabel("Unit", { exact: true }), "MB");
     await planDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(planDialog).not.toBeVisible();
     await expect(adminPage.getByRole("row", { name: PLAN_NAME, exact: true })).toContainText("1 MB");
@@ -60,9 +60,9 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
     await adminNav(adminPage, "Users");
     const planSelect = adminPage.getByLabel(`Storage plan for ${userEmail}`, { exact: true });
     const assigned = adminPage.waitForResponse((r) => r.url().endsWith("/storage-plan") && r.request().method() === "PATCH");
-    await planSelect.selectOption({ label: PLAN_NAME });
+    await chooseSelectOption(adminPage, planSelect, PLAN_NAME);
     expect((await assigned).status()).toBe(200);
-    await expect(planSelect.locator("option:checked")).toHaveText(PLAN_NAME);
+    await expect(planSelect.locator("[data-select-text]")).toHaveText(PLAN_NAME);
 
     // ── 使用者：登入 → 自己的筆記 → 貼 > 1 MB 圖 ─────────────────
     const userPage = await userContext.newPage();

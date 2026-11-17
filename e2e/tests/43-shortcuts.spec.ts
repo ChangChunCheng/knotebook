@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   ADMIN,
+  chooseSelectOption,
   adminNav,
   createNote,
   editorLocator,
@@ -692,7 +693,7 @@ test.describe.serial("ai facts", () => {
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     const providerDialog = page.getByRole("dialog", { name: "Add provider" });
     await providerDialog.locator("#ai-provider-name").fill(PROVIDER_NAME);
-    await providerDialog.locator("#ai-provider-type").selectOption("openai_compatible");
+    await chooseSelectOption(page, providerDialog.locator("#ai-provider-type"), "OpenAI-compatible");
     await providerDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/fast");
     await providerDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(providerDialog).not.toBeVisible();

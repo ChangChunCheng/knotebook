@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { ADMIN, createUserViaInvite, editorLocator, loginAs, openGroupPanel, randomEmail, showSidebarTab } from "./helpers.js";
+import { ADMIN, chooseSelectOption, createUserViaInvite, editorLocator, loginAs, openGroupPanel, randomEmail, showSidebarTab } from "./helpers.js";
 
 /**
  * #175 群組 v2：自訂角色即時生效。
@@ -103,7 +103,7 @@ test("群組角色：新增自訂角色 → 改成員角色即時變唯讀 → �
     await tabs.getByRole("link", { name: "Members", exact: true }).click();
     await expect(adminPage).toHaveURL(membersUrl);
     const roleSelect = adminPage.getByLabel(`Role for ${secondEmail}`, { exact: true });
-    await roleSelect.selectOption({ label: "Reader" });
+    await chooseSelectOption(adminPage, roleSelect, "Reader");
 
     // ── 7. B：10 秒內變唯讀 ────────────────────────────────────────────
     // 有效斷言是這兩條：徽章變「Read-only」（#335：viewer 不再寫 Connected／角色）、編輯器沒有 `contenteditable="true"`。
@@ -127,7 +127,7 @@ test("群組角色：新增自訂角色 → 改成員角色即時變唯讀 → �
     }
 
     // ── 8. A：同一個下拉選回 Member ────────────────────────────────────
-    await roleSelect.selectOption({ label: "Member" });
+    await chooseSelectOption(adminPage, roleSelect, "Member");
 
     // ── 9. B：10 秒內恢復可編輯；B 打字 A 看得到 ────────────────────────
     await expect(userBadge).toHaveText("Connected", { timeout: 10_000 }); // #335：改回能編輯 → 徽章回到只寫「Connected」

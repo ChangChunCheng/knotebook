@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   ADMIN,
+  chooseSelectOption,
   createNote,
   createUserViaInvite,
   editorLocator,
@@ -471,7 +472,7 @@ test("A2-12：「只能刪」成員移入群組筆記 → 沒有 Undo、看不�
       const saved = adminPage.waitForResponse(
         (res) => res.request().method() === "PATCH" && res.url().includes(`/api/groups/${groupId}/members/`),
       );
-      await adminPage.getByLabel(`Role for ${user.email}`, { exact: true }).selectOption({ label: role });
+      await chooseSelectOption(adminPage, adminPage.getByLabel(`Role for ${user.email}`, { exact: true }), role);
       expect((await saved).ok()).toBe(true);
     }
     await adminPage.keyboard.press("Escape");
