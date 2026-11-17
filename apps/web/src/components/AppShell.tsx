@@ -376,9 +376,9 @@ interface AppShellProps {
  * 首頁↔筆記頁重掛（各自渲染一份），tab 靠 localStorage 在重掛間帶回，切 tab 不重繪 `AppShell` 本身。
  *
  * 側欄寬度：靜態卡寬度是 `<aside style={{ width }}>` 的 React state，範圍
- * 200–480、預設 256（＝改版前的 `w-64`），存在 localStorage（`sidebar-width.ts`）。下限讓
+ * 200–480、預設 320，存在 localStorage（`sidebar-width.ts`）。下限讓
  * 群組內筆記列還留得下約 3 個中文字；上限不相對視窗——窄視窗下拉到最寬會擠壓內文，
- * 雙擊把手即回 256。把手（共用的 `PaneResizeHandle`，`edge="right"`）是 `<aside>` 內
+ * 雙擊把手即回 320。把手（共用的 `PaneResizeHandle`，`edge="right"`）是 `<aside>` 內
  * `absolute left-full w-3` 的子元素，約略蓋在根容器既有的 `gap-3` 上（以 padding box 定位，
  * 壓住 aside 右框一個框寬）——所以根的 `gap-3`
  * 與 `main` 都不動；`<aside>` 在 `<xl` 是 `hidden`，把手跟著消失。浮動抽屜用同一個寬度（視窗寬減 4rem 的上限是保險：抽屜只在 640 起，側欄最寬 480，碰不到），沒有把手。

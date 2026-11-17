@@ -1,7 +1,7 @@
 import type { TokenScope } from "@knotebook/shared";
 
 /**
- * #239／#181：「編輯」「移動或複製到群組」「移到垃圾桶與還原」三個開關 ↔ 五種落庫形。
+ * #239／#181：「編輯」「移到群組（無法復原）」「移到垃圾桶（可還原）」三個開關 ↔ 五種落庫形。
  * OAuth 同意頁（勾選框，`ScopeChecksField`）與建立 token 對話框、token 列內編輯（toggle，
  * `ScopeTogglesField`，#247）共用。
  */

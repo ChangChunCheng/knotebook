@@ -22,7 +22,7 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
   await page.getByLabel("Name", { exact: true }).fill(tokenName);
   // #239／#247／#181：存取權是三個開關（預設都關，`ScopeTogglesField`）；開「編輯」＝notes:read notes:write。
   // #181：「刪除」開關在編輯關著時 disabled，開了編輯才可切（本案不開它，token 仍是讀寫）。
-  const deleteSwitch = page.getByRole("switch", { name: "Move notes to the trash and restore them", exact: true });
+  const deleteSwitch = page.getByRole("switch", { name: "Move to trash (can be restored)", exact: true });
   await expect(deleteSwitch).toBeDisabled();
   await expect(deleteSwitch).not.toBeChecked();
   await page.getByRole("switch", { name: "Create and edit notes", exact: true }).click();
@@ -204,8 +204,8 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       // #239'／#181：第一次授權三框預設都不勾——直接按 Allow 只拿到 notes:read。勾「編輯」再 Allow。
       // 「刪除」框在編輯沒勾時 disabled，勾了編輯才可勾（本案不勾，授予的仍是讀寫）。
       const edit = page.getByRole("checkbox", { name: "Create and edit notes" });
-      const move = page.getByRole("checkbox", { name: "Move or copy notes into groups" });
-      const del = page.getByRole("checkbox", { name: "Move notes to the trash and restore them" });
+      const move = page.getByRole("checkbox", { name: "Move to groups (can't be undone)" });
+      const del = page.getByRole("checkbox", { name: "Move to trash (can be restored)" });
       await expect(edit).not.toBeChecked();
       await expect(move).not.toBeChecked();
       await expect(del).not.toBeChecked();
