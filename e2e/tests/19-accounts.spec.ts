@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type Browser, type APIRequestContext } from "@playwright/test";
 import { E2E_ORIGIN, IDP_CONTROL_ORIGIN } from "../ports.js";
-import { ADMIN, adminNav, loginAs, openSiteAdmin, randomEmail, reEscape } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, loginAs, openSiteAdmin, randomEmail, reEscape } from "./helpers.js";
 
 /**
  * #187 e2e 19：1–8（含 6a）；2–6、6a、8 是 #187。
@@ -37,7 +37,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     try {
       await page.getByRole("button", { name: "Add sign-in service" }).click();
       const dialog = page.getByRole("dialog", { name: "Add sign-in service" });
-      await dialog.getByLabel("Template").selectOption("oidc");
+      await chooseSelectOption(page, dialog.getByLabel("Template"), "Custom OIDC");
       await dialog.getByLabel("Display name").fill(SECOND_NAME);
       await dialog.getByLabel("Issuer URL").fill(SECOND_ISSUER);
       await dialog.getByRole("button", { name: "Check issuer" }).click();

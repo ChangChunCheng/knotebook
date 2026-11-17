@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ADMIN, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 流程 4（#263 改版）：站台管理 modal（`/admin/ai`）建 provider（指向 ai-stub）＋ model → 框選文字 → 工具列 AI 鈕開框 →
@@ -113,7 +113,7 @@ test("建 provider/model → 框選 → 指令 → 串流不洩漏 reasoning →
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     const createProviderDialog = page.getByRole("dialog", { name: "Add provider" });
     await createProviderDialog.locator("#ai-provider-name").fill(PROVIDER_NAME);
-    await createProviderDialog.locator("#ai-provider-type").selectOption("openai_compatible");
+    await chooseSelectOption(page, createProviderDialog.locator("#ai-provider-type"), "OpenAI-compatible");
     await createProviderDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/fast");
     await createProviderDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(createProviderDialog).not.toBeVisible();

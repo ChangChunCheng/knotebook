@@ -21,6 +21,7 @@ import { SidebarTabProvider } from "@/lib/sidebar-tab";
 import { personalNote } from "@/test/select-fixtures";
 import { NoteList } from "./NoteList";
 import { pressTrigger } from "@/test/menu-trigger";
+import { OutlineMenuContext, type OutlineMenuValue } from "@/components/outline/outline-menu-context";
 
 // ⋮ 選單：複製連結（任何角色）＋移到垃圾桶（#181：不確認、成功 toast＋復原；#175 起看 `permissions.delete`，含
 // leavingRef 時序：刪除失敗且已進終態時，`NoteMenu` 必須自己補一套「同文案同
@@ -707,6 +708,83 @@ describe("NoteMenu × 版本歷史", () => {
     expect(within(menu).getByRole("menuitem", { name: "AI edit history" })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Version history" })).not.toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Save current version" })).not.toBeInTheDocument();
+  });
+});
+
+describe("NoteMenu × 標題導覽（#465）", () => {
+  function renderOutlineMenu(opts: { shell?: "header" | "sidebar"; value?: OutlineMenuValue | null }) {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("unexpected fetch"))));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const menu =
+      opts.shell === "sidebar" ? (
+        <SidebarNoteMenu note={OWNER_NOTE} />
+      ) : (
+        <NoteMenu note={OWNER_NOTE} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />
+      );
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/notes/my-note"]}>
+          {opts.value ? <OutlineMenuContext.Provider value={opts.value}>{menu}</OutlineMenuContext.Provider> : menu}
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  async function openOutlineMenu(trigger = "More"): Promise<HTMLElement> {
+    pressTrigger(screen.getByRole("button", { name: trigger }));
+    return screen.findByRole("menu");
+  }
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("手機、這篇有標題：頁首 ⋮ 有「Heading outline」、緊接在「Present」之後；選了 → 選單關、open 呼叫一次", async () => {
+    stubLayoutTier("phone");
+    const open = vi.fn();
+    renderOutlineMenu({ value: { available: true, open } });
+    const menu = await openOutlineMenu();
+    const names = within(menu).getAllByRole("menuitem").map((el) => el.textContent?.trim());
+    const ip = names.indexOf("Present");
+    expect(ip).toBeGreaterThanOrEqual(0);
+    expect(names[ip + 1]).toBe("Heading outline");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Heading outline" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(open).toHaveBeenCalledTimes(1);
+    // 面板沒有觸發鈕：關閉時焦點交還 ⋮ 觸發鈕。
+    expect(open).toHaveBeenCalledWith(screen.getByRole("button", { name: "More" }));
+  });
+
+  it("手機、這篇沒有標題（available=false）→ 沒有", async () => {
+    stubLayoutTier("phone");
+    renderOutlineMenu({ value: { available: false, open: vi.fn() } });
+    const menu = await openOutlineMenu();
+    expect(within(menu).getByRole("menuitem", { name: "Present" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
+  });
+
+  it("640-767：大綱已是手機形 → ⋮ 有「Heading outline」", async () => {
+    stubLayoutTier("compact");
+    renderOutlineMenu({ value: { available: true, open: vi.fn() } });
+    const menu = await openOutlineMenu();
+    expect(within(menu).getByRole("menuitem", { name: "Heading outline" })).toBeInTheDocument();
+  });
+
+  it.each([["固定（>= 1280）", "docked"], ["浮動（>= 768）", "overlay"]] as const)("%s（有右側細線）→ 沒有", async (_label, tier) => {
+    stubLayoutTier(tier);
+    renderOutlineMenu({ value: { available: true, open: vi.fn() } });
+    const menu = await openOutlineMenu();
+    expect(within(menu).getByRole("menuitem", { name: "Present" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
+  });
+
+  it.each([["provider 之外（實際的處境）", false], ["就算在 provider 之內", true]] as const)("側欄每列的 ⋮，%s → 手機也沒有", async (_label, inside) => {
+    stubLayoutTier("phone");
+    renderOutlineMenu({ shell: "sidebar", value: inside ? { available: true, open: vi.fn() } : null });
+    const menu = await openOutlineMenu(`Note actions for ${OWNER_NOTE.title}`);
+    expect(within(menu).getByRole("menuitem", { name: "Present" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
   });
 });
 

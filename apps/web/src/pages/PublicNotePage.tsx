@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -7,13 +7,21 @@ import { api, ApiFail } from "@/api/client";
 import { decodePublicYdoc } from "@/collab/public-doc";
 import { PublicNoteEditor } from "@/components/PublicNoteEditor";
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
+import { NoteOutline } from "@/components/outline/NoteOutline";
+import { canPinOutline } from "@/components/outline/outline-layout";
+import { PhoneNoteOutline } from "@/components/outline/PhoneNoteOutline";
+import { focusBackTo } from "@/components/outline/OutlineSheet";
+import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
+import { useOutlineBox } from "@/components/outline/use-outline-box";
+import { useOutlineHeadings, type OutlineEditorLike } from "@/components/outline/use-outline-headings";
+import { useIsOutlineCompact } from "@/lib/layout-tiers";
 import { MediaZoomProvider } from "@/components/media-zoom/MediaZoomProvider";
 import { ImageZoomLayer } from "@/components/media-zoom/ImageZoomLayer";
 import { PublicPageFrame } from "@/components/PublicNoteShell";
 import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { useBlockAnchor } from "@/hooks/useBlockAnchor";
-import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
+import { ARTICLE_COLUMN_PADDING, articleColumn, articleColumnState } from "@/components/ui/article-column";
 import { toNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -83,6 +91,34 @@ export default function PublicNotePage() {
   const blockAnchor = useBlockAnchor({ noteKey: publicKey, ready: doc !== null, root: anchorRoot, ignore: presenting, currentNoteId: null });
   // #269：標題「#」鈕疊在文章欄 wrapper（`relative`）上。
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
+  // #465 右側標題大綱（桌機、平板；手機另有入口）。公開頁沒有版本泡泡；簡報時頁面被簡報層蓋住，不掛。
+  // 只在大綱可能出現時量版面（同筆記頁）。
+  const [publicEditor, setPublicEditor] = useState<OutlineEditorLike | null>(null);
+  const outlineHeadings = useOutlineHeadings(publicEditor);
+  const compact = useIsOutlineCompact();
+  const outlineCanShow = !compact && !presenting && outlineHeadings.length > 0;
+  const outlineBox = useOutlineBox(outlineCanShow ? anchorRoot : null, outlineCanShow ? columnEl : null);
+  const showOutline = outlineCanShow && outlineBox !== null;
+  // 釘住規則同筆記頁；寬度由公開端點給（缺值或不認得＝標準），只有標準寬能釘。
+  const noteWidth = toNoteWidth(query.data?.width);
+  const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
+  const outlinePinAvailable = noteWidth === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
+  const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
+  const pinMotionReady = usePinMotionReady(showOutline);
+  // 手機：只有捲動時的位置泡泡（公開頁沒有 ⋮），點它開底部面板。公開頁不在文件代為捲動的外框裡，手機上仍是捲動容器自己在捲。
+  const phoneOutline = compact && !presenting && outlineHeadings.length > 0;
+  const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
+  useEffect(() => {
+    if (!phoneOutline) setOutlineSheetOpen(false);
+  }, [phoneOutline]);
+  const scrollerTop = useCallback(() => anchorRoot?.getBoundingClientRect().top ?? 0, [anchorRoot]);
+  // 面板沒有觸發鈕：用鍵盤或螢幕閱讀器從泡泡開的，關閉時焦點回到泡泡；手指點的（泡泡不拿焦點）不移動焦點。
+  const [outlineReturnTo, setOutlineReturnTo] = useState<HTMLElement | null>(null);
+  const openOutlineSheet = useCallback((returnFocusTo: HTMLElement | null) => {
+    setOutlineReturnTo(returnFocusTo);
+    setOutlineSheetOpen(true);
+  }, []);
+  const outlineRestoreFocus = useMemo(() => focusBackTo(outlineReturnTo), [outlineReturnTo]);
 
   // 背景 refetch（react-query 預設 focus/reconnect 會重抓）失敗的呈現規則：
   // 404 → **翻成失效卡**，即使手上還有內容——這是撤銷的即時傳播，正在
@@ -145,17 +181,43 @@ export default function PublicNotePage() {
             Knotebook
           </Link>
         </header>
-        <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        {/* 零高度錨點在捲動容器之外、貼它的上緣（同 NoteEditor）。 */}
+        {showOutline && (
+          <NoteOutline
+            headings={outlineHeadings}
+            scrollEl={anchorRoot}
+            box={outlineBox}
+            bubbleShown={false}
+            pinned={outlinePinned}
+            pinAvailable={outlinePinAvailable}
+            onPinnedChange={setOutlinePinPref}
+          />
+        )}
+        {phoneOutline && (
+          <PhoneNoteOutline
+            headings={outlineHeadings}
+            root={anchorRoot}
+            scrollTarget={anchorRoot}
+            topEdge={scrollerTop}
+            placement="anchor"
+            sheetOpen={outlineSheetOpen}
+            onSheetOpenChange={setOutlineSheetOpen}
+            onOpenSheet={openOutlineSheet}
+            restoreFocus={outlineRestoreFocus}
+          />
+        )}
+        {/* 捲軸的位置固定保留：捲軸出現與否不改容器寬度，能不能釘大綱（依容器寬判斷）才不會在門檻附近來回切。 */}
+        <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto sm:[scrollbar-gutter:stable]">
           {/* 內文沿 NoteEditor 的文章欄（#115：`<md` 內距 70→20 的斷點機制在
               article-column.ts／index.css，這裡照吃不另寫）。#297：寬度取公開端點的
               `width`（管理公開連結的人設定）；缺值或不認得 → 標準（舊 server）。 */}
           <div
             ref={setColumnEl}
             data-testid="article-column"
-            className={cn(articleColumn(toNoteWidth(data.width)), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
+            className={cn(articleColumn(articleColumnState(noteWidth, outlinePinned), { pinMotion: pinMotionReady }), ARTICLE_COLUMN_PADDING, "relative flex min-h-full flex-col py-6")}
           >
             <MediaZoomProvider>
-              <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} />
+              <PublicNoteEditor doc={doc!} publicRef={publicRef} links={data.links ?? NO_LINKS} onEditor={setPublicEditor} />
               <HeadingAnchorButtons container={columnEl} />
               <ImageZoomLayer container={columnEl} editable={false} />
             </MediaZoomProvider>

@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { ONLINE_WINDOW_MS, avatarUrl, type AdminInviteDto, type StoragePlanDto, type UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 import { ThemeProvider } from "@/theme";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
@@ -244,9 +245,9 @@ describe("使用者表的儲存空間與方案", () => {
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH" ? fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) }) : null);
     renderUsersRoute(fetchMock);
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
-    expect(select).toHaveValue(BASIC_ID);
-    fireEvent.change(select, { target: { value: BIG_ID } });
-    await waitFor(() => expect(select).toHaveValue(BIG_ID));
+    expect(selectedValue(select)).toBe(BASIC_ID);
+    await chooseOption(select, "Big");
+    await waitFor(() => expect(selectedValue(select)).toBe(BIG_ID));
     const patch = fetchMock.mock.calls.find(([u, i]) => String(u) === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && (i as RequestInit).method === "PATCH");
     expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({ planId: BIG_ID });
     expect(screen.getByText("0 B (no limit)")).toBeInTheDocument();
@@ -258,9 +259,10 @@ describe("使用者表的儲存空間與方案", () => {
     renderUsersRoute(stub([ACTIVE_OTHER], (url, method) =>
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH" ? (new Promise(() => undefined) as unknown as Response) : null));
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
-    fireEvent.change(select, { target: { value: BIG_ID } });
+    await chooseOption(select, "Big");
     await waitFor(() => expect(select).toBeDisabled());
-    expect(select).toHaveValue(BIG_ID);
+    expect(selectedValue(select)).toBe(BIG_ID);
+    expect(displayedLabel(select)).toBe("Big");
   });
 
   it("改方案失敗（404 storage_plan_not_found）：toast，下拉留在原方案", async () => {
@@ -270,9 +272,9 @@ describe("使用者表的儲存空間與方案", () => {
         : null);
     renderUsersRoute(fetchMock);
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
-    fireEvent.change(select, { target: { value: BIG_ID } });
+    await chooseOption(select, "Big");
     expect(await screen.findByText("Plan not found")).toBeInTheDocument();
-    expect(select).toHaveValue(BASIC_ID);
+    expect(selectedValue(select)).toBe(BASIC_ID);
     // 失敗也重抓方案清單（方案可能剛被刪）
     await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u) === "/api/admin/storage-plans").length).toBeGreaterThanOrEqual(2));
   });
@@ -282,8 +284,9 @@ describe("使用者表的儲存空間與方案", () => {
     const row: AdminUserDto = { ...ACTIVE_OTHER, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
     renderUsersRoute(stub([row]));
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
-    await waitFor(() => expect(select).toHaveValue(NEWPLAN_ID));
-    expect(within(select).getByRole("option", { name: "Brand new" })).toBeInTheDocument();
+    await waitFor(() => expect(selectedValue(select)).toBe(NEWPLAN_ID));
+    expect(displayedLabel(select)).toBe("Brand new");
+    expect(await optionLabels(select)).toContain("Brand new");
   });
 
   it("方案清單失敗：方案欄只顯示方案名、沒有下拉", async () => {
@@ -365,16 +368,16 @@ describe("使用者表（#247）", () => {
     });
     renderUsersRoute(fetchMock);
     const alice = await screen.findByRole("combobox", { name: `Role for ${ACTIVE_OTHER.email}` });
-    expect(alice).toHaveValue("user");
-    fireEvent.change(alice, { target: { value: "admin" } });
+    expect(selectedValue(alice)).toBe("user");
+    await chooseOption(alice, "Admin");
     await waitFor(() => expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote`)).toHaveLength(1));
     expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote`)[0][1]).not.toHaveProperty("body");
-    await waitFor(() => expect(alice).toHaveValue("admin"));
+    await waitFor(() => expect(selectedValue(alice)).toBe("admin"));
 
     const carol = screen.getByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` });
-    fireEvent.change(carol, { target: { value: "user" } });
+    await chooseOption(carol, "User");
     await waitFor(() => expect(posts(fetchMock, `${ADMIN_USERS_URL}/${OTHER_ADMIN.id}/demote`)).toHaveLength(1));
-    await waitFor(() => expect(carol).toHaveValue("user"));
+    await waitFor(() => expect(selectedValue(carol)).toBe("user"));
   });
 
   it("U2b promote 204 之後、名單重抓（GET）延遲期間：下拉值恆為 admin（不先彈回 user）", async () => {
@@ -395,14 +398,14 @@ describe("使用者表（#247）", () => {
     });
     renderUsersRoute(fetchMock);
     const alice = await screen.findByRole("combobox", { name: `Role for ${ACTIVE_OTHER.email}` });
-    fireEvent.change(alice, { target: { value: "admin" } });
+    await chooseOption(alice, "Admin");
     await waitFor(() => expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote`)).toHaveLength(1));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([u, i]) => String(u) === ADMIN_USERS_URL && ((i as RequestInit | undefined)?.method ?? "GET") === "GET").length).toBeGreaterThanOrEqual(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(alice).toHaveValue("admin");
+    expect(selectedValue(alice)).toBe("admin");
     releaseGet();
     await waitFor(() => expect(alice).not.toBeDisabled());
-    expect(alice).toHaveValue("admin");
+    expect(selectedValue(alice)).toBe("admin");
   });
 
   it("U3 自己那列：角色下拉 disabled＋title「You can't remove your own admin role.」", async () => {
@@ -420,14 +423,14 @@ describe("使用者表（#247）", () => {
     );
     renderUsersRoute(fetchMock);
     const carol = await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` });
-    fireEvent.change(carol, { target: { value: "user" } });
+    await chooseOption(carol, "User");
     // 列層級錯誤走資料列之後的錯誤列，不放在角色那格（會撐寬 max-content 軌）。
     const errorRow = await screen.findByRole("row", { name: `${OTHER_ADMIN.email} error` });
     expect(within(rowOf(OTHER_ADMIN.email)).queryByRole("alert")).toBeNull();
     const alert = within(errorRow).getByRole("alert");
     expect(alert).toHaveTextContent("The site needs at least one enabled admin.");
     expect(alert).not.toHaveTextContent(i18n.t("errors.last_admin"));
-    expect(carol).toHaveValue("admin");
+    expect(selectedValue(carol)).toBe("admin");
   });
 
   it("U5 角色 pending 時下拉 disabled、顯示剛選的值；再改一次不送第二發", async () => {
@@ -436,10 +439,12 @@ describe("使用者表（#247）", () => {
     );
     renderUsersRoute(fetchMock);
     const alice = await screen.findByRole("combobox", { name: `Role for ${ACTIVE_OTHER.email}` });
-    fireEvent.change(alice, { target: { value: "admin" } });
+    await chooseOption(alice, "Admin");
     await waitFor(() => expect(alice).toBeDisabled());
-    expect(alice).toHaveValue("admin");
-    fireEvent.change(alice, { target: { value: "user" } });
+    expect(selectedValue(alice)).toBe("admin");
+    // disabled 的觸發鈕打不開選單，改不了值
+    fireEvent.keyDown(alice, { key: "Enter" });
+    expect(screen.queryByRole("listbox")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/demote`)).toHaveLength(0);
     expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote`)).toHaveLength(1);
@@ -531,17 +536,17 @@ describe("使用者表（#247）", () => {
     });
     renderUsersRoute(fetchMock);
     const carol = await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` });
-    fireEvent.change(carol, { target: { value: "user" } });
+    await chooseOption(carol, "User");
     const errorRow = await screen.findByRole("row", { name: `${OTHER_ADMIN.email} error` });
     expect(within(errorRow).getByRole("alert")).toHaveTextContent("The site needs at least one enabled admin.");
     await waitFor(() => expect(carol).not.toBeDisabled());
-    expect(carol).toHaveValue("admin");
+    expect(selectedValue(carol)).toBe("admin");
 
     fail = false;
-    fireEvent.change(carol, { target: { value: "user" } });
+    await chooseOption(carol, "User");
     await waitFor(() => expect(screen.queryByRole("row", { name: `${OTHER_ADMIN.email} error` })).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
-    await waitFor(() => expect(carol).toHaveValue("user"));
+    await waitFor(() => expect(selectedValue(carol)).toBe("user"));
   });
 
   it("U11 錯誤狀態以使用者 id 為鍵：角色、啟用、停用確認三處的失敗各自只進自己那列的錯誤列；一列開始新動作只清自己那列", async () => {
@@ -559,7 +564,7 @@ describe("使用者表（#247）", () => {
     const errorRowOf = (email: string) => screen.queryByRole("row", { name: `${email} error` });
 
     // 角色下拉的失敗：只有 carol 有錯誤列
-    fireEvent.change(await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` }), { target: { value: "user" } });
+    await chooseOption(await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` }), "User");
     await waitFor(() => expect(errorRowOf(OTHER_ADMIN.email)).not.toBeNull());
     expect(errorRowOf(ACTIVE_OTHER.email)).toBeNull();
     expect(errorRowOf(DISABLED_OTHER.email)).toBeNull();
@@ -662,12 +667,13 @@ describe("重設密碼（#286）", () => {
     renderUsersRoute(fetchMock);
     const dialog = await openFor(ACTIVE_OTHER.email);
     expect(dialog).toHaveTextContent(ACTIVE_OTHER.email);
-    const select = within(dialog).getByLabelText("Link expires after") as HTMLSelectElement;
-    expect(select).toHaveValue("1");
-    expect(within(select).getAllByRole("option")).toHaveLength(24);
-    expect(within(select).getAllByRole("option")[0]).toHaveTextContent("1 hour");
-    expect(within(select).getAllByRole("option")[1]).toHaveTextContent("2 hours");
-    fireEvent.change(select, { target: { value: "3" } });
+    const select = within(dialog).getByLabelText("Link expires after");
+    expect(selectedValue(select)).toBe("1");
+    const hourLabels = await optionLabels(select);
+    expect(hourLabels).toHaveLength(24);
+    expect(hourLabels[0]).toBe("1 hour");
+    expect(hourLabels[1]).toBe("2 hours");
+    await chooseOption(select, "3 hours");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create link" }));
 
     const result = await screen.findByRole("dialog", { name: "Password reset link" });
@@ -690,7 +696,7 @@ describe("重設密碼（#286）", () => {
     fireEvent.click(within(rowOf(ACTIVE_OTHER.email)).getByRole("button", { name: actionName(ACTIVE_OTHER.email) }));
     expect(await screen.findByRole("dialog", { name: "Reset password" })).toBeInTheDocument();
     expect(screen.queryByDisplayValue(/knbp_/)).toBeNull();
-    expect((screen.getByLabelText("Link expires after") as HTMLSelectElement).value).toBe("1");
+    expect(selectedValue(screen.getByLabelText("Link expires after"))).toBe("1");
   });
 
   it("R4 待用連結：顯示到期句；Cancel link 送 DELETE，重抓後那一行消失、對話框仍開著", async () => {
@@ -910,12 +916,13 @@ describe("邀請（#285）", () => {
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
     expect(within(dialog).getByText(CREATE_DESCRIPTION)).toBeInTheDocument();
-    const select = within(dialog).getByLabelText("Link expires after") as HTMLSelectElement;
-    expect(select).toHaveValue("3");
-    expect(within(select).getAllByRole("option")).toHaveLength(7);
-    expect(within(select).getAllByRole("option")[0]).toHaveTextContent("1 day");
-    expect(within(select).getAllByRole("option")[1]).toHaveTextContent("2 days");
-    fireEvent.change(select, { target: { value: "5" } });
+    const select = within(dialog).getByLabelText("Link expires after");
+    expect(selectedValue(select)).toBe("3");
+    const dayLabels = await optionLabels(select);
+    expect(dayLabels).toHaveLength(7);
+    expect(dayLabels[0]).toBe("1 day");
+    expect(dayLabels[1]).toBe("2 days");
+    await chooseOption(select, "5 days");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create link" }));
 
     const result = await screen.findByRole("dialog", { name: "Invitation link" });
@@ -930,7 +937,7 @@ describe("邀請（#285）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     expect(await screen.findByRole("dialog", { name: "Create an invitation" })).toBeInTheDocument();
     expect(screen.queryByDisplayValue(/knbi_/)).toBeNull();
-    expect((screen.getByLabelText("Link expires after") as HTMLSelectElement).value).toBe("3");
+    expect(selectedValue(screen.getByLabelText("Link expires after"))).toBe("3");
   });
 
   it("I3a 備註：原樣送出（trim 由 server 做）", async () => {

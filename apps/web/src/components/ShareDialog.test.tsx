@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { avatarUrl, type NoteDto, type NoteWidth, type ShareDto, type UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption, optionLabels, selectedValue } from "@/test/ui-select";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { EDITOR_PERMS, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 import { ShareDialog } from "./ShareDialog";
@@ -167,7 +168,7 @@ describe("ShareDialog", () => {
     await selectMembers();
 
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "bob@example.com" } });
-    fireEvent.change(screen.getByLabelText("Role for new share"), { target: { value: "editor" } });
+    await chooseOption(screen.getByLabelText("Role for new share"), "Editor");
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
@@ -368,7 +369,7 @@ describe("ShareDialog", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: /Members only/ })).toBeChecked());
 
     await waitFor(() => expect(screen.getByText(SHARE.email)).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText(`Role for ${SHARE.email}`), { target: { value: "editor" } });
+    await chooseOption(screen.getByLabelText(`Role for ${SHARE.email}`), "Editor");
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
@@ -401,7 +402,7 @@ function stubRoutedFetch(opts: {
   /** true＝PUT …/public-width 回 500。 */
   widthFail?: boolean;
   pending?: string[];
-  onCall?: (method: string, url: string) => Response | undefined;
+  onCall?: (method: string, url: string) => Response | Promise<Response> | undefined;
 }) {
   const calls: Array<{ method: string; url: string }> = [];
   const resolvers = new Map<string, (r: Response) => void>();
@@ -1481,8 +1482,8 @@ describe("公開頁寬度（#297）", () => {
     renderDialog();
     await openDialog();
     const select = await screen.findByLabelText("Public page width");
-    await waitFor(() => expect(select).toHaveValue("wide"));
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Standard", "Wide", "Full width"]);
+    await waitFor(() => expect(selectedValue(select)).toBe("wide"));
+    expect(await optionLabels(select)).toEqual(["Standard", "Wide", "Full width"]);
   });
 
   it("S2 未公開 → 沒有寬度下拉", async () => {
@@ -1494,14 +1495,27 @@ describe("公開頁寬度（#297）", () => {
   });
 
   it("S3 改成全寬 → 恰一次 PUT、body 正確、快取只合併 width", async () => {
-    const stub = stubRoutedFetch({ shares: [], token: TOKEN });
+    // PUT 先扣住，才看得到「請求還在飛」的狀態。
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stub = stubRoutedFetch({
+      shares: [],
+      token: TOKEN,
+      onCall: (method, url) =>
+        method === "PUT" && url === PUBLIC_WIDTH_URL
+          ? (gate.then(() => fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ width: "full" }) })))
+          : undefined,
+    });
     const queryClient = renderDialog();
     await openDialog();
     const select = await screen.findByLabelText("Public page width");
-    fireEvent.change(select, { target: { value: "full" } });
+    await chooseOption(select, "Full width");
     // 請求還在飛：下拉先顯示選的值，不彈回舊值
-    expect(select).toHaveValue("full");
+    expect(selectedValue(select)).toBe("full");
     expect(select).toBeDisabled();
+    release();
     await waitFor(() => expect(widthCalls(stub.calls)).toHaveLength(1));
     const putCall = stub.fetchMock.mock.calls.find(
       ([input, init]) => String(input) === PUBLIC_WIDTH_URL && (init as RequestInit)?.method === "PUT",
@@ -1510,16 +1524,16 @@ describe("公開頁寬度（#297）", () => {
     await waitFor(() =>
       expect(queryClient.getQueryData(["public-link", NOTE.id])).toEqual({ token: TOKEN, slug: null, width: "full" }),
     );
-    expect(screen.getByLabelText("Public page width")).toHaveValue("full");
+    expect(selectedValue(screen.getByLabelText("Public page width"))).toBe("full");
   });
 
   it("S4 PUT 失敗 → 顯示錯誤、下拉回原值、快取不動", async () => {
     stubRoutedFetch({ shares: [], token: TOKEN, widthFail: true });
     const queryClient = renderDialog();
     await openDialog();
-    fireEvent.change(await screen.findByLabelText("Public page width"), { target: { value: "full" } });
+    await chooseOption(await screen.findByLabelText("Public page width"), "Full width");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.getByLabelText("Public page width")).toHaveValue("standard");
+    expect(selectedValue(screen.getByLabelText("Public page width"))).toBe("standard");
     expect(queryClient.getQueryData(["public-link", NOTE.id])).toEqual({ token: TOKEN, slug: null, width: "standard" });
   });
 
@@ -1528,9 +1542,9 @@ describe("公開頁寬度（#297）", () => {
     renderDialog(GROUP_NOTE_ADMIN);
     await openGroupDialog();
     const select = await screen.findByLabelText("Public page width");
-    fireEvent.change(select, { target: { value: "wide" } });
+    await chooseOption(select, "Wide");
     await waitFor(() => expect(widthCalls(calls)).toHaveLength(1));
-    await waitFor(() => expect(screen.getByLabelText("Public page width")).toHaveValue("wide"));
+    await waitFor(() => expect(selectedValue(screen.getByLabelText("Public page width"))).toBe("wide"));
     cleanup();
     vi.unstubAllGlobals();
 

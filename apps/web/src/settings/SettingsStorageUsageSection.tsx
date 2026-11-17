@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { formatBytes, STORAGE_KINDS, type StorageByKind, type StorageKind } from "@knotebook/shared";
+import { formatBytes, STORAGE_KINDS, type StorageByKind } from "@knotebook/shared";
 import { useAuthConfig } from "@/api/authConfig";
 import { useStorageUsage } from "@/api/storage";
 import { ApiFail } from "@/api/client";
@@ -19,22 +19,22 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 
 /**
  * 「依類型」區塊（#247；群組儲存空間頁沿用）。**列恆顯示**（含 0 的列），
- * 順序＝`kinds`（預設 `STORAGE_KINDS`：個人頁六列；群組頁不含頭貼，只傳五類）。佔比的分母取**顯示的那幾類**之和、
+ * 順序＝`STORAGE_KINDS`（五列）。佔比的分母取**顯示的那幾類**之和、
  * **不取 `usedBytes`**：兩者來自 server 上不同時點的兩句查詢，中間有上傳時可能瞬間不等；和為 0 時各條都是 0%。
  * ⚠ 現況上傳只收四種圖片，所以只有「影像」會非零——版面先為多類型留好（上傳放寬另開 issue）。
  * `byKind` 為 undefined（載入中或錯誤）時不渲染列：錯誤訊息由同頁的 `StorageUsageGroup` 負責。
  * 列距與列間框線同設定表格（只統一列距與框線、不換元件）。
  */
-export function StorageByKindGroup({ byKind, pending, kinds = STORAGE_KINDS }: { byKind: StorageByKind | undefined; pending: boolean; kinds?: readonly StorageKind[] }) {
+export function StorageByKindGroup({ byKind, pending }: { byKind: StorageByKind | undefined; pending: boolean }) {
   const { t } = useTranslation();
-  const total = byKind === undefined ? 0 : kinds.reduce((sum, kind) => sum + byKind[kind], 0);
+  const total = byKind === undefined ? 0 : STORAGE_KINDS.reduce((sum, kind) => sum + byKind[kind], 0);
   return (
     <SettingsGroup title={t("settings.storage.byKind")} description={t("settings.storage.byKindDescription")}>
       {pending ? (
         <p className="text-sm text-muted-foreground">{t("app.loading")}</p>
       ) : byKind === undefined ? null : (
         <ul>
-          {kinds.map((kind) => {
+          {STORAGE_KINDS.map((kind) => {
             const bytes = byKind[kind];
             const pct = total === 0 ? 0 : (bytes / total) * 100;
             return (

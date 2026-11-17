@@ -43,7 +43,7 @@ const TOKEN: ApiTokenDto = {
 };
 const STORAGE: StorageUsageDto = {
   usedBytes: 1048576, quotaBytes: 2147483648, planName: "Basic",
-  byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0, avatar: 0 },
+  byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 },
 };
 const GROUPS: GroupDto[] = [groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Team Alpha" }, adminRole())];
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -71,7 +71,7 @@ const PANEL3_GETS: Record<string, unknown> = {
   [`/api/groups/${GROUP_ID}/roles`]: [adminRole(), memberRole(), customRole({ id: "r-custom", name: "Reader", memberCount: 0 })],
   [`/api/groups/${GROUP_ID}/storage`]: {
     usedBytes: 1048576, quotaBytes: 2147483648, planName: "Basic",
-    byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0, avatar: 0 },
+    byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 },
     byMember: [{ userId: "u-admin", handle: "admin", displayName: "Admin", bytes: 1048576 }],
   },
   "/api/admin/users": [
@@ -181,14 +181,14 @@ export const PANEL_PAGES: PanelPageCase[] = [
   { name: "個人：儲存空間", path: "/settings/storage", ready: async () => { await screen.findByRole("switch"); return screen.findByText(/\(Basic\)/); }, minButtons: 1 },
   { name: "個人：群組", path: "/settings/groups", ready: async () => within(await screen.findByRole("dialog")).findByText("Team Alpha"), minButtons: 0 }, // 背景 NoteList 側欄也有同名群組
   { name: "個人：關於", path: "/settings/about", ready: () => screen.findByText("LICENSE"), minButtons: 3 }, // 三個外連 <a class>（repo、docs/、LICENSE）
-  { name: "群組：成員", path: `/groups/${GROUP_ID}`, ready: () => screen.findByText("b@example.com"), minButtons: 4 }, // 實測 4：三列紅垃圾桶（Remove <email>）＋「Add」
+  { name: "群組：成員", path: `/groups/${GROUP_ID}`, ready: () => screen.findByText("b@example.com"), minButtons: 9 }, // 實測 9：三列紅垃圾桶（Remove <email>）＋「Add」＋三列角色下拉觸發鈕＋新增成員的角色下拉觸發鈕（Select 觸發鈕是 button、無實心底色）
   { name: "群組：角色", path: `/groups/${GROUP_ID}/roles`, ready: () => screen.findByRole("region", { name: "Reader" }), minButtons: 21 }, // 實測 21：New role＋三張角色卡各 6 個權限 switch＋自訂角色的鉛筆、紅垃圾桶
   { name: "群組：儲存空間", path: `/groups/${GROUP_ID}/storage`, ready: () => screen.findByText("@admin"), minButtons: 1 }, // 實測 1：自動版本 switch
   { name: "群組：關於", path: `/groups/${GROUP_ID}/about`, ready: async () => { await screen.findByRole("button", { name: "Delete group" }); return screen.findByRole("button", { name: "Leave group" }); }, minButtons: 3 }, // 實測 3：Save name、Leave group、Delete group（Leave 等成員清單到、且非唯一管理員才出現）
-  { name: "站台：使用者", path: "/admin/users", ready: async () => { await screen.findByText("b@example.com"); return screen.findByText("Alice"); }, minButtons: 7 }, // 實測 7：Create invitation＋兩列重設鈕＋兩列啟用 switch＋兩列撤銷垃圾桶（邀請表兩列 pending）
-  { name: "站台：群組", path: "/admin/groups", ready: () => screen.findByRole("combobox", { name: "Storage plan for Team Alpha" }), minButtons: 0 }, // 實測 0：只有方案下拉（沒有刪除鈕），0 是真值
+  { name: "站台：使用者", path: "/admin/users", ready: async () => { await screen.findByText("b@example.com"); return screen.findByText("Alice"); }, minButtons: 11 }, // 實測 11：Create invitation＋兩列重設鈕＋兩列啟用 switch＋兩列撤銷垃圾桶（邀請表兩列 pending）＋四個角色／方案下拉觸發鈕
+  { name: "站台：群組", path: "/admin/groups", ready: () => screen.findByRole("combobox", { name: "Storage plan for Team Alpha" }), minButtons: 1 }, // 實測 1：只有方案下拉觸發鈕（沒有刪除鈕）
   { name: "站台：登入", path: "/admin/login", ready: adminLoginReady, minButtons: 11 }, // 實測 11：兩個存取 switch、「登入期限與 token」組的 Save（兩項都在預設，沒有恢復預設鈕）、Add sign-in service、列內自動建帳 switch、插頭／鉛筆／圖示／紅垃圾桶、啟用 switch、明細區 Copy
-  { name: "站台：儲存方案", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 8 }, // 實測 8：New plan、Edit／Delete Basic、Save defaults、自動版本 switch、版本設定 Save、垃圾桶開關、垃圾桶 Save
+  { name: "站台：儲存方案", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 10 }, // 實測 10：New plan、Edit／Delete Basic、Save defaults、兩個預設方案下拉觸發鈕、自動版本 switch、版本設定 Save、垃圾桶開關、垃圾桶 Save
   { name: "站台：AI 代理", path: "/admin/ai", ready: adminAiReady, minButtons: 15 }, // 實測 15：供應商（Add provider＋插頭／鉛筆／垃圾桶＋switch）、模型（Add model＋switch＋鉛筆／垃圾桶）、動作（Add action＋上移／下移＋switch＋鉛筆／垃圾桶）
   { name: "站台：站台限制", path: "/admin/limits", ready: async () => within(await screen.findByRole("region", { name: "Rate limits" })).findByRole("button", { name: "Save" }), minButtons: 5 }, // 實測 5：三個區塊各一顆 Save、解析 worker 數的 Back to auto、寫筆記內容次數的 Restore default
 ];

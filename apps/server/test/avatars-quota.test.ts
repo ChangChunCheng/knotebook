@@ -93,7 +93,7 @@ describe("頭貼用量算進個人空間", () => {
     expect(m.has(dave.id)).toBe(false);
   });
 
-  it("readSpaceUsageByKind：user 的 avatar＝頭貼總和、image 不含頭貼；群組的 avatar 恆 0", async () => {
+  it("readSpaceUsageByKind：user 的頭貼總和併入 image；群組沒有頭貼", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -105,31 +105,31 @@ describe("頭貼用量算進個人空間", () => {
     await seedAvatarRow(db, { userId: alice.id, originalSize: 5000, displaySize: 300, isCurrent: true });
     await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0 });
     await seedAvatarRow(db, { userId: bob.id, originalSize: 9000, displaySize: 900, isCurrent: true });
-    expect(await readSpaceUsageByKind(db, { kind: "user", id: alice.id })).toEqual({ image: 400, audio: 0, video: 0, document: 0, other: 0, avatar: 5370 });
-    expect(await readSpaceUsageByKind(db, { kind: "group", id: g.id })).toEqual({ image: 30, audio: 0, video: 0, document: 0, other: 0, avatar: 0 });
-    // 只有頭貼的使用者：其他類型 0、avatar 有值
-    expect((await readSpaceUsageByKind(db, { kind: "user", id: bob.id })).avatar).toBe(9900);
+    expect(await readSpaceUsageByKind(db, { kind: "user", id: alice.id })).toEqual({ image: 5770, audio: 0, video: 0, document: 0, other: 0 });
+    expect(await readSpaceUsageByKind(db, { kind: "group", id: g.id })).toEqual({ image: 30, audio: 0, video: 0, document: 0, other: 0 });
+    // 只有頭貼的使用者：頭貼全在 image
+    expect(await readSpaceUsageByKind(db, { kind: "user", id: bob.id })).toEqual({ image: 9900, audio: 0, video: 0, document: 0, other: 0 });
   });
 
-  it("GET /api/storage：byKind.avatar 有值、各類之和＝usedBytes", async () => {
+  it("GET /api/storage：頭貼計入 byKind.image、各類之和＝usedBytes", async () => {
     const b = await buildTestApp();
     const alice = await seedUser(b.db);
     const n = await seedNote(b.db, { ownerId: alice.id });
     await seedAttachment(b.db, b.uploadsDir, n.id, alice.id, 400);
     await seedAvatarRow(b.db, { userId: alice.id, originalSize: 5000, displaySize: 300, isCurrent: true });
     const body = (await b.app.inject({ method: "GET", url: "/api/storage", cookies: await cookieOf(alice.id) })).json();
-    expect(body.byKind).toEqual({ image: 400, audio: 0, video: 0, document: 0, other: 0, avatar: 5300 });
+    expect(body.byKind).toEqual({ image: 5700, audio: 0, video: 0, document: 0, other: 0 });
     expect(body.usedBytes).toBe(5700);
     expect(Object.values(body.byKind as Record<string, number>).reduce((a, x) => a + x, 0)).toBe(body.usedBytes);
   });
 
-  it("GET /api/groups/:id/storage：byKind.avatar 恆 0", async () => {
+  it("GET /api/groups/:id/storage：群組的 byKind 不含頭貼", async () => {
     const b = await buildTestApp();
     const alice = await seedUser(b.db);
     const g = await seedGroup(b.db, "G", [{ userId: alice.id, role: "admin" }]);
     await seedAvatarRow(b.db, { userId: alice.id, originalSize: 5000, displaySize: 300, isCurrent: true });
     const body = (await b.app.inject({ method: "GET", url: `/api/groups/${g.id}/storage`, cookies: await cookieOf(alice.id) })).json();
-    expect(body.byKind.avatar).toBe(0);
+    expect(body.byKind.image).toBe(0);
     expect(body.usedBytes).toBe(0);
   });
 

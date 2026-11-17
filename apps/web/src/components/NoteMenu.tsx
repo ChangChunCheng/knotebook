@@ -12,7 +12,7 @@ import { placeNoteWithUndo } from "@/lib/note-place";
 import { useNotePageControls, type OpenEditsState } from "@/lib/note-page-controls";
 import { useCloseSidebarDrawer } from "@/lib/sidebar-drawer";
 import { showTrashedToast } from "@/lib/trash-undo";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { useIsOutlineCompact, useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,8 @@ import {
   DropdownMenuMainLevel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { EllipsisVertical, History, Link as LinkIcon, MessageCircle, Presentation, Star, Trash } from "@/components/ui/icons";
+import { EllipsisVertical, History, Link as LinkIcon, ListTree, MessageCircle, Presentation, Star, Trash } from "@/components/ui/icons";
+import { useOutlineMenu, type OutlineMenuValue } from "@/components/outline/outline-menu-context";
 import { FavoriteRemoveDialog } from "@/components/FavoriteRemoveDialog";
 import { ManualCopyField } from "@/components/ManualCopyField";
 import {
@@ -68,7 +69,7 @@ export interface NoteMenuProps {
 }
 
 /**
- * 內文卡頁頭的 ⋮ 選單：加入／移出最愛（第一項，任何角色；移出先確認，見 `FavoriteMenuItem`）＋複製連結（任何角色）＋簡報模式（#229，任何角色）＋寬度（只在頁首 ⋮；頁首寬度鈕收起時的設定入口，見 `NoteWidthMenuItems`，由 `NotePage` 以 `widthItems` 交進來，側欄的 ⋮ 不把它帶進首包）＋AI 修改紀錄＋移動到…／複製到…（#216；逐層子選單，規則見 `sidebar/destination-level.ts`、兩種形態見 `share/GroupTransfer.tsx`，「複製到我的筆記」已併入「複製到… → 我的筆記」）
+ * 內文卡頁頭的 ⋮ 選單：加入／移出最愛（第一項，任何角色；移出先確認，見 `FavoriteMenuItem`）＋複製連結（任何角色）＋簡報模式（#229，任何角色）＋標題導覽（#465，只在頁首 ⋮、視窗窄於 768px、這篇有標題時；開底部面板，見 `OutlineMenuItem`）＋寬度（只在頁首 ⋮；頁首寬度鈕收起時的設定入口，見 `NoteWidthMenuItems`，由 `NotePage` 以 `widthItems` 交進來，側欄的 ⋮ 不把它帶進首包）＋AI 修改紀錄＋移動到…／複製到…（#216；逐層子選單，規則見 `sidebar/destination-level.ts`、兩種形態見 `share/GroupTransfer.tsx`，「複製到我的筆記」已併入「複製到… → 我的筆記」）
  * ＋移到垃圾桶（`permissions.delete`，#175；#181 起刪除＝移入垃圾桶）。
  *
  * **移到垃圾桶不確認**：點下選單項即送 DELETE；成功 toast「已移到垃圾桶」，
@@ -196,6 +197,27 @@ function VersionsMenuItem({ onActivate }: { onActivate: () => void }) {
     >
       <History className="mr-2 h-4 w-4" />
       {t("note.menu.versions")}
+    </DropdownMenuItem>
+  );
+}
+
+/** 「標題導覽」項（#465）：只在大綱用手機形的寬度（< 768，`OUTLINE_COMPACT_QUERY`）、而且這篇有 H1–H3 時渲染（`OutlineMenuContext` 由筆記編輯器提供，側欄每列的 ⋮ 在 provider 之外，拿到的是
+ * 「不提供」的預設）。其餘寬度有右側細線，手機上的位置泡泡只在捲動時出現、螢幕閱讀器也抓不到，所以 ⋮ 也放一個入口。
+ * 條件渲染與 matchMedia 訂閱的理由同 `VersionsMenuItem`；三步形同 AI 修改紀錄項（focus trap 規矩，見檔頭）。 */
+function OutlineMenuItem({ onActivate }: { onActivate: (open: OutlineMenuValue["open"]) => void }) {
+  const { t } = useTranslation();
+  const compact = useIsOutlineCompact();
+  const { available, open } = useOutlineMenu();
+  if (!compact || !available) return null;
+  return (
+    <DropdownMenuItem
+      onSelect={(event) => {
+        event.preventDefault();
+        onActivate(open);
+      }}
+    >
+      <ListTree className="mr-2 h-4 w-4" />
+      {t("note.outline.label")}
     </DropdownMenuItem>
   );
 }
@@ -463,6 +485,15 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
               <Presentation className="mr-2 h-4 w-4" />
               {t("note.menu.present")}
             </DropdownMenuItem>
+            {/* 標題導覽（#465）：只在頁首 ⋮、視窗窄於 768px、這篇有標題時（見 `OutlineMenuItem`）。面板沒有觸發鈕，關閉時焦點交還 ⋮ 觸發鈕。 */}
+            {trigger === "header" && (
+              <OutlineMenuItem
+                onActivate={(open) => {
+                  setMenuOpen(false);
+                  open(triggerRef.current);
+                }}
+              />
+            )}
             {/* 寬度：只在頁首 ⋮（側欄每列沒有頁首寬度鈕要補）。兩種形與展開狀態見 `NoteWidthMenuItems`。 */}
             {trigger === "header" && !phone && widthItems?.({ expanded: widthExpanded, onExpandedChange: setWidthExpanded, onModeChange: closeAndReset })}
             {/* 版本歷史：只在 `useVersions().enabled`（＝canEdit，且在 NotePage 的 VersionsProvider 之內）時渲染——

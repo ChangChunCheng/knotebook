@@ -7,6 +7,7 @@ import { useCreateInvite } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { OneTimeLinkResult } from "./OneTimeLinkResult";
 import "@/i18n/management-strings";
 
@@ -15,11 +16,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
-
-/** 與 `PasswordResetDialog` 的 `SELECT_CLASS` 同一份（各檔各自宣告是既有慣例，見 ApiTokensSection）。 */
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7];
 
@@ -105,13 +101,14 @@ function CreateInviteDialogBody({
           {t("admin.invites.expiresField")}
         </label>
         <div>
-          <select id="admin-invite-days" className={SELECT_CLASS} value={days} onChange={(event) => setDays(Number(event.target.value))}>
-            {DAY_OPTIONS.map((n) => (
-              <option key={n} value={n}>
-                {t("admin.invites.days", { count: n })}
-              </option>
-            ))}
-          </select>
+          <Select
+            variant="field"
+            id="admin-invite-days"
+            className="w-fit"
+            value={String(days)}
+            onValueChange={(v) => setDays(Number(v))}
+            options={DAY_OPTIONS.map((n) => ({ value: String(n), label: t("admin.invites.days", { count: n }) }))}
+          />
         </div>
       </div>
       <div className="space-y-1">

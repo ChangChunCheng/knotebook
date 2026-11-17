@@ -2,12 +2,9 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatBytes, type StoragePlanDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { isQuotaReached } from "@/lib/storage-usage";
-
-const SELECT_CLASS =
-  "h-8 max-w-48 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -26,8 +23,8 @@ export function StorageCell({ storage }: { storage: { usedBytes: number; quotaBy
 
 /**
  * 方案下拉，選了即存（失敗 toast）。受控於 server 值：失敗時不必回滾，畫面自然停在原方案。
- * 方案清單還沒到 → 只顯示方案名。目前方案不在清單裡（清單快取比列舊）→ 補一個該方案的 option，
- * 否則瀏覽器會把第一個選項顯示成目前值、使用者一碰就改錯。
+ * 方案清單還沒到 → 只顯示方案名。目前方案不在清單裡（清單快取比列舊）→ 補一個該方案的選項，
+ * 否則觸發鈕找不到對應選項而顯示空白，看不出目前是哪個方案。
  */
 export function PlanSelect({ label, describedBy, planId, planName, plans, onAssign }: {
   label: string;
@@ -44,23 +41,20 @@ export function PlanSelect({ label, describedBy, planId, planName, plans, onAssi
   if (!plans) return <span>{planName}</span>;
   const options = plans.some((p) => p.id === planId) ? plans : [{ id: planId, name: planName }, ...plans];
   return (
-    <select
+    <Select
+      variant="inline"
       aria-label={label}
       aria-describedby={describedBy}
-      className={SELECT_CLASS}
+      className="max-w-48"
       value={pendingId ?? planId}
       disabled={pendingId !== null}
-      onChange={(event) => {
-        const next = event.target.value;
+      options={options.map((p) => ({ value: p.id, label: p.name }))}
+      onValueChange={(next) => {
         setPendingId(next);
         onAssign(next)
           .catch((err: unknown) => toast({ title: errorMessage(t, err), variant: "destructive" }))
           .finally(() => setPendingId(null));
       }}
-    >
-      {options.map((p) => (
-        <option key={p.id} value={p.id}>{p.name}</option>
-      ))}
-    </select>
+    />
   );
 }

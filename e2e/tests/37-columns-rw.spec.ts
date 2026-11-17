@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ORIGIN } from "../ports.js";
-import { ADMIN, adminNav, createNote, editorLocator, loginAs, noteIdFromUrl, openSiteAdmin, selectionAiBox, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, noteIdFromUrl, openSiteAdmin, selectionAiBox, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 並排排版讀寫面（真瀏覽器半）：
@@ -257,7 +257,7 @@ test.describe("站內 AI（ai-stub /echo）", () => {
       const providerDialog = page.getByRole("dialog", { name: "Add provider" });
       const providerName = `E2E Echo Provider ${RUN}`;
       await providerDialog.locator("#ai-provider-name").fill(providerName);
-      await providerDialog.locator("#ai-provider-type").selectOption("openai_compatible");
+      await chooseSelectOption(page, providerDialog.locator("#ai-provider-type"), "OpenAI-compatible");
       await providerDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/echo");
       await providerDialog.getByRole("button", { name: "Create", exact: true }).click();
       await expect(providerDialog).not.toBeVisible();

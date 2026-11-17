@@ -40,9 +40,9 @@
 - **顏色**——文字、背景與表格儲存格的顏色：內建九種顏色，或任選一種顏色。
 - **即時共同編輯**——同一篇筆記上的每個人同時編輯（Yjs 與 Hocuspocus），看得到其他編輯者的游標；筆記頁首顯示還有誰開著這篇，點某人的頭像會跳到他的游標。
 - **筆記之間的連結**——打 `[[`，或貼上、拖入筆記網址；筆記改名後連結仍然有效，連結也可以指向單一段落，每篇筆記也會列出提到它的筆記。
-- **圖片**——在筆記裡加入 PNG、JPEG、GIF 或 WebP 圖片並調整大小；圖片計入筆記所屬空間的儲存方案。
+- **圖片**——在筆記裡加入 PNG、JPEG、GIF 或 WebP 圖片並調整大小，也可全螢幕放大檢視；圖片計入筆記所屬空間的儲存方案。
 - **並排**——兩到四欄的並排，用 `/grid` 或把區塊拖到另一個區塊旁邊建立，拖分隔線調整欄寬（[並排](docs/columns.md)）。
-- **圖表**——Mermaid 圖表，以原始碼儲存、在筆記裡畫出來（[圖表](docs/diagrams.md)）。
+- **圖表**——Mermaid 圖表，以原始碼儲存、在筆記裡畫出來，並可全螢幕放大檢視（[圖表](docs/diagrams.md)）。
 - **筆記寬度**——每篇筆記可設標準、寬或全寬。
 - **版本歷史**——編輯停手後自動存版，也可以手動存；預覽版本、左右並排比較兩個版本，或套用較舊的版本（[版本歷史](docs/versions.md)）。
 - **簡報模式**——把筆記當簡報播放，標題就是投影片；從筆記或它的公開連結都能播。
@@ -157,7 +157,6 @@
 接下來：
 
 - 筆記留言、@ 提及與通知（[#289](https://github.com/sw-willie-wu/knotebook/issues/289)）
-- 放大檢視圖片與 Mermaid 圖（[#462](https://github.com/sw-willie-wu/knotebook/issues/462)）
 - 筆記旁的標題導覽（[#465](https://github.com/sw-willie-wu/knotebook/issues/465)）
 
 規劃記錄在 [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones) 與 [issue tracker](https://github.com/sw-willie-wu/knotebook/issues) 中；歷程見 [CHANGELOG](CHANGELOG.md)。

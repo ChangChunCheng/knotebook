@@ -134,7 +134,7 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await expect(deleteG1.getByRole("radio", { name: "Give them to an admin" })).toBeChecked();
     const adminSelect = deleteG1.getByLabel("Admin who gets the notes");
     await expect(adminSelect).toBeEnabled();
-    await expect(adminSelect.locator("option:checked")).toHaveText(`admin (${ADMIN.email})`);
+    await expect(adminSelect.locator("[data-select-text]")).toHaveText(`admin (${ADMIN.email})`);
     await deleteG1.getByRole("button", { name: "Delete group", exact: true }).click();
     await expect(deleteG1).not.toBeVisible({ timeout: 15_000 });
 

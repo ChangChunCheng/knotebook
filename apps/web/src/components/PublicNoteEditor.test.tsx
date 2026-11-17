@@ -149,3 +149,49 @@ describe("並排公開頁", () => {
     await waitFor(() => expect(document.querySelector('[data-node-type="columnList"]')).toHaveAttribute("data-stacked"));
   });
 });
+
+describe("#465 公開頁把編輯器交給標題大綱", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("掛載時 onEditor 收到編輯器（讀得到文件的標題），卸載時收到 null", async () => {
+    const onEditor = vi.fn();
+    const view = render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <PublicNoteEditor doc={docWith()} publicRef={{ kind: "token", token: "t".repeat(43) }} links={[]} onEditor={onEditor} />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    await screen.findByText("Top");
+    expect(onEditor).toHaveBeenCalledTimes(1);
+    const editor = onEditor.mock.calls[0]![0] as { document: Array<{ id: string; type: string }>; onChange: unknown };
+    expect(editor.document[0]).toMatchObject({ id: "top", type: "heading" });
+    expect(typeof editor.onChange).toBe("function");
+    view.unmount();
+    expect(onEditor).toHaveBeenCalledTimes(2);
+    expect(onEditor).toHaveBeenLastCalledWith(null);
+  });
+
+  it("呼叫端每次 render 換新的回呼也不會重報", async () => {
+    const calls: unknown[] = [];
+    const doc = docWith();
+    const ref = { kind: "token", token: "t".repeat(43) } as const;
+    const ui = () => (
+      <ThemeProvider>
+        <MemoryRouter>
+          <PublicNoteEditor doc={doc} publicRef={ref} links={[]} onEditor={(e) => calls.push(e)} />
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+    const view = render(ui());
+    await screen.findByText("Top");
+    view.rerender(ui());
+    view.rerender(ui());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toBeNull();
+  });
+});

@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stubLayoutTier, tierForWidth } from "@/test/layout-tier";
-import { isOverlay, isPhone, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone } from "./layout-tiers";
+import { stubLayoutTier, tierForWidth, tierMatches } from "@/test/layout-tier";
+import { OUTLINE_COMPACT_QUERY, isNoHover, isOverlay, isPhone, NO_HOVER_QUERY, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone, useNoHover } from "./layout-tiers";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -40,9 +40,15 @@ describe("layout-tiers: JS queries share a boundary with the Tailwind variants",
     expect(remOf(OVERLAY_QUERY)).toBe(tailwindBreakpoint("xl"));
   });
 
+  it("OUTLINE_COMPACT_QUERY is the Tailwind md breakpoint", () => {
+    expect(remOf(OUTLINE_COMPACT_QUERY)).toBe(tailwindBreakpoint("md"));
+  });
+
   it.each([
     [639, "phone"],
-    [640, "overlay"],
+    [640, "compact"],
+    [767, "compact"],
+    [768, "overlay"],
     [1279, "overlay"],
     [1280, "docked"],
   ] as const)("width %i px is the %s tier (rem boundary at 16 px/rem)", (px, tier) => {
@@ -52,6 +58,8 @@ describe("layout-tiers: JS queries share a boundary with the Tailwind variants",
     // `not all and (min-width: Nrem)` matches when the width is below N rem
     expect(!(rem >= remOf(PHONE_QUERY))).toBe(tier === "phone");
     expect(!(rem >= remOf(OVERLAY_QUERY))).toBe(tier !== "docked");
+    expect(!(rem >= remOf(OUTLINE_COMPACT_QUERY))).toBe(tier === "phone" || tier === "compact");
+    expect(tierMatches(tier, OUTLINE_COMPACT_QUERY)).toBe(tier === "phone" || tier === "compact");
   });
 });
 
@@ -132,5 +140,40 @@ describe("layout-tiers: stub change events", () => {
       { matches: true, media: OVERLAY_QUERY },
       { matches: false, media: OVERLAY_QUERY },
     ]);
+  });
+});
+
+describe("layout-tiers: hover capability", () => {
+  it("is false when the query does not match, true when it does", () => {
+    expect(isNoHover()).toBe(false);
+    stubLayoutTier("docked", (q) => q === NO_HOVER_QUERY);
+    expect(isNoHover()).toBe(true);
+  });
+
+  it("useNoHover flips with change events of the (hover: none) query and unsubscribes", () => {
+    let noHover = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        return query === NO_HOVER_QUERY && noHover;
+      },
+      media: query,
+      addEventListener: (_t: string, l: () => void) => {
+        if (query === NO_HOVER_QUERY) listeners.add(l);
+      },
+      removeEventListener: (_t: string, l: () => void) => {
+        listeners.delete(l);
+      },
+    }));
+    const { result, unmount } = renderHook(() => useNoHover());
+    expect(result.current).toBe(false);
+    expect(listeners.size).toBe(1);
+    act(() => {
+      noHover = true;
+      for (const l of [...listeners]) l();
+    });
+    expect(result.current).toBe(true);
+    unmount();
+    expect(listeners.size).toBe(0);
   });
 });

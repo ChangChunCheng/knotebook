@@ -64,18 +64,24 @@ export function sectionUnits(root: HTMLElement, sectionId: string): HTMLElement[
   return found ? picked : null;
 }
 
-const COLLAPSED = ':scope > .bn-block > :is(.bn-block-content, .react-renderer) .bn-toggle-wrapper[data-show-children="false"]';
+/** A block's own row holds a collapsed toggle (`data-show-children="false"`); the open/close button is its direct child. */
+export const COLLAPSED_TOGGLE = ':scope > .bn-block > :is(.bn-block-content, .react-renderer) .bn-toggle-wrapper[data-show-children="false"]';
+
+/** Collapsed-toggle blocks that contain `outer` (not `outer` itself), outermost first. */
+export function collapsedAncestors(root: HTMLElement, outer: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (let node = outer.parentElement?.closest<HTMLElement>(".bn-block-outer") ?? null; node && root.contains(node); node = node.parentElement?.closest<HTMLElement>(".bn-block-outer") ?? null) {
+    if (node.querySelector(COLLAPSED_TOGGLE) !== null) out.unshift(node);
+  }
+  return out;
+}
 
 /**
  * 命中的 block 若在收合的 toggle（toggleListItem、可收合的 heading）底下，子 block 被 `display:none` 藏起來，捲不到、也量不到。
  * 改回**最外層**那個收合的 toggle 的 `.bn-block-outer`（用 `data-show-children="false"` 判斷）。
  */
 function visibleTarget(root: HTMLElement, outer: HTMLElement): HTMLElement {
-  let result = outer;
-  for (let node = outer.parentElement?.closest<HTMLElement>(".bn-block-outer") ?? null; node && root.contains(node); node = node.parentElement?.closest<HTMLElement>(".bn-block-outer") ?? null) {
-    if (node.querySelector(COLLAPSED) !== null) result = node;
-  }
-  return result;
+  return collapsedAncestors(root, outer)[0] ?? outer;
 }
 
 /** 回範圍內第一個含 `findText` 的 block（`.bn-block-outer[data-id]`；在收合的 toggle 底下則回最外層收合的 toggle）；沒有（或範圍不存在）→ null。 */

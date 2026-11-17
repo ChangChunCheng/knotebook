@@ -7,6 +7,7 @@ import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { VersionsProvider, useVersions, useVersionsController } from "@/lib/versions-context";
 import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
 import { CornerStack } from "./CornerStack";
+import { CORNER_STACK_FOOTPRINT_PX, CORNER_STACK_RIGHT_INSET_PX, CORNER_STACK_SIZE_PX } from "./corner-stack-geometry";
 
 /** 探針：印出版本面板狀態，並提供「從 ⋮ 開版本面板」的外部按鈕。 */
 function Probe() {
@@ -99,6 +100,21 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     expect(screen.getByTestId("panel-open")).toHaveTextContent("true");
     expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
     expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
+  });
+
+  it("CORNER_STACK_FOOTPRINT_PX 等於泡泡離下緣 18px 加泡泡高 48px，且泡泡的 class 仍是 bottom-[18px]、h-12", async () => {
+    expect(CORNER_STACK_FOOTPRINT_PX).toBe(18 + 48);
+    renderStack(true);
+    expect(await screen.findByTestId("corner-stack")).toHaveClass("bottom-[18px]");
+    expect(screen.getByTestId("versions-bubble")).toHaveClass("h-12");
+  });
+
+  it("outline rail geometry: right inset 18px and size 48px match the bubble's classes", async () => {
+    expect(CORNER_STACK_RIGHT_INSET_PX).toBe(18);
+    expect(CORNER_STACK_SIZE_PX).toBe(48);
+    renderStack(true);
+    expect(await screen.findByTestId("corner-stack")).toHaveClass("right-[calc(18px+var(--bubble-gutter,var(--scrollbar-size)))]");
+    expect(screen.getByTestId("versions-bubble")).toHaveClass("h-12", "w-12");
   });
 
   it("捲動時不淡出：任何捲動事件後容器沒有 opacity-0／pointer-events-none、沒有計時器", async () => {

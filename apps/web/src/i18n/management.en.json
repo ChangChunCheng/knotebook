@@ -490,14 +490,13 @@
       "description": "How much space your profile pictures and the files in your personal notes take.",
       "usageTitle": "Usage",
       "byKind": "By type",
-      "byKindDescription": "Files and profile pictures, grouped by type.",
+      "byKindDescription": "Files grouped by type. Profile pictures count as images.",
       "kinds": {
         "image": "Images",
         "audio": "Audio",
         "video": "Video",
         "document": "Documents",
-        "other": "Other",
-        "avatar": "Profile pictures"
+        "other": "Other"
       },
       "versionsTitle": "Version history",
       "versionsNote": "Versions and note text don't count toward storage. Files and, in a personal space, profile pictures do."

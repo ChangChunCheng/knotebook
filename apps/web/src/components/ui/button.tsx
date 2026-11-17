@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
  * 全 app 83 顆按鈕長出 12 種 variant×size 組合、8 個檔案在同一畫面混用尺寸）。
  *
  * **預設高度 32px（h-8）；例外有兩類，見下。**
- * `Button`（`icon`／`sm`／`default` 三個 size；`lg` 見例外二）、`Input`、各檔自訂的 `SELECT_CLASS` 預設都是 h-8——同一列的
+ * `Button`（`icon`／`sm`／`default` 三個 size；`lg` 見例外二）、`Input`、`Select` 的 `field` 外觀預設都是 h-8——同一列的
  * 控制項才會等高。改版過程試過「輸入框 36、按鈕 32」與「全部 36」，前者使用者一眼
  * 看出不等高，後者被嫌笨重；最後定在全部 32。
  * ⚠ 動這三個地方任何一個，另外兩個要一起動。`ui/rows.ts` 的 `SIDEBAR_ROW_HEIGHT`

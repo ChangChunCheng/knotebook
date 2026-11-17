@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AdminAuthProviderDto, SiteLimitsDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption } from "@/test/ui-select";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { siteLimitsDto } from "@/test/site-limits-fixtures";
@@ -114,10 +115,10 @@ describe("新增登入服務 dialog（#187）", () => {
     const dialog = await openCreate();
     expect(dialog.getByLabelText("Issuer URL")).toHaveValue("https://gitlab.com");
     expect(dialog.getByLabelText("Display name")).toHaveValue("GitLab");
-    fireEvent.change(dialog.getByLabelText("Template"), { target: { value: "google" } });
+    await chooseOption(dialog.getByLabelText("Template"), "Google");
     expect(dialog.getByLabelText("Issuer URL")).toHaveValue("https://accounts.google.com");
     expect(dialog.getByLabelText("Display name")).toHaveValue("Google");
-    fireEvent.change(dialog.getByLabelText("Template"), { target: { value: "oidc" } });
+    await chooseOption(dialog.getByLabelText("Template"), "Custom OIDC");
     expect(dialog.getByLabelText("Issuer URL")).toHaveValue("");
     expect(dialog.getByLabelText("Display name")).toHaveValue("");
   });
@@ -165,7 +166,7 @@ describe("新增登入服務 dialog（#187）", () => {
     });
     renderSection(server.fetchMock);
     const dialog = await openCreate();
-    fireEvent.change(dialog.getByLabelText("Template"), { target: { value: "oidc" } });
+    await chooseOption(dialog.getByLabelText("Template"), "Custom OIDC");
     fireEvent.change(dialog.getByLabelText("Display name"), { target: { value: "Corp SSO" } });
     fireEvent.change(dialog.getByLabelText("Issuer URL"), { target: { value: "https://idp.example.com" } });
     fireEvent.change(dialog.getByLabelText("Client ID"), { target: { value: "corp-client" } });
@@ -218,7 +219,7 @@ describe("新增登入服務 dialog（#187）", () => {
     });
     renderSection(server.fetchMock);
     const dialog = await openCreate();
-    fireEvent.change(dialog.getByLabelText("Template"), { target: { value: "oidc" } });
+    await chooseOption(dialog.getByLabelText("Template"), "Custom OIDC");
     fireEvent.change(dialog.getByLabelText("Display name"), { target: { value: "   " } });
     fireEvent.change(dialog.getByLabelText("Issuer URL"), { target: { value: "HTTPS://idp.example.com" } });
     fireEvent.change(dialog.getByLabelText("Client ID"), { target: { value: "c" } });
