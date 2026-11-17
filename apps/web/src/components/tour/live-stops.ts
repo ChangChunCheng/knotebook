@@ -2,7 +2,8 @@ import { SuggestionMenu } from "@blocknote/core";
 import i18n from "@/i18n";
 import "@/i18n/tour-strings";
 import { getTourNoteEditor, setTourTransactionFilter, type TourEditor } from "@/lib/tour-bridge";
-import { findFormattingToolbarButton, findTourTarget, type TourTargetId } from "@/lib/tour-targets";
+import { findFormattingToolbarButton, findTourTarget } from "@/lib/tour-find";
+import type { TourTargetId } from "@/lib/tour-targets";
 
 /**
  * 功能導覽的現場演示：在示範筆記的編輯器裡叫出真的選單，或框選一句讓格式工具列出現，整個過程不寫文件。
@@ -13,6 +14,9 @@ import { findFormattingToolbarButton, findTourTarget, type TourTargetId } from "
  *   過濾是常駐外掛上的旗標，演示中不註冊也不拆外掛（選單開著時動態註冊會弄壞選單的狀態）。
  * - 離站由站點的 `leave` 呼叫 `stopLiveTrigger`：關選單、還原選取、關過濾。可以重複呼叫，也可以在沒開始過時呼叫。
  * - AI 站不開選單，只用一筆交易把演示句設成選取（`startLiveSelection`），讓格式工具列自己出現；離站把選取收合（`stopLiveSelection`）。
+ * - 演示會把焦點放進編輯器：觸控裝置會因此叫出螢幕鍵盤，蓋住半個畫面、把頁面往上推。演示期間本來就不收打字，
+ *   所以先在編輯器的可編輯元素上設 `inputmode="none"`（在聚焦之前），離站時還原成原本的值（原本沒有就拿掉）。
+ *   不用失焦來收鍵盤：選單在編輯器失焦時會關。
  */
 
 export type TourTrigger = "[[" | "/";
@@ -54,6 +58,35 @@ export function canRunLiveStop(noteId: string): boolean {
   }
 }
 
+/**
+ * 壓過 `inputmode` 的那個可編輯元素與它原本的值（null＝原本沒有），以示範筆記的 id 為鍵。記元素本身而不是編輯器：
+ * 離站時編輯器可能已經從登記處撤掉，或正暫時卸載（重掛回同一個元素）而回報已銷毀，照樣要把屬性還原。
+ */
+const suppressed = new Map<string, { dom: HTMLElement; previous: string | null }>();
+
+/** 演示期間不叫出螢幕鍵盤（見檔頭）。重複呼叫只記第一次的原值。 */
+function suppressKeyboard(noteId: string, editor: TourEditor): void {
+  if (suppressed.has(noteId)) return;
+  const dom = editor._tiptapEditor.view.dom;
+  suppressed.set(noteId, { dom, previous: dom.getAttribute("inputmode") });
+  dom.setAttribute("inputmode", "none");
+}
+
+/**
+ * 把 `inputmode` 還原成演示前的樣子；沒有壓過就不動。焦點還在那個元素裡時先讓它失焦：聚焦中的元素換回會叫鍵盤的 `inputmode`，
+ * 觸控裝置可能當場把鍵盤叫出來（這時選單已經關了，失焦不影響演示；下一站要用編輯器的話會自己再聚焦）。
+ */
+function restoreKeyboard(noteId: string): void {
+  const saved = suppressed.get(noteId);
+  if (saved === undefined) return;
+  suppressed.delete(noteId);
+  const { dom, previous } = saved;
+  const focused = document.activeElement;
+  if (focused instanceof HTMLElement && dom.contains(focused)) focused.blur();
+  if (previous === null) dom.removeAttribute("inputmode");
+  else dom.setAttribute("inputmode", previous);
+}
+
 /** `trigger` 的選單目前是不是開著（外掛狀態，不看畫面）。兩種選單共用同一個外掛，所以要再比對是哪個觸發字開的。 */
 export function isTriggerMenuShown(editor: TourEditor, trigger: TourTrigger): boolean {
   const menu = menuOf(editor);
@@ -92,15 +125,17 @@ export function startLiveTrigger(noteId: string, trigger: TourTrigger): void {
   const editor = getTourNoteEditor(noteId);
   if (editor === null) return;
   setTourTransactionFilter(noteId, true);
+  suppressKeyboard(noteId, editor);
   startTourTrigger(editor, trigger);
 }
 
-/** 站點的 `leave`：關選單、還原選取、關過濾。 */
+/** 站點的 `leave`：關選單、還原選取、還原 `inputmode`、關過濾。 */
 export function stopLiveTrigger(noteId: string): void {
+  const editor = getTourNoteEditor(noteId);
   try {
-    const editor = getTourNoteEditor(noteId);
     if (editor !== null) stopTourTrigger(editor);
   } finally {
+    restoreKeyboard(noteId);
     // 關選單拋錯也要關過濾，否則使用者在這篇的輸入會一直被擋到導覽結束。
     setTourTransactionFilter(noteId, false);
   }
@@ -145,6 +180,7 @@ export function startLiveSelection(noteId: string): void {
   const range = findDemoSentenceRange(view.state.doc);
   if (range === null) return;
   selecting.add(editor);
+  suppressKeyboard(noteId, editor);
   editor.focus();
   const { state } = view;
   // TextSelection 沒有可 import 的來源：從目前選取的 class 取（`near` 在文字段落裡必回 TextSelection）。
@@ -155,10 +191,10 @@ export function startLiveSelection(noteId: string): void {
   view.dispatch(state.tr.setSelection(TextSel.create(state.doc, range.from, range.to)).scrollIntoView());
 }
 
-/** 站點的 `leave`（AI 站）：把選取收合到末端、關過濾。沒開始過、重複呼叫都是空操作；過濾一定關。 */
+/** 站點的 `leave`（AI 站）：把選取收合到末端、還原 `inputmode`、關過濾。沒開始過、重複呼叫都是空操作；過濾一定關。 */
 export function stopLiveSelection(noteId: string): void {
+  const editor = getTourNoteEditor(noteId);
   try {
-    const editor = getTourNoteEditor(noteId);
     if (editor !== null && selecting.delete(editor) && !editor._tiptapEditor.isDestroyed) {
       const { state, view } = editor._tiptapEditor;
       if (!state.selection.empty) {
@@ -167,6 +203,7 @@ export function stopLiveSelection(noteId: string): void {
       }
     }
   } finally {
+    restoreKeyboard(noteId);
     setTourTransactionFilter(noteId, false);
   }
 }

@@ -17,8 +17,8 @@ export type TourEditor = BlockNoteEditor<any, any, any>;
 
 /** AppShell 交出的側欄控制。全部是穩定函式，呼叫當下才讀狀態。 */
 export interface ShellControls {
-  /** 切側欄 tab。⚠ 窄視窗時會順便打開抽屜（`SidebarTabActions.showTab`）。 */
-  showTab: (tab: SidebarTab) => void;
+  /** 切側欄 tab。⚠ 預設窄視窗時會順便打開抽屜、手機會回清單畫面；`reveal: false` 只換 tab（`SidebarTabActions.showTab`）。 */
+  showTab: (tab: SidebarTab, options?: { reveal?: boolean }) => void;
   /** 在選取模式就結束並回 true；否則回 false。 */
   endSelectionIfActive: () => boolean;
   closeDrawer: () => void;

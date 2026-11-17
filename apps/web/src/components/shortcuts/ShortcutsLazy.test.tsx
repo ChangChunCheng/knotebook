@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AiActionDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { TourContext } from "@/lib/tour-context";
-import { findUserMenuReturnTarget } from "@/lib/tour-targets";
+import { findUserMenuReturnTarget } from "@/lib/tour-find";
 import type { ShortcutsStartPage } from "@/lib/shortcuts-dialog";
 import { RELEASE_HIGHLIGHTS } from "./release-highlights";
 import { ShortcutsContent } from "./ShortcutsLazy";

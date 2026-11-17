@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   arrowPath,
   CARD_GAP,
+  cardInsets,
+  cardMaxSize,
+  MIN_CARD_ROOM,
   HOLE_PADDING,
   HOLE_RADIUS,
   padRect,
   placeCard,
   unionRect,
   VIEWPORT_MARGIN,
+  type Insets,
   type Rect,
   type Size,
 } from "./geometry";
@@ -121,6 +125,88 @@ describe("placeCard：下、上、右、左；四邊放不下且有挖洞就貼�
     const narrow: Size = { width: 300, height: 600 };
     const p = placeCard({ left: 100, top: 40, width: 40, height: 40 }, { width: 320, height: 160 }, narrow);
     expect(p.left).toBe(VIEWPORT_MARGIN);
+  });
+});
+
+describe("placeCard：避開 insets（safe area、手機的頁首與底部圓形鈕）", () => {
+  // 390×844 的手機：頂端 47 的瀏海、釘住的頁首到 110；底部 34 的 Home 指示條、圓形鈕從底部往上 88。
+  const PHONE: Size = { width: 390, height: 844 };
+  const INSETS: Insets = { top: 110, right: 0, bottom: 88, left: 0 };
+  const m = VIEWPORT_MARGIN;
+
+  const inside = (p: { left: number; top: number }, card: Size, insets: Insets, viewport: Size = PHONE) => {
+    expect(p.left).toBeGreaterThanOrEqual(insets.left + m);
+    expect(p.top).toBeGreaterThanOrEqual(insets.top + m);
+    expect(p.left + card.width).toBeLessThanOrEqual(viewport.width - insets.right - m);
+    expect(p.top + card.height).toBeLessThanOrEqual(viewport.height - insets.bottom - m);
+  };
+
+  it("沒有挖洞：在範圍內置中，不是在整個視窗置中", () => {
+    const p = placeCard(null, CARD, PHONE, INSETS);
+    inside(p, CARD, INSETS);
+    expect(p.top).toBe((INSETS.top + m + (PHONE.height - INSETS.bottom - m) - CARD.height) / 2);
+  });
+
+  it("挖洞在釘住的頂列裡（頭像）：卡片放在邊帶下緣，不是挖洞正下方（那裡還在邊帶裡）", () => {
+    const avatar = padRect({ left: 340, top: 50, width: 32, height: 32 });
+    // 挖洞正下方加間距還在邊帶裡，卡片要被推到邊帶下緣。
+    expect(avatar.top + avatar.height + CARD_GAP).toBeLessThan(INSETS.top + m);
+    const p = placeCard(avatar, CARD, PHONE, INSETS);
+    expect(p.placement).toBe("bottom");
+    expect(p.top).toBe(INSETS.top + m);
+    inside(p, CARD, INSETS);
+  });
+
+  it("挖洞是右下的圓形鈕：卡片放在上方，不疊在圓形鈕那一帶", () => {
+    const fab = padRect({ left: 318, top: 772, width: 56, height: 56 });
+    const p = placeCard(fab, CARD, PHONE, INSETS);
+    expect(p.placement).toBe("top");
+    expect(p.top + CARD.height).toBeLessThanOrEqual(fab.top - CARD_GAP);
+    inside(p, CARD, INSETS);
+  });
+
+  it("左右的 safe area（橫拿的瀏海）也讓開", () => {
+    const side: Insets = { top: 0, right: 47, bottom: 21, left: 47 };
+    const wide: Size = { width: 844, height: 390 };
+    const p = placeCard(padRect({ left: 50, top: 20, width: 32, height: 32 }), CARD, wide, side);
+    inside(p, CARD, side, wide);
+  });
+
+  it("320 寬：卡片的最大寬度是範圍的寬，放上去不出界", () => {
+    const narrow: Size = { width: 320, height: 568 };
+    const max = cardMaxSize(narrow, INSETS);
+    expect(max.width).toBe(320 - 2 * m);
+    expect(max.height).toBe(568 - INSETS.top - INSETS.bottom - 2 * m);
+    const card: Size = { width: max.width, height: 200 };
+    inside(placeCard(null, card, narrow, INSETS), card, INSETS, narrow);
+    inside(placeCard(padRect({ left: 250, top: 496, width: 56, height: 56 }), card, narrow, INSETS), card, INSETS, narrow);
+  });
+
+  it("cardInsets：safe area 與邊帶每邊取大的；扣完不到 MIN_CARD_ROOM 高（橫拿的小手機）就只留 safe area", () => {
+    const safe: Insets = { top: 0, right: 44, bottom: 21, left: 44 };
+    const band: Insets = { top: 110, right: 0, bottom: 88, left: 0 };
+    expect(cardInsets(safe, band, PHONE)).toEqual({ top: 110, right: 44, bottom: 88, left: 44 });
+    const landscape: Size = { width: 568, height: 320 };
+    expect(cardMaxSize(landscape, { top: 110, right: 44, bottom: 88, left: 44 }).height).toBeLessThan(MIN_CARD_ROOM);
+    expect(cardInsets(safe, band, landscape)).toEqual(safe);
+    // 剛好夠就照常避開。
+    const justEnough: Size = { width: 568, height: 110 + 88 + 2 * m + MIN_CARD_ROOM };
+    expect(cardInsets(safe, band, justEnough)).toEqual({ top: 110, right: 44, bottom: 88, left: 44 });
+  });
+
+  it("cardInsets：畫面太小時只放掉 keepOut，被鍵盤蓋住的 blocked 照樣讓開", () => {
+    const safe: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
+    const band: Insets = { top: 60, right: 0, bottom: 72, left: 0 };
+    const keyboard: Insets = { top: 0, right: 0, bottom: 180, left: 0 };
+    const small: Size = { width: 568, height: 400 };
+    expect(cardMaxSize(small, { ...band, bottom: 180 }).height).toBeLessThan(MIN_CARD_ROOM);
+    expect(cardInsets(safe, band, small, keyboard)).toEqual(keyboard);
+    expect(cardInsets(safe, band, PHONE, keyboard)).toEqual({ top: 60, right: 0, bottom: 180, left: 0 });
+  });
+
+  it("不給 insets 時與以前一樣（只離視窗邊 VIEWPORT_MARGIN）", () => {
+    expect(cardMaxSize(VIEWPORT)).toEqual({ width: VIEWPORT.width - 2 * m, height: VIEWPORT.height - 2 * m });
+    expect(placeCard(null, CARD, VIEWPORT)).toEqual(placeCard(null, CARD, VIEWPORT, { top: 0, right: 0, bottom: 0, left: 0 }));
   });
 });
 

@@ -118,7 +118,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
    * 開始流程中止（逾時、位置離開示範筆記、沒辦法準備）：跳一則提示、收掉這一輪；示範筆記還沒寫入內容就移到垃圾桶。
    * 要移的筆記正開著時先導回原頁、等位置生效再移：開著的筆記被移到垃圾桶，筆記頁會走「已被刪除」的離場路徑、再跳一則提示。
    * 收掉 `TourRunner` 會中止 `prepareSample`，它的 `bail` 比導回原頁的 transition 先跑；這裡跑著的期間（`ending` 且還沒 `settled`）
-   * 移垃圾桶只由這裡做，`bail` 不動手，「先導回再移」才成立。最後把焦點還給 `returnFocus`（使用者選單的觸發鈕；窄視窗是開側欄抽屜的漢堡鈕）。
+   * 移垃圾桶只由這裡做，`bail` 不動手，「先導回再移」才成立。最後把焦點還給 `returnFocus`（使用者選單的觸發鈕：寬視窗是側欄的帳號列，側欄浮動時是開抽屜的側欄鈕，手機是清單頂列的頭像）。
    * 使用者自己導到別處而中止時也一樣還焦點，與導覽正常結束、或第 1 站之後離開示範筆記時的行為一致。
    */
   const abortStart = async () => {
@@ -193,10 +193,11 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     return note;
   };
 
-  // 第 1 站出現之前，位置離開示範筆記（例如點了側欄別篇）＝中止。第 1 站之後由 `TourRunner` 當成結束處理。
+  // 示範內容寫好之前，位置離開示範筆記（例如點了側欄別篇）＝中止。寫好之後換畫面由 `TourRunner` 管（手機的第 1 站在清單上），
+  // 離開該在的畫面也由它當成結束處理（第 1 站還沒出現時一樣回報 `started: false`，走這裡的中止）。
   useEffect(() => {
     const session = sessionRef.current;
-    if (session.started || session.ending || session.note === null) return;
+    if (session.started || session.ending || session.note === null || session.phase === "seeded") return;
     if (samePath(location.pathname, canonicalNotePath(session.note))) session.arrived = true;
     else if (session.arrived) abortFromEffect();
   }, [location.pathname]);

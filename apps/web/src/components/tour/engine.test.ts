@@ -6,17 +6,22 @@ import {
   fetchTourAiActions,
   focusReturnTarget,
   fullTourStops,
+  measureCardBands,
   measureTargets,
   planStops,
   RETURN_FOCUS_TIMEOUT_MS,
   samePath,
   TARGET_TIMEOUT_MS,
   TourEngine,
+  tourProgress,
   waitForDrawerClosed,
+  waitForStopTarget,
   type TourStopEntry,
 } from "./engine";
+import { LIST_STICKY_TOP_VAR, STICKY_TOP_VAR } from "@/lib/page-scroll";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { buildSequence } from "./sequence";
-import { FULL_TOUR, STOPS, type StopContext, type StopDef, type StopId } from "./stops";
+import { FULL_TOUR, STOPS, type StopContext, type StopDef, type StopId, type TourScreen } from "./stops";
 
 const CTX: StopContext = { searchQuery: "", aiActions: [], sampleNoteId: "n1", liveStops: false };
 const AI_ACTION: AiActionDto = { id: "rewrite", name: "Rewrite", applyMode: "preview", kind: "quick" };
@@ -42,7 +47,10 @@ interface FakeStop {
 }
 
 /** 假站點：`present=false` 的站目標一直是 0 尺寸（等不到）；`missing=true` 的站根本查不到元素。 */
-function fakeStop(name: string, opts: { present?: boolean; missing?: boolean; precondition?: (ctx: StopContext) => boolean } = {}): FakeStop {
+function fakeStop(
+  name: string,
+  opts: { present?: boolean; missing?: boolean; precondition?: (ctx: StopContext) => boolean; skipOnPhone?: boolean; phoneScreen?: "list" } = {},
+): FakeStop {
   const el = opts.missing ? null : targetEl(opts.present ?? true);
   const prepare = vi.fn();
   const leave = vi.fn();
@@ -54,6 +62,8 @@ function fakeStop(name: string, opts: { present?: boolean; missing?: boolean; pr
     prepare,
     leave,
     precondition: opts.precondition,
+    skipOnPhone: opts.skipOnPhone,
+    phoneScreen: opts.phoneScreen,
   };
   return { entry: { stop }, prepare, leave, el };
 }
@@ -279,6 +289,265 @@ describe("往回走也跳站", () => {
     engine.back();
     await vi.advanceTimersByTimeAsync(TARGET_TIMEOUT_MS + 50);
     expect(engine.getSnapshot()).toMatchObject({ index: 1, pending: false });
+  });
+});
+
+describe("手機上沒有的站", () => {
+  it("手機：立刻跳過（不等目標、不跑 prepare，leave 照樣一次），往前往後都一樣", async () => {
+    stubLayoutTier("phone");
+    const a = fakeStop("a");
+    const b = fakeStop("b", { skipOnPhone: true });
+    const c = fakeStop("c");
+    const engine = engineOf([a, b, c]);
+    await engine.begin();
+    engine.next();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ids(engine)).toBe("c");
+    expect(engine.getSnapshot().pending).toBe(false);
+    expect(b.prepare).not.toHaveBeenCalled();
+    expect(b.leave).toHaveBeenCalledTimes(1);
+    engine.back();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ids(engine)).toBe("a");
+    expect(b.leave).toHaveBeenCalledTimes(2);
+  });
+
+  it("waitForStopTarget：手機上沒有的站當下就回 false，目標明明在也一樣；其他版面照常找到", async () => {
+    const b = fakeStop("b", { skipOnPhone: true });
+    const tier = stubLayoutTier("phone");
+    const signal = new AbortController().signal;
+    let settled: boolean | null = null;
+    void waitForStopTarget(b.entry, CTX, signal).then((v) => (settled = v));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    tier.setLayoutTier("overlay");
+    await expect(waitForStopTarget(b.entry, CTX, signal)).resolves.toBe(true);
+  });
+
+  it("側欄浮動、寬視窗：照常進站", async () => {
+    for (const tier of ["overlay", "docked"] as const) {
+      stubLayoutTier(tier);
+      const b = fakeStop("b", { skipOnPhone: true });
+      const engine = engineOf([fakeStop("a"), b, fakeStop("c")]);
+      await engine.begin();
+      engine.next();
+      await frames();
+      expect(ids(engine), tier).toBe("b");
+      engine.end("close");
+    }
+  });
+});
+
+describe("換畫面（StopContext.showScreen）", () => {
+  /** 記下呼叫順序：換畫面、prepare。`gate` 讓換畫面卡住，等呼叫端放行。 */
+  function recorder() {
+    const calls: string[] = [];
+    let release: () => void = () => {};
+    let gate: Promise<void> | null = null;
+    const showScreen = vi.fn(async (screen: TourScreen) => {
+      calls.push(`screen:${screen}`);
+      if (gate !== null) await gate;
+    });
+    return {
+      calls,
+      showScreen,
+      hold: () => {
+        gate = new Promise<void>((r) => (release = r));
+      },
+      release: () => {
+        gate = null;
+        release();
+      },
+    };
+  }
+
+  function track(stop: FakeStop, calls: string[]): FakeStop {
+    stop.prepare.mockImplementation(() => calls.push(`prepare:${stop.entry.stop.id}`));
+    return stop;
+  }
+
+  it("手機：每站先換到它的畫面（清單上的站到清單，其餘到示範筆記）再 prepare；往回走也一樣", async () => {
+    stubLayoutTier("phone");
+    const r = recorder();
+    const engine = new TourEngine(
+      [track(fakeStop("a", { phoneScreen: "list" }), r.calls), track(fakeStop("b"), r.calls), track(fakeStop("c", { phoneScreen: "list" }), r.calls)].map((s) => s.entry),
+      { ...CTX, showScreen: r.showScreen },
+    );
+    await engine.begin();
+    engine.next();
+    await frames();
+    engine.next();
+    await frames();
+    engine.back();
+    await frames();
+    expect(ids(engine)).toBe("b");
+    expect(r.calls).toEqual(["screen:list", "prepare:a", "screen:note", "prepare:b", "screen:list", "prepare:c", "screen:note", "prepare:b"]);
+  });
+
+  it("其他版面一律在示範筆記上；手機上沒有的站不換畫面", async () => {
+    for (const tier of ["docked", "overlay"] as const) {
+      stubLayoutTier(tier);
+      const r = recorder();
+      const engine = new TourEngine([fakeStop("a", { phoneScreen: "list" }), fakeStop("b")].map((s) => s.entry), { ...CTX, showScreen: r.showScreen });
+      await engine.begin();
+      engine.next();
+      await frames();
+      expect(r.calls, tier).toEqual(["screen:note", "screen:note"]);
+      engine.end("close");
+    }
+    stubLayoutTier("phone");
+    const r = recorder();
+    const engine = new TourEngine([fakeStop("a"), fakeStop("b", { skipOnPhone: true }), fakeStop("c")].map((s) => s.entry), { ...CTX, showScreen: r.showScreen });
+    await engine.begin();
+    engine.next();
+    await frames();
+    expect(ids(engine)).toBe("c");
+    expect(r.calls).toEqual(["screen:note", "screen:note"]);
+  });
+
+  it("換畫面還沒好之前不 prepare、不進站；期間結束 → 那一站 leave 一次、prepare 不跑", async () => {
+    stubLayoutTier("phone");
+    const r = recorder();
+    const a = fakeStop("a");
+    const b = fakeStop("b", { phoneScreen: "list" });
+    const engine = new TourEngine([a, b].map((s) => s.entry), { ...CTX, showScreen: r.showScreen });
+    await engine.begin();
+    r.hold();
+    engine.next();
+    await frames();
+    expect(engine.getSnapshot()).toMatchObject({ pending: true, index: 0 });
+    expect(b.prepare).not.toHaveBeenCalled();
+    engine.end("close");
+    r.release();
+    await frames();
+    expect(b.prepare).not.toHaveBeenCalled();
+    expect(b.leave).toHaveBeenCalledTimes(1);
+    expect(engine.getSnapshot().phase).toBe("ended");
+  });
+
+  it("換畫面拋錯只記 console，照樣 prepare、等目標", async () => {
+    stubLayoutTier("phone");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const a = fakeStop("a", { phoneScreen: "list" });
+    const engine = new TourEngine([a.entry], { ...CTX, showScreen: () => Promise.reject(new Error("boom")) });
+    await engine.begin();
+    expect(ids(engine)).toBe("a");
+    expect(a.prepare).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("卡片上的「n / N」", () => {
+  const entries = () => [fakeStop("a"), fakeStop("b", { skipOnPhone: true }), fakeStop("c"), fakeStop("d")].map((s) => s.entry);
+
+  it("手機不數手機上沒有的站；其他版面全數", () => {
+    const stops = entries();
+    expect(tourProgress(stops, 0, "phone")).toEqual({ step: 1, total: 3 });
+    expect(tourProgress(stops, 2, "phone")).toEqual({ step: 2, total: 3 });
+    expect(tourProgress(stops, 3, "phone")).toEqual({ step: 3, total: 3 });
+    for (const layout of ["wide", "floating"] as const) {
+      expect(tourProgress(stops, 2, layout)).toEqual({ step: 3, total: 4 });
+      expect(tourProgress(stops, 3, layout)).toEqual({ step: 4, total: 4 });
+    }
+  });
+
+  it("畫面上那一站一定算進去（導覽中換到手機時卡片還停在它上面）", () => {
+    expect(tourProgress(entries(), 1, "phone")).toEqual({ step: 2, total: 4 });
+  });
+
+  it("完整導覽有 AI 站時：手機少一站，最後一站仍是 N / N", () => {
+    const planned = planStops(fullTourStops(), { ...CTX, aiActions: [AI_ACTION] });
+    const last = planned.length - 1;
+    expect(tourProgress(planned, last, "wide")).toEqual({ step: 10, total: 10 });
+    expect(tourProgress(planned, last, "phone")).toEqual({ step: 9, total: 9 });
+  });
+});
+
+describe("measureCardBands", () => {
+  afterEach(() => {
+    document.documentElement.style.removeProperty(STICKY_TOP_VAR);
+    document.documentElement.style.removeProperty(LIST_STICKY_TOP_VAR);
+  });
+
+  const NONE = { top: 0, right: 0, bottom: 0, left: 0 };
+
+  function fab(rect: DOMRect, inert = false): void {
+    let slot = document.querySelector("[data-phone-fab-slot]");
+    if (slot === null) {
+      slot = document.createElement("div");
+      slot.setAttribute("data-phone-fab-slot", "");
+      document.body.append(slot);
+    }
+    const holder = document.createElement("div");
+    if (inert) holder.setAttribute("inert", "");
+    const button = document.createElement("button");
+    button.setAttribute("data-phone-fab", "x");
+    button.getBoundingClientRect = () => rect;
+    holder.append(button);
+    slot.append(holder);
+  }
+
+  function toolbar(top: number): void {
+    const el = document.createElement("div");
+    el.setAttribute("data-mobile-edit-toolbar", "");
+    el.getBoundingClientRect = () => new DOMRect(0, top, 390, 44);
+    document.body.append(el);
+  }
+
+  it("手機：keepOut 上緣是釘住的筆記頁首，下緣讓開看得到的圓形鈕（看不到的、不可互動的不算）；沒有鍵盤時 blocked 全 0", () => {
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "96px");
+    fab(new DOMRect(16, window.innerHeight - 72, 56, 56));
+    fab(new DOMRect(300, window.innerHeight - 80, 56, 56));
+    fab(new DOMRect(0, 0, 0, 0));
+    fab(new DOMRect(100, 10, 56, 56), true);
+    expect(measureCardBands("phone")).toEqual({ keepOut: { top: 96, right: 0, bottom: 80, left: 0 }, blocked: NONE });
+  });
+
+  it("手機：螢幕鍵盤升起（視覺視窗變矮、innerHeight 不變）算在 blocked，不算在 keepOut", () => {
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "96px");
+    vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 0, scale: 1 });
+    const bands = measureCardBands("phone");
+    expect(bands.blocked.bottom).toBe(300);
+    expect(bands.keepOut.bottom).toBe(0);
+  });
+
+  it("手機：鍵盤上方的編輯工具列也算在 blocked（取高的那個）；圓形鈕仍在 keepOut", () => {
+    vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 0, scale: 1 });
+    toolbar(window.innerHeight - 344);
+    fab(new DOMRect(16, window.innerHeight - 72, 56, 56));
+    const bands = measureCardBands("phone");
+    expect(bands.blocked.bottom).toBe(344);
+    expect(bands.keepOut.bottom).toBe(72);
+  });
+
+  it("手機：鍵盤把版面往上推（視覺視窗 offsetTop > 0）時，被推出畫面的那一段算在 blocked 上緣；雙指放大時不算", () => {
+    vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 120, scale: 1 });
+    expect(measureCardBands("phone").blocked.top).toBe(120);
+    vi.stubGlobal("visualViewport", { height: window.innerHeight / 2, offsetTop: 120, scale: 2 });
+    expect(measureCardBands("phone").blocked.top).toBe(0);
+    vi.stubGlobal("visualViewport", { height: window.innerHeight, offsetTop: 0, scale: 1 });
+    expect(measureCardBands("phone").blocked.top).toBe(0);
+  });
+
+  it("手機清單畫面：上緣是釘住的頂列與清單標題列（變數還沒寫入時至少讓開頂列）", () => {
+    const list = document.createElement("aside");
+    list.setAttribute("data-phone-list-shown", "");
+    const bar = document.createElement("div");
+    bar.setAttribute("data-phone-top-bar", "");
+    bar.getBoundingClientRect = () => new DOMRect(0, 0, 390, 48);
+    list.append(bar);
+    document.body.append(list);
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "200px");
+    expect(measureCardBands("phone").keepOut.top).toBe(48);
+    document.documentElement.style.setProperty(LIST_STICKY_TOP_VAR, "90px");
+    expect(measureCardBands("phone").keepOut.top).toBe(90);
+  });
+
+  it("其他版面不避開任何東西", () => {
+    document.documentElement.style.setProperty(STICKY_TOP_VAR, "96px");
+    vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 0, scale: 1 });
+    fab(new DOMRect(16, window.innerHeight - 72, 56, 56));
+    for (const layout of ["wide", "floating"] as const) expect(measureCardBands(layout)).toEqual({ keepOut: NONE, blocked: NONE });
   });
 });
 
@@ -509,6 +778,31 @@ describe("focusReturnTarget", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(done).toHaveBeenCalledWith(title);
     expect(document.activeElement).toBe(title);
+  });
+
+  it("手機：查不到 → 退到回清單的「‹」，不退到標題框（聚焦文字框會叫出鍵盤）", async () => {
+    stubLayoutTier("phone");
+    const title = document.createElement("input");
+    title.setAttribute("data-note-title-input", "");
+    document.body.append(title);
+    const back = button("Back to notes");
+    back.setAttribute("data-kb-tour-target", "backToList");
+    const done = focusReturnTarget(() => null, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(RETURN_FOCUS_TIMEOUT_MS + 50);
+    await expect(done).resolves.toBe(back);
+    expect(document.activeElement).toBe(back);
+  });
+
+  it("手機：沒有「‹」→ 主內容區，仍不碰標題框", async () => {
+    stubLayoutTier("phone");
+    const title = document.createElement("input");
+    title.setAttribute("data-note-title-input", "");
+    document.body.append(title);
+    const main = document.createElement("main");
+    document.body.append(main);
+    const done = focusReturnTarget(() => null, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(RETURN_FOCUS_TIMEOUT_MS + 50);
+    await expect(done).resolves.toBe(main);
   });
 
   it("沒有標題框 → 主內容區（本來不能聚焦，補 tabindex=-1）", async () => {

@@ -18,31 +18,37 @@
       "tabs": {
         "title": "Sidebar sections",
         "body": "Switch between lists of notes, such as My notes, Groups and Shared with me, with the tabs at the top of the sidebar. They show icons only; hover over one to see its name. Deleted notes go to the Trash first.",
-        "narrowBody": "The tabs at the top of the sidebar switch between lists of notes, such as My notes, Groups and Shared with me. Deleted notes go to the Trash first. Open the sidebar from here."
+        "narrowBody": "The tabs at the top of the sidebar switch between lists of notes, such as My notes, Groups and Shared with me. Deleted notes go to the Trash first. Open the sidebar from here.",
+        "phoneTitle": "Lists of notes",
+        "phoneBody": "This row of icons switches between lists of notes, such as My notes, Groups and Shared with me. Deleted notes go to the Trash first."
       },
       "newNote": {
         "title": "New note",
         "body": "Click here to create a note. It goes into My notes.",
-        "narrowBody": "\"New note\" at the bottom of the sidebar creates a note in My notes. Open the sidebar from here."
+        "narrowBody": "\"New note\" at the bottom of the sidebar creates a note in My notes. Open the sidebar from here.",
+        "phoneBody": "Tap here to create a note. On a note, the new one goes in the same folder or group as that note; on the list, it goes into My notes."
       },
       "folders": {
         "title": "Folders",
         "body": "Use this button in the My notes header to create a folder. A note's ⋮ menu has \"Move to…\" for putting it into a folder.",
-        "narrowBody": "You can create folders from the My notes header. A note's ⋮ menu has \"Move to…\" for putting it into a folder. Open the sidebar from here."
+        "narrowBody": "You can create folders from the My notes header. A note's ⋮ menu has \"Move to…\" for putting it into a folder. Open the sidebar from here.",
+        "phoneBody": "Tap this button in the My notes header to create a folder. A note's ⋮ menu has \"Move to…\" for putting it into a folder."
       },
       "search": {
         "title": "Search",
         "body": "Press {{mod}}K to search. It finds titles and note text.",
-        "narrowBody": "Press {{mod}}K to open the sidebar with the search box focused. It finds titles and note text. You can also open the sidebar from here."
+        "narrowBody": "Press {{mod}}K to open the sidebar with the search box focused. It finds titles and note text. You can also open the sidebar from here.",
+        "phoneBody": "Tap here to search. It finds titles and note text."
       },
       "header": {
         "title": "Share and more",
-        "body": "\"Share\" invites others to view or edit. The ⋮ menu has \"Present\", \"AI edit history\", \"Move to…\", and \"Copy to…\"."
+        "body": "\"Share\" invites others to view or edit. Switch the note between Standard, Wide and Full width with the icon next to Share or from ⋮ → \"Width\". The ⋮ menu also has \"Present\", \"AI edit history\", \"Move to…\" and \"Copy to…\".",
+        "phoneBody": "\"Share\" invites others to view or edit. The ⋮ menu has \"Present\", \"AI edit history\", \"Move to…\", and \"Copy to…\"."
       },
       "versions": {
         "title": "Version history",
         "body": "Notes save versions automatically by default, and you can press {{mod}}S to save one yourself. Open the version history with this button in the bottom-right corner.",
-        "narrowBody": "Notes save versions automatically by default, and you can press {{mod}}S to save one yourself. The version history is in the ⋮ menu."
+        "phoneBody": "Notes save versions automatically by default. \"Version history\" in the ⋮ menu opens the version history, where you can also save a version yourself."
       },
       "wikilink": {
         "title": "Link to another note",
@@ -54,12 +60,14 @@
       },
       "slash": {
         "title": "Insert blocks with /",
-        "body": "Type / to insert headings, lists, tables, diagrams and more, like the flowchart in this note. For side-by-side columns, pick \"2 columns\" (up to 4), or drag the ⋮⋮ beside a block to the left or right edge of another block. Drag the divider between columns to resize them."
+        "body": "Type / to insert headings, lists, tables, diagrams and more, like the flowchart in this note. For side-by-side columns, pick \"2 columns\" (up to 4), or drag the ⋮⋮ beside a block to the left or right edge of another block. Drag the divider between columns to resize them.",
+        "phoneBody": "Type / to insert headings, lists, tables, diagrams and more, like the flowchart in this note."
       },
       "userMenu": {
         "title": "Forgot how something works?",
         "body": "Press {{mod}}/ or open Help from here: shortcuts, the feature tour and what's new are all there, any time.",
-        "narrowBody": "Press {{mod}}/ or open Help from the menu at the bottom-left of the sidebar: shortcuts, the feature tour and what's new are all there, any time. Open the sidebar from here."
+        "narrowBody": "Press {{mod}}/ or open Help from the menu at the bottom-left of the sidebar: shortcuts, the feature tour and what's new are all there, any time. Open the sidebar from here.",
+        "phoneBody": "Tap your avatar here and choose Help: shortcuts, the feature tour and what's new are all there, any time."
       }
     },
     "sample": {

@@ -36,7 +36,7 @@ import { Awareness } from "y-protocols/awareness";
 import { resetLocalPresenceFieldForTest } from "@/components/presence/local-field";
 import { setRemote, userState } from "@/components/presence/test-awareness";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
-import { findDrawerButton, findTourTarget } from "@/lib/tour-targets";
+import { findDrawerButton, findTourTarget } from "@/lib/tour-find";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { stubLayoutTier } from "@/test/layout-tier";
 

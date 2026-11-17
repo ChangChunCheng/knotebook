@@ -7,7 +7,10 @@ sample note, **What's new** (what the current version added), and the **Keyboard
 ## Opening Help
 
 **Choose Help** in the user menu at the bottom of the sidebar. The window opens on the **Feature tour**
-page.
+page. When the sidebar is folded away (windows narrower than 1280 px), open it with the sidebar button first.
+
+**On a phone** (a screen narrower than 640 px) the user menu is your avatar (your picture or initial) at the top right of the list: tap it and choose
+**Help**. Help opens on its list of pages, so tap **Feature tour**, then **Start tour**.
 
 **Press Ctrl+/** (⌘/ on a Mac). The window opens on the **General** shortcuts. Press the shortcut again or Esc to close it.
 It doesn't open while another dialog or menu is open, during a presentation, or on pages without the
@@ -43,7 +46,7 @@ shows "n / N", **Back** and **Next**; the first stop has **Skip feature tour** i
 | New note | The button that creates a note in My notes |
 | Folders | The button that creates a folder, and **Move to…** in a note's `⋮` menu |
 | Search | The search box, and Ctrl+K (⌘K on a Mac) |
-| Share and more | **Share** and the `⋮` menu in the note header |
+| Share and more | **Share**, the width button next to it (Standard, Wide, Full width; also under `⋮` → **Width**; not on a phone) and the `⋮` menu in the note header |
 | Version history | The version history button |
 | Link to another note | The `[[` menu, shown live |
 | Ask AI about a selection | A selected sentence and the AI button in the toolbar (only when your site has an AI action) |
@@ -53,10 +56,28 @@ shows "n / N", **Back** and **Next**; the first stop has **Skip feature tour** i
 Three of the sidebar stops (sections, folders and search) are left out while the sidebar's search box has
 text in it, because the sidebar then shows search results instead. The total in "n / N" leaves out the stops dropped this way.
 
+**On narrower screens.** When the sidebar is folded away (640 to 1279 px wide), the sidebar stops point at the sidebar button
+instead; the sidebar stays closed during the tour. On a phone the list and a note are separate screens, so the tour moves
+between them:
+
+- It starts on the list, even when you started it from a note. **Lists of notes** (the phone's name for **Sidebar sections**)
+  points at the row of tab icons, **New note** and **Search** at the round buttons at the bottom of the screen, and
+  **Folders** at the New folder button in the My notes header.
+- Then it opens the sample note for **Share and more**, **Version history** (the `⋮` menu, which has **Version history** on a
+  phone) and the `[[` and `/` stops.
+- It goes back to the list for the last stop, which points at your avatar at the top right: Help is in its menu.
+- The AI stop is left out: selecting text on a phone doesn't bring up the toolbar. "n / N" doesn't count it.
+
+**Back** and **Next** move between the two screens as needed; the card disappears for a moment while the screen changes.
+
+If the screen crosses one of these widths during the tour (turning a tablet, resizing the window), the current stop moves
+to that layout's target.
+
 **Live stops.** On the `[[` and `/` stops the real menu opens in the sample note's last, empty paragraph, and the AI stop
 selects the sample sentence so the real toolbar appears. The tour doesn't change the note while it does this: it holds
 back typing and most shortcuts, and nothing is written, so reloading or closing the tab in the middle leaves no half-finished
-edit behind. On these stops use the → and Enter keys for the next stop and ← for the previous one. A few key combinations that
+edit behind. On a touch screen the on-screen keyboard stays down on these stops, although the cursor is in the note; once the
+tour has moved on, tapping the text brings the keyboard up as usual. On these stops use the → and Enter keys for the next stop and ← for the previous one. A few key combinations that
 move the cursor still reach the editor; see [Known limitations](known-limitations.md#feature-tour).
 
 **Ending.** The last stop asks whether to keep the sample note.
@@ -68,8 +89,11 @@ Closing the tour with the ✕ button or Esc, at any stop, always keeps the sampl
 stop. If the sample note's page goes away during the tour (the browser's Back button, reloading the page, or the note
 being deleted somewhere else), the tour ends and the sample note stays.
 
-When the tour ends while you are still on the sample note, you go back to the page you started from. On a wide window the
-sidebar also returns to the section it was showing, and the focus goes back to the user menu button.
+When the tour ends while you are still on the sample note, you go back to the page you started from (on a phone, the list; see the end of this paragraph). On a wide window the
+sidebar also returns to the section it was showing, and the focus goes back to the user menu button. When the sidebar is
+folded away, the focus goes to the sidebar button instead. On a phone, finishing the tour, closing it or skipping it takes you
+back to the list with the focus on your avatar, and the list returns to the tab it was showing; if you leave the tour (the
+browser's Back button, for example), you stay where you went and only the tab is put back.
 
 **If it can't start.** When the sample note can't be created, a message says so. When the first stop isn't up within 15
 seconds, a message says the tour couldn't start, and a sample note that was created but is still empty is moved to the trash.
