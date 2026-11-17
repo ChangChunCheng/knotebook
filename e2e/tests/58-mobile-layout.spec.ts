@@ -1829,7 +1829,7 @@ function expectBubbleInNoteArea(g: Awaited<ReturnType<typeof bubbleGeometry>>, l
   const gapRight = g.clientRight - g.bubble.right;
   expect(g.scrollbar, `${label}：預留捲軸槽`).toBeGreaterThan(0);
   expect(Math.abs(gapRight - gapBottom), `${label}：右邊空隙 ${gapRight}、下邊 ${gapBottom}、槽寬 ${g.scrollbar}`).toBeLessThanOrEqual(1);
-  expect(Math.abs(gapBottom - 24), `${label}：離提及列上緣 24px（實 ${gapBottom}）`).toBeLessThanOrEqual(1);
+  expect(Math.abs(gapBottom - 18), `${label}：離提及列上緣 18px（實 ${gapBottom}）`).toBeLessThanOrEqual(1);
 }
 
 test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻璃、釘在內文區右下角（提及列之上）；捲動時不消失；三種寬度、短／長筆記、有／無提及都一樣；390 沒有泡泡", async ({ browser }) => {

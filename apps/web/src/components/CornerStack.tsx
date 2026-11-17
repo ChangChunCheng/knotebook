@@ -19,7 +19,7 @@ const BUBBLE_HOVER =
  * 筆記右下角的歷史泡泡（< 640 沒有；那裡版本歷史在 ⋮ 選單）。
  *
  * 渲染在內文卡裡、捲動區與頁尾（提及列）之間：外層是零高度的定位基準，貼在捲動區的下緣，
- * 泡泡再往上 24px、離右邊捲軸槽的左緣 24px（捲動區在 640 起固定預留捲軸槽，短筆記也一樣；槽寬量出來，Firefox 的細捲軸較窄也對得上）。
+ * 泡泡再往上 18px、離右邊捲軸槽的左緣 18px（捲動區在 640 起固定預留捲軸槽，短筆記也一樣；槽寬量出來，Firefox 的細捲軸較窄也對得上）。
  * 它釘在筆記區域的右下角、不隨內文捲走，也不會壓到下方的提及列，
  * 不再落在視窗角落蓋到卡片外。三段筆記寬度與固定／浮動兩種版本面板都在同一張卡裡，位置一致。
  * 毛玻璃面與手機浮動鈕同一份（`ui/frosted.ts`）。
@@ -51,7 +51,7 @@ export function CornerStack({ scrollRef }: { scrollRef?: RefObject<HTMLElement |
     <div data-testid="corner-anchor" className="pointer-events-none relative z-20 h-0 shrink-0">
       <div
         data-testid="corner-stack"
-        className="pointer-events-auto absolute bottom-6 right-[calc(1.5rem+var(--bubble-gutter,var(--scrollbar-size)))] flex flex-col-reverse gap-3"
+        className="pointer-events-auto absolute bottom-[18px] right-[calc(18px+var(--bubble-gutter,var(--scrollbar-size)))] flex flex-col-reverse gap-3"
         style={gutter !== null && gutter > 0 ? ({ "--bubble-gutter": `${gutter}px` } as CSSProperties) : undefined}
       >
         <Button

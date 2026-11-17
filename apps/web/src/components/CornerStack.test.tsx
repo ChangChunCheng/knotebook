@@ -49,7 +49,7 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     const stack = await screen.findByTestId("corner-stack");
     expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble"]);
     expect(screen.queryByTestId("ai-bubble")).not.toBeInTheDocument();
-    expect(stack).toHaveClass("absolute", "bottom-6", "right-[calc(1.5rem+var(--bubble-gutter,var(--scrollbar-size)))]", "flex", "flex-col-reverse", "gap-3");
+    expect(stack).toHaveClass("absolute", "bottom-[18px]", "right-[calc(18px+var(--bubble-gutter,var(--scrollbar-size)))]", "flex", "flex-col-reverse", "gap-3");
     expect(stack).not.toHaveClass("fixed");
     expect(stack.className).not.toMatch(/safe-area|sm:right|sm:bottom/);
     const anchor = screen.getByTestId("corner-anchor");
