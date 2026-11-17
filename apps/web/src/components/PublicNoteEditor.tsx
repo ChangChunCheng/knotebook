@@ -2,7 +2,7 @@
 // 樣式鏈）；兩個模組同在 BlockNote 共用 chunk 裡，這裡再 import 一次是零成本的保險
 // ——公開頁不得倚賴「NoteEditor 恰好也被載入」才有樣式。
 import "@blocknote/mantine/style.css";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
@@ -10,6 +10,7 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import type { PublicLinkDto } from "@knotebook/shared";
 import { buildReadonlyNoteEditorOptions } from "@/collab/editor-options";
+import type { OutlineEditorLike } from "@/components/outline/use-outline-headings";
 import { WikilinkContext, type WikilinkMode } from "@/components/wikilink/context";
 import { publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { useTheme } from "@/theme";
@@ -21,6 +22,8 @@ export interface PublicNoteEditorProps {
   publicRef: PublicNoteRef;
   /** #269：公開 payload 的 links（只含有自訂公開網址的目標）。wikilink 經 WikilinkContext 的 public 模式渲染——不呼叫 useNotes。 */
   links: readonly PublicLinkDto[];
+  /** #465：建好編輯器時回報（標題大綱讀它的文件），卸載或換掉時回報 null。 */
+  onEditor?: (editor: OutlineEditorLike | null) => void;
 }
 
 /**
@@ -32,7 +35,7 @@ export interface PublicNoteEditorProps {
  * 在無 provider 下正常渲染（含 code/mermaid lazy 鏈）；**不掛 useCollab、不打
  * collab-token**（也沒有 noteId 可打）。
  */
-export function PublicNoteEditor({ doc, publicRef, links }: PublicNoteEditorProps) {
+export function PublicNoteEditor({ doc, publicRef, links, onEditor }: PublicNoteEditorProps) {
   const { i18n } = useTranslation();
   const { resolvedTheme } = useTheme();
 
@@ -54,6 +57,14 @@ export function PublicNoteEditor({ doc, publicRef, links }: PublicNoteEditorProp
     // 語言刻意不進 deps（與 NoteEditor 同一條理由：字典只在建立時讀一次）。
     [doc, awareness, refIdentity],
   );
+  // 回呼經 ref 讀：呼叫端每次 render 傳新的函式，也不會讓編輯器被反覆回報成 null 再回報回來。
+  const onEditorRef = useRef(onEditor);
+  onEditorRef.current = onEditor;
+  useEffect(() => {
+    const report = onEditorRef.current; // cleanup 不讀 ref
+    report?.(editor);
+    return () => report?.(null);
+  }, [editor]);
   const mode = useMemo<WikilinkMode>(() => ({ mode: "public", links: new Map(links.map((l) => [l.id.toLowerCase(), l])) }), [links]);
 
   // editable={false}：BlockNote 不會渲染任何輸入介面（formatting toolbar／slash／

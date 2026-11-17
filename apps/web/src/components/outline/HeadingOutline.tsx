@@ -30,7 +30,8 @@ export interface HeadingOutlineProps {
 /**
  * A thin rail of one line per heading. Hover (mouse), tap (touch without hover) or Enter/Space on the rail opens
  * a floating panel with the heading texts; pinned, the panel stays open in place of the rail.
- * Positions are in the scroll container's coordinates; the caller places this inside it.
+ * Positions are in the scroll container's coordinates: the caller places this in a zero-height layer outside the
+ * scroll container whose top-left corner matches the container's (`OutlineAnchor`), so it does not scroll with the note.
  */
 export function HeadingOutline({ headings, activeId, placement, maxHeight, pinned, pinAvailable, onPinnedChange, onJump }: HeadingOutlineProps) {
   const { t } = useTranslation();
