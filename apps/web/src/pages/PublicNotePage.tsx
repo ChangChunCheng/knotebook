@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -9,6 +9,8 @@ import { PublicNoteEditor } from "@/components/PublicNoteEditor";
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { NoteOutline } from "@/components/outline/NoteOutline";
 import { canPinOutline } from "@/components/outline/outline-layout";
+import { PhoneNoteOutline } from "@/components/outline/PhoneNoteOutline";
+import { focusBackTo } from "@/components/outline/OutlineSheet";
 import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
 import { useOutlineBox } from "@/components/outline/use-outline-box";
 import { useOutlineHeadings, type OutlineEditorLike } from "@/components/outline/use-outline-headings";
@@ -101,6 +103,20 @@ export default function PublicNotePage() {
   const outlinePinAvailable = noteWidth === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
+  // 手機：只有捲動時的位置泡泡（公開頁沒有 ⋮），點它開底部面板。公開頁不在文件代為捲動的外框裡，手機上仍是捲動容器自己在捲。
+  const phoneOutline = phone && !presenting && outlineHeadings.length > 0;
+  const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
+  useEffect(() => {
+    if (!phoneOutline) setOutlineSheetOpen(false);
+  }, [phoneOutline]);
+  const scrollerTop = useCallback(() => anchorRoot?.getBoundingClientRect().top ?? 0, [anchorRoot]);
+  // 面板沒有觸發鈕：用鍵盤或螢幕閱讀器從泡泡開的，關閉時焦點回到泡泡；手指點的（泡泡不拿焦點）不移動焦點。
+  const [outlineReturnTo, setOutlineReturnTo] = useState<HTMLElement | null>(null);
+  const openOutlineSheet = useCallback((returnFocusTo: HTMLElement | null) => {
+    setOutlineReturnTo(returnFocusTo);
+    setOutlineSheetOpen(true);
+  }, []);
+  const outlineRestoreFocus = useMemo(() => focusBackTo(outlineReturnTo), [outlineReturnTo]);
 
   // 背景 refetch（react-query 預設 focus/reconnect 會重抓）失敗的呈現規則：
   // 404 → **翻成失效卡**，即使手上還有內容——這是撤銷的即時傳播，正在
@@ -173,6 +189,19 @@ export default function PublicNotePage() {
             pinned={outlinePinned}
             pinAvailable={outlinePinAvailable}
             onPinnedChange={setOutlinePinPref}
+          />
+        )}
+        {phoneOutline && (
+          <PhoneNoteOutline
+            headings={outlineHeadings}
+            root={anchorRoot}
+            scrollTarget={anchorRoot}
+            topEdge={scrollerTop}
+            placement="anchor"
+            sheetOpen={outlineSheetOpen}
+            onSheetOpenChange={setOutlineSheetOpen}
+            onOpenSheet={openOutlineSheet}
+            restoreFocus={outlineRestoreFocus}
           />
         )}
         {/* 捲軸的位置固定保留：捲軸出現與否不改容器寬度，能不能釘大綱（依容器寬判斷）才不會在門檻附近來回切。 */}

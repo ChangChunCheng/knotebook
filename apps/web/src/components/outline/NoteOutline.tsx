@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { useActiveHeading } from "./active-heading";
 import type { OutlineHeading } from "./headings";
 import { HeadingOutline } from "./HeadingOutline";
-import { jumpToHeading } from "./outline-jump";
 import { outlineMaxHeight, outlinePlacement } from "./outline-layout";
 import type { OutlineBox } from "./use-outline-box";
+import { useOutlineJump } from "./use-outline-jump";
 
 /** `WheelEvent.deltaMode` values: lines and pages (0 is pixels). */
 const WHEEL_DELTA_LINE = 1;
@@ -56,24 +56,7 @@ export function NoteOutline({ headings, scrollEl, box, bubbleShown, pinned, pinA
     [scrollEl, releaseJump],
   );
 
-  // One jump at a time: a new click cancels the previous one's pending wait and flash.
-  const cancelJump = useRef<(() => void) | null>(null);
-  useEffect(
-    () => () => {
-      cancelJump.current?.();
-      cancelJump.current = null;
-    },
-    [],
-  );
-  const onJump = useCallback(
-    (id: string) => {
-      if (!scrollEl) return;
-      cancelJump.current?.();
-      cancelJump.current = jumpToHeading(scrollEl, id);
-      markJumped(id);
-    },
-    [scrollEl, markJumped],
-  );
+  const onJump = useOutlineJump(scrollEl, markJumped);
 
   if (headings.length === 0) return null;
 

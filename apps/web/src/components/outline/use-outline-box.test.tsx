@@ -106,6 +106,31 @@ describe("useOutlineBox", () => {
     expect(result.current?.columnRight).toBe(700);
   });
 
+  it("re-measures in the commit that changes the column's class (no transition with reduced motion), not on other commits", () => {
+    const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
+    let right = 800;
+    const column = el({ left: 100, right });
+    column.getBoundingClientRect = () => ({ left: 100, right }) as DOMRect;
+    column.className = "standard-pinned";
+    // The host renders the column's class, like the note page and the public page do.
+    const { result, rerender } = renderHook(
+      ({ cls }: { cls: string }) => {
+        column.className = cls;
+        return useOutlineBox(scroll, column);
+      },
+      { initialProps: { cls: "standard-pinned" } },
+    );
+    expect(result.current?.columnRight).toBe(800);
+    // Same class, column moved by something else: no layout read on this commit.
+    right = 750;
+    rerender({ cls: "standard-pinned" });
+    expect(result.current?.columnRight).toBe(800);
+    // Unpinning: the column jumps to its new place with no transitionend.
+    right = 700;
+    rerender({ cls: "standard" });
+    expect(result.current?.columnRight).toBe(700);
+  });
+
   it("removes the window resize and transitionend listeners on unmount", () => {
     const scroll = el({ left: 0, right: 1000 }, { w: 1000, h: 700 });
     const column = el({ left: 100, right: 800 });

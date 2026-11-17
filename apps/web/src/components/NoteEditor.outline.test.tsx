@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import * as Y from "yjs";
@@ -10,6 +10,9 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { ThemeProvider } from "@/theme";
 import type { OutlineHeading } from "@/components/outline/headings";
 import type { NoteOutlineProps } from "@/components/outline/NoteOutline";
+import { useOutlineMenu } from "@/components/outline/outline-menu-context";
+import type { OutlineScrollBubbleProps } from "@/components/outline/OutlineScrollBubble";
+import type { OutlineSheetProps } from "@/components/outline/OutlineSheet";
 import { OUTLINE_PINNED_STORAGE_KEY } from "@/components/outline/outline-pin";
 import type { OutlineBox } from "@/components/outline/use-outline-box";
 import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
@@ -47,6 +50,44 @@ vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
     },
   };
 });
+// Phone pieces: recording stubs. The bubble stub is a button calling `onOpen`, as a tap would.
+const phoneStubs = vi.hoisted(() => ({
+  bubble: [] as OutlineScrollBubbleProps[],
+  sheet: [] as OutlineSheetProps[],
+  /** Render the real sheet (still recording its props), for the cases about where focus lands when it closes. */
+  realSheet: false,
+}));
+vi.mock("@/components/outline/OutlineScrollBubble", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/OutlineScrollBubble")>();
+  return {
+    ...original,
+    OutlineScrollBubble: (props: OutlineScrollBubbleProps) => {
+      phoneStubs.bubble.push(props);
+      return <button type="button" data-testid="bubble-stub" onClick={(e) => props.onOpen(e.currentTarget)} />;
+    },
+  };
+});
+vi.mock("@/components/outline/OutlineSheet", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/OutlineSheet")>();
+  return {
+    ...original,
+    OutlineSheet: (props: OutlineSheetProps) => {
+      phoneStubs.sheet.push(props);
+      if (phoneStubs.realSheet) return <original.OutlineSheet {...props} />;
+      return <div data-testid="sheet-stub" data-open={String(props.open)} />;
+    },
+  };
+});
+/** Reads the ⋮ context from inside the header slot, where the header ⋮ sits; opens the sheet handing over itself, as the ⋮ hands over its trigger. */
+function MenuProbe() {
+  const { available, open } = useOutlineMenu();
+  return (
+    <>
+      <button type="button" data-testid="menu-probe" data-available={String(available)} onClick={(e) => open(e.currentTarget)} />
+      <button type="button" data-testid="menu-probe-bare" onClick={() => open()} />
+    </>
+  );
+}
 // The versions panel itself is not under test here; keep it from fetching.
 vi.mock("@/components/versions/VersionsLazy", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/components/versions/VersionsLazy")>();
@@ -410,6 +451,183 @@ describe("NoteEditor：釘住大綱", () => {
     act(() => lastProps().onPinnedChange(false));
     expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBeNull();
     expectColumn("standard");
+    doc.destroy();
+  });
+});
+
+describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    window.localStorage.clear();
+    stubFetch();
+    outline.headings = HEADINGS;
+    outline.props = [];
+    outline.box = WIDE_BOX;
+    outline.measured = 0;
+    phoneStubs.bubble = [];
+    phoneStubs.sheet = [];
+    phoneStubs.realSheet = false;
+    resetNoteWidthsForTest();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** The header slot carries a probe reading the ⋮ context, as the header ⋮ does. */
+  async function renderPhone(opts: { tier?: LayoutTier; mobileToolbar?: boolean; previewSlot?: ReactNode } = {}) {
+    const tier = stubLayoutTier(opts.tier ?? "phone");
+    const doc = new Y.Doc();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // One provider object across re-renders: a new one would build a new editor.
+    const provider = { awareness: null } as never;
+    const tree = (mobileToolbar: boolean | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <VersionsProvider value={{ ...NOOP_VERSIONS, enabled: true, noteId: "note-1" }}>
+            <NoteEditor
+              doc={doc}
+              provider={provider}
+              editable
+              user={{ id: "u1", name: "alice" }}
+              noteId="note-1"
+              headerSlot={<MenuProbe />}
+              mobileToolbar={mobileToolbar}
+              previewSlot={opts.previewSlot}
+            />
+          </VersionsProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+    const utils = render(tree(opts.mobileToolbar));
+    const editor = await screen.findByTestId("note-editor");
+    await nextFrame();
+    const scroll = editor.parentElement!.parentElement!.parentElement!;
+    return { ...utils, doc, scroll, tier, setMobileToolbar: (next: boolean) => utils.rerender(tree(next)) };
+  }
+
+  const probe = () => screen.getByTestId("menu-probe");
+  const lastBubble = () => phoneStubs.bubble[phoneStubs.bubble.length - 1]!;
+  const lastSheet = () => phoneStubs.sheet[phoneStubs.sheet.length - 1]!;
+
+  it("手機、有標題 → 沒有桌機的細線；泡泡固定在頁首下方、聽視窗的捲動、跳轉在捲動容器裡；頁首槽位裡的 ⋮ 拿到 available", async () => {
+    const { doc, scroll } = await renderPhone();
+    expect(stub()).toBeNull();
+    expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
+    expect(lastBubble().placement).toBe("page");
+    expect(lastBubble().scrollTarget).toBe(window);
+    expect(lastBubble().headings).toBe(HEADINGS);
+    // 打字造成的捲動不叫出泡泡：看的是文章欄裡的輸入。
+    expect(lastBubble().inputRoot).toBe(column());
+    expect(probe()).toHaveAttribute("data-available", "true");
+    expect(scroll.contains(screen.getByTestId("bubble-stub"))).toBe(false);
+    expect(lastSheet().open).toBe(false);
+    doc.destroy();
+  });
+
+  it("⋮ 的 open() → 底部面板打開；關掉（onOpenChange(false)）→ 收起；點泡泡也打開", async () => {
+    const { doc } = await renderPhone();
+    fireEvent.click(probe());
+    expect(lastSheet().open).toBe(true);
+    act(() => lastSheet().onOpenChange(false));
+    expect(lastSheet().open).toBe(false);
+    fireEvent.click(screen.getByTestId("bubble-stub"));
+    expect(lastSheet().open).toBe(true);
+    doc.destroy();
+  });
+
+  it("編輯中點泡泡（泡泡不搶焦點，工具列還在）→ 面板拿到把焦點還給編輯器、不捲動的 restoreFocus；工具列在面板開著時收起也不變", async () => {
+    const editing = await renderPhone({ mobileToolbar: true });
+    fireEvent.click(screen.getByTestId("bubble-stub"));
+    expect(lastSheet().open).toBe(true);
+    const restore = lastSheet().restoreFocus;
+    expect(restore).toEqual(expect.any(Function));
+    // 面板開著時焦點在面板裡、工具列收起：restoreFocus 仍是開的那一刻記下的。
+    editing.setMobileToolbar(false);
+    expect(lastSheet().restoreFocus).toBe(restore);
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    restore!();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(focus.mock.contexts[0]).toHaveClass("ProseMirror");
+    editing.unmount();
+    editing.doc.destroy();
+  });
+
+  it("沒在編輯：restoreFocus 回到開它的元素（⋮ 交出觸發鈕、泡泡交出自己）；沒交元素 → 沒有", async () => {
+    const { doc } = await renderPhone();
+    fireEvent.click(probe());
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    lastSheet().restoreFocus!();
+    expect(focus.mock.contexts[0]).toBe(probe());
+    act(() => lastSheet().onOpenChange(false));
+    focus.mockClear();
+    fireEvent.click(screen.getByTestId("bubble-stub"));
+    lastSheet().restoreFocus!();
+    expect(focus.mock.contexts[0]).toBe(screen.getByTestId("bubble-stub"));
+    act(() => lastSheet().onOpenChange(false));
+    fireEvent.click(screen.getByTestId("menu-probe-bare"));
+    expect(lastSheet().open).toBe(true);
+    expect(lastSheet().restoreFocus).toBeUndefined();
+    doc.destroy();
+  });
+
+  describe("真的底部面板：直接關掉（Esc）時焦點落在哪", () => {
+    beforeEach(() => {
+      phoneStubs.realSheet = true;
+    });
+
+    it("編輯中從泡泡開 → Esc 關掉 → 焦點回到編輯器（工具列跟著焦點，不會消失）", async () => {
+      const { doc } = await renderPhone({ mobileToolbar: true });
+      fireEvent.click(screen.getByTestId("bubble-stub"));
+      const dialog = await screen.findByRole("dialog", { name: "Heading outline" });
+      fireEvent.keyDown(document.activeElement ?? dialog, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toHaveClass("ProseMirror"));
+      doc.destroy();
+    });
+
+    it("從 ⋮ 開 → Esc 關掉 → 焦點回到 ⋮（不掉到 body）", async () => {
+      const { doc } = await renderPhone();
+      fireEvent.click(probe());
+      const dialog = await screen.findByRole("dialog", { name: "Heading outline" });
+      fireEvent.keyDown(document.activeElement ?? dialog, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(probe()));
+      doc.destroy();
+    });
+  });
+
+  it.each([
+    ["版本預覽中", { previewSlot: <div>preview</div> }],
+    ["固定段（有細線）", { tier: "docked" as const }],
+    ["浮動段（有細線）", { tier: "overlay" as const }],
+  ])("%s → ⋮ 拿到 available=false、沒有泡泡與面板", async (_label, opts) => {
+    const { doc } = await renderPhone(opts);
+    expect(probe()).toHaveAttribute("data-available", "false");
+    expect(screen.queryByTestId("bubble-stub")).toBeNull();
+    expect(phoneStubs.sheet).toHaveLength(0);
+    doc.destroy();
+  });
+
+  it("沒有標題 → available=false、沒有泡泡", async () => {
+    outline.headings = [];
+    const { doc } = await renderPhone();
+    expect(probe()).toHaveAttribute("data-available", "false");
+    expect(screen.queryByTestId("bubble-stub")).toBeNull();
+    doc.destroy();
+  });
+
+  it("面板開著時變寬離開手機段 → 面板關掉；再回到手機段不會自己再開", async () => {
+    const { doc, tier } = await renderPhone();
+    fireEvent.click(probe());
+    expect(lastSheet().open).toBe(true);
+    act(() => tier.setLayoutTier("overlay"));
+    expect(probe()).toHaveAttribute("data-available", "false");
+    expect(screen.queryByTestId("bubble-stub")).toBeNull();
+    phoneStubs.sheet = [];
+    act(() => tier.setLayoutTier("phone"));
+    expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
+    expect(lastSheet().open).toBe(false);
     doc.destroy();
   });
 });

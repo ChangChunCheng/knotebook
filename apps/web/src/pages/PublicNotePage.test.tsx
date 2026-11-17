@@ -63,6 +63,28 @@ vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
     },
   };
 });
+// 手機的泡泡與底部面板本身另有測試；這裡記下拿到什麼。泡泡替身是一顆按了就呼叫 onOpen 的鈕（同點一下）。
+const phoneStubs = vi.hoisted(() => ({
+  bubble: [] as Array<import("@/components/outline/OutlineScrollBubble").OutlineScrollBubbleProps>,
+  sheet: [] as Array<import("@/components/outline/OutlineSheet").OutlineSheetProps>,
+}));
+vi.mock("@/components/outline/OutlineScrollBubble", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/OutlineScrollBubble")>();
+  return {
+    ...original,
+    OutlineScrollBubble: (props: import("@/components/outline/OutlineScrollBubble").OutlineScrollBubbleProps) => {
+      phoneStubs.bubble.push(props);
+      return <button type="button" data-testid="bubble-stub" onClick={(e) => props.onOpen(e.currentTarget)} />;
+    },
+  };
+});
+vi.mock("@/components/outline/OutlineSheet", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/outline/OutlineSheet")>()),
+  OutlineSheet: (props: import("@/components/outline/OutlineSheet").OutlineSheetProps) => {
+    phoneStubs.sheet.push(props);
+    return <div data-testid="sheet-stub" data-open={String(props.open)} />;
+  },
+}));
 // jsdom 沒有版面：容器寬度由測試指定（同真的 hook，兩個元素都掛上才有值）。
 const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, columnRight: 991.5 } }));
 vi.mock("@/components/outline/use-outline-box", () => ({
@@ -452,13 +474,42 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBe("1");
     });
 
-    it("手機：不掛", async () => {
+    it("手機：沒有細線；位置泡泡在捲動容器之外的零高度錨點裡、聽捲動容器的捲動，有底部面板；頁面沒有 ⋮", async () => {
       stubLayoutTier("phone");
+      phoneStubs.bubble = [];
+      phoneStubs.sheet = [];
       await renderWithHeadings();
-      // 等編輯器回報、標題算完那一輪 render 過去，再斷言沒有。
-      await act(async () => {});
+      const bubble = await screen.findByTestId("bubble-stub");
       expect(screen.queryByTestId("outline-stub")).not.toBeInTheDocument();
       expect(outlineProps).toHaveLength(0);
+      const scroll = screen.getByTestId("article-column").parentElement!;
+      const props = phoneStubs.bubble[phoneStubs.bubble.length - 1]!;
+      expect(props.placement).toBe("anchor");
+      expect(props.scrollTarget).toBe(scroll);
+      expect(props.headings).toEqual([{ id: "h-intro", level: 2, text: "Intro" }]);
+      expect(scroll.contains(bubble)).toBe(false);
+      expect(bubble.closest("[data-outline-anchor]")).not.toBeNull();
+      expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "false");
+      // 唯讀頁：沒有編輯區要避讓。
+      expect(props.inputRoot ?? null).toBeNull();
+      expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
+      act(() => bubble.click());
+      expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "true");
+      // 面板關閉時焦點回到點開它的泡泡（沒有觸發鈕，不然會掉到 body）。
+      const restore = phoneStubs.sheet[phoneStubs.sheet.length - 1]!.restoreFocus;
+      expect(restore).toEqual(expect.any(Function));
+      act(() => restore!());
+      expect(document.activeElement).toBe(bubble);
+    });
+
+    it("桌機：沒有泡泡與底部面板", async () => {
+      stubLayoutTier("docked");
+      phoneStubs.bubble = [];
+      phoneStubs.sheet = [];
+      await renderWithHeadings();
+      await screen.findByTestId("outline-stub");
+      expect(screen.queryByTestId("bubble-stub")).not.toBeInTheDocument();
+      expect(phoneStubs.sheet).toHaveLength(0);
     });
 
     it("簡報中（?present）：桌機也不掛", async () => {

@@ -15,6 +15,14 @@ import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs
  * 60-4 全寬筆記（偏好釘住）：沒有釘住的面板、細線在；hover 展開的面板沒有釘選鈕。
  * 60-5 1280×800（偏好釘住）：側欄 320 時放不下 640 的欄 → 細線、展開的面板沒有釘選鈕；視窗拉到 1440×900 → 自動變成釘住的面板。
  * 60-6 打字新增標題：在最後一段後面 Enter、打 `## New section` → 5 秒內細線多一條，面板裡有「New section」。
+ * 60-7 手機（390×844、觸控）：沒有細線。
+ *   a ⋮ →「Heading outline」→ 底部面板列出 5 項 → 點「Section D」→ 面板消失、焦點回到 ⋮、該標題頂端與釘住的頁首下緣差在 [-2, 4] px、
+ *     文件捲過了。
+ *   b 捲動文件 → 位置泡泡出現、文字含「/5」→ 3 秒內消失；再捲一次 → 點泡泡 → 底部面板出現。
+ *   c 沒有標題的筆記：⋮ 沒有「Heading outline」；捲動後沒有泡泡。
+ *   d 公開頁（未登入）：捲動容器 → 泡泡出現 → 點它 → 面板 → 點「Usage」→ 該標題捲到容器頂端；頁面沒有 ⋮。
+ *   e 編輯中連按 Enter，游標跟著讓文件往下捲：泡泡一次都不出現。
+ *   f 編輯中（工具列在）捲動 → 點泡泡 → 面板 → Esc 直接關掉：焦點回到編輯器、工具列還在。
  * 60-8 公開頁（未登入）：細線在；hover → 點「Usage」→ 該標題捲到容器頂端。
  * 60-9 切換標題（真的 BlockNote DOM）：用 `/` 選單建一個切換 H2「Folded」、裡面放一個 H3「Inner」；把 Inner 捲到頂端 → 亮 Inner；
  *      收合 Folded（不捲動、不按指標，只點開合鈕）→ 亮的換成 Folded；從面板點 Inner → Folded 展開、Inner 捲到頂端、亮 Inner。
@@ -31,6 +39,7 @@ const RUN = Date.now();
 const PASSWORD = "e2e-heading-outline-pw";
 const ORIGIN = E2E_ORIGIN;
 const VIEWPORT = { width: 1440, height: 900 };
+const PHONE = { width: 390, height: 844 };
 
 const filler = (tag: string, n = 40): string => Array.from({ length: n }, (_, i) => `${tag} filler paragraph ${i}`).join("\n\n");
 const LONG_MD = [
@@ -88,12 +97,14 @@ test.beforeAll(async ({ browser }) => {
 
 interface ContextOptions {
   viewport?: { width: number; height: number };
+  /** 手機：390×844、觸控（`viewport` 不用）。 */
+  phone?: boolean;
   /** 每次載入前另外寫進 localStorage 的鍵值（側欄寬度一律寫 320）。 */
   storage?: Record<string, string>;
 }
 
 async function newContext(browser: Browser, options: ContextOptions = {}): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext({ viewport: options.viewport ?? VIEWPORT });
+  const context = await browser.newContext(options.phone ? { hasTouch: true, isMobile: true, viewport: PHONE } : { viewport: options.viewport ?? VIEWPORT });
   await context.addInitScript((entries) => {
     try {
       for (const [key, value] of Object.entries(entries)) window.localStorage.setItem(key, value);
@@ -362,6 +373,166 @@ test("60-8 公開頁（未登入）：細線在，hover 點 Usage 捲到頂端",
     await panelItem(page, "Usage").click();
     await expectLandedAtTop(page, id);
     await expect(panel(page)).toBeHidden();
+  } finally {
+    await context.close();
+  }
+});
+
+const sheet = (page: Page): Locator => page.getByRole("dialog", { name: "Heading outline" });
+const sheetItem = (page: Page, text: string): Locator => sheet(page).locator("[data-outline-item]").filter({ hasText: new RegExp(`^${text}$`) });
+const bubble = (page: Page): Locator => page.getByRole("button", { name: /^Open heading outline: / });
+const moreButton = (page: Page): Locator => page.getByRole("button", { name: "More", exact: true });
+const headingText = (page: Page, text: string): Locator => page.locator('[data-content-type="heading"]').filter({ hasText: new RegExp(`^${text}$`) });
+
+/** 該標題頂端減手機上釘在頂端的筆記頁首下緣（px）。 */
+async function headingBelowHeader(page: Page, id: string): Promise<number> {
+  return page.evaluate((id) => {
+    const block = document.querySelector(`.bn-block-outer[data-id="${id}"]`)!;
+    const header = document.querySelector("[data-note-header-slot]")!;
+    return block.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+  }, id);
+}
+
+/**
+ * 捲一下讓泡泡出現，馬上點它，直到底部面板打開。泡泡停止捲動 1.5 秒就消失，慢的機器上捲完到點之間可能已經不在：整段重來。
+ * 面板已經開著就不再捲、不再點（開著時頁面鎖住捲動，泡泡也在面板底下）。
+ */
+async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>): Promise<void> {
+  await expect(async () => {
+    if (await sheet(page).isVisible()) return;
+    await scroll();
+    await bubble(page).tap({ timeout: 1_000 });
+    await expect(sheet(page)).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+/** 等兩個畫格：捲動事件與它造成的重繪都過去了。 */
+async function twoFrames(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+test("60-7a 手機 ⋮：Heading outline 開底部面板，點 Section D 捲到頁首下方", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long, { phone: true });
+  try {
+    await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
+    await expect(rail(page)).toHaveCount(0);
+    await moreButton(page).click();
+    await page.getByRole("menuitem", { name: "Heading outline" }).click();
+    await expect(sheet(page)).toBeVisible();
+    await expect(sheet(page).locator("[data-outline-item]")).toHaveText(LONG_HEADINGS);
+    const id = await headingId(page, "Section D");
+    await sheetItem(page, "Section D").click();
+    await expect(sheet(page)).toBeHidden();
+    // 面板沒有觸發鈕：焦點交還 ⋮，不掉到 body。
+    await expect(moreButton(page)).toBeFocused();
+    await expect.poll(() => headingBelowHeader(page, id), { timeout: 5_000, message: "標題頂端與頁首下緣的差（px）" }).toBeGreaterThanOrEqual(-2);
+    await expect.poll(() => headingBelowHeader(page, id), { timeout: 5_000, message: "標題頂端與頁首下緣的差（px）" }).toBeLessThanOrEqual(4);
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-7b 手機泡泡：捲動時出現、停下約 1.5 秒後消失，點它開底部面板", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long, { phone: true });
+  try {
+    await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
+    await expect(bubble(page)).toHaveCount(0);
+    await page.evaluate(() => window.scrollBy(0, 600));
+    await expect(bubble(page)).toBeVisible();
+    await expect(bubble(page)).toContainText("/5");
+    await expect(bubble(page)).toHaveCount(0, { timeout: 3_000 });
+    await openSheetFromBubble(page, () => page.evaluate(() => window.scrollBy(0, 300)));
+    await expect(sheet(page).locator("[data-outline-item]")).toHaveCount(5);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-7c 手機、沒有標題的筆記：⋮ 沒有 Heading outline，捲動後沒有泡泡", async ({ browser }) => {
+  const { context, page } = await openNote(
+    browser,
+    async (page) => (await createNoteVia(page, `Outline none ${RUN} ${Date.now()}`, filler("plain", 60))).path,
+    { phone: true },
+  );
+  try {
+    await expect(page.locator('[data-content-type="paragraph"]').filter({ hasText: /^plain filler paragraph 59$/ })).toBeAttached({ timeout: 15_000 });
+    await moreButton(page).click();
+    await expect(page.getByRole("menuitem", { name: "Present" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Heading outline" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await page.evaluate(() => window.scrollBy(0, 600));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await twoFrames(page);
+    await expect(bubble(page)).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-7d 公開頁手機：捲動容器出現泡泡，點它開面板，點 Usage 捲到頂端；沒有 ⋮", async ({ browser }) => {
+  const { context, page } = await newContext(browser, { phone: true });
+  try {
+    await page.goto(`/p/${notes.publicToken}`);
+    await expect(page.locator('[data-testid="public-note-editor"]')).toBeVisible({ timeout: 15_000 });
+    await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
+    await expect(moreButton(page)).toHaveCount(0);
+    await expect(rail(page)).toHaveCount(0);
+    await scrollerOf(page).evaluate((el) => el.scrollBy(0, 600));
+    await expect(bubble(page)).toBeVisible();
+    await expect(bubble(page)).toContainText("/5");
+    await openSheetFromBubble(page, () => scrollerOf(page).evaluate((el) => el.scrollBy(0, 300)));
+    const id = await headingId(page, "Usage");
+    await sheetItem(page, "Usage").click();
+    await expect(sheet(page)).toBeHidden();
+    await expectLandedAtTop(page, id);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-7e 手機編輯中：連按 Enter 讓文件跟著游標往下捲，泡泡不出現", async ({ browser }) => {
+  const { context, page } = await openNote(
+    browser,
+    async (page) => (await createNoteVia(page, `Outline caret ${RUN} ${Date.now()}`, "# Top\n\nfirst line")).path,
+    { phone: true },
+  );
+  try {
+    await expect(headingText(page, "Top")).toBeAttached({ timeout: 15_000 });
+    // 從這裡開始記：泡泡只要出現過一次就記下來。
+    await page.evaluate(() => {
+      const w = window as Window & { bubbleSeen?: boolean };
+      w.bubbleSeen = false;
+      new MutationObserver(() => {
+        if (document.querySelector('button[aria-label^="Open heading outline: "]') !== null) w.bubbleSeen = true;
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+    await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^first line$/ }));
+    for (let i = 0; i < 40; i++) await page.keyboard.press("Enter");
+    await page.keyboard.type("last line");
+    await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 5_000, message: "游標跟著讓文件往下捲" }).toBeGreaterThan(200);
+    await twoFrames(page);
+    expect(await page.evaluate(() => (window as Window & { bubbleSeen?: boolean }).bubbleSeen)).toBe(false);
+    await expect(bubble(page)).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-7f 手機編輯中：從泡泡開面板再直接關掉，焦點回到編輯器、工具列還在", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long, { phone: true });
+  try {
+    await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
+    await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^intro filler paragraph 0$/ }));
+    const toolbar = page.locator("[data-mobile-edit-toolbar]");
+    await expect(toolbar).toBeVisible();
+    // 讀者自己捲（不是打字造成的）：泡泡才出現。點泡泡不搶焦點，工具列留著。
+    await openSheetFromBubble(page, () => page.evaluate(() => window.scrollBy(0, 300)));
+    await page.keyboard.press("Escape");
+    await expect(sheet(page)).toBeHidden();
+    await expect.poll(() => editorLocator(page).evaluate((el) => el.contains(document.activeElement)), { timeout: 5_000, message: "焦點回到編輯器" }).toBe(true);
+    await expect(toolbar).toBeVisible();
   } finally {
     await context.close();
   }
