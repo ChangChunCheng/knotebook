@@ -36,7 +36,7 @@ export async function readSpaceUsage(db: DbOrTx, space: StorageSpace): Promise<S
 /**
  * #247：空間內上傳依 mime 分組加總，JS 端以 shared 的 `kindOfMime` 歸類（分類規則只有一份）。只給兩支用量 GET 用——
  * **不得**搬進 `readSpaceUsage`：那句也是上傳 preHandler 與複製的「已滿」預檢（熱路徑），不加 GROUP BY。
- * 個人空間另以一句取頭貼總和填 `avatar`（群組恆 0）；`image` 等附件類型不含頭貼。
+ * 個人空間另以一句取頭貼總和併入 `image`（群組沒有頭貼）。
  */
 export async function readSpaceUsageByKind(db: DbOrTx, space: StorageSpace): Promise<StorageByKind> {
   const rows = await db
@@ -49,7 +49,7 @@ export async function readSpaceUsageByKind(db: DbOrTx, space: StorageSpace): Pro
   for (const r of rows) out[kindOfMime(r.mime)] += r.bytes;
   if (space.kind === "user") {
     const [row] = await db.select({ bytes: sumAvatarBytesSql(space.id) }).from(users).where(eq(users.id, space.id));
-    out.avatar = row?.bytes ?? 0;
+    out.image += row?.bytes ?? 0;
   }
   return out;
 }

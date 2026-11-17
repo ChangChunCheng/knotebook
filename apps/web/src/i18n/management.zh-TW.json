@@ -490,14 +490,13 @@
       "description": "你個人筆記裡的檔案，加上你的頭貼，佔用的空間。",
       "usageTitle": "用量",
       "byKind": "依類型",
-      "byKindDescription": "檔案與頭貼依類型分組。",
+      "byKindDescription": "依類型分組的檔案；頭貼算在影像。",
       "kinds": {
         "image": "影像",
         "audio": "音訊",
         "video": "影片",
         "document": "文件",
-        "other": "其他",
-        "avatar": "頭貼"
+        "other": "其他"
       },
       "versionsTitle": "版本歷史",
       "versionsNote": "版本歷史與筆記文字不佔用儲存空間；檔案與（個人空間的）頭貼才計入配額。"
