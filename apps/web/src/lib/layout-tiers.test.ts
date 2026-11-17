@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stubLayoutTier, tierForWidth } from "@/test/layout-tier";
-import { isOverlay, isPhone, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone } from "./layout-tiers";
+import { isNoHover, isOverlay, isPhone, NO_HOVER_QUERY, OVERLAY_QUERY, PHONE_QUERY, useIsOverlay, useIsPhone, useNoHover } from "./layout-tiers";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -132,5 +132,40 @@ describe("layout-tiers: stub change events", () => {
       { matches: true, media: OVERLAY_QUERY },
       { matches: false, media: OVERLAY_QUERY },
     ]);
+  });
+});
+
+describe("layout-tiers: hover capability", () => {
+  it("is false when the query does not match, true when it does", () => {
+    expect(isNoHover()).toBe(false);
+    stubLayoutTier("docked", (q) => q === NO_HOVER_QUERY);
+    expect(isNoHover()).toBe(true);
+  });
+
+  it("useNoHover flips with change events of the (hover: none) query and unsubscribes", () => {
+    let noHover = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        return query === NO_HOVER_QUERY && noHover;
+      },
+      media: query,
+      addEventListener: (_t: string, l: () => void) => {
+        if (query === NO_HOVER_QUERY) listeners.add(l);
+      },
+      removeEventListener: (_t: string, l: () => void) => {
+        listeners.delete(l);
+      },
+    }));
+    const { result, unmount } = renderHook(() => useNoHover());
+    expect(result.current).toBe(false);
+    expect(listeners.size).toBe(1);
+    act(() => {
+      noHover = true;
+      for (const l of [...listeners]) l();
+    });
+    expect(result.current).toBe(true);
+    unmount();
+    expect(listeners.size).toBe(0);
   });
 });

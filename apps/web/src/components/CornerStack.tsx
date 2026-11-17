@@ -3,9 +3,12 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { History } from "@/components/ui/icons";
+import { CORNER_STACK_FOOTPRINT_PX } from "./corner-stack-geometry";
 import { useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
 import { tourTarget } from "@/lib/tour-targets";
+
+export { CORNER_STACK_FOOTPRINT_PX };
 
 /**
  * 滑鼠 hover：泡泡下面沒有東西，調透明度看不出差別，所以 hover 改成淺品牌色底（與 `brand` 鈕、`bg-brand-soft` 同一個色），按下再深一階；游標變手指。
