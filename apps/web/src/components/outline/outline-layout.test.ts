@@ -12,7 +12,7 @@ describe("canPinOutline", () => {
 
 describe("outlinePlacement", () => {
   it("places rail and panel beside the column when there is room", () => {
-    expect(outlinePlacement(1072, 991.5)).toEqual({ railLeft: 1007.5, panelLeft: 828, pinnedPanelLeft: 820 });
+    expect(outlinePlacement(1072, 991.5)).toEqual({ railLeft: 1018, panelLeft: 828, pinnedPanelLeft: 820 });
   });
 
   it("puts the pinned panel beside the column when the column already leaves room", () => {
@@ -29,13 +29,13 @@ describe("outlinePlacement", () => {
 
   it("keeps the rail inside the right edge and floats the panel over the column in a narrow container", () => {
     const p = outlinePlacement(800, 790);
-    expect(p.railLeft).toBe(772);
+    expect(p.railLeft).toBe(746);
     expect(p.panelLeft).toBe(556);
   });
 
   it("puts rail and panel at the same left edge in a wide container", () => {
     const p = outlinePlacement(2000, 1528);
-    expect(p.railLeft).toBe(1544);
+    expect(p.railLeft).toBe(1946);
     expect(p.panelLeft).toBe(1544);
   });
 
@@ -44,12 +44,21 @@ describe("outlinePlacement", () => {
   });
 });
 
+describe("rail column", () => {
+  it("centers the rail on the version bubble whatever the column does", () => {
+    // Bubble: right edge 18 inside the width, 48 wide, so its center is width - 42.
+    for (const [w, col] of [[1072, 991.5], [2000, 1528], [800, 790]] as const) {
+      expect(outlinePlacement(w, col).railLeft + 12).toBe(w - 42);
+    }
+  });
+});
+
 describe("outlineMaxHeight", () => {
   it("stops above the version bubble when it is shown", () => {
-    expect(outlineMaxHeight(700, true)).toBe(610);
+    expect(outlineMaxHeight(700, true)).toBe(594);
   });
   it("leaves only the bottom gap without the bubble", () => {
-    expect(outlineMaxHeight(700, false)).toBe(676);
+    expect(outlineMaxHeight(700, false)).toBe(660);
   });
   it("never goes negative", () => {
     expect(outlineMaxHeight(80, true)).toBe(0);

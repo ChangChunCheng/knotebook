@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { useTranslation } from "react-i18next";
 import { Pin, X } from "@/components/ui/icons";
 import { useNoHover } from "@/lib/layout-tiers";
+import { MENU_CONTENT_BASE } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { OutlineHeading } from "./headings";
 import { OutlineList } from "./OutlineList";
@@ -250,11 +251,17 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
           onBlur={() => {
             keepFocus.current = false;
           }}
-          className="pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-lg"
+          className={cn(
+            MENU_CONTENT_BASE,
+            "pointer-events-auto absolute z-auto flex flex-col outline-none",
+            // Pinned: part of the page at rest; the menu surface fades in while the pointer is over it.
+            pinned &&
+              "group/pin border-transparent bg-transparent shadow-none transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none hover:border-border hover:bg-popover hover:shadow-md",
+          )}
           style={{ top: 0, left: pinned ? placement.pinnedPanelLeft : placement.panelLeft, width: OUTLINE_PANEL_WIDTH, maxHeight }}
         >
           {(pinAvailable || pinned || showClose) && (
-            <div className="flex shrink-0 justify-end gap-1 px-1 pt-1 pointer-coarse:gap-0">
+            <div className="flex shrink-0 justify-end gap-1 pointer-coarse:gap-0">
               {(pinAvailable || pinned) && (
                 <button
                   type="button"
@@ -267,7 +274,9 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
                   }}
                   className={cn(
                     "inline-flex h-7 w-7 pointer-coarse:h-11 pointer-coarse:w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    pinned && "bg-accent text-brand",
+                    // Pinned: shown while hovering or focusing inside the panel; faint where there is no hover.
+                    pinned &&
+                      "bg-accent text-brand opacity-0 transition-opacity motion-reduce:transition-none group-hover/pin:opacity-100 group-focus-within/pin:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-60",
                   )}
                 >
                   <Pin className="h-4 w-4" />
@@ -296,7 +305,7 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
             activeId={activeId}
             onSelect={select}
             focusActiveOnMount={focusOnOpen}
-            className="min-h-0 flex-1 overflow-y-auto p-1"
+            className="min-h-0 flex-1 overflow-y-auto"
           />
         </nav>
       )}

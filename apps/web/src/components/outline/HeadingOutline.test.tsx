@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MENU_CONTENT_BASE } from "@/components/ui/dropdown-menu";
 import { NO_HOVER_QUERY } from "@/lib/layout-tiers";
 import { stubLayoutTier } from "@/test/layout-tier";
 import type { OutlineHeading } from "./headings";
@@ -46,6 +47,37 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("HeadingOutline surface", () => {
+  it("floating panel shares the note menu surface and has no extra frame", () => {
+    setup();
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    expect(panel()).toHaveClass(...MENU_CONTENT_BASE.split(" ").filter((c) => c !== "z-50"));
+    expect(panel()).toHaveClass("shadow-md", "outline-none");
+    expect(panel()).not.toHaveClass("rounded-lg", "shadow-lg");
+  });
+
+  it("pinned panel rests on the page and shows the menu surface on hover", () => {
+    setup({ pinned: true });
+    expect(panel()).toHaveClass("bg-transparent", "border-transparent", "shadow-none", "rounded-md");
+    expect(panel()).not.toHaveClass("bg-popover", "border-border", "shadow-md");
+    expect(panel()).toHaveClass("hover:bg-popover", "hover:border-border", "hover:shadow-md", "motion-reduce:transition-none");
+  });
+
+  it("pinned panel hides the pin button until hover or focus, but keeps it reachable without hover", () => {
+    setup({ pinned: true });
+    const pin = screen.getByRole("button", { name: "Unpin outline" });
+    expect(pin).toHaveClass("opacity-0", "group-hover/pin:opacity-100", "group-focus-within/pin:opacity-100", "[@media(hover:none)]:opacity-60");
+  });
+
+  it("floating panel keeps the pin button visible", () => {
+    setup();
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    expect(screen.getByRole("button", { name: "Pin outline" })).not.toHaveClass("opacity-0");
+  });
 });
 
 describe("HeadingOutline hover", () => {

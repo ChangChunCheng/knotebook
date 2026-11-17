@@ -28,6 +28,18 @@ describe("OutlineList", () => {
     expect(item("c")).toHaveClass("pl-8");
   });
 
+  it("reacts like a sidebar note row and draws no custom focus frame", () => {
+    render(<OutlineList headings={headings} activeId="a" onSelect={() => {}} />);
+    expect(item("b")).toHaveClass("rounded-md", "hover:bg-brand-soft", "hover:text-brand-on-soft", "active:bg-brand-soft-strong");
+    expect(item("b").className).not.toMatch(/ring|outline-none|hover:bg-accent/);
+  });
+
+  it("marks the current section with the sidebar's open-note row tint", () => {
+    render(<OutlineList headings={headings} activeId="b" onSelect={() => {}} />);
+    expect(item("b")).toHaveClass("bg-brand-soft", "text-brand-on-soft", "font-medium", "rounded-md", "hover:bg-brand-soft-strong");
+    expect(item("a")).not.toHaveClass("bg-brand-soft", "font-medium");
+  });
+
   it("shows a placeholder for an empty heading", () => {
     render(<OutlineList headings={headings} activeId="a" onSelect={() => {}} />);
     expect(item("c")).toHaveTextContent("(Untitled heading)");

@@ -77,9 +77,11 @@ export function OutlineList({ headings, activeId, onSelect, focusActiveOnMount, 
                 onSelect(h.id);
               }}
               className={cn(
-                "block w-full rounded-md py-1 pr-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                // Rows look and react like the sidebar's note rows: brand tint on hover, a stronger one while pressed,
+                // the browser's own focus ring for the keyboard.
+                "block w-full rounded-md py-1 pr-2 pointer-coarse:py-2.5 text-left text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
                 INDENT[h.level],
-                active ? "font-medium text-brand" : "text-foreground",
+                active ? "bg-brand-soft font-medium text-brand-on-soft hover:bg-brand-soft-strong" : "text-foreground",
               )}
             >
               <span className={cn("line-clamp-2 break-words", empty && "italic text-muted-foreground")}>
