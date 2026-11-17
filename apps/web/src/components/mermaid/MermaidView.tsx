@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { cachedMermaid, preloadMermaid, renderMermaid, type MermaidRenderResult, type MermaidTheme } from "@/lib/mermaid";
 import { useMediaZoom } from "@/components/media-zoom/context";
 import { svgIntrinsicSize } from "@/components/media-zoom/svg-size";
+import { prefetchMediaLightbox } from "@/components/media-zoom/lightbox-chunk";
 import { ZoomButton } from "@/components/media-zoom/ZoomButton";
 import { tourTarget } from "@/lib/tour-targets";
 import { useIsPhone } from "@/lib/layout-tiers";
@@ -278,7 +279,12 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
   // ⚠ `w-full` 不可省：BlockNote 的 `bn-block-content` 是 flex 容器，沒宣告寬度的子項
   // 會被 shrink-wrap 成內容寬度——實測（e2e 截圖）整個 block 縮成約 140px 的一小條。
   return (
-    <div ref={rootRef} className="group relative w-full" {...tourTarget("flowchart")}>
+    <div
+      ref={rootRef}
+      className="group relative w-full"
+      onPointerEnter={canZoom ? prefetchMediaLightbox : undefined}
+      {...tourTarget("flowchart")}
+    >
       {editing ? null : (
         <div
           className={cn(

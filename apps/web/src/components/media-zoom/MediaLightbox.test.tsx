@@ -428,3 +428,58 @@ describe("MediaLightbox", () => {
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("MediaLightbox 載入中的灰塊", () => {
+  it("圖片載入前顯示灰塊（依原尺寸比例）、圖本身先隱形；load 後灰塊消失、圖現身", () => {
+    const { viewport } = setup();
+    const skeleton = viewport.querySelector<HTMLElement>("[data-zoom-skeleton]");
+    expect(skeleton).not.toBeNull();
+    expect(skeleton!.style.aspectRatio).toBe("2000 / 1000");
+    expect(img().className).toContain("opacity-0");
+    fireEvent.load(img());
+    expect(viewport.querySelector("[data-zoom-skeleton]")).toBeNull();
+    expect(img().className).not.toContain("opacity-0");
+  });
+
+  it("圖載入失敗也會收掉灰塊，不會永遠卡著", () => {
+    const { viewport } = setup();
+    fireEvent.error(img());
+    expect(viewport.querySelector("[data-zoom-skeleton]")).toBeNull();
+  });
+
+  it("灰塊顯示時 Esc 與關閉鈕都能關", () => {
+    const { dialog, onClose } = setup();
+    expect(dialog.querySelector("[data-zoom-skeleton]")).not.toBeNull();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("svg 不必等：沒有灰塊", () => {
+    const { viewport } = setup({ kind: "svg", svg: '<svg id="m1"></svg>', naturalWidth: 200, naturalHeight: 100 });
+    expect(viewport.querySelector("[data-zoom-skeleton]")).toBeNull();
+  });
+});
+
+describe("MediaLightbox 游標", () => {
+  it("符合視窗時維持預設游標；放大到超出視窗是 grab，拖曳中是 grabbing，放開回 grab；縮回符合視窗又回預設", () => {
+    const { dialog, viewport } = setup();
+    expect(img().style.cursor).toBe("");
+    fireEvent.keyDown(dialog, { key: "+" });
+    expect(img().style.cursor).toBe("grab");
+    fireEvent.pointerDown(viewport, { pointerId: 1, pointerType: "mouse", clientX: 500, clientY: 400 });
+    expect(img().style.cursor).toBe("grabbing");
+    fireEvent.pointerUp(viewport, { pointerId: 1, pointerType: "mouse", clientX: 480, clientY: 400 });
+    expect(img().style.cursor).toBe("grab");
+    fireEvent.keyDown(dialog, { key: "0" });
+    expect(img().style.cursor).toBe("");
+  });
+
+  it("svg 放大後同樣是 grab", () => {
+    const { dialog } = setup({ kind: "svg", svg: '<svg id="m1"></svg>', naturalWidth: 2000, naturalHeight: 1000 });
+    const content = dialog.querySelector<HTMLElement>("[data-zoom-viewport] > div")!;
+    expect(content.style.cursor).toBe("");
+    fireEvent.keyDown(dialog, { key: "+" });
+    expect(content.style.cursor).toBe("grab");
+  });
+});

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } f
 import type { BlockNoteEditor } from "@blocknote/core";
 import { ZoomButton } from "./ZoomButton";
 import { useMediaZoom } from "./context";
+import { prefetchMediaLightbox } from "./lightbox-chunk";
 import { selectedImageOf } from "./selected-image";
 
 const IMAGE_SELECTOR = '.bn-block-content[data-content-type="image"] img.bn-visual-media';
@@ -132,6 +133,7 @@ export function ImageZoomLayer({
       const found = imageUnder(e.target);
       if (found === undefined) return;
       pointerImgRef.current = found;
+      if (found !== null) prefetchMediaLightbox(); // 點下去前就把放大畫面的 chunk 抓好
       // 放大開著時完全凍結；鈕有焦點時只擋「收起」，可以換成別張圖。
       if (isOpen() || (found === null && buttonFocused())) return;
       setHover(found);

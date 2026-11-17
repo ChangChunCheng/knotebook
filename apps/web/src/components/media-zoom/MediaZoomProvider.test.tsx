@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import i18n from "@/i18n";
 import { useMediaZoom, type MediaZoomApi, type ZoomOrigin, type ZoomSource } from "./context";
 import { MediaZoomProvider } from "./MediaZoomProvider";
+import { loadMediaLightbox } from "./lightbox-chunk";
 
 const SOURCE: ZoomSource = {
   kind: "image",
@@ -67,6 +68,19 @@ describe("MediaZoomProvider", () => {
     expect(screen.getByRole("dialog", { name: "bob.png" })).toBeInTheDocument();
     expect(api!.isOpen).toBe(true);
     expect(screen.getByTestId("state")).toHaveTextContent("true");
+  });
+
+  it("chunk 已載好（例如預取過）：打開當下直接渲染放大畫面，不經外殼", async () => {
+    const { media, button } = pageElements();
+    await loadMediaLightbox();
+    render(
+      <MediaZoomProvider>
+        <Probe />
+      </MediaZoomProvider>,
+    );
+    act(() => api!.open(SOURCE, { button, media }));
+    expect(screen.getByRole("dialog", { name: "bob.png" })).toBeInTheDocument();
+    expect(document.querySelector("[data-zoom-fallback]")).toBeNull();
   });
 
   it("Esc 關閉：放大畫面消失、isOpen 為 false、焦點回放大鈕", async () => {

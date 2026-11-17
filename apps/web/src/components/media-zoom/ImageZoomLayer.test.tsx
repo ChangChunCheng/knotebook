@@ -8,6 +8,9 @@ import { noteSchema } from "@/collab/schema";
 import i18n from "@/i18n";
 import { MediaZoomContext, type MediaZoomApi } from "./context";
 import { ImageZoomLayer, zoomButtonPlacement } from "./ImageZoomLayer";
+import { prefetchMediaLightbox } from "./lightbox-chunk";
+
+vi.mock("./lightbox-chunk", () => ({ loadMediaLightbox: vi.fn(), prefetchMediaLightbox: vi.fn() }));
 
 // DOM 照 BlockNote 的結構手造：.bn-block-outer > .bn-block > .bn-block-content[data-content-type=image] > 調寬框 > img。
 const IMAGE = (id: string, extra = "") =>
@@ -95,6 +98,15 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(img("dimg")).not.toHaveAttribute("tabindex");
     fireEvent.click(img("dimg"));
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("滑鼠移到圖上就預取放大畫面（唯讀也一樣）；移到段落上不預取", () => {
+    vi.mocked(prefetchMediaLightbox).mockClear();
+    render(<Host zoom={zoom} editable={false} />);
+    fireEvent.pointerOver(screen.getByText("Body"), { pointerType: "mouse" });
+    expect(prefetchMediaLightbox).not.toHaveBeenCalled();
+    hoverImg();
+    expect(prefetchMediaLightbox).toHaveBeenCalled();
   });
 
   it("觸控的 pointer 不顯示鈕", () => {

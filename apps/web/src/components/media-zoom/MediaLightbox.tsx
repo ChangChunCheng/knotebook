@@ -11,10 +11,10 @@ import {
 } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useTranslation } from "react-i18next";
-import { DialogOverlay } from "@/components/ui/dialog";
 import { X } from "@/components/ui/icons";
 import { nextMermaidId, rewriteMermaidId } from "@/lib/mermaid";
 import type { ZoomSource } from "./context";
+import { ZoomSkeleton } from "./LightboxFallback";
 import { fitView, panBy, toggleZoom, wheelFactor, zoomAt, type Point, type Size, type ZoomView } from "./zoom-math";
 
 /** `+`／`-` 每按一次的縮放倍率。 */
@@ -94,9 +94,25 @@ export function MediaLightbox({
   const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null);
   const [geo, setGeo] = useState<Geometry | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
-  const setContent = useCallback((el: HTMLElement | null) => {
-    contentRef.current = el;
+  // 圖片要等載入並解碼完才換掉灰塊（SVG 是內嵌的，不必等）。
+  const [imageReady, setImageReady] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const markImageReady = useCallback((img: HTMLImageElement) => {
+    const decoding = typeof img.decode === "function" ? img.decode() : undefined;
+    if (decoding === undefined) setImageReady(true);
+    else void decoding.then(
+      () => setImageReady(true),
+      () => setImageReady(true),
+    );
   }, []);
+  const setContent = useCallback(
+    (el: HTMLElement | null) => {
+      contentRef.current = el;
+      // 已在快取裡（頁面上那張就是同一個網址）：當場視為備妥，連一格灰塊都不出。
+      if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0) setImageReady(true);
+    },
+    [],
+  );
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
   const lastTap = useRef<{ at: number; point: Point } | null>(null);
@@ -181,6 +197,7 @@ export function MediaLightbox({
     const point = { x: event.clientX, y: event.clientY };
     if (!finite(point)) return;
     pointers.current.set(event.pointerId, point);
+    setDragging(true);
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -244,6 +261,7 @@ export function MediaLightbox({
     const previous = pointers.current.get(event.pointerId);
     if (previous === undefined) return;
     pointers.current.delete(event.pointerId);
+    if (pointers.current.size === 0) setDragging(false);
     const g = gesture.current;
     const end = { x: event.clientX, y: event.clientY };
     if (g !== null && finite(end)) g.travel += distance(previous, end);
@@ -274,7 +292,10 @@ export function MediaLightbox({
   /** 指標取消或失去捕捉（例如系統手勢接手）：把它從追蹤中拿掉，殘留的指標才不會讓之後的單指拖曳被當成捏合。 */
   function handlePointerCancel(event: ReactPointerEvent<HTMLDivElement>): void {
     pointers.current.delete(event.pointerId);
-    if (pointers.current.size === 0) gesture.current = null;
+    if (pointers.current.size === 0) {
+      gesture.current = null;
+      setDragging(false);
+    }
   }
 
   function handleClick(): void {
@@ -290,10 +311,13 @@ export function MediaLightbox({
   let content: JSX.Element | null = null;
   if (geo !== null) {
     const { scale, offset } = geo.view;
+    // 內容比視窗大（任一軸）才拖得動：游標是 grab／grabbing；剛好放得下就維持預設游標。
+    const canPan = natural.width * scale > geo.viewport.width + 0.5 || natural.height * scale > geo.viewport.height + 0.5;
     const style = {
       width: `${natural.width * scale}px`,
       height: `${natural.height * scale}px`,
       transform: `translate(${offset.x}px, ${offset.y}px)`,
+      ...(canPan ? { cursor: dragging ? "grabbing" : "grab" } : {}),
     };
     // 內容坐在跟筆記裡一樣的卡面（`bg-card`，編輯器的底色）上：mermaid 的淺色主題用深灰畫線與字、根元素沒有底色，
     // 直接放在半透明黑背板上會看不見；圖片的卡面只會從透明像素透出來。
@@ -304,8 +328,10 @@ export function MediaLightbox({
           src={source.src}
           alt={source.alt}
           draggable={false}
-          className="absolute left-0 top-0 max-w-none bg-card"
+          className={`absolute left-0 top-0 max-w-none bg-card${imageReady ? "" : " opacity-0"}`}
           style={style}
+          onLoad={event => markImageReady(event.currentTarget)}
+          onError={() => setImageReady(true)}
         />
       ) : (
         <div
@@ -325,7 +351,8 @@ export function MediaLightbox({
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogOverlay className="bg-black/80" />
+        {/* 不淡入：與先頂上的外殼（`LightboxFallback`）同一個不透明度，換手時背板不會閃。 */}
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
         <DialogPrimitive.Content
           className="fixed inset-0 z-50 outline-none"
           onKeyDown={handleKeyDown}
@@ -348,6 +375,7 @@ export function MediaLightbox({
             onClick={handleClick}
           >
             {content}
+            {content === null || (source.kind === "image" && !imageReady) ? <ZoomSkeleton natural={natural} viewport={geo?.viewport} /> : null}
           </div>
           {caption && (
             <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/50 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-white">
