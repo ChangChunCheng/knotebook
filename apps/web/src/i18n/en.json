@@ -218,7 +218,10 @@
       "untitled": "(Untitled heading)",
       "pin": "Pin outline",
       "unpin": "Unpin outline",
-      "close": "Close outline"
+      "close": "Close outline",
+      "position": "{{title}} · {{index}}/{{total}}",
+      "open": "Open heading outline",
+      "openAt": "Open heading outline: {{position}}"
     },
     "blockLink": {
       "copy": "Copy link to block",
