@@ -69,7 +69,7 @@ export interface NoteMenuProps {
 }
 
 /**
- * 內文卡頁頭的 ⋮ 選單：加入／移出最愛（第一項，任何角色；移出先確認，見 `FavoriteMenuItem`）＋複製連結（任何角色）＋簡報模式（#229，任何角色）＋標題導覽（#465，只在頁首 ⋮、手機、這篇有標題時；開底部面板，見 `OutlineMenuItem`）＋寬度（只在頁首 ⋮；頁首寬度鈕收起時的設定入口，見 `NoteWidthMenuItems`，由 `NotePage` 以 `widthItems` 交進來，側欄的 ⋮ 不把它帶進首包）＋AI 修改紀錄＋移動到…／複製到…（#216；逐層子選單，規則見 `sidebar/destination-level.ts`、兩種形態見 `share/GroupTransfer.tsx`，「複製到我的筆記」已併入「複製到… → 我的筆記」）
+ * 內文卡頁頭的 ⋮ 選單：加入／移出最愛（第一項，任何角色；移出先確認，見 `FavoriteMenuItem`）＋複製連結（任何角色）＋簡報模式（#229，任何角色）＋標題導覽（#465，只在頁首 ⋮、視窗窄於 768px、這篇有標題時；開底部面板，見 `OutlineMenuItem`）＋寬度（只在頁首 ⋮；頁首寬度鈕收起時的設定入口，見 `NoteWidthMenuItems`，由 `NotePage` 以 `widthItems` 交進來，側欄的 ⋮ 不把它帶進首包）＋AI 修改紀錄＋移動到…／複製到…（#216；逐層子選單，規則見 `sidebar/destination-level.ts`、兩種形態見 `share/GroupTransfer.tsx`，「複製到我的筆記」已併入「複製到… → 我的筆記」）
  * ＋移到垃圾桶（`permissions.delete`，#175；#181 起刪除＝移入垃圾桶）。
  *
  * **移到垃圾桶不確認**：點下選單項即送 DELETE；成功 toast「已移到垃圾桶」，
@@ -485,7 +485,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
               <Presentation className="mr-2 h-4 w-4" />
               {t("note.menu.present")}
             </DropdownMenuItem>
-            {/* 標題導覽（#465）：只在頁首 ⋮、手機、這篇有標題時（見 `OutlineMenuItem`）。面板沒有觸發鈕，關閉時焦點交還 ⋮ 觸發鈕。 */}
+            {/* 標題導覽（#465）：只在頁首 ⋮、視窗窄於 768px、這篇有標題時（見 `OutlineMenuItem`）。面板沒有觸發鈕，關閉時焦點交還 ⋮ 觸發鈕。 */}
             {trigger === "header" && (
               <OutlineMenuItem
                 onActivate={(open) => {

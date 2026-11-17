@@ -111,7 +111,7 @@ export function Pin(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 標題導覽（手機 ⋮ 項、底部面板）。路徑取自 lucide `list-tree`（ISC），手刻同風格。 */
+/** 標題導覽（窄視窗的 ⋮ 項）。路徑取自 lucide `list-tree`（ISC），手刻同風格。 */
 export function ListTree(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="list-tree" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>

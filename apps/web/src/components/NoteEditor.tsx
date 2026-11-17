@@ -608,7 +608,7 @@ export function NoteEditor({
 
   // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；768-1279 版本面板浮在卡上時會蓋住它，也不顯示。
   // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
-  // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗與釘住過場中是每個畫格一次。
+  // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗時是每個畫格一次。
   const outlineHeadings = useOutlineHeadings(editor);
   const overlay = useIsOverlay();
   const outlineCompact = useIsOutlineCompact();
