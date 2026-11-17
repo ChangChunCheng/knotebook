@@ -34,7 +34,7 @@ export function selectedValue(trigger: HTMLElement): string {
 /** 開選單讀出所有選項的名稱，再用 Esc 收起。 */
 export async function optionLabels(trigger: HTMLElement): Promise<string[]> {
   await openSelect(trigger);
-  const labels = screen.getAllByRole("option").map((o) => o.textContent ?? "");
+  const labels = screen.queryAllByRole("option").map((o) => o.textContent ?? "");
   await act(async () => {
     fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
   });

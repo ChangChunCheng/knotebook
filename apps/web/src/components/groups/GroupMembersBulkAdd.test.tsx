@@ -4,6 +4,7 @@ import type { GroupDto, GroupMemberDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { dismissAllToasts } from "@/components/ui/toast";
 import { clickOutside } from "@/test/outside-click";
+import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 import {
   ADMIN_ROLE, GROUP_ADMIN, GROUP_MEMBER, ME, MEMBER_ROLE, ROLES, callsTo, fail, groupFetch, member, ok, renderGroupRoute,
 } from "./group-test-utils";
@@ -60,7 +61,7 @@ async function openMembers(fetchMock: ReturnType<typeof vi.fn>) {
   const view = renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
   const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
   const roleSelect = await within(dialog).findByLabelText("Role for new member");
-  await waitFor(() => expect(roleSelect).toHaveValue(MEMBER_ROLE.id));
+  await waitFor(() => expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id));
   await within(dialog).findByText(ME.email);
   return { dialog, view };
 }
@@ -113,7 +114,7 @@ describe("成員批次加入", () => {
     const fetchMock = membersServer(initial, ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
 
-    fireEvent.change(within(dialog).getByLabelText("Role for new member"), { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(within(dialog).getByLabelText("Role for new member"), "Admin");
     const input = within(dialog).getByLabelText("Email address");
     submitEmails(dialog, "carol@example.com, ghost@example.com; Carol@Example.com BOB@example.com dave@example.com nope");
 
@@ -131,9 +132,9 @@ describe("成員批次加入", () => {
     expect(resultMessage(bulkDialog)).toHaveTextContent(/^The addresses that weren't added are left in the email box/);
     // 沒有帳號與格式不對的留在輸入框（依原輸入順序），角色不重設（還要再加）
     expect(input).toHaveValue("ghost@example.com, nope");
-    expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(ADMIN_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(ADMIN_ROLE.id);
     // 失效後名單重抓：新成員出現，角色是選的那個
-    await waitFor(() => expect(within(dialog).getByLabelText("Role for dave@example.com")).toHaveValue(ADMIN_ROLE.id));
+    await waitFor(() => expect(selectedValue(within(dialog).getByLabelText("Role for dave@example.com"))).toBe(ADMIN_ROLE.id));
     // 設定 modal 裡沒有結果框（只在對話框裡）
     expect(within(dialog).queryByText(/Added \(2\)/)).not.toBeInTheDocument();
   });
@@ -170,13 +171,13 @@ describe("成員批次加入", () => {
   it("全部加成 → 輸入框清空、角色重設；沒有「留在輸入框」的說明", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
-    fireEvent.change(within(dialog).getByLabelText("Role for new member"), { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(within(dialog).getByLabelText("Role for new member"), "Admin");
     submitEmails(dialog, "carol@example.com\tdave@example.com");
     const bulkDialog = await resultDialog();
     expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (2):", emails: ["carol@example.com", "dave@example.com"] });
     expect(resultMessage(bulkDialog)).toBeNull();
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("");
-    expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(MEMBER_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(MEMBER_ROLE.id);
     // 說明文字用開跑時的角色（跑完角色重設了，說明不跟著變）
     expect(within(bulkDialog).getByText("These addresses are added to this group as Admin.")).toBeInTheDocument();
   });
@@ -419,15 +420,16 @@ describe("成員批次加入", () => {
       url === `/api/groups/${SOURCE.id}/members` && method === "GET" ? ok(sourceMembers) : null,
     );
     const { dialog } = await openMembers(fetchMock);
-    fireEvent.change(within(dialog).getByLabelText("Role for new member"), { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(within(dialog).getByLabelText("Role for new member"), "Admin");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Import from another group…" }));
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
     expect(within(importDialog).getByText(/added to this group as Admin\. This is a one-time copy/)).toBeInTheDocument();
     const source = within(importDialog).getByLabelText("Group to import from");
     // 只列其他群組（不含目前這個）
-    expect(within(source).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a group…", "Team Source"]);
-    fireEvent.change(source, { target: { value: SOURCE.id } });
+    expect(displayedLabel(source)).toBe("Choose a group…");
+    expect(await optionLabels(source)).toEqual(["Team Source"]);
+    await chooseOption(source, "Team Source");
 
     const list = await within(importDialog).findByRole("list", { name: "People to add" });
     const boxes = within(list).getAllByRole("checkbox");
@@ -447,7 +449,7 @@ describe("成員批次加入", () => {
       { email: "erin@example.com", roleId: ADMIN_ROLE.id },
     ]);
     // 角色重設規則同輸入框那條：沒有東西放回輸入框 → 重設；說明文字仍是開跑時的角色
-    expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(MEMBER_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(MEMBER_ROLE.id);
     expect(within(bulkDialog).getByText(/added to this group as Admin\./)).toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByText("erin@example.com")).toBeInTheDocument());
 
@@ -471,7 +473,7 @@ describe("成員批次加入", () => {
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "typed@example.com" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Import from another group…" }));
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
-    fireEvent.change(within(importDialog).getByLabelText("Group to import from"), { target: { value: SOURCE.id } });
+    await chooseOption(within(importDialog).getByLabelText("Group to import from"), "Team Source");
     fireEvent.click(await within(importDialog).findByRole("button", { name: "Add 3 people" }));
     // 確認鈕被換掉：焦點不能掉到 body，移到「停止」
     await waitFor(() => expect(within(importDialog).getByRole("button", { name: "Stop" })).toHaveFocus());
@@ -489,16 +491,16 @@ describe("成員批次加入", () => {
       url === `/api/groups/${SOURCE.id}/members` && method === "GET" ? ok(sourceMembers) : null,
     );
     const { dialog } = await openMembers(fetchMock);
-    fireEvent.change(within(dialog).getByLabelText("Role for new member"), { target: { value: ADMIN_ROLE.id } });
+    await chooseOption(within(dialog).getByLabelText("Role for new member"), "Admin");
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "typed@example.com " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Import from another group…" }));
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
-    fireEvent.change(within(importDialog).getByLabelText("Group to import from"), { target: { value: SOURCE.id } });
+    await chooseOption(within(importDialog).getByLabelText("Group to import from"), "Team Source");
     fireEvent.click(await within(importDialog).findByRole("button", { name: "Add 1 person" }));
 
     const bulkDialog = await resultDialog("Import members from another group");
     expect(outcomeSummary(bulkDialog, "added")).toEqual({ label: "Added (1):", emails: ["carol@example.com"] });
-    expect(within(dialog).getByLabelText("Role for new member")).toHaveValue(ADMIN_ROLE.id);
+    expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(ADMIN_ROLE.id);
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("typed@example.com ");
   });
 
@@ -509,7 +511,7 @@ describe("成員批次加入", () => {
     const { dialog } = await openMembers(fetchMock);
     fireEvent.click(within(dialog).getByRole("button", { name: "Import from another group…" }));
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
-    fireEvent.change(within(importDialog).getByLabelText("Group to import from"), { target: { value: SOURCE.id } });
+    await chooseOption(within(importDialog).getByLabelText("Group to import from"), "Team Source");
     expect(await within(importDialog).findByRole("alert")).toHaveTextContent("An unexpected error occurred.");
     expect(within(importDialog).queryByRole("list", { name: "People to add" })).not.toBeInTheDocument();
   });
@@ -522,7 +524,7 @@ describe("成員批次加入", () => {
     const { dialog } = await openMembers(fetchMock);
     fireEvent.click(within(dialog).getByRole("button", { name: "Import from another group…" }));
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
-    fireEvent.change(within(importDialog).getByLabelText("Group to import from"), { target: { value: SOURCE.id } });
+    await chooseOption(within(importDialog).getByLabelText("Group to import from"), "Team Source");
     const all = await within(importDialog).findByRole("checkbox", { name: "Select all (2)" });
     fireEvent.click(all);
     expect(within(importDialog).getByRole("button", { name: "Add 0 people" })).toBeDisabled();

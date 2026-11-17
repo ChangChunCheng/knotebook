@@ -80,7 +80,11 @@ export function Select({
   return (
     <SelectPrimitive.Root
       value={radixValue}
-      onValueChange={(v) => onValueChange(fromRadix(v))}
+      onValueChange={(v) => {
+        // 真正的 "" 選項走 sentinel，Radix 回報原始 "" 只會來自表單內隱藏原生 select 同步時選項還沒到齊，不是使用者選的。
+        if (v === "") return;
+        onValueChange(fromRadix(v));
+      }}
       disabled={disabled}
       name={name}
       form={form}

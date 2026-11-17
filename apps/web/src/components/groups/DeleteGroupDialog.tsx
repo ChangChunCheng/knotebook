@@ -18,12 +18,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
-
-/** 與 `ShareDialog.tsx` 的 `SELECT_CLASS` 同形（原生 `<select>`），但撐滿寬度、長 email 以 `truncate` 吃掉不撐破對話框。 */
-const SELECT_CLASS =
-  "h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 type Mode = "transfer" | "delete";
 
@@ -173,19 +169,15 @@ export function DeleteGroupDialog({
 
         {mode === "transfer" ? (
           <div className="space-y-2">
-            <select
+            <Select
+              variant="field"
               aria-label={t("groups.delete.transferToLabel")}
-              className={SELECT_CLASS}
+              className="w-full"
               disabled={membersQuery.isPending || deleteGroup.isPending}
               value={selected?.userId ?? ""}
-              onChange={(event) => setPickedAdmin(event.target.value)}
-            >
-              {admins.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {`${m.displayName} (${m.email})`}
-                </option>
-              ))}
-            </select>
+              onValueChange={setPickedAdmin}
+              options={admins.map((m) => ({ value: m.userId, label: `${m.displayName} (${m.email})` }))}
+            />
             {adminsFailed && (
               <p role="alert" className="text-sm text-destructive">
                 {t("groups.delete.adminsUnavailable")}

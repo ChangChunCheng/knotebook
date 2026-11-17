@@ -14,6 +14,7 @@ import {
   Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Trash } from "@/components/ui/icons";
+import { Select } from "@/components/ui/select";
 import { RowIconButton } from "@/components/ui/row-icon-button";
 import { toast } from "@/components/ui/toast";
 import { UserEmailCombobox } from "@/components/UserEmailCombobox";
@@ -33,10 +34,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   }
   return t("errors.fallback");
 }
-
-const SELECT_CLASS =
-  "h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm pointer-coarse:text-base shadow-sm focus-visible:outline-none " +
-  "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 名單裡掛內建管理員角色的人數（看 `builtin === "admin"` 計數）。 */
 function countAdmins(members: GroupMemberDto[]): number {
@@ -246,25 +243,20 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
         // 成員彼此看得到 email——要收回就刪這一欄（連同 nameColumn 改回主欄；server 建議的 ① 同群組成員也要一起收，見 routes/users.ts）
         email: { content: member.email, tone: "muted" },
         role: canManageMembers ? (
-          <select
+          <Select
+            variant="inline"
             aria-label={t("groups.detail.roleLabel", { email: member.email })}
             value={member.roleId}
             // roles 還沒到：只有目前角色那一個選項可顯示，先鎖住
             disabled={locked || setRole.isPending || roles.length === 0}
             title={locked ? t("groups.detail.lastAdminHint") : undefined}
-            onChange={(event) => void handleRole(member, event.target.value)}
-            className={SELECT_CLASS}
-          >
-            {roles.length === 0 ? (
-              <option value={member.roleId}>{memberRoleLabel(t, roles, member)}</option>
-            ) : (
-              roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {roleLabel(t, role)}
-                </option>
-              ))
-            )}
-          </select>
+            onValueChange={(roleId) => void handleRole(member, roleId)}
+            options={
+              roles.length === 0
+                ? [{ value: member.roleId, label: memberRoleLabel(t, roles, member) }]
+                : roles.map((role) => ({ value: role.id, label: roleLabel(t, role) }))
+            }
+          />
         ) : (
           memberRoleLabel(t, roles, member)
         ),
@@ -357,19 +349,15 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
             <span id={emailHintId} className="sr-only">
               {t("groups.bulk.addEmailsHint")}
             </span>
-            <select
+            <Select
+              variant="field"
               aria-label={t("groups.detail.addRoleLabel")}
               value={newRoleId ?? ""}
               disabled={roles.length === 0 || running}
-              onChange={(event) => setPickedRoleId(event.target.value)}
-              className={SELECT_CLASS}
-            >
-              {roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {roleLabel(t, role)}
-                </option>
-              ))}
-            </select>
+              onValueChange={setPickedRoleId}
+              options={roles.map((role) => ({ value: role.id, label: roleLabel(t, role) }))}
+              className="shrink-0"
+            />
             <Button type="submit" variant="outline" disabled={addMember.isPending || running}>
               {t("groups.detail.add")}
             </Button>

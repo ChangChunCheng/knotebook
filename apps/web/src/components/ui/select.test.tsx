@@ -153,6 +153,58 @@ describe("ui/select", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it('表單內、沒有 "" 選項：值與選項從空變成真值時，不會回呼 ""', async () => {
+    const onValueChange = vi.fn();
+    function Harness() {
+      const [loaded, setLoaded] = useState(false);
+      return (
+        <form>
+          <Select
+            variant="field"
+            aria-label="Role"
+            value={loaded ? "editor" : ""}
+            onValueChange={onValueChange}
+            options={loaded ? ROLES : []}
+          />
+          <button type="button" onClick={() => setLoaded(true)}>
+            load
+          </button>
+        </form>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "load" }));
+    await waitFor(() => expect(selectedValue(screen.getByRole("combobox", { name: "Role" }))).toBe("editor"));
+    await act(async () => {});
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it('表單內、有 "" 選項：值從尚未在清單的值變成清單內的值時，不會回呼', async () => {
+    const onValueChange = vi.fn();
+    function Harness() {
+      const [loaded, setLoaded] = useState(false);
+      return (
+        <form>
+          <Select
+            variant="field"
+            aria-label="Model"
+            value={loaded ? "gpt" : "late"}
+            onValueChange={onValueChange}
+            options={loaded ? WITH_AUTO : [{ value: "", label: "Auto" }]}
+          />
+          <button type="button" onClick={() => setLoaded(true)}>
+            load
+          </button>
+        </form>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "load" }));
+    await waitFor(() => expect(selectedValue(screen.getByRole("combobox", { name: "Model" }))).toBe("gpt"));
+    await act(async () => {});
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
   it("name 有給：form 送出的 FormData 取得到目前值；沒給 name 則沒有該欄位", () => {
     const named = render(
       <form>
