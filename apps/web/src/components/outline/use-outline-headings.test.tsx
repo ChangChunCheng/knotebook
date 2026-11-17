@@ -92,6 +92,41 @@ describe("useOutlineHeadings", () => {
     expect(result.current.map((x) => x.text)).toEqual(["Alice", "Bob"]);
   });
 
+  it("computes the first change of an empty editor at once (content arriving); later changes wait for the quiet period", () => {
+    const f = makeEditor([]);
+    const { result } = renderHook(() => useOutlineHeadings(f.editor));
+    expect(result.current).toEqual([]);
+    const before = f.state.reads;
+
+    f.setDoc([heading("a", "Alice")]);
+    act(() => f.fire());
+    expect(f.state.reads).toBe(before + 1);
+    expect(result.current.map((x) => x.text)).toEqual(["Alice"]);
+
+    f.setDoc([heading("a", "Alice"), heading("b", "Bob")]);
+    act(() => f.fire());
+    expect(f.state.reads).toBe(before + 1);
+    expect(result.current).toHaveLength(1);
+    act(() => {
+      vi.advanceTimersByTime(OUTLINE_RECOMPUTE_MS);
+    });
+    expect(f.state.reads).toBe(before + 2);
+    expect(result.current.map((x) => x.text)).toEqual(["Alice", "Bob"]);
+  });
+
+  it("computes at once only once: typing in a note that still has no headings waits for the quiet period", () => {
+    const f = makeEditor([]);
+    renderHook(() => useOutlineHeadings(f.editor));
+    act(() => f.fire()); // the one immediate computation; still no headings
+    const before = f.state.reads;
+    act(() => f.fire());
+    expect(f.state.reads).toBe(before);
+    act(() => {
+      vi.advanceTimersByTime(OUTLINE_RECOMPUTE_MS);
+    });
+    expect(f.state.reads).toBe(before + 1);
+  });
+
   it("keeps the same array and skips re-rendering when the headings did not change", () => {
     const f = makeEditor([heading("a", "Alice")]);
     let renders = 0;

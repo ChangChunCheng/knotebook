@@ -27,8 +27,8 @@ export interface HeadingOutlineProps {
   onJump: (id: string) => void;
   /**
    * A wheel over the outline that should scroll the note: the outline sits outside the note's scroll container,
-   * so the browser would not scroll it. Called over the rail always, and over the panel only when its list
-   * cannot scroll further that way. Gets the event's raw `deltaY` and `deltaMode`.
+   * so the browser would not scroll it. Called over the rail and the panel's header always, and over the panel's
+   * list only when the list cannot scroll further that way. Gets the event's raw `deltaY` and `deltaMode`.
    */
   onForwardWheel?: (deltaY: number, deltaMode: number) => void;
 }
@@ -107,17 +107,15 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
   const forwardWheel = useRef(onForwardWheel);
   forwardWheel.current = onForwardWheel;
   // Passive: nothing here cancels the browser's own scrolling. A wheel over a panel list that can still scroll
-  // stays with the list; anywhere else the browser has nothing of ours to scroll, so the note gets it.
+  // stays with the list; anywhere else (the rail, the panel's header with its buttons) the browser has nothing
+  // of ours to scroll, so the note gets it.
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const onWheel = (e: WheelEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.deltaY === 0) return;
-      const panelEl = panelRef.current;
-      if (panelEl?.contains(e.target as Node)) {
-        const list = panelEl.querySelector<HTMLElement>("ol");
-        if (list && canScrollToward(list, e.deltaY)) return;
-      }
+      const list = panelRef.current?.querySelector<HTMLElement>("ol");
+      if (list?.contains(e.target as Node) && canScrollToward(list, e.deltaY)) return;
       forwardWheel.current?.(e.deltaY, e.deltaMode);
     };
     wrapper.addEventListener("wheel", onWheel, { passive: true });

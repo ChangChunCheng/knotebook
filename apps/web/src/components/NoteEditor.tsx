@@ -45,7 +45,7 @@ import { LinkDialog } from "@/components/LinkDialog";
 import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
-import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
+import { ARTICLE_COLUMN_PADDING, articleColumn, articleColumnState } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
 import { useIsOverlay, useIsPhone } from "@/lib/layout-tiers";
@@ -75,11 +75,10 @@ import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { ColumnDividers } from "@/components/editor/ColumnDividers";
 import { LinkLongPress } from "@/components/LinkLongPress";
 import { NoteOutline } from "@/components/outline/NoteOutline";
+import { canPinOutline } from "@/components/outline/outline-layout";
+import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
 import { useOutlineBox } from "@/components/outline/use-outline-box";
 import { useOutlineHeadings } from "@/components/outline/use-outline-headings";
-
-/** 大綱的 `onPinnedChange`：釘選鈕不出現（`pinAvailable={false}`），不會被呼叫。 */
-const noop = () => {};
 
 const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
@@ -606,10 +605,18 @@ export function NoteEditor({
 
   // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；640-1279 版本面板浮在卡上時會蓋住它，也不顯示。
   // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
+  // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗與釘住過場中是每個畫格一次。
   const outlineHeadings = useOutlineHeadings(editor);
-  const outlineBox = useOutlineBox(scrollEl, columnEl);
   const overlay = useIsOverlay();
-  const showOutline = !phone && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0 && outlineBox !== null;
+  const outlineCanShow = !phone && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
+  const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
+  const showOutline = outlineCanShow && outlineBox !== null;
+  // 釘住：偏好是全站一個；只有大綱在、標準寬、容器扣掉面板還放得下 640 的欄時才真的釘（欄換成 `standard-pinned`）。
+  // 其他時候退回細線、欄照原寬度，偏好不動，條件回來就自動再釘。
+  const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
+  const outlinePinAvailable = width === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
+  const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
+  const pinMotionReady = usePinMotionReady(showOutline);
 
   useEffect(() => {
     const report = onCursorScrollerRef.current; // cleanup 不讀 ref
@@ -670,7 +677,7 @@ export function NoteEditor({
   //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
   //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
   //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
-  //         置中 wrapper＝文章欄（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
+  //         置中 wrapper＝文章欄（articleColumn(articleColumnState(width, 釘住), { pinMotion: 大綱出現滿一個畫格 }) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
   //           flex-col py-6；非手機再加 `min-h-full`，手機（頁尾在捲動容器內）改 `grow shrink-0` 撐滿流程包裝；
   //           `relative`＝#160，見下方 JSX 註解）
   //           ← 欄寬／內距一律取自 `ui/article-column.ts`：#297 起三段寬度（標準／寬／
@@ -713,9 +720,9 @@ export function NoteEditor({
               scrollEl={scrollEl}
               box={outlineBox}
               bubbleShown={versionsEnabled && !panelOpen}
-              pinned={false}
-              pinAvailable={false}
-              onPinnedChange={noop}
+              pinned={outlinePinned}
+              pinAvailable={outlinePinAvailable}
+              onPinnedChange={setOutlinePinPref}
             />
           )}
           {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
@@ -752,7 +759,12 @@ export function NoteEditor({
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
+              className={cn(
+                articleColumn(articleColumnState(width, outlinePinned), { pinMotion: pinMotionReady }),
+                ARTICLE_COLUMN_PADDING,
+                "relative flex flex-col py-6",
+                footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full",
+              )}
             >
               <NoteEditorView
                 editor={editor}
