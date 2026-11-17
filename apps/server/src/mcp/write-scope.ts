@@ -101,7 +101,7 @@ export function canDeleteNotes(auth: Pick<McpToolCtx, "authKind" | "tokenScope">
 /** HTTP 上是死碼（沒 notes:delete 時兩支工具都不註冊；唯一的守衛＝本檔單元測試的 #181 D 案）。引號內＝en toggle 字樣。 */
 export const DELETE_SCOPE_MESSAGE =
   'Moving notes to the trash and restoring them needs the notes:delete scope, and this credential doesn\'t have it, so nothing was changed. ' +
-  'Ask the user to turn on "Move notes to the trash and restore them" for this credential via the pencil on its row in ' +
+  'Ask the user to turn on "Move to trash (can be restored)" (notes:delete) for this credential via the pencil on its row in ' +
   "Settings → Authorization, then reconnect.";
 
 /** 同 `requireMoveScope` 的形：session 跳過；沒 write → INSUFFICIENT_SCOPE_MESSAGE；有 write 沒 delete → DELETE_SCOPE_MESSAGE；兩道都在扣 tokenWrite 之前。 */
