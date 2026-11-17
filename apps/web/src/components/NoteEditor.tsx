@@ -46,11 +46,11 @@ import { LinkDialog } from "@/components/LinkDialog";
 import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
-import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
+import { ARTICLE_COLUMN_PADDING, articleColumn, articleColumnState } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
-import { useIsPhone } from "@/lib/layout-tiers";
-import { useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
+import { useIsOutlineCompact, useIsOverlay, useIsPhone } from "@/lib/layout-tiers";
+import { stickyTopInset, useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
 import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
 import { buildWikilinkMenuItems, type EditorRef } from "@/components/wikilink/menu";
@@ -75,6 +75,14 @@ import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/edi
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { ColumnDividers } from "@/components/editor/ColumnDividers";
 import { LinkLongPress } from "@/components/LinkLongPress";
+import { NoteOutline } from "@/components/outline/NoteOutline";
+import { OutlineMenuContext } from "@/components/outline/outline-menu-context";
+import { focusBackTo } from "@/components/outline/OutlineSheet";
+import { PhoneNoteOutline } from "@/components/outline/PhoneNoteOutline";
+import { canPinOutline } from "@/components/outline/outline-layout";
+import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outline-pin";
+import { useOutlineBox } from "@/components/outline/use-outline-box";
+import { useOutlineHeadings } from "@/components/outline/use-outline-headings";
 
 const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
@@ -491,7 +499,7 @@ export function NoteEditor({
   // 任何拖放進行中，欄上掛 class，⋮⋮ 等編輯器外的浮層不吃指標，drop 才落得到底下的編輯器（規則在 `index.css`）。
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
-  const { panelOpen } = useVersions();
+  const { panelOpen, enabled: versionsEnabled } = useVersions();
   // #274：版本面板寬度。state 放在面板與錯誤外框的最近共同祖先（下方列容器），以 CSS 變數往下傳。
   const panelWidth = useVersionsPanelWidth();
   // 640-1279：面板浮在筆記上（列容器 `relative`、面板 `absolute`），上緣讓出頁首；收起規則見 `floating-panel.ts`。
@@ -510,9 +518,12 @@ export function NoteEditor({
 
   // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  // 標題大綱要在捲動容器掛上時重新量測、重新訂閱捲動，ref 不會觸發重繪，所以另存一份 state。
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const setScrollRoot = useCallback(
     (el: HTMLDivElement | null) => {
       scrollRootRef.current = el;
+      setScrollEl(el);
       onScrollRoot?.(el);
     },
     [onScrollRoot],
@@ -620,6 +631,48 @@ export function NoteEditor({
   // 版本預覽中活編輯器藏起來了，撤銷會改到看不見的內容。
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
+  // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；768-1279 版本面板浮在卡上時會蓋住它，也不顯示。
+  // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
+  // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗時是每個畫格一次。
+  const outlineHeadings = useOutlineHeadings(editor);
+  const overlay = useIsOverlay();
+  const outlineCompact = useIsOutlineCompact();
+  const outlineCanShow = !outlineCompact && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
+  const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
+  const showOutline = outlineCanShow && outlineBox !== null;
+  // 釘住：偏好是全站一個；只有大綱在、標準寬、容器扣掉面板還放得下 640 的欄時才真的釘（欄換成 `standard-pinned`）。
+  // 其他時候退回細線、欄照原寬度，偏好不動，條件回來就自動再釘。
+  const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
+  const outlinePinAvailable = width === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
+  const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
+  const pinMotionReady = usePinMotionReady(showOutline);
+  // 窄於 768 沒有細線：捲動時的位置泡泡與底部面板；⋮ 的「標題導覽」經 context 開同一個面板，所以 provider 包住整張卡（含頁首槽位）。
+  // 手機上捲的是文件：泡泡與目前位置聽視窗的捲動，上緣是釘住的頁首下緣。
+  // 640–767 也用這一形，但那一段文件不捲、捲的是容器：泡泡與目前位置聽容器、泡泡浮在容器上緣的錨點層（同細線）。
+  const phoneOutline = outlineCompact && !hasPreview && outlineHeadings.length > 0;
+  const containerTopEdge = useCallback(() => scrollEl?.getBoundingClientRect().top ?? 0, [scrollEl]);
+  const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
+  // 面板不在（離開手機寬度、開版本預覽、標題刪光）時一併關掉，條件回來時不會自己再跳出來。
+  useEffect(() => {
+    if (!phoneOutline) setOutlineSheetOpen(false);
+  }, [phoneOutline]);
+  // 面板關閉（選了標題或直接關掉）時焦點去哪：面板沒有觸發鈕，不指定的話焦點會掉到 body。
+  // 開的當下在編輯（編輯工具列在；只有點泡泡會這樣，泡泡不搶焦點）→ 還給編輯器（不捲動、選取不變），工具列才會回來。面板開著時焦點在
+  // 面板裡、工具列已收起，所以在開的那一刻記下。否則回到開它的元素：⋮ 的觸發鈕，或用鍵盤、螢幕閱讀器
+  // 開的泡泡（面板開著時泡泡不倒數，還在）；手指點泡泡時泡泡沒拿到焦點，不交元素，焦點不移動。
+  const [outlineFocusReturn, setOutlineFocusReturn] = useState<{ editing: boolean; el: HTMLElement | null }>({ editing: false, el: null });
+  const mobileToolbarRef = useRef(mobileToolbar);
+  mobileToolbarRef.current = mobileToolbar;
+  const openOutlineSheet = useCallback((returnFocusTo?: HTMLElement | null) => {
+    setOutlineFocusReturn({ editing: mobileToolbarRef.current, el: returnFocusTo ?? null });
+    setOutlineSheetOpen(true);
+  }, []);
+  const outlineMenu = useMemo(() => ({ available: phoneOutline, open: openOutlineSheet }), [phoneOutline, openOutlineSheet]);
+  const outlineRestoreFocus = useMemo(
+    () => (outlineFocusReturn.editing ? () => editor.prosemirrorView?.dom.focus({ preventScroll: true }) : focusBackTo(outlineFocusReturn.el)),
+    [outlineFocusReturn, editor],
+  );
+
   useEffect(() => {
     const report = onCursorScrollerRef.current; // cleanup 不讀 ref
     report?.(createCursorScroller({ editor, getRoot: () => (hasPreviewRef.current ? null : scrollRootRef.current) }));
@@ -670,15 +723,17 @@ export function NoteEditor({
   // 包住既有的版面，不會讓 `NotePage` 任何 re-render 有機會扯到 editor 重建。
   //
   // 卡片版面：內文卡在這裡。DOM 樹（
-  // 寬度鏈的起點）：
+  // 寬度鏈的起點；最外層的 `OutlineMenuContext` 與 `AiSessionProvider` 不產生節點）：
   //   根 row（relative flex h-full min-h-0 min-w-0 flex-1 gap-3；640-1279 時是浮動版本面板的定位基準）
   //     內文卡（cardSurface，flex-col）
   //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
+  //       NoteOutline                                 ← #465 標題大綱：零高度錨點（data-outline-anchor），貼在捲動容器上緣；細線與面板不隨內文捲、不佔高度
+  //       PhoneNoteOutline                            ← #465 窄版（< 768）：位置泡泡（< 640 fixed 在頁首下方；640–767 浮在卡內錨點層）＋底部面板（Dialog，portal）；與上一項不同時出現
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
   //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
   //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
   //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
-  //         置中 wrapper＝文章欄（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
+  //         置中 wrapper＝文章欄（articleColumn(articleColumnState(width, 釘住), { pinMotion: 大綱出現滿一個畫格 }) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
   //           flex-col py-6；非手機再加 `min-h-full`，手機（頁尾在捲動容器內）改 `grow shrink-0` 撐滿流程包裝；
   //           `relative`＝#160，見下方 JSX 註解）
   //           ← 欄寬／內距一律取自 `ui/article-column.ts`：#297 起三段寬度（標準／寬／
@@ -697,6 +752,7 @@ export function NoteEditor({
   // 改版搬家——e2e 的 `[data-testid="note-editor"] [contenteditable]` 與
   // `NoteEditor.layout.test.tsx` 的節點鏈都吊在這裡。
   return (
+    <OutlineMenuContext.Provider value={outlineMenu}>
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
       <div ref={rowRef} onKeyDown={onRowKeyDown} className="relative flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
         <div className={cn(
@@ -715,6 +771,31 @@ export function NoteEditor({
           <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:sticky max-sm:top-0 max-sm:z-30 max-sm:bg-card max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
+          {showOutline && (
+            <NoteOutline
+              headings={outlineHeadings}
+              scrollEl={scrollEl}
+              box={outlineBox}
+              bubbleShown={versionsEnabled && !panelOpen}
+              pinned={outlinePinned}
+              pinAvailable={outlinePinAvailable}
+              onPinnedChange={setOutlinePinPref}
+            />
+          )}
+          {phoneOutline && (
+            <PhoneNoteOutline
+              headings={outlineHeadings}
+              root={scrollEl}
+              scrollTarget={phone ? window : scrollEl}
+              topEdge={phone ? stickyTopInset : containerTopEdge}
+              placement={phone ? "page" : "anchor"}
+              inputRoot={columnEl}
+              sheetOpen={outlineSheetOpen}
+              onSheetOpenChange={setOutlineSheetOpen}
+              onOpenSheet={openOutlineSheet}
+              restoreFocus={outlineRestoreFocus}
+            />
+          )}
           {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
               手機上的高度要從內容長出來（flex-basis auto，不是 flex-1 的 0%）：卡的高度不固定，0% 的基準加上
               `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
@@ -750,7 +831,12 @@ export function NoteEditor({
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
+              className={cn(
+                articleColumn(articleColumnState(width, outlinePinned), { pinMotion: pinMotionReady }),
+                ARTICLE_COLUMN_PADDING,
+                "relative flex flex-col py-6",
+                footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full",
+              )}
             >
               <NoteEditorView
                 editor={editor}
@@ -815,6 +901,7 @@ export function NoteEditor({
         initialUrl={linkPrefill.url}
       />
     </AiSessionProvider>
+    </OutlineMenuContext.Provider>
   );
 }
 

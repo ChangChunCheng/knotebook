@@ -5,6 +5,9 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import * as Y from "yjs";
 import { EMPTY_YDOC_UPDATE_B64, YDOC_FRAGMENT } from "@knotebook/shared";
 import i18n from "@/i18n";
+import { stubLayoutTier } from "@/test/layout-tier";
+import { OUTLINE_PINNED_STORAGE_KEY } from "@/components/outline/outline-pin";
+import { ARTICLE_COLUMN_MAX, articleColumn } from "@/components/ui/article-column";
 import { ThemeProvider } from "@/theme";
 import PublicNotePage from "./PublicNotePage";
 
@@ -12,15 +15,80 @@ import PublicNotePage from "./PublicNotePage";
 // API，這裡只驗「頁面把正確的 doc/publicRef 交給唯讀編輯器」——選項本身的契約
 // （fragment 名、resolveFileUrl 映射…）守在 collab/editor-options.test.ts。
 // data-ref 序列化成 kind:值——別只吐 kind（那樣「傳錯篇的 ref」測不出來）。
-vi.mock("@/components/PublicNoteEditor", () => ({
-  PublicNoteEditor: ({ doc, publicRef, links }: { doc: Y.Doc; publicRef: import("@/lib/public-note-ref").PublicNoteRef; links: unknown[] }) => (
-    <div
-      data-testid="public-note-editor"
-      data-ref={publicRef.kind === "token" ? `token:${publicRef.token}` : `path:${publicRef.handle}/${publicRef.slug}`}
-      data-fragment-length={String(doc.getXmlFragment(YDOC_FRAGMENT).length)}
-      data-links={JSON.stringify(links)}
-    />
-  ),
+// 替身也像真的一樣把「編輯器」交給 onEditor：一份只有一個 H2 的文件，標題大綱才有東西可列。
+const FAKE_EDITOR = vi.hoisted(() => ({
+  document: [{ id: "h-intro", type: "heading", props: { level: 2 }, content: [{ type: "text", text: "Intro" }] }],
+  onChange: () => () => {},
+}));
+vi.mock("@/components/PublicNoteEditor", async () => {
+  const { useEffect } = await import("react");
+  return {
+    PublicNoteEditor: ({
+      doc,
+      publicRef,
+      links,
+      onEditor,
+    }: {
+      doc: Y.Doc;
+      publicRef: import("@/lib/public-note-ref").PublicNoteRef;
+      links: unknown[];
+      onEditor?: (editor: typeof FAKE_EDITOR | null) => void;
+    }) => {
+      useEffect(() => {
+        onEditor?.(FAKE_EDITOR);
+        return () => onEditor?.(null);
+      }, [onEditor]);
+      return (
+        <div
+          data-testid="public-note-editor"
+          data-ref={publicRef.kind === "token" ? `token:${publicRef.token}` : `path:${publicRef.handle}/${publicRef.slug}`}
+          data-fragment-length={String(doc.getXmlFragment(YDOC_FRAGMENT).length)}
+          data-links={JSON.stringify(links)}
+        />
+      );
+    },
+  };
+});
+// 簡報層本身另有測試（`PublicNotePage.present.test.tsx`）；這裡只要它掛得上。
+vi.mock("@/present/lazy", () => ({ LazyPresentation: () => <div data-testid="presentation-stub" /> }));
+// 大綱本身另有測試；這裡只驗它掛在哪、拿到什麼。
+const outlineProps = vi.hoisted(() => [] as Array<import("@/components/outline/NoteOutline").NoteOutlineProps>);
+vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/NoteOutline")>();
+  return {
+    ...original,
+    NoteOutline: (props: import("@/components/outline/NoteOutline").NoteOutlineProps) => {
+      outlineProps.push(props);
+      return <div data-testid="outline-stub" />;
+    },
+  };
+});
+// 手機的泡泡與底部面板本身另有測試；這裡記下拿到什麼。泡泡替身是一顆按了就呼叫 onOpen 的鈕（同點一下）。
+const phoneStubs = vi.hoisted(() => ({
+  bubble: [] as Array<import("@/components/outline/OutlineScrollBubble").OutlineScrollBubbleProps>,
+  sheet: [] as Array<import("@/components/outline/OutlineSheet").OutlineSheetProps>,
+}));
+vi.mock("@/components/outline/OutlineScrollBubble", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/OutlineScrollBubble")>();
+  return {
+    ...original,
+    OutlineScrollBubble: (props: import("@/components/outline/OutlineScrollBubble").OutlineScrollBubbleProps) => {
+      phoneStubs.bubble.push(props);
+      return <button type="button" data-testid="bubble-stub" onClick={(e) => props.onOpen(e.currentTarget)} />;
+    },
+  };
+});
+vi.mock("@/components/outline/OutlineSheet", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/outline/OutlineSheet")>()),
+  OutlineSheet: (props: import("@/components/outline/OutlineSheet").OutlineSheetProps) => {
+    phoneStubs.sheet.push(props);
+    return <div data-testid="sheet-stub" data-open={String(props.open)} />;
+  },
+}));
+// jsdom 沒有版面：容器寬度由測試指定（同真的 hook，兩個元素都掛上才有值）。
+const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, firstLineTop: null } }));
+vi.mock("@/components/outline/use-outline-box", () => ({
+  useOutlineBox: (scrollEl: HTMLElement | null, columnEl: HTMLElement | null) => (scrollEl !== null && columnEl !== null ? outlineBox.value : null),
 }));
 
 const TOKEN = "abcDEF123_-".repeat(4).slice(0, 43);
@@ -322,6 +390,144 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     it("P3 不認得的 width → 標準", async () => {
       const column = await columnFor({ title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, width: "bogus" });
       expect(column).toHaveClass("mx-auto", "w-full", STANDARD_MAX);
+    });
+  });
+
+  describe("#465 右側標題大綱", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    async function renderWithHeadings(entry?: string, width?: string) {
+      outlineProps.length = 0;
+      const body: PublicNoteBody = { title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, ...(width !== undefined ? { width } : {}) };
+      const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null));
+      vi.stubGlobal("fetch", fn);
+      renderPage(entry);
+      await screen.findByTestId("public-note-editor");
+    }
+
+    it("桌機：掛在頁首之後、捲動容器之前（不在捲動容器裡）；拿到捲動容器與標題，沒有泡泡；沒有偏好時可以釘但沒釘", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings();
+      const stub = await screen.findByTestId("outline-stub");
+      const header = screen.getByRole("banner");
+      const column = screen.getByTestId("article-column");
+      const scroll = column.parentElement!;
+      expect(scroll).toHaveClass("overflow-y-auto");
+      expect(header.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(stub.compareDocumentPosition(scroll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scroll.contains(stub)).toBe(false);
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.scrollEl).toBe(scroll);
+      expect(props.headings).toEqual([{ id: "h-intro", level: 2, text: "Intro" }]);
+      expect(props.bubbleShown).toBe(false);
+      expect(props.pinned).toBe(false);
+      expect(props.pinAvailable).toBe(true);
+      await waitFor(() => expect(column).toHaveClass(...articleColumn("standard", { pinMotion: true }).split(" ")));
+    });
+
+    it("標準寬＋釘住偏好 → 欄一出現就是釘住寬度、那一次沒有過場；一個畫格後才有過場；大綱拿到 pinned", async () => {
+      window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
+      stubLayoutTier("docked");
+      // 欄每一次 class 的值（屬性變動紀錄的舊值，加上最後的現值）。
+      const records: MutationRecord[] = [];
+      const observer = new MutationObserver((list) => records.push(...list));
+      observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+      await renderWithHeadings(undefined, "standard");
+      await screen.findByTestId("outline-stub");
+      const column = screen.getByTestId("article-column");
+      await waitFor(() => expect(column).toHaveClass(...articleColumn("standard-pinned", { pinMotion: true }).split(" ")));
+      records.push(...observer.takeRecords());
+      observer.disconnect();
+      const values = [...records.filter((r) => r.target === column).map((r) => r.oldValue ?? ""), column.className];
+      const pinnedMax = ARTICLE_COLUMN_MAX["standard-pinned"].split(" ")[0]!;
+      const firstPinned = values.find((c) => c.split(" ").includes(pinnedMax));
+      expect(firstPinned, values.join("\n")).toBeDefined();
+      expect(firstPinned!.split(" ")).not.toContain("transition-[max-width,left]");
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.pinned).toBe(true);
+      expect(props.pinAvailable).toBe(true);
+    });
+
+    it("捲動容器固定保留捲軸位置（捲軸出現與否不改寬度，能不能釘不會在門檻附近來回切）", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings();
+      expect(screen.getByTestId("article-column").parentElement).toHaveClass("sm:[scrollbar-gutter:stable]");
+    });
+
+    it("全寬＋釘住偏好 → 欄是全寬、不能釘（只有細線）", async () => {
+      window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
+      stubLayoutTier("docked");
+      await renderWithHeadings(undefined, "full");
+      await screen.findByTestId("outline-stub");
+      const column = screen.getByTestId("article-column");
+      expect(column).toHaveClass(...articleColumn("full").split(" "));
+      expect(column).not.toHaveClass("left-0");
+      for (const c of ARTICLE_COLUMN_MAX["standard-pinned"].split(" ")) expect(column).not.toHaveClass(c);
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.pinned).toBe(false);
+      expect(props.pinAvailable).toBe(false);
+      expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBe("1");
+    });
+
+    it("640-767：同樣是手機形（泡泡、底部面板），沒有細線；768 以上才是細線", async () => {
+      stubLayoutTier("compact");
+      phoneStubs.bubble = [];
+      await renderWithHeadings();
+      await screen.findByTestId("bubble-stub");
+      expect(outlineProps).toHaveLength(0);
+      expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.scrollTarget).toBe(screen.getByTestId("article-column").parentElement!);
+    });
+
+    it("手機：沒有細線；位置泡泡在捲動容器之外的零高度錨點裡、聽捲動容器的捲動，有底部面板；頁面沒有 ⋮", async () => {
+      stubLayoutTier("phone");
+      phoneStubs.bubble = [];
+      phoneStubs.sheet = [];
+      await renderWithHeadings();
+      const bubble = await screen.findByTestId("bubble-stub");
+      expect(screen.queryByTestId("outline-stub")).not.toBeInTheDocument();
+      expect(outlineProps).toHaveLength(0);
+      const scroll = screen.getByTestId("article-column").parentElement!;
+      const props = phoneStubs.bubble[phoneStubs.bubble.length - 1]!;
+      expect(props.placement).toBe("anchor");
+      expect(props.scrollTarget).toBe(scroll);
+      expect(props.headings).toEqual([{ id: "h-intro", level: 2, text: "Intro" }]);
+      expect(scroll.contains(bubble)).toBe(false);
+      expect(bubble.closest("[data-outline-anchor]")).not.toBeNull();
+      expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "false");
+      // 唯讀頁：沒有編輯區要避讓。
+      expect(props.inputRoot ?? null).toBeNull();
+      expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
+      act(() => bubble.click());
+      expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "true");
+      // 面板關閉時焦點回到點開它的泡泡（沒有觸發鈕，不然會掉到 body）。
+      const restore = phoneStubs.sheet[phoneStubs.sheet.length - 1]!.restoreFocus;
+      expect(restore).toEqual(expect.any(Function));
+      act(() => restore!());
+      expect(document.activeElement).toBe(bubble);
+    });
+
+    it("桌機：沒有泡泡與底部面板", async () => {
+      stubLayoutTier("docked");
+      phoneStubs.bubble = [];
+      phoneStubs.sheet = [];
+      await renderWithHeadings();
+      await screen.findByTestId("outline-stub");
+      expect(screen.queryByTestId("bubble-stub")).not.toBeInTheDocument();
+      expect(phoneStubs.sheet).toHaveLength(0);
+    });
+
+    it("簡報中（?present）：桌機也不掛", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings(`/p/${TOKEN}?present`);
+      expect(await screen.findByTestId("presentation-stub")).toBeInTheDocument();
+      await act(async () => {});
+      expect(screen.queryByTestId("outline-stub")).not.toBeInTheDocument();
+      expect(outlineProps).toHaveLength(0);
     });
   });
 });

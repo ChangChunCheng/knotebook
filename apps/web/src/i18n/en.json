@@ -213,6 +213,15 @@
     "transferSaveFirst": "This item can't be inserted directly here. Save it as a file first, then drag it in.",
     "transferNonImage": "Only image files can be inserted here.",
     "wikilinkBroken": "This linked note no longer exists.",
+    "outline": {
+      "label": "Heading outline",
+      "untitled": "(Untitled heading)",
+      "pin": "Pin outline",
+      "unpin": "Unpin outline",
+      "close": "Close outline",
+      "position": "{{title}} · {{index}}/{{total}}",
+      "openAt": "Open heading outline: {{position}}"
+    },
     "blockLink": {
       "copy": "Copy link to block",
       "copyHeading": "Copy link to this section",

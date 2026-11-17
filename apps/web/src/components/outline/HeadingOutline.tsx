@@ -1,0 +1,316 @@
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useTranslation } from "react-i18next";
+import { Pin, X } from "@/components/ui/icons";
+import { useNoHover } from "@/lib/layout-tiers";
+import { MENU_CONTENT_BASE } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import type { OutlineHeading } from "./headings";
+import { OutlineList } from "./OutlineList";
+import { OUTLINE_PANEL_WIDTH, OUTLINE_RAIL_WIDTH, OUTLINE_TOP_OFFSET, type OutlinePlacement } from "./outline-layout";
+
+export const OUTLINE_OPEN_DELAY_MS = 150;
+export const OUTLINE_CLOSE_DELAY_MS = 250;
+
+const LINE_LENGTH: Record<OutlineHeading["level"], number> = { 1: 20, 2: 14, 3: 8 };
+const LINE_HEIGHT = 2;
+const MIN_ROW = 4;
+const MAX_ROW = 8;
+
+export interface HeadingOutlineProps {
+  headings: readonly OutlineHeading[];
+  activeId: string | null;
+  placement: OutlinePlacement;
+  /** Distance from the top of the note area to the top of the rail and panels: the note's first text line. */
+  top?: number;
+  /** Tallest the rail or panel may be; the caller keeps it above the version bubble. */
+  maxHeight: number;
+  pinned: boolean;
+  pinAvailable: boolean;
+  onPinnedChange: (next: boolean) => void;
+  onJump: (id: string) => void;
+  /**
+   * A wheel over the outline that should scroll the note: the outline sits outside the note's scroll container,
+   * so the browser would not scroll it. Called over the rail and the panel's header always, and over the panel's
+   * list only when the list cannot scroll further that way. Gets the event's raw `deltaY` and `deltaMode`.
+   */
+  onForwardWheel?: (deltaY: number, deltaMode: number) => void;
+}
+
+/** The list can still scroll in the direction of `deltaY`. */
+function canScrollToward(el: HTMLElement, deltaY: number): boolean {
+  if (deltaY > 0) return el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  return el.scrollTop > 0;
+}
+
+/**
+ * A thin rail of one line per heading. Hover (mouse), tap (touch without hover) or Enter/Space on the rail opens
+ * a floating panel with the heading texts; pinned, the panel stays open in place of the rail.
+ * Positions are in the scroll container's coordinates: the caller places this in a zero-height layer outside the
+ * scroll container whose top-left corner matches the container's (`OutlineAnchor`), so it does not scroll with the note.
+ */
+export function HeadingOutline({ headings, activeId, placement, top = OUTLINE_TOP_OFFSET, maxHeight, pinned, pinAvailable, onPinnedChange, onJump, onForwardWheel }: HeadingOutlineProps) {
+  const { t } = useTranslation();
+  const noHover = useNoHover();
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const [focusOnOpen, setFocusOnOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTimer = useCallback(() => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }, []);
+  useEffect(() => clearTimer, [clearTimer]);
+
+  const panelOpen = pinned || open;
+
+  const close = useCallback(() => {
+    clearTimer();
+    // Focus inside a panel that is about to unmount would drop to the page body; park it on the rail.
+    if (panelRef.current?.contains(document.activeElement)) railRef.current?.focus();
+    setOpen(false);
+    setFocusOnOpen(false);
+  }, [clearTimer]);
+
+  // Pinning or unpinning replaces the floating state; do not carry a stale open panel across.
+  const wasPinned = useRef(pinned);
+  // Set when the reader pressed unpin, or while focus sits in the panel: only then does an unpin keep focus on the outline.
+  // An automatic unpin (the window got narrower) with focus elsewhere must not pull focus in.
+  const keepFocus = useRef(false);
+  useEffect(() => {
+    close();
+    if (wasPinned.current && !pinned && keepFocus.current) railRef.current?.focus();
+    if (!pinned) keepFocus.current = false;
+    wasPinned.current = pinned;
+  }, [pinned, close]);
+
+  // A floating panel closes on a press outside the outline, whatever the pointer type.
+  useEffect(() => {
+    if (!open || pinned) return;
+    const onDown = (e: PointerEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) close();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [open, pinned, close]);
+
+  const n = headings.length;
+  const rowHeight = Math.min(MAX_ROW, Math.max(MIN_ROW, n === 0 ? MAX_ROW : Math.floor(maxHeight / n)));
+  const scrolling = n * rowHeight > maxHeight;
+  const railActiveRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    if (scrolling) railActiveRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [scrolling, activeId, headings]);
+
+  const forwardWheel = useRef(onForwardWheel);
+  forwardWheel.current = onForwardWheel;
+  // Passive: nothing here cancels the browser's own scrolling. A wheel over a panel list that can still scroll
+  // stays with the list; anywhere else (the rail, the panel's header with its buttons) the browser has nothing
+  // of ours to scroll, so the note gets it.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.defaultPrevented || e.ctrlKey || e.deltaY === 0) return;
+      const list = panelRef.current?.querySelector<HTMLElement>("ol");
+      if (list?.contains(e.target as Node) && canScrollToward(list, e.deltaY)) return;
+      forwardWheel.current?.(e.deltaY, e.deltaMode);
+    };
+    wrapper.addEventListener("wheel", onWheel, { passive: true });
+    return () => wrapper.removeEventListener("wheel", onWheel);
+  }, []);
+  // A rail long enough to scroll itself would move under the wheel too; it follows the current heading instead,
+  // so its own scrolling is cancelled (the only non-passive listener) and the note scrolls.
+  useEffect(() => {
+    const railEl = railRef.current;
+    if (!railEl || !scrolling) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.deltaY === 0 || !forwardWheel.current) return;
+      e.preventDefault();
+      forwardWheel.current(e.deltaY, e.deltaMode);
+    };
+    railEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => railEl.removeEventListener("wheel", onWheel);
+  }, [scrolling, pinned]);
+
+  const onPointerEnter = (e: ReactPointerEvent) => {
+    if (pinned || noHover || e.pointerType !== "mouse") return;
+    clearTimer();
+    if (open) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setOpen(true);
+    }, OUTLINE_OPEN_DELAY_MS);
+  };
+  const onPointerLeave = (e: ReactPointerEvent) => {
+    if (pinned || noHover || e.pointerType !== "mouse") return;
+    clearTimer();
+    if (!open) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      close();
+    }, OUTLINE_CLOSE_DELAY_MS);
+  };
+
+  const onRailClick = (e: MouseEvent) => {
+    clearTimer();
+    if (open) {
+      // A mouse click while the hover panel is open keeps it open; touch and keyboard toggle.
+      if (noHover || e.detail === 0) close();
+      return;
+    }
+    setFocusOnOpen(e.detail === 0);
+    setOpen(true);
+  };
+
+  const onPanelKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || pinned) return;
+    e.stopPropagation();
+    close();
+    railRef.current?.focus();
+  };
+  // Focus stays on the rail when the panel opens by hover or a mouse click; Esc there closes it as well.
+  const onRailKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !open) return;
+    e.stopPropagation();
+    close();
+  };
+
+  // Focus moving out of the outline (Tab away) closes a floating panel; moving between its own parts does not.
+  // A null target (clicking inert panel text, window blur) is left to the outside-press handler.
+  const onBlur = (e: FocusEvent) => {
+    if (pinned || !open) return;
+    const next = e.relatedTarget;
+    if (next instanceof Node && !wrapperRef.current?.contains(next)) close();
+  };
+
+  const select = (id: string) => {
+    onJump(id);
+    if (pinned) return;
+    close();
+  };
+
+  const showClose = noHover && !pinned;
+  const pinLabel = pinned ? t("note.outline.unpin") : t("note.outline.pin");
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="pointer-events-none absolute left-0 h-0 w-0"
+      style={{ top }}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onBlur={onBlur}
+    >
+      {!pinned && (
+        <button
+          ref={railRef}
+          type="button"
+          data-testid="outline-rail"
+          aria-label={t("note.outline.label")}
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onRailClick}
+          onKeyDown={onRailKeyDown}
+          className={cn(
+            // A note with one or two headings would leave an 8-16px target; keep a minimum hit height, lines from the top.
+            "pointer-events-auto absolute flex min-h-6 flex-col items-end justify-start rounded-sm pointer-coarse:min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            scrolling && "overflow-y-auto",
+          )}
+          style={{ top: 0, left: placement.railLeft, width: OUTLINE_RAIL_WIDTH, maxHeight }}
+        >
+          {headings.map((h) => {
+            const active = h.id === activeId;
+            return (
+              <span
+                key={h.id}
+                ref={active ? railActiveRef : undefined}
+                aria-hidden="true"
+                data-level={h.level}
+                data-active={active ? "" : undefined}
+                className={cn("shrink-0 rounded-full", active ? "bg-brand" : "bg-muted-foreground/40")}
+                style={{ width: LINE_LENGTH[h.level], height: LINE_HEIGHT, marginBlock: (rowHeight - LINE_HEIGHT) / 2 }}
+              />
+            );
+          })}
+        </button>
+      )}
+      {panelOpen && (
+        <nav
+          ref={panelRef}
+          id={panelId}
+          data-testid="outline-panel"
+          aria-label={t("note.outline.label")}
+          onKeyDown={onPanelKeyDown}
+          onFocus={() => {
+            keepFocus.current = true;
+          }}
+          onBlur={() => {
+            keepFocus.current = false;
+          }}
+          className={cn(
+            MENU_CONTENT_BASE,
+            "pointer-events-auto absolute z-auto flex flex-col outline-none",
+            // Pinned: part of the page at rest; the menu surface fades in while the pointer is over it or focus is inside.
+            pinned &&
+              "group/pin border-transparent bg-transparent shadow-none transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none hover:border-border hover:bg-popover hover:shadow-md focus-within:border-border focus-within:bg-popover focus-within:shadow-md",
+          )}
+          style={{ top: 0, left: placement.panelLeft, width: OUTLINE_PANEL_WIDTH, maxHeight }}
+        >
+          {(pinAvailable || pinned || showClose) && (
+            <div className="flex shrink-0 justify-end gap-1 pointer-coarse:gap-0">
+              {(pinAvailable || pinned) && (
+                <button
+                  type="button"
+                  aria-pressed={pinned}
+                  aria-label={pinLabel}
+                  title={pinLabel}
+                  onClick={() => {
+                    if (pinned) keepFocus.current = true;
+                    onPinnedChange(!pinned);
+                  }}
+                  className={cn(
+                    "inline-flex h-7 w-7 pointer-coarse:h-11 pointer-coarse:w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    // Pinned: shown while hovering or focusing inside the panel; faint where there is no hover.
+                    pinned &&
+                      "bg-accent text-brand opacity-0 transition-opacity motion-reduce:transition-none group-hover/pin:opacity-100 group-focus-within/pin:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-60",
+                  )}
+                >
+                  <Pin className="h-4 w-4" />
+                </button>
+              )}
+              {showClose && (
+                // The open panel covers the rail, so without hover a second tap on the rail would hit a heading.
+                <button
+                  type="button"
+                  aria-label={t("note.outline.close")}
+                  title={t("note.outline.close")}
+                  onClick={() => {
+                    close();
+                    // Taps on iOS may not focus the button, so focus the rail explicitly.
+                    railRef.current?.focus();
+                  }}
+                  className="inline-flex h-7 w-7 pointer-coarse:h-11 pointer-coarse:w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          )}
+          <OutlineList
+            headings={headings}
+            activeId={activeId}
+            onSelect={select}
+            focusActiveOnMount={focusOnOpen}
+            className="min-h-0 flex-1 overflow-y-auto"
+          />
+        </nav>
+      )}
+    </div>
+  );
+}
