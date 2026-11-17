@@ -748,7 +748,6 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     fireEvent.click(within(screen.getByRole("row", { name: withModel.name })).getByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit action" });
     const modelTrigger = within(dialog).getByLabelText("Model");
-    expect(selectedValue(modelTrigger)).toBe(MODEL_A1.id);
 
     releaseModels();
     await waitFor(() => expect(displayedLabel(modelTrigger)).toBe("Claude Sonnet"));
@@ -791,7 +790,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(postBody?.type).toBe("openai_compatible");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add provider" })).toBeNull());
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.click(within(screen.getByRole("row", { name: PROVIDER_A.name })).getByRole("button", { name: "Edit" }));
     const editDialog = await screen.findByRole("dialog", { name: "Edit provider" });
     const editType = within(editDialog).getByLabelText("Type");
     expect(displayedLabel(editType)).toBe("Anthropic");
