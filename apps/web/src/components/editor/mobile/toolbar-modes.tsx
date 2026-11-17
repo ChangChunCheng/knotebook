@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import { editorHasBlockWithType } from "@blocknote/core";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { blockTypeSelectItems, useEditorState } from "@blocknote/react";
+import { useEditorState } from "@blocknote/react";
+import { applyBlockType, blockTypeItemsFor, currentBlockTypeIndex, targetBlocks, type BlockTypeItem } from "@/components/editor/block-type-items";
 import { linkAtSelection } from "@/components/editor/link-at-selection";
 import { Link } from "@/components/ui/icons";
 import { AlignIcon, CodeIcon, IndentIcon } from "@/components/ui/icons-extra";
@@ -27,11 +27,6 @@ export interface ModeRowProps {
   setMode(mode: MobileToolbarMode): void;
   /** 連結鈕：開建立連結的對話框（與 `/` 選單的連結同一個）。 */
   onCreateLink?(): void;
-}
-
-/** 選取所在的區塊；沒有選取時是游標所在的區塊（與 BlockNote 格式工具列同一個規則）。 */
-function targetBlocks(editor: MobileToolbarEditor) {
-  return editor.getSelection()?.blocks ?? [editor.getTextCursorPosition().block];
 }
 
 const STYLE_BUTTONS = ["bold", "italic", "underline", "strike", "code"] as const;
@@ -125,32 +120,6 @@ export function FormatRow({ editor, mode, setMode, onCreateLink }: ModeRowProps)
   );
 }
 
-type BlockTypeItem = ReturnType<typeof blockTypeSelectItems>[number];
-
-/** 桌機區塊類型選單的項目（`blockTypeSelectItems`），再依 schema 過濾；過濾邏輯同桌機的 `BlockTypeSelect`。 */
-function blockTypeItemsFor(editor: MobileToolbarEditor): BlockTypeItem[] {
-  return blockTypeSelectItems(editor.dictionary).filter((item) =>
-    editorHasBlockWithType(
-      editor,
-      item.type,
-      Object.fromEntries(Object.entries(item.props ?? {}).map(([name, value]) => [name, typeof value])) as Record<string, "string" | "number" | "boolean">,
-    ),
-  );
-}
-
-/**
- * 目前區塊對應到哪一項（-1＝沒有任何一項符合，例如表格、程式碼區塊、圖片）。
- * 桌機的 `BlockTypeSelect` 在 -1 時整個選單不出現；手機這邊對應成「¶ 鈕與所有項目停用」，
- * 否則換類型會把表格或程式碼區塊的內容清掉。
- */
-function currentBlockTypeIndex(editor: MobileToolbarEditor, items: BlockTypeItem[]): number {
-  const first = targetBlocks(editor)[0];
-  if (!first) return -1;
-  return items.findIndex(
-    (item) => item.type === first.type && Object.entries(item.props ?? {}).every(([name, value]) => (first.props as Record<string, unknown>)[name] === value),
-  );
-}
-
 /** 區塊類型列的項目與目前選到哪一項（-1＝目前區塊不能換類型）。 */
 export function useBlockTypeState(editor: MobileToolbarEditor): { items: BlockTypeItem[]; selected: number } {
   const items = useMemo(() => blockTypeItemsFor(editor), [editor]);
@@ -167,13 +136,7 @@ export function BlockTypeRow({ editor }: ModeRowProps) {
   const { items, selected } = useBlockTypeState(editor);
 
   function apply(index: number): void {
-    const item = items[index]!;
-    editor.transact(() => {
-      for (const block of targetBlocks(editor)) {
-        if (!items.some((candidate) => candidate.type === block.type)) continue;
-        editor.updateBlock(block, { type: item.type as never, props: item.props as never });
-      }
-    });
+    applyBlockType(editor, items[index]!, items);
   }
 
   return (
