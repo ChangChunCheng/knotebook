@@ -176,7 +176,8 @@ async function presentFromHeaderMenu(page: Page, title: string): Promise<void> {
 test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯示，且全程零 CSP violation", async ({ browser }) => {
   test.setTimeout(180_000);
   const adminContext = await browser.newContext();
-  const ownerContext = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // 寬到開著版本面板時預覽區仍夠並排（≥ 720 px），後面才有「Single column」可切。
+  const ownerContext = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const anonContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
   const violations: Violation[] = [];
