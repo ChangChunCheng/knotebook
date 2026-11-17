@@ -268,9 +268,9 @@ test("59-3 公開頁：點圖直接放大、Esc 焦點回圖；mermaid 圖聚焦
     await expect(imageDialog).toHaveCount(0);
     await expect(img).toBeFocused();
 
-    // 唯讀時整張 mermaid 圖是一顆「Zoom in」按鈕（右上那顆放大鈕對輔助技術隱藏）
+    // 唯讀時整張 mermaid 圖是一顆「Zoom in on diagram」按鈕（右上那顆放大鈕對輔助技術隱藏）
     await expect(page.locator("svg[aria-roledescription]")).toContainText("ZoomStart", { timeout: 20_000 });
-    const diagram = page.getByRole("button", { name: "Zoom in", exact: true });
+    const diagram = page.getByRole("button", { name: "Zoom in on diagram", exact: true });
     await expect(diagram).toHaveCount(1);
     await diagram.focus();
     await page.keyboard.press("Enter");

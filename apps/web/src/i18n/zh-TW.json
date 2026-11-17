@@ -304,6 +304,7 @@
     },
     "zoom": {
       "open": "放大檢視",
+      "openDiagram": "放大檢視圖表",
       "close": "關閉",
       "imageTitle": "圖片",
       "diagramTitle": "圖表",

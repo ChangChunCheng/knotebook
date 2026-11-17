@@ -304,6 +304,7 @@
     },
     "zoom": {
       "open": "Zoom in",
+      "openDiagram": "Zoom in on diagram",
       "close": "Close",
       "imageTitle": "Image",
       "diagramTitle": "Diagram",

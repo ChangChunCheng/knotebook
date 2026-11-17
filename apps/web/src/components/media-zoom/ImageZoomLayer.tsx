@@ -94,6 +94,8 @@ export function ImageZoomLayer({
   const isOpenNow = zoom?.isOpen === true;
   // pointer 實際所在的圖；顯示中的 hover 在放大開著或鈕有焦點時凍結，之後再追上這個值。
   const pointerImgRef = useRef<HTMLImageElement | null>(null);
+  // 目前顯示鈕的那張圖（沒有鈕時 null）：內容變動時只有鈕在才需要重量位置。
+  const shownRef = useRef<HTMLImageElement | null>(null);
   const buttonFocused = () => {
     const layer = layerRef.current;
     return layer !== null && layer.contains(document.activeElement);
@@ -162,10 +164,10 @@ export function ImageZoomLayer({
       setSelected(selectedImageOf(editor.prosemirrorView));
     };
     update();
-    // 區塊搬移、欄分隔線拖曳不改圖的尺寸、ResizeObserver 不響：內容一變就（每幀至多一次）重量位置。
+    // 區塊搬移、欄分隔線拖曳不改圖的尺寸、ResizeObserver 不響：鈕顯示中時內容一變就（每幀至多一次）重量位置。
     let frame = 0;
     const onChange = () => {
-      if (frame) return;
+      if (frame || shownRef.current === null) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         bump();
@@ -233,6 +235,7 @@ export function ImageZoomLayer({
 
   const target = hover ?? selected;
   const shown = active && container !== null && target !== null && isLoaded(target) ? target : null;
+  shownRef.current = shown;
 
   // 顯示中遇到版面變動（欄寬、圖被調寬、視窗縮放）就重算。座標相對欄 wrapper，wrapper 跟內容一起捲，捲動不必重算。
   useEffect(() => {
@@ -274,7 +277,8 @@ export function ImageZoomLayer({
       <ZoomButton
         // 唯讀時鍵盤與螢幕閱讀器走圖本身（它的 aria-label 已帶「放大檢視」），這顆只留給滑鼠。
         {...(editable ? {} : { tabIndex: -1, "aria-hidden": true as const })}
-        onClick={(event) => zoom?.open(sourceOf(shown), { button: event.currentTarget, media: shown })}
+        // 唯讀時這顆鈕不可聚焦，關掉後焦點改回圖本身（唯讀時圖可聚焦）。
+        onClick={(event) => zoom?.open(sourceOf(shown), { button: editable ? event.currentTarget : null, media: shown })}
       />
     </div>
   );

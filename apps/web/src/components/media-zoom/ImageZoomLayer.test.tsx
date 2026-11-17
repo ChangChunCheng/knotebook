@@ -331,7 +331,45 @@ describe("#462 圖片放大鈕浮動層", () => {
       const button = screen.getByLabelText("Zoom in", { selector: "button" });
       expect(button).toHaveAttribute("tabindex", "-1");
       expect(button).toHaveAttribute("aria-hidden", "true");
+      // 滑鼠點這顆不可聚焦的鈕：origin.button 是 null，關掉後焦點回圖本身
+      fireEvent.click(button);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open.mock.calls[0]![1]).toEqual({ button: null, media: img() });
     });
+  });
+
+  it("內容變動：鈕顯示中才每幀重量一次位置，沒有鈕時不重算", () => {
+    let fireChange = () => {};
+    const editor = {
+      prosemirrorView: { state: { selection: {} } },
+      onSelectionChange: () => () => {},
+      onChange: (cb: () => void) => {
+        fireChange = cb;
+        return () => {};
+      },
+    };
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    spies.push(raf);
+    function EditorHost() {
+      const [el, setEl] = useState<HTMLElement | null>(null);
+      const blocks = useMemo(() => <div dangerouslySetInnerHTML={{ __html: BLOCKS }} />, []);
+      return (
+        <MediaZoomContext.Provider value={zoom}>
+          <div ref={setEl} className="relative" data-testid="col">
+            {blocks}
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- 假編輯器只有 ImageZoomLayer 用到的三個成員 */}
+            <ImageZoomLayer container={el} editable editor={editor as any} />
+          </div>
+        </MediaZoomContext.Provider>
+      );
+    }
+    render(<EditorHost />);
+    fireChange();
+    expect(raf, "沒有鈕：不排重算").not.toHaveBeenCalled();
+    hoverImg();
+    raf.mockClear();
+    fireChange();
+    expect(raf, "鈕顯示中：排一次重算").toHaveBeenCalledTimes(1);
   });
 
   it("放大開著（isOpen）時 pointerleave 不收鈕", () => {

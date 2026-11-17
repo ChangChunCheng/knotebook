@@ -193,7 +193,8 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
   };
 
   const openFromButton = (event: MouseEvent<HTMLButtonElement>): void => {
-    openZoom(event.currentTarget, diagramRef.current ?? event.currentTarget);
+    // 唯讀時這顆鈕不可聚焦（只給滑鼠），關掉後焦點改回可聚焦的圖容器（圖的祖先）。
+    openZoom(editable ? event.currentTarget : null, diagramRef.current ?? event.currentTarget);
   };
 
   const readOnlyZoomProps =
@@ -201,7 +202,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
       ? {
           role: "button" as const,
           tabIndex: 0,
-          "aria-label": t("note.zoom.open"),
+          "aria-label": t("note.zoom.openDiagram"),
           onClick: (event: MouseEvent<HTMLDivElement>) => {
             // 圖裡 `click X href` 產生的連結照常走連結，不開放大。
             if ((event.target as Element).closest("a") !== null) return;
@@ -291,7 +292,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
           {canZoom ? (
             <ZoomButton
               onClick={openFromButton}
-              // 唯讀時鍵盤與螢幕閱讀器走圖的容器（同名、相鄰），這顆只留給滑鼠。
+              // 唯讀時鍵盤與螢幕閱讀器走圖的容器（相鄰、做同一件事），這顆只留給滑鼠。
               {...(editable ? {} : { tabIndex: -1, "aria-hidden": true as const })}
               className={editable ? undefined : "[@media(hover:none)]:hidden"}
             />

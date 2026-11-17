@@ -38,8 +38,8 @@ zoom button sits at (or, for short images, just above) the image's own top-right
 select it, and on a read-only page clicking or tapping the image opens it.
 
 In the full-screen view, scroll or pinch to zoom and drag to move. On the keyboard, `+` and `-` zoom,
-`0` fits the diagram to the window, and the arrow keys move it. Double-click (or double-tap) switches
-between fitting the window and zooming in. Press `Escape`, click the dark background or use the close
+`0` fits the diagram to the window, and the arrow keys move it. Double-click (or double-tap) the diagram to
+switch between fitting the window and zooming in. Press `Escape`, click the dark background or use the close
 button to go back to the note. The zoomed diagram is the same SVG as in the note, so it stays sharp at
 any size.
 

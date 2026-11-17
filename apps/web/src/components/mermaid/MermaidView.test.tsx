@@ -644,13 +644,13 @@ describe("MermaidView — 放大檢視", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("唯讀：圖的容器是可聚焦的按鈕「Zoom in」；click、Enter、Space 各開一次，origin 是 { button: null, media: 容器 }", async () => {
+  it("唯讀：圖的容器是可聚焦的按鈕「Zoom in on diagram」；click、Enter、Space 各開一次，origin 是 { button: null, media: 容器 }", async () => {
     renderZoom(false);
     await drawn();
     const el = area();
     expect(el).toHaveAttribute("role", "button");
     expect(el).toHaveAttribute("tabindex", "0");
-    expect(el).toHaveAccessibleName("Zoom in");
+    expect(el).toHaveAccessibleName("Zoom in on diagram");
     expect(el.className).toContain("cursor-zoom-in");
 
     fireEvent.click(el);
@@ -716,6 +716,12 @@ describe("MermaidView — 放大檢視", () => {
     expect(zoomBtn).toHaveAttribute("tabindex", "-1");
     expect(zoomBtn).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("button", { name: "Show source" }).className).not.toContain("hidden");
+    // 滑鼠點這顆不可聚焦的鈕：origin.button 是 null，關掉後焦點回圖容器（media 在容器裡）
+    fireEvent.click(zoomBtn);
+    expect(open).toHaveBeenCalledTimes(1);
+    const origin = open.mock.calls[0]![1] as { button: HTMLElement | null; media: Element };
+    expect(origin.button).toBeNull();
+    expect(area().contains(origin.media)).toBe(true);
     ro.unmount();
     renderZoom(true);
     await drawn();
