@@ -1792,7 +1792,7 @@ test("58-26 寬螢幕（1280×800）：頁面本身不捲（scrollY 恆為 0）�
   }
 });
 
-async function bubbleGeometry(page: Page): Promise<{ bubble: Rect; scroller: Rect; footer: Rect; blur: string; opacity: string; hit: boolean }> {
+async function bubbleGeometry(page: Page): Promise<{ bubble: Rect; scrollbar: number; clientRight: number; scroller: Rect; footer: Rect; blur: string; opacity: string; hit: boolean }> {
   return page.evaluate(() => {
     const bubbleEl = document.querySelector('[data-testid="versions-bubble"]') as HTMLElement;
     const anchor = document.querySelector('[data-testid="corner-anchor"]') as HTMLElement;
@@ -1803,10 +1803,13 @@ async function bubbleGeometry(page: Page): Promise<{ bubble: Rect; scroller: Rec
       const b = el.getBoundingClientRect();
       return { x: b.x, y: b.y, width: b.width, height: b.height, right: b.right, bottom: b.bottom };
     };
+    const sb = scrollEl.getBoundingClientRect();
+    const scrollbar = scrollEl.offsetWidth - scrollEl.clientWidth;
+    const clientRight = sb.x + scrollEl.clientLeft + scrollEl.clientWidth;
     const b = bubbleEl.getBoundingClientRect();
     const hitEl = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
     const cs = getComputedStyle(bubbleEl);
-    return { bubble: r(bubbleEl), scroller: r(scrollEl), footer: r(footerEl), blur: cs.backdropFilter || cs.getPropertyValue("-webkit-backdrop-filter"), opacity: getComputedStyle(anchor.firstElementChild!).opacity, hit: hitEl === bubbleEl || bubbleEl.contains(hitEl) };
+    return { bubble: r(bubbleEl), scrollbar, clientRight, scroller: r(scrollEl), footer: r(footerEl), blur: cs.backdropFilter || cs.getPropertyValue("-webkit-backdrop-filter"), opacity: getComputedStyle(anchor.firstElementChild!).opacity, hit: hitEl === bubbleEl || bubbleEl.contains(hitEl) };
   });
 }
 
@@ -1821,12 +1824,18 @@ function expectBubbleInNoteArea(g: Awaited<ReturnType<typeof bubbleGeometry>>, l
   expect(g.bubble.x).toBeGreaterThanOrEqual(g.scroller.x);
   expect(g.bubble.y).toBeGreaterThanOrEqual(g.scroller.y);
   expect(g.bubble.bottom, `${label}：不壓到提及列`).toBeLessThanOrEqual(g.footer.y + 0.5);
-  expect(Math.abs(g.footer.y - g.bubble.bottom - 12), `${label}：泡泡在內文區最底，離提及列上緣 12px（實 ${g.footer.y - g.bubble.bottom}）`).toBeLessThanOrEqual(1);
+  const gapBottom = g.footer.y - g.bubble.bottom;
+  // 右邊量到捲軸槽的左緣；捲動區固定預留捲軸槽，所以短筆記也有，兩邊空隙相等。
+  const gapRight = g.clientRight - g.bubble.right;
+  expect(g.scrollbar, `${label}：預留捲軸槽`).toBeGreaterThan(0);
+  expect(Math.abs(gapRight - gapBottom), `${label}：右邊空隙 ${gapRight}、下邊 ${gapBottom}、槽寬 ${g.scrollbar}`).toBeLessThanOrEqual(1);
+  expect(Math.abs(gapBottom - 24), `${label}：離提及列上緣 24px（實 ${gapBottom}）`).toBeLessThanOrEqual(1);
 }
 
 test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻璃、釘在內文區右下角（提及列之上）；捲動時不消失；三種寬度、短／長筆記、有／無提及都一樣；390 沒有泡泡", async ({ browser }) => {
   test.setTimeout(480_000);
   for (const width of [1280, 900, 767, 700]) {
+    const columnLeft: Record<string, number> = {};
     for (const [key, backlinks] of [["long", false], ["short", false], ["mentioned", true]] as const) {
       const { context, page } = await open(browser, width, key, { touch: false, height: 800, backlinks });
       try {
@@ -1843,20 +1852,11 @@ test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻�
           const label = `${width} ${key} ${mode}`;
           const g = await bubbleGeometry(page);
           expectBubbleInNoteArea(g, label);
+          if (mode === "standard") columnLeft[key] = (await page.getByTestId("article-column").boundingBox())!.x;
           expect(g.hit, `${label}：點得到`).toBe(true);
-          if (key === "long") {
-            // 捲到底：最後一段文字與最後一個區塊都在泡泡上緣之上，打字的那一行不被蓋住。
-            const scroller = scrollerOf(page);
-            await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-            await page.waitForTimeout(300);
-            const end = await bubbleGeometry(page);
-            const lastText = (await editorLocator(page).getByText(LONG_LAST, { exact: true }).boundingBox())!;
-            const lastBlock = (await editorLocator(page).locator(".bn-block-outer").last().boundingBox())!;
-            console.log(`MEASURE ${label} end lastText.bottom ${lastText.y + lastText.height} lastBlock.bottom ${lastBlock.y + lastBlock.height} bubble.top ${end.bubble.y} column pb ${await page.getByTestId("article-column").evaluate((el) => getComputedStyle(el).paddingBottom)}`);
-            expect(lastText.y + lastText.height, `${label}：最後一段在泡泡之上`).toBeLessThanOrEqual(end.bubble.y);
-            expect(lastBlock.y + lastBlock.height, `${label}：最後一個區塊在泡泡之上`).toBeLessThanOrEqual(end.bubble.y);
-            await scroller.evaluate((el) => { el.scrollTop = 0; });
-          }
+          // 文章欄底部沒有為泡泡額外留白：下內距等於上內距。
+          const pad = await page.getByTestId("article-column").evaluate((el) => ({ top: getComputedStyle(el).paddingTop, bottom: getComputedStyle(el).paddingBottom }));
+          expect(pad.bottom, `${label}：欄的下內距等於上內距`).toBe(pad.top);
           if (key === "long" && mode === "standard") {
             const scroller = scrollerOf(page);
             await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -1877,6 +1877,10 @@ test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻�
         await context.close();
       }
     }
+    // 捲軸槽固定預留：長筆記（有捲軸）與短筆記（沒有）的文章欄左緣在同一個位置。
+    console.log(`MEASURE ${width} article column left ${JSON.stringify(columnLeft)}`);
+    expect(Math.abs(columnLeft.long! - columnLeft.short!), `${width}：長短筆記的文章欄左緣不動`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(columnLeft.long! - columnLeft.mentioned!), `${width}：有提及時也不動`).toBeLessThanOrEqual(0.5);
   }
   const { context, page } = await open(browser, 390, "long");
   try {
@@ -1887,13 +1891,7 @@ test("58-32 寬螢幕（1280、900、767、700 ×800）：歷史泡泡是毛玻�
   }
 });
 
-/** `rgba(r, g, b, a)`／`color(srgb r g b / a)` 的 alpha（沒寫 alpha 就是 1）。 */
-function bgAlpha(color: string): number {
-  const m = /\/\s*([\d.]+)\s*\)$/.exec(color) ?? /,\s*([\d.]+)\s*\)$/.exec(color);
-  return m ? parseFloat(m[1]!) : 1;
-}
-
-test("58-33 寬螢幕（1280×800）：歷史泡泡 hover 時底色明顯變實（淺色與深色，alpha 增加 ≥ 0.5），移開後回到毛玻璃", async ({ browser }) => {
+test("58-33 寬螢幕（1280×800）：歷史泡泡 hover 時底色是淺品牌色（淺色與深色，等於 bg-brand-soft）、游標是手指，移開後回到毛玻璃", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await open(browser, 1280, "long", { touch: false, height: 800 });
   try {
@@ -1909,7 +1907,18 @@ test("58-33 寬螢幕（1280×800）：歷史泡泡 hover 時底色明顯變實�
       await page.waitForTimeout(400);
       const hover = await bg();
       console.log(`MEASURE bubble bg ${scheme} rest ${rest} hover ${hover}`);
-      expect(bgAlpha(hover) - bgAlpha(rest), `${scheme}：hover 比平時實 ≥ 0.5`).toBeGreaterThanOrEqual(0.5);
+      const soft = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.className = "bg-brand-soft";
+        document.body.appendChild(probe);
+        const c = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return c;
+      });
+      console.log(`MEASURE bubble bg-brand-soft ${scheme} ${soft}`);
+      expect(hover, `${scheme}：hover 底色等於 bg-brand-soft`).toBe(soft);
+      expect(hover, `${scheme}：hover 與平時不同`).not.toBe(rest);
+      expect(await bubble.evaluate((el) => getComputedStyle(el).cursor), `${scheme}：游標是手指`).toBe("pointer");
       await page.mouse.move(5, 5);
       await page.waitForTimeout(400);
       expect(await bg(), `${scheme}：移開後回到平時`).toBe(rest);

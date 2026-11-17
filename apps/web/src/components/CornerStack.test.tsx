@@ -49,7 +49,7 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     const stack = await screen.findByTestId("corner-stack");
     expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble"]);
     expect(screen.queryByTestId("ai-bubble")).not.toBeInTheDocument();
-    expect(stack).toHaveClass("absolute", "bottom-3", "right-6", "flex", "flex-col-reverse", "gap-3");
+    expect(stack).toHaveClass("absolute", "bottom-6", "right-[calc(1.5rem+var(--bubble-gutter,var(--scrollbar-size)))]", "flex", "flex-col-reverse", "gap-3");
     expect(stack).not.toHaveClass("fixed");
     expect(stack.className).not.toMatch(/safe-area|sm:right|sm:bottom/);
     const anchor = screen.getByTestId("corner-anchor");
@@ -91,8 +91,9 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     for (const token of FROSTED_SURFACE.split(" ").filter((c) => !/hover:bg-card|active:bg-card/.test(c))) expect(bubble).toHaveClass(token);
     expect(bubble).toHaveClass("supports-[backdrop-filter]:backdrop-blur-xs", "supports-[backdrop-filter]:backdrop-saturate-150", "bg-card/95", "shadow-lg");
     expect(bubble).not.toHaveClass("bg-brand-soft");
-    // 桌面 hover 明顯變實：只剩 /80（按下 /90），舊的 /30、/40 被合併掉；陰影加深。
-    expect(bubble).toHaveClass("supports-[backdrop-filter]:hover:bg-card/80", "supports-[backdrop-filter]:active:bg-card/90", "hover:shadow-xl");
+    // hover 是淺品牌色底、按下深一階、游標手指；毛玻璃的 hover／按下透明度被合併掉。
+    expect(bubble).toHaveClass("cursor-pointer", "hover:bg-brand-soft", "supports-[backdrop-filter]:hover:bg-brand-soft", "active:bg-brand-soft-strong", "supports-[backdrop-filter]:active:bg-brand-soft-strong");
+    expect(bubble).not.toHaveClass("hover:shadow-xl", "hover:bg-card/95", "active:bg-card/95");
     expect(bubble).not.toHaveClass("supports-[backdrop-filter]:hover:bg-card/30", "supports-[backdrop-filter]:active:bg-card/40");
     fireEvent.click(bubble);
     expect(screen.getByTestId("panel-open")).toHaveTextContent("true");

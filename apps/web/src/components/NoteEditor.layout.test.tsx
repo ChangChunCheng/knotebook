@@ -144,6 +144,8 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     // 手機（< 640）內容卡貼齊螢幕：沒有圓角與框；640 起的 rounded-xl／border 仍在（上面）。
     expect(contentCard).toHaveClass("max-sm:rounded-none", "max-sm:border-0");
     expect(scrollWrapper).toHaveClass("min-h-0", "min-w-0", "flex-1", "overflow-y-auto", "overflow-x-clip");
+    // 640 起固定預留捲軸槽：筆記開始超出時文字欄不跳，歷史泡泡離捲軸的空隙也恆定。
+    expect(scrollWrapper).toHaveClass("sm:[scrollbar-gutter:stable]");
     // 欄寬與內距取自 `ui/article-column.ts`（#115：內文是唯一消費端，頁首/頁尾
     // 滿卡寬）。結構守衛在 `ui/article-column.guard.test.ts`。
     // issue #160：`relative` 是置中 wrapper 必須承重的一根——BlockNote 表格 hover
@@ -159,8 +161,8 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       "flex-col",
       "py-6",
     );
-    // 640 起欄底多留 72px，捲到底時最後一行在歷史泡泡之上。
-    expect(centerWrapper).toHaveClass("sm:pb-[4.5rem]");
+    // 欄底沒有為歷史泡泡額外留白：只有 py-6，底部留白等於頂部。
+    expect(centerWrapper!.className).not.toMatch(/(sm:)?pb-/);
     // 雙層斷言（缺一即假守衛）：置中 wrapper 的 min-h-full/flex-col **與** BlockNoteView
     // 的 flex-1，兩者都要在——高度鏈只有兩者同時存在才成立。
     expect(editorRoot).toHaveClass("min-h-full", "flex-1");

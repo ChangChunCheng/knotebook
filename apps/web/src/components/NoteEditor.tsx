@@ -58,7 +58,7 @@ import { createUploadFile, type Translate } from "@/uploads/upload-file";
 import { createFilePanel } from "@/components/FilePanel";
 import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
-import { BUBBLE_CLEARANCE, CornerStack } from "@/components/CornerStack";
+import { CornerStack } from "@/components/CornerStack";
 import { useVersions } from "@/lib/versions-context";
 import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
 import { tourTarget } from "@/lib/tour-targets";
@@ -695,7 +695,7 @@ export function NoteEditor({
               `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
           <div
             ref={setScrollRoot}
-            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
+            className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible sm:[scrollbar-gutter:stable]", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
           >
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
                 `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
@@ -724,7 +724,7 @@ export function NoteEditor({
             <div
               ref={setColumnEl}
               data-testid="article-column"
-              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", BUBBLE_CLEARANCE, footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
+              className={cn(articleColumn(width), ARTICLE_COLUMN_PADDING, "relative flex flex-col py-6", footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full")}
             >
               <NoteEditorView
                 editor={editor}
@@ -764,7 +764,7 @@ export function NoteEditor({
             </div>
           )}
           {/* 歷史泡泡：零高度錨點貼在捲動區下緣（提及列之上），見 `CornerStack`。 */}
-          <CornerStack />
+          <CornerStack scrollRef={scrollRootRef} />
           {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
