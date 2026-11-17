@@ -6,7 +6,8 @@ import "@/i18n/management-strings";
 
 /**
  * token 權限的三個細 toggle（#247；#181 加「刪除」）：行內編輯與建立對話框共用。「讀取」一律包含，不列。
- * - switch 的可及名稱逐字用 `settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`（模型面字串引用它們）。
+ * - switch 的可及名稱與粗體標籤逐字用 `settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`（模型面字串引用它們）；
+ *   移動與刪除另有一行不重複名稱的說明（`apiTokensScopeMoveDesc`／`apiTokensScopeDeleteDesc`）。
  * - 關掉「編輯」→「搬移」「刪除」disabled 並清為關（與 `scopeFromChecks(false, …) === "notes:read"` 同向）。
  * - 「搬移」用 `tone="destructive"`（不可逆）；「刪除」用預設 tone（移到垃圾桶可還原）。各自開著時下方顯示後果說明
  *   （`apiTokensScopeMoveHint`／`apiTokensScopeDeleteHintRequiresEdit`，兩者都以「需同時勾選編輯」收尾）並 aria-describedby，關著時不顯示。
@@ -57,8 +58,8 @@ export function ScopeTogglesField({
           onCheckedChange={(on) => onChange({ ...value, move: on && value.write })}
         />
         <label htmlFor={moveId} className="text-sm">
-          <span className="font-medium">{t("settings.authorization.tokens.pillMove")}</span>{" "}
-          <span className="text-muted-foreground">{t("settings.account.apiTokensScopeMove")}</span>
+          <span className="font-medium">{t("settings.account.apiTokensScopeMove")}</span>{" "}
+          <span className="text-muted-foreground">{t("settings.account.apiTokensScopeMoveDesc")}</span>
         </label>
       </div>
       {value.move && (
@@ -77,8 +78,8 @@ export function ScopeTogglesField({
           onCheckedChange={(on) => onChange({ ...value, delete: on && value.write })}
         />
         <label htmlFor={deleteId} className="text-sm">
-          <span className="font-medium">{t("settings.authorization.tokens.pillDelete")}</span>{" "}
-          <span className="text-muted-foreground">{t("settings.account.apiTokensScopeDelete")}</span>
+          <span className="font-medium">{t("settings.account.apiTokensScopeDelete")}</span>{" "}
+          <span className="text-muted-foreground">{t("settings.account.apiTokensScopeDeleteDesc")}</span>
         </label>
       </div>
       {value.delete && (

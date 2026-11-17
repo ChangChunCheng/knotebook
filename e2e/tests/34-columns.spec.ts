@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, randomEmail, reEscape, waitForEditorSelection } from "./helpers.js";
+import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, randomEmail, ratioQuantPx, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
  * 並排排版（側邊把手）：
@@ -458,8 +458,11 @@ test("C6 欄內圖片：圖寬不超過欄；右把手往右拖 400px → 圖片
   // 圖片超過原欄寬時圖片欄跟著變寬、文字欄讓出寬度，但不小於文字欄最小寬度。
   expect(leftWidened, "圖片欄變寬").toBeGreaterThan(leftBefore + 50);
   expect(rightWidened, "文字欄讓出寬度").toBeLessThan(rightBefore - 50);
-  expect(rightWidened, "文字欄不小於 200px").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - 1);
-  expect(Math.abs(widened - imgWidened), "data-preview-width＝圖片顯示寬").toBeLessThanOrEqual(1);
+  // 欄比例寫進文件時捨入到兩位小數，換回像素會有誤差（容許值見 helpers 的 `ratioQuantPx`）。
+  const quantPx = Math.max(1, ratioQuantPx([{ width: leftWidened }, { width: rightWidened }]));
+  expect(rightWidened, "文字欄不小於 200px").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - quantPx);
+  // 寫入的 previewWidth 來自捨入前的比例，圖片實際顯示寬則由捨入後的欄寬夾住。
+  expect(Math.abs(widened - imgWidened), "data-preview-width＝圖片顯示寬").toBeLessThanOrEqual(quantPx);
   expect(imgWidened).toBeLessThanOrEqual(leftWidened + 0.5);
 
   // 縮小圖片只改圖、不把欄縮回去。
@@ -624,7 +627,7 @@ test("C9b 簡報：封面的列保留正規 style；390 寬開 → data-stacked�
 });
 
 test("C9c 版本：手動存版 → 改右欄 → split view 兩側列 y 差 ≤ 1px；單欄＋只看變更不出錯", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 900 }); // 1400 開面板：預覽區夠寬，自動 split（同 22-versions）
+  await page.setViewportSize({ width: 1500, height: 900 }); // 1500 開面板：預覽區夠寬，自動 split（同 22-versions）
   const { errors, left, right } = await startSurfacesNote(page, "versions");
   await caretIn(page, left, "End");
   await saveVersion(page, "cols-base");

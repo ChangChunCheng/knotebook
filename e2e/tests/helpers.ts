@@ -745,3 +745,15 @@ export async function chooseSelectOption(page: Page, trigger: Locator, optionNam
   await page.getByRole("option", { name: optionName, exact: true }).click();
   await expect(page.getByRole("listbox")).toHaveCount(0);
 }
+
+
+/** 欄比例寫進文件時四捨五入到兩位小數（`apps/web/src/collab/columns/widths.ts` 的 `ratiosFromPixels`）。 */
+export const COLUMN_RATIO_STEP = 0.01;
+
+/**
+ * 欄比例捨入換回像素的誤差容許值：一格比例對應的像素寬（列越寬越大）。
+ * 實際誤差最多半格，再加上像素取整與欄被夾在最小寬度時的位移，所以放一整格。
+ */
+export function ratioQuantPx(cols: readonly { width: number }[]): number {
+  return (COLUMN_RATIO_STEP * cols.reduce((sum, c) => sum + c.width, 0)) / cols.length;
+}

@@ -76,9 +76,9 @@ async function typeAtEnd(page: Page, text: string) {
 
 test("22 版本歷史：存、改、預覽 diff、套用、沿自「名稱 (短 id)」接著改、遠端改字、窄視窗整頁", async ({ browser }) => {
   test.setTimeout(180_000);
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const page = await ctx.newPage();
-  const other = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const other = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   try {
     await loginAs(page, ADMIN.email, ADMIN.password);
     await createNote(page, `E2E versions ${Date.now()}`);
@@ -107,7 +107,7 @@ test("22 版本歷史：存、改、預覽 diff、套用、沿自「名稱 (短 
     // 預覽 second（預設 vs 目前狀態）：second 之後才打的 gamma-three 是新增，beta-two、alpha-one 未變
     await panel.getByRole("button", { name: /^second \(/ }).click();
     await expect(page.getByTestId("preview-banner")).toContainText(/Previewing second \([0-9a-f]{7}\)/);
-    // 1400 px 開面板：預覽區約 774 px ≥ 720 → 自動並排；兩欄標頭是左右一對下拉。切單欄再看 data-diff。
+    // 1500 px 開面板（側欄與版本面板各 320 px）：預覽區約 810 px ≥ 720 → 自動並排；兩欄標頭是左右一對下拉。切單欄再看 data-diff。
     await expect(page.getByTestId("diff-split")).toBeVisible();
     const splitHead = page.getByTestId("diff-split-head");
     await expect(splitHead.getByRole("button", { name: "Left side" })).toHaveText(/^second \(/);
@@ -219,7 +219,7 @@ test("22 版本歷史：存、改、預覽 diff、套用、沿自「名稱 (短 
 test("22b 並排逐區塊對齊：中間插一段＋前一段改長 → 左 2 與右 3 同列、插入那列左欄留斜紋", async ({ browser }) => {
   test.setTimeout(120_000);
   const shotDir = process.env.VERSIONS_SCREENSHOT_DIR; // 目視截圖：設了才截，本檔不寫絕對路徑
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const page = await ctx.newPage();
   try {
     await loginAs(page, ADMIN.email, ADMIN.password);
@@ -279,7 +279,7 @@ test("22b 並排逐區塊對齊：中間插一段＋前一段改長 → 左 2 �
 
 test("22c 版本清單篩選（#258）＋停手 X 才自動存（#272）：自動版本標 pill、全部／僅手動切換、預覽不受影響、localStorage 記憶、切筆記不關面板", async ({ browser }) => {
   test.setTimeout(180_000);
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const page = await ctx.newPage();
   try {
     await loginAs(page, ADMIN.email, ADMIN.password);

@@ -4,7 +4,7 @@
  * 範圍 200–480：下限讓群組內筆記列還留得下約 3 個中文字的標題；
  * 上限不相對視窗（不自動收窄），拉太寬時雙擊把手回預設。推導見 `AppShell.tsx` 檔頭「側欄寬度」。
  */
-export const SIDEBAR_WIDTH_DEFAULT = 256; // ＝改版前的 w-64
+export const SIDEBAR_WIDTH_DEFAULT = 320; // 與版本面板的預設寬度（VERSIONS_PANEL_WIDTH_DEFAULT）一致
 export const SIDEBAR_WIDTH_MIN = 200;
 export const SIDEBAR_WIDTH_MAX = 480;
 export const SIDEBAR_WIDTH_STEP = 16;

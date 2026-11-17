@@ -76,13 +76,13 @@ export const copyNoteInputNoMove = {
 };
 
 /**
- * #247 改寫後 319 字元（原 331）。HTTP 上可達（讀寫憑證的清單上有 copy_note，帶 group_id 呼叫）；守衛＝`test/mcp-copy.test.ts` 的 #239 案。
+ * HTTP 上可達（讀寫憑證的清單上有 copy_note，帶 group_id 呼叫）；守衛＝`test/mcp-copy.test.ts` 的 #239 案。
  * 處置＝在「設定 → 授權」的 token 列上以鉛筆開啟搬移權。結尾是「then try again」不是「reconnect」：copy_note 已在清單上、
  * scope 每請求重讀（`requireMoveScope`），開啟後下一發帶 group_id 就會過，不必重連。
  */
 export const COPY_NEEDS_MOVE_MESSAGE =
   "Copying a note into a group needs the notes:move scope, and this credential doesn't have it, so nothing was copied. " +
-  'Leave out group_id to copy into your personal notes, or ask the user to turn on "Move or copy notes into groups" for this ' +
+  'Leave out group_id to copy into your personal notes, or ask the user to turn on "Move to groups (can\'t be undone)" (notes:move) for this ' +
   "credential via the pencil on its row in Settings → Authorization, then try again.";
 export const copyNoteOutput = { note: noteSummarySchema.describe("The new copy, in the same shape list_notes returns.") };
 

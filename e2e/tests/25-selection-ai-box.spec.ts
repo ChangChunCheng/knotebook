@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
 
 /**
@@ -8,6 +9,7 @@ import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs
  * 以 expect.poll 等框的位置跟上（floating-ui 的 ancestorScroll 回呼下一幀才派送）。捲動容器＝note-editor 的祖父（同 14-table-hover 的節點鏈）。
  * 位置分兩種（#263）：輸入／串流／錯誤態浮在首區塊上方（可 flip 到下方）；結果態（done）蓋在首區塊上——框頂＝首區塊
  * `.bn-block-outer` 頂、左緣對齊、不 flip，區塊頂捲出容器頂時夾在容器頂。
+ * 另有一條格式工具列的區塊類型選單案例（#464）：多區塊選取套用 Heading 1 只改段落、表格內容不動；一次 Ctrl+Z 全部回來。
  */
 
 const RUN_ID = Date.now();
@@ -346,6 +348,53 @@ test("開框、送出、完成都不改變筆記的捲動位置（框內焦點�
     await expect(box.getByTestId("selection-ai-preview")).toContainText(REWRITTEN_TEXT, { timeout: 15_000 });
     await expect(box).toBeFocused();
     await stays();
+  } finally {
+    await context.close();
+  }
+});
+
+test("區塊類型選單：多區塊選取套用 Heading 1 只改段落、表格內容還在；一次復原全部回來", async ({ browser }) => {
+  const context = await browser.newContext();
+  try {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: E2E_ORIGIN });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loginAs(page, ADMIN.email, ADMIN.password);
+    await createNote(page, `E2E block type select ${RUN_ID}`);
+    const editor = editorLocator(page);
+    await editor.waitFor({ timeout: 15_000 });
+    await editor.click();
+    await editor.pressSequentially("alice paragraph");
+    await waitForEditorSelection(page);
+    await page.keyboard.press("Enter");
+    await editor.pressSequentially("bob paragraph");
+    await waitForEditorSelection(page);
+    await page.keyboard.press("Enter");
+    await page.evaluate((text) => navigator.clipboard.writeText(text), "| Col1 | Col2 |\n| --- | --- |\n| r1c1 | r1c2 |\n");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(editor.locator("table")).toBeVisible({ timeout: 10_000 });
+    await expect(editor.getByText("r1c2", { exact: true })).toBeVisible();
+
+    // 全選：選取從段落開始、跨過表格；工具列左端的區塊類型選單（目前項目 Paragraph）
+    await editor.getByText("alice paragraph", { exact: true }).click();
+    await page.keyboard.press("ControlOrMeta+a");
+    const toolbar = page.locator(".bn-formatting-toolbar");
+    await toolbar.getByRole("button", { name: "Paragraph" }).click();
+    await page.getByRole("menuitem", { name: "Heading 1", exact: true }).click();
+
+    await expect(editor.locator("h1", { hasText: "alice paragraph" })).toBeVisible();
+    await expect(editor.locator("h1", { hasText: "bob paragraph" })).toBeVisible();
+    await expect(editor.locator("table")).toBeVisible();
+    await expect(editor.getByText("r1c1", { exact: true })).toBeVisible();
+    await expect(editor.getByText("r1c2", { exact: true })).toBeVisible();
+
+    // 一次復原：兩段回到段落、表格仍在
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(editor.locator("h1")).toHaveCount(0);
+    await expect(editor.getByText("alice paragraph", { exact: true })).toBeVisible();
+    await expect(editor.getByText("bob paragraph", { exact: true })).toBeVisible();
+    await expect(editor.getByText("r1c1", { exact: true })).toBeVisible();
+    await expect(editor.getByText("r1c2", { exact: true })).toBeVisible();
   } finally {
     await context.close();
   }
