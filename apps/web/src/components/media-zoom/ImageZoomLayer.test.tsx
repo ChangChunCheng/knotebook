@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { noteSchema } from "@/collab/schema";
@@ -36,10 +36,12 @@ function setLoaded(img: HTMLElement, loaded = true, size = { w: 800, h: 600 }) {
 
 function Host({ zoom, editable = true, html = BLOCKS }: { zoom: MediaZoomApi | null; editable?: boolean; html?: string }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
+  // 同一個元素才不會在 rerender 時重設 innerHTML（換掉 img，測試墊的載入狀態就跟著丟了）
+  const blocks = useMemo(() => <div dangerouslySetInnerHTML={{ __html: html }} />, [html]);
   return (
     <MediaZoomContext.Provider value={zoom}>
       <div ref={setEl} className="relative" data-testid="col">
-        <div dangerouslySetInnerHTML={{ __html: html }} />
+        {blocks}
         <ImageZoomLayer container={el} editable={editable} />
       </div>
     </MediaZoomContext.Provider>
@@ -338,6 +340,31 @@ describe("#462 圖片放大鈕浮動層", () => {
     rerender(<Host zoom={{ open, isOpen: true }} />);
     fireEvent.pointerLeave(screen.getByTestId("col"));
     expect(zoomBtn()).not.toBeNull();
+  });
+
+  it("放大剛關掉、焦點還沒還回來：指標在別的區塊也先不收；焦點回到鈕就留著，沒回來才追上指標", async () => {
+    const { rerender } = render(<Host zoom={zoom} />);
+    hoverImg();
+    rerender(<Host zoom={{ open, isOpen: true }} />);
+    rerender(<Host zoom={zoom} />);
+    // 關掉的同一個 task 裡指標底下是段落：鈕還在
+    fireEvent.pointerOver(screen.getByText("Body"), { pointerType: "mouse" });
+    expect(zoomBtn()).not.toBeNull();
+    // 焦點還回鈕（Radix 在下一個 task 做）：之後也不收
+    act(() => zoomBtn()!.focus());
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(zoomBtn()).not.toBeNull();
+    expect(zoomBtn()).toHaveFocus();
+
+    // 再開一次、關掉後焦點沒回到鈕：凍結結束就追上指標（段落 ⇒ 收起）
+    act(() => zoomBtn()!.blur());
+    hoverImg();
+    rerender(<Host zoom={{ open, isOpen: true }} />);
+    rerender(<Host zoom={zoom} />);
+    fireEvent.pointerOver(screen.getByText("Body"), { pointerType: "mouse" });
+    expect(zoomBtn()).not.toBeNull();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(zoomBtn()).toBeNull();
   });
 
   it("鈕有焦點時不收起；失焦且 pointer 不在圖上才收", () => {

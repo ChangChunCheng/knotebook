@@ -89,6 +89,9 @@ export function ImageZoomLayer({
   const sizeRef = useRef<Size>({ width: 0, height: 0 });
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  // 放大開著，或剛關掉、焦點還沒還回放大鈕。
+  const frozenRef = useRef(false);
+  const isOpenNow = zoom?.isOpen === true;
   // pointer 實際所在的圖；顯示中的 hover 在放大開著或鈕有焦點時凍結，之後再追上這個值。
   const pointerImgRef = useRef<HTMLImageElement | null>(null);
   const buttonFocused = () => {
@@ -98,9 +101,30 @@ export function ImageZoomLayer({
   const { t } = useTranslation();
   const zoomLabel = t("note.zoom.open");
 
+  // 放大畫面關掉後，Radix 要到下一個 task 才把焦點還給放大鈕（`onCloseAutoFocus`）。這段空檔裡
+  // 指標底下若是別的區塊，pointerover 會先把鈕收掉，焦點就回不到它。所以關掉後多凍結一個 task，
+  // 焦點落定了才追上指標。這個 setTimeout 一定排在 Radix 那次之後：Radix 是在 FocusScope 卸載的
+  // cleanup 裡排它的 setTimeout，而 React 在同一次 commit 裡會先跑完所有卸載的 cleanup，才跑新的
+  // passive effect（這裡）。
+  useEffect(() => {
+    if (isOpenNow) {
+      frozenRef.current = true;
+      return;
+    }
+    if (!frozenRef.current) return;
+    const timer = setTimeout(() => {
+      frozenRef.current = false;
+      if (!buttonFocused()) setHover(pointerImgRef.current);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      frozenRef.current = false;
+    };
+  }, [isOpenNow]);
+
   useEffect(() => {
     if (!container || !active) return;
-    const isOpen = () => zoomRef.current?.isOpen === true;
+    const isOpen = () => zoomRef.current?.isOpen === true || frozenRef.current;
     const onPointerOver = (e: PointerEvent) => {
       if (e.pointerType === "touch") return;
       const found = imageUnder(e.target);
