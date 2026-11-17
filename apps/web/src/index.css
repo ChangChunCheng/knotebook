@@ -429,11 +429,25 @@ input[name="share-access"] {
    `.bn-block-content` 自己身上，也可能落在它的外層（BlockNote 兩種都會出現）。
    守衛見 `theme.block-selection-guard.test.ts`——這條壞掉只會靜默變回藍框。
    邊界：落在 `.bn-editor` 之外的 `ProseMirror-selectednode`（例如脫離編輯器 DOM 的拖曳
-   預覽節點）仍會拿到 BlockNote 內建的 4px 亮藍。那個節點 `opacity:.001`，看不見，不處理。 */
+   預覽節點）仍會拿到 BlockNote 內建的 4px 亮藍。那個節點 `opacity:.001`，看不見，不處理。
+
+   外框只在焦點還在編輯器容器（`.bn-container`，格式工具列、檔案面板等浮層也掛在裡面）內時上色：
+   點側欄、頁首等別處、編輯器失焦後，ProseMirror 的 selection 仍是整個 block，沒有這個條件外框會一直留著。
+   規則本身不加 `:focus-within`（那樣失焦時會退回 BlockNote 內建的亮藍框）：失焦時外框顏色是透明，
+   `.bn-container:focus-within` 才把 `--kb-node-frame` 設成主題色。 */
 .bn-editor .bn-block-content.ProseMirror-selectednode > *,
 .bn-editor .ProseMirror-selectednode > .bn-block-content > * {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--kb-node-frame, transparent);
   outline-offset: 2px;
+}
+.bn-container:focus-within {
+  --kb-node-frame: var(--color-brand);
+}
+
+/* 檔案 block 被選取時，BlockNote 把檔名那一列塗灰（`.ProseMirror-selectednode .bn-file-name-with-icon`，深色另有一條）。
+   跟外框同一個道理：編輯器容器失焦後不留著（游標移上去的 hover 底色不受影響）。 */
+.bn-container:not(:focus-within) .bn-editor .ProseMirror-selectednode .bn-file-name-with-icon:not(:hover) {
+  background-color: transparent;
 }
 
 /* ── 筆記內容裡的連結（issue #153）─────────────────────────────────────────

@@ -3,13 +3,14 @@
 // `@blocknote/core/fonts/inter.css`——那是 latin-only 的自帶字型（9 個 woff 檔），
 // 對以中文為主的介面沒有幫助，只會讓 bundle 變大；字型交給 app 自己的 CSS 決定。
 import "@blocknote/mantine/style.css";
-import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import type * as Y from "yjs";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
 import { createCursorScroller, type CursorScroller } from "@/collab/cursor-scroll";
 import { gateLocalCursor } from "@/collab/cursor-gate";
+import { clearNodeSelectionAt, type BlankClickView } from "@/collab/blank-click";
 import { collabUserColor } from "@knotebook/shared";
 import { BlockNoteEditor, filterSuggestionItems, SuggestionMenu } from "@blocknote/core";
 import { SideMenuExtension } from "@blocknote/core/extensions";
@@ -485,6 +486,8 @@ export function NoteEditor({
 }: NoteEditorProps) {
   const { t, i18n } = useTranslation();
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
+  const columnElRef = useRef<HTMLElement | null>(null);
+  columnElRef.current = columnEl;
   // 任何拖放進行中，欄上掛 class，⋮⋮ 等編輯器外的浮層不吃指標，drop 才落得到底下的編輯器（規則在 `index.css`）。
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
@@ -592,6 +595,28 @@ export function NoteEditor({
     [doc, provider],
   );
   editorRef.current = editor;
+  // 點捲動區的空白（文章欄的內距、欄外的空地；不是 block、不是任何浮層或按鈕）：整個 block 被選取時改成游標，外框跟著消失。
+  const onScrollAreaMouseDown = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      // Shift＋點擊、從空白處拖曳框選：交給瀏覽器與 ProseMirror 延伸選取，不在這裡換成游標。
+      if (e.button !== 0 || e.shiftKey) return;
+      const root = e.currentTarget;
+      const target = e.target as HTMLElement;
+      const blank =
+        target === root ||
+        target === columnElRef.current ||
+        target.hasAttribute("data-article-flow") ||
+        (!target.closest(".bn-block-outer") && (target.classList.contains("bn-container") || target.classList.contains("bn-editor") || target.classList.contains("bn-block-group")));
+      if (!blank) return;
+      // 捲軸上的按下也會以捲動容器為目標。
+      if (root.clientWidth > 0 && e.clientX - root.getBoundingClientRect().left >= root.clientWidth) return;
+      const view = editor.prosemirrorView as unknown as BlankClickView | undefined;
+      if (!view) return;
+      const focus = editableRef.current;
+      if (clearNodeSelectionAt(view, { x: e.clientX, y: e.clientY }, focus) && focus) e.preventDefault();
+    },
+    [editor],
+  );
   // 版本預覽中活編輯器藏起來了，撤銷會改到看不見的內容。
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
@@ -695,6 +720,7 @@ export function NoteEditor({
               `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
           <div
             ref={setScrollRoot}
+            onMouseDown={onScrollAreaMouseDown}
             className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible sm:[scrollbar-gutter:stable]", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
           >
             {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
