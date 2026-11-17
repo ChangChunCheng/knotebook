@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import * as Y from "yjs";
 import { EMPTY_YDOC_UPDATE_B64, YDOC_FRAGMENT } from "@knotebook/shared";
 import i18n from "@/i18n";
+import { stubLayoutTier } from "@/test/layout-tier";
 import { ThemeProvider } from "@/theme";
 import PublicNotePage from "./PublicNotePage";
 
@@ -12,16 +13,54 @@ import PublicNotePage from "./PublicNotePage";
 // API，這裡只驗「頁面把正確的 doc/publicRef 交給唯讀編輯器」——選項本身的契約
 // （fragment 名、resolveFileUrl 映射…）守在 collab/editor-options.test.ts。
 // data-ref 序列化成 kind:值——別只吐 kind（那樣「傳錯篇的 ref」測不出來）。
-vi.mock("@/components/PublicNoteEditor", () => ({
-  PublicNoteEditor: ({ doc, publicRef, links }: { doc: Y.Doc; publicRef: import("@/lib/public-note-ref").PublicNoteRef; links: unknown[] }) => (
-    <div
-      data-testid="public-note-editor"
-      data-ref={publicRef.kind === "token" ? `token:${publicRef.token}` : `path:${publicRef.handle}/${publicRef.slug}`}
-      data-fragment-length={String(doc.getXmlFragment(YDOC_FRAGMENT).length)}
-      data-links={JSON.stringify(links)}
-    />
-  ),
+// 替身也像真的一樣把「編輯器」交給 onEditor：一份只有一個 H2 的文件，標題大綱才有東西可列。
+const FAKE_EDITOR = vi.hoisted(() => ({
+  document: [{ id: "h-intro", type: "heading", props: { level: 2 }, content: [{ type: "text", text: "Intro" }] }],
+  onChange: () => () => {},
 }));
+vi.mock("@/components/PublicNoteEditor", async () => {
+  const { useEffect } = await import("react");
+  return {
+    PublicNoteEditor: ({
+      doc,
+      publicRef,
+      links,
+      onEditor,
+    }: {
+      doc: Y.Doc;
+      publicRef: import("@/lib/public-note-ref").PublicNoteRef;
+      links: unknown[];
+      onEditor?: (editor: typeof FAKE_EDITOR | null) => void;
+    }) => {
+      useEffect(() => {
+        onEditor?.(FAKE_EDITOR);
+        return () => onEditor?.(null);
+      }, [onEditor]);
+      return (
+        <div
+          data-testid="public-note-editor"
+          data-ref={publicRef.kind === "token" ? `token:${publicRef.token}` : `path:${publicRef.handle}/${publicRef.slug}`}
+          data-fragment-length={String(doc.getXmlFragment(YDOC_FRAGMENT).length)}
+          data-links={JSON.stringify(links)}
+        />
+      );
+    },
+  };
+});
+// 簡報層本身另有測試（`PublicNotePage.present.test.tsx`）；這裡只要它掛得上。
+vi.mock("@/present/lazy", () => ({ LazyPresentation: () => <div data-testid="presentation-stub" /> }));
+// 大綱本身另有測試；這裡只驗它掛在哪、拿到什麼。
+const outlineProps = vi.hoisted(() => [] as Array<import("@/components/outline/NoteOutline").NoteOutlineProps>);
+vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/outline/NoteOutline")>();
+  return {
+    ...original,
+    NoteOutline: (props: import("@/components/outline/NoteOutline").NoteOutlineProps) => {
+      outlineProps.push(props);
+      return <div data-testid="outline-stub" />;
+    },
+  };
+});
 
 const TOKEN = "abcDEF123_-".repeat(4).slice(0, 43);
 
@@ -322,6 +361,53 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     it("P3 不認得的 width → 標準", async () => {
       const column = await columnFor({ title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, width: "bogus" });
       expect(column).toHaveClass("mx-auto", "w-full", STANDARD_MAX);
+    });
+  });
+
+  describe("#465 右側標題大綱", () => {
+    async function renderWithHeadings(entry?: string) {
+      outlineProps.length = 0;
+      const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body: { title: "N", ydoc: EMPTY_YDOC_UPDATE_B64 } } : null));
+      vi.stubGlobal("fetch", fn);
+      renderPage(entry);
+      await screen.findByTestId("public-note-editor");
+    }
+
+    it("桌機：掛在頁首之後、捲動容器之前（不在捲動容器裡）；拿到捲動容器與標題，沒有泡泡、不能釘", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings();
+      const stub = await screen.findByTestId("outline-stub");
+      const header = screen.getByRole("banner");
+      const column = screen.getByTestId("article-column");
+      const scroll = column.parentElement!;
+      expect(scroll).toHaveClass("overflow-y-auto");
+      expect(header.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(stub.compareDocumentPosition(scroll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scroll.contains(stub)).toBe(false);
+      const props = outlineProps[outlineProps.length - 1]!;
+      expect(props.scrollEl).toBe(scroll);
+      expect(props.headings).toEqual([{ id: "h-intro", level: 2, text: "Intro" }]);
+      expect(props.bubbleShown).toBe(false);
+      expect(props.pinned).toBe(false);
+      expect(props.pinAvailable).toBe(false);
+    });
+
+    it("手機：不掛", async () => {
+      stubLayoutTier("phone");
+      await renderWithHeadings();
+      // 等編輯器回報、標題算完那一輪 render 過去，再斷言沒有。
+      await act(async () => {});
+      expect(screen.queryByTestId("outline-stub")).not.toBeInTheDocument();
+      expect(outlineProps).toHaveLength(0);
+    });
+
+    it("簡報中（?present）：桌機也不掛", async () => {
+      stubLayoutTier("docked");
+      await renderWithHeadings(`/p/${TOKEN}?present`);
+      expect(await screen.findByTestId("presentation-stub")).toBeInTheDocument();
+      await act(async () => {});
+      expect(screen.queryByTestId("outline-stub")).not.toBeInTheDocument();
+      expect(outlineProps).toHaveLength(0);
     });
   });
 });

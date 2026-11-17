@@ -48,7 +48,7 @@ import { cardSurface } from "@/components/ui/card";
 import { ARTICLE_COLUMN_PADDING, articleColumn } from "@/components/ui/article-column";
 import { useNoteWidth } from "@/components/note-width";
 import { cn } from "@/lib/utils";
-import { useIsPhone } from "@/lib/layout-tiers";
+import { useIsOverlay, useIsPhone } from "@/lib/layout-tiers";
 import { useStickyTopVar, useTierScrollAnchor } from "@/lib/page-scroll";
 import { useTableScrollHint } from "@/lib/table-scroll-hint";
 import { useTheme } from "@/theme";
@@ -74,6 +74,12 @@ import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/edi
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { ColumnDividers } from "@/components/editor/ColumnDividers";
 import { LinkLongPress } from "@/components/LinkLongPress";
+import { NoteOutline } from "@/components/outline/NoteOutline";
+import { useOutlineBox } from "@/components/outline/use-outline-box";
+import { useOutlineHeadings } from "@/components/outline/use-outline-headings";
+
+/** 大綱的 `onPinnedChange`：釘選鈕不出現（`pinAvailable={false}`），不會被呼叫。 */
+const noop = () => {};
 
 const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
@@ -488,7 +494,7 @@ export function NoteEditor({
   // 任何拖放進行中，欄上掛 class，⋮⋮ 等編輯器外的浮層不吃指標，drop 才落得到底下的編輯器（規則在 `index.css`）。
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
-  const { panelOpen } = useVersions();
+  const { panelOpen, enabled: versionsEnabled } = useVersions();
   // #274：版本面板寬度。state 放在面板與錯誤外框的最近共同祖先（下方列容器），以 CSS 變數往下傳。
   const panelWidth = useVersionsPanelWidth();
   // 640-1279：面板浮在筆記上（列容器 `relative`、面板 `absolute`），上緣讓出頁首；收起規則見 `floating-panel.ts`。
@@ -507,9 +513,12 @@ export function NoteEditor({
 
   // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  // 標題大綱要在捲動容器掛上時重新量測、重新訂閱捲動，ref 不會觸發重繪，所以另存一份 state。
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const setScrollRoot = useCallback(
     (el: HTMLDivElement | null) => {
       scrollRootRef.current = el;
+      setScrollEl(el);
       onScrollRoot?.(el);
     },
     [onScrollRoot],
@@ -595,6 +604,13 @@ export function NoteEditor({
   // 版本預覽中活編輯器藏起來了，撤銷會改到看不見的內容。
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
+  // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；640-1279 版本面板浮在卡上時會蓋住它，也不顯示。
+  // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
+  const outlineHeadings = useOutlineHeadings(editor);
+  const outlineBox = useOutlineBox(scrollEl, columnEl);
+  const overlay = useIsOverlay();
+  const showOutline = !phone && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0 && outlineBox !== null;
+
   useEffect(() => {
     const report = onCursorScrollerRef.current; // cleanup 不讀 ref
     report?.(createCursorScroller({ editor, getRoot: () => (hasPreviewRef.current ? null : scrollRootRef.current) }));
@@ -649,6 +665,7 @@ export function NoteEditor({
   //   根 row（relative flex h-full min-h-0 min-w-0 flex-1 gap-3；640-1279 時是浮動版本面板的定位基準）
   //     內文卡（cardSurface，flex-col）
   //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
+  //       NoteOutline                                 ← #465 標題大綱：零高度錨點（data-outline-anchor），貼在捲動容器上緣；細線與面板不隨內文捲、不佔高度
   //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
   //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
   //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
@@ -690,6 +707,17 @@ export function NoteEditor({
           <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:sticky max-sm:top-0 max-sm:z-30 max-sm:bg-card max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
+          {showOutline && (
+            <NoteOutline
+              headings={outlineHeadings}
+              scrollEl={scrollEl}
+              box={outlineBox}
+              bubbleShown={versionsEnabled && !panelOpen}
+              pinned={false}
+              pinAvailable={false}
+              onPinnedChange={noop}
+            />
+          )}
           {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
               手機上的高度要從內容長出來（flex-basis auto，不是 flex-1 的 0%）：卡的高度不固定，0% 的基準加上
               `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}

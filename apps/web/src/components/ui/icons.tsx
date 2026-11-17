@@ -101,6 +101,29 @@ export function Star(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 釘選（標題導覽面板的釘住鈕）。路徑取自 lucide `pin`（ISC），手刻同風格。 */
+export function Pin(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="pin" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
+}
+
+/** 標題導覽（手機 ⋮ 項、底部面板）。路徑取自 lucide `list-tree`（ISC），手刻同風格。 */
+export function ListTree(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="list-tree" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21 12h-8" />
+      <path d="M21 6H8" />
+      <path d="M21 18h-8" />
+      <path d="M3 6v4c0 1.1.9 2 2 2h3" />
+      <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+    </svg>
+  );
+}
+
 /** 側欄（浮動側欄的入口鈕）。路徑取自 lucide `panel-left`（ISC），手刻同風格。 */
 export function PanelLeft(props: SVGProps<SVGSVGElement>) {
   return (
