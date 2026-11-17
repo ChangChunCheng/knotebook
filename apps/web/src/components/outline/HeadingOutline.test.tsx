@@ -328,3 +328,115 @@ describe("HeadingOutline geometry", () => {
     expect(rail()).not.toHaveClass("overflow-y-auto");
   });
 });
+
+describe("HeadingOutline rail hit area", () => {
+  it("keeps a minimum hit height (larger under a coarse pointer) with the lines from the top", () => {
+    setup({ headings: [headings[0]!] });
+    expect(rail()).toHaveClass("min-h-6", "pointer-coarse:min-h-11", "justify-start", "flex-col");
+  });
+});
+
+describe("HeadingOutline Esc on the rail", () => {
+  it("closes a hover-opened panel when focus is on the rail", () => {
+    setup();
+    rail().focus();
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    expect(panel()).not.toBeNull();
+    fireEvent.keyDown(rail(), { key: "Escape" });
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(rail());
+  });
+
+  it("does nothing when the panel is closed (Esc keeps reaching the page)", () => {
+    const onPageKey = vi.fn();
+    document.addEventListener("keydown", onPageKey);
+    try {
+      setup();
+      fireEvent.keyDown(rail(), { key: "Escape" });
+      expect(onPageKey).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("keydown", onPageKey);
+    }
+  });
+});
+
+describe("HeadingOutline wheel forwarding", () => {
+  /** Sets the list's scroll metrics; jsdom has no layout. */
+  function scrollMetrics(el: HTMLElement, m: { top: number; client: number; height: number }) {
+    Object.defineProperty(el, "scrollTop", { configurable: true, value: m.top });
+    Object.defineProperty(el, "clientHeight", { configurable: true, value: m.client });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: m.height });
+  }
+
+  it("forwards a wheel over the rail without cancelling it", () => {
+    const onForwardWheel = vi.fn();
+    setup({ onForwardWheel });
+    const notCancelled = fireEvent.wheel(rail(), { deltaY: 120, deltaMode: 0 });
+    expect(onForwardWheel).toHaveBeenCalledWith(120, 0);
+    expect(notCancelled).toBe(true);
+  });
+
+  it("ignores pinch-zoom wheels (ctrl) and wheels without vertical movement", () => {
+    const onForwardWheel = vi.fn();
+    setup({ onForwardWheel });
+    fireEvent.wheel(rail(), { deltaY: 120, ctrlKey: true });
+    fireEvent.wheel(rail(), { deltaX: 50, deltaY: 0 });
+    expect(onForwardWheel).not.toHaveBeenCalled();
+  });
+
+  it("over a rail that scrolls itself, cancels the rail's own scrolling and forwards once", () => {
+    const many: OutlineHeading[] = Array.from({ length: 30 }, (_, i) => ({ id: `h${i + 1}`, level: 2, text: `Heading ${i + 1}` }));
+    const onForwardWheel = vi.fn();
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      setup({ headings: many, maxHeight: 100, onForwardWheel });
+      expect(rail()).toHaveClass("overflow-y-auto");
+      const notCancelled = fireEvent.wheel(rail().querySelector("span")!, { deltaY: 3, deltaMode: 1 });
+      expect(notCancelled).toBe(false);
+      expect(onForwardWheel).toHaveBeenCalledTimes(1);
+      expect(onForwardWheel).toHaveBeenCalledWith(3, 1);
+    } finally {
+      // @ts-expect-error restore the jsdom default (no implementation)
+      delete Element.prototype.scrollIntoView;
+    }
+  });
+
+  it("over the panel, leaves the wheel to the list while it can scroll that way and forwards at its ends", () => {
+    const onForwardWheel = vi.fn();
+    setup({ onForwardWheel });
+    mouseEnter(wrapper());
+    advance(OUTLINE_OPEN_DELAY_MS);
+    const list = panel()!.querySelector("ol")!;
+    const target = item("b");
+
+    scrollMetrics(list, { top: 0, client: 100, height: 300 });
+    expect(fireEvent.wheel(target, { deltaY: 100 })).toBe(true);
+    expect(onForwardWheel).not.toHaveBeenCalled();
+    fireEvent.wheel(target, { deltaY: -100 });
+    expect(onForwardWheel).toHaveBeenLastCalledWith(-100, 0);
+
+    scrollMetrics(list, { top: 200, client: 100, height: 300 });
+    onForwardWheel.mockClear();
+    fireEvent.wheel(target, { deltaY: -100 });
+    expect(onForwardWheel).not.toHaveBeenCalled();
+    fireEvent.wheel(target, { deltaY: 100 });
+    expect(onForwardWheel).toHaveBeenLastCalledWith(100, 0);
+
+    // A list that fits never scrolls: every wheel goes to the note.
+    scrollMetrics(list, { top: 0, client: 100, height: 100 });
+    onForwardWheel.mockClear();
+    fireEvent.wheel(target, { deltaY: 100 });
+    fireEvent.wheel(target, { deltaY: -100 });
+    expect(onForwardWheel).toHaveBeenCalledTimes(2);
+  });
+
+  it("does the same over a pinned panel", () => {
+    const onForwardWheel = vi.fn();
+    setup({ pinned: true, onForwardWheel });
+    const list = panel()!.querySelector("ol")!;
+    scrollMetrics(list, { top: 0, client: 100, height: 100 });
+    fireEvent.wheel(item("a"), { deltaY: 40 });
+    expect(onForwardWheel).toHaveBeenCalledWith(40, 0);
+  });
+});

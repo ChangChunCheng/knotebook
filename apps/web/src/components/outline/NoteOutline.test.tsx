@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OutlineHeading } from "./headings";
 import { NoteOutline, type NoteOutlineProps } from "./NoteOutline";
@@ -104,6 +104,30 @@ describe("NoteOutline", () => {
     view.unmount();
     expect(jump.cancels[1]).toHaveBeenCalledTimes(1);
     expect(jump.cancels[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls the note for a wheel over the rail (pixels, lines, pages) and ends a jump's pin", async () => {
+    let top = 0;
+    Object.defineProperty(scrollEl, "scrollTop", { configurable: true, get: () => top, set: (v: number) => void (top = v) });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 500 });
+    setup();
+    fireEvent.wheel(rail(), { deltaY: 120, deltaMode: 0 });
+    expect(top).toBe(120);
+    fireEvent.wheel(rail(), { deltaY: 3, deltaMode: 1 });
+    expect(top).toBe(120 + 3 * 16);
+    fireEvent.wheel(rail(), { deltaY: -1, deltaMode: 2 });
+    expect(top).toBe(120 + 3 * 16 - 500);
+
+    openPanel();
+    fireEvent.click(item("h-install")!);
+    expect(rail().children[1]).toHaveAttribute("data-active");
+    // The jump's own scroll keeps the pin; a forwarded wheel releases it, and the scroll it causes re-measures.
+    fireEvent.scroll(scrollEl);
+    await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    expect(rail().children[1]).toHaveAttribute("data-active");
+    fireEvent.wheel(rail(), { deltaY: 40 });
+    fireEvent.scroll(scrollEl);
+    await waitFor(() => expect(rail().children[0]).toHaveAttribute("data-active"));
   });
 
   it("keeps working when the headings change under an open panel and drop the current one", () => {

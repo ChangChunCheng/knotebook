@@ -25,6 +25,18 @@ export interface HeadingOutlineProps {
   pinAvailable: boolean;
   onPinnedChange: (next: boolean) => void;
   onJump: (id: string) => void;
+  /**
+   * A wheel over the outline that should scroll the note: the outline sits outside the note's scroll container,
+   * so the browser would not scroll it. Called over the rail always, and over the panel only when its list
+   * cannot scroll further that way. Gets the event's raw `deltaY` and `deltaMode`.
+   */
+  onForwardWheel?: (deltaY: number, deltaMode: number) => void;
+}
+
+/** The list can still scroll in the direction of `deltaY`. */
+function canScrollToward(el: HTMLElement, deltaY: number): boolean {
+  if (deltaY > 0) return el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  return el.scrollTop > 0;
 }
 
 /**
@@ -33,7 +45,7 @@ export interface HeadingOutlineProps {
  * Positions are in the scroll container's coordinates: the caller places this in a zero-height layer outside the
  * scroll container whose top-left corner matches the container's (`OutlineAnchor`), so it does not scroll with the note.
  */
-export function HeadingOutline({ headings, activeId, placement, maxHeight, pinned, pinAvailable, onPinnedChange, onJump }: HeadingOutlineProps) {
+export function HeadingOutline({ headings, activeId, placement, maxHeight, pinned, pinAvailable, onPinnedChange, onJump, onForwardWheel }: HeadingOutlineProps) {
   const { t } = useTranslation();
   const noHover = useNoHover();
   const panelId = useId();
@@ -92,6 +104,39 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
     if (scrolling) railActiveRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [scrolling, activeId, headings]);
 
+  const forwardWheel = useRef(onForwardWheel);
+  forwardWheel.current = onForwardWheel;
+  // Passive: nothing here cancels the browser's own scrolling. A wheel over a panel list that can still scroll
+  // stays with the list; anywhere else the browser has nothing of ours to scroll, so the note gets it.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.defaultPrevented || e.ctrlKey || e.deltaY === 0) return;
+      const panelEl = panelRef.current;
+      if (panelEl?.contains(e.target as Node)) {
+        const list = panelEl.querySelector<HTMLElement>("ol");
+        if (list && canScrollToward(list, e.deltaY)) return;
+      }
+      forwardWheel.current?.(e.deltaY, e.deltaMode);
+    };
+    wrapper.addEventListener("wheel", onWheel, { passive: true });
+    return () => wrapper.removeEventListener("wheel", onWheel);
+  }, []);
+  // A rail long enough to scroll itself would move under the wheel too; it follows the current heading instead,
+  // so its own scrolling is cancelled (the only non-passive listener) and the note scrolls.
+  useEffect(() => {
+    const railEl = railRef.current;
+    if (!railEl || !scrolling) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.deltaY === 0 || !forwardWheel.current) return;
+      e.preventDefault();
+      forwardWheel.current(e.deltaY, e.deltaMode);
+    };
+    railEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => railEl.removeEventListener("wheel", onWheel);
+  }, [scrolling, pinned]);
+
   const onPointerEnter = (e: ReactPointerEvent) => {
     if (pinned || noHover || e.pointerType !== "mouse") return;
     clearTimer();
@@ -127,6 +172,12 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
     e.stopPropagation();
     close();
     railRef.current?.focus();
+  };
+  // Focus stays on the rail when the panel opens by hover or a mouse click; Esc there closes it as well.
+  const onRailKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !open) return;
+    e.stopPropagation();
+    close();
   };
 
   // Focus moving out of the outline (Tab away) closes a floating panel; moving between its own parts does not.
@@ -164,8 +215,10 @@ export function HeadingOutline({ headings, activeId, placement, maxHeight, pinne
           aria-expanded={open}
           aria-controls={panelId}
           onClick={onRailClick}
+          onKeyDown={onRailKeyDown}
           className={cn(
-            "pointer-events-auto absolute flex flex-col items-end rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            // A note with one or two headings would leave an 8-16px target; keep a minimum hit height, lines from the top.
+            "pointer-events-auto absolute flex min-h-6 flex-col items-end justify-start rounded-sm pointer-coarse:min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             scrolling && "overflow-y-auto",
           )}
           style={{ top: 0, left: placement.railLeft, width: OUTLINE_RAIL_WIDTH, maxHeight }}

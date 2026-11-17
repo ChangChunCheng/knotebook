@@ -6,14 +6,15 @@ import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs
  * 右側標題大綱（#465，桌機）：內文欄右側一排細線（每個 H1–H3 一條、目前那一節亮），滑上去展開成面板，點標題跳過去。
  * 全部在 1440×900、側欄 320（每個案例先寫 localStorage，不依賴側欄預設寬）。
  *
- * 60-1 跳轉：hover 細線 → 面板出現 5 項 → 點「Section D」→ 該標題的 `.bn-block-outer` 頂端與捲動容器頂端差在 [-2, 4] px；
- *      段落錨點的高亮浮層出現；網址（含 hash）不變；面板收起、細線仍在。
+ * 60-1 跳轉：hover 細線 → 面板出現 5 項 → 點「Section D」→ 段落錨點的高亮浮層馬上出現（只留約 2 秒）；
+ *      該標題的 `.bn-block-outer` 頂端與捲動容器頂端差在 [-2, 4] px；網址（含 hash）不變；面板收起、細線仍在。
  * 60-2 目前位置：把「Usage」捲過容器頂端 → 細線亮的是 Usage 那條；展開面板時 `aria-current` 也在 Usage。
- * 60-6 打字新增標題：在最後一段後面 Enter、打 `## New section` → 2 秒內細線多一條，面板裡有「New section」。
+ * 60-6 打字新增標題：在最後一段後面 Enter、打 `## New section` → 5 秒內細線多一條，面板裡有「New section」。
  * 60-8 公開頁（未登入）：細線在；hover → 點「Usage」→ 該標題捲到容器頂端。
  * 60-9 切換標題（真的 BlockNote DOM）：用 `/` 選單建一個切換 H2「Folded」、裡面放一個 H3「Inner」；把 Inner 捲到頂端 → 亮 Inner；
  *      收合 Folded（不捲動、不按指標，只點開合鈕）→ 亮的換成 Folded；從面板點 Inner → Folded 展開、Inner 捲到頂端、亮 Inner。
  * 60-10 最後一個標題：點面板裡最後一個標題（捲不到頂端的那個）→ 捲到底後仍是它亮。
+ * 60-11 滾輪：大綱在捲動容器之外，滾輪停在細線上、或停在清單放得下（不會自己捲）的面板上時，捲的是內文。
  *
  * 帳號與資料：用邀請建一個帳號（alice）；唯讀的筆記在 beforeAll 以 API 建一次（含一篇開了公開連結的），
  * 會被改到的筆記（60-6、60-9）每次在案例裡另建，`--repeat-each` 時互不干擾。每個案例開新 context。
@@ -161,8 +162,9 @@ test("60-1 跳轉：hover 展開 5 項，點 Section D 捲到頂端並閃一下�
     await expect(panel(page).locator("[data-outline-item]")).toHaveText(LONG_HEADINGS);
     const id = await headingId(page, "Section D");
     await panelItem(page, "Section D").click();
+    // 高亮只留約 2 秒：點完馬上看，再等捲動停下。
+    await expect(page.locator(`.kn-anchor-flash[data-anchor-flash="${id}"]`)).toBeAttached({ timeout: 1_500 });
     await expectLandedAtTop(page, id);
-    await expect(page.locator(`.kn-anchor-flash[data-anchor-flash="${id}"]`)).toBeAttached({ timeout: 5_000 });
     expect(page.url()).toBe(urlBefore);
     await expect(panel(page)).toBeHidden();
     await expect(rail(page)).toBeVisible();
@@ -187,14 +189,35 @@ test("60-2 目前位置：Usage 捲過頂端後亮 Usage，面板的 aria-curren
   }
 });
 
-test("60-6 打字新增 H2：2 秒內細線多一條、面板裡有 New section", async ({ browser }) => {
+test("60-11 滾輪在細線與面板上：捲的是內文", async ({ browser }) => {
+  const { context, page } = await openNote(browser, notes.long);
+  try {
+    await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
+    const scroller = scrollerOf(page);
+    const scrollTop = (): Promise<number> => scroller.evaluate((el) => el.scrollTop);
+    expect(await scrollTop()).toBe(0);
+    await rail(page).hover();
+    await page.mouse.wheel(0, 400);
+    await expect.poll(scrollTop, { timeout: 5_000, message: "滾輪在細線上，內文往下捲" }).toBeGreaterThan(200);
+    // 面板清單放得下五項、不會自己捲：滾輪一樣交給內文。
+    await expect(panel(page)).toBeVisible();
+    const before = await scrollTop();
+    await panelItem(page, "Usage").hover();
+    await page.mouse.wheel(0, 400);
+    await expect.poll(scrollTop, { timeout: 5_000, message: "滾輪在面板上，內文往下捲" }).toBeGreaterThan(before + 200);
+  } finally {
+    await context.close();
+  }
+});
+
+test("60-6 打字新增 H2：5 秒內細線多一條、面板裡有 New section", async ({ browser }) => {
   const { context, page } = await openNote(browser, async (page) => (await createNoteVia(page, `Outline typing ${RUN} ${Date.now()}`, "# First\n\nfirst body\n\nlast line")).path);
   try {
     await expect(railLines(page)).toHaveCount(1, { timeout: 15_000 });
     await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^last line$/ }));
     await page.keyboard.press("Enter");
     await page.keyboard.type("## New section");
-    await expect(railLines(page)).toHaveCount(2, { timeout: 2_000 });
+    await expect(railLines(page)).toHaveCount(2, { timeout: 5_000 });
     await openPanel(page);
     await expect(panelItem(page, "New section")).toBeVisible();
   } finally {

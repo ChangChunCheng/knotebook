@@ -6,7 +6,8 @@ import i18n from "@/i18n";
 import { FROSTED_SURFACE } from "@/components/ui/frosted";
 import { VersionsProvider, useVersions, useVersionsController } from "@/lib/versions-context";
 import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
-import { CORNER_STACK_FOOTPRINT_PX, CornerStack } from "./CornerStack";
+import { CornerStack } from "./CornerStack";
+import { CORNER_STACK_FOOTPRINT_PX } from "./corner-stack-geometry";
 
 /** 探針：印出版本面板狀態，並提供「從 ⋮ 開版本面板」的外部按鈕。 */
 function Probe() {

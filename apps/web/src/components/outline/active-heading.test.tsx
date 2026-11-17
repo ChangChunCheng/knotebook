@@ -166,6 +166,19 @@ describe("useActiveHeading", () => {
     expect(get()).toBe("h2");
   });
 
+  it("releaseJump clears the pin so the next scroll re-measures", () => {
+    const { target, get, api } = setup();
+    flush();
+    act(() => api().markJumped("h3"));
+    act(() => api().releaseJump());
+    expect(get()).toBe("h3");
+    act(() => {
+      target.dispatchEvent(new Event("scroll"));
+    });
+    flush();
+    expect(get()).toBe("h2");
+  });
+
   it("releases the pin on a pointer press in the scrolling area", () => {
     const { target, get, api } = setup();
     flush();

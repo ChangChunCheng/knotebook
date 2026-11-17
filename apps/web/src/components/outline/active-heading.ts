@@ -49,6 +49,11 @@ export interface ActiveHeadingApi {
    * programmatic scroll does not clear it.
    */
   markJumped: (id: string) => void;
+  /**
+   * Clears the jump pin for a hand scroll that does not reach the scrolling area as an event of its own
+   * (a wheel over the outline, forwarded to the note). The scroll it causes re-measures.
+   */
+  releaseJump: () => void;
 }
 
 const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "]);
@@ -67,6 +72,9 @@ export function useActiveHeading(opts: UseActiveHeadingOptions): ActiveHeadingAp
   const markJumped = useCallback((id: string) => {
     pinnedRef.current = id;
     setActive(id);
+  }, []);
+  const releaseJump = useCallback(() => {
+    pinnedRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -119,5 +127,5 @@ export function useActiveHeading(opts: UseActiveHeadingOptions): ActiveHeadingAp
     };
   }, [headings, root, scrollTarget, enabled]);
 
-  return { activeId: enabled ? active : null, markJumped };
+  return { activeId: enabled ? active : null, markJumped, releaseJump };
 }
