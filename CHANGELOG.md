@@ -7,7 +7,13 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **Searching for three or more letters or digits in a row is much faster on a site with many notes.** Search used to read the text of every note you can see; now a search such as `kubernetes` or `資料庫` looks the words up in an index first, so a rare word, or one that isn't anywhere, comes back quickly however many notes there are (measured with a million sections of note text: from about 2.7 seconds to about 0.15). Results are the same as before. Searches for one or two characters, such as most two-character Chinese words, work as before. This applies to the sidebar, `GET /api/search` and MCP `search_notes` alike.
+
+### Upgrade notes
+
+- **Migration 0042 turns on the `pg_trgm` extension and adds one index** to the search index's text; it changes no row. The bundled database and the stock `postgres` images include `pg_trgm`, and the database's owner can create it. On a PostgreSQL server of your own, check [The pg_trgm extension](docs/self-hosting.md#the-pg_trgm-extension) before upgrading: without it the migration fails and the server doesn't start. Building the index holds up writes to the search index for roughly a minute per million sections of note text, before the server starts. Rolling back leaves the extension and the index in place: the older version doesn't use the index, but still keeps it up to date on writes to the search index. See [Self-hosting](docs/self-hosting.md#upgrading-and-rolling-back).
 
 ## [0.17.1] - 2026-11-18
 
