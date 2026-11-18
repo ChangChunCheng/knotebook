@@ -3,6 +3,7 @@
  * 欄位刻意不含任何網址，頭貼只以 `AvatarRef` 表達。
  */
 import type { AvatarRef } from "./avatar.js";
+import { YDOC_FRAGMENT } from "./ydoc.js";
 
 /** awareness 狀態上本 app 自己的欄位名（BlockNote 擁有 `user`、y-prosemirror 擁有 `cursor`）。 */
 export const PRESENCE_FIELD = "knotebook";
@@ -42,3 +43,66 @@ export interface AgentPresenceField {
 }
 
 export type PresenceField = UserPresenceField | AgentPresenceField;
+
+/** Yjs 相對位置的 JSON 形（`Y.relativePositionToJSON` 的輸出）。 */
+export interface RelativePositionJson {
+  type?: { client: number; clock: number };
+  tname?: string;
+  item?: { client: number; clock: number };
+  assoc?: number;
+}
+
+export interface AwarenessCursor {
+  anchor: RelativePositionJson;
+  head: RelativePositionJson;
+}
+
+const isObject = (x: unknown): x is Record<string, unknown> =>
+  typeof x === "object" && x !== null && !Array.isArray(x);
+
+function parseId(x: unknown): { client: number; clock: number } | null {
+  if (!isObject(x)) return null;
+  const { client, clock } = x;
+  if (typeof client !== "number" || !Number.isInteger(client) || client < 0 || client > 0xffffffff) return null;
+  if (typeof clock !== "number" || !Number.isSafeInteger(clock) || clock < 0) return null;
+  return { client, clock };
+}
+
+function parsePosition(x: unknown): RelativePositionJson | null {
+  if (!isObject(x)) return null;
+  // y-prosemirror 送的是 RelativePosition 物件本身（不是 JSON 形式），沒用到的欄位是 null；null 視同沒有。
+  const hasType = x.type != null;
+  const hasTname = x.tname != null;
+  if (hasType === hasTname) return null;
+  const out: RelativePositionJson = {};
+  if (hasType) {
+    const type = parseId(x.type);
+    if (!type) return null;
+    out.type = type;
+  } else {
+    if (x.tname !== YDOC_FRAGMENT) return null;
+    out.tname = YDOC_FRAGMENT;
+  }
+  if (x.item != null) {
+    const item = parseId(x.item);
+    if (!item) return null;
+    out.item = item;
+  }
+  if (x.assoc !== undefined) {
+    if (typeof x.assoc !== "number" || !Number.isSafeInteger(x.assoc)) return null;
+    out.assoc = x.assoc;
+  }
+  return out;
+}
+
+/**
+ * awareness 是 client 自報的資料：server 與 web 在讀 `cursor` 之前都要先過這一關
+ * （y-prosemirror 遇到格式錯誤的 cursor 會直接 throw）。只接受 anchor／head 兩個
+ * 合法的 Yjs 相對位置，並只用已知欄位重建結果，所以大小有上限；不合法回 null，絕不 throw。
+ */
+export function parseAwarenessCursor(x: unknown): AwarenessCursor | null {
+  if (!isObject(x)) return null;
+  const anchor = parsePosition(x.anchor);
+  const head = parsePosition(x.head);
+  return anchor && head ? { anchor, head } : null;
+}

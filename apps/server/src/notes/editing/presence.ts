@@ -7,6 +7,7 @@ import {
   type AgentPresenceField, type EditOp,
 } from "@knotebook/shared";
 import type { CollabContext } from "../../collab/server.js";
+import { SERVER_PRESENCE_ORIGIN } from "../../collab/awareness-sanitize.js";
 
 // 只對已載入文件掛 awareness，直接發事件（clock 不大於 meta 的項目會被整筆跳過，
 // y-protocols/awareness.js:256；Hocuspocus 的 handleAwarenessUpdate 再重新編碼廣播）。
@@ -17,8 +18,9 @@ import type { CollabContext } from "../../collab/server.js";
 // change 的 `updated`（@blocknote/core/dist/yjs.js:80）——少了它，名牌一次都不會亮。
 // 每個 beat 都重取 documents.get，絕不快取 Awareness（unload 會 destroy、reload 是新物件）。
 // state 帶 `knotebook` agent 標記（#293）：web 頭像列只認它判斷 AI，不從名字猜。
+// origin 用 collab server 認得的那一個：它據此把這些 client id 登記成 server 擁有，連線不能改寫（#312）。
 const clocks = new Map<number, number>();
-const ORIGIN = "ai-presence";
+const ORIGIN = SERVER_PRESENCE_ORIGIN;
 export const PRESENCE_COLOR = AGENT_PRESENCE_COLOR;
 
 /** presence 的身分：`name`／`color` 進 awareness 的 `user`（BlockNote 名牌照舊）；`handle`／`label` 進 `knotebook` 的 agent 標記（#293）。 */

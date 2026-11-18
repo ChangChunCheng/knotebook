@@ -1,4 +1,5 @@
 import type { Awareness } from "y-protocols/awareness";
+import { sanitizeRemoteStates } from "./remote-states";
 
 /** y-prosemirror cursor plugin 寫本機游標的 awareness 欄（`yCursorPlugin` 的預設 `cursorStateField`）。 */
 const CURSOR_FIELD = "cursor";
@@ -13,7 +14,9 @@ const CURSOR_FIELD = "cursor";
  *
  * - null 一律放行（失焦、plugin destroy 時的清除）。可編輯翻成唯讀時，BlockNoteView 會重掛 PM view，
  *   舊 plugin 的 destroy 就把已送出的 cursor 清成 null（`NoteEditor.cursor.test.tsx` 守這條）。
- * - 其餘欄位與所有讀取、訂閱都直通原物件（`this` 綁回原物件），別人的游標照樣畫。
+ * - 讀取方面（#312）：`getStates()` 回傳清洗過的別人狀態（`remote-states.ts`），畫遠端游標用的 user 顏色與 cursor 不信任對方自報的內容。
+ *   只有交給 BlockNote 的這一份被包；頭像列讀的是原始的 provider awareness。
+ * - 其餘欄位與訂閱都直通原物件（`this` 綁回原物件），別人的游標照樣畫。
  */
 export function gateLocalCursor(awareness: Awareness, canSend: () => boolean): Awareness {
   const setLocalStateField = (field: string, value: unknown): void => {
@@ -23,6 +26,7 @@ export function gateLocalCursor(awareness: Awareness, canSend: () => boolean): A
   return new Proxy(awareness, {
     get(target, prop) {
       if (prop === "setLocalStateField") return setLocalStateField;
+      if (prop === "getStates") return () => sanitizeRemoteStates(target.getStates());
       const value: unknown = Reflect.get(target, prop, target);
       return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
     },

@@ -4,7 +4,7 @@
 // - 連線關閉即移除該連線登記的 clientID → CA3 第 1 步（5 s 窗）、CA2
 // - 重連的重送沿用舊 clock、被忽略 → CA3 第 2 步、CA4 對照組
 // - clock＋1 被接受 → CA3 第 3 步；觀察者清掉舊 meta 後重連即看到別人 → CA4
-// - 重連後的人不正常斷線，靠 30 s outdatedTimeout 移除 → CA3 第 4 步，只守「不超過 35 s」（改慢會紅，改快不會）
+// - 重連後重寫的狀態會綁到新的連線上（#312），那條連線一關閉就移除，不再等 30 s 的 outdatedTimeout → CA3 第 4 步（5 s 內）
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
@@ -69,7 +69,7 @@ describe("collab awareness（#293）", () => {
     s.viewerClient.disconnect();
   }); // CA2／CA3 不另設 per-test 逾時、沿用全域 120 s：要等滿 awareness 的 30 s 逾時，加上建場景與各段 waitFor，60 s 太貼
 
-  it("CA3 重連的重送被忽略、clock＋1 重寫才回來；之後不正常斷線仍在 35 s 內移除", async () => {
+  it("CA3 重連的重送被忽略、clock＋1 重寫才回來；之後不正常斷線，關閉即移除（5 s 內）", async () => {
     const s = await scene("ca3");
     const sock = socketOf(s.viewerClient);
     sock.disconnect();
@@ -84,10 +84,11 @@ describe("collab awareness（#293）", () => {
     await waitFor("owner 端 viewer 回來", 5_000, s.ownerSeesViewer);
     const t0 = Date.now();
     sock.destroy();
+    // 重寫的那則狀態已登記在新連線上：連線關閉就移除，不靠 awareness 的 30 s 逾時
     await waitFor("移除", 40_000, () => !s.ownerSeesViewer());
     const ms = Date.now() - t0;
     console.log("reconnected abrupt close removal ms", ms);
-    expect(ms).toBeLessThan(35_000);
+    expect(ms).toBeLessThan(5_000);
     s.viewerClient.disconnect();
   });
 
