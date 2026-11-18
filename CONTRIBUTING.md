@@ -6,7 +6,7 @@ Thanks for your interest in Knotebook. This page covers how to get the code runn
 
 - Bugs and feature requests go in the [issue tracker](https://github.com/sw-willie-wu/knotebook/issues). Planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones).
 - For a larger change, it helps to open an issue or comment on an existing one before you start, so the approach can be discussed first.
-- Issues and pull requests in English are welcome. Most existing code comments are written in Traditional Chinese; user-facing docs and the CHANGELOG are in English. You don't need to read Chinese to contribute: the comments explain design decisions, and asking about one in an issue or pull request is fine.
+- Issues and pull requests in English are welcome. Older code comments are mostly in Traditional Chinese; new comments, user-facing docs and the CHANGELOG are in English (see [Code comments](#code-comments)). You don't need to read Chinese to contribute: the older comments explain design decisions, and asking about one in an issue or pull request is fine.
 
 ## Prerequisites
 
@@ -152,6 +152,12 @@ test: cover literal HTML through bulk files, MCP and REST (#379)
 ```
 
 Types in use include `feat`, `fix`, `docs`, `test`, `style`, `refactor`, `perf`, `chore` and `ci`. The scopes used most are `web`, `server`, `e2e`, `release`, `shared`, `editor` and `collab`. The subject is lowercase and in the imperative, and ends with the issue number in parentheses when there is one. Use the body to explain why, when that isn't obvious.
+
+### Code comments
+
+- Write new comments, and comments you change, in English. There's no need to translate older Chinese comments you don't otherwise touch.
+- Comment what the code can't say for itself: why it is done this way, a constraint that isn't visible, a trade-off and what it was measured against. Leave out comments that restate the code.
+- Refer to public things only: a GitHub issue number (`#123`) is fine; personal details, internal document or item numbers, and links to private notes are not.
 
 ### CHANGELOG
 
