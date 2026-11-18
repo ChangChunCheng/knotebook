@@ -351,6 +351,16 @@ describe("MediaLightbox", () => {
     expect(viewport.querySelector("svg")!.parentElement).toHaveClass("bg-card");
   });
 
+  it("svg：按下與拖曳之後，視窗裡仍是同一個 svg 節點（不被重新解析換掉）", () => {
+    const { viewport } = setup({ kind: "svg", svg: '<svg id="mermaid-5" viewBox="0 0 300 200"></svg>', naturalWidth: 300, naturalHeight: 200 });
+    const before = viewport.querySelector("svg")!;
+    fireEvent.pointerDown(before, { pointerId: 1, clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 520, clientY: 410 });
+    expect(viewport.querySelector("svg")).toBe(before);
+    fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 520, clientY: 410 });
+    expect(viewport.querySelector("svg")).toBe(before);
+  });
+
   it("根 svg 沒有 id：內層 svg 的 id 不被換掉", () => {
     const { viewport } = setup({
       kind: "svg",
@@ -426,6 +436,272 @@ describe("MediaLightbox", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("MediaLightbox 對背後頁面的處理", () => {
+  function withPage() {
+    const page = document.createElement("main");
+    page.innerHTML = "<button>behind</button>";
+    document.body.appendChild(page);
+    return page;
+  }
+
+  afterEach(() => {
+    cleanup();
+    document.querySelectorAll("body > main").forEach(page => page.remove());
+  });
+
+  it("開著時不動 body 上會讓整份文件重算樣式的東西：不改行內樣式、不加屬性、不插樣式表", () => {
+    withPage();
+    const bodyAttrs = () => Array.from(document.body.attributes).map(a => `${a.name}=${a.value}`);
+    const before = bodyAttrs();
+    const styles = document.querySelectorAll("style").length;
+    setup();
+    expect(bodyAttrs()).toEqual(before);
+    expect(document.body.style.length).toBe(0);
+    expect(document.querySelectorAll("style").length).toBe(styles);
+  });
+
+  it("背後的頁面對輔助科技隱藏，關掉後還原；畫面本身標 aria-modal", async () => {
+    const page = withPage();
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return open ? <MediaLightbox source={image()} onClose={() => setOpen(false)} restoreFocus={() => undefined} /> : null;
+    }
+    render(<Host />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(page).toHaveAttribute("aria-hidden", "true");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(page).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("只有關閉鈕可聚焦時，Tab／Shift+Tab 都停在它上面", () => {
+    withPage();
+    const { dialog } = setup();
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    expect(document.activeElement).toBe(close);
+    const tab = createEvent.keyDown(close, { key: "Tab" });
+    fireEvent(close, tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
+  });
+
+  it("圖裡有連結（mermaid 的 click … href）：Tab／Shift+Tab 在連結與關閉鈕之間循環，不走到背後的頁面", () => {
+    withPage();
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><a href="https://example.com/a"><text>A</text></a><a href="https://example.com/b"><text>B</text></a></svg>';
+    const { dialog } = setup({ kind: "svg", svg, naturalWidth: 200, naturalHeight: 100 });
+    const [first, second] = Array.from(dialog.querySelectorAll("a"));
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    // 最後一個（關閉鈕）按 Tab 回到第一個連結；第一個按 Shift+Tab 回到關閉鈕。
+    act(() => close.focus());
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first!, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
+    // 中間的元素之間交給瀏覽器照文件順序移動：不擋。
+    act(() => first!.focus());
+    const middle = createEvent.keyDown(first!, { key: "Tab" });
+    fireEvent(first!, middle);
+    expect(middle.defaultPrevented).toBe(false);
+    act(() => second!.focus());
+    const back = createEvent.keyDown(second!, { key: "Tab", shiftKey: true });
+    fireEvent(second!, back);
+    expect(back.defaultPrevented).toBe(false);
+  });
+
+  it("焦點在畫面本身（點過或拖過圖之後）時 Shift+Tab：不走到背後的頁面，移到關閉鈕", () => {
+    withPage();
+    const { dialog } = setup();
+    act(() => dialog.focus());
+    expect(document.activeElement).toBe(dialog);
+    const back = createEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    fireEvent(dialog, back);
+    expect(back.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
+  });
+
+  it("Alt（Option）加上下鍵不捲背後的頁面；Alt 加左右鍵（瀏覽器的上一頁、下一頁）照舊交給瀏覽器", () => {
+    const { dialog } = setup();
+    for (const key of ["ArrowUp", "ArrowDown"]) {
+      const event = createEvent.keyDown(dialog, { key, altKey: true });
+      fireEvent(dialog, event);
+      expect(event.defaultPrevented, `Alt+${key}`).toBe(true);
+    }
+    for (const key of ["ArrowLeft", "ArrowRight"]) {
+      const event = createEvent.keyDown(dialog, { key, altKey: true });
+      fireEvent(dialog, event);
+      expect(event.defaultPrevented, `Alt+${key}`).toBe(false);
+    }
+  });
+
+  it("按在捲軸上（目標是 <html>）不搶走焦點；關掉後不再攔", async () => {
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return open ? <MediaLightbox source={image()} onClose={() => setOpen(false)} restoreFocus={() => undefined} /> : null;
+    }
+    render(<Host />);
+    const onRoot = createEvent.mouseDown(document.documentElement);
+    fireEvent(document.documentElement, onRoot);
+    expect(onRoot.defaultPrevented).toBe(true);
+    const inside = within(screen.getByRole("dialog")).getByRole("button", { name: "Close" });
+    const onButton = createEvent.mouseDown(inside);
+    fireEvent(inside, onButton);
+    expect(onButton.defaultPrevented).toBe(false);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const after = createEvent.mouseDown(document.documentElement);
+    fireEvent(document.documentElement, after);
+    expect(after.defaultPrevented).toBe(false);
+  });
+
+  it("Ctrl／⌘ 加 Home、End、上下鍵不捲背後的頁面；Ctrl 加 + 之類照舊交給瀏覽器", () => {
+    const { dialog } = setup();
+    for (const [key, mod] of [
+      ["Home", "ctrlKey"],
+      ["End", "ctrlKey"],
+      ["ArrowUp", "metaKey"],
+      ["ArrowDown", "metaKey"],
+    ] as const) {
+      const event = createEvent.keyDown(dialog, { key, [mod]: true });
+      fireEvent(dialog, event);
+      expect(event.defaultPrevented, `${mod}+${key}`).toBe(true);
+    }
+    const before = img().style.width;
+    const plus = createEvent.keyDown(dialog, { key: "+", ctrlKey: true });
+    fireEvent(dialog, plus);
+    expect(plus.defaultPrevented).toBe(false);
+    expect(img().style.width).toBe(before);
+  });
+
+  it("按在捲軸上（目標是 <html>）不算點外面，不關閉", async () => {
+    const { onClose } = setup();
+    // Radix 在下一個 task 才開始聽外面的按下
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    // Radix 等按下後的 click 才判定「點外面」
+    fireEvent.pointerDown(document.documentElement);
+    fireEvent.click(document.documentElement);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("焦點被移到背後的頁面：不關閉，焦點拉回關閉鈕", () => {
+    const page = withPage();
+    const { dialog, onClose } = setup();
+    act(() => page.querySelector("button")!.focus());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
+  });
+
+  it("翻頁鍵、Home／End、空白鍵不捲背後的頁面；關閉鈕上的空白鍵照舊", () => {
+    const { dialog } = setup();
+    for (const key of ["PageUp", "PageDown", "Home", "End", " "]) {
+      const event = createEvent.keyDown(dialog, { key });
+      fireEvent(dialog, event);
+      expect(event.defaultPrevented, key).toBe(true);
+    }
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    const space = createEvent.keyDown(close, { key: " " });
+    fireEvent(close, space);
+    expect(space.defaultPrevented).toBe(false);
+  });
+
+  it("關閉鈕上的滾輪也被擋下（不捲背後的頁面）；畫面整片不接受觸控捲動", () => {
+    const { dialog } = setup();
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    const wheel = createEvent.wheel(close, { deltaY: 100, cancelable: true });
+    fireEvent(close, wheel);
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(dialog).toHaveClass("touch-none");
+  });
+});
+
+describe("MediaLightbox 鎖背後頁面的捲動", () => {
+  function pointer(fine: boolean) {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(pointer: fine)" ? fine : false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+  }
+  const root = () => document.documentElement;
+  function gutter(width: number) {
+    const viewportClientWidth = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!.get!;
+    vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
+      return this === document.documentElement ? window.innerWidth - width : viewportClientWidth.call(this);
+    });
+  }
+  function Host() {
+    const [open, setOpen] = useState(true);
+    return open ? <MediaLightbox source={image()} onClose={() => setOpen(false)} restoreFocus={() => undefined} /> : null;
+  }
+  async function closeIt() {
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  }
+
+  afterEach(() => {
+    root().removeAttribute("style");
+  });
+
+  it("滑鼠裝置：開著時 <html> 是 overflow: hidden；有佔位的捲軸時加 scrollbar-gutter: stable；關掉後還原", async () => {
+    pointer(true);
+    gutter(15);
+    render(<Host />);
+    expect(root().style.overflow).toBe("hidden");
+    expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("stable");
+    await closeIt();
+    expect(root().style.overflow).toBe("");
+    expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("");
+  });
+
+  it("沒有佔位的捲軸（覆蓋式捲軸、頁面不捲）：只鎖捲動，不加 scrollbar-gutter（不會多出一條空位）", () => {
+    pointer(true);
+    gutter(0);
+    render(<Host />);
+    expect(root().style.overflow).toBe("hidden");
+    expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("");
+  });
+
+  it("關掉後還原成原本的行內值（含 !important）", async () => {
+    pointer(true);
+    gutter(15);
+    root().style.setProperty("overflow", "clip", "important");
+    root().style.setProperty("scrollbar-gutter", "auto");
+    render(<Host />);
+    expect(root().style.overflow).toBe("hidden");
+    await closeIt();
+    expect(root().style.getPropertyValue("overflow")).toBe("clip");
+    expect(root().style.getPropertyPriority("overflow")).toBe("important");
+    expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("auto");
+  });
+
+  it("沒有捲軸的觸控裝置：不動 <html> 的樣式", () => {
+    pointer(false);
+    gutter(0);
+    render(<Host />);
+    expect(root().getAttribute("style")).toBeNull();
+  });
+
+  it("觸控為主但有佔位的捲軸（例如平板模式的 Windows）：照樣鎖捲動、留住捲軸位置", async () => {
+    pointer(false);
+    gutter(15);
+    render(<Host />);
+    expect(root().style.overflow).toBe("hidden");
+    expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("stable");
+    await closeIt();
+    expect(root().getAttribute("style")).toBe("");
   });
 });
 

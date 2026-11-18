@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { hideOthers } from "aria-hidden";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useTranslation } from "react-i18next";
 import { X } from "@/components/ui/icons";
@@ -25,6 +26,12 @@ const KEY_PAN_STEP_SHIFT = 200;
 const TAP_SLOP = 4;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_DISTANCE = 24;
+/** 會捲動背後頁面的按鍵（方向鍵另有用途，見 `ARROW_PAN`）。 */
+const PAGE_SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", " "]);
+/** 加上 Ctrl／⌘ 後會捲動背後頁面的按鍵。 */
+const MODIFIED_PAGE_SCROLL_KEYS = new Set(["Home", "End", "ArrowUp", "ArrowDown"]);
+/** 加上 Alt（Option）後會捲動背後頁面的按鍵（macOS／iPadOS 的翻頁）；Alt 加左右鍵是瀏覽器的上一頁、下一頁，不在此列。 */
+const ALT_PAGE_SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown"]);
 
 /** 方向鍵＝看過去的方向：按右是要看更右邊，所以內容往左移。 */
 const ARROW_PAN: Record<string, Point> = {
@@ -55,6 +62,33 @@ function finite(p: Point): boolean {
 
 function positiveSize(size: Size): boolean {
   return Number.isFinite(size.width) && Number.isFinite(size.height) && size.width > 0 && size.height > 0;
+}
+
+/**
+ * 放大開著時鎖住背後頁面的捲動：`<html>` 加行內 `overflow: hidden`；原本有佔位的捲軸時再加 `scrollbar-gutter: stable`，
+ * 捲軸的位置留著、版面不往右跳。這兩個都不是繼承屬性，只動 `<html>` 自己，不會讓整份文件重算樣式。
+ * 回傳的函式把兩個屬性還原成原本的行內值（含 `!important`）。
+ * 只在主要指標是滑鼠／觸控板，或頁面有佔位的捲軸（例如平板模式的 Windows）時鎖：沒有捲軸的觸控裝置不動，
+ * 畫面整片 `touch-none`，摸不到背後的頁面。
+ */
+function lockRootScroll(): () => void {
+  const root = document.documentElement;
+  const hasGutter = window.innerWidth - root.clientWidth > 0;
+  const finePointer = typeof window.matchMedia === "function" && window.matchMedia("(pointer: fine)").matches;
+  if (!finePointer && !hasGutter) return () => undefined;
+  const saved = (["overflow", "scrollbar-gutter"] as const).map(name => ({
+    name,
+    value: root.style.getPropertyValue(name),
+    priority: root.style.getPropertyPriority(name),
+  }));
+  root.style.setProperty("overflow", "hidden");
+  if (hasGutter) root.style.setProperty("scrollbar-gutter", "stable");
+  return () => {
+    for (const { name, value, priority } of saved) {
+      if (value === "") root.style.removeProperty(name);
+      else root.style.setProperty(name, value, priority);
+    }
+  };
 }
 
 function distance(a: Point, b: Point): number {
@@ -92,6 +126,8 @@ export function MediaLightbox({
     [source.naturalWidth, source.naturalHeight],
   );
   const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null);
+  const [contentNode, setContentNode] = useState<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [geo, setGeo] = useState<Geometry | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
   // 圖片要等載入並解碼完才換掉灰塊（SVG 是內嵌的，不必等）。
@@ -121,6 +157,8 @@ export function MediaLightbox({
 
   // 字串就是頁面上那份 mermaid 輸出，防線見 `lib/mermaid.ts`。
   const svgMarkup = useMemo(() => (source.kind === "svg" ? withFreshRootId(source.svg) : ""), [source]);
+  // 每次繪製都給新物件的話，React 會重設 innerHTML：按下的那個 svg 節點被換掉、焦點掉到 body，拖曳每一幀都重新解析整張圖。
+  const svgHtml = useMemo(() => ({ __html: svgMarkup }), [svgMarkup]);
 
   // 量視窗尺寸；量到之前不渲染內容。尺寸一變（旋轉手機、縮放視窗）就回到新尺寸的「符合視窗」。
   useLayoutEffect(() => {
@@ -161,14 +199,58 @@ export function MediaLightbox({
     return () => viewportNode.removeEventListener("wheel", onWheel);
   }, [viewportNode, natural]);
 
+  // 背後的頁面對輔助科技隱藏（同 Radix 互動式對話框的 `hideOthers`）。
+  useEffect(() => (contentNode === null ? undefined : hideOthers(contentNode)), [contentNode]);
+
+  // 鎖背後頁面的捲動（見 `lockRootScroll`）。layout effect：在第一次繪製前鎖上，捲軸不會先閃一下。
+  useLayoutEffect(() => lockRootScroll(), []);
+
+  // 按在捲軸那一條（目標是 `<html>`）不讓焦點離開畫面：焦點掉到 body 的話，`+`／`-`／`0`／方向鍵就沒有作用了。
+  useEffect(() => {
+    const keepFocus = (event: MouseEvent) => {
+      if (event.target === document.documentElement) event.preventDefault();
+    };
+    document.addEventListener("mousedown", keepFocus);
+    return () => document.removeEventListener("mousedown", keepFocus);
+  }, []);
+
+  // 視窗以外（關閉鈕、說明列）的滾輪也不捲背後的頁面；視窗內的滾輪由上面那個監聽處理（縮放）。
+  useEffect(() => {
+    if (contentNode === null) return;
+    const stop = (event: WheelEvent) => event.preventDefault();
+    contentNode.addEventListener("wheel", stop, { passive: false });
+    return () => contentNode.removeEventListener("wheel", stop);
+  }, [contentNode]);
+
   function local(p: Point): Point {
     const rect = viewportNode?.getBoundingClientRect();
     return rect ? { x: p.x - rect.left, y: p.y - rect.top } : p;
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    // 帶修飾鍵的組合（例如 Ctrl／⌘ 加 `+`、`-` 的頁面縮放）留給瀏覽器；Esc 交給 Radix。
+    // Radix 的 FocusScope（loop）讓 Tab／Shift+Tab 在畫面裡可聚焦的元素（關閉鈕，以及 mermaid 圖裡 `click … href`
+    // 產生的連結）之間循環，但焦點在畫面本身（點過或拖過圖之後）時 Shift+Tab 它不擋：瀏覽器會把焦點移到背後的頁面、
+    // 捲動那裡的容器，事後再拉回來也來不及。所以這種情況自己接手，移到關閉鈕（畫面裡最後一個可聚焦的元素）。
+    if (event.key === "Tab" && event.shiftKey && event.target === event.currentTarget) {
+      event.preventDefault();
+      closeRef.current?.focus();
+      return;
+    }
+    // Ctrl／⌘ 加 Home、End、上下鍵，以及 Alt 加上下鍵，會捲到背後頁面：擋下。
+    if (
+      ((event.ctrlKey || event.metaKey) && MODIFIED_PAGE_SCROLL_KEYS.has(event.key)) ||
+      (event.altKey && ALT_PAGE_SCROLL_KEYS.has(event.key))
+    ) {
+      event.preventDefault();
+      return;
+    }
+    // 其餘帶修飾鍵的組合（例如 Ctrl／⌘ 加 `+`、`-` 的頁面縮放）留給瀏覽器；Esc 交給 Radix。
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    // 背後的頁面沒有鎖捲動：翻頁、Home／End、空白鍵（不在按鈕上時）不能捲到它。按鈕上的空白鍵照舊是按下。
+    if (PAGE_SCROLL_KEYS.has(event.key)) {
+      if (event.key !== " " || !(event.target instanceof HTMLButtonElement)) event.preventDefault();
+      return;
+    }
     const arrow = ARROW_PAN[event.key];
     if (arrow !== undefined) {
       event.preventDefault();
@@ -343,24 +425,41 @@ export function MediaLightbox({
           ref={setContent}
           className="absolute left-0 top-0 rounded-md bg-card p-2 [&>svg]:block [&>svg]:h-full [&>svg]:w-full [&>svg]:max-w-none!"
           style={style}
-          dangerouslySetInnerHTML={{ __html: svgMarkup }}
+          dangerouslySetInnerHTML={svgHtml}
         />
       );
   }
 
   return (
+    // 不用 Radix 的互動式（modal）模式：它開關時會在 body 上改繼承的樣式（pointer-events、鎖捲動的 CSS 變數）、
+    // 插入樣式表，整份文件的每個元素都要重算樣式，筆記越長開關越慢。這裡改由自己做它負責的部分：
+    // 背後的頁面對輔助科技隱藏（`hideOthers`）、Tab 留在畫面內、滾輪與翻頁鍵不捲背後的頁面、
+    // 滑鼠裝置或有捲軸時 `<html>` 不捲動（`lockRootScroll`），觸控也不會捲動它（`touch-none`）。
+    // 畫面蓋住的是視窗扣掉捲軸的範圍：捲軸那一條點得到，那裡的按下不算點外面（`onPointerDownOutside`）、也不搶走焦點。
     <DialogPrimitive.Root
       open
+      modal={false}
       onOpenChange={open => {
         if (!open) onClose();
       }}
     >
       <DialogPrimitive.Portal>
         {/* 不淡入：與先頂上的外殼（`LightboxFallback`）同一個不透明度，換手時背板不會閃。 */}
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+        <div aria-hidden="true" className="fixed inset-0 z-50 bg-black/80" />
         <DialogPrimitive.Content
-          className="fixed inset-0 z-50 outline-none"
+          ref={setContentNode}
+          aria-modal="true"
+          className="fixed inset-0 z-50 touch-none outline-none"
           onKeyDown={handleKeyDown}
+          onPointerDownOutside={event => {
+            // 按在捲軸（或它留下的空位）上時目標是 `<html>`：不是要關掉放大。
+            if (event.detail.originalEvent.target === document.documentElement) event.preventDefault();
+          }}
+          onFocusOutside={event => {
+            // 焦點被移到背後的頁面（例如程式呼叫 focus()）時不關閉，拉回關閉鈕。
+            event.preventDefault();
+            closeRef.current?.focus();
+          }}
           onCloseAutoFocus={event => {
             event.preventDefault();
             restoreFocus();
@@ -389,6 +488,7 @@ export function MediaLightbox({
             </p>
           )}
           <DialogPrimitive.Close
+            ref={closeRef}
             aria-label={t("note.zoom.close")}
             className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] rounded-full bg-black/50 p-2 text-white/90 transition-colors hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-['']"
           >
