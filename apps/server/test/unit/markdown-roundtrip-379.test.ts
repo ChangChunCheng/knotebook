@@ -153,6 +153,7 @@ describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
     ["<b>bold</b>", "\\<b>bold\\</b>"],
     ["a <b> c", "a \\<b> c"],
     ["<div>x</div>", "\\<div>x\\</div>"],
+    ["<DIV>x</DIV>", "\\<DIV>x\\</DIV>"],
     ["<kbd>k</kbd>", "\\<kbd>k\\</kbd>"],
     ["<mark>m</mark>", "\\<mark>m\\</mark>"],
     ["<span style=\"color:red\">t</span>", "\\<span style=\"color:red\">t\\</span>"],
@@ -198,7 +199,7 @@ describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
     ["external link text", L => [P({ type: "link", href: "https://example.com", content: [T(L)] }, T(" EDITME"))]],
     ["after a line break", L => [P(T(`EDITME\n${L}`))]],
     ["inline code", L => [P(T(L, { code: true }), T(" EDITME"))], (md1, L) => expect(md1).toContain(`\`${L}\``)],
-    ["code block", L => [{ type: "codeBlock", props: { language: "text" }, content: [T(`${L}\nEDITME`)] }], (md1, L) => expect(md1).toContain(`\n${L}\nEDITED`.replace("EDITED", "EDITME"))],
+    ["code block", L => [{ type: "codeBlock", props: { language: "text" }, content: [T(`${L}\nEDITME`)] }], (md1, L) => expect(md1).toContain(`\n${L}\nEDITME`)],
   ];
   for (const [ctx, make, extra] of contexts) {
     describe(ctx, () => {

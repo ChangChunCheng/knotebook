@@ -389,10 +389,9 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(doc)).toBe(`x **a**<span style="color:red">**b**</span>c<span style="color:blue">[l](https://e.com)</span> **plain**\n`);
   });
 
-  // ⚠ 行內顏色留在 markdown 裡的代價：span 裡的文字與沒上色的文字**同一套**轉換——BlockNote 的 HTML → markdown
-  //   不跳脫看起來像 markdown 的字面文字（`**x**`），`<x>` 這類可能開啟標籤的 `<` 則由讀出端加反斜線（`\<` 寫回是字面 `<`，#379）。
-  //   這一案釘的是「與無色文字同一套」。
-  it("有色文字裡像 markdown 的字面文字，與同一段沒上色時的輸出相同（同一套 lossy 規則）", async () => {
+  // span 裡的文字與沒上色的文字**同一套**轉換：BlockNote 的 HTML → markdown 不跳脫看起來像 markdown 的字面文字（`**x**`），
+  //   `<x>` 這類可能開啟標籤的 `<` 則由讀出端加反斜線（`\<` 寫回是字面 `<`，#379）。這一案釘的是有色文字的跳脫與無色文字相同。
+  it("有色文字裡像 markdown 的字面文字，與同一段沒上色時的輸出相同（跳脫方式一樣）", async () => {
     const text = "*no* [y](z) <x>";
     const colored = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: { textColor: "red" } }] }]);
     const plain = await docWith([{ type: "paragraph", content: text }]);
