@@ -154,17 +154,105 @@ describe("OutlineScrollBubble", () => {
     expect(bubble()).toBeNull();
   });
 
-  it("positions by placement", () => {
-    const view = setup().view;
-    scroll();
-    expect(bubble()!.parentElement!.className).toContain("fixed");
-    expect(bubble()!.parentElement!.className).toContain("var(--kb-sticky-top");
-    view.unmount();
-    setup({ placement: "anchor" });
-    scroll();
-    expect(bubble()!.parentElement!.className).toContain("absolute");
-    // The anchor layer lets the pointer through; the chip itself must take taps.
-    expect(bubble()!.parentElement!).toHaveClass("pointer-events-auto");
+  describe("track", () => {
+    const track = () => screen.getByTestId("outline-bubble-track");
+    const fractionOf = () => bubble()!.parentElement!.style.getPropertyValue("--outline-bubble-fraction");
+    const stub = (name: string, value: number) => Object.defineProperty(box, name, { configurable: true, value });
+    const setScroll = (top: number) => stub("scrollTop", top);
+    beforeEach(() => {
+      stub("scrollHeight", 1600);
+      stub("clientHeight", 600);
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("sits on the track at the scroll fraction: top, middle, bottom", () => {
+      setup();
+      setScroll(0);
+      scroll();
+      expect(fractionOf()).toBe("0");
+      setScroll(500);
+      scroll();
+      expect(fractionOf()).toBe("0.5");
+      setScroll(1000);
+      scroll();
+      expect(fractionOf()).toBe("1");
+    });
+
+    it("page: the track runs from under the sticky header to above the bottom reserve", () => {
+      setup({ bottomReserve: 72 });
+      scroll();
+      expect(track().className).toContain("fixed");
+      expect(track().className).toContain("var(--kb-sticky-top");
+      expect(track().style.getPropertyValue("--outline-track-reserve")).toBe("72px");
+    });
+
+    it("page with the edit toolbar up: the reserve is toolbar plus keyboard", () => {
+      vi.stubGlobal("visualViewport", { height: 424, offsetTop: 0, scale: 1, addEventListener() {}, removeEventListener() {} });
+      setup({ editToolbarHeight: 60, bottomReserve: 72 });
+      scroll();
+      expect(track().style.getPropertyValue("--outline-track-reserve")).toBe("404px");
+    });
+
+    it("anchor: the track fills the scroll container's height minus the gaps and the reserve, clear of its scrollbar", () => {
+      stub("offsetWidth", 400);
+      stub("clientWidth", 385);
+      setup({ placement: "anchor", bottomReserve: 66 });
+      scroll();
+      expect(track().className).toContain("absolute");
+      expect(track().style.height).toBe("518px");
+      expect(track().style.getPropertyValue("--outline-track-gutter")).toBe("15px");
+      // The track lets the pointer through; the chip itself must take taps.
+      expect(bubble()!.parentElement!).toHaveClass("pointer-events-auto");
+    });
+
+    it("moves straight to the new scroll position: the chip's positioned box carries no transition or animation", () => {
+      setup();
+      scroll();
+      expect(bubble()!.parentElement!.className).not.toMatch(/\b(transition|duration-|animate-|fade-)/);
+    });
+
+    it("a track shorter than the chip hides the chip instead of letting it hang over what is below; it shows again once the track is tall enough", () => {
+      let trackHeight = 20;
+      let resized: (() => void) | null = null;
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            resized = cb;
+          }
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const rects = vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+      const boxes = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        return { top: 0, height: this.dataset.testid === "outline-bubble-track" ? trackHeight : 36 } as DOMRect;
+      });
+      try {
+        setup();
+        scroll();
+        const chipBox = () => bubble()!.parentElement!;
+        expect(chipBox()).toHaveClass("invisible");
+        trackHeight = 36;
+        act(() => resized!());
+        expect(chipBox()).not.toHaveClass("invisible");
+      } finally {
+        rects.mockRestore();
+        boxes.mockRestore();
+      }
+    });
+
+    it("anchor: only the part of the keyboard that overlaps the scroll container shortens the track", () => {
+      stub("offsetWidth", 400);
+      stub("clientWidth", 400);
+      vi.stubGlobal("innerHeight", 768);
+      vi.stubGlobal("visualViewport", { height: 468, offsetTop: 0, scale: 1, addEventListener() {}, removeEventListener() {} });
+      vi.spyOn(box, "getBoundingClientRect").mockReturnValue({ bottom: 668 } as DOMRect);
+      setup({ placement: "anchor", bottomReserve: 66 });
+      scroll();
+      // Keyboard 300, the container ends 100 above the window's bottom: 200 overlap.
+      expect(track().style.height).toBe("384px");
+    });
   });
 
   describe("scrolls caused by typing in the editor", () => {

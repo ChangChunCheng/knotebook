@@ -66,7 +66,9 @@ import { tourTarget } from "@/lib/tour-targets";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
 import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
-import { SelectionAiController } from "@/components/ai/SelectionAiController";
+import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX, SelectionAiController } from "@/components/ai/SelectionAiController";
+import { CORNER_STACK_FOOTPRINT_PX } from "@/components/corner-stack-geometry";
+import { PHONE_FAB_FOOTPRINT_PX } from "@/components/sidebar/PhoneListFabs";
 import { MobileEditToolbar } from "@/components/editor/mobile/MobileEditToolbar";
 import { MobileToolbarSpacer } from "@/components/editor/mobile/MobileToolbarSpacer";
 import { KnotebookSideMenu, NotePathContext, SIDE_MENU_FLOATING_OPTIONS } from "@/components/editor/KnotebookSideMenu";
@@ -792,6 +794,9 @@ export function NoteEditor({
               topEdge={phone ? stickyTopInset : containerTopEdge}
               placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
+              // 軌道底端要讓開的東西：編輯工具列在時是工具列（疊在鍵盤上）；瀏覽時手機是右下浮動鈕，640-767 是版本泡泡
+              editToolbarHeight={phone && mobileToolbar ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0}
+              bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : versionsEnabled && !panelOpen ? CORNER_STACK_FOOTPRINT_PX : 0}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}
               onOpenSheet={openOutlineSheet}

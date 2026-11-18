@@ -73,9 +73,9 @@ describe("PhoneNoteOutline", () => {
   it("passes the scroll target, placement, editor and sheet state through; tapping the bubble is onOpenSheet", () => {
     const inputRoot = document.createElement("div");
     const restoreFocus = vi.fn();
-    const { props } = setup({ inputRoot, sheetOpen: true, restoreFocus });
+    const { props } = setup({ inputRoot, sheetOpen: true, restoreFocus, bottomReserve: 72, editToolbarHeight: 60 });
     // While the sheet is up the bubble is held (it may be where focus returns).
-    expect(lastBubble()).toMatchObject({ headings: HEADINGS, scrollTarget: window, placement: "page", inputRoot, hold: true, onOpen: props.onOpenSheet });
+    expect(lastBubble()).toMatchObject({ headings: HEADINGS, scrollTarget: window, placement: "page", inputRoot, hold: true, onOpen: props.onOpenSheet, bottomReserve: 72, editToolbarHeight: 60 });
     expect(lastSheet()).toMatchObject({ open: true, headings: HEADINGS, onOpenChange: props.onSheetOpenChange, restoreFocus });
   });
 

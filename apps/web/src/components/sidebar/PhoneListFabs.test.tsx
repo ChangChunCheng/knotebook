@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "@/i18n";
-import { PhoneListFabs } from "./PhoneListFabs";
+import { PHONE_FAB_FOOTPRINT_PX, PhoneListFabs } from "./PhoneListFabs";
 
 interface FabOverrides {
   showNewNote?: boolean;
@@ -59,6 +59,14 @@ describe("PhoneListFabs", () => {
     expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
     expect(search.className).not.toContain("right-[");
     expect(create.className).not.toContain("left-[");
+  });
+
+  it("PHONE_FAB_FOOTPRINT_PX 等於距底 16px 加鈕高 56px，且兩顆鈕的 class 仍是 bottom-[calc(1rem+…)]、h-14", () => {
+    expect(PHONE_FAB_FOOTPRINT_PX).toBe(16 + 56);
+    renderFabs();
+    for (const name of ["Search notes", "New note"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("bottom-[calc(1rem+env(safe-area-inset-bottom))]", "h-14");
+    }
   });
 
   it("建立中：New note 停用、Search 照常", () => {

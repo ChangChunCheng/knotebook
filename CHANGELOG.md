@@ -11,6 +11,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 - **While an image or a diagram is zoomed in, the page's scrollbar is left as an empty strip.** This applies to the phone layout on a screen that shows scrollbars (for example a narrow Chrome or Edge window on a computer). The page behind still can't be scrolled and doesn't shift sideways; the dark background stops where the scrollbar was, and clicking there neither closes the zoomed view nor moves the keyboard focus out of it.
 - **The pin button of the heading outline shows a filled pin while the outline is pinned**, so pinned and unpinned are easy to tell apart.
+- **On a phone or a window narrower than 768 px, the heading outline bubble shows how far down the note you are.** The bubble that appears while you scroll now moves along the right edge with your place in the note, from just under the note's header to just above the buttons at the bottom, the editing toolbar or the on-screen keyboard. A tap still opens the list of headings, and so do Enter and Space.
 
 ### Fixed
 
