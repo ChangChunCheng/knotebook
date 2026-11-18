@@ -14,6 +14,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 ### Fixed
 
 - **Zooming in on an image or a diagram on a phone no longer gets slower the longer the note is.** Opening and closing the full-screen view, pinching to zoom and dragging all slowed down as a note grew, because the browser kept recomputing the styles of the whole note. A diagram that hasn't been drawn yet now pulses only while it is near the part of the note on screen.
+- **Text that looks like HTML now survives writing back what you read** (#379). Reading a note over MCP or REST, downloading it as a file, or sending it to the in-app AI gave text such as `<b>bold</b>`, `a <b> c`, `<img src=x>` or `<!-- c -->` exactly as typed, so writing it back, or sending back a file that changed that part, turned it into bold text, an image or a heading, dropped the tag or the whole paragraph, or refused the write. Now a `<` in Markdown text that could start an HTML tag or comment reads with a backslash in front (`\<b>bold\</b>`), and `\<` in Markdown you write is stored as a plain `<` (this includes Markdown pasted into the editor); inside inline code, code blocks and blocks written as HTML a backslash is not an escape. HTML written without the backslash is read as HTML, as before, and `2 < 3` reads as it is. A file downloaded before this change still treats such text as HTML in the parts it changes. See [AI editing](docs/ai-editing.md#markdown-round-trip).
 
 ## [0.17.0] - 2026-11-18
 

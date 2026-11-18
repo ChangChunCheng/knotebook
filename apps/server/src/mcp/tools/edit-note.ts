@@ -94,6 +94,9 @@ export const editNoteInput = {
       "Writes take 2 to 4 columns. Rewriting a section that holds columns means sending the whole <div> block back. " +
       `Sizes are HTML too: an image shown at a set width reads as <figure><img … width="W">…</figure>, and a table with set column widths ` +
       "reads as an HTML table with colwidth on its first row's cells. Widths are whole pixels from 32 to 4000; write them back the same way to keep them. " +
+      // #379：`\<` 是字面 `<`（BlockNote parser 的 patch）；code 與整塊寫成 HTML 的地方反斜線不是跳脫。
+      "HTML in the markdown is read as HTML; to keep a `<` that would start a tag or comment as text, write `\\<` " +
+      "(as read_note_section returns it), except inside code or a block written as HTML. " +
       WRITE_NOTE_LINK_SENTENCE
   ),
   // #381：rename 也要；句尾的失敗條件跟著主詞放寬（不再說「the note changed」——標題與內文的指紋互不涵蓋）。
