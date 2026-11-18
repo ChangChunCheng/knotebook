@@ -96,6 +96,7 @@ import { createNoteStore, docClock, type NoteStoreSearchHooks, type StoreLogger 
 import { createVersionService, type VersionService } from "./versions.js";
 import { LastActiveTracker, type LastActiveTrackerOptions } from "../auth/last-active.js";
 import { FixedWindowLimiter } from "../http/rate-limit.js";
+import { collabMaxPayloadBytes } from "../notes/note-size.js";
 import {
   SERVER_PRESENCE_ORIGIN,
   ServerOwnedClients,
@@ -527,6 +528,8 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
   // #312：awareness 淨化日誌的 per-user 節流（client 每秒可送很多則，每則都寫一行就是放大器）。
   const awarenessLogLimiter = new FixedWindowLimiter(REJECT_LOG_LIMIT);
   const awarenessNoticeLimiter = new FixedWindowLimiter(SUPPRESSION_NOTICE_LIMIT);
+  const awarenessErrorLogLimiter = new FixedWindowLimiter(REJECT_LOG_LIMIT);
+  const awarenessErrorNoticeLimiter = new FixedWindowLimiter(SUPPRESSION_NOTICE_LIMIT);
   /** #312：每份文件中由 server 自己寫的 awareness client id（AI 代理頭像）。 */
   const serverOwned = new ServerOwnedClients();
 
@@ -956,7 +959,13 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         if (issues.length > 0 && !closedConnection) logAwarenessIssues(documentName, ctx?.userId, issues);
       } catch (err) {
         states.clear();
-        log.error({ err, noteId: documentName.slice(0, LOGGED_NOTE_ID_MAX) }, "collab awareness 淨化失敗，整則丟棄");
+        // 失敗路徑也要有上限：同一人連續送會讓淨化丟錯的訊息時，不能每則寫一行 error。
+        const errKey = ctx?.userId ?? "anonymous";
+        if (awarenessErrorLogLimiter.consume(errKey)) {
+          log.error({ err, userId: ctx?.userId, noteId: documentName.slice(0, LOGGED_NOTE_ID_MAX) }, "collab awareness 淨化失敗，整則丟棄");
+        } else if (awarenessErrorNoticeLimiter.consume(errKey)) {
+          log.warn({ userId: ctx?.userId }, "collab awareness 淨化失敗日誌已達每分鐘上限，其餘略過");
+        }
       }
     },
 
@@ -980,7 +989,8 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
 
   versions.bind(hocuspocus);
 
-  const wss = new WebSocketServer({ noServer: true });
+  // 單則訊息大小上限見 `collabMaxPayloadBytes`。
+  const wss = new WebSocketServer({ noServer: true, maxPayload: collabMaxPayloadBytes(deps.config.limitEnv.noteMaxBytes) });
 
   function handleUpgrade(app: FastifyInstance, request: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);

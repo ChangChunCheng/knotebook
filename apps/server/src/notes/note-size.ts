@@ -27,6 +27,22 @@ export const DEFAULT_NOTE_MAX_BYTES = SITE_LIMITS.noteMaxBytes.default;
 /** `NOTE_MAX_BYTES` 的上限（pg `bytea` 單值上限 1 GiB，再大也存不進 `note_states`）。 */
 export const NOTE_MAX_BYTES_MAX = 1024 * 1024 * 1024;
 
+/** ws 預設的單則訊息上限（100 MiB）；{@link collabMaxPayloadBytes} 只往下收緊，不放寬。 */
+const WS_DEFAULT_MAX_PAYLOAD = 100 * 1024 * 1024;
+
+/**
+ * 協作 WebSocket 容許的 client→server 單則訊息大小（位元組），給 `WebSocketServer({ maxPayload })`；超過的訊息 ws 會以 1009 關掉該連線。
+ *
+ * 合法的 client→server 訊息只有三種：sync step 1（state vector）、awareness 更新（小於 16 KiB）、以及帶這個分頁自己改動的 update／sync step 2
+ * （一次修改，或離線期間累積的修改——網頁在兩次開啟之間不留 Y.Doc）。網頁編輯器把一次「新增」壓在上限內（估算 ≥ 0.94 倍實際），但撤銷與搬移
+ * 不在檢查範圍內，其訊息大小受筆記本身的大小限制、而不是受上限限制；取「這個程序執行期可設的最大上限」（有 env 值用 env 值，沒設用後台頁面的
+ * 最大值）的兩倍再加 1 MiB，涵蓋大小到約兩倍上限的筆記與編碼額外開銷。更大的筆記（上限調低前就存在、舊版留下的、自製 client 寫的）上，一次撤銷或
+ * 搬移就可能超過，該連線會被關掉。不會高於 ws 的 100 MiB 預設，所以只會收緊。server→client 的訊息不受 `maxPayload` 限制。
+ */
+export function collabMaxPayloadBytes(envNoteMaxBytes: number | undefined): number {
+  return Math.min(2 * (envNoteMaxBytes ?? SITE_LIMITS.noteMaxBytes.max) + 1_048_576, WS_DEFAULT_MAX_PAYLOAD);
+}
+
 /**
  * 還在的內容沒有變多時，一次修改容許狀態長多少（位元組）。4 KiB 的理由：
  * - 正常的刪減與改寫在 Yjs 裡只留很少的簿記：在中間刪一個字狀態約多 1.9 倍更新位元組（幾十 B）、等量改寫約多 43 B、全選一大段再打一個字只多

@@ -10,6 +10,7 @@ import {
   DEFAULT_NOTE_MAX_BYTES,
   SIZE_SLACK_BYTES,
   capBlocks,
+  collabMaxPayloadBytes,
   growsPastCap,
   liveContentBytes,
   measureTrial,
@@ -263,5 +264,13 @@ describe("NOTE_MAX_BYTES 設定", () => {
     expect(loadConfig({ ...base, NOTE_MAX_BYTES: "1048576" }).limitEnv.noteMaxBytes).toBe(1_048_576);
     expect(loadConfig({ ...base, NOTE_MAX_BYTES: "" }).limitEnv.noteMaxBytes, "空字串＝未設").toBeUndefined();
     for (const bad of ["0", "-1", "1.5", "abc", String(1024 ** 3 + 1)]) expect(() => loadConfig({ ...base, NOTE_MAX_BYTES: bad }), bad).toThrow(/NOTE_MAX_BYTES/);
+  });
+});
+
+describe("collabMaxPayloadBytes（協作 WebSocket 單則訊息上限）", () => {
+  it("沒設 env → 兩倍後台頁面最大值加 1 MiB（11 MiB）；有設 → 兩倍 env 值加 1 MiB；不超過 ws 預設的 100 MiB", () => {
+    expect(collabMaxPayloadBytes(undefined)).toBe(11_534_336);
+    expect(collabMaxPayloadBytes(1_048_576)).toBe(3_145_728);
+    expect(collabMaxPayloadBytes(1_073_741_824)).toBe(104_857_600);
   });
 });

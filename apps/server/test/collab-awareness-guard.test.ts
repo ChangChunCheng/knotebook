@@ -6,11 +6,13 @@ import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { inArray } from "drizzle-orm";
-import { YDOC_FRAGMENT, collabUserColor } from "@knotebook/shared";
+import { WebSocket } from "ws";
+import { SITE_LIMITS, YDOC_FRAGMENT, collabUserColor } from "@knotebook/shared";
 import { createCollabHooks } from "../src/collab/hooks-impl.js";
 import { users } from "../src/db/schema.js";
 import { presenceClientId } from "../src/notes/editing/presence.js";
-import { buildCollabTestApp, type TestClient } from "./helpers.js";
+import { collabMaxPayloadBytes } from "../src/notes/note-size.js";
+import { buildCollabTestApp, testConfig, type TestClient } from "./helpers.js";
 import { getContent, seedTokenForUser, tick, waitFor } from "./editing-helpers.js";
 import { awarenessFrame, sendRaw } from "./awareness-wire.js";
 
@@ -245,5 +247,41 @@ describe("collab awareness 防偽（#312）", () => {
     await waitFor("A 看到 B 變成 viewer", 5_000, () => peer(s.a, idOf(s.b))?.knotebook?.role === "viewer");
     expect(peer(s.a, idOf(s.b))?.cursor).toBeNull();
     expect(peer(s.a, idOf(s.b))?.user?.id).toBe(s.B.id);
+  });
+});
+
+describe("WebSocket 訊息大小（#312）", () => {
+  it("AW9 超過上限一個位元組的訊息 → 連線以 1009 關閉", async () => {
+    const ctx = await buildCollabTestApp();
+    const raw = new WebSocket(ctx.baseUrl.replace(/^http/, "ws") + "/collab");
+    const closed = new Promise<number>((resolve, reject) => {
+      raw.once("close", code => resolve(code));
+      raw.once("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      raw.once("open", () => resolve());
+      raw.once("error", reject);
+    });
+    raw.send(Buffer.alloc(collabMaxPayloadBytes(testConfig.limitEnv.noteMaxBytes) + 1));
+    expect(await closed).toBe(1009);
+  });
+
+  it("AW10 編輯者一次寫入 5 MiB 的段落 → 照常同步到 server，連線不被關掉", async () => {
+    const ctx = await buildCollabTestApp();
+    const owner = await ctx.createUser({ email: "size-owner@example.com", password: PASSWORD });
+    const note = await ctx.createNote(owner.id);
+    const session = await ctx.loginAs("size-owner@example.com", PASSWORD);
+    const client = await session.connect(note.id);
+
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("x".repeat(SITE_LIMITS.noteMaxBytes.max))]);
+    client.doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [paragraph]);
+
+    const stateVector = (d: Y.Doc) => Buffer.from(Y.encodeStateVector(d)).toString("hex");
+    await waitFor("5 MiB 的編輯同步到 server", 15_000, () => {
+      const doc = ctx.collab.hocuspocus.documents.get(note.id);
+      return doc !== undefined && stateVector(doc) === stateVector(client.doc);
+    });
+    expect(ctx.collab.connectionsOfNote(note.id).size).toBe(1);
   });
 });
