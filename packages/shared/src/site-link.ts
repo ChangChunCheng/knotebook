@@ -247,12 +247,22 @@ export function convertSiteLinks<B>(blocks: B[], resolve: SiteLinkResolve, siteO
 }
 
 /**
- * 連結文字的 markdown 跳脫（`\ ` ` * _ [ ] ~` 前加反斜線）。實測段落與表格 cell 都能逐字往返；`<`、`&` **刻意不收**——
- * BlockNote 的 markdown→HTML 剖析會把 `\<` 的反斜線留下來（`\<d\>` 讀回 `\<d>`），`&amp;` 不跳脫反而原樣往返。
+ * 連結文字的 markdown 跳脫（`\ ` ` * _ [ ] ~` 前加反斜線；可能開啟標記的 `<` 也加，見 {@link lessThanOpensMarkup}）。
+ * 實測段落與表格 cell 都能逐字往返；`&` **不跳脫**——parser 把字元參照原樣留成文字，`&amp;` 不跳脫反而原樣往返。
  * **只用在要變成 markdown 的文字上**（`note-markdown-read.ts` 的 markdown 分支；站內 AI 的 markdown 匯出）；原始 HTML 輸出不得跳脫。
  */
 export function escapeLinkText(text: string): string {
-  return text.replace(/[\\`*_[\]~]/g, "\\$&");
+  return text
+    .replace(/[\\`*_[\]~]/g, "\\$&")
+    .replace(/<(?=(.?))/gs, (m, next: string) => (lessThanOpensMarkup(next === "" ? undefined : next) ? `\\${m}` : m));
+}
+
+/**
+ * `<` 後面接 `next` 時，寫成 markdown 會被當成標記的開頭嗎：後面是英文字母、`/`、`!`、`?`（標籤、結束標籤、註解、宣告、處理指令），
+ * 或後面沒有字了（接下來的節點可能補上這些字）。`2 < 3`、`a <= b` 這類不會，不必跳脫。
+ */
+export function lessThanOpensMarkup(next: string | undefined): boolean {
+  return next === undefined || /[A-Za-z/!?]/.test(next);
 }
 
 /**

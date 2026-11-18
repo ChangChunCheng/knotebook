@@ -134,5 +134,92 @@ describe("#379 寫入端：沒有跳脫的輸入行為不變", () => {
   });
 });
 
-// 留給讀出端的案例使用（讀出 → 寫回的共用輔助）。
-export { P, readMd };
+/** 讀出 → 改一個字 → 寫回 → 再讀出：markdown 與儲存的 block 都要照原樣（只差改掉的那個字）。回傳第一次讀出的 markdown。 */
+async function editLoop(blocks: unknown[], opts: { skipStored?: boolean } = {}): Promise<string> {
+  const d0 = await docWith(blocks);
+  const md1 = await readMd(d0);
+  expect(md1.split("EDITME").length - 1).toBe(1);
+  const md1e = md1.replace("EDITME", "EDITED");
+  const d1 = await docWith(await parse(md1e));
+  expect(await readMd(d1)).toBe(md1e);
+  if (!opts.skipStored) {
+    expect(JSON.stringify(await stored(d1))).toBe(JSON.stringify(await stored(d0)).replace("EDITME", "EDITED"));
+  }
+  return md1;
+}
+
+describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
+  const rows: [string, string][] = [
+    ["<b>bold</b>", "\\<b>bold\\</b>"],
+    ["a <b> c", "a \\<b> c"],
+    ["<div>x</div>", "\\<div>x\\</div>"],
+    ["<kbd>k</kbd>", "\\<kbd>k\\</kbd>"],
+    ["<mark>m</mark>", "\\<mark>m\\</mark>"],
+    ["<span style=\"color:red\">t</span>", "\\<span style=\"color:red\">t\\</span>"],
+    ["<img src=x>", "\\<img src=x>"],
+    ["<h1>H</h1>", "\\<h1>H\\</h1>"],
+    ["<br>", "\\<br>"],
+    ["</p>", "\\</p>"],
+    ["<!-- c -->", "\\<!-- c -->"],
+    ["<?x ?>", "\\<?x ?>"],
+    ["<!DOCTYPE html>", "\\<!DOCTYPE html>"],
+    ["<![CDATA[x]]>", "\\<!\\[CDATA\\[x\\]\\]>"],
+    ["<script>x</script>", "\\<script>x\\</script>"],
+    ["<img src=x onerror=\"y\">", "\\<img src=x onerror=\"y\">"],
+    ["<div data-kb-columns style=\"display:flex;gap:16px\">", "\\<div data-kb-columns style=\"display:flex;gap:16px\">"],
+    ["<figure><img src=\"/a.png\" width=\"100\"></figure>", "\\<figure>\\<img src=\"/a.png\" width=\"100\">\\</figure>"],
+    ["<details><summary>s</summary></details>", "\\<details>\\<summary>s\\</summary>\\</details>"],
+    ["x<y and z>w", "x\\<y and z>w"],
+    ["&lt;b&gt;", "&lt;b&gt;"],
+    ["2 < 3 and 5 > 4", "2 < 3 and 5 > 4"],
+    ["C:\\<dir>", "C:\\\\\\<dir>"],
+  ];
+  for (const [L, E] of rows) {
+    it(`paragraph ${L}`, async () => {
+      const md1 = await editLoop([P(T(`${L} EDITME`))]);
+      expect(md1).toBe(`${E} EDITME\n`);
+    });
+  }
+
+  const S = ["<b>bold</b>", "a <b> c", "<img src=x>", "<!-- c -->", "&lt;b&gt;", "2 < 3 and 5 > 4", "C:\\<dir>"];
+  const contexts: [string, (L: string) => unknown[], ((md1: string, L: string) => void)?][] = [
+    ["heading", L => [{ type: "heading", props: { level: 2 }, content: [T(`${L} EDITME`)] }]],
+    ["bullet item", L => [{ type: "bulletListItem", content: [T(`${L} EDITME`)] }]],
+    ["numbered item", L => [{ type: "numberedListItem", content: [T(`${L} EDITME`)] }]],
+    ["quote", L => [{ type: "quote", content: [T(`${L} EDITME`)] }]],
+    ["table body cell", L => [{ type: "table", content: { type: "tableContent", headerRows: 1, rows: [{ cells: ["h1", "h2"] }, { cells: [[T(`${L} EDITME`)], "c"] }] } }]],
+    ["column", L => [{ type: "columnList", children: [
+      { type: "column", props: { width: 1 }, children: [P(T(`${L} EDITME`))] },
+      { type: "column", props: { width: 1 }, children: [P(T("other"))] },
+    ] }]],
+    ["inline color", L => [P(T("x "), T(L, { textColor: "red" }), T(" EDITME"))], md1 => expect(md1).toContain("<span style=\"color:red\">")],
+    ["colored block", L => [{ type: "paragraph", props: { backgroundColor: "yellow" }, content: [T(`${L} EDITME`)] }]],
+    ["bold run", L => [P(T(L, { bold: true }), T(" EDITME"))]],
+    ["external link text", L => [P({ type: "link", href: "https://example.com", content: [T(L)] }, T(" EDITME"))]],
+    ["after a line break", L => [P(T(`EDITME\n${L}`))]],
+    ["inline code", L => [P(T(L, { code: true }), T(" EDITME"))], (md1, L) => expect(md1).toContain(`\`${L}\``)],
+    ["code block", L => [{ type: "codeBlock", props: { language: "text" }, content: [T(`${L}\nEDITME`)] }], (md1, L) => expect(md1).toContain(`\n${L}\nEDITED`.replace("EDITED", "EDITME"))],
+  ];
+  for (const [ctx, make, extra] of contexts) {
+    describe(ctx, () => {
+      for (const L of S) {
+        it(L, async () => {
+          const md1 = await editLoop(make(L));
+          extra?.(md1, L);
+        });
+      }
+    });
+  }
+
+  it("note link text", async () => {
+    const href = "/notes/11111111-1111-4111-8111-111111111111";
+    const md1 = await editLoop([P({ type: "link", href, content: [T("<b>x</b>")] }, T(" EDITME"))], { skipStored: true });
+    expect(md1).toContain(`[\\<b>x\\</b>](${href})`);
+  });
+
+  it("underline run that ends the text", async () => {
+    // 底線不存在於 markdown，寫回後樣式本來就沒有；這裡只驗文字與再讀出一致。
+    const md1 = await editLoop([P(T("a<"), T("b> EDITME", { underline: true }))], { skipStored: true });
+    expect(md1).toBe("a\\<b> EDITME\n");
+  });
+});
