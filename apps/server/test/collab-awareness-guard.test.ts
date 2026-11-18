@@ -32,7 +32,10 @@ const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 /** 送出的游標 → server 轉發後預期看到的樣子（正規化、不含 null 欄位）。 */
 const expectedCursor = new WeakMap<object, unknown>();
 /** observer 看到的游標是否等於 sent 正規化後的樣子。 */
-const sameCursor = (observed: unknown, sent: object): boolean => isDeepStrictEqual(observed, expectedCursor.get(sent));
+const sameCursor = (observed: unknown, sent: object): boolean => {
+  if (!expectedCursor.has(sent)) throw new Error("sameCursor: no expected cursor recorded for this sent cursor");
+  return isDeepStrictEqual(observed, expectedCursor.get(sent));
+};
 
 /**
  * 用 Yjs 在 client 自己的 doc 上建一個真的游標：第一段文字的第 index 個字元（第一次呼叫時寫入這段文字）。

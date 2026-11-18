@@ -100,7 +100,7 @@ export function sanitizeInboundAwareness(input: SanitizeInput): AwarenessIssue[]
       issues.push("server-client");
       continue;
     }
-    const owner = connections.find((c) => document.getClients(c).has(id));
+    const owner: AwarenessConn | undefined = mine.has(id) ? connection : connections.find((c) => document.getClients(c).has(id));
     if (owner === connection) {
       // 已登記在這條連線上
     } else if (owner) {

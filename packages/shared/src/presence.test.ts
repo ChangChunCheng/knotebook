@@ -48,23 +48,14 @@ describe("parseAwarenessCursor", () => {
     expect(parseAwarenessCursor({ anchor: pos, head: pos })).toEqual({ anchor: pos, head: pos });
   });
 
-  it("y-prosemirror 實際送出的物件（沒用到的欄位是 null）也通過，並正規化成沒有那些欄位", () => {
-    const real = (rel: Y.RelativePosition): unknown => JSON.parse(JSON.stringify(rel));
-    for (const [rel, expected] of [
-      [Y.createRelativePositionFromTypeIndex(text, 2), p],
-      [Y.createRelativePositionFromTypeIndex(fragment, fragment.length), json(Y.createRelativePositionFromTypeIndex(fragment, fragment.length))],
-    ] as const) {
-      const wire = real(rel);
-      expect(parseAwarenessCursor({ anchor: wire, head: wire })).toEqual({ anchor: expected, head: expected });
-    }
-  });
-
-  it("真實形狀（沒用到的欄位是 null）：item 為 null、assoc -1、根 fragment、各種位置都通過", () => {
+  it("真實形狀（沒用到的欄位是 null）：item、非根 type 的結尾（item 為 null）、assoc -1、根 fragment 開頭與結尾都通過並正規化", () => {
     const wire = (rel: Y.RelativePosition): unknown => JSON.parse(JSON.stringify(rel));
     for (const rel of [
+      Y.createRelativePositionFromTypeIndex(text, 2),
       Y.createRelativePositionFromTypeIndex(text, text.length),
       Y.createRelativePositionFromTypeIndex(text, 0, -1),
       Y.createRelativePositionFromTypeIndex(fragment, 0),
+      Y.createRelativePositionFromTypeIndex(fragment, fragment.length),
     ]) {
       const expected = json(rel);
       expect(parseAwarenessCursor({ anchor: wire(rel), head: wire(rel) })).toEqual({ anchor: expected, head: expected });
