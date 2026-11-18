@@ -1293,10 +1293,12 @@ input[name="share-access"] {
    - 筆記的區塊帶 scroll-margin-top：捲到段落、搜尋結果與提及時讓開釘在頂端的筆記頁首（高度由 NoteEditor 量好寫在 --kb-sticky-top）。
      不用 html 的 scroll-padding-top：那會連頁首自己的鈕也算成被擋住，關掉 ⋮ 選單把焦點還給 ⋮ 時，文件會被捲回上面。
    - 下拉重新整理：清單畫面（含全螢幕搜尋層，aside 帶 data-phone-list-shown）與編輯中的筆記（有編輯工具列）擋掉，免得誤觸重載；
-     瀏覽中的筆記照舊可以下拉重新整理。overscroll-behavior 寫在 html 與 body 兩處：各瀏覽器取視窗的值的位置不一致。 */
+     瀏覽中的筆記照舊可以下拉重新整理。overscroll-behavior 寫在 html 與 body 兩處：各瀏覽器取視窗的值的位置不一致。
+   - html 上的 data-has-* 旗標由元件掛上（lib/page-scroll.ts 的 ROOT_FLAGS）。不寫成 html:has(…)：html 成了 :has() 的錨點後，
+     頁面上任何節點插入或移除都可能讓整份文件重算樣式，筆記越長，開關選單、對話框、圖片放大越慢。 */
 @media (width < 40rem) {
-  html:has([data-phone-page-scroll]),
-  html:has([data-phone-page-scroll]) body {
+  html[data-has-phone-page-scroll],
+  html[data-has-phone-page-scroll] body {
     background-color: var(--color-card);
   }
   [data-phone-page-scroll] .bn-block-outer,
@@ -1308,10 +1310,10 @@ input[name="share-access"] {
   [data-phone-page-scroll] [data-sidebar-list] [data-node-kind] * {
     scroll-margin-top: var(--kb-list-sticky-top, 0px);
   }
-  html:has([data-phone-list-shown]),
-  html:has([data-phone-list-shown]) body,
-  html:has([data-mobile-edit-toolbar]),
-  html:has([data-mobile-edit-toolbar]) body {
+  html[data-has-phone-list-shown],
+  html[data-has-phone-list-shown] body,
+  html[data-has-mobile-edit-toolbar],
+  html[data-has-mobile-edit-toolbar] body {
     overscroll-behavior-y: contain;
   }
 }

@@ -224,10 +224,14 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     if (result === null) {
       // #344 D：還沒畫出來（還沒捲到，或正在排隊／渲染）——固定最小高度的佔位，取代一片空白，
       // 版面也不會從 0 高跳起來。只在**首次**出現：已經有圖時改 code 重畫，舊圖留著直到新圖出來。
+      // 閃爍只在視窗附近：遠處的佔位看不到，動畫卻每一幀都要重算樣式與重繪，圖多的長筆記會拖慢捲動與其他畫面。
       return (
         <div
           aria-busy="true"
-          className="flex min-h-40 items-center justify-center rounded-md bg-muted/40 text-sm text-muted-foreground motion-safe:animate-pulse"
+          className={cn(
+            "flex min-h-40 items-center justify-center rounded-md bg-muted/40 text-sm text-muted-foreground",
+            near && "motion-safe:animate-pulse",
+          )}
         >
           {t("note.mermaid.rendering")}
         </div>

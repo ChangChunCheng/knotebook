@@ -14,7 +14,7 @@ function positive(size: Size): boolean {
  * `viewport` 省略時取瀏覽器視窗。
  */
 export function ZoomSkeleton({ natural, viewport }: { natural?: Size; viewport?: Size }): JSX.Element {
-  // clientWidth 不含捲軸：與 Radix 鎖捲動後的版面一致。
+  // clientWidth 不含捲軸：與蓋滿視窗的放大畫面（`fixed inset-0`）同寬。
   const view = viewport ?? { width: document.documentElement.clientWidth, height: window.innerHeight };
   const known = natural !== undefined && positive(natural) && positive(view);
   const scale = known ? fitScale(natural, view) : 1;

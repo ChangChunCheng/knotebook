@@ -261,7 +261,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(510);
   });
 
-  it("PS6 清單或搜尋層在畫面上時 aside 帶 data-phone-list-shown（index.css 據此擋下拉重新整理）；筆記上沒有", async () => {
+  it("PS6 清單或搜尋層在畫面上時 aside 帶 data-phone-list-shown、<html> 帶 data-has-phone-list-shown（index.css 據此擋下拉重新整理）；筆記上沒有", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/n/tester/alpha-note",
@@ -271,8 +271,11 @@ describe("AppShell — 手機上文件在捲", () => {
       </>,
     );
     expect(asideOf(container)).not.toHaveAttribute("data-phone-list-shown");
+    expect(document.documentElement).not.toHaveAttribute("data-has-phone-list-shown");
+    expect(document.documentElement).toHaveAttribute("data-has-phone-page-scroll");
     fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" }));
     expect(asideOf(container)).toHaveAttribute("data-phone-list-shown");
+    expect(document.documentElement).toHaveAttribute("data-has-phone-list-shown");
   });
 
   it("PS8 頂列 sticky 釘在頂端、不透明；清單標題列 sticky 釘在頂列下方；清單容器手機上不自己捲；垃圾桶同樣", async () => {
