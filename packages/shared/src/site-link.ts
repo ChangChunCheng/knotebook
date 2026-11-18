@@ -248,7 +248,7 @@ export function convertSiteLinks<B>(blocks: B[], resolve: SiteLinkResolve, siteO
 
 /**
  * 連結文字的 markdown 跳脫（`\ ` ` * _ [ ] ~` 前加反斜線；可能開啟標記的 `<` 也加，見 {@link lessThanOpensMarkup}）。
- * 實測段落與表格 cell 都能逐字往返；`&` **不跳脫**——parser 把字元參照原樣留成文字，`&amp;` 不跳脫反而原樣往返。
+ * 段落與表格 cell 都能逐字往返；`&` **不跳脫**——parser 把字元參照原樣留成文字，`&amp;` 不跳脫反而原樣往返。
  * **只用在要變成 markdown 的文字上**（`note-markdown-read.ts` 的 markdown 分支；站內 AI 的 markdown 匯出）；原始 HTML 輸出不得跳脫。
  */
 export function escapeLinkText(text: string): string {

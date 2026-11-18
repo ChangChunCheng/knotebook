@@ -174,6 +174,7 @@ describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
     ["&lt;b&gt;", "&lt;b&gt;"],
     ["2 < 3 and 5 > 4", "2 < 3 and 5 > 4"],
     ["C:\\<dir>", "C:\\\\\\<dir>"],
+    ["C:\\< dir", "C:\\\\< dir"],
   ];
   for (const [L, E] of rows) {
     it(`paragraph ${L}`, async () => {

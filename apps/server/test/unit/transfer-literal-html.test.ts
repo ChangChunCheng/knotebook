@@ -116,6 +116,9 @@ describe("#379 修正之前下載的副本（`<` 沒有反斜線）", () => {
     const live = forkOf(doc);
     await applyInMemory(rt, b, agent, live);
 
+    const top = topOf(live);
+    expect(top).toHaveLength(2);
+    expect(top[1]!.id).toBe(b.ids[1]);
     const texts = await fullTexts(live);
     expect(texts).toEqual(["bold kept", "other"]);
     const first = await withEditor(rt, live, ed => (ed.document[0] as unknown as { content: unknown }).content);
