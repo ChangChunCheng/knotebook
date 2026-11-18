@@ -14,6 +14,9 @@ interface PhoneListFabsProps {
   newNotePending: boolean;
 }
 
+/** 浮動鈕占掉的底部高度：距底 `1rem`＋`h-14`（在底部 safe area 之上）；改下面兩顆鈕的 class 時一起改。 */
+export const PHONE_FAB_FOOTPRINT_PX = 72;
+
 /** 兩顆鈕共用的毛玻璃面（與寬視窗的歷史泡泡同一份，見 `ui/frosted.ts`），加上 56px 圓形與層級。 */
 const FROSTED = `z-10 h-14 w-14 rounded-full ${FROSTED_SURFACE}`;
 

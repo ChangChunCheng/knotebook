@@ -297,6 +297,7 @@ describe("HeadingOutline pin", () => {
     fireEvent.click(rail());
     const pin = screen.getByRole("button", { name: "Pin outline" });
     expect(pin).toHaveAttribute("aria-pressed", "false");
+    expect(pin.querySelector('[data-icon="pin"]')).toHaveAttribute("fill", "none");
     fireEvent.click(pin);
     expect(props.onPinnedChange).toHaveBeenCalledWith(true);
   });
@@ -307,6 +308,7 @@ describe("HeadingOutline pin", () => {
     expect(panel()).not.toBeNull();
     const unpin = screen.getByRole("button", { name: "Unpin outline" });
     expect(unpin).toHaveAttribute("aria-pressed", "true");
+    expect(unpin.querySelector('[data-icon="pin"]')).toHaveAttribute("fill", "currentColor");
     fireEvent.click(item("c"));
     expect(props.onJump).toHaveBeenCalledWith("c");
     expect(panel()).not.toBeNull();

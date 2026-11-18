@@ -17,6 +17,10 @@ export interface PhoneNoteOutlineProps {
   placement: "page" | "anchor";
   /** The editable area, if any: scrolls right after typing there do not show the bubble. */
   inputRoot?: HTMLElement | null;
+  /** Pixels to keep clear below the bubble's track while the edit toolbar is not up (floating buttons, version history bubble). */
+  bottomReserve?: number;
+  /** `page` only: above 0 the edit toolbar is up and the track stops this far above the keyboard or colour panel. */
+  editToolbarHeight?: number;
   sheetOpen: boolean;
   onSheetOpenChange: (open: boolean) => void;
   /** The bubble was activated; gets the bubble as the place to return focus to when it had focus, otherwise `null`. */
@@ -33,6 +37,8 @@ export function PhoneNoteOutline({
   topEdge,
   placement,
   inputRoot,
+  bottomReserve,
+  editToolbarHeight,
   sheetOpen,
   onSheetOpenChange,
   onOpenSheet,
@@ -50,6 +56,8 @@ export function PhoneNoteOutline({
       scrollTarget={scrollTarget}
       placement={placement}
       inputRoot={inputRoot}
+      bottomReserve={bottomReserve}
+      editToolbarHeight={editToolbarHeight}
       // While the sheet is up the bubble stays: it may be where focus returns when the sheet closes.
       hold={sheetOpen}
       onOpen={onOpenSheet}

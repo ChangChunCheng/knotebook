@@ -17,6 +17,9 @@ import { OUTLINE_PINNED_STORAGE_KEY } from "@/components/outline/outline-pin";
 import type { OutlineBox } from "@/components/outline/use-outline-box";
 import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
 import { ARTICLE_COLUMN_MAX, articleColumn, type ArticleColumnState } from "@/components/ui/article-column";
+import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
+import { CORNER_STACK_FOOTPRINT_PX } from "@/components/corner-stack-geometry";
+import { PHONE_FAB_FOOTPRINT_PX } from "@/components/sidebar/PhoneListFabs";
 import { NoteEditor } from "./NoteEditor";
 
 const WIDE_BOX: OutlineBox = { width: 1072, height: 700, firstLineTop: null };
@@ -482,7 +485,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
   });
 
   /** The header slot carries a probe reading the ⋮ context, as the header ⋮ does. */
-  async function renderPhone(opts: { tier?: LayoutTier; mobileToolbar?: boolean; previewSlot?: ReactNode } = {}) {
+  async function renderPhone(opts: { tier?: LayoutTier; mobileToolbar?: boolean; fabClearance?: boolean; previewSlot?: ReactNode } = {}) {
     const tier = stubLayoutTier(opts.tier ?? "phone");
     const doc = new Y.Doc();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -500,6 +503,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
               noteId="note-1"
               headerSlot={<MenuProbe />}
               mobileToolbar={mobileToolbar}
+              fabClearance={opts.fabClearance}
               previewSlot={opts.previewSlot}
             />
           </VersionsProvider>
@@ -575,6 +579,26 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     expect(lastSheet().open).toBe(false);
     fireEvent.click(screen.getByTestId("bubble-stub"));
     expect(lastSheet().open).toBe(true);
+    doc.destroy();
+  });
+
+  it("手機：瀏覽時軌道底端讓開右下的浮動鈕；編輯工具列在時改讓開工具列", async () => {
+    const browsing = await renderPhone({ fabClearance: true });
+    expect(lastBubble().bottomReserve).toBe(PHONE_FAB_FOOTPRINT_PX);
+    expect(lastBubble().editToolbarHeight).toBe(0);
+    browsing.unmount();
+    browsing.doc.destroy();
+    const editing = await renderPhone();
+    editing.setMobileToolbar(true);
+    expect(lastBubble().editToolbarHeight).toBe(PHONE_EDIT_TOOLBAR_CLEARANCE_PX);
+    editing.unmount();
+    editing.doc.destroy();
+  });
+
+  it("640-767：軌道底端停在版本泡泡上方", async () => {
+    const { doc } = await renderPhone({ tier: "compact" });
+    expect(lastBubble().bottomReserve).toBe(CORNER_STACK_FOOTPRINT_PX);
+    expect(lastBubble().editToolbarHeight).toBe(0);
     doc.destroy();
   });
 
