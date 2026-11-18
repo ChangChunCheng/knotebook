@@ -12,7 +12,7 @@
  * `data-nesting-level`）輸出成 div 形、每一欄的內容以同一套分類序列化（{@link rowMarkdown}）；有寬度的圖片、
  * 有欄寬的表格（節點本身或後代）整個節點輸出成 HTML，寬度夾回 [32, 4000]（{@link normalizeSizes}）。
  * #386 再加三件（{@link prepareForMarkdown}）：段落內換行寫不回成 `\` 換行的（後一行開頭是空白或標點，或在清單項目／表格儲存格／
- * 標題裡）讀出成行內 `<br>`；粗體等行內樣式開頭、結尾的空白移到樣式外面；文字裡 parser 會當成標記的字元與區塊開頭的標記加反斜線。
+ * 標題裡）讀出成行內 `<br>`；粗體等行內樣式開頭、結尾的空白移到樣式外面；文字裡 parser 會當成標記的字元（含可能開啟 HTML 標籤的 `<`，#379）與區塊開頭的標記加反斜線。
  * 整份沒有任何顏色、並排、寬度，而且上面這些都沒有動到任何東西（沒有要跳脫的字元——含站內連結文字（#269，見
  * {@link escapeNoteLinkText}）——、沒有要改寫的換行、沒有樣式邊緣空白）時直接回 `cleanHTMLToMarkdown(html)`——與 `blocksToMarkdownLossy` 位元組相同。
  * 以「頂層節點」為單位的理由：外部 HTML 已經做完 BlockNote 的攤平（非清單的子 block 被拉到頂層），
@@ -26,7 +26,7 @@ import { COLUMNS_OPEN_TAG, columnOpenTag, parseColumnFlex } from "./columns.js";
 import { isShownColor } from "./note-colors.js";
 import { clampSizePx } from "./note-sizes.js";
 import { unescapeAttributeAngles } from "./serialized-html.js";
-import { escapeLinkText } from "./site-link.js";
+import { escapeLinkText, lessThanOpensMarkup } from "./site-link.js";
 
 const STYLE_CSS = { textColor: "color", backgroundColor: "background-color" } as const;
 const BLOCK_COLOR_ATTRS = ["data-text-color", "data-background-color"] as const;
@@ -345,13 +345,14 @@ function uniquePlaceholder(haystack: string): string | null {
   }
   return null;
 }
-/** BlockNote 的 markdown parser 認得的反斜線跳脫字元（`\` 後接這些才是跳脫，其餘照字面）。 */
-const MD_ESCAPABLE = "\\`*_{}[]()#+-.!~|>";
+/** BlockNote 的 markdown parser 認得的反斜線跳脫字元（`\` 後接這些才是跳脫，其餘照字面）；`<` 是補丁加進去的。 */
+const MD_ESCAPABLE = "\\`*_{}[]()#+-.!~|><";
 /**
  * 一段要寫成 markdown 的純文字裡，parser 會當成標記的字元加反斜線（轉換器本身完全不跳脫文字）：`*`、`` ` ``、`[`、`]` 一律；
  * `_` 只在兩側不都是 `\w`（ASCII 英數字或 `_`）時——與 parser 判字中底線的規則相同，所以 `snake_case`、`a__b` 不動；
  * `~` 只在連著另一個 `~` 或在這段文字的頭尾時（只有 `~~` 是刪除線）；
- * `\` 只在後面接著可跳脫的字元或在這段文字結尾時（`C:\Users` 不動）。`<` 不在此列（#379）。
+ * `\` 只在後面接著可跳脫的字元或在這段文字結尾時（`C:\Users` 不動）；
+ * `<` 只在後面可能開啟標記時（{@link lessThanOpensMarkup}；`2 < 3` 不動）。`&` 不跳脫：parser 把字元參照原樣留成文字（#379）。
  * 實際筆記的實例：斜體裡的字面 `**` 與反引號原樣讀出，寫回時 parser 把它們配成新的強調與 code，一輪走樣一次。
  */
 function escapeMarkdownText(s: string): string {
@@ -364,6 +365,7 @@ function escapeMarkdownText(s: string): string {
     if (c === "*" || c === "`" || c === "[" || c === "]") esc = true;
     else if (c === "_") esc = !(prev !== undefined && next !== undefined && /\w/.test(prev) && /\w/.test(next));
     else if (c === "~") esc = prev === undefined || next === undefined || prev === "~" || next === "~";
+    else if (c === "<") esc = lessThanOpensMarkup(next);
     else if (c === "\\") esc = next === undefined || MD_ESCAPABLE.includes(next);
     out += esc ? `\\${c}` : c;
   }
@@ -398,7 +400,7 @@ function escapeTextNodes(root: ParentNode): boolean {
  * 一行開頭的區塊標記：段落、引言的第一段文字開頭若是 parser 的區塊標記，第一個字前加反斜線，讓它留在原段落。只跳到
  * parser 真的會認的形（規則照 BlockNote markdown parser 的區塊判斷）：`#`～`######` 後接空白或結尾（標題）、`>`（引言，後面接什麼都算）、
  * `-`／`+` 後接空白或結尾（清單）、數字＋`.`／`)` 後接空白或結尾（編號清單）、三個以上 `-`（可夾空白，分隔線）。`*`、`_`、`` ` ``、`~`
- * 已在 {@link escapeMarkdownText} 一律或在頭尾跳脫；`-1`、`#tag`、`1.5` 這類 parser 不認的不跳。`<` 開頭的 HTML 區塊不在此列（#379）。
+ * 已在 {@link escapeMarkdownText} 一律或在頭尾跳脫；`-1`、`#tag`、`1.5` 這類 parser 不認的不跳。`<` 開頭的 HTML 區塊由 {@link escapeMarkdownText} 處理（#379）。
  * 「後接結尾」是因為下一個節點（例如移出粗體的空白）可能接著是空白。前導空白（含 NBSP）之後的標記也算：轉換器會剝掉開頭空白。
  * 清單項目底下的子段落（含收合清單的子 block）也套用——它們是子區塊、parser 照區塊解析；只有項目自己的行內內容不套用（{@link isItemInline}）。
  */

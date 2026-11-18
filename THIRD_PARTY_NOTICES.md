@@ -16,3 +16,10 @@ bundled third-party assets that carry a different license.
 - **Copyright:** Copyright (c) 2009-2015, Kevin Decker <kpdecker@gmail.com>.
 - **License:** BSD 3-Clause License (BSD-3-Clause).
 - **Full license text:** the `LICENSE` file inside the installed package (`node_modules/diff/LICENSE`).
+
+## BlockNote (`@blocknote/core`, modified)
+
+- **Package:** [`@blocknote/core`](https://www.npmjs.com/package/@blocknote/core) 0.52.1 — bundled into the web app's build output (the note editor) and shipped in the container image. Its source code is at https://github.com/TypeCellOS/BlockNote (`packages/core`). `@blocknote/react` and `@blocknote/mantine` 0.52.1, which the web app also bundles, are under the same license and are not modified.
+- **License:** Mozilla Public License, Version 2.0 (MPL-2.0).
+- **Full license text:** the `LICENSE` file inside the installed package (`node_modules/@blocknote/core/LICENSE`), also available at https://www.mozilla.org/MPL/2.0/.
+- **Modification:** Knotebook ships `@blocknote/core` modified. The only change is [`patches/@blocknote__core@0.52.1.patch`](./patches/@blocknote__core@0.52.1.patch) in this repository, applied with `pnpm patch`: it adds `<` to the characters a backslash can escape in the package's Markdown parser.

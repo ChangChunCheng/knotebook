@@ -389,24 +389,26 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(doc)).toBe(`x **a**<span style="color:red">**b**</span>c<span style="color:blue">[l](https://e.com)</span> **plain**\n`);
   });
 
-  // ⚠ 行內顏色留在 markdown 裡的代價：span 裡的文字與沒上色的文字**同一套**轉換——BlockNote 的 HTML → markdown
-  //   不跳脫看起來像 markdown／HTML 的字面文字（`**x**`、`<x>`），而它的 markdown 解析器只認一部分反斜線跳脫
-  //   （`\*` 會解、`\<` 與 `\&` 不會）、不解字元參照（`&lt;` 原樣留成文字；實測）——所以沒有一種寫法能讓
-  //   「字面上的 `<x>`」在 markdown 段落裡往返。這一案釘的是「與無色文字同一套」，不是「無損」。
-  it("有色文字裡像 markdown 的字面文字，與同一段沒上色時的輸出相同（同一套 lossy 規則）", async () => {
+  // span 裡的文字與沒上色的文字**同一套**轉換：BlockNote 的 HTML → markdown 不跳脫看起來像 markdown 的字面文字（`**x**`），
+  //   `<x>` 這類可能開啟標籤的 `<` 則由讀出端加反斜線（`\<` 寫回是字面 `<`，#379）。這一案釘的是有色文字的跳脫與無色文字相同。
+  it("有色文字裡像 markdown 的字面文字，與同一段沒上色時的輸出相同（跳脫方式一樣）", async () => {
     const text = "*no* [y](z) <x>";
     const colored = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: { textColor: "red" } }] }]);
     const plain = await docWith([{ type: "paragraph", content: text }]);
     expect(await readMd(colored)).toBe(`<span style="color:red">${(await readMd(plain)).trimEnd()}</span>\n`);
   });
 
-  // docs/known-limitations.md 逐字宣稱：引用成字面文字的顏色標記讀出時不跳脫，所以寫回時 #hex 與色盤名都會變成真的顏色。
-  it("字面文字裡的顏色標記讀出不跳脫——#hex 與色盤名寫回都變真顏色", async () => {
+  // 引用成字面文字的顏色標記：讀出時 `<` 加反斜線，寫回仍是字面文字，不會變成真的顏色（#379）。
+  it("字面文字裡的顏色標記讀出跳脫——#hex 與色盤名寫回都維持字面文字", async () => {
     const hexMd = await readMd(await docWith([{ type: "paragraph", content: `quote <span style="color:#ff0000">x</span>` }]));
-    expect(hexMd).toBe(`quote <span style="color:#ff0000">x</span>\n`);
-    expect(shape(await withSession(ed => parse(ed, hexMd)))).toContain('"textColor":"#ff0000"');
+    expect(hexMd).toBe(`quote \\<span style="color:#ff0000">x\\</span>\n`);
+    const hex = shape(await withSession(ed => parse(ed, hexMd)));
+    expect(hex).not.toContain('"textColor":"#ff0000"');
+    expect(hex).toContain(`quote <span style=\\"color:#ff0000\\">x</span>`);
     const namedMd = await readMd(await docWith([{ type: "paragraph", content: `quote <span style="color:red">x</span>` }]));
-    expect(shape(await withSession(ed => parse(ed, namedMd)))).toContain(`"textColor":"red"`);
+    const named = shape(await withSession(ed => parse(ed, namedMd)));
+    expect(named).not.toContain(`"textColor":"red"`);
+    expect(named).toContain(`quote <span style=\\"color:red\\">x</span>`);
   });
 
   it("文件裡已經有佔位字元（⸀／⸁）時退回整段 HTML，仍可往返", async () => {

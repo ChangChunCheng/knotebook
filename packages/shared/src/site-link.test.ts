@@ -306,15 +306,20 @@ describe("wikilinksToLinks（MCP 讀與站內 AI 的匯出副本改寫）", () =
 
   // #269：BlockNote 的 markdown 匯出不跳脫文字，跳脫由 `escapeLinkText` 做——但只在真正變成 markdown 的那一步
   // （note-markdown-read.ts 的 markdown 分支）。`wikilinksToLinks` 本身**不跳脫**：它的輸出在讀路徑上也會走上色區塊的原始 HTML
-  // 輸出，那裡跳脫會讓反斜線每往返一次多一層。`<`、`&` 刻意不收（見 escapeLinkText）。
-  it("escapeLinkText 跳脫 \\ ` * _ [ ] ~、< 與 & 不動；wikilinksToLinks 段落與表格 cell 都輸出原文（不跳脫）", () => {
+  // 輸出，那裡跳脫會讓反斜線每往返一次多一層。可能開啟標記的 `<` 會跳脫、`&` 不跳脫（見 escapeLinkText）。
+  it("escapeLinkText 跳脫 \\ ` * _ [ ] ~ 與可能開啟標記的 <，& 不動；wikilinksToLinks 段落與表格 cell 都輸出原文（不跳脫）", () => {
     expect(escapeLinkText("[Draft] Plan *v2*")).toBe("\\[Draft\\] Plan \\*v2\\*");
     expect(escapeLinkText("a]b\\")).toBe("a\\]b\\\\");
     expect(escapeLinkText("a_b_ `c` ~~s~~ x|y")).toBe("a\\_b\\_ \\`c\\` \\~\\~s\\~\\~ x|y");
     expect(escapeLinkText("C:\\path\\")).toBe("C:\\\\path\\\\");
     expect(escapeLinkText("![img] #h")).toBe("!\\[img\\] #h");
     expect(escapeLinkText("foo]bar")).toBe("foo\\]bar");
-    expect(escapeLinkText("a <d> &amp; b")).toBe("a <d> &amp; b");
+    expect(escapeLinkText("a <d> &amp; b")).toBe("a \\<d> &amp; b");
+    expect(escapeLinkText("<b>x</b>")).toBe("\\<b>x\\</b>");
+    expect(escapeLinkText("2 < 3")).toBe("2 < 3");
+    expect(escapeLinkText("a<")).toBe("a\\<");
+    expect(escapeLinkText("\\<b>")).toBe("\\\\\\<b>");
+    expect(escapeLinkText("&amp;")).toBe("&amp;");
     const blocks = [
       { type: "paragraph", content: [wl({ label: "a]b\\" })] },
       { type: "table", content: { type: "tableContent", rows: [{ cells: [[wl({})]] }] } },

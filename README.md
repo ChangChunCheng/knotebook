@@ -161,4 +161,4 @@ Planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/
 
 ## License
 
-MIT — see [LICENSE](./LICENSE). A bundled font asset carries its own license — see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+MIT — see [LICENSE](./LICENSE). Bundled third-party components (a font asset, jsdiff, BlockNote) carry their own licenses — see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

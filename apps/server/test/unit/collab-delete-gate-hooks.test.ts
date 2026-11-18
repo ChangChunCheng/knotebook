@@ -64,6 +64,7 @@ function fakeHandle(noteId: string, userId: string): ConnectionHandle {
     noteId,
     userId,
     sessionId: undefined,
+    presenceRole: "editor",
     requestToken: () => {},
     close: () => {},
     setReadOnly: () => {},

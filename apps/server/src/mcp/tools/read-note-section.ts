@@ -80,6 +80,9 @@ export const readNoteSectionOutput = {
           // 並排：5 欄以上的列讀得到、原樣寫回會被拒（例外），所以括號補寫入的欄數。
           "HTML, as do images shown at a set width, tables with set column widths, and the <div> tags around side-by-side columns; " +
           "write it back unchanged to keep them (edit_note takes rows of 2 to 4 columns). " +
+          // #379：上色區塊等整塊讀成 HTML 的地方，文字裡的 `<` 是 `&lt;`；code 裡原樣——所以句首先排除這兩處。
+          "Outside code and blocks that come back as HTML, a `<` that could start an HTML tag or comment comes back as `\\<`; " +
+          "write it back unchanged to keep it as text. " +
           READ_NOTE_LINK_SENTENCE
       ),
     fingerprint: z

@@ -105,7 +105,12 @@ describe("I-4a 換行後那一行以區塊標記開頭 → 寫成 <br>，不斷�
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  // 換行後接字面的 `<div>` 這類 HTML 標籤修不了：`<` 不跳脫（#379），寫回時那是真的標籤，會把段落斷開（known-limitations 已寫）。
+  it("段落 a⏎<div>x</div>：字面標籤的 < 跳脫，換行與文字都照原樣寫回（#379）", async () => {
+    const r = await loop([P(T("a\n<div>x</div>"))]);
+    expect(r.md1).toContain("a<br>\\<div>x\\</div>");
+    expect(r.b1).toEqual(r.b0);
+    expect(r.md2).toBe(r.md1);
+  });
   it("換行後接一般文字（非標點開頭）照舊是 \\ 換行", async () => {
     const doc = await docWith([P(T("a\nb 2024 年"))]);
     expect(await readMd(doc)).toBe("a\\\nb 2024 年\n");

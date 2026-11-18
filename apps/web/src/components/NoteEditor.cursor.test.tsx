@@ -6,9 +6,10 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { YDOC_FRAGMENT, collabUserColor } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
+import { hslToHex } from "@/collab/remote-states";
 import type { CursorScroller } from "@/collab/cursor-scroll";
 import { ThemeProvider } from "@/theme";
 import { setRemote } from "@/components/presence/test-awareness";
@@ -326,6 +327,76 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     expect(localCursor(awareness)).toBeNull();
     focusAndSelect();
     expect(localCursor(awareness)).toBeNull();
+    awareness.destroy();
+    doc.destroy();
+  });
+});
+
+describe("NoteEditor：遠端 awareness 先清洗再畫（#312）", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    stubFetch();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function mount() {
+    const doc = await seededDoc();
+    const awareness = new Awareness(doc);
+    render(
+      <Host>
+        <NoteEditor doc={doc} provider={{ awareness } as never} user={{ id: "u1", name: "Ann" }} noteId="note-1" editable />
+      </Host>,
+    );
+    await screen.findByText("第二段落文字");
+    const text = findXmlText(doc.getXmlFragment(YDOC_FRAGMENT), "第二段落文字")!;
+    return { doc, awareness, text };
+  }
+
+  it("畸形的遠端 cursor 不會讓編輯器丟錯", async () => {
+    const { doc, awareness, text } = await mount();
+    expect(() => {
+      act(() => {
+        setRemote(awareness, 4243, { user: { id: "u3", name: "Eve", color: "#00ff00" }, cursor: {} });
+      });
+    }).not.toThrow();
+    act(() => {
+      setRemote(awareness, 4242, { user: { id: "u2", name: "Bob", color: "#ff0000" }, cursor: { anchor: rel(text, 0), head: rel(text, 2) } });
+    });
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    expect(screen.queryByText("Eve")).toBeNull();
+    awareness.destroy();
+    doc.destroy();
+  });
+
+  it("注入的顏色不會進游標與選取的 style，選取有合法的底色", async () => {
+    const { doc, awareness, text } = await mount();
+    act(() => {
+      setRemote(awareness, 4244, {
+        user: { id: "u2", name: "Bob", color: "red; background-image: url(https://example.invalid/x)" },
+        cursor: { anchor: rel(text, 0), head: rel(text, 2) },
+      });
+    });
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const label = screen.getByText("Bob");
+    const caret = label.parentElement!;
+    const hex = hslToHex(collabUserColor("u2"))!;
+    for (const el of [label, caret]) {
+      const style = el.getAttribute("style") ?? "";
+      expect(style).not.toContain("url(");
+      expect(style).toContain(hex);
+    }
+    const selections = document.querySelectorAll(".ProseMirror-yjs-selection");
+    expect(selections.length).toBeGreaterThan(0);
+    for (const el of selections) {
+      const style = el.getAttribute("style") ?? "";
+      expect(style).not.toContain("url(");
+      // 6 位 hex 後接 alpha 才是合法的 CSS；jsdom 會正規化成 rgba(...)，不合法的值整條被丟掉。
+      expect(style).toMatch(/background-color:\s*rgba\(\d+, \d+, \d+, [\d.]+\)/);
+    }
     awareness.destroy();
     doc.destroy();
   });
