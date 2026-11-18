@@ -214,6 +214,7 @@ Claude Desktop 與其他用戶端怎麼接、每項工具做什麼，見 [MCP](d
 - [圖表（Mermaid）](docs/diagrams.md)：插入、編輯、貼上與複製出 Mermaid 圖表。
 - [說明與功能導覽](docs/feature-tour.md)：說明視窗、功能導覽、「這一版新增」頁與快捷鍵。
 - [把 Knotebook 安裝成 app](docs/install-app.md)：在 Android、iPhone 與 iPad 加到主畫面，以及在電腦上安裝。
+- [值得先知道的限制](docs/limitations.md)：部署 Knotebook 或把筆記交給它之前該知道的事，包括資料可能遺失之處、無法復原的操作、安全上的取捨與尚未提供的功能。
 - [已知限制](docs/known-limitations.md)：已知的粗糙之處與刻意取捨的完整清單。
 
 接上 AI 與腳本：

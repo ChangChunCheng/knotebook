@@ -1,5 +1,7 @@
 # Known limitations
 
+This is the complete reference: every known rough edge and deliberate trade-off, down to small details of layout, timing and individual endpoints. If you are deciding whether to deploy Knotebook or trust it with your notes, read [Limitations worth knowing](./limitations.md) first; it collects the ones that matter for that and links back here.
+
 Per-person rate figures in this document for API and MCP reads and writes, note content reads and writes, searches, uploads and copies, AI actions, bulk downloads and bulk write-backs are the defaults; a site admin can lower each of them in Site admin → Site limits (see [Site limits](./self-hosting.md#site-limits)). The other rate limits are fixed.
 
 - **A flood of distinct accounts or addresses can push an active login lockout out of memory.** The failed-login throttle keeps at most 10,000 records per track (account and IP), evicting whichever record's last failure is oldest — so an attacker who can produce more recent failures across that many distinct keys, faster than the locked-out record's backoff window (at most 15 minutes), can drop someone else's lockout. Doing so costs thousands of requests from many distinct source addresses, since the attacker's own address gets locked out after 5 failures and every attempt still pays for a password hash. The bound itself is not optional: without it the tables grow for the life of the process.
