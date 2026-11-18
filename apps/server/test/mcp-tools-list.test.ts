@@ -358,7 +358,9 @@ describe("#108 tools/list", () => {
     const EDIT_MD =
       "The new markdown. Required for every operation except delete_section and rename. Colors are HTML, as read_note_section returns them: " +
       'colored text is <span style="color:red">…</span> inside the markdown; a block\'s own color is e.g. <p data-background-color="yellow">…</p>. ' +
-      `For a color, use one of these names: default, gray, brown, red, orange, yellow, green, blue, purple, pink, or a hex color such as #ff6600 (written #rgb or #rrggbb). ${COLUMNS} ${SIZES} ${WRITE_LINK}`;
+      `For a color, use one of these names: default, gray, brown, red, orange, yellow, green, blue, purple, pink, or a hex color such as #ff6600 (written #rgb or #rrggbb). ${COLUMNS} ${SIZES} ` +
+      "HTML in the markdown is read as HTML; to keep a `<` that would start a tag or comment as text, write `\\<` (as read_note_section returns it), except inside code or a block written as HTML. " +
+      WRITE_LINK;
     const CREATE_CONTENT =
       "Markdown for the new note. Leave it out to create an empty note. Some deployments cannot store content this way and answer `invalid_body`; " +
       `create the note without it and the note still exists. Colors, side-by-side columns and sizes work as in edit_note. ${WRITE_LINK}`;
@@ -366,6 +368,7 @@ describe("#108 tools/list", () => {
       "This page of the section, as markdown. The first page starts with the section's heading line — except `_top`, which has no heading; " +
       "a later page resumes where the last one stopped. Colored text and blocks come back as HTML, as do images shown at a set width, tables " +
       "with set column widths, and the <div> tags around side-by-side columns; write it back unchanged to keep them (edit_note takes rows of 2 to 4 columns). " +
+      "Outside code and blocks that come back as HTML, a `<` that could start an HTML tag or comment comes back as `\\<`; write it back unchanged to keep it as text. " +
       READ_LINK;
     const SECTION_IMAGES =
       'An uploaded image\'s address contains its upload id, for example `/api/uploads/<id>` in `![name](/api/uploads/<id>)` or, for an image with a caption or shown at a set width, in `<figure><img … src="/api/uploads/<id>" …>…</figure>`; see them with read_note_image.';

@@ -32,6 +32,7 @@ describe("#379 站內 AI：字面 HTML 讀出、改字、套用", () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     const prepared = prepareAiResult(editor, md.replace("EDITME", "EDITED"), { notes: [], placement: "top" });
     if (!("blocks" in prepared)) throw new Error(`預期可套用，實際 ${JSON.stringify(prepared)}`);
+    expect(prepared.blocks).toHaveLength(1);
     expect(prepared.blocks[0]!.type).toBe("paragraph");
     expect(prepared.blocks[0]!.content).toEqual([{ type: "text", text: `${L} EDITED`, styles: {} }]);
   });

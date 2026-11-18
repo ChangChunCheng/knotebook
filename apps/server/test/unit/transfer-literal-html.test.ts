@@ -1,7 +1,7 @@
 /**
  * #379：批次讀寫（檔案）路徑上，筆記文字裡的字面 HTML 標籤讀出時加反斜線、寫回時還原成字面文字。
  * agent 只改 EDITME 一個字：寫回後整篇匯出要等於 agent 的檔、字面 `<` 原樣留著、沒動的段落保留 id。
- * 另有一案：修正之前下載的副本（`<` 沒有反斜線）寫回時，沒碰的那一段不會被改成真的 HTML。
+ * 另有兩案：修正之前下載的副本（`<` 沒有反斜線）寫回時，沒碰的那一段不會被改成真的 HTML；改到的那一段照檔裡的寫法當成 HTML。
  */
 import { describe, expect, it } from "vitest";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -12,7 +12,7 @@ import { applyInMemory, docWith, forkOf, makeBaseInMemory, topOf, withEditor } f
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
 
-const T = (text: string) => ({ type: "text", text, styles: {} });
+const T = (text: string, styles: Record<string, unknown> = {}) => ({ type: "text", text, styles });
 const P = (text: string) => ({ type: "paragraph", content: [T(text)] });
 const trimR = (s: string) => s.replace(/[ \t]+$/, "");
 const linesTrim = (s: string) => bodyLines(normalizeBody(s)).map(trimR).join("\n");
@@ -68,7 +68,8 @@ describe("#379 批次寫回：字面 `<` 讀出加反斜線、改一個字寫回
           expect(bodyLines(normalizeBody(final))).toEqual(bodyLines(normalizeBody(agent)));
 
           const texts = await fullTexts(live);
-          expect(texts[0]).toContain(`${L} EDITED`);
+          if (ctx === "paragraph") expect(texts[0]).toBe(`${L} EDITED`);
+          else expect(texts[0]).toContain(`${L} EDITED`);
           expect(texts[0]).not.toContain("EDITME");
 
           const top = topOf(live);
@@ -80,7 +81,7 @@ describe("#379 批次寫回：字面 `<` 讀出加反斜線、改一個字寫回
     });
   }
 
-  it("agent 檔裡 `\<b>` 的反斜線保留：匯出的檔真的帶反斜線", async () => {
+  it("匯出的檔裡 `\\<b>` 帶著反斜線", async () => {
     const doc = await docWith(rt, [P("<b>bold</b> EDITME"), P("other")]);
     const b = await makeBaseInMemory(rt, doc);
     expect(b.body).toContain("\\<b>bold\\</b> EDITME");
@@ -104,5 +105,21 @@ describe("#379 修正之前下載的副本（`<` 沒有反斜線）", () => {
     expect(texts).toEqual(["<b>bold</b> keep", "other EDITED"]);
     // 第一段仍是純文字，不是粗體：整篇匯出再讀一次，反斜線版照舊。
     expect(linesTrim((await exportNoteForTransfer(rt, live, new Map())).body)).toBe("\\<b>bold\\</b> keep\n\nother EDITED");
+  });
+
+  it("改到的那段 `<b>bold</b> keep` → `<b>bold</b> kept`：沒有反斜線的 `<b>` 當成 HTML，變成真的粗體", async () => {
+    const doc = await docWith(rt, [P("<b>bold</b> keep"), P("other")]);
+    const b = await makeBaseInMemory(rt, doc, new Map(), "T", line => line.replaceAll("\\<", "<"));
+    expect(b.body).toContain("<b>bold</b> keep");
+    const agent = b.body.replace("keep", "kept");
+    expect(agent).not.toBe(b.body);
+    const live = forkOf(doc);
+    await applyInMemory(rt, b, agent, live);
+
+    const texts = await fullTexts(live);
+    expect(texts).toEqual(["bold kept", "other"]);
+    const first = await withEditor(rt, live, ed => (ed.document[0] as unknown as { content: unknown }).content);
+    expect(first).toEqual([T("bold", { bold: true }), T(" kept")]);
+    expect(linesTrim((await exportNoteForTransfer(rt, live, new Map())).body)).toBe("**bold** kept\n\nother");
   });
 });
