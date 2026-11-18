@@ -5,6 +5,7 @@ import { PHONE_QUERY } from "@/lib/layout-tiers";
 import { stubLayoutTier } from "@/test/layout-tier";
 import {
   PHONE_PAGE_SCROLL_ATTR,
+  ROOT_FLAGS,
   STICKY_TOP_VAR,
   captureScrollAnchor,
   mayCrossTiersByDefault,
@@ -14,6 +15,7 @@ import {
   stickyTopInset,
   useStickyTopInset,
   useStickyTopVar,
+  useRootFlag,
   useTierScrollAnchor,
   visibleHeightOf,
 } from "./page-scroll";
@@ -474,5 +476,32 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     stubLayoutTier("overlay", (query) => query === "(pointer: coarse)");
     vi.stubGlobal("screen", { width: 1180, height: 820 });
     expect(mayCrossTiersByDefault()).toBe(true);
+  });
+});
+
+describe("useRootFlag", () => {
+  function Flag({ on = true }: { on?: boolean }) {
+    useRootFlag(ROOT_FLAGS.listShown, on);
+    return null;
+  }
+
+  it("active 時在 <html> 上掛旗標，關掉或卸載就拿掉", () => {
+    const view = render(<Flag />);
+    expect(document.documentElement).toHaveAttribute(ROOT_FLAGS.listShown, "");
+    view.rerender(<Flag on={false} />);
+    expect(document.documentElement).not.toHaveAttribute(ROOT_FLAGS.listShown);
+    view.rerender(<Flag />);
+    expect(document.documentElement).toHaveAttribute(ROOT_FLAGS.listShown, "");
+    view.unmount();
+    expect(document.documentElement).not.toHaveAttribute(ROOT_FLAGS.listShown);
+  });
+
+  it("兩個元件同時要同一個旗標：先離開的那個不會把它拿掉，最後一個離開才拿掉", () => {
+    const first = render(<Flag />);
+    const second = render(<Flag />);
+    first.unmount();
+    expect(document.documentElement).toHaveAttribute(ROOT_FLAGS.listShown, "");
+    second.unmount();
+    expect(document.documentElement).not.toHaveAttribute(ROOT_FLAGS.listShown);
   });
 });

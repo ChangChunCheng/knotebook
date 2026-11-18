@@ -63,6 +63,14 @@ describe("MobileEditToolbar", () => {
     expect(root()).toHaveAttribute("role", "toolbar");
   });
 
+  it("掛著時 <html> 帶 data-has-mobile-edit-toolbar（index.css 據此擋下拉重新整理），卸載後拿掉", async () => {
+    await mount();
+    expect(document.documentElement).toHaveAttribute("data-has-mobile-edit-toolbar");
+    rerenderHost({ editor, children: null });
+    await waitFor(() => expect(root_()).toBeNull());
+    expect(document.documentElement).not.toHaveAttribute("data-has-mobile-edit-toolbar");
+  });
+
   it("沒有 AI 動作：沒有 AI 鈕，其餘照舊", async () => {
     await mount({ actions: [] });
     expect(labels()).toEqual(MAIN_ROW.slice(1));

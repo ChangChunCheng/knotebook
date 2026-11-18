@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { OVERLAY_QUERY, isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { PhoneBrowseContext, PhoneListContext, isNoteRoutePath } from "@/lib/phone-list";
 import { backTarget, clearListIdx, historyIdx, readListIdx, recordListIdx } from "@/lib/phone-nav";
-import { PHONE_PAGE_SCROLL_ATTR } from "@/lib/page-scroll";
+import { PHONE_PAGE_SCROLL_ATTR, ROOT_FLAGS, useRootFlag } from "@/lib/page-scroll";
 import { createPhoneScrollMemory, enterPhoneScreen, phoneScreenKey, rememberPhoneScroll, type PhoneScreen } from "@/lib/phone-scroll";
 import { SidebarDrawerContext, useSidebarDrawer } from "@/lib/sidebar-drawer";
 import { canonicalizedFrom, useRealNavigationType } from "@/lib/real-location";
@@ -526,6 +526,9 @@ export function AppShell({ children, inert }: AppShellProps) {
   const asideShown = onList || searchOpen;
   const asideShownRef = useRef(asideShown);
   asideShownRef.current = asideShown;
+  // 頁面層的樣式看 `<html>` 上的旗標（見 `ROOT_FLAGS`）。
+  useRootFlag(ROOT_FLAGS.pageScroll, true);
+  useRootFlag(ROOT_FLAGS.listShown, asideShown);
   // 手機上清單、搜尋層、筆記共用文件的捲動（見 `lib/page-scroll.ts`）：換畫面時照 `lib/phone-scroll.ts` 的規則還原或歸零，
   // 停在一個畫面時持續記下它的位置。layout effect：還原要在新畫面第一次繪製之前；舊畫面的監聽也在這裡同步拆掉，
   // 換畫面造成的捲動（文件變短被夾住）不會被記成舊畫面的位置。瀏覽器自己的捲動還原關掉，免得它在返回時搶先捲。

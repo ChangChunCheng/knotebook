@@ -264,6 +264,17 @@ describe("MermaidView — 只畫視窗附近的圖（#344 C）", () => {
     expect(renderMermaidMock).toHaveBeenCalledTimes(1);
   });
 
+  it("佔位只在視窗附近閃爍：遠處的不跑動畫（看不到，卻每一幀都要重算樣式）", async () => {
+    renderMermaidMock.mockImplementation(() => new Promise(() => {})); // 進到附近後一直在排隊
+    render(<MermaidView code="graph TD; A-->B;" editable theme="light" onChange={vi.fn()} />);
+    observer().fire(false);
+    expect(screen.getByText("Rendering diagram…")).not.toHaveClass("motion-safe:animate-pulse");
+    observer().fire(true);
+    expect(screen.getByText("Rendering diagram…")).toHaveClass("motion-safe:animate-pulse");
+    observer().fire(false);
+    expect(screen.getByText("Rendering diagram…")).not.toHaveClass("motion-safe:animate-pulse");
+  });
+
   it("請求被取消後才 reject（AbortError）：不動畫面、不出錯誤態", async () => {
     let rejectIt!: (e: unknown) => void;
     renderMermaidMock.mockImplementation(() => new Promise((_, reject) => (rejectIt = reject)));

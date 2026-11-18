@@ -173,6 +173,15 @@ describe("#222 顏色在工具說明裡", () => {
     expect(d).toContain("Colored text and blocks come back as HTML");
     expect(d).toContain("unchanged");
   });
+  // #379：讀出 `\<`、寫入 `\<` 是字面 `<`；兩句都要排除 code 與整塊 HTML（code 裡 `<` 原樣、整塊 HTML 裡讀成 `&lt;`；兩處反斜線都不是跳脫）。
+  it("字面 `<`：read_note_section 講讀出 `\\<`，edit_note 講寫 `\\<` 保留成文字", () => {
+    expect(readNoteSectionOutput.section.shape.markdown.description).toContain(
+      "Outside code and blocks that come back as HTML, a `<` that could start an HTML tag or comment comes back as `\\<`; write it back unchanged to keep it as text."
+    );
+    expect(editNoteInput.markdown.description).toContain(
+      "HTML in the markdown is read as HTML; to keep a `<` that would start a tag or comment as text, write `\\<` (as read_note_section returns it), except inside code or a block written as HTML."
+    );
+  });
 });
 
 // 並排：並排的正規標籤與欄數、尺寸的形與範圍要寫在工具說明裡；

@@ -869,16 +869,19 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(norm(await liveMarkdown(s.ctx, s.note.id))).toBe(norm(text.split("\n").slice(8).join("\n")));
   });
 
-  it("script 裁示的邊界：段落文字本身是 <script>x</script>（瀏覽器打的字，匯出不跳脫）→ 原樣重送、改別段照舊；改那一段才 400 dropped_element", async () => {
+  it("script 邊界：段落文字本身是 <script>x</script>，匯出以反斜線跳脫 → 原樣重送、改別段、改跳脫後的那段都照舊；寫成沒跳脫的原始標籤才 400 dropped_element", async () => {
     const s = await scene({}, "");
     await seedBlocks(s.ctx.db, s.note.id, [{ type: "paragraph", content: "<script>x</script>" }, { type: "paragraph", content: "Para A" }, { type: "paragraph", content: "Para B" }]);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
-    expect(d.text).toContain("<script>x</script>\n\nPara A");
+    expect(d.text).toContain("\\<script>x\\</script>\n\nPara A");
     expect((await bulkPut(s.ctx.app, s.bulk.token, d.text)).json()).toMatchObject({ result: "unchanged" });
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para B", "Para B 改")))).json()).toMatchObject({ result: "applied" });
     expect((await liveBlocks(s.ctx, s.note.id)).map(b => b.text)).toEqual(["<script>x</script>", "Para A", "Para B 改"]);
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
-    const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, b => b.replace("<script>x</script>", "<script>x</script> 改")));
+    expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, b => b.replace("\\<script>x\\</script>", "\\<script>x\\</script> 改")))).json()).toMatchObject({ result: "applied" });
+    expect((await liveBlocks(s.ctx, s.note.id)).map(b => b.text)).toEqual(["<script>x</script> 改", "Para A", "Para B 改"]);
+    const d3 = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d3.text, b => b.replace("\\<script>x\\</script> 改", "<script>x</script> 改")));
     expect(r.statusCode).toBe(400);
     expect(errOf(r)).toEqual({ code: "unsupported_block", message: transferParseMessage("unsupported_block", "dropped_element") });
   });

@@ -536,6 +536,27 @@
         }
       ],
       "markdown": "<table><tr><th colwidth=\"32\">a</th><th colwidth=\"4000\">b</th></tr><tr><td>c</td><td>d</td></tr></table>\n"
+    },
+    {
+      "id": "G4-literal-html",
+      "roundTrip": "exact",
+      "note": "字面 HTML 文字：可能開啟標記的 < 讀出加反斜線，其餘（&lt;、2 < 3）不動。",
+      "blocks": [
+        { "id": "g4h-p", "type": "paragraph", "content": "<b>bold</b> a <b> c <img src=x>" },
+        { "id": "g4h-h", "type": "heading", "props": { "level": 2 }, "content": "<h1>H</h1>" },
+        { "id": "g4h-li", "type": "bulletListItem", "content": "<!-- c -->" },
+        { "id": "g4h-q", "type": "quote", "content": "&lt;b&gt; 2 < 3 and 5 > 4" },
+        { "id": "g4h-code", "type": "paragraph", "content": [{ "type": "text", "text": "<b>", "styles": { "code": true } }, { "type": "text", "text": " x", "styles": {} }] },
+        { "id": "g4h-fence", "type": "codeBlock", "props": { "language": "ts" }, "content": "<b>x</b>" },
+        { "id": "g4h-path", "type": "paragraph", "content": "C:\\<dir>" },
+        { "id": "g4h-color", "type": "paragraph", "content": [{ "type": "text", "text": "plain ", "styles": {} }, { "type": "text", "text": "<kbd>k</kbd>", "styles": { "textColor": "red" } }] },
+        {
+          "id": "g4h-table",
+          "type": "table",
+          "content": { "type": "tableContent", "headerRows": 1, "rows": [{ "cells": ["h1", "h2"] }, { "cells": ["<div>x</div>", "c"] }] }
+        }
+      ],
+      "markdown": "\\<b>bold\\</b> a \\<b> c \\<img src=x>\n\n## \\<h1>H\\</h1>\n\n* \\<!-- c -->\n\n> &lt;b&gt; 2 < 3 and 5 > 4\n\n`<b>` x\n\n```ts\n<b>x</b>\n```\n\nC:\\\\\\<dir>\n\nplain <span style=\"color:red\">\\<kbd>k\\</kbd></span>\n\n| h1             | h2         |\n| -------------- | ---------- |\n| \\<div>x\\</div> | c          |\n"
     }
   ]
 }

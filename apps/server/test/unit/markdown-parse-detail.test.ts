@@ -42,8 +42,10 @@ describe("parse 失敗成因", () => {
   it("HTML 註解裡、code 裡的 <script> 不算；<embed> 會 parse 成 file block、不拒絕", async () => {
     expect(await parse("<!-- <script>x</script> -->")).toEqual({ error: "empty_content" });
     for (const md of ["para <!-- <script>x</script> -->", "`<script>x</script>`", "```html\n<script>x</script>\n```"]) expect("error" in (await parse(md)), md).toBe(false);
-    // 這個 parser 不認 `\<` 跳脫：`\<script>` 照樣是元素（以前悄悄丟掉、留下反斜線），現在整筆拒絕
-    expect(await parse("\\<script>x")).toEqual(DROPPED);
+    // `\<` 是字面 `<`：`\<script>x` 是一般段落文字，不是元素
+    const escaped = await parse("\\<script>x");
+    expect("error" in escaped).toBe(false);
+    if (!("error" in escaped)) expect(escaped.blocks.map(b => b.content)).toEqual([[{ type: "text", text: "<script>x", styles: {} }]]);
     const embed = await parse('<embed src="https://example.com/a.pdf">');
     expect("error" in embed).toBe(false);
     if (!("error" in embed)) expect(embed.blocks.map(b => b.type)).toEqual(["file"]);

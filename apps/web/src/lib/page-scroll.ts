@@ -11,6 +11,42 @@ import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 export const PHONE_PAGE_SCROLL_ATTR = "data-phone-page-scroll";
 
 /**
+ * `<html>` 上的旗標屬性：畫面上有對應的元件時才在（`useRootFlag`），`index.css` 的手機頁面層樣式（html／body 的底色、
+ * 擋下拉重新整理）據此套用。元件自己身上的標記（`PHONE_PAGE_SCROLL_ATTR`、`data-phone-list-shown`、`data-mobile-edit-toolbar`）照舊。
+ *
+ * 不寫成 `html:has([…])`：`<html>` 一旦是 `:has()` 的錨點，頁面上任何節點插入或移除，瀏覽器都可能把整份文件的樣式重算一次，
+ * 筆記越長，開關選單、對話框、圖片放大越慢。
+ */
+export const ROOT_FLAGS = {
+  pageScroll: "data-has-phone-page-scroll",
+  listShown: "data-has-phone-list-shown",
+  editToolbar: "data-has-mobile-edit-toolbar",
+} as const;
+
+/** 同一個旗標可能同時有多個元件要（例如換頁時新舊兩份短暫並存）：最後一個離開才拿掉。 */
+const rootFlagCounts = new Map<string, number>();
+
+/** `active` 期間在 `<html>` 上掛 `attr`（空值）。 */
+export function useRootFlag(attr: string, active: boolean): void {
+  useLayoutEffect(() => {
+    if (!active) return;
+    const root = document.documentElement;
+    const count = (rootFlagCounts.get(attr) ?? 0) + 1;
+    rootFlagCounts.set(attr, count);
+    if (count === 1) root.setAttribute(attr, "");
+    return () => {
+      const left = (rootFlagCounts.get(attr) ?? 1) - 1;
+      if (left > 0) {
+        rootFlagCounts.set(attr, left);
+        return;
+      }
+      rootFlagCounts.delete(attr);
+      root.removeAttribute(attr);
+    };
+  }, [attr, active]);
+}
+
+/**
  * `<html>` 上的 CSS 變數：手機上釘在頁面頂端的筆記頁首有多高（px，含瀏海的 safe area）。`index.css` 拿它當筆記區塊的
  * `scroll-margin-top`，捲到段落時才不會把區塊捲到頁首底下。
  */
