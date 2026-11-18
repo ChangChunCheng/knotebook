@@ -169,6 +169,15 @@ describe("sanitizeInboundAwareness", () => {
     expect(nul.get(1)?.cursor).toBeNull();
   });
 
+  it("U9b y-prosemirror 實際送的形狀（沒用到的欄位是 null）→ 正規化後通過，不回報 bad-cursor", () => {
+    const { run } = setup();
+    const wire = { type: { client: 1, clock: 2 }, tname: null, item: { client: 1, clock: 5 }, assoc: 0 };
+    const states = new Map<number, Record<string, unknown>>([[1, { cursor: { anchor: wire, head: wire } }]]);
+    expect(run(states)).toEqual([]);
+    const norm = { type: { client: 1, clock: 2 }, item: { client: 1, clock: 5 }, assoc: 0 };
+    expect(states.get(1)?.cursor).toEqual({ anchor: norm, head: norm });
+  });
+
   it("U10 缺連線或缺身分資料時清空全部並回 no-identity", () => {
     const { run } = setup();
     const a = new Map<number, Record<string, unknown>>([[1, { cursor: null }]]);

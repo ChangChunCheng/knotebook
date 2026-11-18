@@ -29,17 +29,28 @@ const clockAt = (observer: TestClient, clientId: number): number | undefined => 
 /** awareness 走 JSON：比對前先把 Yjs 物件轉成同樣的純 JSON。 */
 const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
-/** 用 Yjs 在 client 自己的 doc 上建一個真的游標：第一段文字的第 index 個字元（第一次呼叫時寫入這段文字）。 */
-function yCursor(doc: Y.Doc, index: number): { anchor: unknown; head: unknown } {
+/** 送出的游標 → server 轉發後預期看到的樣子（正規化、不含 null 欄位）。 */
+const expectedCursor = new WeakMap<object, unknown>();
+/** observer 看到的游標是否等於 sent 正規化後的樣子。 */
+const sameCursor = (observed: unknown, sent: object): boolean => isDeepStrictEqual(observed, expectedCursor.get(sent));
+
+/**
+ * 用 Yjs 在 client 自己的 doc 上建一個真的游標：第一段文字的第 index 個字元（第一次呼叫時寫入這段文字）。
+ * 送出的是 y-prosemirror 實際送的形狀：RelativePosition 物件本身（沒用到的 type／tname／item 是 null），
+ * 不是 relativePositionToJSON 的結果。`root` 時改用根 fragment 的位置（tname 有值、type 為 null）。
+ */
+function yCursor(doc: Y.Doc, index: number, root = false): { anchor: unknown; head: unknown } {
   const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
-  if (fragment.length === 0) {
+  if (fragment.length === 0 && !root) {
     const paragraph = new Y.XmlElement("paragraph");
     paragraph.insert(0, [new Y.XmlText("0123456789".repeat(5))]);
     fragment.insert(0, [paragraph]);
   }
-  const text = (fragment.get(0) as Y.XmlElement).get(0) as Y.XmlText;
-  const pos = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, index));
-  return plain({ anchor: pos, head: pos });
+  const target = root ? fragment : ((fragment.get(0) as Y.XmlElement).get(0) as Y.XmlText);
+  const rel = Y.createRelativePositionFromTypeIndex(target, index);
+  const wire = plain({ anchor: rel, head: rel });
+  expectedCursor.set(wire, plain({ anchor: Y.relativePositionToJSON(rel), head: Y.relativePositionToJSON(rel) }));
+  return wire;
 }
 
 async function scene(tag: string, opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
@@ -79,7 +90,7 @@ async function scene(tag: string, opts: Parameters<typeof buildCollabTestApp>[0]
     markers += 1;
     const cursor = yCursor(sender.doc, markers);
     sender.provider.setAwarenessField("cursor", cursor);
-    await waitFor(`標記 ${markers} 到達`, 5_000, () => isDeepStrictEqual(peer(observer, idOf(sender))?.cursor, cursor));
+    await waitFor(`標記 ${markers} 到達`, 5_000, () => sameCursor(peer(observer, idOf(sender))?.cursor, cursor));
   }
 
   return { ctx, A, B, C, V, note, row, email, sessionA, sessionB, a, b, warns, warnIssues, connectAs, mark };
@@ -95,13 +106,14 @@ describe("collab awareness 防偽（#312）", () => {
       extra: "x".repeat(2000),
       cursor,
     });
-    await waitFor("A 收到 B 的游標", 5_000, () => isDeepStrictEqual(peer(s.a, idOf(s.b))?.cursor, cursor));
+    await waitFor("A 收到 B 的游標", 5_000, () => sameCursor(peer(s.a, idOf(s.b))?.cursor, cursor));
     expect(peer(s.a, idOf(s.b))).toEqual({
       user: { id: s.B.id, name: s.row(s.B.id).displayName, color: collabUserColor(s.B.id) },
       knotebook: { v: 1, kind: "user", role: "editor", avatar: null, since: expect.any(Number) },
-      cursor,
+      cursor: expectedCursor.get(cursor),
     });
     expect(s.warns()).toHaveLength(1);
+    expect(s.warnIssues()).not.toContain("bad-cursor");
     expect(s.warns()[0]!.obj).toMatchObject({ noteId: s.note.id, userId: s.B.id });
     expect(s.warnIssues()).toContain("user-mismatch");
   });
@@ -184,8 +196,17 @@ describe("collab awareness 防偽（#312）", () => {
     }
     const good = yCursor(s.b.doc, 30);
     s.b.provider.setAwarenessField("cursor", good);
-    await waitFor("合法游標到達", 5_000, () => isDeepStrictEqual(peer(s.a, idOf(s.b))?.cursor, good));
+    await waitFor("合法游標到達", 5_000, () => sameCursor(peer(s.a, idOf(s.b))?.cursor, good));
     expect(s.warnIssues()).toContain("bad-cursor");
+  });
+
+  it("AW1b 根 fragment 的位置（tname 有值、type 為 null）也原樣轉發，不記 bad-cursor", async () => {
+    const s = await scene("aw1b");
+    const cursor = yCursor(s.b.doc, 0, true);
+    s.b.provider.setAwarenessField("cursor", cursor);
+    await waitFor("A 收到 B 的根位置游標", 5_000, () => sameCursor(peer(s.a, idOf(s.b))?.cursor, cursor));
+    expect(JSON.stringify(cursor)).toContain('"type":null');
+    expect(s.warnIssues()).not.toContain("bad-cursor");
   });
 
   it("AW6 viewer 冒名、自稱 owner → 顯示為本人、角色 viewer；名字照常顯示，游標一律為 null（唯讀連線不分享位置）", async () => {
@@ -214,7 +235,7 @@ describe("collab awareness 防偽（#312）", () => {
     const b2 = await s.connectAs("editor");
     const taken = yCursor(s.b.doc, 7);
     sendRaw(b2, awarenessFrame(s.note.id, [{ clientId: first, clock: 100, state: { user: { id: s.B.id, name: "B" }, cursor: taken } }]));
-    await waitFor("A 看到接手後的狀態", 5_000, () => isDeepStrictEqual(peer(s.a, first)?.cursor, taken));
+    await waitFor("A 看到接手後的狀態", 5_000, () => sameCursor(peer(s.a, first)?.cursor, taken));
     expect(peer(s.a, first)?.user?.id).toBe(s.B.id);
     expect(s.warns()).toHaveLength(0);
 
@@ -222,7 +243,7 @@ describe("collab awareness 防偽（#312）", () => {
     await waitFor("第一條連線收到接手的 clock", 5_000, () => (clockAt(s.b, first) ?? 0) >= 100);
     const back = yCursor(s.b.doc, 8);
     s.b.provider.setAwarenessField("cursor", back);
-    await waitFor("A 看到第一條連線拿回 id", 5_000, () => isDeepStrictEqual(peer(s.a, first)?.cursor, back));
+    await waitFor("A 看到第一條連線拿回 id", 5_000, () => sameCursor(peer(s.a, first)?.cursor, back));
     // 第二條連線這時才設定自己的狀態
     b2.provider.setAwarenessField("user", { id: s.B.id, name: "B", color: "#000000" });
     await waitFor("A 看到第二條連線自己的 id", 5_000, () => peer(s.a, idOf(b2))?.user?.id === s.B.id);

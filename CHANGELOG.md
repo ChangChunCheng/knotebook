@@ -7,7 +7,9 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **People who can open a note can no longer pose as someone else in its presence** (#312). The name, color, role and profile picture on a cursor and in the note header's row of people now come from the account the connection signed in with, not from what the browser reports, so nobody can show up as another person or overwrite another person's or an AI's cursor and name. Someone whose tab crashes after their connection dropped and came back now leaves the row at once. A color can no longer carry style text into other people's pages, and a malformed cursor can no longer break other people's editors. Other people's selections are now highlighted in their color. A read-only person's position in the note is not shared, even by a modified client. A collaboration message larger than twice the largest note size plus 1 MiB (11 MiB by default) now closes the connection; see [Known limitations](docs/known-limitations.md) and [Self-hosting](docs/self-hosting.md).
 
 ## [0.17.0] - 2026-11-18
 

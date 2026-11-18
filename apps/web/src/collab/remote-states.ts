@@ -41,7 +41,7 @@ export function safeCursorColor(user: unknown): string {
   return typeof user.color === "string" && HEX_COLOR.test(user.color) ? user.color : FALLBACK_COLOR;
 }
 
-// y-prosemirror 會改寫 user 預設值，BlockNote 也以 clientID 快取游標元素，所以同一個輸入物件要回同一個輸出物件。
+// 同一個輸入物件回同一個輸出物件：身分穩定，裝飾每次重建時也不必重新淨化。
 const cache = new WeakMap<object, Record<string, unknown>>();
 
 function sanitizeState(state: Record<string, unknown>): Record<string, unknown> {

@@ -46,6 +46,13 @@ describe("sanitizeRemoteStates", () => {
     expect(out.get(2)?.cursor).toEqual(cursor);
   });
 
+  it("y-prosemirror 實際送的形狀（沒用到的欄位是 null）→ 接受並正規化", () => {
+    const wire = { type: null, tname: "knotebook", item: null, assoc: 0 };
+    const out = sanitizeRemoteStates(new Map<number, unknown>([[1, { user: { id: "a", name: "A" }, cursor: { anchor: wire, head: wire } }]]));
+    const norm = { tname: "knotebook", assoc: 0 };
+    expect(out.get(1)?.cursor).toEqual({ anchor: norm, head: norm });
+  });
+
   it("丟掉不是物件的狀態；其他欄位保留；user 只剩 id、name、color", () => {
     const out = sanitizeRemoteStates(
       new Map<number, unknown>([

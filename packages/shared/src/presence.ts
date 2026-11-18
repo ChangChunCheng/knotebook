@@ -70,8 +70,9 @@ function parseId(x: unknown): { client: number; clock: number } | null {
 
 function parsePosition(x: unknown): RelativePositionJson | null {
   if (!isObject(x)) return null;
-  const hasType = x.type !== undefined;
-  const hasTname = x.tname !== undefined;
+  // y-prosemirror 送的是 RelativePosition 物件本身（不是 JSON 形式），沒用到的欄位是 null；null 視同沒有。
+  const hasType = x.type != null;
+  const hasTname = x.tname != null;
   if (hasType === hasTname) return null;
   const out: RelativePositionJson = {};
   if (hasType) {
@@ -82,7 +83,7 @@ function parsePosition(x: unknown): RelativePositionJson | null {
     if (x.tname !== YDOC_FRAGMENT) return null;
     out.tname = YDOC_FRAGMENT;
   }
-  if (x.item !== undefined) {
+  if (x.item != null) {
     const item = parseId(x.item);
     if (!item) return null;
     out.item = item;
