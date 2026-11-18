@@ -10,7 +10,7 @@ import { ImageIcon, KeyboardDown, Pilcrow, RotateCcw, RotateCw } from "@/compone
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { cn } from "@/lib/utils";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
-import { useStickyTopInset } from "@/lib/page-scroll";
+import { ROOT_FLAGS, useRootFlag, useStickyTopInset } from "@/lib/page-scroll";
 import { MobileToolbarButton } from "./MobileToolbarButton";
 import { ColorPanel } from "./ColorPanel";
 import { panelHeightPx, rememberKeyboardInset, setColorPanelHeight } from "./toolbar-footprint";
@@ -92,6 +92,8 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
   const { t } = useTranslation();
   const { actions, editable, state, open } = useAiSession();
   const inset = useKeyboardInset();
+  // 編輯中擋下拉重新整理：`index.css` 看 `<html>` 上的旗標（見 `ROOT_FLAGS`）。
+  useRootFlag(ROOT_FLAGS.editToolbar, true);
   const keyboardOpen = isKeyboardOpen(inset);
   const [mode, setModeState] = useState<MobileToolbarMode>("main");
   const colorOpen = mode === "color";

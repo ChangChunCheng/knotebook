@@ -7,7 +7,13 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **While an image or a diagram is zoomed in, the page's scrollbar is left as an empty strip.** This applies to the phone layout on a screen that shows scrollbars (for example a narrow Chrome or Edge window on a computer). The page behind still can't be scrolled and doesn't shift sideways; the dark background stops where the scrollbar was, and clicking there neither closes the zoomed view nor moves the keyboard focus out of it.
+
+### Fixed
+
+- **Zooming in on an image or a diagram on a phone no longer gets slower the longer the note is.** Opening and closing the full-screen view, pinching to zoom and dragging all slowed down as a note grew, because the browser kept recomputing the styles of the whole note. A diagram that hasn't been drawn yet now pulses only while it is near the part of the note on screen.
 
 ## [0.17.0] - 2026-11-18
 
