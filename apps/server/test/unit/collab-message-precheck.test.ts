@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { BOGUS_MESSAGE_LIMIT, classifyClientMessage } from "../../src/collab/server.js";
+import { AWARENESS_MESSAGE_MAX_BYTES, BOGUS_MESSAGE_LIMIT, classifyClientMessage } from "../../src/collab/server.js";
 
 /** 手工組 wire 訊息：varString(docName) + varUint(type) [+ varUint(subtype)]。
  * 這裡刻意不用 lib0（手組 varint）——測試對 wire 格式的理解要獨立於實作共用的工具。 */
@@ -66,6 +66,22 @@ describe("classifyClientMessage（issue #50 訊息預檢）", () => {
     expect(classifyClientMessage(new Uint8Array([1, 65])).verdict).toBe("malformed");
     // Auth 有 type、沒有 subtype。
     expect(classifyClientMessage(frame(NOTE, 2)).verdict).toBe("malformed");
+  });
+
+  it("awareness（type 1）訊息：恰好 AWARENESS_MESSAGE_MAX_BYTES → ok；多 1 byte → bogus（#312）", () => {
+    // 分類器只讀表頭與總長度，type byte 之後補零即可。
+    const sized = (type: number, total: number): Uint8Array => {
+      const out = new Uint8Array(total);
+      out.set(frame(NOTE, type));
+      return out;
+    };
+    expect(classifyClientMessage(sized(1, AWARENESS_MESSAGE_MAX_BYTES)).verdict).toBe("ok");
+    const over = classifyClientMessage(sized(1, AWARENESS_MESSAGE_MAX_BYTES + 1));
+    expect(over.verdict).toBe("bogus");
+    expect(over.type).toBe(1);
+    expect(over.docNamePrefix).toBe(NOTE);
+    // 只限 awareness：文件更新（type 0）不受這個上限影響。
+    expect(classifyClientMessage(sized(0, AWARENESS_MESSAGE_MAX_BYTES + 1)).verdict).toBe("ok");
   });
 
   it("上限常數 sanity：>1（滾動升級寬限）且有限", () => {

@@ -80,6 +80,7 @@ import {
   COLLAB_REJECT_SERVER_ERROR,
   COLLAB_REJECT_CLIENT_OUTDATED,
   NOTE_SCHEMA_VERSION,
+  type PresenceRole,
 } from "@knotebook/shared";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/index.js";
@@ -95,6 +96,13 @@ import { createNoteStore, docClock, type NoteStoreSearchHooks, type StoreLogger 
 import { createVersionService, type VersionService } from "./versions.js";
 import { LastActiveTracker, type LastActiveTrackerOptions } from "../auth/last-active.js";
 import { FixedWindowLimiter } from "../http/rate-limit.js";
+import {
+  SERVER_PRESENCE_ORIGIN,
+  ServerOwnedClients,
+  sanitizeInboundAwareness,
+  type AwarenessIssue,
+  type ConnectionPresence,
+} from "./awareness-sanitize.js";
 
 /** Hocuspocus 的 `onStoreDocument` debounce（ms）。production 一律 2000。 */
 const STORE_DEBOUNCE_MS = 2_000;
@@ -223,6 +231,13 @@ export const BOGUS_MESSAGE_LIMIT = 10;
  * 紀律：訊息量的天花板不得由對端決定。 */
 const BOGUS_TERMINATE_LOG_LIMIT = { limit: 10, windowMs: 60_000 } as const;
 
+/**
+ * #312：client→server awareness 訊息的總長度上限（bytes）。真 client 的一則 awareness
+ * （名字、角色、頭貼參照、游標）不到 1 KiB；超過的一律當 bogus 吞掉並計數，
+ * 不必等解碼後才由淨化丟棄。
+ */
+export const AWARENESS_MESSAGE_MAX_BYTES = 16384;
+
 /** lib0 varUint（低位在前、最高位元＝continuation）。回傳 null＝越界/畸形。 */
 function readVarUintAt(data: Uint8Array, pos: number): { value: number; next: number } | null {
   let value = 0;
@@ -257,8 +272,9 @@ export interface ClientMessageCheck {
  * 對自己有權限的筆記連上後，用未知 type 灌訊息＝一則換一行未結構化 stderr、連線永不
  * 關（issue #50 對 4.5.0 dist 的核實）。預檢在訊息進 Hocuspocus 之前分類：
  * - `ok` → 原樣轉交；
- * - `bogus`（未知 type／Auth 非 Token 子型別）→ **吞掉不轉交**（轉交只會產生那行
- *   console.error）並由呼叫端計數，超過 {@link BOGUS_MESSAGE_LIMIT} 即 terminate；
+ * - `bogus`（未知 type／Auth 非 Token 子型別／超過 {@link AWARENESS_MESSAGE_MAX_BYTES} 的
+ *   Awareness(1)，#312）→ **吞掉不轉交**（前兩者轉交只會產生那行 console.error，超大的
+ *   awareness 不是真 client 會送的東西）並由呼叫端計數，超過 {@link BOGUS_MESSAGE_LIMIT} 即 terminate；
  * - `malformed`（varint 畸形/長度越界）→ 原樣轉交——Hocuspocus 對解不開的訊息會
  *   throw 並自行關線（`processMessages` 的 catch），本來就自我設限，不需要我們管。
  */
@@ -282,6 +298,7 @@ export function classifyClientMessage(data: Uint8Array): ClientMessageCheck {
     if (subtype === null) return { verdict: "malformed" };
     return subtype.value === 0 ? { verdict: "ok" } : bogus();
   }
+  if (type.value === 1 && data.length > AWARENESS_MESSAGE_MAX_BYTES) return bogus();
   // ⚠ `ok` 集合＝**MessageReceiver.apply 實際有 case 的 type**，不是 MessageType enum
   // 的範圍（enum 有 0..10，但 SyncStatus(8)/Ping(9)/Pong(10) 在
   // 4.5.0 的 switch **沒有 case**、落在同一個 console.error-and-continue 的 default
@@ -308,6 +325,11 @@ export interface CollabContext {
    * AI／API 的直連 ctx（`notes/editing/session.ts` 的 `DirectCtx`）沒有。
    */
   sessionId?: string;
+  /**
+   * #312：這條連線在 awareness 上該顯示的身分（顯示名、頭貼、角色、連上的時間），取自握手時的驗證結果。
+   * WebSocket 連線一定有；直連 ctx 沒有。名字與頭貼是連上當下的快照，角色以 `ConnectionHandle.presenceRole` 為準。
+   */
+  presence?: ConnectionPresence;
 }
 
 export interface CollabDeps {
@@ -339,6 +361,8 @@ export interface ConnectionHandle {
    * （改密碼會換 session，同一台裝置的連線接著用新的 sid 續留）。登出時 `onSessionRevoked` 靠它找出這台裝置的連線。
    */
   sessionId: string | undefined;
+  /** #312：awareness 上顯示的角色。握手時取自 context，每次重驗通過就換成重算的角色（降級成 viewer 會跟著變）。 */
+  presenceRole: PresenceRole;
   /** 要求 client 重送目前的 token（fire-and-forget，無內建 timeout）。 */
   requestToken(): void;
   /** 以指定 reason 關閉「這一條」連線（非 `closeConnections` 的全文件廣播）。 */
@@ -500,6 +524,11 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
   const rejectLogLimiter = new FixedWindowLimiter(REJECT_LOG_LIMIT);
   const serverErrorLogLimiter = new FixedWindowLimiter(REJECT_LOG_LIMIT);
   const suppressionNoticeLimiter = new FixedWindowLimiter(SUPPRESSION_NOTICE_LIMIT);
+  // #312：awareness 淨化日誌的 per-user 節流（client 每秒可送很多則，每則都寫一行就是放大器）。
+  const awarenessLogLimiter = new FixedWindowLimiter(REJECT_LOG_LIMIT);
+  const awarenessNoticeLimiter = new FixedWindowLimiter(SUPPRESSION_NOTICE_LIMIT);
+  /** #312：每份文件中由 server 自己寫的 awareness client id（AI 代理頭像）。 */
+  const serverOwned = new ServerOwnedClients();
 
   /**
    * 這個人在不在「刪除當下的可見名單」上。名單抓取失敗（`null`）一律回 false——**那個 fallback
@@ -576,6 +605,25 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
     }
     if (cause === "server-error") log.error({ ...line, err: ctx.err }, "collab 握手被拒");
     else log.info(line, phase === "handshake" ? "collab 握手被拒" : "collab 重驗後關閉連線");
+  }
+
+  /**
+   * #312：awareness 被淨化時的日誌。連線照常保持（被改寫的內容也照常轉發）——這只是留下
+   * 「有人在送不合規的 awareness」的訊號。同一則訊息的問題去重後寫成一行（一則訊息可帶上千筆
+   * 條目），並套 per-user 節流。**不記狀態內容**（名字、游標都是 client 自報的）。
+   */
+  function logAwarenessIssues(documentName: string, userId: string | undefined, issues: readonly AwarenessIssue[]): void {
+    const key = userId ?? "anonymous";
+    if (!awarenessLogLimiter.consume(key)) {
+      if (awarenessNoticeLimiter.consume(key)) {
+        log.warn({ userId }, "collab awareness 日誌已達每分鐘上限，其餘略過");
+      }
+      return;
+    }
+    log.warn(
+      { noteId: documentName.slice(0, LOGGED_NOTE_ID_MAX), userId, issues: [...new Set(issues)] },
+      "collab awareness 含不合規內容，已丟棄或改寫"
+    );
   }
 
   /** 拒絕這次握手：留下日誌（見 `logReject`）再丟出 `CollabAuthError`。 */
@@ -734,7 +782,16 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
           connectionConfig.readOnly = true;
         }
 
-        return { userId: claims.userId, sessionId: claims.sid };
+        // #312：awareness 上的身分一律取自這裡（client 自報的 `user`／`knotebook` 會被整個重建）。
+        // 頭貼還沒做好顯示圖（pending）時照樣送參照，與 web 一致——讀不到圖的人退回顯示首字。
+        const { displayName, avatar } = gateResult.user;
+        const presence: ConnectionPresence = {
+          name: displayName,
+          avatar: avatar ? { id: avatar.id, v: avatar.v } : null,
+          since: Date.now(),
+          role,
+        };
+        return { userId: claims.userId, sessionId: claims.sid, presence };
       } catch (err) {
         if (err instanceof CollabAuthError) throw err;
         // 未預期例外（`resolveRole`／`gate.check` 撞到 DB 抖動…）。不接的話 Hocuspocus 會
@@ -776,6 +833,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         noteId: documentName,
         userId: context.userId,
         sessionId: context.sessionId,
+        presenceRole: context.presence?.role ?? "viewer",
         requestToken: () => connection.requestToken(),
         close: (reason: string) => connection.close({ code: APP_CLOSE_CODE, reason }),
         setReadOnly: (v: boolean) => {
@@ -864,6 +922,8 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         // #388：之後的登出以這個 sid 找這條連線（見 ConnectionHandle.sessionId）。
         handle.sessionId = claims.sid;
         handle.setReadOnly(role === "viewer");
+        // #312：之後的 awareness 以重算的角色重建（名字與頭貼仍是連上當下的快照）。
+        handle.presenceRole = role;
       } finally {
         for (const cb of callbacks ?? []) {
           try {
@@ -872,6 +932,48 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
             // 回呼是呼叫方（撤權的 clearTimeout）的責任，失敗不得影響連線。
           }
         }
+      }
+    },
+
+    // #312：入站 awareness 一律依「這條連線是誰」重建（規則見 `awareness-sanitize.ts`）。
+    // 角色看索引上的 handle（重驗會更新）；`connected` 之前就排進來的訊息還沒有 handle，退回握手時的角色。
+    // ⚠ 這個 hook 一旦 throw，Hocuspocus 會關掉這條連線——任何意外都改成「整則丟棄」並記一行 error。
+    beforeHandleAwareness: async ({ states, document, connection, context, socketId, documentName }) => {
+      const ctx = context as Partial<CollabContext> | undefined;
+      try {
+        const role = handles.get(connectionKey(socketId, documentName))?.presenceRole ?? ctx?.presence?.role;
+        const issues = sanitizeInboundAwareness({
+          states,
+          document,
+          connection,
+          userId: ctx?.userId,
+          presence: ctx?.presence && role ? { ...ctx.presence, role } : undefined,
+          readOnly: connection?.readOnly ?? true,
+          serverOwned: serverOwned.get(document),
+        });
+        // 連線關閉後佇列裡剩下的訊息會落到這裡（整則丟棄、回 no-identity）：那是正常的收尾，不是不合規內容，不記。
+        const closedConnection = connection !== undefined && !document.hasConnection(connection);
+        if (issues.length > 0 && !closedConnection) logAwarenessIssues(documentName, ctx?.userId, issues);
+      } catch (err) {
+        states.clear();
+        log.error({ err, noteId: documentName.slice(0, LOGGED_NOTE_ID_MAX) }, "collab awareness 淨化失敗，整則丟棄");
+      }
+    },
+
+    // #312：server 自己寫的 awareness（AI 代理頭像）登記為 server 擁有，之後任何連線都不能改寫或接手。
+    // 同時從每條連線的登記裡拿掉這些 id：否則先送過這個 id 的連線（佔位）在關閉時會把 AI 的狀態一起移除。
+    // 不 await 的 hook（Hocuspocus 對 awareness 事件只發不等），所以絕不能 throw。
+    onAwarenessUpdate: async ({ document, transactionOrigin, added, updated }) => {
+      if (transactionOrigin !== SERVER_PRESENCE_ORIGIN) return;
+      try {
+        const ids = [...added, ...updated];
+        serverOwned.mark(document, ids);
+        for (const connection of document.getConnections()) {
+          const clients = document.getClients(connection);
+          for (const id of ids) clients.delete(id);
+        }
+      } catch (err) {
+        log.error({ err, noteId: document.name.slice(0, LOGGED_NOTE_ID_MAX) }, "collab AI 頭像登記失敗");
       }
     },
   });
