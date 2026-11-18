@@ -281,7 +281,7 @@ export function HeadingOutline({ headings, activeId, placement, top = OUTLINE_TO
                       "bg-accent text-brand opacity-0 transition-opacity motion-reduce:transition-none group-hover/pin:opacity-100 group-focus-within/pin:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-60",
                   )}
                 >
-                  <Pin className="h-4 w-4" />
+                  <Pin className="h-4 w-4" fill={pinned ? "currentColor" : "none"} />
                 </button>
               )}
               {showClose && (

@@ -10,6 +10,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 ### Changed
 
 - **While an image or a diagram is zoomed in, the page's scrollbar is left as an empty strip.** This applies to the phone layout on a screen that shows scrollbars (for example a narrow Chrome or Edge window on a computer). The page behind still can't be scrolled and doesn't shift sideways; the dark background stops where the scrollbar was, and clicking there neither closes the zoomed view nor moves the keyboard focus out of it.
+- **The pin button of the heading outline shows a filled pin while the outline is pinned**, so pinned and unpinned are easy to tell apart.
 
 ### Fixed
 
