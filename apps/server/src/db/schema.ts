@@ -643,6 +643,8 @@ export const noteSearchSections = pgTable(
     check("nss_source_id_chk", sql`(${t.sourceKind} = 'note') = (${t.sourceId} is null)`),
     check("nss_section_id_chk", sql`${t.sectionId} ~ '^[A-Za-z0-9_-]{1,64}$'`),
     index("nss_note_idx").on(t.noteId, t.sourceKind, t.ord),
+    // pg_trgm GIN index for the body LIKE in `notes/search-sql.ts` (queries with 3+ letters/digits); migration 0042 creates the extension first.
+    index("nss_body_trgm_idx").using("gin", sql`lower(${t.body}) gin_trgm_ops`),
   ],
 );
 
