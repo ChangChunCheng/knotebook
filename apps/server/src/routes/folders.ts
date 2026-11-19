@@ -1,9 +1,4 @@
-/**
- * 資料夾 REST。讀取收 `authenticateAny("notes:read")`
- * （同 `GET /api/notes`）；寫入一律 cookie-only（`app.authenticate`；外部程式走 MCP），扣 `folder` 桶（在服務層；不與內容寫入的 `edit` 共桶，見 `FOLDER_LIMIT`）。
- * body 裡的 id（`parentId`、`space.groupId`、`folderId`）在這裡轉小寫後交服務層；UUID 形由服務層驗（非 UUID 與不存在同形）。
- * 本檔沒有交易（S14 不登記）；交易都在 `folders/service.ts`。
- */
+// Body ids are lowercased here; the service layer validates the UUID shape (a non-UUID looks like a nonexistent id).
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { FolderDeleteResultDto, FolderListDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
@@ -15,19 +10,15 @@ const spaceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("shared") }).strict(),
   z.object({ kind: z.literal("group"), groupId: z.string() }).strict(),
 ]);
-/** 位置恰一種：`parentId` 或 `space`。 */
 const createBodySchema = z.union([
   z.object({ name: z.string(), parentId: z.string() }).strict(),
   z.object({ name: z.string(), space: spaceSchema }).strict(),
 ]);
-/** 至少一個；`parentId: null`＝根層。 */
 const updateBodySchema = z
   .object({ name: z.string().optional(), parentId: z.string().nullable().optional() })
   .strict()
   .refine(b => b.name !== undefined || b.parentId !== undefined, "Invalid request body: send at least one field.");
-/** `folderId: null`＝根層（必填；非 UUID 與不存在同形，由服務層判）。 */
 const placeBodySchema = z.object({ folderId: z.string().nullable() }).strict();
-/** 可省（沒有 body＝現行行為）；`onlyIfEmpty: true`＝只刪空資料夾。 */
 const deleteBodySchema = z.object({ onlyIfEmpty: z.boolean().optional() }).strict();
 
 export function foldersRoutes(deps: FolderServiceDeps) {
@@ -73,7 +64,7 @@ export function foldersRoutes(deps: FolderServiceDeps) {
       return out.result satisfies FolderDeleteResultDto;
     });
 
-    // 放在這裡不放 `routes/notes.ts`：資料夾的入口檢查與錯誤形都在 `folders/service.ts`。
+    // Entry checks and error shapes live in folders/service.ts, hence not in routes/notes.ts.
     app.put("/api/notes/:id/folder", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const parsed = placeBodySchema.safeParse(request.body ?? {});

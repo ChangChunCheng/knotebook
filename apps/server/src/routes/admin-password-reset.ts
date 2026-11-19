@@ -1,9 +1,4 @@
-/**
- * #286 管理員替使用者產生／取消一次性重設密碼連結（`requireAdmin`）。
- *
- * 不放進 `admin-users.ts`：本檔列在 `test/unit/s14-structure.test.ts` 的 `ROUTE_FILES`，兩支交易都受 ④⑤ 掃描。
- * log 與回應絕不含 token 明文或 `token_hash`（201 回應的 `token` 除外）；產生交易的非預期錯誤一律遮蔽。
- */
+// Logs and responses never contain the token or token_hash (the 201 returns the token once).
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
@@ -27,7 +22,6 @@ export interface AdminPasswordResetRouteDeps {
 
 export function adminPasswordResetRoutes(deps: AdminPasswordResetRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    // 判斷順序：UUID → body → 帳密有效值 → 交易（404／409）。帳密關閉時打不存在的 id → 403。
     app.post("/api/admin/users/:id/password-reset", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "user_not_found", "No user with that id.");
@@ -44,17 +38,17 @@ export function adminPasswordResetRoutes(deps: AdminPasswordResetRouteDeps) {
         issued = await deps.db.transaction(tx => issuePasswordResetInTx(tx, input));
       } catch (err) {
         if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
-        // INSERT 的參數帶 token_hash：drizzle 的錯誤會把參數串進 message，原樣交給全域 handler 就進 log。
+        // INSERT params carry token_hash; redact so it doesn't reach the log.
         throw redactDbError(request.log, err, "產生重設密碼連結");
       }
       const { linkId, expiresAt, replaced } = issued;
       request.log.info({ userId: request.user!.id, targetUserId: id, linkId, expiresAt, replaced }, "產生重設密碼連結");
-      // 清理沒有排程，產生成功後機會性執行；失敗不影響回應。
+      // No scheduler: opportunistic cleanup; failure doesn't affect the response.
       void deleteEndedOneTimeLinks(deps.db).catch((err: unknown) => request.log.warn({ err }, "清理一次性連結失敗"));
       return reply.code(201).send({ token, expiresAt: expiresAt.toISOString() });
     });
 
-    // 取消永遠允許：不看帳密開關、不看停用。本來就沒有也是 204。
+    // Cancelling ignores the password-login switch and disabled state.
     app.delete("/api/admin/users/:id/password-reset", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "user_not_found", "No user with that id.");
@@ -64,7 +58,6 @@ export function adminPasswordResetRoutes(deps: AdminPasswordResetRouteDeps) {
         ({ revoked } = await deps.db.transaction(tx => cancelPasswordResetsInTx(tx, input)));
       } catch (err) {
         if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
-        // 這一句不帶 token_hash 參數，但動的是含雜湊欄的列——不讓錯誤本體進 log（同 admin-auth.ts 刪除登入服務）。
         throw redactDbError(request.log, err, "取消重設密碼連結");
       }
       request.log.info({ userId: request.user!.id, targetUserId: input.targetUserId, revoked }, "取消重設密碼連結");

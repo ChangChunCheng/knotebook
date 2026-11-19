@@ -19,30 +19,25 @@ export interface OidcLinkRouteDeps {
   limiters: { oidcLogin: FixedWindowLimiter };
 }
 
-/** 一律要求 JSON body（`{}`，strict）——CSRF hook 只擋「帶 body 且非 JSON」，無 body 的 POST 會被放行，所以這裡要 body。 */
+/** The CSRF hook only blocks bodies that aren't JSON, so a bodyless POST would pass: require a body. */
 const linkBodySchema = z.object({}).strict();
 
-/**
- * #187：設定頁的手動連結起點。session-only（`app.authenticate` 只認 cookie；Bearer → 401）。回 `{url}`，前端
- * `location.assign`——不開「有副作用的 GET」。callback 在 `routes/oidc.ts` 的 `intent: "link"` 分支。
- */
 export function oidcLinkRoutes(deps: OidcLinkRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.post<{ Params: { providerId: string } }>("/api/auth/oidc/link/:providerId", { preHandler: app.authenticate }, async (request, reply) => {
       if (!linkBodySchema.safeParse(request.body).success) return sendError(reply, 400, "invalid_body", "Invalid request body.");
-      // 臨時密碼還沒換掉的帳號不准連（比照建 PAT：擋在限流之前，被擋的請求不吃額度）。
       if (request.user!.mustChangePassword) return sendError(reply, 403, "forbidden", "Change your password before doing this.");
       if (!deps.limiters.oidcLogin.consume(request.ip)) return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
       const raw = request.params.providerId;
       const provider = UUID_RE.test(raw) ? await loadEnabledProvider(deps.db, raw.toLowerCase()) : null;
       if (provider === null) return sendError(reply, 404, "provider_not_found", "No enabled sign-in service with that id.");
-      // 預檢（權威判斷在 callback 的鎖內）：本人已有 issuer＝其 effective issuer 的身分。
       const effectiveIssuer = provider.resolvedIssuer ?? provider.issuerUrl;
       const [existing] = await deps.db
         .select({ id: userIdentities.id })
         .from(userIdentities)
         .where(and(eq(userIdentities.userId, request.user!.id), eq(userIdentities.issuer, effectiveIssuer)))
         .limit(1);
+      // Advisory; the authoritative check runs under the lock in the callback.
       if (existing !== undefined) return sendError(reply, 409, "identity_already_linked", "You've already linked this sign-in service.");
       let url: URL;
       try {

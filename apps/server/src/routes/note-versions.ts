@@ -1,9 +1,3 @@
-/**
- * 筆記版本歷史 REST。全部 cookie（`app.authenticate`）；PAT／MCP 不能用。
- * 判準六支一致：`:id` 先 `UUID_RE` → `resolveRole`：none → 404 `not_found`、viewer → 403 `forbidden`（"You don't have edit access to this note."）。
- * 寫入四支（存、套用、改名、刪除）吃既有 `edit` 桶，排在角色檢查之後。apply 只在 `writes.available` 時註冊（與 `/edits` 同閘門）。
- * 參數（不變量 S）：`:seq` 走 `/^[1-9]\d{0,9}$/` 且 ≤ 2147483647，否則 404；`before` 同規則、`limit` 1..100、`kind` 只收 manual／auto，否則 400。
- */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
@@ -37,7 +31,6 @@ const INT4_MAX = 2147483647;
 const SEQ_RE = /^[1-9]\d{0,9}$/;
 const LIMIT_RE = /^[1-9]\d{0,2}$/;
 
-/** `:seq`／`before` 的唯一解析點：只收正規十進位、≤ int4。 */
 export function parseSeq(raw: string): number | null {
   if (!SEQ_RE.test(raw)) return null;
   const n = Number(raw);
@@ -47,17 +40,14 @@ export function parseSeq(raw: string): number | null {
 const listQuerySchema = z.object({ before: z.string().optional(), limit: z.string().optional(), kind: z.enum(["manual", "auto"]).optional() }).strict();
 const saveBodySchema = z.object({ name: z.string().optional() }).strict();
 const renameBodySchema = z.object({ name: z.string().nullable() }).strict();
-// 形＝shared 的 `ApplyVersionBody`（`satisfies` 讓兩邊漂移在編譯期紅）。
 const applyBodySchema = z.object({ versionId: z.string().regex(UUID_RE), discardUnsaved: z.boolean() }).strict() satisfies z.ZodType<ApplyVersionBody>;
 
-/** #272：基底參照。`baseSeq` 為 null → null；id 為 null（升級前就已刪的舊資料）或查不到 → 已刪除；否則帶名稱。 */
 function baseRefOf(baseSeq: number | null, id: string | null, names: Map<string, string | null>): VersionBaseRefDto | null {
   if (baseSeq === null) return null;
   if (id === null || !names.has(id)) return { id, name: null, deleted: true };
   return { id, name: names.get(id) ?? null, deleted: false };
 }
 
-/** 一句查這篇筆記裡這些 id 還在不在、叫什麼（不選 ydoc）。 */
 async function versionNames(db: Db, noteId: string, ids: string[]): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   if (ids.length === 0) return out;
@@ -82,11 +72,6 @@ function toVersionDto(r: NoteVersionRow, handles: Map<string, string>, avatars: 
   };
 }
 
-/**
- * editors 的 handle 一次查（`inArray`，筆數＝這一頁出現的不同使用者數）；刪除的使用者 → ""。
- * 頭貼參照另一句（同一批 id；AI 寫入的列也是該使用者本人的頭貼）；刪除的使用者查不到 → null。
- * #272：基底在這一頁的直接用頁內名稱，其餘（不在本頁、被 kind 篩掉）一句查；查不到＝已刪除。
- */
 export async function toVersionDtos(db: Db, noteId: string, rows: NoteVersionRow[]): Promise<VersionDto[]> {
   const ids = [...new Set(rows.flatMap(r => r.editors.map(e => e.user_id)))].filter(id => UUID_RE.test(id));
   const handles = new Map<string, string>();
@@ -100,7 +85,6 @@ export async function toVersionDtos(db: Db, noteId: string, rows: NoteVersionRow
   return rows.map(r => toVersionDto(r, handles, avatars, names));
 }
 
-/** #272：`currentOf` 的結果補上 `base`（讀 `notes.version_base_version_id`）。清單與套用回應共用。 */
 export async function withCurrentBase(db: Db, noteId: string, current: VersionCurrentCore): Promise<VersionCurrentDto> {
   if (current.baseSeq === null) return { ...current, base: null };
   const [n] = await db.select({ id: notes.versionBaseVersionId }).from(notes).where(eq(notes.id, noteId)).limit(1);
@@ -111,7 +95,6 @@ export async function withCurrentBase(db: Db, noteId: string, current: VersionCu
 
 export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    /** none → 404、viewer → 403；回 true＝可以往下走。 */
     async function canEdit(reply: FastifyReply, userId: string, noteId: string): Promise<boolean> {
       const role = await resolveRole(deps.db, userId, noteId);
       if (role === "none") {
@@ -167,7 +150,7 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
         .where(and(eq(noteVersions.noteId, id), eq(noteVersions.seq, seq)))
         .limit(1);
       if (!row) return sendError(reply, 404, "not_found", VERSION_NOT_FOUND);
-      // 搬移會清空版本，讓同一個 seq 指向不同內容——不得被任何快取留住（web 以 id 當快取鍵）。
+      // Moving clears versions, so one seq can mean different content; the web keys its cache by id.
       reply.header("cache-control", "private, no-store");
       return reply.send({ id: row.id, seq: row.seq, ydoc: Buffer.from(row.ydoc).toString("base64") } satisfies VersionSnapshotDto);
     });
@@ -181,6 +164,7 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
       if (!name.ok) return sendError(reply, 400, "invalid_body", INVALID_NAME);
       const userId = request.user!.id;
       if (!(await canEdit(reply, userId, id))) return reply;
+      // Version writes share the edit limiter.
       if (!deps.limiters.edit.consume(userId)) return tooMany(reply);
       const out = await deps.writes.saveVersion(request.log, { noteId: id, userId, name: name.name });
       if (!out.ok) {
@@ -209,15 +193,12 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
         });
         if (!out.ok) {
           if (out.kind === "busy") return sendError(reply, 503, "server_busy", "The note is being written right now. Try again in a moment.");
-          // #181：授權之後被移入垃圾桶（或正被移入）→ 同授權 none 的 404。
           if (out.kind === "gone") return sendError(reply, 404, "not_found", NOTE_NOT_FOUND);
-          // 套回的版本比現況大、而且超過筆記大小上限（`notes/note-size.ts`）。
           if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
           if (out.code === "not_found") return sendError(reply, 404, "not_found", VERSION_NOT_FOUND);
           if (out.code === "version_mismatch") return sendError(reply, 409, "version_mismatch", "That version no longer exists or has been replaced. Reload and try again.");
           return sendError(reply, 409, "version_unsaved_changes", "The note has changes that aren't in any saved version.");
         }
-        // 回「套用全部完成後的實際 current」——沒有 WS 連線時 disconnect 內已卸載（#272 起卸載不切版）。
         const current = await deps.versions.currentOf(id);
         if (current === null) return sendError(reply, 404, "not_found", NOTE_NOT_FOUND);
         return reply.send({ current: await withCurrentBase(deps.db, id, current) } satisfies ApplyVersionResultDto);
@@ -237,7 +218,7 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
       const userId = request.user!.id;
       if (!(await canEdit(reply, userId, id))) return reply;
       if (!deps.limiters.edit.consume(userId)) return tooMany(reply);
-      // 任何 PATCH 都把 kind 變 manual（自動版本事後命名＝轉手動、永久保留）。
+      // Naming an automatic version converts it to manual (kept permanently).
       const [row] = await deps.db
         .update(noteVersions)
         .set({ name: name.name, kind: "manual" })
@@ -257,8 +238,7 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
       const userId = request.user!.id;
       if (!(await canEdit(reply, userId, id))) return reply;
       if (!deps.limiters.edit.consume(userId)) return tooMany(reply);
-      // 單句；基底不可刪——述詞在 DELETE 當下重判。已知限制：READ COMMITTED 下 DELETE 與
-      // `setVersionBase` 的 EXISTS 各看自己的快照，兩邊都提交後 `version_base_seq` 可能指向已刪列（無 FK）；窗口極窄，後果只是 `current.baseSeq` 懸空。
+      // Known limitation: under READ COMMITTED the DELETE and setVersionBase's EXISTS see separate snapshots, so version_base_seq (no FK) can end up dangling; narrow window, the only consequence is a dangling current.baseSeq.
       const gone = await deps.db
         .delete(noteVersions)
         .where(and(

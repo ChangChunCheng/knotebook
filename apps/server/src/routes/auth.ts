@@ -26,10 +26,7 @@ import { isStorableText } from "../auth/admin-provider-input.js";
 const INVALID_CREDENTIALS_MESSAGE = "Wrong email or password.";
 const ICON_NOT_FOUND_MESSAGE = "No sign-in service icon with that id.";
 
-// 只驗結構，內容一律讓 DB 查詢/密碼驗證自然決定結果——login 對外只有一種失敗訊息
-// （invalid_credentials），不該讓 email 格式檢查變成一個額外的、可被用來區分
-// 「帳號存在與否」的旁路（例如 `.email()` 格式驗證失敗直接回 400，會讓攻擊者用
-// 格式錯誤/格式正確但帳號不存在來探測）。
+// Structure only: an `.email()` failure returning 400 would let attackers tell known from unknown addresses.
 const loginBodySchema = z.object({
   email: z.string(),
   password: z.string(),
@@ -47,48 +44,31 @@ export interface AuthRouteDeps {
   gate: UserGate;
   throttle: LoginThrottle;
   collabHooks: CollabHooks;
-  /** #388：同帳號重登後延遲重驗舊 session 共編連線的等待（`auth/sessions.ts` 的 `RELOGIN_REVERIFY_DELAY_MS`），只給測試縮短。 */
   reloginReverifyDelayMs?: number;
 }
 
-/**
- * 登入/登出/me/改密碼路由。
- *
- * `POST /api/auth/login` 的等時化 oracle 防護：帳號不存在、OIDC-only（無
- * passwordHash）、密碼錯誤這三種情況一律回同一組 401 `invalid_credentials`
- * （同 code、同 message），且都會呼叫 `throttle.recordFailure`；帳號不存在或
- * OIDC-only 時改用 `DUMMY_HASH` 跑一次 dummy verify（而非直接短路回 401），
- * 讓耗時與「真的算了一次 argon2 verify」的路徑相近，不讓回應時間差成為新的 oracle。
- */
+// Unknown account, OIDC-only and wrong password all return the same 401 and call recordFailure; the first two run a dummy verify on DUMMY_HASH so timing isn't an oracle.
 export function authRoutes(deps: AuthRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    // 免認證（#187）：登入頁在使用者輸入帳密之前就要知道有哪些登入服務。只曝光 id、顯示名與圖示（AuthProviderPublicDto）。
-    // GET 不受 app.ts 的 JSON CSRF hook 影響。
+    // No auth: the login page needs the providers before credentials are entered.
     app.get("/api/auth/config", async (request): Promise<AuthConfigDto> => {
       const { providers, autoCreateProviderIds } = await listEnabledProvidersForConfig(deps.db);
       const registrationEnabled = await readRegistrationEnabled(deps.db);
       if (registrationEnabled === null) request.log.error("site_settings 讀不到列：帳密自助註冊與 SSO 首登自動建帳都視同關閉（#187）");
-      // 有效值（DB OR env）；不揭露是否 env 強制。讀不到列 → 開＋log.error。
       const passwordLoginEnabled = await isPasswordLoginAccepted(deps.db, deps.config, request.log);
-      // 版本歷史：總開關讓非 admin 也讀得到（個人／群組開關的 disabled 顯示）。讀不到列 → true（DB 預設）。
       const [versionsRow] = await deps.db.select({ v: siteSettings.autoVersionsEnabled }).from(siteSettings).where(eq(siteSettings.singleton, true)).limit(1);
       return {
         providers,
-        // 列缺失時一律 []，與登入交易的「視同關」一致。
         registration: { enabled: registrationEnabled ?? false, providerIds: registrationEnabled === null ? [] : autoCreateProviderIds },
         passwordLogin: { enabled: passwordLoginEnabled },
         autoVersionsEnabled: versionsRow?.v ?? true,
-        // 網頁編輯器的筆記大小上限檢查（貼上、拖放、站內 AI 套用之前；協作更新不在 server 檢查）。
         noteMaxBytes: deps.siteLimits.get("noteMaxBytes"),
         maxUploadBytes: deps.siteLimits.get("uploadMaxBytes"),
       };
     });
 
-    /**
-     * 登入服務圖示：免登入、不看 enabled（停用中也可讀——admin 列表要用；圖示非機密、id 為 UUID）。
-     * 只回檔頭驗過的 PNG／JPEG／WebP（PUT 時存的偵測值），`nosniff`＋`default-src 'none'; sandbox`。
-     * `v` 字串**完全等於**現版本才 immutable（`01`、`1.0` 不算——版本不同的網址不得被長快取）。不加節流。
-     */
+    // `v` is immutable only when it equals the current version exactly (`01` or `1.0` would long-cache a different URL).
+    // No auth and ignores `enabled`: the login page needs icons before sign-in and the admin list shows disabled providers; icons aren't secret and ids are UUIDs.
     app.get("/api/auth/providers/:id/icon", async (request, reply) => {
       const raw = (request.params as { id: string }).id;
       if (!UUID_RE.test(raw)) return sendError(reply, 404, "not_found", ICON_NOT_FOUND_MESSAGE);
@@ -113,16 +93,11 @@ export function authRoutes(deps: AuthRouteDeps) {
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       }
-      // #187：帳密登入的有效值為關 → 403。排在讀帳號與 throttle **之前**：回應與帳號完全無關（同碼、同訊息、不讀 users），
-      // 本身不是存在性 oracle，所以不需要 dummy-hash 等時化；不跑 argon2 也拿掉一個 CPU 放大面。關閉期間這條路徑不吃任何節流
-      // （接受）。管理員不豁免。
+      // Before reading the account and throttle: the response is account-independent, so there is no oracle and no dummy hash is needed; skipping argon2 also removes a CPU amplifier. Unthrottled while disabled (accepted).
       if (!(await isPasswordLoginAccepted(deps.db, deps.config, request.log))) {
         return sendError(reply, 403, "password_login_disabled", PASSWORD_LOGIN_DISABLED_MESSAGE);
       }
-      // 進門一次性正規化（單一漏斗）：下面 throttle 鍵值、DB 查詢、
-      // recordFailure/recordSuccess 全部共用這個值——throttle 帳號鍵與 DB 查詢比對
-      // 若用不同的正規化值，Mixed-Case 變體就能各自累積獨立的 throttle 計數，形同
-      // 繞過帳號軸限流。
+      // Single normalization funnel: if the throttle key and the DB lookup normalized differently, case variants would each get their own throttle count.
       const email = normalizeEmail(parsed.data.email);
       const { password } = parsed.data;
 
@@ -131,9 +106,7 @@ export function authRoutes(deps: AuthRouteDeps) {
         return sendLoginThrottled(reply, throttleCheck.retryAfterMs!);
       }
 
-      // lower() 讀取端比對，與寫入端（auth/tx/register.ts／bootstrap.ts 皆存正規化小寫）
-      // 對稱；多列命中防護：createdAt/id 排序取第一列（正常情況下 email 有 unique
-      // 約束不會有多列，這裡是防禦縱深）。
+      // Multi-row guard (email is unique, so this is defense in depth).
       const [user] = await deps.db
         .select()
         .from(users)
@@ -146,9 +119,6 @@ export function authRoutes(deps: AuthRouteDeps) {
         if (user?.passwordHash) {
           verified = await verifyPassword(user.passwordHash, password);
         } else {
-          // 帳號不存在或 OIDC-only（無 passwordHash）：仍跑一次 dummy verify（結果丟棄，
-          // 一律視為失敗）——只為了等時化，不讓「省略這次 argon2 運算」的耗時差異變成
-          // 判斷帳號是否存在的 oracle。
           await verifyPassword(DUMMY_HASH, password);
           verified = false;
         }
@@ -164,18 +134,15 @@ export function authRoutes(deps: AuthRouteDeps) {
         return sendError(reply, 401, "invalid_credentials", INVALID_CREDENTIALS_MESSAGE);
       }
 
-      // 密碼已驗證正確——只有此時才檢查 disabled，避免密碼錯誤時洩漏帳號存在與否
-      // 之外的額外資訊（是否被停用），也避免被用來當帳號存在 oracle。
+      // Disabled is checked only after the password verifies, so a wrong password reveals nothing.
       if (user!.disabledAt !== null) {
         return sendError(reply, 403, "account_disabled", "This account is disabled.");
       }
 
       deps.throttle.recordSuccess(email, request.ip);
-      await touchLastLogin(deps.db, user!.id, request.log); // #247：帳密登入
+      await touchLastLogin(deps.db, user!.id, request.log);
       await startSession(deps, request, reply, { userId: user!.id, tv: user!.tokenVersion });
 
-      // 標上 shared 的 DTO 型別：形狀漂移（少欄位、型別改了）在 server 端就編譯失敗，
-      // 不必等 web 端 build 才發現——那時錯的其實已經是這裡（#21）。
       const dto: UserDto = {
         id: user!.id,
         email: user!.email,
@@ -191,15 +158,7 @@ export function authRoutes(deps: AuthRouteDeps) {
       return reply.send(dto);
     });
 
-    /**
-     * #388：只登出這台裝置——刪掉 cookie 那張 JWT 的 session 列、清 gate 的 session 快取（`deleteSessionFromCookie`）、
-     * 重驗這台裝置開著的共編連線（`onSessionRevoked`），再清 cookie。同帳號其他裝置的 session 不受影響。
-     *
-     * 冪等：沒帶 cookie、簽章壞、沒有 `sid` 的舊 JWT、列早已不在，一律照樣 204＋清 cookie（不必登入也能登出）。
-     * 刪列撞到 DB 錯誤也一樣 204＋清 cookie（`deleteSessionFromCookie` 只記 error log，也不重驗）：回 500 的話 web 的登出流程停在半路
-     *（`useSession.logout` 拋錯、選單不導頁），使用者以為還登入著，而清 cookie 不需要 DB。代價是那一列留到過期——
-     * 這台瀏覽器的 cookie 已清，只有被複製走的副本還能用到過期。
-     */
+    /** Idempotent: no cookie, bad signature, an old JWT without `sid` or a DB error while deleting all still return 204 and clear the cookie (a 500 would leave the web logout half done, and clearing the cookie needs no DB). The row then lives until expiry, usable only through a copied cookie. */
     app.post("/api/auth/logout", async (request, reply) => {
       const ended = await deleteSessionFromCookie(deps, request);
       if (ended) deps.collabHooks.onSessionRevoked(ended.userId, ended.sid);
@@ -213,7 +172,6 @@ export function authRoutes(deps: AuthRouteDeps) {
       .object({
         handle: z.string().optional(),
         autoVersions: z.boolean().optional(),
-        // #247：驗證與註冊同一套（routes/account.ts 的 registerBodySchema.displayName）。
         displayName: z
           .string()
           .trim()
@@ -223,35 +181,25 @@ export function authRoutes(deps: AuthRouteDeps) {
           .optional(),
       })
       .refine(b => b.handle !== undefined || b.autoVersions !== undefined || b.displayName !== undefined, { message: "Invalid request body: send at least one field." });
-    /** 回應形：寫入後的值（交易內 RETURNING）——現行 `{ ...request.user, handle }` 是 gate 的 60 s 快取，不能沿用。 */
+    /** Values after the write: request.user is the gate's 60 s cache. */
     const profileReturning = () => ({
       id: users.id, email: users.email, handle: users.handle, displayName: users.displayName, isAdmin: users.isAdmin,
       mustChangePassword: users.mustChangePassword, hasPassword: sql<boolean>`${users.passwordHash} is not null`, autoVersions: users.autoVersions,
-      // 相關子查詢裡外層欄位寫字面 `users.id`：插值 `${users.id}` 在單表 RETURNING 會渲染成裸 "id"，被內層 FROM 搶走而恆為 null。
+      // Literal `users.id`: an interpolated column renders as a bare "id" in a single-table RETURNING and is captured by the inner FROM (always null).
       avatar: sql<UserAvatarDto | null>`(select json_build_object('id', ua.id, 'v', ua.version, 'pending', ua.display_data is null) from ${userAvatars} ua where ua.user_id = users.id and ua.is_current)`,
     });
 
     /**
-     * #122／#291 改名。單一 tx 六步：
-     * ①`SELECT users.handle … FOR UPDATE`（本人列；同人併發改名排隊）
-     * ②額度：數 `handle_renames` 24 h 內列數，≥5 → 429（DB 計數跨重啟／實例；在鎖之後數，同人併發也過不了額度）
-     * ③`INSERT handles` 取新名（PK 裁決；改成他人現用名回 409；改成自己現行名在 ① 後即 409，不論 registry 有無自己的列）——必須先於 ④，倒過來兩人互換名字會死鎖
-     * ④`DELETE` 舊名列（帶 `user_id`；刪 0 列照常繼續），commit 後舊名任何人可取用
-     * ⑤`UPDATE users`
-     * ⑥`INSERT handle_renames`
-     *
-     * 舊名以 tx 內 SELECT 為準（request.user 是 gate 的 60s 快取，可能落後）。
-     * 成功後 `gate.invalidate`（比照改密碼），/api/auth/me 立即反映。
-     * 版本歷史、#247：只帶 `autoVersions`／`displayName`（任一或兩者）→ 純 UPDATE、不進改名交易、不扣額度；與 `handle` 一起帶 →
-     * 在改名交易的 `UPDATE users` 同一句寫（撞名回滾時一起不寫）。回應取寫入後的值（RETURNING），不沿用 `request.user` 快取；
-     * 所有分支都經過下方同一個 `gate.invalidate` 出口——不得為 displayName 加提前 return。
+     * Rename (#122, #291). Order inside the transaction matters: lock own row first (concurrent renames queue), count renames in the last 24 h after the lock (>= 5 → 429),
+     * INSERT the new name before DELETEing the old one (the other order deadlocks two people swapping names), then UPDATE users and record the rename.
+     * The old name comes from the in-tx SELECT (request.user is a 60 s cache). With only autoVersions/displayName it is a plain UPDATE outside the rename transaction and quota;
+     * every branch must reach the single gate.invalidate at the end.
      */
     app.patch("/api/auth/profile", { preHandler: app.authenticate }, async (request, reply) => {
       const parsed = profileBodySchema.safeParse(request.body);
       if (!parsed.success) return sendError(reply, 400, "invalid_body", "Invalid request body.");
       const userId = request.user!.id;
       const { autoVersions, displayName } = parsed.data;
-      // 不在 handle 之列的欄位：純 UPDATE 分支整組寫、改名交易的 UPDATE 同一句帶上。
       const extra = {
         ...(autoVersions !== undefined ? { autoVersions } : {}),
         ...(displayName !== undefined ? { displayName } : {}),
@@ -269,39 +217,33 @@ export function authRoutes(deps: AuthRouteDeps) {
         dto = row;
       } else {
         const newHandle = normalized;
-        // 5/日（不建 FixedWindowLimiter，
-        // 具名常數消除 JSDoc/判斷/錯誤訊息三處數字漂移面）
+        // A DB count (handle_renames), not a FixedWindowLimiter, so it survives restarts and multiple instances.
         const RENAME_QUOTA_PER_DAY = 5;
         const QUOTA_EXCEEDED = Symbol("rename-quota");
         const HANDLE_TAKEN = Symbol("rename-handle-taken");
         try {
           dto = await deps.db.transaction(async tx => {
-            // ① 鎖本人列：同人併發改名在此排隊、解鎖後讀到最新名（否則晚者刪 0 列、先者新名留成 live 孤兒）。
             const [row] = await tx.select({ handle: users.handle }).from(users).where(eq(users.id, userId)).limit(1).for("update");
             const oldHandle = row!.handle;
-            if (newHandle === oldHandle) throw HANDLE_TAKEN; // 改成自己現行名：窗期形（無 registry 列）也不得 200／耗額度
+            if (newHandle === oldHandle) throw HANDLE_TAKEN; // renaming to your current name must not return 200 or use quota, even in the window form (no registry row)
 
-            // ② 額度：鎖之後才數，排隊者看得到前者已 commit 的紀錄。
             const [spent] = await tx
               .select({ n: sql<number>`count(*)::int` })
               .from(handleRenames)
               .where(and(eq(handleRenames.userId, userId), gt(handleRenames.renamedAt, sql`now() - interval '1 day'`)));
             if (spent!.n >= RENAME_QUOTA_PER_DAY) throw QUOTA_EXCEEDED;
 
-            // ③ 取新名（PK 裁決）。必須先於 ④：倒過來兩人互換名字會死鎖（40P01 → 500），改成自己現行名也會回 200。
             await tx.insert(handles).values({ handle: newHandle, userId, state: "live" });
 
-            // ④ 釋放舊名。刪 0 列＝本人現行名不在 registry（窗期形），照常繼續；帶 user_id 不會刪到他人的列。
+            // 0 rows deleted is fine (window form: own name not in the registry); `user_id` keeps this from deleting another user's row.
             await tx.delete(handles).where(and(eq(handles.handle, oldHandle), eq(handles.userId, userId)));
 
-            // ⑤ 改名；同一句帶上 autoVersions／displayName（兩者都帶 → 同一交易，#247）。
             const [updated] = await tx
               .update(users)
               .set({ handle: newHandle, ...extra })
               .where(eq(users.id, userId))
               .returning(profileReturning());
 
-            // ⑥ 改名紀錄（額度來源）。
             await tx.insert(handleRenames).values({ userId });
             return updated!;
           });
@@ -317,8 +259,7 @@ export function authRoutes(deps: AuthRouteDeps) {
           throw err;
         }
       }
-      if (dto === undefined) return sendError(reply, 401, "unauthorized", "Not signed in."); // 帳號在請求途中被刪
-      // 比照改密碼的既有慣例：invalidate 讓下一次 authenticate 立刻反映（60s 快取不等 TTL）
+      if (dto === undefined) return sendError(reply, 401, "unauthorized", "Not signed in.");
       deps.gate.invalidate(userId);
       return reply.send(dto);
     });
@@ -332,8 +273,6 @@ export function authRoutes(deps: AuthRouteDeps) {
       const userId = request.user!.id;
 
       const [row] = await deps.db.select().from(users).where(eq(users.id, userId)).limit(1);
-      // request.user 是 authenticate 剛查出來的，理論上這裡一定找得到；找不到就當
-      // 成「憑證已失效」處理（一致的 401），不 throw 成 500。
       if (!row) {
         return sendError(reply, 401, "invalid_credentials", INVALID_CREDENTIALS_MESSAGE);
       }
@@ -343,8 +282,6 @@ export function authRoutes(deps: AuthRouteDeps) {
         if (row.passwordHash) {
           verified = await verifyPassword(row.passwordHash, currentPassword);
         } else {
-          // OIDC-only（無 passwordHash）：沒有密碼可比對，仍跑 dummy verify 等時化，
-          // 結果一律視為失敗——與 login 路徑同一套 oracle 防護理由。
           await verifyPassword(DUMMY_HASH, currentPassword);
           verified = false;
         }
@@ -373,31 +310,17 @@ export function authRoutes(deps: AuthRouteDeps) {
         throw err;
       }
 
-      // tokenVersion 遞增交給 SQL 端做原子操作（`tokenVersion = tokenVersion + 1`），
-      // 不是先在應用層算出 `row.tokenVersion + 1` 再寫回——後者在兩個並發改密碼請求
-      // 之間有 read-modify-write 競態（例如帳號被撤銷/改密碼的同時，另一個並發請求
-      // 用同一份舊快照 +1 寫回，會把先前那次的遞增結果覆蓋掉，等於撤銷被回捲）。
-      // tv 本身的原子性靠單一 UPDATE 就夠；#388 起整段包在交易裡，是為了讓 bump 與換 session 列在同一把 users 列鎖下
-      //（見 `auth/tx/change-password.ts`）。
-      // 成功改密碼一併清 mustChangePassword：不論這次改密碼前是 true 或
-      // false，改完後一律 false——這是「自己主動改過密碼」這件事本身帶來的效果，不需要
-      // 額外判斷原本的值。
-      // #388：同一交易裡刪光這個使用者的 session 列（其他裝置）、為本機建新的一列——「保留這台、踢掉其他台」。
-      // #397：有效期在交易前讀一次，新列與交易後重簽的 cookie／JWT 用同一個值。
+      // token_version is bumped in SQL: a read-modify-write between two concurrent changes would lose an increment and roll a revocation back. The transaction (#388) keeps the bump and
+      // the session-row swap under one users row lock. A successful change always clears mustChangePassword. The TTL is read once so the new row and the re-signed cookie agree (#397).
       const ttlSeconds = deps.siteLimits.get("sessionTtlSeconds");
       const input = { userId, passwordHash: newPasswordHash, ttlSeconds };
       const updated = await deps.db.transaction(tx => changePasswordInTx(tx, input));
-      if (updated === null) return sendError(reply, 401, "unauthorized", "Not signed in."); // 帳號在請求途中被刪
+      if (updated === null) return sendError(reply, 401, "unauthorized", "Not signed in.");
 
-      // 踢掉所有舊 session（含改密碼前簽發、當下可能正被其他裝置使用的那些）——
-      // 它們的 session 列上面已刪；gate.invalidate 讓下一次 `authenticate` 立刻反映新 tokenVersion，
-      // collabHooks.onUserRevoked 是即時協作連線的接縫（沒有協作時為 noop）。
       deps.gate.invalidate(userId);
       deps.collabHooks.onUserRevoked(userId);
 
-      // 重簽自己這個 request 的 cookie（帶 DB 端算出的新 tokenVersion，而非應用層快照
-      // +1 的值——兩者在並發情境下可能不同，必須用 UPDATE ... RETURNING 拿到的真值，
-      // 與上面新建的 session 列），確保改密碼的本人不會被自己剛剛觸發的 tokenVersion bump 給登出。
+      // Re-sign with the DB-returned tokenVersion (not snapshot + 1, which can differ under concurrency) so the user isn't logged out by their own bump.
       await setSessionCookieFor(reply, deps.config, { userId, tv: updated.tokenVersion, sid: updated.sessionId, ttlSeconds });
 
       return reply.code(204).send();

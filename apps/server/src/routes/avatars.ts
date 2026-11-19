@@ -38,21 +38,16 @@ import { deleteUploadFiles, uploadFilePath } from "../uploads/service.js";
 
 export interface AvatarsRouteDeps {
   db: Db;
-  /** 寫入頭貼的路徑在 commit 後 `invalidate`，`UserDto.avatar` 才不會讀到 60 秒前的快取。 */
   gate: UserGate;
-  /** `upload`：與筆記附件共用同一個節流桶（key＝userId）。 */
   limiters: { upload: FixedWindowLimiter; avatarRefresh: FixedWindowLimiter };
   uploadsDir: string;
   siteLimits: SiteLimits;
-  /** 空間鎖等待上限（ms），透傳自 `AppDeps.storageLockTimeoutMs`。 */
   storageLockTimeoutMs: number;
-  /** 下載 IdP 頭貼的位址與埠政策；預設生產政策，只有測試會換。 */
   avatarFetchPolicy?: AvatarFetchPolicy;
-  /** 交錯點測試注入縫；生產不注入。 */
   avatarTestHooks?: AvatarTestHooks;
 }
 
-/** 五個欄位都存進 `integer` 欄，超過就是 DB 的 22003；在驗證層擋成 400。 */
+/** All five fields go into `integer` columns; over int4 the DB raises 22003, so reject as 400. */
 const INT4_MAX = 2147483647;
 const VERSION_RE = /^[1-9]\d{0,9}$/;
 
@@ -60,10 +55,9 @@ const AVATAR_NOT_FOUND_MESSAGE = "No avatar with that id.";
 const IDENTITY_NOT_FOUND_MESSAGE = "No linked sign-in with a picture has that id.";
 const UPLOAD_TOO_LARGE_MESSAGE = "The file is over the size limit.";
 const UNSUPPORTED_IMAGE_MESSAGE = "Unsupported image format. Upload a PNG, JPEG or WebP image.";
-/** 固定字串：不帶網址、不帶底層錯誤訊息（網址可能含 token）。 */
+/** No URL or underlying message (a URL may contain a token). */
 const AVATAR_FETCH_FAILED_MESSAGE = "Couldn't get the picture from the sign-in service.";
 
-/** `crop` 欄：裁切方框（原圖像素座標）＋原圖寬高。整數、方框落在原圖內。 */
 const cropFieldSchema = z
   .object({
     x: z.number().int().min(0).max(INT4_MAX),
@@ -77,21 +71,19 @@ const cropFieldSchema = z
 
 type CropField = z.infer<typeof cropFieldSchema>;
 
-// 雙向相等的編譯期斷言：單向 `satisfies z.ZodType<…>` 抓不到 shared 型別少欄。
+// Two-way check: a one-way `satisfies z.ZodType<…>` misses fields absent from the shared type.
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const _cropShapeMatchesShared: Equal<CropField, AvatarCropUpload> = true;
 void _cropShapeMatchesShared;
 
 const selectBodySchema = z.object({ candidateId: z.string().regex(UUID_RE).nullable() }).strict();
 
-/** `version` 欄：正規十進位的正整數，且不超過 int4。回 null＝格式不合。 */
 function parseVersionField(raw: string | undefined): number | null {
   if (raw === undefined || !VERSION_RE.test(raw)) return null;
   const n = Number(raw);
   return n <= INT4_MAX ? n : null;
 }
 
-/** 回 null＝格式不合（非 JSON、含 NUL、欄位型別或範圍不對）。 */
 function parseCropField(raw: string): CropField | null {
   if (raw.includes("\u0000")) return null;
   let json: unknown;
@@ -104,7 +96,6 @@ function parseCropField(raw: string): CropField | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** 讀 multipart：指定名稱的 file part 收成 buffer（每個名稱只收第一個），文字欄只收第一個字串值。跑完整個迴圈，body 才算讀完。 */
 async function readParts(
   request: FastifyRequest,
   fileFields: readonly string[],
@@ -112,6 +103,7 @@ async function readParts(
 ): Promise<{ files: Map<string, { data: Buffer; truncated: boolean }>; fields: Map<string, string> }> {
   const files = new Map<string, { data: Buffer; truncated: boolean }>();
   const fields = new Map<string, string>();
+  // Run the loop to the end (no break) and resume extra file parts: that is what drains the body (see routes/uploads.ts).
   for await (const part of request.parts({ limits: { fileSize } })) {
     if (part.type === "file") {
       if (fileFields.includes(part.fieldname) && !files.has(part.fieldname)) {
@@ -134,10 +126,6 @@ interface CheckedUpload {
   fields: Map<string, string>;
 }
 
-/**
- * 讀並驗 multipart：413（截斷或顯示圖過大）→ 400（缺 part、crop 壞）→ 415（不是 PNG／JPEG／WebP）。
- * 回 null＝已送出錯誤回應（每條早退都先 drain）。
- */
 async function readAndCheck(request: FastifyRequest, reply: FastifyReply, fileFields: readonly ("original" | "display")[], fileSize: number): Promise<CheckedUpload | null> {
   let parsed;
   try {
@@ -167,7 +155,7 @@ async function readAndCheck(request: FastifyRequest, reply: FastifyReply, fileFi
     sendError(reply, 400, "invalid_body", "The crop field isn't valid.");
     return null;
   }
-  // 只信檔頭，不採信請求端聲稱的 Content-Type／副檔名；GIF 與 SVG 不收。
+  // Only the file header is trusted, not Content-Type or extension; GIF/SVG are not accepted.
   const buffers = new Map<string, Buffer>();
   const mimes = new Map<string, string>();
   for (const name of fileFields) {
@@ -184,20 +172,8 @@ async function readAndCheck(request: FastifyRequest, reply: FastifyReply, fileFi
   return { buffers, mimes, crop, fields };
 }
 
-/**
- * 頭貼候選的清單、上傳與管理。全部 cookie-only（`app.authenticate`，不收 Bearer／transfer token）；本人操作本人。
- * 原圖存 uploads 目錄、不進 `uploads` 表（不受筆記刪除與垃圾桶影響，也讀不到於 `/api/uploads/:id`）；顯示圖存 DB。
- *
- * `POST /api/auth/avatars`（`original`、`display`、`crop`）與 `PUT /api/auth/avatars/:id/display`（`display`、`crop`、`version`）是 multipart，
- * `MULTIPART_EXEMPT_ROUTES` 豁免 JSON CSRF 檢查，改由 essence 必須 multipart 加 Origin 驗證把關。
- * 上傳順序：認證 → 節流 → 空間已滿預檢（讀 body 之前，已滿不白讀）→ 解析 → 驗證 → 寫檔 → 交易。每個早退都先 drain。
- * 重新裁切不做已滿預檢：變小一定要能成功。
- * 別人的候選、不存在的 id、不是 UUID 的 id 一律同一個 404。
- *
- * `POST /api/auth/avatars/oidc/:identityId/refresh`（無 body）：手動重新取得 IdP 頭貼。順序：認證 → 身分是本人的且有最後看到的圖片網址（否則 404，不扣桶）→
- * 節流（每人每小時 10 次）→ 空間已滿預檢（409）→ 同步下載（逾時 10 s，失敗 422 `avatar_fetch_failed`）→ 落檔 → 一個交易：
- * 清 `picture_dismissed_url`、建立或替換候選、選用、`avatar_auto = false`。
- */
+// Originals live in the uploads directory, not the `uploads` table (unaffected by note deletion/trash); display images are in the DB. Multipart routes are exempt from the JSON
+// CSRF check (MULTIPART_EXEMPT_ROUTES) in favour of an essence + Origin check. The space-full pre-check runs before reading the body; re-cropping skips it because shrinking must always succeed.
 export function avatarsRoutes(deps: AvatarsRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     async function authenticateAndThrottle(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
@@ -206,6 +182,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         drainWithCap(request);
         return false;
       }
+      // Deliberately shares the upload limiter with note attachments.
       if (!deps.limiters.upload.consume(request.user!.id)) {
         drainWithCap(request);
         sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
@@ -229,9 +206,8 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       await authenticateAndThrottle(request, reply);
     }
 
-    /** 交易拋出的共同分流；回 true＝已送出回應。其他錯誤原樣丟出（呼叫端用 `redactDbError`）。 */
     async function replyTxError(request: FastifyRequest, reply: FastifyReply, err: unknown): Promise<boolean> {
-      // 先判子類（StorageQuotaExceeded extends TxAbort）：反序會失去數字。
+      // Subclass first (StorageQuotaExceeded extends TxAbort), else the numbers are lost.
       if (err instanceof StorageQuotaExceeded) {
         sendStorageQuotaExceeded(reply, await quotaErrorDetail(deps.db, request.user!, err));
         return true;
@@ -240,7 +216,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         sendError(reply, err.status, err.errCode, err.message);
         return true;
       }
-      // 空間鎖逾時（55P03）／死結（40P01）／序列化失敗（40001），以及保底的唯一鍵與外鍵衝突 → 409 server_busy。
       if (isRetryableTxError(err) || isUniqueViolation(err) || isForeignKeyViolation(err)) {
         sendError(reply, 409, "server_busy", "The server is busy. Try again in a moment.");
         return true;
@@ -248,7 +223,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       return false;
     }
 
-    /** `:id` 過 UUID 形後轉小寫；不過回 null。 */
     const idOf = (request: FastifyRequest): string | null => {
       const raw = (request.params as { id: string }).id;
       return UUID_RE.test(raw) ? raw.toLowerCase() : null;
@@ -277,7 +251,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         throw err;
       }
 
-      // 交易 callback 的引數只放純資料：雜湊與長度在交易之前算好。
       const input: InsertAvatarInput = {
         userId: me,
         originalFile,
@@ -295,7 +268,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       try {
         row = await deps.db.transaction(tx => insertAvatarInTx(tx, input, deps.avatarTestHooks));
       } catch (err) {
-        // DB 沒有列的檔不該留在磁碟；清檔失敗不吞原錯誤。
+        // No DB row, no file; a failed cleanup must not mask the original error.
         await unlink(finalPath).catch(() => {});
         if (await replyTxError(request, reply, err)) return reply;
         throw redactDbError(request.log, err, "上傳頭貼");
@@ -338,7 +311,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       deps.gate.invalidate(me);
       const list = await listAvatars(deps.db, me);
       const candidate = list.candidates.find(c => c.id === avatarId);
-      // 剛 commit 的列在清單裡；清單讀取之間被刪掉的極小窗口回 404。
       return candidate === undefined ? sendAvatarNotFound(reply) : candidate;
     });
 
@@ -353,7 +325,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         if (await replyTxError(request, reply, err)) return reply;
         throw redactDbError(request.log, err, "選用頭貼");
       }
-      // commit 後讓閘門的快取失效，再走和 `/api/auth/me` 同一條路徑重讀目前使用者。
       deps.gate.invalidate(me);
       const result = await deps.gate.checkUser(me);
       if (result.status !== "ok") return sendError(reply, 401, "unauthorized", "Not signed in.");
@@ -373,12 +344,11 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         throw redactDbError(request.log, err, "刪除頭貼");
       }
       deps.gate.invalidate(me);
-      // 列已刪乾淨；檔刪不掉只是磁碟上多一個孤兒檔，記 warn、不讓請求失敗。
+      // A file that can't be deleted is only an orphan: warn, don't fail the request.
       await deleteUploadFiles(deps.uploadsDir, [removed.originalFile], { error: (obj, msg) => request.log.warn(obj, msg) });
       return reply.code(204).send();
     });
 
-    // 手動重新取得 IdP 頭貼。清「刪過的網址」、建立或替換候選、選用與 `avatar_auto = false` 都在 `refreshOidcAvatarInTx` 的同一個交易裡。
     app.post("/api/auth/avatars/oidc/:identityId/refresh", { preHandler: app.authenticate }, async (request, reply) => {
       const me = request.user!.id;
       const raw = (request.params as { identityId: string }).identityId;
@@ -389,7 +359,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         .from(userIdentities)
         .where(and(eq(userIdentities.id, identityId), eq(userIdentities.userId, me)));
       if (identity === undefined || identity.lastPictureUrl === null) return sendError(reply, 404, "not_found", IDENTITY_NOT_FOUND_MESSAGE);
-      // 扣桶在身分檢查之後：別人的、沒有圖片網址的 404 不耗額度。
+      // After the identity check, so 404s cost no quota.
       if (!deps.limiters.avatarRefresh.consume(me)) return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
       const space = { kind: "user", id: me } as const;
       const usage = await readSpaceUsage(deps.db, space);
@@ -398,7 +368,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       const picture = identity.lastPictureUrl;
       const fetched = await fetchOidcAvatar(picture, { issuer: identity.issuer, policy: deps.avatarFetchPolicy ?? PRODUCTION_AVATAR_FETCH_POLICY });
       if (!fetched.ok) {
-        // 只記固定的原因字串：網址可能帶 token，底層錯誤訊息也不進 log。
+        // Fixed reason only: URLs may carry a token.
         request.log.info({ userId: me, identityId, reason: fetched.reason }, "手動取得頭貼失敗");
         return sendError(reply, 422, "avatar_fetch_failed", AVATAR_FETCH_FAILED_MESSAGE);
       }
@@ -437,7 +407,6 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         throw redactDbError(request.log, err, "重新取得 IdP 頭貼");
       }
 
-      // commit 之後：位元組相同就丟掉剛寫的新檔；原地替換就刪被換掉的舊檔。刪不掉只是多一個孤兒檔。
       if (outcome.outcome === "same_bytes") await removeNewFile();
       else if (outcome.outcome === "replaced") await deleteUploadFiles(deps.uploadsDir, [outcome.oldFile], { error: (obj, msg) => request.log.warn(obj, msg) });
       deps.gate.invalidate(me);
@@ -456,7 +425,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       try {
         await stat(filePath);
       } catch {
-        // 列在、檔不在：不是使用者能自己修的狀態，記一筆 log 供維運排查，對呼叫端仍是同一個 404。
+        // Row without file is not user-fixable: log for ops, same 404.
         request.log.warn({ avatarId }, "頭貼候選有紀錄但磁碟找不到原圖檔");
         return sendAvatarNotFound(reply);
       }
@@ -467,8 +436,7 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
       return reply.send(createReadStream(filePath));
     });
 
-    // 顯示圖：任何登入者都讀得到（知道 id 才讀得到）；不看 `is_current`，換掉的候選仍可讀。
-    // 還沒補產顯示圖的候選只有本人讀得到原圖，且永不標 immutable。
+    // Any signed-in user who has the id may read the display image; ownership is checked only for the original. Ignores `is_current` (replaced candidates stay readable). A candidate without a display image exposes only its owner's original and is never immutable.
     app.get("/api/avatars/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const avatarId = idOf(request);
       if (avatarId === null) return sendAvatarNotFound(reply);

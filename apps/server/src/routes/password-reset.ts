@@ -1,15 +1,4 @@
-/**
- * #286 無登入的重設密碼端點：inspect（不消耗連結）與完成（設定新密碼、登出其他瀏覽器、簽新 session）。
- *
- * - 無登入：持有連結的人就是本人。token 只從 POST body 收（網址上只在 fragment），所以不需要 log 遮罩；
- *   log 與回應絕不含 token 明文或 `token_hash`。
- * - 無效 token 一律 410 `reset_link_invalid`，不區分原因；交易外的「連結無效」出口都經 `sendInvalidLink`，
- *   交易內（並發造成）的 410 刻意不經過它。
- * - 帳密開關（有效值）只在交易外判斷，交易內不重讀（末【推】）：關閉時 403，連結不動、不扣任何桶。
- * - 兩顆桶：miss 桶（key=ip）只在交易外查無時扣，有效 token 不做預檢、不被擋；
- *   嘗試桶（key=`link:${id}`）只在完成端點、帳密有效值為開之後扣，inspect 不扣。
- * - 登出手段與改密碼相同（`token_version + 1`＋#388 刪光 session 列＋`gate.invalidate`＋`onUserRevoked`），PAT／OAuth 不受影響。
- */
+// The token comes only from the POST body (URL fragment only), so no log masking is needed; logs and responses never contain it or token_hash. The password-login switch is checked outside the transaction only.
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -46,10 +35,7 @@ export interface PasswordResetRouteDeps {
   limiters: { oneTimeLinkMiss: FixedWindowLimiter; oneTimeLinkAttempt: FixedWindowLimiter };
 }
 
-/**
- * 交易外、不鎖地以雜湊查有效的重設連結（完成的第一步）。形狀不合或查無 → null。
- * 參數帶 `token_hash`：非預期的 DB 錯誤一律遮蔽，不讓雜湊隨 drizzle 錯誤進 log。
- */
+/** token_hash is a query param: redact DB errors so the hash doesn't reach the log. */
 async function findActiveResetLink(
   db: Db,
   token: string,
@@ -74,7 +60,6 @@ async function findActiveResetLink(
 const TOO_MANY_REQUESTS_MESSAGE = "Too many requests. Wait a moment and try again.";
 
 export function passwordResetRoutes(deps: PasswordResetRouteDeps) {
-  /** 交易外查無有效連結：扣 miss 桶（key=ip），超限 429，否則 410。 */
   function sendInvalidLink(reply: FastifyReply, ip: string): FastifyReply {
     if (!deps.limiters.oneTimeLinkMiss.consume(ip)) return sendError(reply, 429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
     return sendError(reply, 410, "reset_link_invalid", RESET_LINK_INVALID_MESSAGE);
@@ -92,7 +77,6 @@ export function passwordResetRoutes(deps: PasswordResetRouteDeps) {
       return reply.send({ email: link.email, expiresAt: link.expiresAt.toISOString() });
     });
 
-    // 順序：body → 連結 → 帳密有效值 → 嘗試桶 → 長度 → argon2 → 交易。argon2 之前能判的都先判。
     app.post("/api/auth/password-reset", async (request, reply) => {
       const parsed = completeBodySchema.safeParse(request.body);
       if (!parsed.success) return sendError(reply, 400, "invalid_body", "Invalid request body.");
@@ -102,7 +86,6 @@ export function passwordResetRoutes(deps: PasswordResetRouteDeps) {
       if (!(await isPasswordLoginAccepted(deps.db, deps.config, request.log))) {
         return sendError(reply, 403, "password_login_disabled", PASSWORD_LOGIN_DISABLED_MESSAGE);
       }
-      // 帳密關閉的 403 在上面先回，不扣這個桶。
       if (!deps.limiters.oneTimeLinkAttempt.consume(`link:${link.id}`)) {
         return sendError(reply, 429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
       }
@@ -116,23 +99,21 @@ export function passwordResetRoutes(deps: PasswordResetRouteDeps) {
         if (err instanceof HashBusyError) return sendError(reply, 429, "server_busy", "The server is busy. Try again in a moment.");
         throw err;
       }
-      // #397：有效期在交易前讀一次，新列與交易後簽的 cookie／JWT 用同一個值。
       const ttlSeconds = deps.siteLimits.get("sessionTtlSeconds");
       const input = { linkId: link.id, targetUserId: link.targetUserId, passwordHash, ttlSeconds };
       let updated: Awaited<ReturnType<typeof completePasswordResetInTx>>;
       try {
         updated = await deps.db.transaction(tx => completePasswordResetInTx(tx, input));
       } catch (err) {
-        // 交易內的 410 都是並發造成（這發已以有效 token 通過上面的查詢），不經 sendInvalidLink、不扣 miss 桶。
+        // A 410 inside the tx comes from concurrency (a valid token passed the lookup): no miss charge.
         if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
-        // UPDATE 的參數帶 password hash：drizzle 的錯誤會把參數串進 message。
+        // UPDATE params carry the password hash.
         throw redactDbError(request.log, err, "重設密碼");
       }
-      // 登出其他瀏覽器（同改密碼）：gate 快取立即失效、共編連線重驗。
       deps.gate.invalidate(updated.id);
       deps.collabHooks.onUserRevoked(updated.id);
       request.log.info({ targetUserId: updated.id, linkId: link.id }, "重設密碼連結已使用");
-      await touchLastLogin(deps.db, updated.id, request.log); // #247：重設密碼連結
+      await touchLastLogin(deps.db, updated.id, request.log);
       await setSessionCookieFor(reply, deps.config, { userId: updated.id, tv: updated.tokenVersion, sid: updated.sessionId, ttlSeconds });
       const dto: UserDto = {
         id: updated.id,

@@ -15,27 +15,19 @@ import { runOauthCleanup } from "../oauth/cleanup.js";
 
 const CODE_TTL_MS = 10 * 60_000;
 
-/**
- * 不變量 S：`req` 進 SQL 述詞前先過正規式。id 就是 `randomBytes(16).toString("base64url")`
- * ＝22 字元；不匹配的一律當「已使用或已過期」同形回，不成 oracle。
- */
+// `req` goes into a SQL predicate: it must match the 22-char base64url shape first; anything else looks like "used or expired".
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
-/**
- * #239：allow 必帶同意頁的勾選結果 `scope`（五種落庫形之一，#181），缺或錯一律 400——在 body 解析這關擋下，早於消費。
- * 這也擋住升版前開著的舊分頁（舊 bundle 不送 `scope`），不推定成 pending。deny 忽略 `scope`。
- */
+// allow requires the consent page's `scope` (also rejects stale pre-upgrade tabs); deny ignores it.
 const decisionBodySchema = z.discriminatedUnion("decision", [
   z.object({ req: z.string(), decision: z.literal("deny") }),
   z.object({ req: z.string(), decision: z.literal("allow"), scope: z.enum(TOKEN_SCOPES) }),
 ]);
 
-/** 同意頁把 scope 字串拆成單值，逐條列人話。 */
 function splitScopes(scope: TokenScope): string[] {
   return scope.split(" ");
 }
 
-/** deny／allow 共用的導回組字——一律 URL API（`state` 由 client 控制）。 */
 function buildRedirect(redirectUri: string, issuer: string, params: Record<string, string>, state: string | null): string {
   const url = new URL(redirectUri);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -50,11 +42,7 @@ export interface OauthApiRouteDeps {
   siteLimits: SiteLimits;
 }
 
-/**
- * 同意頁的站內端點。**掛頂層 app、走站內錯誤形**——不得放進
- * `/oauth` 那個 RFC 形 plugin：這兩支的消費者是我們自己的 SPA，錯誤要能餵給 i18n。
- * 兩支都不吃限流桶（上游 `AUTHORIZE_LIMIT` 已支配）。
- */
+// Top-level app with in-site error shapes (not the RFC plugin): the consumer is our SPA and needs i18n-able errors. No limiter: AUTHORIZE_LIMIT upstream.
 export function oauthApiRoutes(deps: OauthApiRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const issuer = publicUrlIssuer(deps.config.publicUrl);
@@ -78,12 +66,12 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
       if (row === undefined) {
         return sendError(reply, 410, "oauth_request_invalid", "This authorization request has been used or has expired.");
       }
-      // stored 值含 ephemeral port，**不可用字串成員判定**。
+      // The stored value contains an ephemeral port, so no string membership test.
       if (!row.redirectUris.some(uri => matchesLoopbackRedirect(uri, row.redirectUri))) {
         return sendError(reply, 404, "not_found", "No authorization request with that id.");
       }
 
-      // #239：existingScope 是載入當下的快照，只給同意頁當預設勾選；decision 不重查，server 不依賴它。
+      // existingScope only seeds the consent page's default checkboxes; decision doesn't depend on it.
       const [existing] = await deps.db
         .select({ scope: apiTokens.scope })
         .from(apiTokens)
@@ -108,7 +96,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", "Invalid request body.");
       }
-      // 擋在消費之前——被擋下的請求不該白吃掉一個 pending request。
+      // Before consumption, so a rejected request doesn't waste the pending request.
       if (request.user!.mustChangePassword) {
         return sendError(reply, 403, "forbidden", "Change your password before doing this.");
       }
@@ -116,13 +104,13 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
         return sendError(reply, 410, "oauth_request_invalid", "This authorization request has been used or has expired.");
       }
 
-      // ⚠ 殭屍 client 清理要早於下面的消費與 client 查表（誤序只在跨 24h 邊界時可觀察，無自動化守衛）。
+      // Zombie-client cleanup must precede consumption and the client lookup.
       await runOauthCleanup(deps.db);
 
-      // allow 與 deny 都消費，連點兩下只會建一個 code。`expires_at > now()` 那半段
-      // 在這裡被上面的清理遮蔽（過期列已先被清），是縱深防禦、沒有自動化守衛。
+      // allow and deny both consume: a double click creates one code.
       const [pending] = await deps.db
         .delete(oauthRequests)
+        // expires_at overlaps the cleanup above (defense in depth).
         .where(and(eq(oauthRequests.id, parsed.data.req), sql`${oauthRequests.expiresAt} > now()`))
         .returning();
       if (pending === undefined) {
@@ -144,8 +132,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
         return sendError(reply, 409, "token_limit", `You already have the maximum of ${tokenLimit} active tokens. Revoke one first.`);
       }
 
-      // #239：授予值＝要求 ∩ 勾選。超出 pending 的 body 被夾回、不報錯。
-      // #181：交集——不超過 client 要求、也不超過使用者勾的（move 與 delete 互不包含，不是鏈上取小）。
+      // granted = requested ∩ checked (move and delete don't form a chain).
       const granted = narrowerScope(pending.scope as TokenScope, parsed.data.scope);
       const code = randomBytes(32).toString("base64url");
       await deps.db.insert(oauthCodes).values({
@@ -157,7 +144,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
         codeChallenge: pending.codeChallenge,
         expiresAt: new Date(Date.now() + CODE_TTL_MS),
       });
-      // 建 code 也算 client 的「使用」。
+      // Creating a code counts as client use for zombie cleanup.
       await deps.db.update(oauthClients).set({ lastUsedAt: new Date() }).where(eq(oauthClients.clientId, pending.clientId));
 
       return { redirectTo: buildRedirect(pending.redirectUri, issuer, { code }, pending.state) };

@@ -1,18 +1,5 @@
-/**
- * #93：`GET /api/search?q=&limit=&match=&cursor=`——網頁側欄（與 token 使用者）的全文搜尋。
- *
- * - **不開交易**（S14）：只呼叫 `notes/search-query.ts` 的 `searchNotesForUser`（它在 S14 的 `ROUTE_FILES`），與 MCP
- *   `search_notes` 同一支查詢、同一個 REPEATABLE READ READ ONLY 交易。可見性只來自 `visibleNoteBranches`，這裡不另做權限判斷。
- * - `q` **會 trim**（MCP 不 trim，照收原字串）；trim 後 1–`SEARCH_QUERY_MAX` 個 UTF-16 code unit、不得含 NUL。
- * - 不套 MCP 的 wire 預算（REST 沒有鏡像）：片段以 code unit 計（`REST_SNIPPET_MAX`），段落標題截到 `REST_HEADING_MAX`。
- * - `match=body`：只回內文有命中的筆記。查常見字時，標題命中排在前面（rank 0–2），只中內文的（rank 3）會被擠出
- *   頁面；web 的標題區是 client 端自己算的，只需要內文命中。預設 `match=all`＝標題或內文（與 MCP 同）。
- * - 分頁：keyset `(rank, updated_at 微秒, id)`，`nextCursor` 原樣帶回 `cursor`。游標只帶排序值與查詢指紋（`q`＋`match`
- *   的 sha256 前 16 hex），**不帶任何授權資訊**——拿別人的游標只會得到自己看得到、排在那個位置之後的列。翻頁之間被改過的筆記
- *   可能漏掉（被推到前面）或重複一次（rank 變大）；web 端以 id 去重（`notes/search-sql.ts` 與 `test/search-query.test.ts`）。
- * - 順序：所有驗證（含游標）失敗 → 400 `invalid_body`，**不扣桶** → `search` 桶（與 MCP 共用，每人每分 60 次）→ 429。
- * - 錯誤訊息是 HTTP 層，英文（`sendError`；#372）。
- */
+// q is trimmed (MCP isn't). match=body exists because on common words title hits (rank 0–2) push body-only hits (rank 3) off the page. The cursor carries sort values and a query
+// fingerprint only, no authorization; notes edited between pages can be missed or duplicated, so the web dedupes by id. Validation failures (including the cursor) don't consume the limiter.
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -32,7 +19,6 @@ import type { NoteSearchRow, SearchMatchRow, SearchPageKey } from "../notes/sear
 import { buildSnippet } from "../notes/search-snippet.js";
 import { UUID_RE } from "../notes/service.js";
 
-/** 片段與段落標題的上限（UTF-16 code unit）。只有 REST 用，不放 shared。 */
 export const REST_SNIPPET_MAX = 160;
 export const REST_HEADING_MAX = 200;
 
@@ -60,20 +46,17 @@ const searchQuerySchema = z
 
 type Match = "all" | "body";
 
-/** 查詢指紋：游標只對同一個（trim 後的）`q` 與同一個 `match` 有效。 */
 function fingerprintOf(match: Match, q: string): string {
   return createHash("sha256").update(`${match}\0${q}`, "utf8").digest("hex").slice(0, 16);
 }
 
 const RANK_RE = /^[0-3]$/;
-/** pg `to_char(… 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` 的形；前 23 字（毫秒）＋`Z` 交給 `parseCursorTimestamp` 驗日期本身。 */
 const UPDATED_AT_KEY_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\d{3}Z$/;
 
 function encodeSearchCursor(fp: string, key: SearchPageKey): string {
   return encodeKeysetCursor("s", [fp, String(key.rank), key.updatedAtKey, key.id]);
 }
 
-/** 不是本站對這個 `q`＋`match` 發的游標 → null。 */
 export function decodeSearchCursor(raw: string, fp: string): SearchPageKey | null {
   const parts = decodeKeysetCursor(raw, "s", 4);
   if (parts === null) return null;
@@ -125,7 +108,6 @@ export function searchRoutes(deps: SearchRouteDeps) {
       let nextCursor: string | null = null;
       if (rows.length > limit) {
         const last = page.at(-1)!;
-        // page 模式一定有這欄（search-sql.ts）；沒有是內部錯誤，不是使用者輸入。
         if (last.updatedAtKey === undefined) throw new Error("search: updatedAtKey missing in page mode");
         nextCursor = encodeSearchCursor(fp, { rank: last.rank, updatedAtKey: last.updatedAtKey, id: last.id });
       }

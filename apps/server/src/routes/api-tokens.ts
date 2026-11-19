@@ -15,16 +15,11 @@ import type { SiteLimits } from "../site-limits/store.js";
 
 const createBodySchema = z.object({
   name: z.string().trim().min(1).max(64),
-  /** 五種落庫形（#181）；"notes:write" 是升版前 SPA 的值，保留為別名。落庫前一律 normalizeScope。 */
   scope: z.enum([...TOKEN_SCOPES, "notes:write"]),
   expiresInDays: z.union([z.literal(30), z.literal(90), z.literal(365), z.null()]),
 });
 
-/** #106＋#239：`agentLabel`（改 agent 名稱；`null`＝清掉覆寫、回到派生值）與 `scope`（五種落庫形之一，
- * 不收 `"notes:write"` 別名——別名只開在 POST），兩鍵至少給一個。不變量 S：`AGENT_LABEL_RE` 本身就擋掉 NUL
- * 與空字串，所以欄位層不需要 `.refine`；物件層「至少一鍵」的 `.refine` 排在欄位驗證之後
- * （順序照 Global Constraints：`.refine()` 一律排在 `.regex()`／`.max()` 之後，見 routes/notes.ts 的
- * contentQuerySchema 旁註解）。 */
+// AGENT_LABEL_RE already rejects NUL and empty; the object-level "at least one key" refine comes after field validation. The "notes:write" alias is POST-only.
 const patchBodySchema = z
   .object({ agentLabel: z.string().regex(AGENT_LABEL_RE).nullable().optional(), scope: z.enum(TOKEN_SCOPES).optional() })
   .strict()
@@ -33,12 +28,9 @@ const patchBodySchema = z
 function toDto(row: typeof apiTokens.$inferSelect): ApiTokenDto {
   return {
     id: row.id,
-    // kind 只 cast（CHECK 只有兩值，沒有正規化的需求）；scope 走 normalizeScope 讓
-    // CHECK 漂移時退化成不大於原值的合法形（fail-closed）。normalizeScope 對五種合法落庫形
-    // （TOKEN_SCOPES）恆等，所以正常情況下這裡回的就是 DB 的值。
+    // scope goes through normalizeScope so a drifted CHECK degrades to a valid form no larger than stored (fail-closed).
     kind: row.kind as ApiTokenDto["kind"],
     name: row.name,
-    // 欄位有值＝使用者改過的名字，NULL＝回派生值（`agentLabelOf` 是唯一現值運算式）。
     agentLabel: agentLabelOf(row),
     scope: normalizeScope(row.scope),
     createdAt: row.createdAt.toISOString(),
@@ -54,15 +46,7 @@ export interface ApiTokensRouteDeps {
   limiters: { patCreate: FixedWindowLimiter; tokenRename: FixedWindowLimiter };
 }
 
-/**
- * PAT 管理端點。**一律 cookie session 專用**（`app.authenticate`，不是
- * `authenticateAny`）——token 不能拿來簽發、改權限或撤銷 token，否則一支外洩的 token 就能
- * 自我延續，「最壞情況只是筆記被讀寫」的邊界就破了。#239 起 PATCH 能改 `scope`：
- * 若 Bearer 打得到它，外洩的讀寫 token 就能替自己升成搬移。
- *
- * 列表**同時列出 OAuth grant**（#132 之後才會有）：使用者只有這一個地方能看到與
- * 撤銷所有憑證，兩種來源共用同一份 UI。
- */
+/** Cookie-session only (not authenticateAny): a token must not issue, re-scope or revoke tokens, or a leaked one could perpetuate itself. */
 export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.get("/api/auth/tokens", { preHandler: app.authenticate }, async request => {
@@ -79,8 +63,7 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       }
-      // 強制改密碼的使用者不得簽發憑證。**擋在限流之前**——被擋下的請求不該吃掉
-      // 使用者自己的額度（比照 #132 decision 端點「mustChangePassword 在消費之前」）。
+      // Before the limiter, so the rejected request doesn't use quota.
       if (request.user!.mustChangePassword) {
         return sendError(reply, 403, "forbidden", "Change your password before doing this.");
       }
@@ -89,7 +72,6 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
         return sendError(reply, 429, "too_many_requests", "Too many tokens created. Wait a moment and try again.");
       }
 
-      // 建 PAT 是六個清理時機之一（五條 DELETE 的說明見 oauth/cleanup.ts）。
       await runOauthCleanup(deps.db);
       const tokenLimit = deps.siteLimits.get("apiTokensPerUser");
       if ((await countBillableGrants(deps.db, userId)) >= tokenLimit) {
@@ -111,32 +93,16 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
         })
         .returning();
 
-      // 明文只在這個回應出現一次，之後任何地方都拿不回來。
       const body: CreatedApiTokenDto = { ...toDto(row), token: plaintext };
       return reply.code(201).send(body);
     });
 
     /**
-     * `PATCH /api/auth/tokens/:id`（#106）——改這個憑證的 agent 顯示名稱，或（#239）調整 `scope`。
-     *
-     * 順序：格式（不變量 S：uuid → body）→（帶 `scope` 時）mustChangePassword 403（不吃節流額度）→
-     * 節流 → 單語句 UPDATE。⚠ 與 DELETE（完全不節流）
-     * 及 `POST /api/notes`（`role === "none"` 明文不啃桶）不同，這裡節流排在 UPDATE **之前**
-     * 且不看結果──改別人的／不存在的 token 那個 404 一樣會先吃掉一次 `TOKEN_RENAME_LIMIT`
-     * 額度（格式錯在 400 那關就擋掉，不會）。`AND user_id=$me` 讓
-     * 「別人的 token」與「不存在」同形 404（同 DELETE）。`agentLabel: null`
-     * ＝**把欄位清成 NULL**，不是把當下的派生值寫進去——回應仍是派生值，兩者只有直接看
-     * 欄位才分得出來（守衛：api-tokens.test.ts 第 2 案的 `.toBeNull()`）。
-     *
-     * #239：body 可帶 `scope`（五種落庫形之一，#181 加 delete）——**可升可降**，PAT 與 oauth 列皆可，
-     * 不看 client 原本要求過什麼。下一個請求生效：`authenticateAny` 每請求查表、MCP 每請求依 scope
-     * 註冊工具；`refresh` 輪替只換 token 與 access 到期時間、不碰 `scope`，所以降權不會被下一次 refresh 洗回去。
-     * 帶 `scope` 且 `mustChangePassword` → 403（比照 POST）；純改名不擋（維持現狀）。
-     * 兩個欄位都給時一起寫、同一語句。
+     * The limiter runs before the UPDATE and ignores the outcome (a 404 for another user's token still counts), unlike DELETE and POST /api/notes.
+     * `agentLabel: null` clears the column rather than storing the derived value. `scope` can go up or down and applies from the next request; refresh doesn't touch it.
      */
     app.patch("/api/auth/tokens/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
-      // 同 DELETE：非 uuid 直接 404——丟給 pg 會是 22P02，經全域 error handler 冒成 500。
       if (!UUID_RE.test(id)) return sendError(reply, 404, "token_not_found", "No API token with that id.");
       const parsed = patchBodySchema.safeParse(request.body ?? {});
       if (!parsed.success) {
@@ -144,7 +110,6 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
         const message = field === "agentLabel" ? "Invalid agentLabel." : field === "scope" ? "Invalid scope." : "Invalid request body.";
         return sendError(reply, 400, "invalid_body", message);
       }
-      // 擋在節流之前（比照 POST）：被擋下的請求不吃額度。
       if (parsed.data.scope !== undefined && request.user!.mustChangePassword) {
         return sendError(reply, 403, "forbidden", "Change your password before doing this.");
       }
@@ -165,9 +130,8 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
 
     app.delete("/api/auth/tokens/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
-      // 非 uuid 直接 404——丟給 pg 會是 22P02，經全域 error handler 冒成 500。
       if (!UUID_RE.test(id)) return sendError(reply, 404, "token_not_found", "No API token with that id.");
-      // 撤銷＝硬刪列。`AND user_id=$me` 讓「別人的 token」與「不存在」同形 404。
+      // `AND user_id=$me` makes another user's token the same 404 as a missing one.
       const deleted = await deps.db
         .delete(apiTokens)
         .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, request.user!.id)))
