@@ -790,7 +790,7 @@ export function AppShell({ children, inert }: AppShellProps) {
           </div>
           {/* outside the frame so the wrapper is not a flex item eating the gap; inert in presentation like the frame */}
           <div ref={setFabSlot} data-phone-fab-slot="" inert={inert} />
-          {/* outside the inert div (it portals to body) */}
+          {/* it portals to body anyway; kept outside the inert div so readers needn't reason about inert */}
           <ShortcutsDialog
             open={shortcutsOpen}
             onOpenChange={setShortcutsOpen}

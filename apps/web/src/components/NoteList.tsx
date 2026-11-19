@@ -549,7 +549,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             aria-label={t("trash.select")}
             title={t("trash.select")}
             disabled={!selectable}
-            // Queried via SIDEBAR_SELECT_BUTTON.
+            // Focus returns here after selection mode ends (queried via SIDEBAR_SELECT_BUTTON).
             data-sidebar-select=""
             // start would clear the ticked items
             onClick={() => {

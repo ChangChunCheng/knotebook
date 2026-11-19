@@ -19,7 +19,7 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
   const backlinks = backlinksQuery.data;
   const settled = backlinks !== undefined;
   const phone = useIsPhone();
-  // Desktop always renders the row (empty at 0: discoverability, stable card height); phones hide it when empty. No text while pending/failed: the count is unknown.
+  // Desktop always renders the row (empty at 0: discoverability, stable card height). No text while pending/failed: the count is unknown.
   if (phone && (!settled || backlinks.length === 0)) return null;
 
   return (

@@ -1,4 +1,4 @@
-// `@blocknote/core/fonts/inter.css` is deliberately not imported: Latin-only (9 woff files), no help for a CJK UI.
+// `@blocknote/core/fonts/inter.css` is deliberately not imported: Latin-only, no help for a CJK UI.
 import "@blocknote/mantine/style.css";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -244,7 +244,7 @@ export function insertLinkAtSavedSelection(
 
 /** `getSlashItems` must keep its identity across dialog open/close: a changing identity re-runs the `useLoadSuggestionMenuItems` effect (deps `[query, getItems]`) and the menu flashes its loading state. */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
-// The phone menu has no shortcut column; crossing 640 reloads the menu once (deliberate).
+  // The phone menu has no shortcut column; crossing 640 reloads the menu once (deliberate).
   const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   // Restore the saved selection explicitly rather than rely on it not having changed while the dialog took focus; a ref because it affects no output.
@@ -571,7 +571,7 @@ export function NoteEditor({
               placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
               editToolbarHeight={phone && mobileToolbar ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0}
-              // Same condition CornerStack uses to show the bubble.
+              // Non-phone: same condition CornerStack uses to show the bubble.
               bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : versionsEnabled && !panelOpen ? CORNER_STACK_FOOTPRINT_PX : 0}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}
