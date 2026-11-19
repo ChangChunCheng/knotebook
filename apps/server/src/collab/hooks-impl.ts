@@ -1,71 +1,32 @@
-/**
- * `CollabHooks` 的實作——撤權 SLA（撤銷分享 ≤10 秒；機制是
- * 「定向重驗 + 5s deadline」）的核心。
- *
- * 機制只有兩件事：
- *   1. **重驗（reverify）**：對受影響的連線送 `requestToken()`，並掛一個 5s deadline。
- *      client 若回送 token，`onTokenSync` 會重跑 `resolveRole` + `gate.check`
- *      決定續留、降級唯讀或關閉，同時觸發 `onNextTokenSync` 回呼撤銷 deadline；client
- *      若不回應（離線、卡住、惡意），deadline 到期就直接關閉——「沒有查證就不放行」。
- *   2. **刪除閘門**：移入垃圾桶或刪除筆記前先擋掉新連線、關閉既有連線、把文件 flush + unload，讓
- *      交易跑在「沒有任何進行中連線」的前提上；還原 commit 後由 `onNotesRestored` 收門（#181）。
- *
- * 所有 hook 都不得往外 throw：`onShareChanged`/`onUserRevoked`/`onGroupAccessChanged`/`onNotesRestored`
- * 是同步 fire-and-forget，呼叫點在 DB commit 之後（見 `routes/*`、`notes/move-note.ts`、`trash/service.ts`），
- * throw 會讓一個其實已經成功的 API 回 500；`beforeNoteDeleted` 則是移入垃圾桶／刪除交易前的
- * await 點，throw 會讓「筆記刪不掉、卻已經被閘門擋住兩分鐘」（見 `DELETING_GATE_TTL_MS`）——兩種都比記錄錯誤後繼續更糟。
- * `linkSyncGate` 是同步查詢（委派 `linkSyncState`，只讀記憶體），回 `{ ok: false }` 而不 throw（`POST …/links` 映成 409 `not_loaded`）。
- */
+// Revocation is "re-verify + deadline": affected connections get requestToken(), and any that don't
+// answer before the deadline are closed (fail-closed).
+// No hook throws: the sync ones run after the DB commit, where a throw turns a committed request into
+// a 500; beforeNoteDeleted runs before the delete transaction, where a throw would leave the note
+// undeletable yet gated for DELETING_GATE_TTL_MS.
 import { COLLAB_CLOSE_NOTE_DELETED, COLLAB_CLOSE_REVOKED, COLLAB_REVERIFY_DEADLINE_MS } from "@knotebook/shared";
 import type { CollabHooks, NoteDeleteGate } from "./hooks.js";
 import type { CollabServer, ConnectionHandle } from "./server.js";
 
-/**
- * 重驗的 deadline——定義移到 `@knotebook/shared`（issue #40）：它與 client 的 token
- * 重試表是一組跨端耦合的取捨（刻意 fail-closed：deadline 短於 client 最壞重試），
- * 完整說明與釘住這層關係的測試指標見 shared 的 `COLLAB_REVERIFY_DEADLINE_MS` 註解。
- * 這裡 re-export 供既有測試沿用。
- */
+/** Re-exported for existing tests; the rationale is on `COLLAB_REVERIFY_DEADLINE_MS`. */
 export const REVERIFY_DEADLINE_MS = COLLAB_REVERIFY_DEADLINE_MS;
 
-/**
- * 刪除閘門的 TTL。
- *
- * 閘門原本只需要覆蓋「刪除交易還沒 commit、筆記仍在」的那一小段窗口——commit 之後任何
- * 重連本來就會因為 `resolveRole` 查不到筆記而被 `onAuthenticate` 拒絕。
- *
- * ⚠ **但那個拒絕的理由是 `no-role`（wire 上的 `forbidden`），client 會據此告訴使用者
- * 「你已失去這篇筆記的存取權」——而真相是筆記被刪了**（issue #35）。分辨兩者的唯一乾淨
- * 辦法就是這道閘門：它只裝得下「這個行程剛剛刪掉的筆記」，因此不像「查 DB 看筆記在不在」
- * 那樣會變成一個任何登入使用者都能對任意 UUID 提問的存在性 oracle（REST 端刻意不區分
- * 「不存在」與「無權限」，見 `routes/notes.ts` 的防列舉說明）。
- *
- * 所以 TTL 必須**大於 client 端最長的一次重啟退避**：`TOKEN_RESTART_DELAYS_MS` 最後一格
- * 60s ＋ 25% 抖動 ＝ 最壞 75s（見 `apps/web/src/collab/useCollab.ts`）。取 120s 留餘裕。
- * 撐更久沒有意義：睡了半天才醒來的分頁本來就會落回 `forbidden`，那是可接受的降級。
- *
- * 代價：交易失敗時本來要靠 TTL 自然到期，這篇筆記會有兩分鐘連不上且畫面顯示「已刪除」。
- * 不過那條路現在由 `NoteDeleteGate.release()` 收掉（見 `beforeNoteDeleted` 的回傳值），只有
- * 「release 自己也失敗」或「併發的另一次刪除持有這道門」才會真的等到 TTL。
- */
+// Without the gate, a reconnect after the delete commits is refused as no-role, telling the user they
+// lost access (#35). The gate only holds notes this process just deleted, so unlike a DB lookup it is
+// no existence oracle. The TTL must outlast the client's longest restart backoff (60 s + 25% jitter =
+// 75 s, apps/web/src/collab/useCollab.ts). A failed delete calls `release()` instead of waiting.
 export const DELETING_GATE_TTL_MS = 120_000;
 
-/** unload 輪詢：上限 20 × 250ms = 5s，之後一律放行（絕不無限等，見 `beforeNoteDeleted`）。 */
+/** Unload poll: at most 20 × 250 ms = 5 s. */
 const UNLOAD_POLL_INTERVAL_MS = 250;
 const UNLOAD_POLL_ATTEMPTS = 20;
 
-/**
- * 只取用得到的 `error` 方法（pino 的 `Logger`、Fastify 的 `app.log` 皆結構相容）。
- * 刻意不直接依賴 pino 型別：`createCollabHooks` 在 `buildApp()` **之前**就要被建出來
- * （AppDeps 的一部分），那時還沒有 `app.log` 可用。
- */
+/** Structural, not pino's type: hooks are created before `buildApp()`, when no `app.log` exists yet. */
 export interface CollabHooksLogger {
   info(obj: object, msg: string): void;
   error(obj: object, msg: string): void;
 }
 
-// 未注入 logger 時的退路。刻意不是靜默 no-op：會走到 `log.error` 的都是「撤權/刪除清掃
-// 沒有照預期完成」這種必須被看見的事件，吞掉等於讓 SLA 破功時無跡可循。
+// Not a silent no-op: these errors mean revocation or delete cleanup failed, which must stay visible.
 const consoleLogger: CollabHooksLogger = {
   info: (obj, msg) => console.info(msg, obj),
   error: (obj, msg) => console.error(msg, obj),
@@ -76,46 +37,21 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function createCollabHooks(server: CollabServer, log: CollabHooksLogger = consoleLogger): CollabHooks {
-  /**
-   * 每篇筆記目前武裝中的閘門 TTL timer，連同它屬於哪一道門（epoch）。
-   *
-   * **重新開閘門前要先清掉舊的**：刪除失敗後 5 秒重試成功的話，第一次那個
-   * timer 會在 120 秒整點把**第二次**的閘門提早打開，而那個縫隙裡重連的協作者聽到的會是
-   * 「你已失去存取權」。epoch 則保證 `release()` 不會清掉別人的 timer。
-   */
+  // Re-arming must clear the old timer, or a retried delete's gate would open when the first TTL
+  // ends; the epoch keeps release() from clearing another delete's timer.
   const gateTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; epoch: number }>();
-  /**
-   * 對指定的每一條連線要求重新出示 token，並掛上 deadline。
-   *
-   * ⚠ 傳進來的必須是**快照**（呼叫端一律 `[...set]`）：`connectionsOf*` 回傳的是索引裡
-   * 的活集合，重驗過程若同步關閉了某條連線（例如 client 立刻回送過期 token），該集合會
-   * 在迭代中被改動。
-   *
-   * deadline timer 對「已經關閉的連線」fire 是安全的 no-op——v4 `Connection.close` 以
-   * `document.hasConnection(this)` 做冪等守衛（已對 4.5.0 原始碼核實），重複 close 不會
-   * 重送 CLOSE 訊息、也不會影響同文件的其他連線。**因此刻意不做 onDisconnect 清 timer
-   * 的機制**：那需要另一套「連線 → 未觸發 timer」的登記表與拆除時機，複雜度遠高於讓
-   * 一個 5s 的 timer 自然到期。
-   */
+  // Pass a snapshot: connectionsOf* return live index sets that a synchronous close mutates mid-loop.
+  // No onDisconnect cleanup of deadline timers: firing on a closed connection is a no-op (v4.5.0
+  // Connection.close guards with document.hasConnection), far simpler than tracking pending timers.
   function reverify(conns: Iterable<ConnectionHandle>): void {
     for (const c of conns) {
-      // ⚠ **不變式：deadline timer 必須在任何可能拋錯的呼叫之前武裝。** 一次例外絕不能
-      // 留下「既沒被重驗、也沒被關閉」的連線——那是 fail-open，已撤權者可以無限期繼續
-      // 編輯（還只留下一行 log），這段程式就是為了擋這個。先武裝再送 requestToken 是
-      // 安全的：若 send 真的失敗，該連線在 v4 裡已經自我關閉，屆時 timer fire 到的是一條
-      // 已關閉的連線＝冪等 no-op（`Connection.close` 的 `hasConnection` 守衛）。
+      // Arm the deadline before anything that can throw: an exception must never leave a connection
+      // neither re-verified nor closed (fail-open).
       const t = setTimeout(() => {
-        // timer 的 callback 跑在沒有呼叫者的 macrotask 裡：例外逸出會直接讓 process
-        // 掛掉（比照 server.ts 對 upgrade listener 的處理），一律接住並記錄。
+        // Timer callbacks have no caller: an escaping exception would crash the process.
         try {
-          // ⚠ 這一則必須留下訊號（issue #37）：deadline 到期是**合法使用者
-          // 最可能被誤踢**的路徑（他的 client 只是剛好卡在 token 退避裡沒能在 5 秒內回話），
-          // 而使用者看到的是「你已失去存取權」。欄位比照 server.ts 的 `logReject`，
-          // phase 另立 `deadline`——它不是握手被拒，也不是重驗有了結論。
-          //
-          // ⚠ 但**只有這條連線還在索引裡才算數**：timer 對已關閉的連線 fire 是
-          // 安全的 no-op（見上面的說明），使用者自己關掉分頁也會走到這裡——照記的話，排錯
-          // 指引最倚重的那一行會指著一個根本沒被踢的人說「他是被踢的」。
+          // #37: the likeliest path for wrongly kicking a legitimate user, so log it, but only while the
+          // connection is still indexed: a tab the user closed also ends up here.
           const stillConnected = server.connectionsOfNote(c.noteId).has(c);
           if (stillConnected) {
             log.info(
@@ -129,21 +65,16 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
         }
       }, REVERIFY_DEADLINE_MS);
 
-      // 每條連線各自 try/catch：一條連線的意外不得讓**其餘連線漏掉重驗**——那正是
-      // 「已被撤權的人還在編輯」這個失效模式。（v4.5.0 的 `Connection.send` 本身已把
-      // 送出失敗吞掉並改為關閉該連線，所以這裡實務上不會進 catch；純粹是不把整批撤權
-      // 的正確性押在那個實作細節上。）
+      // Per connection, so one failure can't skip re-verifying the rest (v4.5.0 send already swallows
+      // send errors; this doesn't rely on it).
       try {
-        // ⚠ 這個回呼若是在一次**進行中**的 onTokenSync 期間登記的（該次已經把 callbacks
-        // 取走清空了，見 server.ts 的 hoist-take-and-clear），它就不會被那一次觸發；若那次
-        // 重驗的結論是關閉連線，這個回呼便永遠等不到下一次 token sync 而被丟棄，pending 的
-        // timer 隨後對一條已關閉的連線 fire ——同上，安全 no-op。
+        // Registered during an in-flight onTokenSync (callbacks already taken), this won't fire if that
+        // sync closes the connection; the timer then fires on a closed connection, a no-op.
         server.onNextTokenSync(c, () => clearTimeout(t));
-        c.requestToken(); // fire-and-forget，無內建 timeout
+        c.requestToken(); // fire-and-forget, no built-in timeout
       } catch (error) {
         log.error({ err: error, noteId: c.noteId, userId: c.userId }, "collab 重驗單一連線失敗，立即關閉該連線");
-        // fail-closed：連「要求重驗」都做不到的連線沒有續留的理由，不必讓它多活 5s。
-        // 上面的 timer 刻意**不**清除——萬一這裡的 close 自己也拋錯，它仍是最後一道保險。
+        // Fail closed now; the timer stays armed in case this close throws too.
         try {
           c.close(COLLAB_CLOSE_REVOKED);
         } catch (closeError) {
@@ -157,11 +88,7 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
   }
 
   return {
-    /**
-     * 只重驗「該 note ∩ 該 user」的連線，**不得**對整份文件廣播——同文件其他協作者
-     * 的權限沒有變化，無故要他們重新出示 token 會製造無謂的 token endpoint 尖峰（還會
-     * 撞上 per-user 節流），且任何一次 client 沒回應都可能誤殺一條合法連線。
-     */
+    /** Only this user's connections: re-verifying everyone spikes the token endpoint, hits per-user throttling, and can drop a legitimate connection that answers late. */
     onShareChanged(noteId: string, userId: string): void {
       try {
         reverify([...server.connectionsOfNote(noteId)].filter(c => c.userId === userId));
@@ -170,7 +97,6 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       }
     },
 
-    /** 停用帳號／改密碼：該使用者**跨所有文件**的連線全部重驗。 */
     onUserRevoked(userId: string): void {
       try {
         reverify([...server.connectionsOf(userId)]);
@@ -179,7 +105,6 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       }
     },
 
-    /** #388 登出：只重驗這個使用者、這個 session 的連線（其他裝置不動）。 */
     onSessionRevoked(userId: string, sessionId: string): void {
       try {
         reverify([...server.connectionsOf(userId)].filter(c => c.sessionId === sessionId));
@@ -188,10 +113,7 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       }
     },
 
-    /**
-     * #103：只重驗「noteIds ∩ userIds」的連線（比照 `onShareChanged`：不對整份文件廣播）。
-     * 兩個名單先各自去重；日誌只記數量（名單長度由群組大小決定，不讓單行大小隨之成長）。
-     */
+    /** #103: logs counts only, since the lists grow with group size. */
     onGroupAccessChanged(noteIds: readonly string[], userIds: readonly string[]): void {
       try {
         const targets = new Set(userIds);
@@ -205,33 +127,17 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       }
     },
 
-    /**
-     * 刪除筆記前的清場：擋新連線 → 關既有連線 → flush → unload → 輪詢確認。
-     *
-     * ⚠ 刻意**不用** `closeConnections`：v4 的 `closeConnections()` 是以
-     * `ResetConnection` 關閉，語意等同「叫 provider 立刻重連」；而此刻刪除交易尚未
-     * commit、筆記還在，重連會通過授權並讓文件重新進 `server.documents`，輪詢永遠不會
-     * 收斂、DELETE 請求掛死。這裡改用「閘門 + 逐連線 close」：所有人都離開，
-     * 又不製造活鎖。
-     *
-     * ⚠ 這個機制**不保證**「刪除前絕對沒有任何 update 被套用」：`connected` 的
-     * deleting 重查只能擋下「還沒被登記進索引」的連線，擋不掉它在 onAuthenticate 通過後、
-     * connected 抵達前那段時間從佇列 drain 出來、已經套用進 Y.Doc 的 update。真正的
-     * 資料面保證來自兩件事：刪除本身是一個交易，以及 `collab/store.ts` 的 `onStoreDocument` 見到
-     * 筆記已不存在就丟棄該次寫入——所以即使有落單的 update，也不會在筆記永久刪除後復活。
-     * #181：移到垃圾桶（`DELETE /api/notes/:id`）之後列還在，落單的 store **會寫進**垃圾桶筆記——
-     * 那是移入前一刻的內容，還原後看得到；它不會讓筆記回到清單（`deleted_at` 不變）。
-     */
+    // Not closeConnections(): v4 closes with ResetConnection, so providers reconnect at once, re-auth
+    // (the note still exists before commit), reload the doc, and the poll never settles. Late updates
+    // can still slip in; onStoreDocument drops stores for missing notes, and one into a trashed note (#181) doesn't un-trash it.
     async beforeNoteDeleted(noteId: string): Promise<NoteDeleteGate> {
-      // 先關門：此後 onAuthenticate / connected / onTokenSync 三處都會拒絕這篇筆記
-      // ，下面的清掃才不會邊掃邊有新連線補進來。
+      // Close the gate first so no new connection joins during the cleanup.
       const epoch = await server.markDeleting(noteId);
 
       const previous = gateTimers.get(noteId);
       if (previous !== undefined) clearTimeout(previous.timer);
 
-      // TTL。`unref()`：這個計時器不該讓 process（或測試 worker）為了它多活兩分鐘——
-      // 閘門只在服務執行中才有意義，行程要結束時直接跟著消失即可。
+      // unref(): the gate only matters while serving; don't keep the process (or a test worker) alive for it.
       const ttl = setTimeout(() => {
         gateTimers.delete(noteId);
         server.unmarkDeleting(noteId);
@@ -246,7 +152,7 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
             .then(released => {
               if (!released) return;
               const armed = gateTimers.get(noteId);
-              // 只清自己那一顆：release 期間可能已經有新的刪除接手了。
+              // A newer delete may have taken over while release was pending.
               if (armed?.epoch !== epoch) return;
               clearTimeout(armed.timer);
               gateTimers.delete(noteId);
@@ -258,19 +164,15 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
       };
 
       try {
-        // 逐連線 close（帶 reason，client 端據此顯示「筆記已被刪除」而不是重連）。取快照
-        // 迭代：`close()` 會同步觸發 `connection.onClose` → 把自己從索引集合中移除。
+        // Snapshot: close() synchronously removes the connection from the index.
         for (const c of [...server.connectionsOfNote(noteId)]) c.close(COLLAB_CLOSE_NOTE_DELETED);
 
-        // 把 debounce 中的 onStoreDocument 立刻執行——不可 await（回傳 void），落地與否
-        // 由下面的 unload 輪詢間接觀察。
+        // Returns void, so whether the stores landed is observed through the unload poll.
         server.hocuspocus.flushPendingStores();
 
         const doc = server.hocuspocus.documents.get(noteId);
-        // 有進行中的 store 時 `unloadDocument` 會靜默 no-op（`shouldUnloadDocument` 為
-        // false），所以下面要輪詢重試。不 await：unload 內含 hook 執行，正常情況下瞬間
-        // 完成，我們要的訊號是 `documents` 裡的那筆消失。`.catch` 是為了不讓它變成
-        // unhandled rejection 把行程打掛（例如某個 unload hook 拋錯）。
+        // unloadDocument silently no-ops while a store is in flight, hence the poll; .catch keeps a
+        // throwing unload hook from becoming an unhandled rejection.
         if (doc) void server.hocuspocus.unloadDocument(doc).catch(() => {});
 
         for (let i = 0; i < UNLOAD_POLL_ATTEMPTS && server.hocuspocus.documents.has(noteId); i += 1) {
@@ -280,21 +182,17 @@ export function createCollabHooks(server: CollabServer, log: CollabHooksLogger =
         }
 
         if (server.hocuspocus.documents.has(noteId)) {
-          // 逾時（上限 5s）：記錯後**放行**，絕不無限等——DELETE 掛死對使用者是更嚴重的
-          // 故障。之後抵達的 store：移入垃圾桶時照寫進垃圾桶筆記（內容不丟、不復活到清單）；
-          // 永久刪除時由 `onStoreDocument` 的「筆記不存在就丟棄 store」兜底。
+          // Proceed anyway: a hung DELETE is worse. Late stores land in the trashed note, or are dropped once purged.
           log.error({ noteId }, "collab beforeNoteDeleted：文件在期限內未 unload，仍繼續刪除（之後的 store：移入垃圾桶照寫、永久刪除丟棄）");
         }
       } catch (error) {
-        // 清場失敗不得讓 DELETE 回 500：閘門已經關上，交易照跑，殘留的連線最遲在下一次
-        // 重驗／訊息往返時就會因為授權得 none（筆記在垃圾桶或已不存在）而被拒。
+        // Must not 500 the DELETE: the gate is closed, and leftover connections are refused at their next re-verify.
         log.error({ err: error, noteId }, "collab beforeNoteDeleted 清場失敗，仍繼續刪除");
       }
 
       return gate;
     },
 
-    /** #181：還原 commit 後收掉閘門，連同 TTL timer。日誌只記 `{ name, code }` 與數量（不記原始 err、不記 id 清單）。 */
     onNotesRestored(noteIds: readonly string[]): void {
       try {
         for (const id of new Set(noteIds)) {

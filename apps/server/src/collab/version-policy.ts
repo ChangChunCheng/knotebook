@@ -1,12 +1,5 @@
-/**
- * 自動版本的分層稀疏清除。純函式，時間一律外部注入——檔內不得呼叫
- * `Date.now()`／`new Date()`（`version-policy.test.ts` 有源碼守衛），同 `backup-policy.ts` 的慣例。
- *
- * 永遠留：手動版本、基底那版、最新一版（seq 最大）。其餘自動版本依 `age = now − createdAt` 分三個區間：
- *   age < F 天：全留；F ≤ age < D：**只在這個區間的候選之間**每個 UTC 日曆日留 createdAt 最新一筆；age ≥ D：**只在這個區間的候選之間**
- *   每個 UTC 週（週一 00:00 起）留最新一筆。同 createdAt 留 seq 大者。UTC 切桶是設計選擇（見 docs/versions.md）。
- * age 為負（時鐘回撥）算在 F 內。
- */
+// Pure: time is passed in (version-policy.test.ts guards this source against reading the clock).
+// UTC day/week buckets are by design (docs/versions.md); a negative age (clock went back) falls in keep-all.
 export interface VersionPolicyRow {
   seq: number;
   kind: string;
@@ -22,7 +15,7 @@ export interface VersionPolicyOpts {
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
-/** epoch（1970-01-01）是週四；1970-01-05 是週一——週桶以它對齊。 */
+/** The epoch was a Thursday; offsetting 4 days aligns weeks to Monday 00:00 UTC. */
 const MONDAY_EPOCH_OFFSET_MS = 4 * DAY_MS;
 
 const dayKey = (t: number): number => Math.floor(t / DAY_MS);

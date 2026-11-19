@@ -3,9 +3,7 @@ export const PG_FOREIGN_KEY_VIOLATION = "23503";
 export const PG_SERIALIZATION_FAILURE = "40001";
 export const PG_DEADLOCK_DETECTED = "40P01";
 
-// 兩種錯誤形狀都要認得（見下方個別 export 的說明）：原始的 node-postgres
-// `DatabaseError`（`.code` 直接在最外層），或被 drizzle-orm 0.44 包成
-// `DrizzleQueryError`（原始 pg 錯誤落在 `.cause`）。
+// Matches both node-postgres `DatabaseError` (`.code` on top) and drizzle-orm 0.44's `DrizzleQueryError` (pg error in `.cause`).
 function code(e: unknown): unknown {
   return typeof e === "object" && e !== null && "code" in e ? (e as { code?: unknown }).code : undefined;
 }
@@ -16,14 +14,6 @@ function matchesCode(err: unknown, target: string): boolean {
   return code(cause) === target;
 }
 
-/**
- * pg 的 unique_violation（code 23505）——否則唯一鍵違反會被 `throw err` 一路冒到
- * 最外層變成未預期的 500。
- *
- * 共用處：`routes/oidc.ts`（整-tx-重投的觸發判定）、`routes/admin-ai.ts`（model 唯一鍵）。
- * `routes/notes.ts`、`routes/account.ts` 與 `routes/auth.ts` 改用下面的
- * `uniqueViolationConstraint`（各自的表有多把唯一鍵，需要 constraint 名分流）。
- */
 export function isUniqueViolation(err: unknown): boolean {
   return matchesCode(err, PG_UNIQUE_VIOLATION);
 }
@@ -34,15 +24,7 @@ function constraintOf(e: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/**
- * unique violation 的 **constraint 名**（#122 判別契約）：`users` 表如今有
- * email 與 handle 兩把唯一鍵、`handles` 表另有 PK——「任何 unique violation →
- * email_taken」的舊映射會把 handle 撞名誤報成「此 email 已被使用」。呼叫端依
- * constraint 名分流（`handles_pkey`/`users_handle_unique` → handle_taken、
- * `users_email_unique` → email_taken、`notes_owner_slug_idx` → slug_taken），
- * 其他名字一律 rethrow（不認識的唯一鍵違反不該被猜成任何一種 409）。非 unique
- * violation 回 null。
- */
+/** Tables with several unique keys need the constraint name; callers rethrow names they don't know. */
 export function uniqueViolationConstraint(err: unknown): string | null {
   if (!isUniqueViolation(err)) return null;
   const direct = constraintOf(err);
@@ -50,36 +32,18 @@ export function uniqueViolationConstraint(err: unknown): string | null {
   return constraintOf(err instanceof Error ? err.cause : undefined);
 }
 
-/**
- * pg 的 foreign_key_violation（code 23503）——`collab/store.ts` 的 `onStoreDocument`
- * 用它辨識「筆記已被刪除，note_states 首次 insert 撞到外鍵」，據此丟棄該次寫入而不是
- * 讓錯誤一路冒到 Hocuspocus 的 hook 執行器（見 `store.ts` 對「筆記不存在 → 丟棄」硬規則
- * 的說明）。
- */
 export function isForeignKeyViolation(err: unknown): boolean {
   return matchesCode(err, PG_FOREIGN_KEY_VIOLATION);
 }
 
-/**
- * pg 的 serialization_failure（40001）／deadlock_detected（40P01）——`notes/links.ts` 的
- * `writeNoteLinks` 用它辨識「交易本身沒有邏輯錯誤，純粹是併發衝突」的情況，映射成 409
- * `server_busy`（既有 code，setup/auth/邀請兌換的 `HashBusyError` 已在用；此處是第二個
- * 發送點，語意皆為「請稍後重試」，code 與 HTTP status 本非一對一）。與 `isForeignKeyViolation`
- * 分開判定：FK violation 代表某個 target 筆記在授權查詢之後、寫入之前被刪除（可恢復——剔除
- * 該 target 重試一次），這兩個 40001/40P01 代表 DB 層級的交易衝突（不可恢復，直接回應
- * client 重試，不在 server 端重試第二次）。
- */
+// Separate from FK violations: those are recoverable (drop the target, retry once); 40001/40P01 are only answered for the client to retry, never retried server-side.
 export function isTransientTransactionError(err: unknown): boolean {
   return matchesCode(err, PG_SERIALIZATION_FAILURE) || matchesCode(err, PG_DEADLOCK_DETECTED);
 }
 
 export const PG_CHECK_VIOLATION = "23514";
 
-/**
- * check_violation（23514）的 constraint 名（#187：`auth_providers_enabled_secret_chk` → 409 `provider_secret_missing`）。
- * 兩種錯誤形狀（node-postgres 原生、drizzle 包一層）同 `uniqueViolationConstraint`。非 check violation 回 null；
- * 呼叫端只認自己知道的名字，其餘 rethrow（輸入驗證已與其他 CHECK 對齊，撞到＝bug，該 500）。
- */
+/** Callers rethrow names they don't know: input validation mirrors the CHECKs, so hitting another one is a bug. */
 export function checkViolationConstraint(err: unknown): string | null {
   if (!matchesCode(err, PG_CHECK_VIOLATION)) return null;
   const direct = constraintOf(err);
@@ -87,10 +51,7 @@ export function checkViolationConstraint(err: unknown): string | null {
   return constraintOf(err instanceof Error ? err.cause : undefined);
 }
 
-/**
- * 只取 pg 錯誤的 `code` 與 `constraint`（兩種錯誤形狀都認；不是 pg 錯誤回兩個 null）——給「錯誤本體不能進 log」的呼叫端
- * （`lib/redact-db-error.ts`）。刻意不取 `message`／`detail`／`params`：那幾欄會帶寫入的值。
- */
+/** Deliberately omits message/detail/params: they carry the written values. */
 export function pgErrorSummary(err: unknown): { code: string | null; constraint: string | null } {
   const cause = err instanceof Error ? err.cause : undefined;
   const raw = code(err) ?? code(cause);
@@ -103,23 +64,15 @@ export function pgErrorSummary(err: unknown): { code: string | null; constraint:
 export const PG_LOCK_NOT_AVAILABLE = "55P03";
 export const PG_NOT_NULL_VIOLATION = "23502";
 
-/**
- * 儲存配額：空間鎖那一句的 `lock_timeout` 到期＝55P03 `lock_not_available`。與 40001／40P01 同屬
- * 「交易本身沒錯、純粹是併發」——路由一律映射 409 `server_busy`。
- */
 export function isLockTimeout(err: unknown): boolean {
   return matchesCode(err, PG_LOCK_NOT_AVAILABLE);
 }
 
-/** 40001／40P01／55P03：交易被併發犧牲（什麼都沒寫）的路由一律以此映射 409 `server_busy`（呼叫端 grep 本函式名）。 */
+/** Concurrency victims that wrote nothing; routes map them to 409 `server_busy`. */
 export function isRetryableTxError(err: unknown): boolean {
   return isTransientTransactionError(err) || isLockTimeout(err);
 }
 
-/**
- * foreign_key_violation（23503）的 constraint 名（刪方案的分流、建帳／建群組撞已刪的預設方案）。兩種錯誤形狀同
- * `uniqueViolationConstraint`；非 23503 或沒有約束名回 null。呼叫端只認自己知道的名字，其餘照舊處理。
- */
 export function foreignKeyViolationConstraint(err: unknown): string | null {
   if (!isForeignKeyViolation(err)) return null;
   return constraintOf(err) ?? constraintOf(err instanceof Error ? err.cause : undefined);
@@ -130,26 +83,22 @@ function columnOf(e: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** not_null_violation（23502）的欄名（`site_settings` 沒有列時 DEFAULT 函式回 NULL → `storage_plan_id` 23502）。 */
+/** e.g. `storage_plan_id` when `site_settings` has no row and its DEFAULT function returns NULL. */
 export function notNullViolationColumn(err: unknown): string | null {
   if (!matchesCode(err, PG_NOT_NULL_VIOLATION)) return null;
   return columnOf(err) ?? columnOf(err instanceof Error ? err.cause : undefined);
 }
 
-// 資料夾：0034 三支手寫 trigger 的自訂 SQLSTATE。
-export const PG_NOTE_FOLDER_SPACE = "KF001";   // notes_folder_space_trg：筆記與所在資料夾不同空間
-export const PG_FOLDER_PARENT_SPACE = "KF002"; // folders_parent_space_trg：父子不同空間
-export const PG_PLACEMENT_FOLDER = "KF003";    // note_placements_folder_trg：放置不是放置者自己的 shared 資料夾
+// Custom SQLSTATEs raised by the triggers in migration 0034.
+export const PG_NOTE_FOLDER_SPACE = "KF001";   // notes_folder_space_trg: note and its folder in different spaces
+export const PG_FOLDER_PARENT_SPACE = "KF002"; // folders_parent_space_trg: parent and child in different spaces
+export const PG_PLACEMENT_FOLDER = "KF003";    // note_placements_folder_trg: not the placer's own shared folder
 
-/**
- * KF001（兩種錯誤形狀都認）。新碼走得到 KF001 的只有 `POST /api/notes {folderId}`（不在交易內）——
- * 授權之後、INSERT 之前那個群組剛完成轉移（資料夾已變 personal）；帶 `folderId` 的寫入入口一律映成 404 `folder_not_found`。
- */
+/** Raised when the folder changed space between authorization and the write (e.g. a group transfer); callers treat it as folder not found. */
 export function isNoteFolderSpaceViolation(err: unknown): boolean {
   return matchesCode(err, PG_NOTE_FOLDER_SPACE);
 }
 
-/** KF001／KF002／KF003 任一（兩種錯誤形狀都認）。 */
 export function isFolderSpaceViolation(err: unknown): boolean {
   return (
     matchesCode(err, PG_NOTE_FOLDER_SPACE) || matchesCode(err, PG_FOLDER_PARENT_SPACE) || matchesCode(err, PG_PLACEMENT_FOLDER)

@@ -1,174 +1,82 @@
 #!/usr/bin/env node
-// scripts/check-bundle-size.mjs
-//
-// CI bundle 尺寸檢查（issue #19）：`pnpm build` 之後對 apps/web/dist/assets 驗兩件事——
-//   1. entry chunk（index-<hash>.js）的未壓縮尺寸 ≤ MAX_ENTRY_BYTES。lazy split 前
-//      entry 是 1,629 KB（BlockNote＋共編整條鏈都在首包）；切出去後 ~540 KB。上限取
-//      750 KiB（原 700 KB，後調高，理由見常數註解）：任何「把
-//      NotePage/BlockNote 又靜態 import 回首包」的迴歸（+1MB 級）仍必然撞牆。
-//   2. NotePage 的 lazy chunk（NotePage-<hash>.js）存在——entry 上限擋「胖回去」，
-//      這條擋「切分本身被拿掉」（若某天 rollup 改了 chunk 命名慣例，這裡會紅，
-//      屆時把 pattern 跟著改，別直接刪檢查）。
-//   3. 其餘 lazy chunk 存在：mermaid（#94）、shiki（#96）、AdminSections（#201／#247）、簡報層（#229）、版本歷史、垃圾桶 tab（#181）——理由各見常數註解。
-//      一般 tab 選取模式（#181）也是：SelectLazy chunk 必須存在，且 entry 不得含選取字串包的鍵名（SELECT_I18N_MARKER）。
-//      資料夾對話框同理：FolderLazy chunk 必須存在，且 entry 不得含資料夾字串包的鍵名（FOLDER_I18N_MARKER）。
-//      快捷鍵介紹同理：ShortcutsLazy chunk 必須存在，且 entry 不得含 SHORTCUTS_I18N_MARKER。
-//      功能導覽同理：TourLazy chunk 必須存在，且 entry 不得含導覽字串包的鍵名（TOUR_I18N_MARKER）。
-//      說明視窗（ShortcutsLazy）另有兩條：entry 不得含說明頁的字串鍵名（HELP_I18N_MARKER）；ShortcutsLazy chunk 本身不得含導覽字串包的鍵名、
-//      也不得（沿著靜態 import 往下）到達 TourLazy chunk 或帶著導覽字串包鍵名的共用 chunk（說明視窗只經首包的 context 開始導覽，導覽的字串包與站點表不能跟著它下載）。
-//      側欄搜尋的內文區（#93）同理：BodySearchLazy chunk 必須存在，且 entry 不得含內文區的 marker（BODY_SEARCH_MARKER）。
-//      頭貼的解碼／編碼模組（avatars/encode.ts）只能是自己的 lazy chunk：AVATAR_IMAGE_MARKER 必須出現在檔名為 encode-*.js 的 chunk，
-//      且 entry 與其他任何 JS 都不得含它（含被別的 lazy chunk，例如裁切框，靜態 import 而併進去的形）；
-//      再者任何 chunk 都不得靜態 import encode-*.js（兩個以上的靜態使用者會讓它成為共用 chunk，marker 查不到，但開頁就會下載）。
-//      群組對話框（新增／改名、刪除）與筆記 ⋮ 的移動／複製確認框同理（首包瘦身）：各自是 lazy chunk（GroupNameDialog、DeleteGroupDialog、GroupTransferDialog），
-//      且 entry 不得含各自的 marker（GROUP_LAZY_DIALOGS）。圖片與 mermaid 的放大畫面（MediaLightbox，#462）也列在同一張表：只經 lightbox-chunk.ts 的動態 import() 載入（MediaZoomProvider 的 lazy() 與放大鈕的預取共用同一個 promise）。
-//      站台管理／設定的字串包（management-strings，首包瘦身）同理：entry 不得含 MANAGEMENT_I18N_MARKERS，且 management-strings chunk 必須存在並帶著它們。
-//
-// 全程 fail-closed：dist 不存在、找不到 entry、找到多個 entry，一律 throw 而非放行
-// ——「沒東西可檢查」不等於「檢查通過」（比照 check-licenses.mjs 的紀律）。
-//
-// 任一檢查失敗 exit 1 並列出實際尺寸/檔名。
+// Fail closed: nothing to check must not count as a pass.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// #201：#187 登入服務圖示曾讓首包到 725,101 bytes、上限暫調 720 KiB；站台管理、
-// 設定 modal 各區、登入流程四頁（註冊／帳號連結／改密碼／OAuth 同意）改 lazy 後首包約 616 KB，上限調回 700 KiB。
-// 調到 750 KiB：讓垃圾桶、資料夾、選取模式能合流（合流後約 718 KB）；新功能仍預設 lazy，多出的空間是緩衝。
+// Headroom is a buffer; re-importing NotePage/BlockNote statically (+1 MB) still fails.
 export const MAX_ENTRY_BYTES = 750 * 1024;
 export const ENTRY_RE = /^index-[A-Za-z0-9_-]+\.js$/;
+// Guards that the NotePage split itself isn't removed. If rollup changes chunk naming, update the pattern; don't delete the check.
 export const NOTEPAGE_RE = /^NotePage-[A-Za-z0-9_-]+\.js$/;
-// issue #94：mermaid 必須留在自己的 chunk 裡。它連同相依（cytoscape／katex／langium…）
-// 是這個 app 最大的單一相依，靜態 import 會把它整包壓進 NotePage chunk，讓每個開筆記的人
-// 都付這個代價，即使整份筆記一張圖都沒有。`lib/mermaid.ts` 是唯一允許 import 它的地方，
-// 且必須是 `import("mermaid")`。
-// ⚠ 這條守衛的判準是**「mermaid.core chunk 存在」**，不是「entry/NotePage 裡沒有 mermaid
-// 字樣」——後者本來就不會是 0（i18n key、block type、對 chunk 的動態 import 參照都會命中；
-// 實測 entry 6 次、NotePage 19 次）。存在性之所以夠用：只要有人在 `lib/mermaid.ts`
-// 以外靜態 import mermaid，Rollup 就會把它併回引用它的 chunk，這個獨立 chunk 隨即消失。
+// Presence of the mermaid chunk is the guard: a static import outside lib/mermaid.ts makes Rollup merge it back and the chunk disappears.
+// Counting "mermaid" strings in entry/NotePage can't work: i18n keys and dynamic references match.
 export const MERMAID_RE = /^mermaid\.core-[A-Za-z0-9_-]+\.js$/;
-// issue #96：shiki 同 mermaid 的理由必須留在自己的 chunk（唯一允許 import 它的地方是
-// `lib/code-highlight.ts` 的 `import("shiki")`）。chunk 名 shiki-<hash> 來自
-// vite.config.ts 的 chunkFileNames：shiki 套件入口檔叫 index.mjs，Rollup 預設以檔名
-// 命名 chunk 會產出第二個 index-<hash>.js、撞上上面 ENTRY_RE 的「恰一個 entry」偵測。
+// Named shiki-* via chunkFileNames: its index.mjs would otherwise yield a second index-<hash>.js and break the single-entry check.
 export const SHIKI_RE = /^shiki-[A-Za-z0-9_-]+\.js$/;
-// issue #201／#247：站台管理 modal 的六個區塊（users／groups／login／storage＋版本設定／ai／limits）必須是自己的 lazy chunk——
-// 大多數使用者從不打開它。App.tsx 的六個 `lazy(() => import("./components/admin/AdminSections"))` 是唯一允許 import 它的地方；
-// 外殼 `AdminModal` 在首包。判準同 mermaid：任何對 AdminSections 或它重新匯出之區塊的靜態 import，都會讓 Rollup 把它們
-// 併回 entry，這個 chunk 隨即消失。
+// A static import of AdminSections (or its re-exported sections) merges it into entry and the chunk disappears.
 export const ADMINSECTIONS_RE = /^AdminSections-[A-Za-z0-9_-]+\.js$/;
-// 版本歷史：面板、預覽、diff（`diff` 套件）與對話框必須是自己的 lazy chunk——只在使用者打開
-// 版本歷史時才下載。`components/versions/VersionsLazy.tsx` 是唯一入口，所有呼叫端都是 `lazy(() => import(...VersionsLazy))`；
-// ⚠ 判準**不同於** mermaid：這條存在性檢查只擋「整組被併回／chunk 命名慣例改變」。VersionsLazy 的呼叫端（NotePage、NoteEditor）
-// 本來就在 NotePage chunk 內且已有動態 import，所以有人靜態 import 它匯出的元件時，Rollup 是把該元件（及其相依，例如
-// `diff` 套件）**搬進**呼叫端 chunk，VersionsLazy chunk 仍在（實測：VersionsLazy −9.16 kB、NotePage +9.66 kB）。
-// 真正的守衛是下面的 VERSIONS_MARKERS 檢查。
+// Presence only catches the whole group merging back or a rename. A static import of one component moves it into the
+// caller's chunk (this chunk stays), which VERSIONS_MARKERS catches.
 export const VERSIONS_RE = /^VersionsLazy-[A-Za-z0-9_-]+\.js$/;
-// issue #229：簡報層（reveal.js、reveal.css、DOMPurify 的使用端、presentationSchema、present.css）必須是自己的
-// lazy chunk——只有按「簡報模式」的人才付這個代價。`apps/web/src/present/lazy.ts` 的
-// `lazy(() => import("./PresentationOverlay"))` 是唯一允許 import 它的地方：PresentationOverlay 被別處靜態 import
-// 時 Rollup 把它併回引用它的 chunk，這個獨立 chunk 消失（實跑過）。⚠ 這條**抓不到** reveal.js 本身被
-// 別處靜態 import——那時 reveal 被拆進引用者或共用 chunk（實測拆成獨立的 reveal-*.js）、overlay chunk
-// 縮小但仍在；那一形由下面的
-// REVEAL_MARKER 檢查負責。
+// Presence misses a static import of reveal.js itself (reveal splits out, this chunk stays); REVEAL_MARKER covers that.
 export const PRESENTATION_RE = /^PresentationOverlay-[A-Za-z0-9_-]+\.js$/;
-// #181 垃圾桶：側欄垃圾桶 tab 的面板與底部（TrashPanel、TrashFooter、trash-dialogs）必須是自己的 lazy chunk——只有打開垃圾桶
-// tab 的人才付這個代價。`components/sidebar/TrashLazy.tsx` 是唯一入口（AppShell、SidebarFooter 都 `lazy(() => import(...TrashLazy))`）。
-// ⚠ 同 VERSIONS_RE：存在性只擋「兩個掛載點都改成靜態 import、整組併回 entry」；只改一處時元件被搬進 entry、chunk 仍在，
-// 那一形由 entry 上限擋。
+// Presence only catches both mount points going static; a single static import moves the component into entry, which the size cap catches.
 export const TRASHLAZY_RE = /^TrashLazy-[A-Za-z0-9_-]+\.js$/;
-// #181：一般 tab 選取模式必須是自己的 lazy chunk；`components/sidebar/SelectLazy.tsx` 是唯一入口。
-// ⚠ 同 TRASHLAZY_RE：存在性只擋「三個掛載點（NoteList 兩處、SidebarFooter）都改成靜態 import」或 chunk 改名；只改一處時
-// 元件被搬進 entry、chunk 仍在（實測：只改 SidebarFooter 時 entry 734,825、chunk 仍在），那一形由下面的 SELECT_I18N_MARKER 擋。
+// Presence only catches all mount points going static or a rename; a single static import moves it into entry, caught by SELECT_I18N_MARKER.
 export const SELECTLAZY_RE = /^SelectLazy-[A-Za-z0-9_-]+\.js$/;
-// select.*.json 只能進 SelectLazy 鏈：這把鍵名出現在 entry＝字串包（或 import 它的模組）被首包靜態 import。
-// ⚠ 涵蓋 import `@/i18n/select-strings` 的模組與以值 import 它們的模組（含 `lib/select-batch.ts`）；只做型別 import 的不在範圍。
+// A select.*.json key in entry means the string pack (or a module importing it by value, e.g. lib/select-batch.ts) is statically imported.
 export const SELECT_I18N_MARKER = 'deleteSelected_one';
-// 資料夾：資料夾對話框（新增／改名、刪除確認）必須是自己的 lazy chunk；`components/sidebar/FolderLazy.tsx` 是唯一入口
-// （NoteList 的 `lazy(() => import("@/components/sidebar/FolderLazy"))`）。⚠ 同 SELECTLAZY_RE：存在性只擋「整組被併回 entry」或 chunk 改名；
-// 只把其中一個對話框模組靜態 import 進首包時 chunk 仍在，那一形由下面的 FOLDER_I18N_MARKER 擋。
+// Presence only catches the whole group merging back or a rename; FOLDER_I18N_MARKER catches a single static import.
 export const FOLDERLAZY_RE = /^FolderLazy-[A-Za-z0-9_-]+\.js$/;
-// folders.*.json 只能進 FolderLazy 鏈：這把鍵名出現在 entry＝字串包（或 import 它的模組）被首包靜態 import。
+// A folders.*.json key in entry means the string pack is statically imported.
 export const FOLDER_I18N_MARKER = 'restoreRebuilds';
-// 快捷鍵介紹頁（Ctrl+/）：清單、字串包（shortcuts.*.json，經 `@/i18n/shortcuts-strings` 註冊）、鍵面元件必須是自己的 lazy chunk；
-// `components/shortcuts/ShortcutsLazy.tsx` 是唯一入口（`ShortcutsDialog` 的 `lazy(() => import(...))`），外殼 ShortcutsDialog 在首包。
-// ⚠ 同 SELECTLAZY_RE：存在性只擋「整組被併回 entry」或 chunk 改名；只把清單或字串包靜態 import 進首包時 chunk 仍在，那一形由下面的
-// SHORTCUTS_I18N_MARKER 擋。
+// Presence only catches the whole group merging back or a rename; SHORTCUTS_I18N_MARKER catches a static import of the list or strings.
 export const SHORTCUTSLAZY_RE = /^ShortcutsLazy-[A-Za-z0-9_-]+\.js$/;
-// shortcuts.*.json 只能進 ShortcutsLazy 鏈：這把鍵名（`shortcutsGuide.items.columnBackspace`，清單 id）出現在 entry＝字串包或清單被首包靜態 import。
-// 選它而不選 heading／wikilink 這類 id：那些字在 entry 本來就有（block 名稱）。check-bundle-size.test.mjs 驗它是 shortcuts.en.json 的鍵、不在主 en.json。
+// Chosen over ids like heading/wikilink, which already appear in entry as block names.
 export const SHORTCUTS_I18N_MARKER = 'columnBackspace';
-// 說明視窗「這一版新增」頁的鍵名（`helpGuide.whatsNew`）：只有 ShortcutsLazy 鏈用得到；出現在 entry＝說明頁的字串或內容被首包靜態 import。
-// check-bundle-size.test.mjs 驗它是 shortcuts.en.json 的 helpGuide 底下的鍵、不在主 en.json。
+// helpGuide key used only by the ShortcutsLazy chain.
 export const HELP_I18N_MARKER = 'whatsNew';
-// 手機編輯工具列的字串（mobile-toolbar.*.json）只能進 NotePage 鏈：這把鍵名出現在 entry＝字串包或工具列被首包靜態 import。
+// mobile-toolbar.*.json key: the string pack must stay in the NotePage chain.
 export const MOBILE_TOOLBAR_I18N_MARKER = 'hideKeyboard';
-// #93：側欄搜尋的「內文符合」區（BodySearchResults、查詢 hook、片段與點擊處理）必須是自己的 lazy chunk；
-// `components/sidebar/BodySearchLazy.tsx` 是唯一入口（SearchResults 的 `lazy(() => import("@/components/sidebar/BodySearchLazy"))`）。
-// ⚠ 同 SELECTLAZY_RE：存在性只擋「整組被併回 entry」或 chunk 改名；SearchResults 是唯一呼叫端，改成靜態 import 時整組併回 entry、chunk 消失。
-// 另一道是 BODY_SEARCH_MARKER：內文片段列的 data-testid（"body-match"），只寫在 BodySearchResults.tsx（首包的 SearchResults、gate、fallback 都不得用這個字；
-// check-bundle-size.test.mjs 釘住）——entry 含它＝內文區元件被首包靜態 import。
-// 為什麼挑它：不是 i18n 文案（改文案不會讓它消失），而是 e2e 依賴的 testid 契約；不在任何 i18n json，build 後以字面量留在 chunk 裡。
-// 先前用的根元素 testid 在合併列表重寫後改成與首包共用的 sidebar-search-results，所以換成這個。
-// 功能導覽：遮罩、卡片、站點表、示範筆記、字串包（tour.*.json，經 `@/i18n/tour-strings` 註冊）必須是自己的 lazy chunk；
-// `components/tour/TourLazy.tsx` 是唯一入口（`TourProvider` 第一次開始導覽時 `import()`），外殼 TourProvider 在首包。
-// ⚠ 同 SELECTLAZY_RE：存在性只擋「整組被併回 entry」或 chunk 改名；只把字串包或某個導覽模組靜態 import 進首包時 chunk 仍在，
-// 那一形由下面的 TOUR_I18N_MARKER 擋。
+// Presence only catches the whole group merging back or a rename; TOUR_I18N_MARKER catches a static import of a single tour module or the string pack.
 export const TOURLAZY_RE = /^TourLazy-[A-Za-z0-9_-]+\.js$/;
-// tour.*.json 只能進 TourLazy 鏈：這把鍵名（`tourGuide.keepOrDeleteSample`，最後一站的說明句）出現在 entry＝字串包或 import 它的導覽模組被首包靜態 import。
-// 選它而不選 next／back 這類鍵：那些字在 entry 本來就有。check-bundle-size.test.mjs 驗它是 tour.en.json 的鍵、不在主 en.json。
+// Chosen over keys like next/back, which already appear in entry.
 export const TOUR_I18N_MARKER = 'keepOrDeleteSample';
+// Presence only catches the whole group merging back or a rename. The marker is the match rows' data-testid literal
+// (unlike i18n copy it is stable; only BodySearchResults.tsx may use it).
 export const BODYSEARCHLAZY_RE = /^BodySearchLazy-[A-Za-z0-9_-]+\.js$/;
 export const BODY_SEARCH_MARKER = 'body-match';
-// 頭貼的解碼／編碼模組（`avatars/encode.ts`）只能是自己的 lazy chunk（裁切框按儲存時才 `import("@/avatars/encode")`）。
-// marker 是它匯出的錯誤類別在 `this.name` 設的字串字面量（字面量不會被 minify 改掉，類別名會）。兩個方向都查：
-//   正向：含 marker 的 JS 檔必須都叫 encode-<hash>.js（entry 含它＝被首包靜態 import；別的 lazy chunk 含它＝被裁切框等靜態 import 而併進去）；
-//   反向：至少要有一個含 marker 的 encode-<hash>.js（chunk 名來自模組檔名 encode.ts；若 rollup 改了命名慣例，請更新 pattern，不要刪檢查）。
+// The marker is a string literal in the error class of avatars/encode.ts (class names get minified). It must appear only in
+// encode-<hash>.js; in any other JS it means encode.ts was merged into that chunk.
 export const AVATAR_IMAGE_MARKER = 'AvatarImageError';
 export const AVATAR_ENCODE_RE = /^encode-[A-Za-z0-9_-]+\.js$/;
-// 站台管理（admin.*）與設定（settings.*）的字串包（management.*.json，經 `@/i18n/management-strings` 註冊）也只能進 lazy 鏈：
-// 首包只留 AdminModal／SettingsModal／UserMenu 用到的 15 個鍵。兩個 marker 各取一個只在被搬走子樹裡的鍵名
-// （admin.auth.edit.autoCreateConfirmKeep、settings.ai.actionBuiltinBadge），entry 含任一個＝字串包被首包靜態 import（含「某個首包檔 import 了它」）。
-// 反向也要查：management-strings chunk 必須存在且同時帶著兩個 marker（包沒被弄丟、沒被拆壞）。check-bundle-size.test.mjs 驗兩個都是 management.en.json 的鍵。
+// Both markers are keys that exist only in the moved subtree; also require them in the management-strings chunk so the pack isn't lost.
 export const MANAGEMENT_I18N_MARKERS = ['autoCreateConfirmKeep', 'actionBuiltinBadge'];
-// 圖示（只被 lazy UI 用的那組，`components/ui/icons-extra.tsx`）必須是自己的 chunk：不存在＝它被併回 entry 或命名慣例變了。
+// Icons used only by lazy UI; a missing chunk means they were merged into entry or the naming changed.
 export const ICONS_EXTRA_RE = /^icons-extra-[A-Za-z0-9_-]+.js$/;
 export const MANAGEMENT_STRINGS_RE = /^management-strings-[A-Za-z0-9_-]+\.js$/;
-// 只在開啟時才掛載的對話框：各自必須是 lazy chunk，entry 不得含它的 marker（對話框內才用的 i18n 鍵，字面量不會被 minify 改掉）。
-//   GroupNameDialog：NoteList（新增群組）、GroupMenu（改名）各自 lazy() 動態 import；
-//   DeleteGroupDialog：GroupMenu；GroupTransferDialog：NoteMenu（選單項 GroupTransferMenuItems 仍在首包，不含這些 marker）；
-//   MediaLightbox（圖片與 mermaid 的放大畫面，#462）：只經 lightbox-chunk.ts 動態 import()（Provider 的 lazy() 與預取共用）。
-// ⚠ 存在性只擋「整組被併回 entry」或 chunk 改名；只改一處呼叫端為靜態 import 時，chunk 可能仍在，那一形由 marker 擋。
-// check-bundle-size.test.mjs 驗每個 marker 都在對應的原始檔裡。
+// Dialogs mounted only when opened: each must be a lazy chunk whose marker is absent from entry. Presence only catches the whole group
+// merging back or a rename; one static call site leaves the chunk in place, which the marker catches. MediaLightbox loads only via lightbox-chunk.ts.
 export const GROUP_LAZY_DIALOGS = [
   { name: 'GroupNameDialog', re: /^GroupNameDialog-[A-Za-z0-9_-]+\.js$/, marker: 'groups.dialog.createDescription', source: 'components/groups/GroupNameDialog.tsx' },
   { name: 'DeleteGroupDialog', re: /^DeleteGroupDialog-[A-Za-z0-9_-]+\.js$/, marker: 'groups.delete.transferTrashNote', source: 'components/groups/DeleteGroupDialog.tsx' },
   { name: 'GroupTransferDialog', re: /^GroupTransferDialog-[A-Za-z0-9_-]+\.js$/, marker: 'share.move.openCopyAlt', source: 'components/share/GroupTransferDialog.tsx' },
   { name: 'MediaLightbox', re: /^MediaLightbox-[A-Za-z0-9_-]+\.js$/, marker: 'note.zoom.hint', source: 'components/media-zoom/MediaLightbox.tsx' },
 ];
-// 首包 CSS：reveal.css 的 `.reveal-viewport` 規則（寫死黑字白底）若出現在這裡＝reveal.css 被靜態 import 進首包。
+// reveal.css's `.reveal-viewport` rule in entry CSS means reveal.css was imported statically.
 export const ENTRY_CSS_RE = /^index-[A-Za-z0-9_-]+\.css$/;
-// reveal.js 的 JS 會寫 `reveal-viewport` 這個 class 名；入口側的外殼與其他程式碼都不用它。這個字串只准出現在
-// PresentationOverlay-*.js——出現在別的 JS chunk＝reveal.js 被簡報 lazy 鏈以外的地方靜態 import。
+// Class name reveal.js writes; only PresentationOverlay-*.js may contain it.
 export const REVEAL_MARKER = 'reveal-viewport';
-// #229：shiki 的 chunk 名（index 形由 vite.config.ts 改名成 shiki-*；正常 build 全量已併進 shiki-*，只有 shiki 被
-// 靜態 import 時才會另拆出 bundle-full-*——實測過，所以兩個都要擋）。簡報 chunk 的
-// **靜態** import 閉包不得碰到它們——shiki 只能經 lib/code-highlight.ts 的 import("shiki") 動態載入。
+// shiki is renamed shiki-* in vite.config.ts; when imported statically Rollup also emits bundle-full-*, so block both
+// from the presentation chunk's static import closure.
 export const SHIKI_BUNDLE_RE = /^bundle-full-[A-Za-z0-9_-]+\.js$/;
-// Vite 產物裡同目錄 chunk 的靜態 import 形：`from"./X.js"`、`import"./X.js"`（不含動態的 `import("./X.js")`——
-// `import` 後面緊接引號才算）。
-// VersionsLazy 匯出的每個模組各一個「只出現在該模組」的字串（i18n key 在 en.json 的巢狀結構裡，但元件原始碼裡是 `t("versions.x.y")`
-// 字面，會原樣留在產物）。⚠ 靜態 import VersionsLazy 的元件時，Rollup 不會讓呼叫端去 import VersionsLazy chunk，而是把該元件
-// **搬進**呼叫端 chunk（實測：VersionsLazy chunk 照舊存在、NotePage 的靜態 import 閉包乾淨，存在性檢查抓不到）——
-// 所以改查「非 VersionsLazy 的 JS 含不含這些字串」。key 必須精確（不可用前綴：NotePage 的 Suspense fallback 合法使用
-// `versions.preview.loading`、`versions.bubble`、`versions.crash`），且 check-bundle-size.test.mjs 會驗每個 key 都在 en.json。
-//   versions.menu.baseNotDeletable → VersionsPanel      versions.sheet.backToList → VersionsSheet
-//   versions.preview.nonTextChanged → VersionPreview（NonTextDialog 與 VersionPreview 本體）   versions.preview.split → PreviewBanner
-// DiffEditor 刻意不設 marker：它不拉進 diff 套件，BlockNote 本來就在 NotePage，單獨靜態 import 它的代價可忽略。
-//   versions.dialog.applyDiscard → VersionsDialogs
-//   u{2DE}- → `diff` 套件（word.js 的 extendedWordChars；錯誤訊息字串會被 tree-shake 掉，這個正則字面不會）
-//   SelectionAiPreview（#263 框選 AI 預覽）→ 不另設：它 import version-diff 的值，被靜態 import 時 diff 套件跟著搬家，由 u{2DE}- 抓
+// Strings unique to each VersionsLazy module. A static import of one component makes Rollup move it into the caller's chunk while
+// VersionsLazy stays, so check that no other JS contains them. Keys must be exact: the NotePage Suspense fallback legitimately uses
+// versions.preview.loading, versions.bubble and versions.crash.
+// u{2DE}- is a regex literal from the `diff` package (survives tree-shaking, unlike its error strings); it also catches SelectionAiPreview, whose
+// import of version-diff pulls `diff` along. DiffEditor needs no marker: it doesn't pull in `diff`.
 export const VERSIONS_MARKERS = [
   'versions.menu.baseNotDeletable',
   'versions.sheet.backToList',
@@ -179,7 +87,7 @@ export const VERSIONS_MARKERS = [
 ];
 const STATIC_IMPORT_RE = /(?:\bfrom\s*|\bimport\s*)["']\.\/([^"']+\.js)["']/g;
 
-/** 從 start 起遞迴收集同目錄 chunk 的靜態 import 閉包（以檔名判斷，不看內容字串：共用 chunk 的 __vite__mapDeps 會列出別的檔名）。 */
+// Follows file names only: a shared chunk's __vite__mapDeps lists unrelated file names.
 export function staticImportClosure(assetsDir, start) {
   const seen = new Set();
   const queue = [start];
@@ -198,10 +106,6 @@ export function staticImportClosure(assetsDir, start) {
   return seen;
 }
 
-/**
- * 對指定 assets 目錄跑檢查。回傳檢查通過的摘要；違規 throw（訊息含實際數字）。
- * 抽成函式供 `check-bundle-size.test.mjs` 以假目錄直接測邏輯，不必真的 build。
- */
 export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } = {}) {
   let names;
   try {
@@ -292,7 +196,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
         `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
     );
   }
-  // 只掃 entry：SelectLazy 以外的 lazy chunk 帶這把鍵名不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(SELECT_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含選取字串包的鍵名 ${SELECT_I18N_MARKER}——\`@/i18n/select-strings\`（或 import 它的選取模組）` +
@@ -329,7 +232,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
         `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
     );
   }
-  // 只掃 entry：FolderLazy 以外的 lazy chunk 帶這把鍵名不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(FOLDER_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含資料夾字串包的鍵名 ${FOLDER_I18N_MARKER}——\`@/i18n/folder-strings\`（或 import 它的資料夾對話框模組）` +
@@ -345,7 +247,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
         `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
     );
   }
-  // 只掃 entry：ShortcutsLazy 以外的 lazy chunk 帶這把鍵名不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(SHORTCUTS_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含快捷鍵字串包的鍵名 ${SHORTCUTS_I18N_MARKER}——\`@/i18n/shortcuts-strings\`（或 import 它的清單／內容模組）` +
@@ -361,7 +262,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
         `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
     );
   }
-  // 只掃 entry：TourLazy 以外的 lazy chunk 帶這把鍵名不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(TOUR_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含導覽字串包的鍵名 ${TOUR_I18N_MARKER}——\`@/i18n/tour-strings\`（或 import 它的導覽模組）` +
@@ -369,13 +269,13 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     );
   }
 
-  // 說明視窗的 chunk 不得把導覽帶進來：從 ShortcutsLazy 靜態 import 得到的 chunk（含它自己）裡，不得有導覽的字串包鍵名、也不得有 TourLazy chunk。
-  // 只看 ShortcutsLazy 自己那個檔不夠：導覽字串包同時被 TourLazy 用，rollup 會把它抽成共用 chunk，ShortcutsLazy 只留一行 import。
   if (entrySource.includes(HELP_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含說明頁的字串鍵名 ${HELP_I18N_MARKER}——說明頁的內容與字串包只能經 ShortcutsLazy 載入`
     );
   }
+  // Static import closure instead of the file alone: the tour string pack is shared with TourLazy, so rollup extracts a shared chunk
+  // and ShortcutsLazy keeps only an import line.
   for (const chunk of shortcutsChunks) {
     for (const reached of staticImportClosure(assetsDir, chunk)) {
       const leaked = TOURLAZY_RE.test(reached) ? reached : readFileSync(join(assetsDir, reached), 'utf8').includes(TOUR_I18N_MARKER) ? TOUR_I18N_MARKER : undefined;
@@ -388,7 +288,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     }
   }
 
-  // 只掃 entry：NotePage 等 lazy chunk 帶這把鍵名不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(MOBILE_TOOLBAR_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含手機編輯工具列字串包的鍵名 ${MOBILE_TOOLBAR_I18N_MARKER}——\`@/i18n/mobile-toolbar-strings\`（或 import 它的工具列模組）` +
@@ -404,7 +303,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
         `若是 rollup 改了 chunk 命名慣例，請更新本檢查的 pattern，不要刪檢查`
     );
   }
-  // 只掃 entry：BodySearchLazy 以外的 lazy chunk 帶這個字不影響首包。
   if (readFileSync(join(assetsDir, entryName), 'utf8').includes(BODY_SEARCH_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含內文搜尋區的 marker ${BODY_SEARCH_MARKER}——BodySearchResults（或 import 它的模組）` +
@@ -458,9 +356,7 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     );
   }
 
-  // marker 只能抓到「encode.ts 的程式碼被併進別的 chunk」。若 encode 因為有兩個以上的靜態使用者而成為共用 chunk，
-  // 它仍叫 encode-<hash>.js，但開筆記頁／設定頁就會一起下載——所以再查：任何 JS 都不得以靜態 import 載入 encode-<hash>.js
-  // （動態 `import("./encode-….js")` 不算）。
+  // The marker misses encode becoming a shared chunk (two or more static users): it keeps the name encode-<hash>.js but downloads on page open.
   for (const name of names.filter(n => n.endsWith('.js'))) {
     const source = readFileSync(join(assetsDir, name), 'utf8');
     const staticEncode = [...source.matchAll(STATIC_IMPORT_RE)].map(m => m[1]).filter(n => avatarEncodeChunks.includes(n));
@@ -510,7 +406,6 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
   return { entryName, entryBytes, notePageChunks, mermaidChunks, shikiChunks, adminSectionsChunks, versionsChunks, presentationChunks, trashChunks, selectChunks, folderChunks, shortcutsChunks, tourChunks, managementChunks, bodySearchChunks, avatarEncodeChunks, groupDialogChunks };
 }
 
-// 直接執行（非被 import）時跑真的 dist。
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const assetsDir = join(process.cwd(), 'apps', 'web', 'dist', 'assets');
   try {

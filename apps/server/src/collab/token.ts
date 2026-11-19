@@ -3,8 +3,6 @@ import { SignJWT, jwtVerify } from "jose";
 import { COLLAB_TOKEN_TTL_SECONDS, type CollabTokenClaims, type Role } from "@knotebook/shared";
 import { SID_RE } from "../auth/session.js";
 
-// jose 的 duration 字串只認 "<數字><單位>"（s/m/h/d/w/y）——比照 `auth/session.ts` 的
-// `signSession`（`${ttlSeconds}s`），直接由 shared 那個以秒為單位的常數算出，不在這裡另寫一份字面量。
 const COLLAB_TOKEN_TTL = `${COLLAB_TOKEN_TTL_SECONDS}s`;
 
 const ROLES: readonly Role[] = ["owner", "editor", "viewer", "none"];
@@ -13,19 +11,12 @@ function isRole(value: unknown): value is Role {
   return typeof value === "string" && (ROLES as readonly string[]).includes(value);
 }
 
-// 與 `auth/session.ts` 的 `sessionKey` 平行衍生（同一個 sha256(appSecret + ":<用途>")
-// 模式），但用 `:collab` 而非 `:session`——兩把鍵刻意不同，session token 與 collab
-// token 互不能驗證對方（見 unit test「:session 鍵簽的用 :collab 驗必 null」）。
+// Distinct ":collab" suffix, so session tokens and collab tokens can't verify as each other.
 function collabKey(secret: string): Uint8Array {
   return createHash("sha256").update(`${secret}:collab`).digest();
 }
 
-/**
- * 簽發 collab token：claims 含 noteId/role/tv/sid，供 Hocuspocus `onAuthenticate`
- * 與之後的 `onTokenSync` 重驗權限用。**`role:'none'` 也可以簽**——
- * `POST /api/notes/:id/collab-token` 對無權限的使用者一律回 200 + 這種 token
- * （關鍵契約，見 `routes/notes.ts`），不是簽發失敗。
- */
+/** `role: "none"` is valid: the collab-token endpoint answers 200 with such a token to users without access. */
 export async function signCollabToken(appSecret: string, claims: CollabTokenClaims): Promise<string> {
   const key = collabKey(appSecret);
   return new SignJWT({ noteId: claims.noteId, role: claims.role, tv: claims.tv, sid: claims.sid, sv: claims.sv })
@@ -36,7 +27,7 @@ export async function signCollabToken(appSecret: string, claims: CollabTokenClai
     .sign(key);
 }
 
-/** 驗證失敗（篡改／過期／格式錯誤／錯誤鍵簽發）一律回 null，不 throw——比照 `verifySession`。 */
+/** Returns null instead of throwing on any invalid token, like `verifySession`. */
 export async function verifyCollabToken(appSecret: string, token: string): Promise<CollabTokenClaims | null> {
   try {
     const key = collabKey(appSecret);
@@ -44,10 +35,10 @@ export async function verifyCollabToken(appSecret: string, token: string): Promi
     if (typeof payload.sub !== "string") return null;
     if (typeof payload.noteId !== "string") return null;
     if (typeof payload.tv !== "number") return null;
-    // #388：沒有 `sid`（升級前簽的）或 sid 不是 uuid 形狀（比照 `verifySession`）的 token 視為壞 token；client 重取時用的 session cookie 也一樣沒有 sid → 401 → 走未登入流程。
+    // #388: reject tokens without a uuid sid; the old session cookie behind them has no sid either, so the refetch 401s into login.
     if (typeof payload.sid !== "string" || !SID_RE.test(payload.sid)) return null;
     if (!isRole(payload.role)) return null;
-    // #269：`sv` 缺席（閘門前簽的 token）或不是整數 ⇒ 0，**不視為壞 token**——由 onAuthenticate 的閘門以 client-outdated 拒。
+    // #269: a missing `sv` is not a bad token; as 0 it gets rejected by onAuthenticate as client-outdated.
     const sv = typeof payload.sv === "number" && Number.isInteger(payload.sv) ? payload.sv : 0;
     return { userId: payload.sub, noteId: payload.noteId, role: payload.role, tv: payload.tv, sid: payload.sid, sv };
   } catch {
@@ -55,10 +46,7 @@ export async function verifyCollabToken(appSecret: string, token: string): Promi
   }
 }
 
-/**
- * #269：`POST /api/notes/:id/collab-token` 的 body 選配；`noteSchemaVersion` 缺席或不是整數 ⇒ 0。
- * 端點仍對所有人回 200（不洩漏契約不變），版本不符由 onAuthenticate 拒。
- */
+/** #269: bad input means 0, not a 400: the endpoint answers 200 to everyone and onAuthenticate rejects the mismatch. */
 export function schemaVersionFromBody(body: unknown): number {
   if (typeof body !== "object" || body === null) return 0;
   const value = (body as { noteSchemaVersion?: unknown }).noteSchemaVersion;
