@@ -19,7 +19,7 @@ async function docWith(blocks: Array<Record<string, unknown>>): Promise<Y.Doc> {
 const COL = (id: string, children: Array<Record<string, unknown>>, width = 1) => ({ id, type: "column", props: { width }, children });
 const ROW = (id: string, cols: Array<Record<string, unknown>>) => ({ id, type: "columnList", children: cols });
 const para = (id: string, text: string) => ({ id, type: "paragraph", content: text });
-// 在未改 topLevelContainers 的碼上實跑取得
+// Golden values captured from the implementation before the topLevelContainers change: existing documents' fingerprints must stay byte-identical.
 const GOLDEN_OUTLINE = [["_top", 0, "e3b0c44298fc1c14"], ["ha", 12, "70cfcd4d638d7496"], ["hb", 4, "69c7d471720fc8fd"]];
 const GOLDEN_WHOLE = "02384cdbb1c6229a";
 const GOLDEN_BLOCKS = [
@@ -32,28 +32,28 @@ const GOLDEN_BLOCKS = [
 ];
 
 describe("fingerprint", () => {
-  it("F0：不含並排的既有文件指紋逐位元組不變（golden）", async () => {
+  it("fingerprints of existing documents without columns are byte-for-byte unchanged (golden)", async () => {
     const doc = await docWith(GOLDEN_BLOCKS);
     const { outline, whole } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(outline.map(o => [o.sectionId, o.chars, o.fingerprint])).toEqual(GOLDEN_OUTLINE);
     expect(whole).toBe(GOLDEN_WHOLE);
   });
 
-  it("F1：只有一列的文件 → outlineOf 不丟例外，_top.blockIds 為該列 id", async () => {
+  it("document with only one row -> outlineOf does not throw, _top.blockIds is that row's id", async () => {
     const doc = await docWith([ROW("r", [COL("r1", [para("a", "左")]), COL("r2", [para("b", "右")])])]);
     const { outline } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(outline[0]!.blockIds).toEqual(["r"]);
     expect(outline[0]!.chars).toBe(2);
   });
 
-  it("F2：只差某欄 width → _top 指紋不同；只差欄 id → 相同", async () => {
+  it("differing only in a column's width -> different _top fingerprint; differing only in column id -> same", async () => {
     const mk = (w: number, c1: string) => docWith([ROW("r", [COL(c1, [para("a", "左")], w), COL("r2", [para("b", "右")])])]);
     const top = async (d: Promise<Y.Doc>) => outlineOf((await d).getXmlFragment(YDOC_FRAGMENT)).outline[0]!.fingerprint;
     expect(await top(mk(1, "r1"))).not.toBe(await top(mk(2, "r1")));
     expect(await top(mk(1, "r1"))).toBe(await top(mk(1, "other")));
   });
 
-  it("16 hex；空正規字串有固定值；空 _top 用它且計入整篇", async () => {
+  it("16 hex; the empty canonical string has a fixed value; an empty _top uses it and counts toward the whole", async () => {
     expect(fingerprintOf("")).toMatch(/^[0-9a-f]{16}$/);
     expect(EMPTY_SECTION_FINGERPRINT).toBe(fingerprintOf(""));
     const doc = await docWith([{ type: "heading", props: { level: 1 }, content: "A" }]);
@@ -62,7 +62,7 @@ describe("fingerprint", () => {
     expect(whole).toBe(fingerprintOf(outline.map(o => o.fingerprint).join("")));
   });
 
-  it("整篇對段序敏感；同內容不同 id 相同", async () => {
+  it("whole fingerprint is sensitive to section order; same content with different ids is identical", async () => {
     const a = await docWith([{ type: "heading", props: { level: 1 }, content: "A" }, { type: "heading", props: { level: 1 }, content: "B" }]);
     const b = await docWith([{ type: "heading", props: { level: 1 }, content: "B" }, { type: "heading", props: { level: 1 }, content: "A" }]);
     const c = await docWith([{ type: "heading", props: { level: 1 }, content: "A" }, { type: "heading", props: { level: 1 }, content: "B" }]);
@@ -70,7 +70,7 @@ describe("fingerprint", () => {
     expect(outlineOf(a.getXmlFragment(YDOC_FRAGMENT)).whole).toBe(outlineOf(c.getXmlFragment(YDOC_FRAGMENT)).whole);
   });
 
-  it("fingerprintForIds：順序改變或缺 id → null；空 → EMPTY_SECTION_FINGERPRINT", async () => {
+  it("fingerprintForIds: changed order or a missing id -> null; empty -> EMPTY_SECTION_FINGERPRINT", async () => {
     const doc = await docWith([{ type: "paragraph", content: "1" }, { type: "paragraph", content: "2" }]);
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
     const [a, b] = topLevelContainers(f).map(c => c.getAttribute("id")!);
@@ -80,12 +80,12 @@ describe("fingerprint", () => {
     expect(fingerprintForIds(f, [])).toBe(EMPTY_SECTION_FINGERPRINT);
   });
 
-  it("釘住 blockContainer 的屬性集恰為 {id}（BlockNote 升版會紅）", () => {
+  it("pins blockContainer's attribute set to exactly {id} (goes red on a BlockNote upgrade)", () => {
     const editor = BlockNoteEditor.create({ schema: createHeadlessNoteSchema("http://localhost/") });
     expect(Object.keys(editor.pmSchema.nodes.blockContainer!.spec.attrs ?? {}).sort()).toEqual(["id"]);
   });
 
-  it("段落指紋 ≡ fingerprintForIds(該段 blockIds)：多 block 段落依文件順序", async () => {
+  it("section fingerprint equals fingerprintForIds(its blockIds): multi-block sections follow document order", async () => {
     const doc = await docWith([
       { id: "c-h", type: "heading", props: { level: 1 }, content: "H" },
       { id: "b-x", type: "paragraph", content: "X" },
@@ -100,7 +100,7 @@ describe("fingerprint", () => {
     expect(fingerprintForIds(f, [...sec.blockIds].reverse())).toBeNull();
   });
 
-  it("outlineOf：頂層 blockContainer 缺 id 屬性 → throw", () => {
+  it("outlineOf: a top-level blockContainer missing the id attribute -> throws", () => {
     const doc = new Y.Doc();
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
     const group = new Y.XmlElement("blockGroup");

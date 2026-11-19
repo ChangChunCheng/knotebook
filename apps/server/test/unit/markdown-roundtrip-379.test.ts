@@ -1,6 +1,6 @@
 /**
- * #379：Markdown 裡的 `\<` 是字面 `<`。寫入端（parseMarkdownForNote）要把它解成純文字，
- * 不能變成真的 HTML 標籤；沒有跳脫的輸入行為不變。
+ * #379: `\<` in Markdown is a literal `<`. The write side (parseMarkdownForNote) must parse it as plain text, not a real HTML tag;
+ * input without escapes behaves unchanged.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -36,7 +36,7 @@ async function docWith(blocks: unknown[]): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(rt, doc);
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
     s.editor.replaceBlocks(s.editor.document, blocks as any);
   } finally {
     s.close();
@@ -60,13 +60,13 @@ async function readMd(doc: Y.Doc): Promise<string> {
 const T = (text: string, styles: Record<string, unknown> = {}) => ({ type: "text", text, styles });
 const P = (...content: unknown[]) => ({ type: "paragraph", content });
 
-/** 解析後再存進文件，取回實際儲存的區塊（與寫回後的樣子一致）。 */
+/** Parse, store into a document, and get back the blocks as actually stored (the same as after a write-back). */
 async function parseStored(md: string): Promise<Blk[]> {
   return stored(await docWith(await parse(md)));
 }
 const inlineOf = (b: Blk): Inline[] => (Array.isArray(b.content) ? (b.content as Inline[]) : []);
 
-describe("#379 寫入端：`\\<` 是字面 `<`", () => {
+describe("#379 write side: an escaped < is a literal <", () => {
   const inlineCases: [string, string, unknown[]][] = [
     ["escaped tag pair", "\\<b>bold\\</b> x", [T("<b>bold</b> x")]],
     ["escaped less-than in prose", "2 \\< 3", [T("2 < 3")]],
@@ -117,7 +117,7 @@ describe("#379 寫入端：`\\<` 是字面 `<`", () => {
   });
 });
 
-describe("#379 寫入端：沒有跳脫的輸入行為不變", () => {
+describe("#379 write side: input without escapes behaves unchanged", () => {
   it("`<b>x</b>` is still bold", async () => {
     const blocks = await parseStored("<b>x</b>");
     expect(blocks).toHaveLength(1);
@@ -134,7 +134,7 @@ describe("#379 寫入端：沒有跳脫的輸入行為不變", () => {
   });
 });
 
-/** 讀出 → 改一個字 → 寫回 → 再讀出：markdown 與儲存的 block 都要照原樣（只差改掉的那個字）。回傳第一次讀出的 markdown。 */
+/** read -> change one word -> write back -> read: the markdown and the stored blocks must both be as before (only the changed word differs). Returns the first read's markdown. */
 async function editLoop(blocks: unknown[], opts: { skipStored?: boolean } = {}): Promise<string> {
   const d0 = await docWith(blocks);
   const md1 = await readMd(d0);
@@ -148,7 +148,7 @@ async function editLoop(blocks: unknown[], opts: { skipStored?: boolean } = {}):
   return md1;
 }
 
-describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
+describe("#379 read side: a `<` that could open a tag gets a backslash", () => {
   const rows: [string, string][] = [
     ["<b>bold</b>", "\\<b>bold\\</b>"],
     ["a <b> c", "a \\<b> c"],
@@ -220,7 +220,7 @@ describe("#379 讀出端：可能開啟標記的 `<` 加反斜線", () => {
   });
 
   it("underline run that ends the text", async () => {
-    // 底線不存在於 markdown，寫回後樣式本來就沒有；這裡只驗文字與再讀出一致。
+    // Underline doesn't exist in markdown, so the style is gone after write-back anyway; only the text and read-again consistency are checked here.
     const md1 = await editLoop([P(T("a<"), T("b> EDITME", { underline: true }))], { skipStored: true });
     expect(md1).toBe("a\\<b> EDITME\n");
   });

@@ -1,6 +1,4 @@
-// #222：MCP／REST 讀寫筆記的文字色／底色。
-// 寫入：解析後逐一檢查色值，收編輯器內建的 10 種色名與不透明色碼（色碼正規化成小寫 `#rrggbb`），其他整筆拒絕（`unsupported_color`）。
-// 讀取：有顏色的頂層節點輸出成寫入端認得的 HTML，其餘維持 `blocksToMarkdownLossy` 原樣。
+// #222: text/background colors in MCP/REST note reads and writes.
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -14,7 +12,7 @@ const ORIGIN = "http://localhost";
 const notes = [{ id: "11111111-1111-4111-8111-111111111111", title: "A", slug: "a", groupId: null, ownerHandle: "alice" }];
 type Ed = EditorSession["editor"];
 
-// ⚠ 同 editing-markdown.test.ts：每一處 open 都 `try/finally close()`（lease 不變量）。
+// Same as editing-markdown.test.ts: every open is `try/finally close()` (lease invariant).
 const withSession = async <T>(fn: (ed: Ed) => T, doc = new Y.Doc()): Promise<T> => {
   const s = await EditorSession.open(rt, doc);
   try {
@@ -24,9 +22,9 @@ const withSession = async <T>(fn: (ed: Ed) => T, doc = new Y.Doc()): Promise<T> 
   }
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
 type AnyBlocks = any[];
-/** 把 blocks 寫進一份新的 Y.Doc（經真編輯器正規化），回傳那份 doc。 */
+/** Writes blocks into a fresh Y.Doc (normalized through the real editor) and returns that doc. */
 const docWith = async (blocks: AnyBlocks): Promise<Y.Doc> => {
   const doc = new Y.Doc();
   await withSession(ed => {
@@ -34,13 +32,13 @@ const docWith = async (blocks: AnyBlocks): Promise<Y.Doc> => {
   }, doc);
   return doc;
 };
-/** 讀路徑匯出（等同 MCP read_note_section／REST /content 整篇形的 markdown）。 */
+/** Read-path export (the same markdown as MCP read_note_section / the whole-note form of REST /content). */
 const readMd = async (doc: Y.Doc): Promise<string> => {
   const r = await readNoteContentFromDoc(rt, doc);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 };
-/** 去掉 id 的 block JSON（比結構與顏色用）。 */
+/** Block JSON without ids (for comparing structure and colors). */
 const shape = (blocks: unknown): string => JSON.stringify(blocks, (k, v) => (k === "id" ? undefined : v));
 const parse = (ed: Ed, md: string) => {
   const r = parseMarkdownForNote(ed, md, notes, ORIGIN);
@@ -49,13 +47,13 @@ const parse = (ed: Ed, md: string) => {
 };
 
 describe("PALETTE_COLORS", () => {
-  it("恰好是編輯器內建的 10 種色名", () => {
+  it("is exactly the editor's 10 built-in color names", () => {
     expect([...PALETTE_COLORS]).toEqual(["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"]);
   });
 });
 
-describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
-  it.each(PALETTE_COLORS.filter(c => c !== "default"))("%s：行內字色／底色、整段、表格儲存格都收", async c => {
+describe("write: parseMarkdownForNote accepts only built-in color names and hex colors", () => {
+  it.each(PALETTE_COLORS.filter(c => c !== "default"))("%s: inline text/background color, whole block, and table cells are all accepted", async c => {
     await withSession(ed => {
       const md =
         `a <span style="color:${c}">t</span> <span style="background-color:${c}">b</span>\n\n` +
@@ -69,8 +67,8 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
     });
   });
 
-  // docs/ai-editing.md 的寫法表逐列：標題、清單項、引言、<th> 也吃同一組 data-*。
-  it("標題／清單項／引言／<th> 上的 data-* 都成為 block／儲存格顏色", async () => {
+  // The rows of the writing table in docs/ai-editing.md: headings, list items, quotes and <th> take the same data-* set.
+  it("data-* on headings/list items/quotes/<th> become block/cell colors", async () => {
     await withSession(ed => {
       const blocks = parse(
         ed,
@@ -88,14 +86,14 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
     });
   });
 
-  // 同一張寫法表的色碼列：每種元素各一個 `#ff6600` 的 data-*（與上一案同組元素），收下後存成 "#ff6600"。
+  // The hex rows of the same table: one `#ff6600` data-* per element type (same elements as the previous case), accepted and stored as "#ff6600".
   it.each([
     ["p", `<p data-text-color="#ff6600">x</p>`, "paragraph", "textColor"],
     ["h3", `<h3 data-text-color="#ff6600">x</h3>`, "heading", "textColor"],
     ["ul > li", `<ul><li data-background-color="#ff6600">x</li></ul>`, "bulletListItem", "backgroundColor"],
     ["ol > li", `<ol><li data-text-color="#ff6600">x</li></ol>`, "numberedListItem", "textColor"],
     ["blockquote", `<blockquote data-text-color="#ff6600">x</blockquote>`, "quote", "textColor"],
-  ])("寫法表的色碼列：%s 上的 data-* #ff6600 收成 \"#ff6600\"", async (_name, md, type, prop) => {
+  ])("hex row of the writing table: data-* #ff6600 on %s is stored as #ff6600", async (_name, md, type, prop) => {
     await withSession(ed => {
       const blocks = parse(ed, md);
       expect(blocks[0]!.type).toBe(type);
@@ -106,57 +104,57 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
   it.each([
     ["td", `<table><tr><td data-background-color="#ff6600">c</td></tr></table>`],
     ["th", `<table><tr><th data-background-color="#ff6600">t</th></tr><tr><td>d</td></tr></table>`],
-  ])("寫法表的色碼列：表格 %s 上的 data-* #ff6600 收成 \"#ff6600\"", async (_name, md) => {
+  ])("hex row of the writing table: data-* #ff6600 on table %s is stored as #ff6600", async (_name, md) => {
     await withSession(ed => {
       expect(shape(parse(ed, md))).toContain(`"backgroundColor":"#ff6600"`);
     });
   });
 
-  it("default 也收（data-* 寫 default ＝ 沒有顏色）", async () => {
+  it("default is accepted too (data-* default = no color)", async () => {
     await withSession(ed => {
       expect(() => parse(ed, `<p data-background-color="default" data-text-color="default">x</p>`)).not.toThrow();
     });
   });
 
-  it("CSS 色名大小寫會被 DOM 正規化成小寫——`color:RED` 收成 red", async () => {
+  it("CSS color names are lowercased by the DOM: `color:RED` is stored as red", async () => {
     await withSession(ed => {
       expect(shape(parse(ed, `<p><span style="color:RED">x</span></p>`))).toContain(`"textColor":"red"`);
     });
   });
 
   it.each([
-    ["行內 #hex", `a <span style="color:#ff6600">x</span>`, `"textColor":"#ff6600"`],
-    ["行內 rgb()", `a <span style="color:rgb(255, 0, 0)">x</span>`, `"textColor":"#ff0000"`],
-    ["整段 style 底色 #hex", `<p style="background-color:#ffeeaa">x</p>`, `"backgroundColor":"#ffeeaa"`],
-    ["表格儲存格 data-*（短形 #f00 正規化）", `<table><tr><td data-background-color="#f00">c</td></tr></table>`, `"backgroundColor":"#ff0000"`],
-    ["表格儲存格內的行內色", `<table><tr><td><span style="color:rgb(1,2,3)">c</span></td></tr></table>`, `"textColor":"#010203"`],
-    ["連結文字的行內色", `[<span style="color:#123456">x</span>](https://example.com)`, `"textColor":"#123456"`],
-    ["巢狀清單深處", `- a\n  - b\n    - <span style="color:#abcdef">c</span>`, `"textColor":"#abcdef"`],
-  ])("%s → 收下並正規化成小寫 #rrggbb", async (_name, md, expected) => {
+    ["inline #hex", `a <span style="color:#ff6600">x</span>`, `"textColor":"#ff6600"`],
+    ["inline rgb()", `a <span style="color:rgb(255, 0, 0)">x</span>`, `"textColor":"#ff0000"`],
+    ["whole-block style background #hex", `<p style="background-color:#ffeeaa">x</p>`, `"backgroundColor":"#ffeeaa"`],
+    ["table cell data-* (short #f00 normalized)", `<table><tr><td data-background-color="#f00">c</td></tr></table>`, `"backgroundColor":"#ff0000"`],
+    ["inline color inside a table cell", `<table><tr><td><span style="color:rgb(1,2,3)">c</span></td></tr></table>`, `"textColor":"#010203"`],
+    ["inline color on link text", `[<span style="color:#123456">x</span>](https://example.com)`, `"textColor":"#123456"`],
+    ["deep in a nested list", `- a\n  - b\n    - <span style="color:#abcdef">c</span>`, `"textColor":"#abcdef"`],
+  ])("%s -> accepted and normalized to lowercase #rrggbb", async (_name, md, expected) => {
     await withSession(ed => {
       expect(shape(parse(ed, md))).toContain(expected);
     });
   });
 
   it.each([
-    ["行內 CSS 合法但不在色盤的名稱", `a <span style="background-color:chartreuse">x</span>`],
-    ["整段 data-* 未知名稱", `<p data-text-color="crimson">x</p>`],
-    ["整段 data-* 大小寫不符（data-* 不會被正規化）", `<p data-background-color="Red">x</p>`],
-    ["行內 CSS 色名", `a <span style="color:tomato">x</span>`],
-    ["整段 style 底色 transparent", `<p style="background-color:transparent">x</p>`],
-    ["表格儲存格 data-* 色名", `<table><tr><td data-background-color="tomato">c</td></tr></table>`],
-    ["表格儲存格內帶 alpha 的行內色", `<table><tr><td><span style="color:rgb(0 0 0 / 50%)">c</span></td></tr></table>`],
-    ["連結文字的半透明色碼", `[<span style="color:#ff660080">x</span>](https://example.com)`],
-    ["巢狀清單深處 var()", `- a\n  - b\n    - <span style="color:var(--x)">c</span>`],
-  ])("%s → unsupported_color（整筆拒絕）", async (_name, md) => {
+    ["inline CSS name that is valid but not in the palette", `a <span style="background-color:chartreuse">x</span>`],
+    ["whole-block data-* unknown name", `<p data-text-color="crimson">x</p>`],
+    ["whole-block data-* wrong case (data-* is not normalized)", `<p data-background-color="Red">x</p>`],
+    ["inline CSS color name", `a <span style="color:tomato">x</span>`],
+    ["whole-block style background transparent", `<p style="background-color:transparent">x</p>`],
+    ["table cell data-* color name", `<table><tr><td data-background-color="tomato">c</td></tr></table>`],
+    ["inline color with alpha inside a table cell", `<table><tr><td><span style="color:rgb(0 0 0 / 50%)">c</span></td></tr></table>`],
+    ["semi-transparent hex on link text", `[<span style="color:#ff660080">x</span>](https://example.com)`],
+    ["var() deep in a nested list", `- a\n  - b\n    - <span style="color:var(--x)">c</span>`],
+  ])("%s -> unsupported_color (whole write rejected)", async (_name, md) => {
     await withSession(ed => {
       expect(parseMarkdownForNote(ed, md, notes, ORIGIN)).toEqual({ error: "unsupported_color" });
     });
   });
 
-  // docs/ai-editing.md「Colors」逐字宣稱：這兩種寫法被接受但顏色靜默丟失（上游 parser 不認）。
-  // 哪天上游開始認它們，這一案會紅，文件那句就要改。
-  it("行內 <span data-text-color> 與 <mark> 不是顏色：文字留下、顏色靜默丟失（不報錯）", async () => {
+  // docs/ai-editing.md "Colors" claims verbatim: these two forms are accepted but the color is silently dropped (the upstream parser
+  // doesn't recognize them). If upstream starts recognizing them this case goes red and that doc sentence must change.
+  it("inline <span data-text-color> and <mark> are not colors: the text stays, the color is silently dropped (no error)", async () => {
     await withSession(ed => {
       const json = shape(parse(ed, `a <span data-text-color="red">x</span> <mark>y</mark> <span data-background-color="blue">z</span>`));
       expect(json).toContain(`"content":[{"type":"text","text":"a x y z","styles":{}}]`);
@@ -164,14 +162,14 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
     });
   });
 
-  it("一筆裡只要有一個壞色值就整筆拒絕（其餘合法也一樣）", async () => {
+  it("one bad color value rejects the whole write (even if the others are valid)", async () => {
     await withSession(ed => {
       const md = `ok <span style="color:red">r</span>\n\n<p data-text-color="blue">b</p>\n\nbad <span style="color:#ff660080">x</span>`;
       expect(parseMarkdownForNote(ed, md, notes, ORIGIN)).toEqual({ error: "unsupported_color" });
     });
   });
 
-  // parse → 正規化的端到端：style 形走 CSSOM 改寫、data-* 形是原字串，兩條都要落成小寫 #rrggbb 或整筆拒絕。
+  // End to end parse -> normalize: the style form is rewritten through CSSOM, the data-* form is the raw string; both must end as lowercase #rrggbb or reject the whole write.
   it.each([
     ["#ff6600ff", "#ff6600"],
     ["rgba(1, 2, 3, 1)", "#010203"],
@@ -180,19 +178,19 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
     ["hwb(0 0% 0%)", "#ff0000"],
     ["#ff6600 !important", "#ff6600"],
     ["hsl(30, 50%, 33%)", "#7e542a"],
-  ])("style 形 color:%s 收成 %s", async (input, stored) => {
+  ])("style form color:%s is stored as %s", async (input, stored) => {
     await withSession(ed => {
       expect(shape(parse(ed, `<p><span style="color:${input}">x</span></p>`))).toContain(`"textColor":"${stored}"`);
     });
   });
 
-  it.each(["#ff660080", "rgb(0 0 0 / 50%)", "tomato", "oklch(0.7 0.1 30)", "color(srgb 1 0 0)"])("style 形 color:%s → unsupported_color", async input => {
+  it.each(["#ff660080", "rgb(0 0 0 / 50%)", "tomato", "oklch(0.7 0.1 30)", "color(srgb 1 0 0)"])("style form color:%s -> unsupported_color", async input => {
     await withSession(ed => {
       expect(parseMarkdownForNote(ed, `<p><span style="color:${input}">x</span></p>`, notes, ORIGIN)).toEqual({ error: "unsupported_color" });
     });
   });
 
-  it("data-* 形的短 hex、大寫 hex 收成小寫 #rrggbb", async () => {
+  it("short hex and uppercase hex in the data-* form are stored as lowercase #rrggbb", async () => {
     await withSession(ed => {
       expect(shape(parse(ed, `<p data-text-color="#F60">x</p>`))).toContain(`"textColor":"#ff6600"`);
       expect(shape(parse(ed, `<p data-background-color="#FFEEAA">x</p>`))).toContain(`"backgroundColor":"#ffeeaa"`);
@@ -200,24 +198,24 @@ describe("寫入：parseMarkdownForNote 只收內建色名與色碼", () => {
   });
 });
 
-describe("normalizeNoteColors：逐一走訪、不遞迴", () => {
-  it("全合法回 null，不合法回該值", () => {
+describe("normalizeNoteColors: walks iteratively, no recursion", () => {
+  it("all valid returns null, an invalid one returns that value", () => {
     expect(normalizeNoteColors([{ type: "paragraph", props: { textColor: "red" }, content: [{ type: "text", text: "x", styles: { backgroundColor: "blue" } }], children: [] }])).toBeNull();
     expect(normalizeNoteColors([{ type: "paragraph", props: {}, content: [{ type: "text", text: "x", styles: { textColor: "tomato" } }], children: [] }])).toBe("tomato");
   });
 
-  it("合法的色碼就地變成小寫 #rrggbb", () => {
+  it("a valid hex color becomes lowercase #rrggbb in place", () => {
     const blocks = [{ type: "paragraph", props: {}, content: [{ type: "text", text: "x", styles: { textColor: "#fff" } }], children: [] }];
     expect(normalizeNoteColors(blocks)).toBeNull();
     expect(blocks[0]!.content[0]!.styles.textColor).toBe("#ffffff");
   });
 
-  it("非字串色值（型別錯）也算不合法", () => {
+  it("a non-string color value (wrong type) is invalid too", () => {
     expect(normalizeNoteColors([{ type: "paragraph", props: { backgroundColor: 3 }, content: [], children: [] }])).toBe("3");
   });
 
-  it("10 萬層巢狀不會爆堆疊，且找得到最深處的壞值", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 合成測資
+  it("100k levels of nesting do not overflow the stack, and the deepest bad value is found", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- synthetic test data
     const root: any = { type: "paragraph", props: {}, content: [], children: [] };
     let cur = root;
     for (let i = 0; i < 100_000; i++) {
@@ -232,15 +230,15 @@ describe("normalizeNoteColors：逐一走訪、不遞迴", () => {
     expect(normalizeNoteColors([root])).toBe("tomato");
   });
 
-  it("表格：儲存格 props 與儲存格內的行內樣式都看", () => {
+  it("table: both cell props and inline styles inside cells are checked", () => {
     const table = (cell: unknown) => [{ type: "table", props: { textColor: "default" }, content: { type: "tableContent", rows: [{ cells: [cell] }] }, children: [] }];
     expect(normalizeNoteColors(table({ type: "tableCell", props: { backgroundColor: "nope" }, content: [] }))).toBe("nope");
     expect(normalizeNoteColors(table({ type: "tableCell", props: {}, content: [{ type: "text", text: "c", styles: { textColor: "#1" } }] }))).toBe("#1");
-    expect(normalizeNoteColors(table([{ type: "text", text: "c", styles: { backgroundColor: "tomato" } }]))).toBe("tomato"); // 舊形：cell 直接是 inline 陣列
+    expect(normalizeNoteColors(table([{ type: "text", text: "c", styles: { backgroundColor: "tomato" } }]))).toBe("tomato"); // legacy shape: the cell is a bare inline array
     expect(normalizeNoteColors(table({ type: "tableCell", props: { backgroundColor: "red" }, content: [] }))).toBeNull();
   });
 
-  it("並排：欄內段落的壞色值也找得到", () => {
+  it("columns: a bad color value in a paragraph inside a column is found too", () => {
     const row = (styles: Record<string, unknown>) => [{ type: "columnList", props: {}, content: undefined, children: [
       { type: "column", props: { width: 1 }, children: [{ type: "paragraph", props: {}, content: [{ type: "text", text: "a", styles: {} }], children: [] }] },
       { type: "column", props: { width: 1 }, children: [{ type: "paragraph", props: {}, content: [{ type: "text", text: "b", styles }], children: [] }] },
@@ -253,8 +251,8 @@ describe("normalizeNoteColors：逐一走訪、不遞迴", () => {
   });
 });
 
-describe("讀取：blocksToNoteMarkdown", () => {
-  it("沒有任何顏色 → 與 blocksToMarkdownLossy 位元組相同", async () => {
+describe("read: blocksToNoteMarkdown", () => {
+  it("no colors at all -> byte-identical to blocksToMarkdownLossy", async () => {
     const doc = await docWith([
       { type: "heading", props: { level: 2 }, content: "T" },
       { type: "paragraph", content: [{ type: "text", text: "a ", styles: {} }, { type: "text", text: "b", styles: { bold: true } }] },
@@ -267,27 +265,27 @@ describe("讀取：blocksToNoteMarkdown", () => {
     }, doc);
   });
 
-  it("行內字色 → markdown 段落裡的 <span style=\"color:NAME\">（段落本身維持 markdown）", async () => {
+  it("inline text color -> a color span inside a markdown paragraph (the paragraph itself stays markdown)", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "a ", styles: {} }, { type: "text", text: "red", styles: { textColor: "red" } }, { type: "text", text: " b", styles: {} }] }]);
     expect(await readMd(doc)).toBe(`a <span style="color:red">red</span> b\n`);
   });
 
-  it("行內字色＋底色 → 合併成同一個 span", async () => {
+  it("inline text color + background color merge into one span", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "x", styles: { textColor: "red", backgroundColor: "yellow" } }] }]);
     expect(await readMd(doc)).toBe(`<span style="color:red;background-color:yellow">x</span>\n`);
   });
 
-  it("只有底色 → <span style=\"background-color:NAME\">", async () => {
+  it("background color only -> a background-color span", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "x", styles: { backgroundColor: "green" } }] }]);
     expect(await readMd(doc)).toBe(`<span style="background-color:green">x</span>\n`);
   });
 
-  it("整段顏色 → data-* 屬性（不帶 rgb 的 style）", async () => {
+  it("whole-block color -> data-* attributes (no rgb style)", async () => {
     const doc = await docWith([{ type: "paragraph", props: { textColor: "red", backgroundColor: "blue" }, content: "x" }]);
     expect(await readMd(doc)).toBe(`<p data-background-color="blue" data-text-color="red">x</p>\n`);
   });
 
-  it("存成小寫 #rrggbb 的色碼讀出照原值（行內 span、整段 data-*、儲存格 data-*、字色＋底色合成）", async () => {
+  it("hex colors stored as lowercase #rrggbb read back as-is (inline span, whole-block data-*, cell data-*, text + background combined)", async () => {
     const inline = await docWith([{ type: "paragraph", content: [{ type: "text", text: "x", styles: { textColor: "#ff6600" } }] }]);
     expect(await readMd(inline)).toBe(`<span style="color:#ff6600">x</span>\n`);
     const block = await docWith([{ type: "paragraph", props: { textColor: "#ff6600" }, content: "x" }]);
@@ -298,7 +296,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(both)).toBe(`<span style="color:#ff6600;background-color:#00ff00">x</span>\n`);
   });
 
-  it("色碼讀出的 markdown 原樣 parse 回去，再讀一致、色碼不變", async () => {
+  it("the markdown read out for hex colors parses back unchanged, reads the same, and the hex colors stay", async () => {
     const doc = await docWith([
       { type: "paragraph", content: [{ type: "text", text: "a", styles: { textColor: "#ff6600", backgroundColor: "#00ff00" } }] },
       { type: "paragraph", props: { backgroundColor: "#123456" }, content: "b" },
@@ -310,7 +308,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(await docWith(blocks))).toBe(md1);
   });
 
-  it("混合：無色段落維持 markdown，有色段落是 HTML，之間空一行", async () => {
+  it("mixed: uncolored paragraphs stay markdown, colored ones are HTML, separated by a blank line", async () => {
     const doc = await docWith([
       { type: "heading", props: { level: 1 }, content: "T" },
       { type: "paragraph", props: { backgroundColor: "yellow" }, content: "hi" },
@@ -319,17 +317,17 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(doc)).toBe(`# T\n\n<p data-background-color="yellow">hi</p>\n\nplain **b**\n`);
   });
 
-  it("表格：沒上色維持 GFM；任何一格上色 → HTML <table>，儲存格帶 data-*", async () => {
+  it("table: uncolored stays GFM; if any cell is colored -> HTML <table> with data-* on cells", async () => {
     const plain = await docWith([{ type: "table", content: { type: "tableContent", rows: [{ cells: ["a", "b"] }] } }]);
     expect(await readMd(plain)).toContain("| ---");
     const colored = await docWith([{ type: "table", content: { type: "tableContent", rows: [{ cells: [{ type: "tableCell", content: "a", props: { backgroundColor: "red" } }, "b"] }] } }]);
     const md = await readMd(colored);
     expect(md).not.toContain("| ---");
     expect(md).toMatch(/^<table>/);
-    expect(md).toBe(`<table><tr><td data-background-color="red">a</td><td>b</td></tr></table>\n`); // 沒有 tbody／儲存格內 <p>／colspan=1 雜訊
+    expect(md).toBe(`<table><tr><td data-background-color="red">a</td><td>b</td></tr></table>\n`); // no tbody, no <p> inside cells, no colspan=1 noise
   });
 
-  it("不帶編輯器內部雜訊（class、rgb style、data-editable、target）", async () => {
+  it("no editor-internal noise (class, rgb style, data-editable, target)", async () => {
     const doc = await docWith([
       { type: "bulletListItem", props: { textColor: "red" }, content: [{ type: "link", href: "https://e.com", content: [{ type: "text", text: "l", styles: { textColor: "blue" } }] }] },
     ]);
@@ -338,7 +336,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(md).toContain(`<a href="https://e.com">`);
   });
 
-  it("行內 span 裡的文字（<、&、emoji 代理對）原樣往返", async () => {
+  it("text inside an inline span (<, &, emoji surrogate pairs) round-trips unchanged", async () => {
     const text = "a < b & c 😀";
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: { textColor: "red" } }] }]);
     const md = await readMd(doc);
@@ -346,14 +344,14 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(shape(await withSession(ed => parse(ed, md)))).toContain(`"text":"${text}","styles":{"textColor":"red"}`);
   });
 
-  it("跳脫：整段 HTML（block 顏色）裡的 <、& 用字元參照（HTML 區塊會解）", async () => {
+  it("escaping: <, & inside a whole-block HTML (block color) use character references (an HTML block decodes them)", async () => {
     const doc = await docWith([{ type: "paragraph", props: { textColor: "red" }, content: "a<b&c" }]);
     const md = await readMd(doc);
     expect(md).toBe(`<p data-text-color="red">a&lt;b&amp;c</p>\n`);
     expect(shape(await withSession(ed => parse(ed, md)))).toContain(`"text":"a<b&c"`);
   });
 
-  it("既有的非色盤色值（#222 之前寫進去的；編輯器本來就不顯示）讀出時當成沒有顏色，寫回不會被拒", async () => {
+  it("an existing non-palette color value (written before #222; the editor never displayed it) reads as no color, and writing back is not rejected", async () => {
     const doc = await docWith([
       { type: "paragraph", props: { textColor: "#FF6600" }, content: [{ type: "text", text: "x", styles: { backgroundColor: "rgb(1, 2, 3)" } }] },
       { type: "paragraph", props: { backgroundColor: "chartreuse", textColor: "red" }, content: [{ type: "text", text: "y", styles: { textColor: "nope", backgroundColor: "blue" } }] },
@@ -363,12 +361,12 @@ describe("讀取：blocksToNoteMarkdown", () => {
     await withSession(ed => expect(parseMarkdownForNote(ed, md, notes, ORIGIN)).not.toHaveProperty("error"));
   });
 
-  it("檔案 block 的底色不帶出（它本來就被匯出成連結，HTML 也還原不回檔案 block）", async () => {
+  it("a file block's background color is not emitted (it is exported as a link anyway, and HTML can't restore a file block)", async () => {
     const doc = await docWith([{ type: "file", props: { url: "http://localhost/api/uploads/x.pdf", backgroundColor: "red", name: "f" } }]);
     await withSession(ed => expect(blocksToNoteMarkdown(ed, ed.document)).toBe(ed.blocksToMarkdownLossy(ed.document)), doc);
   });
 
-  it("行內顏色在清單項、標題、無色表格的儲存格裡都留在 markdown 裡", async () => {
+  it("inline colors inside list items, headings, and uncolored table cells stay in markdown", async () => {
     const doc = await docWith([
       { type: "heading", props: { level: 2 }, content: [{ type: "text", text: "h ", styles: {} }, { type: "text", text: "red", styles: { textColor: "red" } }] },
       { type: "bulletListItem", content: "a" },
@@ -382,24 +380,24 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(md).not.toMatch(/<(p|ul|li|table|h2)[ >]/);
   });
 
-  it("粗體／連結包住或混在有色文字旁：span 放在強調／連結外面，強調分隔符不會從內側貼著 span", async () => {
+  it("bold/link wrapping or mixed with colored text: the span goes outside the emphasis/link, and emphasis delimiters never touch the span from inside", async () => {
     const doc = await docWith([
       { type: "paragraph", content: [{ type: "text", text: "x ", styles: {} }, { type: "text", text: "a", styles: { bold: true } }, { type: "text", text: "b", styles: { bold: true, textColor: "red" } }, { type: "text", text: "c", styles: {} }, { type: "link", href: "https://e.com", content: [{ type: "text", text: "l", styles: { textColor: "blue" } }] }, { type: "text", text: " ", styles: {} }, { type: "text", text: "plain", styles: { bold: true } }] },
     ]);
     expect(await readMd(doc)).toBe(`x **a**<span style="color:red">**b**</span>c<span style="color:blue">[l](https://e.com)</span> **plain**\n`);
   });
 
-  // span 裡的文字與沒上色的文字**同一套**轉換：BlockNote 的 HTML → markdown 不跳脫看起來像 markdown 的字面文字（`**x**`），
-  //   `<x>` 這類可能開啟標籤的 `<` 則由讀出端加反斜線（`\<` 寫回是字面 `<`，#379）。這一案釘的是有色文字的跳脫與無色文字相同。
-  it("有色文字裡像 markdown 的字面文字，與同一段沒上色時的輸出相同（跳脫方式一樣）", async () => {
+  // Text inside a span goes through the same conversion as uncolored text: BlockNote's HTML -> markdown doesn't escape literal text that looks
+  // like markdown (`**x**`), while a `<` that could open a tag gets a backslash on the read side (`\<` writes back as a literal `<`, #379). This case pins that colored text is escaped the same as uncolored text.
+  it("literal markdown-looking text inside colored text gives the same output as in an uncolored paragraph (same escaping)", async () => {
     const text = "*no* [y](z) <x>";
     const colored = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: { textColor: "red" } }] }]);
     const plain = await docWith([{ type: "paragraph", content: text }]);
     expect(await readMd(colored)).toBe(`<span style="color:red">${(await readMd(plain)).trimEnd()}</span>\n`);
   });
 
-  // 引用成字面文字的顏色標記：讀出時 `<` 加反斜線，寫回仍是字面文字，不會變成真的顏色（#379）。
-  it("字面文字裡的顏色標記讀出跳脫——#hex 與色盤名寫回都維持字面文字", async () => {
+  // Color markers quoted as literal text: `<` gets a backslash on read and writing back still gives literal text, never a real color (#379).
+  it("color markers in literal text are escaped on read: #hex and palette names both stay literal text when written back", async () => {
     const hexMd = await readMd(await docWith([{ type: "paragraph", content: `quote <span style="color:#ff0000">x</span>` }]));
     expect(hexMd).toBe(`quote \\<span style="color:#ff0000">x\\</span>\n`);
     const hex = shape(await withSession(ed => parse(ed, hexMd)));
@@ -411,7 +409,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(named).toContain(`quote <span style=\\"color:red\\">x</span>`);
   });
 
-  it("文件裡已經有佔位字元（⸀／⸁）時退回整段 HTML，仍可往返", async () => {
+  it("document already containing the placeholder characters falls back to whole-block HTML and still round-trips", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "⸀0⸁ ", styles: {} }, { type: "text", text: "r", styles: { textColor: "red" } }] }]);
     const md = await readMd(doc);
     expect(md).toBe(`<p>⸀0⸁ <span style="color:red">r</span></p>\n`);
@@ -419,7 +417,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(doc2)).toBe(md);
   });
 
-  it("I1：沒有文字的有色 block（空段落、空清單項）當成沒有顏色——讀出與 #222 之前位元組相同", async () => {
+  it("colored blocks without text (empty paragraph, empty list item) count as no color: the read output equals blocksToMarkdownLossy", async () => {
     const doc = await docWith([
       { type: "paragraph", content: "a" },
       { type: "paragraph", props: { backgroundColor: "red" } },
@@ -428,14 +426,14 @@ describe("讀取：blocksToNoteMarkdown", () => {
       { type: "paragraph", content: "c" },
     ]);
     const md1 = await readMd(doc);
-    // #222 之前的輸出＝blocksToMarkdownLossy（空的有色 block 本來就讀不出顏色）。
+    // Before #222 the output was blocksToMarkdownLossy (an empty colored block never exposed its color).
     expect(md1).toBe(await withSession(ed => ed.blocksToMarkdownLossy(ed.document), doc));
     expect(md1).not.toContain("data-");
-    // ⚠ 這份的往返本身不一致（空段落寫回被丟），但那是 #222 之前就有的 markdown 行為：無色的空段落一樣。
+    // This one's round trip is itself inconsistent (the empty paragraph is dropped on write back), but that is existing markdown behavior: an uncolored empty paragraph does the same.
   });
 
-  // #222：空儲存格與空段落不同——解析器保留 `<td data-background-color="red"></td>`，所以它的顏色要帶出。
-  it("I2：空的有色表格儲存格保留顏色、往返一致", async () => {
+  // #222: an empty cell differs from an empty paragraph: the parser keeps `<td data-background-color="red"></td>`, so its color is emitted.
+  it("empty colored table cell keeps its color and round-trips consistently", async () => {
     const doc = await docWith([{ type: "table", content: { type: "tableContent", rows: [{ cells: [{ type: "tableCell", content: [], props: { backgroundColor: "red" } }, "b"] }] } }]);
     const md1 = await readMd(doc);
     expect(md1).toBe(`<table><tr><td data-background-color="red"></td><td>b</td></tr></table>\n`);
@@ -444,15 +442,15 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(await docWith(blocks))).toBe(md1);
   });
 
-  // #222：沒有文字的媒體 block（無 caption 的圖片）有內容，底色要帶出。
-  it("無 caption 的有色圖片保留底色、往返一致", async () => {
+  // #222: a media block without text (image without caption) has content, so its background color is emitted.
+  it("colored image without caption keeps its background color and round-trips consistently", async () => {
     const doc = await docWith([{ type: "image", props: { url: "http://localhost/api/uploads/x.png", backgroundColor: "red" } }]);
     const md1 = await readMd(doc);
     expect(md1).toContain(`data-background-color="red"`);
     expect(await readMd(await docWith(await withSession(ed => parse(ed, md1))))).toBe(md1);
   });
 
-  it("I1：有色清單裡的空清單項不帶顏色屬性（帶了寫回會被丟，往返不一致）", async () => {
+  it("an empty list item inside a colored list gets no color attribute (it would be dropped on write back, breaking the round trip)", async () => {
     const doc = await docWith([
       { type: "bulletListItem", props: { backgroundColor: "blue" }, content: "x" },
       { type: "bulletListItem", props: { backgroundColor: "red" } },
@@ -463,7 +461,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
     expect(await readMd(doc2)).toBe(md1);
   });
 
-  it("有色 HTML 區塊內不會出現空行（空行會截斷 markdown 的 HTML 區塊）", async () => {
+  it("no blank lines inside a colored HTML block (a blank line truncates a markdown HTML block)", async () => {
     const doc = await docWith([
       { type: "toggleListItem", props: { textColor: "red" }, content: "t", children: [{ type: "codeBlock", props: { language: "js" }, content: "a\n\nb" }] },
     ]);
@@ -472,7 +470,7 @@ describe("讀取：blocksToNoteMarkdown", () => {
   });
 });
 
-describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
+describe("read -> write back as-is -> read: consistent, no color lost", () => {
   const fixture = [
     { type: "heading", props: { level: 2, textColor: "blue" }, content: "H" },
     { type: "paragraph", content: [{ type: "text", text: "plain & ", styles: {} }, { type: "text", text: "b", styles: { bold: true, textColor: "red" } }, { type: "text", text: "u", styles: { underline: true, backgroundColor: "pink" } }, { type: "link", href: "https://e.com", content: [{ type: "text", text: "lnk", styles: { textColor: "purple" } }] }, { type: "text", text: " 😀 a<b&c", styles: { textColor: "gray", backgroundColor: "orange" } }] },
@@ -496,21 +494,21 @@ describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
     { type: "paragraph", content: "end" },
   ];
 
-  it("read1 === read2，且第二份文件的顏色與第一份寫回的一致", async () => {
+  it("read1 === read2, and the second document's colors match what the first write-back produced", async () => {
     const doc1 = await docWith(fixture);
     const md1 = await readMd(doc1);
     const blocks1 = await withSession(ed => parse(ed, md1));
     const doc2 = await docWith(blocks1);
     const md2 = await readMd(doc2);
     expect(md2).toBe(md1);
-    // 顏色真的寫進去了（不是兩邊都丟光才相等）
+    // the colors were really written (not both sides losing everything and so being equal)
     for (const c of ["blue", "red", "pink", "purple", "gray", "orange", "brown", "yellow", "green"]) expect(shape(blocks1)).toContain(`"${c}"`);
-    // 第一輪寫回後的結構與第二輪寫回一致（顏色不流失、不漂移）
+    // the structure after the first write-back equals the second (colors not lost or drifting)
     const blocks2 = await withSession(ed => parse(ed, md2));
     expect(shape(blocks2)).toBe(shape(blocks1));
   });
 
-  it("原始文件的每一個顏色都在 read1 寫回後的文件裡（扣掉已知的 lossy：巢狀子段落被攤平）", async () => {
+  it("every color of the original document is in the document after read1 is written back (minus known lossy: nested child paragraphs are flattened)", async () => {
     const doc1 = await docWith(fixture);
     const orig = await withSession(ed => ed.document, doc1);
     const back = await withSession(ed => parse(ed, md1Of(ed)), doc1);
@@ -521,9 +519,9 @@ describe("讀 → 原樣寫回 → 再讀：一致且顏色不流失", () => {
 
 const md1Of = (ed: Ed) => blocksToNoteMarkdown(ed, ed.document);
 
-describe("並排", () => {
-  // 逐字形由 note-markdown-goldens 釘住；這裡只看讀出是 div 形、兩欄文字各在一處。
-  it("含列的 blocks 讀成並排的 div 形", async () => {
+describe("columns", () => {
+  // The verbatim form is pinned by note-markdown-goldens; here only that reading gives the div form with each column's text in one place.
+  it("blocks containing a row read as the div form for columns", async () => {
     const md = await withSession(ed => {
       const blocks = [{
         id: "r", type: "columnList", children: [

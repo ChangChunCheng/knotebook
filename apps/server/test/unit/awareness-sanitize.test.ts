@@ -41,7 +41,7 @@ function setup() {
 }
 
 describe("sanitizeInboundAwareness", () => {
-  it("U1 全新的自己狀態：偽造的 user 與多餘欄位被丟掉，改用 server 值重建", () => {
+  it("fresh own state: forged user and extra fields are dropped, rebuilt from server values", () => {
     const { me, document, run } = setup();
     const states = new Map<number, Record<string, unknown>>([
       [
@@ -63,7 +63,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(document.getClients(me).has(10)).toBe(true);
   });
 
-  it("U2 空物件（暫存 Awareness 自己的條目）被移除、不佔名額、不報問題", () => {
+  it("empty object (a temporary Awareness own entry) is removed, takes no slot, reports no issue", () => {
     const { me, document, run } = setup();
     const states = new Map<number, Record<string, unknown>>([
       [5, {}],
@@ -75,7 +75,7 @@ describe("sanitizeInboundAwareness", () => {
     expect([...document.getClients(me)]).toEqual([10]);
   });
 
-  it("U3 已屬於其他使用者連線的 client id 被移除，對方的登記不動", () => {
+  it("client id already owned by another user's connection is removed; the owner's registration is untouched", () => {
     const { conns, document, run } = setup();
     const other: AwarenessConn = { context: { userId: "u-other" } };
     conns.set(other, new Set([10]));
@@ -85,7 +85,7 @@ describe("sanitizeInboundAwareness", () => {
     expect([...document.getClients(other)]).toEqual([10]);
   });
 
-  it("U4 同一使用者另一條連線登記的 id：保留並移轉給目前連線", () => {
+  it("id registered by another connection of the same user is kept and transferred to the current connection", () => {
     const { me, conns, document, run } = setup();
     const mine2: AwarenessConn = { context: { userId: "u-me" } };
     conns.set(mine2, new Set([10]));
@@ -96,7 +96,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(document.getClients(me).has(10)).toBe(true);
   });
 
-  it("U13 同一使用者另一條連線的 id：目前連線已滿時接手被拒，id 留在原連線", () => {
+  it("id of another connection of the same user: when the current connection is full the takeover is rejected and the id stays with the original connection", () => {
     const { me, conns, document, run } = setup();
     conns.get(me)!.add(1);
     const mine2: AwarenessConn = { context: { userId: "u-me" } };
@@ -108,7 +108,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(document.getClients(me).has(10)).toBe(false);
   });
 
-  it("U14 已不在文件連線清單內的連線：整批清空，不登記任何 id", () => {
+  it("connection no longer in the document's connection list: everything is cleared, no id is registered", () => {
     const { conns, run } = setup();
     const gone: AwarenessConn = { context: { userId: "u-me" } };
     const states = new Map<number, Record<string, unknown>>([[10, { cursor: null }]]);
@@ -117,7 +117,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(conns.has(gone)).toBe(false);
   });
 
-  it("U5 server 擁有的 id 被移除，並從連線的登記中拿掉", () => {
+  it("server-owned id is removed and dropped from the connection's registration", () => {
     const { me, conns, document, run } = setup();
     conns.get(me)!.add(10);
     const states = new Map<number, Record<string, unknown>>([[10, { cursor: null }]]);
@@ -126,7 +126,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(document.getClients(me).has(10)).toBe(false);
   });
 
-  it("U6 沒有連線擁有、但文件 awareness 已有的 id 視為 server 寫的而移除", () => {
+  it("id owned by no connection but already in the document awareness is treated as server-written and removed", () => {
     const { docStates, run } = setup();
     docStates.set(10, { anything: true });
     const states = new Map<number, Record<string, unknown>>([[10, { cursor: null }]]);
@@ -134,7 +134,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(states.size).toBe(0);
   });
 
-  it("U7 連線已有一個 client id 時，再來一個新 id 被拒", () => {
+  it("when the connection already has a client id, a new id is rejected", () => {
     const { me, conns, run } = setup();
     conns.get(me)!.add(1);
     const states = new Map<number, Record<string, unknown>>([
@@ -146,7 +146,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(states.has(2)).toBe(false);
   });
 
-  it("U8 同一批兩個新 id：第一個保留、第二個被拒", () => {
+  it("two new ids in one batch: the first is kept, the second is rejected", () => {
     const { run } = setup();
     const states = new Map<number, Record<string, unknown>>([
       [1, { cursor: null }],
@@ -156,7 +156,7 @@ describe("sanitizeInboundAwareness", () => {
     expect([...states.keys()]).toEqual([1]);
   });
 
-  it("U9 格式錯誤的 cursor 變 null 並回報；缺少或 null 的 cursor 為 null 且無問題", () => {
+  it("malformed cursor becomes null and is reported; a missing or null cursor is null with no issue", () => {
     const { run } = setup();
     const bad = new Map<number, Record<string, unknown>>([[1, { cursor: {} }]]);
     expect(run(bad)).toEqual(["bad-cursor"]);
@@ -169,7 +169,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(nul.get(1)?.cursor).toBeNull();
   });
 
-  it("U9b y-prosemirror 實際送的形狀（沒用到的欄位是 null）→ 正規化後通過，不回報 bad-cursor", () => {
+  it("the shape y-prosemirror actually sends (unused fields are null) -> normalized and accepted, no bad-cursor report", () => {
     const { run } = setup();
     const wire = { type: { client: 1, clock: 2 }, tname: null, item: { client: 1, clock: 5 }, assoc: 0 };
     const states = new Map<number, Record<string, unknown>>([[1, { cursor: { anchor: wire, head: wire } }]]);
@@ -178,7 +178,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(states.get(1)?.cursor).toEqual({ anchor: norm, head: norm });
   });
 
-  it("U10 缺連線或缺身分資料時清空全部並回 no-identity", () => {
+  it("missing connection or identity data clears everything and returns no-identity", () => {
     const { run } = setup();
     const a = new Map<number, Record<string, unknown>>([[1, { cursor: null }]]);
     expect(run(a, { connection: undefined })).toEqual(["no-identity"]);
@@ -188,7 +188,7 @@ describe("sanitizeInboundAwareness", () => {
     expect(b.size).toBe(0);
   });
 
-  it("U12 唯讀連線：cursor 一律為 null，其餘欄位仍由 server 重建", () => {
+  it("read-only connection: cursor is null, other fields are still rebuilt by the server", () => {
     const { run } = setup();
     const states = new Map<number, Record<string, unknown>>([[1, { cursor }]]);
     expect(run(states, { readOnly: true, presence: { ...P, role: "viewer" } })).toEqual([]);
@@ -201,7 +201,7 @@ describe("sanitizeInboundAwareness", () => {
 });
 
 describe("ServerOwnedClients", () => {
-  it("U11 依文件分開記錄 server 擁有的 client id", () => {
+  it("records server-owned client ids per document", () => {
     const owned = new ServerOwnedClients();
     const docA = {};
     const docB = {};

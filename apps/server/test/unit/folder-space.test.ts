@@ -12,19 +12,19 @@ import {
 const U = "0b6f3a2e-1c4d-4e5f-8a9b-0c1d2e3f4a5b";
 const G = "ffffffff-1c4d-4e5f-8a9b-0c1d2e3f4a5b";
 
-describe("SP-1 結構鎖鍵", () => {
-  it("大寫 id 與小寫 id 同鍵", () => {
+describe("structure lock keys", () => {
+  it("uppercase and lowercase ids give the same key", () => {
     expect(folderSpaceLockKey({ kind: "personal", ownerId: U.toUpperCase() })).toBe(
       folderSpaceLockKey({ kind: "personal", ownerId: U }),
     );
     expect(folderSpaceLockKey({ kind: "group", groupId: G.toUpperCase() })).toBe(`knotebook.folders:group:${G}`);
   });
-  it("三種前綴", () => {
+  it("three prefixes", () => {
     expect(folderSpaceLockKey({ kind: "personal", ownerId: U })).toBe(`knotebook.folders:personal:${U}`);
     expect(folderSpaceLockKey({ kind: "shared", ownerId: U })).toBe(`knotebook.folders:shared:${U}`);
     expect(folderSpaceLockKey({ kind: "group", groupId: G })).toBe(`knotebook.folders:group:${G}`);
   });
-  it("sortedSpaceLockKeys 去重（含大小寫變體）且依鍵字串排序", () => {
+  it("sortedSpaceLockKeys de-duplicates (including case variants) and sorts by key string", () => {
     expect(
       sortedSpaceLockKeys([
         { kind: "personal", ownerId: U },
@@ -36,20 +36,20 @@ describe("SP-1 結構鎖鍵", () => {
   });
 });
 
-describe("SP-2 列與筆記的空間", () => {
-  it("folderSpaceOfRow 三種 kind", () => {
+describe("space of rows and notes", () => {
+  it("folderSpaceOfRow, three kinds", () => {
     expect(folderSpaceOfRow({ kind: "personal", ownerId: U, groupId: null })).toEqual({ kind: "personal", ownerId: U });
     expect(folderSpaceOfRow({ kind: "shared", ownerId: U, groupId: null })).toEqual({ kind: "shared", ownerId: U });
     expect(folderSpaceOfRow({ kind: "group", ownerId: null, groupId: G })).toEqual({ kind: "group", groupId: G });
   });
-  it("folderSpaceOfRow 不一致 → throw", () => {
+  it("folderSpaceOfRow inconsistent -> throws", () => {
     expect(() => folderSpaceOfRow({ kind: "group", ownerId: null, groupId: null })).toThrow();
     expect(() => folderSpaceOfRow({ kind: "group", ownerId: U, groupId: G })).toThrow();
     expect(() => folderSpaceOfRow({ kind: "personal", ownerId: null, groupId: null })).toThrow();
     expect(() => folderSpaceOfRow({ kind: "personal", ownerId: U, groupId: G })).toThrow();
     expect(() => folderSpaceOfRow({ kind: "other", ownerId: U, groupId: null })).toThrow();
   });
-  it("noteFolderSpace：個人筆記 → personal、群組筆記 → group", () => {
+  it("noteFolderSpace: personal note -> personal, group note -> group", () => {
     expect(noteFolderSpace({ ownerId: U, groupId: null })).toEqual({ kind: "personal", ownerId: U });
     expect(noteFolderSpace({ ownerId: null, groupId: G })).toEqual({ kind: "group", groupId: G });
     expect(() => noteFolderSpace({ ownerId: null, groupId: null })).toThrow();
@@ -61,7 +61,7 @@ describe("SP-2 列與筆記的空間", () => {
     expect(sameFolderSpace({ kind: "group", groupId: G }, { kind: "group", groupId: G })).toBe(true);
     expect(sameFolderSpace({ kind: "group", groupId: G }, { kind: "group", groupId: U })).toBe(false);
   });
-  it("newNoteFolderConsistent：群組資料夾要同一個 groupId（不分大小寫）；個人資料夾不帶 groupId；shared 一律不行", () => {
+  it("newNoteFolderConsistent: a group folder needs the same groupId (case-insensitive); a personal folder carries no groupId; shared never works", () => {
     expect(newNoteFolderConsistent({ kind: "group", groupId: G }, G)).toBe(true);
     expect(newNoteFolderConsistent({ kind: "group", groupId: G }, G.toUpperCase())).toBe(true);
     expect(newNoteFolderConsistent({ kind: "group", groupId: G }, U)).toBe(false);
@@ -71,7 +71,7 @@ describe("SP-2 列與筆記的空間", () => {
     expect(newNoteFolderConsistent({ kind: "shared", ownerId: U }, undefined)).toBe(false);
     expect(newNoteFolderConsistent({ kind: "shared", ownerId: U }, G)).toBe(false);
   });
-  it("toFolderSpaceDto 不輸出 ownerId", () => {
+  it("toFolderSpaceDto does not output ownerId", () => {
     expect(toFolderSpaceDto({ kind: "personal", ownerId: U })).toEqual({ kind: "personal" });
     expect(toFolderSpaceDto({ kind: "shared", ownerId: U })).toEqual({ kind: "shared" });
     expect(toFolderSpaceDto({ kind: "group", groupId: G })).toEqual({ kind: "group", groupId: G });

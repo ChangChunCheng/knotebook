@@ -1,10 +1,10 @@
 /**
- * bulk transfer：S14 探測——**不是產品守衛**。PUT（有 body）上 `request.raw` 的 `close` 何時觸發，決定寫回路由（PUT /api/transfer/notes）的
- * 斷線偵測只准掛 `reply.raw` 的 `close`。整檔 `describe.skipIf(!process.env.KN_PROBE)`：CI 的 `test:unit` 照收檔
- * 但不跑（避免「10 次不一致就紅」偶發）。序列寫進 `KN_PROBE_LOG`（UTF-8；沒給就只印 stdout）。
+ * Bulk transfer probe, not a product guard: when `request.raw`'s `close` fires on a PUT (with body) decides that disconnect detection on the
+ * write-back route (PUT /api/transfer/notes) may only hook `reply.raw`'s `close`. The whole file is `describe.skipIf(!process.env.KN_PROBE)`:
+ * CI's `test:unit` collects the file but doesn't run it (avoids a flake on "red if 10 runs disagree"). Sequences go to `KN_PROBE_LOG` (UTF-8; stdout only if unset).
  *
- * 真 `Fastify()`（不用 `buildApp`）、頂層 `text/markdown` parser、`PUT /p` 與 `GET /g`；事件監聽掛在 onRequest（最早的點，
- * body 讀完前就掛上），handler 內 await 一個外部閘再回 200。四個情境 × keep-alive／非 keep-alive × 10 次。
+ * Real `Fastify()` (not `buildApp`), top-level `text/markdown` parser, `PUT /p` and `GET /g`; event listeners are attached in onRequest (the earliest
+ * point, before the body is read), and the handler awaits an external gate before replying 200. Four scenarios x keep-alive/non-keep-alive x 10 runs.
  */
 import { appendFileSync } from "node:fs";
 import http from "node:http";
@@ -19,8 +19,8 @@ const out = (line: string) => {
 };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-describe.skipIf(!process.env.KN_PROBE)("S14 探測：HTTP close 事件的時序", () => {
-  it("P1–P4 × keep-alive／非 keep-alive × 10 次：事件序列一致", async () => {
+describe.skipIf(!process.env.KN_PROBE)("probe: timing of HTTP close events", () => {
+  it("P1-P4 x keep-alive/non-keep-alive x 10 runs: event sequences are consistent", async () => {
     const app = Fastify();
     app.addContentTypeParser("text/markdown", { parseAs: "buffer" }, (_r, body, done) => done(null, body));
     const events = new Map<string, string[]>();
@@ -93,7 +93,7 @@ describe.skipIf(!process.env.KN_PROBE)("S14 探測：HTTP close 事件的時序"
         await sleep(30);
         gateOpen();
       } else {
-        // P3：body 只送一半就斷——handler 進不來
+        // P3: the body is cut off halfway - the handler is never entered
         await sleep(30);
         req.destroy();
       }

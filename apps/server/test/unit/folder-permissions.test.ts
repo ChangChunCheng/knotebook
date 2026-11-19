@@ -14,25 +14,25 @@ const flags = (f: Partial<FolderRoleFlags>): FolderRoleFlags => ({
   ...f,
 });
 
-/** 角色展開表的五欄（看／建改搬／刪空／刪含筆記／建筆記），由 DTO 推出。 */
+/** The five columns of the role expansion table (view / create-edit-move / delete empty / delete with notes / create notes), derived from the DTO. */
 function columns(p: FolderPermissionsDto | null): [boolean, boolean, boolean, boolean, boolean] {
   if (p === null) return [false, false, false, false, false];
   return [true, p.manage, p.manage, p.manage && p.deleteNotes, p.createNote];
 }
 
-describe("PM-1 群組資料夾權限（角色展開表；sixRoleScene 的旗標＋create-only＋全 false）", () => {
+describe("group folder permissions (role expansion table; sixRoleScene flags + create-only + all false)", () => {
   const rows: Array<[string, FolderRoleFlags | null, FolderPermissionsDto | null, [boolean, boolean, boolean, boolean, boolean]]> = [
-    // 內建管理員七旗標全真；資料夾只看四旗。
+    // The built-in admin has all seven flags true; folders only look at four.
     ["admin", flags({ canRead: true, canCreate: true, canEdit: true, canDelete: true }), { manage: true, deleteNotes: true, createNote: true }, [true, true, true, true, true]],
-    ["member（讀建編）", flags({ canRead: true, canCreate: true, canEdit: true }), { manage: true, deleteNotes: false, createNote: true }, [true, true, true, false, true]],
-    ["editDelete（無 can_create）", flags({ canRead: true, canEdit: true, canDelete: true }), { manage: true, deleteNotes: true, createNote: false }, [true, true, true, true, false]],
+    ["member (read, create, edit)", flags({ canRead: true, canCreate: true, canEdit: true }), { manage: true, deleteNotes: false, createNote: true }, [true, true, true, false, true]],
+    ["editDelete (no can_create)", flags({ canRead: true, canEdit: true, canDelete: true }), { manage: true, deleteNotes: true, createNote: false }, [true, true, true, true, false]],
     ["deleteOnly", flags({ canRead: true, canDelete: true }), { manage: false, deleteNotes: true, createNote: false }, [true, false, false, false, false]],
     ["editOnly", flags({ canRead: true, canEdit: true }), { manage: true, deleteNotes: false, createNote: false }, [true, true, true, false, false]],
     ["readOnly", flags({ canRead: true }), { manage: false, deleteNotes: false, createNote: false }, [true, false, false, false, false]],
-    ["create-only（讀＋建）", flags({ canRead: true, canCreate: true }), { manage: false, deleteNotes: false, createNote: false }, [true, false, false, false, false]],
-    ["全 false", flags({}), null, [false, false, false, false, false]],
-    ["非成員（flags null）", null, null, [false, false, false, false, false]],
-    ["沒有 can_read（其他全真）", flags({ canCreate: true, canEdit: true, canDelete: true }), null, [false, false, false, false, false]],
+    ["create-only (read + create)", flags({ canRead: true, canCreate: true }), { manage: false, deleteNotes: false, createNote: false }, [true, false, false, false, false]],
+    ["all false", flags({}), null, [false, false, false, false, false]],
+    ["non-member (flags null)", null, null, [false, false, false, false, false]],
+    ["no can_read (everything else true)", flags({ canCreate: true, canEdit: true, canDelete: true }), null, [false, false, false, false, false]],
   ];
   it.each(rows)("%s", (_label, f, dto, cols) => {
     const p = folderPermissions({ kind: "group", groupId: G }, ME, f);
@@ -41,20 +41,20 @@ describe("PM-1 群組資料夾權限（角色展開表；sixRoleScene 的旗標�
   });
 });
 
-describe("PM-2 personal／shared：只看 owner，不看 flags", () => {
+describe("personal/shared: only the owner matters, not flags", () => {
   const allTrue = flags({ canRead: true, canCreate: true, canEdit: true, canDelete: true });
-  it("personal owner → 全真（flags 為 null／全 false 也一樣）", () => {
+  it("personal owner -> all true (also when flags are null/all false)", () => {
     const full = { manage: true, deleteNotes: true, createNote: true };
     expect(folderPermissions({ kind: "personal", ownerId: ME }, ME, null)).toEqual(full);
     expect(folderPermissions({ kind: "personal", ownerId: ME }, ME, flags({}))).toEqual(full);
   });
-  it("personal 非 owner → null（flags 全真也一樣）", () => {
+  it("personal non-owner -> null (also when flags are all true)", () => {
     expect(folderPermissions({ kind: "personal", ownerId: OTHER }, ME, allTrue)).toBeNull();
   });
-  it("shared owner → 可管、可刪，不能建筆記", () => {
+  it("shared owner -> can manage and delete, cannot create notes", () => {
     expect(folderPermissions({ kind: "shared", ownerId: ME }, ME, null)).toEqual({ manage: true, deleteNotes: true, createNote: false });
   });
-  it("shared 非 owner → null", () => {
+  it("shared non-owner -> null", () => {
     expect(folderPermissions({ kind: "shared", ownerId: OTHER }, ME, allTrue)).toBeNull();
   });
 });

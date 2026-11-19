@@ -1,4 +1,4 @@
-/** #267：LastActiveTracker 的行程內節流、上限與 best-effort（不拋、只 warn）。SQL 條件那層在整合測試 `last-active.test.ts`。 */
+/** #267: LastActiveTracker's in-process throttling, cap and best-effort behaviour (never throws, only warns). The SQL condition layer is in the integration test `test/last-active.test.ts`. */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyBaseLogger } from "fastify";
 import { LAST_ACTIVE_WRITE_INTERVAL_MS } from "@knotebook/shared";
@@ -12,7 +12,7 @@ function fakeDb(impl: () => Promise<unknown> = () => Promise.resolve({ rowCount:
 const quietLog = () => ({ warn: vi.fn() }) as unknown as FastifyBaseLogger & { warn: ReturnType<typeof vi.fn> };
 
 describe("LastActiveTracker", () => {
-  it("同一使用者在寫入間隔內只打一次 DB；滿間隔後再打；不同使用者各自計", async () => {
+  it("one user hits the DB once within the write interval, and again after the interval; different users are counted separately", async () => {
     let now = 1_000_000;
     const { db, execute } = fakeDb();
     const t = new LastActiveTracker(db, quietLog(), { now: () => now });
@@ -28,7 +28,7 @@ describe("LastActiveTracker", () => {
     expect(execute).toHaveBeenCalledTimes(3);
   });
 
-  it("UPDATE 拋錯：不往外拋；log.warn 一次，物件形帶 err 與 userId；0 列不 warn", async () => {
+  it("UPDATE throws: not rethrown; log.warn once with an object carrying err and userId; 0 rows doesn't warn", async () => {
     const boom = new Error("db down");
     const log = quietLog();
     await expect(new LastActiveTracker(fakeDb(() => Promise.reject(boom)).db, log).touch("u-1")).resolves.toBeUndefined();
@@ -38,20 +38,20 @@ describe("LastActiveTracker", () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
   });
 
-  it("節流表有上限：滿了先清掉已過間隔的項；仍滿就整張清空——不會無限成長", async () => {
+  it("the throttle table is capped: when full, expired entries are cleared first; if still full the whole table is cleared (no unbounded growth)", async () => {
     let now = 0;
     const { db, execute } = fakeDb();
     const t = new LastActiveTracker(db, quietLog(), { now: () => now, maxEntries: 3 });
     await t.touch("a");
-    now = LAST_ACTIVE_WRITE_INTERVAL_MS; // a 已過間隔
+    now = LAST_ACTIVE_WRITE_INTERVAL_MS; // a is exactly one interval old, which counts as expired
     await t.touch("b");
     await t.touch("c");
     expect(t.size).toBe(3);
-    await t.touch("d"); // 滿 → 清掉過期的 a，剩 b、c，再加 d
+    await t.touch("d");
     expect(t.size).toBe(3);
-    await t.touch("b"); // b 仍在間隔內、還在表裡 → 不打 DB
+    await t.touch("b"); // b is still within the interval and still in the table -> no DB call
     expect(execute).toHaveBeenCalledTimes(4);
-    await t.touch("e"); // 滿、且沒有過期項 → 清空後加 e
+    await t.touch("e");
     expect(t.size).toBe(1);
     expect(execute).toHaveBeenCalledTimes(5);
     for (let i = 0; i < 50; i++) await t.touch(`x-${i}`);

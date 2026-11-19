@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLinkConversion, type LinkConversionDeps } from "../../src/notes/link-conversion.js";
 
-// stop() 永不 reject——SIGTERM 鏈的 Promise.race 若被它的拒絕帶走，會跳過 collab.destroy()（丟掉人的待落盤編輯）。
-// 這裡讓 `running` 本身拒絕（log.info 與 log.error 都丟錯），stop() 仍要 resolve。
+// stop() never rejects: if a rejection took down the Promise.race in the SIGTERM chain, it would skip collab.destroy() (dropping people's
+// pending edits). Here `running` itself rejects (log.info and log.error both throw), and stop() must still resolve.
 describe("#269 createLinkConversion().stop()", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("在途那一輪以拒絕收場時 stop() 仍 resolve（永不 reject）", async () => {
+  it("when the in-flight round ends in a rejection, stop() still resolves (never rejects)", async () => {
     vi.useFakeTimers();
     const boom = () => {
       throw new Error("log boom");
@@ -14,12 +14,12 @@ describe("#269 createLinkConversion().stop()", () => {
     const deps = { db: {}, writes: {}, versions: {}, siteOrigin: "http://kb.test", log: { info: boom, warn: boom, error: boom } } as unknown as LinkConversionDeps;
     const lc = createLinkConversion(deps, { startDelayMs: 0 });
     lc.start();
-    vi.advanceTimersByTime(0); // 計時器觸發：running 已建立、尚未 settle
-    const stopped = lc.stop(); // 同一個同步段落掛上處理者：running 的拒絕不會成為 unhandled
+    vi.advanceTimersByTime(0); // fires the timer: running exists but hasn't settled
+    const stopped = lc.stop(); // attach the handler in the same synchronous section: the rejection of running doesn't become unhandled
     await expect(stopped).resolves.toBeUndefined();
   });
 
-  it("還沒開始就 stop：resolve、之後 start 的計時器不再跑", async () => {
+  it("stop before starting: resolves, and a timer started afterwards no longer runs", async () => {
     vi.useFakeTimers();
     const info = vi.fn();
     const deps = { db: {}, writes: {}, versions: {}, siteOrigin: "http://kb.test", log: { info, warn: vi.fn(), error: vi.fn() } } as unknown as LinkConversionDeps;

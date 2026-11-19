@@ -1,15 +1,13 @@
 /**
- * #108：`mcp/queries.ts` 的「每次呼叫現造一組 branch select」守衛。
+ * #108: guard that `mcp/queries.ts` builds a fresh set of branch selects on every call.
  *
- * **為什麼需要它**：drizzle 的 select builder 是**可變且單次使用**的。
- * 同一組 `owned`／`shared` 拿去組第二個 `unionAll(...)`，產出的是一個多一段 `union all`
- * 的畸形查詢，**不丟例外**；而且污染是**回溯的**——建完第二個之後，回頭對第一個 query
- * 物件 `toSQL()` 也變成畸形形。
+ * **Why**: drizzle's select builder is **mutable and single-use**. Reusing the same `owned`/`shared` for a second `unionAll(...)` gives a malformed
+ * query with an extra `union all` segment and **throws no exception**; the contamination is also **retroactive**: after the second is built, `toSQL()`
+ * on the first query object turns malformed too.
  *
- * ⚠ 這裡守的是**我們的組裝函式每次現造**，不是 drizzle 的行為；drizzle 哪天修好了這一族
- * 照樣綠，那正是我們要的。
+ * This guards that **our assembly functions build fresh every time**, not drizzle's behaviour; if drizzle fixes it, this family stays green, which is what we want.
  *
- * 不連線、只 `.toSQL()`：`pg.Pool` 到一個不可能連上的位址（port 1），從頭到尾不發連線。
+ * No connection, only `.toSQL()`: `pg.Pool` points at an unreachable address (port 1) and never connects.
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -33,35 +31,35 @@ const CURSOR = { updatedAt: new Date("2026-09-07T00:00:00.000Z"), id: randomUUID
 const countUnionAll = (sql: string): number => sql.split("union all").length - 1;
 
 describe("#108 buildNoteListQuery", () => {
-  it("連呼兩次，兩次的 SQL 都恰含兩次 union all（三支）", () => {
+  it("calling twice: both SQL texts contain exactly two union all (three branches)", () => {
     const first = buildNoteListQuery(db, { userId: USER, cursor: CURSOR, limit: 50 });
     const second = buildNoteListQuery(db, { userId: USER, cursor: CURSOR, limit: 50 });
     expect(countUnionAll(first.toSQL().sql)).toBe(2);
     expect(countUnionAll(second.toSQL().sql)).toBe(2);
   });
 
-  it("建完第二個之後，回頭對第一個物件 toSQL() 仍恰含兩次 union all（三支）（回溯污染）", () => {
+  it("after building the second, `toSQL()` on the first object still contains exactly two union all (three branches) (retroactive contamination)", () => {
     const first = buildNoteListQuery(db, { userId: USER, cursor: CURSOR, limit: 50 });
     buildNoteListQuery(db, { userId: USER, cursor: CURSOR, limit: 50 });
     expect(countUnionAll(first.toSQL().sql)).toBe(2);
   });
 
-  // ⚠ 這一條同時守住那個**靜默漏列**的精度落差：cursor 只有毫秒（JS `Date.toISOString()`），
-  // 所以排序鍵與 keyset 述詞的左側都必須先 `date_trunc('milliseconds', …)`。留在微秒的話
-  // 「同一毫秒內、微秒較小」的列會被整批切掉，不報錯也不重複——只是不見（整合側有端到端案）。
-  it("SQL 含毫秒精度的 keyset 述詞與 union 上的決定性排序", () => {
+  // This also guards the silent-row-loss precision gap: the cursor only has milliseconds (JS `Date.toISOString()`), so the sort key and the left
+  // side of the keyset predicate must first be `date_trunc('milliseconds', ...)`. Left at microseconds, rows in the same millisecond with a smaller
+  // microsecond are cut off in bulk, with no error and no duplicate: they just vanish (an end-to-end case is on the integration side).
+  it("SQL has a millisecond-precision keyset predicate and a deterministic order on the union", () => {
     const sql = buildNoteListQuery(db, { userId: USER, cursor: CURSOR, limit: 50 }).toSQL().sql;
-    // keyset 在**三支** select 的 where 裡各出現一次，左側是截到毫秒的運算式。
+    // The keyset appears once in the where of each of the three selects, with the millisecond-truncated expression on the left.
     expect(sql.split(`(date_trunc('milliseconds', "notes"."updated_at"), "notes"."id") <`).length - 1).toBe(3);
-    // 殺「keyset 左側直接用原欄位」——那樣寫與 cursor 不同精度。
+    // Catches "the keyset's left side uses the raw column": that would be a different precision from the cursor.
     expect(sql).not.toContain(`("notes"."updated_at", "notes"."id") <`);
-    // 集合運算的 ORDER BY 只收輸出欄位名，所以排序鍵必須是具名輸出欄。
+    // ORDER BY of a set operation accepts only output column names, so the sort key must be a named output column.
     expect(sql).toContain(`date_trunc('milliseconds', "notes"."updated_at") as "updated_at_ms"`);
     expect(sql).toContain(`order by "updated_at_ms" desc, "id" desc`);
     expect(sql).toMatch(/limit \$\d+$/);
   });
 
-  it("不帶 cursor 時沒有 keyset 述詞，其餘形狀不變", () => {
+  it("without a cursor there is no keyset predicate and the other shapes are unchanged", () => {
     const sql = buildNoteListQuery(db, { userId: USER, cursor: null, limit: 50 }).toSQL().sql;
     expect(sql).not.toContain(`"notes"."id") <`);
     expect(countUnionAll(sql)).toBe(2);
@@ -70,7 +68,7 @@ describe("#108 buildNoteListQuery", () => {
 });
 
 describe("#108 buildNoteSearchQuery", () => {
-  it("連呼兩次各恰含兩次 union all（三支），且回頭對第一個物件仍恰兩次", () => {
+  it("calling twice: each contains exactly two union all (three branches), and the first object still has exactly two afterwards", () => {
     const first = buildFullTextQuery(db, { userId: USER, query: "hello", limit: 20 });
     const second = buildFullTextQuery(db, { userId: USER, query: "hello", limit: 20 });
     expect(countUnionAll(first.toSQL().sql)).toBe(2);
@@ -78,24 +76,24 @@ describe("#108 buildNoteSearchQuery", () => {
     expect(countUnionAll(first.toSQL().sql)).toBe(2);
   });
 
-  it("以輸出欄位名 rank 排序，且比對用的是非 pattern 的 position() 不是 like", () => {
+  it("sorted by the output column name rank, and the match uses a non-pattern position() rather than like", () => {
     const { sql, params } = buildFullTextQuery(db, { userId: USER, query: "50%", limit: 20 }).toSQL();
-    // ⚠ `orderBy(rankExpr)`（把 CASE 運算式直接放進 ORDER BY）drizzle 產得出來但 pg 直接拒
-    // （`invalid UNION/INTERSECT/EXCEPT ORDER BY clause`）——集合運算的 ORDER BY 只收輸出欄位名。
+    // `orderBy(rankExpr)` (putting the CASE expression straight into ORDER BY) is something drizzle can generate but pg rejects
+    // (`invalid UNION/INTERSECT/EXCEPT ORDER BY clause`): the ORDER BY of a set operation accepts only output column names.
     expect(sql).toContain(`order by "rank" asc, "updated_at" desc, "id" desc`);
     expect(sql).not.toMatch(/order by[\s\S]*case when/);
-    // 非 pattern 判定：`%` 不會被當萬用字元，所以不需要 ESCAPE，也不得出現 like／ilike。
+    // Non-pattern matching: `%` isn't treated as a wildcard, so no ESCAPE is needed, and like/ilike must not appear.
     expect(sql.toLowerCase()).not.toContain(" like ");
     expect(sql.toLowerCase()).not.toContain(" ilike ");
     expect(sql).toContain("position(");
-    // 第三關：查詢字串以參數送出，不進 SQL 文字。
+    // Third check: the query string is sent as a parameter, not in the SQL text.
     expect(sql).not.toContain("50%");
     expect(params).toContain("50%");
   });
 });
 
 describe("#93 notes/search-sql", () => {
-  it("列表句：三支各帶 EXISTS 子查詢比對 note_search_sections；rank 第四級；title_hit／body_hit；以輸出欄排序；非 pattern", () => {
+  it("list statement: each of the three branches has an EXISTS subquery matching note_search_sections; rank is the fourth level; title_hit/body_hit; ordered by output columns; non-pattern", () => {
     const { sql, params } = buildFullTextQuery(db, { userId: USER, query: "50%", limit: 20 }).toSQL();
     expect(countUnionAll(sql)).toBe(2);
     expect(sql.split("note_search_sections").length - 1).toBeGreaterThanOrEqual(3);
@@ -108,26 +106,26 @@ describe("#93 notes/search-sql", () => {
     expect(sql).not.toContain("50%");
     expect(params).toContain("50%");
   });
-  // #93：bodyOnly／page 兩個選項
-  it("U0 不帶新選項的 toSQL() 與加分頁之前抓的 golden 逐位元組相同（不變量 1：MCP 的 SQL 不變）", () => {
+  // #93: the bodyOnly/page options
+  it("without the new options, toSQL() is byte-identical to the golden captured before paging was added (the MCP SQL is unchanged)", () => {
     const { sql, params } = buildFullTextQuery(db, { userId: GOLDEN_USER, query: "q", limit: 20 }).toSQL();
     expect(sql).toBe(GOLDEN_SQL);
     expect(params).toEqual(GOLDEN_PARAMS);
   });
-  it("U1 不帶、bodyOnly: false、page: undefined 三者逐位元組相同", () => {
+  it("no options, bodyOnly: false, and page: undefined are byte-identical", () => {
     const base = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20 }).toSQL();
     const off = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20, bodyOnly: false }).toSQL();
     const noPage = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20, page: undefined }).toSQL();
     expect(off).toEqual(base);
     expect(noPage).toEqual(base);
   });
-  it("U2 bodyOnly: true 的 sql 與不帶不同、仍恰兩次 union all", () => {
+  it("bodyOnly: true gives different sql from the default, still exactly two union all", () => {
     const base = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20 }).toSQL();
     const body = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20, bodyOnly: true }).toSQL();
     expect(body.sql).not.toBe(base.sql);
     expect(countUnionAll(body.sql)).toBe(2);
   });
-  it("U3 page：after null 多一欄 updated_at_key、沒有 keyset；after 有值時 keyset 的值走參數", () => {
+  it("page: with after null there is one more column, updated_at_key, and no keyset; with after set, the keyset values go through parameters", () => {
     const first = buildFullTextQuery(db, { userId: USER, query: "q", limit: 20, page: { after: null } }).toSQL();
     expect(first.sql).toContain(`"updated_at_key"`);
     expect(first.sql).not.toContain("::timestamptz");
@@ -139,12 +137,12 @@ describe("#93 notes/search-sql", () => {
     expect(next.sql).not.toContain(key.updatedAtKey);
     expect(next.sql).not.toContain(key.id);
   });
-  it("連呼兩次各自現造（單次使用的 builder）", () => {
+  it("calling twice builds fresh each time (single-use builders)", () => {
     const first = buildFullTextQuery(db, { userId: USER, query: "x", limit: 5 });
     buildFullTextQuery(db, { userId: USER, query: "x", limit: 5 });
     expect(countUnionAll(first.toSQL().sql)).toBe(2);
   });
-  it("matches 句：id 清單是 in ($1, $2) 而不是 any(...)；查詢字串走參數；每篇 3 個", () => {
+  it("matches statement: the id list is in ($1, $2), not any(...); the query string goes through parameters; 3 per note", () => {
     const a = randomUUID();
     const b = randomUUID();
     const q = new PgDialect().sqlToQuery(buildSearchMatchesQuery({ query: "zeta", ids: [a, b] }));

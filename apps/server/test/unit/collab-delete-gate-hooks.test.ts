@@ -3,17 +3,15 @@ import { createCollabHooks, DELETING_GATE_TTL_MS, REVERIFY_DEADLINE_MS } from ".
 import type { CollabServer, ConnectionHandle } from "../../src/collab/server.js";
 
 /**
- * 兩組東西：`beforeNoteDeleted` 開的閘門與它回傳的 `release()` handle（issue #35
- * ），以及重驗 deadline 那一行日誌的守衛（issue #37）。
+ * The gate opened by `beforeNoteDeleted` and the `release()` handle it returns (issue #35), plus the guard on the re-verify deadline log line (issue #37).
  *
- * 這一層在 server 那側的測試看不到：整合測試直接呼叫 `collab.markDeleting/releaseDeletingGate`，
- * 而 `notes.test.ts` 用的是 mock 過的 hook。於是 hooks-impl 這邊的兩個修正——「重開閘門前先清掉
- * 舊 timer」與「release 只收自己那一道門」——刪掉都不會有測試變紅，而症狀只是「協作者偶爾看到
- * 錯的那句話」。這個檔案就是釘它們的。
+ * The integration tests call `collab.markDeleting/releaseDeletingGate` directly and `notes.test.ts` uses mocked hooks, so this file exercises the two
+ * hooks-impl fixes itself: clear the old timer before re-opening the gate, and release only its own gate. Without them the symptom is only
+ * collaborators occasionally seeing the wrong message.
  */
 const NOTE = "11111111-1111-1111-1111-111111111111";
 
-/** 只實作 `beforeNoteDeleted`／`reverify` 會碰到的那幾個成員。 */
+/** Implements only the members that `beforeNoteDeleted`/`reverify` touch. */
 function fakeServer(connections: Set<ConnectionHandle> = new Set()): {
   server: CollabServer;
   calls: { mark: number[]; release: Array<[string, number]>; unmark: string[] };
@@ -57,7 +55,7 @@ function recordingLog(): { log: { info: (obj: object, msg: string) => void; erro
 
 const silentLog = { info: () => {}, error: () => {} };
 
-/** 一條假的「文件連線」：只要 `reverify` 會碰到的成員。 */
+/** A fake document connection: only the members `reverify` touches. */
 function fakeHandle(noteId: string, userId: string): ConnectionHandle {
   return {
     socketId: "s1",
@@ -72,21 +70,21 @@ function fakeHandle(noteId: string, userId: string): ConnectionHandle {
 }
 
 /**
- * 重驗 deadline 的那一行日誌（issue #37／PR #49 補審）。
+ * The re-verify deadline log line (issue #37).
  *
- * ⚠ 這條 timer 對「已經關閉的連線」fire 是刻意的冪等 no-op，所以**使用者自己關掉分頁**也會
- * 走到這裡。照記的話，docs 排錯指引最倚重的那一行（「他若堅持自己還有權限，這行說了不是」）
- * 會指著一個根本沒被踢的人。守衛是「這條連線還在索引裡嗎」，而它自己也得有測試——不然
- * 拿掉它不會有任何測試變紅（這一族曾踩過同一個形狀）。
+ * The timer firing on an already-closed connection is a deliberate idempotent no-op, so a user closing the tab themselves lands here too.
+ * Logging it would make the line the docs troubleshooting guide relies on most ("if they insist they still have access, this line says they don't")
+ * point at someone who was never kicked. The guard is "is this connection still in the index", and it needs its own test so that
+ * removing it is detected (this family has hit the same shape before).
  */
-describe("重驗 deadline 的日誌", () => {
+describe("re-verify deadline log", () => {
   const USER = "22222222-2222-2222-2222-222222222222";
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("連線還在索引裡（client 只是沒回話）→ 記一行 deadline", async () => {
+  it("connection still in the index (client just didn't answer) -> logs one deadline line", async () => {
     vi.useFakeTimers();
     const handle = fakeHandle(NOTE, USER);
     const { server } = fakeServer(new Set([handle]));
@@ -99,7 +97,7 @@ describe("重驗 deadline 的日誌", () => {
     expect(line).toMatchObject({ cause: "no-reverify", noteId: NOTE, userId: USER });
   });
 
-  it("連線已經不在索引裡（使用者自己關了分頁）→ 一行都不記", async () => {
+  it("connection no longer in the index (user closed the tab) -> logs nothing", async () => {
     vi.useFakeTimers();
     const handle = fakeHandle(NOTE, USER);
     const live = new Set([handle]);
@@ -107,22 +105,22 @@ describe("重驗 deadline 的日誌", () => {
     const { log, lines } = recordingLog();
 
     createCollabHooks(server, log).onShareChanged(NOTE, USER);
-    // 分頁在 deadline 之前關掉：server 端的 `connection.onClose` 會同步把 handle 拆出索引。
+    // Tab closed before the deadline: the server's `connection.onClose` removes the handle from the index synchronously.
     live.delete(handle);
     await vi.advanceTimersByTimeAsync(REVERIFY_DEADLINE_MS + 100);
 
-    // 標題說「一行都不記」就整份斷言——只濾 deadline 的話，catch 分支寫出的 error 行會被
-    // 放過，而那句話就變成半真。
+    // The title says nothing is logged, so assert the whole output: filtering only deadline lines would let an error line from the
+    // catch branch through and make the claim half true.
     expect(lines).toEqual([]);
   });
 });
 
-describe("beforeNoteDeleted 的閘門 handle", () => {
+describe("beforeNoteDeleted gate handle", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("重開閘門會清掉前一次的 TTL timer（否則第一顆會把第二道門提早打開）", async () => {
+  it("re-opening the gate clears the previous TTL timer (otherwise the first timer opens the second gate early)", async () => {
     vi.useFakeTimers();
     const { server, calls } = fakeServer();
     const hooks = createCollabHooks(server, silentLog);
@@ -131,11 +129,11 @@ describe("beforeNoteDeleted 的閘門 handle", () => {
     await hooks.beforeNoteDeleted(NOTE);
 
     await vi.advanceTimersByTimeAsync(DELETING_GATE_TTL_MS + 1_000);
-    // 舊 timer 沒被清掉的話這裡會是 2——第一顆會在第二道門還該關著的時候把它打開。
+    // If the old timer weren't cleared this would be 2: the first would open the second gate while it should still be closed.
     expect(calls.unmark).toEqual([NOTE]);
   });
 
-  it("release() 收的是「自己那一道門」的世代序號，不是當下最新的那一道", async () => {
+  it("release() takes the generation number of its own gate, not the current latest one", async () => {
     const { server, calls } = fakeServer();
     const hooks = createCollabHooks(server, silentLog);
 
@@ -145,13 +143,13 @@ describe("beforeNoteDeleted 的閘門 handle", () => {
 
     first.release();
     await vi.waitFor(() => expect(calls.release).toHaveLength(1));
-    // 帶的是 1（自己那道），不是 2——否則併發的第二次刪除成功時，第一次的失敗會把它的
-    // 閘門關掉，接下來兩分鐘重連的協作者都會聽到「你已失去存取權」。
+    // It carries 1 (its own gate), not 2: otherwise when a concurrent second delete succeeds, the first one's failure would close its
+    // gate, and collaborators reconnecting over the next two minutes would be told "you lost access".
     expect(calls.release[0]).toEqual([NOTE, 1]);
   });
 });
 
-/** #181：還原 commit 後收掉刪除閘門。 */
+/** #181: release the deleting gate after the restore commit. */
 describe("onNotesRestored", () => {
   const OTHER = "33333333-3333-3333-3333-333333333333";
 
@@ -159,7 +157,7 @@ describe("onNotesRestored", () => {
     vi.useRealTimers();
   });
 
-  it("GH1：收掉閘門並清掉 TTL timer（到期時不再 unmark 第二次）", async () => {
+  it("releases the gate and clears the TTL timer (no second unmark at expiry)", async () => {
     vi.useFakeTimers();
     const { server, calls } = fakeServer();
     const hooks = createCollabHooks(server, silentLog);
@@ -172,7 +170,7 @@ describe("onNotesRestored", () => {
     expect(calls.unmark).toEqual([NOTE]);
   });
 
-  it("GH2：同一篇重複只 unmark 一次；沒有閘門的 id 照呼叫、不 throw", async () => {
+  it("the same note repeated is unmarked only once; an id with no gate is still called, without throwing", async () => {
     const { server, calls } = fakeServer();
     const hooks = createCollabHooks(server, silentLog);
 
@@ -181,7 +179,7 @@ describe("onNotesRestored", () => {
     expect(calls.unmark).toEqual([NOTE, OTHER]);
   });
 
-  it("GH3：unmarkDeleting throw → 不往外 throw、記一次 error（只記 name／code／數量）", () => {
+  it("unmarkDeleting throws -> does not rethrow, logs one error (only name/code/count)", () => {
     const { server } = fakeServer();
     server.unmarkDeleting = () => {
       throw Object.assign(new Error("boom"), { cause: { code: "E_TEST" } });

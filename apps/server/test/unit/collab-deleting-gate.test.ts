@@ -3,26 +3,24 @@ import { COLLAB_RESTART_DELAYS_MS, COLLAB_RESTART_JITTER, COLLAB_TOKEN_RETRY_DEL
 import { DELETING_GATE_TTL_MS } from "../../src/collab/hooks-impl.js";
 
 /**
- * 刪除閘門的 TTL 與 client 重啟退避是一組**跨套件的耦合契約**（#35）。
+ * The deleting gate's TTL and the client's restart backoff form a cross-package coupling contract (#35).
  *
- * 閘門是 server 唯一能對「刪除當下本來就看得到這篇筆記的人」說出「它被刪掉了」的窗口：
- * 交易一 commit，那一列就查不到，`resolveRole` 只會回 'none'，而那條路對使用者說的是
- * 「你已失去存取權」——正是 #35 要修掉的那句錯話。所以閘門必須活得比「一個正在重連的
- * 分頁下一次回來敲門」還久。
+ * The gate is how the server tells someone who could see the note at deletion time that it was deleted: once the transaction commits the row
+ * is gone and `resolveRole` returns only 'none', and that path tells the user "you lost access" (the wrong message #35 fixes). So the gate
+ * must outlive the time a reconnecting tab takes to knock again.
  *
- * 沒有這條測試的話，把 `COLLAB_RESTART_DELAYS_MS` 最後一格調大（或把 TTL 調小）會**靜靜地**
- * 破壞它：沒有任何測試會紅，症狀只是使用者偶爾看到一句錯話。
+ * Raising the last `COLLAB_RESTART_DELAYS_MS` entry (or lowering the TTL) would break this silently; the symptom is only users occasionally
+ * seeing the wrong message. This test catches that.
  */
-describe("刪除閘門 TTL vs client 重啟退避（跨套件不變量）", () => {
+describe("deleting gate TTL vs client restart backoff (cross-package invariant)", () => {
   const worstRestartDelay = Math.max(...COLLAB_RESTART_DELAYS_MS) * (1 + COLLAB_RESTART_JITTER);
 
-  it("TTL 蓋得過 client 最長的一次重啟退避", () => {
+  it("TTL outlasts the client's longest restart backoff", () => {
     expect(DELETING_GATE_TTL_MS).toBeGreaterThan(worstRestartDelay);
   });
 
-  it("TTL 還留得下一整輪 token 退避表的餘裕（重連要先取得 token 才會敲門）", () => {
-    // 從 shared 取實際的重試表計算（issue #40 順帶：舊版手抄 7_500，正是「數字被抄進
-    // 註解後漂移」的形狀）。
+  it("TTL leaves headroom for a whole round of the token backoff table (reconnecting must first obtain a token before knocking)", () => {
+    // Computed from the actual retry table in shared rather than a hand-copied number (a copied 7_500 drifts).
     const tokenRetryTail = COLLAB_TOKEN_RETRY_DELAYS_MS.reduce((sum, d) => sum + d, 0);
     expect(DELETING_GATE_TTL_MS).toBeGreaterThan(worstRestartDelay + tokenRetryTail);
   });
