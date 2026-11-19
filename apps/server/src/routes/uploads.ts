@@ -36,9 +36,10 @@ export interface UploadsRouteDeps {
 
 /**
  * Multipart parsing and its CSRF exemption are done by the global onRequest in app.ts; @fastify/multipart must be registered on the top-level app (not an encapsulated plugin).
- * Transfer tokens (#200) are accepted besides sessions. The POST preHandler order is a contract, all before request.parts(), and every early return drains: authentication → token's note = path note →
- * current role → upload limiter → storage-quota "full" pre-check (so a full space doesn't burn the token) → atomic consumption. Any failure after consumption burns the token, including the
- * in-transaction 409s (same code and shape as the pre-check). CSRF stays exempt: Bearer isn't an ambient credential.
+ * Transfer tokens (#200) are accepted besides sessions; ordinary PAT/OAuth Bearer tokens are not (docs/api-tokens.md). The POST preHandler order is a contract, all before
+ * request.parts(), and every early return drains: authentication → token's note = path note → current role → upload limiter → storage-quota "full" pre-check (so a full space
+ * doesn't burn the token) → atomic consumption. Any failure after consumption burns the token, including the in-transaction 409 storage_quota_exceeded (same code and shape as
+ * the pre-check) and 409 server_busy (space-lock timeout/deadlock). CSRF stays exempt: Bearer isn't an ambient credential.
  */
 export function uploadsRoutes(deps: UploadsRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {

@@ -50,7 +50,7 @@ export interface AuthRouteDeps {
 // Unknown account, OIDC-only and wrong password all return the same 401 and call recordFailure; the first two run a dummy verify on DUMMY_HASH so timing isn't an oracle.
 export function authRoutes(deps: AuthRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    // No auth: the login page needs the providers before credentials are entered.
+    // No auth: the login page needs the providers before credentials are entered; only id, display name and icon are exposed (AuthProviderPublicDto).
     app.get("/api/auth/config", async (request): Promise<AuthConfigDto> => {
       const { providers, autoCreateProviderIds } = await listEnabledProvidersForConfig(deps.db);
       const registrationEnabled = await readRegistrationEnabled(deps.db);
@@ -69,6 +69,7 @@ export function authRoutes(deps: AuthRouteDeps) {
 
     // `v` is immutable only when it equals the current version exactly (`01` or `1.0` would long-cache a different URL).
     // No auth and ignores `enabled`: the login page needs icons before sign-in and the admin list shows disabled providers; icons aren't secret and ids are UUIDs.
+    // Unthrottled; the MIME type is the one detected from the file header at upload.
     app.get("/api/auth/providers/:id/icon", async (request, reply) => {
       const raw = (request.params as { id: string }).id;
       if (!UUID_RE.test(raw)) return sendError(reply, 404, "not_found", ICON_NOT_FOUND_MESSAGE);
@@ -93,7 +94,7 @@ export function authRoutes(deps: AuthRouteDeps) {
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       }
-      // Before reading the account and throttle: the response is account-independent, so there is no oracle and no dummy hash is needed; skipping argon2 also removes a CPU amplifier. Unthrottled while disabled (accepted).
+      // Before reading the account and throttle: the response is account-independent, so there is no oracle and no dummy hash is needed; skipping argon2 also removes a CPU amplifier. Unthrottled while disabled (accepted). Admins are not exempt.
       if (!(await isPasswordLoginAccepted(deps.db, deps.config, request.log))) {
         return sendError(reply, 403, "password_login_disabled", PASSWORD_LOGIN_DISABLED_MESSAGE);
       }
@@ -106,7 +107,7 @@ export function authRoutes(deps: AuthRouteDeps) {
         return sendLoginThrottled(reply, throttleCheck.retryAfterMs!);
       }
 
-      // Multi-row guard (email is unique, so this is defense in depth).
+      // lower() mirrors the write paths, which store normalized lowercase. Multi-row guard (email is unique, so this is defense in depth).
       const [user] = await deps.db
         .select()
         .from(users)
@@ -158,7 +159,7 @@ export function authRoutes(deps: AuthRouteDeps) {
       return reply.send(dto);
     });
 
-    /** Idempotent: no cookie, bad signature, an old JWT without `sid` or a DB error while deleting all still return 204 and clear the cookie (a 500 would leave the web logout half done, and clearing the cookie needs no DB). The row then lives until expiry, usable only through a copied cookie. */
+    /** Logs out only this device; other devices' sessions are unaffected. Idempotent: no cookie, bad signature, an old JWT without `sid`, a missing row or a DB error while deleting all still return 204 and clear the cookie (on a DB error this device's collab connections aren't re-verified; a 500 would leave the web logout half done, and clearing the cookie needs no DB). The row then lives until expiry, usable only through a copied cookie. */
     app.post("/api/auth/logout", async (request, reply) => {
       const ended = await deleteSessionFromCookie(deps, request);
       if (ended) deps.collabHooks.onSessionRevoked(ended.userId, ended.sid);
@@ -190,10 +191,11 @@ export function authRoutes(deps: AuthRouteDeps) {
     });
 
     /**
-     * Rename (#122, #291). Order inside the transaction matters: lock own row first (concurrent renames queue), count renames in the last 24 h after the lock (>= 5 → 429),
-     * INSERT the new name before DELETEing the old one (the other order deadlocks two people swapping names), then UPDATE users and record the rename.
+     * Rename (#122, #291). Order inside the transaction matters: lock own row first (concurrent renames queue), count renames in the last 24 h after the lock
+     * (so a queued rename sees the earlier one's commit and both can't pass the quota; >= 5 → 429), INSERT the new name (another user's current name → 409) before
+     * DELETEing the old one (the other order deadlocks two people swapping names), then UPDATE users and record the rename.
      * The old name comes from the in-tx SELECT (request.user is a 60 s cache). With only autoVersions/displayName it is a plain UPDATE outside the rename transaction and quota;
-     * every branch must reach the single gate.invalidate at the end.
+     * sent with handle, they go in the same UPDATE users and roll back with a name collision. Every branch must reach the single gate.invalidate at the end.
      */
     app.patch("/api/auth/profile", { preHandler: app.authenticate }, async (request, reply) => {
       const parsed = profileBodySchema.safeParse(request.body);

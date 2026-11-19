@@ -2,5 +2,5 @@
 
 export const WRITE_BODY_LIMIT = 262_144;
 
-/** Same value as WRITE_BODY_LIMIT but a separate name: full parse cost is not linear in size (a 1 MiB file dense in inline formatting takes 9–22 s). */
+/** Bytes → 413 content_too_large. Lowered from 1 MiB to WRITE_BODY_LIMIT because full parse cost isn't linear in size (a 1 MiB file dense in inline formatting takes 9–22 s; 256 KiB at most ~5 s in the shapes tried). Separate name because the export's tooLargeToSend flag and the write-back route read it. */
 export const TRANSFER_WRITE_BODY_LIMIT = WRITE_BODY_LIMIT;

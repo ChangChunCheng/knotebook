@@ -318,12 +318,12 @@ export function oauthRoutes(deps: OauthRouteDeps) {
         if (!CODE_VERIFIER_RE.test(verifier)) {
           return sendOauthError(reply, 400, "invalid_request", "code_verifier has invalid characters.");
         }
-        // invalid_grant here would make clients think the code is broken and rerun the whole flow.
+        // Missing or invalid resource → invalid_target (RFC 8707 §2.1); invalid_grant would make clients think the code is broken and rerun the whole flow.
         if (!isCanonicalResource(resource, issuer)) {
           return sendOauthError(reply, 400, "invalid_target", `resource must be ${canonicalResource(issuer)}.`);
         }
 
-        // Explicit `=> never` annotation: TS only treats the call as terminating with it.
+        // Explicit `=> never` annotation: TS only treats the call as terminating with it; without it, enabling noUncheckedIndexedAccess would break type-checking of this block.
         const invalidGrant: (description?: string) => never = (description = "The authorization code is invalid.") => {
           throw new OauthGrantError("invalid_grant", description);
         };
@@ -340,7 +340,8 @@ export function oauthRoutes(deps: OauthRouteDeps) {
             if (consumed.clientId !== clientId || consumed.redirectUri !== redirectUri) invalidGrant();
             if (!verifyPkce(verifier, consumed.codeChallenge)) invalidGrant();
 
-            // ⚠ Don't call deps.gate.checkUser inside the tx: it uses the pool, so concurrent redemptions on a cache miss exhaust it. Read through tx with the same criteria.
+            // ⚠ Don't call deps.gate.checkUser inside the tx: on a cache miss it borrows a second pool connection while holding the tx one, so concurrent redemptions can exhaust
+            // the pool and hang forever. Read through tx with the same criteria.
             const [account] = await tx.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, consumed.userId));
             if (account === undefined || account.disabledAt !== null) invalidGrant();
 

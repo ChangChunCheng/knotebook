@@ -21,7 +21,11 @@ export function sendLoginThrottled(reply: FastifyReply, retryAfterMs: number): F
   });
 }
 
-/** The two upload 409s (pre-check before reading the body, check in the transaction) must stay indistinguishable (#200): never add a flag field. */
+/**
+ * The two upload 409s (pre-check before reading the body, check in the transaction) must stay indistinguishable (#200): never add a flag field.
+ * The message is the shared STORAGE_QUOTA_EXCEEDED_MESSAGE so the pre-check (which has no exception object) and the in-transaction check emit
+ * the same sentence; detail's number visibility is decided by the caller outside the transaction (quotaErrorDetail).
+ */
 export function sendStorageQuotaExceeded(reply: FastifyReply, detail: StorageQuotaErrorDetail): FastifyReply {
   return reply.code(409).send({ error: { code: "storage_quota_exceeded", message: STORAGE_QUOTA_EXCEEDED_MESSAGE }, storage: detail });
 }

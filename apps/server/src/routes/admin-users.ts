@@ -36,7 +36,7 @@ interface AdminUserDto {
   disabledAt: string | null;
   createdAt: string;
   lastLoginAt: string | null;
-  /** Updated at most once a minute per user (#267). */
+  /** Last request with the session cookie, collab connection or edit, or login; at most once a minute per user, except login, which always writes it (#267). null = never. */
   lastActiveAt: string | null;
   storage: SpaceStorageDto;
   hasPassword: boolean;
@@ -103,7 +103,7 @@ async function storageOfUser(db: Db, userId: string): Promise<SpaceStorageDto> {
 export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.get("/api/admin/users", { preHandler: app.requireAdmin }, async () => {
-      // Secondary key id: createdAt isn't unique at millisecond precision.
+      // Secondary key id: createdAt isn't unique at millisecond precision. Users with no attachments and no avatar are absent from the usage map → 0.
       const usage = await listSpaceUsage(deps.db, "user");
       const rows = await deps.db
         .select({ ...adminUserColumns, planId: storagePlans.id, planName: storagePlans.name, quotaBytes: storagePlans.quotaBytes })
@@ -209,6 +209,7 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
     });
 
     // Non-key UPDATE: takes no space lock and doesn't block uploads in progress; no check against current usage. Suspended users can be changed.
+    // A non-UUID :id or planId each get their own 404 code (instead of 22P02 → 500); uppercase UUIDs are lowercased.
     app.patch("/api/admin/users/:id/storage-plan", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "user_not_found", "No user with that id.");

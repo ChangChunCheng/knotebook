@@ -23,11 +23,14 @@ import { canWriteNotes } from "../mcp/write-scope.js";
 import { sendWebResponse, toWebRequest } from "../mcp/transport.js";
 
 /**
- * Order is a contract: JSON guard → authentication → Origin guard → build server / register tools / registerCapabilities / connect → handleRequest. Stateless, one instance per request
- * (the SDK throws if a transport is reused); registerCapabilities must come after registering tools and before connect().
+ * Order is a contract: JSON guard → authentication → Origin guard → build server / register tools / registerCapabilities / connect → handleRequest → materialize the Response
+ * → copy to reply; finally closes the server. The route stays on the global onSend chain (nosniff). Stateless, one instance per request (the SDK throws if a transport is reused);
+ * registerCapabilities must come after registering tools and before connect() (declaring in the constructor options has no effect; after connect() it throws).
  * GET/DELETE give 405 + Allow: POST only after authentication, so unauthenticated requests still get the 401 challenge (#130).
- * ⚠ Differs from the spec: a bad JSON body is this site's 400 bad_request (Fastify's parser rejects it before the SDK), not -32700. With no tool registered, tools/list returns -32601
- * (handlers are installed by the first registerTool), not an empty list; unreachable today because list_notes/search_notes always register.
+ * ⚠ Differs from the spec: a bad JSON body is this site's 400 bad_request (Fastify's parser rejects it before the SDK), not -32700; with no Content-Type and no body the SDK
+ * answers 415 -32000; -32700 has no reachable path here. With no tool registered, tools/list and tools/call return 200 + -32601 (handlers are installed by the first
+ * registerTool; registerCapabilities installs none, so initialize still says listChanged: false), not an empty list, so -32601 doesn't mean the order is wrong.
+ * Unreachable today because list_notes/search_notes always register; kept for a future scope filter that removes every tool.
  * tools/list depends on credential scope and on whether the app has collab/editing.
  */
 
@@ -43,7 +46,8 @@ export interface McpRouteDeps {
   config: AppConfig;
   collab?: CollabServer;
   editing?: EditingRuntime;
-  // Picked one by one; tokenWrite is charged at the scope check and edit after the role check, as in REST.
+  // Picked one by one so MCP sees only the six it uses; folder is the same instance as foldersRoutes (charged in folders/service.ts). tokenWrite is charged at the scope
+  // check and edit after the role check, as in REST.
   limiters: {
     contentRead: FixedWindowLimiter;
     edit: FixedWindowLimiter;
@@ -102,6 +106,7 @@ export function mcpRoutes(deps: McpRouteDeps) {
     app.post("/api/mcp", { preHandler, bodyLimit: WRITE_BODY_LIMIT }, async (request, reply) => {
       // instructions is either-or per request, decided by canWriteNotes (same as scope filtering at registration) so the list and the instructions can't disagree.
       // canMoveNotes/canDeleteNotes only affect registration. #417: whether open_notes_as_files is registered decides whether instructions mention it.
+      // The read-only variant names no write tools and explains how to get write access instead.
       const authKind = request.authKind === "session" ? "session" : "token";
       const canWrite = canWriteNotes({ authKind, tokenScope: request.tokenScope ?? null });
       const filesTool = hasOpenNotesAsFiles({ authKind, collab: deps.collab, editing: deps.editing });
@@ -109,7 +114,7 @@ export function mcpRoutes(deps: McpRouteDeps) {
         { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
         { instructions: mcpInstructions(canWrite, filesTool) }
       );
-      // registerCapabilities must come after tool registration.
+      // Identity is bound into the tool closures (tools never read request); registerCapabilities must come after tool registration.
       registerMcpTools(server, {
         db: deps.db,
         collab: deps.collab,

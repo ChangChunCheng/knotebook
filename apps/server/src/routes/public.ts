@@ -13,6 +13,8 @@ import { uploadFilePath } from "../uploads/service.js";
 
 // All four routes go through the single resolvePublicNote (token and alias forms): the step order and identical 404s must exist once. The lookup must include `public_token IS NOT NULL` so unpublishing kills both forms.
 // The response never includes the token (an alias page would turn a guessable URL into an unrevocable handle). Tokens are kept out of logs by redactPublicTokens in app.ts; this file must not log request URLs.
+// Misses share one per-IP limiter across both forms. Hits use one limiter (publicNote or publicUpload) for both forms, keyed ${ip}:${token} and ${ip}:path:${noteId}, which can't collide
+// (base64url has no ':'), so a note reachable both ways gets twice the hit quota (docs/known-limitations.md).
 
 const PUBLIC_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
@@ -20,9 +22,10 @@ export function isValidPublicToken(token: string): boolean {
   return PUBLIC_TOKEN_RE.test(token);
 }
 
-// Deliberately over-broad: masks the first segment even when it isn't a 43-char token (the alias form's handle too).
+// Deliberately over-broad: masks the first segment even when it isn't a 43-char token (the alias form's handle too); acceptable since handle/slug aren't secret.
 export function redactPublicTokens(url: string): string {
-  // ⚠ Collapse leading slashes and match case-insensitively: the SPA fallback serves `//p/<token>` and `/P/<token>`, which an anchored case-sensitive match would write to the log in the clear.
+  // ⚠ Collapse leading slashes and match case-insensitively: the SPA fallback serves `//p/<token>`, `/P/<token>` and `//api/public/…`, which an anchored case-sensitive match would
+  // write to the log in the clear. The logged URL may then differ slightly from the request; accepted.
   const collapsed = url.replace(/^\/{2,}/, "/");
   return collapsed
     .replace(/^\/p\/[^/?#]+/i, "/p/:token")

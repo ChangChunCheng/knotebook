@@ -1,4 +1,5 @@
-// Accepts only knbt_ bulk tokens, no cookie fallback. Reads have zero side effects (loadNoteDoc only: no direct connection, no presence). Logs never contain content, titles, filenames or tokens.
+// Accepts only knbt_ bulk tokens, no cookie fallback. Reads have zero side effects (loadNoteDoc only: no direct connection, no presence, notes.* untouched); their only writes are
+// transfer_bases and self-revocation. Logs never contain content, titles, filenames or tokens.
 import { eq } from "drizzle-orm";
 import { publicUrlIssuer } from "../config.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -215,7 +216,8 @@ export function transferRoutes(deps: TransferRouteDeps) {
         .send(nf.file);
     });
 
-    // text/markdown 415/Origin 403 are enforced in the global onRequest (TEXT_BODY_EXEMPT_ROUTES); fatal UTF-8 decoding happens here.
+    // text/markdown 415/Origin 403 are enforced in the global onRequest (TEXT_BODY_EXEMPT_ROUTES); over TRANSFER_WRITE_BODY_LIMIT (256 KiB, same as WRITE_BODY_LIMIT) → 413
+    // content_too_large; fatal UTF-8 decoding happens here (non-UTF-8 → 400 invalid_body).
     app.put("/api/transfer/notes", { preHandler: requireBulkWrite, bodyLimit: TRANSFER_WRITE_BODY_LIMIT }, async (request: FastifyRequest, reply: FastifyReply) => {
       await deps.testHooks?.beforeWriteHandler?.();
       const started = Date.now();
@@ -256,7 +258,7 @@ export function transferRoutes(deps: TransferRouteDeps) {
         logLine("note_too_large");
         return sendNoteTooLarge(reply, limitBytes);
       };
-      // Unexpected exceptions are logged with the same keys and rethrown unchanged.
+      // Unexpected exceptions are logged with the same keys (result "internal", diff keys null) and rethrown unchanged; content-bearing DB errors were already redacted in the service.
       try {
         const raw = request.body;
         let text: string;
@@ -297,7 +299,7 @@ export function transferRoutes(deps: TransferRouteDeps) {
         noteId = file.id;
         const access = await resolveNoteAccess(deps.db, userId, file.id);
         if (access.role === "none") return fail(404, "not_found", TRANSFER_NOTE_NOT_FOUND_MESSAGE);
-        // Order prevents enumeration: visible → range object → range → role.
+        // Order is a contract: visible → range object → range → role → syncFile (which charges transferWrite after the file is known to differ, before parsing).
         if (await rangeGone(deps.db, userId, bt.range, tree)) return fail(403, "forbidden", RANGE_GONE_MESSAGE);
         const rows = await visibleNotes(deps.db, userId, { ids: [file.id] });
         const row = rows[0];

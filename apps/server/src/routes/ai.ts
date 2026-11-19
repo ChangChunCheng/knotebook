@@ -69,7 +69,7 @@ export function aiRoutes(deps: AiRouteDeps) {
       const actionId = parsed.data.action_id.toLowerCase();
       const noteId = parsed.data.note_id.toLowerCase();
 
-      // Decided against the constant before the role check and throttle, so these 400s cost no quota.
+      // Decided against the constant, with no DB lookup, before the UUID check, role check and throttle, so these 400s cost no quota.
       const fields = checkInstructFields(actionId === INSTRUCT_ACTION_ID, instruction, focus);
       if (!fields.ok) return sendError(reply, 400, "invalid_body", fields.message);
 
@@ -136,7 +136,7 @@ export function aiRoutes(deps: AiRouteDeps) {
         }
       };
       const upstreamAbort = new AbortController();
-      // Not `request.raw.on("close")`: it means the request body finished, not that the client left, and it fires ~1 ms after the handler starts (a listener attached before it falsely
+      // Not `request.raw.on("close")`: it means the request body finished, not that the client left, and with the awaits before hijack it fires ~1 ms after the handler starts (a listener attached before it falsely
       // aborts upstream; one attached after misses it forever). The response's 'close' tracks the real socket; on normal completion it fires after raw.end() when abort() is a no-op.
       raw.on("close", () => upstreamAbort.abort());
       // 'close' may already have fired during the awaits above; both stream functions honour an already-aborted signal.
@@ -174,7 +174,8 @@ export function aiRoutes(deps: AiRouteDeps) {
         send(AI_SSE_EVENTS.done, {});
       } catch (err) {
         // Don't log err: a base_url with user:pass@ puts the password in fetch's TypeError message (and in the Anthropic SDK's cause). Log fetchErrorSummary, the base URL without
-        // userinfo/query, and whether it had credentials, plus the upstream status and truncated body.
+        // userinfo/query, and whether it had credentials, plus, when the upstream answered non-2xx, its status and truncated body (safe: that is the upstream's own response,
+        // which doesn't contain our URL).
         const upstreamFields =
           err instanceof UpstreamError
             ? { status: err.status, upstreamBody: err.upstreamBody }
@@ -197,8 +198,9 @@ export function aiRoutes(deps: AiRouteDeps) {
           },
           "ai upstream failed"
         );
-        // #53: a key-less openai_compatible provider is legitimate (local vLLM/Ollama) and #46 makes it easy to reach, so an upstream auth error maps to provider_unavailable
-        // ("ask the admin to re-enter the key"). With a stored key that upstream rejects it stays upstream_error.
+        // #53: a key-less openai_compatible provider is legitimate (local vLLM/Ollama), so it can't be refused before streaming, and #46 makes it easy to reach (changing
+        // base_url clears the key). So an upstream 401/403 with no stored key maps to provider_unavailable ("ask the admin to re-enter the key"); with a stored key that
+        // upstream rejects it stays upstream_error. The condition tests the provider's stored key, not its type (key-less anthropic is already refused before streaming).
         const missingKeyAuthFailure =
           err instanceof UpstreamError &&
           (err.status === 401 || err.status === 403) &&

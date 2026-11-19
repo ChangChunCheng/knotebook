@@ -145,7 +145,8 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
           enabled: false,
           // Spelled out so it doesn't rely on the DB default.
           autoCreateEnabled: false,
-          // Cap equals the PATCH `sortOrder` limit; otherwise a max of 100000 would produce 100001 and every later edit would 400.
+          // New providers sort last (concurrent creates may tie; the list then orders by createdAt, id, harmless). Cap equals the PATCH `sortOrder` limit;
+          // otherwise a max of 100000 would produce 100001 and every later edit would 400.
           sortOrder: sql`(select least(coalesce(max(${authProviders.sortOrder}), -1) + 1, 100000) from ${authProviders})`,
         })
         .returning(adminProviderColumns())
@@ -163,7 +164,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       const parsed = patchProviderSchema.safeParse(request.body);
       if (!parsed.success) return sendInvalidBody(reply, parsed.error);
       const { clientSecret, ...fields } = parsed.data;
-      // Sealed outside the transaction; AAD binds id, so ciphertext moved to another row can't be decrypted.
+      // Sealed outside the transaction (the transaction does DB work only); AAD binds id, so ciphertext moved to another row can't be decrypted.
       const newSecretSealed = clientSecret !== undefined ? sealClientSecret(deps.config.appSecret, id, clientSecret) : undefined;
       const patchInput = { id, actorUserId: request.user!.id, ...fields, ...(newSecretSealed !== undefined ? { newSecretSealed } : {}) };
 
@@ -192,7 +193,8 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         request.log.info({ providerId: id, userId: request.user!.id, autoCreateEnabled: row.autoCreateEnabled }, "登入服務的自動建帳開關被變更");
       }
       if (fields.issuerUrl !== undefined) {
-        // Logged even when the value is equal: conditional logging goes silent under concurrency. `from` is read after the site-settings lock, which all issuer-changing writes queue behind.
+        // Logged even when the value is equal: conditional logging goes silent under concurrency. `from` is read after the site-settings lock, which all issuer-changing writes queue behind;
+        // hasSecretAfter/enabledAfter are DB-returned values; autoCreateEnabledAfter guarantees a record when the issuer changes and auto-create is kept.
         request.log.info(
           {
             providerId: id, userId: request.user!.id, from: safeTarget(previousIssuerUrl), to: safeTarget(row.issuerUrl), hasSecretAfter: row.hasSecret, enabledAfter: row.enabled,
@@ -210,7 +212,10 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       if (reply.sent) drainWithCap(request);
     }
 
-    /** CSRF: MULTIPART_EXEMPT_ROUTES in app.ts. No site-settings lock and no registry.invalidate: the icon affects neither login decisions nor the OIDC runtime. */
+    /**
+     * CSRF: MULTIPART_EXEMPT_ROUTES in app.ts. Single UPDATE, no transaction, takes only the first file part. No site-settings lock and no
+     * registry.invalidate: the icon affects neither login decisions nor the OIDC runtime.
+     */
     app.put("/api/admin/auth/providers/:id/icon", { preHandler: requireAdminDrained }, async (request, reply) => {
       const id = providerIdParam(request);
       if (id === null) {

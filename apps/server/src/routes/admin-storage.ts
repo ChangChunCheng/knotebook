@@ -1,4 +1,5 @@
 // No transactions in this file (enforced by test/unit/s14-structure.test.ts; to add one, extract an `*InTx` and list the file there).
+// All routes requireAdmin; bodies are strict zod answered with the fixed "Invalid request body." (never zod's own text); a non-UUID id gets the endpoint's 404 code.
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { asc, eq, sql } from "drizzle-orm";
@@ -29,7 +30,7 @@ const assignSchema = z.object({ planId: z.string() }).strict();
 
 const UNSTORABLE = /[\0]|\p{Surrogate}/u;
 
-/** Length in code points (DB char_length), not `.length`; NUL and lone surrogates are rejected (PG can't store them: 22021). */
+/** Trimmed (incl. full-width spaces); length in code points (DB char_length), not `.length`; NUL and lone surrogates are rejected (PG can't store them: 22021). */
 export function validatePlanName(raw: string): string | null {
   const name = raw.trim();
   if (UNSTORABLE.test(name)) return null;
@@ -162,7 +163,7 @@ export function adminStorageRoutes(deps: AdminStorageRouteDeps) {
       if (parsed.data.quotaBytes !== undefined) set.quotaBytes = parsed.data.quotaBytes;
       let updated: Array<{ id: string }>;
       try {
-        // Lowering below current usage is allowed (it only blocks new additions).
+        // Lowering below current usage is allowed (it deletes nothing, only blocks new additions); raising takes effect immediately (the next check reads it).
         updated = await deps.db.update(storagePlans).set(set).where(eq(storagePlans.id, id)).returning({ id: storagePlans.id });
       } catch (err) {
         if (uniqueViolationConstraint(err) === "storage_plans_name_lower_idx") return nameTaken(reply);

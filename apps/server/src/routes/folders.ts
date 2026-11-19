@@ -1,4 +1,5 @@
-// Body ids are lowercased here; the service layer validates the UUID shape (a non-UUID looks like a nonexistent id).
+// Body ids are lowercased here; the service layer validates the UUID shape (a non-UUID looks like a nonexistent id). No transaction here; they live in folders/service.ts.
+// Writes charge the folder limiter in folders/service.ts, separate from the content edit limiter (FOLDER_LIMIT).
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { FolderDeleteResultDto, FolderListDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";

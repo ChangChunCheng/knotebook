@@ -1,5 +1,6 @@
-// DELETE has no access check: it only touches the caller's row, so users can remove a note they just lost access to. Rows survive trash, unshare and role loss and return with
-// their original add time; only removal or permanent delete (FK cascade) deletes them. The 404 sources are byte-identical so existence isn't leaked; 400/404 before authorization don't charge.
+// DELETE has no access check: it only touches the caller's row, so users can remove a note they just lost access to. Rows survive trash, unshare, removal from the group and role
+// loss and return with their original add time; only removal or permanent delete (FK cascade) deletes them. The 404 sources are byte-identical so existence isn't leaked; 400/404
+// before authorization don't charge. Single statements, no transaction.
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { FavoriteDto } from "@knotebook/shared";

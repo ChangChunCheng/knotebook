@@ -1,4 +1,5 @@
 // The token comes only from the POST body (URL fragment only), so no log masking is needed; logs and responses never contain it or token_hash. The password-login switch is checked outside the transaction only.
+// Logout works like a password change (token_version + 1, all existing session rows deleted, gate.invalidate, onUserRevoked); PATs and OAuth tokens are unaffected.
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";

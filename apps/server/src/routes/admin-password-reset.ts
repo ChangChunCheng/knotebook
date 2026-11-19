@@ -48,7 +48,7 @@ export function adminPasswordResetRoutes(deps: AdminPasswordResetRouteDeps) {
       return reply.code(201).send({ token, expiresAt: expiresAt.toISOString() });
     });
 
-    // Cancelling ignores the password-login switch and disabled state.
+    // Cancelling ignores the password-login switch and disabled state; 204 also when there is nothing to cancel.
     app.delete("/api/admin/users/:id/password-reset", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "user_not_found", "No user with that id.");

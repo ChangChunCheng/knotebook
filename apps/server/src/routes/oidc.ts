@@ -162,7 +162,8 @@ export function oidcRoutes(deps: OidcRouteDeps) {
       let email = nonEmptyClaim(idTokenClaims.email);
       const name = typeof idTokenClaims.name === "string" ? idTokenClaims.name : null;
       let preferredUsername = nonEmptyClaim(idTokenClaims.preferred_username);
-      // userinfo only when the ID token lacks email; the IdP's email_verified flag is never read.
+      // userinfo only when the ID token lacks email; the IdP's email_verified flag is never read. picture also comes from this response when the ID token lacks it;
+      // userinfo is never fetched just for the avatar.
       let userinfo: Record<string, unknown> | undefined;
       if (email === null && metadata.userinfo_endpoint !== undefined) {
         try {
@@ -212,7 +213,8 @@ export function oidcRoutes(deps: OidcRouteDeps) {
       }
 
       if (payload.intent === "prove") {
-        // The new identity comes from pending; the picture in this callback belongs to the proving identity, so no avatar is scheduled.
+        // The new identity comes from pending; the picture in this callback belongs to the proving identity, so no avatar is scheduled. The new identity's avatar arrives
+        // the next time it is used to log in.
         const pending = readPendingLink(request, deps.config.appSecret);
         if (pending === null) {
           clearPendingCookie(reply, deps.config);

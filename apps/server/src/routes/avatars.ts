@@ -172,8 +172,9 @@ async function readAndCheck(request: FastifyRequest, reply: FastifyReply, fileFi
   return { buffers, mimes, crop, fields };
 }
 
-// Originals live in the uploads directory, not the `uploads` table (unaffected by note deletion/trash); display images are in the DB. Multipart routes are exempt from the JSON
-// CSRF check (MULTIPART_EXEMPT_ROUTES) in favour of an essence + Origin check. The space-full pre-check runs before reading the body; re-cropping skips it because shrinking must always succeed.
+// Cookie-only (no Bearer or transfer token). Originals live in the uploads directory, not the `uploads` table (unaffected by note deletion/trash and not reachable through
+// /api/uploads/:id); display images are in the DB. Multipart routes are exempt from the JSON CSRF check (MULTIPART_EXEMPT_ROUTES) in favour of an essence + Origin check.
+// The space-full pre-check runs before reading the body; re-cropping skips it because shrinking must always succeed.
 export function avatarsRoutes(deps: AvatarsRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     async function authenticateAndThrottle(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
@@ -359,7 +360,8 @@ export function avatarsRoutes(deps: AvatarsRouteDeps) {
         .from(userIdentities)
         .where(and(eq(userIdentities.id, identityId), eq(userIdentities.userId, me)));
       if (identity === undefined || identity.lastPictureUrl === null) return sendError(reply, 404, "not_found", IDENTITY_NOT_FOUND_MESSAGE);
-      // After the identity check, so 404s cost no quota.
+      // After the identity check, so 404s cost no quota. The limiter is 10 per hour per user; the download times out after 10 s (→ 422). Clearing picture_dismissed_url,
+      // creating/replacing and selecting the candidate and setting avatar_auto = false all happen in refreshOidcAvatarInTx's single transaction.
       if (!deps.limiters.avatarRefresh.consume(me)) return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
       const space = { kind: "user", id: me } as const;
       const usage = await readSpaceUsage(deps.db, space);

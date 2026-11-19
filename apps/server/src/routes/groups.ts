@@ -1,5 +1,7 @@
-// A non-member and a nonexistent group give the same 404 (GROUP_NOT_FOUND_MESSAGE, byte-identical); 403 only for members lacking the flag. Authorization is decided before body validation.
-// A body roleId's UUID check comes after the 403; "not this group's" is decided inside the transaction.
+// A malformed :id/:userId, a nonexistent group and a non-member (unless site admin) give the same 404 (GROUP_NOT_FOUND_MESSAGE, byte-identical); 403 only for members lacking the flag.
+// Each manage flag = role flag OR site admin (member or not). Authorization is decided before body validation.
+// A body roleId or :roleId that isn't a UUID or isn't this group's → 404 role_not_found (not the group not_found); the body roleId's UUID check comes after the 403 and
+// body-shape validation (:roleId's after the 403, before the body), "not this group's" is decided inside the transaction. Built-in role restrictions → 409 builtin_role.
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { asc, eq, sql } from "drizzle-orm";
@@ -130,9 +132,12 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
       return toGroupDto(row, request.user!.isAdmin);
     });
 
-    // The delete-all gate (beforeNoteDeleted borrows connections) opens before the transaction; notes whose group was joined after it are deleted without it, and onGroupAccessChanged closes online users within 5 s.
-    // 23503 → group_not_empty is defense in depth. 40P01/40001 → server_busy: writing links × deleting a group can still cycle (writeLinksInTx locks the source row, then the target FK KEY SHARE,
-    // against the group notes' FOR UPDATE); transfers to one transferTo queue on the receiver's structure lock, taken before the note lock.
+    // The delete-all gate (beforeNoteDeleted borrows connections) opens before the transaction; notes moved into the group after the gate are deleted without it, and after commit
+    // onGroupAccessChanged closes their online users as revoked within 5 s.
+    // 23503 → group_not_empty is defense in depth (creates/moves after lockGroup block on the FK KEY SHARE). 40P01/40001/55P03 (space or folder-structure lock timeout) → server_busy:
+    // writing links × deleting a group can still cycle (writeLinksInTx locks the source row, then the target FK KEY SHARE, against the group notes' FOR UPDATE); transfers to one
+    // transferTo queue on the receiver's structure lock, taken before the note lock. Transfer can also give 409 storage_quota_exceeded (the receiver's personal space can't fit
+    // the notes; used/quota numbers only for the receiver and site admins).
     app.delete("/api/groups/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const access = await groupAccess(deps.db, id, request.user!);
@@ -246,7 +251,7 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
       } satisfies GroupRoleDto);
     });
 
-    // The name is normalized before the transaction (callback arguments must contain no calls).
+    // The name is normalized before the transaction (callback arguments must contain no calls). Kicks only when read/edit changed and someone holds the role.
     app.patch("/api/groups/:id/roles/:roleId", { preHandler: app.authenticate }, async (request, reply) => {
       const { id, roleId } = request.params as { id: string; roleId: string };
       const access = await groupAccess(deps.db, id, request.user!);
@@ -338,7 +343,8 @@ export function groupsRoutes(deps: GroupsRouteDeps) {
       return toMemberDto({ userId: target.id, email: target.email, displayName: target.displayName, roleId: role.roleId, builtin: role.builtin }, avatars.get(target.id) ?? null);
     });
 
-    // No escalation guard on purpose: a holder of the manage-members flag may assign any role.
+    // No escalation guard on purpose: a holder of the manage-members flag may assign any role. A role change re-verifies that user on all group notes (up or down);
+    // an unchanged role kicks nobody.
     app.patch("/api/groups/:id/members/:userId", { preHandler: app.authenticate }, async (request, reply) => {
       const { id, userId: targetId } = request.params as { id: string; userId: string };
       const access = await groupAccess(deps.db, id, request.user!);

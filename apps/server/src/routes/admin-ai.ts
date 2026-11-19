@@ -32,7 +32,8 @@ export interface AdminAiRouteDeps {
 
 const providerTypeEnum = z.enum(["openai_compatible", "anthropic"]);
 
-// No credentials in the base URL: Node fetch rejects them anyway and baseUrl is plaintext (DB, GET, logs); use the API key field.
+// No credentials in the base URL (user:pass@host, and also user@host): Node fetch rejects them anyway and baseUrl is plaintext (DB, GET, logs); use the
+// API key field. Checked via URL username/password, not string matching.
 const BASE_URL_CREDENTIALS_CODE = "base_url_has_credentials" as const;
 const baseUrlSchema = z
   .string()
@@ -199,7 +200,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       // Generated here: the ciphertext AAD binds providerId (#14), so the id must exist before encryption.
       const id = randomUUID();
       const apiKeyEncrypted = apiKey !== undefined ? encryptApiKey(deps.config.appSecret, apiKey, id) : null;
-      // DrizzleQueryError puts the SQL params (ciphertext, base_url with user:pass@) in its message, so always redact; there are no recognised errors here.
+      // DrizzleQueryError puts the SQL params (ciphertext, base_url with user:pass@) in its message, so always redact; there are no recognised errors here (ai_providers has no unique key or FK, and the zod enum pre-empts the type CHECK).
       const [row] = await deps.db
         .insert(aiProviders)
         .values({ id, name, type, baseUrl, apiKeyEncrypted })
@@ -223,6 +224,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       const { name, type, baseUrl, apiKey, enabled } = parsed.data;
 
       // Only for the log's `from`: non-transactional, so it can be stale under races (`to` and `hasKeyAfter` are reliable). The key-clearing decision is made DB-side below.
+      // Deliberately doesn't select the ciphertext (same guard as providerListColumns).
       const [existing] = await deps.db
         .select({ baseUrl: aiProviders.baseUrl })
         .from(aiProviders)
@@ -243,8 +245,9 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
 
       /**
-       * #46: changing baseUrl clears the stored key unless the same PATCH sets a new one. Otherwise any admin could edit baseUrl and press Test to send the decrypted key
-       * to their own host (`/test` and AI calls send it as Authorization/x-api-key), bypassing "keys can't be read back". Not complete protection (an admin can still
+       * #46: changing baseUrl clears the stored key unless the same PATCH sets a new one. baseUrl has no allowlist, so otherwise any admin could edit baseUrl and press
+       * Test to send the decrypted key to their own host (`/test` and AI calls send it as Authorization/x-api-key) with no DB or APP_SECRET access, bypassing "keys
+       * can't be read back". Clearing the key is the cheapest cut that restricts no host (intranet Ollama keeps working). Not complete protection (an admin can still
        * re-point and wait for another admin to re-enter the key), but it leaves traces (key gone, URL changed, the log line below). Residual risk: docs/known-limitations.md.
        */
       if (baseUrl !== undefined && apiKey === undefined) {
@@ -269,7 +272,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
         });
       if (!row) return sendError(reply, 404, "not_found", "No AI provider with that id.");
 
-      // Logged whenever baseUrl is given: conditioning on `existing` (a non-transactional read) can log nothing under the no-op-PATCH race, the one trace the docs rely on.
+      // Logged whenever baseUrl is given: conditioning on `existing` (a non-transactional read) can log nothing under the no-op-PATCH race, the one trace the docs rely on. Provider edits are admin-only and infrequent, so the noise is acceptable.
       if (baseUrl !== undefined) {
         // "written", not "changed": the UI sends baseUrl on every edit. Records row.hasKey (a DB fact) rather than "key cleared", which would be inferred from the racy read.
         request.log.info(
@@ -482,7 +485,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
     app.patch("/api/admin/ai/actions/:id", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI action with that id.");
-      // A second line behind http/uuid-params.ts, which already lowercases UUID path params.
+      // A second line behind http/uuid-params.ts, which already lowercases UUID path params (so switching to rawId fails no test; that's not a guard gap).
       const id = rawId.toLowerCase();
 
       const parsed = patchActionSchema.safeParse(request.body);

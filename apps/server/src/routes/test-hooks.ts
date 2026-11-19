@@ -1,4 +1,5 @@
-// Registered only with config.testHooks (e2e flag, loopback PUBLIC_URL); overrides this process's scanner only.
+// Registered only with config.testHooks (KNOTEBOOK_E2E_TEST_HOOKS=1 and a loopback PUBLIC_URL), else 404; seconds: null clears the override (back to the
+// configured or site value). Overrides this process's scanner only.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sendInvalidBody } from "../auth/admin-provider-input.js";

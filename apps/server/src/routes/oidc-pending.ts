@@ -48,6 +48,7 @@ function toUserDto(u: LinkedUser, avatar: UserDto["avatar"]): UserDto {
   return { id: u.id, email: u.email, handle: u.handle, displayName: u.displayName, isAdmin: u.isAdmin, mustChangePassword: u.mustChangePassword, hasPassword: u.hasPassword, autoVersions: u.autoVersions, avatar };
 }
 
+// Only the pending-link cookie counts, not the current session; completing in a browser signed in as someone else replaces that session.
 // confirm mirrors login: verify the password first, then check disabled; disabled and "one sub per issuer" are decided only under the lock.
 export function oidcPendingRoutes(deps: OidcPendingRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
@@ -68,7 +69,8 @@ export function oidcPendingRoutes(deps: OidcPendingRouteDeps) {
         clearPendingCookie(reply, deps.config);
         return sendError(reply, 409, "oidc_link_expired", LINK_EXPIRED_MESSAGE);
       }
-      // Same excludeSameIssuerProviders as the callback decision, else the page would reveal before proof that this account already linked this IdP.
+      // Recomputed every time (a provider may have just been disabled). Same excludeSameIssuerProviders as the callback decision, else the page would reveal before proof
+      // that this account already linked this IdP.
       const providers = excludeSameIssuerProviders(await linkedEnabledProvidersWithIssuer(deps.db, pending.userId), pending.issuer);
       const methods = { password: target.passwordHash !== null, providers };
       if (!methods.password && providers.length === 0) return sendError(reply, 409, "oidc_link_no_proof_method", NO_PROOF_MESSAGE);

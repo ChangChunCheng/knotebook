@@ -95,9 +95,11 @@ const linksBodySchema = z.object({ link_target_ids: z.array(z.string().uuid()).m
 const contentQuerySchema = z.object({ section: SEC.optional() }).strict();
 
 /**
- * Non-retryable errors → null (caller rethrows). With a folder, a vanished group necessarily means the folder left that space (a transfer in flight lets the INSERT pass the trigger,
- * then fails on notes_group_id_groups_id_fk after commit), so it must be folder_not_found; don't narrow to KF001/notes_folder_fk.
- * 40P01: the INSERT is outside a transaction and RI triggers take groups/folders KEY SHARE in name order; after a pg_dump restore that cycles with delete-group (pinned by folders-race-ops).
+ * Errors other than FK 23503, KF001 and retryable ones (40001/40P01/lock timeout) → null (caller rethrows). With a folder, a vanished group necessarily means the folder left
+ * that space (a transfer in flight lets the INSERT pass the trigger, then fails on notes_group_id_groups_id_fk after commit), so it must be folder_not_found; don't narrow to
+ * KF001/notes_folder_fk. Without a folder, a group deleted after the membership check → group_not_found.
+ * 40P01 (→ 409 server_busy): the INSERT is outside a transaction and RI triggers take groups/folders KEY SHARE in name order; after a pg_dump restore that cycles with
+ * delete-group (pinned by folders-race-ops).
  */
 function sendCreateInsertFailure(reply: FastifyReply, err: unknown, withFolder: boolean): FastifyReply | null {
   if (isRetryableTxError(err)) return sendError(reply, 409, "server_busy", "The server is busy. Try again in a moment.");
@@ -150,7 +152,8 @@ export interface NotesRouteDeps {
 export function notesRoutes(deps: NotesRouteDeps) {
   // The write queue is shared with MCP (one instance from buildApp); separate instances wouldn't serialize.
   return async function register(app: FastifyInstance): Promise<void> {
-    // Routes using authenticateAny accept Bearer; collab-token deliberately takes none (#136 once missed one).
+    // Routes using authenticateAny accept Bearer; every other notes route is cookie-only, and collab-token deliberately takes none. An omitted challenge equals the required
+    // scope; only /api/mcp declares a wider set.
     app.post("/api/notes", { preHandler: app.authenticateAny("notes:write") }, async (request, reply) => {
       const parsed = createBodySchema.safeParse(request.body ?? {});
       if (!parsed.success) {
@@ -158,7 +161,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       }
       const userId = request.user!.id;
 
-      // For the group branch the create-flag check is outside the transaction (a flag revocation racing with creation isn't guaranteed).
+      // For the group branch membership and the create flag are checked outside the transaction (a flag revocation racing with creation isn't guaranteed).
       let target: { scope: SlugScope; access: Pick<NoteAccess, "role" | "permissions">; ownerHandle: string | null; groupName: string | null };
       const groupId = parsed.data.groupId;
       let folder: FolderAccess | null = null;
@@ -207,7 +210,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
           if (out.kind === "parse") return sendError(reply, 400, out.code, parseErrorMessage(out.code, "Couldn't parse the content.", out.detail));
           if (out.kind === "parser_busy") return sendParserBusy(reply);
           if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
-          // The timeout answer here is deliberately 500, not 503 (docs/ai-editing.md); the service already deleted the row.
+          // Apply failure, including a queue timeout: deliberately 500, not 503 (docs/ai-editing.md); the service has made a best-effort delete of the row.
           return sendError(reply, 500, "internal", "Couldn't create the note.");
         }
         const note = out.inserted;
@@ -241,7 +244,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
 
       // UNION ALL instead of one query with `owner_id=$u OR note_shares.user_id=$u`: an OR across an outer join forces a full notes scan, while each branch uses its own index.
       // The shared branch excludes owner_id = userId: nothing at the DB level stops a self-share row (cannot_share_with_self is only an application check), which would return the note twice with the wrong role.
-      // Both branches join users so the select shapes match for unionAll. `sizeBytes` is added here only; MCP lists don't pay for the subqueries.
+      // The three branches (owned/shared/grouped) are structurally disjoint (see list-query.ts) and all join users (grouped with a LEFT JOIN) so the select shapes match for unionAll. `sizeBytes` is added here only; MCP lists don't pay for the subqueries.
       const { owned: ownedSelect, shared: sharedSelect, grouped: groupedSelect } = visibleNoteBranches(deps.db, userId, {
         extra: { sizeBytes: noteSizeBytesSql() },
       });
@@ -305,7 +308,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return resolveNotePath(deps.db, pathRowsFor(viewerId), scopeCond, slug, redirectKey);
     }
 
-    // 0 or >1 prev_slug hits → 404 (the same owner's notes can release a name in turn); every 404 exit goes through noteNotFound with an identical body. Same toNoteDto as GET /:id: the web seeds its cache from it.
+    // 0 or >1 prev_slug hits → 404 (the same owner's notes can release a name in turn); every other 404 exit goes through noteNotFound with an identical body, except that a
+    // trashed note returns in_trash to a caller with trash access (#181). Same toNoteDto as GET /:id: the web seeds its cache from it.
     app.get("/api/notes/by-path/:handle/:slug", { preHandler: app.authenticate }, async (request, reply) => {
       const params = request.params as { handle: string; slug: string };
       const handle = normalizeHandle(params.handle);
@@ -317,6 +321,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
     });
 
     // A separate prefix: `g` is a legal handle, and mixing static and parameter segments under by-path needs find-my-way backtracking.
+    // Non-UUID, missing group, non-member and a member without the read flag all get the same 404.
     app.get("/api/notes/by-group-path/:groupId/:slug", { preHandler: app.authenticate }, async (request, reply) => {
       const params = request.params as { groupId: string; slug: string };
       if (!UUID_RE.test(params.groupId)) return noteNotFound(reply);
@@ -328,7 +333,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return authorizeRow(reply, request.user!.id, note);
     });
 
-    // Renamed from GET /api/notes/:id: registering GET twice at one path throws in fastify.
+    // Renamed from GET /api/notes/:id: registering GET twice at one path throws in fastify. :ref is a uuid, a frozen legacy slug or an old <vanity>-<uuid> (see resolveNoteIdFromRef).
     app.get("/api/notes/:ref", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
       const { ref } = request.params as { ref: string };
       const userId = request.user!.id;
@@ -344,7 +349,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return authorizeRow(reply, userId, note);
     });
 
-    // Without a live-doc source "read the latest content" has no meaning, so the route isn't registered (404) rather than answering halfway.
+    // Without a live-doc source "read the latest content" has no meaning, so the route isn't registered (404) rather than answering halfway (production always has both).
     if (deps.collab && deps.editing) {
       const collab = deps.collab;
       const editing = deps.editing;
@@ -363,7 +368,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
         const role = await resolveRole(deps.db, userId, id);
         if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
         if (!deps.limiters.contentRead.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many reads. Wait a moment and try again.");
-        // Only token readers show presence (a cookie read is the user's own browser).
+        // Only token readers show presence (a cookie read is the user's own browser). touch acts only on loaded documents, so with nobody online it is a no-op and the read
+        // stays side-effect free. Removing this tokenId check turns no test red; tsc (TS2345) catches it.
         if (request.tokenId) {
           const label = await currentAgentLabel(deps.db, request.tokenId);
           if (label) {
@@ -384,7 +390,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         return reply.send(body);
       });
 
-      /** The limiter comes after the role check (404/403 don't consume) but before any mount or direct connection: a 429 must leave nothing written. bodyLimit 413 → content_too_large; the same number as MD's .max(262_144) but in bytes, so over-long markdown hits it before zod's 400. */
+      /** The limiter comes after the role check (404/403 don't consume) but before any mount or direct connection: a 429 must leave nothing written or recorded. bodyLimit (shared with POST /api/mcp) 413 → content_too_large; the same number as MD's .max(262_144) but in bytes, so over-long markdown hits it before zod's 400. */
       app.post("/api/notes/:id/edits", { preHandler: app.authenticateAny("notes:write"), bodyLimit: WRITE_BODY_LIMIT }, async (request, reply) => {
         const { id } = request.params as { id: string };
         if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
@@ -411,7 +417,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
           if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
           if (out.kind === "gone") return sendError(reply, 404, "not_found", "No note with that id.");
           if (out.code === "fingerprint_mismatch") {
-            // Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
+            // Runs outside the transact, after the direct connection has disconnected. Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
             let current: Awaited<ReturnType<typeof readNoteContent>>;
             try {
               current = await readNoteContent({ db: deps.db, collab, shownLinks: deps.writes.shownLinks }, editing, id, request.user!.id);
@@ -461,7 +467,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
           if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
           if (out.kind === "gone") return sendError(reply, 404, "not_found", "No note with that id.");
           if (out.code === "stale") {
-            // Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
+            // Runs outside the transact, after the direct connection has disconnected. Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
             let current: Awaited<ReturnType<typeof readNoteContent>>;
             try {
               current = await readNoteContent({ db: deps.db, collab, shownLinks: deps.writes.shownLinks }, editing, id, request.user!.id);
@@ -483,7 +489,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       });
     }
 
-    // ⚠ A closure over deps.db: must not be called inside a transaction. A group note has no owner → null.
+    // ⚠ A closure over deps.db: must not be called inside a transaction (at ~10 concurrent requests the pool deadlocks permanently). A group note has no owner → null.
     async function ownerHandleOf(ownerId: string | null): Promise<string | null> {
       if (ownerId === null) return null;
       const [row] = await deps.db.select({ handle: users.handle }).from(users).where(eq(users.id, ownerId)).limit(1);
@@ -503,7 +509,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return row?.name ?? null;
     }
 
-    /** Always outside the transaction (closures over deps.db). */
+    /** Always outside the transaction (closures over deps.db). Every PATCH write is scoped to the authorization-time ownership, so `access` is the authorization of the written row. */
     async function respondPatched(updated: typeof notes.$inferSelect, access: NoteAccess, viewerId: string): Promise<NoteDto> {
       return toNoteDto(
         {
@@ -520,9 +526,12 @@ export function notesRoutes(deps: NotesRouteDeps) {
 
     /**
      * PATCH matrix (statement shapes are a docs-as-spec obligation: change docs/api.md with them). A `slug` key needs permissions.changeSlug and rejects the whole request; `title` also needs permissions.edit (#186).
-     * Uniqueness is decided by the unique index, never a pre-check; reading this row's title/slug_is_custom and probing the scope are not pre-checks in that sense. prev_slug records only custom changes.
-     * 1. {slug: string}: charges slugPatch before validation (success or failure), no pre-read/probe, UPDATE in patchSlugInTx; 23505 on either slug index → 409 slug_taken (by constraint name).
-     * 2. {title}: rename-note.ts; recomputes the auto slug only if slug_is_custom is false; doesn't charge slugPatch (title edits are core; retries are bounded at 5×20 probes + 6 UPDATEs).
+     * Uniqueness is decided by the unique index, never a pre-check; reading this row's title/slug_is_custom and probing the scope are not pre-checks in that sense.
+     * prev_slug is written only when the old slug was custom (custom→custom, custom→auto). Uniqueness is per scope: (owner_id, slug) or (group_id, slug).
+     * 1. {slug: string}: charges slugPatch (10 per 10 min per user) before validation (success or failure), no pre-read/probe, UPDATE in patchSlugInTx; writing prev also deletes
+     *    the same-path redirect in that transaction (personal scope only); a title in the same request doesn't recompute; 23505 on either slug index → 409 slug_taken (by constraint name).
+     * 2. {title}: rename-note.ts; recomputes the auto slug only if slug_is_custom is false; prev untouched, no transaction; doesn't charge slugPatch (title edits are core; retries
+     *    are bounded at 5×20 probes + 6 UPDATEs); the title PATCH itself is unthrottled (accepted).
      * 3. {title, slug: null}: back to auto from the new title (no pre-read); charges slugPatch.
      * 4. {slug: null}: back to auto from the current title (one pre-read); charges slugPatch.
      * Auto collisions never 409: re-probe and retry up to MAX_AUTO_SLUG_RETRIES, then untitled-<uuid8>; each round is a fresh patchSlugInTx (a 23505 aborts only that round). title and slug go in one UPDATE so a conflict rolls back both.
@@ -611,7 +620,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return respondPatched(updated, access, userId);
     });
 
-    /** Body is the complete target set (not a diff). linkSyncGate ok:false (note not in memory or submitter not connected) → 409 not_loaded with nothing written (no fallback; the client retries). writeNoteLinks handles the FK race and 40001/40P01 → busy. */
+    /** Body is the complete target set (not a diff). linkSyncGate ok:false (note not in memory or submitter not connected) → 409 not_loaded with nothing written (no fallback; the client retries). ok:true carries the clock to CAS into notes.links_clock (LWW). writeNoteLinks retries the FK race once and maps 40001/40P01 → busy. */
     app.post("/api/notes/:id/links", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const userId = request.user!.id;
@@ -656,7 +665,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return reply.code(204).send();
     });
 
-    /** resolveRole only authorizes the queried note; each source note's visibility is filtered inside fetchBacklinks so existence and titles of notes without access don't leak. */
+    /** resolveRole only authorizes the queried note; each source note's visibility is filtered inside fetchBacklinks so existence and titles of notes without access don't leak.
+     * A non-uuid :id falls into resolveRole's 404 via its UUID_RE guard, so there is no separate check. */
     app.get("/api/notes/:id/backlinks", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const userId = request.user!.id;
@@ -741,7 +751,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
         case "too_large":
           return sendNoteTooLarge(reply, out.limitBytes);
         case "copied": {
-          // The group name can be stale: a rename is a single UPDATE that doesn't conflict with KEY SHARE.
+          // Role/permissions were read under the group KEY SHARE (exclusive with lockGroup), so they are current at commit; the group name can be stale: a rename is a
+          // single UPDATE that doesn't conflict with KEY SHARE.
           const { note: createdNote, target } = out;
           const dto = target === null
             ? toNoteDto({ ...createdNote, ownerHandle: request.user!.handle, editorHandle: null, groupName: null, viewerFolderId: createdNote.folderId }, { role: "owner", permissions: OWNER_PERMISSIONS })
@@ -778,8 +789,10 @@ export function notesRoutes(deps: NotesRouteDeps) {
      * Deliberately not "none → 404": a session without access still gets 200 and a role:'none' token, so this endpoint can't be used to probe permissions; Hocuspocus onAuthenticate refuses the token.
      * The body repeats the role because the client doesn't decode the JWT.
      * The limiter key is userId, not per note (#24): per-note would multiply an attacker's quota by the note count, and IP would make offices behind a shared egress drag each other down.
-     * 60/min is enough: a call happens only on connect/reconnect/revalidation, and revalidation is per (note, user). FixedWindowLimiter counts rejected calls too, so stuck tabs restart with
-     * TOKEN_RESTART_DELAYS_MS (issue #39). Switching accounts is stopped in account provisioning, not here.
+     * 60/min is enough: a call happens only on connect/reconnect/revalidation, and revalidation is per (note, user). A 429 is the standard body (no retryAfterMs).
+     * FixedWindowLimiter counts rejected calls too; the client tries 5 times, then restarts the connection at 5/15/60 s with jitter (no sign-out), about 5 calls/min per
+     * stuck tab. The 60/min limiter is shared across a user's tabs and notes, so many stuck tabs can drain it; the capped, jittered restart delays (TOKEN_RESTART_DELAYS_MS
+     * in useCollab.ts) limit that (issue #39). Switching accounts is stopped in account provisioning, not here.
      */
     app.post("/api/notes/:id/collab-token", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
@@ -909,10 +922,13 @@ export function notesRoutes(deps: NotesRouteDeps) {
     });
 
     /**
-     * Three limiters side by side, on purpose: token PUT/DELETE = publicLink, consumed before authorization like collab-token (key=userId, so strangers guessing noteIds only drain their own);
-     * alias PUT/DELETE = slugPatch, authorize first then charge, malformed bodies count (no zod pre-parse); width PUT = publicWidth, parse → authorize → charge.
+     * Three limiters side by side, on purpose: token PUT/DELETE = publicLink, consumed before authorization and before resolveRole's query like collab-token (key=userId, so strangers
+     * guessing noteIds only drain their own; 403/404 count too); alias PUT/DELETE = slugPatch (shared with PATCH's slug branch, 10 per 10 min), authorize first then charge, malformed
+     * bodies count (no zod pre-parse); width PUT = publicWidth, parse → authorize → charge (not publicLink: rapid width clicks would push an unpublish into 429).
+     * Width needs no public link and isn't reset by unpublish, move or transfer.
      * None of these touch updated_at (sharing isn't a content change). GET/PUT token and alias responses carry the full {token, slug, width} because the web writes them straight into its cache; width PUT returns only {width}.
-     * Token PUT regenerates every time (not idempotent; client convention: GET first, PUT only if null): revisit if an auto-retrying middleware appears.
+     * Token PUT regenerates every time (not idempotent, and PUT may be auto-retried per RFC 9110; client convention: GET first, PUT only if null): if an auto-retrying middleware
+     * appears, split it into create-if-absent + rotate.
      */
     const resolvePublicLinkAccess = async (reply: FastifyReply, userId: string, noteId: string): Promise<NoteAccess | null> => {
       const access = await resolveNoteAccess(deps.db, userId, noteId);
@@ -967,7 +983,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
       }
       if (!(await resolvePublicLinkAccess(reply, userId, id))) return reply;
-      // Only a miss of the note itself is 404; a null token is an idempotent 204. The same UPDATE clears public_slug (a leftover alias would hold the unique index and revive on regeneration). Trashed notes keep token and alias.
+      // Only a miss of the note itself is 404; a null token is an idempotent 204. The same UPDATE clears public_slug (a leftover alias would hold the unique index and revive on regeneration). A trashed note is a miss (404) and keeps token and alias, so the link returns on restore (#181).
       await deps.groupTestHook?.("public-link-authorized", { noteId: id });
       const cleared = await deps.db
         .update(notes)
@@ -998,7 +1014,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return { width: updated[0].publicWidth };
     });
 
-    /** "Note is public" is not pre-read: the conditional UPDATE's `public_token IS NOT NULL` predicate closes the set-alias/unpublish TOCTOU. Rowcount 0 → 400 (not public, group note, or ownership changed). */
+    /** "Note is public" is not pre-read: the conditional UPDATE's `public_token IS NOT NULL` predicate closes the set-alias/unpublish TOCTOU. Rowcount 0 → 400 (not public, group note, ownership changed, or deleted
+     * after authorization; the last deliberately isn't 404 like elsewhere: the window is tiny, 400 leaks nothing more, and telling them apart would need another read). */
     app.put("/api/notes/:id/public-link/slug", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const userId = request.user!.id;
@@ -1014,8 +1031,8 @@ export function notesRoutes(deps: NotesRouteDeps) {
       if (!result.ok) {
         return sendError(reply, 400, "invalid_body", result.message);
       }
-      // `owner_id = me` covers group notes (no public URL: notes_group_no_public_slug_chk) and both directions of ownership change after authorization; checking only group_id IS NULL
-      // would let a former member's alias land in a new owner's /p/ namespace.
+      // `owner_id = me` covers group notes without any race (a group member with managePublicLink on a published group note would otherwise hit notes_group_no_public_slug_chk
+      // → 500) and both directions of ownership change after authorization; checking only group_id IS NULL would let a former member's alias land in a new owner's /p/ namespace.
       await deps.groupTestHook?.("public-link-authorized", { noteId: id });
       let updated;
       try {

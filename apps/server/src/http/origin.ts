@@ -1,12 +1,13 @@
-// Two comparison semantics, not interchangeable: `isOriginAllowed` (app.ts) compares Origin with request.host (CSRF); `mcpOriginAllowed` compares both against the PUBLIC_URL host (DNS rebinding).
+// Two comparison semantics, not interchangeable: `isOriginAllowed` (app.ts, CSRF guard for the multipart and text/markdown body-exempt routes) compares Origin with request.host; `mcpOriginAllowed` compares both against the PUBLIC_URL host (DNS rebinding).
 
-// Hand-written instead of `new URL().host`: request.host is a bare Host header with no scheme, and URL's default-port removal is scheme-bound while this comparison ignores the scheme.
+// Hand-written instead of `new URL().host`: request.host is a bare Host header with no scheme, and URL's default-port removal is scheme-bound while this comparison ignores the scheme. Strips :80/:443 from both literal strings; IPv6 brackets are kept as-is.
 export function stripDefaultPort(host: string): string {
   return host.replace(/:(?:80|443)$/, "");
 }
 
 // The other side is always the PUBLIC_URL host, never request.host: comparing two request-supplied values is a useless guard (a rebound evil.com makes Origin and Host equal).
-// "null" and unparseable Origins are rejected; without the try/catch a bad value would be a 500, not 403.
+// "null" (sent literally by browsers after a referrer-policy downgrade) and unparseable Origins are rejected; without the try/catch a bad value would be a 500, not 403.
+// The caller handles a missing Origin (deliberately allowed); never pass undefined.
 export function mcpOriginAllowed(origin: string, requestHost: string, publicHost: string): boolean {
   if (origin === "null") return false;
   let originHost: string;

@@ -1,4 +1,5 @@
 // Purge-all is the client sending every listed id: notes trashed after the list loaded are not purged. Callers without trash rights get the same skipped:not_found as for a nonexistent id.
+// No transaction here; they live in trash/service.ts.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { TRASH_BATCH_MAX, type NoteDto, type TrashPurgeResultDto, type TrashRestoreResultDto } from "@knotebook/shared";

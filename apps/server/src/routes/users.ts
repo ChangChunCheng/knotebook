@@ -1,6 +1,6 @@
 // Not a site-wide directory (that would let any logged-in user enumerate every email): only people the caller already knows. Fellow group members (their emails are already visible via
 // GET /api/groups/:id/members; drop this branch if that is withdrawn) and people the caller shared their own non-trashed notes with. Deliberately excludes people who shared notes with me
-// (the UI shows only their handle, not email), self and disabled accounts. Queried live, no cache. Session-only: token scopes don't cover people lookup, and Bearer would give a leaked token an email-harvesting route.
+// (the UI shows only their handle, not email), self and disabled accounts (which can still be added or shared with by typing the full email). Queried live, no cache. Session-only: token scopes don't cover people lookup, and Bearer would give a leaked token an email-harvesting route.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sql } from "drizzle-orm";

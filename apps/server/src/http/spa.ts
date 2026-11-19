@@ -24,6 +24,8 @@ export function staticCacheControl(webDist: string, filePath: string): string {
 }
 
 // wildcard:false and index:false make everything but real asset files fall through to the not-found handler, so index.html has a single path (below) and always gets the security headers.
+// index.html is served for GET/HEAD with Accept containing text/html outside the excluded prefixes; otherwise JSON 404.
+// The caller (src/index.ts) passes webDist only when the directory exists, so it isn't re-checked here.
 export function registerSpaFallback(app: FastifyInstance, webDist: string | undefined): void {
   if (webDist !== undefined) {
     void app.register(fastifyStatic, {
@@ -33,7 +35,7 @@ export function registerSpaFallback(app: FastifyInstance, webDist: string | unde
       // ⚠ static must never serve index.html (#101): it would bypass the security-header path below. Only the literal /index.html is excluded because dist has no other .html;
       // if one is added, static would send it without headers (then use `!pathName.endsWith(".html")`).
       allowedPath: (pathName) => pathName !== "/index.html",
-      // The plugin default `max-age=0` would revalidate every hashed bundle on each app open.
+      // The plugin default `max-age=0` would revalidate every hashed bundle on each app open. setHeaders runs after the plugin's own headers, so this value wins.
       setHeaders: (reply, filePath) => {
         reply.header("cache-control", staticCacheControl(webDist, filePath));
       },
@@ -48,7 +50,7 @@ export function registerSpaFallback(app: FastifyInstance, webDist: string | unde
           const html = await readFile(path.join(webDist, "index.html"), "utf8");
           reply.header("content-type", "text/html; charset=utf-8");
           reply.header("cache-control", REVALIDATE_CACHE_CONTROL);
-          // Token links are capabilities: noindex them (#72). Only this prefix, since securityHeaders() applies to all routes. isPublicSharePath is shared with log masking.
+          // Token links are capabilities: noindex them (#72). Only this prefix, since securityHeaders() applies to all routes. isPublicSharePath is shared with log masking; it collapses slashes and ignores case, so never compare literally.
           if (isPublicSharePath(pathname)) {
             reply.header("x-robots-tag", "noindex");
           }

@@ -78,7 +78,7 @@ const registerBodySchema = z.object({ email: emailField, password: z.string(), d
 const acceptInviteBodySchema = z.object({ token: z.string(), email: emailField, password: z.string(), displayName: displayNameField }).strict();
 const inspectInviteBodySchema = z.object({ token: z.string() }).strict();
 
-/** Cut by code point (a local-part can be 242 chars; slicing UTF-16 could split a surrogate pair). */
+/** Used when no display name is given. Cut to the cap by code point: a local-part can be 242 chars and would otherwise bypass the length cap; slicing UTF-16 could split a surrogate pair. */
 function defaultDisplayName(email: string): string {
   return Array.from(email.split("@")[0]!).slice(0, MAX_REGISTER_DISPLAY_NAME_LENGTH).join("");
 }
@@ -98,7 +98,14 @@ async function findActiveInvite(db: Db, token: string, log: FastifyBaseLogger): 
   }
 }
 
-/** Invites (#285) ignore "allow self-registration" and don't charge REGISTER_LIMIT: the invite is the authorization. An invalid invite is always 410 with no reason. The limiters are shared with password-reset.ts. */
+/**
+ * Invite inspect/accept (#285) are unauthenticated, ignore "allow self-registration" and don't charge REGISTER_LIMIT: the invite is the authorization.
+ * An invalid invite is always 410 invite_invalid with no reason. The password-login switch is checked outside the transaction only. Logs and responses
+ * never contain the token or token_hash. The limiters are the same instances as in password-reset.ts:
+ * - miss limiter (key=ip): charged only when no valid invite is found outside the transaction; no pre-check, so valid tokens are never blocked;
+ *   the password-login 403 and the in-transaction 410 don't charge.
+ * - attempt limiter (key=link:<id>): charged only on accept once password login is on; inspect never charges.
+ */
 export function accountRoutes(deps: AccountRouteDeps) {
   function sendInvalidInvite(reply: FastifyReply, ip: string): FastifyReply {
     if (!deps.limiters.oneTimeLinkMiss.consume(ip)) return sendError(reply, 429, "too_many_requests", TOO_MANY_REQUESTS_MESSAGE);
@@ -181,7 +188,8 @@ export function accountRoutes(deps: AccountRouteDeps) {
       return reply.send({ expiresAt: invite.expiresAt.toISOString() });
     });
 
-    // Everything decidable before argon2 is decided first.
+    // Order: body → invite (invalid charges miss) → password-login 403 (touches no row, charges nothing) → attempt limiter → length → email
+    // pre-check → argon2 → transaction. Everything decidable before argon2 is decided first.
     app.post("/api/auth/invite/accept", async (request, reply) => {
       const parsed = acceptInviteBodySchema.safeParse(request.body);
       if (!parsed.success) return sendInvalidBody(reply, parsed.error);
@@ -323,6 +331,7 @@ export function accountRoutes(deps: AccountRouteDeps) {
         throw err;
       }
       const userId = request.user!.id;
+      // Single conditional UPDATE (a double submit matches 0 rows → 409), serialized with identity unlinking by the users row lock.
       // token_version is bumped in SQL and the session rows are swapped in the same transaction, as in change-password (#388); the TTL is read once so the row and the re-signed cookie agree (#397).
       const ttlSeconds = deps.siteLimits.get("sessionTtlSeconds");
       const input = { userId, passwordHash, ttlSeconds };

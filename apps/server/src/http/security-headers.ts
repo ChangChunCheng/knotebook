@@ -20,7 +20,7 @@ const STATIC_DIRECTIVES: readonly (readonly [string, string])[] = [
   // Both http: and https: (apps/web/src/lib/media-url.ts allows both; plain-http LAN deployments would otherwise lose images).
   ["img-src", "'self' data: blob: http: https:"],
   ["media-src", "'self' http: https:"],
-  // ⚠ If audio/video upload is added, media-src needs blob: (preview).
+  // ⚠ If audio/video upload is added, media-src needs blob: (preview) and possibly data:.
   ["font-src", "'self' data:"],
   // Collab WebSocket is same-origin; AI providers are called server-side.
   ["connect-src", "'self'"],

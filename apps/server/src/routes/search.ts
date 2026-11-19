@@ -1,5 +1,7 @@
-// q is trimmed (MCP isn't). match=body exists because on common words title hits (rank 0–2) push body-only hits (rank 3) off the page. The cursor carries sort values and a query
-// fingerprint only, no authorization; notes edited between pages can be missed or duplicated, so the web dedupes by id. Validation failures (including the cursor) don't consume the limiter.
+// q is trimmed (MCP isn't). match=body exists because on common words title hits (rank 0–2) push body-only hits (rank 3) off the page, and the web computes title matches itself.
+// The cursor carries sort values and a query fingerprint only, no authorization; notes edited between pages can be missed or duplicated, so the web dedupes by id.
+// Visibility comes only from visibleNoteBranches. No transaction here: searchNotesForUser runs the same REPEATABLE READ READ ONLY transaction as MCP search_notes.
+// Validation failures (including the cursor) don't consume the search limiter (shared with MCP search_notes).
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";

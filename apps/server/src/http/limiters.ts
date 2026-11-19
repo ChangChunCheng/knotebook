@@ -76,7 +76,7 @@ export function buildAdjustableLimiters(siteLimits: SiteLimits): AdjustableLimit
   };
 }
 
-// Fresh instances on every call, never a module singleton.
+// The other 22 limiters: fresh instances on every call, never a module singleton (same reason as test/helpers.ts freshLimiters).
 export function buildFixedLimiters(): FixedLimiters {
   return {
     collabToken: new FixedWindowLimiter(COLLAB_TOKEN_LIMIT),

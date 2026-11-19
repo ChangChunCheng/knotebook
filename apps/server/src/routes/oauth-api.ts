@@ -104,7 +104,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
         return sendError(reply, 410, "oauth_request_invalid", "This authorization request has been used or has expired.");
       }
 
-      // Zombie-client cleanup must precede consumption and the client lookup.
+      // Zombie-client cleanup must precede consumption and the client lookup (a misorder only shows across the 24h boundary; no test catches it).
       await runOauthCleanup(deps.db);
 
       // allow and deny both consume: a double click creates one code.
@@ -132,7 +132,7 @@ export function oauthApiRoutes(deps: OauthApiRouteDeps) {
         return sendError(reply, 409, "token_limit", `You already have the maximum of ${tokenLimit} active tokens. Revoke one first.`);
       }
 
-      // granted = requested ∩ checked (move and delete don't form a chain).
+      // granted = requested ∩ checked; a body wider than the pending request is clamped, not an error (move and delete don't form a chain).
       const granted = narrowerScope(pending.scope as TokenScope, parsed.data.scope);
       const code = randomBytes(32).toString("base64url");
       await deps.db.insert(oauthCodes).values({

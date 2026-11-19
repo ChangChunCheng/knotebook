@@ -28,7 +28,8 @@ const patchBodySchema = z
 function toDto(row: typeof apiTokens.$inferSelect): ApiTokenDto {
   return {
     id: row.id,
-    // scope goes through normalizeScope so a drifted CHECK degrades to a valid form no larger than stored (fail-closed).
+    // kind is only cast (its CHECK has two values). scope goes through normalizeScope, which returns the five stored forms unchanged, so a drifted CHECK
+    // degrades to a valid form no larger than stored (fail-closed).
     kind: row.kind as ApiTokenDto["kind"],
     name: row.name,
     agentLabel: agentLabelOf(row),
@@ -46,7 +47,10 @@ export interface ApiTokensRouteDeps {
   limiters: { patCreate: FixedWindowLimiter; tokenRename: FixedWindowLimiter };
 }
 
-/** Cookie-session only (not authenticateAny): a token must not issue, re-scope or revoke tokens, or a leaked one could perpetuate itself. */
+/**
+ * Cookie-session only (not authenticateAny): a token must not issue, re-scope or revoke tokens, or a leaked one could perpetuate itself or raise its own scope
+ * through PATCH. The list includes OAuth grants too: it is the only place to see and revoke every credential.
+ */
 export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.get("/api/auth/tokens", { preHandler: app.authenticate }, async request => {
@@ -98,8 +102,10 @@ export function apiTokensRoutes(deps: ApiTokensRouteDeps) {
     });
 
     /**
-     * The limiter runs before the UPDATE and ignores the outcome (a 404 for another user's token still counts), unlike DELETE and POST /api/notes.
-     * `agentLabel: null` clears the column rather than storing the derived value. `scope` can go up or down and applies from the next request; refresh doesn't touch it.
+     * The limiter runs before the UPDATE and ignores the outcome (a 404 for another user's token still counts), unlike DELETE (not throttled) and POST /api/notes
+     * (doesn't charge 'none'). With `scope`, mustChangePassword → 403 before the limiter (no quota); a pure rename isn't blocked.
+     * `agentLabel: null` clears the column rather than storing the derived value. `scope` can go up or down on PAT and OAuth rows alike, whatever the client first
+     * requested, and applies from the next request; refresh doesn't touch it.
      */
     app.patch("/api/auth/tokens/:id", { preHandler: app.authenticate }, async (request, reply) => {
       const { id } = request.params as { id: string };

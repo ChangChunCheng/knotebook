@@ -1,4 +1,5 @@
-// Logs and responses never contain the token, token_hash or label (the 201 returns the token once).
+// Logs never contain the token, token_hash or label; responses never contain token_hash, the 201 returns the token once, and the list returns the label
+// to admins. All single statements, no transactions.
 import type { FastifyInstance } from "fastify";
 import { desc, eq, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -134,7 +135,7 @@ export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
       return selectInvites(deps.db, eq(oneTimeLinks.kind, "invite"));
     });
 
-    // Revoking ignores the password-login switch.
+    // Revoking ignores the password-login switch. Re-revoking a revoked or expired invite is 204 without touching the row.
     app.delete("/api/admin/invites/:id", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "invite_not_found", "No invite with that id.");
