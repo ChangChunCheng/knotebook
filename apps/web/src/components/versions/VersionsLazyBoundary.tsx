@@ -5,12 +5,10 @@ import { cn } from "@/lib/utils";
 import { VERSIONS_PANEL_PLACEMENT } from "./versions-panel-width";
 
 /**
- * `VersionsLazy` 的每個掛載點都包這一層。版本 UI 是 NotePage 底下、render 時才 throw 的巢狀 lazy——
- * 不包的話 chunk 載入失敗會落到 NotePage 的 route boundary、用掉 **notepage** 的自動 reload 額度把整頁重整。
- * 這裡用自己的額度別名 `versions`、`frame="inline"`（只在原位顯示 #66 的錯誤＋重試）。
- * 非 chunk 的 render 錯誤顯示 `versions.crash`（不是 `app.noteCrash`——那會讓人以為整篇筆記壞了）；
- * `errorClassName` 由呼叫端給它所在位置的外框（面板＝卡片、對話框／整頁＝浮在右下的小卡），只在錯誤態套用。
- * ⚠ `ChunkLoadBeacon` 必須在 `<Suspense>` **內**（擺到外面會在 lazy pending 時就清旗標 → 無限重整，見 ErrorBoundary.tsx 的 ChunkLoadBeacon 註解）。
+ * Wrap every `VersionsLazy` mount point: the version UI is a nested lazy under NotePage that throws at render time; unwrapped, a chunk load failure would fall to NotePage's route boundary and use up the notepage auto-reload allowance, reloading the whole page.
+ * This uses its own allowance alias `versions` and `frame="inline"` (error plus retry in place). Non-chunk render errors show `versions.crash` (not `app.noteCrash`, which suggests the whole note is broken).
+ * `errorClassName` gives the frame for each mount point and applies only in the error state.
+ * `ChunkLoadBeacon` must be inside `<Suspense>`: outside it the flag is cleared while lazy is still pending → infinite reload (see its comment in `ErrorBoundary.tsx`).
  */
 export function VersionsLazyBoundary({
   noteId,
@@ -24,7 +22,7 @@ export function VersionsLazyBoundary({
   fallback?: ReactNode;
   reload?: () => void;
   errorClassName?: string;
-  /** #263：非 chunk 的 render 錯誤文案的 i18n key（預設 `versions.crash`）；框選 AI 預覽傳 `ai.box.previewCrash`。重試語意不變（chunk 失敗＝整頁重載）。 */
+  /** i18n key for non-chunk render error text (default `versions.crash`); the selection-AI preview passes `ai.box.previewCrash`. Retry semantics unchanged (chunk failure = full reload). */
   crashMessageKey?: string;
   children: ReactNode;
 }) {
@@ -45,7 +43,7 @@ export function VersionsLazyBoundary({
   );
 }
 
-/** 各掛載點的錯誤外框。面板：與 VersionsPanel 同位置同寬的卡（寬度吃 NoteEditor 列容器設的 `--versions-panel-width`，與面板同一個來源，#274）；對話框與整頁：浮在右下的小卡（不落在版面末端）。 */
+/** Error frame per mount point. Panel: a card at the panel's position and width (from `--versions-panel-width` set by NoteEditor's row container, the same source as the panel); dialogs and full page: a small card floating bottom right (not at the end of the layout). */
 export const VERSIONS_ERROR_FRAME = {
   panel: cn(cardSurface, "shrink-0 p-3", VERSIONS_PANEL_PLACEMENT),
   inline: "px-5 py-2",

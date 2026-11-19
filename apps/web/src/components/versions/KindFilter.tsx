@@ -10,11 +10,7 @@ const OPTIONS: Array<{ value: VersionKindFilter; labelKey: string }> = [
   { value: "manual", labelKey: "versions.filter.manual" },
 ];
 
-/**
- * 清單篩選（#258）：「全部／僅手動」兩段切換，放在「目前狀態」下方、清單上方（面板與窄視窗整頁共用）。
- * 狀態在 `useVersions().kindFilter`（controller 持有、換筆記不重設、記在 localStorage）；
- * 只影響清單與比較下拉的選項，不影響目前的預覽／比較對象。按下態沿用橫幅的 `PRESSED_CLASS` ＋ `aria-pressed`。
- */
+/** State lives in `useVersions().kindFilter` (the controller owns it, not reset on note change, persisted in localStorage); it affects only the list and the compare dropdown options, not the current preview/compare target. */
 export function KindFilter({ className }: { className?: string }) {
   const { t } = useTranslation();
   const { kindFilter, setKindFilter } = useVersions();
@@ -37,7 +33,6 @@ export function KindFilter({ className }: { className?: string }) {
   );
 }
 
-/** 篩選後清單為空時的一行灰字（只在查詢成功、確實沒有符合的版本時顯示；載入中不顯示）。 */
 export function KindFilterEmpty() {
   const { t } = useTranslation();
   return (

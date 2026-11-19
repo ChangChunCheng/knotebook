@@ -16,19 +16,14 @@ import { selectedTargets, visibleSelectionKeys } from "./select-model";
 import { useSelectRun } from "./select-run";
 import type { SidebarNode } from "./tree";
 
-/** 開著的 Radix Toast（`@radix-ui/react-toast` 的 root 是 `<li data-swipe-direction data-state>`）。 */
+/** An open Radix Toast (the root of `@radix-ui/react-toast` is `<li data-swipe-direction data-state>`). */
 const OPEN_TOAST = 'li[data-swipe-direction][data-state="open"]';
 
 /**
- * 一般 tab 選取模式的標題列（#181，class 同 `TrashPanel.renderHeader` 的選取支）。兩種形（`useWidePointer`）：
- * - 窄：「已選 N 項」＋全選／取消全選＋完成；動作列在底部（`SidebarFooter`）。
- * - 寬：一列——✕（結束選取，就是「完成」的角色：`onMounted` 交它、Esc 規則不變）＋三態全選框＋數量位（批次執行中換成進度 status）＋
- *   `SelectActionBar` 的 `toolbar` 形；底部不顯示。
- * 「全選」只勾畫面上看得見的列（資料夾列與筆記列都算；收合的群組／資料夾的子樹不算）、不清掉先前在收合子樹裡勾的；
- * 「取消全選」（三態框全勾時點下去）清掉全部、含收合子樹裡勾的。
- * 「已選 N 項」＝資料夾與筆記合計、不看收合、不去重（去重在送出前）。
- * 「全選／取消全選／完成／結束選取」沿用首包的 `trash.*` 字串（鍵名前綴不準，但改名要動首包兩語系與垃圾桶的測試）。
- * 只准經 `SelectLazy` 引用。
+ * Select all ticks only visible rows (a collapsed subtree keeps earlier ticks); deselect all (click on the all-ticked tri-state box) clears everything, including collapsed subtrees.
+ * "N selected" is folders + notes, ignoring collapse and not deduped (dedupe happens before sending).
+ * Classes are the same as the select branch of `TrashPanel.renderHeader`.
+ * Reuses the first bundle's `trash.*` strings (the key prefix is misleading, but renaming touches both locales of the first bundle and the trash tests). Import only through the SelectLazy chain and tests.
  */
 export function SelectHeader({
   nodes,
@@ -36,9 +31,7 @@ export function SelectHeader({
   onDone,
 }: {
   nodes: readonly SidebarNode[];
-  /** 掛上時呼叫一次（useLayoutEffect）；NoteList 用它把焦點交給「完成」（寬形是 ✕；只在發起的那一份設過旗標時）。 */
   onMounted: (done: HTMLButtonElement | null) => void;
-  /** 「完成」／✕ 與 Esc：NoteList 設焦點旗標後結束選取。 */
   onDone: () => void;
 }) {
   const { t } = useTranslation();
@@ -46,11 +39,10 @@ export function SelectHeader({
   const { selection } = useSidebarTabState();
   const actions = useSidebarTabActions();
   const { updateSelection } = actions;
-  // 批次執行中（所有實例共用，見 select-run.ts）：寬形把數量位換成進度。
   const run = useSelectRun(actions);
-  // 收合變動時重繪：「全選／取消全選」看可見列。
+  // Re-render on collapse changes: select-all looks at visible rows.
   useCollapseVersion();
-  /** Esc 守衛 ⑤⑥ 由它找所在的 `[data-sidebar-instance]`：寬形掛在恆在的外層（數量位換成進度時不換），窄形掛在數量位。 */
+  /** The Esc guard finds its `[data-sidebar-instance]` through this: wide mounts on the outer element that stays (not swapped when the count turns into progress), narrow on the count slot. */
   const rootRef = useRef<HTMLSpanElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
   const onMountedRef = useRef(onMounted);
@@ -62,8 +54,8 @@ export function SelectHeader({
     onMountedRef.current(doneRef.current);
   }, []);
 
-  // 選取中跨過寬窄判準：焦點所在的鈕（✕、圖示鈕、完成…）隨換形卸載，焦點會掉到 body。
-  // render 時（舊 DOM 還在）記下焦點是否在本實例的標題列裡；換形後焦點落在 body 就交給新形的 doneRef（寬＝✕、窄＝完成）。
+  // Crossing the wide/narrow breakpoint mid-selection unmounts the focused button (✕, icon button, Done…) and focus falls to body.
+  // Record at render (old DOM still present) whether focus is in this instance's header; if it ends up on body after the swap, hand it to the new form's doneRef (wide ✕, narrow Done).
   const focusInHeaderRef = useRef(false);
   const header = rootRef.current?.closest("[data-sidebar-header]") ?? null;
   focusInHeaderRef.current = header !== null && header.contains(document.activeElement);
@@ -75,27 +67,27 @@ export function SelectHeader({
     if (focusInHeaderRef.current && (active === null || active === document.body)) doneRef.current?.focus();
   }, [wide]);
 
-  // Esc：選取模式在使用者離開側欄時不會結束，所以 document 層監聽要有範圍，下列全部成立才動作。
+  // Select mode doesn't end when the user leaves the sidebar, so the document-level listener is scoped: all conditions below must hold.
   useEffect(() => {
-    /** 本次按鍵在 window capture（最早）時是否有開著的 toast：真瀏覽器在 listener 之間跑 microtask，到 bubble 時 toast 可能已關。 */
+    /** Whether a toast was open when this key reached window capture (earliest): a real browser runs microtasks between listeners, so by bubble the toast may already be closed. */
     let toastOpenAt: Event | null = null;
     const capture = (event: KeyboardEvent) => {
       toastOpenAt = event.key === "Escape" && document.querySelector(OPEN_TOAST) !== null ? event : null;
     };
     const handler = (event: KeyboardEvent) => {
-      // ① 只看 Esc；② 輸入法組字中的 Esc 是取消組字；③ 已有人處理（抽屜的 Radix、目的地框／確認框在 capture 先 preventDefault）。
+      // Esc only; Esc during IME composition cancels the composition; skip if already handled (drawer's Radix, destination/confirm dialogs preventDefault in capture).
       if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
-      // ④ 抽屜以外的對話框開著：Esc 是它的。
+      // A dialog other than the drawer is open: Esc belongs to it.
       if (document.querySelector('[role="dialog"]:not([data-sidebar-drawer])')) return;
-      // ④b 按下當下有開著的 toast：Radix Toast 關 toast 時不 preventDefault，一下 Esc 只關一層（停下後的錯誤 toast 不連帶丟掉選取）。
+      // A toast was open when the key went down: Radix Toast doesn't preventDefault when closing it, so one Esc closes only one layer (an error toast after a stop doesn't drop the selection).
       if (toastOpenAt === event) return;
       const shell = rootRef.current?.closest("[data-sidebar-instance]");
-      // ⑤ 本實例看得見：抽屜那份恆看得見；靜態卡在 1280 以下（浮動與手機）是 hidden（抽屜關著時仍掛著）。
+      // This instance is visible: the drawer's always is; the static card is hidden below 1280 (floating and phone) while still mounted when the drawer is closed.
       if (!(shell?.hasAttribute("data-sidebar-drawer") || !window.matchMedia(OVERLAY_QUERY).matches)) return;
-      // ⑥ 焦點在 body（macOS Safari 點勾選框不聚焦它）或本實例之內：主內容區的輸入框、編輯器裡的 Esc 不算。
+      // Focus on body (macOS Safari doesn't focus a clicked checkbox) or inside this instance: Esc in main-content inputs or the editor doesn't count.
       const target = event.target;
       if (!(target === document || target === document.body || target === document.documentElement || (target instanceof Node && shell?.contains(target)))) return;
-      // 讓 NotePage 預覽等 window 監聽照 repo 慣例以 defaultPrevented 讓路。
+      // Lets window listeners such as the NotePage preview yield via defaultPrevented (repo convention).
       event.preventDefault();
       onDoneRef.current();
     };
@@ -110,7 +102,6 @@ export function SelectHeader({
   const count = selectedTargets(nodes, selection.keys).length;
   const visible = visibleSelectionKeys(nodes, isCollapsed);
   const allState = selectAllState(visible, selection.keys);
-  /** 全勾 → 清空全部（含收合子樹裡勾的）；否則 → 勾上可見列、保留已勾的。 */
   const toggleAll = () =>
     updateSelection(allState === "all" ? { type: "clear" } : { type: "setAll", keys: [...new Set([...selection.keys, ...visible])] });
   const countText = t("select.selected", { count });

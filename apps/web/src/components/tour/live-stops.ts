@@ -6,35 +6,26 @@ import { findFormattingToolbarButton, findTourTarget } from "@/lib/tour-find";
 import type { TourTargetId } from "@/lib/tour-targets";
 
 /**
- * 功能導覽的現場演示：在示範筆記的編輯器裡叫出真的選單，或框選一句讓格式工具列出現，整個過程不寫文件。
- *
- * - 游標放進最後的空段落，用 `deleteTriggerCharacter: false` 開選單：觸發字不會進文件，選單照樣出現，
- *   所以重新整理、關分頁、上一頁都不會留下東西，也不產生版本或撤銷紀錄。
- * - 演示期間開著編輯器的交易過濾（`setTourTransactionFilter`）：輸入法組字擋不在鍵盤層，只有在交易層擋得乾淨。
- *   過濾是常駐外掛上的旗標，演示中不註冊也不拆外掛（選單開著時動態註冊會弄壞選單的狀態）。
- * - 離站由站點的 `leave` 呼叫 `stopLiveTrigger`：關選單、還原選取、關過濾。可以重複呼叫，也可以在沒開始過時呼叫。
- * - AI 站不開選單，只用一筆交易把演示句設成選取（`startLiveSelection`），讓格式工具列自己出現；離站把選取收合（`stopLiveSelection`）。
- * - 演示會把焦點放進編輯器：觸控裝置會因此叫出螢幕鍵盤，蓋住半個畫面、把頁面往上推。演示期間本來就不收打字，
- *   所以先在編輯器的可編輯元素上設 `inputmode="none"`（在聚焦之前），離站時還原成原本的值（原本沒有就拿掉）。
- *   不用失焦來收鍵盤：選單在編輯器失焦時會關。
+ * The real menu is opened in the sample note's editor without writing the document: the cursor goes into the last empty paragraph and the menu opens with `deleteTriggerCharacter: false`, so the trigger character never enters the doc and reload, closing the tab or Back leave nothing (no version or undo entry).
+ * While demoing, the editor's transaction filter (`setTourTransactionFilter`) is on: IME composition can only be blocked cleanly at transaction level. It is a flag on a permanent plugin; no plugin is registered or removed during the demo (dynamic registration breaks an open menu's state).
+ * `stopLiveTrigger` (from the step's `leave`) is idempotent and may be called without a start. The AI step opens no menu: one transaction selects the demo sentence so the format toolbar appears by itself.
+ * Focus in the editor raises the on-screen keyboard on touch, covering half the screen and pushing the page up; typing isn't accepted during a demo anyway, so `inputmode="none"` is set on the editable element before focusing and restored on leave (removed if absent before). Blurring isn't used: the menu closes on editor blur.
  */
 
 export type TourTrigger = "[[" | "/";
 
-/** 演示開始前的選取，離站時還原。 */
 interface Saved {
   from: number;
   to: number;
 }
 
-/** 正在演示的編輯器。用編輯器當 key：編輯器卸載後不會留下東西。 */
+/** The editor being demoed; keyed by editor so nothing is left behind after the editor unmounts. */
 const active = new WeakMap<TourEditor, Saved>();
 
 function menuOf(editor: TourEditor) {
   return editor.getExtension(SuggestionMenu);
 }
 
-/** 文件最後一個頂層 block 是沒有內容的段落。 */
 function lastBlockIsEmptyParagraph(editor: TourEditor): boolean {
   const last = editor.document[editor.document.length - 1];
   if (last === undefined || last.type !== "paragraph" || last.children.length > 0) return false;
@@ -42,29 +33,22 @@ function lastBlockIsEmptyParagraph(editor: TourEditor): boolean {
   return Array.isArray(content) && content.every((node: { type?: string; text?: string }) => node.type === "text" && (node.text ?? "") === "");
 }
 
-/**
- * 能不能在這篇示範筆記上現場演示：它的編輯器已登記、可編輯，而且最後一段是空段落（游標要放在那裡）。
- * 開始導覽時算一次；不成立的站改指筆記裡現成的成品。
- */
+/** Computed once at tour start; a step that can't be demoed points at the finished artifact already in the note. */
 export function canRunLiveStop(noteId: string): boolean {
   const editor = getTourNoteEditor(noteId);
   if (editor === null) return false;
   try {
     return editor.isEditable && lastBlockIsEmptyParagraph(editor);
   } catch (err) {
-    // 開始流程裡呼叫：讀不出文件就當不能演示，不讓導覽開不起來。
+    // Called in the start flow: an unreadable document means "can't demo" instead of failing to start the tour.
     console.error(err);
     return false;
   }
 }
 
-/**
- * 壓過 `inputmode` 的那個可編輯元素與它原本的值（null＝原本沒有），以示範筆記的 id 為鍵。記元素本身而不是編輯器：
- * 離站時編輯器可能已經從登記處撤掉，或正暫時卸載（重掛回同一個元素）而回報已銷毀，照樣要把屬性還原。
- */
+/** The element, not the editor, is recorded: on leave the editor may already be unregistered or temporarily unmounted (reports destroyed, then remounts onto the same element), yet the attribute must still be restored. */
 const suppressed = new Map<string, { dom: HTMLElement; previous: string | null }>();
 
-/** 演示期間不叫出螢幕鍵盤（見檔頭）。重複呼叫只記第一次的原值。 */
 function suppressKeyboard(noteId: string, editor: TourEditor): void {
   if (suppressed.has(noteId)) return;
   const dom = editor._tiptapEditor.view.dom;
@@ -72,10 +56,7 @@ function suppressKeyboard(noteId: string, editor: TourEditor): void {
   dom.setAttribute("inputmode", "none");
 }
 
-/**
- * 把 `inputmode` 還原成演示前的樣子；沒有壓過就不動。焦點還在那個元素裡時先讓它失焦：聚焦中的元素換回會叫鍵盤的 `inputmode`，
- * 觸控裝置可能當場把鍵盤叫出來（這時選單已經關了，失焦不影響演示；下一站要用編輯器的話會自己再聚焦）。
- */
+/** Blur first if focus is still inside: swapping a focused element back to a keyboard-raising `inputmode` may summon the keyboard on touch (the menu is already closed, so blur doesn't affect the demo; a later step that needs the editor refocuses). */
 function restoreKeyboard(noteId: string): void {
   const saved = suppressed.get(noteId);
   if (saved === undefined) return;
@@ -87,16 +68,13 @@ function restoreKeyboard(noteId: string): void {
   else dom.setAttribute("inputmode", previous);
 }
 
-/** `trigger` 的選單目前是不是開著（外掛狀態，不看畫面）。兩種選單共用同一個外掛，所以要再比對是哪個觸發字開的。 */
+/** Both menus share one plugin, so also compare which trigger character opened it. */
 export function isTriggerMenuShown(editor: TourEditor, trigger: TourTrigger): boolean {
   const menu = menuOf(editor);
   return menu?.shown() === true && menu.store.state?.triggerCharacter === trigger;
 }
 
-/**
- * 游標放進最後的空段落、叫出 `trigger` 的選單，回傳選單有沒有開。重複呼叫沒有作用。
- * 開選單會把焦點放進編輯器，也會把游標捲進可視範圍。
- */
+/** Opening the menu moves focus into the editor and scrolls the caret into view. Repeated calls do nothing. */
 export function startTourTrigger(editor: TourEditor, trigger: TourTrigger): boolean {
   if (active.has(editor)) return isTriggerMenuShown(editor, trigger);
   const menu = menuOf(editor);
@@ -109,7 +87,7 @@ export function startTourTrigger(editor: TourEditor, trigger: TourTrigger): bool
   return menu.shown();
 }
 
-/** 關選單（已經關了就不動）並還原演示前的選取；沒開始過、重複呼叫都是空操作。不碰焦點。 */
+/** Closes the menu (if still open) and restores the pre-demo selection; a no-op if never started or repeated. Doesn't touch focus. */
 export function stopTourTrigger(editor: TourEditor): void {
   const saved = active.get(editor);
   if (saved === undefined) return;
@@ -120,7 +98,6 @@ export function stopTourTrigger(editor: TourEditor): void {
   editor._tiptapEditor.commands.setTextSelection({ from: saved.from, to: saved.to });
 }
 
-/** 站點的 `prepare`：開過濾、叫出選單。示範筆記的編輯器拿不到就什麼都不做。 */
 export function startLiveTrigger(noteId: string, trigger: TourTrigger): void {
   const editor = getTourNoteEditor(noteId);
   if (editor === null) return;
@@ -129,27 +106,22 @@ export function startLiveTrigger(noteId: string, trigger: TourTrigger): void {
   startTourTrigger(editor, trigger);
 }
 
-/** 站點的 `leave`：關選單、還原選取、還原 `inputmode`、關過濾。 */
 export function stopLiveTrigger(noteId: string): void {
   const editor = getTourNoteEditor(noteId);
   try {
     if (editor !== null) stopTourTrigger(editor);
   } finally {
     restoreKeyboard(noteId);
-    // 關選單拋錯也要關過濾，否則使用者在這篇的輸入會一直被擋到導覽結束。
+    // Close the filter even if closing the menu throws, or the user's typing stays blocked until the tour ends.
     setTourTransactionFilter(noteId, false);
   }
 }
 
-/** 正在框選演示句的編輯器。 */
 const selecting = new WeakSet<TourEditor>();
 
 type PmDoc = TourEditor["_tiptapEditor"]["state"]["doc"];
 
-/**
- * 示範筆記裡要框起來的那句：內容等於範例句的段落；找不到（使用者改掉了）就是第一個非空段落。
- * 回傳文字內容的起訖位置，沒有任何非空段落時回 null。
- */
+/** Paragraph equal to the sample sentence; if the user changed it, the first non-empty paragraph. */
 function findDemoSentenceRange(doc: PmDoc): { from: number; to: number } | null {
   const sentence = i18n.t("tourGuide.sample.aiSentence");
   let exact: { from: number; to: number } | null = null;
@@ -166,11 +138,7 @@ function findDemoSentenceRange(doc: PmDoc): { from: number; to: number } | null 
   return exact ?? firstFilled;
 }
 
-/**
- * 站點的 `prepare`（AI 站）：開過濾，焦點放進編輯器，再用一筆交易把演示句設成選取並捲進視窗。
- * 先要有焦點：沒有焦點時格式工具列雖然會出現，選取反白看不到，編輯器也不會捲到那句。
- * 只改選取、不改文件：不進撤銷、不寫進 Y 文件。重複呼叫沒有作用。
- */
+/** Focus first: without it the format toolbar appears but the selection highlight is invisible and the editor doesn't scroll to the sentence. Only the selection changes, not the document: no undo entry, nothing in the Y doc. */
 export function startLiveSelection(noteId: string): void {
   const editor = getTourNoteEditor(noteId);
   if (editor === null) return;
@@ -183,7 +151,7 @@ export function startLiveSelection(noteId: string): void {
   suppressKeyboard(noteId, editor);
   editor.focus();
   const { state } = view;
-  // TextSelection 沒有可 import 的來源：從目前選取的 class 取（`near` 在文字段落裡必回 TextSelection）。
+  // TextSelection has no importable source: take it from the current selection's class (`near` in a text paragraph always returns a TextSelection).
   const current = state.selection.constructor as unknown as { near(pos: unknown): { constructor: unknown } };
   const TextSel = current.near(state.doc.resolve(range.from)).constructor as unknown as {
     create(doc: PmDoc, anchor: number, head: number): typeof state.selection;
@@ -191,7 +159,6 @@ export function startLiveSelection(noteId: string): void {
   view.dispatch(state.tr.setSelection(TextSel.create(state.doc, range.from, range.to)).scrollIntoView());
 }
 
-/** 站點的 `leave`（AI 站）：把選取收合到末端、還原 `inputmode`、關過濾。沒開始過、重複呼叫都是空操作；過濾一定關。 */
 export function stopLiveSelection(noteId: string): void {
   const editor = getTourNoteEditor(noteId);
   try {
@@ -208,20 +175,15 @@ export function stopLiveSelection(noteId: string): void {
   }
 }
 
-/** AI 站要挖亮的東西：框選工具列上的 AI 鈕。工具列還沒畫出來之前回空陣列，引擎會等。 */
 export function liveSelectionTarget(): Element[] {
   const button = findFormattingToolbarButton(i18n.t("ai.toolbar.trigger"));
   return button === null ? [] : [button];
 }
 
-/** 已經為退路目標捲過的元素：目標每格畫面都會重查，只在第一次找到時捲，之後使用者自己捲走就不去搶。 */
+/** Elements already scrolled to for the fallback target: the target is re-queried every frame, so scroll only on first find and don't fight the user's own scrolling afterwards. */
 const scrolledFallbacks = new WeakSet<Element>();
 
-/**
- * 演示站要挖亮的東西：`trigger` 的選單開著就指選單（等它畫出來才有，畫出來之前回空陣列，引擎會等）；
- * 沒有在演示、或選單因故關掉（例如視窗失焦）就指筆記裡現成的成品，不留空箭頭。
- * 「開著」要是導覽自己開的、而且是這個觸發字的選單：使用者自己開的選單、上一站的選單都不算。
- */
+/** "Open" must mean opened by the tour itself with this trigger: a menu the user opened, or the previous step's, doesn't count. When not demoing or the menu closed for some reason (e.g. window blur) point at the finished artifact in the note, no empty arrow. Empty until the menu is drawn (the engine waits). */
 export function liveTriggerTarget(noteId: string, trigger: TourTrigger, menuId: TourTargetId, fallbackId: TourTargetId): Element[] {
   const editor = getTourNoteEditor(noteId);
   if (editor !== null && active.has(editor) && isTriggerMenuShown(editor, trigger)) {
@@ -237,7 +199,7 @@ export function liveTriggerTarget(noteId: string, trigger: TourTrigger, menuId: 
   return [fallback];
 }
 
-/** 只在示範筆記的編輯器裡找：頁面上可能還有別的編輯器畫面（例如版本預覽）。 */
+/** Only the sample note's editor: the page may hold other editor views (e.g. version preview). */
 export function findInSampleEditor(noteId: string, id: TourTargetId): Element | null {
   return findTourTarget(id, getTourNoteEditor(noteId)?.domElement ?? document);
 }
@@ -248,16 +210,10 @@ export interface LiveStopInput {
 }
 
 /**
- * 演示站期間的鍵盤與滑鼠，都在 window 的 capture 階段接，比編輯器與 BlockNote 的選單都早：
- * - `→`／`Enter` 下一步、`←` 上一步；`Esc` 交給遮罩（它也在 capture 階段接，BlockNote 自己會用 `Esc` 關選單，要搶在前面）；
- *   其他按鍵一律不送進編輯器，選單才不會被方向鍵、字元、`Tab` 動到。
- * - 帶 `Ctrl`／`Meta`／`Alt` 的組合鍵一律不送進編輯器與選單（`stopPropagation`），但多數不 `preventDefault`，
- *   所以瀏覽器自己的快捷鍵（重新整理、開發人員工具、縮放）照常有效；功能鍵（F5、F12）整個放行。
- *   `z`／`y`（撤銷、重做：經 Y 回來的交易會通過交易過濾）、`v`／`x`／`a`（貼上、剪下、全選）和 `Enter` 另外 `preventDefault`。
- * - 選單項目的點擊擋掉：點項目會先關掉選單再執行它，插入雖然會被交易過濾擋下，選單卻沒了。
- *   格式工具列上的鈕也擋（點 AI 鈕會開 AI 框）；遮罩已擋住滑鼠點擊，這裡擋的是直接送到元素上的 click
- *   （例如螢幕閱讀器的啟動、`element.click()`）。
- * 回傳拆除函式。
+ * Keyboard and mouse during a demo step are taken in window capture, earlier than the editor and BlockNote's menus.
+ * →/Enter next, ← previous; Esc goes to the overlay (also capture; BlockNote closes menus on Esc itself, so it must win). Other keys never reach the editor, so arrows, characters and Tab can't move the menu.
+ * Ctrl/Meta/Alt combos are stopped from the editor and menu (`stopPropagation`) but mostly not `preventDefault`ed, so browser shortcuts (reload, devtools, zoom) still work; function keys pass entirely. z/y (undo/redo: transactions coming back via Y pass the filter), v/x/a (paste, cut, select all) and Enter are also `preventDefault`ed.
+ * Menu item clicks are blocked: a click closes the menu and then runs the item; the filter blocks the insert but the menu would be gone. Toolbar buttons too (the AI button opens the AI box); the overlay already blocks mouse clicks, this blocks clicks sent directly to elements (screen reader activation, `element.click()`).
  */
 export function installLiveStopInput({ next, back }: LiveStopInput): () => void {
   const onKeyDown = (e: KeyboardEvent) => {

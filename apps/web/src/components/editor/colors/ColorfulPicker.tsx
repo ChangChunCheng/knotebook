@@ -10,9 +10,9 @@ interface ColorfulPickerProps {
 }
 
 /**
- * 飽和度方塊＋色相滑桿。本檔是唯一 import `react-colorful` 的地方，由 `CustomColorPanel` 以 `lazy()` 載入，
- * 套件只進這個 chunk。react-colorful 的兩個 slider 的 `aria-label` 寫死英文，這裡在每次 render 後改成傳進來的字串：
- * React 只在 prop 值變動時才寫回 DOM，而它給的值是常數，所以覆寫會一直留著；不帶 deps 是為了換語言時跟著更新。
+ * The only importer of `react-colorful` (lazy-loaded by `CustomColorPanel`, so the package stays in this chunk).
+ * Its sliders hard-code an English `aria-label`: overridden after every render, since React only rewrites the DOM when a prop value changes and the library's value is constant.
+ * No deps array, so a language change also updates it.
  */
 export default function ColorfulPicker({ color, onChange, saturationLabel, hueLabel }: ColorfulPickerProps) {
   const ref = useRef<HTMLDivElement>(null);

@@ -19,7 +19,7 @@ import { ColorMenuBody, useColorMenu } from "./ColorMenuBody";
 import { KnotebookColorPicker, type ColorSectionProps } from "./KnotebookColorPicker";
 import { sectionProp, type ColorSection, type ColorTarget } from "./types";
 
-/** 從面板按「返回」時要聚焦的項目（顏色子選單的觸發項）。儲存格選單與列／欄選單不會同時開，共用一個值。 */
+/** Item to refocus on return from the panel; cell and row/column menus never open together, so they share one value. */
 const RETURN_KEY = "tbl-colors";
 
 type TableTarget = Extract<ColorTarget, { kind: "cell" | "rowcol" }>;
@@ -30,11 +30,7 @@ function useTableHandlesState() {
   });
 }
 
-/**
- * 「Colors」子選單：10 種內建色加「自訂…」，點「自訂…」把根選單的 dropdown 換成面板（須放在 `ColorMenuBody` 裡）。
- * 文字段、底色段各依編輯器的 `tables.cellTextColor`／`cellBackgroundColor` 決定顯不顯示，兩者都關時整項不顯示。
- * `target` 只帶 block id 與索引：套用時才讀最新的表格，面板開著時別人改的字不會被蓋掉。
- */
+/** `target` carries only the block id and indices: the latest table is read on apply, so words others changed while the panel is open aren't overwritten. */
 function TableColorsItem({ target, current }: { target: TableTarget; current: (section: ColorSection) => string }) {
   const Components = useComponentsContext()!;
   const dict = useDictionary();
@@ -71,7 +67,6 @@ function TableColorsItem({ target, current }: { target: TableTarget; current: (s
   );
 }
 
-/** 儲存格選單的顏色項：目前顏色是滑鼠所在那一格的 props。 */
 function TableCellColorsItem() {
   const { block, rowIndex, colIndex } = useTableHandlesState();
   if (block === undefined || rowIndex === undefined || colIndex === undefined) return null;
@@ -86,7 +81,7 @@ function TableCellColorsItem() {
   );
 }
 
-/** 列／欄把手選單的顏色項：該列／欄每一格的值都相同才以第一格的值為目前顏色，否則當「自動」。 */
+/** Current colour is the first cell's only if every cell in the row/column matches; otherwise "automatic". */
 function TableRowColColorsItem({ orientation }: { orientation: "row" | "column" }) {
   const tableHandles = useExtension(TableHandlesExtension);
   const { block, rowIndex, colIndex } = useTableHandlesState();
@@ -107,10 +102,7 @@ function TableRowColColorsItem({ orientation }: { orientation: "row" | "column" 
   );
 }
 
-/**
- * 列／欄把手選單：刪除、兩個新增（BlockNote 的元件）與顏色項。標題列／欄切換不放：編輯器沒開 `headers`。
- * className 與 BlockNote 原本的列／欄選單相同，只有 `bn-table-handle-menu`，外觀不變。
- */
+/** No header toggle: the editor doesn't enable `headers`. className matches BlockNote's own row/column menu. */
 export function KnotebookTableHandleMenu({ orientation }: { orientation: "row" | "column" }) {
   const Components = useComponentsContext()!;
   return (
@@ -134,7 +126,7 @@ export function KnotebookTableHandleMenu({ orientation }: { orientation: "row" |
   );
 }
 
-/** 儲存格選單：只有顏色項（拆格沒開）。className 與 BlockNote 原本的儲存格選單相同。 */
+/** Colour item only (cell splitting is off). className matches BlockNote's own cell menu. */
 export function KnotebookTableCellMenu() {
   const Components = useComponentsContext()!;
   return (
@@ -146,15 +138,14 @@ export function KnotebookTableCellMenu() {
   );
 }
 
-// `TableHandle` 的 `tableHandleMenu` 型別是不帶 props 的 FC，但執行時會傳 `orientation`。
+// `TableHandle`'s `tableHandleMenu` is typed as a prop-less FC but receives `orientation` at runtime.
 const tableHandleMenu = KnotebookTableHandleMenu as FC;
 
-/** 模組層常數元件（身分穩定）：BlockNote 的列／欄把手，選單換成 `KnotebookTableHandleMenu`。 */
+/** Module-level components (stable identity): BlockNote's row/column and cell handles with their menu replaced by `KnotebookTableHandleMenu` / `KnotebookTableCellMenu`. */
 export function KnotebookTableHandle(props: TableHandleProps) {
   return <TableHandle {...props} tableHandleMenu={tableHandleMenu} />;
 }
 
-/** 模組層常數元件（身分穩定）：BlockNote 的儲存格把手，選單換成 `KnotebookTableCellMenu`。 */
 export function KnotebookTableCellButton(props: TableCellButtonProps) {
   return <TableCellButton {...props} tableCellMenu={KnotebookTableCellMenu} />;
 }

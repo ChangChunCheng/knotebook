@@ -6,12 +6,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { DestTarget } from "./destination-level";
 
 /**
- * 選取模式的確認框：移入群組、複製、刪資料夾，以及最愛 tab 的移出最愛（#181，複製也先跳確認框，因為複製會多出一份、不直接執行）。複數版移入確認框是通用句，
- * 不預查每篇的分享與公開連結。篇數由呼叫端在目的地選定那一刻快照。
- * 目的地名稱換成完整路徑（`destinationPathLabel`，根層＝空間名）；另加刪資料夾的彙總確認框。
- * **送出中（`progress` 非 null）框開到批次結束**：送出與取消 disabled、框內顯示進度；✕（`DialogPrimitive.Close`）、Esc 與點框外
- * 都經 Dialog root 的 `onOpenChange(false)`，這裡一律忽略（不改 `ui/dialog.tsx`）。批次結束由呼叫端把 `open` 設 false。
- * 只准經 `SelectLazy` 引用。
+ * Copy confirms first too, since it creates an extra copy. The plural move confirm is generic: it doesn't pre-look up each note's shares and public links.
+ * While submitting (`progress` non-null) the dialog stays open until the batch ends: confirm and cancel disabled, progress shown; ✕, Esc and outside click all go through the Dialog root's `onOpenChange(false)` and are ignored here (`ui/dialog.tsx` unchanged). The caller sets `open` false at the end.
+ * Import only through the SelectLazy chain and tests.
  */
 
 export type SelectProgress = { done: number; total: number } | null;
@@ -23,7 +20,6 @@ interface ConfirmProps {
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
   onCloseAutoFocus?: (event: Event) => void;
-  /** 呼叫端的焦點守衛用（焦點仍在框內也算「沒有移到別處」）。 */
   contentRef?: Ref<HTMLDivElement>;
 }
 
@@ -101,7 +97,6 @@ export function MoveConfirmDialog({ count, groupName, ...rest }: ConfirmProps & 
   );
 }
 
-/** 複製確認框的鈕字與說明：建立副本、我的筆記（根層照現行、資料夾帶完整路徑）、群組（完整路徑）。 */
 function copyCopy(t: (key: string, options?: Record<string, unknown>) => string, count: number, target: DestTarget, pathLabel: string) {
   if (target.kind === "makeCopy") return { label: t("share.move.copyHereSubmit"), lead: t("select.copyLeadMakeCopy", { count }) };
   if (target.space.kind === "group") return { label: t("share.move.copySubmit"), lead: t("select.copyLead", { count, group: pathLabel }) };
@@ -109,14 +104,13 @@ function copyCopy(t: (key: string, options?: Record<string, unknown>) => string,
   return { label: t("share.move.copyPersonalSubmit"), lead };
 }
 
-/** `pathLabel`＝`destinationPathLabel`（建立副本與我的筆記根層用不到）。 */
 export function CopyConfirmDialog({ count, target, pathLabel, ...rest }: ConfirmProps & { target: DestTarget; pathLabel: string }) {
   const { t } = useTranslation();
   const { label, lead } = copyCopy(t, count, target, pathLabel);
   return <ConfirmShell {...rest} title={label} description={lead} submitLabel={label} submitVariant="outline" />;
 }
 
-/** 最愛 tab 的批次移出確認框（沒有復原，所以先確認）。篇數由呼叫端在開框那一刻快照。 */
+/** Batch unfavorite confirm (no undo, hence confirm first); the count is a snapshot the caller takes when it opens the dialog. */
 export function UnfavoriteConfirmDialog({ count, ...rest }: ConfirmProps) {
   const { t } = useTranslation();
   return (
@@ -130,11 +124,7 @@ export function UnfavoriteConfirmDialog({ count, ...rest }: ConfirmProps) {
   );
 }
 
-/**
- * 選了資料夾按「刪除」的彙總確認框：標題資料夾數、內文會進垃圾桶的篇數（各資料夾子樹活筆記的聯集）、
- * 另選了筆記時加一句（也在可及描述裡）；與我共享 tab 是「移除」（資料夾只是自己的分類，筆記回最上層）。數字由呼叫端在開框那一刻快照。
- * 送出中規則同 `ConfirmShell`（框開到批次結束）。
- */
+/** On the shared tab this is "remove": folders are only the user's own categories and notes go back to top level. */
 export function DeleteFoldersConfirmDialog({
   folderCount,
   noteCount,
@@ -158,7 +148,7 @@ export function DeleteFoldersConfirmDialog({
     <ConfirmShell
       {...rest}
       title={t("select.deleteFoldersTitle", { count: folderCount })}
-      // 附加句也在 DialogDescription 裡（開框時跟內文一起唸）；兩句之間的空白讓可及描述不黏字，畫面上附加句另起一行。
+      // The extra sentence is in DialogDescription too (read with the body on open); the space between keeps the accessible description from fusing, while visually it starts a new line.
       description={
         <>
           <span>{t("select.deleteFoldersBody", { count: noteCount })}</span>

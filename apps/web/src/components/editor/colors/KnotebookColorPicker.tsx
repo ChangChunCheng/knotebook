@@ -16,11 +16,10 @@ export interface ColorSectionProps {
 interface KnotebookColorPickerProps {
   text?: ColorSectionProps;
   background?: ColorSectionProps;
-  /** 「自訂…」的 `data-kb-color-return` 前綴：從面板按「返回」時用它找回要聚焦的項目，同一個 dropdown 內不可重複。 */
+  /** `data-kb-color-return` prefix of "Custom…": used to find the item to refocus on return; must be unique within one dropdown. */
   returnPrefix: string;
 }
 
-/** 選單項目左側的色塊；`value` 為 undefined 時是空色塊。 */
 function ColorSwatch({ section, value }: { section: ColorSection; value: string | undefined }) {
   const attr = section === "text" ? { "data-text-color": value } : { "data-background-color": value };
   return (
@@ -52,7 +51,7 @@ function Section({ section, props, returnPrefix }: { section: ColorSection; prop
           {dict.color_picker.colors[c]}
         </Components.Generic.Menu.Item>
       ))}
-      {/* 點了要在同一個 dropdown 換成面板，所以不能像其他項目那樣關選單 */}
+      {/* Swaps in the panel within the same dropdown, so unlike other items it must not close the menu */}
       <KeepOpenMenuItem
         data-test={`${section}-color-custom`}
         data-kb-color-return={`${returnPrefix}-${section}`}
@@ -66,11 +65,7 @@ function Section({ section, props, returnPrefix }: { section: ColorSection; prop
   );
 }
 
-/**
- * 顏色選單的項目列表：文字色與底色兩段，各是 10 種內建色加一個「自訂…」。內建色的 `data-test` 與打勾規則
- * （目前值與色名完全相同才打勾）沿用 BlockNote 原生選單；「自訂…」只在目前值是正規形色碼時打勾，
- * 非正規形的舊值（例如外部貼上的 `rgb(…)`）哪一項都不勾。
- */
+/** Checkmarks: built-in colours keep BlockNote's `data-test` values and tick only on an exact name match; "Custom…" only when the current value is a canonical hex code, so a non-canonical legacy value (e.g. pasted `rgb(…)`) ticks nothing. */
 export function KnotebookColorPicker({ text, background, returnPrefix }: KnotebookColorPickerProps) {
   return (
     <>

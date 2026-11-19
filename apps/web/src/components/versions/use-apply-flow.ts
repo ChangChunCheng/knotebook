@@ -13,18 +13,13 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/**
- * 套用流程：按「套用」前一律重抓 `current`（`fetchQuery` `staleTime: 0`）——dirty 跳三選一，不 dirty 直接套用
- * （`discardUnsaved: false`）。body 一律帶清單列的 `versionId`。409 `version_unsaved_changes` → 改跳對話框（插進來的修改）；
- * 409 `version_mismatch` → toast、invalidate 清單、離開預覽。**不自動存**。
- */
+/** `current` is refetched before applying (`staleTime: 0`) so the dirty check sees fresh data. Never auto-saves. */
 export function useApplyFlow(noteId: string) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { openDialog, closeDialog, stopPreview, onApplied } = useVersions();
   const { mutateAsync } = useApplyVersion(noteId);
-  // requestApply 進行中旗標：連點「套用」時第二次直接 return。`fetchQuery` 會把同鍵的並發重抓併成一次，
-  // 但兩次呼叫各自拿到結果後都會走到 applyNow——沒有這道旗標就是兩次 POST apply。
+  // requestApply in-flight flag: a second click returns at once. `fetchQuery` coalesces concurrent refetches of the same key, but both calls would still reach applyNow with their results: without this flag it is two apply POSTs.
   const inFlight = useRef(false);
 
   const applyNow = useCallback(
@@ -33,13 +28,12 @@ export function useApplyFlow(noteId: string) {
         await mutateAsync({ version, discardUnsaved });
         closeDialog();
         stopPreview();
-        // 筆記 query 整組失效（id 鍵＋路徑解析層，NotePage 的 invalidateNoteQueries）——`useApplyVersion.onSuccess`
-        // 只失效 `['note', id]`，舊形／路徑鍵由頁面層補。排在關對話框／離開預覽之後，
-        // 自己再包一層：通知出錯不得把已成功的套用變成錯誤 toast。
+        // Invalidate the whole note query set (id key plus the path-resolution layer, NotePage's invalidateNoteQueries): `useApplyVersion.onSuccess` only invalidates `['note', id]`; the page layer covers the legacy/path keys.
+        // After closing the dialog / leaving preview, and wrapped on its own: a failing notification must not turn a successful apply into an error toast.
         try {
           onApplied();
         } catch {
-          // 失效只是讓頁首資料早點對齊；失敗時等下一次 refetch，不影響套用結果。
+          // Invalidation only aligns header data sooner; on failure wait for the next refetch, the apply result is unaffected.
         }
         toast({ title: t("versions.toast.applied", { label: versionLabel(version) }) });
       } catch (err) {

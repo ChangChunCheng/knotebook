@@ -11,19 +11,14 @@ interface PhoneListBarProps {
   query: string;
   onQueryChange: (query: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
-  /** 搜尋框取得焦點：確保搜尋層是開的。失焦不關（點結果、收鍵盤都會失焦）。 */
+  /** Called on focus. There's deliberately no close on blur: tapping a result or dismissing the keyboard both blur. */
   onOpen: () => void;
-  /** Cancel 或 Esc：關搜尋層（字已清空）。 */
   onClose: () => void;
 }
 
 /**
- * 手機搜尋層開著時的底部搜尋列：搜尋框加「Cancel」。沒在搜尋時清單底部沒有這一列（入口是 `PhoneListFabs` 的搜尋鈕）。
- * 列高 56（內距 6＋控制項 44＋6）加底部 safe area；搜尋框 16px 字級，iOS 才不會聚焦就放大。
- * 手機上捲的是文件：列是搜尋層最後一個子元素、`sticky` 釘在視窗底（`PHONE_BAR_FRAME`）。螢幕鍵盤開著時 `bottom`（鍵盤高，
- * 視覺視窗的高度差）把它頂到鍵盤正上方，同高的 `marginBottom` 讓文件多出這一段，最後幾筆結果捲得到它上方；
- * 只留搜尋框，Cancel 收起。離開搜尋：收起鍵盤後視覺視窗變高、Cancel 回來，按 Cancel；外接鍵盤可按 Esc。
- * 鍵盤蓋住了底部 safe area，所以這時不留那段內距。
+ * Sticky at the window bottom. With the keyboard open, `bottom` (keyboard height, from the visual viewport difference) lifts it above the keyboard and an equal `marginBottom` lets the last results scroll above it.
+ * Search field is 16px so iOS doesn't zoom on focus. The keyboard covers the bottom safe area, so that padding is dropped then.
  */
 export function PhoneListBar({ query, onQueryChange, searchRef, onOpen, onClose }: PhoneListBarProps) {
   const { t } = useTranslation();

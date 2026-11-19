@@ -3,17 +3,10 @@ import type { SelectAllState } from "@/lib/sidebar-selection";
 import { cn } from "@/lib/utils";
 import { Check, Minus } from "./icons";
 
-/**
- * 選取模式的勾選框：14px、方形小圓角、自己畫。
- * 仍是原生 `<input type="checkbox">`（`appearance-none`）——Shift 範圍讀原生 click 的 `shiftKey`、`<label>` 轉送點擊、
- * 鍵盤與 `getByRole("checkbox")` 都不變；勾與橫線是疊在上面的 svg（`peer-checked:`／`peer-indeterminate:` 顯示），
- * 勾選態＝主色底＋`text-brand-fg`（比照 `checkbox.tsx`）。
- * 只准經 `SelectLazy`／`TrashLazy` 鏈引用（首包不得 import）。
- */
+/** Still a native `<input type="checkbox">` (`appearance-none`): Shift range reads the native click's `shiftKey`, `<label>` forwards clicks, keyboard and `getByRole("checkbox")` are unchanged; the tick and dash are an svg on top. Reference only via the `SelectLazy`/`TrashLazy` chain (not in the first bundle). */
 export interface SelectionCheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "className"> {
-  /** 半勾。為真時 input 的 checked 一律 false（半勾優先，兩者不會同時畫）。 */
+  /** When true, input `checked` is always false (indeterminate wins). */
   indeterminate?: boolean;
-  /** 套在外層 span（排版用，例如 `mt-0.5`）。 */
   className?: string;
 }
 
@@ -23,13 +16,13 @@ export const SelectionCheckbox = forwardRef<HTMLInputElement, SelectionCheckboxP
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
-  // indeterminate 只能由 JS 寫。不帶 deps：每次 commit 都重寫，瀏覽器在 click 時清掉的半勾態也會被補回。
+  // `indeterminate` can only be set from JS. No deps: rewritten on every commit, so a state the browser cleared on click is restored.
   useLayoutEffect(() => {
     if (inputRef.current) inputRef.current.indeterminate = indeterminate;
   });
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     onChange?.(event);
-    // 瀏覽器在 click 時把 indeterminate 清掉；上層若沒換狀態就不會重繪，這裡先寫回目前的 prop 值。
+    // The browser clears indeterminate on click; if the parent doesn't change state there is no re-render, so write the current prop back here.
     event.currentTarget.indeterminate = indeterminate;
   };
   return (
@@ -48,7 +41,6 @@ export const SelectionCheckbox = forwardRef<HTMLInputElement, SelectionCheckboxP
   );
 });
 
-/** 三態全選框（一般 tab 與垃圾桶共用）。 */
 export function SelectAllCheckbox({
   state,
   disabled,
@@ -58,12 +50,11 @@ export function SelectAllCheckbox({
 }: {
   state: SelectAllState;
   disabled?: boolean;
-  /** 點下去：state 是 "all" → 呼叫端清空；否則 → 呼叫端全選可見列。 */
   onToggle: () => void;
   label: string;
   title: string;
 }) {
-  // 外層 24px 也帶同字 title：14px 的框旁邊（這一格裡）滑過也有提示。
+  // The outer 24px carries the same title: hovering beside the 14px box (inside this cell) also shows the hint.
   return (
     <span className="flex h-6 w-6 shrink-0 items-center justify-center" title={title}>
       <SelectionCheckbox

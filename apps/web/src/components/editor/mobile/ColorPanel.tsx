@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { BlockNoteScope } from "./BlockNoteScope";
 import type { MobileToolbarEditor } from "./toolbar-modes";
 
-/** 膠囊（52）＋間距與上緣留白：色盤最高只能到「可視高度 − 這個值」。 */
+/** Pill (52) + spacing and top margin: the panel's max height is visible height minus this. */
 const PANEL_CHROME_PX = 112;
 
 const keepFocus = (event: MouseEvent) => event.preventDefault();
@@ -20,7 +20,6 @@ function swatchAttr(section: ColorSection, value: string) {
   return section === "text" ? { "data-text-color": value } : { "data-background-color": value };
 }
 
-/** 色票：視覺 32、點擊區 44；目前套用中的那格加外圈。 */
 function Swatch({ section, value, label, selected, onClick }: { section: ColorSection; value: string; label: string; selected: boolean; onClick(): void }) {
   return (
     <button
@@ -92,12 +91,10 @@ function ColorRow({
 }
 
 /**
- * 色盤：鍵盤收下去之後佔著鍵盤原本的位置（最少 `height`，鍵盤又升起時＝輸入色碼，改成貼內容高）。
- * 上面一列文字色、下面一列背景色，每列最後是「自訂…」，點了在這裡換頁（沿用桌機的 `CustomColorPanel`、`applyColor`，不另寫顏色邏輯）。
- * 套用到編輯器目前的選取：編輯器失焦後 ProseMirror 的選取還在，所以不必先把焦點還給編輯器。
- *
- * 焦點：掛上時先把焦點移到這個面板根（`tabIndex=-1`）。這樣編輯器失焦時 `relatedTarget` 落在工具列內，
- * `NotePage` 仍判定在編輯中、工具列不會卸載；換頁時被點的按鈕隨頁面卸載，也會把焦點收回面板根。
+ * Takes the keyboard's place (min `height`; with the keyboard back up for hex input it shrinks to content height). Applies to the editor's selection,
+ * which ProseMirror keeps after blur, so focus needn't go back to the editor first.
+ * On mount focus moves to the panel root (`tabIndex=-1`): the editor blur's `relatedTarget` then lands inside the toolbar, so `NotePage` still counts as editing
+ * and doesn't unmount the toolbar; when a page swap unmounts the clicked button, focus returns to the root.
  */
 export function ColorPanel({
   editor,
@@ -110,7 +107,6 @@ export function ColorPanel({
   height: number;
   keyboardOpen: boolean;
   inset: number;
-  /** 色盤實際高度（換頁、轉向都會變）；文件尾端的空白與游標避讓靠它。 */
   onMeasure?(height: number): void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -124,7 +120,7 @@ export function ColorPanel({
     },
   });
 
-  // 轉向（視窗高度變了）時重算最小高度，不然橫拿時色盤比可用高度還高。
+  // Recompute the min height on rotation (viewport height changed), else in landscape the panel is taller than the space available.
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -135,7 +131,7 @@ export function ColorPanel({
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !onMeasure || typeof ResizeObserver === "undefined") return;
-    // 還沒有版面（量到 0）就不報，沿用記下的鍵盤高
+    // No layout yet (measured 0): don't report, keep the remembered keyboard height.
     const report = () => {
       if (root.offsetHeight > 0) onMeasure(root.offsetHeight);
     };

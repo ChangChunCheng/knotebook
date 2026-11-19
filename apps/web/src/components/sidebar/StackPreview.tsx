@@ -2,11 +2,7 @@ import { Folder } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 import { DROP_SCOPE_CLASS } from "./useSidebarDrag";
 
-/**
- * 疊資料夾預覽：原地取代 B 列，一個展開的資料夾列＋兩個子列（B、A 的淡色虛線佔位）。
- * 整塊是落點（`data-node-kind="preview"`，readDragTarget 先認它；內層不得有 data-node-kind），套落點範圍提示。
- * creating（放開後的「建立中」）：aria-busy、降低不透明度、不再是落點；不加任何字串。首包模組。
- */
+/** The whole block is the drop target (`data-node-kind="preview"`, recognised first by `readDragTarget`; inner elements must not carry `data-node-kind`). */
 export function StackPreview({
   name,
   anchorTitle,

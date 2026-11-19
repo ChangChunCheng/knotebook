@@ -17,21 +17,16 @@ import { SheetViewportVars } from "./sheet-viewport";
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
-/**
- * 手機 sheet 形（`DropdownMenu` 帶 `phoneSheet`、視窗比 640 窄）的選單內容裡為 true，其餘 false。
- * 選單項依它換成 48px 高、16px 字的列；子選單依它改成「換掉整個 sheet 內容、最上面一列返回」（見 `DropdownMenuMainLevel`）。
- */
+/** True inside phone sheet menu content (`phoneSheet` and viewport < 640); submenus then replace the whole sheet content (see `DropdownMenuMainLevel`). */
 const MenuSheetContext = createContext(false);
 
-/** 目前是否在手機 sheet 形的選單內容裡（只在 `DropdownMenuContent` 的子孫裡有意義）。 */
 export function useMenuSheet(): boolean {
   return useContext(MenuSheetContext);
 }
 
-/** sheet 裡一列：至少 48px 高、16px 字；粗指標原本的 `py-2.5` 一併換掉（高度改由 `min-h-12` 撐）。 */
+/** `pointer-coarse:py-2` overrides the coarse `py-2.5` of the base row classes; the height comes from `min-h-12`. */
 const SHEET_ROW = "min-h-12 py-2 pointer-coarse:py-2 text-base";
 
-/** 選單根層交給觸發鈕與內容的東西：是否用手機 sheet、目前開關（ref：事件處理當下讀最新值）與開關。 */
 interface MenuRootValue {
   phoneSheet: boolean;
   openRef: { readonly current: boolean };
@@ -40,18 +35,11 @@ interface MenuRootValue {
 const MenuRootContext = createContext<MenuRootValue | null>(null);
 
 type MenuRootProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root> & {
-  /**
-   * 手機（< 640，`useIsPhone()`）改成貼底的 sheet：滿寬、上圓角、底部留 safe area、由下往上升起（`kb-sheet`），背後有淡入淡出的背板，
-   * 鍵盤升起時抬到鍵盤上方；列高 48、字 16。640 以上照常是貼著觸發鈕的小選單。
-   * 仍是同一個 Radix 選單（role=menu／menuitem、方向鍵、typeahead、Esc、點外面關、焦點回觸發鈕都不變），只換位置、樣式與指標開啟的時機
-   * （見 `DropdownMenuTrigger`）。開著時跨過 640 整個選單關掉。
-   */
+  /** Phone (< 640): a bottom sheet (rises with `kb-sheet`, backdrop, lifted above the keyboard). Still the same Radix menu (roles, arrows, typeahead, Esc, outside close, focus return); only position, style and when the pointer opens it differ (see `DropdownMenuTrigger`). Crossing 640 while open closes the menu. */
   phoneSheet?: boolean;
 };
 
-/**
- * Radix `Root` 的包裝：受控與非受控都照 Radix 的用法；內部一律以受控方式交給 Radix，觸發鈕才能在 click 時自己打開（sheet 形）。
- */
+/** Internally always controlled so the trigger can open it on click (sheet form). */
 export function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, phoneSheet = false, ...props }: MenuRootProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen ?? false);
   const controlled = openProp !== undefined;
@@ -75,13 +63,9 @@ export function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, phoneS
 }
 
 /**
- * Radix 的觸發鈕在 pointerdown 就打開選單。手機 sheet 形不行：sheet 會在手指底下升起，同一次按壓的 pointerup／click（按住稍久也一樣）
- * 落在剛出現的選單項上，就直接選了它（例如移到垃圾桶）。所以 sheet 形（`phoneSheet` 且這一刻視窗比 640 窄，滑鼠、觸控、筆都一樣）
- * 擋下 pointerdown 的預設開啟，改在 click 才打開：click 由觸發鈕自己收掉，之後才有 sheet。
- * click 只在「這顆鈕自己收到了那一下的 pointerdown」時才開：在背板上按下關掉選單、放開時剛好落在觸發鈕上的 click 不會又把它打開。
- * 沒有 pointerdown 的 click（`detail` 0：輔助技術的啟用、程式觸發）照樣開。
- * 鍵盤（Enter／Space／ArrowDown）照 Radix 原本的 keydown 開啟；那時已經開著，隨後若有 click 也不會再切換。
- * 手機判斷在事件當下讀（`isPhone()`），不訂閱：側欄每一列都有一顆。
+ * Radix opens on pointerdown, but the phone sheet rises under the finger and the same press's pointerup/click would pick the item under it (e.g. move to trash). So in sheet form (`phoneSheet` and viewport narrower than 640, any pointer type) pointerdown's default open is blocked and the menu opens on click.
+ * The click opens only if this button received that pointerdown (a click landing here after pressing the backdrop to close doesn't reopen); clicks without pointerdown (`detail` 0: assistive tech, programmatic) open. Keyboard opens via Radix's own keydown; the click Enter/Space then fires finds it open and does nothing.
+ * The phone check is read at event time (`isPhone()`), not subscribed: every sidebar row has one.
  */
 export const DropdownMenuTrigger = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Trigger>,
@@ -89,8 +73,8 @@ export const DropdownMenuTrigger = forwardRef<
 >(({ onPointerDown, onPointerUp, onPointerCancel, onLostPointerCapture, onClick, ...props }, ref) => {
   const root = useContext(MenuRootContext);
   const sheetNow = () => root !== null && root.phoneSheet && isPhone();
-  // 這一下按在觸發鈕上的進度："down"＝按下、"up"＝在鈕上放開；捲動接手（pointercancel）或沒放開就失去捕捉（拖走）時清掉。
-  // 觸控放開時瀏覽器也會在 pointerup 之後發 lostpointercapture，所以只在還沒放開時才因它清掉。
+  // Progress of the press on this button: "down" = pressed, "up" = released on it; cleared on pointercancel (scroll took over) or lost capture before release.
+  // Touch also fires lostpointercapture after pointerup, so only clear on it before release.
   const pressRef = useRef<"down" | "up" | null>(null);
   return (
     <DropdownMenuPrimitive.Trigger
@@ -99,7 +83,7 @@ export const DropdownMenuTrigger = forwardRef<
       onPointerDown={(event) => {
         onPointerDown?.(event);
         if (event.defaultPrevented || props.disabled) return;
-        // 擋下後 Radix 自己的 pointerdown 處理就不跑（composeEventHandlers 看 defaultPrevented）。
+        // Once blocked, Radix's own pointerdown handling doesn't run (composeEventHandlers checks defaultPrevented).
         pressRef.current = null;
         if (event.button !== 0 || event.ctrlKey) return;
         if (!root?.openRef.current && sheetNow()) {
@@ -164,8 +148,8 @@ export const DropdownMenuSubContent = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, collisionPadding = 8, ...props }, ref) => (
-  // 必須 Portal：父層 `DropdownMenuContent` 是 `overflow-hidden`，內嵌渲染會把往右展開的子選單裁掉；
-  // Portal 後由 Radix 依視窗碰撞自動翻到左側（collisionPadding 留邊，窄視窗／手機抽屜旁不貼邊）。
+  // Must be a Portal: the parent `DropdownMenuContent` is `overflow-hidden`, so rendering inline would clip a submenu opening to the right;
+  // after the Portal Radix flips it to the left on collision (collisionPadding keeps it off the edge in narrow windows / phone drawers).
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.SubContent
       ref={ref}
@@ -181,39 +165,29 @@ export const DropdownMenuSubContent = forwardRef<
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 
 type MenuContentProps = ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
-  /** sheet 形（`DropdownMenu` 的 `phoneSheet`）最上面一行的小標題（例如筆記標題）；其他寬度不渲染。 */
   sheetTitle?: ReactNode;
 };
 
-/** 選單內容的表面（背景、邊框、圓角、陰影、內距）；其他浮動面板要同款外觀時共用。 */
 export const MENU_CONTENT_BASE = "z-50 min-w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
 
-/** 選單項一列的外觀（內距、字級、圓角、焦點高亮、無外框）。 */
 const MENU_ITEM_BASE =
   "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
 
-/**
- * sheet 形的內容。定位靠 `index.css` 的 `.kb-menu-sheet` 規則：Radix 把內容包在一層定位用的 wrapper 裡（行內 transform 貼到觸發鈕旁），
- * 那條規則把 wrapper 改成貼底滿寬、並在它的 `::before` 畫背板。`mb-(--kb-inset)` 把內容抬到鍵盤上方，高度上限跟著看得見的高度。
- * 放在呼叫端 className 之後：呼叫端給小選單的寬高限制（`max-w-…`、`min-w-[trigger 寬]`、`max-h-[可用高度]`）在 sheet 一律被蓋掉。
- */
+/** Positioning comes from `.kb-menu-sheet` in `index.css`: Radix wraps content in a positioning wrapper (inline transform next to the trigger); that rule makes it bottom/full-width and draws the backdrop in its `::before`. `mb-(--kb-inset)` lifts the content above the keyboard. Placed after the caller's className so the caller's small-menu size limits are overridden in the sheet. */
 const SHEET_CONTENT =
   "kb-menu-sheet kb-sheet w-full min-w-0 max-w-none rounded-t-xl rounded-b-none border-x-0 border-b-0 shadow-lg " +
   "px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] mb-(--kb-inset,0px) " +
   "max-h-[calc(var(--kb-visible-h,100dvh)*0.85)] overflow-y-auto";
 
-/**
- * Portal 裡的內容本體：Radix 只在選單開著（與退場動畫期間）掛載它，所以手機判斷的 matchMedia 訂閱只在選單開著時存在，
- * 側欄每一列的 ⋮ 平常不各掛一份。
- */
+/** Radix mounts this only while the menu is open (and exiting), so the phone matchMedia subscription exists only then: each sidebar row's ⋮ doesn't hold one. */
 const MenuContent = forwardRef<ElementRef<typeof DropdownMenuPrimitive.Content>, MenuContentProps>(
   ({ className, sideOffset = 4, sheetTitle, children, ...props }, ref) => {
     const root = useContext(MenuRootContext);
     const phoneSheet = root?.phoneSheet ?? false;
     const phone = useIsPhone();
     const sheet = phoneSheet && phone;
-    // 開著時跨過 640（轉向、拖視窗）：sheet 與小選單的版面、焦點互換不了，整個選單關掉（下次照新寬度開）。
+    // Crossing 640 while open (rotation, resizing): sheet and small-menu layout and focus can't be swapped, so the whole menu closes (it reopens at the new width).
     const prevPhone = useRef(phone);
     useEffect(() => {
       if (prevPhone.current === phone) return;
@@ -263,11 +237,7 @@ export const DropdownMenuContent = forwardRef<ElementRef<typeof DropdownMenuPrim
 ));
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
-/**
- * 主選單那一層的項目。子選單在手機 sheet 裡是「換掉整個內容」：子選單那一組展開（`drilled`）時這裡不渲染，
- * 只剩子選單自己畫的返回列與那一層（例如 `share/GroupTransfer.tsx` 的移動到…／複製到…）。不是 sheet 時一律照常渲染。
- * 用條件渲染而不是藏起來：display:none 的 Radix 項目仍在選單集合裡，typeahead 會停在看不見的項目。
- */
+/** In a phone sheet submenus replace the whole content: while a submenu group is expanded (`drilled`) this isn't rendered. Conditional render, not hidden: display:none Radix items stay in the menu collection and typeahead would stop on invisible items. */
 export function DropdownMenuMainLevel({ drilled, children }: { drilled: boolean; children: ReactNode }) {
   const sheet = useMenuSheet();
   return sheet && drilled ? null : <>{children}</>;
@@ -322,19 +292,11 @@ export const DropdownMenuCheckboxItem = forwardRef<
 });
 DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName;
 
-/**
- * Radix 原生 RadioItem 的最小包裝：只留 `role="menuitemradio"` / `aria-checked`
- * 語意所需的行為 class（cursor/select/outline），**刻意不套用**
- * `DropdownMenuItem`／`DropdownMenuCheckboxItem` 那套 padding/flex/indicator
- * 預設樣式——主題色選擇器把它渲染成 16px 純色圓點，外觀完全交給呼叫端
- * `className`（見 `UserMenu.tsx`）。`aria-checked` 由 Radix 依
- * `DropdownMenuRadioGroup` 的 `value` 與本項的 `value` 是否相等自動算出，不需要
- * 手動傳。
- */
+/** Minimal wrapper over Radix RadioItem: keeps only the behaviour classes for `role="menuitemradio"`/`aria-checked`, deliberately not DropdownMenuItem's padding/flex/indicator defaults: the theme colour picker renders it as a 16px dot, styled entirely by the caller (`UserMenu.tsx`). `aria-checked` comes from the RadioGroup `value`. */
 export const DropdownMenuRadioItem = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.RadioItem>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.RadioItem> & {
-    /** 呼叫端把它畫成一般的一列（例如資料夾 ⋮ 的排序）：手機 sheet 裡跟其他項一樣換成 48px 高、16px 字。色點這類不是列的不要傳。 */
+    /** Pass for ordinary rows (e.g. folder sort): in the phone sheet they become 48px/16px rows. Not for non-row things like colour dots. */
     sheetRow?: boolean;
   }
 >(({ className, sheetRow = false, ...props }, ref) => {
@@ -365,7 +327,7 @@ export const DropdownMenuSeparator = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Separator>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
 >(({ className, ...props }, ref) => {
-  // sheet 的左右內距是 8px（小選單 4px）：分隔線一樣伸到兩側邊緣。
+  // The sheet's side padding is 8px (small menu 4px): the separator still reaches both edges.
   const sheet = useMenuSheet();
   return <DropdownMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border", sheet && "-mx-2", className)} {...props} />;
 });

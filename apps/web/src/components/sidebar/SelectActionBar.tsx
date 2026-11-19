@@ -62,50 +62,21 @@ import { useFolderSortOf } from "./folder-sort";
 import { buildTabNodes, noteSpaceKey } from "./tree";
 
 /**
- * 一般 tab 選取模式的動作列（#181）。只准經 `SelectLazy` 引用。
- * - 動作表（`SELECT_ACTIONS`）：我的筆記、群組 tab、與我共享「移動到／複製到／刪除」，最近「複製到／刪除」，最愛「移出最愛／複製到／刪除」；與我共享的刪除鈕＝「移除選取的資料夾」，
- *   只在選取（去重後）非空且全是資料夾時才渲染。
- * - 選取（資料夾與筆記同列）：`selectedTargets` → `dedupeByAncestor`（祖先也被選的不送、不算略過）→ 依動作 `partitionTargets` 預先排除
- *   （排除的不送、算進結果句的略過）。一項都做不了就 disabled；不出「0 項」toast。
- * - 移動到：目的地框一次一層（`buildDestinationLevel`；path 本元件持有、開框重設；換層一律從 `livePath` 接，不看 path.length）。
- *   群組 tab 選取分屬多個群組、或第一層為空（`isEmptyDestination`）→ disabled。選定後：同空間（`isSameSpace`）不確認、`placeTargetsInOrder`、
- *   結果 toast 帶「復原」（`undoPlacements`，依序送回原處；停下報已移回幾項）、目標資料夾展開；跨空間（只會是我的筆記 → 群組）先
- *   `MoveConfirmDialog`（完整路徑）→ `moveNotesInOrder`，沒有復原。
- * - 複製到：選了資料夾 → disabled；選定後一律先 `CopyConfirmDialog` → `copyNotesInOrder`。
- * - 移出最愛（只有最愛 tab，排第一）：一律先 `UnfavoriteConfirmDialog`（開框那一刻快照篇數）→ `unfavoriteInOrder`，每篇成功就從最愛清單濾掉；沒有復原。
- * - 刪除：含資料夾 → 先開彙總確認框（開框那一刻快照篇數）→ `deleteTargetsInOrder`（資料夾先、筆記後）；只有筆記 → 不確認。
- *   與我共享 tab 是「移除」：一般 toast、沒有復原。
- * - 執行：依序呼叫單篇端點（`lib/select-batch.ts`）；403／404 `not_found` 略過、其餘停下。停下後留在選取、只留下還沒處理的項目；成功則離開選取。結果一則 toast；停在 404 `folder_not_found` 另失效資料夾快取。
- * - 快照：目的地選定那一刻記下要送的項與篇數，確認框與執行都用它（送出中清單重抓，篇數不會倒數）。
- * - 焦點交接：選了目的地，目的地框不還焦點、交給確認框自己的自動聚焦（同空間沒有確認框，由收尾處理）；取消才還給開框鈕。
- *   確認框送出後開到批次結束（進行中忽略所有關閉要求）；收尾的焦點只在焦點仍在本實例、確認框內或 body 時才搬（同 `TrashFooter.finish`）。
- * - 進行中：執行狀態在 provider 層的 `select-run` store，所有動作列（含重開抽屜、Done→Select 後新掛的）都顯示進度、三顆鈕 disabled。
- *   選取結果只在 session 沒換時套用（抽屜關掉、動作列卸載也照套；使用者中途結束又重開就不覆蓋新的選取）。
- * - 開著的那篇：直接選的排到筆記段最後；在某個要刪的**個人／群組**資料夾子樹裡 → 那個資料夾排到資料夾段最後。送它前設
- *   NotePage 的 `leavingRef`；成功導回首頁、「復原」導回它；失敗非終態撥回、終態導回首頁（不補單篇路徑的 `note.deleted` toast：批次只出一則）。
- *   與我共享的移除不設、不離場（筆記只是回最上層）。
- * - 整批都能自己還原才帶「復原」（`showTrashedToast`；資料夾帶走的篇併進 `undoIds`），否則帶說明句。
- * - 兩種形：`bar`＝窄螢幕底部列（`SidebarFooter` 掛；進度句在列上；「移動到」與「複製到」同為 outline 文字鈕）；
- *   `toolbar`＝寬螢幕標題列裡的 24px 圖示鈕（`SelectHeader` 掛；進度由它顯示在數量位）。兩形都包在 `data-select-action-bar` 容器裡，
- *   目的地框、確認框、`runBatch`、各鈕出現與停用的判斷完全共用。
- * - 反灰原因：跨群組的「移動到」、選了資料夾的「複製到」不設 `disabled`（`disabled:pointer-events-none` 會讓
- *   hover 提示出不來），改 `aria-disabled`＋`title`＝原因＋`aria-describedby`，點了不執行；`bar` 形另出同字 toast（觸控看不到 hover）。
- *   優先序：執行中（`disabled`）＞反灰原因（`aria-disabled`）＞沒有可處理的項目／第一層為空（`disabled`）。
+ * An item whose ancestor is also selected is neither sent nor counted as skipped; nothing actionable → disabled, no "0 items" toast.
+ * Snapshot: the items and count to send are captured when the destination is chosen (or Delete pressed); the confirm dialog and execution use it, so a list refetch during submit doesn't count down.
+ * Focus: after a destination is picked the picker doesn't return focus (the confirm dialog's own autofocus takes it; same-space has no dialog, so finish handles it); cancel returns it to the opener.
+ * Reason-disabled buttons (cross-group Move, Copy with a folder selected) use `aria-disabled` + `title` + `aria-describedby`, not `disabled`: `disabled:pointer-events-none` would kill the hover hint; `bar` also toasts the reason (touch has no hover).
+ * Priority: running (`disabled`) > reason (`aria-disabled`) > nothing actionable / empty first level (`disabled`).
  */
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type PlaceTarget = Extract<DestTarget, { kind: "place" }>;
 type Stopped = BatchOutcome<unknown>["stopped"];
 
-/**
- * 窄形底部列的動作鈕：只放圖示（可及名稱由 `aria-label` 給，`title` 給滑鼠停留的人）。每顆 `flex-1` 平分刪除鈕以外的列寬，
- * `min-w-0` 讓它在側欄最窄 200px（卡片內約 182px）也能和 36px 的刪除鈕排進同一列；高度同一般按鈕（h-8），寬度平分列寬。
- * `aria-disabled:` 開頭的是反灰原因的樣子（看起來停用、hover／按下不變色）：各顆恆帶、不依條件加（className 相同，e2e 41-12 依此斷言）。
- */
+/** Icon-only; `min-w-0` lets it share a row with the 36px delete button on the narrowest sidebar (200px; ~182px inside the card). The `aria-disabled:` classes are always present, not conditional (an e2e asserts identical className). */
 const ACTION_BUTTON =
   "min-w-0 flex-1 px-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:border-input aria-disabled:hover:bg-transparent aria-disabled:hover:text-inherit aria-disabled:active:[background:transparent]";
 const ACTION_ICON = "h-4 w-4 shrink-0";
-/** 寬螢幕標題列的「移動到」「複製到」圖示鈕（同標題列其他 24px 鈕）；`aria-disabled:` 同上，兩顆恆帶。 */
 const TOOLBAR_ICON_BUTTON =
   "h-6 w-6 shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:text-inherit";
 const TOOLBAR_DELETE_BUTTON = "h-6 w-6 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive";
@@ -116,7 +87,7 @@ const NO_SKIPS: Eligibility = { eligible: [], notesSkipped: 0, foldersSkipped: 0
 const isFolder = (target: SelectionTarget): boolean => target.kind === "folder";
 const notesOf = (targets: readonly SelectionTarget[]): NoteDto[] => targets.flatMap((target) => (target.kind === "note" ? [target.note] : []));
 
-/** 預先排除＋server 略過 → 結果句的略過數；資料夾依錯誤碼分：`folder_delete_blocked`→擋下、`folder_not_found`→已不在、其他→略過。 */
+/** Folders by error code: `folder_delete_blocked` → blocked, `folder_not_found` → gone, anything else → skipped. */
 function skippedCounts(pre: Eligibility, skippedDetail: BatchOutcome<unknown>["skippedDetail"]) {
   const out = { notesSkipped: pre.notesSkipped, foldersSkipped: pre.foldersSkipped, foldersBlocked: pre.foldersBlocked, foldersGone: 0 };
   for (const { node, err } of skippedDetail) {
@@ -128,16 +99,12 @@ function skippedCounts(pre: Eligibility, skippedDetail: BatchOutcome<unknown>["s
   return out;
 }
 
-/** 停下的 toast：標題＝錯誤句、描述＝已完成幾項（`items`：同空間放置、或刪除含資料夾時「項」；否則「篇」）。 */
 function stoppedCopy(t: Translate, stopped: Stopped, done: number, items: boolean): { title: string; description: string } | null {
   if (stopped === null) return null;
   return { title: folderErrorMessage(t, stopped.cause), description: t(items ? "select.stoppedAfterItems" : "select.stoppedAfter", { count: done }) };
 }
 
-/**
- * 同空間批次的「復原」：依序送回原處；全部成功不另出 toast（清單即時歸位），停下 → 錯誤 toast＋已移回幾項。
- * toast 的 handler 只用參數捕捉的值：按「復原」時動作列常已卸載（同 `lib/trash-undo.ts`）。
- */
+/** The toast handler uses only captured values: at Undo the action bar is usually unmounted (as `lib/trash-undo.ts`). */
 async function undoBatchPlacement(done: readonly PlacedItem[], queryClient: QueryClient, t: Translate): Promise<void> {
   const outcome = await undoPlacements(done, { queryClient });
   if (outcome.stopped === null) return;
@@ -148,7 +115,6 @@ async function undoBatchPlacement(done: readonly PlacedItem[], queryClient: Quer
   });
 }
 
-/** 確認框的快照（目的地選定、或按下刪除那一刻）。 */
 type Confirm =
   | { kind: "move"; target: PlaceTarget; groupId: string; pathLabel: string; notes: NoteDto[]; pre: Eligibility }
   | { kind: "copy"; target: DestTarget; pathLabel: string; notes: NoteDto[]; copySource: DestSpace | null }
@@ -157,14 +123,10 @@ type Confirm =
 
 interface RunResult {
   stopped: Stopped;
-  /** 選取結果套用之後才跑（導回首頁）。 */
   afterSelection?: () => void;
 }
 
-/**
- * @param layout `bar`＝窄形底部列（預設）；`toolbar`＝寬形標題列裡的圖示鈕（不渲染進度句，由 `SelectHeader` 顯示）。
- * @param safeBottom `bar` 形是手機清單滿版的底部列時為 true：外框與搜尋層的搜尋列（`PhoneListBar`）同一組 class（`phone-bar.ts`），兩列同高、都含底部 `safe-area-inset-bottom`。側欄在外框裡（外框已給底邊）時不給，免得疊兩次。
- */
+/** `safeBottom`: the phone full-screen `bar` shares classes with `PhoneListBar` (`phone-bar.ts`) so both are the same height and include the bottom safe area; not given when the sidebar sits in a frame that already provides it (it would double). */
 export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout?: "bar" | "toolbar"; safeBottom?: boolean }) {
   const { t } = useTranslation();
   const { tab: currentTab, selection } = useSidebarTabState();
@@ -176,29 +138,25 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
   const favoritesQuery = useFavorites({ enabled: currentTab === "favorites" });
   const foldersQuery = useFolders();
   const sortOf = useFolderSortOf();
-  // 與畫面上的樹同序（批次依樹序送出）。
   const folderIndex = useMemo(() => indexFolders(foldersQuery.data ?? []), [foldersQuery.data]);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const controls = useNotePageControls();
-  // 批次的 hook 在卸載、換頁後才可能跑到：一律讀最新那份（`?.`，hook 不得丟例外）。
+  // Batch hooks may run after unmount or navigation: always read the latest (`?.`; hooks must not throw).
   const controlsRef = useRef(controls);
   controlsRef.current = controls;
   const run = useSelectRun(actions);
-  // SidebarFooter 只在一般 tab 掛本元件。
+  // SidebarFooter mounts this component only on non-trash tabs.
   const tab = currentTab as SelectableTab;
   const acrossGroupsId = useId();
   const cantCopyId = useId();
 
   const [pickerMode, setPickerMode] = useState<DestMode | null>(null);
-  /** 目的地框目前這一層的路徑（開框重設）。 */
   const [path, setPath] = useState<readonly DestPathStep[]>([]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const openerRef = useRef<HTMLButtonElement | null>(null);
-  /** 目的地框關閉時：選了（交給確認框或收尾）還是取消（還給開框鈕）。 */
   const pickedRef = useRef(false);
-  /** 確認框關閉時：送出過（焦點由收尾處理）還是取消。 */
   const submittedRef = useRef(false);
   const confirmContentRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
@@ -231,19 +189,17 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
   const sourceFor = (mode: DestMode) =>
     batchDestSource({ tab, mode, eligible: (mode === "move" ? moveElig : copyElig).eligible, groups: groups ?? [], groupIds });
   const moveSource = sourceFor("move");
-  /** 第一層要的群組清單到了沒（與我共享的「移動到」只有共享私人資料夾，不等群組）。 */
   const levelReady = (mode: DestMode) => groups !== undefined || (mode === "move" && tab === "shared");
   const busy = run !== null;
   const available = SELECT_ACTIONS[tab];
 
-  /** 焦點仍在本實例、確認框內或 body（被按的鈕已 disabled／確認框已卸載）才搬；等待期間使用者已移到別處就不搶。 */
+  /** Move focus only if it is still in this instance, the dialog or body (the pressed button is disabled / the dialog unmounted); if the user moved elsewhere while waiting, don't grab it. */
   function mayReclaimFocus(shell: Element | null, confirmEl: Element | null): boolean {
     if (!mountedRef.current) return false;
     const active = document.activeElement;
     return active === null || active === document.body || shell?.contains(active) === true || confirmEl?.contains(active) === true;
   }
 
-  /** 一輪批次的共用收尾：鎖、選取結果（只看 session）、確認框、焦點。`execute` 跑批次並出結果 toast。 */
   async function runBatch(input: {
     total: number;
     opener: HTMLElement | null;
@@ -258,11 +214,10 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     let focusTo: "select" | "opener" | null = null;
     try {
       const { stopped, afterSelection } = await execute((processed) => updateSelectRun(actions, processed));
-      // 明選的資料夾（或要搬的資料夾）已不在：樹要重抓。
       if (stopped !== null && isFolderNotFound(stopped.cause)) invalidateFolderRelated(queryClient);
-      // 守衛在選取結果套用前判斷（成功會結束選取、本元件隨之卸載）；搬焦點在收尾之後（確認框已關、開框鈕已恢復可用）。
+      // The guard is evaluated before the selection result is applied (success ends selection and unmounts this); focus moves after finish (dialog closed, opener enabled again).
       if (mayReclaimFocus(shell, confirmContentRef.current)) focusTo = stopped ? "opener" : "select";
-      // 選取結果只看 session、不看掛載（抽屜關掉照套；中途結束又重開就不覆蓋新的那輪）。
+      // The selection result depends on the session, not on mounting (applies with the drawer closed; ending and restarting mid-run doesn't overwrite the new round).
       if (getSelectionSession() === session) {
         flushSync(() => updateSelection(stopped ? { type: "setAll", keys: stopped.remaining.map(selectionKey) } : { type: "end" }));
       }
@@ -274,15 +229,14 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
       });
     }
     if (focusTo === "select") {
-      // 收尾時清單已空（最愛逐篇濾掉快取）：「Select」鈕已停用，focus 會落空，改聚焦面板。
-      // 其他 tab 要等重抓後清單才空，那時瀏覽器已把焦點從停用的「Select」鈕移到 body，由 NoteList 監聽 focusout 再交給面板。
+      // The list is already empty at finish (favorites filter the cache note by note): the "Select" button is disabled, so focus would be lost; focus the panel.
+      // Other tabs empty only after a refetch, by which time the browser has moved focus from the disabled "Select" to body; NoteList listens for focusout and hands it to the panel.
       const selectButton = shell?.querySelector<HTMLButtonElement>(SIDEBAR_SELECT_BUTTON) ?? null;
       if (selectButton !== null && !selectButton.disabled) selectButton.focus();
       else shell?.querySelector<HTMLElement>('[role="tabpanel"]')?.focus();
     } else if (focusTo === "opener" && opener?.isConnected) opener.focus();
   }
 
-  /** 同空間（進資料夾、回根目錄）：不確認；結果 toast 帶「復原」；正向移動成功後展開目標資料夾（比照 ⋮）。 */
   function runPlace(target: PlaceTarget, items: SelectionTarget[], pre: Eligibility, index: FolderIndex, opener: HTMLElement | null): void {
     const folderId = target.folder?.id ?? null;
     void runBatch({
@@ -308,7 +262,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
           },
           t,
         );
-        // 同空間的結果句一律以「項」計（movedItems）：停下的描述也用「項」，只有筆記也一樣。
+        // Same-space results always count "items" (movedItems); the stop description does too, also when only notes were moved.
         const halted = stoppedCopy(t, stopped, done.length, true);
         toast({
           title: halted?.title ?? title,
@@ -321,7 +275,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     });
   }
 
-  /** 我的筆記 → 群組（根層或資料夾）：確認後逐篇 `POST /move`；沒有復原（現行）。 */
   function runMove(snapshot: Extract<Confirm, { kind: "move" }>): void {
     const { target, groupId, pathLabel, notes: items, pre } = snapshot;
     void runBatch({
@@ -385,7 +338,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     });
   }
 
-  /** 最愛 tab：逐篇移出最愛（確認後）。每篇成功就從最愛清單濾掉，結束重抓一次；沒有復原。 */
   function runUnfavorite(snapshot: Extract<Confirm, { kind: "unfavorite" }>): void {
     const { noteIds } = snapshot;
     void runBatch({
@@ -408,10 +360,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     });
   }
 
-  /**
-   * 刪除（資料夾先、筆記後，`deleteTargetsInOrder`）。開著的那篇：直接選的、或所在的個人／群組資料夾（與我共享的移除不算）排到各段最後，
-   * 送它前設 `leavingRef`。
-   */
   function runDelete(items: readonly SelectionTarget[], pre: Eligibility, opener: HTMLElement | null, fromConfirm: boolean): void {
     const openId = controlsRef.current?.noteId ?? null;
     const leavingFolder =
@@ -425,7 +373,9 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
           ) ?? null);
     const isLeaving = (target: SelectionTarget): boolean =>
       target.kind === "folder" ? target === leavingFolder : openId !== null && target.note.id === openId;
-    // 開著的那篇排最後：送它前才設 leavingRef，前面的項目失敗也不會先把頁面閘住（deleteTargetsInOrder 再分成資料夾段、筆記段，各自保序）。
+    // Open note goes last: leavingRef is set only just before sending it, so an earlier failure doesn't gate the page (deleteTargetsInOrder then splits folder and note segments, each order-preserving).
+    // A directly selected note, or a note inside a personal/group folder being deleted (that folder then goes last among folders), counts; removing a shared folder sets nothing (its notes just go back to top level).
+    // Success returns home and Undo returns to the note; no per-note `note.deleted` toast, a batch shows one.
     const ordered = [...items.filter((target) => !isLeaving(target)), ...items.filter(isLeaving)];
     const hasFolders = items.some(isFolder);
     void runBatch({
@@ -439,7 +389,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
           onProgress,
           beforeEach: (target) => {
             const page = controlsRef.current;
-            // 中途在同一個 NotePage 換到別篇：leavingRef 已屬於那一篇，不能設。
+            // Switched to another note within the same NotePage mid-run: leavingRef now belongs to that one, don't set it.
             if (isLeaving(target) && page?.noteId === openId) page.leavingRef.current = true;
           },
           afterFailure: (target) => {
@@ -451,7 +401,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
         });
         const { done, stopped } = outcome;
         const doneNotes = done.flatMap((item) => (item.target.kind === "note" ? [item.target.note] : []));
-        // 資料夾帶走的篇（筆記項的 trashedNoteIds 只是自己，已算在 notesDone）。
+        // A note item's trashedNoteIds is just itself, already counted in notesDone; only folder items bring more notes.
         const undoIds = done.flatMap((item) => (item.target.kind === "folder" ? item.trashedNoteIds : []));
         const reopened = done.some((item) => isLeaving(item.target));
         if (reopened) leaveHome = true;
@@ -485,12 +435,11 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
             variant: stopped ? "destructive" : "default",
           });
         } else {
-          // 與我共享的移除（筆記回最上層、不進垃圾桶）、只刪了空資料夾、或一項都沒做：沒有可復原的。
           toast({ title: halted?.title ?? title, description: halted?.description, variant: stopped || done.length === 0 ? "destructive" : "default" });
         }
         return {
           stopped,
-          // 中途已換到別篇就不導回首頁（controlsRef 經頁面登記的橋接更新，換篇後 noteId 對不上）。
+          // Don't navigate home if the user moved to another note mid-run (controlsRef is updated via the page's bridge; the noteId no longer matches).
           afterSelection: () => {
             if (leaveHome && controlsRef.current?.noteId === openId) void navigate("/", { replace: true });
           },
@@ -506,7 +455,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     setPickerMode(mode);
   }
 
-  /** 移出最愛：先確認；篇數與要送的篇在開框那一刻快照。 */
   function startUnfavorite(event: MouseEvent<HTMLButtonElement>): void {
     openerRef.current = event.currentTarget;
     submittedRef.current = false;
@@ -523,7 +471,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
       runDelete(eligible, deleteElig, opener, false);
       return;
     }
-    // 彙總確認框的數字在開框那一刻快照：各資料夾子樹活筆記的聯集、另選的筆記數。
     const trashed = new Set(folders.flatMap((folder) => liveNotesUnder(folderIndex, folder.id, notes, spaceOf).map((note) => note.id)));
     submittedRef.current = false;
     setConfirm({
@@ -538,13 +485,12 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     setConfirmOpen(true);
   }
 
-  /** 確認框沒有 DialogTrigger（Radix 會把焦點丟到 body）：取消時還給開框鈕；送出過的由收尾處理。 */
+  /** The confirm dialog has no DialogTrigger (Radix would drop focus to body): on cancel focus returns to the opener; after a submit finish handles it. */
   function onConfirmCloseAutoFocus(event: Event): void {
     event.preventDefault();
     if (!submittedRef.current && openerRef.current?.isConnected) openerRef.current.focus();
   }
 
-  // ── 目的地框 ──
   const pickerSource = pickerMode === null ? null : pickerMode === "move" ? moveSource : sourceFor("copy");
   const source = pickerSource === null || pickerSource === "mixedGroups" ? null : pickerSource;
   const level = source !== null && pickerMode !== null && levelReady(pickerMode) ? buildDestinationLevel({ source, path, index: folderIndex, t }) : null;
@@ -584,8 +530,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     setConfirmOpen(true);
   }
 
-  // ── 鈕 ──
-  // 反灰原因（檔頭）：有原因且不在執行中 → aria-disabled（不設 disabled）；執行中一律真的 disabled（這條優先）。
   const moveReason = moveSource === "mixedGroups" ? t("select.acrossGroups") : null;
   const copyReason = targets.some(isFolder) ? t("select.foldersCantCopy") : null;
   const moveSoftDisabled = !busy && moveReason !== null;
@@ -596,19 +540,16 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
       (moveElig.eligible.length === 0 ||
         (moveSource !== "mixedGroups" && levelReady("move") && isEmptyDestination(moveSource, folderIndex, t))));
   const copyDisabled = busy || (!copySoftDisabled && copyElig.eligible.length === 0);
-  // 與我共享：只有「移除選取的資料夾」，選取（去重後）非空且全是資料夾才渲染。
   const showDelete = available.includes("delete") && (tab !== "shared" || (deduped.length > 0 && deduped.every(isFolder)));
   const deleteLabel =
     tab === "shared"
       ? t("select.removeSelectedFolders", { count: targets.filter(isFolder).length })
       : t("select.deleteSelected", { count: targets.length });
 
-  /** 點了反灰原因的鈕：不執行；寬形靠 hover 提示（title），窄形（多半是觸控）出同字 toast。 */
   function showReason(reason: string | null): void {
     if (reason !== null && layout === "bar") toast({ title: reason });
   }
 
-  // 兩形共用的屬性（可及名稱、class、圖示由各形自己給）。
   const moveProps = {
     title: moveReason ?? t("select.moveTo"),
     "aria-describedby": moveReason !== null ? acrossGroupsId : undefined,
@@ -634,7 +575,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
     disabled: busy || deleteElig.eligible.length === 0,
     onClick: startDelete,
   };
-  // aria-describedby 讓螢幕閱讀器唸原因（title 不一定唸）：原因另放一份 sr-only 同字。
+  // aria-describedby so screen readers read the reason (title isn't always read): a second sr-only copy of the same text.
   const reasonTexts = (
     <>
       {moveReason !== null && available.includes("move") && (
@@ -652,7 +593,6 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
 
   const buttons =
     layout === "toolbar" ? (
-      // 寬形：標題列裡一列圖示鈕（進度在 SelectHeader 的數量位）。
       <div className="flex shrink-0 items-center gap-0.5" data-select-action-bar="" aria-busy={busy}>
         {available.includes("unfavorite") && (
           <Button type="button" variant="ghost" size="icon" className={TOOLBAR_ICON_BUTTON} aria-label={t("select.unfavorite")} {...unfavoriteProps}>
@@ -693,7 +633,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
               <StarOff aria-hidden="true" className={ACTION_ICON} />
             </Button>
           )}
-          {/* 「移動到」與「複製到」同為 outline（選取模式沒有唯一主角，不用主色）。 */}
+          {/* outline: select mode has no single primary action */}
           {available.includes("move") && (
             <Button type="button" variant="outline" className={ACTION_BUTTON} aria-label={t("select.moveTo")} {...moveProps}>
               <FolderInput aria-hidden="true" className={ACTION_ICON} />
@@ -705,7 +645,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
             </Button>
           )}
           {showDelete && (
-            // 不用 outline：它的 hover 填 brand-deep，紅字壓深色底不對（同 TrashFooter 的永久刪除）。
+            // Not outline: its hover fills brand-deep, which clashes with red text (as TrashFooter's permanent delete).
             <Button
               type="button"
               variant="ghost"
@@ -724,7 +664,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
   return (
     <>
       {buttons}
-      {/* 對話框放在動作列的 div 外（只是版面；Esc 由 SelectHeader 的 document 監聽處理，對話框開著時它不動作）。 */}
+      {/* Outside the bar's div (layout only); Esc is handled by SelectHeader's document listener, which does nothing while a dialog is open */}
       <DestinationPickerDialog
         mode={pickerMode ?? "copy"}
         count={pickerMode === "move" ? moveElig.eligible.length : copyElig.eligible.length}
@@ -733,7 +673,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
         levelKey={JSON.stringify(path)}
         error={pickerMode !== null && !levelReady(pickerMode) && groupsQuery.isError ? groupsQuery.error : null}
         open={pickerMode !== null}
-        // 換層一律從 livePath 接（path 裡有已失效的步時 buildDestinationLevel 會靜默截斷，不能看 path.length）。
+        // Every level continues from livePath: when a path step went stale buildDestinationLevel silently truncates, so path.length can't be used.
         onDrill={(step) => {
           if (source !== null) setPath([...livePath(source, path, folderIndex, t), step]);
         }}

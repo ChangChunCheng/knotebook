@@ -4,13 +4,11 @@ import { fetchFolders, FOLDERS_QUERY_KEY } from "@/api/folders";
 import { setCollapsed } from "./collapse";
 
 /**
- * 資料夾索引：`GET /api/folders` 一次回全部、不是樹序，client 依 `parentId` 組。
- * 首包模組：不 import 字串包、不 import `tree.ts`（排筆記與判筆記空間放 `tree.ts`，模組相依單向）。
- * 兜底：`parentId` 不在清單、或父子空間不同 → 當根層資料夾；成環（server 已防，壞資料才會有）→ 從環的入口斷開、那個資料夾當根層，
- * 環上的資料夾與筆記照樣看得到。樹、路徑行、展開鏈都查同一張 `parentOf`，三者一致；走訪另以 visited 防禦。
+ * First-bundle module: no string-bundle import and no `tree.ts` import (module dependencies stay one-way). `GET /api/folders` returns everything unordered; the client assembles by `parentId`.
+ * Fallback: a `parentId` not in the list, or in another space → root folder; a cycle (the server prevents it, bad data only) is cut at its entry point so its folders and notes stay visible.
+ * Tree, path rows and expand chain all use the same `parentOf`; traversals also guard with `visited`.
  */
 
-/** 資料夾名稱排序與「名稱」排序共用。 */
 export const FOLDER_COLLATOR = new Intl.Collator("zh-Hant", { numeric: true, sensitivity: "base" });
 
 export type FolderSpaceKey = "personal" | "shared" | `group:${string}`;
@@ -21,22 +19,19 @@ export function spaceKeyOf(space: FolderSpaceDto): FolderSpaceKey {
 
 export interface FolderIndex {
   readonly byId: ReadonlyMap<string, FolderDto>;
-  /** 某空間某父層（null＝根層）的子資料夾，依 FOLDER_COLLATOR 排好（同名依輸入序）。 */
   children(space: FolderSpaceKey, parentId: string | null): readonly FolderDto[];
-  /** 兜底與斷環之後的父層（null＝根層；id 不在索引也回 null）。 */
+  /** Parent after fallback and cycle cutting (null = root level; an id missing from the index also returns null). */
   parentOf(folderId: string): string | null;
 }
 
 const NO_FOLDERS: readonly FolderDto[] = [];
 
-/** 父層在索引裡且同空間才算數；其餘當根層（null）。 */
 function effectiveParentId(byId: ReadonlyMap<string, FolderDto>, folder: FolderDto): string | null {
   if (folder.parentId === null) return null;
   const parent = byId.get(folder.parentId);
   return parent !== undefined && spaceKeyOf(parent.space) === spaceKeyOf(folder.space) ? parent.id : null;
 }
 
-/** parentId 不在清單、或父子空間不同 → 當根層（兜底）；成環 → 在第一個重複的資料夾斷開、它當根層。 */
 export function indexFolders(folders: readonly FolderDto[]): FolderIndex {
   const byId = new Map<string, FolderDto>(folders.map((folder) => [folder.id, folder]));
   const parents = new Map<string, string | null>();
@@ -75,7 +70,6 @@ export function indexFolders(folders: readonly FolderDto[]): FolderIndex {
 
 export const EMPTY_FOLDER_INDEX: FolderIndex = indexFolders([]);
 
-/** 根 → 葉的名稱；id 不在 → null；遇環停在第一次重複前（防禦）。 */
 export function folderPath(index: FolderIndex, folderId: string): string[] | null {
   if (!index.byId.has(folderId)) return null;
   const names: string[] = [];
@@ -91,7 +85,6 @@ export function folderPath(index: FolderIndex, folderId: string): string[] | nul
   return names.reverse();
 }
 
-/** 含自己；遇環不重複。 */
 export function subtreeFolderIds(index: FolderIndex, folderId: string): string[] {
   const out: string[] = [];
   const visited = new Set<string>();
@@ -107,10 +100,7 @@ export function subtreeFolderIds(index: FolderIndex, folderId: string): string[]
   return out;
 }
 
-/**
- * 快取裡 folderId 落在子樹（含自己）、而且筆記空間與資料夾空間相符的筆記（呼叫者視角；空間不符的與樹一樣算根層、不算進來）。
- * 刪除確認篇數、⋮ 擋下判斷、「開著的那篇在不在裡面」用。`spaceOf` 由呼叫端給（`tree.ts` 的 `noteSpaceKey`；本模組不 import `tree.ts`）。
- */
+/** Notes in a different space than the folder count as root (as in the tree), so they're excluded. `spaceOf` comes from the caller (`noteSpaceKey` of `tree.ts`; this module doesn't import it). */
 export function liveNotesUnder(
   index: FolderIndex,
   folderId: string,
@@ -125,7 +115,6 @@ export function liveNotesUnder(
   });
 }
 
-/** 自己與祖先寫成展開（setCollapsed(`folder:<id>`, false)）。id 不在索引 → 只展開自己。 */
 export function expandFolderChain(index: FolderIndex, folderId: string): void {
   const visited = new Set<string>();
   let id: string | null = folderId;
@@ -137,11 +126,9 @@ export function expandFolderChain(index: FolderIndex, folderId: string): void {
 }
 
 /**
- * 還原後展開：還原照原路徑重建資料夾，被還原那幾篇所在的資料夾與祖先寫成展開。
- * - 沒有任何非 null 的 `folderId` → 不發請求。
- * - 一律 `fetchQuery`（staleTime 0）拿新清單：垃圾桶 tab 時 `["folders"]` 沒有 observer，`invalidateQueries` 不會重抓、快取裡沒有
- *   新重建的資料夾。呼叫端必須放在 `invalidateTrashRelated` **之後**：有 observer 時那邊已觸發 refetch，這一發併進同一個請求（只打一次）。
- * - 整段吞掉所有錯誤（含取消）：展開是附帶效果，不丟出、不出 toast。
+ * Always `fetchQuery` (staleTime 0): on the trash tab `["folders"]` has no observer, so `invalidateQueries` wouldn't refetch and the rebuilt folders wouldn't be cached.
+ * Must run after `invalidateTrashRelated`: with an observer that already triggered a refetch, and this merges into the same request.
+ * All errors (including cancellation) are swallowed: expanding is a side effect.
  */
 export async function expandAfterRestore(queryClient: QueryClient, restored: readonly NoteDto[]): Promise<void> {
   try {
@@ -151,11 +138,10 @@ export async function expandAfterRestore(queryClient: QueryClient, restored: rea
     const index = indexFolders(folders);
     for (const folderId of folderIds) expandFolderChain(index, folderId);
   } catch {
-    // 展開失敗不影響還原本身；下次載入資料夾時照常顯示。
   }
 }
 
-/** 根層資料夾＝1；id 不在索引＝0；遇環停（防禦）。 */
+/** Root-level folder = 1; unknown id = 0; stops at a cycle (defensive). */
 export function folderDepth(index: FolderIndex, folderId: string): number {
   if (!index.byId.has(folderId)) return 0;
   const visited = new Set<string>();
@@ -169,7 +155,7 @@ export function folderDepth(index: FolderIndex, folderId: string): number {
   return depth;
 }
 
-/** 葉＝1；遇環不重算；不在索引＝1（當成葉）。 */
+/** Leaf = 1; unknown id = 1 (treated as a leaf); a cycle isn't recounted. */
 export function subtreeHeight(index: FolderIndex, folderId: string): number {
   const visited = new Set<string>();
   const height = (id: string): number => {
@@ -185,7 +171,6 @@ export function subtreeHeight(index: FolderIndex, folderId: string): number {
   return height(folderId);
 }
 
-/** candidateId 是 ancestorId 自己或其子孫。 */
 export function isInSubtree(index: FolderIndex, ancestorId: string, candidateId: string): boolean {
   const visited = new Set<string>();
   let id: string | null = candidateId;

@@ -39,31 +39,19 @@ import { stopBody, stopScreen, stopTarget, type StopContext, type TourScreen } f
 import { TourOverlay } from "./TourOverlay";
 
 export interface TourRunnerProps extends TourStartOptions {
-  /**
-   * 建示範筆記、導過去、等它可編輯並寫入示範內容，回傳那篇筆記；回 null＝沒辦法開始（提示由它自己處理）。
-   * 元件卸載時 `signal` 會中止。`aiActions` 是這一輪唯一一次向 server 讀 AI 動作的結果（不會 reject，失敗是空陣列）：
-   * 寫入示範內容時用它決定放不放 AI 那句，站點也用同一份，兩邊看到的答案才一致。
-   */
+  /** null = the tour can't start (it shows its own toast); `signal` aborts on unmount. `aiActions` is the single read of AI actions per round (never rejects; failure = []): sample content and steps use the same copy, so both agree. Must resolve only after the sample note's page is mounted: the first location check would otherwise end the tour as `left`. */
   prepareSample: (signal: AbortSignal, aiActions: Promise<AiActionDto[]>) => Promise<NoteDto | null>;
-  /** 第一站出現時呼叫，整輪恰好一次（重繪、往回走、StrictMode 都不會重複）。開始前中止的不呼叫。 */
+  /** Called exactly once per round when step 1 appears (not repeated by re-render, going back or StrictMode); not called if aborted before the start. */
   onStarted?: () => void;
-  /** 導覽結束、還原做完之後呼叫一次；沒辦法開始時也呼叫。卸載時不呼叫。 */
+  /** Called once after the tour ended and the restore finished; also when it couldn't start; not called on unmount. */
   onFinished: (result: TourResult) => void;
-  /** 要走的站；預設是完整導覽。 */
   stops?: readonly TourStopEntry[];
 }
 
-/**
- * 導覽怎麼結束的：
- * - `completed`：最後一站〔保留示範筆記〕或〔刪除〕。
- * - `closed`：✕、Esc、第 1 站的「跳過」。
- * - `left`：進過站之後，位置離開了示範筆記。
- * - `aborted`：第一站出現之前就停了（沒辦法準備示範筆記、讀 AI 動作期間離開頁面）。
- */
+/** completed: last step ([keep sample note] or [delete]). closed: ✕, Esc or "Skip" on step 1. left: the location left the sample note after entering the steps. aborted: stopped before step 1 appeared (couldn't prepare the sample note, or left the page while AI actions were read). */
 export type TourFinishReason = "completed" | "closed" | "left" | "aborted";
 
 export interface TourResult {
-  /** 第一站有沒有出現過。 */
   started: boolean;
   reason: TourFinishReason;
 }
@@ -76,19 +64,15 @@ function finishReason(reason: EndReason, started: boolean): TourFinishReason {
 
 interface Run {
   engine: TourEngine;
-  /** 這一輪的站（前置條件濾過），卡片上的「n / N」照目前的版面從這裡數。 */
   stops: readonly TourStopEntry[];
   note: NoteDto;
   path: string;
-  /** 開始前的側欄 tab；沒有登記的側欄時是 null。 */
   tab: SidebarTab | null;
   ctx: StopContext;
 }
 
-/** 手機的清單畫面（首頁）。 */
 const LIST_PATH = "/";
 
-/** 畫面出來了沒：清單＝手機清單在畫面上；示範筆記＝它的編輯器登記了，或筆記頁的標題框已經掛上。 */
 function screenReady(screen: TourScreen, noteId: string): boolean {
   if (screen === "list") return document.querySelector("[data-phone-list-shown]") !== null;
   return getTourNoteEditor(noteId) !== null || document.querySelector("input[data-note-title-input]") !== null;
@@ -103,31 +87,18 @@ function sameRect(a: Rect | null, b: Rect | null): boolean {
   return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
 }
 
-/** ApiFail → errors.<code>；其餘 → errors.fallback（各檔各自一份，是既有慣例）。 */
 function errorMessage(t: Translate, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
 /**
- * 跑一輪功能導覽：開始流程、換站、結束後的還原。整輪只畫一個 `TourOverlay`：換站時原地換掉內容，
- * 報讀器的換站通知（常駐的 live region）才讀得出來，重掛的話它會把每一站當成剛打開。
- *
- * - **開始**：先關側欄抽屜、等它從 DOM 消失（抽屜是 modal，開著時卡片按不到、目標全都查不到）→ 記下目前的側欄 tab →
- *   開始向 server 讀 AI 動作，同時 `prepareSample`（建示範筆記、導過去、寫入內容）→ 用同一次讀到的 AI 動作算前置條件、定站數 → 第一站。
- *   讀取和建筆記並行：等到編輯器可編輯時多半已經讀完，寫入示範內容不必再等一個來回（等的期間使用者在空筆記打的字會讓寫入作罷）。
- *   第一站出現之前不蓋遮罩。開始流程寫在掛載的 effect 裡、每一步之後看中止訊號：開發模式的 StrictMode
- *   掛載時會先卸載一次，第一輪在建示範筆記之前就會停下，不會建兩篇。這靠的是中止檢查之前有一個 `await`
- *   （等抽屜消失）：第一輪的 cleanup 在它回來之前就跑了；開頭改成不讓出執行權的話，第一輪會先把示範筆記建起來。
- * - **換畫面**（只有手機）：清單上的站在清單（`/`），其餘在示範筆記上。引擎進站前呼叫 `ctx.showScreen`：這裡用取代歷史的方式導過去
- *   （歷史不會越走越長）、等畫面出來，期間卡片藏起來（遮罩照樣擋著）。導覽中跨過 640 時，畫面上那一站也照新的版面換畫面。
- * - **導覽中離開**就結束，不續跑，示範筆記留著：位置不在該在的畫面上（被導到登入頁、筆記在別處被刪……），
- *   或瀏覽器的上一頁／下一頁（換畫面是取代歷史，上一頁可能回到同一個路徑的清單，所以看導覽型別，不只看路徑）。
- *   `prepareSample` 要等示範筆記的頁面掛上才回傳，所以第一次檢查時位置已經在示範筆記上。
- * - **結束**：手機上，完成或關掉時回清單（已經在清單上就不動），離開的話不導；其他版面還在示範筆記上就導回 `returnTo`。
- *   tab 與開始時不同就切回去：寬視窗在導走之前切；手機只換 tab、不帶畫面（`reveal: false`）；側欄浮動時不切（切 tab 會打開抽屜）。
- *   等新的位置生效後，每格畫面用 `returnFocus()` 重新找觸發鈕來聚焦。〔刪除〕在導走之後才移到垃圾桶：
- *   開著的筆記被刪掉，筆記頁會跳出「這篇已被刪除」的處理。
+ * One `TourOverlay` for the whole round: a step change swaps its content in place so its persistent live region announces the change; a remount would treat every step as just opened.
+ * Start: close the drawer and wait for it to leave the DOM (it is modal: the card is unreachable and targets unfindable). AI actions are read in parallel with `prepareSample`; the editor is usually editable by the time the read is done, so writing the sample needn't wait another round trip (typing into the empty note meanwhile makes the write give up).
+ * The start flow runs in a mount effect and checks the abort signal after every step: StrictMode's mount-unmount-mount stops the first round before it creates the sample, so two notes aren't created.
+ * That relies on an `await` (the drawer wait) before the first abort check: round one's cleanup runs before it returns; a start that doesn't yield would create the sample first.
+ * Leaving ends the tour without resuming and keeps the sample note. Back/forward (POP) counts as leaving: screen changes replace history, so a POP can land on the same path's list; hence the navigation type is checked, not only the path.
+ * [Delete] trashes only after navigating away: deleting the open note would make the note page run its "deleted" handling.
  */
 export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, onFinished, stops }: TourRunnerProps) {
   const { t } = useTranslation();
@@ -138,7 +109,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
   const deleteNote = useDeleteNote();
   const layout = useTourLayout();
   const [run, setRun] = useState<Run | null>(null);
-  /** 進行中的換畫面次數（手機的清單與示範筆記之間；跨過 640 與換站可能重疊）：大於 0 時卡片先藏起來。 */
+  // A counter: a breakpoint crossing and a step change can overlap; > 0 hides the card.
   const [switchCount, setSwitchCount] = useState(0);
   const switching = switchCount > 0;
   const navigateRef = useRef(navigate);
@@ -147,7 +118,6 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     navigateRef.current = navigate;
     locationRef.current = location;
   });
-  /** 這一刻導覽該在的路徑（示範筆記，或手機清單上的站的清單）；位置變到別處＝離開。 */
   const expectedPathRef = useRef<string | null>(null);
 
   const readQuery = useEffectEvent(() => query);
@@ -157,7 +127,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     await waitForDrawerClosed(signal);
     if (signal.aborted) return;
     const tab = getShellControls()?.getTab() ?? null;
-    // 在等抽屜那個 await 之後才發：StrictMode 的第一輪在那裡就停，不會多讀一次。
+    // Sent after the drawer-wait await: StrictMode's first round stops there, so it doesn't read twice.
     const aiRead = fetchTourAiActions(queryClient);
     let note: NoteDto | null = null;
     try {
@@ -186,7 +156,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
         if (!samePath(locationRef.current.pathname, path)) void navigateRef.current(path, { replace: true });
         const shown = await waitForFrames(() => (ready() ? true : null), screenSignal, SCREEN_TIMEOUT_MS);
         if (shown === null && !screenSignal.aborted && screen === "note") engine?.end("left");
-        // 清單上的站從頂端開始（tab 列不釘在頂端，清單捲下去時看不到）。
+        // Steps on the list start at the top (the tab bar isn't pinned, so it's out of view when the list is scrolled).
         if (shown !== null && screen === "list" && window.scrollY > 0) window.scrollTo(0, 0);
       } finally {
         setSwitchCount((n) => n - 1);
@@ -206,11 +176,9 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
 
   const snapshot = useSyncExternalStore(run?.engine.subscribe ?? subscribeNothing, run?.engine.getSnapshot ?? idleSnapshot);
 
-  // 位置一變就看還在不在該在的畫面上（示範筆記，或手機清單上的站的清單）；只換 search／hash（例如簡報模式的 `?present`）不算離開。
-  // 上一頁／下一頁（POP）一律算離開：導覽自己換畫面都是取代歷史，不會產生 POP。
-  // 這支排在下面進第一站那支之前：開始時就已經不在示範筆記上的話，不進站。
-  // 真實的導覽型別：導覽住在 App 層、在帶 `location` 的 `<Routes>` 外面，`useNavigationType()` 本來就是真的；
-  // 萬一被搬進那種樹裡（那裡的型別恆為 POP），先讀 `RealLocationContext` 給的。
+  // On every location change, check it is still the expected screen (the sample note, or the list for phone list steps); search/hash-only changes (e.g. presentation mode's `?present`) don't count as leaving. Back/forward (POP) always counts: the tour's own screen changes replace history and never produce a POP.
+  // Placed before the effect that enters step 1: if already off the sample note at start, don't enter.
+  // Real navigation type: the tour lives at App level, outside the `<Routes>` that carries `location`, so `useNavigationType()` is real; if it moved into such a tree (type always POP), read `RealLocationContext` first.
   const realNavigationType = useRealNavigationType();
   const routerNavigationType = useNavigationType();
   const navigationType = realNavigationType ?? routerNavigationType;
@@ -232,7 +200,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     return () => run.engine.end("unmount");
   }, [run]);
 
-  // 第一站出現的訊號只發一次：ref 跟著元件實例，StrictMode 的模擬重掛、重繪、往回走都不會再發。
+  // The "step 1 appeared" signal is sent once: the ref lives with the component instance, so StrictMode's simulated remount, re-renders and going back don't resend it.
   const startedRef = useRef(false);
   const notifyStarted = useEffectEvent(() => onStarted?.());
   useEffect(() => {
@@ -241,7 +209,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     notifyStarted();
   }, [snapshot.index]);
 
-  // 導回原頁之後要等新的位置生效（新的側欄掛上）才找觸發鈕：太早找會找到正要卸載的舊側欄裡那顆。
+  // After navigating back wait for the new location to take effect (new sidebar mounted) before looking for the trigger: too early finds the one in the old sidebar about to unmount.
   const locationKeyRef = useRef(location.key);
   useEffect(() => {
     locationKeyRef.current = location.key;
@@ -264,21 +232,22 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
       if (shell !== null && shell.getTab() !== run.tab) shell.showTab(run.tab, options);
     };
     const phone = tourLayout() === "phone";
+    // Not with a floating sidebar: switching tab would open the drawer.
     if (tourLayout() === "wide") restoreTab();
-    // 手機：完成或關掉時回清單（頭像在那裡）。看的是導覽該在的路徑，不是畫面上的位置：結束時可能正在從清單換到示範筆記，
-    // 那次導頁還沒生效，畫面上仍是清單。已經在清單、也沒有在換畫面就不導。離開（`left`）時使用者自己去了別處，不導。
-    // 其他版面：還在示範筆記上就導回 `returnTo`（建示範筆記之前記下的位置，不會就是示範筆記）。
+    // Phone: back to the list on complete/close (the avatar is there). Based on the path the tour should be on, not the on-screen location: at the end it may be mid-switch from list to sample note whose navigation hasn't taken effect, so the screen still shows the list.
+    // Already on the list and not switching screens → no navigation. On `left` the user went elsewhere themselves → none.
+    // Other layouts: if still on the sample note go back to `returnTo` (recorded before the sample note was created, so never the sample note).
     const leave = phone
       ? reason !== "left" && !(samePath(location.pathname, LIST_PATH) && expectedPathRef.current === LIST_PATH)
       : samePath(location.pathname, run.path);
     if (leave) {
       const from = locationKeyRef.current;
-      // 取代掉示範筆記那一筆歷史：〔刪除〕之後按上一頁才不會回到垃圾桶裡的示範筆記。
+      // Replaces the sample note's history entry: after [Delete], Back won't return to the trashed sample note.
       void navigate(phone ? LIST_PATH : returnTo, { replace: true });
       await waitForFrames(() => (locationKeyRef.current !== from ? true : null), signal, RETURN_FOCUS_TIMEOUT_MS);
       if (signal.aborted) return;
     }
-    // 手機只換 tab、不帶畫面：離開到別篇筆記或登入頁時，不把人拉回清單。
+    // Phone only switches tab without a screen: if the user went to another note or the login page, don't pull them back to the list.
     if (phone) restoreTab({ reveal: false });
     await Promise.all([focusReturnTarget(returnFocus, signal), reason === "delete" ? trashSample(run.note) : null]);
     if (signal.aborted) return;
@@ -294,11 +263,11 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     return () => controller.abort();
   }, [snapshot.phase, snapshot.endReason]);
 
-  // 挖洞每格畫面重新量：視窗縮放、捲動、DOM 變動、跨過版面判準（目標換成側欄鈕或「‹」）都跟著動；
-  // 卡片要避開的邊帶（手機的頁首、圓形鈕）也一起量。進站當下在 layout effect 先量一次，畫面上不會先閃一格沒有挖洞的卡片。
+  // The cutout is re-measured every frame: window resize, scroll, DOM changes and crossing the layout breakpoint (target becomes the sidebar button or "‹") all move it;
+  // the edge bands the card avoids (phone header, round buttons) are measured too. Measure once in a layout effect on entering a step, so no frame shows a card without a cutout.
   const entry = snapshot.phase === "running" ? snapshot.entry : null;
 
-  // 導覽中跨過 640：畫面上那一站照新的版面換畫面（例如從側欄浮動轉成手機，清單上的站要回清單）。換站中不動，引擎自己會換。
+  // Crossing 640 mid-tour: re-show the on-screen step for the new layout (e.g. sidebar-floating → phone: a list step must return to the list). Not while switching steps: the engine switches itself.
   const pending = snapshot.pending;
   useEffect(() => {
     const show = run?.ctx.showScreen;
@@ -325,8 +294,8 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
     return () => cancelAnimationFrame(frame);
   }, [entry, run]);
 
-  // 現場演示站：焦點留在編輯器，鍵盤與選單上的點擊由導覽接走（細節見 `installLiveStopInput`）。
-  // 卡片上的樣子看畫面上那一站；攔截另外看「正在準備的那一站」：換進演示站時選單在目標出現之前就已經開了。
+  // Live demo step: focus stays in the editor; keyboard and menu clicks are taken over by the tour (see `installLiveStopInput`).
+  // The card's look follows the on-screen step; interception follows the step being prepared: when entering the demo step the menu was already open before the target appears.
   const liveStop = entry !== null && run !== null && entry.stop.live?.(run.ctx) === true;
   const preparing = snapshot.phase === "running" ? snapshot.preparing : null;
   const liveInput = liveStop || (preparing !== null && run !== null && preparing.stop.live?.(run.ctx) === true);

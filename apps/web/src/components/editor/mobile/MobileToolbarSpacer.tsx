@@ -3,11 +3,9 @@ import { useKeyboardInset } from "@/lib/visual-viewport";
 import { useColorPanelHeight } from "./toolbar-footprint";
 
 /**
- * 手機編輯工具列在時，放在文章欄最尾端的空白：高度＝鍵盤高＋工具列外框高。
- * 色盤開著時（鍵盤已收、色盤佔著鍵盤的位置）以色盤高度為準。
- * 沒有它，文件捲到底時最後幾行只在螢幕最底 24px，被浮在上面的工具列蓋住，ProseMirror 也沒有可捲的空間把游標推上去。
- * 底部 safe area 不在這裡加：工具列在時內文卡自己留了那一段（`NoteEditor` 的 `max-sm:pb-[env(safe-area-inset-bottom)]`），
- * 捲動容器的下緣已經在 safe area 之上，這裡再加就算了兩次。
+ * Trailing space at the end of the article column: keyboard + toolbar frame height (the colour panel's height while it is open).
+ * Without it the last lines sit in the bottom 24px behind the floating toolbar and ProseMirror has no scrollable room to push the caret up.
+ * The bottom safe area isn't added here: while the toolbar is up the note body already pads it (`NoteEditor`'s `max-sm:pb-[env(safe-area-inset-bottom)]`), adding it again would count twice.
  */
 export function MobileToolbarSpacer() {
   const inset = Math.max(useKeyboardInset(), useColorPanelHeight());

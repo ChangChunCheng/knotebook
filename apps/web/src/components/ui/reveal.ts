@@ -1,18 +1,9 @@
 /**
- * 側欄與設定頁頭貼候選格 ⋮ 的「滑過才浮出」（側欄那幾顆是 button.tsx 規範的 24px 例外）。`noterow` 的使用者：筆記列 ⋮
- * （`NoteMenu.tsx`）與垃圾桶列的「還原」、⋮（`sidebar/TrashPanel.tsx`）；列 `<li>` 帶 `group/noterow`。
- * `folderrow`：資料夾列的「在 X 建立筆記」與 ⋮（列帶 `group/folderrow`）。
- * `avatarcell`：設定頁頭貼候選格的 ⋮（整個候選格區塊帶 `group/avatarcell`，滑過區塊內任何地方，各格的 ⋮ 一起浮出）。
- * - 桌面：平常 `opacity-0`；滑過該列（`group-hover/<scope>`）、列內有鍵盤焦點
- *   （`group-has-[:focus-visible]/<scope>`——不用 focus-within，滑鼠點完留下的焦點會讓它殘留）、自己被鍵盤聚焦時浮出。
- * - 選單開著時不消失：Radix trigger 開啟時帶 `data-state="open"`；modal 選單開著時指標已離開列，
- *   沒有這條 ⋮ 會在選單還開著時淡掉。對非選單的「＋」沒有作用（它不帶 data-state）。
- * - 觸控（`hover: none`）常駐：Tailwind v4 的 group-hover 只在 `@media (hover: hover)` 生效。
- * `hoverRevealOnly` 與 `hoverReveal` 的差別只在觸控：⋮ 在觸控裝置要常駐（唯一入口），列上的空心星星相反——
- * `hover: none` 或 `pointer: coarse` 時整顆 `display: none`（不佔位、不在 Tab 順序與無障礙樹），加入改走 ⋮。
- * ⚠ 每個 scope 的 class 必須是**完整字面**——Tailwind 靜態掃描原始碼產生 CSS，
- *   樣板字串拼出來的 class 不會被產生（靜默失效，jsdom 測試照綠）。
- * ⚠ 測試只能斷言 class 字串（jsdom 沒有 CSS、沒有 hover）；真的滑過會浮出要在瀏覽器看。
+ * Hover-reveal for sidebar and avatar-candidate ⋮ buttons (the sidebar ones are button.tsx's 24px exception). Scopes: `noterow` (note row ⋮, trash row Restore/⋮; the `<li>` carries `group/noterow`), `folderrow`, `avatarcell` (the block carries `group/avatarcell`; hovering anywhere in it reveals every cell's ⋮).
+ * Desktop: `opacity-0` until row hover (`group-hover/<scope>`), keyboard focus inside the row (`group-has-[:focus-visible]/<scope>`, not focus-within, which would stick after a mouse click) or the button itself keyboard-focused.
+ * Stays while its menu is open: Radix sets `data-state="open"` on the trigger; with a modal menu the pointer has left the row and ⋮ would fade while the menu is still open. No effect on non-menu "+" buttons.
+ * Touch (`hover: none`): always visible, since Tailwind v4's group-hover only applies under `@media (hover: hover)`. `hoverRevealOnly` differs only on touch: the row's hollow favorite star is `display: none` entirely under `hover: none` or `pointer: coarse` (no space, out of tab order and a11y tree), and adding goes through ⋮, which stays visible as the only entry point.
+ * Every scope's class must be a complete literal (Tailwind scans statically; template-built classes silently fail while jsdom tests stay green). Tests can only assert class strings: no CSS or hover in jsdom.
  */
 export type RevealScope = "grouprow" | "noterow" | "folderrow" | "avatarcell";
 
@@ -30,23 +21,16 @@ export function hoverReveal(scope: RevealScope): string {
   return `${BASE} ${SCOPE[scope]}`;
 }
 
-/** 只在滑鼠／鍵盤裝置浮出、觸控裝置整顆隱藏（見檔頭）。目前只有 `noterow`；每個 class 一樣必須是完整字面。 */
 const REVEAL_ONLY = {
   noterow:
     "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/noterow:opacity-100 group-has-[:focus-visible]/noterow:opacity-100 [@media(hover:none)]:hidden [@media(pointer:coarse)]:hidden",
 } as const;
 
-/**
- * 筆記列 ⋮ 專用（滑鼠）：在 flex 流裡，順序是標題、⋮、星號（星號永遠在最右一格不動）。沒浮出時寬度 0（`-ms-1` 抵掉多出的一個 gap），不佔位；
- * 列被滑過、列內有鍵盤焦點、自己被聚焦或選單開著時長成 24px，標題因此更早截斷，不會被蓋住。
- * 零寬的鈕仍可被 Tab 聚焦（不是 `display: none`），聚焦後 `focus-visible` 讓它長出來。沒有星號時 ⋮ 自己是最右一格。
- * 觸控與沒有 hover 的裝置（`hover: none`，⋮ 常駐）一律 24px（`!` 蓋過上面的寬度 0）。
- * 指標沒滑過列時 Playwright 對零寬的鈕沒辦法 hover／click：測試先 hover 整列再點 ⋮。
- */
+/** Note row ⋮ (mouse): in the flex flow, order title, ⋮, star (the star keeps the rightmost slot; without a star ⋮ is). Hidden = width 0 (`-ms-1` cancels one extra gap), taking no space, but still tabbable (not `display: none`; `focus-visible` or revealing grows it to 24px, so the title truncates earlier instead of being covered). Touch / `hover: none` (⋮ always visible) uses 24px (`!` overrides width 0). Playwright can't hover or click a zero-width button when the pointer isn't over the row: tests hover the row first. */
 export const NOTE_MENU_COLLAPSE =
   "pointer-fine:w-0 pointer-fine:-ms-1 pointer-fine:overflow-hidden pointer-fine:group-hover/noterow:w-6 pointer-fine:group-hover/noterow:ms-0 pointer-fine:group-has-[:focus-visible]/noterow:w-6 pointer-fine:group-has-[:focus-visible]/noterow:ms-0 pointer-fine:focus-visible:w-6 pointer-fine:focus-visible:ms-0 pointer-fine:data-[state=open]:w-6 pointer-fine:data-[state=open]:ms-0 [@media(hover:none)]:w-6! [@media(hover:none)]:ms-0!";
 
-/** 筆記列的最愛星號在觸控（`pointer: coarse`）與沒有 hover 的裝置上整顆不顯示（不佔位、不在 Tab 順序與無障礙樹）：加入、移出最愛都走 ⋮。 */
+/** The filled star is hidden on touch too: adding and removing favorites both go through ⋮. */
 export const NOTE_STAR_TOUCH_HIDDEN = "[@media(hover:none)]:hidden [@media(pointer:coarse)]:hidden";
 
 export function hoverRevealOnly(scope: keyof typeof REVEAL_ONLY): string {

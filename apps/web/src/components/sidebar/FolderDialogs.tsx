@@ -4,7 +4,7 @@ import type { FolderDialogRequest } from "@/components/NoteList";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { FolderNameDialog } from "./FolderNameDialog";
 
-/** 依 `request` 渲染新增／改名／刪除其一（只在開啟時掛載，關閉就交回 `onClose`）。只准經 `FolderLazy` 引用。 */
+/** Import only through the FolderLazy chain and tests. */
 export function FolderDialogs({
   request,
   returnFocusRef,

@@ -6,27 +6,18 @@ import { Button } from "./button";
 type ButtonProps = ComponentPropsWithoutRef<typeof Button>;
 
 export type RowIconButtonProps = Omit<ButtonProps, "variant" | "size" | "children" | "aria-label" | "title" | "asChild" | "aria-disabled"> & {
-  /** 可及名稱，同時當 `title`（列內 icon 鈕必帶 title 與 aria-label）。 */
   label: string;
   icon: ReactNode;
-  /** `destructive`＝紅色線條（解除連結、移除成員、撤銷、刪除）；**不是** `destructive` 變體——列內不出現實心紅鈕。 */
   tone?: "default" | "destructive";
   /**
-   * 不可用但仍要讓人看得到原因（例如最後一位管理員不能移除）：`aria-disabled`（class 常數的 `aria-disabled:opacity-40`）、`title` 換成
-   * `softDisabledReason`，點了不觸發。不用原生 `disabled`：`disabled:pointer-events-none` 會讓 `title` 永遠浮不出來。
-   * 對 `DialogTrigger asChild`，`handleClick` 的兩道各自都擋得住開啟：不轉呼叫注入的 `onClick`；或 `preventDefault()`
-   * （Radix 的 `composeEventHandlers` 見 `defaultPrevented` 就不呼叫 `onOpenToggle`）。`preventDefault()` 另外擋
-   * `type="submit"` 在 form 裡的送出；一般 `onClick` 則只靠不轉呼叫。只攔 click：`onPointerDown`／`onKeyDown` 照樣轉傳，
-   * 所以不適合當 `DropdownMenuTrigger`。
+   * Not usable but the reason must stay visible (e.g. the last admin can't be removed): `aria-disabled` + `title` set to `softDisabledReason`, click does nothing. Not native `disabled`: `disabled:pointer-events-none` would stop `title` ever showing.
+   * For `DialogTrigger asChild`, `handleClick` blocks opening two ways: not forwarding the injected `onClick`, or `preventDefault()` (Radix's `composeEventHandlers` skips `onOpenToggle` on `defaultPrevented`); `preventDefault()` also stops `type="submit"` form submission, while a plain `onClick` relies on not forwarding.
+   * Only click is intercepted: `onPointerDown`/`onKeyDown` still forward, so unsuitable as a `DropdownMenuTrigger`.
    */
   softDisabled?: boolean;
   softDisabledReason?: string;
 };
 
-/**
- * 表格列與角色卡上的動作鈕（#247）：`ghost`＋`size="icon"`（32px），圖示由呼叫端給
- * （`h-4 w-4`）。鉛筆＝編輯、插頭＝測試連線、紅垃圾桶（`tone="destructive"`）＝危險動作。
- */
 export const RowIconButton = forwardRef<HTMLButtonElement, RowIconButtonProps>(
   ({ label, icon, tone = "default", softDisabled = false, softDisabledReason, className, onClick, ...props }, ref) => {
     function handleClick(event: MouseEvent<HTMLButtonElement>): void {

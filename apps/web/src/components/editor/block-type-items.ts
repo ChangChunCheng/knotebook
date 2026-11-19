@@ -3,17 +3,17 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { blockTypeSelectItems } from "@blocknote/react";
 import { asUndoStep } from "@/collab/columns/undo-step";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple (repo convention)
 type AnyBlockNoteEditor = BlockNoteEditor<any, any, any>;
 
 export type BlockTypeItem = ReturnType<typeof blockTypeSelectItems>[number];
 
-/** 選取所在的區塊；沒有選取時是游標所在的區塊（與 BlockNote 格式工具列同一個規則）。 */
+// Same rule as BlockNote's formatting toolbar.
 export function targetBlocks(editor: AnyBlockNoteEditor) {
   return editor.getSelection()?.blocks ?? [editor.getTextCursorPosition().block];
 }
 
-/** 區塊類型選單的項目（`blockTypeSelectItems`），再依 schema 過濾；過濾邏輯同 BlockNote 的 `BlockTypeSelect`。 */
+// Same filter as BlockNote's BlockTypeSelect.
 export function blockTypeItemsFor(editor: AnyBlockNoteEditor): BlockTypeItem[] {
   return blockTypeSelectItems(editor.dictionary).filter((item) =>
     editorHasBlockWithType(
@@ -24,10 +24,7 @@ export function blockTypeItemsFor(editor: AnyBlockNoteEditor): BlockTypeItem[] {
   );
 }
 
-/**
- * 第一個目標區塊對應到哪一項（-1＝沒有任何一項符合，例如表格、程式碼區塊、圖片）。
- * -1 代表目前區塊不能換類型：對它套用任何一項都會把表格或程式碼區塊的內容清掉。
- */
+/** -1 = no item matches (table, code block, image): applying any item to those would wipe their content. */
 export function currentBlockTypeIndex(editor: AnyBlockNoteEditor, items: BlockTypeItem[]): number {
   const first = targetBlocks(editor)[0];
   if (!first) return -1;
@@ -36,10 +33,7 @@ export function currentBlockTypeIndex(editor: AnyBlockNoteEditor, items: BlockTy
   );
 }
 
-/**
- * 把 `item` 套用到目標區塊（選取，沒有選取就是游標所在的區塊），在同一個 transaction 內完成，且自成一個撤銷步（不跟前面的打字併在一起）。
- * 只改本身型別就在 `items` 裡的區塊；表格、程式碼區塊、圖片不動，不然內容會被清掉。
- */
+/** One transaction and its own undo step. Only blocks whose type is already in `items` change; tables, code blocks and images would lose their content. */
 export function applyBlockType(editor: AnyBlockNoteEditor, item: BlockTypeItem, items: BlockTypeItem[]): void {
   asUndoStep(editor, () =>
     editor.transact(() => {

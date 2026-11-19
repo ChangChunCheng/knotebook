@@ -2,19 +2,17 @@ import { useCallback, useEffect, useRef, type KeyboardEvent, type RefObject } fr
 import { useIsOverlay } from "@/lib/layout-tiers";
 import { isOverlayOpen, useVersions } from "@/lib/versions-context";
 
-// NoteEditor 裡包住面板（含載入失敗的錯誤外框）的 `display: contents` 節點；錯誤外框沒有面板的 testid，所以認這個。
+// `display: contents` node in NoteEditor wrapping the panel (including its load-failure error frame): the error frame has no panel testid, so this is recognised instead.
 export const PANEL_SLOT = "[data-versions-panel-slot]";
-// 面板（含錯誤外框）、它開出來的選單與 popper（portal 在面板外）、歷史泡泡：在這些裡面按下去不算「點到筆記區」。
-// 對話框由下面「document 上有 dialog 就讓路」那一道涵蓋，這裡不必列。
+// Panel (with its error frame), the menus and popper it opens (portalled outside the panel), the history bubble: pressing inside these doesn't count as "clicking the note area".
+// Dialogs are covered by the "a dialog in document yields" check below.
 const KEEP_OPEN = `${PANEL_SLOT}, [data-testid="versions-bubble"], [role="menu"], [data-radix-popper-content-wrapper]`;
 
 /**
- * 640-1279 的版本面板浮在筆記上，不是第三欄；收起的規則跟著狀態走，固定段（>= 1280）一律不套用：
- * - 只開了清單（沒有預覽）：在面板、歷史泡泡、它們開出的選單與對話框以外按下去就收起，與側欄抽屜一致。
- * - 差異檢視中（有預覽）：點筆記區不收，只有面板的 ✕ 與面板內按 Esc 會關。
- * - 面板內按 Esc：關面板（連預覽），焦點回到歷史泡泡（面板開著時泡泡不渲染，關了才掛上）。
- * 面板是非 modal 的，所以這裡用 document 的 pointerdown（capture）判斷，不靠遮罩。
- * 回傳的 `onKeyDown` 掛在列容器上（面板在它底下，React 事件冒泡先於 window 上的預覽 Esc 監聽）。
+ * 640–1279 floats the version panel over the note instead of a third column; the fixed segment (>= 1280) never gets these rules.
+ * List only (no preview): pressing outside the panel, history bubble and the menus and dialogs they open closes it, like the sidebar drawer. Diff view (preview open): clicking the note area doesn't close; only the panel's ✕ and Esc inside the panel close.
+ * Esc in the panel closes it (and the preview); focus goes to the history bubble (not rendered while the panel is open).
+ * The panel is non-modal, so a document `pointerdown` (capture) is used, not a backdrop. The returned `onKeyDown` goes on the row container (the panel is under it; React bubbling runs before the window preview-Esc listener).
  */
 export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HTMLElement>) => void } {
   const overlay = useIsOverlay();
@@ -25,7 +23,7 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
     if (!overlay || !panelOpen || preview !== null || dialog !== null) return;
     const onPointerDown = (event: PointerEvent) => {
       if (!(event.target instanceof Element) || event.target.closest(KEEP_OPEN) !== null) return;
-      // 有 modal（含側欄抽屜）開著時，點它的遮罩只關那個 modal，面板留在原位。
+      // With a modal (including the sidebar drawer) open, clicking its backdrop closes only that modal; the panel stays.
       if (document.querySelector('[role="dialog"]') !== null) return;
       close();
     };
@@ -43,7 +41,7 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
     (event: KeyboardEvent<HTMLElement>) => {
       if (!overlay || !panelOpen || event.key !== "Escape" || event.defaultPrevented) return;
       if (!(event.target instanceof Element) || event.target.closest(PANEL_SLOT) === null || isOverlayOpen()) return;
-      event.preventDefault(); // 這一下 Esc 只關面板：頁面層「預覽中 Esc 離開預覽」的監聽看到 defaultPrevented 就讓路
+      event.preventDefault(); // Only closes the panel: the page-level "Esc leaves preview" listener yields on defaultPrevented
       restoreFocusRef.current = true;
       close();
     },
@@ -53,11 +51,7 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
   return { onKeyDown };
 }
 
-/**
- * 量 `headerEl` 的高度寫成列容器上的 `--note-header-h`：浮動面板的上緣要讓出頁首。
- * 直接寫 DOM 不走 state，頁首高度變動（換行、橫幅出現）不會讓 `NoteEditor` 重繪。
- * 量的是頁首加其下的版本預覽橫幅（橫幅在 headerSlot 裡）：橫幅右端的並排／單欄鈕不能被面板蓋住。
- */
+/** Writes `headerEl`'s height as `--note-header-h` on the row container: the floating panel's top leaves room for the header. Written straight to the DOM, not state, so header height changes (wrapping, banner appearing) don't re-render `NoteEditor`. Measures the header plus the preview banner below it (in headerSlot): the banner's right-end side-by-side/single buttons must not be covered. */
 export function useNoteHeaderHeight(rowRef: RefObject<HTMLElement | null>, headerRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const row = rowRef.current;

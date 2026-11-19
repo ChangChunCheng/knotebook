@@ -20,7 +20,7 @@ import { hoverReveal } from "@/components/ui/reveal";
 import { cn } from "@/lib/utils";
 import { setFolderSort, useFolderSort, type FolderSort } from "./folder-sort";
 
-/** 排序列樣式照 `DropdownMenuCheckboxItem`（RadioItem 是不帶樣式的最小包裝）。 */
+/** Sort row styling follows `DropdownMenuCheckboxItem` (RadioItem is an unstyled minimal wrapper). */
 const RADIO_ROW =
   "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
@@ -34,11 +34,7 @@ function isFolderSort(value: string): value is FolderSort {
   return value === "name" || value === "recent" || value === "size";
 }
 
-/**
- * 一個選單項：可執行時是一般項；不可執行（`blockedReason` 有值）時**不用** Radix 的 `disabled`（disabled 項不在方向鍵焦點序裡，
- * 鍵盤與讀屏使用者聽不到說明）——改 `aria-disabled`、`onSelect` 只 `preventDefault`（不關選單、不開框），名稱只有項目名
- * （`aria-labelledby`），說明只在描述裡唸一次（`aria-describedby`）。
- */
+/** Blocked items use `aria-disabled` and a `preventDefault`-only `onSelect`, not Radix `disabled`: disabled items are outside the arrow-key focus order, so keyboard and screen-reader users would never hear the reason. */
 function MenuAction({
   icon: Icon,
   label,
@@ -51,7 +47,6 @@ function MenuAction({
   label: string;
   blockedReason: string | null;
   destructive?: boolean;
-  /** 暫時不能按（例如建立中），沒有說明：用 Radix 的 disabled（同列上的「＋」）。 */
   disabled?: boolean;
   onRun: () => void;
 }) {
@@ -61,7 +56,7 @@ function MenuAction({
   return (
     <DropdownMenuItem
       disabled={disabled}
-      // 明確傳 aria-disabled 會蓋掉 Radix 在 disabled 時自己設的值，所以兩種情形都要帶。
+      // An explicit aria-disabled overrides the value Radix sets itself when disabled, so both cases must pass it.
       aria-disabled={blocked || disabled ? "true" : undefined}
       aria-labelledby={blocked ? nameId : undefined}
       aria-describedby={blocked ? descId : undefined}
@@ -85,11 +80,7 @@ function MenuAction({
   );
 }
 
-/**
- * 刪除／移除項：當作 `DropdownMenuContent` 的子元件，`hasLiveNotes()` 在這裡才呼叫——Radix 只在選單打開與退場動畫期間掛載 content，
- * 所以選單關著時不掃筆記；打開期間快取變了照樣重算。不能在 FolderMenu 本體算成 prop（每次渲染都會跑），也不能用 `open &&` 擋
- * （退場動畫期間會閃回可執行）。
- */
+/** Child of `DropdownMenuContent` so `hasLiveNotes()` runs only while Radix has the content mounted (open and exit animation): not in FolderMenu itself (every render), not `open &&` (flashes enabled during the exit animation). */
 function DeleteAction({ folder, hasLiveNotes, onRun }: { folder: FolderDto; hasLiveNotes: () => boolean; onRun: () => void }) {
   const { t } = useTranslation();
   const blocked = !folder.permissions.deleteNotes && hasLiveNotes();
@@ -104,11 +95,7 @@ function DeleteAction({ folder, hasLiveNotes, onRun }: { folder: FolderDto; hasL
   );
 }
 
-/**
- * 資料夾列 ⋮。24px、hover 浮出（`hoverReveal("folderrow")`）；controlled DropdownMenu，
- * 選單項三步形（`preventDefault` → 關選單 → 動作；GroupMenu／NoteMenu 檔頭的 focus trap 規矩）。對話框由 NoteList 的 host 開
- * （`onRequest` 帶 ⋮ 當還焦點的對象）；排序選了不關選單（radio 可連續看效果）。首包模組：不 import 字串包。
- */
+/** First-bundle module: no string-bundle import. Controlled menu; items follow the three-step pattern (`preventDefault` → close menu → action) of the GroupMenu/NoteMenu focus-trap rule. The dialogs are opened by NoteList's host (`onRequest` carries ⋮ as the focus-return target). Sort radio items `preventDefault` on select so the menu stays open to compare sorts. */
 export function FolderMenu({
   folder,
   depth,
@@ -118,12 +105,10 @@ export function FolderMenu({
   onRequest,
 }: {
   folder: FolderDto;
-  /** 節點的 depth（根層＝1）；≥ FOLDER_DEPTH_MAX → 新增子資料夾不可執行。 */
+  /** Folder depth (root level = 1); at or above FOLDER_DEPTH_MAX "new subfolder" is unavailable. */
   depth: number;
-  /** 只在選單內容掛載時（打開與退場動畫期間）由 `DeleteAction` 呼叫，避免每列每次渲染都掃一遍筆記。 */
   hasLiveNotes: () => boolean;
   onCreateNote: () => void;
-  /** 建立中：「新增筆記」暫時不能按（比照列上的「＋」）。 */
   createNotePending?: boolean;
   onRequest: (request: FolderDialogRequest, opener: HTMLElement | null) => void;
 }) {
@@ -143,8 +128,8 @@ export function FolderMenu({
   }
 
   /**
-   * 開對話框的項目：選單關閉時不把焦點還給 ⋮。對話框（chunk 已快取時）會在選單卸載前就掛上並把焦點給輸入框，
-   * Radix 選單卸載時的還焦點再把它搶回 ⋮（真 Chromium 重現：第二次開框起輸入框都失焦）。關框後焦點回 ⋮ 由 host 的 `returnFocusRef` 負責。
+   * Dialog-opening items don't return focus to ⋮ on close: the dialog (chunk cached) mounts and focuses its input before the menu unmounts,
+   * and Radix's focus return would steal it back (reproduced in Chromium). The host's `returnFocusRef` restores focus after the dialog closes.
    */
   const openingDialogRef = useRef(false);
   function openDialog(request: FolderDialogRequest): void {

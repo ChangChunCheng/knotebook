@@ -4,12 +4,7 @@ import { Avatar } from "@/components/Avatar";
 const MAX_SHOWN = 3;
 const SIZE = 20;
 
-/**
- * 版本列的編輯者頭貼群：重疊排列、至多 3 個，其餘以「+N」收尾。
- * 以 handle 去重（同一人以人與 agent 兩種身分出現只畫一個）；已刪除的使用者
- * （handle 空字串）合成一個「?」占位。agent 寫入的編輯者畫使用者本人的頭貼。
- * 整塊 aria-hidden：可及資訊由列上的 `editorsText` 提供。
- */
+/** Deduped by handle (the same person as human and as agent draws once); a deleted user (empty handle) collapses into one "?" placeholder; an agent write shows the user's own avatar. aria-hidden as a whole: accessible info comes from `editorsText` on the row. */
 export function EditorAvatars({ editors }: { editors: VersionEditorDto[] }) {
   const seen = new Set<string>();
   const unique: VersionEditorDto[] = [];

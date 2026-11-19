@@ -1,15 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-/**
- * 每個資料夾的筆記排序：模組層小 store，結構同 `collapse.ts`——靜態卡、抽屜、選取樹共用，
- * 記憶體覆蓋層**先查**（`setItem` 丟例外時寫進覆蓋層，否則讀回的舊值會蓋掉剛選的排序）。首包模組：不 import `tree.ts`。
- */
+/** Same structure as `collapse.ts`; the memory overlay is checked first: when `setItem` throws, the old stored value would otherwise override the sort just chosen. First-bundle module: no `tree.ts` import. */
 
 export type FolderSort = "name" | "recent" | "size";
 
-/** `sidebar.sort.folder:<id>`。 */
 export const FOLDER_SORT_PREFIX = "sidebar.sort.folder:";
-/** 預設：最近修改。 */
 export const DEFAULT_FOLDER_SORT: FolderSort = "recent";
 
 const overlay = new Map<string, FolderSort>();
@@ -26,7 +21,6 @@ function isFolderSort(value: string | null): value is FolderSort {
   return value === "name" || value === "recent" || value === "size";
 }
 
-/** 不認得的值＝預設；讀丟例外＝預設。 */
 export function folderSortOf(folderId: string): FolderSort {
   const cached = overlay.get(folderId);
   if (cached !== undefined) return cached;
@@ -38,10 +32,9 @@ export function folderSortOf(folderId: string): FolderSort {
   }
 }
 
-/** 每次寫入換一個新的查詢函式：`useFolderSortOf` 的呼叫者拿它當 useMemo 依賴，換了才會重組樹。 */
+/** A new query function on every write: callers use it as a `useMemo` dependency so the tree is rebuilt. */
 let currentSortOf: (folderId: string) => FolderSort = (folderId) => folderSortOf(folderId);
 
-/** 寫入字面值（含 "recent"）；寫入丟例外時記進覆蓋層、成功時刪掉覆蓋層的該鍵。之後通知所有訂閱者。 */
 export function setFolderSort(folderId: string, sort: FolderSort): void {
   try {
     window.localStorage.setItem(FOLDER_SORT_PREFIX + folderId, sort);
@@ -57,15 +50,11 @@ export function useFolderSort(folderId: string): FolderSort {
   return useSyncExternalStore(subscribe, () => folderSortOf(folderId));
 }
 
-/**
- * 回一個查排序的函式；store 每次寫入時換一個新的，這裡直接回它（不用 useMemo、沒有依賴陣列）。
- * 給 `buildTabNodes` 的 `sortOf`，並當 useMemo 依賴。
- */
 export function useFolderSortOf(): (folderId: string) => FolderSort {
   return useSyncExternalStore(subscribe, () => currentSortOf);
 }
 
-/** @internal 測試用：清空覆蓋層、換新的查詢函式（訂閱者由各元件卸載時自己退訂）。 */
+/** @internal tests only: clear the overlay and replace the query function. Listeners aren't cleared: components unsubscribe on unmount. */
 export function __resetFolderSortForTests(): void {
   overlay.clear();
   currentSortOf = (folderId) => folderSortOf(folderId);
