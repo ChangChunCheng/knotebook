@@ -3,33 +3,17 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, selectionAiBox, solidPng, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 手機（< 640）編輯工具列：點內文就出現在鍵盤位置上方，取代底部瀏覽列。觸控 context（hasTouch＋isMobile）。
+ * Phone (< 640) editing toolbar: tapping the body shows it above the keyboard position, replacing the bottom bar. Touch context (hasTouch + isMobile).
  *
- * 57-1 出現與收起（390、320）：點內文 → 工具列出現、瀏覽列不在；選字時沒有浮動格式工具列；每顆鈕捲進可視區後都在視窗內；
- *      收起鍵盤鈕 → 工具列消失、瀏覽列回來。
- * 57-2 Aa（390）：選字 → Aa → 粗體，筆記內容多了 `**`；返回回主列。
- * 57-3 ¶（390）：¶ → Heading 2 → 內容是 `## `；游標在表格、程式碼區塊時 ¶ 為 aria-disabled，按下去內容不變。
- * 57-4 復原、重做（390）：打字後復原回到原文、重做又回來。
- * 57-5 AI 鈕（390）：站台沒有 AI 動作時沒有 AI 鈕；有時沒選字 aria-disabled、選字後可按並開出 AI 框。
- * 57-6 「＋」（390）：有字的段落按 → 在後面開新空段並開 slash 選單、不插 `/`；空的程式碼區塊按 → 也開選單。
- * 57-7 slash 與 `[[` 選單（390）：沒有 Ctrl／Alt 字樣、每列高 ≥ 44、下緣不壓到工具列（游標在上方、下方與鍵盤升起三種位置）。
- * 57-8 色盤（390）：Aa → A → 色票 → ‹：選取不丟、焦點回編輯器、文字色已套用；色盤開著時工具列仍在、點內文色盤收起；
- *      自訂色碼（觸控）可套用、最近用過可再點。
- * 57-9 連結（390）：游標在連結裡按連結鈕 → 對話框預填目前網址 → 改網址只換 href，連結文字不變、不多一份。
- * 57-10 長文件（390）：點最後一行打字，那一行的下緣在工具列上緣之上。
- * 57-11 圖片（390、320）：點圖片 → 浮動工具列出現、含刪除鈕、在視窗內、不被編輯工具列蓋住。
- * 57-11b 高圖片（390、鍵盤升起）：圖片捲到內文區最上面、上方放不下浮動工具列時，工具列翻到圖片下方，且仍在編輯工具列之上。
- *      （flip 的下緣內縮量沒有守住：改成 0 這案照綠。）
- * 57-13 儲存格 Colors（320）：浮動工具列的顏色選單沒被裁掉，色票點得到。
- * 57-14 圖片 Replace（390）：浮動工具列的 Replace 面板沒被裁掉，面板裡的分頁點得到。
- * 57-12 儲存格（320）：跨儲存格選取時浮動工具列左右都在視窗內（留邊 8），超出的部分在工具列內橫捲。
+ * 57-8 also applies a custom color code by touch and taps a recent one again. 57-11b: when the image is scrolled to the top of the body there is no room above for the floating toolbar, so it flips below the image and stays above the editing toolbar; the flip's bottom inset is not asserted.
+ * 57-12: with a multi-cell selection the floating toolbar keeps an 8 margin on both sides and the overflowing part scrolls horizontally inside it.
  *
- * 螢幕鍵盤用假的 `visualViewport` 模擬（見 `emulateKeyboard`）；真實鍵盤動畫、safe area、iOS 的焦點行為、真手指落點量不到，列在實機清單。
+ * The on-screen keyboard is simulated with a fake `visualViewport` (see `emulateKeyboard`); the real keyboard animation, safe area, iOS focus behaviour and where a real finger lands can't be measured and are on the real-device list.
  *
- * 帳號與資料：用邀請建一個帳號（alice），每個案例自己以 API 建筆記（內容各不相同，互不影響）。
+ * Account and data: one account (alice) is created through an invite, and each case creates its own note via the API (each with different content, so they don't affect each other).
  */
 
-// Playwright 的動作預設沒有逾時：點不到就一直等到整個案例逾時，看不出卡在哪一步
+// Playwright actions have no timeout by default: if something can't be clicked it waits until the whole case times out, and it isn't visible which step is stuck.
 test.use({ actionTimeout: 15_000 });
 
 const RUN = Date.now();
@@ -55,7 +39,7 @@ test.beforeAll(async ({ browser }) => {
   } finally {
     await admin.close();
   }
-  // `[[` 選單要夠高才量得出「下緣不壓到工具列」：先備幾篇可連結的筆記
+  // The `[[` menu must be tall enough to measure "bottom edge doesn't overlap the toolbar": prepare a few linkable notes first.
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   try {
     const page = await context.newPage();
@@ -81,7 +65,6 @@ async function createNoteVia(page: Page, title: string, content?: string): Promi
   return { id: note.id, path: `/n/${note.ownerHandle}/${note.slug}` };
 }
 
-/** 觸控 context 登入 alice。 */
 async function phoneContext(browser: Browser, phone: Phone, withKeyboard = false): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: phone });
   const page = await context.newPage();
@@ -91,7 +74,6 @@ async function phoneContext(browser: Browser, phone: Phone, withKeyboard = false
   return { context, page };
 }
 
-/** 開一篇內容為 `markdown` 的新筆記（手機寬度、觸控），等標題框與第一段文字出現。 */
 async function openPhoneNote(
   browser: Browser,
   phone: Phone,
@@ -110,12 +92,11 @@ async function openPhoneNote(
 
 const toolbarOf = (page: Page): Locator => page.locator(TOOLBAR);
 const toolbarButton = (page: Page, name: string): Locator => toolbarOf(page).getByRole("button", { name, exact: true });
-/** 區塊內文（`.bn-inline-content`）中文字剛好是 `text` 的那一段。 */
 const blockText = (page: Page, text: string): Locator => editorLocator(page).locator(".bn-inline-content").filter({ hasText: new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }).first();
 
 /**
- * 螢幕鍵盤的替身：Chromium 模擬不出鍵盤，所以把 `window.visualViewport` 換成可調高度的假物件（版面視窗不縮，同 iOS）。
- * 之後 `setKeyboard(page, 300)` 就等於升起 300px 的鍵盤，`setKeyboard(page, 0)` 收起。工具列與選單的定位都讀這個物件。
+ * Stand-in for the on-screen keyboard: Chromium can't simulate a keyboard, so `window.visualViewport` is replaced with a fake object whose height can be set (the layout viewport doesn't shrink, like iOS).
+ * After that `setKeyboard(page, 300)` is like raising a 300px keyboard and `setKeyboard(page, 0)` lowers it. The toolbar's and menus' positioning read this object.
  */
 async function emulateKeyboard(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -141,7 +122,7 @@ async function emulateKeyboard(page: Page): Promise<void> {
 
 async function setKeyboard(page: Page, px: number): Promise<void> {
   await page.evaluate((value) => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(value), px);
-  // 讓工具列跟上（`useKeyboardInset` 以 requestAnimationFrame 合併讀值）
+  // Let the toolbar catch up (`useKeyboardInset` merges reads with requestAnimationFrame).
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
@@ -152,8 +133,8 @@ async function readMarkdown(page: Page, noteId: string): Promise<string> {
 }
 
 /**
- * 編輯器目前的選取：PM 的 anchor／head 跟 DOM 的 anchor／focus 對齊、而且在同一個區塊裡時，回傳該區塊的文字與選取起訖（區塊內的字元位置）；
- * 否則回傳診斷值（`no-editor`、`focus-outside`、`{ pm, dom }`、`spans-blocks`）。只用在純文字段落（連結是 mark，不是 inline atom，可以）。
+ * The editor's current selection: when PM's anchor/head align with the DOM's anchor/focus and are in the same block, returns that block's text and the selection start/end (character positions within the block);
+ * otherwise returns a diagnostic (`no-editor`, `focus-outside`, `{ pm, dom }`, `spans-blocks`). Only for plain-text paragraphs (a link is a mark, not an inline atom, so it is fine).
  */
 async function blockSelection(page: Page): Promise<unknown> {
   return editorLocator(page).evaluate((el) => {
@@ -180,10 +161,10 @@ async function blockSelection(page: Page): Promise<unknown> {
 }
 
 /**
- * 觸控點進 `block`、按 `keys`，直到選取恰為該段的 `from`–`to`（PM 與 DOM 都是）；不是就整組重來。
- * 為什麼不能點完就按鍵、再等 PM 與 DOM 對齊：編輯器原本沒焦點時，點擊觸發 ProseMirror 的得焦計時器（20 ms），它會把 PM 手上的
- * 舊選取寫回 DOM。Home／方向鍵／Shift+End 若在計時器觸發前按下、PM 還沒讀到，游標就被拉回點的位置（對齊照樣成立），
- * 連結對話框沒預填、選字變成沒選。機制與量測見 helpers 的 `clickEndOfParagraph`。重來時編輯器已有焦點，計時器不再排。
+ * Touch-clicks into `block` and presses `keys` until the selection is exactly `from`-`to` of that paragraph (both PM and DOM); otherwise retries the whole sequence.
+ * Why pressing keys right after the click and then waiting for PM and DOM to align isn't enough: when the editor had no focus, the click triggers ProseMirror's focus timer (20 ms), which writes PM's old selection
+ * back to the DOM. If Home/arrow/Shift+End are pressed before the timer fires and PM hasn't read them, the caret is pulled back to where it was clicked (alignment still holds),
+ * so the link dialog isn't prefilled and the text ends up not selected. The mechanism is in `clickEndOfParagraph` in helpers. On a retry the editor already has focus, so the timer is not scheduled.
  */
 async function tapAndSelect(page: Page, block: Locator, keys: string[], from: number, to: number): Promise<void> {
   const text = (await block.textContent()) ?? "";
@@ -197,12 +178,10 @@ async function tapAndSelect(page: Page, block: Locator, keys: string[], from: nu
   }).toPass({ timeout: 20_000 });
 }
 
-/** 觸控點內文最左邊（避開連結），把游標放到該段的第 `offset` 個字元前。 */
 async function placeCaret(page: Page, block: Locator, offset: number): Promise<void> {
   await tapAndSelect(page, block, ["Home", ...Array.from({ length: offset }, () => "ArrowRight")], offset, offset);
 }
 
-/** 選取整段（點進去、Home、Shift+End）。 */
 async function selectBlock(page: Page, block: Locator): Promise<void> {
   const length = ((await block.textContent()) ?? "").length;
   await tapAndSelect(page, block, ["Home", "Shift+End"], 0, length);
@@ -215,10 +194,9 @@ function rectOf(locator: Locator): Promise<{ x: number; y: number; width: number
   });
 }
 
-/** 工具列外框（含膠囊與色盤）的上緣：選單與內文都不該越過它。 */
 async function toolbarTop(page: Page): Promise<number> {
   return (await toolbarOf(page).first().evaluate((el) => {
-    // 外框 `pointer-events-none` 且高度是內容的總和；膠囊才是看得見的那一塊，色盤開著時另算
+    // The frame is `pointer-events-none` and its height is the sum of its contents; the pill is the visible part, and the color panel is counted separately while open.
     const pill = el.firstElementChild as HTMLElement | null;
     return (pill ?? el).getBoundingClientRect().top;
   })) as number;
@@ -229,22 +207,20 @@ async function expectNoPageErrors(errors: string[]): Promise<void> {
 }
 
 for (const phone of [P390, P320]) {
-  test(`57-1 ${phone.width} 觸控：點內文工具列出現、瀏覽列不在；選字沒有浮動工具列；每顆鈕在視窗內；收起鍵盤瀏覽列回來`, async ({ browser }) => {
+  test(`57-1 ${phone.width} touch: tapping the body shows the toolbar and hides the bar; selecting text shows no floating toolbar; every button is inside the viewport; dismissing the keyboard brings the bar back`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openPhoneNote(browser, phone, `appear ${phone.width}`, "alpha bravo charlie\n\ndelta echo", "alpha bravo charlie");
     try {
-      // 還沒碰內文：瀏覽列在、工具列不在
       await expect(page.locator(`${BROWSE_BAR} [data-phone-fab=\"search\"]`)).toBeVisible();
       await expect(toolbarOf(page)).toHaveCount(0);
 
       await selectBlock(page, blockText(page, "alpha bravo charlie"));
       await expect(toolbarOf(page)).toBeVisible();
       await expect(page.locator(BROWSE_BAR)).toHaveCount(0);
-      // 選字時桌機那條浮動格式工具列不出現（它在選取後的下一個 tick 才會開，所以先等一下再斷言不存在）
+      // While selecting text the desktop floating format toolbar must not appear (it opens on the tick after the selection, so wait a moment before asserting it is absent).
       await page.waitForTimeout(600);
       await expect(page.locator(".bn-formatting-toolbar")).toHaveCount(0);
 
-      // 工具列每顆鈕捲進可視區後，整顆都在視窗內
       const buttons = toolbarOf(page).getByRole("button");
       const count = await buttons.count();
       expect(count, "主列按鈕數").toBeGreaterThanOrEqual(7);
@@ -261,12 +237,10 @@ for (const phone of [P390, P320]) {
         expect(box.width, `${name} 寬`).toBeGreaterThanOrEqual(43.5);
       }
       console.log(`MEASURE 57-1 ${phone.width} ${lines.join(" | ")}`);
-      // 整條膠囊左右各留邊，沒有撐出視窗
       const pill = await rectOf(toolbarOf(page).locator("> div").first());
       expect(pill.x).toBeGreaterThanOrEqual(0);
       expect(pill.right).toBeLessThanOrEqual(phone.width + 0.5);
 
-      // 收起鍵盤：工具列走、瀏覽列回來
       await toolbarButton(page, "Hide keyboard").tap();
       await expect(page.locator(`${BROWSE_BAR} [data-phone-fab=\"search\"]`)).toBeVisible();
       await expect(toolbarOf(page)).toHaveCount(0);
@@ -276,20 +250,19 @@ for (const phone of [P390, P320]) {
   });
 }
 
-test("57-2 Aa：選字 → Aa → 粗體，內容多 `**`；返回回主列", async ({ browser }) => {
+test("57-2 Aa: select text -> Aa -> bold, the content gains `**`; back returns to the main row", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page, note } = await openPhoneNote(browser, P390, "bold", "alpha bravo charlie", "alpha bravo charlie");
   try {
     await selectBlock(page, blockText(page, "alpha bravo charlie"));
     await toolbarButton(page, "Text formatting").tap();
     await expect(toolbarOf(page)).toHaveAttribute("data-mobile-toolbar-mode", "format");
-    // 格式列裡有粗體、斜體、連結、顏色；主列的鈕（插入、復原…）不在
     for (const name of ["Bold", "Italic", "Create link", "Colors"]) await expect(toolbarButton(page, name)).toBeVisible();
     await expect(toolbarButton(page, "Undo")).toHaveCount(0);
     await toolbarButton(page, "Bold").tap();
     await expect(toolbarButton(page, "Bold")).toHaveAttribute("aria-pressed", "true");
     await expect.poll(() => readMarkdown(page, note.id), { timeout: 15_000 }).toContain("**alpha bravo charlie**");
-    // 選字期間編輯器沒有失焦，浮動工具列也沒有冒出來（等一下再斷言不存在，同 57-1）
+    // The floating toolbar opens on the tick after the selection: wait before asserting it is absent.
     await page.waitForTimeout(600);
     await expect(page.locator(".bn-formatting-toolbar")).toHaveCount(0);
     await toolbarButton(page, "Back").tap();
@@ -300,7 +273,7 @@ test("57-2 Aa：選字 → Aa → 粗體，內容多 `**`；返回回主列", as
   }
 });
 
-test("57-3 ¶：改成 Heading 2；游標在表格、程式碼區塊時 ¶ 停用且按了內容不變", async ({ browser }) => {
+test("57-3 pilcrow: changes to Heading 2; with the caret in a table or code block the pilcrow is disabled and pressing it leaves the content unchanged", async ({ browser }) => {
   test.setTimeout(150_000);
   const errors: string[] = [];
   {
@@ -331,8 +304,8 @@ test("57-3 ¶：改成 Heading 2；游標在表格、程式碼區塊時 ¶ 停�
       const pilcrow = toolbarButton(page, "Change block type");
       await expect(pilcrow, `${label}：游標在這裡 ¶ 停用`).toHaveAttribute("aria-disabled", "true");
       await pilcrow.tap({ force: true });
-      // 停用的鈕按了不換模式、內容不被清掉
       await expect(toolbarOf(page)).toHaveAttribute("data-mobile-toolbar-mode", "main");
+      // A disabled button gives nothing to wait for: wait a moment, then check the content.
       await page.waitForTimeout(500);
       expect(await readMarkdown(page, note.id), `${label}：內容不變`).toBe(before);
     } finally {
@@ -342,7 +315,7 @@ test("57-3 ¶：改成 Heading 2；游標在表格、程式碼區塊時 ¶ 停�
   await expectNoPageErrors(errors);
 });
 
-test("57-4 復原、重做：打字後復原回原文，重做又回來", async ({ browser }) => {
+test("57-4 undo and redo: after typing, undo returns to the original text and redo brings it back", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openPhoneNote(browser, P390, "undo", "alpha bravo", "alpha bravo");
   try {
@@ -354,17 +327,16 @@ test("57-4 復原、重做：打字後復原回原文，重做又回來", async 
     await toolbarButton(page, "Undo").tap();
     await expect(blockText(page, "alpha bravo")).toBeVisible({ timeout: 10_000 });
     await expect(editorLocator(page).getByText("zulu")).toHaveCount(0);
-    // 滑鼠點擊會先送 mousedown：按鈕若不擋掉它，編輯器就失焦（觸控的 tap 在 Chromium 不經過這一步，量不出來）
+    // A mouse click sends mousedown first: if the button doesn't block it the editor loses focus (a touch tap in Chromium doesn't go through this step, so it can't be measured).
     await toolbarButton(page, "Redo").click();
     await expect(blockText(page, "alpha bravo zulu")).toBeVisible({ timeout: 10_000 });
-    // 按鈕沒有搶走編輯器的焦點
     expect(await editorLocator(page).evaluate((el) => el.contains(document.activeElement))).toBe(true);
   } finally {
     await context.close();
   }
 });
 
-/** 站台有一組 AI 動作：admin 以 API 建 provider（指向 ai-stub）與預設 model。 */
+/** The site has a set of AI actions: admin creates a provider (pointing at ai-stub) and a default model via the API. */
 async function ensureAiAction(browser: Browser): Promise<void> {
   const context = await browser.newContext();
   try {
@@ -386,9 +358,9 @@ async function ensureAiAction(browser: Browser): Promise<void> {
   }
 }
 
-test("57-5 AI 鈕：站台沒有 AI 動作時沒有；有時沒選字停用、選字後可按並開出 AI 框", async ({ browser }) => {
+test("57-5 AI button: absent when the site has no AI action; with one it is disabled with no selection and pressable after selecting text, opening the AI box", async ({ browser }) => {
   test.setTimeout(150_000);
-  // 沒有 AI 動作：攔下動作清單（站台上別的 spec 可能已經建過 provider，不能靠實際狀態）
+  // No AI action: intercept the action list (other specs on the site may already have created a provider, so the real state can't be relied on).
   {
     const { context, page } = await phoneContext(browser, P390);
     try {
@@ -409,13 +381,11 @@ test("57-5 AI 鈕：站台沒有 AI 動作時沒有；有時沒選字停用、�
     await placeCaret(page, blockText(page, "alpha bravo"), 0);
     const ai = toolbarButton(page, "AI");
     await expect(ai).toBeVisible({ timeout: 10_000 });
-    // 游標收合、沒有選取：停用，按了沒有反應
     await expect(ai).toHaveAttribute("aria-disabled", "true");
     await ai.tap({ force: true });
-    // 停用的鈕按下去不會有任何狀態變化可等；等一下再斷言 AI 框沒開
+    // Pressing a disabled button produces no state change to wait for; wait a moment, then assert the AI box is not open.
     await page.waitForTimeout(600);
     await expect(selectionAiBox(page)).toHaveCount(0);
-    // 選字後可按
     await selectBlock(page, blockText(page, "alpha bravo"));
     await expect(ai).not.toHaveAttribute("aria-disabled", "true");
     await ai.tap();
@@ -427,7 +397,7 @@ test("57-5 AI 鈕：站台沒有 AI 動作時沒有；有時沒選字停用、�
 
 const slashMenu = (page: Page): Locator => page.locator(".bn-suggestion-menu");
 
-test("57-6 ＋：有字的段落在後面開新空段並開 slash 選單、不插 `/`；空的程式碼區塊也開選單", async ({ browser }) => {
+test("57-6 plus button: on a paragraph with text it opens a new empty paragraph after it and opens the slash menu without inserting `/`; an empty code block also opens the menu", async ({ browser }) => {
   test.setTimeout(150_000);
   {
     const { context, page } = await openPhoneNote(browser, P390, "plus", "alpha bravo\n\nomega", "alpha bravo");
@@ -437,7 +407,6 @@ test("57-6 ＋：有字的段落在後面開新空段並開 slash 選單、不�
       await placeCaret(page, blockText(page, "alpha bravo"), 5);
       await toolbarButton(page, "Insert block").tap();
       await expect(slashMenu(page)).toBeVisible({ timeout: 10_000 });
-      // 新的一段插在「alpha bravo」後面；原本那段沒被動到、沒有 `/`
       await expect(blocks).toHaveCount(before + 1);
       await expect(blockText(page, "alpha bravo")).toBeVisible();
       expect(await editorLocator(page).innerText()).not.toContain("/");
@@ -455,18 +424,16 @@ test("57-6 ＋：有字的段落在後面開新空段並開 slash 選單、不�
     await expect(toolbarOf(page)).toBeVisible({ timeout: 10_000 });
     await toolbarButton(page, "Insert block").tap();
     await expect(slashMenu(page)).toBeVisible({ timeout: 10_000 });
-    // 程式碼區塊裡沒有多一個字面 `/`
     expect(await code.innerText()).not.toContain("/");
   } finally {
     await context.close();
   }
 });
 
-/** 選單裡每一列的高度與整個選單的下緣，對照工具列上緣。 */
 async function expectMenuAboveToolbar(page: Page, label: string, minRowHeight: number | null): Promise<{ rows: number; minRow: number; bottom: number; top: number }> {
   const menu = slashMenu(page);
   await expect(menu).toBeVisible({ timeout: 10_000 });
-  // 位置在選單出現後還會量一次（floating-ui 先放再算），等穩定
+  // The position is measured once more after the menu appears (floating-ui places first, then computes); wait for it to settle.
   let last = -1;
   await expect
     .poll(async () => {
@@ -495,16 +462,16 @@ async function expectMenuAboveToolbar(page: Page, label: string, minRowHeight: n
   return { rows, minRow, bottom, top };
 }
 
-test("57-7 slash 與 [[ 選單：沒有快捷鍵字樣、列高 ≥ 44、下緣不壓到工具列", async ({ browser }) => {
+test("57-7 slash and [[ menus: no shortcut wording, row height >= 44, bottom edge doesn't overlap the toolbar", async ({ browser }) => {
   test.setTimeout(180_000);
   const lines: string[] = [];
   const filler = Array.from({ length: 30 }, (_, i) => `filler line ${i}`).join("\n\n");
   for (const [label, markdown, anchor] of [
-    // 游標在文件最上面：選單開在下方，高度要被工具列限制住
+    // Caret at the top of the document: the menu opens below, so its height must be limited by the toolbar.
     ["top", `alpha bravo\n\n${filler}`, "alpha bravo"],
-    // 游標在文件下半：空間不夠，選單開在游標上方
+    // Caret in the lower half of the document: not enough room below, so the menu opens above the caret.
     ["bottom", `${filler}\n\nlast words`, "last words"],
-    // 螢幕鍵盤升起 300px：可視區只剩上半，選單的可用高度與翻上翻下都以鍵盤上緣的工具列為底
+    // On-screen keyboard raised 300px: only the upper half of the viewport is left, and the menu's available height and flip up/down are based on the toolbar at the keyboard's top edge.
     ["keyboard", `${filler}\n\nlast words`, "last words"],
   ] as const) {
     const { context, page } = await openPhoneNote(browser, P390, `menus-${label}`, markdown, anchor, label === "keyboard");
@@ -534,7 +501,7 @@ test("57-7 slash 與 [[ 選單：沒有快捷鍵字樣、列高 ≥ 44、下緣�
 const hexInput = (page: Page): Locator => page.getByRole("textbox", { name: "Hex color" });
 const colorPanel = (page: Page): Locator => page.locator("[data-mobile-color-panel]");
 
-test("57-8 色盤：Aa → A → 色票 → ‹，選取不丟、焦點回編輯器、文字色已套用；色盤開著工具列仍在，點內文色盤收起", async ({ browser }) => {
+test("57-8 color panel: Aa -> A -> swatch -> back chevron keeps the selection, returns focus to the editor and applies the text color; the toolbar stays while the panel is open and tapping the body collapses the panel", async ({ browser }) => {
   test.setTimeout(180_000);
   const { context, page } = await openPhoneNote(browser, P390, "colors", "alpha bravo charlie\n\nsecond words here", "alpha bravo charlie");
   try {
@@ -545,21 +512,17 @@ test("57-8 色盤：Aa → A → 色票 → ‹，選取不丟、焦點回編輯
     await expect(toolbarOf(page)).toBeVisible();
     await expect(toolbarOf(page)).toHaveAttribute("data-mobile-toolbar-mode", "color");
     await expect(toolbarButton(page, "Colors")).toHaveAttribute("aria-pressed", "true");
-    // 色盤與工具列都在視窗內，色盤沒有蓋到上方的文字行（選取的那一行仍看得到）
     const panelRect = await rectOf(colorPanel(page));
     expect(panelRect.bottom).toBeLessThanOrEqual(P390.height + 0.5);
     const selectedLine = await rectOf(blockText(page, "alpha bravo charlie"));
     expect(selectedLine.bottom, "選取的那一行在色盤之上").toBeLessThanOrEqual(panelRect.y + 0.5);
 
-    // 文字色那列選 Red
     const textRow = colorPanel(page).getByRole("group", { name: "Text", exact: true });
     await textRow.getByRole("button", { name: "Red", exact: true }).tap();
     await expect(editorLocator(page).locator('[data-style-type="textColor"][data-value="red"]')).toHaveText("alpha bravo charlie", { timeout: 10_000 });
-    // 色盤還開著、選取沒丟（外框畫在編輯器上）
     await expect(colorPanel(page)).toBeVisible();
     await expect(page.locator("[data-mobile-color-open]")).toHaveCount(1);
 
-    // ‹：回格式列，焦點回編輯器，選取仍是那一整段
     await toolbarButton(page, "Back").tap();
     await expect(colorPanel(page)).toHaveCount(0);
     await expect(toolbarOf(page)).toHaveAttribute("data-mobile-toolbar-mode", "format");
@@ -567,7 +530,6 @@ test("57-8 色盤：Aa → A → 色票 → ‹，選取不丟、焦點回編輯
     expect(await page.evaluate(() => document.getSelection()?.toString())).toBe("alpha bravo charlie");
     await expect(page.locator("[data-mobile-color-open]")).toHaveCount(0);
 
-    // 色盤開著時點內文：色盤收起、工具列還在
     await toolbarButton(page, "Colors").tap();
     await expect(colorPanel(page)).toBeVisible();
     await blockText(page, "second words here").tap({ position: { x: 2, y: 4 } });
@@ -578,7 +540,7 @@ test("57-8 色盤：Aa → A → 色票 → ‹，選取不丟、焦點回編輯
   }
 });
 
-test("57-8b 色盤（觸控）：自訂色碼可套用，最近用過可再點；開自訂頁時色碼框不自動取得焦點", async ({ browser }) => {
+test("57-8b color panel (touch): a custom color code can be applied and a recent one tapped again; the code box doesn't take focus when the custom page opens", async ({ browser }) => {
   test.setTimeout(180_000);
   const { context, page } = await openPhoneNote(browser, P390, "colors-custom", "first words here\n\nsecond words here", "first words here");
   const custom = "#ff6600";
@@ -588,7 +550,7 @@ test("57-8b 色盤（觸控）：自訂色碼可套用，最近用過可再點�
     await toolbarButton(page, "Colors").tap();
     await colorPanel(page).getByRole("group", { name: "Text", exact: true }).getByRole("button", { name: "Custom…", exact: true }).tap();
     await expect(hexInput(page)).toBeVisible();
-    // 觸控不叫出螢幕鍵盤：色碼框沒有焦點，焦點仍在色盤裡
+    // Touch: the code box stays unfocused so the on-screen keyboard doesn't open.
     await expect(hexInput(page)).not.toBeFocused();
     expect(await colorPanel(page).evaluate((el) => el.contains(document.activeElement)), "焦點留在色盤").toBe(true);
     await hexInput(page).tap();
@@ -597,7 +559,6 @@ test("57-8b 色盤（觸控）：自訂色碼可套用，最近用過可再點�
     await expect(editorLocator(page).locator(`[data-style-type="textColor"][data-value="${custom}"]`)).toHaveText("first words here", { timeout: 10_000 });
     await expect(editorLocator(page).locator(`[data-style-type="textColor"][data-value="${custom}"]`)).toHaveCSS("color", "rgb(255, 102, 0)");
 
-    // 另一段選取，開自訂頁，從最近用過點同一個色碼
     await toolbarButton(page, "Back").tap();
     await toolbarButton(page, "Back").tap();
     await selectBlock(page, blockText(page, "second words here"));
@@ -612,11 +573,11 @@ test("57-8b 色盤（觸控）：自訂色碼可套用，最近用過可再點�
   }
 });
 
-test("57-9 連結：游標在連結裡按連結鈕，對話框預填網址；改網址只換 href，文字不變也不多一份", async ({ browser }) => {
+test("57-9 link: with the caret in a link, the link button opens the dialog prefilled with the URL; changing the URL only changes the href, and the text is unchanged and not duplicated", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page, note } = await openPhoneNote(browser, P390, "link", "see [docs](https://example.com/old) end", "see docs end");
   try {
-    // 游標放在「docs」中間（「see 」4 字元＋2）
+    // Caret in the middle of "docs" ("see " is 4 characters, plus 2).
     await placeCaret(page, blockText(page, "see docs end"), 6);
     await toolbarButton(page, "Text formatting").tap();
     await toolbarButton(page, "Create link").tap();
@@ -635,7 +596,7 @@ test("57-9 連結：游標在連結裡按連結鈕，對話框預填網址；改
   }
 });
 
-test("57-10 長文件：點最後一行打字，那一行的下緣在工具列上緣之上", async ({ browser }) => {
+test("57-10 long document: tapping the last line and typing leaves that line's bottom edge above the toolbar's top edge", async ({ browser }) => {
   test.setTimeout(150_000);
   const lines = Array.from({ length: 50 }, (_, i) => `line number ${i}`);
   const { context, page } = await openPhoneNote(browser, P390, "long", lines.join("\n\n"), "line number 0", true);
@@ -644,14 +605,13 @@ test("57-10 長文件：點最後一行打字，那一行的下緣在工具列�
     await last.scrollIntoViewIfNeeded();
     await last.tap({ position: { x: 2, y: 4 } });
     await expect(toolbarOf(page)).toBeVisible({ timeout: 10_000 });
-    // 鍵盤升起（300px）：工具列浮到鍵盤上方，游標那一行要被推到工具列之上
     await setKeyboard(page, 300);
     await page.keyboard.press("End");
     await waitForEditorSelection(page);
     await page.keyboard.type(" typed at the very end");
     const typed = blockText(page, "line number 49 typed at the very end");
     await expect(typed).toBeVisible();
-    // 捲動是 ProseMirror 在打字後做的，等位置穩定再量
+    // Scrolling is done by ProseMirror after typing; wait for the position to settle before measuring.
     let previous = -1;
     await expect
       .poll(async () => {
@@ -671,7 +631,6 @@ test("57-10 長文件：點最後一行打字，那一行的下緣在工具列�
   }
 });
 
-/** 建一篇有圖片與表格的筆記（圖片先上傳，再整篇寫入）。 */
 async function createNoteWithImageAndTable(page: Page, label: string, image = { width: 200, height: 120 }): Promise<NoteRef> {
   const note = await createNoteVia(page, `E2E mobile toolbar ${label} ${RUN}`);
   const upload = await page.request.post(`/api/notes/${note.id}/uploads`, {
@@ -691,7 +650,7 @@ async function createNoteWithImageAndTable(page: Page, label: string, image = { 
     "",
     "tail words",
     "",
-    // 後面接一段長文，內文區才捲得動（測圖片捲到最上面的位置）
+    // A long paragraph follows so the body can scroll (to test the position with the image scrolled to the very top).
     ...Array.from({ length: 30 }, (_, i) => `filler line ${i}\n`),
   ].join("\n");
   const written = await page.request.post(`/api/notes/${note.id}/edits`, { headers: { Origin: ORIGIN }, data: { op: "replace_all", markdown, if_match: fingerprint } });
@@ -700,7 +659,7 @@ async function createNoteWithImageAndTable(page: Page, label: string, image = { 
 }
 
 for (const phone of [P390, P320]) {
-  test(`57-11 ${phone.width} 圖片：點圖片出現浮動工具列，含刪除鈕、在視窗內、不被編輯工具列蓋住`, async ({ browser }) => {
+  test(`57-11 ${phone.width} image: tapping the image shows the floating toolbar with a delete button, inside the viewport and not covered by the editing toolbar`, async ({ browser }) => {
     test.setTimeout(150_000);
     const { context, page } = await phoneContext(browser, phone);
     try {
@@ -714,7 +673,6 @@ for (const phone of [P390, P320]) {
       const floating = page.locator(".bn-formatting-toolbar");
       await expect(floating).toBeVisible({ timeout: 10_000 });
       await expect(floating.getByRole("button", { name: /delete/i })).toBeVisible();
-      // 浮動工具列定位後再量
       let previous = -1;
       await expect
         .poll(async () => {
@@ -729,7 +687,6 @@ for (const phone of [P390, P320]) {
       expect(rect.x, "浮動工具列左緣").toBeGreaterThanOrEqual(-0.5);
       expect(rect.right, "浮動工具列右緣").toBeLessThanOrEqual(phone.width + 0.5);
       expect(rect.y, "浮動工具列上緣").toBeGreaterThanOrEqual(-0.5);
-      // 點圖片時編輯工具列也在：兩條不重疊（浮動的在它上方）
       await expect(toolbarOf(page)).toBeVisible();
       expect(rect.bottom, "浮動工具列下緣在編輯工具列上緣之上").toBeLessThanOrEqual((await toolbarTop(page)) + 0.5);
       expect(rect.bottom, "浮動工具列下緣").toBeLessThanOrEqual(phone.height);
@@ -739,18 +696,17 @@ for (const phone of [P390, P320]) {
   });
 }
 
-test("57-11b 390 高圖片、鍵盤升起：上方放不下時浮動工具列翻到圖片下方，且仍在編輯工具列之上", async ({ browser }) => {
+test("57-11b 390 tall image, keyboard raised: when there is no room above, the floating toolbar flips below the image and stays above the editing toolbar", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page } = await phoneContext(browser, P390, true);
   try {
-    // 寬 200、高 300 的圖：捲到最上面時，它上方放不下浮動工具列
+    // An image 200 wide and 300 high: scrolled to the top, there is no room above it for the floating toolbar.
     const note = await createNoteWithImageAndTable(page, "tall image", { width: 200, height: 300 });
     await page.goto(note.path);
     await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible({ timeout: 15_000 });
     const image = editorLocator(page).locator('[data-content-type="image"]').first();
     await expect(image).toBeVisible({ timeout: 15_000 });
     await setKeyboard(page, 300);
-    // 把圖片頂端捲到內文區最上面：上方沒有空間放工具列，只能翻到下方
     await image.evaluate((el) => el.scrollIntoView({ block: "start" }));
     await image.locator("img").tap();
     const floating = page.locator(".bn-formatting-toolbar");
@@ -776,7 +732,6 @@ test("57-11b 390 高圖片、鍵盤升起：上方放不下時浮動工具列翻
   }
 });
 
-/** 拖過表格第一列的兩格，選成儲存格選取，回傳出現的浮動工具列。 */
 async function selectTwoCells(page: Page): Promise<Locator> {
   const cell1 = editorLocator(page).getByText("c1", { exact: true }).first();
   const cell2 = editorLocator(page).getByText("c2", { exact: true }).first();
@@ -794,7 +749,7 @@ async function selectTwoCells(page: Page): Promise<Locator> {
   return floating;
 }
 
-/** 元素中心點在視窗內，而且那一點命中的就是它（沒被別的元素蓋住、也沒被裁掉）。 */
+/** The element's center is inside the viewport and the hit element at that point is the element itself (not covered by another element, nor clipped). */
 async function expectReachable(target: Locator, viewport: Phone, label: string): Promise<void> {
   await expect(target, `${label} 可見`).toBeVisible({ timeout: 10_000 });
   const hit = await target.first().evaluate((el, size) => {
@@ -808,7 +763,7 @@ async function expectReachable(target: Locator, viewport: Phone, label: string):
   expect(hit.hit, `${label} 中心點命中它自己`).toBe(true);
 }
 
-test("57-12 320 儲存格：跨儲存格選取時浮動工具列右緣在視窗內", async ({ browser }) => {
+test("57-12 320 cells: with a multi-cell selection the floating toolbar's right edge is inside the viewport", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page } = await phoneContext(browser, P320);
   try {
@@ -834,7 +789,7 @@ test("57-12 320 儲存格：跨儲存格選取時浮動工具列右緣在視窗�
   }
 });
 
-test("57-13 320 儲存格：浮動工具列的 Colors 選單沒被裁掉，色票點得到並套用後選單收起", async ({ browser }) => {
+test("57-13 320 cells: the floating toolbar's Colors menu isn't clipped, a swatch can be tapped and the menu collapses after applying", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page } = await phoneContext(browser, P320);
   try {
@@ -854,7 +809,7 @@ test("57-13 320 儲存格：浮動工具列的 Colors 選單沒被裁掉，色�
   }
 });
 
-test("57-14 390 圖片：浮動工具列的 Replace 面板沒被裁掉，面板裡的分頁點得到", async ({ browser }) => {
+test("57-14 390 image: the floating toolbar's Replace panel isn't clipped and the tabs in it can be tapped", async ({ browser }) => {
   test.setTimeout(150_000);
   const { context, page } = await phoneContext(browser, P390);
   try {

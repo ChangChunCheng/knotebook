@@ -17,22 +17,11 @@ import {
 } from "./helpers.js";
 
 /**
- * 側欄的「Favorites」tab 與筆記頁頁首的星號：
- * 1. 頁首星號加入、最愛 tab 依加入時間新到舊、每列第二行是位置；側欄 ⋮ 移出要先確認（取消不移、確認後沒有 Undo、焦點落在相鄰的一列）；
- *    頁首星號移出同樣先確認，再加入不確認；移到垃圾桶的最愛從側欄消失，toast 的 Undo 讓它回到原位。
- * 2. 最愛是每個人自己的：群組成員 alice 加入的群組筆記，同群組的 bob 看不到。
- * 3. 窄寬：390 手機清單裡六顆 tab 放得下不橫向捲動；側欄縮到最窄（200）時六顆都在 tab 列內。
- * 4. 390 寬、兩位其他人在同一篇時，頁首的星號、分享、⋮ 都不被卡片裁掉、也不擠進頁首的右內距；鍵盤 Space 切換後焦點仍在星號；
- *    320 寬星號收起，⋮ 選單的第一項接手。
- * 5. 公開分享頁沒有星號。
- * 6. 最愛 tab 的選取模式：勾兩篇移出（先確認、沒有 Undo、動作列沒有 Move to）；剩下的全部移出後清單空了，焦點留在面板而不是掉到 body；
- *    390 手機清單的動作列（只放圖示、靠可及名稱找鈕）同樣先確認再移出。
- * 7. 筆記列右側的星星：hover／鍵盤焦點才浮出空心星、點了直接加入；最愛 tab 的實心星移出先確認、焦點落到鄰近的列；Tab 順序是連結、星星、⋮；
- *    觸控裝置沒加入的列沒有星星；選取模式、資料夾列、垃圾桶沒有星星；側欄縮到最窄時星星與 ⋮ 都在列內。
- *    列上星星與頁首星號同名（Favorite），頁首的查詢限定在 `<header>` 內。
+ * Removing a favorite asks for confirmation (sidebar kebab, row star, header star, select-mode action bar); cancel keeps it and there is no Undo after confirming; a single-row removal moves focus to the adjacent row. Adding does not confirm. A favorite moved to the trash disappears from the sidebar and the toast's Undo restores it in place. Favorites are per user.
+ * Row star: Tab order is link, kebab, star; a hollow star shows only on hover or keyboard focus; on touch devices rows not yet added have no star; select mode, folder rows and the trash have no star. The row star and the header star share the name (Favorite), so header lookups are scoped to `<header>`.
  *
- * 每個測試都用新建的帳號（alice、bob、carol 加 RUN 後綴），最愛清單不受別支 spec 影響；群組與筆記留著不清（疊每次 `stack:down -v` 重置）。
- * 所有按鈕查詢都用 `exact: true`：Playwright 預設是不分大小寫的子字串比對，「Favorite」會撞到「Add to favorites」「Remove from favorites」。
+ * Every test uses freshly created accounts (alice, bob, carol plus the RUN suffix), so the favorites list is not affected by other specs; groups and notes are left in place (the stack is reset by `stack:down -v` each time).
+ * All button lookups use `exact: true`: Playwright's default is a case-insensitive substring match, so "Favorite" would also match "Add to favorites" and "Remove from favorites".
  */
 
 const RUN = Date.now();
@@ -45,7 +34,6 @@ interface Account {
   displayName: string;
 }
 
-/** 以 admin 的邀請建一個帳號（admin 的 context 用完即關）。 */
 async function createAccount(browser: Browser, name: string): Promise<Account> {
   const account: Account = { email: randomEmail(), displayName: `${name} ${RUN}` };
   const context = await browser.newContext();
@@ -66,22 +54,20 @@ async function openAs(browser: Browser, account: Account, viewport?: { width: nu
   return { context, page };
 }
 
-/** 側欄裡某篇筆記的連結（可及名稱以標題開頭，後面接位置行）。 */
 function noteLink(scope: Locator, title: string): Locator {
   return scope.getByRole("link", { name: new RegExp("^" + reEscape(title)) });
 }
 
-/** 最愛 tab 的列文字：標題＋第二行位置。 */
 function favoriteRow(title: string, location: string): RegExp {
   return new RegExp("^" + reEscape(title) + "\\s*" + reEscape(location) + "$");
 }
 
 function star(page: Page): Locator {
-  // 頁首的星號。側欄每列也有同名（Favorite）的星星，所以限定在 `<header>` 內。
+  // The header star. Each sidebar row also has a star with the same name (Favorite), so scope to `<header>`.
   return page.locator("header").getByRole("button", { name: "Favorite", exact: true });
 }
 
-/** 整頁載入筆記頁後先等標題框：lazy 筆記頁的 fallback 殼會換掉側欄、重設抽屜。 */
+/** After a full page load of a note page, wait for the title box first: the lazy note page's fallback shell replaces the sidebar and resets the drawer. */
 async function waitForNoteTitle(page: Page, title: string): Promise<void> {
   await expect(page.getByRole("textbox", NOTE_TITLE)).toHaveValue(title, { timeout: 15_000 });
 }
@@ -92,13 +78,12 @@ async function openNoteFromSidebar(page: Page, tab: "My notes" | "Favorites", ti
   await waitForNoteTitle(page, title);
 }
 
-/** 檢視者連上：標題（h1）與徽章只寫「Read-only」。 */
 async function waitViewerConnected(page: Page, title: string): Promise<void> {
   await expect(page.getByRole("heading", { name: title, level: 1 })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("status").filter({ hasText: /^Read-only/ })).toBeVisible({ timeout: 15_000 });
 }
 
-test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、移到垃圾桶再還原", async ({ browser }) => {
+test("header star and sidebar kebab: add, sort by time, remove after confirming, move to trash and restore", async ({ browser }) => {
   test.setTimeout(150_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -108,7 +93,6 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     await createNote(page, a);
     await createNote(page, b);
 
-    // 1. B 頁按頁首星號，再到 A 頁按；最愛 tab 新加入的在前
     await expect(star(page)).toBeEnabled();
     await expect(star(page)).toHaveAttribute("aria-pressed", "false");
     await star(page).click();
@@ -121,7 +105,6 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     const favorites = await showSidebarTab(page, "Favorites");
     await expect(favorites.getByRole("link")).toHaveText([favoriteRow(a, "My notes"), favoriteRow(b, "My notes")]);
 
-    // 2. 側欄 ⋮ 移出 B：取消不動，再來一次按確認；沒有 Undo，焦點落在上一列（A）
     const actionsB = favorites.getByRole("button", { name: `Note actions for ${b}`, exact: true });
     await actionsB.locator("xpath=ancestor::li[1]").hover();
     await actionsB.click();
@@ -141,7 +124,6 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     await expect(noteLink(favorites, a)).toBeFocused();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
 
-    // 3. A 頁（已加入）：星號要確認才移出；再按加入不確認
     await expect(star(page)).toHaveAttribute("aria-pressed", "true");
     await star(page).click();
     await expect(dialog).toBeVisible();
@@ -152,7 +134,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
     await expect(star(page)).toHaveAttribute("aria-pressed", "true");
     await expect(dialog).toHaveCount(0);
 
-    // 4. 開著 B（對開著的那篇從側欄移到垃圾桶會導回首頁，所以不停在 A），把 B 再加入；A 從最愛 tab 移到垃圾桶，Undo 讓它回到原位
+    // Keep B open (moving the open note to the trash from the sidebar navigates home, so don't stay on A), add B again; move A to the trash from the Favorites tab, and Undo returns it in place.
     await openNoteFromSidebar(page, "My notes", b);
     await expect(star(page)).toHaveAttribute("aria-pressed", "false");
     await star(page).click();
@@ -170,7 +152,7 @@ test("頁首星號與側欄 ⋮：加入、依時間排序、移出先確認、�
   }
 });
 
-test("最愛是每個人自己的：同群組的 bob 看不到 alice 加入的群組筆記", async ({ browser }) => {
+test("favorites are per user: bob of the same group does not see a group note alice added", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const bob = await createAccount(browser, "bob");
@@ -195,7 +177,6 @@ test("最愛是每個人自己的：同群組的 bob 看不到 alice 加入的�
     const mine = await showSidebarTab(a.page, "Favorites");
     await expect(mine.getByRole("link")).toHaveText([favoriteRow(title, `Groups › E2E fav group ${RUN}`)]);
 
-    // bob 讀得到這篇，但最愛 tab 是空的
     const readable = await b.page.request.get(`/api/notes/${note.id}`);
     expect(readable.status()).toBe(200);
     const theirs = await showSidebarTab(b.page, "Favorites");
@@ -209,7 +190,7 @@ test("最愛是每個人自己的：同群組的 bob 看不到 alice 加入的�
   }
 });
 
-test("窄寬：390 手機清單與側欄縮到最窄時六顆 tab 都放得下", async ({ browser }) => {
+test("narrow widths: all six tabs fit in the 390 phone list and with the sidebar narrowed to its minimum", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 390, height: 844 });
@@ -220,7 +201,7 @@ test("窄寬：390 手機清單與側欄縮到最窄時六顆 tab 都放得下",
     const overflow = await drawerTabs.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
     expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth);
 
-    // 靜態側欄要視窗 ≥ 1280 才有：改成 1280×800，把分隔線一路拖到最窄
+    // The static sidebar needs a viewport >= 1280: switch to 1280x800 and drag the separator all the way to the narrowest.
     await page.setViewportSize({ width: 1280, height: 800 });
     const sidebar = page.getByRole("complementary");
     const handle = page.getByRole("separator", { name: "Resize sidebar" });
@@ -250,7 +231,7 @@ test("窄寬：390 手機清單與側欄縮到最窄時六顆 tab 都放得下",
   }
 });
 
-test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵盤切換焦點不掉；320 寬星號收起、改由 ⋮ 進入", async ({ browser }) => {
+test("390 wide header: star, share and kebab are not clipped nor pushed into the right padding; keyboard toggling keeps focus; at 320 wide the star collapses and entry is through the kebab", async ({ browser }) => {
   test.setTimeout(150_000);
   const alice = await createAccount(browser, "alice");
   const bob = await createAccount(browser, "bob");
@@ -275,7 +256,7 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(noteUrl);
     await waitForNoteTitle(page, title);
-    // 兩位其他人：手機寬的在線者只剩一顆「+2」
+    // Two other viewers: at phone width presence collapses to a single "+2".
     await expect(page.getByRole("group", { name: "Also viewing this note" }).getByRole("button", { name: "2 more, show everyone" })).toHaveCount(1, { timeout: 15_000 });
     await expect(star(page)).toBeEnabled();
 
@@ -287,7 +268,7 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
 
     const frames = await star(page).evaluate((el) => {
       const header = el.closest("header")!;
-      // 最近一個橫向會裁切的祖先（640 起是內文卡；手機上卡不裁切，文件在捲，裁切的是外框的 overflow-x: clip）。
+      // The nearest ancestor that clips horizontally (from 640 up it is the content card; on a phone the card doesn't clip, the document scrolls, and the outer frame's overflow-x: clip does the clipping).
       let card: Element | null = header.parentElement;
       while (card && !["hidden", "clip"].includes(getComputedStyle(card).overflowX)) card = card.parentElement;
       const style = getComputedStyle(header);
@@ -305,7 +286,6 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
       expect(right, `${name} 擠進頁首右內距 ${measured}`).toBeLessThanOrEqual(frames.contentRight + 0.5);
     }
 
-    // 鍵盤：Tab 到星號、Space 切換，焦點仍在星號
     await page.getByRole("textbox", NOTE_TITLE).focus();
     const isFocused = () => star(page).evaluate((el) => el === document.activeElement);
     for (let i = 0; i < 12 && !(await isFocused()); i += 1) {
@@ -317,7 +297,6 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
     await expect(star(page)).toHaveAttribute("aria-pressed", "true");
     await expect(star(page)).toBeFocused();
 
-    // 320 寬：星號收起，⋮ 的第一項接手
     await page.setViewportSize({ width: 320, height: 700 });
     await expect(star(page)).toBeHidden();
     await more.click();
@@ -328,7 +307,7 @@ test("390 寬頁首：星號、分享、⋮ 不被裁、不擠進右內距；鍵
   }
 });
 
-test("公開分享頁沒有星號", async ({ browser }) => {
+test("the public share page has no star", async ({ browser }) => {
   test.setTimeout(90_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -352,7 +331,7 @@ test("公開分享頁沒有星號", async ({ browser }) => {
   }
 });
 
-/** 以 API 建筆記並加入最愛（依序，所以後建的在最愛 tab 的前面）；回傳 id。 */
+/** Creates a note via the API and adds it to favorites (called in order, so later ones come first in the Favorites tab); returns the id. */
 async function apiCreateFavorite(page: Page, title: string): Promise<string> {
   const created = await page.request.post("/api/notes", { data: { title } });
   expect(created.status(), await created.text()).toBe(201);
@@ -362,12 +341,11 @@ async function apiCreateFavorite(page: Page, title: string): Promise<string> {
   return id;
 }
 
-/** 選取動作列（寬形在標題列、窄形在側欄底部；兩形都有 `data-select-action-bar`）。 */
 function actionBar(scope: Locator): Locator {
   return scope.locator("[data-select-action-bar]");
 }
 
-test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒有 Move to）；全部移出後焦點留在面板", async ({ browser }) => {
+test("Favorites tab select mode: check two notes and remove them (confirm first, no Undo, no Move to); after removing all, focus stays in the panel", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -381,7 +359,6 @@ test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒�
     const panel = await showSidebarTab(page, "Favorites");
     await expect(panel.getByRole("link")).toHaveText([favoriteRow(titles[2]!, "My notes"), favoriteRow(titles[1]!, "My notes"), favoriteRow(titles[0]!, "My notes")]);
 
-    // 1. 勾第三、第一篇：動作列有「Copy to」與「Remove from favorites」，沒有「Move to」
     await startSidebarSelection(page);
     await toggleSelectedNote(panel, titles[2]!);
     await toggleSelectedNote(panel, titles[0]!);
@@ -391,7 +368,6 @@ test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒�
     await expect(bar.getByRole("button", { name: "Copy to", exact: true })).toBeVisible();
     await expect(bar.getByRole("button", { name: /^Move to/ })).toHaveCount(0);
 
-    // 2. 先確認：框裡寫著篇數；確認後只剩中間那篇、沒有 Undo、離開選取
     await bar.getByRole("button", { name: "Remove from favorites", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Remove 2 notes from favorites?" });
     await expect(dialog).toBeVisible();
@@ -405,7 +381,6 @@ test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒�
     const afterFirst = await page.request.get("/api/favorites");
     expect(((await afterFirst.json()) as Array<{ noteId: string }>).length).toBe(1);
 
-    // 3. 剩下的一篇也移出：清單空了，「Select」鈕停用，焦點在面板（不掉到 body）
     await startSidebarSelection(page);
     await toggleSelectedNote(panel, titles[1]!);
     await bar.getByRole("button", { name: "Remove from favorites", exact: true }).click();
@@ -421,7 +396,7 @@ test("最愛 tab 選取模式：勾兩篇移出（先確認、沒有 Undo、沒�
   }
 });
 
-test("最愛 tab 選取模式：390 手機清單的動作列先確認再移出", async ({ browser }) => {
+test("Favorites tab select mode: the 390 phone list's action bar confirms before removing", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 390, height: 844 });
@@ -439,7 +414,7 @@ test("最愛 tab 選取模式：390 手機清單的動作列先確認再移出",
 
     const bar = actionBar(drawer);
     await expect(bar.getByRole("button", { name: "Copy to", exact: true })).toBeVisible();
-    // 窄形的鈕只放圖示：可及名稱在，可見文字沒有。
+    // The narrow buttons hold only icons: the accessible name is there, visible text is not.
     for (const name of ["Remove from favorites", "Copy to"]) await expect(bar.getByRole("button", { name, exact: true })).toHaveText("");
     await expect(bar.getByRole("button", { name: /^Move to/ })).toHaveCount(0);
     await bar.getByRole("button", { name: "Remove from favorites", exact: true }).click();
@@ -454,7 +429,7 @@ test("最愛 tab 選取模式：390 手機清單的動作列先確認再移出",
   }
 });
 
-test("最近 tab 選取模式：把清單全部刪除後，焦點落在面板而不是 body", async ({ browser }) => {
+test("Recent tab select mode: after deleting the whole list, focus lands in the panel and not on body", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -468,7 +443,7 @@ test("最近 tab 選取模式：把清單全部刪除後，焦點落在面板而
 
     const panel = await showSidebarTab(page, "Recent");
     await startSidebarSelection(page);
-    // 新帳號的最近清單只有上面兩篇：全選後刪除，清單就空了。
+    // The new account's Recent list holds only these two notes, so Select all empties it.
     await panel.getByRole("checkbox", { name: "Select all", exact: true }).click();
     await expect(panel.getByText("2 selected", { exact: true })).toBeVisible();
     await actionBar(page.getByRole("complementary")).getByRole("button", { name: "Delete 2 selected items", exact: true }).click();
@@ -482,24 +457,21 @@ test("最近 tab 選取模式：把清單全部刪除後，焦點落在面板而
   }
 });
 
-/** 以 API 建筆記（不加入最愛）；回傳 id。 */
 async function apiCreateNote(page: Page, title: string): Promise<string> {
   const created = await page.request.post("/api/notes", { data: { title } });
   expect(created.status(), await created.text()).toBe(201);
   return ((await created.json()) as { id: string }).id;
 }
 
-/** 側欄面板裡某篇筆記的列（`<li>`）。 */
 function noteRowOf(panel: Locator, title: string): Locator {
   return panel.locator('li[data-node-kind="note"]').filter({ has: panel.page().getByRole("link", { name: new RegExp("^" + reEscape(title)) }) });
 }
 
-/** 列上的星星（可及名稱固定 Favorite，狀態看 aria-pressed）。 */
 function rowStar(row: Locator): Locator {
   return row.getByRole("button", { name: "Favorite", exact: true });
 }
 
-test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入變實心；在最愛 tab 取消不移、確認後焦點落到鄰近的列", async ({ browser }) => {
+test("row star (mouse): the hollow star appears only on hover and clicking adds it as a solid star; in the Favorites tab cancel keeps it and after confirming focus lands on a neighbouring row", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -511,7 +483,6 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
     for (const title of titles) await apiCreateFavorite(page, title);
     await page.goto("/");
 
-    // 1. 我的筆記：沒加入的筆記是空心星、平常看不到，hover 該列才浮出；點下直接加入（不開框）
     const mine = await showSidebarTab(page, "My notes");
     const looseRow = noteRowOf(mine, loose);
     const looseStar = rowStar(looseRow);
@@ -526,7 +497,6 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
     const favorites = await showSidebarTab(page, "Favorites");
     await expect(noteLink(favorites, loose)).toBeVisible();
 
-    // 2. 最愛 tab（新到舊：loose、3、2、1）：移出標題 2 要先確認；Cancel 不移、焦點回星星
     const row2 = noteRowOf(favorites, titles[1]!);
     await rowStar(row2).click();
     const dialog = page.getByRole("dialog", { name: "Remove from favorites?" });
@@ -536,7 +506,6 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
     await expect(noteLink(favorites, titles[1]!)).toBeVisible();
     await expect(rowStar(row2)).toBeFocused();
 
-    // 3. 再點、確認：列消失，焦點落到下一列（標題 1）的連結；沒有 Undo
     await rowStar(row2).click();
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Remove", exact: true }).click();
@@ -544,13 +513,11 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
     await expect(noteLink(favorites, titles[0]!)).toBeFocused();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
 
-    // 4. 最後一列（標題 1）移出：沒有下一列，焦點落到上一列（標題 3）
     await rowStar(noteRowOf(favorites, titles[0]!)).click();
     await dialog.getByRole("button", { name: "Remove", exact: true }).click();
     await expect(noteLink(favorites, titles[0]!)).toHaveCount(0, { timeout: 15_000 });
     await expect(noteLink(favorites, titles[2]!)).toBeFocused();
 
-    // 5. 再移出 loose；只剩一篇時移出：清單空了，焦點落到面板
     await rowStar(noteRowOf(favorites, loose)).click();
     await dialog.getByRole("button", { name: "Remove", exact: true }).click();
     await expect(noteLink(favorites, loose)).toHaveCount(0, { timeout: 15_000 });
@@ -563,7 +530,7 @@ test("列上星星（滑鼠）：空心星 hover 才浮出，點了直接加入�
   }
 });
 
-test("列上星星（鍵盤）：Tab 順序是連結、⋮、星星；聚焦的 ⋮ 與空心星 opacity 為 1；Enter 加入後焦點仍在星星", async ({ browser }) => {
+test("row star (keyboard): Tab order is link, kebab, star; the focused kebab and hollow star have opacity 1; after Enter adds, focus stays on the star", async ({ browser }) => {
   test.setTimeout(90_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -597,7 +564,7 @@ test("列上星星（鍵盤）：Tab 順序是連結、⋮、星星；聚焦的 
   }
 });
 
-test("列上星星（觸控）：沒加入的列看不到星星，最愛列的實心星可見、點了開確認框，⋮ 仍有「Add to favorites」", async ({ browser }) => {
+test("row star (touch): rows not yet added show no star; a favorite row shows a non-clickable Favorite marker (tapping opens nothing) and removal goes through the kebab, which still offers \"Add to favorites\" on other rows", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const context = await browser.newContext({ ...devices["Pixel 5"] });
@@ -605,7 +572,7 @@ test("列上星星（觸控）：沒加入的列看不到星星，最愛列的�
     const page = await context.newPage();
     await loginAs(page, alice.email, PASSWORD);
     await expectWidePointer(page, false);
-    // 前提：空心星用 hover: none／pointer: coarse 隱藏；這個 context 要真的落在其中之一
+    // Precondition: the hollow star is hidden with hover: none / pointer: coarse; this context must really be in one of them.
     expect(await page.evaluate(() => window.matchMedia("(hover: none), (pointer: coarse)").matches)).toBe(true);
     const loose = `E2E row star touch loose ${RUN}`;
     const faved = `E2E row star touch faved ${RUN}`;
@@ -619,7 +586,7 @@ test("列上星星（觸控）：沒加入的列看不到星星，最愛列的�
     await expect(noteLink(mine, faved)).toBeVisible();
     await expect(rowStar(noteRowOf(mine, loose))).toHaveCount(0);
 
-    // 觸控：最愛列上沒有星號鈕，只有一顆不能點的標記（role=img、名稱 Favorite），在 ⋮ 左邊；點它什麼都不發生，移出走 ⋮ 選單
+    // Touch: a favorite row has no star button, only a marker that can't be clicked (role=img, name Favorite) to the left of the kebab; clicking it does nothing, and removal goes through the kebab menu.
     const favedRow = noteRowOf(mine, faved);
     await expect(rowStar(favedRow)).toHaveCount(0);
     const marker = favedRow.getByRole("img", { name: "Favorite", exact: true });
@@ -642,7 +609,7 @@ test("列上星星（觸控）：沒加入的列看不到星星，最愛列的�
   }
 });
 
-test("列上星星：選取模式、資料夾列、垃圾桶 tab 都沒有星星", async ({ browser }) => {
+test("row star: no star in select mode, on folder rows or in the Trash tab", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -666,7 +633,7 @@ test("列上星星：選取模式、資料夾列、垃圾桶 tab 都沒有星星
     const panel = await startSidebarSelection(page);
     await expect(mine.getByRole("checkbox").first()).toBeVisible();
     await expect(mine.getByRole("button", { name: "Favorite", exact: true })).toHaveCount(0);
-    // 寬螢幕的選取列用 ✕「Exit selection」結束；「Done」只出現在窄螢幕版的選取列
+    // The wide select bar is exited with the X "Exit selection"; "Done" only appears in the narrow select bar.
     await panel.getByRole("button", { name: "Exit selection", exact: true }).click();
     await expect(rowStar(noteRowOf(mine, title))).toBeVisible();
 
@@ -679,7 +646,7 @@ test("列上星星：選取模式、資料夾列、垃圾桶 tab 都沒有星星
   }
 });
 
-test("列上星星：側欄縮到最窄時，最愛列的連結仍有寬度，星星與 ⋮ 的右緣都在列內", async ({ browser }) => {
+test("row star: with the sidebar at its narrowest, a favorite row's link still has width and the right edges of the star and kebab are inside the row", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });

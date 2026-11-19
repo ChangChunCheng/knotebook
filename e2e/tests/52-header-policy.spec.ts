@@ -2,29 +2,29 @@ import { expect, test, type Browser, type BrowserContext, type Locator, type Pag
 import { ADMIN, clickByPointer, createNote, createUserViaInvite, editorLocator, loginAs, noteIdFromUrl, randomEmail } from "./helpers.js";
 
 /**
- * 筆記頁頁首在各視窗寬的取捨（真瀏覽器量測；六位使用者同時在線＝頁首最擠）：
- * - 星號（Favorite）、分享、寬度鈕（可見時）、⋮ 的右緣都不超出頁首 content box，也不超出卡片內緣（最近一層 overflow:hidden 的祖先）。
- * - 視窗 < 640：在線者只有一顆「5 more, show everyone」，沒有頭像；≥ 640 沒有這顆。
- * - 「最後編輯」與連線文字在視窗 < 640 或頁首 content box < 36rem（576 px）時只給螢幕閱讀器（sr-only），連線點仍看得見。
- *   640–767 這段是文字開始顯示的範圍：以二分找出邊界，邊界兩側（約 641／642）各量一格。
- * - 星號在頁首 content box < 18rem（288 px）時收起；寬度鈕在 content box ≥ 43.5rem（696 px）時出現。
- * - 1440：寬度鈕按三下依序換 Standard → Wide → Full width → Standard，名稱帶下一種；⋮ → Width 是 Radix 子選單。
- * - 390（hasTouch）：⋮ → Width 就地展開三個選項，選了選單不關，Esc 先收合再關。
- * - 視窗 640–1279：側欄與版本面板都浮在筆記上、不佔寬，頁首 content box ＝ 視窗寬 − 66（頁面與卡片的內外距）；面板開著時頁首不變窄，面板上緣落在頁首下緣（框線重疊 1 px 以內）。
- *   視窗 1280、預設側欄寬度＋面板：兩者並排固定，content box 仍夠分享與 ⋮，不被裁。
- * 每次量測印一行 `MEASURE …`；失敗訊息帶各鈕的 bounding box 與兩個邊界的右緣。
+ * Trade-offs of the note page header at each viewport width (real-browser measurement; six users online at once = the most crowded header):
+ * - The right edges of the star (Favorite), share, width button (when visible) and kebab do not exceed the header's content box, nor the card's inner edge (nearest ancestor with overflow:hidden).
+ * - Viewport < 640: the online list is a single "5 more, show everyone" with no avatars; at >= 640 there is no such button.
+ * - "Last edited" and the connection text are screen-reader-only (sr-only) when the viewport is < 640 or the header's content box is < 36rem (576 px); the connection dot stays visible.
+ *   640-767 is the range where the text starts to show: binary search finds the boundary and one measurement is taken on each side (about 641/642).
+ * - The star collapses when the header's content box is < 18rem (288 px); the width button appears when the content box is >= 43.5rem (696 px).
+ * - 1440: pressing the width button three times cycles Standard -> Wide -> Full width -> Standard, the name carrying the next one; kebab -> Width is a Radix submenu.
+ * - 390 (hasTouch): kebab -> Width expands its three options in place, choosing one keeps the menu open, and Esc first collapses then closes.
+ * - Viewport 640-1279: the sidebar and the version panel both float over the note and take no width, so the header's content box = viewport width - 66 (page and card padding); with the panel open the header does not narrow and the panel's top
+ *   edge sits at the header's bottom edge (frame lines overlap within 1 px). Viewport 1280 with the default sidebar width plus the panel: the two sit side by side, and the content box is still enough for share and kebab without clipping.
+ * Each measurement prints a `MEASURE ...` line; failure messages carry each button's bounding box and the right edges of the two boundaries.
  */
 
 const RUN = Date.now();
 const PASSWORD = "e2e-header-policy-pw";
 const OTHERS = ["bob", "carol", "dave", "erin", "frank"] as const;
 const OTHERS_LABEL = "5 more, show everyone";
-/** 頁首 content box 的門檻（px）：文字 36rem、星號 18rem、寬度鈕 43.5rem。 */
+/** Header content box thresholds (px): text 36rem, star 18rem, width button 43.5rem. */
 const TEXT_EDGE = 576;
 const STAR_EDGE = 288;
 const WIDTH_EDGE = 696;
 const TOLERANCE = 0.5;
-/** 視窗 640–1279（側欄與版本面板都浮動）時，視窗寬與頁首 content box 的差：頁面、卡片的內外距與框線。 */
+/** At viewport 640-1279 (sidebar and version panel both floating) the difference between viewport width and header content box: page and card padding and frame lines. */
 const FLOATING_CHROME = 66;
 const CYCLE = {
   standard: "Width: Standard — click for Wide",
@@ -60,7 +60,7 @@ async function openAs(browser: Browser, account: Account, options?: Parameters<B
   return page;
 }
 
-/** 換視窗寬後等頁首寬度連續 3 個 frame 不變再量（版面隨 resize 分幾個 frame 才落定，立刻量會量到中間值）。 */
+/** After changing the viewport width, wait until the header width is unchanged for 3 consecutive frames before measuring (layout settles over several frames after a resize; measuring at once would catch an intermediate value). */
 async function setViewport(page: Page, width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height });
   await headerOf(page).evaluate(
@@ -91,13 +91,13 @@ interface Frame {
   innerWidth: number;
 }
 
-/** 頁首 content box 的右緣與寬、內文卡（頁首槽位 `[data-note-header-slot]` 的父層）的右緣、橫向溢出。 */
+/** Right edge and width of the header content box, right edge of the content card (parent of the header slot `[data-note-header-slot]`), and horizontal overflow. */
 async function frameOf(header: Locator): Promise<Frame> {
   return header.evaluate((h) => {
     const style = getComputedStyle(h);
     const r = h.getBoundingClientRect();
     const px = (v: string) => parseFloat(v) || 0;
-    // 內文卡＝頁首槽位的父層（640 起它 overflow 為 hidden、裁掉溢出的東西；手機上文件在捲，卡不裁切，但頁首仍在卡內）。
+    // The content card is the parent of the header slot (from 640 up it has overflow hidden and clips overflow; on a phone the document scrolls and the card doesn't clip, but the header is still inside the card).
     const card: Element | null = h.closest("[data-note-header-slot]")?.parentElement ?? null;
     return {
       contentRight: r.right - px(style.paddingRight) - px(style.borderRightWidth),
@@ -110,19 +110,18 @@ async function frameOf(header: Locator): Promise<Frame> {
   });
 }
 
-/** 只給螢幕閱讀器的元素：sr-only 把寬高縮到 1 px。 */
 async function isSrOnly(el: Locator): Promise<boolean> {
   const box = await el.boundingBox();
   return box !== null && box.width <= 1 && box.height <= 1;
 }
 
 interface Policy {
-  /** 星號預期可見（缺省依 content box ≥ 288）。 */
+  /** Expected star visibility; omitted = derived from content box >= 288. */
   star?: boolean;
 }
 
 /**
- * 量一個視窗寬下的頁首並斷言取捨。`phone`＝視窗 < 640。失敗時訊息帶各鈕的 box 與兩個邊界。
+ * Measures the header at one viewport width and asserts the trade-offs. `phone` = viewport < 640. On failure the message carries each button's box and the two boundaries.
  */
 async function checkHeader(page: Page, tag: string, vw: number, policy: Policy = {}): Promise<Frame> {
   const header = headerOf(page);
@@ -155,7 +154,6 @@ async function checkHeader(page: Page, tag: string, vw: number, policy: Policy =
   expect(boxes.Favorite !== null, `星號可見性（content box ${frame.contentW}，門檻 ${STAR_EDGE}）${detail}`).toBe(policy.star ?? frame.contentW >= STAR_EDGE);
   expect(boxes.Width !== null, `寬度鈕可見性（content box ${frame.contentW}，門檻 ${WIDTH_EDGE}）${detail}`).toBe(frame.contentW >= WIDTH_EDGE);
 
-  // 在線者
   const group = presenceOf(page);
   const compact = group.getByRole("button", { name: OTHERS_LABEL, exact: true });
   if (phone) {
@@ -166,7 +164,6 @@ async function checkHeader(page: Page, tag: string, vw: number, policy: Policy =
     expect(await group.getByRole("button").count(), `≥ 640 要有頭像 ${detail}`).toBeGreaterThan(1);
   }
 
-  // 文字：視窗 < 640 或 content box < 36rem 時只給螢幕閱讀器，連線點仍看得見
   const textHidden = phone || frame.contentW < TEXT_EDGE;
   const lastEdited = page.getByTestId("last-edited");
   const status = page.getByRole("status").filter({ hasText: /^Connected/ });
@@ -211,13 +208,13 @@ test.beforeAll(async ({ browser }) => {
     await expect(page.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 15_000 });
   }
 
-  // 「最後編輯」要出現（頁首最擠）：重載到看見為止
+  // "Last edited" must appear (the header is most crowded): reload until it is seen.
   await expect(async () => {
     await desktop.reload();
     await waitForNoteTitle(desktop, title);
     await expect(desktop.getByTestId("last-edited")).toBeVisible({ timeout: 3_000 });
   }).toPass({ timeout: 30_000 });
-  await expect(presenceOf(desktop).getByRole("button")).toHaveCount(5, { timeout: 20_000 }); // 5 顆頭像（剛好塞滿寬形容量）
+  await expect(presenceOf(desktop).getByRole("button")).toHaveCount(5, { timeout: 20_000 }); // 5 avatars (exactly fills the wide form's capacity)
 
   touch = await openAs(browser, alice, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   await touch.goto(noteUrl);
@@ -229,20 +226,18 @@ test.afterAll(async () => {
   for (const context of contexts) await context.close();
 });
 
-test("C1 各視窗寬：按鈕不超出頁首與卡片、手機只剩一顆「+N」、文字與星號依門檻收起", async () => {
+test("C1 each viewport width: buttons do not exceed the header or card, a phone shows a single \"+N\", text and star collapse by threshold", async () => {
   test.setTimeout(120_000);
-  // 星號沒有寬度規則以外的例外；320 時 content box 落在 18rem 以下
   for (const [vw, vh] of [[320, 640], [360, 800], [768, 900], [1024, 900], [1440, 900]] as const) {
     await setViewport(desktop, vw, vh);
     await checkHeader(desktop, "C1", vw);
   }
   await setViewport(desktop, 320, 640);
   await expect(buttonIn(headerOf(desktop), "Favorite")).toBeHidden();
-  // 390 觸控裝置（isMobile）
   await checkHeader(touch, "C1-touch", 390);
 });
 
-test("C2 開著版本面板：640–1279 面板浮在筆記上、頁首不變窄且不被蓋；1280 預設側欄並排、頁首仍不超出", async () => {
+test("C2 with the version panel open: at 640-1279 the panel floats over the note and the header neither narrows nor is covered; at 1280 the default sidebar sits side by side and the header still doesn't overflow", async () => {
   test.setTimeout(90_000);
   const header = headerOf(desktop);
   for (const vw of [768, 1024]) {
@@ -253,7 +248,7 @@ test("C2 開著版本面板：640–1279 面板浮在筆記上、頁首不變窄
     await expect(panel).toBeVisible();
     const after = await checkHeader(desktop, "C2-floating", vw);
     expect(Math.abs(after.contentW - before.contentW), `面板開著頁首寬度不變（開前 ${before.contentW}）`).toBeLessThanOrEqual(1);
-    // 上緣：頁首下緣往上 1 px 以內（面板上框與頁首下框線重疊）；頁首的分享、⋮ 不在面板底下
+    // Top edge: within 1 px above the header's bottom edge (the panel's top frame overlaps the header's bottom frame line); the header's share and kebab are not under the panel.
     const headerBox = (await header.boundingBox())!;
     const panelBox = (await panel.boundingBox())!;
     expect(panelBox.y, `面板上緣 ${panelBox.y} 應 ≥ 頁首下緣 ${headerBox.y + headerBox.height} − 1`).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 1);
@@ -261,7 +256,7 @@ test("C2 開著版本面板：640–1279 面板浮在筆記上、頁首不變窄
     await expect(panel).toBeHidden();
   }
 
-  // 固定段：側欄＋面板並排（這個規格沒設過 sidebar.width，側欄是預設寬度）
+  // Fixed range: sidebar and panel side by side (this spec never set sidebar.width, so the sidebar has its default width).
   await setViewport(desktop, 1280, 900);
   await desktop.getByTestId("versions-bubble").click();
   await expect(desktop.getByTestId("versions-panel")).toBeVisible();
@@ -272,10 +267,9 @@ test("C2 開著版本面板：640–1279 面板浮在筆記上、頁首不變窄
   await setViewport(desktop, 1440, 900);
 });
 
-test("C3 640–767：文字開始顯示的邊界（約 641／642）兩側各量一格", async () => {
+test("C3 640-767: measure one point on each side of the boundary (about 641/642) where the text starts to show", async () => {
   test.setTimeout(120_000);
   const lastEdited = desktop.getByTestId("last-edited");
-  // 先量固定幾格
   for (const vw of [640, 641, 642, 700, 767]) {
     await setViewport(desktop, vw, 900);
     await checkHeader(desktop, "C3", vw);
@@ -284,7 +278,6 @@ test("C3 640–767：文字開始顯示的邊界（約 641／642）兩側各量�
   expect(await isSrOnly(lastEdited), "640 時 content box 應在 36rem 以下").toBe(true);
   await setViewport(desktop, 767, 900);
   expect(await isSrOnly(lastEdited), "767 時 content box 應在 36rem 以上").toBe(false);
-  // 二分找最小的文字可見視窗寬，兩側各量一格
   let lo = 640;
   let hi = 767;
   while (hi - lo > 1) {
@@ -304,7 +297,7 @@ test("C3 640–767：文字開始顯示的邊界（約 641／642）兩側各量�
   expect(hi).toBeGreaterThanOrEqual(641);
 });
 
-test("C4 1440 寬度鈕：按三下循環；⋮ → Width 子選單切回 Standard", async () => {
+test("C4 1440 width button: three presses cycle; kebab -> Width submenu switches back to Standard", async () => {
   test.setTimeout(90_000);
   await setViewport(desktop, 1440, 900);
   const header = headerOf(desktop);
@@ -327,7 +320,7 @@ test("C4 1440 寬度鈕：按三下循環；⋮ → Width 子選單切回 Standa
   await expect(toggle).toHaveAttribute("aria-label", CYCLE.standard);
 });
 
-test("C5 觸控：390 的 ⋮ 沒有 Width；700 的 ⋮ → Width 就地展開，選了選單不關，Esc 先收合再關", async () => {
+test("C5 touch: the kebab at 390 has no Width; at 700 kebab -> Width expands in place, choosing one keeps the menu open, and Esc first collapses then closes", async () => {
   test.setTimeout(90_000);
   const header = headerOf(touch);
   await expect(widthButtonIn(header)).toHaveCount(0);
@@ -336,7 +329,7 @@ test("C5 觸控：390 的 ⋮ 沒有 Width；700 的 ⋮ → Width 就地展開�
   await expect(touch.getByRole("menuitem", { name: "Width", exact: true })).toHaveCount(0);
   await touch.keyboard.press("Escape");
   await expect(touch.getByRole("menu")).toHaveCount(0);
-  // 640 以上才有 Width（浮動段的觸控裝置，例如平板直拿）
+  // Width exists only from 640 up (touch devices in the floating range, e.g. a tablet held upright).
   await touch.setViewportSize({ width: 700, height: 844 });
   await buttonIn(header, "More").click();
   const menu = touch.getByRole("menu");
@@ -357,7 +350,7 @@ test("C5 觸控：390 的 ⋮ 沒有 Width；700 的 ⋮ → Width 就地展開�
   await touch.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
-  // 再開一次：選擇有記住；還原成 Standard，免得影響後面
+  // Open again: the choice is remembered; restore Standard so later tests are not affected.
   await buttonIn(header, "More").click();
   await menu.getByRole("menuitem", { name: "Width", exact: true }).click();
   await expect(menu.getByRole("menuitemradio", { name: "Wide", exact: true })).toHaveAttribute("aria-checked", "true");

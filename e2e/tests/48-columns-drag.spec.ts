@@ -3,24 +3,25 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { ADMIN, clickEndOfParagraph, createNote, editorLocator, loginAs, noteIdFromUrl, ratioQuantPx, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 並排的拖曳：⋮⋮ 拖到 block 左右緣建列、加欄，拖曳中的直線提示，自動等高，溝裡的檔案拖放，拖放中 ⋮⋮ 不吃指標；
- * 欄間分隔線調寬（滑鼠、鍵盤）、欄內圖片拉寬時擠壓其他欄，分隔線與 ⋮⋮、選單、表格延伸鈕的命中關係。真滑鼠、1440×900。
+ * Column drags: dragging the handle to a block's left/right edge creates a row or adds a column, the vertical drop indicator during a drag, auto equal height, file drops in the gutter,
+ * the handle not taking the pointer during a drag; separator resizing between columns (mouse, keyboard), an image widened inside a column squeezing the other columns, and how the separator
+ * hit area relates to the handle, menus and the table's extend button. Real mouse, 1440x900.
  *
- * - 內容一律貼 markdown（純文字剪貼簿 → `collab/paste.ts` 接手，同 34-columns）；文件形狀讀主編輯器的 ProseMirror 文件（`docShape`，
- *   格式 `paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z`，`paragraph` 無文字＝空段落）。
- * - 拖曳照 34 `dragBlockBelow` 的分段移動（按下、小移一段、15 步移到終點、再微動一下才放開）。直線提示是 core DropCursor 畫的
- *   `.prosemirror-dropcursor-vertical` 元素（左／右緣各帶 `prosemirror-dropcursor-block-vertical-left|right`）。
- * - 量幾何只比相對值（欄與列、圖與圖、提示線與 block）：headless 的 overlay 捲軸會讓絕對值偏。
- * - 每案收 `pageerror`，案尾斷言沒有（`ResizeObserver loop` 是瀏覽器已知的良性訊息，排除）。
- * - 量到、但還不能斷言對錯的行為寫進 `test.info().annotations`（type 說明量的是什麼）。R 開頭的案是真瀏覽器的量測：
- *   結果固定的部分一律斷言；溝裡提示線與落點的對照（R2）因 Chromium 在溝裡的 `posAtCoords` 不穩定，只記錄。
+ * - Content is always pasted as markdown (plain-text clipboard -> handled by `collab/paste.ts`, as in `34-columns.spec.ts`); the document shape is read from the main editor's ProseMirror document (`docShape`,
+ *   format `paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z`, `paragraph` without text = an empty paragraph).
+ * - Drags move in steps like `dragBlockBelow` in `34-columns.spec.ts` (press, a small move, 15 steps to the end point, a final nudge before release). The vertical indicator is the
+ *   `.prosemirror-dropcursor-vertical` element drawn by core DropCursor (left/right edge carry `prosemirror-dropcursor-block-vertical-left|right`).
+ * - Geometry is compared only as relative values (column vs row, image vs image, indicator vs block): headless overlay scrollbars skew absolute values.
+ * - Every case collects `pageerror` and asserts none at the end (`ResizeObserver loop` is a known benign browser message and is excluded).
+ * - Behaviour that is measured but cannot yet be asserted as right or wrong goes into `test.info().annotations` (type says what was measured). The R cases are real-browser measurements:
+ *   the stable parts are asserted; the comparison of the gutter indicator with the drop target (R2) is only recorded because Chromium's `posAtCoords` in the gutter is unstable.
  */
 
 const RUN = Date.now();
 const ROW = '[data-node-type="columnList"]';
-/** 欄間的溝（`collab/columns/layout.ts` 的 COLUMN_GAP_PX；e2e 不能 import web，兩邊要一起改）。 */
+/** Gutter between columns (`COLUMN_GAP_PX` in `collab/columns/layout.ts`; e2e can't import web, so change both together). */
 const COLUMN_GAP_PX = 24;
-/** 文字欄最小寬度（同上，`COLUMN_MIN_TEXT_PX`）。 */
+/** Minimum width of a text column (same as above, `COLUMN_MIN_TEXT_PX`). */
 const COLUMN_MIN_TEXT_PX = 200;
 const VERTICAL = ".prosemirror-dropcursor-vertical";
 const ANY_CURSOR = ".prosemirror-dropcursor-vertical, .prosemirror-dropcursor-block, .prosemirror-dropcursor-inline";
@@ -46,7 +47,6 @@ async function startNote(page: Page, label: string): Promise<string[]> {
   return errors;
 }
 
-/** 正規形的一列（各欄 `flex:1`）。 */
 function columnsMarkdown(cols: string[]): string {
   return [
     '<div data-kb-columns style="display:flex;gap:16px">',
@@ -55,7 +55,7 @@ function columnsMarkdown(cols: string[]): string {
   ].join("\n");
 }
 
-/** 列前後各一段（`x`／`z`），同 web 單元測試的 fixture。 */
+/** One paragraph before and after the row (`x`/`z`), same as the fixture of the web unit tests. */
 function rowDoc(cols: string[]): string {
   return ["x", "", columnsMarkdown(cols), "", "z", ""].join("\n");
 }
@@ -64,7 +64,6 @@ function originOf(page: Page): string {
   return new URL(page.url()).origin;
 }
 
-/** 在筆記最後貼上 markdown（Ctrl+End 後等 ProseMirror 跟上再貼）。 */
 async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: originOf(page) });
   await editorLocator(page).click();
@@ -74,7 +73,6 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.keyboard.press("ControlOrMeta+v");
 }
 
-/** 主編輯器 ProseMirror 文件的頂層形狀（見檔頭）。 */
 async function docShape(page: Page): Promise<string> {
   return editorLocator(page).evaluate((el) => {
     type PmNode = { type: { name: string }; childCount: number; child(i: number): PmNode; firstChild: PmNode | null; textContent: string };
@@ -93,7 +91,6 @@ async function docShape(page: Page): Promise<string> {
   });
 }
 
-/** 文字恰為 `text` 的區塊外層（巢狀時取最內層）。 */
 function blockOuter(page: Page, text: string): Locator {
   return editorLocator(page)
     .locator(".bn-block-outer")
@@ -101,7 +98,6 @@ function blockOuter(page: Page, text: string): Locator {
     .last();
 }
 
-/** 裝著 `url` 那張圖的區塊外層。 */
 function imageOuter(page: Page, url: string): Locator {
   return editorLocator(page)
     .locator(".bn-block-outer")
@@ -128,7 +124,6 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 灰色 RGB PNG（同 34-columns）。 */
 function grayPng(width: number, height: number): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
@@ -140,7 +135,6 @@ function grayPng(width: number, height: number): Buffer {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
 }
 
-/** 走 API 真上傳一張 PNG 到目前這篇，回傳 `/api/uploads/…` 網址。 */
 async function uploadPng(page: Page, width: number, height: number): Promise<string> {
   const noteId = await noteIdFromUrl(page);
   const res = await page.request.post(`/api/notes/${noteId}/uploads`, {
@@ -160,8 +154,8 @@ type Rect = { x: number; y: number; width: number; height: number };
 type Point = { x: number; y: number };
 
 /**
- * hover `block`，等側邊選單移到它旁邊才回傳兩者的框：垂直範圍重疊，且選單中心在該塊左緣往左 100px 內
- * （同一列的另一欄 y 相同，只看垂直分不出是哪一欄的選單）。貼上時的點擊會讓選單先停在別塊，不等就會拖到錯的那塊。
+ * Hovers `block` and waits for the side menu to move next to it before returning both boxes: vertical ranges overlap and the menu center is within 100px to the left of the block's left edge
+ * (the other column of the same row has the same y, so vertical alignment alone doesn't tell which column's menu it is). The click made while pasting leaves the menu on another block first; without waiting the drag would pick the wrong block.
  */
 async function hoverForSideMenu(page: Page, block: Locator, label: string): Promise<{ menu: Rect; block: Rect }> {
   await block.hover();
@@ -180,7 +174,6 @@ async function hoverForSideMenu(page: Page, block: Locator, label: string): Prom
   return got!;
 }
 
-/** 從目前的滑鼠位置 `from` 以 `steps` 步直線移到 `to`（同 Playwright `mouse.move` 的 `steps` 內插），每一步之後呼叫 `after`。 */
 async function moveInSteps(page: Page, from: Point, to: Point, steps: number, after?: (p: Point) => Promise<void>): Promise<void> {
   for (let i = 1; i <= steps; i++) {
     const p = { x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps };
@@ -190,9 +183,9 @@ async function moveInSteps(page: Page, from: Point, to: Point, steps: number, af
 }
 
 /**
- * 按住 `source` 的 ⋮⋮，照 `dragBlockBelow` 的分段移到 `end`（最後再往下微動 1px），在放開前呼叫 `beforeUp`。
- * `end` 給函式時拿到 ⋮⋮ 中心（直直往下拖要用它的 x）；`nudge` 是按下後第一小段的位移（預設右下各 10px）。
- * `steps` 是移到終點那一段的步數（預設 15）。`watch` 在每一段 `mouse.move` 之後被呼叫（P3 用來檢查全程沒有直線提示）。
+ * Presses the handle of `source` and moves to `end` in the steps of `dragBlockBelow` (a final 1px nudge down), calling `beforeUp` before release.
+ * When `end` is a function it receives the handle's center (a straight drag down needs its x); `nudge` is the displacement of the first small move after the press (default 10px right and down).
+ * `steps` is the number of steps of the move to the end point (default 15). `watch` is called after every `mouse.move` (used to check there is no vertical indicator throughout).
  */
 async function dragHandleTo(
   page: Page,
@@ -215,15 +208,14 @@ async function dragHandleTo(
   await page.mouse.up();
 }
 
-/** 把 `sourceText` 那個 block 的 ⋮⋮ 拖到 `targetText` 那段的下半部放開（core 預設拖放，同 34 `dragBlockBelow`）。 */
 async function dragBlockBelow(page: Page, sourceText: string, targetText: string, watch?: (p: Point) => Promise<void>): Promise<void> {
   const t = (await blockOuter(page, targetText).boundingBox())!;
   await dragHandleTo(page, blockOuter(page, sourceText), sourceText, { x: t.x + t.width / 2, y: t.y + t.height * 0.75 }, { watch });
 }
 
 /**
- * ⋮⋮ 拖到 `target` 的左／右緣：終點 x＝右緣往內 8px 或左緣往內 8px、y＝框的中線。放開前斷言直線提示：
- * `expectVertical`（預設 true）→ 該側的直線看得見；false → 沒有任何直線。
+ * Drags the handle to `target`'s left/right edge: end point x = 8px inside the right or left edge, y = the box's midline. Asserts the indicator before release:
+ * `expectVertical` (default true) -> the vertical line on that side is visible; false -> no vertical line at all.
  */
 async function dragToEdge(page: Page, source: Locator, sourceLabel: string, target: Locator, side: "left" | "right", opts: { expectVertical?: boolean } = {}): Promise<void> {
   const box = (await target.boundingBox())!;
@@ -240,7 +232,6 @@ async function dragBlockToEdge(page: Page, sourceText: string, targetText: strin
   await dragToEdge(page, blockOuter(page, sourceText), sourceText, blockOuter(page, targetText), side, opts);
 }
 
-/** 主編輯器的列（第 `index` 個）每一欄的框與列框。 */
 async function rowGeometry(page: Page, index = 0): Promise<{ row: Rect; cols: Rect[] }> {
   return editorLocator(page)
     .locator(ROW)
@@ -254,7 +245,6 @@ async function rowGeometry(page: Page, index = 0): Promise<{ row: Rect; cols: Re
     });
 }
 
-/** 畫面上的拖放提示（core DropCursor 的元素）：class 與框；沒有 → null。 */
 async function dropCursorState(page: Page): Promise<{ classes: string; rect: Rect } | null> {
   return page.evaluate((selector) => {
     const el = document.querySelector(selector);
@@ -264,7 +254,6 @@ async function dropCursorState(page: Page): Promise<{ classes: string; rect: Rec
   }, ANY_CURSOR);
 }
 
-/** `view.posAtCoords` 的結果與該位置的父節點型別（量 Chromium 在某點把座標對到文件的哪裡）。 */
 async function posInfo(page: Page, p: Point): Promise<{ pos: number; inside: number; parent: string; path: string[] } | null> {
   return editorLocator(page).evaluate((el, pt) => {
     type Resolved = { depth: number; node(d: number): { type: { name: string } }; parent: { type: { name: string } } };
@@ -277,7 +266,6 @@ async function posInfo(page: Page, p: Point): Promise<{ pos: number; inside: num
   }, p);
 }
 
-/** 元素在 `p` 的命中結果：標籤與 class、在不在 `view.dom` 內。 */
 async function hitAt(page: Page, p: Point): Promise<{ tag: string; inEditor: boolean }> {
   return editorLocator(page).evaluate((root, pt) => {
     const el = document.elementFromPoint(pt.x, pt.y);
@@ -286,15 +274,15 @@ async function hitAt(page: Page, p: Point): Promise<{ tag: string; inEditor: boo
 }
 
 /**
- * 放下前一刻 `posAtCoords` 落在哪：父節點型別、所在欄的序號（不在欄裡 → null）、包住它的直接子 block 的 id，
- * 以及父節點是欄時它前後的 block id。
+ * Where `posAtCoords` lands the moment before the drop: parent node type, index of the column it is in (null if not in a column), id of the direct child block that contains it,
+ * and, when the parent is a column, the block ids before and after it.
  */
 type DropPos = { pos: number; parent: string; column: number | null; block: string | null; before: string | null; after: string | null } | null;
 
 /**
- * 頁內建只帶一個 PNG 檔的 `DataTransfer`（不經 dragstart，如同作業系統拖進來），在 `p` 的命中元素上依序 dispatch
- * dragenter → 重新取命中元素、記下 `posAtCoords` → dragover → drop。回傳每一步命中的元素、放下前的 `posAtCoords`，
- * 與 dragover／drop 是否被 `preventDefault`。
+ * Builds in the page a `DataTransfer` carrying only a PNG file (no dragstart, like a drag in from the operating system) and dispatches, on the element hit at `p`, in order:
+ * dragenter -> re-find the hit element and record `posAtCoords` -> dragover -> drop. Returns the element hit at each step, `posAtCoords` before the drop,
+ * and whether dragover/drop were `preventDefault`ed.
  */
 async function dropFileAt(
   page: Page,
@@ -320,9 +308,9 @@ async function dropFileAt(
       type View = { posAtCoords(c: { left: number; top: number }): { pos: number } | null; state: { doc: { resolve(p: number): Resolved } } };
       const view = (root as Element & { editor?: { view?: View } }).editor!.view!;
       let pos = null as { pos: number; parent: string; column: number | null; block: string | null; before: string | null; after: string | null } | null;
-      // 在編輯器父元素的 capture 階段量，也就是產品的 drop handler（掛在 `view.dom`）之前一刻：document capture 的 drop 已經清掉
-      // `kb-dragging`（⋮⋮ 等浮層又吃指標），core SideMenu 也已經改過選取，`posAtCoords` 量到的才與產品同一個狀態。在 dragover
-      // 之前或 window capture 量都不準：Chromium 在溝裡的 `posAtCoords` 會跟著浮層與版面變。
+      // Measure in the capture phase on the editor's parent, i.e. just before the product's drop handler (on `view.dom`): the document-capture drop has already cleared
+      // `kb-dragging` (the handle and other overlays take the pointer again) and core SideMenu has already changed the selection, so `posAtCoords` is measured in the same state as the product.
+      // Measuring before dragover or in window capture is inaccurate: Chromium's `posAtCoords` in the gutter changes with overlays and layout.
       const capture = () => {
         const hit = view.posAtCoords({ left: pt.x, top: pt.y });
         if (!hit) return;
@@ -355,7 +343,7 @@ async function dropFileAt(
   );
 }
 
-/** 依「先比水平距離、相同再比垂直距離、完全相同取前面」找 `p` 最近的欄（溝裡的檔案拖放以這個規則改到最近的欄）。 */
+/** Finds the column nearest to `p` by comparing horizontal distance first, then vertical, taking the earlier one on a tie (the rule by which a file drop in the gutter is retargeted to the nearest column). */
 function nearestColumn(cols: Rect[], p: Point): number {
   const dist = (v: number, from: number, to: number) => (v < from ? from - v : v > to ? v - to : 0);
   let best = -1;
@@ -371,9 +359,9 @@ function nearestColumn(cols: Rect[], p: Point): number {
 }
 
 /**
- * 放下時 `posAtCoords` 的父節點是列（落在兩欄之間）→ 溝裡改座標的規則選的欄：先比水平距離、再比垂直距離、完全相同取前面。
- * 水平距離相差在 0.5px 內（指標幾乎在溝的正中央）時兩欄都算對：浮點的欄框差一點就換邊。
- * 否則 → `posAtCoords` 所在的那一欄（core 照它插入、不改座標）。
+ * When `posAtCoords`'s parent at drop time is the row (between two columns) -> the column chosen by the gutter's coordinate-rewriting rule: horizontal distance first, then vertical, the earlier on a full tie.
+ * If the horizontal distances differ by 0.5px or less (the pointer is almost in the middle of the gutter) both columns count as right: a float difference in the column boxes flips the side.
+ * Otherwise -> the column `posAtCoords` is in (core inserts there without rewriting the coordinate).
  */
 function expectedColumns(cols: Rect[], p: Point, pos: NonNullable<DropPos>): number[] {
   if (pos.parent !== "columnList") return pos.column === null ? [] : [pos.column];
@@ -383,7 +371,7 @@ function expectedColumns(cols: Rect[], p: Point, pos: NonNullable<DropPos>): num
   return near.length > 1 ? near : [nearestColumn(cols, p)];
 }
 
-/** 同一欄裡，垂直距離最近的直接子 block（溝裡改座標的規則；相同取前面）。 */
+/** The direct child block in the same column with the smallest vertical distance (the gutter's coordinate-rewriting rule; the earlier on a tie). */
 function nearestBlockByY(blocks: Array<{ id: string; rect: Rect }>, y: number): string | null {
   let best: { id: string; d: number } | null = null;
   for (const b of blocks) {
@@ -393,13 +381,12 @@ function nearestBlockByY(blocks: Array<{ id: string; rect: Rect }>, y: number): 
   return best?.id ?? null;
 }
 
-/** `ROW[COL(…) | COL(…)]` 裡每一欄的內容字串（只看文件裡第一個列）。 */
 function columnsOf(shape: string): string[] {
   const m = /ROW\[(.*?)\](?=\s{2}|$)/.exec(shape);
   return m ? m[1]!.split(" | ") : [];
 }
 
-test("P1 x y z 拖 z 到 x 右緣 → 兩欄 [x｜z]；左緣 → [z｜x]；Ctrl+Z 一次還原 [sc:columnsDragBeside]", async ({ page }) => {
+test("x y z: dragging z to x's right edge gives two columns [x|z]; left edge gives [z|x]; one Ctrl+Z undoes it [sc:columnsDragBeside]", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p1");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -421,7 +408,7 @@ test("P1 x y z 拖 z 到 x 右緣 → 兩欄 [x｜z]；左緣 → [z｜x]；Ctrl
   expectNoPageErrors(errors);
 });
 
-test("P2 [a｜b] 外的 z 拖到 b 右緣 → 三欄；4 欄的列拖到第 1 欄右緣 → 沒有直線、結果同橫線放置", async ({ page }) => {
+test("z outside [a|b] dragged to b's right edge gives three columns; a 4-column row dragged to the first column's right edge shows no vertical indicator and gives the same result as a horizontal-line drop", async ({ page }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "p2");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -430,7 +417,6 @@ test("P2 [a｜b] 外的 z 拖到 b 右緣 → 三欄；4 欄的列拖到第 1 �
   await expect.poll(() => docShape(page)).toContain("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:z)]");
   expect(await docShape(page)).not.toContain("paragraph:z  ");
 
-  // 4 欄：先拖到第 1 欄右緣（不出直線），再在另一篇同內容的筆記做同目標的橫線放置，兩邊結果相同。
   const four = rowDoc(["a", "b", "c", "d"]);
   const fourShape = "ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:c) | COL(paragraph:d)]";
   await createNote(page, `E2E columns drag p2-four ${RUN}`);
@@ -449,15 +435,15 @@ test("P2 [a｜b] 外的 z 拖到 b 右緣 → 三欄；4 欄的列拖到第 1 �
   expectNoPageErrors(errors);
 });
 
-test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指標在 block 框外與溝裡時沒有直線提示、結果是橫線排序", async ({ page }) => {
+test("reordering is not misfired: one handle drag down inside a column and one at top level, with the pointer outside the block box and in the gutter, show no vertical indicator and give a horizontal-line reorder", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = await startNote(page, "p3");
-  /** `updated`：這一點有收到 dragover（DropCursor 依它重畫）；沒有的話畫面上的提示是上一點留下的，不拿來判斷這一點。 */
+  /** `updated`: this point received a dragover (DropCursor redraws from it); otherwise the indicator on screen is left from the previous point and isn't used to judge this one. */
   type Step = { at: Point; vertical: number; updated: boolean };
   let seen: Step[] = [];
-  // 拖曳中的 dragover 比 `mouse.move` 晚到，所以每一步先等這一點的 dragover 再讀提示：document 冒泡階段記下每一筆非合成的
-  // dragover（DropCursor 掛在 `view.dom`，冒泡到 document 時已經畫好；core SideMenu 夾進框內的合成事件不算）。DragEvent 的座標是
-  // 捨去小數的整數，所以比對 `Math.floor`。換到新元素的那一步 Chromium 只送 dragenter、不送 dragover，等不到就記成沒更新。
+  // A dragover during a drag arrives later than `mouse.move`, so each step first waits for this point's dragover before reading the indicator: the document bubble phase records every non-synthetic
+  // dragover (DropCursor is on `view.dom` and has already drawn by the time it bubbles to document; the synthetic events core SideMenu clamps into the box don't count). DragEvent coordinates are
+  // integers with the fraction dropped, so compare with `Math.floor`. On the step that moves onto a new element Chromium sends only dragenter and no dragover; if none arrives it is recorded as not updated.
   const installDragoverProbe = () =>
     page.evaluate(() => {
       const w = window as unknown as { kbOvers?: string[]; kbOversOn?: boolean };
@@ -480,7 +466,6 @@ test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指
     seen.push({ at, vertical: await page.locator(VERTICAL).count(), updated });
     await page.evaluate(() => void ((window as unknown as { kbOvers?: string[] }).kbOvers = []));
   };
-  /** 每一步落在哪：第 1 欄框外（左邊）、溝、某欄的左右緣區、欄內其他地方。 */
   const regionOf = (cols: Rect[], p: Point): "outside" | "gutter" | "edge-zone" | "inner" => {
     if (p.x < cols[0]!.x) return "outside";
     const col = cols.find((c) => p.x >= c.x && p.x <= c.x + c.width);
@@ -490,12 +475,11 @@ test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指
   };
   const report: Record<string, unknown> = {};
 
-  // 第 1 欄內：[a,q｜b] 把 a 拖到 q 下方。⋮⋮ 在列的左邊（框外）。
   await pasteMarkdown(page, rowDoc(["a\n\nq", "b"]));
   await installDragoverProbe();
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(paragraph:a,paragraph:q) | COL(paragraph:b)]");
   let { cols } = await rowGeometry(page);
-  // 欄內的 ⋮⋮ 只有 16px 寬、右緣貼著第 1 欄左緣：按下後先往左下移，前幾步才在框外。
+  // The in-column handle is only 16px wide with its right edge against column 1's left edge: after pressing, move left-down first so the first few steps are outside the box.
   const q = (await blockOuter(page, "q").boundingBox())!;
   await dragHandleTo(page, blockOuter(page, "a"), "a", { x: q.x + q.width / 2, y: q.y + q.height * 0.75 }, { nudge: { x: -10, y: 10 }, watch });
   await expect.poll(() => docShape(page)).toContain("paragraph:x  ROW[COL(paragraph:q,paragraph:a) | COL(paragraph:b)]  paragraph:z");
@@ -507,14 +491,13 @@ test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指
   expect(seen.at(-1)!.vertical, "放開的那一點沒有直線").toBe(0);
   report.column1 = { cols, withVertical: tagged.filter((s) => s.vertical > 0), notUpdated: seen.filter((s) => !s.updated).map((s) => s.at) };
 
-  // 第 2 欄內：[b｜a,q] 把 a 拖到 q 下方。⋮⋮ 在溝裡。
   seen = [];
   await createNote(page, `E2E columns drag p3-col2 ${RUN}`);
   await pasteMarkdown(page, rowDoc(["b", "a\n\nq"]));
   await installDragoverProbe();
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(paragraph:b) | COL(paragraph:a,paragraph:q)]");
   ({ cols } = await rowGeometry(page));
-  // ⋮⋮ 在溝的右側 16px：同樣先往左下移，前幾步才在溝裡。
+  // The handle occupies the rightmost 16px of the gutter: likewise move left-down first so the first few steps are in the gutter.
   const q2 = (await blockOuter(page, "q").boundingBox())!;
   await dragHandleTo(page, blockOuter(page, "a"), "a", { x: q2.x + q2.width / 2, y: q2.y + q2.height * 0.75 }, { nudge: { x: -10, y: 10 }, watch });
   await expect.poll(() => docShape(page)).toContain("paragraph:x  ROW[COL(paragraph:b) | COL(paragraph:q,paragraph:a)]  paragraph:z");
@@ -526,7 +509,7 @@ test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指
   expect(seen.at(-1)!.vertical, "放開的那一點沒有直線").toBe(0);
   report.column2 = { cols, withVertical: tagged.filter((s) => s.vertical > 0), notUpdated: seen.filter((s) => !s.updated).map((s) => s.at) };
 
-  // 頂層：x y z 把 x 拖到 z 下方。穿過左緣區的那幾步都還在 x 自己上面，全程沒有直線。
+  // Top level: x y z, drag x below z. The steps through the left edge zone are still over x itself, so there is no vertical indicator throughout.
   seen = [];
   await createNote(page, `E2E columns drag p3-top ${RUN}`);
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -539,12 +522,12 @@ test("P3 排序不誤觸：同一欄內與頂層各一次 ⋮⋮ 往下拖，指
   expect(seen.filter((s) => s.updated && s.vertical > 0), "頂層排序途中出現直線").toEqual([]);
   await expect(editorLocator(page).locator(ROW)).toHaveCount(0);
 
-  // 欄內排序時，從欄外的 ⋮⋮ 斜著拖到中央會穿過目標欄的左緣區（框內）：那幾步照判準出直線，放開在中央時照樣是橫線排序。
+  // When reordering inside a column, dragging diagonally from the handle outside the column to the center crosses the target column's left edge zone (inside the box): those steps show a vertical line by the rule, and releasing at the center still gives a horizontal-line reorder.
   test.info().annotations.push({ type: "in-column-sort-path-crosses-edge-zone", description: JSON.stringify(report) });
   expectNoPageErrors(errors);
 });
 
-test("P4 [a｜b] 拖 b 到列外 z 的右緣 → 新列 [z｜b]、原列 [a｜空]", async ({ page }) => {
+test("[a|b]: dragging b to the right edge of z outside the row gives a new row [z|b] and the original row [a|empty]", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p4");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -554,7 +537,6 @@ test("P4 [a｜b] 拖 b 到列外 z 的右緣 → 新列 [z｜b]、原列 [a｜�
   expectNoPageErrors(errors);
 });
 
-/** 列裡每張 `<img>` 的高度與寬度，以及列寬、各欄寬。 */
 async function imageRowMetrics(page: Page): Promise<{ heights: number[]; widths: number[]; rowWidth: number; colWidths: number[] }> {
   return editorLocator(page)
     .locator(ROW)
@@ -571,7 +553,6 @@ async function imageRowMetrics(page: Page): Promise<{ heights: number[]; widths:
     });
 }
 
-/** 列裡各圖高度差 ≤ 2px、各欄寬總和＋溝＝列寬（±1px）；回傳量到的值。 */
 async function expectEqualHeights(page: Page, n: number, opts: { skip?: number } = {}): Promise<Awaited<ReturnType<typeof imageRowMetrics>>> {
   let m: Awaited<ReturnType<typeof imageRowMetrics>> | undefined;
   await expect(async () => {
@@ -585,7 +566,7 @@ async function expectEqualHeights(page: Page, n: number, opts: { skip?: number }
   return m!;
 }
 
-test("P5 自動等高：400×200 與 200×200 建列、再加 300×300 → 各圖高度差 ≤ 2px、欄寬總和＋溝＝列寬；加一張 80×80 小圖 → 小圖寬 80、其他等高", async ({ page }) => {
+test("auto equal height: a row from 400x200 and 200x200, then adding 300x300 -> image heights differ by <= 2px and column widths plus gutters equal the row width; adding an 80x80 small image -> the small image is 80 wide and the others stay equal height", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = await startNote(page, "p5");
   const record: Record<string, unknown> = {};
@@ -627,7 +608,7 @@ test("P5 自動等高：400×200 與 200×200 建列、再加 300×300 → 各�
   expectNoPageErrors(errors);
 });
 
-test("P10 溝裡的檔案（⋮⋮ 顯示中）：⋮⋮ 中心命中 ⋮⋮，dragenter 之後同一點命中編輯器、dragover 被接受，放下 → 圖片進最近的欄、網址不變", async ({ page }) => {
+test("file in the gutter (handle shown): the handle's center hits the handle, after dragenter the same point hits the editor and dragover is accepted, dropping puts the image into the nearest column and the URL is unchanged", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p10");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -656,7 +637,7 @@ test("P10 溝裡的檔案（⋮⋮ 顯示中）：⋮⋮ 中心命中 ⋮⋮，d
   expectNoPageErrors(errors);
 });
 
-test("S6 拖放中 ⋮⋮ 不吃指標：對 document 的 dragenter（沒有 dragstart）→ 欄上掛 kb-dragging，⋮⋮、選單、外包層、popover 各自 pointer-events:none；drop、dragend、pointermove 清掉，dragleave 不清，dragover 補回", async ({ page }) => {
+test("the handle doesn't take the pointer during a drag: a dragenter on document (no dragstart) puts kb-dragging on the columns and sets pointer-events:none on the handle, menu, wrapper and popover; drop, dragend and pointermove clear it, dragleave does not, dragover restores it", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "s6");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -664,7 +645,6 @@ test("S6 拖放中 ⋮⋮ 不吃指標：對 document 的 dragenter（沒有 dra
   await hoverForSideMenu(page, blockOuter(page, "b"), "b");
   await expect(page.locator("[data-kb-column-side-menu]")).toBeVisible();
 
-  /** 每個實際命中層各自的 computed pointer-events；掛 class 的元素數、它包不包住編輯器。 */
   const state = () =>
     page.evaluate(() => {
       const wrapper = document.querySelector("[data-kb-column-side-menu]");
@@ -715,7 +695,7 @@ test("S6 拖放中 ⋮⋮ 不吃指標：對 document 的 dragenter（沒有 dra
   expectNoPageErrors(errors);
 });
 
-test("S6b 拖放中，檔案面板（floating-ui portal 裡）的 file input 仍是指標命中的元素：外部檔案可以直接拖進去", async ({ page }) => {
+test("during a drag the file input in the file panel (inside a floating-ui portal) is still the element hit by the pointer: external files can be dropped straight onto it", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "s6b");
   const editor = editorLocator(page);
@@ -743,9 +723,6 @@ test("S6b 拖放中，檔案面板（floating-ui portal 裡）的 file input 仍
   expectNoPageErrors(errors);
 });
 
-// ─── 真瀏覽器量測：jsdom 定不了的幾個點 ───────────────────────────────────────────────────
-
-/** 在 document 上（capture）數拖放事件，看一次手勢是否真的開始拖放、有幾筆 dragover。重複呼叫會歸零。 */
 async function resetDragLog(page: Page): Promise<void> {
   await page.evaluate(() => {
     const w = window as unknown as { kbDragLog?: Record<string, number>; kbDragLogOn?: boolean };
@@ -760,7 +737,6 @@ async function resetDragLog(page: Page): Promise<void> {
 
 const dragLog = (page: Page) => page.evaluate(() => (window as unknown as { kbDragLog?: Record<string, number> }).kbDragLog ?? {});
 
-/** ⋮⋮ 拖 `source` 到 `p`，放開前記下提示線；回傳量到的值。放下後文件與 `original` 不同就點回編輯器、Ctrl+Z 還原。 */
 async function probeDrop(page: Page, sourceText: string, p: Point, original: string, undoAnchor: string): Promise<Record<string, unknown>> {
   await resetDragLog(page);
   const pos = await posInfo(page, p);
@@ -772,7 +748,7 @@ async function probeDrop(page: Page, sourceText: string, p: Point, original: str
       hit = await hitAt(page, p);
     },
   });
-  // R1、R2、R4 的每一點都會改文件：等它變了再量。
+  // Every point of R1, R2 and R4 changes the document: wait for the change before measuring.
   await expect.poll(() => docShape(page), { message: "放下後文件有變" }).not.toBe(original);
   const after = await docShape(page);
   const landed = await blockOuter(page, sourceText).boundingBox();
@@ -785,9 +761,9 @@ async function probeDrop(page: Page, sourceText: string, p: Point, original: str
   return out;
 }
 
-// R1：最後一個 block 下方，`posAtCoords` 落在文件結尾（父節點是頂層 blockGroup，找不到合格的 Y）或根本不在 `view.dom` 內
-// （core SideMenu 改發夾進框內的合成事件，直線判斷不收合成事件），所以 x 在右緣區也只出橫線、放下是橫線放置。
-test("R1 最後一個 block 下方、x 在右緣區：只出橫線、放下不建列，x 移到文件結尾", async ({ page }) => {
+// R1: below the last block, `posAtCoords` lands at the end of the document (the parent is the top-level blockGroup, no qualifying Y is found) or not inside `view.dom` at all
+// (core SideMenu then emits synthetic events clamped into the box, and the vertical-line check ignores synthetic events), so with x in the right edge zone only a horizontal line is shown and the drop is a horizontal-line drop.
+test("R1 below the last block with x in the right edge zone: only a horizontal line, dropping creates no row and x moves to the end of the document", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = await startNote(page, "r1");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -815,11 +791,11 @@ test("R1 最後一個 block 下方、x 在右緣區：只出橫線、放下不�
   expectNoPageErrors(errors);
 });
 
-// R2：⋮⋮ 拖到溝裡。拖曳中的提示線由 DropCursor 依 `posAtCoords`＋`dropPoint` 畫；放下時落點的父節點是列的話，會先改到最近欄的
-// 最近 block 再放。兩者可能不同（提示線畫在列下方、block 卻進了某一欄），而且 Chromium 在溝裡的 `posAtCoords` 同一點也會時而
-// 落進某欄、時而落在兩欄之間，落點跟著變。斷言固定的部分：每一點都有 drop、z 一定進到列裡的某一欄（不留在列外）、沒有 pageerror。
-// 提示線與落點的對照只記錄：每一點的 `posAtCoords`、放開前的提示線、放下後的文件與 block 的框。
-test("R2 ⋮⋮ 拖到溝裡：每一點都放得下、z 進到列裡的某一欄；記錄提示線位置與實際落點", async ({ page }) => {
+// R2: dragging the handle into the gutter. The indicator during the drag is drawn by DropCursor from `posAtCoords` + `dropPoint`; if the drop target's parent is the row at drop time, the coordinate is first rewritten to the nearest
+// block of the nearest column. The two can differ (the indicator drawn below the row while the block goes into a column), and Chromium's `posAtCoords` in the gutter at the same point sometimes lands in a column and sometimes between
+// two columns, so the drop target moves too. Asserted: every point has a drop, z ends up in one of the row's columns (not left outside the row), and there is no pageerror.
+// The comparison of indicator and drop target is only recorded: each point's `posAtCoords`, the indicator before release, and the document and block boxes after the drop.
+test("R2 handle dragged into the gutter: every point can be dropped and z ends up in one of the row's columns; indicator position and actual drop target are recorded", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = await startNote(page, "r2");
   await pasteMarkdown(page, rowDoc(["a\n\na2\n\na3", "b"]));
@@ -849,7 +825,6 @@ test("R2 ⋮⋮ 拖到溝裡：每一點都放得下、z 進到列裡的某一�
   expectNoPageErrors(errors);
 });
 
-/** 列裡每一欄的直接子 block：id 與框。 */
 async function rowBlocks(page: Page): Promise<Array<Array<{ id: string; rect: Rect }>>> {
   return editorLocator(page)
     .locator(ROW)
@@ -864,17 +839,17 @@ async function rowBlocks(page: Page): Promise<Array<Array<{ id: string; rect: Re
     );
 }
 
-// R3：溝裡（欄與欄之間）放下只帶檔案的拖放。Chromium 的 `posAtCoords` 在溝裡有時落進某一欄、有時落在兩欄之間（父節點是列），
-// 以放下前一刻的值決定預期：落在兩欄之間 → 改座標的規則選的欄（先比水平、再比垂直距離）裡垂直最近的 block；落進某一欄 →
-// 包住 `posAtCoords` 的那個 block（或欄層級時它前後的 block）。新的圖片 block 要緊鄰預期的 block；沒有 pageerror、dragover 被接受。
-test("R3 檔案拖進溝裡（沒有 ⋮⋮）：沒有 pageerror、圖片緊鄰改座標規則或 posAtCoords 指到的 block", async ({ page }) => {
+// R3: dropping a file-only drag in the gutter (between columns). Chromium's `posAtCoords` in the gutter sometimes lands in a column and sometimes between two columns (the parent is the row);
+// the expectation follows the value just before the drop: between two columns -> the vertically nearest block in the column chosen by the coordinate-rewriting rule (horizontal then vertical distance); in a column ->
+// the block containing `posAtCoords` (or the blocks before and after it at column level). The new image block must be adjacent to an expected block; no pageerror, and dragover is accepted.
+test("R3 file dragged into the gutter (no handle): no pageerror, the image is adjacent to the block chosen by the coordinate-rewriting rule or the one `posAtCoords` points to", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = await startNote(page, "r3");
   await pasteMarkdown(page, rowDoc(["a\n\na2\n\na3", "b"]));
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(paragraph:a,paragraph:a2,paragraph:a3) | COL(paragraph:b)]");
   const results: unknown[] = [];
   try {
-    // 把滑鼠移開，免得 ⋮⋮ 蓋在溝上。
+    // Move the mouse away so the handle does not cover the gutter.
     await page.mouse.move(5, 5);
     for (const where of ["center-a-level", "near-col1-a2", "near-col2-b-level", "near-col2-below-b"] as const) {
       const { cols } = await rowGeometry(page);
@@ -925,9 +900,9 @@ test("R3 檔案拖進溝裡（沒有 ⋮⋮）：沒有 pageerror、圖片緊鄰
   expectNoPageErrors(errors);
 });
 
-// R4：指標在欄的左右緣區、緊貼溝（離欄界 0–3px）。Chromium 的 `posAtCoords` 在這些點都落進該欄的段落（父節點不是列），
-// 溝裡改座標那條路本來就不會走到；這裡守的是結果：每一點都有 drop、直線提示在該側、放下建新欄，沒有被改成橫線放進最近的 block。
-test("R4 欄的左右緣區緊貼溝：直線提示在該側、放下建新欄 [a｜z｜b]，不被改成橫線放置", async ({ page }) => {
+// R4: the pointer in a column's left/right edge zone, right against the gutter (0-3px from the column boundary). Chromium's `posAtCoords` at these points lands in that column's paragraph (the parent is not the row),
+// so the gutter coordinate-rewriting path is never reached; what this checks is the outcome: every point has a drop, the vertical indicator is on that side, and dropping creates a new column instead of being turned into a horizontal-line drop into the nearest block.
+test("R4 column left/right edge zone right against the gutter: the vertical indicator is on that side and dropping creates a new column [a|z|b], not turned into a horizontal-line drop", async ({ page }) => {
   test.setTimeout(240_000);
   const errors = await startNote(page, "r4");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -960,10 +935,10 @@ test("R4 欄的左右緣區緊貼溝：直線提示在該側、放下建新欄 [
   expectNoPageErrors(errors);
 });
 
-// R5：⋮⋮ 拖曳開始時 core 會選取被拖的 block，格式工具列跟著出現在它正上方，蓋住上一個 block 的左半部。拖放中工具列（與它外面
-// floating-ui 的包裝層）不吃指標，放開點命中底下的 block，drop 照常發生。前提先斷言工具列真的蓋在放開的點上。
-// 工具列只在拖曳開始後的一小段時間在畫面上（量到約 25ms 後出現、再約 250ms 收起），所以這裡一步就移到終點、等它出現就放開。
-test("R5 x y z 拖 z 到正上方 y 的左緣（格式工具列蓋在上面）→ 放開點命中 y、建列 [z｜y]", async ({ page }) => {
+// R5: when a handle drag starts, core selects the dragged block and the format toolbar appears right above it, covering the left half of the previous block. During the drag the toolbar (and the floating-ui
+// wrapper around it) does not take the pointer, so the release point hits the block underneath and the drop happens as usual. First assert the toolbar really covers the release point.
+// The toolbar is on screen only briefly after the drag starts (appears after about 25ms and is gone after about 250ms), so this moves to the end point in one step and releases as soon as it appears.
+test("R5 x y z: dragging z to the left edge of y directly above (format toolbar covering it) -> the release point hits y and creates the row [z|y]", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "r5");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -980,7 +955,7 @@ test("R5 x y z 拖 z 到正上方 y 的左緣（格式工具列蓋在上面）�
         const el = document.elementFromPoint(pt.x, pt.y);
         const toolbar = document.querySelector(".bn-formatting-toolbar");
         const bar = toolbar?.getBoundingClientRect();
-        // 標記要掛在 floating-ui 的包裝層（接走 drop 的那一層），不是工具列本身。
+        // The marker goes on floating-ui's wrapper (the layer that takes the drop), not on the toolbar itself.
         const marked = toolbar?.closest("[data-kb-formatting-toolbar-popover]") ?? null;
         return {
           hit: el ? `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 40)}` : "none",
@@ -1012,16 +987,13 @@ test("R5 x y z 拖 z 到正上方 y 的左緣（格式工具列蓋在上面）�
   expectNoPageErrors(errors);
 });
 
-// ─── 分隔線調寬、欄內圖片擴欄 ───────────────────────────────────────────────────────────────
-
-/** 欄間分隔線（頁面上還有側欄的 `Resize sidebar` 分隔線，所以限在浮層裡）。 */
+/** Separator between columns (the page also has the sidebar's `Resize sidebar` separator, so scope to the overlay). */
 const DIVIDER = '.kb-column-dividers [role="separator"]';
 
 function divider(page: Page, index = 0): Locator {
   return page.locator(DIVIDER).nth(index);
 }
 
-/** 主編輯器第一個列每一欄的文件欄寬（column 節點的 `width`）。 */
 async function docWidths(page: Page): Promise<number[]> {
   return editorLocator(page).evaluate((el) => {
     type PmNode = { type: { name: string }; attrs: { width?: number }; childCount: number; child(i: number): PmNode };
@@ -1038,7 +1010,6 @@ async function docWidths(page: Page): Promise<number[]> {
   });
 }
 
-/** 從現在起數主編輯器 Y.Doc 的 update 事件（y-prosemirror 綁定的那份；本地交易與遠端更新都算）。重複呼叫會歸零。 */
 async function resetYUpdates(page: Page): Promise<void> {
   await editorLocator(page).evaluate((el) => {
     type YDoc = { on(ev: "update", f: () => void): void };
@@ -1055,7 +1026,6 @@ async function resetYUpdates(page: Page): Promise<void> {
 
 const yUpdates = (page: Page) => page.evaluate(() => (window as unknown as { kbYUpdates?: number }).kbYUpdates ?? 0);
 
-/** 拖分隔線時的旁觀狀態：body 的 user-select、拖曳中的分隔線數、預覽樣式表數。 */
 async function dragState(page: Page): Promise<{ userSelect: string; dragging: number; preview: number }> {
   return page.evaluate(
     (sel) => ({
@@ -1070,8 +1040,8 @@ async function dragState(page: Page): Promise<{ userSelect: string; dragging: nu
 const IDLE = { userSelect: "", dragging: 0, preview: 0 };
 
 /**
- * 按住第 `index` 條分隔線命中區的中心、以 10 步水平移 `dx` 再放開；放開前呼叫 `beforeUp`。按下前先在命中區上移一下：
- * 分隔線在 `pointerenter` 時重量位置，位置變了的那一下 `pointerdown` 不開始拖曳。
+ * Presses the center of the hit area of separator `index`, moves `dx` horizontally in 10 steps, then releases; `beforeUp` is called before release. Before pressing, move once over the hit area:
+ * the separator re-measures its position on `pointerenter`, and a `pointerdown` right after the position changed does not start a drag.
  */
 async function dragDivider(page: Page, dx: number, opts: { index?: number; beforeUp?: () => Promise<void> } = {}): Promise<void> {
   const box = (await divider(page, opts.index).boundingBox())!;
@@ -1086,7 +1056,6 @@ async function dragDivider(page: Page, dx: number, opts: { index?: number; befor
 
 type HitKind = { separator: boolean; sideMenuButton: boolean; menuItem: string | null; extend: boolean; desc: string };
 
-/** `p` 命中的元素是哪一種：欄間分隔線、欄內 ⋮⋮ 按鈕、`/` 選單項（回它的文字）、表格「加一欄」延伸鈕；`desc` 是標籤與 class。 */
 async function hitKind(page: Page, p: Point): Promise<HitKind> {
   return page.evaluate(
     ({ pt, sel }) => {
@@ -1105,13 +1074,11 @@ async function hitKind(page: Page, p: Point): Promise<HitKind> {
   );
 }
 
-/** 第一個列兩欄的像素寬比例：左／(左＋右)。 */
 async function leftShare(page: Page): Promise<number> {
   const { cols } = await rowGeometry(page);
   return cols[0]!.width / (cols[0]!.width + cols[1]!.width);
 }
 
-/** 帶寬度的圖片（貼上後成為 `previewWidth`）。 */
 function figure(url: string, width: number): string {
   return `<figure><img alt="pic" src="${url}" width="${width}"></figure>`;
 }
@@ -1120,7 +1087,7 @@ const toRect = (b: { x: number; y: number; width: number; height: number }): Rec
 
 const inlineOf = (page: Page, text: string): Locator => blockOuter(page, text).locator(".bn-inline-content").first();
 
-test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫一次欄寬，不點回編輯器直接 Ctrl+Z 還原；[圖｜文字] 拉窄圖片欄 → 圖變小，拖回 → 長回 previewWidth", async ({ page }) => {
+test("[text|text] dragging the separator until the left column hits 200px stops there, releasing writes the column widths once, and Ctrl+Z without clicking back into the editor undoes it; [image|text] narrowing the image column shrinks the image and dragging back restores previewWidth", async ({ page }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "p6");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -1130,7 +1097,7 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
   const before = (await rowGeometry(page)).cols;
   const record: Record<string, unknown> = { before };
 
-  // 貼上的交易都落定才開始數 Y update：隔 300ms 讀兩次文件形狀相同。
+  // Start counting Y updates only after the paste's transactions have settled: two reads of the document shape 300 ms apart are the same.
   await expect
     .poll(async () => {
       const first = await docShape(page);
@@ -1138,8 +1105,8 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
       return first === (await docShape(page));
     })
     .toBe(true);
-  // 往左拖超過左欄能讓的寬度：左欄停在文字欄最小寬度 200px。
   await resetYUpdates(page);
+  // Drag 150px past what the left column can give: it stops at the 200px text-column minimum.
   await dragDivider(page, -(before[0]!.width - 200) - 150, {
     beforeUp: async () => {
       const during = { cols: (await rowGeometry(page)).cols, widths: await docWidths(page), updates: await yUpdates(page), state: await dragState(page) };
@@ -1161,20 +1128,19 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
   expect(after[0]!.width, "放開後左欄仍是文字欄最小寬度").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - ratioQuantPx(after));
   expect(after[0]!.width).toBeLessThanOrEqual(COLUMN_MIN_TEXT_PX + ratioQuantPx(after));
   expect(await dragState(page), "放開後清掉預覽與 user-select").toEqual(IDLE);
-  // 寫入只發生一次：放開那一下一個 Y update，之後沒有再改。
+  // The write happens once: one Y update at release and none afterwards.
   await page.waitForTimeout(500);
   record.updates = await yUpdates(page);
   expect(record.updates, "放開後恰一次 Y update").toBe(1);
   expect(await docWidths(page)).toEqual(written);
 
-  // 分隔線按下時不搶焦點：不點回編輯器，Ctrl+Z 直接撤銷這次調寬。
+  // Pressing on the separator does not steal focus: without clicking back into the editor, Ctrl+Z undoes this resize directly.
   record.focusInEditor = await editorLocator(page).evaluate((el) => el.contains(document.activeElement));
   expect(record.focusInEditor, "拖完焦點仍在編輯器").toBe(true);
   await page.keyboard.press("Control+z");
   await expect.poll(() => docWidths(page)).toEqual([1, 1]);
   await expect.poll(() => leftShare(page)).toBeCloseTo(0.5, 2);
 
-  // [圖｜文字]：圖片寬 300（previewWidth），左欄拉到約 150px → 圖片跟著變窄；拖回原寬 → 圖片長回 300。
   await createNote(page, `E2E columns drag p6-image ${RUN}`);
   const url = await uploadPng(page, 600, 300);
   await pasteMarkdown(page, rowDoc([figure(url, 300), "right text"]));
@@ -1207,11 +1173,11 @@ test("P6 [文字｜文字] 拖分隔線到左欄碰 200px 停住、放開只寫�
   expectNoPageErrors(errors);
 });
 
-test("P6b 列上方的圖片晚載入、把列往下推（columnEl 高度不變）→ 分隔線跟著下移、仍貼左欄右緣；在原位置按下不開始拖曳、點回內文游標進得去", async ({ page }) => {
+test("an image above the row loads late and pushes the row down (columnEl height unchanged): the separator moves down with it and stays at the left column's right edge; pressing at the old position does not start a drag and clicking back into the text puts the caret in", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p6b");
   const url = await uploadPng(page, 400, 200);
-  // 圖片的回應由測試放行：放行前量一次版面（圖片還沒有高度），放行後再量。
+  // The image response is released by the test: measure the layout once before releasing (the image has no height yet) and once after.
   let release!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));
   await page.route(
@@ -1224,7 +1190,7 @@ test("P6b 列上方的圖片晚載入、把列往下推（columnEl 高度不變�
   await pasteMarkdown(page, [`![late](${url})`, "", columnsMarkdown(["a", "b"]), ""].join("\n"));
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("image  ROW[COL(paragraph:a) | COL(paragraph:b)]");
   await expect(divider(page)).toHaveCount(1);
-  // 滑鼠移開：滑過分隔線會觸發它的重量，這裡要量的是 ResizeObserver 自己跟上。
+  // Move the mouse away: sliding over the separator triggers its re-measure, and what is measured here is ResizeObserver catching up on its own.
   await page.mouse.move(5, 5);
   const measure = () =>
     page.evaluate((sel) => {
@@ -1261,7 +1227,6 @@ test("P6b 列上方的圖片晚載入、把列往下推（columnEl 高度不變�
   }
   expect(Math.abs(after.columnEl.height - before.columnEl.height), "前提：columnEl 高度不變").toBeLessThanOrEqual(0.5);
 
-  // 分隔線原本的位置現在是圖片那一段：不命中分隔線，按下也不開始拖曳。
   const old = { x: before.sep.x + before.sep.width / 2, y: before.sep.y + before.sep.height / 2 };
   expect((await hitKind(page, old)).separator, "原位置不再命中分隔線").toBe(false);
   await page.mouse.move(old.x, old.y);
@@ -1270,14 +1235,14 @@ test("P6b 列上方的圖片晚載入、把列往下推（columnEl 高度不變�
   await page.mouse.up();
   expect(pressed, "在原位置按下沒有開始拖分隔線").toEqual(IDLE);
 
-  // 那一下選取了圖片，圖片工具列蓋在左欄上方，所以點右欄的內文。
+  // That press selected the image and the image toolbar covers the top of the left column, so click the right column's text.
   await clickEndOfParagraph(page, inlineOf(page, "b"));
   expect(await dragState(page)).toEqual(IDLE);
   expect(await docWidths(page)).toEqual([1, 1]);
   expectNoPageErrors(errors);
 });
 
-test("P7 聚焦分隔線按 → 兩次 → 左欄比例增約 10%、右欄變窄；回到編輯器 Ctrl+Z 一次還原；← 一次 → 左欄比例減約 5% [sc:columnResizeKeys]", async ({ page }) => {
+test("focusing the separator and pressing Right twice raises the left column's share by about 10% and narrows the right column; back in the editor one Ctrl+Z undoes it; one Left lowers the left share by about 5% [sc:columnResizeKeys]", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p7");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -1288,7 +1253,7 @@ test("P7 聚焦分隔線按 → 兩次 → 左欄比例增約 10%、右欄變窄
   expect(share0).toBeCloseTo(0.5, 2);
 
   await divider(page).focus();
-  // 兩次之間不等待：落在撤銷的合併時間窗內。
+  // No waiting between the two presses: they fall within the undo merge window.
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
   await expect.poll(() => leftShare(page)).toBeGreaterThan(share0 + 0.09);
@@ -1312,7 +1277,7 @@ test("P7 聚焦分隔線按 → 兩次 → 左欄比例增約 10%、右欄變窄
   expectNoPageErrors(errors);
 });
 
-test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後文字欄變窄、到 200px 停住；放開後 Ctrl+Z 一次還原圖寬與欄寬", async ({ page }) => {
+test("[image|text] dragging the image's right handle: first it grows inside the column, past the column width the text column narrows until it stops at 200px; after release one Ctrl+Z undoes both the image width and the column width", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p8");
   const url = await uploadPng(page, 1200, 300);
@@ -1329,14 +1294,13 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
 
   try {
     await img.hover();
-    const handle = imageBlock.locator(".bn-resize-handle").nth(1); // 第二個是右把手
+    const handle = imageBlock.locator(".bn-resize-handle").nth(1); // the second one is the right handle
     await expect(handle).toBeVisible();
     const h = (await handle.boundingBox())!;
     const start = { x: h.x + h.width / 2, y: h.y + h.height / 2 };
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
 
-    // 欄內：+40 → 圖片 240、欄寬不變。
     const inside = { x: start.x + 40, y: start.y };
     await moveInSteps(page, start, inside, 5);
     const step1 = await snap();
@@ -1344,7 +1308,7 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
     expect(Math.abs(step1.img - 240), "欄內先變大").toBeLessThanOrEqual(1);
     expect(Math.abs(step1.cols[1]!.width - before[1]!.width), "欄內時文字欄不變").toBeLessThanOrEqual(0.5);
 
-    // 超過可用寬 60px：文字欄讓出 60px。
+    // 60px past the available width: the text column gives up 60px.
     const over = { x: start.x + (ck - 200) + 60, y: start.y };
     await moveInSteps(page, inside, over, 10);
     const step2 = await snap();
@@ -1352,7 +1316,7 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
     expect(step2.cols[1]!.width, "超過欄寬後文字欄變窄").toBeLessThan(before[1]!.width - 50);
     expect(step2.cols[0]!.width, "圖片欄變寬").toBeGreaterThan(before[0]!.width + 50);
 
-    // 再往右拉很遠：文字欄停在 200px；再拉也不變。
+    // Far right: the text column stops at 200px.
     const far = { x: over.x + 600, y: start.y };
     await moveInSteps(page, over, far, 10);
     const step3 = await snap();
@@ -1368,7 +1332,7 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
     const written = { widths: await docWidths(page), previewWidth: await imageBlock.getAttribute("data-preview-width") };
     record.written = written;
     const afterUp = (await rowGeometry(page)).cols;
-    // previewWidth 由捨入前的 `ck + granted` 算出，欄卻依捨入後的比例排版、把圖片夾在欄寬內；差距不超過一格比例對應的像素寬。
+    // previewWidth is computed from the pre-rounding `ck + granted`, while columns lay out by the rounded ratios and clamp the image within the column width; the difference is at most the pixel width of one ratio step.
     expect(Math.abs(Number(written.previewWidth) - step4.img), "寫入的 previewWidth＝放開時的圖寬").toBeLessThanOrEqual(
       Math.max(1, ratioQuantPx(afterUp)),
     );
@@ -1386,7 +1350,7 @@ test("P8 [圖｜文字] 拉圖右把手：先在欄內變大，超過欄寬後�
   expectNoPageErrors(errors);
 });
 
-test("P9 分隔線與第 2 欄 ⋮⋮：按鈕寬 ≤ 16、兩者不重疊、⋮⋮ 右緣貼右欄左緣；⋮⋮ 顯示中命中區仍命中分隔線、拖得動；⋮⋮ 點得到也拖得動", async ({ page }) => {
+test("separator and column 2's handle: the button is <= 16 wide, they don't overlap, the handle's right edge touches column 2's left edge; with the handle shown the hit area still hits the separator and can be dragged; the handle can be clicked and dragged", async ({ page }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "p9");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -1401,7 +1365,6 @@ test("P9 分隔線與第 2 欄 ⋮⋮：按鈕寬 ≤ 16、兩者不重疊、⋮
     const sep = toRect((await divider(page).boundingBox())!);
     const { row, cols } = await rowGeometry(page);
     const midY = row.y + row.height / 2;
-    // 命中區每一個像素欄各量一點（命中區中心是 +4）。
     const hits: Array<{ p: Point } & HitKind> = [];
     for (let dx = 0.5; dx < sep.width; dx++) {
       const p = { x: sep.x + dx, y: midY };
@@ -1412,8 +1375,8 @@ test("P9 分隔線與第 2 欄 ⋮⋮：按鈕寬 ≤ 16、兩者不重疊、⋮
     expect(Math.abs(sep.x - (cols[0]!.x + cols[0]!.width)), "命中區左緣＝左欄右緣").toBeLessThanOrEqual(1);
     expect(sep.width).toBe(8);
     expect(Math.abs(menu.x + menu.width - cols[1]!.x), "⋮⋮ 右緣貼右欄左緣").toBeLessThanOrEqual(1);
-    // side menu 的 popover 以整數像素的 translate 定位（floating-ui 依 devicePixelRatio 捨入），相對的 columnEl 左緣帶小數時，
-    // ⋮⋮ 會比右欄左緣再往左最多 0.5px，蓋到命中區最右邊那一個像素欄（side menu 的 z-index 高於分隔線浮層）。
+    // The side menu's popover is positioned by an integer-pixel translate (floating-ui rounds by devicePixelRatio); when the relative columnEl's left edge has a fraction,
+    // the handle can sit up to 0.5px further left than column 2's left edge and cover the rightmost pixel column of the hit area (the side menu's z-index is above the separator overlay).
     expect(btn.x, "⋮⋮ 按鈕最多蓋到命中區 0.5px").toBeGreaterThanOrEqual(sep.x + sep.width - 0.5);
     for (const h of hits.slice(0, -1)) expect(h.separator, `⋮⋮ 顯示中命中區 ${JSON.stringify(h)}`).toBe(true);
   } finally {
@@ -1421,7 +1384,6 @@ test("P9 分隔線與第 2 欄 ⋮⋮：按鈕寬 ≤ 16、兩者不重疊、⋮
     console.log("P9=" + JSON.stringify(v));
   }
 
-  // ⋮⋮ 顯示中，在命中區按下拖得動。先把滑鼠移進命中區，確認 ⋮⋮ 仍在畫面上。
   const band = (await divider(page).boundingBox())!;
   await page.mouse.move(band.x + band.width / 2, band.y + band.height / 2);
   await expect(page.locator("[data-kb-column-side-menu]").getByRole("button", { name: "Open block menu" })).toBeVisible();
@@ -1431,24 +1393,22 @@ test("P9 分隔線與第 2 欄 ⋮⋮：按鈕寬 ≤ 16、兩者不重疊、⋮
   await page.keyboard.press("Control+z");
   await expect.poll(() => docWidths(page)).toEqual([1, 1]);
 
-  // ⋮⋮ 點得到：選單打開。
   await hoverForSideMenu(page, blockOuter(page, "b"), "b");
   await page.locator("[data-kb-column-side-menu]").getByRole("button", { name: "Open block menu" }).click();
   await expect(page.getByRole("menuitem", { name: "Ungroup columns" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menuitem", { name: "Ungroup columns" })).toBeHidden();
 
-  // ⋮⋮ 拖得動：b 拖到 z 下方。
   await dragBlockBelow(page, "b", "z");
   await expect.poll(() => docShape(page)).toContain("ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z  paragraph:b");
   expect(await docWidths(page)).toEqual([1, 1]);
   expectNoPageErrors(errors);
 });
 
-test("P9b 第 1 欄靠右的 block 打 / 讓選單蓋住溝：命中區那一點命中選單項，點下 → 選單項生效、沒有開始拖分隔線", async ({ page }) => {
+test("typing / in a block at the right of column 1 lets the menu cover the gutter: the hit-area point hits the menu item, clicking applies the menu item and does not start a separator drag", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p9b");
-  // 第 2 欄放六段，列（也就是分隔線命中區）比選單項所在的高度還高。
+  // Put six paragraphs in column 2 so the row (and thus the separator hit area) is taller than where the menu items are.
   await pasteMarkdown(page, rowDoc(["a", "b\n\nb2\n\nb3\n\nb4\n\nb5\n\nb6"]));
   await expect
     .poll(() => docShape(page), { timeout: 15_000 })
@@ -1457,7 +1417,7 @@ test("P9b 第 1 欄靠右的 block 打 / 讓選單蓋住溝：命中區那一點
   const { cols } = await rowGeometry(page);
   const col1Right = cols[0]!.x + cols[0]!.width;
   await clickEndOfParagraph(page, inlineOf(page, "a"));
-  // 打字讓游標靠近第 1 欄右緣（不換行），選單從游標往右展開就會蓋到溝。
+  // Type so the caret is near column 1's right edge (without wrapping); the menu opens rightwards from the caret and covers the gutter.
   const caret = () =>
     page.evaluate(() => {
       const r = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
@@ -1484,19 +1444,18 @@ test("P9b 第 1 欄靠右的 block 打 / 讓選單蓋住溝：命中區那一點
   const pressed = await dragState(page);
   await page.mouse.up();
   expect(pressed, "沒有開始拖分隔線").toEqual(IDLE);
-  // 選單關掉後，同一點命中的是分隔線：剛才命中選單項是因為選單蓋在上面，不是那一點本來就沒有分隔線。
+  // After the menu closes the same point hits the separator: it hit the menu item just now because the menu was on top, not because that point had no separator.
   await expect(item).toBeHidden();
   await expect.poll(async () => (await hitKind(page, p)).separator, { message: "選單關掉後同一點命中分隔線" }).toBe(true);
-  // 段落有字時，選單項在它後面插入新的標題 block。
   await expect.poll(() => docShape(page)).toMatch(/ROW\[COL\(paragraph:am+ ?,heading\) \| COL\(paragraph:b,paragraph:b2/);
   expect(await docWidths(page)).toEqual([1, 1]);
   expectNoPageErrors(errors);
 });
 
-test("P9c 第 1 欄的表格 hover 出「加一欄」延伸鈕：量它與分隔線命中區的關係（有重疊就斷言重疊處命中延伸鈕）；點下 → 表格多一欄、沒有開始拖分隔線", async ({ page }) => {
+test("hovering a table in column 1 shows the \"add a column\" extend button: measures its relation to the separator hit area (where they overlap, the overlap hits the extend button); clicking it adds a table column and does not start a separator drag", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p9c");
-  // 欄寬給得比欄寬大：表格撐到欄內能放的最寬，延伸鈕最靠近溝。
+  // Give a column width bigger than the column: the table stretches to the widest the column can hold, putting the extend button closest to the gutter.
   const table = '<table><tr><th colwidth="300">h1</th><th colwidth="300">h2</th></tr><tr><td>c1</td><td>c2</td></tr></table>';
   await pasteMarkdown(page, rowDoc([table, "b"]));
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(table:h1h2c1c2) | COL(paragraph:b)]");
@@ -1510,7 +1469,6 @@ test("P9c 第 1 欄的表格 hover 出「加一欄」延伸鈕：量它與分隔
   const sep = toRect((await divider(page).boundingBox())!);
   const { cols } = await rowGeometry(page);
   const y = ext.y + ext.height / 2;
-  // 延伸鈕與命中區的水平交集；沒有交集時量命中區在延伸鈕那一列高度的命中結果。
   const overlap = { from: Math.max(ext.x, sep.x), to: Math.min(ext.x + ext.width, sep.x + sep.width) };
   const overlaps = overlap.to - overlap.from > 0.5;
   const probe = overlaps ? { x: (overlap.from + overlap.to) / 2, y } : { x: sep.x + sep.width / 2, y };
@@ -1532,14 +1490,14 @@ test("P9c 第 1 欄的表格 hover 出「加一欄」延伸鈕：量它與分隔
   expectNoPageErrors(errors);
 });
 
-test("P10b 溝裡的檔案（分隔線命中區）：命中區中心先命中分隔線，dragenter 之後同一點命中編輯器、dragover 被接受，放下 → 圖片進最近的欄、網址不變", async ({ page }) => {
+test("file in the gutter (separator hit area): the hit area's center first hits the separator, after dragenter the same point hits the editor and dragover is accepted, dropping puts the image into the nearest column and the URL is unchanged", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p10b");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(paragraph:a) | COL(paragraph:b)]");
   await expect(divider(page)).toHaveCount(1);
   const url = page.url();
-  // 滑鼠移開：⋮⋮ 不顯示，命中區那一點只有分隔線。
+  // Move the mouse away: the handle is not shown, so the hit-area point has only the separator.
   await page.mouse.move(5, 5);
   const sep = toRect((await divider(page).boundingBox())!);
   const b = (await blockOuter(page, "b").boundingBox())!;
@@ -1562,11 +1520,11 @@ test("P10b 溝裡的檔案（分隔線命中區）：命中區中心先命中分
   expectNoPageErrors(errors);
 });
 
-/** 欄開標籤的正規形（shared `canonicalColumnsLine`；e2e 不能 import shared，兩邊要一起改）。 */
+/** Canonical form of a column opening tag (shared `canonicalColumnsLine`; e2e can't import shared, so change both together). */
 const COLUMNS_OPEN_TAG = '<div data-kb-columns style="display:flex;gap:16px">';
 const COLUMN_LINE_RE = /^<div data-kb-column style="flex:((?:0|[1-9][0-9]?)(?:\.[0-9]{1,2})?)">$/;
 
-test("P11 拖分隔線後 REST 讀出：欄開標籤是正規形、值＝文件欄寬；原樣 replace_all 寫回 → 201、欄寬不變、再讀逐字相同", async ({ page }) => {
+test("after dragging a separator, a REST read: the column opening tag is canonical and its values equal the document column widths; writing it back unchanged with replace_all gives 201, widths unchanged, and a re-read is byte-identical", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "p11");
   const noteId = await noteIdFromUrl(page);
@@ -1584,7 +1542,7 @@ test("P11 拖分隔線後 REST 讀出：欄開標籤是正規形、值＝文件�
     return (await res.json()) as Content;
   };
   const columnLines = (md: string) => md.split("\n").filter((l) => l.startsWith("<div data-kb-column"));
-  // 調寬經共編送到 server 有時間差：讀到的欄寬等於文件的值才算 server 看到了。
+  // The resize reaches the server through collab with a delay: the server counts as having seen it once the widths read equal the document's values.
   let original!: Content;
   await expect(async () => {
     original = await read();
@@ -1607,7 +1565,7 @@ test("P11 拖分隔線後 REST 讀出：欄開標籤是正規形、值＝文件�
     data: { op: "replace_all", markdown: original.markdown, if_match: original.fingerprint },
   });
   expect(same.status(), await same.text()).toBe(201);
-  // replace_all 換掉每個 block 的 id：列的 data-id 換掉＝頁面收到這次寫入。
+  // replace_all replaces every block's id: the row's data-id changing means the page received this write.
   await expect.poll(() => editorLocator(page).locator(ROW).first().getAttribute("data-id"), { timeout: 10_000 }).not.toBe(rowIdBefore);
   expect(await docWidths(page)).toEqual(widths);
   expect((await read()).markdown).toBe(original.markdown);

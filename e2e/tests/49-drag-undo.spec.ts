@@ -3,17 +3,14 @@ import { expect, test, type Browser, type BrowserContext, type Locator, type Pag
 import { ADMIN, clickEndOfParagraph, createNote, editorLocator, loginAs, noteIdFromUrl, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
- * ⋮⋮ 拖放之後的撤銷與焦點：U1 橫線放進既有欄之後立刻 Ctrl+Z（#428）、U2 排序之後焦點留在編輯器（#430）、
- * U3 多選拖曳途中協作者打字（#429）、U4／U5／U7 焦點不在編輯器時頁面上的 Ctrl+Z（#430）、U6 複製拖之後立刻 Ctrl+Z（#428）、
- * U8 刪掉選取的圖片、撤銷、立刻重做（#428）、U9 協作者刪掉你選取的圖片（#428）。
- * 真滑鼠、1440×900。
+ * Undo and focus after a handle drag. Issue refs: #428 undo right after a drop or copy drag and image delete/redo, #429 a collaborator typing during a multi-select drag, #430 focus and Ctrl+Z when focus is not in the editor. Real mouse, 1440x900.
  *
- * - 內容一律貼 markdown（同 34／48）。文件形狀讀主編輯器的 ProseMirror 文件：`docShape` 同 48 的格式，`docIds` 是頂層
- *   block（含列裡每一欄的 block）的 `文字#id 前 8 碼`。
- * - 拖曳照 48 的分段（hover → 等 ⋮⋮ 移到該 block 旁 → 按住 → 小移 5 步 → 15 步到終點 → 再下移 1px → 放開）。
- * - 協作者是另一個 browser context，用同一個帳號開同一篇。
- * - 貼上與拖曳之間等 1 秒，兩者是不同的撤銷步驟；拖完等 800ms 再按 Ctrl+Z（使用者的節奏，不靠撤銷合併窗口）。
- * - 每案收 `pageerror`，案尾斷言沒有（`ResizeObserver loop` 是瀏覽器已知的良性訊息，排除）。
+ * - Content is always pasted as markdown (same as `34-columns` and `48-columns-drag`). The document shape is read from the main editor's ProseMirror document: `docShape` has the format of
+ *   `48-columns-drag`, and `docIds` lists each top-level block (including blocks in a row's columns) as `text#first 8 chars of id`.
+ * - Drags use the steps of `48-columns-drag` (hover -> wait for the handle to move next to the block -> press -> 5 small steps -> 15 steps to the end point -> 1px further down -> release).
+ * - The collaborator is another browser context opening the same note with the same account.
+ * - Wait 1 second between paste and drag, because they are different undo steps; after the drag wait 800 ms before Ctrl+Z (a user's rhythm, not relying on the undo merge window).
+ * - Every case collects `pageerror` and asserts none at the end (`ResizeObserver loop` is a known benign browser message and is excluded).
  */
 
 const RUN = Date.now();
@@ -39,7 +36,6 @@ async function startNote(page: Page, label: string): Promise<string[]> {
   return errors;
 }
 
-/** 協作者：另一個 context 以同一個帳號開同一篇，等連上、編輯器掛好。 */
 async function openCollaborator(browser: Browser, url: string): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
@@ -59,7 +55,7 @@ function columnsMarkdown(cols: string[]): string {
   ].join("\n");
 }
 
-/** 在筆記最後貼上 markdown，等 1 秒讓貼上自成一個撤銷步驟。 */
+/** Pastes markdown at the end of the note and waits 1 second so the paste becomes its own undo step. */
 async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
   await editorLocator(page).click();
@@ -71,7 +67,6 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
 
 type PmNode = { type: { name: string }; attrs: { id?: unknown }; childCount: number; child(i: number): PmNode; firstChild: PmNode | null; textContent: string };
 
-/** 主編輯器 ProseMirror 文件的頂層形狀（同 48）。 */
 async function docShape(page: Page): Promise<string> {
   return editorLocator(page).evaluate((el) => {
     type Node = { type: { name: string }; childCount: number; child(i: number): Node; firstChild: Node | null; textContent: string };
@@ -88,7 +83,6 @@ async function docShape(page: Page): Promise<string> {
   });
 }
 
-/** 每個 blockContainer（含列裡的）依文件順序：`文字#id 前 8 碼`。 */
 async function docIds(page: Page): Promise<string[]> {
   return editorLocator(page).evaluate((el) => {
     type Node = PmNode & { descendants(f: (n: Node) => boolean | void): void };
@@ -101,7 +95,6 @@ async function docIds(page: Page): Promise<string[]> {
   });
 }
 
-/** 焦點在不在主編輯器裡。 */
 const focusInEditor = (page: Page) => editorLocator(page).evaluate((el) => el.contains(document.activeElement));
 
 function blockOuter(page: Page, text: string): Locator {
@@ -113,7 +106,6 @@ function blockOuter(page: Page, text: string): Locator {
 
 type Point = { x: number; y: number };
 
-/** hover `block`，等側邊選單移到它旁邊（同 48 `hoverForSideMenu`）。 */
 async function hoverForSideMenu(page: Page, block: Locator, label: string): Promise<void> {
   await block.hover();
   await expect(page.getByRole("button", { name: "Open block menu" })).toBeVisible();
@@ -133,8 +125,8 @@ async function moveInSteps(page: Page, from: Point, to: Point, steps: number): P
 }
 
 /**
- * 按住 `sourceText` 的 ⋮⋮，照 48 的分段拖到 `targetText` 那段的下半部（橫線放置）放開。`midDrag` 在小移之後、移到終點之前跑
- * （拖曳中途讓協作者打字）。
+ * Presses the handle of `sourceText` and drags it in the steps of `48-columns-drag` to the lower half of the paragraph `targetText` (horizontal-line drop), then releases. `midDrag` runs after the small move
+ * and before moving to the end point (lets the collaborator type mid-drag).
  */
 async function dragBlockBelow(page: Page, sourceText: string, targetText: string, midDrag?: () => Promise<void>, opts: { copy?: boolean } = {}): Promise<void> {
   await hoverForSideMenu(page, blockOuter(page, sourceText), sourceText);
@@ -147,7 +139,7 @@ async function dragBlockBelow(page: Page, sourceText: string, targetText: string
   await midDrag?.();
   const t = (await blockOuter(page, targetText).boundingBox())!;
   const end = { x: t.x + t.width / 2, y: t.y + t.height * 0.75 };
-  // 複製拖：按住 Ctrl 移到終點、放開（PM 在 drop 時看修飾鍵）。
+  // Copy drag: hold Ctrl through the move and release (PM reads the modifier key at drop).
   if (opts.copy) await page.keyboard.down("Control");
   await moveInSteps(page, nudge, end, 15);
   await moveInSteps(page, end, { x: end.x, y: end.y + 1 }, 1);
@@ -155,7 +147,7 @@ async function dragBlockBelow(page: Page, sourceText: string, targetText: string
   if (opts.copy) await page.keyboard.up("Control");
 }
 
-/** document 有沒有收到這次拖曳的 dragend（⋮⋮ 在放下時被換掉的話收不到）。 */
+/** Whether document received this drag's dragend (it is not received if the handle is replaced at drop). */
 async function watchDragEnd(page: Page): Promise<() => Promise<boolean>> {
   await page.evaluate(() => {
     const w = window as unknown as { kbDragEnd?: boolean };
@@ -165,7 +157,7 @@ async function watchDragEnd(page: Page): Promise<() => Promise<boolean>> {
   return () => page.evaluate(() => !!(window as unknown as { kbDragEnd?: boolean }).kbDragEnd);
 }
 
-test("U1 #428 z 橫線放進 [a｜b] 的第 1 欄，不點編輯器直接 Ctrl+Z → 一下還原、沒有 pageerror、協作者看到的相同、id 不變", async ({ page, browser }) => {
+test("#428 horizontal-line drop of z into column 1 of [a|b], then Ctrl+Z without clicking the editor: one press undoes it, no pageerror, the collaborator sees the same, ids unchanged", async ({ page, browser }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "u1");
   await pasteMarkdown(page, ["x", "", columnsMarkdown(["a", "b"]), "", "z", ""].join("\n"));
@@ -191,7 +183,7 @@ test("U1 #428 z 橫線放進 [a｜b] 的第 1 欄，不點編輯器直接 Ctrl+Z
     await expect.poll(() => docShape(page)).toBe(before);
     expect(await docIds(page)).toEqual(idsBefore);
     await expect.poll(() => docShape(peer.page), { message: "共享文件也還原" }).toBe(before);
-    // 再打一個字：本機與共享文件一致的話，打字不會把撤銷前的狀態寫回去。
+    // Type one more character: if local and shared documents agree, typing does not write the pre-undo state back.
     await clickEndOfParagraph(page, blockOuter(page, "x").locator(".bn-inline-content").first());
     await page.keyboard.type("T");
     await expect.poll(() => docShape(peer.page)).toContain("paragraph:xT  ROW[COL(paragraph:a) | COL(paragraph:b)]  paragraph:z");
@@ -202,7 +194,7 @@ test("U1 #428 z 橫線放進 [a｜b] 的第 1 欄，不點編輯器直接 Ctrl+Z
   }
 });
 
-test("U2 #430 x y z 拖 x 到 z 下方 → 焦點留在編輯器、游標在 x；不點編輯器直接 Ctrl+Z → 一下還原、id 不變", async ({ page }) => {
+test("#430 x y z dragging x below z: focus stays in the editor with the caret in x; Ctrl+Z without clicking the editor undoes it in one press, ids unchanged", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "u2");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -230,7 +222,7 @@ test("U2 #430 x y z 拖 x 到 z 下方 → 焦點留在編輯器、游標在 x�
   expectNoPageErrors(errors);
 });
 
-test("U6 #428 按住 Ctrl 把 x 複製到 z 下方（文件結尾），不點編輯器直接 Ctrl+Z → 一下還原、沒有 pageerror、協作者看到的相同 [sc:dragBlockCopy]", async ({ page, browser }) => {
+test("#428 holding Ctrl to copy x below z (end of document), then Ctrl+Z without clicking the editor: one press undoes it, no pageerror, the collaborator sees the same [sc:dragBlockCopy]", async ({ page, browser }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "u6");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -252,12 +244,12 @@ test("U6 #428 按住 Ctrl 把 x 複製到 z 下方（文件結尾），不點編
     await page.keyboard.press("Control+z");
     await expect.poll(() => docShape(page)).toBe(before);
     const idsUndone = await docIds(page);
-    // 複製拖是 PM 預設的放置，兩份 x 的 id 怎麼分配不歸這裡管，只記下；沒被複製的 y、z 的 id 不變。
+    // A copy drag is PM's default drop and how the two copies of x get ids is not decided here, so it is only recorded; the ids of y and z, which were not copied, are unchanged.
     test.info().annotations.push({ type: "ids-before-copied-undone", description: JSON.stringify({ idsBefore, idsCopied, idsUndone }) });
     expect(idsUndone.slice(1)).toEqual(idsBefore.slice(1));
     await expect.poll(() => docShape(peer.page), { message: "共享文件也還原" }).toBe(before);
     expect(await docIds(peer.page)).toEqual(idsUndone);
-    // 本機與共享文件一致的話，之後打字不會把複本寫回去。
+    // If local and shared documents agree, later typing does not write the copy back.
     await clickEndOfParagraph(page, blockOuter(page, "y").locator(".bn-inline-content").first());
     await page.keyboard.type("T");
     await expect.poll(() => docShape(peer.page)).toBe("paragraph:x  paragraph:yT  paragraph:z");
@@ -268,7 +260,7 @@ test("U6 #428 按住 Ctrl 把 x 複製到 z 下方（文件結尾），不點編
   }
 });
 
-test("U3 #429 a b 多選拖到 c 下方，拖曳途中協作者在 d 打字 → a b 整塊搬走、沒有空段落、兩邊相同；Ctrl+Z 一下還原", async ({ page, browser }) => {
+test("#429 a b multi-selected and dragged below c while a collaborator types in d mid-drag: a b move as one block, no empty paragraph, both sides match; one Ctrl+Z undoes it", async ({ page, browser }) => {
   test.setTimeout(150_000);
   const errors = await startNote(page, "u3");
   await pasteMarkdown(page, "a\n\nb\n\nc\n\nd\n");
@@ -279,8 +271,8 @@ test("U3 #429 a b 多選拖到 c 下方，拖曳途中協作者在 d 打字 → 
     const idsBefore = await docIds(page);
     await page.waitForTimeout(1_000);
 
-    // 選取從 a 跨到 b（core 在 dragstart 把它換成兩個 block 的多選）。
     await clickEndOfParagraph(page, blockOuter(page, "a").locator(".bn-inline-content").first());
+    // The selection spans a to b (core turns it into a two-block multi-selection at dragstart).
     await page.keyboard.press("Shift+ArrowDown");
     await waitForEditorSelection(page);
     const selectionType = () =>
@@ -316,10 +308,10 @@ test("U3 #429 a b 多選拖到 c 下方，拖曳途中協作者在 d 打字 → 
   }
 });
 
-/** 頁首左上角的 padding（不是任何控制項）：點下去焦點落到 `<body>`。 */
 async function clickHeaderBlank(page: Page): Promise<void> {
   const header = page.locator("header").filter({ has: page.getByLabel("Note title") });
   const box = (await header.boundingBox())!;
+  // The header's top-left padding is not a control.
   const p = { x: box.x + 3, y: box.y + 3 };
   const hit = await header.evaluate((el, pt) => document.elementFromPoint(pt.x, pt.y) === el, p);
   expect(hit, "前提：點的是頁首本身").toBe(true);
@@ -327,7 +319,7 @@ async function clickHeaderBlank(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement === document.body), { message: "焦點在 body" }).toBe(true);
 }
 
-test("U4 #430 排序之後點頁首空白處（焦點在 body）→ Ctrl+Z 照樣撤銷這篇、焦點回到編輯器；Ctrl+Shift+Z 重做", async ({ page }) => {
+test("#430 after a reorder, clicking blank header space (focus on body): Ctrl+Z still undoes this note and focus returns to the editor; Ctrl+Shift+Z redoes", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "u4");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -350,7 +342,7 @@ test("U4 #430 排序之後點頁首空白處（焦點在 body）→ Ctrl+Z 照�
   expectNoPageErrors(errors);
 });
 
-test("U5 #430 排序之後焦點在標題框 → Ctrl+Z 不動筆記內容", async ({ page }) => {
+test("#430 after a reorder with focus in the title box: Ctrl+Z leaves the note content alone", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "u5");
   await pasteMarkdown(page, "x\n\ny\n\nz\n");
@@ -364,16 +356,15 @@ test("U5 #430 排序之後焦點在標題框 → Ctrl+Z 不動筆記內容", asy
   await title.click();
   await expect(title).toBeFocused();
   await page.keyboard.press("Control+z");
-  // 撤銷是同步的：等一段時間確定筆記沒有晚到的改動。
+  // Undo applies synchronously; wait to rule out a late change from elsewhere.
   await page.waitForTimeout(800);
   expect(await docShape(page)).toBe(moved);
-  // 鍵沒有被攔下：標題框自己的撤銷收到了它，退回 `createNote` 填標題之前的值。
+  // The key was not intercepted: the title box's own undo received it and went back to the value before `createNote` filled the title.
   await expect(title).toHaveValue("Untitled");
   await expect(title).toBeFocused();
   expectNoPageErrors(errors);
 });
 
-/** 主編輯器第一個列每一欄的文件欄寬（column 節點的 `width`；同 48）。 */
 async function docWidths(page: Page): Promise<number[]> {
   return editorLocator(page).evaluate((el) => {
     type Node = { type: { name: string }; attrs: { width?: number }; childCount: number; child(i: number): Node };
@@ -390,7 +381,7 @@ async function docWidths(page: Page): Promise<number[]> {
   });
 }
 
-test("U7 #430 欄間分隔線有焦點時用 → 調寬，不點回筆記直接 Ctrl+Z → 欄寬還原、焦點回到編輯器", async ({ page }) => {
+test("#430 with a separator between columns focused, ArrowRight resizes; Ctrl+Z without clicking back into the note restores the column widths and returns focus to the editor", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "u7");
   await pasteMarkdown(page, ["x", "", columnsMarkdown(["a", "b"]), "", "z", ""].join("\n"));
@@ -427,7 +418,6 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 灰色 RGB PNG（同 34／48）。 */
 function grayPng(width: number, height: number): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
@@ -439,7 +429,6 @@ function grayPng(width: number, height: number): Buffer {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
 }
 
-/** 走 API 真上傳一張 PNG 到目前這篇，回傳 `/api/uploads/…` 網址（同 48）。 */
 async function uploadPng(page: Page): Promise<string> {
   const noteId = await noteIdFromUrl(page);
   const res = await page.request.post(`/api/notes/${noteId}/uploads`, {
@@ -454,7 +443,7 @@ const selectionJSON = (page: Page) =>
   editorLocator(page).evaluate((el) => (el as Element & { editor?: { view?: { state: { selection: { toJSON(): { type: string } } } } } }).editor!.view!.state.selection.toJSON().type);
 
 for (const where of ["end", "column"] as const) {
-  test(`U8 #428 點選圖片（${where === "end" ? "文件結尾" : "第 1 欄最後一個 block"}）→ Backspace 刪掉 → Ctrl+Z → 立刻 Ctrl+Shift+Z → 沒有 pageerror、重做生效、協作者看到的相同`, async ({ page, browser }) => {
+  test(`#428 click-select the image (${where === "end" ? "end of document" : "last block of column 1"}) -> Backspace deletes it -> Ctrl+Z -> Ctrl+Shift+Z immediately: no pageerror, the redo takes effect, the collaborator sees the same`, async ({ page, browser }) => {
     test.setTimeout(150_000);
     const errors = await startNote(page, `u8-${where}`);
     const url = await uploadPng(page);
@@ -480,7 +469,7 @@ for (const where of ["end", "column"] as const) {
       await page.keyboard.press("Control+Shift+z");
       await expect.poll(() => docShape(page)).toBe(without);
       await expect.poll(() => docShape(peer.page), { message: "共享文件也重做了" }).toBe(without);
-      // 本機與共享文件一致的話，之後打字兩邊都看得到。
+      // If local and shared documents agree, later typing is visible on both sides.
       await clickEndOfParagraph(page, blockOuter(page, "x").locator(".bn-inline-content").first());
       await page.keyboard.type("T");
       await expect.poll(() => docShape(peer.page)).toBe(without.replace("paragraph:x", "paragraph:xT"));
@@ -491,7 +480,7 @@ for (const where of ["end", "column"] as const) {
     }
   });
 
-  test(`U9 #428 點選圖片（${where === "end" ? "文件結尾" : "第 1 欄最後一個 block"}）之後協作者刪掉它 → 沒有 pageerror、本機與協作者看到的相同、之後打字兩邊一致`, async ({ page, browser }) => {
+  test(`#428 click-select the image (${where === "end" ? "end of document" : "last block of column 1"}) and then the collaborator deletes it: no pageerror, local and collaborator see the same, and later typing matches on both sides`, async ({ page, browser }) => {
     test.setTimeout(150_000);
     const errors = await startNote(page, `u9-${where}`);
     const url = await uploadPng(page);
@@ -515,8 +504,8 @@ for (const where of ["end", "column"] as const) {
       await peer.page.keyboard.press("Backspace");
       await expect.poll(() => docShape(peer.page)).toBe(without);
       await expect.poll(() => docShape(page), { message: "本機收到刪除" }).toBe(without);
-      // 本機與共享文件一致的話，之後打字兩邊都看得到。協作者的游標標籤可能就在 x 裡（x 的文字不再只是 "x"），所以用鍵盤移到
-      // 第一段（x）的結尾，不點它。
+      // If local and shared documents agree, later typing is visible on both sides. The collaborator's cursor label may be inside x (x's text is then no longer just "x"), so move with the keyboard to
+      // the end of the first paragraph (x) instead of clicking it.
       expect(await focusInEditor(page), "焦點還在編輯器").toBe(true);
       await page.keyboard.press("ControlOrMeta+Home");
       await page.keyboard.press("End");

@@ -5,33 +5,28 @@ import { derivedVersionName } from "../../packages/shared/src/version-names.js";
 import { E2E_ORIGIN } from "../ports.js";
 
 /**
- * 疊內建的 env bootstrap admin（見 `docker-compose.e2e.yml` 的 `ADMIN_EMAIL`/
- * `ADMIN_PASSWORD`）。#187 起 env 管理員首登**不強制改密碼**，所以全疊唯一密碼就是
- * `password`，所有 spec 直接用它登入（沒有「01 先改密碼、其餘 spec 用新密碼」的檔序耦合了）。
- * 強制改密碼不再有 e2e 覆蓋（代建已移除），由 `auth/guards.test.tsx`、`pages/ChangePasswordPage.test.tsx` 與 server 測試守。
+ * Credentials of the env bootstrap admin built into the stack (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `docker-compose.e2e.yml`).
+ * The env admin is not forced to change its password on first login, so one password serves every spec.
+ * Forced password change has no e2e coverage; it is covered by `auth/guards.test.tsx`, `pages/ChangePasswordPage.test.tsx` and server tests.
  *
- * ⚠ 慣例：**新寫的案例要開／關公開連結（`PUT`／`DELETE …/public-link`），owner 一律用新帳號**（`randomEmail()` 註冊或
- * `createUserViaInvite`），不要用 admin。那顆桶是 `PUBLIC_LINK_LIMIT`：key=userId、每人 10 次／10 分鐘固定窗；整套序跑時 admin
- * 的額度已被 11／16／18／22／27 用掉，再加就會吃 429、而且紅在後面不相干的 spec。31、34、36 已照這樣做。
- * （上列五支既有的維持用 admin，不要再往裡面加 admin 的公開連結操作。）
+ * Convention: new tests that toggle a public link (`PUT`/`DELETE .../public-link`) use a fresh account (`randomEmail()` or
+ * `createUserViaInvite`), not admin. The `PUBLIC_LINK_LIMIT` limiter is keyed by userId (10 per 10 minutes, fixed window) and
+ * admin's allowance is already used up by specs 11, 16, 18, 22 and 27, which stay on admin: don't add admin public-link calls to them
+ * (an extra one would 429 in an unrelated later spec).
  */
 export const ADMIN = {
   email: "admin@e2e.local",
   password: "e2e-admin-password",
 } as const;
 
-/** 隨機化隔離：多 spec 共用一座疊（單 worker、不 `down -v` 於 spec 之間），
- * 建帳號一律用隨機 email 避免互撞。 */
+/** Random emails keep specs from colliding on the shared stack (single worker, no `down -v` between specs). */
 export function randomEmail(): string {
   return `e2e-${randomUUID()}@e2e.local`;
 }
 
 /**
- * `/login` → 送出表單 → 等離開 `/login`。**不在這裡斷言最終落在哪個 URL**——
- * 被旗標的帳號（例如舊版代建、尚未改密碼的帳號）會被 `ChangePasswordGate` client-side 導向
- * `/change-password`，一般帳號（含 env bootstrap 管理員）則落在 `/`；呼叫端才知道自己期待哪一種，用
- * `expect(page).toHaveURL(...)`（本身有重試）斷言即可，這裡只保證「表單已送出且
- * 導航已經開始」。
+ * `/login` -> submit -> wait to leave `/login`. Does not assert the final URL: flagged accounts are sent to `/change-password`
+ * client-side by `ChangePasswordGate`, others land on `/`; callers assert theirs with `expect(page).toHaveURL(...)` (which retries).
  */
 export async function loginAs(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/login");
@@ -42,9 +37,9 @@ export async function loginAs(page: Page, email: string, password: string): Prom
 }
 
 /**
- * admin 以 API 建邀請，另開一個不帶 cookie 的 APIRequestContext 兌換——**不得用 admin 的 context**：
- * 兌換成功會 Set-Cookie 登入新帳號，蓋掉 admin 的 session。`adminPage` 須已登入且導覽過（要取 origin）。
- * 建出的帳號沒有強制改密碼，之後直接 `loginAs`。CSRF 只需 JSON content-type（`data` 自動帶，同 26 的 `call`）。
+ * Admin creates the invite via API; a separate cookie-less APIRequestContext redeems it. Must not use admin's context: a
+ * successful redeem sets a cookie that logs in the new account and overwrites admin's session. `adminPage` must be logged in
+ * and already navigated (for its origin). CSRF only needs a JSON content-type (`data` sets it).
  */
 export async function createUserViaInvite(
   adminPage: Page,
@@ -63,112 +58,96 @@ export async function createUserViaInvite(
 }
 
 /**
- * 在目前已登入的 `page`（須已在 `/` 且看得到 `AppShell`）建一篇新筆記並填標題。
- * 呼叫端接手後 `page.url()` 就是這篇筆記的 canonical URL（可直接餵給另一個
- * context 的 `page.goto` 開同一篇）。
+ * Creates a new note on the logged-in `page` (must be at `/` with `AppShell` visible) and fills the title. Afterwards
+ * `page.url()` is the note's canonical URL.
  *
- * 標題走 `TitleInput` 的 blur-即存語意（見該元件檔頭），不是 800ms debounce——
- * `.blur()` 讓存檔請求立刻送出，不必在這裡等一輪 debounce。
+ * The title is saved on `TitleInput` blur, not after the 800ms debounce; `.blur()` sends the save immediately.
  *
- * 交還控制權前等兩件事，**順序刻意是「先連線、後編輯器」**：Hocuspocus 共編連線
- * 真的連上（`ConnectionBadge` 顯示「Connected」），然後編輯器節點掛上。連線屏障是
- * issue #33 要的顯式前置條件；放在前面是因為 `contenteditable="true"` 如今隱含
- * 「已同步 ⟹ 已連線」（見下段），倒過來放的話，握手卡死時會先在 contenteditable
- * 那行逾時、報「編輯器沒掛上」這個誤導訊息，連線屏障一次都輪不到執行。
+ * Waits for the connection first, then the editor. The connection wait is an explicit precondition (#33); it comes first because
+ * `contenteditable="true"` currently implies synced, so the other order would time out on the editor with a misleading message
+ * when the handshake hangs and the connection wait would never run.
  *
- * 歷史與現況（強制延遲 collab-token 的實驗核實）：#33 的成因——字被
- * `@hocuspocus/provider` 排進尚未連線的 `messageQueue`、隨即 reload 就永久丟掉——
- * 已被 #48 順帶封死：「從未同步」的筆記唯讀（`NotePage` 的
- * `editable = roleCanEdit && synced`），BlockNote 唯讀時 ProseMirror 根本不掛
- * `contenteditable="true"`，所以下面第二道 `waitFor` 如今**隱含**等到首次 sync 完成。
- * 但那是寄生在 #48 的唯讀行為上：哪天編輯器改成「未同步也可編輯」（local-first，
- * `NotePage` 的註解正暗示這個方向），這裡沒有顯式屏障的話 flake 會原樣復活。
- * 等「Connected」讓這個前置條件寫在測試自己身上，而不是賭產品碼永遠幫忙擋。
- * （流程 3 在自己的 spec 裡對 **userPage** 另有一道同款屏障——那個 page 不經過
- * `createNote`；所有走 `createNote` 的 page（流程 1／2／3 的 adminPage／4）都由這裡涵蓋。）
+ * #33 was typing queued in `@hocuspocus/provider`'s `messageQueue` before connect and lost on reload. #48 closed it: a never-synced
+ * note is read-only (`NotePage`: `editable = roleCanEdit && synced`) and BlockNote does not mount `contenteditable="true"` then,
+ * so the editor wait implies first sync. That depends on #48's read-only behaviour; if the editor ever becomes editable before
+ * sync, the flake returns unless this waits for "Connected" explicitly, so the precondition is stated in the test itself.
+ * Pages that do not go through `createNote` need their own connection wait.
  */
 export async function createNote(page: Page, title: string): Promise<void> {
-  // 頁尾「New note」只在 My notes／Recent／搜尋中顯示；呼叫端可能停在 Groups／Shared with me，先切回 My notes。
+  // The footer "New note" only shows in My notes/Recent/search; the caller may be on Groups/Shared with me, so switch to My notes first.
   if (!(await page.getByRole("button", { name: "New note", exact: true }).isVisible())) {
     await showSidebarTab(page, "My notes");
   }
   await page.getByRole("button", { name: "New note", exact: true }).click();
-  // #122 首跳：新筆記的 canonical 是 /n/<handle>/untitled-<uuid8>（slug 吃 DB default）
+  // First hop (#122): the new note's canonical URL is /n/<handle>/untitled-<uuid8> (slug from the DB default).
   await page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
 
   const titleInput = page.getByLabel("Note title");
-  // 網址先換、畫面約 180 ms 後才換成新筆記（react-router startTransition）：只等網址就填，會填進上一篇的標題框
-  // （CI 上 27-site-links 的四支）。等新筆記的標題框（值為 Untitled）掛上再填。
+  // The URL changes about 180 ms before the screen does (react-router startTransition); filling on the URL alone would type into
+  // the previous note's title box. Wait for the new note's title box (value Untitled).
   await expect(titleInput).toHaveValue("Untitled", { timeout: 15_000 });
   await titleInput.fill(title);
   await titleInput.blur();
 
-  // #122：**斷第二跳**——title 存檔 → server 重算 auto slug →
-  // NotePage 收斂 effect 把網址換成 /n/<handle>/<title-slug>。只斷 /\/n\// 會在首跳
-  // 就提前通過，後續的 URL 相關斷言全變競態。
-  // 已知邊界：predicate 排除任何 untitled-<8hex> 尾形——若日後某測試讓標題退化成
-  // untitled 系列且撞到 server 的 uuid8 退位形，這裡會 15s 逾時；目前所有 createNote
-  // 標題都帶 Date.now()，不會發生。
+  // Second hop (#122): title save -> server recomputes the auto slug -> NotePage's convergence effect rewrites the URL to
+  // /n/<handle>/<title-slug>. Matching only /\/n\// would pass on the first hop and make later URL assertions racy.
+  // The predicate excludes any untitled-<8hex> tail, so a test whose title degrades to the untitled family (or hits the server's
+  // uuid8 fallback) would time out here after 15s.
   await page.waitForURL(
     (url) => /^\/n\/[^/]+\/[^/]+$/.test(url.pathname) && !/\/untitled-[0-9a-f]{8}$/.test(url.pathname),
     { timeout: 15_000 },
   );
 
-  // 共編連線屏障：`ConnectionBadge`（`role="status"`）顯示「Connected」。用 `hasText`
-  // 過濾把它與 Radix Toast 另外渲染的 `role="status"` live-region（例如流程 1 的
-  // 「Password updated.」播報）區分開——同流程 3 的手法。regex 錨定開頭：`hasText`
-  // 給字串是大小寫不敏感的子字串比對，未來若出現「Disconnected」之類的文案會誤中。
+  // Connection barrier: `ConnectionBadge` (`role="status"`) shows "Connected". `hasText` filters it from the Radix Toast live region,
+  // which is also `role="status"`. The regex is anchored because a string `hasText` is a case-insensitive substring match and would
+  // match a future "Disconnected".
   //
-  // 與 #48 離線升級的互動（非顯然）：`connected 但尚未 synced` 超過 3 秒
-  // 時，badge 會暫時升級成「Not loaded — offline」而非「Connected」——但升級只在
-  // `!synced` 期間持續，首次 sync 一完成就回落顯示「Connected」，所以這道等待最壞
-  // 情況等同「等到首次 sync」，與下面 contenteditable 那道同預算，不會因升級而 flake。
+  // After 3s connected-but-not-synced the badge shows "Not loaded - offline" instead of "Connected", but only while `!synced`;
+  // it falls back once the first sync completes, so this wait costs at worst the same as the contenteditable wait below.
   await expect(page.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 15_000 });
 
-  // 編輯器（BlockNote）節點掛上——呼叫端緊接著通常就要 click/type，還沒 mount 會
-  // 直接找不到 contenteditable 節點。（#48 之後這行也隱含等到首次 sync，見檔頭。）
+  // The editor (BlockNote) node must be mounted: callers usually click/type next and would not find contenteditable. After #48
+  // this also implies first sync.
   await page.locator(MAIN_EDITOR_SELECTOR).first().waitFor({ timeout: 15_000 });
 }
 
 /**
- * #263：主編輯器的 contenteditable。框選 AI 框掛在主編輯器的 DOM 之內（`editor.portalElement` 在 `.bn-container` 裡），預覽時框裡
- * 多一顆唯讀編輯器——它是 `contenteditable="false"`，本來就不會中這個選擇器；`:not(…)` 把「框內一律排除」寫明，日後框內若出現可編輯
- * 元素也不會被誤選。以主編輯器為範圍的斷言一律經 `editorLocator`。
+ * #263: the main editor's contenteditable. The selection AI box lives inside the main editor's DOM (`editor.portalElement` is in
+ * `.bn-container`) and its preview holds a read-only editor (`contenteditable="false"`, which the selector already skips); `:not(...)`
+ * states the exclusion so an editable element appearing in the box later is not picked up. Assertions scoped to the main editor
+ * go through `editorLocator`.
  */
 export const MAIN_EDITOR_SELECTOR = '[data-testid="note-editor"] [contenteditable="true"]:not([data-testid="selection-ai-box"] *)';
 
 /**
- * BlockNote（`@blocknote/mantine`）把呼叫端傳給 `<BlockNoteView data-testid=…>`
- * 的任意 prop 原樣灑在最外層 `<div class="bn-root bn-container …">` 上（見
- * `@blocknote/react` dist 內 `hi` 元件的 `{...i}` 展開）——`data-testid` 因此不會
- * 落在真正可編輯的節點，而是它的祖先。實際的 ProseMirror root 是這個 div 底下
- * 由 tiptap/prosemirror-view 在掛載時設定 `contentEditable="true"` 的子節點，因此
- * 一律用「testid 祖先 + `[contenteditable="true"]` 子孫」這個 CSS 選擇器定位，
- * 不能只用 testid 本身（click/type 會作用在容器而非真正的 ProseMirror root）。
+ * BlockNote (`@blocknote/mantine`) spreads arbitrary props passed to `<BlockNoteView data-testid=...>` onto the outer
+ * `<div class="bn-root bn-container ...">` (see the `{...i}` spread in the `hi` component in `@blocknote/react`'s dist), so
+ * `data-testid` lands on an ancestor of the editable node. The ProseMirror root is the child where tiptap/prosemirror-view sets
+ * `contentEditable="true"` at mount; locate it as testid ancestor + `[contenteditable="true"]` descendant. Using the testid
+ * alone would click/type on the container instead of the ProseMirror root.
  */
 export function editorLocator(page: Page) {
   return page.locator(MAIN_EDITOR_SELECTOR).first();
 }
 
 /**
- * 等編輯器（ProseMirror）把目前的 DOM selection 讀進自己的 state，才能接著按 Enter／打字。
+ * Waits until ProseMirror has read the current DOM selection into its state, so a following Enter/typing lands at the right place.
  *
- * 點擊、End、Ctrl+End 這類游標移動是瀏覽器原生做的：DOM selection 當下就變了，但 ProseMirror 要等
- * `selectionchange` 事件（瀏覽器另排的 task）才把它讀回 `state.selection`；Enter 與一般按鍵輸入用的是
- * `state.selection`。Playwright 緊接著送的 Enter 若趕在 selectionchange 之前被處理，新段落／文字就落在
- * **上一個**游標位置（為什麼 selectionchange 會晚到輸入事件之後：推測是 Chromium 對輸入事件的排程優先序，未量測）。
- * 在 e2e 疊上不經任何對話框就重現：點段尾 → End → Enter，修前 30 次錯 3 次、加本 helper 後 30/30 正確；
- * 錯的那幾次從點擊到 Enter 的 23 ms 內一個 selectionchange 都沒送到，`state.selection` 還停在前一段尾。
- * 22b（inserted-middle 落到 two-bottom 之後）trace 同型。所以只驗 `window.getSelection()`
- * 不夠——要對到 ProseMirror 的 state。
+ * Click/End/Ctrl+End move the caret natively and the DOM selection changes at once, but ProseMirror reads it into `state.selection`
+ * only on `selectionchange` (a separately queued browser task), while Enter and typing use `state.selection`. An Enter sent right
+ * after can be handled before `selectionchange`, so the new paragraph/text lands at the **previous** caret position (why it arrives
+ * late is presumed to be Chromium's input-event scheduling, unmeasured). Reproduced on the e2e stack with no dialog: click at
+ * paragraph end -> End -> Enter was wrong 3 of 30 times before this helper and 30/30 correct after; in the wrong runs no
+ * `selectionchange` arrived within the 23 ms from click to Enter and `state.selection` was still at the previous paragraph end.
+ * Checking only `window.getSelection()` is not enough; it must be compared with ProseMirror's state.
  *
- * ⚠ 只適用於文字游標：collapsed 的 TextSelection、caret 在文字節點內（例如段尾純文字）。NodeSelection、
- * 或 caret 在 inline atom（圖片、wikilink 等）旁時，`posAtDOM`（bias −1）跟 PM 自己讀 selection 的換算／正規化
- * 不同，可能在合法的穩定狀態下永遠對不上而超時。
+ * Only for a text caret: a collapsed TextSelection with the caret inside a text node. With a NodeSelection, or a caret next to an
+ * inline atom (image, wikilink), `posAtDOM` (bias -1) converts differently from how PM reads its own selection and may never match
+ * in a legitimate stable state, so this times out.
  *
- * 讀的是 Tiptap 掛在 contenteditable 上的 `editor`（`view.dom.editor`）。超時時失敗訊息帶最後一次的診斷值：
- * `"no-editor"`（editor 物件沒掛上）、`{ focusOutside: … }`（activeElement／caret 不在編輯器內）、
- * `{ pm, dom }`（PM 的 selection.head 與 DOM caret 換算的位置）。
+ * Reads the `editor` Tiptap attaches to the contenteditable (`view.dom.editor`). On timeout the message carries the last
+ * diagnostic: `"no-editor"` (editor not attached), `{ focusOutside: ... }` (activeElement/caret outside the editor), or
+ * `{ pm, dom }` (PM's selection.head vs the position converted from the DOM caret).
  */
 export async function waitForEditorSelection(page: Page, timeout = 2_000): Promise<void> {
   await expect
@@ -203,17 +182,20 @@ export async function waitForEditorSelection(page: Page, timeout = 2_000): Promi
 }
 
 /**
- * 點 `target`（編輯器內某個單行段落）再按 End，並確認游標真的停在**那一段**的尾端（PM state 與 DOM 都是）；沒有就整組重來。
- * 只用在單行、純文字的段落（End 是「視覺行尾」；比對用 textContent，段內有 wikilink 等 inline atom 時兩邊的字可能不同）。
+ * Clicks `target` (a single-line paragraph in the editor), presses End, and confirms the caret is at the end of **that** paragraph
+ * (both PM state and DOM); otherwise retries the whole sequence. Only for single-line plain-text paragraphs: End moves to the visual
+ * line end, and the comparison uses textContent, which can differ when the paragraph has inline atoms such as wikilinks.
  *
- * 為什麼 `click → End → waitForEditorSelection` 不夠：編輯器**原本沒焦點**時（例如對話框 Escape 後焦點回到觸發鈕），點擊觸發
- * prosemirror-view 的 `handlers.focus`，它排一個 20 ms 的 `setTimeout`：若當下 DOM selection 跟 PM 上次讀到的
- * （`domObserver.currentSelection`）不同，就 `selectionToDOM`——把 PM state 的選取寫回 DOM。End 若在計時器觸發前按下、PM 還沒讀到
- * End 的 selectionchange，DOM 游標就被拉回 PM 手上的舊位置（點擊處；點擊的 selectionchange 也還沒讀到時，是失焦前的位置）；之後
- * PM 與 DOM 都停在那裡，`waitForEditorSelection` 的「對齊」照樣成立，打字就插錯地方。所以這裡同時斷「在段尾」與「是這一段」。
- * CI 的簡報 e2e 兩次、本機以 CDP 降速 4× 20 次錯 4 次，都是這樣（"one updated text"），
- * 錯的都是這個計時器把 DOM 游標從段尾拉回點擊處（DOM offset 8 → 4）。
- * 計時器每次「失焦 → 得焦」只排一次；斷言成立時 PM 已讀到段尾（currentSelection＝DOM），之後它就算才觸發也是 no-op。
+ * Why `click -> End -> waitForEditorSelection` is not enough: when the editor had no focus (e.g. focus returned to the trigger
+ * button after a dialog Escape), the click triggers prosemirror-view's `handlers.focus`, which schedules a 20 ms `setTimeout`. If the
+ * DOM selection then differs from what PM last read (`domObserver.currentSelection`), it runs `selectionToDOM` and writes PM's
+ * selection back to the DOM. If End is pressed before the timer fires and PM has not read End's selectionchange, the DOM caret is
+ * pulled back to PM's old position (the click point, or the pre-blur position if the click's selectionchange was not read either);
+ * PM and DOM then agree on the wrong place, `waitForEditorSelection` passes, and typing goes to the wrong spot. Hence this checks
+ * both "at paragraph end" and "this paragraph".
+ * Seen in CI slide e2e twice and locally 4 of 20 times with CDP 4x throttling ("one updated text"): the timer pulled the DOM caret
+ * from paragraph end back to the click point (DOM offset 8 -> 4). The timer is scheduled once per blur->focus; once the assertion
+ * holds PM has read the paragraph end (currentSelection equals DOM), so a late firing is a no-op.
  */
 export async function clickEndOfParagraph(page: Page, target: Locator, timeout = 10_000): Promise<void> {
   const expected = (await target.textContent()) ?? "";
@@ -256,8 +238,8 @@ export async function clickEndOfParagraph(page: Page, target: Locator, timeout =
 }
 
 /**
- * #247：站台管理是 modal。UserMenu（觸發鈕名＝displayName「admin」）→「Site admin」→ `/admin/users`，回傳該 dialog。
- * 關閉用 Esc（或 dialog 的 ✕），回到開啟前的頁面；站台管理已沒有「回筆記」連結。
+ * #247: site admin is a modal. UserMenu (trigger named by displayName "admin") -> "Site admin" -> `/admin/users`; returns that dialog.
+ * Close it with Esc (or the dialog's close button) to return to the page before.
  */
 export async function openSiteAdmin(page: Page): Promise<Locator> {
   await page.getByRole("button", { name: "admin", exact: true }).click();
@@ -265,12 +247,11 @@ export async function openSiteAdmin(page: Page): Promise<Locator> {
   await expect(page).toHaveURL(/\/admin\/users$/);
   const dialog = page.getByRole("dialog", { name: "Site admin" });
   await expect(dialog).toBeVisible();
-  // 等左卡目前項次標好 aria-current 才算開好（窄視窗左卡是 display:none，用 CSS locator 才不受隱藏影響）。
+  // Open once the left card's current item has aria-current (the left card is display:none in a narrow viewport, so use a CSS locator).
   await expect(dialog.locator('nav a[aria-current="page"]')).toHaveCount(1);
   return dialog;
 }
 
-/** 站台管理 modal 左卡項次（nav 的可及名稱＝面板標題「Site admin」）。 */
 export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" | "Storage plans" | "AI agents" | "Site limits"): Promise<void> {
   const urls = {
     Users: /\/admin\/users$/,
@@ -287,19 +268,19 @@ export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" 
 export type SidebarTabName = "Recent" | "Favorites" | "My notes" | "Groups" | "Shared with me" | "Trash";
 
 /**
- * 窄視窗（< 1280）把側欄帶到眼前，回傳可放進 `showSidebarTab` 等 helper 的範圍：
- * - 手機（< 640）：清單就是整個側欄（滿版的 `complementary`）；在筆記畫面就按「Back to notes」，已在清單就不動。
- * - 640–1279：側欄是抽屜；按「Open sidebar」開（已開就不動），回傳抽屜 dialog。
- * 手機看寬度決定走哪一支，不看畫面上有什麼按鈕。
+ * In a narrow viewport (< 1280) brings the sidebar into view and returns the scope to pass to helpers like `showSidebarTab`:
+ * - phone (< 640): the list is the whole sidebar (full-screen `complementary`); on a note screen click "Back to notes", on the list do nothing.
+ * - 640-1279: the sidebar is a drawer; click "Open sidebar" (unless open) and return the drawer dialog.
+ * The branch is chosen by width, not by which buttons are on screen.
  */
 export async function openListOnCompact(page: Page): Promise<Locator> {
   const width = page.viewportSize()?.width ?? 1280;
   if (width < 640) {
-    // 不用「含 tab 列」過濾：全螢幕搜尋層開著時 tab 列不在，清單仍是這個 aside。
+    // Don't filter on the tab bar: it is absent while the full-screen search layer is open, but the list is still this aside.
     const sidebar = page.getByRole("complementary");
     const back = page.getByRole("button", { name: "Back to notes", exact: true });
-    // 換頁走 transition：網址先換、畫面晚一點才跟上，isVisible 不會等。
-    // 先等清單或筆記畫面其中之一出現，再判斷要不要按返回。
+    // Navigation runs in a transition: the URL changes before the screen, and isVisible doesn't wait.
+    // Wait for either the list or the note screen before deciding whether to press back.
     await expect(sidebar.or(back).first()).toBeVisible({ timeout: 15_000 });
     if (!(await sidebar.isVisible())) await back.click();
     await expect(sidebar).toBeVisible({ timeout: 15_000 });
@@ -314,10 +295,10 @@ export async function openListOnCompact(page: Page): Promise<Locator> {
 }
 
 /**
- * 點側欄某個 tab、等它 aria-selected，回傳同一範圍內的 tabpanel。`scope` 預設靜態側欄（complementary）：1280 以上是固定側欄，
- * 手機（< 640）是滿版的清單（也是那個 `<aside>`）；640–1279 的抽屜要傳抽屜（`openListOnCompact` 的回傳值）。
- * 側欄一次只渲染目前 tab 的內容：負向斷言（`toHaveCount(0)`）在看不到該類筆記的 tab 會空轉成綠，
- * 所以每個負向斷言前都要重新呼叫一次。
+ * Clicks a sidebar tab, waits for aria-selected, and returns the tabpanel in the same scope. `scope` defaults to the static sidebar
+ * (complementary): fixed at 1280 and above, the full-screen list on phones (< 640, also that `<aside>`); for the 640-1279 drawer
+ * pass the drawer (`openListOnCompact`'s return value). The sidebar renders only the current tab, so a negative assertion
+ * (`toHaveCount(0)`) passes vacuously on a tab that never shows that kind of note; call this again before each one.
  */
 export async function showSidebarTab(page: Page, name: SidebarTabName, scope?: Locator): Promise<Locator> {
   const root = scope ?? page.getByRole("complementary");
@@ -328,10 +309,11 @@ export async function showSidebarTab(page: Page, name: SidebarTabName, scope?: L
 }
 
 /**
- * #181：一般 tab（我的筆記／群組／與我共享／最近）標題列的「Select」→ 等選取標題列的「0 selected」（lazy 的 SelectLazy chunk 到了；
- * 進入時已選一律清空）。`scope` 預設靜態側欄；窄螢幕傳抽屜。回傳 tabpanel（勾選框在裡面；動作列窄形在 tabpanel 外、側欄底部，
- * 寬形在 tabpanel 內的標題列 `[data-sidebar-header]`——兩形都是 `[data-select-action-bar]`、鈕的可及名稱相同）。
- * 垃圾桶 tab 的選取是另一套（36）。
+ * #181: clicks "Select" in the header of a regular tab (My notes/Groups/Shared with me/Recent) and waits for "0 selected" in the
+ * selection header (the lazy SelectLazy chunk arrived; selection is cleared on entry). `scope` defaults to the static sidebar;
+ * narrow screens pass the drawer. Returns the tabpanel (checkboxes are inside; the narrow action bar sits outside the tabpanel at the
+ * sidebar bottom, the wide one in the tabpanel's `[data-sidebar-header]`; both are `[data-select-action-bar]` with the same button
+ * names). Selection in the Trash tab is separate.
  */
 export async function startSidebarSelection(page: Page, scope?: Locator): Promise<Locator> {
   const panel = (scope ?? page.getByRole("complementary")).getByRole("tabpanel");
@@ -341,8 +323,9 @@ export async function startSidebarSelection(page: Page, scope?: Locator): Promis
 }
 
 /**
- * #181：選取模式中點某篇的勾選框（整列是 `<label>`，可及名稱以標題開頭；最近 tab 後面接位置行）。
- * 點的是 checkbox 本身：Shift 範圍讀 click 事件的 `shiftKey`。不帶 `shift` 是單列切換；`shift` 時錨點到這篇整段加入、這篇一定變成已勾。
+ * #181: in select mode, clicks a note's checkbox (the whole row is a `<label>` whose accessible name starts with the title; the Recent
+ * tab appends a location line). Clicks the checkbox itself because a Shift range reads the click event's `shiftKey`. Without
+ * `shift` it toggles one row; with `shift` it adds the whole range from the anchor to this note and this note ends up checked.
  */
 export async function toggleSelectedNote(panel: Locator, title: string, opts?: { shift?: boolean }): Promise<void> {
   const box = panel.getByRole("checkbox", { name: new RegExp("^" + reEscape(title)) });
@@ -352,8 +335,9 @@ export async function toggleSelectedNote(panel: Locator, title: string, opts?: {
 }
 
 /**
- * 標題為 `title` 的 toast（Radix Toast 的 `<li>`，在「Notifications」region 裡）。標題用 exact 比對：Radix 另有一份
- * 「Notification …」朗讀節點（`role="status"`，約 1 秒後移除）會含同樣的子字串。同標題可能同時有好幾則（連續移入），取最新的一則。
+ * The toast titled `title` (Radix Toast `<li>` in the "Notifications" region). The title is matched exactly because Radix also renders a
+ * "Notification ..." announcer node (`role="status"`, removed after about 1 s) containing the same substring. Several toasts can share
+ * a title (consecutive trashing); takes the newest.
  */
 export function toastWithTitle(page: Page, title: string): Locator {
   return page
@@ -364,13 +348,13 @@ export function toastWithTitle(page: Page, title: string): Locator {
 }
 
 /**
- * #181：側欄（或傳入的範圍）裡某篇筆記列的 ⋮ →「Delete」，等該列離開清單、toast 出現；回傳 toast locator。
- * 移入不確認。移的是開著的那篇時，頁面會導回 `/`（同頁首 ⋮）。
+ * #181: on a note row in the sidebar (or the given scope), opens the kebab -> "Delete", waits for the row to leave the list and the
+ * toast to appear; returns the toast locator. Trashing needs no confirmation. Trashing the open note navigates back to `/`.
  */
 export async function moveNoteToTrashFromSidebar(page: Page, title: string, scope?: Locator): Promise<Locator> {
   const root = scope ?? page.getByRole("complementary");
   const actions = root.getByRole("button", { name: `Note actions for ${title}`, exact: true });
-  // ⋮ 是 hover 才長出來的（滑鼠下沒滑過時寬度 0，Playwright 對零寬的鈕無法 hover／click）：先 hover 整列，再點。
+  // The kebab only grows on hover (zero width until the pointer has been over the row, and Playwright can't hover/click a zero-width button): hover the row first, then click.
   await actions.locator("xpath=ancestor::li[1]").hover();
   await actions.click();
   await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
@@ -380,7 +364,7 @@ export async function moveNoteToTrashFromSidebar(page: Page, title: string, scop
   return toastItem;
 }
 
-/** #247：群組 modal。側欄群組列 ⋮ →「Members & settings」→ `/groups/<id>`；回傳 group id。 */
+/** Group row kebab -> "Members & settings" -> `/groups/<id>`; returns the group id. */
 export async function openGroupPanel(page: Page, groupName: string): Promise<string> {
   await showSidebarTab(page, "Groups");
   await page.getByRole("complementary").getByRole("button", { name: `Group actions for ${groupName}` }).click();
@@ -393,16 +377,17 @@ export async function openGroupPanel(page: Page, groupName: string): Promise<str
 }
 
 /**
- * 資料夾：目前 tab 的資料夾列（`li[data-node-kind="folder"]`）。以主鈕名稱 exact 找，再取最近的資料夾 `<li>` 祖先——
- * 不能用 `filter({ has })`：外層資料夾的 `<li>` 也「含」子資料夾的主鈕。
+ * Folder row (`li[data-node-kind="folder"]`) in the current tab. Finds the main button by exact name, then its nearest folder `<li>`
+ * ancestor; `filter({ has })` would not work because an outer folder's `<li>` also contains the child folder's main button.
  */
 export function folderRow(scope: Locator, name: string): Locator {
   return scope.getByRole("button", { name, exact: true }).locator("xpath=ancestor::li[@data-node-kind='folder'][1]");
 }
 
 /**
- * 資料夾：按 `opener`（標題列「New folder」、群組列「New folder in G」或 ⋮ 的「New subfolder」已開出的框都可）→ 等 lazy 的
- * 新增對話框 → 輸入名稱 → Create → 等框關閉、資料夾主鈕出現（取看得見的那份：窄螢幕時靜態卡藏著）。
+ * Clicks `opener` (the dialog opened from the header "New folder", a group row's "New folder in G", or a kebab "New subfolder" all work),
+ * waits for the lazy create dialog, types the name, clicks Create, waits for the dialog to close and the folder's main button to appear
+ * (the visible one: the static card is hidden in a narrow viewport).
  */
 export async function createFolder(page: Page, opener: Locator, name: string): Promise<void> {
   await opener.hover();
@@ -410,7 +395,6 @@ export async function createFolder(page: Page, opener: Locator, name: string): P
   await submitFolderName(page, "New folder", name);
 }
 
-/** 新增／改名對話框：等輸入框得焦點 → 填名稱 → 送出 → 等框關閉、該名稱的資料夾主鈕可見。 */
 export async function submitFolderName(page: Page, title: "New folder" | "Rename folder", name: string): Promise<void> {
   const dialog = page.getByRole("dialog", { name: title, exact: true });
   const input = dialog.getByRole("textbox", { name: "Folder name", exact: true });
@@ -421,12 +405,11 @@ export async function submitFolderName(page: Page, title: "New folder" | "Rename
   await expect(page.getByRole("button", { name, exact: true }).locator("visible=true").first()).toBeVisible({ timeout: 15_000 });
 }
 
-/** 資料夾：資料夾 ⋮（hover 浮出，先 hover）。 */
+/** Folder kebab (appears on hover: hover the row first). */
 export function folderMenuButton(scope: Locator, folder: string): Locator {
   return scope.getByRole("button", { name: `Folder menu for ${folder}`, exact: true });
 }
 
-/** 資料夾：資料夾 ⋮ → 選一項（Radix 選單，等 menuitem 可見再點）。 */
 export async function folderMenuItem(page: Page, scope: Locator, folder: string, item: string): Promise<void> {
   const trigger = folderMenuButton(scope, folder);
   await trigger.hover();
@@ -437,14 +420,15 @@ export async function folderMenuItem(page: Page, scope: Locator, folder: string,
 }
 
 /**
- * 寬窄判準的字面（`apps/web/src/lib/wide-pointer.ts` 的 `WIDE_POINTER_QUERY`；e2e 不能依賴 web 套件，兩處須同步）。
- * 寬＝⋮「Move to…／Copy to…」往旁層疊、選取工具列在標題列；窄＝逐層就地展開、動作列在底部。
+ * Literal of the wide/narrow pointer query (`WIDE_POINTER_QUERY` in `apps/web/src/lib/wide-pointer.ts`; e2e can't depend on the web package,
+ * so keep both in sync). Wide: kebab "Move to.../Copy to..." stacks levels sideways and the selection toolbar is in the header; narrow: levels expand in place and the action bar is at the bottom.
  */
 const WIDE_POINTER_QUERY = "(width >= 48rem) and (hover: hover) and (pointer: fine)";
 
 /**
- * 斷言頁面目前落在寬（`true`）／窄（`false`）判準。寬形案與 390 案開頭各呼叫一次，防「預設視窗是寬」這個假設失效時
- * 紅在不相干的地方；`setViewportSize` 之後呼叫也等於等 matchMedia 跟上新尺寸。Playwright 改不了 hover／pointer，跨判準只能靠寬度。
+ * Asserts the page is currently on the wide (`true`) or narrow (`false`) query. Called at the start of the wide-case and 390-case tests so a
+ * wrong default-viewport assumption fails here rather than somewhere unrelated; called after `setViewportSize` it also waits for matchMedia to catch up.
+ * Playwright can't change hover/pointer, so the query can only be switched via width.
  */
 export async function expectWidePointer(page: Page, wide: boolean): Promise<void> {
   await expect
@@ -455,17 +439,18 @@ export async function expectWidePointer(page: Page, wide: boolean): Promise<void
 }
 
 /**
- * 選單開著時點一個選單項（子選單裡的也可）。寬螢幕的「Move to…／Copy to…」子選單是 Radix flyout：滑鼠要分段移過去
- * 再點——一步瞬移離開觸發項時 Radix 判定「沒往子選單走」、把子選單關掉（理由詳見 16 的 `pickFromSubmenu`）。窄螢幕的就地展開形
- * 分段移動也無害。子選單有 `max-h`（20rem）會捲動：先捲進視野再量位置。
- * `scope`：層疊各層同時開著，「Move here」等同名項可能在好幾層都有——傳 `openedSubmenu` 回傳的那一層限定範圍。
+ * Clicks a menu item while the menu is open (submenu items too). The wide "Move to.../Copy to..." submenu is a Radix flyout: the pointer must
+ * move over in steps; jumping straight off the trigger makes Radix decide the pointer is not heading to the submenu and close it
+ * (see `pickFromSubmenu` in `16-groups-share.spec.ts`). The narrow in-place form is fine with stepped moves too. The submenu has `max-h` (20rem) and scrolls:
+ * scroll into view before measuring.
+ * `scope`: stacked levels are open together and same-named items such as "Move here" can exist in several; pass the level returned by `openedSubmenu` to restrict.
  */
 export async function clickMenuItemByPointer(page: Page, name: string, scope?: Locator): Promise<void> {
   await clickByPointer(page, (scope ?? page).getByRole("menuitem", { name, exact: true }));
 }
 
 /**
- * 滑鼠分段移到 `target` 中心再點（選單的 radio 項等：一步瞬移離開 SubTrigger，Radix 會判定沒往子選單走而關掉它）。
+ * Moves the pointer to the center of `target` in steps, then clicks (menu radio items etc.: jumping off the SubTrigger makes Radix decide the pointer isn't heading to the submenu and close it).
  */
 export async function clickByPointer(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible();
@@ -477,8 +462,8 @@ export async function clickByPointer(page: Page, target: Locator): Promise<void>
 }
 
 /**
- * 寬形層疊的 SubTrigger（`trigger`）打開後的那一層 menu。等它 `aria-expanded="true"`，再以它的 `aria-controls`
- * （Radix 只在打開時設，值＝該層 SubContent 的 id）找那一層——各層 SubContent 都是 portal、互不包含，所以這一層的範圍不含更深的層。
+ * The menu level opened by a wide stacked SubTrigger (`trigger`). Waits for `aria-expanded="true"`, then finds the level by its `aria-controls`
+ * (Radix sets it only when open; the value is that SubContent's id). Every SubContent is a portal and none contains another, so this level's scope excludes deeper ones.
  */
 export async function openedSubmenu(page: Page, trigger: Locator): Promise<Locator> {
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -489,19 +474,19 @@ export async function openedSubmenu(page: Page, trigger: Locator): Promise<Locat
   return menu;
 }
 
-/** 窄形逐層換層項的可及名稱尾綴（`folders.dest.openLevel`「{{name}}, open」）；寬形層疊的 SubTrigger 不帶。 */
+/** Suffix of the accessible name of a narrow level-switch item (`folders.dest.openLevel` "{{name}}, open"); the wide stacked SubTrigger has none. */
 const OPEN_LEVEL_SUFFIX = ", open";
 
 /**
- * ⋮ 開著時點「Move to…」／「Copy to…」，再依序點 `steps`（可及名稱 exact；換層項照窄形寫成「X, open」）。
- * 形態看觸發項：
- * - 寬且可 hover（`aria-haspopup="menu"`）＝往旁層疊：觸發項是 Radix `SubTrigger`，每一步以 `clickMenuItemByPointer` 分段移過去、限定在
- *   目前這一層；寬形的 SubTrigger 不帶「, open」，所以把尾綴去掉再找，點了等它 `aria-expanded="true"`、下一步改在它打開的
- *   那一層找（沒有「Back」可等）。
- * - 窄或觸控＝就地展開逐層：直接點縮排項（同一個 menu）。「X, open」點了等新的一層換上來才點下一步——錨點是「剛點的那項不見了」
- *   （舊層整層換掉；只看「Back」從第二層起就是空等，舊層本來就有 Back），再確認新層有「Back」（第二層起恆第一項；返回的圖示是
- *   aria-hidden，可及名稱只有「Back」）。
- * `steps` 空＝只打開子選單（呼叫端要先斷言第一層；寬形用 `openedSubmenu` 取那一層）。
+ * With the kebab open, clicks "Move to..."/"Copy to..." then each of `steps` (exact accessible names; level-switch items written in the narrow form "X, open").
+ * The form depends on the trigger:
+ * - wide and hoverable (`aria-haspopup="menu"`) = stack sideways: the trigger is a Radix `SubTrigger`; each step goes through
+ *   `clickMenuItemByPointer` scoped to the current level. The wide SubTrigger has no ", open" suffix, so strip it before searching, then wait for
+ *   `aria-expanded="true"` and search the next step in the level it opened (there is no "Back" to wait for).
+ * - narrow or touch = expand in place, level by level: click the indented item (same menu). After "X, open" wait for the new level to replace the old
+ *   one (anchor: the item just clicked is gone; waiting on "Back" alone would be an empty wait from level two on, as the old level has one too),
+ *   then confirm the new level has "Back" (first item from level two on; its icon is aria-hidden so the accessible name is just "Back").
+ * Empty `steps` only opens the submenu (the caller asserts the first level; for wide use `openedSubmenu` to get that level).
  */
 export async function pickNoteMenuDestination(page: Page, trigger: "Move to…" | "Copy to…", steps: readonly string[]): Promise<void> {
   const item = page.getByRole("menuitem", { name: trigger, exact: true });
@@ -527,7 +512,7 @@ export async function pickNoteMenuDestination(page: Page, trigger: "Move to…" 
   }
 }
 
-/** 選取模式的目的地框（「Move to」／「Copy to」）依序點 `steps`（每項一顆按鈕，可及名稱 exact；換層的等待同上：剛點的那顆不見、再見到「Back」）。 */
+/** Select-mode destination dialog ("Move to"/"Copy to"): clicks each of `steps` (one button per item, exact accessible name; same level-change wait as above: the clicked button disappears, then "Back" appears). */
 export async function pickDestination(dialog: Locator, steps: readonly string[]): Promise<void> {
   for (const step of steps) {
     await dialog.getByRole("button", { name: step, exact: true }).click();
@@ -538,7 +523,7 @@ export async function pickDestination(dialog: Locator, steps: readonly string[])
   }
 }
 
-/** 原生拖曳的落點：`position` 是相對 target 左上角的座標（同 `Locator.dragTo` 的 `targetPosition`）；省略＝中心。 */
+/** Native drag drop point: `position` is relative to the target's top-left (like `Locator.dragTo`'s `targetPosition`); omitted = center. */
 async function dragPoint(target: Locator, position?: { x: number; y: number }): Promise<{ x: number; y: number }> {
   const box = await target.boundingBox();
   expect(box, "拖曳目標量不到位置（不可見？）").not.toBeNull();
@@ -546,9 +531,10 @@ async function dragPoint(target: Locator, position?: { x: number; y: number }): 
 }
 
 /**
- * 資料夾：拖曳進行中（滑鼠已按下）把指標分段移到 `target` → 等 `waitFor`（若有）→ 再移 1 步（讓可放狀態更新）。
- * 不放開；呼叫端接著再移或 `page.mouse.up()`。target 在移動當下才量（拖曳中清單可能變形，例如彈簧資料夾展開）。
- * `waitFor` 是斷言回呼（例如預覽可見），不寫 waitForTimeout。
+ * Folders: while a drag is in progress (mouse already down), moves the pointer to `target` in steps -> waits for `waitFor` (if any) -> moves 1 more
+ * step (so the drop state updates). Does not release; the caller moves further or calls `page.mouse.up()`. The target is measured when the move
+ * happens because the list can reshape mid-drag (e.g. a spring-loaded folder expanding).
+ * `waitFor` is an assertion callback (e.g. preview visible), not waitForTimeout.
  */
 export async function dragMoveTo(
   page: Page,
@@ -562,9 +548,9 @@ export async function dragMoveTo(
 }
 
 /**
- * 資料夾：以 page.mouse 做原生拖曳（Chromium；Playwright 攔下瀏覽器產生的拖曳資料、逐發送 dragenter／dragover／drop）。
- * 在 source 中心 down → 在 source 內橫移一小段讓拖曳開始（dragstart）→ `dragMoveTo` 分段移到 target（預設中心，`position` 同上）、
- * 等 `waitFor`、再移 1 步 → up。`drop: false`＝停在最後一步不放開，呼叫端自行接著移動並 `page.mouse.up()`。
+ * Folders: native drag with page.mouse (Chromium; Playwright intercepts the browser-generated drag data and dispatches dragenter/dragover/drop).
+ * Mouse down at the source center -> move a short distance inside the source to start the drag (dragstart) -> `dragMoveTo` in steps to the target
+ * (default center, `position` as above), wait for `waitFor`, move 1 more step -> up. `drop: false` stops at the last step without releasing so the caller keeps moving and calls `page.mouse.up()`.
  */
 export async function dragTo(
   page: Page,
@@ -580,13 +566,12 @@ export async function dragTo(
   if (opts.drop !== false) await page.mouse.up();
 }
 
-/** #263：框選 AI 框（`role="region"`、`data-testid="selection-ai-box"`）。 */
 export function selectionAiBox(page: Page): Locator {
   return page.getByTestId("selection-ai-box");
 }
 
-/** #263：三擊選取整段（非空選取，`getSelection()` 才吃得到）→ 按工具列的 AI 鈕 → 等框出現。 */
 export async function openSelectionAiBox(page: Page, paragraphText: string): Promise<Locator> {
+  // Triple-click gives a non-empty selection that getSelection() sees.
   await editorLocator(page).getByText(paragraphText, { exact: true }).click({ clickCount: 3 });
   await page.getByRole("button", { name: "AI", exact: true }).click();
   const box = selectionAiBox(page);
@@ -595,16 +580,16 @@ export async function openSelectionAiBox(page: Page, paragraphText: string): Pro
 }
 
 /**
- * #272：e2e 測試縫——把自動存版等待 X 設成 `seconds` 秒（null＝回站台設定）。只有 e2e 疊有這條路由
- * （`KNOTEBOOK_E2E_TEST_HOOKS=1`、PUBLIC_URL 是 localhost）；`page` 須以站台管理員登入。設定是整座疊共用的（單 worker 序列），
- * 用到的測試開頭設、`finally`（或 afterEach）設回 null。
+ * #272: e2e test hook that sets the autosave-version wait X to `seconds` (null = back to the site setting). Only the e2e stack has this route
+ * (`KNOTEBOOK_E2E_TEST_HOOKS=1`, PUBLIC_URL is localhost); `page` must be logged in as site admin. The setting is shared by the whole stack
+ * (single worker, serial), so the test sets it at the start and restores null in `finally` (or afterEach).
  */
 export async function setAutoWait(page: Page, seconds: number | null): Promise<void> {
   const res = await page.request.put("/api/admin/test/version-auto-wait", { headers: { Origin: E2E_ORIGIN }, data: { seconds } });
   expect(res.status(), await res.text()).toBe(204);
 }
 
-/** 目前網址（`/n/<handle>/<slug>`）那篇筆記的 id（by-path API）。 */
+/** Id of the note at the current `/n/<handle>/<slug>` URL (not a `/g/` group URL), via the by-path API. */
 export async function noteIdFromUrl(page: Page): Promise<string> {
   const [, , handle, slug] = new URL(page.url()).pathname.split("/");
   const res = await page.request.get(`/api/notes/by-path/${handle}/${slug}`);
@@ -613,8 +598,8 @@ export async function noteIdFromUrl(page: Page): Promise<string> {
 }
 
 /**
- * #272：從版本清單 API 組出某一版的完整標籤「名稱 (短 id)」（未命名＝uuid 推名，與 web 的 `versionLabel` 用同一個函式）。
- * 格式須與 web 的 `versionLabel`（`apps/web/src/components/versions/version-labels.ts`）同步（e2e 不能依賴 web 套件，只能自組）。
+ * #272: builds a version's full label "name (short id)" from the version list API (unnamed = name derived from the uuid, using the same function as web's `versionLabel`).
+ * The format must stay in sync with web's `versionLabel` (`apps/web/src/components/versions/version-labels.ts`); e2e can't depend on the web package.
  */
 export async function versionLabelOf(
   request: APIRequestContext,
@@ -630,23 +615,20 @@ export async function versionLabelOf(
 }
 
 /**
- * 把字串放進 RegExp 時跳脫特殊字元（版本標籤含括號）。
- * web 另有一份同樣的 `reEscape`（`apps/web/src/test/version-fixtures.ts`；e2e 不能依賴 web 套件），兩處須同步。
+ * Escapes regex special characters when putting a string into a RegExp (version labels contain parentheses).
+ * web has the same `reEscape` (`apps/web/src/test/version-fixtures.ts`); keep both in sync (e2e can't depend on the web package).
  */
 export function reEscape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// ── 功能導覽 ─────────────────────────────────────────────────────────────────────────────────
-
-/** 導覽的說明卡（`role="dialog"`、`aria-modal="false"`）。 */
 export function tourCard(page: Page): Locator {
   return page.locator("[data-tour-card]");
 }
 
 /**
- * 從使用者選單打開「Help」→ 停在「Feature tour」頁 → 「Start tour」，等第 1 站的說明卡出現。
- * `userName` 是使用者選單觸發鈕的名稱（帳號的顯示名稱）。寬視窗用；窄視窗的觸發鈕在抽屜裡，案例自己走。
+ * From the user menu opens "Help" -> stays on the "Feature tour" page -> "Start tour", and waits for the first stop's card.
+ * `userName` is the name of the user menu trigger (the account's display name). For wide viewports; in narrow ones the trigger is inside the drawer and the test drives it itself.
  */
 export async function openTour(page: Page, userName: string): Promise<void> {
   await page.getByRole("button", { name: userName, exact: true }).click();
@@ -675,14 +657,14 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 單色 RGBA PNG（不靠 fixture 檔——repo 內不放樣本）。 */
+/** Solid-color RGBA PNG (no fixture file; the repo holds no samples). */
 export function solidPng(width: number, height: number): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 6; // RGBA
-  const row = Buffer.alloc(1 + width * 4); // 第一個位元組是 filter 0
+  const row = Buffer.alloc(1 + width * 4); // first byte is filter type 0
   for (let x = 0; x < width; x++) row.set([0xe2, 0x43, 0x29, 0xff], 1 + x * 4);
   const raw = Buffer.concat(Array.from({ length: height }, () => row));
   return Buffer.concat([
@@ -694,18 +676,18 @@ export function solidPng(width: number, height: number): Buffer {
 }
 
 export interface TapArea {
-  /** 畫出來的框（寬、高）。 */
+  /** Rendered box (width, height). */
   visual: [number, number];
-  /** 點擊範圍（寬、高）：框的中心往上下左右找，最遠還點得到這顆元素（或它裡面的東西）的位置。 */
+  /** Tap area (width, height): the farthest from the box center in each direction where the element (or something inside it) is still hit. */
   tap: [number, number];
-  /** 框的中心（視窗座標）。 */
+  /** Box center (viewport coordinates). */
   center: [number, number];
 }
 
 /**
- * 量一個元素實際點得到的範圍。從框的中心往四個方向每 0.5px 用 `elementFromPoint` 取樣，最多往外 24px；
- * 用 `::after` 擴大點擊範圍的鈕會量到比畫出來的框大，被別的元素蓋住或碰到視窗邊緣的那一側會變短。
- * 區間是左上含、右下不含，所以每一側最多少算 0.5px（兩側合計 1px）。
+ * Measures the area of an element that actually receives taps. Samples `elementFromPoint` every 0.5px from the box center in four directions, up to
+ * 24px out; a button whose tap area is enlarged with `::after` measures bigger than its box, and a side covered by another element or touching the
+ * viewport edge comes out shorter. The interval includes top-left and excludes bottom-right, so each side can be short by up to 0.5px (1px total).
  */
 export async function tapAreaOf(target: Locator): Promise<TapArea> {
   const handle = await target.first().elementHandle({ timeout: 10_000 });
@@ -736,9 +718,9 @@ export async function tapAreaOf(target: Locator): Promise<TapArea> {
 }
 
 /**
- * 共用 Select 元件（`components/ui/select.tsx`）選一項：點觸發鈕、點選項、等選單收起。
- * 選項面板在 portal（對話框之外），所以選項一律從 `page` 查。`optionName` 與選項文字全等比對。
- * 觸發鈕目前選中的值看 `data-value`；顯示文字看 `[data-select-text]`（觸發鈕內還有隱藏的全選項文字，不能對整顆鈕斷言文字）。
+ * Picks an item in the shared Select component (`components/ui/select.tsx`): click the trigger, click the option, wait for the menu to close.
+ * The option panel is in a portal (outside the dialog), so options are always looked up from `page`. `optionName` matches the option text exactly.
+ * The trigger's current value is in `data-value`; the displayed text is in `[data-select-text]` (the trigger also holds hidden text of all options, so don't assert text on the whole button).
  */
 export async function chooseSelectOption(page: Page, trigger: Locator, optionName: string | RegExp): Promise<void> {
   await trigger.click();
@@ -746,13 +728,12 @@ export async function chooseSelectOption(page: Page, trigger: Locator, optionNam
   await expect(page.getByRole("listbox")).toHaveCount(0);
 }
 
-
-/** 欄比例寫進文件時四捨五入到兩位小數（`apps/web/src/collab/columns/widths.ts` 的 `ratiosFromPixels`）。 */
+/** Column ratios are rounded to two decimals when written to the document (`ratiosFromPixels` in `apps/web/src/collab/columns/widths.ts`). */
 export const COLUMN_RATIO_STEP = 0.01;
 
 /**
- * 欄比例捨入換回像素的誤差容許值：一格比例對應的像素寬（列越寬越大）。
- * 實際誤差最多半格，再加上像素取整與欄被夾在最小寬度時的位移，所以放一整格。
+ * Tolerance when converting rounded column ratios back to pixels: the pixel width of one ratio step (larger for wider rows).
+ * The real error is at most half a step; pixel rounding and shifts when a column is clamped to its minimum width add more, so a full step is used.
  */
 export function ratioQuantPx(cols: readonly { width: number }[]): number {
   return (COLUMN_RATIO_STEP * cols.reduce((sum, c) => sum + c.width, 0)) / cols.length;
