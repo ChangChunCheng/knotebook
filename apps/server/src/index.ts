@@ -183,6 +183,7 @@ async function main(): Promise<void> {
     process.once(sig, () => {
       backfillAbort.abort();
       // Link conversion writes through direct Hocuspocus connections, so it must drain before collab.destroy().
+      // The scan just stops; destroy flushes unsaved changes into pending and the scanner resumes after restart.
       // Bounded so a note stuck on a lock can't eat docker stop's grace period, which collab needs to flush.
       void Promise.race([Promise.all([collab.versions.stopScan(), app.linkConversion.stop()]), stopGrace()])
         .then(() => collab.destroy())

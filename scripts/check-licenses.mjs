@@ -183,6 +183,7 @@ export function analyzeWorkspaceDependencyTree(packages) {
 export function main() {
   let hasViolations = false;
 
+  // No --prod: dev dependencies are checked too.
   const licensesByNameRaw = runJson('pnpm', ['--loglevel', 'error', 'licenses', 'list', '--json']);
   assertLicensesShape(licensesByNameRaw);
   const licensesByName = licensesByNameRaw;

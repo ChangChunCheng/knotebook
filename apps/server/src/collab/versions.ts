@@ -1,3 +1,4 @@
+// Auto versions come only from the pending scan: no idle timer, no cut on unload or around AI writes; apply never cuts.
 // #272: in-memory state is per process (like NoteWriteQueue); pending cuts live in the DB, so the
 // scanner resumes them after a restart.
 import { and, asc, eq, gt, inArray, isNull, lt, lte, notInArray, sql } from "drizzle-orm";

@@ -49,6 +49,7 @@ export const users = pgTable("users", {
   // The DEFAULT snapshots the site default at INSERT, so callers needn't pass it; no `site_settings` row → NULL → 23502.
   // Named `foreignKey()`, not `.references()`: error mapping keys on constraint names.
   storagePlanId: uuid("storage_plan_id").notNull().default(sql`public.knotebook_default_storage_plan('user')`),
+  // Effective = site switch AND this column; read when a note loads, so a toggle applies from the next load.
   autoVersions: boolean("auto_versions").notNull().default(true),
   // Written outside any tx with SKIP LOCKED (never waits on the users-then-identity lock order), so a login may go unrecorded.
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -195,7 +196,7 @@ export const userAvatars = pgTable(
     cropSize: integer("crop_size"),
     displayData: bytea("display_data"),
     displayMime: text("display_mime"),
-    // Redundant copy for SUM; a CHECK keeps it in sync.
+    // = coalesce(octet_length(display_data), 0), stored so personal storage can SUM(original_size + display_size); a CHECK keeps it in sync.
     displaySize: integer("display_size").notNull().default(0),
     // Bumped on every image change: the URL's `?v=` and the re-crop precondition.
     version: integer().notNull().default(1),
@@ -272,6 +273,7 @@ export const groups = pgTable("groups", {
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   storagePlanId: uuid("storage_plan_id").notNull().default(sql`public.knotebook_default_storage_plan('group')`),
+  // Effective = site switch AND this column; read when a note loads, so a toggle applies from the next load.
   autoVersions: boolean("auto_versions").notNull().default(true),
 }, t => [
   check("groups_name_chk", sql`length(${t.name}) between 1 and 80`),
@@ -671,7 +673,8 @@ export const oauthClients = pgTable(
 );
 
 // #107: PATs and OAuth grants share one table: one Bearer lookup, one list, one revoke path. Plaintext tokens are never stored;
-// `access_token_hash` is globally unique so one plaintext can't map to two identities.
+// `access_token_hash` is globally unique so one plaintext can't map to two identities;
+// that UNIQUE also serves the Bearer lookup, so no extra index.
 // `access_expires_at` NULL = PAT never expires; auth rejects only "non-NULL and expired" (`auth/bearer.ts`).
 // For oauth `name` snapshots `oauth_clients.client_name`, so both 1..64 limits must change together.
 // PATs survive `users.token_version` bumps (sign out everywhere, password change), like GitHub PATs; see docs/api-tokens.md.
@@ -742,7 +745,7 @@ export const oauthRequests = pgTable(
 // #132: `redirect_uri` is the exact value from this authorize call (ephemeral port included); token exchange compares against it.
 // Single use is app-enforced (`DELETE ... RETURNING`, no `used_at`), so a replay can't be told from a missing code and can't
 // revoke the grant (PKCE makes intercepted codes useless; see docs/known-limitations.md). No `expires_at` index, as for
-// oauth_requests; the `access_token_hash` UNIQUE already serves the Bearer hot path.
+// oauth_requests.
 export const oauthCodes = pgTable(
   "oauth_codes",
   {
