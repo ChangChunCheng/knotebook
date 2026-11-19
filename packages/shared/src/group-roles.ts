@@ -1,5 +1,5 @@
 // Read is implicit (the server stores can_read = true); the six flags don't imply each other.
-import type { GroupRolePermissions } from "./index.js";
+import type { GroupRolePermissions } from "./groups.js";
 
 export const GROUP_ROLE_FLAGS = [
   "create", "edit", "delete", "managePublicLink", "manageMembers", "manageGroup",
