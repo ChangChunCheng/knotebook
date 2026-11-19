@@ -8,40 +8,14 @@ import { Input } from "@/components/ui/input";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 
 export interface ChangePasswordFormProps {
-  /**
-   * 成功（`POST /api/auth/password` 204 + `['me']` refetch 完成）後呼叫——
-   * **導向完全由呼叫端決定**：強制頁（`ChangePasswordPage`）
-   * `navigate("/", {replace:true})`；設定 modal（`SettingsLoginSection`）
-   * 只 toast、不導航（`navigate("/")` 會關掉 modal，甚至扯掉背景 `/notes/:ref`
-   * 的共編 provider——不可）。本元件自己不 toast、不 navigate，只負責欄位/
-   * 驗證/送出/錯誤顯示＋成功後 `invalidateQueries(['me'])`（server
-   * 重簽對齊行為在此層——見下方 handleSubmit 內註解）。
-   */
+  /** Navigation is up to the caller: navigating away from the settings modal would close it and tear down the background note's collab provider. */
   onSuccess: () => void;
-  /**
-   * 送出鈕的階層（ui/button.tsx 規範）。本元件同時裝在兩種表面，由呼叫端決定：
-   * `"page"`（預設，`/change-password` 整頁強制改密）→ `brandSolid` 滿寬；
-   * `"outline"`（個人設定 modal 的「登入」頁，#247：面板右卡不放實心鈕）→ `outline`、不滿寬。
-   */
   tone?: "page" | "outline";
 }
 
 /**
- * 改密碼表單（自 `ChangePasswordPage` 抽出，行為原封搬入）。
- * 打 `POST /api/auth/password`——currentPassword + newPassword，
- * `confirmNewPassword` 只在 client 端比對，不送出。
- *
- * 新密碼長度在送出前先做 client 端 pre-validation（`MIN_PASSWORD_LENGTH`，鏡射
- * server 端同名常數，與 `RegisterPage` 同一套模式）——只是體驗
- * 優化，server 一樣會再驗一次（`password_too_short`），不能省。兩次新密碼不一致
- * 同樣在 client 端擋下，不送出請求。
- *
- * 成功（204）：`routes/auth.ts` 的 `POST /api/auth/password` 會替這次 request
- * 重簽一顆新 session cookie（帶 DB 端算出的新 tokenVersion），讓改密碼的本人
- * 不會被自己觸發的 tv++ 立即登出——這裡順著這個既有 server 行為走：
- * `invalidateQueries(['me'])` 並等待這次 refetch 完成，新 cookie 已經生效，
- * refetch 拿到的是「新密碼已生效、`mustChangePassword:false`」的最新使用者
- * 物件——再呼叫 `onSuccess()`，讓呼叫端決定接下來要導向哪裡／要不要提示。
+ * The length check is UX only; the server validates again. On success the server re-issues the session cookie with
+ * the new tokenVersion, so changing the password doesn't log this user out.
  */
 export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordFormProps) {
   const { t } = useTranslation();
@@ -72,12 +46,9 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
         method: "POST",
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      // 等 refetch 完成才呼叫 onSuccess：呼叫端若要 navigate，導航當下就要能讀到
-      // `mustChangePassword:false`（`ChangePasswordGate` 才不會把它導回改密碼頁）。
+      // Await the refetch so a navigating caller already sees mustChangePassword:false (else ChangePasswordGate bounces back).
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
-      // 呼叫 onSuccess() 前先清空三個密碼欄位——強制頁那條路徑會立刻 navigate 卸載，
-      // 這步無感；但設定 modal 那條路徑只 toast、表單留在原地（見 onSuccess 的 JSDoc），
-      // 不清的話舊密碼明碼會留存在 DOM/state 裡。
+      // In the settings modal the form stays mounted; don't leave the passwords in state.
       setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
@@ -94,7 +65,6 @@ export function ChangePasswordForm({ onSuccess, tone = "page" }: ChangePasswordF
     }
   }
 
-  // 整頁（強制改密）是卡片頁，控制項 44px；面板內（tone="outline"）維持預設 32px，見 ui/button.tsx 規範例外二。
   const fieldClass = tone === "page" ? "h-11" : undefined;
 
   return (

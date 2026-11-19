@@ -1,11 +1,7 @@
 import type { AvatarCropDto } from "@knotebook/shared";
 
-/**
- * 頭貼裁切框的純數學。座標約定：
- * - 視窗是邊長 `viewport`（px）的正方形；原圖像素 p 顯示在視窗座標 `offset + p * scale`。
- * - `scale`＝每個原圖像素佔幾個視窗像素；`offset` 是原圖左上角在視窗內的位置，合法時兩軸都 ≤ 0（圖蓋滿視窗）。
- * - 裁切框 `{ x, y, size }` 是原圖像素座標的正方形，三個值都是整數、落在圖內。
- */
+// Original pixel p shows at viewport position `offset + p * scale`; a valid offset is ≤ 0 on both axes, so the
+// image covers the viewport. Crops are integer squares in original pixels.
 
 export interface Point {
   x: number;
@@ -17,9 +13,7 @@ export interface CropView {
   offset: Point;
 }
 
-/** 視窗上限：原圖 1 px 最多放大成視窗 4 px。 */
 const MAX_PIXEL_ZOOM = 4;
-/** 縮放範圍上限：最多是最小縮放的 8 倍。 */
 const MAX_ZOOM_RATIO = 8;
 
 function assertSize(width: number, height: number): void {
@@ -34,25 +28,22 @@ function assertPositive(name: string, value: number): void {
   }
 }
 
-/** `Math.min(Math.max(...))` 會產生 -0；一律正規化成 0，讓 `toEqual`／相等比較不被負零絆倒。 */
+/** `+ 0` turns the -0 that Math.min/max can produce into 0, so equality checks don't trip. */
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value)) + 0;
 }
 
-/** 最小縮放：短邊剛好填滿視窗。`viewport` 必須是正的有限數，否則丟 `RangeError`。 */
 export function minScale(width: number, height: number, viewport: number): number {
   assertSize(width, height);
   assertPositive("viewport", viewport);
   return viewport / Math.min(width, height);
 }
 
-/** 最大縮放：原圖 1 px 對應視窗 4 px，或最小縮放的 8 倍，取小者；但不會小於最小縮放（原圖比視窗小很多時）。 */
 export function maxScale(width: number, height: number, viewport: number): number {
   const lo = minScale(width, height, viewport);
   return Math.max(lo, Math.min(MAX_PIXEL_ZOOM, MAX_ZOOM_RATIO * lo));
 }
 
-/** 把平移量夾到圖蓋滿視窗的範圍：每軸 `[視窗 − 圖尺寸 × scale, 0]`。 */
 export function clampOffset(offset: Point, scale: number, width: number, height: number, viewport: number): Point {
   return {
     x: clamp(offset.x, Math.min(0, viewport - width * scale), 0),
@@ -60,7 +51,6 @@ export function clampOffset(offset: Point, scale: number, width: number, height:
   };
 }
 
-/** 以 `anchor`（視窗座標）為不動點縮放到 `nextScale`（先夾進上下限），結果的平移量已夾在圖內。`view.scale`、`nextScale` 必須是正的有限數，否則丟 `RangeError`。 */
 export function zoomAround(view: CropView, nextScale: number, anchor: Point, width: number, height: number, viewport: number): CropView {
   assertPositive("scale", view.scale);
   assertPositive("scale", nextScale);
@@ -71,10 +61,7 @@ export function zoomAround(view: CropView, nextScale: number, anchor: Point, wid
   return { scale, offset };
 }
 
-/**
- * 目前的檢視換成原圖整數像素的裁切框：`size ≥ 1` 且落在圖內，即使 `offset` 沒夾過也一樣。
- * `view.scale`、`viewport` 必須是正的有限數，否則丟 `RangeError`；`offset` 必須是有限數。
- */
+/** The crop has size ≥ 1 and lies inside the image even if `offset` wasn't clamped. */
 export function viewToCrop(view: CropView, width: number, height: number, viewport: number): AvatarCropDto {
   assertSize(width, height);
   assertPositive("viewport", viewport);
@@ -87,13 +74,11 @@ export function viewToCrop(view: CropView, width: number, height: number, viewpo
   };
 }
 
-/** 既有裁切框換回檢視（縮放夾進上下限、平移夾在圖內）。 */
 export function cropToView(crop: AvatarCropDto, width: number, height: number, viewport: number): CropView {
   const scale = clamp(viewport / Math.max(1, crop.size), minScale(width, height, viewport), maxScale(width, height, viewport));
   return { scale, offset: clampOffset({ x: -crop.x * scale, y: -crop.y * scale }, scale, width, height, viewport) };
 }
 
-/** 置中、取短邊的裁切框（沒有人調過裁切時的預設）。 */
 export function centeredCrop(width: number, height: number): AvatarCropDto {
   assertSize(width, height);
   const size = Math.min(width, height);

@@ -6,8 +6,6 @@ import type { AvatarRef, UserAvatarDto } from "./avatar.js";
 
 export const SESSION_COOKIE = "knotebook_session";
 
-/** OIDC authorization request 期間的一次性 state cookie 名稱——存活
- * 短暫（見 server 端 `OIDC_STATE_TTL_SECONDS`），只在 `/api/auth/oidc` 路徑下有效。 */
 export const OIDC_STATE_COOKIE = "knotebook_oidc";
 
 export type Role = "owner" | "editor" | "viewer" | "none";
@@ -16,35 +14,25 @@ export interface ApiError {
   error: { code: string; message: string };
 }
 
-/** `GET /api/auth/me`、login/OIDC 成功回應的使用者形狀（見 apps/server routes/auth.ts）。 */
 export interface UserDto {
   id: string;
   email: string;
-  /** #122：URL 用的使用者名（/n/<handle>/…）。建帳時派生（OIDC preferred_username →
-   * email local-part）；settings 可改（改名＝舊網址即死；舊名釋出、任何人可再取用）。 */
   handle: string;
   displayName: string;
   isAdmin: boolean;
-  /** 首登強制改密碼旗標：已沒有寫入端（#285 拿掉代建），只剩舊版代建、尚未改密碼的帳號帶著它；
-   * env bootstrap 管理員、OIDC 自動建帳、註冊、接受邀請皆為 false。web 端的 `ChangePasswordGate` 依此
-   * 導向 `/change-password`——見 apps/web/src/auth/guards.tsx。 */
+  /** Legacy: nothing sets it any more; only old admin-created accounts that never changed their password still carry it. Web's ChangePasswordGate redirects to /change-password on it. */
   mustChangePassword: boolean;
-  /** OIDC-only 帳號為 false；設定 modal 據此隱藏改密表單。 */
   hasPassword: boolean;
-  /** 版本歷史：個人空間的自動儲存開關（`users.auto_versions`）。生效值另需站台總開關。 */
+  /** Personal setting; the effective value also needs the site-wide switch. */
   autoVersions: boolean;
-  /** 目前使用的頭貼；沒有則 null。只帶 id 與版本，網址一律由 `avatarUrl` 組。 */
   avatar: UserAvatarDto | null;
 }
 
-/** #285：管理員邀請的狀態（`GET /api/admin/invites`，由 SQL 以 now() 算）。 */
 export type AdminInviteStatus = "pending" | "used" | "revoked" | "expired";
 
-/** #285：管理員邀請列表的一列（不含 token 與雜湊；token 只在建立回應出現一次）。 */
 export interface AdminInviteDto {
   id: string;
   label: string | null;
-  /** SQL 以 now() 算：used_at → used；revoked_at → revoked；expires_at <= now() → expired；其餘 pending。不看帳密開關（由頁面提示）。 */
   status: AdminInviteStatus;
   createdAt: string;
   expiresAt: string;
@@ -54,68 +42,52 @@ export interface AdminInviteDto {
   usedBy: { id: string; email: string } | null;
 }
 
-/** 密碼長度下限，鏡射 apps/server/src/auth/constants.ts 的同名常數——這裡是給
- * web 端表單前端先驗用的唯一真相，兩邊刻意保持同一個數字（12）。 */
+/** Same number as apps/server/src/auth/constants.ts; this copy lets web forms validate first. */
 export const MIN_PASSWORD_LENGTH = 12;
-/** #187 帳密註冊的上限：email 對齊 SSO 的 254（server `MAX_EMAIL_CLAIM_LENGTH`），
- * 以 JS `.length` 計；顯示名 100 個 code point。web 先驗（RegisterPage）、server 為準（routes/account.ts）。 */
+/** Email length in JS `.length`, matching SSO's 254; display name in code points. Web prechecks, the server enforces. */
 export const MAX_REGISTER_EMAIL_LENGTH = 254;
 export const MAX_REGISTER_DISPLAY_NAME_LENGTH = 100;
-/** #285 邀請備註上限，以 code point 計，與 DB `one_time_links_label_chk` 同值（server 與 web 共用）。 */
+/** Code points; same as DB `one_time_links_label_chk`. */
 export const MAX_INVITE_LABEL_LENGTH = 100;
 
-/** `GET /api/auth/config`（免認證）：登入頁用 `providers` 畫「Sign in with X」、`registration` 決定註冊入口（帳密自助註冊＋各服務是否自動建帳）、
- * `passwordLogin.enabled`（帳密登入的**有效值**＝DB 值 OR env 強制；不揭露是否 env 強制，#187）決定帳密表單。
- * 只曝光 id、顯示名與圖示——issuer／client id 等設定細節不出線（#187）。 */
+/** Unauthenticated. `passwordLogin.enabled` is the effective value (DB OR env), without revealing whether env forces it. */
 export interface AuthConfigDto {
   providers: AuthProviderPublicDto[];
   registration: {
-    /** `site_settings.registration_enabled`（DB 值；列不在 → false）——只管帳密自助註冊；是否實際可用還要看 passwordLogin.enabled。 */
+    /** Password self-registration only; it also needs `passwordLogin.enabled`. */
     enabled: boolean;
-    /** 啟用中且開了自動建帳的服務 id，照顯示順序；是 `providers` 的子集。`site_settings` 列不在時一律 []（與登入交易的「視同關」一致）。 */
     providerIds: string[];
   };
   passwordLogin: { enabled: boolean };
-  /** 版本歷史：站台自動儲存總開關（`site_settings.auto_versions_enabled`）——個人與群組開關在它關閉時顯示 disabled。 */
   autoVersionsEnabled: boolean;
-  /**
-   * 筆記大小上限（server `NOTE_MAX_BYTES`，Yjs 狀態的位元組數）。網頁編輯器在貼上、拖放、站內 AI 套用之前據此自己擋（瀏覽器的協作更新
-   * 不在 server 檢查），已超過的筆記顯示提示。server 一律回傳；選填只是讓沒有這個欄位的回應（測試替身、舊 server）照常可用＝不檢查。
-   */
+  /** Bytes of Yjs state. Web checks it before paste, drop and AI apply (the server doesn't check browser collab updates); absent means no check. */
   noteMaxBytes?: number;
-  /**
-   * 圖片上傳單檔大小上限（bytes，站台限制 `uploadMaxBytes`，管理員可調）。網頁在上傳前據此自己擋。server 一律回傳；選填只是讓沒有這個欄位的回應
-   * （測試替身、舊 server）照常可用＝不前驗。
-   */
+  /** Bytes; admin-adjustable. Absent (test doubles, older servers) means no client-side precheck. */
   maxUploadBytes?: number;
 }
 
-/** #187：一個啟用中的單一登入服務（登入頁按鈕、連結頁的證明方式）。只曝光 id、顯示名與圖示——issuer／client id 不出線。 */
+/** Exposes only id, display name and icon; issuer, client id and other provider settings never leave the server. */
 export interface AuthProviderPublicDto {
   id: string;
-  /** 管理員輸入的字串：web 只准放進 React 文字節點（`escapeValue: false`）。 */
+  /** Admin-entered: web must render it only as React text (`escapeValue: false`). */
   displayName: string;
-  /** 已換算的圖示（`resolveProviderIcon`）；`null`＝不顯示。web 直接渲染，不自行換算。 */
   icon: ProviderIconDto;
 }
 
-/** #187：`GET /api/auth/oidc/pending`。`methods` 每次請求重算（provider 可能剛被停用）。 */
 export interface PendingLinkDto {
-  /** 這一次待連結的識別；confirm／prove 必須原樣帶回（另一分頁覆蓋了 pending 時 server 回 409 `oidc_link_expired`）。 */
+  /** Send back unchanged; if another tab replaced the pending link, the server returns 409 `oidc_link_expired`. */
   pendingId: string;
   email: string;
-  /** 要連結的那個 provider 的顯示名；provider 已被刪除時為 null（身分不綁 provider）。 */
   providerDisplayName: string | null;
   methods: { password: boolean; providers: AuthProviderPublicDto[] };
 }
 
-/** #187：`POST /api/auth/oidc/pending/confirm` 成功。`next` 由 server 從 pending cookie 解出、再過 `safeNextPath`，沒有就是 `/`——web 只用這個值、不讀網址參數。 */
+/** The server reads `next` from the pending cookie and filters it through `safeNextPath`; web uses it instead of the URL parameter. */
 export interface PendingLinkConfirmDto {
   user: UserDto;
   next: string;
 }
 
-/** #187：回一個要整頁導過去的 IdP authorization URL（SSO 證明起點；手動連結起點同形）。 */
 export interface OidcRedirectDto {
   url: string;
 }
@@ -123,66 +95,46 @@ export interface OidcRedirectDto {
 export interface NoteDto {
   id: string;
   title: string;
-  /** #175：群組筆記沒有個人 owner（`owner_id` 與 `group_id` 恰一個非 null，DB `notes_owner_xor_group_chk`）。 */
+  /** Exactly one of `owner_id`/`group_id` is non-null (DB `notes_owner_xor_group_chk`). */
   ownerId: string | null;
-  /** 群組筆記恆為 `"editor"`／`"viewer"`，從不是 `"owner"`（#175）。 */
+  /** Always `"editor"` or `"viewer"` for group notes, never `"owner"`. */
   role: Role;
   createdAt: string;
   updatedAt: string;
-  /** 網址代稱（#122 起 NOT NULL＋per-user 唯一）：auto（跟標題走）或自訂，恆為字串。 */
   slug: string;
-  /** owner 的 username（/n/<ownerHandle>/<slug> 的第一段）；editor PATCH 回應也帶 owner 的、非操作者的。群組筆記為 null。 */
   ownerHandle: string | null;
-  /** #175：與 `group?.id` 重複，讓 `canonicalNotePath(note)` 一行呼叫就能組出兩種網址。 */
+  /** Duplicates `group?.id` so `canonicalNotePath(note)` can build both URL forms. */
   groupId: string | null;
-  /** slug 形態：false＝auto（title 變更會重算）、true＝顯式自訂（title 變更不動 slug）。 */
   slugIsCustom: boolean;
-  /** 單層自訂 redirect 來源（只記自訂變更；無則 null）——by-path miss 後的補查面。 */
   prevSlug: string | null;
-  /** #106：誰在什麼時候最後改了這篇（`notes.last_edited_*` 四欄；從未被編輯過＝null）。
-   * 型別宣告在本檔下方——interface 是型別層的，不受宣告順序影響（沒有 TDZ 這回事）。 */
   lastEdited: LastEditedDto | null;
-  /** #175：群組筆記的所屬群組（看得到群組筆記的只有成員）；個人筆記恆 null。 */
   group: NoteGroupDto | null;
-  /** #175：呼叫者在這篇上能做什麼。web 一律看這裡，不再用 `role === "owner"` 推。 */
+  /** Web must use this, not `role === "owner"`. */
   permissions: NotePermissions;
-  /** 所在資料夾（呼叫者視角）：個人／群組筆記＝`notes.folder_id`；共享給我的筆記＝我自己的放置（擁有者的資料夾不外流）。null＝根層。 */
+  /** For notes shared with the caller, the caller's own placement; the owner's folder is never exposed. */
   folderId: string | null;
-  /** 內文（Yjs 狀態）＋附件的位元組數，只用於排序；只有 `GET /api/notes` 帶。 */
   sizeBytes?: number;
 }
 
-/**
- * #175：單篇筆記上的操作權。個人筆記：owner 全真；逐人分享 editor 只有 read／edit、viewer 只有 read。
- * 群組筆記：由呼叫者群組角色的旗標推得（`manageShares`／`moveToGroup` 恆 false）。
- */
 export interface NotePermissions {
   read: boolean;
   edit: boolean;
   delete: boolean;
-  /** 逐人分享（`GET/PUT/DELETE …/shares`）。只有個人筆記的 owner。 */
   manageShares: boolean;
-  /** 公開連結（token）；個人＝owner、群組＝`can_manage_public_link`。 */
   managePublicLink: boolean;
-  /** 自訂網址代稱（PATCH 帶 `slug`）；個人＝owner、群組＝`can_manage_public_link`。 */
   changeSlug: boolean;
-  /** 移進群組（`POST …/move`）；只有個人筆記的 owner。 */
   moveToGroup: boolean;
 }
 
-// #106 內容端點（`GET /api/notes/:id/content`，#137 起還有寫入端）的對外形。指紋是樂觀
-// 併發的判準、不是安全邊界：server 端算在未 mount 的 Yjs 結構上（`notes/editing/fingerprint.ts`），
-// web 永不自己算。`blockIds` 是 server 內部用的，刻意不在這幾個 DTO 上出現。
+// Fingerprints are an optimistic-concurrency check, not a security boundary, and only the server computes them.
 export interface NoteOutlineEntry {
-  /** 段落識別子：首段恆為 `TOP_SECTION_ID`（`_top`），其餘＝該 heading block 的 id。 */
   sectionId: string;
   level: number;
   heading: string;
   chars: number;
   fingerprint: string;
 }
-/** 誰在什麼時候最後改了這篇（#137 起是真值；#136 一律 null）。`byHandle` 是**編輯者**的
- * username（不是 owner 的）；`agentLabel` 非 null＝那次是 AI／API 經 token 寫的。 */
+/** `byHandle` is the editor's handle, not the owner's; a non-null `agentLabel` means it was written through a token. */
 export interface LastEditedDto {
   at: string;
   byHandle: string;
@@ -194,17 +146,14 @@ export interface NoteContentDto {
   outline: NoteOutlineEntry[];
   lastEdited: LastEditedDto | null;
 }
-/** `?section=` 回應裡的段落鍵是 `id`（不是 `sectionId`）。 */
 export interface NoteSectionDto {
   section: Omit<NoteOutlineEntry, "sectionId"> & { id: string; markdown: string };
   lastEdited: LastEditedDto | null;
 }
 
-/** #106 寫入端（`POST /api/notes/:id/edits`，#137）可用的五個 op。`revert` 不在其中——它不是
- * 呼叫端能直接送的 op，只由 `POST …/edits/:editId/revert` 產生（`note_ai_edits.op` 的枚舉多一個）。 */
+/** No `revert`: that op is only produced by `POST …/edits/:editId/revert`. */
 export type EditOp = "replace_all" | "replace_section" | "insert_after" | "append" | "delete_section";
-/** 寫入成功（201）的回應：`fingerprint`／`outline` 是**合併之後**的整篇狀態，呼叫端可直接拿去做下一次
- * `if_match`，不必再讀一次；`unboundWikilinks`＝這次寫入裡沒對到唯一筆記、留成純文字的 `[[…]]` 個數。 */
+/** `fingerprint`/`outline` describe the merged note, so they can serve as the next `if_match` without a re-read. */
 export interface NoteEditResultDto {
   editId: string;
   fingerprint: string;
@@ -212,25 +161,18 @@ export interface NoteEditResultDto {
   unboundWikilinks: number;
 }
 
-/** #272：每篇筆記保留的 AI 修改紀錄上限（實為「最多」，見 `notes/editing/revert.ts` 檔頭）。server 的裁切與 web 的說明句共用。 */
+/** The server prunes AI edit rows to this many per note; web help text quotes it. */
 export const AI_EDITS_RETENTION = 100;
 
-/** #106 修改紀錄清單（`GET /api/notes/:id/edits`，#137）的一列。新到舊排序，最多 `RETENTION`（100）筆。
- * `op` 比 `EditOp` 多一個 `revert`＝撤回列（由 `POST …/:editId/revert` 產生，本身永不可撤回）。
- * `heading`＝這次修改落點所在段落的標題，查不到就是空字串（段落已被刪掉／改名）。
- * `byHandle`＝發動這次修改的使用者 handle；`agentLabel`＝token 派生或當時的快照（cookie 寫入為 null）。
- * `revertable`＝現在還能不能撤回。false 的情形：撤回列本身、已經撤回過、落點指紋對不上、
- * `delete_section` 的 anchor block 不在了，以及**這次刪除已經被還原過**（`delete_section` 的
- * `before_blocks` 又出現在頂層——撤回端沒有 `if_match`，這是它的冪等守衛，見 revert.ts）。 */
+// `revertable` is also false once a deleted section has been restored (its `before_blocks` are back at top level):
+// revert takes no `if_match`, so this is its idempotency guard.
 export interface NoteEditDto {
   id: string;
-  /** `file_sync`＝bulk transfer 檔案寫回（每區一列）。web 原樣顯示字面值（不翻譯）。 */
   op: EditOp | "revert" | "file_sync";
   sectionId: string | null;
   heading: string;
   byHandle: string;
   agentLabel: string | null;
-  /** 寫入者本人目前的頭貼（`agentLabel` 非 null 的列也是本人的）；沒有頭貼、顯示圖尚未備好 → null。 */
   avatar: AvatarRef | null;
   createdAt: string;
   revertedAt: string | null;
@@ -238,14 +180,8 @@ export interface NoteEditDto {
   revertable: boolean;
 }
 
-// 分享名單上的角色只會是 'editor'/'viewer'——note_shares 表的 DB check constraint
-// 本就不允許存 'owner'/'none'（owner 不會出現在 note_shares 裡；'none' 純粹是
-// resolveRole 用來表示「無權限」的哨兵值，從不落地成一筆分享列）。與 NoteDto 的
-// `Role`（涵蓋全部四種狀態）刻意分開成獨立型別，讓「這欄位只可能是這兩種角色」
-// 這件事在型別層就看得出來。
 export type ShareRole = "editor" | "viewer";
 
-/** #175：群組角色的七個旗標（DB `group_roles.can_*`）。 */
 export interface GroupRolePermissions {
   read: boolean;
   create: boolean;
@@ -256,23 +192,17 @@ export interface GroupRolePermissions {
   manageGroup: boolean;
 }
 
-/** 內建角色的種類；自訂角色為 null（顯示名走 i18n `groups.role.admin`／`groups.role.member`）。 */
 export type BuiltinGroupRole = "admin" | "member";
 
 export interface GroupRoleDto {
   id: string;
   builtin: BuiltinGroupRole | null;
-  /** 自訂角色的名稱；內建角色恆 null（DB `group_roles_name_chk`）。 */
   name: string | null;
   permissions: GroupRolePermissions;
   memberCount: number;
 }
 
-/**
- * #175 群組。`myRole` null＝非成員的站台 admin（只可能出現在 `PATCH /api/groups/:id` 的回應；
- * `GET /api/groups` 只列所屬群組）。兩個 `canManage*`＝角色旗標 OR 站台 admin——
- * **web 一律看這兩欄，不看 `myRole`**。
- */
+/** `myRole` is null only for a non-member site admin. Web must use the `canManage*` flags, which include site admins. */
 export interface GroupDto {
   id: string;
   name: string;
@@ -280,11 +210,10 @@ export interface GroupDto {
   canManageMembers: boolean;
   canManageGroup: boolean;
   createdAt: string;
-  /** 版本歷史：群組空間的自動儲存開關（`groups.auto_versions`）。 */
   autoVersions: boolean;
 }
 
-/** #175：`DELETE /api/groups/:id` 必填 body；`transfer`＝群組筆記全數改成 `transferTo`（必須是內建管理員）的個人筆記，`delete`＝連筆記一起刪。 */
+/** `transferTo` must hold the built-in admin role. */
 export type DeleteGroupBody = { mode: "transfer"; transferTo: string } | { mode: "delete" };
 
 export interface GroupMemberDto {
@@ -293,11 +222,9 @@ export interface GroupMemberDto {
   displayName: string;
   roleId: string;
   builtin: BuiltinGroupRole | null;
-  /** 該成員目前使用的頭貼；沒有（或顯示圖尚未補產）則 null。 */
   avatar: AvatarRef | null;
 }
 
-/** 筆記所屬群組（#175：`role` 欄移除——權限改看 `NoteDto.permissions`）。 */
 export interface NoteGroupDto {
   id: string;
   name: string;
@@ -308,19 +235,14 @@ export interface ShareDto {
   email: string;
   displayName: string;
   role: ShareRole;
-  /** 被分享者目前使用的頭貼；沒有（或顯示圖尚未補產）則 null。 */
   avatar: AvatarRef | null;
 }
 
-/**
- * `GET /api/users/suggest?q=` 的一筆建議：只會是呼叫者「已經認識」的人——與他同在某個群組的成員，或他把自己的筆記
- * 逐人分享過的對象（這兩群人的 email 呼叫者在介面上本來就看得到）。不是全站名錄；排除自己與停用帳號。
- */
+/** Only people the caller already sees (group co-members, users they shared notes with); not a site directory. Excludes the caller and disabled accounts. */
 export interface UserSuggestionDto {
   userId: string;
   email: string;
   displayName: string;
-  /** 該人目前使用的頭貼；沒有（或顯示圖尚未補產）則 null。 */
   avatar: AvatarRef | null;
 }
 
@@ -328,85 +250,55 @@ export interface UserSuggestResponse {
   users: UserSuggestionDto[];
 }
 
-/** `q` trim 後的長度下限／上限（含），與每次最多回幾筆。web 的輸入框也用同一組數字決定何時發請求。 */
+/** Trimmed length bounds (inclusive); web uses the same numbers to decide when to send a request. */
 export const USER_SUGGEST_MIN_QUERY = 2;
 export const USER_SUGGEST_MAX_QUERY = 100;
 export const USER_SUGGEST_MAX_RESULTS = 8;
 
-/**
- * #93：`GET /api/search` 的查詢長度上限（trim 後，UTF-16 code unit——zod `.max` 數的就是這個）、預設與最大篇數。
- * web 的側欄用同一組數字決定要不要發請求。
- */
+/** Query length in UTF-16 code units after trim (what zod `.max` counts); web uses these to decide when to send. */
 export const SEARCH_QUERY_MAX = 200;
 export const SEARCH_LIMIT_DEFAULT = 20;
 export const SEARCH_LIMIT_MAX = 50;
 
-/** 一個命中的段落：`sectionId` 接在筆記網址後成 `#b-<sectionId>`（`_top` 除外）；`heading` 對 `_top` 是空字串。 */
+/** `sectionId` becomes the `#b-<sectionId>` anchor (except `_top`). */
 export interface NoteSearchMatchDto {
   sectionId: string;
   heading: string;
   snippet: string;
 }
 
-/** `note` 與 `GET /api/notes` 的同一篇同形，但沒有 `sizeBytes`。`matches` 在 `matchedOn: "title"` 時是 `[]`，內文命中也可能是 `[]`。 */
 export interface NoteSearchHitDto {
   note: NoteDto;
   matchedOn: "title" | "body" | "both";
   matches: NoteSearchMatchDto[];
 }
 
-/** `nextCursor` 非 null＝還有下一頁；原樣帶回 `cursor` 參數（同一個 q 與 match）。 */
 export interface NoteSearchResultDto {
   hits: NoteSearchHitDto[];
   nextCursor: string | null;
 }
 
-/** 反向連結清單項目：連到目前筆記的來源筆記摘要，供 backlinks 面板渲染。 */
 export interface BacklinkDto {
   id: string;
   title: string;
   slug: string;
-  /** 來源筆記 owner 的 username——BacklinksSection 組 /n/ 連結用（#122）；群組筆記為 null。 */
   ownerHandle: string | null;
-  /** #175：來源筆記所屬群組（`/g/` 連結用）；個人筆記為 null。 */
   groupId: string | null;
 }
 
-/** 圖片上傳單檔大小上限（bytes）：10 MiB，超過回 `file_too_large`（413）。 */
-// 取自獨立常數，不讀 `SITE_LIMITS`：模組頂層讀註冊表會讓整張表無法被 tree-shake（web 首包變大）。
+/** Bytes. From the standalone default, not `SITE_LIMITS`: reading the registry at module top level defeats tree-shaking. */
 export const MAX_UPLOAD_BYTES: number = UPLOAD_MAX_BYTES_DEFAULT;
 
-/** 單次 `POST /api/notes/:id/links` 提交的 target 集合上限（去重、過濾 self-link 正規化後計；超過回 400 `invalid_body`）。 */
+/** Counted after dedupe and self-link filtering. */
 export const MAX_LINK_TARGETS = 1000;
 
-/** 單篇筆記 backlinks 面板回傳的來源筆記數上限。 */
 export const MAX_BACKLINKS = 200;
 
-/**
- * #267：server 對同一使用者的 `users.last_active_at` 至多每這麼久寫一次（ms）——行程內節流表與 SQL 條件都用它
- * （`apps/server/src/auth/last-active.ts`）。必須明顯短於 `ONLINE_WINDOW_MS`：持續有活動的人，記錄最多落後這麼久，
- * 所以只要兩者差距夠大，他一直顯示「上線中」。
- */
+/** Must stay well below `ONLINE_WINDOW_MS`, so continuously active users always show as online. */
 export const LAST_ACTIVE_WRITE_INTERVAL_MS = 60 * 1000;
 
-/** #267：web 站台管理使用者表把 `now - lastActiveAt` 小於它（ms）的人顯示「上線中」。 */
 export const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
-// 權威清單：`grep -rn "sendError(" apps/server/src` + auth.ts 手寫 429（`too_many_attempts`）
-// 逐一核對後的全集，另加 `too_many_requests`（slug limiter）與
-// `slug_taken`（slug unique violation）——這兩碼尚未落地於 grep 結果，屬預先保留。
-// `not_loaded`＝`POST /api/notes/:id/links` 409：該筆記尚未載入
-// 進 collab server 記憶體，或提交者無該筆記開啟中的連線，`linkSyncGate` 回 `{ok:false}`，
-// 不落地任何寫入。`server_busy` 除需要雜湊密碼的端點的 429（`HashBusyError`，argon2 併發
-// 超限）外，另有第二個發送點——同一個 `POST /api/notes/:id/links` 的 409：
-// `writeNoteLinks` 交易撞上 pg `serialization_failure`/`deadlock_detected`
-// （40001/40P01，剔除消失 target 重試一次後仍失敗才會落到這裡）；純 DB 層級的併發衝突，
-// 非邏輯錯誤，交給 client 重試（與 `not_loaded` 區分：後者無 note_states 回退路徑，client
-// 收斂方式不同）。`file_too_large`＝`POST /api/notes/:id/uploads` 413 唯一發送點。
-// setup token 流程退役，`invalid_setup_token`/
-// `already_setup`/`invalid_email`/`invalid_display_name`/`bootstrap_email_mismatch`
-// 五碼隨之刪除（唯一消費者已隨 setup token 路由一併移除；`password_too_short` 仍由
-// `routes/auth.ts`／`routes/account.ts` 消費，留用）。
 export const ERROR_CODES = [
   "unauthorized",
   "forbidden",
@@ -424,8 +316,7 @@ export const ERROR_CODES = [
   "email_taken",
   "user_not_found",
   "cannot_disable_self",
-  // #247 站台管理員降級（`POST /api/admin/users/:id/demote`）：`cannot_demote_self`＝400，降自己；`last_site_admin`＝409，
-  // 降級後站台沒有任何啟用中的管理員。⚠ 不可沿用 `last_admin`——那是**群組**的碼（見下方 #103 段），web 以 `errors.<code>` 對映訊息。
+  // Not `last_admin`: that is the group code.
   "cannot_demote_self",
   "last_site_admin",
   "cannot_share_with_self",
@@ -440,38 +331,19 @@ export const ERROR_CODES = [
   "upstream_error",
   "builtin_action",
   "model_taken",
-  // OIDC 登入流程。`oidc_unavailable`＝provider 不在／停用、discovery 失敗或不可用（login 與 callback 皆 302）；
-  // `oidc_state_mismatch`＝callback 的 state cookie 缺失／過期／與查詢字串或 provider 不符；`oidc_exchange_failed`＝與 IdP 的
-  // token／userinfo 交換失敗；`oidc_email_missing`／`oidc_conflict`＝SSO 決策（`auth/oidc-login-decision.ts`）的拒絕碼。
-  // #187 起 IdP 的「email 已驗證」旗標不參與任何判斷，舊的「email 未驗證」碼已退役。
   "oidc_unavailable",
   "oidc_state_mismatch",
   "oidc_exchange_failed",
   "oidc_email_missing",
   "oidc_conflict",
-  // #107 API token／OAuth：`insufficient_scope`＝合法 token 但 scope 不足（403——刻意
-  // 與「token 本身無效」的 401 分開，後者才計入無效 Bearer 的節流）；`token_limit`＝
-  // 每位使用者的有效 token 軟配額；`token_not_found`＝撤銷不存在或不屬於自己的 token
-  // （兩者同形，不當成列舉 oracle）；`oauth_request_invalid`＝授權請求已用／已過期
-  // （#132 才會發出，碼在 #130 一併加，避免 i18n 分兩次改）。
+  // `insufficient_scope` (403) is kept apart from the invalid-token 401, which counts toward the Bearer limiter.
+  // `token_not_found` also covers other users' tokens, so it can't be used to enumerate them.
   "insufficient_scope",
   "token_limit",
   "token_not_found",
   "oauth_request_invalid",
-  // #106：`GET /api/notes/:id/content?section=` 指定的段落在這份文件裡不存在（404——與
-  // 「整篇筆記找不到／無權限」的 `not_found` 分開，因為呼叫端的處置不同：段落沒了就重讀
-  // 大綱，筆記沒了就別再試）。
+  // Separate from `not_found`: a missing section means re-read the outline, a missing note means stop.
   "section_not_found",
-  // #106 寫入端（`POST /api/notes/:id/edits`，#137）：
-  // `fingerprint_mismatch`＝409，`if_match` 與目前內容不符（回應另帶 `current`，呼叫端重讀後重試）；
-  // `unsupported_block`＝送來的 markdown 解析出不在 schema 白名單內的 block，或 core 剖析時丟例外（整筆拒絕，不靜默剝除）；
-  // `empty_content`＝markdown 解析後是空的（純空白）；`empty_section`＝要刪的段落沒有任何 block；
-  // `too_many_blocks`＝超過 `MAX_BLOCKS`；`content_too_large`＝413，body 超過 `bodyLimit`
-  // （由 `app.ts` 的 `clientErrorCode` 映射，是唯一的 413 通用碼——上傳的 `file_too_large`
-  // 由 uploads 路由自己回，不經那條分流）。
-  // #378：`unsupported_color`＝400，送來的 markdown 帶了編輯器無法顯示的文字色／底色（收拒規則見 `note-colors.ts` 的
-  // `canonicalColor`；整筆拒絕，同 `unsupported_block`；`POST /api/notes` 帶 content 也會回）。
-  // 並排：`unsupported_columns`／`unsupported_size`＝400，並排或圖片寬度／表格欄寬不是讀出的正規形（同樣整筆拒絕）。
   "fingerprint_mismatch",
   "unsupported_block",
   "unsupported_color",
@@ -481,49 +353,24 @@ export const ERROR_CODES = [
   "empty_section",
   "too_many_blocks",
   "content_too_large",
-  // bulk transfer：`too_many_notes`＝413，整包下載的範圍內超過 3 000 篇（串流開始前回）。
   "too_many_notes",
-  // bulk transfer 寫回：`not_mergeable`＝409，這篇的段表對不上（下載時 `segments` 為 NULL），不能用檔案寫回；
-  // `base_unavailable`＝409，基底查無、不屬於這篇、`key_id` 不符、或已用不同內容送回過——重新下載再改。
   "not_mergeable",
   "base_unavailable",
-  // #106 撤回端（`POST /api/notes/:id/edits/:editId/revert`，#137）：
-  // `already_reverted`＝409，這筆修改已經撤回過（或它本身就是一筆撤回列——撤回列永不可撤回）；
-  // `stale`＝409，撤回的落點已經不是當初那樣了：AI 寫進去的 block 被人改過／刪掉、`delete_section`
-  // 的 anchor block 不在了，或**這次刪除已經被還原過**（`before_blocks` 又出現在頂層——撤回端
-  // 沒有 `if_match`，這是它的冪等守衛，重試不會把內容插第二次）。回應另帶 `current`。
-  // 兩者都是「不能撤回」，但呼叫端的處置不同：前者是重複操作（不必再試），後者要重讀內容再決定。
+  // `already_reverted` needs no retry; `stale` means re-read the content before deciding.
   "already_reverted",
   "stale",
-  // #103 群組：`last_admin`＝409，這個動作會讓群組沒有管理者（最後一位 admin 退出／被移除／被降級）；
-  // `already_member`＝409；`group_not_found`＝404，帶進來的 groupId 不存在、你不是成員或剛被刪除
-  // （同形）；`POST /api/notes {groupId}` 對非 UUID 回 400 `invalid_body`（zod 擋），移動與複製（#175）
-  // 對非 UUID、以及角色不能新建筆記，也回這個碼（404）。`note_in_group`＝409，群組筆記沒有逐人分享；`invalid_name`＝400，群組名稱；
-  // `conflict`＝409，筆記的歸屬在授權之後變了：PATCH 以授權當下的歸屬當 scope、更新 0 列而列仍在（#175 起四格都是）；
-  // public-link PUT 的歸屬述詞（`group_id IS NOT DISTINCT FROM`）落空；移動時筆記已不是你的個人筆記。
   "last_admin",
   "already_member",
   "group_not_found",
   "note_in_group",
   "invalid_name",
   "conflict",
-  // #175：`group_not_empty`＝409，刪群組時群組內還有筆記。原本是只允許刪空群組時的拒絕；現在刪群組一律帶模式、
-  // 正常路徑不再發出，只剩交易外 FK 23503 的防禦縱深分支（`routes/groups.ts`；理論上到不了）。保留在詞彙表。
-  // #175：`role_not_found`＝404，成員路由帶的 `roleId` 不合法或不屬於該群組。
+  // `group_not_empty` is only a defensive branch now (group deletion always takes a mode).
   "group_not_empty",
   "role_not_found",
-  // #175：`builtin_role`＝409，對內建角色做不允許的事（改內建管理員、改內建一般成員的名稱、刪任一內建角色）；
-  // `role_name_taken`＝409，自訂角色名稱（trim＋NFC 後、不分大小寫）與同群組另一個自訂角色相同，或等於任一語系的內建顯示名。
   "builtin_role",
   "role_name_taken",
-  // #175：`not_admin`＝409，刪群組的轉移對象（`transferTo`）不是這個群組持內建管理員角色的成員（含非 UUID、非成員、自訂角色——只認 `builtin = 'admin'`，與「每群組至少一位內建管理員」同一個定義）。
   "not_admin",
-  // #187：多 provider 登入與「詢問是否連結」。`registration_disabled`＝403／302：帳密自助註冊關閉（`POST /api/auth/register`），
-  // 或 SSO 首登時該服務沒開自動建帳；`oidc_link_expired`＝409／302，pending cookie 失效、被另一分頁覆蓋（pendingId 不符）、或目標
-  // 帳號已不在／email 已改；`oidc_link_proof_mismatch`＝SSO 證明回來的身分不屬於目標帳號；`oidc_link_no_proof_method`＝
-  // 目標帳號沒有密碼，也沒有可用來證明的已連結 provider（全停用，或只剩與待連結身分同 issuer 者）；`oidc_claim_too_long`＝IdP 的 email > 254 或 sub > 255；
-  // `identity_taken`＝要連的 (issuer, sub) 已屬別人；`identity_already_linked`＝帳號已有同 issuer 的另一個 sub；
-  // `provider_not_found`＝404，SSO 證明起點指定的 provider 不在可用清單（不區分原因）。
   "registration_disabled",
   "oidc_link_expired",
   "oidc_link_proof_mismatch",
@@ -532,66 +379,36 @@ export const ERROR_CODES = [
   "identity_taken",
   "identity_already_linked",
   "provider_not_found",
-  // #187：站台管理 `/api/admin/auth/*`。`provider_enabled`＝409，刪除仍在啟用中的登入服務（要先停用）；
-  // `provider_secret_missing`＝409，要啟用一個沒有 client secret 的登入服務（DB CHECK `auth_providers_enabled_secret_chk`）；
-  // `provider_client_id_missing`＝409，要啟用一個沒有 client ID 的登入服務（DB CHECK `auth_providers_enabled_client_id_chk`，#299）；
-  // `oidc_discovery_failed`＝502，「測試連線」／「先試探」讀不到可用的 OIDC 設定（discovery 失敗、缺 jwks_uri、無非對稱簽章、issuer 不符或過長）。
   "provider_enabled",
   "provider_secret_missing",
   "provider_client_id_missing",
   "oidc_discovery_failed",
-  // #187：註冊、個人設定、帳密登入開關。`password_login_disabled`＝403，帳密登入的有效值為關時的帳密登入／帳密註冊／
-  // 加上密碼；`sso_provider_required`＝409，關閉帳密登入（或在關閉狀態下停用 provider）後沒有任何啟用中的登入服務；
-  // `admin_sso_link_required`＝409，同上但操作的管理員本人沒有可用的 SSO 身分；`password_already_set`＝409，已有密碼的帳號
-  // 打「加上密碼」；`last_login_method`＝409，解除後帳號不再有任何可用的登入方式；`oidc_link_session_mismatch`＝
-  // 302 `/settings/login?link_error=`，手動連結回來時目前 session 不在、失效、停用或不是發起者。
   "password_login_disabled",
   "sso_provider_required",
   "admin_sso_link_required",
   "password_already_set",
   "last_login_method",
   "oidc_link_session_mismatch",
-  // AI provider 的 base URL 帶了帳密（`user:pass@host`／`user@host`）＝400；認證請放 API key 欄位。
   "base_url_has_credentials",
-  // 儲存配額：`storage_quota_exceeded`＝409，這次新增的附件位元組放不進該空間（上傳、複製、移入群組、
-  // 刪群組・轉移；回應頂層另帶 `storage`，見 `StorageQuotaErrorDetail`）。方案管理（站台管理員）：`storage_plan_in_use`＝409，
-  // 刪除仍有使用者或群組指派的方案；`storage_plan_is_default`＝409，刪除新使用者或新群組的預設方案（既是預設又使用中也回這個）；
-  // `storage_plan_name_taken`＝409，方案名稱（不分大小寫）已存在；`storage_plan_not_found`＝404。
   "storage_quota_exceeded",
   "storage_plan_in_use",
   "storage_plan_is_default",
   "storage_plan_name_taken",
   "storage_plan_not_found",
-  // 頭貼：`avatar_outdated`＝409，重新裁切時送出的 `version` 已不是目前版本（另一個分頁先補好了，或原圖剛被替換）。
   "avatar_outdated",
-  // 頭貼：`avatar_fetch_failed`＝422，手動重新取得 OIDC 頭貼時 server 下載失敗（只有 refresh 端點用；不帶網址與底層訊息）。
   "avatar_fetch_failed",
-  // 筆記版本歷史：`version_is_base`＝409，刪除「目前內容的基底版本」；
-  // `version_unsaved_changes`＝409，套用時有未儲存的修改而 body 沒帶 `discardUnsaved: true`，或套用兩次都遇到併發修改；
-  // `version_mismatch`＝409，套用 body 的 `versionId` 與該 seq 現在那一列不同（搬移清空後同一個 seq 指向別的內容）。
   "version_is_base",
   "version_unsaved_changes",
   "version_mismatch",
-  // #263：`instruct_preview_only`＝400，把內建 Instruct 動作的套用模式改成 direct——自由指令的結果一律先預覽。
   "instruct_preview_only",
-  // #286：`user_disabled`＝409，替停用帳號產生重設連結；`password_not_set`＝409，替沒有密碼
-  // （只用 SSO）的帳號產生；`reset_link_invalid`＝410，重設連結形狀不合、查無、已用、已撤銷或已過期（不區分原因）。
   "user_disabled",
   "password_not_set",
   "reset_link_invalid",
-  // #285：`invite_invalid`＝410，邀請形狀不合、查無、已用、已撤銷或已過期（不區分原因）；
-  // `invite_used`＝409，撤銷已用的邀請；`invite_not_found`＝404，撤銷不存在或非邀請的 id。
   "invite_invalid",
   "invite_used",
   "invite_not_found",
-  // #181：`in_trash`＝404，單篇讀取（`:ref`／by-path／by-group-path）的目標在垃圾桶、且呼叫者有垃圾桶權；
-  // body 另帶頂層 `noteId`。沒有垃圾桶權者照舊 `not_found`。
+  // `in_trash` only for callers with trash access; others still get `not_found`.
   "in_trash",
-  // 資料夾：`folder_not_found`＝404，資料夾 id 不合形、不存在或看不到（含 trigger 的 KF001 映射）；
-  // `folder_name_taken`＝409，同層不分大小寫撞名；`folder_too_deep`＝409，超過 FOLDER_DEPTH_MAX 層；`folder_cycle`＝409，搬進自己的子樹；
-  // `folder_limit`＝409，該空間資料夾數已達 FOLDERS_PER_SPACE_MAX；`folder_cross_space`＝400，資料夾或筆記跨空間；
-  // `folder_delete_blocked`＝403，子樹有呼叫者不能刪除的活筆記。
-  // `folder_not_empty`＝409，只由 `DELETE /api/folders/:id { onlyIfEmpty: true }` 發出：資料夾裡還有子資料夾、活筆記或（共享私人）放置。
   "folder_not_found",
   "folder_name_taken",
   "folder_too_deep",
@@ -600,11 +417,8 @@ export const ERROR_CODES = [
   "folder_cross_space",
   "folder_delete_blocked",
   "folder_not_empty",
-  // `too_complex`＝500（MCP 工具錯誤同名）：讀出一篇筆記的轉換在 parse worker 裡逾時或用完記憶體（筆記太大或太複雜；重試無用）。
   "too_complex",
-  // `note_too_large`＝413（MCP 工具錯誤同名）：這次修改會讓筆記的大小（Yjs 狀態的位元組數）超過 `NOTE_MAX_BYTES`，而且比修改前大；details 帶 `limitBytes`。
   "note_too_large",
-  // `limit_locked_by_env`＝409：管理頁要改的站台限制被伺服器的環境變數鎖住（#397）。
   "limit_locked_by_env",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -619,7 +433,6 @@ export interface AiActionDto {
   id: string;
   name: string;
   applyMode: "direct" | "preview";
-  /** #263：`"instruct"`＝內建 Instruct（web 畫輸入框），其餘 `"quick"`（web 畫 chip）。由 id 判（`aiActionKind`）。 */
   kind: AiActionKind;
 }
 
@@ -655,89 +468,64 @@ export interface AdminAiActionDto {
   sortOrder: number;
   enabled: boolean;
   builtin: boolean;
-  /** #263：同 `AiActionDto.kind`；管理頁據此對 Instruct 不畫套用模式控制項。 */
   kind: AiActionKind;
 }
 
-/** #187：登入服務範本（只決定新增表單的預填值與卡片標籤）。值域與 DB CHECK `auth_providers_template_chk` 相同。 */
+/** Must match DB CHECK `auth_providers_template_chk`. */
 export type AuthProviderTemplate = "gitlab" | "google" | "oidc";
 
-/**
- * #187：`GET /api/admin/auth/providers` 的一列（POST／PATCH 回同形）。**不含 client secret 的任何形**——只有
- * `hasSecret`。`displayName` 是管理員輸入：web 只准放進 React 文字節點（`escapeValue: false`）。
- */
+/** Never carries the client secret, only `hasSecret`. `displayName` is admin-entered: render it only as React text. */
 export interface AdminAuthProviderDto {
   id: string;
   template: AuthProviderTemplate;
   displayName: string;
   issuerUrl: string;
-  /** null＝尚未填入（#299：新增時可留空，之後用「編輯」補上；沒有 client ID 不能啟用）。 */
   clientId: string | null;
   hasSecret: boolean;
   enabled: boolean;
-  /** 首次登入時自動建立帳號；新服務一律 false，建立 API 不收；PATCH 改 issuer 不會改它。 */
   autoCreateEnabled: boolean;
   sortOrder: number;
-  /** env 匯入的那一個（沿用舊回呼網址 `/api/auth/oidc/callback`）。 */
   legacyCallback: boolean;
-  /** 要登記在 IdP 端的回呼網址；server 以 `oidcRedirectUri` 組（與 login／callback 同一個 helper）。 */
   callbackUrl: string;
-  /** issuer 是明文 `http://`。 */
   insecureIssuer: boolean;
-  /** 曾經成功 discovery（`resolved_issuer` 有值）；false 時受影響人數可能不準。 */
   issuerResolved: boolean;
   createdAt: string;
-  /** 圖示設定原值（`icon_kind`）。 */
   iconKind: ProviderIconKind;
-  /** 已換算的圖示，與公開形同一個 `resolveProviderIcon`（upload 形即上傳圖網址）。 */
   icon: ProviderIconDto;
 }
 
-/** #187：`GET /api/admin/auth/providers/:id/impact`——開停用 dialog 當下的快照。 */
 export interface AdminAuthProviderImpactDto {
-  /** 有 identity 對到這個服務、且未停用的帳號數。 */
   linkedUsers: number;
-  /** 其中**沒有可用密碼**（無密碼，或帳密登入開關的 DB 值為關，#187）、也沒有任何 identity 對到「其他啟用中服務」的帳號數——停用後暫時登不進。 */
   lockedOutUsers: number;
   issuerResolved: boolean;
-  /** 停用這個服務後，操作的管理員本人是否失去最後一個可用 SSO 身分（他有這個服務的身分、且沒有任何身分對到其他啟用中服務）。
-   *  DB 值為關時這種停用會被防自鎖守衛擋（409 `admin_sso_link_required`）；dialog 先說明。 */
   actingAdminLockedOut: boolean;
 }
 
-/** #187：測試連線／先試探的非致命提醒。 */
 export type AdminAuthProbeWarning = "insecure_issuer" | "client_secret_post_not_advertised" | "client_id_missing" | "secret_undecryptable";
 
-/** #187：`POST /api/admin/auth/providers/:id/test`、`POST /api/admin/auth/discover` 成功。`issuer`＝IdP discovery 回報的 issuer。 */
 export interface AdminAuthProbeResultDto {
   issuer: string;
   warnings: AdminAuthProbeWarning[];
 }
 
-/** #187：`GET /api/auth/identities` 的一列。不回 `sub`。 */
 export interface IdentityDto {
   id: string;
-  /** IdP 回報的 issuer 原字串（身分的鍵之一）。對不到啟用中 provider 時，頁面以它的 host 標示。 */
   issuer: string;
-  /** effective issuer 等於本列 issuer、且啟用中的 provider（可能 0、1 或多個）。 */
   providers: AuthProviderPublicDto[];
   createdAt: string;
   lastLoginAt: string | null;
-  /** server 依「密碼只在 DB 值為真時算數」算出；web 只照它 disable「解除連結」。 */
   unlinkable: boolean;
 }
 
-/** #187：可以從設定頁發起手動連結的 provider（啟用中、且本人沒有同 issuer 的身分）。 */
 export interface LinkableProviderDto {
   providerId: string;
-  /** 管理員輸入的字串：web 只准放進 React 文字節點。 */
+  /** Admin-entered: render it only as React text. */
   displayName: string;
   template: AuthProviderTemplate;
-  /** 已換算的圖示（`resolveProviderIcon`）；`null`＝不顯示。web 直接渲染，不自行換算。 */
   icon: ProviderIconDto;
 }
 
-/** #187：`GET /api/auth/identities`（session-only）。`passwordLoginEnabled` 是**有效值**（DB OR env），只決定設定頁顯示「加上密碼」與說明。 */
+/** `passwordLoginEnabled` is the effective value (DB OR env). */
 export interface IdentitiesDto {
   identities: IdentityDto[];
   linkable: LinkableProviderDto[];
@@ -745,16 +533,14 @@ export interface IdentitiesDto {
   passwordLoginEnabled: boolean;
 }
 
-/** #187：`GET`／`PATCH /api/admin/auth/settings`。`passwordLoginEnabled` 是 **DB 值**；`passwordLoginForced`＝env `PASSWORD_LOGIN_FORCE_ENABLE`。 */
+/** `passwordLoginEnabled` is the DB value; `passwordLoginForced` is env `PASSWORD_LOGIN_FORCE_ENABLE`. */
 export interface AdminAuthSettingsDto {
   registrationEnabled: boolean;
   passwordLoginEnabled: boolean;
   passwordLoginForced: boolean;
-  /** 開 dialog 當下的快照；權威判斷在 PATCH。 */
+  /** Snapshot for the dialog; the PATCH decides. */
   passwordLoginImpact: {
-    /** 未停用、且沒有任何 identity 對到啟用中 provider 的 effective issuer 的帳號數。 */
     usersWithoutSso: number;
-    /** 操作者本人有一個 identity 對到某個啟用中 provider 的 effective issuer（與防自鎖守衛同一個函式）。 */
     actingAdminHasSso: boolean;
     enabledProviders: number;
   };
@@ -764,89 +550,29 @@ export const COLLAB_CLOSE_REVOKED = "knotebook:revoked";
 export const COLLAB_CLOSE_NOTE_DELETED = "knotebook:note-deleted";
 
 /**
- * 共編握手被拒時，server 寫進 permission-denied 訊息的 reason（client 從 provider 的
- * `authenticationFailed` 事件收到）。
- *
- * ⚠ 這一組常數與上面的 `COLLAB_CLOSE_*` 是**兩條不同的通道**，不可混用：
- * `COLLAB_CLOSE_*` 走應用層 CLOSE 訊息（連線**已經**通過 onAuthenticate 之後才送）；
- * 這裡這組則是 onAuthenticate 當場就拒絕，Hocuspocus 只回一則 permission-denied Auth
- * 訊息、**不關 socket 也不重連**（已對 @hocuspocus/server 4.5.0 `ClientConnection` 核實）。
- * client 必須自己把它翻成狀態機事件，否則畫面會永遠停在「連線中」（issue #6）。
- *
- * ⚠ **這一組分成語意完全不同的兩桶（issue #35），client 的處置不可混用**：
- *
- * A.「這是一則授權裁決」——`note-deleting`（筆記已刪除／刪除中）與 `forbidden`（這個人對
- *    這篇筆記沒有任何角色）。使用者對這篇筆記的關係真的結束了，client 據此收斂終態
- *    （deleted／撤權二擊）並導頁。
- * B.「拒絕的原因不是權限」——`invalid-token`（token 驗不過，或 session 的 tokenVersion 已被
- *    撤銷）與 `server-error`（onAuthenticate 撞到未預期例外）。**client 絕不可據此宣告使用者
- *    失去存取權**：對他說錯話之外，那一則拒絕多半重取一次 token 就會有結論。正確處置是排一次
- *    連線重啟（見 `useCollab` 的 `TOKEN_RESTART_DELAYS_MS`），狀態留在 `connecting`；重取 token
- *    時若 session 真的沒了會拿到 401，屆時走的是登出流程，那才是它正確的結局。
- *
- * 舊版把三種拒絕理由全塞進 `invalid-token` 一個桶子，client 一律翻成撤權——帳號被停用或密碼
- * 在別處改過（兩者都只是 session 失效）會對一個權限完好的使用者說「你已失去存取權」並把他
- * 導走（issue #35）。
- * ⚠ 因此 **client 對「不認得的 reason」（含 Hocuspocus 對未預期例外填的字面值
- * `"permission-denied"`、以及 reason 缺席）一律歸 B 桶**：寧可多重試幾次，不可誤殺。
- *
- * ⚠ **不要為「筆記不存在」另開一個 reason**：那會把「這個 noteId 是否存在」變成一個任何登入
- * 使用者都能問的 oracle，而 REST 端刻意不區分這兩者（`GET /api/notes/:ref` 一律 404、
- * collab-token 一律 200 + role 'none'，見 `routes/notes.ts` 的防列舉說明）。刪除後的重連窗口
- * 改由 server 端的刪除閘門覆蓋（`DELETING_GATE_TTL_MS` 大於 `COLLAB_RESTART_DELAYS_MS` 的最大
- * 值），而閘門**只對「刪除當下本來就看得到這篇筆記的人」說 `note-deleting`**——其他人一律
- * 落在 `forbidden`，與「這篇筆記存在但不是你的」完全一樣，問不出任何東西。
+ * Reasons sent when onAuthenticate rejects a collab handshake. Unlike `COLLAB_CLOSE_*` (sent after auth), Hocuspocus
+ * neither closes nor reconnects here (Hocuspocus 4.5.0), so the client must map them to state events or it stays "connecting" (#6).
+ * `note-deleting` and `forbidden` are authorization verdicts. `invalid-token` and `server-error` are not: the client must
+ * restart the connection rather than report lost access (#35), and treats unknown or missing reasons the same way.
+ * No separate "note not found" reason: it would let any user probe whether a note id exists. Only users who could see
+ * the note when it was deleted get `note-deleting`; everyone else gets `forbidden`.
  */
 export const COLLAB_REJECT_NOTE_DELETING = "note-deleting";
 export const COLLAB_REJECT_INVALID_TOKEN = "invalid-token";
 export const COLLAB_REJECT_FORBIDDEN = "forbidden";
 export const COLLAB_REJECT_SERVER_ERROR = "server-error";
-/**
- * #269：舊分頁閘門。collab token 的 `sv`（client 送來的 `NOTE_SCHEMA_VERSION`）與 server 的不同（`!==`）就以這個 reason 拒。
- * 不是授權裁決：本版起的 client 收到它進 `outdated`（唯讀＋提示重整），**不加進 `isTerminal`**、不導頁；
- * 閘門前的舊 client 不認得它 ⇒ 落入 B 桶一直重試（一次性限制，CHANGELOG 寫明）。不需要 DB、與筆記存不存在無關（不形成 oracle）。
- */
+/** Not an authorization verdict: the client goes read-only (`outdated`), not terminal. Older clients retry it like any unknown reason. */
 export const COLLAB_REJECT_CLIENT_OUTDATED = "client-outdated";
-/**
- * client 在「token 徹底取不到」或「拒連理由不是授權裁決」之後，整條連線重來的退避表（ms，
- * issue #39／#35）與抖動幅度。最後一格重複使用；實際延遲 ＝ 該格 × [0.75, 1.25)。
- *
- * ⚠ **住在 shared 是因為 server 端的刪除閘門 TTL 必須大於這裡的最大值**
- * （`DELETING_GATE_TTL_MS`，見 `apps/server/src/collab/hooks-impl.ts`）：閘門是 server 唯一
- * 能對「本來看得到這篇筆記的人」說出「它被刪掉了」的窗口，關得比 client 的重連還早的話，
- * 那個人就會收到 `forbidden` ＝ 被告知失去存取權（issue #35）。兩個常數因此是一組耦合的
- * 契約，由 `apps/server/test/unit/collab-deleting-gate.test.ts` 釘住——調整這裡的數字時，
- * 那條測試會告訴你 server 端要不要跟著調。
- */
+// The last entry repeats; actual delay is entry × [0.75, 1.25). In shared because the server's `DELETING_GATE_TTL_MS` must
+// exceed the maximum, or a reconnecting user who could see a deleted note gets `forbidden` (collab-deleting-gate.test.ts).
 export const COLLAB_RESTART_DELAYS_MS = [5_000, 15_000, 60_000] as const;
 export const COLLAB_RESTART_JITTER = 0.25;
 
-/**
- * client 取 collab token 的**有上限**退避重試表（ms）。5xx／429／網路錯誤走這條——
- * 「暫時取不到 token」不是授權失敗，不可據此踢人或登出（401 例外，直接登出）。
- * 消費端在 `useCollab.ts`；放在 shared 是因為它是跨端契約的一半：server 端的刪除閘門
- * TTL（`collab-deleting-gate.test.ts`）與撤權重驗 deadline（下方）都以它的總和為前提。
- */
+/** For 5xx, 429 and network errors (401 logs out instead); failing to get a token is not an authorization failure. The deleting-gate TTL and the reverify deadline are sized against this sum. */
 export const COLLAB_TOKEN_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000] as const;
 
-/**
- * 撤權重驗的 deadline：server 送出 `requestToken()` 後等 client 回送新 token 的上限（ms），
- * 逾時即以 `COLLAB_CLOSE_REVOKED` 關閉連線。5s 是撤權 SLA 的一部分（「定向重驗 + 5s
- * deadline」，撤銷分享 ≤10 秒）——要調它得連 SLA 一起看。
- *
- * ⚠ **刻意短於 client 的最壞 token 重試**（上方 `COLLAB_TOKEN_RETRY_DELAYS_MS` 總和
- * 7.5s）——這不是疏忽（issue #40：舊註解宣稱餘裕含 client 重試退避，為假）：這條
- * deadline 是撤權的**最後一道 fail-closed 保險**（「撤銷分享 ≤10 秒」SLA），
- * 放寬到 >7.5s 會吃掉 SLA 的大半餘裕。重驗期間 client 若撞上 429/5xx、還在退避排程
- * 裡，deadline 先到並關線。誤殺的代價：client 進 `reconnecting-once` 重連——後端若
- * 仍在抖動，會再落入 5/15/60s 的重啟排程、badge 幾秒後升離線警示，體感不只「重連一
- * 次」；但**權限判定不受影響**：不會被升級成 kicked（那需要在 `reconnecting-once`
- * 中再吃第二擊），後端恢復即自行回復。正常路徑一次 token 往返 <200ms，5s 的餘裕
- * 留給 DB 抖動——**不含** client 的重試退避。
- *
- * 這層「deadline < 最壞重試」的關係由 `apps/web/src/collab/useCollab.test.tsx` 釘住——
- * 調整任一邊的數字時，那條測試逼你回來重新面對這個取捨。
- */
+// Part of the revocation SLA (a revoked share loses access within 10 s), so deliberately shorter than the client's
+// worst-case token retry (7.5 s): a client still backing off just reconnects, without being kicked. Pinned by useCollab.test.tsx.
 export const COLLAB_REVERIFY_DEADLINE_MS = 5_000;
 
 export const COLLAB_TOKEN_TTL_SECONDS = 120;
@@ -855,14 +581,12 @@ export interface CollabTokenClaims {
   userId: string;
   role: Role;
   tv: number;
-  /** #388：換這張 token 的那個 session 的 `sessions.id`。collab server 握手與重驗時確認那一列還在（登出那台裝置的連線因此被關）。 */
+  /** The collab server rechecks this session row on handshake and reverify, so logging out a device closes its connections. */
   sid: string;
-  /** #269：client 取 token 時送的 note schema 版本（缺席或非整數＝0）。`onAuthenticate` 以 `!==` 比對 `NOTE_SCHEMA_VERSION`。 */
   sv: number;
 }
 
-/** email 的單一漏斗：所有建帳寫入與所有 email 比對讀取共用；OIDC claims
- * 亦過此。 */
+/** Every account write and email comparison must use this, OIDC claims included. */
 export function normalizeEmail(input: string): string {
   return input.trim().toLowerCase();
 }
@@ -872,19 +596,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const UUID_SUFFIX_RE = /-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RESERVED_SLUGS = new Set(["new"]);
 
-/** slug 正規化：NFC 合成 + Unicode-aware 小寫。給 `validateSlug` 與 DB 唯一比對用。 */
 export function normalizeSlug(input: string): string {
   return input.normalize("NFC").toLowerCase();
 }
 
-/**
- * 驗證已正規化（已過 `normalizeSlug`）的字串是否為合法自訂 slug。
- * 1–100 code points；charset 僅 `\p{L}\p{N}-`（刻意不含 `\p{M}` combining marks——
- * 例如 `İ`.toLowerCase() 產生的 U+0307 會被擋）；不可頭尾/連續/純 `-`；保留字
- * `new`；整串 uuid 或以 `-<uuid>` 結尾 → `uuid_like`（避免與**舊版**發出去的
- * `/notes/<vanity>-<id>` 連結混淆——那些連結永久活著，由 `extractRefUuid` 解析）。
- * 檢查順序即為分支優先序：length → charset → dash → reserved → uuid_like。
- */
+// Input must already be `normalizeSlug`ed. No `\p{M}` on purpose (e.g. U+0307 from `"İ".toLowerCase()`). `uuid_like` keeps
+// slugs distinct from legacy `/notes/<vanity>-<id>` links, which still resolve via `extractRefUuid`.
 export function validateSlug(normalized: string): "length" | "charset" | "dash" | "reserved" | "uuid_like" | null {
   const length = Array.from(normalized).length;
   if (length < 1 || length > 100) return "length";
@@ -897,33 +614,17 @@ export function validateSlug(normalized: string): "length" | "charset" | "dash" 
 
 const HANDLE_CHARSET_RE = /^[a-z0-9-]+$/;
 
-/**
- * handle（使用者名，#122）的正規化：**僅 ASCII A-Z→a-z 的碼位映射**。
- *
- * 與 `normalizeSlug` 刻意不同：handle 是身分識別、進 URL 的第二段，ASCII-only
- * （跨鍵盤可輸入、避免 IDN 同形混淆）優先於在地化——所以**不做** Unicode
- * lowercase（`İ`.toLowerCase() 會產生 combining mark U+0307）、不 transliterate；
- * 非 ASCII 字元原樣保留，交給 {@link validateHandle} 以 `charset` 拒收。
- */
+// Maps only ASCII A-Z to a-z, unlike normalizeSlug: handles are URL identities, so no Unicode lowercasing (U+0307 from
+// "İ") or transliteration; non-ASCII is left for validateHandle to reject.
 export function normalizeHandle(input: string): string {
-  // 碼位加 32 而非 toLowerCase()：讓「絕不觸 Unicode lowercase」在原始碼層級看得見
+  // +32 rather than toLowerCase(), so the no-Unicode-lowercase rule is visible.
   return input.replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
 }
 
-/**
- * 驗證已正規化（已過 `normalizeHandle`）的字串是否為合法 handle（#122）：
- * 1–32、charset 僅 `a-z0-9-`、dash 不可頭尾/連續、不得 uuid 形。
- *
- * **刻意沒有保留字單**（與 `validateSlug` 的 `reserved` 分支不同）：handle 恆出現在
- * `/n/`、`/p/` 的第二段，與任何頂層路由零衝突面——`api`、`new`、`settings` 都是
- * 合法 handle（apps/server/test/unit/shared-handle.test.ts 有反向釘，別「順手」把
- * slug 的保留字抄過來）。
- * uuid_like 分支在 32 字元上限下對完整 uuid（36 字元）實為死碼（length 先擋），
- * 留著是防禦性宣告：上限若放寬，這條規則仍在。
- */
+// No reserved words, unlike validateSlug: handles only appear as the second segment of /n/ and /p/ (shared-handle.test.ts).
+// `uuid_like` is unreachable under the 32 limit; kept in case the limit grows.
 export function validateHandle(normalized: string): "length" | "charset" | "dash" | "uuid_like" | null {
-  // 長度以 code point 計（比照 validateSlug 慣例）：非 ASCII 長輸入才會正確落到
-  // charset 訊息（「只能用 a-z0-9-」）而不是誤導的「太長」。
+  // Code points, so long non-ASCII input reports `charset` rather than `length`.
   const length = Array.from(normalized).length;
   if (length < 1 || length > 32) return "length";
   if (!HANDLE_CHARSET_RE.test(normalized)) return "charset";
@@ -932,15 +633,8 @@ export function validateHandle(normalized: string): "length" | "charset" | "dash
   return null;
 }
 
-/**
- * 從標題產生 slug 片段。唯一消費端（#122 起）：`autoSlugFromTitle` 的原料（後續進
- * normalizeSlug→validateSlug 漏斗）——`canonicalNotePath` 已改 `/n/<handle>/<slug>`
- * 單一形，不再組 vanity 片段。刻意不做大小寫正規化：需要唯一比對的路徑由消費端
- * 自行 `normalizeSlug`（歷史上 vanity 路徑要保留原大小寫，這個性質順帶留存）。
- * pipeline：NFC → 保留 `\p{L}\p{N}`，其餘一段段轉單一 `-` → 去頭尾 `-` →
- * 以 code point（`Array.from`，避免切斷 surrogate pair）截斷至 60 → 截斷後再去尾
- * `-` 一次（截斷點可能恰好落在 `-` 後）。全空 → `""`。
- */
+// No case folding: callers needing uniqueness apply normalizeSlug. Truncation counts code points (no split surrogate
+// pairs), then trims `-` again because the cut may land after one.
 export function titleSlug(title: string): string {
   let s = title.normalize("NFC").replace(/[^\p{L}\p{N}]+/gu, "-");
   s = s.replace(/^-+|-+$/g, "");
@@ -952,15 +646,8 @@ export function titleSlug(title: string): string {
   return s;
 }
 
-/**
- * 從標題產生 auto slug（#122：`slug_is_custom=false` 的筆記，slug 跟
- * 標題走）。漏斗：`titleSlug` → `normalizeSlug` → `validateSlug`；合法候選
- * **原封不動**放行（重音、CJK 保留）。首驗不過時才進 fallback：NFD 剝 `\p{M}`
- * 再 NFC 回來重驗——這會把**整串**的變音符一併剝掉（`İstanbul Café` →
- * `istanbul-cafe`），不只肇事字元；仍不過（uuid 形、保留字、空、全符號…）→
- * 固定退 `"untitled"`。產物恆為 `normalizeSlug` 的固定點（進 DB 唯一比對的
- * 前提）。唯一性去重是呼叫端的事——本函式是純函式。
- */
+// Valid candidates pass unchanged (accents, CJK kept); the fallback strips diacritics from the whole string. The result is
+// always a fixed point of normalizeSlug (needed for unique matching); deduplication is the caller's job.
 export function autoSlugFromTitle(title: string): string {
   const candidate = normalizeSlug(titleSlug(title));
   if (validateSlug(candidate) === null) return candidate;
@@ -969,11 +656,7 @@ export function autoSlugFromTitle(title: string): string {
   return "untitled";
 }
 
-/**
- * 從 ref 字串（可能是純 uuid，或**舊版連結**的 `<vanity>-<uuid>` 形式）擷取尾碼
- * uuid，供 `GET /api/notes/:ref` 在 legacy slug 比對失敗後的第二段查找路徑——
- * 0007 之前發出去的連結靠這條永久可解。找不到回傳 null。
- */
+/** Legacy `<vanity>-<uuid>` links must keep resolving. */
 export function extractRefUuid(ref: string): string | null {
   if (UUID_RE.test(ref)) return ref.toLowerCase();
   const match = UUID_SUFFIX_RE.exec(ref);
@@ -981,82 +664,47 @@ export function extractRefUuid(ref: string): string | null {
   return null;
 }
 
-/**
- * 組出筆記的 canonical 路徑：個人筆記 `/n/<ownerHandle>/<slug>`（#122）、群組筆記
- * `/g/<groupId>/<slug>`（#175）。slug 自 0007 起 NOT NULL。供 NoteList
- * href、NotePage 收斂 effect 的 `history.replaceState`、分享 dialog 複製連結共用。
- * 兩段都不做 URL 編碼：擋掉 `/ % ? #` 等分隔字元的是**字元集驗證**——handle 走
- * `validateHandle`（`a-z0-9-`）、群組 id 是 uuid、slug 走 `validateSlug`（`\p{L}\p{N}-`），三者都
- * 不可能切出額外 path segment 或 query/hash；非 ASCII 字元由瀏覽器/
- * `encodeURIComponent` 在傳輸層處理（與舊 `/notes/<slug>` 形同慣例）。
- * 舊形 `/notes/…`（含 `<vanity>-<uuid>`）永久可解析（server 走 legacy＋uuid 尾碼），
- * 但**不再由本函式產生**。
- */
+/** No URL encoding: the handle, group uuid and slug charsets can't contain `/ % ? #`. */
 export function canonicalNotePath(note: { ownerHandle: string | null; groupId: string | null; slug: string }): string {
-  // #175：群組筆記 `/g/<group uuid>/<slug>`；個人筆記 `/n/<handle>/<slug>`。群組 id 是
-  // server 產生的小寫 uuid（`gen_random_uuid()`），與 slug 一樣不含分隔字元。兩者皆 null 不可能
-  // （DB `notes_owner_xor_group_chk`）——真的遇到就 throw，不組一條打不開的網址。
-  // ⚠ 刻意用 `typeof … === "string"` 而不是 `!== null`：#175 之前的物件（舊版前端快取、還沒補欄的
-  // 測試 fixture）沒有 `groupId` 欄，值是 undefined；`!== null` 會把它當群組筆記、組出
-  // `/g/undefined/<slug>`（實測 web 四檔 13 條紅）。`shared-slug.test.ts` 有一案釘住。
+  // `typeof` rather than `!== null`: older objects without `groupId` (undefined) would otherwise give `/g/undefined/…`.
   if (typeof note.groupId === "string") return `/g/${note.groupId}/${note.slug}`;
   if (typeof note.ownerHandle === "string") return `/n/${note.ownerHandle}/${note.slug}`;
   throw new Error("canonicalNotePath: ownerHandle 與 groupId 皆為 null");
 }
 
-/**
- * 組出公開別名**頁面**路徑（#122）：`/p/<handle>/<slug>`——`/p/` 兩段
- * 形頁面網址的組字點（比照 `canonicalNotePath`）：ShareDialog
- * 別名列的前綴/複製走這裡，
- * 禁自拼字串（組字漂移＝複製鈕給出打不開的網址）。不做 URL 編碼
- * 的理由同 `canonicalNotePath`（輸入是**已驗證**的 handle/slug，charset 擋掉分隔
- * 字元）。⚠ 職責邊界：公開 **API** 網址（fetch 用的
- * `/api/public/notes/…`）的組字點是 web 的 `lib/public-note-ref.ts`——那邊吃的是
- * URL 原始參數、做防禦性 encodeURIComponent，**編碼政策不同、刻意不共用**。
- * ⚠ e2e **刻意除外**：e2e package 無 @knotebook/shared 依賴（rsync 不帶 dist），
- * 別名網址一律從 ShareDialog UI 讀出。token 形 `/p/<token>` 不經此函式（單段、
- * 無組字問題）。
- */
+/** Build alias URLs only here. Not shared with web `lib/public-note-ref.ts`, which encodes raw URL params defensively. */
 export function publicAliasPath(ref: { handle: string; slug: string }): string {
   return `/p/${ref.handle}/${ref.slug}`;
 }
 
-/**
- * #72：空 Y.Doc 的合法 update 編碼（`Y.encodeStateAsUpdate(new Y.Doc())` ＝ `[0,0]`
- * 的 base64）。公開端點對「筆記從沒開過編輯器（查無 note_states）」回這個值——
- * **不能回空字串／零長度**：`Y.applyUpdate(doc, new Uint8Array())` 會 throw（實測），
- * 公開頁直接爆。server 回它、web 端測試斷同一份；「這個字面真的等於空文件編碼」
- * 由 server 的 unit 釘住（防兩端 import 同一個錯值的套套邏輯）。
- */
+// Encoded empty Y.Doc, returned when a note has no stored state: `Y.applyUpdate` throws on a zero-length update.
+// A server unit test checks the literal.
 export const EMPTY_YDOC_UPDATE_B64 = "AAA=";
 
-/** #269：公開頁裡指向「有自訂公開網址」的筆記的連結。`path` 只有 `/p/<ownerHandle>/<publicSlug>` 一種形；token 形永不出現。 */
+/** `path` is always the alias form; the token form never appears. */
 export interface PublicLinkDto {
   id: string;
   title: string;
   path: string;
 }
 
-/** #note-width：內文欄三段寬度；順序＝由窄到寬。`notes_public_width_chk` 與此同值（note-width-check-sync.test.ts 守）。 */
+/** Narrow to wide; must match DB `notes_public_width_chk` (note-width-check-sync.test.ts). */
 export const NOTE_WIDTHS = ["standard", "wide", "full"] as const;
 export type NoteWidth = (typeof NOTE_WIDTHS)[number];
 
-/** 公開內容端點（token 形與別名形同形）的回應。刻意不含本篇的 id／token／updatedAt。 */
+/** Deliberately omits the note's id, token and updatedAt. */
 export interface PublicNoteDto {
   title: string;
   ydoc: string;
   links: PublicLinkDto[];
-  /** optional＝舊 server 相容，web 缺值當 standard。 */
+  /** Optional for older servers; web treats absent as "standard". */
   width?: NoteWidth;
 }
 
-/**
- * #107／#239／#181：API token 的 scope。是集合不是單值；落庫形固定字面順序 read → write → move → delete，共五形。
- * #181 起是**格（lattice）不是鏈**：`notes:move` 與 `notes:delete` 互不包含，所以沒有「索引越大權限越大」這回事——
- * 比大小一律用 `narrowerScope`（交集）或 `hasScope`（成員），不得用 `TOKEN_SCOPES.indexOf`。
- * move、delete 都必須搭配 write（write 一定把 read 顯式寫進字串）。DB 三條 `scope` CHECK、zod enum 都以這份為準
- * （`scope-check-sync.test.ts` 守 CHECK）。之後新增 scope 照「切詞、交集、固定順序組字」的形加。
- */
+// A lattice, not a chain: move and delete don't include each other, so compare with narrowerScope/hasScope, never
+// `indexOf`. move/delete require write. The DB scope CHECKs and zod enums follow this list (scope-check-sync.test.ts).
+// The stored form is five fixed literals in read, write, move, delete order; write always includes read explicitly.
+// Add new scopes the same way (split into words, intersect, join in the fixed order).
 export const TOKEN_SCOPES = [
   "notes:read",
   "notes:read notes:write",
@@ -1066,45 +714,16 @@ export const TOKEN_SCOPES = [
 ] as const;
 export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
-/** 單一 scope 名（`hasScope` 的第二參數）。 */
 export type ScopeName = "notes:read" | "notes:write" | "notes:move" | "notes:delete";
 
-/**
- * 路由宣告「這個操作至少需要什麼」時用的單值，與落庫形（集合）刻意不同型別。
- * 刻意不含 `notes:move`、`notes:delete`：`bearer.ts` 的扣桶只分 write／其他，搬移與刪除不是路由層的
- * scope 門檻（由 MCP 的 `canMoveNotes`／`requireMoveScope`、`canDeleteNotes`／`requireDeleteScope` 在工具層判定）。
- */
+/** No move/delete: `bearer.ts` only tells write from other; move and delete are checked at the MCP tool layer. */
 export type RequiredScope = "notes:read" | "notes:write";
 
-/**
- * 把外部送來的 scope 參數正規化成落庫形。
- *
- * **切詞後逐一比對，不是子字串比對**：`xnotes:write`、`notes:write-all` 都只是
- * 不認得的值，不得因為「含有 notes:write」而授予寫入權（那是 scope 放大）。
- *
- * **忽略不認得的值**（RFC 6749 §3.3 允許 AS 部分忽略；MCP client 可能自行加
- * `offline_access`），因此**永不回 null**——呼叫端沒有 `invalid_scope` 分支。
- * 空／undefined → `notes:read`（最小權限）：MCP client 的 scope 優先序是「401
- * challenge 的 scope → PRM `scopes_supported` → 兩者皆無才省略」，我們兩者都給，
- * 正常不會送空；真的送空就給最小的。
- *
- * 分隔字元只認**半形空白**（RFC 6749 §3.3 的 scope 是 SP-delimited）。tab／全形空白
- * 之類的分隔不會被切開，整串因此變成一個不認得的值 → 落到 `notes:read`，方向是
- * fail-closed。
- *
- * 回應裡的 `scope` 一律是這個函式的輸出（我們實際授予的集合），被忽略的值不回聲；
- * client 依 RFC 6749 §5.1 應以回應為準。
- *
- * **要 `notes:move`／`notes:delete` 不要 `notes:write` → 兩者都丟、給 `notes:read`**（fail-closed）：
- * 1. 自動補 `notes:write` ＝授予沒要求的寫入權（scope 放大）；
- * 2. `notes:read notes:move`、`notes:read notes:delete` 不是合法落庫形（DB CHECK 拒）；
- * 3. 回 `invalid_scope`（null）會破壞上面「永不回 null」的契約；RFC 6749 §3.3 允許 AS 部分忽略。
- *
- * 對五種合法落庫形恆等（`bearer.ts`、`api-tokens.ts` 拿它讀 DB 值，不必另判）。
- */
+// Whole space-separated words only (`notes:write-all` must not grant write; tabs don't split, failing closed). Unknown
+// values are ignored (RFC 6749 §3.3), so it never returns null; empty gives `notes:read`. move/delete without write give
+// `notes:read` rather than granting unrequested write. Identity on the five stored forms.
 export function normalizeScope(input: string | null | undefined): TokenScope {
   const parts = (input ?? "").split(" ");
-  // read 在五種落庫形裡都有，不必另外判斷；move、delete 只在同時有 write 時才算數。
   if (!parts.includes("notes:write")) return "notes:read";
   return [
     "notes:read",
@@ -1114,10 +733,7 @@ export function normalizeScope(input: string | null | undefined): TokenScope {
   ].join(" ") as TokenScope;
 }
 
-/**
- * 兩個落庫形的交集（格上的 meet）。不在五形內的值先當 `notes:read`（輸入來自 `text` 欄的
- * `as TokenScope`）——不得把垃圾字串原樣傳回去，也不得讓非正規值（如裸 `notes:write`）被正規化放大。
- */
+/** Values outside the five forms count as `notes:read`: inputs come from a text column cast to TokenScope. */
 export function narrowerScope(a: TokenScope, b: TokenScope): TokenScope {
   const canon = (s: TokenScope): TokenScope => ((TOKEN_SCOPES as readonly string[]).includes(s) ? s : "notes:read");
   const pa = new Set(canon(a).split(" "));
@@ -1129,201 +745,89 @@ export function narrowerScope(a: TokenScope, b: TokenScope): TokenScope {
   );
 }
 
-/**
- * 落庫的 scope 集合是否涵蓋這個操作所需的權限。
- *
- * 用**成員判定**，不是「`required === "notes:read"` 恆真 ‖ `stored` 整串等於讀寫形」
- * 那種寫死的階層判斷：後者遇到第三形（讀寫搬移）會把 write 判成沒有。這支函式是授權
- * 判定的最後一關，而它拿到的 `stored` 來自 `text` 欄位、型別是靠 `as TokenScope`
- * 斷言來的，所以也不依賴 `scope` 欄的 CHECK。
- *
- * 守衛見 `apps/server/test/unit/shared-scope.test.ts`：帶 cast 的漂移案會讓字面
- * 相等版本紅掉。
- */
+// Membership test, not a hard-coded hierarchy (which misjudged the third form). This is the final authorization check and
+// `stored` is a cast text column, so it doesn't rely on the DB CHECK.
 export function hasScope(stored: TokenScope, required: ScopeName): boolean {
   return stored.split(" ").includes(required);
 }
 
-/** OAuth 應用程式閒置多少天後被清理（server cleanup ①）；web 顯示 oauth 列到期日也用它（#298）。 */
 export const OAUTH_APP_IDLE_DAYS = 30;
 
-/** `GET /api/auth/tokens` 的列元素（#107）。`kind='oauth'` 的列在 #132 才會出現。 */
 export interface ApiTokenDto {
   id: string;
   kind: "pat" | "oauth";
-  /** PAT 是使用者自取；oauth 是 client 自述的名稱快照（**未經驗證**，UI 要標示）。 */
+  /** For oauth, the client-claimed name, unverified: the UI must say so. */
   name: string;
-  /** #106：AI 名牌與修改紀錄上顯示的短名。**非 null**——`api_tokens.agent_label` 為
-   * NULL 時回 `deriveAgentLabel(name)` 的派生值（server 端 `agentLabelOf`）。 */
   agentLabel: string;
   scope: TokenScope;
   createdAt: string;
   lastUsedAt: string | null;
-  /** null＝不到期（PAT 的預設）。oauth 列是 access token 到期（約 24 小時），不是授權失效時間；web 不顯示它（#298）。 */
+  /** null: never expires (the PAT default). For oauth rows, the access token's expiry (~24 h), not the grant's; web doesn't show it. */
   expiresAt: string | null;
   clientId: string | null;
 }
 
-/** `POST /api/auth/tokens` 的 201 回應：**`token` 明文只在這裡出現一次**。 */
 export interface CreatedApiTokenDto extends ApiTokenDto {
   token: string;
 }
 
-/** #132：同意頁要顯示的四要素（`GET /api/oauth/request`）。 */
 export interface OauthRequestDto {
-  /** client 的自述名稱，**未經驗證**——渲染時要 bidi 隔離。 */
+  /** Client-claimed, unverified: bidi-isolate when rendering. */
   clientName: string;
-  /** `new URL(redirect_uri).host`，**刻意含 port**：讓使用者看到實際會跳去的位址。 */
+  /** Includes the port on purpose, so users see where they'll be sent. */
   redirectHost: string;
   scope: TokenScope;
-  /** `scope` 拆成單值陣列，供同意頁逐條列出人話說明。 */
   scopes: string[];
-  /** 呼叫者本人已有同 client 的 oauth grant（新授權會取代它）。恆等於 `existingScope !== null`。 */
   replacesExisting: boolean;
-  /**
-   * #239：呼叫者本人同 client 的 oauth grant 目前的 scope；無則 `null`。載入當下的快照，
-   * 只給同意頁當預設勾選——server 授予值不依賴它。
-   */
+  /** Load-time snapshot, only for the consent page's default checkboxes; the server grant doesn't depend on it. */
   existingScope: TokenScope | null;
 }
 
-/**
- * 「這條路徑不是 SPA 頁」的唯一判準——兩個用途共用：
- *
- * 1. server 的 SPA fallback（`apps/server/src/http/spa.ts`）：命中者不回 index.html，
- *    落回 JSON 404。
- * 2. `safeNextPath`（#131）：登入後的導回目標若命中，一律當作不安全的 next——否則
- *    OIDC callback 會把使用者導到一份裸 JSON（或 #132 的 RFC 形錯誤），而不是頁面。
- *
- * 比對是 **segment 邊界**，不是字串 `startsWith`：`/x` 本身或 `/x/...` 才算命中，
- * 所以 `/collaborators` 不受 `/collab` 牽連、`/apifoo` 不受 `/api` 牽連。
- *
- * 前四條是 SPA fallback 的契約（守衛在 `apps/server/test/spa.test.ts`）；常數本身
- * export 出來只有一個用途：讓測試釘住這是一個**封閉集合**，逼下一個想加前綴的人連同
- * SPA fallback 的行為一起想過。**實作端一律用 `isExcludedPath`**，不要自己 import
- * 陣列再寫一次比對——那正是本次搬家要消滅的東西。
- *
- * `/oauth` 與 `/.well-known` 是 #131 加入的：#132 會在這兩個前綴下掛 OAuth 授權
- * 伺服器的端點，它們的 404 是 RFC 形 JSON 而不是 SPA 頁。**在 #132 落地之前**這兩條
- * 路由還不存在，加入的即時效果只是「`GET /oauth/x` 帶 `Accept: text/html` 從回
- * index.html 變成回 JSON 404」——刻意如此。
- *
- * ⚠ #132 的**同意頁**是 SPA 路徑 `/authorize`（server 的 `GET /oauth/authorize` 驗完
- * 參數後 302 到它），**不在 `/oauth` 之下**——所以把 `/oauth` 排除掉不會把同意頁自己
- * 排除掉。不要因為「同意頁需要 SPA fallback」而刪掉這個前綴。
- *
- * ⚠ **不做任何正規化**（守衛：`shared-next-path.test.ts` 的「不做正規化」一案）。
- * 呼叫端各自決定餵什麼進來：`spa.ts` 餵未解碼的 `request.url.split("?")[0]`（Fastify
- * 的路由比對也不解碼），`safeNextPath` 餵 `new URL(...).pathname`（dot-segment 已正
- * 規化、百分比編碼保留）。兩者對 `/x/../api/notes` 的判定因此不同，這是刻意的：各自
- * 比對的是各自那一側真正會被路由的字串。`apps/server/src/routes/public.ts` 的 token 遮罩理由鏈也依賴這條——它算準了
- * `//api/public/…` 這種變體**比不中**任何前綴而落進 SPA fallback。
- */
+// Shared by the server SPA fallback (`http/spa.ts`) and `safeNextPath`; match on segment boundaries via isExcludedPath.
+// `/oauth` and `/.well-known` 404s are RFC-shaped JSON, not SPA pages; the list is a closed set (pinned by spa.test.ts).
+// The consent page `/authorize` is outside `/oauth`, so excluding `/oauth` is safe.
+// No normalization: each caller passes what its side routes (spa.ts the raw URL, safeNextPath the parsed pathname);
+// `routes/public.ts` token masking relies on `//api/public/…` not matching.
 export const EXCLUDED_PREFIXES = ["/api", "/collab", "/healthz", "/assets", "/oauth", "/.well-known"] as const;
 
-/** `pathname` 是否命中 {@link EXCLUDED_PREFIXES}——segment 邊界比對，理由與清單見該常數。 */
 export function isExcludedPath(pathname: string): boolean {
   return EXCLUDED_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-/**
- * `/p` 公開分享頁的 pathname 判定。server 的 noindex 條件、log 遮罩與網頁端的「公開頁不提示安裝」
- * 共用同一份正規化（開頭斜線收斂＋不分大小寫），**不得各寫一份字面比對**：SPA fallback 對 `//p/<token>`、
- * `/P/<token>` 一律照常服務（React Router 的路由比對也不分大小寫），只修一邊的話這些變體就會漏掉。
- * `pathname === "/p"` 也算：本身沒有 token，讓 `/p` 與 `/p/` 行為一致。
- */
+// Server noindex, log masking and the web install prompt must all use this: the SPA fallback also serves `//p/…` and `/P/…`.
 export function isPublicSharePath(pathname: string): boolean {
   const p = pathname.replace(/^\/{2,}/, "/").toLowerCase();
   return p === "/p" || p.startsWith("/p/");
 }
 
-/**
- * `next` 的長度上限。2048 是一個任意但明顯低於各層實務上限的數字（nginx 預設 header
- * buffer 8 KB、舊 IE 的網址列 2083），用途是讓「有人把整份文件塞進 query」有個明確的
- * 失敗點，而不是慢慢地把各層撐爆。
- *
- * 這個數字同時是 SSO 那條路的 cookie 預算保證：`next` 會被封進 OIDC state cookie，而
- * 2048 字元的 next 封章（JSON → AES-GCM → base64url）後 `name=value` 是 **3049 bytes**、
- * 含屬性的 `Set-Cookie` 是 3115，都在 4 KB 之下（實測；臨界值是 2834 字元）。**所以 server 端不需要、也刻意沒有
- * 第二道更緊的上限**——理由見 `apps/server/src/auth/oidc-state.ts` 的 `next` 欄位
- * JSDoc。
- */
+// Arbitrary but well below practical layer limits (nginx's 8 KB header buffer, old IE's 2083-char URL), so an absurdly long query
+// fails at a clear point. Also bounds the OIDC state cookie: a 2048-char next sealed into it is 3049 bytes (3115 with Set-Cookie
+// attributes), under 4 KB (the limit is 2834 chars), so the server has no tighter limit.
 export const MAX_NEXT_PATH_LENGTH = 2048;
 
-/** `safeNextPath` 解析用的虛構 base——只用來判定「相對解析後有沒有換 origin」，
- * 這個網域不會被連線（`.invalid` 是 RFC 2606 保留的 TLD）。 */
+// Fictional base, never contacted (`.invalid` is reserved by RFC 2606); only used to detect an origin change.
 const NEXT_PATH_BASE = "http://knotebook.invalid";
 
-/** 可見 ASCII（U+0021–U+007E）。為何收得這麼緊，見 `safeNextPath` 的第 4 條。 */
 const NEXT_PATH_CHARSET_RE = /^[\u0021-\u007e]+$/;
 
 /**
- * 「登入完可以把人送去哪」的唯一判準（#131）——web 的 `LoginPage`／`useSessionGate`
- * 與 server 的 OIDC login／callback 共用這一支。
- *
- * **回傳輸入的原字串或 `null`，永遠不回傳正規化後的形。** 這是本函式最重要的契約：
- * `/..//evil` 通過所有檢查（相對於本站解析仍指向本站），但
- * `new URL("/..//evil", base).pathname` 是 `//evil`——把那個正規化形送進 `Location`
- * 或 `navigate()`，瀏覽器會當它是 protocol-relative URL，人就到了 `http://evil`。
- * 回原字串則由瀏覽器自己相對於本站解析，無害。
- *
- * 失敗一律回 `null`、**刻意不回原因碼**：所有呼叫端的處置都一樣（靜默 fallback 到
- * `/`），沒有分支需求，也不該把「你給的 next 哪裡不合法」講給使用者聽。
- *
- * 檢查順序（任何一條不過就是 `null`；便宜的先跑）：
- * 1. 必須是字串——**不是型別系統的贅語**：query string 解出來可能是 `null` 或**陣列**
- *    （Fastify 對 `?next=/&next=x` 給的是 `["/", "x"]`），而陣列的 `[0]` 可能剛好是
- *    `"/"`，靠下面的字元檢查是攔不住的。
- * 2. 長度 <= `MAX_NEXT_PATH_LENGTH`。用 `input.length`（UTF-16 碼元）而**不是**同檔
- *    `validateSlug`／`validateHandle` 那種 code point 計數：這裡量的是「當 `Location`
- *    用時的長度」，而且過了第 4 條之後全是 ASCII，兩種算法等值。
- * 3. 首字元 `/`，第二字元不是 `/` 也不是 `\`——擋掉 `//evil` 與 `/\evil` 這兩種會被
- *    URL 解析器當成 authority 的形（`\` 在 special scheme 下等同 `/`）。
- *    ⚠ 本條的**次字元**兩個比對與第 5 條的 origin 檢查**互為冗餘**：刪掉任一邊，全表
- *    仍綠（已窮舉 + fuzz 驗證）。保留兩邊是讓字元層與解析層各有一道，不把「同源」整個
- *    押在單一機制上。
- * 4. **只允許可見 ASCII（U+0021–U+007E）**——必須在 URL 解析之前擋：WHATWG 的解析器
- *    會把 CR／LF／TAB 靜默移除，先解析再看就永遠看不到它們，而
- *    `Location: /x\r\nSet-Cookie: …` 是標頭注入。
- *
- *    **這條刻意比「只擋 CR／LF／TAB／NUL」嚴很多**，理由是
- *    **呼叫端契約**：OIDC callback 的成功導向刻意**不**做編碼（`reply.redirect(next)`，#131 起，
- *    見 `routes/oidc.ts`），因為在導向端補編碼行不通——`encodeURI` 會把既有的 `%20`
- *    二次編碼成 `%2520`，`encodeURIComponent` 會把 `/`、`?`、`#` 一起吃掉。所以
- *    **「送進來的字串必須可以逐字當 `Location` 用」是本函式的責任**。Node 的標頭字元
- *    白名單是 `[\t\x20-\x7e\x80-\xff]`：裸的 C0（TAB 除外，那條由上一段的理由
- *    擋）與 DEL 會被 `validateHeaderValue` 丟 `ERR_INVALID_CHAR`，**U+0100 起（超過
- *    latin-1）的字元也會**——`/n/alice/筆記` 這種未編碼的 CJK 路徑就是（實測：U+00FF
- *    仍放行，U+0100 起才炸）。
- *    而該例外**接不到** `routes/oidc.ts` 最外層的 catch：`app.ts` 掛的是 async
- *    `onSend`，`reply.redirect()` 只是把 header 塞進 reply，真正的 `writeHead` 發生在
- *    handler 回傳之後 → 使用者拿到 JSON 500，而 `setSessionCookie` 已經跑過。等於打破
- *    `routes/oidc.ts` 檔頭寫的「這條路由一切失敗都是 302，不是 JSON 500」。
- *
- *    對呼叫端的要求（因此）是：**送已百分比編碼的路徑**。web 端天然滿足——瀏覽器的
- *    `location.pathname` 本身就是百分比編碼形，所以 `/n/alice/%E7%AD%86%E8%A8%98`
- *    通過、`/n/alice/筆記` 不通過，真實路徑一個都不會被誤殺。
- * 5. 相對於 `NEXT_PATH_BASE` 解析後 origin 必須沒變。**這條是刻意的冗餘防線**（見第 3
- *    條）：**沒有任何輸入能只被它擋下**——突變測試會顯示這行可以刪掉而測試全綠，這是
- *    已知且刻意的。**同段的 `try/catch` 同理**：相對輸入配合法 base，`new URL` 不會
- *    throw，catch 分支同樣沒有輸入到得了。
- * 6. 解析後的 pathname 不得命中 `isExcludedPath`——`/api/…`、`/oauth/…` 這些不是 SPA
- *    頁，導過去只會看到一份裸 JSON。用**解析後**的 pathname 比對，`/x/../api/notes`
- *    與 `/x/%2e%2e/api/notes` 才擋得掉（`isExcludedPath` 自己不做正規化，見該函式）。
- * 7. 收斂尾斜線與大小寫之後不是 `/login`——`/login?next=%2Flogin` 這種手工連結會讓人
- *    登入完又回到登入表單（此時已登入）。不是安全問題，是死路；這條是 #131
- *    加的。收斂是必要的：react-router 的路徑比對忽略尾斜線、預設大小寫不敏感，所以
- *    `/login/` 與 `/LOGIN` 一樣會渲染登入頁。
- *    判準是「**這個頁的存在前提是尚未登入**」——只有這種頁才該排除。`/change-password`
- *    不算：它對已登入者是一個功能正常的頁。#187 起 `/link-account` 同理（它的存在前提是「正在連結、session 無關」；登入完導回那裡只會被 pending 失效踢回 `/login`）。#187 起 `/register` 同理（已登入者開它會被導向 `next`（經 safeNextPath）或 `/`）。#286 起 `/reset-password` 同理（已登入者只會看到「請先登出」）。
+ * Returns the input unchanged, never a normalized form: `/..//evil` passes, but its parsed pathname `//evil` would
+ * redirect off-site as a protocol-relative URL.
+ * - `typeof` is needed: parsed query strings can be arrays (`?next=/&next=x`).
+ * - The second-character check and the origin check are deliberately redundant; no input is stopped by the latter alone.
+ *   The try/catch around `new URL` is unreachable too: with a valid base it doesn't throw.
+ * - Visible ASCII only, checked before URL parsing (the parser silently drops CR/LF/TAB). The OIDC callback redirects to
+ *   `next` unencoded, and Node throws on header chars above U+00FF after the session cookie is set, so callers must pass
+ *   percent-encoded paths (browser `location.pathname` already is).
+ * - Excluded paths are matched on the parsed pathname, so `/x/../api/notes` is caught.
+ * - Pages that only make sense logged out are dead ends after login. Trailing slashes and case are folded first because
+ *   react-router ignores both (`/login/` and `/LOGIN` render the login page).
  */
 export function safeNextPath(input: string | null | undefined): string | null {
   if (typeof input !== "string") return null;
   if (input.length > MAX_NEXT_PATH_LENGTH) return null;
   if (input[0] !== "/") return null;
   if (input[1] === "/" || input[1] === "\\") return null;
-  // 不需要 eslint-disable：這個 pattern 的**字面裡沒有任何控制字元**（是碼位逸出），
-  // `no-control-regex` 本來就不會命中它。
   if (!NEXT_PATH_CHARSET_RE.test(input)) return null;
 
   let url: URL;

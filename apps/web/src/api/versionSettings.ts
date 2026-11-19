@@ -5,7 +5,7 @@ import { AUTH_CONFIG_QUERY_KEY } from "./authConfig";
 import { GROUPS_QUERY_KEY } from "./groups";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 
-/** 站台版本設定（requireAdmin）。改總開關後失效公開的 `['auth-config']`（非 admin 的 disabled 顯示讀它）。 */
+/** Changing the master switch invalidates the public `['auth-config']`, which non-admins read. */
 export const VERSION_SETTINGS_QUERY_KEY = ["admin", "version-settings"] as const;
 
 export function useVersionSettings() {
@@ -24,7 +24,7 @@ export function useUpdateVersionSettings() {
   });
 }
 
-/** 個人開關：**只送 `autoVersions`**——不進改名交易、不扣改名額度。回應是寫入後的 `UserDto`，直接寫進 session 快取。 */
+/** Sends only `autoVersions` so the server skips the rename transaction and quota. */
 export function useUpdateAutoVersions() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -34,7 +34,6 @@ export function useUpdateAutoVersions() {
   });
 }
 
-/** 群組開關（manageGroup）：只送 `autoVersions`；成功後失效 `['groups']`（`GroupDto.autoVersions` 從那裡讀）。 */
 export function useUpdateGroupAutoVersions() {
   const queryClient = useQueryClient();
   return useMutation({

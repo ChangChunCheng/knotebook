@@ -2,11 +2,10 @@ import { getNodeById, type BlockNoteEditor } from "@blocknote/core";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import { escapeLinkText, FOCUS_MAX_CODE_POINTS, normalizeAnchor, truncateCodePoints, wikilinkHref, wikilinkVisibleText } from "@knotebook/shared";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** PM 的 `EditorState` 與 `Transaction` 都有 `doc`／`selection`。呼叫端一律 `editor.transact((tr) => fn(tr, …))`（BlockNote 建議的讀法；
- * 只讀不改的 tr 不會被 dispatch，見 StateManager.transact）。 */
+/** Callers use `editor.transact((tr) => fn(tr, …))`; a read-only tr is never dispatched. */
 export type PMLike = Pick<AnyEditor["prosemirrorState"], "doc" | "selection">;
 type PMNode = PMLike["doc"];
 
@@ -15,13 +14,11 @@ export interface BlockRange {
   to: number;
 }
 
-/** 區塊（`blockContainer`）的 posBefore～posAfter；找不到回 null。 */
 export function blockRange(doc: PMNode, blockId: string): BlockRange | null {
   const info = getNodeById(blockId, doc);
   return info ? { from: info.posBeforeNode, to: info.posBeforeNode + info.node.nodeSize } : null;
 }
 
-/** 首區塊 posBefore～末區塊 posAfter；任一端找不到回 null。 */
 export function anchorRange(doc: PMNode, blockIds: readonly string[]): BlockRange | null {
   if (blockIds.length === 0) return null;
   const first = blockRange(doc, blockIds[0]);
@@ -29,12 +26,8 @@ export function anchorRange(doc: PMNode, blockIds: readonly string[]): BlockRang
   return first && last ? { from: first.from, to: last.to } : null;
 }
 
-/**
- * 「內建工具列此刻會不會出現」（#263）。**照抄**上游 `FormattingToolbarExtension.shouldShow`（BlockNote 0.52.1
- * `extensions/FormattingToolbar/FormattingToolbar.ts`，閉包私有、不可引用）的三個條件：選取非空、TextSelection 須含文字、不跨 code 節點；
- * NodeSelection／CellSelection 與上游一樣回 true。框的自動關閉用它判「使用者做出了非空選取」；**不得**改用工具列 store
- * （store 在 pointerdown 期間恆為 false，pointerup 寫回 true 時不再有 selection change，滑鼠拖選會漏）。
- */
+// Copies the conditions of BlockNote 0.52.1's private FormattingToolbarExtension.shouldShow. Don't use the toolbar
+// store instead: it is false during pointerdown and no selection change follows pointerup, so drag-selects are missed.
 export function toolbarWouldShow({ doc, selection }: PMLike): boolean {
   if (selection.empty) return false;
   if (isTextSelection(selection) && doc.textBetween(selection.from, selection.to).length === 0) return false;
@@ -46,19 +39,13 @@ export function toolbarWouldShow({ doc, selection }: PMLike): boolean {
   return !spansCode;
 }
 
-/**
- * 選取是不是「文字以外的目標」：選到整個區塊（圖片、檔案等，NodeSelection）或跨儲存格（CellSelection，以 `$anchorCell` 辨認——
- * `prosemirror-tables` 不是本 app 的直接依賴）。這兩種選取的格式工具列帶著文字選取沒有的項目（替換、下載、刪除、合併儲存格…）。
- */
+// CellSelection is detected by `$anchorCell` because prosemirror-tables isn't a direct dependency.
 export function isNonTextSelection({ selection }: Pick<PMLike, "selection">): boolean {
   return isNodeSelection(selection) || "$anchorCell" in selection;
 }
 
-/**
- * 選取是否整個落在錨點範圍內（#263；框的自動關閉與工具列壓制共用的唯一判斷）。部分重疊算不在範圍內。
- * Ctrl+A 的 AllSelection 是 from=0、to=doc.content.size，落在根 blockGroup 的開合 token 上，比首區塊的 posBefore（=1）還外面——
- * 先夾回根 blockGroup 的內容區 [1, doc.content.size − 1] 再比，否則全選開的框永遠「不在範圍內」。
- */
+// Partial overlap counts as outside. Clamped to the root blockGroup's content [1, size − 1] because Ctrl+A's
+// AllSelection spans 0..size and would otherwise never be inside.
 export function selectionInsideAnchor({ doc, selection }: PMLike, blockIds: readonly string[]): boolean {
   const range = anchorRange(doc, blockIds);
   if (!range) return false;
@@ -67,10 +54,6 @@ export function selectionInsideAnchor({ doc, selection }: PMLike, blockIds: read
   return from >= range.from && to <= range.to;
 }
 
-/**
- * `textBetween` 的 leaf 文字：wikilink 寫成 `[顯示文字](/notes/<id>[#b-…])`（#269，與送出的 markdown 一致；`titleOf` 給現行標題，
- * 缺席時 `label || snapshotTitle`，再空退到 href；顯示文字經 `escapeLinkText` 跳脫，同送出的 markdown）、硬換行寫成 `\n`，其餘取 textContent。
- */
 export function leafText(node: PMNode, titleOf?: (id: string) => string | undefined): string {
   if (node.type.name === "wikilink") {
     const id = String(node.attrs.targetNoteId ?? "");
@@ -81,10 +64,7 @@ export function leafText(node: PMNode, titleOf?: (id: string) => string | undefi
   return node.textContent;
 }
 
-/**
- * `open()` 的 focus（#263）：選取恰好涵蓋錨點區塊的全部文字 → `""`；否則取選取文字（區塊間以 `\n` 分隔、leaf 輸出其文字），
- * 以 code point 截到 2000。「恰好涵蓋」以「選取文字＝錨點全文」判——三擊整段、跨區塊整段拖選、Ctrl+A 都成立（實測三形相等）。
- */
+// "" when the selection covers all of the anchor's text (triple-click, a whole drag and Ctrl+A all compare equal).
 export function selectionFocus({ doc, selection }: PMLike, blockIds: readonly string[], titleOf?: (id: string) => string | undefined): string {
   const leaf = (node: PMNode) => leafText(node, titleOf);
   const selected = doc.textBetween(selection.from, selection.to, "\n", leaf);

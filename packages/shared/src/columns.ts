@@ -1,13 +1,8 @@
-// 並排排版的兩個節點：`columnList`（列）與 `column`（欄）。
-// MIT 自寫、clean-room：不引入也不參考 `@blocknote/xl-multi-column`。節點名沿用 core 的 `columnList`／`column`，
-// 才吃得到 core 內建的 `UniqueID`（types 含這兩名）、`fixColumnList`、鍵盤與 SideMenu 行為。
-// 同 note-schema-config.ts：只有 renderHTML／toExternalHTML 閉包碰 document，且只在掛載與匯出時被呼叫。
-//
-// parse：列的規則以 getAttrs 限定至少兩欄；外部形的欄規則（`div[data-kb-column]`）另限定父元素是合格的外部列——
-// 只靠列層限定擋不住單欄外部 HTML，內層的欄仍會被認成欄、被 PM 包成補了空欄的兩欄列。站內形的欄規則不加限定
-// （從欄內複製再貼上靠它重建）；也不用 `context: "columnList/"`，那會讓欄內複製再貼上丟例外。
-//
-// 改這裡的節點名、group、content、prop＝改 note schema：同步升 `note-schema-version.ts` 的 NOTE_SCHEMA_VERSION。
+// Clean-room MIT code (don't import or consult @blocknote/xl-multi-column). Node names match core's
+// columnList/column so core's UniqueID, fixColumnList and SideMenu handling apply.
+// External columns must be in a valid external row, or PM wraps a lone one into a row with an empty column.
+// The site-form column rule is unrestricted: copy-paste inside a column rebuilds through it. Not `context: "columnList/"`: that makes such a paste throw.
+// Changing a node name, group, content or prop changes the note schema: bump NOTE_SCHEMA_VERSION.
 import { createBlockSpecFromTiptapNode } from "@blocknote/core";
 import { Node } from "@tiptap/core";
 
@@ -26,13 +21,11 @@ export const COLUMN_BLOCK_TYPES: ReadonlySet<string> = new Set([COLUMN_LIST_TYPE
 export const COLUMNS_STYLE = "display:flex;gap:16px";
 export const COLUMNS_OPEN_TAG = `<div data-kb-columns style="${COLUMNS_STYLE}">`;
 
-/** 非有限數 → 1；夾 [0.1, 10]；四捨五入到兩位小數。 */
 export function clampColumnWidth(n: number): number {
   if (!Number.isFinite(n)) return COLUMN_WIDTH_DEFAULT;
   return Math.round(Math.min(COLUMN_WIDTH_MAX, Math.max(COLUMN_WIDTH_MIN, n)) * 100) / 100;
 }
 
-/** 外部形的寬度字面：1 → "1"、1.5 → "1.5"、0.756 → "0.76"。 */
 export function formatColumnWidth(n: number): string {
   return String(clampColumnWidth(n));
 }
@@ -42,13 +35,12 @@ export function columnOpenTag(width: number): string {
 }
 
 const FLEX_RE = /(?:^|;)\s*flex\s*:\s*([0-9]+(?:\.[0-9]+)?)/i;
-/** 取 `flex` 屬性（不認 `-webkit-flex`、`display:flex`）的第一個數字；沒有 → 1。 */
 export function parseColumnFlex(style: string | null): number {
   const m = FLEX_RE.exec(style ?? "");
   return m ? clampColumnWidth(Number(m[1])) : COLUMN_WIDTH_DEFAULT;
 }
 
-// #398 順手：走兄弟（`firstElementChild`／`nextElementSibling`）——server 端 DOM（jsdom）的 `children` 每讀一次是 O(子數)。
+// Walk siblings: on the server, jsdom's `children` costs O(children) per access.
 const countChildren = (el: Element, selector: string) => {
   let n = 0;
   for (let c = el.firstElementChild; c !== null; c = c.nextElementSibling) if (c.matches(selector)) n++;
@@ -94,7 +86,7 @@ export const ColumnNode = Node.create({
   priority: 40,
   addAttributes() {
     return {
-      // 寬度由 node 的 renderHTML 寫進 style（`flex:N 1 0`），屬性本身不輸出。
+      // Width is written into style by the node's renderHTML (flex:N 1 0), not as an attribute.
       width: { default: COLUMN_WIDTH_DEFAULT, parseHTML: (el: HTMLElement) => parseColumnFlex(el.getAttribute("style")), renderHTML: () => ({}) },
     };
   },
@@ -107,7 +99,7 @@ export const ColumnNode = Node.create({
   },
 });
 
-// toExternalHTML 自寫、不經 defaultBlockToHTML：只帶讀出正規形的屬性，不帶 class／data-id／data-node-type。
+// Own toExternalHTML, not defaultBlockToHTML: emit only attributes that read back canonically (no class/data-id/data-node-type).
 const listSpec = createBlockSpecFromTiptapNode({ node: ColumnListNode, type: COLUMN_LIST_TYPE, content: "none" }, {});
 export const columnListBlockSpec: typeof listSpec = {
   ...listSpec,

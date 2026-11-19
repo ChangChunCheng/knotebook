@@ -9,13 +9,7 @@ import {
 import type { BacklinkDto, LastEditedDto, NoteDto } from "@knotebook/shared";
 import { api } from "./client";
 
-/**
- * 筆記在別處（AI 經 API 寫入、撤回一筆修改…）被改動之後要失效的三把 key（#106）：
- * id 錨定的常駐層、目前 ref 的解析層、路徑解析層（個人筆記 by-path／群組筆記 by-group-path 二擇一）。
- *
- * ⚠ `invalidateQueries(["note", id])` 是**前綴**比對，**不涵蓋** `["note", slug]`——
- * 兩者是同一層陣列的不同元素，所以目前這條路由用的 ref 要另外傳進來。
- */
+/** `["note", id]` matches by prefix and doesn't cover `["note", slug]`, so the route's current ref is passed separately. */
 export function invalidateNoteQueries(
   queryClient: QueryClient,
   note: Pick<NoteDto, "id" | "ownerHandle" | "groupId" | "slug">,
@@ -23,8 +17,7 @@ export function invalidateNoteQueries(
 ): void {
   void queryClient.invalidateQueries({ queryKey: ["note", note.id] });
   if (ref !== note.id) void queryClient.invalidateQueries({ queryKey: ["note", ref] });
-  // #175：路徑解析層依形二擇一——群組筆記 `/g/`、個人筆記 `/n/`。判準與 `canonicalNotePath`
-  // 同一條（`typeof … === "string"`，不是 `!== null`：沒有 `groupId` 欄的舊物件不得被當成群組筆記）。
+  // Same test as `canonicalNotePath`: `typeof === "string"`, not `!== null`, so old objects without `groupId` aren't group notes.
   if (typeof note.groupId === "string") {
     void queryClient.invalidateQueries({ queryKey: ["note-by-group-path", note.groupId, note.slug] });
   } else {
@@ -32,10 +25,6 @@ export function invalidateNoteQueries(
   }
 }
 
-/**
- * 最近 tab 跟上開著那篇的編輯——把 `["notes"]` 快取裡那一列的 `lastEdited` 換成新值。
- * 只有開著的那篇有觸發點，其他筆記等清單下次重抓。沒有快取、沒有這一列、值相同、較舊（或 null）都不寫。
- */
 export function patchNotesListLastEdited(
   queryClient: QueryClient,
   id: string,
@@ -51,7 +40,7 @@ export function patchNotesListLastEdited(
       ? prev === lastEdited
       : prev.at === lastEdited.at && prev.byHandle === lastEdited.byHandle && prev.agentLabel === lastEdited.agentLabel;
   if (same) return;
-  // 只往前走：清單已有較新的值（例如切回視窗時清單先重抓過），快取裡的舊 note 不得蓋回去。
+  // Only move forward: the list may already hold a newer value (e.g. refetched on window focus).
   if (prev !== null && (lastEdited === null || Date.parse(lastEdited.at) < Date.parse(prev.at))) return;
   queryClient.setQueryData<NoteDto[]>(
     ["notes"],
@@ -66,7 +55,7 @@ export function useNotes(): UseQueryResult<NoteDto[]> {
   });
 }
 
-/** `retry` 有給才覆寫（給 `undefined` 會蓋掉 QueryClient 的預設，query-core 再退回 3 次）。 */
+/** `retry` is set only when given: an explicit `undefined` would override the QueryClient default. */
 export interface NoteQueryOptions {
   enabled?: boolean;
   retry?: UseQueryOptions<NoteDto>["retry"];
@@ -76,19 +65,8 @@ function retryOption(options: NoteQueryOptions): Pick<UseQueryOptions<NoteDto>, 
   return options.retry === undefined ? {} : { retry: options.retry };
 }
 
-/**
- * `GET /api/notes/:ref`。#122 起 NotePage 用它扮兩個角色：
- * - **解析層**（ref＝路由參數，slug 或 uuid）：`enabled` 由呼叫端以 paramsKey 判斷
- *   控制——只在真導航（key 不等）時打；收斂 effect 換到本篇 canonical 不算真導航（#179）；
- * - **常駐層**（ref＝解析出的 id）：key 以 id 為錨永不過時，refetch/invalidate 全清
- *   都安全。`ref.length > 0` 的守衛同時吃掉「尚未解析完成」的空字串（不打
- *   `/api/notes/undefined`）。
- *
- * ⚠ **禁止加 `placeholderData`/`keepPreviousData`**（即使是為了消掉轉場的 loading
- * 閃爍）：NotePage 的 seed effect 依賴「`resolveQuery.data` 必屬當下這組 ref」——
- * 給了 placeholder，導航瞬間 data 會是**上一篇**的 note，seed 會寫出
- * `{key: 新, id: 舊}`，頁面停在錯的筆記上、網址卻是新的，而且沒有測試會紅。
- */
+/** Never add `placeholderData`/`keepPreviousData`: NotePage's seed effect assumes `data` belongs to the current ref;
+ * a placeholder would seed the previous note under the new URL, and no test would fail. */
 export function useNote(ref: string, options: NoteQueryOptions = {}): UseQueryResult<NoteDto> {
   return useQuery({
     queryKey: ["note", ref],
@@ -98,11 +76,7 @@ export function useNote(ref: string, options: NoteQueryOptions = {}): UseQueryRe
   });
 }
 
-/**
- * `GET /api/notes/by-path/:handle/:slug`——`/n/<handle>/<slug>` 新形網址的解析層
- * （#122）。query key 含 handle 與 slug（data 必屬當下這組 params）；
- * `useNote` 的 placeholderData 禁令同樣適用於此（同一個 seed effect 消費）。
- */
+/** Same `placeholderData` ban as `useNote` (same seed effect). */
 export function useNoteByPath(
   handle: string,
   slug: string,
@@ -116,11 +90,7 @@ export function useNoteByPath(
   });
 }
 
-/**
- * `GET /api/notes/by-group-path/:groupId/:slug`——`/g/<group_id>/<slug>` 群組筆記網址的解析層
- * （#175）。query key 含 groupId 與 slug（data 必屬當下這組 params）。
- * ⚠ 與 `useNote`／`useNoteByPath` 同一條禁令：**不得加 `placeholderData`**（同一個 seed effect 消費）。
- */
+/** Same `placeholderData` ban as `useNote` (same seed effect). */
 export function useNoteByGroupPath(
   groupId: string,
   slug: string,
@@ -135,13 +105,6 @@ export function useNoteByGroupPath(
   });
 }
 
-/**
- * 反向連結（`GET /api/notes/:id/backlinks` → `{backlinks: BacklinkDto[]}`）。
- * `enabled: !!noteId`——與 `useNote` 的 `ref.length > 0` 同用意：`NotePage` 在 note
- * 還沒載完時 `noteId` 是 `undefined`，不該對 `/undefined/backlinks` 發請求。
- * React Query 預設 `refetchOnWindowFocus: true`（見 `main.tsx` 的 `new QueryClient()`
- * 未覆寫這個選項），已滿足「focus refetch」——不需要在這裡額外指定。
- */
 export function useBacklinks(noteId: string | undefined): UseQueryResult<BacklinkDto[]> {
   return useQuery({
     queryKey: ["backlinks", noteId],
@@ -155,10 +118,6 @@ export function useBacklinks(noteId: string | undefined): UseQueryResult<Backlin
   });
 }
 
-/**
- * `groupId`（#103）：在群組裡建筆記；群組筆記的權限來自建立者在該群組的角色。
- * 角色缺新建旗標 403 `forbidden`；非成員或群組不存在 404 `group_not_found`。
- */
 export function useCreateNote() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -180,10 +139,9 @@ export function useDeleteNote() {
     onSuccess: (_data, id) => {
       void queryClient.invalidateQueries({ queryKey: ["notes"] });
       void queryClient.invalidateQueries({ queryKey: ["note", id] });
-      // 前綴失效所有 `["backlinks", noteId]`：側欄 ⋮ 可以留在 A 頁刪掉 B，B 若連到 A，
-      // A 底部的 B 晶片要跟著消失。
+      // All backlinks: the sidebar can delete B while A is open, and A's chip for B must disappear.
       void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
-      // #181：刪除＝移入垃圾桶，垃圾桶清單多一筆。
+      // Deleting moves the note to the trash.
       void queryClient.invalidateQueries({ queryKey: ["trash"] });
     },
   });

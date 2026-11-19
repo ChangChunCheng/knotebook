@@ -1,8 +1,6 @@
 @import "tailwindcss";
 
-/* Tailwind v4 預設 `dark:` 走 prefers-color-scheme media query；我們的主題切換
-   是手動寫 `.dark` class 到 <html>（見 theme.tsx），所以要把 `dark:` variant
-   改成 class-based（比對 `.dark` 祖先）才會生效。 */
+/* Theme switching toggles a `.dark` class on <html> (theme.tsx), so `dark:` must match that class, not prefers-color-scheme. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
@@ -11,11 +9,11 @@
 }
 
 :root {
-  --background: oklch(0.967 0.003 264); /* #f3f4f6 頁底（卡片浮在更深的底上，淺色頁底改淺灰） */
+  --background: oklch(0.967 0.003 264); /* #f3f4f6 */
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0); /* #ffffff（不變） */
+  --card: oklch(1 0 0); /* #ffffff */
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0); /* 不變；淺色浮層與卡同色，靠既有 border+shadow 分離 */
+  --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
@@ -23,7 +21,7 @@
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.94 0.004 264); /* #eaebee（原 0.97 在新頁底 0.967 上 hover 差 0.003 等於無回饋，調深一階） */
+  --accent: oklch(0.94 0.004 264); /* below 0.97 so hover shows on --background */
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
@@ -31,35 +29,27 @@
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
-  /* 主題色（accent）基底＝indigo。這四個 token 是 `[data-accent]` 屬性不存在時的
-     fallback（首屏防閃腳本遇非法/未設值就不設屬性，靠這裡撐住），不是
-     `[data-accent=indigo]` 的替代品——兩者必須逐字同值，見下方 [data-accent] 區塊
-     與 `theme.accent-vars.test.ts` 的 (c) 基底等值守衛。 */
-  --brand: oklch(0.550 0.064 275.7); /* ≈#676f97，indigo light */
+  /* Accent base (indigo): the fallback when [data-accent] is absent (the anti-flash script sets nothing for invalid
+     values). Must equal the [data-accent=indigo] block exactly (theme.accent-vars.test.ts). */
+  --brand: oklch(0.550 0.064 275.7);
   --brand-soft: oklch(0.681 0.058 275.7 / 14%);
   --brand-soft-strong: oklch(0.681 0.058 275.7 / 20%);
-  --brand-on-soft: oklch(0.450 0.067 275.7); /* ≈#4b527a */
-  --brand-deep: oklch(0.470 0.064 275.7); /* ≈#51587f */
-  --brand-fg: oklch(0.985 0 0); /* 主色實心鈕的字色：淺色模式一律白字 */
+  --brand-on-soft: oklch(0.450 0.067 275.7);
+  --brand-deep: oklch(0.470 0.064 275.7);
+  --brand-fg: oklch(0.985 0 0);
 
-  /* 搜尋結果的命中高亮底色（不隨 accent 變）。對比（WCAG 2，`mark` 沿用列文字色）：前景字 15.9:1，
-     六色 `--brand-on-soft`（active 列）最低 5.8:1；深色見 :root.dark。 */
-  --search-highlight: oklch(0.924 0.12 95.746); /* ≈#fde68a（稿色） */
+  /* Independent of the accent. */
+  --search-highlight: oklch(0.924 0.12 95.746);
 
-  /* 六個 swatch 變數：色點 UI 唯一取色來源。:root 放各色 light `--brand` 值。 */
-  --brand-swatch-indigo: oklch(0.550 0.064 275.7); /* ≈#676f97 */
-  --brand-swatch-blue: oklch(0.550 0.052 244.4); /* ≈#58758e */
-  --brand-swatch-teal: oklch(0.550 0.050 183.3); /* ≈#4f7b74 */
-  --brand-swatch-sage: oklch(0.550 0.049 137.6); /* ≈#64795d */
-  --brand-swatch-rose: oklch(0.550 0.052 18.4); /* ≈#8e6566 */
-  --brand-swatch-gold: oklch(0.550 0.098 82.4); /* ≈#8e6b23 */
+  --brand-swatch-indigo: oklch(0.550 0.064 275.7);
+  --brand-swatch-blue: oklch(0.550 0.052 244.4);
+  --brand-swatch-teal: oklch(0.550 0.050 183.3);
+  --brand-swatch-sage: oklch(0.550 0.049 137.6);
+  --brand-swatch-rose: oklch(0.550 0.052 18.4);
+  --brand-swatch-gold: oklch(0.550 0.098 82.4);
 
-  /* 程式碼區塊上色（issue #96）。shiki 走 createCssVariablesTheme（prefix --code-），
-     token 顏色一律是 var(--code-…)，色值只在這裡與 :root.dark 各一套——深淺切換＝換變數值，
-     shiki 完全不知情。**刻意不引用 --brand 系**：程式碼配色是語意配色（關鍵字／字串／
-     註解…），換 accent 不得改變這裡任何顏色（issue 設計限制；守衛
-     theme.code-highlight-vars.test.ts）。色值取自 GitHub Light 的 token 色（在同級
-     淺灰底上有現成的對比度驗證），底色配我們的頁底層階。 */
+  /* Shiki's css-variables theme emits var(--code-…). Not derived from --brand: syntax colors must not change with
+     the accent (theme.code-highlight-vars.test.ts). */
   --code-foreground: #1f2328;
   --code-background: #f6f8fa;
   --code-token-comment: #59636e;
@@ -76,62 +66,48 @@
   --code-token-inserted: #116329;
 }
 
-/* 深色基底塊**必須錨在 `:root`**（issue #154）。`@theme inline` 讓 `text-brand` 這類
-   utility 編譯成 `color: var(--brand)`、在元素自己身上求值；而 BlockNote 把 light/dark
-   當 **class** 寫在 `.bn-root`（編輯器容器）與 `portalElement`（浮層）上。舊的裸 `.dark`
-   會在那些巢狀 `.dark` 上再命中一次，把本塊的 indigo fallback 重新宣告到編輯器子樹裡，
-   使用者選的主題色在編輯器內被靜默重設（深色＋非 indigo 五色全中）。`dark` class 與
-   `data-accent` 都只寫在 `<html>`（`theme.tsx`／`index.html` 防閃腳本），所以錨 `:root`
-   不丟任何正當命中。下面十二個 `[data-accent]` 塊的深色那半同理錨 `:root.dark`。
-   同理任何**不錨在根元素**的規則都不得宣告主題變數——BlockNote 也在 `.bn-root` 寫
-   `data-color-scheme`，`[data-color-scheme=dark]` 一樣會在編輯器裡重設。
-   守衛：`theme.accent-vars.test.ts` 的 (h)——任何宣告主題變數的規則，選擇器清單裡每一項
-   都必須是以 `:root`／`html` 起頭的單一複合選擇器。 */
+/* Anchored at :root (#154): BlockNote puts a `dark` class and data-color-scheme on .bn-root, so a bare `.dark` rule
+   would re-declare the indigo fallback inside the editor and reset the user's accent. Only :root/html rules may
+   declare theme variables (theme.accent-vars.test.ts). */
 :root.dark {
-  --background: oklch(0.172 0.007 258.4); /* #0e1013 頁底（卡片浮在更深的底上） */
-  --foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
-  --card: oklch(0.230 0.012 264.3); /* #1a1d23（原 0.264，卡面比頁底亮一階） */
-  --card-foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
-  --popover: oklch(0.264 0.014 267); /* #22252c */
-  --popover-foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
-  --primary: oklch(0.925 0.006 264.5); /* #e4e6ea */
-  --primary-foreground: oklch(0.213 0.008 264.4); /* #17191d */
-  --secondary: oklch(0.309 0.015 264.3); /* #2c3038 */
-  --secondary-foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
-  --muted: oklch(0.309 0.015 264.3); /* #2c3038 */
-  --muted-foreground: oklch(0.707 0.016 260.7); /* #9ba1ab */
-  --accent: oklch(0.309 0.015 264.3); /* #2c3038 */
-  --accent-foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
+  --background: oklch(0.172 0.007 258.4); /* #0e1013 */
+  --foreground: oklch(0.982 0.002 247.8);
+  --card: oklch(0.230 0.012 264.3); /* #1a1d23 */
+  --card-foreground: oklch(0.982 0.002 247.8);
+  --popover: oklch(0.264 0.014 267);
+  --popover-foreground: oklch(0.982 0.002 247.8);
+  --primary: oklch(0.925 0.006 264.5);
+  --primary-foreground: oklch(0.213 0.008 264.4);
+  --secondary: oklch(0.309 0.015 264.3);
+  --secondary-foreground: oklch(0.982 0.002 247.8);
+  --muted: oklch(0.309 0.015 264.3);
+  --muted-foreground: oklch(0.707 0.016 260.7);
+  --accent: oklch(0.309 0.015 264.3);
+  --accent-foreground: oklch(0.982 0.002 247.8);
   --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.982 0.002 247.8); /* #f8f9fa */
-  --border: oklch(0.707 0.016 260.7 / 18%); /* #9ba1ab @18% */
-  --input: oklch(0.707 0.016 260.7 / 25%); /* #9ba1ab @25% */
-  --ring: oklch(0.557 0.017 260.7); /* #6e747e */
+  --destructive-foreground: oklch(0.982 0.002 247.8);
+  --border: oklch(0.707 0.016 260.7 / 18%);
+  --input: oklch(0.707 0.016 260.7 / 25%);
+  --ring: oklch(0.557 0.017 260.7);
 
-  /* 主題色（accent）基底＝indigo。與 :root 版本同語意：[data-accent] 屬性不存在時的
-     fallback，必須逐字＝:root.dark[data-accent=indigo] 那塊，見守衛 (c)。 */
-  --brand: oklch(0.681 0.058 275.7); /* ≈#8e96bd，indigo dark（=基色） */
+  /* Accent base (indigo), dark: must equal :root.dark[data-accent=indigo] exactly. */
+  --brand: oklch(0.681 0.058 275.7);
   --brand-soft: oklch(0.681 0.058 275.7 / 16%);
   --brand-soft-strong: oklch(0.681 0.058 275.7 / 24%);
-  --brand-on-soft: oklch(0.840 0.038 275.7); /* ≈#c3c9e4 */
-  --brand-deep: oklch(0.721 0.058 275.7); /* ≈#9aa2ca */
-  --brand-fg: oklch(0.213 0.008 264.4); /* 深色模式一律近黑字（主色在深色是亮色） */
+  --brand-on-soft: oklch(0.840 0.038 275.7);
+  --brand-deep: oklch(0.721 0.058 275.7);
+  --brand-fg: oklch(0.213 0.008 264.4);
 
-  /* 搜尋高亮 dark 套：前景字 8.1:1，六色 `--brand-on-soft` 最低 5.2:1。 */
-  --search-highlight: oklch(0.420 0.080 85); /* ≈#61490c */
+  --search-highlight: oklch(0.420 0.080 85);
 
-  /* 六個 swatch 變數：:root.dark 放各色 dark 基色。 */
-  --brand-swatch-indigo: oklch(0.681 0.058 275.7); /* ≈#8e96bd */
-  --brand-swatch-blue: oklch(0.677 0.048 244.4); /* ≈#7f9bb3 */
-  --brand-swatch-teal: oklch(0.700 0.046 183.3); /* ≈#7fa8a1 */
-  --brand-swatch-sage: oklch(0.692 0.045 137.6); /* ≈#8fa388 */
-  --brand-swatch-rose: oklch(0.670 0.048 18.4); /* ≈#b18a8a */
-  --brand-swatch-gold: oklch(0.747 0.089 82.4); /* ≈#c9a86a */
+  --brand-swatch-indigo: oklch(0.681 0.058 275.7);
+  --brand-swatch-blue: oklch(0.677 0.048 244.4);
+  --brand-swatch-teal: oklch(0.700 0.046 183.3);
+  --brand-swatch-sage: oklch(0.692 0.045 137.6);
+  --brand-swatch-rose: oklch(0.670 0.048 18.4);
+  --brand-swatch-gold: oklch(0.747 0.089 82.4);
 
-  /* 程式碼區塊上色 dark 套（對照 :root 那套的說明）。**每個變數都要有 dark 版**——
-     漏一個＝該 token 靜默沿用 light 色值（CSS 變數繼承），深底上就是一坨看不見的
-     深色字。色值取自 GitHub Dark；底色 #15181e 落在頁底 #0e1013 與卡面 #1a1d23 之間，
-     維持「更深一階」的層階語感。 */
+  /* Every --code-* variable needs a dark value, or it silently inherits the light one. */
   --code-foreground: #e6edf3;
   --code-background: #15181e;
   --code-token-comment: #8b949e;
@@ -148,16 +124,9 @@
   --code-token-inserted: #7ee787;
 }
 
-/* 主題色（accent）十二個套用塊：六色 × light/dark。
-   - 屬性值不帶引號（`[data-accent=indigo]`），守衛 regex 同調。
-   - 順序規則：**所有 `:root.dark[data-accent=…]` 塊一律寫在所有 `:root[data-accent=…]`
-     塊之後**。原本兩邊同為 (0,2,0)、靠來源順序決勝負；#154 把深色塊錨到 `:root` 後
-     變成 (0,3,0)，dark 塊不論位置都壓得過 light 塊，這條順序改為第二道保險（守衛 (b)
-     照留）。仍要注意的是：若某色只有 light 塊沒有 dark 塊，`:root[data-accent]`
-     (0,2,0) 會壓過 `:root.dark` 基底（同為 (0,2,0)、它寫在後面），讓淺色值滲進深色。
-   - `--brand-soft`/`--brand-soft-strong` 底色一律取該色 dark `--brand`（=基色）的
-     oklch 三值：light 塊 /14%、/20%；dark 塊 /16%、/24%。不得用 light `--brand`
-     當底——`theme.accent-vars.test.ts` 守衛 (e) 機械擋這個錯法。 */
+/* Unquoted attribute values (the guard regex expects them). Keep all dark blocks after all light ones; a color without
+   a dark block would leak light values into dark mode. --brand-soft* derive from the color's dark --brand
+   (theme.accent-vars.test.ts). */
 
 :root[data-accent=indigo] {
   --brand: oklch(0.550 0.064 275.7); /* ≈#676f97 */
@@ -292,29 +261,16 @@ body {
   font-family: var(--font-sans);
 }
 
-/* 滾動條：全 app 統一細版——透明軌道＋圓角半透明中性灰 thumb，色跟
-   `--muted-foreground` 走（兩色模式自動換）。
-   Chromium/Safari 走 `::-webkit-scrollbar` 偽元素（radius/hover 全可控）；
-   Firefox 走標準 `scrollbar-width`/`scrollbar-color`，但**必須包在
-   `@supports (-moz-appearance: none)` 內**：Chromium 121+ 也支援標準屬性，
-   而 Chromium 的實作規則是一旦設了 `scrollbar-width`/`scrollbar-color`，
-   `::-webkit-scrollbar` 系列樣式整組停用——無條件設會讓下面的偽元素樣式
-   在 Chromium 上「幾乎不可見地」失效（寬與色不變，只靜默掉圓角/內縮/
-   hover），結構由 `theme.scrollbar-guard.test.ts` 守著。
-   `-moz-appearance` 是 Firefox 已別名化的舊屬性：哪天被移除，Firefox 只是
-   退回預設滾動條（退化不會壞）。 */
-/* 這一組值是**滾動條的共用語彙**：頁面上所有捲軸與 select picker 的捲軸（見檔案
-   後段 `@supports (appearance: base-select)`）都引用它們。picker 的捲軸不能與這裡
-   併成同一條規則——`::picker(select)` 在尚未支援的瀏覽器是無效選擇器，而**選擇器
-   清單裡有一個無效就整條規則作廢**，那會連帶把全 app 的捲軸樣式一起弄丟。所以是
-   「兩組規則、一份值」，由 `theme.scrollbar-guard.test.ts` 釘住兩邊都只引用這些變數。 */
+/* Firefox's standard properties stay inside @supports (-moz-appearance: none): once set, Chromium 121+ ignores all
+   ::-webkit-scrollbar styling. The picker's scrollbar can't share these rules: an unsupported ::picker(select) voids
+   the whole selector list (theme.scrollbar-guard.test.ts). */
 :root {
   --scrollbar-size: 10px;
 
-  /* 2px 透明 border＋content-box clip：thumb 視覺 6px、hover 命中區維持 10px。 */
+  /* 2px transparent border + content-box clip: 6px visible thumb, 10px hover target. */
   --scrollbar-thumb-inset: 2px;
 
-  /* 55%/75% 是對比與低調間的折衷（40% 時靜止態對比僅 1.69:1）。 */
+  /* 40% gave only 1.69:1 contrast at rest. */
   --scrollbar-thumb: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklab, var(--muted-foreground) 75%, transparent);
 }
@@ -350,54 +306,32 @@ body {
   }
 }
 
-/* 分享面板「存取權」三選一（`components/ShareDialog.tsx` 的 `AccessSection`）唯一還
-   留著的原生 `<input type="radio">`——那顆 radio 本身不換成 Radix RadioGroup（會動到
-   `AccessSection` 的 latch/sticky 不變量，範圍外），但至少讓瀏覽器預設的藍色圈圈跟上
-   主題色。選擇器收窄到 `name="share-access"`（該元件唯一一組 radio），不對全站原生
-   radio 亂灑——今天 app 裡也只有這一處在用原生 radio。 */
+/* The app's only native radio; tint it with the accent. */
 input[name="share-access"] {
   accent-color: var(--color-brand);
 }
 
-/* 更細的水平捲軸（6px），給 backlinks 那條單排 strip 用——那一列只有 36px 高，
-   全域的 10px 捲軸會把 chips 擠上去、也留不出 chip 與捲軸之間的間隙。
-   thumb 的透明 border 一併從 2px 收成 1px，否則 6px 軌道裡 thumb 只剩 2px。
-
-   **必須寫在這裡**（與上面的全域滾動條規則同為頂層規則、且排在其後）：Tailwind
-   把偽元素寫進 class 名的那種 arbitrary variant 會被放進 `@layer utilities`，而
-   未分層的頂層規則勝過任何 layer——實測那樣寫捲軸仍是 10px。（此處刻意不寫出那個
-   class 名的字面：scanner 不解析註解，寫了照樣會產出一份沒人用的死 CSS。）
-   使用端：`ui/rows.ts` 的 `BACKLINKS_SCROLL_ROW`（該常數註解記了整組幾何換算）。 */
+/* Backlinks strip (36px row). Must be a top-level rule after the global scrollbar rules: a Tailwind arbitrary variant
+   lands in @layer utilities, which loses to unlayered rules. */
 .scrollbar-x-thin::-webkit-scrollbar {
   height: 6px;
 }
 
+/* A 1px thumb border: with the default 2px border the 6px track would leave a 2px thumb. */
 .scrollbar-x-thin::-webkit-scrollbar-thumb {
   border-width: 1px;
 }
 
-/* BlockNote 深色覆寫。
-   a. 選擇器形狀：浮層（slash menu／formatting toolbar／file panel 等）掛在
-   editor.portalElement，其 class 只有 `bn-root` ＋ color scheme，沒有
-   `bn-container`——以 `.bn-container` 為錨的覆寫對浮層無效。BlockNote 的 CSS
-   在 NotePage lazy chunk，載入順序必晚於本檔，同 specificity 我們必輸，需要
-   (0,3,0) 才贏內建 `.bn-root[data-color-scheme=dark]` 的 (0,2,0)。因此選擇器
-   定死為 `.dark .bn-root[data-color-scheme="dark"]`，選擇器不得放寬，也不得改錨到 `.bn-container`。
-   b. 這個區塊必須留在經 Tailwind 處理的 index.css 內：`@theme inline` 會
-   tree-shake 沒被引用的 `--color-*`，是本區塊的 `var(--color-…)` 引用把它們
-   留在產物裡——搬去獨立 CSS 檔會讓變數消失、宣告靜默失效，且 parity 測試
-   抓不到。 */
-/* light 的編輯器底色：把「BlockNote 內建 #ffffff 恰等於 light --card 純白」的數值
-   巧合升級成真耦合——#126 滿版化後公開頁 frame 直接用 bg-card 當整頁底，
-   若日後 --card 離開純白而編輯器仍畫內建白，文章欄寬的白長條會在 light 重新浮出
-   「內文卡」殘影。(0,2,0) 壓得過內建裸 .bn-root 的 (0,1,0)，載入順序無關。
-   視覺上此刻零變化（兩值同為白）。 */
+/* BlockNote dark overrides. Menus are portaled under .bn-root without .bn-container, and BlockNote's CSS loads later,
+   so this exact (0,3,0) selector is needed. Keep it in this Tailwind-processed file: these var() references stop
+   `@theme inline` from dropping the --color-* variables. */
+/* Follow --card rather than BlockNote's white, which matches --card only by coincidence. */
 .bn-root[data-color-scheme="light"] {
   --bn-colors-editor-background: var(--color-card);
 }
 
 .dark .bn-root[data-color-scheme="dark"] {
-  --bn-colors-editor-background: var(--color-card); /* 編輯器坐在內文卡上，不是頁底 */
+  --bn-colors-editor-background: var(--color-card);
   --bn-colors-editor-text: var(--color-foreground);
   --bn-colors-menu-background: var(--color-popover);
   --bn-colors-menu-text: var(--color-popover-foreground);
@@ -405,36 +339,19 @@ input[name="share-access"] {
   --bn-colors-tooltip-text: var(--color-foreground);
   --bn-colors-hovered-background: var(--color-accent);
   --bn-colors-hovered-text: var(--color-accent-foreground);
-  --bn-colors-selected-background: oklch(0.363 0.015 264.4); /* #3a3e46，比 accent 亮一階；無對應 token 字面值 */
+  --bn-colors-selected-background: oklch(0.363 0.015 264.4); /* no token for this shade */
   --bn-colors-selected-text: var(--color-foreground);
   --bn-colors-disabled-background: var(--color-muted);
   --bn-colors-disabled-text: var(--color-muted-foreground);
   --bn-colors-border: var(--color-border);
   --bn-colors-side-menu: var(--color-muted-foreground);
-  --bn-colors-shadow: oklch(0.172 0.007 258.4 / 60%); /* 用於 --bn-shadow-medium */
+  --bn-colors-shadow: oklch(0.172 0.007 258.4 / 60%);
 }
 
-/* block 被選取時的外框（node selection）。BlockNote 內建是寫死的
-   `.bn-block-content.ProseMirror-selectednode > * { outline: 4px solid #64a0ff }`
-   ——那個藍不吃我們的主題色，圖片、檔案、mermaid 圖一大就整塊被亮藍圈住。這裡把
-   **所有** block 統一換成主題色（`--color-brand`，跟著使用者選的莫蘭迪主題色走）的
-   細框；外框本身不能拿掉，那是「這個 block 現在被選取」的唯一提示（此時按 Delete
-   會刪掉整塊）。`border-radius: 4px` 沿用內建那條，不重複宣告。
-
-   ⚠ `.bn-editor` 這個祖先錨點不得拿掉：BlockNote 的 CSS 在 NotePage lazy chunk，
-   載入順序必晚於本檔，同 specificity 我們必輸（同 `.dark .bn-root[data-color-scheme]`
-   那段的理由）。內建那兩條是 (0,2,0)，靠 `.bn-editor` 墊到 (0,3,0) 才蓋得掉——
-   `bn-editor` 是 ProseMirror 可編輯元素本身的 class（BlockNote 的 editorProps 掛的），
-   所有 block content 都在它底下。兩種形都要寫：`ProseMirror-selectednode` 可能落在
-   `.bn-block-content` 自己身上，也可能落在它的外層（BlockNote 兩種都會出現）。
-   守衛見 `theme.block-selection-guard.test.ts`——這條壞掉只會靜默變回藍框。
-   邊界：落在 `.bn-editor` 之外的 `ProseMirror-selectednode`（例如脫離編輯器 DOM 的拖曳
-   預覽節點）仍會拿到 BlockNote 內建的 4px 亮藍。那個節點 `opacity:.001`，看不見，不處理。
-
-   外框只在焦點還在編輯器容器（`.bn-container`，格式工具列、檔案面板等浮層也掛在裡面）內時上色：
-   點側欄、頁首等別處、編輯器失焦後，ProseMirror 的 selection 仍是整個 block，沒有這個條件外框會一直留著。
-   規則本身不加 `:focus-within`（那樣失焦時會退回 BlockNote 內建的亮藍框）：失焦時外框顏色是透明，
-   `.bn-container:focus-within` 才把 `--kb-node-frame` 設成主題色。 */
+/* Accent outline instead of BlockNote's hard-coded blue; it must stay, as the only sign that Delete removes the block.
+   .bn-editor lifts it over the later-loaded built-in (0,2,0); both forms are needed because ProseMirror-selectednode
+   can sit on .bn-block-content or its parent. Colored only while focus is in .bn-container, or it lingers after blur;
+   :focus-within on the rule itself would fall back to the built-in blue. */
 .bn-editor .bn-block-content.ProseMirror-selectednode > *,
 .bn-editor .ProseMirror-selectednode > .bn-block-content > * {
   outline: 2px solid var(--kb-node-frame, transparent);
@@ -444,39 +361,21 @@ input[name="share-access"] {
   --kb-node-frame: var(--color-brand);
 }
 
-/* 檔案 block 被選取時，BlockNote 把檔名那一列塗灰（`.ProseMirror-selectednode .bn-file-name-with-icon`，深色另有一條）。
-   跟外框同一個道理：編輯器容器失焦後不留著（游標移上去的 hover 底色不受影響）。 */
+/* Like the outline: no file-name highlight once the editor loses focus. */
 .bn-container:not(:focus-within) .bn-editor .ProseMirror-selectednode .bn-file-name-with-icon:not(:hover) {
   background-color: transparent;
 }
 
-/* ── 筆記內容裡的連結（issue #153）─────────────────────────────────────────
-   在這條之前連結**看起來就是純文字**：`@import "tailwindcss"` 的 preflight 把 `a` 重設
-   成 `color: inherit; text-decoration: inherit`，而 BlockNote 的 `style.css` 沒給內容區
-   的 `a[href]` 顏色或底線。這條拉到與 wikilink（`components/wikilink/spec.tsx`）同一套：
-   主題色 ＋ 實線底線——底線是「不得只靠顏色區分連結」那條無障礙要求的載體，不是裝飾。
-
-   ⚠ 選擇器**不用裸 `a`**（會命中工具列／浮層／自訂 block 裡的 anchor），用 link mark 的
-   `data-inline-content-type="link"`；同組 HTMLAttributes 裡那個 `className:
-   "bn-inline-content-section"` **不能**用——Tiptap 把 key 原封不動當屬性名寫出去，渲染
-   出來是字面的 `classname=`（實測 `a.className` 為空字串）。
-   ⚠ `.bn-editor` 祖先錨不得拿掉（同本檔前面幾處覆寫的理由：BlockNote 的 CSS 在 NotePage
-   lazy chunk、載入必晚於本檔，兩邊都未分層，同 specificity 必輸）；錨到 (0,2,0) 也一併
-   壓過 preflight（在 `@layer base`，而**未分層樣式贏過任何 layer**）。
-   ⚠ 顏色走 `--color-brand`（宣告在 `@theme inline`，編譯成 `:root,:host`）而**不是**
-   `--brand`：理由與守衛見 `wikilink/spec.tsx` 註解與 `theme.link-guard.test.ts`。
-   ⚠ 用 `text-decoration-line` 只是「只宣告需要的那一個 longhand」。**別**把理由寫成
-   「怕簡寫蓋掉 strike／underline mark 的線」——那是假的：那些 mark 是 anchor 的祖先，而
-   `text-decoration-*` 都不是繼承屬性，子元素擦不掉祖先的裝飾線。 */
+/* Links (#153): preflight strips `a` color and underline, and BlockNote doesn't restore them; the underline is the
+   accessibility cue. Uses the link mark attribute, not bare `a`, and not the HTMLAttributes className: Tiptap writes that key
+   as a literal `classname=` attribute. The .bn-editor anchor is required: BlockNote's CSS loads later (both unlayered), and (0,2,0)
+   also beats preflight (@layer base; unlayered styles beat any layer). --color-brand, not --brand: see theme.link-guard.test.ts. */
 .bn-editor [data-inline-content-type="link"] {
   color: var(--color-brand);
   text-decoration-line: underline;
 }
 
-/* 手機編輯工具列的色盤開著時，編輯器已失焦，選取靠 ShowSelectionExtension 的 `[data-show-selection]` 補畫。
-   BlockNote 預設把它畫成 `background-color: highlight`，而這個 span 在最內層，會蓋住剛套上的背景色，
-   使用者就看不到套色的效果；所以只在編輯器根節點帶 `data-mobile-color-open` 時改畫外框。
-   AI 框等其他用途的反白不帶這個屬性，樣式不變。`.bn-editor` 祖先錨的理由同上。 */
+/* With the phone color palette open, a selection highlight would hide the color just applied. */
 .bn-editor[data-mobile-color-open] [data-show-selection] {
   background-color: transparent;
   outline: 2px solid var(--color-brand);
@@ -484,61 +383,18 @@ input[name="share-access"] {
   border-radius: 2px;
 }
 
-/* 可編輯時觸控長按連結＝開工具列，關掉 iOS 的長按連結選單；唯讀（contenteditable="false"）保留系統選單。
-   套到可編輯編輯器裡所有 `<a>`（一般連結、wikilink，也含 mermaid 圖裡的連結）；Android 的 contextmenu 由 JS 攔（`lib/long-press.ts`）。
-   不改成 link 屬性選擇器：`theme.link-guard.test.ts` 規定那種規則恰好兩條。 */
+/* Long-press opens our toolbar, so suppress the iOS link callout (Android: lib/long-press.ts). Not a link attribute
+   selector: theme.link-guard.test.ts allows exactly two such rules. */
 .bn-editor[contenteditable="true"] a {
   -webkit-touch-callout: none;
 }
 
-/* 「開新分頁」圖示，**只掛在解析後是 `http(s)` 網址的連結上**（同為 link mark 的
-   `mailto:`／`tel:`／`sms:` 不開在分頁裡，交給協定處理程式）。
-
-   判準（issue #156；屬性選擇器比的是 href 的**字面值**，所以要把瀏覽器 URL 剖析器會
-   視為 http(s) 的寫法逐一列出來）：
-   - 協定名不分大小寫：`[href^="http:" i]`／`[href^="https:" i]`（`HTTPS://X.COM`）。
-     比的是 `http:` 含冒號，不是 `http`（後者會命中 `httpfoo:` 這種別的協定）。也不要求
-     冒號後面接 `//`：`https:\\x.com`、`https:/\x.com`、跨協定的 `https:x.com` 剖析出來
-     都是那台主機；同協定的 `https:x` 是站內相對路徑——那也確實開在新分頁，不是錯標。
-   - 省略協定（protocol-relative）：`//host`，以及 http(s) 頁面上與它等價的
-     `\\host`、`/\host`、`\/host`（特殊協定的剖析把 `\` 當 `/`）。CSS 字串裡 `\\` 是一個
-     反斜線。
-   已知仍蓋不到、只會**少標**（不會錯標）的形（舉例，非窮舉）：開頭帶空白／控制字元
-   （` https://…`），以及網址**任何位置**夾 tab／換行（剖析器會把它們整個刪掉，例如
-   `ht<tab>tps://…`、`/<tab>/evil.com` 剖析後等於 `https://…`、`//evil.com`）——字面前綴
-   比不到。使用者面說明在
-   `docs/known-limitations.md`。不改走「JS 用 `new URL()` 判斷後寫 data 屬性」：BlockNote
-   的 link mark 只接受靜態 `HTMLAttributes`，要逐條算屬性就得改 schema（attr 會寫進 Yjs）或
-   在 ProseMirror 管的 DOM 上改屬性（會觸發它的 DOM 觀察器），兩條都在跟上游打架。
-   ⚠ 這幾條要逐條寫在逗號清單裡，**別**收成 `:is(…)`：`:is()` 裡的逗號會讓
-   `theme.link-guard.test.ts` 對選擇器清單的逗號拆分切錯、守衛靜默失效。
-
-   語意查證過而非推測：
-   `http(s)` 連結帶 `target="_blank"`（守衛見 server 的 `editing-markdown.test.ts`），
-   上游 link toolbar 那顆按鈕的 tooltip 逐字也是 "Open in new tab"。站內 wikilink
-   刻意沒有它——那是 `<a>`（#269 起；點擊由 `useWikilinkClick` 接走）＋ react-router 的同分頁導航。
-
-   ⚠ **圖示的 path 資料只存在本檔這一處**（`::after` 的 `content` 放不進 SVG 標記，只能
-   走 `mask-image` ＋ data URI，而 CSS 用不了 React 組件；也刻意不引入 icon 套件，見
-   `components/ui/icons.tsx` 檔頭）。**若日後需要 React 版的 external-link 圖示，兩處必須
-   一起決定單一真相**，不要各寫一份。形狀取自 lucide `external-link`，與 icons.tsx 同
-   語彙（`viewBox="0 0 24 24"`、stroke、`stroke-width=2`、round cap/join）。
-
-   `mask-image` ＋ `background-color: currentColor` 而不是把顏色編進 SVG，圖示才會自動
-   跟著上面那條的 `--color-brand`（否則要為六個主題色 × 明暗寫十二份 data URI）。
-   ⚠ Lightning CSS 有丟規則的前例（`::picker(select)::-webkit-scrollbar`，見檔案後段）
-   ——改這條之後要**實際在 build 產物裡 grep `mask`** 確認它還在。
-
-   兩側留白刻意**不對稱**（左 0.15em ／右 0.2em，視覺判斷）：⚠ 別對齊成一樣。
-
-   ⚠ 已知瑕疵（使用者面版本在 `docs/known-limitations.md`，別只留在這裡）：`::after` 是
-   atomic inline，CSS Text 明定其前後都有軟換行機會，所以文字可能留在行尾、圖示單獨掉到
-   下一行。調 margin 解不掉。
-
-   互動實測結論（範圍：**行中間、沒有被斷行的單一 anchor**，不涵蓋上面那個換行情形）：點
-   圖示＝點連結文字（都走上游 `handleClick` 開新分頁）、hover 到圖示 link toolbar 照常出
-   現且不閃動、游標停在連結尾端打字不會被吸進連結（`inclusive: false`）。所以沒加
-   `pointer-events: none`、也沒退回字元方案；量測明細見 issue #153 與 PR。 */
+/* External-link icon only on hrefs that parse as http(s). Selectors match the literal href, so list each form the
+   URL parser accepts; leading whitespace or embedded tabs are missed (docs/known-limitations.md). Not computed in JS:
+   the link mark only takes static HTMLAttributes. Keep a comma list, not :is(): theme.link-guard.test.ts splits on
+   commas. mask-image with currentColor, so the icon follows --color-brand. Lightning CSS has dropped rules before: after editing,
+   grep the build output for `mask`. The margins are asymmetric on purpose (visual balance). Known flaw: the icon can wrap alone
+   onto the next line (docs/known-limitations.md). */
 .bn-editor [data-inline-content-type="link"][href^="http:" i]::after,
 .bn-editor [data-inline-content-type="link"][href^="https:" i]::after,
 .bn-editor [data-inline-content-type="link"][href^="//"]::after,
@@ -559,39 +415,8 @@ input[name="share-access"] {
   mask-size: contain;
 }
 
-/* 內文左右對齊，配一條讓長連結／長識別字「填滿再斷」的規則。
-
-   ⚠ 這兩段是一組的，不要只留其中一半（下方有一條 CSS 源碼守衛釘住兩段同進同出，
-   見 `theme.justify-wordbreak-guard.test.ts`）。單獨開 justify 會出現這個症狀：
-   某行是「一小段文字 ＋ 空白 ＋ 一長串不能斷的東西」（網址、程式碼識別字）時，
-   瀏覽器在那個空白換行、把整行空隙全灌進去——而 `.bn-inline-content` 是
-   `white-space: pre-wrap`（BlockNote 內建），使用者打的空白都被保留，成了唯一
-   可以無限拉伸的伸縮點。
-
-   實測（**headed** chromium、`file://` 靜態頁、
-   `ARTICLE_COLUMN` 的兩個邊界欄寬 clamp(42.5rem,85%,66rem)——680px 與
-   1056px；量法：中英混排段落夾一個不能斷的長識別字，取同一行內連續空白字元
-   range 的 `getBoundingClientRect().width` 最大值）：
-   - 680px（下限）：只開 justify 136.4px；補上 `word-break: break-all` 後
-     降到 7.9px。
-   - 1056px（上限）：欄夠寬，長識別字本來就會被推到自己的一行，兩種寫法都已經
-     很小（4.8px／5.5px）——這個問題本質上只在窄欄位才明顯，寬欄位不靠這條規則
-     也大致不會發生。
-   舊註解寫的「600px、255px→4.1px」是量錯欄寬（600px 在這個版面到不了，
-   `ARTICLE_COLUMN` 最窄是 680px；釘住大綱時的例外見下）且用 headless 量的（違反本專案「量版面幾何一律
-   用 headed」的既有紀律），數字與量法都已作廢，上面是重量後的結果。
-   #297 起欄寬分三段（`ui/article-column.ts`）：寬／全寬不會比標準窄（上限
-   1408px／不設上限），下限 680px 不變——寬欄未另量，依 1056px 的結果推論只會更不明顯。
-   #465 釘住標題大綱時，標準欄讓出面板的空間，最窄可到 640px（放不下 640 就不釘）；比上面量的
-   680px 只窄 40px，未另量。
-
-   ⚠ 一定要用 `word-break: break-all`，不能用 `overflow-wrap: anywhere`：後者只在
-   「整行沒有其他合法斷點」時才切字，而那一行有（就是那個空白），所以它在 680px
-   那組實測裡幾乎無效。`break-all` 是無條件允許在字中間斷，換行演算法才會拿長
-   字串把行填滿——也因此它不會特意保留短 token 不切，純粹是換行演算法優先整塊
-   搬走的副作用，不是這個屬性本身的保證。
-
-   中文本來就到處可斷、行自然填滿，這兩條對它都是無作用。 */
+/* Justify and the word-break below go together (theme.justify-wordbreak-guard.test.ts): justify alone stretches the
+   space before an unbreakable string, because .bn-inline-content is pre-wrap. */
 .bn-editor .bn-block-content[data-content-type=paragraph]:not([data-text-alignment]),
 .bn-editor .bn-block-content[data-content-type=bulletListItem]:not([data-text-alignment]),
 .bn-editor .bn-block-content[data-content-type=numberedListItem]:not([data-text-alignment]),
@@ -602,142 +427,50 @@ input[name="share-access"] {
   hyphens: auto;
 }
 
-/* ⚠ `:not([data-text-alignment])` 在上面那組是承重的：BlockNote 只在對齊**不是
-   預設值**時才把這個屬性寫進 DOM（`blocks/defaultProps.ts` 的
-   `getTextAlignmentAttribute`：值等於 default 就回 `{}`），所以使用者自己在工具列
-   挑過對齊的 block 一定帶屬性、上面那組就不匹配。內建那幾條
-   （`[data-text-alignment=left]{text-align:left!important}` 等）另外帶 `!important`，
-   即使匹配也壓得過——兩道防線同一個結論：使用者挑過的對齊永遠贏。
-
-   下面的 word-break 只給 link mark（`<a data-inline-content-type="link">`）與行內 code：#269 起 wikilink 也是 `<a>`，
-   但它顯示的是筆記標題，不該在字中間被切開（裸 `a` 會連它一起命中）。屬性**不加引號**——加了會被
-   `theme.link-guard.test.ts` 當成連結樣式規則收進去；守衛見 `theme.justify-wordbreak-guard.test.ts`。 */
+/* :not([data-text-alignment]) above matters: BlockNote sets the attribute only for non-default alignment.
+   break-all, not overflow-wrap: anywhere, which won't break while the line has another break point. Not wikilinks:
+   titles shouldn't split mid-word. Unquoted attribute, or theme.link-guard.test.ts would collect it. */
 .bn-editor .bn-inline-content [data-inline-content-type=link],
 .bn-editor .bn-inline-content code {
   word-break: break-all;
 }
 
-/* 程式碼區塊的底與字（issue #96）。BlockNote 內建寫死
-   `.bn-block-content[data-content-type=codeBlock] { color:#fff; background:#161616 }`
-   ——淺色模式也是一塊深色方塊。這裡換成 --code-* 變數（值在 :root／:root.dark 兩套，
-   見上方變數區塊）。⚠ `.bn-editor` 錨點不得拿掉：內建是 (0,2,0) 且載入順序晚於
-   本檔，同 specificity 必輸——同上面選取外框那條的理由；守衛
-   theme.code-highlight-vars.test.ts。
-
-   token 的顏色**不需要**在這裡寫任何規則：shiki 的 decoration 是 inline style
-   `color: var(--code-token-…)`，變數值換了就跟著換。 */
+/* BlockNote hard-codes a dark box; .bn-editor beats its later-loaded (0,2,0). */
 .bn-editor .bn-block-content[data-content-type=codeBlock] {
   color: var(--code-foreground);
   background-color: var(--code-background);
-  /* 內建 0 邊框全靠底色分界——淺色底 #f6f8fa 與卡面白太接近，補一條與其他卡片
-     同語彙的邊。 */
+  /* The light code background is too close to card white. */
   border: 1px solid var(--color-border);
 }
 
-/* 語言下拉的閉合態（issue #96 的顏色 → issue #111 的樣式 → 搬進方塊內）。
-   目標是**與 mermaid 的控制鈕同一套邏輯**（`MermaidView.tsx`）：疊在方塊**內的右上角**、
-   平常隱形，hover 到整個 block、游標在這塊程式碼裡、或鍵盤聚焦下拉本身才現身。
-
-   內建是：`color:#fff`（配深底，淺色底上等於看不見）、絕對定位在方塊**左上角內部**
-   （`top:8px;left:18px`）、`opacity:0` → hover 浮到 .5。
-
-   1. **右上角、方塊內**：位置寫在下面共用的 `.block-control`（與 mermaid 那顆鈕同一條
-      規則，`top`／`right` 同值）。左上角是最糟的落點——疊在第一行程式碼的**開頭**，正是
-      最常點去放游標的地方；右上角落在 `<pre>` 的 24px 上內距裡，只壓到第一行行框頂端約 3px
-      （headless Chromium 151、900px 寬實量：控制項下緣距方塊上緣 31px、程式碼內容從 28px
-      開始；截圖上與第一行字形不重疊）。
-      #111 曾把它搬到方塊**外面**的上方、為此在 block content 上留一條 1.75rem 的保留列
-      （＝mermaid 那條 `h-7`）；後來拿掉保留列：沒 hover 時隱形、不擋內容，
-      不必替它多佔一段高度。
-   2. **何時現身**：hover 整個 block（滑鼠）、`[data-caret-inside]`（游標在這塊程式碼裡，由
-      `collab/code-block-caret.ts` 的 decoration 掛上——觸控沒有 hover，點進程式碼就靠這條
-      叫出下拉；**不能**用 `:focus-within`，焦點在編輯器根、不在 block，理由見該檔）、
-      `select:focus`（鍵盤）、`select:open`（清單展開中，見 `@supports` 那段）。用 `opacity` 而不是 `display/hidden` 隱藏——後者會讓它退出
-      Tab 順序，鍵盤使用者就永遠構不到。
-      隱形時 `pointer-events:none`：它現在疊在程式碼上，觸控點到那一角若被一顆看不見的
-      下拉吃掉，就是「想放游標卻打開語言選單」。滑鼠不受影響（要點到它必先 hover 到
-      block，它就先現身、`pointer-events` 也一起回來）；Tab 順序也不受影響（pointer-events
-      不管焦點）。mermaid 那顆鈕刻意不跟，理由在 `MermaidView.tsx`。
-   3. **長相**：與 mermaid 那顆鈕同一條規則（下面的 `.block-control`）。現身時直接給全對比，
-      不用半透明疊色（#96 算過：α 混色的有效對比會隨底色浮動，內建的 .5 只有 3.1:1）。
-
-   展開後的清單見檔案後段的 `@supports (appearance: base-select)`：支援的瀏覽器
-   （Chromium 135+／Safari 27）會把清單換成真正的 DOM，我們照 app 的 ⋮ 選單樣式畫，
-   連箭頭（`::picker-icon`）都有；**不支援者（今天的 Firefox）才是 OS 原生 widget**，
-   那裡只有 option 的前景/底色與 `color-scheme` 有效（見下一條）。
-
-   ⚠ 內建選擇器 `.bn-block-content[data-content-type=codeBlock]>div>select` 是 (0,2,2)，
-   且 BlockNote 的 CSS 在 NotePage lazy chunk、載入必晚於本檔——`.bn-editor` 錨墊到
-   (0,3,2) 才蓋得掉，掉了錨整組靜默回到左上角的隱形下拉。守衛見
-   `theme.code-highlight-vars.test.ts`。 */
+/* Language dropdown at the top-right, like the mermaid button (top-left covers where users place the caret).
+   [data-caret-inside] stands in for hover on touch (focus is on the editor root, so :focus-within fails). Hidden via
+   opacity to stay in the Tab order, with pointer-events: none so a tap on the corner doesn't open it. Without the
+   .bn-editor anchor it silently falls back to the built-in top-left (theme.code-highlight-vars.test.ts). */
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
-  /* ⚠ **`left:auto` 不可省**。`top`／`right` 由 `.block-control` 給，但內建還有一條
-     `left:18px`；少了這行，left 與 right 同時生效、寬度跟著撐開——控制項從方塊左緣 ＋18px
-     一路橫到右上角，整條蓋在第一行程式碼上（headless Chromium 151 實測：在
-     真實元素的規則上拿掉 `left`，下拉寬 556px、左距 19px）。靜默失敗，守衛釘一條。 */
+  /* Required: the built-in left:18px plus our right would stretch it across the first line. */
   left: auto;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
 
-  /* **寬度下限**：原生 select 的寬度跟著「目前選到的那個標籤」走，於是同一顆控制項
-     會在 `C`（36px）與 `Markdown`（86px）之間縮放，語言一換寬度就跳。給一個放得下
-     目前所有標籤的下限（headed 實測最寬是 Markdown 85.6px，含內距與箭頭；6rem＝96px
-     留約 10px 餘裕），今天所有語言都落在下限內＝寬度恆定。
-     ⚠ 刻意用 `min-width` 而不是 `width`：這個值是**量出來的**（字寬由字型決定，字數
-     不是好指標——`TypeScript` 10 字反而比 `Markdown` 8 字窄），換字型／縮放／未來加更長
-     的語言名都可能超出。寫死 `width` ＋ `overflow:hidden` 的失敗形是**靜默截斷**；
-     `min-width` 的失敗形只是「那一顆變寬一點」，而它是右錨定（`right`）的，右緣不動。 */
+  /* min-width, not width: a longer label widens it (right-anchored) instead of being clipped. */
   min-width: 6rem;
   white-space: nowrap;
-  /* 長相與位置不在這裡：與 mermaid 那顆鈕共用下面的 `.block-control`（一份真相）。 */
 }
 
-/* ── Block 控制項的共用視覺與位置（issue #111 → 搬進方塊內）──────────
-   兩個消費端，一條規則：
-     - mermaid 的「編輯／顯示原始碼」鈕（`MermaidView.tsx`，掛 class）
-     - codeBlock 的語言下拉（BlockNote 內建 render 出來的原生 `<select>`，我們拿不到
-       className，只能用選擇器把它接進同一條規則）
-
-   為什麼不是「兩邊各寫一份、靠測試對值」：那是更早的做法，結果就是把 `rounded-sm`
-   手抄成 `0.125rem`——那是 **Tailwind v3** 的值，v4 的 `rounded-sm` 是 `0.25rem`，
-   於是圓角差一半（實測回報）。用 `@apply` 直接吃同一組 utility，就不會再有人工換算，
-   改一次兩邊一起變。**位置也在這條**：兩顆都疊在自己方塊內的右上角，containing block
-   分別是 block content（BlockNote 內建 `position:relative`）與 MermaidView 的外層
-   （`relative`）。
-
-   **實底＋邊框**：控制項疊在程式碼／圖上，要自己帶底才讀得到。WCAG 對比（以變數色值換算
-   sRGB 計算；淺色 → 深色）：
-     - 字 `--muted-foreground` 對底 `--popover`：4.73 → 5.90（文字 ≥ 4.5）
-     - 邊框 `--muted-foreground` 對 codeBlock 底 `--code-background`：4.45 → 6.83（非文字 UI ≥ 3）
-     - 同一條邊框對 mermaid 所在的卡面 `--card`：4.73 → 6.49
-   底色本身與方塊底幾乎同色（`--popover` 對 `--code-background` 只有 1.06 → 1.16），
-   分界全靠那條邊框——所以邊框不能用 `--border`（淺色 #e5e5e5 對 #f6f8fa 只有約 1.2）。
-   更早用的是 `bg-background`：淺色頁底 #f3f4f6 上 muted 字只有 4.30，不到 AA。
-
-   ⚠ **不得放進 `@layer components`**：BlockNote 的 CSS 沒有 layer，而**未分層的樣式
-   贏過任何 layer**（與 specificity 無關）——放進去 select 那半會整條失效。
-   ⚠ select 那個選擇器是 (0,3,2)，靠 `.bn-editor` 錨才壓得過內建的 (0,2,2)（內建的
-   CSS 在 NotePage lazy chunk，載入必晚於本檔；兩邊都未分層，才輪到 specificity 決勝）。
-   內建的 `top:8px` 也是靠這個錨才被這裡的 `top` 蓋掉。
-   ⚠ 同一個未分層特性的**代價**：Tailwind 的 utility 在 `@layer utilities` 裡，所以
-   這條規則會**贏過** class 上的 utility。掛了 `.block-control` 的元素若要改上面這些
-   屬性（字級、內距、圓角、位置…），加一個 utility class 是**沒有用**的——要嘛改這條規則
-   （兩邊一起變，通常正是我們要的），要嘛那個元素就不該用 .block-control。 */
+/* Shared by the mermaid button and the code block <select>. The border carries the edge (the background nearly
+   matches the block). Not in a layer: BlockNote's CSS is unlayered, and unlayered wins; so this rule also beats
+   utility classes on the element. */
 .block-control,
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
   @apply absolute top-1 right-1 rounded-sm border border-muted-foreground bg-popover px-2 py-1 text-xs text-muted-foreground;
 
-  /* 原生 select 才需要的一條：不寫的話它用作業系統的 UI 字型，跟旁邊那顆鈕明顯不是
-     同一套字。對 `<button>` 無害（本來就繼承）。 */
+  /* A native select otherwise uses the OS UI font. */
   font-family: inherit;
 }
 
-/* hover／按下回饋：與側欄列同一組 token（`brand-soft`／`brand-soft-strong`／`brand-on-soft`）。
-   那兩個底色是半透明，疊在程式碼或圖上會透出底下的內容，所以當漸層圖層疊在原本的實底
-   （`bg-popover`）上：底不變、對比不會浮動。不放 layer，理由同上一條。
-   語言下拉（原生 select）同一組回饋；唯讀（`:disabled`）退成純文字標籤，不回應。
-   hover 只在真有 hover 的裝置上套：觸控點一下不會留下黏住的 hover 色；按下回饋不受限。 */
+/* Translucent colors layered over the solid background. Hover only where hover exists, so taps don't stick. */
 @media (hover: hover) {
   .block-control:hover,
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:hover:not(:disabled) {
@@ -753,14 +486,13 @@ input[name="share-access"] {
   background-image: linear-gradient(var(--brand-soft-strong), var(--brand-soft-strong));
 }
 
-/* 鍵盤焦點要看得見：未分層的 `.block-control` 會蓋掉 utility，所以環也寫在這裡。 */
+/* Unlayered .block-control would override a utility focus ring. */
 .block-control:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
-/* 兩顆以上的方塊控制項排成一組時，位置由組給，鈕本身照舊吃 `.block-control` 的長相。
-   與 `.block-control` 同樣不放 layer：未分層才贏得過它的 `absolute`。 */
+/* Unlayered like .block-control, to beat its `absolute`. */
 .block-control-group {
   @apply absolute top-1 right-1 flex items-stretch gap-1;
 }
@@ -770,18 +502,14 @@ input[name="share-access"] {
   position: static;
 }
 
-/* 觸控：程式碼區塊的語言下拉是 BlockNote 內建的原生 select，字級 12px 時 iOS 聚焦會放大整頁。
-   與上一條同樣不放 layer、選擇器與它一致，才壓得過它的 `text-xs`。 */
+/* iOS zooms the page when focusing a select under 16px. */
 @media (pointer: coarse) {
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
     font-size: var(--text-base);
   }
 }
 
-/* 現身：hover 整個 block、游標在這塊程式碼裡（`data-caret-inside`）、或焦點在下拉上——
-   與 mermaid 的 `group-hover`／`group-focus-within`／`focus-visible` 同語意。
-   清單展開的那段（焦點已移進 option）另由 `@supports (appearance: base-select)` 裡的
-   `select:open` 撐著，理由見那條。 */
+/* While the list is open, select:open in the @supports block keeps it visible. */
 .bn-editor .bn-block-content[data-content-type=codeBlock]:hover > div > select,
 .bn-editor .bn-block-content[data-content-type=codeBlock][data-caret-inside] > div > select,
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:focus {
@@ -789,22 +517,14 @@ input[name="share-access"] {
   pointer-events: auto;
 }
 
-/* 唯讀（viewer／未同步）：BlockNote 仍會渲染這個 select，只是設 `disabled`（見
-   `createCodeBlockSpec` 的 render）。留著它是 viewer 唯一看得到語言的地方，但要去掉
-   「可以點」的暗示——拿掉邊框，退成純文字標籤。**底色刻意留著**：它疊在程式碼上，
-   muted 字直接壓在淺色 `--code-background` 上只有 4.45（不到 4.5），壓在自己的
-   `--popover` 底上是 4.73；那塊底與程式碼底幾乎同色（1.06 → 1.16），看起來仍是一行字。 */
+/* Keep the background: muted text directly on the light code background is below 4.5:1. */
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:disabled {
   border-color: transparent;
   cursor: default;
 }
 
-/* 展開後的清單是 OS 原生 widget，CSS 幾乎蓋不到——**除了** option 的前景/底色與
-   `color-scheme`。內建寫死 `option{color:#000}`：深色模式下瀏覽器把彈出清單畫成深底，
-   黑字疊上去就等於看不見（實測回報）。這裡把兩者都交給主題變數，並讓 `color-scheme`
-   跟著主題走，原生清單的底色/捲軸才會是對的那一套。
-   ⚠ `color-scheme` 只掛在這個 select 上，不掛 `:root`/`:root.dark`——那會一次改掉全 app
-   的原生控制項與捲軸外觀，遠超這條的範圍。 */
+/* The native list honors only option colors and color-scheme; the built-in option{color:#000} is invisible on a
+   dark list. color-scheme not on :root, which would change every native control. */
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
   color-scheme: light;
 }
@@ -818,29 +538,14 @@ input[name="share-access"] {
   color: var(--color-foreground);
 }
 
-/* ── 可自訂 select（issue #111，漸進增強）────────────────────────────
-   `appearance: base-select` 把彈出清單從 OS widget 換成**真正的 DOM**：`::picker(select)`
-   是清單容器、`option` 變成可排版的元素、`::picker-icon` 是箭頭。於是清單也能吃我們的
-   主題——不必自繪，也不必碰 BlockNote 的 block spec（仍然只是 CSS 加在內建那個 select 上）。
-
-   支援度：Chromium 135+ 與 Safari 27 已出貨，Firefox 還在 Nightly 的 flag 後面。
-   **這整段是漸進增強**：不支援的瀏覽器整塊忽略，直接沿用上面那條路（原生清單 ＋ option
-   顏色 ＋ color-scheme）。⚠ 因此上面那組**必須留在 `@supports` 外面**——搬進來的話
-   Firefox 就退回 BlockNote 寫死的 `option{color:#000}`，深色模式又看不見了。
-
-   清單的長相刻意對齊 app 既有的 ⋮ 選單（`components/ui/dropdown-menu.tsx` 的
-   `DropdownMenuContent`／`DropdownMenuItem`）——同一個 app 裡的「一份清單」就該長一樣；
-   守衛直接讀那個檔對 token。 */
+/* Progressive enhancement; the native-list rules above must stay outside @supports for other browsers. */
 @supports (appearance: base-select) {
-  /* ⚠ 兩個選擇器都要：只給 select 的話，清單仍是 OS widget（規範要求 select 與
-     ::picker(select) 都切到 base 外觀）。 */
+  /* Both selectors are required, or the list stays an OS widget. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select,
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select::picker(select) {
     appearance: base-select;
   }
 
-  /* 閉合態：base 外觀下 select 本身變成可排版的按鈕（內容 ＋ 箭頭）。長相仍走
-     `.block-control`，這裡只補排版與箭頭。 */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
     display: flex;
     align-items: center;
@@ -852,15 +557,7 @@ input[name="share-access"] {
     transition: transform 0.15s;
   }
 
-  /* 唯讀（disabled）時箭頭一併退場：邊框已由上方的 `:disabled` 規則拆掉（底色刻意留著，
-     理由見該規則），箭頭留著的話 hover 出現的仍是「一顆不能按的下拉」——唯讀時語言標籤是純文字
-     （#111）。`display:none` 不違反上方「用 opacity
-     別用 display」的規矩：那條管的是控制項的 Tab 可及性，這裡藏的是**偽元素**、
-     且 disabled 的 select 本就不進 Tab 順序。⚠ 蓋不到 Firefox：它無 base-select、
-     select 是 OS 原生 widget、原生箭頭仍在（已知殘留——要蓋得對 :disabled 另加
-     appearance:none，會與 base-select 這條打架，不值得）。順帶把單一文字項貼回
-     右緣（space-between 在單項下退化成 flex-start，箭頭走了會露出 min-width 撐出
-     的空白；mermaid 唯讀鈕是貼右的，兩者同位置，#111）。 */
+  /* Read-only: no arrow, label kept right-aligned. Firefox keeps its native arrow. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:disabled {
     justify-content: flex-end;
   }
@@ -869,36 +566,25 @@ input[name="share-access"] {
     display: none;
   }
 
-  /* 展開時箭頭轉向——這是「這是個下拉」的視覺暗示，先前 `appearance:none` 之下
-     根本沒有箭頭可用。 */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:open::picker-icon {
     transform: rotate(180deg);
   }
 
-  /* 清單展開中，下拉本體保持現身、點得到。base-select 一展開就把焦點移進被選中的 `<option>`，
-     select 本身不再 `:focus`，而 `:focus-within` 在它身上也不成立（headless Chromium 151
-     觸控模擬實測：tap 下拉後 activeElement 是 OPTION、select 的 :focus／:focus-within 都是 false、
-     :open 是 true）。點下拉那一刻編輯器 blur、caret 屬性拿掉，手指／滑鼠一離開 block，少了這條
-     下拉就淡出並變回 pointer-events:none，清單卻還開著。滑鼠 click 與鍵盤 Enter／Space 展開也一樣
-     （同版本在最小頁面上實測：焦點進 option、只有 :open 成立），所以這條同時修了鍵盤路徑——
-     以前只有 `:focus` 時，鍵盤展開清單後下拉本體同樣會淡出（由此推得，未在 app 裡單獨實測）。e2e `30-code-block-touch` 守觸控那段交接。
-     放在 @supports 裡：不支援 base-select 的瀏覽器清單是 OS widget、焦點留在 select 上（`:focus`
-     那條就夠），且 `:open` 不認得的話會讓整條選擇器清單作廢——所以也不能併進上面的現身規則。 */
+  /* base-select moves focus into the <option>, so the select is neither :focus nor :focus-within. Not merged above:
+     an unknown :open would void the selector list. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:open {
     opacity: 1;
     pointer-events: auto;
   }
 
-  /* 清單容器：比照 DropdownMenuContent。 */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select::picker(select) {
     @apply min-w-32 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md;
   }
 
-  /* 選項：比照 DropdownMenuItem（原生 hover 與鍵盤移動都會走 :hover／:focus）。 */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select > option {
     @apply flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors;
 
-    /* 外面那條給原生清單的底色在這裡要讓開，否則每個選項都自帶一塊背景。 */
+    /* Undo the native-list option background. */
     background-color: transparent;
     color: var(--color-popover-foreground);
   }
@@ -908,59 +594,23 @@ input[name="share-access"] {
     @apply bg-accent text-accent-foreground;
   }
 
-  /* 清單的捲軸（23 個語言必定溢出）：預設是瀏覽器原生那條——淺灰 thumb ＋ 上下
-     stepper 箭頭，跟筆記那條細捲軸完全不同調。這裡把它拉回**同一組值**
-     （`--scrollbar-thumb`，與全域捲軸共用，見檔案前段）。
-
-     ⚠ 為什麼這裡用標準屬性、而不是像全域那組用 `::-webkit-scrollbar` 偽元素：
-     `::picker(select)::-webkit-scrollbar` 這條鏈**瀏覽器吃得到**（Chrome 152 上
-     注入這條規則後 thumb 立刻改色改寬），但 **Tailwind v4 的 Lightning CSS 解析不了它，
-     整條規則在 build 就被丟掉**（實測 dist 出現 0 次，連 `cssMinify:false` 也一樣
-     ——是 Tailwind 的處理階段丟的，不是壓縮器）。所以那條路在這個管線裡送不出去。
-
-     ⚠ 這是 `theme.scrollbar-guard.test.ts` 那條「標準屬性只准出現在
-     `@supports (-moz-appearance: none)` 內」的**唯一例外**，理由是那條規則的成因在
-     這裡不成立：Chromium 的規則是「元素一旦設了 scrollbar-width/color，該元素的
-     `::-webkit-scrollbar` 樣式整組停用」——而 picker 上根本沒有 webkit 樣式可停用
-     （見上一段）。守衛已把例外寫成「只有選擇器含 `::picker(select)` 時允許」。 */
+  /* Standard properties: Lightning CSS drops `::picker(select)::-webkit-scrollbar` at build. Allowed outside the
+     Firefox block because the picker has no webkit styles to disable (theme.scrollbar-guard.test.ts). */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select::picker(select) {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
 
-/* ── #115 窄視窗（<md）：內文左右內距 70 → 20 ─────────────────────────────
-   BlockNote 內建（裸 `.bn-editor`，(0,1,0)）給 54px 的 padding-inline（側選單／
-   拖曳把手的落點），加上置中 wrapper 的 `px-4`＝文字左緣 70px。窄視窗改成
-   wrapper `max-md:px-0` ＋ 這裡的 20px ＝ 文字左緣 20px，與頁首/頁尾的 `px-5`
-   共線。
-
-   ⚠ 選擇器**必須疊 class 墊到 (0,2,0)**（`.bn-editor.bn-editor`）：BlockNote 的
-   CSS 在 NotePage lazy chunk、載入必晚於本檔，兩邊都未分層——同特異性我們必輸
-   （本檔前面的深色覆寫、codeBlock 區塊都記過同一條雷）。寫裸 `.bn-editor` 會
-   **靜默不生效且 jsdom 全綠**；本規則是否真的進 build 產物，靠 build 後
-   `grep "bn-editor.bn-editor" apps/web/dist/assets/*.css`（至少一檔命中）驗證。
-
-   媒體查詢用 `width < 48rem`＝Tailwind v4 `max-md:` 的實編形——與 wrapper 的
-   `max-md:px-0`（ui/article-column.ts）同界，兩邊必須一起動。
-
-   已知代價：640–767 寬的視窗上，BlockNote 側選單（+／⠿，寬於 20px）會被捲動
-   容器裁掉一部分（< 640 不掛側選單），接受（docs/known-limitations.md 有記）。 */
+/* Doubled class to beat BlockNote's later-loaded .bn-editor (a single one silently fails). 48rem must match
+   max-md:px-0 in ui/article-column.ts. The side menu is clipped at 640–767px (docs/known-limitations.md). */
 @media (width < 48rem) {
   .bn-editor.bn-editor {
     padding-inline: 1.25rem;
   }
 }
 
-/* 內文標題字級用 Markdown 慣例：H1 2em、H2 1.5em、H3 1.25em（BlockNote 預設是 3em／2em／1.3em），所有寬度一致。
-   H4–H6（1em 以下）不動。
-
-   BlockNote 的標題字級是兩步：`[data-content-type=heading]`（H1，沒有 data-level——預設值不輸出屬性）與
-   `[data-content-type=heading][data-level="2"|"3"]` 設自訂屬性 `--level`（特異性 (0,1,0)／(0,2,0)），再由
-   `.bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type=heading]`（(0,5,0)）寫
-   `font-size: var(--level)`。所以這裡改的是 `--level` 而不是 font-size：自訂屬性只跟同樣宣告 `--level` 的規則比特異性，
-   不必去贏那條 (0,5,0)；那條規則照樣吃到我們的值。疊 `.bn-editor.bn-editor` 墊到 (0,4,0)，高於 BlockNote 的 (0,1,0)／(0,2,0)
-   ——它的 CSS 在 lazy chunk、載入較晚，兩邊都未分層，同特異性我們必輸（同上一段的雷）。 */
+/* Set BlockNote's --level instead of font-size, so we needn't beat its (0,5,0) font-size rule. */
 .bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
   --level: 2em;
 }
@@ -970,8 +620,6 @@ input[name="share-access"] {
 .bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
   --level: 1.25em;
 }
-/* 標題換類型的轉場：下一個區塊從「前一個標題」的字級起算（`--prev-level`，BlockNote 設在 `[data-prev-level="n"]`、特異性 (0,1,0)），
-   同樣改成這組字級，動畫才不會從 BlockNote 預設的大小開始。 */
 .bn-editor.bn-editor [data-prev-level="1"] {
   --prev-level: 2em;
 }
@@ -982,8 +630,7 @@ input[name="share-access"] {
   --prev-level: 1.25em;
 }
 
-/* 拖曳預覽：BlockNote 把被拖的區塊複製到 <body> 下（`.bn-drag-preview`，沒有 `bn-editor`），上面那組選擇器碰不到，
-   不補的話被拖的 H1 仍以 48px 顯示。 */
+/* The drag preview is cloned under <body>, outside .bn-editor. */
 .bn-drag-preview.bn-drag-preview [data-content-type="heading"]:not([data-level]) {
   --level: 2em;
 }
@@ -994,11 +641,8 @@ input[name="share-access"] {
   --level: 1.25em;
 }
 
-/* 桌面側邊選單（`+`／拖曳把手）的高度：BlockNote 依標題字級寫死（H1 108px、H2 84px、H3 67px），
-   讓按鈕落在首行文字中線。高度＝36px ＋ 1.5 × 字級（BlockNote 的 108／84／67 對 48／32／20.8px 正是這個式子；標題 padding-top 18px、行高 1.5）。
-   字級縮小後要跟著縮：H1 32px → 84px、H2 24px → 72px、H3 20px → 66px。
-   側邊選單是浮在 `.bn-editor` 外的元素，疊兩次自己的 class 墊到 (0,4,0)，高於 BlockNote 的 (0,3,0)，不管載入先後。
-   H1 的側邊選單帶 `data-level="1"`（與區塊本身不同，區塊的 H1 沒有 data-level）。 */
+/* BlockNote hard-codes 36px + 1.5 × font size so the buttons align with the first line; recomputed for our sizes. The side
+   menu of an H1 carries data-level="1", unlike the H1 block itself. */
 .bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="1"] {
   height: 84px;
 }
@@ -1009,12 +653,7 @@ input[name="share-access"] {
   height: 66px;
 }
 
-/* 手機：寬表格在右緣還能往右捲時淡出，提示「這裡還有」。淡出寬度走 --kb-table-fade（預設 0＝不淡出）。
-   支援捲動驅動動畫（animation-timeline）的瀏覽器純 CSS：動畫以表格自己的橫向捲動位置為時間軸，捲到最右前（95%）維持 1.5rem、
-   最後 5% 收到 0；表格沒有溢出時時間軸不作用、動畫不生效，自然沒有淡出。不支援的瀏覽器由 NoteEditor 的委派監聽
-   （lib/table-scroll-hint.ts）在還能往右捲的表格上加 data-kb-more-right。
-   疊 .bn-editor.bn-editor 墊到 (0,4,0)，高於 BlockNote 的 `.bn-editor [data-content-type=table] .tableWrapper`（0,3,0）
-   （它的 CSS 晚載入、未分層，同特異性我們必輸）。媒體查詢 width < 40rem 與 PHONE_QUERY 同界；其他寬度不碰表格。 */
+/* Fades while the table can scroll further right. Fallback: lib/table-scroll-hint.ts sets data-kb-more-right. */
 @property --kb-table-fade {
   syntax: "<length>";
   inherits: false;
@@ -1029,6 +668,7 @@ input[name="share-access"] {
     --kb-table-fade: 0px;
   }
 }
+/* 40rem matches PHONE_QUERY (lib/layout-tiers.ts). */
 @media (width < 40rem) {
   .bn-editor.bn-editor [data-content-type="table"] .tableWrapper {
     mask-image: linear-gradient(to right, #000 calc(100% - var(--kb-table-fade)), transparent);
@@ -1049,25 +689,16 @@ input[name="share-access"] {
   }
 }
 
-/* 手機：選單列不被擠扁。上游給每列 height: 52px，但選單是有高度上限（50vh）的直欄 flex，列預設可收縮，
-   沒有副標的 [[ 筆記清單列被擠到內容高度 33px（有副標的 / 列約 49px），不夠一個觸控目標。flex-shrink: 0 讓列保持 52px，超出的部分在選單內捲動。
-   疊 .bn-mantine 是為了不輸給晚載入的同特異度規則。媒體查詢 width < 40rem 與 PHONE_QUERY 同界。 */
+/* In the height-capped flex menu, rows would shrink below a touch target. */
+/* 40rem matches PHONE_QUERY (lib/layout-tiers.ts). */
 @media (width < 40rem) {
   .bn-mantine .bn-suggestion-menu-item {
     flex-shrink: 0;
   }
 }
 
-/* ── 並排排版 ─────────────────────────
-   列＝core 的 .bn-block-column-list（flex），欄＝.bn-block-column（inline style 的 flex:N 1 0 是欄寬比例，這裡不碰）。
-   全部錨 .bn-editor 提高特異度：BlockNote 的 CSS 在 lazy chunk、晚於本檔，兩邊都未分層，同特異度我們必輸，
-   而且靜默不生效、jsdom 全綠——是否出貨靠 build 後 grep dist/assets/*.css（data-stacked、data-kb-col-kind）。
-   - 欄的左右 padding 歸零（覆寫 core 的 20px 與首尾不對稱規則；上下 12px 照 core）：欄距只靠列的 gap，欄的內容寬才與欄比例成正比。
-   - gap 與兩個 min-width 是 collab/columns/layout.ts 的 COLUMN_GAP_PX／COLUMN_MIN_TEXT_PX／COLUMN_MIN_IMAGE_PX，兩邊要一起改
-     （columns-css.guard.test.ts 比對）。data-kb-col-kind、data-stacked 由 layout-extension.ts 的 node decoration 掛上。
-   - image 欄的 96px 與上面 :first-child／:last-child 的 200px 同特異度，只靠排在後面贏——兩條的順序不能對調（守衛 CSS3）。
-   - 堆疊用 display:block：欄上的 inline flex 自然失效，不必 !important。
-   - 欄內圖片：外框與圖都 max-width:100%，畫面寬＝min(previewWidth 或原圖寬, 欄的內容寬)，欄變窄不寫 previewWidth。 */
+/* Anchored on .bn-editor to beat BlockNote's later-loaded CSS. Gap and min widths must match collab/columns/layout.ts
+   (columns-css.guard.test.ts). The image min-width wins only by coming later: keep the order. */
 .bn-editor .bn-block-column-list {
   gap: 24px;
   align-items: flex-start;
@@ -1096,15 +727,9 @@ input[name="share-access"] {
 .bn-editor .bn-block-column [data-file-block] .bn-visual-media {
   max-width: 100%;
 }
-/* 拖放進行中（`kb-dragging` 由 components/editor/use-drag-active-class.ts 掛在欄上），⋮⋮ 與分隔線都在 view.dom 外、
-   沒有人對 dragover 呼叫 preventDefault，指標停在上面時 drop 不被接受（外部檔案會被瀏覽器直接開啟）。關掉它們的命中，
-   讓事件落到底下的編輯器。pointer-events 會繼承，但子元素明寫 auto 時蓋得掉外層的 none，所以命中元素本身與子孫都要列：
-   side menu 的 popover（KnotebookSideMenu.tsx 的 SIDE_MENU_FLOATING_OPTIONS）、欄內 ⋮⋮ 的外包層、分隔線浮層。
-   未分層：分隔線帶 Tailwind 的 pointer-events-auto（在 @layer utilities），未分層的樣式才贏得過。
-   格式工具列也要關：⋮⋮ 拖曳開始時 core 會選取被拖的 block，工具列跟著出現在它正上方，工具列與它外面那層 floating-ui 的包裝
-   div 都會接走落在上面的 drop（標記掛在包裝 div 上：SelectionAiController.tsx 的 FORMATTING_TOOLBAR_ELEMENT_PROPS）。
-   只關工具列、不關整個 floating-ui portal：portal 裡還有檔案面板的 file input、AI 框、連結輸入框，它們本身就是拖放的落點。
-   圖片的放大鈕浮動層（ImageZoomLayer）同樣在 view.dom 外：拖放中要隱藏、不接 drop。 */
+/* While dragging, controls outside view.dom would swallow the drop. Children are listed too (an explicit `auto`
+   overrides an inherited `none`). Not the whole floating-ui portal: it holds drop targets. The formatting toolbar is listed too:
+   core selects the dragged block, and the toolbar above it would catch the drop. */
 .kb-dragging [data-kb-formatting-toolbar-popover],
 .kb-dragging [data-kb-formatting-toolbar-popover] *,
 .kb-dragging [data-kb-side-menu-popover],
@@ -1119,15 +744,9 @@ input[name="share-access"] {
 
 .kb-dragging [data-kb-zoom-layer] { visibility: hidden; }
 
-/* 圖片放大：唯讀時圖本身可點（ImageZoomLayer 標 data-kb-zoomable）。 */
 .bn-editor img[data-kb-zoomable] { cursor: zoom-in; }
 
-/* 欄內的 ⋮⋮ 縮成 16px 寬、貼著右欄左緣（side menu 以 left-start 定位，右緣對齊 block 左緣，外框變窄就往右縮），
-   溝的左側 8px 留給分隔線（components/editor/ColumnDividers.tsx）。要縮的是實際的命中目標：mantine 的 ActionIcon
-   自己有 24px 寬（--ai-size），svg 由 `.bn-side-menu .mantine-UnstyledButton-root:not(.mantine-Menu-item) svg`
-   (0,3,1) 定成 22px；只縮外框的話按鈕照樣溢出、蓋到分隔線（side menu 的 z-index 20 高於分隔線浮層的 5）。
-   BlockNote 的 CSS 在 lazy chunk、晚於本檔，這幾條的特異度都要高過 mantine 的對應規則，否則靜默失效（build 後 grep
-   dist/assets/*.css 的 data-kb-column-side-menu）。 */
+/* 16px so it doesn't cover the divider (it has the higher z-index). Must out-specify mantine's later-loaded rules. */
 .bn-container [data-kb-column-side-menu] .bn-side-menu {
   width: 16px;
 }
@@ -1142,9 +761,7 @@ input[name="share-access"] {
   height: 16px;
 }
 
-/* 分隔線：命中區是溝左側 8px（觸控時佔滿溝），直線畫在溝的正中央（命中區左緣＝左欄右緣，往右半個溝寬）。
-   平常不顯示，hover、鍵盤聚焦、拖曳中才出現；觸控沒有 hover，以淡色常顯（data-touch）。直線本身不吃指標。
-   這裡不寫 pointer-events：分隔線靠 Tailwind 的 pointer-events-auto 吃指標，拖放中由上面那條 .kb-dragging 規則關掉。 */
+/* pointer-events comes from a utility, which .kb-dragging turns off. */
 .kb-column-dividers [role="separator"]::after {
   content: "";
   position: absolute;
@@ -1173,22 +790,13 @@ input[name="share-access"] {
   border-radius: 2px;
 }
 
-/* 版本預覽 diff：左邊 3px 色條＋淡底。顏色只在 diff 預覽內。
-   選擇器掛在 .kb-diff（DiffEditor 的 wrapper）之下，活編輯器不受影響。字面色、不碰 --brand（#154：.bn-root 內 brand token 會被重設）。
-   `data-diff` 貼在 `.bn-block-outer[data-id]`，`.bn-block` 是它的直接子；並排的欄與列也貼（見下方那組）。
-   未分層：與 BlockNote 自己未分層的 CSS 同層比特性。 */
+/* Literal colors, not --brand (#154: brand tokens are reset inside .bn-root). */
 .kb-diff [data-diff="added"] > .bn-block { border-left: 3px solid oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
 .kb-diff [data-diff="deleted"] > .bn-block { border-left: 3px solid oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); text-decoration: line-through; opacity: 0.85; }
 .kb-diff [data-diff="changed"] > .bn-block { border-left: 3px solid oklch(0.8 0.15 85); background: oklch(0.8 0.15 85 / 0.1); }
 .kb-diff [data-diff="moved"] > .bn-block { border-left: 3px dashed oklch(0.65 0.02 260); }
 .kb-diff [data-diff="collapsed"] > .bn-block { color: var(--muted-foreground); font-style: italic; }
-/* 並排的欄與列：`data-diff` 直接貼在欄／列元素上，它們沒有 `.bn-block` 子層（欄的子節點就是
-   `.bn-block-outer`），上面的 `> .bn-block` 套不到，所以色條畫在元素本身。欄用 inset 陰影＋淡底；列的增刪與移動用虛線外框。
-   欄的 moved 虛線畫不出 inset 陰影，改實線同色。
-   標記過的欄留 8px 起始內距，色條不壓欄內首字：上面並排段把欄的 padding-inline 歸零（`.bn-editor .bn-block-column:first-child`
-   (0,3,0)），這條掛 `.kb-diff .bn-editor` 是 (0,4,0)，不靠出現順序；只在有 data-diff 時生效（DiffEditor 給每一欄都貼，含
-   context，所以 diff 預覽裡各欄內距一致），一般編輯與公開頁的欄不受影響。
-   增刪的欄與欄內 block 各自標記，欄的色條與 block 的 border-left 疊成雙條，屬接受。 */
+/* Columns and column lists carry data-diff themselves (no .bn-block child). */
 .kb-diff .bn-editor [data-node-type="column"][data-diff] { padding-inline-start: 8px; }
 .kb-diff [data-node-type="column"][data-diff="added"] { box-shadow: inset 3px 0 0 oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
 .kb-diff [data-node-type="column"][data-diff="deleted"] { box-shadow: inset 3px 0 0 oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); }
@@ -1198,34 +806,23 @@ input[name="share-access"] {
 .kb-diff [data-node-type="columnList"][data-diff="deleted"] { outline: 1px dashed oklch(0.63 0.2 25); outline-offset: 4px; }
 .kb-diff [data-node-type="columnList"][data-diff="moved"] { outline: 1px dashed oklch(0.65 0.02 260); outline-offset: 4px; }
 
-/* #263 框選 AI 框的預覽（只含被改的區塊，不帶前後上下文）。
-   預覽寬度＝區塊寬度（換行時機與正文一致）：框內唯讀編輯器左右內距歸零，蓋過上游裸 `.bn-editor`（(0,1,0)）與上面窄視窗的
-   `.bn-editor.bn-editor`（(0,2,0)）——這裡 (0,3,0)。`.kb-ai-preview` 是 SelectionAiResult 在 DiffEditor 外面包的一層（DiffEditor 的根
-   寫死 `.kb-diff`），所以只能用後代選擇器。
-   色條改 inset box-shadow：border-left 會吃掉 3px 文字欄、換行就跟正文不同；`.kb-ai-preview .kb-diff [data-diff=…] > .bn-block` 是
-   (0,4,0)，高於上面四條的 (0,3,0)，不靠出現順序。moved 的虛線畫不出 inset 陰影，改實線同色（接受）；色條壓在首字左緣 3px 上（接受）。 */
+/* AI preview wraps like the body: no inline padding, and inset shadows instead of a border that takes text width. */
 .kb-ai-preview .bn-editor.bn-editor { padding-inline: 0; }
 .kb-ai-preview .kb-diff [data-diff="added"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.72 0.17 152); }
 .kb-ai-preview .kb-diff [data-diff="deleted"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.63 0.2 25); }
 .kb-ai-preview .kb-diff [data-diff="changed"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.8 0.15 85); }
 .kb-ai-preview .kb-diff [data-diff="moved"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.65 0.02 260); }
 
-/* 並排兩欄：欄寬只有文章欄的一半左右（1400px 視窗約 363px），上方「內文左右對齊」那組 justify 在這麼窄的欄裡
-   會把字距拉開（真瀏覽器截圖 11）。只在並排容器 `.kb-diff-split`（VersionPreview 的 diff-split）之下把**沒自訂對齊**的區塊改回
-   left（BlockNote 預設）；使用者挑過對齊的區塊帶 `data-text-alignment`，不匹配，照舊。特性與 justify 那組同為 (0,4,0)，
-   靠出現在它之後勝出——不得把這段搬到 justify 規則之前（`VersionPreview.test.tsx` 釘住順序）。單欄 diff 與活編輯器同寬，照舊 justify。 */
+/* Too narrow for justify. Must come after the justify rule (same specificity; VersionPreview.test.tsx). */
 .kb-diff-split .bn-editor .bn-block-content:not([data-text-alignment]) {
   text-align: left;
   hyphens: manual;
 }
 
-/* 並排逐區塊對齊：VersionPreview 以 inline margin-top 把兩欄同列的頂層區塊推到同一高度。
-   BlockNote 的 `.bn-block-outer{transition:margin .2s}` 會讓這些 margin 用 0.2s 動畫長出來——期間位置一直在變，
-   ResizeObserver 每幀觸發、e2e 量到的是半途值；並排容器內關掉。 */
+/* VersionPreview aligns rows with margin-top; a transition would make ResizeObserver read mid-way values. */
 .kb-diff-split .bn-block-outer {
   transition: none;
 }
-/* 單側列在對面欄留的空白：斜紋、低對比、不擋點擊（像 GitHub split diff 的灰格）。定位基準是欄的 section（relative）。 */
 .kb-diff-spacer {
   position: absolute;
   left: 0;
@@ -1234,9 +831,7 @@ input[name="share-access"] {
   background: repeating-linear-gradient(45deg, transparent 0 6px, oklch(0.6 0.02 260 / 0.12) 6px 12px);
 }
 
-/* #269：段落錨點的短暫高亮（useBlockAnchor 在 ProseMirror 管轄外疊一層 .kn-anchor-flash 浮層蓋住該區塊，2 s 後移除——不掛在
-   .bn-block-outer 上：可編輯時 ProseMirror 會重繪被改屬性的節點、高亮跟著消失）。主題色用 --color-brand（理由見 wikilink/spec.tsx 與
-   theme.link-guard.test.ts）；prefers-reduced-motion 時不動畫、靜態底色。浮層不吃指標事件。 */
+/* An overlay outside ProseMirror, which would redraw an edited block and drop the highlight. */
 @keyframes kn-anchor-flash {
   from {
     background-color: color-mix(in oklch, var(--color-brand) 22%, transparent);
@@ -1249,9 +844,7 @@ input[name="share-access"] {
   pointer-events: none;
   animation: kn-anchor-flash 2s ease-out;
 }
-/* 搜尋跳轉的常駐標記（useBlockAnchor 的 startMark）：浮層先帶 .kn-anchor-pending（透明、不動畫），等捲動穩定才換成 .kn-anchor-mark
-   開始閃——明顯的兩次「亮→暗」（5 段 × 320 ms ＝ 1.6 s），最後停在亮的。亮色（brand 38%）在閃爍與恆亮是同一個主色、同一個強度。
-   取消靠 Esc／關閉搜尋／下一次搜尋跳轉／離開這篇（浮層被移除），不靠動畫結束。 */
+/* Pending until scrolling settles, then blinks; ends lit. */
 @keyframes kn-anchor-mark {
   0%,
   40%,
@@ -1272,10 +865,7 @@ input[name="share-access"] {
   background-color: color-mix(in oklch, var(--color-brand) 38%, transparent);
   animation: kn-anchor-mark 1.6s linear;
 }
-/* 手機：從清單點進筆記時，筆記畫面從右側滑入（只在 AppShell 判定為「清單 → 筆記的 PUSH」時加上這個 class）。
-   用 transform（合成層，不在主執行緒重排）。transform 會讓裡面 fixed 的元素改以這個元素為準定位，所以筆記頁的浮動鈕
-   不放在主內容區裡，而是 portal 到 AppShell 在主內容區外面留的一格（`data-phone-fab-slot`）。滑入時的橫向溢出由外框的
-   overflow-x: clip 裁掉。 */
+/* transform makes this the containing block for fixed descendants, so the floating button lives outside it. */
 @keyframes kb-phone-enter {
   from {
     transform: translateX(100%);
@@ -1288,14 +878,11 @@ input[name="share-access"] {
   animation: kb-phone-enter 200ms ease-out;
 }
 
-/* 手機（< 640）：清單與筆記捲的是文件，不是內層容器（見 lib/page-scroll.ts；AppShell 外框帶 data-phone-page-scroll）。
-   - html／body 的底色換成手機版面的底色（卡片色）：Safari 半透明的底部工具列後面、回彈時露出來的區域與內容同色，沒有色帶。
-   - 筆記的區塊帶 scroll-margin-top：捲到段落、搜尋結果與提及時讓開釘在頂端的筆記頁首（高度由 NoteEditor 量好寫在 --kb-sticky-top）。
-     不用 html 的 scroll-padding-top：那會連頁首自己的鈕也算成被擋住，關掉 ⋮ 選單把焦點還給 ⋮ 時，文件會被捲回上面。
-   - 下拉重新整理：清單畫面（含全螢幕搜尋層，aside 帶 data-phone-list-shown）與編輯中的筆記（有編輯工具列）擋掉，免得誤觸重載；
-     瀏覽中的筆記照舊可以下拉重新整理。overscroll-behavior 寫在 html 與 body 兩處：各瀏覽器取視窗的值的位置不一致。
-   - html 上的 data-has-* 旗標由元件掛上（lib/page-scroll.ts 的 ROOT_FLAGS）。不寫成 html:has(…)：html 成了 :has() 的錨點後，
-     頁面上任何節點插入或移除都可能讓整份文件重算樣式，筆記越長，開關選單、對話框、圖片放大越慢。 */
+/* The document scrolls on phones (lib/page-scroll.ts). scroll-margin-top, not scroll-padding-top, which counts the
+   header's buttons as covered. overscroll-behavior on html and body: browsers differ. Flags are html attributes, not
+   html:has(), which can restyle the whole document on any DOM change. The html/body background is the card color so Safari's
+   translucent bottom toolbar and bounce area match the content. Pull-to-refresh is blocked on list screens (including the
+   full-screen search layer) and while editing (accidental reloads); reading a note still allows it. */
 @media (width < 40rem) {
   html[data-has-phone-page-scroll],
   html[data-has-phone-page-scroll] body {
@@ -1305,7 +892,6 @@ input[name="share-access"] {
   [data-phone-page-scroll] .bn-block-content {
     scroll-margin-top: var(--kb-sticky-top, 0px);
   }
-  /* 清單列（連同列裡會拿到焦點的連結與按鈕）：鍵盤或螢幕閱讀器把焦點移過去時讓開釘住的頂列與標題列（下緣由清單量好寫在 --kb-list-sticky-top）。 */
   [data-phone-page-scroll] [data-sidebar-list] [data-node-kind],
   [data-phone-page-scroll] [data-sidebar-list] [data-node-kind] * {
     scroll-margin-top: var(--kb-list-sticky-top, 0px);
@@ -1324,8 +910,6 @@ input[name="share-access"] {
   }
 }
 
-/* 手機：對話框（預設尺寸）與帶 `phoneSheet` 的選單是貼底的 sheet，由下往上升起、關閉時往下收，背板淡入淡出。只在手機寬度動畫；
-   減少動態時不動畫（Radix 會直接卸載）。 */
 @keyframes kb-sheet-in {
   from {
     transform: translateY(100%);
@@ -1358,10 +942,8 @@ input[name="share-access"] {
     opacity: 1;
   }
 }
-/* 手機：帶 `phoneSheet` 的選單（⋮ 選單、帳號選單）是貼底滿寬的 sheet（`.kb-menu-sheet` 只在手機寬度由 JS 加上）。
-   Radix 把選單內容包在定位用的 wrapper 裡，以行內樣式把它貼到觸發鈕旁（left／top／transform，高解析度螢幕另有 will-change: transform），
-   這裡蓋掉那些定位，改成貼齊視窗底與左右。will-change 也要清掉：它會讓 wrapper 變成 fixed 子孫的包含區塊，背板就蓋不滿視窗。
-   背板畫在 wrapper 的 ::before（z-index -1：在選單底下）；點背板＝在選單外按下，Radix 照常關閉選單。 */
+/* Override Radix's inline positioning. will-change must go too: it makes the wrapper the containing block for fixed
+   descendants, so the backdrop wouldn't cover the viewport. */
 [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet) {
   position: fixed !important;
   inset: auto 0 0 0 !important;
@@ -1394,9 +976,8 @@ input[name="share-access"] {
   }
 }
 
-/* 一般錨點的 2 s 高亮在 reduced-motion 下不動畫、靜態底色。搜尋標記（.kn-anchor-mark）刻意不在這裡關動畫：它是「你要找的字在這裡」的
-   定位提示，只閃 2 次、頻率遠低於每秒 3 次（WCAG 2.3.1 閃光門檻），而且最後停在亮的；關掉動畫就只剩一個恆亮的底色，使用者看不出
-   是跳轉的結果（曾有使用者在系統關閉動畫的機器上回報「沒有閃兩下、是恆亮」）。 */
+/* The search mark still blinks: only twice (under the WCAG 2.3.1 threshold), and a static one doesn't read as the
+   jump target. */
 @media (prefers-reduced-motion: reduce) {
   .kn-anchor-flash:not(.kn-anchor-mark):not(.kn-anchor-pending) {
     animation: none;

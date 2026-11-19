@@ -1,8 +1,7 @@
 import * as Y from "yjs";
 
-// 結構層：fragment > blockGroup > blockContainer > blockContent [+ blockGroup]。nodeName 是 camelCase
-// （toString() 印小寫——apps/web/src/collab/undo.ts:200-211 的雷）。段落只定義在唯一 blockGroup 的
-// 直接 blockContainer／columnList 子節點（並排列是一個頂層單位，欄內是內容）；更深的是內容。正規序列化排除 id；指紋（server 端 hash）不是安全邊界。
+// Sections are only the single blockGroup's direct blockContainer/columnList children; deeper nodes are content.
+// nodeName is camelCase even though toString() prints lowercase.
 export const TOP_SECTION_ID = "_top";
 export const SECTION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -14,31 +13,25 @@ export interface SectionInfo {
   blockIds: string[];
 }
 
-/** 頂層 bnBlock：`blockContainer` 與 `columnList`。名稱沿用，語意擴大。 */
 export function topLevelContainers(fragment: Y.XmlFragment): Y.XmlElement[] {
   const group = fragment.get(0);
   if (!(group instanceof Y.XmlElement) || group.nodeName !== "blockGroup") return [];
   const out: Y.XmlElement[] = [];
-  // #398：Y 型別的 `get(i)` 每次從頭走（O(i)），索引迴圈是平方——`x<br>`×4.9 萬的段落有約 10 萬個子節點；一律 `toArray()` 一次走完。
+  // Y types' get(i) walks from the start, so an index loop is quadratic on paragraphs with ~100k children.
   for (const child of group.toArray()) {
     if (child instanceof Y.XmlElement && (child.nodeName === "blockContainer" || child.nodeName === "columnList")) out.push(child);
   }
   return out;
 }
 
-// columnList 也會走到這裡（第一個子節點是 column、不是 blockGroup）：回第一欄，headingLevel 只認 heading，列不會被當標題。
+// A columnList reaches here too: its first child is a column, not a blockGroup, so it returns the first column; headingLevel only
+// matches headings, so a row is never treated as a heading.
 function blockContent(container: Y.XmlElement): Y.XmlElement | null {
   const first = container.get(0);
   return first instanceof Y.XmlElement && first.nodeName !== "blockGroup" ? first : null;
 }
 
-/**
- * 純文字：XmlText 走 delta 的 insert 串接（toString 會把 mark 印成 XML 標籤）。
- * #93：**迭代**（顯式 stack）——巢狀深度是 client 可控的，遞迴版在深文件上 RangeError，
- * 而 `sectionize` 會被全文索引在每次落盤時呼叫。子節點**反序**推入，pop 出來就是前序（＝遞迴版的串接順序）；
- * 只收 `XmlText | XmlElement`（`Y.XmlHook` 是 `YMap` 子類，同遞迴版被濾掉）。輸出與遞迴版逐位元組相同
- * （`note-sections.test.ts` 對照遞迴參考實作）。
- */
+// Iterative: nesting depth is client-controlled. Delta inserts, because toString() prints marks as XML tags.
 function textOf(node: Y.XmlElement | Y.XmlText): string {
   let s = "";
   const stack: Array<Y.XmlElement | Y.XmlText> = [node];
@@ -108,7 +101,7 @@ export function canonicalizeElements(elements: Y.XmlElement[]): string {
   return elements.map(canonicalizeNode).join("\n");
 }
 
-/** `blockIds` 必須是頂層、且與文件順序一致；否則 null（＝指紋不符）。空陣列 → ""。 */
+/** `blockIds` must be top-level and in document order, else null (fingerprint mismatch). */
 export function canonicalizeSection(fragment: Y.XmlFragment, blockIds: string[]): string | null {
   if (blockIds.length === 0) return "";
   const containers = topLevelContainers(fragment);

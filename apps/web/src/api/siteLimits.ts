@@ -9,14 +9,14 @@ export function useSiteLimits(): UseQueryResult<SiteLimitsDto> {
   return useQuery({ queryKey: SITE_LIMITS_QUERY_KEY, queryFn: () => api<SiteLimitsDto>("/api/admin/limits") });
 }
 
-/** PATCH 站台限制（requireAdmin）；公開設定（例如上傳大小上限）跟著變，所以失效 `["auth-config"]`。 */
+/** Public settings (e.g. the upload size limit) change too, hence `["auth-config"]`. */
 export function useUpdateSiteLimits(): UseMutationResult<SiteLimitsDto, unknown, SiteLimitsPatchBody> {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: SiteLimitsPatchBody) => api<SiteLimitsDto>("/api/admin/limits", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: (updated) => {
       queryClient.setQueryData(SITE_LIMITS_QUERY_KEY, updated);
-      // 兩次儲存的回應可能亂序到達，舊的快照會蓋掉新的：寫入後再重抓一次，以伺服器現況為準。
+      // Responses to two saves can arrive out of order; refetch so the server's state wins.
       void queryClient.invalidateQueries({ queryKey: SITE_LIMITS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: AUTH_CONFIG_QUERY_KEY });
     },

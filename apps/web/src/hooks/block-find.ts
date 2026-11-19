@@ -1,17 +1,9 @@
 import { TOP_SECTION_ID } from "@knotebook/shared";
 import { foldedIndexOf } from "@/lib/search-match";
 
-/**
- * #93：在編輯器 DOM 裡，找「某個段落範圍內第一個含查詢字的 block」（側欄全文搜尋點片段 → 跳到命中的那一行，不只是段落標題）。
- *
- * - **段落範圍＝`note-sections.ts` 的 `sectionize`**：只看頂層單位（`.bn-editor > .bn-block-group` 的直接子節點：`.bn-block-outer` 與
- *   並排列 `columnList`）；頂層 heading 開新段的條件與 `sectionize` 相同（`level <= 目前段的 level`，或目前是 `_top`）——較深的子標題不另成段、
- *   欄內的 heading 不切段。`_top` ＝筆記開頭到第一個切段 heading 之前。
- * - 範圍內依文件順序（前序：父先於子）逐個 `.bn-block-outer[data-id]`，比對的是**該 block 自己的文字**（不含巢狀子 block），
- *   所以嵌套清單子項、欄內命中會回最內層真正含字的那個 block。
- * - 比對用 `foldedIndexOf`（與標亮同一支）。查詢字是**一整段子字串**（server 也這樣比），沒有「多個詞」要選：`findText` 就是 `forQuery`。
- * - 找不到 → null（呼叫端退回段落標題）。
- */
+// Sections must match sectionize in note-sections.ts: only top-level units (blocks and columnList rows) count, and
+// nested or in-column headings don't start sections. Blocks are matched on their own text, so the innermost matching
+// block wins. The query is a single substring, as on the server.
 const GROUP = ".bn-editor > .bn-block-group";
 const OUTER_SELF = ":scope > .bn-block > .bn-block-content";
 
@@ -22,10 +14,7 @@ function headingLevel(unit: HTMLElement): number | null {
   return Number.isFinite(level) ? level : 1;
 }
 
-/**
- * block 自己的文字：行內內容、`<pre>`（程式碼區塊）與表格格子（`td, th`——格子是 `<td><p>`，沒有 `.bn-inline-content`）；
- * mermaid 讀 `data-code`（server 索引收的就是 mermaid 的 `code` 屬性，`search-text.ts`）。不收 `<select>`（語言選單的選項）與巢狀子 block。
- */
+// Table cells are `<td><p>` without .bn-inline-content; mermaid uses data-code, which is what the server indexes.
 function ownText(outer: HTMLElement): string {
   const content = outer.querySelector<HTMLElement>(OUTER_SELF);
   if (!content) return "";
@@ -35,14 +24,12 @@ function ownText(outer: HTMLElement): string {
     .join("\n");
 }
 
-/** 頂層單位依文件順序；root 內還沒有編輯器（尚未掛上）→ null。 */
 export function topUnits(root: HTMLElement): HTMLElement[] | null {
   const group = root.querySelector<HTMLElement>(GROUP);
   if (!group) return null;
   return Array.from(group.querySelectorAll<HTMLElement>(':scope > :is(.bn-block-outer, [data-node-type="columnList"])'));
 }
 
-/** 這個段落的頂層單位；找不到該 heading（`sectionId` 不在 DOM）→ null。 */
 export function sectionUnits(root: HTMLElement, sectionId: string): HTMLElement[] | null {
   const units = topUnits(root);
   if (units === null) return null;
@@ -55,7 +42,7 @@ export function sectionUnits(root: HTMLElement, sectionId: string): HTMLElement[
     if (level !== null && (curLevel === 0 || level <= curLevel)) {
       curId = unit.getAttribute("data-id") ?? "";
       curLevel = level;
-      // 同 id 的段出現第二次（複製貼上留下的重複 id）：server 只收第一段，這裡也只取第一段。
+      // Duplicate ids from copy-paste: the server keeps only the first such section, so stop there too.
       if (curId === sectionId && found && sectionId !== TOP_SECTION_ID) break;
       if (curId === sectionId) found = true;
     }
@@ -76,15 +63,11 @@ export function collapsedAncestors(root: HTMLElement, outer: HTMLElement): HTMLE
   return out;
 }
 
-/**
- * 命中的 block 若在收合的 toggle（toggleListItem、可收合的 heading）底下，子 block 被 `display:none` 藏起來，捲不到、也量不到。
- * 改回**最外層**那個收合的 toggle 的 `.bn-block-outer`（用 `data-show-children="false"` 判斷）。
- */
+// Children of a collapsed toggle are display:none and can't be scrolled to, so use the outermost collapsed toggle.
 function visibleTarget(root: HTMLElement, outer: HTMLElement): HTMLElement {
   return collapsedAncestors(root, outer)[0] ?? outer;
 }
 
-/** 回範圍內第一個含 `findText` 的 block（`.bn-block-outer[data-id]`；在收合的 toggle 底下則回最外層收合的 toggle）；沒有（或範圍不存在）→ null。 */
 export function findMatchBlock(root: HTMLElement, sectionId: string, findText: string): HTMLElement | null {
   const lowerQuery = findText.toLowerCase();
   if (lowerQuery === "") return null;

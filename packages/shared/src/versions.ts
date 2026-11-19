@@ -1,46 +1,35 @@
-/**
- * 筆記版本歷史。server 與 web 共用的常數、DTO 與名稱正規化。
- * 「基底」＝目前內容是從哪一版接著改（`notes.version_base_seq`）；null＝沒有基底（還沒存過、或套用後基底寫不回去）。
- */
+// "Base" (notes.version_base_seq): the version the current content continues from; null if none.
 import type { AvatarRef } from "./avatar.js";
 
-/** 版本名稱上限（code point）。 */
+/** Code points. */
 export const VERSION_NAME_MAX = 120;
-/** 清單分頁。 */
 export const VERSION_LIST_LIMIT_DEFAULT = 50;
 export const VERSION_LIST_LIMIT_MAX = 100;
-/** 站台清除設定 1 ≤ 全部保留天數 ≤ 每日一版天數 ≤ 3650（DB CHECK `site_settings_version_days_chk` 同值）。 */
+/** 1 ≤ keepAllDays ≤ dailyUntilDays ≤ this, as in DB CHECK site_settings_version_days_chk. */
 export const VERSION_DAYS_MAX = 3650;
 export const VERSION_KEEP_ALL_DAYS_DEFAULT = 7;
 export const VERSION_DAILY_UNTIL_DAYS_DEFAULT = 30;
-/** #272：自動存版等待 X——最後一次內容變動後這麼多分鐘沒有新的變動才自動存一版。站台設定（DB CHECK `site_settings_version_auto_wait_chk` 同範圍）。 */
+/** Minutes without content changes before an automatic version; same range as DB CHECK site_settings_version_auto_wait_chk. */
 export const VERSION_AUTO_WAIT_MINUTES_DEFAULT = 5;
 export const VERSION_AUTO_WAIT_MINUTES_MIN = 1;
 export const VERSION_AUTO_WAIT_MINUTES_MAX = 60;
 
 export type VersionKind = "auto" | "manual";
 
-/**
- * 每版一份編輯者名單；`handle` 是現值（刪除的使用者為 `""`），`agentLabel` 是切版當下的快照（AI 寫入才有）。
- * `avatar` 是該使用者本人目前的頭貼（AI 寫入的列也是本人的，不是代理的）；刪除的使用者、沒有頭貼、顯示圖尚未備好 → null。
- */
+/** `handle` is current ("" if deleted); `agentLabel` is a snapshot. `avatar` is the user's own, even on AI rows. */
 export interface VersionEditorDto {
   handle: string;
   agentLabel: string | null;
   avatar: AvatarRef | null;
 }
 
-/**
- * #272：基底參照。`id`＝基底那一版的 uuid（升級前就已刪除的舊資料為 null）；`deleted`＝該列已不存在；
- * `name` 只在未刪時有（已刪不保留）。
- */
 export interface VersionBaseRefDto {
   id: string | null;
   name: string | null;
   deleted: boolean;
 }
 
-/** 清單的一列。`baseSeq`＝「沿自」的那一版（只在基底不是當時最新版時有值）；`base`＝它的參照（`baseSeq` 為 null 時為 null，#272）。 */
+/** `baseSeq` is set only when the base wasn't the latest version at the time. */
 export interface VersionDto {
   id: string;
   seq: number;
@@ -52,7 +41,6 @@ export interface VersionDto {
   createdAt: string;
 }
 
-/** 目前內容與版本的關係。`autoEnabled`＝生效值（站台且空間）。`base`＝`baseSeq` 那一版的參照（#272）；`nextSeq` 保留，web 不再顯示。 */
 export interface VersionCurrentDto {
   baseSeq: number | null;
   base: VersionBaseRefDto | null;
@@ -61,49 +49,41 @@ export interface VersionCurrentDto {
   autoEnabled: boolean;
 }
 
-/** `GET /api/notes/:id/versions`。`nextBefore` 非 null 時帶 `?before=` 取下一頁。 */
 export interface VersionListDto {
   versions: VersionDto[];
   current: VersionCurrentDto;
   nextBefore: number | null;
 }
 
-/** `GET /api/notes/:id/versions/:seq`：只回快照；名稱等一律從清單取。`ydoc` 是 base64 的 `encodeStateAsUpdate`。 */
+/** `ydoc`: base64 encodeStateAsUpdate. */
 export interface VersionSnapshotDto {
   id: string;
   seq: number;
   ydoc: string;
 }
 
-/** `POST /api/notes/:id/versions`。`upgraded: true`＝內容與基底相同，沒有建新列，基底那版轉為手動並套名稱。 */
+/** `upgraded`: content equals the base, so no row was created; the base became manual and took the name. */
 export type SavedVersionDto = VersionDto & { upgraded: boolean };
 
-/** `POST /api/notes/:id/versions/:seq/apply` 的 body（兩欄必填；`versionId` 是清單列的 `id`）。 */
 export interface ApplyVersionBody {
   versionId: string;
   discardUnsaved: boolean;
 }
 
-/** `POST /api/notes/:id/versions/:seq/apply` 的回應。 */
 export interface ApplyVersionResultDto {
   current: VersionCurrentDto;
 }
 
-/** `GET/PATCH /api/admin/versions/settings`。 */
 export interface VersionSettingsDto {
   keepAllDays: number;
   dailyUntilDays: number;
   autoVersionsEnabled: boolean;
-  /** #272：自動存版等待 X（整數分鐘 1–60）——最後一次內容變動後這麼久沒有新的變動，就自動存一版。 */
   autoWaitMinutes: number;
 }
 
 const UNSTORABLE = /\u0000|\p{Surrogate}/u;
 
-/**
- * 版本名稱正規化。去頭尾空白（`String.prototype.trim`，含全形空白）；空字串＝NULL；上限以 **code point** 計；
- * NUL 與落單代理拒絕（PostgreSQL text 存不下 → 22021，必須在進 SQL 前擋）。web 先驗、server 為準。
- */
+/** Rejects NUL and lone surrogates before SQL: PostgreSQL text can't store them (22021). */
 export function normalizeVersionName(raw: string | null): { ok: true; name: string | null } | { ok: false } {
   if (raw === null) return { ok: true, name: null };
   const name = raw.trim();

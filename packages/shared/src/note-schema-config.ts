@@ -1,18 +1,7 @@
-// 只有 render／toExternalHTML 閉包碰 document，且都在 mount／匯出時才被呼叫；import 本檔不碰 DOM。
-// shared 的 tsconfig 未設 lib（TS 預設含 DOM 型別），這裡刻意不加 reference directive。
-//
-// 媒體／嵌入 URL 判斷規則（`isAllowedEmbedUrl`／`isSafeMediaUrl`／`safeMediaUrl` 共用）：只認
-// http(s)；相對網址在 `isSafeMediaUrl` 放行（自家上傳是 `/api/uploads/<id>`）；空字串在
-// `isSafeMediaUrl` 一律放行（交給 BlockNote「還沒有檔案」的 placeholder）；`data:`／
-// `javascript:`／`file:`／`blob:` 等危險 scheme 一律擋；`isAllowedEmbedUrl`（Embed tab
-// 輸入端）嚴格：不自動補 scheme、只收絕對 http(s)，沒有 `base`——空字串在這條同樣被擋
-// （`isAllowedEmbedUrl("")` 為 `false`，web `media-url.test.ts` 釘住）。
-//
-// `base` 必填、shared 不碰 `window`：web 端包裝補 `window.location.href`（見
-// `apps/web/src/lib/media-url.ts`），server 端傳 jsdom 的 url（`PUBLIC_URL` origin）。
-//
-// 本檔的 config 與 web 的 `noteSchema`（`apps/web/src/collab/schema.ts`）靠
-// `apps/web/src/collab/schema.test.ts` 的 parity 三案同步：改任一邊都要跑那三案。
+// Importing this file doesn't touch the DOM; shared's tsconfig sets no `lib`, so DOM types come by default.
+// isSafeMediaUrl allows relative URLs (own uploads) and "" (BlockNote's "no file yet" placeholder); embeds don't
+// (isAllowedEmbedUrl("") is false, pinned by the web's media-url.test.ts). data:, javascript:, file: and blob: are always blocked.
+// Must stay in sync with the web's noteSchema: run the parity cases in apps/web/src/collab/schema.test.ts.
 import {
   BlockNoteSchema, createBlockSpec, createCodeBlockSpec, createInlineContentSpec, defaultBlockSpecs, defaultInlineContentSpecs,
   type CodeBlockOptions,
@@ -22,15 +11,14 @@ import { normalizeAnchor, wikilinkHref, wikilinkVisibleText } from "./site-link.
 
 export const MERMAID_LANGUAGE = "mermaid";
 export const mermaidBlockConfig = { type: MERMAID_LANGUAGE, content: "none", propSchema: { code: { default: "" } } } as const;
-// #269：`label` 空 ⇒ 顯示目標現行標題（跟著改名）；`anchorBlockId` 空 ⇒ 整篇，否則目標筆記內區塊 id（BLOCK_ANCHOR_RE，
-// 不合格的值讀端一律當空）。改這裡＝改 note schema：同步升 `note-schema-version.ts` 的 NOTE_SCHEMA_VERSION（digest 守衛會紅）。
+// Empty `label`: show the target's current title. Empty `anchorBlockId`: whole note (invalid values read as empty).
+// Changing this changes the note schema: bump NOTE_SCHEMA_VERSION (the digest test fails otherwise).
 export const wikilinkConfig = {
   type: "wikilink",
   content: "none",
   propSchema: { targetNoteId: { default: "" }, snapshotTitle: { default: "" }, label: { default: "" }, anchorBlockId: { default: "" } },
 } as const;
 
-// 原 code-highlight.ts 的 SUPPORTED_LANGUAGES 整份搬來（值逐字不變、型別同）；web 再疊 createHighlighter。
 export const SUPPORTED_LANGUAGES: NonNullable<CodeBlockOptions["supportedLanguages"]> = {
   text: { name: "Plain text", aliases: ["txt", "plaintext"] },
   typescript: { name: "TypeScript", aliases: ["ts"] },
@@ -64,19 +52,14 @@ function resolvesToHttp(raw: string, base?: string): boolean {
   try { parsed = new URL(raw, base); } catch { return false; }
   return parsed.protocol === "http:" || parsed.protocol === "https:";
 }
-/** 嵌入（iframe／外部圖）只收絕對 http(s)：刻意不補 scheme、不吃 base（web media-url.test.ts:21-23 釘住）。 */
 export function isAllowedEmbedUrl(raw: string): boolean { return resolvesToHttp(raw, undefined); }
-// base 必填：shared 沒有 window；web 的包裝補 window.location.href、server 傳 jsdom 的 url（PUBLIC_URL origin）。
-// base 錯了會把相對的 /api/uploads/<id> 消毒成 about:blank。
+// `base` is required (shared has no window); a wrong one turns relative /api/uploads/<id> into about:blank.
 export function isSafeMediaUrl(raw: string, base: string): boolean { return raw === "" ? true : resolvesToHttp(raw, base); }
 export function safeMediaUrl(raw: string, base: string): string { return isSafeMediaUrl(raw, base) ? raw : BLOCKED_MEDIA_URL; }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例，同 apps/web/src/collab/schema.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention, as in apps/web/src/collab/schema.ts)
 type FileBlockSpecLike = { implementation: { toExternalHTML?: (this: any, block: any, ...rest: any[]) => unknown } };
-/**
- * 檔案類 block 匯出前先把 props.url 過 safeMediaUrl（@see #43）：換 props 而非改回傳的 DOM，因為 data-url 也在委派的
- * 原實作裡吐出；`this` 與 `...rest` 原樣轉發，防上游改版。
- */
+// #43: rewrite props.url, not the returned DOM: the delegated implementation also emits data-url.
 export function withGuardedExternalHTML<Spec extends FileBlockSpecLike>(spec: Spec, base: string): Spec {
   const original = spec.implementation.toExternalHTML;
   if (!original) return spec;
@@ -84,7 +67,7 @@ export function withGuardedExternalHTML<Spec extends FileBlockSpecLike>(spec: Sp
     ...spec,
     implementation: {
       ...spec.implementation,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
       toExternalHTML(this: unknown, block: any, ...rest: any[]) {
         return original.call(this, { ...block, props: { ...block.props, url: safeMediaUrl(block.props.url, base) } }, ...rest);
       },
@@ -92,7 +75,6 @@ export function withGuardedExternalHTML<Spec extends FileBlockSpecLike>(spec: Sp
   } as Spec;
 }
 
-/** server 的 headless schema：與 web `noteSchema` 同 config；render／toExternalHTML 用 DOM API 造與 web 同形的節點。 */
 export function createHeadlessNoteSchema(base: string) {
   const mermaidSpec = createBlockSpec(mermaidBlockConfig, {
     render: () => ({ dom: document.createElement("div") }),
@@ -104,11 +86,10 @@ export function createHeadlessNoteSchema(base: string) {
       pre.append(code);
       return { dom: pre };
     },
-  })(); // createBlockSpec 回 factory；createInlineContentSpec 直接回 spec（0.52.1 d.ts 核實）
+  })(); // createBlockSpec returns a factory
   const wikilinkSpec = createInlineContentSpec(wikilinkConfig, {
     render: () => ({ dom: document.createElement("span") }),
-    // #269：與 web spec 同形——`<span><a href="/notes/<id>[#b-…]">label || snapshotTitle || href</a></span>`
-    // （外層 span 的理由見 web `components/wikilink/spec.tsx` 的 `WikilinkExternalHTML`）。
+    // Same HTML as the web's wikilink toExternalHTML (components/wikilink/spec.tsx).
     toExternalHTML: ic => {
       const span = document.createElement("span");
       const a = document.createElement("a");

@@ -3,7 +3,6 @@ import type { IdentitiesDto, OidcRedirectDto } from "@knotebook/shared";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { api } from "./client";
 
-/** #187：`GET /api/auth/identities`（session-only）。 */
 export const IDENTITIES_QUERY_KEY = ["identities"] as const;
 
 export function useIdentities(): UseQueryResult<IdentitiesDto> {
@@ -14,12 +13,12 @@ export function useUnlinkIdentity() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api<void>(`/api/auth/identities/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    // 失敗（409／404）也代表 server 狀態已與畫面不同：成敗皆重抓。
+    // Refetch on failure too: a 409/404 means the list on screen is already stale.
     onSettled: () => void queryClient.invalidateQueries({ queryKey: IDENTITIES_QUERY_KEY }),
   });
 }
 
-/** 手動連結起點。一律送 JSON body `{}`（server 拒收無 body 的 POST）。成功後呼叫端 `location.assign(url)`。 */
+/** Always sends `{}`: the server rejects this POST without a body. */
 export function useStartLink() {
   return useMutation({
     mutationFn: (providerId: string) =>
@@ -27,12 +26,11 @@ export function useStartLink() {
   });
 }
 
-/** 加上密碼。成功後 server 已重簽本人 session（tokenVersion +1）；refetch session（hasPassword）與登入方式（unlinkable 會變）。 */
 export function useSetPassword() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (newPassword: string) => api<void>("/api/auth/password/set", { method: "POST", body: JSON.stringify({ newPassword }) }),
-    // onSettled：409 password_already_set 也代表 server 已有密碼、畫面該切到改密碼形，成敗皆重抓。
+    // Refetch on 409 password_already_set too. Identities change because `unlinkable` depends on having a password.
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: IDENTITIES_QUERY_KEY });
