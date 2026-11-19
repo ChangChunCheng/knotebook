@@ -1,7 +1,4 @@
-/**
- * #200：簽發交易本體（`auth/tx/issue-transfer-token.ts`）與過期清理。直接呼叫交易本體——
- * MCP 那層（scope、角色、扣桶、錯誤映射、測試縫）在 `mcp-transfer*.test.ts`。
- */
+// The MCP layer (scope, role, bucket charging, error mapping, test hooks) is in `mcp-transfer*.test.ts`.
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -34,37 +31,37 @@ function issue(db: Db, parentTokenId: string, noteId: string, purpose: TransferP
   );
 }
 
-/** DB 的 `now()`（epoch 毫秒，可能帶小數）。每次是獨立交易，所以是「這一刻」的時間。 */
+/** DB `now()` (epoch ms, may be fractional). Each call is its own transaction, so it is "this moment". */
 async function dbNowMs(db: Db): Promise<number> {
   const { rows } = await db.$client.query<{ ms: string }>("select extract(epoch from now()) * 1000 as ms");
   return Number(rows[0]!.ms);
 }
 
 describe("issueTransferTokenInTx", () => {
-  it("簽出：一列、noteId 是 DB 小寫形（輸入大寫也一樣）、expiresAt ≈ now＋10 分", async () => {
+  it("issues one row: noteId is the DB lowercase form (even for uppercase input), expiresAt is about now + 10 minutes", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
-    // 上下界都取 DB 時鐘（與 `expires_at` 同一個 `now()`），不受 WSL 與 Windows 主機時鐘漂移影響。
+    // Both bounds use the DB clock (the same `now()` as `expires_at`), unaffected by clock drift between the WSL and Windows hosts.
     const before = await dbNowMs(db);
     const r = await issue(db, o.patId, o.noteId.toUpperCase(), "upload");
     const after = await dbNowMs(db);
     expect(r.kind).toBe("issued");
     if (r.kind !== "issued") return;
     expect(r.noteId).toBe(o.noteId);
-    // ±1 ms：node-postgres 把微秒截成毫秒，DB 端 epoch 毫秒帶小數。
+    // +-1 ms: node-postgres truncates microseconds to milliseconds, while the DB epoch ms is fractional.
     expect(r.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 10 * 60_000 - 1);
     expect(r.expiresAt.getTime()).toBeLessThanOrEqual(after + 10 * 60_000 + 1);
     expect(await db.select().from(transferTokens)).toHaveLength(1);
   });
 
-  it("母憑證不存在 → revoked，零列", async () => {
+  it("parent credential missing -> revoked, zero rows", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     expect(await issue(db, randomUUID(), o.noteId, "download")).toEqual({ kind: "revoked" });
     expect(await db.select().from(transferTokens)).toHaveLength(0);
   });
 
-  it("母憑證只剩 60 秒 → expiresAt 截在母憑證的 access_expires_at（least）", async () => {
+  it("parent credential has only 60 seconds left -> expiresAt is cut to the parent's access_expires_at (least)", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     const parentExp = new Date(Date.now() + 60_000);
@@ -73,16 +70,16 @@ describe("issueTransferTokenInTx", () => {
     expect(r.kind === "issued" && r.expiresAt.getTime()).toBe(parentExp.getTime());
   });
 
-  it("母憑證已過期 → INSERT 撞 transfer_tokens_expiry_chk（23514），呼叫端據此判 revoked", async () => {
+  it("parent credential already expired -> the INSERT hits transfer_tokens_expiry_chk (23514), the caller treats it as revoked", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
-    // DB 時鐘、留 1 分鐘餘裕（不用 `Date.now()`：WSL 的 pg 與 Windows 主機時鐘可能漂移數秒）。
+    // DB clock with 1 minute of slack (not `Date.now()`: pg in WSL and the Windows host clock can drift by seconds).
     await db.update(apiTokens).set({ accessExpiresAt: sql`now() - interval '1 minute'` }).where(eq(apiTokens.id, o.patId));
     const err = await issue(db, o.patId, o.noteId, "upload").then(() => null, (e: unknown) => e);
     expect(checkViolationConstraint(err)).toBe(TRANSFER_TOKENS_EXPIRY_CHK);
   });
 
-  it("筆記不存在 → 23503，約束名＝TRANSFER_TOKENS_NOTE_FK（呼叫端據此判 note_gone）", async () => {
+  it("note missing -> 23503, constraint name = TRANSFER_TOKENS_NOTE_FK (the caller treats it as note_gone)", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     const err = await issue(db, o.patId, randomUUID(), "upload").then(() => null, (e: unknown) => e);
@@ -90,8 +87,8 @@ describe("issueTransferTokenInTx", () => {
   });
 });
 
-describe("未消費 upload token 上限", () => {
-  it("同一母憑證 5 支未消費 upload 之後第 6 支 too_many_pending；download 不受限；另一支母憑證不受影響", async () => {
+describe("cap on unconsumed upload tokens", () => {
+  it("after 5 unconsumed uploads from one parent credential the 6th is too_many_pending; download is not limited; another parent credential is unaffected", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     for (let i = 0; i < 5; i++) expect((await issue(db, o.patId, o.noteId, "upload")).kind).toBe("issued");
@@ -101,14 +98,14 @@ describe("未消費 upload token 上限", () => {
     expect((await issue(db, other.patId, other.noteId, "upload")).kind).toBe("issued");
   });
 
-  it("同一母憑證先簽 5 支 download，upload 照樣簽得出——計數只算 purpose='upload'", async () => {
+  it("5 downloads issued first, uploads can still be issued - the count only covers purpose='upload'", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     for (let i = 0; i < 5; i++) expect((await issue(db, o.patId, o.noteId, "download")).kind).toBe("issued");
     expect((await issue(db, o.patId, o.noteId, "upload")).kind).toBe("issued");
   });
 
-  it("5 支分散在 5 篇不同筆記也算滿——上限是每支母憑證，不是每篇", async () => {
+  it("5 spread over 5 different notes still count as full - the cap is per parent credential, not per note", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     for (let i = 0; i < 5; i++) {
@@ -118,7 +115,7 @@ describe("未消費 upload token 上限", () => {
     expect(await issue(db, o.patId, o.noteId, "upload")).toEqual({ kind: "too_many_pending" });
   });
 
-  it("用掉一支或過期一支就騰出一個名額", async () => {
+  it("using one or expiring one frees a slot", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     const ids: string[] = [];
@@ -132,7 +129,7 @@ describe("未消費 upload token 上限", () => {
 });
 
 describe("deleteExpiredTransferTokens", () => {
-  it("只刪已過期的列", async () => {
+  it("only expired rows are deleted", async () => {
     const { db } = await freshDb();
     const o = await ownerWithPat(db);
     const live = await issueDirect(db, o.patId, o.noteId, "download");
@@ -143,7 +140,7 @@ describe("deleteExpiredTransferTokens", () => {
     expect(ids).toEqual([live.id]);
   });
 
-  it("skip locked：別的交易鎖著的過期列被跳過，清理不等鎖、其餘照刪", async () => {
+  it("skip locked: expired rows locked by another transaction are skipped, cleanup does not wait for the lock, the rest are deleted", async () => {
     const { db, pool } = await freshDb();
     const o = await ownerWithPat(db);
     const held = await issueDirect(db, o.patId, o.noteId, "download");

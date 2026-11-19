@@ -28,8 +28,8 @@ async function holderFor(db: TestApp["db"]): Promise<Client> {
   return holder;
 }
 
-describe("POST /api/auth/password/set（#187）", () => {
-  it("純 SSO 成功 → 204、bump token_version、本人新 cookie 有效、舊 cookie 失效；之後可用密碼登入；onUserRevoked 一次", async () => {
+describe("POST /api/auth/password/set (#187)", () => {
+  it("SSO-only user -> 204, token_version bumped, own new cookie valid, old cookie invalid; password login then works; onUserRevoked called once", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const u = await seedUser(db);
@@ -46,7 +46,7 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: u.email, password: NEW_PW } })).statusCode).toBe(200);
   });
 
-  it("已有密碼 → 409 password_already_set、不改；C14 雙送出 → 第一次 204、第二次 409", async () => {
+  it("already has a password -> 409 password_already_set and unchanged; double submit -> first 204, second 409", async () => {
     const { app, db } = await buildTestApp();
     const p = await insertPasswordUser(db);
     expect((await setPw(app, await cookieOf(p.id))).json().error.code).toBe("password_already_set");
@@ -57,20 +57,20 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect((await setPw(app, fresh, { newPassword: "another-password-456" })).json().error.code).toBe("password_already_set");
   });
 
-  it("太短 → 400 password_too_short；body 不合 → 400；未登入／Bearer → 401", async () => {
+  it("too short -> 400 password_too_short; invalid body -> 400; unauthenticated or Bearer -> 401", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     expect((await setPw(app, await cookieOf(u.id), { newPassword: "short" })).json().error.code).toBe("password_too_short");
     expect((await setPw(app, await cookieOf(u.id), { newPassword: NEW_PW, extra: 1 })).json().error.code).toBe("invalid_body");
     expect((await app.inject({ method: "POST", url: "/api/auth/password/set", payload: { newPassword: NEW_PW } })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // Valid PAT (scope enough for authenticateAny), no cookie: the 401 can only come from "session only".
     const { token } = await seedTokenForUser(db, u.id);
     expect(
       (await app.inject({ method: "POST", url: "/api/auth/password/set", headers: bearer(token), payload: { newPassword: NEW_PW } })).statusCode,
     ).toBe(401);
   });
 
-  it("HashBusyError → 429 server_busy、不改", async () => {
+  it("HashBusyError -> 429 server_busy, unchanged", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     vi.mocked(hashPassword).mockRejectedValueOnce(new HashBusyError());
@@ -79,7 +79,7 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect(row!.h).toBeNull();
   });
 
-  it("B22：有效值關 → 403 password_login_disabled（不 hash）；env 強制＋DB 關 → 204（看有效值）", async () => {
+  it("effective off -> 403 password_login_disabled (no hashing); env force + DB off -> 204 (effective value decides)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -91,7 +91,7 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect((await setPw(forced.app, await cookieOf(v.id))).statusCode).toBe(204);
   });
 
-  it("B22／B23：關閉期間 POST /api/auth/password（改密碼）照常成功並清 must_change_password；旗標帳號 /me 仍回 true", async () => {
+  it("while off, POST /api/auth/password (change password) still succeeds and clears must_change_password; flagged account's /me still returns true", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { mustChangePassword: true });
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -103,7 +103,7 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect(row!.m).toBe(false);
   });
 
-  it("B23：關閉期間旗標帳號建 PAT → 403（既有擋法照常）", async () => {
+  it("while off, a flagged account creating a PAT -> 403 (existing block unchanged)", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { mustChangePassword: true });
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -111,11 +111,11 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("C14 並發：另一連線先送出「加上密碼」（未提交）→ 真路由卡在列鎖 → 提交後鎖後重評 WHERE → 409、密碼仍是先到者的、tv=1", async () => {
+  it("concurrent: another connection submits 'add password' first (uncommitted) -> real route blocks on the row lock -> after commit it re-evaluates WHERE -> 409, password is the first one's, token_version=1", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const cookies = await cookieOf(u.id);
-    // 暖 gate 快取，讓真路由的 authenticate 不會被 holder 的未提交 bump 影響。
+    // Warm the gate cache so the real route's authenticate is not affected by the holder's uncommitted bump.
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies })).statusCode).toBe(200);
     const holder = await holderFor(db);
     try {
@@ -135,8 +135,8 @@ describe("POST /api/auth/password/set（#187）", () => {
     }
   });
 
-  // 這案守的是 unlinkIdentityInTx 的 users 鎖（holder 的 SQL 是手抄路由那句）；加密碼這一側由上面的 C14 並發案守。
-  it("C10 第二形：另一連線先做「加上密碼」（未提交）→ 這邊解除最後一個身分等它提交 → 讀到有密碼 → 204", async () => {
+  // Guards the users lock in unlinkIdentityInTx (the holder's SQL is a hand copy of the route's); the add-password side is guarded by the concurrent case above.
+  it("concurrent, second shape: another connection 'adds password' first (uncommitted) -> unlinking the last identity waits for its commit -> sees the password -> 204", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: "https://a.example", enabled: false, clientSecret: null });
     const u = await seedUser(db);

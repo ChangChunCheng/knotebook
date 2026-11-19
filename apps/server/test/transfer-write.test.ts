@@ -1,6 +1,3 @@
-/**
- * bulk transfer 寫回既有筆記（W1–W17）。流程：`downloadNote` → `editBody` → `bulkPut`。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -34,8 +31,8 @@ const edits = (ctx: CollabTestCtx, noteId: string) => ctx.db.select().from(noteA
 const baseRow = async (ctx: CollabTestCtx, key: string) => (await ctx.db.select().from(transferBases).where(eq(transferBases.key, key)))[0]!;
 const norm = (s: string) => s.replace(/\n+$/, "");
 
-describe("W1–W7 狀態表", () => {
-  it("W1 原樣重送 → unchanged；transferWrite 未扣；tokenRead 扣 1；筆記未變；紀錄 0 列", async () => {
+describe("state table", () => {
+  it("resend unchanged -> unchanged; transferWrite not charged; tokenRead charged 1; note unchanged; 0 record rows", async () => {
     const tokenRead = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { tokenRead, transferWrite } });
@@ -46,13 +43,11 @@ describe("W1–W7 狀態表", () => {
     expect(r.json()).toMatchObject({ id: s.note.id, created: false, result: "unchanged", applied: 0, base: null });
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(before);
     expect(await edits(s.ctx, s.note.id)).toHaveLength(0);
-    // tokenRead 已扣 1（limit 1）：再一次 unchanged → 429
     expect((await bulkPut(s.ctx.app, s.bulk.token, d.text)).statusCode).toBe(429);
-    // transferWrite 沒扣：真的改一段仍可寫（limit 1）
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "Para 1 new")))).statusCode).toBe(200);
   });
 
-  it("W2 改一段 → applied 1、內容＝agent 檔、其餘 id 不變、一列 file_sync、applied_body_sha 已寫、沒有 version", async () => {
+  it("change one paragraph -> applied 1, content = the agent's file, other ids unchanged, one file_sync row, applied_body_sha written, no version", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const ids0 = await topIdsOf(s.ctx, s.note.id);
@@ -73,8 +68,8 @@ describe("W1–W7 狀態表", () => {
     expect((await baseRow(s.ctx, d.fm.base!)).appliedBodySha).not.toBeNull();
   });
 
-  // isBlocked 預檢在佇列之前：桶滿時連同檔重送都 429，所以這裡用 limit 2——寫一次、重送、再寫一篇仍成功＝重送沒扣。
-  it("W3 寫回後同檔重送 → unchanged、不扣 transferWrite；W4 舊 base 改別段 → 409 base_unavailable、筆記未變", async () => {
+  // The isBlocked pre-check runs before the queue: when the bucket is full even a resend of the same file is 429, so limit 2 here - write once, resend, write another note still succeeds = the resend did not charge.
+  it("resending the same file after write-back -> unchanged, transferWrite not charged; an old base changing another paragraph -> 409 base_unavailable, note unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -88,14 +83,13 @@ describe("W1–W7 狀態表", () => {
     expect(w4.statusCode).toBe(409);
     expect(errOf(w4)).toEqual({ code: "base_unavailable", message: BASE_UNAVAILABLE_MESSAGES.already_sent, reason: "already_sent" });
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(after);
-    // 重送與 409 都沒扣 → limit 2 還剩 1：再寫一篇仍 200
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
     await seedMd(s.ctx.db, n2.id, "Only para");
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, n2.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, () => "Changed para"))).statusCode).toBe(200);
   });
 
-  it("色碼：上傳 #F60 → 下載回小寫 #ff6600；原上傳檔與重新下載的檔重送都判 unchanged", async () => {
+  it("color codes: upload #F60 -> download returns lowercase #ff6600; resending the original upload and the re-downloaded file both count as unchanged", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const addColor = (b: string) => b.replace("Para 1", 'Para <span style="color:#F60">1</span>');
@@ -106,7 +100,7 @@ describe("W1–W7 狀態表", () => {
     expect(d2.body).toContain('<span style="color:#ff6600">1</span>');
     expect(d2.body).not.toContain("#F60");
     const rowsBefore = (await edits(s.ctx, s.note.id)).length;
-    // 重新下載的副本把色碼改回上傳時的寫法（大寫短寫）：位元組與本文雜湊都跟下載的不同，要靠解析後的正規形比對才判得出沒有新改動。
+    // The re-downloaded copy has the color changed back to the upload spelling (uppercase short form): bytes and body hash both differ from the download, so only the normalized form after parsing shows there is no new change.
     const again = await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, b => b.replace("#ff6600", "#F60")));
     expect(again.statusCode, again.body).toBe(200);
     expect(again.json()).toMatchObject({ applied: 0 });
@@ -114,7 +108,7 @@ describe("W1–W7 狀態表", () => {
     expect((await edits(s.ctx, s.note.id)).length).toBe(rowsBefore);
   });
 
-  it("409 三形：別人的 base、別篇的 base → reason other_note；不存在的 16 hex → expired（各帶對應訊息）", async () => {
+  it("three 409 shapes: someone else's base, another note's base -> reason other_note; a nonexistent 16 hex -> expired (each with its own message)", async () => {
     const s = await scene();
     const other = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Other" });
     await seedMd(s.ctx.db, other.id, "Other para");
@@ -133,7 +127,7 @@ describe("W1–W7 狀態表", () => {
     }
   });
 
-  it("W5b 換金鑰（同一個 DB、不同 APP_SECRET）→ 原樣重送 409 base_unavailable、筆記逐位元組未變、紀錄 0 列", async () => {
+  it("key rotation (same DB, different APP_SECRET) -> resending as is gives 409 base_unavailable, note byte-for-byte unchanged, 0 record rows", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const before = await liveMarkdown(s.ctx, s.note.id);
@@ -146,7 +140,7 @@ describe("W1–W7 狀態表", () => {
     expect(await edits(ctx2, s.note.id)).toHaveLength(0);
   });
 
-  it("W6 not_mergeable：改內容 → 409＋NOT_MERGEABLE_MESSAGE；原樣重送 → unchanged", async () => {
+  it("not_mergeable: changing content -> 409 + NOT_MERGEABLE_MESSAGE; resending as is -> unchanged", async () => {
     const s = await scene({ transferTestHooks: { forceUnmergeable: () => true } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "x")));
@@ -157,7 +151,7 @@ describe("W1–W7 狀態表", () => {
     expect(r2.json()).toMatchObject({ result: "unchanged" });
   });
 
-  it("W7 只插空行 → unchanged、applied_body_sha 不寫、不扣 transferWrite", async () => {
+  it("only blank lines inserted -> unchanged, applied_body_sha not written, transferWrite not charged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -165,7 +159,6 @@ describe("W1–W7 狀態表", () => {
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ result: "unchanged" });
     expect((await baseRow(s.ctx, d.fm.base!)).appliedBodySha).toBeNull();
-    // transferWrite 沒扣：另一篇的真寫入仍可（limit 1）
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
     await seedMd(s.ctx.db, n2.id, "Only para");
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, n2.id);
@@ -173,9 +166,9 @@ describe("W1–W7 狀態表", () => {
   });
 });
 
-describe("W8 400 整篇不寫（拿掉守衛會落到 500 那幾條：NUL／落單代理／非 uuid 進 SQL）", () => {
+describe("400 and nothing written (cases that would be 500 without the guard: NUL / lone surrogate / non-uuid reaching SQL)", () => {
   const NUL = String.fromCodePoint(0);
-  it("十二形各 400＋JSON；筆記、標題、基底都沒變；「A、空段落、B」中間插 X → 200", async () => {
+  it("twelve shapes each give 400 + JSON; note, title and base unchanged; inserting X between 'A, empty paragraph, B' -> 200", async () => {
     const s = await scene({}, "A\n\nB");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const before = await liveMarkdown(s.ctx, s.note.id);
@@ -206,14 +199,14 @@ describe("W8 400 整篇不寫（拿掉守衛會落到 500 那幾條：NUL／落�
     expect((await s.ctx.db.select({ title: notes.title }).from(notes).where(eq(notes.id, s.note.id)))[0]!.title).toBe("Title");
     expect(JSON.stringify((await basesOf(s.ctx.db)).map(b => [b.key, b.appliedBodySha]))).toBe(basesBefore);
   });
-  it("「A、空段落、B」中間插 X → 200", async () => {
+  it("inserting X between 'A, empty paragraph, B' -> 200", async () => {
     const s = await scene({}, "A");
     await humanEdit(s.ctx, s.note.id, ed => ed.replaceBlocks(ed.document, [{ type: "paragraph", content: "A" }, { type: "paragraph" }, { type: "paragraph", content: "B" }]));
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("A\n\n", "A\n\nX\n\n")));
     expect(r.statusCode).toBe(200);
   });
-  it("檔案層級未閉合的 ``` fence（agent 新增）→ 400 invalid_body＋UNCLOSED_FENCE_MESSAGE", async () => {
+  it("file-level unclosed ``` fence (added by the agent) -> 400 invalid_body + UNCLOSED_FENCE_MESSAGE", async () => {
     const s = await scene({}, "A\n\nB");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("B", "```\nB")));
@@ -222,8 +215,8 @@ describe("W8 400 整篇不寫（拿掉守衛會落到 500 那幾條：NUL／落�
   });
 });
 
-describe("W9–W12 權限、範圍、額度、佇列", () => {
-  it("W9 viewer 403；範圍外 403；垃圾桶 404；範圍物件看不到 403；access=read 403", async () => {
+describe("permissions, scope, quota, queue", () => {
+  it("viewer 403; out of range 403; trash 404; range object invisible 403; access=read 403", async () => {
     const s = await scene();
     const owner = await seedUser(s.ctx.db);
     const shared = await seedNote(s.ctx.db, { ownerId: owner.id }, { title: "S" });
@@ -233,31 +226,27 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     const viewer = await bulkPut(s.ctx.app, s.bulk.token, editBody(sd.text, () => "x"));
     expect(viewer.statusCode).toBe(403);
     expect(errOf(viewer)).toEqual({ code: "forbidden", message: "You don't have edit access to this note." });
-    // 範圍外：folder 範圍的權杖、筆記不在那個資料夾
     const f = (await seedFolder(s.ctx.db, { personal: s.u.id }, { name: "F" })).id;
     const fbulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "write", range: { kind: "folder", folderId: f } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const out = await bulkPut(s.ctx.app, fbulk.token, editBody(d.text, b => b.replace("Para 1", "x")));
     expect(out.statusCode).toBe(403);
     expect(errOf(out).message).toBe("This note isn't in this transfer token's range.");
-    // 範圍物件看不到：刪掉資料夾
     await s.ctx.db.execute(sql`delete from folders where id = ${f}`);
     const gone = await bulkPut(s.ctx.app, fbulk.token, editBody(d.text, b => b.replace("Para 1", "x")));
     expect(gone.statusCode).toBe(403);
     expect(errOf(gone).message).toBe("The group or folder this transfer token covers is no longer visible to you.");
-    // access=read
     const rbulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "read" });
     const ro = await bulkPut(s.ctx.app, rbulk.token, editBody(d.text, b => b.replace("Para 1", "x")));
     expect(ro.statusCode).toBe(403);
     expect(errOf(ro)).toEqual({ code: "insufficient_scope", message: "This token's scope doesn't allow this action." });
-    // 垃圾桶
     await s.ctx.db.update(notes).set({ deletedAt: new Date() }).where(eq(notes.id, s.note.id));
     const trashed = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "x")));
     expect(trashed.statusCode).toBe(404);
     expect(errOf(trashed)).toEqual({ code: "not_found", message: TRANSFER_NOTE_NOT_FOUND_MESSAGE });
   });
 
-  it("W10 transferWrite limit 1 → 第二篇的寫回 429＋Retry-After ≥ 1、筆記未變", async () => {
+  it("transferWrite limit 1 -> the second note's write-back is 429 + Retry-After >= 1, note unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
@@ -273,7 +262,7 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     expect(await liveMarkdown(s.ctx, n2.id)).toBe(before);
   });
 
-  it("W10b 桶滿時「同檔重送」仍 200 unchanged（寫回額度只看有改的檔）；同一份副本改別的內容 → 409 already_sent", async () => {
+  it("with the bucket full, resending the same file is still 200 unchanged (the write quota counts only changed files); the same copy with other content -> 409 already_sent", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -285,7 +274,7 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 2", "y")))).statusCode).toBe(409);
   });
 
-  it("W10c 寫回額度在解析之前扣：解析失敗的寫回 400 也算一次 → 另一篇的真寫入 429、筆記未變", async () => {
+  it("the write quota is charged before parsing: a write-back that fails to parse (400) also counts once -> another note's real write is 429, note unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
@@ -302,7 +291,7 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     expect(await liveMarkdown(s.ctx, n2.id)).toBe(before);
   });
 
-  it("W10d 額度用完時，本文位元組有改的檔一律 429——連只插空行（零區）的也是（判零區要先解析）；位元組相同的重送仍 200 unchanged", async () => {
+  it("with the quota used up, any file whose body bytes changed is 429 - even one that only inserted blank lines (zero region; detecting it needs parsing first); a resend with identical bytes is still 200 unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
@@ -317,7 +306,7 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     expect(same.json()).toMatchObject({ result: "unchanged" });
   });
 
-  it("W11 佇列被占（queueWaitMs 50）→ 503 server_busy、筆記未變", async () => {
+  it("queue occupied (queueWaitMs 50) -> 503 server_busy, note unchanged", async () => {
     let release!: () => void;
     let entered!: () => void;
     const inMerge = new Promise<void>(r => (entered = r));
@@ -347,7 +336,7 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
     expect(await liveMarkdown(s.ctx, s.note.id)).not.toContain("second");
   });
 
-  it("W12 不扣 edit／tokenWrite：兩桶 limit 0 時寫回仍 200；transferWrite limit 0 時 REST /edits 仍可寫", async () => {
+  it("does not charge edit/tokenWrite: with both buckets at limit 0 write-back is still 200; with transferWrite at limit 0 REST /edits can still write", async () => {
     const zero = () => new FixedWindowLimiter({ limit: 0, windowMs: 60_000 });
     const s = await scene({ limiters: { edit: zero(), tokenWrite: zero() } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -358,8 +347,8 @@ describe("W9–W12 權限、範圍、額度、佇列", () => {
   });
 });
 
-describe("W13 log 鍵集合（11 鍵——沒有 conflicts、versionId；錯誤出口 diff 鍵 null）", () => {
-  it("applied／409／400 各恰一行 info、鍵恰 11 個；log 不含標題、本文、檔內標記、knbt_", async () => {
+describe("log key set (11 keys - no conflicts, versionId; error exits have a null diff key)", () => {
+  it("applied / 409 / 400 each log exactly one info line with exactly 11 keys; the log contains no title, body, in-file marker or knbt_", async () => {
     const chunks: string[] = [];
     const s = await scene({ logger: { level: "info", stream: { write: (x: string) => void chunks.push(x) } } }, PARAS(3, "SecretBodyMarker"));
     await s.ctx.db.update(notes).set({ title: "SecretTitleMarker" }).where(eq(notes.id, s.note.id));
@@ -380,7 +369,7 @@ describe("W13 log 鍵集合（11 鍵——沒有 conflicts、versionId；錯誤�
     for (const m of ["SecretBodyMarker", "SecretTitleMarker", "knbt_"]) expect(all).not.toContain(m);
   });
 
-  it("W13b 未預期的例外（紀錄交易 trigger 失敗）→ 500、`bulk transfer write` 恰一行、result internal、11 鍵且 diff 鍵 null；log 不含本文與 Failed query", async () => {
+  it("unexpected exception (record transaction trigger fails) -> 500, exactly one `bulk transfer write` line, result internal, 11 keys with a null diff key; the log contains no body and no Failed query", async () => {
     const chunks: string[] = [];
     const s = await scene({ logger: { level: "info", stream: { write: (x: string) => void chunks.push(x) } } }, PARAS(3, "SecretBodyMarker"));
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -407,8 +396,8 @@ describe("W13 log 鍵集合（11 鍵——沒有 conflicts、versionId；錯誤�
   });
 });
 
-describe("W14 空筆記", () => {
-  it("沒有內容的筆記 → 下載本文空 → 寫兩段 → 200、內容＝agent 本文、沒有多餘空段落、紀錄形＝插入列", async () => {
+describe("empty note", () => {
+  it("a note with no content -> download body is empty -> write two paragraphs -> 200, content = the agent's body, no extra empty paragraph, record shape = insert rows", async () => {
     const s = await scene({}, "");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect(d.body).toBe("");
@@ -422,7 +411,7 @@ describe("W14 空筆記", () => {
     expect(row!.afterBlockIds).toHaveLength(2);
   });
 
-  it("W14b（known-limitation）只剩一顆空段落的筆記不算「空筆記」：寫兩段 → 那顆空段落留在結尾（結尾 0 行段永遠最後）", async () => {
+  it("known limitation: a note with only one empty paragraph does not count as an empty note: write two paragraphs -> that empty paragraph stays at the end (a zero-line paragraph at the end always stays last)", async () => {
     const s = await scene({}, "");
     await seedBlocks(s.ctx.db, s.note.id, [{ type: "paragraph" }]);
     const [emptyId] = await topIdsOf(s.ctx, s.note.id);
@@ -436,7 +425,7 @@ describe("W14 空筆記", () => {
   });
 });
 
-describe("W15 帶內容的 DB 失敗不洩內容", () => {
+describe("a DB failure carrying content does not leak the content", () => {
   async function withTrigger<T>(ctx: CollabTestCtx, table: string, when: string, f: () => Promise<T>): Promise<T> {
     await ctx.db.execute(sql.raw(`create function kn_w15() returns trigger language plpgsql as $$ begin raise exception 'W15TriggerMarker'; end $$`));
     await ctx.db.execute(sql.raw(`create trigger kn_w15 ${when} on ${table} for each row execute function kn_w15()`));
@@ -456,7 +445,7 @@ describe("W15 帶內容的 DB 失敗不洩內容", () => {
     expect(all, "前提：trigger 觸發（log 有 pgErrorSummary 的 code）").toContain('"code":"P0001"');
     for (const m of [marker, "Failed query", "params", "W15TriggerMarker"]) expect(all, m).not.toContain(m);
   };
-  it("(a) 紀錄交易失敗 → 500、log 不含本文標記", async () => {
+  it("record transaction fails -> 500, the log has no body marker", async () => {
     const c = capture();
     const s = await scene({ logger: c.logger });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -464,7 +453,7 @@ describe("W15 帶內容的 DB 失敗不洩內容", () => {
     expect(r.statusCode).toBe(500);
     assertClean(c.chunks, "W15BodyMarkerA");
   });
-  it("(c) 改名失敗 → 500、標題未變、log 不含標題標記", async () => {
+  it("rename fails -> 500, title unchanged, the log has no title marker", async () => {
     const c = capture();
     const s = await scene({ logger: c.logger });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -481,7 +470,7 @@ describe("W15 帶內容的 DB 失敗不洩內容", () => {
     expect((await s.ctx.db.select({ title: notes.title }).from(notes).where(eq(notes.id, s.note.id)))[0]!.title).toBe("Title");
     assertClean(c.chunks, "W15TitleMarkerC");
   });
-  it("(d)（docs/api.md 的 internal 列）內文已寫入並記錄、之後改名失敗 → 500；同檔重送 → 409 already_sent、內文不重複", async () => {
+  it("(the internal row of docs/api.md) body already written and recorded, rename fails afterwards -> 500; resending the same file -> 409 already_sent, body not duplicated", async () => {
     const c = capture();
     const s = await scene({ logger: c.logger });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -506,8 +495,8 @@ describe("W15 帶內容的 DB 失敗不洩內容", () => {
   });
 });
 
-describe("W16 溢位（真上限；「人改了中間那段」的形改回 409，見 transfer-write-reread）", () => {
-  it("2 500 段；agent 改 0–599 與 1 900–2 499 → 中間那段沒被動到、id 不變、log diffOverflow／anchored／degradedLines", async () => {
+describe("overflow (real limit; the shape where someone edited the middle paragraph goes back to 409, see transfer-write-reread)", () => {
+  it("2 500 paragraphs; the agent changes 0-599 and 1 900-2 499 -> the middle paragraph is untouched with its id unchanged, log diffOverflow/anchored/degradedLines", async () => {
     const chunks: string[] = [];
     const s = await scene({ logger: { level: "info", stream: { write: (x: string) => void chunks.push(x) } } }, PARAS(2500, "Unique line"));
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -536,8 +525,8 @@ describe("W16 溢位（真上限；「人改了中間那段」的形改回 409�
   }, 180_000);
 });
 
-describe("W17 紀錄交易失敗後重送不重複（重送回 409 note_changed，不再判 same）", () => {
-  it("改寫、刪除、插入兩段 → 紀錄失敗 500（內容已合併）→ 同檔重送 → 409 note_changed；內容不重複、頂層 id 唯一", async () => {
+describe("resending after a record transaction failure does not duplicate (the resend returns 409 note_changed, no longer judged same)", () => {
+  it("rewrite, delete, insert two paragraphs -> record failure 500 (content already merged) -> resending the same file -> 409 note_changed; content not duplicated, top-level ids unique", async () => {
     const s = await scene({}, PARAS(5));
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const text = editBody(d.text, b => b.replace("Para 0", "Para 0 rewritten").replace("Para 2\n\n", "").replace("Para 4", "Para 4\n\nInsertedOne\n\nInsertedTwo"));
@@ -565,7 +554,7 @@ describe("W17 紀錄交易失敗後重送不重複（重送回 409 note_changed�
   });
 });
 
-describe("W18 寫回與新增在回覆之前已經建好全文索引（#369：known-limitations「A write … is indexed before its reply comes back」對 bulk 也成立）", () => {
+describe("write-back and create build the full-text index before the reply (#369: the known-limitations statement 'A write ... is indexed before its reply comes back' holds for bulk too)", () => {
   type SearchHit = { note: { id: string }; matchedOn: "title" | "body" | "both"; matches: Array<{ snippet: string }> };
   const search = async (ctx: CollabTestCtx, userId: string, q: string) => {
     const r = await ctx.app.inject({ method: "GET", url: `/api/search?q=${encodeURIComponent(q)}`, cookies: await cookieOf(userId) });
@@ -574,7 +563,7 @@ describe("W18 寫回與新增在回覆之前已經建好全文索引（#369：kn
   };
   const uniq = (tag: string) => `kbidx${tag}${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
-  it("寫回既有筆記：200 回來後立刻 GET /api/search 搜得到這篇、命中在內文（之前搜不到）", async () => {
+  it("write-back to an existing note: right after the 200, GET /api/search finds this note, hit in the body (previously not found)", async () => {
     const s = await scene();
     const mark = uniq("w");
     expect(await search(s.ctx, s.u.id, mark)).toEqual([]);
@@ -587,7 +576,7 @@ describe("W18 寫回與新增在回覆之前已經建好全文索引（#369：kn
     expect(hits[0]!.matches.some(m => m.snippet.includes(mark))).toBe(true);
   });
 
-  it("新增筆記：201 回來後立刻 GET /api/search 搜得到新筆記、命中在內文", async () => {
+  it("create a note: right after the 201, GET /api/search finds the new note, hit in the body", async () => {
     const s = await scene();
     const mark = uniq("c");
     const r = await bulkPut(s.ctx.app, s.bulk.token, `---\nknotebook: 1\ntitle: "Indexed new"\n---\nFirst para\n\nSecond para ${mark}\n`);
@@ -600,8 +589,8 @@ describe("W18 寫回與新增在回覆之前已經建好全文索引（#369：kn
   });
 });
 
-describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone，動過就拒）", () => {
-  /** REST `replace_section`（PAT）：把 outline[1]（第一個 heading 那段）整段換成 markdown → 所有 block 換新 id。 */
+describe("note replaced after download -> 409 note_changed (replaces anchors_gone: changed means rejected)", () => {
+  /** REST `replace_section` (PAT): replaces the section under the first heading, so every block gets a new id. */
   async function replaceSection(s: Awaited<ReturnType<typeof scene>>, markdown: string) {
     const c = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json() as { outline: Array<{ sectionId: string; fingerprint: string }> };
     const sec = c.outline[1]!;
@@ -617,7 +606,7 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(md0);
   };
 
-  it("Z1 下載 → replace_section 換掉整段 → 送舊副本（改一段＋改標題）→ 409 note_changed；內容逐字不變、沒有新版本或紀錄列、沒改名、沒扣 transferWrite、log 一行", async () => {
+  it("download -> replace_section replaces the whole section -> sending the old copy (one paragraph and the title changed) -> 409 note_changed; content verbatim unchanged, no new version or record row, not renamed, transferWrite not charged, one log line", async () => {
     const chunks: string[] = [];
     const s = await scene({ limiters: { transferWrite: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }, logger: { level: "info", stream: { write: (x: string) => void chunks.push(x) } } }, "# H\n\nFirst para\n\nSecond para");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -638,13 +627,12 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     const lines = chunks.flatMap(c => c.split("\n")).filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(o => o.msg === "bulk transfer write");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ result: "base_unavailable", noteId: s.note.id, applied: null });
-    // transferWrite（limit 1）沒被扣：重新下載後照常寫回
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r2 = await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, b => b.replace("Second para edited by edit_note", "Second para redone")));
     expect(r2.statusCode).toBe(200);
   });
 
-  it("Z2 多區檔案（A 有改、在 C 之後插 X），B、C 被換成內容相同的新 id → 整篇 409、A 也沒寫", async () => {
+  it("multi-region file (A changed, X inserted after C), B and C replaced by new ids with identical content -> the whole file is 409, A is not written either", async () => {
     const s = await scene({}, "A\n\nB\n\nC");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => {
@@ -655,14 +643,14 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     expect(await edits(s.ctx, s.note.id)).toHaveLength(0);
   });
 
-  it("Z3a 基底是空筆記、之後別人寫了內容 → 409（不再插在開頭）", async () => {
+  it("base is an empty note, someone later writes content -> 409 (no longer inserted at the start)", async () => {
     const s = await scene({}, "");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => ed.replaceBlocks(ed.document.map(b => b.id), [{ type: "paragraph", content: "Human para" }]));
     await refused(s, `${d.text}Agent para`);
   });
 
-  it("Z3b 在基底最開頭插入（筆記沒動）→ 照舊寫入", async () => {
+  it("insert at the very start of the base (note untouched) -> written as before", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => `New first\n\n${b}`));
@@ -670,7 +658,7 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     expect((await liveBlocks(s.ctx, s.note.id)).map(b => b.text)).toEqual(["New first", "Para 0", "Para 1", "Para 2", "Para 3"]);
   });
 
-  it("Z3c 現況被清成 0 顆頂層（note_states 換成空文件）→ 409", async () => {
+  it("current state cleared to 0 top-level blocks (note_states replaced with an empty document) -> 409", async () => {
     const s = await scene({}, PARAS(3));
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await s.ctx.db.delete(noteStates).where(eq(noteStates.noteId, s.note.id));
@@ -679,7 +667,7 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     await refused(s, editBody(d.text, b => `${b.replace(/\n+$/, "")}\n\nPara 3 new`));
   });
 
-  it("Z3d 只改標題、但筆記內文已被 replace_section 換過 → 409、標題不變", async () => {
+  it("only the title changed, but the body was already replaced by replace_section -> 409, title unchanged", async () => {
     const s = await scene({}, "# H\n\nFirst para");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await replaceSection(s, "# H\n\nFirst para edited");
@@ -687,7 +675,7 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
     expect((await s.ctx.db.select({ title: notes.title }).from(notes).where(eq(notes.id, s.note.id)))[0]!.title).toBe("Title");
   });
 
-  it("Z4 基底 [A, B, C]；A、C 被換成新 id（內容相同）；agent 刪 B → 409、B 還在", async () => {
+  it("base [A, B, C]; A and C replaced by new ids (same content); the agent deletes B -> 409, B is still there", async () => {
     const s = await scene({}, "A\n\nB\n\nC");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => {
@@ -700,10 +688,9 @@ describe("Z 下載後筆記被換過 → 409 note_changed（取代 anchors_gone�
   });
 });
 
-describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
+describe("error shapes", () => {
   const CH = "# 第一章\n\n段落 A1\n\n## 1.1 小節\n\n段落 B1\n\n# 第二章\n\n段落 C1\n\n* 清單一\n* 清單二\n\n# 第三章\n\n段落 D1";
   const versions = (ctx: CollabTestCtx, noteId: string) => ctx.db.select().from(noteVersions).where(eq(noteVersions.noteId, noteId));
-  /** REST edit_note 的 replace_section／delete_section（PAT），以 heading 找那一段。 */
   async function sectionEdit(s: Awaited<ReturnType<typeof scene>>, heading: string, op: "replace_section" | "delete_section", markdown?: string) {
     const c = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json() as { outline: Array<{ sectionId: string; heading: string; fingerprint: string }> };
     const sec = c.outline.find(o => o.heading === heading)!;
@@ -711,7 +698,6 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     const r = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.pat.token), payload });
     expect(r.statusCode).toBe(201);
   }
-  /** 送檔 → 409 note_changed，內容逐字不變、不存版、不寫紀錄。 */
   async function expectRefused(s: Awaited<ReturnType<typeof scene>>, token: string, text: string) {
     const md0 = await liveMarkdown(s.ctx, s.note.id);
     const v0 = (await versions(s.ctx, s.note.id)).length;
@@ -725,37 +711,37 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
   }
   const REPLACED = "# 第二章\n\n段落 C1 AI 改過\n\n* 清單一\n* 清單二";
 
-  it("A-b replace_section 換掉第二章 → 送舊副本改同一段 C1 → 409", async () => {
+  it("replace_section replaces chapter 2 -> the old copy changes the same paragraph C1 -> 409", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await sectionEdit(s, "第二章", "replace_section", REPLACED);
     await expectRefused(s, s.bulk.token, editBody(d.text, b => b.replace("段落 C1", "段落 C1 檔案改")));
   });
-  it("A-h replace_section 改成與檔案相同 → 409", async () => {
+  it("replace_section changes it to match the file -> 409", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await sectionEdit(s, "第二章", "replace_section", "# 第二章\n\n段落 C1 一樣\n\n* 清單一\n* 清單二");
     await expectRefused(s, s.bulk.token, editBody(d.text, b => b.replace("段落 C1", "段落 C1 一樣")));
   });
-  it("A-k replace_section 改 C1 後、檔案改同章的清單項 → 409", async () => {
+  it("after replace_section changes C1, the file changes a list item of the same chapter -> 409", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await sectionEdit(s, "第二章", "replace_section", REPLACED);
     await expectRefused(s, s.bulk.token, editBody(d.text, b => b.replace("* 清單二", "* 清單二（檔案改）")));
   });
-  it("A-m replace_section 改 C1 後、檔案改同章的標題 → 409", async () => {
+  it("after replace_section changes C1, the file changes the title of the same chapter -> 409", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await sectionEdit(s, "第二章", "replace_section", REPLACED);
     await expectRefused(s, s.bulk.token, editBody(d.text, b => b.replace("# 第二章", "# 第二章（檔案改名）")));
   });
-  it("A-e delete_section 刪了第三章、檔案改 D1 → 409", async () => {
+  it("delete_section deletes chapter 3, the file changes D1 -> 409", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await sectionEdit(s, "第三章", "delete_section");
     await expectRefused(s, s.bulk.token, editBody(d.text, b => b.replace("段落 D1", "段落 D1 檔案改")));
   });
-  it("A-兩個權杖：A 先寫回改 Z → B 從舊副本改 X（與 Z 不相鄰）→ 409；B 的修改都沒寫", async () => {
+  it("two tokens: A writes back a change to Z first -> B changes X from the old copy (not adjacent to Z) -> 409; none of B's changes are written", async () => {
     const s = await scene({}, "段落 X\n\n段落 Y\n\n段落 Z");
     const pat2 = await seedTokenForUser(s.ctx.db, s.u.id, "notes:read notes:write");
     const b2 = await issueBulkDirect(s.ctx.db, pat2.tokenId, { access: "write" });
@@ -764,7 +750,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(da.text, b => b.replace("段落 Z", "段落 Z：A 改")))).json()).toMatchObject({ result: "applied" });
     await expectRefused(s, b2.token, editBody(db.text, b => b.replace("段落 X", "段落 X：B 改")));
   });
-  it("A-瀏覽器原地打字（block id 不變）後送舊副本改同一段 → 409、不存版", async () => {
+  it("after typing in place in the browser (block ids unchanged), sending the old copy that changes the same paragraph -> 409, no version saved", async () => {
     const s = await scene({}, CH);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => {
@@ -775,7 +761,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(await versions(s.ctx, s.note.id)).toHaveLength(0);
   });
 
-  it("B front matter 開頭有 knotebook:／id:、卻沒有收尾的 --- → 400 invalid_body；新增與寫回兩條路都擋、什麼都沒建", async () => {
+  it("front matter starting with knotebook:/id: but with no closing --- -> 400 invalid_body; both create and write-back paths block it, nothing created", async () => {
     const s = await scene();
     const n0 = (await s.ctx.db.select().from(notes)).length;
     const r1 = await bulkPut(s.ctx.app, s.bulk.token, "---\nknotebook: 1\ntitle: \"T\"\nbody text");
@@ -785,11 +771,11 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(r2.statusCode).toBe(400);
     expect(errOf(r2)).toEqual({ code: "invalid_body", message: UNCLOSED_FRONT_MATTER_MESSAGE });
     expect((await s.ctx.db.select().from(notes)).length).toBe(n0);
-    // 開頭不是 --- 的照舊當內文
+    // A file that does not start with --- is treated as body as before.
     expect((await bulkPut(s.ctx.app, s.bulk.token, "body\n---\nknotebook: 1")).statusCode).toBe(201);
   });
 
-  it("C 寫回 → 那列在 AI 修改紀錄撤回 → 同檔重送 → 409 reason reverted（不再回 unchanged）", async () => {
+  it("write back -> that row is reverted in the AI edit log -> resending the same file -> 409 reason reverted (no longer unchanged)", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const text = editBody(d.text, b => b.replace("Para 1", "Para 1 new"));
@@ -801,7 +787,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     const r = await bulkPut(s.ctx.app, s.bulk.token, text);
     expect(r.statusCode).toBe(409);
     expect(errOf(r)).toEqual({ code: "base_unavailable", message: BASE_UNAVAILABLE_MESSAGES.reverted, reason: "reverted" });
-    // 撤回後這份副本整份不收，連只改標題也一樣
+    // After the revert the whole copy is no longer accepted, even a title-only change.
     const rn = await bulkPut(s.ctx.app, s.bulk.token, renameIn(text, "New title"));
     expect(rn.statusCode).toBe(409);
     expect(errOf(rn).reason).toBe("reverted");
@@ -809,7 +795,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(norm(await liveMarkdown(s.ctx, s.note.id))).toBe(PARAS(4));
   });
 
-  it("C-旁觀者：別篇筆記的紀錄列撤回，不影響這份副本——同檔重送仍 unchanged", async () => {
+  it("bystander: reverting a record row of another note does not affect this copy - resending the same file is still unchanged", async () => {
     const s = await scene();
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Other" });
     await seedMd(s.ctx.db, n2.id, PARAS(3, "Q"));
@@ -824,7 +810,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, text)).json()).toMatchObject({ result: "unchanged" });
   });
 
-  it("E 400 訊息照成因：事件屬性、<script>（整段或混在內文）、未閉合 <!--、block 上限、未閉合 ~~~", async () => {
+  it("400 messages follow the cause: event attributes, <script> (whole or mixed into the body), unclosed <!--, block limit, unclosed ~~~", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const put = (f: (b: string) => string) => bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, f));
@@ -844,7 +830,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(norm(await liveMarkdown(s.ctx, s.note.id))).toBe(PARAS(4));
   });
 
-  it("script 裁示：含複雜內容（標題、巢狀清單、表格、引用、code 裡的 <script>／<iframe>、行內碼的 <style>、mermaid、並排、圖片）的筆記下載後原樣寫回 → unchanged；改一段 → applied、其餘逐字不變", async () => {
+  it("script handling: a note with complex content (headings, nested lists, tables, quotes, <script>/<iframe> in code, <style> in inline code, mermaid, columns, images) written back as downloaded -> unchanged; changing one paragraph -> applied, the rest verbatim unchanged", async () => {
     const fence = "```";
     const md = [
       "# 標題一",
@@ -869,7 +855,7 @@ describe("X 錯誤形 A–E（A 組回 note_changed）", () => {
     expect(norm(await liveMarkdown(s.ctx, s.note.id))).toBe(norm(text.split("\n").slice(8).join("\n")));
   });
 
-  it("script 邊界：段落文字本身是 <script>x</script>，匯出以反斜線跳脫 → 原樣重送、改別段、改跳脫後的那段都照舊；寫成沒跳脫的原始標籤才 400 dropped_element", async () => {
+  it("script boundary: a paragraph whose text is <script>x</script>, exported with backslash escaping -> resending as is, changing another paragraph, and changing the escaped paragraph all behave as before; only the unescaped raw tag is 400 dropped_element", async () => {
     const s = await scene({}, "");
     await seedBlocks(s.ctx.db, s.note.id, [{ type: "paragraph", content: "<script>x</script>" }, { type: "paragraph", content: "Para A" }, { type: "paragraph", content: "Para B" }]);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);

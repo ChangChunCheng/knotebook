@@ -1,8 +1,5 @@
-/**
- * #93：複製在**同一交易**內寫索引。
- * rollback 證明：`afterWriteForTest` 在索引列與狀態列**已寫入之後**丟例外——`note-copy-files-copied` 在索引之前
- * 觸發，證明不了「已寫入的索引列被 rollback」。
- */
+// Rollback proof: `afterWriteForTest` throws after the index and state rows are written - `note-copy-files-copied` fires before
+// indexing, so it cannot prove that already-written index rows are rolled back.
 import { describe, expect, it } from "vitest";
 import { eq, ne } from "drizzle-orm";
 import { buildTestApp } from "./helpers.js";
@@ -14,8 +11,8 @@ import { indexRows, seedNoteState, stateRow } from "./search-helpers.js";
 const copy = async (app: Awaited<ReturnType<typeof buildTestApp>>["app"], noteId: string, userId: string) =>
   app.inject({ method: "POST", url: `/api/notes/${noteId}/copy`, cookies: await cookieOf(userId), payload: {} });
 
-describe("複製", () => {
-  it("複製有內容的筆記 → 新筆記立即可搜、source_version = 1", async () => {
+describe("copy", () => {
+  it("copying a note with content -> the new note is searchable at once, source_version = 1", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const src = await seedNote(db, { ownerId: u.id }, { title: "Src" });
@@ -27,7 +24,7 @@ describe("複製", () => {
     expect(await stateRow(db, id)).toMatchObject({ sourceVersion: 1, capped: false });
   });
 
-  it("rollback 證明：afterWriteForTest 在索引已寫入之後丟例外 → 複製失敗、新筆記不存在、兩表沒有新筆記的任何列", async () => {
+  it("rollback proof: afterWriteForTest throws after the index is written -> copy fails, the new note does not exist, neither table has any row for it", async () => {
     const boom = async (): Promise<void> => { throw new Error("after-write boom"); };
     const { app, db } = await buildTestApp({ searchIndexHooks: { afterWriteForTest: boom } });
     const u = await seedUser(db);
@@ -40,7 +37,7 @@ describe("複製", () => {
     expect(await db.select().from(noteSearchState).where(ne(noteSearchState.noteId, src.id))).toEqual([]);
   });
 
-  it("複製一篇從沒開過（沒有 note_states）的筆記 → 201、新筆記有狀態列、0 個 section 列", async () => {
+  it("copying a note that was never opened (no note_states) -> 201, the new note has a state row and 0 section rows", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const src = await seedNote(db, { ownerId: u.id }, { title: "Never opened" });

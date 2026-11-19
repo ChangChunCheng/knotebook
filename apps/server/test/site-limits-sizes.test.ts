@@ -1,7 +1,3 @@
-/**
- * #397：筆記大小上限、上傳大小上限、`/api/auth/config` 都現讀 `siteLimits`；
- * `watchNotesOverCap` 在 `noteMaxBytes` 變動時重記超過上限的筆記。actor 一律是本測試在同一個 DB 建的 admin。
- */
 import { describe, expect, it, vi } from "vitest";
 import { SESSION_COOKIE } from "@knotebook/shared";
 import { logNotesOverCap, watchNotesOverCap } from "../src/notes/note-size-startup.js";
@@ -24,15 +20,15 @@ function pngBody(totalBytes: number): Buffer {
   ]);
 }
 
-describe("noteMaxBytes 立即生效", () => {
-  it("update 之後下一次會長過新上限的寫入 413（limitBytes＝新值）；/api/auth/config 同步", async () => {
+describe("noteMaxBytes takes effect immediately", () => {
+  it("after update, the next write that would grow past the new limit is 413 (limitBytes = new value); /api/auth/config follows", async () => {
     const ctx = await buildCollabTestApp({});
     const admin = await seedUser(ctx.db, { isAdmin: true });
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
     const note = await seedNote(ctx.db, { ownerId: u.id }, { title: "N" });
     const edit = (markdown: string) => ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: bearer(pat.token), payload: { op: "append", markdown } });
-    // 直接塞一篇狀態超過 1 MiB 的筆記（約 270 位元組／段）；預設上限 5 MiB 下還能寫。
+    // Insert a note whose state exceeds 1 MiB directly (about 270 bytes per paragraph); it still fits under the default 5 MiB cap.
     await seedMd(ctx.db, note.id, paras(5000));
     expect((await edit(paras(2, "ok"))).statusCode).toBe(201);
 
@@ -48,8 +44,8 @@ describe("noteMaxBytes 立即生效", () => {
   });
 });
 
-describe("uploadMaxBytes 立即生效", () => {
-  it("update 之後 1.5 MiB 上傳 413 file_too_large、0.9 MiB 成功；/api/auth/config 的 maxUploadBytes 同步", async () => {
+describe("uploadMaxBytes takes effect immediately", () => {
+  it("after update, a 1.5 MiB upload is 413 file_too_large and 0.9 MiB succeeds; maxUploadBytes in /api/auth/config follows", async () => {
     const ctx = await buildTestApp();
     const admin = await seedUser(ctx.db, { isAdmin: true });
     const owner = await seedUser(ctx.db);
@@ -63,7 +59,6 @@ describe("uploadMaxBytes 立即生效", () => {
         headers: { "content-type": `multipart/form-data; boundary=${BOUNDARY}`, cookie },
       });
 
-    // 預設 10 MiB：1.5 MiB 收得下。
     expect((await post(Math.round(1.5 * MIB))).statusCode).toBe(201);
 
     await ctx.siteLimits.update(admin.id, { uploadMaxBytes: MIB });
@@ -78,7 +73,7 @@ describe("uploadMaxBytes 立即生效", () => {
 });
 
 describe("watchNotesOverCap", () => {
-  it("noteMaxBytes 變動時重記超過上限的筆記（limitBytes＝新值）；unsubscribe 之後不再記", async () => {
+  it("changing noteMaxBytes re-logs notes over the limit (limitBytes = new value); no more logging after unsubscribe", async () => {
     const ctx = await buildCollabTestApp({});
     const admin = await seedUser(ctx.db, { isAdmin: true });
     const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
@@ -98,7 +93,7 @@ describe("watchNotesOverCap", () => {
     await ctx.siteLimits.update(admin.id, { noteMaxBytes: 2 * MIB });
     await new Promise(r => setTimeout(r, 200));
     expect(lines.length).toBe(n);
-    // 直接呼叫仍可用（開機那次）。
+    // A direct call still works (the boot-time one).
     await logNotesOverCap(ctx.db, ctx.siteLimits.get("noteMaxBytes"), log);
     expect(lines.at(-1)!.obj.limitBytes).toBe(2 * MIB);
     await ctx.destroy();

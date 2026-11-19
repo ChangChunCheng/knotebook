@@ -1,7 +1,3 @@
-/**
- * bulk transfer（R1–R3b）：檔案寫回的紀錄交易（`recordFileSyncInTx`）。
- * 列出與撤回（R4–R7c、反例二兩序）：`file_sync` 列經 REST 的列出與撤回。
- */
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../src/db/index.js";
@@ -69,8 +65,8 @@ const record = (db: Db, input: Parameters<typeof recordFileSyncInTx>[1]) => db.t
 const editsOf = (db: Db, noteId: string) => db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, noteId));
 const baseOf = async (db: Db, key: string) => (await db.select().from(transferBases).where(eq(transferBases.key, key)))[0]!;
 
-describe("R1 三種列＋基底更新", () => {
-  it("改寫、刪除、插入三列 → CHECK 全過；applied_body_sha 與 last_used_at 更新；回傳 id＝文件順序", async () => {
+describe("three kinds of rows + base update", () => {
+  it("rewrite, delete and insert rows -> all CHECKs pass; applied_body_sha and last_used_at updated; returned ids are in document order", async () => {
     const s = await scene();
     const before = await baseOf(s.db, s.key);
     const ids = await record(s.db, { noteId: s.note.id, baseKey: s.key, appliedBodySha: SHA, rows: [rewriteRow(s.note.id, s.u.id), deleteRow(s.note.id, s.u.id), insertRow(s.note.id, s.u.id)] });
@@ -79,7 +75,7 @@ describe("R1 三種列＋基底更新", () => {
     const byId = new Map(rows.map(r => [r.id, r]));
     expect(ids.map(id => byId.get(id)!.afterBlockIds)).toEqual([["new0"], [], ["ins"]]);
     expect(ids.map(id => byId.get(id)!.anchor)).toEqual([null, { block_id: "prev", position: "after" }, null]);
-    // created_at 依文件順序嚴格遞增（now() + i 微秒）
+    // created_at strictly increases in document order (now() + i microseconds).
     const t = await s.db.execute<{ id: string; us: string }>(sql`select id, (extract(epoch from created_at) * 1000000)::bigint::text as us from note_ai_edits where note_id = ${s.note.id}`);
     const us = new Map(t.rows.map(r => [r.id, BigInt(r.us)]));
     expect(us.get(ids[0]!)! < us.get(ids[1]!)!).toBe(true);
@@ -88,21 +84,21 @@ describe("R1 三種列＋基底更新", () => {
     expect(Buffer.from(after.appliedBodySha!).equals(SHA)).toBe(true);
     expect(after.lastUsedAt.getTime()).toBeGreaterThan(before.lastUsedAt.getTime());
   });
-  it("零列（全是 same 區的呼叫形）→ 不寫紀錄、只更新基底", async () => {
+  it("zero rows (call shape where every region is same) -> no record written, only the base updated", async () => {
     const s = await scene();
     expect(await record(s.db, { noteId: s.note.id, baseKey: s.key, appliedBodySha: SHA, rows: [] })).toEqual([]);
     expect(await editsOf(s.db, s.note.id)).toHaveLength(0);
     expect((await baseOf(s.db, s.key)).appliedBodySha).not.toBeNull();
   });
-  it("對照：刪除列不帶 anchor → note_ai_edits_anchor_chk 擋下", async () => {
+  it("control: a delete row without anchor -> blocked by note_ai_edits_anchor_chk", async () => {
     const s = await scene();
     const bad = { ...deleteRow(s.note.id, s.u.id), anchor: null };
     await expect(record(s.db, { noteId: s.note.id, baseKey: s.key, appliedBodySha: SHA, rows: [bad] })).rejects.toMatchObject({ cause: { constraint: "note_ai_edits_anchor_chk" } });
   });
 });
 
-describe("R2 同一個交易（失敗點在 INSERT 之後）", () => {
-  it("transfer_bases 的 before update trigger 丟錯 → 這篇 note_ai_edits 0 列、applied_body_sha 仍 NULL", async () => {
+describe("one transaction (failure after the INSERT)", () => {
+  it("the before-update trigger of transfer_bases throws -> this note has 0 note_ai_edits rows and applied_body_sha is still NULL", async () => {
     const s = await scene();
     await s.db.execute(sql.raw(`create function kn_r2_fail() returns trigger language plpgsql as $$ begin raise exception 'r2 boom'; end $$`));
     await s.db.execute(sql.raw(`create trigger kn_r2 before update on transfer_bases for each row execute function kn_r2_fail()`));
@@ -115,7 +111,7 @@ describe("R2 同一個交易（失敗點在 INSERT 之後）", () => {
       await s.db.execute(sql.raw(`drop function if exists kn_r2_fail()`));
     }
   });
-  it("R2b 多列 INSERT 失敗（trigger）→ 0 列、基底未寫", async () => {
+  it("multi-row INSERT fails (trigger) -> 0 rows, base not written", async () => {
     const s = await scene();
     await s.db.execute(sql.raw(`create function kn_r2b_fail() returns trigger language plpgsql as $$ begin if new.after_block_ids = array['ins'] then raise exception 'r2b boom'; end if; return new; end $$`));
     await s.db.execute(sql.raw(`create trigger kn_r2b before insert on note_ai_edits for each row execute function kn_r2b_fail()`));
@@ -130,13 +126,13 @@ describe("R2 同一個交易（失敗點在 INSERT 之後）", () => {
   });
 });
 
-describe("R3 裁切到 100", () => {
+describe("trimmed to 100", () => {
   async function seedOld(db: Db, noteId: string, userId: string, n: number) {
     for (let i = 0; i < n; i++) {
       await db.insert(noteAiEdits).values({ ...rewriteRow(noteId, userId, 1000 + i), createdAt: sql`now() - interval '1 day' + ${i}::int * interval '1 second'` });
     }
   }
-  it("先 seed 99 列、寫 3 列 → 恰 100、最舊的 2 列被刪；旁觀者（別篇）的列不受影響", async () => {
+  it("seed 99 rows, write 3 -> exactly 100, the oldest 2 are deleted; a bystander's rows (another note) are unaffected", async () => {
     const s = await scene();
     await seedOld(s.db, s.note.id, s.u.id, 99);
     await seedOld(s.db, s.other.id, s.u.id, 5);
@@ -150,7 +146,7 @@ describe("R3 裁切到 100", () => {
     expect(olds).toContain("old1002");
     expect(await editsOf(s.db, s.other.id)).toHaveLength(5);
   });
-  it("R3b 一次寫 105 區 → 留下本請求較晚的 100 列、回傳的 editIds 只含存活的 100 個（文件順序）", async () => {
+  it("writing 105 regions at once -> the later 100 rows of this request stay, the returned editIds contain only the surviving 100 (document order)", async () => {
     const s = await scene();
     const rows = Array.from({ length: 105 }, (_, i) => rewriteRow(s.note.id, s.u.id, i));
     const ids = await record(s.db, { noteId: s.note.id, baseKey: s.key, appliedBodySha: SHA, rows });
@@ -162,7 +158,6 @@ describe("R3 裁切到 100", () => {
   });
 });
 
-// ── file_sync 列的撤回──────────────────────────────
 type Opts = Parameters<typeof buildCollabTestApp>[0];
 type EditItem = { id: string; op: string; revertable: boolean; revertedAt: string | null };
 async function writeScene(md: string, opts: Opts = {}) {
@@ -180,12 +175,11 @@ async function writeScene(md: string, opts: Opts = {}) {
   return { ctx, u, pat, bulk, note, list, revert, md: md0, top };
 }
 const PARAS5 = "Para 0\n\nPara 1\n\nPara 2\n\nPara 3\n\nPara 4";
-/** 改寫 Para 1、刪 Para 3、在最後插一段 → 三列（文件順序：改寫、刪除、插入）。 */
 const threeRegions = (b: string) => b.replace("Para 1", "Rewritten").replace("Para 3\n\n", "").replace(/\n*$/, "\n\nInserted\n");
 const errCode = (r: { json(): unknown }) => (r.json() as { error: { code: string } }).error.code;
 
-describe("撤回 file_sync", () => {
-  it("R4 三列經 GET …/edits 列出、op file_sync、revertable；R5 逐列撤回：改寫還原、刪除插回（再撤 → already_reverted）、插入移除 → 回到原文", async () => {
+describe("reverting file_sync", () => {
+  it("three rows listed via GET .../edits, op file_sync, revertable; reverting row by row: rewrite restored, delete re-inserted (reverting again -> already_reverted), insert removed -> back to the original text", async () => {
     const s = await writeScene(PARAS5);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const w = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, threeRegions));
@@ -193,7 +187,7 @@ describe("撤回 file_sync", () => {
     const edits = await s.list();
     expect(edits).toHaveLength(3);
     for (const e of edits) expect(e).toMatchObject({ op: "file_sync", revertable: true, revertedAt: null });
-    const [ins, del, rew] = edits; // 列表新到舊；同一請求的三列 id 照文件順序寫入
+    const [ins, del, rew] = edits; // the list is newest first; the three rows of one request are written by id in document order
     const rows = await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.note.id));
     const byId = new Map(rows.map(r => [r.id, r]));
     expect(byId.get(rew!.id)!.beforeBlocks).toHaveLength(1);
@@ -213,7 +207,7 @@ describe("撤回 file_sync", () => {
     expect(new Set(t).size).toBe(t.length);
   });
 
-  it("R5b 空筆記的插入列 → 撤回 → 頂層恰一顆空段落", async () => {
+  it("insert row of an empty note -> revert -> exactly one empty paragraph at top level", async () => {
     const s = await writeScene("");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, `${d.text}First para\n\nSecond para`)).statusCode).toBe(200);
@@ -224,7 +218,7 @@ describe("撤回 file_sync", () => {
     expect(await s.md()).toBe("");
   });
 
-  it("R6 人改了寫回的 block → 該列 revertable false、撤回 409 stale", async () => {
+  it("a human changed the written block -> that row is revertable false, revert is 409 stale", async () => {
     const s = await writeScene(PARAS5);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "Rewritten")))).statusCode).toBe(200);
@@ -236,7 +230,7 @@ describe("撤回 file_sync", () => {
     expect(errCode(r)).toBe("stale");
   });
 
-  it("R7 刪除列撤回後再打 → 不重複插入；R7b beforeRevertRecord throw → 500（內容已還原、紀錄沒寫）→ 再撤 409 stale、頂層 id 唯一、before_blocks 只一份", async () => {
+  it("hit a delete row again after reverting it -> no duplicate insert; beforeRevertRecord throws -> 500 (content restored, record not written) -> revert again 409 stale, top-level ids unique, before_blocks only one copy", async () => {
     let boom = true;
     const s = await writeScene(PARAS5, { editingTestHooks: { beforeRevertRecord: async () => { if (boom) throw new Error("boom"); } } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -257,7 +251,7 @@ describe("撤回 file_sync", () => {
     expect((await s.md()).split("Para 3").length - 1).toBe(1);
   });
 
-  it("PR3b（純基底形）：基底 [B, 空段落, A, C]、檔案刪 A → anchor＝使用者自己的空段落（after，非佔位）→ 撤回後 A 回到它後面、空段落仍在", async () => {
+  it("pure base shape: base [B, empty paragraph, A, C], file deletes A -> anchor = the user's own empty paragraph (after, not a placeholder) -> after revert A returns behind it and the empty paragraph stays", async () => {
     const s = await writeScene("");
     await seedBlocks(s.ctx.db, s.note.id, [{ type: "paragraph", content: "B" }, { type: "paragraph" }, { type: "paragraph", content: "A" }, { type: "paragraph", content: "C" }]);
     const [, userEmpty] = await s.top();
@@ -279,7 +273,7 @@ describe("撤回 file_sync", () => {
     expect(await s.md()).toMatch(/^B\n\n\n\nA\n\nC$/);
   });
 
-  it("R7c 刪除列正常撤回後再打 → already_reverted、頂層 id 唯一", async () => {
+  it("hit a delete row again after a normal revert -> already_reverted, top-level ids unique", async () => {
     const s = await writeScene(PARAS5);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 3\n\n", "")))).statusCode).toBe(200);

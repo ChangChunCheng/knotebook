@@ -1,7 +1,4 @@
-/**
- * #93：索引寫入交易。
- * 被測方一律是真的 `writeSearchIndex`；holder 只扮演「另一方」（DELETE、note_states 改寫）。
- */
+// The code under test is always the real `writeSearchIndex`; the holder only plays "the other side" (DELETE, note_states rewrite).
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import pg from "pg";
@@ -18,8 +15,8 @@ const V1 = [{ id: "p", text: "version one alpha" }];
 const V2 = [{ id: "p", text: "version two bravo" }];
 const heads = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `h${i}`, type: "heading", text: `h${i}` }));
 
-describe("S3／S4：首建與版本", () => {
-  it("S3：同一篇以 Promise.all 同時首建兩次 → 每個 section_id 恰一列、狀態列一列", async () => {
+describe("first build and versions", () => {
+  it("the same note first built twice at once via Promise.all -> exactly one row per section_id, one state row", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -32,7 +29,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await db.select().from(noteSearchState).where(eq(noteSearchState.noteId, n.id))).toHaveLength(1);
   });
 
-  it("S4：以舊 sourceVersion 呼叫 → stale、表不變、首建時沒有殘留狀態列", async () => {
+  it("called with an old sourceVersion -> stale, tables unchanged, no leftover state row after a first build", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -42,7 +39,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await indexRows(db, n.id)).toEqual([]);
   });
 
-  it("沒有 note_states 列 → stale；筆記不存在 → gone", async () => {
+  it("no note_states row -> stale; note does not exist -> gone", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -50,7 +47,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await writeSearchIndex(db, "00000000-0000-4000-8000-0000000000aa", 1, extractOf(V1))).toBe("gone");
   });
 
-  it("同內容同版本以外的新版本 → unchanged 只推進 source_version；內容變 → written 替換整篇", async () => {
+  it("a new version with the same content -> unchanged only advances source_version; changed content -> written replaces the whole note", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -65,7 +62,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await stateRow(db, n.id)).toMatchObject({ sourceVersion: 3, indexedUnits: "version two bravo".length, capped: false });
   });
 
-  it("空內容（0 列）→ written、狀態列一列、0 個 section 列、indexed_units 0、不 capped；之後有內容也照寫", async () => {
+  it("empty content (0 rows) -> written, one state row, 0 section rows, indexed_units 0, not capped; content later is still written", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -80,7 +77,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await stateRow(db, n.id)).toMatchObject({ sourceVersion: 2, indexedUnits: "version one alpha".length, capped: false });
   });
 
-  it("2001 個 heading → 2000 列（4 句 INSERT）寫得進去、ord 連續、狀態列 capped 且 indexed_units 等於列 body 合計", async () => {
+  it("2001 headings -> 2000 rows (4 INSERT statements) get written, ord is contiguous, state row is capped and indexed_units equals the sum of row bodies", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -95,7 +92,7 @@ describe("S3／S4：首建與版本", () => {
     expect(await stateRow(db, n.id)).toMatchObject({ indexedUnits: units, capped: true });
   });
 
-  it("rows 不變、只有 capped 翻轉 → written（不是 unchanged），狀態列 capped 跟著變（2000↔2001 段；空筆記→含空 id container）", async () => {
+  it("rows unchanged, only capped flips -> written (not unchanged) and the state row's capped follows (2000 vs 2001 paragraphs; empty note vs one with an empty-id container)", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -121,20 +118,22 @@ describe("S3／S4：首建與版本", () => {
   });
 });
 
-describe("S5：與刪筆記的鎖序", () => {
-  it("索引交易持狀態列鎖期間永久刪除（#181：DELETE 只移入垃圾桶，硬刪走 purgeTrashedNotesInTx）→ 永久刪除卡在 notes 列、放行後完成，兩表無該篇列", async () => {
+describe("lock order against note deletion", () => {
+  it("permanent delete while the index transaction holds the state-row lock (#181: DELETE only moves to trash; hard delete goes through purgeTrashedNotesInTx) -> permanent delete waits on the notes row and completes after release, neither table has the note's rows", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
-    await markTrashed(db.$client, n.id, u.id); // 索引寫入不看 deleted_at（includes）：垃圾桶筆記照樣索引
+    await markTrashed(db.$client, n.id, u.id); // index writing ignores deleted_at (includes): trashed notes are still indexed
     await seedNoteState(db, n.id, searchDoc(V1), 1);
-    await writeSearchIndex(db, n.id, 1, extractOf(V1)); // 狀態列已存在：第 2 步的 ON CONFLICT DO NOTHING 不觸發 FK 檢查
+    await writeSearchIndex(db, n.id, 1, extractOf(V1)); // the state row exists: the ON CONFLICT DO NOTHING insert does not trigger an FK check
     await setNoteState(db, n.id, searchDoc(V2), 2);
     const gate = makeGate();
-    // 停在第 3 步之後＝已持 notes KEY SHARE 與狀態列 FOR UPDATE：拿掉第 1 步時，本交易持狀態列鎖、DELETE 持 notes 列，
-    // DELETE 的 cascade 已鎖住 sections 列、等狀態列；放行後第 5 步刪 sections 列等 DELETE——走到真正的環（突變實測：40P01，
-    // 環閉合在 `delete from note_search_sections`，當時是 DELETE 回 500；#181 起同一個 `deleteNotesInTx` 由永久刪除呼叫）。停在第 2 步之前也紅得了（不持鎖 → DELETE 不被擋 → "settled"），
-    // 但那只證明「沒擋住」，沒走到上面實測的死結路徑。
+    // Stop after the state-row lock is taken, i.e. holding notes KEY SHARE and the state row FOR UPDATE. Without the initial
+    // notes KEY SHARE: this tx holds the state-row lock, DELETE holds the notes row, DELETE's cascade has locked the sections rows
+    // and waits on the state row; after release the sections delete waits on DELETE - a real cycle (40P01, closing at
+    // the index writer's `delete from note_search_sections` against `deleteNotesInTx`, which permanent delete calls). Stopping before the
+    // state-row lock would also go red (no lock held -> DELETE is not blocked -> "settled"), but
+    // that only proves "not blocked" and never reaches the deadlock path above.
     const w = writeSearchIndex(db, n.id, 2, extractOf(V2), { hooks: { afterVersionReadForTest: gate.wait } });
     await gate.reached;
     const purge = db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [n.id], by: u.id }));
@@ -146,7 +145,7 @@ describe("S5：與刪筆記的鎖序", () => {
     expect(await stateRow(db, n.id)).toBeUndefined();
   });
 
-  it("反向：刪除先持 notes 列 → 索引交易卡在第 1 步，刪除提交後回 gone", async () => {
+  it("reverse: delete takes the notes row first -> the index transaction blocks at its first lock and returns gone after the delete commits", async () => {
     const { db, url } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -163,12 +162,12 @@ describe("S5：與刪筆記的鎖序", () => {
     } finally {
       await holder.end();
     }
-    expect(await stateRow(db, n.id)).toBeUndefined(); // 佔位列隨 rollback 消失（gone 走例外）
+    expect(await stateRow(db, n.id)).toBeUndefined(); // the placeholder row disappears with the rollback (gone goes through an exception)
   });
 });
 
-describe("S12：回填與即時落盤交錯（兩個具名停點）", () => {
-  it("案 A（beforeStateLockForTest）：回填 B 停在拿狀態列鎖之前；即時落盤寫 V+1 並完成索引；放行 B → stale、表內是 V+1；之後同內容的 bump 不改變結果", async () => {
+describe("backfill interleaved with live persist (two named stop points)", () => {
+  it("case A (beforeStateLockForTest): backfill B stops before taking the state-row lock; live persist writes V+1 and finishes indexing; release B -> stale, table has V+1; a later bump with the same content changes nothing", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -177,7 +176,7 @@ describe("S12：回填與即時落盤交錯（兩個具名停點）", () => {
     const b = writeSearchIndex(db, n.id, 1, extractOf(V1), { hooks: { beforeStateLockForTest: gate.wait } });
     await gate.reached;
     await setNoteState(db, n.id, searchDoc(V2), 2);
-    expect(await writeSearchIndex(db, n.id, 2, extractOf(V2))).toBe("written"); // L：B 只持 KEY SHARE，L 不被擋
+    expect(await writeSearchIndex(db, n.id, 2, extractOf(V2))).toBe("written"); // L: B holds only KEY SHARE, so L is not blocked
     gate.open();
     expect(await b).toBe("stale");
     expect((await indexRows(db, n.id)).map(r => r.body)).toEqual(["version two bravo"]);
@@ -187,7 +186,7 @@ describe("S12：回填與即時落盤交錯（兩個具名停點）", () => {
     expect((await stateRow(db, n.id))!.sourceVersion).toBe(3);
   });
 
-  it("案 B（afterVersionReadForTest）：B 已持狀態列鎖並讀到 V；即時落盤寫 V+1，其索引交易 L 卡在第 2 步；放行 B → B 寫 V、L 隨後寫 V+1", async () => {
+  it("case B (afterVersionReadForTest): B holds the state-row lock and has read V; live persist writes V+1 and its index transaction L waits on the second lock; release B -> B writes V, then L writes V+1", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -205,13 +204,13 @@ describe("S12：回填與即時落盤交錯（兩個具名停點）", () => {
     expect((await stateRow(db, n.id))!.sourceVersion).toBe(2);
   });
 
-  it("案 C：note_states.version 被往回寫（小於狀態列 source_version）→ 照寫、warn 一行", async () => {
+  it("case C: note_states.version written backwards (below the state row's source_version) -> still written, one warn", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
     await seedNoteState(db, n.id, searchDoc(V1), 5);
     await writeSearchIndex(db, n.id, 5, extractOf(V1));
-    await setNoteState(db, n.id, searchDoc(V2), 2); // 應用以外的手動 SQL（沒照 runbook 刪索引）
+    await setNoteState(db, n.id, searchDoc(V2), 2); // manual SQL outside the app (the index was not deleted per the restore runbook)
     const { log, warns } = captureLog();
     expect(await writeSearchIndex(db, n.id, 2, extractOf(V2), { log })).toBe("written");
     expect((await indexRows(db, n.id)).map(r => r.body)).toEqual(["version two bravo"]);
@@ -220,8 +219,8 @@ describe("S12：回填與即時落盤交錯（兩個具名停點）", () => {
   });
 });
 
-describe("S10 一般寫入路徑的 rollback", () => {
-  it("afterWriteForTest 在 INSERT 與狀態列 UPDATE 之後丟例外 → 例外冒出、舊的索引列與狀態列原樣", async () => {
+describe("rollback on the normal write path", () => {
+  it("afterWriteForTest throws after the INSERT and the state-row UPDATE -> the error surfaces, old index rows and state row are unchanged", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -237,7 +236,7 @@ describe("S10 一般寫入路徑的 rollback", () => {
 });
 
 describe("bumpSearchIndexVersion", () => {
-  it("只在 hash／extractor 相符且 source_version 較小時推進；不符回 0", async () => {
+  it("advances only when hash/extractor match and source_version is smaller; otherwise returns 0", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });

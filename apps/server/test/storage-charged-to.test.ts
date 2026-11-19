@@ -1,8 +1,4 @@
-/**
- * #247：群組用量「依成員」依佔用者 `uploads.charged_to_id` 分組——三條寫入（上傳、移入、複製）、一條刻意不動（刪群組轉移）。
- * 案 (a)–(d)、(f)、(g) 各釘 charged_to 的一種情境。
- * (e)（migration 0023 回填）在 migrate.test.ts；「佔用者≠上傳者」的查詢分組案在 storage-admin.test.ts；UPDATE 的位置在 unit/storage-quota-structure.test.ts。
- */
+// The migration 0023 backfill is in `migrate.test.ts`; the query grouping where the payer is not the uploader is in `storage-admin.test.ts`; where the UPDATE sits is in `unit/storage-quota-structure.test.ts`.
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Db } from "../src/db/index.js";
@@ -22,7 +18,7 @@ async function byMember(app: FastifyInstance, groupId: string, viewerId: string)
   expect(res.statusCode, res.body).toBe(200);
   return res.json().byMember as MemberRow[];
 }
-/** 該筆記的 uploads 列（raw SQL，與被測碼獨立），依 size 排。 */
+/** The note's uploads rows (raw SQL, independent of the code under test), ordered by size. */
 async function uploadRows(db: Db, noteId: string): Promise<UploadRow[]> {
   return (await db.$client.query<UploadRow>(
     "select uploader_id, charged_to_id, size from uploads where note_id = $1 order by size, id", [noteId],
@@ -39,7 +35,7 @@ const copyRest = async (app: FastifyInstance, noteId: string, userId: string, pa
 const transfer = async (app: FastifyInstance, groupId: string, adminId: string): Promise<LightMyRequestResponse> =>
   app.inject({ method: "DELETE", url: `/api/groups/${groupId}`, cookies: await cookieOf(adminId), payload: { mode: "transfer", transferTo: adminId } });
 
-/** A 的個人筆記分享給 B（editor），B 經真路由上傳 100＋50 bytes。G＝{X admin、A member、B member}。 */
+/** A's personal note shared to B (editor), B uploads 100 + 50 bytes through the real route. G = {X admin, A member, B member}. */
 async function sharedNoteWithBsUploads(app: FastifyInstance, db: Db) {
   const [a, b, x] = await Promise.all([
     seedUser(db, { displayName: "A" }), seedUser(db, { displayName: "B" }), seedUser(db, { displayName: "X" }),
@@ -52,12 +48,12 @@ async function sharedNoteWithBsUploads(app: FastifyInstance, db: Db) {
   return { a, b, x, g, n };
 }
 
-describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
-  it("(a) REST 移入：B 在 A 分享給他的個人筆記上傳 → A 移入 G → 那些附件算 A、B（仍是成員）無列；uploader_id 仍是 B；G 另一篇 X 的附件不受影響（UPDATE 只動本篇）", async () => {
+describe("#247 byMember by the charged member (uploads.charged_to_id)", () => {
+  it("REST move-in: B uploads on A's shared personal note -> A moves it into G -> those attachments count for A, B (still a member) has no row; uploader_id is still B; another note of X in G is unaffected (the UPDATE touches only this note)", async () => {
     const { app, db } = await buildTestApp();
     const { a, b, x, g, n } = await sharedNoteWithBsUploads(app, db);
     const other = await seedNote(db, { groupId: g.id });
-    await uploaded(app, other.id, x.id, 20); // 旁觀列：G 的另一篇、X 上傳（佔用者 X）
+    await uploaded(app, other.id, x.id, 20); // bystander row: another note in G, uploaded by X (charged X)
     const res = await moveRest(app, n.id, a.id, g.id);
     expect(res.statusCode, res.body).toBe(200);
     expect(await byMember(app, g.id, x.id)).toEqual([
@@ -71,7 +67,7 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     ]);
   });
 
-  it("(b) 直接上傳進群組筆記 → 佔用者＝上傳者；上傳進個人筆記也照寫佔用者", async () => {
+  it("direct upload into a group note -> charged = uploader; uploading into a personal note also writes the charged member", async () => {
     const { app, db } = await buildTestApp();
     const [m, x] = await Promise.all([seedUser(db, { displayName: "M" }), seedUser(db, { displayName: "X" })]);
     const g = await seedGroup(db, "G", [{ userId: x.id, role: "admin" }, { userId: m.id, role: "member" }]);
@@ -84,7 +80,7 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     expect(await uploadRows(db, p.id)).toEqual([{ uploader_id: m.id, charged_to_id: m.id, size: 32 }]);
   });
 
-  it("(c) 複製進群組：副本附件全算複製者 C（來源附件由 A、B 上傳）；內容沒連到的不複製、不計入；複製到個人空間也照寫佔用者", async () => {
+  it("copy into a group: all copied attachments count for the copier C (sources uploaded by A, B); attachments the content does not link are not copied or counted; copying to a personal space also writes the charged member", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [a, b, c, x] = await Promise.all([
       seedUser(db, { displayName: "A" }), seedUser(db, { displayName: "B" }), seedUser(db, { displayName: "C" }), seedUser(db, { displayName: "X" }),
@@ -94,7 +90,7 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     await seedShare(db, src.id, c.id, "viewer");
     const u1 = await seedUpload(db, uploadsDir, src.id, a.id, Buffer.alloc(30, 1));
     const u2 = await seedUpload(db, uploadsDir, src.id, b.id, Buffer.alloc(70, 2));
-    await seedUpload(db, uploadsDir, src.id, a.id, Buffer.alloc(500, 3)); // 內容沒連到：不複製
+    await seedUpload(db, uploadsDir, src.id, a.id, Buffer.alloc(500, 3)); // content does not link it: not copied
     await seedDoc(db, src.id, imageDoc([`/api/uploads/${u1}`, `/api/uploads/${u2}`]));
 
     const res = await copyRest(app, src.id, c.id, { groupId: g.id });
@@ -112,16 +108,16 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     ]);
   });
 
-  it("(d) 佔用者帳號被硬刪（上傳者仍在）→ 那些 bytes 落匿名列，不回落給上傳者 B", async () => {
+  it("charged account hard-deleted (uploader still exists) -> those bytes land on the anonymous row, not falling back to uploader B", async () => {
     const { app, db } = await buildTestApp();
     const { a, x, g, n } = await sharedNoteWithBsUploads(app, db);
     expect((await moveRest(app, n.id, a.id, g.id)).statusCode).toBe(200);
-    // 應用程式沒有刪帳號路徑：直接刪。A 移入後不擁有任何個人筆記（notes.owner_id 是 ON DELETE restrict，否則 23503）。
+    // The app has no delete-account path: delete directly. After the move A owns no personal notes (notes.owner_id is ON DELETE restrict, otherwise 23503).
     await db.$client.query("delete from users where id = $1", [a.id]);
     expect(await byMember(app, g.id, x.id)).toEqual([{ userId: null, handle: null, displayName: null, bytes: 150 }]);
   });
 
-  it("(f) MCP move_note_to_group 移入 → 歸屬與 REST (a) 相同", async () => {
+  it("MCP move_note_to_group move-in -> same attribution as REST move-in", async () => {
     const { app, db } = await buildTestApp();
     const { a, b, x, g, n } = await sharedNoteWithBsUploads(app, db);
     const { token } = await seedTokenForUser(db, a.id, "notes:read notes:write notes:move");
@@ -136,20 +132,20 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     ]);
   });
 
-  it("(g) 刪群組「轉移給管理員」不動 charged_to_id：佔用者 M（不是接收者 X）在轉移後仍是 M", async () => {
+  it("deleting a group with transfer to an admin leaves charged_to_id alone: charged M (not the recipient X) is still M after the transfer", async () => {
     const { app, db } = await buildTestApp();
     const [m, x] = await Promise.all([seedUser(db, { displayName: "M" }), seedUser(db, { displayName: "X" })]);
     const g = await seedGroup(db, "G", [{ userId: x.id, role: "admin" }, { userId: m.id, role: "member" }]);
     const gn = await seedNote(db, { groupId: g.id });
     await uploaded(app, gn.id, m.id, 80);
-    expect(await uploadRows(db, gn.id)).toEqual([{ uploader_id: m.id, charged_to_id: m.id, size: 80 }]); // 前置
+    expect(await uploadRows(db, gn.id)).toEqual([{ uploader_id: m.id, charged_to_id: m.id, size: 80 }]);
     const del = await transfer(app, g.id, x.id);
     expect(del.statusCode, del.body).toBe(204);
     expect(await uploadRows(db, gn.id)).toEqual([{ uploader_id: m.id, charged_to_id: m.id, size: 80 }]);
     expect((await db.$client.query("select owner_id, group_id from notes where id = $1", [gn.id])).rows).toEqual([{ owner_id: x.id, group_id: null }]);
   });
 
-  it("移入的筆記帶著上傳者帳號早已刪除的附件（uploader_id NULL）→ 也算移入者：每一筆，不論原上傳者", async () => {
+  it("a moved-in note carrying attachments whose uploader account was long deleted (uploader_id NULL) -> also counted for the mover: every one, whoever uploaded", async () => {
     const { app, db } = await buildTestApp();
     const [a, x] = await Promise.all([seedUser(db, { displayName: "A" }), seedUser(db, { displayName: "X" })]);
     const g = await seedGroup(db, "G", [{ userId: x.id, role: "admin" }, { userId: a.id, role: "member" }]);
@@ -166,13 +162,13 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     ]);
   });
 
-  it("群組筆記再複製進同一群組：原篇仍算移入者 A，副本（只含內容連到的附件）算複製者 C", async () => {
+  it("copying a group note into the same group: the original still counts for mover A, the copy (only attachments linked by content) counts for copier C", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [a, c, x] = await Promise.all([seedUser(db, { displayName: "A" }), seedUser(db, { displayName: "C" }), seedUser(db, { displayName: "X" })]);
     const g = await seedGroup(db, "G", [{ userId: x.id, role: "admin" }, { userId: a.id, role: "member" }, { userId: c.id, role: "member" }]);
     const n = await seedNote(db, { ownerId: a.id });
     const u1 = await seedUpload(db, uploadsDir, n.id, a.id, Buffer.alloc(30, 1));
-    await seedUpload(db, uploadsDir, n.id, a.id, Buffer.alloc(70, 2)); // 內容沒連到：移入時算 A，複製時不帶
+    await seedUpload(db, uploadsDir, n.id, a.id, Buffer.alloc(70, 2)); // content does not link it: counted for A at move-in, not carried at copy
     await seedDoc(db, n.id, imageDoc([`/api/uploads/${u1}`]));
     expect((await moveRest(app, n.id, a.id, g.id)).statusCode).toBe(200);
     const res = await copyRest(app, n.id, c.id, { groupId: g.id });
@@ -183,7 +179,7 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     ]);
   });
 
-  it("佔用者離開群組後照列名字與位元組（不看是否仍是成員）", async () => {
+  it("after the charged member leaves the group the name and bytes are still listed (membership is not checked)", async () => {
     const { app, db } = await buildTestApp();
     const { a, x, g, n } = await sharedNoteWithBsUploads(app, db);
     expect((await moveRest(app, n.id, a.id, g.id)).statusCode).toBe(200);
@@ -191,7 +187,7 @@ describe("#247 byMember 依佔用者（uploads.charged_to_id）", () => {
     expect(await byMember(app, g.id, x.id)).toEqual([{ userId: a.id, handle: a.handle, displayName: "A", bytes: 150 }]);
   });
 
-  it("轉移後接收者 X 再把那篇移入另一個群組 H → H 裡算 X（移入覆寫），不是原佔用者 M", async () => {
+  it("after a transfer, recipient X moves that note into another group H -> counts for X in H (move-in overrides), not the original charged member M", async () => {
     const { app, db } = await buildTestApp();
     const [m, x] = await Promise.all([seedUser(db, { displayName: "M" }), seedUser(db, { displayName: "X" })]);
     const g = await seedGroup(db, "G", [{ userId: x.id, role: "admin" }, { userId: m.id, role: "member" }]);

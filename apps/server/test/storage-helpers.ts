@@ -1,7 +1,4 @@
-/**
- * 儲存配額整合測試共用的種子與量測。直插只在測試裡。
- * 上傳一律走真路由（`upload()`），附件大小可精確指定：PNG 簽章 8 bytes＋填充（`detectImageMimeType` 只認完整簽章）。
- */
+// Uploads always go through the real route; the attachment size can be set exactly: PNG signature 8 bytes + padding (`detectImageMimeType` accepts only the full signature).
 import { readdir, writeFile } from "node:fs/promises";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
@@ -13,7 +10,6 @@ import { cookieOf } from "./group-helpers.js";
 
 export const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/** 恰 `size` bytes 的 PNG（簽章＋填充）。 */
 export function pngOf(size: number): Buffer {
   if (size < PNG_SIG.length) throw new Error(`pngOf: size ${size} < 8`);
   return Buffer.concat([PNG_SIG, Buffer.alloc(size - PNG_SIG.length, 0x41)]);
@@ -29,7 +25,6 @@ export function multipartFile(bytes: Buffer): Buffer {
   ]);
 }
 
-/** 以 `userId` 的 session 上傳 `size` bytes 到 `noteId`（真路由）。 */
 export async function upload(app: FastifyInstance, noteId: string, userId: string, size: number): Promise<LightMyRequestResponse> {
   return app.inject({
     method: "POST",
@@ -58,7 +53,6 @@ export async function setGroupPlan(db: Db, groupId: string, planId: string): Pro
   await db.update(groups).set({ storagePlanId: planId }).where(eq(groups.id, groupId));
 }
 
-/** 給使用者／群組一個新方案（名稱隨機）並回方案 id。 */
 export async function giveUserQuota(db: Db, userId: string, quotaBytes: number | null): Promise<string> {
   const id = await seedPlan(db, `u-${userId.slice(0, 8)}-${Math.random().toString(36).slice(2, 8)}`, quotaBytes);
   await setUserPlan(db, userId, id);
@@ -70,7 +64,7 @@ export async function giveGroupQuota(db: Db, groupId: string, quotaBytes: number
   return id;
 }
 
-/** 直插一列附件：DB `size` 任意（可大於 2 GiB 總和用），磁碟寫一個小 PNG（`noFile` 時不寫）。回 upload id。 */
+/** Inserts an attachment row directly: DB `size` is arbitrary (the total can exceed 2 GiB), a small PNG is written to disk (unless `noFile`). Returns the upload id. */
 export async function seedAttachment(
   db: Db, uploadsDir: string, noteId: string, uploaderId: string, size: number, opts: { noFile?: boolean } = {},
 ): Promise<string> {
@@ -79,7 +73,7 @@ export async function seedAttachment(
   return u!.id;
 }
 
-/** 現場用量（raw SQL，與被測碼獨立）。 */
+/** Live usage (raw SQL, independent of the code under test). */
 export async function usedOf(pool: Pool, space: { kind: "user" | "group"; id: string }): Promise<number> {
   const col = space.kind === "user" ? "owner_id" : "group_id";
   const { rows } = await pool.query<{ s: string }>(
@@ -90,13 +84,11 @@ export async function usedOf(pool: Pool, space: { kind: "user" | "group"; id: st
 
 export const filesIn = async (dir: string): Promise<string[]> => (await readdir(dir)).sort();
 
-/** 409 storage_quota_exceeded 的完整形（toMatchObject 用）。 */
 export const quotaBody = (storage: Record<string, unknown>) => ({
   error: { code: "storage_quota_exceeded", message: "This space's storage quota is full." },
   storage,
 });
 
-/** 等到 DB 上有 ≥ n 條連線在等 advisory 鎖（或逾時）。給 race 案的柵欄用。 */
 export async function waitForAdvisoryWaiters(pool: Pool, n: number, timeoutMs = 5_000): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   let seen = 0;

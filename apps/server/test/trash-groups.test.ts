@@ -1,7 +1,4 @@
-/**
- * #181：群組與垃圾桶。
- * 造垃圾桶狀態一律打 `DELETE /api/notes/:id`；只有「把刪除時刻往前推」直改 DB（證明保留期照原刪除時間算）。
- */
+// Trash state is always created via `DELETE /api/notes/:id`; only "move the deletion time back" edits the DB directly (proving retention counts from the original deletion time).
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -29,7 +26,7 @@ const purge = (app: FastifyInstance, userId: string, ids: string[]) => inject(ap
 const withId = (body: unknown, from: string, to: string): unknown => JSON.parse(JSON.stringify(body).split(from).join(to));
 const rowExists = async (db: Db, table: "notes" | "uploads", id: string) =>
   (await db.$client.query(`select 1 from ${table} where id = $1`, [id])).rowCount === 1;
-/** `deleted_at` 的毫秒（epoch）；DTO 的 `deletedAt` 是毫秒精度。 */
+// Epoch ms, because the DTO's `deletedAt` has millisecond precision.
 const deletedAtMs = async (db: Db, id: string): Promise<number> => {
   const { rows } = await db.$client.query<{ ms: number }>(`select (extract(epoch from deleted_at) * 1000)::float8 as ms from notes where id = $1`, [id]);
   return rows[0]!.ms;
@@ -46,17 +43,17 @@ async function expect204(res: Promise<LightMyRequestResponse>): Promise<void> {
   expect(r.statusCode, r.body).toBe(204);
 }
 
-describe("G1 刪群組・轉移", () => {
-  it("垃圾桶裡的群組筆記成為接收者的個人筆記、仍在垃圾桶（刪除時刻／刪除者不變、公開連結清掉）；接收者還原後是沒有分享的個人筆記", async () => {
+describe("deleting a group with transfer", () => {
+  it("a trashed group note becomes the recipient's personal note and stays in trash (deletion time and deleter unchanged, public link cleared); after the recipient restores it, it is a personal note with no shares", async () => {
     const { app, db } = await buildTestApp();
     const s = await sixRoleScene(db);
-    const d = s.editDelete; // 移入者 D：自訂角色（閱讀＋編輯＋刪除）
+    const d = s.editDelete; // mover D: custom role (read + edit + delete)
     const a = await seedNote(db, { groupId: s.groupId }, { title: "G1 活" });
     const t = await seedNote(db, { groupId: s.groupId }, { title: "G1 垃圾桶", publicToken: token() });
-    const other = await seedNote(db, { ownerId: s.outsider.id }); // 旁觀者：別人的個人垃圾桶筆記
+    const other = await seedNote(db, { ownerId: s.outsider.id }); // bystander: someone else's personal trashed note
     await expect204(del(app, t.id, d.id));
     await expect204(del(app, other.id, s.outsider.id));
-    // 往前推兩天：轉移若重寫 deleted_at（＝now()），下面的時刻比對就紅。
+    // Move back two days: if the transfer rewrote deleted_at (= now()), the timestamp comparison below would go red.
     await db.$client.query(`update notes set deleted_at = deleted_at - interval '2 days' where id = $1`, [t.id]);
     const before = await trashCols(db.$client, t.id);
     const beforeMs = await deletedAtMs(db, t.id);
@@ -79,7 +76,7 @@ describe("G1 刪群組・轉移", () => {
     expect(item).toMatchObject({ id: t.id, title: "G1 垃圾桶", group: null, deletedBy: { handle: d.handle } });
     expect(Math.abs(Date.parse(item.deletedAt) - beforeMs)).toBeLessThan(1);
     expect(Date.parse(item.purgeAt!) - Date.parse(item.deletedAt)).toBe(7 * DAY_MS);
-    // 移入者 D 已不是任何群組的成員：他的垃圾桶裡沒有它。
+    // Mover D is no longer a member of any group: it is not in their trash.
     expect(await listIds(app, d.id)).toEqual([]);
 
     const r = await restore(app, s.admin.id, [t.id]);
@@ -97,14 +94,14 @@ describe("G1 刪群組・轉移", () => {
   });
 });
 
-describe("G2 刪群組・全刪", () => {
-  it("活筆記與垃圾桶裡的群組筆記連同附件列、磁碟檔一起不在；別處的垃圾桶筆記不受影響", async () => {
+describe("deleting a group with delete-all", () => {
+  it("live notes and trashed group notes are all gone together with attachment rows and disk files; trashed notes elsewhere are unaffected", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const admin = await seedUser(db);
     const g = await seedGroup(db, "G2", [{ userId: admin.id, role: "admin" }]);
     const a = await seedNote(db, { groupId: g.id });
     const t = await seedNote(db, { groupId: g.id });
-    const p = await seedNote(db, { ownerId: admin.id }); // 旁觀者：同一人的個人垃圾桶筆記
+    const p = await seedNote(db, { ownerId: admin.id }); // bystander: the same person's personal trashed note
     const ua = await seedAttachment(db, uploadsDir, a.id, admin.id, 10);
     const ut = await seedAttachment(db, uploadsDir, t.id, admin.id, 20);
     const up = await seedAttachment(db, uploadsDir, p.id, admin.id, 30);
@@ -129,8 +126,8 @@ describe("G2 刪群組・全刪", () => {
   });
 });
 
-describe("G3 角色即時", () => {
-  it("編輯＋刪除角色列得到 → 拿掉刪除旗標立刻列不到、restore 得 not_found；改成拿掉編輯旗標同樣；旗標都回來又列得到、可還原", async () => {
+describe("roles take effect at once", () => {
+  it("edit + delete role is listed -> removing the delete flag unlists it at once and restore gets not_found; removing the edit flag instead behaves the same; with the flags back it is listed again and restorable", async () => {
     const { app, db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const n = await seedNote(db, { groupId: s.groupId });
@@ -156,8 +153,8 @@ describe("G3 角色即時", () => {
   });
 });
 
-describe("G4 能刪不能編輯", () => {
-  it("deleteOnly 移入群組筆記 → 204；他的垃圾桶沒有它、restore 得 not_found；管理員列得到並能還原", async () => {
+describe("can delete but cannot edit", () => {
+  it("deleteOnly moves a group note -> 204; it is not in their trash and restore gets not_found; the admin lists it and can restore it", async () => {
     const { app, db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const n = await seedNote(db, { groupId: s.groupId });
@@ -179,8 +176,8 @@ describe("G4 能刪不能編輯", () => {
   });
 });
 
-describe("G5 容量", () => {
-  it("個人與群組各一篇附件筆記：移入後用量（現場 SUM 與兩支用量端點）不變；永久刪除後減少", async () => {
+describe("capacity", () => {
+  it("one personal and one group note with attachments: after the move, usage (live SUM and both usage endpoints) is unchanged; after permanent delete it decreases", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G5", [{ userId: u.id, role: "admin" }]);
@@ -208,8 +205,8 @@ describe("G5 容量", () => {
   });
 });
 
-describe("G6 群組筆記的公開連結", () => {
-  it("管理員移入 → 公開 token 404；另一位編輯＋刪除成員還原 → 公開 token 200、欄位未被改", async () => {
+describe("public link of a group note", () => {
+  it("admin moves it -> the public token is 404; another editor + delete member restores it -> the public token is 200 and its fields are untouched", async () => {
     const { app, db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const tok = token();

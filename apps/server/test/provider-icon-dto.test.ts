@@ -5,8 +5,8 @@ import { cookieOf, seedUser } from "./group-helpers.js";
 import { adminApp } from "./helpers/admin-auth.js";
 import { expectedIcon, expectNoIconBytes, seedIconMatrix } from "./helpers/provider-icon.js";
 
-describe("provider DTO 的 icon 換算", () => {
-  it("S7 GET /api/auth/config：三範本 × 五種 kind 各帶換算後的 icon；不出線 template／iconKind 與圖檔位元組", async () => {
+describe("provider DTO icon conversion", () => {
+  it("GET /api/auth/config: 3 templates x 5 kinds each carry the converted icon; template/iconKind and image bytes are not exposed", async () => {
     const { app, db } = await buildTestApp();
     const matrix = await seedIconMatrix(db);
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
@@ -17,7 +17,7 @@ describe("provider DTO 的 icon 換算", () => {
     expect(res.body).not.toContain('"template"');
   });
 
-  it("S7 GET /api/auth/identities：identities[].providers 與 linkable 各帶 icon（同一換算）；不含圖檔位元組", async () => {
+  it("GET /api/auth/identities: identities[].providers and linkable each carry icon (same conversion); no image bytes", async () => {
     const { app, db } = await buildTestApp();
     const matrix = await seedIconMatrix(db);
     const linked = await seedUser(db);
@@ -39,7 +39,7 @@ describe("provider DTO 的 icon 換算", () => {
     expectNoIconBytes(other.body);
   });
 
-  it("S7 admin GET /api/admin/auth/providers：每列 iconKind（原值）與 icon（同一換算）；不含圖檔位元組", async () => {
+  it("admin GET /api/admin/auth/providers: each row has iconKind (raw value) and icon (same conversion); no image bytes", async () => {
     const { app, db, cookies } = await adminApp();
     const matrix = await seedIconMatrix(db);
     const res = await app.inject({ method: "GET", url: "/api/admin/auth/providers", cookies });
@@ -51,7 +51,7 @@ describe("provider DTO 的 icon 換算", () => {
     expectNoIconBytes(res.body);
   });
 
-  it("S8 POST 新服務 → iconKind 'template'、icon 依範本（gitlab → GitLab logo、oidc → 通用）", async () => {
+  it("POST new provider -> iconKind 'template', icon from the template (gitlab -> GitLab logo, oidc -> generic)", async () => {
     const { app, cookies } = await adminApp();
     for (const [template, icon] of [["gitlab", { type: "builtin", name: "gitlab" }], ["oidc", { type: "builtin", name: "generic" }]] as const) {
       const res = await app.inject({

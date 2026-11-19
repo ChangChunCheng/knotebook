@@ -1,7 +1,4 @@
-/**
- * #297 公開頁寬度：`PUT /api/notes/:id/public-width`（權限同公開連結、自己的速率桶、歸屬述詞）與公開端點回 `width`。
- * public-link 三支回應帶 `width`、DELETE 不重設在 `public-share.test.ts`；移動／轉移保留寬度在 `groups-v2-move`／`groups-v2-delete`。
- */
+// Public-link responses carrying `width` and DELETE not resetting it are covered in `public-share.test.ts`; keeping the width across move/transfer is in `groups-v2-move.test.ts` and `groups-v2-delete.test.ts`.
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -27,11 +24,11 @@ const transfer = async (app: FastifyInstance, groupId: string, userId: string, t
 const CONFLICT_BODY = { error: { code: "conflict", message: "The note's owner or group changed. Reload and try again." } };
 
 describe("#297 PUT /api/notes/:id/public-width", () => {
-  it("W1 owner 個人筆記（未公開）→ 200 { width }、落地；token 仍 null、updated_at 不動", async () => {
+  it("owner personal note (not public) -> 200 { width }, persisted; token stays null, updated_at unchanged", async () => {
     const { app, db } = await buildTestApp();
     const [owner, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const n = await seedNote(db, { ownerId: owner.id });
-    // 述詞要含 note id：同 owner 的另一篇、別人的個人筆記都必須不被改到。
+    // The predicate must include the note id: another note of the same owner and others' personal notes must stay untouched.
     const sibling = await seedNote(db, { ownerId: owner.id });
     const foreign = await seedNote(db, { ownerId: other.id });
     const before = await noteState(db.$client, n.id);
@@ -46,14 +43,14 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(await noteState(db.$client, n.id)).toMatchObject({ public_token: null, updated_at: before.updated_at });
   });
 
-  it("W2 權限同公開連結：群組內建管理員／有 canManagePublicLink 的自訂角色 200；一般成員 403；非成員 404 與不存在的 id 同形；被分享的 viewer 403", async () => {
+  it("permissions as for the public link: group built-in admin / custom role with canManagePublicLink 200; ordinary member 403; non-member 404 same shape as a missing id; shared viewer 403", async () => {
     const { app, db } = await buildTestApp();
     const [admin, pl, member, outsider, owner, viewer] = await Promise.all([seedUser(db), seedUser(db), seedUser(db), seedUser(db), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: pl.id, role: "member" }, { userId: member.id, role: "member" }]);
     const role = await seedRole(db, g.id, "pl", { canRead: true, canManagePublicLink: true });
     await setMemberRole(db, g.id, pl.id, role);
     const gn = await seedNote(db, { groupId: g.id });
-    const gSibling = await seedNote(db, { groupId: g.id }); // 同群組另一篇：不得被改到
+    const gSibling = await seedNote(db, { groupId: g.id }); // another note in the same group: must not be changed
 
     const byAdmin = await put(app, gn.id, admin.id, { width: "wide" });
     expect(byAdmin.statusCode).toBe(200);
@@ -82,7 +79,7 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(await widthOf(db, pn.id)).toBe("standard");
   });
 
-  it("W3 body strict：缺鍵／壞值／未知鍵／非字串 → 400 invalid_body、DB 不變；陌生人送壞 body 也是 400（先解析 body）", async () => {
+  it("body is strict: missing key / bad value / unknown key / non-string -> 400 invalid_body, DB unchanged; a stranger sending a bad body also gets 400 (body parsed first)", async () => {
     const { app, db } = await buildTestApp();
     const [owner, stranger] = await Promise.all([seedUser(db), seedUser(db)]);
     const n = await seedNote(db, { ownerId: owner.id });
@@ -97,7 +94,7 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(s.json().error.code).toBe("invalid_body");
   });
 
-  it("W4 授權之後筆記被刪 → 404 not_found", async () => {
+  it("note deleted after authorization -> 404 not_found", async () => {
     const state: { noteId?: string; db?: Db; fired?: boolean } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async (point, ctx) => {
@@ -118,7 +115,7 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(res.json().error.code).toBe("not_found");
   });
 
-  it("授權之後筆記被移進群組 → 409 conflict；寬度沒寫進去", async () => {
+  it("note moved into a group after authorization -> 409 conflict; width not written", async () => {
     const state: { noteId?: string; fire?: () => Promise<LightMyRequestResponse>; moved?: LightMyRequestResponse } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async (point, ctx) => {
@@ -140,7 +137,7 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(await noteState(db.$client, n.id)).toMatchObject({ group_id: g.id });
   });
 
-  it("反向：授權之後群組被轉移給個人 → 409 conflict；寬度沒寫進去", async () => {
+  it("reverse: group transferred to a person after authorization -> 409 conflict; width not written", async () => {
     const state: { noteId?: string; fire?: () => Promise<LightMyRequestResponse>; moved?: LightMyRequestResponse } = {};
     const { app, db } = await buildTestApp({
       collabHooks: spyCollabHooks(),
@@ -163,7 +160,7 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
     expect(await noteState(db.$client, n.id)).toMatchObject({ owner_id: a.id, group_id: null });
   });
 
-  it("W7 公開端點兩形都回 width：設過的值；沒設過 → standard", async () => {
+  it("both public endpoint forms return width: the set value; standard when never set", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const T = "w".repeat(43);
@@ -182,8 +179,8 @@ describe("#297 PUT /api/notes/:id/public-width", () => {
   });
 });
 
-describe("#297 publicWidth 速率桶", () => {
-  it("R1 60 次／10 分鐘、與 publicLink 分開：第 61 次 429；之後 DELETE public-link 仍 204", async () => {
+describe("#297 publicWidth rate bucket", () => {
+  it("60 per 10 minutes, separate from publicLink: the 61st is 429; DELETE public-link afterwards is still 204", async () => {
     expect(PUBLIC_WIDTH_LIMIT).toEqual({ limit: 60, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ publicLink: new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }) }) });
     const owner = await seedUser(db);
@@ -200,7 +197,7 @@ describe("#297 publicWidth 速率桶", () => {
     expect(del.statusCode).toBe(204);
   });
 
-  it("R2 不扣桶：陌生人的 404、viewer 的 403、壞 body 的 400 各 61 次之後，三人改自己的筆記仍 200", async () => {
+  it("does not charge the bucket: after 61 each of a stranger's 404, a viewer's 403 and a bad body's 400, the three can still edit their own notes (200)", async () => {
     const { app, db } = await buildTestApp();
     const [owner, stranger, viewer] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const n = await seedNote(db, { ownerId: owner.id });

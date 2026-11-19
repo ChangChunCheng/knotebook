@@ -1,7 +1,3 @@
-/**
- * 使用者與群組的方案指派、四條建帳路徑的預設、site_settings 缺列的契約變更、建帳／建群組撞已刪預設的映射
- * （使用者、S14（構造錯誤））。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../src/auth/tx/admin-site-settings.js";
@@ -16,25 +12,23 @@ import { basicPlanId, seedAttachment, seedPlan } from "./storage-helpers.js";
 
 const PW = "correct-horse-battery-staple";
 type B = Awaited<ReturnType<typeof adminApp>>;
-/** admin 建一張邀請（#285），回明文 token 與列 id。 */
 const inviteOf = async (b: B): Promise<{ token: string; id: string }> => {
   const res = await b.app.inject({ method: "POST", url: "/api/admin/invites", cookies: b.cookies, payload: { expiresInDays: 1 } });
   expect(res.statusCode, res.body).toBe(201);
   const body = res.json() as { token: string; invite: { id: string } };
   return { token: body.token, id: body.invite.id };
 };
-/** 接受邀請（不帶 cookie）。 */
 const acceptInvite = (b: B, token: string, email: string) =>
   b.app.inject({ method: "POST", url: "/api/auth/invite/accept", payload: { token, email, password: PW, displayName: "N" } });
-/** 建帳一律走「admin 建邀請 → 無登入接受邀請」（#285 起管理員代建已移除），回接受邀請的回應。 */
+/** Accounts are always created via admin-creates-invite -> accept invite without login (direct admin creation was removed in #285); returns the accept response. */
 const createUser = async (b: B, email: string) => acceptInvite(b, (await inviteOf(b)).token, email);
 const planOfUser = async (db: B["db"], id: string) => (await db.select({ p: users.storagePlanId }).from(users).where(eq(users.id, id)))[0]!.p;
-/** 收到的 log 整串序列化（Error 的 message／stack／cause 不可列舉，手動攤開——drizzle 把 params 串進 message）。 */
+/** Serialize the whole received log (an Error's message/stack/cause are non-enumerable and spread by hand - drizzle puts params into the message). */
 const logText = (lines: Array<{ msg?: string; obj: Record<string, unknown> }>) =>
   JSON.stringify(lines, (_k, v: unknown) => (v instanceof Error ? { ...v, message: v.message, stack: v.stack, cause: v.cause } : v));
 
-describe("AdminUserDto.storage 與指派", () => {
-  it("GET /api/admin/users 每列帶 storage 四欄（typeof number）；停權使用者照常顯示用量", async () => {
+describe("AdminUserDto.storage and assignment", () => {
+  it("GET /api/admin/users: each row carries the four storage fields (typeof number); suspended users still show usage", async () => {
     const b = await adminApp();
     const u = await seedUser(b.db, { disabled: true });
     const n = await seedNote(b.db, { ownerId: u.id });
@@ -46,7 +40,7 @@ describe("AdminUserDto.storage 與指派", () => {
     expect(row.disabledAt).not.toBeNull();
   });
 
-  it("接受邀請 201 → 新帳號掛當下預設、用量 0", async () => {
+  it("accepting an invite 201 -> the new account gets the current default, usage 0", async () => {
     const b = await adminApp();
     const p = await seedPlan(b.db, "NewDefault", 77);
     await b.db.update(siteSettings).set({ defaultUserStoragePlanId: p });
@@ -57,7 +51,7 @@ describe("AdminUserDto.storage 與指派", () => {
     expect(row.storage).toEqual({ planId: p, planName: "NewDefault", usedBytes: 0, quotaBytes: 77 });
   });
 
-  it("PATCH /api/admin/users/:id/storage-plan：200 AdminUserDto；停權者可改；使用者不存在／非 UUID → 404 user_not_found；方案不存在／非 UUID → 404 storage_plan_not_found；大寫 UUID 可；只限站台 admin", async () => {
+  it("PATCH /api/admin/users/:id/storage-plan: 200 AdminUserDto; suspended users can be changed; user missing/non-UUID -> 404 user_not_found; plan missing/non-UUID -> 404 storage_plan_not_found; uppercase UUID works; site admin only", async () => {
     const b = await adminApp();
     const u = await seedUser(b.db, { disabled: true });
     const p = await seedPlan(b.db, "P", null);
@@ -71,14 +65,13 @@ describe("AdminUserDto.storage 與指派", () => {
       expect((await b.app.inject({ method: "PATCH", url: url(u.id), cookies: b.cookies, payload: { planId: id } })).json().error.code, id).toBe("storage_plan_not_found");
     }
     expect((await b.app.inject({ method: "PATCH", url: url(u.id), cookies: b.cookies, payload: {} })).statusCode).toBe(400);
-    // strict：不能順手帶每人自己的數字
     expect((await b.app.inject({ method: "PATCH", url: url(u.id), cookies: b.cookies, payload: { planId: p, quotaBytes: 1 } })).statusCode).toBe(400);
     await expectAdminOnly(b.app, b.db, "PATCH", url(u.id), { planId: p });
   });
 });
 
-describe("四條建帳路徑都吃到「當下的」使用者預設；既有不變", () => {
-  it("接受邀請、register、OIDC 自動建帳、bootstrap", async () => {
+describe("all four account-creation paths pick up the current user default; existing accounts unchanged", () => {
+  it("accept invite, register, OIDC auto-create, bootstrap", async () => {
     const b = await adminApp();
     const basic = await basicPlanId(b.db);
     const p = await seedPlan(b.db, "P", 5);
@@ -109,11 +102,11 @@ describe("四條建帳路徑都吃到「當下的」使用者預設；既有不�
   });
 });
 
-describe("site_settings 沒有列（契約變更）", () => {
-  it("接受邀請 → 500 且 log.error 含 SITE_SETTINGS_MISSING_MESSAGE、log 不帶密碼雜湊、不留帳號與 handle 列、邀請未用；POST /api/groups → 500＋同一句 log、不留群組", async () => {
+describe("site_settings has no row (contract change)", () => {
+  it("accept invite -> 500 and log.error contains SITE_SETTINGS_MISSING_MESSAGE, log has no password hash, no account or handle row left, invite unused; POST /api/groups -> 500 with the same log line, no group left", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
-    // 邀請在刪列之前建（刪列之後建也可：帳密開關讀不到列視同開）。
+    // The invite is created before deleting the row (creating it after also works: an unreadable row counts as password login on).
     const invite = await inviteOf(b);
     await b.db.delete(siteSettings);
     const before = (await b.db.$client.query("select (select count(*)::int from users) u, (select count(*)::int from handles) h, (select count(*)::int from groups) g")).rows[0];
@@ -131,18 +124,18 @@ describe("site_settings 沒有列（契約變更）", () => {
     expect(link!.usedAt).toBeNull();
   });
 
-  it("bootstrap 首次啟動 → 拋出 23502（column storage_plan_id）、不留帳號列", async () => {
+  it("first bootstrap start -> throws 23502 (column storage_plan_id), no account row left", async () => {
     const fresh = await freshDb();
     await fresh.db.delete(siteSettings);
-    // 不用 toThrow(/storage_plan_id/)：DrizzleQueryError 的訊息本來就含整句 INSERT 的欄名清單，任何失敗都會命中。
+    // Not toThrow(/storage_plan_id/): a DrizzleQueryError message contains the whole INSERT column list anyway, so any failure would match.
     const err = await initializeInstance(fresh.db, { email: "boot@example.com", password: PW }).catch(e => e);
     expect(err?.cause ?? err).toMatchObject({ code: "23502", column: "storage_plan_id" });
     expect(await fresh.db.select().from(users)).toEqual([]);
   });
 });
 
-describe("建帳／建群組撞已刪的預設方案 → 409 server_busy（以 trigger 構造的 23503）", () => {
-  it("接受邀請：users_storage_plan_fk → 409 server_busy；其他名字的 23503 照舊 500、log 只記遮蔽後的摘要（不帶密碼雜湊）", async () => {
+describe("account/group creation hitting a deleted default plan -> 409 server_busy (23503 built with a trigger)", () => {
+  it("accept invite: users_storage_plan_fk -> 409 server_busy; a 23503 with another name is still 500 and the log records only the masked summary (no password hash)", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     await b.db.$client.query(`
@@ -156,12 +149,12 @@ describe("建帳／建群組撞已刪的預設方案 → 409 server_busy（以 t
       create or replace function pg_temp_raise_users_fk() returns trigger language plpgsql as $$
       begin raise exception using errcode = '23503', constraint = 'something_else_fk', message = 'constructed'; end $$;`);
     expect((await createUser(b, "z@example.com")).statusCode).toBe(500);
-    // 不洩漏先斷：遮蔽被拿掉時要紅在這條，不被下面的 context 結構斷言遮住。
+    // Assert no leak first: if masking is removed it must go red here, not be hidden by the context structure assertions below.
     expect(logText(logs.lines).includes("$argon2"), "log 帶了密碼雜湊").toBe(false);
     expect(logs.lines.some(l => l.level === "error" && l.obj.code === "23503" && l.obj.constraint === "something_else_fk" && l.obj.context === "接受邀請")).toBe(true);
   });
 
-  it("POST /api/groups：groups_storage_plan_fk → 409 server_busy、不留群組", async () => {
+  it("POST /api/groups: groups_storage_plan_fk -> 409 server_busy, no group left", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     await db.$client.query(`

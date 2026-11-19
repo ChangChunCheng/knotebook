@@ -1,8 +1,4 @@
-/**
- * #397：`update` 的驗證、修改紀錄、並行與載入：
- * `SiteLimits.load`／`update` 接拋棄式 DB。actor 一律是本測試在同一個 DB 建的 admin（`site_limit_changes.actor_user_id`
- * 有外鍵）；只有「交易失敗」案刻意用不存在的 uuid。
- */
+// site_limit_changes.actor_user_id has a foreign key, so the actor is an admin created in the same DB; only the "transaction fails" case deliberately uses a nonexistent uuid.
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -52,7 +48,6 @@ const countRows = async (db: Db) => ({
   changes: (await db.select().from(siteLimitChanges)).length,
 });
 
-/** 回傳 update 丟出的錯誤（沒丟就 fail）。 */
 async function caught(p: Promise<unknown>): Promise<unknown> {
   try {
     await p;
@@ -62,8 +57,8 @@ async function caught(p: Promise<unknown>): Promise<unknown> {
   throw new Error("expected update to reject");
 }
 
-describe("SiteLimits.update 的驗證", () => {
-  it("update 擋越界／沒對齊／env 鎖，且什麼都不寫", async () => {
+describe("SiteLimits.update validation", () => {
+  it("update rejects out-of-range / misaligned / env-locked values and writes nothing", async () => {
     const { db, admin, s } = await setup();
     const range = await caught(s.update(admin.id, { rateEdit: 2 }));
     expect(range).toBeInstanceOf(LimitRangeError);
@@ -84,7 +79,7 @@ describe("SiteLimits.update 的驗證", () => {
     expect(s.get("noteMaxBytes")).toBe(5242880);
   });
 
-  it("多個錯只報註冊表順序第一個；鎖先於範圍", async () => {
+  it("several errors report only the first in registry order; lock before range", async () => {
     const { db, admin, s } = await setup();
     const e1 = await caught(s.update(admin.id, { rateEdit: 2, noteMaxBytes: 1 }));
     expect(e1).toBeInstanceOf(LimitRangeError);
@@ -98,7 +93,7 @@ describe("SiteLimits.update 的驗證", () => {
     expect(await countRows(db)).toEqual({ limits: 0, changes: 0 });
   });
 
-  it("單一輪驗證", async () => {
+  it("validation in a single pass", async () => {
     const { db, admin, s } = await setup();
     const e = await caught(s.update(admin.id, { noteMaxBytes: 1048577, rateEdit: 2 }));
     expect(e).toBeInstanceOf(LimitStepError);
@@ -106,7 +101,7 @@ describe("SiteLimits.update 的驗證", () => {
     expect(await countRows(db)).toEqual({ limits: 0, changes: 0 });
   });
 
-  it("全有或全無", async () => {
+  it("all or nothing", async () => {
     const { db, admin, s } = await setup();
     const e = await caught(s.update(admin.id, { rateEdit: 10, rateSearch: 1 }));
     expect(e).toBeInstanceOf(LimitRangeError);
@@ -116,8 +111,8 @@ describe("SiteLimits.update 的驗證", () => {
   });
 });
 
-describe("SiteLimits.update 的寫入與修改紀錄", () => {
-  it("寫入＋紀錄", async () => {
+describe("SiteLimits.update writes and change log", () => {
+  it("write plus log entry", async () => {
     const { db, admin, s } = await setup();
     const [bystander] = await db
       .insert(siteLimitChanges)
@@ -139,15 +134,12 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(byKey.get("rateEdit")).toMatchObject({ actorUserId: admin.id, oldValue: null, newValue: 10, oldEffective: 30, newEffective: 10 });
     expect(byKey.get("noteMaxBytes")).toMatchObject({ actorUserId: admin.id, oldValue: null, newValue: 2097152, oldEffective: 5242880, newEffective: 2097152 });
 
-    // 旁觀者列逐欄不變。
     const [bAfter] = await db.select().from(siteLimitChanges).where(eq(siteLimitChanges.id, bystander!.id));
     expect(bAfter).toEqual(bystander);
 
-    // 同值再 update → 不加列。
     await s.update(admin.id, { rateEdit: 10, noteMaxBytes: 2097152 });
     expect(await others()).toHaveLength(2);
 
-    // null → 刪列、紀錄 new_value null、new_effective＝預設。
     await s.update(admin.id, { rateEdit: null });
     expect(s.get("rateEdit")).toBe(30);
     expect((await db.select().from(siteLimits).where(eq(siteLimits.key, "rateEdit"))).length).toBe(0);
@@ -159,7 +151,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(bFinal).toEqual(bystander);
   });
 
-  it("存成等於預設的值", async () => {
+  it("storing a value equal to the default", async () => {
     const { db, admin, s } = await setup();
     const calls: Array<ReadonlySet<SiteLimitKey>> = [];
     s.onChange(keys => void calls.push(keys));
@@ -171,7 +163,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(calls).toEqual([]);
   });
 
-  it("null 設在沒列的 key", async () => {
+  it("null for a key without a row", async () => {
     const { db, admin, s } = await setup();
     const calls: Array<ReadonlySet<SiteLimitKey>> = [];
     s.onChange(keys => void calls.push(keys));
@@ -180,7 +172,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(calls).toEqual([]);
   });
 
-  it("onChange 只發有變的 key，含連帶自動項", async () => {
+  it("onChange fires only for changed keys, including derived auto items", async () => {
     const { admin, s } = await setup();
     const calls: Array<ReadonlySet<SiteLimitKey>> = [];
     s.onChange(keys => void calls.push(keys));
@@ -190,7 +182,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(s.get("parseQueueWaitMs")).toBe(25000);
   });
 
-  it("listener 拋錯不影響", async () => {
+  it("a throwing listener has no effect", async () => {
     const { admin, s, lines } = await setup();
     let second = 0;
     s.onChange(() => {
@@ -210,7 +202,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(second).toBe(2);
   });
 
-  it("交易失敗：鎖放掉、記憶體不動", async () => {
+  it("transaction failure: lock released, memory unchanged", async () => {
     const { db, admin, s } = await setup();
     const err = (await caught(s.update("00000000-0000-0000-0000-000000000000", { rateEdit: 10 }))) as { code?: string; cause?: { code?: string } };
     expect(err.code ?? err.cause?.code, "actor 外鍵 23503").toBe("23503");
@@ -229,7 +221,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
     expect(s.get("rateEdit")).toBe(10);
   });
 
-  it("並行：記憶體＝DB，紀錄串得起來（20 輪）", async () => {
+  it("concurrent: memory = DB and the log chains up (20 rounds)", async () => {
     const { db, admin, s } = await setup();
     const u = (v: number) => s.update(admin.id, { rateEdit: v });
     for (let round = 0; round < 20; round++) {
@@ -257,7 +249,7 @@ describe("SiteLimits.update 的寫入與修改紀錄", () => {
 });
 
 describe("SiteLimits.load", () => {
-  it("load 忽略越界與未知列", async () => {
+  it("load ignores out-of-range and unknown rows", async () => {
     const { db } = await freshDb();
     const admin = await insertAdmin(db);
     await db.insert(siteLimits).values([

@@ -1,19 +1,11 @@
-/**
- * #108：兩個寫入端點的 `bodyLimit` 邊界。
- *
- * 這一族存在的理由是**既有的兩條 413 測試對「上限被放大」零鑑別力**：`note-edits.test.ts`
- * 與 `mcp-endpoint.test.ts` 都送寫死的 300 000 bytes，把上限改成 280 000 兩案照樣綠
- * 本檔四發**全部從 `WRITE_BODY_LIMIT` 算出來**，所以常數
- * 一動、邊界跟著動；兩個端點各一組，是「合併成一份常數之後兩邊不會再分岔」的守衛。
- *
- * ⚠ **兩件最容易反過來寫的事，都是實跑量過的**：
- * (1) **恰好等於上限不算超過**——fastify 的判準是「>」不是「>=」。
- * (2) **UTF-8 的 bytes 恆 ≥ UTF-16 code unit 數**，而 body 還要扣掉 JSON 外殼，所以「恰好
- *     `WRITE_BODY_LIMIT` bytes 的 body」裡的 `markdown` **必然沒有**超過 `MD` 的
- *     262 144 code unit——第 2 發想拿 400 不能靠 `.max`（實跑得到 **201，而且內容真的寫進
- *     筆記**），要靠 `editBodySchema` 每個分支的 `.strict()`。用 `.strict()` 還有一個好處：
- *     它**不落盤**，不會污染同檔後面的斷言。
- */
+// #108: bodyLimit boundaries of the two write endpoints. Why this family exists: a 413 request with a hard-coded 300 000 bytes (as in
+// `note-edits.test.ts` and `mcp-endpoint.test.ts`) stays green when the limit is changed to 280 000. All four requests here are
+// computed from `WRITE_BODY_LIMIT`, so the boundary moves with the constant; one set per endpoint catches the two sides diverging once they share one constant.
+//
+// Two easy-to-invert points: (1) exactly equal to the limit is not over - fastify's rule is ">" not ">=". (2) UTF-8 bytes are always >= UTF-16 code units, and the body also
+// loses the JSON envelope, so in a body of exactly `WRITE_BODY_LIMIT` bytes the `markdown` is necessarily not over `MD`'s 262 144 code units - request 2 cannot get its 400 from
+// `.max` (it returns 201 and the content really gets written); it relies on `.strict()` on every branch of `editBodySchema`. `.strict()` also does not persist, so it does not
+// pollute later assertions in the file.
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { noteAiEdits } from "../src/db/schema.js";
@@ -26,8 +18,8 @@ const PASSWORD = "correct-horse-battery";
 const SEED = "# A\n\n第一段的內容";
 
 /**
- * 把 `filler` 撐到序列化後**恰好** `target` bytes（payload 全 ASCII，1 char ＝ 1 byte）。
- * 測資造錯（送出的其實沒到邊界）會讓整案空轉，所以把大小釘死而不是相信算術。
+ * Pads `filler` so the serialized body is exactly `target` bytes (payload all ASCII, 1 char = 1 byte). If the fixture is miscalculated (the body does not reach the
+ * boundary) the case spins idle, so the size is pinned instead of trusting arithmetic.
  */
 function padTo(build: (filler: string) => unknown, target: number): string {
   const empty = Buffer.byteLength(JSON.stringify(build("")));
@@ -55,40 +47,38 @@ async function setup() {
   return { ctx, note, token, postEdits, rows, live };
 }
 
-/** MCP 側兩發共用的信封：`tools/list` ＋ 一把撐大小的 `pad` 參數。 */
 const mcpEnvelope = (pad: string) => rpc("tools/list", { pad });
 
-describe("#108 寫入端點的 bodyLimit 邊界（WRITE_BODY_LIMIT）", () => {
-  it("第 1 發 POST /:id/edits：上限 +1 bytes → 413 content_too_large", async () => {
+describe("#108 bodyLimit boundaries of the write endpoints (WRITE_BODY_LIMIT)", () => {
+  it("request 1, POST /:id/edits: limit + 1 bytes -> 413 content_too_large", async () => {
     const s = await setup();
     const res = await s.postEdits(padTo(md => ({ op: "append", markdown: md }), WRITE_BODY_LIMIT + 1));
     expect(res.statusCode).toBe(413);
-    // #372：不是 fastify 原生句，而是與其他錯誤同形的英文句。
+    // #372: not fastify's native sentence but an English sentence in the same shape as other errors.
     expect(res.json()).toEqual({ error: { code: "content_too_large", message: "The request body is over this endpoint's size limit. Send a smaller request." } });
   });
 
-  it("第 2 發 POST /:id/edits：恰好上限 ＋ 一把未宣告的鍵 → 400 invalid_body（不是 413），且零落盤", async () => {
+  it("request 2, POST /:id/edits: exactly the limit + one undeclared key -> 400 invalid_body (not 413), and nothing persisted", async () => {
     const s = await setup();
     const before = s.live();
-    // **恰好**上限＝沒有超過，所以走得進 handler；擋下它的是 `.strict()` 不是 `.max`
-    // （見檔頭第 (2) 點：這個大小的 `markdown` 必然沒超過 `MD` 的 code unit 上限）。
+    // Exactly the limit = not over, so it gets into the handler; what blocks it is `.strict()`, not `.max` (see the header: a `markdown` of this size cannot exceed MD's code unit limit).
     const res = await s.postEdits(padTo(md => ({ op: "append", zzz: "x", markdown: md }), WRITE_BODY_LIMIT));
     expect(res.statusCode).not.toBe(413);
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("invalid_body");
-    // 拒絕案：live doc 一個字都沒變、修改紀錄零列（`.strict()` 這條路不落盤）。
+    // Rejection case: the live doc is unchanged and there are zero edit-log rows (the `.strict()` path does not persist).
     expect(s.live()).toBe(before);
     expect(await s.rows()).toHaveLength(0);
   });
 
-  it("第 3 發 POST /api/mcp：上限 +1 bytes → 413 content_too_large", async () => {
+  it("request 3, POST /api/mcp: limit + 1 bytes -> 413 content_too_large", async () => {
     const s = await setup();
     const res = await mcpPost(s.ctx.app, undefined, { token: s.token, raw: padTo(mcpEnvelope, WRITE_BODY_LIMIT + 1) });
     expect(res.statusCode).toBe(413);
     expect(res.json()).toEqual({ error: { code: "content_too_large", message: "The request body is over this endpoint's size limit. Send a smaller request." } });
   });
 
-  it("第 4 發 POST /api/mcp：恰好上限 → 不是 413（帶一坨 padding 照樣 200）", async () => {
+  it("request 4, POST /api/mcp: exactly the limit -> not 413 (a pile of padding still gets 200)", async () => {
     const s = await setup();
     const res = await mcpPost(s.ctx.app, undefined, { token: s.token, raw: padTo(mcpEnvelope, WRITE_BODY_LIMIT) });
     expect(res.statusCode).not.toBe(413);

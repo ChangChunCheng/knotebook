@@ -1,4 +1,3 @@
-/** #247：PATCH /api/auth/profile 加 displayName（驗證同註冊；純 UPDATE 不進改名交易；gate.invalidate）。 */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -13,11 +12,11 @@ async function call(app: FastifyInstance, method: "GET" | "PATCH", url: string, 
   return app.inject({ method, url, ...(who ? { cookies: await cookieOf(who) } : {}), ...(payload !== undefined ? { payload: payload as object } : {}) });
 }
 
-describe("PATCH /api/auth/profile — displayName（#247）", () => {
-  it("只帶 displayName：200 回寫入後的 UserDto（已 trim）、DB 寫入、緊接 /me 回新名（gate.invalidate，不等 60 秒快取）", async () => {
+describe("PATCH /api/auth/profile - displayName (#247)", () => {
+  it("displayName only: 200 with the written UserDto (trimmed), written to DB, /me right after shows the new name (gate.invalidate, no 60 s cache wait)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db, { displayName: "Old Name" });
-    expect((await call(app, "GET", "/api/auth/me", u.id)).json().displayName).toBe("Old Name"); // 灌 gate 快取
+    expect((await call(app, "GET", "/api/auth/me", u.id)).json().displayName).toBe("Old Name"); // fills the gate cache
     const res = await call(app, "PATCH", "/api/auth/profile", u.id, { displayName: "  New Name  " });
     expect((await call(app, "GET", "/api/auth/me", u.id)).json().displayName).toBe("New Name");
     expect(res.statusCode).toBe(200);
@@ -26,7 +25,7 @@ describe("PATCH /api/auth/profile — displayName（#247）", () => {
     expect(row!.d).toBe("New Name");
   });
 
-  it("只帶 displayName 不碰 handles registry、不消耗改名額度：連改 6 次後改 handle 仍 200", async () => {
+  it("displayName only does not touch the handles registry or the rename quota: changing handle after 6 changes is still 200", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const before = await db.select().from(handles).where(eq(handles.userId, u.id));
@@ -35,7 +34,7 @@ describe("PATCH /api/auth/profile — displayName（#247）", () => {
     expect((await call(app, "PATCH", "/api/auth/profile", u.id, { handle: `${u.handle}-x` })).statusCode).toBe(200);
   });
 
-  it("displayName＋autoVersions 同一請求：兩欄都寫", async () => {
+  it("displayName + autoVersions in one request: both fields are written", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const res = await call(app, "PATCH", "/api/auth/profile", u.id, { displayName: "Both", autoVersions: false });
@@ -44,7 +43,7 @@ describe("PATCH /api/auth/profile — displayName（#247）", () => {
     expect(row).toEqual({ d: "Both", a: false });
   });
 
-  it("displayName＋handle 走改名交易同一句：成功兩欄都寫；handle 撞名 409 時 displayName 也不寫（同一交易回滾）", async () => {
+  it("displayName + handle go through the rename transaction together: both written on success; on a handle conflict (409) displayName is not written either (same transaction rolls back)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db, { displayName: "Keep" });
     const other = await seedUser(db);
@@ -56,7 +55,7 @@ describe("PATCH /api/auth/profile — displayName（#247）", () => {
     expect(ok.json()).toMatchObject({ displayName: "Won", handle: `${u.handle}-y` });
   });
 
-  it("不合法 → 400 invalid_body（不是 500、不寫）；100 個 astral 字元放行；{} 400；未登入 401", async () => {
+  it("invalid -> 400 invalid_body (not 500, nothing written); 100 astral characters allowed; {} is 400; unauthenticated 401", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db, { displayName: "Stay" });
     for (const displayName of ["", "   ", "　　", EMOJI.repeat(101), "x".repeat(101), `a${NUL}b`, "a\uD800b", 5, null]) {

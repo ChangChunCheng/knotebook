@@ -5,11 +5,10 @@ import { buildTestApp } from "./helpers.js";
 import { seedDoc, wikilinkDoc } from "./copy-helpers.js";
 import { seedGroup, seedNote, seedUser } from "./group-helpers.js";
 
-// server 半：只收有自訂公開網址的目標，token 形永不出現在 payload。
 const token = () => randomBytes(32).toString("base64url");
 
-describe("#269 公開 payload 的 links", () => {
-  it("只收有自訂公開網址的目標（path＝/p/<handle>/<slug>）；只有 token 形公開的（即使同 owner）、非公開、群組筆記都不收；全文不含任何目標的 token", async () => {
+describe("#269 links in the public payload", () => {
+  it("only targets with a custom public URL are included (path = /p/<handle>/<slug>); token-only public notes (even of the same owner), non-public and group notes are excluded; the body contains no target's token", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const other = await seedUser(db);
@@ -20,7 +19,7 @@ describe("#269 公開 payload 的 links", () => {
     const tokenOnly = await seedNote(db, { ownerId: owner.id }, { title: "Token Only", publicToken: tokenOnlyTok });
     const priv = await seedNote(db, { ownerId: owner.id }, { title: "Private" });
     const grp = await seedNote(db, { groupId: g.id }, { title: "Group" });
-    // 殘留別名：public_slug 有、public_token 已撤（「有 token 才能有別名」是應用層不變量、DB 不強制——schema.ts 的註解）。
+    // Leftover alias: public_slug set, public_token revoked ("an alias needs a token" is an app-layer invariant the DB does not enforce).
     const residual = await seedNote(db, { ownerId: other.id }, { title: "Residual", publicSlug: "res" });
     const srcTok = token();
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Src", publicToken: srcTok });
@@ -34,7 +33,7 @@ describe("#269 公開 payload 的 links", () => {
     expect(Object.keys(res.json()).sort()).toEqual(["links", "title", "width", "ydoc"]);
   });
 
-  it("links 不含本篇自己（本篇有自訂公開網址、文中有同篇連結時亦然）；別名形端點同樣帶 links", async () => {
+  it("links excludes the note itself (even when it has a custom public URL and links to itself); the alias endpoint also carries links", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const selfTok = token();
@@ -48,7 +47,7 @@ describe("#269 公開 payload 的 links", () => {
     }
   });
 
-  it("快照壞掉（解碼失敗）或沒有 note_states → links: []、仍 200", async () => {
+  it("corrupt snapshot (decode failure) or no note_states -> links: [] and still 200", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const t1 = token();

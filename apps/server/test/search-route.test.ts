@@ -1,7 +1,3 @@
-/**
- * #93：`GET /api/search`（R1–R13）。查詢本體（排序、可見性、keyset 細節）在 `search-query.test.ts`；這裡驗 HTTP 層：
- * 驗證、trim、DTO 形、截斷、可見性、folderId 視角、限流（與 MCP 共用）、token、`match=body`、分頁與游標竄改。
- */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -29,21 +25,20 @@ async function ok(app: FastifyInstance, auth: Auth, qs: string): Promise<NoteSea
 const idsOf = (r: NoteSearchResultDto) => r.hits.map(h => h.note.id);
 const enc = encodeURIComponent;
 const body = (text: string): Blk[] => [{ id: "p", text }];
-/** 解開游標、改一段、再包回去（竄改案用）。 */
 function tamper(cursor: string, edit: (parts: string[]) => string[]): string {
   const parts = Buffer.from(cursor, "base64url").toString("utf8").split("|");
   return Buffer.from(edit(parts).join("|"), "utf8").toString("base64url");
 }
 
-describe("R1 未登入", () => {
-  it("沒有 session 也沒有 token → 401", async () => {
+describe("unauthenticated", () => {
+  it("no session and no token -> 401", async () => {
     const { app } = await buildTestApp();
     expect((await get(app, null, "?q=abc")).statusCode).toBe(401);
   });
 });
 
-describe("R2 驗證 → 400 invalid_body（不扣桶）", () => {
-  it("缺 q、空、空白、201 code unit、101 emoji、NUL、limit 0／51／abc／1.5、match=title、重複 q、未知參數", async () => {
+describe("validation -> 400 invalid_body (does not charge the bucket)", () => {
+  it("missing q, empty, whitespace, 201 code units, 101 emoji, NUL, limit 0/51/abc/1.5, match=title, duplicate q, unknown parameter", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -60,7 +55,7 @@ describe("R2 驗證 → 400 invalid_body（不扣桶）", () => {
     expect((await get(app, auth, `?q=${enc("😀".repeat(100))}`)).statusCode).toBe(200);
   });
 
-  it("連打 70 發 400 之後一發合法請求仍 200（驗證失敗不扣桶；search 桶每分 60）", async () => {
+  it("70 requests of 400, then one valid request is still 200 (validation failures do not charge; the search bucket is 60 per minute)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -69,8 +64,8 @@ describe("R2 驗證 → 400 invalid_body（不扣桶）", () => {
   });
 });
 
-describe("R3 trim", () => {
-  it("q=%20report%20 與 q=report 結果相同；游標互通（指紋用 trim 後的字）", async () => {
+describe("trim", () => {
+  it("q=%20report%20 and q=report give the same result; cursors interoperate (the fingerprint uses the trimmed text)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -85,8 +80,8 @@ describe("R3 trim", () => {
   });
 });
 
-describe("R4 形狀", () => {
-  it("matchedOn 三值；title 的 matches 為 []；body 的 sectionId＝heading id、snippet 含查詢字；note 除 sizeBytes 外同 GET /api/notes", async () => {
+describe("shape", () => {
+  it("three matchedOn values; title's matches is []; body's sectionId = heading id and snippet contains the query; note is the same as GET /api/notes except sizeBytes", async () => {
     const { app, db } = await buildTestApp();
     const [u, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const auth = await asUser(u.id);
@@ -120,8 +115,8 @@ describe("R4 形狀", () => {
   });
 });
 
-describe("R5 截斷與片段長度", () => {
-  it("heading 300 字 → 200 code unit；400 個 \" 的內文、查 \" → 片段 code unit 長度 150–160", async () => {
+describe("truncation and snippet length", () => {
+  it("300-char heading -> 200 code units; body of 400 double-quote characters, query for one -> snippet length 150-160 code units", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -134,12 +129,13 @@ describe("R5 截斷與片段長度", () => {
     expect(s.snippet.length).toBeLessThanOrEqual(160);
   });
 
-  it("含 emoji 的查詢：命中段以 code point 計（qlen），命中後的連續空白照樣壓成一個", async () => {
+  it("query with emoji: the matched segment counts code points (qlen), and whitespace after the hit still collapses to one", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
-    // 命中後緊跟三個空白：qlen 以 code point 計＝2，命中段是「😀x」、之後的空白被壓成一個；若誤用 code unit（3），
-    // 命中段會吞進第一個空白（命中段不壓空白），結果變兩個空白。
+    // Three spaces right after the hit: qlen counts code points = 2, the matched segment is the emoji plus x and the following
+    // whitespace collapses to one; with code units (3) the matched segment would swallow the first space (matched segments do
+    // not collapse whitespace), leaving two spaces.
     await seedIndexedNote(db, { ownerId: u.id }, "e", body(`${"a".repeat(60)} 😀x   ${"b".repeat(200)}`));
     const s = (await ok(app, auth, `?q=${enc("😀x")}`)).hits[0]!.matches[0]!;
     expect(s.snippet).toContain("😀x b");
@@ -148,8 +144,8 @@ describe("R5 截斷與片段長度", () => {
   });
 });
 
-describe("R6 可見性", () => {
-  it("陌生人的私人筆記 0；分享後 1；群組成員看得到、非成員 0；垃圾桶裡的 0", async () => {
+describe("visibility", () => {
+  it("a stranger's private note 0; after sharing 1; group member sees it, non-member 0; trashed 0", async () => {
     const { app, db } = await buildTestApp();
     const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const n = await seedIndexedNote(db, { ownerId: a.id }, "plain", body("visprobe"));
@@ -167,8 +163,8 @@ describe("R6 可見性", () => {
   });
 });
 
-describe("R7 folderId（呼叫者視角）", () => {
-  it("被分享者放進自己的資料夾 → note.folderId 是被分享者的、不是擁有者的", async () => {
+describe("folderId (caller's perspective)", () => {
+  it("a sharee puts the note in their own folder -> note.folderId is the sharee's, not the owner's", async () => {
     const { app, db } = await buildTestApp();
     const [owner, sharee] = await Promise.all([seedUser(db), seedUser(db)]);
     const n = await seedIndexedNote(db, { ownerId: owner.id }, "plain", body("fldprobe"));
@@ -182,8 +178,8 @@ describe("R7 folderId（呼叫者視角）", () => {
   });
 });
 
-describe("R8／R9 限流（與 MCP 共用）與 token", () => {
-  it("search 桶 1 → 第二發 429；先打 REST 再打 MCP search_notes → too_many_requests", async () => {
+describe("rate limit (shared with MCP) and tokens", () => {
+  it("search bucket 1 -> second request 429; REST first, then MCP search_notes -> too_many_requests", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ search: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -202,7 +198,7 @@ describe("R8／R9 限流（與 MCP 共用）與 token", () => {
     expect(result.structuredContent.code).toBe("too_many_requests");
   });
 
-  it("R9 notes:read token → 200；同一顆桶對 token 一樣扣", async () => {
+  it("notes:read token -> 200; the same bucket charges tokens too", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ search: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const u = await seedUser(db);
     const { token } = await seedTokenForUser(db, u.id, "notes:read");
@@ -213,8 +209,8 @@ describe("R8／R9 限流（與 MCP 共用）與 token", () => {
   });
 });
 
-describe("R10 match=body", () => {
-  it("只中標題的不出現；不帶 match 時出現", async () => {
+describe("match=body", () => {
+  it("title-only matches do not appear; they appear without match", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -226,8 +222,8 @@ describe("R10 match=body", () => {
   });
 });
 
-describe("R11 分頁", () => {
-  it("25 篇：預設 20＋nextCursor → 帶 cursor 5＋null；聯集＝limit=50 一次取、無重複", async () => {
+describe("pagination", () => {
+  it("25 notes: default 20 + nextCursor -> with cursor 5 + null; union equals one fetch with limit=50, no duplicates", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -243,7 +239,7 @@ describe("R11 分頁", () => {
     expect(new Set([...idsOf(p1), ...idsOf(p2)]).size).toBe(25);
   });
 
-  it("恰好 40 篇、limit=20 → 第二頁 20 篇且 nextCursor: null", async () => {
+  it("exactly 40 notes, limit=20 -> second page has 20 and nextCursor: null", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const auth = await asUser(u.id);
@@ -255,13 +251,13 @@ describe("R11 分頁", () => {
   });
 });
 
-describe("R12／R13 游標竄改與不洩漏", () => {
-  it("竄改的游標全部 400（不是 500）、不扣桶；換 q／換 match 帶舊游標也 400", async () => {
+describe("cursor tampering and no leaks", () => {
+  it("every tampered cursor is 400 (not 500) and does not charge the bucket; an old cursor with a different q / match is also 400", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ search: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }) });
     const u = await seedUser(db);
     const auth = await asUser(u.id);
     for (let i = 0; i < 2; i += 1) await seedIndexedNote(db, { ownerId: u.id }, `plain ${i}`, body("tamperprobe"));
-    const first = await ok(app, auth, "?q=tamperprobe&limit=1"); // 扣 1
+    const first = await ok(app, auth, "?q=tamperprobe&limit=1"); // charges 1
     const c = first.nextCursor!;
     expect(c).not.toBeNull();
     const bad = [
@@ -285,11 +281,11 @@ describe("R12／R13 游標竄改與不洩漏", () => {
       expect(res.statusCode, qs).toBe(400);
       expect(res.json().error.code).toBe("invalid_body");
     }
-    expect((await get(app, auth, `?q=tamperprobe&limit=1&cursor=${c}`)).statusCode).toBe(200); // 扣 2（前面 11 發沒扣）
+    expect((await get(app, auth, `?q=tamperprobe&limit=1&cursor=${c}`)).statusCode).toBe(200); // charges 2 (the 11 before did not charge)
     expect((await get(app, auth, "?q=tamperprobe")).statusCode).toBe(429);
   });
 
-  it("R13 A 的游標給 B（同 q、同 match）→ 200，只含 B 看得到的", async () => {
+  it("A's cursor given to B (same q, same match) -> 200, containing only what B can see", async () => {
     const { app, db } = await buildTestApp();
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     await seedIndexedNote(db, { ownerId: a.id }, "a1", body("leakcur"));

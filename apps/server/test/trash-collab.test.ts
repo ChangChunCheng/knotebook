@@ -1,7 +1,4 @@
-/**
- * #181：共編與垃圾桶。
- * 一律接真 hooks（`createCollabHooks`）：預設 noop hooks 的 DELETE 不開閘門、不踢線，還原也不收門。
- */
+// Always wired to real hooks (`createCollabHooks`): the default noop hooks' DELETE opens no gate, kicks no connection, and restore does not release the gate.
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { COLLAB_CLOSE_NOTE_DELETED, YDOC_FRAGMENT, type NoteDto } from "@knotebook/shared";
@@ -32,8 +29,8 @@ async function noteStateHas(ctx: CollabTestCtx, noteId: string, text: string): P
   return doc.getXmlFragment(YDOC_FRAGMENT).toString().includes(text);
 }
 
-describe("#181 共編與垃圾桶", () => {
-  it("CL1：移入踢線（CLOSE note-deleted）；TTL 內新連線以 note-deleting 拒；閘門過期後以 forbidden 拒", async () => {
+describe("#181 collab and trash", () => {
+  it("move to trash kicks connections (CLOSE note-deleted); a new connection within the TTL is refused with note-deleting; after the gate expires it is refused with forbidden", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-cl1@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -47,11 +44,11 @@ describe("#181 共編與垃圾桶", () => {
     expect((await trashCols(ctx.db.$client, note.id))?.deleted_at).not.toBeNull();
 
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
-    ctx.collab.unmarkDeleting(note.id); // 模擬 TTL 到期
+    ctx.collab.unmarkDeleting(note.id); // simulates TTL expiry
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_FORBIDDEN);
   });
 
-  it("CL2：移入 → 還原 → 立刻連得上並能同步（閘門被 onNotesRestored 收掉，不等 TTL）", async () => {
+  it("move to trash -> restore -> connects and syncs at once (the gate is released by onNotesRestored, no TTL wait)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-cl2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -69,7 +66,7 @@ describe("#181 共編與垃圾桶", () => {
     await waitFor("另一端收到", 10_000, () => b.doc.getXmlFragment(YDOC_FRAGMENT).toString().includes("CL2 還原後的字"));
   });
 
-  it("CL3：移入後直開直連寫入並落盤 → 不 throw、note_states 有那段字、仍在垃圾桶、清單不含它；還原後 /content 讀得到", async () => {
+  it("after move to trash, a direct connection writes and persists -> no throw, note_states has that text, still in trash, not in the list; after restore /content reads it", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-cl3@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -84,7 +81,7 @@ describe("#181 共編與垃圾桶", () => {
     } finally {
       s.close();
     }
-    // 測試直開（繞過 withDirectConnection 的重確認）：模擬閘門後零星抵達的 store。
+    // The test opens the connection directly (bypassing withDirectConnection's re-confirmation): simulates a store arriving sporadically after the gate.
     const direct = await ctx.collab.hocuspocus.openDirectConnection(note.id, { userId: owner.id });
     await direct.transact(doc => {
       Y.applyUpdate(doc, Y.encodeStateAsUpdate(src));

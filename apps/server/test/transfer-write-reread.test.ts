@@ -1,8 +1,4 @@
-/**
- * 批次寫回「下載後筆記被動過 → 409 note_changed」（不再三方合併）。
- * E0：同一篇沒動過的筆記重複匯出逐位元組相同（冷筆記、live 文件已載入記憶體）——`note_changed` 的判斷以此為前提。
- * NC1–NC9：九案；NC10–NC12：檢查與套用之間的插隊（TOCTOU）、寫回額度、front matter。
- */
+// Repeated exports of a note that was not touched are byte-identical (cold note, live document already loaded in memory): the `note_changed` decision presupposes this.
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -35,8 +31,8 @@ const RICH = [
   "段落 P sentinel-e0-end",
 ].join("\n\n");
 
-describe("E0 重複匯出逐位元組相同", () => {
-  it("冷筆記：連續兩次下載本文相同", async () => {
+describe("repeated exports are byte-identical", () => {
+  it("cold note: two downloads in a row have the same body", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
@@ -49,7 +45,7 @@ describe("E0 重複匯出逐位元組相同", () => {
     expect(a.body).toContain("sentinel-e0-end");
   });
 
-  it("live 文件已載入記憶體（有連線）：連續兩次下載本文相同；連線斷開、卸載後的冷讀也相同", async () => {
+  it("live document loaded in memory (with a connection): two downloads in a row have the same body; a cold read after disconnect and unload is the same too", async () => {
     const ctx = await buildCollabTestApp();
     const email = `o-${randomUUID()}@example.com`;
     const owner = await ctx.createUser({ email, password: PASSWORD });
@@ -90,7 +86,6 @@ const titleOf = async (ctx: CollabTestCtx, id: string) => (await ctx.db.select({
 const norm = (s: string) => s.replace(/\n+$/, "");
 const bodyOf = (text: string) => text.split("\n").slice(8).join("\n");
 
-/** MCP `edit_note`（真的經 /api/mcp）：以 heading 找段，`replace_section`／`delete_section`。 */
 async function mcpSectionEdit(s: Scene, heading: string, op: "replace_section" | "delete_section", markdown?: string) {
   const c = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json() as { outline: Array<{ sectionId: string; heading: string; fingerprint: string }> };
   const sec = c.outline.find(o => o.heading === heading)!;
@@ -98,14 +93,13 @@ async function mcpSectionEdit(s: Scene, heading: string, op: "replace_section" |
   const r = await callTool(s.ctx.app, s.pat.token, "edit_note", args);
   expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
 }
-/** MCP rename（#381 起要帶 `if_match`＝`read_note_outline` 的 `titleFingerprint`，照模型的真實流程先讀）。 */
+/** MCP rename (since #381 it needs `if_match` = `titleFingerprint` from `read_note_outline`; read first, as a model really would). */
 async function mcpRename(s: Scene, title: string) {
   const o = await callTool(s.ctx.app, s.pat.token, "read_note_outline", { note_id: s.note.id });
   expect(o.isError, JSON.stringify(o.structuredContent)).toBeUndefined();
   const r = await callTool(s.ctx.app, s.pat.token, "edit_note", { note_id: s.note.id, op: "rename", title, if_match: o.structuredContent.titleFingerprint });
   expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
 }
-/** 送檔 → 409 note_changed；內容、標題、紀錄列、版本、基底都沒動。 */
 async function expectNoteChanged(s: Scene, token: string, text: string, base: string) {
   const md0 = await liveMarkdown(s.ctx, s.note.id);
   const t0 = await titleOf(s.ctx, s.note.id);
@@ -124,8 +118,8 @@ async function expectNoteChanged(s: Scene, token: string, text: string, base: st
   return md0;
 }
 
-describe("NC 下載後筆記動過 → 409 note_changed", () => {
-  it("NC1 下載後別人用 MCP edit_note 改了別章 → 送回（改第一章）409 note_changed、筆記不變；重新下載重做 → 200", async () => {
+describe("note changed after download -> 409 note_changed", () => {
+  it("after download someone else changes another chapter with MCP edit_note -> sending back (changing chapter 1) is 409 note_changed, note unchanged; re-download and redo -> 200", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await mcpSectionEdit(s, "第三章", "replace_section", "# 第三章\n\n段落 D1 被 edit_note 改");
@@ -133,7 +127,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     const md0 = await expectNoteChanged(s, s.bulk.token, text, d.fm.base!);
     expect(md0).toContain("段落 D1 被 edit_note 改");
     expect(md0).not.toContain("檔案改");
-    // 內文被別人改過，檔案只改標題也一樣拒絕
+    // The body was changed by someone else, so a title-only file is also rejected.
     await expectNoteChanged(s, s.bulk.token, renameIn(d.text, "Title from file"), d.fm.base!);
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, b => b.replace("段落 A1", "段落 A1 檔案改")));
@@ -143,7 +137,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(md).toContain("段落 D1 被 edit_note 改");
   });
 
-  it("NC2 下載後別人只改了標題（edit_note rename）→ 送回改內文 409；送回只改標題也 409；標題、內文都不變", async () => {
+  it("after download someone else changes only the title (edit_note rename) -> sending back a body change is 409; sending back only a title change is also 409; title and body both unchanged", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await mcpRename(s, "Renamed by edit_note");
@@ -152,7 +146,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Renamed by edit_note");
   });
 
-  it("NC3 相鄰 X、Y：副本 A 先寫回改 X → 副本 B 改 X 與 Y（同一區）→ 409、X 只有一份", async () => {
+  it("adjacent X, Y: copy A writes back a change to X first -> copy B changes X and Y (same region) -> 409, X exists only once", async () => {
     const s = await scene({}, "段落 X\n\n段落 Y\n\n段落 Z");
     const pat2 = await seedTokenForUser(s.ctx.db, s.u.id, "notes:read notes:write");
     const b2 = await issueBulkDirect(s.ctx.db, pat2.tokenId, { access: "write" });
@@ -164,7 +158,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(md.split("段落 X").length - 1).toBe(1);
   });
 
-  it("NC4 插入：edit_note 換掉第二章 → 送舊副本在 C1 後插一段 → 409（不再插到別章）", async () => {
+  it("insert: edit_note replaces chapter 2 -> the old copy inserts a paragraph after C1 -> 409 (no longer inserted into another chapter)", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await mcpSectionEdit(s, "第二章", "replace_section", "# 第二章\n\n段落 C1 AI 改過\n\n* 清單一\n* 清單二");
@@ -172,7 +166,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(md).not.toContain("檔案新插的段");
   });
 
-  it("NC5 刪除：edit_note 改過那一段 → 送舊副本刪掉它 → 409（不再回 unchanged／same）、那段還在", async () => {
+  it("delete: edit_note changed that paragraph -> the old copy deletes it -> 409 (no longer unchanged/same), the paragraph is still there", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await mcpSectionEdit(s, "第三章", "replace_section", "# 第三章\n\n段落 D1 被改");
@@ -180,7 +174,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(md).toContain("段落 D1 被改");
   });
 
-  it("NC6 筆記沒動 → 改寫＋插入＋刪除＋改名一次套用、結果＝檔案；沒動的 block 留原 id、沒有存版", async () => {
+  it("note untouched -> rewrite + insert + delete + rename applied at once, result = file; untouched blocks keep their ids, no version saved", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const before = await liveBlocks(s.ctx, s.note.id);
@@ -199,7 +193,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(await edits(s.ctx, s.note.id)).toHaveLength(3);
   });
 
-  it("NC7 檔案沒改、筆記被動過（內文與標題都被改）→ 200 unchanged、什麼都不寫", async () => {
+  it("file unchanged, note touched (body and title both changed) -> 200 unchanged, nothing written", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await mcpSectionEdit(s, "第三章", "replace_section", "# 第三章\n\n段落 D1 被改");
@@ -212,7 +206,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Other title");
   });
 
-  it("NC8 同副本寫回後：別人再改、送同一份 → unchanged；送別的內容 → already_sent（不被 note_changed 搶先）；撤回後送同一份 → reverted", async () => {
+  it("after the same copy is written back: someone else edits again, sending the same one -> unchanged; sending other content -> already_sent (not pre-empted by note_changed); after a revert sending the same one -> reverted", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const text = editBody(d.text, b => b.replace("段落 A1", "段落 A1 改"));
@@ -231,7 +225,7 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     expect(errOf(again).reason).toBe("reverted");
   });
 
-  it("NC9 live 文件開著（瀏覽器連線）時有人打字 → 409 note_changed、打的字還在、檔案的修改沒寫", async () => {
+  it("someone types while the live document is open (browser connection) -> 409 note_changed, the typed text is still there, the file's changes are not written", async () => {
     const PASS = "correct-horse-battery";
     const ctx = await buildCollabTestApp();
     const email = `o-${randomUUID()}@example.com`;
@@ -241,7 +235,6 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
     const pat = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
     const bulk = await issueBulkDirect(ctx.db, pat.tokenId, { access: "write" });
     const d = await downloadNote(ctx.app, bulk.token, n.id);
-    // 瀏覽器端（provider 的 doc）打字：改第三段
     const s = await EditorSession.open(testEditingRuntime, client.doc);
     try {
       const third = s.editor.document[2]!;
@@ -260,8 +253,8 @@ describe("NC 下載後筆記動過 → 409 note_changed", () => {
   });
 });
 
-describe("NC13 匯出相同、結構不同", () => {
-  it("別人把一段換成內容相同的新 block（id 換了，整篇匯出逐字相同）→ 改別段的檔 409 note_changed", async () => {
+describe("same export, different structure", () => {
+  it("someone replaces a paragraph with a new block of the same content (id changed, whole export verbatim identical) -> a file that edits another paragraph is 409 note_changed", async () => {
     const s = await scene({}, "Para 0\n\nPara 1\n\nPara 2");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => ed.replaceBlocks([ed.document[1]!.id], [{ type: "paragraph", content: "Para 1" }]));
@@ -270,9 +263,9 @@ describe("NC13 匯出相同、結構不同", () => {
   });
 });
 
-describe("NC14／NC15 「動過」只看這篇自己的內容（結構比對，不照匯出比）", () => {
+describe("'changed' looks only at this note's own content (structural comparison, not export comparison)", () => {
   for (const change of ["rename", "invisible"] as const) {
-    it(`NC14 連到別篇的 wikilink（沒有自訂文字、顯示對方現行標題）：對方${change === "rename" ? "改名" : "變成看不到（進垃圾桶）"} → 不算動過、改別段的檔 200；wikilink 那顆 id 與屬性不變`, async () => {
+    it(`wikilink to another note (no custom text, shows the other note's current title): the other note ${change === "rename" ? "is renamed" : "becomes invisible (moved to trash)"} -> not counted as changed, a file editing another paragraph is 200; the wikilink's id and attributes are unchanged`, async () => {
       const s = await scene({}, "");
       const target = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Target before" });
       await seedBlocks(s.ctx.db, s.note.id, [
@@ -284,7 +277,7 @@ describe("NC14／NC15 「動過」只看這篇自己的內容（結構比對，�
       expect(d.body).toContain("Target before");
       if (change === "rename") await s.ctx.db.update(notes).set({ title: "Target after" }).where(eq(notes.id, target.id));
       else await s.ctx.db.update(notes).set({ deletedAt: new Date() }).where(eq(notes.id, target.id));
-      expect((await downloadNote(s.ctx.app, s.bulk.token, s.note.id)).body).not.toBe(d.body); // 前提：這篇的匯出確實變了
+      expect((await downloadNote(s.ctx.app, s.bulk.token, s.note.id)).body).not.toBe(d.body); // precondition: this note's export really changed
       const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "Para 1 file")));
       expect(r.statusCode).toBe(200);
       expect(r.json()).toMatchObject({ result: "applied", applied: 1 });
@@ -298,7 +291,7 @@ describe("NC14／NC15 「動過」只看這篇自己的內容（結構比對，�
     });
   }
 
-  it("NC15 下載後筆記被搬進資料夾、分享給別人 → 不算動過：改內文的檔照常 200 applied", async () => {
+  it("after download the note is moved into a folder and shared with others -> not counted as changed: a file editing the body is still 200 applied", async () => {
     const s = await scene({}, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const f = await seedFolder(s.ctx.db, { personal: s.u.id }, { name: "Moved here" });
@@ -311,8 +304,8 @@ describe("NC14／NC15 「動過」只看這篇自己的內容（結構比對，�
   });
 });
 
-describe("NC16 寫回過本文的副本不再收標題修改", () => {
-  it("副本寫回 Para 0 → 別人改 Para 2 → 同一份檔只改 title 再送 → 409 already_sent、標題不變、別人的修改在", async () => {
+describe("a copy that already wrote the body no longer accepts title changes", () => {
+  it("copy writes back Para 0 -> someone else edits Para 2 -> the same file with only the title changed is sent again -> 409 already_sent, title unchanged, the other's change is there", async () => {
     const s = await scene({}, "Para 0\n\nPara 1\n\nPara 2");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const text = editBody(d.text, b => b.replace("Para 0", "Para 0 file"));
@@ -328,7 +321,7 @@ describe("NC16 寫回過本文的副本不再收標題修改", () => {
   });
 });
 
-describe("NC17 基底 0 顆、現況恰一顆空段落（瀏覽器打開會正規化出來）", () => {
+describe("base has 0 blocks, current has exactly one empty paragraph (a browser normalizes that in when opening)", () => {
   const loneEmpty = (s: Scene, typed: boolean) =>
     humanEdit(s.ctx, s.note.id, ed => {
       ed.insertBlocks([{ type: "paragraph", content: typed ? "typed" : "" }], ed.document[0]!.id, "after");
@@ -336,7 +329,7 @@ describe("NC17 基底 0 顆、現況恰一顆空段落（瀏覽器打開會正�
       if (typed) ed.updateBlock(ed.document[0]!.id, { content: [] });
     });
   for (const typed of [false, true]) {
-    it(`當沒動過：寫兩段 → 200、結果恰兩段（那顆空段落被換掉）${typed ? "；打過字又刪光的空段落也一樣" : ""}`, async () => {
+    it(`treated as untouched: write two paragraphs -> 200, result is exactly two paragraphs (the empty paragraph is replaced)${typed ? "; same for an empty paragraph that was typed into and then cleared" : ""}`, async () => {
       const s = await scene({}, "");
       const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
       expect(d.body).toBe("");
@@ -348,7 +341,7 @@ describe("NC17 基底 0 顆、現況恰一顆空段落（瀏覽器打開會正�
       expect((await liveBlocks(s.ctx, s.note.id)).map(b => b.text)).toEqual(["First para", "Second para"]);
     });
   }
-  it("對照：那一顆段落有字 → 409；有兩顆空段落 → 409", async () => {
+  it("control: that one paragraph has text -> 409; two empty paragraphs -> 409", async () => {
     const s = await scene({}, "");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => ed.replaceBlocks(ed.document.map(b => b.id), [{ type: "paragraph" }, { type: "paragraph" }]));
@@ -358,8 +351,8 @@ describe("NC17 基底 0 顆、現況恰一顆空段落（瀏覽器打開會正�
   });
 });
 
-describe("NC19 段表 null（mergeable: false）只改標題：退回整篇匯出比對", () => {
-  it("下載後別人改了內文 → 只改 title 的檔 409、標題不變；沒人改 → renamed（對照）", async () => {
+describe("null paragraph table (mergeable: false), title-only change: falls back to whole-export comparison", () => {
+  it("after download someone changed the body -> a file with only the title changed is 409, title unchanged; nobody changed it -> renamed (control)", async () => {
     const s = await scene({ transferTestHooks: { forceUnmergeable: () => true } }, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await humanEdit(s.ctx, s.note.id, ed => ed.updateBlock(ed.document[1]!.id, { content: "Para 1 human" }));
@@ -367,7 +360,7 @@ describe("NC19 段表 null（mergeable: false）只改標題：退回整篇匯�
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d2.text, "Renamed unmergeable"))).json()).toMatchObject({ result: "renamed" });
   });
-  it("（docs 寫明的例外）含 wikilink 的 mergeable:false 筆記：連到的筆記改名 → 這篇的匯出變了 → 只改 title 的檔 409", async () => {
+  it("documented exception: a mergeable:false note with a wikilink: the linked note is renamed -> this note's export changed -> a file with only the title changed is 409", async () => {
     const s = await scene({ transferTestHooks: { forceUnmergeable: () => true } }, "");
     const target = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Target before" });
     await seedBlocks(s.ctx.db, s.note.id, [
@@ -381,8 +374,8 @@ describe("NC19 段表 null（mergeable: false）只改標題：退回整篇匯�
   });
 });
 
-describe("NC18 空段落打字再刪光算動過（known-limitations 寫明）", () => {
-  it("基底 A、空段落、B；別人在空段落打字再刪光 → 改 A 的檔 409", async () => {
+describe("typing into an empty paragraph and deleting it all counts as changed (documented in known-limitations)", () => {
+  it("base A, empty paragraph, B; someone types into the empty paragraph and deletes it all -> a file editing A is 409", async () => {
     const s = await scene({}, "");
     await seedBlocks(s.ctx.db, s.note.id, [{ type: "paragraph", content: "A" }, { type: "paragraph" }, { type: "paragraph", content: "B" }]);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -390,13 +383,13 @@ describe("NC18 空段落打字再刪光算動過（known-limitations 寫明）",
       ed.updateBlock(ed.document[1]!.id, { content: "x" });
       ed.updateBlock(ed.document[1]!.id, { content: [] });
     });
-    expect((await downloadNote(s.ctx.app, s.bulk.token, s.note.id)).body).toBe(d.body); // 匯出一字不差
+    expect((await downloadNote(s.ctx.app, s.bulk.token, s.note.id)).body).toBe(d.body); // export is verbatim identical
     await expectNoteChanged(s, s.bulk.token, editBody(d.text, b => b.replace(/^A$/m, "A file")), d.fm.base!);
   });
 });
 
-describe("NC10 檢查之後、合併之前插隊（TOCTOU）", () => {
-  it("NC10a beforeMerge（規劃與套用都做完、合併前）別人改了另一段 → 不合併、重來時判成 note_changed；別人的修改在、檔案的沒寫", async () => {
+describe("someone interleaves after the check, before the merge (TOCTOU)", () => {
+  it("beforeMerge (planning and applying done, before the merge): someone changes another paragraph -> no merge, on retry judged note_changed; their change is there, the file's is not written", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ editingTestHooks: { beforeMerge: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } } }, "Para 0\n\nPara 1\n\nPara 2");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -408,7 +401,7 @@ describe("NC10 檢查之後、合併之前插隊（TOCTOU）", () => {
     expect(await edits(s.ctx, s.note.id)).toHaveLength(0);
   });
 
-  it("NC10b beforeMerge 時別人在文件結尾加一段（不動任何既有 block）→ 也擋下（整篇指紋）", async () => {
+  it("at beforeMerge someone appends a paragraph at the end of the document (touching no existing block) -> also blocked (whole-note fingerprint)", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ editingTestHooks: { beforeMerge: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } } }, "Para 0\n\nPara 1\n\nPara 2");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -418,7 +411,7 @@ describe("NC10 檢查之後、合併之前插隊（TOCTOU）", () => {
     expect((await liveBlocks(s.ctx, s.note.id)).map(x => x.text)).toEqual(["Para 0", "Para 1", "Para 2", "Human tail"]);
   });
 
-  it("NC10c 只改標題：改名那一刻（slug 候選縫，UPDATE 之前）別人改了標題 → 409 note_changed、別人的標題留著", async () => {
+  it("title only: at the moment of rename (slug candidate hook, before the UPDATE) someone changes the title -> 409 note_changed, their title stays", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ slugUpdateTestHook: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -432,8 +425,8 @@ describe("NC10 檢查之後、合併之前插隊（TOCTOU）", () => {
   });
 });
 
-describe("NC11 寫回額度只看有改的檔", () => {
-  it("transferWrite 用完：沒改的檔 → 200 unchanged（扣 tokenRead）；有改的檔 → 429；新增檔重送（去重命中）→ 200", async () => {
+describe("write quota counts only files that changed", () => {
+  it("transferWrite used up: unchanged file -> 200 unchanged (charges tokenRead); changed file -> 429; resending a new file (dedupe hit) -> 200", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } }, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -454,8 +447,8 @@ describe("NC11 寫回額度只看有改的檔", () => {
   });
 });
 
-describe("NC20 零區（位元組有變、決策全是 same）＝unchanged", () => {
-  it("只加空行 → 200 unchanged、applied_body_sha 不寫、寫回額度退回；額度用完時同一個檔 → 429（判零區要先解析，解析前就扣）", async () => {
+describe("zero region (bytes changed, every decision is same) = unchanged", () => {
+  it("only blank lines added -> 200 unchanged, applied_body_sha not written, write quota refunded; with the quota used up the same file -> 429 (detecting a zero region needs parsing first, and it is charged before parsing)", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } }, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -471,7 +464,7 @@ describe("NC20 零區（位元組有變、決策全是 same）＝unchanged", () 
     const again = await bulkPut(s.ctx.app, s.bulk.token, blank);
     expect(again.statusCode).toBe(429);
   });
-  it("零區之後同一份副本只改標題 → renamed（不是 already_sent）", async () => {
+  it("after a zero region the same copy with only the title changed -> renamed (not already_sent)", async () => {
     const s = await scene({}, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const blank = editBody(d.text, b => b.replace("Para 0\n", "Para 0\n\n\n"));
@@ -483,8 +476,8 @@ describe("NC20 零區（位元組有變、決策全是 same）＝unchanged", () 
   });
 });
 
-describe("NC12 front matter", () => {
-  it("`id :`／`base :`（冒號前有空白）→ 寫回原筆記、不建新筆記；有 base 沒 id → 400、什麼都沒建", async () => {
+describe("front matter", () => {
+  it("`id :` / `base :` (space before the colon) -> written to the original note, no new note created; base without id -> 400, nothing created", async () => {
     const s = await scene({}, "Para 0\n\nPara 1");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const count = async () => (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
