@@ -11,7 +11,7 @@ export const TITLE_DEBOUNCE_MS = 800;
 interface TitleInputProps {
   note: NoteDto;
   readOnly: boolean;
-  /** When true the URL already moved to another note: ignore new input so it is not saved into this note. */
+  /** True when the URL already moved to another note while this one is still shown: ignore new input so it is not saved into this note. Text typed before that still saves normally (it was typed on this note). */
   isNavigatingAway?: () => boolean;
 }
 
@@ -25,7 +25,7 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncedRef = useRef(note.title);
 
-  // Do not overwrite unsaved local edits (value !== syncedRef.current); note switches remount this component.
+  // Do not overwrite unsaved local edits (value !== syncedRef.current); note switches remount this component (NotePage itself is still reused, not remounted).
   useEffect(() => {
     if (note.title === syncedRef.current) return;
     syncedRef.current = note.title;
@@ -98,7 +98,7 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
 
   return (
     <input
-      // NotePage focuses this after restore.
+      // NotePage focuses this after restore; use this attribute, not "the first input in the header".
       data-note-title-input=""
       className="min-w-16 flex-1 bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground"
       aria-label={t("note.titleLabel")}

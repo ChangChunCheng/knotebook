@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
-/** `onReload` exists because jsdom `location.reload` cannot be replaced. */
+/** Content stays readable; no toast, no navigation. `onReload` exists because jsdom `location.reload` cannot be replaced. */
 export function OutdatedClientBanner({ onReload }: { onReload?: () => void }) {
   const { t } = useTranslation();
   return (

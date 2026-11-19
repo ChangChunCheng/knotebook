@@ -65,7 +65,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** Only for non-owner notes. Group notes are never marked (#182): see the group panel member table. */
+/** Only for non-owner notes shared with me per person; group notes are never marked (#182): see the group panel member table. The note header no longer shows the role either (#335). */
 export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
   const { t } = useTranslation();
   if (group) return null;
@@ -84,7 +84,7 @@ interface NoteRowProps {
   favoritePending: boolean;
 }
 
-/** Not a button: touch and no-hover devices add and remove through ⋮; sits left of ⋮ so every row ⋮ lines up. */
+/** Not a button: shown only on touch/no-hover devices (a mouse uses the star button) and takes no clicks; add and remove through ⋮. Sits left of ⋮ so every row ⋮ lines up: 14px star about 8px from ⋮, `ms-2` from the text. */
 function FavoriteMarker() {
   const { t } = useTranslation();
   return (
@@ -99,11 +99,11 @@ function FavoriteMarker() {
   );
 }
 
-/** Static card and drawer each render a NoteList, so a row can exist twice in the DOM: tests must scope with `within(...)`. */
+/** Static card and drawer each render a NoteList, so a row can exist twice in the DOM: tests must scope with `within(...)`. DOM order equals visual order; the star's hover reveal relies on the `group/noterow` class on the `li`. */
 function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRowProps) {
   const { t } = useTranslation();
   const { activeNoteId, setActiveNoteId } = useActiveNote();
-  // Active comes from context note.id, not route params: slug is recomputed from the title and the URL changes after the save returns.
+  // #122: active comes from context note.id (see `lib/active-note.tsx`), not route params: slug is recomputed from the title and the URL changes after the save returns.
   const active = activeNoteId === note.id;
   return (
     <li
@@ -114,15 +114,15 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         variant === "recent" ? "pl-2" : "h-11 pointer-fine:h-7",
         variant === "plain" && "pl-2",
         variant === "group" && "pl-3",
-        // twMerge treats the `hover:bg-*` group as exclusive, so the active hover override must go through `cn(...)`.
+        // #247: the active row's hover is one shade darker; the four row states match the admin left card. twMerge treats the `hover:bg-*` group as exclusive, so the active hover override must go through `cn(...)`.
         active && "bg-brand-soft text-brand-on-soft font-medium hover:bg-brand-soft-strong",
       )}
     >
-      {/* `<Link>` + computed active, not `<NavLink>`: NavLink matches location, which fails for non-canonical URLs (old `/notes/:ref`, prev_slug). */}
+      {/* `<Link>` + computed active, not `<NavLink>`: NavLink matches location, which fails for non-canonical URLs (old `/notes/:ref`, prev_slug). Since #179 location matches the address bar, but id is still the only stable criterion. */}
       <Link
         to={canonicalNotePath(note)}
         onClick={(event) => {
-          // Optimistic set only for a plain left-click: modified clicks open a new tab and would leave the highlight on a note that did not open. alt+click is not covered.
+          // Optimistic set only for a plain left-click: modified clicks open a new tab and would leave the highlight on a note that did not open. Middle-click fires auxclick, not click, so it never reaches here; alt+click (download) is a known gap.
           if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
             setActiveNoteId(note.id);
           }
@@ -134,7 +134,7 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         )}
       >
         {variant === "recent" ? (
-          // Both lines are `<div>` so the accessible name has a space between blocks (jsdom has no Tailwind).
+          // Both lines are `<div>` so the accessible name has a space between blocks (spans would run together as "TitleLocation"; the space comes from the UA block display; jsdom has no Tailwind).
           <>
             <div className="truncate text-[13px] max-sm:text-[15px]">{note.title}</div>
             <LocationLine label={noteLocationLabel(note, location, t)} />
@@ -159,7 +159,7 @@ function LocationLine({ label }: { label: string }) {
   );
 }
 
-/** Group-row variant (`reveal="grouprow"`) shows on row hover or `:focus-visible` inside, so keyboard users always see it. */
+/** 24px icon button. Group-row variant (`reveal="grouprow"`) shows on row hover or `:focus-visible` inside, so keyboard users always see it; focus left by a mouse click does not count (not focus-within). Without `reveal` (title-row variant) it is always shown. */
 function HeaderActionButton({
   label,
   onClick,
@@ -225,7 +225,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
     >
       <div className={cn("group/grouprow flex h-11 items-center gap-0.5 pr-0.75 pointer-fine:h-7 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong", ROW_ICON_ROW)}>
         <GroupRowButton name={group.name} open={open} onToggle={toggle} />
-        {/* group notes need edit rights to create a folder */}
+        {/* New folder: group notes need edit rights to create a folder; placed before "+" */}
         {group.myRole?.permissions.edit && (
           <HeaderActionButton
             reveal="grouprow"
@@ -343,7 +343,7 @@ export interface NoteListProps {
 
 const MESSAGE_CLASS = "p-2 text-sm text-muted-foreground";
 
-/** GET /api/groups pending/error only affects the Groups tab (and the zero-notes empty check); until then group notes fall back to Shared-with-me rows. The tabpanel `tabIndex={0}` is in `AppShell` (APG: Tab must stop on a panel whose first content is not focusable). Selection mode swaps in lazy `SelectHeader`/`SelectableTree`; the scroll container `[data-sidebar-list]` is not swapped so scroll does not jump. Focus moves only in the initiating instance (`focusAfterRef`). The Favourites tab is the intersection of favourites and `["notes"]` and does not wait for folders. */
+/** GET /api/groups pending/error only affects the Groups tab (and the zero-notes empty check); until then group notes fall back to Shared-with-me rows. The tabpanel `tabIndex={0}` is in `AppShell` (APG: Tab must stop on a panel whose first content is not focusable). Selection mode swaps in lazy `SelectHeader`/`SelectableTree`; the scroll container `[data-sidebar-list]` is not swapped so scroll does not jump. Focus moves only in the initiating instance (`focusAfterRef`). Rendered as a flex-col child of `AppShell`'s tabpanel; Esc in selection mode is handled by `SelectHeader`. The Favourites tab is the intersection of favourites and `["notes"]`, in favourite order (newest first), and does not wait for folders. */
 export function NoteList({ onCreateNote, createNotePending = false }: NoteListProps) {
   const { t } = useTranslation();
   const { tab, selection } = useSidebarTabState();
@@ -369,7 +369,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const groups = groupsQuery.data ?? EMPTY_GROUPS;
   // Without memo every tick would change `nodes`/`groupIds` and re-render all rows.
   const groupIds = useMemo<ReadonlySet<string>>(() => new Set((groupsQuery.data ?? EMPTY_GROUPS).map((group) => group.id)), [groupsQuery.data]);
-  // Failed with no old data: empty index (notes at root) plus an error row. Recent/Favourites are flat and do not wait for folders.
+  // My notes/Groups/Shared wait for `["folders"]` so the list does not render flat and then jump; if it failed with no old data: empty index (notes at root) plus an error row. Recent/Favourites are flat and do not wait for folders.
   const waitFolders = tab !== "recent" && tab !== "favorites" && tab !== "trash";
   const folderIndex = useMemo(() => indexFolders(foldersQuery.data ?? EMPTY_FOLDERS), [foldersQuery.data]);
   const location = useMemo<LocationContext>(() => ({ groupIds, folders: folderIndex }), [groupIds, folderIndex]);
@@ -538,7 +538,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           />
         );
       case "selectMode":
-        // Same as `TrashPanel` (24px exception); label reuses `trash.select` from the initial bundle.
+        // Same as `TrashPanel` (24px exception, see the `ui/button.tsx` header); label reuses `trash.select` from the initial bundle, so renaming the key means editing both locales.
         return (
           <Button
             key={action}
@@ -603,7 +603,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           </>
         )}
       </div>
-      {/* `key={tab}` resets scroll on tab switch; phones scroll the document. */}
+      {/* `key={tab}` resets scroll on tab switch; toggling selection mode keeps the element (no scroll jump); phones scroll the document and reset via AppShell. */}
       {/* Clip on the inner wrapper: an `overflow-y-auto` list computes the other axis to `hidden`, which is still scrollable. */}
       {/* Drag events are delegated here; the wrapper is `min-h-full` so blank space below counts as root. */}
       <div key={tab} ref={listRef} data-sidebar-list="" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain", PHONE_LIST_SCROLLER)} {...drag.containerProps}>

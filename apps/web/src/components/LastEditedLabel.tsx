@@ -3,7 +3,7 @@ import type { NoteDto } from "@knotebook/shared";
 
 /**
  * Collapses with `max-sm:sr-only @max-[36rem]:sr-only` (not `hidden`) like `ConnectionBadge`, so it stays in the accessibility tree.
- * The divider shares the label null condition so it hides together. Shrink order in the header: title yields to `min-w-16` (`TitleInput`), then this label truncates, then nothing else shrinks.
+ * The divider separates the label from `ConnectionBadge` so the header does not read the status and the author as one sentence; it shares the label null condition so it hides together. Shrink order in the header: title yields to `min-w-16` (64px, `TitleInput`; the read-only `<h1>` also truncates there), then this label (`min-w-0 truncate`) shrinks to 0, then nothing else shrinks (`ShareDialog`/`NoteMenu` triggers are `shrink-0`; the three are a set).
  * Absolute date format: the repo has no relative-time helper (`ApiTokensSection.formatDate` is the same).
  */
 export function LastEditedLabel({ note, onOpenEdits }: { note: NoteDto; onOpenEdits: () => void }) {

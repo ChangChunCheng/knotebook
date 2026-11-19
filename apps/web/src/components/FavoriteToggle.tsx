@@ -11,7 +11,7 @@ import { toast } from "@/components/ui/toast";
 
 /**
  * `aria-disabled` + early return while submitting, not `disabled`: `disabled` drops keyboard focus to body.
- * Hidden below 18rem (header is an `@container`): the star would push share or ⋮ out of the card.
+ * Hidden below 18rem (header is an `@container`): the star would push share or ⋮ out of the card; the ⋮ menu item of the same name takes over.
  */
 export function FavoriteToggle({ note }: { note: NoteDto }) {
   const { t } = useTranslation();

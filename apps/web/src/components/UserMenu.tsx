@@ -54,7 +54,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
   async function handleLogout(): Promise<void> {
     await logout();
     release(); // search text belongs to the user signing out: clear it (#369)
-    // Sign-out deliberately omits `?next=` (#131): it means "leaving", not "blocked" (contrast `useSessionGate` in `auth/guards.tsx`).
+    // Sign-out deliberately omits `?next=` (#131): it means "leaving", not "blocked" (contrast `useSessionGate` in `auth/guards.tsx`). `ChangePasswordPage` and `NotePage` session expiry also go to bare `/login`.
     navigate("/login", { replace: true });
   }
 
@@ -142,7 +142,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         <DropdownMenuLabel id={accentLabelId} className="text-xs font-normal text-muted-foreground">
           {t("userMenu.accent")}
         </DropdownMenuLabel>
-        {/* The gap is load-bearing: 16px dot + 8px gap = 24px centres, the WCAG 2.5.8 spacing floor; on touch the dots are 28px with a 44px hit area and gap-4. */}
+        {/* The gap is load-bearing: 16px dot + 8px gap = 24px centres, the WCAG 2.5.8 spacing floor; on touch the dots are 28px with a 44px hit area and gap-4, giving 44px centres so adjacent hit areas just do not overlap (no longer relying on the 24px exception); shrinking the gap fails. */}
         <DropdownMenuRadioGroup
           value={accent}
           onValueChange={(value) => setAccent(value as Accent)}
@@ -174,7 +174,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         </DropdownMenuRadioGroup>
 
         <DropdownMenuSeparator />
-        {/* Hint only under AppShell: the listener lives there. aria-hidden keeps it out of the item name (e2e). */}
+        {/* Hint only under AppShell: the listener lives there. aria-hidden keeps it out of the item name (e2e). Opens via `openSettings`, same as AppShell's Ctrl+,. */}
         <DropdownMenuItem
           aria-keyshortcuts={shortcuts ? (mac ? "Meta+," : "Control+,") : undefined}
           onSelect={() => openSettings(navigate, location, () => setMenuOpen(true))}
@@ -186,7 +186,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             </span>
           )}
         </DropdownMenuItem>
-        {/* Not rendered outside AppShell (no listener). Follow NoteMenu focus-trap rule: preventDefault, close menu manually, open dialog (unit tests cannot catch a missing preventDefault). */}
+        {/* Not rendered outside AppShell (no listener). Follow NoteMenu focus-trap rule: preventDefault, close menu manually, open dialog (unit tests cannot catch a missing preventDefault). The trigger is passed as the close focus target; focus return is pinned in AppShell.shortcuts.test and e2e. */}
         {shortcuts && (
           <DropdownMenuItem
             aria-keyshortcuts={mac ? "Meta+/" : "Control+/"}

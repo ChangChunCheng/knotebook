@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { NOTE_WIDTHS, type NoteWidth } from "@knotebook/shared";
 
-/** Values `"wide"`/`"full"` under `note.width.<lowercase noteId>` (standard = no key). Module `values` Map is the source of truth, seeded from localStorage; storage events from other tabs update it. The `storage` listener and the Map are dropped when the last subscriber leaves, because changes are missed while unlistened and would show stale values. */
+/** Values `"wide"`/`"full"` under `note.width.<lowercase noteId>` (standard = no key). Module `values` Map is the source of truth, seeded from localStorage; storage events from other tabs update it. Per browser, per note. Writes update the Map and notify first, then try localStorage (blocked storage still applies, just not remembered). The `storage` listener and the Map are dropped when the last subscriber leaves, because changes are missed while unlistened and would show stale values; so with blocked storage, switching notes drops the subscriber count to zero and clears the Map, consistent with "not remembered". */
 export const NOTE_WIDTH_STORAGE_PREFIX = "note.width.";
 
 const values = new Map<string, NoteWidth>();

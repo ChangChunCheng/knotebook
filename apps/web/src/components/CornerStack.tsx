@@ -7,11 +7,11 @@ import { useIsPhone } from "@/lib/layout-tiers";
 import { useVersions } from "@/lib/versions-context";
 import { tourTarget } from "@/lib/tour-targets";
 
-/** Nothing sits under the bubble, so hover uses a brand background instead of opacity. Last in the class string so twMerge overrides the frosted hover/press values. */
+/** Nothing sits under the bubble, so hover uses a brand background instead of opacity. Last in the class string so twMerge overrides the frosted hover/press values. `hover:` applies only on hover-capable pointers (`@media (hover: hover)`), so touch is unaffected. */
 const BUBBLE_HOVER =
   "cursor-pointer hover:bg-brand-soft supports-[backdrop-filter]:hover:bg-brand-soft active:bg-brand-soft-strong supports-[backdrop-filter]:active:bg-brand-soft-strong";
 
-/** Pinned to the scroll area bottom (zero-height anchor), not the window corner. Hidden on phones (⋮ menu has the entry). */
+/** Pinned to the scroll area bottom (zero-height anchor), not the window corner. Hidden below 640 (reads the same `useIsPhone()` as the ⋮ versions item, so each width has exactly one entry). 18px above the scroll area bottom and 18px left of the scrollbar gutter (the scroll area reserves one from 640 up, `scrollbar-gutter: stable`). Does not fade on scroll. */
 export function CornerStack({ scrollRef }: { scrollRef?: RefObject<HTMLElement | null> }) {
   const { t } = useTranslation();
   const versions = useVersions();

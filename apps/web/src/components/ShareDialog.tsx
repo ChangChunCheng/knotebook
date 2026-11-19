@@ -223,8 +223,8 @@ function deriveAccess(token: string | null, shares: ShareDto[]): AccessLevel {
 }
 
 /**
- * The radio is a sticky latch: derived once when both queries (shares + public-link) have fetched after mount (#170); until then loading and no radio selected (a literal derive-on-open would show an already public note as private). The choice then lives until the dialog closes (closing unmounts), with no recompute on data change (it would bounce "public -> specific members (zero members)" and "remove last member" back to private).
- * Explicit recompute points: failed mutation recovery (otherwise the screen says revoked while the link is alive), cancel of the private confirm flow, and abort of that flow (partial failure).
+ * The radio is a sticky latch: derived once when both queries (shares + public-link) have fetched after mount (#170); until then loading and no radio selected (a literal derive-on-open would show an already public note as private). The choice then lives until the dialog closes (closing unmounts; the reset relies on the `open &&` mounting structure, pinned by a test), with no recompute on data change (it would bounce "public -> specific members (zero members)" and "remove last member" back to private).
+ * Explicit recompute points: failed mutation recovery (otherwise the screen says revoked while the link is alive), cancel of the private confirm flow, and abort of that flow (partial failure). Adding a member while in the private state intentionally does not recompute.
  * Member list and add form render in all three states. If members are cleared while the confirm flow is pending, the effect finishes the pending link revoke (otherwise the action evaporates).
  * Private confirm flow deletes public-link first, then shares sequentially: if it aborts the worst case is leftover members, not an open link.
  * Personal notes only (#175): group notes use `GroupNoteShareSection`.
@@ -247,7 +247,7 @@ function AccessSection({ note }: { note: NoteDto }) {
   const shares = sharesQuery.data ?? [];
   const queriesFailed = linkQuery.isError || sharesQuery.isError;
 
-  // Latch only on data fetched after mount (#170): the cache can predate an ownership change (move writes shares as [], deleting a group converts its notes to personal). Mount always refetches (default staleTime 0, see main.tsx). Known residuals: a failed refetch counts as fetched; a request already in flight at mount is reused; a post-mount `setQueryData` also latches.
+  // Latch only on data fetched after mount (#170): the cache can predate an ownership change (move writes shares as [], deleting a group converts its notes to personal). Mount always refetches (default staleTime 0, see main.tsx). Known residuals (`isFetchedAfterMount` only checks that the post-mount fetch count rose, not which request the data came from): a failed refetch counts as fetched; a request already in flight at mount is reused; a post-mount `setQueryData` also latches.
   useEffect(() => {
     if (selection === null && linkQuery.isFetchedAfterMount && sharesQuery.isFetchedAfterMount
         && linkQuery.data !== undefined && sharesQuery.data !== undefined) {
@@ -418,7 +418,7 @@ function AccessSection({ note }: { note: NoteDto }) {
   );
 }
 
-/** No radio, so no latch (#170/#171 sticky misreports do not apply). Roles come from `note.permissions`: after a move this DTO is the server response and a create-but-not-edit role ends up a viewer. `useShares` is never issued; `usePublicLink` only when `managePublicLink`. */
+/** No radio, so no latch (#170/#171 sticky misreports do not apply). Roles come from `note.permissions`: after a move this DTO is the server response and a create-but-not-edit role ends up a viewer. `useShares` is never issued; `usePublicLink` only when `managePublicLink` (otherwise the server returns 403). The group-settings link closes this dialog first, otherwise two dialogs would stack. */
 function GroupNoteShareSection({ note, onClose }: { note: NoteDto; onClose: () => void }) {
   const { t } = useTranslation();
   const location = useLocation();
@@ -519,7 +519,7 @@ function generateValidatedRandomSlug(): string | null {
   return null;
 }
 
-/** `anonymous` is derived from `slug` (null = ON), not separate state: a failed mutation leaves `slug` unchanged so the toggle recovers by itself. Regenerate in OFF swaps token then slug, aborting on failure: the OFF URL has no token but the token is still the only security boundary, so slug-only would leave a leaked token unrotatable. Always `mutateAsync` + catch -> `setError` (a bare `mutate` failing silently would misreport the link state). Ids `#share-public-slug-prefix`/`-hint` and the "Custom public link" / "Save custom URL" names are read by e2e 11-public-share.spec.ts. Known limitation: `value` does not follow slug changes from another tab. */
+/** `anonymous` is derived from `slug` (null = ON), not separate state: a failed mutation leaves `slug` unchanged so the toggle recovers by itself. Regenerate in OFF swaps token then slug, aborting on failure: the OFF URL has no token but the token is still the only security boundary, so slug-only would leave a leaked token unrotatable. Always `mutateAsync` + catch -> `setError` (a bare `mutate` failing silently would misreport the link state). Ids `#share-public-slug-prefix`/`-hint` and the "Custom public link" / "Save custom URL" names are read by e2e 11-public-share.spec.ts. Known limitation: `value` does not follow slug changes from another tab. Rendered only when there is a token; all four actions share one `error` state because `busy` makes them mutually exclusive. */
 function PublicLinkPanel({
   noteId,
   ownerHandle,
@@ -792,7 +792,7 @@ export function ShareDialog({ note }: ShareDialogProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        {/* text-brand on the Button className (not the icon) so twMerge can drop the ghost hover text colour. State goes in `title`, not aria-label: it must stay a fixed "Share" (e2e, tests). */}
+        {/* text-brand on the Button className (not the icon) so twMerge can drop the ghost hover text colour (twMerge only resolves conflicts within one `cn()` call). State goes in `title`, not aria-label: `title` does not change the accessible name while aria-label is set, and the name must stay a fixed "Share" (e2e, tests). */}
         <Button
           type="button"
           variant="ghost"
@@ -805,7 +805,7 @@ export function ShareDialog({ note }: ShareDialogProps) {
           <TriggerIcon className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      {/* 448px does not fit email + role + add in one row */}
+      {/* 448px does not fit email + role + add in one row; max-w-lg (512px) is the DialogContent default width, so this does not narrow it */}
       <DialogContent dismissOnOutside={false} className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("share.title")}</DialogTitle>

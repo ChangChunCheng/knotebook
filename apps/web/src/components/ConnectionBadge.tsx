@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { canEdit, stopsReconnect, type CollabState } from "@/collab/connection";
 import { cn } from "@/lib/utils";
 
-/** Delay before escalating to the offline warning (ms, #48): the first moments of opening a note and short reconnects pass through connecting phases and must not flash a warning. */
+/** Delay before escalating to the offline warning (ms, #48): the first moments of opening a note and short reconnects pass through connecting phases and must not flash a warning; 3 s filters these without delaying the "editing offline" warning too long. */
 export const OFFLINE_WARN_MS = 3_000;
 
 /** `connected` uses a literal colour: the status green is theme-independent. */
@@ -17,7 +17,7 @@ const PHASE_STYLES: Record<CollabState["phase"], { key: string; dotClassName: st
 };
 
 /**
- * Escalation (#48): after `OFFLINE_WARN_MS` outside connected, the dot turns warning and the text depends on `synced`.
+ * Escalation (#48): after `OFFLINE_WARN_MS` outside connected, the dot turns warning and the text depends on `synced`. Never synced: "Not loaded — offline" and read-only (NotePage also blocks editing). Synced then disconnected: still editable, "Editing offline".
  * `role="status"` + polite: revocation/downgrade/offline are not user-initiated, so screen readers should learn of them without interruption.
  * The status dot has no text node so e2e `hasText:/^Connected/` and `/^Read-only/` prefix matches keep working.
  */

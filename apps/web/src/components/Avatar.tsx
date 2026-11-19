@@ -17,7 +17,7 @@ export interface AvatarProps {
 /** Light = `AGENT_PRESENCE_COLOR` (Tailwind needs full literals; Avatar.test keeps them equal); dark uses a brighter purple for contrast (WCAG 1.4.11). */
 const AGENT_ICON = "text-[#7c3aed] dark:text-[#a78bfa]";
 
-/** The ring colour is a runtime value, so it must be inline. */
+/** URLs are built only via `avatarUrl`; the prop takes an `AvatarRef`, never a URL. The ring colour is a runtime value, so it must be inline. */
 export function Avatar({ name, avatar, size, ringColor, offsetColor = "var(--color-card)", kind = "user", className }: AvatarProps) {
   // Keyed by `id:v` so a new version retries without a reset effect.
   const imgKey = avatar ? `${avatar.id}:${avatar.v}` : null;

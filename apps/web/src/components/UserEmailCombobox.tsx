@@ -28,7 +28,7 @@ export interface UserEmailComboboxProps {
   label: string;
   placeholder?: string;
   excludeUserIds?: ReadonlyArray<string>;
-  /** `type="text"` because native `type="email"` validation rejects multiple addresses; only the address under the caret is queried and replaced (separator rules shared with `parseEmailList`). */
+  /** `type="text"` because native `type="email"` validation rejects multiple addresses; only the address under the caret is queried and replaced (separator rules shared with `parseEmailList`). Addresses already in the box are not suggested. Off = single address, `type="email"`, a pick fills the whole field. */
   multiple?: boolean;
   readOnly?: boolean;
   onPaste?: (event: ClipboardEvent<HTMLInputElement>) => void;
@@ -37,7 +37,7 @@ export interface UserEmailComboboxProps {
   className?: string;
 }
 
-/** Not portalled: the list stays in the dialog DOM so clicking an option is not a Radix Dialog "click outside". */
+/** Suggestions (`/api/users/suggest`) cover only same-group members and people you shared with, not a site directory. Picking only fills the input (no submit); with no active option Enter submits the outer form. Queries start after >= 2 characters and 200 ms idle; a failed query means no suggestions. Not portalled: the list stays in the dialog DOM so clicking an option is not a Radix Dialog "click outside". */
 export function UserEmailCombobox({
   value, onChange, label, placeholder, excludeUserIds, multiple = false, readOnly = false, onPaste,
   "aria-describedby": describedBy, ref, className,
@@ -95,7 +95,7 @@ export function UserEmailCombobox({
     ],
   });
 
-  // Esc must close the list before the outer Radix Dialog: Radix listens in the document capture phase, so intercept earlier in window capture.
+  // Esc must close the list before the outer Radix Dialog: Radix listens in the document capture phase, so intercept earlier in window capture (only while the list is open and the event comes from this input).
   useEffect(() => {
     if (!expanded) return;
     function onKeyDown(event: globalThis.KeyboardEvent): void {

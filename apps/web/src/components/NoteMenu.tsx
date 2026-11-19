@@ -52,7 +52,7 @@ const GroupTransferDialog = lazy(() => import("@/components/share/GroupTransferD
 export interface NoteMenuProps {
   note: NoteDto;
   state: CollabState;
-  /** Shared with NotePage: collab `deleted` and "delete from ⋮" are two leave paths; one gate avoids double toast and navigation. */
+  /** Shared with NotePage: collab `deleted` and "delete from ⋮" are two leave paths; one gate avoids double toast and navigation. Required on purpose (as is `state`) so NotePage cannot forget it; do not make it optional. */
   leavingRef: RefObject<boolean>;
   onOpenEdits: () => void;
   /** Fallback focus target when the full-page version history closes. */
@@ -64,7 +64,7 @@ export interface NoteMenuProps {
 /**
  * Focus trap: Radix DropdownMenu is modal and fights Dialog FocusScope; `lib/clipboard.ts` `execCommand` fallback only accepts `[role="dialog"],[role="menu"]` hosts. So the copy item calls `event.preventDefault()`, awaits `copyText` while the menu still has focus, and only then closes the menu manually (`DropdownMenu` is therefore controlled).
  * Delete vs collaboration `deleted` terminal state: the server closes the initiator connection first, so `close(NOTE_DELETED)` can arrive before the DELETE response. The handler sets `leavingRef` before awaiting. On failure in a terminal state NotePage terminal effect will never fire (it is gated by `leavingRef`), so this handler must reproduce its exit (kicked -> `note.accessRevoked`, else `note.deleted`, destructive toast, navigate home). On failure otherwise, reset `leavingRef` to false so the error toast is not swallowed. Terminal state is read from `stateRef.current`, not the closure `state`, which is likely still `connected`.
- * Sidebar rows decide "the open note" from `NotePageControlsContext`, not `useActiveNote`: `activeNoteId` is set optimistically on click, before NotePage has that note leavingRef. Open note: same leave path as header; AI history opens the dialog directly without navigating (a different canonical path would re-resolve and tear down collaboration). Other note: delete only toasts; AI history navigates with `state.openEdits`, which NotePage reads and `replace`s away.
+ * Sidebar rows decide "the open note" from `NotePageControlsContext`, not `useActiveNote`: `activeNoteId` is set optimistically on click, before NotePage holds that note's `leavingRef`. Open note: same leave path as header; AI history opens the dialog directly without navigating (a different canonical path would re-resolve and tear down collaboration). Other note: delete only toasts; AI history navigates with `state.openEdits`, which NotePage reads and `replace`s away.
  */
 
 interface PageExit {
@@ -122,7 +122,7 @@ export function SidebarNoteMenu({ note }: { note: NoteDto }) {
   );
 }
 
-/** Phone only (other widths have the CornerStack bubble: one entry per width). Conditional render, not `sm:hidden`: a display:none Radix item stays in the collection, so arrow keys and typeahead stop on an invisible item. */
+/** Phone only (below 640px; other widths have the CornerStack bubble, which reads the same `useIsPhone()`, so each width has exactly one entry). The hook lives in this child so sidebar rows do not each subscribe. Conditional render, not `sm:hidden`: a display:none Radix item stays in the collection, so arrow keys and typeahead stop on an invisible item. */
 function VersionsMenuItem({ onActivate }: { onActivate: () => void }) {
   const { t } = useTranslation();
   const phone = useIsPhone();
@@ -140,7 +140,7 @@ function VersionsMenuItem({ onActivate }: { onActivate: () => void }) {
   );
 }
 
-/** Phones only show the bubble while scrolling and screen readers cannot reach it, so the menu has an entry too. */
+/** Phones only show the bubble while scrolling and screen readers cannot reach it, so the menu has an entry too. Renders only below 768px when the note has headings and is not in version preview; sidebar rows sit outside `OutlineMenuContext` (default: no entry). */
 function OutlineMenuItem({ onActivate }: { onActivate: (open: OutlineMenuValue["open"]) => void }) {
   const { t } = useTranslation();
   const compact = useIsOutlineCompact();
@@ -159,7 +159,7 @@ function OutlineMenuItem({ onActivate }: { onActivate: (open: OutlineMenuValue["
   );
 }
 
-/** `aria-disabled` + no-op select, not `disabled`: keyboard open focuses the first enabled item and `disabled` would leave focus on the second. `useFavoriteStatus` is called inside the content so rows do not subscribe while closed. */
+/** `aria-disabled` + no-op select, not `disabled`: keyboard open focuses the first enabled item and `disabled` would leave focus on the second. `useFavoriteStatus` is called inside the content so rows do not subscribe while closed. Inert until the status is ready and while a toggle is pending; since the item stays enabled for focus, focus is not moved once it becomes active. */
 function FavoriteMenuItem({ noteId, onAdd, onRemove }: { noteId: string; onAdd: () => void; onRemove: () => void }) {
   const { t } = useTranslation();
   const { ready, favorite, pending } = useFavoriteStatus(noteId);
@@ -196,10 +196,10 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
   stateRef.current = page?.state;
 
   const [menuOpen, setMenuOpen] = useState(false);
-  /** No DialogTrigger, so Radix would drop focus to body. */
+  /** No DialogTrigger, so Radix would drop focus to body: this ref returns focus to the ⋮ trigger after the move/copy dialog closes. */
   const ownTriggerRef = useRef<HTMLButtonElement>(null);
   const triggerRef = externalTriggerRef ?? ownTriggerRef;
-  /** Skip returning focus to the trigger on close: it is about to be inside the inert AppShell. */
+  /** Skip returning focus to the trigger on close: it is about to be inside the inert AppShell (the presentation layer focuses its own root). */
   const enteringPresentationRef = useRef(false);
   const [transfer, setTransfer] = useState<GroupTransferPick | null>(null);
   const [groupExpanded, setGroupExpanded] = useState<GroupTransferKind | null>(null);
@@ -437,7 +437,7 @@ function NoteMenuCore({ note, trigger, onOpenEdits, onPresent, page, triggerRef:
             onPick={handlePick}
             onModeChange={closeAndReset}
           />
-          {/* `permissions.delete`: group `can_delete` members must be able to delete. No confirmation: the toast offers undo (#181). */}
+          {/* `permissions.delete`, not `role`: a group note's role is never owner, and `can_delete` members must be able to delete. No confirmation: the toast offers undo (#181); undo lives in `lib/trash-undo.ts`, not this component, because the menu has usually unmounted by then. Disabled while deleting so it cannot be sent twice. */}
           {note.permissions.delete && (
             <DropdownMenuMainLevel drilled={groupExpanded !== null}>
               <DropdownMenuItem

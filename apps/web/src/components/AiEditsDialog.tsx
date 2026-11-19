@@ -30,7 +30,7 @@ function EditRow({ note, edit }: { note: NoteDto; edit: NoteEditDto }) {
   async function handleRevert(): Promise<void> {
     try {
       await revert.mutateAsync(edit.id);
-      // Reverting changes the note body, so `last_edited_*` changes too. `ref` is `note.id`: this dialog only has a `NoteDto`.
+      // Reverting changes the note body, so `last_edited_*` changes too. `ref` is `note.id`: this dialog only has a `NoteDto`; `NotePage` passes the route ref through its own remote-update path.
       invalidateNoteQueries(queryClient, note, note.id);
       toast({ title: t("aiEdits.revertOk") });
     } catch (err) {
@@ -49,7 +49,7 @@ function EditRow({ note, edit }: { note: NoteDto; edit: NoteEditDto }) {
         <p className="text-xs text-muted-foreground">
           {new Date(edit.createdAt).toLocaleString(i18n.language)}
           {" · "}
-          {/* op is the raw API literal on purpose; `revert` is synthesized by the revert endpoint, not sendable by callers */}
+          {/* op is the raw API literal on purpose: the list mirrors the op the caller sent, and a translation would hide that. Exception: `revert` is synthesized by the revert endpoint (apps/server/src/notes/editing/revert.ts), not sendable by callers */}
           <code>{edit.op}</code>
           {edit.heading !== "" && ` · ${edit.heading}`}
         </p>
@@ -67,7 +67,7 @@ function EditRow({ note, edit }: { note: NoteDto; edit: NoteEditDto }) {
 
 /**
  * State lives in `NotePage` because the dialog has two triggers (⋮ item and `LastEditedLabel`).
- * The list query is gated on `open`: `GET /api/notes/:id/edits` has a rate-limit bucket and NotePage mounts one dialog per opened note.
+ * The list query is gated on `open`: `GET /api/notes/:id/edits` has a rate-limit bucket and NotePage mounts one dialog per opened note (pinned in AiEditsDialog.test.tsx).
  */
 export function AiEditsDialog({
   note,

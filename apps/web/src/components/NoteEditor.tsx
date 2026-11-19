@@ -1,4 +1,4 @@
-// `@blocknote/core/fonts/inter.css` is deliberately not imported: Latin-only, no help for a CJK UI.
+// This one import is enough: it @imports the mantine theme and `@blocknote/react` styles. `@blocknote/core/fonts/inter.css` is deliberately not imported (Latin-only woff that only grows the bundle for a CJK UI); fonts come from the app CSS.
 import "@blocknote/mantine/style.css";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -97,7 +97,7 @@ const BLOCKED_TRANSFER_TOAST_KEYS: Record<BlockedTransferReason, string> = {
   nonImageFile: "note.transferNonImage",
 };
 
-/** Must be `handleDOMEvents`, not `handlePaste`/`handleDrop`: BlockNote registers `handleDOMEvents.paste` that unconditionally preventDefaults and handles it, and ProseMirror consults `handlePaste`/`handleDrop` only inside the built-in editHandlers, after `handleDOMEvents` found no taker. So the latter never run on paste, nor on a drop carrying only `Files`. `someProp` checks directly passed editorProps before plugins, so this runs before BlockNote. `view` is typed `unknown` so tests can pass `null`. */
+/** Must be `handleDOMEvents`, not `handlePaste`/`handleDrop`: BlockNote registers `handleDOMEvents.paste` that unconditionally preventDefaults and handles it, and ProseMirror consults `handlePaste`/`handleDrop` only inside the built-in editHandlers, after `handleDOMEvents` found no taker. So the latter never run on paste, nor on a drop carrying only `Files`. `someProp` checks directly passed editorProps before plugins, so this runs before BlockNote. Returns true = handled, BlockNote paste logic never runs; false = falls through, so ordinary text paste is unaffected. `view` is unused and typed `unknown` so tests can pass `null`. */
 export function createMediaBlockingDOMEvents(translate: Translate): {
   paste: (view: unknown, event: ClipboardEvent) => boolean;
   drop: (view: unknown, event: DragEvent) => boolean;
@@ -125,15 +125,15 @@ export interface NoteEditorOptionsInput {
   editorRef: EditorRef;
   noteId: string;
   siteLinks: SiteLinkEnvRef;
-  /** Late-bound: the editor is not rebuilt when editable changes. */
+  /** Late-bound: the editor is not rebuilt when editable changes. Omitted = always send. */
   canSendCursor?: () => boolean;
-  /** Late-bound (the limit loads after the editor is created); returns true when it would exceed (already notified). */
+  /** Late-bound (the limit loads after the editor is created); asked once per paste/drop after parsing and before insertion with the estimated growth in bytes; true = would exceed (already notified), insert rejected. Omitted = no check. */
   sizeGuard?: (incomingBytes: number) => boolean;
-  /** Late-bound getter: config loads after the editor is created. */
+  /** Late-bound getter, read at each upload: config loads after the editor is created and can change. Omitted or undefined = no pre-check. */
   maxUploadBytes?: () => number | undefined;
 }
 
-/** Separate function so it can be tested without mounting BlockNote (jsdom lacks DOM/Range APIs). */
+/** Separate function so it can be tested without mounting BlockNote (jsdom lacks DOM/Range APIs). These options carry the contracts: image blocks get uploadFile while other media data URLs stay blocked, the collab fragment name, and the dictionary choice. */
 export function buildNoteEditorOptions({
   doc,
   provider,
@@ -158,7 +158,7 @@ export function buildNoteEditorOptions({
     }),
     // `createUploadFile` never rejects (see its header): on failure it toasts and removes the placeholder itself.
     uploadFile: createUploadFile({ noteId, editorRef, translate, maxUploadBytes }),
-    // Render-side URL guard (issue #12): note content is a Yjs document, so any collaborator with editor permission can write block props directly, bypassing the UI Embed tab checks. BlockNote runs previews and "open/download" through `resolveFileUrl` (verified against @blocknote/core and react 0.52.1 dist), the one place that intercepts before every sink. It must allow relative URLs: our own uploads are `/api/uploads/<id>` (rules in shared `note-schema-config.ts`, web base in `lib/media-url.ts`).
+    // Render-side URL guard (issue #12): note content is a Yjs document, so any collaborator with editor permission can write block props directly, bypassing the UI Embed tab checks. BlockNote runs previews and "open/download" through `resolveFileUrl` (verified against @blocknote/core and react 0.52.1 dist), the one place that intercepts before every sink without rewriting block specs. It must allow relative URLs (the input-side absolute-http(s) rule would block every uploaded image): our own uploads are `/api/uploads/<id>` (rules in shared `note-schema-config.ts`, web base in `lib/media-url.ts`).
     resolveFileUrl: (url: string) => Promise.resolve(safeMediaUrl(url)),
     pasteHandler: createMarkdownPasteHandler(createSiteLinkPasteHook(siteLinks)),
     // same criterion as `edgeDrop` in `handleDrop` below
@@ -174,11 +174,11 @@ export function buildNoteEditorOptions({
         createTourTransactionFilterExtension(),
       ],
       editorProps: {
-        // Order matters: site-link drop, then gutter file drop redirect (a ⋮⋮ drag redirects before the drop point is recorded, a file after the media block), then record the drop point, then media blocking.
+        // Order matters: site-link drop, then gutter file drop redirect (a ⋮⋮ drag redirects before the drop point is recorded, a file after the media block), then record the drop point (the columns paste rule uses it), then media blocking. Site-link drop: #352.
         handleDOMEvents: withSiteLinkDrop(siteLinks, editorRef, withGutterFileDrop(editorRef, withColumnsDropPoint(createMediaBlockingDOMEvents(translate)))),
-        // Directly passed editorProps are consulted before plugins; false continues as usual.
+        // Directly passed editorProps are consulted before plugins. Estimates growth after the slice is parsed and before insertion, rejecting over the limit; false continues to BlockNote and the columns paste rule.
         handlePaste: sizeHandlers.handlePaste,
-        // Size check only when nothing took over (a move adds no content). The dragged block recorded at dragstart is always cleared afterwards; a ⋮⋮ drag is also recorded to refocus the editor after dragend (#430).
+        // Size check only when no handler took over (copy-drags, external drags; a move adds no content; #428, #429). The dragged block recorded at dragstart is always cleared afterwards; a ⋮⋮ drag is also recorded to refocus the editor after dragend (#430).
         handleDrop: (view, event, slice, moved) => {
           try {
             return (
@@ -195,11 +195,11 @@ export function buildNoteEditorOptions({
         // Judge "after this input lands, are the characters before the caret `[[`", not the typed character (issue #98): ordinary typing is picked up by `readDOMChange` as "replace [from, to) with text", where `text` can be any length (fast typing merges to "[[", IME ends with e.g. "測試[[") and from may differ from to.
         handleTextInput: (view, from, to, text) => {
           const sel = view.state.selection;
-          // The deletions use parameter coordinates but `openSuggestionMenu` inserts at the current selection: they must be the same range, so guard explicitly (ProseMirror normally guarantees it).
+          // The deletions use parameter coordinates but `openSuggestionMenu` inserts at the current selection: they must be the same range (if they differ we would delete in one place and insert in another, corrupting the document), so guard explicitly (ProseMirror normally guarantees it).
           if (sel.from !== from || sel.to !== to) return false;
 
           const doc = view.state.doc;
-          // `from >= 1` is insurance before `resolve(from - 1)`; the same-parent check only documents intent (`textBetween` is already empty across blocks).
+          // `from >= 1` is insurance before `resolve(from - 1)`; the same-parent check documents that a `[` ending the previous block does not count (`textBetween` is already empty across blocks).
           let before = "";
           if (from >= 1) {
             const $prev = doc.resolve(from - 1),
@@ -219,7 +219,7 @@ export function buildNoteEditorOptions({
           const tr = view.state.tr;
           if (from < to) tr.delete(from, to);
           if (start < from) tr.delete(start, from);
-          // Returning true swallows the input, so the content before `[[` must be reinserted by us.
+          // Returning true swallows the input, so the content before `[[` must be reinserted by us. `openSuggestionMenu` inserts `[[` at the selection, already mapped to `start` by the dispatch above (so dispatch first).
           if (keep) tr.insertText(keep, start);
           if (tr.docChanged) view.dispatch(tr);
           // `deleteTriggerCharacter: true` so `clearQuery` also deletes `[[`; omitted/false leaves `[[` behind.
@@ -244,7 +244,7 @@ export function insertLinkAtSavedSelection(
 
 /** `getSlashItems` must keep its identity across dialog open/close: a changing identity re-runs the `useLoadSuggestionMenuItems` effect (deps `[query, getItems]`) and the menu flashes its loading state. */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
-  // The phone menu has no shortcut column; crossing 640 reloads the menu once (deliberate).
+  // The phone menu has no shortcut column; crossing 640 reloads the menu once. Do not add `linkDialogOpen` to its deps or replace `openLinkDialog` with an inline arrow.
   const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   // Restore the saved selection explicitly rather than rely on it not having changed while the dialog took focus; a ref because it affects no output.
@@ -322,7 +322,7 @@ export function lateBoundTranslate(ref: { current: Translate }): Translate {
   return (key, opts) => ref.current(key, opts);
 }
 
-/** Separate from `NotePage` so page tests can mock it (BlockNote needs DOM APIs jsdom lacks). */
+/** Separate from `NotePage` so page tests can mock it (BlockNote needs DOM APIs jsdom lacks). Mounted only once provider/doc are ready, so no null handling inside. */
 export function NoteEditor({
   doc,
   provider,
@@ -350,7 +350,7 @@ export function NoteEditor({
   const { resolvedTheme } = useTheme();
   const { panelOpen, enabled: versionsEnabled } = useVersions();
   const panelWidth = useVersionsPanelWidth();
-  // floating panel: top edge leaves room for the header (`floating-panel.ts`)
+  // floating panel (640-1279: the versions panel floats over the note): top edge leaves room for the header (`floating-panel.ts`)
   const rowRef = useRef<HTMLDivElement>(null);
   const headerSlotRef = useRef<HTMLDivElement>(null);
   useNoteHeaderHeight(rowRef, headerSlotRef);
@@ -375,7 +375,7 @@ export function NoteEditor({
     [onScrollRoot],
   );
   useTableScrollHint(scrollRootRef, phone);
-  // Anchor on the first visible block (its own line) so both layouts stop at the same paragraph; on phones measure the header directly (`--kb-sticky-top` not written yet).
+  // Keep the reading position when crossing 640 (e.g. rotating). Anchor on the first visible block (its own line) so both layouts stop at the same paragraph; on phones measure the header directly (`--kb-sticky-top` not written yet).
   useTierScrollAnchor({
     containerRef: scrollRootRef,
     itemSelector: ".bn-block-outer",
@@ -387,7 +387,7 @@ export function NoteEditor({
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);
   onCursorScrollerRef.current = onCursorScroller;
-  // Written at render: when editable flips BlockNoteView remounts the PM view at commit, after which the gate must see the new value.
+  // Written at render, not in an effect: when editable flips, BlockNoteView remounts the PM view during commit and the gate must already read the new value then.
   const editableRef = useRef(editable);
   editableRef.current = editable;
 
@@ -436,7 +436,7 @@ export function NoteEditor({
       sizeGuard,
       maxUploadBytes: () => maxUploadBytesRef.current,
     }),
-    // Language and noteId are not in deps: the dictionary is read once at creation, and a noteId change always changes `doc`/`provider` (`collab/useCollab.ts`).
+    // Language and noteId are not in deps: the dictionary is read once at creation, and a noteId change always changes `doc`/`provider` (`collab/useCollab.ts`), so a language switch applies after reload (rebuilding would remount the collab binding, not worth it).
     [doc, provider],
   );
   editorRef.current = editor;
@@ -464,19 +464,19 @@ export function NoteEditor({
   // The live editor is hidden during version preview: an undo would change invisible content.
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
-  // Outline is hidden during version preview and when the floating version panel would cover it (768-1279). Layout is measured only when it may appear: a changed measurement re-renders this layer, once per frame while resizing.
+  // Phones have their own entry. Outline is hidden during version preview (it maps only the live document) and when the floating version panel would cover it (768-1279). Layout is measured only when it may appear: a changed measurement re-renders this layer, once per frame while resizing.
   const outlineHeadings = useOutlineHeadings(editor);
   const overlay = useIsOverlay();
   const outlineCompact = useIsOutlineCompact();
   const outlineCanShow = !outlineCompact && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
   const showOutline = outlineCanShow && outlineBox !== null;
-  // Pinning preference is site-wide; it applies only with an outline, standard width and room for a 640 column, else it falls back to the thin line without changing the preference.
+  // Pinning preference is site-wide; it applies only with an outline, standard width and room for a 640 column (after subtracting the panel), else it falls back to the thin line without changing the preference; it re-pins automatically when conditions return.
   const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
   const outlinePinAvailable = width === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
-  // Below 768: position bubble + bottom panel; ⋮ opens the same panel via context, so the provider wraps the whole card. 640-767 listens to the container (document does not scroll there); phones to the window.
+  // Below 768: position bubble + bottom panel; ⋮ opens the same panel via context, so the provider wraps the whole card. 640-767 listens to the container (document does not scroll there); phones to the window. On phones the top edge is the pinned header bottom; at 640-767 the bubble floats in the anchor layer at the container top.
   const phoneOutline = outlineCompact && !hasPreview && outlineHeadings.length > 0;
   const containerTopEdge = useCallback(() => scrollEl?.getBoundingClientRect().top ?? 0, [scrollEl]);
   const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
@@ -484,7 +484,7 @@ export function NoteEditor({
   useEffect(() => {
     if (!phoneOutline) setOutlineSheetOpen(false);
   }, [phoneOutline]);
-  // No trigger button, so without a target focus falls to body: when opened while editing (bubble tap) return to the editor (no scroll, selection unchanged); otherwise to the opener (⋮ or keyboard-opened bubble). Recorded at open because focus is in the panel and the toolbar is collapsed while open.
+  // No trigger button, so without a target focus falls to body: when opened while editing (bubble tap) return to the editor (no scroll, selection unchanged); otherwise to the opener (⋮ or keyboard-opened bubble). Returning to the editor brings the edit toolbar back; a keyboard-opened bubble is still present (no countdown while the panel is open), a finger-tapped bubble never had focus so focus is left alone. Recorded at open because focus is in the panel and the toolbar is collapsed while open.
   const [outlineFocusReturn, setOutlineFocusReturn] = useState<{ editing: boolean; el: HTMLElement | null }>({ editing: false, el: null });
   const mobileToolbarRef = useRef(mobileToolbar);
   mobileToolbarRef.current = mobileToolbar;
@@ -506,7 +506,7 @@ export function NoteEditor({
   }, [editor]);
 
   useEffect(() => registerEditor(noteId, editor), [noteId, editor]);
-  // Register first, then notify in the same commit; `editor.isEditable` is set by BlockNoteView ref callback earlier in commit.
+  // Notify once per editor instance when it first becomes editable (the registry dedups). Register first, then notify in the same commit; `editor.isEditable` is set by BlockNoteView ref callback earlier in commit.
   useEffect(() => {
     if (editable) notifyEditorEditable(noteId, editor);
   }, [noteId, editor, editable]);
@@ -542,9 +542,9 @@ export function NoteEditor({
         <div className={cn(
           cardSurface,
           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
-          // Phone: the document scrolls; the card does not clip (header sticky) and is at least `svh` high so a short note still reaches the bottom.
+          // Phone: the document scrolls; the card does not clip (header sticky) and is at least `svh` high (unchanged as browser toolbars resize) so a short note still reaches the bottom; tapping below still focuses the end.
           "max-sm:min-h-svh max-sm:overflow-visible",
-          // The floating toolbar brings its own bottom safe area; the container bottom sits above it so the toolbar top is 60px above (caret scroll boundary and AI box flip use it).
+          // The floating toolbar brings its own bottom safe area; the container bottom sits above it so the toolbar top is 60px above (caret scroll boundary and AI box flip use it). With the keyboard closed the toolbar top is exactly 60px above the container bottom; with keyboard or palette open the gap is a few px larger, harmless.
           mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
         )}>
           {/* phone: header slot owns the notch safe area and is pinned (opaque) */}
@@ -571,7 +571,7 @@ export function NoteEditor({
               placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
               editToolbarHeight={phone && mobileToolbar ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0}
-              // Non-phone: same condition CornerStack uses to show the bubble.
+              // Non-phone: same condition CornerStack uses to show the bubble (versions enabled, panel closed).
               bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : versionsEnabled && !panelOpen ? CORNER_STACK_FOOTPRINT_PX : 0}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}
@@ -585,7 +585,7 @@ export function NoteEditor({
             onMouseDown={onScrollAreaMouseDown}
             className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible sm:[scrollbar-gutter:stable]", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
           >
-            {/* `relative` is load-bearing (#160): BlockNote table hover overlays use FloatingPortal into `editor.portalElement`; without a positioned ancestor they size against `<html>` and grow a page scrollbar (extend buttons lack flip/shift). `overflow-x-clip` (#162) crops right-overflowing "add row" buttons: css-overflow-3 section 3.1 makes `clip` compute to `hidden` when the other axis is non-visible; `overflow-x:auto` already clips at the same box, so nothing new is clipped. Details in `14-table-hover.spec.ts`. */}
+            {/* `relative` is load-bearing (#160): BlockNote table hover overlays use FloatingPortal into `editor.portalElement`; without a positioned ancestor (wrapper, scroll container or `.bn-container` all work) they size against `<html>` and grow a page scrollbar (extend buttons lack flip/shift). `overflow-x-clip` (#162) crops right-overflowing "add row" buttons: css-overflow-3 section 3.1 makes `clip` compute to `hidden` when the other axis is non-visible; `overflow-x:auto` already clips at the same box, so nothing new is clipped. Side +/⠿ handles overflow left and are clipped (`docs/known-limitations.md`, #115); the public page disables them via `!isEditable`. `scrollWidth` ignores `overflow-x`. We never call `scrollIntoView` and caret-follow is consumed by `.tableWrapper` first. Details in `14-table-hover.spec.ts`. */}
             {/* phone: wrapper at least as tall as the scroll container so a short note gets no extra scroll range */}
             <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col max-sm:grow" : "contents"}>
             <div
@@ -609,7 +609,7 @@ export function NoteEditor({
                   getSlashItems={getSlashItems}
                   notePath={notePath}
                 >
-                  {/* sole owner of the formatting toolbar controller and AI box */}
+                  {/* sole owner of the formatting toolbar controller and AI box; NoteEditorView never touches AI context */}
                   <SelectionAiController />
                 </NoteEditorView>
                 <HeadingAnchorButtons container={columnEl} />
@@ -666,7 +666,7 @@ export function NoteEditor({
   );
 }
 
-/** Different ids per menu: a just-closed menu lingers in the DOM and a shared id would highlight the old one in the tour. Module-level constants (identity is a `useMemo` dependency). */
+/** Different ids per menu: a just-closed menu lingers in the DOM and a shared id would highlight the old one in the tour. Module-level constants (identity is a `useMemo` dependency). Only adds attributes; never set `style`/`onMouseDownCapture` here. */
 const WIKILINK_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
   elementProps: tourTarget("wikilinkMenu") as FloatingUIOptions["elementProps"],
 };
@@ -697,7 +697,7 @@ export interface NoteEditorViewProps {
 /** Separate exported component so the `filePanel={false}` and `useMemo` identity contracts can be tested with a real editor (`NoteEditorView.test.tsx`). */
 export function NoteEditorView({ editor, editable, theme, noteId, getItems, getSlashItems, children, notePath }: NoteEditorViewProps) {
   const phone = useIsPhone();
-  // Unfreeze core side menu after the controller unmounts at phone width (state must exist first or core throws).
+  // If the block menu was open when narrowing to phone width, the controller unmounts but core's menu stays frozen: unfreeze it (state must exist first or core throws).
   useEffect(() => {
     if (!phone) return;
     const sideMenu = editor.getExtension(SideMenuExtension);

@@ -11,7 +11,7 @@ import { NarrowTopBar } from "./NarrowTopBar";
 /**
  * Flag is cleared only when the chunk really loaded (ChunkLoadBeacon commit), so there is at most one automatic reload after each successful load regardless of timing (no clock).
  * The quota is per route mount, not per chunk: a nested chunk that throws synchronously during render after mount would loop (fail, reload, mount clears quota, fail). Check this before adding nested lazy.
- * Precondition (#201): no lazy that renders only after another lazy mounted may share a quota. Settings (`chunk="settings"`) and admin (`chunk="admin"`, #247) share one because their sections are sibling route elements: after the beacon clears, a failing sibling reloads onto the failing URL and a second failure sees the flag. Multi-mount aliases (`versions`, `trash`, `select`, `bodySearch`) `import()` one module from every mount point, so once one succeeds the others cannot fail. Nested dynamic imports (syntax highlighting) fail as promise rejections, not render errors, and are out of scope.
+ * Precondition (#201): no lazy that renders only after another lazy mounted may share a quota. The `chunk` alias gives each lazy route its own quota. Settings (`chunk="settings"`) and admin (`chunk="admin"`, #247) each have one quota shared across their sibling sections (admin's sections are one `AdminSections` chunk), because the sections are sibling route elements: after the beacon clears, a failing sibling reloads onto the failing URL and a second failure sees the flag. Multi-mount aliases (`versions` is nested under NotePage, so it uses its own alias; also `trash`, `select`, `bodySearch`) `import()` one module from every mount point, so once one succeeds the others cannot fail. Nested dynamic imports (syntax highlighting) fail as promise rejections, not render errors, and are out of scope.
  * Tests use literal chunk keys (pinning the names), so no constants are exported.
  */
 const DEFAULT_CHUNK = "notepage";
@@ -69,7 +69,7 @@ function clearReloadFlag(chunk: string): void {
   }
 }
 
-/** Must sit inside `<Suspense>` next to `<NotePage>`: outside it the effect runs while lazy is pending, clears the flag, and every reload re-arms it (endless loop). Pinned in App.errorBoundary.test.tsx. `chunk` must match the route boundary. */
+/** Must sit inside `<Suspense>` next to `<NotePage>`: outside it (even if still inside the error boundary) the effect runs while lazy is pending, clears the flag, and every reload re-arms it (endless loop). Pinned in App.errorBoundary.test.tsx. `chunk` must match the route boundary. */
 export function ChunkLoadBeacon({ chunk = DEFAULT_CHUNK }: { chunk?: string }) {
   useEffect(() => {
     clearReloadFlag(chunk);
@@ -86,18 +86,18 @@ function subscribeOnline(callback: () => void) {
   };
 }
 
-/** Offline, a reload replaces the SPA with the browser error page (no service worker), so the button stays disabled until the online event. */
+/** Offline, a reload replaces the SPA with the browser error page (no service worker), so the button stays disabled until the online event. The chunk-error text tells the user to check the connection, so it must not lead to a button that destroys the app. */
 export function useOnline(): boolean {
   return useSyncExternalStore(subscribeOnline, () => navigator.onLine !== false);
 }
 
 type BoundaryStatus = "normal" | "pending" | "reloading" | "error";
 
-/** `page` frame must not wrap AppShell (it calls `/api/auth/me` and exposes the sidebar; login pages are reachable signed out). */
+/** `app` is the content card only: the page already sits inside AppShellLayout's AppShell, so the frame must not add another. `page` frame must not wrap AppShell (it calls `/api/auth/me` and exposes the sidebar; login pages are reachable signed out). */
 export type LazyRouteFrame = "app" | "page" | "inline";
 
 interface LazyRouteErrorBoundaryProps {
-  /** Not `location.key`: closing the settings modal creates a new key and would read as "switching notes". */
+  /** Identifies the destination (for NotePage see NoteRoute in App.tsx); reload happens only while in the error state (see componentDidUpdate). Not `location.key`: closing the settings modal creates a new key and would read as "switching notes". */
   resetKey: string | undefined;
   /** Same value as the route `ChunkLoadBeacon`. */
   chunk?: string;
@@ -118,7 +118,7 @@ function defaultReload() {
   location.reload();
 }
 
-/** `pending` must render the fallback, never children: they would throw again and gDSFE would loop without componentDidCatch running. getDerivedStateFromError only sets `pending` (dev calls it twice). */
+/** Catches any render error below, not only chunk load failures. `pending` must render the fallback, never children: they would throw again and gDSFE would loop without componentDidCatch running. getDerivedStateFromError only sets `pending` (dev calls it twice). */
 export class LazyRouteErrorBoundary extends Component<LazyRouteErrorBoundaryProps, LazyRouteErrorBoundaryState> {
   state: LazyRouteErrorBoundaryState = { status: "normal", isChunkError: false };
 
@@ -252,7 +252,7 @@ interface AppErrorBoundaryProps {
   children: ReactNode;
 }
 
-/** No automatic reload here: it would turn a persistent render bug into an endless reload. The fallback has zero context dependency (no AppShell: auth/query may be the source of the error). */
+/** Must wrap ThemeProvider and Toaster so errors thrown by them are caught too. No automatic reload here: it would turn a persistent render bug into an endless reload. The fallback has zero context dependency (no AppShell: auth/query may be the source of the error); theme is applied via a class on documentElement, i18n is a module singleton and Button uses no context, so all are safe. */
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, { hasError: boolean }> {
   state = { hasError: false };
 

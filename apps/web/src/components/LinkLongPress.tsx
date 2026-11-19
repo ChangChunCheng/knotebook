@@ -4,7 +4,7 @@ import { createLongPress } from "@/lib/long-press";
 
 const LINK_SELECTOR = 'a[data-inline-content-type="link"]';
 
-/** Long-press places an empty selection inside the link so `LinkToolbarController` opens its toolbar; the synthesized mousedown/mouseup/click are stopped in capture because ProseMirror `handleClick` (on mouseup) would still open a new tab. */
+/** Long-press places an empty selection inside the link so `LinkToolbarController` opens its toolbar; the synthesized mousedown/mouseup/click are stopped in capture because ProseMirror `handleClick` (on mouseup) would still open a new tab. Must be mounted inside `<BlockNoteView>` (uses its context). */
 export function LinkLongPress() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
   const editor = useBlockNoteEditor<any, any, any>();

@@ -4,7 +4,7 @@ import { GitLabLogo, GoogleLogo } from "@/components/ui/brand-icons";
 import { SignInGeneric } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 
-/** Decorative only (aria-hidden), so the surrounding accessible name is unchanged. Load failure is remembered by URL so a new `?v=` retries. */
+/** The DTO `icon` is already resolved by the server; render only. Decorative only (aria-hidden), so the surrounding accessible name is unchanged. Load failure is remembered by URL so a new `?v=` retries. */
 export function ProviderIcon({ icon, className }: { icon: ProviderIconDto | undefined; className?: string }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (icon == null) return null;

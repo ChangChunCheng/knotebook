@@ -6,7 +6,7 @@ import { canInsertColumns, insertColumns } from "@/collab/columns/commands";
 import { Link } from "@/components/ui/icons";
 import { Columns2, Diagram } from "@/components/ui/icons-extra";
 
-/** Kept in the mermaid namespace on purpose: the `lastIndexOf(group)` insertion needs identical strings (pinned in slash-menu.test.tsx); renaming touches both translation files for no gain. */
+/** Kept in the mermaid namespace on purpose: the `lastIndexOf(group)` insertion needs identical strings (pinned in slash-menu.test.tsx); renaming touches both translation files for no gain. Extracted so "link and diagram items share one group" is visible in the source; a mismatched group falls to the end. */
 export const SLASH_EXTRA_GROUP_KEY = "note.mermaid.slashGroup";
 
 export const SLASH_MENU_PHONE_BOTTOM_CLEARANCE_PX = PHONE_EDIT_TOOLBAR_CLEARANCE_PX + 8;
@@ -40,7 +40,7 @@ export const PHONE_SLASH_MENU_FLOATING_OPTIONS: FloatingUIOptions = {
   useFloatingOptions: { placement: "bottom-start", middleware: slashMenuPhoneMiddleware() },
 };
 
-/** Must spread the default items: returning only custom items silently replaces the built-in menu with no type error. `NoteEditorView` must also set `slashMenu={false}` or two controllers stack. */
+/** Not listed with the caret in a column, table or child block (recomputed per query). Must spread the default items: returning only custom items silently replaces the built-in menu with no type error. `NoteEditorView` must also set `slashMenu={false}` or two controllers stack. */
 export function buildSlashMenuItems(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
   editor: any,

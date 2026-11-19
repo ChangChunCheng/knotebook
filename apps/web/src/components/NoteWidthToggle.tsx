@@ -7,7 +7,7 @@ import { NoteWidthIcon } from "@/components/ui/icons-extra";
 import { tourTarget } from "@/lib/tour-targets";
 import { cn } from "@/lib/utils";
 
-/** Shown only when the header content box is >= 43.5rem (header is an `@container`): below that wide equals standard. */
+/** Shown only when the header content box is >= 43.5rem (header is an `@container`): below that wide equals standard; when hidden, the ⋮ menu sets the width. */
 export function NoteWidthToggle({ noteId }: { noteId: string }) {
   const { t } = useTranslation();
   const [width, setWidth] = useNoteWidth(noteId);

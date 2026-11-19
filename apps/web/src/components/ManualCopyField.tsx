@@ -8,7 +8,7 @@ export interface ManualCopyFieldProps {
 }
 
 /**
- * Fallback when both copy paths fail. A toast is not enough: Radix toast sets `userSelect: none` and swipe-to-dismiss eats horizontal drags. Must be mounted under a `<Dialog>` (`DialogDescription` reads the dialog context and throws outside).
+ * Fallback when both copy paths fail. A toast is not enough: Radix toast sets `userSelect: none` and swipe-to-dismiss eats horizontal drags. Must be mounted under a `<Dialog>` (`DialogDescription` reads the dialog context and throws outside). The text is a `DialogDescription`, not a `<p>`, because the NoteMenu manual-copy dialog has no other description for `aria-describedby`.
  * Do not override the description `id`: `DialogContent`s `aria-describedby` points at Radix `descriptionId`, so overriding it dangles; the input is named with `aria-label` instead.
  * Auto-select deps are `[value]`, not an inline `ref` callback: a new callback identity each render would re-run `select()` and steal focus while typing.
  */

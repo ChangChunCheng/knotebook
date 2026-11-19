@@ -11,7 +11,7 @@ import { toast } from "@/components/ui/toast";
 import { captureRemoveContext, focusAfterRemoveLater, type RemoveContext } from "@/lib/favorite-focus";
 import { cn } from "@/lib/utils";
 
-/** State comes from `NoteList` (one `["favorites"]` subscription per list, not per row). `aria-disabled` + early return while submitting, not `disabled`, to keep keyboard focus. The row unmounts after a successful removal in the favourites tab, so closing and focus handling happen after the `await`, using the neighbour recorded at open. */
+/** State comes from `NoteList` (one `["favorites"]` subscription per list, not per row). `aria-disabled` + early return while submitting, not `disabled`, to keep keyboard focus. The row unmounts after a successful removal in the favourites tab, so closing and focus handling happen after the `await`, using the neighbour recorded at open. The accessible name is fixed (`note.favorite.label`); state is expressed only by `aria-pressed`. Hidden on touch/no-hover (NoteList `FavoriteMarker` shows instead; add/remove via ⋮). The confirm dialog mounts only while open. */
 export function RowFavoriteStar({ note, favorite, pending }: { note: NoteDto; favorite: boolean; pending: boolean }) {
   const { t } = useTranslation();
   const addFavorite = useAddFavorite();

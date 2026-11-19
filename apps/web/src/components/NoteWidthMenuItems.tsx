@@ -25,7 +25,7 @@ const WIDTH_RADIO_ROW =
   "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
 
-/** Two forms (same criterion as `GroupTransferMenuItems`): nested submenu when wide and hoverable; in-place radios when narrow or touch, with the expanded state owned by `NoteMenu` so Esc collapses first. */
+/** Two forms (same criterion as `GroupTransferMenuItems`): nested submenu when wide and hoverable; in-place radios when narrow or touch, with the expanded state owned by `NoteMenu` so Esc collapses first. `useNoteWidth` is called only here, so the width store is subscribed only while the menu content is mounted (open). */
 export function NoteWidthMenuItems({ noteId, expanded, onExpandedChange, onModeChange }: NoteWidthItemsControl & { noteId: string }) {
   const { t } = useTranslation();
   const [width, setWidth] = useNoteWidth(noteId);

@@ -1,4 +1,4 @@
-// Deliberate: the public page must not rely on NoteEditor being loaded for BlockNote styles.
+// Deliberate: the public page must not rely on NoteEditor being loaded for BlockNote styles. Zero cost: both modules share the BlockNote chunk.
 import "@blocknote/mantine/style.css";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,11 +25,11 @@ export function PublicNoteEditor({ doc, publicRef, links, onEditor }: PublicNote
   const { i18n } = useTranslation();
   const { resolvedTheme } = useTheme();
 
-  // Local Awareness: BlockNote only takes `{ awareness }`; destroy on unmount because the constructor starts a timer. Under StrictMode the discarded first instance lives until unmount (accepted).
+  // Local Awareness: BlockNote only takes `{ awareness }`; destroy on unmount because the constructor starts a timer. Under StrictMode (dev only) the discarded first instance lives until unmount and the survivor is destroyed once by the simulated unmount and reused; accepted (read-only page has no peers, production does not double-run).
   const awareness = useMemo(() => new Awareness(doc), [doc]);
   useEffect(() => () => awareness.destroy(), [awareness]);
 
-  // Depend on an identity string, not the `publicRef` object, so rebuilds do not rely on caller memoization.
+  // Depend on an identity string, not the `publicRef` object, so rebuilds do not rely on caller memoization. A ref change within one mount cannot happen today (new ref -> new query key -> unmount); these deps do not vouch for that path.
   const refIdentity = publicRefIdentity(publicRef);
   const editor = useCreateBlockNote(
     buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, language: i18n.language }),

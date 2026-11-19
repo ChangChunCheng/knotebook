@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 
 /** Deliberately does not reuse `NotePageFallback`/`NoteRouteErrorBoundary`: they need `AppShellLayout`, whose AppShell calls `/api/auth/me` and shows the sidebar to anonymous visitors. The public route has zero auth dependency (pinned in App.publicRoute.test.tsx). Stays in the entry bundle because the fallback renders before the lazy chunk arrives. */
 
-/** `flex flex-col` + `overflow-hidden` are load-bearing (body container `min-h-0 flex-1 overflow-y-auto`, page must not scroll as a whole). Background is bg-card, not bg-background: the BlockNote background is coupled to `--color-card`, so a darker page would make the article column look like a floating card. `inert` while the presentation shell is mounted (#229). */
+/** `flex flex-col` + `overflow-hidden` are load-bearing (body container `min-h-0 flex-1 overflow-y-auto`, page must not scroll as a whole). Background is bg-card, not bg-background: the BlockNote background is coupled to `--color-card`, so a darker page would make the article column look like a floating card. The coupling is the two `.bn-root[data-color-scheme]` overrides in index.css; overriding bn variables per page was rejected: two new rules plus an anchor class, and it would move the editor off `--color-card` and disturb BlockNote's built-in color-mix. The article column width is still owned by the column inside PublicNotePage. `inert` while the presentation shell is mounted (#229). */
 export function PublicPageFrame({ children, inert }: { children: ReactNode; inert?: boolean }) {
   useCardPage();
   return (
@@ -35,7 +35,7 @@ function defaultReload() {
   location.reload();
 }
 
-/** No automatic reload and no ChunkLoadBeacon: that flag budget is NotePage-specific; an anonymous visitor has no unsaved state, so a manual reload button suffices. */
+/** Catches chunk load failures and render errors (including `decodePublicYdoc` throwing on a corrupt payload). No automatic reload and no ChunkLoadBeacon: that flag budget is NotePage-specific; an anonymous visitor has no unsaved state, so a manual reload button suffices; this also avoids a second flag mechanism with its own failure modes (private mode, clearing timing). */
 export class PublicNoteErrorBoundary extends Component<PublicNoteErrorBoundaryProps, { hasError: boolean }> {
   state = { hasError: false };
 

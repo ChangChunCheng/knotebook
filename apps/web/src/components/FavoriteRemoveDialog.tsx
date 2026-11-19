@@ -4,7 +4,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 
 /**
  * Not `sidebar/select-dialogs.tsx`: that is lazy-only (`SelectLazy`) but the ⋮ menu is in the initial bundle.
- * Cancel is the first footer child so initial focus is the safe action.
+ * Cancel is the first footer child so initial focus is the safe action. Focus after close is the caller's (`onCloseAutoFocus`). `title` takes the raw note title; blank shows the title placeholder inside the dialog, so callers need not handle it. While submitting, both buttons are disabled and Esc/outside click/✕ are ignored.
  */
 interface FavoriteRemoveDialogProps {
   title: string;

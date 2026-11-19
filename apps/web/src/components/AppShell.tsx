@@ -107,7 +107,7 @@ interface SidebarContentProps {
   layout?: "classic" | "phone";
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
-  /** Phone documents scroll, so a new tab list must start at top. */
+  /** Called on a tab change in the phone layout only (not on first mount): phone documents scroll, so a new tab list must start at top. */
   onPhoneTabChange?: () => void;
 }
 
@@ -138,7 +138,7 @@ function SidebarContent({
   useEffect(() => {
     if (searching) updateSelection({ type: "end" });
   }, [searching, updateSelection]);
-  // layout effect: scroll before the new tab first paint
+  // layout effect: scroll before the new tab first paints, otherwise one frame of the new list is painted at the old position
   const seenTabRef = useRef(tab);
   useLayoutEffect(() => {
     if (seenTabRef.current === tab) return;
@@ -149,7 +149,7 @@ function SidebarContent({
     <>
       {phoneLayout ? (
         <div data-phone-top-bar="" className={cn("shrink-0 pt-[env(safe-area-inset-top)]", PHONE_TOP_BAR_STICKY)}>
-          {/* edges align with list rows */}
+          {/* edges align with list rows: title text and avatar visual right edge sit 16px from the screen edge (avatar 32 visual / 44 hit area, hence pr-2.5) */}
           <div className="flex h-12 items-center justify-between pl-4 pr-2.5">
             <div className="flex items-center gap-2">
               <span
@@ -270,7 +270,7 @@ function SidebarContent({
             !selection.active && (
               <PhoneListFabs
                 onSearch={() => {
-                  // iOS only shows the keyboard inside a user gesture.
+                  // Mount the search box (flushSync) and focus it within the same tap: iOS only shows the keyboard inside a user gesture.
                   flushSync(() => onSearchOpenChange?.(true));
                   searchRef.current?.focus();
                 }}
@@ -301,10 +301,10 @@ interface AppShellProps {
 
 /**
  * Both the static card and the drawer are in the DOM while the drawer is open (static one `hidden`); jsdom has no CSS, so tests scope with `within(drawer)`.
- * Search state lives here so Ctrl/Cmd+K can focus across components and both search boxes show one value.
- * Ctrl/Cmd+K: `preventDefault` only when there is something to do; gives up when any non-drawer `[role="dialog"]` is open (do not fight Radix focus trap; the ⋮ menu is `role="menu"` and still fires). Strict `event.key === "k"` excludes Ctrl+Shift+K. Yields when `event.defaultPrevented`: BlockNote create-link binds Ctrl/Cmd+K natively without stopPropagation.
- * Drawer is a direct Radix Dialog (the `ui/dialog.tsx` content hardcodes centring and a top-right X); the focus trap arms only once focus lands in the container (see `onOpenAutoFocus`). Esc ends selection first (see `onEscapeKeyDown`).
- * Sidebar width: `<aside style={{ width }}>`, 200-480 default 320 in localStorage (`sidebar-width.ts`). The handle is an `absolute left-full w-3` child overlapping the root `gap-3`, so gap and `main` are untouched; it disappears with the `hidden` aside below `xl`. The drawer uses the same width (4rem cap is insurance).
+ * Search state is owned above the sidebar (App-level `useSidebarQuery`) so Ctrl/Cmd+K can focus across components, `SearchResults` gets the query, and both search boxes show one value.
+ * Ctrl/Cmd+K: `preventDefault` only when there is something to do (phone layout, narrow, or the static search box is mounted; on narrow the static box is `display:none`); gives up when any non-drawer `[role="dialog"]` is open (do not fight Radix focus trap; the ⋮ menu is `role="menu"` and still fires, and the menu closes: accepted). Strict `event.key === "k"` because Shift gives "K", which excludes Ctrl+Shift+K (pinned in `AppShell.test.tsx`). Yields when `event.defaultPrevented`: BlockNote create-link binds Ctrl/Cmd+K natively without stopPropagation, so without yielding its popup would never open.
+ * Drawer is a direct Radix Dialog (the `ui/dialog.tsx` content hardcodes centring and a top-right X); the focus trap arms only once focus lands in the container (see `onOpenAutoFocus`). Esc in selection mode ends selection first and keeps the drawer open (see `onEscapeKeyDown`).
+ * Sidebar width: `<aside style={{ width }}>`, 200-480 default 320 in localStorage (`sidebar-width.ts`); 200 keeps ~3 CJK characters in group rows; 480 is not viewport-relative (a narrow window gets squeezed; double-click on the handle resets to 320). The handle is an `absolute left-full w-3` child overlapping the root `gap-3`, so gap and `main` are untouched; it disappears with the `hidden` aside below `xl`. The drawer uses the same width (4rem cap is insurance).
  */
 export function AppShell({ children, inert }: AppShellProps) {
   const { t } = useTranslation();
@@ -375,7 +375,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     [],
   );
 
-  // Ctrl/Cmd+/: Shift is not excluded (`/` needs Shift on some layouts); `!alt` like NotePage Ctrl+S. With another dialog or a menu open it gives up: Radix menu and Dialog share FocusScope (unlike Ctrl+K, where the menu still fires). Empty deps: the handler reads only refs and DOM.
+  // Ctrl/Cmd+/: Shift is not excluded (`/` needs Shift on some layouts); `!alt` like NotePage Ctrl+S. With another dialog (the sidebar drawer excepted) or a menu open it gives up without preventDefault: Radix menu and Dialog share FocusScope (unlike Ctrl+K, where the menu still fires). Empty deps: the handler reads only refs and DOM.
   useEffect(() => {
     function handleShortcutsKey(event: KeyboardEvent): void {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key !== "/") return;
@@ -395,7 +395,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     return () => window.removeEventListener("keydown", handleShortcutsKey);
   }, []);
 
-  // Ctrl/Cmd+,: same rules as Ctrl+/ but excluding shift. Mac Safari treats ⌘, as native Preferences, so the page may never receive it. The handler reads a ref because navigate/location change every render.
+  // Ctrl/Cmd+,: same guards as Ctrl+/ plus `!shift`, but no toggle: with any dialog or menu open (settings, the shortcuts dialog, the presentation layer) it does nothing. Opens via `openSettings`, the same path as the user-menu item. Mac Safari treats ⌘, as native Preferences, so the page may never receive it. The handler reads a ref because navigate/location change every render.
   const settingsRouteRef = useRef({ navigate, location });
   settingsRouteRef.current = { navigate, location };
 
@@ -411,7 +411,7 @@ export function AppShell({ children, inert }: AppShellProps) {
         // Rapid clicks: the second must not step back again before popstate arrives.
         if (backFromKeyRef.current === here.key) return;
         backFromKeyRef.current = here.key;
-        // Replace this entry with the list instead of adding one, otherwise back returns to the note just left.
+        // If the list entry is still in history go back to it (system back and ‹ share one history); otherwise replace this entry with the list instead of adding one, so back does not return to the note just left.
         const target = backTarget({ listIdx: readListIdx(), currentIdx: historyIdx() });
         if (target.kind === "go") go(target.delta);
         else go("/", { replace: true });
@@ -502,7 +502,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     setPhoneSearchOpen(false);
     pendingSearchFocusRef.current = false;
   }, [phone]);
-  // Close on every URL change except a same-note canonical convergence (#179).
+  // Close the search layer and blur its input on every navigation (`location.key` change, including tapping the current note or system back), except a same-note canonical convergence (#179). The Ctrl+K note-to-list flow reopens and focuses the layer in later effects, so this effect must stay above them.
   const searchSeenRef = useRef({ key: location.key, pathname: location.pathname });
   useEffect(() => {
     const seen = searchSeenRef.current;
@@ -578,7 +578,7 @@ export function AppShell({ children, inert }: AppShellProps) {
           openedByShortcutRef.current = true;
           setDrawerOpen(true);
         } else {
-          // Opened by the sidebar button focus is on the Content container, not the search box.
+          // Already open: Ctrl+K means focus search, so move focus into the drawer search box (when opened by the sidebar button, focus is on the Content container, not the search box).
           drawerSearchRef.current?.focus();
         }
       } else if (searchInputRef.current) {
@@ -612,7 +612,7 @@ export function AppShell({ children, inert }: AppShellProps) {
 
   // jsdom matchMedia stub addEventListener is a no-op, so the test dispatches change by hand (AppShell.test).
   useEffect(() => {
-    // Otherwise the static sidebar and the drawer would show together under a full-screen overlay.
+    // Close the drawer when the viewport crosses into the wide tier; otherwise the static sidebar and the drawer would show together under a full-screen overlay.
     const mql = window.matchMedia(OVERLAY_QUERY);
     const handleChange = (event: MediaQueryListEvent) => {
       if (!event.matches) setDrawerOpen(false);
@@ -621,7 +621,7 @@ export function AppShell({ children, inert }: AppShellProps) {
     return () => mql.removeEventListener("change", handleChange);
   }, []);
 
-  /** `groupId` (also for group folders) and `folderId` go into the body only when given. Folder errors carry `max`; `folder_not_found` refetches folders. */
+  /** `groupId` for the group "+" (#103; the server defaults the creator to editor); a group folder sends both `groupId` and `folderId`; each goes into the body only when given. On success the folder chain is expanded. Every failure toasts (incl. group_not_found); folder errors carry `max`; `folder_not_found` refetches folders. */
   async function handleNewNote(groupId?: string, folderId?: string): Promise<void> {
     const body = {
       ...(groupId === undefined ? {} : { groupId }),
@@ -639,7 +639,7 @@ export function AppShell({ children, inert }: AppShellProps) {
 
   const shortcutBadge = isMacPlatform() ? "⌘K" : "Ctrl K";
 
-  // Created through a ref; the object changes only when the search layer opens or closes.
+  // For the floating buttons on the note page: open the search layer (end selection first so the box can mount) and create a note. Creation goes through a ref; the object changes only when the search layer opens or closes.
   const handleNewNoteRef = useRef(handleNewNote);
   handleNewNoteRef.current = handleNewNote;
   // Portalled slot outside the main area: the main area slides, and a fixed button inside it would be positioned against the whole note.
@@ -669,13 +669,13 @@ export function AppShell({ children, inert }: AppShellProps) {
   };
 
   return (
-    // `h-dvh` + `overflow-hidden` lock the viewport (100vh is taller than the visible area when the mobile address bar shows); `min-h-screen` would let long content grow `main` and force document scroll so card `overflow-y-auto` never clips. `min-w-0` on `main` is explicit (no overflow, so the width chain relies on it). Phones invert this: the document scrolls (Safari only collapses its toolbar then), `overflow-x-clip` not `hidden` (hidden would make the vertical axis a scroll container and break sticky headers).
+    // `h-dvh` + `overflow-hidden` lock the viewport (100vh is taller than the visible area when the mobile address bar shows); `min-h-screen` would let long content grow `main` and force document scroll so card `overflow-y-auto` never clips. `min-w-0` on `main` is explicit (no overflow, so the width chain relies on it). Phones invert this: the document scrolls (Safari only collapses its toolbar then, and content scrolls behind the translucent bottom bar), `overflow-x-clip` not `hidden` (hidden would make the vertical axis a scroll container and break sticky headers; clip also prevents horizontal scroll from the slide-in).
     <SidebarDrawerContext.Provider value={{ setOpen: setDrawerOpen }}>
       <PhoneListContext.Provider value={phoneState}>
       <PhoneBrowseContext.Provider value={browseState}>
       <ShortcutsDialogContext.Provider value={shortcutsApi}>
         <SidebarTabProvider actionsRef={tabActionsRef}>
-          {/* phone: content hugs the screen edge; safe area is given by the elements touching it */}
+          {/* phone: content hugs the screen edge; safe area comes from the edge elements (note header top, floating buttons bottom, `main` left/right) */}
           <div
             inert={inert}
             {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}
@@ -684,7 +684,7 @@ export function AppShell({ children, inert }: AppShellProps) {
               SAFE_FRAME_PADDING,
             )}
           >
-            {/* SidebarContent returns a fragment; the Trash action bar finds the Select button through this attribute */}
+            {/* SidebarContent returns a fragment; the Trash action bar finds the Select button of the same instance through this attribute */}
             <aside
               ref={asideRef}
               onClickCapture={(event) => {
@@ -696,7 +696,7 @@ export function AppShell({ children, inert }: AppShellProps) {
               className={cn(
                 cardSurface,
                 "relative hidden shrink-0 xl:flex xl:flex-col",
-                // `svh` (not dvh) so the height does not change with toolbar expansion and cause scroll jumps
+                // At least one viewport tall so bottom bars sit at the viewport bottom; `svh` (not dvh) so the height does not change with toolbar expansion and cause scroll jumps
                 asideShown && "max-sm:flex max-sm:min-h-svh max-sm:w-full max-sm:flex-col max-sm:rounded-none max-sm:border-0",
                 asideShown && "max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)]",
               )}
@@ -735,9 +735,9 @@ export function AppShell({ children, inert }: AppShellProps) {
                   data-sidebar-instance=""
                   // Background and flex-col are both required (overlay black shows through; list loses its constraint). No cardSurface rounding: the drawer is not a card.
                   className="fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-card pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] outline-none"
-                  // The 4rem cap is insurance so the note area stays tappable to close.
+                  // The 4rem cap is insurance (the drawer only exists from 640px and width is at most 480) so the note area stays tappable to close; the drawer has no resize handle.
                   style={{ width: `min(${sidebarWidth}px, calc(100vw - 4rem))` }}
-                  // Radix handles Esc first in capture: in selection mode it ends selection and a microtask later the checkboxes unmount before React onKeyDown, so focus goes to the drawer Select button here (flushSync).
+                  // In selection mode this handler ends selection and keeps the drawer open. Radix handles Esc first in capture, so React's `onKeyDown` never runs (the checkboxes have already unmounted): move focus to the drawer Select button here (flushSync so it exists in this task).
                   onEscapeKeyDown={(event) => {
                     let ended = false;
                     flushSync(() => {
@@ -767,16 +767,16 @@ export function AppShell({ children, inert }: AppShellProps) {
                     }
                   }}
                 >
-                  {/* without a Title the dialog has no accessible name */}
+                  {/* without a Title the dialog has no accessible name, and the pinned Radix gives no console warning */}
                   <DialogPrimitive.Title className="sr-only">{t("sidebar.drawerTitle")}</DialogPrimitive.Title>
                   <SidebarContent {...sidebarProps} searchRef={drawerSearchRef} />
-                  {/* toast viewport moves into the drawer: everything outside is aria-hidden and focus is trapped; it is fixed-positioned, so the drawer content must not get transform/filter */}
+                  {/* toast viewport moves into the drawer: everything outside is aria-hidden and focus is trapped; it is fixed-positioned, so the drawer content must not get transform/filter; z-50 portalled layers may cover the toast (accepted) */}
                   <div ref={toastViewportHostRef} />
                 </DialogPrimitive.Content>
               </DialogPrimitive.Portal>
             </DialogPrimitive.Root>
 
-            {/* hidden while the list or search layer is shown (not unmounted) */}
+            {/* hidden while the list or search layer is shown (not unmounted): only one of list or main may grow the scrolling document, and on Cancel the scroll memory restores the position */}
             <main
               inert={searchOpen && !onList}
               className={cn(

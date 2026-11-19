@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-/** `placementClassName` must be a full literal (Tailwind scans statically). `onChange(px, true)` only on commit (release, keyboard, double-click). */
+/** `placementClassName` must be a full literal (Tailwind scans statically). `onChange(px, true)` only on commit (release, keyboard, double-click). The outward arrow key widens (right edge: ArrowRight; left edge: ArrowLeft); Home/End go to min/max. */
 export function PaneResizeHandle({
   width,
   onChange,
@@ -60,7 +60,7 @@ export function PaneResizeHandle({
       tabIndex={0}
       data-dragging={dragging ? "" : undefined}
       className={cn("group/resize absolute inset-y-0 flex w-3 cursor-col-resize touch-none select-none justify-center outline-none", placementClassName)}
-      // Not preventDefault on pointerdown: it would suppress the compatibility mouse events.
+      // Not preventDefault on pointerdown: it would suppress the compatibility mouse events, which the double-click reset may rely on.
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -89,7 +89,7 @@ export function PaneResizeHandle({
         onChange(clamp(next), true);
       }}
     >
-      {/* classes must be full literals (Tailwind static scan) */}
+      {/* classes must be full literals (Tailwind static scan). Hover changes only the cursor (no line); the ring line shows only while dragging or keyboard-focused. */}
       <div
         aria-hidden="true"
         className="h-full w-0.5 rounded-full transition-colors group-focus-visible/resize:bg-ring group-data-[dragging]/resize:bg-ring"
