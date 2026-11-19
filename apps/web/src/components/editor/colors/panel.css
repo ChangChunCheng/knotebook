@@ -1,5 +1,5 @@
-/* 自訂色面板裡的 react-colorful 指標：縮小一些，白框外加一圈細暗邊，淺色底上也看得到。
-   多帶面板 class 讓特異度高過 react-colorful 執行時注入的同名規則。 */
+/* Smaller react-colorful pointer: white border plus a thin dark outer ring, visible on light backgrounds.
+   Includes the panel class so specificity beats the same-named rule react-colorful injects at runtime. */
 .kb-color-panel .react-colorful__pointer {
   width: 16px;
   height: 16px;
@@ -8,8 +8,8 @@
     0 1px 3px rgb(0 0 0 / 0.3);
 }
 
-/* 指標以中心對齊色值位置，色值在 0% 或 100% 時有一半畫在色塊外。色塊左右各內縮半個指標寬，
-   picker 本身仍是 200px，指標在兩端也不會超出 picker、壓到選單外框。 */
+/* The pointer is centred on the value, so at 0%/100% half of it sticks out; the swatch is inset by half a pointer on each side
+   so the pointer never leaves the 200px picker and overlaps the menu frame. */
 .kb-color-panel .react-colorful__saturation,
 .kb-color-panel .react-colorful__hue {
   margin-inline: 8px;

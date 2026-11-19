@@ -12,9 +12,8 @@ interface KeepOpenMenuItemProps {
 }
 
 /**
- * 點了不關選單的選單項目。BlockNote 的 `Menu.Item` 型別沒有 `closeMenuOnClick`，onClick 也不帶事件，
- * 但 mantine 實作（`@blocknote/mantine` 的 `menu/Menu.tsx`）把多餘的 props 經 `...rest` 原樣交給 Mantine 的 Menu.Item，
- * onClick 也是原樣轉交，所以執行時兩者都有效；型別轉換集中在這一處。
+ * Menu item that doesn't close the menu. BlockNote's `Menu.Item` type has no `closeMenuOnClick` and onClick takes no event, but the
+ * mantine implementation (`@blocknote/mantine` `menu/Menu.tsx`) forwards extra props and onClick unchanged, so both work at runtime; the cast lives here.
  */
 export function KeepOpenMenuItem(props: KeepOpenMenuItemProps) {
   const Components = useComponentsContext()!;

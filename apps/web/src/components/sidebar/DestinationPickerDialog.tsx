@@ -10,20 +10,12 @@ import type { DestItem, DestMode, DestPathStep, DestTarget } from "./destination
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-/** ApiFail → errors.<code>；其餘 → errors.fallback（各檔各自一份，是既有慣例）。 */
 function errorMessage(t: Translate, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-/**
- * 選取模式「移動到」「複製到」的目的地選擇框（批次的目的地）。
- * 一次只顯示**一層**：項目由 `buildDestinationLevel`（與筆記 ⋮ 的逐層子選單共用）產生，path 由呼叫端持有，
- * 傳進來的是這一層的 `level` 與它的識別 `levelKey`。每項一顆按鈕（不做 tree 方向鍵，鍵盤用 Tab 走）：
- * 帶 `>` 的項目＝`onDrill`（框內換成下一層）、「返回」＝`onBack`、其他＝`onPick`（選定目的地）。
- * 只有 `levelKey` 變了（換層）才把清單捲回頂端、焦點給新層第一個未停用的項目（整層都反灰時給 footer 的 Cancel）；同一層重繪（資料夾重抓）不搬動。
- * 選了就呼叫 `onPick`，關框與焦點交接由呼叫端決定（選了交給確認框、取消才還給開框鈕）。只准經 `SelectLazy` 引用。
- */
+/** Scroll-to-top and focus move only when `levelKey` changes, not on a same-level re-render (folder refetch). Closing and focus handoff belong to the caller. Reference only via `SelectLazy`. */
 export function DestinationPickerDialog({
   mode,
   count,
@@ -40,11 +32,8 @@ export function DestinationPickerDialog({
 }: {
   mode: DestMode;
   count: number;
-  /** 選取含資料夾：描述用「{{count}} 項」（pickerDescriptionItems），否則「{{count}} 篇筆記」（pickerDescription）。 */
   hasFolders: boolean;
-  /** null＝群組載入中。 */
   level: readonly DestItem[] | null;
-  /** 目前這一層的識別（path 序列化，例如 JSON.stringify(path)）；只有它變了才搬焦點與捲回頂端。 */
   levelKey: string;
   error: unknown;
   open: boolean;
@@ -58,8 +47,7 @@ export function DestinationPickerDialog({
   const descriptionId = useId();
   const crossSpaceId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
-  // 這一層有跨空間反灰的項目（選了資料夾、下半部的空間）：描述下方多一行同字，並列進對話框的 aria-describedby
-  // （開框時跟描述一起唸；disabled 鈕的 title 螢幕閱讀器讀不到）。
+  // Items disabled for crossing spaces add a description line included in aria-describedby (a disabled button's title isn't read by screen readers).
   const crossSpace = level?.some((item) => item.kind !== "separator" && item.kind !== "back" && item.disabled === "crossSpace") ?? false;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -93,9 +81,8 @@ export function DestinationPickerDialog({
 }
 
 /**
- * 一層的清單。掛在對話框內容裡（關框即卸載），掛上那次不搬焦點（交給 Radix 開框的自動聚焦）；之後 `levelKey` 每變一次，
- * 清單捲回頂端、焦點給第一個未停用的項目（第二層起即「返回」）；整層都反灰時給 `fallbackRef`（footer 的 Cancel），
- * 不讓焦點跟著被換掉的按鈕掉到 body。返回項前導 `ChevronLeft` 圖示（`aria-hidden`）、可及名稱「返回」。
+ * Mounted inside the dialog content: no focus move on first mount (Radix auto-focus handles it). On later level changes focus goes to the first enabled item (from the second level that is "Back"); when every item is disabled it goes to `fallbackRef` (footer Cancel),
+ * so it doesn't fall to body when the buttons are replaced.
  */
 function DestinationLevelList({
   level,
@@ -107,7 +94,6 @@ function DestinationLevelList({
 }: {
   level: readonly DestItem[];
   levelKey: string;
-  /** 這一層沒有可按的項目時，換層的焦點給它。 */
   fallbackRef: RefObject<HTMLButtonElement | null>;
   onDrill: (step: DestPathStep) => void;
   onBack: () => void;

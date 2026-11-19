@@ -11,7 +11,7 @@ import { useVersions } from "@/lib/versions-context";
 import { useApplyFlow } from "./use-apply-flow";
 import { versionLabel } from "./version-labels";
 
-// 上限 120 字（server 為最終裁決）。shared 匯出 `VERSION_NAME_MAX`——直接 import，不另寫一份常數。
+// Max 120 characters (the server decides finally); import `VERSION_NAME_MAX` from shared, don't duplicate the constant.
 import { VERSION_NAME_MAX } from "@knotebook/shared";
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -19,7 +19,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 關閉時的焦點還原，由 `VersionsDialogs` 交給四個對話框的 `DialogContent`。 */
 type CloseAutoFocus = (event: Event) => void;
 
 function SaveDialog({ noteId, then, onCloseAutoFocus }: { noteId: string; then?: VersionDto; onCloseAutoFocus: CloseAutoFocus }) {
@@ -29,8 +28,7 @@ function SaveDialog({ noteId, then, onCloseAutoFocus }: { noteId: string; then?:
   const { applyNow } = useApplyFlow(noteId);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // 整段 submit 的進行中旗標：帶 `then` 時存檔成功後 `save.isPending` 已翻回 false，
-  // 但還要等套用完成——這段期間不得再送出（否則多存一次、多送一次 apply）。ref 擋重入、state 讓鈕 disabled。
+  // In-flight flag for the whole submit: with `then`, after the save succeeds `save.isPending` is already false but the apply is still running; no submit meanwhile (it would save twice and send apply twice). The ref blocks re-entry, state disables the button.
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
 
@@ -55,12 +53,12 @@ function SaveDialog({ noteId, then, onCloseAutoFocus }: { noteId: string; then?:
 
   return (
     <Dialog open onOpenChange={(open) => !open && closeDialog()}>
-      {/* 表單型對話框一律 dismissOnOutside={false}（`ui/dialog.tsx:48-55` 的 repo 慣例）：誤點外面不得丟掉已填的名稱；Esc／取消照常關 */}
+      {/* Form dialogs use dismissOnOutside={false}: a stray click outside must not discard the typed name; Esc/cancel still close */}
       <DialogContent dismissOnOutside={false} onCloseAutoFocus={onCloseAutoFocus}>
         <form onSubmit={(e) => void submit(e)}>
           <DialogHeader>
             <DialogTitle>{t("versions.dialog.saveTitle")}</DialogTitle>
-            {/* #272：不預告會建立第幾版 */}
+            {/* Don't announce which version number will be created */}
             <DialogDescription>{t("versions.dialog.saveDescription")}</DialogDescription>
           </DialogHeader>
           <label className="mt-4 block text-sm" htmlFor="version-save-name">
@@ -218,24 +216,17 @@ function DeleteDialog({ noteId, version, onCloseAutoFocus }: { noteId: string; v
 }
 
 /**
- * 版本對話框的單一掛載點（NotePage 以 lazy 掛）：依 context 的 `dialog` 分派；`null` 時不渲染。
- *
- * 焦點還原：四個對話框都是受控、沒有 `DialogTrigger`，Radix 關閉時只會 `triggerRef.current?.focus()`（null），
- * 焦點落到 body（Ctrl+S 存完游標離開編輯器）。所以在「沒有對話框 → 有對話框」那一刻記下 `document.activeElement`
- * （Ctrl+S 時就是編輯器的 contenteditable），整段對話（含三選一 → 儲存的換框）結束時還回去（同 `GroupNameDialog`／`LinkDialog` 的手動還原）；
- * 元素已卸載（從頁首 ⋮ 開時記到的是選單項）就退回 `returnFocusRef`（⋮ 觸發鈕，同 VersionsSheet），也沒有就不動。換框（apply → save、存完套用遇 409 → apply）時舊框卸載也會
- * 觸發 onCloseAutoFocus（`@radix-ui/react-focus-scope` dist `index.mjs:94` 在 setTimeout 裡送出），那時還有對話框開著：不還原。
- * `openRef` 有兩件事：(1) 卸載時歸零——NotePage 條件掛、關閉即卸載，沒有這步所有還原都會被擋，
- * 測試的 Host 照 NotePage 條件掛，拿掉 cleanup 會紅；(2) 換框時擋還原——這一條在 jsdom 沒有鑑別力（拿掉照樣綠，突變驗證），
- * 原因推測是新框的 FocusScope 把焦點拉回框內【推】，留著是為了不讓焦點先跳到編輯器再被拉回（真瀏覽器可能因此捲動）。
- * 記到 `document.body` 視同沒記到，走 ⋮ 退路。
+ * Focus restore: the four dialogs are controlled with no `DialogTrigger`, so Radix on close only does `triggerRef.current?.focus()` (null) and focus falls to body (after Ctrl+S the caret leaves the editor). So `document.activeElement` is recorded at the "no dialog → dialog" moment (the editor's contenteditable after Ctrl+S) and restored when the whole dialog flow ends (including the three-way → save swap), as in `GroupNameDialog`/`LinkDialog`.
+ * If that element is gone (opened from the header ⋮: the menu item was recorded) it falls back to `returnFocusRef` (the ⋮ trigger, as VersionsSheet); with neither, nothing. `document.body` counts as not recorded.
+ * Swapping dialogs (apply → save, apply hitting 409 → apply) also fires onCloseAutoFocus from the old dialog's unmount (`@radix-ui/react-focus-scope` sends it in a setTimeout) while another dialog is open: don't restore then.
+ * `openRef` does two things: reset on unmount (NotePage mounts conditionally and unmounts on close; without the reset all restores would be blocked); and block restore during a swap (jsdom tests don't cover this guard; it is kept so focus doesn't jump to the editor and get pulled back, which in a real browser may scroll).
  */
 export function VersionsDialogs({ returnFocusRef }: { returnFocusRef?: RefObject<HTMLElement | null> } = {}) {
   const { noteId, dialog } = useVersions();
   const isOpen = noteId !== null && dialog !== null;
   const [session, setSession] = useState<{ open: boolean; returnTo: HTMLElement | null }>({ open: false, returnTo: null });
   if (session.open !== isOpen) {
-    // body 不算「可還的元素」：當成沒記到，關閉時走 ⋮ 退路。
+    // body doesn't count as a restorable element: treated as not recorded, so close falls back to the ⋮ path.
     const active = document.activeElement;
     setSession({ open: isOpen, returnTo: isOpen && active instanceof HTMLElement && active !== document.body ? active : null });
   }
@@ -243,8 +234,8 @@ export function VersionsDialogs({ returnFocusRef }: { returnFocusRef?: RefObject
   useLayoutEffect(() => {
     openRef.current = isOpen;
   });
-  // NotePage 只在 dialog !== null 時掛本元件（關閉即卸載，不會再以 isOpen=false render 一次）：卸載時把 openRef 歸零，
-  // 否則 FocusScope 在卸載後送出的 onCloseAutoFocus 會被上面的換框守衛擋掉、焦點落到 body。
+  // NotePage mounts this only when dialog !== null (close = unmount, never an isOpen=false render): reset openRef on unmount,
+  // or the swap guard above would block the onCloseAutoFocus FocusScope sends after unmount and focus would fall to body.
   useLayoutEffect(
     () => () => {
       openRef.current = false;
@@ -254,7 +245,6 @@ export function VersionsDialogs({ returnFocusRef }: { returnFocusRef?: RefObject
   const returnTo = session.returnTo;
   const onCloseAutoFocus = (event: Event) => {
     if (openRef.current) return;
-    // 記到的元素已卸載（從頁首 ⋮ 開：記到的是選單項）→ 退回 `returnFocusRef`（NotePage 交下來的 ⋮ 觸發鈕，同 VersionsSheet）。
     const target = returnTo?.isConnected ? returnTo : returnFocusRef?.current;
     if (!target?.isConnected) return;
     event.preventDefault();

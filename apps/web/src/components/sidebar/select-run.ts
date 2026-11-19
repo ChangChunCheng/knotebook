@@ -2,11 +2,9 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { SidebarTabActions } from "@/lib/sidebar-tab";
 
 /**
- * 一般 tab 選取模式「批次進行中」的狀態（#181）：每個 `SidebarTabProvider` 一份，鍵＝它穩定的
- * actions 物件（擁有 session 計數器的那一個）。所有 `SelectActionBar` 實例讀同一份——重開抽屜、Done→Select 後新掛上的
- * 動作列也顯示「處理中」、三顆鈕 disabled，不能在舊那輪跑完前開第二輪（避免重複複製）。
- * 鍵不用 session：Done→Select 開出的新 session 查不到舊那輪，動作列就會變成可按。結果要不要套用由呼叫端比對 session。
- * 只准被 SelectLazy 鏈與測試 import（lazy chunk 內，首包零成本）。
+ * One per `SidebarTabProvider`, keyed by its stable actions object (the one owning the session counter) and read by every `SelectActionBar`: a bar mounted later (drawer reopened, Done→Select) also shows "processing" with disabled buttons, so a second round can't start (no duplicate copies).
+ * Not keyed by session: a new session from Done→Select wouldn't find the old round and the buttons would become clickable. Whether to apply the result is decided by the caller comparing sessions.
+ * Import only through the SelectLazy chain and tests (inside the lazy chunk, zero first-bundle cost).
  */
 
 export interface SelectRun {
@@ -32,7 +30,6 @@ export function useSelectRun(owner: SidebarTabActions): SelectRun | null {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
-/** 同步搶鎖：已有進行中的就回 false（跨實例也擋連點）。起始進度 `{ done: 0, total }`。 */
 export function beginSelectRun(owner: SidebarTabActions, total: number): boolean {
   if (runs.has(owner)) return false;
   runs.set(owner, { progress: { done: 0, total } });
@@ -47,7 +44,6 @@ export function updateSelectRun(owner: SidebarTabActions, done: number): void {
   emit();
 }
 
-/** 只在 `SelectActionBar` 收尾那個 `finally` 呼叫。 */
 export function endSelectRun(owner: SidebarTabActions): void {
   if (runs.delete(owner)) emit();
 }

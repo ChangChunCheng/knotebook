@@ -1,14 +1,13 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 
 /**
- * 選取（或游標）整個落在一條既有連結裡時，回傳那條連結（範圍、文字、網址）；否則 undefined。
- * link mark 的 `inclusive` 是 false，從選取起點本身查會拿到前一個節點的 mark（剛好選整條連結、或連結在段首時查不到），
- * 所以選取沒收合時從起點後一格查（BlockNote 的 `editLink` 也是這樣）；收合的游標查它自己所在位置，
- * 連結前後的游標才不會被誤判成在連結裡。選取超出連結尾端不算。
+ * The link mark is non-inclusive: looking up at the selection start returns the previous node's mark (misses a selection that exactly covers the link, or a link at paragraph start),
+ * so a non-collapsed selection looks one position after its start (as BlockNote's `editLink`). A collapsed cursor looks at its own position,
+ * so cursors just outside the link aren't taken as inside. A selection extending past the link end doesn't count.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple (repo convention)
 export function linkAtSelection(editor: BlockNoteEditor<any, any, any> | null | undefined) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 取 PM 選取
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM selection
   const sel = (editor as any)?._tiptapEditor?.state?.selection as { from: number; to: number; empty: boolean } | undefined;
   if (!editor || !sel) return undefined;
   const link = editor.getLinkMarkAtPos(sel.empty ? sel.from : sel.from + 1);

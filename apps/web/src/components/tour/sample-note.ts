@@ -7,12 +7,7 @@ import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import "@/i18n/tour-strings";
 import type { TourEditor } from "@/lib/tour-bridge";
 
-/**
- * 功能導覽用的範例筆記：建立（`createSampleNote`）與寫入內容（`seedSampleNote`）。
- * 每次開始導覽都建一篇新的，不查舊的、不讀任何本機或 server 紀錄。
- */
 
-/** 建一篇新筆記（標題依目前介面語言）並讓側欄的筆記清單重抓；失敗時拋出 `api` 的錯誤，由呼叫端處理。 */
 export async function createSampleNote(queryClient: QueryClient, t: TFunction): Promise<NoteDto> {
   const note = await api<NoteDto>("/api/notes", {
     method: "POST",
@@ -22,18 +17,14 @@ export async function createSampleNote(queryClient: QueryClient, t: TFunction): 
   return note;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 type SampleBlock = Record<string, any>;
 
 const text = (value: string) => [{ type: "text" as const, text: value, styles: {} }];
 
 const para = (value: string): SampleBlock => ({ type: "paragraph", content: text(value) });
 
-/**
- * 範例筆記的內容（純函式）：常見的 block 都有，站內連結指向筆記自己。
- * 站台有開 AI（`hasAi`）時，倒數第二段是留給 AI 站框選的那句；沒開就不放那句。
- * 最後是空段落（給後續站放游標用）。
- */
+/** With AI configured (`hasAi`) the second-to-last paragraph is the sentence the AI step selects; otherwise it is omitted. The last paragraph is empty (the cursor target for later steps). */
 export function buildSampleBlocks(
   t: TFunction,
   note: Pick<NoteDto, "id" | "title">,
@@ -88,7 +79,6 @@ export function buildSampleBlocks(
 
 type PmDoc = Parameters<Parameters<TourEditor["transact"]>[0]>[0]["doc"];
 
-/** 文件是不是只有一個沒有內容的段落（BlockNote 的 doc > blockGroup > blockContainer > paragraph）。 */
 function isSingleEmptyParagraph(doc: PmDoc): boolean {
   if (doc.textContent !== "") return false;
   const kinds: string[] = [];
@@ -98,13 +88,7 @@ function isSingleEmptyParagraph(doc: PmDoc): boolean {
   return kinds.length === 3 && kinds[1] === "blockContainer" && kinds[2] === "paragraph";
 }
 
-/**
- * 把範例內容寫進剛建好、還是空的筆記；回傳是否真的寫入。
- *
- * 判空和寫入在同一個交易裡、以交易的 `doc` 為準：判空若在交易外先算好再傳進來，
- * 另一個分頁剛打的字可能在那之後才同步到，寫入會把它吃掉。
- * 寫入標成不進撤銷：否則使用者多按一下 Ctrl+Z 就把整篇範例撤掉。
- */
+/** Emptiness is judged inside the same transaction against its `doc`: computed outside, a keystroke from another tab that syncs later would be overwritten. Written as not undoable: otherwise one extra Ctrl+Z undoes the whole sample. */
 export function seedSampleNote(
   editor: TourEditor,
   note: Pick<NoteDto, "id" | "title">,

@@ -7,14 +7,9 @@ import { useColorMenu } from "./ColorMenuBody";
 import { KnotebookColorPicker, type ColorSectionProps } from "./KnotebookColorPicker";
 import { sectionProp, type ColorSection } from "./types";
 
-/** 從面板按「返回」時要聚焦的項目（本元件的子選單觸發項）。 */
 const RETURN_KEY = "dh-colors";
 
-/**
- * 取代拖曳把手選單的「顏色」項：子選單裡是 10 種內建色，每段多一個「自訂…」，點了把整個把手選單的 dropdown
- * 換成自訂色面板。須放在 `ColorMenuBody` 裡面。文字色、底色各一段：編輯器的 schema 給這種 block 這個字串 prop
- * 時才顯示那一段（檢查寫法照上游）；兩段都不符時不顯示本項（例如 codeBlock）。
- */
+/** A section shows only when the editor schema gives the block that string prop (same check as upstream); neither → item hidden (e.g. codeBlock). Must be inside `ColorMenuBody`. */
 export function KnotebookBlockColorsItem({ children }: { children: ReactNode }) {
   const Components = useComponentsContext()!;
   const editor = useBlockNoteEditor();

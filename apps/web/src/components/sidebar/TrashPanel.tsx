@@ -23,17 +23,8 @@ import { PHONE_LIST_HEADER_STICKY, PHONE_LIST_SCROLLER } from "@/components/side
 import { usePhoneListScroll } from "@/components/sidebar/phone-list-scroll";
 
 /**
- * 垃圾桶 tab 的面板：`AppShell` 在 tab 為 `trash` 時放進 tabpanel，取代 `NoteList`。
- * - 列**不是連結**：垃圾桶裡的筆記不能開（非目標「預覽」）；只有 hover 浮出的「還原」與 ⋮（還原／永久刪除）。
- * - 兩區「個人」「群組」（某區 0 篇整區不渲染），區內照 server 的順序（`deleted_at DESC`）。
- * - 標題列動作照 `tabSpec("trash").actions` 渲染。
- * - 清空＝把**清單上**的 id 全部送 purge：之後才移入的不受影響；超過 200 由 `purgeTrashIds` 分批。
- * - 確認框成敗都關，結果走 toast（`trash-dialogs.tsx`）。動作完成後焦點回清單容器（被處理的列會卸載）。
- * - 選取模式：狀態在 `SidebarTabProvider`（靜態卡與抽屜兩份共用）；列換成整列 `<label>`＋勾選框、不渲染「還原」與 ⋮。
- *   標題列分兩形（`useWidePointer`）：窄＝「已選 N 篇」＋全選＋完成，還原／永久刪除的動作列在底部
- *   （`TrashFooter.tsx` 的 `TrashActionBar`）；寬＝一列 ✕（結束選取，「完成」的角色）＋三態全選框＋「已選 N 篇」＋`TrashWideToolbar`
- *   （兩顆圖示鈕與永久刪除確認框，只在選取中掛載），底部不顯示。
- *   焦點只由發起的那一份實例移動（`focusAfterRef`）。
+ * Rows are not links (trashed notes can't be opened). "Empty" sends every id on the list to purge: items trashed afterwards are unaffected; `purgeTrashIds` batches above 200.
+ * Focus moves only from the instance that started the action (`focusAfterRef`).
  */
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -60,15 +51,15 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
       title={trashItemTitle(item, { t, locale })}
       className={cn("group/noterow flex items-center gap-0.5 rounded-md py-1.5 pl-2 pr-0.75 text-[13px] hover:bg-brand-soft hover:text-brand-on-soft", ROW_ICON_ROW)}
     >
-      {/* 兩行一律 <div>（同 NoteList 最近 tab 的兩行列）。 */}
+      {/* Both lines are <div>, as NoteList recents rows */}
       <div className="min-w-0 flex-1">
         <div className="truncate">{item.title}</div>
-        {/* 位置段太長被截斷時，title 給完整路徑；根層不帶。 */}
+        {/* title = full path when the location is truncated; none at root */}
         <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={trashLocationLine(item) || undefined}>
           {trashDetailLine(item, { now, t, locale })}
         </div>
       </div>
-      {/* 側欄 24px 例外（button.tsx 檔頭）；與筆記列 ⋮ 共用 hoverReveal("noterow")。 */}
+      {/* 24px sidebar exception (see button.tsx header); shares hoverReveal("noterow") with the note row ⋮ */}
       <Button
         type="button"
         variant="ghost"
@@ -80,7 +71,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
       >
         <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
       </Button>
-      {/* controlled＋三步（preventDefault → 關選單 → 動作）：同 NoteMenu 檔頭的 focus trap 規矩。 */}
+      {/* controlled + three steps (preventDefault → close menu → action): focus-trap rule, as NoteMenu */}
       <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
@@ -122,10 +113,7 @@ function TrashRow({ item, now, actions }: { item: TrashItemDto; now: number; act
   );
 }
 
-/**
- * 選取模式的列：整列是 `<label>`，點文字或勾選框都切換。
- * memo：勾一列時其他列不重繪、不重算日期——`now`／`onToggle` 由 `TrashPanel` 保持穩定。
- */
+/** memo: ticking a row doesn't re-render others or recompute dates (`now`/`onToggle` are stable from `TrashPanel`). */
 const SelectableTrashRow = memo(function SelectableTrashRow({
   item,
   now,
@@ -141,14 +129,14 @@ const SelectableTrashRow = memo(function SelectableTrashRow({
   const locale = i18n.language;
   return (
     <li data-node-kind="note" data-node-id={item.id} title={trashItemTitle(item, { t, locale })}>
-      {/* select-none：Shift＋點文字時不順帶選取頁面文字。label 內只能放 phrasing content，兩行用 block span。 */}
+      {/* select-none: Shift+click on text must not select page text; a label holds only phrasing content, so the two lines are block spans */}
       <label
         className={cn(
           "flex cursor-pointer select-none items-start gap-2 rounded-md py-1.5 pl-2 pr-1 text-[13px]",
           checked ? "bg-brand-soft font-medium text-brand-on-soft" : "hover:bg-brand-soft hover:text-brand-on-soft",
         )}
-        // Firefox 有修飾鍵時不把 label 的 click 轉給勾選框（留給文字選取），Shift／Ctrl＋點列文字會沒反應：有修飾鍵且點的不是
-        // 勾選框本身時，取消轉送、自己切換（三引擎一致；Chromium／WebKit 不會因此切兩次）。
+        // Firefox doesn't forward a label's click to the checkbox when a modifier is held (left for text selection), so Shift/Ctrl+click on the row text did nothing:
+        // with a modifier and a target other than the checkbox, cancel the forward and toggle ourselves (same in all three engines; Chromium/WebKit don't toggle twice).
         onClick={(event) => {
           if (!(event.shiftKey || event.ctrlKey || event.metaKey) || event.target instanceof HTMLInputElement) return;
           event.preventDefault();
@@ -157,7 +145,7 @@ const SelectableTrashRow = memo(function SelectableTrashRow({
       >
         <SelectionCheckbox
           checked={checked}
-          // Shift＝範圍；Ctrl／⌘＋點與一般點選相同（單列切換）。macOS 的 Ctrl＋點是右鍵、不產生 click，用 ⌘。
+          // Shift = range; Ctrl/⌘+click is a plain toggle. Ctrl+click on macOS is a right-click and fires no click, hence ⌘.
           onChange={(event) => onToggle(selectionKey({ kind: "note", id: item.id }), (event.nativeEvent as MouseEvent).shiftKey)}
           className="mt-0.5"
         />
@@ -202,19 +190,15 @@ export function TrashPanel() {
   const emptyButtonRef = useRef<HTMLButtonElement>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);
-  /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
   const focusAfterRef = useRef<"done" | "select" | null>(null);
-  /** 單篇永久刪除的對象（確認框開著）。 */
   const [purgeId, setPurgeId] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
-  /** 每開一次清空框 +1：送出後回來時只關「同一次」開的框（期間取消又重開的不關）。 */
+  /** +1 per opening: on response the dialog closes only if it is still the same opening (one cancelled and reopened meanwhile isn't). */
   const emptyRoundRef = useRef(0);
-  /** 開框的鈕（該列 ⋮／「清空」）：取消時焦點還給它（沒有 DialogTrigger，Radix 預設會掉到 body）。關框那次 render 的
-   * state 已清掉，所以存 ref。 */
+  /** Opener of the dialog (row ⋮ / "Empty"): focus returns here on cancel (no DialogTrigger; Radix's default falls to body). A ref because state is already cleared in the closing render. */
   const openerRef = useRef<HTMLElement | null>(null);
-  /** 確認後是否已送出（成敗不論）：送出過的關框焦點回清單（被處理的列會卸載），取消的回開框的鈕。 */
   const submittedRef = useRef(false);
-  /** 連點不重送：mutation 的 isPending 要等下一個 macrotask 才反映到 disabled。 */
+  /** No double send on rapid clicks: the mutation's `isPending` reaches `disabled` only a macrotask later. */
   const busyRef = useRef(false);
 
   const items = trash.data?.items ?? [];
@@ -229,8 +213,8 @@ export function TrashPanel() {
     (target === "done" ? doneButtonRef : selectButtonRef).current?.focus();
   }, [selection.active]);
 
-  // 選取中跨過寬窄判準（比照 SelectHeader）：標題列換形，焦點所在的鈕（完成、✕、圖示鈕…）卸載，焦點會掉到 body。
-  // render 時（舊 DOM 還在）記下焦點是否在本實例的標題列裡；換形後焦點落在 body 就交給新形的 doneButtonRef（寬＝✕、窄＝完成）。
+  // Crossing the wide/narrow breakpoint mid-selection (as SelectHeader) swaps the header and unmounts the focused button; focus falls to body.
+  // Record at render (old DOM still present) whether focus is in this instance's header; if it ends up on body after the swap, hand it to the new form's doneButtonRef (wide ✕, narrow Done).
   const focusInHeaderRef = useRef(false);
   focusInHeaderRef.current = headerRef.current?.contains(document.activeElement) ?? false;
   const prevWideRef = useRef(wide);
@@ -242,16 +226,15 @@ export function TrashPanel() {
   }, [wide]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    // 從 portal（寬形 TrashWideToolbar 的永久刪除確認框）經 React 樹冒泡上來的按鍵不處理：確認框內的 Esc 只關框、不結束選取。
+    // Ignore keys bubbling from a portal (the wide toolbar's purge dialog) through the React tree: Esc in the dialog only closes it, doesn't end selection.
     if (!event.currentTarget.contains(event.target as Node)) return;
-    // 靜態卡的 Esc。抽屜裡的 Esc 由 AppShell 的 onEscapeKeyDown（document capture）結束選取並交焦點；真瀏覽器在那之後、
-    // React 的 onKeyDown 之前就 commit，勾選框已卸載，這裡收不到。
+    // The static card's Esc. In the drawer AppShell's onEscapeKeyDown (document capture) ends selection and hands focus; a real browser commits after that
+    // and before React's onKeyDown, with the checkboxes already unmounted, so this never sees it.
     if (event.key !== "Escape" || !selection.active) return;
     focusAfterRef.current = "select";
-    if (endSelectionIfActive()) event.preventDefault(); // 這一下 Esc 只結束選取（搜尋標記的 Esc 監聽看到 defaultPrevented 就讓路）
+    if (endSelectionIfActive()) event.preventDefault(); // Only ends selection; the search-highlight Esc listener yields on defaultPrevented
   }
 
-  // 穩定（清單重抓才換）：選取列 memo 靠它。
   const toggleRow = useCallback(
     (key: string, shiftKey: boolean): void => {
       const { order } = splitTrashSections(trash.data?.items ?? []);
@@ -278,7 +261,7 @@ export function TrashPanel() {
         } catch (err) {
           toastTrashFailure("restore", err, t);
         }
-        // 被還原的列會卸載：焦點原本在面板內（或已落 body）才拉回清單；等回應期間使用者已移到別處（例如編輯器）就不搶。
+        // A restored row unmounts: pull focus to the list only if it was in the panel (or already on body); if the user moved elsewhere (e.g. the editor) while waiting, don't grab it.
         const active = document.activeElement;
         if (active === null || active === document.body || rootRef.current?.contains(active)) listRef.current?.focus();
       }),
@@ -322,10 +305,10 @@ export function TrashPanel() {
             aria-label={t("trash.select")}
             title={t("trash.select")}
             disabled={actionsDisabled}
-            // 握把：底部動作列離開選取模式後，經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦。
+            // Handle: after the bottom action bar leaves select mode, find this same instance's button via `[data-sidebar-instance]` and focus it.
             data-sidebar-select=""
-            // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的；標題列換字樣前那一幀連點兩下也一樣）。
             onClick={() => {
+              // Don't resend `start` while selecting: the reducer's `start` clears ticks (a double-click before the header text swaps does the same).
               if (selection.active) return;
               focusAfterRef.current = "done";
               updateSelection({ type: "start" });
@@ -355,7 +338,6 @@ export function TrashPanel() {
             {t("trash.emptyTrash")}
           </Button>
         );
-      // 一般 tab 的動作由 NoteList 渲染，垃圾桶 tab 不宣告。
       case "newPersonalNote":
       case "newGroup":
       case "newFolder":
@@ -378,7 +360,7 @@ export function TrashPanel() {
     }
     if (items.length === 0) return <p className={MESSAGE_CLASS}>{t("trash.empty")}</p>;
     const { personal, workspace } = splitTrashSections(items);
-    // 「剩 N 天」以清單抓到的時間計（每次重抓更新）：勾選等重繪不換值，選取列的 memo 才有效。
+    // "N days left" is computed from the time the list was fetched (updated per refetch): ticking and other re-renders don't change it, so the select rows' memo works.
     const now = trash.dataUpdatedAt;
     const renderItem = (item: TrashItemDto) =>
       selection.active ? (
@@ -436,7 +418,7 @@ export function TrashPanel() {
           </Button>
           <SelectAllCheckbox
             state={allState}
-            // 選取中清單被重抓成 0 篇（別處清掉）：沒有可選的。
+            // The list was refetched to 0 while selecting (cleared elsewhere): nothing selectable.
             disabled={items.length === 0}
             onToggle={() => updateSelection(allState === "all" ? { type: "clear" } : { type: "setAll", keys: order })}
             label={t("trash.selectAll")}
@@ -460,7 +442,7 @@ export function TrashPanel() {
           type="button"
           variant="ghost"
           size="sm"
-          // 選取中清單被重抓成 0 篇（別處清掉）：沒有可選的。
+          // The list was refetched to 0 while selecting (cleared elsewhere): nothing selectable.
           disabled={items.length === 0}
           onClick={() => updateSelection(allSelected ? { type: "clear" } : { type: "setAll", keys: splitTrashSections(items).order })}
           className={cn("h-6 px-2 text-xs", ROW_ICON_HIT)}
@@ -492,12 +474,12 @@ export function TrashPanel() {
       <PurgeConfirmDialog
         count={1}
         open={purgeId !== null}
-        // 列的還原送出中也 disabled：`exclusive` 會吞掉這一下。
+        // Also disabled while the row's restore is in flight: `exclusive` would swallow this click.
         pending={purge.isPending || restore.isPending}
         onConfirm={() => {
           if (purgeId === null) return;
           const target = purgeId;
-          // 回應前取消又對別列開框：第一發回來時不關第二個框。
+          // Cancelled and reopened on another row before the response: don't close that second dialog.
           void purgeIds([target], () => setPurgeId((current) => (current === target ? null : current)));
         }}
         onOpenChange={(open) => {
@@ -511,7 +493,7 @@ export function TrashPanel() {
         open={emptyOpen}
         pending={purge.isPending || restore.isPending}
         onConfirm={() => {
-          // 開框後清單被重抓成 0 篇（別處已清掉）：不送空請求、不報「已永久刪除 0 篇」，直接關框。
+          // The list was refetched after opening and none of the selection remains: no empty request or "deleted 0" report, just close.
           if (items.length === 0) {
             setEmptyOpen(false);
             return;

@@ -5,10 +5,6 @@ import { X } from "./icons";
 import { cn } from "@/lib/utils";
 import { Button } from "./button";
 
-// 精簡版 shadcn toast：Radix Toast 原語 + 一個模組層級的 pub/sub store 給
-// `toast()` 這個 imperative API 用（元件樹任何地方呼叫都能推新 toast），
-// 不搬 shadcn 完整版的 reducer/action 那一套——目前只需要「顯示一則
-// 訊息、可帶 variant、會自動消失」。
 
 export type ToastVariant = "default" | "destructive";
 
@@ -18,8 +14,7 @@ export interface ToastItem {
   description?: string;
   variant?: ToastVariant;
   durationMs?: number;
-  /** 動作鈕（#175「前往副本」）。點擊先跑 onClick、再由 Radix 關閉該 toast。 */
-  action?: { label: string; onClick: () => void; /** 給無法操作 toast 的螢幕閱讀器使用者；未填時用 label。 */ altText?: string };
+  action?: { label: string; onClick: () => void; /** For screen-reader users who can't operate the toast; defaults to `label`. */ altText?: string };
 }
 
 type Listener = (toasts: ToastItem[]) => void;
@@ -27,10 +22,7 @@ type Listener = (toasts: ToastItem[]) => void;
 let toasts: ToastItem[] = [];
 const listeners = new Set<Listener>();
 
-// id 產生器：不用 crypto.randomUUID——非 secure context（LAN plain-http，
-// 正當拓撲，如 http://192.168.1.50:3000）不存在該 API，會令每次
-// toast() 拋 TypeError；jsdom/Node 有 polyfill 所以測試抓不到。id 只需
-// session 內唯一供 dismiss 比對，無安全需求，模組層級遞增計數器即可。
+// No `crypto.randomUUID`: it doesn't exist in non-secure contexts (plain-http LAN is a legitimate topology), so every `toast()` would throw a TypeError (jsdom/Node have a polyfill, so tests miss it). The id only needs session-wide uniqueness for dismiss matching: a counter is enough.
 let toastIdSeq = 0;
 
 function emit() {
@@ -51,7 +43,7 @@ export function dismissToast(id: string): void {
   emit();
 }
 
-/** 清掉目前所有 toast。store 是模組層級的，測試之間必須自行歸零才不會互相污染。 */
+/** The store is module-level: tests must reset it themselves to avoid cross-test pollution. */
 export function dismissAllToasts(): void {
   toasts = [];
   emit();
@@ -68,14 +60,9 @@ export function useToasts(): ToastItem[] {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-// ── viewport 的落腳處 ──────────────────────────────────────────────────────────
-// 平常 ToastViewport 就渲染在 Toaster 所在處（`#root` 裡）。窄螢幕的側欄抽屜是 modal Radix Dialog：開著時
-// `hideOthers` 把抽屜以外全標成 aria-hidden、FocusScope 把焦點鎖在抽屜裡，留在原處的 toast（與它的「Undo」）
-// 螢幕閱讀器讀不到、鍵盤也到不了。所以抽屜開著時由 AppShell 登記抽屜內容裡的一個空節點，Toaster 把 viewport
-// portal 進去；抽屜關了（節點卸載）就清掉、viewport 回原處。toast 本身的狀態與計時器在 Toaster 底下的 Radix
-// Toast 元件裡，viewport 換位置不會重設它們。
-// 但 viewport 換位置會讓每則 toast 重新登記成最上層的 DismissableLayer：開抽屜前就在的 toast 會吃掉抽屜裡的第一下
-// Esc（關 toast、抽屜不關），與抽屜開著時才跳的 toast 一樣（e2e 38）。
+// Viewport location. Normally ToastViewport renders where Toaster is (inside `#root`). The narrow-screen sidebar drawer is a modal Radix Dialog: while open `hideOthers` marks everything else aria-hidden and FocusScope traps focus, so a toast left in place (and its "Undo") is unreadable and unreachable.
+// So while the drawer is open AppShell registers an empty node inside the drawer content and Toaster portals the viewport into it; when it unmounts the viewport returns. Toast state and timers live in the Radix Toast components under Toaster, so moving the viewport doesn't reset them.
+// But moving re-registers every toast as the top DismissableLayer: a toast that predates the drawer swallows the first Esc in it (closes the toast, not the drawer), the same as a toast that appears while the drawer is open.
 
 let viewportHost: HTMLElement | null = null;
 const viewportHostListeners = new Set<() => void>();
@@ -94,13 +81,7 @@ function setViewportHost(host: HTMLElement | null): void {
   for (const listener of viewportHostListeners) listener();
 }
 
-/**
- * 給 modal 容器（目前只有側欄抽屜）用的 callback ref：掛上就把 toast viewport 搬進這個節點，卸載時搬回原處。
- * 卸載時只清自己登記的那個：別的容器已接手的話不動它。
- *
- * ⚠ viewport 是 `position: fixed`：容器（與它的祖先）不可加 transform／filter／perspective，否則 fixed 會改以
- * 容器為準、toast 跟著跑進抽屜的框裡。
- */
+/** Callback ref for modal containers (currently the sidebar drawer): on mount moves the toast viewport into the node, on unmount back; on unmount clears only its own registration (leaves it if another container took over). The viewport is `position: fixed`: the container and its ancestors must not have transform/filter/perspective, or fixed resolves against the container and toasts end up inside the drawer's frame. */
 export function toastViewportHostRef(host: HTMLElement | null): (() => void) | undefined {
   if (!host) return undefined;
   setViewportHost(host);
@@ -118,11 +99,9 @@ export const ToastViewport = forwardRef<
   <ToastPrimitive.Viewport
     ref={ref}
     className={cn(
-      // `pointer-events-none`（#115）：viewport 空著的時候仍是右下角一塊 fixed 命中
-      // 區，會蓋住右下角歷史泡泡的下緣；toast item 自己帶 `pointer-events-auto`（見
-      // ToastRoot），互動不受影響。
+      // pointer-events-none: an empty viewport is still a fixed bottom-right hit region that covers the lower edge of the history bubble; toast items carry `pointer-events-auto` themselves.
       "pointer-events-none fixed bottom-0 right-0 z-[100] flex max-h-screen w-full flex-col gap-2 sm:max-w-[420px]",
-      // 內距 16 px，四邊再與 safe area 取大（瀏海與 Home 指示條下不被蓋住）。
+      // 16px padding, max'd with the safe area on each side (not covered by the notch or Home indicator).
       "pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))]",
       className,
     )}
@@ -190,7 +169,6 @@ export const ToastClose = forwardRef<
 ));
 ToastClose.displayName = ToastPrimitive.Close.displayName;
 
-/** 掛在 App 根部一次即可；監聽 toast() store，渲染目前所有存活的 toast。 */
 export function Toaster(): ReactNode {
   const items = useToasts();
   const host = useSyncExternalStore(subscribeViewportHost, getViewportHost, getViewportHost);

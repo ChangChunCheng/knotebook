@@ -8,29 +8,18 @@ import { ComparePicker } from "./ComparePicker";
 import { PRESSED_CLASS, TINT_HOVER_CLASS } from "./version-labels";
 import { useTargetLabel } from "./use-target-label";
 
-/** 模式鈕共用的圖示鈕形（`size="icon"`、`h-7 w-7`，名稱放 `aria-label`＋`title`，hover 看得到）。 */
 const MODE_BUTTON = `h-7 w-7 shrink-0 ${TINT_HOVER_CLASS}`;
 
 /**
- * 頁首下方的預覽橫幅：
- * 「正在預覽 名稱 (短 id) ｜（單欄時：左下拉 → 右下拉）｜……｜ 並排 單欄 只看差異」——三顆是圖示鈕，包成一組 `ml-auto` 靠右。
- * **橫幅不放 ✕**：離開預覽＝Esc（掛在 NotePage）、面板清單點空白處、再點已選中的列、關面板（`close()` 一併離開預覽）。
- * 時間與 editors 不放（面板列已有）、沒有「比較對象」標籤；底色 `bg-brand-soft`（品牌色 tint；`--primary` 是中性近黑，不能用）。
- * 單排：容器 `flex-nowrap`、每顆鈕 `shrink-0`（放不下會橫向溢出，不換行）。
- * 切換鈕的按下態用 `PRESSED_CLASS`（`version-labels.ts`，在主色底上再深一階）＋`aria-pressed`。
- * `narrow`：窄視窗整頁沒有並排，並排／單欄兩顆鈕不渲染；預覽區不到 `SPLIT_MIN_WIDTH`（controller 的 `previewWide` 為 false）時也不渲染。
+ * The banner has no ✕: leaving preview is Esc (in NotePage), clicking blank space in the panel list, clicking the selected row again, or closing the panel (`close()` leaves preview too). Time and editors are omitted (the panel rows have them).
+ * Background `bg-brand-soft`: `--primary` is neutral near-black and can't be used. Single row: `flex-nowrap` and `shrink-0` buttons (overflow horizontally rather than wrap).
+ * `narrow`: the full-page narrow view has no side-by-side, so the split/single buttons aren't rendered; nor when the preview area is below `SPLIT_MIN_WIDTH` (controller `previewWide` false).
  */
-/**
- * 「只看差異」開關（橫幅與整頁共用）。它只作用在單欄：
- * 預覽實際是並排時（controller 的 `splitActive`，由 `VersionPreview` 回報）停用。用 `aria-disabled` 而不是 `disabled`：
- * `disabled:pointer-events-none` 會讓 `title` 浮不出來，說明就看不到了；點擊在 handler 裡擋掉。
- * `iconOnly`（橫幅傳 true）：圖示鈕，名稱放 `aria-label`＋`title`（平時是名稱、停用時換成說明）。
- * 窄視窗整頁不傳：保留文字鈕——觸控沒有 hover，看不到 `title`。
- */
+/** Only affects single-column: disabled while the preview is actually side-by-side (controller `splitActive`, reported by `VersionPreview`). `aria-disabled`, not `disabled`: `disabled:pointer-events-none` would stop `title` showing, so the explanation would be invisible; the click is blocked in the handler. The narrow full page doesn't pass `iconOnly`: touch has no hover, so `title` can't be seen. */
 export function OnlyChangesToggle({ iconOnly = false }: { iconOnly?: boolean }) {
   const { t } = useTranslation();
   const { onlyChanges, setOnlyChanges, splitActive } = useVersions();
-  // `title` 觸控看不到、報讀器不一定念：停用時另掛一段 sr-only 說明給 aria-describedby。
+  // `title` isn't visible on touch nor always read by screen readers: when disabled an sr-only explanation is attached for aria-describedby.
   const hintId = useId();
   const label = t("versions.preview.onlyChanges");
   const hint = t("versions.preview.onlyChangesSplitHint");
@@ -70,7 +59,7 @@ export function PreviewBanner({ narrow = false }: { narrow?: boolean }) {
   return (
     <div data-testid="preview-banner" className="flex flex-nowrap items-center gap-2 border-b border-border bg-brand-soft px-5 py-2 text-xs">
       <span className="min-w-0 truncate font-medium" title={label}>{t("versions.preview.banner", { label })}</span>
-      {/* 比較對象：並排時兩個下拉是兩欄的標頭，橫幅只在單欄時放「左 → 右」。 */}
+      {/* Compare targets: side-by-side the two dropdowns are the column headers; the banner shows "left → right" only in single-column */}
       {!splitActive && (
         <>
           <ComparePicker side="left" />
@@ -83,8 +72,8 @@ export function PreviewBanner({ narrow = false }: { narrow?: boolean }) {
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {!narrow && previewWide && (
           <>
-            {/* 預覽區不夠寬（previewWide=false）就沒有並排，兩顆都不渲染。按下態看實際生效的版面（`splitActive`）：
-                auto 時以自動選到的那顆為按下，手動選後就是選的那顆；不會兩顆都沒按下。 */}
+            {/* No side-by-side when the preview area is too narrow (previewWide=false): neither button renders.
+                Pressed follows the layout actually in effect (`splitActive`): in auto the auto-picked one is pressed, after a manual choice that one; never neither. */}
             <Button
               type="button"
               variant="ghost"

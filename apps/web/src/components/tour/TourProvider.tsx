@@ -4,14 +4,8 @@ import { toast } from "@/components/ui/toast";
 import { TourContext, type TourApi, type TourStartOptions } from "@/lib/tour-context";
 import type { TourLazyProps } from "./TourLazy";
 
-/**
- * 功能導覽的首包外殼：只提供 `TourContext.start`，不打任何 API、不看路徑、不自動做任何事。
- * 第一次 `start` 才 `import()` 導覽的 chunk（`TourLazy`：遮罩、卡片、站點表、示範筆記、字串包）。
- * ⚠ 這個檔只准對 `./TourLazy` 做 `import type`；靜態 import 導覽的任何模組都會把整條鏈拉回首包
- * （scripts/check-bundle-size.mjs 會紅）。
- */
+/** Only `import type` from `./TourLazy` is allowed here: any static import of tour modules pulls the whole chain into the first bundle (`scripts/check-bundle-size.mjs` fails). */
 
-/** 從按下開始到第 1 站出現的上限；超過就中止（共編一直連不上之類）。 */
 export const START_TIMEOUT_MS = 15_000;
 
 type TourLazyComponent = ComponentType<TourLazyProps>;
@@ -26,7 +20,7 @@ function loadTourLazy(): Promise<TourLazyComponent> {
       return m.TourLazy;
     },
     (err: unknown) => {
-      // 下一次開始再重試下載。
+      // Retry the download on the next start.
       loadingTourLazy = null;
       throw err;
     },
@@ -34,10 +28,7 @@ function loadTourLazy(): Promise<TourLazyComponent> {
   return loadingTourLazy;
 }
 
-/**
- * 導覽元件 render 時拋錯：只收掉這一輪、跳一則提示，不讓錯誤傳到最外層 `AppErrorBoundary`（那會把整個 app 換成兜底畫面）。
- * 示範筆記照提早結束的規則保留。以 `session.id` 當 key，下一輪是全新的 boundary。
- */
+/** A render error ends the round with a toast instead of reaching `AppErrorBoundary` (which would replace the whole app). Keyed by `session.id`, so the next round gets a fresh boundary. */
 class TourErrorBoundary extends Component<{ onCrash: () => void; children: ReactNode }, { crashed: boolean }> {
   state = { crashed: false };
 
@@ -61,11 +52,7 @@ interface Session extends TourStartOptions {
   timedOut: boolean;
 }
 
-/**
- * 一個時間只有一輪：進行中（含還在準備示範筆記）再呼叫 `start` 不動作，這一輪結束或中止後才能再開。
- * 15 秒上限從按下起算、第 1 站出現才停；逾時由 chunk 裡的流程收拾（提示、把空白的示範筆記移到垃圾桶）。
- * chunk 載入失敗、或逾時時 chunk 還沒到：導覽的字串包在 chunk 裡、拿不到導覽自己的提示，改用首包的載入失敗提示。
- */
+/** One round at a time: `start` does nothing while a round is active (including while the sample note is still being prepared) and works again after it ends or aborts. The 15 s limit runs from the press until step 1 appears; on timeout the chunk's flow cleans up (toast, moves a blank sample note to trash). If the chunk failed to load or hadn't arrived at timeout, the tour's own strings are unavailable, so the first bundle's load-failure message is used. */
 export function TourProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [TourLazy, setTourLazy] = useState<TourLazyComponent | null>(() => loadedTourLazy);
@@ -126,7 +113,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
             returnFocus={session.returnFocus}
             timedOut={session.timedOut}
             onStarted={() => {
-              // 只是停掉計時器（清資源）：第 1 站出現之後不中止，由 TourLazy 依 `started` 判斷。
+              // Only stops the timer (cleanup): after step 1 appears nothing aborts; TourLazy decides by `started`.
               if (activeRef.current === session.id) clearTimeout(timerRef.current);
             }}
             onDone={() => end(session.id)}

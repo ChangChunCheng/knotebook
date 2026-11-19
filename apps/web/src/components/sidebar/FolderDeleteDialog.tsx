@@ -18,15 +18,10 @@ import { folderDeleteBody, folderDeleteFacts } from "./folder-delete";
 import { indexFolders } from "./folder-index";
 import { noteSpaceKey } from "./tree";
 
+// Import only through the FolderLazy chain and tests.
 const EMPTY_NOTES: NoteDto[] = [];
 const EMPTY_FOLDERS: FolderDto[] = [];
 
-/**
- * 刪除／移除資料夾確認框（一律跳）。篇數與子資料夾數由快取即時算；保留天數取 `useTrash()`（未載到用通用句）。
- * 送出中兩鈕 disabled、忽略關閉要求（同 `select-dialogs.tsx`）。開著的那篇在子樹裡：送出前設 NotePage 的
- * `leavingRef`，成功導回首頁（只有資料夾這一則 toast）、「復原」導回那篇；失敗且非終態撥回、終態導回首頁。成敗都關框。
- * 只准被 FolderLazy 鏈與測試 import。
- */
 export function FolderDeleteDialog({
   folder,
   open,
@@ -62,7 +57,7 @@ export function FolderDeleteDialog({
     if (busy) return;
     setBusy(true);
     const count = facts.liveNotes.length;
-    // 共享移除不經垃圾桶、筆記沒被刪：開著那篇照樣可用，不離場。
+    // Removing a shared folder skips the trash and deletes no notes: the open note stays usable, no navigation.
     const containsOpen = facts.containsOpen && !facts.shared;
     if (containsOpen && controls) controls.leavingRef.current = true;
     try {

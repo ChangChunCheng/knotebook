@@ -9,24 +9,20 @@ import { findNodeById } from "@/collab/columns/position";
 import { createWidthPreview, writeColumnWidths, type WidthPreview } from "@/collab/columns/width-preview";
 import { changedIndices, dividerResize, ratiosFromPixels } from "@/collab/columns/widths";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** 桌面的命中區：溝的左側 8px（貼左欄右緣）；溝的右側留給欄內縮成 16px 的 ⋮⋮（`index.css`）。 */
+/** Desktop hit area: 8px left of the gutter; the right side belongs to the 16px ⋮⋮ inside the column (`index.css`). */
 const FINE_HIT_PX = 8;
-/** 觸控沒有 hover、手指也比滑鼠粗：命中區佔滿整條溝。 */
 const COARSE_HIT_PX = COLUMN_GAP_PX;
 const COARSE_QUERY = "(pointer: coarse)";
-/** 鍵盤每按一次移動「列寬 − 溝寬總和」的這個比例。 */
 const KEY_STEP = 0.05;
 
 const ROW_SELECTOR = `[data-node-type="${COLUMN_LIST_TYPE}"]`;
 
-/** 一條分隔線：座標相對 `container`，aria 值是整數百分比。 */
 interface DividerPlace {
   key: string;
   rowId: string;
-  /** 左欄的 index（分隔線在第 index 與 index+1 欄之間）。 */
   index: number;
   columnIds: readonly string[];
   top: number;
@@ -36,11 +32,9 @@ interface DividerPlace {
   now: number;
   min: number;
   max: number;
-  /** 觸控裝置：命中區佔滿溝、直線淡色常顯。 */
   touch: boolean;
 }
 
-/** 一列量到的東西：欄 id、各欄像素寬、各欄最小寬度。 */
 interface RowMeasure {
   rowId: string;
   rowEl: HTMLElement;
@@ -62,16 +56,16 @@ interface DragState {
   startX: number;
   px: readonly number[];
   mins: readonly number[];
-  /** 按下時文件裡的欄寬：拖曳期間別人改過的欄，放開時不蓋掉（`writeColumnWidths` 的 `since`）。 */
+  /** Column widths at pointerdown; columns others changed mid-drag are not overwritten on release (`since` of `writeColumnWidths`). */
   base: readonly number[];
-  /** 最近一次移動算出的整列比例；左右兩欄的像素沒變（沒動、或卡在最小寬度）時是 null，放開時不寫。 */
+  /** null when neither adjacent column's pixel width changed (no move, or pinned at min width): nothing is written on release. */
   next: number[] | null;
   preview: WidthPreview;
   prevUserSelect: string;
   controller: AbortController;
 }
 
-/** 未掛載時 tiptap 的 view 是代理物件，讀 `dom` 會丟例外。 */
+/** Before mount tiptap's view is a proxy; reading `dom` throws. */
 function viewDomOf(editor: AnyEditor): HTMLElement | null {
   try {
     return editor.domElement ?? null;
@@ -84,7 +78,6 @@ function columnElsOf(rowEl: Element): HTMLElement[] {
   return Array.from(rowEl.children).filter((el): el is HTMLElement => el.getAttribute("data-node-type") === COLUMN_TYPE);
 }
 
-/** 堆疊、欄數不到兩欄、id 不齊、或與文件對不上的列 → null（不畫分隔線）。最小寬度依文件的欄內容判斷。 */
 function measureRow(editor: AnyEditor, rowEl: HTMLElement): RowMeasure | null {
   if (rowEl.hasAttribute(STACKED_ATTR)) return null;
   const rowId = rowEl.getAttribute("data-id");
@@ -165,7 +158,6 @@ function samePlace(a: DividerPlace, b: DividerPlace): boolean {
 const samePlaces = (a: readonly DividerPlace[], b: readonly DividerPlace[]) =>
   a.length === b.length && a.every((p, i) => samePlace(p, b[i]!));
 
-/** 文件裡這一列目前的欄 id 與欄寬；列不在（或不是並排列）→ null。 */
 function rowInDoc(editor: AnyEditor, rowId: string): { ids: string[]; widths: number[] } | null {
   const row = editor.getBlock(rowId) as { type?: string; children?: { id: string; props?: { width?: number } }[] } | undefined;
   if (!row || row.type !== COLUMN_LIST_TYPE || !row.children) return null;
@@ -173,16 +165,9 @@ function rowInDoc(editor: AnyEditor, rowId: string): { ids: string[]; widths: nu
 }
 
 /**
- * 欄間分隔線的浮層：疊在 `container`（編輯欄的 `relative` wrapper）上，不在 ProseMirror 管的 DOM 裡放任何東西。只該在可編輯時掛上。
- *
- * - 每個未堆疊的列、每對相鄰欄一條；座標相對 `container`，`container` 跟內容一起捲，所以不聽捲動。
- * - 重量（合併到下一個 animation frame）：文件變更；ResizeObserver 觀察 `container`、`view.dom`（列上方的內容長高會把列往下推，
- *   列與欄本身大小不變）、每一列與它的欄；視窗 resize。`pointerenter`／`pointerdown` 時再同步量一次，收 RO 都沒觸發的版面變動；
- *   位置變了就只更新位置，那一下 `pointerdown` 不開始拖曳。
- * - 指標拖曳：移動中只改預覽樣式表（`createWidthPreview`），放開時寫一次（一個撤銷步）；Esc、列變成堆疊、列被刪或欄 id 序列變了、
- *   卸載都會取消並清掉預覽，不寫。
- * - 鍵盤 ←／→：每次移列可用寬的 5%，夾最小寬度；算出的欄寬與文件現值相同就不寫。寫入不自成撤銷步：聚焦、失焦時各切一次，
- *   快速連按由 UndoManager 的合併時間窗併成一步。
+ * Overlay on `container` (the editor column's `relative` wrapper); nothing is put inside ProseMirror's DOM. Mount only when editable. `container` scrolls with the content, so no scroll listener.
+ * Re-measured on document changes, window resize, and via ResizeObserver on `container`, `view.dom` (content growing above a row pushes it down without resizing the row or its columns), and each row and its columns; also on pointerenter/pointerdown, to catch layout changes ResizeObserver misses. A pointerdown that finds the position changed only updates it and does not start a drag.
+ * Keyboard writes are not their own undo step: one is cut on focus and on blur, rapid presses merge via the UndoManager window.
  */
 export function ColumnDividers({ container, editor }: { container: HTMLElement | null; editor: AnyEditor }): JSX.Element | null {
   const { t } = useTranslation();
@@ -191,10 +176,7 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
   const dragRef = useRef<DragState | null>(null);
   const placesRef = useRef<DividerPlace[]>(places);
 
-  /**
-   * 結束拖曳：`commit` 為 true 且文件裡的欄 id 序列沒變才寫；一律清預覽、還原 `user-select`。
-   * 分隔線兩側那兩欄照拖曳結果寫；其他欄若在拖曳期間被別人改過就保留現值（按下時量的像素已經過時）。
-   */
+  /** Columns other than the two beside the divider keep their current widths: pixels measured at pointerdown are stale if someone changed them mid-drag. */
   const stopDrag = (commit: boolean) => {
     const drag = dragRef.current;
     if (!drag) return;
@@ -211,7 +193,6 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
   const stopDragRef = useRef(stopDrag);
   stopDragRef.current = stopDrag;
 
-  /** 量全部的列；套用新位置，並在拖曳中的那一列消失（堆疊、被刪）或欄 id 序列變了時取消拖曳。回傳新位置。 */
   const measureAll = (): DividerPlace[] => {
     const dom = viewDomOf(editor);
     let next: DividerPlace[] = [];
@@ -247,8 +228,8 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
       });
     };
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
-    // 只對新出現的目標 observe、對消失的 unobserve：每次都重來會讓 RO 對每個目標再報一次，變成無窮重量。
-    // 堆疊的列也觀察：它變寬到不再堆疊時，要靠它的大小變化重量。
+    // Observe only new targets / unobserve gone ones: starting over would make RO report every target again, looping forever.
+    // Stacked rows are observed too: when one widens enough to unstack, its size change triggers the re-measure.
     const syncObserved = () => {
       if (!observer) return;
       const targets = new Set<Element>([container]);
@@ -290,7 +271,6 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
     };
   }, [container, editor]);
 
-  /** 同步重量；這條分隔線的位置變了（或已不在）→ true。 */
   const remeasureMoved = (place: DividerPlace): boolean => {
     const fresh = measureAllRef.current().find((p) => p.key === place.key);
     return !fresh || fresh.top !== place.top || fresh.left !== place.left || fresh.height !== place.height || fresh.width !== place.width;
@@ -327,7 +307,7 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
     document.body.style.userSelect = "none";
     setDraggingKey(place.key);
     const listen = { signal: controller.signal };
-    /** 依指標位置算整列比例並更新預覽；放開那一筆也要算，它的位置不一定有 pointermove 報過。 */
+    /** The release event is computed too: its position may never have been reported by a pointermove. */
     const apply = (ev: PointerEvent) => {
       const i = drag.index;
       const [left, right] = dividerResize(drag.px[i]!, drag.px[i + 1]!, drag.mins[i]!, drag.mins[i + 1]!, ev.clientX - drag.startX);
@@ -365,7 +345,7 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     if (dragRef.current) return;
-    // 每次按鍵都從畫面重量：上一次的寫入已經改了欄寬。
+    // Measure from the screen every keypress: the previous write already changed the widths.
     const dom = viewDomOf(editor);
     const rowEl = dom && rowElById(dom, place.rowId);
     const row = rowEl && measureRow(editor, rowEl);
@@ -374,14 +354,14 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
     const i = place.index;
     const step = Math.max(0, row.rowRect.width - COLUMN_GAP_PX * (row.px.length - 1)) * KEY_STEP;
     const [left, right] = dividerResize(row.px[i]!, row.px[i + 1]!, row.mins[i]!, row.mins[i + 1]!, e.key === "ArrowLeft" ? -step : step);
-    // 已在最小寬度：像素沒變就不寫（否則文件寬度與畫面不成比例的列會被整列改寫，多出一個看不出變化的撤銷步）。
+    // Already at min width: skip when pixels are unchanged (otherwise a row whose doc widths don't match the screen is rewritten, adding an invisible undo step).
     if (left === row.px[i]) return;
     const px = [...row.px];
     px[i] = left;
     px[i + 1] = right;
     const next = ratiosFromPixels(px, [i, i + 1]);
     if (changedIndices(inDoc.widths, next).length === 0) return;
-    // 像素與文件現值在同一次按鍵裡同步讀到，之間不會有別人的更新；`since` 與放開時同一套規則。
+    // Pixels and doc value are read in the same keypress, so no remote update lands between; same `since` rule as on release.
     writeColumnWidths(editor, place.rowId, next, { undoStep: false, since: { base: inDoc.widths, own: [i, i + 1] } });
   };
 
@@ -408,8 +388,7 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
           style={{ top: place.top, left: place.left, width: place.width, height: place.height }}
           onPointerEnter={() => void remeasureMoved(place)}
           onPointerDown={(e) => onPointerDown(e, place)}
-          // 滑鼠按下不把焦點移到分隔線：焦點留在編輯器，拖完立刻 Ctrl+Z 就能撤銷；也免得按住拖曳時選到字。
-          // 鍵盤使用者用 Tab 聚焦分隔線。
+          // Mouse down must not move focus to the divider: focus stays in the editor so Ctrl+Z right after a drag undoes it, and holding to drag doesn't select text.
           onMouseDown={(e) => e.preventDefault()}
           onKeyDown={(e) => onKeyDown(e, place)}
           onFocus={cutUndoStep}

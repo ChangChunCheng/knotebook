@@ -5,10 +5,7 @@ import { absoluteUrl, blockLinkUrl, copyBlockLink } from "@/lib/copy-block-link"
 const HEADING_SELF = ':scope > .bn-block > .bn-block-content[data-content-type="heading"]';
 const HEADING_TEXT = ":scope > .bn-block > .bn-block-content > .bn-inline-content";
 
-/**
- * 從事件目標往上找最近的 `.bn-block-outer`：自己是標題 ⇒ 那顆；是別種區塊、或在並排的欄內⇒ null（隱藏）；
- * 不在任何區塊裡（例如 # 鈕本身）⇒ undefined（不變）。
- */
+/** Walks up to the nearest `.bn-block-outer`: null hides the button, undefined (target is in no block, e.g. the # button itself) leaves it unchanged. */
 function headingOuterOf(node: EventTarget | Node | null): HTMLElement | null | undefined {
   const el = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
   const outer = el?.closest<HTMLElement>(".bn-block-outer") ?? null;
@@ -20,10 +17,8 @@ function headingOuterOf(node: EventTarget | Node | null): HTMLElement | null | u
 type Size = { width: number; height: number };
 
 /**
- * 「#」放在標題文字**右側**（相對 `container`）。不放左側：可編輯時 BlockNote 側邊選單（`+`／`⠿`，z-index 20）正好蓋在區塊左緣外，
- * 「#」看得到、點不到（headed 瀏覽器實測）。
- * - 垂直：在文字**首行**置中——首行取 Range 的第一個 client rect；空標題（沒有文字片段）退回整個 inline box。
- * - 水平：不超出欄位右緣（`left ≤ 欄寬 − 鈕寬`）；文字頂到右緣時不讓「#」撐出橫向捲動（公開頁 `<md` 量到 1px 溢出）。
+ * "#" sits to the right of the heading text: on the left, BlockNote's side menu (z-index 20) overlaps the block's left edge and the button would be visible but unclickable.
+ * Clamped to the column's right edge so long headings don't cause horizontal scroll (1px overflow seen on narrow public pages).
  */
 function placeOf(outer: HTMLElement, container: HTMLElement, button: Size): { top: number; left: number } {
   const box = container.getBoundingClientRect();
@@ -40,16 +35,11 @@ function placeOf(outer: HTMLElement, container: HTMLElement, button: Size): { to
 
 type Target = { outer: HTMLElement; id: string; top: number; left: number };
 
-/**
- * #269：標題旁 hover「#」鈕（editor、viewer、公開頁都有）。疊在編輯欄的 `relative` wrapper（`container`）上；pointer 進入、或選取
- * 游標落在標題區塊時顯示，pointer 離開整個欄位時隱藏。複製 `location.origin + location.pathname + "#b-" + id`（公開頁即公開網址）。
- * 觸控沒有 hover。
- */
 export function HeadingAnchorButtons({ container, linkBase }: { container: HTMLElement | null; linkBase?: () => string }) {
   const { t } = useTranslation();
   const [target, setTarget] = useState<Target | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  // 鈕的實際尺寸：第一次出現前量不到（先當 0），掛上後在 layout effect 量到再重算一次（paint 前，不閃）。
+  // Size unknown before the first render (0); re-measured in a layout effect before paint, so no flash.
   const sizeRef = useRef<Size>({ width: 0, height: 0 });
 
   useEffect(() => {
@@ -89,7 +79,7 @@ export function HeadingAnchorButtons({ container, linkBase }: { container: HTMLE
     setTarget(cur => (cur ? { ...cur, ...placeOf(cur.outer, container, sizeRef.current) } : cur));
   }, [target, container]);
 
-  // 顯示中遇到版面變動（欄寬、內容推移、視窗縮放）就重算位置；區塊被刪掉就收起。座標相對欄 wrapper，wrapper 跟內容一起捲，捲動不必重算。
+  // While shown, re-measure on layout changes (column width, content shifting, window resize) and hide when the block is deleted. The wrapper scrolls with the content, so scrolling needs no recompute.
   const outer = target?.outer ?? null;
   useEffect(() => {
     if (!container || !outer) return;

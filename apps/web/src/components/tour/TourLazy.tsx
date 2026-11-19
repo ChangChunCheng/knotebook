@@ -14,43 +14,32 @@ import { focusReturnTarget, RETURN_FOCUS_TIMEOUT_MS, samePath, waitForFrames } f
 import { createSampleNote, seedSampleNote } from "./sample-note";
 import { TourRunner, type TourResult } from "./TourRunner";
 
-/**
- * 導覽的 lazy chunk 入口（`TourProvider` 第一次開始導覽時才 `import()` 這支）：示範筆記的準備、開始流程的中止，
- * 以及整輪的 `TourRunner`。
- */
 
 export interface TourLazyProps extends TourStartOptions {
-  /** 從按下開始起已經超過開始流程的上限：第 1 站還沒出現就中止。 */
+  /** Past the start limit since the press: abort if step 1 hasn't appeared yet. */
   timedOut: boolean;
-  /** 第 1 站出現時呼叫一次。 */
+  /** Called once when step 1 appears. */
   onStarted: () => void;
-  /** 這一輪結束（正常結束或中止）時呼叫一次；之後「進行中」就清掉。 */
+  /** Called once when the round ends (finished or aborted); afterwards "active" is cleared. */
   onDone: () => void;
 }
 
-/**
- * 示範筆記準備到哪：`preparing` 還沒寫入內容；`seeded` 寫入那一步正常回傳過（不論真的寫了沒有）；`aborted` 已中止。
- * 中止與寫入共用這一個值：寫入只在 `preparing` 時做，中止只在不是 `seeded` 時把它改成 `aborted`，
- * 所以中止之後才回來的讀取不會再寫入，寫入過的筆記也不會被當成空白筆記丟掉。
- */
+/** One value shared by abort and write: writing happens only while `preparing`, abort moves it to `aborted` only when not `seeded`, so a read returning after abort doesn't write and a written note isn't discarded as blank. */
 type SamplePhase = "preparing" | "seeded" | "aborted";
 
 interface Session {
   phase: SamplePhase;
   note: NoteDto | null;
-  /** 已經跳過一則失敗提示（建立失敗或開始失敗）：同一輪不再跳第二則。 */
+  /** A failure toast was already shown (create or start failed): at most one per round. */
   notified: boolean;
   started: boolean;
-  /** 已經到過示範筆記的頁面：之後位置離開它才算「離開」。 */
+  /** Reached the sample note's page once: only after that does leaving it count as leaving. */
   arrived: boolean;
-  /** 結束或中止的處理已經開始。 */
+  /** End or abort handling has started. */
   ending: boolean;
-  /**
-   * 中止的處理已經決定好示範筆記的去留（要移的也送出了）。在這之前由中止的處理負責移垃圾桶（它會先導回原頁）；
-   * 之後才回來的 POST，那篇由 `prepareSample` 自己移。
-   */
+  /** Set once abort has decided what happens to the sample note (including sending the one to move). Before that abort trashes it (after navigating back); a POST returning later is moved by `prepareSample` itself. */
   settled: boolean;
-  /** 已經把示範筆記送去垃圾桶。 */
+  /** The sample note was already sent to trash. */
   discarded: boolean;
 }
 
@@ -60,7 +49,6 @@ function describeError(t: TFunction, err: unknown): string | undefined {
   return err instanceof ApiFail ? t(`errors.${err.code}`, { defaultValue: t("errors.fallback") }) : undefined;
 }
 
-/** 等這篇筆記的編輯器登記上來而且可編輯（可編輯＝已同步、角色可寫）；中止就回 null。 */
 function waitForEditableEditor(noteId: string, signal: AbortSignal): Promise<TourEditor | null> {
   return new Promise((resolve) => {
     if (signal.aborted) {
@@ -78,7 +66,7 @@ function waitForEditableEditor(noteId: string, signal: AbortSignal): Promise<Tou
     unsubscribe = onEditorEditable((id, editor) => {
       if (id === noteId) finish(editor);
     });
-    // 訂閱前就已經可編輯的實例不會補通知。
+    // An instance that was already editable before subscribing gets no replay.
     const current = getTourNoteEditor(noteId);
     if (current?.isEditable) finish(current);
   });
@@ -106,7 +94,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     locationRef.current = location;
   }, [location]);
 
-  /** 移到垃圾桶，不跳垃圾桶提示（開始失敗那則已經說了）；這一篇只送一次。中止後元件可能已經卸載，送出照樣會跑。 */
+  /** No trash toast (the start-failure one already said it); sent once. After abort the component may be unmounted and this still runs. */
   const discard = (note: NoteDto) => {
     const session = sessionRef.current;
     if (session.discarded) return;
@@ -115,11 +103,9 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
   };
 
   /**
-   * 開始流程中止（逾時、位置離開示範筆記、沒辦法準備）：跳一則提示、收掉這一輪；示範筆記還沒寫入內容就移到垃圾桶。
-   * 要移的筆記正開著時先導回原頁、等位置生效再移：開著的筆記被移到垃圾桶，筆記頁會走「已被刪除」的離場路徑、再跳一則提示。
-   * 收掉 `TourRunner` 會中止 `prepareSample`，它的 `bail` 比導回原頁的 transition 先跑；這裡跑著的期間（`ending` 且還沒 `settled`）
-   * 移垃圾桶只由這裡做，`bail` 不動手，「先導回再移」才成立。最後把焦點還給 `returnFocus`（使用者選單的觸發鈕：寬視窗是側欄的帳號列，側欄浮動時是開抽屜的側欄鈕，手機是清單頂列的頭像）。
-   * 使用者自己導到別處而中止時也一樣還焦點，與導覽正常結束、或第 1 站之後離開示範筆記時的行為一致。
+   * If the note to move is open, navigate back first and wait for the location to take effect: trashing an open note sends the note page through its "deleted" exit and a second toast.
+   * Tearing down `TourRunner` aborts `prepareSample`, whose `bail` runs before the back-navigation transition; while this runs (`ending` and not yet `settled`) only this trashes and `bail` doesn't.
+   * Focus returns to `returnFocus` also when the user navigated away themselves (same as normal end).
    */
   const abortStart = async () => {
     const session = sessionRef.current;
@@ -147,10 +133,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
   };
   const abortFromEffect = useEffectEvent(() => void abortStart());
 
-  /**
-   * 建示範筆記、導過去、等它可編輯、寫入示範內容。每個 await 回來都先看是不是已經中止：中止了就不寫入，
-   * 建好的筆記移到垃圾桶（中止時 POST 還沒回來的那篇，也在這裡移）。
-   */
+  /** Checks for abort after every await: once aborted nothing is written, and the created note is moved to trash (including one whose POST hadn't returned at abort). */
   const prepareSample = async (signal: AbortSignal, aiActions: Promise<AiActionDto[]>): Promise<NoteDto | null> => {
     const session = sessionRef.current;
     const stopped = () => session.phase === "aborted" || signal.aborted;
@@ -173,7 +156,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     }
     session.note = note;
     if (stopped()) return bail();
-    // 訂閱「可編輯」與看現值都在 waitForEditableEditor 裡，所以在導頁前或後呼叫都不會漏掉那一次通知。
+    // Subscribing to "editable" and reading the current value both happen in waitForEditableEditor, so calling before or after navigation can't miss the notification.
     const editable = waitForEditableEditor(note.id, signal);
     void navigate(canonicalNotePath(note));
     const editor = await editable;
@@ -185,7 +168,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     try {
       seedSampleNote(editor, note, t, actions.length > 0);
     } catch (err) {
-      // 文件還是空的：維持 `preparing`，中止時當成空白筆記移到垃圾桶。
+      // Document still empty: stay `preparing`, so abort trashes it as a blank note.
       console.error(err);
       return null;
     }
@@ -193,8 +176,8 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     return note;
   };
 
-  // 示範內容寫好之前，位置離開示範筆記（例如點了側欄別篇）＝中止。寫好之後換畫面由 `TourRunner` 管（手機的第 1 站在清單上），
-  // 離開該在的畫面也由它當成結束處理（第 1 站還沒出現時一樣回報 `started: false`，走這裡的中止）。
+  // Before the sample is written, leaving the sample note (e.g. clicking another note in the sidebar) = abort. After it, screen changes are `TourRunner`'s; leaving the screen it should be on
+  // also ends there (step 1 not yet shown still reports `started: false` and aborts here).
   useEffect(() => {
     const session = sessionRef.current;
     if (session.started || session.ending || session.note === null || session.phase === "seeded") return;
@@ -202,8 +185,8 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     else if (session.arrived) abortFromEffect();
   }, [location.pathname]);
 
-  // 逾時中不中止由這裡的 `started` 決定：第 1 站 commit 之後，下一次 render 前會先跑完 `handleStarted`，
-  // 所以這裡看到的 `started` 已經是真的。TourProvider 收到 `onStarted` 停表只是清掉用不到的計時器。
+  // Whether to abort on timeout is decided by `started` here: after step 1 commits, `handleStarted` runs before the next render, so the `started` seen here is already true.
+  // TourProvider stopping its timer on `onStarted` only clears a timer that's no longer needed.
   useEffect(() => {
     if (timedOut && !sessionRef.current.started) abortFromEffect();
   }, [timedOut]);

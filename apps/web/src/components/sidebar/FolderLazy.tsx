@@ -1,7 +1,4 @@
 import "@/i18n/folder-strings";
 
-/**
- * 資料夾對話框的唯一 lazy 入口（首包上限）：只准以 `lazy(() => import("@/components/sidebar/FolderLazy"))` 引用。
- * 字串包 `folders.*.json` 與三個對話框都只經這條鏈進來。
- */
+/** Sole lazy entry for the folder dialogs (first-bundle limit): reference only via `lazy(() => import(...))`; the `folders.*.json` strings and the three dialogs come in only through this chain. */
 export { FolderDialogs } from "./FolderDialogs";

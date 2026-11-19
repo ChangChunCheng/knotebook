@@ -10,22 +10,18 @@ import { cn } from "@/lib/utils";
 import { arrowPath, cardInsets, cardMaxSize, HOLE_RADIUS, NO_INSETS, padRect, placeCard, sameInsets, type Insets, type Rect, type Size } from "./geometry";
 
 export interface TourOverlayProps {
-  /** 目標在視窗座標的矩形（多個目標先用 `unionRect` 合成）；null＝不挖洞、卡片置中。呼叫端每一格畫面重新量。 */
+  /** In viewport coordinates (several targets are merged with `unionRect`); null = no cutout, card centred; the caller re-measures every frame. */
   target: Rect | null;
-  /** 第幾站，從 1 起算（顯示用；換版面時同一站的號碼可能變）。 */
   step: number;
-  /** 換站的識別（引擎站序裡的位置）：換站通知與進站聚焦看它，不看顯示的號碼。沒給就用 `step`。 */
+  /** Step identity (position in the engine's step order): step-change announcements and focus-on-enter use it, not the displayed number (which can change with the layout). */
   stopKey?: number | string;
-  /** 換畫面中（手機在清單與示範筆記之間切換）：卡片先藏起來，遮罩照樣擋住頁面。 */
   hidden?: boolean;
   total: number;
   title: string;
   body: string;
-  /** 演示站：焦點留在編輯器（不搶），卡片讀出換站與結束的按鍵。 */
   live?: boolean;
-  /** 卡片要避開的畫面邊帶（從視窗各邊量起，例如手機釘住的頁首與底部的圓形鈕）；瀏海等 safe area 卡片自己會讀，不必算進來。畫面太小時會不理它。 */
+  /** Edge bands the card should avoid (from each window edge); safe areas the card reads itself. Ignored when the screen is too small. */
   keepOut?: Insets;
-  /** 畫面被蓋住的部分（螢幕鍵盤、鍵盤上方的工具列）：卡片一律讓開。 */
   blocked?: Insets;
   onNext: () => void;
   onBack: () => void;
@@ -42,7 +38,6 @@ function subscribeResize(onChange: () => void): () => void {
 const viewportWidth = () => window.innerWidth;
 const viewportHeight = () => window.innerHeight;
 
-/** 量 safe area 用的元素四邊內距是 `env(safe-area-inset-*)`；讀不到（不支援、jsdom）就是 0。 */
 function readPadding(el: HTMLElement | null): Insets {
   if (el === null) return NO_INSETS;
   const style = getComputedStyle(el);
@@ -53,27 +48,18 @@ function readPadding(el: HTMLElement | null): Insets {
   return { top: px(style.paddingTop), right: px(style.paddingRight), bottom: px(style.paddingBottom), left: px(style.paddingLeft) };
 }
 
-/** `useId` 的字元不一定能直接放進 `url(#…)`，只留英數。 */
+/** `useId` characters may be invalid inside `url(#…)`; keep alphanumerics only. */
 function svgId(prefix: string, id: string): string {
   return `${prefix}-${id.replace(/[^a-zA-Z0-9]/g, "")}`;
 }
 
 /**
- * 功能導覽的遮罩與說明卡（只負責畫面與按鍵；換站、找目標、結束後的還原由呼叫端處理）。
- *
- * - 卡片是 `aria-modal="false"` 的 dialog，不用 Radix 的 modal Dialog：modal 會把頁面其他部分標成 `aria-hidden`／`inert`，
- *   要指的目標就查不到了，報讀器也讀不到被挖亮的東西。焦點與 Tab 迴圈自己管。
- * - 遮罩蓋滿整個畫面、擋掉頁面的滑鼠操作，只有卡片可按。
- * - `pointerdown` 在 window 的 capture 階段攔：BlockNote 的選單用 floating-ui 的 `useDismiss` 在 document 的 capture 階段聽
- *   `pointerdown`，「點到外面」就關選單，而且不看 `defaultPrevented`；元素上的處理輪不到，只有比 document 更早的 window
- *   capture 擋得住。`preventDefault` 讓焦點留在原處（演示站的編輯器）。因此卡片上的 React `onPointerDown` 收不到事件，
- *   按鈕動作一律掛 `onClick`（`click` 照常觸發）。
- * - Esc 也在 window capture 接走：焦點在編輯器時 BlockNote 會自己用 Esc 關選單，導覽要先拿到。
- * - 挖洞、外框、箭頭、卡片都不做過渡，換站與目標移動時一起跳到新位置：只讓挖洞做過渡的話，那段時間箭頭尖端會離開外框；
- *   呼叫端每格畫面重量目標（例如捲動中），有過渡的挖洞也會落後目標。沒有動畫也就不必另外處理 `prefers-reduced-motion`。
- * - 卡片不進瀏海、圓角、Home 指示條這些 safe area（`viewport-fit=cover` 下內容會延伸過去），也避開呼叫端給的 `keepOut`。
- * - 卡片的名稱與描述在換站時是原地換掉的（焦點常常一直停在同一顆「下一步」上），報讀器不會重讀；
- *   所以另有一個常駐的 polite live region，換站時填入「n / N、標題、說明」。掛上那一次不填：焦點會進卡片，dialog 本身就會被讀出。
+ * The card is a dialog with `aria-modal="false"`, not Radix's modal Dialog: modal marks the rest of the page `aria-hidden`/`inert`, so targets couldn't be found and screen readers couldn't read the highlighted thing. Focus and the Tab loop are managed here.
+ * `pointerdown` is intercepted in window capture: BlockNote's menus use floating-ui `useDismiss` on document-capture `pointerdown` and close on "outside", ignoring `defaultPrevented`; only something earlier than document can stop it.
+ * `preventDefault` keeps focus in place (the demo's editor). So React `onPointerDown` on the card never fires; button actions use `onClick`.
+ * Esc is also taken in window capture: with focus in the editor BlockNote closes menus on Esc itself.
+ * Cutout, outline, arrow and card have no transitions and jump together: a transition on the cutout alone would detach the arrow tip from the outline, and with the target re-measured every frame (e.g. while scrolling) a transitioned cutout lags it. Without animation `prefers-reduced-motion` needs no handling.
+ * The card's name and description are swapped in place on a step change (focus often stays on the same "Next"), which screen readers don't re-read; so a persistent polite live region is filled with "n / N, title, description". Not filled on first mount: focus enters the card and the dialog itself is announced.
  */
 export function TourOverlay({
   target,
@@ -109,10 +95,10 @@ export function TourOverlay({
   const isLast = step === total;
 
   const progress = t("tourGuide.progress", { n: step, total });
-  // 標題已經以標點結尾（例如「忘了怎麼用？」）就不再補句點，免得報讀成「？。」；標點後面跟著收尾的引號、括號也算。
+  // A title already ending in punctuation gets no full stop, or screen readers read "?."; closing quotes/brackets after the punctuation count too.
   const titleStop = /[.!?。．！？…⋯]["'”’」』）)]*$/u.test(title.trimEnd()) ? "" : t("tourGuide.titleStop");
-  // 換過站才報（見檔頭），內容在換站那一刻定下來：同一站因為換版面而改了號碼或說明，不再報一次。
-  // 在 render 中比對上一個識別，不必多等一輪 effect。
+  // Announce only after a step change; content is fixed at that moment, so renumbering or new text from a layout change doesn't announce again.
+  // Compare the previous identity during render, saving an extra effect round.
   const key = stopKey ?? step;
   const [prevKey, setPrevKey] = useState(key);
   const [announcement, setAnnouncement] = useState("");
@@ -126,8 +112,8 @@ export function TourOverlay({
     height: useSyncExternalStore(subscribeResize, viewportHeight),
   };
 
-  // 卡片尺寸要等畫出來才量得到：掛上時在 layout effect 先量一次（畫面上不會先閃一格錯的位置），
-  // 之後換站、換語言、視窗變窄讓卡片變大變小，由 ResizeObserver 通知再量。
+  // The card size is known only after paint: measure once in a layout effect on mount (no flash at a wrong position),
+  // then re-measure via ResizeObserver when a step change, language change or narrower window resizes the card.
   const [cardSize, setCardSize] = useState<Size>({ width: 0, height: 0 });
   useLayoutEffect(() => {
     const el = cardRef.current;
@@ -142,7 +128,6 @@ export function TourOverlay({
     return () => observer.disconnect();
   }, []);
 
-  // safe area 只會隨轉向、視窗大小改變：掛上時與視窗尺寸變了才重讀。
   const [safeArea, setSafeArea] = useState<Insets>(NO_INSETS);
   useLayoutEffect(() => {
     const next = readPadding(safeAreaRef.current);
@@ -157,14 +142,14 @@ export function TourOverlay({
     hole === null ? null : arrowPath(hole, { left: placement.left, top: placement.top, ...cardSize }, placement.placement);
 
   const handleKeyDown = useEffectEvent((e: KeyboardEvent) => {
-    // 輸入法組字中的 Esc 是取消組字，交給輸入法（Chromium 組字中的 keydown 是 keyCode 229）。
+    // Esc during IME composition cancels the composition and belongs to the IME (Chromium's keydown during composition has keyCode 229).
     if (e.key === "Escape" && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       e.stopPropagation();
       onClose();
       return;
     }
-    // 演示站的焦點在編輯器，Tab 怎麼處理由演示站決定；這裡只管卡片內的迴圈。
+    // On the demo step focus is in the editor and the demo decides what Tab does; this only handles the loop inside the card.
     if (e.key !== "Tab" || live) return;
     const items = Array.from(cardRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? []);
     if (items.length === 0) return;
@@ -193,13 +178,13 @@ export function TourOverlay({
     };
   }, []);
 
-  // 一般站一進站就把焦點放在主要動作（最後一站是〔保留示範筆記〕，不是〔刪除〕）；演示站焦點要留在編輯器，選單才不會關。
-  // 換畫面時卡片藏著，出來之後再聚焦一次。
+  // A regular step focuses the main action on entry (the last step's is [keep sample note], not [delete]); the demo step must leave focus in the editor, or the menu would close.
+  // The card is hidden during a screen change; focus again after it appears.
   useEffect(() => {
     if (!live && !hidden) primaryRef.current?.focus();
   }, [key, total, live, hidden]);
 
-  // z-[95]：要高於編輯器浮層（BlockNote 最高 90），低於 toast（100）。
+  // z-[95]: above editor overlays (BlockNote's highest is 90), below toasts (100).
   return createPortal(
     <div ref={rootRef} data-tour-overlay="" className="fixed inset-0 z-[95]">
       <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full forced-color-adjust-none">
@@ -225,7 +210,7 @@ export function TourOverlay({
         <rect width="100%" height="100%" mask={`url(#${maskId})`} className="fill-black/50" />
         {hole && (
           <>
-            {/* 高對比模式下暗色遮罩與挖洞的交界看不出來，外面多畫一圈系統文字色。 */}
+            {/* High-contrast mode: the dark overlay/cutout boundary is invisible, so draw an extra ring in the system text colour */}
             <rect
               data-tour-ring-contrast=""
               x={hole.left - 2}
@@ -284,14 +269,14 @@ export function TourOverlay({
             {t("tourGuide.keepOrDeleteSample")}
           </p>
         )}
-        {/* 一般站也先掛著空的 live region：換到演示站時才填字，報讀器才讀得出來。 */}
+        {/* Mounted empty on regular steps too: only text added to an existing live region is announced */}
         <p aria-live="polite" className={live ? "mt-2 text-xs text-muted-foreground" : undefined}>
           {live ? t("tourGuide.liveHint") : null}
         </p>
         <p data-tour-step-announcement="" aria-live="polite" className="sr-only">
           {announcement}
         </p>
-        {/* 窄到一行放不下（320 寬的手機、最後一站的兩顆長鈕）就換行，鈕不會擠出卡片。 */}
+        {/* Wraps when one line doesn't fit (320px phone, two long buttons on the last step) so buttons don't overflow the card */}
         <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
           <span className="mr-auto text-xs text-muted-foreground">{progress}</span>
           {isFirst && !isLast && (
@@ -326,7 +311,7 @@ export function TourOverlay({
             </Button>
           )}
         </div>
-        {/* DOM 放在最後，Tab 順序才是「動作鈕 → ✕」；畫面上在右上角。 */}
+        {/* Last in the DOM so Tab order is action buttons → ✕; positioned top right */}
         <Button
           type="button"
           variant="ghost"

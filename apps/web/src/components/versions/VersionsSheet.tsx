@@ -17,22 +17,16 @@ import { currentSubtitle, editorsText, formatVersionTime, versionLabel } from ".
 import { useApplyFlow } from "./use-apply-flow";
 
 /**
- * 手機（< 640）的版本歷史：全螢幕 Radix Dialog、不改網址。
- * 步一＝清單（「‹ 返回 · 版本歷史」、最後編輯、目前狀態、清單、底部「儲存當前版本」）；
- * 步二＝預覽（「‹ 清單 · 名稱 (短 id) · 時間」、單欄 diff、底部「‹ 上一版 ｜ 套用 名稱 (短 id) ｜ 下一版 ›」）。步數就是 `preview` 是否為 null。
- * 底部「較舊的版本」＝seq 較小的下一筆、「較新的版本」＝較大的那筆（文案刻意不用「前一版」，免得與比較對象撞名）；
- * 到頭就 disabled（較舊那側還有下一頁時先載，載入中 disabled）。
- * 整頁不掛 `PreviewBanner`，步二頁首第二列自己給它的控制項：比較對象一對下拉（`ComparePicker`，左 → 右）、
- * 「只看差異」——兩者都讀 controller 的狀態。只有並排／單欄不提供（`forceSingle`），所以下拉一律放列 2。
- * 焦點：受控 Dialog 沒有 Trigger，Radix 關閉時不會還原焦點——掛載當下記住 `document.activeElement`，關閉時手動還（同 `GroupNameDialog`）。
- * 記到的元素已不在 DOM（從頁首 ⋮ 開：記到的是選單項，選單關掉就卸載）→ 退回 `returnFocusRef`（NotePage 交下來的 ⋮ 觸發鈕）。
- * 320 px：步二頁首第二列帶 `flex-wrap`，放不下就換行（依 class 推論；jsdom 量不到版面，真瀏覽器量測留 e2e）。
- * Esc：步二＝回清單、步一＝關整頁，兩者都 `preventDefault`（NotePage 的預覽 Esc 以 `defaultPrevented` 讓路）。
+ * Phone (< 640), URL unchanged. Step one = list, step two = preview (the step is whether `preview` is null). Bottom "older/newer version" = the next smaller/larger seq (wording deliberately avoids "previous version", which would clash with the compare target); disabled at the ends (an older page is loaded first when it exists; disabled while loading).
+ * No `PreviewBanner` on the full page: step two's second header row holds the compare dropdown pair (`ComparePicker`, left → right) and "only differences" (both read controller state); only side-by-side/single isn't offered (`forceSingle`), so the dropdowns always go on row 2.
+ * Focus: a controlled Dialog has no Trigger so Radix doesn't restore focus: `document.activeElement` is recorded on mount and restored by hand on close (as `GroupNameDialog`); if that element is gone (opened from the header ⋮: the menu item unmounts with the menu) fall back to `returnFocusRef` (the ⋮ trigger passed down by NotePage).
+ * At 320px step two's second header row has `flex-wrap`.
+ * Esc: step two → back to the list, step one → close; both `preventDefault` (NotePage's preview Esc yields on `defaultPrevented`).
  */
 export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc; lastEdited: NoteDto["lastEdited"]; returnFocusRef?: RefObject<HTMLElement | null> }) {
   const { t, i18n } = useTranslation();
   const { noteId, preview, kindFilter, startPreview, stopPreview, close, openSave } = useVersions();
-  // body 不算「可還的元素」：當成沒記到，關閉時走 returnFocusRef（⋮）。
+  // body doesn't count as a restorable element: treated as not recorded, so close falls back to returnFocusRef (⋮).
   const [returnFocus] = useState(() => {
     const active = document.activeElement;
     return active instanceof HTMLElement && active !== document.body ? active : null;
@@ -46,7 +40,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
   const row: VersionDto | undefined = index >= 0 ? rows[index] : undefined;
   const older = index >= 0 ? rows[index + 1] : undefined;
   const newer = index > 0 ? rows[index - 1] : undefined;
-  // 底部「較舊／較新的版本」只換左邊（同面板點列；右邊保持）。
+  // Bottom "older/newer version" only changes the left side (as clicking a panel row; the right side stays).
   const go = (v: VersionDto) => startPreview({ seq: v.seq, id: v.id, name: v.name });
 
   const shut = () => {
@@ -107,7 +101,7 @@ export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc;
     </>
   );
 
-  // #272：頁首「‹ 清單 · 名稱 (短 id)」與套用鈕用清單那一列（改名立刻反映）；清單裡沒有時用選取時記下的名稱。
+  // The header "‹ list · name (short id)" and the apply button use the list row (a rename shows at once); if it isn't in the list, the name recorded at selection.
   const renderPreview = (target: VersionTarget) => {
     const label = versionLabel(row ?? target);
     return (
