@@ -13,57 +13,35 @@ import {
 import { E2E_ORIGIN } from "../ports.js";
 
 /**
- * 自訂色碼（任意 #rrggbb 的文字色與底色）的顯示面與自訂色面板 e2e。
+ * Display surfaces for custom color codes (any #rrggbb text and background color) and the custom color panel, e2e.
  *
- * 面板（格式工具列與拖曳把手 ⋮⋮ 選單的「Custom…」）：
- * - C1＋C2：工具列套自訂色與內建 red 對照、工具列圖示顯示自訂色、重新整理後仍在、全程零 CSP violation；切深色後自訂色不變、內建 red 變。
- * - C3：拖曳把手套自訂底色到有巢狀子 block 的段落，另一段套內建底色對照。
- * - C5：套用過的顏色出現在「Recent」，點色塊直接套用並關選單。
- * - C6：拖曳飽和度方塊只改面板裡的值，按 Apply 才寫入筆記與最近用過。
- * - C10：觸控裝置套用色碼與最近用過；開面板時色碼框不自動取得焦點（不叫出螢幕鍵盤）。
- * - C11a／C11b：拖曳把手的面板在拖曳超出面板、打色碼時滑鼠移開的情況下都不會被關掉。
- * - C11c：工具列（一般文字選取與表格儲存格選取）與拖曳把手的面板裡用真鍵盤 Tab／Shift+Tab 在面板內繞回，選單不關、不打字進筆記。
- * - C13：帶自訂行內色與 block 底色的段落複製貼上到另一份筆記，顏色相同。
+ * Cases are numbered C1-C14 in their titles. They cover the format toolbar's and drag handle's custom color panels, the table cell/row handles, and display surfaces (editor, public page, version preview, presentation).
  *
- * 表格（滑鼠停在儲存格上出現的儲存格把手 ▾，與列／欄把手 ⋮⋮ 的選單）：
- * - C4a：儲存格把手套自訂底色，只有那一格上色，重新整理後仍在。
- * - C4b：列把手套自訂字色，整列每一格都換色，另一列不變。
- * - C4c：列／欄把手選單的項目恰為刪除、兩個新增、Colors；新增一列、刪除一欄照常；畫面上只有一組把手。
- *   關掉列選單後馬上開儲存格選單，經 aria-controls 只查到儲存格選單（只有 Colors）。
- * - C4d：儲存格把手的面板開著時，另一個分頁刪掉整張表：面板跟著表格消失、什麼都沒寫入，頁面不丟例外。
- * - C11a／C11b（儲存格把手）：同拖曳把手的 C11a／C11b，入口換成儲存格把手。
- * 表格把手的選單一律經觸發鈕的 `aria-controls` 找：BlockNote 的把手浮層在淡出期間會顯示它最後一次開著時的
- * HTML 複本（可能含剛關掉的選單），整頁查 class 會同時查到那份複本。
+ * - C7: the built-in `red` control element must keep its built-in value (guards against a false green where everything turns the same color).
+ * - C8: no `securitypolicyviolation` throughout C7 (the custom-color rules are inserted dynamically by JS and must not rely on inline style or `unsafe-inline`).
+ * - C12: B shows a color A pasted without reloading (colors applied by a remote collaborator don't go through local operations).
+ * - C9: a short, uppercase hex code written as `style` over REST is stored as lowercase `#rrggbb`.
+ * - Table handle menus are always found through the trigger's `aria-controls`: BlockNote's handle overlay shows a copy of the HTML from when it was last open during its fade-out (it may contain the menu just closed), so querying by class on the page would match that copy too.
  *
- * 顯示面：
- * - C7：同一份筆記在編輯器、公開頁、版本預覽、簡報四個面，自訂色碼的 computed 色值都要對，且內建色名
- *   （`red`）的對照元素維持內建值（防止「全部變成同一色」的假綠）。
- * - C8：C7 全程不得出現任何 `securitypolicyviolation`（自訂色碼的規則是 JS 動態插入的，不可靠 inline style 或 `unsafe-inline`）。
- * - C12：同一個 context 的兩個分頁開同一篇筆記；A 貼上自訂色碼後，B 不重新整理就要顯示出來（遠端共編者套的色碼不會經過本機操作）。
- * - C9：用 API token 經 REST 寫入以 `style` 表示的十六進位色碼（短形、大寫），開著的編輯器不重新整理就顯示，且存成小寫 `#rrggbb`。
- * - C14：格式工具列的自訂色面板開著、正在打色碼時，另一個分頁在選取之前插入一段：色碼框的焦點不被工具列搶走，打完按 Enter 套到原本的選取；
- *   同時量面板沒有橫向捲軸、選色方塊不超出面板。
+ * How codes get into the note: panel cases apply colors through the UI; C9 uses the REST API; the rest only care how a code already in the document is displayed, so they put it in by pasting HTML (`pasteHtml`).
+ * The paste is a synthetic `ClipboardEvent("paste")` with a real `DataTransfer` holding only `text/html`:
+ * - it avoids the browser's async clipboard (Chromium sanitizes HTML on write and `data-*` attributes are not guaranteed to survive) and needs no clipboard permission;
+ * - no `text/plain`: the editor's paste flow parses plain text as markdown first, so the HTML would never be processed.
  *
- * 色碼是怎麼放進筆記的：面板的案例走 UI 套色；C9 走 REST API；其餘只關心「已經在文件裡」的色碼如何顯示，所以用貼上 HTML 放（`pasteHtml`）。
- * 貼上走合成的 `ClipboardEvent("paste")`＋真的 `DataTransfer`，只放 `text/html`：
- * - 不經瀏覽器 async clipboard（寫入時 Chromium 會消毒 HTML，`data-*` 之類的屬性不保證留得下來），也不需要剪貼簿授權；
- * - 不放 `text/plain`：編輯器的貼上流程會優先把純文字當 markdown 解析，HTML 就沒機會被處理。
- *
- * helper 的 `openShareDialog`、`readPublicUrl`、`saveVersion`、`presentFromHeaderMenu`、CSP 收集器是從
- * 11-public-share、22-versions、22-presentation、09-csp 複製精簡的（那些檔的 helper 沒有 export）。
- * 公開連結的 owner 用新帳號、不用 admin（公開連結的限流桶以 userId 計，見 helpers 檔頭）。
+ * The helpers `openShareDialog`, `readPublicUrl`, `saveVersion`, `presentFromHeaderMenu` and the CSP collector are trimmed copies from `11-public-share`, `22-versions`, `22-presentation`
+ * and `09-csp` (those files' helpers are not exported). The public link owner is a fresh account, not admin (the public-link limiter is per userId, see the header of helpers).
  */
 
 const CUSTOM = "#ff6600";
 const RGB_CUSTOM = "rgb(255, 102, 0)";
-/** 內建 red：`--bn-colors-highlights-red-text: #e03e3e`、`--bn-colors-highlights-red-background: #fbe4e4`（淺色）。 */
+/** Built-in red: `--bn-colors-highlights-red-text: #e03e3e`, `--bn-colors-highlights-red-background: #fbe4e4` (light theme). */
 const RGB_RED_TEXT = "rgb(224, 62, 62)";
 const RGB_RED_BG = "rgb(251, 228, 228)";
 
 /**
- * 種子：行內文字色、段落與標題的區塊文字色、儲存格底色，各一個自訂色碼與一個內建色名的對照。
- * 簡報切頁（頂層 heading 中 level 最小的當章、第一個 heading 之前是封面）會切成三張：
- * 封面 [i、cp、rp]、第 2 張 [ch]、第 3 張 [rh、表格]。
+ * Seed: inline text color, block text color of a paragraph and a heading, and a cell background, each with one custom code and one built-in color name as control.
+ * Presentation paging (the smallest level among top-level headings is the chapter; anything before the first heading is the cover) yields three slides:
+ * cover [i, cp, rp], slide 2 [ch], slide 3 [rh, table].
  */
 const SEED_HTML =
   `<p>i <span data-style-type="textColor" data-value="${CUSTOM}">ci</span> <span data-style-type="textColor" data-value="red">ri</span></p>` +
@@ -94,12 +72,11 @@ function probeLocator(scope: Locator, surface: Surface, probe: Probe): Locator {
   let selector: string;
   if (probe.kind === "inline") selector = `[data-style-type="textColor"][data-value="${probe.value}"]`;
   else if (probe.kind === "cell") selector = `td[data-background-color="${probe.value}"]`;
-  // 編輯器類的顯示面：區塊色屬性在 `.bn-block-content` 上；簡報是消毒後的 HTML，屬性直接在 p／h2 上。
+  // Editor surfaces: the block color attributes are on `.bn-block-content`; the presentation is sanitized HTML with the attributes directly on p/h2.
   else selector = surface === "editor" ? `.bn-block-content[data-text-color="${probe.value}"]` : `[data-text-color="${probe.value}"]`;
   return scope.locator(selector).filter({ hasText: new RegExp(`^${probe.text}$`) }).first();
 }
 
-/** `texts` 裡每一個元素的 computed 色值都要等於預期（toHaveCSS 會重試，等規則被插入與版面穩定）。 */
 async function expectColors(scope: Locator, surface: Surface, texts: string[]): Promise<void> {
   for (const probe of PROBES.filter((p) => texts.includes(p.text))) {
     await expect(probeLocator(scope, surface, probe), `${surface}：${probe.text} 的 ${probe.css}`).toHaveCSS(probe.css, probe.expected, { timeout: 15_000 });
@@ -108,7 +85,6 @@ async function expectColors(scope: Locator, surface: Surface, texts: string[]): 
 
 const ALL_TEXTS = PROBES.map((p) => p.text);
 
-/** 貼上 HTML（只放 text/html）：先點編輯器放游標，再對 contenteditable 送合成貼上事件。 */
 async function pasteHtml(page: Page, html: string): Promise<void> {
   await editorLocator(page).click();
   await page.evaluate((markup) => {
@@ -126,7 +102,7 @@ interface Violation {
 }
 type CspWindow = { __cspViolations?: Violation[] };
 
-/** 在 context 內每個頁面的任何腳本之前註冊 CSP violation 收集器（匿名 context 的頁面也要各自註冊）。 */
+/** Registers the CSP violation collector before any script of every page in the context (pages of an anonymous context need their own registration). */
 async function collectCspViolations(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
     const w = window as unknown as CspWindow;
@@ -148,7 +124,7 @@ async function openShareDialog(page: Page) {
   return dialog;
 }
 
-/** 匿名公開連結的輸入框只放 token，網址要自己組回去。 */
+/** The anonymous public-link input holds only the token; the URL has to be rebuilt. */
 async function readPublicUrl(dialog: Locator, page: Page): Promise<string> {
   const input = dialog.getByLabel("Public link URL");
   await expect(input).toBeVisible();
@@ -173,10 +149,10 @@ async function presentFromHeaderMenu(page: Page, title: string): Promise<void> {
   await expect(page.locator(".reveal.ready")).toBeVisible({ timeout: 15_000 });
 }
 
-test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯示，且全程零 CSP violation", async ({ browser }) => {
+test("C7+C8 custom color codes show in the editor, public page, version preview and presentation, with zero CSP violations throughout", async ({ browser }) => {
   test.setTimeout(180_000);
   const adminContext = await browser.newContext();
-  // 寬到開著版本面板時預覽區仍夠並排（≥ 720 px），後面才有「Single column」可切。
+  // Wide enough that with the version panel open the preview area can still sit side by side (>= 720 px), so "Single column" can be switched to later.
   const ownerContext = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const anonContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
@@ -185,7 +161,7 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     await collectCspViolations(ownerContext);
     await collectCspViolations(anonContext);
 
-    // ── 建一個新帳號當 owner（公開連結的限流桶不要吃 admin 的）──────────────
+    // Create a new account as owner (the public-link limiter should not consume admin's allowance).
     await loginAs(adminPage, ADMIN.email, ADMIN.password);
     await expect(adminPage).toHaveURL(/\/$/);
     const ownerEmail = randomEmail();
@@ -198,7 +174,7 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     const title = `E2E custom colors ${Date.now()}`;
     await createNote(page, title);
 
-    // ── 編輯器：先確認貼上後文件裡真的有色碼屬性（失敗是貼上解析的問題，不是顯示），再看 computed ──
+    // Editor: first confirm the document really has the color attributes after pasting (a failure is a paste parsing problem, not display), then check computed values.
     await pasteHtml(page, SEED_HTML);
     const editor = editorLocator(page);
     await expect(editor.locator(`[data-value="${CUSTOM}"]`)).toHaveCount(1);
@@ -206,7 +182,6 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     await expect(editor.locator(`td[data-background-color="${CUSTOM}"]`)).toHaveCount(1);
     await expectColors(editor, "editor", ALL_TEXTS);
 
-    // ── 公開頁：開匿名公開連結，等內容落盤，再用全新 context 開 ──────────────
     const dialog = await openShareDialog(page);
     const publicRadio = dialog.getByRole("radio", { name: /^Public link/ });
     await expect(publicRadio).toBeEnabled();
@@ -219,7 +194,7 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
       const res = await anonContext.request.get(`/api/public/notes/${token}`);
       expect(res.status()).toBe(200);
       const body = (await res.json()) as { ydoc: string };
-      // 色碼字串原文編進 Yjs update：含它＝這份內容（而不是貼上前的舊快照）已落盤。
+      // The code string is encoded verbatim in the Yjs update: containing it means this content (not the pre-paste snapshot) has been persisted.
       expect(Buffer.from(body.ydoc, "base64").toString("utf8")).toContain(CUSTOM);
     }).toPass({ timeout: 20_000 });
 
@@ -230,7 +205,6 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     await expectColors(anon.locator(".bn-editor").first(), "editor", ALL_TEXTS);
     violations.push(...(await drainCspViolations(anon)));
 
-    // ── 簡報：逐張換頁，各斷言該張的元素 ──────────────────────────────────
     await presentFromHeaderMenu(page, title);
     const slide = page.locator(".reveal .slides section.present");
     await expect(slide.getByText("cp", { exact: true })).toBeVisible();
@@ -241,17 +215,15 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     await page.keyboard.press("ArrowRight");
     await expect(slide.getByText("rh", { exact: true })).toBeVisible();
     await expectColors(slide, "present", ["rh", "cc", "rc"]);
-    // 退出簡報：先退全螢幕（等過連退防護窗口），再按 Esc 關對話框。
     await page.evaluate(async () => {
       if (document.fullscreenElement) await document.exitFullscreen();
     });
-    // 350 ms 必須大於簡報自己的 300 ms 防連退窗口，否則 Esc 會被當成同一次退出而吃掉。
+    // The 350 ms must be longer than the presentation's own 300 ms double-exit guard window, otherwise Esc is treated as the same exit and swallowed.
     await page.waitForTimeout(350);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(editorLocator(page)).toBeVisible();
 
-    // ── 版本預覽：存一版、開預覽、切單欄（預設並排時兩欄各有一份，單欄只有一份）──
     await saveVersion(page, "colors-v1");
     await page.getByTestId("versions-bubble").click();
     const panel = page.getByTestId("versions-panel");
@@ -259,6 +231,7 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
     await panel.getByRole("button", { name: /^colors-v1 \(/ }).click();
     const banner = page.getByTestId("preview-banner");
     await expect(banner).toBeVisible();
+    // Single column: side by side renders the content twice.
     await banner.getByRole("button", { name: "Single column" }).click();
     await expectColors(page.getByTestId("diff-single"), "editor", ALL_TEXTS);
 
@@ -269,7 +242,7 @@ test("C7＋C8 自訂色碼在編輯器、公開頁、版本預覽、簡報都顯
   }
 });
 
-test("C12 兩個分頁開同一篇筆記：A 貼上自訂色碼，B 不重新整理就顯示", async ({ browser }) => {
+test("C12 two tabs open the same note: A pastes a custom code and B shows it without reload", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext();
   try {
@@ -279,13 +252,13 @@ test("C12 兩個分頁開同一篇筆記：A 貼上自訂色碼，B 不重新整
     const title = `E2E colors two tabs ${Date.now()}`;
     await createNote(pageA, title);
 
-    // 同一個 context 共用 cookie，不必再登入。等 B 載入完成、連上共編才讓 A 貼上。
     const pageB = await context.newPage();
     await pageB.goto(pageA.url());
     await expect(pageB.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
     await expect(pageB.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 15_000 });
     await expect(editorLocator(pageB)).toBeVisible();
 
+    // Let A paste only after B has loaded and connected, so B gets the color as a remote update and not through its initial sync.
     await pasteHtml(pageA, `<p data-text-color="${CUSTOM}">tab</p><p>x <span data-style-type="textColor" data-value="${CUSTOM}">y</span></p>`);
 
     const editorB = editorLocator(pageB);
@@ -296,9 +269,9 @@ test("C12 兩個分頁開同一篇筆記：A 貼上自訂色碼，B 不重新整
   }
 });
 
-test("C9 API 用 token 以 style 寫入色碼：網頁不重整就顯示，且存成小寫 #rrggbb", async ({ browser, baseURL }) => {
+test("C9 API token writes a code via style: the page shows it without reload and it is stored as lowercase #rrggbb", async ({ browser, baseURL }) => {
   test.setTimeout(120_000);
-  // 新帳號：建 token 的額度（每人每小時 10 次）是 per user，不吃 admin 的。
+  // New account: the token-creation allowance (10 per user per hour) is per user and does not use up admin's.
   const adminContext = await browser.newContext();
   const userContext = await browser.newContext();
   let anonymous: BrowserContext | undefined;
@@ -317,7 +290,6 @@ test("C9 API 用 token 以 style 寫入色碼：網頁不重整就顯示，且�
     await createNote(page, title);
     const noteUrl = page.url();
 
-    // API token（照 45-bulk-transfer）：notes:read notes:write，結束時撤掉。
     const created = await page.request.post("/api/auth/tokens", {
       data: { name: `e2e-colors-${Date.now()}`, scope: "notes:read notes:write", expiresInDays: 30 },
     });
@@ -327,12 +299,12 @@ test("C9 API 用 token 以 style 寫入色碼：網頁不重整就顯示，且�
     const token = body.token;
     expect(token).toMatch(/^knb_/);
 
-    // 回到筆記並等編輯器掛上（命中即隱含已連線且首次同步完成）。
     await page.goto(noteUrl);
     const editor = editorLocator(page);
+    // A matching editable editor implies connected and first sync done.
     await editor.waitFor();
 
-    // 無 cookie 的 context：用瀏覽器 context 會因 session cookie 而通過，對 Bearer 沒有鑑別力。
+    // Cookie-less context: a browser context would pass through the session cookie and have no discriminating power over Bearer.
     anonymous = await browser.newContext();
     const api = anonymous.request;
     const auth = { Authorization: `Bearer ${token}` };
@@ -342,16 +314,16 @@ test("C9 API 用 token 以 style 寫入色碼：網頁不重整就顯示，且�
     const mine = notes.find((n) => n.title === title)!;
     expect(mine).toBeTruthy();
 
-    // 短形、大寫的色碼經 style 寫入：parser 先換成 rgb(255, 102, 0)，寫入端再正規化成 #ff6600。
+    // A short, uppercase code written via style: the parser first turns it into rgb(255, 102, 0), then the write side normalizes it to #ff6600.
     const res = await api.post(`${baseURL}/api/notes/${mine.id}/edits`, {
       headers: auth,
       data: { op: "append", markdown: '<span style="color:#F60">c9</span>' },
     });
     expect(res.status()).toBe(201);
 
-    // 寫入後 token 的遠端游標落在這次寫下的第一個字前面。ProseMirror 把 widget 包進「後面那個字」的
-    // mark 裡，所以游標（含名牌文字）會畫在色彩 span 裡面，span 的 textContent 不會剛好是 "c9"。
-    // 這裡用子字串找 span，再扣掉 widget 比對 span 自己的文字：整段 "c9" 都被上色，不是只有一部分。
+    // After the write the token's remote cursor sits before the first character it wrote. ProseMirror wraps the widget into the mark of the following character,
+    // so the cursor (with its name tag text) is drawn inside the colored span and the span's textContent is not exactly "c9".
+    // So find the span by substring, then compare the span's own text without the widget: the whole "c9" is colored, not just part of it.
     const colored = editor.locator('[data-style-type="textColor"]').filter({ hasText: "c9" }).first();
     await expect(colored).toHaveCSS("color", RGB_CUSTOM, { timeout: 10_000 });
     await expect(colored).toHaveAttribute("data-value", CUSTOM);
@@ -373,7 +345,7 @@ test("C9 API 用 token 以 style 寫入色碼：網頁不重整就顯示，且�
   }
 });
 
-test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前插入一段：焦點留在色碼框，Enter 套到原選取", async ({ browser }) => {
+test("C14 toolbar custom color panel while typing a code: another tab inserts a paragraph before the selection; focus stays in the code box and Enter applies to the original selection", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext();
   try {
@@ -388,16 +360,14 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
     await pageA.keyboard.press("Enter");
     await pageA.keyboard.type("target text");
 
-    // 同一個 context 共用 cookie，不必再登入。等 B 載入完成、連上共編、看到 A 打的內容。
     const pageB = await context.newPage();
     await pageB.goto(pageA.url());
     await expect(pageB.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
     await expect(pageB.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 15_000 });
     const editorB = editorLocator(pageB);
-    // A 的遠端游標（含名牌文字）畫在 `target text` 段尾，所以用子字串比對。
+    // A's remote cursor (with its name tag text) is drawn at the end of the `target text` paragraph, so match by substring.
     await expect(editorB.locator(".bn-block-content", { hasText: "target text" })).toBeVisible({ timeout: 10_000 });
 
-    // A：三擊選取整段 `target text` → 真滑鼠點顏色鈕 → 「自訂…」，焦點進色碼框。
     await editorA.getByText("target text", { exact: true }).click({ clickCount: 3 });
     await pageA.locator('.bn-formatting-toolbar [data-test="colors"]').click();
     await pageA.locator('[data-test="text-color-custom"]').click();
@@ -407,7 +377,7 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
     const hex = pageA.getByRole("textbox", { name: "Hex color" });
     await expect(hex).toBeFocused();
 
-    // 面板寬度：dropdown 不出現橫向捲軸，選色方塊左右都在面板內；色值在 0%（方塊與色相的左端）時指標也不超出面板。
+    // Panel width: the dropdown has no horizontal scrollbar, the color square is inside the panel on both sides, and with the value at 0% (left end of the square and hue) the pointer also stays inside the panel.
     const dropdown = pageA.locator(".bn-formatting-toolbar .bn-color-picker-dropdown");
     const metrics = await dropdown.evaluate((el) => {
       const panelBox = el.querySelector(".kb-color-panel")!.getBoundingClientRect();
@@ -432,12 +402,11 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
     expect(metrics.pointerLeft, JSON.stringify(metrics)).toBeGreaterThanOrEqual(metrics.panelLeft);
     expect(metrics.pointerRight, JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.panelRight);
 
-    // 面板一開，色碼框裡是 `#`（沒有自訂色也沒有最近用過）；全選後打，蓋掉它。
+    // The code box opens containing `#`; select all and type over it.
     await pageA.keyboard.press("Control+A");
     await pageA.keyboard.type("#ff6");
     await expect(hex).toHaveValue("#ff6");
 
-    // B：在第一段開頭打 zz 再按 Enter，新段落插在 A 的選取上方，A 的選取被重映射、工具列重繪。
     await editorB.getByText("top", { exact: true }).click();
     await pageB.keyboard.press("Home");
     await waitForEditorSelection(pageB);
@@ -445,7 +414,7 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
     await pageB.keyboard.press("Enter");
 
     await expect(editorA.getByText("zz", { exact: true })).toBeVisible({ timeout: 10_000 });
-    // 工具列重繪後 Mantine focus trap 的重新聚焦排在 setTimeout 裡，多等一下再看焦點。
+    // After the toolbar redraw Mantine's focus trap refocuses inside a setTimeout, so wait a little before checking focus.
     await pageA.waitForTimeout(300);
     expect(await hex.evaluate((el) => el === document.activeElement)).toBe(true);
     await expect(panel).toBeVisible();
@@ -457,7 +426,6 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
 
     const colored = editorA.locator('[data-style-type="textColor"][data-value="#ff6600"]').filter({ hasText: /^target text$/ });
     await expect(colored).toHaveCSS("color", RGB_CUSTOM, { timeout: 10_000 });
-    // B 的遠端游標（含名牌文字）畫在 `top` 開頭，比對前扣掉 widget。
     const blockTexts = () =>
       editorA.evaluate((root) =>
         Array.from(root.querySelectorAll(".bn-block-content"))
@@ -468,18 +436,17 @@ test("C14 工具列自訂色面板打色碼時，另一個分頁在選取之前�
           })
           .filter((text) => text !== ""),
       );
+    // B's remote cursor (with its name tag text) is drawn at the start of `top`; blockTexts strips the widget.
     await expect.poll(blockTexts).toEqual(["zz", "top", "target text"]);
   } finally {
     await context.close();
   }
 });
 
-// ── 自訂色面板 ─────────────────────────────────────────────────────────────
-
-/** 內建 red 的文字色在深色主題是 `#ec4040`。 */
+// Built-in red's text color in dark theme is `#ec4040`.
 const RGB_RED_TEXT_DARK = "rgb(236, 64, 64)";
 const RECENT_COLORS_KEY = "knotebook:recent-colors";
-/** 拖曳把手的面板要量「移到面板外 150 px」，視窗要夠寬。 */
+/** Wide viewport: the C11a tests move the pointer 160 px outside the panel, so it must be wide enough. */
 const WIDE = { width: 1400, height: 900 };
 
 function hexToRgb(hex: string): string {
@@ -487,7 +454,6 @@ function hexToRgb(hex: string): string {
   return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-/** 新 context 以 admin 登入、建一份筆記，把 `lines` 逐段打進去。`prepare` 在開頁面之前對 context 做設定（例如攔截請求）。 */
 async function startColorNote(
   browser: Browser,
   name: string,
@@ -515,12 +481,10 @@ async function typeLines(page: Page, lines: string[]): Promise<void> {
   await expect(paragraph(page, lines[lines.length - 1]!)).toBeVisible();
 }
 
-/** 文字剛好是 `text` 的那一段的行內內容。 */
 function paragraph(page: Page, text: string): Locator {
   return editorLocator(page).locator(".bn-inline-content").filter({ hasText: new RegExp(`^${reEscape(text)}$`) }).first();
 }
 
-/** 文字剛好是 `text` 的那一段的 `.bn-block-content`（不含巢狀子 block 的字）。 */
 function blockContent(page: Page, text: string): Locator {
   return editorLocator(page).locator(".bn-block-content").filter({ hasText: new RegExp(`^${reEscape(text)}$`) }).first();
 }
@@ -529,15 +493,14 @@ function inlineColored(page: Page, hex: string, text: string): Locator {
   return editorLocator(page).locator(`[data-style-type="textColor"][data-value="${hex}"]`).filter({ hasText: new RegExp(`^${reEscape(text)}$`) });
 }
 
-/** 用鍵盤選取 `text` 那一段的第 `from` 到 `to` 個字，等格式工具列出現。 */
 async function selectText(page: Page, text: string, from: number, to: number): Promise<void> {
   const toolbar = page.locator(".bn-formatting-toolbar");
   const hasRange = () => page.evaluate(() => !(document.getSelection()?.isCollapsed ?? true));
   if ((await toolbar.isVisible()) || (await hasRange())) {
-    // 上一次的選取還在：工具列可能正好蓋在要點的那一段上。等焦點回到編輯器（套用後是 setTimeout 才還焦點），
-    // 選取還沒收起才按方向鍵收起，再等工具列消失
+    // The previous selection is still there: the toolbar may be covering the paragraph to click. Wait for focus to return to the editor (after applying it is restored in a setTimeout);
+    // press the arrow key to collapse the selection only if it has not collapsed yet, then wait for the toolbar to disappear.
     await expect.poll(() => editorLocator(page).evaluate((el) => el.contains(document.activeElement))).toBe(true);
-    // 焦點回到編輯器時，選取範圍可能晚一點才畫回 DOM：這一輪看到的還是收起的，工具列卻還開著，就再看一次
+    // After focus returns to the editor the selection may be painted back into the DOM a little later: this round may still see a collapsed selection while the toolbar is still open, so look once more.
     await expect(async () => {
       if (await hasRange()) await page.keyboard.press("ArrowRight");
       await expect(toolbar).toBeHidden({ timeout: 1_000 });
@@ -555,7 +518,6 @@ const panelOf = (page: Page) => page.locator(".kb-color-panel");
 const hexInput = (page: Page) => page.getByRole("textbox", { name: "Hex color" });
 const applyButton = (page: Page) => panelOf(page).getByRole("button", { name: "Apply", exact: true });
 
-/** 選取已就緒時，以真滑鼠點工具列的顏色鈕與「Custom…」，回傳面板。觸控時用 tap。 */
 async function openToolbarPanel(page: Page, section: "text" | "background", how: "click" | "tap" = "click"): Promise<Locator> {
   const colors = page.locator('.bn-formatting-toolbar [data-test="colors"]');
   const custom = page.locator(`.bn-formatting-toolbar [data-test="${section}-color-custom"]`);
@@ -572,7 +534,6 @@ async function openToolbarPanel(page: Page, section: "text" | "background", how:
   return panel;
 }
 
-/** hover 文字是 `text` 的那一段，等側邊選單對齊那一段，以真滑鼠點 ⋮⋮ 開把手選單。 */
 async function openBlockMenu(page: Page, text: string): Promise<Locator> {
   const content = blockContent(page, text);
   await content.hover();
@@ -591,7 +552,6 @@ async function openBlockMenu(page: Page, text: string): Promise<Locator> {
   return menu;
 }
 
-/** 把手選單 → hover「Colors」開子選單 → 點 `dataTest` 那一項。 */
 async function pickBlockColorItem(page: Page, text: string, dataTest: string): Promise<void> {
   const menu = await openBlockMenu(page, text);
   await menu.getByRole("menuitem", { name: "Colors", exact: true }).hover();
@@ -608,7 +568,6 @@ async function openBlockPanel(page: Page, text: string, section: "text" | "backg
   return panel;
 }
 
-/** 各段的文字（扣掉遠端游標的 widget、略過空段落），比對「筆記內容沒有多出字元」用。 */
 function blockTexts(page: Page): Promise<string[]> {
   return editorLocator(page).evaluate((root) =>
     Array.from(root.querySelectorAll(".bn-block-content"))
@@ -621,11 +580,11 @@ function blockTexts(page: Page): Promise<string[]> {
   );
 }
 
-test("C1＋C2 工具列套自訂色：與內建 red 對照、工具列圖示顯示自訂色、重新整理後仍在、零 CSP violation；深色主題下自訂色不變", async ({ browser }) => {
+test("C1+C2 toolbar applies a custom color: vs built-in red as control, toolbar icon shows the custom color, survives reload, zero CSP violations; in dark theme the custom color is unchanged", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: WIDE });
   try {
-    // react-colorful 會注入自己的 <style>：從開面板起就要收 violation
+    // react-colorful injects its own <style>: collect violations from the moment the panel opens.
     await collectCspViolations(context);
     const page = await context.newPage();
     await loginAs(page, ADMIN.email, ADMIN.password);
@@ -643,7 +602,6 @@ test("C1＋C2 工具列套自訂色：與內建 red 對照、工具列圖示顯�
     await expect(panelOf(page)).toHaveCount(0);
     await expect(inlineColored(page, CUSTOM, "orange")).toHaveCSS("color", RGB_CUSTOM, { timeout: 10_000 });
 
-    // 同一段的另一段字套內建 red 當對照
     await selectText(page, line, 11, 14);
     await page.locator('.bn-formatting-toolbar [data-test="colors"]').click();
     await page.locator('.bn-formatting-toolbar [data-test="text-color-red"]').click();
@@ -651,20 +609,17 @@ test("C1＋C2 工具列套自訂色：與內建 red 對照、工具列圖示顯�
     await expect(red).toHaveCSS("color", RGB_RED_TEXT, { timeout: 10_000 });
     await expect(inlineColored(page, CUSTOM, "orange")).toHaveCSS("color", RGB_CUSTOM);
 
-    // 選回自訂色那段：工具列顏色鈕的圖示是自訂色
     await selectText(page, line, 0, 6);
     await expect(page.locator('.bn-formatting-toolbar [data-test="colors"] .bn-color-icon')).toHaveCSS("color", RGB_CUSTOM);
 
-    // 收集器每次載入頁面都會重設：開面板期間（react-colorful 注入 <style>）收到的 violation 要在重新整理前先取出
+    // The collector resets on every page load: take the violations received while the panel was open (react-colorful injecting <style>) before reloading.
     const violations = await drainCspViolations(page);
 
-    // 重新整理：色碼存進筆記了
     await page.reload();
     await expect(page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
     await expect(inlineColored(page, CUSTOM, "orange")).toHaveCSS("color", RGB_CUSTOM, { timeout: 15_000 });
     await expect(red).toHaveCSS("color", RGB_RED_TEXT);
 
-    // 深色主題：自訂色碼照原值，內建 red 換成深色的值（兩者都變或都不變都是錯）
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(red).toHaveCSS("color", RGB_RED_TEXT_DARK, { timeout: 10_000 });
     await expect(inlineColored(page, CUSTOM, "orange")).toHaveCSS("color", RGB_CUSTOM);
@@ -676,11 +631,10 @@ test("C1＋C2 工具列套自訂色：與內建 red 對照、工具列圖示顯�
   }
 });
 
-test("C3 拖曳把手套自訂底色：外層 block 上底色、巢狀子 block 在它裡面，另一段套內建 red 底色對照", async ({ browser }) => {
+test("C3 drag handle applies a custom background: the outer block gets the background with the nested child inside it, another paragraph gets built-in red background as control", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await startColorNote(browser, "block bg", []);
   try {
-    // parent 底下巢狀一個 child，再回到頂層打 other
     await editorLocator(page).click();
     await page.keyboard.type("parent");
     await page.keyboard.press("Enter");
@@ -704,8 +658,8 @@ test("C3 拖曳把手套自訂底色：外層 block 上底色、巢狀子 block 
     await expect(outer).toHaveCount(1);
     await expect(outer.locator(":scope > .bn-block-content")).toHaveText("parent");
     await expect(outer).toHaveCSS("background-color", "rgb(0, 255, 0)", { timeout: 10_000 });
-    // 子 block 是外層 .bn-block 的後代，畫在它的底色上。不斷言子 block 自己的 background-color：
-    // background-color 不會繼承，BlockNote 只對外層上底色（內建色也一樣），子 block 的 .bn-block 是透明的。
+    // The child block is a descendant of the outer .bn-block and is drawn on its background. The child's own background-color is not asserted:
+    // background-color is not inherited and BlockNote puts the background only on the outer block (built-in colors too); the child's .bn-block is transparent.
     expect(
       await blockContent(page, "child").evaluate(
         (el, sel) => el.closest(".bn-block")!.parentElement!.closest(".bn-block") === document.querySelector(sel),
@@ -724,8 +678,8 @@ test("C3 拖曳把手套自訂底色：外層 block 上底色、巢狀子 block 
 });
 
 /**
- * 先以色碼框套 `CUSTOM` 到 `first` 段的第一個字，再開面板點「Recent」的色塊套到 `second` 段的第一個字；`how` 決定用滑鼠還是觸控。
- * `onFirstPanel` 在第一次開面板、還沒碰色碼框時呼叫。
+ * First applies `CUSTOM` through the code box to the first character of the `first` paragraph, then opens the panel and clicks the "Recent" swatch to apply it to the first character of the `second` paragraph; `how` selects mouse or touch.
+ * `onFirstPanel` is called when the panel is first opened, before the code box is touched.
  */
 async function applyThenPickRecent(
   page: Page,
@@ -751,13 +705,12 @@ async function applyThenPickRecent(
   const swatch = panel.getByRole("button", { name: CUSTOM, exact: true });
   await expect(swatch).toBeVisible();
   await press(swatch);
-  // 點色塊就是套用：選單整個關掉
   await expect(panelOf(page)).toHaveCount(0);
   await expect(page.locator(".bn-color-picker-dropdown")).toHaveCount(0);
   await expect(inlineColored(page, CUSTOM, second.slice(0, second.indexOf(" ")))).toHaveCSS("color", RGB_CUSTOM, { timeout: 10_000 });
 }
 
-test("C5 最近用過：套用一次後再開面板，Recent 有該色，點色塊直接套到另一段並關選單", async ({ browser }) => {
+test("C5 recents: after applying once, reopening the panel shows the color under Recent; clicking the swatch applies it to another paragraph and closes the menu", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await startColorNote(browser, "recent", ["first words", "second words"]);
   try {
@@ -767,7 +720,7 @@ test("C5 最近用過：套用一次後再開面板，Recent 有該色，點色�
   }
 });
 
-test("C6 拖曳飽和度方塊：色碼框跟著變，按 Apply 前筆記與最近用過都不變，按了才寫入", async ({ browser }) => {
+test("C6 dragging the saturation square: the code box follows, the note and recents are unchanged before Apply, and Apply writes them", async ({ browser }) => {
   test.setTimeout(120_000);
   const line = "drag me";
   const { context, page } = await startColorNote(browser, "drag preview", [line]);
@@ -781,7 +734,7 @@ test("C6 拖曳飽和度方塊：色碼框跟著變，按 Apply 前筆記與最�
     await page.mouse.down();
     await page.mouse.move(sat.x + sat.width * 0.5, sat.y + sat.height * 0.5, { steps: 5 });
     await expect.poll(() => hexInput(page).inputValue()).toMatch(/^#[0-9a-f]{6}$/);
-    // 按住繼續拖：色碼框要跟著指標再變一次（不是只在按下那一刻取一次值）
+    // Keep dragging while held: the code box must change again with the pointer (not sampled only at press time).
     const midway = await hexInput(page).inputValue();
     await page.mouse.move(sat.x + sat.width * 0.2, sat.y + sat.height * 0.8, { steps: 5 });
     await page.mouse.up();
@@ -789,7 +742,6 @@ test("C6 拖曳飽和度方塊：色碼框跟著變，按 Apply 前筆記與最�
     const dragged = await hexInput(page).inputValue();
     expect(dragged).not.toBe(midway);
 
-    // 拖曳只改預覽：筆記裡沒有色彩 span、字色照舊，最近用過也沒記
     await expect(paragraph(page, line).locator('[data-style-type="textColor"]')).toHaveCount(0);
     expect(await paragraph(page, line).evaluate((el) => getComputedStyle(el).color)).toBe(original);
     expect(await page.evaluate((key) => localStorage.getItem(key), RECENT_COLORS_KEY) ?? "").not.toContain(dragged);
@@ -803,9 +755,8 @@ test("C6 拖曳飽和度方塊：色碼框跟著變，按 Apply 前筆記與最�
   }
 });
 
-test("C10 觸控裝置：套用色碼與最近用過都可用，開面板時色碼框不自動取得焦點", async ({ browser }) => {
+test("C10 touch device: applying a code and recents both work, and the code box does not take focus when the panel opens", async ({ browser }) => {
   test.setTimeout(150_000);
-  // 筆記在桌面 context 建好打字，觸控 context 只開它
   const { context: desktop, page: owner, title } = await startColorNote(browser, "touch", ["first words", "second words"]);
   const touch = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 800, height: 1000 } });
   try {
@@ -813,16 +764,16 @@ test("C10 觸控裝置：套用色碼與最近用過都可用，開面板時色�
     await loginAs(page, ADMIN.email, ADMIN.password);
     await page.goto(owner.url());
     await expect(page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
-    // 桌面那頁的遠端游標（含名牌文字）畫在段落文字裡：看到內容後關掉桌面那頁，等游標消失，段落文字才會剛好相等
+    // The desktop page's remote cursor (with its name tag text) is drawn inside the paragraph text: after seeing the content close the desktop page and wait for the cursor to disappear, so the paragraph text becomes exactly equal.
     await expect(editorLocator(page).locator(".bn-inline-content", { hasText: "second words" })).toBeVisible({ timeout: 15_000 });
     await desktop.close();
     await expect(editorLocator(page).locator(".bn-collaboration-cursor__base")).toHaveCount(0, { timeout: 15_000 });
     await expect(paragraph(page, "second words")).toBeVisible();
-    // 前提：這個 context 被當成觸控（不是細指標），面板才會走「不聚焦色碼框」那條
+    // Precondition: this context is treated as touch (not a fine pointer), so the panel takes the path that does not focus the code box.
     expect(await page.evaluate(() => window.matchMedia("(pointer: fine)").matches)).toBe(false);
 
     await applyThenPickRecent(page, "first words", "second words", "tap", async (panel) => {
-      // 觸控開面板不叫出螢幕鍵盤：色碼框沒有焦點，焦點仍在面板裡（不在面板外，否則下一個按鍵會關掉選單）
+      // Opening the panel by touch does not bring up the on-screen keyboard: the code box has no focus, and focus stays inside the panel (not outside it, or the next key press would close the menu).
       await expect(hexInput(page)).not.toBeFocused();
       expect(await panel.evaluate((el) => el.contains(document.activeElement)), "焦點要留在面板裡").toBe(true);
     });
@@ -831,7 +782,7 @@ test("C10 觸控裝置：套用色碼與最近用過都可用，開面板時色�
   }
 });
 
-test("C11a 拖曳把手的面板：在飽和度方塊按下、拖到面板外 150 px 停住再放開，面板仍在、值已變、Apply 生效", async ({ browser }) => {
+test("C11a drag handle panel: pressing on the saturation square, dragging 160 px outside the panel, pausing and releasing keeps the panel open, the value changed and Apply takes effect", async ({ browser }) => {
   test.setTimeout(120_000);
   const line = "drag outside";
   const { context, page } = await startColorNote(browser, "drag outside", [line]);
@@ -840,16 +791,15 @@ test("C11a 拖曳把手的面板：在飽和度方塊按下、拖到面板外 15
     const sat = (await panel.locator(".react-colorful__saturation").boundingBox())!;
     const box = (await panel.boundingBox())!;
     const y = sat.y + sat.height * 0.5;
-    // 往右拖出面板 160 px；右邊放不下就往左
     const outsideX = box.x + box.width + 160 < WIDE.width - 10 ? box.x + box.width + 160 : box.x - 160;
     await page.mouse.move(sat.x + sat.width * 0.6, sat.y + sat.height * 0.4);
     await page.mouse.down();
     await page.mouse.move(sat.x + sat.width * 0.3, y, { steps: 5 });
     await expect.poll(() => hexInput(page).inputValue()).toMatch(/^#[0-9a-f]{6}$/);
-    // 面板內拖到的值；拖出面板後指標仍被追蹤，飽和度貼到邊（0% 或 100%），值要再變
+    // The value reached inside the panel; after leaving the panel the pointer is still tracked and the saturation sticks to the edge (0% or 100%), so the value must change again.
     const inside = await hexInput(page).inputValue();
     await page.mouse.move(outsideX, y, { steps: 10 });
-    // 停得比子選單的關閉延遲久：面板若放在 hover 開關的子選單裡，這段時間就會被關掉
+    // Pause longer than the submenu's close delay: if the panel lived in a hover-opened submenu it would be closed during this time.
     await page.waitForTimeout(500);
     await page.mouse.up();
 
@@ -866,7 +816,7 @@ test("C11a 拖曳把手的面板：在飽和度方塊按下、拖到面板外 15
   }
 });
 
-test("C11b 拖曳把手的面板：打色碼到一半把滑鼠移到編輯器另一端停住，再打完按 Enter，套上完整色碼", async ({ browser }) => {
+test("C11b drag handle panel: moving the mouse to the other end of the editor and pausing while halfway through typing a code, then finishing and pressing Enter, applies the full code", async ({ browser }) => {
   test.setTimeout(120_000);
   const line = "type then move";
   const { context, page } = await startColorNote(browser, "type move", [line, "far line"]);
@@ -894,8 +844,8 @@ test("C11b 拖曳把手的面板：打色碼到一半把滑鼠移到編輯器另
 });
 
 /**
- * 面板已開、色碼框有焦點、沒有最近用過（新 context）時：打一個合法色碼讓 Apply 可按，Tab 到 Apply（最後一個元素），
- * 再按一次 Tab 要繞回 Back；Shift+Tab 回到 Apply。全程選單開著、筆記內容不變。
+ * With the panel open, the code box focused and no recents (new context): type a valid code so Apply is enabled, Tab to Apply (the last element),
+ * Tab again must wrap to Back; Shift+Tab returns to Apply. The menu stays open and the note content is unchanged throughout.
  */
 async function expectTabWrapsInPanel(page: Page, panel: Locator): Promise<void> {
   const texts = await blockTexts(page);
@@ -923,7 +873,6 @@ async function expectTabWrapsInPanel(page: Page, panel: Locator): Promise<void> 
   expect(await blockTexts(page)).toEqual(texts);
 }
 
-/** 格式工具列裡排在顏色鈕之後、可用（沒停用、有顯示）的鈕；dropdown 裡的不算。 */
 function enabledToolbarButtonsAfterColors(page: Page): Promise<string[]> {
   return page.locator(".bn-formatting-toolbar").evaluate((bar) => {
     const colors = bar.querySelector('[data-test="colors"]')!;
@@ -934,17 +883,18 @@ function enabledToolbarButtonsAfterColors(page: Page): Promise<string[]> {
   });
 }
 
-// 面板自己在兩端處理 Tab／Shift+Tab（先移好焦點並 preventDefault），所以不論面板的最後一個元素是不是整條工具列的
-// 最後一個可 Tab 元素，工具列與 dropdown 掛在 document 上的 focus trap 看到焦點已不在端點都不介入，焦點一定留在面板裡。
-// 下面兩案各量一種：一般文字選取（顏色鈕之後還有建立連結鈕），以及表格儲存格選取（顏色鈕之後沒有可用的鈕）。
-// 顏色選單一律以真滑鼠點開：Mantine 與工具列兩層 focus trap 的註冊順序只有這樣才和真實使用相同。
-// 共編者讓工具列重繪時搶焦點的情境，單人安靜的頁面量不到，由 C14 涵蓋。
-test("C11c 工具列的面板：真鍵盤 Tab 在最後一個元素繞回 Back、Shift+Tab 回到最後一個，選單不關、不打字進筆記", async ({ browser }) => {
+// The panel handles Tab/Shift+Tab itself at both ends (moves focus and preventDefault), so whether or not the panel's last element is also the last tabbable element of
+// the whole toolbar, the focus traps the toolbar and dropdown hang on document see focus no longer at an end and do not intervene, and focus stays in the panel.
+// The two cases below measure each situation: a plain text selection (a create-link button follows the color button) and a table cell selection (no usable button follows the color button).
+// Open the color menu with the real mouse: only that matches real use for the registration order of Mantine's and the toolbar's two focus traps.
+// A scenario where a collaborator makes the toolbar redraw and steal focus cannot be measured on a quiet single-user page; the format-toolbar case where another tab inserts a paragraph covers it.
+test("C11c toolbar panel: real-keyboard Tab wraps from the last element to Back and Shift+Tab to the last, the menu stays open and nothing is typed into the note", async ({ browser }) => {
   test.setTimeout(120_000);
   const line = "keyboard target";
   const { context, page } = await startColorNote(browser, "tab toolbar", [line]);
   try {
     await selectText(page, line, 0, line.length);
+    // Precondition: a usable button (create link) follows the color button, so the panel's last element is not the toolbar's last tabbable element.
     const enabledAfter = await enabledToolbarButtonsAfterColors(page);
     expect(enabledAfter.length, JSON.stringify(enabledAfter)).toBeGreaterThan(0);
 
@@ -955,10 +905,10 @@ test("C11c 工具列的面板：真鍵盤 Tab 在最後一個元素繞回 Back�
   }
 });
 
-test("C11c 工具列的面板（選取表格儲存格，顏色鈕之後沒有可用的鈕）：Tab／Shift+Tab 仍在面板內繞回，粗體沒被切換", async ({ browser }) => {
+test("C11c toolbar panel (table cell selection, no usable button after the color button): Tab/Shift+Tab still wrap inside the panel and bold is not toggled", async ({ browser }) => {
   test.setTimeout(120_000);
-  // 站台設了 AI 動作時（同一座疊上別的測試會設），工具列尾端多一顆 AI 鈕，顏色鈕之後就有可用的鈕、量不到本案要的情境。
-  // 這一頁把 AI 動作清單換成空的，工具列跟沒設 AI 動作的站台相同。
+  // When the site has AI actions configured (other tests on the same stack set them) the toolbar gets a trailing AI button, so a usable button follows the color button and this case's scenario cannot be measured.
+  // This page replaces the AI action list with an empty one, so the toolbar matches a site without AI actions.
   const { context, page } = await startColorNote(browser, "tab table", [], { viewport: WIDE }, (ctx) =>
     ctx.route("**/api/ai/actions", (route) => route.fulfill({ json: { actions: [] } })),
   );
@@ -968,7 +918,6 @@ test("C11c 工具列的面板（選取表格儲存格，顏色鈕之後沒有可
     await expect(cells).toHaveCount(2);
     await expect(cells.nth(1)).toHaveText("cell two");
 
-    // 滑鼠從第一格拖到第二格：選取變成儲存格選取（CellSelection）
     const a = (await cells.nth(0).boundingBox())!;
     const b = (await cells.nth(1).boundingBox())!;
     await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
@@ -978,7 +927,7 @@ test("C11c 工具列的面板（選取表格儲存格，顏色鈕之後沒有可
     await expect(editorLocator(page).locator("td.selectedCell")).toHaveCount(2);
     await expect(page.locator(".bn-formatting-toolbar")).toBeVisible();
 
-    // 前提：這就是面板最後一個元素同時是整條工具列最後一個可 Tab 元素的情境
+    // Precondition: no usable button follows the color button, so the panel's last element is also the toolbar's last tabbable element.
     const enabledAfter = await enabledToolbarButtonsAfterColors(page);
     expect(enabledAfter, JSON.stringify(enabledAfter)).toEqual([]);
 
@@ -990,7 +939,7 @@ test("C11c 工具列的面板（選取表格儲存格，顏色鈕之後沒有可
   }
 });
 
-test("C11c 拖曳把手的面板：真鍵盤 Tab 在最後一個元素繞回 Back、Shift+Tab 回到最後一個，選單不關、不打字進筆記", async ({ browser }) => {
+test("C11c drag handle panel: real-keyboard Tab wraps from the last element to Back and Shift+Tab to the last, the menu stays open and nothing is typed into the note", async ({ browser }) => {
   test.setTimeout(120_000);
   const line = "keyboard block";
   const { context, page } = await startColorNote(browser, "tab handle", [line]);
@@ -1002,7 +951,7 @@ test("C11c 拖曳把手的面板：真鍵盤 Tab 在最後一個元素繞回 Bac
   }
 });
 
-test("C13 帶自訂行內色與 block 底色的段落複製貼上到另一份筆記：重新整理後顏色與原筆記相同", async ({ browser }) => {
+test("C13 copying a paragraph with a custom inline color and block background into another note: after reload the colors match the original note", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: WIDE });
   try {
@@ -1028,9 +977,9 @@ test("C13 帶自訂行內色與 block 底色的段落複製貼上到另一份筆
     const expected = { blockText: "copy me", blockBg: RGB_CUSTOM, spanText: "me", spanColor: RGB_CUSTOM };
     await expect.poll(probe, { timeout: 15_000 }).toEqual(expected);
 
-    // 選取只在一個 block 的文字裡時，BlockNote 只複製行內內容（內建色也一樣），block 的底色要選取跨到別的 block 才會跟著走。
-    // Ctrl+A 在這個編輯器是瀏覽器原生的全選，ProseMirror 讀回來是從第一段文字頭到最後一段文字尾的文字選取：只有一段時
-    // 仍在那一段裡，所以後面多放一段 tail。原生全選要等 selectionchange 才讀進編輯器，複製前先等選取真的跨了 block。
+    // With the selection inside one block's text BlockNote copies only the inline content (built-in colors too); a block's background travels only when the selection spans into another block.
+    // Ctrl+A in this editor is the browser's native select-all, which ProseMirror reads back as a text selection from the first paragraph's start to the last paragraph's end: with a single paragraph
+    // it stays inside that paragraph, hence a trailing paragraph `tail`. The native select-all reaches the editor only on selectionchange, so before copying wait until the selection really spans blocks.
     await clickEndOfParagraph(page, paragraph(page, "copy me"));
     await page.keyboard.press("ControlOrMeta+a");
     await expect
@@ -1055,7 +1004,6 @@ test("C13 帶自訂行內色與 block 底色的段落複製貼上到另一份筆
     await page.keyboard.press("ControlOrMeta+v");
     await expect.poll(probe, { timeout: 15_000 }).toEqual(expected);
 
-    // 重新整理：貼上的色碼存進了這份筆記，規則在新頁面也產生得出來
     await page.reload();
     await expect(page.getByLabel("Note title")).toHaveValue(targetTitle, { timeout: 15_000 });
     await expect.poll(probe, { timeout: 15_000 }).toEqual(expected);
@@ -1064,12 +1012,8 @@ test("C13 帶自訂行內色與 block 底色的段落複製貼上到另一份筆
   }
 });
 
-// ── 表格 ───────────────────────────────────────────────────────────────────
-
-/** 2×2 表格：第一列 a1、b1，第二列 a2、b2。 */
 const TABLE_HTML = "<table><tr><td>a1</td><td>b1</td></tr><tr><td>a2</td><td>b2</td></tr></table>";
 
-/** 新筆記貼上 2×2 表格。 */
 async function startTableNote(browser: Browser, name: string): Promise<{ context: BrowserContext; page: Page; title: string }> {
   const started = await startColorNote(browser, name, []);
   await pasteHtml(started.page, TABLE_HTML);
@@ -1079,12 +1023,10 @@ async function startTableNote(browser: Browser, name: string): Promise<{ context
   return started;
 }
 
-/** 文字剛好是 `text` 的那一格。 */
 function tableCell(page: Page, text: string): Locator {
   return editorLocator(page).locator("td").filter({ hasText: new RegExp(`^${reEscape(text)}$`) }).first();
 }
 
-/** 每一列各格的文字（扣掉遠端游標的 widget）。 */
 function tableTexts(page: Page): Promise<string[][]> {
   return editorLocator(page)
     .locator("tr")
@@ -1100,7 +1042,7 @@ function tableTexts(page: Page): Promise<string[][]> {
 }
 
 const cellHandle = (page: Page) => page.locator("button.bn-table-cell-handle");
-// 列把手與欄把手是同一個元件，欄把手以 transform 轉 90 度
+// The row handle and column handle are the same component; the column handle is rotated 90 degrees with a transform.
 const rowHandle = (page: Page) => page.locator('.bn-table-handle:not([style*="rotate"])');
 const columnHandle = (page: Page) => page.locator('.bn-table-handle[style*="rotate"]');
 
@@ -1109,8 +1051,8 @@ const overlapsX = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width
 const overlapsY = (a: Box, b: Box) => a.y < b.y + b.height && b.y < a.y + a.height;
 
 /**
- * 滑鼠移到 `text` 那一格，等儲存格把手、列把手、欄把手各剛好一個，且都對齊那一格。
- * boundingBox 在對到多個元素時會丟例外（重試到只剩一個）：把手浮層淡出時的複本也會被重試掉。
+ * Moves the mouse onto the cell `text` and waits until there is one cell handle, one row handle and one column handle, all aligned with that cell.
+ * boundingBox throws when it matches several elements (retry until one is left): the copy of a handle overlay that is fading out is retried away too.
  */
 async function hoverCell(page: Page, text: string): Promise<Locator> {
   const cell = tableCell(page, text);
@@ -1128,7 +1070,7 @@ async function hoverCell(page: Page, text: string): Promise<Locator> {
   return cell;
 }
 
-/** 以真滑鼠點把手開根選單，回傳這個把手自己的 dropdown（觸發鈕的 `aria-controls` 指向它）。 */
+/** Opens the root menu by clicking a handle with the real mouse, and returns that handle's own dropdown (the trigger's `aria-controls` points to it). */
 async function openTableMenu(page: Page, trigger: Locator): Promise<Locator> {
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -1139,7 +1081,6 @@ async function openTableMenu(page: Page, trigger: Locator): Promise<Locator> {
   return menu;
 }
 
-/** 表格選單 → hover「Colors」開子選單 → 點該段的「Custom…」，回傳面板。 */
 async function openTablePanel(menu: Locator, section: "text" | "background"): Promise<Locator> {
   await menu.getByRole("menuitem", { name: "Colors", exact: true }).hover();
   const custom = menu.locator(`[data-test="${section}-color-custom"]`);
@@ -1154,13 +1095,13 @@ async function openTablePanel(menu: Locator, section: "text" | "background"): Pr
 const panelHex = (panel: Locator) => panel.getByRole("textbox", { name: "Hex color" });
 const panelApply = (panel: Locator) => panel.getByRole("button", { name: "Apply", exact: true });
 
-test("C4a 儲存格把手：Colors → Background → Custom… 套 #ff6600，只有那一格上底色，重新整理後仍在", async ({ browser }) => {
+test("C4a cell handle: Colors -> Background -> Custom... applies #ff6600; only that cell gets the background and it survives reload", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page, title } = await startTableNote(browser, "cell bg");
   try {
     await hoverCell(page, "b1");
     const menu = await openTableMenu(page, cellHandle(page));
-    // 儲存格選單只有 Colors 一項（拆格沒開）
+    // The cell menu has only Colors (split cells is not enabled).
     await expect(menu.getByRole("menuitem")).toHaveText(["Colors"]);
     const panel = await openTablePanel(menu, "background");
     await panelHex(panel).fill(CUSTOM);
@@ -1182,7 +1123,7 @@ test("C4a 儲存格把手：Colors → Background → Custom… 套 #ff6600，�
   }
 });
 
-test("C4b 列把手：Colors → Text → Custom… 套 #0000ff，整列每一格都換字色，另一列不變", async ({ browser }) => {
+test("C4b row handle: Colors -> Text -> Custom... applies #0000ff; every cell of the row changes text color and the other row is unchanged", async ({ browser }) => {
   test.setTimeout(120_000);
   const blue = "#0000ff";
   const { context, page } = await startTableNote(browser, "row text");
@@ -1210,18 +1151,18 @@ test("C4b 列把手：Colors → Text → Custom… 套 #0000ff，整列每一�
   }
 });
 
-test("C4c 列／欄把手選單：項目恰為刪除、兩個新增、Colors；新增一列、刪除一欄照常；畫面上只有一組把手", async ({ browser }) => {
+test("C4c row/column handle menu: items are exactly delete, two inserts and Colors; inserting a row and deleting a column work; only one set of handles on screen", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await startTableNote(browser, "row col");
   try {
     await hoverCell(page, "a1");
-    // 只有一組把手：內建的表格把手若沒關掉，會再疊一組
+    // Only one set of handles: if the built-in table handles were not turned off, another set would be stacked on top.
     await expect(cellHandle(page)).toHaveCount(1);
     await expect(page.locator(".bn-table-handle")).toHaveCount(2);
     await expect(rowHandle(page)).toHaveCount(1);
     await expect(columnHandle(page)).toHaveCount(1);
 
-    // 關掉列選單後馬上開儲存格選單：列把手浮層淡出期間 DOM 裡還有一份列選單的複本，經 aria-controls 只查到儲存格選單
+    // Open the cell menu right after closing the row menu: while the row handle overlay fades out the DOM still holds a copy of the row menu, and aria-controls finds only the cell menu.
     const peek = await openTableMenu(page, rowHandle(page));
     await expect(peek.getByRole("menuitem")).toHaveText(["Delete row", "Add row above", "Add row below", "Colors"]);
     await page.keyboard.press("Escape");
@@ -1232,21 +1173,18 @@ test("C4c 列／欄把手選單：項目恰為刪除、兩個新增、Colors；�
     await page.keyboard.press("Escape");
     await expect(cellHandle(page)).toHaveAttribute("aria-expanded", "false");
 
-    // 新增一列（在第一列下方）
     await hoverCell(page, "a1");
     const rowMenu = await openTableMenu(page, rowHandle(page));
     await expect(rowMenu.getByRole("menuitem")).toHaveText(["Delete row", "Add row above", "Add row below", "Colors"]);
     await rowMenu.getByRole("menuitem", { name: "Add row below", exact: true }).click();
     await expect.poll(() => tableTexts(page)).toEqual([["a1", "b1"], ["", ""], ["a2", "b2"]]);
 
-    // 刪除第二欄
     await hoverCell(page, "b2");
     const columnMenu = await openTableMenu(page, columnHandle(page));
     await expect(columnMenu.getByRole("menuitem")).toHaveText(["Delete column", "Add column left", "Add column right", "Colors"]);
     await columnMenu.getByRole("menuitem", { name: "Delete column", exact: true }).click();
     await expect.poll(() => tableTexts(page)).toEqual([["a1"], [""], ["a2"]]);
 
-    // 改完表格，把手仍只有一組
     await hoverCell(page, "a2");
     await expect(cellHandle(page)).toHaveCount(1);
     await expect(page.locator(".bn-table-handle")).toHaveCount(2);
@@ -1255,13 +1193,12 @@ test("C4c 列／欄把手選單：項目恰為刪除、兩個新增、Colors；�
   }
 });
 
-test("C4d 儲存格把手的面板開著時，另一個分頁刪掉整張表：面板跟著表格消失、什麼都沒寫入，頁面不丟例外", async ({ browser }) => {
+test("C4d with the cell handle's panel open, another tab deletes the whole table: the panel disappears with the table, nothing is written and the page throws no exception", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page: pageA, title } = await startTableNote(browser, "cell remote delete");
   const errors: string[] = [];
   pageA.on("pageerror", (error) => errors.push(error.message));
   try {
-    // 同一個 context 共用 cookie，不必再登入。等 B 載入完成、連上共編、看到表格。
     const pageB = await context.newPage();
     pageB.on("pageerror", (error) => errors.push(`B: ${error.message}`));
     await pageB.goto(pageA.url());
@@ -1270,14 +1207,12 @@ test("C4d 儲存格把手的面板開著時，另一個分頁刪掉整張表：�
     const editorB = editorLocator(pageB);
     await expect(editorB.locator("td")).toHaveCount(4, { timeout: 10_000 });
 
-    // A：儲存格把手開到自訂面板，打好色碼但還沒套用
     await hoverCell(pageA, "b1");
     const menu = await openTableMenu(pageA, cellHandle(pageA));
     const panel = await openTablePanel(menu, "background");
     await panelHex(panel).fill(CUSTOM);
     await expect(panelApply(panel)).toBeEnabled();
 
-    // B：表格的拖曳把手選單 → Delete，整張表從文件裡拿掉
     const tableB = editorB.locator(".bn-block-content", { has: pageB.locator("table") }).first();
     await editorB.locator("td", { hasText: "a2" }).first().hover();
     const handle = pageB.getByRole("button", { name: "Open block menu" });
@@ -1293,10 +1228,9 @@ test("C4d 儲存格把手的面板開著時，另一個分頁刪掉整張表：�
     await blockMenu.getByRole("menuitem", { name: "Delete", exact: true }).click();
     await expect(editorB.locator("table")).toHaveCount(0);
 
-    // A：表格消失，把手與面板跟著卸載
     await expect(editorLocator(pageA).locator("table")).toHaveCount(0, { timeout: 10_000 });
     await expect(pageA.locator(".kb-color-panel")).toHaveCount(0, { timeout: 10_000 });
-    // 什麼都沒寫入：每隔 200 ms 讀一次、讀滿三次，每次兩頁都沒有表格、也沒有這個底色
+    // Nothing was written: read every 200 ms, three times; each time neither page has a table or this background.
     const reads: number[][] = [];
     await expect
       .poll(
@@ -1313,7 +1247,7 @@ test("C4d 儲存格把手的面板開著時，另一個分頁刪掉整張表：�
   }
 });
 
-test("C11a 儲存格把手的面板：在飽和度方塊按下、拖到面板外 150 px 停住再放開，面板仍在、值已變、Apply 生效", async ({ browser }) => {
+test("C11a cell handle panel: pressing on the saturation square, dragging 160 px outside the panel, pausing and releasing keeps the panel open, the value changed and Apply takes effect", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await startTableNote(browser, "cell drag outside");
   try {
@@ -1323,16 +1257,15 @@ test("C11a 儲存格把手的面板：在飽和度方塊按下、拖到面板外
     const sat = (await panel.locator(".react-colorful__saturation").boundingBox())!;
     const box = (await panel.boundingBox())!;
     const y = sat.y + sat.height * 0.5;
-    // 往右拖出面板 160 px；右邊放不下就往左
     const outsideX = box.x + box.width + 160 < WIDE.width - 10 ? box.x + box.width + 160 : box.x - 160;
     await page.mouse.move(sat.x + sat.width * 0.6, sat.y + sat.height * 0.4);
     await page.mouse.down();
     await page.mouse.move(sat.x + sat.width * 0.3, y, { steps: 5 });
     await expect.poll(() => panelHex(panel).inputValue()).toMatch(/^#[0-9a-f]{6}$/);
-    // 面板內拖到的值；拖出面板後指標仍被追蹤，飽和度貼到邊（0% 或 100%），值要再變
+    // The value reached inside the panel; after leaving the panel the pointer is still tracked and the saturation sticks to the edge (0% or 100%), so the value must change again.
     const inside = await panelHex(panel).inputValue();
     await page.mouse.move(outsideX, y, { steps: 10 });
-    // 停得比子選單的關閉延遲久：面板若放在 hover 開關的子選單裡，這段時間就會被關掉
+    // Pause longer than the submenu's close delay: if the panel lived in a hover-opened submenu it would be closed during this time.
     await page.waitForTimeout(500);
     await page.mouse.up();
 
@@ -1349,7 +1282,7 @@ test("C11a 儲存格把手的面板：在飽和度方塊按下、拖到面板外
   }
 });
 
-test("C11b 儲存格把手的面板：打色碼到一半把滑鼠移到編輯器另一端停住，再打完按 Enter，套上完整色碼", async ({ browser }) => {
+test("C11b cell handle panel: moving the mouse to the other end of the editor and pausing while halfway through typing a code, then finishing and pressing Enter, applies the full code", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await startTableNote(browser, "cell type move");
   try {

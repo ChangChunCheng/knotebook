@@ -2,23 +2,15 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 側欄與版本面板的三段版面（真瀏覽器量測）：
- * - 視窗 ≥ 1280：側欄固定在左側，版本面板是筆記右側的第三欄（`position: relative`）。
- * - 視窗 640–1279：沒有固定側欄，頁首側欄鈕（Open sidebar）開抽屜；版本面板浮在筆記上（`position: absolute`），
- *   上緣在頁首下緣，頁首的分享與 ⋮ 不被蓋；抽屜寬度吃 sidebar.width，至少讓出 4rem。
- * - 視窗 < 640：版本歷史由 ⋮ 開整頁。
- * 邊界（1279／1280、639／640）兩側各量一格；浮動面板的收起規則：只開清單時點筆記收起、差異檢視中點筆記不收、面板內 Esc 收起。
- * 頁首與寬度的細部量測在 52-header-policy。
+ * The three layout tiers of the sidebar and version panel (real-browser measurement):
+ * - Viewport >= 1280: the sidebar is fixed on the left and the version panel is the third column to the right of the note (`position: relative`).
+ * - Viewport 640-1279: no fixed sidebar; the header's sidebar button (Open sidebar) opens a drawer; the version panel floats over the note (`position: absolute`), its top edge at the header's bottom edge,
+ *   and the header's share and kebab are not covered; the drawer width follows sidebar.width, leaving at least 4rem.
+ * - Viewport < 640: version history opens as a full page from the kebab.
+ * One measurement on each side of the boundaries (1279/1280, 639/640); the floating panel's collapse rules: with only the list open, clicking the note collapses it; clicking the note during a diff view does not; Esc inside the panel collapses it.
+ * Finer header and width measurements are in 52-header-policy.
  *
- * - L1 768 與 1024：沒有固定側欄；抽屜的開關（遮罩、Esc、選筆記）與焦點回側欄鈕。
- * - L2 抽屜寬度吃 sidebar.width：768 與 640（抽屜最窄的一格）都是 400（視窗寬減 4rem 的上限在 640 起不會碰到，只是保險）。
- * - L3 768 與 1024 的版本面板：在頁首下方；只開清單時點筆記收起；差異檢視中點筆記不收；面板內 Esc 收起。
- * - L4 1279 浮動、1280 固定：側欄與面板的形態各量一格。
- * - L5 640：由歷史泡泡開浮動面板（⋮ 沒有 Version history）；639 改由 ⋮ 開整頁。
- * - L6 1024 開著面板拉到 1400：面板還在、清單捲動位置不變。
- * - L7 預覽時右側讓出面板寬度：1024 預覽區、1270 並排右欄都不被蓋住。
- * - L8 面板載入失敗的錯誤外框：重試鈕沒有被擋住。
- * - L9 面板開著時 Ctrl+K 開抽屜，點遮罩只關抽屜。
+ * Cases are numbered L1-L9 in their titles. L2: the drawer width follows sidebar.width, 400 at both 768 and 640 (the viewport-width-minus-4rem cap is not reached from 640 up, it is only a safeguard).
  */
 
 const RUN = Date.now();
@@ -28,7 +20,7 @@ const headerOf = (page: Page): Locator => page.locator("header").filter({ has: p
 const panelOf = (page: Page): Locator => page.getByTestId("versions-panel");
 const drawerOf = (page: Page): Locator => page.getByRole("dialog", { name: "Navigation" });
 const openSidebar = (page: Page): Locator => page.getByRole("button", { name: "Open sidebar" });
-/** 固定側欄：含「New note」鈕的 complementary（版本面板也是 aside，不能只數 complementary）。 */
+/** Fixed sidebar: the complementary containing the "New note" button (the version panel is also an aside, so counting complementary alone is not enough). */
 const dockedSidebarOf = (page: Page): Locator => page.getByRole("complementary").filter({ has: page.getByRole("button", { name: "New note", exact: true }) });
 
 async function setViewport(page: Page, width: number, height = 900): Promise<void> {
@@ -58,7 +50,7 @@ async function saveVersion(page: Page, name: string): Promise<void> {
   await expect(dialog).not.toBeVisible();
 }
 
-/** 點筆記內文（點文字本身：編輯器左上角常被區塊的拖曳把手蓋住）。 */
+/** Clicks the note body (the text itself: the editor's top-left is often covered by a block's drag handle). */
 const clickNoteText = (page: Page): Promise<void> => editorLocator(page).getByText("paragraph 2", { exact: true }).click();
 
 const positionOf = (el: Locator): Promise<string> => el.evaluate((node) => getComputedStyle(node).position);
@@ -70,7 +62,7 @@ async function openPanel(page: Page): Promise<Locator> {
   return panel;
 }
 
-/** 浮動面板開著時：上緣落在頁首下緣（框線重疊 1 px 以內），頁首的分享與 ⋮ 右緣不被面板蓋住。 */
+/** With the floating panel open: its top edge sits at the header's bottom edge (frame lines overlap within 1 px) and the right edges of the header's share and kebab are not covered by the panel. */
 async function expectPanelBelowHeader(page: Page, tag: string): Promise<void> {
   const header = headerOf(page);
   const headerBox = (await header.boundingBox())!;
@@ -100,13 +92,13 @@ test.beforeAll(async ({ browser }) => {
   title = `E2E tiers ${RUN}`;
   await createNote(page, title);
   noteUrl = page.url();
-  // 十幾個版本：清單夠長才捲得動（捲動位置在跨 1280 時要保留）
+  // A dozen versions: the list must be long enough to scroll (the scroll position must be kept across 1280).
   for (let i = 1; i <= 14; i += 1) {
     await typeAtEnd(page, `paragraph ${i}`);
     await saveVersion(page, `v-${String(i).padStart(2, "0")}`);
   }
   await typeAtEnd(page, "unsaved tail");
-  // 「Saved as …」的 toast 開著時，Esc 先關 toast；等它自己消失，後面的 Esc 才會落在抽屜與面板上。
+  // While the "Saved as ..." toast is open, Esc closes the toast first; wait for it to go away so later Esc presses land on the drawer and panel.
   await expect(page.getByText(/^Saved as /)).toHaveCount(0, { timeout: 20_000 });
 });
 
@@ -119,7 +111,7 @@ test.beforeEach(async () => {
   await setViewport(page, 1440);
 });
 
-test("L1 768 與 1024：沒有固定側欄；側欄鈕開抽屜，點遮罩、Esc、選筆記都收，焦點回側欄鈕", async () => {
+test("L1 768 and 1024: no fixed sidebar; the sidebar button opens the drawer, and clicking the backdrop, Esc and choosing a note all close it with focus back on the sidebar button", async () => {
   test.setTimeout(120_000);
   for (const vw of [768, 1024]) {
     await setViewport(page, vw);
@@ -135,7 +127,7 @@ test("L1 768 與 1024：沒有固定側欄；側欄鈕開抽屜，點遮罩、Es
 
     await opener.click();
     await expect(drawerOf(page)).toBeVisible();
-    await page.mouse.click(vw - 10, 450); // 抽屜右側露出的遮罩
+    await page.mouse.click(vw - 10, 450); // the backdrop showing to the right of the drawer
     await expect(drawerOf(page)).toBeHidden();
     await expect(opener, `${vw}：點遮罩關閉後焦點回側欄鈕`).toBeFocused();
 
@@ -148,7 +140,7 @@ test("L1 768 與 1024：沒有固定側欄；側欄鈕開抽屜，點遮罩、Es
   }
 });
 
-test("L2 抽屜寬度吃 sidebar.width：768 與 640（抽屜最窄的一格）都是 400", async () => {
+test("L2 drawer width follows sidebar.width: 768 and 640 (the narrowest drawer) are both 400", async () => {
   test.setTimeout(90_000);
   await page.evaluate((k) => window.localStorage.setItem(k, "400"), SIDEBAR_KEY);
   await page.reload();
@@ -166,31 +158,28 @@ test("L2 抽屜寬度吃 sidebar.width：768 與 640（抽屜最窄的一格）�
   expect(Math.abs(narrow.width - 400), `640 寬的抽屜寬 ${narrow.width}`).toBeLessThanOrEqual(1);
   await page.keyboard.press("Escape");
   await expect(drawerOf(page)).toBeHidden();
-  // 還原：記憶體裡的側欄寬度只有重整才會跟著 localStorage 回預設，後面的案子不該帶著 400 跑。
+  // Restore: the in-memory sidebar width only returns to the localStorage default after a reload, so later cases must not run with 400.
   await page.evaluate((k) => window.localStorage.removeItem(k), SIDEBAR_KEY);
   await page.reload();
   await waitForNoteTitle(page, title);
 });
 
-test("L3 768 與 1024 開版本面板：面板在頁首下方；只開清單時點筆記收起；差異檢視中點筆記不收；面板內 Esc 收起", async () => {
+test("L3 version panel at 768 and 1024: below the header; with only the list open clicking the note collapses it; clicking the note during a diff view does not; Esc inside the panel collapses it", async () => {
   test.setTimeout(120_000);
   for (const vw of [768, 1024]) {
     await setViewport(page, vw);
     const panel = await openPanel(page);
     await expectPanelBelowHeader(page, `L3 ${vw}`);
 
-    // 只開清單：點筆記內文 → 收起
     await clickNoteText(page);
     await expect(panel, `${vw}：只開清單時點筆記要收起`).toBeHidden();
 
-    // 差異檢視中：點筆記內文不收
     await openPanel(page);
     await panel.getByRole("button", { name: /^v-03 \(/ }).click();
     await expect(page.getByTestId("preview-banner")).toBeVisible();
     await page.getByTestId("preview-slot").getByText("paragraph 2").first().click();
     await expect(panel, `${vw}：差異檢視中點筆記不收`).toBeVisible();
 
-    // 面板內 Esc：連預覽一起收起，焦點回歷史泡泡
     await panel.getByRole("button", { name: /^v-03 \(/ }).focus();
     await page.keyboard.press("Escape");
     await expect(panel).toBeHidden();
@@ -199,7 +188,7 @@ test("L3 768 與 1024 開版本面板：面板在頁首下方；只開清單時�
   }
 });
 
-test("L4 1279 浮動、1280 固定：側欄與版本面板的形態各量一格", async () => {
+test("L4 1279 floating, 1280 fixed: one measurement of the sidebar's and version panel's form on each side", async () => {
   test.setTimeout(90_000);
   await setViewport(page, 1279);
   await expect(dockedSidebarOf(page)).toHaveCount(0);
@@ -214,7 +203,6 @@ test("L4 1279 浮動、1280 固定：側欄與版本面板的形態各量一格"
   await expect(openSidebar(page)).toBeHidden();
   const docked = await openPanel(page);
   expect(await positionOf(docked), "1280：面板是第三欄").toBe("relative");
-  // 並排：頁首不被切
   const headerBox = (await headerOf(page).boundingBox())!;
   for (const name of ["Share", "More"]) {
     const box = (await headerOf(page).getByRole("button", { name, exact: true }).boundingBox())!;
@@ -223,7 +211,7 @@ test("L4 1279 浮動、1280 固定：側欄與版本面板的形態各量一格"
   await page.getByRole("button", { name: "Close version history", exact: true }).click();
 });
 
-test("L5 640 由歷史泡泡開浮動面板（⋮ 沒有 Version history）；639 改由 ⋮ 開整頁", async () => {
+test("L5 640: the history bubble opens the floating panel (the kebab has no Version history); 639 opens a full page from the kebab", async () => {
   test.setTimeout(90_000);
   await setViewport(page, 640);
   await page.getByRole("button", { name: "More", exact: true }).click();
@@ -235,7 +223,6 @@ test("L5 640 由歷史泡泡開浮動面板（⋮ 沒有 Version history）；63
   expect(await positionOf(floating)).toBe("absolute");
   await expectPanelBelowHeader(page, "L5 640");
 
-  // 跨 640：面板與預覽都關，改走 ⋮
   await setViewport(page, 639, 800);
   await expect(page.getByTestId("versions-panel")).toHaveCount(0);
   await expect(page.getByTestId("versions-bubble")).toHaveCount(0);
@@ -250,13 +237,13 @@ test("L5 640 由歷史泡泡開浮動面板（⋮ 沒有 Version history）；63
   await expect(sheet).toBeHidden();
 });
 
-test("L6 1024 開著面板拉到 1400：面板還在、清單捲動位置不變", async () => {
+test("L6 1024 with the panel open widened to 1400: the panel stays and the list's scroll position is unchanged", async () => {
   test.setTimeout(90_000);
   await setViewport(page, 1024, 600);
   const panel = await openPanel(page);
   const list = panel.locator("ul").first();
   await list.evaluate((el) => {
-    el.scrollTop = 150; // 低於兩段版面各自的最大捲動量，才不會被夾住而誤判成位置變了
+    el.scrollTop = 150; // below the maximum scroll of both layouts, so it isn't clamped and mistaken for a position change
   });
   const before = await list.evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
   expect(before.max, "清單要夠長才捲得動").toBeGreaterThan(200);
@@ -269,7 +256,7 @@ test("L6 1024 開著面板拉到 1400：面板還在、清單捲動位置不變"
   await page.getByRole("button", { name: "Close version history", exact: true }).click();
 });
 
-test("L7 預覽時右側讓出面板寬度：1024 預覽區右緣不超過面板；1270 夠寬並排，右欄也不被蓋住", async () => {
+test("L7 during preview space on the right is left for the panel width: the 1024 preview area's right edge doesn't pass the panel; at 1270 it is wide enough for side by side and the right column isn't covered either", async () => {
   test.setTimeout(90_000);
   for (const vw of [1024, 1270]) {
     await setViewport(page, vw, 900);
@@ -290,14 +277,14 @@ test("L7 預覽時右側讓出面板寬度：1024 預覽區右緣不超過面板
   }
 });
 
-test("L8 面板載入失敗的錯誤外框：重試鈕沒有被擋住，可以按", async () => {
+test("L8 the error frame when the panel fails to load: the retry button isn't blocked and can be pressed", async () => {
   test.setTimeout(90_000);
   await setViewport(page, 1024, 900);
   await page.route(/\/assets\/VersionsLazy-[^/]*\.js/, (route) => route.abort());
   try {
     await page.reload();
     await waitForNoteTitle(page, title);
-    // 第一次載入失敗會自動重整一次（sessionStorage 旗標防迴圈，重整後面板是關的）；擋著不放，重新開第二次才停在「Try again」。
+    // The first failed load triggers one automatic reload (a sessionStorage flag prevents a loop, and after the reload the panel is closed); hold the request so the second open stops at "Try again".
     const retry = page.getByRole("button", { name: "Try again" });
     await expect(async () => {
       await waitForNoteTitle(page, title);
@@ -313,7 +300,7 @@ test("L8 面板載入失敗的錯誤外框：重試鈕沒有被擋住，可以�
   await waitForNoteTitle(page, title);
 });
 
-test("L9 面板開著時 Ctrl+K 開抽屜，點遮罩只關抽屜，面板留在原位", async () => {
+test("L9 with the panel open, Ctrl+K opens the drawer and clicking the backdrop closes only the drawer, leaving the panel in place", async () => {
   test.setTimeout(90_000);
   await setViewport(page, 1024, 900);
   const panel = await openPanel(page);

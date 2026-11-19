@@ -2,17 +2,14 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { ADMIN, createUserViaInvite, loginAs, openListOnCompact, randomEmail } from "./helpers.js";
 
 /**
- * #93：側欄搜尋的合併結果列表（真瀏覽器；標題命中與內文命中一個列表，**每處內文命中各一項**、三行：標題／資料夾路徑／片段）。
- * 點該項 → 開筆記、捲到該段落範圍內**第一個含查詢字的 block**、捲到畫面**中間**並高亮（閃的是那個 block，不是段落標題）。E1 寬螢幕從首頁 Ctrl+K 搜、點片段；
- * E1b 巢狀標題（片段的段落標題是 `#` Top，但閃的是 `##` Sub 底下含字的那一行）；E2 同篇只捲動、不重載、上一頁回得去；E3／E4 窄螢幕抽屜
- * （別篇／同篇）點片段都關抽屜；E5 版面（共用捲動容器）與「載入更多」；E6 別篇、命中在長段落深處；E9 一篇多處命中列多項、點第 2 項跳到第 2 處
- * 並落在視窗中段；E10 block 比視窗高時對準它自己那一行；E11 常駐標記（恆亮、Esc 與清空搜尋字取消）。
+ * #93: the sidebar search's merged result list in a real browser (title hits and body hits in one list, one item per body hit, three lines each: title / folder path / snippet). Clicking an item opens the note, scrolls to the first block containing the query inside that section's range, centers it and highlights it (the block flashes, not the section heading).
  *
- * - e2e package 不 import `@knotebook/shared`，網址自組（同 27-site-links 檔頭）。
- * - 每個 test 用自己的新使用者：search 桶每人每分 60 次，與 UI 共用；ADMIN 只發邀請。
- * - 筆記一律以 `POST /api/notes` 帶 markdown 建（帶內容才扣 edit 桶 30／分）；索引有延遲，先輪詢 `GET /api/search` 等到命中再打字。
- * - 整頁載入筆記頁後先等「Note title」標題框再碰側欄（lazy NotePage 的 fallback 自帶一份 AppShell，會換殼）；點擊導覽後 `waitForURL`
- *   之後再等新頁專屬的狀態（標題框的值、高亮浮層），不只等網址。
+ * - The e2e package does not import `@knotebook/shared`, so URLs are built by hand (same as the header of `27-site-links.spec.ts`).
+ * - Each test uses its own new user: the search limiter allows 60 per minute per user and is shared with the UI; ADMIN only issues invites.
+ * - Notes are created with `POST /api/notes` carrying markdown (only requests with content count against the edit limiter, 30 per minute); indexing lags, so poll
+ *   `GET /api/search` until it hits before typing.
+ * - After a full page load of a note page, wait for the "Note title" box before touching the sidebar (the lazy NotePage's fallback carries its own AppShell and swaps
+ *   shells); after a click navigation, `waitForURL` and then wait for state specific to the new page (title box value, highlight overlay), not just the URL.
  */
 
 const PASSWORD = "e2e-fulltext-pw";
@@ -36,7 +33,6 @@ async function createNoteViaApi(page: Page, title: string, content?: string): Pr
 }
 const pathOf = (n: Created) => `/n/${n.ownerHandle}/${n.slug}`;
 
-/** 等索引追上：`match=body` 的結果裡這篇有命中、回它第一個 match 的段落。 */
 async function waitIndexed(page: Page, q: string, noteId: string): Promise<{ sectionId: string; heading: string }> {
   let found: { sectionId: string; heading: string } | null = null;
   await expect
@@ -54,7 +50,7 @@ async function waitIndexed(page: Page, q: string, noteId: string): Promise<{ sec
   return found!;
 }
 
-/** 段落錨點的高亮浮層（抄 27-site-links 的 expectAnchorFlash 主幹）：出現、蓋在該區塊上、在可編輯 DOM 之外。 */
+/** Highlight overlay for a section anchor (the main part of `expectAnchorFlash` in `27-site-links.spec.ts`): appears, covers the block, sits outside the editable DOM. */
 async function expectAnchorFlash(page: Page, blockId: string): Promise<void> {
   const overlay = page.locator(`.kn-anchor-flash[data-anchor-flash="${blockId}"]`);
   await expect(overlay).toBeAttached({ timeout: 15_000 });
@@ -70,8 +66,8 @@ async function expectAnchorFlash(page: Page, blockId: string): Promise<void> {
 
 const block = (page: Page, id: string) => page.locator(`.bn-block-outer[data-id="${id}"]`);
 /**
- * 搜尋跳轉捲到畫面中間：判定＝block 中心點落在視窗高度的 25%–75%。命中處下方要有足夠內容才捲得到中間（測試資料各自保證）。
- * 用 poll：捲動後版面可能還在穩定。
+ * A search jump scrolls to mid-viewport: the block's center is within 25%-75% of the viewport height. There must be enough content below the hit to scroll that far (each test's data ensures it).
+ * Uses poll because layout may still be settling after the scroll.
  */
 async function expectBlockCentered(page: Page, id: string): Promise<void> {
   const ratio = () =>
@@ -86,7 +82,7 @@ async function expectBlockCentered(page: Page, id: string): Promise<void> {
     }, { timeout: 10_000, message: `block ${id} 的中心點應在視窗高度的 25%–75%` })
     .toBe(true);
 }
-/** 頁面上「自己的文字含 kw」的最內層 block 的 id（等它出現）。命中 block 的 id 由 DOM 讀，不靠 server（server 只記到段落）。 */
+/** Id of the innermost block on the page whose own text contains kw (waits for it to appear). The hit block's id is read from the DOM, not from the server (the server only records the section). */
 async function matchBlockId(page: Page, kw: string): Promise<string> {
   const handle = await page.waitForFunction(
     (k) => {
@@ -102,7 +98,6 @@ async function matchBlockId(page: Page, kw: string): Promise<string> {
 }
 const titleBox = (page: Page) => page.getByRole("textbox", { name: "Note title" });
 const bodyRegion = (scope: Page | Locator) => scope.getByRole("region", { name: "Search results" });
-/** 內文區裡某篇的第一個片段連結。 */
 function snippetOf(scope: Page | Locator, href: string): Locator {
   return bodyRegion(scope).locator(`a[href="${href}"]`);
 }
@@ -110,7 +105,7 @@ function filler(prefix: string, n: number): string {
   return Array.from({ length: n }, (_, i) => `${prefix} filler ${i + 1}`).join("\n\n");
 }
 
-test("E1＋E2：寬螢幕從首頁 Ctrl+K 搜 → 點片段捲到 Gamma 並高亮；同篇再點只捲動、不重載、上一頁回得去", async ({ page }) => {
+test("E1+E2: wide screen, Ctrl+K from home and clicking the snippet scrolls to Gamma and highlights it; clicking again in the same note only scrolls, no reload, and back works", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E1");
   const stamp = Date.now();
@@ -121,10 +116,9 @@ test("E1＋E2：寬螢幕從首頁 Ctrl+K 搜 → 點片段捲到 Gamma 並高�
   expect(hit.heading).toBe("Gamma");
   const gammaId = hit.sectionId;
 
-  // E1：首頁、Ctrl+K
   await page.goto("/");
   const search = page.getByRole("complementary").getByRole("textbox", { name: "Search notes" });
-  // Ctrl+K 的監聽掛在 AppShell；登入檢查的 Loading 結束、搜尋框可見後才按，否則按鍵沒人接。
+  // The Ctrl+K listener is on AppShell: press only after the login check's Loading is over and the search box is visible, otherwise nothing receives the key.
   await expect(search).toBeVisible();
   await page.keyboard.press("ControlOrMeta+k");
   await expect(search).toBeFocused();
@@ -142,7 +136,6 @@ test("E1＋E2：寬螢幕從首頁 Ctrl+K 搜 → 點片段捲到 Gamma 並高�
   await expect(block(page, hitId)).toBeInViewport();
   await expectBlockCentered(page, hitId);
 
-  // 同篇——先回到沒有 hash 的網址（頁首），再從側欄點同一個片段
   await page.goto(pathOf(a));
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
   await expect(block(page, hitId)).not.toBeInViewport();
@@ -163,7 +156,7 @@ test("E1＋E2：寬螢幕從首頁 Ctrl+K 搜 → 點片段捲到 Gamma 並高�
   expect(await page.evaluate(() => (window as unknown as { __kbMarker?: number }).__kbMarker)).toBe(1);
 });
 
-test("E1b 巢狀標題：# Top 底下都是 ##——片段的段落標題是 Top，但點了閃的是 ## Sub 底下含字的那一行", async ({ page }) => {
+test("E1b nested headings: under # Top everything is ## - the snippet's section heading is Top, but the flash is on the line under ## Sub that contains the text", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E1b");
   const stamp = Date.now();
@@ -179,7 +172,6 @@ test("E1b 巢狀標題：# Top 底下都是 ##——片段的段落標題是 Top
   await sidebar.getByRole("textbox", { name: "Search notes" }).fill(kx);
   const snippet = snippetOf(sidebar, `${pathOf(c)}#b-${topId}`);
   await expect(snippet).toBeVisible({ timeout: 15_000 });
-  // 每處命中一項、三行（標題／路徑／片段）；段落標題（Top）不顯示。
   await expect(snippet.locator(":scope > div")).toHaveCount(3);
   await expect(snippet.locator(":scope > div").nth(1)).toContainText("My notes");
   await expect(snippet.locator(":scope > div").nth(2)).toContainText(kx);
@@ -194,7 +186,7 @@ test("E1b 巢狀標題：# Top 底下都是 ##——片段的段落標題是 Top
   await expect(page.locator(`.kn-anchor-flash[data-anchor-flash="${topId}"]`)).toHaveCount(0);
 });
 
-test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面、捲到含字的 block", async ({ page }) => {
+test("E3+E4 phone list: clicking a snippet of another note or the same note returns to the note screen and scrolls to the block with the text", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await asNewUser(page, "E2E Fulltext E3");
@@ -206,7 +198,6 @@ test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面
   const gammaId = (await waitIndexed(page, kw, a.id)).sectionId;
   const href = `${pathOf(a)}#b-${gammaId}`;
 
-  // 手機：筆記畫面先回清單，在底部搜尋框打字（全螢幕搜尋層），結果的片段就在清單裡。
   async function searchInDrawer(): Promise<Locator> {
     const list = await openListOnCompact(page);
     const input = list.getByRole("textbox", { name: "Search notes" });
@@ -217,7 +208,6 @@ test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面
     return s;
   }
 
-  // E3：開著無關的 B，點 A 的片段
   await page.goto(pathOf(b));
   await expect(titleBox(page)).toHaveValue(b.title, { timeout: 15_000 });
   await (await searchInDrawer()).click();
@@ -229,7 +219,6 @@ test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面
   await expect(block(page, hitId)).toBeInViewport({ timeout: 15_000 });
   await expectAnchorFlash(page, hitId);
 
-  // 在 A 頁面，回清單搜尋，點 A 自己的片段——回到同一篇，清單藏起來
   await page.goto(pathOf(a));
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
   await expect(block(page, hitId)).not.toBeInViewport();
@@ -239,7 +228,7 @@ test("E3＋E4 手機清單：別篇與同篇的片段點了都回到筆記畫面
   await expectAnchorFlash(page, hitId);
 });
 
-test("E5 版面與載入更多：22 篇標題命中在上；捲到底：22＋20 列＋載入更多 → 44 列、鈕消失；點最後一篇的片段導過去", async ({ page }) => {
+test("E5 layout and load more: 22 title hits first; scrolled to the bottom: 22 + 20 rows + load more -> 44 rows and the button disappears; clicking the last note's snippet navigates there", async ({ page }) => {
   test.setTimeout(180_000);
   await asNewUser(page, "E2E Fulltext E5");
   const stamp = Date.now();
@@ -257,17 +246,17 @@ test("E5 版面與載入更多：22 篇標題命中在上；捲到底：22＋20 
     )
     .toBe(22);
 
-  // 建完一定要重載：內文區與 ["notes"] 清單交叉比對，頁面若在建筆記前就載過清單，新筆記會被濾掉。
+  // Reload after creating: the content area is cross-checked against the ["notes"] list, so if the page loaded the list before the notes were created they would be filtered out.
   await page.goto("/");
   const sidebar = page.getByRole("complementary");
   await sidebar.getByRole("textbox", { name: "Search notes" }).fill(ky);
   const results = sidebar.getByTestId("sidebar-search");
   const region = bodyRegion(sidebar);
   const hits = region.getByTestId("search-hit");
-  // 合併列表：22 篇標題命中在前，加第一頁 20 篇只中內文的；項數是列出的（已載入）項數。
+  // Merged list: 22 title hits first, then the first page of 20 notes that only hit in the body; the count is of listed (loaded) items.
   await expect(results.getByRole("status")).toHaveText("42 results loaded, more available", { timeout: 15_000 });
   await expect(hits).toHaveCount(42, { timeout: 15_000 });
-  // 整個列表一個捲動容器：捲到底，「載入更多」看得到、按得到。
+  // One scroll container holds the whole list: scrolled to the bottom, Load more is in view.
   await region.evaluate((el) => el.closest(".overflow-y-auto")!.scrollTo({ top: 1e6 }));
   const more = region.getByRole("button", { name: "Load more" });
   await expect(more).toBeInViewport();
@@ -286,7 +275,7 @@ test("E5 版面與載入更多：22 篇標題命中在上；捲到底：22＋20 
   await expect(titleBox(page)).toHaveValue(lastNote!.title, { timeout: 15_000 });
 });
 
-test("E6 別篇、命中在長段落深處：點片段 → 含字的 block 進視窗並閃、段落標題不閃", async ({ page }) => {
+test("E6 other note, hit deep in a long section: clicking the snippet brings the block with the text into view and flashes it, the section heading does not flash", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E6");
   const stamp = Date.now();
@@ -297,7 +286,6 @@ test("E6 別篇、命中在長段落深處：點片段 → 含字的 block 進�
   const hit = await waitIndexed(page, kz, a.id);
   expect(hit.heading).toBe("Long");
 
-  // 別篇：開著 B，從側欄點 A 的片段（navigate＋state，不帶查詢字進網址）
   await page.goto(pathOf(b));
   await expect(titleBox(page)).toHaveValue(b.title, { timeout: 15_000 });
   const sidebar = page.getByRole("complementary");
@@ -316,14 +304,14 @@ test("E6 別篇、命中在長段落深處：點片段 → 含字的 block 進�
   await expectBlockCentered(page, hitId);
   await expect(page.locator(`.kn-anchor-flash[data-anchor-flash="${hit.sectionId}"]`)).toHaveCount(0);
 
-  // 重新整理：navigation state 留在 history entry 裡 → 與 `#b-` 一樣會再跳一次（known-limitations 的句子以此為準）
+  // Reload: navigation state stays in the history entry, so it jumps again like `#b-` does (known-limitations is written to match).
   await page.reload();
   await expect(titleBox(page)).toBeVisible({ timeout: 15_000 });
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
   await expectAnchorFlash(page, hitId);
 });
 
-test("E7 表格格子：命中回表格那顆 block 並閃（格子是 <td><p>，沒有 .bn-inline-content）", async ({ page }) => {
+test("E7 table cell: a hit returns the table's block and flashes it (a cell is <td><p>, without .bn-inline-content)", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E7");
   const stamp = Date.now();
@@ -357,7 +345,7 @@ ${filler("mid", 20)}
   await expect(block(page, tableId!)).toBeInViewport();
 });
 
-test("E8 命中在收合的 toggle 子項：閃的是 toggle 那顆（子項被藏起來），而且在視窗內", async ({ page }) => {
+test("E8 hit in a collapsed toggle child: the flash is on the toggle block (the child is hidden) and it is inside the viewport", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E8");
   const stamp = Date.now();
@@ -370,7 +358,6 @@ last paragraph
 `);
   await page.goto(pathOf(a));
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
-  // 在最後一段後面用 UI 打一個 toggle 加一個子項（"> " 輸入規則）
   await page.getByText("last paragraph").click();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
@@ -385,7 +372,6 @@ last paragraph
   await page.goto("/");
   await page.goto(pathOf(a));
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
-  // 父 toggle（輸入子項時它展開）：按它的箭頭收合，子項被藏起來。
   const parent = page.locator(".bn-block-outer:has(> .bn-block > .bn-block-content .bn-toggle-wrapper)").first();
   const toggleId = await parent.getAttribute("data-id");
   expect(toggleId).not.toBeNull();
@@ -404,12 +390,12 @@ last paragraph
   await expect(page.locator(".bn-block-outer", { hasText: `child ${kg}` }).last()).toBeHidden();
 });
 
-test("E9 一篇多處命中列多項：三處命中三項（各三行）；點第 2 項 → 跳到第 2 處命中的 block、落在視窗中段；一般 #b- 連結仍捲到最上面", async ({ page }) => {
+test("E9 several hits in one note give several items: three hits, three items (three lines each); clicking item 2 jumps to the second hit's block and lands mid-viewport; a plain #b- link still scrolls to the top", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E9");
   const stamp = Date.now();
   const km = `km${stamp}`;
-  // 三個段落各一處命中；每處上面、下面都有 ≥ 25 個段落，才捲得到畫面中間。
+  // One hit in each of three paragraphs; each has >= 25 paragraphs above and below so it can scroll to mid-viewport.
   const sec = (n: number) => `## Sec ${n}
 
 ${filler(`s${n}a`, 25)}
@@ -450,10 +436,9 @@ ${sec(3)}`;
     await expect(item.locator(":scope > div").nth(0)).toHaveText(a.title);
     await expect(item.locator(":scope > div").nth(1)).toContainText("My notes");
     await expect(item.locator(":scope > div").nth(2)).toContainText(`hit ${i + 1}`);
-    await expect(item).not.toContainText(`Sec ${i + 1}`); // 段落標題不顯示
+    await expect(item).not.toContainText(`Sec ${i + 1}`); // the section heading is not shown
   }
 
-  // 點第 2 項：跳到第 2 處命中的 block（不是第 1 處、也不是標題），並落在視窗中段
   await items.nth(1).click();
   await page.waitForURL((u) => u.pathname === pathOf(a) && u.hash === `#b-${sections[1]}`, { timeout: 15_000 });
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
@@ -463,8 +448,8 @@ ${sec(3)}`;
   await expect(block(page, secondId)).toContainText(`hit 2`);
   await expectBlockCentered(page, secondId);
 
-  // 對照：沒有 kbFind 的一般 #b- 連結（複製出去的段落連結）仍把標題捲到最上面（落在視窗上段，不在中間）
-  await page.goto("/"); // 先離開：同一頁只差 hash 的 goto 是同文件導覽，不會重新載入、也不會再捲
+  // Contrast: a plain #b- link without kbFind (a copied section link) still scrolls the heading to the top (upper part of the viewport, not the middle).
+  await page.goto("/"); // leave first: a goto that differs only by hash is a same-document navigation, which neither reloads nor scrolls again
   await page.goto(`${pathOf(a)}#b-${sections[1]}`);
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
   await expectAnchorFlash(page, sections[1]!);
@@ -473,7 +458,7 @@ ${sec(3)}`;
     .toBeLessThan(0.25);
 });
 
-test("E10 block 比視窗高（清單父項包著很多子項）：置中對準父項自己那一行，命中那一行在視窗內且在中段", async ({ page }) => {
+test("E10 block taller than the viewport (a list parent wrapping many children): centers on the parent's own line; the hit line is inside the viewport and mid-viewport", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E10");
   const stamp = Date.now();
@@ -500,10 +485,9 @@ ${filler("post", 25)}
   await expect(titleBox(page)).toHaveValue(a.title, { timeout: 15_000 });
   const parentId = await matchBlockId(page, kq);
   await expectAnchorFlash(page, parentId);
-  // 前提：整個父項 block（連子項）比視窗高，否則這案測不到東西
+  // Precondition: the whole parent block (with its children) is taller than the viewport, otherwise this test measures nothing.
   const outerHeight = await block(page, parentId).evaluate((el) => el.getBoundingClientRect().height);
   expect(outerHeight, "父項 block 要比視窗高").toBeGreaterThan(page.viewportSize()!.height);
-  // 命中的那一行（父項自己的 content）在視窗內、在中段
   const line = block(page, parentId).locator(":scope > .bn-block > .bn-block-content");
   await expect(line).toContainText(kq);
   await expect(line).toBeInViewport({ ratio: 1 });
@@ -517,7 +501,7 @@ ${filler("post", 25)}
     .toBe(true);
 });
 
-test("E11 常駐標記：閃兩下後恆亮（3 s 後還在）→ Esc 消失；再跳一次 → 清空搜尋字後消失", async ({ page }) => {
+test("E11 persistent marker: after two flashes it stays lit (still there after 3 s) -> Esc clears it; jumping again -> clearing the query clears it", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E11");
   const stamp = Date.now();
@@ -539,21 +523,20 @@ test("E11 常駐標記：閃兩下後恆亮（3 s 後還在）→ Esc 消失；�
   const mark = page.locator(`.kn-anchor-flash.kn-anchor-mark[data-anchor-flash="${hitId}"]`);
   await expect(mark).toBeAttached();
 
-  // 恆亮：等過閃爍時間（2 s）再多一秒，標記還在、還對在那個 block 上、底色是亮的（不是動畫結束後的透明）
+  // Stays lit: after the flash time (2 s) plus one more second the marker is still there, still on that block, and its background is lit (not the transparent end of an animation).
   await page.waitForTimeout(3_000);
   await expect(mark).toBeAttached();
   await expectAnchorFlash(page, hitId);
   expect(await mark.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
 
-  // 首頁進來的第一次跳轉換了殼（首頁 AppShell → 筆記頁 AppShell），搜尋字不重設（#369：query 住在 App 層）
+  // The first jump from home swaps shells (home AppShell -> note page AppShell); the query is not reset (#369: the query lives in the App layer).
   await expect(sidebar.getByRole("textbox", { name: "Search notes" })).toHaveValue(kk);
 
-  // 焦點在編輯器裡按 Esc（真的 BlockNote：OverrideEscape 先 blur、再 preventDefault）：一下就消失，不用按兩次（#369）
+  // Esc with focus in the editor (real BlockNote: OverrideEscape blurs first, then preventDefault): it clears in one press, not two (#369).
   await page.locator(".bn-editor").first().click();
   await page.keyboard.press("Escape");
   await expect(mark).toHaveCount(0);
 
-  // 再跳一次（搜尋結果還開著、搜尋字還在）→ 清空搜尋字後消失
   await expect(snippet).toBeVisible({ timeout: 15_000 });
   await snippet.click();
   await expect(mark).toBeAttached({ timeout: 15_000 });
@@ -565,7 +548,7 @@ test("E11 常駐標記：閃兩下後恆亮（3 s 後還在）→ Esc 消失；�
 
 
 for (const motion of ["no-preference", "reduce"] as const) {
-  test(`E11b 標記明顯閃兩下（prefers-reduced-motion: ${motion}）：動畫期間取樣底色，至少兩次「淡→亮」，最後停在亮、且與恆亮同一個強度`, async ({ page }) => {
+  test(`E11b marker flashes visibly twice (prefers-reduced-motion: ${motion}): sampling the background during the animation shows at least two dim->lit rises, ending lit at the same strength as the persistent state`, async ({ page }) => {
     test.setTimeout(120_000);
     await page.emulateMedia({ reducedMotion: motion });
     await asNewUser(page, `E2E Fulltext E11b ${motion}`);
@@ -580,9 +563,9 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await sidebar.getByRole("textbox", { name: "Search notes" }).fill(kk);
     const snippet = snippetOf(sidebar, `${pathOf(a)}#b-${hit.sectionId}`);
     await expect(snippet).toBeVisible({ timeout: 15_000 });
-    // 點之前裝好取樣器（每 30 ms 讀一次浮層的 computed 底色 alpha 與 class）；浮層出現前記 null
+    // Install the sampler before clicking (every 30 ms it reads the overlay's computed background alpha and class); records null until the overlay appears.
     await page.evaluate(() => {
-      // computed 值可能是 oklab()／oklch()／rgba()／transparent
+      // The computed value may be oklab()/oklch()/rgba()/transparent.
       const alphaOf = (c: string): number => {
         if (c === "transparent") return 0;
         const m = /\/\s*([\d.]+)\s*\)/.exec(c);
@@ -601,7 +584,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await page.waitForTimeout(4_000);
     const log = await page.evaluate(() => (window as unknown as { __markLog: Array<{ t: number; a: number | null; mark: boolean }> }).__markLog);
 
-    // 動畫是在 mark class 之後才開始的（等捲動穩定）：只取 mark=true 之後的樣本
+    // The animation starts after the mark class (once scrolling settles): only take samples after mark=true.
     const firstMark = log.findIndex((s) => s.mark);
     expect(firstMark, "應該出現過 .kn-anchor-mark").toBeGreaterThanOrEqual(0);
     const seq = log.slice(firstMark).map((s) => s.a ?? 0);
@@ -617,11 +600,11 @@ for (const motion of ["no-preference", "reduce"] as const) {
       }
     }
     expect(rises, `應該有至少兩次 淡→亮（取樣：${seq.map((v) => v.toFixed(2)).join(" ")}）`).toBeGreaterThanOrEqual(2);
-    // 最後停在亮，且是目標強度（brand 38%）
     const last = seq.at(-1)!;
+    // Ends lit at the persistent strength (brand 38%).
     expect(last).toBeGreaterThan(0.33);
     expect(last).toBeLessThan(0.43);
-    // 閃的總長大約 1.2–1.6 s：第一個 mark 樣本到最後一次變化之間
+    // The flash lasts about 1.2-1.6 s: from the first mark sample to the last change.
     const settledAt = log.slice(firstMark).findIndex((_, i, arr) => arr.slice(i).every((s) => Math.abs((s.a ?? 0) - last) < 0.005));
     const dur = log[firstMark + settledAt]!.t - log[firstMark]!.t;
     expect(dur).toBeGreaterThan(1_100);
@@ -629,7 +612,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
   });
 }
 
-test("E11c 首頁搜尋 → 點結果（換殼）→ 在筆記頁清空搜尋字 → 標記消失；搜尋字在換殼後還在", async ({ page }) => {
+test("E11c home search -> click a result (shell swap) -> clearing the query on the note page clears the marker; the query is still there after the swap", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Fulltext E11c");
   const stamp = Date.now();

@@ -13,26 +13,15 @@ import {
 } from "./helpers.js";
 
 /**
- * 手機（視窗窄於 640）的導覽：清單是首頁，筆記是它上面的一層。
+ * Phone navigation (viewport narrower than 640): the list is home and a note is a layer on top of it.
  *
- * 55-1 清單畫面：頂列（頭像）、六顆只有圖示的 tab 排在同一列、底部列（搜尋框與 New note）貼著視窗下緣，沒有側欄鈕；筆記畫面藏起清單。
- * 55-2 全螢幕搜尋：聚焦搜尋框開層（Cancel 取代 New note、tab 與清單換成搜尋結果）；Cancel、Esc、點結果、系統返回都關層。
- * 55-3 「‹」回清單：清單的捲動位置、搜尋框的字、焦點（回到剛點的那一列）都保留；系統返回鍵與「‹」同一條歷史。
- * 55-4 深連結進來時「‹」換掉目前這一格、不新增歷史；清單→A→A 裡的連結→B 之後「‹」一次退回清單那一格。
- * 55-5 三段版面：639 是手機（有「‹」、沒有側欄鈕）、640 與 1279 是浮動側欄、1280 固定側欄；跨 640 時搜尋層與抽屜各自收起。
- * 55-6 位置副標：個人資料夾、群組資料夾、共享三種形狀；點了回清單、切到對應的 tab、展開資料夾（收合過的也會展開）、那一列在畫面內。
- * 55-7 筆記頁底部瀏覽列：搜尋按鈕開全螢幕搜尋（Cancel 回到這篇）；New note 建在這篇所在的空間與資料夾；
- *      擁有者、群組成員有；群組檢視者、共享給我的沒有；唯讀筆記點內文不影響它。
- * 55-8 編輯器取得焦點時瀏覽列整條不在，點頂列標題後回來。
- * 55-9 #313：NotePage 的 chunk 還在載入時開的抽屜，chunk 到了之後不會自己關。
- * 55-10 觸控尺寸：觸控 context 下量點得到的範圍並斷言（頁首圖示鈕 ≥ 40×44、清單與瀏覽列的控制項 ≥ 44），同時印成 MEASURE 行。
- * 55-11 清單→筆記→重新整理→「‹」：照樣退回清單那一格（序號少一、歷史長度不變）。
- * 55-12 筆記上開著全螢幕搜尋層時按系統返回：回到清單，層是關的、搜尋框沒有焦點。
+ * Cases are numbered 55-1 to 55-12 in their titles. 55-5: 639 is a phone (chevron, no sidebar button), 640 and 1279 have the floating sidebar and 1280 the fixed one; crossing 640 closes the search layer and the drawer respectively.
+ * 55-7: owners and group members have the bottom bar; group viewers and notes shared with me do not, and clicking the body of a read-only note does not affect it. 55-10: tap areas are also printed as MEASURE lines.
  *
- * 桌面版 Chromium 驗不到的：螢幕鍵盤把底部列頂起來（visualViewport）、瀏海與 Home 指示條的 safe area（只能查 class 與 CSS 字面，見單元測試）、
- * 滑入轉場的實際畫面、真手指的點擊範圍。這幾項要實機看。
+ * Not verifiable in desktop Chromium: the on-screen keyboard pushing the bottom bar up (visualViewport), the notch and home-indicator safe area (only class and CSS text can be checked, see unit tests),
+ * the actual look of slide-in transitions, and the tap area of a real finger. These need a real device.
  *
- * 每個測試用新建帳號（alice、bob 加 RUN 後綴），資料以 API 建、建完才縮到手機寬度（寬視窗建資料、窄視窗操作）。
+ * Every test uses fresh accounts (alice, bob plus the RUN suffix); data is created via the API and only then is the viewport shrunk to phone width (create data in a wide viewport, operate in a narrow one).
  */
 
 const RUN = Date.now();
@@ -44,7 +33,6 @@ interface Account {
   displayName: string;
 }
 
-/** admin 發邀請建帳號（admin 的 context 用完即關）。 */
 async function createAccount(browser: Browser, name: string): Promise<Account> {
   const account: Account = { email: randomEmail(), displayName: `${name} ${RUN}` };
   const context = await browser.newContext();
@@ -58,7 +46,6 @@ async function createAccount(browser: Browser, name: string): Promise<Account> {
   return account;
 }
 
-/** 開新 context 以 `account` 登入（落在 `/`）。 */
 async function openAs(browser: Browser, account: Account, viewport: { width: number; height: number } = PHONE): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
@@ -67,7 +54,6 @@ async function openAs(browser: Browser, account: Account, viewport: { width: num
   return { context, page };
 }
 
-/** 觸控手機（`pointer: coarse`）context：列高、點擊範圍都走觸控那一套。 */
 async function openTouchAs(browser: Browser, account: Account): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: PHONE });
   const page = await context.newPage();
@@ -102,17 +88,16 @@ async function apiGroup(page: Page, name: string): Promise<string> {
 
 const pathOf = (note: Created, groupId?: string): string => (groupId === undefined ? `/n/${note.ownerHandle}/${note.slug}` : `/g/${groupId}/${note.slug}`);
 
-/** 標題框用屬性選擇器：抽屜（Radix modal）開著時背景是 aria-hidden，role 查詢找不到它。 */
+/** The title box uses an attribute selector: while the drawer (Radix modal) is open the background is aria-hidden and a role query can't find it. */
 const titleBox = (page: Page): Locator => page.locator('[aria-label="Note title"]');
 const backButton = (page: Page): Locator => page.getByRole("button", { name: "Back to notes", exact: true });
 const openSidebar = (page: Page): Locator => page.getByRole("button", { name: "Open sidebar", exact: true });
 const listBar = (page: Page): Locator => page.locator("[data-phone-list-bar]");
-/** 清單畫面底部兩顆圓形浮動鈕（搜尋層開著時不存在）。 */
 const fabs = (page: Page): Locator => page.locator("[data-phone-list-fabs]");
 const searchFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "Search notes", exact: true });
 const newNoteFab = (page: Page): Locator => fabs(page).getByRole("button", { name: "New note", exact: true });
 const browseBar = (page: Page): Locator => page.getByTestId("note-browse-bar");
-/** 筆記頁底部的浮動 Search 鈕（外層容器是 display: contents，自己沒有版面，可見性看鈕）。 */
+/** The floating Search button at the bottom of the note page (its outer container is display: contents and has no layout of its own, so visibility is judged on the button). */
 const browseSearch = (page: Page): Locator => browseBar(page).getByRole("button", { name: "Search notes", exact: true });
 const searchBox = (page: Page): Locator => page.getByRole("textbox", { name: "Search notes", exact: true });
 const sidebarOf = (page: Page): Locator => page.getByRole("complementary").filter({ has: page.getByRole("tablist", { name: "Sidebar sections" }) });
@@ -120,12 +105,12 @@ const drawerOf = (page: Page): Locator => page.getByRole("dialog", { name: "Navi
 const noteLink = (scope: Locator, title: string): Locator => scope.getByRole("link", { name: new RegExp("^" + reEscape(title)) });
 const historyIdx = (page: Page): Promise<number | null> => page.evaluate(() => (history.state as { idx?: number } | null)?.idx ?? null);
 
-/** 開筆記後等標題框：lazy NotePage 的 fallback 殼換成真的之前，頁面上的東西都還會被換掉。 */
+/** After opening a note, wait for the title box: until the lazy NotePage's fallback shell is replaced by the real one, everything on the page can still be swapped out. */
 async function waitForTitle(page: Page, title: string): Promise<void> {
   await expect(titleBox(page)).toHaveValue(title, { timeout: 15_000 });
 }
 
-test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮動鈕貼著下緣、沒有側欄鈕；筆記畫面藏起來", async ({ browser }) => {
+test("55-1 list screen: top bar, six icon tabs in one row, two floating buttons at the bottom edge, no sidebar button; the note screen hides them", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -140,11 +125,9 @@ test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮�
     await expect(openSidebar(page)).toHaveCount(0);
     await expect(titleBox(page)).toHaveCount(0);
 
-    // 頂列：頭像鈕（名稱是顯示名稱）在最上面
     const top = page.locator("[data-phone-top-bar]");
     await expect(top.getByRole("button", { name: alice.displayName, exact: true })).toBeVisible();
 
-    // 六顆 tab 在同一個 tablist 裡、同一列、不橫向溢出
     const tabs = sidebar.getByRole("tablist", { name: "Sidebar sections" }).getByRole("tab");
     await expect(tabs).toHaveCount(6);
     const tops = new Set<number>();
@@ -158,7 +141,7 @@ test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮�
     expect(tops.size, `六顆 tab 的上緣 ${[...tops].join(",")}`).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(PHONE.width);
 
-    // 沒在搜尋：清單底部沒有搜尋列、也沒有搜尋框；左下 Search、右下 New note，下緣離視窗下緣 16px（桌面 Chromium 沒有 safe area）
+    // Not searching: no search bar and no search box at the bottom of the list; Search at bottom left, New note at bottom right, 16px from the viewport's bottom edge (desktop Chromium has no safe area).
     await expect(listBar(page)).toHaveCount(0);
     await expect(searchBox(page)).toHaveCount(0);
     for (const fab of [searchFab(page), newNoteFab(page)]) {
@@ -166,7 +149,6 @@ test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮�
       expect(Math.abs(PHONE.height - (box.y + box.height) - 16), "浮動鈕離下緣").toBeLessThanOrEqual(1);
     }
 
-    // 點筆記：清單藏起來、筆記畫面出現、有「‹」
     await showSidebarTab(page, "My notes");
     await noteLink(sidebar, title).click();
     await waitForTitle(page, title);
@@ -182,7 +164,7 @@ test("55-1 清單畫面：頂列、六顆圖示 tab 同一列、底部兩顆浮�
   }
 });
 
-test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；結果與提示句", async ({ browser }) => {
+test("55-2 full-screen search: Cancel, Esc, clicking a result and system back all close the layer; results and hint", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -190,21 +172,19 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
     const title = `E2E mn search ${RUN}`;
     await apiNote(page, title);
     await page.goto("/");
-    // 搜尋層裡沒有 tab 列，所以不能用 sidebarOf（它要求含 tab 列）。
+    // The search layer has no tab bar, so `sidebarOf` (which requires the tab bar) can't be used.
     const sidebar = page.getByRole("complementary");
     const tablist = sidebar.getByRole("tablist", { name: "Sidebar sections" });
     const newNote = newNoteFab(page);
     const cancel = listBar(page).getByRole("button", { name: "Cancel", exact: true });
     await expect(tablist).toBeVisible({ timeout: 15_000 });
 
-    // 開層：tab 列與清單換成提示句、Cancel 取代 New note
     await searchFab(page).click();
     await expect(cancel).toBeVisible();
     await expect(newNote).toHaveCount(0);
     await expect(tablist).toHaveCount(0);
     await expect(page.getByTestId("phone-search-hint")).toBeVisible();
 
-    // 輸入：結果出現；Cancel 清字、關層、tab 與 New note 回來
     await searchBox(page).fill(title);
     await expect(noteLink(sidebar, title)).toBeVisible({ timeout: 15_000 });
     await cancel.click();
@@ -213,7 +193,6 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
     await expect(newNote).toBeVisible();
     await expect(tablist).toBeVisible();
 
-    // Esc：同上
     await searchFab(page).click();
     await searchBox(page).fill(title);
     await expect(noteLink(sidebar, title)).toBeVisible({ timeout: 15_000 });
@@ -222,7 +201,6 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
     await expect(cancel).toHaveCount(0);
     await expect(tablist).toBeVisible();
 
-    // 點結果：進筆記、層關；系統返回回到清單，這時層不開（Cancel 不在、New note 在）
     await searchFab(page).click();
     await searchBox(page).fill(title);
     await noteLink(sidebar, title).click();
@@ -237,10 +215,10 @@ test("55-2 全螢幕搜尋：Cancel、Esc、點結果、系統返回都關層；
   }
 });
 
-test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系統返回與「‹」同一條歷史", async ({ browser }) => {
+test("55-3 the back chevron returns to the list: scroll position, search text and focus are kept; system back and the chevron share one history", async ({ browser }) => {
   test.setTimeout(180_000);
   const alice = await createAccount(browser, "alice");
-  // 筆記在桌面 context 建好；清單捲動與點擊在觸控手機 context 裡做（列高 44，滑鼠的窄視窗列只有 28）。
+  // Notes are created in a desktop context; list scrolling and clicking are done in the touch phone context (row height 44, whereas a mouse's narrow viewport row is only 28).
   const titles = Array.from({ length: 30 }, (_, i) => `E2E mn scroll ${String(i + 1).padStart(2, "0")} ${RUN}`);
   const desktop = await openAs(browser, alice, { width: 1280, height: 800 });
   try {
@@ -254,15 +232,15 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     const sidebar = sidebarOf(page);
     await showSidebarTab(page, "My notes");
     await expect(noteLink(sidebar, titles[0]!)).toBeVisible({ timeout: 15_000 });
-    // 手機上捲的是文件（不是清單容器）。
     const list = sidebar.locator("[data-sidebar-list]");
+    // On a phone the document scrolls, not the list container.
     const pageScrollY = () => page.evaluate(() => window.scrollY);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)).toBeGreaterThan(300);
     await page.evaluate(() => window.scrollTo(0, Math.round((document.documentElement.scrollHeight - window.innerHeight) / 2)));
     const before = await pageScrollY();
     expect(before).toBeGreaterThan(100);
 
-    // 點目前畫面上的某一篇（捲動後第一篇看得見的：在釘住的頂列與標題列之下、浮動鈕之上）
+    // Click a note currently on screen (the first one visible after scrolling: below the pinned top bar and title row, above the floating buttons).
     const target = await list.evaluate((el) => {
       const header = document.querySelector("[data-sidebar-header]")!.getBoundingClientRect();
       const link = Array.from(el.querySelectorAll<HTMLAnchorElement>("a[href^='/n/']")).find((a) => {
@@ -281,15 +259,11 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     await backButton(page).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(sidebarOf(page)).toBeVisible();
-    // 沒有新增 entry（退一格，不是 push 一個 `/`）
     expect(await historyIdx(page)).toBe(listIdx);
     expect(await page.evaluate(() => history.length)).toBe(historyBefore + 1);
-    // 捲動位置還在
     await expect.poll(pageScrollY).toBe(before);
-    // 焦點回到剛點的那一列
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("href") ?? null)).toBe(target.href);
 
-    // 系統返回鍵：清單 → 筆記 → goBack → 清單，與「‹」同一格
     await sidebar.locator(`a[href="${target.href}"]`).click();
     await expect(titleBox(page)).toBeVisible({ timeout: 15_000 });
     await page.goBack();
@@ -298,7 +272,6 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     expect(await historyIdx(page)).toBe(listIdx);
     await expect.poll(pageScrollY).toBe(before);
 
-    // 搜尋框的字：點結果進筆記、「‹」回來，字還在
     const query = titles[4]!;
     await searchFab(page).click();
     await searchBox(page).fill(query);
@@ -306,7 +279,6 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
     await waitForTitle(page, query);
     await backButton(page).click();
     await expect(page).toHaveURL(/\/$/);
-    // 搜尋層已收起（沒有搜尋框）；再點 Search，剛才的字還在。
     await expect(searchBox(page)).toHaveCount(0);
     await searchFab(page).click();
     await expect(searchBox(page)).toHaveValue(query);
@@ -315,7 +287,7 @@ test("55-3 「‹」回清單：捲動位置、搜尋字、焦點都保留；系
   }
 });
 
-test("55-4 深連結與連結鏈：深連結的「‹」換掉這一格（不新增歷史）；清單→A→B 之後「‹」一次回清單", async ({ browser }) => {
+test("55-4 deep link and link chain: the chevron of a deep link replaces its entry (no new history); list -> A -> B, then one chevron press goes back to the list", async ({ browser }) => {
   test.setTimeout(150_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -325,7 +297,6 @@ test("55-4 深連結與連結鏈：深連結的「‹」換掉這一格（不新
     await apiNote(page, `E2E mn chain B ${stamp}`);
     await page.setViewportSize(PHONE);
 
-    // 深連結：整頁載入筆記 → 「‹」→ `/`，history.length 與 idx 都不變
     await page.goto(pathOf(a));
     await waitForTitle(page, `E2E mn chain A ${stamp}`);
     const lengthBefore = await page.evaluate(() => history.length);
@@ -335,11 +306,9 @@ test("55-4 深連結與連結鏈：深連結的「‹」換掉這一格（不新
     await expect(sidebarOf(page)).toBeVisible();
     expect(await page.evaluate(() => history.length)).toBe(lengthBefore);
     expect(await historyIdx(page)).toBe(idxBefore);
-    // 換掉的這一格是清單：返回鍵之後不會又落在同一篇筆記
     await page.goBack();
     expect(new URL(page.url()).pathname).not.toBe(pathOf(a));
 
-    // 連結鏈：清單 → A →（A 裡的 wikilink）→ B →「‹」→ 清單那一格
     await page.goto("/");
     await expect(sidebarOf(page)).toBeVisible({ timeout: 15_000 });
     const listIdx = await historyIdx(page);
@@ -369,7 +338,7 @@ test("55-4 深連結與連結鏈：深連結的「‹」換掉這一格（不新
   }
 });
 
-test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定側欄；跨 640 時搜尋層與抽屜各自收起", async ({ browser }) => {
+test("55-5 three tiers: 639 phone, 640 and 1279 floating sidebar, 1280 fixed sidebar; crossing 640 closes the search layer and the drawer respectively", async ({ browser }) => {
   test.setTimeout(150_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -384,7 +353,6 @@ test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定�
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))));
     };
 
-    // 1280：固定側欄（含 New note 鈕的 complementary）、沒有側欄鈕、沒有「‹」
     await expect(page.getByRole("complementary").getByRole("button", { name: "New note", exact: true })).toBeVisible();
     await expect(openSidebar(page)).toHaveCount(0);
     await expect(backButton(page)).toHaveCount(0);
@@ -402,7 +370,6 @@ test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定�
     await expect(openSidebar(page)).toHaveCount(0);
     await expect(browseSearch(page)).toBeVisible();
 
-    // 手機 → 640：搜尋層開著（蓋在筆記上）時跨過去，層收起、側欄不是滿版
     await browseBar(page).getByRole("button", { name: "Search notes", exact: true }).click();
     await expect(listBar(page).getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
     await setWidth(640);
@@ -410,7 +377,6 @@ test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定�
     await expect(openSidebar(page)).toBeVisible();
     await expect(titleBox(page)).toBeVisible();
 
-    // 640 開抽屜 → 縮到 639：抽屜收起，仍停在這篇筆記；再回 640 不自動開
     await openSidebar(page).click();
     await expect(drawerOf(page)).toBeVisible();
     await setWidth(639);
@@ -420,7 +386,6 @@ test("55-5 三段版面：639 手機、640 與 1279 浮動側欄、1280 固定�
     await setWidth(640);
     await expect(drawerOf(page)).toHaveCount(0);
 
-    // 清單畫面（手機）→ 640：HomePage 在浮動段，側欄鈕在
     await backToHome(page, setWidth);
   } finally {
     await context.close();
@@ -442,7 +407,7 @@ async function backToHome(page: Page, setWidth: (width: number) => Promise<void>
   await expect(sidebarOf(page)).toBeVisible();
 }
 
-test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點了回清單、切到對應 tab、展開資料夾、那一列在畫面內", async ({ browser }) => {
+test("55-6 three location subtitle forms: personal folder, group folder, shared; clicking returns to the list, switches to the matching tab, expands the folder and the row is in view", async ({ browser }) => {
   test.setTimeout(180_000);
   const alice = await createAccount(browser, "alice");
   const bob = await createAccount(browser, "bob");
@@ -465,7 +430,6 @@ test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點
 
     const location = (page: Page): Locator => page.getByTestId("note-header-subline").getByRole("button", { name: /^Show in list: / });
 
-    // alice：個人資料夾
     await a.page.setViewportSize(PHONE);
     await a.page.goto(pathOf(personal));
     await waitForTitle(a.page, `E2E mn personal ${RUN}`);
@@ -478,7 +442,7 @@ test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點
     await expect(folderRow(sidebarA, folder).getByRole("button", { name: folder, exact: true })).toHaveAttribute("aria-expanded", "true");
     await expect(noteLink(sidebarA, `E2E mn personal ${RUN}`)).toBeInViewport({ timeout: 10_000 });
 
-    // 資料夾收合之後再點副標：會重新展開。退回清單收合資料夾，前進回筆記，再點副標。
+    // Clicking the subtitle after the folder was collapsed expands it again: go back to the list and collapse the folder, go forward to the note, click the subtitle again.
     const folderButton = folderRow(sidebarA, folder).getByRole("button", { name: folder, exact: true });
     await noteLink(sidebarA, `E2E mn personal ${RUN}`).click();
     await waitForTitle(a.page, `E2E mn personal ${RUN}`);
@@ -493,7 +457,6 @@ test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點
     await expect(folderButton).toHaveAttribute("aria-expanded", "true");
     await expect(noteLink(sidebarOf(a.page), `E2E mn personal ${RUN}`)).toBeInViewport({ timeout: 10_000 });
 
-    // alice：群組資料夾
     await a.page.goto(pathOf(inGroup, groupId));
     await waitForTitle(a.page, `E2E mn group ${RUN}`);
     await expect(location(a.page)).toHaveAccessibleName(`Show in list: ${group} › ${folder}`);
@@ -502,9 +465,7 @@ test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點
     await expect(sidebarOf(a.page).getByRole("tab", { name: "Groups", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(noteLink(sidebarOf(a.page), `E2E mn group ${RUN}`)).toBeInViewport({ timeout: 10_000 });
 
-    // bob：共享給我（沒有放置）
     await b.page.goto(pathOf(shared));
-    // 檢視者的標題是 h1（沒有標題框）
     await expect(b.page.getByRole("heading", { name: `E2E mn shared ${RUN}`, level: 1 })).toBeVisible({ timeout: 15_000 });
     await expect(location(b.page)).toHaveAccessibleName(`Show in list: Shared with me · @${shared.ownerHandle}`);
     await expect(location(b.page)).toContainText(`Shared with me · @${shared.ownerHandle}`);
@@ -518,7 +479,7 @@ test("55-6 位置副標三形：個人資料夾、群組資料夾、共享；點
   }
 });
 
-test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建在這篇旁邊；顯示矩陣（擁有者、群組成員有；群組檢視者、共享的沒有）", async ({ browser }) => {
+test("55-7 note page bottom bar: search opens the layer and Cancel returns to this note; New note is created next to this note; display matrix (owners and group members have it; group viewers and shared-with-me notes do not)", async ({ browser }) => {
   test.setTimeout(240_000);
   const alice = await createAccount(browser, "alice");
   const bob = await createAccount(browser, "bob");
@@ -529,7 +490,6 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
   try {
     const group = `E2E mn BGrp ${RUN}`;
     const groupId = await apiGroup(a.page, group);
-    // bob＝一般成員（讀、新建、編輯）；carol＝只讀的自訂角色
     const memberAdd = await a.page.request.put(`/api/groups/${groupId}/members`, { data: { email: bob.email } });
     expect(memberAdd.ok(), await memberAdd.text()).toBe(true);
     const roleRes = await a.page.request.post(`/api/groups/${groupId}/roles`, {
@@ -551,7 +511,6 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     const newNote = (page: Page): Locator => browseBar(page).getByRole("button", { name: "New note", exact: true });
     const searchButton = (page: Page): Locator => browseBar(page).getByRole("button", { name: "Search notes", exact: true });
 
-    // ── 擁有者：有；搜尋開層、Cancel 回到這篇、焦點回搜尋鈕 ───────────────────────────────
     await a.page.setViewportSize(PHONE);
     await a.page.goto(pathOf(owned));
     await waitForTitle(a.page, `E2E mn owned ${RUN}`);
@@ -568,7 +527,6 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     await expect(sidebarOf(a.page)).toHaveCount(0);
     await expect(searchButton(a.page)).toBeFocused();
 
-    // New note：建在同一個資料夾（回清單看那個資料夾底下）
     await newNote(a.page).click();
     await a.page.waitForURL(/\/n\/[^/]+\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
     await expect(titleBox(a.page)).toHaveValue("Untitled", { timeout: 15_000 });
@@ -578,7 +536,6 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     await showSidebarTab(a.page, "My notes");
     await expect(folderRow(sidebarA, folder).getByRole("link", { name: /^Untitled/ })).toHaveCount(1, { timeout: 15_000 });
 
-    // ── 群組成員：有；新筆記在群組裡 ─────────────────────────────────────────────────────
     await b.page.goto(pathOf(groupNote, groupId));
     await waitForTitle(b.page, `E2E mn gnote ${RUN}`);
     await expect(newNote(b.page)).toBeVisible({ timeout: 15_000 });
@@ -586,19 +543,17 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
     await b.page.waitForURL(/\/g\/[0-9a-f-]{36}\/untitled-[0-9a-f]{8}$/, { timeout: 15_000 });
     expect(new URL(b.page.url()).pathname.split("/")[2]).toBe(groupId);
 
-    // ── 共享給我的（bob 是編輯者）：瀏覽列在、沒有 New note ────────────────────────────────
     await b.page.goto(pathOf(sharedNote));
     await waitForTitle(b.page, `E2E mn bshared ${RUN}`);
     await expect(browseSearch(b.page)).toBeVisible();
     await expect(searchButton(b.page)).toBeVisible();
     await expect(newNote(b.page)).toHaveCount(0);
 
-    // ── 群組檢視者（carol）：沒有 New note；唯讀筆記點內文瀏覽列仍在 ─────────────────────────
     await c.page.goto(pathOf(groupNote, groupId));
     await expect(c.page.getByRole("heading", { name: `E2E mn gnote ${RUN}`, level: 1 })).toBeVisible({ timeout: 15_000 });
     await expect(browseSearch(c.page)).toBeVisible();
     await expect(newNote(c.page)).toHaveCount(0);
-    // 唯讀筆記沒有可編輯的內文節點：直接點內文區域的座標（頁首之下、瀏覽列之上）。
+    // A read-only note has no editable body node: click the coordinates of the body area directly (below the header, above the bar).
     await c.page.mouse.click(PHONE.width / 2, 400);
     await expect(browseSearch(c.page)).toBeVisible();
     await expect(newNote(c.page)).toHaveCount(0);
@@ -609,7 +564,7 @@ test("55-7 筆記頁瀏覽列：搜尋開層、Cancel 回這篇；New note 建�
   }
 });
 
-test("55-8 編輯時瀏覽列讓位：編輯器取得焦點整條不在，點頂列標題後回來", async ({ browser }) => {
+test("55-8 the bar yields while editing: the whole bar is absent while the editor has focus and comes back after clicking the top bar title", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -620,13 +575,12 @@ test("55-8 編輯時瀏覽列讓位：編輯器取得焦點整條不在，點頂
     await waitForTitle(page, title);
     await expect(browseSearch(page)).toBeVisible();
 
-    // 編輯器可編輯後點進去（唯讀期間的點擊不算編輯中）
     await expect(editorLocator(page)).toBeVisible({ timeout: 15_000 });
+    // Click only once editable (a click while read-only doesn't count as editing).
     await editorLocator(page).click();
     await waitForEditorSelection(page);
     await expect(browseBar(page)).toHaveCount(0);
 
-    // 點頂列標題（焦點離開編輯器）：瀏覽列回來
     await titleBox(page).click();
     await expect(browseSearch(page)).toBeVisible();
   } finally {
@@ -634,7 +588,7 @@ test("55-8 編輯時瀏覽列讓位：編輯器取得焦點整條不在，點頂
   }
 });
 
-test("55-9 #313：NotePage 的程式碼還在載入時開的抽屜，載入完成後不會自己關", async ({ browser }) => {
+test("55-9 #313: a drawer opened while NotePage's code is still loading does not close by itself after loading finishes", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -655,7 +609,7 @@ test("55-9 #313：NotePage 的程式碼還在載入時開的抽屜，載入完�
     });
     await page.goto(pathOf(note), { waitUntil: "commit" });
 
-    // chunk 被擋住：還沒有標題框，頁面上只有載入中的佔位；這時開抽屜
+    // The chunk is held: there is no title box yet and the page only shows the loading placeholder; open the drawer now.
     await expect(openSidebar(page)).toBeVisible({ timeout: 15_000 });
     await expect(titleBox(page)).toHaveCount(0);
     expect(held, "NotePage 的 chunk 請求必須真的被攔到，否則這案沒有測到任何事").toBeGreaterThan(0);
@@ -664,7 +618,6 @@ test("55-9 #313：NotePage 的程式碼還在載入時開的抽屜，載入完�
 
     release();
     await waitForTitle(page, title);
-    // 換成真的筆記頁之後抽屜還在（同一份殼）
     await expect(drawerOf(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(drawerOf(page)).toHaveCount(0);
@@ -673,7 +626,7 @@ test("55-9 #313：NotePage 的程式碼還在載入時開的抽屜，載入完�
   }
 });
 
-test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝置上點得到的範圍夠大", async ({ browser }) => {
+test("55-10 touch size: the main controls of the list and note screens have a large enough tappable area on a touch device", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openTouchAs(browser, alice);
@@ -684,7 +637,7 @@ test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝�
     const sidebar = sidebarOf(page);
     await expect(sidebar).toBeVisible({ timeout: 15_000 });
     const lines: string[] = [];
-    /** 點擊範圍（`tapAreaOf`）至少 `minWidth`×`minHeight`（取樣每側最多少算 0.5px，所以容許差 1）；量到的值也印成 MEASURE 行。 */
+    /** The tap area (`tapAreaOf`) is at least `minWidth` x `minHeight` (sampling can under-count each side by up to 0.5px, so a difference of 1 is allowed); the measured values are also printed as MEASURE lines. */
     const expectTap = async (screen: string, name: string, target: Locator, minWidth: number, minHeight: number): Promise<void> => {
       const area = await tapAreaOf(target);
       const fmt = (v: number[]): string => `${v[0]!.toFixed(1)}x${v[1]!.toFixed(1)}`;
@@ -700,19 +653,19 @@ test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝�
     await showSidebarTab(page, "My notes", sidebar);
     await noteLink(sidebar, title).click();
     await waitForTitle(page, title);
-    // 頁首圖示鈕：32px 畫出來的框，點擊範圍撐到 40×44
+    // Header icon buttons draw a 32px box; the tap area is enlarged to 40x44.
     await expectTap("note", "back", backButton(page), 40, 44);
     await expectTap("note", "star", page.locator("header").getByRole("button", { name: "Favorite", exact: true }), 40, 44);
     await expectTap("note", "share", page.locator("header").getByRole("button", { name: "Share", exact: true }), 40, 44);
     await expectTap("note", "more", page.locator("header").getByRole("button", { name: "More", exact: true }), 40, 44);
+    // The location subtitle is a one-line text button (32 high, full width) under the title box.
     const locationButton = page.getByTestId("note-header-subline").getByRole("button", { name: /^Show in list: / });
-    // 位置副標是一行文字鈕（高 32、整行寬），上面是標題框
     await expectTap("note", "location", locationButton, 44, 32);
     await expectTap("note", "browse-search", browseBar(page).getByRole("button", { name: "Search notes", exact: true }), 44, 44);
     await expectTap("note", "browse-new-note", browseBar(page).getByRole("button", { name: "New note", exact: true }), 44, 44);
-    // 標題框加位置副標合起來的高度（兩者上下相鄰，點哪一個都開對應的東西）。
     const titleRect = (await titleBox(page).boundingBox())!;
     const locationRect = (await locationButton.boundingBox())!;
+    // Title box and location subtitle together: they are adjacent vertically and each opens its own thing.
     const union = { width: Math.max(titleRect.x + titleRect.width, locationRect.x + locationRect.width) - Math.min(titleRect.x, locationRect.x), height: locationRect.y + locationRect.height - titleRect.y };
     lines.push(`MEASURE note title+location visual ${union.width.toFixed(1)}x${union.height.toFixed(1)}`);
     expect(union.height, "note title+location 合起來的高").toBeGreaterThanOrEqual(44);
@@ -722,7 +675,7 @@ test("55-10 觸控尺寸：清單與筆記畫面的主要控制項在觸控裝�
   }
 });
 
-test("55-11 清單→筆記→重新整理→「‹」：照樣退回清單那一格（序號少一、歷史長度不變）", async ({ browser }) => {
+test("55-11 list -> note -> reload -> back chevron: still returns to the list's entry (index one less, history length unchanged)", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
@@ -752,7 +705,7 @@ test("55-11 清單→筆記→重新整理→「‹」：照樣退回清單那�
   }
 });
 
-test("55-12 筆記上開著全螢幕搜尋層時按系統返回：回到清單，層是關的、搜尋框沒有焦點", async ({ browser }) => {
+test("55-12 system back while the full-screen search layer is open on a note: returns to the list with the layer closed and the search box not focused", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { width: 1280, height: 800 });
