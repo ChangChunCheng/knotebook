@@ -1,6 +1,6 @@
 import { parseSiteNoteHref, wikilinkPropsFromLink, type SiteLinkTarget, type SiteNoteHref } from "@knotebook/shared";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Node/Transaction can't be value-imported in apps/web
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Node/Transaction types can't be imported: prosemirror-model/-state aren't apps/web dependencies
 type Any = any;
 
 export const SITE_LINK_CONVERT_META = "knotebook:siteLinkConvert";

@@ -15,7 +15,7 @@ import type { EditorRef } from "@/components/wikilink/menu";
 import { columnContextOf, findNodeById, type ColumnContext, type PMNodeLike } from "./position";
 import { asUndoStep } from "./undo-step";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM Transaction/Node can't be value-imported in apps/web
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transaction/Node types can't be imported: prosemirror-state/-model aren't apps/web dependencies
 type Any = any;
 type BnEditor = NonNullable<EditorRef["current"]>;
 

@@ -10,8 +10,8 @@ import type { UndoManager } from "yjs";
  * and so the same destroyed manager: Ctrl+Z silently does nothing. The view remounts on every
  * `editable` flip (`@blocknote/react` 0.52.1 binds mount to a ref callback depending on it, and
  * `NotePage` flips it false→true on every note open) and on StrictMode's simulated remount.
- * Preventing the teardown is fragile (any new prop dependency breaks it); the sync plugin already
- * re-attaches on every `view()`, so the undo manager is re-subscribed the same way.
+ * Preventing the teardown is fragile (any new prop dependency breaks it); the sync plugin
+ * re-attaches on every `view()` but the undo plugin only tears down, so the manager is re-armed on every mount (`keepCollabUndoAlive`).
  *
  * The manager is deliberately not rebuilt: `destroy()` keeps `undoStack`/`redoStack`, so
  * re-subscribing revives the history, whereas a rebuild drops it; and the old instance holds the
@@ -53,7 +53,7 @@ export function armCollabUndoManager(manager: UndoManager): void {
 //
 // Discriminator (all required): origin y-sync$ ∧ a non-empty change ∧ empty deleteSet ∧ result
 // exactly the default empty document. Select-all-delete has the same shape but a non-empty deleteSet; typing
-// the first character is a pure insert but non-empty. `undo.test.tsx` guards that it isn't too broad.
+// the first character is a pure insert, but the result isn't the empty document. `undo.test.tsx` guards that it isn't too broad.
 
 interface XmlNodeLike {
   nodeName?: string;
@@ -159,8 +159,8 @@ export function guardEmptyDocNormalization(manager: UndoManager): void {
   };
 }
 
-// Arm now and on every mount: under StrictMode the remount's onMount fires while our listener is
-// unsubscribed (the re-run effect's immediate arm catches it); an editable flip fires only onMount.
+// Arm now and on every mount: under StrictMode the remount's onMount fires while our onMount subscription is torn down
+// (the re-run effect's immediate arm catches it); an editable flip doesn't re-run the effect, so only onMount sees it.
 export function keepCollabUndoAlive(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor: BlockNoteEditor<any, any, any>,

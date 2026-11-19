@@ -78,7 +78,7 @@ function restartConnection(provider: HocuspocusProvider, pendingReconnectRef: { 
   return () => clearTimeout(fallback);
 }
 
-// A network failure surfaces as fetch's own error, not ApiFail: treat it as transient.
+// Network failures and a non-JSON 2xx throw a plain Error, not ApiFail: treat as transient.
 function isRetryableTokenError(err: unknown): boolean {
   if (err instanceof ApiFail) return err.status === 429 || err.status >= 500;
   return true;

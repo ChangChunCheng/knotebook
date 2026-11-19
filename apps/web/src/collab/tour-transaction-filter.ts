@@ -16,7 +16,7 @@ import { createPmPlugin } from "./pm-plugin";
 import { Y_SYNC_META } from "./site-link-pm";
 import { isTourTransactionFilterOn, TOUR_TRANSACTION_META } from "./tour-filter-flag";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Transaction can't be value-imported in apps/web
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transaction type can't be imported: prosemirror-state isn't an apps/web dependency
 type Any = any;
 
 // Root trs allowed: no doc change, the tour's own, and `y-sync$` ones (remote edits, undo/redo via Y); blocking those would desync PM and the Y.Doc.

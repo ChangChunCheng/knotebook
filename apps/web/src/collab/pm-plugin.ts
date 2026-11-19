@@ -1,6 +1,6 @@
 import { inputRulesPlugin, type Editor } from "@tiptap/core";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Transaction/EditorState can't be value-imported in apps/web
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transaction/EditorState types can't be imported: prosemirror-state isn't an apps/web dependency
 type Any = any;
 
 export interface PmPluginSpec {
@@ -12,7 +12,7 @@ export interface PmPluginSpec {
 }
 
 /**
- * `@tiptap/pm/state` can't be value-imported from apps/web (MODULE_NOT_FOUND in the Vite
+ * `@tiptap/pm/state` isn't an apps/web dependency (MODULE_NOT_FOUND in the Vite
  * transform), so take the `Plugin` class from tiptap's own `inputRulesPlugin` instance
  * (construction doesn't touch `editor`).
  */

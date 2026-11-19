@@ -7,7 +7,7 @@ import type { PasteConversionHook } from "./paste";
 import { createPmPlugin } from "./pm-plugin";
 import { addedLinkRanges, blockRanges, collectSiteLinks, replaceSiteLinks, SITE_LINK_CONVERT_META, Y_SYNC_META, type SiteLinkRange } from "./site-link-pm";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's three generic parameters / PM types can't be value-imported in apps/web (repo convention)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's three generic parameters (repo convention); PM types: prosemirror-state/-model aren't apps/web dependencies
 type AnyEditor = BlockNoteEditor<any, any, any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 type Any = any;
@@ -192,7 +192,7 @@ export async function runFallbackConversion(
   if (resolved.size === 0 || !editor || editor.headless) return 0;
   const view = editor._tiptapEditor.view;
   // Match href and text inside blocks that still exist, so links edited meanwhile aren't converted.
-  const wanted =new Set(requests.filter((r) => resolved.has(r.href)).map((r) => `${r.href}\u0000${r.text}`));
+  const wanted = new Set(requests.filter((r) => resolved.has(r.href)).map((r) => `${r.href}\u0000${r.text}`));
   const blockIds = new Set(requests.flatMap((r) => r.blockIds));
   const links = collectSiteLinks(view.state.doc, blockRanges(view.state.doc, blockIds), origin).filter((l) => wanted.has(`${l.href}\u0000${l.text}`));
   if (links.length === 0) return 0;

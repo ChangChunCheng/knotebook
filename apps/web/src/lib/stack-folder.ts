@@ -1,4 +1,4 @@
-// Import only dynamically: the folder strings must stay out of the main bundle (scripts/check-bundle-size.mjs).
+// Lazy module: load only via import("@/lib/stack-folder"), so its folder strings stay out of the main bundle (scripts/check-bundle-size.mjs).
 import "@/i18n/folder-strings";
 import type { QueryClient } from "@tanstack/react-query";
 import type { FolderDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";

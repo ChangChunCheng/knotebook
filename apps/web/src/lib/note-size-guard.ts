@@ -14,7 +14,7 @@ import * as Y from "yjs";
  * regardless of text. 105 gives ~1.0x for paragraphs and lists.
  */
 export const PER_ELEMENT_BYTES = 105;
-/** Non-text inline node (hardBreak, wikilink…): stored as an embed inside the text, empirically ~39 B; 36 is used. */
+/** Non-text inline node (hardBreak, wikilink…), stored as one embed item inside the text. */
 export const PER_INLINE_NODE_BYTES = 36;
 /** Each format mark is a pair of Yjs format items (start/end), about 54 each; a link also counts its attributes (`markBytes`). */
 export const PER_MARK_BYTES = 55;
