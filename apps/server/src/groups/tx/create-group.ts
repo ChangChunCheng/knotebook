@@ -1,6 +1,6 @@
 /**
- * #175：建群組。同一交易建群組、兩個內建角色（管理員七旗標全真；一般成員 read／create／edit——
- * 與 0012 步驟 2 同一組旗標）、建立者掛管理員。本檔不 import `Db`、不接 `deps`（S14）。
+ * #175: creates a group. One transaction creates the group, the two built-in roles (admin: all seven flags; member: read/create/edit,
+ * the same flags as migration 0012) and attaches the creator as admin. Takes only `tx` and plain data.
  */
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups } from "../../db/schema.js";

@@ -1,16 +1,15 @@
 /**
- * #175：自訂角色的修改與刪除。兩支都以 `lockGroup` 開頭——與刪群組、成員異動
- * 同一把 groups 列鎖（鎖序「成員／角色變動＝groups 一把」）：刪角色與「把人掛上這個角色」因此序列化，後到者看到
- * 前者的結果（角色已不在 → 404 `role_not_found`；那人已掛上 → 被改掛內建一般成員），不會在 `group_members_role_fk`
- * 撞 23503。本檔不 import 資料庫型別、不碰路由的依賴物件（S14）；測試縫 `hook` 是型別明示的參數。業務拒絕一律 throw `TxAbort`。
+ * #175: custom-role update and delete. Both start with `lockGroup`: the same groups row lock as group deletion and member changes, so deleting a role
+ * and attaching someone to it are serialized and the later one sees the earlier result (role gone → 404 `role_not_found`; the member already attached →
+ * moved to the built-in member role), never a 23503 on `group_members_role_fk`. Takes only `tx`, plain data and the test hook. Business rejections throw `TxAbort`.
  *
- * ⚠ 跨檔前提（`notes/tx/move.ts`）：移動路徑讀成員資格與角色旗標之前，只對 groups 列取 `FOR KEY SHARE`；它的正確性
- * 建立在「所有會改變**既有成員資格**，或改變**可能已有人持有之角色**旗標的寫入，都先 `lockGroup`（groups `FOR UPDATE`，
- * 與 KEY SHARE 互斥；刪群組、成員異動、角色改刪）」上。`POST …/roles` 只新增一個尚無人持有的角色（要掛上它必須經過 `addMemberInTx`／`setMemberRoleInTx` 的
- * `lockGroup`），不改變任何人的有效權限，所以不在此列、也不取鎖。日後若新增會刪 `users` 的路徑（`group_members.user_id`
- * 是 ON DELETE CASCADE），必須先對該使用者所屬的每個群組 `lockGroup`。
- * 所以這兩支的第一步必須是 `lockGroup`，不可為了省一次往返拿掉或挪到讀取之後。守衛：
- * `test/groups-v2-roles-race.test.ts` 的「groups FOR KEY SHARE」一案（另一條交易持 KEY SHARE 時，`updateRoleInTx`／`deleteRoleInTx` 都必須卡住）。
+ * ⚠ Cross-file premise (`notes/tx/move.ts`): the move path reads membership and role flags holding only `FOR KEY SHARE` on the groups row.
+ * That is correct only if every write that changes **existing membership** or the flags of **a role someone may already hold** first takes `lockGroup`
+ * (groups `FOR UPDATE`, which conflicts with KEY SHARE; group deletion, member changes, role update/delete). `POST …/roles` only adds a role nobody holds yet
+ * (attaching it goes through `lockGroup` in `addMemberInTx`/`setMemberRoleInTx`), changes nobody's effective permissions, and so doesn't lock.
+ * If a path that deletes `users` is ever added (`group_members.user_id` is ON DELETE CASCADE), it must first `lockGroup` every group the user belongs to.
+ * So `lockGroup` must stay the first step here; don't drop it to save a round trip or move it after reads. Guard: the "groups FOR KEY SHARE" case in
+ * `test/groups-v2-roles-race.test.ts` (with another transaction holding KEY SHARE, `updateRoleInTx` and `deleteRoleInTx` must block).
  */
 import { and, eq } from "drizzle-orm";
 import type { GroupRoleDto, GroupRoleFlags } from "@knotebook/shared";
@@ -26,15 +25,16 @@ import type { GroupTestHook } from "../test-hook.js";
 const notFound = (): TxAbort => new TxAbort(404, "not_found", GROUP_NOT_FOUND_MESSAGE);
 const roleNotFound = (): TxAbort => new TxAbort(404, "role_not_found", "No role with that id.");
 
-/** commit 後的踢線名單：群組所有筆記 × 受影響的成員。 */
+/** Kick list after commit: all group notes × affected members. */
 export interface RoleKick {
   noteIds: string[];
   userIds: string[];
 }
 
 /**
- * `updateRoleInTx`：改自訂角色的名稱與旗標；內建一般成員只准改旗標；內建管理員一律 409。`name` 已正規化、`permissions`
- * 已過形狀檢查（路由先驗）。**`read` 或 `edit` 有變才回踢線名單**（其他五旗標只影響 REST 授權；值沒變就不踢）。
+ * Updates a custom role's name and flags; the built-in member role may only change flags; the built-in admin always → 409. `name` is already normalized and
+ * `permissions` already shape-checked (the route validates first). **Returns a kick list only if `read` or `edit` changed** (the other five flags only
+ * affect REST authorization; unchanged values kick nobody).
  */
 export async function updateRoleInTx(
   tx: Tx,
@@ -66,8 +66,9 @@ export async function updateRoleInTx(
 }
 
 /**
- * `deleteRoleInTx`：刪自訂角色。掛著它的成員同交易改掛**內建一般成員**，再刪角色——FK `group_members_role_fk` 是 NO ACTION，
- * 順序反過來會 23503。內建角色一律 409（每群組恰兩個內建角色）。回（群組所有筆記, 原持有者）；沒有持有者時兩者皆空。
+ * Deletes a custom role. Members holding it are re-attached to the **built-in member** role in the same transaction before the role is deleted
+ * (FK `group_members_role_fk` is NO ACTION; the reverse order gives 23503). Built-in roles → 409 (every group has exactly two).
+ * Returns (all group notes, former holders); both empty if nobody held it.
  */
 export async function deleteRoleInTx(
   tx: Tx,

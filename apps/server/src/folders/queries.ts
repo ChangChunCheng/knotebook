@@ -1,6 +1,6 @@
 /**
- * 資料夾的可見性與清單。可見性與權限只有一個推導：
- * `folderAccessOf`（交易外的 `folderAccessFromRow` 與交易內的 `folderAccessInTx` 都經它）。看不到與不存在同形（null）。
+ * Folder visibility and listing. Visibility and permissions are derived in one place, `folderAccessOf`,
+ * so invisible and nonexistent folders look the same (null).
  */
 import { and, asc, eq, inArray, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import type { FolderDto, FolderPermissionsDto } from "@knotebook/shared";
@@ -16,19 +16,19 @@ export type FolderRow = typeof folders.$inferSelect;
 export interface FolderAccess {
   folder: FolderRow;
   space: FolderSpace;
-  /** 群組資料夾＝呼叫者的角色旗標（非成員 null）；personal／shared 恆 null。 */
+  /** Group folders: the caller's role flags (null for non-members). Always null for personal/shared. */
   flags: FolderRoleFlags | null;
   permissions: FolderPermissionsDto;
 }
 
-/** 可見性與權限的唯一推導；看不到 → null。 */
+/** The single derivation of visibility and permissions; null = not visible. */
 export function folderAccessOf(folder: FolderRow, flags: FolderRoleFlags | null, userId: string): FolderAccess | null {
   const space = folderSpaceOfRow(folder);
   const permissions = folderPermissions(space, userId, flags);
   return permissions === null ? null : { folder, space, flags, permissions };
 }
 
-/** 資料夾列＋呼叫者在該群組的角色旗標（LEFT JOIN；personal／shared 的 `folders.group_id` 為 NULL，JOIN 必落空）。每次呼叫現造。 */
+/** Folder row plus the caller's role flags (LEFT JOIN; personal/shared rows have a NULL `group_id`, so the join never matches). */
 function accessColumns() {
   return {
     folder: folders,
@@ -40,7 +40,7 @@ function accessColumns() {
   };
 }
 
-/** `folders LEFT JOIN group_members (group, $u) LEFT JOIN group_roles`；limit 1；不鎖。呼叫前 `folderId` 已過 `UUID_RE`。 */
+/** Not locked; limit 1. `folderId` must already have passed `UUID_RE`. */
 export function folderAccessQuery(db: DbOrTx, userId: string, folderId: string) {
   return db
     .select(accessColumns())
@@ -61,7 +61,7 @@ export function folderAccessFromRow(row: FolderAccessRow | undefined, userId: st
   return folderAccessOf(row.folder, flags, userId);
 }
 
-/** 非 UUID → null；看不到 → null（與不存在同形）。 */
+/** Non-UUID or invisible → null (same shape as nonexistent). */
 export async function resolveFolderAccess(db: DbOrTx, userId: string, folderId: string): Promise<FolderAccess | null> {
   if (!UUID_RE.test(folderId)) return null;
   const [row] = await folderAccessQuery(db, userId, folderId.toLowerCase());
@@ -80,17 +80,16 @@ export function toFolderDto(row: FolderRow, permissions: FolderPermissionsDto): 
 }
 
 /**
- * `listVisibleFolders` 與 `listVisibleFoldersPage` 共用的可見性述詞：`owner_id = $u`（personal／shared）∪ 群組成員且 `can_read`。
- * 需要查詢已 `LEFT JOIN group_members (group, $u) LEFT JOIN group_roles`（同 `folderAccessQuery`）。
+ * Visibility predicate shared by both list queries: owner (personal/shared) or group member with `can_read`.
+ * Needs the same LEFT JOINs as `folderAccessQuery`.
  */
 function visibleFolderWhere(userId: string): SQL {
   return or(eq(folders.ownerId, userId), and(isNotNull(groupMembers.userId), eq(groupRoles.canRead, true)))!;
 }
 
 /**
- * `GET /api/folders`：`owner_id = $u`（personal／shared）∪ 群組成員且 `can_read`。排序：kind、coalesce(group_id, owner_id)、
- * parent_id NULLS FIRST、lower(name)、id。SQL 的篩選與 `folderAccessOf` 不一致（選出了看不到的列）→ throw，不靜默略過：
- * 兩者是同一條可見性規則的兩種寫法，不一致就是 bug——寧可 500，也不把看不到的資料夾送出去、或悄悄少列掩蓋漂移。
+ * `GET /api/folders`. Throws if the SQL filter selects a row that `folderAccessOf` hides: the two encode one visibility
+ * rule, so a mismatch is a bug, and failing is better than leaking a folder or silently dropping one.
  */
 export async function listVisibleFolders(db: DbOrTx, userId: string): Promise<FolderDto[]> {
   const rows = await db
@@ -108,21 +107,20 @@ export async function listVisibleFolders(db: DbOrTx, userId: string): Promise<Fo
     );
   const accesses = rows.map(row => folderAccessFromRow(row, userId));
   const hidden = accesses.filter(a => a === null).length;
-  // 訊息不帶資料夾 id（錯誤 log 只記計數）
+  // The message omits folder ids; the error log keeps only the count.
   if (hidden > 0) throw new Error(`listVisibleFolders: SQL 篩選與 folderAccessOf 不一致（${hidden} 列）`);
   return accesses.map(a => toFolderDto(a!.folder, a!.permissions));
 }
 
 export type FolderKind = FolderSpace["kind"];
 export const FOLDER_KINDS: readonly FolderKind[] = ["group", "personal", "shared"];
-/** keyset 鍵：`(kind, coalesce(group_id, owner_id), id)`。 */
+/** Keyset key; `spaceId` is the group id for group folders, otherwise the owner id. */
 export interface FolderPageKey { kind: FolderKind; spaceId: string; id: string }
 
 /**
- * 資料夾：MCP `list_folders` 的分頁清單。可見性與 `listVisibleFolders` 同一個述詞（`visibleFolderWhere`），
- * keyset `(kind, coalesce(group_id, owner_id), id) > (游標)` 升序（ORDER BY 同三欄、同順序），`.limit(limit + 1)`；
- * 可選 `groupId`（`folders.group_id = $g`）與 `ids`。每列帶 `path`（根 → 葉；外層欄寫帶表名字面 `"folders"."id"`）與 `groupName`。
- * SQL 的篩選與 `folderAccessOf` 不一致 → throw（同 `listVisibleFolders` 的紀律）。
+ * Paged list for MCP `list_folders`. Same visibility predicate and the same mismatch-throws rule as `listVisibleFolders`.
+ * Keyset order is (kind, space id, id); `limit + 1` rows are fetched to compute `hasMore`. Each row carries the root-to-leaf
+ * `path` (the outer column is spelled `"folders"."id"` with the table name, see `NOTES_FOLDER_ID` in `sql.ts`) and `groupName`.
  */
 export async function listVisibleFoldersPage(
   db: DbOrTx,
@@ -156,7 +154,7 @@ export async function listVisibleFoldersPage(
     .limit(opts.limit + 1);
   const page = rows.slice(0, opts.limit).map(row => ({ row, access: folderAccessFromRow(row, userId) }));
   const hidden = page.filter(p => p.access === null).length;
-  // 訊息不帶資料夾 id（錯誤 log 只記計數）
+  // The message omits folder ids; the error log keeps only the count.
   if (hidden > 0) throw new Error(`listVisibleFoldersPage: SQL 篩選與 folderAccessOf 不一致（${hidden} 列）`);
   return {
     rows: page.map(({ row, access }) => ({

@@ -1,6 +1,6 @@
 /**
- * 還原的照路徑重建。S14：只收 `tx`／純資料。
- * 呼叫端（`restoreNotesInTx`）必持該空間的結構鎖：改名、建立也取同一把，所以「找不到 → INSERT」之間不會被搶名、不撞 23505。
+ * Path-based folder rebuild used by restore. Takes only `tx` and plain data.
+ * Callers (`restoreNotesInTx`) must hold the space's structure lock; rename and create take the same lock, so a name can't be taken between "not found" and INSERT (no 23505).
  */
 import { and, asc, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
@@ -9,9 +9,9 @@ import type { FolderSpace } from "../space.js";
 import { folderSpaceWhere } from "../sql.js";
 
 /**
- * 由根到葉逐層 `select id from folders where <space> and parent_id is not distinct from $p and lower(name) = lower($seg)
- * order by id limit 1`；沒有就 INSERT（`created_by = by`）。比對在 SQL 以 `lower()`（與同層唯一索引同一個）；段名由呼叫端先做 NFC。
- * **不檢查深度與數量上限**（還原不因上限失敗）。segments 不得為空。回葉 id。
+ * Walks root to leaf: per level, selects the folder under the parent with `lower(name) = lower($seg)` (the same comparison as the
+ * sibling unique index), lowest id first, and INSERTs it (`created_by = by`) if missing. Segment names must already be NFC.
+ * Depth and count limits are **not** checked (restore must not fail on them). `segments` must be non-empty. Returns the leaf id.
  */
 export async function ensureFolderPathInTx(tx: Tx, space: FolderSpace, segments: readonly string[], by: string): Promise<string> {
   if (segments.length === 0) throw new Error("ensureFolderPathInTx: segments 不得為空");

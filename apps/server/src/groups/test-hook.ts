@@ -1,89 +1,86 @@
 /**
- * #103／#175 的群組測試注入縫（比照 `slugUpdateTestHook`／`noteCreateHooks`）：生產不注入＝零成本。
- * 每個點都標在兩步之間的窗口——「鎖已取得、寫入尚未發生」，或「授權之後、取列／寫入之前」——整合測試在那裡
- * 讓另一條請求插進來（`test/groups-v2-race.test.ts`、`groups-members.test.ts`、`groups-v2-notes-write.test.ts`、
- * `groups-v2-urls.test.ts`），把會出問題的交錯形變成決定性的測試。
+ * Test-injection points for group-related races (like `slugUpdateTestHook`/`noteCreateHooks`); never injected in production, so zero cost.
+ * Each point sits in a window between two steps (lock taken but write not yet done, or after authorization but before the row read/write),
+ * where integration tests let a second request interleave to make the racy ordering deterministic.
  */
 export type GroupRacePoint =
-  /** `GET /api/notes/:ref`：授權之後、取列之前。 */
+  /** `GET /api/notes/:ref`: after authorization, before the row read. */
   | "ref-authorized"
-  /** `POST /api/notes {groupId}` 與 MCP `create_note {groupId}`：成員與 `can_create` 檢查之後、建立筆記之前（#103 的 `PUT …/group` 換群組也用過這個點，那支端點 #175 已移除）。 */
+  /** `POST /api/notes {groupId}` and MCP `create_note {groupId}`: after the membership and `can_create` checks, before the note is created. */
   | "membership-checked"
-  /** `PUT /api/notes/:id/shares`：授權之後、交易之前（#175：「授權後被移進群組」窗）。 */
+  /** `PUT /api/notes/:id/shares`: after authorization, before the transaction (window: note moved into a group after authorization). */
   | "share-authorized"
-  /** public-link 的 token PUT、別名 PUT 與寬度 PUT（#297），及 token DELETE、別名 DELETE（#181）：授權之後、UPDATE 之前（#175）。 */
+  /** public-link token PUT, alias PUT and width PUT (#297), token DELETE and alias DELETE (#181): after authorization, before UPDATE. */
   | "public-link-authorized"
-  /** `PUT /api/notes/:id/shares`：`FOR SHARE` 讀到 `group_id IS NULL` 之後、upsert 之前。 */
+  /** `PUT /api/notes/:id/shares`: after the `FOR SHARE` read saw `group_id IS NULL`, before the upsert. */
   | "share-group-checked"
-  /**
-   * #175（`groups/tx/roles.ts`）：`lockGroup` 鎖住 `groups` 列、角色已查到且通過內建檢查之後，
-   * 寫入 `group_roles`／`group_members` 之前。
-   */
+  /** `groups/tx/roles.ts`: after `lockGroup` locked the `groups` row and the role passed the built-in checks, before writing `group_roles`/`group_members`. */
   | "group-roles-checked"
   /**
-   * `addMemberInTx`／`setMemberRoleInTx`／`removeMemberInTx`（`groups/tx/members.ts`）：`lockGroup` 鎖住 `groups` 列、完成該支的檢查之後、寫入 `group_members` 之前。
-   * 檢查各支不同：`addMemberInTx` 只解析角色（`already_member` 由之後的 INSERT 判定）；`setMemberRoleInTx` 解析新角色、確認成員，從內建管理員換走時
-   * 做管理員計數——角色不變時提早回傳、不經過此點；`removeMemberInTx` 確認成員，移的是內建管理員時做管理員計數。
+   * `addMemberInTx`/`setMemberRoleInTx`/`removeMemberInTx` (`groups/tx/members.ts`): after `lockGroup` and that function's own checks, before writing `group_members`.
+   * The checks differ: `addMemberInTx` only resolves the role (`already_member` is decided by the later INSERT); `setMemberRoleInTx` resolves the new role,
+   * confirms membership, and counts admins when a built-in admin is demoted (an unchanged role returns early and skips this point);
+   * `removeMemberInTx` confirms membership and counts admins when a built-in admin is removed.
    */
   | "group-members-checked"
-  /** #175（`notes/tx/move.ts`）：(0) `FOR UPDATE` 鎖住筆記列、(1) 目標群組檢查通過之後、刪逐人分享之前。 */
+  /** `notes/tx/move.ts`: after the note row is locked `FOR UPDATE` and the target group check passed, before per-user shares are deleted. */
   | "note-move-locked"
-  /** #175：每輪 slug 探測之後、savepoint 寫入之前（ctx.slug＝本輪候選）。 */
+  /** After each slug probe round, before the savepoint write (ctx.slug = this round's candidate). */
   | "note-move-slug-candidate"
-  /** #175（`notes/tx/copy.ts`，只在目標是群組時）：(g) 目標 `groups` 列 `FOR KEY SHARE`＋成員重驗通過之後、鎖來源之前。 */
+  /** `notes/tx/copy.ts` (group targets only): after the target `groups` row is locked `FOR KEY SHARE` and membership revalidated, before the source is locked. */
   | "note-copy-target-locked"
-  /** #175（`notes/tx/copy.ts`）：(0) `FOR KEY SHARE` 鎖住來源之後（目標是群組時 (g) 也已持鎖）、讀附件與建副本之前。 */
+  /** `notes/tx/copy.ts`: after the source is locked `FOR KEY SHARE` (for a group target the target lock is already held), before attachments are read and the copy created. */
   | "note-copy-locked"
   /**
-   * #175；儲存配額起：附件檔已複製（`copyFile` 迴圈之後）、取空間鎖與建副本之前（ctx.noteId＝**來源**——副本此時還沒建）；
-   * 測試在這裡丟錯模擬失敗。
+   * Storage quota: after the attachment files are copied (after the `copyFile` loop), before the space lock and the copy are created
+   * (ctx.noteId = the **source**; the copy doesn't exist yet). Tests throw here to simulate a failure.
    */
   | "note-copy-files-copied"
-  /** #175：by-path 兩形（/n/、/g/）取到列之後、授權（`authorizeRow`）之前——「取列後被移動」的窗。 */
+  /** By-path lookups (/n/ and /g/): after the row is fetched, before `authorizeRow` (window: note moved after the fetch). */
   | "path-resolved"
-  /** #175（`groups/tx/delete-group.ts` `transferGroupInTx`）：每篇的每輪 slug 探測之後、savepoint 寫入之前（ctx.noteId、ctx.slug＝本輪候選）。 */
+  /** `transferGroupInTx` (`groups/tx/delete-group.ts`): per note, after each slug probe round, before the savepoint write (ctx.noteId, ctx.slug = this round's candidate). */
   | "group-transfer-slug-candidate"
-  /** #175 `DELETE /api/groups/:id` 全刪模式（路由，**交易外**）：gate 全部開完之後、`BEGIN` 之前——「gate 之後才進群組」與「另一位管理員的轉移先完成」的窗。 */
+  /** `DELETE /api/groups/:id` delete-all mode (route, **outside** the transaction): after all gates are open, before `BEGIN` (windows: a note enters the group after the gates; another admin's transfer finishes first). */
   | "group-delete-gated"
-  /** 刪群組（`groups/tx/delete-group.ts`）：轉移（`transferGroupInTx`）＝`lockGroup`＋transferTo 檢查通過之後、取成員與筆記之前；全刪（`deleteGroupWithNotesInTx`）＝`lockGroup` 之後、取 L 之前。 */
+  /** Group deletion (`groups/tx/delete-group.ts`): transfer = after `lockGroup` and the transferTo check, before members and notes are read; delete-all (`deleteGroupWithNotesInTx`) = after `lockGroup`, before the group's notes are locked. */
   | "group-delete-locked"
   /**
-   * 儲存配額（第 4a 步）：`assertSpaceRoomInTx` 取得空間 advisory 鎖、`lock_timeout` 已復原之後，讀配額與 SUM 之前。
-   * 四支白名單交易（上傳 `insertUploadInTx`、移動 `moveNoteToGroupInTx`、複製 `copyNoteInTx`、轉移 `transferGroupInTx`）都經過它；ctx 由呼叫端帶（上傳 `{noteId}`、移動 `{noteId, groupId}`、
-   * 複製 `{noteId: 來源, groupId?: 目標群組}`、轉移 `{groupId: 被刪的群組}`）。
+   * Storage quota: after `assertSpaceRoomInTx` took the space advisory lock and `lock_timeout` was restored, before the quota and SUM are read.
+   * All four whitelisted transactions pass through it (upload `insertUploadInTx`, move `moveNoteToGroupInTx`, copy `copyNoteInTx`, transfer `transferGroupInTx`);
+   * callers supply ctx: upload `{noteId}`, move `{noteId, groupId}`, copy `{noteId: source, groupId?: target group}`, transfer `{groupId: deleted group}`.
    */
   | "storage-space-locked"
-  /** #181（`notes/tx/trash.ts` `trashNotesInTx`）：`FOR UPDATE` 鎖住待移入的筆記列之後、交易內重判刪除權之前。 */
+  /** `trashNotesInTx` (`notes/tx/trash.ts`, #181): after the notes to trash are locked `FOR UPDATE`, before delete permission is rechecked in the transaction. */
   | "note-trash-locked"
-  /** #181（`restoreNotesInTx`）：`FOR UPDATE` 鎖住筆記列之後、分類與重判垃圾桶權之前。 */
+  /** `restoreNotesInTx` (#181): after the note rows are locked `FOR UPDATE`, before classification and the trash-permission recheck. */
   | "note-restore-locked"
-  /** #181（`purgeTrashedNotesInTx`）：`FOR UPDATE` 鎖住筆記列之後、分類與重判垃圾桶權之前。 */
+  /** `purgeTrashedNotesInTx` (#181): after the note rows are locked `FOR UPDATE`, before classification and the trash-permission recheck. */
   | "note-purge-locked"
-  /** #181（`purgeExpiredBatchInTx`）：到期列 `FOR UPDATE SKIP LOCKED` 選完之後、`deleteNotesInTx` 之前（ctx.noteId＝這批第一篇，空批不帶）。 */
+  /** `purgeExpiredBatchInTx` (#181): after expired rows are picked with `FOR UPDATE SKIP LOCKED`, before `deleteNotesInTx` (ctx.noteId = first note of the batch; absent for an empty batch). */
   | "trash-purge-locked"
-  /** #181：REST move／MCP `move_note_to_group`（`notes/move-note.ts`）授權之後、`.transaction(` 之前。 */
+  /** REST move / MCP `move_note_to_group` (`notes/move-note.ts`, #181): after authorization, before `.transaction(`. */
   | "note-move-authorized"
-  /** #181：REST copy／MCP `copy_note`（`notes/copy-note.ts`）授權之後、`.transaction(` 之前（ctx.noteId＝來源）。 */
+  /** REST copy / MCP `copy_note` (`notes/copy-note.ts`, #181): after authorization, before `.transaction(` (ctx.noteId = source). */
   | "note-copy-authorized"
-  /** #181：`POST /api/notes/:id/uploads`（`routes/uploads.ts`）授權之後、`.transaction(` 之前。 */
+  /** `POST /api/notes/:id/uploads` (`routes/uploads.ts`, #181): after authorization, before `.transaction(`. */
   | "upload-authorized"
-  /** 資料夾建立／改名搬移／刪除（`folders/service.ts`）：交易外授權之後、閘門／`.transaction(` 之前。 */
+  /** Folder create / rename-move / delete (`folders/service.ts`): after authorization outside the transaction, before the gates / `.transaction(`. */
   | "folder-authorized"
-  /** 資料夾結構鎖（`folders/tx/lock.ts` `lockFolderSpacesInTx`）：取完所有結構鎖鍵、`lock_timeout` 已復原之後（鍵空不經過）。 */
+  /** Folder structure lock (`lockFolderSpacesInTx` in `folders/tx/lock.ts`): after all structure-lock keys are taken and `lock_timeout` restored (not fired when there are no keys). */
   | "folder-structure-locked"
-  /** 刪資料夾：閘門全開之後、交易之前。 */
+  /** Folder delete: after all gates are open, before the transaction. */
   | "folder-delete-gated"
-  /** 刪資料夾（`folders/tx/delete-folder.ts`）：一段式鎖完子樹筆記之後、分組之前。 */
+  /** Folder delete (`folders/tx/delete-folder.ts`): after the subtree's notes are locked in one statement, before live and trashed notes are split (also before the `onlyIfEmpty` check). */
   | "folder-delete-notes-locked"
-  /** 放置筆記（`placeNoteInTx`）：交易外授權之後、交易之前。 */
+  /** `placeNote`: after authorization outside the transaction, before the transaction. */
   | "note-folder-authorized"
-  /** 放置筆記（`folders/tx/place-note.ts`）：交易內鎖完筆記並重判之後、寫入之前。 */
+  /** `folders/tx/place-note.ts`: after the note is locked and rechecked in the transaction, before the write. */
   | "note-folder-locked"
-  /** 複製筆記到資料夾（`notes/tx/copy.ts` `copyNoteInTx`）：目標資料夾 `FOR KEY SHARE`＋重判之後、鎖來源之前。 */
+  /** `copyNoteInTx` into a folder (`notes/tx/copy.ts`): after the target folder is locked `FOR KEY SHARE` and rechecked, before the source is locked. */
   | "note-copy-folder-locked"
-  /** 還原筆記（`trash/service.ts` `restoreTrashed`）：預判與預讀空間之後、交易之前。 */
+  /** `restoreTrashed` (`trash/service.ts`): after the pre-check and the space pre-read, before the transaction. */
   | "trash-restore-prejudged"
-  /** #334 `PUT /api/favorites/:id`（`routes/favorites.ts`）：授權與扣桶之後、寫入之前——「授權後筆記被永久刪除」的窗。 */
+  /** `PUT /api/favorites/:id` (`routes/favorites.ts`, #334): after authorization and limiter consumption, before the write (window: note permanently deleted after authorization). */
   | "favorite-authorized";
 
 export interface GroupHookCtx { noteId?: string; groupId?: string; slug?: string; folderId?: string }

@@ -1,8 +1,9 @@
 /**
- * 資料夾的服務層：REST 與 MCP 共用的唯一入口。
- * 每支的形一律是「名稱 → 交易外快速判（入口順序）→ 扣 `folder` 桶 → 縫 → 交易（`folders/tx/*`，S14：callback 整段一個
- * `xInTx`）→ catch 映射」。失敗一律回 HTTP 對應的錯誤形（REST 直接送；MCP 之後以 code 映射）。HTTP 層訊息英文（#372）。
- * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`（④ 計數）。
+ * Folder service: the single entry point shared by REST and MCP.
+ * Every operation follows: validate input (name, ids) → fast authorization outside the transaction → consume the `folder` limiter
+ * → test hook → transaction (`folders/tx/*`) → map errors. Failures are returned as HTTP-shaped errors
+ * (REST sends them directly; MCP maps by code).
+ * A `.transaction(` callback here must be one `xInTx(tx, …)` call (enforced by `test/unit/s14-structure.test.ts`).
  */
 import { and, asc, isNull, sql } from "drizzle-orm";
 import type { ErrorCode, FolderDeleteResultDto, FolderDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
@@ -55,7 +56,6 @@ export interface FolderServiceDeps {
   limiters: { folder: FixedWindowLimiter };
 }
 
-/** 一律回 HTTP 對應的錯誤形（REST 直接送，MCP 以 code 映射）。 */
 export interface FolderFailure { kind: "error"; status: 400 | 403 | 404 | 409 | 429; code: ErrorCode; message: string }
 
 const fail = (status: FolderFailure["status"], code: ErrorCode, message: string): FolderFailure => ({ kind: "error", status, code, message });
@@ -65,8 +65,8 @@ export async function listFolders(db: Db, userId: string): Promise<FolderDto[]> 
 }
 
 /**
- * 建立。id（`parent.folderId`、`space.groupId`）由呼叫端轉小寫；這裡只驗 UUID 形。
- * 順序：名稱 → 位置的可見性（404）→ 管理權（403）→ 扣 `folder` 桶 → `folder-authorized` 縫 → 交易（重判全部）。
+ * Ids (`parent.folderId`, `space.groupId`) are lowercased by the caller; only the UUID shape is checked here.
+ * Order: name → location visibility (404) → manage permission (403) → limiter → `folder-authorized` test hook → transaction (rechecks everything).
  */
 export async function createFolder(
   deps: FolderServiceDeps,
@@ -88,11 +88,11 @@ export async function createFolder(
     const requested = input.parent.space;
     let space: FolderSpace;
     if (requested.kind === "group") {
-      // 非 UUID／不存在／非成員／角色無閱讀 → 同一個 404（同形）。
+      // Non-UUID, nonexistent, non-member and no-read-role all return the same 404.
       if (!UUID_RE.test(requested.groupId)) return fail(404, "group_not_found", GROUP_NOT_FOUND_MESSAGE);
       space = { kind: "group", groupId: requested.groupId };
       const m = await loadCreateTarget(deps.db, input.by, requested.groupId);
-      // 與交易內同一個推導（folderPermissions）：null＝看不到、!manage＝角色不能編輯。
+      // Same derivation as inside the transaction (folderPermissions): null = invisible, !manage = the role can't edit.
       const perms = m === undefined ? null : folderPermissions(space, input.by, m);
       if (perms === null) return fail(404, "group_not_found", GROUP_NOT_FOUND_MESSAGE);
       if (!perms.manage) return fail(403, "forbidden", FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE);
@@ -114,7 +114,7 @@ export async function createFolder(
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
-    // 防禦縱深：父子空間 trigger 只在預讀之後空間被改時才可能觸發，與看不到同形。
+    // Defence in depth: the parent/child space trigger can only fire if the space changed after the pre-read; same shape as invisible.
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }
@@ -122,9 +122,9 @@ export async function createFolder(
 }
 
 /**
- * 改名／搬移（只限同空間）。`folderId` 由 app 層 `lowercaseUuidParams`、`parentId` 由路由轉小寫；這裡只驗 UUID 形。
- * 順序：名稱 → 自己的可見性（404）→ 新父層的可見性（非 UUID 或看不到 → 404）→ 同空間（400）→ 管理權（403）
- * → 扣 `folder` 桶 → `folder-authorized` 縫 → 交易（重判全部，再成環、深度、撞名）。
+ * Rename and/or move (same space only). `folderId` is lowercased by `lowercaseUuidParams` in the app layer and `parentId` by the route; only the UUID shape is checked here.
+ * Order: name → own visibility (404) → new parent's visibility (non-UUID or invisible → 404) → same space (400) → manage permission (403)
+ * → limiter → `folder-authorized` test hook → transaction (rechecks everything, then cycle, depth, name clash).
  */
 export async function updateFolder(
   deps: FolderServiceDeps,
@@ -168,7 +168,7 @@ export async function updateFolder(
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
-    // 防禦縱深：同空間已在交易內判過；KF002 只在預讀之後空間被改時才可能觸發，與看不到同形。
+    // Defence in depth: same space was already checked in the transaction; KF002 can only fire if the space changed after the pre-read; same shape as invisible.
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }
@@ -176,13 +176,15 @@ export async function updateFolder(
 }
 
 /**
- * 刪資料夾。`folderId` 由 app 層 `lowercaseUuidParams` 轉小寫；這裡只驗 UUID 形。
- * 順序：可見性（404）→ 管理權（403）→（個人／群組）預讀子樹活筆記（述詞），非空且無刪除權 → 403 `folder_delete_blocked`
- * → 扣 `folder` 桶 → `folder-authorized` 縫 → 對預讀到的每篇開共編閘門 → `folder-delete-gated` 縫 → 交易 →
- * **不論成功或失敗**全部 `release()`（預讀後才搬出子樹的不收門會擋新連線到 TTL；`releaseDeletingGate` 只收活筆記）。
- * 共享私人：筆記不動（放置 CASCADE），不預讀、不開閘門。
- * `onlyIfEmpty`（只刪空資料夾）：預讀到活筆記 → 409 `folder_not_empty`（排在 `folder_delete_blocked` 之前，不扣桶、
- * 不開閘門）；過了這裡預讀必為空，所以一律不開閘門。子資料夾與放置只由交易內判（權威）。
+ * `folderId` is lowercased by `lowercaseUuidParams` in the app layer; only the UUID shape is checked here.
+ * Order: visibility (404) → manage permission (403) → (personal/group) pre-read the subtree's live notes; any present and
+ * the caller can't delete → 403 `folder_delete_blocked` → limiter → `folder-authorized` test hook → open a collab gate for each
+ * pre-read note → `folder-delete-gated` test hook → transaction → `release()` every gate **whether it succeeded or failed**
+ * (a gate left open for a note that moved out of the subtree after the pre-read would block new connections until its TTL;
+ * `releaseDeletingGate` only releases live notes).
+ * Shared: notes aren't touched (placements CASCADE), so no pre-read and no gates.
+ * `onlyIfEmpty`: live notes in the pre-read → 409 `folder_not_empty`, checked before `folder_delete_blocked`, without consuming the limiter
+ * or opening gates; past that point the pre-read is empty, so no gates are opened. Subfolders and placements are judged only in the transaction (authoritative).
  */
 export async function deleteFolder(
   deps: FolderServiceDeps,
@@ -210,7 +212,7 @@ export async function deleteFolder(
   const hookCtx: GroupHookCtx = { folderId, ...(access.space.kind === "group" ? { groupId: access.space.groupId } : {}) };
   await deps.groupTestHook?.("folder-authorized", hookCtx);
 
-  // allSettled（比照 `routes/groups.ts` 全刪）：閘門的契約是不 throw；萬一有一個 reject，其他已開的也要 release 再拋。
+  // allSettled, like the delete-all path in `routes/groups.ts`: gates aren't supposed to throw, but if one rejects, the ones already opened must be released before rethrowing.
   const settled = await Promise.allSettled(liveIds.map(id => deps.collabHooks.beforeNoteDeleted(id)));
   const gates: NoteDeleteGate[] = settled.flatMap(s => (s.status === "fulfilled" ? [s.value] : []));
   const releaseAll = (): void => {
@@ -227,7 +229,7 @@ export async function deleteFolder(
   };
   let result: FolderDeleteResultDto;
   try {
-    // 縫在 try 內：縫丟錯（測試）也走 finally 的 releaseAll。
+    // Test hook inside the try so a throwing hook still reaches the finally's releaseAll.
     await deps.groupTestHook?.("folder-delete-gated", hookCtx);
     result = await deps.db.transaction(tx => deleteFolderInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
@@ -241,9 +243,9 @@ export async function deleteFolder(
 }
 
 /**
- * 把筆記放進／移出資料夾。`noteId` 由 app 層 `lowercaseUuidParams`、`folderId` 由路由轉小寫；這裡只驗 UUID 形。
- * 順序（筆記授權排在資料夾之前）：筆記授權（404／群組筆記無編輯權 403）→ 模式 → 資料夾可見性（404）→ 空間（400）
- * → 扣 `folder` 桶 → `note-folder-authorized` 縫 → 交易（重判全部）→ 回呼叫者視角的 `NoteDto`。
+ * Places a note into or out of a folder. `noteId` is lowercased by `lowercaseUuidParams` in the app layer and `folderId` by the route; only the UUID shape is checked here.
+ * Order (note authorization comes before the folder): note authorization (404; group note without edit permission 403) → mode → folder visibility (404) → space (400)
+ * → limiter → `note-folder-authorized` test hook → transaction (rechecks everything) → returns a `NoteDto` from the caller's view.
  */
 export async function placeNote(
   deps: FolderServiceDeps,
@@ -276,10 +278,10 @@ export async function placeNote(
     await deps.db.transaction(tx => placeNoteInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
-    // 交易內重判之後、upsert 之前被撤分享（撤分享不鎖 notes）→ 與看不到這篇同形。
+    // Share revoked after the in-transaction recheck but before the upsert (revoking doesn't lock notes): same shape as not visible.
     const fk = foreignKeyViolationConstraint(err);
     if (fk === "note_placements_share_fk") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);
-    // 防禦縱深：資料夾已在交易內 KS 鎖住並判過空間；FK／trigger 只在那之外的漂移才觸發，與看不到同形。
+    // Defence in depth: the folder was already locked KEY SHARE and its space checked in the transaction; FK/trigger errors only come from drift outside that, same shape as invisible.
     if (fk === "notes_folder_fk" || fk === "note_placements_folder_id_folders_id_fk" || isFolderSpaceViolation(err)) {
       return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     }
@@ -287,7 +289,7 @@ export async function placeNote(
     throw err;
   }
 
-  // 極窄競態：commit 之後、重讀之前被移走或降權 → 與看不到同形。
+  // Narrow race: the note was moved or lost permission between commit and re-read: same shape as not visible.
   const fields = await loadNoteFields(deps.db, noteId, by);
   const access = await resolveNoteAccess(deps.db, by, noteId);
   if (fields === undefined || access.role === "none") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);

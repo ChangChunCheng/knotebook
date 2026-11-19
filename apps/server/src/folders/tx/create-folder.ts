@@ -1,9 +1,10 @@
 /**
- * 建立資料夾的交易本體（根層與父資料夾兩形）。S14：只收 `tx`／純資料／測試縫。
- * 順序：（群組空間）groups KS → 結構鎖 →（父資料夾形）父列 KS → 重判可見性、同空間、管理權（與服務層同一個入口順序） → 深度 → 數量 → INSERT。
- * 失敗一律 throw `TxAbort`。同層撞名的 23505 不在這裡接（交易已 abort），交給服務層映射 409 `folder_name_taken`。
- * 呼叫端一律 READ COMMITTED（結構鎖之後的下一句才拿新快照，見 `lock.ts` 檔頭）。
- * 錯誤訊息在 `../messages.ts`（服務層的交易外快速路徑 import 同一份，404／403 逐位元組相同）。
+ * Transaction body for creating a folder (root-level or under a parent). Takes only `tx`, plain data and the test hook.
+ * Order: (group space) groups KEY SHARE → structure lock → (parent form) parent row KEY SHARE → recheck visibility, same space and
+ * manage permission (same order as the service layer) → depth → count → INSERT.
+ * Failures throw `TxAbort`. The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service layer maps it to 409 `folder_name_taken`.
+ * Callers must use READ COMMITTED: the statement after the structure lock takes a fresh snapshot (see the header of `lock.ts`).
+ * Error messages live in `../messages.ts`, shared with the service layer's fast path so the 404/403 bodies are identical.
  */
 import { count, sql } from "drizzle-orm";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderPermissionsDto } from "@knotebook/shared";
@@ -29,7 +30,7 @@ export interface CreateFolderInput {
   by: string;
   name: string;
   lockTimeoutMs: number;
-  /** 交易外預讀的位置；space 由父資料夾或請求決定。id 皆已小寫。 */
+  /** Pre-read outside the transaction: the space comes from the parent folder or the request. Ids are lowercase. */
   target: { kind: "parent"; folderId: string; space: FolderSpace } | { kind: "root"; space: FolderSpace };
 }
 
@@ -40,7 +41,7 @@ export async function createFolderInTx(
 ): Promise<{ row: FolderRow; permissions: FolderPermissionsDto }> {
   const { target } = input;
   const space = target.space;
-  // 以資料夾 id 進來 → folder_not_found；以群組 id 進來 → group_not_found（n-2）。
+  // Addressed by folder id → folder_not_found; addressed by group id → group_not_found.
   const notFound = (): TxAbort =>
     target.kind === "parent"
       ? new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE)
