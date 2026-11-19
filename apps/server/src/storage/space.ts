@@ -5,12 +5,14 @@ export type StorageSpace = { kind: "user"; id: string } | { kind: "group"; id: s
 
 export const STORAGE_QUOTA_EXCEEDED_MESSAGE = "This space's storage quota is full.";
 
+/** `notes_owner_xor_group_chk` guarantees exactly one of owner/group is non-NULL. */
 export function spaceOfNote(n: { ownerId: string | null; groupId: string | null }): StorageSpace {
   if (n.groupId !== null) return { kind: "group", id: n.groupId };
   if (n.ownerId !== null) return { kind: "user", id: n.ownerId };
   throw new Error("spaceOfNote: owner_id 與 group_id 皆為 NULL（違反 notes_owner_xor_group_chk）");
 }
 
+/** Case variants of one id must give the same lock; a hash collision only over-serializes. */
 export function spaceLockKey(space: StorageSpace): string {
   return `knotebook.storage:${space.kind}:${space.id.toLowerCase()}`;
 }

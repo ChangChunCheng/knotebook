@@ -31,12 +31,12 @@ export interface LinkedUser {
 }
 
 /**
-  * The first statement locks the target account row (`FOR NO KEY UPDATE`, compatible with the FK's KEY SHARE) before any identity row (the
-  * create branch and the boot backfill excepted): the serialization point for "one sub per issuer". lower(email) must equal `pendingEmail`
-  * (else `oidc_link_expired`); a password proof needs `password_hash` to still be the verified string. A proof mismatch doesn't reveal whose
-  * identity it was, and `account_disabled` is disclosed only after proof. `must_change_password` is untouched; an SSO proof also updates
-  * the proving identity's `last_login_at` (after the users lock). The password-hash comparison and the session happen outside (caller).
-  */
+ * The first statement locks the target account row (`FOR NO KEY UPDATE`, compatible with the FK's KEY SHARE) before any identity row (the
+ * create branch and the boot backfill excepted): the serialization point for "one sub per issuer". lower(email) must equal `pendingEmail`
+ * (else `oidc_link_expired`); a password proof needs `password_hash` to still be the verified string. A proof mismatch doesn't reveal whose
+ * identity it was, and `account_disabled` is disclosed only after proof. `must_change_password` is untouched; an SSO proof also updates
+ * the proving identity's `last_login_at` (after the users lock). Password verification (argon2) and the session happen in the caller.
+ */
 export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, hook?: OidcTestHook): Promise<LinkedUser> {
   const [row] = await tx
     .select({
@@ -89,6 +89,7 @@ export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, h
     .onConflictDoNothing({ target: [userIdentities.issuer, userIdentities.sub] })
     .returning({ id: userIdentities.id });
   if (inserted.length === 0) {
+    // ON CONFLICT waited for the other transaction; this new statement's snapshot sees its committed row.
     const [owner] = await tx
       .select({ userId: userIdentities.userId })
       .from(userIdentities)

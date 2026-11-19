@@ -65,6 +65,7 @@ export async function hasUsableSso(q: DbOrTx, userId: string): Promise<boolean> 
   return result.rows[0]!.ok;
 }
 
+/** Snapshot only; the lock-out guard in the PATCH is authoritative. */
 export async function passwordLoginImpact(db: Db, actorUserId: string): Promise<AdminAuthSettingsDto["passwordLoginImpact"]> {
   const result = await db.execute<{ without_sso: number; enabled: number }>(sql`
     select

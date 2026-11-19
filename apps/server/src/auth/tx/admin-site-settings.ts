@@ -8,9 +8,9 @@ import { hasUsableSso } from "../sign-in-methods.js";
 export const SITE_SETTINGS_MISSING_MESSAGE = "Site settings are missing (site_settings has no row).";
 
 /**
-  * Every settings and provider write takes this row first, unconditionally (a conditional lock leaves gaps), so two admins
-  * disabling providers can't both pass the lock-out guard. Holders don't lock account rows (acyclic with unlinking).
-  */
+ * Settings writes and every provider PATCH/DELETE take this row first, unconditionally (a conditional lock leaves gaps), so two admins
+ * disabling providers can't both pass the lock-out guard.
+ */
 export async function lockSiteSettingsInTx(tx: Tx): Promise<{ registrationEnabled: boolean; passwordLoginEnabled: boolean }> {
   const [row] = await tx
     .select({ registrationEnabled: siteSettings.registrationEnabled, passwordLoginEnabled: siteSettings.passwordLoginEnabled })
@@ -21,7 +21,7 @@ export async function lockSiteSettingsInTx(tx: Tx): Promise<{ registrationEnable
   return row;
 }
 
-/** By DB values only (an env override isn't exempt), so a state reached during rescue still holds without the env. */
+/** By DB values only (an env override isn't exempt), so a state reached during rescue still holds without the env. Call it after the write, in the same transaction, holding the site-settings lock. */
 export async function assertSsoOnlyGuardInTx(tx: Tx, actorUserId: string): Promise<void> {
   const [anyEnabled] = await tx.select({ one: sql<number>`1` }).from(authProviders).where(eq(authProviders.enabled, true)).limit(1);
   if (anyEnabled === undefined) throw new TxAbort(409, "sso_provider_required", "Enable at least one sign-in service before turning off password sign-in.");

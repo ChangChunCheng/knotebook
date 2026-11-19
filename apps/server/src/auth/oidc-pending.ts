@@ -7,8 +7,9 @@ import { OIDC_STATE_COOKIE_PATH } from "./oidc-state.js";
 // One per browser: a new confirm_link overwrites the old one (the two-tab case relies on `pendingId`).
 
 export const OIDC_PENDING_COOKIE = "knotebook_oidc_link";
+/** 15 minutes: must outlast a 600 s OIDC round trip (SSO proof). */
 export const OIDC_PENDING_TTL_SECONDS = 900;
-/** Browsers silently DROP cookies over about 4096 bytes; measured on `name=value`, 3800 leaves margin. */
+/** Browsers silently DROP cookies over about 4096 bytes; counted over `name=value`, 3800 leaves margin. */
 export const OIDC_PENDING_MAX_COOKIE_BYTES = 3800;
 const NAMESPACE = "oidc-pending-link";
 
@@ -18,8 +19,10 @@ export interface PendingLinkPayload {
   sub: string;
   providerId: string;
   userId: string;
+  /** Already normalized (the link tx compares `lower(email)` against it). */
   email: string;
   exp: number;
+  /** Already through `safeNextPath`; re-validate before use. */
   next?: string;
 }
 

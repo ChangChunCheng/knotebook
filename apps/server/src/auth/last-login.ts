@@ -3,13 +3,13 @@ import type { FastifyBaseLogger } from "fastify";
 import type { Db } from "../db/index.js";
 
 /**
-  * Called wherever a NEW login session is signed (not when re-signing after a password change or linking while signed in).
-  * Outside any transaction, never waits for a lock (`SKIP LOCKED`: a locked `users` row is skipped with a warn, since
-  * "SSO login doesn't wait on `users`" outranks recording; the cost is an occasionally missed login under concurrency).
-  * Display-only: errors are swallowed here because the OIDC callback's outer catch would turn any exception into
-  * `oidc_exchange_failed`. Also writes `last_active_at` (a login is activity; bypasses `LastActiveTracker`'s throttle).
-  * Neither column is in `UserDto`, so no gate invalidate.
-  */
+ * Called wherever a NEW login session is signed (not when re-signing after changing or adding a password, or linking while signed in).
+ * Outside any transaction (the OIDC login tx deliberately doesn't write `users`), never waits for a lock (`SKIP LOCKED`: a locked `users`
+ * row is skipped with a warn, since "SSO login doesn't wait on `users`" outranks recording; the cost is an occasionally missed login under
+ * concurrency). Display-only: errors are swallowed here because the OIDC callback's outer catch would turn any exception into
+ * `oidc_exchange_failed`. Also writes `last_active_at` (a login is activity; bypasses `LastActiveTracker`'s throttle).
+ * Neither column is in `UserDto`, so no gate invalidate.
+ */
 export async function touchLastLogin(db: Db, userId: string, log: FastifyBaseLogger): Promise<void> {
   try {
     const res = await db.execute(

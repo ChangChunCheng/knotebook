@@ -28,12 +28,13 @@ export interface TransferAuthDeps {
 }
 
 /**
-  * With a header only the transfer path applies (no cookie fallback); plain PATs/OAuth tokens get a dedicated 401 message. Expiry (child
-  * and parent) is judged with DB `now()`, the POST's clock. Early returns drain the body first (else the client gets a network error).
-  * Every 401 for a request with a header consumes `bearerMiss` (full bucket: 429 with Retry-After and no WWW-Authenticate); the
-  * header-less 401 comes from `app.authenticate` and doesn't, and 403 doesn't. `request.tokenId` is the parent's id (so the error log shows
-  * which one); the parent's `last_used_at` isn't updated. Headers are set before `sendError`.
-  */
+ * With a header only the transfer path applies (no cookie fallback); plain PATs/OAuth tokens get a dedicated 401 message. Expiry (child
+ * and parent) is judged with DB `now()`, the POST's clock. Early returns drain the body first (else the client gets a network error).
+ * Every 401 for a request with a header consumes `bearerMiss` (full bucket: 429 with Retry-After and no WWW-Authenticate); the
+ * header-less 401 doesn't (in `require()` it comes from `app.authenticate`, in `requireBulk()` it is sent there with a transfer
+ * challenge), and 403 doesn't. `request.tokenId` is the parent's id (so the error log shows which one); the parent's `last_used_at`
+ * isn't updated. Headers are set before `sendError`.
+ */
 export function createTransferAuth(deps: TransferAuthDeps) {
   function reject401(request: FastifyRequest, reply: FastifyReply, withError: boolean, message: string): void {
     drainWithCap(request);

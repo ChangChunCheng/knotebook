@@ -13,11 +13,11 @@ interface FailureRecord {
 const MAX_BACKOFF_SECONDS = 900; // 15 minutes
 
 /**
-  * Keys come straight from the request: the account key is the submitted email (the login body schema only checks `z.string()`
-  * because format validation would make 400/401 an account-existence oracle); the IP key is `X-Forwarded-For` when `TRUST_PROXY`
-  * is set, else the socket address. Truncation bounds bytes (entry count alone doesn't: bodyLimit is 1 MiB). 320 exceeds the
-  * 254-char email limit, so real input is never cut; oversized input collapses onto one record, which is intended.
-  */
+ * Keys come straight from the request: the account key is the submitted email (the login body schema only checks `z.string()`
+ * because format validation would make 400/401 an account-existence oracle); the IP key is `X-Forwarded-For` when `TRUST_PROXY`
+ * is set, else the socket address. Truncation bounds bytes (entry count alone doesn't: bodyLimit is 1 MiB). 320 exceeds the
+ * 254-char email limit, so real input is never cut; oversized input collapses onto one record, which is intended.
+ */
 const MAX_KEY_LENGTH = 320;
 
 const boundKey = (key: string): string => (key.length <= MAX_KEY_LENGTH ? key : key.slice(0, MAX_KEY_LENGTH));
@@ -92,7 +92,7 @@ export class LoginThrottle {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   recordSuccess(account: string, _ip: string): void {
     this.accountFailures.delete(boundKey(account));
-    // The IP counter is deliberately kept and only decays through the idle timeout: a success on one account must not unblock an IP guessing others.
+    // The IP counter is deliberately kept (it decays only through the idle timeout): otherwise logging into one's own account would reset the backoff of an IP guessing others.
   }
 
   private evaluateRecord(

@@ -50,6 +50,7 @@ function providerColumns() {
   };
 }
 
+/** A NULL client_id counts as no usable provider (unreachable: CHECK `auth_providers_enabled_client_id_chk`, and both read paths read enabled rows only). */
 function withClientId(row: (Omit<OidcProviderRow, "clientId"> & { clientId: string | null }) | undefined): OidcProviderRow | null {
   if (row === undefined) return null;
   const { clientId } = row;

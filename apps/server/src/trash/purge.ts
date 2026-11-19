@@ -52,6 +52,7 @@ export function createTrashPurger(deps: TrashPurgerDeps): TrashPurger {
         if (out.noteIds.length < batchSize) break;
       }
     } finally {
+      // Earlier batches may already have committed when a later one fails: log the real count.
       deps.log.info({ purged: total }, "垃圾桶清理：永久刪除到期筆記");
     }
     return total;

@@ -26,6 +26,7 @@ function baseColumns(retentionDays: number | null) {
   };
 }
 
+// `deletedAtMs` is the millisecond sort key itself; the name avoids the `deletedAt:` pattern of a guard in `trash-structure.test.ts`.
 export interface TrashCursor { deletedAtMs: Date; id: string }
 
 const deletedAtMsExpr = sql`date_trunc('milliseconds', ${notes.deletedAt})`.mapWith(notes.deletedAt);

@@ -22,13 +22,13 @@ export interface ResolveOidcLoginResult {
 }
 
 /**
-  * The auto-create switch is read under `site_settings FOR SHARE`, which excludes provider PATCH/DELETE (they take the settings lock
-  * first). The provider row is bound to the callback-verified `config_version`: the code exchange sits between that check and this
-  * transaction, and claims from a replaced issuer must not create an account. The provider's `enabled` is deliberately not re-checked here.
-  * The login branch only updates `user_identities.last_login_at` and never locks the user row (no cycle with SSO proof's
-  * user-then-identity order); 0 rows after a concurrent unlink still counts as login. The create branch is registry-first
-  * (handles, users, user_identities) and deliberately doesn't write `users.oidc_*`. Unique-key errors are rethrown; the route retries the whole transaction.
-  */
+ * The auto-create switch is read under `site_settings FOR SHARE`, which excludes provider PATCH/DELETE (they take the settings lock
+ * first). The provider row is bound to the callback-verified `config_version`: the code exchange sits between that check and this
+ * transaction, and claims from a replaced issuer must not create an account. The provider's `enabled` is deliberately not re-checked here.
+ * The login branch only updates `user_identities.last_login_at` and never locks the user row (no cycle with SSO proof's
+ * user-then-identity order); 0 rows after a concurrent unlink still counts as login. The create branch is registry-first
+ * (handles, users, user_identities) and deliberately doesn't write `users.oidc_*`. Unique-key errors are rethrown; the route retries the whole transaction.
+ */
 export async function resolveOidcLoginInTx(
   tx: Tx,
   input: { claims: OidcClaims; providerId: string; configVersion: number },
@@ -72,8 +72,9 @@ export async function resolveOidcLoginInTx(
           .orderBy(asc(users.createdAt), asc(users.id))
       : [];
   // READ COMMITTED snapshots per statement: another first login for the same (issuer, sub) may commit between the two
-  // queries, so the email query hits its account while the identity query missed. Re-query the identity before deciding and feed a
-  // hit back as the identity input (disabled still gives account_disabled); no separate login shortcut.
+  // queries, so the email query hits its account while the identity query missed. One re-query suffices: a create-branch winner's users row
+  // and identity commit together, so seeing the row means seeing the identity. Feed a hit back as the identity input (disabled still gives
+  // account_disabled); no separate login shortcut.
   if (emailRows.length > 0) hit = await identityQuery();
   const byIdentityUser: OidcCandidateRow | null =
     hit === undefined ? null : { id: hit.id, disabledAt: hit.disabledAt, hasPassword: hit.passwordHash !== null, linkedProviders: [] };
@@ -97,6 +98,7 @@ export async function resolveOidcLoginInTx(
         providerStale,
       };
     case "confirm_link":
+      // claims.email equals lower(users.email) (the match condition above); it is sealed into the pending cookie and compared again under the lock.
       return { outcome: { kind: "confirm_link", userId: decision.userId, email: claims.email! }, settingsMissing, providerStale };
     case "login":
       await tx

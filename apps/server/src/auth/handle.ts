@@ -6,8 +6,8 @@ import { handles } from "../db/schema.js";
 
 // The `handles` registry PK is the only arbiter of uniqueness; the DB probe in `deriveHandle` is an availability check, so the
 // write can still collide. Retry contracts: bootstrap doesn't retry (fails closed); OIDC retries the whole tx once; register and
-// accept-invite rerun the tx up to 3 times, then use `user-<uuid8>`. Re-probing on retry fixes a real `handles_pkey` race; the
-// `users_handle_unique` window case is a deterministic re-collision (see the call sites).
+// accept-invite (`routes/account.ts`) rerun the tx up to 3 times probing, and the 4th attempt uses `user-<uuid8>`. Re-probing on retry fixes
+// a real `handles_pkey` race; the `users_handle_unique` window case is a deterministic re-collision (see the call sites).
 
 const UUID_FORM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

@@ -18,6 +18,7 @@ export interface Snapshot {
 
 const KEY_SET: ReadonlySet<string> = new Set(SITE_LIMIT_KEYS);
 
+/** Invalid rows are ignored, not deleted. `checkStorable` is shared so `update` and this can't disagree. */
 export function resolveSnapshot(rows: ReadonlyMap<string, number>, limitEnv: LimitEnv, machine: MachineInfo): Snapshot {
   const values = {} as Record<SiteLimitKey, number>;
   const source = {} as Record<SiteLimitKey, SiteLimitSource>;

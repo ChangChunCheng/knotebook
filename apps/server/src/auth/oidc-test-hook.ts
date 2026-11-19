@@ -2,7 +2,7 @@
 export type OidcRacePoint =
   | "pending-confirm-verified"
   | "link-locked"
-  /** After the identity lookup missed, before the email query: another first login for the same identity committing here makes the email query hit the account it just created. */
+    /** After the identity lookup missed, before the email query. READ COMMITTED snapshots per statement: another first login for the same identity committing here makes the email query hit the account it just created. */
   | "login-identity-missed";
 
 export type OidcTestHook = (

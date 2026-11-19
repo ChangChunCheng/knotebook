@@ -1,12 +1,12 @@
 /**
-  * The only place a quota is decided; called after the transaction's row locks and before any write in the space's scope (keeps lock
-  * order acyclic). Each step is its own statement: `incoming <= 0` returns without locking (only additions are blocked); `lock_timeout`
-  * is set via `set_config` (`SET` takes no bind parameters), the advisory lock is alone (55P03 maps to 409 server_busy), then
-  * `lock_timeout` goes back TO DEFAULT (not 0: that restores the role/database/config value, so only the space-lock statement is bounded).
-  * The SUM must be a separate statement after the lock: READ COMMITTED snapshots per statement, which is what sees the previous holder's
-  * commit (the advisory xact lock is released only once the commit is visible). A NULL quota means unlimited; used + incoming equal to the
-  * quota passes. Callers must run READ COMMITTED.
-  */
+ * The only place a quota is decided; called after the transaction's row locks and before any write in the space's scope (keeps lock
+ * order acyclic). Each step is its own statement: `incoming <= 0` returns without locking (only additions are blocked); `lock_timeout`
+ * is set via `set_config` (`SET` takes no bind parameters), the advisory lock is alone (55P03 maps to 409 server_busy), then
+ * `lock_timeout` goes back TO DEFAULT (not 0: that restores the role/database/config value, so only the space-lock statement is bounded).
+ * The SUM must be a separate statement after the lock: READ COMMITTED snapshots per statement, which is what sees the previous holder's
+ * commit (the advisory xact lock is released only once the commit is visible). A NULL quota means unlimited; used + incoming equal to the
+ * quota passes. Callers must run READ COMMITTED.
+ */
 import { eq, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groups, notes, storagePlans, uploads, users } from "../../db/schema.js";
@@ -22,6 +22,7 @@ export interface SpaceRoomOpts {
   hookCtx?: { noteId?: string; groupId?: string };
 }
 
+/** Extends `TxAbort` so an unhandled one still maps to the right code; carries `space` and the numbers so the route decides visibility outside the transaction. */
 export class StorageQuotaExceeded extends TxAbort {
   constructor(
     readonly space: StorageSpace,

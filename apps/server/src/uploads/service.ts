@@ -16,8 +16,8 @@ export function assertUploadsDirWritable(uploadsDir: string): void {
   }
   try {
     unlinkSync(probePath);
-    // The probe write already proved the directory is writable; a failed cleanup doesn't change that.
   } catch {
+    // The probe write already proved the directory is writable; a failed cleanup doesn't change that.
   }
 }
 

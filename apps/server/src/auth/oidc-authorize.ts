@@ -6,7 +6,7 @@ import { oidcRedirectUri } from "./oidc-client.js";
 import type { OidcProviderRow } from "./oidc-providers.js";
 import { OIDC_STATE_COOKIE_PATH, OIDC_STATE_TTL_SECONDS, sealOidcState, type OidcStateIntent } from "./oidc-state.js";
 
-/** Shared by login and SSO proof start. The scope must stay "openid email profile" (else the email/name claims are missing). Throws when the metadata lacks an endpoint: callers must catch. */
+/** Shared by login, SSO proof start and manual link. The scope must stay "openid email profile" (else the email/name claims are missing). Throws when the metadata lacks an endpoint: callers must catch. */
 export async function startAuthorization(
   config: Pick<AppConfig, "appSecret" | "publicUrl">,
   provider: Pick<OidcProviderRow, "id" | "legacyCallback" | "configVersion">,

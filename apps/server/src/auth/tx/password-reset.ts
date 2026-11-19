@@ -55,6 +55,7 @@ export async function cancelPasswordResetsInTx(tx: Tx, input: { targetUserId: st
   return { revoked: await revokePendingPasswordResetsInTx(tx, input.targetUserId) };
 }
 
+/** All rejections are 410 and reachable only under concurrency. Touches only `users` and `one_time_links`: PATs, OAuth and transfer tokens are deliberately left alone. */
 export async function completePasswordResetInTx(
   tx: Tx,
   input: { linkId: string; targetUserId: string; passwordHash: string; ttlSeconds: number },

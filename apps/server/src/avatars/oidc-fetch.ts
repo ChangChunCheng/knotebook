@@ -1,15 +1,15 @@
 /**
-  * Downloads an IdP `picture` URL (untrusted: the target comes from the IdP's profile). SSRF: every hop (start URL and each redirect,
-  * followed manually, max 3, all checks repeated) checks scheme and port, resolves the host and refuses if ANY address is special-use;
-  * userinfo is refused before connecting; no cookies or Authorization are sent. One timeout covers resolution, every hop and the
-  * body read; the body is counted while read and aborted at the cap; a content-type other than the three bitmap types is never
-  * read; the final check is by magic bytes (GIF refused). Failure reasons are fixed strings: the built-in fetch's TypeError
-  * carries the full URL (password and query), so underlying errors are neither returned nor logged.
-  * Exemption: a host equal to the issuer's (URL already lowercased) skips the address check, since self-hosted IdPs serve avatars
-  * from internal addresses; only the host string is compared (no subdomain, suffix or same-IP matching), scheme and port are still
-  * checked, and a redirect to another host is address-checked again.
-  * Known residual risk: DNS rebinding (resolve and connect are separate lookups), and probing of services on the exempt host's 80/443/issuer port.
-  */
+ * Downloads an IdP `picture` URL (untrusted: the target comes from the IdP's profile). SSRF: every hop (start URL and each redirect,
+ * followed manually, max 3, all checks repeated) checks scheme and port, resolves the host and refuses if ANY address is special-use;
+ * userinfo is refused before connecting; no cookies or Authorization are sent. One timeout covers resolution, every hop and the
+ * body read; the body is counted while read and aborted at the cap; a content-type other than the three bitmap types is never
+ * read; the final check is by magic bytes (GIF refused). Failure reasons are fixed strings: the built-in fetch's TypeError
+ * carries the full URL (password and query), so underlying errors are neither returned nor logged.
+ * Exemption: a host equal to the issuer's (URL already lowercased) skips the address check, since self-hosted IdPs serve avatars
+ * from internal addresses; only the host string is compared (no subdomain, suffix or same-IP matching), scheme and port are still
+ * checked, and a redirect to another host is address-checked again.
+ * Known residual risk: DNS rebinding (resolve and connect are separate lookups), and probing of services on the exempt host's 80/443/issuer port.
+ */
 import { BlockList, isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { MAX_OIDC_AVATAR_BYTES } from "@knotebook/shared";
@@ -189,8 +189,8 @@ export async function fetchOidcAvatar(
     const iu = new URL(opts.issuer);
     issuerHost = iu.hostname;
     issuerPort = effectivePort(iu);
-    // The issuer isn't a URL: no exemption.
   } catch {
+    // The issuer isn't a URL: no exemption.
   }
   try {
     let current: URL;

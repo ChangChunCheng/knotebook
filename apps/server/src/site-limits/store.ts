@@ -98,7 +98,7 @@ export class SiteLimits {
     return { items, machine: { ...this.machine } };
   }
 
-  /** Validation runs once before the lock (env lock, range, step; first failure wins, nothing written). Released in `finally` so a throw leaves memory untouched. */
+    /** Validation runs once before the lock (env lock, range, step; first failure wins, nothing written). On a throw the snapshot is untouched; `finally` releases the lock so the next update isn't stuck. */
   async update(actorUserId: string, changes: Changes): Promise<SiteLimitsView> {
     if (this.db === null) throw new Error("SiteLimits.defaults() is read-only");
     const set = this.validate(changes);

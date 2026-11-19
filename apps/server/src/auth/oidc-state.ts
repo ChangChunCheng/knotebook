@@ -15,7 +15,7 @@ export interface OidcStateBase {
 
 export type OidcStateIntent = {
   intent: "login";
-    /** Re-validated by the callback after unsealing: the seal proves we issued it, not that it is still safe (the criterion may have tightened while an old cookie was in flight). No second length cap: `safeNextPath` (`MAX_NEXT_PATH_LENGTH` = 2048) is the only gate, and a smaller one silently dropped valid long paths. */
+      /** Re-validated by the callback after unsealing: the seal proves we issued it, not that it is still safe (the criterion may have tightened while an old cookie was in flight). No second length cap: `safeNextPath` (`MAX_NEXT_PATH_LENGTH` = 2048) is the only gate; a 2048-char `next` seals to about 3165 bytes of `name=value`, under the 4 KB cookie limit, so a smaller cap only dropped valid paths. */
   next?: string;
 } | {
   intent: "prove";

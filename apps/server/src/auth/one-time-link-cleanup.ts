@@ -3,10 +3,10 @@ import type { Db } from "../db/index.js";
 import { oneTimeLinks } from "../db/schema.js";
 
 /**
- * No scheduler: opportunistic, fire-and-forget after a link is created (failure only `log.warn`). Ended means 30 days past
- * `coalesce(used_at, revoked_at, expires_at)`. `for update skip locked` is load-bearing: complete, cancel, disable and the
- * user-delete cascade may lock the same row, and skipping locked rows means no wait and no cycle (guard: the skip locked case
- * in `test/one-time-link-cleanup.test.ts`).
+ * No scheduler: opportunistic, fire-and-forget after a link is created (failure only `log.warn`). Deletes links ended more than 30 days
+ * ago; the end is `coalesce(used_at, revoked_at, expires_at)`. `for update skip locked` is load-bearing: complete, cancel, disable and the
+ * user-delete cascade may lock the same row, and skipping locked rows means no wait and no cycle (guard: the skip locked case in
+ * `test/one-time-link-cleanup.test.ts`).
  */
 export async function deleteEndedOneTimeLinks(db: Db): Promise<void> {
   await db.execute(

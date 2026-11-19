@@ -14,11 +14,11 @@ export interface LastActiveTrackerOptions {
 }
 
 /**
-  * Two throttle layers per user: an in-process table of the last attempt (not success, so failures and SKIP LOCKED skips
-  * wait out the interval too; this is the main filter since every typing change calls it), and the SQL predicate as backstop
-  * across app processes. Never waits for a lock (`SKIP LOCKED`) and never rejects (errors only warn), so REST may await it and
-  * collab needn't. Session activity only (bearer tokens track their own). Not in `UserDto`, so no gate invalidate.
-  */
+ * Two throttle layers per user: an in-process table of the last attempt (not success, so failures and SKIP LOCKED skips
+ * wait out the interval too and a DB outage doesn't add a query per request; this is the main filter since every typing change calls
+ * it), and the SQL predicate as backstop across app processes. Never waits for a lock (`SKIP LOCKED`) and never rejects (errors only
+ * warn), so REST may await it and collab needn't. Session activity only (bearer tokens track their own). Not in `UserDto`, so no gate invalidate.
+ */
 export class LastActiveTracker {
   private readonly lastAttempt = new Map<string, number>();
   private readonly maxEntries: number;

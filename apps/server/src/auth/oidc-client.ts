@@ -1,4 +1,4 @@
-// Per app instance, never a module singleton (same reason as `AppDeps.limiters`).
+// Per app instance, never a module singleton: module state would be shared across test files.
 
 import * as client from "openid-client";
 import type { AppConfig } from "../config.js";
@@ -18,6 +18,7 @@ export class OidcUnavailableError extends Error {
   }
 }
 
+/** Never log the whole err: pino writes message/stack/cause, which can hold a credentialed URL; only `OidcUnavailableError`'s message is sanitized. */
 export function oidcErrorLogFields(err: unknown): Record<string, unknown> {
   if (err instanceof OidcUnavailableError) {
     return { errName: err.name, reason: err.message, ...(err.underlying !== undefined ? { underlying: err.underlying } : {}) };
@@ -96,7 +97,7 @@ export function createOidcRuntime(oidc: OidcClientSettings, opts: OidcRuntimeOpt
 
     assertUsableMetadata(configuration.serverMetadata(), oidc.issuerUrl);
 
-    // After the usability check: enabling this makes every id_token verification require an asymmetric signature.
+    // After the usability check: enabling makes every id_token verification require an asymmetric signature, so without the check an unusable issuer would only fail later, in the callback.
     client.enableNonRepudiationChecks(configuration);
 
     return configuration;
@@ -148,7 +149,7 @@ export function oidcRedirectUri(config: Pick<AppConfig, "publicUrl">, provider: 
   return new URL(path, config.publicUrl).href;
 }
 
-/** Same value as the CHECK in migration 0014. */
+/** Same bound as the 512 CHECKs on `user_identities.issuer` and `auth_providers.resolved_issuer` (migration 0014). */
 export const MAX_ISSUER_LENGTH = 512;
 
 export interface OidcRuntimeKey {

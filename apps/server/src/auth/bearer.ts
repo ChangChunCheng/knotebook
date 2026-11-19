@@ -25,11 +25,11 @@ export interface BearerDeps {
 const LAST_USED_THROTTLE_MS = 60_000;
 
 /**
-  * Opt-in: only routes mounting this accept API tokens, so a leaked token can read/write notes but not take over the account.
-  * `required` is the single value for the authorization check (`hasScope(stored, required)`); `challenge` is the scope set
-  * advertised in WWW-Authenticate (default `required`; see `auth/challenge.ts`). With an Authorization header only the token
-  * path runs, with no cookie fallback (the web client never sends it). Don't call `app.authenticate` for the cookie fallback:
-  * `sendError` calls `reply.send()`, so a header set afterwards is silently lost.
+ * Opt-in: only routes mounting this accept API tokens, so a leaked token can read/write notes but not take over the account.
+ * `required` is the single value for the authorization check (`hasScope(stored, required)`); `challenge` is the scope set
+ * advertised in WWW-Authenticate (default `required`; see `auth/challenge.ts`). With an Authorization header only the token
+ * path runs, with no cookie fallback (the web client never sends it). Don't call `app.authenticate` for the cookie fallback:
+ * `sendError` calls `reply.send()`, so a header set afterwards is silently lost.
  */
 export function createAuthenticateAny(deps: BearerDeps) {
   // Per-app instance: a module-level singleton would share state across test files (the last_used_at guard tests would flip with run order).
@@ -42,11 +42,11 @@ export function createAuthenticateAny(deps: BearerDeps) {
     if (previous !== undefined && now - previous < LAST_USED_THROTTLE_MS) return;
     lastUsedTouchedAt.set(row.id, now);
     const stamp = new Date(now);
-    // Fire-and-forget: last_used_at only feeds the settings page and the zombie-client cleanup, so a failed write must not fail the request.
+    // Fire-and-forget: last_used_at only feeds the settings page and the idle-client cleanup, so a failed write must not fail the request.
     void (async () => {
       await deps.db.update(apiTokens).set({ lastUsedAt: stamp }).where(eq(apiTokens.id, row.id));
       if (row.clientId !== null) {
-        // The zombie-client cleanup uses this timestamp for "unused for 30 days", so it must move with the token's.
+        // The idle-client cleanup (`oauth/cleanup.ts`) uses this timestamp for "unused for 30 days", so it must move with the token's.
         await deps.db.update(oauthClients).set({ lastUsedAt: stamp }).where(eq(oauthClients.clientId, row.clientId));
       }
     })().catch((err: unknown) => {
@@ -102,7 +102,7 @@ export function createAuthenticateAny(deps: BearerDeps) {
         .limit(1);
       if (row === undefined) return rejectBearer(request, reply, challenge, true);
 
-      // No `kind` in the predicate: default PATs have NULL expiry, and the quota predicate's `kind='oauth' OR` would keep expired oauth tokens valid.
+      // Reject only a non-NULL past expiry (default PATs have NULL). No `kind` here: the quota predicate's `kind='oauth' OR` would keep expired oauth access tokens valid.
       if (row.accessExpiresAt !== null && row.accessExpiresAt.getTime() <= Date.now()) {
         return rejectBearer(request, reply, challenge, true);
       }

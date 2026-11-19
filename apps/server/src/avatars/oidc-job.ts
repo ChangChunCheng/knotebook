@@ -1,12 +1,13 @@
 /**
-  * Login never waits on this; any failure only means no avatar (download, decode or quota can fail). One job per (user, identity) at a time
-  * (in-process dedupe, later duplicates are skipped); `last_picture_url` is recorded before the dedupe check. A full personal space stops
-  * the job. The file is written as `.tmp`, then renamed; the transaction re-checks the dismissed URL, so one deleted during the download
-  * isn't restored. The user may unlink before or after the download: the identity row is re-read in the transaction (`unlinked`),
-  * leaving no candidate or file. After commit the files no longer needed are removed (the replaced original, or the new file when the
-  * bytes are identical); on any failure the new file is removed. Logs carry only `{ userId, identityId, reason }`: the picture URL
-  * may carry a token, and DB errors keep only `name` and SQLSTATE (the raw error has SQL params).
-  */
+ * Login never waits on this; any failure only means no avatar (download, decode or quota can fail). One job per (user, identity) at a time
+ * (in-process dedupe, later duplicates are skipped); `last_picture_url` is recorded before the dedupe check. A full personal space stops
+ * the job. The file is written as `.tmp`, then renamed; the transaction re-checks the dismissed URL, so one deleted during the download
+ * isn't restored. The user may unlink before or after the download: the identity row is re-read in the transaction (`unlinked`),
+ * leaving no candidate or file. After commit the files no longer needed are removed (the replaced original, or the new file when the
+ * bytes are identical); on any failure the new file is removed. Logs carry only `{ userId, identityId, reason }`: the picture URL
+ * may carry a token, and neither it nor underlying error messages go to logs or return values; DB errors keep only `name` and SQLSTATE
+ * (the raw error has SQL params).
+ */
 import { createHash, randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { and, eq } from "drizzle-orm";

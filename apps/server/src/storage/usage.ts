@@ -1,4 +1,4 @@
-// Non-transactional reads that may borrow a pool connection: call them only outside a transaction (when given a `Db`).
+// Non-transactional reads that may borrow a pool connection: call them only outside a transaction.
 import { eq, sql } from "drizzle-orm";
 import { emptyStorageByKind, kindOfMime, type GroupStorageMemberUsageDto, type StorageByKind, type StorageQuotaErrorDetail } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
@@ -64,6 +64,7 @@ export async function canViewSpaceUsage(db: Db, user: { id: string; isAdmin: boo
   return (await groupAccess(db, space.id, user))?.manageGroup === true;
 }
 
+/** Called after rollback, outside the transaction; the visibility TOCTOU is acceptable. */
 export async function quotaErrorDetail(db: Db, user: { id: string; isAdmin: boolean }, err: StorageQuotaExceeded): Promise<StorageQuotaErrorDetail> {
   return (await canViewSpaceUsage(db, user, err.space))
     ? { incomingBytes: err.incomingBytes, usedBytes: err.usedBytes, quotaBytes: err.quotaBytes }
@@ -80,7 +81,7 @@ export function isSpaceFull(usage: SpaceUsage | null): usage is SpaceUsage & { q
   return usage !== null && usage.quotaBytes !== null && usage.usedBytes >= usage.quotaBytes;
 }
 
-/** Avatar bytes come from a second GROUP BY summed in JS, so avatar-only users must still get an entry. */
+/** A missing key means 0 (the caller fills it in). Avatar bytes come from a second GROUP BY summed in JS, so avatar-only users must still get an entry. */
 export async function listSpaceUsage(db: DbOrTx, kind: "user" | "group"): Promise<Map<string, number>> {
   const key = kind === "user" ? notes.ownerId : notes.groupId;
   const rows = await db.select({ id: key, used: sumUploadSizeSql() }).from(uploads).innerJoin(notes, eq(notes.id, uploads.noteId)).groupBy(key);

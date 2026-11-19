@@ -10,7 +10,7 @@ export function agentLabelOf(row: { agentLabel: string | null; name: string }): 
   return row.agentLabel ?? deriveAgentLabel(row.name);
 }
 
-/** No "skip the query when nobody is online" shortcut: the result is persisted (`note_ai_edits.agent_label`, `notes.last_edited_agent_label`) and a shortcut would record `null`. No test catches that. */
+/** No "skip the query when nobody is online" shortcut: the write callers persist the result (`note_ai_edits.agent_label`, `notes.last_edited_agent_label`) and a shortcut would record `null`. No test catches that. */
 export async function currentAgentLabel(db: Db, tokenId: string): Promise<string | null> {
   const [row] = await db
     .select({ name: apiTokens.name, agentLabel: apiTokens.agentLabel })

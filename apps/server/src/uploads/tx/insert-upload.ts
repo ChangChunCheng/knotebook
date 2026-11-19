@@ -1,4 +1,4 @@
-/** The note is locked `FOR KEY SHARE` explicitly before the space lock, and the space is the one read inside the transaction (the precheck may predate a move). The route unlinks the file if this throws. */
+/** The note is locked `FOR KEY SHARE` explicitly (the same lock the INSERT's FK takes anyway, just earlier) before the space lock, and the space is the one read inside the transaction (the precheck may predate a move). The route unlinks the file if this throws. */
 import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { notes, uploads } from "../../db/schema.js";
@@ -26,6 +26,6 @@ export async function insertUploadInTx(tx: Tx, input: InsertUploadInput, hook?: 
   // Trashing takes `FOR UPDATE` first, which conflicts with this KEY SHARE; if it commits first the re-evaluated `deleted_at IS NULL` fails and this is a 404.
   if (!note) throw new TxAbort(404, "not_found", "No note with that id.");
   await assertSpaceRoomInTx(tx, spaceOfNote(note), input.size, { lockTimeoutMs: input.lockTimeoutMs, hook, hookCtx: { noteId: input.noteId } });
-  // charged_to_id = uploader, also for personal notes (`notes/tx/move.ts` overwrites it on a move into a group).
+  // charged_to_id = uploader, also for personal notes (the personal space ignores it; `notes/tx/move.ts` overwrites it on a move into a group).
   await tx.insert(uploads).values({ id: input.id, noteId: input.noteId, uploaderId: input.uploaderId, chargedToId: input.uploaderId, mime: input.mime, size: input.size });
 }

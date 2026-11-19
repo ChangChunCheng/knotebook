@@ -1,8 +1,8 @@
 /**
  * Logs only these fields, never the message: Node's fetch TypeError for `user:pass@` URLs carries the full URL with the password, and
  * credentials in a query can surface in other errors too. `errName` falls back to `constructor.name` (the Anthropic SDK's errors are all
- * named "Error"). `causeName` is the first cause level's name, `causeCode` the first string `code` within 3 levels (undici: `cause.code`;
- * Anthropic SDK: `cause.cause`).
+ * named "Error"; SDK 0.116). `causeName` is the first cause level's name, `causeCode` the first string `code` within 3 levels (undici:
+ * `cause.code`; Anthropic SDK: `cause.cause`).
  */
 export interface FetchErrorSummary {
   errName: string;

@@ -2,6 +2,7 @@ import { defaultParseWorkers, memoryParseWorkers } from "@knotebook/shared";
 import { QUEUE_WAIT_SLACK_MS, QUEUE_WAIT_TIMEOUT_FACTOR } from "../notes/editing/parse-settings.js";
 import type { MachineInfo } from "./types.js";
 
+/** `memory` only when strictly smaller than the CPU count (same rule as parse-settings). */
 export function autoParseWorkers(machine: MachineInfo, workerMemoryMb: number): { value: number; source: "cpu" | "memory" } {
   const byCpu = defaultParseWorkers(machine.cpus);
   const byMemory = memoryParseWorkers(machine.memoryBytes, workerMemoryMb);

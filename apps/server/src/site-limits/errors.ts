@@ -1,3 +1,4 @@
+// Messages are English only (HTTP layer).
 import { siteLimitDef, siteLimitStep, type SiteLimitKey } from "@knotebook/shared";
 
 /** → 409 limit_locked_by_env */

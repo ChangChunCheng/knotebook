@@ -13,7 +13,7 @@ export interface IssueBulkTransferTokenInput {
   ttlMinutes: number;
 }
 
-/** Test seam (`beforeLock`: a test can delete the parent to produce `revoked`; `afterCount`: before the INSERT). */
+/** Tests only. `beforeLock` holds no lock, so a test can delete the parent to produce `revoked`; `afterCount` runs after the count, before the INSERT. */
 export interface IssueBulkTransferTokenSeam {
   beforeLock?: () => Promise<void>;
   afterCount?: () => Promise<void>;

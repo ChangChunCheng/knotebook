@@ -11,7 +11,7 @@ export interface IssueTransferTokenInput {
   maxPendingUploads: number;
 }
 
-/** Test seam: `afterCount` runs after the count (download skips it but still calls) and before the INSERT, so a test can interleave two issuers. */
+/** Test seam. `beforeLock` holds no lock, so a test can delete the parent to produce `revoked`; `afterCount` runs after the count (download skips it but still calls) and before the INSERT, so a test can interleave two issuers. */
 export interface IssueTransferTokenSeam {
   beforeLock?: () => Promise<void>;
   afterCount?: () => Promise<void>;
@@ -23,11 +23,11 @@ export type IssueTransferTokenResult =
   | { kind: "too_many_pending" };
 
 /**
-  * Locking the parent `FOR NO KEY UPDATE` serializes issuance per parent (the count can't read 4 on both sides; compatible with the
-  * INSERT's FK `KEY SHARE`) and makes a concurrent revoke wait and cascade the new row afterwards, removing the FK race. 0 rows: revoked
-  * after authentication. Only unconsumed, unexpired uploads count, per parent (not per note). A NULL parent expiry (PAT default) means
-  * 10 min. Left to the caller: the note FK violation and `transfer_tokens_expiry_chk`.
-  */
+ * Locking the parent `FOR NO KEY UPDATE` serializes issuance per parent (the count can't read 4 on both sides; compatible with the
+ * INSERT's FK `KEY SHARE`) and makes a concurrent revoke wait and cascade the new row afterwards, removing the FK race. 0 rows: revoked
+ * after authentication. Only unconsumed, unexpired uploads count, per parent (not per note). A NULL parent expiry (PAT default) means
+ * 10 min. Left to the caller: the note FK violation and `transfer_tokens_expiry_chk`.
+ */
 export async function issueTransferTokenInTx(
   tx: Tx,
   input: IssueTransferTokenInput,
@@ -68,5 +68,6 @@ export async function issueTransferTokenInTx(
       expiresAt: sql`least(now() + interval '10 minutes', coalesce((select ${apiTokens.accessExpiresAt} from ${apiTokens} where ${apiTokens.id} = ${input.parentTokenId}), 'infinity'::timestamptz))`,
     })
     .returning({ id: transferTokens.id, noteId: transferTokens.noteId, expiresAt: transferTokens.expiresAt });
+  // Only upload/download are issued here and both carry note_id (CHECK `transfer_tokens_bulk_note_chk`).
   return { kind: "issued", id: row!.id, noteId: row!.noteId!, expiresAt: row!.expiresAt };
 }

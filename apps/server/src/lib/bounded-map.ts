@@ -1,11 +1,12 @@
+// Never reached at self-hosted scale, small enough that a flood can't run memory away.
 export const DEFAULT_MAX_KEYS = 10_000;
 
 /**
-  * Evicts the oldest-inserted entry (insertion order, not strict LRU: rewriting a key moves it to the tail, `get()`
-  * doesn't reorder). The cap is exploitable (flooding can evict a blocked login backoff); the eviction order only raises
-  * that bar: the account track records emails an attacker doesn't care about and the IP track is forgeable when `TRUST_PROXY=true`.
-  * The real cost is argon2 per failed login. Residual risk: `docs/known-limitations.md`.
-  */
+ * Evicts the oldest-inserted entry (insertion order, not strict LRU: rewriting a key moves it to the tail, `get()`
+ * doesn't reorder). The cap is exploitable (flooding can evict a blocked login backoff); the eviction order only raises
+ * that bar: the account track records emails an attacker doesn't care about and the IP track is forgeable when `TRUST_PROXY=true`.
+ * The real cost is argon2 per failed login. Residual risk: `docs/known-limitations.md`.
+ */
 export class BoundedMap<V> {
   private readonly entries = new Map<string, V>();
 

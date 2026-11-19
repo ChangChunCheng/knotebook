@@ -37,7 +37,7 @@ export async function initializeInstance(db: Db, envAdmin?: EnvAdminBootstrap): 
     throw notInitialized;
   }
 
-  // Same normalization as routes/account.ts and routes/auth.ts, and displayName derives from it.
+  // Same normalization as routes/account.ts and routes/auth.ts, and displayName derives from it so an upper-case env email doesn't linger in the display name.
   const email = normalizeEmail(envAdmin.email);
   const passwordHash = await hashPassword(envAdmin.password);
   const displayName = email.split("@")[0] || email;

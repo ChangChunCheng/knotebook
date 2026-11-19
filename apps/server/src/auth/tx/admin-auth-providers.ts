@@ -70,13 +70,13 @@ export interface UpdateAuthProviderResult {
 }
 
 /**
-  * Every "did it change" decision sits on the right side of this one UPDATE's SET: it sees the old tuple under the row
-  * lock, whereas read-then-compare in Node is a TOCTOU. Omitted fields coalesce to the current value. An issuer change
-  * clears `resolved_issuer` and force-disables (without a secret it also clears the secret); the version bumps when a
-  * secret is set or issuer/client id actually changed. `autoCreateEnabled` affects neither the version nor the guard.
-  */
+ * Every "did it change" decision sits on the right side of this one UPDATE's SET: it sees the old tuple under the row
+ * lock, whereas read-then-compare in Node is a TOCTOU. Omitted fields coalesce to the current value. An issuer change
+ * clears `resolved_issuer` and force-disables (without a secret it also clears the secret); the version bumps when a
+ * secret is set or issuer/client id actually changed. `autoCreateEnabled` affects neither the version nor the guard.
+ */
 export async function updateAuthProviderInTx(tx: Tx, input: UpdateAuthProviderInput): Promise<UpdateAuthProviderResult> {
-  // Site-settings lock first (serializes all site-settings writes), so the `before` read below can be trusted.
+  // Site-settings lock first (settings writes and every provider PATCH/DELETE take it, so they are serialized), so the `before` read below can be trusted.
   const settings = await lockSiteSettingsInTx(tx);
   const [before] = await tx
     .select({ issuerUrl: authProviders.issuerUrl, enabled: authProviders.enabled, autoCreateEnabled: authProviders.autoCreateEnabled })

@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-// Same format as `sealOidcState`: base64url(iv).base64url(ct).base64url(tag). Callers validate the fields (the result is `unknown`).
+// Callers validate the fields (the result is `unknown`).
 
 function deriveKey(appSecret: string, namespace: string): Buffer {
   return createHash("sha256").update(`${appSecret}:${namespace}`).digest();

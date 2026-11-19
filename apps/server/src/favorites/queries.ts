@@ -19,8 +19,7 @@ export async function listFavorites(db: DbOrTx, userId: string): Promise<Favorit
   return rows.map(row => ({ noteId: row.id, favoritedAt: row.favoritedAt.toISOString() }));
 }
 
-/** Not `do nothing` then re-read: a removal from another tab in between would read 0 rows. A note deleted after authorization hits the FK: `"gone"` (route 404). */
-/** The caller has authorized and `noteId` is UUID-checked and lowercased. */
+/** The caller has authorized and `noteId` is UUID-checked and lowercased. Not `do nothing` then re-read: a removal from another tab in between would read 0 rows. A note deleted after authorization hits the FK: `"gone"` (route 404). */
 export async function addFavorite(db: DbOrTx, input: { userId: string; noteId: string }): Promise<FavoriteDto | "gone"> {
   try {
     const [row] = await db

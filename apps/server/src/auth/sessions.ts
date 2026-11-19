@@ -43,11 +43,11 @@ export async function setSessionCookieFor(
 }
 
 /**
-  * Returns the deleted row, or null when there is nothing to revoke. Only the cookie's signature is checked (not tv, disabled or
-  * expiry). Whether to re-verify collab connections is the caller's call (logout does, login doesn't). Never throws: a DB error
-  * is logged and the row lives until it expires (the cache is left alone). DELETE first, then `invalidateSession`: reversed, a
-  * `check` in between recaches the row.
-  */
+ * Returns the deleted row, or null when there is nothing to revoke. Only the JWT is verified (signature, exp), not tv, disabled or the
+ * row's `expires_at`. Whether to re-verify collab connections is the caller's call (logout does, login doesn't). Never throws: a DB error
+ * is logged and the row lives until it expires (the cache is left alone). DELETE first, then `invalidateSession`: reversed, a `check`
+ * in between recaches the row.
+ */
 export async function deleteSessionFromCookie(
   deps: SessionDeps,
   request: FastifyRequest,
@@ -74,14 +74,14 @@ export async function deleteSessionFromCookie(
 }
 
 /**
-  * Only the SAME account's previous cookie is invalidated (another account's session on this browser keeps its row; its cookie is just
-  * overwritten). Expired rows are cleaned opportunistically, fire-and-forget (no scheduler). Unlike logout, collab connections of the
-  * replaced sid are re-verified after `RELOGIN_REVERIFY_DELAY_MS`: an immediate re-verify could make the old tab fetch a token before
-  * the browser stored the new cookie (401, login redirect); after the delay the old tab gets a token for the new sid and stays, while
-  * a copied old cookie's connection closes within about 10 s plus the 5 s re-verify deadline. Without it there is no bound: the
-  * collab token TTL is only checked at handshake and re-verification. The timer is `unref()`ed so it doesn't hold up shutdown
-  * (firing during shutdown is safe: hooks don't throw).
-  */
+ * Only the SAME account's previous cookie is invalidated (another account's session on this browser keeps its row; its cookie is just
+ * overwritten). Expired rows are cleaned opportunistically, fire-and-forget (no scheduler). Unlike logout, collab connections of the
+ * replaced sid are re-verified after `RELOGIN_REVERIFY_DELAY_MS`: an immediate re-verify could make the old tab fetch a token before
+ * the browser stored the new cookie (401, login redirect); after the delay the old tab gets a token for the new sid and stays, while
+ * a copied old cookie's connection closes within about 10 s plus the 5 s re-verify deadline. Without it there is no bound: the 120 s
+ * collab token TTL is only checked at handshake and re-verification, and established connections aren't re-verified periodically.
+ * The timer is `unref()`ed so it doesn't hold up shutdown (firing during shutdown is safe: hooks don't throw).
+ */
 export async function startSession(
   deps: StartSessionDeps,
   request: FastifyRequest,

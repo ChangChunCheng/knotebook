@@ -1,4 +1,4 @@
-/** `client_name` is an unverified self-description shown on the consent page; this blocklist keeps characters (bidi, zero-width, control) from visually hiding the "not verified" note. Scanned by code point so astral characters aren't split. */
+/** `client_name` is an unverified self-description shown on the consent page; this blocklist keeps characters (bidi, zero-width, control) from visually hiding the "not verified" note. With loopback-only redirects it is the only phishing defence. Scanned by code point so astral characters aren't split. */
 export const DEFAULT_CLIENT_NAME = "MCP client";
 
 export function hasUnsafeClientNameChar(name: string): boolean {

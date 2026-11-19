@@ -12,7 +12,7 @@ import { MAX_ISSUER_LENGTH } from "./oidc-client.js";
 const UNSTORABLE = /[\0]|\p{Surrogate}/u;
 const ISSUER_SCHEME = /^https?:\/\//;
 const codePoints = (s: string): number => [...s].length;
-/** NUL and lone surrogates in a PG text column give 22021/22P05 (a 500). Registration display names use this too. */
+/** NUL and lone surrogates in a PG text column give 22021/22P05 (a 500). Also used for display names elsewhere (registration, invites, admin). */
 export function isStorableText(s: string): boolean {
   return !UNSTORABLE.test(s);
 }
