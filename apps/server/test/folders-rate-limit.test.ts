@@ -1,10 +1,9 @@
 /**
- * 資料夾寫入的節流桶（`FOLDER_LIMIT`，http/rate-limit.ts）：`folders/service.ts` 四支（REST 與 MCP 共用）扣自己的 `folder` 桶，
- * 不扣內容寫入的 `edit` 桶（`EDIT_LIMIT` 30/min）。回歸對象：側欄選取模式一次移動 31 篇以上，第 31 篇起 429，
- * 而且把同一分鐘 AI 編輯的額度一起吃光。
+ * The `folders/service.ts` write paths (REST and MCP share them) charge their own `folder` bucket (`FOLDER_LIMIT`, http/rate-limit.ts), not the content-write `edit` bucket (`EDIT_LIMIT` 30/min).
+ * Regression guarded: moving 31+ notes at once in the sidebar selection mode got 429 from the 31st on, and also used up that minute's AI-edit quota.
  *
- * 承重的寫法：把 `app.ts` 的 `foldersRoutes`／`mcpRoutes` 接線改回 `edit` 實例（共桶）→ FRL-1、FRL-2、FRL-4 紅；
- * 服務層四支任一支不扣 `folder` 桶 → FRL-3 紅。
+ * Load-bearing: wiring `foldersRoutes`/`mcpRoutes` in `app.ts` back to the `edit` instance (shared bucket) turns the first, second and fourth cases red;
+ * any of the four service functions not charging the `folder` bucket turns the third case red.
  */
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -19,7 +18,7 @@ import { inject } from "./trash-helpers.js";
 
 const RW: TokenScope = "notes:read notes:write";
 
-/** 剩幾次（耗盡它；上限 1000 防無窮迴圈）。 */
+/** Remaining count (exhausts it; cap 1000 to prevent an infinite loop). */
 function remaining(l: FixedWindowLimiter, key: string): number {
   let n = 0;
   while (n <= 1000 && l.consume(key)) n += 1;
@@ -33,8 +32,8 @@ function status(res: LightMyRequestResponse, expected: number): void {
 const place = (app: FastifyInstance, userId: string, noteId: string, folderId: string | null) =>
   inject(app, "PUT", `/api/notes/${noteId}/folder`, userId, { folderId });
 
-describe("FRL 資料夾桶與 edit 桶分開", () => {
-  it("FRL-1 生產預設值：連續 40 篇放進資料夾＋5 個資料夾搬家（共 45 次）全 200；edit 桶一次都沒扣", async () => {
+describe("folder bucket separate from the edit bucket", () => {
+  it("production defaults: 40 consecutive placements into folders + 5 folder moves (45 in total) all 200; the edit bucket is never charged", async () => {
     expect(EDIT_LIMIT.limit).toBeLessThan(45);
     expect(FOLDER_LIMIT.limit).toBeGreaterThanOrEqual(45);
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
@@ -55,7 +54,7 @@ describe("FRL 資料夾桶與 edit 桶分開", () => {
     expect(remaining(folder, u.id)).toBe(FOLDER_LIMIT.limit - 45);
   });
 
-  it("FRL-2 edit 桶已耗盡（0）：建立、改名、搬家、放置、刪除資料夾照常成功", async () => {
+  it("edit bucket exhausted (0): create, rename, move, place and delete folder still succeed", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 0, windowMs: 60_000 }) }) });
     const u = await seedUser(db);
     const n = (await seedNote(db, { ownerId: u.id })).id;
@@ -73,7 +72,7 @@ describe("FRL 資料夾桶與 edit 桶分開", () => {
     expect(rows[0]!.n).toBe(0);
   });
 
-  it("FRL-3 folder 桶上限 4：四支各一次後第五次 429 too_many_requests、不寫；edit 桶沒被扣", async () => {
+  it("folder bucket limit 4: after one call of each of the four, the fifth is 429 too_many_requests and writes nothing; the edit bucket isn't charged", async () => {
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
     const folder = new FixedWindowLimiter({ limit: 4, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ edit, folder }) });
@@ -99,7 +98,7 @@ describe("FRL 資料夾桶與 edit 桶分開", () => {
     expect(remaining(edit, u.id)).toBe(EDIT_LIMIT.limit);
   });
 
-  it("FRL-4 MCP 資料夾工具扣同一顆 folder 桶：edit 0 時 move_note_to_folder 照常成功；folder 0 時 too_many_requests", async () => {
+  it("MCP folder tools charge the same folder bucket: with edit at 0 move_note_to_folder still succeeds; with folder at 0 too_many_requests", async () => {
     const folder = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 0, windowMs: 60_000 }), folder }),
@@ -112,7 +111,7 @@ describe("FRL 資料夾桶與 edit 桶分開", () => {
     const first = await callTool(app, auth, "move_note_to_folder", { note_id: n, folder_id: f });
     expect(first.isError, JSON.stringify(first.structuredContent)).toBeUndefined();
     expect((await noteFolderCols(db.$client, n))?.folder_id).toBe(f);
-    // 同一顆實例：MCP 扣掉唯一一次後，REST 也被擋。
+    // The same instance: after MCP uses up the only one, REST is blocked too.
     status(await place(app, u.id, n, null), 429);
     const second = await callTool(app, auth, "move_note_to_folder", { note_id: n, folder_id: null });
     expect([second.isError, second.structuredContent]).toEqual([

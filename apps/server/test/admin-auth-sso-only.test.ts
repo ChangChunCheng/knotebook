@@ -24,8 +24,8 @@ const patchProvider = (b: Built, id: string, payload: object) =>
   b.app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${id}`, cookies: b.cookies, payload });
 const off = (b: Built) => b.db.update(siteSettings).set({ passwordLoginEnabled: false });
 
-describe("provider PATCH 的防自鎖守衛（#187）", () => {
-  it("④DB 關後停用唯一 enabled provider → 409 sso_provider_required、仍啟用", async () => {
+describe("self-lockout guard of provider PATCH (#187)", () => {
+  it("DB off, disabling the only enabled provider -> 409 sso_provider_required, still enabled", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A });
     await b.db.insert(userIdentities).values({ userId: b.admin.id, issuer: A, sub: "a" });
@@ -36,7 +36,7 @@ describe("provider PATCH 的防自鎖守衛（#187）", () => {
     expect((await providerRow(b.db, p.id))!.enabled).toBe(true);
   });
 
-  it("⑤DB 關後改 issuer（隱含停用）唯一 provider → 409，secret／issuer／版本都沒變（整筆回滾）", async () => {
+  it("DB off, changing issuer (implies disabling) of the only provider -> 409, secret/issuer/version all unchanged (whole request rolled back)", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A, configVersion: 3 });
     await b.db.insert(userIdentities).values({ userId: b.admin.id, issuer: A, sub: "a" });
@@ -47,7 +47,7 @@ describe("provider PATCH 的防自鎖守衛（#187）", () => {
     expect(await providerRow(b.db, p.id)).toEqual(before);
   });
 
-  it("⑥DB 關後停用操作者唯一連到的那個（另有別的 enabled provider）→ 409 admin_sso_link_required", async () => {
+  it("DB off, disabling the only one the operator is linked to (another enabled provider exists) -> 409 admin_sso_link_required", async () => {
     const b = await adminApp();
     const pa = await seedAuthProvider(b.db, { issuerUrl: A });
     await seedAuthProvider(b.db, { issuerUrl: B });
@@ -56,7 +56,7 @@ describe("provider PATCH 的防自鎖守衛（#187）", () => {
     expect((await patchProvider(b, pa.id, { enabled: false })).json().error.code).toBe("admin_sso_link_required");
   });
 
-  it("⑦env 強制期間結果相同；⑨DB 開時停用最後一個 provider → 200", async () => {
+  it("same result while env forces it; DB on, disabling the last provider -> 200", async () => {
     const forced = await adminApp({ config: { ...testConfig, passwordLoginForceEnable: true } });
     const p = await seedAuthProvider(forced.db, { issuerUrl: A });
     await off(forced);
@@ -66,17 +66,17 @@ describe("provider PATCH 的防自鎖守衛（#187）", () => {
     expect((await patchProvider(b, q.id, { enabled: false })).statusCode).toBe(200);
   });
 
-  it("DB 關時不改 enabled 的 PATCH（只改顯示名）不驗守衛 → 200（即使操作者沒有 SSO）：啟用中的、與**本來就停用**的各一次", async () => {
+  it("DB off, a PATCH that doesn't change enabled (name only) skips the guard -> 200 (even if the operator has no SSO): once for an enabled provider, once for one that was already disabled", async () => {
     const b = await adminApp();
     const on = await seedAuthProvider(b.db, { issuerUrl: A });
     const offAlready = await seedAuthProvider(b.db, { issuerUrl: B, enabled: false, clientSecret: null });
     await off(b);
     expect((await patchProvider(b, on.id, { displayName: "Renamed" })).statusCode).toBe(200);
-    // 本來就停用：寫入後 enabled 仍 false；只有「由 true 變 false」才驗——否則會被「操作者本人要有啟用中 provider 的身分」的檢查擋（操作者沒有 SSO）。
+    // Already disabled: enabled is still false after the write; only true -> false is checked, otherwise the "operator must have an identity at an enabled provider" check would block it (the operator has no SSO).
     expect((await patchProvider(b, offAlready.id, { displayName: "Renamed too" })).statusCode).toBe(200);
   });
 
-  it("讀不到 site_settings 列 → PATCH 與 DELETE 都 500＋log.error", async () => {
+  it("site_settings row unreadable -> PATCH and DELETE both 500 + log.error", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     const p = await seedAuthProvider(b.db, { issuerUrl: A, enabled: false, clientSecret: null });
@@ -87,8 +87,8 @@ describe("provider PATCH 的防自鎖守衛（#187）", () => {
   });
 });
 
-describe("provider 寫入以 site_settings 列序列化", () => {
-  it("另一連線關閉帳密（持鎖、未提交）→ 停用最後一個 provider 等它提交 → 409 sso_provider_required", async () => {
+describe("provider writes serialize on the site_settings row", () => {
+  it("another connection turns off password login (holding the lock, uncommitted) -> disabling the last provider waits for the commit -> 409 sso_provider_required", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A });
     const holder = await holderFor(b.db);
@@ -106,7 +106,7 @@ describe("provider 寫入以 site_settings 列序列化", () => {
     expect((await providerRow(b.db, p.id))!.enabled).toBe(true);
   });
 
-  it("DB 關；另一連線停用 p1（持鎖、未提交）→ 這邊停用 p2 等它提交 → 409，終態至少一個 enabled", async () => {
+  it("DB off; another connection disables p1 (holding the lock, uncommitted) -> this side disables p2 and waits for the commit -> 409, at least one enabled at the end", async () => {
     const b = await adminApp();
     const p1 = await seedAuthProvider(b.db, { issuerUrl: A });
     const p2 = await seedAuthProvider(b.db, { issuerUrl: B });
@@ -127,7 +127,7 @@ describe("provider 寫入以 site_settings 列序列化", () => {
     expect((await providerRow(b.db, p2.id))!.enabled).toBe(true);
   });
 
-  it("DELETE 也取站台設定列鎖：另一連線持鎖 → DELETE 等它提交 → 204", async () => {
+  it("DELETE also takes the site-settings row lock: another connection holds the lock -> DELETE waits for the commit -> 204", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A, enabled: false, clientSecret: null });
     const holder = await holderFor(b.db);

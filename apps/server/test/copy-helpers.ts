@@ -1,7 +1,6 @@
 /**
- * #175（複製）的測試種子與量測。新檔（不動 `group-helpers.ts`）。
- * wikilink 節點的形狀照 `packages/shared/src/note-markdown.ts` 的 `extractLinkTargets` 實際讀的：
- * `Y.XmlElement` 節點名 `"wikilink"`、屬性 `targetNoteId`（UUID）；位置不拘（它走整棵樹）。
+ * wikilink node shape follows what `extractLinkTargets` in `packages/shared/src/note-markdown.ts` actually reads:
+ * a `Y.XmlElement` named "wikilink" with attribute `targetNoteId` (UUID); position doesn't matter (it walks the whole tree).
  */
 import { writeFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
@@ -11,14 +10,13 @@ import type { Db } from "../src/db/index.js";
 import { noteStates, uploads } from "../src/db/schema.js";
 import { uploadFilePath } from "../src/uploads/service.js";
 
-/** 最小的 PNG 檔頭＋幾個位元組（複製不驗內容，只逐位元組比對）。 */
+/** Minimal PNG header plus a few bytes (copy doesn't validate content, only compares byte for byte). */
 export const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
 export async function seedDoc(db: Db, noteId: string, doc: Y.Doc): Promise<void> {
   await db.insert(noteStates).values({ noteId, ydoc: Buffer.from(Y.encodeStateAsUpdate(doc)), version: 1 });
 }
 
-/** 插一列 uploads＋把 bytes 寫到磁碟（`opts.noFile`：只插列、不寫檔）。回 upload id。 */
 export async function seedUpload(
   db: Db,
   uploadsDir: string,
@@ -32,7 +30,6 @@ export async function seedUpload(
   return u!.id;
 }
 
-/** 解 `note_states` 的快照；沒有列回 `null`。 */
 export async function loadDoc(db: Db, noteId: string): Promise<Y.Doc | null> {
   const [row] = await db.select({ ydoc: noteStates.ydoc }).from(noteStates).where(eq(noteStates.noteId, noteId)).limit(1);
   if (!row) return null;
@@ -43,7 +40,7 @@ export async function loadDoc(db: Db, noteId: string): Promise<Y.Doc | null> {
 
 export const xmlOf = (doc: Y.Doc): string => doc.getXmlFragment(YDOC_FRAGMENT).toString();
 
-/** 每個 url 一個 `blockContainer > image[url]`（同 `test/unit/copy-doc.test.ts` 的 `docWith`）。 */
+/** One `blockContainer > image[url]` per url (same as `docWith` in `test/unit/copy-doc.test.ts`). */
 export function imageDoc(urls: string[]): Y.Doc {
   const doc = new Y.Doc();
   const group = new Y.XmlElement("blockGroup");
@@ -59,7 +56,6 @@ export function imageDoc(urls: string[]): Y.Doc {
   return doc;
 }
 
-/** 一個 paragraph，內含每個目標一個 `wikilink[targetNoteId]` 行內節點。 */
 export function wikilinkDoc(targetIds: string[]): Y.Doc {
   const doc = new Y.Doc();
   const group = new Y.XmlElement("blockGroup");

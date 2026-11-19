@@ -1,7 +1,4 @@
-/**
- * `POST /api/auth/avatars/oidc/:identityId/refresh`：手動「改用 X 的頭貼」。
- * 走真路由與真交易；圖片伺服器是本機 `node:http`，除專門測生產位址政策的案外，下載政策注入「放行 loopback 與任意埠」。
- */
+/** The image server is a local `node:http`; except for the cases testing the production address policy, the download policy is injected to allow loopback and any port. */
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, writeFile } from "node:fs/promises";
@@ -25,7 +22,7 @@ import { giveUserQuota, pngOf } from "./storage-helpers.js";
 const ISSUER = "https://idp.example";
 const OPEN_POLICY: AvatarFetchPolicy = { portAllowed: () => true, addressBlocked: () => false };
 
-/** 內容由 `fill` 決定的 PNG（signature 相同、位元組不同 → sha256 不同）。 */
+/** A PNG whose content is determined by `fill` (same signature, different bytes -> different sha256). */
 function pngFilled(size: number, fill: number): Buffer {
   const b = pngOf(size);
   b.fill(fill, 8);
@@ -43,7 +40,7 @@ afterEach(async () => {
 interface ImageRoute {
   status?: number;
   body?: Buffer;
-  /** 收到請求後等這個 Promise 才回應。 */
+  /** After the request arrives, the response waits for this Promise. */
   hold?: Promise<void>;
 }
 
@@ -102,7 +99,6 @@ function logCollector() {
   return { out, logger: { level: "info", stream: { write: (chunk: string) => void out.push(chunk) } } };
 }
 
-/** 給候選填上顯示圖與裁切。 */
 async function giveDisplay(db: Db, id: string): Promise<void> {
   await db
     .update(userAvatars)
@@ -110,8 +106,8 @@ async function giveDisplay(db: Db, id: string): Promise<void> {
     .where(eq(userAvatars.id, id));
 }
 
-describe("POST /api/auth/avatars/oidc/:identityId/refresh：成功", () => {
-  it("使用者刪過這張 → 200 回清單：候選回來且是目前頭貼、avatar_auto＝false、picture_dismissed_url 清空、refreshable 不再含它；用量與檔案對得上", async () => {
+describe("POST /api/auth/avatars/oidc/:identityId/refresh: success", () => {
+  it("the user had deleted this one -> 200 returns the list: the candidate is back and is the current avatar, avatar_auto = false, picture_dismissed_url cleared, refreshable no longer contains it; usage and files add up", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);
@@ -136,12 +132,11 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：成功", () => {
     expect((await identityOf(db, identityId)).pictureDismissedUrl).toBeNull();
     expect(await filesOf(uploadsDir)).toEqual([rows[0]!.originalFile]);
     expect(await usedBytes(db, alice.id)).toBe(500);
-    // 目前頭貼立刻反映在 /me。
     const me = await app.inject({ method: "GET", url: "/api/auth/me", cookies: await cookieOf(alice.id) });
     expect(me.json().avatar).toMatchObject({ id: rows[0]!.id, pending: true });
   });
 
-  it("已有這個身分的候選（位元組不同）→ 原地替換並選用：同一個 id、version + 1、裁切與顯示圖清空、舊檔刪掉、上傳的那張不再是目前頭貼", async () => {
+  it("a candidate for this identity already exists (different bytes) -> replaced in place and selected: same id, version + 1, crop and display image cleared, old file deleted, the uploaded one is no longer the current avatar", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/new.png": { body: pngFilled(700, 2) } });
     const alice = await seedUser(db);
@@ -181,7 +176,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：成功", () => {
     expect(existsSync(path.join(uploadsDir, old!.originalFile))).toBe(false);
   });
 
-  it("位元組相同 → 不換原圖、不升 version、顯示圖保留，但仍選用；新下載的檔不留", async () => {
+  it("same bytes -> original not replaced, version not bumped, display image kept, but still selected; the newly downloaded file isn't kept", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const bytes = pngFilled(400, 3);
     const img = await imageServer({ "/a.png": { body: bytes } });
@@ -201,7 +196,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：成功", () => {
     expect(await filesOf(uploadsDir)).toEqual([]);
   });
 
-  it("旁觀者：bob 有同形資料（身分、被刪過的網址、目前頭貼）時完全不受影響", async () => {
+  it("bystander: completely unaffected when bob has same-shaped data (identity, dismissed URL, current avatar)", async () => {
     const { app, db } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);
@@ -221,8 +216,8 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：成功", () => {
   });
 });
 
-describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
-  it("圖片伺服器 500 → 422 avatar_fetch_failed；訊息與 log 都不含網址（含 token）；沒有候選、沒有檔；avatar_auto 與 picture_dismissed_url 不動", async () => {
+describe("POST /api/auth/avatars/oidc/:identityId/refresh: failure", () => {
+  it("image server 500 -> 422 avatar_fetch_failed; neither message nor log contains the URL (with token); no candidate, no file; avatar_auto and picture_dismissed_url unchanged", async () => {
     const { out, logger } = logCollector();
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY }, { logger });
     const img = await imageServer({ "/a.png": { status: 500 } });
@@ -243,7 +238,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
     expect(logged).toContain("http_status");
   });
 
-  it("生產位址政策（不注入）→ 指向 loopback 的網址 422 avatar_fetch_failed，且沒有送出請求", async () => {
+  it("production address policy (not injected) -> a URL pointing at loopback gives 422 avatar_fetch_failed and no request is sent", async () => {
     const { app, db } = await buildTestApp();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);
@@ -254,7 +249,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
     expect(img.requests()).toBe(0);
   });
 
-  it("空間已滿 → 409 storage_quota_exceeded，不下載（請求數 0）", async () => {
+  it("space full -> 409 storage_quota_exceeded, no download (request count 0)", async () => {
     const { app, db } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);
@@ -267,7 +262,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
     expect(img.requests()).toBe(0);
   });
 
-  it("放不下這張 → 409 storage_quota_exceeded；整筆回滾：沒有候選、沒有檔、avatar_auto 與 picture_dismissed_url 不動", async () => {
+  it("doesn't fit -> 409 storage_quota_exceeded; whole request rolled back: no candidate, no file, avatar_auto and picture_dismissed_url unchanged", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);
@@ -284,7 +279,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
     expect((await identityOf(db, identityId)).pictureDismissedUrl).toBe(picture);
   });
 
-  it("下載期間解除連結 → 404；沒有候選、沒有留檔", async () => {
+  it("unlinked during download -> 404; no candidate, no leftover file", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
@@ -302,8 +297,8 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：失敗", () => {
   });
 });
 
-describe("POST /api/auth/avatars/oidc/:identityId/refresh：身分檢查、節流、認證", () => {
-  it("別人的身分、last_picture_url 為 NULL、不是 UUID → 404，且不扣桶（上限 1 次，三次 404 之後第一次真的請求仍是 200）", async () => {
+describe("POST /api/auth/avatars/oidc/:identityId/refresh: identity check, throttling, authentication", () => {
+  it("someone else's identity, last_picture_url NULL, not a UUID -> 404 and no bucket charge (limit 1: after three 404s the first real request is still 200)", async () => {
     const { app, db } = await buildTestApp(
       { avatarFetchPolicy: OPEN_POLICY, limiters: { avatarRefresh: new FixedWindowLimiter({ limit: 1, windowMs: 3_600_000 }) } },
     );
@@ -322,7 +317,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：身分檢查、節�
     expect((await refresh(app, alice.id, own)).statusCode).toBe(200);
   });
 
-  it("每人每小時的上限：第 2 次 429（上限 1 次時）；bob 另有自己的額度；被擋的那次不下載", async () => {
+  it("per-person hourly limit: the 2nd gets 429 (with limit 1); bob has his own quota; the blocked request doesn't download", async () => {
     const { app, db } = await buildTestApp(
       { avatarFetchPolicy: OPEN_POLICY, limiters: { avatarRefresh: new FixedWindowLimiter({ limit: 1, windowMs: 3_600_000 }) } },
     );
@@ -340,7 +335,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：身分檢查、節�
     expect((await refresh(app, bob.id, bobIdentity)).statusCode).toBe(200);
   });
 
-  it("預設桶是每人每小時 10 次：第 11 次 429", async () => {
+  it("default bucket is 10 per person per hour: the 11th gets 429", async () => {
     const { app, db } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { status: 500 } });
     const alice = await seedUser(db);
@@ -349,7 +344,7 @@ describe("POST /api/auth/avatars/oidc/:identityId/refresh：身分檢查、節�
     expect((await refresh(app, alice.id, identityId)).statusCode).toBe(429);
   });
 
-  it("未登入 401；Bearer（個人 token）也是 401", async () => {
+  it("not signed in 401; Bearer (personal token) is also 401", async () => {
     const { app, db } = await buildTestApp({ avatarFetchPolicy: OPEN_POLICY });
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(db);

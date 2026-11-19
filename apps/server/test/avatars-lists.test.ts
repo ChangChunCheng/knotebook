@@ -1,8 +1,3 @@
-/**
- * 列表端點的頭貼參照（`readAvatarRefs`）：群組成員、分享名單、使用者建議。
- * 每個端點的 `avatar` 都要等於該人在 `/api/auth/me` 的 `{ id, v }`；待補顯示圖的候選別人讀不到，列表一律給 null；
- * 查詢句數不隨人數成長；旁觀者的頭貼不會出現在任何回應。
- */
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it, vi } from "vitest";
@@ -15,7 +10,6 @@ import { noteAiEdits, noteVersions, storagePlans, userAvatars, users } from "../
 import type { Db } from "../src/db/index.js";
 import { readAvatarRefs } from "../src/avatars/read.js";
 
-/** 目前頭貼（版本 3）加一張非目前的舊候選。 */
 async function giveCurrentPicture(db: Db, userId: string, version = 3): Promise<AvatarRef> {
   await seedAvatarRow(db, { userId, originalSize: 4000, displaySize: 200 });
   const id = await seedAvatarRow(db, { userId, originalSize: 5000, displaySize: 300, isCurrent: true });
@@ -23,16 +17,16 @@ async function giveCurrentPicture(db: Db, userId: string, version = 3): Promise<
   return { id, v: version };
 }
 
-/** 顯示圖尚未補產的目前候選（OIDC 剛下載、尚未由本人瀏覽器補產）。 */
+/** A current candidate whose display image isn't generated yet (OIDC just downloaded it, the owner's browser hasn't generated it); others can't read it, so lists give null. */
 async function givePendingPicture(db: Db, userId: string): Promise<string> {
   return seedAvatarRow(db, { userId, originalSize: 800, displaySize: 0, isCurrent: true });
 }
 
-// helper 的批次查詢（`user_id = any($1::uuid[])`）；閘門讀自己的頭貼走 `user_id = $1`，不算在內。
+// The helper's batch query (`user_id = any($1::uuid[])`); the gate reading its own avatar uses `user_id = $1` and isn't counted.
 const AVATAR_SQL = /"user_avatars"\."user_id" = any\(\$1::uuid\[\]\)/;
 
 describe("readAvatarRefs", () => {
-  it("空陣列不發查詢；重複 id 只查一次且結果正確；非 UUID 形的 id 不進查詢", async () => {
+  it("empty array sends no query; duplicate ids are queried once with a correct result; non-UUID ids don't enter the query", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const ref = await giveCurrentPicture(db, alice.id);
@@ -50,7 +44,7 @@ describe("readAvatarRefs", () => {
     expect(junk.result.size).toBe(0);
   });
 
-  it("只收目前且顯示圖已備好的列：非目前候選、待補候選、沒有頭貼的人都不在結果裡", async () => {
+  it("only current rows with a ready display image are accepted: non-current candidates, pending candidates and people without an avatar are not in the result", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -63,8 +57,8 @@ describe("readAvatarRefs", () => {
   });
 });
 
-describe("GET/PUT/PATCH /api/groups/:id/members 的 avatar", () => {
-  it("alice 帶 { id, v }、bob 與待補的 carol 為 null；旁觀者 dave 的頭貼不出現；PUT／PATCH 的回應也對", async () => {
+describe("avatar of GET/PUT/PATCH /api/groups/:id/members", () => {
+  it("alice carries { id, v }, bob and the pending carol are null; bystander dave's avatar doesn't appear; PUT/PATCH responses are right too", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const alice = await seedUser(db, { displayName: "Alice" });
@@ -105,7 +99,7 @@ describe("GET/PUT/PATCH /api/groups/:id/members 的 avatar", () => {
     expect(patchedBob.json().avatar).toBeNull();
   });
 
-  it("停用帳號的頭貼照常顯示", async () => {
+  it("the avatar of a disabled account is shown as usual", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const erin = await seedUser(db, { displayName: "Erin", disabled: true });
@@ -116,7 +110,7 @@ describe("GET/PUT/PATCH /api/groups/:id/members 的 avatar", () => {
     expect(erinRow?.avatar).toEqual(ref);
   });
 
-  it("換頭貼（選用另一張候選）後 id 與 v 跟著變", async () => {
+  it("after changing avatar (selecting another candidate) id and v change with it", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const alice = await seedUser(db);
@@ -134,11 +128,10 @@ describe("GET/PUT/PATCH /api/groups/:id/members 的 avatar", () => {
     const after = await read();
     expect(after?.id).toBe(second);
     expect(after?.v).toBeGreaterThanOrEqual(7);
-    // 與本人 /me 一致
     expect(sel.json().avatar).toMatchObject({ id: after?.id, v: after?.v });
   });
 
-  it("查詢句數：3 人與 6 人的 GET members 碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: GET members with 3 and with 6 people each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const make = async (name: string, n: number) => {
@@ -167,8 +160,8 @@ describe("GET/PUT/PATCH /api/groups/:id/members 的 avatar", () => {
   });
 });
 
-describe("GET/PUT /api/notes/:id/shares 的 avatar", () => {
-  it("被分享者的 avatar 正確（待補與沒有頭貼為 null）；PUT 回應正確；旁觀者的頭貼不出現；非擁有者仍 403", async () => {
+describe("avatar of GET/PUT /api/notes/:id/shares", () => {
+  it("shared users' avatar is right (pending and no avatar are null); PUT response is right; bystander's avatar doesn't appear; non-owner still 403", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const alice = await seedUser(db, { displayName: "Alice" });
@@ -203,7 +196,7 @@ describe("GET/PUT /api/notes/:id/shares 的 avatar", () => {
     expect(denied.body).not.toContain(aliceRef.id);
   });
 
-  it("查詢句數：2 人與 4 人的分享名單碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: share lists of 2 and 4 people each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const small = await seedNote(db, { ownerId: owner.id });
@@ -229,8 +222,8 @@ describe("GET/PUT /api/notes/:id/shares 的 avatar", () => {
   });
 });
 
-describe("GET /api/users/suggest 的 avatar", () => {
-  it("每個建議帶本人的 avatar（待補與沒有頭貼為 null）；不在建議結果裡的人頭貼不出現；停用帳號本來就不在建議裡", async () => {
+describe("avatar of GET /api/users/suggest", () => {
+  it("every suggestion carries its own avatar (pending and no avatar are null); avatars of people not in the suggestions don't appear; disabled accounts are never in suggestions", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters() });
     const me = await seedUser(db);
     const alice = await seedUser(db, { displayName: "sugg Alice" });
@@ -254,7 +247,7 @@ describe("GET /api/users/suggest 的 avatar", () => {
     expect(res.body).not.toContain(daveRef.id);
   });
 
-  it("查詢句數：2 人與 4 人的建議碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: suggestions of 2 and 4 people each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters() });
     const me = await seedUser(db);
     const make = async (tag: string, n: number) => {
@@ -280,8 +273,8 @@ describe("GET /api/users/suggest 的 avatar", () => {
   });
 });
 
-describe("列表與 /api/auth/me 一致", () => {
-  it("alice 的列表 avatar 等於 /me 的 { id, v }；待補的 carol 在 /me 是 pending: true、列表是 null", async () => {
+describe("list matches /api/auth/me", () => {
+  it("alice's list avatar equals /me's { id, v }; pending carol is pending: true in /me and null in the list", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const alice = await seedUser(db);
@@ -301,8 +294,8 @@ describe("列表與 /api/auth/me 一致", () => {
   });
 });
 
-describe("readAvatarRefs 大量 id", () => {
-  it("幾千個 id 仍是 1 句查詢、綁定參數只有 2 個（id 陣列一個）；結果只含有頭貼的人", async () => {
+describe("readAvatarRefs with many ids", () => {
+  it("thousands of ids are still 1 query with only 2 bound parameters (one is the id array); result contains only people with an avatar", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const ref = await giveCurrentPicture(db, alice.id);
@@ -315,7 +308,7 @@ describe("readAvatarRefs 大量 id", () => {
         .map(([q]) => q as { text?: string; values?: unknown[] } | string)
         .filter((q): q is { text: string; values: unknown[] } => typeof q !== "string" && typeof q?.text === "string" && AVATAR_SQL.test(q.text));
       expect(calls).toHaveLength(1);
-      // 綁定參數的個數不隨 id 數成長：一個陣列（全部 id）加 is_current 的布林。
+      // The number of bound parameters doesn't grow with id count: one array (all ids) plus the is_current boolean.
       expect(calls[0]!.values).toHaveLength(2);
       expect(Array.isArray(calls[0]!.values[0])).toBe(true);
       expect(calls[0]!.values[0]).toHaveLength(ids.length);
@@ -325,8 +318,8 @@ describe("readAvatarRefs 大量 id", () => {
   });
 });
 
-describe("GET /api/admin/users 的 avatar", () => {
-  it("每人帶本人的 avatar（待補與沒有頭貼為 null）；PATCH storage-plan 的回應也帶；非管理員仍 403", async () => {
+describe("avatar of GET /api/admin/users", () => {
+  it("every user carries their own avatar (pending and no avatar are null); PATCH storage-plan response carries it too; non-admin still 403", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const alice = await seedUser(db, { displayName: "Alice" });
@@ -354,7 +347,7 @@ describe("GET /api/admin/users 的 avatar", () => {
     expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: await cookieOf(alice.id) })).statusCode).toBe(403);
   });
 
-  it("查詢句數：3 人與 6 人的列表碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: lists of 3 and 6 people each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const run = async (n: number) => {
       const { app, db } = await buildTestApp();
       const admin = await seedUser(db, { isAdmin: true });
@@ -373,12 +366,12 @@ describe("GET /api/admin/users 的 avatar", () => {
   });
 });
 
-describe("版本歷史 editors 的 avatar", () => {
+describe("avatar of version history editors", () => {
   async function seedVersion(db: Db, noteId: string, seq: number, editors: Array<{ user_id: string; agent_label: string | null }>) {
     await db.insert(noteVersions).values({ noteId, seq, ydoc: Buffer.from([0]), kind: "auto", name: null, editors, baseSeq: null });
   }
 
-  it("人與 AI 兩種身分各帶本人的頭貼（同一人兩個 editor 帶同一個 { id, v }）；沒有頭貼為 null；已刪除的使用者 handle 為空字串且 avatar 為 null；旁觀者的頭貼不出現", async () => {
+  it("human and AI identities each carry the owner's avatar (two editors of the same person carry the same { id, v }); a deleted user's handle is an empty string and avatar null; bystander's avatar doesn't appear", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -409,13 +402,12 @@ describe("版本歷史 editors 的 avatar", () => {
     expect(versions.find(v => v.seq === 2)!.editors).toEqual([{ handle: "", agentLabel: null, avatar: null }]);
     expect(res.body).not.toContain(daveRef.id);
 
-    // 改名（PATCH）的回應同樣帶
     const renamed = await app.inject({ method: "PATCH", url: `/api/notes/${note.id}/versions/1`, cookies, payload: { name: "第一版" } });
     expect(renamed.statusCode, renamed.body).toBe(200);
     expect(renamed.json().editors[2]).toEqual({ handle: bob.handle, agentLabel: "Codex", avatar: bobRef });
   });
 
-  it("查詢句數：編輯者 2 人與 4 人的清單碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: editor lists of 2 and 4 people each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const run = async (n: number) => {
       const { app, db } = await buildTestApp();
       const owner = await seedUser(db);
@@ -442,8 +434,8 @@ describe("版本歷史 editors 的 avatar", () => {
   });
 });
 
-describe("GET /api/notes/:id/edits（AI 修改紀錄）的 avatar", () => {
-  it("每列帶寫入者本人的頭貼（agentLabel 非 null 也是本人的）；沒有頭貼為 null；旁觀者的頭貼不出現", async () => {
+describe("avatar of GET /api/notes/:id/edits (AI edit history)", () => {
+  it("every row carries the writer's own avatar (also when agentLabel is non-null); a user without an avatar gets null; bystander's avatar doesn't appear", async () => {
     const { db, app } = await buildCollabTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -469,7 +461,7 @@ describe("GET /api/notes/:id/edits（AI 修改紀錄）的 avatar", () => {
     expect(res.body).not.toContain(daveRef.id);
   });
 
-  it("查詢句數：寫入者 2 人與 4 人的紀錄碰 user_avatars 都恰 1 句，總句數相同", async () => {
+  it("query count: edit logs of 2 and 4 writers each touch user_avatars exactly once, and the total statement count is the same", async () => {
     const run = async (n: number) => {
       const { db, app } = await buildCollabTestApp();
       const owner = await seedUser(db);

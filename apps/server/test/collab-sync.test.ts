@@ -6,18 +6,15 @@ import { buildCollabTestApp } from "./helpers.js";
 
 const PASSWORD = "correct-horse-battery";
 
-// onAuthenticate 換成真驗證後，本檔一律走不帶 override 的 `connect()`
-// （經 `POST /api/notes/:id/collab-token` 取真 token）；索引以 userId 辨識（不再是
-// 「token 字面值即 userId」的過渡形狀），需要兩個不同身分的地方改用
-// 兩個真實使用者（owner + share 出去的 editor）。
+// Connections always use connect() without override (real token via POST /api/notes/:id/collab-token); the index keys by userId, so two identities need two real users (owner + shared editor).
 
-// 只在本檔用來辨識「這則 CLOSE 是我們主動送的」。真正的撤權 reason 常數（
-// COLLAB_CLOSE_REVOKED 等）由 collab 常數定義、撤權流程消費。
+// Used in this file only to recognise "this CLOSE was sent by us on purpose". The real revocation reason constants
+// (COLLAB_CLOSE_REVOKED etc., from @knotebook/shared) are what the revocation flow sends.
 const TEST_CLOSE_REASON = "knotebook:test-closed";
 
 /**
- * 輪詢等待條件成立。共編是非同步收斂的，斷言不可用固定 sleep（會依機器速度隨機
- * 紅綠），也不可只檢查一次——一律「在期限內輪詢到成立」，逾時才失敗並帶上標籤。
+ * Polls until the condition holds. Collaboration converges asynchronously, so assertions can't use a fixed sleep (red/green would depend on machine speed)
+ * nor check only once - always poll within a deadline and fail with the label on timeout.
  */
 async function waitFor(label: string, timeoutMs: number, check: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -32,15 +29,14 @@ function stateVector(doc: Y.Doc): string {
   return Buffer.from(Y.encodeStateVector(doc)).toString("hex");
 }
 
-/** 在 doc 的共編 fragment 插入一個含文字的 XML 元素——模擬 BlockNote 的一次編輯。 */
 function insertParagraph(doc: Y.Doc, text: string): void {
   const element = new Y.XmlElement("paragraph");
   element.insert(0, [new Y.XmlText(text)]);
   doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
 }
 
-describe("Hocuspocus v4 × Fastify 共編同步", () => {
-  it("兩個 client 連同一份 note，A 的編輯 ≤3s 內收斂到 B", async () => {
+describe("Hocuspocus v4 x Fastify collab sync", () => {
+  it("two clients on the same note: A's edit converges to B within 3 s", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "alice@example.com", password: PASSWORD });
     const note = await ctx.createNote(alice.id);
@@ -55,7 +51,7 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
     expect(b.doc.getXmlFragment(YDOC_FRAGMENT).toString()).toBe("<paragraph>hello from A</paragraph>");
   });
 
-  it("連線索引隨連線建立/中斷增減（撤權的地基）", async () => {
+  it("connection index grows and shrinks with connect/disconnect (foundation of revocation)", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "alice@example.com", password: PASSWORD });
     const bob = await ctx.createUser({ email: "bob@example.com", password: PASSWORD });
@@ -81,7 +77,7 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
     expect(ctx.collab.connectionsOfNote(note.id).size).toBe(1);
   });
 
-  it("同一條 socket 退訂再重訂同一篇筆記：索引指向活著的那條連線，舊登記不殘留", async () => {
+  it("the same socket unsubscribing and resubscribing to the same note: the index points to the live connection, no stale registration left", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "alice@example.com", password: PASSWORD });
     const note = await ctx.createNote(alice.id);
@@ -89,18 +85,16 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
 
     const a = await session.connect(note.id);
 
-    // detach → attach 是 SPA 在筆記間導覽的形狀：**同一條 socket**（socketId 不變）先送
-    // CLOSE 退訂，再重新訂閱同一篇筆記，於是前後兩次登記共用同一個
-    // (socketId, documentName) 複合鍵。
+    // detach -> attach is the shape of the SPA navigating between notes: the **same socket** (socketId unchanged) first sends CLOSE to unsubscribe,
+    // then subscribes to the same note again, so both registrations share the same (socketId, documentName) composite key.
     a.provider.detach();
     a.provider.attach();
 
     await waitFor("重訂後索引恰有一條連線", 5_000, () => ctx.collab.connectionsOfNote(note.id).size === 1);
     expect(ctx.collab.connectionsOf(alice.id).size).toBe(1);
 
-    // 索引裡剩下的必須是**活著**的那條：拿它關線，client 要真的收得到。若索引誤留舊的
-    // （已從 document 移除的）handle，`Connection.close` 的 hasConnection 守衛會讓它靜靜
-    // 什麼都不做——撤權就會漏掉一個還在編輯的使用者。
+    // What's left in the index must be the **live** one: close through it and the client must really receive it. If the index wrongly kept the old handle
+    // (already removed from the document), the hasConnection guard of `Connection.close` would silently do nothing - revocation would miss a user still editing.
     const handle = [...ctx.collab.connectionsOfNote(note.id)][0];
     handle.close(TEST_CLOSE_REASON);
 
@@ -109,7 +103,7 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
     );
   });
 
-  it("onNextTokenSync 在 requestToken 觸發的 token 抵達時被呼叫，且只觸發一次", async () => {
+  it("onNextTokenSync is called when the token triggered by requestToken arrives, and only once", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "alice@example.com", password: PASSWORD });
     const note = await ctx.createNote(alice.id);
@@ -118,8 +112,8 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
     await session.connect(note.id);
     const handle = [...ctx.collab.connectionsOf(alice.id)][0];
 
-    // 同一連線登記兩個回呼：兩個都必須被觸發（deadline 在 5s 內可能重覆
-    // 登記，若實作用「單一 cb 覆寫」會讓第一個 timer 永不解除、誤殺已重驗成功者）。
+    // Two callbacks registered on one connection: both must fire (the deadline may be registered twice within 5 s; if the implementation overwrote with a single cb,
+    // the first timer would never be cleared and a successfully revalidated user would be killed by mistake).
     let first = 0;
     let second = 0;
     ctx.collab.onNextTokenSync(handle, () => { first += 1; });
@@ -129,14 +123,14 @@ describe("Hocuspocus v4 × Fastify 共編同步", () => {
 
     await waitFor("onNextTokenSync 的兩個回呼都被觸發", 3_000, () => first === 1 && second === 1);
 
-    // 一次性：登記過的回呼觸發後即清空，第二次 token 抵達不會重複呼叫。
+    // One-shot: a registered callback is cleared after firing, so a second token arrival doesn't call it again.
     handle.requestToken();
     await new Promise(resolve => setTimeout(resolve, 500));
     expect(first).toBe(1);
     expect(second).toBe(1);
   });
 
-  it("markDeleting 期間拒絕新連線，unmarkDeleting 後恢復", async () => {
+  it("new connections are rejected during markDeleting, restored after unmarkDeleting", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "alice@example.com", password: PASSWORD });
     const note = await ctx.createNote(alice.id);

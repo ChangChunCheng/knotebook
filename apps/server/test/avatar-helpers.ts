@@ -1,6 +1,3 @@
-/**
- * 頭貼整合測試共用的種子。直插只在測試裡；真路由的行為由各自的測試檔守。
- */
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { vi } from "vitest";
@@ -13,16 +10,15 @@ import { pngOf } from "./storage-helpers.js";
 
 export interface SeedAvatarOpts {
   userId: string;
-  /** 原圖位元組數（落在 `original_size` 的 CHECK 範圍內：1 ~ 10 MiB）。 */
+  /** Original byte count (within the `original_size` CHECK range: 1 ~ 10 MiB). */
   originalSize: number;
-  /** 顯示圖位元組數；0＝顯示圖尚未補產（只有 OIDC 候選有這個狀態）。 */
+  /** Display image byte count; 0 = display image not generated yet (only OIDC candidates have this state). */
   displaySize: number;
   isCurrent?: boolean;
-  /** OIDC 候選（`displaySize` 為 0）的來源身分。 */
+  /** Source identity of an OIDC candidate (`displaySize` is 0). */
   identityId?: string;
 }
 
-/** 直插一列頭貼；回列 id。顯示圖大於 0 → 上傳來源；等於 0 → OIDC 候選（待補產）。 */
 export async function seedAvatarRow(db: Db, o: SeedAvatarOpts): Promise<string> {
   const pending = o.displaySize === 0;
   const [row] = await db
@@ -45,7 +41,7 @@ export async function seedAvatarRow(db: Db, o: SeedAvatarOpts): Promise<string> 
   return row!.id;
 }
 
-/** 恰 `size` bytes、可被偵測為 WebP 的顯示圖（`WEBP_BYTES` 加填充）。 */
+/** A display image of exactly `size` bytes that is detectable as WebP (`WEBP_BYTES` plus padding). */
 export function webpOf(size: number): Buffer {
   if (size < WEBP_BYTES.length) throw new Error(`webpOf: size ${size} < ${WEBP_BYTES.length}`);
   return Buffer.concat([WEBP_BYTES, Buffer.alloc(size - WEBP_BYTES.length, 0x42)]);
@@ -54,13 +50,13 @@ export function webpOf(size: number): Buffer {
 export const DEFAULT_CROP = { x: 4, y: 8, size: 64, width: 128, height: 96 };
 
 export interface AvatarUploadOpts {
-  /** 原圖位元組；`null`＝不送這個 part。預設 2000 bytes 的 PNG。 */
+  /** Original bytes; `null` = don't send this part. Default is a 2000-byte PNG. */
   original?: Buffer | null;
-  /** 顯示圖位元組；`null`＝不送這個 part。預設 300 bytes 的 WebP。 */
+  /** Display image bytes; `null` = don't send this part. Default is a 300-byte WebP. */
   display?: Buffer | null;
-  /** 物件→JSON 字串；字串→原樣；`null`＝不送 `crop` 欄。 */
+  /** Object -> JSON string; string -> as is; `null` = don't send the `crop` field. */
   crop?: Record<string, unknown> | string | null;
-  /** `null`＝不帶 cookie（未登入）。 */
+  /** `null` = no cookie (not signed in). */
   cookies?: Record<string, string> | null;
   headers?: Record<string, string>;
 }
@@ -76,7 +72,6 @@ export function avatarUploadBody(opts: AvatarUploadOpts = {}): Buffer {
   return multipartBody(parts);
 }
 
-/** `POST /api/auth/avatars`（真路由）；`userId` 以該人的 session 送出。 */
 export async function uploadAvatar(app: FastifyInstance, userId: string, opts: AvatarUploadOpts = {}) {
   const cookies = opts.cookies === undefined ? await cookieOf(userId) : opts.cookies;
   return app.inject({
@@ -89,13 +84,13 @@ export async function uploadAvatar(app: FastifyInstance, userId: string, opts: A
 }
 
 export interface AvatarRecropOpts {
-  /** 顯示圖位元組；`null`＝不送這個 part。預設 300 bytes 的 WebP。 */
+  /** Display image bytes; `null` = don't send this part. Default is a 300-byte WebP. */
   display?: Buffer | null;
-  /** 物件→JSON 字串；字串→原樣；`null`＝不送 `crop` 欄。 */
+  /** Object -> JSON string; string -> as is; `null` = don't send the `crop` field. */
   crop?: Record<string, unknown> | string | null;
-  /** 送出的版本；字串原樣；`null`＝不送 `version` 欄。預設 1。 */
+  /** Version sent: string as is; `null` = don't send the `version` field. Default 1. */
   version?: number | string | null;
-  /** `null`＝不帶 cookie（未登入）。 */
+  /** `null` = no cookie (not signed in). */
   cookies?: Record<string, string> | null;
   headers?: Record<string, string>;
 }
@@ -111,7 +106,6 @@ export function avatarRecropBody(opts: AvatarRecropOpts = {}): Buffer {
   return multipartBody(parts);
 }
 
-/** `PUT /api/auth/avatars/:id/display`（真路由）；`userId` 以該人的 session 送出。 */
 export async function recropAvatar(app: FastifyInstance, userId: string, id: string, opts: AvatarRecropOpts = {}) {
   const cookies = opts.cookies === undefined ? await cookieOf(userId) : opts.cookies;
   return app.inject({
@@ -124,8 +118,8 @@ export async function recropAvatar(app: FastifyInstance, userId: string, id: str
 }
 
 /**
- * 跑 `fn` 期間統計打到 PostgreSQL 的查詢句數（spy `pg.Client#query`；drizzle 與 pool 的查詢最後都經它）。
- * `match` 只計 SQL 文字符合的句子（例如只看碰 `user_avatars` 的）。
+ * Counts queries sent to PostgreSQL while `fn` runs (spy on `pg.Client#query`, which drizzle and pool queries all end up in).
+ * `match` counts only statements whose SQL text matches (e.g. only those touching `user_avatars`).
  */
 export async function countQueries<T>(fn: () => Promise<T>, match?: RegExp): Promise<{ result: T; count: number }> {
   const spy = vi.spyOn(pg.Client.prototype, "query");

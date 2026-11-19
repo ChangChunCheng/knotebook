@@ -102,7 +102,7 @@ async function setupNoteAccess(db: Db): Promise<NoteAccess> {
   };
 }
 
-/** 全 limiters 皆給生產預設值，只有 `ai` 可覆寫——供 429 測試用小額度，其餘測試不受影響。 */
+/** All limiters get production defaults; only `ai` can be overridden - for 429 tests with a small quota, without affecting other tests. */
 function limitersWithAi(ai: FixedWindowLimiter) {
   return freshLimiters({ ai });
 }
@@ -110,14 +110,13 @@ function limitersWithAi(ai: FixedWindowLimiter) {
 interface FakeUpstream {
   baseUrl: string;
   calls: number;
-  /** 每次收到請求時解析出的 JSON body（openai_compatible chat/completions 格式）。 */
   requestBodies: Array<{ model?: string; messages?: Array<{ role: string; content: string }> }>;
-  /** 最近一次連線是否在完整回應前就被 client 中止（server 端偵測 `req`/`res` 的 close/aborted）。 */
+  /** Whether the latest connection was cut before the full response was written (detected via close/aborted of `req`/`res`). */
   lastAborted: boolean;
 }
 
-/** 起一個真的本機 http server 當 fake upstream——`app.inject()` 攔不到出站請求（我們自己的
- * server code 內部打的是真 `fetch()`），沿用 `admin-ai.test.ts` 的既有 harness 慣例。 */
+/** Real local http server as fake upstream: `app.inject()` can't intercept outbound requests (our server code does a real `fetch()`);
+ * same harness convention as `admin-ai.test.ts`. */
 async function startFakeUpstream(
   handler: (req: http.IncomingMessage, res: http.ServerResponse, state: FakeUpstream) => void
 ): Promise<FakeUpstream> {
@@ -136,7 +135,7 @@ async function startFakeUpstream(
       try {
         state.requestBodies.push(JSON.parse(raw));
       } catch {
-        // 非 JSON body（不影響測試斷言，僅供 debug）。
+        // The app always sends JSON; the catch only keeps a bad body from skipping the handler.
       }
       handler(req, res, state);
     });
@@ -155,13 +154,12 @@ function sseDelta(content: string): string {
 
 const SSE_HEADERS = { "content-type": "text/event-stream" };
 
-/** 解析回應體裡依序出現的 SSE `event: <type>` 名稱清單（忽略 data 內容，只看事件順序）。 */
 function eventSequence(body: string): string[] {
   return [...body.matchAll(/^event: (\w+)$/gm)].map(m => m[1]!);
 }
 
-describe("POST /api/ai — 授權矩陣", () => {
-  it("未登入 → 401", async () => {
+describe("POST /api/ai - authorization matrix", () => {
+  it("not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -171,7 +169,7 @@ describe("POST /api/ai — 授權矩陣", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("非 uuid action_id/note_id → 400（非 500）", async () => {
+  it("non-uuid action_id/note_id -> 400 (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -185,7 +183,7 @@ describe("POST /api/ai — 授權矩陣", () => {
     expect(res.json().error.code).toBe("invalid_body");
   });
 
-  it("note 無權（含不存在的 note）→ 404", async () => {
+  it("note not permitted (including a nonexistent note) -> 404", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -199,7 +197,7 @@ describe("POST /api/ai — 授權矩陣", () => {
     expect(res.json().error.code).toBe("not_found");
   });
 
-  it("viewer → 403", async () => {
+  it("viewer -> 403", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
     const res = await app.inject({
@@ -213,8 +211,8 @@ describe("POST /api/ai — 授權矩陣", () => {
   });
 });
 
-describe("POST /api/ai — action/model 解析", () => {
-  it("action 不存在 → 404", async () => {
+describe("POST /api/ai - action/model resolution", () => {
+  it("action doesn't exist -> 404", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
     const res = await app.inject({
@@ -227,7 +225,7 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(res.json().error.code).toBe("not_found");
   });
 
-  it("action 存在但 disabled → 404", async () => {
+  it("action exists but disabled -> 404", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
     const action = await insertAction(db, { enabled: false });
@@ -241,10 +239,10 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(res.json().error.code).toBe("not_found");
   });
 
-  it("零 provider → 503 ai_not_configured", async () => {
+  it("zero providers -> 503 ai_not_configured", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
-    const action = await insertAction(db); // modelId null，且全站零 provider/model
+    const action = await insertAction(db); // modelId null, and zero providers/models site-wide
     const res = await app.inject({
       method: "POST",
       url: "/api/ai",
@@ -255,7 +253,7 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(res.json().error.code).toBe("ai_not_configured");
   });
 
-  it("degraded provider → 503 provider_unavailable，不打 upstream", async () => {
+  it("degraded provider -> 503 provider_unavailable, upstream not called", async () => {
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const access = await setupNoteAccess(db);
@@ -280,7 +278,7 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(fakeUpstream.calls).toBe(0);
   });
 
-  it("anthropic provider 無 key → 503 provider_unavailable，且**不**進 degraded 集合（pre-stream 獨立檢查）", async () => {
+  it("anthropic provider without key -> 503 provider_unavailable and NOT added to the degraded set (independent pre-stream check)", async () => {
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const access = await setupNoteAccess(db);
@@ -299,12 +297,12 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(runtime.degraded.has(provider.id)).toBe(false);
   });
 
-  it("apiKey 解密失敗 → 503 provider_unavailable，且加入 degraded 集合", async () => {
+  it("apiKey decryption fails -> 503 provider_unavailable and added to the degraded set", async () => {
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const access = await setupNoteAccess(db);
-    // 用不同的 appSecret 加密，模擬「APP_SECRET 已變更、舊密文解不開」。
-    // 用不同的 appSecret 加密：keyId 就對不上了，AAD 綁哪個 id 都不影響這條斷言。
+    // Encrypt with a different appSecret to simulate "APP_SECRET changed, old ciphertext can't be decrypted": keyId won't match,
+    // so whichever id the AAD binds to doesn't affect this assertion.
     const badId = randomUUID();
     const badCiphertext = encryptApiKey("a-completely-different-secret-".repeat(3), "sk-x", badId);
     const provider = await insertProvider(db, { id: badId, apiKeyEncrypted: badCiphertext });
@@ -322,14 +320,14 @@ describe("POST /api/ai — action/model 解析", () => {
     expect(runtime.degraded.has(provider.id)).toBe(true);
   });
 
-  it("429（AI_LIMIT 打滿）", async () => {
+  it("429 (AI_LIMIT exhausted)", async () => {
     const smallAiLimiter = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ limiters: limitersWithAi(smallAiLimiter) });
     const access = await setupNoteAccess(db);
     const payload = { action_id: "00000000-0000-0000-0000-000000000000", note_id: access.noteId, text: "hi" };
 
     const first = await app.inject({ method: "POST", url: "/api/ai", cookies: { [SESSION_COOKIE]: access.editorCookie }, payload });
-    expect(first.statusCode).not.toBe(429); // 第一次消耗掉唯一的額度（結果本身是 404，不是本測試重點）
+    expect(first.statusCode).not.toBe(429); // the first call uses up the only quota (its result is 404, not what this test is about)
 
     const second = await app.inject({ method: "POST", url: "/api/ai", cookies: { [SESSION_COOKIE]: access.editorCookie }, payload });
     expect(second.statusCode).toBe(429);
@@ -337,11 +335,11 @@ describe("POST /api/ai — action/model 解析", () => {
   });
 });
 
-describe("POST /api/ai — 正常串流", () => {
-  it("apiKey 解得開 → 明文金鑰真的送到上游（issue #14：這條路徑原本零覆蓋）", async () => {
-    // `POST /api/ai` 是金鑰最主要的消費路徑，但整個檔案裡設過 key 的只有「無 key」與
-    // 「故意解不開」兩種。於是 `decryptApiKey(..., resolved.provider.id)` 這個新參數若被
-    // 改錯（例如寫成 model id），production 會所有 AI 呼叫全掛 503 而測試照樣全綠。
+describe("POST /api/ai - normal streaming", () => {
+  it("apiKey decrypts -> the plaintext key really reaches the upstream (issue #14: this path had zero coverage)", async () => {
+    // `POST /api/ai` is the main consumer of the key, yet the only key states set in this file were "no key" and "deliberately undecryptable",
+    // so if the new `decryptApiKey(..., resolved.provider.id)` argument were wrong (e.g. the model id), production would 503 every AI call
+    // while the tests stayed green.
     let seenAuth: string | undefined;
     const fakeUpstream = await startFakeUpstream((req, res) => {
       seenAuth = req.headers.authorization;
@@ -371,7 +369,7 @@ describe("POST /api/ai — 正常串流", () => {
     expect(seenAuth).toBe("Bearer sk-live-key");
   });
 
-  it("正常串流至 done：event 順序為 delta×N → done", async () => {
+  it("normal stream to done: event order delta x N -> done", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.write(sseDelta("Hello"));
@@ -393,8 +391,8 @@ describe("POST /api/ai — 正常串流", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    // 四個 SSE header 全斷（不只 content-type）——這行最容易在後人整理
-    // header 時被無感刪掉，尤其 x-accel-buffering（反向代理不緩衝，SSE 即時性的關鍵）。
+    // All four SSE headers are asserted (not just content-type): this line is easily deleted unnoticed when someone tidies headers,
+    // especially x-accel-buffering (reverse proxies don't buffer, key to SSE timeliness).
     expect(res.headers["content-type"]).toContain("text/event-stream");
     expect(res.headers["cache-control"]).toBe("no-cache");
     expect(res.headers["connection"]).toBe("keep-alive");
@@ -403,7 +401,7 @@ describe("POST /api/ai — 正常串流", () => {
     expect(res.body).toContain('"text":"Hello"');
     expect(res.body).not.toContain("event: error");
 
-    // 上游收到的 body：system/user 都正確套用（含 {{text}} 模板替換；system 前面是並排的固定說明）。
+    // Body received upstream: system/user applied correctly (including {{text}} template substitution; system is preceded by the fixed columns notice).
     expect(fakeUpstream.requestBodies).toHaveLength(1);
     const sent = fakeUpstream.requestBodies[0]!;
     expect(sent.model).toBe(model.modelId);
@@ -413,13 +411,13 @@ describe("POST /api/ai — 正常串流", () => {
     ]);
   });
 
-  it("[DONE] 後即使 upstream 自己不主動關閉連線，server 端仍主動中止（回歸，防 socket 洩漏）", async () => {
+  it("after [DONE] the server still aborts even if the upstream doesn't close the connection itself (regression, prevents socket leaks)", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.write(sseDelta("ok"));
       res.write("data: [DONE]\n\n");
-      // 刻意不呼叫 res.end()——模擬「送了 [DONE] 但自己不掛斷連線」的寬鬆上游實作，
-      // 逼出 route 端 finally 的 `handle.abort()` 是否真的主動要求關閉這條連線。
+      // Deliberately don't call res.end(): simulates a lenient upstream that sends [DONE] but never hangs up,
+      // forcing the question of whether the route's `finally` `handle.abort()` really asks to close the connection.
     });
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
@@ -435,16 +433,16 @@ describe("POST /api/ai — 正常串流", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(eventSequence(res.body)).toEqual(["delta", "done"]); // 正常收尾，不受 upstream 未關連線影響
+    expect(eventSequence(res.body)).toEqual(["delta", "done"]); // normal finish, unaffected by the upstream leaving the connection open
 
-    // 即使 client 端請求早已正常完成，upstream 端的連線也應該在短時間內被我們主動中止
-    // （`handle.abort()`），不會無限期掛著——`lastAborted` 沿用既有 fake upstream helper 的
-    // 「未寫完就被關」語意（這裡是「res 未呼叫 end() 就被關」）。
+    // Even though the client request completed long ago, the upstream connection should be aborted by us (`handle.abort()`) shortly,
+    // not left hanging forever - `lastAborted` reuses the existing fake upstream "cut before fully written" semantics
+    // (here: "closed without res.end() being called").
     await realDelay(300);
     expect(fakeUpstream.lastAborted).toBe(true);
   });
 
-  it("upstream 5xx → SSE error 事件，message 固定文案不含 fake upstream body 的哨兵字串", async () => {
+  it("upstream 5xx -> SSE error event, fixed message text without the fake upstream body's sentinel string", async () => {
     const sentinel = "SENTINEL-DO-NOT-LEAK-9f3a";
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(500, { "content-type": "text/plain" });
@@ -463,13 +461,13 @@ describe("POST /api/ai — 正常串流", () => {
       payload: { action_id: action.id, note_id: access.noteId, text: "hi" },
     });
 
-    expect(res.statusCode).toBe(200); // hijack 之後一律 200 + SSE，錯誤走事件而非 HTTP 狀態碼
+    expect(res.statusCode).toBe(200); // after hijack it is always 200 + SSE; errors travel as events, not HTTP status
     expect(eventSequence(res.body)).toEqual(["error"]);
     expect(res.body).toContain("The request to the AI provider failed.");
     expect(res.body).not.toContain(sentinel);
   });
 
-  it("PATCH action 的 systemPrompt 後，下一發立即生效（無快取護欄）", async () => {
+  it("after PATCHing an action's systemPrompt the next call takes effect immediately (no cache guard)", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.end(`${sseDelta("ok")}data: [DONE]\n\n`);
@@ -503,13 +501,13 @@ describe("POST /api/ai — 正常串流", () => {
     expect(fakeUpstream.requestBodies[1]!.messages?.[0]).toEqual({ role: "system", content: `${MARKUP_GUARD_PROMPT}\n\nv2 prompt — 改過了` });
   });
 
-  it("client 中途斷線 → fake upstream 收到 abort", async () => {
+  it("client disconnecting midway -> fake upstream sees an abort", async () => {
     let releaseUpstream: (() => void) | undefined;
     const upstreamHeld = new Promise<void>(resolve => (releaseUpstream = resolve));
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.write(sseDelta("first-chunk"));
-      // 刻意不 end：卡住連線，等測試主動中止 client 端後，觀察 server 端是否偵測到 abort。
+      // Deliberately don't end: hold the connection until the test aborts the client side, then observe whether the server detects the abort.
       void upstreamHeld;
     });
     const { app, db } = await buildTestApp();
@@ -535,45 +533,38 @@ describe("POST /api/ai — 正常串流", () => {
 
     const res = await fetchPromise;
     const reader = res.body!.getReader();
-    await reader.read(); // 確保至少收到第一個 delta，client 真的已經連上串流
+    await reader.read(); // make sure at least the first delta arrived, i.e. the client is really connected to the stream
 
-    controller.abort(); // 模擬 client 中途斷線
+    controller.abort(); // simulate client disconnect midway
     await reader.cancel().catch(() => {});
 
-    // fake upstream 端應觀察到連線被中止（req 'aborted' 或 res 'close' 於未寫完前觸發）。
     await realDelay(300);
     expect(fakeUpstream.lastAborted).toBe(true);
     releaseUpstream?.();
   });
 
-  // 不另設 per-test 逾時、沿用全域 testTimeout（vitest.config.ts 120 s）：以前寫死的 15 s 也罩住 buildTestApp（建庫）與
-  // 種資料，機器忙時那段一慢就逾時假紅。「注入的 400 ms 有接上」改由下面只量 idle 那一段的牆鐘界線守（20 s 對生產預設 60 s）。
+  // No per-test timeout; the global testTimeout (vitest.config.ts, 120 s) applies: a per-test timeout would also cover buildTestApp (DB creation) and seeding,
+  // which time out falsely on a busy machine. "The injected 400 ms is wired through" is guarded instead by a wall-clock bound on the idle phase only (20 s vs the production default 60 s).
   it(
-    "idle timeout：fake upstream 停止吐 delta 後短逾時 → SSE error（真實時間，見 aiIdleTimeoutMs 測試 seam）",
+    "idle timeout: short timeout after the fake upstream stops emitting deltas -> SSE error (real time, see the aiIdleTimeoutMs test hook)",
     async () => {
       const fakeUpstream = await startFakeUpstream((_req, res) => {
         res.writeHead(200, SSE_HEADERS);
         res.write(sseDelta("only-one-chunk-then-silence"));
-        // 之後刻意不再吐任何 delta、也不 res.end()——模擬 upstream 卡住，逼出 idle timeout 分支。
+        // Then deliberately emit no more deltas and don't res.end(): simulates a stuck upstream, forcing the idle timeout branch.
       });
-      // 第二版（CI flake 復發後改寫）：第一版靠 `vi.useFakeTimers` +
-      // `vi.advanceTimersByTimeAsync(60_000)` 把「idle timer 已 arm」變成確定性訊號（收到第
-      // 一個 delta 才推假時鐘），方向沒錯，但 CI 上兩次都仍在 `startFakeUpstream` 的
-      // `onTestFinished` server.close() 卡滿 180s hook timeout——且是在測試本體（含
-      // assertion）已經跑完之後才卡住，代表卡的是「SSE 連線沒被關掉」，指向假時鐘 × 真實
-      // SSE I/O（fake upstream 是真的 `http.createServer`，app 端打的是真 `fetch()`）在 CI
-      // 上的某個環節不可靠，本機兩輪全綠、CI 兩發全掛，繼續在假時鐘路線上猜成本太高。
-      // 改結構性修法：idle timeout 本身透過 `BuildAppOptions.aiIdleTimeoutMs`（見 app.ts／
-      // routes/ai.ts）變成可注入值，這裡給一個短的**真實**值，完全不碰 `vi.useFakeTimers`——
-      // idle timer 用它原本的真實 `setTimeout` 觸發，沒有任何假時鐘介入的空間。
+      // The idle timeout is injectable via `BuildAppOptions.aiIdleTimeoutMs` (see app.ts / routes/ai.ts) and given a short **real** value here;
+      // `vi.useFakeTimers` is deliberately avoided: fake timers combined with real SSE I/O (the fake upstream is a real `http.createServer`, the app does a real `fetch()`)
+      // hung in CI at `startFakeUpstream`'s `onTestFinished` server.close() until the 180 s hook timeout, after the test body had finished (the SSE connection never got closed).
+      // The idle timer fires through its real `setTimeout`, with no fake clock involved.
       const { app, db } = await buildTestApp({}, { aiIdleTimeoutMs: 400 });
       const access = await setupNoteAccess(db);
       const provider = await insertProvider(db, { baseUrl: fakeUpstream.baseUrl });
       const model = await insertModel(db, provider.id);
       const action = await insertAction(db, { modelId: model.id });
 
-      // `payloadAsStream: true`（light-my-request）：`app.inject()` 的 promise 在 handler
-      // `raw.writeHead()`（hijack 後立刻送出）當下就 resolve，不必等整段回應跑完。
+      // `payloadAsStream: true` (light-my-request): the `app.inject()` promise resolves as soon as the handler's `raw.writeHead()` runs
+      // (right after hijack), without waiting for the whole response.
       const res = await app.inject({
         method: "POST",
         url: "/api/ai",
@@ -591,8 +582,8 @@ describe("POST /api/ai — 正常串流", () => {
         resolveFirstDelta = resolve;
       });
       const streamEnded = new Promise<void>(resolve => stream.once("end", resolve));
-      // 刻意用 stream.on("data") 手動累積而非較直覺的 `for await...of` + `break`：
-      // 迭代器中途 break 會觸發其 return() 進而 destroy() 掉串流，等於過早砍斷 SSE 連線。
+      // Accumulate manually with stream.on("data") instead of the more obvious `for await...of` + `break`:
+      // breaking mid-iteration triggers the iterator's return(), which destroy()s the stream and cuts the SSE connection too early.
       stream.on("data", (chunk: Buffer) => {
         body += chunk.toString("utf8");
         if (!deltaSeen && eventSequence(body).includes("delta")) {
@@ -601,17 +592,16 @@ describe("POST /api/ai — 正常串流", () => {
         }
       });
 
-      // 等到「至少收到一個完整 delta 事件」為止（poll/await 實際資料，不用固定 sleep）——
-      // handler 的 for-await 迴圈每次迭代都 resetIdleTimer，收到第一個 delta 代表 idle timer
-      // 必然已 arm，語意與第一版相同，這部分仍有價值、原樣保留。
+      // Wait until at least one full delta event has arrived (poll actual data, no fixed sleep): the handler's for-await loop calls resetIdleTimer
+      // on every iteration, so receiving the first delta means the idle timer is armed.
       await firstDelta;
       const idleStart = Date.now();
 
-      // 不推假時鐘——單純等真實時間過去（400ms idle timeout + 些許排程餘裕），idle timer
-      // 觸發後的 error 事件＋raw.end() 會自然送達，`stream` 的 'end' 事件即代表連線已關閉。
+      // No fake clock - just wait for real time (400 ms idle timeout plus some scheduling slack): the error event + raw.end() after the idle timer fires
+      // arrive naturally, and the stream's 'end' event means the connection is closed.
       await streamEnded;
-      // 只量「收到 delta → 連線關閉」這一段：注入的 400 ms 有一路接到路由的話遠小於界線；沒接上（落回 routes/ai.ts 的
-      // IDLE_TIMEOUT_MS 60 s）就要等滿 60 s → 紅。界線 20 s 離兩邊都遠（與 ./lock-timeout-bound.ts 同一種設計）。
+      // Only the span "delta received -> connection closed" is measured: if the injected 400 ms reaches the route it is far below the bound; if not (falling back to
+      // IDLE_TIMEOUT_MS 60 s in routes/ai.ts) it waits the full 60 s -> red. The 20 s bound is far from both (same design as ./lock-timeout-bound.ts).
       expect(Date.now() - idleStart).toBeLessThan(20_000);
       expect(eventSequence(body)).toEqual(["delta", "error"]);
       expect(body).toContain("The request to the AI provider failed.");
@@ -619,13 +609,13 @@ describe("POST /api/ai — 正常串流", () => {
   );
 });
 
-describe("POST /api/ai — 閘門一致性三案（與 GET /api/ai/actions 共用 resolveActionModel）", () => {
-  it("案 A：首個 model 建成 disabled → GET 清單與 POST 皆判定不可用", async () => {
+describe("POST /api/ai - gate consistency, three cases (shares resolveActionModel with GET /api/ai/actions)", () => {
+  it("first model created disabled -> GET list and POST both judge it unavailable", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
     const provider = await insertProvider(db);
     await insertModel(db, provider.id, { enabled: false });
-    const action = await insertAction(db); // modelId null，回退候選為空（唯一 model 是 disabled）
+    const action = await insertAction(db); // modelId null, fallback candidates empty (the only model is disabled)
 
     const getRes = await app.inject({ method: "GET", url: "/api/ai/actions", cookies: { [SESSION_COOKIE]: access.editorCookie } });
     expect(getRes.json().actions.map((a: { id: string }) => a.id)).not.toContain(action.id);
@@ -640,12 +630,12 @@ describe("POST /api/ai — 閘門一致性三案（與 GET /api/ai/actions 共�
     expect(postRes.json().error.code).toBe("ai_not_configured");
   });
 
-  it("案 B：PATCH 停用 default model 後 → GET 清單與 POST 由可用轉為不可用", async () => {
+  it("PATCH disabling the default model -> GET list and POST go from available to unavailable", async () => {
     const { app, db } = await buildTestApp();
     const access = await setupNoteAccess(db);
     const provider = await insertProvider(db);
     const model = await insertModel(db, provider.id, { isDefault: true });
-    const action = await insertAction(db); // modelId null，靠 isDefault 回退命中 model
+    const action = await insertAction(db); // modelId null, hits the model through the isDefault fallback
 
     const getBefore = await app.inject({ method: "GET", url: "/api/ai/actions", cookies: { [SESSION_COOKIE]: access.editorCookie } });
     expect(getBefore.json().actions.map((a: { id: string }) => a.id)).toContain(action.id);
@@ -674,7 +664,7 @@ describe("POST /api/ai — 閘門一致性三案（與 GET /api/ai/actions 共�
     expect(postRes.json().error.code).toBe("ai_not_configured");
   });
 
-  it("案 C：DELETE default model 後另一 enabled model 仍在 → GET 清單與 POST 回退成功", async () => {
+  it("DELETE of the default model while another enabled model remains -> GET list and POST fall back successfully", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.end(`${sseDelta("fallback ok")}data: [DONE]\n\n`);
@@ -684,7 +674,7 @@ describe("POST /api/ai — 閘門一致性三案（與 GET /api/ai/actions 共�
     const provider = await insertProvider(db, { baseUrl: fakeUpstream.baseUrl });
     const defaultModel = await insertModel(db, provider.id, { modelId: "default-model", isDefault: true });
     const fallbackModel = await insertModel(db, provider.id, { modelId: "fallback-model", isDefault: false });
-    const action = await insertAction(db); // modelId null，靠回退排序命中
+    const action = await insertAction(db); // modelId null, hits through the fallback ordering
 
     const admin = await insertUser(db);
     await db.update(users).set({ isAdmin: true }).where(eq(users.id, admin.id));
@@ -712,15 +702,14 @@ describe("POST /api/ai — 閘門一致性三案（與 GET /api/ai/actions 共�
 });
 
 /**
- * issue #53：openai_compatible 允許無金鑰（本機 vLLM/Ollama 的合法狀態，pre-stream 不得
- * 一律當錯）——但 #46 讓「有 models 掛著、金鑰被清掉」變得容易達到（任何一次改 base_url
- * 都進入它）。此時上游回 401/403，使用者看到的卻是與真因無關的「AI 服務回傳錯誤」。
+ * issue #53: openai_compatible allows no key (a legitimate state for local vLLM/Ollama, so pre-stream must not treat it as an error),
+ * but #46 makes "models attached, key cleared" easy to reach (any base_url change gets there): the upstream then answers 401/403
+ * and the user sees an unrelated "AI service returned an error".
  *
- * 修法：只在「上游明確回授權錯誤 且 該 provider 沒有存金鑰」的組合下，把 SSE error 的
- * 錯誤碼映射成 provider_unavailable（web 端對該碼的 i18n 文案＝「請管理員重新輸入
- * API key」）。有金鑰但被上游拒絕（金鑰失效/被撤銷）是另一種情況，維持 upstream_error。
+ * Fix: only when the upstream explicitly returns an auth error AND the provider has no stored key, map the SSE error code to provider_unavailable
+ * (the web i18n text for that code asks the admin to re-enter the API key). A key that exists but is rejected upstream (revoked/invalid) stays upstream_error.
  */
-describe("POST /api/ai — openai_compatible 無金鑰撞上游授權錯誤（issue #53）", () => {
+describe("POST /api/ai - openai_compatible without key hitting an upstream auth error (issue #53)", () => {
   async function run(upstreamStatus: number, providerOverrides: Partial<typeof aiProviders.$inferInsert>) {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(upstreamStatus, { "content-type": "application/json" });
@@ -737,28 +726,27 @@ describe("POST /api/ai — openai_compatible 無金鑰撞上游授權錯誤（is
       cookies: { [SESSION_COOKIE]: access.editorCookie },
       payload: { action_id: action.id, note_id: access.noteId, text: "hi" },
     });
-    expect(res.statusCode).toBe(200); // hijack 後一律 200，錯誤走 SSE 事件
+    expect(res.statusCode).toBe(200); // always 200 after hijack; errors travel as SSE events
     expect(eventSequence(res.body)).toEqual(["error"]);
-    // 「上游 body 絕不外洩」的不變量對**兩個** error 出口都要成立（既有的
-    // sentinel 測試只驅動 500、只蓋得到 upstream_error 那條出口）——fake upstream 的
-    // body 帶哨兵字串，映射與否都不得出現在 SSE 回應裡。
+    // The invariant "upstream body never leaks" must hold on **both** error exits (the existing sentinel test only drives 500 and so only covers
+    // the upstream_error exit): the fake upstream body carries a sentinel string that must not appear in the SSE response whether or not it is mapped.
     expect(res.body).not.toContain("missing api key");
     return res.body;
   }
 
-  it("無金鑰 + 上游 401 → SSE error 碼是 provider_unavailable（不是 upstream_error）", async () => {
+  it("no key + upstream 401 -> SSE error code is provider_unavailable (not upstream_error)", async () => {
     const body = await run(401, { apiKeyEncrypted: null });
     expect(body).toContain("provider_unavailable");
     expect(body).not.toContain("upstream_error");
   });
 
-  it("無金鑰 + 上游 403 → 同樣映射成 provider_unavailable", async () => {
+  it("no key + upstream 403 -> mapped to provider_unavailable too", async () => {
     const body = await run(403, { apiKeyEncrypted: null });
     expect(body).toContain("provider_unavailable");
     expect(body).not.toContain("upstream_error");
   });
 
-  it("**有**金鑰 + 上游 401 → 維持 upstream_error（金鑰失效是另一種情況，不得誤導成「未設定」）", async () => {
+  it("with a key + upstream 401 -> stays upstream_error (an invalid key is a different situation, must not mislead as not configured)", async () => {
     const providerId = randomUUID();
     const body = await run(401, {
       id: providerId,
@@ -768,15 +756,15 @@ describe("POST /api/ai — openai_compatible 無金鑰撞上游授權錯誤（is
     expect(body).not.toContain("provider_unavailable");
   });
 
-  it("無金鑰 + 上游 500 → 維持 upstream_error（授權錯誤以外不映射）", async () => {
+  it("no key + upstream 500 -> stays upstream_error (only auth errors are mapped)", async () => {
     const body = await run(500, { apiKeyEncrypted: null });
     expect(body).toContain("upstream_error");
     expect(body).not.toContain("provider_unavailable");
   });
 });
 
-describe("POST /api/ai — #263 Instruct 欄位矩陣（串流前 400、在角色檢查與節流之前）", () => {
-  // 刻意用使用者無權限的 note：400 若排在 resolveRole 之後，這些案會變 404。
+describe("POST /api/ai - #263 Instruct field matrix (400 before streaming, ahead of the role check and throttling)", () => {
+  // Deliberately a note the user has no permission on: if the 400 came after resolveRole these cases would become 404.
   const NO_ACCESS_NOTE = "11111111-2222-4333-8444-555555555555";
   const cases: Array<[string, Record<string, unknown>]> = [
     ["Instruct 缺 instruction", { action_id: INSTRUCT_ACTION_ID }],
@@ -789,7 +777,7 @@ describe("POST /api/ai — #263 Instruct 欄位矩陣（串流前 400、在角�
     ["大寫的 Instruct id 缺 instruction（小寫化後同樣走 Instruct 規則）", { action_id: INSTRUCT_ACTION_ID.toUpperCase() }],
   ];
   for (const [name, extra] of cases) {
-    it(`${name} → 400 invalid_body（筆記無權限也先回 400）`, async () => {
+    it(`${name} -> 400 invalid_body (400 comes first even when the note is not permitted)`, async () => {
       const { app, db } = await buildTestApp();
       const user = await insertUser(db);
       const res = await app.inject({
@@ -803,8 +791,8 @@ describe("POST /api/ai — #263 Instruct 欄位矩陣（串流前 400、在角�
     });
   }
 
-  it("Instruct 的 400 不扣節流額度：limit 1 下先送兩發 400，第三發才吃額度（404：動作不存在），第四發 429", async () => {
-    // 節流在 resolveRole 之後（routes/ai.ts），所以要用有編輯權的筆記，請求才走得到 consume。
+  it("Instruct 400s don't consume throttle quota: with limit 1, two 400s first, the third takes the quota (404: action doesn't exist), the fourth is 429", async () => {
+    // Throttling comes after resolveRole (routes/ai.ts), so a note with edit permission is needed for the request to reach consume.
     const smallAiLimiter = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ limiters: limitersWithAi(smallAiLimiter) });
     const access = await setupNoteAccess(db);
@@ -817,7 +805,7 @@ describe("POST /api/ai — #263 Instruct 欄位矩陣（串流前 400、在角�
     expect(statuses).toEqual([400, 400, 404, 429]);
   });
 
-  it("Instruct：instruction 1..500＋focus 為 2000 個 emoji → 串流 200（不是 400）", async () => {
+  it("Instruct: instruction 1..500 + focus of 2000 emoji -> stream 200 (not 400)", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.end(`${sseDelta("ok")}data: [DONE]\n\n`);
@@ -838,7 +826,7 @@ describe("POST /api/ai — #263 Instruct 欄位矩陣（串流前 400、在角�
   });
 });
 
-describe("POST /api/ai — #263 組裝（固定標記與守門）", () => {
+describe("POST /api/ai - #263 assembly (fixed markers and guard)", () => {
   async function instructRun(payload: Record<string, unknown>, before?: (db: Db) => Promise<void>) {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
@@ -858,7 +846,7 @@ describe("POST /api/ai — #263 組裝（固定標記與守門）", () => {
     return { res, db, sent: fakeUpstream.requestBodies };
   }
 
-  it("Instruct：user＝預設 template 依序代入三個標記（instruction 用 trim 後的值）；system＝固定說明＋空行＋守門＋空行＋動作 prompt", async () => {
+  it("Instruct: user = default template with the three markers filled in order (instruction uses the trimmed value); system = fixed notice + blank line + guard + blank line + action prompt", async () => {
     const { res, db, sent } = await instructRun({
       action_id: INSTRUCT_ACTION_ID,
       text: "第一段\n\n第二段",
@@ -866,7 +854,7 @@ describe("POST /api/ai — #263 組裝（固定標記與守門）", () => {
       focus: "第二段",
     });
     const [instruct] = await db.select().from(aiActions).where(eq(aiActions.id, INSTRUCT_ACTION_ID));
-    expect(sent).toHaveLength(1); // 前置條件：上游確實收到一發請求（否則下面讀 sent[0] 會是 TypeError）
+    expect(sent).toHaveLength(1); // precondition: the upstream really received one request (otherwise reading sent[0] below would be a TypeError)
     expect(sent[0]!.messages).toEqual([
       { role: "system", content: `${MARKUP_GUARD_PROMPT}\n\n${INSTRUCT_GUARD_PROMPT}\n\n${instruct!.systemPrompt}` },
       { role: "user", content: "<instruction>\n改成條列\n</instruction>\n<selected>\n第二段\n</selected>\n<text>\n第一段\n\n第二段\n</text>" },
@@ -874,28 +862,28 @@ describe("POST /api/ai — #263 組裝（固定標記與守門）", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("Instruct 不帶 focus → <selected></selected>", async () => {
+  it("Instruct without focus -> <selected></selected>", async () => {
     const { sent } = await instructRun({ action_id: INSTRUCT_ACTION_ID, text: "body", instruction: "x" });
-    expect(sent).toHaveLength(1); // 前置條件：上游確實收到一發請求（否則下面讀 sent[0] 會是 TypeError）
+    expect(sent).toHaveLength(1); // precondition: the upstream really received one request (otherwise reading sent[0] below would be a TypeError)
     expect(sent[0]!.messages?.[1]).toEqual({ role: "user", content: "<instruction>\nx\n</instruction>\n<selected></selected>\n<text>\nbody\n</text>" });
   });
 
-  it("Instruct 的 template 被管理員改過：標記仍由路由包，template 只決定順序與中間的字", async () => {
+  it("Instruct template edited by the admin: the route still wraps the markers, the template only decides order and the words in between", async () => {
     const { sent } = await instructRun({ action_id: INSTRUCT_ACTION_ID, text: "body", instruction: "x" }, async (db) => {
       await db.update(aiActions).set({ userTemplate: "B:{{text}} A:{{instruction}}" }).where(eq(aiActions.id, INSTRUCT_ACTION_ID));
     });
-    expect(sent).toHaveLength(1); // 前置條件：上游確實收到一發請求（否則下面讀 sent[0] 會是 TypeError）
+    expect(sent).toHaveLength(1); // precondition: the upstream really received one request (otherwise reading sent[0] below would be a TypeError)
     expect(sent[0]!.messages?.[1]?.content).toBe("B:<text>\nbody\n</text> A:<instruction>\nx\n</instruction>");
   });
 
-  it("大寫的 Instruct id：同樣包標記、前置守門（小寫化後判 DB id）", async () => {
+  it("uppercase Instruct id: markers still wrapped, guard still prepended (lowercased before judging the DB id)", async () => {
     const { sent } = await instructRun({ action_id: INSTRUCT_ACTION_ID.toUpperCase(), text: "body", instruction: "x" });
-    expect(sent).toHaveLength(1); // 前置條件：上游確實收到一發請求（否則下面讀 sent[0] 會是 TypeError）
+    expect(sent).toHaveLength(1); // precondition: the upstream really received one request (otherwise reading sent[0] below would be a TypeError)
     expect(sent[0]!.messages?.[0]?.content.startsWith(`${MARKUP_GUARD_PROMPT}\n\n${INSTRUCT_GUARD_PROMPT}\n\n`)).toBe(true);
     expect(sent[0]!.messages?.[1]?.content).toContain("<text>\nbody\n</text>");
   });
 
-  it("quick 動作：system＝固定說明＋空行＋動作 prompt（不前置 Instruct 守門）、text 裸代入、{{instruction}}／{{focus}} 代入空字串", async () => {
+  it("quick action: system = fixed notice + blank line + action prompt (no Instruct guard prepended), text substituted bare, {{instruction}}/{{focus}} substituted with an empty string", async () => {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
       res.end(`${sseDelta("ok")}data: [DONE]\n\n`);
@@ -920,9 +908,9 @@ describe("POST /api/ai — #263 組裝（固定標記與守門）", () => {
   });
 });
 
-// 並排：MARKUP_GUARD_PROMPT 由 server 前置在每一個動作的 system 最前面，
-// 管理員改 DB 裡的 systemPrompt（含改成空字串）都拿不掉它。
-describe("POST /api/ai — 並排與尺寸的固定說明", () => {
+// MARKUP_GUARD_PROMPT is prepended by the server at the very front of every action's system prompt;
+// an admin editing systemPrompt in the DB (even to an empty string) can't remove it.
+describe("POST /api/ai - fixed notice for columns and sizes", () => {
   async function upstreamApp() {
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);
@@ -945,13 +933,13 @@ describe("POST /api/ai — 並排與尺寸的固定說明", () => {
     return { db, model, send, sent: fakeUpstream.requestBodies };
   }
 
-  it("AQ2：管理員改 systemPrompt 前後與改成空字串，system 都以固定說明開頭；空字串時 system 就是固定說明", async () => {
+  it("admin changing systemPrompt, before and after and to an empty string: system always starts with the fixed notice; with an empty string system is just the fixed notice", async () => {
     const { db, model, send, sent } = await upstreamApp();
     const action = await insertAction(db, { modelId: model.id, systemPrompt: "v1 prompt" });
     await send(action.id);
     await db.update(aiActions).set({ systemPrompt: "v2 只要翻譯" }).where(eq(aiActions.id, action.id));
     await send(action.id);
-    // admin API 是 min(1)、送不出空字串；DB 欄位允許——防禦案
+    // The admin API is min(1) and can't send an empty string; the DB column allows it - defensive case
     await db.update(aiActions).set({ systemPrompt: "" }).where(eq(aiActions.id, action.id));
     await send(action.id);
     expect(sent).toHaveLength(3);
@@ -962,7 +950,7 @@ describe("POST /api/ai — 並排與尺寸的固定說明", () => {
     ]);
   });
 
-  it("AQ4：四個內建 quick 動作（seed 的 id）各送一發，system 都是固定說明＋空行＋該動作在 DB 的 systemPrompt", async () => {
+  it("the four builtin quick actions (seeded ids) each send once: system is always fixed notice + blank line + that action's systemPrompt in the DB", async () => {
     const { db, send, sent } = await upstreamApp();
     const quickIds = BUILTIN_ACTION_IDS.filter(id => id !== INSTRUCT_ACTION_ID);
     expect(quickIds).toHaveLength(4);
@@ -976,9 +964,9 @@ describe("POST /api/ai — 並排與尺寸的固定說明", () => {
     });
   });
 
-  // anthropic 分支的 system 是請求 body 頂層的 `system`（`upstream.ts` streamAnthropic），不是 messages[0]；
-  // 兩個分支今天共用同一個 opts，有人拆開時這案會紅。
-  it("AQ5：anthropic provider 的請求 body `system` 也是固定說明＋空行＋動作 prompt", async () => {
+  // In the anthropic branch system is the top-level `system` of the request body (`upstream.ts` streamAnthropic), not messages[0];
+  // both branches share one opts today, and this case goes red if someone splits them.
+  it("anthropic provider: the request body `system` is also fixed notice + blank line + action prompt", async () => {
     const ev = (type: string, data: unknown) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     const fakeUpstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, SSE_HEADERS);

@@ -15,8 +15,8 @@ import { buildCollabTestApp, COLLAB_TOKEN_INIT, testConfig, testSessionId } from
 const PASSWORD = "correct-horse-battery";
 
 /**
- * 輪詢等待條件成立（比照 collab-sync.test.ts）：共編是非同步收斂的，斷言不可用固定
- * sleep，也不可只檢查一次——一律「在期限內輪詢到成立」，逾時才失敗並帶上標籤。
+ * Polls until the condition holds (as in collab-sync.test.ts): collaboration converges asynchronously, so assertions can't use a fixed
+ * sleep nor check only once - always poll within a deadline and fail with the label on timeout.
  */
 async function waitFor(label: string, timeoutMs: number, check: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -31,15 +31,14 @@ function stateVector(doc: Y.Doc): string {
   return Buffer.from(Y.encodeStateVector(doc)).toString("hex");
 }
 
-/** 在 doc 的共編 fragment 插入一個含文字的 XML 元素——模擬 BlockNote 的一次編輯。 */
 function insertParagraph(doc: Y.Doc, text: string): void {
   const element = new Y.XmlElement("paragraph");
   element.insert(0, [new Y.XmlText(text)]);
   doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
 }
 
-describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
-  it("owner 可連可寫；viewer 連上但寫入被 protocol 層丟棄（另一 client 看不到）", async () => {
+describe("collab auth: onAuthenticate / onTokenSync real verification", () => {
+  it("owner can connect and write; viewer connects but its writes are dropped at the protocol layer (another client doesn't see them)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth1@example.com", password: PASSWORD });
     const viewerUser = await ctx.createUser({ email: "viewer-auth1@example.com", password: PASSWORD });
@@ -60,14 +59,14 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     );
     expect(viewerClient.doc.getXmlFragment(YDOC_FRAGMENT).toString()).toBe("<paragraph>from owner</paragraph>");
 
-    // viewer 端寫入：protocol 層應直接丟棄（見 Hocuspocus `connection.readOnly` 的
-    // messageYjsUpdate/messageYjsSyncStep2 分支），不落地也不廣播給 owner。
+    // A viewer's write: the protocol layer should drop it (see the messageYjsUpdate/messageYjsSyncStep2 branches of Hocuspocus
+    // `connection.readOnly`), neither persisted nor broadcast to the owner.
     insertParagraph(viewerClient.doc, "from viewer");
     await new Promise(resolve => setTimeout(resolve, 500));
     expect(ownerClient.doc.getXmlFragment(YDOC_FRAGMENT).toString()).not.toContain("from viewer");
   });
 
-  it("偽 token（簽章錯誤）拒連", async () => {
+  it("forged token (bad signature) is refused", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -78,15 +77,15 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     await expect(session.connect(note.id, { tokenOverride: forged })).rejects.toThrow(COLLAB_REJECT_INVALID_TOKEN);
   });
 
-  it("陌生人以合法簽章但聲稱 role:'owner' 的 token 連線——重跑 resolveRole 得 'none'，仍拒連（N2：token 內 role 不作授權依據）", async () => {
+  it("a stranger with a validly signed token claiming role:'owner' -> resolveRole is re-run and gives 'none', still refused (the role inside the token isn't an authorization basis)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth3@example.com", password: PASSWORD });
     const stranger = await ctx.createUser({ email: "stranger-auth3@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("stranger-auth3@example.com", PASSWORD);
 
-    // 簽章有效（用真的 appSecret 簽），但 stranger 對這篇筆記毫無權限——role:'owner' 只是
-    // 簽發時的（謊稱）快照，server 端不得信任，必須重跑 resolveRole 才拒絕。
+    // The signature is valid (signed with the real appSecret) but the stranger has no permission on this note - role:'owner' is only a (false)
+    // snapshot from issuing time; the server must not trust it and must re-run resolveRole to refuse.
     const forgedRole = await signCollabToken(testConfig.appSecret, {
       noteId: note.id,
       userId: stranger.id,
@@ -96,11 +95,11 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
       sv: NOTE_SCHEMA_VERSION,
     });
 
-    // issue #35：這是唯一真正的「授權被拒」——筆記在、token 有效，只是這個人沒有角色。
+    // issue #35: the only real "authorization denied": the note exists and the token is valid, but this person has no role.
     await expect(session.connect(note.id, { tokenOverride: forgedRole })).rejects.toThrow(COLLAB_REJECT_FORBIDDEN);
   });
 
-  it("撤分享後拿撤前舊 token（TTL 內）重連被拒（N2）", async () => {
+  it("after a share is revoked, reconnecting with the pre-revocation token (within TTL) is refused", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth4@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth4@example.com", password: PASSWORD });
@@ -110,7 +109,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const ownerSession = await ctx.loginAs("owner-auth4@example.com", PASSWORD);
     const editorSession = await ctx.loginAs("editor-auth4@example.com", PASSWORD);
 
-    // 撤權前先拿一份合法 token（TTL 120s 內都有效）。
+    // Take a valid token before revoking (valid for the whole 120 s TTL).
     const tokenRes = await editorSession.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
     expect(tokenRes.status).toBe(200);
     const { token: staleToken } = (await tokenRes.json()) as { token: string };
@@ -123,7 +122,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     );
   });
 
-  it("token.noteId ≠ document name → 拒連", async () => {
+  it("token.noteId != document name -> refused", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth5@example.com", password: PASSWORD });
     const noteA = await ctx.createNote(owner.id);
@@ -142,12 +141,11 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     await expect(session.connect(noteA.id, { tokenOverride: tokenForB })).rejects.toThrow(COLLAB_REJECT_INVALID_TOKEN);
   });
 
-  it("刪除閘門過期後，已刪除的筆記與「存在但無權限」的筆記拒連理由相同——不當存在性 oracle（issue #35）", async () => {
-    // 「筆記已刪完、閘門也清了、client 才連回來」這個窗口本來會被說成「你已失去存取權」。
-    // 修法是把閘門的 TTL 拉長到蓋過 client 最長的重啟退避（見 DELETING_GATE_TTL_MS），
-    // **而不是**新增一個「筆記不存在」的拒連理由：後者會讓任何登入使用者都能對任意 UUID
-    // 問「這篇筆記存在嗎」，而 REST 端刻意不區分這兩者（一律 404／一律 200+role:'none'）。
-    // 這條測試釘的就是「兩者不可分辨」。
+  it("after the deleting gate expires, a deleted note and an 'exists but no permission' note are refused for the same reason - no existence oracle (issue #35)", async () => {
+    // The window "note fully deleted, gate cleared, client only now reconnects" would otherwise be reported as "you lost access".
+    // The fix lengthens the gate TTL to cover the client's longest restart backoff (see DELETING_GATE_TTL_MS), **rather than** adding a
+    // "note doesn't exist" refusal reason: that would let any signed-in user ask for any UUID "does this note exist?", which REST
+    // deliberately doesn't distinguish (always 404 / always 200+role:'none'). This test pins that the two are indistinguishable.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth15@example.com", password: PASSWORD });
     await ctx.createUser({ email: "stranger-auth15@example.com", password: PASSWORD });
@@ -155,7 +153,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const othersNote = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("stranger-auth15@example.com", PASSWORD);
 
-    // 直接刪 row 且不碰閘門＝「刪除流程早就跑完、TTL 也過了」的終局狀態。
+    // Deleting the row directly without touching the gate = the end state where the deletion flow finished long ago and the TTL has passed.
     await ctx.db.delete(notes).where(eq(notes.id, deletedNote.id));
 
     const deletedReason = await session.connect(deletedNote.id).then(
@@ -167,13 +165,13 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
       (err: Error) => err.message
     );
     expect(deletedReason).toContain(COLLAB_REJECT_FORBIDDEN);
-    // 逐字相同（除了 noteId）：兩者可觀察行為一致，問不出「這個 id 到底存不存在」。
+    // Byte-identical (except noteId): the observable behaviour is the same, so nobody can ask whether this id exists.
     expect(deletedReason.replace(deletedNote.id, "")).toBe(existingReason.replace(othersNote.id, ""));
   });
 
-  it("刪除閘門要先驗 token 才回答——沒有合法 token 問不出「這篇筆記正在被刪」", async () => {
-    // 閘門是這個 server 唯一會透露「某個 noteId 存在且剛被刪掉」的地方，所以它排在驗完
-    // token 之後：要問就得先持有一份對這篇筆記合法簽章的 token。
+  it("the deleting gate verifies the token before answering - without a valid token one can't ask whether the note is being deleted", async () => {
+    // The gate is what reveals that some noteId exists and was just deleted, so it sits after token
+    // verification: to ask, one must first hold a token validly signed for this note.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth18@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -183,13 +181,12 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
 
     const forged = await signCollabToken("f".repeat(64), { noteId: note.id, userId: owner.id, role: "owner", tv: 0, sid: testSessionId(owner.id), sv: NOTE_SCHEMA_VERSION });
     await expect(session.connect(note.id, { tokenOverride: forged })).rejects.toThrow(COLLAB_REJECT_INVALID_TOKEN);
-    // 合法 token 才拿得到真正的理由。
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
   });
 
-  it("刪除閘門只對「本來就看得到這篇筆記的人」說 note-deleting（否則就是存在性 oracle）", async () => {
-    // 閘門必須能對協作者說出「筆記被刪了」，又不能讓任何人拿一個 UUID 就問出「這篇存在嗎」。
-    // 名單在刪除交易之前抓下來（markDeleting → loadNoteAudience），只有名單上的人聽得到。
+  it("the deleting gate says note-deleting only to people who could already see the note (otherwise it is an existence oracle)", async () => {
+    // The gate must tell collaborators "the note was deleted" without letting anyone ask "does this exist?" with a UUID.
+    // The audience list is captured before the deletion transaction (markDeleting -> loadNoteAudience); only people on the list hear it.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth20@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth20@example.com", password: PASSWORD });
@@ -202,22 +199,21 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const editorSession = await ctx.loginAs("editor-auth20@example.com", PASSWORD);
     const strangerSession = await ctx.loginAs("stranger-auth20@example.com", PASSWORD);
 
-    // 分享對象：聽得到真正的理由。
     await expect(editorSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
-    // 陌生人：拿得到合法 token（endpoint 對誰都回 200），但只會聽到 forbidden——與「這篇
-    // 筆記根本不存在」一模一樣，問不出任何東西。
+    // Stranger: can get a valid token (the endpoint returns 200 to everyone) but only hears forbidden - identical to "the note
+    // doesn't exist at all", so nothing can be asked.
     await expect(strangerSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_FORBIDDEN);
   });
 
-  it("名單抓不到時，「有沒有角色」接手判斷——陌生人照樣只聽得到 forbidden", async () => {
-    // `markDeleting` 的名單查詢失敗時（DB 抖動）閘門的 value 是 null。那個 fallback 若解成
-    // 「誰都聽得到 note-deleting」，一次抖動就把「這個 id 剛被刪掉」告訴全世界整整兩分鐘。
+  it("when the audience list can't be fetched, 'has a role' takes over - a stranger still hears only forbidden", async () => {
+    // When the audience query of `markDeleting` fails (DB hiccup) the gate's value is null. If that fallback resolved to "everyone hears
+    // note-deleting", one hiccup would tell the world "this id was just deleted" for a full two minutes.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth21@example.com", password: PASSWORD });
     await ctx.createUser({ email: "stranger-auth21@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
 
-    // 讓名單查詢真的爆掉（拔掉 note_shares 表），閘門因此只記得 key、value 是 null。
+    // Make the audience query really blow up (drop the note_shares table), so the gate remembers only the key and its value is null.
     await ctx.db.execute(sql`ALTER TABLE note_shares RENAME TO note_shares_hidden`);
     try {
       await ctx.collab.markDeleting(note.id);
@@ -229,40 +225,40 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const ownerSession = await ctx.loginAs("owner-auth21@example.com", PASSWORD);
     const strangerSession = await ctx.loginAs("stranger-auth21@example.com", PASSWORD);
 
-    // owner 現在還查得到角色 ⇒ 聽得到真正的理由。
+    // The owner can still be found to have a role => hears the real reason.
     await expect(ownerSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
-    // 陌生人沒有角色 ⇒ 只聽得到 forbidden，問不出這篇筆記的任何事。
+    // A stranger has no role => hears only forbidden, learns nothing about this note.
     await expect(strangerSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_FORBIDDEN);
   });
 
-  it("閘門的收放：release 只收得掉自己那一道，而且只在筆記還在時", async () => {
-    // 這三條是「刪除失敗 → 收閘門」整條路的不變量，少了任何一條，症狀都只是「協作者偶爾
-    // 看到錯的那句話」——不會有別的測試變紅。
+  it("gate release: release only removes its own gate, and only while the note still exists", async () => {
+    // These three are invariants of the whole "deletion failed -> release the gate" path; if any one breaks, the only symptom is
+    // "collaborators occasionally see the wrong message", so each one is asserted here.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth22@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("owner-auth22@example.com", PASSWORD);
 
-    // ① 正常：自己開的門，筆記還在 → 收得掉，連線恢復。
+    // Normal: a gate it opened itself, note still there -> released, connection recovers.
     const epoch = await ctx.collab.markDeleting(note.id);
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
     await expect(ctx.collab.releaseDeletingGate(note.id, epoch)).resolves.toBe(true);
     const client = await session.connect(note.id);
     client.disconnect();
 
-    // ② 別人的門收不掉（併發的第二次刪除接手之後，第一次的失敗不得開門）。
+    // Someone else's gate can't be released (after a concurrent second deletion takes over, the first one's failure must not open the gate).
     const second = await ctx.collab.markDeleting(note.id);
     await expect(ctx.collab.releaseDeletingGate(note.id, epoch)).resolves.toBe(false);
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
 
-    // ③ 筆記真的不在了 → 不收（不然重連的協作者會聽到「你已失去存取權」）。
+    // The note is really gone -> not released (otherwise a reconnecting collaborator would hear "you lost access").
     await ctx.db.delete(notes).where(eq(notes.id, note.id));
     await expect(ctx.collab.releaseDeletingGate(note.id, second)).resolves.toBe(false);
     await expect(session.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
   });
 
-  it("閘門的名單是合併而非覆蓋（併發刪除不得把協作者從名單上洗掉）", async () => {
-    // 較晚那次 `markDeleting` 的名單查詢可能落在較早那次 commit 之後而查回空集合。
+  it("the gate's audience list is merged, not overwritten (concurrent deletions must not wipe collaborators off the list)", async () => {
+    // The audience query of the later `markDeleting` may land after the earlier one's commit and return an empty set.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth23@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth23@example.com", password: PASSWORD });
@@ -271,19 +267,19 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const editorSession = await ctx.loginAs("editor-auth23@example.com", PASSWORD);
 
     await ctx.collab.markDeleting(note.id);
-    // 第二次：此時筆記列已經不在（模擬前一次已 commit）→ 名單查回空集合。
+    // Second time: the note row is already gone (simulates the previous one having committed) -> the audience query returns an empty set.
     await ctx.db.delete(notes).where(eq(notes.id, note.id));
     await ctx.collab.markDeleting(note.id);
 
-    // 合併的話 editor 仍在名單上，聽得到真正的理由；覆蓋的話他會聽到 forbidden。
+    // Merged: the editor stays on the list and hears the real reason; overwritten: they would hear forbidden.
     await expect(editorSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
   });
 
-  it("拒連留下一行結構化日誌：noteId/userId/cause/reason，不含 token（issue #37）", async () => {
-    // issue #6 修好之後，一次拒連的後果從「使用者卡在連線中（會來回報，維護者可以現場看
-    // 畫面）」變成「使用者被自動導走」，他只會說「我突然被踢出來了」。CollabAuthError 的
-    // message 又刻意留空（避免 Hocuspocus 無條件 console.error），所以沒有這行 log 的話，
-    // 兩端一個位元都不留。
+  it("a refusal leaves one structured log line: noteId/userId/cause/reason, no token (issue #37)", async () => {
+    // After issue #6 was fixed, the consequence of a refusal changed from "the user is stuck on connecting (they report it, and the maintainer
+    // can watch the screen live)" to "the user is automatically redirected away", and all they'll say is "I was suddenly kicked out".
+    // CollabAuthError's message is deliberately left empty (to avoid Hocuspocus's unconditional console.error), so without this log line
+    // neither side leaves a single bit.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth16@example.com", password: PASSWORD });
     const stranger = await ctx.createUser({ email: "stranger-auth16@example.com", password: PASSWORD });
@@ -310,26 +306,26 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
       cause: "no-role",
       reason: COLLAB_REJECT_FORBIDDEN,
     });
-    // 欄位是封閉集合：token 內容（憑證）不得進日誌。
+    // The fields are a closed set: token content (credentials) must not enter the log.
     expect(Object.keys(line!.obj).sort()).toEqual(["cause", "noteId", "phase", "reason", "userId"]);
 
-    // 而 `bad-token` **不得**進 info：/collab 的 upgrade 不需要 session，Hocuspocus 對認證
-    // 失敗又不關 socket——一則空 token 訊息換一行 info 日誌等於把日誌量交給匿名對端決定。
+    // And `bad-token` **must not** go to info: /collab's upgrade needs no session and Hocuspocus doesn't close the socket on auth failure -
+    // trading an empty-token message for an info line would let an anonymous peer decide the log volume.
     const forged = await signCollabToken("f".repeat(64), { noteId: note.id, userId: stranger.id, role: "owner", tv: 0, sid: testSessionId(stranger.id), sv: NOTE_SCHEMA_VERSION });
     await expect(session.connect(note.id, { tokenOverride: forged })).rejects.toThrow(COLLAB_REJECT_INVALID_TOKEN);
     const badToken = ctx.collabLogs.find(one => one.obj.cause === "bad-token");
     expect(badToken?.level).toBe("debug");
   });
 
-  it("onAuthenticate 撞到未預期例外 → server-error（不是撤權），並留下 error 級別的日誌", async () => {
-    // 這是唯一會讓分頁真的一直停在「連線中」的拒連原因，也就是維護者最需要找到的那一種：
-    // 它必須跟其他拒連走同一個出口（`cause` 欄位），否則 docs 教的 grep 剛好漏掉它。
+  it("onAuthenticate hitting an unexpected exception -> server-error (not revocation), and leaves an error-level log", async () => {
+    // This refusal reason leaves a tab stuck on "connecting" forever, the kind the maintainer most needs to find: it must go
+    // through the same exit (the `cause` field) as the other refusals, otherwise the grep the docs teach misses exactly it.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth19@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("owner-auth19@example.com", PASSWORD);
 
-    // 先拿到合法 token（此時 gate 還是好的——它同時守著 REST 的 authenticate）。
+    // First get a valid token (the gate is still fine at this point - it also guards REST's authenticate).
     const tokenRes = await session.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
     const { token } = (await tokenRes.json()) as { token: string };
 
@@ -338,15 +334,15 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
 
     const line = ctx.collabLogs.find(one => one.obj.cause === "server-error");
     expect(line?.level).toBe("error");
-    // ⚠ userId 必須在（docs 的排錯指引承諾每一行都認得出是誰，而這一行是它叫維護者
-    // 「先 grep 這個」的那一種）——`claims` 在 try 內，身分要另外提到 catch 看得到的地方。
+    // userId must be present (the docs' troubleshooting guide promises every line identifies who, and this is the kind it tells maintainers
+    // to grep first) - `claims` is inside the try, so the identity must be hoisted somewhere the catch can see.
     expect(line?.obj).toMatchObject({ noteId: note.id, userId: owner.id, reason: COLLAB_REJECT_SERVER_ERROR });
     expect(line?.obj.err).toBeInstanceOf(Error);
   });
 
-  it("gate 不通過記成 session-revoked，但送給 client 的仍是 invalid-token（兩層刻意不同）", async () => {
-    // 「帳號停用／tokenVersion 過期」對 client 而言只是「這份 token 不能用」——它重取一次
-    // 就會拿到 401 並走登出流程；但維護者要能分辨這與「簽章壞掉」不是同一回事。
+  it("a gate failure is logged as session-revoked, but what the client receives is still invalid-token (the two layers deliberately differ)", async () => {
+    // "Account disabled / tokenVersion expired" is for the client just "this token can't be used" - it fetches again, gets 401 and runs the
+    // logout flow; but maintainers must be able to tell it apart from "bad signature".
     const ctx = await buildCollabTestApp();
     await ctx.createUser({ email: "admin-auth17@example.com", password: PASSWORD, isAdmin: true });
     const target = await ctx.createUser({ email: "target-auth17@example.com", password: PASSWORD });
@@ -355,7 +351,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const adminSession = await ctx.loginAs("admin-auth17@example.com", PASSWORD);
     const targetSession = await ctx.loginAs("target-auth17@example.com", PASSWORD);
 
-    // 比照 auth12：手動簽 tv=0 的 token，避開 collab-token 路徑先把 gate 結果快取住。
+    // As in the onAuthenticate disabled-account case below: sign a tv=0 token by hand, to avoid the collab-token path caching the gate result first.
     const preDisableToken = await signCollabToken(testConfig.appSecret, {
       noteId: note.id,
       userId: target.id,
@@ -374,7 +370,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     expect(line?.obj).toMatchObject({ noteId: note.id, userId: target.id, reason: COLLAB_REJECT_INVALID_TOKEN });
   });
 
-  it("connectionsOf 於連線/斷線後正確增減（兩個真實使用者）", async () => {
+  it("connectionsOf grows and shrinks correctly after connect/disconnect (two real users)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth6@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth6@example.com", password: PASSWORD });
@@ -401,7 +397,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     expect(ctx.collab.connectionsOfNote(note.id).size).toBe(1);
   });
 
-  it("onTokenSync 重驗：requestToken 後送出撤權後的新 token（即使聲稱 role:'owner'）→ 連線被 close(COLLAB_CLOSE_REVOKED)", async () => {
+  it("onTokenSync revalidation: after requestToken sending a post-revocation new token (even when claiming role:'owner') -> connection is closed with COLLAB_CLOSE_REVOKED", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth7@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth7@example.com", password: PASSWORD });
@@ -415,8 +411,8 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const editorClient = await editorSession.connect(note.id, {
       tokenFn: async () => {
         if (revoked) {
-          // 撤權後仍簽一個聲稱 role:'owner' 的合法簽章 token——驗證 onTokenSync 重跑
-          // resolveRole 而非信任 token 內的 role（N2 同樣適用於重驗路徑）。
+          // After revocation still sign a validly signed token claiming role:'owner' - verifies onTokenSync re-runs resolveRole instead of
+          // trusting the role in the token (the same applies to the revalidation path).
           return signCollabToken(testConfig.appSecret, { noteId: note.id, userId: editorUser.id, role: "owner", tv: 0, sid: testSessionId(editorUser.id), sv: NOTE_SCHEMA_VERSION });
         }
         const res = await editorSession.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
@@ -438,7 +434,7 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     );
   });
 
-  it("onNextTokenSync 的回呼在重驗被拒（close）路徑也會觸發，不因 reject 被跳過", async () => {
+  it("the onNextTokenSync callback also fires when revalidation is rejected (close), not skipped because of the rejection", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth11@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -448,8 +444,8 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const client = await session.connect(note.id, {
       tokenFn: async () => {
         if (swapped) {
-          // noteId 不符——保證命中 onTokenSync 的 close 分支（不管是走 N6 的 userId
-          // 比對還是 noteId 比對，這裡兩者都會觸發同一個 close，重點是這條路徑確實被拒）。
+          // noteId mismatch - guarantees the close branch of onTokenSync is hit (whether via the userId comparison or the noteId comparison,
+          // both trigger the same close here; what matters is that this path really is rejected).
           return signCollabToken(testConfig.appSecret, {
             noteId: "00000000-0000-0000-0000-000000000000",
             userId: owner.id,
@@ -476,16 +472,15 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
 
     handle.requestToken();
 
-    // 沒有 hoist-take-and-clear-before-verify + finally 派送的話，`handle.close()` 會
-    // 同步觸發 unregister() 先把 tokenSyncCallbacks 的這個 key 刪掉，導致這裡永遠等不到
-    // fired 變 true（逾時失敗）——這正是本測試要抓的迴歸。
+    // Without hoist-take-and-clear-before-verify + dispatch in finally, `handle.close()` would synchronously trigger unregister(), which deletes
+    // this key from tokenSyncCallbacks first, so `fired` would never become true here (timeout) - the regression this test catches.
     await waitFor("重驗被拒的路徑仍觸發 onNextTokenSync 回呼", 3_000, () => fired);
     await waitFor("連線確實被 close(COLLAB_CLOSE_REVOKED)（不是誤判其他成功路徑）", 3_000, () =>
       client.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
   });
 
-  it("N2（onAuthenticate）：帳號停用後（tv bump + gate.invalidate），拿停用前簽的 token 重新連線被拒", async () => {
+  it("onAuthenticate: after the account is disabled (tv bump + gate.invalidate), reconnecting with a token signed before disabling is refused", async () => {
     const ctx = await buildCollabTestApp();
     await ctx.createUser({ email: "admin-auth12@example.com", password: PASSWORD, isAdmin: true });
     const target = await ctx.createUser({ email: "target-auth12@example.com", password: PASSWORD });
@@ -494,10 +489,9 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const adminSession = await ctx.loginAs("admin-auth12@example.com", PASSWORD);
     const targetSession = await ctx.loginAs("target-auth12@example.com", PASSWORD);
 
-    // 停用前手動簽一份合法 token（tv=0，此時尚未被 bump）——刻意不走
-    // `POST .../collab-token`：那條路徑會先經 `authenticate` 呼叫一次 `gate.check`，
-    // 把「尚未停用」的結果快取住（TTL 60s），會讓下面的停用操作看起來像沒生效
-    // （撞上同一個快取陷阱，而非驗證到我們真正想測的東西）。
+    // Hand-sign a valid token before disabling (tv=0, not yet bumped) - deliberately not via `POST .../collab-token`: that path first calls
+    // `gate.check` through `authenticate` and caches the "not yet disabled" result (TTL 60s), making the disabling below look ineffective
+    // (hitting the same cache trap instead of verifying what we want to test).
     const preDisableToken = await signCollabToken(testConfig.appSecret, {
       noteId: note.id,
       userId: target.id,
@@ -510,14 +504,14 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const disableRes = await adminSession.fetch(`/api/admin/users/${target.id}/disable`, { method: "POST" });
     expect(disableRes.status).toBe(204);
 
-    // resolveRole 仍會判定 target 是 owner（停用不影響 note 所有權）——這裡失敗只可能
-    // 是因為 gate.check 判定 revoked（tv 不符），精準命中 server.ts 的 gate 分支。
+    // resolveRole still judges the target as owner (disabling doesn't affect note ownership) - so failing here can only be because gate.check
+    // judges revoked (tv mismatch), precisely hitting the gate branch of server.ts.
     await expect(targetSession.connect(note.id, { tokenOverride: preDisableToken })).rejects.toThrow(
       COLLAB_REJECT_INVALID_TOKEN
     );
   });
 
-  it("N2（onTokenSync）：連線中的使用者被停用後，重驗（同一份舊 tv 的 token）→ close(COLLAB_CLOSE_REVOKED)", async () => {
+  it("onTokenSync: a connected user who gets disabled -> revalidation (the same old-tv token) -> close(COLLAB_CLOSE_REVOKED)", async () => {
     const ctx = await buildCollabTestApp();
     await ctx.createUser({ email: "admin-auth13@example.com", password: PASSWORD, isAdmin: true });
     const target = await ctx.createUser({ email: "target-auth13@example.com", password: PASSWORD });
@@ -526,9 +520,9 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     const adminSession = await ctx.loginAs("admin-auth13@example.com", PASSWORD);
     const targetSession = await ctx.loginAs("target-auth13@example.com", PASSWORD);
 
-    // 固定用同一份（此時仍合法、tv=0）的 token 建立連線，且往後每次 requestToken 都
-    // 重送同一份——這樣停用後唯一會變的變數就是 DB 裡的 tv/disabledAt，精準隔離出
-    // onTokenSync 的 gate.check 分支（role 仍會是 'owner'，不受停用影響）。
+    // Always connect with the same token (still valid at this point, tv=0), and resend that same one on every later requestToken - so the only
+    // variable that changes after disabling is tv/disabledAt in the DB, precisely isolating the gate.check branch of onTokenSync
+    // (role will still be 'owner', unaffected by disabling).
     const fixedToken = await signCollabToken(testConfig.appSecret, {
       noteId: note.id,
       userId: target.id,
@@ -551,15 +545,14 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
     );
   });
 
-  it("N6（onTokenSync）：重驗時送來另一個『真的有權限』使用者的合法簽章 token 仍視為借殼並 close，不接受身分頂替", async () => {
+  it("onTokenSync: revalidation with a validly signed token of another user who really has permission is still treated as impersonation and closed; identity takeover isn't accepted", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-auth14@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-auth14@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
-    // editorUser 對這篇筆記有**真實**的合法權限——若把 N6 的 userId 比對拿掉，
-    // resolveRole/gate.check 對 editorUser 都會通過，owner 這條連線會被靜靜地接管成
-    // editorUser 的身分／權限而不會被關閉，測試才真的會失敗（不是隨便一個「role:none」
-    // 陌生人就能製造出同樣的 close 結果，那樣測不出 N6 這條比對本身有沒有作用）。
+    // editorUser has **real** legitimate permission on this note - if the userId comparison were removed, resolveRole/gate.check would both pass
+    // for editorUser, and the owner's connection would be silently taken over as editorUser's identity/permissions without being closed, so the test
+    // really fails (any random role:none stranger would produce the same close and couldn't tell whether the comparison itself works).
     await ctx.share(note.id, editorUser.id, "editor");
 
     const ownerSession = await ctx.loginAs("owner-auth14@example.com", PASSWORD);
@@ -592,40 +585,37 @@ describe("共編認證：onAuthenticate / onTokenSync 真驗證", () => {
       ownerClient.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
 
-    // ⚠ 這一則必須看得見：握手階段的 bad-token 走 debug（匿名 socket 的
-    // 日誌放大器），但**重驗階段**的 bad-token 是把一條已經認證過的連線踢掉，使用者會看到
-    // 「你已失去存取權」並被導走——身分也早就知道了。
+    // This line must be visible: a bad-token at handshake goes to debug (log amplifier for anonymous sockets), but a bad-token at **revalidation**
+    // kicks an already authenticated connection - the user sees "you lost access" and is redirected away - and the identity is already known.
     const line = ctx.collabLogs.find(one => one.obj.phase === "reverify" && one.obj.cause === "bad-token");
     expect(line?.level).toBe("info");
     expect(line?.obj).toMatchObject({ noteId: note.id, userId: owner.id });
   });
 
-  it("#240 以大寫 documentName 連線被拒（token 由同一個大寫 id 簽出，claims 已是小寫）", async () => {
+  it("#240 connecting with an uppercase documentName is refused (the token was signed from the same uppercase id, claims already lowercase)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-r7@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("owner-r7@example.com", PASSWORD);
-    // 預設取 token 邏輯＝POST /api/notes/<大寫>/collab-token，再以同一個大寫字串當 documentName。
+    // The default token logic = POST /api/notes/<uppercase>/collab-token, then the same uppercase string as the documentName.
     await expect(session.connect(note.id.toUpperCase())).rejects.toThrow(COLLAB_REJECT_INVALID_TOKEN);
     expect(ctx.collab.hocuspocus.documents.has(note.id.toUpperCase())).toBe(false);
   });
 });
 
 /**
- * issue #50：已登入使用者在合法連線上灌「無法處理」的訊息（未知 message type／
- * Auth 非 Token 子型別）——Hocuspocus 對這類訊息只會 console.error 後繼續、連線
- * 永不關、不受我們任何節流管轄。訊息預檢（classifyClientMessage）在訊息進
- * Hocuspocus 之前吞掉並計數，累積 BOGUS_MESSAGE_LIMIT 則即 terminate 該連線，
- * 留一行有全程序節流的日誌。
+ * issue #50: a signed-in user floods a legitimate connection with messages that can't be handled (unknown message type / non-Token Auth subtype) -
+ * Hocuspocus only console.errors and carries on, the connection never closes and no throttle of ours applies. The message precheck (classifyClientMessage)
+ * swallows and counts them before they reach Hocuspocus, and after BOGUS_MESSAGE_LIMIT messages terminates the connection, leaving one log line with process-wide throttling.
  */
-describe("訊息預檢：未知型別灌流 → 強制斷線（issue #50）", () => {
-  /** 手工組 wire 訊息（varString(docName) + varUint(type)）——同 unit 測試的手組法。 */
+describe("message precheck: flooding unknown types -> forced disconnect (issue #50)", () => {
+  /** Hand-built wire message (varString(docName) + varUint(type)) - same method as the unit test. */
   function bogusFrame(docName: string, type: number): Uint8Array {
     const name = new TextEncoder().encode(docName);
     return new Uint8Array([name.length, ...name, type]);
   }
 
-  it("合法連線上灌無 handler 的 type（9=Ping，#50 重現用的那個）：到上限即斷線、日誌恰一行、同文件其他連線照常同步", async () => {
+  it("type with no handler on a legitimate connection (9=Ping, the one that reproduced #50): disconnect at the limit, exactly one log line, other connections on the same document keep syncing", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "flood-owner@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -634,23 +624,23 @@ describe("訊息預檢：未知型別灌流 → 強制斷線（issue #50）", ()
     const bystander = await session.connect(note.id);
     expect(ctx.collab.connectionsOfNote(note.id).size).toBe(2);
 
-    // 取 flooder 底層的 ws（provider 明確持有 websocketProvider，其 webSocket 是真 socket）。
+    // Take the flooder's underlying ws (the provider explicitly holds websocketProvider, whose webSocket is the real socket).
     const rawWs = (flooder.provider.configuration as unknown as { websocketProvider: { webSocket: { send(d: Uint8Array): void } } })
       .websocketProvider.webSocket;
 
-    // type 9（Ping）在 enum 裡有名字、在 MessageReceiver 的 switch 裡沒有 case——正是
-    // 「用 enum 範圍當白名單」擋不住的那一型。
+    // type 9 (Ping) has a name in the enum but no case in MessageReceiver's switch - exactly the kind that "using the enum range as an
+    // allow list" can't stop.
     for (let i = 0; i < 10; i += 1) rawWs.send(bogusFrame(note.id, 9));
 
-    // terminate 是 server 端主動硬斷——等 flooder 那條連線從索引消失。
+    // terminate is a hard disconnect by the server - wait for the flooder's connection to vanish from the index.
     await waitFor("flooder 連線被強制斷線", 5_000, () => ctx.collab.connectionsOfNote(note.id).size === 1);
 
     const lines = ctx.collabLogs.filter(one => one.msg.includes("強制斷線") && !one.msg.includes("上限"));
     expect(lines).toHaveLength(1);
     expect(lines[0]!.obj).toMatchObject({ noteId: note.id, bogusCount: 10, lastType: 9 });
 
-    // 同文件的另一條連線不只活著，還真的在同步：寫入後等 server 端文件收斂到同一個
-    // state vector（比照 collab-sync 的收斂斷言，不用固定 sleep）。
+    // The other connection on the same document isn't just alive, it really syncs: after writing, wait until the server-side document converges
+    // to the same state vector (as in collab-sync's convergence assertions, no fixed sleep).
     insertParagraph(bystander.doc, "bystander still syncing");
     const serverDoc = () => ctx.collab.hocuspocus.documents.get(note.id);
     await waitFor("bystander 的編輯同步到 server", 5_000, () => {
@@ -660,7 +650,7 @@ describe("訊息預檢：未知型別灌流 → 強制斷線（issue #50）", ()
     expect(ctx.collab.connectionsOfNote(note.id).size).toBe(1);
   });
 
-  it("少於上限的無 handler type 不斷線（滾動升級寬限），合法 Sync 照常通過", async () => {
+  it("fewer than the limit of no-handler types doesn't disconnect (grace for rolling upgrades), a legitimate Sync still passes", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "flood-owner2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -671,8 +661,8 @@ describe("訊息預檢：未知型別灌流 → 強制斷線（issue #50）", ()
       .websocketProvider.webSocket;
     for (let i = 0; i < 5; i += 1) rawWs.send(bogusFrame(note.id, 99));
 
-    // 連線仍可正常編輯——用真的同步收斂當「沒被斷線」的證據（比固定 sleep 強：這同時
-    // 證明合法 Sync 訊息通過預檢、且 5 發 bogus 沒有觸發 terminate）。
+    // The connection can still edit normally - real sync convergence is the evidence of "not disconnected" (stronger than a fixed sleep: it also
+    // proves legitimate Sync messages pass the precheck and 5 bogus messages didn't trigger terminate).
     insertParagraph(client.doc, "still editable");
     const serverDoc = () => ctx.collab.hocuspocus.documents.get(note.id);
     await waitFor("編輯同步到 server（連線未被斷）", 5_000, () => {

@@ -13,25 +13,25 @@ import { adminApp } from "./helpers/admin-auth.js";
 import { seedAuthProvider } from "./helpers/oidc-provider.js";
 import { OidcUnavailableError, probeOidcIssuer } from "../src/auth/oidc-client.js";
 
-// admin AI 路由遇非預期 DB 錯誤時，全域 error handler 會把整個 err 交給 pino——drizzle 0.44 的 `DrizzleQueryError` 把整條 SQL
-// 與 params 串進 message、也掛成屬性：寫 provider 時就是 `api_key_encrypted` 的 ct／iv／tag、可能帶 `user:pass@` 的 base_url；
-// 寫 action 時是 system prompt 全文。這裡用 NUL 字元觸發真的 pg 錯誤（22021，不是任何已知的唯一鍵／FK），走真實的 drizzle 錯誤形。
+// Unexpected DB errors reach pino through the global error handler. drizzle 0.44's DrizzleQueryError embeds the whole SQL and params in its message and as properties:
+// provider writes leak api_key_encrypted ct/iv/tag and a base_url that may carry `user:pass@`; action writes leak the full system prompt.
+// A NUL character triggers a real pg error (22021, not any known unique/FK violation), so the real drizzle error shape is exercised.
 const NUL = String.fromCodePoint(0);
-/** pino JSON 行裡 jsonb 的鍵會以 `\"ct\"` 形出現在 message 字串裡、以 `"ct"` 形出現在物件裡——兩形都抓。 */
+/** In pino JSON lines a jsonb key appears as `\"ct\"` inside the message string and as `"ct"` inside objects; match both. */
 const SEALED_KEY = /\\*"(?:ct|iv|tag|keyId)\\*"/;
 const BASE_PASS = "base-url-password-marker";
 const SECRET_HOST = "secret-host-marker.example.com";
 const PROMPT_MARKER = "system-prompt-marker";
 const MODEL_MARKER = "model-id-marker";
 const REDACTED_SUFFIX = "時發生非預期的資料庫錯誤（錯誤本體已遮蔽）";
-/** DrizzleQueryError 的 params 落進 JSON log 的兩種形：message 裡的 `params: …`（drizzle 以「換行＋`params: ${params}`」接在 SQL 後）
- * 與可列舉屬性序列化成的 `"params":`。只比對這兩形，不比對裸字 params（避免別處合法出現的字樣假紅）。 */
-const PARAMS_LEAK = /params: |"params"\s*:/; // 不加 \b：JSON 裡換行被跳脫成 `\n`，`params` 前一個字元是 n，\b 會漏抓
+/** How DrizzleQueryError params reach the JSON log: `params: …` in the message (drizzle appends a newline plus `params: ${params}` after the SQL)
+ * and the enumerable property serialized as `"params":`. Only these two shapes are matched, not the bare word, to avoid false reds from legitimate occurrences elsewhere. */
+const PARAMS_LEAK = /params: |"params"\s*:/; // no \b: JSON escapes newlines as `\n`, so the char before `params` is n and \b would miss it
 
-/** 一個「被我們佔住、但沒人在聽」的本機埠：連過去必定 ECONNREFUSED，且測完前不會被以 listen(0) 取埠的 server 拿到（#255）。
- * 以前是「先 listen(0) 再 close 才去連它」——放掉的埠會被別的測試檔分走，連過去就回 404 而不是被拒。
- * 做法：挑一個剛釋放的埠 P，用 localPort=P 對一個自己的 server 建立連線佔住 P（沒有任何 listener 在 P 上），
- * 再實際連一次 P 確認真的被拒才採用（不同環境的 loopback 行為不同，不假設）。 */
+/** A local port we hold but nobody listens on: connecting always gives ECONNREFUSED, and no server using listen(0) can be handed it before the test ends (#255).
+ * Not "listen(0), close, then connect": the released port gets reused by another test file and answers 404 instead of refusing.
+ * Approach: pick a just-released port P, occupy it by connecting to a server of our own with localPort=P (no listener on P),
+ * then connect to P once to confirm it is really refused (loopback behaviour differs across environments, so it is not assumed). */
 const portReleases: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const release of portReleases.splice(0)) await release();
@@ -110,9 +110,8 @@ async function insertAction(db: Db) {
 type Case = {
   name: string;
   context: string;
-  /** 回傳要打的請求（必要時先種資料）。 */
   request: (db: Db) => Promise<{ method: "POST" | "PATCH"; url: string; payload: object }>;
-  /** 這一路 params 裡會帶的敏感片段——log 全文不得出現。 */
+  /** Sensitive fragments this route carries in params; none may appear anywhere in the log. */
   markers: string[];
   sealed: boolean;
 };
@@ -124,7 +123,7 @@ const CASES: Case[] = [
     request: async () => ({
       method: "POST",
       url: "/api/admin/ai/providers",
-      // base URL 帶 user:pass@ 在入口就 400 到不了 DB；改把標記放在 query（base_url 仍整串進 params，斷言照樣有判別力）。
+      // A base URL with user:pass@ is rejected with 400 at the entry and never reaches the DB; put the marker in the query instead (base_url still goes whole into params, so the assertion still discriminates).
       payload: { name: `x${NUL}`, type: "openai_compatible", baseUrl: `https://${SECRET_HOST}/v1?k=${BASE_PASS}`, apiKey: "sk-leak-me-not" },
     }),
     markers: [BASE_PASS, SECRET_HOST, "sk-leak-me-not"],
@@ -187,8 +186,8 @@ const CASES: Case[] = [
   },
 ];
 
-describe("admin AI 寫入遇非預期 DB 錯誤：回 500 internal，log 不含 params／密文／base_url／prompt", () => {
-  it("前提：同一形錯誤原樣丟出時，DrizzleQueryError 的 message 確實帶 base_url 與密文（不然下面量不到東西）", async () => {
+describe("admin AI writes hitting an unexpected DB error: 500 internal, log has no params/ciphertext/base_url/prompt", () => {
+  it("precondition: when the same error is thrown unchanged, DrizzleQueryError's message does carry base_url and ciphertext (otherwise the checks below measure nothing)", async () => {
     const { db } = await adminApp();
     const id = randomUUID();
     const err = await db
@@ -201,7 +200,7 @@ describe("admin AI 寫入遇非預期 DB 錯誤：回 500 internal，log 不含 
     expect(JSON.stringify({ msg: (err as Error).message })).toMatch(SEALED_KEY);
   });
 
-  it.each(CASES)("$name：500 internal；遮蔽行記 {code 22021, constraint null, context}；log 全文不含敏感片段", async c => {
+  it.each(CASES)("$name: 500 internal; redacted line logs {code 22021, constraint null, context}; whole log has no sensitive fragment", async c => {
     const { out, options } = logged();
     const { app, db, cookies } = await adminApp({}, options);
     const req = await c.request(db);
@@ -225,10 +224,10 @@ describe("admin AI 寫入遇非預期 DB 錯誤：回 500 internal，log 不含 
   });
 });
 
-describe("POST /providers/:id/test 連線失敗的 log 不含 base_url 裡的憑證", () => {
+describe("POST /providers/:id/test connection failure log has no credentials from base_url", () => {
   const MSG = "AI provider 測試連線失敗（逾時或網路錯誤）";
 
-  it("base_url 帶 user:pass@ → 502；log 只記 errName／target／urlHasCredentials，不含密碼", async () => {
+  it("base_url with user:pass@ -> 502; log only records errName/target/urlHasCredentials, no password", async () => {
     const { out, options } = logged();
     const { app, db, cookies } = await adminApp({}, options);
     const p = await insertProvider(db, `http://user:${BASE_PASS}@127.0.0.1:9/v1?k=query-secret-marker`);
@@ -246,8 +245,8 @@ describe("POST /providers/:id/test 連線失敗的 log 不含 base_url 裡的憑
     expect(text).not.toContain("query-secret-marker");
   });
 
-  it("無憑證的連線拒絕 → log 仍保留可除錯資訊（causeCode ECONNREFUSED）", async () => {
-    const port = await holdRefusedPort(); // 不用 :9 之類被 fetch 列為 bad port 的埠
+  it("connection refused without credentials -> log still keeps debuggable info (causeCode ECONNREFUSED)", async () => {
+    const port = await holdRefusedPort(); // not :9 or similar ports that fetch treats as bad ports
 
     const { out, options } = logged();
     const { app, db, cookies } = await adminApp({}, options);
@@ -261,7 +260,7 @@ describe("POST /providers/:id/test 連線失敗的 log 不含 base_url 裡的憑
   });
 });
 
-describe("POST /api/ai 上游失敗的 log 不含 base_url 裡的憑證（任何能觸發 AI 動作的使用者都能讓這行出現）", () => {
+describe("POST /api/ai upstream failure log has no credentials from base_url (any user who can trigger an AI action can make this line appear)", () => {
   const MSG = "ai upstream failed";
 
   async function aiSetup(provider: { type: "openai_compatible" | "anthropic"; baseUrl: string; apiKey?: string }) {
@@ -285,7 +284,7 @@ describe("POST /api/ai 上游失敗的 log 不含 base_url 裡的憑證（任何
     return { out, res, providerId: id };
   }
 
-  it.each(["openai_compatible", "anthropic"] as const)("%s：base_url 帶 user:pass@ → SSE error；log 只記摘要，不含密碼與 query", async type => {
+  it.each(["openai_compatible", "anthropic"] as const)("%s: base_url with user:pass@ -> SSE error; log only records a summary, no password or query", async type => {
     const { out, res, providerId } = await aiSetup({ type, baseUrl: `http://user:${BASE_PASS}@127.0.0.1:9/v1?k=query-secret-marker`, apiKey: "sk-ai-key" });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("event: error");
@@ -293,8 +292,8 @@ describe("POST /api/ai 上游失敗的 log 不含 base_url 裡的憑證（任何
     const hits = parseLines(out).filter(l => l.msg === MSG);
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ level: 40, providerId, urlHasCredentials: true, target: "http://127.0.0.1:9/v1" });
-    // openai_compatible：fetch 直接丟 TypeError；anthropic：SDK 包成 APIConnectionError（`.name` 是 "Error"，取 constructor.name），
-    // cause 是同一個 TypeError。
+    // openai_compatible: fetch throws a TypeError directly; anthropic: the SDK wraps it in APIConnectionError (`.name` is "Error", so constructor.name is used),
+    // with the same TypeError as cause.
     expect(hits[0]).toMatchObject(type === "anthropic" ? { errName: "APIConnectionError", causeName: "TypeError" } : { errName: "TypeError" });
     expect(hits[0]).not.toHaveProperty("err");
 
@@ -303,7 +302,7 @@ describe("POST /api/ai 上游失敗的 log 不含 base_url 裡的憑證（任何
     expect(text).not.toContain("query-secret-marker");
   });
 
-  it("上游回非 2xx（UpstreamError）→ log 仍保留 status 與截過的 upstreamBody", async () => {
+  it("upstream non-2xx (UpstreamError) -> log still keeps status and the truncated upstreamBody", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(500, { "content-type": "text/plain" });
       res.end("upstream-body-marker");
@@ -321,11 +320,11 @@ describe("POST /api/ai 上游失敗的 log 不含 base_url 裡的憑證（任何
   });
 });
 
-describe("開機 v1→v2 密文升級寫入失敗：log 不含新密文", () => {
-  it("UPDATE 遇非預期 DB 錯誤 → 遮蔽行 {code P0001, context}＋原 warn 行（無 err）；log 全文不含 ct／iv／tag／params", async () => {
+describe("startup v1->v2 ciphertext upgrade write failure: log has no new ciphertext", () => {
+  it("UPDATE hits an unexpected DB error -> redacted line {code P0001, context} plus the original warn line (no err); whole log has no ct/iv/tag/params", async () => {
     const { db } = await adminApp();
     const id = randomUUID();
-    // 手造 v1 密文（issue #14 之前格式：無 AAD）——升級條件是「用目前 APP_SECRET 解得開的 v1」。
+    // Hand-built v1 ciphertext (format before issue #14: no AAD); the upgrade applies to a v1 that decrypts with the current APP_SECRET.
     const key = createHash("sha256").update(`${testConfig.appSecret}:ai-key`).digest();
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -343,7 +342,7 @@ describe("開機 v1→v2 密文升級寫入失敗：log 不含新密文", () => 
         ct: ct.toString("base64"),
       },
     });
-    // 只讓 UPDATE 失敗（SQLSTATE P0001，不是任何已知約束），走真實的 drizzle 錯誤形。
+    // Fail only the UPDATE (SQLSTATE P0001, not any known constraint) so the real drizzle error shape is exercised.
     await db.execute(sql.raw("create function kb_test_fail_ai_update() returns trigger language plpgsql as $$ begin raise exception 'forced test failure'; end $$"));
     await db.execute(sql.raw("create trigger kb_test_fail_ai_update before update on ai_providers for each row execute function kb_test_fail_ai_update()"));
 
@@ -368,8 +367,8 @@ describe("開機 v1→v2 密文升級寫入失敗：log 不含新密文", () => 
   });
 });
 
-describe("anthropic 連不上（無憑證）：log 的摘要分得出錯誤種類與底層 code", () => {
-  it("關掉的本機埠 → errName APIConnectionError、causeCode ECONNREFUSED（在 cause.cause）", async () => {
+describe("anthropic unreachable (no credentials): log summary distinguishes error kind and underlying code", () => {
+  it("closed local port -> errName APIConnectionError, causeCode ECONNREFUSED (in cause.cause)", async () => {
     const port = await holdRefusedPort();
 
     const { out, options } = logged();
@@ -388,10 +387,10 @@ describe("anthropic 連不上（無憑證）：log 的摘要分得出錯誤種�
   }, 60_000);
 });
 
-describe("OIDC discovery 失敗：issuer 帶 user:pass@ 時錯誤訊息與 log 都不含密碼（/login 不必登入就能觸發）", () => {
+describe("OIDC discovery failure: with user:pass@ in issuer, error message and log have no password (/login triggers this without signing in)", () => {
   const ISSUER = `http://user:${BASE_PASS}@127.0.0.1:9/realms/x?k=query-secret-marker`;
 
-  it("probeOidcIssuer：OidcUnavailableError 的 message 只含 safeTarget、不串底層 message；底層只留 name／code 摘要", async () => {
+  it("probeOidcIssuer: OidcUnavailableError message has only safeTarget and does not chain the underlying message; only a name/code summary of the underlying is kept", async () => {
     const err = await probeOidcIssuer(ISSUER).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OidcUnavailableError);
     expect((err as Error).message).toBe("OIDC discovery 失敗（issuer=http://127.0.0.1:9/realms/x）");
@@ -399,7 +398,7 @@ describe("OIDC discovery 失敗：issuer 帶 user:pass@ 時錯誤訊息與 log �
     expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(BASE_PASS);
   });
 
-  it("GET /api/auth/oidc/login/:id → 302 oidc_unavailable（回應不變）；log 行記 reason／underlying，不含密碼與 query", async () => {
+  it("GET /api/auth/oidc/login/:id -> 302 oidc_unavailable (response unchanged); log line records reason/underlying, no password or query", async () => {
     const { out, options } = logged();
     const { app, db } = await adminApp({}, options);
     const p = await seedAuthProvider(db, { issuerUrl: ISSUER });
@@ -416,7 +415,7 @@ describe("OIDC discovery 失敗：issuer 帶 user:pass@ 時錯誤訊息與 log �
     expect(text).not.toContain("query-secret-marker");
   });
 
-  it("POST /api/auth/oidc/link/:id → 503 oidc_unavailable（回應不變）；log 不含密碼", async () => {
+  it("POST /api/auth/oidc/link/:id -> 503 oidc_unavailable (response unchanged); log has no password", async () => {
     const { out, options } = logged();
     const { app, db, cookies } = await adminApp({}, options);
     const p = await seedAuthProvider(db, { issuerUrl: ISSUER });
@@ -431,8 +430,8 @@ describe("OIDC discovery 失敗：issuer 帶 user:pass@ 時錯誤訊息與 log �
   });
 });
 
-describe("anthropic 上游回非 2xx：log 比照 openai 記 status 與截過的回應 body", () => {
-  it("400 JSON body → errName BadRequestError、status 400、upstreamBody 含上游訊息", async () => {
+describe("anthropic upstream non-2xx: log records status and truncated response body like openai", () => {
+  it("400 JSON body -> errName BadRequestError, status 400, upstreamBody contains the upstream message", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(400, { "content-type": "application/json", "request-id": "req-marker" });
       res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "anthropic-body-marker" } }));

@@ -1,8 +1,4 @@
-/**
- * #103 群組測試共用的種子與量測工具。**只在測試裡直插**——`db.insert(notes)` 在 `test/` 不受
- * `notes-slug.test.ts` 的源碼守衛管轄（那條只掃 `src/`）。
- * 大量種子一律明寫 `slug`／`handle`：吃 `untitled-<uuid8>`／`user-<uuid8>` DEFAULT 有生日問題（#150）。
- */
+/** Seeds: bulk seeds always spell out `slug`/`handle` explicitly - relying on the `untitled-<uuid8>`/`user-<uuid8>` DEFAULTs has a birthday problem (#150). Direct `db.insert(notes)` is fine in test/ because the notes-slug.test.ts source guard only scans src/. */
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
@@ -38,12 +34,12 @@ export async function seedUser(
   return { id: u!.id, email: u!.email, handle: u!.handle };
 }
 
-/** `app.inject({ cookies })` 用的 session cookie（直接簽，tv=0——與 insert 預設的 token_version 一致）。 */
+/** Session cookie for `app.inject({ cookies })` (signed directly, tv=0 - matching insert's default token_version). */
 export async function cookieOf(userId: string): Promise<Record<string, string>> {
   return { [SESSION_COOKIE]: await signTestSession({ userId, tv: 0 }) };
 }
 
-/** 建群組＋兩個內建角色（與 0012 步驟 2、`createGroupInTx` 同旗標）＋成員。回兩個內建角色的 id。 */
+/** Built-in role flags must match migration 0012 (step 2) and createGroupInTx. */
 export async function seedGroup(
   db: Db,
   name: string,
@@ -70,10 +66,10 @@ export async function seedGroup(
 type RoleFlag = "canRead" | "canCreate" | "canEdit" | "canDelete" | "canManagePublicLink" | "canManageMembers" | "canManageGroup";
 
 /**
- * 自訂角色（測試直插，繞過 `POST …/roles`；**預設 `canRead: false`**——那是 DB 仍允許、生產路徑寫不出的「不可讀」角色，
- * 新測試要可讀的角色就明寫 `canRead: true`）。旗標組合仍受兩條 CHECK 約束：四個筆記旗標（新建／編輯／刪除／管理公開連結）⇒ 閱讀
- * （`group_roles_read_implied_chk`）、內建管理員七旗標全真（`group_roles_admin_all_chk`），給錯組合會 23514；
- * 「新建 ⇒ 編輯」自 migration 0013 起不在。
+ * Custom role (direct insert, bypassing `POST .../roles`; **defaults to `canRead: false`** - an unreadable role the DB still allows but production can't write; spell out `canRead: true`
+ * for new tests that need a readable role). The flag combination is still constrained by two CHECKs: the four note flags (create/edit/delete/manage public link) imply read
+ * (`group_roles_read_implied_chk`), and the built-in admin has all seven flags true (`group_roles_admin_all_chk`); a wrong combination gives 23514.
+ * Create no longer implies edit (since migration 0013).
  */
 export async function seedRole(db: Db, groupId: string, name: string, flags: Partial<Record<RoleFlag, boolean>>): Promise<string> {
   const [r] = await db.insert(groupRoles).values({ groupId, name, canRead: false, ...flags }).returning({ id: groupRoles.id });
@@ -84,7 +80,7 @@ export async function setMemberRole(db: Db, groupId: string, userId: string, rol
   await db.update(groupMembers).set({ roleId }).where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId)));
 }
 
-/** 個人筆記給 `{ ownerId }`、群組筆記給 `{ groupId }`（XOR）。slug 預設隨機（#150 生日問題）。 */
+/** A personal note takes `{ ownerId }`, a group note `{ groupId }` (XOR). slug defaults to random (#150 birthday problem). */
 export async function seedNote(
   db: Db,
   owner: { ownerId: string } | { groupId: string },
@@ -109,7 +105,7 @@ export async function seedNote(
   return { id: n!.id, slug };
 }
 
-/** 直插一列轉址（寫轉址的生產路徑只有移動）。`expired` 給一列已過期的。 */
+/** Inserts a redirect row directly (production writes redirects only when a note leaves its path: moving a note into a group, or deleting a group in transfer mode). `expired` gives an already-expired row. */
 export async function seedRedirect(db: Db, oldPath: string, noteId: string, opts: { expired?: boolean } = {}): Promise<void> {
   await db.insert(noteRedirects).values({
     oldPath,
@@ -122,21 +118,21 @@ export async function seedShare(db: Db, noteId: string, userId: string, role: "v
   await db.insert(noteShares).values({ noteId, userId, role });
 }
 
-/** `explain (costs off)` 一段 drizzle `.toSQL()` 的輸出（參數照原樣綁定）。 */
+/** Output of `explain (costs off)` for a drizzle `.toSQL()` (parameters bound as-is). */
 export async function planOf(pool: Pool, q: { sql: string; params: unknown[] }): Promise<string> {
   const { rows } = await pool.query(`explain (costs off) ${q.sql}`, q.params);
   return rows.map((r: Record<string, string>) => r["QUERY PLAN"]).join("\n");
 }
 
-/** `seedPlannerData` 裡使用者 1 所屬的第一個群組（使用者 1 屬於群組 8、9、10）。 */
+/** The first group user 1 belongs to in `seedPlannerData` (user 1 belongs to groups 8, 9, 10). */
 export const PLANNER_GROUP_OF_USER1 = "00000000-0000-4000-9000-000000000008";
 
 /**
- * EXPLAIN 用的規模資料（比照 migrate.test.ts 的 #18 慣例：seed 後 analyze，讓 planner 真的做選擇）：
- * 2000 位使用者、500 個群組、每人 3 個群組（約 6000 列成員）、5000 篇筆記（4/5 在群組裡、每群組約 8 篇）、
- * 每篇一列逐人分享。回傳使用者 1 與群組 8 裡的一篇筆記。
- * ⚠ 保留下來的「每篇一列逐人分享」也落在群組筆記上（群組筆記殘留分享列的形）——只為 EXPLAIN 的規模，**不得**拿這份 seed 做可見性斷言。
- * ⚠ 也只建了 `member` 內建角色，沒有 admin 角色、沒有任何管理員（「每群組至少一位管理員」不成立）——**不得**拿來測管理員不變量。
+ * Scale data for EXPLAIN (as in migrate.test.ts: analyze after seeding so the planner really chooses):
+ * 2000 users, 500 groups, 3 groups per person (about 6000 member rows), 5000 notes (4/5 in groups, about 8 per group),
+ * one per-person share row per note. Returns user 1 and a note in group 8.
+ * Note: the kept "one share row per note" also lands on group notes (the shape of residual share rows on group notes) - only for EXPLAIN scale, **don't** use this seed for visibility assertions.
+ * Note: it also creates only the `member` built-in role, with no admin role and no admin (the "at least one admin per group" invariant doesn't hold) - **don't** use it to test admin invariants.
  */
 export async function seedPlannerData(pool: Pool): Promise<{ userId: string; noteId: string }> {
   const U = (n: string): string => `('00000000-0000-4000-8000-' || lpad(to_hex(${n}), 12, '0'))::uuid`;
@@ -170,7 +166,7 @@ export async function seedPlannerData(pool: Pool): Promise<{ userId: string; not
   return { userId: "00000000-0000-4000-8000-000000000001", noteId: rows[0].id as string };
 }
 
-/** 七個成員是 spy 的 `CollabHooks`（`linkSyncGate` 恆拒，比照既有測試的 stub）。 */
+/** The seven members are a spy `CollabHooks` (`linkSyncGate` always rejects, like the existing test stubs). */
 export function spyCollabHooks() {
   return {
     onShareChanged: vi.fn<(noteId: string, userId: string) => void>(),
@@ -194,13 +190,13 @@ export interface MatrixScene {
   outsider: SeededUser;
   siteAdmin: SeededUser;
   newcomer: SeededUser;
-  /** #175：沒有人掛的自訂角色（六旗標全關，只有恆真的閱讀）。 */
+  /** Custom role nobody holds (all six flags off, only the always-true read). */
   customRoleId: string;
 }
 
 export interface MatrixEndpoint {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  /** `groupId` 已依 actor 換好（`badId`＝非 UUID、`missing`＝不存在的 UUID）。 */
+  /** `groupId` already resolved per actor (`badId` = non-UUID, `missing` = nonexistent UUID). */
   url: (groupId: string, scene: MatrixScene) => string;
   payload?: (scene: MatrixScene) => Record<string, unknown>;
   expected: Record<MatrixActor, number>;
@@ -223,8 +219,8 @@ async function seedMatrixScene(db: Db): Promise<MatrixScene> {
 }
 
 /**
- * 群組路由授權矩陣：每個 actor 一個全新的場景（破壞性端點互不干擾）。
- * 非成員／非 UUID／不存在三者的 404 回應必須**逐位元組相同**。
+ * Group route authorization matrix: a fresh scenario per actor (destructive endpoints don't interfere).
+ * The 404 responses of non-member/non-UUID/nonexistent must be **byte-for-byte identical**.
  */
 export async function runGroupAuthMatrix(app: FastifyInstance, db: Db, endpoint: MatrixEndpoint): Promise<void> {
   const notFoundBodies: string[] = [];
@@ -255,9 +251,9 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 等到「這個測試 DB 上有連線在等鎖」或「另一個請求已經結束」。並發測試在注入縫裡呼叫它：
- * 回 `"blocked"` ＝ 交錯真的發生（另一條請求卡在我們持有的鎖上）；回 `"settled"` ＝ 另一條請求沒被擋
- * 就跑完了。測試在最後斷言它是 `"blocked"`，證明那一案測到的是交錯而不是序列。
+ * Waits until "a connection on this test DB is waiting on a lock" or "another request has finished". Called inside concurrency test hooks:
+ * `"blocked"` = the interleaving really happened (another request got stuck on a lock we hold); `"settled"` = the other request wasn't blocked and ran to completion.
+ * Tests finally assert it is `"blocked"`, proving that the case exercised an interleaving rather than a sequence.
  */
 export async function waitForBlockedOrSettled(pool: Pool, other: Promise<unknown>, timeoutMs = 5_000): Promise<"blocked" | "settled"> {
   let settled = false;
@@ -275,8 +271,8 @@ export async function waitForBlockedOrSettled(pool: Pool, other: Promise<unknown
 }
 
 /**
- * 輪詢到「這個測試 DB 上至少 n 條連線在等鎖」（同上的查詢）。多發請求要依序排進同一把鎖的佇列時用：
- * 送第一發 → 等 1 → 送第二發 → 等 2，佇列順序就是送出順序（#286 的並發案）。
+ * Polls until "at least n connections on this test DB are waiting on locks" (same query as above). For queuing several requests in order on the same lock:
+ * send the first -> wait for 1 -> send the second -> wait for 2, so the queue order is the send order.
  */
 export async function waitForLockWaiters(pool: Pool, n: number, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -290,7 +286,7 @@ export async function waitForLockWaiters(pool: Pool, n: number, timeoutMs = 5_00
   throw new Error(`waitForLockWaiters(${n}) 逾時（${timeoutMs}ms）`);
 }
 
-/** 筆記的歸屬與公開連結狀態；`updated_at` 取文字形（微秒精度，比 JS Date 準）。 */
+/** Ownership and public-link state of a note; `updated_at` as text (microsecond precision, more accurate than a JS Date). */
 export async function noteState(pool: Pool, noteId: string): Promise<{
   owner_id: string | null; group_id: string | null; slug: string; prev_slug: string | null; slug_is_custom: boolean;
   public_token: string | null; public_slug: string | null; updated_at: string;

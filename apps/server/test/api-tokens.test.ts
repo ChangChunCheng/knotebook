@@ -1,10 +1,3 @@
-/**
- * #130：PAT 管理端點（`routes/api-tokens.ts`）。
- *
- * 這一族守的是：①明文只出現一次、DB 只存 sha256；②I1 額度述詞的形狀（過期 PAT
- * 不計、oauth 計）；③機會性清理（`runOauthCleanup`）的 ⑤；④撤銷＝硬刪且跨使用者同形 404；
- * ⑤四條端點是 cookie 專用——token 不能簽發、改名、改權限或撤銷 token。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { SESSION_COOKIE, type TokenScope } from "@knotebook/shared";
@@ -18,10 +11,9 @@ import { mcpPost, rpc } from "./mcp-helpers.js";
 import { buildTestApp, freshLimiters, insertPasswordUser, signTestSession } from "./helpers.js";
 
 /**
- * PAT 管理端點是 **cookie 專用**，所以每個案子都需要一個已登入的會話。
- * cookie 用 repo 慣例直接簽（見 test/admin-ai.test.ts 的 cookieFor），不跑登入流程——
- * `mustChangePassword: true` 那一案跑真登入會卡在首登強改密流程。帳號用
- * `insertPasswordUser` 建（有真密碼，改密碼那一案要用它）。
+ * The PAT management endpoints are **cookie only**, so every case needs a signed-in session. The cookie is signed directly (repo convention, see cookieFor in
+ * test/admin-ai.test.ts) rather than going through login: the `mustChangePassword: true` case would get stuck in the forced first-login password change.
+ * The account is made with `insertPasswordUser` (real password, needed by the change-password case).
  */
 async function signedInApp(
   over: { overrides?: Partial<AppDeps>; mustChangePassword?: boolean; password?: string } = {}
@@ -35,7 +27,6 @@ async function signedInApp(
   return { app, db, cookie, userId: user.id, password: user.password };
 }
 
-/** 同一座 app 內再建第二個使用者與其 cookie（跨使用者隔離的案子用）。 */
 async function anotherUser(db: Db): Promise<{ userId: string; cookie: string }> {
   const user = await insertPasswordUser(db);
   return { userId: user.id, cookie: await signTestSession({ userId: user.id, tv: 0 }) };
@@ -49,16 +40,16 @@ function create(app: FastifyInstance, cookie: string, payload: CreateBody) {
 
 const READ_FOREVER: CreateBody = { name: "n", scope: "notes:read", expiresInDays: null };
 
-describe("PAT 管理端點", () => {
-  it("建立 → 明文只出現一次、DB 只存 sha256", async () => {
+describe("PAT management endpoints", () => {
+  it("create -> plaintext appears only once, DB stores only sha256", async () => {
     const { app, db, cookie } = await signedInApp();
     const res = await create(app, cookie, { name: "  Claude Desktop  ", scope: "notes:write", expiresInDays: null });
     expect(res.statusCode).toBe(201);
     const body = res.json();
-    expect(body.name).toBe("Claude Desktop"); // 前後空白落庫前 trim
-    expect(body.agentLabel).toBe("claude"); // 建立當下也要有派生值——列表就是拿這個回應直接更新
+    expect(body.name).toBe("Claude Desktop");
+    expect(body.agentLabel).toBe("claude"); // the derived value must exist at creation time too - the list updates directly from this response
     expect(body.token).toMatch(/^knb_[A-Za-z0-9_-]{43}$/);
-    expect(body.scope).toBe("notes:read notes:write"); // 落庫形是集合
+    expect(body.scope).toBe("notes:read notes:write"); // stored form is a set
     expect(body.expiresAt).toBeNull();
 
     const rows = await db.select().from(apiTokens);
@@ -66,31 +57,29 @@ describe("PAT 管理端點", () => {
     expect(rows[0].accessTokenHash).not.toContain(body.token);
     expect(rows[0].accessTokenHash).toMatch(/^[0-9a-f]{64}$/);
 
-    // 列表回應永遠不含明文
     const list = await app.inject({ method: "GET", url: "/api/auth/tokens", cookies: { [SESSION_COOKIE]: cookie } });
     expect(JSON.stringify(list.json())).not.toContain(body.token);
     expect(list.json().tokens[0]).toMatchObject({ kind: "pat", name: "Claude Desktop", scope: "notes:read notes:write" });
   });
 
-  it("建立出來的 token 真的能過 Bearer 認證（hash 與 bearer.ts 同一套）", async () => {
+  it("a created token really passes Bearer authentication (hash is the same scheme as bearer.ts)", async () => {
     const { app, cookie } = await signedInApp();
     const { token } = (await create(app, cookie, READ_FOREVER)).json();
     const res = await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(200);
   });
 
-  it("expiresInDays 只收 30/90/365/null；其他值 400；空名 400", async () => {
+  it("expiresInDays accepts only 30/90/365/null; other values 400; empty name 400", async () => {
     const { app, cookie } = await signedInApp();
     for (const expiresInDays of [30, 90, 365, null] as const) {
       const res = await create(app, cookie, { name: "n", scope: "notes:read", expiresInDays });
       expect(res.statusCode, String(expiresInDays)).toBe(201);
       if (expiresInDays !== null) {
-        // expiresAt 要落在「現在＋N 天」附近（±1 分鐘）
         const delta = new Date(res.json().expiresAt).getTime() - Date.now();
         expect(Math.abs(delta - expiresInDays * 86_400_000)).toBeLessThan(60_000);
       }
     }
-    // 負向案刻意餵型別外的值，單點 cast
+    // negative cases deliberately feed out-of-type values, single cast
     const badDays = { name: "n", scope: "notes:read", expiresInDays: 7 } as unknown as CreateBody;
     expect((await create(app, cookie, badDays)).statusCode).toBe(400);
     expect((await create(app, cookie, { name: "", scope: "notes:read", expiresInDays: null })).statusCode).toBe(400);
@@ -98,7 +87,7 @@ describe("PAT 管理端點", () => {
     expect((await create(app, cookie, { name: "x".repeat(65), scope: "notes:read", expiresInDays: null })).statusCode).toBe(400);
   });
 
-  it("I1：第 21 支 409 token_limit", async () => {
+  it("the 21st token gets 409 token_limit", async () => {
     const { app, cookie } = await signedInApp({
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 100, windowMs: 3_600_000 }) }) },
     });
@@ -110,20 +99,19 @@ describe("PAT 管理端點", () => {
     expect(over.json().error.code).toBe("token_limit");
   });
 
-  it("I1：已過期的 PAT 不計入額度", async () => {
+  it("expired PATs don't count toward the quota", async () => {
     const { app, db, cookie, userId } = await signedInApp({
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 100, windowMs: 3_600_000 }) }) },
     });
-    // 直接插 20 支「已過期 1 天」的 PAT——它們不該擋住第 21 支
+    // Insert 20 PATs "expired 1 day ago" directly - they must not block the 21st
     for (let i = 0; i < 20; i += 1) {
       await db.insert(apiTokens).values({
         userId,
         kind: "pat",
         name: `old${i}`,
         scope: "notes:read",
-        // ⚠ 用 padStart 不是 padEnd：`h1`.padEnd(64,"0") 與 `h10`.padEnd(64,"0")
-        // 是同一個字串，第 11 圈就會撞 access_token_hash 的唯一索引，測試在 arrange
-        // 階段就炸（而且錯誤看起來與 I1 無關）。
+        // Use padStart, not padEnd: `h1`.padEnd(64,"0") and `h10`.padEnd(64,"0") are the same string, so round 11 would collide with the
+        // access_token_hash unique index and the test would blow up in arrange (with an error that looks unrelated to the quota).
         accessTokenHash: `${i}`.padStart(64, "0"),
         accessExpiresAt: new Date(Date.now() - 86_400_000),
       });
@@ -131,12 +119,11 @@ describe("PAT 管理端點", () => {
     expect((await create(app, cookie, { name: "fresh", scope: "notes:read", expiresInDays: null })).statusCode).toBe(201);
   });
 
-  it("I1：oauth grant 即使 access 已過期也計入額度（refresh 不到期）", async () => {
+  it("an oauth grant counts toward the quota even if its access has expired (refresh never expires)", async () => {
     const { app, db, cookie, userId } = await signedInApp({
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 100, windowMs: 3_600_000 }) }) },
     });
-    // 同一使用者對同一 client 只能有一個 oauth grant（per-owner partial unique），
-    // 所以 20 個 grant 要對應 20 個不同 client。
+    // One user can have only one oauth grant per client (per-owner partial unique), so 20 grants need 20 different clients.
     for (let i = 0; i < 20; i += 1) {
       await db.insert(oauthClients).values({ clientId: `c-quota-${i}`, clientName: "C", redirectUris: ["http://127.0.0.1:1/cb"] });
       await db.insert(apiTokens).values({
@@ -153,7 +140,7 @@ describe("PAT 管理端點", () => {
     const over = await create(app, cookie, { name: "fresh", scope: "notes:read", expiresInDays: null });
     expect(over.statusCode).toBe(409);
 
-    // 列表是「本人全部 grant」：oauth 列要出現、clientId 有值、access 已過期也仍列出
+    // The list is "all of the user's grants": the oauth row appears, has a clientId, and is still listed with expired access
     const list = await app.inject({ method: "GET", url: "/api/auth/tokens", cookies: { [SESSION_COOKIE]: cookie } });
     const rows = list.json().tokens as Array<{ kind: string; clientId: string | null; expiresAt: string | null; name: string }>;
     expect(rows).toHaveLength(20);
@@ -162,10 +149,10 @@ describe("PAT 管理端點", () => {
     expect(new Date(g0!.expiresAt!).getTime()).toBeLessThan(Date.now());
   });
 
-  it("機會性清理 ⑤：建立時順手清掉過期超過 30 天的 PAT，未滿 30 天的留著；oauth grant 不清", async () => {
+  it("opportunistic cleanup: creating a token also removes PATs expired for more than 30 days and keeps those under 30 days; oauth grants are not cleaned", async () => {
     const { app, db, cookie, userId } = await signedInApp();
-    // oauth grant 的 access 過期不代表授權失效（refresh 不到期）——#132 落地後這是
-    // 唯一擋住「連 oauth 一起清」的防線，查詢條件逐字寫了 kind='pat'。
+    // An oauth grant's access expiry doesn't mean the grant is invalid (refresh never expires): the only barrier against cleaning oauth grants
+    // along with PATs is the query condition, which literally says kind='pat'.
     await db.insert(oauthClients).values({ clientId: "c-old", clientName: "C", redirectUris: ["http://127.0.0.1:1/cb"] });
     await db.insert(apiTokens).values({
       userId,
@@ -193,8 +180,8 @@ describe("PAT 管理端點", () => {
       accessTokenHash: "b".repeat(64),
       accessExpiresAt: new Date(Date.now() - 29 * 86_400_000),
     });
-    // #132：建 PAT 現在跑的是完整五條（`oauth/cleanup.ts`），不只 ⑤。這一列 31 天沒用
-    // 的 client 是 ① 的觸發——少了它，把呼叫換回「只有 ⑤」的版本仍會全綠。
+    // Creating a PAT runs the full set of cleanups (`oauth/cleanup.ts`), not just the PAT one. This client unused for 31 days triggers
+    // the unused-client cleanup - without it, swapping the call back to the PAT-only version would still be green.
     await db.insert(oauthClients).values({
       clientId: "c-stale",
       clientName: "Stale",
@@ -215,11 +202,11 @@ describe("PAT 管理端點", () => {
     await create(app, cookie, { name: "new", scope: "notes:read", expiresInDays: null });
     const names = (await db.select().from(apiTokens)).map(r => r.name).sort();
     expect(names).toEqual(["new", "oauth-old", "recent"]);
-    // ① 把 30 天沒用的 client 連同其 grant 一起帶走（CASCADE）
+    // the unused-for-30-days client is removed together with its grant (CASCADE)
     expect((await db.select({ id: oauthClients.clientId }).from(oauthClients)).map(r => r.id)).toEqual(["c-old"]);
   });
 
-  it("限流：PAT_CREATE 超限 → 429", async () => {
+  it("rate limit: exceeding PAT_CREATE -> 429", async () => {
     const { app, cookie } = await signedInApp({
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 2, windowMs: 3_600_000 }) }) },
     });
@@ -229,26 +216,26 @@ describe("PAT 管理端點", () => {
     expect((await create(app, cookie, { name: "t2", scope: "notes:read", expiresInDays: null })).statusCode).toBe(429);
   });
 
-  it("mustChangePassword 的使用者 → 403，且不吃限流額度", async () => {
+  it("user with mustChangePassword -> 403, and doesn't consume rate-limit quota", async () => {
     const { app, cookie } = await signedInApp({
       mustChangePassword: true,
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 1, windowMs: 3_600_000 }) }) },
     });
     for (let i = 0; i < 2; i += 1) {
       const res = await create(app, cookie, READ_FOREVER);
-      expect(res.statusCode, `#${i}`).toBe(403); // 第 2 發若變 429 就是順序錯了
+      expect(res.statusCode, `#${i}`).toBe(403); // if the 2nd became 429 the order would be wrong
     }
   });
 
-  it("撤銷：只刪那一支（另一支要在）、204 且立即失效；不存在的／非 uuid → 404 token_not_found", async () => {
+  it("revoke: deletes only that token (the other must remain), 204 and takes effect immediately; nonexistent/non-uuid -> 404 token_not_found", async () => {
     const { app, db, cookie } = await signedInApp();
     const { id, token } = (await create(app, cookie, READ_FOREVER)).json();
-    // 第二支：WHERE 少了 id 半邊（只剩 user_id）會把使用者全部 token 刪光——只建一支
-    // 的話「刪光」與「刪對」不可分辨。
+    // A second token: if the WHERE lost the id half (only user_id left) all of the user's tokens would be deleted - with just one token
+    // "deleted everything" and "deleted the right one" are indistinguishable.
     const other = (await create(app, cookie, { name: "other", scope: "notes:read", expiresInDays: null })).json();
 
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200);
-    // pg 的 uuid 比較不分大小寫，大寫路徑也要能撤（admin-users 同族註解）
+    // pg uuid comparison is case-insensitive, so an uppercase path must also revoke
     expect(
       (await app.inject({ method: "DELETE", url: `/api/auth/tokens/${String(id).toUpperCase()}`, cookies: { [SESSION_COOKIE]: cookie } })).statusCode
     ).toBe(204);
@@ -264,13 +251,13 @@ describe("PAT 管理端點", () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(missing.json().error.code).toBe("token_not_found");
-    // 非 uuid 的 :id 也是 404（不能讓 pg 的 22P02 冒成 500）
+    // A non-uuid :id is also 404 (pg's 22P02 must not surface as a 500)
     const notUuid = await app.inject({ method: "DELETE", url: "/api/auth/tokens/not-a-uuid", cookies: { [SESSION_COOKIE]: cookie } });
     expect(notUuid.statusCode).toBe(404);
     expect(notUuid.json().error.code).toBe("token_not_found");
   });
 
-  it("跨使用者隔離：B 看不到也刪不掉 A 的 token，A 建滿 20 支也不占 B 的額度", async () => {
+  it("cross-user isolation: B can't see or delete A's tokens, and A filling 20 doesn't use B's quota", async () => {
     const { app, db, cookie: cookieA } = await signedInApp({
       overrides: { limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 100, windowMs: 3_600_000 }) }) },
     });
@@ -280,19 +267,18 @@ describe("PAT 管理端點", () => {
     expect(created.statusCode).toBe(201);
     const { id } = created.json();
 
-    // B 的列表不含 A 的 token
     const listB = await app.inject({ method: "GET", url: "/api/auth/tokens", cookies: { [SESSION_COOKIE]: b.cookie } });
     expect(listB.statusCode).toBe(200);
     expect(listB.json().tokens).toEqual([]);
 
-    // B 撤銷 A 的 token → 404，且列還在（把 WHERE 的 user_id 條件刪掉這案就會紅）
+    // B revoking A's token -> 404 and the row remains (deleting the user_id condition from the WHERE turns this red)
     const revokeByB = await app.inject({ method: "DELETE", url: `/api/auth/tokens/${id}`, cookies: { [SESSION_COOKIE]: b.cookie } });
     expect(revokeByB.statusCode).toBe(404);
     expect(revokeByB.json().error.code).toBe("token_not_found");
     expect(await db.select().from(apiTokens).where(eq(apiTokens.id, id))).toHaveLength(1);
 
-    // B 自己的額度不受 A 的 token 影響（I1 查詢也帶 user_id）——A 先建滿 20 支，
-    // I1 少了 user_id 條件的話 B 的第一支就會 409。
+    // B's own quota is unaffected by A's tokens (the quota query also carries user_id) - A fills 20 first;
+    // without the user_id condition B's first would be 409.
     for (let i = 1; i < 20; i += 1) {
       expect((await create(app, cookieA, { name: `A${i}`, scope: "notes:read", expiresInDays: null })).statusCode, `A#${i}`).toBe(201);
     }
@@ -300,7 +286,7 @@ describe("PAT 管理端點", () => {
     expect((await create(app, b.cookie, { name: "B only", scope: "notes:read", expiresInDays: null })).statusCode).toBe(201);
   });
 
-  it("列表依建立時間新到舊", async () => {
+  it("list is newest first by creation time", async () => {
     const { app, cookie } = await signedInApp();
     await create(app, cookie, { name: "first", scope: "notes:read", expiresInDays: null });
     await new Promise(resolve => setTimeout(resolve, 5));
@@ -309,7 +295,7 @@ describe("PAT 管理端點", () => {
     expect(list.json().tokens.map((t: { name: string }) => t.name)).toEqual(["second", "first"]);
   });
 
-  it("改密碼之後既有 token 仍然有效", async () => {
+  it("existing tokens stay valid after a password change", async () => {
     const { app, cookie, password } = await signedInApp({ password: "correct-horse-battery" });
     const { token } = (await create(app, cookie, READ_FOREVER)).json();
     const changed = await app.inject({
@@ -322,18 +308,18 @@ describe("PAT 管理端點", () => {
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200);
   });
 
-  it("PAT 管理端點是 cookie 專用：Bearer 打四條都 401 且不帶 challenge", async () => {
+  it("PAT management endpoints are cookie-only: Bearer on all four -> 401 without challenge", async () => {
     const { app, cookie } = await signedInApp();
     const created = (await create(app, cookie, READ_FOREVER)).json();
     const auth = { authorization: `Bearer ${created.token}` };
     const cases = [
       ["GET", "/api/auth/tokens"],
       ["POST", "/api/auth/tokens"],
-      // #106：改名也不例外——一支外洩的 token 若能替自己改 agent 名稱，名牌上顯示的
-      // 就不再是使用者授權的那個身分。
+      // #106: renaming is no exception - if a leaked token could rename itself, the name tag would no longer show
+      // the identity the user authorized.
       ["PATCH", `/api/auth/tokens/${created.id}`],
-      // #239：PATCH 也能改權限；Bearer 若打得到，外洩的讀寫 token 就能替自己升成搬移。
-      // 認證在 preHandler、早於讀 body，所以 {agentLabel} 那列其實已涵蓋；這列把 scope 形明寫出來。
+      // #239: PATCH can also change scope; if Bearer reached it, a leaked read/write token could upgrade itself to move.
+      // Authentication is in preHandler, before the body is read, so the {agentLabel} row already covers it; this row spells out the scope shape.
       ["PATCH", `/api/auth/tokens/${created.id}`, { scope: RWM }],
       ["DELETE", `/api/auth/tokens/${created.id}`],
     ] as const;
@@ -351,14 +337,6 @@ describe("PAT 管理端點", () => {
   });
 });
 
-/**
- * #106：`PATCH /api/auth/tokens/:id` 改 agent 顯示名稱。
- *
- * 這一族守的是：①列表每列都有 `agentLabel`，欄位 NULL 時回派生值、有值時回覆寫；
- * ②不變量 S（`AGENT_LABEL_RE` ∪ null 才進 UPDATE、body `.strict()`）；③`null` 是
- * **把欄位清成 NULL**，不是把派生值寫進去；④跨使用者同形 404 且不誤傷別人同一個 client
- * 的 grant；⑤`TOKEN_RENAME_LIMIT`。
- */
 async function seedOauthGrant(db: Db, userId: string, clientId = "client-1"): Promise<string> {
   await db
     .insert(oauthClients)
@@ -380,8 +358,8 @@ async function seedOauthGrant(db: Db, userId: string, clientId = "client-1"): Pr
   return row!.id;
 }
 
-describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
-  it("兩 kind 各 PATCH 200 帶新 agentLabel；GET 列表每列有 agentLabel（NULL 回派生值）", async () => {
+describe("PATCH /api/auth/tokens/:id (agent name)", () => {
+  it("both kinds PATCH 200 with the new agentLabel; GET list has agentLabel on every row (NULL returns the derived value)", async () => {
     const { app, db, cookie, userId } = await signedInApp();
     const pat = await create(app, cookie, { name: "Claude Code (knotebook)", scope: "notes:read", expiresInDays: null });
     expect(pat.statusCode).toBe(201);
@@ -404,7 +382,7 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
     expect(list1.every((t: { agentLabel: unknown }) => t.agentLabel === "bot-1")).toBe(true);
   });
 
-  it("格式錯／含 NUL／未知欄位／空字串／33 字 → 400 invalid_body；null → 重設回派生值且欄位真的是 NULL；別人的 → 404", async () => {
+  it("bad format/contains NUL/unknown field/empty string/33 characters -> 400 invalid_body; null -> reset to the derived value and the column really is NULL; someone else's -> 404", async () => {
     const { app, db, cookie } = await signedInApp();
     const patId = (await create(app, cookie, { name: "Claude Code", scope: "notes:read", expiresInDays: null })).json().id as string;
     const NUL = String.fromCharCode(0);
@@ -434,9 +412,8 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
         })
       ).json().agentLabel
     ).toBe("renamed");
-    // 字元集要與 DB 端的 CHECK（`api_tokens_agent_label_chk`）逐字同形——這裡用一個
-    // 同時含底線與點的值，確保兩邊都真的收這兩個字元（放在下面「重設回 NULL」之前，
-    // 否則會被那個空值斷言蓋過去）。
+    // The character set must match the DB CHECK (`api_tokens_agent_label_chk`) exactly - use a value with both underscore and dot so both sides
+    // really accept those characters (placed before the "reset to NULL" step, otherwise the empty-value assertion would mask it).
     expect(
       (
         await app.inject({
@@ -453,8 +430,8 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
       cookies: { [SESSION_COOKIE]: cookie },
       payload: { agentLabel: null },
     });
-    expect(reset.json().agentLabel).toBe("claude"); // 回應是派生值
-    // 欄位真的清空（不是把派生值寫進去）——只看回應的話兩種實作都綠
+    expect(reset.json().agentLabel).toBe("claude"); // the response is the derived value
+    // The column is really cleared (not the derived value written in) - looking at the response alone, both implementations pass
     expect((await db.select({ l: apiTokens.agentLabel }).from(apiTokens).where(eq(apiTokens.id, patId)))[0]!.l).toBeNull();
     const other = await anotherUser(db);
     const r404 = await app.inject({
@@ -465,9 +442,9 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
     });
     expect(r404.statusCode).toBe(404);
     expect(r404.json().error.code).toBe("token_not_found");
-    // 不變量 S 的路徑參數那一半（同 DELETE 的 not-a-uuid 那格）：非 uuid、含 NUL 的 :id 一律
-    // 404，不讓字串進 SQL（pg 對 uuid 欄位的 22P02 會冒成 500）。⚠ 這兩行是 PATCH 的
-    // `UUID_RE` 守衛的**唯一**守衛——實測拿掉那一行後，本檔其餘 17 案全綠。
+    // Path-parameter half of the id validation (same as the not-a-uuid cell of DELETE): non-uuid and NUL-containing :id are always 404,
+    // never letting the string into SQL (pg's 22P02 on the uuid column would surface as a 500). These two lines are the test of PATCH's `UUID_RE`
+    // check: removing that check leaves every other case in this file green.
     for (const bad of ["not-a-uuid", encodeURIComponent(`a${NUL}b`)]) {
       const r = await app.inject({
         method: "PATCH",
@@ -480,7 +457,7 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
     }
   });
 
-  it("TOKEN_RENAME_LIMIT：注入 limit 3，第 4 次 429", async () => {
+  it("TOKEN_RENAME_LIMIT: with limit 3 injected, the 4th is 429", async () => {
     const { app, cookie } = await signedInApp({
       overrides: { limiters: freshLimiters({ tokenRename: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) }) },
     });
@@ -510,7 +487,7 @@ describe("PATCH /api/auth/tokens/:id（agent 名稱）", () => {
     ).toBe(429);
   });
 
-  it("使用者 A 改名不影響 B 同一個 client 的 grant", async () => {
+  it("user A renaming doesn't affect B's grant for the same client", async () => {
     const { app, db, cookie, userId } = await signedInApp();
     const b = await anotherUser(db);
     const aGrant = await seedOauthGrant(db, userId, "shared-client");
@@ -537,7 +514,7 @@ function patch(app: FastifyInstance, cookie: string, id: string, payload: unknow
 }
 
 describe("#239 POST scope", () => {
-  it("收讀、讀寫、讀寫搬移與舊別名 notes:write；拒 notes:move 單值", async () => {
+  it("accepts read, read/write, read/write/move and the old alias notes:write; rejects the single value notes:move", async () => {
     const { app, cookie } = await signedInApp();
     for (const [sent, stored] of [
       ["notes:read", "notes:read"],
@@ -556,8 +533,8 @@ describe("#239 POST scope", () => {
 const RWD = "notes:read notes:write notes:delete";
 const RWMD = "notes:read notes:write notes:move notes:delete";
 
-describe("#181 scope（notes:delete）", () => {
-  it("POST 收讀寫刪除、讀寫搬移刪除：201，回應、列、GET 列表皆原值；缺 write 的刪除 → 400", async () => {
+describe("#181 scope (notes:delete)", () => {
+  it("POST accepts read/write/delete and read/write/move/delete: 201, response, row and GET list all keep the value; delete without write -> 400", async () => {
     const { app, db, cookie } = await signedInApp();
     const ids: Record<string, string> = {};
     for (const scope of [RWD, RWMD]) {
@@ -575,7 +552,7 @@ describe("#181 scope（notes:delete）", () => {
       expect((await create(app, cookie, { name: "bad", scope: scope as never, expiresInDays: null })).statusCode, scope).toBe(400);
     }
   });
-  it("PATCH 改成讀寫刪除、讀寫搬移刪除 → 200 回原值、列也是；別名 notes:write 與缺 write 的刪除 → 400", async () => {
+  it("PATCH to read/write/delete and read/write/move/delete -> 200 with the original value, row too; alias notes:write and delete without write -> 400", async () => {
     const { app, db, cookie } = await signedInApp();
     const id = (await create(app, cookie, READ_FOREVER)).json().id as string;
     for (const scope of [RWD, RWMD]) {
@@ -594,7 +571,7 @@ describe("#181 scope（notes:delete）", () => {
 });
 
 describe("#239 PATCH scope", () => {
-  it("升與降都生效、回 DTO；別人的 id → 404 且對方列不變", async () => {
+  it("both upgrade and downgrade take effect and return the DTO; someone else's id -> 404 and their row is unchanged", async () => {
     const { app, db, cookie } = await signedInApp();
     const id = (await create(app, cookie, READ_FOREVER)).json().id as string;
     const up = await patch(app, cookie, id, { scope: RWM });
@@ -607,7 +584,7 @@ describe("#239 PATCH scope", () => {
     const [row] = await db.select().from(apiTokens).where(eq(apiTokens.id, theirs));
     expect(row!.scope).toBe("notes:read");
   });
-  it("oauth 列也能改", async () => {
+  it("oauth rows can be changed too", async () => {
     const { app, db, cookie, userId } = await signedInApp();
     await db.insert(oauthClients).values({ clientId: "c-239", clientName: "C", redirectUris: ["http://127.0.0.1:1/cb"] });
     const [row] = await db
@@ -618,22 +595,22 @@ describe("#239 PATCH scope", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: "oauth", scope: RWM });
   });
-  it("{} → 400；未知鍵 → 400；scope 非落庫形 → 400 且訊息是「Invalid scope.」", async () => {
+  it("{} -> 400; unknown key -> 400; scope not in stored form -> 400 with message 'Invalid scope.'", async () => {
     const { app, cookie } = await signedInApp();
     const id = (await create(app, cookie, READ_FOREVER)).json().id as string;
     expect((await patch(app, cookie, id, {})).statusCode).toBe(400);
     expect((await patch(app, cookie, id, { scope: RWM, extra: 1 })).statusCode).toBe(400);
-    // PATCH 不收 "notes:write" 別名（別名只開在 POST）；亂序與缺 write 的集合也不收。
+    // PATCH doesn't accept the "notes:write" alias (the alias is only open on POST); shuffled order and sets missing write are rejected too.
     for (const scope of ["notes:move", "notes:write", "notes:read notes:move", "notes:write notes:read"]) {
       const bad = await patch(app, cookie, id, { scope });
       expect(bad.statusCode, scope).toBe(400);
       expect(bad.json().error.message, scope).toBe("Invalid scope.");
     }
-    // 其餘兩類訊息：agentLabel 不合 → "Invalid agentLabel."；空物件 → "Invalid request body."。
+    // The other two messages: invalid agentLabel -> "Invalid agentLabel."; empty object -> "Invalid request body."
     expect((await patch(app, cookie, id, { agentLabel: "bad label!" })).json().error.message).toBe("Invalid agentLabel.");
     expect((await patch(app, cookie, id, {})).json().error.message).toBe("Invalid request body.");
   });
-  it("mustChangePassword：帶 scope → 403 且列不變；純 agentLabel → 200（現狀不退）", async () => {
+  it("mustChangePassword: with scope -> 403 and the row unchanged; agentLabel only -> 200 (current behaviour)", async () => {
     const { app, db, cookie, userId } = await signedInApp({ mustChangePassword: true });
     const [row] = await db
       .insert(apiTokens)
@@ -646,7 +623,7 @@ describe("#239 PATCH scope", () => {
     expect(after!.scope).toBe("notes:read");
     expect((await patch(app, cookie, row!.id, { agentLabel: "bot" })).statusCode).toBe(200);
   });
-  it("mustChangePassword 的 403 擋在節流之前：桶只剩 1 次，連送兩次帶 scope 都是 403，之後純改名仍 200", async () => {
+  it("the 403 for mustChangePassword comes before throttling: with 1 attempt left in the bucket, two sends with scope are both 403, and a later pure rename is still 200", async () => {
     const { app, db, cookie, userId } = await signedInApp({
       mustChangePassword: true,
       overrides: { limiters: freshLimiters({ tokenRename: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) },
@@ -659,7 +636,7 @@ describe("#239 PATCH scope", () => {
     expect((await patch(app, cookie, row!.id, { scope: RWM })).statusCode).toBe(403);
     expect((await patch(app, cookie, row!.id, { agentLabel: "bot" })).statusCode).toBe(200);
   });
-  it("改完下一個請求生效：同一支 token 的 tools/list 12 ↔ 13，讀寫刪除 15（buildTestApp 無共編，#181 起含 list_trash；資料夾功能加入後含 list_folders 與四支資料夾寫入工具，讀寫刪除另含 delete_folder）", async () => {
+  it("takes effect on the next request: tools/list of the same token goes 12 <-> 13, read/write/delete 15 (buildTestApp has no collaboration; includes list_trash since #181; the folder feature adds list_folders and four folder write tools, and read/write/delete also has delete_folder)", async () => {
     const { app, cookie } = await signedInApp();
     const created = (await create(app, cookie, { name: "live", scope: "notes:read notes:write", expiresInDays: null })).json();
     const count = async () => ((await mcpPost(app, rpc("tools/list"), { token: created.token })).json().result.tools as unknown[]).length;
@@ -668,7 +645,7 @@ describe("#239 PATCH scope", () => {
     expect(await count()).toBe(13);
     await patch(app, cookie, created.id, { scope: "notes:read notes:write" });
     expect(await count()).toBe(12);
-    // #181：RW → RWD 同樣下一個請求生效（多 delete_note、restore_note；資料夾功能加入後再多 delete_folder）。
+    // #181: RW -> RWD also takes effect on the next request (adds delete_note, restore_note; the folder feature adds delete_folder on top).
     await patch(app, cookie, created.id, { scope: RWD });
     expect(await count()).toBe(15);
   });

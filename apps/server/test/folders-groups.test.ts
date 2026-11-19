@@ -1,8 +1,3 @@
-/**
- * 資料夾：刪群組（「刪群組」兩列、系統代建名）
- * ——轉移把群組資料夾整棵收進接收者個人根層的新頂層、全刪取結構鎖、舊碼在新 schema 上照跑。
- * 控制字元與組合字元一律以 `String.fromCharCode` 組字。
- */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
@@ -21,7 +16,7 @@ import {
 } from "./legacy-tx-fixtures.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// The default space-lock limit is set to 60 s in this file (product value 5000) so the wall-clock bound for "the injected short limit took effect" is far from both - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -66,7 +61,6 @@ async function rootsOf(pool: Pool, ownerId: string): Promise<FolderLite[]> {
 async function groupFolderCount(pool: Pool, groupId: string): Promise<number> {
   return (await pool.query<{ n: number }>("select count(*)::int n from folders where group_id = $1", [groupId])).rows[0]!.n;
 }
-/** 由葉往根讀名稱路徑。 */
 async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   const out: string[] = [];
   let cur: string | null = folderId;
@@ -78,7 +72,7 @@ async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   }
   return out;
 }
-/** trigger 只守被寫的那一列，這裡以 SQL 全掃補「父子同空間」「筆記與所在資料夾同空間」兩條不變量。 */
+/** The trigger guards only the row being written; this full-scans with SQL to cover the two invariants "parent and child in the same space" and "a note in the same space as its folder". */
 async function spaceViolations(pool: Pool): Promise<{ parentChild: number; noteFolder: number }> {
   const parentChild = (await pool.query<{ n: number }>(
     `select count(*)::int n from folders c join folders p on p.id = c.parent_id
@@ -108,8 +102,8 @@ async function liveNote(db: Db, owner: { groupId: string } | { ownerId: string }
   return n.id;
 }
 
-describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () => {
-  it("FG-1 正路：新頂層「研發組」在接收者根層、整棵掛在它下面；筆記三種列各自落位；之後還原帶快照的那篇在新頂層下照路徑重建；樹只有接收者看得到", async () => {
+describe("delete group - transfer: the whole folder tree is taken into the recipient's new top level", () => {
+  it("happy path: the new top level '研發組' is at the recipient's root with the whole tree under it; the three kinds of note rows land in place; restoring a note with a snapshot afterwards rebuilds by path under the new top level; only the recipient can see the tree", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const [r, q, m] = [await seedUser(db), await seedUser(db), await seedUser(db)];
@@ -171,7 +165,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect(await rootsOf(pool, r.id)).toHaveLength(1);
   });
 
-  it("FG-2 旁觀者：另一個群組的資料夾、接收者原有的個人與共享私人資料夾、別人的資料夾——kind／owner_id／group_id／parent_id 都不變", async () => {
+  it("bystanders: another group's folders, the recipient's existing personal and private shared folders, others' folders - kind/owner_id/group_id/parent_id all unchanged", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const [r, u] = [await seedUser(db), await seedUser(db)];
@@ -194,7 +188,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect((await rootsOf(pool, r.id)).map(f => f.name).sort()).toEqual(["G", "Mine"]);
   });
 
-  it("FG-3 沒有結構：沒有資料夾也沒有帶快照的垃圾桶筆記 → 不建新頂層、筆記在根層；只有帶快照的垃圾桶筆記→ 建新頂層、根層活筆記也進去、快照前接", async () => {
+  it("no structure: no folders and no trashed notes with a snapshot -> no new top level, notes at root; only trashed notes with a snapshot -> new top level created, root-level live notes go in too, snapshot prefixed", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const r = await seedUser(db);
@@ -218,7 +212,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect(await noteFolderCols(pool, snap)).toEqual({ folder_id: null, trash_folder_path: ["研發組", "X"] });
   });
 
-  it("FG-11 活筆記殘留快照（回滾期間被舊碼還原）不算「垃圾桶裡帶快照」：群組沒有資料夾時不為它建新頂層、留在根層、快照不動；群組有資料夾時照根層規則進新頂層、快照不動", async () => {
+  it("live notes with a leftover snapshot (restored by old code during a rollback) don't count as trashed-with-snapshot: a group without folders gets no new top level for them, they stay at root, snapshot untouched; a group with folders puts them into the new top level by the root rule, snapshot untouched", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const r = await seedUser(db);
@@ -240,7 +234,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect(await noteFolderCols(pool, stale2)).toEqual({ folder_id: roots[0]!.id, trash_folder_path: ["X"] });
   });
 
-  it("FG-4 撞名與尾碼：根層已有「研發組」→「研發組 (2)」、快照前接「研發組 (2)」；再有「研發組 (2)」→「研發組 (3)」；已有 team、群組名 Team → Team (2)（lower 比對）", async () => {
+  it("name collision and suffix: root already has '研發組' -> '研發組 (2)', snapshot prefixed with '研發組 (2)'; another '研發組 (2)' -> '研發組 (3)'; existing team and group name Team -> Team (2) (lower comparison)", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const r = await seedUser(db);
@@ -264,7 +258,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
 
     const u = await seedUser(db);
     const team = (await seedFolder(db, { personal: u.id }, { name: "team" })).id;
-    // 旁觀者：同名但不在接收者的個人根層（共享私人根層、個人子層、別人的個人根層）——探測不得把它們算進去。
+    // Bystanders: same name but not in the recipient's personal root (private shared root, personal child level, others' personal root) - the probe must not count them.
     await seedFolder(db, { shared: u.id }, { name: "Team" });
     await seedFolder(db, { personal: u.id }, { name: "Team (2)", parentId: team });
     await seedFolder(db, { personal: (await seedUser(db)).id }, { name: "Team (2)" });
@@ -274,7 +268,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect((await rootsOf(pool, u.id)).map(f => f.name).sort()).toEqual(["Team (2)", "team"]);
   });
 
-  it("FG-5 長名：群組名 80 個字、接收者已有同名 → 新頂層 ≤ 80 code point、以「 (2)」結尾", async () => {
+  it("long name: group name of 80 characters, recipient already has the same name -> new top level <= 80 code points, ending with ' (2)'", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const r = await seedUser(db);
@@ -288,7 +282,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect(top.name).toBe(`${"名".repeat(76)} (2)`);
   });
 
-  it("FG-6 固定名：群組名全是控制字元 → zh-TW「群組」、en-US「Group」、不帶「Group」；NFD 群組名 → NFC 新頂層名", async () => {
+  it("fixed name: a group name of only control characters -> zh-TW gives the Chinese word for group, en-US gives 'Group', no header gives 'Group'; an NFD group name -> NFC new top-level name", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const cases: Array<[string | undefined, string]> = [["zh-TW,zh;q=0.9,en;q=0.8", "群組"], ["en-US,en;q=0.9", "Group"], [undefined, "Group"]];
@@ -308,7 +302,7 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
     expect((await rootsOf(pool, r.id)).map(f => f.name)).toEqual([`Caf${E_ACUTE}`]);
   });
 
-  it("FG-7 深度不擋：群組樹 5 層 → 轉移後接收者的樹 6 層、204；整庫沒有父子或筆記與資料夾不同空間；最深那篇位置不變", async () => {
+  it("depth isn't blocked: group tree of 5 levels -> after transfer the recipient's tree is 6 levels, 204; the whole database has no parent/child or note/folder in different spaces; the deepest note's position unchanged", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const [r, q] = [await seedUser(db), await seedUser(db)];
@@ -322,8 +316,8 @@ describe("刪群組・轉移：資料夾整棵收進接收者的新頂層", () =
   });
 });
 
-describe("刪群組・全刪", () => {
-  it("FG-8 群組資料夾與子資料夾都不在；別的群組資料夾、筆記不動", async () => {
+describe("delete group - delete all", () => {
+  it("group folders and subfolders are gone; other groups' folders and notes untouched", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const r = await seedUser(db);
@@ -345,8 +339,8 @@ describe("刪群組・全刪", () => {
   });
 });
 
-describe("刪群組：結構鎖等太久 → 409 server_busy", () => {
-  /** 另一條連線持住 key 的結構鎖，期間跑 act；`try { rollback } finally { release }`。 */
+describe("delete group: structure lock waits too long -> 409 server_busy", () => {
+  /** Another connection holds the structure lock for key while act runs; `try { rollback } finally { release }`. */
   async function whileHolding<T>(pool: Pool, key: string, act: () => Promise<T>): Promise<T> {
     const holder = await pool.connect();
     try {
@@ -367,11 +361,11 @@ describe("刪群組：結構鎖等太久 → 409 server_busy", () => {
     const ms = Date.now() - t0;
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json()).toEqual({ error: { code: "server_busy", message: "The server is busy. Try again in a moment." } });
-    expect(ms).toBeLessThan(INJECTED_LOCK_TIMEOUT_BOUND_MS); // 注入值（300 ms）有生效，不是本檔預設 60 s
+    expect(ms).toBeLessThan(INJECTED_LOCK_TIMEOUT_BOUND_MS); // the injected value (300 ms) took effect, not this file's default 60 s
   }
   const groupExists = async (pool: Pool, id: string) => (await pool.query("select 1 from groups where id = $1", [id])).rowCount === 1;
 
-  it("FG-9 轉移（另一位管理員 q 發動、轉給 r）：群組空間的鎖、接收者 r 個人空間的鎖各被持住（lock_timeout 300 ms）→ 409 server_busy（< 20 s）、群組與資料夾原封；放掉後 204", async () => {
+  it("transfer (another admin q initiates, giving to r): the group space lock and recipient r's personal space lock are each held (lock_timeout 300 ms) -> 409 server_busy (< 20 s), group and folders intact; 204 after release", async () => {
     const { app, db } = await buildTestApp({ storageLockTimeoutMs: 300 });
     const pool = db.$client;
     const [r, q] = [await seedUser(db), await seedUser(db)];
@@ -390,7 +384,7 @@ describe("刪群組：結構鎖等太久 → 409 server_busy", () => {
     await transferOk(app, g.id, r.id, r.id);
   });
 
-  it("FG-10 全刪：群組空間的鎖被持住（lock_timeout 300 ms）→ 409 server_busy（< 20 s）、群組、資料夾、筆記原封；放掉後 204", async () => {
+  it("delete all: the group space lock is held (lock_timeout 300 ms) -> 409 server_busy (< 20 s), group, folders and notes intact; 204 after release", async () => {
     const { app, db } = await buildTestApp({ storageLockTimeoutMs: 300 });
     const pool = db.$client;
     const r = await seedUser(db);
@@ -407,13 +401,13 @@ describe("刪群組：結構鎖等太久 → 409 server_busy", () => {
   });
 });
 
-describe("舊碼相容：4a7e0c1 的交易本體在新 schema 上照跑", () => {
-  it("FG-OLD 舊版移入群組、轉移、全刪、還原：都成功；歸屬變了的筆記 folder_id 自癒成 NULL，群組資料夾隨 DELETE groups CASCADE，還原回原資料夾或根層", async () => {
+describe("old-code compatibility: old transaction bodies (from before folders existed) run unchanged on the new schema", () => {
+  it("old move-into-group, transfer, delete-all, restore all succeed; notes whose ownership changed get folder_id self-healed to NULL, group folders go with DELETE groups CASCADE, restore returns to the original folder or root", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const lockTimeoutMs = DEFAULT_STORAGE_LOCK_TIMEOUT_MS;
 
-    // ① 移入群組：個人筆記在個人資料夾 → 群組筆記、folder_id NULL（trigger 自癒）
+    // Move into group: a personal note in a personal folder -> group note, folder_id NULL (trigger self-heals)
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "member" }]);
     const PF = (await seedFolder(db, { personal: u.id })).id;
@@ -423,7 +417,7 @@ describe("舊碼相容：4a7e0c1 的交易本體在新 schema 上照跑", () => 
       .toEqual({ owner_id: null, group_id: g.id, folder_id: null });
     expect(await folderRow(pool, PF)).toBeDefined();
 
-    // ② 轉移：群組資料夾裡的活筆記與垃圾桶筆記 → 接收者的個人筆記、folder_id NULL；群組資料夾 CASCADE
+    // Transfer: live and trashed notes in a group folder -> the recipient's personal notes, folder_id NULL; group folders CASCADE
     const r = await seedUser(db);
     const g2 = await seedGroup(db, "G2", [{ userId: r.id, role: "admin" }]);
     const [GA, GB] = await seedFolderChain(db, { group: g2.id }, ["A", "B"]);
@@ -438,7 +432,7 @@ describe("舊碼相容：4a7e0c1 的交易本體在新 schema 上照跑", () => 
     expect(await folderRow(pool, GB!)).toBeUndefined();
     expect(await personalFolders(pool, r.id)).toEqual([]);
 
-    // ③ 全刪：資料夾 CASCADE、筆記刪除
+    // Delete all: folders CASCADE, notes deleted
     const g3 = await seedGroup(db, "G3", [{ userId: r.id, role: "admin" }]);
     const [HA, HB] = await seedFolderChain(db, { group: g3.id }, ["A", "B"]);
     const doomed = await liveNote(db, { groupId: g3.id }, HB!);
@@ -447,7 +441,7 @@ describe("舊碼相容：4a7e0c1 的交易本體在新 schema 上照跑", () => 
     expect(await folderRow(pool, HB!)).toBeUndefined();
     expect(await noteFolderCols(pool, doomed)).toBeUndefined();
 
-    // ④ 還原：資料夾還在 → 回原資料夾、快照殘留；資料夾已刪 → 根層
+    // Restore: folder still exists -> back to the original folder, snapshot left over; folder already deleted -> root
     const keep = (await seedFolder(db, { personal: u.id }, { name: "Keep" })).id;
     const gone = (await seedFolder(db, { personal: u.id }, { name: "Gone" })).id;
     const back = await trashedNote(db, { ownerId: u.id }, u.id, keep, ["Keep"]);

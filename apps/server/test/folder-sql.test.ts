@@ -1,7 +1,3 @@
-/**
- * 資料夾：SQL 片段（`folders/sql.ts`）、可見性查詢（`folders/queries.ts`）、結構鎖與交易內讀取（`folders/tx/lock.ts`）。
- * 直接對 DB 跑，不經路由。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -24,7 +20,7 @@ import { sixRoleScene } from "./trash-helpers.js";
 import { noteFolderCols, seedFolder, seedFolderChain, setNoteFolder } from "./folder-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS, SLOW_DEFAULT_LOCK_TIMEOUT_MS } from "./lock-timeout-bound.js";
 
-/** drizzle logger 會記交易控制語句——數 SQL 前先濾掉。 */
+/** The drizzle logger also logs transaction control statements - filter them out before counting SQL. */
 const TXN_CONTROL = /^(begin|commit|rollback)\b/i;
 const loggedDb = (pool: Pool, queries: string[]) => drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
 const ids = async (db: Db, inner: ReturnType<typeof subtreeFolderIdsSql>) =>
@@ -32,7 +28,7 @@ const ids = async (db: Db, inner: ReturnType<typeof subtreeFolderIdsSql>) =>
 const scalar = async <T>(db: Db, expr: ReturnType<typeof sql>) => (await db.execute<{ v: T }>(sql`select ${expr} as v`)).rows[0]!.v;
 const sorted = (...xs: string[]) => [...xs].sort();
 
-/** 交易 A 以 `lock` 取鎖後停住，跑完 `fn` 才放（`fn` 斷言失敗也放，免得持鎖交易卡住 teardown）。 */
+/** Transaction A takes the lock with `lock` and holds until `fn` finishes (released even if an assertion in `fn` fails, so the lock-holding transaction doesn't hang teardown). */
 async function whileHeld(db: Db, lock: (tx: Tx) => Promise<unknown>, fn: () => Promise<void>): Promise<void> {
   let release!: () => void;
   const gate = new Promise<void>(r => { release = r; });
@@ -53,8 +49,8 @@ async function whileHeld(db: Db, lock: (tx: Tx) => Promise<unknown>, fn: () => P
 }
 const holdSpaces = (spaces: readonly FolderSpace[]) => (tx: Tx) => lockFolderSpacesInTx(tx, spaces, { lockTimeoutMs: 5_000 });
 
-describe("資料夾 SQL 片段（folders/sql.ts）", () => {
-  it("S-1 路徑：三層 A › B \"q\" › C 的筆記得根→葉陣列；在 A 得 [A]；根層 NULL；同一式放進 UPDATE 一樣", async () => {
+describe("folder SQL fragments (folders/sql.ts)", () => {
+  it("path: a note in a three-level A > B 'q' > C gets a root -> leaf array; in A gets [A]; root level NULL; the same expression works inside an UPDATE", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [a, , c] = await seedFolderChain(db, { personal: u.id }, ["A", 'B "q"', "C"]);
@@ -75,7 +71,7 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     expect(await noteFolderCols(pool, atRoot.id)).toEqual({ folder_id: null, trash_folder_path: null });
   });
 
-  it("S-2 子樹：R›{X›{Y}, Z} 與另一棵 S›{S1} → R 恰 {R,X,Y,Z}；X 恰 {X,Y}", async () => {
+  it("subtree: R>{X>{Y}, Z} and another tree S>{S1} -> R is exactly {R,X,Y,Z}; X is exactly {X,Y}", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const sp = { personal: u.id };
@@ -86,7 +82,7 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     expect(await ids(db, subtreeFolderIdsSql(x!))).toEqual(sorted(x!, y!));
   });
 
-  it("S-3 深度／高度／祖先：R 深 1、Y 深 3；R 高 3、Y 高 1；Y 的祖先 {Y,X,R}", async () => {
+  it("depth/height/ancestors: R depth 1, Y depth 3; R height 3, Y height 1; Y's ancestors {Y,X,R}", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const [r, x, y] = await seedFolderChain(db, { personal: u.id }, ["R", "X", "Y"]);
@@ -98,11 +94,11 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     expect(await ids(db, folderAncestorIdsSql(y!))).toEqual(sorted(y!, x!, r!));
   });
 
-  it("S-11 遞迴上限：恰 FOLDER_CTE_DEPTH_LIMIT 層的鏈完整走到；人為成環 → 每支查詢在上限內結束（statement_timeout 2 s 下不掛住）", async () => {
+  it("recursion limit: a chain of exactly FOLDER_CTE_DEPTH_LIMIT levels is walked completely; with an artificial cycle every query ends within the limit (no hang under statement_timeout 2 s)", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const N = FOLDER_CTE_DEPTH_LIMIT;
-    // 上限要高於正常可達的最深（FOLDER_DEPTH_MAX + 1：轉移多一層新頂層），合法的樹才不會被截
+    // The limit must be above the deepest normally reachable depth (FOLDER_DEPTH_MAX + 1: a transfer adds one new top level) so legitimate trees aren't truncated
     expect(N).toBeGreaterThan(FOLDER_DEPTH_MAX + 1);
     const bounded = async <T>(q: ReturnType<typeof sql>) => db.transaction(async tx => {
       await tx.execute(sql`set local statement_timeout = '2s'`);
@@ -111,7 +107,6 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     const count = (inner: ReturnType<typeof subtreeFolderIdsSql>) => sql`select count(*)::int as v from (${inner}) kf_t`;
     const pathSql = (noteId: string) => sql`select ${folderPathJsonSql(NOTES_FOLDER_ID())} as v from notes where notes.id = ${noteId}`;
 
-    // 邊界：恰 N 層的鏈不被截
     const names = Array.from({ length: N }, (_, i) => `L${i + 1}`);
     const chain = await seedFolderChain(db, { personal: u.id }, names);
     const leaf = await seedNote(db, { ownerId: u.id });
@@ -122,7 +117,7 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     expect(await bounded<number>(count(subtreeFolderIdsSql(chain[0]!)))).toEqual([N]);
     expect(await bounded<number>(count(folderAncestorIdsSql(chain[N - 1]!)))).toEqual([N]);
 
-    // 成環 CA ↔ CB（DB 不守成環；直寫造出來）：每支都在 N 層停
+    // Cycle CA <-> CB (the DB doesn't prevent cycles; created by direct writes): every query stops at N levels
     const [ca, cb] = await seedFolderChain(db, { personal: u.id }, ["CA", "CB"]);
     await pool.query("update folders set parent_id = $2 where id = $1", [ca, cb]);
     const inCa = await seedNote(db, { ownerId: u.id });
@@ -135,16 +130,16 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
     await expect(bounded<number>(count(folderAncestorIdsSql(ca!)))).resolves.toEqual([N]);
   });
 
-  it("S-8 渲染：單表 UPDATE 與單表 SELECT 的路徑子查詢裡外層欄都帶表名 \"notes\".\"folder_id\"", async () => {
+  it("rendering: the path subquery of a single-table UPDATE and a single-table SELECT both carry the table name on the outer column notes.folder_id", async () => {
     const { db } = await freshDb();
     const upd = db.update(notes).set({ trashFolderPath: folderPathJsonSql(NOTES_FOLDER_ID()) }).where(eq(notes.id, randomUUID())).toSQL().sql;
     expect(upd).toContain('where f.id = "notes"."folder_id"');
-    // 單表 SELECT 才是 drizzle 會把直接傳入的欄位渲染成裸 "folder_id" 的形（UPDATE 照樣帶表名，0.44 實測）
+    // A single-table SELECT is the shape where drizzle renders a directly passed column as bare "folder_id" (an UPDATE still carries the table name, as of 0.44).
     const sel = db.select({ p: folderPathJsonSql(NOTES_FOLDER_ID()) }).from(notes).toSQL().sql;
     expect(sel).toContain('where f.id = "notes"."folder_id"');
   });
 
-  it("S-10 folderSpaceWhere：personal／shared／group 各只選到自己空間的資料夾", async () => {
+  it("folderSpaceWhere: personal/shared/group each select only their own space's folders", async () => {
     const { db } = await freshDb();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -162,8 +157,8 @@ describe("資料夾 SQL 片段（folders/sql.ts）", () => {
   });
 });
 
-describe("資料夾可見性（folders/queries.ts、folders/tx/lock.ts）", () => {
-  it("S-4 可見性：群組資料夾照角色推導權限；全 false 角色、outsider → null；personal／shared 只對 owner；隨機 uuid、非 UUID → null；交易內同推導", async () => {
+describe("folder visibility (folders/queries.ts, folders/tx/lock.ts)", () => {
+  it("visibility: group folders derive permissions from the role; all-false roles and outsider -> null; personal/shared only for the owner; random uuid and non-UUID -> null; same derivation inside a transaction", async () => {
     const { db } = await freshDb();
     const s = await sixRoleScene(db);
     const noRead = await seedUser(db);
@@ -205,18 +200,18 @@ describe("資料夾可見性（folders/queries.ts、folders/tx/lock.ts）", () =
     expect(await resolveFolderAccess(db, s.admin.id, randomUUID())).toBeNull();
     await expect(resolveFolderAccess(db, s.admin.id, "x")).resolves.toBeNull();
 
-    // 站台管理員沒有特權：非成員看不到群組資料夾、看不到別人的 personal／shared，清單也是空的
+    // A site admin has no privilege: non-members can't see group folders or others' personal/shared, and their list is empty too
     const siteAdmin = await seedUser(db, { isAdmin: true });
     for (const f of [gf, pf, sf]) expect(await resolveFolderAccess(db, siteAdmin.id, f.id), f.name).toBeNull();
     expect(await db.transaction(tx => folderAccessInTx(tx, siteAdmin.id, gfRow!))).toBeNull();
     expect(await listVisibleFolders(db, siteAdmin.id)).toEqual([]);
 
-    // memberFlagsInTx：成員回四旗標、非成員 null
+    // memberFlagsInTx: members get four flags, non-members null
     expect(await db.transaction(tx => memberFlagsInTx(tx, s.member.id, s.groupId))).toEqual({ canRead: true, canCreate: true, canEdit: true, canDelete: false });
     expect(await db.transaction(tx => memberFlagsInTx(tx, s.outsider.id, s.groupId))).toBeNull();
   });
 
-  it("S-5 清單：只得我的 personal、shared 與我能讀的群組資料夾；順序 kind → 空間 → 根層先 → lower(name) → id；permissions 逐列；createdAt ISO", async () => {
+  it("list: only my personal, shared and the group folders I can read; order kind -> space -> root level first -> lower(name) -> id; permissions per row; createdAt ISO", async () => {
     const { db } = await freshDb();
     const [me, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const gMine = await seedGroup(db, "Mine", [{ userId: me.id, role: "admin" }, { userId: other.id, role: "member" }]);
@@ -254,14 +249,14 @@ describe("資料夾可見性（folders/queries.ts、folders/tx/lock.ts）", () =
       ...([[pA, null], [pB, null], [pChild, pB.id]] as const).map(([f, parentId]) => ({ id: f.id, name: f.name, parentId, space: { kind: "personal" }, permissions: T })),
       { id: sh.id, name: sh.name, parentId: null, space: { kind: "shared" }, permissions: SH },
     ];
-    // resolves：SQL 篩選與 folderAccessOf 不一致時 listVisibleFolders 會 throw，這裡要以斷言失敗呈現
+    // resolves: if the SQL filter and folderAccessOf disagree listVisibleFolders throws, which must surface here as an assertion failure
     await expect(listVisibleFolders(db, me.id).then(l => l.map(({ createdAt: _c, ...rest }) => rest))).resolves.toEqual(expected);
     const list = await listVisibleFolders(db, me.id);
     const created = new Map((await db.select({ id: folders.id, createdAt: folders.createdAt }).from(folders)).map(r => [r.id, r.createdAt.toISOString()]));
     for (const f of list) expect(f.createdAt, f.name).toBe(created.get(f.id));
   });
 
-  it("S-9 lockFolderInTx：回整列；不存在 → undefined；update 擋 key share、key share 不擋 key share", async () => {
+  it("lockFolderInTx: returns the whole row; nonexistent -> undefined; update blocks key share, key share doesn't block key share", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const f = await seedFolder(db, { personal: u.id }, { name: "F" });
@@ -282,20 +277,19 @@ describe("資料夾可見性（folders/queries.ts、folders/tx/lock.ts）", () =
   });
 });
 
-describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
-  it("S-6a 結構鎖互斥：異鍵不等、同鍵等、大寫 id 的同空間也等（鍵小寫）", async () => {
+describe("structure lock and groups KS (folders/tx/lock.ts)", () => {
+  it("structure lock exclusion: different keys don't wait, the same key waits, an uppercase id in the same space also waits (keys are lowercased)", async () => {
     const { db, pool } = await freshDb();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const mine: FolderSpace = { kind: "personal", ownerId: u.id };
     const lockB = (spaces: readonly FolderSpace[]) => db.transaction(tx => lockFolderSpacesInTx(tx, spaces, { lockTimeoutMs: 5_000 }));
     let pending: Promise<unknown> = Promise.resolve();
     await whileHeld(db, holdSpaces([mine]), async () => {
-      // 異鍵（別人的 personal、自己的 shared）→ 不等（先測：此時沒有其他等鎖者）
+      // Different keys (someone else's personal, own shared) -> no wait (tested first: no other lock waiter exists at this point)
       const otherKey = lockB([{ kind: "personal", ownerId: v.id }, { kind: "shared", ownerId: u.id }]);
       pending = otherKey;
       expect(await waitForBlockedOrSettled(pool, otherKey)).toBe("settled");
       await otherKey;
-      // 同鍵 → 等
       pending = lockB([mine]);
       await waitForLockWaiters(pool, 1);
     });
@@ -307,14 +301,14 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     await pending;
   });
 
-  it("S-6b 逾時：A 不放、B 的上限 200 ms → 55P03，而且是 200 ms 級（不是交易原本的上限）", async () => {
+  it("timeout: A doesn't release, B's limit is 200 ms -> 55P03, and on the order of 200 ms (not the transaction's original limit)", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const mine: FolderSpace = { kind: "personal", ownerId: u.id };
     await whileHeld(db, holdSpaces([mine]), async () => {
       const t0 = Date.now();
-      // 交易原本的上限先設成 60 s（session 預設是 0＝無限等）：200 ms 沒套上的話要等滿 60 s 才 55P03，牆鐘界線 20 s 離兩邊都遠
-      // （見 ./lock-timeout-bound.ts；以前 200 ms 對 3 s 界線，對照組是無限等）。
+      // The transaction's original limit is first set to 60 s (the session default is 0 = wait forever): if the 200 ms wasn't applied it would wait the full 60 s for 55P03;
+      // the 20 s wall-clock bound is far from both (see ./lock-timeout-bound.ts).
       const err = await db
         .transaction(async tx => {
           await tx.execute(sql.raw(`set local lock_timeout = '${SLOW_DEFAULT_LOCK_TIMEOUT_MS}ms'`));
@@ -326,11 +320,11 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     });
   });
 
-  it("S-6c lock_timeout 只罩取鎖那幾句：交易內與 commit 後同一條連線都回到 database 層設的 7s（不是寫死 0、不是 session 層）", async () => {
+  it("lock_timeout covers only the lock-taking statements: inside the transaction and after commit the same connection returns to the database-level 7s (not a hard-coded 0, not session-level)", async () => {
     const { db, url } = await freshDb();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
-    // database 層設 7s（`TO DEFAULT` 要回到這個值）；只有之後新開的連線吃得到，故另開 pool；max 1 ⇒ commit 後量的是同一條連線
+    // The database level is set to 7s (`TO DEFAULT` must return to this value); only newly opened connections pick it up, so a separate pool; max 1 => after commit the measurement is on the same connection
     const dbName = (await db.$client.query<{ d: string }>("select current_database() as d")).rows[0]!.d;
     await db.$client.query(`alter database "${dbName}" set lock_timeout = '7s'`);
     const pool2 = new Pool({ connectionString: url, max: 1 });
@@ -351,7 +345,7 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     }
   });
 
-  it("S-6d lockTimeoutMs 必須是正整數（0／負數／小數／NaN → throw，不送進 PG）；鍵空時不驗、直接回", async () => {
+  it("lockTimeoutMs must be a positive integer (0/negative/fraction/NaN -> throw, not sent to PG); not validated and returned directly when the key list is empty", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const mine: FolderSpace = { kind: "personal", ownerId: u.id };
@@ -361,7 +355,7 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     await expect(db.transaction(tx => lockFolderSpacesInTx(tx, [], { lockTimeoutMs: 0 }))).resolves.toBeUndefined();
   });
 
-  it("S-6e 縫：三把鍵（含一個重複空間）全部取完之後恰呼叫一次、ctx 原樣", async () => {
+  it("test hook: called exactly once after all three keys (including one duplicate space) are taken, with ctx unchanged", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -378,7 +372,7 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     expect(calls).toEqual([{ point: "folder-structure-locked", ctx, stmts: 9 }]);
   });
 
-  it("S-6f 鍵空：0 句 SQL、不呼叫縫", async () => {
+  it("empty keys: 0 SQL statements, hook not called", async () => {
     const { pool } = await freshDb();
     const queries: string[] = [];
     const logged = loggedDb(pool, queries);
@@ -392,7 +386,7 @@ describe("結構鎖與 groups KS（folders/tx/lock.ts）", () => {
     expect(calls).toEqual([]);
   });
 
-  it("S-7 groups KS：回實際存在的 id；一句、依 id 排序、for key share；空陣列 0 句", async () => {
+  it("groups KS: returns the ids that actually exist; one statement, ordered by id, for key share; empty array 0 statements", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const g1 = await seedGroup(db, "G1", [{ userId: u.id, role: "admin" }]);

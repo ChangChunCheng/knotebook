@@ -1,7 +1,4 @@
-/**
- * 頭貼候選的管理：重新裁切（PUT …/:id/display）、選用（PUT /api/auth/avatar）、刪除（DELETE …/:id）、本人讀原圖（GET …/:id/original）、任何登入者讀顯示圖（GET /api/avatars/:id）。
- * 全部走真路由與真交易；並發案用 `avatarTestHooks.afterUserLock` 把第一條請求停在持有 users 列鎖之後。
- */
+/** Concurrency cases use `avatarTestHooks.afterUserLock` to hold the first request right after it takes the users row lock. */
 import { readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -35,7 +32,6 @@ const remove = async (app: Ctx["app"], userId: string, id: string) =>
 const readOriginal = async (app: Ctx["app"], userId: string, id: string) =>
   app.inject({ method: "GET", url: `/api/auth/avatars/${id}/original`, cookies: await cookieOf(userId) });
 
-/** 真路由上傳一張；回列 id。 */
 async function uploaded(app: Ctx["app"], userId: string, opts: Parameters<typeof uploadAvatar>[2] = {}): Promise<string> {
   const res = await uploadAvatar(app, userId, opts);
   expect(res.statusCode, res.body).toBe(201);
@@ -51,8 +47,8 @@ function logCollector() {
 
 const levels = (out: string[]): number[] => out.map(line => (JSON.parse(line) as { level: number }).level);
 
-describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
-  it("200 回更新後的候選；version + 1、crop、原圖寬高與顯示圖都換掉；原圖檔與目前頭貼旗標不動；/me 立刻是新版本", async () => {
+describe("PUT /api/auth/avatars/:id/display: re-crop", () => {
+  it("200 returns the updated candidate; version + 1, crop, original width/height and display image all replaced; original file and current-avatar flag untouched; /me is immediately the new version", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -82,7 +78,7 @@ describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies })).json().avatar).toEqual({ id, v: 2, pending: false });
   });
 
-  it("待補顯示圖的 OIDC 候選也能補產：pending 變 false，用量多出整張顯示圖", async () => {
+  it("an OIDC candidate with a pending display image can also be filled in: pending becomes false, usage gains the whole display image", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await seedAvatarRow(db, { userId: alice.id, originalSize: 700, displaySize: 0 });
@@ -93,7 +89,7 @@ describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
     expect(await usedBytes(db, alice.id)).toBe(1100);
   });
 
-  it("用量只算差額：變小一定成功（即使配額已滿）；變大超過剩餘空間 → 409 且 DB 不變；剛好放得下 → 200", async () => {
+  it("usage counts only the difference: shrinking always succeeds (even with the quota full); growing beyond the remaining space -> 409 and DB unchanged; exactly fitting -> 200", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id, { original: pngOf(2000), display: webpOf(300) });
@@ -118,7 +114,7 @@ describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
     expect(await rowOf(db, id)).toMatchObject({ version: 3, displaySize: 300 });
   });
 
-  it("version 不符 → 409 avatar_outdated，DB 不變；version 缺、非正整數或超過 int4 → 400", async () => {
+  it("version mismatch -> 409 avatar_outdated, DB unchanged; version missing, not a positive integer or above int4 -> 400", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -141,7 +137,7 @@ describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
     expect((await rowOf(db, id))!.version).toBe(1);
   });
 
-  it("格式驗證同上傳：缺 display／crop、crop 壞或寬度超過 int4 → 400；GIF 或文字當顯示圖 → 415；顯示圖過大 → 413；都不動 DB", async () => {
+  it("format validation same as upload: missing display/crop, bad crop or width above int4 -> 400; GIF or text as the display image -> 415; display image too large -> 413; DB untouched in all cases", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -167,8 +163,8 @@ describe("PUT /api/auth/avatars/:id/display：重新裁切", () => {
   });
 });
 
-describe("頭貼候選 id 的歸屬：他人、不存在、格式不對一律同形 404", () => {
-  it("重新裁切、刪除、讀原圖：bob 的候選、不存在的 uuid、not-a-uuid 的 404 逐字相同；bob 的列與檔不動", async () => {
+describe("ownership of avatar candidate ids: someone else's, nonexistent and malformed ids all give the same 404", () => {
+  it("re-crop, delete, read original: bob's candidate, a nonexistent uuid and not-a-uuid give a byte-identical 404; bob's row and file are untouched", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -192,7 +188,7 @@ describe("頭貼候選 id 的歸屬：他人、不存在、格式不對一律同
       expect(missing.statusCode, name).toBe(404);
       expect(malformed.statusCode, name).toBe(404);
     }
-    // 版本不符也不能讓別人的候選露出 409：歸屬先於版本檢查。
+    // A version mismatch must not reveal someone else's candidate as 409: ownership is checked before version.
     const staleOthers = await recropAvatar(app, alice.id, bobsId, { display: webpOf(500), crop: NEW_CROP, version: 7 });
     const staleMissing = await recropAvatar(app, alice.id, ghost, { display: webpOf(500), crop: NEW_CROP, version: 7 });
     expect(staleOthers.statusCode).toBe(404);
@@ -202,7 +198,7 @@ describe("頭貼候選 id 的歸屬：他人、不存在、格式不對一律同
     expect(await readdir(uploadsDir)).toEqual([bobsBefore.originalFile]);
   });
 
-  it("大寫的 uuid 可用（重新裁切、讀原圖、刪除）", async () => {
+  it("uppercase uuid works (re-crop, read original, delete)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -214,8 +210,8 @@ describe("頭貼候選 id 的歸屬：他人、不存在、格式不對一律同
   });
 });
 
-describe("PUT /api/auth/avatar：選用", () => {
-  it("200 回新的 UserDto（不是 60 秒前的快取）；目標是目前頭貼、舊的不是；avatar_auto 關掉", async () => {
+describe("PUT /api/auth/avatar: select", () => {
+  it("200 returns the new UserDto (not the cache from 60 seconds ago); target is the current avatar and the old one isn't; avatar_auto turned off", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -239,11 +235,10 @@ describe("PUT /api/auth/avatar：選用", () => {
     const again = await select(app, alice.id, { candidateId: first.toUpperCase() });
     expect(again.statusCode, again.body).toBe(200);
     expect(again.json().avatar.id).toBe(first);
-    // 旁觀者的目前頭貼不受影響。
     expect((await rowOf(db, bobsAvatar))!.isCurrent).toBe(true);
   });
 
-  it("candidateId 為 null → avatar 為 null、候選都還在、都不是目前；avatar_auto 關掉", async () => {
+  it("candidateId null -> avatar null, candidates all remain, none is current; avatar_auto turned off", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -262,7 +257,7 @@ describe("PUT /api/auth/avatar：選用", () => {
     expect((await rowOf(db, bobsAvatar))!.isCurrent).toBe(true);
   });
 
-  it("選 bob 的候選或不存在的 id → 404，alice 原本的目前頭貼與 avatar_auto 都不變（整筆回滾）", async () => {
+  it("selecting bob's candidate or a nonexistent id -> 404, alice's current avatar and avatar_auto are both unchanged (whole request rolled back)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -282,7 +277,7 @@ describe("PUT /api/auth/avatar：選用", () => {
     expect(avatarAuto).toBe(true);
   });
 
-  it("body 不合 → 400 invalid_body（缺欄位、非 uuid、多餘欄位、非物件）", async () => {
+  it("invalid body -> 400 invalid_body (missing field, non-uuid, extra field, non-object)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const mine = await uploaded(app, alice.id);
@@ -295,8 +290,8 @@ describe("PUT /api/auth/avatar：選用", () => {
   });
 });
 
-describe("DELETE /api/auth/avatars/:id：刪除", () => {
-  it("刪非目前的候選：204；列與原圖檔消失；用量減掉原圖加顯示圖；avatar_auto 不變；目前頭貼不動", async () => {
+describe("DELETE /api/auth/avatars/:id: delete", () => {
+  it("deleting a non-current candidate: 204; row and original file are gone; usage drops by original + display; avatar_auto unchanged; current avatar untouched", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const old = await uploaded(app, alice.id, { original: pngOf(1000), display: webpOf(200) });
@@ -318,7 +313,7 @@ describe("DELETE /api/auth/avatars/:id：刪除", () => {
     expect((await rowOf(db, current))!.isCurrent).toBe(true);
   });
 
-  it("刪目前的那張：之後 avatar 為 null、avatar_auto 關掉、其他候選不會被自動選用；/me 立刻反映", async () => {
+  it("deleting the current one: afterwards avatar is null, avatar_auto is off, other candidates aren't auto-selected; /me reflects it immediately", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const a = await uploaded(app, alice.id);
@@ -336,7 +331,7 @@ describe("DELETE /api/auth/avatars/:id：刪除", () => {
     expect(avatarAuto).toBe(false);
   });
 
-  it("刪 OIDC 候選：該身分的 picture_dismissed_url 記下該列的圖片網址；bob 的身分列與候選不變；候選指到別人的身分列時也不動別人的列", async () => {
+  it("deleting an OIDC candidate: that identity's picture_dismissed_url records the row's picture URL; bob's identity row and candidate unchanged; also leaves others' rows alone when the candidate points at someone else's identity row", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -358,15 +353,15 @@ describe("DELETE /api/auth/avatars/:id：刪除", () => {
     expect(await dismissedOf(bobIdentity)).toBeNull();
     expect(await rowOf(db, bobsCandidate)).toBeDefined();
 
-    // 不該出現的資料：alice 的候選掛著 bob 的身分。刪它不能改到 bob 的身分列。
-    // 一個身分至多一張候選（部分唯一索引）：bob 的候選先拿掉才放得進去。
+    // Data that shouldn't exist: alice's candidate hanging on bob's identity; deleting it must not touch bob's identity row.
+    // One identity has at most one candidate (partial unique index): bob's candidate has to be removed before this one can be placed.
     await db.delete(userAvatars).where(eq(userAvatars.id, bobsCandidate));
     const strayId = await seedAvatarRow(db, { userId: alice.id, originalSize: 90, displaySize: 0, identityId: bobIdentity });
     expect((await remove(app, alice.id, strayId)).statusCode).toBe(204);
     expect(await dismissedOf(bobIdentity)).toBeNull();
   });
 
-  it("上傳來源的候選刪除不碰任何身分列", async () => {
+  it("deleting an upload-source candidate doesn't touch any identity row", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const [ident] = await db.insert(userIdentities).values({ userId: alice.id, issuer: "https://sso.example", sub: "s1", lastPictureUrl: "https://pics.example/y.png" }).returning({ id: userIdentities.id });
@@ -376,7 +371,7 @@ describe("DELETE /api/auth/avatars/:id：刪除", () => {
     expect(row!.u).toBeNull();
   });
 
-  it("刪除後檔案已不在磁碟：仍 204，log 只有 warn（沒有 error）", async () => {
+  it("after the file is gone from disk, deletion still gives 204 and the log has only a warn (no error)", async () => {
     const { out, logger } = logCollector();
     const { app, db, uploadsDir } = await buildTestApp({}, { logger });
     const alice = await seedUser(db);
@@ -396,8 +391,8 @@ describe("DELETE /api/auth/avatars/:id：刪除", () => {
   });
 });
 
-describe("GET /api/auth/avatars/:id/original：本人讀原圖", () => {
-  it("200、位元組相等；content-type 是存的偵測值，另有 nosniff、CSP sandbox、private no-cache", async () => {
+describe("GET /api/auth/avatars/:id/original: owner reads the original", () => {
+  it("200, bytes equal; content-type is the stored detected value, plus nosniff, CSP sandbox, private no-cache", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const original = pngOf(1800);
@@ -411,7 +406,7 @@ describe("GET /api/auth/avatars/:id/original：本人讀原圖", () => {
     expect(res.headers["cache-control"]).toBe("private, no-cache");
   });
 
-  it("bob 讀 alice 的原圖 → 404", async () => {
+  it("bob reading alice's original -> 404", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -419,7 +414,7 @@ describe("GET /api/auth/avatars/:id/original：本人讀原圖", () => {
     expect((await readOriginal(app, bob.id, id)).statusCode).toBe(404);
   });
 
-  it("列在、檔不在磁碟 → 404，log 記一筆 warn（不帶檔案路徑）", async () => {
+  it("row exists, file missing from disk -> 404, log records one warn (without the file path)", async () => {
     const { out, logger } = logCollector();
     const { app, db, uploadsDir } = await buildTestApp({}, { logger });
     const alice = await seedUser(db);
@@ -436,7 +431,7 @@ describe("GET /api/auth/avatars/:id/original：本人讀原圖", () => {
     await app.close();
   });
 
-  it("OIDC 候選還沒補產顯示圖、原圖檔也不在 → 404（不丟 500）", async () => {
+  it("OIDC candidate whose display image isn't generated yet and original file missing too -> 404 (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0 });
@@ -444,7 +439,7 @@ describe("GET /api/auth/avatars/:id/original：本人讀原圖", () => {
   });
 });
 
-describe("同一人的並發寫入", () => {
+describe("concurrent writes by the same person", () => {
   function held() {
     let entered = 0;
     let release!: () => void;
@@ -469,11 +464,11 @@ describe("同一人的並發寫入", () => {
     };
   }
 
-  it("上傳持 users 列鎖暫停時，同一人的選用被擋住；放行後選用生效，最後恰一張目前頭貼", async () => {
+  it("while an upload is paused holding the users row lock, the same person's select is blocked; after release the select takes effect, and exactly one current avatar remains", async () => {
     const h = held();
     const { app, db } = await buildTestApp({ avatarTestHooks: h.hooks });
     const alice = await seedUser(db);
-    // 用 seed 直插：hook 的第一次進入要留給接下來的上傳。
+    // Inserted via seed: the hook's first entry must be left for the upload that follows.
     const seeded = await seedAvatarRow(db, { userId: alice.id, originalSize: 900, displaySize: 100, isCurrent: true });
     let pending: Array<Promise<unknown>> = [];
     try {
@@ -496,11 +491,11 @@ describe("同一人的並發寫入", () => {
     const rows = await rowsOf(db, alice.id);
     expect(rows).toHaveLength(2);
     expect(rows.filter(r => r.isCurrent)).toHaveLength(1);
-    // 選用排在上傳之後，所以最後的目前頭貼是被選用的那張。
+    // The select is queued after the upload, so the final current avatar is the selected one.
     expect(rows.find(r => r.isCurrent)!.id).toBe(seeded);
   });
 
-  it("上傳持 users 列鎖暫停時，同一人的重新裁切被擋住；放行後兩條都完成", async () => {
+  it("while an upload is paused holding the users row lock, the same person's re-crop is blocked; after release both complete", async () => {
     const h = held();
     const { app, db } = await buildTestApp({ avatarTestHooks: h.hooks });
     const alice = await seedUser(db);
@@ -527,7 +522,7 @@ describe("同一人的並發寫入", () => {
     expect(await rowsOf(db, alice.id)).toHaveLength(2);
   });
 
-  it("上傳持 users 列鎖暫停時，同一人的刪除被擋住；放行後兩條都完成", async () => {
+  it("while an upload is paused holding the users row lock, the same person's delete is blocked; after release both complete", async () => {
     const h = held();
     const { app, db } = await buildTestApp({ avatarTestHooks: h.hooks });
     const alice = await seedUser(db);
@@ -556,7 +551,7 @@ describe("同一人的並發寫入", () => {
     expect(rows[0]!.isCurrent).toBe(true);
   });
 
-  it("兩個選用互相等待：後拿到鎖的生效，兩條都 200，最後恰一張目前頭貼", async () => {
+  it("two selects waiting on each other: the one that gets the lock later takes effect, both 200, exactly one current avatar remains", async () => {
     const h = held();
     const { app, db } = await buildTestApp({ avatarTestHooks: h.hooks });
     const alice = await seedUser(db);
@@ -586,8 +581,8 @@ describe("同一人的並發寫入", () => {
   });
 });
 
-describe("頭貼管理端點的存取界線", () => {
-  it("未登入 401、只帶 Bearer（API token）401；跨源 Origin 的重新裁切 403；都不動資料", async () => {
+describe("access boundaries of the avatar management endpoints", () => {
+  it("not signed in 401, Bearer only (API token) 401; re-crop with cross-origin Origin 403; no data changed in any case", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -609,8 +604,8 @@ describe("頭貼管理端點的存取界線", () => {
 const readDisplay = async (app: Ctx["app"], userId: string, id: string, query = "") =>
   app.inject({ method: "GET", url: `/api/avatars/${id}${query}`, cookies: await cookieOf(userId) });
 
-describe("GET /api/avatars/:id：讀顯示圖", () => {
-  it("別人也能讀：200、位元組相等；content-type 是 DB 值，另有 nosniff 與 CSP sandbox", async () => {
+describe("GET /api/avatars/:id: read the display image", () => {
+  it("others can read it too: 200, bytes equal; content-type is the DB value, plus nosniff and CSP sandbox", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -625,7 +620,7 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect(res.headers["cache-control"]).toBe("private, no-cache");
   });
 
-  it("content-type 取 DB 存的值，不由內容或網址推", async () => {
+  it("content-type comes from what the DB stores, not inferred from content or URL", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -633,7 +628,7 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect((await readDisplay(app, alice.id, id)).headers["content-type"]).toBe("image/jpeg");
   });
 
-  it("?v= 等於現版本 → immutable；不等、沒帶、空字串、1.0、01、陣列形都是 no-cache", async () => {
+  it("?v= equal to the current version -> immutable; unequal, missing, empty string, 1.0, 01 and array forms are all no-cache", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -648,7 +643,7 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect((await readDisplay(app, bob.id, id, "?v=2")).headers["cache-control"]).toBe("private, max-age=31536000, immutable");
   });
 
-  it("不看 is_current：換過目前頭貼後，舊候選的 id 仍讀得到", async () => {
+  it("is_current is ignored: after changing the current avatar an old candidate's id can still be read", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -661,7 +656,7 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect((await readDisplay(app, bob.id, second)).statusCode).toBe(200);
   });
 
-  it("大寫 uuid 可用；不存在、不是 uuid 的 id 與刪除後都是同形 404", async () => {
+  it("uppercase uuid works; nonexistent, not-a-uuid and deleted ids all give the same 404", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
@@ -678,7 +673,7 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect(gone.body).toBe(missing.body);
   });
 
-  it("待補顯示圖的 OIDC 候選：本人讀到原圖（no-cache，即使 ?v= 吻合），別人 404", async () => {
+  it("OIDC candidate with a pending display image: the owner reads the original (no-cache, even if ?v= matches), others get 404", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -701,14 +696,14 @@ describe("GET /api/avatars/:id：讀顯示圖", () => {
     expect(other.headers["content-type"]).toBe(missing.headers["content-type"]);
   });
 
-  it("待補的候選、本人讀但原圖檔不在 → 404（不丟 500）", async () => {
+  it("pending candidate, owner reads but the original file is missing -> 404 (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0 });
     expect((await readDisplay(app, alice.id, id)).statusCode).toBe(404);
   });
 
-  it("未登入 401、只帶 Bearer（API token）401", async () => {
+  it("not signed in 401, Bearer only (API token) 401", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await uploaded(app, alice.id);
