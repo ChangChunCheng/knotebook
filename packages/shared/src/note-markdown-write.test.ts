@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { canonicalColumnsLine, normalizeTableWidths, relativizeSiteUploads } from "./note-markdown-write.js";
 
-// 並排的寫入。node 環境：只測不需要 DOM 的三支；語法檢查（需要 DOM）在 server
-// `test/unit/note-markdown-validate.test.ts`。
+// Columns writing. Node environment: only the three functions that need no DOM; the syntax check (needs a DOM) is in server
+// `test/unit/note-markdown-validate.test.ts`.
 
-describe("canonicalColumnsLine：逐字等於正規行才算", () => {
-  it("外層行 → list；欄行 → { width }", () => {
+describe("canonicalColumnsLine: only an exactly canonical line counts", () => {
+  it("outer line -> list; column line -> { width }", () => {
     expect(canonicalColumnsLine('<div data-kb-columns style="display:flex;gap:16px">')).toBe("list");
     expect(canonicalColumnsLine('<div data-kb-column style="flex:1.5">')).toEqual({ width: 1.5 });
   });
 
-  it("行尾一個 \\r 照收", () => {
+  it("one trailing carriage return is accepted", () => {
     expect(canonicalColumnsLine('<div data-kb-columns style="display:flex;gap:16px">\r')).toBe("list");
     expect(canonicalColumnsLine('<div data-kb-column style="flex:1.5">\r')).toEqual({ width: 1.5 });
   });
 
-  it.each([["0.1", 0.1], ["10", 10], ["2.25", 2.25], ["1", 1]])("flex:%s 收", (s, w) => {
+  it.each([["0.1", 0.1], ["10", 10], ["2.25", 2.25], ["1", 1]])("flex:%s accepted", (s, w) => {
     expect(canonicalColumnsLine(`<div data-kb-column style="flex:${s}">`)).toEqual({ width: w });
   });
 
@@ -38,7 +38,7 @@ describe("canonicalColumnsLine：逐字等於正規行才算", () => {
     '<DIV DATA-KB-COLUMN STYLE="flex:1">',
     '<DIV DATA-KB-COLUMNS STYLE="display:flex;gap:16px">',
     '<div data-kb-column style="flex:1">\r\r',
-  ])("%j → null", line => {
+  ])("%j -> null", line => {
     expect(canonicalColumnsLine(line)).toBeNull();
   });
 });
@@ -47,33 +47,33 @@ const table = (columnWidths: unknown[]) => ({ type: "table", props: {}, content:
 const para = (children: unknown[] = []) => ({ type: "paragraph", props: {}, content: [], children });
 const widthsOf = (b: unknown): unknown[] => (b as { content: { columnWidths: unknown[] } }).content.columnWidths;
 
-describe("normalizeTableWidths：非正有限數 → undefined", () => {
-  it("[120, NaN, 80] → [120, undefined, 80]", () => {
+describe("normalizeTableWidths: non-positive or non-finite numbers -> undefined", () => {
+  it("[120, NaN, 80] -> [120, undefined, 80]", () => {
     const out = normalizeTableWidths([table([120, NaN, 80])]);
     expect(widthsOf(out[0])).toEqual([120, undefined, 80]);
     expect(widthsOf(out[0])[1]).toBeUndefined();
   });
 
-  it.each<[string, number[]]>([["[NaN, NaN]", [NaN, NaN]], ["[0, -5]", [0, -5]]])("%s → 全 undefined", (_name, ws) => {
+  it.each<[string, number[]]>([["[NaN, NaN]", [NaN, NaN]], ["[0, -5]", [0, -5]]])("%s -> all undefined", (_name, ws) => {
     const out = normalizeTableWidths([table(ws)]);
     expect(widthsOf(out[0])).toEqual([undefined, undefined]);
     expect(widthsOf(out[0]).every(v => v === undefined)).toBe(true);
   });
 
-  it("columnList → column → table 裡的同樣處理", () => {
+  it("the same handling inside columnList -> column -> table", () => {
     const blocks = [{ type: "columnList", props: {}, children: [{ type: "column", props: { width: 1 }, children: [table([NaN, 120])] }, { type: "column", props: { width: 1 }, children: [para()] }] }];
     const out = normalizeTableWidths(blocks) as unknown as Array<{ children: Array<{ children: unknown[] }> }>;
     expect(widthsOf(out[0]!.children[0]!.children[0])).toEqual([undefined, 120]);
     expect(widthsOf(out[0]!.children[0]!.children[0])[0]).toBeUndefined();
-    expect(out[0]!.children[1]).toBe(blocks[0]!.children[1]); // 沒改到的分支沿用原物件
+    expect(out[0]!.children[1]).toBe(blocks[0]!.children[1]); // unchanged branches reuse the original object
   });
 
-  it("沒有可改的值 → 回同一個陣列", () => {
+  it("nothing to change -> returns the same array", () => {
     const blocks = [table([120, undefined, 80]), para([table([300])])];
     expect(normalizeTableWidths(blocks)).toBe(blocks);
   });
 
-  it("輸入物件沒被改", () => {
+  it("the input object is not mutated", () => {
     const t = table([120, NaN, 80]);
     const blocks = [para([t])];
     const out = normalizeTableWidths(blocks);
@@ -87,15 +87,15 @@ const U = "00000000-0000-4000-8000-000000000001";
 const media = (type: string, url: string, children: unknown[] = []) => ({ type, props: { url, name: "n" }, children });
 const urlOf = (b: unknown): unknown => (b as { props: { url: unknown } }).props.url;
 
-describe("relativizeSiteUploads：同 origin 的 /api/uploads/<uuid> 還原成相對形", () => {
+describe("relativizeSiteUploads: same-origin /api/uploads/<uuid> is restored to the relative form", () => {
   const BASE = "http://localhost";
 
-  it("頂層 image", () => {
+  it("top-level image", () => {
     const out = relativizeSiteUploads([media("image", `http://localhost/api/uploads/${U}`)], BASE);
     expect(urlOf(out[0])).toBe(`/api/uploads/${U}`);
   });
 
-  it("欄內（columnList → column → image）與段落 children 裡的 image、video、file 同樣還原", () => {
+  it("images, videos and files inside columns (columnList -> column -> image) and in paragraph children are restored the same way", () => {
     const abs = `http://localhost/api/uploads/${U}`;
     const blocks = [
       { type: "columnList", props: {}, children: [{ type: "column", props: { width: 1 }, children: [media("image", abs)] }, { type: "column", props: { width: 1 }, children: [para()] }] },
@@ -118,19 +118,19 @@ describe("relativizeSiteUploads：同 origin 的 /api/uploads/<uuid> 還原成�
     `http://localhost/other/${U}`,
     `/api/uploads/${U}`,
     "",
-  ])("不動：%j", url => {
+  ])("untouched: %j", url => {
     const blocks = [media("image", url)];
     const out = relativizeSiteUploads(blocks, BASE);
     expect(urlOf(out[0])).toBe(url);
     expect(out).toBe(blocks);
   });
 
-  it("沒有可改的輸入 → 回同一個陣列", () => {
+  it("nothing to change -> returns the same array", () => {
     const blocks = [para([media("image", `/api/uploads/${U}`)]), media("file", "https://evil.example/a.pdf")];
     expect(relativizeSiteUploads(blocks, BASE)).toBe(blocks);
   });
 
-  it("輸入物件沒被改", () => {
+  it("the input object is not mutated", () => {
     const abs = `http://localhost/api/uploads/${U}`;
     const img = media("image", abs);
     const blocks = [para([img])];

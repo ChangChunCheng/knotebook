@@ -5,8 +5,8 @@ import {
   REWRITE_ACTION_ID, SUMMARIZE_ACTION_ID, TRANSLATE_ACTION_ID, aiActionKind, codePointLength, truncateCodePoints,
 } from "./ai.js";
 
-describe("AI 動作常數（#263）", () => {
-  it("內建五個 id：既有四個值不變、Instruct 是固定的小寫 uuid、順序固定且不重複", () => {
+describe("AI action constants (#263)", () => {
+  it("five built-in ids: the existing four unchanged, Instruct is a fixed lower-case uuid, order fixed and no duplicates", () => {
     expect([REWRITE_ACTION_ID, TRANSLATE_ACTION_ID, SUMMARIZE_ACTION_ID, CONTINUE_WRITING_ACTION_ID]).toEqual([
       "ab0a1517-bec1-4709-b13f-756548375b86",
       "362788cb-d2f0-41ce-b697-c929b67bf20e",
@@ -20,17 +20,17 @@ describe("AI 動作常數（#263）", () => {
     expect(new Set(BUILTIN_ACTION_IDS).size).toBe(5);
   });
 
-  it("上限：instruction 500、focus 2000（code point）", () => {
+  it("limits: instruction 500, focus 2000 (code points)", () => {
     expect([INSTRUCTION_MAX_CODE_POINTS, FOCUS_MAX_CODE_POINTS]).toEqual([500, 2000]);
   });
 
-  it("kind：只有 Instruct 是 instruct，其餘內建與任意自訂 id 都是 quick", () => {
+  it("kind: only Instruct is instruct; the other built-ins and any custom id are quick", () => {
     expect(aiActionKind(INSTRUCT_ACTION_ID)).toBe("instruct");
     for (const id of BUILTIN_ACTION_IDS.filter((x) => x !== INSTRUCT_ACTION_ID)) expect(aiActionKind(id)).toBe("quick");
     expect(aiActionKind("00000000-0000-4000-8000-000000000000")).toBe("quick");
   });
 
-  it("code point：emoji（surrogate pair）算 1；截斷不切半個 emoji、沒超過就原樣回傳", () => {
+  it("code points: an emoji (surrogate pair) counts as 1; truncation does not cut an emoji in half, and returns the input unchanged when not over", () => {
     const emoji = "😀".repeat(3);
     expect(codePointLength(emoji)).toBe(3);
     expect(emoji.length).toBe(6);
@@ -39,7 +39,7 @@ describe("AI 動作常數（#263）", () => {
     expect(truncateCodePoints("", 0)).toBe("");
   });
 
-  it("錯誤碼 instruct_preview_only 在 ERROR_CODES", () => {
+  it("error code instruct_preview_only is in ERROR_CODES", () => {
     expect(ERROR_CODES).toContain("instruct_preview_only");
   });
 });

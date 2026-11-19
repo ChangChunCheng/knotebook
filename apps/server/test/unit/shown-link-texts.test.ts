@@ -1,6 +1,6 @@
 /**
- * #387：`edit_note` 寫回時，讀者讀到的「沒有自訂文字的連結」的文字不得被凍結成自訂文字（`notes/editing/shown-link-texts.ts`）。
- * 這支釘住記憶體本身（誰、哪個目標、哪段文字、多久、上限）與讀出時的走訪；寫入端的整合行為在 `test/mcp-edit-note-linklabel.test.ts`。
+ * #387: when `edit_note` writes back, the text of a link the reader saw without custom text must not be frozen into custom text (`notes/editing/shown-link-texts.ts`).
+ * This file pins the memory itself (who, which target, which text, how long, the cap) and the traversal on read; the write-side integration behaviour is in `test/mcp-edit-note-linklabel.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 import { ShownLinkTexts, shownLinkTextsOf } from "../../src/notes/editing/shown-link-texts.js";
@@ -9,7 +9,7 @@ const T = "abcdef00-0000-4000-8000-00000000000a";
 const T2 = "abcdef00-0000-4000-8000-00000000000b";
 
 describe("ShownLinkTexts", () => {
-  it("記下的 (使用者, 目標, 文字) 才命中；別的使用者、別的目標、別的文字都不命中；目標 id 不分大小寫", () => {
+  it("only a recorded (user, target, text) hits; another user, another target or another text does not; the target id is case-insensitive", () => {
     const m = new ShownLinkTexts();
     m.record("u1", { free: [[T, "Target v1"]], custom: [] });
     expect(m.has("u1", T, "Target v1")).toBe(true);
@@ -20,7 +20,7 @@ describe("ShownLinkTexts", () => {
     expect(m.has("u1", T, "target v1")).toBe(false);
   });
 
-  it("過了保存期限就不命中，也從表裡拿掉", () => {
+  it("past the retention period it no longer hits and is removed from the table", () => {
     let now = 1000;
     const m = new ShownLinkTexts({ ttlMs: 100, now: () => now });
     m.record("u1", { free: [[T, "A"]], custom: [] });
@@ -31,7 +31,7 @@ describe("ShownLinkTexts", () => {
     expect(m.size).toBe(0);
   });
 
-  it("再讀到同一個連結會重算期限", () => {
+  it("reading the same link again recomputes the expiry", () => {
     let now = 0;
     const m = new ShownLinkTexts({ ttlMs: 100, now: () => now });
     m.record("u1", { free: [[T, "A"]], custom: [] });
@@ -41,20 +41,20 @@ describe("ShownLinkTexts", () => {
     expect(m.has("u1", T, "A")).toBe(true);
   });
 
-  it("讀到同一個目標、同一段文字的自訂文字連結 → 拿掉先前記下的；同一次讀出兩種都有時，沒有自訂文字的那個算數", () => {
+  it("reading a custom-text link for the same target and text removes the earlier record; when one read has both kinds, the one without custom text wins", () => {
     const m = new ShownLinkTexts();
     m.record("u1", { free: [[T, "A"]], custom: [] });
     m.record("u1", { free: [], custom: [[T, "A"]] });
     expect(m.has("u1", T, "A")).toBe(false);
     m.record("u1", { free: [[T, "A"]], custom: [[T, "A"]] });
     expect(m.has("u1", T, "A")).toBe(true);
-    // 自訂文字只拿掉同一個使用者的
+    // custom text removes only the same user's record
     m.record("u2", { free: [[T, "B"]], custom: [] });
     m.record("u1", { free: [], custom: [[T, "B"]] });
     expect(m.has("u2", T, "B")).toBe(true);
   });
 
-  it("超過上限 → 丟掉最舊的；重新記下的那筆算新的", () => {
+  it("over the cap -> the oldest is dropped; a re-recorded entry counts as new", () => {
     const m = new ShownLinkTexts({ max: 3 });
     m.record("u1", { free: [[T, "1"], [T, "2"], [T, "3"]], custom: [] });
     m.record("u1", { free: [[T, "1"]], custom: [] });
@@ -64,7 +64,7 @@ describe("ShownLinkTexts", () => {
     expect(["1", "3", "4"].map(t => m.has("u1", T, t))).toEqual([true, true, true]);
   });
 
-  it("每個帳號有自己的上限：超過只丟這個帳號自己最舊的，別的帳號（即使更舊）不受影響", () => {
+  it("each account has its own cap: exceeding it drops only that account's oldest, other accounts (even older ones) are unaffected", () => {
     const m = new ShownLinkTexts({ max: 100, perUserMax: 2 });
     m.record("u2", { free: [[T, "a"]], custom: [] });
     m.record("u1", { free: [[T, "1"], [T, "2"]], custom: [] });
@@ -76,7 +76,7 @@ describe("ShownLinkTexts", () => {
 });
 
 describe("ShownLinkTexts.keepLabelFree", () => {
-  it("清掉讀到過的文字的 label、換上現行標題，並回報被清掉的 (目標, 原文字)；沒讀到過的、別人讀到的不動", () => {
+  it("clears the label of text that was read and puts in the current title, and reports the cleared (target, original text); text never read, or read by someone else, is untouched", () => {
     const m = new ShownLinkTexts();
     m.record("u1", { free: [[T, "Old"]], custom: [] });
     const wl = (label: string) => ({ type: "wikilink", props: { targetNoteId: T, snapshotTitle: label, label, anchorBlockId: "" } });
@@ -92,7 +92,7 @@ describe("ShownLinkTexts.keepLabelFree", () => {
 
 describe("shownLinkTextsOf", () => {
   const wl = (props: Record<string, string>) => ({ type: "wikilink", props: { snapshotTitle: "", label: "", anchorBlockId: "", ...props } });
-  it("沒有自訂文字的連結：讀者看得到目標＝現行標題、看不到＝snapshotTitle、都空＝網址；有自訂文字的另列；表格格子與子 block 都走到", () => {
+  it("link without custom text: the reader sees the target = current title, if not visible = snapshotTitle, if both empty = the URL; custom-text links are listed separately; table cells and child blocks are traversed", () => {
     const blocks = [
       { type: "paragraph", content: [{ type: "text", text: "a ", styles: {} }, wl({ targetNoteId: T.toUpperCase(), snapshotTitle: "Old" }), wl({ targetNoteId: T, label: "Mine" })] },
       { type: "paragraph", content: [wl({ targetNoteId: T2, snapshotTitle: "Hidden snap" })], children: [{ type: "paragraph", content: [wl({ targetNoteId: T2, anchorBlockId: "h1" })] }] },

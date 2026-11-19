@@ -8,25 +8,25 @@ const run = async (params: Record<string, unknown>) => {
   return params;
 };
 
-describe("#240：lowercaseUuidParams", () => {
-  it("名單恰為 id、userId", () => {
+describe("#240: lowercaseUuidParams", () => {
+  it("the parameter list is exactly id and userId", () => {
     expect([...LOWERCASED_PARAMS]).toEqual(["id", "userId"]);
   });
 
-  it("id／userId 的大寫與大小寫混雜 UUID 轉小寫", async () => {
+  it("upper-case and mixed-case UUIDs in id / userId are lowercased", async () => {
     const a = randomUUID();
     const b = "0f8fad5b-d9cb-469f-a165-70867728950e";
-    const mixed = "0F8fAd5B-d9Cb-469F-a165-70867728950E"; // 寫死：保證真的大小寫混雜
+    const mixed = "0F8fAd5B-d9Cb-469F-a165-70867728950E"; // hard-coded: guarantees it really is mixed case
     expect(await run({ id: a.toUpperCase(), userId: mixed })).toEqual({ id: a, userId: b });
   });
 
-  it("非 UUID 形原樣；名單外的參數即使是 UUID 形也原樣", async () => {
+  it("non-UUID values are unchanged; parameters outside the list are unchanged even if UUID-shaped", async () => {
     const u = randomUUID().toUpperCase();
     const p = { id: "NOT-A-UUID", userId: `${u}x`, ref: u, handle: u, slug: u, editId: u, groupId: u };
     expect(await run({ ...p })).toEqual(p);
   });
 
-  it("沒有 params（404 handler 的 `{'*': …}`、無參數路由）不丟錯", async () => {
+  it("no params (the 404 handler's `{'*': ...}`, a route without parameters) does not throw", async () => {
     expect(await run({ "*": "nope" })).toEqual({ "*": "nope" });
     await expect(lowercaseUuidParams({ params: undefined } as unknown as FastifyRequest)).resolves.toBeUndefined();
   });

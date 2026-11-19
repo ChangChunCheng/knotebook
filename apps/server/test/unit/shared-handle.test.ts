@@ -2,77 +2,77 @@ import { describe, expect, it } from "vitest";
 import { normalizeHandle, validateHandle } from "@knotebook/shared";
 
 /**
- * #122：handle 驗證與正規化。
+ * #122: handle validation and normalisation.
  *
- * 與 slug 的關鍵差異：**ASCII-only**——handle 是身分識別，跨鍵盤可
- * 輸入性與避免 IDN 同形混淆優先於在地化；正規化只做 A-Z→a-z 的碼位映射，**不
- * transliterate、不用 normalizeSlug**（其 Unicode lowercase 會產生 combining mark）。
+ * Key difference from slugs: **ASCII-only** - a handle is an identity, so typeability across keyboards and avoiding IDN homoglyph
+ * confusion come before localisation; normalisation is only the A-Z -> a-z code point mapping, **no transliteration, and not
+ * normalizeSlug** (its Unicode lowercase produces combining marks).
  */
-describe("normalizeHandle（ASCII lowercase，僅 A-Z→a-z）", () => {
-  it("大寫 ASCII 轉小寫", () => {
+describe("normalizeHandle (ASCII lowercase, A-Z -> a-z only)", () => {
+  it("upper-case ASCII becomes lower case", () => {
     expect(normalizeHandle("AliCe-Lee2")).toBe("alice-lee2");
   });
 
-  it("非 ASCII 字元原樣保留（不 transliterate——交給 validateHandle 拒收）", () => {
+  it("non-ASCII characters are kept as is (no transliteration - validateHandle rejects them)", () => {
     expect(normalizeHandle("İstanbul")).toBe("İstanbul");
     expect(normalizeHandle("Ünsal")).toBe("Ünsal");
   });
 
-  it("土耳其 İ 不得經 Unicode toLowerCase 產生 combining mark（那是 normalizeSlug 的行為，這裡禁止）", () => {
-    // 若誤用 String.prototype.toLowerCase()，"İ" 會變成 "i" + U+0307 兩個 code point
+  it("Turkish dotted capital I must not go through Unicode toLowerCase and produce a combining mark (that is normalizeSlug's behaviour, forbidden here)", () => {
+    // misusing String.prototype.toLowerCase() would turn "İ" into "i" + U+0307, two code points
     expect(Array.from(normalizeHandle("İ")).length).toBe(1);
   });
 
-  it("不 trim 空白（意圖釘）：空白原樣保留，由 validateHandle 的 charset 拒收", () => {
+  it("does not trim whitespace (pinned intent): whitespace is kept as is and rejected by the charset check of validateHandle", () => {
     expect(normalizeHandle(" Alice ")).toBe(" alice ");
     expect(validateHandle(normalizeHandle(" Alice "))).toBe("charset");
   });
 
-  it("normalize→validate 組合：大寫輸入經正規化後合法", () => {
+  it("normalize -> validate: upper-case input is valid after normalisation", () => {
     expect(validateHandle(normalizeHandle("ALICE-Lee2"))).toBeNull();
   });
 });
 
-describe("validateHandle（1–32、^[a-z0-9-]+$、dash 規則、非 uuid 形；無保留字單）", () => {
-  it("合法：小寫英數與中段連字號", () => {
+describe("validateHandle (1-32, ^[a-z0-9-]+$, dash rules, not uuid-shaped; no reserved-word list)", () => {
+  it("valid: lower-case alphanumerics and inner hyphens", () => {
     expect(validateHandle("alice-lee")).toBeNull();
     expect(validateHandle("a")).toBeNull();
-    expect(validateHandle("user-3f2a9c1d")).toBeNull(); // DB default 兜底形必須合法
+    expect(validateHandle("user-3f2a9c1d")).toBeNull(); // the DB default fallback shape must be valid
     expect(validateHandle("a".repeat(32))).toBeNull();
   });
 
-  it("長度：空字串與 33 字元皆拒", () => {
+  it("length: empty string and 33 characters are both rejected", () => {
     expect(validateHandle("")).toBe("length");
     expect(validateHandle("a".repeat(33))).toBe("length");
   });
 
-  it("長度以 code point 計（比照 validateSlug）：34 code unit／17 code point 的 emoji 串落 charset 而非 length", () => {
-    // 把實作改回 normalized.length（code unit）這條會回 "length" 而紅——守住 code-point 決定
+  it("length is counted in code points (like validateSlug): an emoji string of 34 code units / 17 code points fails charset, not length", () => {
+    // reverting the implementation to normalized.length (code units) would return "length" and turn this red: pins the code-point decision
     expect(validateHandle("😀".repeat(17))).toBe("charset");
   });
 
-  it("charset：非 ASCII、底線、點、空白、大寫（未正規化）皆拒", () => {
+  it("charset: non-ASCII, underscore, dot, whitespace and upper case (not normalised) are all rejected", () => {
     expect(validateHandle("ünsal")).toBe("charset");
     expect(validateHandle("alice_lee")).toBe("charset");
     expect(validateHandle("alice.lee")).toBe("charset");
     expect(validateHandle("alice lee")).toBe("charset");
     expect(validateHandle("Alice")).toBe("charset");
-    // İ 經錯誤的 Unicode lowercase 產生的 combining mark 形也在 charset 這關被擋
+    // the combining-mark form that dotted capital I produces under a wrong Unicode lowercase is also stopped at the charset check
     expect(validateHandle("i̇stanbul")).toBe("charset");
   });
 
-  it("dash：頭尾與連續連字號拒收", () => {
+  it("dash: leading, trailing and consecutive hyphens are rejected", () => {
     expect(validateHandle("-abc")).toBe("dash");
     expect(validateHandle("abc-")).toBe("dash");
     expect(validateHandle("a--b")).toBe("dash");
     expect(validateHandle("-")).toBe("dash");
   });
 
-  it("uuid 形拒收（完整 uuid 也同時超長——兩個規則各自成立，斷言非 null 即可）", () => {
+  it("uuid-shaped is rejected (a full uuid is also too long - the two rules each hold, so asserting non-null is enough)", () => {
     expect(validateHandle("550e8400-e29b-41d4-a716-446655440000")).not.toBeNull();
   });
 
-  it("反向釘：handle **無保留字單**——api/new/settings/admin/login 都是合法 handle（刻意不設：handle 恆在 /n/ /p/ 第二段，零路由衝突面）", () => {
+  it("reverse pin: handle has **no reserved-word list** - api/new/settings/admin/login are valid handles (deliberate: a handle is the second segment under /n/ and /p/, so no route can conflict)", () => {
     for (const word of ["api", "new", "settings", "admin", "login", "notes", "p", "n", "g", "u"]) {
       expect(validateHandle(word), word).toBeNull();
     }

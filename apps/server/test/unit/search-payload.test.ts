@@ -1,6 +1,6 @@
 /**
- * #93：回應層 wire 預算——依「筆記順序 → 每篇 ord 順序」逐個加入 match，下一個會超過就**停止加入任何 match**（不跳過再試）。
- * 另：「search 桶在查詢之前扣」（耗盡者不碰 DB）——不連 DB 的純單元案。
+ * #93: response-layer wire budget: matches are added in note order, then each note's ord order; once the next one would exceed the budget, **stop adding any match** (no skipping to try a later one).
+ * Also "the search bucket is charged before the query" (an exhausted one never touches the DB): pure unit cases with no DB.
  */
 import { describe, expect, it } from "vitest";
 import type { McpToolCtx } from "../../src/mcp/context.js";
@@ -13,17 +13,17 @@ const note = (id: string) => ({
 const m = (n: number): SearchMatchForModel => ({ sectionId: "s", heading: "", snippet: "x".repeat(n) });
 
 describe("assembleSearchPayload", () => {
-  it("預算夠 → 全部加入、沒有 matchesTruncated", () => {
+  it("enough budget -> all added, no matchesTruncated", () => {
     const out = assembleSearchPayload([note("a"), note("b")], [[m(10), m(10)], [m(10)]], false);
     expect(out.notes.map(n => n.matches.length)).toEqual([2, 1]);
     expect("matchesTruncated" in out).toBe(false);
   });
-  it("預算不夠 → 在第一個放不下的地方停止、之後即使放得下也不加、帶 matchesTruncated: true", () => {
+  it("not enough budget -> stops at the first one that does not fit, adds nothing after it even if it would fit, carries matchesTruncated: true", () => {
     const notes = [note("a"), note("b")];
     const p0 = JSON.stringify({ notes, truncated: false });
     const base = p0.length + JSON.stringify(p0).length + 64;
-    // 預算＝恰好放得下 m(10) 與 m(1)：「跳過 m(5000) 再試下一個」的寫法會把 b 的 m(1) 放進去（[1, 1]）。
-    // ⚠ 原本的 base + 200 放不下 m(10)＋m(1)（122＋104），那個寫法下照樣是 [1, 0]——零鑑別力（突變實測）。
+    // Budget = exactly enough for m(10) and m(1): a "skip m(5000), try the next" implementation would put b's m(1) in ([1, 1]).
+    // A looser base + 200 does not fit m(10)+m(1) (122 + 104), so it gives [1, 0] under that implementation too and cannot tell the two apart.
     const cost = (x: SearchMatchForModel) => { const j = JSON.stringify(x); return j.length + JSON.stringify(j).length + 2; };
     const out = assembleSearchPayload(notes, [[m(10), m(5000)], [m(1)]], false, base + cost(m(10)) + cost(m(1)));
     expect(out.notes.map(n => n.matches.length)).toEqual([1, 0]);
@@ -31,10 +31,10 @@ describe("assembleSearchPayload", () => {
   });
 });
 
-describe("#93 扣桶時點", () => {
-  it("search 桶耗盡 → too_many_requests，且在查詢之前（不碰 db）", async () => {
+describe("#93 when the bucket is charged", () => {
+  it("search bucket exhausted -> too_many_requests, before the query (db untouched)", async () => {
     let touched = 0;
-    // 對 db 的任何存取都計數並丟例外：扣桶若搬到查詢之後，查詢會先碰到它。
+    // any access to db is counted and throws: if the charge moved after the query, the query would hit it first.
     const db = new Proxy({}, { get() { touched += 1; throw new Error("db touched"); } });
     const ctx = { db, userId: "u", limiters: { search: { consume: () => false } } } as unknown as McpToolCtx;
     const r = await searchNotes({ query: "x" }, ctx);

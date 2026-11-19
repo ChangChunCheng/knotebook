@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { effectivePasswordLogin } from "../../src/auth/password-login.js";
 
-describe("effectivePasswordLogin（#187：有效值＝DB 值 OR env 強制；讀不到列視同開）", () => {
+describe("effectivePasswordLogin (#187: effective value = DB value OR env force; an unreadable row counts as on)", () => {
   it.each([
     [true, false, true],
     [false, false, false],
@@ -9,7 +9,7 @@ describe("effectivePasswordLogin（#187：有效值＝DB 值 OR env 強制；讀
     [true, true, true],
     [false, true, true],
     [null, true, true],
-  ] as const)("DB=%s、env 強制=%s → %s", (dbValue, forced, expected) => {
+  ] as const)("DB=%s, env force=%s -> %s", (dbValue, forced, expected) => {
     expect(effectivePasswordLogin(dbValue, forced)).toBe(expected);
   });
 });

@@ -11,8 +11,6 @@ import {
 } from "../../src/transfer/paths.js";
 import type { BulkRange } from "../../src/auth/transfer-token.js";
 
-/** bulk transfer 的檔案路徑。 */
-
 const T0 = new Date("2026-01-01T00:00:00Z");
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 let seq = 0;
@@ -37,7 +35,7 @@ const folder = (name: string, extra: Partial<LayoutFolder> = {}): LayoutFolder =
 const group = (name: string, extra: Partial<LayoutGroup> = {}): LayoutGroup => ({ id: uid(), name, createdAt: T0, ...extra });
 const ALL: BulkRange = { kind: "all" };
 
-describe("sanitizeSegment 規則 1：非法字元 → _", () => {
+describe("sanitizeSegment: illegal characters -> _", () => {
   it.each([
     ["a<b", "a_b"],
     ["a>b", "a_b"],
@@ -59,10 +57,10 @@ describe("sanitizeSegment 規則 1：非法字元 → _", () => {
     ["a\u200bb", "a_b"],
     ["a\u200fb", "a_b"],
     ["a\ufeffb", "a_b"],
-  ])("%j → %j", (raw, want) => {
+  ])("%j -> %j", (raw, want) => {
     expect(sanitizeSegment(raw)).toBe(want);
   });
-  it("shell 在雙引號內仍會展開的 `$`、反引號、`!` → _；標題與資料夾名都是", () => {
+  it("`$`, backtick and `!`, which the shell still expands inside double quotes, -> _; for both titles and folder names", () => {
     const shell = ["$", "`", "!"];
     for (const raw of ["$(touch x)", "`id`", "$HOME", "a!b", "${PATH}", "$(echo PWNED>>pwned.txt)"]) {
       for (const out of [sanitizeSegment(raw), sanitizeTitle(raw)]) for (const c of shell) expect(out, `${raw} → ${out}`).not.toContain(c);
@@ -71,7 +69,7 @@ describe("sanitizeSegment 規則 1：非法字元 → _", () => {
     expect(sanitizeTitle("`id`")).toBe("_id_");
     expect(sanitizeTitle("$HOME")).toBe("_HOME");
     expect(sanitizeTitle("a!b")).toBe("a_b");
-    // 整條匯出路徑（標題＋資料夾名）也不含這三個字元
+    // the whole export path (title + folder name) does not contain these three characters either
     const f = folder("$(echo x)");
     const n1 = note("$(touch x)", { folderId: f.id });
     const n2 = note("`id`");
@@ -80,50 +78,50 @@ describe("sanitizeSegment 規則 1：非法字元 → _", () => {
     for (const p of [...files.values(), ...dirs.map(d => d.path)]) for (const c of shell) expect(p, p).not.toContain(c);
     expect(files.get(n1.id)).toBe("My notes/_(echo x)/_(touch x).md");
   });
-  it("四個區間的外側鄰字不換（U+2029、U+202F、U+2065、U+206A、U+200A、U+2010、U+0080）", () => {
+  it("characters just outside the four ranges are not replaced (U+2029, U+202F, U+2065, U+206A, U+200A, U+2010, U+0080)", () => {
     expect(sanitizeSegment("a\u2029b\u202fb\u2065b\u206ab\u200ab\u2010b\u0080b~")).toBe("a\u2029b\u202fb\u2065b\u206ab\u200ab\u2010b\u0080b~");
   });
 });
 
-describe("sanitizeSegment 規則 2–6", () => {
-  it("P2 規則 2：尾端 . 與空白去掉；空了 → _", () => {
+describe("sanitizeSegment: trailing dot/space, reserved names, leading dot, NFC, truncation", () => {
+  it("trailing . and whitespace removed; if that empties it -> _", () => {
     expect(sanitizeSegment("a. ")).toBe("a");
     expect(sanitizeSegment("...")).toBe("_");
     expect(sanitizeSegment("   ")).toBe("_");
     expect(sanitizeSegment("a . .")).toBe("a");
   });
-  it("P3 規則 3：保留名（不分大小寫、含帶副檔名形）前加 _；COM10 不是保留名", () => {
+  it("reserved names (case-insensitive, including with an extension) get a _ prefix; COM10 is not reserved", () => {
     expect(sanitizeSegment("CON")).toBe("_CON");
     expect(sanitizeSegment("con.md")).toBe("_con.md");
     expect(sanitizeSegment("Lpt9")).toBe("_Lpt9");
     expect(sanitizeSegment("aux.tar.gz")).toBe("_aux.tar.gz");
     expect(sanitizeSegment("COM10")).toBe("COM10");
     expect(sanitizeSegment("CONSOLE")).toBe("CONSOLE");
-    // 規則 ② 去尾端空白之後才判保留名（Windows 也把 "CON " 當保留名）
+    // the reserved-name check happens after trailing whitespace is removed (Windows also treats "CON " as reserved)
     expect(sanitizeSegment("CON ")).toBe("_CON");
     expect(sanitizeSegment("aux  ")).toBe("_aux");
     expect(sanitizeSegment("nul.")).toBe("_nul");
   });
-  it("P4 規則 4：開頭 . → _（只換第一個）", () => {
+  it("leading . -> _ (only the first is replaced)", () => {
     expect(sanitizeSegment(".git")).toBe("_git");
     expect(sanitizeSegment(".")).toBe("_");
-    // （docs/mcp.md 照這幾形寫）：`..` → `_`（第一個點換掉、尾端的點去掉）；`.knotebook` → `_knotebook`；
-    // 標題 `.`、`..`、`...` 清洗後只剩 `_` → Untitled
+    // docs/mcp.md documents these exact shapes: `..` -> `_` (the first dot is replaced, the trailing dot is removed); `.knotebook` -> `_knotebook`;
+    // titles `.`, `..`, `...` are left with only `_` after cleaning -> Untitled
     expect(sanitizeSegment("..")).toBe("_");
     expect(sanitizeSegment(".knotebook")).toBe("_knotebook");
     for (const t of [".", "..", "..."]) expect(sanitizeTitle(t), t).toBe("Untitled");
-    // 同一層的 `.` 與 `..` 資料夾都清成 `_`，後建的那個拿 ` (2)`
+    // the `.` and `..` folders on the same level are both cleaned to `_`; the one created later gets ` (2)`
     const a = folder(".", { createdAt: at(0) });
     const b = folder("..", { createdAt: at(1) });
     const { dirs } = buildLayout({ notes: [], folders: [a, b], groups: [], range: ALL });
     expect(dirs.filter(d => d.id === a.id || d.id === b.id).map(d => d.path)).toEqual(["My notes/_", "My notes/_ (2)"]);
   });
-  it("P5 規則 5：NFC", () => {
+  it("NFC", () => {
     const out = sanitizeSegment("e\u0301");
     expect(out).toBe("\u00e9");
     expect(Array.from(out)).toHaveLength(1);
   });
-  it("P6 規則 6：截到 64 code point（不切代理對），截完 trimEnd", () => {
+  it("truncated to 64 code points (a surrogate pair is not cut), trimEnd after truncating", () => {
     const astral = "\u{20BB7}".repeat(65);
     const out = sanitizeSegment(astral);
     expect(Array.from(out)).toHaveLength(SEGMENT_MAX);
@@ -135,8 +133,8 @@ describe("sanitizeSegment 規則 2–6", () => {
   });
 });
 
-describe("sanitizeTitle（規則 8）", () => {
-  it("P7 清洗後空或只由 _ 組成 → Untitled；a_／_a 保留", () => {
+describe("sanitizeTitle", () => {
+  it("empty after cleaning or made only of _ -> Untitled; a_ / _a are kept", () => {
     for (const t of ["", "   ", "_", "///", "...", "__"]) expect(sanitizeTitle(t), JSON.stringify(t)).toBe("Untitled");
     expect(sanitizeTitle("a_")).toBe("a_");
     expect(sanitizeTitle("_a")).toBe("_a");
@@ -145,22 +143,22 @@ describe("sanitizeTitle（規則 8）", () => {
 });
 
 describe("casefoldKey", () => {
-  it("NFC → toUpperCase → toLowerCase（ß 與 SS 同鍵；\u00e9 兩種寫法同鍵）", () => {
+  it("NFC -> toUpperCase -> toLowerCase (ss-sharp and SS share a key; the two spellings of e-acute share a key)", () => {
     expect(casefoldKey("ß")).toBe(casefoldKey("SS"));
     expect(casefoldKey("e\u0301")).toBe(casefoldKey("\u00c9"));
     expect(casefoldKey("Abc")).toBe("abc");
   });
 });
 
-describe("buildLayout 判重（規則 7、9）", () => {
-  it("P8 同目錄 A／a：createdAt 早的拿原名，晚的 (2)", () => {
+describe("buildLayout duplicate detection", () => {
+  it("same directory A / a: the earlier createdAt keeps the original name, the later gets (2)", () => {
     const late = note("A", { createdAt: at(10) });
     const early = note("a", { createdAt: at(1) });
     const L = buildLayout({ notes: [late, early], folders: [], groups: [], range: { kind: "personal" } });
     expect(L.files.get(early.id)).toBe("My notes/a.md");
     expect(L.files.get(late.id)).toBe("My notes/A (2).md");
   });
-  it("P8 清洗後撞名（a:b／a_b）、ß／SS、第三個拿 (3)", () => {
+  it("names colliding after cleaning (a:b / a_b), ss-sharp / SS, the third gets (3)", () => {
     const n1 = note("a:b", { createdAt: at(1) });
     const n2 = note("a_b", { createdAt: at(2) });
     const n3 = note("a|b", { createdAt: at(3) });
@@ -175,21 +173,21 @@ describe("buildLayout 判重（規則 7、9）", () => {
       "My notes/SS (2).md",
     ]);
   });
-  it("P8 createdAt 相同時以 id 排", () => {
+  it("equal createdAt: ordered by id", () => {
     const hi = { ...note("x"), id: "ffffffff-0000-4000-8000-000000000000" };
     const lo = { ...note("X"), id: "00000000-ffff-4000-8000-000000000000" };
     const L = buildLayout({ notes: [hi, lo], folders: [], groups: [], range: { kind: "personal" } });
     expect(L.files.get(lo.id)).toBe("My notes/X.md");
     expect(L.files.get(hi.id)).toBe("My notes/x (2).md");
   });
-  it("P8 尾碼找第一個空位：已有「a (2)」標題時第二個 a 拿 (3)", () => {
+  it("the suffix takes the first free slot: with a title 'a (2)' already present, the second a gets (3)", () => {
     const a1 = note("a", { createdAt: at(1) });
     const a2lit = note("a (2)", { createdAt: at(2) });
     const a3 = note("A", { createdAt: at(3) });
     const L = buildLayout({ notes: [a3, a2lit, a1], folders: [], groups: [], range: { kind: "personal" } });
     expect([a1, a2lit, a3].map(n => L.files.get(n.id))).toEqual(["My notes/a.md", "My notes/a (2).md", "My notes/A (3).md"]);
   });
-  it("P9 規則 9：資料夾 x.md 與筆記 x 同層 → 檔 x.md、資料夾 x.md (2)（即使資料夾較早）", () => {
+  it("folder x.md and note x on the same level -> file x.md, folder x.md (2) (even if the folder is older)", () => {
     const f = folder("x.md", { createdAt: at(0) });
     const n = note("x", { createdAt: at(5) });
     const inF = note("inside", { folderId: f.id });
@@ -198,7 +196,7 @@ describe("buildLayout 判重（規則 7、9）", () => {
     expect(L.files.get(inF.id)).toBe("My notes/x.md (2)/inside.md");
     expect(L.dirs.map(d => d.path)).toContain("My notes/x.md (2)");
   });
-  it("資料夾之間同層撞名也加尾碼（清洗後 a/b 與 a_b）", () => {
+  it("collisions between folders on the same level also get a suffix (after cleaning a/b and a_b)", () => {
     const f1 = folder("a/b", { createdAt: at(1) });
     const f2 = folder("a_b", { createdAt: at(2) });
     const L = buildLayout({ notes: [], folders: [f2, f1], groups: [], range: { kind: "personal" } });
@@ -207,7 +205,7 @@ describe("buildLayout 判重（規則 7、9）", () => {
   });
 });
 
-describe("buildLayout 配置（P10–P12）", () => {
+describe("buildLayout placement", () => {
   function world() {
     seq = 1000;
     const g1 = group("團隊", { createdAt: at(1) });
@@ -216,7 +214,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     const gSlash = group("a/b", { createdAt: at(4) });
     const gDots = group("..", { createdAt: at(5) });
     const gCon = group("CON", { createdAt: at(6) });
-    // 個人：5 層巢狀＋空資料夾
+    // personal: 5 levels of nesting + an empty folder
     const p1 = folder("L1");
     const p2 = folder("L2", { parentId: p1.id });
     const p3 = folder("L3", { parentId: p2.id });
@@ -224,7 +222,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     const p5 = folder("L5", { parentId: p4.id });
     const pEmpty = folder("空的");
     const pSlash = folder("x/y");
-    // 群組資料夾、我的 shared 資料夾
+    // group folder, my shared folder
     const gf = folder("規格", { space: { kind: "group", groupId: g1.id } });
     const sf = folder("別人的", { space: { kind: "shared" } });
     const nPersonal = note("個人");
@@ -239,7 +237,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     return { g1, g2, gEmpty, gSlash, gDots, gCon, p1, p2, p3, p4, p5, pEmpty, pSlash, gf, sf, nPersonal, nDeep, nG1, nG1f, nG2, nShTop, nShF, nLost, nSlashG };
   }
 
-  it("P10 三空間＋巢狀＋空資料夾＋shared placement 有無＋同名群組＋沒有筆記的群組；dirs 的 id／space", () => {
+  it("three spaces + nesting + empty folders + shared placement present or not + same-named groups + a group without notes; id/space of dirs", () => {
     const w = world();
     const L = buildLayout({
       notes: [w.nPersonal, w.nDeep, w.nG1, w.nG1f, w.nG2, w.nShTop, w.nShF, w.nLost, w.nSlashG],
@@ -280,7 +278,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)));
   });
 
-  it("P12 dirs 依完整路徑 code unit 序（Groups/… < My notes/… < Shared with me/…）", () => {
+  it("dirs are ordered by full path code units (Groups/... < My notes/... < Shared with me/...)", () => {
     const w = world();
     const L = buildLayout({ notes: [], folders: [w.sf, w.pEmpty, w.gf], groups: [w.g1], range: ALL });
     const paths = L.dirs.map(d => d.path);
@@ -288,7 +286,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     expect([...paths].sort()).toEqual(paths);
   });
 
-  it("P11 範圍縮小（personal、資料夾）：輸入是完整集合，輸出只有範圍內、路徑逐字等於全部範圍", () => {
+  it("narrowing the range (personal, folder): the input is the full set, the output has only what is in range, paths verbatim equal to the full range", () => {
     const w = world();
     const input = {
       notes: [w.nPersonal, w.nDeep, w.nG1, w.nShTop],
@@ -300,13 +298,13 @@ describe("buildLayout 配置（P10–P12）", () => {
     expect([...personal.files.keys()].sort()).toEqual([w.nPersonal.id, w.nDeep.id].sort());
     expect(personal.files.get(w.nDeep.id)).toBe(full.files.get(w.nDeep.id));
     expect(personal.dirs).toEqual(full.dirs.filter(d => d.path === "My notes" || d.path.startsWith("My notes/")));
-    // 資料夾範圍：祖先鏈（含頂層）＋子樹
+    // folder range: the ancestor chain (including the top level) + the subtree
     const sub = buildLayout({ ...input, range: { kind: "folder", folderId: w.p3.id } });
     expect([...sub.files.values()]).toEqual(["My notes/L1/L2/L3/L4/L5/深.md"]);
     expect(sub.dirs.map(d => d.path)).toEqual(["My notes", "My notes/L1", "My notes/L1/L2", "My notes/L1/L2/L3", "My notes/L1/L2/L3/L4", "My notes/L1/L2/L3/L4/L5"]);
   });
 
-  it("群組名清洗：/ 不多一層、.. → _、CON → _CON；資料夾名 a/b 不多一層", () => {
+  it("group name cleaning: / does not add a level, .. -> _, CON -> _CON; folder name a/b does not add a level", () => {
     const w = world();
     const L = buildLayout({ notes: [w.nSlashG], folders: [w.pSlash], groups: [w.gSlash, w.gDots, w.gCon], range: ALL });
     expect(L.files.get(w.nSlashG.id)).toBe("Groups/a_b/在 a_b 群組.md");
@@ -315,7 +313,7 @@ describe("buildLayout 配置（P10–P12）", () => {
     expect(L.dirs.map(d => d.path)).not.toContain("Groups/..");
   });
 
-  it("標題清洗進檔名：空標題 → Untitled.md；兩篇空標題 → Untitled (2).md", () => {
+  it("title cleaning into file names: empty title -> Untitled.md; two empty titles -> Untitled (2).md", () => {
     const a = note("", { createdAt: at(1) });
     const b = note("///", { createdAt: at(2) });
     const L = buildLayout({ notes: [a, b], folders: [], groups: [], range: { kind: "personal" } });
@@ -323,8 +321,8 @@ describe("buildLayout 配置（P10–P12）", () => {
   });
 });
 
-describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍篩", () => {
-  /** 會讓「只看範圍內的同層」算出不同名字的三形：同名群組、清洗後撞名的資料夾、規則 9（祖先層的筆記 x 與資料夾 x.md）。 */
+describe("buildLayout range narrowing: names are computed on the full set, then filtered by range", () => {
+  /** Three shapes that would give different names if only the same level inside the range were looked at: same-named groups, folders colliding after cleaning, and the case where a note x at an ancestor level collides with a folder x.md. */
   function world() {
     seq = 5000;
     const gA = group("Team", { createdAt: at(1) });
@@ -356,7 +354,7 @@ describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍�
     return { gA, gB, gC, fAB1, fAB2, fXmd, fXmdKid, gAf, gBf, sf, notes, folders, groups };
   }
 
-  it("每一種範圍：files 與 dirs 都 ⊂ 全部範圍那份，而且逐字相同", () => {
+  it("for every range: files and dirs are a subset of the full-range set and verbatim equal", () => {
     const w = world();
     const full = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: ALL });
     expect(full.files.size).toBe(w.notes.length);
@@ -376,28 +374,28 @@ describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍�
     }
   });
 
-  it("同名群組：只抓第二個 Team 時仍是 Groups/Team (2)/…，不會落到第一個 Team 的路徑；目錄只有 Groups 與這個群組", () => {
+  it("same-named groups: exporting only the second Team still gives Groups/Team (2)/... and does not land on the first Team's path; the directories are only Groups and this group", () => {
     const w = world();
     const L = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "group", groupId: w.gB.id } });
     expect([...L.files.values()].sort()).toEqual(["Groups/Team (2)/B 頂層.md", "Groups/Team (2)/spec/B spec.md"]);
     expect(L.dirs.map(d => d.path)).toEqual(["Groups", "Groups/Team (2)", "Groups/Team (2)/spec"]);
   });
 
-  it("清洗後撞名的資料夾：資料夾範圍 a_b (2) 的路徑同全部範圍；祖先鏈只有頂層目錄", () => {
+  it("folders colliding after cleaning: for the folder range a_b (2) the paths equal the full range; the ancestor chain is only the top-level directory", () => {
     const w = world();
     const L = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "folder", folderId: w.fAB2.id } });
     expect([...L.files.values()]).toEqual(["My notes/a_b (2)/in b.md"]);
     expect(L.dirs.map(d => d.path)).toEqual(["My notes", "My notes/a_b (2)"]);
   });
 
-  it("規則 9 在祖先層：資料夾範圍 kid（在 x.md (2) 底下）路徑同全部範圍；祖先層的筆記 x 不在輸出裡", () => {
+  it("the collision with a note at an ancestor level: for the folder range kid (under x.md (2)) the paths equal the full range; the ancestor level's note x is not in the output", () => {
     const w = world();
     const L = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "folder", folderId: w.fXmdKid.id } });
     expect([...L.files.values()]).toEqual(["My notes/x.md (2)/kid/deep.md"]);
     expect(L.dirs.map(d => d.path)).toEqual(["My notes", "My notes/x.md (2)", "My notes/x.md (2)/kid"]);
   });
 
-  it("群組資料夾範圍：祖先鏈含 Groups 與群組目錄；shared 資料夾範圍取讀者 placement 在子樹裡的筆記", () => {
+  it("group folder range: the ancestor chain includes Groups and the group directory; the shared folder range takes the notes whose reader placement is inside the subtree", () => {
     const w = world();
     const g = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "folder", folderId: w.gBf.id } });
     expect(g.dirs.map(d => d.path)).toEqual(["Groups", "Groups/Team (2)", "Groups/Team (2)/spec"]);
@@ -407,7 +405,7 @@ describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍�
     expect([...s.files.values()]).toEqual(["Shared with me/放這/分享放好.md"]);
   });
 
-  it("personal／shared 範圍：只有該頂層目錄與其下；群組目錄不寫", () => {
+  it("personal / shared range: only that top-level directory and what is below it; no group directories are written", () => {
     const w = world();
     const p = buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "personal" } });
     expect(p.dirs.every(d => d.path === "My notes" || d.path.startsWith("My notes/"))).toBe(true);
@@ -418,13 +416,13 @@ describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍�
     expect(s.files.size).toBe(2);
   });
 
-  it("範圍所指的群組／資料夾不在輸入裡 → 丟錯（呼叫端先判 403）", () => {
+  it("a group/folder the range points to is not in the input -> throws (the caller checks 403 first)", () => {
     const w = world();
     expect(() => buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "group", groupId: uid() } })).toThrow();
     expect(() => buildLayout({ notes: w.notes, folders: w.folders, groups: w.groups, range: { kind: "folder", folderId: uid() } })).toThrow();
   });
 
-  it("同名群組的輸入順序不影響命名（依 createdAt、id）", () => {
+  it("the input order of same-named groups does not affect naming (by createdAt, id)", () => {
     const w = world();
     const a = buildLayout({ notes: w.notes, folders: w.folders, groups: [w.gA, w.gB, w.gC], range: ALL });
     const b = buildLayout({ notes: w.notes, folders: w.folders, groups: [w.gC, w.gB, w.gA], range: ALL });
@@ -434,8 +432,8 @@ describe("buildLayout 範圍縮小：命名在完整集合上算、再依範圍�
   });
 });
 
-describe("檔名開頭的空白（known-limitations）", () => {
-  it("開頭的空白保留、結尾的空白去掉", () => {
+describe("leading whitespace in file names (known-limitations)", () => {
+  it("leading whitespace is kept, trailing whitespace is removed", () => {
     expect(sanitizeTitle("  前後空白  ")).toBe("  前後空白");
   });
 });

@@ -1,12 +1,12 @@
 /**
- * #93：摘錄演算法。cost＝MCP 的 JSON 逃脫後成本（`escapedLength`）。
- * 保證：libc locale 下恆含命中起點；命中逃脫後成本 ≤ 158 時含整段命中；結果逃脫後 ≤ 160。
+ * #93: snippet algorithm. cost = cost after the MCP's JSON escaping (`escapedLength`).
+ * Guarantees: under the libc locale the match start is included; a match whose escaped cost is <= 158 is included whole; the escaped result is <= 160.
  */
 import { describe, expect, it } from "vitest";
 import { MCP_SNIPPET_MAX, escapedLength } from "../../src/mcp/limits.js";
 import { buildSnippet } from "../../src/notes/search-snippet.js";
 
-/** 模擬 SQL 的窗口（search-sql.ts：前 40、命中、後 160 code point；win_start 1-based）。 */
+/** Simulates the SQL window (search-sql.ts: 40 code points before, the match, 160 after; win_start is 1-based). */
 function windowOf(body: string, query: string) {
   const cps = Array.from(body);
   const lower = Array.from(body.toLowerCase());
@@ -22,8 +22,8 @@ function windowOf(body: string, query: string) {
 const snip = (body: string, q: string) => buildSnippet(windowOf(body, q), MCP_SNIPPET_MAX, escapedLength);
 const esc = (s: string) => JSON.stringify(s).length - 2;
 
-describe("摘錄", () => {
-  it("命中在段首：沒有前綴 …；段尾：沒有後綴 …；段中：兩邊都有", () => {
+describe("snippet", () => {
+  it("match at section start: no leading ellipsis; at the end: no trailing ellipsis; in the middle: both", () => {
     expect(snip("zeta and more", "zeta")).toBe("zeta and more");
     expect(snip("some words zeta", "zeta")).toBe("some words zeta");
     const mid = snip(`${"a ".repeat(100)}zeta${" b".repeat(200)}`, "zeta");
@@ -31,34 +31,34 @@ describe("摘錄", () => {
     expect(mid.endsWith("…")).toBe(true);
     expect(mid).toContain("zeta");
   });
-  it("… 的差一邊界：摘錄外恰好剩 0 個字 → 沒有 …；恰好剩 1 個字 → 有 …（前後各一組）", () => {
-    // 後文：命中在段首、成本 4，後文預算 158 − 4 ＝ 154 個 `x`。
+  it("ellipsis off-by-one boundary: exactly 0 characters left outside the snippet -> no ellipsis; exactly 1 left -> ellipsis (before and after each)", () => {
+    // After: match at the start, cost 4, after-budget 158 - 4 = 154 `x` characters.
     expect(snip(`zeta${"x".repeat(154)}`, "zeta")).toBe(`zeta${"x".repeat(154)}`);
     expect(snip(`zeta${"x".repeat(155)}`, "zeta")).toBe(`zeta${"x".repeat(154)}…`);
-    // 前文：窗口只帶命中前 40 個字（前文預算 51 用不完），所以前文恰為窗口；body 多 1 個字就在窗口外。
+    // Before: the window carries only the 40 characters before the match (before-budget 51 is not used up), so the before text is exactly the window; one more character in the body falls outside it.
     expect(snip(`${"y".repeat(40)}zeta`, "zeta")).toBe(`${"y".repeat(40)}zeta`);
     expect(snip(`${"y".repeat(41)}zeta`, "zeta")).toBe(`…${"y".repeat(40)}zeta`);
   });
-  it("前後文的連續空白（含換行）壓成一個空格；命中段本身不壓、保持 body 原文的大小寫", () => {
+  it("consecutive whitespace (including newlines) in the before/after text collapses to one space; the match itself is not collapsed and keeps the body's original case", () => {
     expect(snip("pre \n\n  ZeTa   x  y", "zeta")).toBe("pre ZeTa x y");
     expect(snip("pre x  y post", "x  y")).toBe("pre x  y post");
   });
-  it("40 個 U+0001 前文＋命中 → 命中整段在摘錄裡（窗口先截再算預算的舊演算法會把它丟掉）", () => {
+  it("40 U+0001 before the match + match -> the whole match is in the snippet (an older algorithm that cut the window first and computed the budget after would drop it)", () => {
     const s = snip(`${"\u0001".repeat(40)}zeta tail`, "zeta");
     expect(s).toContain("zeta tail");
     expect(esc(s)).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
   });
-  it("查詢為 200 個 \"（逃脫後 400）→ 摘錄以命中起點開頭、逃脫後 ≤ 160", () => {
+  it("a query of 200 \" (400 after escaping) -> snippet starts at the match start, escaped length <= 160", () => {
     const q = '"'.repeat(200);
     const s = snip(`pre ${q} post`, q);
     expect(s.startsWith('…"')).toBe(true);
     expect(esc(s)).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
   });
-  it("任何輸入的逃脫後長度 ≤ 160（混合 \\\"、C0、CJK、emoji）", () => {
+  it("escaped length <= 160 for any input (mixed backslash-quote, C0, CJK, emoji)", () => {
     const body = `${"\\\"\u0001中😀".repeat(60)}zeta${"\\\"\u0002文😀".repeat(80)}`;
     expect(esc(snip(body, "zeta"))).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
   });
-  it("命中前後都是 emoji、命中本身含 emoji → 含命中、沒有孤立代理、≤ 160", () => {
+  it("emoji on both sides of the match and inside it -> match included, no lone surrogate, <= 160", () => {
     const s = snip(`${"😀".repeat(50)}ze😀ta${"😀".repeat(80)}`, "ze😀ta");
     expect(s).toContain("ze😀ta");
     expect(JSON.stringify(s)).not.toMatch(/\\ud[89a-f]/i);

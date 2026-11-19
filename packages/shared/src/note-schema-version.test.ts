@@ -2,13 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createHeadlessNoteSchema } from "./note-schema-config.js";
 import { NOTE_SCHEMA_VERSION } from "./note-schema-version.js";
 
-// note schema 變了而 NOTE_SCHEMA_VERSION 沒升 ⇒ 紅。
-// 舊分頁閘門只認這個整數；schema 改了卻沒升，閘門前後的分頁會被當成同版，舊分頁照樣剝掉新屬性。
-// 新 props 加上之後以同一份正規化實算：digest = 3467380a（BlockNote 0.52.1）。
-// 守衛範圍：只看 headless schema 的 block／inline／style 型別、prop 名與預設值；web noteSchema 的另組、PM 層屬性（blockContainer attrs、link mark attrs）不在 digest 內。
-// 2：並排 columnList／column，digest = bcaeadd4。
+// Red when the note schema changed but NOTE_SCHEMA_VERSION was not bumped.
+// The stale-tab gate only recognises this integer: if the schema changes without a bump, tabs on both sides of the gate count as the same version and old tabs still strip the new attributes.
+// Scope: only the headless schema's block / inline / style types, prop names and defaults; the web noteSchema's own set and PM-level attributes (blockContainer attrs, link mark attrs) are not in the digest.
 
-/** 已記錄的 schema 版本與 digest。schema 改了：升 NOTE_SCHEMA_VERSION，並把這裡換成新的 { version, digest }。 */
+/** The recorded schema version and digest. If the schema changed: bump NOTE_SCHEMA_VERSION and replace this with the new { version, digest }. */
 const RECORDED = { version: 2, digest: "bcaeadd4" } as const;
 
 type PropSpec = { default?: unknown; values?: unknown };
@@ -25,7 +23,6 @@ function propsOf(propSchema: unknown): string {
     .join(",");
 }
 
-/** 型別名＋各 prop 名＋預設值（＋列舉值），排序後逐行。 */
 function canonical(schema: { blockSchema: object; inlineContentSchema: object; styleSchema: object }): string {
   const lines: string[] = [];
   const blocks = schema.blockSchema as Record<string, { content: string; propSchema: unknown }>;
@@ -40,7 +37,7 @@ function canonical(schema: { blockSchema: object; inlineContentSchema: object; s
   return lines.join("\n");
 }
 
-/** FNV-1a 32-bit（純 JS，shared 不碰 node:crypto）。 */
+/** FNV-1a 32-bit (plain JS; shared does not touch node:crypto). */
 function fnv1a32(text: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
@@ -50,15 +47,15 @@ function fnv1a32(text: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
-describe("NOTE_SCHEMA_VERSION 與 schema digest", () => {
-  it("schema 的 digest 與記錄相符（不符：升 NOTE_SCHEMA_VERSION 並更新 RECORDED——received 就是新的 digest）", () => {
+describe("NOTE_SCHEMA_VERSION and schema digest", () => {
+  it("the schema digest matches the record (if not: bump NOTE_SCHEMA_VERSION and update RECORDED - the received value is the new digest)", () => {
     const digest = fnv1a32(canonical(createHeadlessNoteSchema("http://localhost/")));
     expect({ version: NOTE_SCHEMA_VERSION, digest }).toEqual(RECORDED);
   });
-  it("正規化形含 wikilink 的四個 props（守 canonical 本身沒漏掉 inline content）", () => {
+  it("the canonical form contains the wikilink's four props (guards against canonical itself missing inline content)", () => {
     expect(canonical(createHeadlessNoteSchema("http://localhost/"))).toContain('I:wikilink:none:anchorBlockId="",label="",snapshotTitle="",targetNoteId=""');
   });
-  it("正規化形含並排兩型", () => {
+  it("the canonical form contains the two column types", () => {
     const text = canonical(createHeadlessNoteSchema("http://localhost/"));
     expect(text).toContain("B:column:none:width=1");
     expect(text).toContain("B:columnList:none:");

@@ -18,7 +18,7 @@ import {
   retryAfterSeconds,
 } from "../../src/http/rate-limit.js";
 
-describe("#397：9 個可調桶的常數與註冊表一致", () => {
+describe("#397: constants of the 9 tunable buckets match the registry", () => {
   const pairs: Array<[SiteLimitKey, { readonly limit: number; readonly windowMs: number }]> = [
     ["rateTokenRead", TOKEN_READ_LIMIT],
     ["rateTokenWrite", TOKEN_WRITE_LIMIT],
@@ -30,11 +30,11 @@ describe("#397：9 個可調桶的常數與註冊表一致", () => {
     ["rateTransferExport", TRANSFER_EXPORT_LIMIT],
     ["rateTransferWrite", TRANSFER_WRITE_LIMIT],
   ];
-  it.each(pairs)("%s：windowMs 與 limit 等於註冊表", (k, c) => {
+  it.each(pairs)("%s: windowMs and limit equal the registry", (k, c) => {
     expect(c.windowMs).toBe(siteLimitDef(k).windowMs);
     expect(c.limit).toBe(siteLimitDef(k).default);
   });
-  it("currentLimit() 回現讀的上限（數字與函式兩種）", () => {
+  it("currentLimit() returns the live limit (for both number and function limits)", () => {
     let n = 5;
     expect(new FixedWindowLimiter({ limit: 7, windowMs: 1_000 }).currentLimit()).toBe(7);
     const l = new FixedWindowLimiter({ limit: () => n, windowMs: 1_000 });
@@ -44,58 +44,58 @@ describe("#397：9 個可調桶的常數與註冊表一致", () => {
   });
 });
 
-describe("LoginThrottle key 上限（issue #15）", () => {
-  /** 每次用不同帳號，讓斷言只反映 IP 那一軌。 */
+describe("LoginThrottle key cap (issue #15)", () => {
+  /** Uses a different account each time so the assertion reflects only the IP track. */
   const fail = (throttle: LoginThrottle, ip: string, times: number, tag = ip) => {
     for (let i = 0; i < times; i += 1) throttle.recordFailure(`${tag}-account-${i}`, ip);
   };
 
-  it("不同 IP 灌爆時舊的紀錄會被淘汰，不是無上限成長", () => {
+  it("flooding from different IPs evicts old records instead of growing without bound", () => {
     const now = 1000;
     const throttle = new LoginThrottle({ now: () => now, maxKeys: 2 });
 
     fail(throttle, "10.0.0.1", 5);
     expect(throttle.checkAllowed("someone-else", "10.0.0.1").allowed).toBe(false);
 
-    // 另外兩個 IP 各失敗一次——上限是 2，10.0.0.1 是最舊的，被擠掉。
+    // two other IPs fail once each: the cap is 2, 10.0.0.1 is the oldest and is pushed out.
     fail(throttle, "10.0.0.2", 1);
     fail(throttle, "10.0.0.3", 1);
 
     expect(throttle.checkAllowed("someone-else", "10.0.0.1").allowed).toBe(true);
   });
 
-  it("最近失敗的紀錄最晚被淘汰（封鎖中的那筆不會被更舊的擠掉）", () => {
+  it("the most recently failed record is evicted last (a blocked one is not displaced by an older one)", () => {
     let now = 1000;
     const throttle = new LoginThrottle({ now: () => now, maxKeys: 2 });
 
-    fail(throttle, "10.0.0.1", 5); // 封鎖中
+    fail(throttle, "10.0.0.1", 5); // blocked
     now += 1;
-    fail(throttle, "10.0.0.2", 5); // 也封鎖中，但更新
+    fail(throttle, "10.0.0.2", 5); // also blocked, but newer
     now += 1;
-    fail(throttle, "10.0.0.1", 1); // 10.0.0.1 重新移到尾端
+    fail(throttle, "10.0.0.1", 1); // 10.0.0.1 moves to the tail again
     now += 1;
-    fail(throttle, "10.0.0.3", 1); // 淘汰最舊的——現在是 10.0.0.2
+    fail(throttle, "10.0.0.3", 1); // evicts the oldest - now 10.0.0.2
 
     expect(throttle.checkAllowed("someone-else", "10.0.0.1").allowed).toBe(false);
     expect(throttle.checkAllowed("someone-else", "10.0.0.2").allowed).toBe(true);
   });
 
-  it("超長的 key 會被截斷（筆數有上限，位元組也要有上限）", () => {
-    // login 的 body schema 刻意只驗 `z.string()`（避免格式驗證變成帳號存在 oracle），
-    // Fastify 預設 bodyLimit 是 1 MiB——不截斷的話一筆 key 就能吃掉一堆記憶體。
+  it("an over-long key is truncated (the entry count is capped, and so must the bytes be)", () => {
+    // login's body schema deliberately validates only `z.string()` (so format validation does not become an account-existence oracle) and
+    // Fastify's default bodyLimit is 1 MiB, so without truncation a single key could use a lot of memory.
     const now = 1000;
     const throttle = new LoginThrottle({ now: () => now });
     const prefix = "a".repeat(400);
 
     for (let i = 0; i < 5; i += 1) throttle.recordFailure(`${prefix}@example.com`, "10.0.0.1");
 
-    // 只在第 320 個字元之後不同的兩個 key 落在同一筆紀錄上（真實 email 永遠碰不到：
-    // RFC 5321 的上限是 254）。換一個沒被封鎖的 IP，才能確定斷言只反映帳號軌。
+    // two keys that differ only after character 320 land on the same record (real emails never reach it: the RFC 5321 limit is 254).
+    // Use an IP that is not blocked, so the assertion reflects only the account track.
     expect(throttle.checkAllowed(`${prefix}@other.example`, "203.0.113.7").allowed).toBe(false);
     expect(throttle.checkAllowed("short@example.com", "203.0.113.7").allowed).toBe(true);
   });
 
-  it("帳號軌同樣有上限", () => {
+  it("the account track has a cap too", () => {
     const now = 1000;
     const throttle = new LoginThrottle({ now: () => now, maxKeys: 2 });
 
@@ -111,7 +111,7 @@ describe("LoginThrottle key 上限（issue #15）", () => {
 
 describe("LoginThrottle", () => {
   describe("basic backoff mechanism", () => {
-    it("4 次失敗後仍 allowed", () => {
+    it("still allowed after 4 failures", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
@@ -124,7 +124,7 @@ describe("LoginThrottle", () => {
       expect(result.retryAfterMs).toBeUndefined();
     });
 
-    it("第 5 次失敗後 blocked 且 retryAfterMs > 0", () => {
+    it("blocked after the 5th failure with retryAfterMs > 0", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
@@ -137,7 +137,7 @@ describe("LoginThrottle", () => {
       expect(result.retryAfterMs).toBe(2000);
     });
 
-    it("失敗次數遞增 → retryAfterMs 遞增", () => {
+    it("retryAfterMs grows with the failure count", () => {
       const failureCounts = [5, 6, 7];
       const retryAfterTimes: number[] = [];
 
@@ -163,32 +163,26 @@ describe("LoginThrottle", () => {
   });
 
   describe("failure count preservation (critical)", () => {
-    it("計數不因退避窗過期而重置：5 次失敗 → 鎖 2s → 解封後 +1 次 → 應鎖 4s", () => {
+    it("the count is not reset when the backoff window expires: 5 failures -> locked 2 s -> +1 after unlock -> locked 4 s", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 5 failures at time 1000
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // At time 1000, should be blocked with 2000ms
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
 
-      // Advance time to 3001 (past the 2000ms backoff window)
       now = 3001;
 
-      // checkAllowed should now return allowed (backoff expired)
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
 
-      // Record one more failure at time 3001 (6th failure)
       throttle.recordFailure("user1", "192.168.1.1");
 
-      // checkAllowed at time 3001 should be blocked with 4000ms
-      // (because 2^(6-4) = 4 seconds, lastFailureTime = 3001)
+      // 2^(6-4) = 4 seconds from lastFailureTime = 3001
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(4000);
@@ -196,28 +190,24 @@ describe("LoginThrottle", () => {
   });
 
   describe("time-based unlocking with fake clock", () => {
-    it("假時鐘前進超過退避窗 → allowed", () => {
+    it("fake clock advancing past the backoff window -> allowed", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 5 failures at time 1000
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // At time 1000, should be blocked
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // Advance time beyond the backoff window
       now = 3001;
 
-      // Should now be allowed
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
     });
 
-    it("精確邊界測試：時鐘在 last+2000 時 allowed；last+1999 時 blocked", () => {
+    it("exact boundary: allowed at last+2000, blocked at last+1999", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
@@ -225,19 +215,17 @@ describe("LoginThrottle", () => {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // At 1000 + 1999 = 2999, still blocked
       now = 2999;
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(1);
 
-      // At 1000 + 2000 = 3000, allowed (half-open: elapsedMs < backoffMs, not <=)
+      // half-open window: blocked while elapsedMs < backoffMs, not <=
       now = 3000;
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
       expect(result.retryAfterMs).toBeUndefined();
 
-      // At 1000 + 1999 = 2999 should still be blocked (for completeness)
       now = 2999;
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
@@ -246,96 +234,78 @@ describe("LoginThrottle", () => {
   });
 
   describe("recordSuccess behavior", () => {
-    it("recordSuccess 清除帳號計數，但保留 IP 計數", () => {
+    it("recordSuccess clears the account count but keeps the IP count", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 5 failures on account1 + 192.168.1.1
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("account1", "192.168.1.1");
       }
 
-      // account1 on 192.168.1.1 should be blocked
       let result = throttle.checkAllowed("account1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // Record success for account1
       throttle.recordSuccess("account1", "192.168.1.1");
 
-      // account1 on 192.168.1.1 should still be blocked (IP counter preserved)
       result = throttle.checkAllowed("account1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // But account1 on a different IP should be allowed (account counter cleared)
       result = throttle.checkAllowed("account1", "192.168.1.2");
       expect(result.allowed).toBe(true);
 
-      // account2 on same 192.168.1.1 should still be blocked (IP counter preserved)
       result = throttle.checkAllowed("account2", "192.168.1.1");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
     });
 
-    it("recordSuccess 後計數從零開始（在不同 IP），再失敗 4 次仍 allowed", () => {
+    it("after recordSuccess the count restarts from zero (on a different IP): 4 more failures are still allowed", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 5 failures on user1/IP1
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // Should be blocked on 192.168.1.1
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // Record success
       throttle.recordSuccess("user1", "192.168.1.1");
 
-      // Account counter cleared, so user1 on a different 192.168.1.2 should be allowed
       result = throttle.checkAllowed("user1", "192.168.1.2");
       expect(result.allowed).toBe(true);
 
-      // Can fail 4 more times on 192.168.1.2 before blocking again
       for (let i = 0; i < 4; i++) {
         throttle.recordFailure("user1", "192.168.1.2");
         result = throttle.checkAllowed("user1", "192.168.1.2");
         expect(result.allowed).toBe(true);
       }
 
-      // 5th failure should block
       throttle.recordFailure("user1", "192.168.1.2");
       result = throttle.checkAllowed("user1", "192.168.1.2");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
     });
 
-    it("無關帳號/IP 不受其他 recordSuccess 影響", () => {
+    it("unrelated accounts/IPs are unaffected by another recordSuccess", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // user1 fails 5 times on 192.168.1.1
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // user2 fails 5 times on 192.168.1.2
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user2", "192.168.1.2");
       }
 
-      // recordSuccess for user1/IP1
       throttle.recordSuccess("user1", "192.168.1.1");
 
-      // user1 on 192.168.1.1 should still be blocked (IP counter preserved)
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // user1 on a different 192.168.1.3 should be allowed (account counter cleared)
       result = throttle.checkAllowed("user1", "192.168.1.3");
       expect(result.allowed).toBe(true);
 
-      // user2/IP2 should still be blocked (unrelated)
       result = throttle.checkAllowed("user2", "192.168.1.2");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
@@ -343,49 +313,42 @@ describe("LoginThrottle", () => {
   });
 
   describe("account and IP independence (take stricter)", () => {
-    it("(a) 帳號在 5 個 IP 各失敗 1 次 → 乾淨 IP 也被帳號計數 blocked", () => {
+    it("an account failing once on each of 5 IPs -> a clean IP is also blocked by the account count", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // account1 fails once on each of 5 different IPs
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("account1", `192.168.1.${i}`);
       }
 
-      // account1 on a clean IP (192.168.1.99) should still be blocked (帳號計數)
       const result = throttle.checkAllowed("account1", "192.168.1.99");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
     });
 
-    it("(b) IP 被 5 個帳號各失敗 1 次 → 新帳號同 IP 也被 IP 計數 blocked", () => {
+    it("an IP failed once by each of 5 accounts -> a new account on the same IP is also blocked by the IP count", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // 5 different accounts fail once each on same IP
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure(`account${i}`, "192.168.1.1");
       }
 
-      // New account on same IP should be blocked (IP 計數)
       const result = throttle.checkAllowed("newaccount", "192.168.1.1");
       expect(result.allowed).toBe(false);
       expect(result.retryAfterMs).toBe(2000);
     });
 
-    it("(c) 帳號和 IP 退避窗不同時 → retryAfterMs 應為較大值（精確）", () => {
+    it("account and IP backoff windows differ -> retryAfterMs is the larger one (exact)", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // account1 fails 5 times (retryAfterMs = 2000ms)
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("account1", "192.168.1.1");
       }
 
-      // Advance time by 1500ms (both still locked, but IP more)
       now = 2500;
 
-      // Record more failures on IP (from account2) to get 6 failures on IP (4000ms backoff)
       for (let i = 0; i < 1; i++) {
         throttle.recordFailure("account2", "192.168.1.1");
       }
@@ -403,11 +366,10 @@ describe("LoginThrottle", () => {
   });
 
   describe("backoff expiration cap", () => {
-    it("退避上限：大量失敗後 retryAfterMs ≤ 15 分鐘（900000ms）", () => {
+    it("backoff cap: after many failures retryAfterMs <= 15 minutes (900000 ms)", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 50 failures to exceed normal exponential backoff
       for (let i = 0; i < 50; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
@@ -417,7 +379,7 @@ describe("LoginThrottle", () => {
       expect(result.retryAfterMs).toBe(900000);
     });
 
-    it("精確上限驗證：第 14 次失敗後應達到 15 分鐘上限", () => {
+    it("exact cap: the 14th failure reaches the 15-minute cap", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
@@ -433,65 +395,53 @@ describe("LoginThrottle", () => {
   });
 
   describe("idle timeout cleanup", () => {
-    it("記錄在超過 15 分鐘無新失敗後應被清理", () => {
+    it("a record with no new failure for over 15 minutes is cleaned up", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 5 failures at time 1000
       for (let i = 0; i < 5; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // Should be blocked
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
 
-      // Advance time by 15 minutes + 1ms
       now = 1000 + 900000 + 1;
 
-      // checkAllowed should clean up the idle record and return allowed
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
 
-      // After cleanup, the next failure should start fresh (failureCount = 1)
       throttle.recordFailure("user1", "192.168.1.1");
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
     });
 
-    it("未達 5 次的記錄在 15 分鐘無新失敗後也應被清理", () => {
+    it("a record under 5 failures is also cleaned up after 15 minutes without new failures", () => {
       let now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
 
-      // Record 3 failures
       for (let i = 0; i < 3; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
 
-      // Should be allowed (only 3 failures)
       let result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
 
-      // Advance time by 15 minutes + 1ms
       now = 1000 + 900000 + 1;
 
-      // checkAllowed should clean up the idle record
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
 
-      // Verify record was cleaned by recording 1 failure and checking it's treated fresh
       throttle.recordFailure("user1", "192.168.1.1");
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(true);
 
-      // Verify it's actually fresh: 3 more failures should not block yet
       for (let i = 0; i < 3; i++) {
         throttle.recordFailure("user1", "192.168.1.1");
       }
       result = throttle.checkAllowed("user1", "192.168.1.1");
-      expect(result.allowed).toBe(true); // Still have only 4 total
+      expect(result.allowed).toBe(true); // only 4 failures in total
 
-      // 5th failure should block
       throttle.recordFailure("user1", "192.168.1.1");
       result = throttle.checkAllowed("user1", "192.168.1.1");
       expect(result.allowed).toBe(false);
@@ -500,7 +450,7 @@ describe("LoginThrottle", () => {
   });
 
   describe("edge cases", () => {
-    it("checkAllowed 在無失敗時應返回 allowed=true", () => {
+    it("checkAllowed returns allowed=true when there are no failures", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
       const result = throttle.checkAllowed("user1", "192.168.1.1");
@@ -508,7 +458,7 @@ describe("LoginThrottle", () => {
       expect(result.retryAfterMs).toBeUndefined();
     });
 
-    it("precise boundary: 第 4 次失敗後 checkAllowed 應返回 allowed=true", () => {
+    it("exact boundary: checkAllowed returns allowed=true after the 4th failure", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
       for (let i = 0; i < 4; i++) {
@@ -519,7 +469,7 @@ describe("LoginThrottle", () => {
       expect(result.retryAfterMs).toBeUndefined();
     });
 
-    it("precise boundary: 第 5 次失敗後 checkAllowed 應返回 allowed=false 且 retryAfterMs=2000", () => {
+    it("exact boundary: checkAllowed returns allowed=false with retryAfterMs=2000 after the 5th failure", () => {
       const now = 1000;
       const throttle = new LoginThrottle({ now: () => now });
       for (let i = 0; i < 5; i++) {
@@ -532,14 +482,14 @@ describe("LoginThrottle", () => {
   });
 });
 
-// POST /api/ai 節流參數形狀（比照 http/rate-limit.ts 其餘 *_LIMIT 匯出常數的
-// 驗證慣例）——鎖住「每分鐘 30 次」這個具體數字，不讓它被無感改動。
+// POST /api/ai throttle shape (same validation convention as the other *_LIMIT constants exported from http/rate-limit.ts):
+// pins the concrete figure "30 per minute" so it cannot change unnoticed.
 describe("AI_LIMIT", () => {
-  it("形狀：limit=30、windowMs=60_000（每分鐘 30 次）", () => {
+  it("shape: limit=30, windowMs=60_000 (30 per minute)", () => {
     expect(AI_LIMIT).toEqual({ limit: 30, windowMs: 60_000 });
   });
 
-  it("套進 FixedWindowLimiter：30 次放行，第 31 次擋", () => {
+  it("applied to FixedWindowLimiter: 30 allowed, the 31st blocked", () => {
     const limiter = new FixedWindowLimiter(AI_LIMIT);
     for (let i = 0; i < 30; i++) {
       expect(limiter.consume("user1")).toBe(true);
@@ -547,7 +497,7 @@ describe("AI_LIMIT", () => {
     expect(limiter.consume("user1")).toBe(false);
   });
 
-  it("不同 user 各自獨立計數", () => {
+  it("different users are counted independently", () => {
     const limiter = new FixedWindowLimiter(AI_LIMIT);
     for (let i = 0; i < 30; i++) limiter.consume("user1");
     expect(limiter.consume("user1")).toBe(false);
@@ -555,26 +505,26 @@ describe("AI_LIMIT", () => {
   });
 });
 
-// #286：重設連結的兩顆桶，鎖住具體數字。
-describe("ONE_TIME_LINK_MISS_LIMIT／ONE_TIME_LINK_ATTEMPT_LIMIT", () => {
-  it("miss 桶：每分鐘 30 次（key=ip）", () => {
+// #286: the two buckets of the reset link; pins the concrete figures.
+describe("ONE_TIME_LINK_MISS_LIMIT / ONE_TIME_LINK_ATTEMPT_LIMIT", () => {
+  it("miss bucket: 30 per minute (key=ip)", () => {
     expect(ONE_TIME_LINK_MISS_LIMIT).toEqual({ limit: 30, windowMs: 60_000 });
   });
 
-  it("嘗試桶：每小時 10 次（key=link:id）", () => {
+  it("attempt bucket: 10 per hour (key=link:id)", () => {
     expect(ONE_TIME_LINK_ATTEMPT_LIMIT).toEqual({ limit: 10, windowMs: 3_600_000 });
   });
 });
 
-// 資料夾寫入桶（folders/service.ts 四支＋MCP 五支資料夾工具）：鎖住「每分鐘 600 次」——docs 與 CHANGELOG 寫死這個數字。
+// Folder write bucket (folders/service.ts routes and the MCP folder tools): pins "600 per minute" - the docs and CHANGELOG hard-code this figure.
 describe("FOLDER_LIMIT", () => {
-  it("形狀：limit=600、windowMs=60_000（每分鐘 600 次）", () => {
+  it("shape: limit=600, windowMs=60_000 (600 per minute)", () => {
     expect(FOLDER_LIMIT).toEqual({ limit: 600, windowMs: 60_000 });
   });
 });
 
-describe("FixedWindowLimiter.isBlocked（#72：不計數的預檢）", () => {
-  it("isBlocked 不消耗額度：連問 N 次都不影響 consume 的可用次數", () => {
+describe("FixedWindowLimiter.isBlocked (#72: pre-check that does not count)", () => {
+  it("isBlocked does not consume quota: asking N times leaves consume's available count unchanged", () => {
     const limiter = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     for (let i = 0; i < 10; i += 1) expect(limiter.isBlocked("k")).toBe(false);
     expect(limiter.consume("k")).toBe(true);
@@ -582,7 +532,7 @@ describe("FixedWindowLimiter.isBlocked（#72：不計數的預檢）", () => {
     expect(limiter.consume("k")).toBe(false);
   });
 
-  it("額度用滿後 isBlocked 回 true；不同 key 不受影響", () => {
+  it("isBlocked returns true once the quota is used up; other keys are unaffected", () => {
     const limiter = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     expect(limiter.isBlocked("a")).toBe(false);
     limiter.consume("a");
@@ -590,7 +540,7 @@ describe("FixedWindowLimiter.isBlocked（#72：不計數的預檢）", () => {
     expect(limiter.isBlocked("b")).toBe(false);
   });
 
-  it("視窗過期後 isBlocked 回 false（跟 consume 的視窗語意一致）", () => {
+  it("isBlocked returns false after the window expires (same window semantics as consume)", () => {
     vi.useFakeTimers();
     try {
       const limiter = new FixedWindowLimiter({ limit: 1, windowMs: 1_000 });
@@ -604,22 +554,22 @@ describe("FixedWindowLimiter.isBlocked（#72：不計數的預檢）", () => {
   });
 });
 
-describe("FixedWindowLimiter 函式額度與 retryAfterMs", () => {
+describe("FixedWindowLimiter function limits and retryAfterMs", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("L1 limit 傳函式：每次 consume 現讀（不是建構時快照）", () => {
+  it("limit as a function: read live on every consume (not a snapshot at construction)", () => {
     let cap = 2;
     const l = new FixedWindowLimiter({ limit: () => cap, windowMs: 60_000 });
     expect(l.consume("u")).toBe(true);
     expect(l.consume("u")).toBe(true);
     expect(l.consume("u")).toBe(false);
-    cap = 5; // 同一視窗內調高：第 4 次（計數 4 ≤ 5）放行
+    cap = 5; // raised within the same window: the 4th (count 4 <= 5) is allowed
     expect(l.consume("u")).toBe(true);
   });
 
-  it("L2a isBlocked 也吃函式現值", () => {
+  it("isBlocked also uses the current function value", () => {
     let cap = 1;
     const l = new FixedWindowLimiter({ limit: () => cap, windowMs: 60_000 });
     expect(l.consume("u")).toBe(true);
@@ -628,7 +578,7 @@ describe("FixedWindowLimiter 函式額度與 retryAfterMs", () => {
     expect(l.isBlocked("u")).toBe(false);
   });
 
-  it("L2b consumeMany 也吃函式現值（含 n > limit 的夾住）", () => {
+  it("consumeMany also uses the current function value (including clamping when n > limit)", () => {
     let cap = 2;
     const l = new FixedWindowLimiter({ limit: () => cap, windowMs: 60_000 });
     expect(l.consumeMany("u", 2)).toBe(true);
@@ -638,46 +588,46 @@ describe("FixedWindowLimiter 函式額度與 retryAfterMs", () => {
     expect(l.consumeMany("u", 1)).toBe(false);
   });
 
-  it("L3 數字額度照舊（既有呼叫點不變）", () => {
+  it("a numeric limit works as before (existing call sites unchanged)", () => {
     const l = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     expect([l.consume("u"), l.consume("u"), l.consume("u")]).toEqual([true, true, false]);
     expect(l.isBlocked("u")).toBe(true);
   });
 
-  it("L4 retryAfterMs：無視窗 0；開窗後 t+10 s 剩 50 000；過期 0；不計數不開窗", () => {
+  it("retryAfterMs: 0 with no window; 50 000 left at t+10 s once opened; 0 after expiry; neither counts nor opens a window", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-03T00:00:00Z"));
     const l = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     expect(l.retryAfterMs("u")).toBe(0);
-    expect(l.consume("u")).toBe(true); // retryAfterMs 沒開窗：這發仍是第一發
+    expect(l.consume("u")).toBe(true); // retryAfterMs did not open a window: this call is still the first
     vi.setSystemTime(new Date("2026-11-03T00:00:10Z"));
     expect(l.retryAfterMs("u")).toBe(50_000);
     expect(l.retryAfterMs("u")).toBe(50_000);
-    expect(l.isBlocked("u")).toBe(true); // retryAfterMs 不計數：計數仍是 1
+    expect(l.isBlocked("u")).toBe(true); // retryAfterMs does not count: the count is still 1
     vi.setSystemTime(new Date("2026-11-03T00:01:00Z"));
     expect(l.retryAfterMs("u")).toBe(0);
-    vi.setSystemTime(new Date("2026-11-03T00:01:01Z")); // 過期之後也是 0，不是負數
+    vi.setSystemTime(new Date("2026-11-03T00:01:01Z")); // after expiry it is also 0, not negative
     expect(l.retryAfterMs("u")).toBe(0);
     expect(l.retryAfterMs("other")).toBe(0);
   });
 
-  it("L5 retryAfterSeconds：向上取整、至少 1（Retry-After 不送 0）", () => {
+  it("retryAfterSeconds: rounds up, at least 1 (Retry-After must not be 0)", () => {
     expect([1, 1000, 1001, 0, 59_999, 60_000].map(retryAfterSeconds)).toEqual([1, 1, 2, 1, 60, 60]);
   });
 
-  it("TRANSFER_EXPORT_LIMIT：每小時 10 次", () => {
+  it("TRANSFER_EXPORT_LIMIT: 10 per hour", () => {
     expect(TRANSFER_EXPORT_LIMIT).toEqual({ limit: 10, windowMs: 3_600_000 });
   });
 
-  it("L6 TRANSFER_WRITE_LIMIT：每分鐘 30 次", () => {
+  it("TRANSFER_WRITE_LIMIT: 30 per minute", () => {
     expect(TRANSFER_WRITE_LIMIT).toEqual({ limit: 30, windowMs: 60_000 });
   });
 });
 
-describe("FixedWindowLimiter.consumeTicket／refund（寫回解析前扣、零區退回；退回要對到同一個視窗）", () => {
+describe("FixedWindowLimiter.consumeTicket / refund (charged before write-back parsing, refunded for empty regions; a refund must land in the same window)", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("R1 退回目前視窗的一次：limit 1 扣滿 → refund(那次的 ticket) → 再扣一次放行", () => {
+  it("refund of one in the current window: limit 1 used up -> refund(that ticket) -> another consume is allowed", () => {
     const l = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const ticket = l.consumeTicket("u");
     expect(ticket).not.toBeNull();
@@ -688,29 +638,29 @@ describe("FixedWindowLimiter.consumeTicket／refund（寫回解析前扣、零�
     expect(l.consume("u")).toBe(false);
   });
 
-  it("R2 被拒回 null（照樣計數）；沒有視窗、計數 0 → refund 什麼都不做（計數不變負、不開窗）", () => {
+  it("a rejected call returns null (still counted); with no window and count 0, refund does nothing (count does not go negative, no window opened)", () => {
     vi.useFakeTimers();
     const l = new FixedWindowLimiter({ limit: 1, windowMs: 1_000 });
-    l.refund("u", Date.now()); // 沒有視窗
+    l.refund("u", Date.now()); // no window
     expect(l.retryAfterMs("u")).toBe(0);
     const t1 = l.consumeTicket("u");
     expect(t1).toBe(Date.now());
-    expect(l.consumeTicket("u")).toBeNull(); // 被拒也計數（count 2）
+    expect(l.consumeTicket("u")).toBeNull(); // a rejected call is counted too (count 2)
     l.refund("u", t1!);
     l.refund("u", t1!);
-    l.refund("u", t1!); // 計數已是 0：不變負
+    l.refund("u", t1!); // count is already 0: does not go negative
     expect(l.consume("u")).toBe(true);
     expect(l.consume("u")).toBe(false);
   });
 
-  it("R3 扣完之後視窗過期、又開了新窗：拿舊 ticket 退回不會減到新窗上", () => {
+  it("after the window expired and a new one opened, refunding an old ticket does not reduce the new window", () => {
     vi.useFakeTimers();
     const l = new FixedWindowLimiter({ limit: 1, windowMs: 1_000 });
     const old = l.consumeTicket("u");
     expect(old).not.toBeNull();
     vi.advanceTimersByTime(1_000);
-    expect(l.consume("u")).toBe(true); // 新窗，扣滿
-    l.refund("u", old!); // 舊窗的 ticket：不動新窗
+    expect(l.consume("u")).toBe(true); // new window, used up
+    l.refund("u", old!); // ticket of the old window: leaves the new window alone
     expect(l.isBlocked("u")).toBe(true);
     expect(l.consume("u")).toBe(false);
   });

@@ -6,8 +6,8 @@ import type { MachineInfo } from "../../src/site-limits/types.js";
 const GiB = 2 ** 30;
 const machine: MachineInfo = { cpus: 4, cpuSource: "os", memoryBytes: 16 * GiB, memorySource: "os" };
 
-describe("parseSettingsLogFields（開機 log「parse worker settings in effect」，#397）", () => {
-  it("全預設：欄位名照舊；worker 數依 CPU、兩個自動項 from=auto", () => {
+describe("parseSettingsLogFields (startup log \"parse worker settings in effect\", #397)", () => {
+  it("all defaults: field names unchanged; worker count follows CPU, the two auto items have from=auto", () => {
     expect(parseSettingsLogFields(SiteLimits.defaults({ machine }))).toEqual({
       workers: 3,
       workersSource: "cpu",
@@ -22,20 +22,20 @@ describe("parseSettingsLogFields（開機 log「parse worker settings in effect�
     });
   });
 
-  it("記憶體比 CPU 少 → workersSource=memory；機器來源照實帶出", () => {
+  it("less memory than CPU -> workersSource=memory; the machine source is carried through as is", () => {
     const f = parseSettingsLogFields(SiteLimits.defaults({ machine: { cpus: 8, cpuSource: "cgroup-v2", memoryBytes: 2 * GiB, memorySource: "cgroup-v1" } }));
     expect(f).toMatchObject({ workers: 1, workersSource: "memory", cpus: 8, cpuSource: "cgroup-v2", memoryMb: 2048, memorySource: "cgroup-v1" });
     expect(f.from.workers).toBe("auto");
   });
 
-  it("env 給的 → workersSource=env、from=env；排隊等待仍自動、跟著 env 的時限", () => {
+  it("from env -> workersSource=env, from=env; queue wait stays auto and follows the env timeout", () => {
     const f = parseSettingsLogFields(SiteLimits.defaults({ machine, limitEnv: { parseWorkers: 2, parseTimeoutMs: 5000 } }));
     expect(f).toMatchObject({ workers: 2, workersSource: "env", timeoutMs: 5000, queueWaitMs: 25_000 });
     expect(f.from).toEqual({ workers: "env", workerMemoryMb: "default", timeoutMs: "env", queueWaitMs: "auto" });
   });
 
-  it("管理頁存的 → workersSource=admin、from.workers=admin", () => {
-    // `defaults()` 沒有 DB 列；把它的 view 裡 parseWorkers 的來源換成 admin（形狀同 `load` 讀到一列時）。
+  it("saved on the admin page -> workersSource=admin, from.workers=admin", () => {
+    // `defaults()` has no DB row; swap the source of parseWorkers in its view to admin (same shape as when `load` reads a row).
     const base = SiteLimits.defaults({ machine });
     const stub = {
       parseLimits: () => ({ ...base.parseLimits(), workers: 2 }),

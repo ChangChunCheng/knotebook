@@ -1,10 +1,10 @@
 /**
- * #130：API token 的 scope 契約（`packages/shared`）。
+ * #130: the API token scope contract (`packages/shared`).
  *
- * 落庫形是**集合不是單值**——write 一定把 read 顯式寫進字串、move／delete 一定帶著 write，所以只有
- * R、RW、RWM、RWD、RWMD 五種（#181 起是格不是鏈）；`hasScope` 因此是成員判定，
- * 不是寫死的階層判斷。這一族的守衛重點在「切詞比對，不是子字串比對」：
- * `includes` 式的『簡化』重構會讓 `scope=notes:writer` 拿到寫入權。
+ * The stored shape is a **set, not a single value**: write always spells read out in the string, move/delete always carry write, so only
+ * R, RW, RWM, RWD, RWMD exist (a lattice, not a chain, since #181); `hasScope` is therefore a membership check, not a hard-coded
+ * hierarchy. The point of this group is "token matching, not substring matching":
+ * an `includes`-style "simplification" would give `scope=notes:writer` write access.
  */
 import { describe, expect, it } from "vitest";
 import { hasScope, narrowerScope, normalizeScope, TOKEN_SCOPES, type ScopeName, type TokenScope } from "@knotebook/shared";
@@ -16,45 +16,45 @@ const RWD = "notes:read notes:write notes:delete";
 const RWMD = "notes:read notes:write notes:move notes:delete";
 
 describe("normalizeScope", () => {
-  it("undefined／null／空／全空白 → notes:read（最小權限）", () => {
+  it("undefined/null/empty/all-whitespace -> notes:read (least privilege)", () => {
     expect(normalizeScope(undefined)).toBe("notes:read");
     expect(normalizeScope(null)).toBe("notes:read");
     expect(normalizeScope("")).toBe("notes:read");
     expect(normalizeScope("   ")).toBe("notes:read");
   });
 
-  it("含 notes:write → 把 read 顯式補進落庫形", () => {
+  it("with notes:write -> read is added explicitly to the stored shape", () => {
     expect(normalizeScope("notes:write")).toBe("notes:read notes:write");
     expect(normalizeScope("notes:write notes:read")).toBe("notes:read notes:write");
     expect(normalizeScope("notes:read  notes:write")).toBe("notes:read notes:write");
   });
 
-  it("只有 read（含重複）", () => {
+  it("read only (including duplicates)", () => {
     expect(normalizeScope("notes:read")).toBe("notes:read");
     expect(normalizeScope("notes:read notes:read")).toBe("notes:read");
   });
 
-  it("忽略不認得的值（RFC 6749 §3.3；MCP client 可能自行加 offline_access）", () => {
+  it("ignores unknown values (RFC 6749 section 3.3; an MCP client may add offline_access itself)", () => {
     expect(normalizeScope("offline_access notes:write")).toBe("notes:read notes:write");
     expect(normalizeScope("openid profile email")).toBe("notes:read");
   });
 
-  it("切詞比對而非子字串比對：含 notes:write 子字串的未知值不得升權", () => {
-    // 這條是防「把實作簡化成 input.includes("notes:write")」的守衛。normalizeScope 的
-    // 輸入在 #132 是 client 完全可控的 authorize `scope` 參數，子字串比對＝scope 放大。
+  it("token matching, not substring matching: an unknown value containing the notes:write substring must not escalate", () => {
+    // Guards against simplifying to input.includes("notes:write"). In #132 normalizeScope's
+    // input is the client-controlled authorize `scope` parameter, so substring matching would amplify scope.
     expect(normalizeScope("notes:writer")).toBe("notes:read");
     expect(normalizeScope("xnotes:write")).toBe("notes:read");
     expect(normalizeScope("notes:write-all")).toBe("notes:read");
   });
 
-  it("分隔字元只認半形空白（RFC 6749 的 scope 是 SP-delimited），其餘一律 fail-closed", () => {
-    // tab 分隔不會被切開 → 整串成為一個不認得的值 → 最小權限。方向刻意是保守的。
+  it("the delimiter is a plain space only (RFC 6749 scope is SP-delimited); anything else fails closed", () => {
+    // A tab-delimited string is not split -> the whole string is one unknown value -> least privilege. The direction is deliberately conservative.
     expect(normalizeScope("notes:read\tnotes:write")).toBe("notes:read");
   });
 });
 
 describe("hasScope", () => {
-  it("required=notes:read 對五種落庫形都成立", () => {
+  it("required=notes:read holds for all five stored shapes", () => {
     expect(hasScope("notes:read", "notes:read")).toBe(true);
     expect(hasScope("notes:read notes:write", "notes:read")).toBe(true);
     expect(hasScope("notes:read notes:write notes:move", "notes:read")).toBe(true);
@@ -62,65 +62,65 @@ describe("hasScope", () => {
     expect(hasScope("notes:read notes:write notes:move notes:delete", "notes:read")).toBe(true);
   });
 
-  it("required=notes:write 需 stored 含 write", () => {
+  it("required=notes:write needs stored to contain write", () => {
     expect(hasScope("notes:read", "notes:write")).toBe(false);
     expect(hasScope("notes:read notes:write", "notes:write")).toBe(true);
     expect(hasScope("notes:read notes:write notes:move", "notes:write")).toBe(true);
   });
 
-  it("是成員判定，不是整串字面相等——落庫形多一個空白也不該把讀寫降成唯讀", () => {
-    // cast 是刻意的：`TokenScope` 只有五個字面值，這個值在型別上不可能出現，但
-    // `stored` 實際來自 `text` 欄位、型別是 `as TokenScope` 斷言來的。這條釘住
-    // 「授權判定不依賴 scope 欄的 CHECK」——寫成 `stored === "notes:read notes:write"`
-    // 的版本會在這裡紅掉。
+  it("membership check, not whole-string equality - an extra space in the stored shape must not downgrade read-write to read-only", () => {
+    // The cast is deliberate: `TokenScope` has only five literals, so this value cannot occur by type, but
+    // `stored` really comes from a `text` column and its type is an `as TokenScope` assertion. This pins
+    // that the authorisation decision does not depend on the scope column's CHECK - a version written as
+    // `stored === "notes:read notes:write"` goes red here.
     const drifted = "notes:read  notes:write" as TokenScope;
     expect(hasScope(drifted, "notes:write")).toBe(true);
     expect(hasScope(drifted, "notes:read")).toBe(true);
 
-    // 對稱的另一面：成員判定也不能退化成對 `stored` 做子字串比對（那是 fail-open，
-    // 會讓 `notes:writer` 這種值拿到寫入權）。與 normalizeScope 的 tokenize 守衛同理。
+    // The mirror image: membership must not degrade into a substring match on `stored` (that would fail open and
+    // give `notes:writer` write access); same reasoning as the tokenize guard of normalizeScope.
     expect(hasScope("notes:writer" as TokenScope, "notes:write")).toBe(false);
   });
 });
 
-describe("#239 normalizeScope：notes:move", () => {
-  it("要 move 不要 write → 丟掉 move、給 notes:read（不補 write，fail-closed）", () => {
+describe("#239 normalizeScope: notes:move", () => {
+  it("move without write -> move dropped, notes:read given (write is not added, fail closed)", () => {
     expect(normalizeScope("notes:move")).toBe("notes:read");
     expect(normalizeScope("notes:read notes:move")).toBe("notes:read");
   });
-  it("write＋move → 第三形（順序與重複無關）", () => {
+  it("write + move -> the third shape (order and duplicates do not matter)", () => {
     expect(normalizeScope("notes:move notes:write")).toBe("notes:read notes:write notes:move");
     expect(normalizeScope("notes:read notes:write notes:move notes:move")).toBe("notes:read notes:write notes:move");
   });
-  it("切詞比對：notes:mover 不算 move；tab 分隔整串不認得", () => {
+  it("token matching: notes:mover is not move; a tab-delimited string is not recognised", () => {
     expect(normalizeScope("notes:mover notes:write")).toBe("notes:read notes:write");
     expect(normalizeScope("notes:write\tnotes:move")).toBe("notes:read");
   });
-  it("五種合法落庫形恆等（server 讀 DB 的 scope 值時拿它正規化，合法值必須原樣回來）", () => {
+  it("the five valid stored shapes map to themselves (the server normalises DB scope values with it, so valid values must come back as is)", () => {
     for (const s of TOKEN_SCOPES) expect(normalizeScope(s)).toBe(s);
   });
 });
 
-describe("#181 normalizeScope：notes:delete", () => {
-  it("要 delete 不要 write → 丟掉 delete、給 notes:read（不補 write，fail-closed）", () => {
+describe("#181 normalizeScope: notes:delete", () => {
+  it("delete without write -> delete dropped, notes:read given (write is not added, fail closed)", () => {
     expect(normalizeScope("notes:delete")).toBe(R);
     expect(normalizeScope("notes:read notes:delete")).toBe(R);
   });
-  it("write＋delete → RWD；四項全 → RWMD（順序無關）", () => {
+  it("write + delete -> RWD; all four -> RWMD (order does not matter)", () => {
     expect(normalizeScope("notes:delete notes:write")).toBe(RWD);
     expect(normalizeScope("notes:delete notes:move notes:write notes:read")).toBe(RWMD);
   });
-  it("切詞比對：notes:deleter 不算 delete；tab 分隔整串不認得", () => {
+  it("token matching: notes:deleter is not delete; a tab-delimited string is not recognised", () => {
     expect(normalizeScope("notes:deleter notes:write")).toBe(RW);
     expect(normalizeScope("notes:write\tnotes:delete")).toBe(R);
   });
 });
 
-describe("#239／#181 narrowerScope（交集）", () => {
-  it("TOKEN_SCOPES 以五形字面釘住（含順序；不靠它自己的索引推導）", () => {
+describe("#239 / #181 narrowerScope (intersection)", () => {
+  it("TOKEN_SCOPES is pinned as the five literal shapes (including order; not derived from its own indexes)", () => {
     expect(TOKEN_SCOPES).toEqual([R, RW, RWM, RWD, RWMD]);
   });
-  // 逐格寫出期望值（格上的 meet）；不拿 TOKEN_SCOPES 的索引當 oracle——move 與 delete 互不包含。
+  // Expected values written out cell by cell (the meet on the lattice); TOKEN_SCOPES indexes are not used as the oracle - move and delete do not contain each other.
   const TABLE: Record<string, Record<string, string>> = {
     [R]: { [R]: R, [RW]: R, [RWM]: R, [RWD]: R, [RWMD]: R },
     [RW]: { [R]: R, [RW]: RW, [RWM]: RW, [RWD]: RW, [RWMD]: RW },
@@ -130,27 +130,27 @@ describe("#239／#181 narrowerScope（交集）", () => {
   };
   for (const a of [R, RW, RWM, RWD, RWMD])
     for (const b of [R, RW, RWM, RWD, RWMD])
-      it(`25 格：${a} ∧ ${b} ＝ ${TABLE[a]![b]}`, () => {
+      it(`25 cells: ${a} meet ${b} = ${TABLE[a]![b]}`, () => {
         expect(narrowerScope(a as TokenScope, b as TokenScope)).toBe(TABLE[a]![b]);
       });
-  it("對稱：25 格 a∧b ＝ b∧a", () => {
+  it("symmetric: 25 cells, a meet b = b meet a", () => {
     for (const a of [R, RW, RWM, RWD, RWMD])
       for (const b of [R, RW, RWM, RWD, RWMD])
         expect(narrowerScope(a as TokenScope, b as TokenScope)).toBe(narrowerScope(b as TokenScope, a as TokenScope));
   });
-  it("不在五形內的值當成 notes:read（fail-closed，不回傳垃圾字串）", () => {
+  it("a value outside the five shapes is treated as notes:read (fail closed, no garbage string returned)", () => {
     expect(narrowerScope("garbage" as TokenScope, RWM)).toBe(R);
     expect(narrowerScope(RW, "notes:read notes:move" as TokenScope)).toBe(R);
   });
-  it("非正規值先當 notes:read 再交集：裸 notes:write 不得被正規化成讀寫", () => {
+  it("a non-canonical value is treated as notes:read before intersecting: a bare notes:write must not be normalised to read-write", () => {
     expect(narrowerScope("notes:write" as TokenScope, RWMD)).toBe(R);
   });
-  it("順序錯的四項字串不在五形內 → notes:read", () => {
+  it("a four-item string in the wrong order is outside the five shapes -> notes:read", () => {
     expect(narrowerScope(RWMD, "notes:read notes:write notes:delete notes:move" as TokenScope)).toBe(R);
   });
 });
 
-describe("#239／#181 hasScope：五形 × 四個 ScopeName", () => {
+describe("#239 / #181 hasScope: five shapes x four ScopeNames", () => {
   const MEMBERS: Record<string, Record<ScopeName, boolean>> = {
     [R]: { "notes:read": true, "notes:write": false, "notes:move": false, "notes:delete": false },
     [RW]: { "notes:read": true, "notes:write": true, "notes:move": false, "notes:delete": false },
@@ -158,26 +158,26 @@ describe("#239／#181 hasScope：五形 × 四個 ScopeName", () => {
     [RWD]: { "notes:read": true, "notes:write": true, "notes:move": false, "notes:delete": true },
     [RWMD]: { "notes:read": true, "notes:write": true, "notes:move": true, "notes:delete": true },
   };
-  it("成員表", () => {
+  it("membership table", () => {
     for (const [stored, row] of Object.entries(MEMBERS))
       for (const [name, want] of Object.entries(row))
         expect(hasScope(stored as TokenScope, name as ScopeName), `${stored} ∋ ${name}`).toBe(want);
   });
-  it("move 只在 RWM、RWMD", () => {
+  it("move only in RWM, RWMD", () => {
     expect(hasScope(RWM, "notes:move")).toBe(true);
     expect(hasScope(RWMD, "notes:move")).toBe(true);
     expect(hasScope(RWD, "notes:move")).toBe(false);
     expect(hasScope(RW, "notes:move")).toBe(false);
     expect(hasScope(R, "notes:move")).toBe(false);
   });
-  it("delete 只在 RWD、RWMD", () => {
+  it("delete only in RWD, RWMD", () => {
     expect(hasScope(RWD, "notes:delete")).toBe(true);
     expect(hasScope(RWMD, "notes:delete")).toBe(true);
     expect(hasScope(RWM, "notes:delete")).toBe(false);
     expect(hasScope(RW, "notes:delete")).toBe(false);
     expect(hasScope(R, "notes:delete")).toBe(false);
   });
-  it("漂移值照實做成員判定（授權不靠它單獨判，靠 canDeleteNotes 的 write∧delete）", () => {
+  it("drifted values get an honest membership check (authorisation does not rest on it alone but on canDeleteNotes: write AND delete)", () => {
     expect(hasScope("notes:read notes:delete" as TokenScope, "notes:delete")).toBe(true);
   });
 });

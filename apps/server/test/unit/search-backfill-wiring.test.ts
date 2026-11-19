@@ -1,6 +1,6 @@
 /**
- * #93 S13：回填呼叫點在 `app.listen` **之後**（與 handle.test.ts 的補登守衛方向相反），
- * 關機 handler 第一步 abort。錨定**呼叫點字面**（`backfillSearchIndex(db`），不是函式名——後者先命中 import。
+ * #93: the backfill call comes **after** `app.listen` (the opposite direction of the back-fill guard in handle.test.ts) and the shutdown handler aborts it first.
+ * Anchors on the **call-site literal** (`backfillSearchIndex(db`), not the function name, which would match the import first.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -9,15 +9,15 @@ import { fileURLToPath } from "node:url";
 
 const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/index.ts"), "utf8");
 
-describe("#93 S13：index.ts 的回填接線", () => {
-  it("回填呼叫點在 app.listen 之後", () => {
+describe("#93: backfill wiring in index.ts", () => {
+  it("the backfill call comes after app.listen", () => {
     const callAt = src.indexOf("backfillSearchIndex(db");
     const listenAt = src.indexOf(".listen(");
     expect(callAt, "index.ts 必須呼叫 backfillSearchIndex(db…)").toBeGreaterThan(-1);
     expect(listenAt).toBeGreaterThan(-1);
     expect(callAt, "回填必須在 listen 之後").toBeGreaterThan(listenAt);
   });
-  it("關機 handler 先 abort 回填，再 destroy collab", () => {
+  it("the shutdown handler aborts the backfill first, then destroys collab", () => {
     const onceAt = src.indexOf("process.once(");
     const abortAt = src.indexOf("backfillAbort.abort()", onceAt);
     const destroyAt = src.indexOf(".destroy()", onceAt);
@@ -26,23 +26,23 @@ describe("#93 S13：index.ts 的回填接線", () => {
     expect(destroyAt).toBeGreaterThan(-1);
     expect(abortAt).toBeLessThan(destroyAt);
   });
-  it("#269：轉換工作在 listen 之後 start；SIGTERM 鏈先以 2 s 共用寬限等 app.linkConversion.stop()，再 collab.destroy()（#272 先或後 merge 都成立）", () => {
+  it("#269: link conversion starts after listen; the SIGTERM chain first waits for app.linkConversion.stop() with a shared 2 s grace, then collab.destroy() (holds whether #272 merges before or after)", () => {
     const listenAt = src.indexOf(".listen(");
     const startAt = src.indexOf("app.linkConversion.start()");
     expect(startAt).toBeGreaterThan(listenAt);
     const onceAt = src.indexOf("process.once(");
     expect(onceAt, "index.ts 要有 process.once( 關機 handler").toBeGreaterThan(-1);
-    // 剔掉註解行再找（#272：handler 上方／裡面的註解字面會先命中）。
+    // strip comment lines before searching (#272: comment literals above/inside the handler would match first).
     const handler = src.slice(onceAt).replace(/^\s*\/\/.*$/gm, "");
-    // 單獨形（#272 未 merge）或併入 Promise.all 的形（#272 已 merge）都接受；stop 必須在「collab.destroy() 之前的那個 race」裡。
+    // accepts both the standalone form (#272 not merged) and the form folded into Promise.all (#272 merged); stop must be inside the race that comes before collab.destroy().
     const race = /Promise\.race\(\[(?:Promise\.all\(\[[^\]]*\bapp\.linkConversion\.stop\(\)[^\]]*\]\)|app\.linkConversion\.stop\(\)), stopGrace\(\)\]\)/.exec(handler);
     expect(race, "關機要以 Promise.race([… app.linkConversion.stop() …, stopGrace()]) 有上限地等轉換工作").not.toBeNull();
     const destroyAt = handler.indexOf("collab.destroy()");
     expect(destroyAt, "關機要呼叫 collab.destroy()").toBeGreaterThan(-1);
     expect(destroyAt, "race 要在 collab.destroy() 之前").toBeGreaterThan(race!.index + race![0].length - 1);
-    // 寬限常數（#272 併線後只留一份，現住 collab/versions.ts）：先從 stopGrace 的定義取出它**實際**用的常數名，再到**定義**該常數
-    // 的檔（index.ts 自己，或 index.ts 從 ./… import 它的那支）剔掉 `//` 註解行後找 `const <名> = 2_000;`——stopGrace 改用另一個
-    // 本地常數、或 2_000 只剩註解裡有，都會紅。
+    // Grace constant (a single copy after #272, now in collab/versions.ts): first take the constant name stopGrace actually uses, then look in the file that defines it
+    // (index.ts itself, or the file index.ts imports it from ./...) with `//` comment lines stripped for `const <name> = 2_000;` - turns red if stopGrace switches to another
+    // local constant, or if 2_000 survives only in a comment.
     const grace = /const stopGrace = \(\): Promise<void> => new Promise\(resolve => setTimeout\(resolve, ([A-Z_]+)\)\.unref\(\)\);/.exec(src);
     expect(grace, "stopGrace 要寫成 new Promise(resolve => setTimeout(resolve, <常數>).unref())").not.toBeNull();
     const graceName = grace![1]!;

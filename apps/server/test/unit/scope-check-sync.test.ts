@@ -1,6 +1,4 @@
-/**
- * #239 S2：三條 scope CHECK 的允許值 ≡ TOKEN_SCOPES。讀 journal 最後一筆的 snapshot（migration 重編號也不必改這裡）。
- */
+/** #239: the allowed values of the three scope CHECKs equal TOKEN_SCOPES. Reads the last journal entry's snapshot, so migration renumbering needs no change here. */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +12,7 @@ const snapshot = JSON.parse(
   readFileSync(path.join(drizzleDir, `meta/${String(lastIdx).padStart(4, "0")}_snapshot.json`), "utf8")
 ) as { tables: Record<string, { checkConstraints?: Record<string, { value: string }> }> };
 
-describe("#239 S2：scope CHECK ≡ TOKEN_SCOPES", () => {
+describe("#239: scope CHECK equals TOKEN_SCOPES", () => {
   it.each(["api_tokens", "oauth_requests", "oauth_codes"])("%s", table => {
     const value = snapshot.tables[`public.${table}`]!.checkConstraints![`${table}_scope_chk`]!.value;
     expect(value).toBe(`"${table}"."scope" in (${TOKEN_SCOPES.map(s => `'${s}'`).join(",")})`);
