@@ -10,14 +10,8 @@ import { Star } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
 
 /**
- * 筆記頁頁首的最愛星號。未加入：點下樂觀加入（不出 toast，星號本身就是回饋）；已加入：點下先開確認框，
- * 確認後移出（同樣不出 toast）。失敗一律出錯誤 toast。
- *
- * - 送出中用 `aria-disabled`＋onClick 直接 return，不用 `disabled`：鍵盤使用者按 Space 時焦點在這顆鈕上，
- *   `disabled` 會讓焦點掉到 body。
- * - 查詢還沒到或失敗時用 `disabled`（還不能操作，也沒有焦點要保）。
- * - 頁首比 18rem 窄時整顆收起（`@max-[18rem]:hidden`，頁首是 `@container`）：星號會把分享或 ⋮ 擠出卡片，
- *   這時改由 ⋮ 選單的同名項目進入。
+ * `aria-disabled` + early return while submitting, not `disabled`: `disabled` drops keyboard focus to body.
+ * Hidden below 18rem (header is an `@container`): the star would push share or ⋮ out of the card; the ⋮ menu item of the same name takes over.
  */
 export function FavoriteToggle({ note }: { note: NoteDto }) {
   const { t } = useTranslation();
@@ -64,6 +58,7 @@ export function FavoriteToggle({ note }: { note: NoteDto }) {
         aria-pressed={favorite}
         aria-disabled={pending ? true : undefined}
         title={favorite ? t("note.menu.removeFavorite") : t("note.menu.addFavorite")}
+        // `disabled`, not aria-disabled: no focus to keep until ready.
         disabled={!ready}
         onClick={() => void handleClick()}
       >

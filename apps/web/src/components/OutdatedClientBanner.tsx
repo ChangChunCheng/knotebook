@@ -1,10 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
-/**
- * #269：舊分頁閘門擋下的分頁（collab 的 `outdated` phase）——頁首上方提示重整。內容照樣可讀、不 toast、不導頁。
- * `onReload` 只為可測（jsdom 的 `location.reload` 不可替換）；生產不傳＝`window.location.reload()`。
- */
+/** Content stays readable; no toast, no navigation. `onReload` exists because jsdom `location.reload` cannot be replaced. */
 export function OutdatedClientBanner({ onReload }: { onReload?: () => void }) {
   const { t } = useTranslation();
   return (

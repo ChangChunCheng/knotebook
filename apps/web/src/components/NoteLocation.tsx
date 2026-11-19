@@ -12,19 +12,14 @@ import { useSidebarTabActions } from "@/lib/sidebar-tab";
 const ELLIPSIS = "…";
 const SEPARATOR = " › ";
 const SUFFIX_SEPARATOR = " · ";
-/** 清單換頁、資料夾展開後，等那一列真的排進版面的最長影格數（約 0.5 秒）。 */
+/** Max frames (about 0.5 s) to wait for the row to appear. */
 const SCROLL_MAX_FRAMES = 30;
 
 export interface FitResult {
   shown: string[];
-  /** 首尾之外已沒有可省的段，最後一段要用文字截斷（尾端「…」）。 */
   truncateLast: boolean;
 }
 
-/**
- * 在 `available` 寬內排路徑：一定留第一與最後一段，中間從中央往外換成單一「…」；
- * 中間都換掉還放不下，就讓最後一段尾端省略。`widths[i]` 含第 i 段前面的分隔符，`ellipsisW` 含它前面的分隔符。
- */
 export function fitSegments(segments: readonly string[], widths: readonly number[], available: number, ellipsisW: number): FitResult {
   const n = segments.length;
   const total = widths.reduce((sum, w) => sum + w, 0);
@@ -50,7 +45,6 @@ export function fitSegments(segments: readonly string[], widths: readonly number
   return build(true);
 }
 
-/** 清單換成這篇筆記所在的 tab 後，把它那一列捲到畫面中央（那一列要等清單可見、資料夾展開才存在）。 */
 function scrollRowIntoView(noteId: string): void {
   let frames = 0;
   const tick = () => {
@@ -58,7 +52,7 @@ function scrollRowIntoView(noteId: string): void {
     const row = rows.find((el) => el.getClientRects().length > 0);
     if (row !== undefined) {
       row.scrollIntoView({ block: "center" });
-      // 焦點跟著畫面：否則回清單時的焦點還原會落在上一次開啟的那一列。
+      // Move focus with the view, otherwise focus restore on returning to the list lands on the previously opened row.
       row.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
       return;
     }
@@ -74,11 +68,7 @@ interface Measure {
   suffixW: number;
 }
 
-/**
- * 手機筆記頁首的位置副標：「我的筆記 › 資料夾 › …」。整行是一顆按鈕，點了回到清單、切到這篇所在的 tab、
- * 展開資料夾鏈並把這一列捲到中央。放不下時留首尾、中間換成「…」。
- */
-export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在位置文字右邊的小元件（連線點）；路徑太長時只截路徑，它一直貼在文字後面。 */ trailing?: ReactNode }) {
+export function NoteLocation({ note, trailing }: { note: NoteDto; /** Small widget right after the location text (connection dot); when the path is too long only the path is truncated and this stays attached to the text. */ trailing?: ReactNode }) {
   const { t } = useTranslation();
   const foldersQuery = useFolders();
   const groupsQuery = useGroups();
@@ -96,10 +86,8 @@ export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在�
   const trailingRef = useRef<HTMLSpanElement>(null);
   const trailingWidth = useContainerWidth(trailingRef);
   const wrapWidth = useContainerWidth(wrapRef);
-  // 路徑可用的寬度＝整行寬扣掉右邊的小元件與它前面的間距（wrapper 的 gap-2＝8px）。
   const available = wrapWidth === 0 ? 0 : Math.max(1, wrapWidth - (trailing ? trailingWidth + 8 : 0));
   const [measure, setMeasure] = useState<Measure | null>(null);
-  // 量一份不可見的完整路徑；路徑（語言換了段名也會變）變了才重量。
   useLayoutEffect(() => {
     const root = measureRef.current;
     if (root === null) return;
@@ -118,7 +106,6 @@ export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在�
 
   function handleClick() {
     showTab(parts.tab);
-    // 群組區塊收合時那一列不會渲染，先展開群組。
     if (parts.groupId !== null) setCollapsed(`group:${parts.groupId}`, false);
     if (parts.folderId !== null) expandFolderChain(folderIndex, parts.folderId);
     scrollRowIntoView(note.id);
@@ -130,13 +117,12 @@ export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在�
         type="button"
         aria-label={t("note.showInList", { path: fullPath })}
         onClick={handleClick}
-        // 標題列 + 這一列合計要 ≥ 44px 的點擊高度，所以用 py 撐高、不用負 margin 壓到標題上。
+        // Title row + this row must total >= 44px tap height: pad with py rather than a negative margin.
         className="flex min-w-0 items-center overflow-hidden whitespace-nowrap rounded py-2 text-left text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         {fit.shown.map((segment, i) => {
           const last = i === fit.shown.length - 1;
           const truncated = fit.truncateLast && (last || i === 0);
-          // 只有一段，或首尾加起來仍放不下時：最後一段吃剩餘寬度，第一段最多佔一半，都以「…」截尾。
           const cls = !truncated ? "shrink-0" : last ? "min-w-0 truncate" : "max-w-[50%] shrink-0 truncate";
           return (
             <Fragment key={`${i}:${segment}`}>
@@ -163,7 +149,7 @@ export function NoteLocation({ note, trailing }: { note: NoteDto; /** 緊接在�
           {trailing}
         </span>
       )}
-      {/* 量測用的隱藏副本：關在自己的 overflow-hidden 盒子裡，長路徑不會撐大頁首的 scrollWidth。 */}
+      {/* Measuring copy in its own overflow-hidden box so a long path cannot inflate the header scrollWidth. */}
       <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         <span ref={measureRef} className="invisible absolute start-0 top-0 whitespace-pre text-xs">
           {parts.segments.map((segment, i) => (

@@ -11,17 +11,7 @@ import { toast } from "@/components/ui/toast";
 import { captureRemoveContext, focusAfterRemoveLater, type RemoveContext } from "@/lib/favorite-focus";
 import { cn } from "@/lib/utils";
 
-/**
- * 側欄筆記列最右側的最愛星星（24px 圖示鈕，在 ⋮ 之後、整列最右一格，位置固定不動）。
- * - 已是最愛：實心、一直顯示；點下先開確認框，確認後移出。觸控與沒有 hover 的裝置上這顆鈕隱藏，改由 `FavoriteMarker`（NoteList）在 ⋮ 左邊顯示不可點的標記，加入、移出走 ⋮。
- * - 不是最愛：空心、平常 `opacity-0`，列被 hover 或列內有鍵盤焦點時浮出；觸控裝置整顆隱藏（加入走 ⋮）；點下直接加入。
- * - 可及名稱固定 `note.favorite.label`（同頁首星號），狀態只由 `aria-pressed` 表達；`title` 是目前動作的提示。
- *
- * 狀態從 `NoteList` 傳進來（整份清單只訂一次 `["favorites"]`），這裡不訂 `["favorites"]` 查詢，所以列數多也不會多出 query observer（每列仍各有自己的 mutation hook）。
- * 送出中用 `aria-disabled`＋onClick 直接 return，不用 `disabled`：鍵盤焦點留在鈕上。
- * 確認框只在開著時掛載。最愛 tab 裡那一列會在移出成功後卸載，所以關框與焦點都在 `await` 之後，
- * 焦點退路用開框當下記下的鄰居決定。
- */
+/** State comes from `NoteList` (one `["favorites"]` subscription per list, not per row). `aria-disabled` + early return while submitting, not `disabled`, to keep keyboard focus. The row unmounts after a successful removal in the favourites tab, so closing and focus handling happen after the `await`, using the neighbour recorded at open. The accessible name is fixed (`note.favorite.label`); state is expressed only by `aria-pressed`. Hidden on touch/no-hover (NoteList `FavoriteMarker` shows instead; add/remove via ⋮). The confirm dialog mounts only while open. */
 export function RowFavoriteStar({ note, favorite, pending }: { note: NoteDto; favorite: boolean; pending: boolean }) {
   const { t } = useTranslation();
   const addFavorite = useAddFavorite();

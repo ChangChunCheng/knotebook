@@ -7,17 +7,11 @@ import { NoteWidthIcon } from "@/components/ui/icons-extra";
 import { tourTarget } from "@/lib/tour-targets";
 import { cn } from "@/lib/utils";
 
-/**
- * #297：頁首寬度鈕（站內、每篇各自記，見 `note-width.ts`）。按一下換成下一種寬度：
- * 標準 → 寬 → 全寬 → 標準。名稱與 title 寫出目前與下一種。
- * 頁首 content box 寬 ≥ 43.5rem 才顯示（header 是 `@container`）：更窄時「寬」與「標準」一樣寬；
- * 收起時改由頁首 ⋮ 選單設定。
- */
+/** Shown only when the header content box is >= 43.5rem (header is an `@container`): below that wide equals standard; when hidden, the ⋮ menu sets the width. */
 export function NoteWidthToggle({ noteId }: { noteId: string }) {
   const { t } = useTranslation();
   const [width, setWidth] = useNoteWidth(noteId);
   const next = NOTE_WIDTHS[(NOTE_WIDTHS.indexOf(width) + 1) % NOTE_WIDTHS.length]!;
-  // 名稱帶現值與下一種（不同於 Share 的固定 aria-label）；title 同字。
   const name = t("note.width.cycle", { name: t(`note.width.${width}`), next: t(`note.width.${next}`) });
   return (
     <Button

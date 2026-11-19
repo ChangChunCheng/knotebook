@@ -9,11 +9,6 @@ import { createTargetFor } from "@/lib/note-create-target";
 import { PhoneBrowseContext } from "@/lib/phone-list";
 import { isKeyboardOpen, useKeyboardInset } from "@/lib/visual-viewport";
 
-/**
- * 手機筆記頁底部的兩顆毛玻璃浮動鈕（與清單畫面同一組 `PhoneListFabs`）：左下「Search」（開全螢幕搜尋層）、
- * 右下「New note」（建在這篇所在的空間與資料夾；這篇不能在那裡建就不顯示）。
- * 螢幕鍵盤開著（例如正在改標題）或搜尋層開著時整組不渲染；編輯中由 `NotePage` 不掛。內容的底部空白由 `NoteEditor` 的 `fabClearance` 給。
- */
 export function NoteBrowseBar({ note }: { note: NoteDto }) {
   const browse = useContext(PhoneBrowseContext);
   const foldersQuery = useFolders();
@@ -41,7 +36,7 @@ export function NoteBrowseBar({ note }: { note: NoteDto }) {
       />
     </div>
   );
-  // 掛到 AppShell 在主內容區外面留的那一格：筆記滑入時位移的是主內容區，鈕不跟著動（見 `PhoneBrowseState.fabSlot`）。
+  // Mounted in a slot outside the main area: the main area slides when a note opens and the fixed buttons must not move with it.
   const slot = browse?.fabSlot ?? null;
   return slot === null ? bar : createPortal(bar, slot);
 }
