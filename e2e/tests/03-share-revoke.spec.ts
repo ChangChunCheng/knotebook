@@ -2,15 +2,10 @@ import { test, expect } from "@playwright/test";
 import { ADMIN, createNote, loginAs, openSiteAdmin, randomEmail } from "./helpers.js";
 
 /**
- * admin 於站台管理頁建邀請連結（UI 全程，#285）→ 第二使用者（獨立 browser
- * context）開連結、自己填 email 與密碼建帳並登入（不強制改密碼）→ admin 建筆記並分享給他
- * → 他開啟可見 → admin 撤銷 → **≤10 秒**他的頁面出現 `note.accessRevoked` toast
- * 文案＋被導回 `/`（SLA 的機器斷言）。
- *
- * 建邀請走站台管理 modal（`/admin/users`），從 `UserMenu` 的「Site admin」入口進去
- * （走真實入口，不 `page.goto` 深連結），完成後按 Esc 關掉回 `/`。
+ * The invitation goes through the site admin modal (`/admin/users`) from `UserMenu`'s "Site admin" item (the real entry
+ * point, no `page.goto` deep link); Esc closes it back to `/`. The 10-second timeout is the revocation SLA.
  */
-test("admin 建第二使用者 → 分享筆記 → 撤銷 → SLA 內失去存取", async ({ browser }) => {
+test("admin invites a second user -> shares a note -> revokes -> access is lost within the SLA", async ({ browser }) => {
   const adminContext = await browser.newContext();
   const userContext = await browser.newContext();
   try {
@@ -18,7 +13,6 @@ test("admin 建第二使用者 → 分享筆記 → 撤銷 → SLA 內失去存�
     await loginAs(adminPage, ADMIN.email, ADMIN.password);
     await expect(adminPage).toHaveURL(/\/$/);
 
-    // ── 站台管理頁 → 使用者區 → 建立第二使用者 ────────────────────────
     await openSiteAdmin(adminPage);
 
     const secondEmail = randomEmail();
@@ -28,7 +22,7 @@ test("admin 建第二使用者 → 分享筆記 → 撤銷 → SLA 內失去存�
     const createDialog = adminPage.getByRole("dialog", { name: "Create an invitation" });
     await createDialog.getByRole("button", { name: "Create link" }).click();
 
-    // 結果對話框：唯讀欄（可及名稱 `Link`）的值就是邀請連結，token 只在這裡出現一次。
+    // Result dialog: the read-only field (accessible name `Link`) holds the invitation link; the token appears only here.
     const resultDialog = adminPage.getByRole("dialog", { name: "Invitation link" });
     const inviteUrl = await resultDialog.getByRole("textbox", { name: "Link", exact: true }).inputValue();
     expect(inviteUrl.startsWith(`${new URL(adminPage.url()).origin}/register#invite=`)).toBe(true);
@@ -36,14 +30,12 @@ test("admin 建第二使用者 → 分享筆記 → 撤銷 → SLA 內失去存�
     await resultDialog.getByRole("button", { name: "Done", exact: true }).click();
     await expect(resultDialog).not.toBeVisible();
 
-    // ── Esc 關站台管理 modal、回 "/" ──────────────────────────────────
     await adminPage.keyboard.press("Escape");
     await expect(adminPage).toHaveURL(/\/$/);
 
-    // ── 第二使用者：獨立 context 開邀請連結 → 自己填表建帳（成功即登入、不強制改密碼）──
     const userPage = await userContext.newPage();
     await userPage.goto(inviteUrl);
-    // 讀完 fragment 就從網址列清掉，所以網址上沒有 `#`。
+    // The fragment is cleared from the address bar once read, so the URL has no `#`.
     await expect(userPage).toHaveURL(/\/register$/);
     await expect(userPage.getByText(/^This invitation works once/)).toBeVisible();
     await userPage.getByLabel("Email", { exact: true }).fill(secondEmail);
@@ -53,53 +45,48 @@ test("admin 建第二使用者 → 分享筆記 → 撤銷 → SLA 內失去存�
     await userPage.getByRole("button", { name: "Create account", exact: true }).click();
     await expect(userPage).toHaveURL(/\/$/);
 
-    // ── 建筆記＋分享給第二使用者（對方已建帳，加人才找得到 email） ─────────────────────────────────────
+    // The invitee has an account now, which the email lookup needs when adding a member
     const title = `E2E share ${Date.now()}`;
     await createNote(adminPage, title);
     const noteUrl = adminPage.url();
 
     await adminPage.getByRole("button", { name: "Share", exact: true }).click();
     const shareDialog = adminPage.getByRole("dialog", { name: "Share note" });
-    // 加人表單掛在「限定成員」情境面板底下（新 IA），
-    // 只有選了這個層級才會掛載——先切過去才看得到 Email address 欄位。
+    // The add-member form sits under the "Members only" panel and mounts only once that level is selected,
+    // so switch to it before the Email address field exists.
     await shareDialog.getByRole("radio", { name: /Members only/ }).click();
     await shareDialog.getByLabel("Email address").fill(secondEmail);
     await shareDialog.getByRole("button", { name: "Add", exact: true }).click();
     await expect(shareDialog.getByText(secondEmail)).toBeVisible();
 
-    // ── 第二使用者開啟被分享的筆記（已登入，同上面建帳後的 context），確認可見 ───────────────────────────────────
-    // 分享表單預設角色＝viewer（未改動下拉選單）：`TitleInput` 對 `readOnly`
-    // 改渲染成 `<h1>`（不是可編輯的 `Note title` labeled input，見
-    // `TitleInput.tsx` 的 `if (readOnly)` 分支）——「可見」斷言改認這顆標題。
+    // The share form's default role is viewer (dropdown untouched): `TitleInput` renders an `<h1>` for `readOnly`
+    // (not the editable labeled `Note title` input; see the `if (readOnly)` branch in `TitleInput.tsx`), so "visible" is
+    // asserted on that heading.
     await userPage.goto(noteUrl);
     await expect(userPage.getByRole("heading", { name: title, level: 1 })).toBeVisible({ timeout: 15_000 });
 
-    // ── 屏障：等 Hocuspocus 共編真的連上，才開始算 SLA ──────────────────
-    // REST（上面那個 `<h1>` 標題）成功只代表 `GET /api/notes/:ref` 拿到資料；
-    // provider 的 WS 握手是接在它後面才起步的獨立非同步流程（`useCollab`）。
-    // 在這裡就撤權也不再是卡死的（issue #6：握手前被拒走的是
-    // `authenticationFailed`，`useCollab` 現在接了並翻成同一套二擊語意，同樣收斂到
-    // 下面那組斷言）——但這道屏障仍然保留：它讓這一支 spec 釘的是「已連線後收到
-    // 應用層 CLOSE(REVOKED)」那條主路徑，而不是隨機落在兩條之一。
-    // `ConnectionBadge`（`role="status"`）是真訊號：
-    // 等它顯示「Read-only」（#335：viewer 連上後徽章只寫「唯讀」；順帶釘住角色＝viewer，分享表單預設角色）。
-    // regex 錨定開頭（同 helpers.ts `createNote` 的屏障）：字串形式是大小寫不敏感的
-    // 子字串比對，未來若出現「Disconnected」之類的文案會誤中。
+    // Barrier: wait until the Hocuspocus collab connection is really up before the SLA clock starts.
+    // REST success (the `<h1>` above) only means `GET /api/notes/:ref` returned; the provider's WS handshake is a separate
+    // async flow (`useCollab`) that starts after it. Revoking before that would also converge (a rejection before the
+    // handshake arrives as `authenticationFailed`, which `useCollab` maps to the same two-strike handling; issue #6), but the
+    // barrier makes this spec pin the main path, receiving the application-level CLOSE(REVOKED) while connected, instead of
+    // landing randomly on either path.
+    // `ConnectionBadge` (`role="status"`) is the real signal: wait for it to read "Read-only" (#335: a connected viewer's
+    // badge says only that, which also pins the default role as viewer).
+    // The regex is anchored at the start (same as the barrier in `createNote` in helpers.ts): a string matches as a
+    // case-insensitive substring, so a future text such as "Disconnected" would match by mistake.
     const connectionBadge = userPage.getByRole("status").filter({ hasText: /^Read-only/ });
     await expect(connectionBadge).toBeVisible({ timeout: 15_000 });
 
-    // ── admin 撤銷（DELETE share）──────────────────────────────────
     await shareDialog.getByRole("button", { name: `Remove ${secondEmail}` }).click();
-    // #395：移除先有行內確認
+    // #395: removal needs a confirmation first
     await shareDialog.getByRole("alert").getByRole("button", { name: "Remove", exact: true }).click();
-    // 等那一列的移除鈕消失（確認列的文字也含 email，getByText 會 strict-mode 雙命中）
+    // Wait for that row's remove button to disappear (the confirmation row's text also contains the email, so getByText would double-match in strict mode)
     await expect(shareDialog.getByRole("button", { name: `Remove ${secondEmail}` })).toHaveCount(0);
     await expect(shareDialog.getByText(secondEmail, { exact: true })).not.toBeVisible();
 
-    // ── 撤銷 SLA：≤10 秒，第二使用者頁面出現 accessRevoked toast＋被導回 "/" ──
-    // Radix Toast 額外渲染一個 `role="status"` live-region 播報「Notification …」
-    // 跟真正的 toast 文案共用子字串——`exact:true` 只匹配
-    // 真正的 ToastTitle 節點。
+    // Radix Toast also renders a `role="status"` live region announcing "Notification ..." that shares a substring with the
+    // real toast text; `exact: true` matches only the actual ToastTitle node.
     await expect(userPage.getByText("You no longer have access to this note.", { exact: true })).toBeVisible({
       timeout: 10_000,
     });

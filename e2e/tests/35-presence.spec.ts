@@ -2,12 +2,9 @@ import { test, expect, type BrowserContext, type Locator, type Page } from "@pla
 import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, noteIdFromUrl, randomEmail, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
- * #293：頁首「也在這篇的人」頭像列。
- * A（擁有者）寫 40 段 → B（檢視者）進來 → A 看到 B（唯讀者沒有游標）、B 看到 A（外框色＝遠端游標色、點頭像捲到游標）
- * → B 多開一分頁仍一顆 → B 的兩支 PAT 各讀一次，A 看到兩顆 AI（不與 B 合併）→ 390 寬只剩一顆 +N 與完整名單 → 鍵盤 → B 關掉後 35 s 內消失。
- *
- * 唯讀者沒有游標：此檔「B 的頭像是 no cursor」即守衛；紅了代表 viewer 也送了 cursor，不得改斷言。
- * 被刪位置點頭像會捲到相鄰，所以這裡只對「沒有游標」的頭像斷言不捲。
+ * A read-only user has no cursor: in this file "B's avatar is no cursor" is the guard; red means the viewer also sent a cursor,
+ * and the assertion must not be loosened.
+ * Clicking the avatar of a deleted position scrolls to a neighbour, so scrolling is asserted only for avatars with "no cursor".
  */
 
 const RUN = Date.now();
@@ -18,14 +15,13 @@ function scrollerOf(page: Page): Locator {
 
 const scrollTopOf = (page: Page) => scrollerOf(page).evaluate((el) => el.scrollTop);
 
+/** For viewers only: waits for the read-only h1 title and the "Read-only" badge. */
 async function waitConnectedOnNote(page: Page, title: string): Promise<void> {
-  // viewer 的標題是 h1（等標題再碰側欄／頁首）
   await expect(page.getByRole("heading", { name: title, level: 1 })).toBeVisible({ timeout: 15_000 });
-  // #335：viewer 連上後徽章只寫「Read-only」（能編輯者才是「Connected」）；本檔只有 viewer 等這道屏障
   await expect(page.getByRole("status").filter({ hasText: /^Read-only/ })).toBeVisible({ timeout: 15_000 });
 }
 
-test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲到游標）、多分頁一顆、兩支 AI、窄螢幕完整名單、鍵盤、關掉後消失", async ({
+test("header avatar row: A sees B (no cursor), B sees A (outline colour, click scrolls to the cursor), one avatar for multiple tabs, two AIs, full list on a narrow screen, keyboard, disappears after closing", async ({
   browser,
   baseURL,
 }) => {
@@ -38,7 +34,6 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     ctxA = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     ctxB = await browser.newContext({ viewport: { width: 1280, height: 600 } });
     anonymous = await browser.newContext();
-    // ── 建場：A 建筆記、打 40 段 ───────────────────────────────────────
     const pageA = await ctxA.newPage();
     await loginAs(pageA, ADMIN.email, ADMIN.password);
     const title = `E2E presence ${RUN}`;
@@ -54,7 +49,6 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     }
     await expect(editorLocator(pageA)).toContainText(`Last line ${RUN}`);
 
-    // ── B（檢視者）──────────────────────────────────────────────────
     const bEmail = randomEmail();
     const bPassword = "e2e-presence-viewer-pw";
     await createUserViaInvite(pageA, { email: bEmail, password: bPassword, displayName: "E2E Viewer" });
@@ -65,11 +59,10 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await loginAs(pageB, bEmail, bPassword);
     await pageB.goto(noteUrl);
     await waitConnectedOnNote(pageB, title);
-    // 唯讀者沒有游標的守衛要有鑑別力：B 真的點進內文（y-prosemirror 只在 view.hasFocus() 時才送 cursor）。
-    // 點前段，B 視窗內，不會捲動。
+    // For the "read-only user has no cursor" guard to discriminate, B really clicks into the body (y-prosemirror sends a cursor
+    // only while view.hasFocus()). Click an early paragraph, inside B's viewport, so no scrolling.
     await pageB.getByTestId("note-editor").getByText(`Line 2 ${RUN}`).click();
 
-    // ── A 看 B ──────────────────────────────────────────────
     const rowA = pageA.getByRole("group", { name: "Also viewing this note" });
     const bAvatar = rowA.getByRole("button", { name: "E2E Viewer, Viewer, no cursor right now" });
     await expect(bAvatar).toBeVisible({ timeout: 15_000 });
@@ -79,7 +72,7 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     const tip = pageA.getByRole("tooltip");
     await expect(tip).toContainText("E2E Viewer · Viewer");
     await expect(tip).toContainText("No cursor right now");
-    // 負向斷言的觀察窗：B 若（錯誤地）送了 cursor，要等 awareness 傳到 A 並渲染；至少 300 ms 後再斷一次。
+    // Observation window for the negative assertion: if B (wrongly) sent a cursor, awareness has to reach A and render; assert again after at least 300 ms.
     await pageA.waitForTimeout(300);
     await expect(bAvatar).toBeVisible();
 
@@ -87,12 +80,11 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await bAvatar.click();
     expect(await scrollTopOf(pageA)).toBe(scrollBefore);
 
-    // ── B 看 A ──────────────────────────────────────────────
-    // 之後到第 5 步之前 A 不再碰別的元素，保住焦點＝游標。
+    // From here until the narrow-screen part A touches no other element, which keeps focus = the cursor.
     await editorLocator(pageA).getByText(`Last line ${RUN}`).click();
-    // 游標落在行尾，B 端該段文字不被 A 的遠端游標 widget 切開。
+    // The caret lands at the end of the line, so on B's side that paragraph's text is not split by A's remote cursor widget.
     await pageA.keyboard.press("End");
-    // 後面不打字，但 A 送出的游標位置（awareness）讀的是 PM 的 state.selection：等它讀回 End，B 端的游標一開始就在行尾、不在斷言途中移位。
+    // A types nothing more, but the cursor position A sends (awareness) is read from PM's state.selection: wait for it to read back End, so the cursor on B's side starts at the line end and does not move during assertions.
     await waitForEditorSelection(pageA);
 
     const rowB = pageB.getByRole("group", { name: "Also viewing this note" });
@@ -113,19 +105,17 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await expect.poll(() => scrollTopOf(pageB)).toBeGreaterThan(0);
     await expect(caret).toBeInViewport();
 
-    // ── 同一人多分頁只有一顆 ───────────────────────────────────
     const bAnyAvatar = rowA.getByRole("button", { name: /^E2E Viewer, Viewer,/ });
     const pageB2 = await ctxB.newPage();
     await pageB2.goto(noteUrl);
     await waitConnectedOnNote(pageB2, title);
-    // 負向性質需要時間窗：合併失敗時，第二顆要等 pageB2 的 awareness 傳到 A 並渲染才會出現（A 端沒有可觀察的「已收到」訊號）。
+    // A negative property needs a time window: when merging fails, the second avatar appears only after pageB2's awareness reaches A and renders (A has no observable "received" signal).
     await pageA.waitForTimeout(1_500);
     await expect(bAnyAvatar).toHaveCount(1);
     await pageB2.close();
     await pageA.waitForTimeout(1_500);
     await expect(bAnyAvatar).toHaveCount(1);
 
-    // ── 兩支 AI（不與 B 合併）──────────────────────────────────
     const bMe = (await (await pageB.request.get("/api/auth/me")).json()) as { handle: string };
     const labels: string[] = [];
     for (const n of ["ai1", "ai2"]) {
@@ -137,7 +127,7 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(read.status()).toBe(200);
-      labels.push(name); // 全小寫無空白 → agent 標籤＝名稱本身（同 13）
+      labels.push(name); // all lowercase without spaces, so the agent label equals the name (as in 13)
     }
     const agentBtn = (label: string) =>
       rowA.getByRole("button", { name: `${bMe.handle} (${label}), AI agent, go to its cursor` });
@@ -149,10 +139,8 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await expect(pageA.getByRole("tooltip")).toContainText(`${bMe.handle} (${labels[0]}) · AI agent`);
     await expect(bAnyAvatar).toHaveCount(1);
 
-    // ── 窄螢幕 +N 與完整名單（A 看到 3 位）──────────────────────
-    // ai1 的 Tooltip 還開著；縮窄後該頭像被藏，先把滑鼠移走讓 Tooltip 關掉，免得蓋住 +N。
-    // 不用 hover()（可能動到 A 的捲動，後面 Enter 捲動需要 scrollTop > 0）。Radix hoverable Tooltip 離開 trigger 只建 grace area，
-    // 要等「之後」的 pointermove 落在區外才關（react-tooltip dist/index.mjs:268-291），所以送兩段 move，慢機器重試。
+    // ai1's Tooltip is still open; after narrowing that avatar is hidden, so first move the mouse away to close the Tooltip, or it would cover +N.
+    // Do not use hover() (it may move A's scroll, and the later Enter scroll needs scrollTop > 0). A Radix hoverable Tooltip leaving its trigger only builds a grace area and closes only when a later pointermove lands outside it (react-tooltip), so send two moves, retried on slow machines.
     const sb = (await scrollerOf(pageA).boundingBox())!;
     const cx = sb.x + sb.width / 2;
     const cy = sb.y + sb.height / 2;
@@ -162,8 +150,8 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
       await expect(pageA.getByRole("tooltip")).toHaveCount(0, { timeout: 1_000 });
     }).toPass({ timeout: 5_000 });
     await pageA.setViewportSize({ width: 390, height: 844 });
+    // Phone width (< 640) shows no avatars, only a single "+N", where N is everyone else
     const personBtn = rowA.getByRole("button", { name: /, (go to (their|its) cursor|no cursor right now)$/ });
-    // 手機寬（< 640）不放頭像，只有一顆「+N」，N＝其他所有人
     await expect(personBtn).toHaveCount(0);
     const more = rowA.getByRole("button", { name: "3 more, show everyone" });
     await expect(more).toBeVisible();
@@ -191,20 +179,19 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await expect(personBtn).toHaveCount(3);
     await expect(rowA.getByRole("button", { name: /more, show everyone/ })).toHaveCount(0);
 
-    // ── 鍵盤 ────────────────────────────────────────────────────
     const first = rowA.getByRole("button").first();
     const second = rowA.getByRole("button").nth(1);
     await first.focus();
     await expect(pageA.getByRole("tooltip")).toBeVisible();
     const secondLabel = (await second.getAttribute("aria-label")) ?? "";
-    // 第二顆（AI）的 tooltip 要含它自己的名字：`{handle} ({label}), AI agent, …` → `{handle} ({label}) · AI agent`
+    // The second avatar's (AI) tooltip must contain its own name: `{handle} ({label}), AI agent, ...` -> `{handle} ({label}) · AI agent`
     const secondTip = secondLabel.replace(/, AI agent, (go to its cursor|no cursor right now)$/, " · AI agent");
     expect(secondTip).not.toBe(secondLabel);
     await pageA.keyboard.press("Tab");
     await expect(second).toBeFocused();
     await expect(pageA.getByRole("tooltip")).toContainText(secondTip);
 
-    // Enter 捲到 AI 的游標（文件開頭）：A 打字後停在底部，scrollTop 要變小；且不開選單。
+    // Enter scrolls to the AI's cursor (document start): after A typed it sat at the bottom, so scrollTop must decrease; and no menu opens.
     const topBeforeEnter = await scrollTopOf(pageA);
     expect(topBeforeEnter).toBeGreaterThan(0);
     await rowA.getByRole("button", { name: /AI agent/ }).first().focus();
@@ -212,7 +199,6 @@ test("頁首頭像列：A 看 B（無游標）、B 看 A（外框色、點了捲
     await expect.poll(() => scrollTopOf(pageA)).toBeLessThan(topBeforeEnter);
     await expect(pageA.getByRole("menu")).toHaveCount(0);
 
-    // ── B 的最後一個分頁關掉 → 消失；AI 仍在（閒置 120 s 才消失，不等）──
     await pageB.close();
     await expect(bAnyAvatar).toHaveCount(0, { timeout: 35_000 });
     await expect(agentBtn(labels[0]!)).toBeVisible();

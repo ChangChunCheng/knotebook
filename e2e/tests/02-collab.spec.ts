@@ -2,14 +2,10 @@ import { test, expect } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs } from "./helpers.js";
 
 /**
- * 兩個獨立 `browser.newContext()`（各自獨立 cookie jar，模擬兩台
- * 裝置）同開同一篇筆記，斷言雙向即時同步。用同一個 admin 帳號登入兩個 context
- * 即可驗證——這一階段還不需要分享/第二使用者（那是之後多人流程的範圍）。
- *
- * `ADMIN.password`：疊內唯一的 admin 密碼（#187 起 env 管理員首登不強改密碼，
- * 沒有檔序耦合）。
+ * Two contexts with the same admin account (separate cookie jars, like two devices); sharing and a second user are out of
+ * scope here. `ADMIN.password` is the stack's only admin password.
  */
-test("雙 browser context 即時共編：雙向文字同步", async ({ browser }) => {
+test("two browser contexts co-edit in real time: text syncs both ways", async ({ browser }) => {
   const contextA = await browser.newContext();
   const contextB = await browser.newContext();
   try {
@@ -33,15 +29,15 @@ test("雙 browser context 即時共編：雙向文字同步", async ({ browser }
     await editorA.pressSequentially("Hello from A");
     await expect(editorB).toContainText("Hello from A", { timeout: 10_000 });
 
-    // 接著打字要接在既有內容之後（不是覆蓋掉剛同步進來的內容）——click 只保證聚焦，
-    // 光游標位置不定，用 End 把游標移到這個 block 的尾端再打字。
+    // Typing must append after the synced content, not overwrite it: click only focuses, leaving the caret position
+    // arbitrary, so End moves it to the end of this block first.
     await editorB.click();
     await editorB.press("End");
     await editorB.pressSequentially(" and B");
     await expect(editorA).toContainText("Hello from A and B", { timeout: 10_000 });
   } finally {
-    // try/finally：斷言失敗時仍要釋放兩個 context（否則失敗案例會在同一個 worker
-    // 累積殘留 browser context，拖累後續 spec 的資源——已知遞延項）。
+    // try/finally: close both contexts even when an assertion fails, so failed runs do not leave browser contexts piling up
+    // in the same worker and slowing later specs (a known deferred item).
     await contextA.close();
     await contextB.close();
   }

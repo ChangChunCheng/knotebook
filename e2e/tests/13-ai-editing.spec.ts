@@ -2,15 +2,12 @@ import { expect, test } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs } from "./helpers.js";
 
 /**
- * #106（#136／#137／#138 三棒的整條線）：外部 AI 拿 PAT 改一段筆記，正開著這篇的瀏覽器
- * 不重整就看到新內容、看到遠端游標的名牌、看到標題列的最後編輯落款；再從 ⋮ 打開 AI
- * 修改紀錄把那一發撤回，內容還原、該列顯示已撤回。
- *
- * ⚠ 名牌的斷言用**屬性**不是可見性：沒亮的時候 BlockNote 的 CSS 把 label 壓成
- * `max-width:4px; max-height:5px; color:transparent`，那個 4×5 的透明框仍然算「可見」，
- * `toBeVisible()` 在這裡是假綠。
+ * #106 (with #136, #137, #138): an external AI edits a note through a PAT while a browser has it open.
+ * The name tag assertion uses an attribute, not visibility: when not lit, BlockNote's CSS squeezes the label to
+ * `max-width:4px; max-height:5px; color:transparent`, and that 4x5 transparent box still counts as "visible", so
+ * `toBeVisible()` would be a false green here.
  */
-test("外部 AI 改一段：不重整看到新內容、遠端游標名牌、最後編輯落款；⋮ AI 修改紀錄撤回 → 內容還原", async ({
+test("external AI edits a section: new content without reload, remote cursor name tag, last-edit attribution; revert from the More menu AI edit history -> content restored", async ({
   page,
   browser,
   baseURL,
@@ -23,8 +20,8 @@ test("外部 AI 改一段：不重整看到新內容、遠端游標名牌、最�
 
   const editor = editorLocator(page);
   await editor.click();
-  // ⚠ heading 一律同級：`sectionize()` 只在「同級或更淺」的 heading 才開新段，`## B` 會被
-  // 併進前一段（Global Constraints 專條）。這裡只有一個 `# Section A`，改寫時也重述同級。
+  // All headings at the same level: `sectionize()` opens a new section only for a heading at the same level or shallower, so
+  // `## B` would be merged into the previous section. There is a single `# Section A` here, and the rewrite restates a same-level heading too.
   await editor.pressSequentially("Intro line");
   await editor.press("Enter");
   await editor.pressSequentially("# Section A");
@@ -32,45 +29,46 @@ test("外部 AI 改一段：不重整看到新內容、遠端游標名牌、最�
   await editor.pressSequentially("Original body");
   await expect(editor).toContainText("Original body");
 
-  // 隨機化：多 spec 共用一座疊、失敗時刻意不 down，固定名稱重跑會撞 strict mode。
-  // ⚠ 隨機化會改變派生出來的 agent 名稱：`deriveAgentLabel` 取第一個空白切詞 → NFKC →
-  //   小寫 → 濾掉 `[^A-Za-z0-9._-]` → 截 32。名稱刻意做成「無空白、全小寫、只含 `-` 與
-  //   數字、共 23 字元」，派生值就等於名稱本身，底下一律用同一個變數斷言、不另外寫死。
+  // Randomized: specs share one stack and a failed run deliberately leaves it up; a fixed name would collide on re-run in strict mode.
+  // Randomizing changes the derived agent name: `deriveAgentLabel` takes the first whitespace-delimited word -> NFKC ->
+  //   lowercase -> filters out `[^A-Za-z0-9._-]` -> truncates to 32. The name is deliberately whitespace-free, all lowercase,
+  //   only `-` and digits, 23 characters, so the derived value equals the name itself and everything below asserts with the
+  //   same variable instead of hard-coding it.
   const tokenName = `e2e-agent-${Date.now()}`;
 
   await page.goto("/settings/authorization");
   await page.getByRole("button", { name: "Create API token" }).click();
-  // ⚠ `getByLabel` 預設是不分大小寫的子字串比對——保留 exact（理由同 12）。
+  // `getByLabel` defaults to a case-insensitive substring match; keep exact (reason as in 12).
   await page.getByLabel("Name", { exact: true }).fill(tokenName);
-  // #239／#247：存取權是兩個開關（預設都關）；開「編輯」＝notes:read notes:write（同 12）。
+  // Turning on "Edit" grants notes:read notes:write (as in 12)
   await page.getByRole("switch", { name: "Create and edit notes", exact: true }).click();
   await page.getByRole("button", { name: "Create token" }).click();
   const token = await page.getByLabel("New API token", { exact: true }).inputValue();
   expect(token).toMatch(/^knb_/);
   await page.getByRole("button", { name: "Done" }).click();
 
-  // 回到筆記並等編輯器掛上——`editorLocator` 命中即隱含「已連線且首次同步完成」（見
-  // helpers.ts 檔頭）。presence 只對**已載入**的文件掛，所以這一步是後面所有斷言的前提。
+  // Back to the note and wait for the editor to mount: a match on `editorLocator` implies "connected and first sync done" (see
+  // `createNote` in helpers.ts). presence is attached only to an **already loaded** document, so this is a precondition for every assertion below.
   await page.goto(noteUrl);
   await editor.waitFor();
 
-  // **無 cookie 的 context**：用瀏覽器 context 會因為 session cookie 而通過，對 Bearer
-  // 沒有鑑別力。try/finally 比照 02／12：斷言失敗時仍要釋放，否則失敗案例會在同一個
-  // worker 累積殘留 context。
+  // A **context without cookies**: a browser context would pass through the session cookie, which gives no discrimination
+  // against Bearer. try/finally as in 02 / 12: release on assertion failure, otherwise failed runs leave contexts piling up
+  // in the same worker.
   const anonymous = await browser.newContext();
   try {
     const api = anonymous.request;
     const auth = { Authorization: `Bearer ${token}` };
 
-    // ⚠ 用清單端點找 note id：以 handle／slug 解析筆記的那條路由是 cookie 專用，不在
-    //   #107 的 Bearer 允許清單上，用匿名 context 打會 401（`.id` 是 undefined，之後
-    //   每一發都 404）。`GET /api/notes` 在清單上。
+    // Find the note id via the list endpoint: the route that resolves a note by handle / slug is cookie-only and not on #107's
+    //   Bearer allowlist, so an anonymous context gets 401 (`.id` is undefined and every later call is 404). `GET /api/notes`
+    //   is on the list.
     const listRes = await api.get(`${baseURL}/api/notes`, { headers: auth });
     expect(listRes.status()).toBe(200);
     const notes = (await listRes.json()) as Array<{ id: string; title: string; ownerHandle: string }>;
     const mine = notes.find(n => n.title === title)!;
     expect(mine).toBeTruthy();
-    // handle 由 DB default 產生（`user-<8hex>`），不得寫死；名牌斷言要用真的那一個。
+    // handle comes from a DB default (`user-<8hex>`) and must not be hard-coded; the name tag assertion needs the real one.
     const handle = mine.ownerHandle;
 
     const contentRes = await api.get(`${baseURL}/api/notes/${mine.id}/content`, { headers: auth });
@@ -81,9 +79,9 @@ test("外部 AI 改一段：不重整看到新內容、遠端游標名牌、最�
     const sec = content.outline.find(o => o.heading === "Section A")!;
     expect(sec).toBeTruthy();
 
-    // ⚠ 換一個**不同的** heading：`replace_section` 連 heading 一起換掉，用新標題才能證明
-    //   游標落在「這次寫下去的第一顆」，而不是退回文件開頭（`Section A` 這篇裡就是文件
-    //   開頭那一段，沿用舊標題就分不出兩者）。
+    // Use a **different** heading: `replace_section` replaces the heading too, and only a new title proves the cursor lands on
+    //   "the first thing written this time" rather than falling back to the document start (here `Section A` is the document
+    //   start, so reusing the old title could not tell the two apart).
     const res = await api.post(`${baseURL}/api/notes/${mine.id}/edits`, {
       headers: auth,
       data: {
@@ -96,50 +94,42 @@ test("外部 AI 改一段：不重整看到新內容、遠端游標名牌、最�
     expect(res.status()).toBe(201);
     const applied = (await res.json()) as { outline: Array<{ sectionId: string; heading: string }> };
 
-    // ① 不重整就看到新內容
     await expect(editor).toContainText("Rewritten by AI", { timeout: 10_000 });
 
-    // ② 遠端游標名牌。BlockNote 的 `renderCursor` 產的是
-    //    `bn-collaboration-cursor__base > bn-collaboration-cursor__caret > bn-collaboration-cursor__label`。
     const cursor = page.locator(".bn-collaboration-cursor__base").filter({
       has: page.locator(`.bn-collaboration-cursor__label:text-is("${handle} (${tokenName})")`),
     });
 
-    // ②-a 裝飾真的產生了（名字牌此時可能還是收起來的：第一次現身走 awareness 的 `added`，
-    //      而 BlockNote 設亮起屬性的處理常式只看 `updated`）。
+    // 2a. The decoration really exists (the name tag may still be collapsed: the first appearance goes through awareness
+    //      `added`, while BlockNote's handler that sets the lit attribute watches only `updated`).
     await expect(cursor).toHaveCount(1, { timeout: 15_000 });
 
-    // ②-b 名牌真的亮得起來。**這裡再讀一次，不是為了「製造」一次 change 事件**——上面
-    //      那發寫入本身就已經送過一次 `updated`，亮燈視窗早就開過。真正的理由是**時機**：
-    //      前面兩個等待各有 10 秒與 15 秒逾時，真的跑到接近上限時，寫入那次留下的兩秒
-    //      視窗已經關了，斷言會撲進視窗外——不是機制沒作用，是斷言下錯了時間點。這裡對
-    //      **同一段**再讀一次（段落識別子直接取自上面那發 201 的 outline，不必多打一次
-    //      整篇讀），游標位置不變、但 presence state 的單調遞增欄位前進 → 新舊 state 深度
-    //      不等 → provider 才會發 `change` → 在斷言前就地重開一次兩秒視窗，不必賭前面的
-    //      等待實際花了多久。
+    // 2b. The name tag really lights up. **Reading again here is not to "produce" a change event**: the write above already sent
+    //      one `updated`, so the lighting window was opened long ago. The real reason is **timing**: the two earlier waits have
+    //      10s and 15s timeouts, and when they run close to the limit the two-second window left by the write has already
+    //      closed and the assertion lands outside it - the mechanism did not fail, the assertion was placed at the wrong time.
+    //      Reading **the same section** again (the section id comes straight from the outline of the 201 above, no need for
+    //      another whole-note read) leaves the cursor position unchanged while a monotonically increasing field of the presence
+    //      state advances -> old and new states differ in a deep compare -> the provider emits `change` -> a fresh two-second
+    //      window opens right before the assertion, without betting on how long the earlier waits took.
     const secB = applied.outline.find(o => o.heading === "Section B")!;
     expect(secB).toBeTruthy();
     const reread = await api.get(`${baseURL}/api/notes/${mine.id}/content?section=${secB.sectionId}`, { headers: auth });
     expect(reread.status()).toBe(200);
     await expect(cursor).toHaveAttribute("data-active", "", { timeout: 10_000 });
 
-    // ③ 標題列的最後編輯落款（`useCollab` 收到遠端 update → debounce 3 s → 失效 note query）
+    // 3. Last-edited attribution in the title bar (`useCollab` receives a remote update -> 3 s debounce -> invalidates the note query)
     await expect(page.getByTestId("last-edited")).toContainText(`(${tokenName})`, { timeout: 15_000 });
 
-    // ④ ⋮ → AI 修改紀錄 → 撤回 → 內容還原
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("menuitem", { name: "AI edit history" }).click();
     await page.getByRole("button", { name: "Revert", exact: true }).first().click();
     await expect(editor).toContainText("Original body", { timeout: 10_000 });
     await expect(editor).not.toContainText("Rewritten by AI");
-    // ⚠ 成功 toast 的文案（`aiEdits.revertOk`）與列上的「已撤回」標記（`aiEdits.reverted`）
-    //   是兩個互不為子字串的字串——否則 dialog 還開著時兩個節點都中，strict mode violation。
-    //   `exact: true` 另外避開 Radix Toast 的 `role="status"` live-region（01／03 的同款雷）。
+    // The success toast text (`aiEdits.revertOk`) and the "reverted" marker on the row (`aiEdits.reverted`) are two strings
+    //   that are not substrings of each other; otherwise both nodes match while the dialog is open, a strict mode violation.
+    //   `exact: true` also avoids Radix Toast's `role="status"` live region (same trap as in 03).
     await expect(page.getByText("Edit reverted.", { exact: true })).toBeVisible();
-    // ⑤ 要求「該列顯示已撤回」——`useRevertEdit` 的 onSuccess 失效
-    //    修改紀錄清單（`apps/web/src/api/noteEdits.ts`），dialog 重抓後那一列的
-    //    `revertable` 變 false、`revertedAt` 非 null，`AiEditsDialog.tsx` 就會把
-    //    Revert 按鈕換成這個字串（`aiEdits.reverted`，與上面的 toast 文案不互為子字串）。
     await expect(page.getByText("Already reverted", { exact: true })).toBeVisible();
   } finally {
     await anonymous.close();

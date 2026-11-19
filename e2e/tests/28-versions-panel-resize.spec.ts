@@ -1,11 +1,7 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { ADMIN, createNote, loginAs } from "./helpers.js";
 
-/**
- * #274 版本面板右欄可拖曳調寬（真瀏覽器量測）：預設 320、拖曳／上下限／雙擊／鍵盤、localStorage 重整後仍在、
- * 把手命中（elementFromPoint）、與側欄把手互不影響、窄視窗沒有可見的版本面板把手。
- * 寬度一律用 boundingBox 實測；拖曳用真滑鼠（pointer capture）。
- */
+/** Widths are measured with boundingBox; dragging uses a real mouse (pointer capture). */
 
 const PANEL_KEY = "versions.panelWidth";
 
@@ -26,7 +22,7 @@ async function openPanel(page: Page): Promise<void> {
   await expect(panelOf(page)).toBeVisible();
   await expect(handleOf(page)).toBeVisible();
 }
-/** 抓把手中心、水平拖 dx px（先走兩步讓 pointermove 連發），放開。 */
+/** Drags in two halves so pointermove fires repeatedly. */
 async function dragBy(page: Page, handle: Locator, dx: number): Promise<void> {
   const box = (await handle.boundingBox({ timeout: 5_000 }))!;
   const x = box.x + box.width / 2;
@@ -41,7 +37,7 @@ async function expectWidth(loc: Locator, expected: number, tol = 1): Promise<voi
   await expect.poll(async () => Math.abs((await widthOf(loc)) - expected), { timeout: 5_000, message: `寬度應約 ${expected}` }).toBeLessThanOrEqual(tol);
 }
 
-test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、雙擊、鍵盤、命中、與側欄獨立", async ({ browser }) => {
+test("28 versions panel resize: default 320, drag, survives reload, limits, double-click, keyboard, hit target, independent of the sidebar", async ({ browser }) => {
   test.setTimeout(120_000);
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const page = await ctx.newPage();
@@ -54,18 +50,15 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     const panel = panelOf(page);
     const handle = handleOf(page);
 
-    // 1. 預設 320
     await expectWidth(panel, 320);
     await expect(handle).toHaveAttribute("aria-valuenow", "320");
 
-    // 6. 把手命中：中心點的最上層元素是把手本身或其子孫
     const hit = await handle.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
       return { isHandle: !!top && (top === el || el.contains(top)), top: top ? `${top.tagName}.${top.className}` : null };
     });
     expect(hit.isHandle, `elementFromPoint=${hit.top}`).toBe(true);
-    // 把手上下兩端也要命中（不只中心）
     const hitEnds = await handle.evaluate((el) => {
       const r = el.getBoundingClientRect();
       return [r.y + 8, r.y + r.height - 8].map((y) => {
@@ -75,8 +68,8 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     });
     expect(hitEnds).toEqual([true, true]);
 
-    // 6b. 把手在內文卡與版本面板之間的間隙：中心 x 落在兩卡之間（不壓在任何一張卡上），且與兩卡貼著面板左框
-    // 面板外包一層 `display: contents` 的 slot：內文卡是 slot 的前一個兄弟。
+    // The handle sits in the gap between the note card and the versions panel: its centre x lies between the two cards (not over either) and it hugs the panel's left border.
+    // The panel is wrapped in a `display: contents` slot: the note card is the slot's previous sibling.
     const noteCard = page.locator("[data-versions-panel-slot]").locator("xpath=preceding-sibling::*[1]");
     const [noteBox, panelBox, handleBox] = [await noteCard.boundingBox({ timeout: 5_000 }), await panel.boundingBox({ timeout: 5_000 }), await handle.boundingBox({ timeout: 5_000 })];
     const noteRight = noteBox!.x + noteBox!.width;
@@ -84,11 +77,10 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     const geom = JSON.stringify({ noteRight, panelLeft: panelBox!.x, handleCenter });
     expect(handleCenter, geom).toBeGreaterThan(noteRight);
     expect(handleCenter, geom).toBeLessThan(panelBox!.x);
-    // 結構關係：把手 `right-full` 以面板 padding box 定位，右緣＝面板左緣＋1 個框寬（border 1px，與側欄對稱）。
+    // Structure: the handle is positioned `right-full` against the panel's padding box, so its right edge = panel left edge + 1 border width (border 1px, symmetric with the sidebar).
     expect(Math.abs(handleBox!.x + handleBox!.width - (panelBox!.x + 1)), geom).toBeLessThanOrEqual(0.5);
     console.log(`GEOM ${geom}`);
 
-    // 2. 往左拖 100 → 420；重整後仍 420
     await dragBy(page, handle, -100);
     await expectWidth(panel, 420);
     await expect(handle).toHaveAttribute("aria-valuenow", "420");
@@ -97,7 +89,6 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     await openPanel(page);
     await expectWidth(panel, 420);
 
-    // 3. 上限 560、下限 240
     await dragBy(page, handleOf(page), -400);
     await expectWidth(panel, 560);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), PANEL_KEY)).toBe("560");
@@ -105,12 +96,10 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     await expectWidth(panel, 240);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), PANEL_KEY)).toBe("240");
 
-    // 4. 雙擊回 320（預設值＝移除鍵）
     await handleOf(page).dblclick();
     await expectWidth(panel, 320);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), PANEL_KEY)).toBeNull();
 
-    // 5. 鍵盤：聚焦後 ArrowLeft 變寬 16、ArrowRight 變窄 16
     await handleOf(page).focus();
     await page.keyboard.press("ArrowLeft");
     await expectWidth(panel, 336);
@@ -123,7 +112,6 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
     await handleOf(page).dblclick();
     await expectWidth(panel, 320);
 
-    // 7. 側欄把手仍可拖，且兩個寬度互不影響
     const sidebar = page.locator("aside").first();
     const sideBefore = await widthOf(sidebar);
     await dragBy(page, handleOf(page), -80);
@@ -140,7 +128,7 @@ test("28 版本面板調寬：預設 320、拖曳、重整保留、上下限、�
   }
 });
 
-test("28b 窄視窗（390）開版本：沒有可見的版本面板把手（含寬視窗開著面板再縮窄）", async ({ browser }) => {
+test("28b narrow viewport (390) opening versions: no visible versions panel handle (including opening the panel wide and then narrowing)", async ({ browser }) => {
   test.setTimeout(90_000);
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
@@ -148,13 +136,12 @@ test("28b 窄視窗（390）開版本：沒有可見的版本面板把手（含�
     await loginAs(page, ADMIN.email, ADMIN.password);
     await createNote(page, `E2E panel narrow ${Date.now()}`);
     const anyHandle = page.getByRole("separator", { name: "Resize versions panel" });
-    // 寬視窗開著面板 → 把手可見；縮到 390 → 面板（與把手）離開寬版配置，不得留可見把手
+    // Panel open in a wide viewport -> handle visible; narrowed to 390 -> the panel (and its handle) leaves the wide layout and must leave no visible handle
     await openPanel(page);
     await expect(anyHandle.filter({ visible: true })).toHaveCount(1);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByTestId("versions-bubble")).toBeHidden();
     await expect(anyHandle.filter({ visible: true })).toHaveCount(0);
-    // 窄視窗從 ⋮ 開整頁版本歷史：同樣沒有可見把手
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("menuitem", { name: "Version history" }).click();
     await expect(page.getByRole("dialog", { name: "Version history" })).toBeVisible();

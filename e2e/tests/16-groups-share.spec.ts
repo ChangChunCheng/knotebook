@@ -2,38 +2,37 @@ import { expect, test, type Browser, type BrowserContext, type Locator, type Pag
 import { ADMIN, createNote, createUserViaInvite, editorLocator, loginAs, openGroupPanel, randomEmail, showSidebarTab } from "./helpers.js";
 
 /**
- * #175（改寫自 #103 版）：移入群組與複製到個人。
- * A 建群組、從設定加 B（內建一般成員）→ A 建個人筆記（打字＋**真上傳**一張圖）、逐人分享給 C、開公開連結 →
- * C 開著那篇 → A 從 ⋮「Move to…」第二層選單選群組把它移進群組（確認框列出 C、說公開連結會關）→
- * A 的網址列變 `/g/<group id>/<slug>`、面板換成群組版；C ≤10 秒被踢回首頁；公開網址 404 →
- * B 開**舊的** `/n/<A handle>/<slug>` → 網址列變 `/g/…`、內容正確 → B 在 ⋮「Copy to… → My notes」→ toast「Open copy」→
- * 副本頁的圖是**新的**上傳網址、真的載得出來 → A 從 ⋮「Delete」刪群組筆記（原圖的上傳端點 403）→ B 重整副本頁，圖仍載得出來。
- *
- * 不斷言 A 搬完的角色（create-only 角色搬完是 viewer；A 是群組建立者＝內建管理員，本支不測
- * create-only——那條由 server 案 9 與 web 案 14 守）。v2 沒有「移出群組」，舊版的移出段整段刪除。
- * 斷言形沿用 03（10 秒 SLA、exact toast）、11（真上傳、`naturalWidth` 輪詢、公開端點 `toPass`）、15（設定加成員）。
- * 收尾以全刪模式（`{ mode: "delete" }`）刪掉這支建的群組——群組裡還有筆記也刪得掉（#175）。主體中途失敗時
- * 清理的錯誤被吞（不蓋掉原始失敗）；主體通過時清理失敗照常讓測試紅。
+ * A's role after the move is not asserted (a create-only role becomes viewer after moving; A is the group creator = built-in
+ * admin; create-only is covered by `apps/server/test/groups-v2-move.test.ts`).
+ * Cleanup deletes the group this test created in full-delete mode (`{ mode: "delete" }`; a group that still contains notes can
+ * be deleted too, #175). If the body failed midway the cleanup's error is swallowed so it does not mask the original failure;
+ * if the body passed, a cleanup failure turns the test red.
  */
 
 const PASSWORD = "e2e-second-user-pw";
 
-/** 1×1 紅色 PNG（同 11）。 */
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
 
 /**
- * ⋮ 選單開著時，點第二層觸發項（「Move to…」／「Copy to…」）再點子選單裡的項目（桌面 flyout 形）。
+ * With the more menu open: click the second-level trigger ("Move to..." / "Copy to...") and then an item in its submenu (the
+ * desktop flyout form).
  *
- * 不能直接 `target.click()`：Playwright 的 click 會把滑鼠**一步瞬移**到目標中心。Radix 的子選單靠「指標水平移動方向」
- * 判斷使用者是不是正往子選單走（`pointerDirRef` 只在父選單內的 pointermove 更新，`lastPointerXRef` 初值 0，
- * 所以從 ⋮ 鈕第一次移進父選單那一下必記成 `right`）。1280 寬的視窗裡 ⋮ 貼右緣，子選單碰撞翻到**左側**
- * （`data-side="left"`）——瞬移離開觸發項時方向 `right` ≠ 子選單側 `left`，Radix 判定「沒往子選單走」→ 焦點回父選單 →
- * 子選單 `onFocusOutside` 關掉、項目被卸載，click 無限重試到測試逾時（會卡滿 180 秒）。
- * 真人的滑鼠是連續移動，離開觸發項前最後幾筆 pointermove 就在觸發項內、方向正確，幾乎不會遇到（除非極快地一甩就離開觸發項；最壞也只是子選單關掉、再 hover 一次就開）。
- * 所以這裡分段移動（`steps`）模擬真人：第一段仍落在觸發項內，把方向更新成實際往子選單的方向，之後才離開觸發項。
+ * `target.click()` directly will not work: Playwright's click teleports the mouse to the target centre in **one step**. Radix
+ * decides whether the user is heading toward the submenu from the **horizontal pointer direction** (`pointerDirRef` is updated
+ * only on pointermove inside the parent menu, and `lastPointerXRef` starts at 0, so the first move from the more button into
+ * the parent menu is always recorded as `right`). In a 1280-wide viewport the more button hugs the right edge and the
+ * submenu collides over to the **left** (`data-side="left"`); on teleporting away from the trigger the direction `right` !=
+ * the submenu side `left`, Radix decides "not heading to the submenu", focus returns to the parent menu, the submenu's
+ * `onFocusOutside` closes it and the item is unmounted, and click retries until the test times out (stuck for the full 180
+ * seconds).
+ * A human's mouse moves continuously, so the last few pointermoves before leaving the trigger are inside it with the right
+ * direction and this almost never happens (unless one flicks out of the trigger extremely fast; at worst the submenu closes
+ * and one more hover opens it).
+ * So this moves in steps (`steps`) to imitate a human: the first step still lands inside the trigger and updates the
+ * direction to the actual direction of the submenu, and only then leaves the trigger.
  */
 async function pickFromSubmenu(page: Page, triggerName: string, itemName: string): Promise<void> {
   await page.getByRole("menuitem", { name: triggerName, exact: true }).click();
@@ -45,12 +44,10 @@ async function pickFromSubmenu(page: Page, triggerName: string, itemName: string
   await target.click();
 }
 
-/** admin 以邀請建一個帳號（API 建邀請＋另開 context 兌換，不動 admin 的頁面）。 */
 async function createUser(adminPage: Page, email: string, displayName: string): Promise<void> {
   await createUserViaInvite(adminPage, { email, password: PASSWORD, displayName });
 }
 
-/** 依名字找群組 id（`context.request` 帶該 context 的 session cookie）；找不到回 null。 */
 async function groupIdNamed(context: BrowserContext, name: string): Promise<string | null> {
   const list = await context.request.get("/api/groups");
   expect(list.status()).toBe(200);
@@ -59,8 +56,8 @@ async function groupIdNamed(context: BrowserContext, name: string): Promise<stri
 }
 
 /**
- * 刪掉名為 `name` 的群組。走 API 而不是 15 的 UI 路徑（側欄 ⋮ → Delete group）：
- * 這段在 `finally` 裡跑，失敗時頁面可能停在任何狀態，UI 步驟不可靠。回傳是否找到並刪掉。
+ * Deletes the group named `name`. Uses the API rather than 15's UI path (sidebar more menu -> Delete group): this runs in
+ * `finally`, where the page may be in any state and UI steps are unreliable. Returns whether it was found and deleted.
  */
 async function deleteGroupNamed(context: BrowserContext, name: string): Promise<boolean> {
   const id = await groupIdNamed(context, name);
@@ -70,7 +67,6 @@ async function deleteGroupNamed(context: BrowserContext, name: string): Promise<
   return true;
 }
 
-/** 新 context 登入，停在 "/"。 */
 async function firstLogin(browser: Browser, email: string): Promise<{ page: Page; close: () => Promise<void> }> {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -79,14 +75,13 @@ async function firstLogin(browser: Browser, email: string): Promise<{ page: Page
   return { page, close: () => context.close() };
 }
 
-/** `naturalWidth > 0` ＝瀏覽器真的抓到並解碼了圖（404／破圖時是 0；同 11）。 */
 async function expectImageLoaded(img: Locator): Promise<void> {
   await expect
     .poll(async () => img.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 })
     .toBeGreaterThan(0);
 }
 
-test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ 成員複製到我的筆記 → 刪原筆記後副本的圖仍在", async ({ browser, request }) => {
+test("move into group (kicks per-person shares, closes the public link, old URL redirects) -> member copies to My notes -> the copy's image survives deleting the original", async ({ browser, request }) => {
   test.setTimeout(180_000);
   const adminContext = await browser.newContext();
   const closers: Array<() => Promise<void>> = [];
@@ -97,13 +92,12 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await loginAs(adminPage, ADMIN.email, ADMIN.password);
     await expect(adminPage).toHaveURL(/\/$/);
 
-    const memberEmail = randomEmail(); // B：群組一般成員
-    const guestEmail = randomEmail(); // C：個人筆記的逐人分享對象
+    const memberEmail = randomEmail();
+    const guestEmail = randomEmail();
     const guestName = "E2E Share Guest";
     await createUser(adminPage, memberEmail, "E2E Group Member");
     await createUser(adminPage, guestEmail, guestName);
 
-    // ── A：建群組（側欄群組「＋」）→ 群組面板 → 以 email 加 B（同 15）────────────────
     const sidebar = adminPage.getByRole("complementary");
     await showSidebarTab(adminPage, "Groups");
     await sidebar.getByRole("button", { name: "New group", exact: true }).click();
@@ -122,7 +116,6 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await adminPage.keyboard.press("Escape");
     await expect(adminPage).toHaveURL(/\/$/);
 
-    // ── A：個人筆記 → 打字＋真上傳一張圖（同 11）────────────────────────────
     const title = `E2E move note ${Date.now()}`;
     await createNote(adminPage, title);
     const personalUrl = adminPage.url();
@@ -146,7 +139,6 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     const originalSrc = await originalImg.getAttribute("src");
     expect(originalSrc).toMatch(/^\/api\/uploads\/[0-9a-f-]{36}$/);
 
-    // ── A：分享給 C（Members only）→ 開公開連結、記下 token ─────────────────────
     await adminPage.getByRole("button", { name: "Share", exact: true }).click();
     const shareDialog = adminPage.getByRole("dialog", { name: "Share note" });
     await shareDialog.getByRole("radio", { name: /Members only/ }).click();
@@ -164,25 +156,23 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await adminPage.keyboard.press("Escape");
     await expect(shareDialog).not.toBeVisible();
 
-    // ── C：首登、打開那篇、等共編連上（viewer）──────────────────────────────
     const guest = await firstLogin(browser, guestEmail);
     closers.push(guest.close);
     await guest.page.goto(personalUrl);
     await expect(guest.page.getByRole("heading", { name: title, level: 1 })).toBeVisible({ timeout: 15_000 });
     await expect(guest.page.getByRole("status").filter({ hasText: /^Read-only/ })).toBeVisible({ timeout: 15_000 });
 
-    // ── A：⋮ → Move to…（第二層選單，桌面 hover／點開）→ 選群組 → 確認框 → Move into group ──
     await adminPage.getByRole("button", { name: "More", exact: true }).click();
     await pickFromSubmenu(adminPage, "Move to…", groupName);
     const confirm = adminPage.getByRole("dialog").filter({ hasText: `Move this note into "${groupName}"?` });
-    // 提交鈕在 shares 與 public-link 兩支都到之前停用；確認文案也要等它們到才完整。
+    // The submit button is disabled until both the shares and public-link queries have arrived; the confirmation text is also complete only after they arrive.
     await expect(confirm).toContainText(
       `Per-person sharing with ${guestName} is removed; if they aren't in the group, they lose access.`,
     );
     await expect(confirm).toContainText("Its public link will be turned off.");
     await confirm.getByRole("button", { name: "Move into group", exact: true }).click();
 
-    // A：網址列換成群組形（新群組裡沒有撞名，slug 沿用）；再開分享面板確認已是群組版（無 radio、說明存取看角色）。
+    // The slug is kept because the new group has no name collision.
     await expect(adminPage).toHaveURL(new RegExp(`/g/${groupId}/${slug}$`), { timeout: 15_000 });
     await adminPage.getByRole("button", { name: "Share", exact: true }).click();
     await expect(shareDialog).toBeVisible();
@@ -190,7 +180,6 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await expect(shareDialog.getByRole("radio")).toHaveCount(0);
     const groupUrl = adminPage.url();
 
-    // ── C：≤10 秒被踢回 "/"；公開網址 404 ────────────────────────────────────
     await expect(guest.page.getByText("You no longer have access to this note.", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(guest.page).toHaveURL(/\/$/, { timeout: 10_000 });
     await expect(async () => {
@@ -199,15 +188,13 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await adminPage.keyboard.press("Escape");
     await expect(shareDialog).not.toBeVisible();
 
-    // ── B：首登 → 開**舊的** /n/<A handle>/<slug> → 轉到 /g/…、內容正確 ──────────────
     const member = await firstLogin(browser, memberEmail);
     closers.push(member.close);
     await member.page.goto(personalUrl);
     await expect(member.page).toHaveURL(groupUrl, { timeout: 15_000 });
-    await expect(member.page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 }); // B 是 editor：標題是輸入框
+    await expect(member.page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
     await expect(member.page.locator('[data-testid="note-editor"]')).toContainText(sentence, { timeout: 15_000 });
 
-    // ── B：⋮ → Copy to… → My notes → 確認 → toast「Open copy」→ 副本頁的圖是新上傳、載得出來 ─────────
     await member.page.getByRole("button", { name: "More", exact: true }).click();
     await pickFromSubmenu(member.page, "Copy to…", "My notes");
     await member.page.getByRole("dialog").getByRole("button", { name: "Copy to my notes", exact: true }).click();
@@ -218,16 +205,16 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
       { timeout: 15_000 },
     );
     const copyUrl = member.page.url();
-    await expect(member.page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 }); // 副本的 owner 是 B
+    await expect(member.page.getByLabel("Note title")).toHaveValue(title, { timeout: 15_000 });
     await expect(member.page.locator('[data-testid="note-editor"]')).toContainText(sentence, { timeout: 15_000 });
     const copyImg = member.page.locator('img[src*="/api/uploads/"]');
     await expect(copyImg).toBeVisible({ timeout: 15_000 });
     const copySrc = await copyImg.getAttribute("src");
     expect(copySrc).toMatch(/^\/api\/uploads\/[0-9a-f-]{36}$/);
-    expect(copySrc).not.toBe(originalSrc); // 附件複製成新 id、網址改寫
+    expect(copySrc).not.toBe(originalSrc); // the attachment is copied under a new id and the URL is rewritten
     await expectImageLoaded(copyImg);
 
-    // ── A：刪群組筆記（⋮ → Delete，不確認）→ 原圖的上傳端點 403（#181：筆記進垃圾桶，附件仍在、看不到的上傳是 403）
+    // #181: the note goes to the trash and the attachment stays, so an upload that can no longer be seen is 403
     await adminPage.getByRole("button", { name: "More", exact: true }).click();
     await adminPage.getByRole("menuitem", { name: "Delete", exact: true }).click();
     await expect(adminPage).toHaveURL(/\/$/, { timeout: 15_000 });
@@ -235,7 +222,6 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
       expect((await adminContext.request.get(originalSrc!)).status()).toBe(403);
     }).toPass({ timeout: 10_000 });
 
-    // ── B：重整副本頁 → 圖仍載得出來 ────────────────────────────────────────
     await member.page.reload();
     await expect(member.page).toHaveURL(copyUrl);
     const copyImgAfter = member.page.locator(`img[src="${copySrc}"]`);
@@ -243,8 +229,8 @@ test("移入群組（踢逐人分享、關公開連結、舊網址轉址）→ �
     await expectImageLoaded(copyImgAfter);
     passed = true;
   } finally {
-    // 清理不得蓋掉真正的失敗：主體已失敗時清理的錯誤吞掉（`finally` 裡再 throw 會取代原本的錯誤）；
-    // 主體通過時清理失敗照常讓測試紅——群組必須找得到、刪得掉。
+    // Cleanup must not mask the real failure: if the body already failed, swallow the cleanup error (throwing in `finally` would
+    // replace the original error); if the body passed, a cleanup failure turns the test red as usual - the group must be findable and deletable.
     try {
       const deleted = await deleteGroupNamed(adminContext, groupName);
       if (passed) expect(deleted).toBe(true);

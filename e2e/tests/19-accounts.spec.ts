@@ -4,10 +4,11 @@ import { E2E_ORIGIN, IDP_CONTROL_ORIGIN } from "../ports.js";
 import { ADMIN, chooseSelectOption, adminNav, loginAs, openSiteAdmin, randomEmail, reEscape } from "./helpers.js";
 
 /**
- * #187 e2e 19：1–8（含 6a）；2–6、6a、8 是 #187。
- * 第二個服務指向 fake-idp 的路徑形 issuer `http://fake-idp:9400/b`（各自金鑰、共用 client）。
- * 識別值一律隨機化（顯示名、sub、email）：腳本失敗時不 down 疊，重跑會吃到髒資料。
- * control endpoint 走 `IDP_CONTROL_ORIGIN`（`e2e/ports.ts`）下的 `/b/control/next-login`（`request` fixture 不吃瀏覽器的 host-resolver-rules）。
+ * The second provider points at fake-idp's path-form issuer `http://fake-idp:9400/b` (own keys, shared client).
+ * Identity values (display name, sub, email) are randomised: a failed run leaves the stack up and a re-run would otherwise
+ * hit dirty data.
+ * The control endpoint is `/b/control/next-login` under `IDP_CONTROL_ORIGIN` (`e2e/ports.ts`; the `request` fixture ignores
+ * the browser's host-resolver-rules).
  */
 
 const SECOND_ISSUER = "http://fake-idp:9400/b";
@@ -31,8 +32,8 @@ async function adminOnSignInPage(browser: Browser) {
   return { context, page };
 }
 
-test.describe.serial("19 帳號與登入服務（#187）", () => {
-  test("19-1：admin 在 /admin/login 建第二個登入服務 → 回呼網址 → 填 secret → 測試 → 啟用 → 打開自動建帳；登入頁出現按鈕、首登建帳", async ({ browser, request }) => {
+test.describe.serial("19 Accounts and sign-in providers (#187)", () => {
+  test("19-1: admin creates a second sign-in provider at /admin/login -> callback URL -> fill secret -> test -> enable -> turn on auto-create; the sign-in page shows the button and a first login creates the account", async ({ browser, request }) => {
     const { context, page } = await adminOnSignInPage(browser);
     try {
       await page.getByRole("button", { name: "Add sign-in service" }).click();
@@ -50,7 +51,6 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await steps.getByRole("button", { name: "Done" }).click();
       await expect(steps).not.toBeVisible();
 
-      // 登入服務＝資料列（Edit、Test connection、開關）＋「＜名稱＞ details」明細列（secret 狀態、測試結果）。
       const card = page.getByRole("row", { name: SECOND_NAME, exact: true });
       const details = page.getByRole("row", { name: `${SECOND_NAME} details`, exact: true });
       await expect(details.getByText(/No client secret yet/)).toBeVisible();
@@ -64,11 +64,11 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await card.getByRole("button", { name: "Test connection" }).click();
       await expect(details.getByText(`Connection OK. The identity provider reports issuer ${SECOND_ISSUER}.`)).toBeVisible();
       await expect(details.getByText("The issuer uses plain http.")).toBeVisible();
-      // #247：啟用 switch 的可及名稱＝「Enabled」欄頭＋服務顯示名（aria-labelledby）。
+      // #247: the enable switch's accessible name = the "Enabled" column header + the provider's display name (aria-labelledby).
       await card.getByRole("switch", { name: `Enabled ${SECOND_NAME}`, exact: true }).click();
       await expect(card.getByRole("switch", { name: `Enabled ${SECOND_NAME}`, exact: true })).toHaveAttribute("aria-checked", "true");
       const autoCreate = card.getByRole("switch", { name: `Create accounts on first sign-in with ${SECOND_NAME}`, exact: true });
-      await expect(autoCreate).toHaveAttribute("aria-checked", "false"); // 新服務預設關
+      await expect(autoCreate).toHaveAttribute("aria-checked", "false");
       await autoCreate.click();
       await expect(autoCreate).toHaveAttribute("aria-checked", "true");
     } finally {
@@ -90,7 +90,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-2：已登入帳號在設定頁「Link」第二個服務 → 已連結 → 另一個瀏覽器以它登入同一帳號", async ({ browser, request }) => {
+  test("19-2: a signed-in account links the second provider on the settings page -> linked -> another browser signs in to the same account with it", async ({ browser, request }) => {
     const email = randomEmail();
     const sub = `e2e-19-2-${randomUUID()}`;
     const ctx = await browser.newContext();
@@ -101,11 +101,11 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await page.goto("/settings/login");
       await nextLogin(request, SECOND_CONTROL_URL, { sub, email: `other-${randomUUID()}@e2e.local` });
       await page.getByRole("button", { name: `Link ${SECOND_NAME}` }).click();
-      // 整條 OIDC 來回之後才回到設定頁（URL 等待無作用——出發前就在 /settings/login）。
-      // toast 文字另有一份在 `role="status"` 的「Notification …」朗讀節點：不加 exact 會 strict mode 兩個命中（03 先例）。
+      // The settings page is reached only after the whole OIDC round trip (waiting on the URL has no effect: we are on /settings/login before leaving).
+      // The toast text also has a copy in a `role="status"` "Notification ..." screen-reader node: without exact there would be two matches in strict mode (see 03).
       await expect(page.getByText("Sign-in service linked.", { exact: true })).toBeVisible({ timeout: 20_000 });
-      // #247：回程落點是設定的「Sign-in」頁（server 導 `/settings/login?linked=…`，toast 後清參數）；
-      // 等到 toast 才斷言，這時已是回程那一頁，不是出發前那一頁。
+      // #247: the return lands on the settings "Sign-in" page (the server redirects to `/settings/login?linked=...` and the param
+      // is cleared after the toast); assert only after the toast, when this is already the return page and not the one we left.
       await expect(page).toHaveURL(/\/settings\/login(\?.*)?$/);
       await expect(page.getByRole("table", { name: "Sign-in methods", exact: true }).getByRole("row", { name: new RegExp(SECOND_NAME) })).toBeVisible();
     } finally {
@@ -124,7 +124,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-3：帳密註冊 → 另一個瀏覽器以同 email 走 SSO → /link-account 輸密碼 → 連結進站", async ({ browser, request }) => {
+  test("19-3: password registration -> another browser goes through SSO with the same email -> /link-account asks for the password -> linked and signed in", async ({ browser, request }) => {
     const email = randomEmail();
     const reg = await browser.newContext();
     try {
@@ -156,8 +156,8 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  // 依賴 19-1：第二服務已打開自動建帳（登入頁的 SSO 鈕首登建帳）
-  test("19-4＋19-5：登入頁 SSO 鈕首登建純 SSO 帳號 → 唯一登入方式的解除鈕 disabled → 加上密碼 → 另一個瀏覽器以密碼登入", async ({ browser, request }) => {
+  // Depends on 19-1: the second provider has auto-create on, so the sign-in page SSO button creates the account.
+  test("19-4 + 19-5: first login via the sign-in page SSO button creates an SSO-only account -> unlink button of the only sign-in method is disabled -> add a password -> another browser signs in with the password", async ({ browser, request }) => {
     const email = randomEmail();
     const ctx = await browser.newContext();
     try {
@@ -168,10 +168,9 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
       await page.goto("/settings/login");
       const row = page.getByRole("table", { name: "Sign-in methods", exact: true }).getByRole("row", { name: new RegExp(SECOND_NAME) });
-      // 唯一的登入方式：解除鈕 softDisabled（aria-disabled、可聚焦、title 說原因）。
       await expect(row.getByRole("button", { name: "Unlink" })).toHaveAttribute("aria-disabled", "true");
       await expect(row.getByText("This is your only way to sign in, so it can't be unlinked.")).toBeVisible();
-      // id 定位：Playwright 的 getByLabel 預設子字串比對，「New password」會同時命中「Confirm new password」（strict mode 錯，`05-oidc.spec.ts:87-89` 先例）。
+      // Locate by id: Playwright's getByLabel defaults to substring matching, so "New password" would also match "Confirm new password" (a strict mode error).
       await page.locator("#set-password-new").fill(NEW_PASSWORD);
       await page.locator("#set-password-confirm").fill(NEW_PASSWORD);
       await page.getByRole("button", { name: "Add password" }).click();
@@ -192,7 +191,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-6：關閉自行註冊 → 登入頁沒有註冊鈕、/register 導回登入頁、API 403；再關所有服務的自動建帳 → 新 email SSO 首登被拒；最後逐一還原", async ({ browser, request }) => {
+  test("19-6: turning off self-registration -> sign-in page has no register button, /register redirects to login, API 403; then turn off auto-create on all providers -> a new email's first SSO login is rejected; finally restore each", async ({ browser, request }) => {
     const { context, page } = await adminOnSignInPage(browser);
     type ProviderRow = { id: string; displayName: string; autoCreateEnabled: boolean };
     const listProviders = async (): Promise<ProviderRow[]> => {
@@ -200,7 +199,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       expect(res.ok()).toBe(true);
       return ((await res.json()) as { providers: ProviderRow[] }).providers;
     };
-    // 原值在 try 內抓：抓取本身失敗時 original 維持 null，finally 退回固定值。
+    // The original values are captured inside the try: if capturing fails, `original` stays null and the finally falls back to fixed values.
     let original: { registrationEnabled: boolean; providers: Array<{ id: string; autoCreateEnabled: boolean }> } | null = null;
     try {
       const settingsRes = await page.request.get("/api/admin/auth/settings");
@@ -209,7 +208,6 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       const before = await listProviders();
       original = { registrationEnabled, providers: before.map(({ id, autoCreateEnabled }) => ({ id, autoCreateEnabled })) };
 
-      // 第一段：只關帳密自助註冊——註冊鈕消失、/register 導回登入頁（第二服務仍會建帳，但只經登入頁的 SSO 鈕）。
       const sw = page.getByRole("switch", { name: "Allow self-registration with a password" });
       if ((await sw.getAttribute("aria-checked")) === "true") await sw.click();
       await expect(sw).toHaveAttribute("aria-checked", "false");
@@ -218,10 +216,10 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       try {
         const p = await anon.newPage();
         await p.goto("/register");
-        // 等待點＝URL 落在 /login：只在 config 落地後才導走（載入中會先顯示表單）。
+        // Wait point = the URL landing on /login: it leaves only after the config has landed (the form shows first while loading).
         await expect(p).toHaveURL(/\/login$/);
         await expect(p.getByRole("link", { name: `Sign in with ${SECOND_NAME}` })).toBeVisible();
-        await expect(p.getByRole("link", { name: "Create an account" })).toHaveCount(0); // 即使還有服務會建帳
+        await expect(p.getByRole("link", { name: "Create an account" })).toHaveCount(0);
         const api = await p.request.post("/api/auth/register", { data: { email: randomEmail(), password: NEW_PASSWORD } });
         expect(api.status()).toBe(403);
         expect((await api.json()).error.code).toBe("registration_disabled");
@@ -229,7 +227,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
         await anon.close();
       }
 
-      // 第二段：關掉所有服務的自動建帳。本輪的兩列走 UI，其餘（前輪殘留）走 API。
+      // This run's two rows go through the UI; leftovers from earlier runs go through the API.
       for (const name of [SECOND_NAME, "SSO"]) {
         const autoCreate = page.getByRole("switch", { name: `Create accounts on first sign-in with ${name}`, exact: true });
         if ((await autoCreate.count()) === 0) continue;
@@ -267,7 +265,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
           results.push(await page.request.patch("/api/admin/auth/settings", { data: { registrationEnabled: original.registrationEnabled } }));
           expect(results.map((r) => r.ok())).not.toContain(false);
         } else {
-          // 原值沒抓到（開頭就掛）：退回「自助註冊開、第二服務與 SSO 會建帳」——05、19-4、19-6a、26 依賴它們。
+          // Original values were not captured (failed at the start): fall back to "self-registration on, second provider and SSO create accounts"; 05, 19-4, 19-6a and 26 depend on them.
           const results = [];
           for (const row of await listProviders()) {
             if (row.displayName !== SECOND_NAME && row.displayName !== "SSO") continue;
@@ -282,7 +280,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-6a：純 SSO 帳號（第一個服務 SSO）＋同 email 以第二個服務登入 → /link-account 只能以 SSO 證明 → 進站、設定頁兩個身分", async ({ browser, request }) => {
+  test("19-6a: an SSO-only account (first provider SSO) + the same email signing in through the second provider -> /link-account allows proving only via SSO -> signed in, settings shows two identities", async ({ browser, request }) => {
     const email = randomEmail();
     const firstSub = `e2e-19-6a-${randomUUID()}`;
     const reg = await browser.newContext();
@@ -302,8 +300,9 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await page.goto("/login");
       await page.getByRole("link", { name: `Sign in with ${SECOND_NAME}` }).click();
       await expect(page).toHaveURL(/\/link-account$/, { timeout: 20_000 });
-      // 容忍殘留：只斷言本輪要用的那顆在。它看得到＝pending 已落地，才能斷言密碼欄不存在
-      // （落地前是「Loading…」，密碼欄本來就不在——先斷言 count 0 會在資料到之前就假綠）。
+      // Tolerate leftovers: assert only that the one needed this run is present. Seeing it means pending has landed, after which
+      // the password field can be asserted absent (before that it shows "Loading..." and the password field is absent anyway,
+      // so asserting count 0 first would be a false green before the data arrives).
       const prove = page.getByRole("button", { name: "Confirm by signing in with SSO", exact: true });
       await expect(prove).toBeVisible();
       await expect(page.getByLabel("Password for this account")).toHaveCount(0);
@@ -320,7 +319,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-8：admin 連結第二服務 → 關帳密、關自行註冊、關第二服務的自動建帳 → 建立邀請對話框顯示帳密已關、送出 disabled → 新人以 SSO 首登被拒 → 暫開第二服務的自動建帳 → 新人 SSO 首登建帳進站 → 關回；admin 的 session 仍有效", async ({ browser, request }) => {
+  test("19-8: admin links the second provider -> turns off password login, self-registration and the second provider's auto-create -> the create-invitation dialog says password is off and submit is disabled -> a newcomer's first SSO login is rejected -> temporarily turn on the second provider's auto-create -> newcomer's first SSO login creates the account and signs in -> turn it back off; the admin's session is still valid", async ({ browser, request }) => {
     const { context, page } = await adminOnSignInPage(browser);
     const memberEmail = randomEmail();
     const memberSub = `e2e-19-8-member-${randomUUID()}`;
@@ -330,7 +329,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       expect(res.ok()).toBe(true);
       return ((await res.json()) as { providers: ProviderRow[] }).providers;
     };
-    // 原值在 try 內抓（比照 19-6）：抓取本身失敗時 original 維持 null，finally 退回固定值。
+    // The original values are captured inside the try (as in 19-6): if capturing fails, `original` stays null and the finally falls back to fixed values.
     let original: { registrationEnabled: boolean; secondProvider: { id: string; autoCreateEnabled: boolean } } | null = null;
     try {
       const settingsRes = await page.request.get("/api/admin/auth/settings");
@@ -341,7 +340,7 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       original = { registrationEnabled, secondProvider: { id: second!.id, autoCreateEnabled: second!.autoCreateEnabled } };
       const secondId = original.secondProvider.id;
 
-      // 前輪殘留：admin 若已有 /b 的身分，「Link」鈕不會出現——先清（此時帳密登入開著、admin 有密碼，解除一定被允許）。
+      // Leftover from earlier runs: if the admin already has an identity on /b, the "Link" button does not appear, so clear it first (password login is on and the admin has a password, so unlinking is always allowed).
       const ids = await (await page.request.get("/api/auth/identities")).json();
       for (const identity of ids.identities as Array<{ id: string; issuer: string }>) {
         if (identity.issuer === SECOND_ISSUER) expect((await page.request.delete(`/api/auth/identities/${identity.id}`)).status()).toBe(204);
@@ -358,13 +357,11 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       await confirm.getByRole("button", { name: "Turn off" }).click();
       await expect(page.getByRole("switch", { name: "Allow password sign-in" })).toHaveAttribute("aria-checked", "false");
 
-      // 關自行註冊與第二服務的自動建帳（API）：新人 SSO 首登只剩「暫開自動建帳」這條路。
       const closeReg = await page.request.patch("/api/admin/auth/settings", { data: { registrationEnabled: false } });
       expect(closeReg.ok()).toBe(true);
       const closeAuto = await page.request.patch(`/api/admin/auth/providers/${secondId}`, { data: { autoCreateEnabled: false } });
       expect(closeAuto.ok()).toBe(true);
 
-      // 帳密關閉時，建立邀請對話框說明並禁止送出。
       await page.goto("/admin/users");
       await page.getByRole("button", { name: "Create invitation" }).click();
       const inviteDialog = page.getByRole("dialog", { name: "Create an invitation" });
@@ -377,19 +374,17 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
       try {
         const p = await member.newPage();
         await p.goto("/login");
-        // 「不存在」斷言的等待點：SSO 鈕看得到＝`/api/auth/config` 已落地（帳密表單在落地前照常顯示）。
+        // Wait point for the "does not exist" assertion: the SSO button being visible means `/api/auth/config` has landed (the password form shows as usual before it lands).
         await expect(p.getByRole("link", { name: `Sign in with ${SECOND_NAME}` })).toBeVisible();
         await expect(p.locator("#login-email")).toHaveCount(0);
         const api = await p.request.post("/api/auth/login", { data: { email: ADMIN.email, password: ADMIN.password } });
         expect(api.status()).toBe(403);
         expect((await api.json()).error.code).toBe("password_login_disabled");
 
-        // 新人 SSO 首登：自行註冊關、第二服務不建帳 → 被拒。
         await nextLogin(request, SECOND_CONTROL_URL, { sub: memberSub, email: memberEmail, name: "E2E Closed Member" });
         await p.getByRole("link", { name: `Sign in with ${SECOND_NAME}` }).click();
         await expect(p.getByRole("alert")).toHaveText("New accounts can't be created this way right now. Please contact the site administrator.", { timeout: 20_000 });
 
-        // 暫開第二服務的自動建帳 → 同一個人再 SSO 首登 → 建帳進站。
         const openAuto = await page.request.patch(`/api/admin/auth/providers/${secondId}`, { data: { autoCreateEnabled: true } });
         expect(openAuto.ok()).toBe(true);
         await nextLogin(request, SECOND_CONTROL_URL, { sub: memberSub, email: memberEmail, name: "E2E Closed Member" });
@@ -403,19 +398,18 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
         await member.close();
       }
 
-      // admin 用密碼登入的 session 在關閉後仍有效。
       expect((await page.request.get("/api/auth/me")).status()).toBe(200);
     } finally {
       try {
-        // 先收集、後斷言：不逐發斷言，免得前一發失敗就跳過後面的還原（比照 19-6）。
+        // Collect first, assert later: do not assert one by one, so a failure on an earlier call does not skip the later restores (as in 19-6).
         const results = [];
-        // 一律開回（否則髒疊重跑時 01／05 等帳密登入全掛；救不回就 stack:down）。
+        // Always turn it back on (otherwise on a dirty-stack re-run password logins in 01 / 05 etc. all fail; if it cannot be restored, run stack:down).
         results.push(await page.request.patch("/api/admin/auth/settings", { data: { passwordLoginEnabled: true } }));
         if (original !== null) {
           results.push(await page.request.patch(`/api/admin/auth/providers/${original.secondProvider.id}`, { data: { autoCreateEnabled: original.secondProvider.autoCreateEnabled } }));
           results.push(await page.request.patch("/api/admin/auth/settings", { data: { registrationEnabled: original.registrationEnabled } }));
         } else {
-          // 原值沒抓到（開頭就掛）：退回固定值——第二服務會建帳（19-1 打開的值、19-4 依賴）、自行註冊開（預設）。
+          // Original values were not captured (failed at the start): fall back to fixed values - the second provider creates accounts (the value 19-1 turns on, which 19-4 depends on) and self-registration on (the default).
           for (const row of await listProviders()) {
             if (row.displayName !== SECOND_NAME) continue;
             results.push(await page.request.patch(`/api/admin/auth/providers/${row.id}`, { data: { autoCreateEnabled: true } }));
@@ -429,14 +423,15 @@ test.describe.serial("19 帳號與登入服務（#187）", () => {
     }
   });
 
-  test("19-7：停用（dialog 顯示人數）→ 登入頁按鈕消失 → 刪除", async ({ browser }) => {
+  test("19-7: disabling (dialog shows the count) -> sign-in page button disappears -> delete", async ({ browser }) => {
     const { context, page } = await adminOnSignInPage(browser);
     try {
       const card = page.getByRole("row", { name: SECOND_NAME, exact: true });
       await card.getByRole("switch", { name: `Enabled ${SECOND_NAME}`, exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Turn this sign-in service off?" });
-      // 不釘死人數：身分以 issuer 為鍵、刪服務後保留，髒疊重跑時 `/b` 上可能已有前幾輪的身分；前輪若在刪除前失敗，
-      // 殘留的同 issuer 啟用服務會讓 lockedOut 變 0。只斷言「至少有本輪 19-1 那一個」與數字形。
+      // The count is not pinned: identities are keyed by issuer and kept after a provider is deleted, so on a dirty-stack re-run
+      // `/b` may already hold identities from earlier runs; if an earlier run failed before deleting, a leftover enabled provider
+      // with the same issuer would make lockedOut 0. Assert only "at least the one from this run's 19-1" and the number's shape.
       await expect(dialog.getByText(/^Linked accounts: [1-9]\d*$/)).toBeVisible();
       await expect(dialog.getByText(/^Of those, with no other way to sign in: \d+$/)).toBeVisible();
       await dialog.getByRole("button", { name: "Turn off" }).click();

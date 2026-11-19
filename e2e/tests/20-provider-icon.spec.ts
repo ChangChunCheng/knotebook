@@ -3,14 +3,13 @@ import { test, expect } from "@playwright/test";
 import { ADMIN, loginAs, solidPng } from "./helpers.js";
 
 /**
- * 登入服務圖示：管理員在 /admin/login（站台管理 → Sign-in）以 UI 對 e2e 疊既有的「SSO」（global-setup 建的）上傳 PNG →
- * 未登入的登入頁「Sign in with SSO」內有 <img>，src 帶 ?v=，而且是真瀏覽器 canvas 縮過的結果（256×128 → 128×64）。
- * 不新增服務（05 等以名稱定位 SSO 鈕）。測前斷言 iconKind === "template"（不是就失敗，不猜怎麼還原——PATCH 不收 upload）；finally 一律還原成 template。
- *
- * 目視用截圖：設了 `PROVIDER_ICON_SCREENSHOT_DIR` 才截登入頁 SSO 按鈕區，未設就略過；本檔不寫任何絕對路徑。
+ * No provider is added (05 etc. locate the SSO button by name). The test asserts iconKind === "template" before starting (it
+ * fails otherwise; no guessing how to restore, since PATCH does not accept upload) and always restores it in finally.
+ * Screenshots for visual inspection: taken only when `PROVIDER_ICON_SCREENSHOT_DIR` is set, otherwise skipped; this file
+ * writes no absolute path.
  */
 
-test("20-1：管理員上傳「SSO」的圖示 → 登入頁 SSO 鈕出現縮成 128×64 的上傳圖", async ({ browser }) => {
+test("20-1: admin uploads an icon for SSO -> the sign-in page SSO button shows the uploaded image downscaled to 128x64", async ({ browser }) => {
   const shotDir = process.env.PROVIDER_ICON_SCREENSHOT_DIR;
   const adminContext = await browser.newContext();
   try {
@@ -22,15 +21,14 @@ test("20-1：管理員上傳「SSO」的圖示 → 登入頁 SSO 鈕出現縮成
     };
     const sso = list.providers.find(p => p.displayName === "SSO");
     expect(sso, "e2e 疊應有 global-setup 建的 SSO").toBeDefined();
-    // 還原目標固定是 template：前置若不是 template，finally 的還原會把原狀改壞，所以不是就直接失敗（也不嘗試還原——PATCH 不收 upload）。
-    // 若某次執行在上傳後、還原前被中斷，髒疊會一直卡在這個前置檢查紅；救法是 stack:down（帶 -v 清 volume）再重起。adminContext 仍由外層 finally 關閉。
+    // The restore target is fixed at template: if the precondition is not template, the finally restore would corrupt the original state, so fail straight away (and do not try to restore: PATCH does not accept upload).
+    // If a run is interrupted after the upload and before the restore, a dirty stack keeps failing this precondition; the fix is stack:down (with -v to clear volumes) and starting again. The outer finally still closes adminContext.
     expect(sso!.iconKind).toBe("template");
 
-    // 還原失敗不得蓋掉本體的原錯：本體已失敗時只 console.error 還原錯、rethrow 原錯；本體成功時才丟還原錯。
+    // A restore failure must not mask the body's original error: if the body already failed, only console.error the restore error and rethrow the original; throw the restore error only when the body succeeded.
     let failure: unknown;
     try {
       await page.goto("/admin/login");
-      // 登入服務的資料列：Icon 鈕與名稱前的圖示都在這一列。
       const card = page.getByRole("row", { name: sso!.displayName, exact: true });
       await card.getByRole("button", { name: "Icon", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Sign-in service icon" });

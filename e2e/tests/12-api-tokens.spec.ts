@@ -4,24 +4,24 @@ import { createHash, randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { ADMIN, loginAs } from "./helpers.js";
 
-test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改 scope 後 tools/list 跟著變（#239）→ 撤銷後立即 401", async ({
+test("PAT: created in settings -> Bearer request without cookies works -> PATCH changes scope and tools/list follows (#239) -> immediately 401 after revoke", async ({
   page,
   browser,
   baseURL,
 }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
 
-  // 隨機化：多 spec 共用一座疊、失敗時刻意不 down，固定名稱在重跑時會在
-  // 列名查詢（getByRole("row", { name, exact: true })）撞出 strict mode violation，把真正的回歸訊息蓋掉。
+  // Randomized: specs share one stack and a failed run deliberately leaves it up; a fixed name would collide in the row-name
+  // lookup (getByRole("row", { name, exact: true })) on re-run, with a strict mode violation that buries the real regression message.
   const tokenName = `E2E script ${Date.now()}`;
 
   await page.goto("/settings/authorization");
   await page.getByRole("button", { name: "Create API token" }).click();
-  // ⚠ `getByLabel` 預設是「不分大小寫的子字串比對」——exact 保留：#247 前 token 與
-  // HandleSection（aria-label "Username"）同在帳號資訊頁時兩者撞名、strict mode violation。
+  // `getByLabel` defaults to a case-insensitive substring match, so keep exact: before #247, with the token and HandleSection
+  // (aria-label "Username") on the same account page, the two names collided in a strict mode violation.
   await page.getByLabel("Name", { exact: true }).fill(tokenName);
-  // #239／#247／#181：存取權是三個開關（預設都關，`ScopeTogglesField`）；開「編輯」＝notes:read notes:write。
-  // #181：「刪除」開關在編輯關著時 disabled，開了編輯才可切（本案不開它，token 仍是讀寫）。
+  // #239/#247/#181: access is three switches (all off by default, `ScopeTogglesField`); turning on "Edit" means notes:read notes:write.
+  // #181: the "Delete" switch is disabled while Edit is off and togglable once Edit is on (not turned on here, so the token stays read-write).
   const deleteSwitch = page.getByRole("switch", { name: "Move to trash (can be restored)", exact: true });
   await expect(deleteSwitch).toBeDisabled();
   await expect(deleteSwitch).not.toBeChecked();
@@ -30,33 +30,32 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
   await expect(deleteSwitch).not.toBeChecked();
   await page.getByRole("button", { name: "Create token" }).click();
 
-  // 明文只出現這一次，用它自己的 aria-label 讀出來（不要用模糊比對）
   const tokenField = page.getByLabel("New API token", { exact: true });
   await expect(tokenField).toBeVisible();
   const token = await tokenField.inputValue();
   expect(token).toMatch(/^knb_/);
   await page.getByRole("button", { name: "Done" }).click();
 
-  // **無 cookie 的 context**——用瀏覽器 context 會因為 session cookie 而 200，
-  // 那樣這一發對 Bearer 完全沒有鑑別力。try/finally 比照 02：斷言失敗時仍要釋放，
-  // 否則失敗案例會在同一個 worker 累積殘留 context。
+  // A **context without cookies**: a browser context would get 200 through the session cookie, which gives this request no
+  // discrimination against Bearer. try/finally as in 02: release on assertion failure, otherwise failed runs leave contexts
+  // piling up in the same worker.
   const anonymous = await browser.newContext();
   try {
     const api = anonymous.request;
     const ok = await api.get(`${baseURL}/api/notes`, { headers: { Authorization: `Bearer ${token}` } });
     expect(ok.status()).toBe(200);
-    // 同一支 token 也建得了筆記（勾的是 Create and edit notes＝notes:read notes:write）
     const created = await api.post(`${baseURL}/api/notes`, {
       headers: { Authorization: `Bearer ${token}` },
       data: { title: "E2E via token" },
     });
     expect(created.status()).toBe(201);
 
-    // #239：PATCH /api/auth/tokens/:id 改 scope → 同一支 token 的 tools/list 下一個請求就跟著變。
-    // 設定頁沒有改權限的 UI——用 page.request（與頁面共用 session cookie）直接打 cookie-only 的 PATCH。
-    // ⚠ 刻意沿用這支 PAT、不另建：`PAT_CREATE_LIMIT`（`http/rate-limit.ts`）是每人每小時 10 支、存在 server
-    //   行程記憶體，e2e 全用 ADMIN；髒疊重跑時映像沒變，`stack:up` 的 `up --build` 不會重建容器、計數還在——每輪多建一支，連跑幾輪就會撞 429 假紅
-    //   （本檔與 13 號每輪各建一支，與 #239 之前相同）。
+    // #239: PATCH /api/auth/tokens/:id changes scope -> the same token's tools/list changes on the very next request.
+    // The settings page has no UI for changing permissions, so use page.request (shares the page's session cookie) to hit the cookie-only PATCH.
+    // Reuse this PAT deliberately rather than creating another: `PAT_CREATE_LIMIT` (`http/rate-limit.ts`) is 10 per user per hour,
+    //   kept in server process memory, and e2e always uses ADMIN; when a dirty stack is re-run the image is unchanged, so `up --build`
+    //   in `stack:up` does not recreate the container and the count persists - each run creates one more and a few runs hit a 429
+    //   false red (this file and 13 each create one per run, same as before #239).
     const listed = await page.request.get("/api/auth/tokens");
     expect(listed.status()).toBe(200);
     const { tokens } = (await listed.json()) as { tokens: { id: string; name: string; scope: string }[] };
@@ -82,14 +81,14 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
       expect(((await res.json()) as { scope: string }).scope).toBe(scope);
     };
     const before = await toolNames();
-    // 對照：讀寫憑證確實列得到寫入工具，`move_note_to_group` 不在是因為少了 notes:move；
-    // #181：`list_trash` 任何憑證都有，`delete_note`／`restore_note` 不在是因為少了 notes:delete。
+    // Control: a read-write credential does list the write tools; `move_note_to_group` is absent because notes:move is missing.
+    // #181: `list_trash` is available to every credential; `delete_note` / `restore_note` are absent because notes:delete is missing.
     expect(before).toContain("copy_note");
     expect(before).toContain("list_trash");
     expect(before).not.toContain("move_note_to_group");
     expect(before).not.toContain("delete_note");
     expect(before).not.toContain("restore_note");
-    // 資料夾：`list_folders` 任何憑證都有；`delete_folder` 同 delete_note 要 notes:delete。
+    // Folders: `list_folders` is available to every credential; `delete_folder`, like delete_note, needs notes:delete.
     expect(before).toContain("list_folders");
     expect(before).not.toContain("delete_folder");
     await setScope("notes:read notes:write notes:move");
@@ -97,7 +96,7 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
     expect(withMove).toContain("move_note_to_group");
     expect(withMove).not.toContain("delete_note");
     expect(withMove).not.toContain("delete_folder");
-    // #181：讀寫刪除——要 notes:delete 的三支（delete_note、restore_note，資料夾功能加入後加 delete_folder）出現，搬移不在（move 與 delete 互相獨立）。
+    // #181: read-write-delete: the three tools that need notes:delete (delete_note, restore_note, and delete_folder since folders were added) appear, and move does not (move and delete are independent).
     await setScope("notes:read notes:write notes:delete");
     const withDelete = await toolNames();
     expect(withDelete).toContain("delete_note");
@@ -114,43 +113,44 @@ test("PAT：設定頁建立 → 無 cookie 的 Bearer 請求可用 → PATCH 改
     expect(after).toContain("list_trash");
     expect(after).toContain("list_folders");
 
-    // 撤銷——鎖定這一輪建的那一列（名稱已隨機化，前一輪殘留不會同名）。#247：token 是表格列，
-    // 撤銷是列尾紅垃圾桶 icon 鈕（aria-label「Revoke」）。
+    // Revoke the row created in this run (the name is randomized, so leftovers from earlier runs never share it).
     const row = page.getByRole("row", { name: tokenName, exact: true });
     await row.getByRole("button", { name: "Revoke", exact: true }).click();
     await page.getByRole("button", { name: "Revoke token" }).click();
-    // 斷言「剛建的那筆消失」而不是「列表全空」——多 spec 共用一座疊，admin 帳號
-    // 可能有前一輪殘留的 token（髒疊重跑時「全空」會假紅）。
+    // Assert "the just-created entry is gone", not "the list is empty": the specs share one stack, and the admin account may
+    // hold tokens left by earlier runs (on a dirty-stack re-run "empty" would be a false red).
     await expect(page.getByText(tokenName)).toHaveCount(0);
 
     const revoked = await api.get(`${baseURL}/api/notes`, { headers: { Authorization: `Bearer ${token}` } });
     expect(revoked.status()).toBe(401);
-    // 「憑證無效」與「未帶憑證」是兩條不同的 challenge（RFC 6750 §3 vs §3.1），一起釘住
+    // "Invalid credential" and "no credential" are two different challenges (RFC 6750 sec 3 vs 3.1); pin both
     expect(revoked.headers()["www-authenticate"]).toContain('error="invalid_token"');
     expect(revoked.headers()["www-authenticate"]).toContain("resource_metadata=");
   } finally {
     await anonymous.close();
-    // 撤銷不依賴上面的斷言成功：中途紅了也要撤，否則髒疊重跑會累積憑證（每人上限 20）。
-    // 正常路徑已經在上面經 UI 撤銷，這裡查不到就不動；清理本身失敗不得蓋掉原本的錯誤。
+    // Revocation must not depend on the assertions above succeeding: revoke even if something went red midway, or re-runs on a
+    // dirty stack accumulate credentials (limit 20 per user).
+    // On the normal path it was already revoked through the UI above, so nothing is touched if it is not found here; a cleanup
+    // failure must not mask the original error.
     try {
       const listed = (await (await page.request.get("/api/auth/tokens")).json()) as { tokens: { id: string; name: string }[] };
       const left = listed.tokens.find(t => t.name === tokenName);
       if (left) await page.request.delete(`/api/auth/tokens/${left.id}`);
     } catch {
-      // 忽略：清理盡力而為。
+      // Ignored: cleanup is best-effort.
     }
   }
 });
 
-test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback 收到 code → 換發 token 可用", async ({
+test("OAuth: unauthenticated authorize -> log in -> consent -> local callback receives the code -> exchanged token works", async ({
   page,
   browser,
   baseURL,
 }) => {
-  // 測試程式扮演 MCP client：本機 callback server 收 code。Playwright 與 chromium 都在
-  // WSL 主機同一個 network namespace，loopback 直達。
+  // The test plays the MCP client: a local callback server receives the code. Playwright and chromium share one network
+  // namespace, so loopback is reachable.
   const received: URLSearchParams[] = [];
-  // 只收 `/cb`：瀏覽器在 callback 頁可能另抓 `/favicon.ico` 之類，混進來會讓 `received[n]` 錯位。
+  // Accept only `/cb`: the browser may also fetch `/favicon.ico` etc. on the callback page, which would shift `received[n]`.
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/cb") received.push(url.searchParams);
@@ -159,7 +159,7 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
   });
 
   try {
-    // listen(0)：chromium 封鎖 port 1 之類的低位埠，一律讓 OS 給隨機埠。
+    // listen(0): chromium blocks low ports like port 1, so always let the OS pick a random port.
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as AddressInfo).port;
     const redirectUri = `http://127.0.0.1:${port}/cb`;
@@ -176,7 +176,7 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       const verifier = randomBytes(32).toString("base64url");
       const challenge = createHash("sha256").update(verifier).digest("base64url");
       const state = `st-${Date.now()}`;
-      // #239／#181：要求四個 scope（MCP 的 challenge 就是這四個），同意頁才會出現三個勾選框。
+      // #239/#181: request four scopes (the MCP challenge is exactly these four) so the consent page shows three checkboxes.
       const authorizeUrlFor = (s: string): string =>
         `${baseURL}/oauth/authorize?${new URLSearchParams({
           response_type: "code",
@@ -190,9 +190,9 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
         }).toString()}`;
       const authorizeUrl = authorizeUrlFor(state);
 
-      // **未登入**進來：#131 的 return-to 應該把我們送到登入頁再送回同意頁。
-      // ⚠ 不能用 `loginAs`——它第一行就 `page.goto("/login")`，會把 `?next=` 沖掉，
-      // 然後登入完落在 `/`。要在**這一頁原地**填表送出。
+      // Arrive **unauthenticated**: the return-to from #131 should send us to the login page and back to the consent page.
+      // Do not use `loginAs`: its first line does `page.goto("/login")`, which wipes `?next=`, and login would land on `/`.
+      // Fill and submit the form **in place on this page**.
       await page.goto(authorizeUrl);
       await expect(page).toHaveURL(/\/login\?next=/);
       await page.locator("#login-email").fill(ADMIN.email);
@@ -201,8 +201,8 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       await expect(page).toHaveURL(/\/authorize\?req=/);
 
       await expect(page.getByText(`127.0.0.1:${port}`)).toBeVisible();
-      // #239'／#181：第一次授權三框預設都不勾——直接按 Allow 只拿到 notes:read。勾「編輯」再 Allow。
-      // 「刪除」框在編輯沒勾時 disabled，勾了編輯才可勾（本案不勾，授予的仍是讀寫）。
+      // #239/#181: on a first grant all three boxes are unchecked by default, so pressing Allow directly yields only notes:read;
+      // tick "Edit" and then Allow. The "Delete" box is disabled while Edit is unticked and tickable once it is (not ticked here, so the grant stays read-write).
       const edit = page.getByRole("checkbox", { name: "Create and edit notes" });
       const move = page.getByRole("checkbox", { name: "Move to groups (can't be undone)" });
       const del = page.getByRole("checkbox", { name: "Move to trash (can be restored)" });
@@ -241,12 +241,12 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       const notes = await api.get(`${baseURL}/api/notes`, { headers: { Authorization: `Bearer ${token}` } });
       expect(notes.status()).toBe(200);
 
-      // 同一份清單看得到這個 App 列（名稱是 client 自述、標成 App）
       await page.goto("/settings/authorization");
       await expect(page.getByRole("row", { name: /^E2E client \d+$/ }).first()).toBeVisible();
 
-      // #239：同一個 client 再授權一次——編輯框沿用目前已授予的權限（預設勾）並標「Currently
-      // granted」，搬移框與刪除框仍不勾。按 Deny，不留第二支憑證（舊憑證不受影響：deny 不碰 api_tokens）。
+      // #239: authorize the same client again: the Edit box carries over the currently granted permission (checked by default)
+      // and is labelled "Currently granted", while the move and delete boxes stay unchecked. Press Deny so no second credential
+      // is left (the old credential is unaffected: deny does not touch api_tokens).
       const state2 = `st2-${Date.now()}`;
       await page.goto(authorizeUrlFor(state2));
       await expect(page).toHaveURL(/\/authorize\?req=/);
@@ -262,7 +262,7 @@ test("OAuth：未登入開 authorize → 登入 → 同意 → 本機 callback �
       await anonymous.close();
     }
   } finally {
-    // 不關就是 open handle，worker 不會退出。
+    // Without closing it there is an open handle and the worker does not exit.
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

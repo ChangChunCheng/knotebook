@@ -1,18 +1,15 @@
 // e2e/stubs/fake-idp.mjs
 //
-// 零依賴（僅 node: 內建模組）OIDC IdP stub，跑在 compose 的獨立容器（見
-// ../../docker-compose.e2e.yml 的 fake-idp 服務）。
+// Zero-dependency OIDC IdP stub in its own compose container (see the fake-idp service in ../../docker-compose.e2e.yml).
 //
-// #187：同一個 process 掛兩個 issuer——
-//   - 根：`http://fake-idp:9400`（`e2e/global-setup.ts` 以管理 API 建成名為「SSO」的服務，05 用它）
-//   - 路徑形：`http://fake-idp:9400/b`（19 在 /admin/auth 建的第二個服務用它）
-// 各自的 discovery 文件、iss、authorize／token／userinfo／jwks 路徑、**各自的簽章金鑰**與一次性狀態；**共用**同一組
-// client id／secret；control endpoint 每個 issuer 一個（`/control/next-login`、`/b/control/next-login`）。
-// stub 回報的 issuer 與 provider 填的字串完全一致（帶 path 時尾斜線不一致會 throw）。
+// #187: one process serves two issuers, the root `http://fake-idp:9400` and the path form `http://fake-idp:9400/b`.
+// Each has its own discovery document, iss, authorize/token/userinfo/jwks paths, **signing key** and one-shot state, and its own
+// control endpoint (`/control/next-login`, `/b/control/next-login`); both **share** one client id/secret.
+// The reported issuer must equal the provider's configured string exactly (with a path, a trailing-slash mismatch throws).
 //
-// 與 apps/server/test/helpers/fake-idp.ts（in-process CustomFetch harness）不同物：那支是測試進程內直接攔截 fetch，
-// 這支是真的開 socket、走真實 HTTP；這裡不驗 redirect_uri 綁定（那支才有）。
-// 刻意不用 fastify：與 app 不共用 build context（Dockerfile.stub 無安裝層）。
+// Unlike apps/server/test/helpers/fake-idp.ts, which intercepts fetch in-process, this opens a real socket and speaks real HTTP,
+// and it does not check the redirect_uri binding.
+// Deliberately not fastify: it shares no build context with the app (Dockerfile.stub has no install layer).
 
 import { createServer } from "node:http";
 import { generateKeyPairSync, createHash, randomBytes, sign as cryptoSign } from "node:crypto";
@@ -38,7 +35,6 @@ function sendJson(res, status, body) {
   res.end(payload);
 }
 
-/** 一張 64×64 的單色 PNG（頭貼 e2e 的 `picture` 指向它）。 */
 function makeAvatarPng() {
   const size = 64;
   const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -62,8 +58,8 @@ function makeAvatarPng() {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // 位元深度
-  ihdr[9] = 2; // RGB
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type RGB
   const row = Buffer.alloc(1 + size * 3);
   for (let x = 0; x < size; x++) {
     row[1 + x * 3] = 0x2e;
@@ -85,18 +81,16 @@ function base64url(input) {
   return buf.toString("base64url");
 }
 
-/** 一個 issuer 的全部狀態與處理。`prefix` 是路徑前綴（根＝""）；`handle` 回 true＝已回應。 */
+/** `prefix` is the path prefix (root = ""); `handle` returns true once it has responded. */
 function createIssuer(prefix, kid) {
   const issuer = `${ORIGIN}${prefix}`;
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  /** 下一次 `/authorize` 要簽發的身分——control endpoint 預置，`/authorize` 消費即清。 */
+  /** Identity for the next `/authorize`; set by the control endpoint, cleared when used. */
   let nextLogin;
-  /** code → { claims, nonce, codeChallenge }——`/authorize` 寫入，`/token` 消費即刪。 */
   const authorizedCodes = new Map();
-  /** access_token → claims——`/token` 寫入，`/userinfo` 讀（不刪）。 */
   const accessTokenClaims = new Map();
 
-  /** 手組 compact JWT（RS256）——build context 內無 jose 可用。 */
+  /** Hand-assembled compact JWT (RS256): jose is not available in the stub's build context. */
   function signIdToken(claims) {
     const header = { alg: "RS256", kid };
     const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
@@ -116,7 +110,7 @@ function createIssuer(prefix, kid) {
         response_types_supported: ["code"],
         subject_types_supported: ["public"],
         code_challenge_methods_supported: ["S256"],
-        // #187：宣告 client_secret_post（Knotebook 一律用它），否則「測試連線」會出 client_secret_post_not_advertised 提醒。
+        // #187: advertise client_secret_post (the only method Knotebook uses); otherwise "test connection" warns client_secret_post_not_advertised.
         token_endpoint_auth_methods_supported: ["client_secret_post"],
       });
       return true;
@@ -232,13 +226,13 @@ function createIssuer(prefix, kid) {
   return { prefix, handle };
 }
 
-// 路徑形的放前面：根 issuer 的前綴是 ""，會吃下所有路徑。
+// Path-form issuers go first: the root issuer's prefix is "" and would match every path.
 const ISSUERS = [createIssuer("/b", "e2e-key-b"), createIssuer("", "e2e-key")];
 
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "fake-idp"}`);
-    // 頭貼圖：與 issuer 同主機名同埠，所以 app 的下載器把它當成 issuer 自己的主機（容器網路位址仍會被擋，豁免只看主機名）。
+    // Same hostname and port as the issuer, so the app's downloader treats it as the issuer's own host (the exemption looks at hostname only; container-network addresses are still blocked).
     if (req.method === "GET" && url.pathname === "/avatar.png") {
       res.writeHead(200, { "content-type": "image/png", "content-length": AVATAR_PNG.length });
       res.end(AVATAR_PNG);
@@ -247,7 +241,7 @@ const server = createServer(async (req, res) => {
     for (const iss of ISSUERS) {
       if (iss.prefix !== "" && !url.pathname.startsWith(`${iss.prefix}/`)) continue;
       if (await iss.handle(req, res, url, url.pathname.slice(iss.prefix.length))) return;
-      if (iss.prefix !== "") break; // `/b/…` 沒命中：不落到根 issuer（否則 `/b/token` 打錯會被根的同名路由誤收）
+      if (iss.prefix !== "") break; // a miss under `/b/` must not fall through to the root issuer, or a mistyped `/b/token` would hit the root's same-named route
     }
     if (!res.headersSent) sendJson(res, 404, { error: "not_found" });
   } catch (err) {
@@ -256,8 +250,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// 必須綁 0.0.0.0：同時要被 compose 網路內的 app 容器（issuer host `fake-idp`）與
-// 發布出去的 `127.0.0.1:<E2E_IDP_PORT>`（瀏覽器經 host-resolver-rules 打進來）打到。
+// Must bind 0.0.0.0: reachable both from the app container on the compose network (issuer host `fake-idp`) and from the published
+// `127.0.0.1:<E2E_IDP_PORT>` (the browser reaches it via host-resolver-rules).
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[fake-idp] listening on 0.0.0.0:${PORT} (issuers: ${ISSUERS.map(i => `${ORIGIN}${i.prefix}`).join(", ")})`);
 });
