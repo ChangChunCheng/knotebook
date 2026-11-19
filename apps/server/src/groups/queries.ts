@@ -1,6 +1,7 @@
 /**
  * Invariant: every group keeps at least one built-in admin. Transactions changing `group_members` / `role_id` call `lockGroup()` first and then count
- * with a separate statement, `countAdmins()`: under READ COMMITTED the new statement only gets a fresh snapshot once the lock is held.
+ * with a separate statement, `countAdmins()`: under READ COMMITTED the new statement only gets a fresh snapshot once the lock is held
+ * (without the lock, two concurrent demotions both see an admin left and end with zero).
  * Don't merge them into one statement or switch to REPEATABLE READ.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
@@ -21,8 +22,8 @@ export const NOT_ADMIN_MESSAGE = "The transfer target must be an admin of this g
 export const GROUP_NAME_MAX = 80;
 
 /**
- * NUL in a `text` column is 22021 (a 500); the pg driver silently turns a lone surrogate into U+FFFD. Length counts code points (DB `length()`),
- * so composed emoji take several; see `docs/api.md`.
+ * Rejects NUL and lone surrogates (`hasUnstorableChar`): NUL in a `text` column is 22021 (a 500); the pg driver silently turns a lone surrogate into U+FFFD, so the name would be silently corrupted.
+ * Length counts code points (DB `length()`): 80 single-code-point emoji fit exactly, composed emoji take several; see `docs/api.md`. Returns the trimmed name, or null.
  */
 export function validateGroupName(raw: string): string | null {
   if (hasUnstorableChar(raw)) return null;
@@ -183,7 +184,7 @@ export function groupNoteIdsQuery(db: DbOrTx, groupId: string) {
   return db.select({ id: notes.id }).from(notes).where(eq(notes.groupId, groupId));
 }
 
-/** Returns the normalized value; store it so `' reader '` and `Reader` collide under the `lower()` index. Reserved names are checked separately (409). */
+/** Rejects NUL and lone surrogates (`hasUnstorableChar`), then trim → NFC, 1..40 code points (`group_roles_name_len_chk`); invalid → null. Returns the normalized value; store it so `' reader '` and `Reader` collide under the `lower()` index. Reserved names are checked separately (409, not 400). */
 export function validateRoleName(raw: string): string | null {
   if (hasUnstorableChar(raw)) return null;
   const name = normalizeRoleName(raw);

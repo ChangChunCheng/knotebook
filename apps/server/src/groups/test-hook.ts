@@ -12,7 +12,7 @@ export type GroupRacePoint =
   | "note-move-slug-candidate"
   | "note-copy-target-locked"
   | "note-copy-locked"
-  /** Tests throw here to simulate a failure after attachment files were copied. */
+  /** After attachment files are copied, before the space lock and the copy's insert; `ctx.noteId` is the source (the copy doesn't exist yet). Tests throw here to simulate a failure. */
   | "note-copy-files-copied"
   /** Window: note moved after the by-path fetch. */
   | "path-resolved"

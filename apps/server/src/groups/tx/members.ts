@@ -30,7 +30,7 @@ export async function addMemberInTx(
   return { roleId: role.id, builtin: role.builtin };
 }
 
-/** No privilege-escalation guard by design; the only hard limit is the last built-in admin. */
+/** No privilege-escalation guard by design (granting/revoking built-in admin, including oneself); the only hard limit is the last built-in admin. */
 export async function setMemberRoleInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string; roleId: string },

@@ -2,7 +2,9 @@
  * `lockGroup` must stay the first step: `notes/tx/move.ts` reads membership and role flags holding only `FOR KEY SHARE` on the groups row, which is safe
  * only if every write that changes existing membership or the flags of a role someone may hold takes `lockGroup` first. It also serializes role delete
  * against attaching a member, avoiding 23503 on `group_members_role_fk`. `POST …/roles` adds a role nobody holds yet and doesn't lock. A future path that
- * deletes `users` (`group_members.user_id` CASCADEs) must `lockGroup` each of the user's groups first. Guard: `test/groups-v2-roles-race.test.ts`.
+ * deletes `users` (`group_members.user_id` CASCADEs) must `lockGroup` each of the user's groups first. Attaching a role requires `lockGroup` via `addMemberInTx`/`setMemberRoleInTx`.
+ * Serialization: the later transaction sees the result (role gone → 404 `role_not_found`; member already attached → moved to the built-in member role).
+ * Guard: the "groups FOR KEY SHARE" case in `test/groups-v2-roles-race.test.ts` (with another transaction holding KEY SHARE, update and delete must block).
  */
 import { and, eq } from "drizzle-orm";
 import type { GroupRoleDto, GroupRoleFlags } from "@knotebook/shared";
@@ -23,7 +25,7 @@ export interface RoleKick {
   userIds: string[];
 }
 
-/** Kick list only if `read` or `edit` changed; the other flags only affect REST authorization. */
+/** Built-in member: flags only (renaming → 409); built-in admin: always 409. `name`/`permissions` are validated by the route first. Kick list only if `read` or `edit` changed; the other flags only affect REST authorization. */
 export async function updateRoleInTx(
   tx: Tx,
   input: { groupId: string; roleId: string; name: string | undefined; permissions: GroupRoleFlags | undefined },
@@ -53,7 +55,7 @@ export async function updateRoleInTx(
   return { role: toGroupRoleDto(after!)!, kick };
 }
 
-/** Holders move to the built-in member role first: FK `group_members_role_fk` is NO ACTION, so the reverse order gives 23503. */
+/** Holders move to the built-in member role first: FK `group_members_role_fk` is NO ACTION, so the reverse order gives 23503. Built-in roles → 409 (each group has exactly two). Returns (all group notes, previous holders), both empty if nobody held it. */
 export async function deleteRoleInTx(
   tx: Tx,
   input: { groupId: string; roleId: string },

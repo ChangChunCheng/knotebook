@@ -1,4 +1,5 @@
 /**
+ * Fragments are built fresh per call (drizzle builders are single-use) and never executed here.
  * Each CTE has a unique `kf_*` name so fragments can be combined in one statement.
  * Cycles are rejected in application code under the structure lock; the depth cap below only guarantees termination.
  */
@@ -15,7 +16,7 @@ import type { FolderSpace } from "./space.js";
 export const FOLDER_CTE_DEPTH_LIMIT = FOLDER_DEPTH_MAX * 4;
 const LIMIT = (): SQL => sql.raw(String(FOLDER_CTE_DEPTH_LIMIT));
 
-/** drizzle 0.44 renders a column interpolated into a single-table SELECT as a bare `"folder_id"`, so correlated subqueries spell the table name. */
+/** drizzle 0.44 renders a column interpolated into a single-table SELECT as a bare `"folder_id"` (a single-table UPDATE does qualify it), so correlated subqueries spell the table name. */
 export const NOTES_FOLDER_ID = (): SQL => sql.raw('"notes"."folder_id"');
 
 export function folderPathJsonSql(outer: SQL): SQL<string[] | null> {
