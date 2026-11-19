@@ -212,7 +212,8 @@ For people writing notes:
 - [Diagrams (Mermaid)](docs/diagrams.md): inserting, editing, pasting and copying out Mermaid diagrams.
 - [Help and the feature tour](docs/feature-tour.md): the Help window, the feature tour, the What's new page and the keyboard shortcuts.
 - [Installing Knotebook as an app](docs/install-app.md): adding it to the home screen on Android, iPhone and iPad, and installing it on a computer.
-- [Known limitations](docs/known-limitations.md): every known rough edge and deliberate trade-off.
+- [Limitations worth knowing](docs/limitations.md): what to know before you deploy Knotebook or trust it with your notes, such as where data can be lost, what can't be undone, security trade-offs and missing features.
+- [Known limitations](docs/known-limitations.md): the complete reference of every known rough edge and deliberate trade-off.
 
 For connecting AI and scripts:
 

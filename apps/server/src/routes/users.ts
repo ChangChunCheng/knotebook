@@ -24,6 +24,7 @@ import {
   USER_SUGGEST_MAX_QUERY, USER_SUGGEST_MAX_RESULTS, USER_SUGGEST_MIN_QUERY, type UserSuggestResponse, type UserSuggestionDto,
 } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
+import { escapeLike } from "../db/like.js";
 import { readAvatarRefs } from "../avatars/read.js";
 import { sendError } from "../http/errors.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
@@ -36,11 +37,6 @@ const suggestQuerySchema = z
       .pipe(z.string().min(USER_SUGGEST_MIN_QUERY, "The query is too short.").max(USER_SUGGEST_MAX_QUERY, "The query is too long.")),
   })
   .strict();
-
-/** LIKE 樣式跳脫：`\` 先跳脫自己，再跳脫 `%`／`_`（搭配 `ESCAPE '\'`）。 */
-export function escapeLike(s: string): string {
-  return s.replace(/[\\%_]/g, ch => `\\${ch}`);
-}
 
 export interface UsersRouteDeps {
   db: Db;

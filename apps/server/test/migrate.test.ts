@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 import { MAX_AVATAR_DISPLAY_BYTES, MAX_PROVIDER_ICON_BYTES, SITE_LIMITS, autoSlugFromTitle, validateHandle, validateSlug } from "@knotebook/shared";
 import { applyMigrationsThrough, freshDb, freshEmptyDb, idxOfTag, journalEntries } from "./helpers.js";
 import { runMigrations } from "../src/db/migrate.js";
+import { createDb } from "../src/db/index.js";
+import { Pool } from "pg";
 import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
 import { apiTokens, authProviders, folders, groupMembers, groupRoles, groups, noteFavorites, notePlacements, noteRedirects, notes, oauthClients, oauthCodes, noteSearchSections, noteSearchState, noteLinkConversion, noteVersions, handleRenames, oauthRequests, oneTimeLinks, sessions, siteLimitChanges, siteLimits, siteSettings, storagePlans, transferBases, transferCreates, transferTokens, userAvatars, userIdentities, users } from "../src/db/schema.js";
 
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** drizzle 對 `schema.ts` 的序列化；宣告漂移守衛拿最新一支當比對基準（改成實際檔名）。 */
-const SNAPSHOT_FILE = "meta/0041_snapshot.json";
+const SNAPSHOT_FILE = "meta/0042_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
   tables: Record<string, {
     checkConstraints?: Record<string, { name: string; value: string }>;
@@ -3719,5 +3721,70 @@ describe("note_favorites（#334）", () => {
     expect(statements[0]).toMatch(/^CREATE TABLE "note_favorites"/);
     expect(statements.filter(s => /^ALTER TABLE "note_favorites" ADD CONSTRAINT "[^"]+" FOREIGN KEY .* ON DELETE cascade/.test(s))).toHaveLength(2);
     expect(statements.filter(s => /^CREATE INDEX "note_favorites_note_idx"/.test(s))).toHaveLength(1);
+  });
+});
+
+describe("search-trigram (pg_trgm body index)", () => {
+  it("pg_trgm is installed; nss_body_trgm_idx is a gin_trgm_ops index on lower(body)", async () => {
+    const { pool } = await freshDb();
+    const ext = (await pool.query(`select 1 from pg_extension where extname = 'pg_trgm'`)).rows;
+    expect(ext).toHaveLength(1);
+    const idx = (await pool.query(`select tablename, indexdef from pg_indexes where indexname = 'nss_body_trgm_idx'`)).rows;
+    expect(idx).toHaveLength(1);
+    expect(idx[0].tablename).toBe("note_search_sections");
+    expect(idx[0].indexdef).toMatch(/USING gin \(lower\(body\) gin_trgm_ops\)$/);
+  });
+
+  it("a non-superuser database owner can run every migration (pg_trgm is a trusted extension)", async () => {
+    const baseUrl = process.env.TEST_DATABASE_URL!;
+    const fresh = await freshEmptyDb();
+    const role = `owner_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const password = randomUUID();
+    const admin = new Pool({ connectionString: baseUrl });
+    let ownerPool: Pool | undefined;
+    try {
+      const dbName = new URL(fresh.url).pathname.slice(1);
+      await admin.query(`CREATE ROLE "${role}" LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE`);
+      await admin.query(`ALTER DATABASE "${dbName}" OWNER TO "${role}"`);
+      const ownerUrl = new URL(fresh.url);
+      ownerUrl.username = role;
+      ownerUrl.password = password;
+      ownerPool = new Pool({ connectionString: ownerUrl.toString() });
+      // DROP DATABASE … WITH (FORCE) sends 57P01 to leftover connections; without a listener vitest fails the run (as in helpers.ts close()).
+      ownerPool.on("error", () => {});
+      const ownerDb = createDb(ownerPool);
+      const su = (await ownerPool.query(`select rolsuper from pg_roles where rolname = current_user`)).rows[0].rolsuper;
+      expect(su).toBe(false);
+      // Absent before, owned by the new role after: the non-superuser owner created it through the trusted-extension path.
+      expect((await ownerPool.query(`select 1 from pg_extension where extname = 'pg_trgm'`)).rows).toHaveLength(0);
+      await runMigrations(ownerDb);
+      const extOwner = await ownerPool.query(
+        `select r.rolname from pg_extension e join pg_roles r on r.oid = e.extowner where e.extname = 'pg_trgm'`,
+      );
+      expect(extOwner.rows).toEqual([{ rolname: role }]);
+      expect((await ownerPool.query(`select 1 from pg_indexes where indexname = 'nss_body_trgm_idx'`)).rows).toHaveLength(1);
+    } finally {
+      // Order matters: the role owns the objects the migrations created, so the database must be dropped before DROP ROLE (handing ownership back is not enough).
+      await ownerPool?.end();
+      await fresh.close();
+      await admin.query(`DROP ROLE IF EXISTS "${role}"`);
+      await admin.end();
+    }
+  });
+
+  it("SQL file: CREATE EXTENSION plus one CREATE INDEX; no CONCURRENTLY or leading COMMIT", () => {
+    const entries = journalEntries().filter(e => e.tag.endsWith("_search-trigram"));
+    expect(entries, "journal must have exactly one *_search-trigram entry").toHaveLength(1);
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${entries[0]!.tag}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+    const statements = sqlText
+      .split("--> statement-breakpoint")
+      .map(s => s.replace(/^\s*--.*$/gm, "").trim())
+      .filter(s => s.length > 0);
+    expect(statements).toEqual([
+      "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+      `CREATE INDEX "nss_body_trgm_idx" ON "note_search_sections" USING gin (lower("body") gin_trgm_ops);`,
+    ]);
   });
 });

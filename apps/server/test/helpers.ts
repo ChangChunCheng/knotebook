@@ -49,15 +49,22 @@ export interface FreshDb {
  * 再 DROP 掉這個資料庫（見下方 `close`），即使斷言失敗（test 拋出）也會執行，不會洩漏
  * 連線或殘留資料庫。同時回傳 `close()` 供非 test context（例如手動除錯腳本）自行呼叫。
  * 兩者皆冪等（多次呼叫安全）。
+ *
+ * @param opts.cLocale When `true`, create the database from template0 with `LC_COLLATE` and `LC_CTYPE` set to `C`
+ *   (by default it inherits the cluster's locale).
  */
-export async function freshEmptyDb(): Promise<FreshDb> {
+export async function freshEmptyDb(opts: { cLocale?: boolean } = {}): Promise<FreshDb> {
   const baseUrl = process.env.TEST_DATABASE_URL;
   if (!baseUrl) throw new Error("TEST_DATABASE_URL 未設定——確認 vitest globalSetup（test/global-setup.ts）有跑過");
 
   const dbName = `test_${randomBytes(8).toString("hex")}`;
   const adminPool = new Pool({ connectionString: baseUrl });
   try {
-    await adminPool.query(`CREATE DATABASE "${dbName}"`);
+    await adminPool.query(
+      opts.cLocale === true
+        ? `CREATE DATABASE "${dbName}" TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'`
+        : `CREATE DATABASE "${dbName}"`,
+    );
   } finally {
     await adminPool.end();
   }
