@@ -17,7 +17,7 @@ function setup(...tables: HTMLElement[]) {
 }
 
 describe("syncTableScrollHint", () => {
-  it("右邊還有內容沒看到才帶屬性；差不到 1px 或剛好捲到底不帶", () => {
+  it("carries the attribute only when content remains to the right; less than 1px away or scrolled exactly to the end does not", () => {
     const el = scroller({ scrollWidth: 600, clientWidth: 300, scrollLeft: 0 });
     syncTableScrollHint(el);
     expect(el).toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
@@ -43,7 +43,7 @@ describe("useTableScrollHint", () => {
     document.body.innerHTML = "";
   });
 
-  it("支援判斷看 CSS.supports；沒有 CSS.supports 視為不支援", () => {
+  it("support check looks at CSS.supports; without CSS.supports it counts as unsupported", () => {
     expect(supportsScrollTimeline()).toBe(false);
     vi.stubGlobal("CSS", { supports: (query: string) => query === "animation-timeline: scroll(self inline)" });
     expect(supportsScrollTimeline()).toBe(true);
@@ -51,7 +51,7 @@ describe("useTableScrollHint", () => {
     expect(supportsScrollTimeline()).toBe(false);
   });
 
-  it("支援捲動驅動動畫的瀏覽器：純 CSS，hook 不掛監聽、不標屬性", () => {
+  it("browsers supporting scroll-driven animation: pure CSS, the hook attaches no listener and sets no attribute", () => {
     vi.stubGlobal("CSS", { supports: () => true });
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const { root, ref } = setup(wide);
@@ -61,7 +61,7 @@ describe("useTableScrollHint", () => {
     expect(wide).not.toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
   });
 
-  it("開始時就依溢出與否標好：溢出的有、沒溢出的沒有", () => {
+  it("marked at start according to whether it overflows: overflowing ones have it, others do not", () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const narrow = scroller({ scrollWidth: 300, clientWidth: 300, scrollLeft: 0 });
     const { ref } = setup(wide, narrow);
@@ -70,7 +70,7 @@ describe("useTableScrollHint", () => {
     expect(narrow).not.toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
   });
 
-  it("scroll 不冒泡：容器用 capture 接到表格自己的 scroll，捲到底就拿掉", () => {
+  it("scroll does not bubble: the container catches the table's own scroll with capture, and removes the attribute once scrolled to the end", () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const { ref } = setup(wide);
     renderHook(() => useTableScrollHint(ref, true));
@@ -83,12 +83,12 @@ describe("useTableScrollHint", () => {
     expect(wide).toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
   });
 
-  it("摺疊區塊展開（只改 data-show-children）後，裡面的寬表格也標得到", async () => {
+  it("after a collapsed block expands (only data-show-children changes), a wide table inside is marked too", async () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const toggle = document.createElement("div");
     toggle.appendChild(wide);
     const { ref } = setup(toggle);
-    // 摺疊時表格沒有寬度。
+    // While collapsed the table has no width of its own: clientWidth equals scrollWidth, so there is no overflow.
     Object.defineProperty(wide, "clientWidth", { value: 800, configurable: true });
     renderHook(() => useTableScrollHint(ref, true));
     expect(wide).not.toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
@@ -97,7 +97,7 @@ describe("useTableScrollHint", () => {
     await waitFor(() => expect(wide).toHaveAttribute(TABLE_MORE_RIGHT_ATTR));
   });
 
-  it("狀態沒變的重掃不寫屬性（不產生屬性變動，也不會自己觸發自己）", async () => {
+  it("a rescan with unchanged state writes no attribute (so no attribute mutation, and it does not trigger itself)", async () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const narrow = scroller({ scrollWidth: 300, clientWidth: 300, scrollLeft: 0 });
     const { root, ref } = setup(wide, narrow);
@@ -105,7 +105,7 @@ describe("useTableScrollHint", () => {
     const seen: MutationRecord[] = [];
     const watcher = new MutationObserver((records) => seen.push(...records));
     watcher.observe(root, { attributes: true, subtree: true });
-    root.appendChild(document.createElement("p")); // 觸發重掃
+    root.appendChild(document.createElement("p")); // triggers a rescan
     await new Promise((resolve) => setTimeout(resolve, 20));
     const attributeRecords = [...seen, ...watcher.takeRecords()].filter((record) => record.type === "attributes");
     watcher.disconnect();
@@ -113,7 +113,7 @@ describe("useTableScrollHint", () => {
     expect(wide).toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
   });
 
-  it("只在容器上掛一份監聽，不逐表掛", () => {
+  it("attaches one listener on the container, not one per table", () => {
     const tables = [1, 2, 3].map(() => scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 }));
     const { root, ref } = setup(...tables);
     const rootAdd = vi.spyOn(root, "addEventListener");
@@ -123,7 +123,7 @@ describe("useTableScrollHint", () => {
     for (const add of tableAdds) expect(add).not.toHaveBeenCalled();
   });
 
-  it("不是手機（enabled=false）：不掛監聽、不標屬性", () => {
+  it("not phone (enabled=false): no listener, no attribute", () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const { root, ref } = setup(wide);
     const add = vi.spyOn(root, "addEventListener");
@@ -132,7 +132,7 @@ describe("useTableScrollHint", () => {
     expect(wide).not.toHaveAttribute(TABLE_MORE_RIGHT_ATTR);
   });
 
-  it("卸載時拿掉監聽與屬性", () => {
+  it("unmount removes the listener and the attribute", () => {
     const wide = scroller({ scrollWidth: 800, clientWidth: 300, scrollLeft: 0 });
     const { root, ref } = setup(wide);
     const remove = vi.spyOn(root, "removeEventListener");

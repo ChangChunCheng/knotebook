@@ -10,12 +10,12 @@ import managementEnRaw from "./management.en.json?raw";
 import managementZhTWRaw from "./management.zh-TW.json?raw";
 
 /**
- * 站台管理（`admin.*`）與設定（`settings.*`）的 lazy 字串包（`management.*.json`，只由設定／管理各 lazy 鏈經 `management-strings.ts` 註冊）。
- * 主 JSON 的 parity（`index.test.ts`）不涵蓋這兩檔，所以 parity、與主檔不重疊、無重複鍵、誰該 import 都在這裡。
- * ⚠ 主檔內容一律讀 `?raw`：i18next 的 store 直接引用 init 的 `resources`，註冊後主 JSON 的 module 物件已被 deep merge 帶上整包 admin／settings。
+ * Lazy string bundles for site admin (`admin.*`) and settings (`settings.*`) (`management.*.json`, registered only by the settings / admin lazy chains via `management-strings.ts`).
+ * The main-JSON parity test (`index.test.ts`) does not cover these two files, so parity, no overlap with the main file, no duplicate keys, and which files must import are checked here.
+ * The main file is always read as `?raw`: i18next's store references init's `resources` directly, so after registration the main JSON module object has been deep-merged with the whole admin / settings bundle.
  */
 
-/** 首包（AdminModal、SettingsModal、UserMenu）用得到、必須留在主檔的 16 個鍵——改這份清單＝改首包大小，同時改 management-strings.ts 的註解。 */
+/** The 16 keys the first bundle (AdminModal, SettingsModal, UserMenu) needs and that must stay in the main file; changing this list changes the first bundle size, so update the comment in management-strings.ts too. */
 const KEPT_IN_MAIN = [
   "admin.nav.label",
   "admin.nav.users",
@@ -44,7 +44,7 @@ function get(obj: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-/** 同 `index.test.ts`：`JSON.parse` 遇重複鍵只留最後一份，直接掃原始文字。 */
+/** Same as `index.test.ts`: `JSON.parse` keeps only the last of duplicate keys, so scan the raw text. */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
   const stack: { keys: Set<string> | null; expectKey: boolean }[] = [];
@@ -74,30 +74,30 @@ const mainEnKeys = flattenKeys(JSON.parse(enRaw));
 const mainZhTWKeys = flattenKeys(JSON.parse(zhTWRaw));
 const isManaged = (key: string) => key.startsWith("admin.") || key.startsWith("settings.");
 
-describe("MC1 management 包：兩語系鍵集合相同、頂層只有 admin 與 settings", () => {
-  it("鍵集合相同", () => {
+describe("management bundle: both locales have the same key set, top level is only admin and settings", () => {
+  it("same key set", () => {
     expect(flattenKeys(managementZhTW).sort()).toEqual(flattenKeys(managementEn).sort());
   });
 
-  it("頂層恰為 admin、settings", () => {
+  it("top level is exactly admin and settings", () => {
     expect(Object.keys(managementEn)).toEqual(["admin", "settings"]);
     expect(Object.keys(managementZhTW)).toEqual(["admin", "settings"]);
   });
 
-  it("主檔＋包合起來兩語系鍵集合相同（admin／settings 以外的鍵本來就由 index.test.ts 守）", () => {
+  it("main file + bundle together have the same key set in both locales (keys other than admin / settings are guarded by index.test.ts)", () => {
     const union = (main: string[], mgmt: unknown) => [...main, ...flattenKeys(mgmt)].sort();
     expect(union(mainZhTWKeys, managementZhTW)).toEqual(union(mainEnKeys, managementEn));
   });
 });
 
-describe("MC2 與主檔不重疊", () => {
-  it("包裡的鍵一個都不在主檔", () => {
+describe("no overlap with the main file", () => {
+  it("no key in the bundle is in the main file", () => {
     const mainSet = new Set(mainEnKeys);
     expect(flattenKeys(managementEn).filter((key) => mainSet.has(key))).toEqual([]);
   });
 });
 
-describe("MC3 主檔的 admin／settings 只剩首包的 16 個鍵", () => {
+describe("main file's admin / settings keep only the 16 first-bundle keys", () => {
   it.each([
     ["en", mainEnKeys],
     ["zh-TW", mainZhTWKeys],
@@ -106,20 +106,20 @@ describe("MC3 主檔的 admin／settings 只剩首包的 16 個鍵", () => {
   });
 });
 
-describe("MC4 註冊後可用、不覆寫主檔", () => {
-  it("包裡的鍵（含複數與模板鍵）在兩語系都解得到", () => {
+describe("available after registration, main file not overridden", () => {
+  it("bundle keys (including plural and template keys) resolve in both locales", () => {
     expect(i18n.t("admin.auth.edit.autoCreateConfirmKeep", { lng: "en" })).toBe(get(managementEn, "admin.auth.edit.autoCreateConfirmKeep"));
     expect(i18n.t("settings.ai.actionBuiltinBadge", { lng: "zh-TW" })).toBe("內建");
     expect(i18n.t("settings.account.apiTokensScopeEdit", { lng: "en" })).toBe(get(managementEn, "settings.account.apiTokensScopeEdit"));
   });
 
-  it("首包的鍵仍是主檔的值", () => {
+  it("first-bundle keys are still the main file's values", () => {
     expect(i18n.t("settings.title", { lng: "en" })).toBe("Settings");
     expect(i18n.t("admin.nav.label", { lng: "zh-TW" })).toBe("站台管理");
   });
 });
 
-describe("MC5 management 包沒有重複鍵", () => {
+describe("management bundle has no duplicate keys", () => {
   it.each([
     ["en", managementEnRaw],
     ["zh-TW", managementZhTWRaw],
@@ -128,7 +128,7 @@ describe("MC5 management 包沒有重複鍵", () => {
   });
 });
 
-describe("MC6 每個 _one 都有 _other", () => {
+describe("every _one has an _other", () => {
   it.each([
     ["en", managementEn],
     ["zh-TW", managementZhTW],
@@ -139,32 +139,31 @@ describe("MC6 每個 _one 都有 _other", () => {
   });
 });
 
-/** 剝掉註解（同 article-column.guard.test.ts；`//` 前是 `:` 的當 URL 不剝）。 */
+/** Strips comments (same as article-column.guard.test.ts; a `//` preceded by `:` is treated as a URL and not stripped). */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
-/** `src/` 下所有非測試的 .ts／.tsx（相對 web 根、`/` 分隔）。 */
 function listNonTestSources(): string[] {
   return readdirSync(`${process.cwd()}/src`, { recursive: true, encoding: "utf8" })
     .map((p) => `src/${p.replace(/\\/g, "/")}`)
     .filter((p) => /\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p) && !p.startsWith("src/test/"));
 }
 
-// 字面（單／雙引號、反引號）開頭是 `admin.` 或 `settings.` 的字串。模板鍵（`admin.auth.warnings.${x}`）取到 `$`、`{` 前一併算入。
+// Strings whose literal (single/double quote, backtick) starts with `admin.` or `settings.`. Template keys (`admin.auth.warnings.${x}`) are taken up to the `$` / `{` before it and counted too.
 const KEY_LITERAL = /["'`]((?:admin|settings)\.[A-Za-z0-9_.]*)/g;
 const KEPT = new Set(KEPT_IN_MAIN);
 
-describe("MC7 用到被搬走鍵的檔自己 import @/i18n/management-strings", () => {
+describe("files using moved keys import @/i18n/management-strings themselves", () => {
   const importer = /^import\s+["']@\/i18n\/management-strings["'];?\s*$/m;
 
-  it("掃得到東西（防正則或路徑壞掉而靜默全過）", () => {
+  it("finds something (guards against a broken regex or path silently passing everything)", () => {
     const users = listNonTestSources().filter((p) => [...stripComments(readFileSync(`${process.cwd()}/${p}`, "utf8")).matchAll(KEY_LITERAL)].some((m) => !KEPT.has(m[1]!)));
     expect(users.length).toBeGreaterThan(20);
     expect(users).toContain("src/settings/ScopeChecksField.tsx");
   });
 
-  it("每個含非首包 admin.／settings. 鍵字面的非測試檔都有 import；首包用的 16 鍵不需要", () => {
+  it("every non-test file containing a non-first-bundle admin. / settings. key literal imports it; the 16 first-bundle keys do not need it", () => {
     const offenders: string[] = [];
     for (const path of listNonTestSources()) {
       if (path === "src/i18n/management-strings.ts") continue;
@@ -175,7 +174,7 @@ describe("MC7 用到被搬走鍵的檔自己 import @/i18n/management-strings", 
     expect(offenders).toEqual([]);
   });
 
-  it("首包保留鍵的使用者（AdminModal、SettingsModal、UserMenu）不得 import 字串包（會把它拉回首包）", () => {
+  it("users of the first-bundle keys (AdminModal, SettingsModal, UserMenu) must not import the string bundle (that would pull it back into the first bundle)", () => {
     for (const path of ["src/components/admin/AdminModal.tsx", "src/settings/SettingsModal.tsx", "src/components/UserMenu.tsx"]) {
       expect(readFileSync(`${process.cwd()}/${path}`, "utf8"), path).not.toContain("management-strings");
     }

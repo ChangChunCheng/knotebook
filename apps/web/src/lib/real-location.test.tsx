@@ -3,10 +3,10 @@ import { act, render, screen } from "@testing-library/react";
 import { BrowserRouter, useLocation, useNavigate } from "react-router";
 import { canonicalizedFrom, useHistoryLocation, useHistoryLocationKey, withCanonicalizedFrom } from "./real-location";
 
-// #179：NotePage 的收斂 effect 靠 `useHistoryLocationKey` 判斷「有沒有導覽在途」。它讀的是
-// `UNSAFE_NavigationContext.navigator.location`——型別上不保證存在。正式 app 用 BrowserRouter，
-// 這裡就在 BrowserRouter 下釘住「讀得到、而且就是 history 當下那一筆的 key」：react-router 升級
-// 若改了 navigator 的形狀，這裡會紅，而不是讓防護默默退化成「無法判斷、照常 replace」。
+// #179: NotePage's convergence effect uses `useHistoryLocationKey` to tell whether a navigation is in flight. It reads
+// `UNSAFE_NavigationContext.navigator.location`, whose existence the types do not guarantee. The real app uses BrowserRouter,
+// so this pins under BrowserRouter that it is readable and is the key of the current history entry: if a react-router upgrade
+// changes the navigator's shape this turns red, instead of the guard silently degrading into "cannot tell, replace as usual".
 
 let readKey: (() => string | undefined) | undefined;
 let go: ((to: string) => void) | undefined;
@@ -19,14 +19,14 @@ function Probe() {
   return <div data-testid="rendered-key">{location.key}</div>;
 }
 
-describe("useHistoryLocationKey（BrowserRouter）", () => {
+describe("useHistoryLocationKey (BrowserRouter)", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
     readKey = undefined;
     go = undefined;
   });
 
-  it("回傳 history 當下 entry 的 key，與 render 到的 location.key 一致；導覽後跟著換", async () => {
+  it("returns the key of the current history entry, equal to the rendered location.key; changes after navigation", async () => {
     window.history.replaceState(null, "", "/start");
     render(
       <BrowserRouter>
@@ -47,7 +47,7 @@ describe("useHistoryLocationKey（BrowserRouter）", () => {
     expect(second).toBe(screen.getByTestId("rendered-key").textContent);
   });
 
-  it("useHistoryLocation：同一筆 entry 的 pathname、state 與 action（NotePage 換篇空窗判斷用）", async () => {
+  it("useHistoryLocation: pathname, state and action of the same entry (used by NotePage to judge the gap while switching notes)", async () => {
     window.history.replaceState(null, "", "/start");
     let readLocation: ReturnType<typeof useHistoryLocation> | undefined;
     let goWithState: ((to: string, state: unknown, replace?: boolean) => void) | undefined;
@@ -78,8 +78,8 @@ describe("useHistoryLocationKey（BrowserRouter）", () => {
   });
 });
 
-describe("canonicalizedFrom 標記", () => {
-  it("保留既有 state 的鍵、加上來源 pathname；非物件 state 從空物件起算", () => {
+describe("canonicalizedFrom marker", () => {
+  it("keeps the existing state's keys and adds the source pathname; a non-object state starts from an empty object", () => {
     expect(withCanonicalizedFrom({ openEdits: false }, "/notes/x")).toEqual({
       openEdits: false,
       knotebookCanonicalizedFrom: "/notes/x",

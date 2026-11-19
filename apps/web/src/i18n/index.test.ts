@@ -5,23 +5,22 @@ import zhTW from "./zh-TW.json";
 import enRaw from "./en.json?raw";
 import zhTWRaw from "./zh-TW.json?raw";
 
-/** 攤平成 `a.b.c` 形式的 key 清單，供兩個語系做全量對照。 */
 function flattenKeys(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null) return [prefix];
   return Object.entries(value).flatMap(([key, child]) => flattenKeys(child, prefix ? `${prefix}.${key}` : key));
 }
 
-// 兩個語系的 key 集合必須完全一致——漏一把 key 在 UI 上只會安靜地顯示成
-// key 字串本身（i18next 預設行為），不會有任何錯誤，靠測試才擋得住。
+// The key sets of the two locales must be identical: a missing key shows up in the UI silently as the key string itself
+// (i18next default behavior), with no error, so only a test catches it.
 describe("i18n key parity", () => {
-  it("en 與 zh-TW 的 key 集合完全相同", () => {
+  it("en and zh-TW have the same key set", () => {
     expect(flattenKeys(zhTW).sort()).toEqual(flattenKeys(en).sort());
   });
 });
 
 /**
- * `JSON.parse` 遇到同一物件內的重複 key 只留最後一份，parity 與 lint 都抓不到；前一份變成死字串、
- * PR diff 還會出現看似新增的行。這裡直接掃原始文字，同一物件層出現第二次的 key 就回報。
+ * `JSON.parse` keeps only the last of duplicate keys within one object, which neither parity nor lint catches: the earlier one
+ * becomes a dead string and the PR diff shows a seemingly added line. This scans the raw text and reports a key that appears a second time at the same object level.
  */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
@@ -48,25 +47,22 @@ function duplicateKeys(raw: string): string[] {
   return dups;
 }
 
-describe("i18n 無重複 key", () => {
+describe("i18n has no duplicate keys", () => {
   it.each([
     ["en", enRaw],
     ["zh-TW", zhTWRaw],
-  ] as const)("%s：同一物件內沒有重複的 key", (_name, raw) => {
+  ] as const)("%s: no duplicate key within one object", (_name, raw) => {
     expect(duplicateKeys(raw)).toEqual([]);
   });
 });
 
-// 保護 errors.<code> 對映全部 ERROR_CODES + errors.fallback 這個介面承諾
-// （逐字依賴：任何 ApiFail.code 都要能在兩個語系裡查到對應文案）。
+// Guards the contract that errors.<code> maps every ERROR_CODES entry plus errors.fallback (relied on verbatim: any
+// ApiFail.code must resolve to copy in both locales).
 //
-// 這把測試正是 `errors.not_loaded`／`errors.file_too_large` 兩個 key 存在的原因
-// （ERROR_CODES 新增碼）：
-// - `errors.not_loaded`：僅為 ERROR_CODES parity 而存在，目前**無 UI 呼叫路徑**——
-//   link-sync client 收到 409 `not_loaded` 是靜默重試一次後放棄，不會把
-//   這則文案顯示給使用者；此文案暫不可能被真人看到。
-// - `errors.file_too_large`：**會**經 uploadFile 的錯誤處理路徑以 toast 顯示給使用者
-//   （圖片上傳流程）。
+// This test is why the keys `errors.not_loaded` and `errors.file_too_large` exist (new ERROR_CODES entries):
+// - `errors.not_loaded`: exists only for ERROR_CODES parity and currently has no UI call path - the link-sync client
+//   retries silently once on a 409 `not_loaded` and then gives up, so this copy is never shown to a user.
+// - `errors.file_too_large`: is shown to the user as a toast through uploadFile's error handling (image upload flow).
 describe("i18n error message coverage", () => {
   for (const [langName, resource] of [
     ["en", en],
@@ -85,11 +81,11 @@ describe("i18n error message coverage", () => {
   }
 });
 
-// #175：server 用 `BUILTIN_ROLE_DISPLAY_NAMES` 擋「自訂角色取內建顯示名」——
-// 那份常數必須等於兩語系 `groups.role.admin`／`groups.role.member` 的值，改顯示名時這裡會紅；
-// 新增語系不會自動紅（這裡只比對寫死 import 的 en／zh-TW），要同步這個陣列與 `BUILTIN_ROLE_DISPLAY_NAMES`。
-describe("內建角色顯示名＝保留名常數", () => {
-  it("BUILTIN_ROLE_DISPLAY_NAMES 恰等於 en／zh-TW 的 groups.role.admin 與 groups.role.member", () => {
+// #175: the server rejects a custom role taking a built-in display name via `BUILTIN_ROLE_DISPLAY_NAMES`; that constant must equal the values of
+// `groups.role.admin` / `groups.role.member` in both locales, so renaming a display name turns this red. Adding a locale does not (only the
+// hard-imported en / zh-TW are compared): update this array and `BUILTIN_ROLE_DISPLAY_NAMES` together.
+describe("built-in role display names = reserved-name constant", () => {
+  it("BUILTIN_ROLE_DISPLAY_NAMES equals groups.role.admin and groups.role.member in en / zh-TW", () => {
     expect([...BUILTIN_ROLE_DISPLAY_NAMES].sort()).toEqual(
       [en.groups.role.admin, en.groups.role.member, zhTW.groups.role.admin, zhTW.groups.role.member].sort(),
     );

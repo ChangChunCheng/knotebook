@@ -10,10 +10,9 @@ import { AppRoutes } from "@/App";
 import { expectCardControls44 } from "@/test/card-controls";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 同 SettingsUsersSection.test.tsx 的約定：mock 全域 fetch，走真正的 `AppRoutes`
-// （App.tsx 的唯一真相樹），不 mock ChangePasswordPage 本身——驗證的是「有沒有接對」
-// （route 掛在 <RequireAuth> 底下、成功後 ['me'] refetch 到 mustChangePassword:false
-// 並落在 /，登出按鈕真的能逃出這頁），而不只是元件單獨渲染的行為。
+// Same convention as SettingsUsersSection.test.tsx: mock global fetch and go through the real `AppRoutes` (the single tree in App.tsx),
+// without mocking ChangePasswordPage itself - what is verified is the wiring (route under <RequireAuth>; after success the ['me']
+// refetch gets mustChangePassword:false and lands on /; the sign-out button can really leave this page), not just the component rendered alone.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -39,9 +38,9 @@ const USER_MUST_CHANGE: UserDto = {
 
 const CHANGE_PASSWORD_URL = "/api/auth/password";
 
-/** 基本 fetch mock：`/api/auth/me`（回傳
- * `loggedInAs`，可隨後續呼叫變動——用一個 getter 而非固定值，讓「改密碼成功/登出後
- * 下一次 me query 的回應會變」這件事有得測，而不是整個測試檔固定死一個回應）。 */
+/** Base fetch mock: `/api/auth/me` returns `loggedInAs`, which may change on later calls - a getter rather than a fixed value, so
+ * "the next me query after a password change / sign-out returns something different" can be tested, instead of pinning one
+ * response for the whole file. */
 function baseFetchHandlers(getLoggedInAs: () => UserDto | null) {
   return (url: string, method: string): Response | null => {
     if (url === "/api/groups" && method === "GET") {
@@ -91,7 +90,7 @@ describe("ChangePasswordPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mustChangePassword:true 使用者訪 /change-password → 渲染表單（不被 gate 導開）", async () => {
+  it("a mustChangePassword:true user visiting /change-password -> renders the form (the gate does not redirect away)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -102,13 +101,12 @@ describe("ChangePasswordPage", () => {
 
     renderAt("/change-password", fetchMock);
 
-    // 本檔第一次載入 ChangePasswordPage lazy chunk
     await waitFor(
       () => expect(screen.getByRole("heading", { name: "Change your password" })).toBeInTheDocument(),
     );
   });
 
-  it("卡片頁例外：登出、三個密碼欄、送出鈕都是 44px（h-11）", async () => {
+  it("card page exception: sign-out, the three password fields and the submit button are 44px (h-11)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -121,7 +119,7 @@ describe("ChangePasswordPage", () => {
     expect(expectCardControls44()).toBe(5);
   });
 
-  it("新密碼 <12 字元 → client 端擋下，不打 API", async () => {
+  it("new password < 12 characters -> blocked on the client, no API call", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -145,7 +143,7 @@ describe("ChangePasswordPage", () => {
     expect(postCalls).toHaveLength(0);
   });
 
-  it("新密碼與確認新密碼不一致 → client 端擋下，不打 API", async () => {
+  it("new password and confirmation differ -> blocked on the client, no API call", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -169,13 +167,11 @@ describe("ChangePasswordPage", () => {
     expect(postCalls).toHaveLength(0);
   });
 
-  it("成功流程（模擬真實 server 行為：204 重簽新 cookie，仍算登入）→ me refetch 回 mustChangePassword:false → 導向 /（gate 自然放行，不落在 change-password 或 login）", async () => {
-    // `routes/auth.ts` 的 POST /api/auth/password 成功時會替這次 request 重簽一顆新
-    // session cookie（見該檔說明）——使用者並未被登出。之後的 GET /api/auth/me（本頁
-    // `invalidateQueries` 觸發的 refetch）理應回 200，且 mustChangePassword 已被
-    // server 清成 false。這裡用一個 closure 旗標模擬這個狀態轉換，而不是直接 mock 死
-    // 「改密碼後 401」——那樣測的是與 production 相反的行為（曾經
-    // test-integrity 問題）。
+  it("success flow (simulating real server behaviour: 204 re-signs a new cookie, still signed in) -> me refetch returns mustChangePassword:false -> navigates to / (the gate lets through naturally, not landing on change-password or login)", async () => {
+    // `routes/auth.ts` POST /api/auth/password re-signs a new session cookie for this request on success (see that file) - the user is
+    // not signed out. The following GET /api/auth/me (the refetch triggered by this page's `invalidateQueries`) should return 200, with
+    // mustChangePassword already cleared to false by the server. A closure flag simulates this transition, instead of mocking
+    // "401 after changing the password" outright - that would test the opposite of production behaviour.
     let mustChange = true;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -183,7 +179,7 @@ describe("ChangePasswordPage", () => {
       const base = baseFetchHandlers(() => ({ ...USER_MUST_CHANGE, mustChangePassword: mustChange }))(url, method);
       if (base) return Promise.resolve(base);
       if (url === CHANGE_PASSWORD_URL && method === "POST") {
-        mustChange = false; // server 端已清旗標；cookie 仍有效（重簽），不是登出
+        mustChange = false; // the server cleared the flag; the cookie is still valid (re-signed), not a sign-out
         return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
       }
       throw new Error(`unexpected fetch: ${method} ${url}`);
@@ -197,13 +193,10 @@ describe("ChangePasswordPage", () => {
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "new-correct-horse-battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
 
-    // 落在首頁（AppShell 的「New note」按鈕）——不是改密碼表單，也不是登入頁；使用者
-    // 全程沒有被登出過。
     await waitFor(() => expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument());
     expect(screen.queryByRole("heading", { name: "Change your password" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Sign in" })).not.toBeInTheDocument();
 
-    // 送出的 body 正確（不含 confirmNewPassword）。
     const call = fetchMock.mock.calls.find(
       ([reqUrl, reqInit]) => String(reqUrl) === CHANGE_PASSWORD_URL && (reqInit as RequestInit | undefined)?.method === "POST",
     );
@@ -214,15 +207,14 @@ describe("ChangePasswordPage", () => {
       newPassword: "new-correct-horse-battery",
     });
 
-    // ['me'] 快取反映了 refetch 到的新狀態：仍是同一個使用者、mustChangePassword 已清
-    // false——正是這個值的變化驅動 ChangePasswordGate 放行，不是頁面自己硬導航繞過 gate。
+    // The ['me'] cache reflects the refetched new state: still the same user, mustChangePassword cleared to false - this change is what
+    // drives ChangePasswordGate to let through, not the page hard-navigating around the gate.
     expect(queryClient.getQueryData(["me"])).toMatchObject({ id: USER_MUST_CHANGE.id, mustChangePassword: false });
 
-    // 成功 toast 有顯示，且不再提「請重新登入」（真的沒有登出）。
     expect(screen.getByText("Password updated.")).toBeInTheDocument();
   });
 
-  it("忘記目前密碼：改密碼頁上的登出按鈕會登出並導向 /login（Important 1：避免使用者被永久卡在此頁）", async () => {
+  it("forgot the current password: the sign-out button on the change-password page signs out and goes to /login (so the user is not stuck on this page for good)", async () => {
     let loggedInAs: UserDto | null = USER_MUST_CHANGE;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -252,7 +244,7 @@ describe("ChangePasswordPage", () => {
   });
 });
 
-describe("ChangePasswordPage——#187 說明句", () => {
+describe("ChangePasswordPage - #187 explanatory sentence", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -267,15 +259,15 @@ describe("ChangePasswordPage——#187 說明句", () => {
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
 
-  it("帳密登入有效值關 → 顯示說明句", async () => {
+  it("password login effective value off -> shows the explanatory sentence", async () => {
     renderAt("/change-password", fetchWithConfig(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: false } }) })));
     expect(await screen.findByText(B23)).toBeInTheDocument();
   });
 
-  it("有效值開 → 沒有那句", async () => {
+  it("effective value on -> no such sentence", async () => {
     const queryClient = renderAt("/change-password", fetchWithConfig(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true } }) })));
     await screen.findByRole("heading", { name: "Change your password" });
-    // 「不存在」斷言的等待點：config 已落地進 query cache（否則說明句本來就還沒出現，斷言空真）。
+    // Wait point for the "absent" assertion: the config has landed in the query cache (otherwise the sentence simply has not appeared yet and the assertion is vacuous).
     await waitFor(() => expect(queryClient.getQueryData(["auth-config"])).toBeDefined());
     expect(screen.queryByText(B23)).not.toBeInTheDocument();
   });

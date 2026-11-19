@@ -19,7 +19,6 @@ function docOf(text: string): Y.Doc {
   d.getText("t").insert(0, text);
   return d;
 }
-/** ProseMirror 節點的替身（只有估計會讀的欄位）。 */
 const text = (s: string, marks: Array<{ attrs?: Record<string, unknown> }> = []) => ({ isText: true, text: s, marks });
 const el = (children: unknown[], isInline = false, type = "paragraph", attrs: Record<string, unknown> = {}) => ({
   isText: false,
@@ -31,20 +30,18 @@ const el = (children: unknown[], isInline = false, type = "paragraph", attrs: Re
 });
 const slice = (nodes: unknown[]) => ({ content: { forEach: (f: (c: never) => void) => nodes.forEach(c => f(c as never)) } });
 
-describe("筆記大小上限的前端檢查（lib/note-size-guard）", () => {
-  it("estimatePmBytes：文字的 UTF-8＋每個元素節點 PER_ELEMENT_BYTES＋行內節點 PER_INLINE_NODE_BYTES＋格式標記", () => {
-    // 一個段落 block：blockContainer > paragraph > 「中文ab」＋換行＋粗體「x」
+describe("front-end note size limit check (lib/note-size-guard)", () => {
+  it("estimatePmBytes: UTF-8 of text + PER_ELEMENT_BYTES per element node + PER_INLINE_NODE_BYTES per inline node + mark overhead", () => {
     const block = el([el([text("中文ab"), el([], true), text("x", [{ attrs: {} }])])]);
     expect(estimatePmBytes(slice([block]))).toBe(2 * PER_ELEMENT_BYTES + 8 + PER_INLINE_NODE_BYTES + 1 + PER_MARK_BYTES);
-    // 連結的網址也算
     const link = el([el([text("go", [{ attrs: { href: "https://e.com" } }])])]);
     expect(estimatePmBytes(slice([link]))).toBe(2 * PER_ELEMENT_BYTES + 2 + PER_MARK_BYTES + utf8Bytes("href") + utf8Bytes("https://e.com"));
-    // 連結的每個有值的屬性：key＋字串值；null 的不算
+    // Each link attribute with a value counts as key + string value; null ones do not count.
     const link2 = el([el([text("go", [{ attrs: { href: "https://e.com", target: "_blank", class: null } }])])]);
     expect(estimatePmBytes(slice([link2]))).toBe(2 * PER_ELEMENT_BYTES + 2 + PER_MARK_BYTES + utf8Bytes("hrefhttps://e.comtarget_blank"));
   });
 
-  it("estimatePmBytes：節點上長的字串屬性（mermaid 原始碼、網址；id 除外）算進去；blockGroup 便宜、待辦清單項貴一點", () => {
+  it("estimatePmBytes: string attributes on nodes (mermaid source, URLs; id excluded) count; blockGroup is cheap, a to-do list item costs a bit more", () => {
     const code = "graph TD; " + "A-->B; ".repeat(100);
     const mermaid = el([el([], false, "mermaid", { code, id: "x".repeat(36), textColor: "default" })], false, "blockContainer");
     expect(estimatePmBytes(slice([mermaid]))).toBe(2 * PER_ELEMENT_BYTES + utf8Bytes(code));
@@ -54,7 +51,7 @@ describe("筆記大小上限的前端檢查（lib/note-size-guard）", () => {
     expect(estimatePmBytes(slice([task]))).toBe(PER_ELEMENT_BYTES + 130 + 1);
   });
 
-  it("estimateBlocksBytes（站內 AI）：每個 block 兩個元素節點、子 block 多一個 blockGroup、表格每列一個每格兩個；換行算行內節點，程式碼區塊不算", () => {
+  it("estimateBlocksBytes (in-site AI): each block is two element nodes, a child block adds a blockGroup, a table has one per row and two per cell; a line break counts as an inline node, a code block does not", () => {
     expect(estimateBlocksBytes([{ type: "paragraph", content: [{ type: "text", text: "ab", styles: {} }] }])).toBe(2 * PER_ELEMENT_BYTES + 2);
     expect(estimateBlocksBytes([{ type: "paragraph", content: [{ type: "text", text: "a\nb", styles: { bold: true } }] }])).toBe(2 * PER_ELEMENT_BYTES + 2 + PER_INLINE_NODE_BYTES + PER_MARK_BYTES);
     expect(estimateBlocksBytes([{ type: "codeBlock", content: [{ type: "text", text: "a\nb", styles: {} }] }])).toBe(2 * PER_ELEMENT_BYTES + 3);
@@ -62,44 +59,44 @@ describe("筆記大小上限的前端檢查（lib/note-size-guard）", () => {
     expect(estimateBlocksBytes([{ type: "checkListItem", content: [] }])).toBe(PER_ELEMENT_BYTES + 130);
     expect(estimateBlocksBytes([{ type: "mermaid", props: { code: "graph TD; A-->B; B-->C;" } }])).toBe(2 * PER_ELEMENT_BYTES + utf8Bytes("graph TD; A-->B; B-->C;"));
     const table = { type: "table", content: { type: "tableContent", rows: [{ cells: [[{ type: "text", text: "x", styles: {} }], { content: [{ type: "text", text: "yy", styles: {} }] }] }] } };
-    expect(estimateBlocksBytes([table])).toBe(2 * PER_ELEMENT_BYTES + PER_ELEMENT_BYTES + 2 * 2 * 95 + 3); // 儲存格＋格內段落各 95
+    expect(estimateBlocksBytes([table])).toBe(2 * PER_ELEMENT_BYTES + PER_ELEMENT_BYTES + 2 * 2 * 95 + 3); // each cell and the paragraph inside it cost 95
   });
 
-  it("noteStateBytes：原始大小沒超過門檻就用原始大小；超過才量回收過的複本（本機刪掉、還被留著的內容不算）", () => {
-    const d = new Y.Doc({ gc: false }); // 模擬 UndoManager 留住刪掉的內容
+  it("noteStateBytes: uses the raw size if it does not exceed the threshold; only above it measures the compacted copy (content deleted locally but still retained does not count)", () => {
+    const d = new Y.Doc({ gc: false }); // simulates the UndoManager retaining deleted content
     d.getText("t").insert(0, "x".repeat(5_000));
     d.getText("t").delete(0, 4_900);
     const raw = Y.encodeStateAsUpdate(d).byteLength;
     expect(raw).toBeGreaterThan(5_000);
     expect(noteStateBytes(d)).toBe(raw);
-    expect(noteStateBytes(d, raw)).toBe(raw); // 沒超過門檻
+    expect(noteStateBytes(d, raw)).toBe(raw); // not above the threshold
     const gced = noteStateBytes(d, raw - 1);
     expect(gced).toBeLessThan(300);
   });
 
-  it("exceedsNoteLimit：回收過的大小＋成長 > 上限才擋；剛好等於不擋；沒有成長（≤ 0）或上限未知不擋", () => {
+  it("exceedsNoteLimit: blocks only if compacted size + growth > limit; exactly equal does not block; no growth (<= 0) or an unknown limit does not block", () => {
     const d = docOf("x".repeat(100));
     const size = Y.encodeStateAsUpdate(d).byteLength;
     expect(exceedsNoteLimit(d, 10, size + 10)).toBe(false);
     expect(exceedsNoteLimit(d, 11, size + 10)).toBe(true);
-    expect(exceedsNoteLimit(d, -50, size - 100)).toBe(false); // 縮短：就算已超過上限也放
+    expect(exceedsNoteLimit(d, -50, size - 100)).toBe(false); // shrinking: allowed even if already over the limit
     expect(exceedsNoteLimit(d, 1_000_000, undefined)).toBe(false);
     expect(exceedsNoteLimit(d, 5_001, 5_000), "光是這次就超過：不必量").toBe(true);
-    // 墓碑：原始大小會擋、回收過的不會 → 放
     const t = new Y.Doc({ gc: false });
     t.getText("t").insert(0, "y".repeat(5_000));
     t.getText("t").delete(0, 4_900);
+    // Tombstones: the raw size would block, the compacted size would not -> allowed.
     expect(exceedsNoteLimit(t, 1_000, 2_000)).toBe(false);
   });
 
-  it("formatNoteLimit：MB／KB，至多一位小數", () => {
+  it("formatNoteLimit: MB / KB, at most one decimal", () => {
     expect(formatNoteLimit(5 * 1024 * 1024)).toBe("5 MB");
     expect(formatNoteLimit(1.5 * 1024 * 1024)).toBe("1.5 MB");
     expect(formatNoteLimit(20 * 1024)).toBe("20 KB");
     expect(formatNoteLimit(20_000)).toBe("19.5 KB");
   });
 
-  it("createNoteSizeGuard：超過 → 提示（帶上限）並回 true；沒超過、上限未知 → false、不提示；每次呼叫時才讀文件與上限", () => {
+  it("createNoteSizeGuard: over -> notifies (with the limit) and returns true; not over or unknown limit -> false and no notification; reads the document and limit on each call", () => {
     let doc = docOf("x".repeat(100));
     let limit: number | undefined = Y.encodeStateAsUpdate(doc).byteLength + 50;
     const notify = vi.fn();
@@ -116,7 +113,7 @@ describe("筆記大小上限的前端檢查（lib/note-size-guard）", () => {
     expect(guard(10)).toBe(false);
   });
 
-  it("createNoteSizePasteHandlers：貼上估 slice 減去被取代的選取；拖放估 slice，站內搬移（moved）不問", () => {
+  it("createNoteSizePasteHandlers: paste estimates the slice minus the replaced selection; drop estimates the slice, and an in-site move (moved) is not asked", () => {
     const guard = vi.fn(() => false);
     const h = createNoteSizePasteHandlers(guard);
     const incoming = slice([el([el([text("x".repeat(100))])])]);

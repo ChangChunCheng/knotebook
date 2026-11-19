@@ -27,7 +27,6 @@ afterEach(() => {
   document.documentElement.style.removeProperty(STICKY_TOP_VAR);
 });
 
-/** 外框（帶屬性）裡的一個容器；`framed: false` 時容器不在外框裡（例如公開頁）。 */
 function makeRoot(framed = true): HTMLDivElement {
   const root = document.createElement("div");
   Object.defineProperty(root, "clientHeight", { value: 5000, configurable: true });
@@ -43,8 +42,8 @@ function makeRoot(framed = true): HTMLDivElement {
   return root;
 }
 
-describe("page-scroll：手機上文件代替內層容器捲動", () => {
-  it("scrollsPage：手機寬度且在外框裡才成立；不在外框裡（公開頁）或 640 起都不成立", () => {
+describe("page-scroll: on phone the document scrolls instead of the inner container", () => {
+  it("scrollsPage: true only at phone width and inside the frame; false outside the frame (public page) or from 640 up", () => {
     stubLayoutTier("phone");
     expect(scrollsPage(makeRoot())).toBe(true);
     expect(scrollsPage(makeRoot(false))).toBe(false);
@@ -55,7 +54,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(scrollsPage(makeRoot())).toBe(false);
   });
 
-  it("scrollToTopOf：手機捲文件、容器不動；其他情形捲容器", () => {
+  it("scrollToTopOf: on phone scrolls the document and leaves the container; otherwise scrolls the container", () => {
     const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     stubLayoutTier("phone");
     const phoneRoot = makeRoot();
@@ -76,7 +75,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(windowScroll).not.toHaveBeenCalled();
   });
 
-  it("visibleHeightOf：手機是視窗高扣掉頁首，其他是容器自己的可視高度", () => {
+  it("visibleHeightOf: on phone the window height minus the header; otherwise the container's own visible height", () => {
     stubLayoutTier("phone");
     vi.stubGlobal("innerHeight", 844);
     document.documentElement.style.setProperty(STICKY_TOP_VAR, "120px");
@@ -87,7 +86,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(visibleHeightOf(makeRoot())).toBe(5000);
   });
 
-  it("stickyTopInset：沒有設定時 0", () => {
+  it("stickyTopInset: 0 when not set", () => {
     expect(stickyTopInset()).toBe(0);
   });
 
@@ -98,7 +97,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     return framed ? <div {...{ [PHONE_PAGE_SCROLL_ATTR]: "" }}>{header}</div> : header;
   }
 
-  it("useStickyTopVar：不在文件代為捲動的外框裡（抽屜裡的清單）就不寫", () => {
+  it("useStickyTopVar: does not write when outside the frame where the document scrolls on its behalf (a list inside a drawer)", () => {
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
     });
@@ -106,7 +105,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("");
   });
 
-  it("useStickyTopVar：卸載時只移除自己寫的值；同名變數已被另一份改寫就不動", () => {
+  it("useStickyTopVar: on unmount removes only the value it wrote; if another instance rewrote the same variable it is left alone", () => {
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
     });
@@ -119,7 +118,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
     expect(document.documentElement.style.getPropertyValue(STICKY_TOP_VAR)).toBe("");
   });
 
-  it("useStickyTopVar：開著時把頁首外框的高度（四捨五入）寫進 <html>，關掉或卸載時移除", () => {
+  it("useStickyTopVar: while enabled writes the header frame's height (rounded) to <html>; removed when disabled or unmounted", () => {
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
     });
@@ -134,7 +133,7 @@ describe("page-scroll：手機上文件代替內層容器捲動", () => {
   });
 });
 
-describe("useStickyTopInset：頁首高度變了就重繪", () => {
+describe("useStickyTopInset: re-renders when the header height changes", () => {
   function Header({ height }: { height: number }) {
     const ref = useRef<HTMLDivElement>(null);
     useStickyTopVar(ref, height > 0);
@@ -148,7 +147,7 @@ describe("useStickyTopInset：頁首高度變了就重繪", () => {
     return <p data-testid="inset">{useStickyTopInset()}</p>;
   }
 
-  it("頁首量到新的高度時，讀它的元件跟著重繪（不用等別的原因重繪）", () => {
+  it("when the header measures a new height, the component reading it re-renders (without waiting for another cause)", () => {
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return new DOMRect(0, 0, 390, Number(this.getAttribute("data-height") ?? 0));
     });
@@ -163,7 +162,7 @@ describe("useStickyTopInset：頁首高度變了就重繪", () => {
   });
 });
 
-describe("captureScrollAnchor／restoreScrollAnchor", () => {
+describe("captureScrollAnchor / restoreScrollAnchor", () => {
   const ITEMS = { itemSelector: "[data-i]", idAttr: "data-i" };
   function list(tops: number[], height: number): HTMLElement {
     const container = document.createElement("div");
@@ -180,28 +179,26 @@ describe("captureScrollAnchor／restoreScrollAnchor", () => {
     return container;
   }
 
-  it("取下緣在那條線之下的第一項，記下它離線多遠與高度", () => {
+  it("takes the first item whose bottom edge is below the line, and records its distance from the line and its height", () => {
     const container = list([-200, -100, -20, 80, 180], 100);
     expect(captureScrollAnchor(container, ITEMS, 50)).toEqual({ id: "2", offset: -70, height: 100 });
   });
 
-  it("還原：同一項回到離線同樣的距離；捲過線的部分照新高度比例換算；找不到回 false", () => {
+  it("restore: the same item returns to the same distance from the line; the part scrolled past the line is rescaled to the new height; not found returns false", () => {
     const container = list([0, 40, 80, 120], 40);
     const scrollBy = vi.fn();
-    // 項 2 現在上緣在 80，線在 60：原本捲過 70／100，新高度 40 → 捲過 28 → 上緣應在 32 → 往下捲 48
+    // Item 2's top is now at 80 and the line at 60: it had scrolled 70/100, new height 40 -> scrolled 28 -> top should be at 32 -> scroll down 48.
     expect(restoreScrollAnchor(container, ITEMS, { id: "2", offset: -70, height: 100 }, 60, scrollBy)).toBe(true);
     expect(scrollBy).toHaveBeenCalledWith(48);
     scrollBy.mockClear();
-    // 沒捲過線：照原距離
     expect(restoreScrollAnchor(container, ITEMS, { id: "1", offset: 10, height: 100 }, 20, scrollBy)).toBe(true);
     expect(scrollBy).toHaveBeenCalledWith(10);
     expect(restoreScrollAnchor(container, ITEMS, { id: "9", offset: 0, height: 10 }, 0, scrollBy)).toBe(false);
   });
 });
 
-describe("captureScrollAnchor：並排欄位", () => {
+describe("captureScrollAnchor: side-by-side columns", () => {
   type Box = { id: string; top: number; height: number };
-  /** 照文件順序放好項目，每一條線都要拿到文件順序裡第一個下緣在線之下的那一項。 */
   function expectDocumentOrder(boxes: Box[], lines: number[]): void {
     const container = document.createElement("div");
     for (const box of boxes) {
@@ -222,8 +219,8 @@ describe("captureScrollAnchor：並排欄位", () => {
   }
   const linesUpTo = (end: number, step: number) => Array.from({ length: Math.ceil(end / step) }, (_, i) => i * step);
 
-  it("兩欄長短不一（第二欄的區塊在文件裡排在第一欄之後、位置從上面重新開始）：整段範圍內都取到文件順序裡第一個下緣在線之下的區塊", () => {
-    // 文件順序：第一欄 c1-0…c1-3（各高 100，從 0 起）、第二欄 c2-0…c2-3（各高 60，從 0 起）、欄位之後 b0…b29（各高 50，從 400 起）
+  it("columns of unequal length (the second column's blocks come after the first column in the document but their positions restart from the top): across the whole range, the first block in document order whose bottom edge is below the line is picked", () => {
+    // Document order: first column c1-0..c1-3 (each 100 high, from 0), second column c2-0..c2-3 (each 60 high, from 0), after the columns b0..b29 (each 50 high, from 400).
     expectDocumentOrder(
       [
         ...Array.from({ length: 4 }, (_, i) => ({ id: `c1-${i}`, top: i * 100, height: 100 })),
@@ -234,15 +231,15 @@ describe("captureScrollAnchor：並排欄位", () => {
     );
   });
 
-  it("第二欄比較長：線過了第一欄的底、還在第二欄裡時，取到第二欄的那一塊", () => {
-    // 第一欄 c1-0、c1-1（各高 100，到 200）、第二欄 c2-0…c2-5（各高 60，到 360）、欄位之後 b0…b9（各高 50，從 360 起）
+  it("second column longer: when the line is past the first column's bottom but still inside the second column, the second column's block is picked", () => {
+    // First column c1-0, c1-1 (each 100 high, to 200), second column c2-0..c2-5 (each 60 high, to 360), after the columns b0..b9 (each 50 high, from 360).
     const boxes = [
       ...Array.from({ length: 2 }, (_, i) => ({ id: `c1-${i}`, top: i * 100, height: 100 })),
       ...Array.from({ length: 6 }, (_, i) => ({ id: `c2-${i}`, top: i * 60, height: 60 })),
       ...Array.from({ length: 10 }, (_, i) => ({ id: `b${i}`, top: 360 + i * 50, height: 50 })),
     ];
     expectDocumentOrder(boxes, linesUpTo(800, 17));
-    // 明確：線在 250（第一欄已結束）→ 第二欄的 c2-4（240～300）
+    // Line at 250 (the first column has ended) -> the second column's c2-4 (240-300).
     vi.restoreAllMocks();
     document.body.innerHTML = "";
     expectDocumentOrder(boxes, [250]);
@@ -250,8 +247,8 @@ describe("captureScrollAnchor：並排欄位", () => {
   });
 });
 
-describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
-  // 兩種排版：手機（文件在捲，項高 100、文件裡從 100 開始）與 640 起（容器在捲，容器頂在 60、項高 40）。
+describe("useTierScrollAnchor: keeps the reading position across 640", () => {
+  // Two layouts: phone (the document scrolls, items 100 high, starting at 100 in the document) and 640 and up (the container scrolls, container top at 60, items 40 high).
   let layout: "phone" | "wide" = "phone";
   let pageY = 0;
   let boxTop = 0;
@@ -303,7 +300,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function (this: Element) {
       return (hidden ? [] : [this.getBoundingClientRect()]) as unknown as DOMRectList;
     });
-    // 媒體查詢翻轉後、React 收到通知前要做的事（排版換掉、文件被夾回 0 並發出 scroll）：比 React 先登記監聽，先跑。
+    // What must happen after the media query flips and before React is notified (layout swaps, the document is clamped back to 0 and fires scroll): registered before React's listener so it runs first.
     const pending: Array<() => void> = [];
     window.matchMedia(PHONE_QUERY).addEventListener("change", () => pending.splice(0).forEach((fn) => fn()));
     const { container } = render(<Host framed={framed} />);
@@ -318,16 +315,15 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     return { container: box, tier, beforeReact: (fn) => pending.push(fn) };
   }
 
-  /** `target`（預設文件）發出一次 scroll，接著跑下一個 frame（記位置在那裡）。 */
   const scrollOn = (target: EventTarget = document) =>
     act(() => {
       target.dispatchEvent(new Event("scroll"));
       frames.splice(0).forEach((cb) => cb(0));
     });
 
-  it("手機 → 640 起 → 手機：同一項停在頂端附近；換段途中被夾回 0 的那次 scroll 不記", () => {
+  it("phone -> 640 and up -> phone: the same item stays near the top; the scroll that clamps to 0 during the switch is not recorded", () => {
     const { tier, beforeReact } = setup();
-    pageY = 320; // 項 2 上緣在 -20，離線（50）-70
+    pageY = 320; // item 2's top is at -20, which is -70 from the line (50)
     scrollOn();
     beforeReact(() => {
       layout = "wide";
@@ -335,7 +331,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
       scrollOn();
     });
     act(() => tier.setLayoutTier("overlay"));
-    // 640 起：項 2 捲過 70／100 → 新高度 40 捲過 28 → 上緣在 60 − 28 = 32 → 容器 scrollTop = 60 + 80 − 32 = 108
+    // 640 and up: item 2 scrolled 70/100 -> new height 40 scrolled 28 -> top at 60 - 28 = 32 -> container scrollTop = 60 + 80 - 32 = 108.
     expect(boxTop).toBe(108);
     beforeReact(() => {
       layout = "phone";
@@ -344,22 +340,22 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(pageY).toBe(320);
   });
 
-  it("捲完緊接著轉向（只隔一個 frame、沒有停頓）：還的是最後捲到的那一項", () => {
+  it("turning right after scrolling ends (one frame apart, no pause): restores the last item scrolled to", () => {
     const { tier, beforeReact } = setup();
     pageY = 320;
     scrollOn();
-    pageY = 650; // 項 5 下緣在 50（剛好在線上，不算）→ 項 6 上緣在 50
+    pageY = 650; // item 5's bottom is at 50 (exactly on the line, does not count) -> item 6's top is at 50
     scrollOn();
     beforeReact(() => {
       layout = "wide";
       pageY = 0;
     });
     act(() => tier.setLayoutTier("overlay"));
-    // 項 6 離線 0 → 640 起上緣在 60 → scrollTop = 60 + 240 − 60 = 240
+    // Item 6 is 0 from the line -> at 640 and up its top is at 60 -> scrollTop = 60 + 240 - 60 = 240.
     expect(boxTop).toBe(240);
   });
 
-  it("別的元素（表格、選單）的捲動不理", () => {
+  it("scrolling of other elements (tables, menus) is ignored", () => {
     const { tier, beforeReact } = setup();
     const other = document.createElement("div");
     document.body.append(other);
@@ -373,7 +369,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(boxTop).toBe(0);
   });
 
-  it("容器不在文件代為捲動的外框裡（抽屜裡那份清單）：不記也不還", () => {
+  it("container not inside the frame where the document scrolls on its behalf (the list in a drawer): neither records nor restores", () => {
     const { tier, beforeReact } = setup(false);
     pageY = 320;
     scrollOn();
@@ -385,11 +381,11 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(boxTop).toBe(0);
   });
 
-  it("容器看不到（筆記頁時藏起來的清單、收起的抽屜）時不記也不還；位置留到回來時再還", () => {
+  it("container not visible (a list hidden on the note page, a collapsed drawer): neither records nor restores; the position is kept for restoring on return", () => {
     const { container, tier, beforeReact } = setup();
     pageY = 520;
     scrollOn();
-    // 清單藏起來時文件的捲動（例如在筆記頁）不改它記的位置
+    // The document's scrolling while the list is hidden (e.g. on the note page) does not change the position it recorded.
     hidden = true;
     pageY = 900;
     scrollOn();
@@ -407,7 +403,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     act(() => tier.setLayoutTier("phone"));
     expect(pageY).toBe(520);
   });
-  it("每個 frame 最多量一次：同一個 frame 內的多次 scroll 只排一次", () => {
+  it("at most one measurement per frame: several scrolls within a frame are queued once", () => {
     setup();
     pageY = 320;
     act(() => {
@@ -416,7 +412,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(frames).toHaveLength(1);
   });
 
-  it("640 起、螢幕短邊不比 640 窄（桌機、平板）：捲動時不排、不量", () => {
+  it("640 and up with the screen's short side not narrower than 640 (desktop, tablet): does not queue or measure on scroll", () => {
     const { container } = setup(true, { tier: "overlay", phoneSized: false });
     const rects = vi.mocked(Element.prototype.getBoundingClientRect);
     rects.mockClear();
@@ -426,7 +422,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(rects).not.toHaveBeenCalled();
   });
 
-  it("桌機視窗從手機寬度拉寬：還原手機寬度時記的位置，之後作廢；再拉窄回手機寬度時不跳回那裡", () => {
+  it("a desktop window widened from phone width: the position recorded at phone width is discarded on restore, and narrowing back to phone width does not jump there", () => {
     const { tier, beforeReact } = setup(true, { tier: "phone", phoneSized: false });
     pageY = 320;
     scrollOn();
@@ -443,18 +439,18 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(pageY).toBe(0);
   });
 
-  it("640 起、螢幕短邊比 640 窄（轉橫拿的手機）：照樣記，轉回直拿還原", () => {
+  it("640 and up with the screen's short side narrower than 640 (a phone held landscape): still records, and restores when turned back to portrait", () => {
     const { container, tier, beforeReact } = setup(true, { tier: "overlay", phoneSized: true });
-    boxTop = 80; // 項 2 上緣在 60 + 80 − 80 = 60＝容器頂，離線 0
+    boxTop = 80; // item 2's top is at 60 + 80 - 80 = 60 = container top, 0 from the line
     scrollOn(container);
     beforeReact(() => {
       layout = "phone";
     });
     act(() => tier.setLayoutTier("phone"));
-    // 手機：項 2 上緣 300 − pageY 要在 50 → pageY = 250
+    // Phone: item 2's top 300 - pageY must be 50 -> pageY = 250.
     expect(pageY).toBe(250);
   });
-  it("預設判斷：640 起、短邊不比 640 窄、但主要指標是手指（平板分割畫面、摺疊機）→ 照樣記；滑鼠的桌機視窗不記", () => {
+  it("default decision: 640 and up, short side not narrower than 640, but the primary pointer is a finger (tablet split screen, foldable) -> still records; a desktop window with a mouse does not", () => {
     vi.stubGlobal("screen", { width: 1024, height: 768 });
     const touch = setup(true, { tier: "overlay", phoneSized: "default", others: (query) => query === "(pointer: coarse)" });
     boxTop = 80;
@@ -467,7 +463,7 @@ describe("useTierScrollAnchor：跨 640 保住閱讀位置", () => {
     expect(pageY).toBe(250);
   });
 
-  it("預設判斷：滑鼠的桌機（短邊 ≥ 640、指標精確）不記；手機尺寸的螢幕記", () => {
+  it("default decision: a desktop with a mouse (short side >= 640, precise pointer) does not record; a phone-sized screen does", () => {
     stubLayoutTier("overlay");
     vi.stubGlobal("screen", { width: 1440, height: 900 });
     expect(mayCrossTiersByDefault()).toBe(false);
@@ -485,7 +481,7 @@ describe("useRootFlag", () => {
     return null;
   }
 
-  it("active 時在 <html> 上掛旗標，關掉或卸載就拿掉", () => {
+  it("when active sets a flag on <html>, removed when disabled or unmounted", () => {
     const view = render(<Flag />);
     expect(document.documentElement).toHaveAttribute(ROOT_FLAGS.listShown, "");
     view.rerender(<Flag on={false} />);
@@ -496,7 +492,7 @@ describe("useRootFlag", () => {
     expect(document.documentElement).not.toHaveAttribute(ROOT_FLAGS.listShown);
   });
 
-  it("兩個元件同時要同一個旗標：先離開的那個不會把它拿掉，最後一個離開才拿掉", () => {
+  it("two components want the same flag at once: the one leaving first does not remove it, the last one leaving does", () => {
     const first = render(<Flag />);
     const second = render(<Flag />);
     first.unmount();

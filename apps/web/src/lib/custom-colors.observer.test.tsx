@@ -8,8 +8,8 @@ import { noteSchema } from "@/collab/schema";
 import { selectInBlock, type AnyEditor } from "@/test/ai-host";
 import { CUSTOM_COLORS_STYLE_ID, installCustomColors, resetCustomColorsForTest } from "./custom-colors";
 
-// 遠端共編者套的自訂色，本機編輯器沒有人操作過：登記只能靠 DOM 觀察。
-// 兩個編輯器各自一份 Y.Doc、互傳 update，掛在 body 下兩個兄弟容器。
+// A custom color applied by a remote collaborator was never touched in the local editor, so registration can only rely on DOM observation.
+// Two editors each have their own Y.Doc and exchange updates, mounted in two sibling containers under body.
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -36,9 +36,9 @@ async function pair() {
           fragment: doc.getXmlFragment(YDOC_FRAGMENT),
           user: { id: `u${n}`, name: `User ${n}`, color: "hsl(0 65% 45%)" },
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema generic triple
       } as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
     ) as any as AnyEditor;
     const el = document.createElement("div");
     document.body.appendChild(el);
@@ -68,7 +68,7 @@ async function pair() {
 const INLINE_SEL = '[data-style-type="textColor"][data-value="#ff6600"]';
 
 describe("installCustomColors with a remote collaborator (#378)", () => {
-  it("OB6 遠端套的色碼，在被觀察的容器裡登記", async () => {
+  it("a color code applied remotely is registered in the observed container", async () => {
     const { a, b, sync } = await pair();
     installCustomColors(b.el);
     act(() => {
@@ -79,7 +79,7 @@ describe("installCustomColors with a remote collaborator (#378)", () => {
     await waitFor(() => expect(rules()).toContain(INLINE_SEL));
   });
 
-  it("OB6 對照：觀察的是別的容器時，不會登記", async () => {
+  it("contrast: when a different container is observed, it is not registered", async () => {
     const { a, b, sync } = await pair();
     const third = document.createElement("div");
     document.body.appendChild(third);
@@ -90,7 +90,7 @@ describe("installCustomColors with a remote collaborator (#378)", () => {
     });
     await sync();
     await tick();
-    // 先確認遠端的 span 真的長到 B 的 DOM，否則「沒有規則」可能只是遠端更新沒到。
+    // First confirm the remote span really reached B's DOM; otherwise "no rule" could just mean the remote update never arrived.
     expect(b.el.querySelector(INLINE_SEL)).not.toBeNull();
     expect(rules()).not.toContain(INLINE_SEL);
   });

@@ -14,26 +14,26 @@ function quotaError(storage?: Record<string, unknown>): ApiFail {
 }
 
 describe("storageQuotaDescription", () => {
-  it("有用量與上限：用量說明句（en）", async () => {
+  it("with usage and limit: usage sentence (en)", async () => {
     await i18n.changeLanguage("en");
     const text = storageQuotaDescription(quotaError({ incomingBytes: 1, usedBytes: 2048, quotaBytes: 4096 }), t);
     expect(text).toBe(`${formatBytes(2048)} of ${formatBytes(4096)} used. Ask a site admin for more space.`);
   });
 
-  it("有用量與上限：用量說明句（zh-TW）", async () => {
+  it("with usage and limit: usage sentence (zh-TW)", async () => {
     await i18n.changeLanguage("zh-TW");
     const text = storageQuotaDescription(quotaError({ incomingBytes: 1, usedBytes: 2048, quotaBytes: 4096 }), t);
     expect(text).toBe(`已使用 ${formatBytes(2048)}／${formatBytes(4096)}，請洽站台管理員增加空間`);
   });
 
-  it("沒有用量、或上限為 null：通用句", async () => {
+  it("no usage, or limit is null: generic sentence", async () => {
     await i18n.changeLanguage("en");
     const generic = "This space has no room for the file. Ask its owner or a site admin.";
     expect(storageQuotaDescription(quotaError(), t)).toBe(generic);
     expect(storageQuotaDescription(quotaError({ incomingBytes: 1, usedBytes: 5, quotaBytes: null }), t)).toBe(generic);
   });
 
-  it("uploads/upload-file 原地轉出同一支函式", () => {
+  it("uploads/upload-file re-export the same function", () => {
     expect(reExported).toBe(storageQuotaDescription);
   });
 });

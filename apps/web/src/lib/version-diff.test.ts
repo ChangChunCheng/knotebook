@@ -10,18 +10,17 @@ const p = (id: string, text: string, children: DiffBlock[] = []): DiffBlock => (
 });
 const img = (id: string, url: string): DiffBlock => ({ id, type: "image", props: { url }, content: undefined, children: [] });
 
-/** 只取一層的 (key, mark) 對，方便讀。 */
 const marksOf = (a: DiffBlock[], b: DiffBlock[]) => diffBlocks(a, b).map((e) => [e.key, markOf(e)]);
 
 describe("diffBlocks", () => {
-  it("新增：只在 b 的區塊 → added，順序依 b", () => {
+  it("added: only in b's blocks -> added, in b's order", () => {
     expect(marksOf([p("A", "a")], [p("A", "a"), p("B", "b")])).toEqual([
       ["A", "context"],
       ["B", "added"],
     ]);
   });
 
-  it("刪除：插在 a 裡它前一顆存活區塊之後；前面沒有存活的就放開頭；合成 id", () => {
+  it("deleted: inserted after the previous surviving block in a; with none before it, placed first; synthetic id", () => {
     const out = marksOf([p("X", "x"), p("A", "a"), p("D", "d"), p("B", "b")], [p("A", "a"), p("B", "b")]);
     expect(out).toEqual([
       ["diff-del-1", "deleted"],
@@ -31,7 +30,7 @@ describe("diffBlocks", () => {
     ]);
   });
 
-  it("修改：同 id、去掉 children 後 JSON 不等 → changed；只改 children 的父不算 changed", () => {
+  it("modified: same id, JSON differs after removing children -> changed; a parent whose only change is in children does not count as changed", () => {
     const a = [p("A", "舊字"), p("P", "同", [p("C", "子一")])];
     const b = [p("A", "新字"), p("P", "同", [p("C", "子二")])];
     const out = diffBlocks(a, b);
@@ -39,7 +38,7 @@ describe("diffBlocks", () => {
     expect(out[1].children.map(markOf)).toEqual(["changed"]);
   });
 
-  it("搬動：LIS 外的才標 moved（[A,B,C] → [C,A,B] 只有 C）", () => {
+  it("moved: only those outside the LIS are marked moved ([A,B,C] -> [C,A,B] marks only C)", () => {
     expect(marksOf([p("A", "a"), p("B", "b"), p("C", "c")], [p("C", "c"), p("A", "a"), p("B", "b")])).toEqual([
       ["C", "moved"],
       ["A", "context"],
@@ -47,14 +46,14 @@ describe("diffBlocks", () => {
     ]);
   });
 
-  it("搬動＋修改並存：mark 是 changed、moved 旗標仍為 true", () => {
+  it("moved and modified together: mark is changed, the moved flag is still true", () => {
     const [first] = diffBlocks([p("A", "a"), p("B", "b")], [p("B", "b2"), p("A", "a")]);
     expect(first.key).toBe("B");
     expect(markOf(first)).toBe("changed");
     expect(first.moved).toBe(true);
   });
 
-  it("父刪子升：跨層搬移顯示為刪除＋新增；P 前面沒有存活區塊 → 刪除放開頭；渲染 id 全部唯一", () => {
+  it("parent deleted, child promoted: a cross-level move shows as delete + add; with no surviving block before P, the delete goes first; all rendered ids are unique", () => {
     const a = [p("P", "父", [p("C", "子")])];
     const b = [p("C", "子")];
     const entries = diffBlocks(a, b);
@@ -70,14 +69,14 @@ describe("diffBlocks", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("非文字區塊（image）只標 changed、內容取 b、nonText 旗標", () => {
+  it("non-text block (image): only marked changed, content taken from b, nonText flag", () => {
     const entries = diffBlocks([img("I", "/api/uploads/1")], [img("I", "/api/uploads/2")]);
     const { blocks, marks } = renderDiff(entries);
     expect(marks.get("I")).toEqual({ mark: "changed", moved: false, nonText: true });
     expect(blocks[0].props).toEqual({ url: "/api/uploads/2" });
   });
 
-  it("inline 重組：equal／added 沿用 b 的樣式、removed 沿用 a 的樣式並加 strike＋紅底、added 加綠底", () => {
+  it("inline recomposition: equal/added keep b's styles, removed keeps a's styles plus strike and red background, added gets green background", () => {
     const a: DiffBlock[] = [{ id: "A", type: "paragraph", props: {}, content: [{ type: "text", text: "舊 字", styles: { bold: true } }], children: [] }];
     const b: DiffBlock[] = [{ id: "A", type: "paragraph", props: {}, content: [{ type: "text", text: "新 字", styles: { italic: true } }], children: [] }];
     const { blocks } = renderDiff(diffBlocks(a, b));
@@ -88,7 +87,7 @@ describe("diffBlocks", () => {
     ]);
   });
 
-  it("inline 重組：連結保留原形；wikilink 以文字＋link 外觀呈現（#269）", () => {
+  it("inline recomposition: links keep their shape; a wikilink is shown as text with link appearance (#269)", () => {
     const wl = { type: "wikilink", props: { targetNoteId: "n2", snapshotTitle: "T" } };
     const a: DiffBlock[] = [{ id: "A", type: "paragraph", props: {}, content: [wl, { type: "text", text: " 看", styles: {} }], children: [] }];
     const b: DiffBlock[] = [
@@ -96,24 +95,23 @@ describe("diffBlocks", () => {
     ];
     const { blocks } = renderDiff(diffBlocks(a, b));
     const content = blocks[0].content as Array<Record<string, unknown>>;
-    // #269：變動區塊內的 wikilink 以文字（label || 標題 || snapshotTitle || href）呈現，重組成 link 外觀。
     expect(content[0]).toEqual({ type: "link", href: "/notes/n2", content: [{ type: "text", text: "T", styles: {} }] });
     expect(content).toContainEqual({ type: "link", href: "https://x.test", content: [{ type: "text", text: "這", styles: { backgroundColor: "green" } }] });
   });
 
-  it("兩邊都空 → 一顆空 paragraph（initialContent 不可為空陣列）", () => {
+  it("both sides empty -> one empty paragraph (initialContent must not be an empty array)", () => {
     const { blocks, marks } = renderDiff(diffBlocks([], []));
     expect(blocks).toEqual([{ id: "diff-empty", type: "paragraph" }]);
     expect(marks.size).toBe(0);
   });
 
-  it("v1 vs 空文件：全部 added（子孫也是）", () => {
+  it("v1 vs empty document: everything added (descendants too)", () => {
     const entries = diffBlocks([], [p("A", "a", [p("C", "c")])]);
     expect(entries.map(markOf)).toEqual(["added"]);
     expect(entries[0].children.map(markOf)).toEqual(["added"]);
   });
 
-  it("只看差異：連續 context 折成一顆合成段落，子樹有變更的 context 不折", () => {
+  it("show only differences: consecutive context folds into one synthetic paragraph; context whose subtree has changes is not folded", () => {
     const a = [p("A", "a"), p("B", "b"), p("C", "c"), p("D", "d", [p("E", "e")])];
     const b = [p("A", "a"), p("B", "b"), p("C", "c2"), p("D", "d", [p("E", "e2")])];
     const { blocks, marks } = renderDiff(diffBlocks(a, b), { onlyChanges: true, collapsedText: (n) => `… ${n} …` });
@@ -122,13 +120,13 @@ describe("diffBlocks", () => {
     expect(marks.get("diff-ctx-1")?.mark).toBe("collapsed");
   });
 
-  it("並排標記：左邊標 deleted／changed、右邊標 added／changed／moved", () => {
+  it("side-by-side marks: left marks deleted / changed, right marks added / changed / moved", () => {
     const { left, right } = sideBySideMarks(diffBlocks([p("A", "a"), p("D", "d"), p("M", "m")], [p("M", "m"), p("A", "a2"), p("N", "n")]));
     expect(Object.fromEntries(left)).toEqual({ A: "changed", D: "deleted" });
     expect(Object.fromEntries(right)).toEqual({ M: "moved", A: "changed", N: "added" });
   });
 
-  it("缺 id 與同一層重複的 id 不 throw；同一層重複出現的 id **全部**不配對（含第一次出現的那顆），渲染 id 全唯一", () => {
+  it("missing ids and duplicate ids in one level do not throw; a duplicated id within a level is not paired at all (the first occurrence included), and rendered ids are all unique", () => {
     const noId: DiffBlock = { type: "paragraph", props: {}, content: [], children: [] };
     const a = [p("A", "a"), p("A", "a 重複"), noId];
     const b = [p("A", "a"), p("A", "又重複"), { ...noId }];
@@ -141,15 +139,15 @@ describe("diffBlocks", () => {
     expect(entries.filter((e) => markOf(e) === "deleted")).toHaveLength(3);
   });
 
-  it("對照：同一個 id 只在一側重複時，另一側那顆也不配對（重複判定是逐側、逐層）", () => {
+  it("contrast: when an id repeats on one side only, its counterpart on the other side is not paired either (duplicate detection is per side and per level)", () => {
     const entries = diffBlocks([p("A", "a")], [p("A", "a"), p("A", "a2")]);
     expect(entries.map(markOf).sort()).toEqual(["added", "added", "deleted"]);
   });
 });
 
-/** 決定性的亂字（小寫字母）：同一個 seed 永遠同一串；不同 seed 的 bigram 幾乎不重疊（Dice 遠低於 0.5）。 */
+/** Deterministic random words (lowercase letters): the same seed gives the same string; bigrams of different seeds barely overlap (Dice far below 0.5). */
 const gibberish = (seed: number, len = 40): string => {
-  // mulberry32：各 seed 的序列彼此獨立（線性同餘的不同 seed 只是同一條序列錯位，會偶發撞出相似字串）。
+  // mulberry32: the sequences of different seeds are independent (different seeds of a linear congruential generator are the same sequence shifted, which would occasionally produce similar strings).
   let x = seed >>> 0;
   let s = "";
   for (let i = 0; i < len; i += 1) {
@@ -160,12 +158,12 @@ const gibberish = (seed: number, len = 40): string => {
   }
   return s;
 };
-/** 決定性的亂句：n 個 5 字母的亂字、空白分隔（token bigram 才有 n−1 個；單一長串只算一個 token）。 */
+/** n 5-letter words separated by spaces: token bigrams need separate words, while one long string is a single token with no bigram. */
 const words = (seed: number, n = 8): string => (gibberish(seed, 5 * n).match(/.{5}/g) ?? []).join(" ");
 const h =(id: string, text: string): DiffBlock => ({ id, type: "heading", props: { level: 1 }, content: [{ type: "text", text, styles: {} }], children: [] });
 
-describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
-  it("1a 讓位＋1b：在區塊開頭按 Enter（舊 id 留在新的空白區塊、原文字換新 id）→ 只有新區塊是 added，原文字 context、沒有 deleted", () => {
+describe("diffBlocks content fallback pairing (passes 1a/1b/1c)", () => {
+  it("1a yield + 1b: pressing Enter at the start of a block (the old id stays on the new empty block, the original text gets a new id) -> only the new block is added, the original text is context, nothing deleted", () => {
     const entries = diffBlocks([p("id1", "first"), p("id2", "hello")], [p("id1", "first"), p("id2", "new"), p("id3", "hello")]);
     expect(entries.map((e) => [e.key, markOf(e)])).toEqual([
       ["id1", "context"],
@@ -175,7 +173,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(entries[2].before?.id).toBe("id2");
   });
 
-  it("1b：整篇貼上（所有 id 都換新、文字不變）→ 全部 unchanged、沒有 moved", () => {
+  it("1b: pasting the whole note (every id replaced, text unchanged) -> all unchanged, none moved", () => {
     const texts = ["one", "two", "three", "four", "five"];
     const entries = diffBlocks(
       texts.map((t, i) => p(`id${i + 1}`, t)),
@@ -184,7 +182,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(entries.map((e) => [e.key, e.status, e.moved])).toEqual(texts.map((_, i) => [`id${i + 6}`, "unchanged", false]));
   });
 
-  it("1b＋LIS：整篇貼上且第 2、3 顆對調 → 恰一顆 moved，其餘 context", () => {
+  it("1b + LIS: pasting the whole note with the 2nd and 3rd swapped -> exactly one moved, the rest context", () => {
     const texts = ["one", "two", "three", "four", "five"];
     const swapped = [texts[0], texts[2], texts[1], texts[3], texts[4]];
     const entries = diffBlocks(
@@ -196,7 +194,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(entries.map(markOf).filter((m) => m === "context")).toHaveLength(4);
   });
 
-  it("1c：整篇貼上且第 3 顆改了一個詞（相似度 > 0.5）→ 該顆 changed 且 inline 有刪／增片段，其餘 context", () => {
+  it("1c: pasting the whole note with one word changed in the 3rd block (similarity > 0.5) -> that block changed with inline removed/added fragments, the rest context", () => {
     const texts = ["Alpha beta gamma delta", "Lorem ipsum dolor sit amet", "The quick brown fox jumps over the lazy dog", "Pack my box with five dozen", "Sphinx of black quartz judge"];
     const after = [...texts];
     after[2] = "The quick brown cat jumps over the lazy dog";
@@ -212,21 +210,21 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(inline).toContainEqual({ type: "text", text: "cat", styles: { backgroundColor: "green" } });
   });
 
-  it("1c 門檻：同 type 但相似度不足 0.5 → 不配對（刪除＋新增）", () => {
+  it("1c threshold: same type but similarity below 0.5 -> not paired (delete + add)", () => {
     expect(marksOf([p("id1", "完全不同的內容")], [p("id2", "another thing entirely different here")])).toEqual([
       ["diff-del-1", "deleted"],
       ["id2", "added"],
     ]);
   });
 
-  // 以下兩段取自 docs/known-limitations.md：同主題、措辭相近但講的是兩件事。字元 bigram Dice 0.603（舊定義會誤配），
-  // token bigram Dice 0.415——是該檔 229 段兩兩配對中最高的一對（守門檻與 token 化）。
+  // The next two paragraphs come from docs/known-limitations.md: same topic and similar wording but about two different things. Character bigram
+  // Dice is 0.603 (the old definition mispaired them), token bigram Dice is 0.415 (guards the threshold and tokenization).
   const SIGNIN_SERVICE =
     "Turning a sign-in service off doesn't sign anyone out. People who signed in through it keep their session until it expires, and their API tokens and connected apps keep working (a token created without an expiry keeps working until it's revoked). Deleting the service doesn't change that either. To cut someone off right away, disable their account in Site admin → Users — that stops their sessions and tokens too.";
   const SIGNIN_PASSWORD =
     "Turning password sign-in off doesn't sign anyone out. Existing sessions, API tokens, connected apps and MCP clients keep working. To cut someone off right away, disable their account in Site admin → Users.";
 
-  it("1c 門檻（token bigram）：刪掉一段、原處寫一段同主題但不相關的英文 → 不配對（刪除＋新增）", () => {
+  it("1c threshold (token bigram): delete a paragraph and write an unrelated one on the same topic in English in its place -> not paired (delete + add)", () => {
     expect(bigramDice(SIGNIN_SERVICE, SIGNIN_PASSWORD)).toBeGreaterThan(0.4);
     expect(bigramDice(SIGNIN_SERVICE, SIGNIN_PASSWORD)).toBeLessThan(0.5);
     expect(marksOf([p("k0", "Kept first paragraph stays here"), p("k1", SIGNIN_SERVICE), p("k2", "Kept last paragraph stays here")], [p("k0", "Kept first paragraph stays here"), p("n1", SIGNIN_PASSWORD), p("k2", "Kept last paragraph stays here")])).toEqual([
@@ -237,21 +235,21 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1c 門檻（token bigram）：整篇貼上後同一段只改一個詞 → 仍配對（changed）", () => {
+  it("1c threshold (token bigram): pasting the whole note and changing one word of the same paragraph -> still paired (changed)", () => {
     const edited = SIGNIN_SERVICE.replace("connected apps", "connected tools");
     expect(bigramDice(SIGNIN_SERVICE, edited)).toBeGreaterThanOrEqual(0.5);
     const entries = diffBlocks([p("id1", SIGNIN_SERVICE)], [p("id2", edited)]);
     expect(entries.map((e) => [e.key, markOf(e), e.before?.id])).toEqual([["id2", "changed", "id1"]]);
   });
 
-  it("1c 只比 token ≥ 4 的區塊：3 個詞的短段改一個詞 → 不配對（只靠 1b 的完全相等）", () => {
+  it("1c compares only blocks with >= 4 tokens: a short 3-word paragraph with one word changed -> not paired (only exact equality in 1b can pair it)", () => {
     expect(marksOf([p("id1", "alpha beta gamma")], [p("id2", "alpha beta delta")])).toEqual([
       ["diff-del-1", "deleted"],
       ["id2", "added"],
     ]);
   });
 
-  it("非文字型只做精確配對：image props 相同 → unchanged；url 不同 → 刪除＋新增（不走 1c）", () => {
+  it("non-text blocks pair only exactly: image props equal -> unchanged; url different -> delete + add (does not go through 1c)", () => {
     expect(marksOf([img("id1", "/api/uploads/1")], [img("id2", "/api/uploads/1")])).toEqual([["id2", "context"]]);
     expect(marksOf([img("id1", "/api/uploads/1")], [img("id2", "/api/uploads/2")])).toEqual([
       ["diff-del-1", "deleted"],
@@ -259,7 +257,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1b：同一層重複的相同內容依出現順序一一配（id3↔id1、id4↔id2）", () => {
+  it("1b: identical content repeated in one level pairs one-to-one in order of appearance (id3<->id1, id4<->id2)", () => {
     const entries = diffBlocks([p("id1", "x"), p("id2", "x")], [p("id3", "x"), p("id4", "x")]);
     expect(entries.map((e) => [e.key, e.status, e.before?.id])).toEqual([
       ["id3", "unchanged", "id1"],
@@ -267,11 +265,11 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1c 候選帶：a 前面 5 顆被刪、b 前面插 40 顆新區塊、其後 100 顆換 id 且各改了尾巴 → 100 顆仍全部配到（changed）", () => {
+  it("1c candidate band: 5 deleted before in a, 40 new blocks inserted before in b, then 100 blocks with new ids each with the tail changed -> all 100 still pair (changed)", () => {
     const a = [...Array.from({ length: 5 }, (_, i) => p(`gone${i}`, words(1000 + i))), ...Array.from({ length: 100 }, (_, i) => p(`a${i}`, words(i)))];
     const b = [
       ...Array.from({ length: 40 }, (_, i) => p(`new${i}`, words(2000 + i))),
-      ...Array.from({ length: 100 }, (_, i) => p(`b${i}`, `${words(i).slice(0, -5)}xyzzy`)), // 換掉最後一個字：Dice 6/7
+      ...Array.from({ length: 100 }, (_, i) => p(`b${i}`, `${words(i).slice(0, -5)}xyzzy`)), // replaces the last word: Dice 6/7
     ];
     const entries = diffBlocks(a, b);
     const paired = entries.filter((e) => e.status === "changed");
@@ -280,12 +278,12 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(entries.filter((e) => e.status === "deleted")).toHaveLength(5);
   });
 
-  it("1a 不讓位：同 id 的一對內容不同、但對側沒有內容相等的未配對區塊 → 仍是這一對 changed", () => {
+  it("1a does not yield: a same-id pair with different content, but the other side has no unpaired block with equal content -> still this pair changed", () => {
     const entries = diffBlocks([p("id1", "abc")], [p("id1", "abd")]);
     expect(entries.map((e) => [e.key, markOf(e), e.before?.id])).toEqual([["id1", "changed", "id1"]]);
   });
 
-  it("不變：b 側兩顆同 id 同文字、缺 id 的同文字區塊 → 文字相同也不配對", () => {
+  it("unchanged: two blocks with the same id and text on side b, and a block without id with the same text -> equal text is still not paired", () => {
     const dup = diffBlocks([p("id1", "same text")], [p("id9", "same text"), p("id9", "same text")]);
     expect(dup.map(markOf).sort()).toEqual(["added", "added", "deleted"]);
     const noId: DiffBlock = { type: "paragraph", props: { textAlignment: "left" }, content: [{ type: "text", text: "same text", styles: {} }], children: [] };
@@ -295,8 +293,8 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     expect(missingA.map(markOf).sort()).toEqual(["added", "deleted"]);
   });
 
-  it("型別守衛：paragraph 與 heading 文字相同 → 1b（shallow 含 type）與 1c（type 須相同）都不配 → 刪除＋新增", () => {
-    // 文字 ≥ 4 個 token，1c 真的會比到（不看 type 的話 Dice＝1 就配了）。
+  it("type guard: paragraph and heading with the same text -> neither 1b (shallow form includes type) nor 1c (type must match) pairs them -> delete + add", () => {
+    // Text has >= 4 tokens so 1c really compares (if type were ignored, Dice = 1 would pair them).
     const text = "The quick brown fox jumps over the lazy dog";
     expect(marksOf([p("id1", text)], [h("id2", text)])).toEqual([
       ["diff-del-1", "deleted"],
@@ -304,7 +302,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1a 讓位（b 側方向）：id 對子的新內容在 a 的未配對區塊裡有完全相同者 → 讓位，b 配給那顆、a 的舊那顆刪除", () => {
+  it("1a yield (b-side direction): the new content of an id pair has an identical block among a's unpaired blocks -> yield, b pairs with that block, and a's old one is deleted", () => {
     const entries = diffBlocks([p("id1", "t"), p("id5", "t2")], [p("id1", "t2")]);
     expect(entries.map((e) => [e.key, markOf(e), e.before?.id])).toEqual([
       ["diff-del-1", "deleted", "id1"],
@@ -312,8 +310,8 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1a 讓位連鎖：後面那對讓位後釋出的內容才讓前面那對讓位（要重跑到不再有新的讓位）", () => {
-    // id2（w→x）的舊內容 w 在 b 池（id3）→ 讓位，b 池多了 x；第二輪：id1（x→y）的舊內容 x 這時才在 b 池 → 讓位。
+  it("1a yield chain: content released after the later pair yields is what lets the earlier pair yield (rerun until no new yield)", () => {
+    // id2 (w->x): its old content w is in the b pool (id3) -> yield, adding x to the b pool; second round: id1 (x->y) has old content x in the b pool only now -> yield.
     const entries = diffBlocks([p("id1", "x"), p("id2", "w")], [p("id1", "y"), p("id2", "x"), p("id3", "w")]);
     expect(entries.map((e) => [e.key, markOf(e), e.before?.id])).toEqual([
       ["id1", "added", undefined],
@@ -322,7 +320,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("1a 讓位比個數：同層有重複內容、己側還有別顆能接走時不讓位 → 不交叉配對、沒有假 moved", () => {
+  it("1a yield counts occurrences: duplicate content in one level, and this side has another block that can take it -> no yield -> no crossed pairing, no false moved", () => {
     const entries = diffBlocks([p("id1", "hello world"), p("id5", "hello world")], [p("id1", "hello world!"), p("id6", "hello world")]);
     expect(entries.map((e) => [e.key, e.status, e.moved, e.before?.id])).toEqual([
       ["id1", "changed", false, "id1"],
@@ -330,7 +328,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("空的文字型區塊照常配對但不標 moved：刪一顆空行＋別處新增空行 → 兩顆空行配成 unchanged、moved=false", () => {
+  it("empty text blocks pair as usual but are not marked moved: delete one empty line + add an empty line elsewhere -> the two empty lines pair as unchanged, moved=false", () => {
     const entries = diffBlocks([p("id1", ""), p("id2", "alpha"), p("id3", "beta")], [p("id2", "alpha"), p("id3", "beta"), p("id9", "")]);
     expect(entries.map((e) => [e.key, e.status, e.moved, e.before?.id])).toEqual([
       ["id2", "unchanged", false, "id2"],
@@ -339,7 +337,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("在文末空段落打字（BlockNote 補一顆新的空段落）→ 新字 added、空段落 unchanged 且不 moved、沒有 deleted", () => {
+  it("typing in the empty paragraph at the end of the note (BlockNote adds a new empty paragraph) -> new text added, the empty paragraph unchanged and not moved, nothing deleted", () => {
     const entries = diffBlocks([p("id1", "hello"), p("id2", "")], [p("id1", "hello"), p("id2", "new text"), p("id3", "")]);
     expect(entries.map((e) => [e.key, e.status, e.moved, e.before?.id])).toEqual([
       ["id1", "unchanged", false, "id1"],
@@ -348,8 +346,8 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("空行對子先排除再算 LIS：空行移到前面不會把唯一的非空對子擠出 LIS 標成 moved", () => {
-    // 若空行也進 LIS（a 索引序列 [1, 2, 0]），LIS 是兩顆空行、x 會被標 moved；先排除則 x 單獨成 LIS。
+  it("empty-line pairs are excluded before computing the LIS: moving an empty line to the front does not push the only non-empty pair out of the LIS and mark it moved", () => {
+    // If the empty lines also entered the LIS (a-index sequence [1, 2, 0]), the LIS would be the two empty lines and x would be marked moved; with them excluded x alone forms the LIS.
     const entries = diffBlocks([p("x", "keep me"), p("e", ""), p("f", "")], [p("e2", ""), p("f2", ""), p("x", "keep me")]);
     expect(entries.map((e) => [e.key, e.status, e.moved, e.before?.id])).toEqual([
       ["e2", "unchanged", false, "e"],
@@ -358,7 +356,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("刪除錨點跳過靠內容配起來的空行：刪掉「空行＋下一段」、別處新增空行 → 被刪段落仍在原處（Title 之後），不跑到文末", () => {
+  it("the deletion anchor skips empty lines paired by content: deleting 'empty line + next paragraph' and adding an empty line elsewhere -> the deleted paragraph stays in place (after Title), not at the end", () => {
     const a = [p("h", "Title"), p("e1", ""), p("d", "This paragraph gets deleted"), p("k1", "keep one"), p("k2", "keep two"), p("t", "")];
     const b = [p("h", "Title"), p("k1", "keep one"), p("k2", "keep two"), p("n", ""), p("t", "")];
     expect(diffBlocks(a, b).map((e) => [e.key, e.status, e.before?.id])).toEqual([
@@ -371,7 +369,7 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("真實的區塊開頭按 Enter（舊 id 那顆變成空行）→ 空行 added、原文字 context", () => {
+  it("real Enter at the start of a block (the old-id block becomes an empty line) -> empty line added, original text context", () => {
     const entries = diffBlocks([p("id1", "first"), p("id2", "hello")], [p("id1", "first"), p("id2", ""), p("id3", "hello")]);
     expect(entries.map((e) => [e.key, markOf(e), e.before?.id])).toEqual([
       ["id1", "context", "id1"],
@@ -380,22 +378,22 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
     ]);
   });
 
-  it("bigramDice：token bigram（拉丁字母／數字連成一個 token、其他字元各一個、空白標點是分隔）、多重集合交集", () => {
+  it("bigramDice: token bigram (Latin letters/digits form one token, other characters one each, whitespace and punctuation separate), multiset intersection", () => {
     expect(bigramDice("a b c d", "a b c e")).toBeCloseTo(4 / 6);
     expect(bigramDice("x x x", "x x")).toBeCloseTo(2 / 3);
     expect(bigramDice("hello, world!", "hello world")).toBe(1);
-    expect(bigramDice("abc def", "abc deg")).toBe(0); // 拉丁字母連成一個 token：def ≠ deg
+    expect(bigramDice("abc def", "abc deg")).toBe(0); // Latin letters form one token: def != deg
     expect(bigramDice("中文字", "中文字")).toBe(1);
     expect(bigramDice("v2 release", "v3 release")).toBe(0);
-    expect(bigramDice("abcd", "abcd")).toBe(0); // 只有一個 token → 沒有 bigram
+    expect(bigramDice("abcd", "abcd")).toBe(0); // only one token -> no bigram
   });
 
-  it("bigramDice 以 code point 切：代理對 emoji 是一個 token（以 UTF-16 code unit 切會得 0.5）", () => {
+  it("bigramDice cuts by code point: a surrogate-pair emoji is one token (cutting by UTF-16 code unit would give 0.5)", () => {
     expect(bigramDice("a😀", "a😁")).toBe(0);
     expect(bigramDice("a😀", "a😀")).toBe(1);
   });
 
-  it("效能（只印不斷言時間）：2000 顆對 2000 顆、全新 id、文字各異且互不相似 → 全部刪＋增", () => {
+  it("performance (the time is printed, not asserted): 2000 vs 2000 blocks, all new ids, distinct unrelated text -> all deleted + added", () => {
     const a = Array.from({ length: 2000 }, (_, i) => p(`a${i}`, words(i)));
     const b = Array.from({ length: 2000 }, (_, i) => p(`b${i}`, words(10000 + i)));
     const t0 = performance.now();
@@ -407,10 +405,10 @@ describe("diffBlocks 配對的內容後備（規則 1a／1b／1c）", () => {
   });
 });
 
-describe("splitRows（並排逐區塊對齊）", () => {
+describe("splitRows (side-by-side block alignment)", () => {
   const rowsOf = (a: DiffBlock[], b: DiffBlock[]) => splitRows(a, b, diffBlocks(a, b));
   const textOfP = (blk: DiffBlock) => (blk.content as Array<{ text: string }>)[0].text;
-  /** 不變量：left／right 各自（忽略 null）嚴格遞增，且 a、b 每個索引各恰出現一次。 */
+  /** Invariant: left / right are each strictly increasing (ignoring null), and every index of a and b appears exactly once. */
   const checkInvariants = (a: DiffBlock[], b: DiffBlock[], rows: SplitRow[]) => {
     const ls = rows.map((r) => r.left).filter((x): x is number => x !== null);
     const rs = rows.map((r) => r.right).filter((x): x is number => x !== null);
@@ -419,7 +417,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     expect(rows.every((r) => r.left !== null || r.right !== null)).toBe(true);
   };
 
-  it("中間插入：a=[p1,p2]、b=[p1,new,p2] → 左 2 與右 3 同列", () => {
+  it("insert in the middle: a=[p1,p2], b=[p1,new,p2] -> left 2 and right 3 on the same row", () => {
     const a = [p("A", "one"), p("B", "two")];
     const b = [p("A", "one"), p("N", "new"), p("B", "two")];
     expect(rowsOf(a, b)).toEqual([
@@ -429,7 +427,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("刪除：左單側列", () => {
+  it("deleted: a left-only row", () => {
     const a = [p("A", "one"), p("D", "gone"), p("B", "two")];
     const b = [p("A", "one"), p("B", "two")];
     expect(rowsOf(a, b)).toEqual([
@@ -439,7 +437,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("修改：changed 仍同列", () => {
+  it("modified: changed stays on the same row", () => {
     const a = [p("A", "one"), p("B", "two")];
     const b = [p("A", "one changed"), p("B", "two")];
     expect(rowsOf(a, b)).toEqual([
@@ -448,7 +446,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("moved 對子不對齊：左右各佔一列、不同列", () => {
+  it("moved pairs are not aligned: left and right take a row each, not the same row", () => {
     const a = [p("A", "a"), p("B", "b"), p("C", "c")];
     const b = [p("C", "c"), p("A", "a"), p("B", "b")];
     expect(diffBlocks(a, b).find((e) => e.key === "C")?.moved).toBe(true);
@@ -462,7 +460,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     checkInvariants(a, b, rows);
   });
 
-  it("刪增交錯：a 刪 2、b 增 3 → 兩列兩側並排、一列只有右側", () => {
+  it("interleaved delete and add: a deletes 2, b adds 3 -> two rows with both sides, one row with the right side only", () => {
     const a = [p("A", "head"), p("D1", "x"), p("D2", "y"), p("B", "tail")];
     const b = [p("A", "head"), p("N1", "p"), p("N2", "q"), p("N3", "r"), p("B", "tail")];
     expect(rowsOf(a, b)).toEqual([
@@ -474,11 +472,11 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("錨列交叉降級：兩側皆空文字的對子 moved=false 但 a 索引倒退 → 當成兩側未對齊", () => {
+  it("anchor row crossing downgrade: a pair that is empty text on both sides has moved=false but a's index goes backwards -> treated as unaligned on both sides", () => {
     const a = [p("e1", ""), p("X", "x")];
     const b = [p("X", "x"), p("e2", "")];
     const entries = diffBlocks(a, b);
-    // 前提：空行對子確實配上了、且 moved 恆 false（否則這案沒有鑑別力）
+    // Precondition: the empty-line pair really paired and moved is false (otherwise this case could not tell the difference).
     const blank = entries.find((e) => e.before === a[0]);
     expect(blank?.after).toBe(b[1]);
     expect(blank?.moved).toBe(false);
@@ -491,12 +489,12 @@ describe("splitRows（並排逐區塊對齊）", () => {
     checkInvariants(a, b, rows);
   });
 
-  it("第一段開頭按 Enter＋文末空段打字 → 遠處配到的空行對子不搶錨列，alpha／beta／gamma 各自左右同列", () => {
-    // a＝存版時：三段＋文末空段 T；b＝現在：第一段開頭按 Enter（舊 id 1 留在空段、alpha 換新 id X）、在 T 打字、又多一個空段 M。
+  it("Enter at the start of the first paragraph + typing in the trailing empty paragraph -> an empty-line pair paired from far away does not take the anchor row, alpha / beta / gamma each stay on the same row left and right", () => {
+    // a = at save time: three paragraphs + a trailing empty paragraph T; b = now: Enter at the start of the first paragraph (old id 1 stays on the empty paragraph, alpha gets a new id X), typing in T, and one more empty paragraph M.
     const a = [p("1", "alpha"), p("2", "beta"), p("3", "gamma"), p("T", "")];
     const b = [p("1", ""), p("X", "alpha"), p("2", "beta"), p("3", "gamma"), p("T", "tail"), p("M", "")];
     const entries = diffBlocks(a, b);
-    // 前提（真 diffBlocks）：a 的空段 T 與 b 開頭的空段配成對子、moved=false，且在 entries 裡排第一（舊寫法會先拿它當錨）。
+    // Precondition (real diffBlocks): a's empty paragraph T pairs with the empty paragraph at b's start with moved=false and comes first in entries.
     expect(entries[0].before).toBe(a[3]);
     expect(entries[0].after).toBe(b[0]);
     expect(entries[0].moved).toBe(false);
@@ -519,8 +517,8 @@ describe("splitRows（並排逐區塊對齊）", () => {
     checkInvariants(a, b, rows);
   });
 
-  it("空行對子夾在相鄰兩錨列之間 → 升格為錨列（同列）", () => {
-    // a 多一顆只在左側的 D：不升格的話降級逐顆並排會把 D 與 b 的空行排同列，空行對子與 Y 都錯開。
+  it("an empty-line pair between two adjacent anchor rows -> promoted to an anchor row (same row)", () => {
+    // a has an extra D on the left only: without promotion, the downgraded one-by-one side-by-side would put D on the same row as b's empty line, and both the empty-line pair and Y end up misaligned.
     const a = [p("X", "x"), p("D", "gone"), p("e1", ""), p("Y", "y")];
     const b = [p("X", "x"), p("e2", ""), p("Y", "y")];
     const entries = diffBlocks(a, b);
@@ -533,7 +531,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("空側：a 為空 → 全是右側單側列；b 為空 → 全是左側單側列", () => {
+  it("empty side: a empty -> all right-only rows; b empty -> all left-only rows", () => {
     const b = [p("A", "a"), p("B", "b")];
     expect(rowsOf([], b)).toEqual([
       { left: null, right: 0 },
@@ -545,7 +543,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("巢狀子區塊不另成列：只看頂層", () => {
+  it("nested child blocks do not form their own rows: only the top level counts", () => {
     const a = [p("A", "a", [p("A1", "child")])];
     const b = [p("A", "a", [p("A1", "child"), p("A2", "new child")]), p("B", "b")];
     expect(rowsOf(a, b)).toEqual([
@@ -554,7 +552,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
     ]);
   });
 
-  it("不變量：多組亂數編輯（刪、增、改、搬、空行、換 id）每列兩側索引嚴格遞增、a／b 每個索引恰出現一次", () => {
+  it("invariant: random edits (delete, add, modify, move, empty line, new id) - each row's indices on both sides are strictly increasing, and every a / b index appears exactly once", () => {
     let seed = 7;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
     const words = ["alpha", "beta", "gamma", "delta", "", "", "epsilon zeta eta theta", "iota kappa lambda mu nu"];
@@ -570,7 +568,7 @@ describe("splitRows（並排逐區塊對齊）", () => {
   });
 });
 
-describe("#269 wikilink 的 diff", () => {
+describe("#269 wikilink diff", () => {
   const ID1 = "11111111-1111-4111-8111-111111111111";
   const ID2 = "22222222-2222-4222-8222-222222222222";
   const wl = (props: Record<string, string>) => ({ type: "wikilink", props: { targetNoteId: ID1, snapshotTitle: "", label: "", anchorBlockId: "", ...props } });
@@ -581,14 +579,14 @@ describe("#269 wikilink 的 diff", () => {
   const contentOf = (a: DiffBlock[], b: DiffBlock[], titleOf?: (id: string) => string | undefined) =>
     renderDiff(diffBlocks(a, b), { titleOf }).blocks[0]!.content as unknown[];
 
-  it("label 變：刪舊 label＋增新 label（各一個 link 節點）", () => {
+  it("label changed: old label deleted + new label added (one link node each)", () => {
     expect(contentOf([para("A", wl({ label: "A" }))], [para("A", wl({ label: "B" }))])).toEqual([
       { type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: "A", styles: DEL }] },
       { type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: "B", styles: ADD }] },
     ]);
   });
 
-  it("目標變（文字相同）：恰兩個節點——刪除的 Foo、新增的 Foo", () => {
+  it("target changed (same text): exactly two nodes - deleted Foo, added Foo", () => {
     const c = contentOf([para("A", wl({ snapshotTitle: "Foo" }))], [para("A", wl({ targetNoteId: ID2, snapshotTitle: "Foo" }))]);
     expect(c).toEqual([
       { type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: "Foo", styles: DEL }] },
@@ -596,12 +594,12 @@ describe("#269 wikilink 的 diff", () => {
     ]);
   });
 
-  it("錨點變：href 不同 ⇒ 刪＋增", () => {
+  it("anchor changed: different href => delete + add", () => {
     const c = contentOf([para("A", wl({ label: "X", anchorBlockId: "a1" }))], [para("A", wl({ label: "X", anchorBlockId: "a2" }))]);
     expect(c.map((n) => (n as { href: string }).href)).toEqual([`/notes/${ID1}#b-a1`, `/notes/${ID1}#b-a2`]);
   });
 
-  it("一般連結 → wikilink（文字等於標題的轉換）：恰兩個節點；反方向 wikilink → 一般連結 /notes/B 也不合併", () => {
+  it("plain link -> wikilink (conversion where the text equals the title): exactly two nodes; the reverse wikilink -> plain link /notes/B is not merged either", () => {
     const titleOf = (id: string) => (id === ID1 ? "Foo" : undefined);
     expect(contentOf([para("A", lnk(`/notes/${ID1}`, "Foo"))], [para("A", wl({ snapshotTitle: "Foo" }))], titleOf)).toEqual([
       { type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: "Foo", styles: DEL }] },
@@ -610,7 +608,7 @@ describe("#269 wikilink 的 diff", () => {
     expect(contentOf([para("A", wl({ snapshotTitle: "Foo" }))], [para("A", lnk(`/notes/${ID1}`, "Foo"))], titleOf)).toHaveLength(2);
   });
 
-  it("部分重疊的 label 編輯：共同前綴之後恰一個刪除節點＋一個新增節點（Chapter 3→4、第3章→第4章）", () => {
+  it("partially overlapping label edit: after the common prefix, exactly one deleted node + one added node (Chapter 3->4 and its Chinese counterpart)", () => {
     for (const [from, to] of [["Chapter 3", "Chapter 4"], ["第3章", "第4章"]]) {
       const c = contentOf([para("A", { type: "text", text: "see ", styles: {} }, wl({ label: from }))], [para("A", { type: "text", text: "see ", styles: {} }, wl({ label: to }))]);
       expect(c).toEqual([
@@ -621,7 +619,7 @@ describe("#269 wikilink 的 diff", () => {
     }
   });
 
-  it("空顯示文字（label、標題、快照皆空）：以 wikilinkHref 出現；換目標看得見；只含它的段落不判為空白", () => {
+  it("empty display text (label, title and snapshot all empty): shown as wikilinkHref; a changed target is visible; a paragraph containing only it is not judged blank", () => {
     const c = contentOf([para("A", wl({}))], [para("A", wl({ targetNoteId: ID2 }))]);
     expect(c).toEqual([
       { type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: `/notes/${ID1}`, styles: DEL }] },
@@ -630,7 +628,7 @@ describe("#269 wikilink 的 diff", () => {
     expect(diffBlocks([para("A", wl({}))], [para("A", wl({ targetNoteId: ID2 }))])[0]!.status).toBe("changed");
   });
 
-  it("變動區塊內、只有 snapshotTitle 不同的 wikilink（titleOf 給同一個現行標題）：照常一個不帶 diff 樣式的節點（逐字鍵不含 snapshotTitle）", () => {
+  it("wikilink inside a changed block with only snapshotTitle different (titleOf gives the same current title): one node without diff styling as usual (the verbatim key does not include snapshotTitle)", () => {
     const titleOf = () => "Live";
     const c = contentOf(
       [para("A", wl({ snapshotTitle: "Old" }), { type: "text", text: " x", styles: {} })],
@@ -640,7 +638,7 @@ describe("#269 wikilink 的 diff", () => {
     expect(c[0]).toEqual({ type: "link", href: `/notes/${ID1}`, content: [{ type: "text", text: "Live", styles: {} }] });
   });
 
-  it("區塊層：只有 snapshotTitle 變 ⇒ unchanged、marks 與並排 marks 都沒有它（無 label 快照過期；有 label 往返後快照≠label）", () => {
+  it("block level: only snapshotTitle changed => unchanged, and neither marks nor side-by-side marks have it (without a label the snapshot is stale; with a label, after a round trip snapshot != label)", () => {
     for (const [before, after] of [
       [wl({ snapshotTitle: "Old" }), wl({ snapshotTitle: "New" })],
       [wl({ label: "L", snapshotTitle: "Target" }), wl({ label: "L", snapshotTitle: "L" })],
@@ -655,7 +653,7 @@ describe("#269 wikilink 的 diff", () => {
     }
   });
 
-  it("diffBlocks／renderDiff 不改寫輸入（深相等）；含 wikilink 的文件 splitRows 保有錨點列", () => {
+  it("diffBlocks / renderDiff do not modify their input (deep equality); for a document with wikilinks splitRows keeps the anchor rows", () => {
     const a = [para("A", wl({ label: "A" })), para("B", { type: "text", text: "keep", styles: {} })];
     const b = [para("A", wl({ label: "B" })), para("B", { type: "text", text: "keep", styles: {} })];
     const before = JSON.parse(JSON.stringify([a, b]));
@@ -666,17 +664,15 @@ describe("#269 wikilink 的 diff", () => {
   });
 });
 
-describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () => {
-  // 期望值是 fixture 實際跑出的輸出。
+describe("side-by-side diff: rows pair by row, columns pair by column id, column level does not collapse", () => {
   const P = (text: string, id: string): DiffBlock => ({ id, type: "paragraph", props: {}, content: [{ type: "text", text, styles: {} }], children: [] });
   const col = (id: string, kids: DiffBlock[], width = 1): DiffBlock => ({ id, type: "column", props: { width }, children: kids });
   const row = (id: string, cols: DiffBlock[]): DiffBlock => ({ id, type: "columnList", props: {}, children: cols });
-  /** 輸出的 show：每個 entry 一行 `key status[/moved] type`，子層縮兩格。 */
   const show = (es: DiffEntry[], d = 0): string[] =>
     es.flatMap((e) => [`${"  ".repeat(d)}${e.key} ${e.status}${e.moved ? "/moved" : ""} ${(e.after ?? e.before)!.type}`, ...show(e.children, d + 1)]);
   const base = () => [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
 
-  it("VD1 只看變更、列裡只有一欄有變 → 列的直接子節點全是欄（欄層不收合）；c0 內收成一個佔位段落、c1 內是 changed 的 b1", () => {
+  it("show changes only, only one column in the row changed -> the row's direct children are all columns (column level does not collapse); c0 collapses into one placeholder paragraph, c1 holds the changed b1", () => {
     const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b2", "b1")])]), P("z", "z9")];
     const { blocks, marks } = renderDiff(diffBlocks(base(), b), { onlyChanges: true });
     const r = blocks.find((x) => x.type === "columnList")!;
@@ -691,7 +687,7 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     expect(marks.get("b1")?.mark).toBe("changed");
   });
 
-  it("VD2 欄寬 1→2、內容不變 → c1 changed、b1 unchanged、列不是 changed；marks 的 c1 是 changed", () => {
+  it("column width 1->2, content unchanged -> c1 changed, b1 unchanged, the row is not changed; c1 in marks is changed", () => {
     const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
     const entries = diffBlocks(base(), b);
     expect(show(entries)).toEqual([
@@ -706,11 +702,11 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     const { blocks, marks } = renderDiff(entries);
     expect(marks.get("c1")).toEqual({ mark: "changed", moved: false, nonText: false });
     expect(marks.has("r")).toBe(false);
-    // 欄沒有 inline content：渲染時不做 inline diff、content 照原樣（undefined）。
+    // A column has no inline content: rendering does no inline diff and content stays as is (undefined).
     expect(blocks[1].children![1].content).toBeUndefined();
   });
 
-  it("VD3 只看變更、整列沒變 → 整列在頂層與其後未變的 z 一起收成一個佔位段落（頂層的佔位合法）", () => {
+  it("show changes only, the whole row unchanged -> the row and the unchanged z after it collapse into one placeholder paragraph at the top level (a top-level placeholder is valid)", () => {
     const b = [P("x2", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
     const { blocks, marks } = renderDiff(diffBlocks(base(), b), { onlyChanges: true });
     expect(blocks.map((x) => x.type)).toEqual(["paragraph", "paragraph"]);
@@ -719,7 +715,7 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     expect(blocks[1].content).toEqual([{ type: "text", text: "… 2 …", styles: {} }]);
   });
 
-  it("VD4 刪 c1、加 c2（同寬）→ 不配成同一欄：c0 unchanged、被刪的欄 deleted、c2 added；合併渲染的列有 3 欄", () => {
+  it("delete c1, add c2 (same width) -> not paired as the same column: c0 unchanged, the deleted column deleted, c2 added; the merged render row has 3 columns", () => {
     const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c2", [P("n", "n1")])]), P("z", "z9")];
     const entries = diffBlocks(base(), b);
     expect(show(entries)).toEqual([
@@ -741,7 +737,7 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     ]);
   });
 
-  it("VD5 a1 從 c0 移到 c1 → 跨欄＝刪＋增（c0 下一顆 deleted、c1 下 a1 added）", () => {
+  it("a1 moves from c0 to c1 -> across columns = delete + add (the next one under c0 deleted, a1 added under c1)", () => {
     const a = [P("x", "x0"), row("r", [col("c0", [P("a", "a1"), P("k", "k1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
     const b = [P("x", "x0"), row("r", [col("c0", [P("k", "k1")]), col("c1", [P("b", "b1"), P("a", "a1")])]), P("z", "z9")];
     expect(show(diffBlocks(a, b))).toEqual([
@@ -757,7 +753,7 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     ]);
   });
 
-  it("VD6 刪一列、在別處加一列（欄 id 全新）→ 不配成同一列：被刪的列 deleted、z9 unchanged（不是 moved）、r2 added", () => {
+  it("delete a row, add a row elsewhere (all-new column ids) -> not paired as the same row: the deleted row deleted, z9 unchanged (not moved), r2 added", () => {
     const a = [P("x", "x0"), row("r1", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
     const b = [P("x", "x0"), P("z", "z9"), row("r2", [col("d0", [P("p", "p1")]), col("d1", [P("q", "q1")])])];
     expect(show(diffBlocks(a, b))).toEqual([
@@ -776,7 +772,7 @@ describe("並排的 diff：列配列、欄依 id 配欄、欄層不收合", () =
     ]);
   });
 
-  it("VD7（事實釘）兩個欄寬不同的欄互換順序 → c1 unchanged/moved、c0 unchanged（欄沒有 changed）", () => {
+  it("two columns with different widths swap order -> c1 unchanged/moved, c0 unchanged (columns do not become changed)", () => {
     const a = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")], 1), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
     const b = [P("x", "x0"), row("r", [col("c1", [P("b", "b1")], 2), col("c0", [P("a", "a1")], 1)]), P("z", "z9")];
     expect(show(diffBlocks(a, b))).toEqual([

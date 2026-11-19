@@ -6,7 +6,7 @@ describe("useDebounced", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("初值立即生效；改值後 299 ms 還是舊值、300 ms 變新值", () => {
+  it("initial value applies immediately; after changing, still the old value at 299 ms and the new one at 300 ms", () => {
     const { result, rerender } = renderHook(({ v }) => useDebounced(v, 300), { initialProps: { v: "a" } });
     expect(result.current).toBe("a");
     rerender({ v: "ab" });
@@ -16,7 +16,7 @@ describe("useDebounced", () => {
     expect(result.current).toBe("ab");
   });
 
-  it("連續改值只在最後一次之後 300 ms 生效", () => {
+  it("consecutive changes take effect 300 ms after the last one", () => {
     const { result, rerender } = renderHook(({ v }) => useDebounced(v, 300), { initialProps: { v: "a" } });
     rerender({ v: "ab" });
     act(() => vi.advanceTimersByTime(200));

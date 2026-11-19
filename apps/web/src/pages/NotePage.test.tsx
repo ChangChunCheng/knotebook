@@ -40,19 +40,18 @@ import { findDrawerButton, findTourTarget } from "@/lib/tour-find";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { stubLayoutTier } from "@/test/layout-tier";
 
-// BlockNote 需要一整套 jsdom 沒有的 DOM/Range API，掛進單元測試只會測到環境；
-// 這裡只驗證「頁面有沒有把正確的 props 交給編輯器」，編輯器本身留給手動驗證。
+// BlockNote needs a whole set of DOM/Range APIs jsdom lacks, and mounting it in a unit test would only test the environment; this file
+// verifies only that the page hands the right props to the editor, and leaves the editor itself to manual verification.
 //
-// NoteEditor slot 化——舊版 mock 只吃 `editable`，slot 化後會把整個
-// 頁頭（TitleInput/ConnectionBadge/分享鈕/⋮）與 backlinks chips 一起吞掉。改為原樣
-// 渲染 `headerSlot`/`footerSlot`，讓下面依賴 `getByLabelText("Note title")` 等查詢的
-// 既有測試在新結構下繼續照過。`SettingsModal.test.tsx` 有第二處綁定同一份 mock 形狀
-// （該檔檔頭自述沿用這裡的最小替身慣例），兩處要同步改。
-// 版本歷史：替身另渲染 `previewSlot`（包在 `mock-preview-slot` 裡），並給兩顆驅動鈕——
-// 進入預覽（`startPreview`）與開套用三選一（`openDialog({ kind: "apply" })`）；真的 NoteEditor 裡這兩條路徑由面板觸發，
-// 面板掛在 NoteEditor 的第三欄，替身不渲染它。
+// The NoteEditor mock is slot-based: an older mock that only took `editable` would swallow the whole header (TitleInput / ConnectionBadge /
+// share button / kebab) and the backlinks chips once slots were introduced. It now renders `headerSlot` / `footerSlot` as they are, so
+// existing tests relying on queries such as `getByLabelText("Note title")` keep passing with the new structure. `SettingsModal.test.tsx` binds
+// to the same mock shape (its header says it follows this file's minimal-stand-in convention), so update both together.
+// Version history: the stand-in also renders `previewSlot` (wrapped in `mock-preview-slot`) and provides two driver buttons - entering a preview
+// (`startPreview`) and opening the three-way apply dialog (`openDialog({ kind: "apply" })`); in the real NoteEditor these two paths are
+// triggered by the panel, which sits in NoteEditor's third column and which the stand-in does not render.
 const VERSION_1 = vi.hoisted(() => ({
-  id: "0001aaaa-0000-4000-8000-000100010000", // ＝vid(1)；vi.hoisted 先於 import 執行，不能呼叫 vid
+  id: "0001aaaa-0000-4000-8000-000100010000", // = vid(1); vi.hoisted runs before imports, so vid cannot be called
   seq: 1,
   kind: "manual" as const,
   name: null,
@@ -61,11 +60,9 @@ const VERSION_1 = vi.hoisted(() => ({
   base: null,
   createdAt: "2026-01-01T00:00:00.000Z",
 }));
-// #293：替身交給 NotePage 的 scroller（`onCursorScroller`）；預設 null＝同真編輯器尚未交出。
 const editorMock = vi.hoisted(() => ({ scroller: null as null | ((c: unknown) => boolean), noteMaxBytes: undefined as number | undefined, maxUploadBytes: undefined as number | undefined }));
-/** `GET /api/auth/config` 回的 `noteMaxBytes`（筆記大小上限）、`maxUploadBytes`（單檔上傳上限）；undefined＝回應不帶這個欄位。 */
 const siteConfig = vi.hoisted(() => ({ noteMaxBytes: undefined as number | undefined, maxUploadBytes: undefined as number | undefined }));
-// #297：`mock-column` 用真的 `useNoteWidth(noteId)`，P3 靠它驗 NotePage 交給頁首選單與編輯器的是同一個 id。
+// #297: `mock-column` uses the real `useNoteWidth(noteId)`, and the width test relies on it to verify that NotePage hands the header menu and the editor the same id.
 vi.mock("@/components/NoteEditor", async () => {
   const React = await import("react");
   const { useVersions } = await import("@/lib/versions-context");
@@ -125,12 +122,10 @@ vi.mock("@/components/NoteEditor", async () => {
   return { NoteEditor: NoteEditorMock };
 });
 
-/** `provider.on("synced", …)`／`.off(…)`／`.synced` 的最小替身。多數既有測試
- * 不主動 emit、`synced` 也維持預設 `false`——那些測試裡 link-sync 狀態機不會送出任何
- * `POST .../links`（`onSynced()` 是它唯一的提交觸發點，見 `link-sync.ts`）。但「連結同步
- * 接線」那組測試會主動呼叫 `.emit("synced", …)` 或把 `.synced` 直接設 `true`——這支替身
- * 兩種用法都要撐得住，`mockFetch` 的 `POST .../links` → 204 分支正是那些測試依賴的
- * 成功回應（不是單純防禦性備而不用）。 */
+/** Minimal stand-in for `provider.on("synced", ...)` / `.off(...)` / `.synced`. Most existing tests never emit and leave `synced` at the default
+ * `false`, so the link-sync state machine sends no `POST .../links` there (`onSynced()` is its only submit trigger, see `link-sync.ts`). But the
+ * "link-sync wiring" tests call `.emit("synced", ...)` or set `.synced` to `true` directly; the stand-in must support both, and the `mockFetch`
+ * branch `POST .../links` -> 204 is the success response those tests depend on (not just a defensive branch). */
 function createStubProvider() {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
@@ -146,32 +141,28 @@ function createStubProvider() {
     off(event: string, fn: (...args: unknown[]) => void) {
       listeners.get(event)?.delete(fn);
     },
-    /** 直接呼叫所有透過 `.on(event, …)` 註冊過的 handler——**不是**先設
-     * `synced = true` 再讓 `NotePage` 掛載 effect 裡的
-     * `if (provider.synced) handleSynced()` 補呼叫那條路徑。用 `emit` 才是真的在戳
-     * `provider.on("synced", handleSynced)` 這行**訂閱本身**有沒有接上：若那行被拿掉，
-     * `listeners` 裡就不會有任何 handler，`emit` 什麼都不會發生。 */
+    /** Calls every handler registered via `.on(event, ...)` directly - NOT by setting `synced = true` first and letting the
+     * `if (provider.synced) handleSynced()` catch-up call in NotePage's mount effect run. `emit` is what really exercises whether the
+     * subscription `provider.on("synced", handleSynced)` itself is wired: if that line were removed, `listeners` would hold no handler
+     * and `emit` would do nothing. */
     emit(event: string, ...args: unknown[]) {
       listeners.get(event)?.forEach((fn) => fn(...args));
     },
   };
 }
 
-// useCollab 的真實行為（HocuspocusProvider + WebSocket）不進 jsdom；狀態機本身
-// 有 connection.test.ts 全覆蓋。這裡把它換成一個可由測試直接擺弄的假回傳值，
-// 驗證 NotePage 對每個 phase 的反應。
+// useCollab's real behaviour (HocuspocusProvider + WebSocket) does not run in jsdom; the state machine itself is fully covered by
+// connection.test.ts. Here it is replaced with a return value the test can manipulate directly, to verify NotePage's reaction to each phase.
 //
-// `doc`/`provider` 換成連結同步接線之前的 `{fake:"doc"}`/`{fake:"provider"}` 會讓
-// `NotePage` 的 link-sync 掛載 effect（`doc.on("update",…)`／`provider.on("synced",…)`）
-// 直接 TypeError（那兩個替身沒有 `.on`）：`doc` 換一個**真的** `Y.Doc`、`provider` 換
-// 上面的最小 `on`/`off`/`synced` 替身。兩者都放進這個 `vi.hoisted` 模組級物件、由
-// `beforeEach` 逐測試重建（見下）——**不能**改成 mock 工廠裡每次呼叫 `useCollab()`
-// 都新建一份：link-sync 的掛載 effect deps 是 `[noteId, doc, provider]`，逐 render
-// 給新物件會讓它每個 render 都 teardown 再重訂閱，在真實情境下會讓 provider 的
-// `synced`（只在 false→true 邊緣 emit 一次）被錯過訂閱窗口。
-/** m14 專用的 navigate 攔截縫：預設 `undefined`＝走真的 useNavigate；單一測試把
- * `navSpy.current` 設成 vi.fn() 可**壓住導頁**，觀察「解析 404 的那幾個 render」
- * 畫面停在哪一格（否則 navigate 太快、中間態無法斷言）。afterEach 歸零。 */
+// Using `{fake:"doc"}` / `{fake:"provider"}` for `doc` / `provider` would make NotePage's link-sync mount effect (`doc.on("update",...)` /
+// `provider.on("synced",...)`) throw a TypeError (those stand-ins have no `.on`): `doc` is a real `Y.Doc` and `provider` is the minimal
+// `on` / `off` / `synced` stand-in above. Both live in this module-level `vi.hoisted` object and are rebuilt per test by `beforeEach` (see
+// below) - they must NOT be created anew on every `useCollab()` call inside the mock factory: the link-sync mount effect's deps are
+// `[noteId, doc, provider]`, and fresh objects each render would tear it down and resubscribe on every render, so in a real scenario the
+// provider's `synced` (emitted once, on the false -> true edge) would be missed during the subscription gap.
+/** Seam to intercept navigate: default `undefined` = use the real useNavigate; a test can set `navSpy.current` to a vi.fn() to hold back
+ * navigation and observe where the screen stops during the renders of a resolution 404 (otherwise navigate is too fast and the
+ * intermediate state cannot be asserted). Reset in afterEach. */
 const navSpy = vi.hoisted(() => ({ current: undefined as ((to: unknown, opts?: unknown) => void) | undefined }));
 vi.mock("react-router", async (importOriginal) => {
   const mod = await importOriginal<typeof import("react-router")>();
@@ -189,9 +180,8 @@ const collab = vi.hoisted(() => ({
   onUnauthorized: undefined as (() => void) | undefined,
   doc: undefined as unknown as Y.Doc,
   provider: undefined as unknown as ReturnType<typeof createStubProvider>,
-  /** #179：每次 render 傳進 useCollab 的 noteId（真實 useCollab 依它拆線／重連）。測試自行清空。 */
+  // The noteId passed to useCollab on each render; tests clear it themselves.
   noteIds: [] as (string | undefined)[],
-  /** 最近 tab 時效案：NotePage 傳給 useCollab 的 onDocUpdate，測試自己觸發。 */
   onDocUpdate: undefined as (() => void) | undefined,
 }));
 vi.mock("@/collab/useCollab", () => ({
@@ -207,9 +197,8 @@ vi.mock("@/collab/useCollab", () => ({
     collab.noteIds.push(noteId);
     collab.onUnauthorized = onUnauthorized;
     collab.onDocUpdate = onDocUpdate;
-    // issue #48：NotePage 用 `synced` 閘住 editable。真實 useCollab 的 `synced` 是 sticky
-    // 追蹤 `provider.synced`，測試裡直接反映 stub 的 `provider.synced`——設一處就同時餵
-    // editable 與 link-sync 掛載 effect。
+    // issue #48: NotePage gates editable on `synced`. The real useCollab's `synced` is sticky and tracks `provider.synced`; in tests it directly
+    // reflects the stub's `provider.synced` - setting it in one place feeds both editable and the link-sync mount effect.
     return {
       state: collab.state,
       doc: collab.doc,
@@ -222,7 +211,7 @@ vi.mock("@/collab/useCollab", () => ({
 
 const { default: NotePage, scheduleTerminalReconcile } = await import("./NotePage");
 
-/** 與 NotePage 內同名常數對齊；輪詢輪數的斷言用得到。 */
+// Must match TERMINAL_RECONCILE_INTERVAL_MS / TERMINAL_RECONCILE_TIMEOUT_MS in NotePage.tsx; the poll-count assertions use them.
 const RECONCILE_INTERVAL_MS = 750;
 const RECONCILE_TIMEOUT_MS = 6_000;
 
@@ -266,9 +255,6 @@ const NOTE: NoteDto = {
   permissions: OWNER_PERMS,
 };
 
-/** `/api/auth/me`、`/api/notes`（清單）、`/api/notes/:ref`（單篇）三支的假 server。
- * `backlinks` 參數預設空陣列（既有測試全部維持「0 篇→整塊隱藏」不干擾），佈局回饋
- * 那組新測試會傳非空陣列逼 `BacklinksSection` 真的渲染出 `<details>`。 */
 function mockFetch(
   note: NoteDto | { status: number; code: string } = NOTE,
   backlinks: BacklinkDto[] = [],
@@ -276,12 +262,11 @@ function mockFetch(
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
-    // #103：側欄（AppShell → NoteList）的 `useGroups()`——沒有這支，mock 的 throw 會
-    // 變成 rejected query，群組段多出一個 `role="alert"`，撞上本檔的單數 alert 查詢。
+    // #103: the sidebar's (AppShell -> NoteList) `useGroups()` - without this route the mock's throw becomes a rejected query, the group
+    // section gets an extra `role="alert"`, and it collides with this file's singular alert queries.
     if (url === "/api/groups" && method === "GET") {
       return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
     }
-    // 頁首星號無條件訂閱最愛清單。
     if (url === "/api/favorites" && method === "GET") {
       return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
     }
@@ -296,14 +281,12 @@ function mockFetch(
     if (url === "/api/notes" && method === "GET") {
       return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
     }
-    // backlinks 折疊區塊的 fetch（`useBacklinks`）。必須放在下面的
-    // `GET /api/notes/` catch-all 之前——`/api/notes/:id/backlinks` 也會匹配那個
-    // `startsWith` 判斷，若順序反了，backlinks 請求會被誤餵成 NoteDto（catch-all
-    // 分支回的是 `note` 而不是 `{backlinks:[]}`），這支測試檔案裡的 NotePage 測試
-    // 多數不驗證 backlinks 內容，固定回空陣列即可（0 篇時 `BacklinksSection` 整塊
-    // 隱藏，不干擾既有斷言）；佈局回饋那組測試會傳非空陣列。
-    // 版本歷史：清單（面板 `limit=50`、套用前重抓 `limit=1`）、快照、套用。同樣要在
-    // `GET /api/notes/` catch-all 之前。快照的 `AAA=` 是 `Y.encodeStateAsUpdate(new Y.Doc())`（空 doc，node 實跑取得）。
+    // Fetch for the backlinks collapsed section (`useBacklinks`). It must come before the `GET /api/notes/` catch-all below - `/api/notes/:id/backlinks`
+    // also matches that `startsWith` check, and in the wrong order a backlinks request would be fed a NoteDto (the catch-all branch returns `note`,
+    // not `{backlinks:[]}`). Most NotePage tests here do not verify backlinks content, so a fixed empty array is enough (with 0 items
+    // `BacklinksSection` is hidden entirely and does not interfere with existing assertions); the layout tests pass a non-empty array.
+    // Version history: list (panel `limit=50`, re-fetch before apply `limit=1`), snapshot, apply. Same requirement: before the
+    // `GET /api/notes/` catch-all. The snapshot's `AAA=` is `Y.encodeStateAsUpdate(new Y.Doc())` (an empty doc).
     const versionsBase = `/api/notes/${encodeURIComponent(NOTE.id)}/versions`;
     const versionCurrent = { baseSeq: 1, base: { id: VERSION_1.id, name: null, deleted: false }, dirty: false, nextSeq: 2, autoEnabled: true };
     if ((url === `${versionsBase}?limit=50` || url === `${versionsBase}?limit=1`) && method === "GET") {
@@ -351,9 +334,8 @@ function mockFetch(
       }
       return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(note) }));
     }
-    // link-sync 的提交端點。「連結同步接線」那組測試會主動 emit `"synced"`
-    // 事件（或直接把 `collab.provider.synced` 設 `true`）觸發真的提交，這支就是那些
-    // 測試依賴的成功回應（204）——不是備而不用的防禦性分支。
+    // The link-sync submit endpoint. The "link-sync wiring" tests emit "synced" (or set `collab.provider.synced` to `true`) to trigger a real
+    // submit, and this is the success response (204) they depend on - not a defensive branch kept in reserve.
     if (url.endsWith("/links") && method === "POST") {
       return Promise.resolve(fakeResponse({ ok: true, status: 204 }));
     }
@@ -361,16 +343,15 @@ function mockFetch(
   });
 }
 
-/** #122：ActiveNoteContext 的觀測探針——NotePage 的 set/清除行為靠它斷言。 */
 function ActiveProbe() {
   const { activeNoteId } = useActiveNote();
   return <div data-testid="active-probe">{activeNoteId ?? "none"}</div>;
 }
 
-/** 模擬 NoteList 的樂觀 set：掛載時把 `id` 種進 context（殘留來源）。
- * `id` 選填且元件**恆掛載**——provider 的 children 形狀必須在 render 與 rerender 之間
- * 穩定（child 位移會讓 React 把 NotePage 整棵 remount，previousRoleRef 之類的頁內
- * state 全部歸零，N4 那組 rerender 案就假紅了）。 */
+/** Simulates NoteList's optimistic set: seeds `id` into the context on mount (the source of a leftover).
+ * `id` is optional and the component is always mounted - the provider's children shape must stay stable between render and rerender (a
+ * shifted child makes React remount the whole NotePage and zeroes in-page state such as previousRoleRef, which made the role-downgrade
+ * rerender cases fail falsely). */
 function SeedActive({ id }: { id?: string }) {
   const { setActiveNoteId } = useActiveNote();
   useEffect(() => {
@@ -379,9 +360,7 @@ function SeedActive({ id }: { id?: string }) {
   return null;
 }
 
-/** #179：router 的 location（MemoryRouter 內、Routes 之外）。網址收斂 effect 改走
- * `navigate` 之後，網址的真相是 router location，不再是 `window.location`（MemoryRouter
- * 不碰它）。 */
+/** The router's location. Convergence goes through navigate and MemoryRouter does not touch window.location, so the router location is the source of truth for the URL. */
 function RouterPathProbe() {
   const location = useLocation();
   return (
@@ -404,9 +383,7 @@ function routerPath(): string | null {
   return screen.getByTestId("router-path").textContent;
 }
 
-/** renderNotePage 與各 rerender 案共用的 provider 內部樹——單一定義保證形狀一致。
- * #179：收斂 effect 會把 `/notes/:ref` 導成 `/n/<handle>/<slug>`（router navigate），所以
- * 新形與群組形兩條 route 也要掛，否則收斂後 NotePage 會被卸載。 */
+/** Shared by renderNotePage and the rerender cases so the tree shape stays stable; it also mounts the /n/ and /g/ routes, or NotePage would be unmounted after convergence. */
 function NotePageTree({ seedActiveId }: { seedActiveId?: string }) {
   return (
     <ActiveNoteProvider>
@@ -440,7 +417,7 @@ function renderNotePage(ref: string, options: { seedActiveId?: string } = {}) {
   return { ...result, queryClient };
 }
 
-// `sidebar.tab` 會往外流到同檔後面的案（寫入它的案在同檔後面），檔案頂層清。
+// `sidebar.tab` leaks into later cases of the same file (the cases that write it come later in the file), so clear it at file top level.
 afterEach(() => localStorage.removeItem("sidebar.tab"));
 
 describe("NotePage", () => {
@@ -449,14 +426,14 @@ describe("NotePage", () => {
     collab.state = { phase: "connecting" };
     collab.doc = new Y.Doc();
     collab.provider = createStubProvider();
-    // 上一案 NotePage 的回呼會殘留在 hoisted 物件上——不清的話「等到回呼出現」會立刻拿到舊頁的那支。
+    // The previous case's NotePage callbacks stay on the hoisted object; without clearing, "wait until the callback shows up" would immediately get the old page's one.
     collab.onUnauthorized = undefined;
     siteConfig.noteMaxBytes = undefined;
     siteConfig.maxUploadBytes = undefined;
     editorMock.noteMaxBytes = undefined;
     editorMock.maxUploadBytes = undefined;
     window.history.replaceState(null, "", "/");
-    // toast store 是模組層級的，不歸零的話上一個測試的 toast 會留在畫面上。
+    // The toast store is module-level; without resetting it the previous test's toast stays on screen.
     dismissAllToasts();
   });
 
@@ -467,7 +444,7 @@ describe("NotePage", () => {
     siteConfig.maxUploadBytes = undefined;
   });
 
-  it("設定的 maxUploadBytes（GET /api/auth/config）交給編輯器（貼上、拖放圖片的上傳前驗用）", async () => {
+  it("the configured maxUploadBytes (GET /api/auth/config) is handed to the editor (for pre-upload checks on paste and image drop)", async () => {
     siteConfig.maxUploadBytes = 654_321;
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = true;
@@ -475,24 +452,24 @@ describe("NotePage", () => {
     await waitFor(() => expect(editorMock.maxUploadBytes).toBe(654_321));
   });
 
-  it("以舊形 uuid ref 開頁：解析出筆記、把網址 replace 成新形 canonical、掛上編輯器", async () => {
+  it("opening with an old-form uuid ref: resolves the note, replaces the URL with the new canonical form, mounts the editor", async () => {
     vi.stubGlobal("fetch", mockFetch());
-    collab.provider.synced = true; // 正常開頁路徑：同步過才有可編輯的標題 input（issue #48）
+    collab.provider.synced = true; // normal open path: only after sync is there an editable title input (issue #48)
     window.history.replaceState(null, "", `/notes/${NOTE.id}`);
 
     renderNotePage(NOTE.id);
 
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
     expect(screen.getByLabelText("Note title")).toHaveValue("My Note");
-    // #122：canonical 是 `/n/<ownerHandle>/<slug>` 單一形——舊形連結進來，網址收斂成新形。
-    // #179：收斂走 router navigate（不再是 window.history.replaceState）。
+    // #122: canonical is the single `/n/<ownerHandle>/<slug>` form - an old-form link arriving converges the URL to the new form.
+    // #179: convergence goes through router navigate (no longer window.history.replaceState).
     await waitFor(() => expect(routerPath()).toBe(canonicalNotePath(NOTE)));
     expect(routerPath()).toBe("/n/tester/my-note");
   });
 
-  it("issue #48：從未同步過的連線（開頁就連不上）→ 即使 REST 角色是 owner 也唯讀", async () => {
-    // 第一次 sync 之前，本機 Y.Doc 是空的——「可編輯」等於在一篇空白但看似正常的筆記上
-    // 打字，重整就沒了。此時必須唯讀，不管 REST 給的角色多高。
+  it("issue #48: a connection that has never synced (cannot connect on open) -> read-only even if the REST role is owner", async () => {
+    // Before the first sync the local Y.Doc is empty - being "editable" would mean typing into a blank-looking but normal note and losing
+    // it on refresh. It must be read-only regardless of how high the REST role is.
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = false;
 
@@ -500,16 +477,16 @@ describe("NotePage", () => {
 
     await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
     expect(screen.getByText("Connecting…")).toBeInTheDocument();
-    // ⚠ 但標題**仍可編輯**（#48）：標題走 REST 的 last-write-wins、不走 Yjs，
-    // 連不上共編但 REST 正常時改標題完全安全。跟著 synced 一起鎖死是功能倒退。
+    // But the title stays editable (#48): the title goes through REST last-write-wins, not Yjs, so changing the title is entirely safe when
+    // co-editing cannot connect but REST works. Locking it together with synced would be a regression.
     expect(screen.getByLabelText("Note title")).toBeInTheDocument();
   });
 
-  describe("筆記大小上限（前端檢查）", () => {
+  describe("note size limit (front-end check)", () => {
     afterEach(() => {
       siteConfig.noteMaxBytes = undefined;
     });
-    it("設定的 noteMaxBytes（GET /api/auth/config）交給編輯器（貼上、拖放、站內 AI 套用的檢查用）", async () => {
+    it("the configured noteMaxBytes (GET /api/auth/config) is handed to the editor (for checks on paste, drop and in-site AI apply)", async () => {
       siteConfig.noteMaxBytes = 123_456;
       vi.stubGlobal("fetch", mockFetch());
       collab.provider.synced = true;
@@ -517,7 +494,7 @@ describe("NotePage", () => {
       await waitFor(() => expect(editorMock.noteMaxBytes).toBe(123_456));
     });
 
-    it("超過上限的筆記：開啟（同步後）就顯示不擋編輯的提示；刪掉內容、節流時間過後消失；再長過上限又出現", async () => {
+    it("a note over the limit: opening (after sync) shows a notice that does not block editing; it disappears after content is deleted and the throttle time passes; it reappears when it grows past the limit again", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
         collab.doc.getText("t").insert(0, "x".repeat(2_000));
@@ -527,7 +504,7 @@ describe("NotePage", () => {
         renderNotePage("my-note");
         const notice = "This note is over the size limit; editing may be slow. Delete content to shrink it.";
         expect(await screen.findByText(notice)).toBeInTheDocument();
-        await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "true")); // 不擋編輯
+        await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "true")); // editing is not blocked
         act(() => collab.doc.getText("t").delete(0, 1_500));
         expect(screen.getByText(notice), "節流：還沒重算").toBeInTheDocument();
         await act(async () => {
@@ -544,7 +521,7 @@ describe("NotePage", () => {
       }
     });
 
-    it("上限內、或設定沒帶上限、或還沒同步：不顯示", async () => {
+    it("within the limit, or no limit configured, or not synced yet: not shown", async () => {
       collab.doc.getText("t").insert(0, "x".repeat(2_000));
       siteConfig.noteMaxBytes = Y.encodeStateAsUpdate(collab.doc).byteLength + 1_000;
       vi.stubGlobal("fetch", mockFetch());
@@ -561,7 +538,7 @@ describe("NotePage", () => {
     });
   });
 
-  it("issue #48：同步過一次之後就可編輯（owner）", async () => {
+  it("issue #48: editable after syncing once (owner)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = true;
 
@@ -570,18 +547,18 @@ describe("NotePage", () => {
     await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "true"));
   });
 
-  it("接線：owner 掛載後 provider 觸發 synced 事件 → 真的打 POST /api/notes/:id/links（驗證 provider.on(\"synced\",…) 掛載接線本身，不是只測 link-sync 內部狀態機）", async () => {
+  it("wiring: after the owner mounts, the provider fires the synced event -> really calls POST /api/notes/:id/links (verifies the provider.on('synced', ...) mount wiring itself, not only link-sync's internal state machine)", async () => {
     const fetchSpy = mockFetch();
     vi.stubGlobal("fetch", fetchSpy);
 
     renderNotePage("my-note");
-    // 不看 editable（那要 synced，而這條專門測「emit synced 事件路徑」，不能先設
-    // provider.synced=true，否則走的是護欄③的 getter 補呼叫、不是事件本身）。
+    // Do not look at editable (that needs synced, and this case tests precisely the "emit synced event" path; setting provider.synced=true
+    // first would take the getter catch-up call, not the event itself).
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
 
-    // 用 `emit` 直接呼叫透過 `.on("synced", …)` 註冊的 handler——這條路徑非過
-    // `provider.synced` 這個 getter 補呼叫（見 `createStubProvider` 註解），專門戳
-    // NotePage 掛載 effect 裡 `provider.on("synced", handleSynced)` 這行訂閱本身。
+    // Use `emit` to call the handler registered through `.on("synced", ...)` directly - this path does not go through the `provider.synced`
+    // getter catch-up call (see the `createStubProvider` comment), and specifically exercises the `provider.on("synced", handleSynced)`
+    // subscription line in NotePage's mount effect.
     collab.provider.emit("synced", { state: true });
 
     await waitFor(() =>
@@ -592,13 +569,11 @@ describe("NotePage", () => {
     );
   });
 
-  it("護欄③：effect 掛載前 provider 已 synced ⇒ 不靠事件也補提交一次", async () => {
-    // 掛載 effect 訂閱 `provider.on("synced", …)` 之後，緊接著檢查一次
-    // `if (provider.synced) handleSynced()`——這條補呼叫是專門對付「effect 是在
-    // provider 早已同步完成之後才掛上去」的邊緣情形（StrictMode 重掛、或本來就慢了
-    // 一步），false→true 那個邊緣事件已經 emit 過、不會再等到。這裡刻意**不** emit
-    // 任何事件，只把 `synced` 這個狀態設成 `true`，逼 NotePage 只能靠這條補呼叫線路
-    // 才會提交——若那行被拿掉，這裡永遠等不到 POST。
+  it("getter catch-up: provider already synced before the effect mounts => submits once more without an event", async () => {
+    // After the mount effect subscribes `provider.on("synced", ...)` it immediately checks `if (provider.synced) handleSynced()` - this
+    // catch-up call is for the edge case where "the effect mounts after the provider has long since synced" (StrictMode remount, or just a
+    // step slower): the false -> true edge event was already emitted and will not come again. Deliberately NO event is emitted here; only
+    // the `synced` state is set to `true`, so NotePage can submit only through this catch-up wiring - if that line were removed, the POST would never arrive.
     const fetchSpy = mockFetch();
     vi.stubGlobal("fetch", fetchSpy);
     collab.provider.synced = true;
@@ -613,7 +588,7 @@ describe("NotePage", () => {
     );
   });
 
-  it("啟動條件：viewer fixture（canEdit 為假）⇒ 不 start() ⇒ 即使 synced 事件觸發也不提交", async () => {
+  it("start condition: viewer fixture (canEdit false) => no start() => no submit even when the synced event fires", async () => {
     const fetchSpy = mockFetch({ ...NOTE, role: "viewer" });
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -621,25 +596,24 @@ describe("NotePage", () => {
     await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
 
     collab.provider.emit("synced", { state: true });
-    // link-sync 的 `onSynced()` 在 `!started` 時完全同步 no-op（見 link-sync.ts），
-    // 這裡多等一輪 microtask/宏任務只是保守起見，避免漏抓任何非同步分支。
+    // link-sync's `onSynced()` is a fully synchronous no-op when `!started` (see link-sync.ts); waiting one more round of
+    // microtask/macrotask here is just being conservative so no async branch is missed.
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(fetchSpy).not.toHaveBeenCalledWith(`/api/notes/${NOTE.id}/links`, expect.anything());
   });
 
-  it("connected 且角色是 viewer → 編輯器唯讀、標題變純文字", async () => {
+  it("connected with role viewer -> editor read-only, title becomes plain text", async () => {
     vi.stubGlobal("fetch", mockFetch({ ...NOTE, role: "viewer" }));
     collab.state = { phase: "connected", role: "viewer" };
 
-    collab.provider.synced = true; // #335：viewer 在 connected＋synced 時徽章才改寫「Read-only」
+    collab.provider.synced = true; // #335: for a viewer the badge switches to "Read-only" only when connected and synced
     renderNotePage("my-note");
 
     await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false"));
-    // `container.querySelector("header")` 範圍化——單純的
-    // `queryByLabelText(...).not.toBeInTheDocument()` 在新 mock 下即使 headerSlot
-    // 整個沒渲染也會通過（vacuous pass）；範圍化到 header 內同時斷言「heading 在」
-    // 與「textbox 不在」，才把鑑別力綁回同一個容器上。
+    // Scoped to `container.querySelector("header")`: a bare `queryByLabelText(...).not.toBeInTheDocument()` passes vacuously under the new
+    // mock even if headerSlot is not rendered at all; scoping to the header and asserting both "heading present" and "textbox absent"
+    // ties the check to the same container.
     const header = document.querySelector("header");
     expect(header).not.toBeNull();
     expect(within(header!).getByRole("heading", { name: "My Note" })).toBeInTheDocument();
@@ -648,11 +622,11 @@ describe("NotePage", () => {
     expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   });
 
-  // #115：頁首回滿卡寬（置左置右）——單層 header 自己就是內容列，標題貼左、
-  // 控制項貼右，`px-5`（20px）與 `<md` 內文左緣共線。#88 的「內容列套文章欄」
-  // 是被本改版刻意拆掉的行為（守衛端的反向掃描見 article-column.guard.test.ts
-  // (d)：NotePage 不得再 import 文章欄常數）。
-  it("#115：頁首單層滿卡寬（px-5，不再套文章欄）", async () => {
+  // #115: the header returns to full card width (left / right aligned) - the single-level header is itself the content row, the title hugs
+  // the left and the controls the right, and `px-5` (20px) lines up with the `<md` body's left edge. #88's "content row wrapped in the
+  // article column" was deliberately removed by this redesign (the reverse scan lives in article-column.guard.test.ts (d): NotePage must no
+  // longer import the article-column constant).
+  it("#115: single-level header at full card width (px-5, no longer in the article column)", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -662,12 +636,12 @@ describe("NotePage", () => {
     expect(header).not.toBeNull();
     expect(header).toHaveClass("flex", "items-center", "gap-3", "border-b", "border-border", "px-5", "py-3");
     expect(header).toContainElement(screen.getByLabelText("Note title"));
-    // #115：頁首最前面是 `xl:hidden` 的側欄鈕（浮動側欄的入口——筆記頁沒有
-    // NarrowTopBar，這顆就是唯一入口）。
+    // #115: first in the header is the `xl:hidden` sidebar button (the entry to the floating sidebar - the note page has no NarrowTopBar,
+    // so this button is the only entry).
     expect(header).toContainElement(screen.getByRole("button", { name: "Open sidebar" }));
   });
 
-  it("手機（< 640）：頁首最前面是「Back to notes」，沒有「Open sidebar」（抽屜在手機上不可達）", async () => {
+  it("phone (< 640): first in the header is 'Back to notes', no 'Open sidebar' (the drawer is unreachable on phone)", async () => {
     stubLayoutTier("phone");
     vi.stubGlobal("fetch", mockFetch());
 
@@ -679,7 +653,7 @@ describe("NotePage", () => {
     expect(screen.queryByRole("button", { name: "Open sidebar" })).toBeNull();
   });
 
-  describe("手機頁首兩行（標題＋位置副標）", () => {
+  describe("phone header, two rows (title + location subtitle)", () => {
     function setupPhone() {
       resetLocalPresenceFieldForTest();
       const awareness = new Awareness(new Y.Doc());
@@ -691,7 +665,7 @@ describe("NotePage", () => {
       vi.stubGlobal("fetch", mockFetch({ ...NOTE, lastEdited: { at: "2026-02-03T04:05:06.000Z", byHandle: "alice", agentLabel: null } }));
     }
 
-    it("第一行：返回、標題、星號、分享、⋮；沒有寬度鈕；第二行：連線點、位置、在線者、最後編輯", async () => {
+    it("first row: back, title, star, share, kebab; no width button; second row: connection dot, location, who is online, last edited", async () => {
       setupPhone();
       renderNotePage("my-note");
       await screen.findByTestId("note-editor");
@@ -699,7 +673,7 @@ describe("NotePage", () => {
       const header = document.querySelector("header") as HTMLElement;
       const top = within(header).getByTestId("note-header-title-row");
       const sub = within(header).getByTestId("note-header-subline");
-      // 標題與它下方一行（連線點、位置、在線者）是同一個區塊；「‹」與右側動作鈕是它的兄弟，列用 items-center 對齊整個區塊的垂直中心。
+      // The title and the line under it (connection dot, location, online users) are one block; the back arrow and the right-hand action buttons are its siblings, and the row aligns with items-center to the vertical center of that block.
       const block = within(top).getByTestId("note-header-block");
       expect(top).toHaveClass("items-center");
       expect(block.parentElement).toBe(top);
@@ -707,7 +681,7 @@ describe("NotePage", () => {
       expect(block.children[0]).toBe(within(top).getByLabelText("Note title"));
       expect(block.children[1]).toBe(sub);
       expect(top.children[0]).toBe(within(top).getByRole("button", { name: "Back to notes" }));
-      // 瀏海的退讓由 NoteEditor 的頁首槽位給（橫幅也在它之下），頁首自己維持 12px 上內距。
+      // The notch inset is given by NoteEditor's header slot (the banner sits below it too), so the header itself keeps a 12px top padding.
       expect(header).toHaveClass("pt-3");
       expect(header.className).not.toContain("safe-area-inset");
       expect(within(top).getByRole("button", { name: "Back to notes" })).toBeInTheDocument();
@@ -727,7 +701,7 @@ describe("NotePage", () => {
       }
     });
 
-    it("連線狀態與在線者整頁各只有一份（不是 CSS 藏一份）", async () => {
+    it("connection state and online users appear once on the whole page (not one copy hidden by CSS)", async () => {
       setupPhone();
       renderNotePage("my-note");
       await screen.findByTestId("note-editor");
@@ -739,7 +713,7 @@ describe("NotePage", () => {
       expect(within(header).getAllByTestId("last-edited")).toHaveLength(1);
     });
 
-    it("位置按鈕的點擊高度：副標列有垂直 padding，加標題列合計 ≥ 44（class 斷言，jsdom 無版面）", async () => {
+    it("location button tap height: the subtitle row has vertical padding, and together with the title row it adds up to >= 44 (class assertion, jsdom has no layout)", async () => {
       setupPhone();
       renderNotePage("my-note");
       await screen.findByTestId("note-editor");
@@ -748,7 +722,7 @@ describe("NotePage", () => {
       expect(screen.getByLabelText("Note title")).toHaveClass("text-xl");
     });
 
-    it("固定段：維持單行頁首，沒有副標列也沒有位置按鈕", async () => {
+    it("fixed tier: keeps the single-row header, no subtitle row and no location button", async () => {
       vi.stubGlobal("fetch", mockFetch());
       renderNotePage("my-note");
       await screen.findByTestId("note-editor");
@@ -759,7 +733,7 @@ describe("NotePage", () => {
       expect(screen.queryByRole("button", { name: /^Show in list/ })).toBeNull();
     });
 
-    it("浮動段：同樣維持單行頁首", async () => {
+    it("floating tier: also keeps the single-row header", async () => {
       stubLayoutTier("overlay");
       vi.stubGlobal("fetch", mockFetch());
       renderNotePage("my-note");
@@ -770,7 +744,7 @@ describe("NotePage", () => {
     });
   });
 
-  describe("手機底部瀏覽列", () => {
+  describe("phone bottom browse bar", () => {
     const BAR = "note-browse-bar";
 
     async function renderEditable(note: NoteDto = NOTE, role: "owner" | "viewer" = "owner") {
@@ -784,7 +758,7 @@ describe("NotePage", () => {
       return view;
     }
 
-    it("可編輯：焦點進編輯區 → 瀏覽列消失；焦點到頁首標題 → 回來", async () => {
+    it("editable: focus enters the editing area -> the browse bar disappears; focus on the header title -> it comes back", async () => {
       await renderEditable();
       expect(within(screen.getByTestId(BAR)).getByRole("button", { name: "New note" })).toBeInTheDocument();
       act(() => screen.getByTestId("mock-content").focus());
@@ -793,7 +767,7 @@ describe("NotePage", () => {
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
     });
 
-    it("焦點移到編輯工具列（blur 帶 relatedTarget）：仍算編輯中，瀏覽列不閃回來", async () => {
+    it("focus moves to the editing toolbar (blur carries relatedTarget): still counts as editing, the browse bar does not flash back", async () => {
       await renderEditable();
       const content = screen.getByTestId("mock-content");
       act(() => content.focus());
@@ -804,12 +778,12 @@ describe("NotePage", () => {
       onTestFinished(() => toolbar.remove());
       fireEvent.blur(content, { relatedTarget: toolbar });
       expect(screen.queryByTestId(BAR)).toBeNull();
-      // 焦點真的離開到別處：回來。
+      // Focus really leaves for elsewhere: it comes back.
       fireEvent.blur(content, { relatedTarget: screen.getByLabelText("Note title") });
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
     });
 
-    it("底部空白（fabClearance）跟浮動鈕同進退：沒在編輯有；焦點進編輯區沒有；回標題又有", async () => {
+    it("bottom space (fabClearance) moves with the floating button: present when not editing; absent when focus is in the editing area; present again on returning to the title", async () => {
       await renderEditable();
       const editor = () => screen.getByTestId("note-editor");
       expect(editor()).toHaveAttribute("data-fab-clearance", "true");
@@ -819,7 +793,7 @@ describe("NotePage", () => {
       expect(editor()).toHaveAttribute("data-fab-clearance", "true");
     });
 
-    it("可編輯：焦點進編輯區 → 編輯工具列出現；焦點到頁首標題 → 消失", async () => {
+    it("editable: focus enters the editing area -> the editing toolbar appears; focus on the header title -> it disappears", async () => {
       await renderEditable();
       expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
       act(() => screen.getByTestId("mock-content").focus());
@@ -828,7 +802,7 @@ describe("NotePage", () => {
       expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
     });
 
-    it("焦點移到工具列的鈕上：工具列還在、瀏覽列不閃回來", async () => {
+    it("focus on a toolbar button: the toolbar stays and the browse bar does not flash back", async () => {
       await renderEditable();
       act(() => screen.getByTestId("mock-content").focus());
       act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
@@ -836,7 +810,7 @@ describe("NotePage", () => {
       expect(screen.queryByTestId(BAR)).toBeNull();
     });
 
-    it("焦點在工具列的鈕上時被降成唯讀：編輯工具列不留著（旗標還在也不渲染）", async () => {
+    it("downgraded to read-only while focus is on a toolbar button: the editing toolbar does not stay (not rendered even if the flag is still set)", async () => {
       const { rerender, queryClient } = await renderEditable();
       act(() => screen.getByTestId("mock-content").focus());
       act(() => screen.getByRole("button", { name: "mock-toolbar-button" }).focus());
@@ -855,13 +829,13 @@ describe("NotePage", () => {
       expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
     });
 
-    it("唯讀：點內文沒有編輯工具列", async () => {
+    it("read-only: tapping the body shows no editing toolbar", async () => {
       await renderEditable({ ...NOTE, role: "viewer", ownerId: "u2", permissions: VIEWER_PERMS }, "viewer");
       act(() => screen.getByTestId("mock-content").focus());
       expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
     });
 
-    it.each(["overlay", "docked"] as const)("%s：聚焦編輯區也不出編輯工具列", async (tier) => {
+    it.each(["overlay", "docked"] as const)("%s: focusing the editing area shows no editing toolbar", async (tier) => {
       stubLayoutTier(tier);
       collab.state = { phase: "connected", role: "owner" };
       collab.provider.synced = true;
@@ -872,7 +846,7 @@ describe("NotePage", () => {
       expect(screen.queryByTestId("mock-mobile-toolbar")).toBeNull();
     });
 
-    it("編輯區在焦點還在裡面時被卸載（點連結換篇）：新畫面的瀏覽列不會被舊的編輯旗標藏住", async () => {
+    it("editing area unmounted while focus is still inside (tapping a link to switch notes): the new screen's browse bar is not hidden by the old editing flag", async () => {
       stubLayoutTier("phone");
       collab.state = { phase: "connected", role: "owner" };
       collab.provider.synced = true;
@@ -895,7 +869,7 @@ describe("NotePage", () => {
       expect(await screen.findByTestId(BAR)).toBeInTheDocument();
     });
 
-    it("編輯中被降成唯讀（焦點旗標還在）：瀏覽列回來", async () => {
+    it("downgraded to read-only while editing (focus flag still set): the browse bar comes back", async () => {
       const { rerender, queryClient } = await renderEditable();
       act(() => screen.getByTestId("mock-content").focus());
       expect(screen.queryByTestId(BAR)).toBeNull();
@@ -913,7 +887,7 @@ describe("NotePage", () => {
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
     });
 
-    it("唯讀：點內文瀏覽列仍在，沒有「New note」，搜尋還在", async () => {
+    it("read-only: tapping the body keeps the browse bar, there is no 'New note', search is still there", async () => {
       await renderEditable({ ...NOTE, role: "viewer", ownerId: "u2", permissions: VIEWER_PERMS }, "viewer");
       act(() => screen.getByTestId("mock-content").focus());
       fireEvent.focus(screen.getByTestId("mock-content"));
@@ -922,7 +896,7 @@ describe("NotePage", () => {
       expect(within(screen.getByTestId(BAR)).getByRole("button", { name: "Search notes" })).toBeInTheDocument();
     });
 
-    it("首次同步完成前（還不能編輯）：是瀏覽列，不是編輯狀態", async () => {
+    it("before the first sync completes (not editable yet): browse bar, not editing state", async () => {
       stubLayoutTier("phone");
       collab.state = { phase: "connected", role: "owner" };
       collab.provider.synced = false;
@@ -933,7 +907,7 @@ describe("NotePage", () => {
       expect(screen.getByTestId(BAR)).toBeInTheDocument();
     });
 
-    it.each(["overlay", "docked"] as const)("%s：沒有瀏覽列", async (tier) => {
+    it.each(["overlay", "docked"] as const)("%s: no browse bar", async (tier) => {
       stubLayoutTier(tier);
       vi.stubGlobal("fetch", mockFetch());
       renderNotePage("my-note");
@@ -942,7 +916,7 @@ describe("NotePage", () => {
     });
   });
 
-  it("浮動段（640–1279）：頁首是「Open sidebar」，沒有「Back to notes」", async () => {
+  it("floating tier (640-1279): the header has 'Open sidebar' and no 'Back to notes'", async () => {
     stubLayoutTier("overlay");
     vi.stubGlobal("fetch", mockFetch());
 
@@ -953,9 +927,9 @@ describe("NotePage", () => {
     expect(screen.queryByRole("button", { name: "Back to notes" })).toBeNull();
   });
 
-  // class 斷言，不是行為斷言：jsdom 無版面。頁首收縮順序（標題讓到 64px → 標籤截斷 → 其餘不縮）
-  // 是 TitleInput min-w-16、LastEditedLabel truncate、Share／⋮ shrink-0 三處一組。
-  it("頁首收縮契約（class 斷言，jsdom 無版面）：標題 min-w-16、Share 與 ⋮ shrink-0", async () => {
+  // A class assertion, not a behaviour assertion: jsdom has no layout. The header shrink order (title yields down to 64px -> label
+  // truncates -> the rest do not shrink) is the combination of TitleInput min-w-16, LastEditedLabel truncate, and Share / kebab shrink-0.
+  it("header shrink contract (class assertion, jsdom has no layout): title min-w-16, Share and kebab shrink-0", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -966,7 +940,7 @@ describe("NotePage", () => {
     expect(screen.getByRole("button", { name: "More" })).toHaveClass("shrink-0");
   });
 
-  it("功能導覽靠 data-kb-tour-target 找得到頁首的漢堡鈕、Share、⋮", async () => {
+  it("the feature tour finds the header's hamburger button, Share and kebab through data-kb-tour-target", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -978,7 +952,7 @@ describe("NotePage", () => {
     expect(findTourTarget("noteMenu")).toBe(header.getByRole("button", { name: "More" }));
   });
 
-  it("#297 P1 owner：頁首是 @container；寬度鈕在 Share 之後、⋮ 之前", async () => {
+  it("owner: the header is an @container; the width button comes after Share and before the kebab", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -993,7 +967,7 @@ describe("NotePage", () => {
     expect(width.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("頁首 ⋮ 裡有「Width」（任何寬度都能改寬度，頁首鈕在窄寬會隱藏）", async () => {
+  it("the header kebab has 'Width' (the width can be changed at any viewport width; the header button is hidden at narrow widths)", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -1003,7 +977,7 @@ describe("NotePage", () => {
     expect(await screen.findByRole("menuitem", { name: "Width" })).toBeInTheDocument();
   });
 
-  it("頁首 gap 在手機寬收成 gap-2（容器查詢套不到 header 自己的 gap）", async () => {
+  it("header gap collapses to gap-2 at phone width (a container query cannot apply to the header's own gap)", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -1012,7 +986,7 @@ describe("NotePage", () => {
     expect(document.querySelector("header")).toHaveClass("gap-3", "max-sm:gap-2");
   });
 
-  it("頁首子節點順序：導覽鈕、標題、連線、在線者、最後編輯、星號、分享、寬度、⋮", async () => {
+  it("header child order: nav button, title, connection, online users, last edited, star, share, width, kebab", async () => {
     resetLocalPresenceFieldForTest();
     const awareness = new Awareness(new Y.Doc());
     onTestFinished(() => awareness.destroy());
@@ -1041,7 +1015,7 @@ describe("NotePage", () => {
     }
   });
 
-  it("頁首有最愛星號，位置在 Share 之前（#334）", async () => {
+  it("the header has the favorites star, positioned before Share (#334)", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -1054,7 +1028,7 @@ describe("NotePage", () => {
     expect(star).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("#297 P2 viewer：頁首也有寬度鈕（個人閱讀偏好）", async () => {
+  it("viewer: the header also has the width button (a personal reading preference)", async () => {
     vi.stubGlobal("fetch", mockFetch({ ...NOTE, role: "viewer" }));
     collab.state = { phase: "connected", role: "viewer" };
 
@@ -1064,7 +1038,7 @@ describe("NotePage", () => {
     expect(within(document.querySelector("header")!).getByRole("button", { name: /^Width/ })).toBeInTheDocument();
   });
 
-  it("N4 降級：connected(owner) → connected(viewer) 時 toast 並切成唯讀", async () => {
+  it("downgrade: connected(owner) -> connected(viewer) toasts and switches to read-only", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     collab.provider.synced = true;
@@ -1088,7 +1062,7 @@ describe("NotePage", () => {
     );
   });
 
-  it("角色變 'none'（撤權流程的前半段）不報「已改為檢視者」——那會跟隨後的撤權提示矛盾", async () => {
+  it("role changing to 'none' (the first half of the revoke flow) does not report 'changed to viewer' - that would contradict the revoke notice that follows", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "editor" };
     collab.provider.synced = true;
@@ -1110,7 +1084,7 @@ describe("NotePage", () => {
     expect(screen.queryByText("Your access changed to viewer. This note is now read-only.")).not.toBeInTheDocument();
   });
 
-  it("kicked 終態 → toast「已失去存取權」並導回 /", async () => {
+  it("kicked terminal state -> toast 'lost access' and back to /", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "kicked" };
 
@@ -1118,11 +1092,11 @@ describe("NotePage", () => {
 
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     expect(screen.getByText("You no longer have access to this note.")).toBeInTheDocument();
-    // 撤權的 close reason 常數本身由 shared 提供，client 只認 reason 字串（code 硬寫 1000）。
+    // The revoke close reason constant itself is provided by shared; the client only recognizes the reason string (code hardcoded as 1000).
     expect(COLLAB_CLOSE_REVOKED).toBe("knotebook:revoked");
   });
 
-  it("deleted 終態 → toast 並導回 /", async () => {
+  it("deleted terminal state -> toast and back to /", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "deleted" };
 
@@ -1132,7 +1106,7 @@ describe("NotePage", () => {
     expect(screen.getByText("This note has been deleted.")).toBeInTheDocument();
   });
 
-  it("#269 outdated：不導頁、不 toast；banner 出現；編輯器與標題唯讀", async () => {
+  it("#269 outdated: no navigation, no toast; banner appears; editor and title read-only", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = true;
     collab.state = { phase: "outdated" };
@@ -1141,7 +1115,7 @@ describe("NotePage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Knotebook has been updated");
     expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "false");
-    // 標題唯讀＝變純文字（同「connected 且角色是 viewer」那一案的斷言形：範圍化到 header，heading 在、textbox 不在）。
+    // Read-only title = plain text (same assertion shape as the "connected with role viewer" case: scoped to header, heading present, textbox absent).
     const header = document.querySelector("header");
     expect(header).not.toBeNull();
     expect(within(header!).getByRole("heading", { name: "My Note" })).toBeInTheDocument();
@@ -1150,7 +1124,7 @@ describe("NotePage", () => {
     expect(screen.queryByText("This note has been deleted.")).not.toBeInTheDocument();
   });
 
-  it("首次解析 404 → **linkInvalid** 文案（不得沿用「筆記已刪」）並導回 /", async () => {
+  it("first resolution 404 -> linkInvalid text (must not reuse 'note deleted') and back to /", async () => {
     vi.stubGlobal("fetch", mockFetch({ status: 404, code: "not_found" }));
 
     renderNotePage("gone");
@@ -1160,28 +1134,24 @@ describe("NotePage", () => {
     expect(screen.queryByText("This note has been deleted.")).not.toBeInTheDocument();
   });
 
-  // ── #122：ActiveNoteContext 接線（set-after-load／404 清殘留／卸載條件清除） ──
-
-  it("解析成功後 set active（最終校正點——直接進網址/書籤也會亮，樂觀誤 set 由此校正）", async () => {
+  it("after a successful resolution, set active (the final correction point - opening directly from a URL / bookmark lights it too; an optimistic wrong set is corrected here)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = true;
 
-    // seed 一個錯的 id（模擬樂觀誤 set）——解析成功後必須被校正成真的
+    // Seed a wrong id (simulating an optimistic wrong set) - after a successful resolution it must be corrected to the real one.
     renderNotePage(NOTE.id, { seedActiveId: "99999999-9999-4999-8999-999999999999" });
 
-    // 先確認誤 set 真的在場（不是一路都對的空轉），再斷校正
+    // First confirm the wrong set is really present (not an idle run where everything was right all along), then assert the correction.
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent("99999999"));
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE.id));
   });
 
-  it("真接線的卸載清除：關頁滅（current===自己→清）；他頁搶先 set→**不誤清**（條件清除）", async () => {
-    // active-note.test 的競態案守的是復刻 Page——這裡把同兩條語意釘在**真的 NotePage**
-    // 上（把 NotePage 的 cleanup 改成無條件清 null，原本全套仍綠）。
+  it("real wiring clears on unmount: closing the page turns it off (current === own -> clear); another page setting first -> not cleared by mistake (conditional clear)", async () => {
+    // The race case in active-note.test guards a replica of the page - this pins the same two semantics onto the real NotePage.
     vi.stubGlobal("fetch", mockFetch());
     collab.provider.synced = true;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const OTHER_ID = "22222222-2222-4222-8222-222222222222";
-    // withPage=false 時同一個 child 槽位換成 <div/>——NotePage 卸載、provider/probe 留著
     const tree = (withPage: boolean, seedActiveId?: string) => (
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
@@ -1193,7 +1163,7 @@ describe("NotePage", () => {
                 <Routes>
                   <Route element={<AppShellLayout />}>
                     <Route path="/notes/:ref" element={<NotePage />} />
-                    {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
+                    {/* #179: the convergence effect uses router navigate to replace the old form with the new /n/ form */}
                     <Route path="/n/:handle/:slug" element={<NotePage />} />
                     <Route path="/" element={<div>home landing</div>} />
                   </Route>
@@ -1211,12 +1181,11 @@ describe("NotePage", () => {
     const view = render(tree(true));
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE.id));
 
-    // 關頁滅：卸載 NotePage → cleanup（current===自己）→ 清空
     view.rerender(tree(false));
     expect(screen.getByTestId("active-probe")).toHaveTextContent("none");
 
-    // 競態不誤清：重開頁亮起後，他頁（模擬 NoteList 樂觀 set）搶先 set 另一 id，
-    // 再卸載本頁——cleanup 帶舊 id、current 已是別人，不得把剛亮起來的高亮滅掉
+    // Race not cleared by mistake: after the page is reopened and lit, another page (simulating NoteList's optimistic set) sets another id
+    // first, then this page unmounts - its cleanup carries the old id while current is already someone else's, so it must not turn off the highlight that was just lit.
     view.rerender(tree(true));
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE.id));
     view.rerender(tree(true, OTHER_ID));
@@ -1225,20 +1194,18 @@ describe("NotePage", () => {
     expect(screen.getByTestId("active-probe")).toHaveTextContent(OTHER_ID);
   });
 
-  it("解析 404 導走前清掉樂觀殘留：NoteList 點擊 set 的 id 不會卡在側欄", async () => {
+  it("clearing optimistic leftovers before navigating away on a resolution 404: the id NoteList set on click does not stay stuck in the sidebar", async () => {
     vi.stubGlobal("fetch", mockFetch({ status: 404, code: "not_found" }));
 
-    // SeedActive＝模擬 NoteList 的樂觀 set：點了一篇隨後解析失敗的筆記。NotePage 對
-    // 這個 id 從未 set 成功，卸載的條件清除按 id 對不上——殘留只有 404 出口的
-    // setActiveNoteId(null) 清得掉（拿掉那行本案必紅）。
+    // SeedActive simulates NoteList's optimistic set: a note was clicked and then its resolution failed. NotePage never set this id
+    // successfully, so the conditional clear on unmount cannot match by id - only setActiveNoteId(null) on the 404 exit can clear the
+    // leftover (removing that line turns this case red).
     renderNotePage("gone", { seedActiveId: "99999999-9999-4999-8999-999999999999" });
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent("99999999"));
 
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent("none"));
   });
-
-  // ── #122 5a：解析層→id 常駐層（①③＋A1＋收斂閘門） ──
 
   const NOTE_B: NoteDto = {
     ...NOTE,
@@ -1247,11 +1214,9 @@ describe("NotePage", () => {
     slug: "note-b",
   };
 
-  /** 兩篇筆記、以 ref（slug 或 uuid）查找的假 server；`bPending` 讓 B 的解析掛住
-   * （A1／閘門案要的「解析回應前」窗口），`killRef(ref)` 讓某個 ref 之後 404
-   * （①案的「舊 slug 鍵已死」與真刪除案），`failRef(ref)` 讓它之後 500（常駐層
-   * 錯誤卡案）。另帶 shares/public-link/PATCH 最小 handler——「改自訂 slug → 網址
-   * 收斂」案要開真的 ShareDialog 走 persist 全鏈。 */
+  /** `bPending` holds B's resolution (the window before the resolution response); `killRef(ref)` makes a ref 404 afterwards and `failRef(ref)` makes it 500;
+   * `setRef(ref, note)` makes a ref resolve to that note (e.g. an old slug taken over by a new note). The shares / public-link / PATCH handlers exist so the
+   * real ShareDialog can run the whole persist path. */
   function stubTwoNotes(options: { bPending?: boolean } = {}) {
     let releaseB!: () => void;
     const bGate = new Promise<void>((resolve) => (releaseB = resolve));
@@ -1285,9 +1250,9 @@ describe("NotePage", () => {
         return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ token: null }) });
       }
       if (url.startsWith("/api/notes/by-path/") && method === "GET") {
-        // #122 新形解析端點：/api/notes/by-path/<handle>/<slug>。保真度註記：真 server
-        // 是 JOIN users＋notes.slug（uuid 打 by-path 不會命中），這裡直查 byRef（含 id
-        // 鍵）——目前無案依賴這個差異，別寫依賴它的案子。
+        // #122 new-form resolution endpoint: /api/notes/by-path/<handle>/<slug>. Fidelity note: the real server JOINs users + notes.slug (a
+        // uuid sent to by-path does not match), while this looks up byRef directly (including id keys) - no case depends on that
+        // difference now, so do not write one that does.
         const [handle, pathSlug] = url
           .slice("/api/notes/by-path/".length)
           .split("/")
@@ -1316,9 +1281,9 @@ describe("NotePage", () => {
               : { slug: body.slug, slugIsCustom: true }
             : {}),
         };
-        // 寫回 stub 狀態：useUpdateNote.onSuccess 會 invalidate id 鍵、
-        // 觸發常駐層重抓——stub 不同步的話重抓會拿回舊 DTO，該案綠不綠就押在
-        // setQueryData 與 refetch 的 microtask 落點先後（脆弱且與真 server 語意不符）。
+        // Write back into the stub state: useUpdateNote.onSuccess invalidates the id key and triggers a persistent-layer refetch - if the stub
+        // did not sync, the refetch would bring back the old DTO, and whether the case is green would hinge on the microtask ordering of
+        // setQueryData vs refetch (fragile and unlike the real server).
         byRef.set(updated.id, updated);
         byRef.set(updated.slug, updated);
         return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) });
@@ -1354,7 +1319,6 @@ describe("NotePage", () => {
       releaseB: () => releaseB(),
       killRef: (ref: string) => byRef.delete(ref),
       failRef: (ref: string) => failRefs.add(ref),
-      /** #179：讓某個 ref（slug）之後解析到指定筆記——模擬「A 改名後，舊 slug 被新筆記 B 拿走」。 */
       setRef: (ref: string, note: NoteDto) => byRef.set(ref, note),
     };
   }
@@ -1403,33 +1367,32 @@ describe("NotePage", () => {
     return queryClient;
   }
 
-  it("①改標題後 invalidate 全清 → 頁面存活、不觸發 deleted 出口（id 鍵永不過時）", async () => {
+  it("after a title change, invalidating everything -> the page survives and does not trigger the deleted exit (the id key never goes stale)", async () => {
     const { fetchMock, killRef } = stubTwoNotes();
     collab.provider.synced = true;
 
     const queryClient = renderTwoNoteTree();
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
 
-    // 模擬改標題後舊 slug 鍵已死（server 端 auto slug 已重算）：舊架構下 focus/invalidate
-    // 重抓 ['note', 'my-note'] 會 404 → 被當「筆記已刪」踢回首頁——這正是 id 錨定要殺的病。
+    // Simulates the old slug key being dead after a title change (the server has recomputed the auto slug): under the old architecture, a
+    // focus / invalidate refetch of ['note', 'my-note'] would 404 and be treated as "note deleted", kicking the user to the home page - exactly the disease id anchoring cures.
     killRef("my-note");
     await act(async () => {
       await queryClient.invalidateQueries();
     });
 
-    // 存活：編輯器還在、沒有任何 404 出口的 toast、active 不掉
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
     expect(screen.queryByText("This note has been deleted.")).not.toBeInTheDocument();
     expect(screen.queryByText("This link is invalid or the note doesn't exist.")).not.toBeInTheDocument();
     expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE.id);
-    // 機制直釘：invalidate 之後**沒有**再對舊 slug 鍵發 GET——解析 query
-    // 已停用、常駐層走 id 鍵；順帶釘（從未打過空 ref 的 `/api/notes/`）。
+    // Mechanism pinned directly: after the invalidate, no GET is sent for the old slug key again - the resolution query is disabled and
+    // the persistent layer uses the id key; also pins that an empty ref `/api/notes/` is not requested.
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls.filter((u) => u === "/api/notes/my-note")).toHaveLength(1);
     expect(urls).not.toContain("/api/notes/");
   });
 
-  it("③同 pattern 真導航（點側欄另一篇）→ **內容**切到新筆記、URL 收斂到新 canonical", async () => {
+  it("same-pattern real navigation (clicking another note in the sidebar) -> the content switches to the new note and the URL converges to the new canonical", async () => {
     stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1438,31 +1401,30 @@ describe("NotePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "go-b" }));
 
-    // 斷**內容**（標題 input 的值），不是高亮——同 pattern 下 params 變更只
-    // re-render 不 remount，解析機制必須對 params 變更反應，否則內容卡在舊筆記。
+    // Assert the content (the title input's value), not the highlight: under the same pattern a params change only re-renders without
+    // remounting, so the resolution mechanism must react to the params change or the content stays stuck on the old note.
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Note B"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/note-b"));
     expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE_B.id);
   });
 
-  it("④跨 pattern 真導航（舊形頁 → /n/ 新形）→ 內容切到新筆記、URL/高亮同步", async () => {
+  it("cross-pattern real navigation (old-form page -> /n/ new form) -> content switches to the new note, URL / highlight in sync", async () => {
     stubTwoNotes();
     collab.provider.synced = true;
 
     renderTwoNoteTree();
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
 
-    // paramsKey 前綴不同（ref: → n:）＝跨 pattern 天然 key 不等；解析走 useNoteByPath
     fireEvent.click(screen.getByRole("button", { name: "go-b-new" }));
 
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Note B"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/note-b"));
-    // 高亮延件：只斷最終態「active 跟到新筆記」——條件清除的
-    // 鑑別力在 NotePage.test 的「真接線卸載清除」案，這行不重複宣稱那個。
+    // Highlight deferred: only the final state "active follows the new note" is asserted - the conditional clear's discrimination is
+    // covered by the "real wiring clears on unmount" case above.
     expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE_B.id);
   });
 
-  it("#297 P3 每篇各自記：A 經頁首選全寬 → 換到 B 是標準 → 回 A 仍全寬；內文欄（mock-column）跟著頁首走", async () => {
+  it("#297: each note remembers its own: A set to full width via the header -> B is standard -> back to A is still full width; the body column (mock-column) follows the header", async () => {
     const widthKeys = () => Object.keys(localStorage).filter((k) => k.startsWith("note.width."));
     for (const key of widthKeys()) localStorage.removeItem(key);
     try {
@@ -1495,10 +1457,9 @@ describe("NotePage", () => {
     }
   });
 
-  it("A4：**新形之間**換頁（/n/→/n/ 同 pattern）→ 內容與網址都切到新筆記", async () => {
-    // useNoteByPath 的 query key 必含 handle 與 slug——丟掉 slug 段時，導航瞬間
-    // resolveQuery.data 是**上一篇**的 DTO，seed 寫出 {key: 新, id: 舊}，頁面永久
-    // 卡在 A、網址還被收斂回 A（此前無任何案會紅）。
+  it("between new-form pages (/n/ -> /n/, same pattern) -> content and URL both switch to the new note", async () => {
+    // The useNoteByPath query key must include the handle and the slug - if the slug segment is dropped, at the instant of navigation
+    // resolveQuery.data is the previous note's DTO, seeding writes {key: new, id: old}, the page stays stuck on A forever and the URL is converged back to A.
     stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1511,7 +1472,7 @@ describe("NotePage", () => {
     await waitFor(() => expect(routerPath()).toBe("/n/tester/note-b"));
   });
 
-  it("新形 by-path 404 → linkInvalid 出口（兩形分流的新分支）", async () => {
+  it("new-form by-path 404 -> linkInvalid exit (the new branch of the two-form split)", async () => {
     stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1522,7 +1483,7 @@ describe("NotePage", () => {
     expect(screen.queryByText("This note has been deleted.")).not.toBeInTheDocument();
   });
 
-  it("以 /n/ 新形開頁：解析走 useNoteByPath（by-path 端點，非舊形 ref）、網址收斂為 canonical", async () => {
+  it("opening with the /n/ new form: resolution goes through useNoteByPath (by-path endpoint, not the old-form ref) and the URL converges to canonical", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1535,7 +1496,7 @@ describe("NotePage", () => {
     await waitFor(() => expect(routerPath()).toBe("/n/tester/my-note"));
   });
 
-  it("A1：導航到 B 後、解析回應前——畫面無 A 的標題與可編輯編輯器（loading 佔位）；收斂閘門：舊 note 的快取更新不寫網址", async () => {
+  it("after navigating to B and before the resolution response, the screen has no A title or editable editor (loading placeholder); convergence gate: a cache update of the old note does not write the URL", async () => {
     const { releaseB } = stubTwoNotes({ bPending: true });
     collab.provider.synced = true;
 
@@ -1545,33 +1506,31 @@ describe("NotePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "go-b" }));
 
-    // A1：轉場中不得渲染舊筆記的 NoteEditor/TitleInput（loading 佔位卡）
+    // Transition: the old note's NoteEditor/TitleInput must not render (loading placeholder card).
     await waitFor(() => expect(screen.queryByTestId("note-editor")).not.toBeInTheDocument());
     expect(screen.queryByLabelText("Note title")).not.toBeInTheDocument();
 
-    // 收斂閘門：在途重解析時，舊筆記（A）的常駐層更新（例如它的 refetch
-    // 帶回新 slug）**不得**把網址改走——needsResolve 閘要擋住它。
-    // ⚠ 必須 flush 一個 **macrotask**：react-query 的通知走 macrotask 排程，同步 act
-    // 斷言會落在 re-render 之前、變成零鑑別力的假綠（拿掉閘門、網址
-    // 真的被改走，同步版斷言照樣綠）。
+    // Convergence gate: while a re-resolution is in flight, an update to the old note's (A) persistent layer (e.g. its refetch bringing
+    // back a new slug) must not move the URL away - the needsResolve gate must stop it.
+    // Must flush a **macrotask**: react-query notifications are scheduled as macrotasks, so a synchronous act assertion would land before
+    // the re-render and pass vacuously (it would pass even with the gate removed and the URL really moved away).
     await act(async () => {
       queryClient.setQueryData(["note", NOTE.id], { ...NOTE, slug: "moved-away" });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(routerPath()).not.toBe("/n/tester/moved-away");
-    // #179：router 的網址就是剛導過去的 B 的舊形網址（收斂走 navigate 後 router 與網址列一致），轉場中原地不動
+    // #179: the router URL is B's old-form URL just navigated to (after convergence goes through navigate, the router and the address bar agree); it stays put during the transition.
     expect(routerPath()).toBe("/notes/note-b");
 
-    // 放行 B：內容與網址一起收斂
     releaseB();
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Note B"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/note-b"));
   });
 
-  it("常駐層 404＝**真刪除** → note.deleted 文案導回 /（不得誤入 linkInvalid——needsResolve 前置的牙）", async () => {
-    // 以 uuid 開頁：解析層與常駐層共用同一個 cache entry（["note", <id>]）——真刪除的
-    // 404 會同時讓 resolveQuery.isError 成立，linkInvalid 少了 needsResolve 前置就會
-    // 噴錯文案。這一案同時守 noteGone 出口存在性與該前置。
+  it("persistent-layer 404 = real deletion -> note.deleted text and back to / (must not fall into linkInvalid - what the needsResolve precondition guards)", async () => {
+    // Opening by uuid: the resolution layer and persistent layer share one cache entry (["note", <id>]) - a real-deletion 404 also makes
+    // resolveQuery.isError true, and without the needsResolve precondition linkInvalid would show the wrong text. This case guards both the
+    // existence of the noteGone exit and that precondition.
     const { killRef } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1590,11 +1549,11 @@ describe("NotePage", () => {
     expect(screen.getByTestId("active-probe")).toHaveTextContent("none");
   });
 
-  it("slug 變更（快取回寫）→ 收斂 effect 更新網址（正向面）", async () => {
-    // 這一案守「收斂 effect 是**資料變動驅動**」（deps 少了 note 這裡必紅）。
-    // 內部自訂網址的 UI 入口（ShareDialog 的 SlugField）已下架（見 ShareDialog.tsx 頂層說明）——slug 改變現在只可能來自標題重新
-    // 派生（#145）或其他寫入路徑，這裡改用 setQueryData 直接模擬「常駐層 note
-    // 換了新 slug」，同款手法見上面 A1 案（`queryClient.setQueryData(["note", …])`）。
+  it("slug change (cache write-back) -> the convergence effect updates the URL (positive side)", async () => {
+    // This case guards that the convergence effect is **driven by data changes** (it turns red if `note` is missing from the deps). The UI
+    // entry for an internal custom URL (ShareDialog's SlugField) has been removed - a slug change
+    // can now only come from title re-derivation (#145) or other write paths, so setQueryData is used here to simulate "the persistent-layer
+    // note got a new slug", the same technique as the transition case above (`queryClient.setQueryData(["note", ...])`).
     stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1609,12 +1568,12 @@ describe("NotePage", () => {
     await waitFor(() => expect(routerPath()).toBe("/n/tester/renamed"));
   });
 
-  it("#179：改名換網址走 router（params 跟著變）但不重解析——共編不拆線、編輯器不重掛；連續改兩次亦然", async () => {
-    // 收斂 effect 改走 `navigate` 之後 params 會變；若被當成真導航，`noteId` 會在轉場那一 render
-    // 變 undefined（真實 useCollab 依 noteId 拆線重連）、NoteEditor 換成佔位卡再重掛，而且新 slug
-    // 在這個假 server 上打 by-path 會 404 → linkInvalid 導回首頁。第二次改名守的是
-    // `resolvedFor.key` 跟上：資料先變、網址後換的那一 render，params 既不是舊 key 也不是新
-    // canonical。
+  it("#179: renaming changes the URL through the router (params change) without re-resolving - co-editing is not torn down, the editor is not remounted; the same for two consecutive renames", async () => {
+    // After the convergence effect goes through `navigate`, params change; if that were treated as a real navigation, `noteId` would
+    // become undefined in the transition render (the real useCollab tears down and reconnects on noteId), NoteEditor would be swapped for the
+    // placeholder and remounted, and the new slug would 404 on this fake server's by-path -> linkInvalid back to the home page. The second
+    // rename guards `resolvedFor.key` keeping up: in the render where data changed first and the URL second, params are neither the old key
+    // nor the new canonical.
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1642,9 +1601,9 @@ describe("NotePage", () => {
     expect(screen.queryByText("This link is invalid or the note doesn't exist.")).not.toBeInTheDocument();
   });
 
-  it("#179：側欄抽屜開著時改名換網址 → 抽屜留著；真的換到別篇 → 抽屜關掉", async () => {
-    // AppShell「pathname 變就關抽屜」：收斂 effect 改走 router navigate 後，同一篇換網址也會換
-    // pathname——靠收斂標記（canonicalizedFrom＝上一個 pathname）分辨。
+  it("#179: with the sidebar drawer open, renaming changes the URL -> the drawer stays; really switching to another note -> the drawer closes", async () => {
+    // AppShell closes the drawer when pathname changes: after the convergence effect goes through router navigate, a URL change on the same
+    // note changes pathname too - the convergence marker (canonicalizedFrom = the previous pathname) tells them apart.
     stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1665,14 +1624,14 @@ describe("NotePage", () => {
     });
     expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
 
-    // 正對照：真導航到另一篇照樣關抽屜（抽屜是 modal，外面的測試鈕被 aria-hidden、可及名稱算成空字串——改用文字查）
+    // Positive control: a real navigation to another note still closes the drawer (the drawer is modal, the test button outside is aria-hidden and its accessible name counts as an empty string - query by text instead).
     fireEvent.click(screen.getByText("go-b-new"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/note-b"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
   });
 
-  it("#179：A 改名後舊 slug 被新筆記 B 拿走——點連結（PUSH）到舊網址要重解析、落到 B，不得因「A 走過這個網址」留在 A", async () => {
-    // 舊 slug 不保留（唯一性只在現行 (owner_id, slug)）。knownKeys 只能在上一頁／下一頁（POP）採用。
+  it("#179: after A is renamed its old slug is taken by new note B - clicking a link (PUSH) to the old URL must re-resolve and land on B, and must not stay on A just because 'A visited this URL'", async () => {
+    // Old slugs are not kept (uniqueness holds only on the current (owner_id, slug)). knownKeys may only be adopted on back / forward (POP).
     const { setRef } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1680,7 +1639,6 @@ describe("NotePage", () => {
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
     await waitFor(() => expect(routerPath()).toBe("/n/tester/my-note"));
 
-    // A 改名：網址收斂到 /n/tester/renamed，/n/tester/my-note 成了 A 走過的舊網址
     await act(async () => {
       queryClient.setQueryData(["note", NOTE.id], { ...NOTE, slug: "renamed" });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1690,7 +1648,6 @@ describe("NotePage", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // 新筆記 B 自動拿到 my-note 這個 slug
     setRef("my-note", { ...NOTE_B, slug: "my-note" });
     fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
 
@@ -1699,8 +1656,8 @@ describe("NotePage", () => {
     await waitFor(() => expect(screen.getByTestId("active-probe")).toHaveTextContent(NOTE_B.id));
   });
 
-  it("#179：A 改名後點連結到已死的舊網址 → linkInvalid 導回首頁，且常駐層 ['note', A] 不被解析層舊快取蓋回改名前", async () => {
-    // 解析層對舊 slug 的重抓 404 時，react-query 留著舊資料（改名前的 A）；seed 若照寫，常駐層會回滾。
+  it("#179: after A is renamed, clicking a link to the dead old URL -> linkInvalid back to the home page, and the persistent-layer ['note', A] is not overwritten by the resolution layer's stale cache back to its pre-rename state", async () => {
+    // When the resolution layer's refetch for the old slug 404s, react-query keeps the old data (A before the rename); if seed wrote it as is, the persistent layer would roll back.
     const { killRef } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1717,7 +1674,7 @@ describe("NotePage", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    killRef("my-note"); // 舊 slug 已解不回來
+    killRef("my-note"); // the old slug can no longer be resolved
     fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
 
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
@@ -1727,20 +1684,19 @@ describe("NotePage", () => {
     expect(resident?.title).toBe("Renamed");
   });
 
-  it("#179：同一組（location.key, canonical）只寫一次網址——navigate 沒生效時不會每次重跑都再 replace", async () => {
+  it("#179: the same (location.key, canonical) pair writes the URL once - when navigate takes no effect, it does not replace again on every rerun", async () => {
     stubTwoNotes();
     collab.provider.synced = true;
     const navCalls: unknown[] = [];
-    /** #229：收斂改成物件形（{ pathname, search, hash }）之後，以 pathname 比對。 */
     const pathOf = (to: unknown) => (typeof to === "string" ? to : (to as { pathname?: string }).pathname);
-    navSpy.current = (to) => void navCalls.push(to); // 壓住導頁：router location 停在 /notes/my-note
+    navSpy.current = (to) => void navCalls.push(to); // hold back navigation: the router location stays at /notes/my-note
 
     const queryClient = renderTwoNoteTree("/notes/my-note");
     await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("My Note"));
     await waitFor(() => expect(navCalls.map(pathOf)).toContain("/n/tester/my-note"));
 
-    // 常駐層 note 換物件（slug 不變、只換標題——同值物件會被 react-query 結構共享成同一個參考，effect 不會重跑）
-    // → 收斂 effect 重跑兩次
+    // The persistent-layer note gets a new object (slug unchanged, only the title changed - an equal-valued object would be structurally
+    // shared into the same reference by react-query and the effect would not rerun) -> the convergence effect reruns twice.
     for (let i = 0; i < 2; i += 1) {
       await act(async () => {
         queryClient.setQueryData(["note", NOTE.id], { ...NOTE, title: `My Note ${i}` });
@@ -1750,9 +1706,9 @@ describe("NotePage", () => {
     expect(navCalls.filter((to) => pathOf(to) === "/n/tester/my-note")).toHaveLength(1);
   });
 
-  // ── 換篇空窗（BrowserRouter 把 setState 包在 startTransition：history 先換、畫面後換） ──
+  // Note-switch gap: BrowserRouter wraps setState in startTransition, so history changes first and the screen later.
 
-  /** 可「壓住」的 router：hold 時 history 照常換 entry，router 的 location 不跟上——重現轉場提交前的空窗。 */
+  /** A router that can be held back: while held, history changes entries as usual but the router location does not follow - reproducing the gap before a transition commits. */
   function renderHeldTree(
     initialEntry: string | { pathname: string; state: unknown },
     earlierEntries: { pathname: string; state: unknown }[] = [],
@@ -1780,7 +1736,7 @@ describe("NotePage", () => {
         </Router>
       );
     }
-    /** 照 App.tsx 的 AppRoutes：真實 location 進 RealLocationContext、主樹吃 backgroundLocation（設定 modal）。 */
+    /** Follows AppRoutes in App.tsx: the real location goes into RealLocationContext and the main tree takes backgroundLocation (the settings modal). */
     function AppRoutesLike() {
       const location = useLocation();
       const navigationType = useNavigationType();
@@ -1834,7 +1790,7 @@ describe("NotePage", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-  it("換篇空窗：網址已換到 B、畫面仍是 A——在 A 的標題框打字＋blur 不得 PATCH 到 A", async () => {
+  it("note-switch gap: the URL has moved to B while the screen is still A - typing in A's title field and blur must not PATCH A", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note");
@@ -1844,7 +1800,7 @@ describe("NotePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "go-b-new" }));
     expect(nav.history.location.pathname).toBe("/n/tester/note-b");
     const input = screen.getByLabelText("Note title");
-    expect(input).toHaveValue("My Note"); // 空窗：舊頁仍掛著、可互動
+    expect(input).toHaveValue("My Note"); // gap: the old page is still mounted and interactive
 
     fireEvent.change(input, { target: { value: "Typed in the gap" } });
     fireEvent.blur(input);
@@ -1856,7 +1812,7 @@ describe("NotePage", () => {
     expect(titlePatches(fetchMock)).toEqual([]);
   });
 
-  it("換篇空窗：上一頁回到別篇（那筆 entry 是當初收斂留下、帶收斂標記）也算換篇，不得 PATCH 到 A", async () => {
+  it("note-switch gap: going back to another note (that entry was left by convergence and carries the convergence marker) also counts as a switch, and must not PATCH A", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note", [
@@ -1876,7 +1832,7 @@ describe("NotePage", () => {
     nav.release();
   });
 
-  it("換篇空窗：上一頁回到的別篇 entry，收斂標記剛好＝目前網址（舊網址被別篇重用）也不放過", async () => {
+  it("note-switch gap: back to another note's entry whose convergence marker happens to equal the current URL (the old URL reused by another note) is not let through either", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note", [
@@ -1895,7 +1851,7 @@ describe("NotePage", () => {
     nav.release();
   });
 
-  it("換篇空窗：REPLACE 換到別篇、state 帶的是別的網址的收斂標記（例如沿用舊 state）也算換篇", async () => {
+  it("note-switch gap: a REPLACE to another note whose state carries a convergence marker for another URL (e.g. reusing the old state) also counts as a switch", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note");
@@ -1912,8 +1868,8 @@ describe("NotePage", () => {
     nav.release();
   });
 
-  it("換篇空窗的反例：設定 modal 開著（主樹吃背景 location）、沒有導覽在途時，背景頁標題照常存", async () => {
-    // 比對基準必須是真實 location：拿背景 location 比，key 與 pathname 都跟 history 當下不同，會被誤判成換篇。
+  it("counter-example of the gap: with the settings modal open (the main tree takes the background location) and no navigation in flight, the background page's title saves as usual", async () => {
+    // The baseline must be the real location: comparing against the background location, the key and the pathname both differ from history's current, and it would be misjudged as a note switch.
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     renderHeldTree({
@@ -1930,7 +1886,7 @@ describe("NotePage", () => {
     );
   });
 
-  it("換篇空窗的反例：同一篇改名後收斂換網址（transition 未提交）期間繼續打字＋blur，照常存到同一篇", async () => {
+  it("counter-example of the gap: while the same note's convergence changes the URL after a rename (transition not committed), typing + blur continues to save into the same note", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note");
@@ -1941,7 +1897,7 @@ describe("NotePage", () => {
       nav.queryClient.setQueryData(["note", NOTE.id], { ...NOTE, slug: "renamed" });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    // 收斂 effect 已 replace（history 換了），router 還停在舊網址
+    // The convergence effect has already replaced (history changed) while the router still sits on the old URL.
     expect(nav.history.location.pathname).toBe("/n/tester/renamed");
     expect(routerPath()).toBe("/n/tester/my-note");
 
@@ -1954,7 +1910,7 @@ describe("NotePage", () => {
     nav.release();
   });
 
-  it("換篇空窗的反例：同一篇只換 hash（段落錨點）的導覽在途時，打字＋blur 照常存", async () => {
+  it("counter-example of the gap: while a navigation that only changes the hash (paragraph anchor) of the same note is in flight, typing + blur saves as usual", async () => {
     const { fetchMock } = stubTwoNotes();
     collab.provider.synced = true;
     const nav = renderHeldTree("/n/tester/my-note");
@@ -1972,7 +1928,7 @@ describe("NotePage", () => {
     nav.release();
   });
 
-  it("常駐層非 404 錯誤（500）→ 錯誤卡留在頁上，不導走、不噴 404 文案", async () => {
+  it("persistent-layer non-404 error (500) -> the error card stays on the page, no navigation, no 404 text", async () => {
     const { failRef } = stubTwoNotes();
     collab.provider.synced = true;
 
@@ -1990,8 +1946,8 @@ describe("NotePage", () => {
     expect(screen.queryByText("This link is invalid or the note doesn't exist.")).not.toBeInTheDocument();
   });
 
-  it("m14：解析 404 的 render 落在 **loading 佔位格**（非錯誤卡），出口只靠 navigate", async () => {
-    // 壓住 navigate 讓中間態可觀察（否則導頁太快、這一格斷言不到）。
+  it("the render of a resolution 404 lands on the loading placeholder (not the error card); the exit relies on navigate only", async () => {
+    // Hold back navigate so the intermediate state is observable (otherwise navigation is too fast to assert this stage).
     const nav = vi.fn();
     navSpy.current = nav;
     vi.stubGlobal("fetch", mockFetch({ status: 404, code: "not_found" }));
@@ -1999,31 +1955,28 @@ describe("NotePage", () => {
     renderNotePage("gone");
 
     await waitFor(() => expect(nav).toHaveBeenCalledWith("/", { replace: true }));
-    // 導頁被壓住 → 頁面停在解析 404 的那一格：loading 佔位、**沒有** role=alert 錯誤卡
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("This link is invalid or the note doesn't exist.")).toBeInTheDocument();
   });
 
-  it("非 404 的載入錯誤留在頁面上顯示訊息，不導走", async () => {
+  it("a non-404 load error stays on the page showing a message, no navigation", async () => {
     vi.stubGlobal("fetch", mockFetch({ status: 500, code: "internal" }));
 
     renderNotePage("my-note");
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong. Please try again."));
     expect(screen.queryByText("home landing")).not.toBeInTheDocument();
-    // error 態渲染的是佔位內文卡，不是裸 <p>。
     const card = screen.getByRole("alert").parentElement;
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
-    // #115：佔位卡也要有窄視窗抽屜入口——isError 是會**停住**的狀態（筆記被刪、
-    // 沒權限），沒有這顆，`<md` 的使用者在錯誤畫面上零導覽出口。
+    // #115: the placeholder card also needs the narrow-viewport drawer entry - isError is a state that **halts** (note deleted, no
+    // permission), and without this button a `<md` user would have zero navigation exits on the error screen.
     expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
   });
 
-  // note 本身載入成功，但 `doc|provider|user` 還沒全部備妥（這裡卡住
-  // `user`——`useSession()` 的 `/api/auth/me` 故意延遲 resolve）時，渲染的是不含
-  // header/footer slot 的佔位卡，不是 `NoteEditor`。
-  it("doc/provider/user 尚未備妥時渲染不含 header 的佔位卡，不是 NoteEditor", async () => {
+  // The note itself loaded, but `doc|provider|user` are not all ready yet (here `user` is stuck: `/api/auth/me` behind `useSession()` is
+  // deliberately delayed) - what renders is the placeholder card without header / footer slots, not `NoteEditor`.
+  it("while doc/provider/user are not ready, renders a placeholder card without the header, not NoteEditor", async () => {
     let resolveMe!: () => void;
     const meGate = new Promise<void>((resolve) => {
       resolveMe = resolve;
@@ -2046,7 +1999,6 @@ describe("NotePage", () => {
     expect(document.querySelector("header")).toBeNull();
     const card = screen.getByText("Loading…").parentElement;
     expect(card).toHaveClass("min-w-0", "flex-1", "overflow-y-auto", "rounded-xl", "border", "border-border", "bg-card");
-    // 手機：佔位卡貼齊螢幕（沒有圓角與框）。
     expect(card).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
 
     resolveMe();
@@ -2054,7 +2006,7 @@ describe("NotePage", () => {
     expect(document.querySelector("header")).not.toBeNull();
   });
 
-  it("token 401 的登出回呼會清掉 ['me'] 並導去 /login", async () => {
+  it("the token 401 sign-out callback clears ['me'] and navigates to /login", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -2066,7 +2018,7 @@ describe("NotePage", () => {
               <Routes>
                 <Route element={<AppShellLayout />}>
                   <Route path="/notes/:ref" element={<NotePage />} />
-                  {/* #179：收斂 effect 以 router navigate 把舊形換成 /n/ 新形 */}
+                  {/* #179: the convergence effect uses router navigate to replace the old form with the new /n/ form */}
                   <Route path="/n/:handle/:slug" element={<NotePage />} />
                   <Route path="/login" element={<div>login page</div>} />
                 </Route>
@@ -2080,17 +2032,16 @@ describe("NotePage", () => {
     await waitFor(() => expect(collab.onUnauthorized).toBeTypeOf("function"));
     collab.onUnauthorized!();
 
-    // 只斷言導頁：`['me']` 被 setQueryData(null) 之後緊接著 invalidate，假 server
-    // 仍回得出使用者，所以快取會立刻被重新填回來——那正是正常行為，不該拿來斷言。
+    // Assert navigation only: right after `['me']` is set with setQueryData(null) there is an invalidate, and the fake server still returns a
+    // user, so the cache is immediately refilled - that is normal behaviour and not something to assert.
     await waitFor(() => expect(screen.getByText("login page")).toBeInTheDocument());
   });
 
-  // NoteEditor 現在是「slot 化」呼叫——NotePage body 直接
-  // 渲染 `<div className="flex min-h-0 flex-1"><NoteEditor .../></div>`，`NoteEditor`
-  // （mock）容器的直接父層就是這個 body row，不再是舊版「自己捲動」的
-  // `overflow-y-auto` 容器（捲動責任完全交給 `NoteEditor` 內部／各卡片自己的
-  // `overflow-y-auto`，見 `NoteEditor.tsx`／`AppShell.tsx` 的說明）。
-  it("NoteEditor 容器存在，外層是 slot 化的 body row（flex min-h-0 flex-1），不是舊版自捲容器", async () => {
+  // NoteEditor is now called in slot form - the NotePage body renders `<div className="flex min-h-0 flex-1"><NoteEditor .../></div>`
+  // directly, so the direct parent of the `NoteEditor` (mock) container is this body row, no longer the old self-scrolling
+  // `overflow-y-auto` container (scrolling is left entirely to NoteEditor's internals / each card's own `overflow-y-auto`, see
+  // `NoteEditor.tsx` / `AppShell.tsx`).
+  it("the NoteEditor container exists and its parent is the slot-based body row (flex min-h-0 flex-1), not the old self-scrolling container", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     renderNotePage("my-note");
@@ -2102,12 +2053,11 @@ describe("NotePage", () => {
     expect(bodyRow).not.toHaveClass("overflow-y-auto");
   });
 
-  // backlinks 從可折疊的 `<details>` 改成常駐 chips，且不再由 NotePage
-  // 額外包一層容器——`footerSlot` 就是 `<BacklinksSection>` 本身，幾何（shrink-0／
-  // border-t／捲動上限）完全收在該元件內部（見 BacklinksSection.test.tsx 的專屬
-  // 覆蓋）。這裡只驗證 slot 接線本身：footerSlot 的內容（chip 連結）確實出現在
-  // mock 渲染出的 note-editor 容器內，不是漏接。
-  it("footerSlot（backlinks chips）確實接進 NoteEditor，不是漏接的 slot", async () => {
+  // Backlinks went from a collapsible `<details>` to always-visible chips, and NotePage no longer wraps them in an extra container -
+  // `footerSlot` is the `<BacklinksSection>` itself, with the geometry (shrink-0 / border-t / scroll cap) entirely inside that component
+  // (covered in BacklinksSection.test.tsx). Here only the slot wiring is verified: the content of footerSlot (the chip links) really
+  // appears inside the note-editor container rendered by the mock, so the slot is not left unconnected.
+  it("footerSlot (backlinks chips) really is wired into NoteEditor, not a slot left unconnected", async () => {
     const backlink: BacklinkDto = { id: "22222222-2222-2222-2222-222222222222", title: "Other", slug: "other", ownerHandle: "tester", groupId: null };
     vi.stubGlobal("fetch", mockFetch(NOTE, [backlink]));
 
@@ -2116,15 +2066,13 @@ describe("NotePage", () => {
     const editor = await screen.findByTestId("note-editor");
     await waitFor(() => expect(within(editor).getByRole("link", { name: "Other" })).toBeInTheDocument());
     expect(within(editor).getByText("Mentioned in 1 note")).toBeInTheDocument();
-    // 已不再有折疊語意（<details>/<summary>）——F 節改成常駐 chips。
     expect(editor.querySelector("details")).toBeNull();
   });
 });
 
-// ── #175：`/g/:groupId/:slug`（NotePage 第三形）──
-// 群組筆記沒有個人 owner，canonical 是 `/g/<groupId>/<slug>`；解析層走
-// `GET /api/notes/by-group-path/:groupId/:slug`（`useNoteByGroupPath`），不打 by-path 與 `:ref`。
-describe("NotePage × /g/ 群組筆記（#175）", () => {
+// #175: `/g/:groupId/:slug` (NotePage's third form). A group note has no personal owner; canonical is `/g/<groupId>/<slug>`; resolution
+// goes through `GET /api/notes/by-group-path/:groupId/:slug` (`useNoteByGroupPath`), not by-path and not `:ref`.
+describe("NotePage x /g/ group notes (#175)", () => {
   const GROUP_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const G_NOTE: NoteDto = {
     ...NOTE,
@@ -2156,12 +2104,8 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     vi.unstubAllGlobals();
   });
 
-  /**
-   * 假 server：by-group-path 以 `<groupId>/<slug>` 查（`aliases` 模擬轉址表／prev_slug：舊 slug → 現行筆記）；
-   * by-path 只認 `legacyByPath`（模擬 0012 之後「舊 `/n/<原 owner>/<slug>` 經轉址表落到群組筆記」）；
-   * 單篇 `GET /api/notes/:id` 以 id 查。每一筆呼叫記進 `calls`（`api()` 會把 throw 變成 rejected query，
-   * 斷言「打了哪支」一律看 calls）。
-   */
+  /** by-group-path looks up `<groupId>/<slug>`; `aliases` simulates the redirect table (old slug -> current note); by-path only knows `legacyByPath`;
+   * `GET /api/notes/:id` looks up by id. Every call is recorded in `calls`: assert which endpoint was hit from `calls`, because `api()` turns a throw into a rejected query. */
   function stubGroupNotes(
     options: { aliases?: Record<string, NoteDto>; legacyByPath?: Record<string, NoteDto> } = {},
   ) {
@@ -2257,7 +2201,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     return queryClient;
   }
 
-  it("①以 /g/ 開頁：解析打 by-group-path（不打 by-path、不打 :ref）、seed ['note', id]、網址留在 canonical", async () => {
+  it("opening via /g/: resolution hits by-group-path (not by-path, not :ref), seeds ['note', id], the URL stays canonical", async () => {
     const { calls } = stubGroupNotes();
     window.history.replaceState(null, "", `/g/${GROUP_ID}/group-note`);
 
@@ -2273,7 +2217,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     expect(canonicalNotePath(G_NOTE)).toBe(`/g/${GROUP_ID}/group-note`);
   });
 
-  it("②by-group-path 回的 slug 與網址不同（轉址表／prev_slug 命中）→ 收斂 effect replace 成 /g/<gid>/<新 slug>", async () => {
+  it("by-group-path returns a slug different from the URL (redirect table / prev_slug hit) -> the convergence effect replaces to /g/<gid>/<new slug>", async () => {
     stubGroupNotes({ aliases: { "old-group-note": G_NOTE } });
     window.history.replaceState(null, "", `/g/${GROUP_ID}/old-group-note`);
 
@@ -2282,7 +2226,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     await waitFor(() => expect(routerPath()).toBe(`/g/${GROUP_ID}/group-note`));
   });
 
-  it("③/n/<h>/<old> 打 by-path、回的是群組筆記（migration 轉址）→ replace 成 /g/<gid>/<slug>", async () => {
+  it("/n/<h>/<old> hits by-path and returns a group note (migration redirect) -> replace to /g/<gid>/<slug>", async () => {
     const { calls } = stubGroupNotes({ legacyByPath: { "tester/old-personal": G_NOTE } });
     window.history.replaceState(null, "", "/n/tester/old-personal");
 
@@ -2293,7 +2237,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     expect(calls.some((c) => c.startsWith("GET /api/notes/by-group-path/"))).toBe(false);
   });
 
-  it("④/g/→/g/ 同 pattern 換頁 → 內容與網址都切到新筆記（解析層 data 必屬當下這組 params）", async () => {
+  it("/g/ -> /g/ same-pattern navigation -> content and URL both switch to the new note (the resolution layer's data must belong to the current params)", async () => {
     stubGroupNotes();
     window.history.replaceState(null, "", `/g/${GROUP_ID}/group-note`);
 
@@ -2306,7 +2250,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     await waitFor(() => expect(routerPath()).toBe(`/g/${GROUP_ID}/group-note-2`));
   });
 
-  it("#182：群組筆記重驗後角色改變但仍有存取（editor → viewer）→ 重抓 ['groups']（側欄「＋」看 myRole）", async () => {
+  it("#182: after revalidation a group note's role changes but access remains (editor -> viewer) -> re-fetches ['groups'] (the sidebar '+' looks at myRole)", async () => {
     const { calls } = stubGroupNotes();
     collab.state = { phase: "connected", role: "editor" };
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -2327,13 +2271,13 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
       </QueryClientProvider>
     );
     const count = (call: string) => calls.filter((c) => c === call).length;
-    // 側欄「＋」看 ['groups']；頁首 ⋮／分享看 ['note', id] 的 permissions；側欄筆記列 ⋮ 看 ['notes'] 的 permissions。
+    // The sidebar "+" looks at ['groups']; the header kebab / share look at the permissions of ['note', id]; the sidebar note row kebab looks at the permissions of ['notes'].
     const watched = ["GET /api/groups", `GET /api/notes/${G_NOTE.id}`, "GET /api/notes"];
 
     const view = render(tree());
     await waitFor(() => expect(screen.getByTestId("note-editor")).toHaveAttribute("data-editable", "true"));
     await waitFor(() => expect(count("GET /api/groups")).toBeGreaterThan(0));
-    // 讓初次載入的請求全部落地，之後的增量只可能來自角色變動
+    // Let every request of the initial load land, so any later increment can only come from the role change.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
@@ -2346,13 +2290,14 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     await waitFor(() => expect(watched.map(count)).toEqual(before.map((n) => n + 1)));
   });
 
-  // ── N4 換篇：previousRoleRef 不得跨篇比較 ──
-  // NotePage 換篇不 remount（同一個元件實例），舊版 ref 留著上一篇的角色。模擬真實 useCollab 的時序：
-  // ① 換篇後的前幾個 render，state 仍是**上一篇**殘留的 connected（真實 hook 要等新 noteId 的連線
-  //   effect 才 setState(INITIAL)），而且這時 noteId 已經是新篇——只以 noteId 判「換篇」擋不住；
-  // ② 新篇的連線 effect 換上新的 provider 並歸零成 connecting；③ 新篇 connected。
-  // 每案結尾在新篇內做一次**真的**角色變動當 positive control：同一套觀測手法（等 macrotask 後數
-  // 請求、找 toast）在該發生時看得到——證明前面「沒發生」的斷言不是因為根本觀測不到。
+  // Note switch: previousRoleRef must not compare across notes.
+  // NotePage does not remount when switching notes (same component instance), and the old ref kept the previous note's role. This
+  // simulates the real useCollab timing:
+  // (1) in the first few renders after the switch the state is still the previous note's leftover connected (the real hook only sets
+  //   state(INITIAL) in the new noteId's connection effect), and noteId is already the new one - judging "switched" by noteId alone cannot block this;
+  // (2) the new note's connection effect brings in a new provider and resets to connecting; (3) the new note connects.
+  // Each case ends with a **real** role change inside the new note as a positive control: the same observation technique (wait a
+  // macrotask, count requests, find the toast) can see it when it should happen - proving that the earlier "did not happen" assertions are not because it cannot be observed at all.
   const DOWNGRADE_TOAST = "Your access changed to viewer. This note is now read-only.";
   const RESTORE_TOAST = "Your edit access has been restored.";
 
@@ -2383,7 +2328,6 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
 
-    // 標題：可編輯時是 input、唯讀時是 h1——兩種都認。
     const titleShown = (title: string) =>
       expect(screen.queryByRole("heading", { name: title }) ?? screen.getByLabelText("Note title")).toSatisfy(
         (el: HTMLElement) => el.textContent === title || (el as HTMLInputElement).value === title,
@@ -2396,26 +2340,26 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    // ① 換篇：collab.state 刻意不動（上一篇的 connected 殘留），provider 也還是舊的。
-    // 真 hook 在此刻（換篇經過 noteId=undefined、cleanup 已 setSession(null)）給的是 provider=null；
-    // 測試沿用舊 provider 是更嚴的情境（殘留 connected 配上「看起來仍有效」的 provider）。
+    // (1) Switch notes: collab.state is deliberately left alone (the previous note's connected leftover) and the provider is still the old one.
+    // At this moment the real hook (the switch passes through noteId=undefined, cleanup already did setSession(null)) gives provider=null;
+    // the test keeping the old provider is the stricter scenario (a leftover connected paired with a provider that still looks valid).
     collab.noteIds = [];
     fireEvent.click(screen.getByRole("button", { name: "go-g2" }));
     await waitFor(() => expect(collab.noteIds).toContain(G_NOTE_2.id));
     await waitFor(() => titleShown("Group Note 2"));
     await settle();
-    // ② 新篇的連線：新 provider、歸零。
+    // (2) The new note's connection: a new provider, reset.
     collab.provider = createStubProvider();
     collab.provider.synced = true;
     collab.state = { phase: "connecting" };
     view.rerender(tree());
     await settle();
-    // 換篇本身會重抓（新篇的 note／backlinks 等）——基準取在新篇 connected 之前、一切落地之後。
+    // Switching notes itself refetches (the new note's note / backlinks, etc.): take the baseline before the new note becomes connected and after everything has landed.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     const groupsBefore = count("GET /api/groups");
-    // ③ 新篇 connected：第一次只記錄、不比較。
+    // (3) The new note becomes connected: the first time it only records and does not compare.
     collab.state = { phase: "connected", role: to };
     view.rerender(tree());
     await waitFor(() =>
@@ -2427,13 +2371,13 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     return { view, tree, count, settle, groupsBefore };
   }
 
-  it("N4 換篇：可編輯篇 → 只能檢視的篇，不跳「已改為檢視者」、不失效 ['groups']；新篇內真的恢復仍會報", async () => {
+  it("switching notes: editable note -> view-only note shows no 'changed to viewer' toast and does not invalidate ['groups']; a real recovery inside the new note is still reported", async () => {
     const { view, tree, count, settle, groupsBefore } = await switchNoteScenario("editor", "viewer");
 
     expect(screen.queryByText(DOWNGRADE_TOAST)).not.toBeInTheDocument();
     expect(count("GET /api/groups")).toBe(groupsBefore);
 
-    // positive control：新篇內 viewer → editor 是真的角色變動——toast 與 ['groups'] 失效都要出現。
+    // Positive control: viewer -> editor inside the new note is a real role change - both the toast and the ['groups'] invalidation must appear.
     collab.state = { phase: "connected", role: "editor" };
     view.rerender(tree());
     await settle();
@@ -2441,13 +2385,13 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     await waitFor(() => expect(count("GET /api/groups")).toBe(groupsBefore + 1));
   });
 
-  it("N4 換篇：只能檢視的篇 → 可編輯篇，不跳「已恢復編輯權限」；新篇內真的降級仍會報", async () => {
+  it("switching notes: view-only note -> editable note shows no 'edit access restored' toast; a real downgrade inside the new note is still reported", async () => {
     const { view, tree, count, settle, groupsBefore } = await switchNoteScenario("viewer", "editor");
 
     expect(screen.queryByText(RESTORE_TOAST)).not.toBeInTheDocument();
     expect(count("GET /api/groups")).toBe(groupsBefore);
 
-    // positive control（同時是「同一篇內 editor → viewer 仍報降級」的回歸）。
+    // Positive control (also the regression for "editor -> viewer within the same note is still reported as a downgrade").
     collab.state = { phase: "connected", role: "viewer" };
     view.rerender(tree());
     await settle();
@@ -2455,7 +2399,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     await waitFor(() => expect(count("GET /api/groups")).toBe(groupsBefore + 1));
   });
 
-  it("⑤by-group-path 404 → linkInvalid 出口並導回 /", async () => {
+  it("by-group-path 404 -> linkInvalid exit and back to /", async () => {
     stubGroupNotes();
     renderGroupTree(`/g/${GROUP_ID}/never-here`);
 
@@ -2463,7 +2407,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
     expect(screen.getByText("This link is invalid or the note doesn't exist.")).toBeInTheDocument();
   });
 
-  it("invalidateNoteQueries：群組筆記失效 ['note-by-group-path', groupId, slug]，不碰 ['note-by-path', …]；個人筆記反之", () => {
+  it("invalidateNoteQueries: a group note invalidates ['note-by-group-path', groupId, slug] and does not touch ['note-by-path', ...]; a personal note is the reverse", () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(["note", G_NOTE.id], G_NOTE);
     queryClient.setQueryData(["note-by-group-path", GROUP_ID, G_NOTE.slug], G_NOTE);
@@ -2483,7 +2427,7 @@ describe("NotePage × /g/ 群組筆記（#175）", () => {
   });
 });
 
-// ── 側欄筆記列 ⋮ 與 NotePage 的接線（NotePageControlsContext／location.state openEdits）──
+// Wiring between the sidebar note row kebab and NotePage (NotePageControlsContext / location.state openEdits).
 
 function SidebarLocationProbe() {
   const location = useLocation();
@@ -2494,8 +2438,7 @@ function SidebarLocationProbe() {
   );
 }
 
-/** `mockFetch` 的 catch-all 會把 `/api/notes/:id/edits` 當單篇回 NoteDto——先攔下來回 `{edits: []}`。
- * `notes`：`GET /api/notes`（側欄清單）的回應；其餘交給 `inner`。每筆呼叫記進 `calls`。 */
+/** The `mockFetch` catch-all would answer `/api/notes/:id/edits` with a NoteDto, so intercept it first and return `{edits: []}`. */
 function withEditsAndList(inner: ReturnType<typeof mockFetch>, notes: () => NoteDto[] = () => []) {
   const calls: string[] = [];
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -2514,7 +2457,6 @@ function withEditsAndList(inner: ReturnType<typeof mockFetch>, notes: () => Note
   return { fn, calls };
 }
 
-/** `NotePageTree` 只掛 `/notes/:ref` 且沒有位置探針——這組自己組：兩條筆記路由＋首頁＋探針。 */
 function renderWithProbe(initialEntry: string | { pathname: string; state: unknown }, extra?: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const result = render(
@@ -2541,14 +2483,13 @@ function renderWithProbe(initialEntry: string | { pathname: string; state: unkno
 }
 
 async function openSidebarRowMenu(title: string): Promise<HTMLElement> {
-  // 靜態側欄目前的 tab 面板（預設「我的筆記」；抽屜沒開不在 DOM）。
   const section = await screen.findByRole("tabpanel");
   const trigger = await within(section).findByRole("button", { name: `Note actions for ${title}` });
   fireEvent.pointerDown(trigger, { button: 0 });
   return screen.findByRole("menu");
 }
 
-describe("NotePage × 側欄筆記列 ⋮", () => {
+describe("NotePage x sidebar note row kebab", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connecting" };
@@ -2564,28 +2505,27 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     navSpy.current = undefined;
   });
 
-  it("帶 state {openEdits:true} 進場 → 就緒後開 AI 修改紀錄、state 被 replace 清掉；不帶 state 不開", async () => {
+  it("entering with state {openEdits:true} -> opens the AI edit history once ready and the state is cleared by a replace; without state it does not open", async () => {
     const { fn } = withEditsAndList(mockFetch());
     vi.stubGlobal("fetch", fn);
 
-    // 對照：一般進場不開對話框。
     const plain = renderNotePage("my-note");
     await screen.findByLabelText("Note title", { selector: "input" });
     expect(screen.queryByRole("dialog", { name: "AI edits on this note" })).toBeNull();
     plain.unmount();
 
     renderWithProbe({ pathname: "/notes/my-note", state: { openEdits: true } });
-    // 最終落點是 canonical（#179：收斂走 router navigate、保留**當下**的 state——openEdits 已被清掉——只多一個收斂標記）。
+    // The final landing is canonical (#179: convergence goes through router navigate and keeps the **current** state - openEdits already cleared - adding only a convergence marker).
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/my-note\|\{"knotebookCanonicalizedFrom":"\/notes\/my-note"\}$/));
     expect(await screen.findByRole("dialog", { name: "AI edits on this note" })).toBeInTheDocument();
   });
 
-  it("側欄 ⋮ 在開著的那篇按 AI 修改紀錄：開同一個對話框、不導頁、不重掛", async () => {
-    // ⚠ 「側欄拿不到 controls、改走 navigate(canonical, {state})」這個錯法，路徑與最終 state 都
-    // 和正確做法一樣（canonical 收斂本來就會把 `/notes/my-note` 換成 `/n/tester/my-note`；
-    // #179 起收斂走 router navigate，params 等於 canonical 也不重解析、不重掛）——看得出差別的
-    // 只有 **location.key**：任何一次導頁（push 或 replace）都會換 key。所以先等收斂落定、記下
-    // key，按完選單項後 key 必須不變。
+  it("sidebar kebab on the open note, pressing AI edit history: opens the same dialog, no navigation, no remount", async () => {
+    // A wrong implementation where the sidebar cannot get the controls and goes through navigate(canonical, {state}) would give the same
+    // path and final state as the correct one (canonical convergence already turns `/notes/my-note` into `/n/tester/my-note`; since #179
+    // convergence goes through router navigate, and params equal to canonical neither re-resolve nor remount) - the only visible difference
+    // is **location.key**: any navigation (push or replace) changes the key. So wait for convergence to settle first and record the key;
+    // after pressing the menu item the key must be unchanged.
     const { fn } = withEditsAndList(mockFetch(), () => [NOTE]);
     vi.stubGlobal("fetch", fn);
     collab.state = { phase: "connected", role: "owner" };
@@ -2604,7 +2544,7 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     expect(screen.getByLabelText("Note title", { selector: "input" })).toBe(titleInput);
   });
 
-  it("側欄 ⋮ 刪除開著的那篇：回首頁、不出現「筆記已被刪除」toast", async () => {
+  it("sidebar kebab deleting the open note: back to the home page, no 'note was deleted' toast", async () => {
     let deleted = false;
     const inner = mockFetch();
     const { fn, calls } = withEditsAndList(
@@ -2639,17 +2579,18 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
 
     expect(await screen.findByText("home landing")).toBeInTheDocument();
     expect(calls).toContain(`DELETE /api/notes/${NOTE.id}`);
-    // 失效後的 `GET /api/notes/<id>` 404 會晚一點回來——等它有機會落地再斷言沒有 toast。
+    // The `GET /api/notes/<id>` 404 after invalidation comes back a bit later - give it a chance to land before asserting there is no toast.
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(screen.queryByText("This note has been deleted.")).toBeNull();
   });
 
-  // NP-U1：移入後常駐層 ["note", id] 停在 404 in_trash 的 error 態；復原必須先蓋回常駐層再導回，
-  // 否則重開的 NotePage 讀到舊 error →「此筆記已被刪除」並彈回首頁。
-  // ⚠ 寫死從 `/n/tester/my-note`（by-path）進入：只有 by-path 形（`/g/<groupId>/<slug>` 同理）會留下解析層的
-  // `["note-by-path", …]` 快取，而常駐層在掛載時重抓一次、`dataUpdatedAt` 才比解析層新，復原後 seed effect 不 seed 的條件才成立；
-  // 從 `/notes/<slug>` 或 `/notes/<id>` 進入時重開那篇會重抓 by-path、照常 seed，不 seed 也不會彈回。
-  it("NP-U1 頁首 ⋮ 移到垃圾桶 → 回首頁 → 按 Undo：回到該篇、標題框出現，全程沒有「此筆記已被刪除」", async () => {
+  // After moving to the trash, the persistent layer ["note", id] stays in the 404 in_trash error state; undo must first overwrite the
+  // persistent layer and then navigate back, otherwise the reopened NotePage reads the old error -> "this note was deleted" and bounces to the home page.
+  // Hardcoded to enter from `/n/tester/my-note` (by-path): only the by-path form (and likewise `/g/<groupId>/<slug>`) leaves a
+  // resolution-layer `["note-by-path", ...]` cache, and the persistent layer refetches once on mount so that its `dataUpdatedAt` is newer than the
+  // resolution layer, which is when the "seed effect does not seed after undo" condition holds; entering from `/notes/<slug>` or `/notes/<id>`
+  // refetches by-path on reopening and seeds as usual, so it would not bounce even without seeding.
+  it("header kebab moves to the trash -> back to the home page -> press Undo: back to that note, the title field appears, and the 'this note was deleted' message does not appear at any point", async () => {
     let trashed = false;
     const inner = mockFetch();
     const { fn, calls } = withEditsAndList(
@@ -2679,7 +2620,7 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     );
     vi.stubGlobal("fetch", fn);
     collab.state = { phase: "connected", role: "owner" };
-    // 「全程沒有」靠 toast 呼叫紀錄、不靠畫面快照：noteGone 出口在 toast() 當下同步記下，與之後哪個 render 先 commit 無關。
+    // "Does not appear at any point" is judged from the toast call record, not a screen snapshot: the noteGone exit records synchronously at the moment toast() is called, regardless of which render commits first afterwards.
     const toastSpy = vi.spyOn(toastModule, "toast");
     onTestFinished(() => toastSpy.mockRestore());
     const toastTitles = () => toastSpy.mock.calls.map(([item]) => item.title);
@@ -2690,30 +2631,31 @@ describe("NotePage × 側欄筆記列 ⋮", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/\|/));
-    // 等移入後常駐層的重抓（404 in_trash）真的落地成 error 態，才是起點（不用固定等待）。
+    // Wait until the persistent-layer refetch after moving to the trash (404 in_trash) has really landed as an error state - that is the starting point (no fixed wait).
     await waitFor(() => expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("error"));
 
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
-    // 正面條件三者同時成立才算「回到該篇」：網址、標題框、常駐層 success。漏 seed 時重開的頁面讀到舊 error
-    // 就彈回首頁（網址變 /），這裡等不到而紅；常駐層之後才被失效重抓成 success，那時網址早已是 /。
+    // "Back at that note" requires three things together: URL, title field, persistent layer success. If the seed is missing, the reopened
+    // page reads the old error and bounces home (the URL becomes /) and this wait times out red; the persistent layer is invalidated and refetched into success only later, by which time the URL is already /.
     await waitFor(() => {
       expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/my-note\|/);
       expect(screen.getByLabelText("Note title", { selector: "input" })).toBeInTheDocument();
       expect(queryClient.getQueryState(["note", NOTE.id])?.status).toBe("success");
     });
     expect(calls).toContain("POST /api/trash/restore");
-    // 標題框出現＝重開的頁面已有一個 render 不是 noteGone 佔位卡；React 在它之前已跑完先前 commit 的 effect（含 noteGone 出口），
-    // 所以若曾判成「已刪除」，toast() 此刻必已被呼叫。正面兩則都來自 trash-undo，只證明那一側的 spy 接上；
-    // NotePage 那一側的呼叫被攔到，由突變（拿掉 seed 且 noteGone 不導頁 → 下一行紅）證明。
+    // The title field appearing = the reopened page has a render that is not the noteGone placeholder card; React has already run the
+    // previously committed effects (including the noteGone exit) before it, so if it was judged "deleted", toast() must already have been
+    // called by now. The two positive messages both come from trash-undo and only prove that spy is attached; that NotePage's own calls
+    // would be caught is shown by removing the seed and making noteGone not navigate (the next line then fails).
     expect(toastTitles()).toEqual(expect.arrayContaining(["Moved to the trash", "Restored 1 note"]));
     expect(toastTitles()).not.toContain("This note has been deleted.");
     expect(screen.queryByText("This note has been deleted.", { exact: true })).toBeNull();
   });
 });
 
-// 解析層 404 `in_trash`（帶頂層 noteId）→ 卡片、不導頁；其餘 404 照舊連結無效（NP-T*）。
-// NP-T4 回歸另見既有案：「首次解析 404 → linkInvalid」（舊形）、「新形 by-path 404 → linkInvalid 出口」、「⑤by-group-path 404」。
-describe("NotePage × 側欄內文搜尋的同篇片段", () => {
+// A resolution-layer 404 `in_trash` (with a top-level noteId) -> a card, no navigation; other 404s remain link-invalid as before.
+// The regression for the link-invalid 404 is covered by existing cases: "first resolution 404 -> linkInvalid text", "new-form by-path 404 -> linkInvalid exit" and "by-group-path 404 -> linkInvalid exit and back to /".
+describe("NotePage x same-note snippet from sidebar content search", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connecting" };
@@ -2729,8 +2671,8 @@ describe("NotePage × 側欄內文搜尋的同篇片段", () => {
     navSpy.current = undefined;
   });
 
-  it("開著這一篇時點側欄裡同篇的片段 → 走段落錨點（留在原網址、只換 hash），不是 push 到片段的 href", async () => {
-    // 錨點 API 由頁面登記給外層的側欄殼；沒登記上去時側欄把它當別篇、導向 href（會丟掉目前網址的 query）。
+  it("clicking a same-note snippet in the sidebar while that note is open -> goes through the paragraph anchor (stays on the original URL, only the hash changes), not a push to the snippet's href", async () => {
+    // The anchor API is registered by the page to the outer sidebar shell; if not registered, the sidebar treats it as another note and navigates to the href (which would drop the current URL's query).
     const { fn } = withEditsAndList(
       ((input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input).startsWith("/api/search?")) {
@@ -2756,7 +2698,7 @@ describe("NotePage × 側欄內文搜尋的同篇片段", () => {
   });
 });
 
-describe("NotePage × 在垃圾桶裡", () => {
+describe("NotePage x in the trash", () => {
   const GROUP_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const G_NOTE: NoteDto = {
     ...NOTE,
@@ -2771,7 +2713,6 @@ describe("NotePage × 在垃圾桶裡", () => {
     group: { id: GROUP_ID, name: "Workshop A" },
     permissions: { ...OWNER_PERMS, manageShares: false, moveToGroup: false },
   };
-  /** 不在垃圾桶的另一篇（換篇用）。 */
   const OTHER_NOTE: NoteDto = { ...NOTE, id: "77777777-7777-4777-8777-777777777777", title: "Other Note", slug: "other-note" };
   const LINK_INVALID = "This link is invalid or the note doesn't exist.";
   const IN_TRASH = "This note is in the trash";
@@ -2793,12 +2734,9 @@ describe("NotePage × 在垃圾桶裡", () => {
     navSpy.current = undefined;
   });
 
-  /**
-   * 假 server：兩篇（個人 NOTE、群組 G_NOTE）一開始都在垃圾桶——三種解析端點（by-path、by-group-path、`/api/notes/:ref`）
-   * 都回 404 `code`（預設 in_trash；`noteId: false` 時不帶頂層 noteId）；`POST /api/trash/restore` 之後改回 200。
-   * `initiallyTrashed: false`＝一開始就是一般筆記；`restoreKeepsTrashed`＝restore 回成功、但解析層重抓仍是 in_trash。
-   * `holdRestore`＝restore 的回應等 `release()` 才回。OTHER_NOTE 恆 200（by-path 與 id）。
-   */
+  /** Both notes start in the trash and the resolution endpoints return 404 `code` (default in_trash; `noteId: false` omits the top-level noteId) until `POST /api/trash/restore`.
+   * `initiallyTrashed: false` starts as an ordinary note; `restoreKeepsTrashed` makes restore succeed while the resolution refetch is still in_trash; `holdRestore` holds the restore
+   * response until `release()`. OTHER_NOTE always returns 200. */
   function stubTrashed(
     opts: {
       code?: string;
@@ -2903,7 +2841,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     return queryClient;
   }
 
-  /** 同一個 NotePage 內換篇（fireEvent.click 不移焦點）。 */
+  // fireEvent.click does not move focus, which the focus cases rely on.
   function NavButtons() {
     const nav = useNavigate();
     return (
@@ -2920,14 +2858,13 @@ describe("NotePage × 在垃圾桶裡", () => {
 
   const titleInput = () => screen.getByLabelText("Note title", { selector: "input" });
 
-  /** toast 呼叫紀錄（同步記下，不靠畫面快照）。 */
   function spyToasts() {
     const toastSpy = vi.spyOn(toastModule, "toast");
     onTestFinished(() => toastSpy.mockRestore());
     return () => toastSpy.mock.calls.map(([item]) => item.title);
   }
 
-  /** 卡片出現後讓出口 effect（若誤判成連結無效）有機會跑完導頁。 */
+  // Gives a mistaken link-invalid exit effect the chance to navigate.
   async function settle() {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -2940,7 +2877,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go to trash" })).toBeInTheDocument();
-    // 卡片包在 placeholderCard 裡：窄螢幕的導覽出口（NarrowTopBar 的側欄鈕，#115）也在（jsdom 不套 xl:hidden）。
+    // The card is wrapped in placeholderCard: the narrow-screen navigation exit (NarrowTopBar's sidebar button, #115) is there too (jsdom does not apply xl:hidden).
     expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
     await settle();
     expect(toastTitles()).not.toContain(LINK_INVALID);
@@ -2957,13 +2894,13 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(screen.queryByRole("heading", { level: 2, name: IN_TRASH })).toBeNull();
   }
 
-  it("NP-T1 by-path 回 404 in_trash（帶 noteId）→ 卡片；沒有連結無效 toast、不導回首頁", async () => {
+  it("by-path returns 404 in_trash (with noteId) -> a card; no link-invalid toast, no navigation back to the home page", async () => {
     stubTrashed();
     await expectCardStays("/n/tester/my-note");
   });
 
-  // 用 `/notes/<slug>` 形：解析層 key 是 `["note", slug]`，不在 invalidateTrashRelated 的前綴清單裡。
-  it("NP-T2 /notes/<slug> 形：卡片 → 按 Restore → 送 restore、解析層重抓 200 → 卡片消失、標題框出現且拿到焦點", async () => {
+  // Using the `/notes/<slug>` form: the resolution-layer key is `["note", slug]`, which is not in the prefix list of invalidateTrashRelated.
+  it("/notes/<slug> form: card -> press Restore -> sends restore, the resolution layer refetch returns 200 -> the card disappears, the title field appears and gets focus", async () => {
     const { calls } = stubTrashed();
     renderAt(`/notes/${NOTE.slug}`);
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -2975,13 +2912,10 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(calls).toContain("POST /api/trash/restore");
     await waitFor(() => expect(routerPath()).toBe("/n/tester/my-note"));
     expect(screen.queryByText(LINK_INVALID)).toBeNull();
-    // 卡片卸載後焦點不落在 body：移到標題框。
     await waitFor(() => expect(screen.getByLabelText("Note title", { selector: "input" })).toHaveFocus());
   });
 
-  // ── 焦點只給「那一次還原的那一篇」 ──
-
-  it("NP-T8 一般開筆記（不在垃圾桶）：標題框不拿焦點", async () => {
+  it("opening a note normally (not in the trash): the title field does not take focus", async () => {
     stubTrashed({ initiallyTrashed: false });
     renderAt("/n/tester/my-note");
     await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
@@ -2989,7 +2923,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(titleInput()).not.toHaveFocus();
   });
 
-  it("NP-T9 還原拿到焦點後換篇、再換回來：兩次開頁標題框都不拿焦點（旗標用過即清）", async () => {
+  it("after a restore took focus, switching notes and switching back: neither open focuses the title field (the flag is cleared once used)", async () => {
     stubTrashed();
     renderAt(`/notes/${NOTE.slug}`);
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -3007,7 +2941,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(titleInput()).not.toHaveFocus();
   });
 
-  it("NP-T10 restore 成功但解析層重抓仍是 in_trash（卡片留著）→ 換到別篇：別篇標題框不拿焦點", async () => {
+  it("restore succeeds but the resolution-layer refetch is still in_trash (card stays) -> switch to another note: the other note's title field does not take focus", async () => {
     const { calls, untrash } = stubTrashed({ restoreKeepsTrashed: true });
     renderAt(`/notes/${NOTE.slug}`);
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -3020,7 +2954,6 @@ describe("NotePage × 在垃圾桶裡", () => {
     await settle();
     expect(titleInput()).not.toHaveFocus();
 
-    // 之後還原真的落地、再換回那篇：旗標早該在別篇頁首掛上時清掉。
     untrash();
     fireEvent.click(screen.getByRole("button", { name: "go-my-note" }));
     await waitFor(() => expect(titleInput()).toHaveValue("My Note"));
@@ -3028,7 +2961,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(titleInput()).not.toHaveFocus();
   });
 
-  it("NP-T11 restore 送出未回就換到別篇 → 回應落地 → 換回被還原的那篇：標題框不拿焦點", async () => {
+  it("restore sent without a reply and then switching to another note -> response lands -> switching back to the restored note: the title field does not take focus", async () => {
     const { release } = stubTrashed({ holdRestore: true });
     renderAt(`/notes/${NOTE.slug}`);
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -3046,7 +2979,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(titleInput()).not.toHaveFocus();
   });
 
-  it("NP-T11b restore 送出未回就換走、回應落地前又換回（新卡片）→ 回應落地：標題框拿到焦點", async () => {
+  it("restore sent without a reply, switch away, switch back before the response lands (a new card) -> response lands: the title field takes focus", async () => {
     const { release } = stubTrashed({ holdRestore: true });
     renderAt(`/notes/${NOTE.slug}`);
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -3060,31 +2993,31 @@ describe("NotePage × 在垃圾桶裡", () => {
     await waitFor(() => expect(titleInput()).toHaveFocus());
   });
 
-  it("NP-T3 by-group-path 形同 NP-T1：卡片、不導頁", async () => {
+  it("by-group-path form behaves like the by-path in_trash case: card, no navigation", async () => {
     stubTrashed();
     await expectCardStays(`/g/${GROUP_ID}/${G_NOTE.slug}`);
   });
 
-  it("NP-T3 /notes/:ref（id）形同 NP-T1：卡片、不導頁", async () => {
+  it("/notes/:ref (id) form behaves like the by-path in_trash case: card, no navigation", async () => {
     stubTrashed();
     await expectCardStays(`/notes/${NOTE.id}`);
   });
 
-  it("NP-T4 回歸：404 not_found（即使 body 帶了頂層 noteId）→ 照舊連結無效 toast＋回首頁", async () => {
+  it("regression: 404 not_found (even if the body carries a top-level noteId) -> link-invalid toast + back to the home page as before", async () => {
     stubTrashed({ code: "not_found" });
     await expectLinkInvalid("/n/tester/my-note");
   });
 
-  it("NP-T5 404 in_trash 但沒有 noteId → 無從還原，走連結無效出口", async () => {
+  it("404 in_trash without a noteId -> nothing to restore, takes the link-invalid exit", async () => {
     stubTrashed({ noteId: false });
     await expectLinkInvalid("/n/tester/my-note");
   });
 
-  // 正式環境的 QueryClient 會重試（預設 3 次、退避 1＋2＋4 秒）：這裡給「會重試、但不等」的預設，數解析端點被打幾次。
+  // The production QueryClient retries (default 3 times, backoff 1+2+4 s): here the default is "retries but does not wait", and the resolution endpoint hit count is counted.
   const RETRYING = { retry: 2, retryDelay: 0 };
   const byPathGets = (calls: string[]) => calls.filter((call) => call === "GET /api/notes/by-path/tester/my-note").length;
 
-  // 三支解析層 hook 各自要傳 retry（by-path、舊形 `/notes/:ref`、群組形），一形一案、數該形的解析端點。
+  // Each of the three resolution-layer hooks needs its own retry (by-path, old-form `/notes/:ref`, group form): one case per form, counting that form's resolution endpoint.
   it.each([
     { form: "by-path", entry: "/n/tester/my-note", endpoint: "GET /api/notes/by-path/tester/my-note" },
     { form: "by-ref", entry: `/notes/${NOTE.id}`, endpoint: `GET /api/notes/${NOTE.id}` },
@@ -3093,7 +3026,7 @@ describe("NotePage × 在垃圾桶裡", () => {
       entry: `/g/${GROUP_ID}/${G_NOTE.slug}`,
       endpoint: `GET /api/notes/by-group-path/${GROUP_ID}/${G_NOTE.slug}`,
     },
-  ])("NP-T7 解析層 404 in_trash 不重試（$form）：解析端點只打一次、卡片直接出現", async ({ entry, endpoint }) => {
+  ])("resolution-layer 404 in_trash is not retried ($form): the resolution endpoint is hit once and the card appears directly", async ({ entry, endpoint }) => {
     const { calls } = stubTrashed();
     renderAt(entry, RETRYING);
     expect(await screen.findByRole("heading", { level: 2, name: IN_TRASH })).toBeInTheDocument();
@@ -3101,7 +3034,7 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(calls.filter((call) => call === endpoint)).toHaveLength(1);
   });
 
-  it("NP-T7b 其他 404 照 QueryClient 預設重試（retry 2 → 共 3 次）後才走連結無效", async () => {
+  it("other 404s retry per the QueryClient default (retry 2 -> 3 calls in total) before taking the link-invalid exit", async () => {
     const { calls } = stubTrashed({ code: "not_found" });
     renderAt("/n/tester/my-note", RETRYING);
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
@@ -3109,8 +3042,8 @@ describe("NotePage × 在垃圾桶裡", () => {
     expect(byPathGets(calls)).toBe(3);
   });
 
-  // 正式環境（`main.tsx` 的 `new QueryClient()`）沒設 retry：沿用 query-core 的預設 3 次。
-  it("NP-T7c QueryClient 沒設 retry：其他 404 照 query-core 預設重試 3 次（共 4 次）", async () => {
+  // Production (`new QueryClient()` in `main.tsx`) sets no retry: the query-core default of 3 retries applies.
+  it("QueryClient without retry: other 404s retry per the query-core default 3 times (4 calls in total)", async () => {
     const { calls } = stubTrashed({ code: "not_found" });
     renderAt("/n/tester/my-note", { retryDelay: 0 });
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
@@ -3120,10 +3053,10 @@ describe("NotePage × 在垃圾桶裡", () => {
 });
 
 /**
- * 終態後的清單對帳。這條路徑是在跟 **server 的既知行為** 賽跑：
- * `DELETE /api/notes/:id` 會先 `await beforeNoteDeleted(id)`（unload 輪詢上限
- * 20 × 250ms = 5s）**才**跑刪除交易，所以 client 收到 NOTE_DELETED 之後，那一列最久
- * 還會在 DB 裡待 5 秒。單發重抓一定不夠，必須輪詢——這組測試就是在鎖這件事。
+ * Terminal-state list reconciliation. This path races a **known server behaviour**:
+ * `DELETE /api/notes/:id` first `await beforeNoteDeleted(id)` (unload polling cap 20 x 250ms = 5s) **before** the delete transaction runs,
+ * so after the client receives NOTE_DELETED that row can still be in the DB for up to 5 seconds. A single refetch is not enough;
+ * polling is needed - this group of tests pins that.
  */
 describe("scheduleTerminalReconcile", () => {
   const OTHER_NOTE: NoteDto = { ...NOTE, id: "22222222-2222-2222-2222-222222222222", title: "Other", slug: "other" };
@@ -3139,12 +3072,12 @@ describe("scheduleTerminalReconcile", () => {
     vi.useRealTimers();
   });
 
-  /** 先用真的 fetchQuery 建出 `['notes']`（帶 queryFn，之後 invalidate 才抓得動）。 */
+  // Built with fetchQuery and a queryFn so that a later invalidate can refetch.
   async function seedNotesQuery(queryFn: () => Promise<NoteDto[]>) {
     await queryClient.fetchQuery({ queryKey: ["notes"], queryFn });
   }
 
-  it("server 還沒 commit 刪除時會持續重抓，直到那一筆真的消失", async () => {
+  it("keeps refetching while the server has not committed the delete, until that row is really gone", async () => {
     let snapshot: NoteDto[] = [NOTE, OTHER_NOTE];
     const queryFn = vi.fn(() => Promise.resolve(snapshot));
     await seedNotesQuery(queryFn);
@@ -3152,13 +3085,12 @@ describe("scheduleTerminalReconcile", () => {
 
     scheduleTerminalReconcile(queryClient, NOTE.id);
 
-    // 前幾輪 server 仍回舊清單（刪除交易還沒 commit）——幽靈列還在，輪詢不能停。
+    // For the first few rounds the server still returns the old list (the delete transaction has not committed) - the ghost row is still there, so polling must not stop.
     await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS * 2);
     expect(queryClient.getQueryData<NoteDto[]>(["notes"])).toHaveLength(2);
     const callsWhileGhostPresent = queryFn.mock.calls.length;
     expect(callsWhileGhostPresent).toBeGreaterThan(1);
 
-    // 交易 commit 之後，下一輪就會抓到正確的清單並停止。
     snapshot = [OTHER_NOTE];
     await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS * 2);
     expect(queryClient.getQueryData<NoteDto[]>(["notes"])).toEqual([OTHER_NOTE]);
@@ -3168,7 +3100,7 @@ describe("scheduleTerminalReconcile", () => {
     expect(queryFn.mock.calls.length).toBe(callsAfterConverged);
   });
 
-  it("那一筆一開始就不在了 → 抓一次就收工", async () => {
+  it("that row is already gone at the start -> one fetch and done", async () => {
     const queryFn = vi.fn(() => Promise.resolve([OTHER_NOTE]));
     await seedNotesQuery(queryFn);
     const before = queryFn.mock.calls.length;
@@ -3179,7 +3111,7 @@ describe("scheduleTerminalReconcile", () => {
     expect(queryFn.mock.calls.length).toBe(before + 1);
   });
 
-  it("server 一直回傳該筆 → 到上限就停，不會無限輪詢", async () => {
+  it("the server keeps returning that row -> stops at the cap, no endless polling", async () => {
     const queryFn = vi.fn(() => Promise.resolve([NOTE, OTHER_NOTE]));
     await seedNotesQuery(queryFn);
     const before = queryFn.mock.calls.length;
@@ -3188,19 +3120,18 @@ describe("scheduleTerminalReconcile", () => {
     await vi.advanceTimersByTimeAsync(RECONCILE_TIMEOUT_MS + RECONCILE_INTERVAL_MS * 2);
     const afterDeadline = queryFn.mock.calls.length;
 
-    // 輪詢次數受時限約束（+2 是首發那次與邊界誤差的餘裕）。
+    // The number of polls is bounded by the time limit (+2 is slack for the first fetch and boundary error).
     expect(afterDeadline - before).toBeLessThanOrEqual(Math.ceil(RECONCILE_TIMEOUT_MS / RECONCILE_INTERVAL_MS) + 2);
 
-    // 而且是真的停了，不是慢下來。
     await vi.advanceTimersByTimeAsync(RECONCILE_TIMEOUT_MS * 2);
     expect(queryFn.mock.calls.length).toBe(afterDeadline);
   });
 
-  it("時限涵蓋 server 的最壞情況（unload 輪詢 20 × 250ms = 5s）", () => {
+  it("the time limit covers the server's worst case (unload polling 20 x 250ms = 5s)", () => {
     expect(RECONCILE_TIMEOUT_MS).toBeGreaterThan(20 * 250);
   });
 
-  it("noteId 未知（筆記從未載入成功）→ 只抓一次，不進輪詢", async () => {
+  it("noteId unknown (the note never loaded successfully) -> fetches once, no polling", async () => {
     const queryFn = vi.fn(() => Promise.resolve([NOTE, OTHER_NOTE]));
     await seedNotesQuery(queryFn);
     const before = queryFn.mock.calls.length;
@@ -3211,9 +3142,9 @@ describe("scheduleTerminalReconcile", () => {
     expect(queryFn.mock.calls.length).toBe(before + 1);
   });
 
-  it("被踢的終態對帳同時讓 ['groups'] 失效一次（不隨 ['notes'] 輪詢重複）", async () => {
-    // 前兩次仍回「NOTE 還在」讓 ['notes'] 輪詢跑至少兩輪，藉此跟「['groups'] 失效被
-    // 誤放進 tick() 裡、隨每輪重複發」的錯法做出區別；第三次起才收斂。
+  it("the kicked terminal state's reconciliation invalidates ['groups'] once at the same time (not repeated with the ['notes'] polling)", async () => {
+    // The first two returns still say "NOTE is still there" so that ['notes'] polling runs at least two rounds, which tells this apart from
+    // the wrong approach of putting the ['groups'] invalidation inside tick() so it repeats every round; it converges from the third return on.
     const notesFn = vi
       .fn<() => Promise<NoteDto[]>>()
       .mockResolvedValueOnce([NOTE, OTHER_NOTE])
@@ -3227,20 +3158,19 @@ describe("scheduleTerminalReconcile", () => {
     scheduleTerminalReconcile(queryClient, NOTE.id);
     await vi.advanceTimersByTimeAsync(0);
 
-    // ['groups'] 立刻被重抓一次（一發，掛在 scheduleTerminalReconcile 本體，不在 tick() 裡）。
+    // ['groups'] is refetched once immediately (one request, hung on scheduleTerminalReconcile itself, not inside tick()).
     await waitFor(() => expect(groupsFn).toHaveBeenCalledTimes(2));
 
-    // ['notes'] 那邊 NOTE 還在（前兩次 mock 都回含 NOTE 的清單）——輪詢會繼續跑好幾輪；
-    // 若 ['groups'] 的失效被誤放進 tick()，這裡就會隨每輪重複發，不會停在 2。
+    // On the ['notes'] side NOTE is still there (the first two mocks both returned a list containing NOTE) - polling continues for several
+    // rounds; if the ['groups'] invalidation were wrongly placed inside tick(), it would repeat every round here and not stay at 2.
     await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS * 3);
     expect(notesFn.mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(groupsFn).toHaveBeenCalledTimes(2);
   });
 });
 
-// ── #229：收斂保留 search／hash ──────────────────────────────────────
-// `?present` 與 `#/<slide id>` 是簡報模式的網址狀態；收斂（直接開 `/notes/:ref`、播放中改名）
-// 若只寫 pathname，簡報層會在第一次收斂時消失。
+// #229: convergence keeps search / hash. `?present` and `#/<slide id>` are the URL state of presentation mode; if convergence (opening
+// `/notes/:ref` directly, renaming during playback) wrote only the pathname, the presentation layer would disappear at the first convergence.
 
 function FullLocationProbe() {
   const location = useLocation();
@@ -3277,7 +3207,7 @@ function renderAtEntry(entry: string) {
   return { ...result, queryClient };
 }
 
-describe("#229 網址收斂保留 search／hash", () => {
+describe("#229 URL convergence keeps search / hash", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connected", role: "owner" };
@@ -3294,19 +3224,19 @@ describe("#229 網址收斂保留 search／hash", () => {
     navSpy.current = undefined;
   });
 
-  it("舊形 /notes/<uuid>?present#/x → canonical /n/tester/my-note?present#/x（search 與 hash 都在）", async () => {
+  it("old form /notes/<uuid>?present#/x -> canonical /n/tester/my-note?present#/x (search and hash both kept)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     renderAtEntry(`/notes/${NOTE.id}?present#/x`);
     await waitFor(() => expect(screen.getByTestId("full-location").textContent).toBe("/n/tester/my-note?present#/x"));
   });
 
-  it("播放中改名：網址換新 slug、?present＋hash 保留，編輯器同一個實例（不重掛）", async () => {
+  it("renaming during playback: the URL gets the new slug, ?present + hash are kept, the editor is the same instance (not remounted)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     const { queryClient } = renderAtEntry("/n/tester/my-note?present#/x");
     const editorBefore = await screen.findByTestId("note-editor");
     await waitFor(() => expect(screen.getByTestId("full-location").textContent).toBe("/n/tester/my-note?present#/x"));
 
-    // react-query 的通知走 macrotask：同步 act 會讓斷言落在 re-render 之前（本檔 A1 案的既有註解）。
+    // react-query notifications go through a macrotask: a synchronous act would land the assertion before the re-render (see the existing comment in the transition case of this file).
     await act(async () => {
       queryClient.setQueryData(["note", NOTE.id], { ...NOTE, title: "Renamed", slug: "renamed" });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3317,9 +3247,7 @@ describe("#229 網址收斂保留 search／hash", () => {
   });
 });
 
-// ── 版本歷史─────────────────────────────────────
-
-describe("NotePage × 版本歷史", () => {
+describe("NotePage x version history", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connecting" };
@@ -3336,7 +3264,7 @@ describe("NotePage × 版本歷史", () => {
     navSpy.current = undefined;
   });
 
-  it("Ctrl+S（owner）→ preventDefault、開儲存對話框", async () => {
+  it("Ctrl+S (owner) -> preventDefault, opens the save dialog", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3344,12 +3272,12 @@ describe("NotePage × 版本歷史", () => {
     const ev = new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true });
     window.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
-    // 這是版本 describe 第一個開對話框的案，lazy chunk 冷啟動＋全套平行負載下曾實測到 3043 ms（舊全域 3 s 時逾時紅）；
-    // 原本單案放寬到 10 s，全域 asyncUtilTimeout 已是 10 s（test/setup.ts），不再另設。
+    // First case in this describe to open a dialog: the lazy chunk's cold start under full parallel load can be slow; the global
+    // asyncUtilTimeout (10 s, test/setup.ts) covers it, so no separate timeout is set.
     expect(await screen.findByRole("dialog", { name: "Save current version" })).toBeInTheDocument();
   });
 
-  it("儲存對話框已開著再按 Ctrl+S → 仍 preventDefault（不跳瀏覽器另存），不開第二個、已填的名稱還在", async () => {
+  it("Ctrl+S while the save dialog is already open -> still preventDefault (no browser save-as), no second dialog opens, the already-typed name stays", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3366,7 +3294,7 @@ describe("NotePage × 版本歷史", () => {
     expect(within(screen.getByRole("dialog", { name: "Save current version" })).getByLabelText("Version name (optional)")).toHaveValue("草稿");
   });
 
-  it("套用三選一按「先儲存」開的儲存對話框，再按 Ctrl+S 不會把「存完接著套用」洗掉", async () => {
+  it("pressing Ctrl+S in the save dialog opened from the three-way apply's 'Save first' does not wash out 'apply after saving'", async () => {
     const fetchSpy = mockFetch();
     vi.stubGlobal("fetch", fetchSpy);
     collab.state = { phase: "connected", role: "owner" };
@@ -3387,7 +3315,7 @@ describe("NotePage × 版本歷史", () => {
     );
   });
 
-  it("Cmd+S（metaKey）同樣攔", async () => {
+  it("Cmd+S (metaKey) is intercepted too", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3397,7 +3325,7 @@ describe("NotePage × 版本歷史", () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
-  it("viewer → Ctrl+S 不攔（瀏覽器預設行為保留）、沒有對話框", async () => {
+  it("viewer -> Ctrl+S is not intercepted (browser default kept), no dialog", async () => {
     vi.stubGlobal("fetch", mockFetch({ ...NOTE, role: "viewer", permissions: VIEWER_PERMS }));
     collab.state = { phase: "connected", role: "viewer" };
     renderNotePage(NOTE.id);
@@ -3409,7 +3337,7 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("已有對話框開著（例如分享）→ Ctrl+S 不攔", async () => {
+  it("another dialog already open (e.g. share) -> Ctrl+S is not intercepted", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3426,7 +3354,7 @@ describe("NotePage × 版本歷史", () => {
     }
   });
 
-  it("Ctrl+Shift+S、Alt+S、單按 s 都不攔", async () => {
+  it("Ctrl+Shift+S, Alt+S and a plain s are not intercepted", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3438,7 +3366,7 @@ describe("NotePage × 版本歷史", () => {
     }
   });
 
-  it("簡報模式（?present）中 Ctrl+S 不攔、不開儲存對話框", async () => {
+  it("in presentation mode (?present) Ctrl+S is not intercepted and no save dialog opens", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     collab.provider.synced = true;
@@ -3451,7 +3379,7 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.queryByRole("dialog", { name: "Save current version" })).not.toBeInTheDocument();
   });
 
-  it("預覽：previewSlot 交給 NoteEditor、頁首出現橫幅；編輯器替身仍在", async () => {
+  it("preview: previewSlot is handed to NoteEditor, the banner appears in the header; the editor stand-in is still there", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3461,18 +3389,18 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.getByTestId("note-editor")).toBeInTheDocument();
   });
 
-  it("Esc（沒有浮層）：離開預覽", async () => {
+  it("Esc (no overlay): leaves the preview", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
     fireEvent.click(await screen.findByText("mock-start-preview"));
     await screen.findByTestId("mock-preview-slot");
-    // 這一下 Esc 只關預覽這一層——preventDefault（fireEvent 回 false），搜尋標記的 Esc 監聽看到 defaultPrevented 就讓路
+    // This Esc closes only the preview layer - preventDefault (fireEvent returns false); the search marker's Esc listener yields when it sees defaultPrevented.
     expect(fireEvent.keyDown(window, { key: "Escape" })).toBe(false);
     await waitFor(() => expect(screen.queryByTestId("mock-preview-slot")).not.toBeInTheDocument());
   });
 
-  it("預覽中開著 ⋮ 選單按 Esc → 只關選單、預覽留著（jsdom；真鍵盤見 e2e 22）", async () => {
+  it("Esc with the kebab menu open during a preview -> closes only the menu, the preview stays (jsdom; real keyboard in e2e/tests/22-versions.spec.ts)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3485,7 +3413,7 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.getByTestId("mock-preview-slot")).toBeInTheDocument();
   });
 
-  it("預覽中開著儲存對話框按 Esc → 只關對話框、預覽留著（jsdom；真鍵盤見 e2e 22）", async () => {
+  it("Esc with the save dialog open during a preview -> closes only the dialog, the preview stays (jsdom; real keyboard in e2e/tests/22-versions.spec.ts)", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3498,7 +3426,7 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.getByTestId("mock-preview-slot")).toBeInTheDocument();
   });
 
-  it("Esc 已被別人 preventDefault（＝Radix 處理過、浮層已卸）→ 預覽留著，即使 DOM 裡已沒有任何浮層", async () => {
+  it("Esc already preventDefault'ed by someone else (= handled by Radix, overlay already unmounted) -> the preview stays, even though no overlay is left in the DOM", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     renderNotePage(NOTE.id);
@@ -3513,7 +3441,7 @@ describe("NotePage × 版本歷史", () => {
     expect(screen.getByTestId("mock-preview-slot")).toBeInTheDocument();
   });
 
-  it("套用成功 → 筆記 query 整組失效（invalidateNoteQueries：['note', id] 與路徑解析層 ['note-by-path', handle, slug]）", async () => {
+  it("apply succeeded -> the whole note query group is invalidated (invalidateNoteQueries: ['note', id] and the path-resolution layer ['note-by-path', handle, slug])", async () => {
     vi.stubGlobal("fetch", mockFetch());
     collab.state = { phase: "connected", role: "owner" };
     const { queryClient } = renderNotePage(NOTE.id);
@@ -3528,7 +3456,7 @@ describe("NotePage × 版本歷史", () => {
   });
 });
 
-describe("NotePage × 最近 tab 跟上開著那篇", () => {
+describe("NotePage x recent tab follows the open note", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connecting" };
@@ -3545,7 +3473,7 @@ describe("NotePage × 最近 tab 跟上開著那篇", () => {
     navSpy.current = undefined;
   });
 
-  it("NP-R1 開著的那篇被編輯後，最近 tab 立刻把它排到最前；GET /api/notes 只打一次", async () => {
+  it("the open note, once edited, is moved to the front of the recent tab immediately; GET /api/notes is called once", async () => {
     localStorage.setItem("sidebar.tab", "recent");
     const edited = (at: string) => ({ at, byHandle: "tester", agentLabel: null });
     const noteA: NoteDto = { ...NOTE, lastEdited: edited("2026-10-01T00:00:00.000Z") };
@@ -3594,7 +3522,7 @@ describe("NotePage × 最近 tab 跟上開著那篇", () => {
     expect(listCalls).toBe(1);
   });
 
-  it("NP-R2 回到快取過的 A：note 快取裡較舊的 lastEdited 不蓋掉清單裡較新的值（清單不寫、不重排）", async () => {
+  it("back to a cached A: the older lastEdited in the note cache does not overwrite the newer value in the list (the list is not written or reordered)", async () => {
     localStorage.setItem("sidebar.tab", "recent");
     const edited = (at: string) => ({ at, byHandle: "tester", agentLabel: null });
     const aOld: NoteDto = { ...NOTE, lastEdited: edited("2026-10-01T00:00:00.000Z") };
@@ -3629,7 +3557,7 @@ describe("NotePage × 最近 tab 跟上開著那篇", () => {
       );
     await waitFor(() => expect(order()).toEqual([NOTE.id, noteB.id]));
     await waitFor(() => expect(screen.getByLabelText("Note title", { selector: "input" })).toHaveValue("Other Note"));
-    // 「5 分鐘內開過 A」留下的舊快取（解析層＋常駐層）；清單則已是較新的 A。
+    // Stale cache left by "opened A within 5 minutes" (resolution layer + persistent layer); the list already has a newer A.
     queryClient.setQueryData(["note-by-path", "tester", "my-note"], aOld);
     queryClient.setQueryData(["note", NOTE.id], aOld);
 
@@ -3659,7 +3587,7 @@ describe("NotePage × 最近 tab 跟上開著那篇", () => {
   });
 });
 
-describe("頁頭頭像列（#293）", () => {
+describe("header avatar row (#293)", () => {
   const GROUP = { name: "Also viewing this note" } as const;
   let awareness: Awareness;
 
@@ -3687,12 +3615,12 @@ describe("頁頭頭像列（#293）", () => {
   async function openPage(note: NoteDto = NOTE) {
     vi.stubGlobal("fetch", mockFetch(note));
     const rendered = renderNotePage("my-note");
-    // 頁頭在編輯器替身的 headerSlot 裡；viewer 的標題是 h1（沒有 "Note title" 輸入框），以替身為準。
+    // The header is in the editor stand-in's headerSlot; a viewer's title is an h1 (no "Note title" input), so go by the stand-in.
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
     return rendered;
   }
 
-  it("NP-P1 位置：ConnectionBadge 之後、LastEditedLabel 之前", async () => {
+  it("position: after ConnectionBadge, before LastEditedLabel", async () => {
     setRemote(awareness, 10, userState("u2", "Bea"));
     await openPage({ ...NOTE, lastEdited: { at: "2026-10-01T00:00:00.000Z", byHandle: "tester", agentLabel: null } });
 
@@ -3708,7 +3636,7 @@ describe("頁頭頭像列（#293）", () => {
     expect(group.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("NP-P2 沒有頭貼時本分頁寫 knotebook 欄、avatar 為 null", async () => {
+  it("without an avatar this tab writes the knotebook field with avatar null", async () => {
     await openPage();
 
     await waitFor(() =>
@@ -3722,7 +3650,7 @@ describe("頁頭頭像列（#293）", () => {
     );
   });
 
-  it("NP-P2a 有頭貼時 avatar 寫 { id, v }、不含 pending", async () => {
+  it("with an avatar, avatar is written as { id, v } without pending", async () => {
     const { queryClient } = await openPage();
     await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
 
@@ -3735,7 +3663,7 @@ describe("頁頭頭像列（#293）", () => {
     expect(Object.keys(field.avatar).sort()).toEqual(["id", "v"]);
   });
 
-  it("NP-P2b 換頭貼、清除頭貼後 awareness 的 avatar 跟著變", async () => {
+  it("after changing and clearing the avatar, the awareness avatar follows", async () => {
     const { queryClient } = await openPage();
     await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
     const avatarOf = () => (awareness.getLocalState()?.knotebook as { avatar: unknown }).avatar;
@@ -3760,18 +3688,18 @@ describe("頁頭頭像列（#293）", () => {
     ["connecting", /Connecting/],
     ["reconnecting-once", /Reconnecting/],
     ["outdated", /Reload required/],
-  ] as const)("NP-P3 非 connected（%s）：沒有頭像列、本機不寫 knotebook 欄", async (phase, badgeText) => {
+  ] as const)("not connected (%s): no avatar row, and the local tab writes no knotebook field", async (phase, badgeText) => {
     collab.state = { phase };
     setRemote(awareness, 10, userState("u2", "Bea"));
     await openPage();
-    // 連線徽章出現＝頁頭與 effect 都已跑完，再斷言「沒有」。
+    // The badge appearing means the header and its effects have run; only then assert that the avatar row is absent.
     await waitFor(() => expect(within(document.querySelector("header")!).getByText(badgeText)).toBeInTheDocument());
 
     expect(screen.queryByRole("group", GROUP)).toBeNull();
     expect(awareness.getLocalState()).not.toHaveProperty("knotebook");
   });
 
-  it("NP-P4 scroller 接線：點頭像 → NoteEditor 交出的 scroller 收到那份 cursor", async () => {
+  it("scroller wiring: clicking an avatar -> the scroller handed out by NoteEditor receives that cursor", async () => {
     const scroller = vi.fn<(cursor: unknown) => boolean>(() => true);
     editorMock.scroller = scroller;
     const cursor = { anchor: { tag: "a" }, head: { tag: "a" } };
@@ -3784,7 +3712,7 @@ describe("頁頭頭像列（#293）", () => {
     expect(scroller).toHaveBeenCalledWith(cursor);
   });
 
-  it("NP-P5 我自己（另一個分頁，同 user.id）不出現", async () => {
+  it("myself (another tab, same user.id) does not appear", async () => {
     setRemote(awareness, 10, userState(USER.id, USER.displayName));
     await openPage();
     await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
@@ -3792,14 +3720,14 @@ describe("頁頭頭像列（#293）", () => {
     expect(screen.queryByRole("group", GROUP)).toBeNull();
   });
 
-  it("NP-P6 viewer：本機 knotebook.role 是 viewer", async () => {
+  it("viewer: the local knotebook.role is viewer", async () => {
     collab.state = { phase: "connected", role: "viewer" };
     await openPage({ ...NOTE, role: "viewer" });
 
     await waitFor(() => expect(awareness.getLocalState()?.knotebook).toMatchObject({ role: "viewer" }));
   });
 
-  it("NP-P7 改顯示名稱：knotebook.since 跟著更新", async () => {
+  it("changing the display name: knotebook.since is updated", async () => {
     const { queryClient } = await openPage();
     await waitFor(() => expect(awareness.getLocalState()?.knotebook).toBeDefined());
     const first = (awareness.getLocalState()!.knotebook as { since: number }).since;

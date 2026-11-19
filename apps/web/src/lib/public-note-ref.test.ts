@@ -3,12 +3,12 @@ import { publicNoteApiPath, publicNoteQueryKey, publicRefIdentity } from "./publ
 
 const TOKEN = "abcDEF123_-".repeat(4).slice(0, 43);
 
-describe("publicNoteApiPath（#122：兩形 API 網址的唯一組字點）", () => {
-  it("token 形 → /api/public/notes/<token>", () => {
+describe("publicNoteApiPath (#122: builds the API URL for both forms)", () => {
+  it("token form -> /api/public/notes/<token>", () => {
     expect(publicNoteApiPath({ kind: "token", token: TOKEN })).toBe(`/api/public/notes/${TOKEN}`);
   });
 
-  it("別名形 → /api/public/notes/<handle>/<slug>；非 ASCII slug 先編碼（fetch URL 面）", () => {
+  it("alias form -> /api/public/notes/<handle>/<slug>; a non-ASCII slug is encoded first (fetch URL side)", () => {
     expect(publicNoteApiPath({ kind: "path", handle: "alice", slug: "my-doc" })).toBe(
       "/api/public/notes/alice/my-doc",
     );
@@ -18,8 +18,8 @@ describe("publicNoteApiPath（#122：兩形 API 網址的唯一組字點）", ()
   });
 });
 
-describe("publicNoteQueryKey（兩形不得共 key——共了會拿到彼此的殘留快取）", () => {
-  it("token 形與別名形前綴不同、段落逐值展開", () => {
+describe("publicNoteQueryKey (the two forms must not share a key, or they would get each other's stale cache)", () => {
+  it("token form and alias form have different prefixes, segments expanded per value", () => {
     expect(publicNoteQueryKey({ kind: "token", token: TOKEN })).toEqual(["public-note", TOKEN]);
     expect(publicNoteQueryKey({ kind: "path", handle: "alice", slug: "my-doc" })).toEqual([
       "public-note-by-path",
@@ -29,8 +29,8 @@ describe("publicNoteQueryKey（兩形不得共 key——共了會拿到彼此的
   });
 });
 
-describe("publicRefIdentity（#269：PublicNoteEditor 的重建 deps 與段落錨點的 noteKey 共用）", () => {
-  it("token 形 → token:<token>；別名形 → path:<handle>/<slug>（兩形前綴不同）", () => {
+describe("publicRefIdentity (#269: shared by PublicNoteEditor's rebuild deps and the paragraph-anchor noteKey)", () => {
+  it("token form -> token:<token>; alias form -> path:<handle>/<slug> (the two forms have different prefixes)", () => {
     expect(publicRefIdentity({ kind: "token", token: TOKEN })).toBe(`token:${TOKEN}`);
     expect(publicRefIdentity({ kind: "path", handle: "alice", slug: "my-doc" })).toBe("path:alice/my-doc");
   });

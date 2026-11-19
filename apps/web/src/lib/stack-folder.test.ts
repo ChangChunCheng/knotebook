@@ -12,8 +12,8 @@ import { personalNote } from "@/test/select-fixtures";
 import { runStackFolder, showStackCreatedToast, STACK_CREATE_ATTEMPTS, undoStackFolder, type StackNote } from "./stack-folder";
 
 /**
- * 疊資料夾的三發、補償與復原（疊資料夾的第 5–8 步）。
- * 假 fetch：依序記下 [method, url, body 原字串]；非 GET 依序取 replies（用完就 throw，之後不該再有請求）；GET 一律回空清單。
+ * The three requests of stacking a folder, compensation and undo. Fake fetch: records [method, url, raw body string] in order;
+ * non-GET requests take replies in order (it throws once they run out, since no further request is expected); GET always returns an empty list.
  */
 
 type Reply = { status: number; body: unknown };
@@ -67,7 +67,6 @@ function run(queryClient: QueryClient, t: typeof i18n.t, over: Partial<Parameter
   return runStackFolder({ a: A, b: B, parent: { folderId: "F" }, firstName: "New folder", takenNames: [], queryClient, t, ...over });
 }
 
-/** 讓尚未結束的 promise 鏈跑完（假 fetch 都是立即 resolve）。 */
 async function settle() {
   await act(async () => {
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
@@ -91,7 +90,7 @@ describe("runStackFolder", () => {
     act(() => dismissAllToasts());
   });
 
-  it("ST1 根層個人：POST {name, space personal} → PUT B → PUT A；['folders']、['notes'] 的失效（重抓）完成後才回 folder", async () => {
+  it("root personal: POST {name, space personal} -> PUT B -> PUT A; returns the folder only after the invalidation (refetch) of ['folders'] and ['notes'] completes", async () => {
     const calls = stubSequence([created(), placed("B", "NEW"), placed("A", "NEW")]);
     const { queryClient, t } = setup();
     const releases: (() => void)[] = [];
@@ -117,7 +116,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(0);
   });
 
-  it("ST2 parent 資料夾 → {name, parentId}；共享 → space shared；群組 → space {group, G}", async () => {
+  it("parent folder -> {name, parentId}; shared -> space shared; group -> space {group, G}", async () => {
     const calls = stubSequence([
       created(), placed("B", "NEW"), placed("A", "NEW"),
       created(), placed("B", "NEW"), placed("A", "NEW"),
@@ -136,7 +135,7 @@ describe("runStackFolder", () => {
     ]);
   });
 
-  it("ST3 撞名：前兩發 409 → 名稱依序 New folder／New folder 2／New folder 3；五發全 409 → 恰 5 發、沒有 PUT、一則 toast、回 null", async () => {
+  it("name collision: the first two 409 -> names New folder / New folder 2 / New folder 3 in turn; all five 409 -> five requests, no PUT, one toast, returns null", async () => {
     const taken = fail(409, "folder_name_taken");
     const calls = stubSequence([taken, taken, created("New folder 3"), placed("B", "NEW"), placed("A", "NEW")]);
     const { queryClient, t } = setup();
@@ -158,7 +157,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST4 ① 409 folder_limit → 恰 1 發 POST、沒有 PUT 與 DELETE、一則錯誤 toast、回 null、['folders'] 被失效（重抓）", async () => {
+  it("409 folder_limit: one POST, no PUT or DELETE, one error toast, returns null, ['folders'] invalidated (refetch)", async () => {
     const calls = stubSequence([fail(409, "folder_limit")]);
     const { queryClient, t } = setup();
     expect(queryClient.getQueryState(["folders"])?.isInvalidated).toBe(false);
@@ -171,7 +170,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST5 ② 403 → DELETE 新資料夾 {onlyIfEmpty:true}、沒有 ③、一則 toast（errors.forbidden）", async () => {
+  it("PUT B (2nd request) 403 -> DELETE the new folder {onlyIfEmpty:true}, no PUT A (3rd request), one toast (errors.forbidden)", async () => {
     const calls = stubSequence([created(), fail(403, "forbidden"), ok({ trashedNoteIds: [], deletedFolderIds: ["NEW"] })]);
     const { queryClient, t } = setup();
 
@@ -182,7 +181,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST6 ③ 404 folder_not_found → PUT B 回 b.from → DELETE {onlyIfEmpty:true}、一則 toast「Folder not found.」", async () => {
+  it("PUT A (3rd request) 404 folder_not_found -> PUT B back to b.from -> DELETE {onlyIfEmpty:true}, one toast 'Folder not found.'", async () => {
     const calls = stubSequence([
       created(),
       placed("B", "NEW"),
@@ -199,7 +198,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST7 補償的 DELETE 回 409 folder_not_empty → 之後沒有請求、['folders'] 仍被失效（保留的新資料夾要進側欄）、仍只有一則 toast", async () => {
+  it("compensating DELETE returns 409 folder_not_empty -> no request after it, ['folders'] still invalidated (the kept new folder must reach the sidebar), still one toast", async () => {
     const calls = stubSequence([created(), placed("B", "NEW"), fail(403, "forbidden"), placed("B", "F"), fail(409, "folder_not_empty")]);
     const { queryClient, t } = setup();
     expect(queryClient.getQueryState(["folders"])?.isInvalidated).toBe(false);
@@ -213,7 +212,7 @@ describe("runStackFolder", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST8 ③ 失敗後補償的 PUT B 也失敗 → 不送 DELETE、['folders'] 被失效、只有一則 toast", async () => {
+  it("after PUT A fails, the compensating PUT B also fails -> no DELETE sent, ['folders'] invalidated, one toast", async () => {
     const calls = stubSequence([created(), placed("B", "NEW"), fail(403, "forbidden"), fail(500, "internal")]);
     const { queryClient, t } = setup();
     expect(queryClient.getQueryState(["folders"])?.isInvalidated).toBe(false);
@@ -228,7 +227,7 @@ describe("runStackFolder", () => {
   });
 });
 
-describe("undoStackFolder／showStackCreatedToast", () => {
+describe("undoStackFolder / showStackCreatedToast", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -243,7 +242,7 @@ describe("undoStackFolder／showStackCreatedToast", () => {
   const UNDO_SEQUENCE: Call[] = [PUT("A", null), PUT("B", "F"), DELETE_ONLY_IF_EMPTY];
   const undo = (queryClient: QueryClient, t: typeof i18n.t) => undoStackFolder({ folderId: "NEW", a: A, b: B, queryClient, t });
 
-  it("ST9 PUT A {from:null} → PUT B {from} → DELETE {onlyIfEmpty}；200 → 沒有 toast、['folders'] 被失效", async () => {
+  it("PUT A {from:null} -> PUT B {from} -> DELETE {onlyIfEmpty}; 200 -> no toast, ['folders'] invalidated", async () => {
     const calls = stubSequence([placed("A", null), placed("B", "F"), ok({ trashedNoteIds: [], deletedFolderIds: ["NEW"] })]);
     const { queryClient, t } = setup();
 
@@ -256,7 +255,7 @@ describe("undoStackFolder／showStackCreatedToast", () => {
     expect(toastItems()).toHaveLength(0);
   });
 
-  it("ST9 DELETE 409 folder_not_empty → toast「The folder has other items now, so it was kept」", async () => {
+  it("DELETE 409 folder_not_empty -> toast 'The folder has other items now, so it was kept'", async () => {
     const calls = stubSequence([placed("A", null), placed("B", "F"), fail(409, "folder_not_empty")]);
     const { queryClient, t } = setup();
 
@@ -267,7 +266,7 @@ describe("undoStackFolder／showStackCreatedToast", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST9 DELETE 404 folder_not_found → 視為完成、沒有 toast", async () => {
+  it("DELETE 404 folder_not_found -> treated as done, no toast", async () => {
     const calls = stubSequence([placed("A", null), placed("B", "F"), fail(404, "folder_not_found")]);
     const { queryClient, t } = setup();
 
@@ -278,7 +277,7 @@ describe("undoStackFolder／showStackCreatedToast", () => {
     expect(toastItems()).toHaveLength(0);
   });
 
-  it("ST9 PUT A 失敗 → 錯誤 toast、沒有 PUT B 與 DELETE", async () => {
+  it("PUT A fails -> error toast, no PUT B or DELETE", async () => {
     const calls = stubSequence([fail(403, "forbidden")]);
     const { queryClient, t } = setup();
 
@@ -290,7 +289,7 @@ describe("undoStackFolder／showStackCreatedToast", () => {
     expect(toastItems()).toHaveLength(1);
   });
 
-  it("ST10 showStackCreatedToast：en「Created “Q3 notes” with 2 notes」有 Undo；按 Undo → 走 ST9 的序列；zh「已建立「Q3 notes」並放入 2 篇筆記」", async () => {
+  it("showStackCreatedToast: the en toast for 2 notes has Undo; pressing Undo runs the undo sequence above; the zh toast reads 「已建立「Q3 notes」並放入 2 篇筆記」", async () => {
     const calls = stubSequence([placed("A", null), placed("B", "F"), ok({ trashedNoteIds: [], deletedFolderIds: ["NEW"] })]);
     const { queryClient, t } = setup();
 

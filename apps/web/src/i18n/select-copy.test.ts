@@ -9,8 +9,8 @@ import selectEnRaw from "./select.en.json?raw";
 import selectZhTWRaw from "./select.zh-TW.json?raw";
 
 /**
- * #181 一般 tab 選取模式的 lazy 字串包（`select.*`，只由 SelectLazy 鏈經 `select-strings.ts` 註冊）。
- * 主 JSON 的 parity（`index.test.ts`）不涵蓋這兩檔，所以 parity、逐字、與主檔不重疊、無重複鍵都在這裡。
+ * #181 lazy string bundle for ordinary-tab select mode (`select.*`, registered only by the SelectLazy chain via `select-strings.ts`).
+ * The main-JSON parity test (`index.test.ts`) does not cover these two files, so parity, literal text, no overlap with the main file and no duplicate keys are checked here.
  */
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -22,7 +22,7 @@ function get(obj: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-/** 同 `index.test.ts`：`JSON.parse` 遇重複鍵只留最後一份，直接掃原始文字。 */
+/** Same as `index.test.ts`: `JSON.parse` keeps only the last of duplicate keys, so scan the raw text. */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
   const stack: { keys: Set<string> | null; expectKey: boolean }[] = [];
@@ -48,18 +48,18 @@ function duplicateKeys(raw: string): string[] {
   return dups;
 }
 
-describe("SC1 select 包：兩語系鍵集合相同、頂層只有 select", () => {
-  it("鍵集合相同", () => {
+describe("select bundle: both locales have the same key set, top level is only select", () => {
+  it("same key set", () => {
     expect(flattenKeys(selectZhTW).sort()).toEqual(flattenKeys(selectEn).sort());
   });
 
-  it("頂層恰一個鍵 select", () => {
+  it("exactly one top-level key, select", () => {
     expect(Object.keys(selectEn)).toEqual(["select"]);
     expect(Object.keys(selectZhTW)).toEqual(["select"]);
   });
 });
 
-describe("SC2 選取模式文案字面（zh-TW）", () => {
+describe("select-mode copy literals (zh-TW)", () => {
   const SPEC_COPY: Record<string, string> = {
     "select.selected_other": "已選 {{count}} 項",
     "select.moveTo": "移動到",
@@ -72,7 +72,6 @@ describe("SC2 選取模式文案字面（zh-TW）", () => {
   }
 });
 
-/** 資料夾選取模式的逐字字串（zh-TW 的 `_one`／`_other` 同字）。 */
 const FOLDER_SPEC_ZH: Record<string, string> = {
   acrossGroups: "選取的筆記分屬不同群組，無法一起移動",
   foldersOnlyWithinSpace: "資料夾只能在同一個空間內移動",
@@ -111,7 +110,7 @@ const FOLDER_SPEC_EN: Record<string, string> = {
   foldersGoneSuffix_other: ", {{count}} folders no longer exist",
 };
 
-describe("SC7 資料夾逐字", () => {
+describe("folder literals", () => {
   it.each(Object.entries(FOLDER_SPEC_ZH))("zh-TW select.%s", (key, text) => {
     expect(get(selectZhTW, `select.${key}`)).toBe(text);
   });
@@ -121,7 +120,6 @@ describe("SC7 資料夾逐字", () => {
   });
 });
 
-/** 最愛 tab 選取模式的逐字字串（zh-TW 的 `_one`／`_other` 同字）。 */
 const FAVORITE_SPEC_ZH: Record<string, string> = {
   unfavorite: "移出最愛",
   unfavoriteTitle_one: "要把 {{count}} 篇筆記移出最愛嗎？",
@@ -140,7 +138,7 @@ const FAVORITE_SPEC_EN: Record<string, string> = {
   unfavorited_other: "Removed {{count}} notes from favorites",
 };
 
-describe("SC8 最愛 tab 逐字", () => {
+describe("favorites tab literals", () => {
   it.each(Object.entries(FAVORITE_SPEC_ZH))("zh-TW select.%s", (key, text) => {
     expect(get(selectZhTW, `select.${key}`)).toBe(text);
   });
@@ -150,9 +148,9 @@ describe("SC8 最愛 tab 逐字", () => {
   });
 });
 
-// 讀原始文字：deep merge 的 addResourceBundle 會把 select 併進 i18n 初始化時那份主 JSON 物件（同一個 import），
-// 所以 import 進來的主 JSON 在 select-strings 載入後已帶 select 鍵。
-describe("SC3 主 JSON 沒有 select 頂層鍵（字串只進 lazy 包）", () => {
+// Read the raw text: deep-merge addResourceBundle merges `select` into the main JSON object from i18n init (the same import),
+// so after select-strings loads, the imported main JSON already has a `select` key.
+describe("main JSON has no select top-level key (strings go only into the lazy bundle)", () => {
   it.each([
     ["en", enRaw],
     ["zh-TW", zhTWRaw],
@@ -161,18 +159,18 @@ describe("SC3 主 JSON 沒有 select 頂層鍵（字串只進 lazy 包）", () =
   });
 });
 
-describe("SC4 註冊後可用、不覆寫主檔", () => {
-  it("select.selected：en「3 selected」、zh-TW「已選 3 項」", () => {
+describe("available after registration, main file not overridden", () => {
+  it("select.selected: en '3 selected', zh-TW '已選 3 項'", () => {
     expect(i18n.t("select.selected", { count: 3, lng: "en" })).toBe("3 selected");
     expect(i18n.t("select.selected", { count: 3, lng: "zh-TW" })).toBe("已選 3 項");
   });
 
-  it("trash.select 仍是 Select", () => {
+  it("trash.select is still Select", () => {
     expect(i18n.t("trash.select", { lng: "en" })).toBe("Select");
   });
 });
 
-describe("SC5 select 包沒有重複鍵", () => {
+describe("select bundle has no duplicate keys", () => {
   it.each([
     ["en", selectEnRaw],
     ["zh-TW", selectZhTWRaw],
@@ -181,7 +179,7 @@ describe("SC5 select 包沒有重複鍵", () => {
   });
 });
 
-describe("SC6 每個 _one 都有 _other", () => {
+describe("every _one has an _other", () => {
   it.each([
     ["en", selectEn],
     ["zh-TW", selectZhTW],

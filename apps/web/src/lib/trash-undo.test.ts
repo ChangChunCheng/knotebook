@@ -18,8 +18,6 @@ afterEach(() => {
   __resetFolderSortForTests();
 });
 
-// 「已移到垃圾桶」toast 與「復原」。真的 QueryClient、navigate 用 vi.fn()。
-
 interface FakeResponseInit {
   ok: boolean;
   status: number;
@@ -69,7 +67,6 @@ const HINT = "Members of the group whose role can both edit and delete notes can
 
 type RestoreReply = { status: 200; body: unknown } | { status: number; body: unknown };
 
-/** 只接受 `POST /api/trash/restore`；記下 body。 */
 function stubRestore(reply: RestoreReply) {
   const bodies: unknown[] = [];
   vi.stubGlobal(
@@ -94,12 +91,12 @@ function setup() {
   return { queryClient, navigate, t: i18n.t.bind(i18n) };
 }
 
-/** Radix Toast Root（`<li>`）——variant 的 class 掛在它身上。 */
+/** Radix Toast Root (`<li>`): the variant class sits on it. */
 function toastRoot(title: string): HTMLElement {
   return screen.getByText(title, { exact: true }).closest("li") as HTMLElement;
 }
 
-describe("showTrashedToast／undoTrash", () => {
+describe("showTrashedToast / undoTrash", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -110,7 +107,7 @@ describe("showTrashedToast／undoTrash", () => {
     act(() => dismissAllToasts());
   });
 
-  it("TU1 個人筆記：標題「Moved to the trash」、有 Undo、沒有 hint 句", async () => {
+  it("personal note: title 'Moved to the trash', has Undo, no hint sentence", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false }));
 
@@ -119,7 +116,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.queryByText(HINT, { exact: true })).toBeNull();
   });
 
-  it("TU2 群組筆記 delete-only（edit 假）：沒有 Undo、有 hint 句", async () => {
+  it("group note delete-only (edit false): no Undo, has the hint sentence", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [GROUP_DELETE_ONLY], queryClient, navigate, t, reopen: false }));
 
@@ -128,7 +125,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("TU3 多篇：混合（一篇 delete-only）→ 沒有 Undo；兩篇都可 → 有 Undo，按下送兩個 id", async () => {
+  it("several notes: mixed (one delete-only) -> no Undo; both restorable -> Undo, pressing it sends two ids", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [PERSONAL, GROUP_DELETE_ONLY], queryClient, navigate, t, reopen: false }));
     expect(await screen.findByText("Moved to the trash", { exact: true })).toBeInTheDocument();
@@ -141,7 +138,7 @@ describe("showTrashedToast／undoTrash", () => {
     await waitFor(() => expect(bodies).toEqual([{ ids: [PERSONAL.id, GROUP_EDIT_DELETE.id] }]));
   });
 
-  it("TU4 復原成功＋reopen：toast「Restored 1 note」（非 destructive）、navigate(canonical) 一次", async () => {
+  it("undo succeeds + reopen: toast 'Restored 1 note' (not destructive), navigate(canonical) once", async () => {
     const { queryClient, navigate, t } = setup();
     stubRestore({ status: 200, body: { restored: [PERSONAL], skipped: [] } });
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: true }));
@@ -153,7 +150,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).toHaveBeenCalledWith(canonicalNotePath(PERSONAL));
   });
 
-  it("TU5 復原成功、reopen false：不導頁", async () => {
+  it("undo succeeds, reopen false: does not navigate", async () => {
     const { queryClient, navigate, t } = setup();
     stubRestore({ status: 200, body: { restored: [PERSONAL], skipped: [] } });
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false }));
@@ -163,7 +160,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("TU6 已不在垃圾桶（全略過）：toast「Restored 0 notes, 1 no longer in the trash」destructive、不導頁", async () => {
+  it("already gone from the trash (all skipped): destructive toast 'Restored 0 notes, 1 no longer in the trash', does not navigate", async () => {
     const { queryClient, navigate, t } = setup();
     stubRestore({ status: 200, body: { restored: [], skipped: [{ id: PERSONAL.id, reason: "not_found" }] } });
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: true }));
@@ -175,9 +172,8 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("TU8 seed 早於導頁：navigate 當下常駐層 [\"note\", id] 已是 success（移入時留下的 404 error 態被蓋掉）", async () => {
+  it("seed before navigate: when navigating, the persistent [\"note\", id] entry is already success (the 404 error state left by moving to the trash is overwritten)", async () => {
     const { queryClient, navigate, t } = setup();
-    // 起點：常駐層有舊 data、停在 404 in_trash 的 error 態。
     queryClient.setQueryData(["note", PERSONAL.id], PERSONAL);
     await queryClient
       .fetchQuery({ queryKey: ["note", PERSONAL.id], queryFn: () => Promise.reject(new ApiFail(404, "in_trash", "x")), retry: false })
@@ -196,10 +192,10 @@ describe("showTrashedToast／undoTrash", () => {
     expect(statusAtNavigate).toEqual(["success"]);
   });
 
-  it("TU7 復原失敗（500）：toast errors.fallback、不導頁、[\"trash\"] 照樣失效", async () => {
+  it("undo fails (500): toast errors.fallback, no navigation, [\"trash\"] still invalidated", async () => {
     const { queryClient, navigate, t } = setup();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    // code 不在 errors.* 裡 → errors.fallback（errors.internal 另有自己的字）。
+    // The code is not in errors.*, so errors.fallback is used (errors.internal has its own text).
     stubRestore({ status: 500, body: { error: { code: "unexpected_failure", message: "x" } } });
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: true }));
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
@@ -209,9 +205,9 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("TU9 復原失敗（409 server_busy）：toast 依錯誤碼顯示 errors.server_busy 的字（不是通用字）、destructive、不導頁", async () => {
+  it("undo fails (409 server_busy): toast shows the errors.server_busy text by error code (not the generic text), destructive, no navigation", async () => {
     const { queryClient, navigate, t } = setup();
-    // restoreTrashIds 把錯誤包成 TrashBatchError——要解包（trashErrorCause）才拿得到 code。
+    // restoreTrashIds wraps the error in TrashBatchError: unwrap it (trashErrorCause) to get the code.
     stubRestore({ status: 409, body: { error: { code: "server_busy", message: "x" } } });
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: true }));
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
@@ -223,8 +219,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  // 多選刪除用的四個可選欄（TU10–TU13；TU9 已被 server_busy 佔用）。
-  it("TU10 title：標題逐字、仍有 Undo", async () => {
+  it("title: title verbatim, still has Undo", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, title: "Moved 2 notes to the trash" }));
 
@@ -233,7 +228,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("TU11 不可復原＋description：描述是「X 」接 hint、沒有 Undo", async () => {
+  it("not restorable + description: the description is 'X ' followed by the hint, no Undo", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [GROUP_DELETE_ONLY], queryClient, navigate, t, reopen: false, description: "X" }));
 
@@ -241,7 +236,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("TU12 reopenId 覆蓋推算：兩篇、reopenId=b → 復原後以 b 的 canonical 路徑導回一次", async () => {
+  it("reopenId overrides the inferred one: two notes, reopenId=b -> after undo navigates once to b's canonical path", async () => {
     const { queryClient, navigate, t } = setup();
     stubRestore({ status: 200, body: { restored: [PERSONAL, GROUP_EDIT_DELETE], skipped: [] } });
     act(() =>
@@ -253,7 +248,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(navigate).toHaveBeenCalledWith(canonicalNotePath(GROUP_EDIT_DELETE));
   });
 
-  it("TU13 variant destructive：toast 根節點 bg-destructive", async () => {
+  it("variant destructive: the toast root has bg-destructive", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, variant: "destructive" }));
 
@@ -261,7 +256,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(toastRoot("Moved to the trash")).toHaveClass("bg-destructive");
   });
 
-  it("TU-F1 undoIds 併進復原 body、去重；notes: []＋undoIds → 帶 Undo", async () => {
+  it("undoIds are merged into the restore body, deduplicated; notes: [] + undoIds -> has Undo", async () => {
     const { queryClient, navigate, t } = setup();
     const bodies = stubRestore({ status: 200, body: { restored: [PERSONAL], skipped: [] } });
     act(() => showTrashedToast({ notes: [PERSONAL], undoIds: [PERSONAL.id, "x2"], queryClient, navigate, t, reopen: false }));
@@ -274,7 +269,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("TU-F2 分批中途失敗、partial 已還原 200 篇 → 錯誤 toast 的描述「Restored 200 notes」", async () => {
+  it("failure midway through batching, partial already restored 200 -> the error toast description is 'Restored 200 notes'", async () => {
     const { queryClient, navigate, t } = setup();
     const ids = Array.from({ length: 250 }, (_, i) => `n${i}`);
     let call = 0;
@@ -293,8 +288,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(await screen.findByText("Restored 200 notes", { exact: true })).toBeInTheDocument();
   });
 
-  // 資料夾（還原後展開）：TU-F1／TU-F2 已被前面的案佔用，這裡的案編為 TU-R1／TU-R2。
-  /** `POST /api/trash/restore` 依序取 `restoreReplies`（用完重複最後一個）；`GET /api/folders` 回 `folders`。 */
+  /** `POST /api/trash/restore` takes `restoreReplies` in order (repeating the last once used up); `GET /api/folders` returns `folders`. */
   function stubRestoreAndFolders(restoreReplies: Array<(batch: string[]) => Response>, folders: unknown[]) {
     const folderGets: string[] = [];
     let call = 0;
@@ -320,7 +314,7 @@ describe("showTrashedToast／undoTrash", () => {
   }
   const ok = (body: unknown) => fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(body) });
 
-  it("TU-R1復原成功 → 先收合的 folder:A 被展開", async () => {
+  it("undo succeeds -> a previously collapsed folder:A is expanded", async () => {
     const { queryClient, navigate, t } = setup();
     const inA = { ...PERSONAL, folderId: "A" };
     const folderGets = stubRestoreAndFolders([() => ok({ restored: [inA], skipped: [] })], [folderDto({ id: "A", name: "A" })]);
@@ -332,7 +326,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(folderGets).toHaveLength(1);
   });
 
-  it("TU-R2分批中途失敗 → 已還原那幾篇的資料夾展開、其餘不動", async () => {
+  it("failure midway through batching -> folders of the notes already restored are expanded, the rest untouched", async () => {
     const { queryClient, navigate, t } = setup();
     const ids = Array.from({ length: 250 }, (_, i) => `n${i}`);
     const folderGets = stubRestoreAndFolders(
@@ -352,7 +346,7 @@ describe("showTrashedToast／undoTrash", () => {
     expect(folderGets).toHaveLength(1);
   });
 
-  it("TU14 可復原＋description：描述照原字顯示（不接 hint）、仍有 Undo", async () => {
+  it("restorable + description: the description is shown as is (no hint appended), still has Undo", async () => {
     const { queryClient, navigate, t } = setup();
     act(() => showTrashedToast({ notes: [PERSONAL], queryClient, navigate, t, reopen: false, description: "X" }));
 

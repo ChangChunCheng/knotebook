@@ -68,12 +68,11 @@ vi.mock("@/collab/useCollab", () => ({
   },
 }));
 
-/** lazy 簡報層的替身：stub＝立刻宣告就緒並模擬 reveal 的 keyboard[27]；pending／fail＝chunk 載入中／失敗；fatal＝呼叫 onFatal。 */
+/** Stand-in for the lazy presentation layer: `stub` declares ready at once and simulates reveal's keyboard[27]; `pending` / `fail` = chunk loading / failed; `fatal` makes it call onFatal. */
 const stub = vi.hoisted(() => ({
   mode: "stub" as "stub" | "pending" | "fail",
   fatal: null as string | null,
   mounts: 0,
-  /** overlay 卸載（layout cleanup）當下頁面上的網址——外殼被閘門拿掉的那一 render，router 的 location 是什麼。 */
   shellGoneLoc: null as string | null,
 }));
 vi.mock("@/present/lazy", async () => {
@@ -130,7 +129,6 @@ function respond(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) } as unknown as Response;
 }
 
-/** 假 server：`notes` 可以是一篇、或某支端點回錯（`noteId` 有給時放在 body 頂層，同 404 in_trash）；`list` 是側欄清單。 */
 function stubFetch({ note = NOTE as NoteDto | { status: number; code: string; noteId?: string }, list = [NOTE] as NoteDto[] } = {}) {
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -144,11 +142,12 @@ function stubFetch({ note = NOTE as NoteDto | { status: number; code: string; no
     if (url.startsWith("/api/notes/") && method === "GET") {
       return Promise.resolve(
         "status" in note
+          // `noteId`, when given, goes at the top level of the body, like the 404 in_trash response.
           ? respond(note.status, { error: { code: note.code, message: "x" }, ...(note.noteId !== undefined ? { noteId: note.noteId } : {}) })
           : respond(200, note),
       );
     }
-    // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+    // #93: with a search term of >= 2 characters the sidebar's content area calls /api/search (returns empty).
     if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
@@ -194,10 +193,10 @@ function renderPresent(entries: InitialEntry[], { strict = false, browser = fals
 const loc = () => screen.getByTestId("loc").textContent;
 const dialog = () => screen.getByRole("dialog", { name: "My Note — presentation" });
 
-// `sidebar.tab` 會往外流到同檔後面的案，檔案頂層清。
+// `sidebar.tab` leaks into later cases of the same file, so clear it at file top level.
 afterEach(() => localStorage.removeItem("sidebar.tab"));
 
-describe("NotePage × 簡報", () => {
+describe("NotePage x presentation", () => {
   let fake: FakeFullscreen | null = null;
 
   beforeEach(async () => {
@@ -224,7 +223,7 @@ describe("NotePage × 簡報", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("test 1：?present → 外殼與 overlay 掛上、AppShell 帶 inert；沒有 ?present → 都沒有", async () => {
+  it("?present -> shell and overlay mount and AppShell is inert; without ?present neither exists", async () => {
     stubFetch();
     const first = renderPresent(["/n/tester/my-note?present"]);
     expect(await screen.findByTestId("present-overlay")).toHaveAttribute("data-variant", "member");
@@ -237,7 +236,7 @@ describe("NotePage × 簡報", () => {
     expect(screen.getByTestId("note-editor").closest("[inert]")).toBeNull();
   });
 
-  it("test 21：外殼與 overlay 的任何祖先都沒有 inert", async () => {
+  it("neither the shell nor the overlay has an inert ancestor", async () => {
     stubFetch();
     renderPresent(["/n/tester/my-note?present"]);
     const overlay = await screen.findByTestId("present-overlay");
@@ -245,7 +244,7 @@ describe("NotePage × 簡報", () => {
     expect(dialog().closest("[inert]")).toBeNull();
   });
 
-  it("test 1／2：Esc 一次 → 回筆記（拿掉 ?present）、navigate 恰一次、編輯器同一實例", async () => {
+  it("one Esc -> back to the note (?present removed), navigate exactly once, the same editor instance", async () => {
     stubFetch();
     renderPresent(["/n/tester/my-note?present"]);
     await screen.findByTestId("present-overlay");
@@ -258,7 +257,7 @@ describe("NotePage × 簡報", () => {
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 
-  it("test 5：播放中 Ctrl+K 讓路（寬：不聚焦搜尋框；窄：不開抽屜）", async () => {
+  it("during playback Ctrl+K yields (wide: search box not focused; narrow: drawer not opened)", async () => {
     stubFetch();
     renderPresent(["/n/tester/my-note?present"]);
     await screen.findByTestId("present-overlay");
@@ -270,7 +269,6 @@ describe("NotePage × 簡報", () => {
     expect(document.querySelector("[data-sidebar-drawer]")).toBeNull();
   });
 
-  /** 退全螢幕早於導往 target 的那次 navigate。 */
   function expectExitBeforeNavigate(target: string) {
     const navIndex = nav.fn.mock.calls.findIndex((call) => call[0] === target);
     expect(navIndex).toBeGreaterThanOrEqual(0);
@@ -278,7 +276,7 @@ describe("NotePage × 簡報", () => {
     expect(fake!.exitFullscreen.mock.invocationCallOrder[0]).toBeLessThan(nav.fn.mock.invocationCallOrder[navIndex]);
   }
 
-  it("test 4：401 出口在 navigate('/login') 之前退出我們的全螢幕", async () => {
+  it("the 401 exit leaves our fullscreen before navigate('/login')", async () => {
     stubFetch();
     fake = installFakeFullscreen();
     renderPresent(["/n/tester/my-note?present"]);
@@ -291,8 +289,7 @@ describe("NotePage × 簡報", () => {
     expectExitBeforeNavigate("/login");
   });
 
-  it("test 4／8：共編終態（kicked）出口在 navigate('/') 之前退出我們的全螢幕", async () => {
-    // 比照 NotePage.test.tsx「kicked 終態」案：終態在 render 前設好。
+  it("the co-edit terminal state (kicked) exit leaves our fullscreen before navigate('/')", async () => {
     stubFetch();
     fake = installFakeFullscreen();
     enterPresentationFullscreen();
@@ -303,7 +300,7 @@ describe("NotePage × 簡報", () => {
     expectExitBeforeNavigate("/");
   });
 
-  it("test 14：解析 404（linkInvalid，例如側欄別篇）→ 先退全螢幕、toast note.linkInvalid、導 /", async () => {
+  it("resolution 404 (linkInvalid, e.g. another note in the sidebar) -> leave fullscreen first, toast note.linkInvalid, go to /", async () => {
     stubFetch({ note: { status: 404, code: "not_found" } });
     fake = installFakeFullscreen();
     enterPresentationFullscreen();
@@ -316,7 +313,7 @@ describe("NotePage × 簡報", () => {
     expect(fake.exitFullscreen.mock.invocationCallOrder[0]).toBeLessThan(nav.fn.mock.invocationCallOrder[navIndex]);
   });
 
-  it("常駐層 404（noteGone）→ 先退全螢幕再導 /", async () => {
+  it("persistent-layer 404 (noteGone) -> leave fullscreen first, then go to /", async () => {
     const fetchFn = stubFetch();
     fake = installFakeFullscreen();
     const { queryClient } = renderPresent(["/n/tester/my-note?present"]);
@@ -329,12 +326,12 @@ describe("NotePage × 簡報", () => {
     await act(async () => queryClient.invalidateQueries({ queryKey: ["note", NOTE.id] }));
     await waitFor(() => expect(loc()).toBe("/"));
     expectExitBeforeNavigate("/");
-    // 外殼被 `!leavingRef.current` 閘門拿掉的那一 render，router 的 location 仍是 ?present（react-router 以 startTransition 更新 location，
-    // noteGone 出口的 setActiveNoteId(null) 先提交一次 render）——拿掉閘門，外殼要多活到 location 變成 "/" 才卸載。
+    // During the render in which the shell is removed by the `!leavingRef.current` gate, the router's location is still ?present (react-router updates
+    // location in startTransition, and the noteGone exit's setActiveNoteId(null) commits a render first); without the gate the shell would live on until location becomes "/".
     expect(stub.shellGoneLoc).toBe("/n/tester/my-note?present");
   });
 
-  it("test 4（K 案）：<StrictMode> 下以 ?present 掛載、已在我們的全螢幕 → 假卸載不退全螢幕", async () => {
+  it("mounted with ?present under <StrictMode> and already in our fullscreen -> the fake unmount does not leave fullscreen", async () => {
     stubFetch();
     fake = installFakeFullscreen();
     enterPresentationFullscreen();
@@ -344,17 +341,17 @@ describe("NotePage × 簡報", () => {
     expect(fake.exitFullscreen).not.toHaveBeenCalled();
   });
 
-  it("test 20：解析回 500 → 外殼錯誤態＋×；× 離開", async () => {
+  it("resolution returns 500 -> shell error state + x; x leaves", async () => {
     stubFetch({ note: { status: 500, code: "internal" } });
     renderPresent(["/notes/x?present"]);
-    // 頁面本體的錯誤卡也帶 role=alert（且在 inert 內仍查得到），所以限定在簡報 dialog 內查外殼自己的錯誤態。
+    // The page body's error card also carries role=alert (and is still queryable inside inert), so query the shell's own error state inside the presentation dialog.
     const shellDialog = await screen.findByRole("dialog");
     expect(await within(shellDialog).findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
     fireEvent.click(screen.getByRole("button", { name: "Exit presentation" }));
     await waitFor(() => expect(loc()).toBe("/notes/x"));
   });
 
-  it("?present 開一篇 in_trash → 外殼錯誤態 errors.in_trash、不導頁", async () => {
+  it("?present opening a note that is in_trash -> shell error state errors.in_trash, no navigation", async () => {
     stubFetch({ note: { status: 404, code: "in_trash", noteId: NOTE.id } });
     renderPresent(["/n/tester/my-note?present"]);
     const shellDialog = await screen.findByRole("dialog");
@@ -367,7 +364,7 @@ describe("NotePage × 簡報", () => {
     expect(screen.queryByText("This link is invalid or the note doesn't exist.")).toBeNull();
   });
 
-  it("test 20：chunk 載入失敗（額度已用）→ 錯誤卡在外殼內；Esc 一樣離開", async () => {
+  it("chunk load failure (quota used up) -> error card inside the shell; Esc leaves as well", async () => {
     stubFetch();
     stub.mode = "fail";
     sessionStorage.setItem("knotebook:chunk-reload:present", "1");
@@ -377,7 +374,7 @@ describe("NotePage × 簡報", () => {
     await waitFor(() => expect(loc()).toBe("/n/tester/my-note"));
   });
 
-  it("test 20：chunk 載入中 → DOM 恰一個 [role=dialog]；Esc 一次 → navigate 恰一次", async () => {
+  it("chunk loading -> exactly one [role=dialog] in the DOM; one Esc -> navigate exactly once", async () => {
     stubFetch();
     stub.mode = "pending";
     renderPresent(["/n/tester/my-note?present"]);
@@ -389,7 +386,7 @@ describe("NotePage × 簡報", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("test 20：overlay 回報 configRefused → 外殼顯示文案、overlay 卸載；Esc 一次 → navigate 恰一次", async () => {
+  it("overlay reports configRefused -> the shell shows the text and the overlay unmounts; one Esc -> navigate exactly once", async () => {
     stubFetch();
     stub.fatal = "present.configRefused";
     renderPresent(["/n/tester/my-note?present"]);
@@ -400,7 +397,7 @@ describe("NotePage × 簡報", () => {
     await waitFor(() => expect(nav.fn).toHaveBeenCalledTimes(1));
   });
 
-  it("共編首次 synced 之前不掛 overlay：外殼是載入態", async () => {
+  it("overlay is not mounted before the first co-edit synced: the shell is in the loading state", async () => {
     stubFetch();
     collab.provider.synced = false;
     renderPresent(["/n/tester/my-note?present"]);
@@ -410,7 +407,7 @@ describe("NotePage × 簡報", () => {
   });
 });
 
-describe("NotePage × 簡報（BrowserRouter：網址寫入點、上一頁）", () => {
+describe("NotePage x presentation (BrowserRouter: URL write points, back button)", () => {
   let fake: FakeFullscreen | null = null;
 
   beforeEach(async () => {
@@ -434,7 +431,7 @@ describe("NotePage × 簡報（BrowserRouter：網址寫入點、上一頁）", 
   it.each([
     [`/notes/${"11111111-1111-1111-1111-111111111111"}?present#/x`, "/n/tester/my-note?present#/x"],
     [`/notes/${"11111111-1111-1111-1111-111111111111"}?present&hash=true#/x`, "/n/tester/my-note?present#/x"],
-  ])("test 18：%s → 最終 %s（正規化與收斂兩個寫入點不互相覆蓋）", async (start, expected) => {
+  ])("%s -> final %s (the normalization and convergence write points do not overwrite each other)", async (start, expected) => {
     stubFetch();
     window.history.replaceState(null, "", start);
     renderPresent([], { browser: true });
@@ -442,7 +439,7 @@ describe("NotePage × 簡報（BrowserRouter：網址寫入點、上一頁）", 
     await screen.findByTestId("present-overlay");
   });
 
-  it("播放中（已全螢幕）按瀏覽器上一頁 → 退出全螢幕、回筆記頁、編輯器同一實例", async () => {
+  it("during playback (already fullscreen), the browser back button -> leaves fullscreen, returns to the note page, same editor instance", async () => {
     stubFetch();
     fake = installFakeFullscreen();
     window.history.replaceState(null, "", "/n/tester/my-note");
@@ -480,7 +477,7 @@ describe("NotePage × 簡報（BrowserRouter：網址寫入點、上一頁）", 
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 
-  it("帶旗標進入 → 播放中改名 → Esc → navigate(-1) 回到舊網址那筆 → 留在同一篇、收斂到新網址、編輯器不重掛", async () => {
+  it("entered with the flag -> rename during playback -> Esc -> navigate(-1) back to the old URL entry -> stays on the same note, converges to the new URL, the editor does not remount", async () => {
     stubFetch();
     window.history.replaceState(null, "", "/n/tester/my-note");
     let go: ((to: { pathname: string; search: string }, state: unknown) => void) | null = null;
@@ -514,13 +511,12 @@ describe("NotePage × 簡報（BrowserRouter：網址寫入點、上一頁）", 
     nav.fn.mockClear();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(`${window.location.pathname}${window.location.search}`).toBe("/n/tester/renamed"));
-    // 走的是 navigate(-1)（帶旗標進入），不是 replace：Esc 那一下的 navigate 恰一次且為 -1。
     expect(nav.fn.mock.calls.filter((call) => call[0] === -1)).toHaveLength(1);
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 });
 
-describe("NotePage × ⋮ 進入簡報", () => {
+describe("NotePage x entering presentation from the kebab menu", () => {
   let fake: FakeFullscreen | null = null;
 
   beforeEach(async () => {
@@ -543,7 +539,7 @@ describe("NotePage × ⋮ 進入簡報", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("test 16：從頁首 ⋮ 進入 → 選單關閉後焦點在簡報層根（Radix 不把焦點還給 inert 背景裡的觸發鈕）", async () => {
+  it("entering from the header kebab -> after the menu closes, focus is on the presentation layer root (Radix does not return focus to the trigger inside the inert background)", async () => {
     stubFetch();
     window.history.replaceState(null, "", "/n/tester/my-note");
     renderPresent(["/n/tester/my-note"]);
@@ -552,11 +548,11 @@ describe("NotePage × ⋮ 進入簡報", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Present" }));
     const shell = await screen.findByRole("dialog", { name: "My Note — presentation" });
     await waitFor(() => expect(document.activeElement).toBe(shell));
-    await new Promise((resolve) => setTimeout(resolve, 30)); // Radix FocusScope 的卸載回焦在 setTimeout(0)
+    await new Promise((resolve) => setTimeout(resolve, 30)); // Radix FocusScope returns focus on unmount in setTimeout(0)
     expect(document.activeElement).toBe(shell);
   });
 
-  it("test 4（K 案，從選單）：<StrictMode>＋BrowserRouter 從 ⋮ 進入 → 全螢幕 resolve 後 exitFullscreen 未被呼叫", async () => {
+  it("<StrictMode> + BrowserRouter entering from the kebab menu -> exitFullscreen is not called after fullscreen resolves", async () => {
     stubFetch();
     window.history.replaceState(null, "", "/n/tester/my-note");
     renderPresent([], { strict: true, browser: true });
@@ -569,7 +565,7 @@ describe("NotePage × ⋮ 進入簡報", () => {
     expect(fake!.exitFullscreen).not.toHaveBeenCalled();
   });
 
-  it("test 14：側欄 ⋮ 到別篇、該篇解析 404 → exitFullscreen 被呼叫、toast note.linkInvalid、導 /", async () => {
+  it("sidebar kebab to another note whose resolution is 404 -> exitFullscreen is called, toast note.linkInvalid, go to /", async () => {
     const OTHER: NoteDto = { ...NOTE, id: "22222222-2222-2222-2222-222222222222", title: "Other", slug: "other" };
     const fetchFn = stubFetch({ list: [NOTE, OTHER] });
     const base = fetchFn.getMockImplementation()!;

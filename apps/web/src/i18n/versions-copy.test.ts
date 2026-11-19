@@ -3,7 +3,7 @@ import zhTW from "./zh-TW.json";
 import en from "./en.json";
 import managementZhTW from "./management.zh-TW.json";
 
-/** 版本歷史文案的字面；#272 起 vN → 「名稱 (短 id)」。改這些字串＝改產品決定，先與維護者確認。 */
+/** Literal version-history copy; since #272 vN -> 「name (short id)」. Changing these strings changes product copy: confirm with the maintainer first. */
 const SPEC_COPY: Record<string, string> = {
   "versions.save": "儲存當前版本",
   "versions.dialog.saveTitle": "儲存當前版本",
@@ -15,7 +15,6 @@ const SPEC_COPY: Record<string, string> = {
   "versions.toast.saved": "已存為 {{label}}",
   "versions.toast.upgraded": "內容與 {{label}} 相同，已將它設為手動版本",
   "versions.toast.applied": "已套用 {{label}}",
-  // #258：「目前狀態」副標只看 baseSeq／dirty；列的來源字樣改「沿自」。
   "versions.current.noBase": "沒有基底版本",
   "versions.current.clean": "沿自 {{label}} · 無修改",
   "versions.current.dirty": "沿自 {{label}} · 有未儲存的修改",
@@ -24,15 +23,12 @@ const SPEC_COPY: Record<string, string> = {
   "versions.siteOff": "站台已關閉自動儲存",
   "versions.title": "版本歷史",
   "note.menu.versions": "版本歷史",
-  // 其餘字面
   "versions.currentLabel": "目前狀態",
-  // #258：只有自動版本的列標「自動存檔」pill；清單加「全部／僅手動」篩選
   "versions.autoBadge": "自動存檔",
   "versions.filter.all": "全部",
   "versions.filter.manual": "僅手動",
   "versions.filter.emptyManual": "沒有手動儲存的版本",
   "versions.applySeq": "套用 {{label}}",
-  // 橫幅拿掉時間／editors／「比較對象」標籤；比較對象改左右一對下拉
   "versions.preview.banner": "正在預覽 {{label}}",
   "versions.preview.leftPicker": "左側版本",
   "versions.preview.rightPicker": "右側版本",
@@ -48,11 +44,10 @@ const SPEC_COPY: Record<string, string> = {
   "groups.autoVersions.title": "自動儲存版本",
   "versions.sheet.back": "返回",
   "versions.sheet.backToList": "清單",
-  // 避免與比較對象「前一版」同名：底部導覽鈕不用「上一版」「下一版」
+  // Avoid sharing a name with the comparison target 「前一版」: the bottom navigation buttons do not use 「上一版」 / 「下一版」.
   "versions.sheet.prev": "較舊的版本",
-  // 同上：避免與比較對象同名
+  // Same: avoid sharing a name with the comparison target.
   "versions.sheet.next": "較新的版本",
-  // #272：基底版已刪除
   "versions.deletedSuffix": "{{label}}（已刪除）",
   "versions.deletedVersion": "已刪除的版本",
 };
@@ -61,14 +56,14 @@ function get(obj: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-describe("版本歷史文案字面（zh-TW）", () => {
+describe("version history copy literals (zh-TW)", () => {
   for (const [key, text] of Object.entries(SPEC_COPY)) {
-    // settings.*／admin.* 的字串在 lazy 包（management.*.json），其餘在主檔。
+    // admin.* / settings.* strings are in the lazy bundle (management.*.json), the rest in the main file.
     it(key, () => expect(get(key.startsWith("settings.") || key.startsWith("admin.") ? managementZhTW : zhTW, key)).toBe(text));
   }
 });
 
-/** 明列刪除的鍵（「前一版」概念、「vs 空文件」、「比較對象」標籤、純文字欄標頭）與 #258 刪除的鍵：兩個語系都不得殘留。 */
+/** Keys explicitly deleted (the 「前一版」 concept, 「vs 空文件」, the 「比較對象」 label, plain-text column headers) and the keys deleted in #258: neither locale may keep them. */
 const REMOVED_KEYS = [
   "versions.preview.compareLabel",
   "versions.preview.comparePrevious",
@@ -76,9 +71,7 @@ const REMOVED_KEYS = [
   "versions.preview.vsEmpty",
   "versions.preview.leftLabel",
   "versions.preview.rightLabelCurrent",
-  // 橫幅不再有 ✕。
   "versions.preview.close",
-  // #258：列不再標手動／自動文字、不再有基底綠點；「目前狀態」不再看清單第一筆。
   "versions.kind.manual",
   "versions.kind.auto",
   "versions.baseDot",
@@ -87,7 +80,7 @@ const REMOVED_KEYS = [
   "versions.current.dirtyFrom",
 ];
 
-describe("已刪除的鍵不殘留", () => {
+describe("deleted keys do not remain", () => {
   for (const key of REMOVED_KEYS) {
     it(key, () => {
       expect(get(zhTW, key)).toBeUndefined();
@@ -96,7 +89,7 @@ describe("已刪除的鍵不殘留", () => {
   }
 });
 
-describe("#272：versions.* 不再有 {{seq}}（兩語系；UI 不顯示 vN）", () => {
+describe("#272: versions.* no longer has {{seq}} (both locales; the UI does not show vN)", () => {
   const leaves = (o: unknown, path = "versions"): Array<[string, string]> =>
     typeof o === "string" ? [[path, o]] : o && typeof o === "object" ? Object.entries(o).flatMap(([k, v]) => leaves(v, `${path}.${k}`)) : [];
   for (const [lang, dict] of [["zh-TW", zhTW], ["en", en]] as const) {

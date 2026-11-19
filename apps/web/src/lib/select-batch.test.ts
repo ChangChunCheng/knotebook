@@ -39,7 +39,7 @@ function fakeResponse(status: number, body?: unknown): Response {
 const ok = (body?: unknown): Response => fakeResponse(body === undefined ? 204 : 200, body);
 const fail = (status: number, code: string): Response => fakeResponse(status, { error: { code, message: "x" } });
 
-/** 記下每次 `method url body`；回應依 `method url` 查表，未列的 throw（讓測試紅在這裡）。 */
+/** Records each `method url body`; replies are looked up by `method url`, and an unlisted one throws (so the test goes red here). */
 function stubFetch(routes: Record<string, () => Reply>): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -60,7 +60,6 @@ function newClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-/** invalidateQueries 的呼叫序（照常執行，只記 queryKey）。 */
 function spyInvalidations(qc: QueryClient): string[] {
   const keys: string[] = [];
   const original = qc.invalidateQueries.bind(qc);
@@ -72,12 +71,11 @@ function spyInvalidations(qc: QueryClient): string[] {
 }
 
 const k = (...key: unknown[]): string => JSON.stringify(key);
-/** SB6 停下案（只刪成 a）與 SB11 的失效集合。 */
+/** Invalidation set when the batch stops after deleting only "a" (also used by the hook-throws case). */
 const SB6_STOP_KEYS = [k("folders"), k("notes"), k("trash"), k("backlinks"), k("note", "a")];
 const sorted = (keys: readonly string[]): string[] => [...new Set(keys)].sort();
 const notes = (...ids: string[]): NoteDto[] => ids.map((id) => personalNote({ id, title: `T-${id}` }));
 const noteT = (note: NoteDto): SelectionTarget => ({ kind: "note", note });
-/** `deleteTargetsInOrder` 刪一篇筆記的 done 形。 */
 const trashed = (note: NoteDto) => ({ target: noteT(note), trashedNoteIds: [note.id] });
 const idOf = (target: SelectionTarget): string => (target.kind === "note" ? target.note.id : target.folder.id);
 const del = (id: string): string => `DELETE /api/notes/${id}`;
@@ -91,8 +89,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("runSequential（執行）", () => {
-  it("SB1 依序：前一篇回來之前不送下一篇；全部成功 → done 三篇、沒有略過與停下", async () => {
+describe("runSequential (execution)", () => {
+  it("in order: the next is not sent before the previous returns; all succeed -> three done, none skipped or stopped", async () => {
     let release!: (r: Response) => void;
     const calls = stubFetch({
       [del("a")]: () => new Promise<Response>((resolve) => { release = resolve; }),
@@ -110,7 +108,7 @@ describe("runSequential（執行）", () => {
     expect(out).toEqual({ done: [a, b, c].map(trashed), skipped: 0, skippedDetail: [], stopped: null });
   });
 
-  it("SB2 classifyBatchError：403、404 not_found 略過；其餘一律停下", () => {
+  it("classifyBatchError: 403 and 404 not_found are skipped; everything else stops", () => {
     expect(classifyBatchError(new ApiFail(403, "forbidden", "x"))).toBe("skip");
     expect(classifyBatchError(new ApiFail(404, "not_found", "x"))).toBe("skip");
     expect(classifyBatchError(new ApiFail(404, "role_not_found", "x"))).toBe("stop");
@@ -122,7 +120,7 @@ describe("runSequential（執行）", () => {
     expect(classifyBatchError(new TypeError("Failed to fetch"))).toBe("stop");
   });
 
-  it("SB3 略過繼續：403 與 404 not_found 計入 skipped，其餘照送", async () => {
+  it("skip and continue: 403 and 404 not_found count into skipped, the rest are sent as usual", async () => {
     const calls = stubFetch({
       [del("a")]: () => ok(),
       [del("b")]: () => fail(403, "forbidden"),
@@ -137,7 +135,7 @@ describe("runSequential（執行）", () => {
     expect(out.stopped).toBeNull();
   });
 
-  it("SB4 停下：429 之後不再送；remaining 是停下那篇（含）之後的選取鍵形", async () => {
+  it("stop: nothing is sent after a 429; remaining is the selection-key form from the stopped item (inclusive) on", async () => {
     const calls = stubFetch({
       [del("a")]: () => ok(),
       [del("b")]: () => fail(429, "too_many_requests"),
@@ -158,7 +156,7 @@ describe("runSequential（執行）", () => {
     expect((out.stopped?.cause as ApiFail).status).toBe(429);
   });
 
-  it("SB5 hook 時機：beforeEach 在送出前；afterFailure 收到分類", async () => {
+  it("hook timing: beforeEach runs before sending; afterFailure receives the classification", async () => {
     const calls = stubFetch({
       [del("a")]: () => ok(),
       [del("b")]: () => fail(403, "forbidden"),
@@ -175,7 +173,7 @@ describe("runSequential（執行）", () => {
     expect(failures).toEqual([["b", 403, "skip"], ["c", 429, "stop"]]);
   });
 
-  it("SB9 空陣列：三種動作都不送請求", async () => {
+  it("empty array: none of the three actions sends a request", async () => {
     const calls = stubFetch({});
     const qc = newClient();
     const empty = { done: [], skipped: 0, skippedDetail: [], stopped: null };
@@ -186,7 +184,7 @@ describe("runSequential（執行）", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("SB10 進度：每篇成功或略過後回報；停下那篇不回報", async () => {
+  it("progress: reported after each success or skip; the stopped item is not reported", async () => {
     stubFetch({ [del("a")]: () => ok(), [del("b")]: () => fail(403, "forbidden"), [del("c")]: () => ok() });
     const progress: Array<[number, number]> = [];
     await deleteTargetsInOrder(notes("a", "b", "c").map(noteT), { queryClient: newClient(), onProgress: (p, t) => progress.push([p, t]) });
@@ -201,7 +199,7 @@ describe("runSequential（執行）", () => {
 });
 
 describe("moveNotesInOrder", () => {
-  it("SB7 body、成功的快取寫入、失敗的對帳序；停下時 groups 仍失效", async () => {
+  it("body, cache writes on success, reconcile order on failure; groups are still invalidated when stopped", async () => {
     const [a, b, c] = notes("a", "b", "c");
     const movedA = { ...a, groupId: "g1", group: { id: "g1", name: "R&D" } };
     const movedB = { ...b, groupId: "g1", group: { id: "g1", name: "R&D" } };
@@ -228,7 +226,6 @@ describe("moveNotesInOrder", () => {
     expect(keys.indexOf(k("shares", "c"))).toBeLessThan(noteC);
     expect(keys.indexOf(k("public-link", "c"))).toBeLessThan(noteC);
 
-    // 停下案：第一篇 429。finally 的 groups 一次＋對帳序裡的一次。
     vi.unstubAllGlobals();
     stubFetch({ [move("a")]: () => fail(429, "too_many_requests") });
     const qc2 = newClient();
@@ -237,12 +234,13 @@ describe("moveNotesInOrder", () => {
     expect(out2.stopped?.remaining).toEqual([{ kind: "note", id: "a" }, { kind: "note", id: "b" }]);
     expect(keys2).toContain(k("groups"));
     await waitFor(() => expect(keys2).toContain(k("note", "a")));
+    // Stop case: the first note gets 429; groups are invalidated once in finally and once in the reconcile order.
     expect(keys2.filter((x) => x === k("groups"))).toHaveLength(2);
   });
 });
 
 describe("copyNotesInOrder", () => {
-  it("SB8 body 依目的地、副本寫入快取、整批後失效 notes；停下時也失效", async () => {
+  it("body depends on the destination, copies are written into the cache, notes are invalidated after the whole batch; also when stopped", async () => {
     const [a, b] = notes("a", "b");
     const copyA = personalNote({ id: "ca", title: "T-a" });
     const copyB = personalNote({ id: "cb", title: "T-b", groupId: "g1", group: { id: "g1", name: "R&D" } });
@@ -270,8 +268,8 @@ describe("copyNotesInOrder", () => {
   });
 });
 
-describe("hook 丟例外（finally 的意義）", () => {
-  it("SB11 onProgress 丟例外 → 整批 reject，三種動作的整批失效仍做", async () => {
+describe("hook throws (what finally is for)", () => {
+  it("onProgress throws -> the whole batch rejects, and the batch-level invalidation of all three actions still happens", async () => {
     const boom = (): never => {
       throw new Error("boom");
     };
@@ -299,32 +297,29 @@ describe("hook 丟例外（finally 的意義）", () => {
   });
 });
 
-// ── 資料夾與筆記的批次 ──
-
 const folderT = (id: string, parentId: string | null = null): SelectionTarget => ({ kind: "folder", folder: folderDto({ id, name: id, parentId }) });
 const patchFolder = (id: string): string => `PATCH /api/folders/${id}`;
 const putFolder = (id: string): string => `PUT /api/notes/${id}/folder`;
 const delFolder = (id: string): string => `DELETE /api/folders/${id}`;
 const lines = (calls: readonly Call[]): string[] => calls.map((x) => `${x.method} ${x.url} ${JSON.stringify(x.body ?? null)}`);
 
-describe("SBf1 classifyBatchError（資料夾錯誤碼）", () => {
-  it("folder_not_found 預設 stop、{ folderGone: skip } 時 skip；folder_delete_blocked（403）skip；folder_name_taken（409）stop", () => {
+describe("classifyBatchError (folder error codes)", () => {
+  it("folder_not_found stops by default and skips with { folderGone: skip }; folder_delete_blocked (403) skips; folder_name_taken (409) stops", () => {
     const gone = new ApiFail(404, "folder_not_found", "x");
     expect(classifyBatchError(gone)).toBe("stop");
     expect(classifyBatchError(gone, { folderGone: "stop" })).toBe("stop");
     expect(classifyBatchError(gone, { folderGone: "skip" })).toBe("skip");
     expect(classifyBatchError(new ApiFail(403, "folder_delete_blocked", "x"))).toBe("skip");
     expect(classifyBatchError(new ApiFail(409, "folder_name_taken", "x"))).toBe("stop");
-    // 選項只影響 folder_not_found：其餘照一般流程。
     expect(classifyBatchError(new ApiFail(404, "not_found", "x"), { folderGone: "skip" })).toBe("skip");
     expect(classifyBatchError(new ApiFail(429, "too_many_requests", "x"), { folderGone: "skip" })).toBe("stop");
   });
 });
 
-describe("placeTargetsInOrder（同空間）", () => {
+describe("placeTargetsInOrder (same space)", () => {
   const p1 = personalNote({ id: "p1", title: "P1", folderId: "B" });
 
-  it("SBf2 依序 PATCH 資料夾、PUT 筆記；done 帶原處；根層送 null；成功筆記寫進快取", async () => {
+  it("PATCH folders then PUT notes in order; done carries the original place; the root sends null; successful notes are written into the cache", async () => {
     const placedP1 = { ...p1, folderId: "C" };
     const calls = stubFetch({
       [patchFolder("A")]: () => ok(folderDto({ id: "A", name: "A", parentId: "C" })),
@@ -353,7 +348,7 @@ describe("placeTargetsInOrder（同空間）", () => {
     expect(lines(rootCalls)).toEqual(['PATCH /api/folders/A {"parentId":null}', 'PUT /api/notes/p1/folder {"folderId":null}']);
   });
 
-  it("SBf3 第二項 404 folder_not_found → 停下（不是略過）；remaining 只剩它；finally 失效 folders、notes、trash", async () => {
+  it("second item 404 folder_not_found -> stop (not skip); remaining holds only it; finally invalidates folders, notes, trash", async () => {
     const calls = stubFetch({
       [patchFolder("A")]: () => ok(folderDto({ id: "A", name: "A", parentId: "C" })),
       [putFolder("p1")]: () => fail(404, "folder_not_found"),
@@ -369,7 +364,7 @@ describe("placeTargetsInOrder（同空間）", () => {
     expect(keys).toEqual(expect.arrayContaining([k("folders"), k("notes"), k("trash")]));
   });
 
-  it("SBf4 429 → 停下、之後不送", async () => {
+  it("429 -> stop, nothing sent afterwards", async () => {
     const calls = stubFetch({
       [putFolder("p1")]: () => fail(429, "too_many_requests"),
       [patchFolder("A")]: () => ok(folderDto({ id: "A", name: "A" })),
@@ -391,7 +386,7 @@ describe("undoPlacements", () => {
     { kind: "note", id: "p2", from: null },
   ];
 
-  it("SBf5 依序送回各自的 from；done＝送回成功的項目", async () => {
+  it("sends each back to its own from, in order; done = the items sent back successfully", async () => {
     const calls = stubFetch({
       [patchFolder("A")]: () => ok(folderDto({ id: "A", name: "A" })),
       [putFolder("p1")]: () => ok(personalNote({ id: "p1", title: "P1", folderId: "B" })),
@@ -406,7 +401,7 @@ describe("undoPlacements", () => {
     expect(out).toEqual({ done: placed, skipped: 0, skippedDetail: [], stopped: null });
   });
 
-  it("SBf6 第 2 項 429 → 停下、done 長度 1、第 3 項不送", async () => {
+  it("second item 429 -> stop, done length 1, the third is not sent", async () => {
     const calls = stubFetch({
       [patchFolder("A")]: () => ok(folderDto({ id: "A", name: "A" })),
       [putFolder("p1")]: () => fail(429, "too_many_requests"),
@@ -423,7 +418,7 @@ describe("undoPlacements", () => {
 });
 
 describe("deleteTargetsInOrder", () => {
-  it("SB6 整批後恰失效 folders／notes／trash／backlinks 與每篇成功的 note；停下時也失效", async () => {
+  it("after the whole batch invalidates exactly folders / notes / trash / backlinks and every successful note; also when stopped", async () => {
     stubFetch({ [del("a")]: () => ok(), [del("b")]: () => ok() });
     const qc = newClient();
     const keys = spyInvalidations(qc);
@@ -439,7 +434,7 @@ describe("deleteTargetsInOrder", () => {
     expect(sorted(keys2)).toEqual(sorted(SB6_STOP_KEYS));
   });
 
-  it("SBf7 資料夾先、筆記後；資料夾 403 folder_delete_blocked 與 404 folder_not_found 都略過；收 trashedNoteIds", async () => {
+  it("folders first, notes after; folder 403 folder_delete_blocked and 404 folder_not_found are both skipped; collects trashedNoteIds", async () => {
     const [n1, n2] = notes("n1", "n2");
     const calls = stubFetch({
       [delFolder("F1")]: () => ok({ trashedNoteIds: ["x1", "x2"], deletedFolderIds: ["F1"] }),
@@ -469,7 +464,7 @@ describe("deleteTargetsInOrder", () => {
     );
   });
 
-  it("SBf7b 筆記的 404 folder_not_found 不套資料夾的略過（停下）；hook 收 SelectionTarget", async () => {
+  it("a note's 404 folder_not_found does not get the folder skip (it stops); the hook receives SelectionTarget", async () => {
     const [n1] = notes("n1");
     stubFetch({ [del("n1")]: () => fail(404, "folder_not_found") });
     const seen: Array<[string, string]> = [];
@@ -486,25 +481,25 @@ describe("deleteTargetsInOrder", () => {
   });
 });
 
-describe("moveNotesInOrder（簽名）", () => {
-  it("SBf8 body：帶資料夾 {groupId, folderId}、根層只有 {groupId}；finally 另失效 folders", async () => {
+describe("moveNotesInOrder (signature)", () => {
+  it("body: with a folder {groupId, folderId}, root only {groupId}; finally also invalidates folders", async () => {
     const [a] = notes("a");
     const calls = stubFetch({ [move("a")]: () => ok({ ...a, groupId: "G" }) });
     const qc = newClient();
     const keys = spyInvalidations(qc);
     await moveNotesInOrder([a], { groupId: "G", folderId: "GF" }, { queryClient: qc });
     await moveNotesInOrder([a], { groupId: "G" }, { queryClient: qc });
-    // 鍵在、值 undefined（呼叫端常見的寫法）也不能送出 folderId 鍵。
+    // A key present with value undefined (a common way callers write it) must not send a folderId key either.
     await moveNotesInOrder([a], { groupId: "G", folderId: undefined }, { queryClient: qc });
     expect(calls.map((x) => JSON.stringify(x.body))).toEqual(['{"groupId":"G","folderId":"GF"}', '{"groupId":"G"}', '{"groupId":"G"}']);
     expect(keys).toContain(k("folders"));
   });
 });
 
-describe("copyNotesInOrder（目的地）", () => {
+describe("copyNotesInOrder (destination)", () => {
   const G = groupDto({ id: "G", name: "G" }, memberRole());
 
-  it("SBf9 建立副本：每篇落回自己的群組與資料夾；原資料夾 404 → 該篇不帶 folderId 重送一次、算完成", async () => {
+  it("creates copies: each lands back in its own group and folder; if the original folder 404s -> that note is resent without folderId and counts as done", async () => {
     const p1 = personalNote({ id: "p1", title: "P1", folderId: "A" });
     const g1 = groupNote({ id: "g1", title: "G1", group: G, folderId: "GF" });
     const root = personalNote({ id: "r", title: "R" });
@@ -533,7 +528,7 @@ describe("copyNotesInOrder（目的地）", () => {
     expect(keys).toEqual(expect.arrayContaining([k("notes"), k("folders")]));
   });
 
-  it("SBf9 群組筆記的原資料夾 404 → 重送時保留 groupId", async () => {
+  it("a group note whose original folder 404s -> keeps groupId when resent", async () => {
     const g1 = groupNote({ id: "g1", title: "G1", group: G, folderId: "GF" });
     let tries = 0;
     const calls = stubFetch({
@@ -547,7 +542,7 @@ describe("copyNotesInOrder（目的地）", () => {
     expect(out.done).toHaveLength(1);
   });
 
-  it("SBf9 明選的資料夾 404 → 停下、不重送", async () => {
+  it("an explicitly chosen folder 404 -> stop, no resend", async () => {
     const [a, b] = notes("a", "b");
     const calls = stubFetch({ [copy("a")]: () => fail(404, "folder_not_found"), [copy("b")]: () => ok(personalNote({ id: "cb", title: "B" })) });
     const target: DestTarget = {
@@ -564,7 +559,7 @@ describe("copyNotesInOrder（目的地）", () => {
     ]);
   });
 
-  it("SBf9 個人資料夾目的地 → {folderId}（沒有 groupId）", async () => {
+  it("personal folder destination -> {folderId} (no groupId)", async () => {
     const [a] = notes("a");
     const calls = stubFetch({ [copy("a")]: () => ok(personalNote({ id: "ca", title: "A" })) });
     await copyNotesInOrder([a], { kind: "place", space: { kind: "personal" }, folder: folderDto({ id: "PF", name: "PF" }) }, { queryClient: newClient() });
@@ -576,7 +571,7 @@ describe("unfavoriteInOrder", () => {
   const favs = (...ids: string[]): FavoriteDto[] => ids.map((noteId) => ({ noteId, favoritedAt: "2026-03-01T00:00:00.000Z" }));
   const ids = (qc: QueryClient): string[] | undefined => qc.getQueryData<FavoriteDto[]>(["favorites"])?.map((favorite) => favorite.noteId);
 
-  it("依序 DELETE；每篇成功就從 [favorites] 濾掉；整批只失效一次 [favorites]", async () => {
+  it("DELETE in order; each success is filtered out of [favorites]; [favorites] is invalidated once per batch", async () => {
     const calls = stubFetch({
       "DELETE /api/favorites/a": () => ok(),
       "DELETE /api/favorites/b": () => ok(),
@@ -594,7 +589,7 @@ describe("unfavoriteInOrder", () => {
     expect(invalidations).toEqual([k("favorites")]);
   });
 
-  it("429 → 停下、之後不送、已完成的已濾掉、remaining 從停下那篇起；停下時也失效", async () => {
+  it("429 -> stop, nothing sent afterwards, completed ones already filtered out, remaining starts from the stopped item; also invalidates when stopped", async () => {
     const calls = stubFetch({
       "DELETE /api/favorites/a": () => ok(),
       "DELETE /api/favorites/b": () => fail(429, "too_many_requests"),
@@ -610,7 +605,7 @@ describe("unfavoriteInOrder", () => {
     expect(invalidations).toEqual([k("favorites")]);
   });
 
-  it("404 not_found → 略過、繼續下一篇；快取沒載入時不建立", async () => {
+  it("404 not_found -> skip and continue with the next; not created when the cache is not loaded", async () => {
     stubFetch({
       "DELETE /api/favorites/a": () => fail(404, "not_found"),
       "DELETE /api/favorites/b": () => ok(),
