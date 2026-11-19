@@ -7,32 +7,29 @@ import { Input } from "@/components/ui/input";
 import { formatApiValue, toInput } from "./site-limit-format";
 import "@/i18n/management-strings";
 
-/** 有「調低後果」說明的項目（文案在 `admin.limits.consequences.<key>`）。 */
+/** Keys with a "consequences of lowering" note (copy at `admin.limits.consequences.<key>`). */
 const CONSEQUENCE_KEYS: ReadonlySet<SiteLimitKey> = new Set(["parseTimeoutMs", "parseWorkerMemoryMb", "parseQueueWaitMs"]);
 
-/** 註冊表裡的 key（修改紀錄可能帶著已不在註冊表的 key）。 */
+/** Change-log entries may carry keys that are no longer in the registry. */
 export function isSiteLimitKey(key: string): key is SiteLimitKey {
   return Object.prototype.hasOwnProperty.call(SITE_LIMITS, key);
 }
 
-/** 不帶數字的單位名稱（例如輸入框旁還沒填值時）用複數形。 */
+/** Unit names shown without a number (e.g. beside an empty input) use the plural form. */
 const UNIT_PLURAL_COUNT = 2;
 
-/** 輸入單位的名稱（依 `count` 取單複數）；worker 數與 token 數不用「次」。 */
 export function inputUnitLabel(t: TFunction, key: SiteLimitKey, count: number = UNIT_PLURAL_COUNT): string {
   if (key === "parseWorkers") return t("admin.limits.units.workers", { count });
   if (key === "apiTokensPerUser") return t("admin.limits.units.tokens", { count });
   return t(`admin.limits.units.${siteLimitDef(key).input.unit}`, { count });
 }
 
-/** API 單位的名稱：次數類跟輸入單位同名（worker／token／次），其餘照 API 單位（bytes、ms…）。 */
 export function apiUnitLabel(t: TFunction, key: SiteLimitKey, count: number = UNIT_PLURAL_COUNT): string {
   const unit = siteLimitDef(key).unit;
   if (unit === "count") return inputUnitLabel(t, key, count);
   return t(`admin.limits.units.${unit}`, { count });
 }
 
-/** 一個 API 值的顯示：對齊時以輸入單位（`5 MiB`、`45 seconds`），沒對齊時照 API 單位原樣（`5 242 881 bytes`）。 */
 export function limitValueText(t: TFunction, key: SiteLimitKey, apiValue: number): string {
   const n = toInput(key, apiValue);
   if (n === null) return formatApiValue(key, apiValue, apiUnitLabel(t, key, apiValue));
@@ -44,19 +41,18 @@ function outOfPageRange(key: SiteLimitKey, apiValue: number): boolean {
   return apiValue < def.min || apiValue > def.max;
 }
 
-/** 生效值能不能以輸入單位顯示：對齊輸入刻度就能（超出管理頁範圍的 env 值也一樣，另有一句說明）。 */
+/** True when aligned to the input scale, including env values outside the page's range (which get an extra note). */
 function shownInInputUnits(item: SiteLimitItemDto): boolean {
   return toInput(item.key, item.value) !== null;
 }
 
-/** 輸入框的起始內容：自動項空白（placeholder 顯示自動值）；其餘是生效值的輸入單位數字，沒對齊時是 API 單位原文。 */
+/** Auto items start empty (the placeholder shows the auto value); others get the effective value in input units, or the raw API-unit text when unaligned. */
 export function initialDraft(t: TFunction, item: SiteLimitItemDto): string {
   if (item.source === "auto") return "";
   if (!shownInInputUnits(item)) return formatApiValue(item.key, item.value, apiUnitLabel(t, item.key, item.value));
   return String(toInput(item.key, item.value));
 }
 
-/** 輸入框旁的單位跟著框裡的數字取單複數；不是整數（或空白）時看 placeholder，再沒有就用複數。 */
 function unitCount(text: string, placeholder: string | undefined): number {
   for (const candidate of [text.trim(), placeholder ?? ""]) {
     if (/^\d+$/.test(candidate)) return Number(candidate);
@@ -87,15 +83,9 @@ export interface SiteLimitRowProps {
   onDraft(text: string): void;
   onReset(): void;
   disabled: boolean;
-  /** 前端驗證錯誤（整數、範圍），顯示在列內。 */
   error?: string | null;
 }
 
-/**
- * 站台限制的一列：名稱、說明、輸入框（輸入單位）、「預設 X · 範圍 A–B」、狀態。
- * 狀態依 `item.source`：`default` 無標記；`auto` 標自動值；`admin` 標「已調整」＋恢復鈕；`env` 鎖住並說明，
- * 值超出管理頁範圍、或管理頁另存了值時各多一句；`storedIgnored` 另起一句說存的值沒套用。
- */
 export function SiteLimitRow({ item, draft, onDraft, onReset, disabled, error }: SiteLimitRowProps) {
   const { t } = useTranslation();
   const baseId = useId();
@@ -112,7 +102,7 @@ export function SiteLimitRow({ item, draft, onDraft, onReset, disabled, error }:
   const locked = item.source === "env";
   const value = locked ? initialDraft(t, item) : draft;
   const showUnit = !locked || shownInInputUnits(item);
-  // 自動值沒對齊輸入刻度時不放 placeholder（框裡放不下 API 單位原文）；原值寫在下面的「自動：…」那句。
+  // No placeholder when the auto value isn't aligned to the input scale (API-unit text won't fit); the raw value is in the "auto: ..." line below.
   const autoInInputUnits = item.source === "auto" && item.autoValue !== undefined ? toInput(key, item.autoValue) : null;
   const placeholder = autoInInputUnits === null ? undefined : String(autoInInputUnits);
 

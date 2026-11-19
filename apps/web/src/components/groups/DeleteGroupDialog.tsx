@@ -23,7 +23,6 @@ import { toast } from "@/components/ui/toast";
 
 type Mode = "transfer" | "delete";
 
-/** ApiFail → errors.<code>；其餘 → errors.fallback（與 `GroupMenu`／`GroupNameDialog` 同形，repo 慣例逐檔各一份）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -32,27 +31,18 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 /**
- * 刪除群組的兩模式對話框（#175）。側欄 ⋮（`GroupMenu`）與群組 modal「關於」頁（`GroupAboutSection`）
- * 兩個入口共用；呼叫端以 `open && <DeleteGroupDialog … />` 掛載，每次開都是新狀態（比照 `GroupNameDialog`）。
+ * Callers mount it as `open && <DeleteGroupDialog />` so state is fresh on every open. Transfer is the default because it
+ * loses no data; the admin select keeps the server's order (`GET …/members` lists admins first) and may include yourself.
+ * The delete-all checkbox is cleared on mode switch so it can't carry into a later delete-all. Empty groups still show both
+ * modes (same effect there) so the UI doesn't branch and the user needn't guess.
  *
- * - **轉移給管理員**（預設）：下拉只列持內建管理員角色的成員，順序沿用 server（`GET …/members` 內建管理員在前），
- *   第一位預設選中、可以是自己。這是不丟資料的那條路，所以放前面當預設。
- * - **全部刪除**：筆記、附件、修改紀錄永久刪除，必須先勾「我了解…」才能送出；切模式時同步清掉勾選，
- *   避免舊勾選被帶進下一次全刪。
- * - **空群組也顯示兩模式**：兩者在空群組上效果相同，但介面不分岔，使用者不必猜；
- *   說明句換成「這個群組沒有筆記」。
- * - 篇數＝活筆記＋群組垃圾桶裡的（#181：兩模式都連垃圾桶裡的一起處理）。活筆記取自 `['notes']` 快取
- *   （`groupId === group.id`）：側欄本來就載著它；垃圾桶取自 `GET /api/trash` 中 `group.id` 相符的項目。
- *   垃圾桶篇數在下列情形不可信：①自己沒有該群組的垃圾桶權（`edit`＋`delete`；能管群組的自訂角色可能沒有）、
- *   ②清單 `truncated`（上限 `TRASH_LIST_LIMIT`，會少算）；另外還沒載到或載入失敗也一樣。任一篇數不可信時說明句改用不含數字的版本，
- *   不顯示「0 篇」的假話；「這個群組沒有筆記」只在兩者都可信且為 0 時說。
- * - 轉移模式另起一句說明垃圾桶裡的群組筆記去向（進接收者的個人垃圾桶）；垃圾桶篇數可信且為 0 時省略。
- * - 轉移模式、`GET /api/folders` 成功且有這個群組的資料夾時，再起一句說明資料夾去向；
- *   還沒載到或載入失敗不說。
- * - 按鈕變體：確認鈕 `destructive`（一個畫面一顆實心鈕，取消是 `outline`；見 `ui/button.tsx`）。
+ * Note count = live notes + the group's trash, since both modes also handle trashed notes (#181); live notes come from the
+ * `['notes']` cache because the sidebar has it loaded anyway. The trash count is unreliable when the user lacks the group's
+ * trash rights (edit + delete; a custom role that can manage the group may not have them), the list is `truncated`
+ * (`TRASH_LIST_LIMIT` undercounts), or it hasn't loaded or failed; then the number-free copy is used rather than claiming 0.
+ * In transfer mode trashed group notes go to the recipient's personal trash.
  *
- * 失敗一律 toast 並**留著對話框**（409 `not_admin`、409 `server_busy`、404…）；`not_admin` 另外重抓成員名單，
- * 讓下拉換成最新的管理員。成功 → `onOpenChange(false)` → `onDeleted?.()`。
+ * Failures (409 `not_admin`, 409 `server_busy`, 404…) keep the dialog open; `not_admin` also refetches members so the select shows current admins.
  */
 export function DeleteGroupDialog({
   group,
@@ -77,7 +67,7 @@ export function DeleteGroupDialog({
   const [acknowledged, setAcknowledged] = useState(false);
 
   const admins = (membersQuery.data ?? []).filter((m) => m.builtin === "admin");
-  // 選中的人若不在（重抓後）名單裡就退回第一位，不留一個送出去必 409 的殘值。
+  // Fall back to the first admin if the selection vanished after a refetch: a stale value would always 409.
   const selected = admins.find((m) => m.userId === pickedAdmin) ?? admins[0] ?? null;
   const adminsFailed = membersQuery.isError;
 

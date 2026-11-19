@@ -1,37 +1,39 @@
 import { cn } from "@/lib/utils";
 
 /**
- * 管理面板托盤（#247）的 class：頁底色 45%＋毛玻璃，陰影只在這一層；卡本身不投影。
- * `ManagementShell`（站台管理／群組／設定）與快捷鍵介紹頁（`ShortcutsDialog`）共用，改托盤只動這裡。
+ * Management panel tray (#247). Shadow only on this layer; the cards themselves cast none. Shared by `ManagementShell` and
+ * `ShortcutsDialog`, so tray changes go here only.
  */
 export const managementTray =
   "flex h-full min-h-0 w-full min-w-0 gap-2 rounded-2xl bg-background/45 p-2 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md md:gap-3 md:p-3 " +
-  // 手機（< 640）面板是貼底的 sheet（`ui/dialog.tsx` 的 panel），一次只顯示一張卡：托盤不留內距、不投影，卡直接貼齊 sheet 的左右與底，
-  // 與選單的 sheet 一樣滿版；左右與底的 safe area 由卡自己當內距（見下面三個常數）。
+  // Phone (< 640px): the panel is a bottom sheet (`ui/dialog.tsx`) showing one card, so the tray has no padding or shadow
+  // and the card sits flush with the sheet's sides and bottom, full width like the menu sheet. The card itself pads the
+  // side and bottom safe areas (see the three constants below).
   "max-sm:gap-0 max-sm:p-0 max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:shadow-none max-sm:bg-transparent max-sm:backdrop-blur-none";
 
-/** 手機：卡就是 sheet 的表面——貼齊左右與底，只留上圓角，左右與底沒有邊框（同選單 sheet）。 */
+/** Phone: the card is the sheet's surface, flush at the sides and bottom, top corners rounded, no side/bottom border (like the menu sheet). */
 export const managementCardPhone = "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:bg-popover";
 
-/** 手機：本身沒有內距的卡（內容卡）把左右與底的 safe area 當內距（橫拿時的側邊、Home 指示條），不往外退。 */
+/** Phone: cards without own padding use the safe-area insets (landscape sides, home indicator) as padding. */
 export const managementCardPhoneInset =
   "max-sm:pl-[env(safe-area-inset-left)] max-sm:pr-[env(safe-area-inset-right)] max-sm:pb-[env(safe-area-inset-bottom)]";
 
-/** 手機：自帶 16px 內距的卡（項次清單）：內距與 safe area 取大。 */
+/** Phone: cards with their own 16px padding (the nav list) use the larger of that and the safe-area inset. */
 export const managementListPaddingPhone =
   "max-sm:pl-[max(1rem,env(safe-area-inset-left))] max-sm:pr-[max(1rem,env(safe-area-inset-right))] max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]";
 
 /**
- * 左欄項次的 class（`ManagementShell` 的 `ManagementNavItem` 與快捷鍵介紹頁的分類鈕共用——兩者是同一種視覺語彙，
- * 差別只在一個是 NavLink、一個是 state 驅動的按鈕）。`active`＝目前所在項次。
+ * Shared by `ManagementShell`'s `ManagementNavItem` and the shortcuts dialog's category buttons: same visual language, one a
+ * NavLink and one a state-driven button. `active` = the current item.
  */
 export function managementNavItemClass(active: boolean): string {
   return cn(
     "flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors " +
       "hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
     active && "bg-brand-soft font-medium text-brand-on-soft hover:bg-brand-soft-strong",
-    // 手機：項次清單是「點進去」的清單、不是選取中的導覽，長相同選單 sheet 的列——至少 48px 高、16px 一般字重、列與列相貼、4px 圓角、
-    // 灰色的按壓／焦點底色，沒有常駐的品牌色（目前所在的項次也一樣）。列往兩側各多出 8px（`-mx-2`）、內距 8px（`px-2`）：底色離卡緣 8px，文字與列尾的「›」離卡緣 16px（同選單 sheet 的列）。
+    // Phone: a drill-in list, not a selected navigation, so rows look like the menu sheet's rows: at least 48px high, 16px
+    // normal weight, no gap, 4px radius, gray press/focus background, no persistent brand color (not even on the current
+    // item). -mx-2/px-2 puts the background 8px from the card edge and the text and trailing "›" 16px.
     "max-sm:-mx-2 max-sm:h-auto max-sm:min-h-12 max-sm:rounded-sm max-sm:px-2 max-sm:text-base max-sm:font-normal max-sm:text-foreground " +
       "max-sm:hover:bg-accent max-sm:hover:text-foreground max-sm:active:bg-accent max-sm:focus-visible:bg-accent",
     active && "max-sm:bg-transparent max-sm:font-normal max-sm:text-foreground max-sm:hover:bg-accent",
@@ -39,15 +41,17 @@ export function managementNavItemClass(active: boolean): string {
 }
 
 /**
- * 手機項次清單的列互相貼齊（桌面是 4px 的間距）。清單區在手機上自己捲動：卡是 `overflow-hidden`，矮螢幕（橫拿）放不下的列要捲得到；
- * 列頭（髮絲線以上）在清單之外，不跟著捲。`min-h-0 flex-1` 讓清單拿到卡剩下的有限高度；`overflow-y-auto` 會讓橫向也裁切，
- * 所以清單自己往兩側多出 8px 再用 8px 內距補回，列的 `-mx-2` 剛好落在清單邊界內、不產生橫向捲動。
+ * Phone rows touch (4px gap on desktop). The list scrolls by itself on phones: the card is `overflow-hidden`, and rows that
+ * don't fit a short (landscape) screen must stay reachable; the header row above the rule is outside the list and doesn't
+ * scroll. `min-h-0 flex-1` gives the list the card's remaining finite height. `overflow-y-auto` clips horizontally too, so the list extends 8px each side and pads back; the rows' `-mx-2` then
+ * stay inside the list bounds and no horizontal scroll appears.
  */
 export const managementNavListClass = "flex flex-col gap-1 max-sm:-mx-2 max-sm:min-h-0 max-sm:flex-1 max-sm:gap-0 max-sm:overflow-y-auto max-sm:px-2";
 
 /**
- * 手機項次清單最上面一列（「‹」＋標題）與清單之間的髮絲線，同選單 sheet 的分隔線——線拉滿卡的全寬（往兩側退掉卡的內距，內距含 safe area）；
- * 列高讓「‹」與標題垂直置中；標題的左緣（卡內距＋讓出「‹」的 40px）不因列變寬而動。
+ * Phone: the rule between the top row ("‹" + title) and the list, like the menu sheet's divider, spans the full card width
+ * (undoing the card padding, safe area included). The row height centers "‹" and the title vertically; the title's left
+ * edge (card padding + 40px for "‹") doesn't move when the row widens.
  */
 export const managementListHeaderPhone =
   "max-sm:mb-2 max-sm:h-12 max-sm:border-b max-sm:border-border " +
@@ -55,16 +59,17 @@ export const managementListHeaderPhone =
   "max-sm:pl-[calc(max(1rem,env(safe-area-inset-left))+2.5rem)] max-sm:pr-[max(1rem,env(safe-area-inset-right))]";
 
 /**
- * 手機：「‹」與項次清單標題（高 48px，卡內距 16px）垂直置中；內容層的標題同高，兩層的「‹」才落在同一個位置。
- * 底色就是 sheet 的表面（看起來是透明的），但捲動的內容從它底下經過時會被遮住，不會與「‹」的符號重疊。
+ * Phone: centers "‹" on the nav list title (48px high, 16px card padding); the content layer's title has the same height, so
+ * "‹" lands in the same place on both layers. The background is the sheet surface (looks transparent) but hides content
+ * scrolling under it, so it doesn't overlap the "‹" glyph.
  */
 export const managementBackTopPhone = "max-sm:top-[26px] max-sm:bg-popover";
 
 /**
- * 手機內容層：內容區頂端留出「‹」的位置（符號到 54px、點擊範圍到 62px），讓載入中、載入失敗、找不到這類沒有自己標題的內容不落在「‹」底下；
- * 有標題的頁（`SettingsPage` 的 h1、快捷鍵的分類標題）再用 `managementHeadingUpPhone` 往上拉回與「‹」同高。
+ * Phone: leaves room at the top for "‹" (glyph to 54px, hit area to 62px) so untitled content (loading, error, not found)
+ * isn't under it; titled pages (`SettingsPage`'s h1, the shortcuts category title) pull back up with `managementHeadingUpPhone`.
  */
 export const managementContentTopPhone = "max-sm:pt-16";
 
-/** 手機：標題（高 48px）往上拉 48px，中線落在「‹」的中線（40px）。與 `managementContentTopPhone` 成對。 */
+/** Phone: pulls the 48px title up 48px so its midline meets "‹"'s midline (40px). Pairs with `managementContentTopPhone`. */
 export const managementHeadingUpPhone = "max-sm:-mt-12 max-sm:flex max-sm:min-h-12 max-sm:items-center max-sm:pl-10";

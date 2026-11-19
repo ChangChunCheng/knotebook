@@ -1,21 +1,16 @@
 /**
- * 說明視窗「這一版新增」頁的登記檔：列出這一版比上一版多了什麼。
- *
- * 這個檔不 import 任何模組：說明視窗的 chunk 會讀它，不能因此把別的 chunk 的程式帶進來。
- *
- * - 帶來新功能的 PR：在 `items` 加條目（`id`），雙語字串加進 `i18n/shortcuts.*.json`
- *   的 `helpGuide.whatsNew.items.<id>.title`／`.desc`。`version` 還是上一個已發布版本時，
- *   順手改成下一版，並拿掉上一版的條目（對應的中英字串也要一起刪，否則殘留字串的守衛會紅）。
- * - 只有站台管理員用得到的功能，條目標 `adminOnly: true`：一般使用者的頁面不列它（用 `visibleHighlightItems` 過濾）。
- * - 發版：改這裡——確認 `version` 等於這次的版本、刪掉不想列的條目（連同 `i18n/shortcuts.*.json` 的
- *   `helpGuide.whatsNew.items.<id>` 一起刪）；這一版沒有就清空 `items`，
- *   頁面只顯示「這一版沒有要特別介紹的新功能。」
- * - 頁面標題的「vX.Y.Z 新增」取這裡的 `version`，不取 app 版本：兩次發版之間 app 版本仍是上一版，
- *   用它會把還沒發布的功能標成舊版。`release-highlights.guard.test.ts` 擋 `version` 低於 `apps/web/package.json`。
+ * No imports: the help dialog chunk reads this file and must not pull other chunks in.
+ * A PR adding a feature adds an item (`id`) with bilingual strings at `helpGuide.whatsNew.items.<id>.title`/`.desc`
+ * in `i18n/shortcuts.*.json`; if `version` is still the last released one, bump it to the next and remove the
+ * previous items. Remove an item's i18n strings together with it (`release-highlights.guard.test.ts` requires both languages and flags leftover strings).
+ * Admin-only features set `adminOnly: true` and are filtered out for other users by `visibleHighlightItems`.
+ * On release, check `version` equals the release and drop unwanted items; with none, empty `items` and the page
+ * says there are no highlighted features.
+ * `version` titles the page instead of the app version: between releases the app version is still
+ * the previous one, which would label unreleased features as old. The same guard rejects a `version` below `apps/web/package.json`.
  */
 export interface HighlightItem {
   id: string;
-  /** 只給站台管理員看。省略等於 false。 */
   adminOnly?: boolean;
 }
 
@@ -29,7 +24,6 @@ export const RELEASE_HIGHLIGHTS: ReleaseHighlights = {
   items: [],
 };
 
-/** 這位使用者看得到的條目：一般使用者看不到 `adminOnly` 的，站台管理員全部看得到。保留原順序。 */
 export function visibleHighlightItems(items: readonly HighlightItem[], isSiteAdmin: boolean): HighlightItem[] {
   return items.filter((item) => isSiteAdmin || item.adminOnly !== true);
 }

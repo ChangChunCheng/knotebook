@@ -11,7 +11,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 站台管理表格的用量格（使用者表、群組表共用）：「X of Y」／「X (no limit)」；已達上限（>=）→ 警示色。 */
 export function StorageCell({ storage }: { storage: { usedBytes: number; quotaBytes: number | null } }) {
   const { t } = useTranslation();
   const text =
@@ -22,13 +21,13 @@ export function StorageCell({ storage }: { storage: { usedBytes: number; quotaBy
 }
 
 /**
- * 方案下拉，選了即存（失敗 toast）。受控於 server 值：失敗時不必回滾，畫面自然停在原方案。
- * 方案清單還沒到 → 只顯示方案名。目前方案不在清單裡（清單快取比列舊）→ 補一個該方案的選項，
- * 否則觸發鈕找不到對應選項而顯示空白，看不出目前是哪個方案。
+ * Saves on pick (toast on failure). Controlled by the server value, so a failed save needs no rollback. Before the plan
+ * list loads only the name shows. If the current plan is missing from the list (its cache older than the row), an option
+ * for it is added; otherwise the trigger renders blank and the current plan can't be seen.
  */
 export function PlanSelect({ label, describedBy, planId, planName, plans, onAssign }: {
   label: string;
-  /** 補充描述的元素 id（群組名不唯一時，指到該列的建立時間格讓同名列可區分）。 */
+  /** Group names aren't unique: points at the row's created-at cell so same-name rows can be told apart. */
   describedBy?: string;
   planId: string;
   planName: string;
@@ -36,7 +35,7 @@ export function PlanSelect({ label, describedBy, planId, planName, plans, onAssi
   onAssign: (planId: string) => Promise<unknown>;
 }) {
   const { t } = useTranslation();
-  // 儲存中先顯示剛選的方案（受控值仍是 server 值，不暫存的話下拉會在請求期間彈回舊方案）；失敗時清掉 → 自然回到 server 值。
+  // Show the just-picked plan while saving; the controlled value is still the server's and would snap back during the request. Cleared on failure, falling back to the server value.
   const [pendingId, setPendingId] = useState<string | null>(null);
   if (!plans) return <span>{planName}</span>;
   const options = plans.some((p) => p.id === planId) ? plans : [{ id: planId, name: planName }, ...plans];

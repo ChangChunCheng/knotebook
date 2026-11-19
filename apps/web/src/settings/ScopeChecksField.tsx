@@ -5,11 +5,10 @@ import type { ScopeChecks } from "@/lib/token-scope";
 import "@/i18n/management-strings";
 
 /**
- * #239／#181：「編輯」「移到群組（無法復原）」「移到垃圾桶（可還原）」三框。現在只剩 OAuth 同意頁用
- * （#247 起建立 token 對話框與行內編輯改用 `ScopeTogglesField`）；兩者用同一套
- * 標籤（`settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`——MCP 模型面字串引用的
- * 就是這幾句，server 單元 `scope-labels-sync.test.ts` 逐字比對）與同一套連動：
- * 取消編輯 → 搬移、刪除 disabled 且清掉勾選。
+ * Only the OAuth consent page uses this; the token dialog and inline edit use `ScopeTogglesField`. Both share the labels
+ * (`settings.account.apiTokensScopeEdit`/`apiTokensScopeMove`/`apiTokensScopeDelete`): model-facing strings quote them and
+ * the server's `scope-labels-sync.test.ts` compares them verbatim. Both also share the coupling: unchecking edit disables
+ * move/delete and clears them.
  */
 export function ScopeChecksField({
   value,
@@ -24,7 +23,6 @@ export function ScopeChecksField({
   showWrite?: boolean;
   showMove?: boolean;
   showDelete?: boolean;
-  /** 同意頁：已授予的項目旁標「目前已授予」。 */
   granted?: ScopeChecks;
 }) {
   const { t } = useTranslation();
@@ -61,7 +59,7 @@ export function ScopeChecksField({
               aria-describedby={moveHintId}
               onCheckedChange={c => onChange({ ...value, move: c === true && value.write })}
             />
-            {/* Checkbox 本體帶 `peer`（ui/checkbox.tsx）：框 disabled 時標籤跟著變淡，與框的 disabled:opacity-50 一致。 */}
+            {/* The checkbox carries `peer` (ui/checkbox.tsx), so the label dims with it when disabled, matching its disabled:opacity-50. */}
             <label htmlFor={moveId} className="text-sm peer-disabled:cursor-not-allowed peer-disabled:opacity-50">
               {t("settings.account.apiTokensScopeMove")}
             </label>

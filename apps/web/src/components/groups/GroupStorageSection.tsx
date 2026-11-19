@@ -19,10 +19,11 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 /**
- * 「依成員」（#247）：每個人佔用了這個群組多少空間——server 依 `uploads.charged_to_id`（佔用者）分組：
- * 在群組筆記裡直接上傳＝上傳者；把筆記移入或複製進群組＝執行的人（移入含該篇全部附件；複製只含隨副本複製的附件）。佔用者帳號已刪除者彙總成
- * `userId: null` 一列。只列 `bytes > 0`；沒有任何列時一句說明。佔比分母同「依類型」：`byKind` 五類之和。
- * 列距與列間框線同設定表格（只統一列距與框線、不換元件，保留進度條 grid）。
+ * The server groups by `uploads.charged_to_id` (who is charged): an upload into a group note charges the uploader;
+ * moving or copying a note in charges whoever did it (a move includes all its attachments, a copy only those copied).
+ * Deleted accounts collapse into one `userId: null` row. The percentage
+ * denominator is the same as by-kind: the sum of the five `byKind` categories. Row spacing and borders match the
+ * settings table without switching to it, to keep the progress-bar grid.
  */
 function ByMemberGroup({ usage }: { usage: GroupStorageUsageDto }) {
   const { t } = useTranslation();
@@ -61,11 +62,7 @@ function ByMemberGroup({ usage }: { usage: GroupStorageUsageDto }) {
   );
 }
 
-/**
- * 群組的「自動儲存版本」開關（#175、#247 搬到儲存空間頁）：**對所有成員渲染**；非 `canManageGroup` 時
- * disabled 並說明誰能改；站台總開關關閉時 disabled 並說明站台已關（`AutoVersionsSwitch` 以 siteOff 優先）。
- * 說明加一句「版本不佔額度」（`settings.storage.versionsNote`）。
- */
+/** `AutoVersionsSwitch` gives `siteOff` priority over `disabledReason`. */
 function GroupAutoVersionsGroup({ group }: { group: GroupDto }) {
   const { t } = useTranslation();
   const config = useAuthConfig();
@@ -88,11 +85,7 @@ function GroupAutoVersionsGroup({ group }: { group: GroupDto }) {
   );
 }
 
-/**
- * 群組 modal「儲存空間」（`/groups/:id/storage`，#247）：用量／配額／方案、依類型（五列恆顯示）、依成員、版本歷史開關。
- * **所有成員**都看得到（`GET /api/groups/:id/storage` 成員可讀；唯讀）。
- * ⚠ SCOPE：上傳目前只收四種圖片，實際只有「影像」會非零。
- */
+/** Read-only; shown to every member, since `GET …/storage` is readable by any member or site admin. Uploads currently accept only four image types, so only "image" is ever non-zero. */
 export function GroupStorageSection() {
   const { t } = useTranslation();
   const group = useGroupOutlet();

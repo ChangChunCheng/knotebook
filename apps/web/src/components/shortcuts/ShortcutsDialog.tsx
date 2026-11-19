@@ -11,33 +11,33 @@ import { cn } from "@/lib/utils";
 import type { ShortcutsStartPage } from "@/lib/shortcuts-dialog";
 
 /**
- * 內容（分類清單、字串、鍵面）在 lazy chunk，第一次打開才下載；外殼（這個檔）在首包，只有對話框骨架。
- * `ShortcutsLazy` 模組頂層註冊字串包——別從首包任何地方 import 它（scripts/check-bundle-size.mjs 會紅）。
+ * Content lives in a lazy chunk; `ShortcutsLazy` registers its string bundle at module top level, so never
+ * import it from the entry bundle (scripts/check-bundle-size.mjs fails).
  */
 const ShortcutsContent = lazy(() => import("@/components/shortcuts/ShortcutsLazy").then((m) => ({ default: m.ShortcutsContent })));
 
-/** chunk 下載中與載入失敗時佔住右邊整塊托盤的一張卡（標題、✕、Esc 都在外殼，所以這兩個狀態下對話框一樣關得掉）。 */
-// 手機：卡貼齊 sheet 底緣，底部內距與 Home 指示條的 safe area 取大。
+/**
+ * Title, ✕ and Esc live in the shell, so the dialog still closes while the chunk loads or fails. On phones the card
+ * sits on the sheet's bottom edge, so bottom padding is the larger of its own and the home-indicator safe area.
+ */
 const FALLBACK_CARD = cn(cardSurface, "min-w-0 flex-1 overflow-y-auto p-8 pt-12 max-sm:pb-[max(2rem,env(safe-area-inset-bottom))]", managementCardPhone);
 
 /**
- * 說明視窗的對話框外殼（Ctrl+/ 或使用者選單「說明」；開關 state 與監聽器在 `AppShell`）。
- * 版面沿用設定的托盤＋兩張卡（左：功能導覽、這一版新增與快捷鍵分類，右：所選那一頁），兩張卡在 lazy chunk 裡（`ShortcutsLazy`）。
- * 這裡持有的是「不依賴 chunk」的部分：Dialog、sr-only 的標題與描述（對話框的名稱）、✕、托盤、焦點進出。
+ * Focus: on open, focus the content area (auto-focus prevented), or the dialog itself until the chunk loads and
+ * the content takes over. DOM order is ✕, categories, (narrow back button), content; Radix FocusScope `loop` cycles
+ * Tab between content and ✕. A controlled Dialog without a `DialogTrigger` drops focus on body when closed, so
+ * `onCloseAutoFocus` is prevented and `returnFocusRef` is focused instead (the focused element at open when opened by
+ * keyboard; the UserMenu trigger when opened from the menu).
  *
- * 焦點：
- * - 開啟：聚焦內容區（`onOpenAutoFocus` preventDefault 後自己 focus）；chunk 還沒到時先聚焦對話框本身，內容元件掛上後自己接手。
- *   DOM 順序是 ✕ → 左欄分類 → （窄螢幕的返回鈕）→ 內容區，Radix FocusScope `loop` 讓 Tab 在內容區與 ✕ 之間循環。
- * - 關閉：沒有 `DialogTrigger` 的受控 Dialog，Radix 關閉時不還焦點、落在 body——所以 `onCloseAutoFocus` preventDefault 後
- *   聚焦 `returnFocusRef`（鍵盤開的＝開啟當下的焦點元素；選單開的＝UserMenu 的觸發鈕）。
- * - ⚠ `DialogTitle` 不得傳 `id`：Radix 的 Title 是 `{ id: context.titleId, ...props }`，傳了會蓋掉 context 的 id，
- *   Content 的 `aria-labelledby` 仍指 `context.titleId` → 對話框沒有名稱。
+ * Phone (< 640px): a bottom sheet without ✕, using the same back stack as `ManagementShell`: it opens on the category
+ * list; the content's back returns to the list; the list's back closes, and if opened from a menu (`reopenMenuRef`)
+ * reopens that menu once the sheet is down (labelled back-to-menu; otherwise labelled close). Tapping the dimmed strip
+ * or Esc closes everything.
  *
- * 手機（< 640）：貼底的 sheet，沒有 ✕，與管理面板同一套返回堆疊（`ManagementShell` 檔頭）：打開時先停在分類清單；
- * 內容層的「‹」回分類清單，分類清單的「‹」關掉——從選單開的（`reopenMenuRef`）在收下去之後重開那個選單（名稱「返回選單」），
- * 否則只關（名稱「關閉」）。點上方變暗的縫或 Esc 整個關掉。
+ * `DialogTitle` must not get an `id`: Radix spreads props after its own `id`, so `aria-labelledby`
+ * would point at a missing id and the dialog would have no name.
  *
- * ⚠ `ChunkLoadBeacon` 必須在 `<Suspense>` 內（擺放不變量見 ErrorBoundary.tsx）。卡面一律 `cn(cardSurface, …)`（card.guard.test.ts）。
+ * `ChunkLoadBeacon` must stay inside `<Suspense>` (placement invariant in ErrorBoundary.tsx); card surfaces use `cn(cardSurface, …)` (card.guard.test.ts).
  */
 export function ShortcutsDialog({
   open,
@@ -49,13 +49,13 @@ export function ShortcutsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnFocusRef: RefObject<HTMLElement | null>;
-  /** 這一次打開停在哪一頁（內容元件掛上時取用；每次打開重新掛上，打開後不會跟著變）。 */
+  /** Start page, read when the content mounts; each open remounts it, so later changes while open are ignored. */
   page?: ShortcutsStartPage;
-  /** 開啟它的選單怎麼重開（`ShortcutsDialogApi.open` 的 `reopenMenu`）；null＝不是從選單開的。 */
+  /** How to reopen the menu that opened it; null means it wasn't opened from a menu. */
   reopenMenuRef?: RefObject<(() => void) | null>;
 }) {
   const { t } = useTranslation();
-  // 每次由關到開換一個 key，內容元件重新掛上、起始頁重設：關閉動畫還沒跑完（內容仍掛著）就再打開時也一樣。
+  // New key per open remounts the content and resets the start page, even when reopened mid close-animation.
   const [wasOpen, setWasOpen] = useState(open);
   const [openCount, setOpenCount] = useState(0);
   if (open !== wasOpen) {
@@ -63,9 +63,9 @@ export function ShortcutsDialog({
     if (open) setOpenCount((n) => n + 1);
   }
   const phone = useIsPhone();
-  /** 分類清單的「‹」按下：收完之後重開選單（而不是還焦點）。 */
+  // Set when the list's back button is pressed: reopen the menu after closing instead of returning focus.
   const backToMenuRef = useRef(false);
-  // 打開當下是不是手機寬度：「返回選單」只給在手機上從選單打開的情形（在 640 以上打開、之後縮到手機寬度的，清單的「‹」只關）。
+  // Phone width at open time: "back to menu" applies only to a menu-opened phone session (opened wide then shrunk: "‹" just closes).
   const [phoneAtOpen, setPhoneAtOpen] = useState<boolean | null>(null);
   if (open && phoneAtOpen === null) setPhoneAtOpen(isPhone());
   else if (!open && phoneAtOpen !== null) setPhoneAtOpen(null);
@@ -79,7 +79,7 @@ export function ShortcutsDialog({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           const dialog = event.currentTarget as HTMLElement;
-          // 看得見的那一層的落點（內容區，或手機停在分類清單時清單的「‹」），見 `ShortcutsLazy`。
+          // The visible layer's target (content, or the list's back button on a phone list); see `ShortcutsLazy`.
           (dialog.querySelector<HTMLElement>("[data-shortcuts-focus]") ?? dialog).focus();
         }}
         onCloseAutoFocus={(event) => {
@@ -96,7 +96,7 @@ export function ShortcutsDialog({
         <DialogTitle className="sr-only">{t("shortcuts.title")}</DialogTitle>
         <DialogDescription className="sr-only">{t("shortcuts.description")}</DialogDescription>
         <div className={cn(managementTray, "relative")}>
-          {/* 唯讀說明頁：不需要設定那種「點外面不關」的保護，✕／Esc／點外面都能關。✕ 在 DOM 最前面（落在托盤右上角）。 */}
+          {/* Read-only page, so no settings-style outside-click protection: ✕, Esc and outside click all close; ✕ comes first in the DOM (tray's top-right) */}
           {!phone && (
             <DialogClose asChild>
               <Button

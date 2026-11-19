@@ -17,12 +17,14 @@ const GITLAB_ICON: ProviderIconDto = { type: "builtin", name: "gitlab" };
 const GOOGLE_ICON: ProviderIconDto = { type: "builtin", name: "google" };
 
 /**
- * 登入服務圖示對話框：五個選項各附預覽，按「儲存」才生效——上傳走 PUT、其他走 PATCH {iconKind}；
- * 無變更直接關。表單型 → `dismissOnOutside={false}`。開或關都重設為目前的 iconKind；縮圖的 `blob:` 在換掉或關閉時釋放。
- * 開或關都遞增 `generation`：關閉時還在跑的縮圖，回來後發現 generation 已變就丟掉結果（不建 `blob:`、不寫 state）——否則取消後再開會漏進舊檔。
- * 儲存中（`busy`）不得關閉：Cancel 停用、`onOpenChange` 擋下 X／Esc（點外面本來就擋）——否則取消再重開時 `choice` 停在舊 iconKind，
- * PUT 成功後直接按 Save 會送 PATCH 把剛上傳的圖清掉。`busy` 涵蓋到「成功後等 admin providers 重抓完」（`refreshing`）：mutation 的 invalidate 不等 refetch，
- * 不等的話在重抓回來前重開，選項仍是舊的 iconKind。重抓失敗（invalidateQueries 拋出）也照樣關閉，不卡住。generation 檢查留作保險（正常路徑到不了）。
+ * Five options with previews; Save applies (upload via PUT, others PATCH {iconKind}); no change just closes. A form, so
+ * `dismissOnOutside={false}`. Opening or closing resets to the current iconKind; the thumbnail's `blob:` is released when replaced or closed.
+ * `generation` bumps on every open/close so a thumbnail still resizing after a close is discarded (no `blob:`, no state write); otherwise it
+ * would leak into the next open.
+ * Closing is blocked while `busy` (Cancel disabled, `onOpenChange` blocks X/Esc; outside clicks are already blocked): otherwise after cancel
+ * and reopen `choice` stays on the old iconKind and Save after a successful PUT would PATCH the new image away. `busy` includes the providers
+ * refetch after a save (the mutation's invalidate doesn't wait for it), else a reopen before it returns shows the old iconKind; a failed
+ * refetch (invalidateQueries throws) still closes. For saves the generation check is only a backstop (unreachable on the normal path).
  */
 export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDto }) {
   const { t } = useTranslation();
@@ -38,7 +40,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // `picked` 換掉（含設為 null）或卸載時釋放上一個 blob:（更新不會被 StrictMode 重跑，只有 mount 會——mount 時 picked 為 null）。
+  // Revoke the previous blob: URL when `picked` changes or on unmount (StrictMode reruns only the mount, where `picked` is null, not updates).
   useEffect(() => {
     if (picked === null) return;
     const url = picked.url;
@@ -56,7 +58,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];
-    event.target.value = ""; // 同一個檔再選一次也要觸發 change
+    event.target.value = ""; // re-picking the same file must still fire change
     if (file === undefined) return;
     setError(null);
     setPicked(null);
@@ -64,7 +66,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
     const started = generation.current;
     try {
       const blob = await resizeProviderIcon(file);
-      if (generation.current !== started) return; // 對話框已開關過：這張是被取消的那次選檔
+      if (generation.current !== started) return; // dialog was closed or reopened since this pick started
       setPicked({ blob, url: URL.createObjectURL(blob) });
     } catch (err) {
       if (generation.current !== started) return;
@@ -75,7 +77,6 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
   }
 
   const busy = patch.isPending || upload.isPending || refreshing;
-  // 選上傳、目前不是 upload、還沒有新檔 → 無從儲存。
   const needsFile = choice === "upload" && provider.iconKind !== "upload" && picked === null;
 
   async function handleSave(): Promise<void> {
@@ -87,22 +88,22 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
       } else if (choice !== "upload" && choice !== provider.iconKind) {
         await patch.mutateAsync({ id: provider.id, body: { iconKind: choice } });
       }
-      // 其餘＝無變更：不送請求，直接關。
+      // Anything else is no change: no request, just close.
       if (choice === "upload" ? picked !== null : choice !== provider.iconKind) {
-        // 寫入成功：等列表重抓完再關（沿用進行中的重抓，不取消重來）；重抓失敗不擋關閉。
+        // Saved: wait for the list refetch before closing, joining one in flight rather than restarting it.
         setRefreshing(true);
         try {
           await queryClient.invalidateQueries({ queryKey: ADMIN_AUTH_PROVIDERS_QUERY_KEY }, { cancelRefetch: false });
         } catch {
-          // 照關
+          // A failed refetch must not block closing.
         } finally {
           setRefreshing(false);
         }
       }
-      if (generation.current !== started) return; // 儲存中被取消、甚至重開：請求照跑（列表由 mutation 的 invalidate 重抓），但不替新開的對話框關門
+      if (generation.current !== started) return; // closed or reopened mid-save: the request still ran (the mutation's invalidate refetches the list), but don't close the new dialog
       handleOpenChange(false);
     } catch (err) {
-      if (generation.current !== started) return; // 同上：錯誤屬於已關掉的那次，不寫進新開的對話框
+      if (generation.current !== started) return; // the error belongs to the closed dialog; don't show it in the new one
       setError(authErrorMessage(t, err));
     }
   }
@@ -110,7 +111,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
   function preview(kind: ProviderIconKind): ProviderIconDto {
     switch (kind) {
       case "template":
-        // template 分支不讀 version。
+        // The template branch doesn't read the version.
         return resolveProviderIcon({ id: provider.id, template: provider.template, iconKind: "template", iconVersion: 0 });
       case "gitlab":
         return GITLAB_ICON;
@@ -127,7 +128,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
     <Dialog
       open={open}
       onOpenChange={next => {
-        if (!next && busy) return; // 儲存中忽略關閉請求（X／Esc／Cancel）
+        if (!next && busy) return; // ignore close requests (X/Esc/Cancel) while saving
         handleOpenChange(next);
       }}
     >

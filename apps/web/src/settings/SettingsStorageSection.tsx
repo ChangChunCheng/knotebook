@@ -33,7 +33,7 @@ import { SiteTrashGroup } from "./SettingsTrashSection";
 import { SiteVersionsGroups } from "./SettingsVersionsSection";
 import "@/i18n/management-strings";
 
-/** errors.<code>；方案端點的 invalid_name 改用方案版文案（errors.invalid_name 是群組的「1–80」）。 */
+/** errors.<code>; plan endpoints use plan-specific text for invalid_name (errors.invalid_name is the group's "1–80"). */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     if (err.code === "invalid_name") return t("admin.storage.nameInvalid");
@@ -43,9 +43,10 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 /**
- * 新增／編輯方案。上限＝數字（MB／GB，1024 進位）或「無上限」。編輯時只送改了的欄位：
- * 名稱 trim 後不同才送 `name`；碰過上限欄（數字、單位、無上限任一）且換算後不同才送 `quotaBytes`——
- * bytes→「MB＋小數」→bytes 會四捨五入，只改名時不能把換算值送回去。調低只顯示說明文字，不另確認。
+ * The limit is a number (MB/GB, 1024-based) or unlimited. Edit sends only changed fields: `name` only if it differs
+ * after trim; `quotaBytes` only when a limit input (number, unit or unlimited) was touched and the converted value
+ * differs, because bytes → "MB + decimal" → bytes rounds and a rename must not send the converted value back.
+ * Lowering the limit only shows a hint, with no extra confirmation.
  */
 function PlanDialog({ plan, trigger }: { plan?: StoragePlanDto; trigger: ReactNode }) {
   const { t } = useTranslation();
@@ -185,7 +186,7 @@ function PlanDialog({ plan, trigger }: { plan?: StoragePlanDto; trigger: ReactNo
   );
 }
 
-/** 刪除鈕＋確認框。disabled 只是體驗（說明在表下方，看得見）；server 仍是最終裁決，競態的 409 以 toast 顯示。 */
+/** `disabled` is a courtesy (the reason is visible below the table); the server decides, and a racing 409 `storage_plan_in_use` shows as a toast. */
 function DeletePlanButton({ plan, disabled }: { plan: StoragePlanDto; disabled: boolean }) {
   const { t } = useTranslation();
   const del = useDeleteStoragePlan();
@@ -231,7 +232,7 @@ function DeletePlanButton({ plan, disabled }: { plan: StoragePlanDto; disabled: 
   );
 }
 
-/** 兩個預設：只影響之後建立的。`null`＝沒碰過、顯示 server 值；送出只帶改了的鍵。 */
+/** Both defaults affect only what is created later. `null` = untouched (shows the server value); submit sends only changed keys. */
 function DefaultsGroup({ data }: { data: StoragePlansResponse }) {
   const { t } = useTranslation();
   const updateDefaults = useUpdateStorageDefaults();
@@ -296,10 +297,6 @@ function DefaultsGroup({ data }: { data: StoragePlansResponse }) {
 
 const BADGE_CLASS = "whitespace-nowrap rounded border border-border px-1 text-xs text-muted-foreground";
 
-/**
- * 方案表：名稱（預設標籤）｜上限｜使用者｜群組｜超過上限（>0 紅）｜操作（編輯、刪除）。
- * 刪除鈕不可用時 softDisabled＋原因（`title`），表下另有看得見的說明。
- */
 function PlanTable({ plans }: { plans: StoragePlanDto[] }) {
   const { t } = useTranslation();
   const columns: SettingsTableColumn[] = [
@@ -345,12 +342,7 @@ function PlanTable({ plans }: { plans: StoragePlanDto[] }) {
   );
 }
 
-/**
- * 站台管理的「儲存方案」（`/admin/storage`，admin only；#247）：方案表、兩個預設、站台版本設定（`SiteVersionsGroups`）、
- * 站台垃圾桶設定（`SiteTrashGroup`，#181）。
- * 只被站台管理的 lazy 模組靜態 import（#201／#247：同一個 chunk，不得逐區 lazy）。刪除鈕的 disabled 只是體驗，
- * server 仍裁決（並發被指派 → 409 `storage_plan_in_use`，以 toast 顯示）。
- */
+/** Statically imported only by the site-admin lazy module, so everything shares one chunk; don't lazy-load per section. */
 export function SettingsStorageSection() {
   const { t } = useTranslation();
   const plansQuery = useAdminStoragePlans();

@@ -3,30 +3,12 @@ import { managementHeadingUpPhone } from "@/components/management/tray";
 import { cn } from "@/lib/utils";
 
 /**
- * 設定面板的版面語彙（設定、群組、站台管理三個面板的各頁共用）。
- *
- * 解的是「沒有層次感、項次內容都黏在一起」：改版前每個區塊都是一串同級的
- * `h1`/`h2` ＋灰色說明 ＋控制項，彼此只靠 24px 空白隔開，而 modal 標題（14px）
- * 比區塊標題（18px）還小——型階是倒的，分群沒有任何視覺載體。
- *
- * 型階（由大到小）：頁標題 20px ／ 群組標題 16px ／ 說明與內文 14px ／
- * 導覽品牌字 13px。四級各自可辨，不靠粗細硬撐。
- *
- * 分群用**髮絲線＋留白**，不用卡片：這個 modal 本身已經是一張浮層卡，
- * 群組再各包一張會變成卡中卡，而且會把「一頁設定」讀成「一堆不相干的東西」。
- *
- * 說明文字**不限寬、不左右對齊**（#247）：面板右卡很寬，曾用 65ch 限寬配左右對齊；
- * 限寬拿掉後左右對齊也一起拿掉——不限寬的左右對齊在寬欄位上會把字距拉出明顯的「河流」。
+ * Groups are separated by hairlines and whitespace, not cards: the modal is already a floating card, so cards
+ * would nest and make one settings page read as unrelated things. Descriptions are neither width-limited nor
+ * justified: justified text in a wide column opens visible rivers.
  */
 
-/**
- * 一個 `/settings/*` 區塊的頁首＋群組容器。
- *
- * `action` 放在標題列右側時要留出 ✕ 關閉鈕的位置——面板的 ✕ 在右卡
- * `absolute right-2 top-2`（#247），內容區的 `p-8` 只擦邊擋得住，所以標題列多給 `pr-6`。
- *
- * `divide-y` 讓群組之間長出髮絲線（第一個不長），群組自己負責上下留白。
- */
+/** The header gets `pr-6` so an `action` clears the panel's absolutely positioned close button (right-2 top-2), which the content's `p-8` only barely clears. */
 export function SettingsPage({
   title,
   description,
@@ -55,16 +37,10 @@ export function SettingsPage({
 }
 
 /**
- * 一個設定群組＝**一件事**（使用者名／API token／密碼／AI 供應商…）。
- *
- * `action` 刻意放在群組自己的標題列，不浮在內容上方：這樣才看得出來
- * 「建立 token」屬於 API token 這一組、而不是屬於整頁。
- *
- * `title` 可省略（例如 SSO-only 帳號那段提示沒有自己的標題，而且
- * `SettingsAccountSection.test.tsx` 明文要求那時不得出現「修改密碼」標題）。
- *
- * `labelledByTitle`（預設關）：`<section aria-labelledby>` 指向自己的 `<h2>`，成為以標題命名的 region。
- * 同頁有同名控制項時（例如兩顆「儲存」）讓測試與輔助科技能以群組標題圈定；不是每個群組都開，免得整頁都是 landmark。
+ * One group is one thing; its `action` sits in the group's own title row so it reads as belonging to that group,
+ * not the whole page. `title` is optional: the SSO-only account hint has no title, and
+ * `SettingsAccountSection.test.tsx` requires no change-password heading then.
+ * `labelledByTitle` is opt-in: it makes the section a landmark so same-named controls on a page (two "Save") can be scoped; not default, to avoid landmark clutter.
  */
 export function SettingsGroup({
   title,

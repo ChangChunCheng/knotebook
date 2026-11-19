@@ -10,11 +10,6 @@ import { ActiveNoteProvider } from "@/lib/active-note";
 import { adminRole, groupDto, memberRole } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-/**
- * 群組 modal（`/groups/:id/*`，#247）測試共用：真 `AppRoutes`＋`MemoryRouter`＋fetch 分派（慣例：未列的請求 throw）。
- * 形照舊的群組詳情頁測試（#247 前的 settings 版）。背景 `HomePage` 也吃 `useGroups()`，查詢一律
- * `within(dialog)`。
- */
 export function fakeResponse({ ok: okFlag, status, json }: { ok: boolean; status: number; json?: () => Promise<unknown> }): Response {
   return { ok: okFlag, status, json: json ?? (() => Promise.reject(new Error("no body"))) } as unknown as Response;
 }
@@ -39,12 +34,10 @@ export const ME: UserDto = {
 export const ADMIN_ROLE = adminRole({ id: "11111111-1111-1111-1111-111111111111" });
 export const MEMBER_ROLE = memberRole({ id: "22222222-2222-2222-2222-222222222222" });
 export const ROLES: GroupRoleDto[] = [ADMIN_ROLE, MEMBER_ROLE];
-/** 我是唯一的管理員（`memberCount` 1）。 */
+/** I am the only admin (`memberCount` 1). */
 export const GROUP_ADMIN: GroupDto = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Team Alpha", createdAt: "2026-01-01T00:00:00.000Z" }, ADMIN_ROLE);
-/** 我是兩位管理員之一。 */
 export const GROUP_CO_ADMIN: GroupDto = { ...GROUP_ADMIN, myRole: { ...ADMIN_ROLE, memberCount: 2 } };
 export const GROUP_MEMBER: GroupDto = groupDto({ id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "Team Beta", createdAt: "2026-01-02T00:00:00.000Z" }, MEMBER_ROLE);
-/** 背景頁：一般個人筆記。 */
 export const BG_NOTE = { pathname: "/n/me/some-note", search: "", hash: "", state: null, key: "bg1" } as Location;
 
 export function member(userId: string, email: string, displayName: string, role: GroupRoleDto): GroupMemberDto {
@@ -53,7 +46,6 @@ export function member(userId: string, email: string, displayName: string, role:
 
 export type Handler = (url: string, method: string, init: RequestInit | undefined) => Response | Promise<Response> | null;
 
-/** 群組用量的預設回應（#247 的 `GroupStorageUsageDto`）。 */
 export const EMPTY_GROUP_USAGE = {
   usedBytes: 0,
   quotaBytes: 2147483648,
@@ -62,11 +54,7 @@ export const EMPTY_GROUP_USAGE = {
   byMember: [],
 };
 
-/**
- * `GET /api/groups` 回 `getGroups()`；`…/members` 回 `getMembers()`（或它回的 Promise）；`…/roles` 回 `ROLES`；
- * `…/storage` 回 `EMPTY_GROUP_USAGE`；`/api/auth/config` 站台自動版本開著；加成員框的建議 `/api/users/suggest` 回空清單
- * （不然每打一個字都走查詢失敗那條路）。`extra` 先比對。
- */
+/** Auth config has site auto-versions on. The suggest endpoint returns an empty list so typing doesn't take the query-failure path. `extra` is matched first. */
 export function groupFetch(
   getGroups: () => GroupDto[],
   getMembers: () => GroupMemberDto[] | Promise<Response> = () => [],
@@ -112,18 +100,18 @@ function LocationProbe() {
   );
 }
 
-/** `pathname|state-json`。 */
 export function locationText(): string {
   return screen.getByTestId("location").textContent ?? "";
 }
 
+/** The background `HomePage` also uses `useGroups()`, so query `within(dialog)`. */
 export function renderGroupRoute(entry: string | { pathname: string; state?: unknown }, fetchMock: ReturnType<typeof vi.fn>) {
   vi.stubGlobal("fetch", fetchMock);
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ThemeProvider>
         <MemoryRouter initialEntries={[entry]}>
-          {/* 同 `App()`：ActiveNoteProvider 包住 AppRoutes——退出／刪除後導回背景筆記頁時 NotePage 要它（#247） */}
+          {/* Same as `App()`: NotePage needs ActiveNoteProvider after leave/delete navigates back to the background note. */}
           <ActiveNoteProvider>
             <LocationProbe />
             <AppRoutes />

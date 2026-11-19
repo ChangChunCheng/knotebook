@@ -3,10 +3,7 @@ type LightboxModule = typeof import("./MediaLightbox");
 let pending: Promise<LightboxModule> | null = null;
 let loaded: LightboxModule | null = null;
 
-/**
- * 放大畫面的 chunk 載入點：Provider 與預取共用同一個 promise，瀏覽器只下載、只 `import()` 一次。
- * 失敗時清掉 promise，下次打開才有機會重試。
- */
+/** Provider and prefetch share one promise, so the chunk downloads and `import()`s once; it is cleared on failure so the next open can retry. */
 export function loadMediaLightbox(): Promise<LightboxModule> {
   pending ??= import("./MediaLightbox").then(
     m => {
@@ -21,12 +18,12 @@ export function loadMediaLightbox(): Promise<LightboxModule> {
   return pending;
 }
 
-/** chunk 已載好就回模組（Provider 據此直接渲染、不經 Suspense 的最短等待），否則 `null`。 */
+/** Lets the Provider render directly once loaded, skipping even the shortest Suspense wait. */
 export function loadedMediaLightbox(): LightboxModule | null {
   return loaded;
 }
 
-/** 滑鼠移上或焦點進來時先把 chunk 抓好；已載或載入中都不重複觸發，失敗不處理（打開時會再試並顯示錯誤）。 */
+/** On hover or focus. No-op when loaded or loading; failure is ignored here: opening retries and shows the error. */
 export function prefetchMediaLightbox(): void {
   if (loaded !== null || pending !== null) return;
   void loadMediaLightbox().catch(() => undefined);

@@ -34,8 +34,6 @@ import { PasswordResetAction } from "./PasswordResetDialog";
 import { PlanSelect, StorageCell } from "./StorageAdminCells";
 import "@/i18n/management-strings";
 
-/** ApiFail → errors.<code>；其餘 → errors.fallback。與 NoteList/ShareDialog 同一套對映
- * （各檔各自一份，是既有慣例——見那兩處的說明）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -44,9 +42,10 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 }
 
 /**
- * #267「最後活動」欄：`now - lastActiveAt` 小於 `ONLINE_WINDOW_MS` →「上線中」（server 至多每 `LAST_ACTIVE_WRITE_INTERVAL_MS` 記一次，
- * 遠短於視窗，持續有活動的人不會掉出來）；更早 → 日期＋時間（與版本面板 `formatVersionTime` 同格式：dateStyle／timeStyle short）；
- * null（從無紀錄）→「尚無紀錄」。`now` 取瀏覽器時鐘、在 render 當下算；沒有計時器重算，停在畫面上的「上線中」要等下次 render（例如列表重新取得）才會變。
+ * The server records activity at most every `LAST_ACTIVE_WRITE_INTERVAL_MS`, far shorter than `ONLINE_WINDOW_MS`,
+ * so continuously active users don't drop out. Older times use the same format as the version panel's
+ * `formatVersionTime` (dateStyle/timeStyle short). `now` is the browser clock at render time and there is no
+ * timer: a stale "online" persists until the next render (e.g. a list refetch).
  */
 function lastActiveLabel(lastActiveAt: string | null, t: (key: string) => string, language: string): string {
   if (lastActiveAt === null) return t("admin.users.lastActiveNone");
@@ -56,9 +55,9 @@ function lastActiveLabel(lastActiveAt: string | null, t: (key: string) => string
 }
 
 /**
- * 角色下拉（#247：管理員／一般；升級送 `promote`、降級送 `demote`）。
- * 自己那列 disabled＋`title`（server 另以 400 `cannot_demote_self` 把關）；pending 時 disabled 並顯示剛選的值；
- * 失敗（含 409 `last_site_admin`）下拉自然留在原值（受控於列資料），錯誤交給上層的錯誤列。
+ * Self row is disabled with a `title` (the server also rejects it with 400 `cannot_demote_self`). While pending
+ * it is disabled and shows the just-picked value. A failed change (including 409 `last_site_admin`) snaps back
+ * because the value is controlled by row data; the error goes to the parent's error row.
  */
 function UserRoleSelect({ row, isSelf, onError }: { row: AdminUserDto; isSelf: boolean; onError: (message: string | null) => void }) {
   const { t } = useTranslation();
@@ -98,9 +97,10 @@ function UserRoleSelect({ row, isSelf, onError }: { row: AdminUserDto; isSelf: b
 }
 
 /**
- * 啟用 toggle（#247）：關 → 先開確認框（停用會踢掉線上 session）、確認才送 `disable`；開 → 直接送 `enable`。
- * 自己那列照常渲染、恆為開，但 `aria-disabled`＋`title`、不送請求；server 的 `cannot_disable_self` 照舊是最後防線。
- * 失敗：toggle 受控於列資料、自然彈回，錯誤交給上層的錯誤列。可及名稱「Enabled ＜email＞」由表格的 aria-labelledby 給。
+ * Disabling confirms first because it kicks online sessions; enabling sends at once. The self row renders,
+ * stays on, is `aria-disabled` with a `title` and sends nothing (the server's `cannot_disable_self` is the
+ * last defense). A failed toggle snaps back because it is controlled by row data; the error goes to the
+ * parent's error row. The accessible name ("Enabled <email>") comes from the table's aria-labelledby.
  */
 function UserEnabledSwitch({
   row,
@@ -174,16 +174,6 @@ function UserEnabledSwitch({
   );
 }
 
-/**
- * 站台管理 modal 的使用者區（`/admin/users`，#247）。歷程：獨立頁 → 併進設定 modal →
- * 獨立頁 `/admin/*` → #247 起是站台管理 modal 的第一項（`AdminSections` 聚合 chunk）。
- * 頁首的「建立邀請」是面板層級動作，`outline`；它開出的對話框內送出鈕照舊 `brandDeep`。
- *
- * 使用者表：使用者（名稱、@handle 副標）｜Email｜儲存｜最後活動（#267 的渲染原樣沿用）｜角色｜方案｜操作（重設密碼鈕，#286）｜啟用；使用者表下方是邀請表（#285，`InvitesGroup`）；
- * 列名與開關名稱都用 email（`nameColumn`）。角色變更與啟用切換的錯誤走錯誤列，狀態以使用者 id 為鍵存在這裡。
- * - 方案下拉即存、失敗 toast（`PlanSelect`）；停權者照樣可改。
- * - 標題列的建立鈕走 `SettingsPage` 的 `action` 插槽（見 `SettingsLayout.tsx`）。
- */
 export function SettingsUsersSection() {
   const { t, i18n } = useTranslation();
   const { user } = useSession();
@@ -206,7 +196,6 @@ export function SettingsUsersSection() {
     { id: "user", header: t("admin.users.user"), kind: "primary", grow: 1 },
     { id: "email", header: t("admin.tableEmail"), kind: "text", grow: 1.5 },
     { id: "storage", header: t("admin.tableStorage"), kind: "fixed" },
-    // #267 的表頭 key，逐字沿用
     { id: "lastActive", header: t("admin.users.lastActive"), kind: "fixed" },
     { id: "role", header: t("admin.tableRole"), kind: "control" },
     { id: "plan", header: t("admin.tablePlan"), kind: "control" },
@@ -221,9 +210,9 @@ export function SettingsUsersSection() {
       cells: {
         email: row.email,
         storage: <StorageCell storage={row.storage} />,
-        // #267 的最後活動渲染式，逐字沿用——判斷與格式都是 #267 的，本線不改
         lastActive: lastActiveLabel(row.lastActiveAt, t, i18n.language),
         role: <UserRoleSelect row={row} isSelf={isSelf} onError={(message) => setRowError(row.id, message)} />,
+        // Plans stay assignable for disabled users.
         plan: (
           <PlanSelect
             label={t("admin.planFor", { email: row.email })}
@@ -234,7 +223,7 @@ export function SettingsUsersSection() {
           />
         ),
       },
-      // hasPassword 為假時元件回 null，cell 照樣渲染
+      // renders null when hasPassword is false; the cell still renders
       actions: <PasswordResetAction row={row} onError={(message) => setRowError(row.id, message)} />,
       enabled: (labelledBy) => (
         <UserEnabledSwitch row={row} isSelf={isSelf} labelledBy={labelledBy} onError={(message) => setRowError(row.id, message)} />
@@ -247,8 +236,7 @@ export function SettingsUsersSection() {
     <SettingsPage
       title={t("admin.title")}
       description={t("admin.description")}
-      // 建立鈕改掛在頁首標題列。原本它自己一行右對齊浮在表格上方，既沒有跟標題
-      // 成組、也沒有跟表格成組，是「項次都黏在一起」感覺的來源之一。
+      // In the page header, grouped with the title, rather than floating on its own line above the table.
       action={<CreateInviteDialog />}
     >
       <SettingsGroup>

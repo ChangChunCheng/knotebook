@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { authErrorMessage } from "./auth-error-message";
 import "@/i18n/management-strings";
 
-/** #187：純 SSO 帳號「加上密碼」。設定 modal 內 → 送出鈕 `outline`（#247：面板右卡不放實心鈕）。長度與兩次一致先在 client 擋（server 仍會再驗）。 */
+/** Length and confirmation are checked on the client first; the server validates again. `outline` submit: the settings panel card has no solid button. */
 export function SetPasswordForm({ onSuccess }: { onSuccess: () => void }) {
   const { t } = useTranslation();
   const setPassword = useSetPassword();

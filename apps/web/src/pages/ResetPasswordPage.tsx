@@ -19,21 +19,15 @@ type InspectState =
   | { kind: "error"; code: string | null };
 
 /**
- * #286 `/reset-password`：與 `/register` 同層、在 `RequireAuth` 之外。token 的處理：
- * 1. token 在 fragment（`#token=…`），不送到 server、不進 log 與 Referer；掛載時讀進 state；
- * 2. 立刻以 react-router 的 `navigate(…, { replace: true })` 清掉 fragment。不用 `history.replaceState`：router 的
- *    location 不會跟著更新，傳 `null` 還會清掉 router 放在 `history.state` 的 key／idx；
- * 3. 確定未登入時才寫進 sessionStorage（重新整理後還找得回來）；已登入時只放 state，鍵若存在就刪掉；
- * 4. 成功、410、頁面卸載都刪鍵（重新整理不跑 cleanup，所以不影響第 3 點）。整頁離開時由 `main.tsx` 清。
- * 1–4 的實作在共用 hook `useOneTimeLinkToken`（與 #285 邀請註冊同一份，兩頁行為不分岔）。
- *
- * 已登入（任何帳號）只顯示「請先登出」：避免管理員在自己的瀏覽器測連結時，把自己換成對方。
- * token 不進 TanStack Query 的 queryKey：快取在卸載後仍會保留到 gcTime。
+ * Outside `RequireAuth`, like `/register`. Token handling is the shared `useOneTimeLinkToken` (same as invite registration), so the two
+ * pages can't diverge.
+ * A logged-in user (any account) sees "log out first" so an admin testing a link can't swap themselves into the target account.
+ * The token stays out of any queryKey: the cache outlives unmount until gcTime.
  */
 export default function ResetPasswordPage() {
   const session = useSession();
   const { token, forget } = useOneTimeLinkToken({ param: "token", storageKey: RESET_TOKEN_KEY, user: session.user });
-  // 同一頁換成新 token（貼新連結）時以 key 重掛：舊的錯誤、輸入與晚到的回應不會帶進新連結。
+  // Key remount on a new token: old errors, input and late responses don't leak into the new link.
   return <ResetPasswordContent key={token ?? ""} token={token} forget={forget} session={session} />;
 }
 

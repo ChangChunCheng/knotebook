@@ -10,15 +10,15 @@ import { toast } from "@/components/ui/toast";
 import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（見 SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
 /**
- * 開關與天數都只改本地狀態，按「儲存」才 PATCH（開→天數、關→`null`）：打開若即時送預設 7 天，
- * 可能讓一小時內清掉一批舊垃圾。本地 `null`＝顯示 server 值（同 `RetentionGroup`）；成功後清回 `null`。
+ * Edits stay local until Save: sending the default 7 days the moment the toggle opens could purge a batch of
+ * old trash within the hour. Save sends the days when on, `null` when off. Local `null` shows the server value
+ * (as in `RetentionGroup`) and is reset to `null` after a successful save.
  */
 function TrashForm({ data }: { data: TrashSettingsDto }) {
   const { t } = useTranslation();
@@ -97,9 +97,9 @@ function TrashForm({ data }: { data: TrashSettingsDto }) {
 }
 
 /**
- * 站台垃圾桶設定（#181）：嵌在站台管理「儲存方案」頁、版本設定之後。開關「自動永久刪除」＋保留天數（1–3650）＋「儲存」。
- * 說明句寫「每小時檢查一次」「每次最多 2,000 篇」——對應 server `trash/purge.ts` 的 `TRASH_PURGE_INTERVAL_MS`（60 分）與
- * `TRASH_PURGE_BATCH × TRASH_PURGE_MAX_BATCHES`（100 × 20）。三態都以同標題的 region 呈現（同頁另有一顆「儲存」）。
+ * Retention is 1–3650 days. Hint text (hourly, at most 2,000 per run) mirrors server `trash/purge.ts`:
+ * `TRASH_PURGE_INTERVAL_MS` (60 min) and `TRASH_PURGE_BATCH × TRASH_PURGE_MAX_BATCHES` (100 × 20). All three states render
+ * as a region with the same title because the page has another Save button.
  */
 export function SiteTrashGroup() {
   const { t } = useTranslation();

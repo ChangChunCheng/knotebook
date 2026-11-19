@@ -7,17 +7,18 @@ import { KnotebookColorStyleButton } from "@/components/editor/colors/KnotebookC
 import { useAiSession } from "./AiSession";
 
 /**
- * 自訂 formatting toolbar（#263）：`getFormattingToolbarItems()` 的預設按鈕原樣復原，尾端追加一顆 AI icon 鈕——按下開框選 AI 框
- * （`session.open()`），工具列那排由框取代（壓制在 `SelectionAiController`）。舊版的下拉清單整段拿掉：它用 `position:absolute` 畫在
- * `.bn-toolbar` 裡，而 mantine 的 `.bn-toolbar` 是 `overflow-x:auto`，展開就變成工具列的垂直溢出。
+ * The AI button opens the selection AI box (`session.open()`), which replaces the toolbar row (suppressed in
+ * `SelectionAiController`). No dropdown: one drawn with `position:absolute` inside `.bn-toolbar` overflows vertically
+ * because mantine's `.bn-toolbar` is `overflow-x:auto`.
  *
- * 顯示條件：可編輯、有可用動作、且 `getSelection()` 不是 undefined——NodeSelection（選到圖片／檔案區塊）時它回 undefined，
- * 不渲染 AI 項，避免按了沒反應的死鈕；跨欄或含整列的選取照常渲染（`open()` 把錨點擴大成整列）。串流中停用。`useAiSession()` 能直接用：toolbar 經 `editor.portalElement` 的 React portal
- * 渲染，context 穿透 portal。
+ * A NodeSelection (image/file block) makes `getSelection()` return undefined, so the button is hidden; it would do nothing.
+ * Cross-column or whole-row selections render it as usual (`open()` widens the anchor to the whole row). `useAiSession()` works here
+ * because the toolbar renders through `editor.portalElement`'s React portal and context passes through portals.
  *
- * 預設按鈕中的檔案刪除鈕（key `fileDeleteButton`）換成自家版：原生的走 `editor.removeBlocks`，刪欄內的圖會收欄。
- * 顏色鈕（key `colorStyleButton`）也換成自家版：10 種內建色之外每段多一個「自訂…」，可套任意色碼（#378）。
- * 區塊類型選單（key `blockTypeSelect`）也換成自家版：多區塊選取時只改本身是選單項目類型的區塊，表格、圖片等不在選單內的區塊不被清空（#464）。
+ * The file-delete button (`fileDeleteButton`) is replaced because the native one uses `editor.removeBlocks`, which
+ * collapses a column when its image is deleted. The color button (`colorStyleButton`) is replaced to add a custom color beyond the 10
+ * built-in ones per section (#378). The block type select (`blockTypeSelect`) is replaced so a multi-block selection
+ * changes only blocks that are menu item types, and tables, images etc. aren't wiped (#464).
  */
 export function AiToolbar() {
   const Components = useComponentsContext()!;

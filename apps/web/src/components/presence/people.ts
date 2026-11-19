@@ -8,9 +8,9 @@ import {
 } from "@knotebook/shared";
 
 /**
- * #293：頁頭頭像列的名單（純函式，不碰 React）。awareness 是 client 自報，
- * 這裡每一格都當不可信：`knotebook` 欄只收 `v === 1`、角色只收白名單、頭貼一律過 `parseAvatarRef`、
- * 顏色一律自己算（不讀 `state.user.color`）。
+ * Header avatar row list (#293). Awareness is client-reported, so every field is untrusted: the `knotebook` field only with
+ * `v === 1`, roles only from a whitelist, avatars always via `parseAvatarRef`, colors always computed here (never
+ * `state.user.color`).
  */
 
 export type PresenceKey = `user:${string}` | `agent:${number}`;
@@ -63,14 +63,12 @@ function parseRole(x: unknown): PresenceRole | null {
   return x === "owner" || x === "editor" || x === "viewer" ? x : null;
 }
 
-/** owner > editor > viewer > null。 */
 function higherRole(a: PresenceRole | null, b: PresenceRole | null): PresenceRole | null {
   if (a === null) return b;
   if (b === null) return a;
   return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
 }
 
-/** 單一 awareness 狀態 → 一筆；該略過的回 null（1–3）。 */
 function parseEntry(clientId: number, state: unknown, myClientId: number, myUserId: string): Entry | null {
   if (clientId === myClientId) return null;
   if (typeof state !== "object" || state === null) return null;
@@ -82,7 +80,7 @@ function parseEntry(clientId: number, state: unknown, myClientId: number, myUser
       : null;
   const cursor = s.cursor ?? null;
   if (field?.kind === "agent") {
-    // server 一定帶 handle 與 label；缺了就是偽造或壞資料，整筆略過。
+    // The server always sends handle and label; missing means forged or corrupt, so skip the entry.
     if (!isNonEmptyString(field.handle) || !isNonEmptyString(field.label)) return null;
     return { kind: "agent", clientId, handle: field.handle, label: field.label, cursor };
   }
@@ -108,7 +106,7 @@ function entryKey(e: Entry): PresenceKey {
   return e.kind === "agent" ? `agent:${e.clientId}` : `user:${e.userId}`;
 }
 
-/** since 大者勝；同分取 clientID 大者（只求穩定）。 */
+/** Larger `since` wins; ties go to the larger clientID (only for stability). */
 function newer(a: UserEntry, b: UserEntry): UserEntry {
   if (a.since !== b.since) return a.since > b.since ? a : b;
   return a.clientId > b.clientId ? a : b;
@@ -123,7 +121,10 @@ function entries(states: ReadonlyMap<number, unknown>, myClientId: number, myUse
   return out;
 }
 
-/** 1–4：略過自己的 clientID、`state` 非物件、`user.id === myUserId`、既無字串 `user.id` 也無 agent 標記者；AI 以 clientID 為一項；人以 user id 合併。回傳依 key 字典序（排序由 orderBySeen 負責）。 */
+/**
+ * Excludes my clientID and any state with my user id (my other tabs). One item per AI clientID; humans merged by user
+ * id. Sorted by key only: display order is `orderBySeen`'s job.
+ */
 export function presencePeople(states: ReadonlyMap<number, unknown>, myClientId: number, myUserId: string): PresencePerson[] {
   const people = new Map<PresenceKey, PresencePerson>();
   const latest = new Map<PresenceKey, UserEntry>();
@@ -153,7 +154,7 @@ export function presencePeople(states: ReadonlyMap<number, unknown>, myClientId:
   return [...people.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
-/** 該 key 目前「有 cursor 且 since 最大」那份狀態的 cursor（同分取 clientID 大者）；沒有 → null。點擊當下呼叫，讀即時狀態。 */
+/** Call at click time: reads the live states. */
 export function presenceCursor(
   states: ReadonlyMap<number, unknown>,
   key: PresenceKey,
@@ -163,13 +164,13 @@ export function presenceCursor(
   let best: Entry | null = null;
   for (const e of entries(states, myClientId, myUserId)) {
     if (e.cursor == null || entryKey(e) !== key) continue;
-    // AI 的 key 帶 clientID，只會有一份；人才需要挑 since 最大者。
+    // An AI key carries the clientID so it has one state; only humans need the largest-`since` pick.
     best = best !== null && best.kind === "user" && e.kind === "user" ? newer(best, e) : e;
   }
   return best?.cursor ?? null;
 }
 
-/** 先來的在左；離開即移除；再回來排最後。 */
+/** Arrival order, left to right; someone who leaves and comes back goes last. */
 export function orderBySeen(
   seen: ReadonlyMap<PresenceKey, number>,
   people: readonly PresencePerson[],
@@ -190,7 +191,7 @@ export function orderBySeen(
   return { seen: next, people: ordered, nextSeq: seq };
 }
 
-/** 鍵、名字、角色、頭貼 id／v、有沒有游標（布林）。游標位置不在內。 */
+/** Cursor position is excluded: only whether one exists. */
 export function presenceSignature(people: readonly PresencePerson[]): string {
   return JSON.stringify(
     people.map((p) =>
@@ -211,10 +212,7 @@ function fit(total: number, capacity: number): { shown: number; more: number } {
   return { shown: total, more: 0 };
 }
 
-/**
- * 超過容量時 shown＝容量−1、more＝total−shown；未超過時 shown＝total、more＝0。
- * 精簡形（手機寬）一顆頭像都不放，只有「+N」，N＝所有人；沒有其他人時 more 是 0、不渲染。
- */
+/** Compact (phone width) shows no avatars, only "+N" for everyone; with nobody else `more` is 0 and nothing renders. */
 export function presenceLayout(total: number): {
   wide: { shown: number; more: number };
   narrow: { shown: number; more: number };

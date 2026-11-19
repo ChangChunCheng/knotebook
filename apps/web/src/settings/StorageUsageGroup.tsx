@@ -6,17 +6,12 @@ import { isQuotaReached } from "@/lib/storage-usage";
 import { cn } from "@/lib/utils";
 import { SettingsGroup } from "./SettingsLayout";
 
-/** 逐檔複製的既有慣例（見 SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-/**
- * 設定裡的「儲存空間」群組：個人（帳號頁）與群組（群組詳情、manageGroup）共用。三態：
- * 有上限「已使用 X／Y（方案）」、無上限「已使用 X（無上限，方案）」、已達上限（用量 >= 上限：警示色＋「已達上限，無法再新增附件」）。
- * 只顯示、不能改方案。載入成功時末尾一行靜態說明「垃圾桶裡的筆記也計入用量」（#181；不另算垃圾桶占多少）。
- */
+/** Display only, no plan change. Trash notes count toward usage, without a separate trash figure (#181). */
 export function StorageUsageGroup({ title, query }: { title: string; query: UseQueryResult<StorageUsageDto> }) {
   const { t } = useTranslation();
   let body;

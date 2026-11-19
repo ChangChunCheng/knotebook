@@ -13,7 +13,7 @@ import { copyText } from "@/lib/clipboard";
 import { authErrorMessage } from "./auth-error-message";
 import "@/i18n/management-strings";
 
-/** 範本只預填 issuer 與顯示名（GitLab 可改成自架網址）。Microsoft 不做。 */
+/** Templates prefill only the issuer and display name (GitLab's can be changed to a self-hosted URL). No Microsoft template. */
 const TEMPLATE_DEFAULTS: Record<AuthProviderTemplate, { displayName: string; issuerUrl: string }> = {
   gitlab: { displayName: "GitLab", issuerUrl: "https://gitlab.com" },
   google: { displayName: "Google", issuerUrl: "https://accounts.google.com" },
@@ -21,9 +21,11 @@ const TEMPLATE_DEFAULTS: Record<AuthProviderTemplate, { displayName: string; iss
 };
 
 /**
- * 欄位檢查，逐條對齊 server 的 `apps/server/src/auth/admin-provider-input.ts`（zod）——web 先擋、給欄位旁的具體錯誤，server 仍是權威。
- * 長度一律以 code point 計（`[...s].length`，同 server 與 0014 的 `char_length`）；不用 `<input maxLength>`（那是 UTF-16，emoji 算 2）。
- * issuer scheme 大小寫敏感（`HTTPS://` 被拒；`new URL` 會正規化掉大小寫，不能拿它判 scheme）。回傳 i18n key（`admin.auth.validation.*`）或 null。
+ * Mirrors the server's `apps/server/src/auth/admin-provider-input.ts` check by check: the web blocks first with errors next
+ * to the field; the server stays authoritative. Lengths count code points (`[...s].length`, like the server and the
+ * database's `char_length`), not `<input maxLength>` (UTF-16, so an emoji counts twice). The issuer scheme check is
+ * case-sensitive (`HTTPS://` is rejected) and can't use `new URL`, which normalizes case. Checks return an i18n key
+ * (`admin.auth.validation.*`) or null.
  */
 const UNSTORABLE = /[\0]|\p{Surrogate}/u;
 const ISSUER_SCHEME = /^https?:\/\//;
@@ -59,7 +61,7 @@ function checkIssuerUrl(raw: string): string | null {
   return null;
 }
 
-/** `allowEmpty`：新增、或編輯一個還沒有 client ID 的服務時，空白＝「沒填」，不算錯。 */
+/** `allowEmpty`: on create, or when editing a provider with no client ID yet, blank means "not filled", not an error. */
 function checkClientId(raw: string, allowEmpty: boolean): string | null {
   const s = raw.trim();
   if (allowEmpty && s === "") return null;
@@ -69,7 +71,10 @@ function checkClientId(raw: string, allowEmpty: boolean): string | null {
   return null;
 }
 
-/** secret 不 trim、原樣送出；空字串＝不送（建立：之後用編輯補；編輯：不變更）。只有空白 → 錯誤（不默默丟掉）。 */
+/**
+ * The secret is sent verbatim (not trimmed); empty means omitted (create: add it later via edit; edit: unchanged).
+ * Whitespace-only is an error rather than silently dropped.
+ */
 function checkClientSecret(s: string): string | null {
   if (s === "") return null;
   if (UNSTORABLE.test(s)) return "unstorable";
@@ -84,7 +89,6 @@ function collectErrors(checks: Array<[keyof FieldErrors, string | null]>): Field
   return errors;
 }
 
-/** 欄位旁的錯誤；`id` 給輸入框的 `aria-describedby`。 */
 function FieldError({ id, errorKey }: { id: string; errorKey: string | undefined }) {
   const { t } = useTranslation();
   if (errorKey === undefined) return null;
@@ -95,7 +99,6 @@ function FieldError({ id, errorKey }: { id: string; errorKey: string | undefined
   );
 }
 
-/** 有錯時把輸入框標成 invalid 並指向錯誤文字。 */
 function invalidProps(errorId: string, errorKey: string | undefined) {
   return errorKey === undefined ? {} : { "aria-invalid": true as const, "aria-describedby": errorId };
 }
@@ -124,11 +127,10 @@ function ProbeResult({ probe }: { probe: ProbeState }) {
   );
 }
 
-/** 建立後的設定步驟：貼回呼網址、scope、confidential＋client_secret_post、填 client ID（缺才有）、填 secret、測試、啟用。 */
 function SetupSteps({ provider, onDone }: { provider: AdminAuthProviderDto; onDone: () => void }) {
   const { t } = useTranslation();
   const titleRef = useRef<HTMLHeadingElement>(null);
-  // 送出鈕隨表單一起卸載、焦點會掉到 body；切到設定步驟時把焦點放到標題，螢幕閱讀器從這一步開始讀。
+  // The submit button unmounts and focus falls to body; focus the title so screen readers read from the setup step.
   useEffect(() => {
     titleRef.current?.focus();
   }, []);
@@ -197,7 +199,7 @@ export function CreateProviderDialog() {
     setCreated(null);
   }
 
-  /** 任何關閉（取消、Esc、點外面、完成）都 reset——secret 不留在 state 裡等下次打開。 */
+  /** Every close (cancel, Esc, click outside, done) resets, so the secret never lingers in state until the next open. */
   function handleOpenChange(next: boolean): void {
     setOpen(next);
     if (!next) reset();
@@ -234,8 +236,7 @@ export function CreateProviderDialog() {
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
     try {
-      // secret 空字串＝不帶這個鍵（之後可用「編輯」補）；有內容就**原樣**送出——server 不 trim secret（IdP 給的就是那串），
-      // web 也不 trim。只有空白的已在上面擋成欄位錯誤（不默默丟掉）。
+      // The secret goes verbatim: the server doesn't trim it either (it is exactly what the IdP issued).
       setCreated(
         await create.mutateAsync({
           template,
@@ -372,7 +373,7 @@ export function CreateProviderDialog() {
   );
 }
 
-/** 開 dialog 當下的欄位值——PATCH 只送與它不同的欄位。 */
+/** Field values when the dialog opened; the PATCH sends only fields that differ from them. */
 interface EditBaseline {
   displayName: string;
   issuerUrl: string;
@@ -388,13 +389,16 @@ const baselineOf = (provider: AdminAuthProviderDto): EditBaseline => ({
 });
 
 /**
- * 編輯：secret **唯寫**——欄位永遠從空白開始、`hasSecret` 時以 placeholder 說明「已儲存、留空不變」；留空送出時
- * PATCH body **沒有** `clientSecret` 鍵（空字串 server 會 400，且「不改」與「清除」是兩件事、不提供清除）。
- * PATCH **只送改過的欄位**（與開 dialog 當下的值比）：沒碰 issuer 就不帶 issuer——否則另一位管理員剛改過 issuer 時，這邊帶著
- * 舊 issuer 送出會被 server 的 CASE 當成「改 issuer」，把對方的 issuer 改回去、清掉對方剛存的 secret 並停用；也不留 from==to 的稽核行。
- * 什麼都沒改就不發請求、直接關閉。任何關閉都清掉 secret 欄。
- * 改 issuer 時依畫面上的開關值決定自動建帳：開著就先問，三鈕：關掉並儲存／保持開啟並儲存／取消；本來關就明帶 false（fail-closed）。
- * issuer 沒變不帶此欄。server 不強制改值。
+ * The secret is write-only: the field always starts blank (with `hasSecret`, the placeholder says it is saved and blank
+ * keeps it), and the PATCH omits `clientSecret` when blank. The server 400s on "", and "keep" and "clear" are different;
+ * clearing isn't offered.
+ * Only fields changed since the dialog opened are sent: if another admin just changed the issuer, sending the old issuer
+ * would count as an issuer change on the server, reverting theirs, clearing their new secret and disabling the provider.
+ * It also avoids from==to audit rows for untouched fields. With no changes, no request is sent and the dialog just closes. Every close clears
+ * the secret field.
+ * When the issuer changes, auto-create follows the on-screen toggle: if on, a confirm asks (turn off and save / keep on and
+ * save / cancel); if off, `false` is sent explicitly (fail-closed). Unchanged issuer: the field isn't sent. The server
+ * doesn't force the value.
  */
 export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDto }) {
   const { t } = useTranslation();
@@ -408,12 +412,12 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
   const [sortOrder, setSortOrder] = useState(String(provider.sortOrder));
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [error, setError] = useState<string | null>(null);
-  // 改 issuer 且自動建帳為開時，暫存待送的 body 並開確認框；開著＝非 null。
+  // Pending body while the issuer-change confirm is open (open = non-null).
   const [confirmBody, setConfirmBody] = useState<PatchAuthProviderBody | null>(null);
 
   function handleOpenChange(next: boolean): void {
     setOpen(next);
-    // 關閉（取消、Esc、點外面、成功送出）就清 secret——不留在 state 裡等下次打開；初值也是空，所以重開必為空。
+    // Clear the secret on any close so it doesn't linger in state; it also starts empty, so a reopen is always empty.
     if (!next) {
       setClientSecret("");
       setConfirmBody(null);
@@ -429,11 +433,11 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
     }
   }
 
-  // 「有沒有改」一律拿**原始輸入**與 baseline 比（送出時才 trim）：env 匯入的 issuer 可能帶尾端空白，拿 trim 後的值比會讓
-  // 什麼都沒動的存檔也送出 issuer → server 清 secret 並停用。
+  // Compare the raw input with the baseline (trim only on submit): an env-imported issuer may carry trailing whitespace,
+  // which would send an unchanged issuer and make the server clear the secret and disable the provider.
   const issuerChanged = issuerUrl !== baseline.issuerUrl;
   const secretEntered = clientSecret !== "";
-  // 改 issuer 會清 secret（除非同一次帶了新 secret）並停用；停用中的服務沒有「會停用」可說。
+  // An issuer change clears the secret (unless a new one is sent with it) and disables; a disabled provider has nothing to disable.
   const issuerWarning = !issuerChanged
     ? null
     : provider.hasSecret && !secretEntered
@@ -451,7 +455,8 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
     const order = Number(orderText);
     const errors = collectErrors([
       ["displayName", checkDisplayName(displayName)],
-      // issuer 沒改就不驗：新規則上線前存在的舊資料可能帶帳密，不該擋住只改其他欄位（server 也只驗送出的欄位）。
+      // Unchanged issuer isn't validated: data saved before this rule may contain credentials and mustn't block editing other
+      // fields (the server also validates only sent fields).
       ["issuerUrl", issuerChanged ? checkIssuerUrl(issuerUrl) : null],
       ["clientId", checkClientId(clientId, baseline.clientId === "")],
       ["clientSecret", checkClientSecret(clientSecret)],
@@ -463,7 +468,7 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
     const body: PatchAuthProviderBody = {};
     if (displayName !== baseline.displayName) body.displayName = displayName.trim();
     if (issuerChanged) body.issuerUrl = issuerUrl.trim();
-    // baseline 為空（尚無 client ID）：只打空白＝沒填，不送鍵（送 "" 會吃 400）。
+    // No client ID yet: whitespace-only counts as unfilled and no key is sent (the server 400s on "").
     if (baseline.clientId === "" ? clientId.trim() !== "" : clientId !== baseline.clientId) body.clientId = clientId.trim();
     if (order !== baseline.sortOrder) body.sortOrder = order;
     if (secretEntered) body.clientSecret = clientSecret;
@@ -473,10 +478,10 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
     }
     if (issuerChanged) {
       if (provider.autoCreateEnabled) {
-        setConfirmBody(body); // 先不送
+        setConfirmBody(body);
         return;
       }
-      body.autoCreateEnabled = false; // 沒問過就關（fail-closed）
+      body.autoCreateEnabled = false; // not asked: off (fail-closed)
     }
     await send(body);
   }
@@ -492,7 +497,7 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
     }
   }
 
-  // 按任一儲存鈕先關確認框再送；錯誤顯示在編輯對話框，送出中由儲存鈕的 disabled 擋重送。
+  // Errors show in the edit dialog; the disabled save button blocks resending while in flight.
   function confirmAndSend(autoCreateEnabled: boolean): void {
     const body = confirmBody;
     if (body === null) return;
@@ -600,7 +605,7 @@ export function EditProviderDialog({ provider }: { provider: AdminAuthProviderDt
         >
           <DialogContent
             onCloseAutoFocus={event => {
-              // 確認框沒有觸發鈕可還原，焦點改回編輯對話框的 Issuer URL 欄。
+              // The confirm has no trigger to restore focus to; focus the edit dialog's Issuer URL field.
               event.preventDefault();
               document.getElementById(fieldId("issuer"))?.focus();
             }}

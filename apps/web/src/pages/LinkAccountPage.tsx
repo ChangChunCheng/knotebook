@@ -11,29 +11,29 @@ import { toast } from "@/components/ui/toast";
 import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
-/** `?error=` 白名單（#187）：prove 回程會帶這些碼回來；其餘一律 fallback（任意 query 不得直接餵 i18next）。 */
+/** `?error=` allowlist (#187): codes the prove round-trip returns; anything else falls back (arbitrary query values must never reach i18next). */
 const LINK_ERROR_CODES = new Set<string>([
   "oidc_link_proof_mismatch", "oidc_link_expired", "identity_taken", "identity_already_linked",
   "account_disabled", "oidc_exchange_failed", "oidc_unavailable", "oidc_state_mismatch", "oidc_claim_too_long",
 ]);
 
-/** 回登入頁；code 是 `ERROR_CODES` 成員才帶（LoginPage 自己還會再過一次白名單）。 */
+/** Carries `code` only if it is in `ERROR_CODES` (LoginPage applies its own allowlist again). */
 function loginLocation(code: string | null): string {
   return code !== null && (ERROR_CODES as readonly string[]).includes(code) ? `/login?error=${code}` : "/login";
 }
 
 /**
- * #187「這個 email 已有帳號，要連結嗎？」。不掛在 RequireAuth 底下：它只看 pending-link cookie（HttpOnly，頁面讀不到，
- * 一律經 `GET /api/auth/oidc/pending`），與目前 session 無關——已登入他人的瀏覽器完成連結，server 簽出的 session 取代舊的。
- * pending 失效（401）→ 安靜回 `/login`，帶著當下的 `?error=`（prove 回程的 oidc_link_expired 要讓使用者看得到）。
- * 成功後只用 confirm 回應的 `next`，**不讀網址參數**。provider 顯示名是管理員輸入：只進文字節點。
+ * Outside RequireAuth: relies only on the pending-link cookie (HttpOnly, unreadable by the page, so always via `GET /api/auth/oidc/pending`),
+ * not on the current session; linking in a browser signed in as someone else works, as the session the server issues replaces the old one.
+ * An expired pending link (401) quietly returns to `/login` with the current `?error=` (so the prove round-trip's `oidc_link_expired` stays
+ * visible). After success only the confirm response's `next` is used, never URL params. The provider display name is admin input: text nodes only.
  */
 export default function LinkAccountPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  // 惰性採樣一次（同 LoginPage）：之後會把 error 從網址清掉，但 401 轉登入頁時還要帶它。
+  // Sampled once (same as LoginPage): the URL's error is cleared later but is still needed for the 401 redirect.
   const [initialError] = useState<string | null>(() => searchParams.get("error"));
   const [errorMessage, setErrorMessage] = useState<string | null>(() =>
     initialError === null ? null : t(`errors.${LINK_ERROR_CODES.has(initialError) ? initialError : "fallback"}`, { defaultValue: t("errors.fallback") }),
@@ -48,7 +48,7 @@ export default function LinkAccountPage() {
       params.delete("error");
       setSearchParams(params, { replace: true });
     }
-    // 只在掛載時清一次性的 ?error=。
+    // Mount only: clears the one-shot `?error=`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,7 +109,7 @@ export default function LinkAccountPage() {
     const pending = pendingQuery.data;
     if (pending === undefined) return;
     setErrorMessage(null);
-    // 前一次密碼送出的 429 倒數不得錯接到 prove 的錯誤上。
+    // A previous password-submit 429 countdown must not carry over to this error.
     setRetryAfterSeconds(null);
     setBusy(true);
     try {
@@ -117,7 +117,7 @@ export default function LinkAccountPage() {
         method: "POST",
         body: JSON.stringify({ pendingId: pending.pendingId }),
       });
-      // 第二段 OIDC 往返由瀏覽器頂層導航承載（state cookie 已由這個 fetch 的 Set-Cookie 寫入）。
+      // The second OIDC round-trip is a top-level navigation (the state cookie was set by this fetch's Set-Cookie).
       window.location.assign(res.url);
     } catch (err) {
       showFailure(err);
@@ -130,7 +130,7 @@ export default function LinkAccountPage() {
     try {
       await api<void>("/api/auth/oidc/pending/cancel", { method: "POST" });
     } catch {
-      // 清不掉也照樣離開：cookie 15 分鐘後自然過期。
+      // Leave anyway: the cookie expires on its own after 15 minutes.
     }
     if (showNotice) toast({ title: t("linkAccount.cancelled") });
     navigate("/login", { replace: true });
@@ -138,7 +138,8 @@ export default function LinkAccountPage() {
 
   const loadError = pendingQuery.error;
   const noProofMethod = loadError instanceof ApiFail && loadError.code === "oidc_link_no_proof_method";
-  // 401／oidc_link_expired 由上面的 effect 轉登入頁；其餘（500、網路失敗）給通用錯誤與出口，免得永遠停在 Loading。
+  // 401/`oidc_link_expired` go to login via the effect above; other failures (500, network) get a generic error and an exit, so the page
+  // never sits on Loading.
   const loadFailed =
     loadError !== null &&
     !noProofMethod &&

@@ -36,7 +36,6 @@ import { categoryKeys, serverErrorMessage, SiteLimitsGroup } from "./SettingsLim
 import { SiteAccessSettings } from "./SiteAccessSettings";
 import "@/i18n/management-strings";
 
-/** 「登入期限與 token」：網頁登入有效期（以小時填）與每人有效 API token 上限，沿用站台限制分頁的列與儲存邏輯。 */
 function SessionAndTokensGroup() {
   const { t } = useTranslation();
   const query = useSiteLimits();
@@ -48,7 +47,7 @@ function SessionAndTokensGroup() {
       </SettingsGroup>
     );
   }
-  // 只在沒有資料時換成錯誤文字：有舊資料時背景重抓失敗，不能把輸入到一半的內容整組拆掉。
+  // Only swap to the error when there's no data: a failed background refetch must not tear down half-typed input.
   if (query.data === undefined) {
     return (
       <SettingsGroup title={title}>
@@ -61,7 +60,6 @@ function SessionAndTokensGroup() {
   return <SiteLimitsGroup title={title} keys={categoryKeys("signIn")} data={query.data} />;
 }
 
-/** 停用前確認（停用前提示受影響人數）。人數是開 dialog 當下的快照。 */
 function DisableProviderDialog({
   provider,
   open,
@@ -91,10 +89,10 @@ function DisableProviderDialog({
           <DialogTitle>{t("admin.auth.disableTitle")}</DialogTitle>
           <DialogDescription>{t("admin.auth.disableDescription")}</DialogDescription>
         </DialogHeader>
-        {/* 顯示名是管理員輸入：獨立文字節點，不進 t() 插值（Global Constraints）。 */}
+        {/* Admin-entered name: own text node, not interpolated into t(). */}
         <p className="text-sm font-medium">{provider.displayName}</p>
-        {/* 列上的「已連結」欄與這裡共用同一把 query key：開框時快取裡已有列載入時的舊人數（isPending=false），
-            重抓完成前一律顯示載入中，才維持「開框當下的快照」、不先閃過期人數（#247）。 */}
+        {/* Same query key as the row's linked column, so on open the cache already holds the count from row load (isPending false): show
+            loading until the refetch finishes, so it stays a snapshot at open and never flashes a stale count (#247). */}
         {impact.isPending || impact.isFetching ? (
           <p className="text-sm text-muted-foreground">{t("admin.auth.impactLoading")}</p>
         ) : impact.isError ? (
@@ -124,10 +122,7 @@ function DisableProviderDialog({
   );
 }
 
-/**
- * 刪除。刪除要先停用：啟用中時是 `aria-disabled`（`RowIconButton` 的 softDisabled），`title` 與明細列的可見文字都說明原因，
- * 並以 `aria-describedby`（`disabledHintId`，那段文字在明細列）連過去；server 另以 409 `provider_enabled` 把關。
- */
+/** Delete needs the provider disabled first: soft-disabled (`aria-disabled`) with the reason linked via `aria-describedby`; the server also enforces it (409 `provider_enabled`). */
 function DeleteProviderDialog({ provider, disabledHintId }: { provider: AdminAuthProviderDto; disabledHintId: string }) {
   const { t } = useTranslation();
   const deleteProvider = useDeleteAuthProvider();
@@ -178,10 +173,7 @@ function DeleteProviderDialog({ provider, disabledHintId }: { provider: AdminAut
 
 type TestState = { ok: true; result: AdminAuthProbeResultDto } | { ok: false; message: string } | null;
 
-/**
- * 一個服務的測試連線狀態。按鈕在操作欄、結果在明細列，所以由 `SettingsAuthSection` 以服務 id 為鍵保存。
- * `configKey`＝測試當時的 issuer／client ID／secret：結果只對那組設定有效，三者任一變了，區塊根在 render 期間把這筆刪掉。
- */
+/** Keyed by provider id in the section because the button and the result live in different rows. `configKey` is the issuer/client ID/secret at test time; the result is only valid for it, and if any of the three changes the section root drops the entry during render. */
 interface ProviderTest {
   configKey: string;
   pending: boolean;
@@ -192,13 +184,13 @@ function configKeyOf(provider: AdminAuthProviderDto): string {
   return `${provider.issuerUrl}|${provider.clientId ?? ""}|${provider.hasSecret}`;
 }
 
-/** 「已連結」欄（每列一支唯讀的 impact 查詢，不改 server）；`DisableProviderDialog` 共用同一把 key，開框時照舊重抓。 */
+/** `DisableProviderDialog` shares this query key and still refetches on open. */
 function LinkedCount({ providerId }: { providerId: string }) {
   const impact = useAuthProviderImpact(providerId, true);
   return <span className="tabular-nums">{impact.data ? impact.data.linkedUsers : "—"}</span>;
 }
 
-/** 啟用開關（可及名稱「Enabled ＜顯示名＞」，由表格的 aria-labelledby 給）。關閉一律先過確認 dialog（顯示人數）；開關受控，取消時維持原狀。 */
+/** Accessible name "Enabled <name>" comes from the table's aria-labelledby. Turning off always goes through the confirm dialog (with the count); the switch is controlled, so Cancel leaves it unchanged. */
 function ProviderEnabledSwitch({ provider, labelledBy }: { provider: AdminAuthProviderDto; labelledBy: string }) {
   const { t } = useTranslation();
   const patch = usePatchAuthProvider();
@@ -230,8 +222,8 @@ function ProviderEnabledSwitch({ provider, labelledBy }: { provider: AdminAuthPr
 }
 
 /**
- * 自動建帳開關。control 欄第一次放 switch：可及名稱用 `aria-label`，不是啟用欄的 `aria-labelledby`。
- * 切換即送單獨一欄的 PATCH，不跳確認框；服務停用中也可切（先設好再啟用）。
+ * First switch in the control column: named via `aria-label`, not the enabled column's `aria-labelledby`. Toggling sends a single-field
+ * PATCH without confirmation, and works while the provider is disabled (configure before enabling).
  */
 function ProviderAutoCreateSwitch({ provider }: { provider: AdminAuthProviderDto }) {
   const { t } = useTranslation();
@@ -255,7 +247,7 @@ function ProviderAutoCreateSwitch({ provider }: { provider: AdminAuthProviderDto
   );
 }
 
-/** 列尾操作鈕（順序：測試／次要 → 編輯 → 危險，即測試 → 圖示 → 編輯 → 刪除）。測試的進行中與結果交給上層保存、在明細列顯示。 */
+/** Test progress and results are kept by the parent because they show in the detail row. */
 function ProviderActions({
   provider,
   deleteHintId,
@@ -295,10 +287,7 @@ function ProviderActions({
   );
 }
 
-/**
- * 明細列（現有內容全數保留）：刪除停用說明（`deleteDisabledHint`，刪除鈕的 aria-describedby 目標）、client ID、
- * 回呼網址與複製鈕、secret 已存／未存、未連線、不安全 issuer（紅色）、測試中狀態與結果。
- */
+/** Includes `deleteDisabledHint`, the delete button's aria-describedby target. */
 function ProviderDetail({
   provider,
   deleteHintId,
@@ -367,11 +356,6 @@ function ProviderDetail({
   );
 }
 
-/**
- * #187：站台管理 → 登入（站台 modal 的 `/admin/login`；舊網址 `/admin/auth` 轉過來，#247）。頂部是「允許帳號密碼登入」與「允許用帳號密碼自行註冊」（`SiteAccessSettings`），下面是登入服務管理。
- * 新增與編輯 dialog 在 `AuthProviderDialogs.tsx`。登入服務表：服務（圖示、名稱；副標＝範本名＋legacy 標記）｜Issuer｜已連結｜自動建帳（control 欄的 switch）｜操作｜啟用，
- * 其餘資訊在明細列。
- */
 export function SettingsAuthSection() {
   const { t } = useTranslation();
   const providersQuery = useAdminAuthProviders();
@@ -379,7 +363,8 @@ export function SettingsAuthSection() {
   const [tests, setTests] = useState<Record<string, ProviderTest>>({});
   const providers = providersQuery.data ?? [];
 
-  // 測試結果只對「當時的 issuer／client ID／secret」有效：任一變了就刪掉那一筆（render 期間重設，不重掛列，編輯 dialog 才不會被卸載）。
+  // Test results are valid only for the issuer/client ID/secret at test time: drop an entry once any of them changes. Reset during render
+  // (not an effect) so rows aren't remounted, which would unmount an open edit dialog.
   const staleIds = providers
     .filter((provider) => {
       const test = tests[provider.id];

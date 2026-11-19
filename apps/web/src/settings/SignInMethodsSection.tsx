@@ -16,8 +16,8 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import "@/i18n/management-strings";
 
 /**
- * `?link_error=` 白名單（#187）＋cookie 解開後 `failLocation` 會發的兩碼（`oidc_state_mismatch`、`oidc_claim_too_long`——
- * 同 `/link-account`）。白名單外一律 fallback（任意 query 不得直接餵 i18next）。
+ * Allowlist for `?link_error=` (#187) plus the two codes `failLocation` emits after the cookie decodes (`oidc_state_mismatch`,
+ * `oidc_claim_too_long`, as on `/link-account`). Anything else falls back (an arbitrary query must never reach i18next).
  */
 const LINK_ERROR_CODES = new Set<string>([
   "identity_taken", "identity_already_linked", "oidc_link_session_mismatch", "account_disabled",
@@ -32,13 +32,10 @@ function issuerHost(issuer: string): string {
   }
 }
 
-/** 以 host 標示的列（服務已刪或停用中）一律通用圖示。 */
+/** Rows labelled by host (provider deleted or disabled) always use the generic icon. */
 const HOST_ROW_ICON: ProviderIconDto = { type: "builtin", name: "generic" };
 
-/**
- * 解除連結（#247：列尾紅垃圾桶 icon 鈕，確認框照舊）。不可解除時 softDisabled＋原因（
- * 有理由要讓人看見的不可用），並以 `aria-describedby` 指向主欄副標裡看得見的同一段原因（`hintId`）。
- */
+/** When unlinking is disallowed: `softDisabled` with a reason, and `aria-describedby` points at the same visible reason in the subtitle (`hintId`). */
 function UnlinkButton({ identity, names, hintId }: { identity: IdentityDto; names: string; hintId: string }) {
   const { t } = useTranslation();
   const unlink = useUnlinkIdentity();
@@ -84,10 +81,7 @@ function UnlinkButton({ identity, names, hintId }: { identity: IdentityDto; name
   );
 }
 
-/**
- * #187「登入方式」群組。解除鈕的可否由 server 的 `unlinkable` 決定（web 不自己推）。
- * 表格：服務（圖示、名稱；副標＝提示行、`unknownProvider` 行）｜連結於｜最後使用｜操作（解除連結）。
- */
+/** Whether unlinking is allowed comes from the server's `unlinkable`; the web side doesn't infer it. */
 export function SignInMethodsSection() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -104,12 +98,12 @@ export function SignInMethodsSection() {
       const code = LINK_ERROR_CODES.has(linkError) ? linkError : "fallback";
       toast({ title: t(`errors.${code}`, { defaultValue: t("errors.fallback") }), variant: "destructive" });
     }
-    // 只刪這兩個一次性鍵，其餘參數原封不動。
+    // Delete only these two one-shot keys; leave other params untouched.
     const params = new URLSearchParams(searchParams);
     params.delete("linked");
     params.delete("link_error");
     setSearchParams(params, { replace: true });
-    // 只在掛載時處理一次（同 LoginPage 的 ?error= 慣例）。
+    // Handled once at mount (same as LoginPage's `?error=`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -131,10 +125,11 @@ export function SignInMethodsSection() {
   ];
   const rows: SettingsTableRow[] = (identities.data?.identities ?? []).map(identity => {
     const hintId = `${baseId}-${identity.id}-hint`;
-    // provider 顯示名是管理員輸入：只進文字節點，不當 i18n 插值參數。對不到啟用中 provider：issuer host。
+    // The provider display name is admin input: text node only, never an i18n interpolation parameter. With no matching active
+    // provider, show the issuer host.
     const names = identity.providers.length > 0 ? identity.providers.map(p => p.displayName).join(" / ") : issuerHost(identity.issuer);
-    // 多個時取第一個（server 已依 sort_order, created_at, id 排序，auth/sign-in-methods.ts）。
-    // ⚠ 不得寫成 `identity.providers[0]?.icon ?? HOST_ROW_ICON`——`??` 會把「不顯示」（null）吞成通用圖示。
+    // With several, take the first: the server already sorts by (sort_order, created_at, id) (apps/server/src/auth/sign-in-methods.ts).
+    // Don't write `identity.providers[0]?.icon ?? HOST_ROW_ICON`: `??` would turn "no icon" (null) into the generic icon.
     const first = identity.providers[0];
     const rowIcon = first === undefined ? HOST_ROW_ICON : first.icon;
     const subtitles = [

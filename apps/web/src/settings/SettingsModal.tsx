@@ -10,24 +10,18 @@ interface SettingsLocationState {
 }
 
 /**
- * 個人設定 modal（#247）——第二棵 Routes 樹的 layout route。外殼（托盤、兩卡、✕、窄視窗雙層、
- * 項次轉傳 `backgroundLocation`）全在 `components/management/ManagementShell`；這一層只做兩件事：
- * 1. 關閉（Esc／✕）時導回開啟前的背景 location（`location.state.backgroundLocation`）；深連結沒有這個
- *    state 時導回 `/`。點外面不關（外殼的 `dismissOnOutside={false}`）。
- * 2. 六個項次（帳戶資訊／登入／授權／儲存空間／群組／關於）。站台管理不在這裡（入口在 `UserMenu`）。
- *
- * 項次之間切換是巢狀 route 切換，`<Dialog>` 不隨切換卸載重掛（layout route 的既有語意）。
- * 各頁是 lazy chunk（#201）：外殼留在首包，開 modal 時外框與導覽立刻出現，只有內容區在 chunk 到手前顯示
- * 「載入中」。chunk 載入失敗走 `LazyRouteErrorBoundary`（自動 reload 一次、之後內容區顯示錯誤＋重試）；
- * `resetKey` 取真實 pathname——錯誤畫面上點另一個項次＝換目的地。`ChunkLoadBeacon` 必須在 Suspense 內、
- * 與 `<Outlet/>` 並列（擺放不變量見 ErrorBoundary.tsx）。`chunk="settings"` 只是錯誤邊界的額度別名，不代表一個 chunk。
+ * Pages are lazy chunks (#201) while the shell stays in the entry bundle, so the frame and navigation appear at once. Switching tabs is a
+ * nested route change, so `<Dialog>` stays mounted. `resetKey` is the real pathname so clicking another tab on the error screen changes
+ * the destination. `ChunkLoadBeacon` must sit inside Suspense beside `<Outlet/>` (placement invariant in ErrorBoundary.tsx);
+ * `chunk="settings"` is a reload-quota alias shared by all settings pages, not a real chunk. Site administration isn't here (its entry is
+ * in `UserMenu`).
  */
 export function SettingsModal() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const backgroundLocation = (location.state as SettingsLocationState | null)?.backgroundLocation;
-  // 「群組」項右側灰字計數（#247）：與側欄同一份 ['groups'] 快取；載入中（data undefined）不顯示。
+  // Same ['groups'] cache as the sidebar, so no extra fetch.
   const groups = useGroups();
 
   function handleOpenChange(open: boolean): void {

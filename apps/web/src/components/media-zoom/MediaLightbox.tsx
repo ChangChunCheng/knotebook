@@ -18,22 +18,22 @@ import type { ZoomSource } from "./context";
 import { ZoomSkeleton } from "./LightboxFallback";
 import { fitView, panBy, toggleZoom, wheelFactor, zoomAt, type Point, type Size, type ZoomView } from "./zoom-math";
 
-/** `+`／`-` 每按一次的縮放倍率。 */
+/** Zoom factor per `+`/`-` press. */
 const KEY_ZOOM_STEP = 1.2;
 const KEY_PAN_STEP = 40;
 const KEY_PAN_STEP_SHIFT = 200;
-/** 按下到放開累計移動不超過這個距離才算「點一下」，超過就是拖曳。 */
+/** Max total movement (px) from press to release that still counts as a tap rather than a drag. */
 const TAP_SLOP = 4;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_DISTANCE = 24;
-/** 會捲動背後頁面的按鍵（方向鍵另有用途，見 `ARROW_PAN`）。 */
+/** Keys that scroll the page behind (the arrows have another use, see `ARROW_PAN`). */
 const PAGE_SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", " "]);
-/** 加上 Ctrl／⌘ 後會捲動背後頁面的按鍵。 */
+/** Keys that scroll the page behind with Ctrl/⌘. */
 const MODIFIED_PAGE_SCROLL_KEYS = new Set(["Home", "End", "ArrowUp", "ArrowDown"]);
-/** 加上 Alt（Option）後會捲動背後頁面的按鍵（macOS／iPadOS 的翻頁）；Alt 加左右鍵是瀏覽器的上一頁、下一頁，不在此列。 */
+/** Keys that scroll the page behind with Alt/Option (page turning on macOS/iPadOS); Alt+Left/Right is browser history, so it is not listed. */
 const ALT_PAGE_SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown"]);
 
-/** 方向鍵＝看過去的方向：按右是要看更右邊，所以內容往左移。 */
+/** Arrow = the direction you want to look: Right means see further right, so the content moves left. */
 const ARROW_PAN: Record<string, Point> = {
   ArrowRight: { x: -1, y: 0 },
   ArrowLeft: { x: 1, y: 0 },
@@ -48,11 +48,11 @@ interface Geometry {
 
 interface Gesture {
   start: Point;
-  /** 這次手勢累計移動的距離（任一指）。 */
+  /** Total movement in this gesture (any finger). */
   travel: number;
-  /** 期間曾有第二指按下：是捏合，不是點擊。 */
+  /** A second finger went down during it: a pinch, not a tap. */
   multi: boolean;
-  /** 按下時落在內容（圖／圖表）上；放開時指標被捕捉在視窗元素上，目標已看不出來。 */
+  /** Pressed on the content (image/diagram). Needed because the pointer is captured on the viewport element, so the release target no longer shows what was pressed. */
   onContent: boolean;
 }
 
@@ -65,11 +65,11 @@ function positiveSize(size: Size): boolean {
 }
 
 /**
- * 放大開著時鎖住背後頁面的捲動：`<html>` 加行內 `overflow: hidden`；原本有佔位的捲軸時再加 `scrollbar-gutter: stable`，
- * 捲軸的位置留著、版面不往右跳。這兩個都不是繼承屬性，只動 `<html>` 自己，不會讓整份文件重算樣式。
- * 回傳的函式把兩個屬性還原成原本的行內值（含 `!important`）。
- * 只在主要指標是滑鼠／觸控板，或頁面有佔位的捲軸（例如平板模式的 Windows）時鎖：沒有捲軸的觸控裝置不動，
- * 畫面整片 `touch-none`，摸不到背後的頁面。
+ * Locks page scroll while zoom is open: inline `overflow: hidden` on `<html>`, plus `scrollbar-gutter: stable` when there
+ * was a reserved scrollbar, so the scrollbar space stays and the layout doesn't jump right. Neither is inherited, so only
+ * `<html>` restyles, not the whole document. The returned function restores both original inline values (incl. `!important`).
+ * Locks only when the primary pointer is a mouse/trackpad or the page has a reserved scrollbar (e.g. Windows in tablet
+ * mode): touch devices without one are left alone, since the whole screen is `touch-none` and the page behind can't be touched.
  */
 function lockRootScroll(): () => void {
   const root = document.documentElement;
@@ -96,20 +96,20 @@ function distance(a: Point, b: Point): number {
 }
 
 /**
- * 換掉 SVG 的根 id（mermaid 的樣式、marker 都以它為前綴），放大的這份就不會跟頁面上那張共用 id。
- * 沒有根 id 就原樣使用。
+ * Replaces the SVG root id (mermaid prefixes its styles and markers with it) so the zoomed copy doesn't share ids with the
+ * diagram on the page. Without a root id the SVG is used as is.
  */
 function withFreshRootId(svg: string): string {
-  // 只看第一個 `<svg …>` 開始標籤：根沒有 id 時不能退而換掉內層 svg 的 id。
+  // First `<svg>` tag only: without a root id, an inner svg's id must not be rewritten.
   const rootTag = /<svg\b[^>]*>/.exec(svg)?.[0];
   const id = rootTag === undefined ? undefined : /\sid="([^"]+)"/.exec(rootTag)?.[1];
   return id === undefined ? svg : rewriteMermaidId(svg, id, nextMermaidId());
 }
 
 /**
- * 圖片與 mermaid 圖的全螢幕放大畫面（#462）。只經 `lightbox-chunk.ts` 的動態 `import()` 載入（`MediaZoomProvider` 的 `lazy()` 與預取共用）。
- *
- * 縮放改寬高而不是 `transform: scale()`：transform 會用點陣快照放大，SVG 會糊；只有平移用 `translate`。
+ * Fullscreen zoom for images and mermaid diagrams (#462). Loaded only through `lightbox-chunk.ts`'s dynamic `import()`
+ * (shared by `MediaZoomProvider`'s `lazy()` and the prefetch).
+ * Zooms via width/height rather than `transform: scale()`, which scales a raster snapshot and blurs SVG; only panning uses `translate`.
  */
 export function MediaLightbox({
   source,
@@ -130,7 +130,7 @@ export function MediaLightbox({
   const closeRef = useRef<HTMLButtonElement>(null);
   const [geo, setGeo] = useState<Geometry | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
-  // 圖片要等載入並解碼完才換掉灰塊（SVG 是內嵌的，不必等）。
+  // Images replace the gray placeholder only once loaded and decoded (inline SVG needn't wait).
   const [imageReady, setImageReady] = useState(false);
   const [dragging, setDragging] = useState(false);
   const markImageReady = useCallback((img: HTMLImageElement) => {
@@ -144,7 +144,7 @@ export function MediaLightbox({
   const setContent = useCallback(
     (el: HTMLElement | null) => {
       contentRef.current = el;
-      // 已在快取裡（頁面上那張就是同一個網址）：當場視為備妥，連一格灰塊都不出。
+      // Already cached (same URL as the image on the page): ready at once, not even one frame of placeholder.
       if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0) setImageReady(true);
     },
     [],
@@ -152,15 +152,17 @@ export function MediaLightbox({
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
   const lastTap = useRef<{ at: number; point: Point } | null>(null);
-  /** 觸控／筆點背景：等接下來的 `click` 才關，見 `handlePointerUp`。 */
+  /** Touch/pen tap on the backdrop: close on the following `click`, see `handlePointerUp`. */
   const closeOnClick = useRef(false);
 
-  // 字串就是頁面上那份 mermaid 輸出，防線見 `lib/mermaid.ts`。
+  // The string is the page's own mermaid output; the safeguards for injecting it are in `lib/mermaid.ts`.
   const svgMarkup = useMemo(() => (source.kind === "svg" ? withFreshRootId(source.svg) : ""), [source]);
-  // 每次繪製都給新物件的話，React 會重設 innerHTML：按下的那個 svg 節點被換掉、焦點掉到 body，拖曳每一幀都重新解析整張圖。
+  // Stable object: a fresh one per render makes React reset innerHTML, replacing the pressed svg node (focus drops to body)
+  // and reparsing the whole diagram every drag frame.
   const svgHtml = useMemo(() => ({ __html: svgMarkup }), [svgMarkup]);
 
-  // 量視窗尺寸；量到之前不渲染內容。尺寸一變（旋轉手機、縮放視窗）就回到新尺寸的「符合視窗」。
+  // No content renders until the viewport is measured. On a size change (phone rotation, window resize) the view resets to
+  // fit the new size.
   useLayoutEffect(() => {
     if (viewportNode === null || !positiveSize(natural)) return;
     const measure = (force: boolean) => {
@@ -179,7 +181,7 @@ export function MediaLightbox({
     return () => observer.disconnect();
   }, [viewportNode, natural]);
 
-  // 滾輪要 preventDefault（不捲動背後的頁面），React 的 onWheel 是 passive，所以掛原生監聽。
+  // Native listener: the wheel must preventDefault (not scroll the page behind) and React's onWheel is passive.
   useEffect(() => {
     if (viewportNode === null) return;
     const onWheel = (event: WheelEvent) => {
@@ -199,13 +201,13 @@ export function MediaLightbox({
     return () => viewportNode.removeEventListener("wheel", onWheel);
   }, [viewportNode, natural]);
 
-  // 背後的頁面對輔助科技隱藏（同 Radix 互動式對話框的 `hideOthers`）。
+  // Hide the page behind from assistive technology (as Radix's modal mode does with `hideOthers`).
   useEffect(() => (contentNode === null ? undefined : hideOthers(contentNode)), [contentNode]);
 
-  // 鎖背後頁面的捲動（見 `lockRootScroll`）。layout effect：在第一次繪製前鎖上，捲軸不會先閃一下。
+  // Layout effect: lock before first paint so the scrollbar doesn't flash.
   useLayoutEffect(() => lockRootScroll(), []);
 
-  // 按在捲軸那一條（目標是 `<html>`）不讓焦點離開畫面：焦點掉到 body 的話，`+`／`-`／`0`／方向鍵就沒有作用了。
+  // Pressing the scrollbar (target `<html>`) must not move focus out; with focus on body the +/-/0/arrow keys stop working.
   useEffect(() => {
     const keepFocus = (event: MouseEvent) => {
       if (event.target === document.documentElement) event.preventDefault();
@@ -214,7 +216,8 @@ export function MediaLightbox({
     return () => document.removeEventListener("mousedown", keepFocus);
   }, []);
 
-  // 視窗以外（關閉鈕、說明列）的滾輪也不捲背後的頁面；視窗內的滾輪由上面那個監聽處理（縮放）。
+  // Wheel outside the viewport (close button, caption bar) must not scroll the page behind either; inside the viewport
+  // the listener above handles it (zoom).
   useEffect(() => {
     if (contentNode === null) return;
     const stop = (event: WheelEvent) => event.preventDefault();
@@ -228,15 +231,16 @@ export function MediaLightbox({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    // Radix 的 FocusScope（loop）讓 Tab／Shift+Tab 在畫面裡可聚焦的元素（關閉鈕，以及 mermaid 圖裡 `click … href`
-    // 產生的連結）之間循環，但焦點在畫面本身（點過或拖過圖之後）時 Shift+Tab 它不擋：瀏覽器會把焦點移到背後的頁面、
-    // 捲動那裡的容器，事後再拉回來也來不及。所以這種情況自己接手，移到關閉鈕（畫面裡最後一個可聚焦的元素）。
+    // Radix's FocusScope (loop) cycles Tab/Shift+Tab among the focusable elements (the close button and links from mermaid
+    // `click … href`), but not Shift+Tab when focus is on the viewport itself (after clicking or dragging the content): the
+    // browser would move focus to the page behind and scroll a container there, too late to undo. So send focus to the
+    // close button, the last focusable element.
     if (event.key === "Tab" && event.shiftKey && event.target === event.currentTarget) {
       event.preventDefault();
       closeRef.current?.focus();
       return;
     }
-    // Ctrl／⌘ 加 Home、End、上下鍵，以及 Alt 加上下鍵，會捲到背後頁面：擋下。
+    // Ctrl/⌘ + Home, End, Up, Down and Alt + Up, Down would scroll the page behind: block them.
     if (
       ((event.ctrlKey || event.metaKey) && MODIFIED_PAGE_SCROLL_KEYS.has(event.key)) ||
       (event.altKey && ALT_PAGE_SCROLL_KEYS.has(event.key))
@@ -244,9 +248,10 @@ export function MediaLightbox({
       event.preventDefault();
       return;
     }
-    // 其餘帶修飾鍵的組合（例如 Ctrl／⌘ 加 `+`、`-` 的頁面縮放）留給瀏覽器；Esc 交給 Radix。
+    // Other modifier combos (e.g. Ctrl/⌘ + `+`/`-` page zoom) are left to the browser; Esc goes to Radix.
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    // 背後的頁面沒有鎖捲動：翻頁、Home／End、空白鍵（不在按鈕上時）不能捲到它。按鈕上的空白鍵照舊是按下。
+    // The scroll lock covers only `<html>`, and is skipped on touch devices without a scrollbar, so PageUp/PageDown,
+    // Home/End and Space (when not on a button) must not scroll the page behind. Space on a button still presses it.
     if (PAGE_SCROLL_KEYS.has(event.key)) {
       if (event.key !== " " || !(event.target instanceof HTMLButtonElement)) event.preventDefault();
       return;
@@ -283,7 +288,7 @@ export function MediaLightbox({
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
-      // 捕捉不到（例如指標已結束）不影響拖曳
+      // Capture can fail (e.g. the pointer already ended); dragging still works.
     }
     if (pointers.current.size === 1) {
       const target = event.target instanceof Node ? event.target : null;
@@ -313,7 +318,8 @@ export function MediaLightbox({
       return;
     }
 
-    // 兩指：以中點、距離比縮放，舊中點底下的內容跟著手指移到新中點。第三指以後不參與。
+    // Two fingers: zoom by midpoint and distance ratio, the content under the old midpoint follows to the new one. Further
+    // fingers are ignored.
     const [idA, idB] = [...pointers.current.keys()] as [number, number];
     if (event.pointerId !== idA && event.pointerId !== idB) {
       pointers.current.set(event.pointerId, current);
@@ -351,11 +357,10 @@ export function MediaLightbox({
     gesture.current = null;
     if (g === null || g.multi || g.travel > TAP_SLOP) return;
 
-    // 點一下：背景關閉；圖上兩下（間隔與距離都夠近）在「符合視窗」與放大之間切換。
     if (!g.onContent) {
       lastTap.current = null;
-      // 觸控與筆在 pointerup 之後瀏覽器還會補送一次 click：這時就關掉，那次 click 會落到底下的頁面上
-      // （幽靈點擊）。所以等那次 click 落在視窗元素上才關（Radix 的點外面關閉也是這樣做）；滑鼠照舊放開就關。
+      // Touch/pen: the browser sends a click after pointerup; closing now would let it land on the page underneath (ghost
+      // click). So close when that click lands on the viewport (as Radix's click-outside does); a mouse closes on release.
       if (event.pointerType === "touch" || event.pointerType === "pen") closeOnClick.current = true;
       else onClose();
       return;
@@ -371,7 +376,7 @@ export function MediaLightbox({
     lastTap.current = { at: now, point: g.start };
   }
 
-  /** 指標取消或失去捕捉（例如系統手勢接手）：把它從追蹤中拿掉，殘留的指標才不會讓之後的單指拖曳被當成捏合。 */
+  /** Pointer cancelled or capture lost (e.g. a system gesture took over): untrack it, or a leftover pointer makes a later one-finger drag a pinch. */
   function handlePointerCancel(event: ReactPointerEvent<HTMLDivElement>): void {
     pointers.current.delete(event.pointerId);
     if (pointers.current.size === 0) {
@@ -390,8 +395,8 @@ export function MediaLightbox({
     source.kind === "image" ? source.caption || source.alt || t("note.zoom.imageTitle") : t("note.zoom.diagramTitle");
   const caption = source.kind === "image" ? source.caption : "";
 
-  // 內容比視窗大（任一軸）才拖得動：游標是 grab／grabbing；剛好放得下就維持預設游標。
-  // 指標被捕捉在視窗元素上，所以視窗本身也要帶同一個游標，背板與邊緣才與內容上一致。
+  // Pannable only when the content exceeds the viewport on either axis (grab/grabbing cursor). The viewport carries the same
+  // cursor because the pointer is captured on it, so backdrop and edges match the content.
   const canPan =
     geo !== null &&
     (natural.width * geo.view.scale > geo.viewport.width + 0.5 || natural.height * geo.view.scale > geo.viewport.height + 0.5);
@@ -406,8 +411,8 @@ export function MediaLightbox({
       transform: `translate(${offset.x}px, ${offset.y}px)`,
       ...(panCursor !== undefined ? { cursor: panCursor } : {}),
     };
-    // 內容坐在跟筆記裡一樣的卡面（`bg-card`，編輯器的底色）上：mermaid 的淺色主題用深灰畫線與字、根元素沒有底色，
-    // 直接放在半透明黑背板上會看不見；圖片的卡面只會從透明像素透出來。
+    // Same card surface as in the note (`bg-card`): mermaid's light theme draws dark gray lines and text with no root
+    // background, invisible on the translucent black backdrop; for images it only shows through transparent pixels.
     content =
       source.kind === "image" ? (
         <img
@@ -431,11 +436,12 @@ export function MediaLightbox({
   }
 
   return (
-    // 不用 Radix 的互動式（modal）模式：它開關時會在 body 上改繼承的樣式（pointer-events、鎖捲動的 CSS 變數）、
-    // 插入樣式表，整份文件的每個元素都要重算樣式，筆記越長開關越慢。這裡改由自己做它負責的部分：
-    // 背後的頁面對輔助科技隱藏（`hideOthers`）、Tab 留在畫面內、滾輪與翻頁鍵不捲背後的頁面、
-    // 滑鼠裝置或有捲軸時 `<html>` 不捲動（`lockRootScroll`），觸控也不會捲動它（`touch-none`）。
-    // 畫面蓋住的是視窗扣掉捲軸的範圍：捲軸那一條點得到，那裡的按下不算點外面（`onPointerDownOutside`）、也不搶走焦點。
+    // Not Radix's modal mode: toggling it changes inherited styles on body (pointer-events, scroll-lock CSS variables) and
+    // inserts a stylesheet, restyling every element, so long notes open and close slowly. Its duties are done here instead:
+    // `hideOthers` for assistive technology, Tab kept inside, wheel and page keys not scrolling the page behind, `<html>`
+    // not scrolling with a mouse or a scrollbar (`lockRootScroll`), and `touch-none` for touch.
+    // The overlay covers the viewport minus the scrollbar: the scrollbar strip stays clickable, and presses there are
+    // neither "outside" (`onPointerDownOutside`) nor focus-stealing.
     <DialogPrimitive.Root
       open
       modal={false}
@@ -444,7 +450,7 @@ export function MediaLightbox({
       }}
     >
       <DialogPrimitive.Portal>
-        {/* 不淡入：與先頂上的外殼（`LightboxFallback`）同一個不透明度，換手時背板不會閃。 */}
+        {/* No fade-in: same opacity as LightboxFallback, so the handover doesn't flash. */}
         <div aria-hidden="true" className="fixed inset-0 z-50 bg-black/80" />
         <DialogPrimitive.Content
           ref={setContentNode}
@@ -452,11 +458,11 @@ export function MediaLightbox({
           className="fixed inset-0 z-50 touch-none outline-none"
           onKeyDown={handleKeyDown}
           onPointerDownOutside={event => {
-            // 按在捲軸（或它留下的空位）上時目標是 `<html>`：不是要關掉放大。
+            // A press on the scrollbar (or its reserved space) targets `<html>`: not a request to close.
             if (event.detail.originalEvent.target === document.documentElement) event.preventDefault();
           }}
           onFocusOutside={event => {
-            // 焦點被移到背後的頁面（例如程式呼叫 focus()）時不關閉，拉回關閉鈕。
+            // Focus moved to the page behind (e.g. a programmatic focus()): don't close, pull it back to the close button.
             event.preventDefault();
             closeRef.current?.focus();
           }}
