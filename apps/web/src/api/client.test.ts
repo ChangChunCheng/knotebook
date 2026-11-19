@@ -151,7 +151,7 @@ describe("api()", () => {
     }
   });
 
-  it("storage_quota_exceeded：保留頂層 storage（三數）", async () => {
+  it("storage_quota_exceeded: keeps top-level storage (three numbers)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 409,
       json: () => Promise.resolve({ error: { code: "storage_quota_exceeded", message: "This space's storage quota is full." }, storage: { incomingBytes: 10, usedBytes: 600, quotaBytes: 1000 } }),
@@ -161,7 +161,7 @@ describe("api()", () => {
     expect((err as ApiFail).storage).toEqual({ incomingBytes: 10, usedBytes: 600, quotaBytes: 1000 });
   });
 
-  it("storage_quota_exceeded：只有 incomingBytes（null）也收；看不到數字時 usedBytes／quotaBytes 不出現", async () => {
+  it("storage_quota_exceeded: accepts incomingBytes-only (null); usedBytes/quotaBytes absent when no numbers are visible", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 409,
       json: () => Promise.resolve({ error: { code: "storage_quota_exceeded", message: "x" }, storage: { incomingBytes: null } }),
@@ -170,7 +170,7 @@ describe("api()", () => {
     expect(err.storage).toEqual({ incomingBytes: null });
   });
 
-  it("storage 形狀不對（usedBytes 是字串）→ 整個不收，storage 為 undefined", async () => {
+  it("malformed storage (usedBytes is a string) -> dropped entirely, storage is undefined", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 409,
       json: () => Promise.resolve({ error: { code: "storage_quota_exceeded", message: "x" }, storage: { incomingBytes: 1, usedBytes: "600", quotaBytes: 1000 } }),
@@ -180,7 +180,7 @@ describe("api()", () => {
     expect(err.storage).toBeUndefined();
   });
 
-  it("別的錯誤碼帶了 storage 也不收（只認 storage_quota_exceeded）", async () => {
+  it("storage on another error code is ignored", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 409,
       json: () => Promise.resolve({ error: { code: "server_busy", message: "x" }, storage: { incomingBytes: 1 } }),
@@ -189,7 +189,7 @@ describe("api()", () => {
     expect(err.storage).toBeUndefined();
   });
 
-  it("CL-T1 404 in_trash：收頂層 noteId", async () => {
+  it("404 in_trash: keeps top-level noteId", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 404,
       json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: "abc" }),
@@ -200,7 +200,7 @@ describe("api()", () => {
     expect((err as ApiFail).noteId).toBe("abc");
   });
 
-  it("CL-T2 別的錯誤碼帶了 noteId 也不收", async () => {
+  it("noteId on another error code is ignored", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 404,
       json: () => Promise.resolve({ error: { code: "not_found", message: "x" }, noteId: "abc" }),
@@ -210,7 +210,7 @@ describe("api()", () => {
     expect(err.noteId).toBeUndefined();
   });
 
-  it("CL-T3 in_trash 但 noteId 不是字串 → 不收", async () => {
+  it("in_trash with a non-string noteId -> ignored", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse({
       ok: false, status: 404,
       json: () => Promise.resolve({ error: { code: "in_trash", message: "x" }, noteId: 42 }),

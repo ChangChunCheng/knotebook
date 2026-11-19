@@ -13,9 +13,8 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * 側欄（AppShell）是 layout route：首頁 ↔ 筆記頁換路由時 `<aside>` 是同一個 DOM 節點，
- * 清單捲動位置、選取模式、NotePage chunk 載入中的側欄都不會被重掛丟掉。
- * NotePage 換成測試放行才 resolve 的 stub（它自己不含 AppShell）。
+ * The sidebar (AppShell) is a layout route: the `<aside>` is the same DOM node across home <-> note navigation, so list scroll position, selection mode and the sidebar shown while the NotePage chunk loads survive instead of being remounted.
+ * NotePage is replaced by a stub that resolves only when the test releases it (it doesn't include AppShell itself).
  */
 const notePageGate = vi.hoisted(() => ({ pending: null as Promise<void> | null, release: () => {} }));
 vi.mock("./pages/NotePage", async () => {
@@ -23,7 +22,7 @@ vi.mock("./pages/NotePage", async () => {
   return {
     default: function NotePageStub() {
       const location = useLocation();
-      // 與真 NotePage 一樣：簡報（?present）時把整個側欄標成 inert，離開時清掉。
+      // As the real NotePage does: marks the whole sidebar inert under ?present and clears it on leaving.
       useAppShellInert(new URLSearchParams(location.search).has("present"));
       return <p>notepage-stub</p>;
     },
@@ -97,7 +96,7 @@ function renderApp(initial: string) {
   );
 }
 
-describe("App route tree：AppShell 是 layout route", () => {
+describe("App route tree: AppShell is a layout route", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     notePageGate.pending = null;
@@ -120,7 +119,7 @@ describe("App route tree：AppShell 是 layout route", () => {
     vi.unstubAllGlobals();
   });
 
-  it("首頁點一篇筆記 → <aside> 是同一個節點（chunk 載入中也是）", async () => {
+  it("clicking a note on home keeps the same <aside> node, including while the chunk loads", async () => {
     notePageGate.pending = new Promise<void>((resolve) => {
       notePageGate.release = resolve;
     });
@@ -129,7 +128,6 @@ describe("App route tree：AppShell 是 layout route", () => {
     fireEvent.click(await within(asideBefore).findByRole("link", { name: /Wired Note/ }));
     await waitFor(() => expect(screen.getByTestId("loc")).toHaveTextContent("/n/alice/wired-note"));
 
-    // chunk 還沒放行：fallback 在場，側欄沒有換掉
     expect(screen.getAllByText("Loading…").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("complementary")).toBe(asideBefore);
 
@@ -138,12 +136,11 @@ describe("App route tree：AppShell 是 layout route", () => {
     expect(screen.getByRole("complementary")).toBe(asideBefore);
   });
 
-  it("首頁 → 筆記頁：清單捲動位置與選取模式保留", async () => {
+  it("home -> note page keeps list scroll position and selection mode", async () => {
     renderApp("/");
     const aside = await screen.findByRole("complementary");
     const link = await within(aside).findByRole("link", { name: /Wired Note/ });
 
-    // 側欄內第一個可捲動祖先（清單的捲動容器）
     let scroller: HTMLElement | null = link.parentElement;
     while (scroller !== null && !scroller.className.includes("overflow-y-auto")) scroller = scroller.parentElement;
     expect(scroller).not.toBeNull();
@@ -152,7 +149,7 @@ describe("App route tree：AppShell 是 layout route", () => {
     fireEvent.click(within(aside).getAllByRole("button", { name: "Select" })[0]!);
     expect(await within(aside).findByRole("button", { name: "Done" })).toBeInTheDocument();
 
-    // 選取模式中的列不是連結：用程式導覽
+    // Rows in selection mode are not links, so navigate programmatically.
     fireEvent.click(screen.getByRole("button", { name: "go-note" }));
     await waitFor(() => expect(screen.getByTestId("loc")).toHaveTextContent("/n/alice/wired-note"));
     expect(await screen.findByText("notepage-stub")).toBeInTheDocument();
@@ -163,27 +160,26 @@ describe("App route tree：AppShell 是 layout route", () => {
     expect(within(asideAfter).getByRole("button", { name: "Done" })).toBeInTheDocument();
   });
 
-  it("簡報模式：整個 AppShell 在 inert 裡，離開簡報後清掉", async () => {
+  it("presentation mode: whole AppShell is inert, cleared on leaving presentation", async () => {
     renderApp("/n/alice/wired-note?present");
     const aside = await screen.findByRole("complementary");
     await screen.findByText("notepage-stub");
     expect(aside.closest("[inert]")).not.toBeNull();
   });
 
-  it("沒有 ?present：AppShell 沒有 inert；簡報 → 一般模式清掉 inert", async () => {
+  it("without ?present AppShell is not inert; presentation -> normal mode clears inert", async () => {
     renderApp("/n/alice/wired-note?present");
     const aside = await screen.findByRole("complementary");
     await screen.findByText("notepage-stub");
     expect(aside.closest("[inert]")).not.toBeNull();
 
-    // 同一個 NotePage 實例換成沒有 ?present：effect 依值重設
     const probeNote = within(aside).getByRole("link", { name: /Wired Note/ });
     fireEvent.click(probeNote);
     await waitFor(() => expect(screen.getByTestId("loc")).toHaveTextContent(/^\/n\/alice\/wired-note$/));
     await waitFor(() => expect(aside.closest("[inert]")).toBeNull());
   });
 
-  it("離開筆記頁（回首頁）→ inert 一併清掉（卸載清除）", async () => {
+  it("leaving the note page (back to home) clears inert via unmount cleanup", async () => {
     renderApp("/n/alice/wired-note?present");
     const aside = await screen.findByRole("complementary");
     await screen.findByText("notepage-stub");

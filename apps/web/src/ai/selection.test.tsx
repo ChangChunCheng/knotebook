@@ -8,14 +8,14 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { noteSchema } from "@/collab/schema";
 import { anchorRange, blockRange, leafText, selectionFocus, selectionInsideAnchor, toolbarWouldShow } from "./selection";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 function createEditor(initialContent: unknown[]): AnyEditor {
   return BlockNoteEditor.create({ schema: noteSchema, initialContent: initialContent as never }) as AnyEditor;
 }
 
-/** 裸 mount（同 `ai/apply.test.ts`）：wikilink 走 toExternalHTML，elementRenderer shim 一行即足。只給純函式案用。 */
+/** Bare mount (as in `ai/apply.test.ts`): wikilink uses toExternalHTML, so a one-line elementRenderer shim suffices. For pure-function cases only. */
 function bareMounted(initialContent: unknown[]): AnyEditor {
   const editor = createEditor(initialContent);
   const el = document.createElement("div");
@@ -39,8 +39,8 @@ const DOC = [
   { id: "p3", type: "paragraph", content: "third" },
 ];
 
-describe("toolbarWouldShow（#263：照抄上游 FormattingToolbarExtension.shouldShow）", () => {
-  it("逐案與上游 store 一致：空選取 false、無文字的 TextSelection false、跨 code false、NodeSelection true、一般文字 true、全選含 code false", () => {
+describe("toolbarWouldShow (#263: copy of upstream FormattingToolbarExtension.shouldShow)", () => {
+  it("matches the upstream store case by case: empty selection false, TextSelection without text false, across code false, NodeSelection true, plain text true, select-all with code false", () => {
     const editor = createEditor([
       { id: "p1", type: "paragraph", content: "alpha" },
       { id: "p2", type: "paragraph", content: "beta" },
@@ -66,8 +66,8 @@ describe("toolbarWouldShow（#263：照抄上游 FormattingToolbarExtension.shou
   });
 });
 
-describe("selectionInsideAnchor（#263：與工具列壓制共用的唯一判斷）", () => {
-  it("在範圍內 true；部分重疊、範圍外 false；錨點區塊不在了 false", () => {
+describe("selectionInsideAnchor (#263: shared with toolbar suppression)", () => {
+  it("true when inside the range; false for partial overlap, outside, or anchor block gone", () => {
     const editor = bareMounted(DOC);
     select(editor, start(editor, "p1") + 1, start(editor, "p1") + 4);
     expect(read(editor, (tr) => selectionInsideAnchor(tr, ["p1"]))).toBe(true);
@@ -79,7 +79,7 @@ describe("selectionInsideAnchor（#263：與工具列壓制共用的唯一判斷
     expect(read(editor, (tr) => selectionInsideAnchor(tr, ["gone"]))).toBe(false);
   });
 
-  it("Ctrl+A（AllSelection，from=0、to=doc.content.size）對「全部頂層區塊」的錨點算在範圍內；只錨首區塊時不算", () => {
+  it("Ctrl+A (AllSelection, from=0, to=doc.content.size) counts as inside an anchor of all top-level blocks; not when only the first block is anchored", () => {
     const editor = bareMounted(DOC);
     act(() => void editor._tiptapEditor.commands.selectAll());
     expect(read(editor, (tr) => [tr.selection.from, tr.selection.to])).toEqual([0, editor.prosemirrorState.doc.content.size]);
@@ -87,7 +87,7 @@ describe("selectionInsideAnchor（#263：與工具列壓制共用的唯一判斷
     expect(read(editor, (tr) => selectionInsideAnchor(tr, ["p1"]))).toBe(false);
   });
 
-  it("blockRange／anchorRange：posBefore～posAfter；任一端找不到回 null", () => {
+  it("blockRange/anchorRange: posBefore..posAfter; null when either end isn't found", () => {
     const editor = bareMounted(DOC);
     const doc = editor.prosemirrorState.doc;
     const p1 = getNodeById("p1", doc)!;
@@ -98,8 +98,8 @@ describe("selectionInsideAnchor（#263：與工具列壓制共用的唯一判斷
   });
 });
 
-describe("selectionFocus（#263 open()）", () => {
-  it("整塊選取（首區塊開頭到末區塊結尾）→ 空字串；Ctrl+A 對全部區塊 → 空字串", () => {
+describe("selectionFocus (#263 open())", () => {
+  it("whole-block selection (first block start to last block end) -> empty string; Ctrl+A over all blocks -> empty string", () => {
     const editor = bareMounted(DOC);
     select(editor, start(editor, "p1"), end(editor, "p2"));
     expect(read(editor, (tr) => selectionFocus(tr, ["p1", "p2"]))).toBe("");
@@ -107,7 +107,7 @@ describe("selectionFocus（#263 open()）", () => {
     expect(read(editor, (tr) => selectionFocus(tr, ["p1", "p2", "p3"]))).toBe("");
   });
 
-  it("部分選取取子字串；跨區塊以換行分隔", () => {
+  it("partial selection yields the substring; across blocks joined by newlines", () => {
     const editor = bareMounted(DOC);
     select(editor, start(editor, "p1") + 6, start(editor, "p1") + 10);
     expect(read(editor, (tr) => selectionFocus(tr, ["p1"]))).toBe("beta");
@@ -115,34 +115,34 @@ describe("selectionFocus（#263 open()）", () => {
     expect(read(editor, (tr) => selectionFocus(tr, ["p1", "p2"]))).toBe("beta gamma\nsec");
   });
 
-  it("#269 wikilink（leaf 節點）輸出 [顯示文字](/notes/<id>)，與送出的 markdown 寫法一致；有 titleOf 時 label 空取現行標題", () => {
+  it("#269 wikilink (leaf node) is written as [label](/notes/<id>), matching the sent markdown; with titleOf an empty label takes the current title", () => {
     const editor = bareMounted([
       { id: "w", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: "x", snapshotTitle: "Plan" } }, " end"] },
       { id: "z", type: "paragraph", content: "zz" },
     ]);
-    // wikilink 是 atom，在 PM 裡只佔 1 個位置："see "（4）＋wikilink（1）＝5
+    // A wikilink is an atom occupying 1 position in PM: "see " (4) + wikilink (1) = 5
     select(editor, start(editor, "w"), start(editor, "w") + 5);
     expect(read(editor, (tr) => selectionFocus(tr, ["w"]))).toBe("see [Plan](/notes/x)");
     expect(read(editor, (tr) => selectionFocus(tr, ["w"], (id) => (id === "x" ? "Live" : undefined)))).toBe("see [Live](/notes/x)");
   });
 
-  it("#269：leafText——label 優先、錨點進 href、全空退到 href", () => {
+  it("#269: leafText - label first, anchor into href, all empty falls back to href", () => {
     const node = (attrs: Record<string, string>) => ({ type: { name: "wikilink" }, attrs: { targetNoteId: "x", snapshotTitle: "", label: "", anchorBlockId: "", ...attrs }, textContent: "" }) as never;
     expect(leafText(node({ label: "L", anchorBlockId: "b1" }))).toBe("[L](/notes/x#b-b1)");
     expect(leafText(node({ snapshotTitle: "S" }), () => "Live")).toBe("[Live](/notes/x)");
     expect(leafText(node({}))).toBe("[/notes/x](/notes/x)");
   });
 
-  it("#269：leafText 的連結文字做 markdown 跳脫（與送出的 markdown 同形，AI 回寫才解得回原字串）", () => {
+  it("#269: leafText link text is markdown-escaped (same form as the sent markdown, so an AI write-back can restore the original string)", () => {
     const node = (attrs: Record<string, string>) => ({ type: { name: "wikilink" }, attrs: { targetNoteId: "x", snapshotTitle: "", label: "", anchorBlockId: "", ...attrs }, textContent: "" }) as never;
     expect(leafText(node({ label: "[Draft] Plan *v2*" }))).toBe("[\\[Draft\\] Plan \\*v2\\*](/notes/x)");
     expect(leafText(node({ label: "a]b\\" }))).toBe("[a\\]b\\\\](/notes/x)");
     expect(leafText(node({}), () => "`c`_~")).toBe("[\\`c\\`\\_\\~](/notes/x)");
   });
 
-  it("超過 2000 code point 截到 2000，不切半個 emoji", () => {
+  it("truncates to 2000 code points without splitting an emoji", () => {
     const editor = bareMounted([{ id: "e", type: "paragraph", content: `${"😀".repeat(2100)}x` }]);
-    // emoji 在 PM 裡佔 2 個位置（UTF-16），選到 x 之前
+    // An emoji takes 2 positions in PM (UTF-16); the selection ends before the x
     select(editor, start(editor, "e"), start(editor, "e") + 4200);
     const focus = read(editor, (tr) => selectionFocus(tr, ["e"]));
     expect(Array.from(focus)).toHaveLength(2000);

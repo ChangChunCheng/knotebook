@@ -6,9 +6,9 @@ import { noteSchema } from "@/collab/schema";
 import type { DiffBlock } from "@/lib/version-diff";
 import { buildPreview, isNoChange, normalizeMarkdown, stripTextWrapper } from "./preview";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 function mounted(initialContent: unknown[]): BlockNoteEditor<any, any, any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: initialContent as never }) as BlockNoteEditor<any, any, any>;
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -23,31 +23,31 @@ function ids(blocks: readonly DiffBlock[]): string[] {
 
 const AFTER: DiffBlock[] = [{ id: "new-1", type: "paragraph", props: {}, content: [{ type: "text", text: "ONE", styles: {} }], children: [] }];
 
-describe("stripTextWrapper（#263）", () => {
-  it("整段以 <text> 開頭、</text> 結尾（忽略前後空白）才剝；標記內緊鄰的一個換行一併去掉", () => {
+describe("stripTextWrapper (#263)", () => {
+  it("strips only when the whole text starts with <text> and ends with </text> (surrounding whitespace ignored); one newline right inside the markers is removed too", () => {
     expect(stripTextWrapper("<text>\nA\n\nB\n</text>")).toBe("A\n\nB");
     expect(stripTextWrapper("  <text>A</text>\n")).toBe("A");
     expect(stripTextWrapper("<text></text>")).toBe("");
   });
-  it("只有開頭或只有結尾、或前面還有別的字 → 原樣", () => {
+  it("only an opening or only a closing tag, or other text before it -> unchanged", () => {
     expect(stripTextWrapper("<text>A")).toBe("<text>A");
     expect(stripTextWrapper("A</text>")).toBe("A</text>");
     expect(stripTextWrapper("B <text>A</text>")).toBe("B <text>A</text>");
   });
 });
 
-describe("isNoChange（#263）", () => {
-  it("兩端 trim、統一換行後相等 → true", () => {
+describe("isNoChange (#263)", () => {
+  it("equal after trimming both ends and normalizing newlines -> true", () => {
     expect(normalizeMarkdown("\r\nA\r\nB  \r\n")).toBe("A\nB");
     expect(isNoChange("alpha beta  \r\n", "alpha beta\n")).toBe(true);
     expect(isNoChange("A\r\nB", "A\nB\n")).toBe(true);
   });
-  it("內容不同 → false", () => {
+  it("different content -> false", () => {
     expect(isNoChange("alpha", "beta")).toBe(false);
   });
 });
 
-describe("buildPreview（#263：只放被改的區塊，不再帶前後上下文）", () => {
+describe("buildPreview (#263: only the changed blocks, no surrounding context)", () => {
   const DOC = [
     { id: "p0", type: "paragraph", content: "zero" },
     { id: "p1", type: "paragraph", content: "one" },
@@ -59,7 +59,7 @@ describe("buildPreview（#263：只放被改的區塊，不再帶前後上下文
     { id: "p4", type: "paragraph", content: "four" },
   ];
 
-  it("平面：before 只有錨點區塊、after 只有傳入的區塊（同一物件）；前後兄弟 p0／p2 都不出現；沒有 surroundIds 欄位", () => {
+  it("flat: before has only the anchor blocks, after only the passed blocks (same object); sibling p0/p2 absent; no surroundIds field", () => {
     const editor = mounted(DOC);
     const preview = buildPreview(editor, ["p1"], AFTER, false);
     expect(ids(preview.before)).toEqual(["p1"]);
@@ -69,7 +69,7 @@ describe("buildPreview（#263：只放被改的區塊，不再帶前後上下文
     expect(preview.noChange).toBe(false);
   });
 
-  it("巢狀（選取從子區塊 c2 拉到 p3，getSelection 回 [c2, p3]）：before 恰為 [c2, p3]，同層的 c1、p4 與祖先 p2 都不出現", () => {
+  it("nested (selection from child c2 to p3, getSelection returns [c2, p3]): before is [c2, p3]; same-level c1, p4 and ancestor p2 absent", () => {
     const editor = mounted(DOC);
     const preview = buildPreview(editor, ["c2", "p3"], AFTER, true);
     expect(ids(preview.before)).toEqual(["c2", "p3"]);
@@ -77,20 +77,20 @@ describe("buildPreview（#263：只放被改的區塊，不再帶前後上下文
     expect(preview.noChange).toBe(true);
   });
 
-  it("錨點區塊帶子樹：before 照 getBlock 帶上子區塊（被改的範圍本來就含子樹）", () => {
+  it("anchor block with a subtree: before includes the child blocks via getBlock (the changed range includes the subtree)", () => {
     const editor = mounted(DOC);
     const preview = buildPreview(editor, ["p2"], AFTER, false);
     expect(ids(preview.before)).toEqual(["p2", "c1", "c2"]);
   });
 
-  it("錨點裡找不到的 id（已被刪）略過，其餘照放", () => {
+  it("ids not found in the anchor (already deleted) are skipped, the rest kept", () => {
     const editor = mounted(DOC);
     editor.removeBlocks(["p3"]);
     const preview = buildPreview(editor, ["p1", "p3"], AFTER, false);
     expect(ids(preview.before)).toEqual(["p1"]);
   });
 
-  it("before 是呼叫當下的現值：之後再改文件，已產出的 preview 不變（凍結由呼叫端保管這份物件）", () => {
+  it("before is the value at call time: later document edits don't change an already produced preview (the caller owns freezing this object)", () => {
     const editor = mounted(DOC);
     const preview = buildPreview(editor, ["p1"], AFTER, false);
     editor.updateBlock("p1", { content: "changed later" });

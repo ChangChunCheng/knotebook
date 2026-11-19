@@ -5,8 +5,6 @@ import { P, integrity, mountEditor, row, shape, textPos, withChildren, type AnyE
 import { removeBlocksKeepColumns } from "./keep-columns";
 import { blockIdsForMenuDelete, blockIdsInSelectionForDelete } from "./selection-delete";
 
-// ⋮⋮ Delete 的刪除對象。表一（展開）、表二（多選判斷）的期望值逐字取自實際選取的輸出。
-
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
@@ -35,11 +33,10 @@ const BB_KQ = () => [P("x", "x0"), withChildren(P("bb", "b1"), [P("k", "k1"), P(
 const A_BK = () => [P("a", "a1"), withChildren(P("b", "b1"), [P("k", "k1")]), P("z", "z9")];
 const ROW_BB_KQ = () => W([[P("a", "a1")], [withChildren(P("bb", "b1"), [P("k", "k1"), P("q", "q1")])]]);
 
-/** `bb` 裡選第 1 個字（不跨 block 的文字選取）。 */
 function selectFirstCharOfBb(editor: AnyEditor): void {
   editor.setTextCursorPosition("b1", "start");
   editor.transact((tr) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TextSelection 從現行選取的 constructor 取，沒有可 import 的型別
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TextSelection is taken from the constructor of the current selection; there is no importable type
     tr.setSelection((tr.selection.constructor as any).create(tr.doc, textPos(editor, "bb", 0), textPos(editor, "bb", 1))),
   );
 }
@@ -102,12 +99,12 @@ const SD1: Sd1Row[] = [
     ],
 ];
 
-describe("SD1 blockIdsInSelectionForDelete：表一", () => {
+describe("blockIdsInSelectionForDelete: expansion table", () => {
   it.each<Sd1Row>(SD1)("%s", (_name, content, from, to, blocks, ids, after) => {
     const editor = mount(content());
     const before = shape(editor);
     editor.setSelection(from, to);
-    // 事實釘：core 的跨欄選取清單（core 升版時第一個紅）。
+    // Pinned fact: core's cross-column selection list (the first thing to go red when core is upgraded).
     expect(blocksOf(editor)).toBe(blocks);
     const got = blockIdsInSelectionForDelete(editor, editor.getSelection()!.blocks);
     expect(got).toEqual(ids);
@@ -119,14 +116,14 @@ describe("SD1 blockIdsInSelectionForDelete：表一", () => {
   });
 });
 
-// 「撤銷一次就還原」也要在共編 UndoManager 下成立（app 的實際組態）；挑四形，期望與非共編逐字相同。
-describe("SD1-COLLAB 表一四形在共編下：刪除結果相同、manager.undo() 一次回起始", () => {
+// "One undo restores" must also hold under the collab UndoManager (the app's real configuration); four shapes are picked, with expectations verbatim the same as non-collab.
+describe("expansion table, four shapes under collab: same deletion result, one manager.undo() returns to the start", () => {
   const COLLAB = SD1.filter(([name]) => ["C1", "C7", "C10", "C12"].includes(name));
-  it("挑到的恰是四形（改名時不得靜默少跑）", () => {
+  it("the picked ones are exactly the four shapes (renaming mustn't silently run fewer)", () => {
     expect(COLLAB.map(([name]) => name)).toEqual(["C1", "C7", "C10", "C12"]);
   });
 
-  it.each<Sd1Row>(COLLAB)("%s（共編）", (_name, content, from, to, blocks, ids, after) => {
+  it.each<Sd1Row>(COLLAB)("%s (collab)", (_name, content, from, to, blocks, ids, after) => {
     const m = mountEditor(content(), { collab: true });
     cleanups.push(m.destroy);
     const editor = m.editor;
@@ -145,8 +142,8 @@ describe("SD1-COLLAB 表一四形在共編下：刪除結果相同、manager.und
   });
 });
 
-describe("SD2 沒有欄／列項時原樣", () => {
-  it("C2：回傳的就是 blocks 的 id 串、順序不變", () => {
+describe("no column/row entries: unchanged", () => {
+  it("returns the id string of blocks as is, order unchanged", () => {
     const editor = mount(W([[P("a", "a1"), P("k", "k1")], [P("b", "b1")]]));
     editor.setSelection("a1", "k1");
     const blocks = editor.getSelection()!.blocks;
@@ -155,22 +152,22 @@ describe("SD2 沒有欄／列項時原樣", () => {
   });
 });
 
-describe("SD3 blockIdsForMenuDelete：表二", () => {
+describe("blockIdsForMenuDelete: menu table", () => {
   const sel = (from: string, to: string) => (editor: AnyEditor) => editor.setSelection(from, to);
   it.each<[string, () => PartialBlockLike[], (editor: AnyEditor) => void, string, string[], string]>([
-    ["R1", AB, sel("a1", "b1"), "b1", ["a1", "b1"], "paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z"],
-    ["R2", C1, sel("a1", "b1"), "b1", ["a1", "b1"], "paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
-    ["R2q", C1, sel("a1", "b1"), "q1", ["q1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b)]  paragraph:z"],
-    ["R3", C1, sel("x0", "b1"), "a1", ["x0", "a1", "b1"], "ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
-    ["R4", C1, sel("x0", "b1"), "b1", ["x0", "a1", "b1"], "ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
-    ["R6", C4, sel("b1", "c1"), "c1", ["b1", "c1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph) | COL(paragraph)]  paragraph:z"],
-    ["C10-a", AB, sel("x0", "z9"), "a1", ["x0", "r", "z9"], "paragraph"],
-    ["C10-x", AB, sel("x0", "z9"), "x0", ["x0", "r", "z9"], "paragraph"],
-    ["C11-k", C11, sel("a1", "b1"), "k1", ["k1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b,paragraph:q)]  paragraph:z"],
-    ["N1", BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  paragraph:bb{paragraph:q}  paragraph:z"],
-    ["N2", A_BK, sel("a1", "b1"), "k1", ["k1"], "paragraph:a  paragraph:b  paragraph:z"],
+    ["AB: select a-b, click b", AB, sel("a1", "b1"), "b1", ["a1", "b1"], "paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z"],
+    ["C1: select a-b, click b", C1, sel("a1", "b1"), "b1", ["a1", "b1"], "paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
+    ["C1: select a-b, click q (outside the selection)", C1, sel("a1", "b1"), "q1", ["q1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b)]  paragraph:z"],
+    ["C1: select x-b, click a (inside the selection)", C1, sel("x0", "b1"), "a1", ["x0", "a1", "b1"], "ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
+    ["C1: select x-b, click b", C1, sel("x0", "b1"), "b1", ["x0", "a1", "b1"], "ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z"],
+    ["C4: select b-c, click c", C4, sel("b1", "c1"), "c1", ["b1", "c1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph) | COL(paragraph)]  paragraph:z"],
+    ["AB: select x-z, click a", AB, sel("x0", "z9"), "a1", ["x0", "r", "z9"], "paragraph"],
+    ["AB: select x-z, click x", AB, sel("x0", "z9"), "x0", ["x0", "r", "z9"], "paragraph"],
+    ["C11: select a-b, click the child k", C11, sel("a1", "b1"), "k1", ["k1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b,paragraph:q)]  paragraph:z"],
+    ["first character of bb selected, click the child k", BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  paragraph:bb{paragraph:q}  paragraph:z"],
+    ["select a-b, click the child k", A_BK, sel("a1", "b1"), "k1", ["k1"], "paragraph:a  paragraph:b  paragraph:z"],
     [
-      "C12-b",
+      "TWO_ROWS: select b-c, click b",
       TWO_ROWS,
       sel("b1", "c1"),
       "b1",
@@ -178,7 +175,7 @@ describe("SD3 blockIdsForMenuDelete：表二", () => {
       "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  ROW[COL(paragraph) | COL(paragraph:d)]  paragraph:z",
     ],
     [
-      "C12-c",
+      "TWO_ROWS: select b-c, click c",
       TWO_ROWS,
       sel("b1", "c1"),
       "c1",
@@ -186,7 +183,7 @@ describe("SD3 blockIdsForMenuDelete：表二", () => {
       "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  ROW[COL(paragraph) | COL(paragraph:d)]  paragraph:z",
     ],
     [
-      "C12-d",
+      "TWO_ROWS: select b-c, click d",
       TWO_ROWS,
       sel("b1", "c1"),
       "d1",
@@ -206,14 +203,14 @@ describe("SD3 blockIdsForMenuDelete：表二", () => {
     expect(shape(editor)).toBe(before);
   });
 
-  // 函式契約：⋮⋮ 只開在 blockContainer 上（core `getDraggableBlockFromElement`），UI 開不到欄節點；整列把手才會用到。
-  it("點的 id 是 blocks 裡的欄節點本身（core 原本的條件；函式契約，UI 開不到）→ 展開後的集合", () => {
+  // Function contract: the drag handle only opens on a blockContainer (core `getDraggableBlockFromElement`), so the UI can't open one on a column node; the whole-row handle would use it.
+  it("clicked id is a column node among blocks (core's original condition; function contract, not reachable from the UI) -> the expanded set", () => {
     const editor = mount(C1());
     editor.setSelection("a1", "b1");
     expect(blockIdsForMenuDelete(editor, "rc1")).toEqual(["a1", "b1"]);
   });
 
-  it("沒有選取（游標在 b 內）→ 只刪點的 block", () => {
+  it("no selection (caret inside b) -> deletes only the clicked block", () => {
     const editor = mount(AB());
     editor.setTextCursorPosition("b1", "end");
     expect(editor.getSelection()).toBeUndefined();
@@ -221,16 +218,16 @@ describe("SD3 blockIdsForMenuDelete：表二", () => {
   });
 });
 
-describe("SD4 不變量：選取裡沒有欄／列項時與 core 規則完全相同", () => {
+describe("invariant: with no column/row entries in the selection the rules are identical to core's", () => {
   it.each<[string, () => PartialBlockLike[], (editor: AnyEditor) => void, string, string[], string]>([
-    ["N1", BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  paragraph:bb{paragraph:q}  paragraph:z"],
-    ["N2", A_BK, (editor) => editor.setSelection("a1", "b1"), "k1", ["k1"], "paragraph:a  paragraph:b  paragraph:z"],
-    ["N3", ROW_BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:bb{paragraph:q})]  paragraph:z"],
-    ["N4", BB_KQ, selectFirstCharOfBb, "q1", ["q1"], "paragraph:x  paragraph:bb{paragraph:k}  paragraph:z"],
-    // 多選那一支：點的 block 在選取裡 → 刪整個選取。
-    ["N5", () => [P("a", "a1"), P("b", "b1"), P("c", "c1")], (editor) => editor.setSelection("a1", "b1"), "a1", ["a1", "b1"], "paragraph:c"],
+    ["BB_KQ: first character of bb selected, click the child k", BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  paragraph:bb{paragraph:q}  paragraph:z"],
+    ["A_BK: select a-b, click the child k", A_BK, (editor) => editor.setSelection("a1", "b1"), "k1", ["k1"], "paragraph:a  paragraph:b  paragraph:z"],
+    ["ROW_BB_KQ: first character of bb selected, click the child k", ROW_BB_KQ, selectFirstCharOfBb, "k1", ["k1"], "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:bb{paragraph:q})]  paragraph:z"],
+    ["BB_KQ: first character of bb selected, click the child q", BB_KQ, selectFirstCharOfBb, "q1", ["q1"], "paragraph:x  paragraph:bb{paragraph:k}  paragraph:z"],
+    // Multi-select branch: the clicked block is in the selection -> delete the whole selection.
+    ["top-level a-b selected, click a", () => [P("a", "a1"), P("b", "b1"), P("c", "c1")], (editor) => editor.setSelection("a1", "b1"), "a1", ["a1", "b1"], "paragraph:c"],
     [
-      "N6",
+      "a and k of one column selected, click k",
       () => W([[P("a", "a1"), P("k", "k1")], [P("b", "b1")]]),
       (editor) => editor.setSelection("a1", "k1"),
       "k1",

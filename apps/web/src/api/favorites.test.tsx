@@ -16,7 +16,6 @@ function fakeResponse(status: number, body?: unknown): Response {
 
 type Handler = () => Response | Promise<Response>;
 
-/** 記下每次呼叫；同一個 `method url` 依序取回應（用完就重複最後一個）；未列的 throw。 */
 function stubFetch(routes: Record<string, Handler[]>) {
   const calls: Array<{ method: string; url: string; init: RequestInit | undefined }> = [];
   const used: Record<string, number> = {};
@@ -37,7 +36,6 @@ function stubFetch(routes: Record<string, Handler[]>) {
   return calls;
 }
 
-/** 由測試決定何時回應的 handler。 */
 function deferred() {
   let resolve!: (r: Response) => void;
   let reject!: (e: unknown) => void;
@@ -62,7 +60,7 @@ const NO_CONTENT = () => fakeResponse(204);
 const getCount = (calls: Array<{ method: string; url: string }>) =>
   calls.filter((c) => c.method === "GET" && c.url === "/api/favorites").length;
 const cached = (qc: QueryClient) => qc.getQueryData<FavoriteDto[]>(FAVORITES_QUERY_KEY);
-/** 讓已排進佇列的 promise 回呼與 React Query 的通知跑完。 */
+/** 20 ms lets queued promise callbacks and React Query notifications finish. */
 const flush = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 afterEach(() => {
@@ -71,7 +69,7 @@ afterEach(() => {
 });
 
 describe("useFavorites", () => {
-  it("key 是 ['favorites']，GET /api/favorites 成功回陣列", async () => {
+  it("key is ['favorites']; GET /api/favorites succeeds with an array", async () => {
     const list = [fav("b", "2026-03-02T00:00:00.000Z"), fav("a", "2026-03-01T00:00:00.000Z")];
     const calls = stubFetch({ "GET /api/favorites": [() => fakeResponse(200, list)] });
     const qc = client();
@@ -81,7 +79,7 @@ describe("useFavorites", () => {
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET /api/favorites"]);
   });
 
-  it("enabled: false 時不打 GET，改成 true 才打", async () => {
+  it("does not GET with enabled: false; GETs once true", async () => {
     const calls = stubFetch({ "GET /api/favorites": [() => fakeResponse(200, [])] });
     const qc = client();
     const { result, rerender } = renderHook(({ enabled }) => useFavorites({ enabled }), {
@@ -98,7 +96,7 @@ describe("useFavorites", () => {
 });
 
 describe("useAddFavorite", () => {
-  it("PUT /api/favorites/:id 不帶 body、不補 Content-Type", async () => {
+  it("PUT /api/favorites/:id with no body and no Content-Type", async () => {
     const calls = stubFetch({ "PUT /api/favorites/n1": [() => fakeResponse(200, fav("n1", "2026-03-01T00:00:00.000Z"))] });
     const qc = client();
     const { result } = renderHook(() => useAddFavorite(), { wrapper: wrapper(qc) });
@@ -108,7 +106,7 @@ describe("useAddFavorite", () => {
     expect(new Headers(calls[0]!.init?.headers).has("Content-Type")).toBe(false);
   });
 
-  it("樂觀插入依加入時間新到舊；同一毫秒時 noteId 大的在前", async () => {
+  it("optimistic insert orders by added time, newest first; on the same millisecond the larger noteId comes first", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const now = "2026-03-05T10:00:00.000Z";
     vi.setSystemTime(new Date(now));
@@ -129,7 +127,7 @@ describe("useAddFavorite", () => {
     putC.resolve(fakeResponse(200, fav("c", now)));
   });
 
-  it("加入失敗（404）→ 快取回到原值、mutateAsync reject 出 ApiFail", async () => {
+  it("add failure (404) -> cache returns to the original value, mutateAsync rejects with ApiFail", async () => {
     stubFetch({ "PUT /api/favorites/a": [NOT_FOUND] });
     const qc = client();
     const before = [fav("x", "2026-03-04T00:00:00.000Z")];
@@ -146,7 +144,7 @@ describe("useAddFavorite", () => {
     expect(cached(qc)).toEqual(before);
   });
 
-  it("加入一篇本來就在快取裡的，失敗時不把它撤掉", async () => {
+  it("adding a note already in the cache doesn't remove it when the add fails", async () => {
     stubFetch({ "PUT /api/favorites/a": [NOT_FOUND] });
     const qc = client();
     const before = [fav("a", "2026-03-04T00:00:00.000Z")];
@@ -158,7 +156,7 @@ describe("useAddFavorite", () => {
     expect(cached(qc)).toEqual(before);
   });
 
-  it("A 加入送出中、B 移出先完成，之後 A 失敗 → 快取裡沒有 A 也沒有 B", async () => {
+  it("A add in flight, B removal completes first, then A fails -> cache has neither A nor B", async () => {
     const putA = deferred();
     stubFetch({ "PUT /api/favorites/a": [putA.handler], "DELETE /api/favorites/b": [NO_CONTENT] });
     const qc = client();
@@ -178,7 +176,7 @@ describe("useAddFavorite", () => {
     expect(cached(qc)).toEqual([]);
   });
 
-  it("成功後 favoritedAt 換成 server 回的值", async () => {
+  it("after success favoritedAt becomes the server's value", async () => {
     const server = "2026-03-05T10:00:00.123Z";
     stubFetch({ "PUT /api/favorites/a": [() => fakeResponse(200, fav("a", server))] });
     const qc = client();
@@ -188,7 +186,7 @@ describe("useAddFavorite", () => {
     expect(cached(qc)).toEqual([fav("a", server)]);
   });
 
-  it("送出中快取被重抓蓋掉（不含 A），之後 A 成功 → 快取補回 A、依順序排好", async () => {
+  it("a refetch lands mid-flight and overwrites the cache without A, then A succeeds -> A is restored, in order", async () => {
     const putA = deferred();
     stubFetch({ "PUT /api/favorites/a": [putA.handler] });
     const qc = client();
@@ -212,7 +210,7 @@ describe("useAddFavorite", () => {
     expect(cached(qc)).toEqual([y, server, x]);
   });
 
-  it("加入前已在路上的重抓被取消，回來的舊清單不會蓋掉樂觀列", async () => {
+  it("a refetch already in flight before the add is cancelled; the stale list that comes back doesn't overwrite the optimistic row", async () => {
     const refetch = deferred();
     const putA = deferred();
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
@@ -242,7 +240,7 @@ describe("useAddFavorite", () => {
     await waitFor(() => expect(result.current.list.data).toEqual([rowA]));
   });
 
-  it("A、B 同時加入：B 先完成時不重抓，A 完成後重抓一次", async () => {
+  it("A and B added together: no refetch when B finishes first; one refetch after A finishes", async () => {
     const putA = deferred();
     const putB = deferred();
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
@@ -281,7 +279,7 @@ describe("useAddFavorite", () => {
     expect(result.current.list.data).toEqual([rowB, rowA]);
   });
 
-  it("A 加入送出中、B 移出先完成：B 完成時不重抓，A 完成後重抓一次", async () => {
+  it("A add in flight, B removal finishes first: no refetch when B finishes; one refetch after A finishes", async () => {
     const putA = deferred();
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
     const rowB = fav("b", "2026-03-04T00:00:00.000Z");
@@ -315,7 +313,7 @@ describe("useAddFavorite", () => {
     expect(result.current.list.data).toEqual([rowA]);
   });
 
-  it("加入失敗後也重抓一次（掛著清單時）", async () => {
+  it("one refetch after a failed add too (when the list is mounted)", async () => {
     const rowX = fav("x", "2026-03-04T00:00:00.000Z");
     const calls = stubFetch({ "GET /api/favorites": [() => fakeResponse(200, [rowX])], "PUT /api/favorites/a": [NOT_FOUND] });
     const qc = client();
@@ -333,7 +331,7 @@ describe("useAddFavorite", () => {
 });
 
 describe("useRemoveFavorite", () => {
-  it("單獨一次移出完成後重抓一次（掛著清單時）", async () => {
+  it("a single removal triggers one refetch after it completes (when the list is mounted)", async () => {
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
     const calls = stubFetch({
       "GET /api/favorites": [() => fakeResponse(200, [rowA]), () => fakeResponse(200, [])],
@@ -351,7 +349,7 @@ describe("useRemoveFavorite", () => {
     expect(result.current.list.data).toEqual([]);
   });
 
-  it("DELETE /api/favorites/:id；回應前快取不變，204 後濾掉那一篇", async () => {
+  it("DELETE /api/favorites/:id; cache unchanged before the response, that note filtered out after 204", async () => {
     const del = deferred();
     const calls = stubFetch({ "DELETE /api/favorites/a": [del.handler] });
     const qc = client();
@@ -373,7 +371,7 @@ describe("useRemoveFavorite", () => {
     expect(cached(qc)).toEqual([b]);
   });
 
-  it("移出失敗（網路錯誤）→ 快取不變、mutateAsync reject", async () => {
+  it("removal failure (network error) -> cache unchanged, mutateAsync rejects", async () => {
     const del = deferred();
     stubFetch({ "DELETE /api/favorites/a": [del.handler] });
     const qc = client();
@@ -393,12 +391,12 @@ describe("useRemoveFavorite", () => {
 });
 
 describe("useFavoriteStatus", () => {
-  it("查詢 pending 時 ready=false；這一篇送出中 pending=true，別篇不受影響；送完 pending=false", async () => {
+  it("ready=false while the query is pending; pending=true while this note is in flight, other notes unaffected; pending=false when done", async () => {
     const get = deferred();
     const putA = deferred();
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
     const rowB = fav("b", "2026-03-04T00:00:00.000Z");
-    // 第二次 GET 是加入完成後的重抓。
+    // The second GET is the refetch after the add completes.
     stubFetch({ "GET /api/favorites": [get.handler, () => fakeResponse(200, [rowA, rowB])], "PUT /api/favorites/a": [putA.handler] });
     const qc = client();
     const { result } = renderHook(() => ({ a: useFavoriteStatus("a"), b: useFavoriteStatus("b"), add: useAddFavorite() }), {
@@ -425,10 +423,10 @@ describe("useFavoriteStatus", () => {
     expect(result.current.a.favorite).toBe(true);
   });
 
-  it("這一篇移出送出中 pending=true，204 後 pending=false", async () => {
+  it("pending=true while this note's removal is in flight, pending=false after 204", async () => {
     const del = deferred();
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
-    // 第二次 GET 是移出完成後的重抓。
+    // The second GET is the refetch after the removal completes.
     stubFetch({ "GET /api/favorites": [() => fakeResponse(200, [rowA]), () => fakeResponse(200, [])], "DELETE /api/favorites/a": [del.handler] });
     const qc = client();
     const { result } = renderHook(() => ({ a: useFavoriteStatus("a"), remove: useRemoveFavorite() }), { wrapper: wrapper(qc) });
@@ -445,7 +443,7 @@ describe("useFavoriteStatus", () => {
     await waitFor(() => expect(result.current.a).toEqual({ ready: true, favorite: false, pending: false }));
   });
 
-  it("掛著的時候背景重抓失敗 → ready=false、favorite=false（即使快取裡還有這一篇）", async () => {
+  it("background refetch fails while mounted -> ready=false, favorite=false (even if the cache still has this note)", async () => {
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
     stubFetch({
       "GET /api/favorites": [() => fakeResponse(200, [rowA]), () => fakeResponse(500, { error: { code: "internal", message: "x" } })],
@@ -460,7 +458,7 @@ describe("useFavoriteStatus", () => {
     expect(result.current).toEqual({ ready: false, favorite: false, pending: false });
   });
 
-  it("查詢失敗 → ready=false", async () => {
+  it("query failure -> ready=false", async () => {
     stubFetch({ "GET /api/favorites": [() => fakeResponse(500, { error: { code: "internal", message: "x" } })] });
     const qc = client();
     const { result } = renderHook(() => useFavoriteStatus("a"), { wrapper: wrapper(qc) });
@@ -468,7 +466,7 @@ describe("useFavoriteStatus", () => {
     expect(result.current).toEqual({ ready: false, favorite: false, pending: false });
   });
 
-  it("重抓失敗後才掛上的（例如重開選單）→ ready=false，即使快取裡還有舊清單", async () => {
+  it("mounted after a refetch failure (e.g. reopening the menu) -> ready=false even though the cache still has the old list", async () => {
     const rowA = fav("a", "2026-03-05T00:00:00.000Z");
     stubFetch({
       "GET /api/favorites": [() => fakeResponse(200, [rowA]), () => fakeResponse(500, { error: { code: "internal", message: "x" } })],
@@ -488,7 +486,7 @@ describe("useFavoriteStatus", () => {
 });
 
 describe("useFavoriteLookup", () => {
-  it("清單成功 → ready、ids 是最愛的 noteId 集合；整份只打一次 GET", async () => {
+  it("list succeeds -> ready, ids is the set of favorite noteIds; GET only once in total", async () => {
     const calls = stubFetch({ "GET /api/favorites": [() => fakeResponse(200, [fav("b", "2026-03-02T00:00:00.000Z"), fav("a", "2026-03-01T00:00:00.000Z")])] });
     const qc = client();
     const { result } = renderHook(() => useFavoriteLookup(), { wrapper: wrapper(qc) });
@@ -500,7 +498,7 @@ describe("useFavoriteLookup", () => {
     expect(getCount(calls)).toBe(1);
   });
 
-  it("查詢失敗 → ready=false、ids 為空（呼叫端看 ready，不把空集合當成都不是最愛）", async () => {
+  it("query failure -> ready=false, ids empty (callers check ready and don't treat an empty set as 'none are favorites')", async () => {
     stubFetch({ "GET /api/favorites": [() => fakeResponse(500, { error: { code: "internal", message: "x" } })] });
     const qc = client();
     const { result } = renderHook(() => useFavoriteLookup(), { wrapper: wrapper(qc) });
@@ -509,7 +507,7 @@ describe("useFavoriteLookup", () => {
     expect(result.current.ids.size).toBe(0);
   });
 
-  it("pendingIds 只含送出中那一篇；完成後清掉", async () => {
+  it("pendingIds holds only the in-flight note; cleared on completion", async () => {
     const put = deferred();
     stubFetch({
       "GET /api/favorites": [() => fakeResponse(200, [])],

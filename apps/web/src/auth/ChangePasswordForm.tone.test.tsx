@@ -12,19 +12,19 @@ function wrap(node: ReactNode) {
 
 const PASSWORD_FIELD_IDS = ["change-password-current", "change-password-new", "change-password-confirm"];
 
-describe("密碼表單在面板內的送出鈕（#247）", () => {
+describe("password form's submit button inside a panel (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  it('ChangePasswordForm tone="outline" → 送出鈕是 outline、不是實心、不滿寬', () => {
+  it('ChangePasswordForm tone="outline" -> submit button is outline, not solid, not full width', () => {
     const { container } = wrap(<ChangePasswordForm tone="outline" onSuccess={() => {}} />);
     const submit = screen.getByRole("button", { name: "Change password" });
     expect(submit).toHaveClass("border-input");
     expect(submit).not.toHaveClass("bg-brand-deep");
     expect(submit).not.toHaveClass("bg-brand");
     expect(submit).not.toHaveClass("w-full");
-    // 設定 modal 內維持 32px（ui/button.tsx 例外二：只有 tone="page" 放大）
+    // Stays 32px inside the settings modal (only tone="page" is enlarged, see ui/button.tsx)
     expect(submit).toHaveClass("h-8");
     expect(submit).not.toHaveClass("h-11");
     for (const id of PASSWORD_FIELD_IDS) {
@@ -32,7 +32,7 @@ describe("密碼表單在面板內的送出鈕（#247）", () => {
     }
   });
 
-  it('ChangePasswordForm 預設 tone（"page"，/change-password 整頁）→ brandSolid 滿寬，行為不變', () => {
+  it('ChangePasswordForm default tone ("page", the full /change-password page) -> brandSolid full width, behaviour unchanged', () => {
     const { container } = wrap(<ChangePasswordForm onSuccess={() => {}} />);
     const submit = screen.getByRole("button", { name: "Change password" });
     expect(submit).toHaveClass("bg-brand", "w-full", "h-11");
@@ -41,7 +41,7 @@ describe("密碼表單在面板內的送出鈕（#247）", () => {
     }
   });
 
-  it("SetPasswordForm 送出鈕是 outline", () => {
+  it("SetPasswordForm submit button is outline", () => {
     wrap(<SetPasswordForm onSuccess={() => {}} />);
     const submit = screen.getByRole("button", { name: "Add password" });
     expect(submit).toHaveClass("border-input");

@@ -35,7 +35,7 @@ const urls = () => calls.map((c) => c.url);
 const qOf = (url: string) => new URL(url, "http://x").searchParams.get("q");
 
 function setup(initial: { query: string; debounced: string }, userId = "u1") {
-  // 刻意不設 retry: false——H5 要殺「拿掉 hook 的 retry: false」。
+  // Deliberately not setting retry: false, so removing the hook's own `retry: false` is caught (see the 429/500 case).
   const client = new QueryClient();
   client.setQueryData<UserDto | null>(SESSION_QUERY_KEY, { id: userId } as UserDto);
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -57,7 +57,7 @@ afterEach(() => {
 describe("useBodySearch", () => {
   beforeEach(() => stubFetch());
 
-  it("H1 發一次、URL 形；特殊字元編碼；gate 不是 search → 不發、pending", async () => {
+  it("sends one request with the right URL shape; special characters encoded; gate not search -> no request, pending", async () => {
     const { result, rerender } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     expect(urls()[0]).toBe("/api/search?q=abcd&limit=20&match=body");
@@ -74,7 +74,7 @@ describe("useBodySearch", () => {
     void result;
   });
 
-  it("H2 第一次載入中 pending；回來 ready、stale false、forQuery", async () => {
+  it("pending while first loading; ready when it returns, stale false, forQuery", async () => {
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     expect(result.current.kind).toBe("pending");
@@ -86,13 +86,13 @@ describe("useBodySearch", () => {
     expect(s.hits.map((h) => h.note.id)).toEqual(["n1"]);
   });
 
-  it("H3 hook 不再 trim：debounced 照原樣送", async () => {
+  it("hook no longer trims: debounced is sent as is", async () => {
     setup({ query: " ab ", debounced: "ab" });
     await waitFor(() => expect(calls.length).toBe(1));
     expect(qOf(urls()[0]!)).toBe("ab");
   });
 
-  it("H4 取消：debounced 改變、新請求發出後，第一發的 signal 已 aborted", async () => {
+  it("cancel: after debounced changes and the new request is sent, the first request's signal is aborted", async () => {
     const { rerender } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     rerender({ query: "abcde", debounced: "abcde" });
@@ -100,7 +100,7 @@ describe("useBodySearch", () => {
     expect(calls[0]!.signal?.aborted).toBe(true);
   });
 
-  it("H5 第一頁 429 → error rateLimited；500 → rateLimited false；都不 retry", async () => {
+  it("first page 429 -> error rateLimited; 500 -> rateLimited false; neither retries", async () => {
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     act(() => calls[0]!.resolve(json(429, { error: { code: "too_many_requests", message: "x" } })));
@@ -113,11 +113,11 @@ describe("useBodySearch", () => {
     act(() => calls[0]!.resolve(json(500, { error: { code: "internal", message: "x" } })));
     await waitFor(() => expect(h.result.current.kind).toBe("error"));
     expect(h.result.current).toEqual({ kind: "error", rateLimited: false });
-    await new Promise((r) => setTimeout(r, 1200)); // 預設 retry 的第一次延遲是 1 s
+    await new Promise((r) => setTimeout(r, 1200)); // The default retry's first delay is 1 s
     expect(calls.length).toBe(1);
   });
 
-  it("H6 換人登入：session 快取的 user id 改了、rerender → 重新發請求", async () => {
+  it("switching user: the session cache's user id changes, rerender -> a new request is sent", async () => {
     const { client, rerender } = setup({ query: "abcd", debounced: "abcd" }, "u1");
     await waitFor(() => expect(calls.length).toBe(1));
     act(() => calls[0]!.resolve(json(200, page(["n1"]))));
@@ -126,7 +126,7 @@ describe("useBodySearch", () => {
     await waitFor(() => expect(calls.length).toBe(2));
   });
 
-  it("H7 stale：防抖中與新請求在路上都回 ready stale（舊批、舊 forQuery、hasMore false），整段不出現 pending", async () => {
+  it("stale: while debouncing and while a new request is in flight, returns ready stale (old batch, old forQuery, hasMore false), never pending", async () => {
     const kinds: string[] = [];
     const { result, rerender } = setup({ query: "abc", debounced: "abc" });
     await waitFor(() => expect(calls.length).toBe(1));
@@ -159,7 +159,7 @@ describe("useBodySearch", () => {
     expect(kinds).not.toContain("pending");
   });
 
-  it("H8 分頁：hasMore → loadMore 帶 cursor、兩頁串接 → 第二頁 null 後 hasMore false", async () => {
+  it("pagination: hasMore -> loadMore sends the cursor, two pages concatenate -> hasMore false after a null second page", async () => {
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     act(() => calls[0]!.resolve(json(200, page(["n1", "n2"], "c1"))));
@@ -175,7 +175,7 @@ describe("useBodySearch", () => {
     expect(ready(result.current).loadingMore).toBe(false);
   });
 
-  it("H9 去重：第二頁含第一頁已有的 id → 只出現一次、位置在第一頁那裡", async () => {
+  it("dedupe: a second page containing an id from the first page -> appears once, at its first-page position", async () => {
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     act(() => calls[0]!.resolve(json(200, page(["n1", "n2"], "c1"))));
@@ -186,7 +186,7 @@ describe("useBodySearch", () => {
     await waitFor(() => expect(ready(result.current).hits.map((h) => h.note.id)).toEqual(["n1", "n2", "n3"]));
   });
 
-  it("H10 第二頁 429 → ready、第一頁還在、moreError.rateLimited；再 loadMore 成功 → moreError null", async () => {
+  it("second page 429 -> ready, first page kept, moreError.rateLimited; a successful loadMore afterwards -> moreError null", async () => {
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
     act(() => calls[0]!.resolve(json(200, page(["n1"], "c1"))));
@@ -203,7 +203,7 @@ describe("useBodySearch", () => {
     expect(ready(result.current).moreError).toBeNull();
   });
 
-  it("H11 視窗重新聚焦（資料已過 30 s staleTime）→ 不發新請求", async () => {
+  it("window refocus (data older than the 30 s staleTime) -> no new request", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));
@@ -216,7 +216,7 @@ describe("useBodySearch", () => {
     expect(calls.length).toBe(1);
   });
 
-  it("H12 網路恢復（資料已過 30 s staleTime）→ 不發新請求", async () => {
+  it("network recovery (data older than the 30 s staleTime) -> no new request", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { result } = setup({ query: "abcd", debounced: "abcd" });
     await waitFor(() => expect(calls.length).toBe(1));

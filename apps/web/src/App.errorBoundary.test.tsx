@@ -9,26 +9,12 @@ import { AppRoutes } from "./App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * Issue #66 接線案 11／11a：釘 App.tsx **真的**把 /notes/:ref 包進
- * NoteRouteErrorBoundary、且 ChunkLoadBeacon 真的在 Suspense 內——boundary 元件
- * 自身的行為在 ErrorBoundary.test.tsx，那裡手組的形狀對不代表 App.tsx 的對。
- * 案 12（app 級接線）在 App.appBoundary.test.tsx（它的 HomePage mock 是檔案級
- * hoisted，同檔會與本檔案互相耦合）。
+ * Pins that App.tsx really wraps /notes/:ref in NoteRouteErrorBoundary and puts ChunkLoadBeacon inside Suspense. The boundary's own behaviour is in ErrorBoundary.test.tsx, where a hand-assembled shape says nothing about App.tsx's. The app-level wiring is in App.appBoundary.test.tsx (its HomePage mock is hoisted file-wide and would couple with this file).
  *
- * ⚠⚠ 案 11 必須宣告在 11a 之前，不得調換、也不得在案 11 前插入任何會成功
- * render /notes/:ref 的新案：App.tsx 的 NotePage lazy 是模組級單例，同一個測試檔
- * 只有第一個觸發它的案子會經過 suspend 期。「beacon 錯放到 Suspense 外 → 案 11 紅」
- * 這道守門（本設計最嚴重故障形＝無限重整迴圈）靠的正是案 11 那次 render 有
- * pending 期——錯放的 beacon 會在該期 commit、清掉種下的旗標，讓 componentDidCatch
- * 誤判「首次」而走 reload＋載入畫面，案 11 對 B 專屬文案的斷言因此變紅。11a 若
- * 先跑把 lazy resolve 掉，案 11 變純同步 throw、beacon 根本不 commit，這道守門
- * 就靜靜失效。
+ * ⚠⚠ The chunk-error case must stay declared before the "renders normally" case, and no new case that successfully renders /notes/:ref may precede it: App.tsx's NotePage lazy is a module-level singleton, so only the first case to trigger it passes through a suspend period. The guard "beacon misplaced outside Suspense -> chunk-error case fails" relies on that pending period (the worst failure here is an infinite reload loop): a misplaced beacon commits during it and clears the seeded flag, so componentDidCatch wrongly treats the error as the first one and reloads into the loading screen, turning the chunk-error-screen assertion red. If the normal case ran first and resolved the lazy, the chunk-error case would be a plain synchronous throw, the beacon would never commit, and the guard would silently stop working.
  */
 
-// vi.mock 是 hoisted 的，factory 不得引用模組頂層 const（TDZ）——共享狀態一律走
-// vi.hoisted。旗標必須在 mock 元件**函式本體內**讀：import 結果被 React.lazy 永久
-// 快取、factory 只執行一次，在 factory 層決定匯出哪個元件的話第二案拿到的仍是
-// 第一案的行為。
+// vi.mock is hoisted, so the factory can't reference top-level consts (TDZ): shared state goes through vi.hoisted. Read the flag inside the mock component's function body: React.lazy caches the import result forever and the factory runs once, so choosing the export in the factory would give the second case the first case's behaviour.
 const mockNotePage = vi.hoisted(() => ({
   mode: "throw" as "throw" | "ok",
   chunkMessage: "Failed to fetch dynamically imported module: https://x/assets/NotePage-abc.js",
@@ -105,8 +91,7 @@ function renderNoteRoute() {
 
 beforeEach(async () => {
   sessionStorage.clear();
-  // 預設值：新增案子忘了設 mode 時沿用上一案的模式會很難查（且案 11 必須是第一
-  // 個、順序不能動），這裡固定歸位
+  // Reset so a new case that forgets to set the mode doesn't inherit the previous case's.
   mockNotePage.mode = "throw";
   await i18n.changeLanguage("en");
   stubFetch();
@@ -116,31 +101,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("App route tree — /notes/:ref 的 ErrorBoundary 接線（issue #66 案 11／11a）", () => {
-  // 案 11 在前（見檔頭警告）。先種旗標：讓 A 路徑短路進 B，期望結果才是可斷言的
-  // 穩態；同時讓「beacon 錯放」有旗標可偷清。
-  it("案 11：NotePage render 丟 chunk 錯誤（旗標已設）→ B 畫面而非白屏（斷言 B 專屬元素）", async () => {
+describe("App route tree - ErrorBoundary wiring for /notes/:ref (#66)", () => {
+  // Runs first (see header). The seeded flag short-circuits the auto-reload path into the chunk-error screen, giving a stable end state to assert and a flag a misplaced beacon could clear.
+  it("NotePage render throws a chunk error (flag set) -> chunk-error screen, not a blank page", async () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     mockNotePage.mode = "throw";
     vi.stubGlobal("location", { ...window.location, reload: vi.fn() });
 
     renderNoteRoute();
 
-    // 前置斷言：此刻**不得**已經是 B 畫面——B 若同步出現，代表 NotePage lazy 已被
-    // 先前某案 resolve、本案沒有經過 suspend 期，「beacon 錯放 → 本案紅」的守門
-    // 就靜靜失效了（見檔頭 ⚠⚠）。這把順序假設從註解變成會紅的斷言。
+    // Precondition: the chunk-error screen must not already be showing. If it appears synchronously, an earlier case already resolved the NotePage lazy and this case skipped the suspend period, which would silently disable the misplaced-beacon guard (see header). This turns that ordering assumption into a failing assertion.
     expect(screen.queryByText(CHUNK_ERROR_TEXT)).not.toBeInTheDocument();
 
-    // B 專屬元素（chunk 分支文案＋重試鈕）。⚠ 不得改斷 AppShell 招牌（「New note」）
-    // ——側欄在 layout route 裡、與 boundary 無關，那樣拿掉 boundary 也綠。
-    // 這是「最終到達某狀態」的等待，守門力在斷言內容不在等待長度；冷啟高負載下
-    //（fetch→react-query→lazy→分類→setState 整條鏈）的餘裕靠 test/setup.ts 的全域 asyncUtilTimeout
+    // Chunk-error-specific elements (chunk-branch text + retry button). Don't assert the AppShell landmark ("New note") instead: the sidebar is in the layout route, independent of the boundary, so it would pass without the boundary.
+    // Waiting for an end state: the assertion content guards, not the wait length; headroom for the whole chain (fetch -> react-query -> lazy -> classification -> setState) on a loaded cold start comes from the global asyncUtilTimeout in test/setup.ts.
     await waitFor(() => expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
-  it("案 11a：NotePage 正常 render（旗標已設）→ beacon 清旗標（clear-on-success 的接線）", async () => {
-    sessionStorage.setItem(FLAG_KEY, "1"); // 先種：起始為空的話刪掉 beacon 也綠——恆真
+  it("NotePage renders normally (flag set) -> beacon clears the flag (clear-on-success wiring)", async () => {
+    sessionStorage.setItem(FLAG_KEY, "1"); // Seeded: starting empty would pass even if the beacon were deleted
     mockNotePage.mode = "ok";
 
     renderNoteRoute();

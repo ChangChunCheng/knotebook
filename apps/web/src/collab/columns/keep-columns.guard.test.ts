@@ -2,14 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * 來源層守衛：web 原始碼裡我們發動的移除／取代一律走 `collab/columns/keep-columns.ts`。
- * core 的 `removeBlocks`／`replaceBlocks` 會收欄、把剩一欄的列攤平；改回它們時 jsdom 測試只在有欄的案才會紅，
- * 新增的呼叫點根本沒有那種案——所以靠讀原始碼擋。
+ * Source-level guard: removals/replacements that web source code triggers always go through `collab/columns/keep-columns.ts`. Core's `removeBlocks`/`replaceBlocks` collapse columns and flatten a row left with one column; if they were used again, jsdom tests would only turn red in cases that have columns, and a newly added call site has no such case, so reading the source is what blocks it.
  *
- * 掃描語意：`src` 下所有 `.ts`／`.tsx`，排除 `*.test.*` 與任何 `test/` 目錄（測試可以直接用 core 方法建內容），
- * 只放行 `collab/columns/keep-columns.ts` 一個檔。比對的是字面 `.removeBlocks(`／`.replaceBlocks(`，註解裡寫出來也算。
- * 守不到的：解構（`const { removeBlocks } = editor`）或 `editor["removeBlocks"](…)` 這類寫法；只比對單行字面，
- * 斷行或加空白的寫法（`.removeBlocks` 與 `(` 分在兩行、`.removeBlocks (`）也守不到。
+ * Scan semantics: all `.ts`/`.tsx` under `src`, excluding `*.test.*` and any `test/` directory (tests may build content with core methods), allowing only the one file `collab/columns/keep-columns.ts`. It matches the literal `.removeBlocks(` / `.replaceBlocks(`, and mentions inside comments count too. Not covered: destructuring (`const { removeBlocks } = editor`) or `editor["removeBlocks"](...)`; only single-line literals are matched, so forms with a line break or a space (`.removeBlocks` and `(` on separate lines, `.removeBlocks (`) aren't caught either.
  */
 
 const root = `${process.cwd()}/src`;
@@ -31,8 +26,8 @@ function sourceFiles(dir: string, rel = ""): string[] {
 
 const scanned = sourceFiles(root).filter((path) => !ALLOWED.has(path));
 
-describe("來源層守衛：移除／取代走 keep-columns", () => {
-  it("G1：除 keep-columns.ts 外，web 原始碼不含 `.removeBlocks(`／`.replaceBlocks(`", () => {
+describe("source guard: removals/replacements go through keep-columns", () => {
+  it("apart from keep-columns.ts, web source contains no `.removeBlocks(` / `.replaceBlocks(`", () => {
     const hits = scanned.flatMap((path) => {
       const lines = readFileSync(`${root}/${path}`, "utf8").split(/\r?\n/);
       return lines.flatMap((line, i) => (line.includes(".removeBlocks(") || line.includes(".replaceBlocks(") ? [`${path}:${i + 1}: ${line.trim()}`] : []));
@@ -40,7 +35,7 @@ describe("來源層守衛：移除／取代走 keep-columns", () => {
     expect(hits).toEqual([]);
   });
 
-  it("G1b：關鍵檔都在掃描範圍內（放行清單沒有吃掉它們）", () => {
+  it("key files are within the scan range (the allow-list hasn't swallowed them)", () => {
     for (const path of [
       "ai/apply.ts",
       "collab/mermaid-paste.ts",
@@ -54,12 +49,12 @@ describe("來源層守衛：移除／取代走 keep-columns", () => {
     }
   });
 
-  it("G2：側選單不再用 core 的刪除項", () => {
+  it("the side menu no longer uses core's delete item", () => {
     const source = readFileSync(`${root}/components/editor/KnotebookSideMenu.tsx`, "utf8");
     expect(source.match(/(?<![A-Za-z])RemoveBlockItem\b/g) ?? []).toHaveLength(0);
   });
 
-  it("G3：掃到的檔數 > 50（防掃空）", () => {
+  it("more than 50 files scanned (guards against an empty scan)", () => {
     expect(scanned.length).toBeGreaterThan(50);
   });
 });

@@ -7,7 +7,6 @@ afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-// x、[a,q｜b]、y{k}、z
 function mount(): AnyEditor {
   const m = mountEditor([
     P("x", "x0"),
@@ -23,33 +22,33 @@ const docOf = (editor: AnyEditor) => editor.prosemirrorView!.state.doc;
 const at = (editor: AnyEditor, pos: number) => docOf(editor).resolve(pos);
 const posOf = (editor: AnyEditor, id: string, type?: string) => findNodeById(docOf(editor), id, type)!.pos;
 
-describe("PO1 isTopLevelPosition", () => {
-  it("頂層段落文字內 → true", () => {
+describe("isTopLevelPosition", () => {
+  it("inside top-level paragraph text -> true", () => {
     const editor = mount();
     expect(isTopLevelPosition(at(editor, textPos(editor, "x", 1)))).toBe(true);
   });
-  it("欄內段落文字內 → false", () => {
+  it("inside a column paragraph's text -> false", () => {
     const editor = mount();
     expect(isTopLevelPosition(at(editor, textPos(editor, "b", 1)))).toBe(false);
   });
-  it("頂層段落的子 block 文字內 → false", () => {
+  it("inside a child block of a top-level paragraph -> false", () => {
     const editor = mount();
     expect(isTopLevelPosition(at(editor, textPos(editor, "k", 1)))).toBe(false);
   });
-  it("column 節點內、block 之間 → false", () => {
+  it("inside a column node, between blocks -> false", () => {
     const editor = mount();
     const q = findNodeById(docOf(editor), "q1", "blockContainer")!;
     const $pos = at(editor, q.pos);
     expect($pos.parent.type.name).toBe("column");
     expect(isTopLevelPosition($pos)).toBe(false);
   });
-  it("欄與欄之間（columnList 內）→ false", () => {
+  it("between columns (inside columnList) -> false", () => {
     const editor = mount();
     const $pos = at(editor, posOf(editor, "rc1", "column"));
     expect($pos.parent.type.name).toBe("columnList");
     expect(isTopLevelPosition($pos)).toBe(false);
   });
-  it("頂層 block 之間（depth 1）→ true", () => {
+  it("between top-level blocks (depth 1) -> true", () => {
     const editor = mount();
     const $pos = at(editor, posOf(editor, "r", "columnList"));
     expect($pos.depth).toBe(1);
@@ -57,8 +56,8 @@ describe("PO1 isTopLevelPosition", () => {
   });
 });
 
-describe("PO2 columnContextOf", () => {
-  it("第 2 欄第 1 顆文字內 → colIndex 1、blockIndex 0", () => {
+describe("columnContextOf", () => {
+  it("inside the first block of column 2 -> colIndex 1, blockIndex 0", () => {
     const editor = mount();
     const ctx = columnContextOf(at(editor, textPos(editor, "b", 0)))!;
     expect(ctx).not.toBeNull();
@@ -68,24 +67,24 @@ describe("PO2 columnContextOf", () => {
     expect(docOf(editor).resolve(textPos(editor, "b", 0)).node(ctx.colDepth).attrs.id).toBe("rc1");
     expect(ctx.listDepth).toBe(ctx.colDepth - 1);
   });
-  it("第 1 欄第 2 顆 → colIndex 0、blockIndex 1", () => {
+  it("second block of column 1 -> colIndex 0, blockIndex 1", () => {
     const editor = mount();
     const ctx = columnContextOf(at(editor, textPos(editor, "q", 1)))!;
     expect({ colIndex: ctx.colIndex, blockIndex: ctx.blockIndex, id: ctx.block.attrs.id }).toEqual({ colIndex: 0, blockIndex: 1, id: "q1" });
   });
-  it("欄內 block 的子 block 文字內 → null", () => {
+  it("inside the text of a child block of a column block -> null", () => {
     const m = mountEditor([P("x", "x0"), row([[P("a", "a1")], [withChildren(P("b", "b1"), [P("k", "k1")])]], "r"), P("z", "z9")]);
     cleanups.push(m.destroy);
     expect(columnContextOf(at(m.editor, textPos(m.editor, "k", 0)))).toBeNull();
   });
-  it("頂層 → null", () => {
+  it("top level -> null", () => {
     const editor = mount();
     expect(columnContextOf(at(editor, textPos(editor, "x", 0)))).toBeNull();
   });
 });
 
 describe("findNodeById", () => {
-  it("依 id 與型別找節點；找不到回 null", () => {
+  it("finds a node by id and type; not found returns null", () => {
     const editor = mount();
     const doc = docOf(editor);
     const hit = findNodeById(doc, "rc1")!;

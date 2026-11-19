@@ -13,7 +13,7 @@ import { blockSnapshot, captureAnchor, verifyAnchor } from "./anchor";
 import { buildPreview } from "./preview";
 import { anchorPlacement, applyAiResult, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "./apply";
 
-// 與 server `note-markdown-goldens.test.ts` 共用的 golden（web 的 vitest 下 `import.meta.url` 不是 file:，從 apps/web 根目錄算）。
+// Golden shared with the server's `note-markdown-goldens.test.ts` (under web's vitest `import.meta.url` is not a file: URL, so the path is computed from the apps/web root).
 const goldens = JSON.parse(readFileSync(`${process.cwd()}/../../packages/shared/test-fixtures/note-markdown-goldens.json`, "utf8")) as {
   cases: { id: string; markdown: string }[];
 };
@@ -23,35 +23,18 @@ const golden = (id: string): string => {
   return c.markdown;
 };
 
-// 包一層照呼叫原實作的 spy（斷言寫入的陣列身分）；不用 automock——那會讓同檔真編輯器案的寫入變成什麼都不做。
+// Wrapped in a spy that calls through to the real implementation (asserts the identity of the written array); not automock, which would turn the writes of the real-editor cases into no-ops.
 vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
   const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
   return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
 });
 beforeEach(() => {
-  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // Not an arrow returning it: a function returned from beforeEach runs as teardown; mockReset also clears the mockImplementationOnce queue and restores the wrapped original
 });
 
-// ⚠ 補充（已用 fetch spy 驗證下述因果）：
-// wikilink 是用 `createReactInlineContentSpec` 蓋的 React inline content。ProseMirror
-// 在**掛載中**（非 headless）的編輯器插入這類節點時，會同步走
-// `ReactInlineContentSpec.tsx` 的 `renderHTML`（Tiptap node spec 的 `toDOM`，用於
-// NodeViewDesc 初始 DOM shell，不是互動渲染），該函式選 Content 的順序是
-// `toExternalHTML || render`（`ReactInlineContentSpec.tsx:152-154`）——本專案的
-// `wikilinkSpec` 有掛 `toExternalHTML`（`WikilinkExternalHTML`，純函式、零 hook，
-// 見 `components/wikilink/spec.tsx`），所以這條路徑渲染的**不是**互動用的
-// `WikilinkInline`（那支才讀 `useNotes()`/`useNavigate()`/`useTranslation()`）。
-// `renderHTML` 內部再呼叫 `renderToDOMSpec`（`@blocknote/react/.../ReactRenderUtil.ts`），
-// 該函式只認 `editor.elementRenderer`（由正式的 `<BlockNoteView>` 元件透過
-// `withReactContext` 掛上）；`editor.headless` 掛載後是 `false`，`elementRenderer`
-// 是 `null` 時就直接丟 `Error: elementRenderer not available, expected headless
-// editor`。原本的 harness 只 `editor.mount(el)`，沒有渲染 `<BlockNoteView>`，因此
-// 需要補上這個 shim；但因為實際渲染的是無 hook 的 `toExternalHTML`，shim 只需要滿足
-// `renderToDOMSpec` 對「非 null」的檢查、把節點同步塞進 DOM 即可，**不需要**
-// `QueryClientProvider`／`MemoryRouter`／`fetch` stub（先前的版本誤判了這點，
-// 用 fetch spy 探測過：wikilink 重綁測試全程 `fetch` 呼叫次數＝0，8 個測試拿掉這些
-// context/stub 後全數照樣通過）。這是**測試 harness 的補強**，不改動任何一條測試斷言。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- initialContent 走 BlockNote 泛型三元組最寬型別，同 repo 慣例
+// Harness shim: wikilink is a React inline content built with `createReactInlineContentSpec`. When ProseMirror inserts such a node into a mounted (non-headless) editor it synchronously calls `renderHTML` of `ReactInlineContentSpec.tsx` (the Tiptap `toDOM`, used for the initial NodeViewDesc DOM shell), which picks its Content as `toExternalHTML || render`. `wikilinkSpec` sets `toExternalHTML` (`WikilinkExternalHTML`, pure, no hooks; see `components/wikilink/spec.tsx`), so the interactive `WikilinkInline` (which reads `useNotes()`/`useNavigate()`/`useTranslation()`) is not what renders here.
+// `renderHTML` then calls `renderToDOMSpec` (`@blocknote/react/.../ReactRenderUtil.ts`), which only accepts `editor.elementRenderer` (set by the real `<BlockNoteView>` through `withReactContext`); a mounted editor is not headless, and a null `elementRenderer` throws `Error: elementRenderer not available, expected headless editor`. The harness only calls `editor.mount(el)` without rendering `<BlockNoteView>`, hence this shim. Since the hook-free `toExternalHTML` is what renders, the shim only has to be non-null and insert the node into the DOM synchronously; no `QueryClientProvider`/`MemoryRouter`/`fetch` stub is needed.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- initialContent uses the widest BlockNote generic-triple type, per repo convention
 function mountedEditor(initial?: any[]) {
   const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: initial });
   const el = document.createElement("div");
@@ -62,15 +45,15 @@ function mountedEditor(initial?: any[]) {
   return editor;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 function prep(editor: any, markdown: string, notes: SiteLinkCandidate[] = []): PreparedResult {
   const prepared = prepareAiResult(editor, markdown, { notes, placement: "top" });
   if ("empty" in prepared || "invalid" in prepared) throw new Error("預期非空結果");
   return prepared;
 }
 
-describe("AI 套用鏈", () => {
-  it("套用：markdown 結果替換錨定 blocks，回傳插入 ids 與被替換快照", () => {
+describe("AI apply chain", () => {
+  it("apply: markdown result replaces the anchored blocks; returns inserted ids and a snapshot of the replaced ones", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文一" }, { type: "paragraph", content: "原文二" }]);
     const ids = editor.document.slice(0, 2).map((b) => b.id);
     const anchor = captureAnchor(editor, "note-1", ids);
@@ -84,7 +67,7 @@ describe("AI 套用鏈", () => {
     expect(text).not.toContain("原文一");
   });
 
-  it("守門1：錨點 block 被刪 → {ok:false, reason:'missing'}，文件不變", () => {
+  it("anchor block deleted -> {ok:false, reason:'missing'}, document unchanged", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "甲" }, { type: "paragraph", content: "乙" }]);
     const ids = editor.document.slice(0, 2).map((b) => b.id);
     const anchor = captureAnchor(editor, "note-1", ids);
@@ -95,7 +78,7 @@ describe("AI 套用鏈", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  it("守門2：錨點 block 內容被改 → {ok:false, reason:'changed'}，文件不變", () => {
+  it("anchor block content edited -> {ok:false, reason:'changed'}, document unchanged", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "甲" }]);
     const id = editor.document[0].id;
     const anchor = captureAnchor(editor, "note-1", [id]);
@@ -104,15 +87,14 @@ describe("AI 套用鏈", () => {
     expect(out).toEqual({ ok: false, reason: "changed" });
   });
 
-  it("revert：取代(插入ids, 快照) 還原原文；插入 block 被改/被刪後 revert 皆回 'stale' 且不動文件", () => {
+  it("revert: replacing (inserted ids, snapshot) restores the original text; reverts return 'stale' without touching the document after an inserted block was edited or deleted", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const out = applyAiResult(editor, anchor, prep(editor, "新文"));
     if (!out.ok) throw new Error("apply 應成功");
-    const inserted = captureAnchor(editor, "note-1", out.insertedIds); // 套用後立刻存插入錨點
+    const inserted = captureAnchor(editor, "note-1", out.insertedIds);
     expect(revertAiResult(editor, inserted, out.replacedSnapshot)).toBe("ok");
     expect(JSON.stringify(editor.document)).toContain("原文");
-    // 再套一次後「內容被改」→ stale 且文件不變
     const anchor2 = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const out2 = applyAiResult(editor, anchor2, prep(editor, "新文二"));
     if (!out2.ok) throw new Error("apply 應成功");
@@ -121,12 +103,11 @@ describe("AI 套用鏈", () => {
     const before = JSON.stringify(editor.document);
     expect(revertAiResult(editor, inserted2, out2.replacedSnapshot)).toBe("stale");
     expect(JSON.stringify(editor.document)).toBe(before);
-    // 「被刪」→ stale
     editor.removeBlocks([out2.insertedIds[0]]);
     expect(revertAiResult(editor, inserted2, out2.replacedSnapshot)).toBe("stale");
   });
 
-  it("wikilink 重綁三態：唯一命中→wikilink 節點；零/多重命中→純文字保留＋unboundCount", () => {
+  it("wikilink rebinding, three outcomes: unique match -> wikilink node; zero or multiple matches -> plain text kept + unboundCount", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "上下文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const notes: SiteLinkCandidate[] = [
@@ -140,16 +121,13 @@ describe("AI 套用鏈", () => {
     const doc = JSON.stringify(editor.document);
     expect(doc).toContain('"wikilink"');
     expect(doc).toContain("aaaaaaaa-0000-0000-0000-000000000001");
-    expect(doc).toContain("[[重複標題]]"); // 多重命中→純文字
-    expect(doc).toContain("[[不存在]]");   // 零命中→純文字
+    expect(doc).toContain("[[重複標題]]");
+    expect(doc).toContain("[[不存在]]");
     expect(p.unboundCount).toBe(2);
   });
 
-  // codeBlock 的 content 型態是 "plain"，但 parse 出來的節點形狀跟
-  // inline content 的 paragraph 一樣是 `{type:"text"}[]` 陣列——重綁若只憑
-  // `Array.isArray` 判斷會把 code fence 裡剛好命中的 `[[X]]` 也换成 wikilink inline
-  // node，塞進不接受 inline content 的 block。
-  it("重綁跳過 plain-content block：code block 內的 [[X]]（唯一命中）保持純文字、不計入 unboundCount", () => {
+  // A codeBlock's content type is "plain", but its parsed node has the same `{type:"text"}[]` shape as paragraph inline content: rebinding that only checks `Array.isArray` would turn a `[[X]]` that happens to match inside a code fence into a wikilink inline node, placed in a block that doesn't accept inline content.
+  it("rebinding skips plain-content blocks: a uniquely matching [[X]] in a code block stays plain text and isn't counted in unboundCount", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "上下文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const notes: SiteLinkCandidate[] = [{ id: "aaaaaaaa-0000-0000-0000-000000000001", title: "產品規劃", slug: "plan", groupId: null, ownerHandle: "alice" }];
@@ -163,10 +141,8 @@ describe("AI 套用鏈", () => {
     expect(p.unboundCount).toBe(0);
   });
 
-  // `tryParseMarkdownToBlocks` 對空／純空白 markdown 實測回傳單一空
-  // 段落（不是 `[]`，見 apply.ts `isBlankParseResult` 的實測註記）——不擋的話
-  // `replaceBlocks` 會把使用者原本的段落換成空段落、卻回報 ok。
-  it("空結果：空字串／純空白 markdown → prepareAiResult 回 {empty:true}，不碰文件", () => {
+  // `tryParseMarkdownToBlocks` returns a single empty paragraph (not `[]`) for empty or whitespace-only markdown (see `isBlankParseResult` in apply.ts); without the guard `replaceBlocks` would replace the user's paragraph with an empty one yet report ok.
+  it("empty result: empty/whitespace-only markdown -> prepareAiResult returns {empty:true}, document untouched", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別刪我" }]);
     const before = JSON.stringify(editor.document);
     expect(prepareAiResult(editor, "", { notes: [], placement: "top" })).toEqual({ empty: true });
@@ -174,8 +150,8 @@ describe("AI 套用鏈", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  // #386：AI 結果裡的段落內換行（三種寫法）存成換行，下一行開頭不多一個空白（與 MCP 同一支 `checkNoteMarkdownSyntax` 的 html）。
-  it.each(["L1\nL2", "L1\\\nL2", "L1  \nL2"])("段落內換行 %j → 一段、文字 L1⏎L2（不多空白）", (md) => {
+  // #386: line breaks inside a paragraph of an AI result (three spellings) are stored as a newline with no extra leading space on the next line (same `checkNoteMarkdownSyntax` html as MCP).
+  it.each(["L1\nL2", "L1\\\nL2", "L1  \nL2"])("line break %j inside a paragraph -> one paragraph, text L1 newline L2 (no extra space)", (md) => {
     const editor = mountedEditor([{ type: "paragraph", content: "x" }]);
     const p = prepareAiResult(editor, md, { notes: [], placement: "top" });
     if (!("blocks" in p)) throw new Error(JSON.stringify(p));
@@ -183,9 +159,8 @@ describe("AI 套用鏈", () => {
     expect(p.blocks[0]!.content).toEqual([{ type: "text", text: "L1\nL2", styles: {} }]);
   });
 
-  // 並排：AI 結果走與 MCP 相同的語法＋結構檢查；目標不在頂層（"nested"）時不收任何並排。
   const ROW2 = golden("G1-cols-spec");
-  it("GA1：正規形兩欄、placement top → PreparedResult，一列兩欄、欄寬 [1, 1.5]", () => {
+  it("canonical two-column form, placement top -> PreparedResult with one row of two columns, widths [1, 1.5]", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const p = prepareAiResult(editor, ROW2, { notes: [], placement: "top" });
     if ("empty" in p || "invalid" in p) throw new Error("預期 PreparedResult");
@@ -194,21 +169,21 @@ describe("AI 套用鏈", () => {
     expect(p.blocks[0]!.children.map((c) => (c.props as { width: number }).width)).toEqual([1, 1.5]);
   });
 
-  it("GA2：同一段、placement nested → { invalid: unsupported_columns }，文件不變", () => {
+  it("same paragraph, placement nested -> { invalid: unsupported_columns }, document unchanged", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const before = JSON.stringify(editor.document);
     expect(prepareAiResult(editor, ROW2, { notes: [], placement: "nested" })).toEqual({ invalid: "unsupported_columns" });
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  it("GA3：不含並排的 markdown 照舊回 PreparedResult", () => {
+  it("markdown without columns still returns PreparedResult", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const p = prepareAiResult(editor, "# T\n\n- a\n- b", { notes: [], placement: "top" });
     if ("empty" in p || "invalid" in p) throw new Error("預期 PreparedResult");
     expect(p.blocks.map((b) => b.type)).toEqual(["heading", "bulletListItem", "bulletListItem"]);
   });
 
-  it("GA4：孤立的 columnList／column（parse 結果被換掉）→ 結構檢查擋下 unsupported_columns", () => {
+  it("orphan columnList/column (parse result replaced) -> structure check rejects with unsupported_columns", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     for (const type of ["columnList", "column"]) {
       const spy = vi.spyOn(editor, "tryParseHTMLToBlocks").mockReturnValue([{ id: "c", type, props: { width: 1 }, children: [] }] as never);
@@ -221,39 +196,39 @@ describe("AI 套用鏈", () => {
     }
   });
 
-  it("GA5：裸 <img width>（不在 figure 裡）→ unsupported_size", () => {
+  it("bare <img width> (not inside a figure) -> unsupported_size", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     expect(prepareAiResult(editor, '<img src="/x" width="300">', { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_size" });
   });
 
-  it("GA6：其他 div 用 display:flex 排版 → unsupported_columns", () => {
+  it("other div laid out with display:flex -> unsupported_columns", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     expect(prepareAiResult(editor, '<div style="display:flex">x</div>', { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_columns" });
   });
 
-  it("GA9：core parse 丟例外的輸入（編輯器內部形 data-content-type）→ { invalid: unsupported_block }，不往外拋、文件不變", () => {
+  it("input that makes core parse throw (editor-internal data-content-type form) -> { invalid: unsupported_block }, no throw, document unchanged", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const md = '<div data-content-type="paragraph">x</div>';
-    expect(() => editor.tryParseHTMLToBlocks(markdownToHTML(md))).toThrow(); // fixture 自檢：jsdom 上 core 真的丟
+    expect(() => editor.tryParseHTMLToBlocks(markdownToHTML(md))).toThrow(); // fixture self-check: core really throws in jsdom
     const before = JSON.stringify(editor.document);
     expect(prepareAiResult(editor, md, { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_block" });
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  // #398：解析前的保護與 server 同一套（shared 的 `findParseGuardFailure`／`premergedHtml`）。
-  it("GP1：段落裡又有段落（<p> 裡的 <button> 裡的 <p>）→ { invalid: unsupported_block }，core parse 沒被呼叫", () => {
+  // #398: parse guards are the same as the server's (shared `findParseGuardFailure` / `premergedHtml`).
+  it("paragraph nested in a paragraph (<button> in <p>, <p> in <button>) -> { invalid: unsupported_block }, core parse not called", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const parse = vi.spyOn(editor, "tryParseHTMLToBlocks");
     expect(prepareAiResult(editor, "<p>a<button><p>b</p><p>c</p></button></p>", { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_block" });
     expect(parse).not.toHaveBeenCalled();
   });
-  it("GP2：巢狀深度超過 MAX_HTML_DEPTH（129 層）→ { invalid: unsupported_block }；128 層照收", () => {
+  it("nesting deeper than MAX_HTML_DEPTH (129 levels) -> { invalid: unsupported_block }; 128 levels accepted", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "x" }]);
     const bq = (d: number) => "<blockquote><p>a</p>".repeat(d) + "</blockquote>".repeat(d);
     expect(prepareAiResult(editor, bq(128), { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_block" });
     expect(prepareAiResult(editor, bq(127), { notes: [], placement: "top" })).not.toHaveProperty("invalid");
   });
-  it("GP3：引言裡的多段落先併好再交給 core（core 只看到一個 <p>），結果與不併相同", () => {
+  it("multiple paragraphs in a quote are merged before core sees them (core sees one <p>); result equals the unmerged case", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "x" }]);
     const md = "> a\n>\n> **b**\n>\n> c";
     const expected = editor.tryParseHTMLToBlocks(markdownToHTML(md));
@@ -264,8 +239,8 @@ describe("AI 套用鏈", () => {
     expect(strip(out.blocks)).toBe(strip(expected));
   });
 
-  // core 剖析 <details> 時把子節點 clone 進活文件，瀏覽器裡 <img onerror> 會觸發——語法檢查先擋，不進 core parse
-  it("GA10：<details> 內、figure 內的 <img onerror> → { invalid: unsupported_block }，core parse 沒被呼叫；top 與 nested 同", () => {
+  // core clones <details> children into the live document while parsing, which fires <img onerror> in a browser; the syntax check rejects first so it never reaches core parse
+  it("<img onerror> inside <details> or inside a figure -> { invalid: unsupported_block }, core parse not called; same for top and nested", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const parse = vi.spyOn(editor, "tryParseHTMLToBlocks");
     try {
@@ -284,7 +259,7 @@ describe("AI 套用鏈", () => {
     }
   });
 
-  // 同 server 管線（#94）：```mermaid 的 codeBlock 還原成 mermaid block，否則 AI 套回會把圖變成程式碼區塊
+  // Same as the server pipeline (#94): a ```mermaid codeBlock is restored to a mermaid block, otherwise applying the AI result would turn the diagram into a code block
   const FENCE = "```mermaid\ngraph TD; A-->B\n```";
   const mermaidOf = (markdown: string, placement: "top" | "nested") => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
@@ -292,13 +267,13 @@ describe("AI 套用鏈", () => {
     if ("empty" in p || "invalid" in p) throw new Error("預期 PreparedResult");
     return p.blocks;
   };
-  it("MM1：頂層 ```mermaid fence → mermaid block（code 逐字）", () => {
+  it("top-level ```mermaid fence -> mermaid block (code verbatim)", () => {
     const blocks = mermaidOf(FENCE, "top");
     expect(blocks.map((b) => b.type)).toEqual(["mermaid"]);
     expect(blocks[0]!.props).toEqual({ code: "graph TD; A-->B" });
   });
 
-  it("MM2：列的欄內有 mermaid fence（錨點頂層）→ 欄內是 mermaid block；錨點在欄內、AI 回 fence（nested）→ mermaid block", () => {
+  it("mermaid fence inside a column (anchor top-level) -> mermaid block in the column; anchor inside a column with the AI returning a fence (nested) -> mermaid block", () => {
     const rowMd = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\n${FENCE}\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
     const [list] = mermaidOf(rowMd, "top");
     expect(list!.type).toBe("columnList");
@@ -306,7 +281,7 @@ describe("AI 套用鏈", () => {
     expect(mermaidOf(FENCE, "nested").map((b) => b.type)).toEqual(["mermaid"]);
   });
 
-  it("MM4：AI 沒改的圖在預覽 diff 裡是 context（還原後保留 parse 給的 id 才配得到）", () => {
+  it("a diagram the AI didn't change is context in the preview diff (the parse-assigned id is kept after restoring, so it can match)", () => {
     const CODE = "graph TD; A-->B";
     const editor = mountedEditor([P("old words", "p1"), { id: "m", type: "mermaid", props: { code: CODE } }, P("tail", "p3")]);
     const p = prep(editor, "new words\n\n```mermaid\n" + CODE + "\n```\n\ntail");
@@ -316,7 +291,7 @@ describe("AI 套用鏈", () => {
     expect(marks).toEqual(["context"]);
   });
 
-  it("GA7：合併表頭只設一欄寬（colwidth=\"120,\"）→ PreparedResult，columnWidths 第二項是 undefined（不是 NaN）", () => {
+  it("merged header with only one column width (colwidth=\"120,\") -> PreparedResult, second columnWidths entry is undefined (not NaN)", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const p = prepareAiResult(editor, golden("G3-table-colspan-partial"), { notes: [], placement: "top" });
     if ("empty" in p || "invalid" in p) throw new Error("預期 PreparedResult");
@@ -327,7 +302,7 @@ describe("AI 套用鏈", () => {
     expect(ws[2]).toBe(80);
   });
 
-  it("GA8：收合標題底下的站內上傳圖片 → url 還原成相對形；同形外站網址原樣不動", () => {
+  it("on-site uploaded image under a collapsed heading -> url restored to relative form; same-shape external URL left as is", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "別動我" }]);
     const md = golden("G2-img-in-toggle-heading");
     const urlOf = (markdown: string): unknown => {
@@ -340,7 +315,7 @@ describe("AI 套用鏈", () => {
     expect(urlOf(md.replace('src="/api/uploads/', 'src="https://other.example/api/uploads/'))).toBe(external);
   });
 
-  it("anchorPlacement——頂層 → top；欄內 → nested；縮排子 block → nested；頂層段落＋頂層列 → top；頂層＋欄內 → nested", () => {
+  it("anchorPlacement: top-level -> top; inside a column -> nested; indented child block -> nested; top-level paragraph + top-level row -> top; top-level + in-column -> nested", () => {
     const editor = mountedEditor([P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r"), withChildren(P("p", "p"), [P("c", "c1")])]);
     expect(anchorPlacement(editor, ["x"])).toBe("top");
     expect(anchorPlacement(editor, ["a1"])).toBe("nested");
@@ -349,7 +324,7 @@ describe("AI 套用鏈", () => {
     expect(anchorPlacement(editor, ["x", "a1"])).toBe("nested");
   });
 
-  it("#263：applyAiResult 寫進文件的就是 prepared.blocks 這個陣列（同一物件，預覽與寫入同一份）", () => {
+  it("#263: applyAiResult writes this very prepared.blocks array into the document (same object, preview and write share it)", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "原文" }]);
     const anchor = captureAnchor(editor, "note-1", [editor.document[0].id]);
     const prepared = prep(editor, "新文");
@@ -358,8 +333,8 @@ describe("AI 套用鏈", () => {
     expect(out.ok).toBe(true);
   });
 
-  // 同列另一欄是空的：core 的 fixColumnList 會刪掉所有空欄、把剩一欄的列攤平——程式發動的移除不走這條。
-  it("錨點是欄內唯一 block → 套用與撤回都不收欄", () => {
+  // The other column in the row is empty: core's fixColumnList deletes all empty columns and flattens a row left with one column; removals triggered by code don't take that path.
+  it("anchor is the sole block in a column -> neither apply nor revert collapses the column", () => {
     const editor = mountedEditor([P("x", "x"), row([[P("原文", "b")], [P("", "e")]], "r"), P("z", "z")]);
     const anchor = captureAnchor(editor, "note-1", ["b"]);
     const out = applyAiResult(editor, anchor, prep(editor, "新一\n\n新二"));
@@ -370,7 +345,7 @@ describe("AI 套用鏈", () => {
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:原文) | COL(paragraph)]  paragraph:z");
   });
 
-  it("hasNonTextBlock：image block 在錨點內 → true（降級 preview 判定）", () => {
+  it("hasNonTextBlock: image block inside the anchor -> true (degrades the preview)", () => {
     const editor = mountedEditor([
       { type: "paragraph", content: "文" },
       { type: "image", props: { url: "https://example.com/a.png" } },
@@ -380,7 +355,7 @@ describe("AI 套用鏈", () => {
     expect(hasNonTextBlock(editor, [ids[0]])).toBe(false);
   });
 
-  it("hasNonTextBlock 看錨點的子孫——列的第 2 欄有 image → true；段落底下縮排 image → true；只有文字的列 → false", () => {
+  it("hasNonTextBlock looks at the anchor's descendants: image in column 2 of a row -> true; indented image under a paragraph -> true; text-only row -> false", () => {
     const editor = mountedEditor([
       row([[P("a", "a1")], [P("b", "b1"), IMG("i1")]], "r"),
       withChildren(P("p", "p"), [IMG("i2")]),
@@ -389,20 +364,20 @@ describe("AI 套用鏈", () => {
     expect(hasNonTextBlock(editor, ["r"])).toBe(true);
     expect(hasNonTextBlock(editor, ["p"])).toBe(true);
     expect(hasNonTextBlock(editor, ["t"])).toBe(false);
-    expect(hasNonTextBlock(editor, ["gone"])).toBe(false); // 錨點在串流期間被刪：不丟（否則 finish 會在這裡炸）
+    expect(hasNonTextBlock(editor, ["gone"])).toBe(false); // anchor deleted during streaming: must not throw (finish would blow up here otherwise)
   });
 
-  // 守門 verifyAnchor 只比內容不比位置；預覽期間錨點換了位置，套用前以現在的位置重驗結構。
+  // verifyAnchor compares content, not position; if the anchor moved during the preview, structure is re-verified at the current position before applying.
   const ROW_AB = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1.5">\n\nB\n\n</div>\n</div>`;
   const clean = { dupIds: 0, nullIds: 0, nestedRows: 0, valid: true };
-  it("AP-Q6a：預覽期間把頂層錨點縮排（Tab／nestBlock）→ 套用回 changed、文件不變、沒有巢狀列；不含並排的結果照常套用", () => {
+  it("indenting the top-level anchor during the preview (Tab / nestBlock) -> apply returns changed, document unchanged, no nested row; results without columns still apply", () => {
     const editor = mountedEditor([P("prev", "p0"), P("x", "x")]);
     const prepared = prep(editor, ROW_AB);
     const plain = prep(editor, "plain");
     const anchor = captureAnchor(editor, "note-1", ["x"]);
     editor.setTextCursorPosition("x", "end");
     editor.nestBlock();
-    expect(anchorPlacement(editor, ["x"])).toBe("nested"); // fixture 自檢：真的縮排了
+    expect(anchorPlacement(editor, ["x"])).toBe("nested"); // fixture self-check: it really got indented
     const before = JSON.stringify(editor.document);
     expect(applyAiResult(editor, anchor, prepared)).toEqual({ ok: false, reason: "changed" });
     expect(JSON.stringify(editor.document)).toBe(before);
@@ -411,7 +386,7 @@ describe("AI 套用鏈", () => {
     expect(shape(editor)).toBe("paragraph:prev{paragraph:plain}");
   });
 
-  it("AP-Q6b：預覽期間把頂層錨點搬進欄 → 套用回 changed、文件不變、沒有巢狀列／重複 id／空 id", () => {
+  it("moving the top-level anchor into a column during the preview -> apply returns changed, document unchanged, no nested row / duplicate id / empty id", () => {
     const editor = mountedEditor([P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r")]);
     const prepared = prep(editor, ROW_AB);
     const anchor = captureAnchor(editor, "note-1", ["x"]);
@@ -420,31 +395,31 @@ describe("AI 套用鏈", () => {
       editor.removeBlocks(["x"]);
       editor.insertBlocks([xb], "a1", "after");
     });
-    expect(editor.getParentBlock("x")?.type).toBe("column"); // fixture 自檢
+    expect(editor.getParentBlock("x")?.type).toBe("column"); // fixture self-check
     const before = JSON.stringify(editor.document);
     expect(applyAiResult(editor, anchor, prepared)).toEqual({ ok: false, reason: "changed" });
     expect(JSON.stringify(editor.document)).toBe(before);
     expect(integrity(editor)).toEqual(clean);
   });
 
-  // 同 MCP：色碼收下並正規化，不是色盤名也不是色碼的值整筆拒絕
-  it("GA-C1：文字色是 #hex（parse 成 rgb()）→ 收下，prepared 的行內 textColor 是 #ff0000", () => {
+  // Same as MCP: color codes are accepted and normalized; a value that is neither a palette color name nor a color code is rejected as a whole
+  it("text color as #hex (parsed to rgb()) -> accepted, prepared inline textColor is #ff0000", () => {
     const editor = mountedEditor([P("別動我")]);
     const ok = prepareAiResult(editor, '<span style="color:#ff0000">x</span>', { notes: [], placement: "top" });
     expect("blocks" in ok && JSON.stringify(ok.blocks[0]!.content)).toContain('"textColor":"#ff0000"');
     expect(prepareAiResult(editor, '<span style="color:tomato">x</span>', { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_color" });
   });
 
-  it("GA-C2：底色是 CSS 合法但不在色盤的色名 → unsupported_color；色盤內的色名照收", () => {
+  it("background color that is a valid CSS name but not in the palette -> unsupported_color; palette names still accepted", () => {
     const editor = mountedEditor([P("別動我")]);
     expect(prepareAiResult(editor, '<p data-background-color="chartreuse">x</p>', { notes: [], placement: "top" })).toEqual({ invalid: "unsupported_color" });
     const ok = prepareAiResult(editor, '<p data-background-color="red">x</p>', { notes: [], placement: "top" });
     expect("blocks" in ok && ok.blocks[0]!.props.backgroundColor).toBe("red");
   });
 
-  it("GA-C3：parse 結果是單一帶色盤外底色的空段落 → unsupported_color（同 server：色值檢查在空判準之前）；色盤內底色仍是 empty", () => {
+  it("parse result is a single empty paragraph with an off-palette background -> unsupported_color (as on the server: color check precedes the emptiness check); in-palette background is still empty", () => {
     const editor = mountedEditor([P("別動我")]);
-    // 事實釘：core 0.52.1 parse 空 <p> 時丟掉段落、補一個預設 props 的空段落，所以真的 markdown 走不到「空且帶色」——以 spy 造 parse 結果（同 GA4）
+    // Core 0.52.1 drops the paragraph when parsing an empty <p> and adds an empty paragraph with default props, so real markdown can't reach "empty but colored"; the parse result is faked with a spy (as in the orphan columnList/column case).
     expect(prepareAiResult(editor, '<p data-background-color="chartreuse"></p>', { notes: [], placement: "top" })).toEqual({ empty: true });
     for (const [color, expected] of [
       ["chartreuse", { invalid: "unsupported_color" }],
@@ -460,14 +435,14 @@ describe("AI 套用鏈", () => {
     }
   });
 
-  it("blockSnapshot：同一 block 兩次呼叫字串相等；block 不存在回 null", () => {
+  it("blockSnapshot: two calls on the same block give equal strings; a missing block returns null", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "穩定" }]);
     const id = editor.document[0].id;
     expect(blockSnapshot(editor, id)).toBe(blockSnapshot(editor, id));
     expect(blockSnapshot(editor, "no-such-id")).toBeNull();
   });
 
-  it("verifyAnchor 三態：ok／missing／changed（還原鈕啟用判定依賴的公開介面）", () => {
+  it("verifyAnchor three outcomes: ok / missing / changed (public interface the revert button's enabled state depends on)", () => {
     const editor = mountedEditor([{ type: "paragraph", content: "甲" }, { type: "paragraph", content: "乙" }]);
     const ids = editor.document.slice(0, 2).map((b) => b.id);
     const anchor = captureAnchor(editor, "note-1", ids);
@@ -479,11 +454,11 @@ describe("AI 套用鏈", () => {
   });
 });
 
-describe("#269：站內連結 → wikilink（快取命中才轉，沒有後備）", () => {
+describe("#269: on-site links -> wikilink (converted only on cache hit, no fallback)", () => {
   const notes2: SiteLinkCandidate[] = [
     { id: "11111111-1111-4111-8111-111111111111", title: "Alpha", slug: "alpha", groupId: null, ownerHandle: "alice" },
   ];
-  it("[文字](/notes/<id>)、/n/ 現行網址、表格內 → wikilink；快取裡沒有的維持一般連結；預覽與寫入同一份 blocks", () => {
+  it("[text](/notes/<id>), current /n/ URLs, and links in tables -> wikilink; ones not in the cache stay ordinary links; preview and write share one blocks array", () => {
     const editor = createTestEditor([{ id: "p", type: "paragraph", content: "x" }]);
     const p = prepareAiResult(
       editor,
@@ -498,7 +473,7 @@ describe("#269：站內連結 → wikilink（快取命中才轉，沒有後備�
     expect(json).toContain('"href":"/n/alice/missing"');
   });
 
-  it("AI 回寫的跳脫連結文字（我們送出的形）解回原字串——label 逐字保留、文字等於現行標題時 label 為空", () => {
+  it("escaped link text from an AI write-back (the form we send) round-trips to the original string: label kept verbatim, empty label when the text equals the current title", () => {
     const editor = createTestEditor([{ id: "p", type: "paragraph", content: "x" }]);
     const id = notes2[0]!.id;
     const titled: SiteLinkCandidate[] = [{ ...notes2[0]!, title: "[Draft] Plan *v2*" }];

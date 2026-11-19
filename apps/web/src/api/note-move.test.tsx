@@ -8,9 +8,7 @@ import { usePublicLink } from "./public-link";
 import { useShares } from "./shares";
 
 /**
- * #175：移動／複製／送出前檢查三支 hook 的快取契約。renderHook 本體掛 `useShares`＋`usePublicLink`
- * 兩個 observer——沒有 active observer 時 `invalidateQueries` 只標 stale、不重抓、promise 立即 resolve，
- * 「先 await 重抓」與「重抓掛起」都造不出來。
+ * #175: cache contract of the move / copy / pre-submit check hooks. renderHook itself mounts two observers, `useShares` and `usePublicLink`: with no active observer `invalidateQueries` only marks stale, doesn't refetch and its promise resolves immediately, so neither "await the refetch first" nor "refetch left hanging" could be reproduced.
  */
 
 const ID = "11111111-1111-1111-1111-111111111111";
@@ -51,7 +49,7 @@ function fakeResponse(status: number, json?: unknown): Response {
 
 type GateName = "shares" | "public";
 
-/** armed 之後的 shares／public-link GET 各有自己的閘門，由測試分別手動放行（才分得出「少等哪一支」）。 */
+/** After arming, the shares and public-link GETs each have their own gate, released manually by the test (so it can tell which one wasn't waited for). */
 function setupFetch(handlers: Record<string, () => Response>) {
   let armed = false;
   const releases = {} as Record<GateName, () => void>;
@@ -82,7 +80,7 @@ function setupFetch(handlers: Record<string, () => Response>) {
 
 const KEY_OF: Record<GateName, unknown[]> = { shares: ["shares", ID], public: ["public-link", ID] };
 
-/** 放行 name 那一支並等它重抓完成（fetchStatus idle）、再讓出一個 macrotask。抓得到「只等一支就寫」的錯誤實作，主要靠 waitFor 約 50ms 的輪詢給了它提早寫入的時間（讓出 macrotask 只是多一層）；延遲 ≥ 50ms 才寫的錯誤形從外部分辨不出，已接受這個限制。 */
+/** Releases the named gate and waits for its refetch to finish (fetchStatus idle), then yields one macrotask. What catches an implementation that writes after waiting for only one refetch is mainly waitFor's ~50 ms polling, which gives it time to write early (yielding a macrotask is an extra layer); an implementation that delays its write by >= 50 ms can't be told apart from outside, an accepted limitation. */
 async function releaseAndSettle(client: QueryClient, f: { release: (n: GateName) => void }, name: GateName) {
   f.release(name);
   await waitFor(() => expect(client.getQueryState(KEY_OF[name])?.fetchStatus).toBe("idle"));
@@ -121,8 +119,8 @@ afterEach(() => {
 });
 
 describe("useMoveNoteToGroup", () => {
-  it("移動成功：快取寫入序＝shares→public-link→note（三次同步、之間無 await；不變量①⑥）", async () => {
-    // 搬完以回應為準、不假設 editor（create-only 搬完可能是 viewer）
+  it("move success: cache write order is shares -> public-link -> note (three synchronous writes, no await between them)", async () => {
+    // After a move, trust the response and don't assume editor (a create-only move can leave a viewer)
     const moved = noteDto({ groupId: GID, ownerId: "u9", role: "viewer", permissions: { moveToGroup: false, edit: false } as never });
     const f = setupFetch({ ...baseHandlers, [`POST ${NOTE_URL}/move`]: () => fakeResponse(200, moved) });
     const client = makeClient();
@@ -155,7 +153,7 @@ describe("useMoveNoteToGroup", () => {
     }
   });
 
-  it("移動成功時 public-link 快取是空的 → 不憑空寫出快取項", async () => {
+  it("move success with an empty public-link cache -> no cache entry is created from nothing", async () => {
     const moved = noteDto({ groupId: GID, ownerId: "u9", role: "viewer", permissions: { moveToGroup: false, edit: false } as never });
     setupFetch({ [`POST ${NOTE_URL}/move`]: () => fakeResponse(200, moved) });
     const client = makeClient();
@@ -167,7 +165,7 @@ describe("useMoveNoteToGroup", () => {
   it.each<[GateName, GateName]>([
     ["shares", "public"],
     ["public", "shares"],
-  ])("移動失敗：先放行 %s、後放行 %s——兩支重抓都完成後才失效 note 與 groups；mutateAsync 在重抓結束前就 reject（不從 onError 回傳 promise——不變量②）", async (first, second) => {
+  ])("move failure: release %s first, %s second - note and groups are invalidated only after both refetches finish; mutateAsync rejects before the refetches end (onError doesn't return a promise)", async (first, second) => {
     const f = setupFetch({
       ...baseHandlers,
       [`POST ${NOTE_URL}/move`]: () => fakeResponse(403, { error: { code: "forbidden", message: "no" } }),
@@ -189,21 +187,18 @@ describe("useMoveNoteToGroup", () => {
     const p = result.current.mutateAsync({ groupId: GID }).catch(() => {
       rejected = true;
     });
-    // 重抓真的被掛起（兩支都已發出第二次 GET、尚未放行）
     await waitFor(() => {
       expect(f.calls.filter(c => c.method === "GET" && c.url === SHARES_URL)).toHaveLength(2);
       expect(f.calls.filter(c => c.method === "GET" && c.url === PUBLIC_URL)).toHaveLength(2);
     });
-    // mutateAsync 在重抓結束前就已 reject
     await waitFor(() => expect(rejected).toBe(true));
-    // 重抓掛著：note 與 groups 都還沒被失效
     const mid = keysOf(invSpy as never);
     expect(mid).toContainEqual(["shares", ID]);
     expect(mid).toContainEqual(["public-link", ID]);
     expect(mid).not.toContainEqual(["note", ID]);
     expect(mid).not.toContainEqual(["groups"]);
 
-    // 只放行一支並等它完成：另一支仍掛著，note 與 groups 仍不得被失效（少等任一支都會在此紅）
+    // Release only one and wait for it: the other still hangs, so note and groups must still not be invalidated (waiting for fewer than both fails here)
     await releaseAndSettle(client, f, first);
     const half = keysOf(invSpy as never);
     expect(half).not.toContainEqual(["note", ID]);
@@ -219,8 +214,8 @@ describe("useMoveNoteToGroup", () => {
   });
 });
 
-describe("applyMovedNote／refetchAfterFailure（批次共用）", () => {
-  it("AM1 applyMovedNote：shares＝[]、public-link 清 token／slug、note 寫入；順序 shares → public-link → note；失效 ['notes']", () => {
+describe("applyMovedNote / refetchAfterFailure (shared by batch)", () => {
+  it("applyMovedNote: shares = [], public-link token/slug cleared, note written; order shares -> public-link -> note; invalidates ['notes']", () => {
     const client = makeClient();
     client.setQueryData(["shares", ID], [SHARE]);
     client.setQueryData(["public-link", ID], { token: "T", slug: "s", width: "full" });
@@ -237,7 +232,7 @@ describe("applyMovedNote／refetchAfterFailure（批次共用）", () => {
     expect(keysOf(invSpy as never)).toContainEqual(["notes"]);
   });
 
-  it("AM2 refetchAfterFailure：shares 與 public-link 兩支失效都 resolve 之後才失效 note", async () => {
+  it("refetchAfterFailure: note is invalidated only after both the shares and public-link invalidations resolve", async () => {
     const client = makeClient();
     const releases: Record<string, () => void> = {};
     const invSpy = vi.spyOn(client, "invalidateQueries").mockImplementation(((filters: { queryKey: unknown[] }) => {
@@ -261,7 +256,7 @@ describe("applyMovedNote／refetchAfterFailure（批次共用）", () => {
 });
 
 describe("useCopyNote", () => {
-  it("複製到個人：body 是 {}；成功寫 ['note', copy.id]、失效 ['notes']，不動來源的 ['note', id]", async () => {
+  it("copy to personal: body is {}; success writes ['note', copy.id], invalidates ['notes'], leaves the source ['note', id] alone", async () => {
     const copy = noteDto({ id: "44444444-4444-4444-4444-444444444444", slug: "n-copy" });
     const f = setupFetch({ [`POST ${NOTE_URL}/copy`]: () => fakeResponse(201, copy) });
     const client = makeClient();
@@ -279,7 +274,7 @@ describe("useCopyNote", () => {
     expect(client.getQueryData(["note", ID])).toBeUndefined();
   });
 
-  it("複製到群組：body 是 { groupId }", async () => {
+  it("copy to a group: body is { groupId }", async () => {
     const copy = noteDto({ id: "44444444-4444-4444-4444-444444444444", groupId: GID });
     const f = setupFetch({ [`POST ${NOTE_URL}/copy`]: () => fakeResponse(201, copy) });
     const client = makeClient();
@@ -290,7 +285,7 @@ describe("useCopyNote", () => {
 });
 
 describe("useConfirmNoteStillPersonal", () => {
-  it("送出前檢查：仍是我的個人筆記 → true、不寫快取", async () => {
+  it("pre-submit check: still my personal note -> true, no cache write", async () => {
     setupFetch({ ...baseHandlers, [`GET ${NOTE_URL}`]: () => fakeResponse(200, noteDto({})) });
     const client = makeClient();
     const { result } = renderHook(
@@ -309,7 +304,7 @@ describe("useConfirmNoteStillPersonal", () => {
     expect(client.getQueryData(["note", ID])).toBeUndefined();
   });
 
-  it("送出前檢查：仍是個人筆記但 permissions.moveToGroup=false（不是我能移動的）→ false、寫入最新 note", async () => {
+  it("pre-submit check: still personal but permissions.moveToGroup=false (not movable by me) -> false, latest note written", async () => {
     const latest = noteDto({ groupId: null, role: "viewer", permissions: { moveToGroup: false } as never });
     setupFetch({ ...baseHandlers, [`GET ${NOTE_URL}`]: () => fakeResponse(200, latest) });
     const client = makeClient();
@@ -330,7 +325,7 @@ describe("useConfirmNoteStillPersonal", () => {
   it.each<[GateName, GateName]>([
     ["shares", "public"],
     ["public", "shares"],
-  ])("送出前檢查：已變群組筆記 → 先放行 %s、後放行 %s，兩支重抓都完成後才寫 ['note', id]、回 false（刻意不用 fetchQuery）", async (first, second) => {
+  ])("pre-submit check: now a group note -> release %s first, %s second; ['note', id] is written and false returned only after both refetches finish (fetchQuery is deliberately not used)", async (first, second) => {
     const latest = noteDto({ groupId: GID, role: "viewer", permissions: { moveToGroup: false } as never });
     const f = setupFetch({ ...baseHandlers, [`GET ${NOTE_URL}`]: () => fakeResponse(200, latest) });
     const client = makeClient();
@@ -355,12 +350,10 @@ describe("useConfirmNoteStillPersonal", () => {
       expect(f.calls.filter(c => c.method === "GET" && c.url === SHARES_URL)).toHaveLength(2);
       expect(f.calls.filter(c => c.method === "GET" && c.url === PUBLIC_URL)).toHaveLength(2);
     });
-    // 重抓掛著：note 尚未被寫、promise 尚未 resolve
     expect(client.getQueryData(["note", ID])).toBeUndefined();
     expect(settled).toBeUndefined();
 
-    // 只放行一支並等它完成：另一支仍掛著，note 仍不得被寫、promise 仍未 resolve
-    // （少等任一支＝「閃一下公開」，會在此紅）
+    // Release only one and wait for it: the other still hangs, so note still isn't written and the promise is still pending (waiting for fewer than both would briefly flash the note as public, failing here)
     await releaseAndSettle(client, f, first);
     expect(client.getQueryData(["note", ID])).toBeUndefined();
     expect(setSpy).not.toHaveBeenCalled();
@@ -375,15 +368,14 @@ describe("useConfirmNoteStillPersonal", () => {
     for (const k of [["shares", ID], ["public-link", ID]]) {
       expect(keys).toContainEqual(k);
     }
-    // false 路徑也要失效列表／解析層／群組
     for (const k of ["notes", "note-by-path", "note-by-group-path", "groups"]) {
       expect(keys).toContainEqual([k]);
     }
   });
 });
 
-describe("移動／複製帶資料夾", () => {
-  it("NMv1 移動 body 只放有值的鍵（folderId 未給＝沒有這個鍵）", async () => {
+describe("move / copy with a folder", () => {
+  it("move body contains only keys with values (no folderId given = no such key)", async () => {
     const f = setupFetch({ [`POST ${NOTE_URL}/move`]: () => fakeResponse(200, noteDto({ groupId: GID })) });
     const client = makeClient();
     const { result } = renderHook(() => useMoveNoteToGroup(ID), { wrapper: wrapperFor(client) });
@@ -393,7 +385,7 @@ describe("移動／複製帶資料夾", () => {
     expect(JSON.parse(f.calls[1]!.body!)).toEqual({ groupId: "G", folderId: "GF" });
   });
 
-  it("NMv2 複製 body：{} 無鍵；{ folderId } 只有 folderId", async () => {
+  it("copy body: {} has no keys; { folderId } has only folderId", async () => {
     const f = setupFetch({ [`POST ${NOTE_URL}/copy`]: () => fakeResponse(201, noteDto({ id: "44444444-4444-4444-4444-444444444444" })) });
     const client = makeClient();
     const { result } = renderHook(() => useCopyNote(ID), { wrapper: wrapperFor(client) });
@@ -404,11 +396,11 @@ describe("移動／複製帶資料夾", () => {
   });
 
   it.each([
-    ["move 成功", "move", 200],
-    ["move 失敗", "move", 409],
-    ["copy 成功", "copy", 201],
-    ["copy 失敗", "copy", 409],
-  ] as const)("NMv3 %s 後失效 ['folders']", async (_name, kind, status) => {
+    ["move success", "move", 200],
+    ["move failure", "move", 409],
+    ["copy success", "copy", 201],
+    ["copy failure", "copy", 409],
+  ] as const)("after %s invalidates ['folders']", async (_name, kind, status) => {
     const body = status < 400 ? noteDto({ id: "44444444-4444-4444-4444-444444444444", groupId: GID }) : { error: { code: "x", message: "x" } };
     setupFetch({ ...baseHandlers, [`POST ${NOTE_URL}/${kind}`]: () => fakeResponse(status, body) });
     const client = makeClient();

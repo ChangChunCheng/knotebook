@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- 測試直接摸 PM 的 view／transaction／step（型別在 apps/web 拿不到） */
+/* eslint-disable @typescript-eslint/no-explicit-any -- tests reach into PM's view/transaction/step (types unavailable in apps/web) */
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
@@ -28,7 +28,7 @@ import * as edgeDropModule from "./edge-drop";
 import * as insertModule from "./edge-drop-insert";
 import * as sizeGuardModule from "@/lib/note-size-guard";
 
-// 以 `buildNoteEditorOptions` 掛真編輯器（UniqueID、autolink、PasteRule、站內連結外掛都在），送真 DOM 事件。toast 換成 spy。
+// Mounts a real editor with `buildNoteEditorOptions` (UniqueID, autolink, PasteRule and the site-link plugin all present) and sends real DOM events. toast is replaced by a spy.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
@@ -41,10 +41,11 @@ interface Mounted {
   view: View;
   container: HTMLElement;
   doc: Y.Doc;
-  /** 文件裡一開始就有的 id（比對結果時，其他 id 一律當成新產生的）。 */
+  /** Ids present in the document from the start; when comparing, any other id counts as newly generated. */
   known: Set<string>;
-  /** 每次 `handleDrop` 串接被呼叫時，那次呼叫期間的 Y.Doc update 次數與 `editor.transact` 呼叫次數。 */
+  /** For each `handleDrop` chain call: the Y.Doc update count during that call. */
   handlerUpdates: number[];
+  /** For each `handleDrop` chain call: the `editor.transact` call count during that call. */
   handlerTransacts: number[];
   updates(): number;
   destroy(): void;
@@ -66,9 +67,7 @@ function collectIds(blocks: readonly any[], out = new Set<string>()): Set<string
 }
 
 /**
- * 內容先寫進 Y.Doc 再 mount（初始內容不在撤銷堆疊裡）。`handleDrop` 是 `buildNoteEditorOptions` 產品碼的那一支，外面只包一層計數；
- * `handlers: false`＝對照編輯器：`handleDrop` 換成不接手的版本（不呼叫 `edgeDrop`／`emptyColumnDrop`）。
- * 拖曳來源記錄器由列的版面 extension 在 mount 時掛上、unmount 時拆掉。
+ * Content is written to the Y.Doc before mount (initial content isn't in the undo stack). `handleDrop` is the product's `buildNoteEditorOptions` one, wrapped only by a counter; `handlers: false` = control editor: `handleDrop` replaced by a version that doesn't take over (doesn't call `edgeDrop`/`emptyColumnDrop`). The drag-source recorder is attached by the row layout extension on mount and removed on unmount.
  */
 function mount(content: PartialBlockLike[], opts: { handlers?: boolean; sizeGuard?: (bytes: number) => boolean } = {}): Mounted {
   const doc = new Y.Doc();
@@ -138,17 +137,14 @@ function mount(content: PartialBlockLike[], opts: { handlers?: boolean; sizeGuar
   return m;
 }
 
-/** 文件 JSON，新產生的 id（不在 `known` 裡）換成 `?`。 */
+/** Document JSON with newly generated ids (not in `known`) replaced by `?`. */
 const normalized = (editor: AnyEditor, known: Set<string>) =>
   JSON.parse(JSON.stringify(editor.document), (key, value) => (key === "id" && !known.has(value) ? "?" : value));
 
 const EDITOR_BOX: Box = [0, 0, 1000, 1000];
 
 /**
- * jsdom 的 rect 全是 0。以 `<data-node-type>:<data-id>` 查表回值（`blockOuter:y1`、`columnList:r`、`column:rc0`）；
- * `columnList:*`／`column:*<i>` 給不知道 id 的新列與它的第 i 欄。掛在 prototype、依身分回值：欄寬或文件一變 PM 就換掉元素，
- * 掛在單一元素上的 mock 在第一次寫入後就失效。`.bn-editor` 的根 `.bn-block-group` 回一個包住所有測試座標的框：core SideMenu
- * 在 root 的 capture drop 以它判斷落點是否在編輯器框外，框外 250px 內會先發一筆座標夾進框內的合成事件。
+ * jsdom rects are all 0. Values are looked up by `<data-node-type>:<data-id>` (`blockOuter:y1`, `columnList:r`, `column:rc0`); `columnList:*` / `column:*<i>` give a new row whose id isn't known and its i-th column. Mounted on the prototype and returning by identity: PM replaces elements when column widths or the document change, so a mock on a single element goes stale after the first write. The root `.bn-block-group` of `.bn-editor` returns a box enclosing all test coordinates: core SideMenu's capture drop on root uses it to decide whether the drop point is outside the editor box, and within 250px outside the box it first dispatches a synthetic event with the coordinates clamped into the box.
  */
 function mockRects(boxes: Record<string, Box>, opts: { editorBox?: boolean } = {}): void {
   const original = Element.prototype.getBoundingClientRect;
@@ -167,7 +163,7 @@ function mockRects(boxes: Record<string, Box>, opts: { editorBox?: boolean } = {
   });
 }
 
-/** 列 `id`（欄 id `${id}c${i}`；`id` 為 `*` 時是不知道 id 的列）佔 x 0–600、y top–bottom，n 欄等寬、欄間 24px 溝。 */
+/** Row `id` (column ids `${id}c${i}`; `*` for a row whose id isn't known) spans x 0-600, y top-bottom; n equal-width columns with 24px gutters. */
 function rowBoxes(id: string, top: number, bottom: number, n: number): Record<string, Box> {
   const width = (600 - 24 * (n - 1)) / n;
   const out: Record<string, Box> = { [`columnList:${id}`]: [0, top, 600, bottom] };
@@ -177,7 +173,6 @@ function rowBoxes(id: string, top: number, bottom: number, n: number): Record<st
 
 const topBox = (id: string, top: number): Record<string, Box> => ({ [`blockOuter:${id}`]: [0, top, 600, top + 30] });
 
-/** `id` 那個 blockContainer 內第一個 textblock 的開頭。 */
 const textIn = (m: Mounted, id: string): number => blockPos(m.editor, id) + 2;
 
 function dropEvent(dataTransfer: unknown, [x, y]: readonly [number, number], extra: { ctrlKey?: boolean; synthetic?: boolean } = {}): DragEvent {
@@ -191,7 +186,6 @@ function dropEvent(dataTransfer: unknown, [x, y]: readonly [number, number], ext
   return event as DragEvent;
 }
 
-/** 對 `view.dom` dispatch drop（`posAtCoords` 固定回 `pos`），之後照瀏覽器在拖曳來源上補一個 dragend。 */
 function drop(m: Mounted, pos: number, at: readonly [number, number], dataTransfer: unknown, extra: { ctrlKey?: boolean } = {}): DragEvent {
   m.view.posAtCoords = () => ({ pos, inside: -1 });
   const event = dropEvent(dataTransfer, at, extra);
@@ -200,7 +194,7 @@ function drop(m: Mounted, pos: number, at: readonly [number, number], dataTransf
   return event;
 }
 
-/** 一次 ⋮⋮ 拖放：`drag` 是被拖 block 的 id，`range` 給多選範圍，`target` 是落點所在 block 的 id（`posAtCoords` 回它的文字開頭）。 */
+/** One drag-handle drag-drop: `drag` is the id of the dragged block, `range` gives a multi-selection range, `target` is the id of the block at the drop point (`posAtCoords` returns the start of its text). */
 interface Gesture {
   drag: string;
   range?: readonly [string, string];
@@ -230,7 +224,6 @@ function spies(): Spies {
   };
 }
 
-/** handler 只被呼叫一次，收到的不是 core SideMenu 的合成事件。 */
 function expectOneRealCall(spy: MockInstance<any>): void {
   expect(spy).toHaveBeenCalledTimes(1);
   expect((spy.mock.calls[0]![2] as { synthetic?: boolean }).synthetic).not.toBe(true);
@@ -239,7 +232,6 @@ function expectOneRealCall(spy: MockInstance<any>): void {
 const stepsJSON = (m: Mounted, tr: any) =>
   JSON.parse(JSON.stringify(tr.steps.map((s: any) => s.toJSON())), (key, value) => (key === "id" && value !== null && !m.known.has(value) ? "?" : value));
 
-/** 兩次 `buildInsert`（預測的文件、實際文件）的步驟逐一相同；回傳那組步驟的 `stepType`。 */
 function expectSameInsertSteps(m: Mounted, insert: Spies["insert"]): string[] {
   expect(insert).toHaveBeenCalledTimes(2);
   expect(insert.mock.results.map((r) => r.value)).toEqual([true, true]);
@@ -250,7 +242,7 @@ function expectSameInsertSteps(m: Mounted, insert: Spies["insert"]): string[] {
 }
 
 /**
- * 接手的放置：handler 只被呼叫一次、兩次 `buildInsert` 一致、撤銷堆疊多一步。回傳 `undo()`：撤銷一次回到放置前。
+ * A taken-over drop: the handler is called once, the two `buildInsert` calls agree, the undo stack gains one step. Returns `undo()`: one undo returns to before the drop.
  */
 function takenDrop(m: Mounted, act: () => DragEvent, handler: "edge" | "empty" = "edge") {
   const manager = collabUndoManager(m.editor)!;
@@ -280,8 +272,7 @@ function takenDrop(m: Mounted, act: () => DragEvent, handler: "edge" | "empty" =
 }
 
 /**
- * 不接手的放置：在受測編輯器上做 `act`，斷言兩個 handler 都回 false、`buildInsert` 零呼叫；再依序掛對照編輯器做同一件事，
- * 結果（新 id 正規化後）相同。對照編輯器不同時掛：兩顆同在一份 document 時，core 會把非落點的拖曳來源當成「拖到別的編輯器」刪掉它的選取。
+ * A drop that isn't taken over: run `act` on the editor under test, assert both handlers return false and `buildInsert` is never called; then mount the control editors one at a time and do the same, results equal (after normalizing new ids). Control editors aren't mounted together: with two on one document, core treats the non-target drag source as "dragged to another editor" and deletes its selection.
  */
 function expectSameAsControl(
   content: PartialBlockLike[],
@@ -320,13 +311,11 @@ function linkMarks(m: Mounted): Array<{ text: string; href: string }> {
   return out;
 }
 
-// ─── D 組：直線放置 ───────────────────────────────────────────────────────────────
-
-describe("D1 頂層建列", () => {
+describe("top-level row creation", () => {
   it.each([
-    ["右", 590, "ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y"],
-    ["左", 5, "ROW[COL(paragraph:z) | COL(paragraph:x)]  paragraph:y"],
-  ] as const)("D1 x y z 拖 z 到 x %s緣 → 建列、游標在 z 開頭、編輯器取得焦點、一步撤銷", (_side, x, expected) => {
+    ["right", 590, "ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y"],
+    ["left", 5, "ROW[COL(paragraph:z) | COL(paragraph:x)]  paragraph:y"],
+  ] as const)("x y z, drag z to x's %s edge -> row created, caret at the start of z, editor focused, one undo step", (_side, x, expected) => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     const drop1 = takenDrop(m, () => dragDrop(m, { drag: "z1", target: "x1", at: [x, 115], boxes: topBox("x1", 100) }));
     expect(shape(m.editor)).toBe(expected);
@@ -337,26 +326,26 @@ describe("D1 頂層建列", () => {
   });
 });
 
-describe("D2 列外的 block 加欄", () => {
+describe("adding a column to a block outside a row", () => {
   const content = () => [row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z1")];
   it.each([
-    ["b 右緣", "b1", 590, "ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:z)]"],
-    ["a 左緣", "a1", 5, "ROW[COL(paragraph:z) | COL(paragraph:a) | COL(paragraph:b)]"],
-    ["a 右緣", "a1", 280, "ROW[COL(paragraph:a) | COL(paragraph:z) | COL(paragraph:b)]"],
-    ["b 左緣", "b1", 320, "ROW[COL(paragraph:a) | COL(paragraph:z) | COL(paragraph:b)]"],
-  ] as const)("D2 [a｜b] 拖 z 到 %s → 三欄、欄寬各 1、一步撤銷", (_label, target, x, expected) => {
+    ["b's right edge", "b1", 590, "ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:z)]"],
+    ["a's left edge", "a1", 5, "ROW[COL(paragraph:z) | COL(paragraph:a) | COL(paragraph:b)]"],
+    ["a's right edge", "a1", 280, "ROW[COL(paragraph:a) | COL(paragraph:z) | COL(paragraph:b)]"],
+    ["b's left edge", "b1", 320, "ROW[COL(paragraph:a) | COL(paragraph:z) | COL(paragraph:b)]"],
+  ] as const)("[a|b], drag z to %s -> three columns, each width 1, one undo step", (_label, target, x, expected) => {
     const m = mount(content());
     const d = takenDrop(m, () => dragDrop(m, { drag: "z1", target, at: [x, 200], boxes: rowBoxes("r", 100, 300, 2) }));
     expect(shape(m.editor)).toBe(expected);
     expect(cursorOf(m.editor)).toBe("z@0");
     expect(widthsOf(m.editor, 0)).toEqual([1, 1, 1]);
-    expect(d.insertSteps).toEqual(["replace"]); // 既有欄寬不變 → 不寫屬性
+    expect(d.insertSteps).toEqual(["replace"]); // existing column widths unchanged -> no attribute written
     d.undo();
   });
 });
 
-describe("D3 從欄裡拖出來建列", () => {
-  it("D3 [a｜b,q] 拖 q 到 x 右緣 → [x｜q]，原列 [a｜b]", () => {
+describe("creating a row by dragging out of a column", () => {
+  it("[a|b,q] drag q to x's right edge -> [x|q], the original row [a|b]", () => {
     const m = mount([P("x", "x1"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r")]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "q1", target: "x1", at: [590, 15], boxes: topBox("x1", 0) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(paragraph:q)]  ROW[COL(paragraph:a) | COL(paragraph:b)]");
@@ -366,7 +355,7 @@ describe("D3 從欄裡拖出來建列", () => {
   it.each([
     [2, "ROW[COL(paragraph:a) | COL(paragraph)]"],
     [3, "ROW[COL(paragraph:a) | COL(paragraph) | COL(paragraph:c)]"],
-  ] as const)("D3 拖走 %i 欄列裡某欄唯一的 block → 來源欄留空段落、欄數不變", (n, expectedSource) => {
+  ] as const)("dragging away the only block of a column in a %i-column row -> source column keeps an empty paragraph, column count unchanged", (n, expectedSource) => {
     const cols = n === 2 ? [[P("a", "a1")], [P("b", "b1")]] : [[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]];
     const m = mount([P("x", "x1"), row(cols, "r")]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "b1", target: "x1", at: [590, 15], boxes: topBox("x1", 0) }));
@@ -375,21 +364,21 @@ describe("D3 從欄裡拖出來建列", () => {
   });
 });
 
-describe("D4 同一列內換欄、等於沒動", () => {
-  it("D4 [a,c｜b] 拖 c 到 b 右緣 → [a｜b｜c]", () => {
+describe("moving between columns of one row, and no-ops", () => {
+  it("[a,c|b] drag c to b's right edge -> [a|b|c]", () => {
     const m = mount([row([[P("a", "a1"), P("c", "c1")], [P("b", "b1")]], "r")]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "c1", target: "b1", at: [590, 200], boxes: rowBoxes("r", 100, 300, 2) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:c)]");
     d.undo();
   });
 
-  it("D4 [a｜b] 拖 b 到 a 右緣 → 不接手，結果同對照編輯器", () => {
+  it("[a|b] drag b to a's right edge -> not taken over, result equals the control editor", () => {
     expectSameAsControl([row([[P("a", "a1")], [P("b", "b1")]], "r")], (m) =>
       dragDrop(m, { drag: "b1", target: "a1", at: [280, 200], boxes: rowBoxes("r", 100, 300, 2) }),
     );
   });
 
-  it("D4 [a｜b｜c] 拖 c 到 a 左緣 → [c｜a｜b｜空]", () => {
+  it("[a|b|c] drag c to a's left edge -> [c|a|b|empty]", () => {
     const m = mount([row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r")]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "c1", target: "a1", at: [5, 200], boxes: rowBoxes("r", 100, 300, 3) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:c) | COL(paragraph:a) | COL(paragraph:b) | COL(paragraph)]");
@@ -398,36 +387,36 @@ describe("D4 同一列內換欄、等於沒動", () => {
   });
 });
 
-describe("D5 多選", () => {
-  it("D5 同欄兩個多選 → 依序進新欄", () => {
+describe("multi-selection", () => {
+  it("two selected in the same column -> enter new columns in order", () => {
     const m = mount([P("x", "x1"), row([[P("a", "a1"), P("b", "b1"), P("c", "c1")], [P("d", "d1")]], "r")]);
     takenDrop(m, () => dragDrop(m, { drag: "a1", range: ["a1", "b1"], target: "x1", at: [590, 15], boxes: topBox("x1", 0) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(paragraph:a,paragraph:b)]  ROW[COL(paragraph:c) | COL(paragraph:d)]");
   });
 
-  it("D5 頂層兩個多選 → 依序進新欄", () => {
+  it("two selected at top level -> enter new columns in order", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1"), P("w", "w1")]);
     takenDrop(m, () => dragDrop(m, { drag: "y1", range: ["y1", "z1"], target: "x1", at: [590, 15], boxes: topBox("x1", 0) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(paragraph:y,paragraph:z)]  paragraph:w");
   });
 
-  it("D5 跨欄多選 → 不接手，結果同對照編輯器", () => {
+  it("multi-selection across columns -> not taken over, result equals the control editor", () => {
     expectSameAsControl([P("x", "x1"), row([[P("a", "a1")], [P("d", "d1")]], "r")], (m) =>
       dragDrop(m, { drag: "a1", range: ["a1", "d1"], target: "x1", at: [590, 15], boxes: topBox("x1", 0) }),
     );
   });
 });
 
-describe("D6 4 欄的列", () => {
-  it("D6 拖頂層 z 到 4 欄列的欄緣 → 不接手，結果同對照編輯器", () => {
+describe("row with 4 columns", () => {
+  it("dragging top-level z to a column edge of a 4-column row -> not taken over, result equals the control editor", () => {
     expectSameAsControl([row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")], [P("d", "d1")]], "r"), P("z", "z1")], (m) =>
       dragDrop(m, { drag: "z1", target: "b1", at: [280, 200], boxes: rowBoxes("r", 100, 300, 4) }),
     );
   });
 });
 
-describe("D7 新列成為最後一個 block", () => {
-  it("D7 x y 拖 x 到 y 右緣 → 列後補一個空段落", () => {
+describe("new row becomes the last block", () => {
+  it("x y: drag x to y's right edge -> an empty paragraph is added after the row", () => {
     const m = mount([P("x", "x1"), P("y", "y1")]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:y) | COL(paragraph:x)]  paragraph");
@@ -436,7 +425,7 @@ describe("D7 新列成為最後一個 block", () => {
   });
 });
 
-describe("D8 不變量", () => {
+describe("invariants", () => {
   const red = { id: "r1", type: "paragraph", props: { textColor: "red" }, content: [{ type: "text", text: "red", styles: {} }] } as PartialBlockLike;
   const content = () => [
     red,
@@ -460,7 +449,7 @@ describe("D8 不變量", () => {
     }
   }
 
-  it("D8 建列：id 集合只多新列與兩欄、X 的 props 與子 block 原樣、無巢狀列、欄寬是正規形", () => {
+  it("row creation: the id set gains only the new row and two columns, X's props and child blocks unchanged, no nested rows, column widths in canonical form", () => {
     const m = mount(content());
     const before = Object.fromEntries(xIds.map((id) => [id, m.editor.getBlock(id)]));
     expect((before.img1 as any).props.previewWidth).toBe(320);
@@ -473,7 +462,7 @@ describe("D8 不變量", () => {
     check(m, before, beforeIds, 3);
   });
 
-  it("D8 加欄：id 集合只多新欄、X 原樣、欄寬是正規形", () => {
+  it("adding a column: the id set gains only the new column, X unchanged, column widths in canonical form", () => {
     const m = mount(content());
     const before = Object.fromEntries(xIds.map((id) => [id, m.editor.getBlock(id)]));
     const beforeIds = collectIds(m.editor.document);
@@ -483,8 +472,8 @@ describe("D8 不變量", () => {
   });
 });
 
-describe("D9 一步撤銷", () => {
-  it("D9 撤銷堆疊只多一步，undo 一次回到放置前（各案另見 D1–D4、D12）", () => {
+describe("one undo step", () => {
+  it("the undo stack gains one step; one undo returns to before the drop", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     const manager = collabUndoManager(m.editor)!;
     const before = m.editor.document;
@@ -497,8 +486,8 @@ describe("D9 一步撤銷", () => {
   });
 });
 
-describe("D10 放下之後", () => {
-  it("D10 view.dragging 清掉、drop 被 preventDefault；之後的橫線拖放照常（欄元素已被換過）", () => {
+describe("after the drop", () => {
+  it("view.dragging is cleared and the drop is preventDefault'ed; later horizontal-line drops work as usual (the column elements have been replaced)", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1"), P("w", "w1")]);
     const first = dragDrop(m, { drag: "z1", target: "x1", at: [590, 115], boxes: topBox("x1", 100) });
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y  paragraph:w");
@@ -514,7 +503,7 @@ describe("D10 放下之後", () => {
   });
 });
 
-/** `naturalWidth`／`naturalHeight`／`complete` 依 `<img>` 所在 block 的 id 查表；查不到的回 0×0、未完成。 */
+/** `naturalWidth`/`naturalHeight`/`complete` are looked up by the id of the block holding the `<img>`; not found -> 0x0, incomplete. */
 function mockImages(sizes: Record<string, readonly [number, number]>): void {
   const sizeOf = (img: HTMLImageElement) => sizes[img.closest("[data-id]")?.getAttribute("data-id") ?? ""];
   vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockImplementation(function (this: HTMLImageElement) {
@@ -528,15 +517,15 @@ function mockImages(sizes: Record<string, readonly [number, number]>): void {
   });
 }
 
-describe("D11 自動等高", () => {
+describe("automatic equal height", () => {
   const previewWidths = (m: Mounted, ids: string[]) => ids.map((id) => (m.editor.getBlock(id) as any).props.previewWidth);
 
-  it("D11 前提：image block 在畫面上有 <img>", () => {
+  it("precondition: the image block has an <img> on screen", () => {
     const m = mount([IMG("i1"), IMG("i2")]);
     expect(m.view.dom.querySelectorAll("img").length).toBe(2);
   });
 
-  it("D11 200×100 與 100×100 建列 → 欄寬 [1.33, 0.67]，previewWidth 不變", () => {
+  it("200x100 and 100x100 create a row -> column widths [1.33, 0.67], previewWidth unchanged", () => {
     const m = mount([IMG("i1"), IMG("i2", 300), P("t", "t1")]);
     mockImages({ i1: [200, 100], i2: [100, 100] });
     const before = previewWidths(m, ["i1", "i2"]);
@@ -546,25 +535,25 @@ describe("D11 自動等高", () => {
     expect(previewWidths(m, ["i1", "i2"])).toEqual(before);
   });
 
-  it("D11 第三張加欄 → 整列依寬高比重算", () => {
+  it("a third image adds a column -> the whole row is recomputed from aspect ratios", () => {
     const m = mount([row([[IMG("i1")], [IMG("i2")]], "r"), IMG("i3"), P("t", "t1")]);
     mockImages({ i1: [200, 100], i2: [100, 100], i3: [100, 200] });
     const before = previewWidths(m, ["i1", "i2", "i3"]);
     const d = takenDrop(m, () => dragDrop(m, { drag: "i3", target: "i2", at: [590, 200], boxes: rowBoxes("r", 100, 300, 2) }));
-    expect(d.insertSteps).toEqual(["replace", "attr", "attr"]); // 新欄＋兩個既有欄的寬
+    expect(d.insertSteps).toEqual(["replace", "attr", "attr"]); // new column plus the widths of the two existing columns
     expect(shape(m.editor)).toBe("ROW[COL(image) | COL(image) | COL(image)]  paragraph:t");
     expect(widthsOf(m.editor, 0)).toEqual([1.71, 0.86, 0.43]);
     expect(previewWidths(m, ["i1", "i2", "i3"])).toEqual(before);
   });
 
-  it("D11 其中一張 naturalWidth 為 0 → [1, 1]", () => {
+  it("one image has naturalWidth 0 -> [1, 1]", () => {
     const m = mount([IMG("i1"), IMG("i2"), P("t", "t1")]);
     mockImages({ i1: [200, 100], i2: [0, 100] });
     takenDrop(m, () => dragDrop(m, { drag: "i2", target: "i1", at: [590, 115], boxes: topBox("i1", 100) }));
     expect(widthsOf(m.editor, 0)).toEqual([1, 1]);
   });
 
-  it("D11 圖＋段落 → [1, 1]", () => {
+  it("image + paragraph -> [1, 1]", () => {
     const m = mount([P("x", "x1"), IMG("i2"), P("t", "t1")]);
     mockImages({ i2: [200, 100] });
     takenDrop(m, () => dragDrop(m, { drag: "i2", target: "x1", at: [590, 115], boxes: topBox("x1", 100) }));
@@ -573,17 +562,15 @@ describe("D11 自動等高", () => {
   });
 });
 
-// ─── D12：橫線放進空欄 ───────────────────────────────────────────────────────────
-
-describe("D12 橫線放進空欄取代空段落", () => {
-  /** [a｜E] 與頂層 z：z 橫線放進第 2 欄（x 在欄中間、不在左右緣），`posAtCoords` 落在 E。 */
+describe("horizontal-line drop into an empty column replaces the empty paragraph", () => {
+  /** [a|E] and top-level z: z is dropped by horizontal line into column 2 (x in the middle of the column, not at the left/right edges), `posAtCoords` lands on E. */
   const emptyContent = (e: PartialBlockLike = { id: "e1", type: "paragraph", content: [] } as PartialBlockLike) => [
     row([[P("a", "a1")], [e]], "r"),
     P("z", "z1"),
   ];
   const intoEmpty: Gesture = { drag: "z1", target: "e1", at: [450, 200], boxes: rowBoxes("r", 100, 300, 2) };
 
-  it("D12 先直線拖走 b 留下空欄，再把頂層 z 放進空欄 → [a｜z]、游標在 z、一步撤銷回到放 z 之前", () => {
+  it("first drag b away by vertical line leaving an empty column, then drop top-level z into it -> [a|z], caret in z, one undo step back to before z was dropped", () => {
     const m = mount([row([[P("a", "a1")], [P("b", "b1")]], "r"), P("x", "x1"), P("z", "z1")]);
     takenDrop(m, () => dragDrop(m, { drag: "b1", target: "x1", at: [590, 415], boxes: { ...rowBoxes("r", 100, 300, 2), ...topBox("x1", 400) } }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph)]  ROW[COL(paragraph:x) | COL(paragraph:b)]  paragraph:z");
@@ -602,7 +589,7 @@ describe("D12 橫線放進空欄取代空段落", () => {
     d.undo();
   });
 
-  it("D12 頂層 z 放進 [a｜空] → [a｜z]、空段落不在了", () => {
+  it("top-level z dropped into [a|empty] -> [a|z], the empty paragraph is gone", () => {
     const m = mount(emptyContent());
     const d = takenDrop(m, () => dragDrop(m, intoEmpty), "empty");
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph:z)]");
@@ -611,23 +598,23 @@ describe("D12 橫線放進空欄取代空段落", () => {
   });
 
   const notEmpty: Array<[string, PartialBlockLike]> = [
-    ["有字", P("t", "e1")],
-    ["有子 block", withChildren({ id: "e1", type: "paragraph", content: [] } as PartialBlockLike, [P("k", "k1")])],
-    ["文字色非預設", { id: "e1", type: "paragraph", props: { textColor: "red" }, content: [] } as PartialBlockLike],
-    ["背景色非預設", { id: "e1", type: "paragraph", props: { backgroundColor: "blue" }, content: [] } as PartialBlockLike],
-    ["對齊非預設", { id: "e1", type: "paragraph", props: { textAlignment: "center" }, content: [] } as PartialBlockLike],
+    ["has text", P("t", "e1")],
+    ["has child blocks", withChildren({ id: "e1", type: "paragraph", content: [] } as PartialBlockLike, [P("k", "k1")])],
+    ["non-default text color", { id: "e1", type: "paragraph", props: { textColor: "red" }, content: [] } as PartialBlockLike],
+    ["non-default background color", { id: "e1", type: "paragraph", props: { backgroundColor: "blue" }, content: [] } as PartialBlockLike],
+    ["non-default alignment", { id: "e1", type: "paragraph", props: { textAlignment: "center" }, content: [] } as PartialBlockLike],
   ];
-  it.each(notEmpty)("D12 欄裡的段落%s → 不取代，結果同對照編輯器", (_label, e) => {
+  it.each(notEmpty)("column paragraph: %s -> not replaced, result equals the control editor", (_label, e) => {
     expectSameAsControl(emptyContent(e), (m) => dragDrop(m, intoEmpty));
   });
 
-  it("D12 欄裡有兩個 block（其一是空段落）→ 不取代，結果同對照編輯器", () => {
+  it("column has two blocks (one an empty paragraph) -> not replaced, result equals the control editor", () => {
     expectSameAsControl([row([[P("a", "a1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike, P("c", "c1")]], "r"), P("z", "z1")], (m) =>
       dragDrop(m, intoEmpty),
     );
   });
 
-  it("D12 X 含列（多選頂層 p 與列 [c｜d]）放進別列的空欄 → 欄內 p, c, d、id 不變、無巢狀列", () => {
+  it("X containing a row (multi-selection of top-level p and a row [c|d]) dropped into another row's empty column -> p, c, d in the column, ids unchanged, no nested rows", () => {
     const m = mount([P("p", "p1"), row([[P("c", "c1")], [P("d", "d1")]], "s"), ...emptyContent().slice(0, 1)]);
     const beforeIds = collectIds(m.editor.document);
     const d = takenDrop(m, () => dragDrop(m, { ...intoEmpty, drag: "p1", range: ["p1", "c1"] }), "empty");
@@ -640,7 +627,7 @@ describe("D12 橫線放進空欄取代空段落", () => {
     d.undo();
   });
 
-  it("D12 文字拖曳 → 不取代，結果同對照編輯器", () => {
+  it("text drag -> not replaced, result equals the control editor", () => {
     expectSameAsControl(emptyContent(), (m) => {
       mockRects(intoEmpty.boxes);
       const view = m.view;
@@ -651,25 +638,25 @@ describe("D12 橫線放進空欄取代空段落", () => {
       const start = new Event("dragstart", { bubbles: true, cancelable: true });
       Object.defineProperty(start, "dataTransfer", { value: dataTransfer });
       view.dom.dispatchEvent(start);
-      expect(draggedBlocksOf(view)).toBeNull(); // 前提：文字選取不記 X
+      expect(draggedBlocksOf(view)).toBeNull(); // precondition: a text selection records no X
       view.dragging = { slice: view.state.selection.content(), move: true };
       dataTransfer.setData("text/plain", "z");
       drop(m, textIn(m, "e1"), intoEmpty.at, dataTransfer);
     });
   });
 
-  it("D12 複製拖 → 不取代，結果同對照編輯器", () => {
+  it("copy drag -> not replaced, result equals the control editor", () => {
     expectSameAsControl(emptyContent(), (m) => dragDrop(m, { ...intoEmpty, ctrlKey: true }));
   });
 
-  it("D12 外部 HTML → 不取代，結果同對照編輯器", () => {
+  it("external HTML -> not replaced, result equals the control editor", () => {
     expectSameAsControl(emptyContent(), (m) => {
       mockRects(intoEmpty.boxes);
       drop(m, textIn(m, "e1"), intoEmpty.at, { types: ["text/html", "text/plain"], getData: (t: string) => (t === "text/html" ? "<p>ext</p>" : "ext"), items: [], files: [] });
     });
   });
 
-  it("D12 檔案 → 不取代（handleDrop 不會被問到）", () => {
+  it("file -> not replaced (handleDrop isn't consulted)", () => {
     const m = mount(emptyContent());
     const s = spies();
     mockRects(intoEmpty.boxes);
@@ -685,7 +672,7 @@ describe("D12 橫線放進空欄取代空段落", () => {
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
   });
 
-  it("D12 合成事件 → emptyColumnDrop 回 false、不送交易", () => {
+  it("synthetic event -> emptyColumnDrop returns false, no transaction sent", () => {
     const m = mount(emptyContent());
     mockRects(intoEmpty.boxes);
     startBlockDrag(m.editor, "z1");
@@ -696,22 +683,21 @@ describe("D12 橫線放進空欄取代空段落", () => {
     expect(edgeDropModule.emptyColumnDrop(m.editor, m.view, event, m.view.dragging.slice)).toBe(false);
     expect(transact).not.toHaveBeenCalled();
     expect(s.insert).not.toHaveBeenCalled();
-    // 對照：同一組幾何、不是合成事件 → 接手
     expect(edgeDropModule.emptyColumnDrop(m.editor, m.view, dropEvent(createFakeDataTransfer(["blocknote/html"]), intoEmpty.at), m.view.dragging.slice)).toBe(true);
   });
 
-  it("D12 拖空段落自己 → 不取代，結果同對照編輯器", () => {
+  it("dragging the empty paragraph itself -> not replaced, result equals the control editor", () => {
     expectSameAsControl(emptyContent(), (m) => dragDrop(m, { ...intoEmpty, drag: "e1" }));
   });
 
-  it("D12 多選頂層 p 與列 [c｜空]，放回那列自己的空欄 → 不取代、不送交易，結果同對照編輯器、id 集合不變", () => {
+  it("multi-selection of top-level p and a row [c|empty] dropped back into that row's own empty column -> not replaced, no transaction sent, result equals the control editor, id set unchanged", () => {
     const content = [P("p", "p1"), row([[P("c", "c1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike]], "r")];
     let idsBefore: Set<string> | null = null;
     let idsAfter: Set<string> | null = null;
     const m = expectSameAsControl(content, (x) => {
       mockRects(intoEmpty.boxes);
       const { dataTransfer } = startBlockDrag(x.editor, "p1", { range: ["p1", "e1"] });
-      expect(draggedBlocksOf(x.view)).toEqual({ ids: ["p1", "r"], kind: "multi", hasRows: true }); // 前提
+      expect(draggedBlocksOf(x.view)).toEqual({ ids: ["p1", "r"], kind: "multi", hasRows: true }); // precondition
       idsBefore ??= collectIds(x.editor.document);
       drop(x, textIn(x, "e1"), intoEmpty.at, dataTransfer);
       idsAfter ??= collectIds(x.editor.document);
@@ -721,13 +707,11 @@ describe("D12 橫線放進空欄取代空段落", () => {
     expect(idsAfter).toEqual(idsBefore);
   });
 
-  describe("D12 預先驗證失敗 → 一筆都不送", () => {
-    // 預測的文件上 `buildInsert` 不成立（模擬：E 在只移除 X 之後已不再是空段落）。handler 回 false 之後 PM 的預設 drop 照跑、
-    // 那一筆會寫 Yjs，所以只數 handler 呼叫期間的 update。排在後面的 `blockMoveDrop` 換成不接手的版本：這裡數的是前兩支送了幾筆，
-    // 對照編輯器也是 PM 預設的 drop。
+  describe("pre-validation fails -> nothing is sent", () => {
+    // `buildInsert` fails on the predicted document (simulated: after removing only X, E is no longer an empty paragraph). After the handler returns false PM's default drop runs and that would write to Yjs, so only updates during the handler call are counted. The later `blockMoveDrop` is replaced by a version that doesn't take over: what's counted here is how many writes the first two sent, and the control editor also uses PM's default drop.
     const noMoveTakeover = () => vi.spyOn(edgeDropModule, "blockMoveDrop").mockReturnValue(false);
 
-    it("D12 空欄：emptyColumnDrop 回 false、buildInsert 只被呼叫一次、handler 期間沒有 Y update、結果同對照編輯器", () => {
+    it("empty column: emptyColumnDrop returns false, buildInsert called once, no Y update during the handler, result equals the control editor", () => {
       const m = expectSameAsControl(emptyContent(), (x) => dragDrop(x, intoEmpty), {
         insertCalls: 1,
         before: (s) => {
@@ -739,7 +723,7 @@ describe("D12 橫線放進空欄取代空段落", () => {
       expect(m.handlerUpdates).toEqual([0]);
     });
 
-    it("D12 直線：edgeDrop 回 false、buildInsert 只被呼叫一次、handler 期間沒有 Y update、結果同對照編輯器", () => {
+    it("vertical line: edgeDrop returns false, buildInsert called once, no Y update during the handler, result equals the control editor", () => {
       const m = expectSameAsControl(
         [P("x", "x1"), P("y", "y1"), P("z", "z1")],
         (x) => dragDrop(x, { drag: "z1", target: "x1", at: [590, 115], boxes: topBox("x1", 100) }),
@@ -756,14 +740,12 @@ describe("D12 橫線放進空欄取代空段落", () => {
   });
 });
 
-// ─── D13–D17：與其他拖放外掛的組合 ─────────────────────────────────────────────
-
 const URL_Y = "see https://y.example/b now";
 const URL_M = "mid https://m.example/c";
 const URL_X = "go https://x.example/a";
 
-describe("D13 直線放置不跑 paste rule", () => {
-  it("D13 新掛的編輯器第一次建列：X、Y、中間 block 的網址都不變成連結", () => {
+describe("vertical-line drop doesn't run the paste rule", () => {
+  it("first row creation on a freshly mounted editor: URLs in X, Y and the middle blocks don't become links", () => {
     const m = mount([P(URL_Y, "y1"), P(URL_M, "m1"), P(URL_X, "x1"), P("t", "t1")]);
     const before = linkMarks(m);
     takenDrop(m, () => dragDrop(m, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }));
@@ -771,7 +753,7 @@ describe("D13 直線放置不跑 paste rule", () => {
     expect(linkMarks(m)).toEqual(before);
   });
 
-  it("D13 新掛的編輯器第一次加欄：X、欄裡、中間 block 的網址都不變成連結", () => {
+  it("first column add on a freshly mounted editor: URLs in X, the column and the middle blocks don't become links", () => {
     const m = mount([row([[P(URL_Y, "a1")], [P(URL_M, "b1")]], "r"), P(URL_M, "m1"), P(URL_X, "x1"), P("t", "t1")]);
     const before = linkMarks(m);
     takenDrop(m, () => dragDrop(m, { drag: "x1", target: "b1", at: [590, 200], boxes: rowBoxes("r", 100, 300, 2) }));
@@ -780,7 +762,6 @@ describe("D13 直線放置不跑 paste rule", () => {
   });
 });
 
-/** 外部拖入（`view.dragging` 為 null）：側欄連結的形。 */
 function externalLinkDrop(m: Mounted, pos: number): void {
   mockRects({});
   const href = "https://ext.example/z";
@@ -792,17 +773,17 @@ function externalLinkDrop(m: Mounted, pos: number): void {
   });
 }
 
-describe("D14 外部連結拖入之後的直線放置", () => {
-  it("D14 先拖入一個外部連結，再建列 → 放置前後 link mark 相同", () => {
+describe("vertical-line drop after an external link drag-in", () => {
+  it("drag an external link in first, then create a row -> link marks are the same before and after the drop", () => {
     const m = mount([P(URL_Y, "y1"), P(URL_M, "m1"), P(URL_X, "x1"), P("t", "t1")]);
     externalLinkDrop(m, textIn(m, "t1") + 1);
     const before = linkMarks(m);
-    expect(before.map((l) => l.href)).toContain("https://ext.example/z"); // 前提：外部拖入照常轉成連結
+    expect(before.map((l) => l.href)).toContain("https://ext.example/z"); // precondition: an external drag-in still converts to a link as usual
     takenDrop(m, () => dragDrop(m, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }));
     expect(linkMarks(m)).toEqual(before);
   });
 
-  it("D14 先拖入一個外部連結，再加欄 → 放置前後 link mark 相同", () => {
+  it("drag an external link in first, then add a column -> link marks are the same before and after the drop", () => {
     const m = mount([row([[P(URL_Y, "a1")], [P(URL_M, "b1")]], "r"), P(URL_M, "m1"), P(URL_X, "x1"), P("t", "t1")]);
     externalLinkDrop(m, textIn(m, "t1") + 1);
     const before = linkMarks(m);
@@ -812,12 +793,12 @@ describe("D14 外部連結拖入之後的直線放置", () => {
   });
 });
 
-describe("D15 直線放置之後的外部拖入", () => {
-  it("D15 外部拖入帶既有 data-id 的 BlockNote HTML → 插入後 id 不重複", () => {
+describe("external drag-in after a vertical-line drop", () => {
+  it("external drag-in of BlockNote HTML carrying an existing data-id -> ids stay unique after insertion", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1"), P("t", "t1")]);
     takenDrop(m, () => dragDrop(m, { drag: "z1", target: "x1", at: [590, 115], boxes: topBox("x1", 100) }));
     const html = m.editor.blocksToFullHTML([m.editor.getBlock("t1")!]);
-    expect(html).toContain('data-id="t1"'); // 前提：HTML 帶著文件裡既有的 id
+    expect(html).toContain('data-id="t1"'); // precondition: the HTML carries an id that already exists in the document
     mockRects({});
     const blocksBefore = m.editor.document.length;
     drop(m, blockPos(m.editor, "t1"), [300, 500], {
@@ -832,32 +813,32 @@ describe("D15 直線放置之後的外部拖入", () => {
     });
     expect(ids.filter((id) => id === "t1").length).toBe(1);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(m.editor.document.length).toBe(blocksBefore + 1); // 前提：真的插進了一個 block
+    expect(m.editor.document.length).toBe(blocksBefore + 1); // precondition: a block really was inserted
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y  paragraph:t  paragraph:t");
   });
 });
 
-describe("D16 直線放置與放進空欄不 autolink", () => {
+describe("vertical-line drop and drop into an empty column don't autolink", () => {
   const URL_END = "go https://x.example/a";
   const URL_END_Y = "see https://y.example/b";
 
-  // 第一個 block 不放網址：文件第一次載入時 autolink 會檢查第一個 textblock 的最後一個字（與拖放無關）。
-  it("D16 建列：X、Y 都是句尾網址的段落 → 沒有新連結", () => {
+  // The first block has no URL: when a document first loads, autolink checks the last character of the first textblock (unrelated to drag-drop).
+  it("row creation: X and Y are paragraphs ending with a URL -> no new links", () => {
     const m = mount([P("first", "f1"), P(URL_END_Y, "y1"), P("m", "m1"), P(URL_END, "x1"), P("t", "t1")]);
-    expect(linkMarks(m)).toEqual([]); // 前提
+    expect(linkMarks(m)).toEqual([]); // precondition
     takenDrop(m, () => dragDrop(m, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }));
     expect(shape(m.editor)).toBe(`paragraph:first  ROW[COL(paragraph:${URL_END_Y}) | COL(paragraph:${URL_END})]  paragraph:m  paragraph:t`);
     expect(linkMarks(m)).toEqual([]);
   });
 
-  it("D16 加欄：X 是兩個段落、第一段以網址結尾 → 沒有新連結", () => {
+  it("column add: X is two paragraphs, the first ends with a URL -> no new links", () => {
     const m = mount([row([[P("a", "a1")], [P("b", "b1")]], "r"), P(URL_END, "x1"), P("then", "x2"), P("t", "t1")]);
     takenDrop(m, () => dragDrop(m, { drag: "x1", range: ["x1", "x2"], target: "b1", at: [590, 200], boxes: rowBoxes("r", 100, 300, 2) }));
     expect(shape(m.editor)).toBe(`ROW[COL(paragraph:a) | COL(paragraph:b) | COL(paragraph:${URL_END},paragraph:then)]  paragraph:t`);
     expect(linkMarks(m)).toEqual([]);
   });
 
-  it("D16 放進空欄：X 是兩個段落、第一段以網址結尾 → 沒有新連結", () => {
+  it("drop into an empty column: X is two paragraphs, the first ends with a URL -> no new links", () => {
     const m = mount([
       row([[P("a", "a1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike]], "r"),
       P(URL_END, "x1"),
@@ -870,45 +851,43 @@ describe("D16 直線放置與放進空欄不 autolink", () => {
   });
 });
 
-describe("D17 直接拖已選取的圖片", () => {
-  it("D17 圖片 blockContent 的 NodeSelection 拖到 x 右緣：core 取消了 dragstart → 不記 X、不接手，結果同對照編輯器", () => {
+describe("dragging an already selected image directly", () => {
+  it("NodeSelection of the image blockContent dragged to x's right edge: core cancels dragstart -> no X recorded, not taken over, result equals the control editor", () => {
     expectSameAsControl([P("x", "x1"), IMG("img1"), P("t", "t1")], (m) => {
       mockRects(topBox("x1", 100));
       const view = m.view;
       const Selection = Object.getPrototypeOf(view.state.selection.constructor);
       const imgPos = blockPos(m.editor, "img1");
       view.dispatch(view.state.tr.setSelection(Selection.fromJSON(view.state.doc, { type: "node", anchor: imgPos + 1 })));
-      expect(view.state.selection.node.type.name).toBe("image"); // 前提：選的是 blockContent
+      expect(view.state.selection.node.type.name).toBe("image"); // precondition: the selection is the blockContent
       view.posAtCoords = () => ({ pos: imgPos + 1, inside: -1 });
       const dataTransfer = createFakeDataTransfer([], { store: true });
       const start = new Event("dragstart", { bubbles: true, cancelable: true });
       Object.defineProperty(start, "dataTransfer", { value: dataTransfer });
       (view.nodeDOM(imgPos) as HTMLElement).querySelector("img")!.dispatchEvent(start);
       expect(start.defaultPrevented).toBe(true);
-      expect(view.state.selection.node.type.name).toBe("blockContainer"); // core 把選取擴成整個 block
+      expect(view.state.selection.node.type.name).toBe("blockContainer"); // core widens the selection to the whole block
       expect(view.dragging).toBeTruthy();
       expect(draggedBlocksOf(view)).toBeNull();
       drop(m, textIn(m, "x1"), [590, 115], dataTransfer);
     });
   });
 
-  it("D17 對照：圖片已被選取時改抓它的 ⋮⋮ 拖到 x 右緣 → 照常建列、一步撤銷", () => {
+  it("control: with the image already selected, grabbing its drag handle to x's right edge -> row created as usual, one undo step", () => {
     const m = mount([P("x", "x1"), IMG("img1"), P("t", "t1")]);
     const view = m.view;
     const Selection = Object.getPrototypeOf(view.state.selection.constructor);
     view.dispatch(view.state.tr.setSelection(Selection.fromJSON(view.state.doc, { type: "node", anchor: blockPos(m.editor, "img1") + 1 })));
-    expect(view.state.selection.node.type.name).toBe("image"); // 前提：選的是 blockContent
+    expect(view.state.selection.node.type.name).toBe("image"); // precondition: the selection is the blockContent
     const d = takenDrop(m, () => dragDrop(m, { drag: "img1", target: "x1", at: [590, 115], boxes: topBox("x1", 100) }));
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:x) | COL(image)]  paragraph:t");
     d.undo();
   });
 });
 
-// ─── 拖曳中途變唯讀、撤銷後重做 ─────────────────────────────────────────────────
-
-describe("ED-RF1 拖曳中途編輯器變唯讀", () => {
-  // 直接呼叫 handler：PM 在 view 不可編輯時根本不跑 drop 的 editHandlers，走 dispatch 的話 handleDrop 不會被呼叫。
-  it("ED-RF1 建列幾何：唯讀時 edgeDrop 回 false、沒有 Y update；回到可編輯時同一組幾何接手", () => {
+describe("editor turns read-only mid-drag", () => {
+  // Call the handler directly: when the view isn't editable PM doesn't run drop's editHandlers at all, so going through dispatch never calls handleDrop.
+  it("row-creation geometry: read-only -> edgeDrop returns false and no Y update; once editable again the same geometry is taken over", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     mockRects(topBox("x1", 100));
     const { dataTransfer } = startBlockDrag(m.editor, "z1");
@@ -923,7 +902,7 @@ describe("ED-RF1 拖曳中途編輯器變唯讀", () => {
     expect(edgeDropModule.edgeDrop(m.editor, m.view, event)).toBe(true);
   });
 
-  it("ED-RF1 空欄幾何：唯讀時 emptyColumnDrop 回 false、沒有 Y update；回到可編輯時同一組幾何接手", () => {
+  it("empty-column geometry: read-only -> emptyColumnDrop returns false and no Y update; once editable again the same geometry is taken over", () => {
     const m = mount([row([[P("a", "a1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike]], "r"), P("z", "z1")]);
     mockRects(rowBoxes("r", 100, 300, 2));
     const { dataTransfer } = startBlockDrag(m.editor, "z1");
@@ -943,8 +922,8 @@ describe("ED-RF1 拖曳中途編輯器變唯讀", () => {
 
 const zToXRight: Gesture = { drag: "z1", target: "x1", at: [590, 115], boxes: topBox("x1", 100) };
 
-describe("ED-RF5 撤銷後重做", () => {
-  it("ED-RF5 x y z 拖 z 到 x 右緣 → undo → redo 一次 → 文件回到放置後（欄寬與 id 都在）", () => {
+describe("redo after undo", () => {
+  it("x y z, drag z to x's right edge -> undo -> redo once -> document back to after the drop (column widths and ids both present)", () => {
     const m = mount([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     dragDrop(m, zToXRight);
     const after = m.editor.document;
@@ -955,7 +934,7 @@ describe("ED-RF5 撤銷後重做", () => {
     expect(m.editor.document).toEqual(after);
   });
 
-  it("ED-RF5 兩張圖建列（欄寬依寬高比）→ undo → redo 一次 → 文件回到放置後", () => {
+  it("two images create a row (widths by aspect ratio) -> undo -> redo once -> document back to after the drop", () => {
     const m = mount([IMG("i1"), IMG("i2"), P("t", "t1")]);
     mockImages({ i1: [200, 100], i2: [100, 100] });
     dragDrop(m, { drag: "i2", target: "i1", at: [590, 115], boxes: topBox("i1", 100) });
@@ -968,8 +947,6 @@ describe("ED-RF5 撤銷後重做", () => {
     expect(m.editor.document).toEqual(after);
   });
 });
-
-// ─── H 組：DropCursor 與 drop 用同一個判斷 ────────────────────────────────────────
 
 interface Scenario {
   name: string;
@@ -986,84 +963,84 @@ const zToX: Gesture = { drag: "z1", target: "x1", at: [590, 115], boxes: topBox(
 const inTwoCols = (target: string, x: number): Gesture => ({ drag: "z1", target, at: [x, 200], boxes: rowBoxes("r", 100, 300, 2) });
 
 const scenarios: Scenario[] = [
-  { name: "D1 z 到 x 右緣", content: three, g: zToX, vertical: true },
-  { name: "D1 z 到 x 左緣", content: three, g: { ...zToX, at: [5, 115] }, vertical: true },
-  { name: "D2 z 到 b 右緣", content: twoCols, g: inTwoCols("b1", 590), vertical: true },
-  { name: "D2 z 到 a 左緣", content: twoCols, g: inTwoCols("a1", 5), vertical: true },
-  { name: "D2 z 到 a 右緣", content: twoCols, g: inTwoCols("a1", 280), vertical: true },
-  { name: "D2 z 到 b 左緣", content: twoCols, g: inTwoCols("b1", 320), vertical: true },
+  { name: "z to x's right edge", content: three, g: zToX, vertical: true },
+  { name: "z to x's left edge", content: three, g: { ...zToX, at: [5, 115] }, vertical: true },
+  { name: "z to b's right edge", content: twoCols, g: inTwoCols("b1", 590), vertical: true },
+  { name: "z to a's left edge", content: twoCols, g: inTwoCols("a1", 5), vertical: true },
+  { name: "z to a's right edge", content: twoCols, g: inTwoCols("a1", 280), vertical: true },
+  { name: "z to b's left edge", content: twoCols, g: inTwoCols("b1", 320), vertical: true },
   {
-    name: "D3 欄裡的 q 到 x 右緣",
+    name: "q from a column to x's right edge",
     content: () => [P("x", "x1"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r")],
     g: { drag: "q1", target: "x1", at: [590, 15], boxes: topBox("x1", 0) },
     vertical: true,
   },
   {
-    name: "D4 c 到 b 右緣",
+    name: "c to b's right edge",
     content: () => [row([[P("a", "a1"), P("c", "c1")], [P("b", "b1")]], "r")],
     g: { drag: "c1", target: "b1", at: [590, 200], boxes: rowBoxes("r", 100, 300, 2) },
     vertical: true,
   },
   {
-    name: "D4 等於沒動：b 到 a 右緣",
+    name: "no-op: b to a's right edge",
     content: () => [row([[P("a", "a1")], [P("b", "b1")]], "r")],
     g: { drag: "b1", target: "a1", at: [280, 200], boxes: rowBoxes("r", 100, 300, 2) },
     vertical: false,
   },
   {
-    name: "D4 c 到 a 左緣",
+    name: "c to a's left edge",
     content: () => [row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r")],
     g: { drag: "c1", target: "a1", at: [5, 200], boxes: rowBoxes("r", 100, 300, 3) },
     vertical: true,
   },
   {
-    name: "D5 同欄多選到 x 右緣",
+    name: "same-column multi-selection to x's right edge",
     content: () => [P("x", "x1"), row([[P("a", "a1"), P("b", "b1"), P("c", "c1")], [P("d", "d1")]], "r")],
     g: { drag: "a1", range: ["a1", "b1"], target: "x1", at: [590, 15], boxes: topBox("x1", 0) },
     vertical: true,
   },
   {
-    name: "D5 跨欄多選",
+    name: "multi-selection across columns",
     content: () => [P("x", "x1"), row([[P("a", "a1")], [P("d", "d1")]], "r")],
     g: { drag: "a1", range: ["a1", "d1"], target: "x1", at: [590, 15], boxes: topBox("x1", 0) },
     vertical: false,
   },
   {
-    name: "D6 4 欄的列",
+    name: "row with 4 columns",
     content: () => [row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")], [P("d", "d1")]], "r"), P("z", "z1")],
     g: { drag: "z1", target: "b1", at: [280, 200], boxes: rowBoxes("r", 100, 300, 4) },
     vertical: false,
   },
-  { name: "不出直線：合成事件", content: three, g: zToX, synthetic: true, vertical: false },
-  { name: "不出直線：複製拖", content: three, g: { ...zToX, ctrlKey: true }, vertical: false },
-  { name: "不出直線：唯讀", content: three, g: zToX, tweak: (m) => void (m.editor.isEditable = false), vertical: false },
+  { name: "no vertical line: synthetic event", content: three, g: zToX, synthetic: true, vertical: false },
+  { name: "no vertical line: copy drag", content: three, g: { ...zToX, ctrlKey: true }, vertical: false },
+  { name: "no vertical line: read-only", content: three, g: zToX, tweak: (m) => void (m.editor.isEditable = false), vertical: false },
   {
-    name: "不出直線：沒有記下的 X（dragend 清掉）",
+    name: "no vertical line: no recorded X (cleared by dragend)",
     content: three,
     g: zToX,
     tweak: (m) => void m.editor.domElement!.parentElement!.dispatchEvent(new Event("dragend", { bubbles: true })),
     vertical: false,
   },
-  { name: "不出直線：不在拖曳中", content: three, g: zToX, tweak: (m) => void (m.view.dragging = null), vertical: false },
-  { name: "不出直線：Y 就是 X", content: three, g: { ...zToX, drag: "x1" }, vertical: false },
+  { name: "no vertical line: not dragging", content: three, g: zToX, tweak: (m) => void (m.view.dragging = null), vertical: false },
+  { name: "no vertical line: Y is X itself", content: three, g: { ...zToX, drag: "x1" }, vertical: false },
   {
-    name: "不出直線：Y 是多選 X 的第二個",
+    name: "no vertical line: Y is the second of multi-selection X",
     content: three,
     g: { drag: "x1", range: ["x1", "y1"], target: "y1", at: [590, 115], boxes: topBox("y1", 100) },
     vertical: false,
   },
   {
-    name: "不出直線：X 含列",
+    name: "no vertical line: X contains a row",
     content: () => [P("p", "p1"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("y", "y1")],
     g: { drag: "p1", range: ["p1", "a1"], target: "y1", at: [590, 415], boxes: topBox("y1", 400) },
     vertical: false,
   },
-  { name: "不出直線：不在左右緣區", content: three, g: { ...zToX, at: [300, 115] }, vertical: false },
-  { name: "不出直線：溝裡", content: twoCols, g: inTwoCols("a1", 300), vertical: false },
+  { name: "no vertical line: not in a left/right edge zone", content: three, g: { ...zToX, at: [300, 115] }, vertical: false },
+  { name: "no vertical line: in the gutter", content: twoCols, g: inTwoCols("a1", 300), vertical: false },
 ];
 
-describe("H2 edgeTargetAt 說直線 ⇔ edgeDrop 接手", () => {
-  it.each(scenarios.map((s) => [s.name, s] as const))("H2 %s", (_name, s) => {
+describe("edgeTargetAt says vertical line <=> edgeDrop takes over", () => {
+  it.each(scenarios.map((s) => [s.name, s] as const))("%s", (_name, s) => {
     const m = mount(s.content());
     mockRects(s.g.boxes);
     const { dataTransfer } = startBlockDrag(m.editor, s.g.drag, { range: s.g.range });
@@ -1076,9 +1053,7 @@ describe("H2 edgeTargetAt 說直線 ⇔ edgeDrop 接手", () => {
   });
 });
 
-// ─── H1：DropCursor 畫的線 ───────────────────────────────────────────────────────
-
-/** 拖放事件；座標以 `configurable: true` 定義（溝裡的拖放會在事件上改寫座標）。 */
+/** Drag-drop event; coordinates defined with `configurable: true` (a drop in the gutter rewrites the coordinates on the event). */
 function dragEventAt(type: "dragover" | "drop", dataTransfer: unknown, [x, y]: readonly [number, number]): DragEvent {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
@@ -1090,8 +1065,7 @@ function dragEventAt(type: "dragover" | "drop", dataTransfer: unknown, [x, y]: r
 }
 
 /**
- * 對 `view.dom` dispatch dragover（`posAtCoords` 固定回 `pos`）。core DropCursor 把線掛在 `view.dom.offsetParent` 上，
- * jsdom 沒有 offsetParent，改回 mount 的 container。
+ * Dispatches a dragover on `view.dom` (`posAtCoords` always returns `pos`). Core's DropCursor attaches the line to `view.dom.offsetParent`; jsdom has no offsetParent, so the mounted container is returned instead.
  */
 function dragOver(m: Mounted, pos: number, at: readonly [number, number], dataTransfer: unknown): DragEvent {
   Object.defineProperty(m.view.dom, "offsetParent", { get: () => m.container, configurable: true });
@@ -1103,17 +1077,16 @@ function dragOver(m: Mounted, pos: number, at: readonly [number, number], dataTr
 
 const cursorEl = (m: Mounted) => m.container.querySelector<HTMLElement>(".prosemirror-dropcursor-vertical, .prosemirror-dropcursor-block-horizontal");
 
-/** DropCursor hook 只被呼叫一次，收到的不是 core SideMenu 的合成事件。 */
 function expectOneRealHookCall(hook: MockInstance<typeof edgeDropModule.computeDropPosition>): void {
   expect(hook).toHaveBeenCalledTimes(1);
   expect((hook.mock.calls[0]![0].event as { synthetic?: boolean }).synthetic).not.toBe(true);
 }
 
-describe("H1 DropCursor：直線畫在目標的左右緣，其餘照 core 的橫線", () => {
+describe("DropCursor: the vertical line is drawn at the target's left/right edge, everything else follows core's horizontal line", () => {
   it.each([
-    ["頂層 x 右緣", three, zToX, "block-vertical-right", ".bn-block-outer"],
-    ["欄內 a 左緣", twoCols, inTwoCols("a1", 5), "block-vertical-left", '[data-node-type="column"]'],
-  ] as const)("H1 拖 z 到%s → 直線，nodeDOM(pos) 是目標的框", (_label, content, g, orientation, targetSelector) => {
+    ["top-level x's right edge", three, zToX, "block-vertical-right", ".bn-block-outer"],
+    ["a in a column, left edge", twoCols, inTwoCols("a1", 5), "block-vertical-left", '[data-node-type="column"]'],
+  ] as const)("drag z to %s -> vertical line, nodeDOM(pos) is the target's box", (_label, content, g, orientation, targetSelector) => {
     const hook = vi.spyOn(edgeDropModule, "computeDropPosition");
     const m = mount(content());
     mockRects(g.boxes);
@@ -1129,7 +1102,7 @@ describe("H1 DropCursor：直線畫在目標的左右緣，其餘照 core 的橫
     expect(el!.classList.contains(`prosemirror-dropcursor-${orientation}`)).toBe(true);
   });
 
-  it("H1 拖 z 到 x 中間（不在左右緣）→ core 的橫線", () => {
+  it("drag z to the middle of x (not at the left/right edge) -> core's horizontal line", () => {
     const hook = vi.spyOn(edgeDropModule, "computeDropPosition");
     const m = mount(three());
     mockRects(zToX.boxes);
@@ -1144,10 +1117,8 @@ describe("H1 DropCursor：直線畫在目標的左右緣，其餘照 core 的橫
   });
 });
 
-// ─── C 組：與既有拖放的組合 ────────────────────────────────────────────────────
-
-describe("C1 站內拖曳帶媒體 data URL", () => {
-  it("C1 ⋮⋮ 拖 z 到 x 右緣、dataTransfer 帶 data URL 圖 → 媒體阻擋 toast、文件不變、edgeDrop 零呼叫", () => {
+describe("in-site drag carrying a media data URL", () => {
+  it("drag handle drags z to x's right edge with a data-URL image in dataTransfer -> media blocking toast, document unchanged, edgeDrop never called", () => {
     const m = mount(three());
     const s = spies();
     mockRects(zToX.boxes);
@@ -1164,13 +1135,13 @@ describe("C1 站內拖曳帶媒體 data URL", () => {
 
 const EXTERNAL_HTML = () => ({ types: ["text/html", "text/plain"], getData: (t: string) => (t === "text/html" ? "<p>ext</p>" : "ext"), items: [], files: [] });
 
-describe("C2 外部拖入不出直線", () => {
-  it("C2 外部 HTML 拖到 x 右緣 → DropCursor 不畫直線、edgeDrop 回 false、照現行插入", () => {
+describe("external drag-in shows no vertical line", () => {
+  it("external HTML dragged to x's right edge -> DropCursor draws no vertical line, edgeDrop returns false, insertion as today", () => {
     const hook = vi.spyOn(edgeDropModule, "computeDropPosition");
     const m = mount(three());
     const s = spies();
     mockRects(zToX.boxes);
-    expect(m.view.dragging).toBeNull(); // 前提：外部拖入
+    expect(m.view.dragging).toBeNull(); // precondition: external drag-in
     dragOver(m, textIn(m, "x1"), zToX.at, EXTERNAL_HTML());
     expectOneRealHookCall(hook);
     expect(hook.mock.results[0]!.value).toEqual(hook.mock.calls[0]![0].defaultPosition);
@@ -1183,12 +1154,12 @@ describe("C2 外部拖入不出直線", () => {
   });
 });
 
-describe("C4 溝裡的檔案拖放", () => {
-  // [a｜b]：列 y 100–300、欄 0–288 與 312–600（溝 288–312），a、b 各佔欄頂 100–140（中線 120）。
+describe("file drop in the gutter", () => {
+  // [a|b]: row y 100-300, columns 0-288 and 312-600 (gutter 288-312), a and b each occupy 100-140 at the column top (midline 120).
   const content = () => [row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z1")];
   const boxes: Record<string, Box> = { ...rowBoxes("r", 100, 300, 2), "blockOuter:a1": [0, 100, 288, 140], "blockOuter:b1": [312, 100, 600, 140] };
 
-  /** 依座標回 pos：溝裡 → 列內兩欄之間；第 2 欄 → b 的文字；第 1 欄 → a 的文字。core 會用改過的座標再問一次。 */
+  /** Returns pos by coordinates: in the gutter -> between the two columns of the row; column 2 -> b's text; column 1 -> a's text. Core asks again with the modified coordinates. */
   function posByCoords(m: Mounted): void {
     m.view.posAtCoords = ({ left }: { left: number; top: number }) => {
       const rowPos = blockPos(m.editor, "r");
@@ -1197,7 +1168,7 @@ describe("C4 溝裡的檔案拖放", () => {
     };
   }
 
-  /** 只帶一個 png 檔的 drop（或給定的 `dataTransfer`）；回傳事件與 dispatch 期間 listener 丟出的例外（jsdom 以 window 的 error 事件回報）。 */
+  /** A drop carrying only a png file (or the given `dataTransfer`); returns the event and the exception a listener threw during dispatch (jsdom reports them as the window's error event). */
   function fileDrop(m: Mounted, at: readonly [number, number], given?: unknown): { event: DragEvent; errors: unknown[] } {
     const file = new File(["x"], "pic.png", { type: "image/png" });
     const dataTransfer = given ?? { types: ["Files"], files: [file], items: [{ kind: "file", type: file.type, getAsFile: () => file }], getData: () => "" };
@@ -1219,9 +1190,9 @@ describe("C4 溝裡的檔案拖放", () => {
   }
 
   it.each([
-    ["上半", 110, [456, 110], "ROW[COL(paragraph:a) | COL(image,paragraph:b)]  paragraph:z"],
-    ["下半", 135, [456, 130], "ROW[COL(paragraph:a) | COL(paragraph:b,image)]  paragraph:z"],
-  ] as const)("C4 溝裡偏第 2 欄、y 在 b 的%s → 座標改到 b 框內、圖片插在 b 的那一側、drop 被 preventDefault", async (_half, y, moved, expected) => {
+    ["upper half", 110, [456, 110], "ROW[COL(paragraph:a) | COL(image,paragraph:b)]  paragraph:z"],
+    ["lower half", 135, [456, 130], "ROW[COL(paragraph:a) | COL(paragraph:b,image)]  paragraph:z"],
+  ] as const)("in the gutter nearer column 2, y in b's %s -> coordinates moved into b's box, image inserted on b's side, drop preventDefault'ed", async (_half, y, moved, expected) => {
     const m = mount(content());
     const s = spies();
     mockRects(boxes);
@@ -1231,7 +1202,7 @@ describe("C4 溝裡的檔案拖放", () => {
     const { event, errors } = fileDrop(m, [305, y]);
     expect(errors).toEqual([]);
     expect(event.defaultPrevented).toBe(true);
-    expect(s.edge).not.toHaveBeenCalled(); // 只帶檔案：PM 不會問到 handleDrop
+    expect(s.edge).not.toHaveBeenCalled(); // files only: PM never consults handleDrop
     await settle();
     expect(upload).toHaveBeenCalledTimes(1);
     expect(shape(m.editor)).toBe(expected);
@@ -1240,7 +1211,7 @@ describe("C4 溝裡的檔案拖放", () => {
     expect([event.clientX, event.clientY]).toEqual(moved);
   });
 
-  it("C4 落點在欄內 → 不改座標，圖片照 core 插在 b 之後", async () => {
+  it("drop point inside a column -> coordinates unchanged, image inserted after b as core does", async () => {
     const m = mount(content());
     mockRects(boxes);
     posByCoords(m);
@@ -1253,7 +1224,7 @@ describe("C4 溝裡的檔案拖放", () => {
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph:b,image)]  paragraph:z");
   });
 
-  it("C4 ⋮⋮ 橫線拖進溝裡 → 座標在 PM 放置之前改到最近欄的最近 block，z 落在第 2 欄", () => {
+  it("drag-handle horizontal-line drag into the gutter -> coordinates moved to the nearest block of the nearest column before PM drops, z lands in column 2", () => {
     const m = mount(content());
     const s = spies();
     mockRects(boxes);
@@ -1268,7 +1239,7 @@ describe("C4 溝裡的檔案拖放", () => {
     expect([event.clientX, event.clientY]).toEqual([456, 130]);
   });
 
-  it("C4 ⋮⋮ 拖到第 2 欄左緣區、posAtCoords 卻落在兩欄之間 → 照直線加欄，座標不改", () => {
+  it("drag handle to column 2's left edge zone but posAtCoords lands between the columns -> add a column by vertical line, coordinates unchanged", () => {
     const m = mount(content());
     const s = spies();
     mockRects(boxes);
@@ -1284,19 +1255,19 @@ describe("C4 溝裡的檔案拖放", () => {
     expect(shape(m.editor)).toBe("ROW[COL(paragraph:a) | COL(paragraph:z) | COL(paragraph:b)]");
   });
 
-  it("C4 溝裡的拖放帶 text/html 與 Files（文字表示排在 Files 前面）→ 不改座標", () => {
+  it("drop in the gutter carrying text/html and Files (text representation before Files) -> coordinates unchanged", () => {
     const m = mount(content());
     mockRects(boxes);
     posByCoords(m);
-    // `files` 為空：有檔案時媒體阻擋會先以「帶了文字表示」擋下，走不到這裡的判斷。
+    // `files` is empty: with files present media blocking would stop it first on "carries a text representation", never reaching this decision.
     const dataTransfer = { types: ["text/html", "Files"], files: [], items: [], getData: (t: string) => (t === "text/html" ? "<p>ext</p>" : "") };
     const { event, errors } = fileDrop(m, [305, 135], dataTransfer);
     expect(errors).toEqual([]);
     expect([event.clientX, event.clientY]).toEqual([305, 135]);
   });
 
-  describe("C4 堆疊的列：各欄 x 範圍相同，最近的欄由 y 決定", () => {
-    // [a｜b｜c] 堆疊成上下三段：欄 y 100–180、192–272、284–364（段間 12px），x 都是 0–600；a、b、c 各佔欄頂 40px。
+  describe("stacked rows: columns share the same x range, the nearest column is decided by y", () => {
+    // [a|b|c] stacked into three bands: columns y 100-180, 192-272, 284-364 (12px between bands), x all 0-600; a, b, c each take 40px at the column top.
     const stacked = () => [row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z1")];
     const stackedBoxes: Record<string, Box> = {
       "columnList:r": [0, 100, 600, 364],
@@ -1313,7 +1284,6 @@ describe("C4 溝裡的檔案拖放", () => {
       ["c1", 284, 324],
     ];
 
-    /** 落在某個 block 框內 → 它的文字；其餘（段間、列外側）→ 第 2、3 欄之間。 */
     function posStacked(m: Mounted): void {
       m.view.posAtCoords = ({ left, top }: { left: number; top: number }) => {
         const hit = left >= 0 && left <= 600 ? blockAt.find(([, t, b]) => top >= t && top <= b) : undefined;
@@ -1325,9 +1295,9 @@ describe("C4 溝裡的檔案拖放", () => {
     }
 
     it.each([
-      ["第 2、3 段之間偏第 3 段", [300, 280]],
-      ["列右外側、與第 3 欄同高", [605, 300]],
-    ] as const)("C4 檔案落在%s → 圖片插在 c 之前", async (_label, at) => {
+      ["between bands 2 and 3, nearer band 3", [300, 280]],
+      ["right of the row, level with column 3", [605, 300]],
+    ] as const)("file dropped %s -> image inserted before c", async (_label, at) => {
       const m = mount(stacked());
       mockRects(stackedBoxes);
       posStacked(m);
@@ -1341,8 +1311,7 @@ describe("C4 溝裡的檔案拖放", () => {
   });
 });
 
-describe("C5 大小上限與直線放置", () => {
-  /** 包住產品碼的 `createNoteSizePasteHandlers`，回傳它那支 `handleDrop` 的 spy；要在 mount 之前呼叫。 */
+describe("size limit and vertical-line drop", () => {
   function spySizeDrop() {
     const original = sizeGuardModule.createNoteSizePasteHandlers;
     const handleDrop = vi.fn();
@@ -1354,7 +1323,7 @@ describe("C5 大小上限與直線放置", () => {
     return handleDrop;
   }
 
-  it("C5 大小上限回 true：外部拖入被擋、文件不變；edgeDrop／emptyColumnDrop 都回 false 之後 size 的 handleDrop 被呼叫一次", () => {
+  it("size limit returns true: external drag-in is blocked, document unchanged; after edgeDrop/emptyColumnDrop both return false the size handleDrop is called once", () => {
     const sizeDrop = spySizeDrop();
     const guard = vi.fn(() => true);
     const m = mount(three(), { sizeGuard: guard });
@@ -1370,7 +1339,7 @@ describe("C5 大小上限與直線放置", () => {
     expect(shape(m.editor)).toBe(before);
   });
 
-  it("C5 大小上限回 true：⋮⋮ 直線放置照做、size 的 handleDrop 不被呼叫", () => {
+  it("size limit returns true: drag-handle vertical-line drop still happens, size handleDrop isn't called", () => {
     const sizeDrop = spySizeDrop();
     const m = mount(three(), { sizeGuard: () => true });
     takenDrop(m, () => dragDrop(m, zToX));
@@ -1378,7 +1347,7 @@ describe("C5 大小上限與直線放置", () => {
     expect(sizeDrop).not.toHaveBeenCalled();
   });
 
-  it("C5 大小上限回 true：⋮⋮ 放進空欄照做、size 的 handleDrop 不被呼叫", () => {
+  it("size limit returns true: drag-handle drop into an empty column still happens, size handleDrop isn't called", () => {
     const sizeDrop = spySizeDrop();
     const m = mount([row([[P("a", "a1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike]], "r"), P("z", "z1")], { sizeGuard: () => true });
     takenDrop(m, () => dragDrop(m, { drag: "z1", target: "e1", at: [450, 200], boxes: rowBoxes("r", 100, 300, 2) }), "empty");
@@ -1386,7 +1355,7 @@ describe("C5 大小上限與直線放置", () => {
     expect(sizeDrop).not.toHaveBeenCalled();
   });
 
-  it("C5 ⋮⋮ 橫線放置（edgeDrop／emptyColumnDrop 都回 false）→ blockMoveDrop 接手搬移、size 的 handleDrop 不被呼叫（搬移不估大小）", () => {
+  it("drag-handle horizontal-line drop (edgeDrop/emptyColumnDrop both return false) -> blockMoveDrop takes over the move, size handleDrop isn't called (moves don't estimate size)", () => {
     const sizeDrop = spySizeDrop();
     const guard = vi.fn(() => true);
     const m = mount(three(), { sizeGuard: guard });
@@ -1401,7 +1370,7 @@ describe("C5 大小上限與直線放置", () => {
     expect(shape(m.editor)).not.toContain("ROW");
   });
 
-  it("C5 Ctrl 複製拖（PM 預設的放置）→ blockMoveDrop 不接手、size 的 handleDrop 被呼叫一次，回 true 時不放", () => {
+  it("Ctrl copy-drag (PM's default drop) -> blockMoveDrop doesn't take over, size handleDrop is called once, nothing is placed when it returns true", () => {
     const sizeDrop = spySizeDrop();
     const guard = vi.fn(() => true);
     const m = mount(three(), { sizeGuard: guard });
@@ -1416,16 +1385,16 @@ describe("C5 大小上限與直線放置", () => {
   });
 });
 
-describe("C6 handleDrop 跑完就清掉記下的被拖 block", () => {
+describe("handleDrop clears the recorded dragged blocks when done", () => {
   it.each([
-    ["直線放置（接手）", [590, 115], true],
-    ["橫線放置（edgeDrop 不接手）", [300, 115], false],
-  ] as const)("C6 %s：drop 之後、dragend 之前，記錄已經是 null", (_label, at, taken) => {
+    ["vertical-line drop (taken over)", [590, 115], true],
+    ["horizontal-line drop (edgeDrop doesn't take over)", [300, 115], false],
+  ] as const)("%s: after drop and before dragend the record is already null", (_label, at, taken) => {
     const m = mount(three());
     const s = spies();
     mockRects(zToX.boxes);
     const { dataTransfer } = startBlockDrag(m.editor, "z1");
-    expect(draggedBlocksOf(m.view)).not.toBeNull(); // 前提
+    expect(draggedBlocksOf(m.view)).not.toBeNull(); // precondition
     m.view.posAtCoords = () => ({ pos: textIn(m, "x1"), inside: -1 });
     m.view.dom.dispatchEvent(dropEvent(dataTransfer, at));
     expectOneRealCall(s.edge);

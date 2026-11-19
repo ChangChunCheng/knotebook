@@ -31,7 +31,6 @@ function fakeResponse(status: number, body?: unknown): Response {
   } as unknown as Response;
 }
 
-/** 記錄每次呼叫的 method/url/raw body，依表分派回應；未列的 throw（慣例）。 */
 function stubFetch(routes: Record<string, () => Response>) {
   const calls: Array<{ method: string; url: string; body: string | undefined }> = [];
   vi.stubGlobal(
@@ -72,7 +71,7 @@ afterEach(async () => {
 });
 
 describe("api/folders", () => {
-  it("FA1 useFolders 打 GET /api/folders、回 .folders，key 是 ['folders']", async () => {
+  it("useFolders GETs /api/folders and returns .folders; key is ['folders']", async () => {
     const folders = [folderDto({ id: "f1", name: "A" })];
     const calls = stubFetch({ "GET /api/folders": () => fakeResponse(200, { folders }) });
     const queryClient = client();
@@ -82,14 +81,14 @@ describe("api/folders", () => {
     expect(queryClient.getQueryData(FOLDERS_QUERY_KEY)).toEqual(folders);
   });
 
-  it("FA1b fetchFolders：GET /api/folders → .folders（useFolders 與還原後展開共用）", async () => {
+  it("fetchFolders: GET /api/folders -> .folders (shared by useFolders and post-restore expansion)", async () => {
     const folders = [folderDto({ id: "f1", name: "A" }), groupFolder({ id: "g1", name: "G", groupId: "g" })];
     const calls = stubFetch({ "GET /api/folders": () => fakeResponse(200, { folders }) });
     await expect(fetchFolders()).resolves.toEqual(folders);
     expect(calls).toEqual([{ method: "GET", url: "/api/folders", body: undefined }]);
   });
 
-  it("FA2 createFolderRequest：根層帶 space、子資料夾帶 parentId，body 逐字", async () => {
+  it("createFolderRequest: root level carries space, subfolder carries parentId; body verbatim", async () => {
     const created = groupFolder({ id: "gf", name: "Reports", groupId: "g1" });
     const calls = stubFetch({ "POST /api/folders": () => fakeResponse(201, created) });
     await expect(createFolderRequest({ name: "Reports", space: { kind: "group", groupId: "g1" } })).resolves.toEqual(created);
@@ -99,7 +98,7 @@ describe("api/folders", () => {
     expect(JSON.parse(calls[1]!.body!)).toEqual({ name: "Weekly", parentId: "gf" });
   });
 
-  it("FA3 renameFolderRequest(\"f1\", \"B\") → PATCH /api/folders/f1 body {\"name\":\"B\"}", async () => {
+  it("renameFolderRequest(\"f1\", \"B\") -> PATCH /api/folders/f1 body {\"name\":\"B\"}", async () => {
     const calls = stubFetch({ "PATCH /api/folders/f1": () => fakeResponse(200, folderDto({ id: "f1", name: "B" })) });
     await renameFolderRequest("f1", "B");
     expect(calls).toHaveLength(1);
@@ -108,7 +107,7 @@ describe("api/folders", () => {
     expect(JSON.parse(calls[0]!.body!)).toEqual({ name: "B" });
   });
 
-  it("FA4 useCreateFolder 成功後失效 ['folders']、['notes']，不失效 ['trash']", async () => {
+  it("useCreateFolder success invalidates ['folders'], ['notes'], not ['trash']", async () => {
     stubFetch({ "POST /api/folders": () => fakeResponse(201, folderDto({ id: "f1", name: "A" })) });
     const queryClient = client();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
@@ -120,7 +119,7 @@ describe("api/folders", () => {
     expect(keys).not.toContain('["trash"]');
   });
 
-  it("FA5 useRenameFolder／useDeleteFolder 成功與失敗後都失效 ['folders']、['notes']、['trash']", async () => {
+  it("useRenameFolder / useDeleteFolder invalidate ['folders'], ['notes'], ['trash'] on both success and failure", async () => {
     const deleted: FolderDeleteResultDto = { trashedNoteIds: [], deletedFolderIds: ["ok"] };
     stubFetch({
       "PATCH /api/folders/ok": () => fakeResponse(200, folderDto({ id: "ok", name: "B" })),
@@ -148,7 +147,7 @@ describe("api/folders", () => {
     }
   });
 
-  it("FA6 useDeleteFolder 成功後失效每個 trashedNoteIds 的 ['note', id] 與 ['backlinks']", async () => {
+  it("useDeleteFolder success invalidates ['note', id] for every trashedNoteIds and ['backlinks']", async () => {
     const deleted: FolderDeleteResultDto = { trashedNoteIds: ["n1", "n2"], deletedFolderIds: ["f1", "f2"] };
     stubFetch({ "DELETE /api/folders/f1": () => fakeResponse(200, deleted) });
     const queryClient = client();
@@ -161,19 +160,18 @@ describe("api/folders", () => {
     expect(keys).toContain('["backlinks"]');
   });
 
-  it("FA7 folderErrorMessage：folder_too_deep 帶 max（不含 {{max}}）、zh；folder_not_found 逐字；非 ApiFail → fallback", async () => {
+  it("folderErrorMessage: folder_too_deep carries max (no {{max}} left) in en and zh; folder_not_found verbatim; non-ApiFail -> fallback", async () => {
     expect(folderErrorMessage(t, new ApiFail(409, "folder_too_deep", ""))).toBe("Folders can be at most 5 levels deep.");
     expect(folderErrorMessage(t, new ApiFail(404, "folder_not_found", ""))).toBe("Folder not found.");
     expect(folderErrorMessage(t, new Error("network"))).toBe("An unexpected error occurred.");
-    // ApiFail 帶沒有翻譯的 code → fallback（defaultValue）
     expect(folderErrorMessage(t, new ApiFail(500, "weird_unknown_code", ""))).toBe("An unexpected error occurred.");
     await i18n.changeLanguage("zh-TW");
     expect(folderErrorMessage(t, new ApiFail(409, "folder_too_deep", ""))).toBe("資料夾最多 5 層。");
   });
 });
 
-describe("api/folders 放置與搬資料夾", () => {
-  it("FA-P1 placeNoteRequest：PUT /api/notes/:id/folder；null 的鍵存在、值 null", async () => {
+describe("api/folders placement and moving folders", () => {
+  it("placeNoteRequest: PUT /api/notes/:id/folder; a null key is present with value null", async () => {
     const calls = stubFetch({ "PUT /api/notes/n1/folder": () => fakeResponse(200, { id: "n1" }) });
     await placeNoteRequest("n1", "f1");
     await placeNoteRequest("n1", null);
@@ -185,7 +183,7 @@ describe("api/folders 放置與搬資料夾", () => {
     expect(nullBody.folderId).toBeNull();
   });
 
-  it("FA-P2 moveFolderRequest(\"f1\", null) → PATCH /api/folders/f1 body { parentId: null }", async () => {
+  it("moveFolderRequest(\"f1\", null) -> PATCH /api/folders/f1 body { parentId: null }", async () => {
     const calls = stubFetch({ "PATCH /api/folders/f1": () => fakeResponse(200, folderDto({ id: "f1", name: "A" })) });
     await moveFolderRequest("f1", null);
     expect(calls[0]!.method).toBe("PATCH");
@@ -195,7 +193,7 @@ describe("api/folders 放置與搬資料夾", () => {
     expect(body.parentId).toBeNull();
   });
 
-  it("FA-P3 applyPlacedNote：寫 ['note', id]，失效 ['folders']、['notes']，不失效 ['trash']", () => {
+  it("applyPlacedNote: writes ['note', id], invalidates ['folders'], ['notes'], not ['trash']", () => {
     const queryClient = client();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
     const dto = { id: "n1", title: "N" } as unknown as NoteDto;
@@ -208,8 +206,8 @@ describe("api/folders 放置與搬資料夾", () => {
   });
 });
 
-describe("api/folders 只刪空資料夾", () => {
-  it("FA-D1 deleteFolderRequest(\"f\") 不帶 body 與 Content-Type；帶 { onlyIfEmpty: true } → body 恰為 {\"onlyIfEmpty\":true}", async () => {
+describe("api/folders delete only if empty", () => {
+  it("deleteFolderRequest(\"f\") sends no body or Content-Type; with { onlyIfEmpty: true } the body is {\"onlyIfEmpty\":true}", async () => {
     const inits: RequestInit[] = [];
     vi.stubGlobal(
       "fetch",
@@ -228,7 +226,7 @@ describe("api/folders 只刪空資料夾", () => {
     expect(new Headers(inits[1]!.headers).get("Content-Type")).toBe("application/json");
   });
 
-  it("FA-D2 isFolderNotEmpty：409 folder_not_empty → true；folder_delete_blocked、非 ApiFail → false", () => {
+  it("isFolderNotEmpty: 409 folder_not_empty -> true; folder_delete_blocked and non-ApiFail -> false", () => {
     expect(isFolderNotEmpty(new ApiFail(409, "folder_not_empty", ""))).toBe(true);
     expect(isFolderNotEmpty(new ApiFail(403, "folder_delete_blocked", ""))).toBe(false);
     expect(isFolderNotEmpty(new Error("folder_not_empty"))).toBe(false);
