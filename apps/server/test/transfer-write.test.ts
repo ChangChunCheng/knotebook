@@ -68,7 +68,8 @@ describe("state table", () => {
     expect((await baseRow(s.ctx, d.fm.base!)).appliedBodySha).not.toBeNull();
   });
 
-  // The isBlocked pre-check runs before the queue: when the bucket is full even a resend of the same file is 429, so limit 2 here - write once, resend, write another note still succeeds = the resend did not charge.
+  // The write quota is only looked at once the file is known to differ from the copy it came from; nothing checks it before the note's queue.
+  // limit 2: the second note's write can only succeed if neither the resend nor the 409 was charged. With the quota then used up, the same resend still goes through.
   it("resending the same file after write-back -> unchanged, transferWrite not charged; an old base changing another paragraph -> 409 base_unavailable, note unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
@@ -87,6 +88,10 @@ describe("state table", () => {
     await seedMd(s.ctx.db, n2.id, "Only para");
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, n2.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, () => "Changed para"))).statusCode).toBe(200);
+    expect(transferWrite.isBlocked(s.u.id)).toBe(true);
+    const full = await bulkPut(s.ctx.app, s.bulk.token, text);
+    expect(full.statusCode).toBe(200);
+    expect(full.json()).toMatchObject({ result: "unchanged" });
   });
 
   it("color codes: upload #F60 -> download returns lowercase #ff6600; resending the original upload and the re-downloaded file both count as unchanged", async () => {
