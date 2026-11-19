@@ -1,22 +1,13 @@
 /**
- * 版本專用指紋。與 `editing/fingerprint.ts` 的 `outlineOf(...).whole` 分家：
- * 那顆是 #106 `if_match` 的契約（`canonicalizeNode`，**不得改**），這顆只給版本子系統判斷「有沒有改」。四條差別：
- * (1) 空的 `Y.XmlText` 視同不存在——「打一字再刪」留下的 `T[]` 與新建空段落的 `[]` 同值（兩者在 whole 上不同）；
- * (2) 頂層全部是「屬性全為 schema 預設、無內容」的 paragraph（含零顆、多顆）＝真空（兩人同時打開真空筆記會合併出兩顆空段落）；
- * (3) **不丟例外**：顯式 stack 走訪（`canonicalizeNode` 遞迴，5000 層 RangeError）、依文件順序直接走訪、不經 id 查表
- *     （缺 id 不撞鍵）、未知節點照 nodeName、屬性值以有深度上限的 `stableValue` 序列化。
- * (4) 屬性值**嚴格等於**（`===`）該元素類型在 shared schema 的 `propSchema[prop].default` 時視同缺席（方案二）：
- *     舊 schema 寫的筆記缺較新的預設屬性，瀏覽器打一字再刪時 y-prosemirror 會把那個段落連預設屬性一起寫回，內容沒變。
- *     型別不同視為不等（`level: "1"` 不等於預設 `1`）；查不到預設的類型／屬性照舊參與；值為 `undefined` 的屬性一律視同缺席。
- * 雜湊同 `fingerprintOf`（sha256 前 16 hex）；輸入帶 `V2:` 前綴（(4) 之前是 `V1:`），與 whole 的值域分開，不會被誤當 `if_match`。
- * 不做資料遷移：若有 `V1:` 的基底指紋，該篇下一次比對會視為有改，最多多切一版。
- * 只認識 BlockNote 0.52 的結構名（`blockGroup`／`blockContainer`／`paragraph`），升版時 `version-fingerprint.test.ts` 的 pin 案會紅。
+ * Separate from `editing/fingerprint.ts`'s `outlineOf().whole`: that one is the #106 `if_match` contract (`canonicalizeNode`, must not change); this one only decides "was it changed" for versioning. Differences: (1) an empty `Y.XmlText` counts as absent (typing a character then deleting leaves `T[]` vs a new empty paragraph's `[]`); (2) a top level of only default-attribute empty paragraphs (zero or many) is vacuum (two people opening an empty note concurrently merge into two empty paragraphs); (3) never throws: explicit stack (`canonicalizeNode` recursion hits RangeError at 5000 levels), document-order walk with no id lookup, depth-bounded `stableValue`; (4) attribute values strictly `===` the element type's schema default count as absent (notes written under an older schema lack newer default attrs, and y-prosemirror writes them back after a type-and-delete). Types differ → not equal (`level: "1"` ≠ `1`); attributes with undefined are always absent; types/attributes without a known default still count.
+ * Same hash as `fingerprintOf` (sha256, first 16 hex) with a `V2:` prefix so values can't be mistaken for `if_match` (V1 predates (4)); no migration: an old V1 base counts as changed once, at most one extra version.
+ * Knows BlockNote 0.52 structure names only; the pin case in `version-fingerprint.test.ts` goes red on upgrade.
  */
 import * as Y from "yjs";
 import { createHeadlessNoteSchema } from "@knotebook/shared";
 import { fingerprintOf } from "./editing/fingerprint.js";
 
-/** BlockNote 0.52.1 `defaultProps` 的預設值（`test/unit/version-fingerprint.test.ts` 釘住）。 */
+/** BlockNote 0.52.1 `defaultProps` (pinned by `test/unit/version-fingerprint.test.ts`). */
 export const PARAGRAPH_DEFAULT_PROPS: Readonly<Record<string, string>> = {
   backgroundColor: "default",
   textColor: "default",
@@ -25,7 +16,7 @@ export const PARAGRAPH_DEFAULT_PROPS: Readonly<Record<string, string>> = {
 
 export const VACUUM_VERSION_FINGERPRINT = fingerprintOf("V2:vacuum");
 
-/** config 不一定是物件：0.52 的 inline `text`／`link` 在 `inlineContentSchema` 裡就是字串 `"text"`／`"link"`。 */
+/** `config` isn't always an object: in 0.52 inline `text`/`link` are plain strings in `inlineContentSchema`. */
 type SchemaConfigs = Record<string, unknown>;
 interface SchemaLike {
   blockSchema?: SchemaConfigs;
@@ -33,14 +24,9 @@ interface SchemaLike {
   styleSchema?: SchemaConfigs;
 }
 type WarnFn = (obj: object, msg: string) => void;
-// 本模組沒有注入的 logger（模組載入時就要建表）；比照 collab/server.ts 的 consoleCollabLogger。
 const consoleWarn: WarnFn = (obj, msg) => console.warn(msg, obj);
 
-/**
- * 從 schema 的 `blockSchema`／`inlineContentSchema`／`styleSchema` 推出 `{ 類型: { 屬性: 預設值 } }`（只收有 `default` 的屬性、
- * 至少一個預設的類型；style 的 propSchema 是 `"boolean"`／`"string"` 字串，沒有預設，不入表）。**不手寫常數表**——會跟 schema 漂移。
- * `load` 丟例外（某環境載不起 shared schema）→ 退回空表並 `warn` 一次：指紋仍算得出來，只是不忽略預設值（永不 throw 的不變量不破）。
- */
+/** Derived from the schema, not a hand-written table (it would drift). If `load` throws (the shared schema can't load in some environment), fall back to an empty table and warn once: the fingerprint still works, it just doesn't ignore defaults (the never-throws invariant holds). */
 export function buildDefaultPropsByType(load: () => SchemaLike, warn: WarnFn = consoleWarn): Record<string, Record<string, unknown>> {
   try {
     const schema = load();
@@ -63,26 +49,22 @@ export function buildDefaultPropsByType(load: () => SchemaLike, warn: WarnFn = c
   }
 }
 
-/** 模組載入時建一次（`createHeadlessNoteSchema` 只建 config、不碰 DOM；base 不影響 propSchema）。 */
 export const DEFAULT_PROPS_BY_TYPE: Readonly<Record<string, Readonly<Record<string, unknown>>>> = buildDefaultPropsByType(
+  // Config only, no DOM; the base URL doesn't affect propSchema.
   () => createHeadlessNoteSchema("http://localhost/"),
 );
 
-/** 這個屬性值是否嚴格等於該元素類型在 schema 的預設值（查表一律 `Object.hasOwn`，`constructor` 之類的名字不會撞到原型）。 */
+/** `Object.hasOwn` lookups, so names like `constructor` don't hit the prototype. */
 function isSchemaDefault(nodeName: string, attr: string, value: unknown): boolean {
   if (!Object.hasOwn(DEFAULT_PROPS_BY_TYPE, nodeName)) return false;
   const defaults = DEFAULT_PROPS_BY_TYPE[nodeName]!;
   return Object.hasOwn(defaults, attr) && defaults[attr] === value;
 }
 
-/** 屬性值巢狀深度上限：超過的部分以 `"…"` 代表（惡意的深巢狀屬性值不得把序列化推進遞迴爆棧）；
- * 超過上限的部分被截成 `"…"`，該部分的差異不反映在指紋上。 */
+/** Deeper parts become `"…"` (a malicious deep attribute value mustn't blow the stack); differences past it don't reach the fingerprint. */
 const VALUE_DEPTH_MAX = 32;
 
-/**
- * 對 JSON 值與 shared `note-sections.ts` 的 `stable()` 同形（鍵排序、陣列保序）；另加三種保險：深度上限、`bigint`／`Uint8Array`
- * 轉字串（`JSON.stringify` 遇 bigint 會丟例外）、`Y.AbstractType` 不展開（有父指標，展開會成環）。
- */
+/** Same shape as `stable()` in shared `note-sections.ts`, plus: depth limit, bigint/Uint8Array as strings (`JSON.stringify` throws on bigint), and `Y.AbstractType` not expanded (parent pointers cycle). */
 function stableValue(value: unknown, depth = 0): string {
   if (depth > VALUE_DEPTH_MAX) return '"…"';
   if (value === null) return "null";
@@ -114,7 +96,6 @@ function isDefaultEmptyParagraphContainer(node: unknown): boolean {
   return p.toArray().every(c => c instanceof Y.XmlText && c.length === 0);
 }
 
-/** 真空：fragment 為空，或恰一個 blockGroup、它的每個子節點都是預設空段落（含零個）。只看三層，不遞迴。 */
 function isVacuum(fragment: Y.XmlFragment): boolean {
   if (fragment.length === 0) return true;
   if (fragment.length !== 1) return false;
@@ -124,17 +105,14 @@ function isVacuum(fragment: Y.XmlFragment): boolean {
 
 type Frame = Y.XmlElement | Y.XmlText | string;
 
-/** 子節點反序推入（pop 出來就是文件順序）；空 XmlText 與 XmlHook 不進場；兄弟之間推分隔記號。 */
 function pushChildren(stack: Frame[], kids: unknown[]): void {
   const kept = kids.filter((c): c is Y.XmlElement | Y.XmlText => c instanceof Y.XmlElement || (c instanceof Y.XmlText && c.length > 0));
   for (let i = kept.length - 1; i >= 0; i -= 1) {
     stack.push(kept[i]!);
-    // 兄弟分隔記號是保險、不承重：`E…[…]` 與 `T…` 本身就有明確邊界（拿掉仍 11/11 綠）。
     if (i > 0) stack.push("|");
   }
 }
 
-/** 前序序列化，顯式 stack（深度不受 JS 呼叫棧限制）。元素：`E<name>(<排序後的非 id 屬性>)[<子>]`；文字：`T<delta>`。 */
 function serialize(fragment: Y.XmlFragment): string {
   const out: string[] = ["F["];
   const stack: Frame[] = ["]"];
@@ -151,8 +129,7 @@ function serialize(fragment: Y.XmlFragment): string {
     }
     const attrs = f.getAttributes() as Record<string, unknown>;
     const kept = Object.keys(attrs)
-      // 值為 undefined 一律視同缺席：`numberedListItem.start`、image／video `previewWidth` 的預設就是 undefined（不入表），
-      // y-prosemirror 重建節點時會把 undefined 寫進 Yjs。
+      // undefined attrs count as absent: `numberedListItem.start` and image/video `previewWidth` default to undefined (not in the table), and y-prosemirror writes undefined into Yjs when rebuilding nodes.
       .filter(k => k !== "id" && attrs[k] !== undefined && !isSchemaDefault(f.nodeName, k, attrs[k]))
       .sort()
       .map(k => `${JSON.stringify(k)}=${stableValue(attrs[k])}`);
@@ -163,7 +140,6 @@ function serialize(fragment: Y.XmlFragment): string {
   return out.join("");
 }
 
-/** 版本子系統唯一的「內容指紋」。永不丟例外（呼叫端仍包防禦性 catch）。 */
 export function versionFingerprint(fragment: Y.XmlFragment): string {
   return isVacuum(fragment) ? VACUUM_VERSION_FINGERPRINT : fingerprintOf(`V2:${serialize(fragment)}`);
 }

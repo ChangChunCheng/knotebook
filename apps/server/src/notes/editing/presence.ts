@@ -1,4 +1,3 @@
-// 實作等級：full（實測過：游標真的解回目標 block）。
 import { createHash } from "node:crypto";
 import type { Hocuspocus } from "@hocuspocus/server";
 import * as Y from "yjs";
@@ -9,29 +8,17 @@ import {
 import type { CollabContext } from "../../collab/server.js";
 import { SERVER_PRESENCE_ORIGIN } from "../../collab/awareness-sanitize.js";
 
-// 只對已載入文件掛 awareness，直接發事件（clock 不大於 meta 的項目會被整筆跳過，
-// y-protocols/awareness.js:256；Hocuspocus 的 handleAwarenessUpdate 再重新編碼廣播）。
-// ⚠ clocks 是**模組層**、process 生命週期、永不修剪：provider 在 removal 後仍保留 meta 的
-// clock（awareness.js:269-272），重新起算的計數會被靜默丟棄＝閒置停止後 AI 再也不現身。
-// 守衛：test/unit/editing-presence.test.ts 的「clock map 是 process 生命週期」那一案（唯一一個）。
-// ⚠ state 一定要帶 `beat`：change 只在 state 深度不等時才發（awareness.js:278），而名牌只吃
-// change 的 `updated`（@blocknote/core/dist/yjs.js:80）——少了它，名牌一次都不會亮。
-// 每個 beat 都重取 documents.get，絕不快取 Awareness（unload 會 destroy、reload 是新物件）。
-// state 帶 `knotebook` agent 標記（#293）：web 頭像列只認它判斷 AI，不從名字猜。
-// origin 用 collab server 認得的那一個：它據此把這些 client id 登記成 server 擁有，連線不能改寫（#312）。
+// `clocks` is module-level and never pruned: the provider keeps meta clocks after removal (y-protocols awareness.js), so a restarted counter would be silently dropped and the AI would never reappear (guarded by "clock map is process lifetime" in editing-presence.test.ts).
+// State must carry `beat`: awareness only emits change when state differs deeply, and the name tag only reads change.updated (@blocknote/core yjs.js).
+// Re-read documents.get on every beat; never cache the Awareness (unload destroys it).
+// The `knotebook` agent marker is how the web avatar list tells AI; origin is the one the collab server recognizes, so these client ids are registered as server-owned (#312).
 const clocks = new Map<number, number>();
 const ORIGIN = SERVER_PRESENCE_ORIGIN;
 export const PRESENCE_COLOR = AGENT_PRESENCE_COLOR;
 
-/** presence 的身分：`name`／`color` 進 awareness 的 `user`（BlockNote 名牌照舊）；`handle`／`label` 進 `knotebook` 的 agent 標記（#293）。 */
 export interface PresenceIdentity { name: string; color: string; handle: string; label: string }
 
-/**
- * presence 顯示名的**唯一**組字點（#108），同時帶出 handle／label。原本 `routes/notes.ts` 三處（`/content` 讀、
- * `/edits` 寫、`/revert`）＋ `mcp/note-read.ts` 一處各有一份逐字相同的字面量，四份都改吃這裡。
- * ⚠ **組字只有一份了，但「它組得對不對」仍然只有兩條逐字斷言守著**（`note-presence.test.ts`
- * 與 `mcp-content.test.ts` 的 presence 案）——把 `<handle> (<label>)` 前後顛倒兩者都會紅。
- */
+/** Single place that composes the display name; guarded only by two verbatim assertions (`note-presence.test.ts`, `mcp-content.test.ts`). */
 export function presenceIdentity(userHandle: string, agentLabel: string): PresenceIdentity {
   return { name: `${userHandle} (${agentLabel})`, color: PRESENCE_COLOR, handle: userHandle, label: agentLabel };
 }
@@ -45,24 +32,15 @@ export type PresenceTarget =
   | { kind: "block"; blockId: string }
   | { kind: "doc-start" };
 
-/** `?section=` 讀 → 該段第一顆；整篇讀 → 文件開頭。讀取不動結構，用 sectionId 是安全的。 */
 export function presenceTargetForRead(section: string | undefined): PresenceTarget {
   return section === undefined ? { kind: "doc-start" } : { kind: "section", sectionId: section };
 }
 
 /**
- * 段落寫入 → 該段第一顆；`replace_all` → 文件第一顆。
- * ⚠ **只吃編輯後的 `afterBlockIds`，絕不吃請求帶進來的 `section_id`**：section_id 就是 heading
- * 那顆 block 的 id，而 replace_section／delete_section 連 heading 一起換掉（apply.ts 的
- * `ed.replaceBlocks(sectionIds, …)`），編輯完成後它已不存在——拿它去查會靜默退回文件開頭。
- * `afterBlockIds[0]` 就是這次寫下去的第一顆 block，四個 op 一致；delete_section 的 afterIds
- * 恆為空（該段已刪，沒有落點）→ 文件開頭。
- * ⚠ **`insert_after` 刻意不定到該段的 heading**：
- * 這裡落在**剛插入的第一顆**。理由是簽章裡刻意沒有 sectionId 參數（見上），而使用者要看的本來
- * 就是 AI 剛寫下的那一顆。這是刻意的——不要當成 bug「修」回去。
+ * Use only post-edit `afterBlockIds`, never the request's `section_id`: it is a heading id that replace_section/delete_section replace, so the lookup would silently fall back to doc start. `insert_after` deliberately lands on the first inserted block, not the heading; `delete_section` has no landing block (afterIds always empty) and goes to doc start.
  */
 export function presenceTargetForWrite(op: EditOp, afterBlockIds: readonly string[]): PresenceTarget {
-  if (op === "replace_all") return { kind: "doc-start" }; // 整篇取代 → 文件第一顆
+  if (op === "replace_all") return { kind: "doc-start" };
   const first = afterBlockIds[0];
   return first === undefined ? { kind: "doc-start" } : { kind: "block", blockId: first };
 }
@@ -87,8 +65,7 @@ export class PresenceRegistry {
     this.now = opts.now ?? Date.now;
     this.capacity = opts.capacity ?? 500;
     this.idleMs = opts.idleMs ?? 120_000;
-    // ⚠ 心跳可以縮短、**絕不可放大**：對端 y-protocols 的 outdatedTimeout 是寫死的 30 s，
-    // 不會跟著這個值走，放大到 30 s 以上就是瀏覽器把 AI 掃掉（實測 10 s / 30 s 這個比例可行）。
+    // The heartbeat may be shortened but never lengthened: the peer's y-protocols outdatedTimeout is a hard-coded 30 s.
     this.heartbeatMs = opts.heartbeatMs ?? 10_000;
   }
   get size(): number { return this.entries.size; }
@@ -99,48 +76,23 @@ export class PresenceRegistry {
     return n;
   }
 
-  /** ⚠ 回的是 `Y.relativePositionToJSON(...)` 的 JSON 物件，**不是 yjs 那支回 `Uint8Array` 的
-   *  編碼版**（awareness 傳輸會 JSON.stringify，消費端 y-prosemirror 讀的是
-   *  `createRelativePositionFromJSON`；送錯形會在裝飾計算裡丟 "Unexpected case"）。
-   *  驗收 grep 要求整個 apps/server 完全不出現那個編碼函式名，所以這裡刻意不寫出它。 */
+  /** Must be the JSON form (`Y.relativePositionToJSON`), not the `Uint8Array` encoding: awareness JSON.stringify's it and y-prosemirror reads `createRelativePositionFromJSON`; the wrong shape throws "Unexpected case" client-side. */
   private cursorFor(doc: Y.Doc, target: PresenceTarget): { anchor: unknown; head: unknown } | null {
     const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
     const containers = topLevelContainers(fragment);
     const byId = (id: string | undefined) => containers.find(c => c.getAttribute("id") === id);
     let block: Y.XmlElement | undefined = containers[0];
     if (target.kind === "section") {
-      // 零 block `_top`（筆記以 heading 開頭）→ blockIds[0] 是 undefined → 退文件開頭
       block = byId(sectionize(fragment).find(s => s.sectionId === target.sectionId)?.blockIds[0]) ?? block;
     } else if (target.kind === "block") {
-      // 併發：這一顆可能在我們 emit 之前又被別人改掉了 → 退文件開頭，不丟錯
       block = byId(target.blockId) ?? block;
     }
-    // 並排列：往下一層取第一欄的第一個 blockContainer（不遞迴）
     if (block?.nodeName === "columnList") {
       const firstColumn = block.get(0);
       const first = firstColumn instanceof Y.XmlElement ? firstColumn.get(0) : undefined;
       block = first instanceof Y.XmlElement ? first : undefined;
     }
-    // ⚠ 兩層都要判型，但兩層擋的是**不同**情境（實測用真 BlockNote 文件量過，見下）：
-    // 第一層（`content instanceof Y.XmlElement`）擋的是**文件連一顆頂層容器都沒有**——尚未被
-    // 任何用戶端寫入的空文件，`topLevelContainers` 回 `[]`，`block` 是 `undefined`，於是
-    // `content` 也是 `undefined`。拿掉這層、直接呼叫 `content.get(0)`，會在**這裡**（伺服器端
-    // `cursorFor` 本身，touch/emit 呼叫進來的同步呼叫鏈）丟
-    // `TypeError: Cannot read properties of undefined (reading 'get')`——這是可達的正式情境
-    // （筆記剛建立、還沒有人打過字）。這跟「錯誤編碼形在裝飾計算裡丟錯」是
-    // **兩個不同機制**：那條是游標的**編碼形式**在**用戶端** y-prosemirror 的裝飾計算裡
-    // 丟錯；這裡是**完全沒有頂層容器**在**伺服器端**因為呼叫在 `undefined` 上取子節點而丟錯。
-    // 圖片、分隔線這類「非文字」block **不是**這一層要擋的對象：容器的第一個子節點就是那顆
-    // 內容元素本身（例如 `<blockContainer><image .../></blockContainer>`），`content` 非
-    // `undefined`，只是長度為 0——是**第二層**（`text instanceof Y.XmlText`）安靜擋下它們、
-    // 回空值、不丟錯（`content.get(0)` 在 0 長度的元素上安全回 `undefined`）。
-    // 守衛＝本檔（`editing-presence.test.ts`）除「目標推導」與「clientId 穩定」外的其餘 6 案
-    // （不含「表格」那一案）——只拿掉第一層會讓這 6 案在 touch() 內同步丟出上述例外；「表格」
-    // 那一案因為文件裡確實有頂層容器，不受第一層影響，仍然綠。第二層另有窄化守衛：若只判
-    // `!== undefined`（表格這類「有子節點但子節點是元素」的窄縫——`<table><tableRow>…`，
-    // `table.get(0)` 是 `tableRow` 這個 `Y.XmlElement`，不是 `undefined` 也不是文字），不丟錯
-    // 但會塞一個指向元素而非文字節點的型別錯誤 cursor 進 awareness state，見「內容的第一個
-    // 子節點是元素而非文字」那一案。
+    // Both checks are needed: the first guards a doc with no top-level container yet (new note, nobody typed): `content` is undefined and `content.get(0)` would throw here; the second guards non-text first children (images; tables, where `get(0)` is a tableRow element), which would put a wrongly typed cursor into the awareness state.
     const content = block?.get(0);
     const text = content instanceof Y.XmlElement ? content.get(0) : undefined;
     if (!(text instanceof Y.XmlText)) return null;
@@ -150,13 +102,11 @@ export class PresenceRegistry {
 
   private emit(entry: Entry, kind: "added" | "updated" | "removed"): void {
     const doc = this.hocuspocus?.documents.get(entry.noteId);
-    if (!doc) return; // 未載入／已 unload：沒有人看得到，也沒有 Awareness 可寫
+    if (!doc) return;
     const clock = this.bump(entry.clientId);
     if (kind === "removed") {
       doc.awareness.states.delete(entry.clientId);
     } else {
-      // ⚠ `beat: clock` 不是裝飾品：state 深度相等時 provider 不發 change，BlockNote 的名牌
-      //   就永遠不會亮（Global Constraints 專條）。守衛＝單元檔的「state 深度不等」那一案。
       const cursor = this.cursorFor(doc, entry.target);
       const { name, color, handle, label } = entry.identity;
       const knotebook: AgentPresenceField = { v: 1, kind: "agent", handle, label };
@@ -171,7 +121,7 @@ export class PresenceRegistry {
   }
 
   touch(noteId: string, tokenId: string, identity: PresenceIdentity, target: PresenceTarget): void {
-    if (!this.hocuspocus?.documents.get(noteId)) return; // 未載入＝沒人看得到
+    if (!this.hocuspocus?.documents.get(noteId)) return;
     const key = `${noteId}:${tokenId}`;
     const existing = this.entries.get(key);
     if (existing) {

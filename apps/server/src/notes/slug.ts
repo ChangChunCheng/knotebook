@@ -5,11 +5,6 @@ import type { DbOrTx } from "../db/tx.js";
 import { uniqueViolationConstraint } from "../db/pg-errors.js";
 import { notes } from "../db/schema.js";
 
-/**
- * 把 `validateSlug` 回傳的違規原因轉成使用者看得懂的訊息（分支順序：
- * length → charset → dash → reserved → uuid_like）——這裡刻意不逐字照抄
- * `validateSlug` 的英文型別名稱，讓 400 回應的 `message` 對終端使用者友善。
- */
 function slugErrorMessage(reason: NonNullable<ReturnType<typeof validateSlug>>): string {
   switch (reason) {
     case "length":
@@ -27,11 +22,6 @@ function slugErrorMessage(reason: NonNullable<ReturnType<typeof validateSlug>>):
 
 export type SlugValidationResult = { ok: true; value: string } | { ok: false; message: string };
 
-/**
- * PATCH /api/notes/:id 帶非 null `slug` 時的正規化+驗證入口：`normalizeSlug` →
- * `validateSlug`，違者回傳可直接塞進 400 `invalid_body` 的訊息。呼叫端（routes/notes.ts）
- * 只需處理這個聯集，不必自己重複組裝 `normalizeSlug`/`validateSlug` 兩支呼叫。
- */
 export function prepareSlugForPatch(raw: string): SlugValidationResult {
   const normalized = normalizeSlug(raw);
   const reason = validateSlug(normalized);
@@ -41,41 +31,25 @@ export function prepareSlugForPatch(raw: string): SlugValidationResult {
   return { ok: true, value: normalized };
 }
 
-// auto slug 探測上限（#122，同 auth/handle.ts 的 PROBE_LIMIT 理由與可見性）：
-// 探測是 O(同前綴數) 次索引查詢，而 title PATCH 與建立筆記（`notes/create.ts`，#145）**兩條
-// 路都無節流**（cookie 的 `POST /api/notes` 沒有 per-user 桶；Bearer 只吃 `tokenWrite`），
-// 上界必須有。超限退 `untitled-<uuid8>`。
+// Probing is O(same-prefix count) index queries, and both title PATCH and note creation are unthrottled (cookie `POST /api/notes` has no per-user limiter), so a bound is required; beyond it fall back to `untitled-<uuid8>`.
 const AUTO_SLUG_PROBE_LIMIT = 20;
 
-// auto slug 的寫入撞唯一索引（真競態）重試上限（#122）：1..5 次重探測重發，
-// 第 6 次改用 `fallbackAutoSlug()`（untitled-<uuid8>）——再撞（~2^-32）就讓錯誤冒出去。
-// **兩個呼叫端共用這一份**（#145）：`routes/notes.ts` 的 PATCH（UPDATE 重試）與
-// `notes/create.ts` 的建立路徑（INSERT 重試）。各自寫死一個 5 的話，只改其中一處不會有
-// 任何測試變紅（同 `UPDATED_AT_NOW` 抽出的理由，#142）。
+// 1..5 re-probes, then `fallbackAutoSlug()`; a further collision (~2^-32) surfaces. Shared by PATCH (UPDATE retry) and create (INSERT retry): separate hard-coded 5s could drift with no test failing.
 export const MAX_AUTO_SLUG_RETRIES = 5;
 
-/** 探測全敗／UPDATE 重試耗盡時的最終退位形（碰撞機率 ~2^-32，撞上就讓唯一索引裁決）。 */
 export function fallbackAutoSlug(): string {
   return `untitled-${randomUUID().slice(0, 8)}`;
 }
 
-/**
- * #175：auto slug 的去重範圍。個人筆記＝owner（`notes_owner_slug_idx`）、群組筆記＝群組（`notes_group_slug_idx`）。
- * 群組筆記的 `owner_id` 是 NULL，兩把唯一索引互不干擾（PG 的 NULL 不互撞）。
- */
+/** Personal notes dedupe per owner (`notes_owner_slug_idx`), group notes per group (`notes_group_slug_idx`); the two unique indexes don't collide with each other: group notes have `owner_id` NULL. */
 export type SlugScope = { ownerId: string } | { groupId: string };
 
-/** 撞的是哪一把 slug 唯一索引都算「slug 撞名」（constraint 名分流）；其他 23505 一律不是。 */
 export function isSlugUniqueViolation(err: unknown): boolean {
   const c = uniqueViolationConstraint(err);
   return c === "notes_owner_slug_idx" || c === "notes_group_slug_idx";
 }
 
-/**
- * #175：`-N` 尾碼候選（移動、轉移、建立、PATCH 共用的唯一一份算術）。n=1 回基底本身（不截）；n≥2 重截基底
- * （以 code point 計，CJK 不被切半）使總長 ≤60、去掉截斷後的尾端連字號（不產生 `--N`）後加 `-N`——同 0007
- * backfill 的 SQL 版。
- */
+/** n=1 returns the base itself; n≥2 re-truncates the base by code point (CJK isn't cut in half) so the total ≤ 60, drops a trailing dash (no `--N`), then appends `-N`. Same as the 0007 backfill SQL. */
 export function nextSlugCandidate(base: string, n: number): string {
   if (n <= 1) return base;
   const suffix = `-${n}`;
@@ -84,22 +58,7 @@ export function nextSlugCandidate(base: string, n: number): string {
 }
 
 /**
- * scope 範圍（個人＝owner、群組＝群組）的 slug 去重探測（#122；#175 抽出）：依序探測
- * `nextSlugCandidate(base, 1..AUTO_SLUG_PROBE_LIMIT)`，回第一個沒被占用的；全撞 → `fallbackAutoSlug()`
- * （`untitled-<uuid8>`）。收 `DbOrTx`：交易內（`notes/tx/write-slug.ts` 的 `writeSlugInTx`）傳 `tx`、
- * 交易外（PATCH、建立的預設模式）傳 `db`。
- *
- * **述詞必排除本列**（`id <> noteId`）——不排除的話「標題微調但 auto slug 不變」會把
- * 自己判成占用、網址在 `meeting`↔`meeting-2` 間震盪且每次舊網址即死。
- *
- * `excludeNoteId === null` ＝**這一列還不存在**（建立路徑，`notes/create.ts`，#145）：本來就沒有
- * 「本列」要排除，`and()` 會把那個 `undefined` 述詞濾掉。實測（`.toSQL()`）：
- * 非 null 那條路渲染出的 `sql` 與放寬前**逐位元組相同**、`params` 同為 4 格；null 則少掉
- * `"id" <> $3`、`params` 剩 3 格——所以放寬對 PATCH 是零改變。
- *
- * 明文特赦（同 deriveHandle）：這是可用性探測、非唯一性裁決——兩把唯一索引
- * （`notes_owner_slug_idx`／`notes_group_slug_idx`）仍是最終裁決者；探測後仍撞（真競態）由呼叫端重探測重發（PATCH 的 UPDATE
- * 重試迴圈、`notes/create.ts` 的 INSERT 重試迴圈與 `writeSlugInTx` 的 savepoint 重試迴圈，三者共用 `MAX_AUTO_SLUG_RETRIES`）。
+ * The predicate must exclude the row itself (`id <> noteId`), otherwise a title tweak that leaves the auto slug unchanged would find itself occupying it and flip between `meeting` and `meeting-2`. `excludeNoteId === null` means the row doesn't exist yet (create): `and()` drops the undefined predicate. This is an availability probe, not the uniqueness arbiter: the unique indexes are, and callers retry on collision (shared `MAX_AUTO_SLUG_RETRIES`).
  */
 export async function probeUniqueSlug(db: DbOrTx, scope: SlugScope, excludeNoteId: string | null, base: string): Promise<string> {
   for (let n = 1; n <= AUTO_SLUG_PROBE_LIMIT; n++) {
@@ -120,29 +79,12 @@ export async function probeUniqueSlug(db: DbOrTx, scope: SlugScope, excludeNoteI
   return fallbackAutoSlug();
 }
 
-/**
- * auto slug 的 scope 範圍去重探測（#122）：候選基底＝`autoSlugFromTitle(title)`，探測與 `-N` 算術全在
- * `probeUniqueSlug`／`nextSlugCandidate`（#175 抽出；行為與抽出前逐輪相同——候選序列、探測次數、退位形、
- * 渲染出的 SQL 與 params 都不變）。`noteId` 的語意見 `probeUniqueSlug` 的 `excludeNoteId`。
- */
 export async function deriveUniqueAutoSlug(db: DbOrTx, scope: SlugScope, noteId: string | null, title: string): Promise<string> {
   return probeUniqueSlug(db, scope, noteId, autoSlugFromTitle(title));
 }
 
 /**
- * 舊形 `GET /api/notes/:ref` 的 ref 解析（#122，序位即優先序）：
- * 1. `normalizeSlug(ref)` 精確比對 **`notes.legacy_slug`**（0007 凍結快照，全域唯一、
- *    trigger 保證不可變）——**刻意不查現行 `notes.slug`**：slug 已是 per-user 唯一，
- *    跨 owner 同名時全域查找沒有確定答案；舊形連結凍結在 0007 當下的世界。
- *    「A 的 legacy 與 B 之後設的同名現行 custom 並存 → `/notes/<名>` 解到 A」＝
- *    設計意圖（劫持反例測試釘住），新形網址走 by-path 不經這裡。
- * 2. 未命中 → `extractRefUuid(ref)` 擷取尾碼/整串 uuid（涵蓋純 uuid 與舊版
- *    `<vanity>-<uuid>` 兩種形式）——這使 0007 之前發出去的所有連結永久可解。
- * 3. 兩者皆失敗 → null，呼叫端一律映射成 404 `not_found`（防列舉，不區分
- *    「slug 不存在」與「格式看起來不像 uuid」）。
- *
- * 注意：這裡只負責「ref → noteId」，不做任何權限判斷——呼叫端仍須對解出來的
- * noteId 走 `resolveRole`（none → 404），與其他 notes 路由的防列舉原則一致。
+ * Looks up `notes.legacy_slug` (frozen at 0007, globally unique, immutable via trigger), deliberately not the current `notes.slug`: slugs are per-user unique, so a global lookup has no deterministic answer, and old-form links stay frozen to 0007's world. Then falls back to the uuid in the ref (bare or `<vanity>-<uuid>`), so pre-0007 links resolve forever; A's legacy slug beats B's later identical custom slug by design (hijack test). Resolves ref → id only, no authorization; null always maps to 404 (anti-enumeration).
  */
 export async function resolveNoteIdFromRef(db: DbOrTx, ref: string): Promise<string | null> {
   const normalized = normalizeSlug(ref);
