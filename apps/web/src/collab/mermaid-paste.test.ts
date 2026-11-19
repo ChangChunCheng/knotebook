@@ -3,16 +3,15 @@ import { CB, P, mountEditor, row, shape, type AnyEditor } from "@/test/columns-f
 import { replaceBlocksKeepColumns } from "./columns/keep-columns";
 import { collectBlockIds, convertPastedMermaidBlocks, findPastedMermaidCodeBlocks } from "./mermaid-paste";
 
-// 包一層照呼叫原實作的 spy；不用 automock——那會讓 MP1 的真編輯器轉換變成什麼都不做。
+// Wrapped in a spy that calls through to the real implementation; not automock, which would turn the real-editor conversion into a no-op.
 vi.mock("./columns/keep-columns", async (importOriginal) => {
   const m = await importOriginal<typeof import("./columns/keep-columns")>();
   return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
 });
 beforeEach(() => {
-  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // Not an arrow returning it: a function returned from beforeEach runs as teardown; mockReset also clears the mockImplementationOnce queue and restores the wrapped original
 });
 
-/** 測試用的 block 形狀（只含本模組會讀的欄位）。 */
 interface TestBlock {
   id: string;
   type: string;
@@ -29,50 +28,48 @@ function paragraph(id: string, children: TestBlock[] = []): TestBlock {
 }
 
 describe("collectBlockIds", () => {
-  it("含巢狀 children", () => {
+  it("includes nested children", () => {
     const doc = [paragraph("a", [paragraph("a1"), codeBlock("a2", "ts", "x")]), paragraph("b")];
     expect(collectBlockIds(doc)).toEqual(new Set(["a", "a1", "a2", "b"]));
   });
 
-  it("空文件回空集合", () => {
+  it("empty document gives an empty set", () => {
     expect(collectBlockIds([])).toEqual(new Set());
   });
 });
 
 describe("findPastedMermaidCodeBlocks", () => {
-  it("只挑**新插入**且 language 為 mermaid 的 code block", () => {
+  it("picks only code blocks that are **newly inserted** and have language mermaid", () => {
     const before = new Set(["old"]);
     const doc = [codeBlock("old", "mermaid", "graph TD; A-->B;"), codeBlock("new", "mermaid", "graph LR; X-->Y;")];
     expect(findPastedMermaidCodeBlocks(doc, before)).toEqual([{ id: "new", code: "graph LR; X-->Y;" }]);
   });
 
-  it("⚠ 既有的 mermaid code block 不得被動到", () => {
-    // 這是這個模組最重要的不變量：使用者可能刻意把一張圖「轉回程式碼」保留著，
-    // 之後在別處貼上時**不該**把它again 轉成圖。所以判定必須以「這次新插入的」為界，
-    // 不能掃全文。
+  it("an existing mermaid code block must not be touched", () => {
+    // The module's key invariant: a user may deliberately turn a diagram back into code and keep it, and pasting elsewhere later must not convert it into a diagram again. So the decision is bounded by "newly inserted this time" and can't scan the whole document.
     const doc = [codeBlock("kept-as-code", "mermaid", "graph TD; A-->B;")];
     expect(findPastedMermaidCodeBlocks(doc, collectBlockIds(doc))).toEqual([]);
   });
 
-  it("其他語言的 code block 不動", () => {
+  it("code blocks of other languages are untouched", () => {
     expect(findPastedMermaidCodeBlocks([codeBlock("n", "ts", "const a = 1;")], new Set())).toEqual([]);
   });
 
-  it("language 未設定的 code block 不動", () => {
+  it("code blocks with no language set are untouched", () => {
     const block = { id: "n", type: "codeBlock", props: {}, content: [{ type: "text", text: "x" }], children: [] };
     expect(findPastedMermaidCodeBlocks([block], new Set())).toEqual([]);
   });
 
-  it("內容為空白的 mermaid code block 不動（不製造空圖）", () => {
+  it("a mermaid code block with blank content is untouched (no empty diagram is made)", () => {
     expect(findPastedMermaidCodeBlocks([codeBlock("n", "mermaid", "  \n ")], new Set())).toEqual([]);
   });
 
-  it("巢狀 children 內的也找得到", () => {
+  it("ones inside nested children are found too", () => {
     const doc = [paragraph("p", [codeBlock("deep", "mermaid", "graph TD; A-->B;")])];
     expect(findPastedMermaidCodeBlocks(doc, new Set())).toEqual([{ id: "deep", code: "graph TD; A-->B;" }]);
   });
 
-  it("保留原始碼的換行與縮排", () => {
+  it("keeps the source's line breaks and indentation", () => {
     const source = "graph TD\n  A-->B\n  B-->C";
     expect(findPastedMermaidCodeBlocks([codeBlock("n", "mermaid", source)], new Set())).toEqual([
       { id: "n", code: source },
@@ -81,8 +78,8 @@ describe("findPastedMermaidCodeBlocks", () => {
 });
 
 describe("convertPastedMermaidBlocks", () => {
-  // 假 editor 的 `transact` 不執行回呼：helper 照呼叫原實作，但不碰文件；斷言對 helper 的 spy 做。
-  it("把找到的 code block 換成 mermaid block", () => {
+  // The fake editor's `transact` doesn't run the callback: the helper calls through to the real implementation but doesn't touch the document; assertions are made on the helper's spy.
+  it("replaces the found code blocks with mermaid blocks", () => {
     const doc = [codeBlock("new", "mermaid", "graph TD; A-->B;")];
     const editor = { document: doc, transact: vi.fn() };
     const count = convertPastedMermaidBlocks(editor, new Set());
@@ -90,13 +87,13 @@ describe("convertPastedMermaidBlocks", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["new"], [{ type: "mermaid", props: { code: "graph TD; A-->B;" } }]);
   });
 
-  it("沒有可轉的就完全不碰編輯器", () => {
+  it("with nothing to convert the editor isn't touched at all", () => {
     const editor = { document: [paragraph("p")], transact: vi.fn() };
     expect(convertPastedMermaidBlocks(editor, new Set())).toBe(0);
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("⚠ 取代拋錯不外傳（貼上已經完成，不能因為轉換失敗而讓整個貼上看起來壞掉）", () => {
+  it("an error thrown by the replacement doesn't propagate (the paste has already completed, and a failed conversion mustn't make the whole paste look broken)", () => {
     vi.mocked(replaceBlocksKeepColumns).mockImplementationOnce(() => {
       throw new Error("boom");
     });
@@ -104,7 +101,7 @@ describe("convertPastedMermaidBlocks", () => {
     expect(() => convertPastedMermaidBlocks({ document: doc, transact: vi.fn() }, new Set())).not.toThrow();
   });
 
-  it("多個一起轉，且逐一替換（一個失敗不影響其他）", () => {
+  it("several are converted together, replaced one by one (one failure doesn't affect the others)", () => {
     vi.mocked(replaceBlocksKeepColumns).mockImplementationOnce(() => {
       throw new Error("boom");
     });
@@ -113,12 +110,12 @@ describe("convertPastedMermaidBlocks", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).toHaveBeenCalledTimes(2);
   });
 
-  describe("真編輯器", () => {
+  describe("real editor", () => {
     let destroy: (() => void) | undefined;
     afterEach(() => destroy?.());
 
-    // 同列另一欄是空的：core 的 fixColumnList 會刪掉所有空欄、把剩一欄的列攤平——程式發動的移除不走這條。
-    it("MP1：欄內唯一 block 是 ```mermaid codeBlock → 轉成 mermaid、列仍兩欄", () => {
+    // The other column in the row is empty: core's fixColumnList deletes all empty columns and flattens a row left with one column; removals triggered by code don't take that path.
+    it("the only block in a column is a ```mermaid codeBlock -> converted to mermaid, the row still has two columns", () => {
       const m = mountEditor([
         P("x", "x"),
         row([[{ ...CB("m", "graph TD; A-->B;"), props: { language: "mermaid" } }], [P("", "e")]], "r"),

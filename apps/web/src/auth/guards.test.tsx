@@ -5,8 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-rou
 import "@/i18n";
 import { RequireAuth, ChangePasswordGate } from "./guards";
 
-// `ChangePasswordGate` 的 fetch-mocked 測試：不打真的 server，只驗證
-// `/api/auth/me` 回傳不同組合時，路由最終落在哪個佔位頁面。
+// Fetch-mocked tests for `ChangePasswordGate`: no real server; checks only which placeholder page the route lands on for different `/api/auth/me` responses.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -22,8 +21,6 @@ function fakeResponse({ ok, status, json }: FakeResponseInit): Response {
   } as unknown as Response;
 }
 
-/** 已登入，且可指定 `mustChangePassword`——給 `ChangePasswordGate`
- * 測試用。 */
 function mockFetchMustChangePassword(mustChangePassword: boolean) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
@@ -51,9 +48,7 @@ function mockFetchMustChangePassword(mustChangePassword: boolean) {
   });
 }
 
-/** 多掛一條 `/change-password` 路由，且用 `<ChangePasswordGate>` 包住 `/*`
- * catch-all——與 `App.tsx` 的真實巢狀方式一致（`/change-password` 本身在
- * gate 外面，其餘路由在 gate 裡面）。 */
+/** Mounts an extra `/change-password` route and wraps the `/*` catch-all in `<ChangePasswordGate>`, matching App.tsx's real nesting (`/change-password` itself is outside the gate, other routes inside). */
 function renderChangePasswordGateAt(initialPath: string) {
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -72,7 +67,7 @@ function renderChangePasswordGateAt(initialPath: string) {
   );
 }
 
-/** `/api/auth/me` 回 500——session query 進 error 分支（401 才是「未登入」）。 */
+/** `/api/auth/me` returns 500 - the session query enters its error branch (only 401 means signed out). */
 function mockFetchServerError(): ReturnType<typeof vi.fn> {
   return vi.fn(() =>
     Promise.resolve(
@@ -124,12 +119,12 @@ function serverError(): Response {
   });
 }
 
-describe("session query 出錯（非 401）", () => {
+describe("session query errors (non-401)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("RequireAuth：500 → 顯示錯誤與重試出口，不停在 loading，也不誤導向 /login", async () => {
+  it("RequireAuth: 500 -> shows the error with a retry exit, doesn't stay on loading, doesn't misredirect to /login", async () => {
     vi.stubGlobal("fetch", mockFetchServerError());
 
     renderRequireAuth();
@@ -141,21 +136,15 @@ describe("session query 出錯（非 401）", () => {
   });
 
   /**
-   * 錯誤畫面只能用在「完全沒有 session 可用」的情況。已登入之後 session query 仍會
-   * 反覆重查（`main.tsx` 用裸 `new QueryClient()`＝`refetchOnWindowFocus: true` +
-   * `staleTime: 0`），server 重啟或網路抖一下就會讓 `["me"]` 落入 error 狀態，但快取
-   * 裡的 user 還在。
+   * The error screen is for when there is no session at all. After sign-in the session query keeps refetching (`main.tsx` uses a bare `new QueryClient()`, i.e. `refetchOnWindowFocus: true` + `staleTime: 0`), so a server restart or a network blip can put `["me"]` into error while the cached user is still there.
    *
-   * 實測（v5.101）的兩段語意，這條測試釘的是第二段：
-   * - 失敗 refetch 的**當下**，既有 observer 仍回報 `status:"success"`＋原本的 data；
-   * - 但此時任何**重新掛載**（換路由、開設定 modal——`App.tsx` 兩棵 Routes 樹都掛
-   *   `RequireAuth`）會建立新的 observer，它看到的是 `status:"error"` 且 data 仍在。
+   * Two semantics of the query library (v5.101); this test pins the second:
+   * - At the moment a refetch fails, existing observers still report `status:"success"` with the old data;
+   * - but any **remount** at that point (route change, opening the settings modal - both route trees in `App.tsx` mount `RequireAuth`) creates a new observer, which sees `status:"error"` with data still present.
    *
-   * 這時若把整棵樹換成錯誤畫面，代價是卸載 NotePage → `useCollab` 執行
-   * `provider.destroy(); doc.destroy();`，而專案沒有 y-indexeddb，還沒同步出去的編輯
-   * 就永久消失了。有 session 可用就必須沿用。
+   * Replacing the whole tree with the error screen then unmounts NotePage, `useCollab` runs `provider.destroy(); doc.destroy();`, and the project has no y-indexeddb, so edits not yet synced are lost for good. When a session is usable it must be kept.
    */
-  it("session 在 error 狀態但快取仍有 user → 重新掛載後照常放行，不換成錯誤畫面", async () => {
+  it("session in error state but cache still has the user -> after remount lets through as usual, no error screen", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(okSession()));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -166,17 +155,17 @@ describe("session query 出錯（非 401）", () => {
     await act(async () => {
       await first.queryClient.refetchQueries({ queryKey: ["me"] });
     });
-    expect(first.queryClient.getQueryState(["me"])?.status).toBe("error"); // 前提成立
+    expect(first.queryClient.getQueryState(["me"])?.status).toBe("error");
     first.unmount();
 
-    // 同一個 QueryClient 重新掛載＝新的 observer，看到的是 error + 既有 data。
+    // Remounting with the same QueryClient = a new observer, which sees error + existing data.
     renderRequireAuth(first.queryClient);
 
     expect(screen.getByText("home-page")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
-  it("按下重試 → 重新查 session，這次成功就正常放行", async () => {
+  it("pressing retry -> queries the session again, and succeeding lets through as usual", async () => {
     let failNext = true;
     const fetchMock = vi.fn(() => {
       if (failNext) {
@@ -218,7 +207,7 @@ describe("ChangePasswordGate", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mustChangePassword:true 訪 / → 導向 /change-password", async () => {
+  it("mustChangePassword:true visiting / -> redirects to /change-password", async () => {
     vi.stubGlobal("fetch", mockFetchMustChangePassword(true));
 
     renderChangePasswordGateAt("/");
@@ -227,7 +216,7 @@ describe("ChangePasswordGate", () => {
     expect(screen.queryByText("home-page")).not.toBeInTheDocument();
   });
 
-  it("mustChangePassword:false 訪 / → 不導向，正常放行", async () => {
+  it("mustChangePassword:false visiting / -> no redirect, lets through", async () => {
     vi.stubGlobal("fetch", mockFetchMustChangePassword(false));
 
     renderChangePasswordGateAt("/");
@@ -236,7 +225,7 @@ describe("ChangePasswordGate", () => {
     expect(screen.queryByText("change-password-page")).not.toBeInTheDocument();
   });
 
-  it("mustChangePassword:true 直接訪 /change-password → 停留原地，不會被導去別處（gate 在它外面）", async () => {
+  it("mustChangePassword:true visiting /change-password directly -> stays put, not redirected elsewhere (the gate is outside it)", async () => {
     vi.stubGlobal("fetch", mockFetchMustChangePassword(true));
 
     renderChangePasswordGateAt("/change-password");
@@ -246,19 +235,14 @@ describe("ChangePasswordGate", () => {
   });
 });
 
-// ── #131：未登入導向登入頁時帶上 next ────────────────────────────────────────
-//
-// 這一族守的是「使用者本來要開的那一頁」有沒有被交給登入頁。逐字斷言整串 query 是
-// 重點：pathname+search 必須恰好 encode 一次，內含的 ?、& 與 % 才不會被當成 /login
-// 自己的參數（LoginPage 那頭，用 searchParams.get("next") 解一次拿回原字串）。
+// This family guards whether "the page the user meant to open" is handed to the login page. Asserting the whole query verbatim is the point: pathname+search must be encoded exactly once, so the embedded ?, & and % aren't taken as /login's own parameters (LoginPage decodes once with searchParams.get("next") to get the original string).
 
-/** 落在 /login 時把完整 location 印成單一 text node，讓斷言可以逐字 toBe。 */
 function LoginProbe() {
   const location = useLocation();
   return <div data-testid="login-location">{`${location.pathname}${location.search}`}</div>;
 }
 
-/** `/api/auth/me` 回 401＝未登入（useSession 把 401 轉成 resolve null，不進 error 分支）。 */
+/** `/api/auth/me` returns 401 = signed out (useSession turns 401 into a resolved null, not the error branch). */
 function mockFetchUnauthenticated(): ReturnType<typeof vi.fn> {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
@@ -278,7 +262,6 @@ function mockFetchUnauthenticated(): ReturnType<typeof vi.fn> {
   });
 }
 
-/** 讓測試可以按「上一頁」，用來分辨 replace 與 push。 */
 function BackButton() {
   const navigate = useNavigate();
   return (
@@ -310,14 +293,13 @@ async function expectLoginLocation(expected: string) {
   });
 }
 
-describe("#131 未登入導向帶 next", () => {
-  // ⚠ 既有的兩個 `afterEach(() => vi.unstubAllGlobals())` 各自關在別的 describe 裡，
-  // 這個新 describe 是它們的兄弟節點、吃不到——自己帶一份，否則 fetch 樁會外洩。
+describe("#131 signed-out redirect carries next", () => {
+  // The two existing `afterEach(() => vi.unstubAllGlobals())` live inside other describes, and this describe is their sibling and can't reach them: carry its own, otherwise the fetch stub leaks.
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("未登入訪問受保護路徑 → /login?next=<目前路徑>（含 query，整串 encode 一次）", async () => {
+  it("signed-out visit to a protected path -> /login?next=<current path> (query included, whole string encoded once)", async () => {
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     renderRequireAuthAt(["/n/alice/my-note?a=1&b=2"]);
@@ -326,14 +308,9 @@ describe("#131 未登入導向帶 next", () => {
     expect(screen.queryByText("protected-page")).not.toBeInTheDocument();
   });
 
-  it("pathname 本身含百分比編碼（非 ASCII 標題的真實形）→ % 要再編一次成 %25", async () => {
-    // 真實瀏覽器的 location.pathname 對非 ASCII slug 就是百分比編碼形，所以這才是
-    // 「/n/alice/筆記」在 web 端的樣子。**漏編**會讓 server 端 searchParams.get("next")
-    // 一次就解出裸的 CJK，過不了 safeNextPath 的可見 ASCII 檢查；**雙重編碼**則會讓
-    // next 變成 %252F… 開頭，解出來首字元不是 /、同樣被擋。兩種錯法都由下面這條逐字
-    // 斷言接住——這一案是字元檢查在 web 端的另一端。
-    // ⚠ 不可改用裸 CJK 路徑來測：MemoryRouter 不會替你編碼，那是真實瀏覽器產不出來
-    // 的狀態，測出來的結論會是誤導。
+  it("pathname that is already percent-encoded (the real shape of non-ASCII titles) -> % is encoded again as %25", async () => {
+    // A real browser's location.pathname for a non-ASCII slug is percent-encoded, so this is what "/n/alice/<CJK title>" looks like on web. A **missing** encoding makes the server's searchParams.get("next") decode to bare CJK once, failing safeNextPath's visible-ASCII check; **double** encoding makes next start with %252F..., decoding to a first character that isn't /, also rejected. Both mistakes are caught by the verbatim assertion below; this case is the web-side counterpart of that character check.
+    // Don't test with a bare CJK path: MemoryRouter doesn't encode for you and a real browser can't produce that state, so the conclusion would mislead.
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     renderRequireAuthAt(["/n/alice/%E7%AD%86%E8%A8%98"]);
@@ -341,9 +318,8 @@ describe("#131 未登入導向帶 next", () => {
     await expectLoginLocation("/login?next=%2Fn%2Falice%2F%25E7%25AD%2586%25E8%25A8%2598");
   });
 
-  it("即使 next 只是 / 也照樣寫進 URL（不特例化——少一條分支＝少一個出錯點）", async () => {
-    // 代價是未登入訪首頁時網址列會多一個沒有資訊量的 ?next=%2F。這是刻意的取捨，
-    // 不要「順手清乾淨」。
+  it("next is written to the URL even when it is just / (no special case - one fewer branch, one fewer failure point)", async () => {
+    // The cost is a content-free ?next=%2F in the address bar when a signed-out user visits home. This is a deliberate trade-off; don't tidy it up.
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     renderRequireAuthAt(["/"]);
@@ -351,9 +327,8 @@ describe("#131 未登入導向帶 next", () => {
     await expectLoginLocation("/login?next=%2F");
   });
 
-  it("hash 不帶（search 帶）", async () => {
-    // 行為契約，不是機制解釋：理由見 guards.tsx 的註解（safeNextPath 那頭其實**接受**
-    // 帶 fragment 的路徑，本處只是不產生它）。
+  it("hash isn't carried (search is)", async () => {
+    // A behaviour contract, not a mechanism explanation: see the comment in guards.tsx (safeNextPath does accept paths with a fragment; this side just doesn't produce one).
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     renderRequireAuthAt(["/n/alice/my-note?a=1#frag"]);
@@ -361,9 +336,8 @@ describe("#131 未登入導向帶 next", () => {
     await expectLoginLocation("/login?next=%2Fn%2Falice%2Fmy-note%3Fa%3D1");
   });
 
-  it("導向是 replace 不是 push：登入頁按上一頁不會回到那個進不去的受保護頁", async () => {
-    // 沒有這一案，把 replace 改成 push 全表仍綠——而 push 會留下一個死路：登入完
-    // 按上一頁回到 /login?next=…（此時已登入）。
+  it("the redirect is replace, not push: going back from the login page doesn't return to the inaccessible protected page", async () => {
+    // Push would leave a dead end: after signing in, going back returns to /login?next=... (already signed in).
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     renderRequireAuthAt(["/somewhere-else", "/n/alice/my-note"]);
@@ -371,13 +345,12 @@ describe("#131 未登入導向帶 next", () => {
     await expectLoginLocation("/login?next=%2Fn%2Falice%2Fmy-note");
     fireEvent.click(screen.getByRole("button", { name: "back" }));
 
-    // replace：受保護頁那一筆已被登入頁取代，上一頁是 /somewhere-else——它同樣未登入，
-    // 於是再次被導到登入頁，next 換成 /somewhere-else。
-    // 若是 push：上一頁會是 /n/alice/my-note，next 仍會是 %2Fn%2Falice%2Fmy-note。
+    // replace: the protected page's entry was replaced by the login page, so back goes to /somewhere-else, which is also signed out and redirects to login again with next changed to /somewhere-else.
+    // With push: back would be /n/alice/my-note, and next would still be %2Fn%2Falice%2Fmy-note.
     await expectLoginLocation("/login?next=%2Fsomewhere-else");
   });
 
-  it("ChangePasswordGate 獨立掛載＋未登入 → 同樣帶 next（三顆 gate 共用 useSessionGate）", async () => {
+  it("ChangePasswordGate mounted alone + signed out -> also carries next (the gates share useSessionGate)", async () => {
     vi.stubGlobal("fetch", mockFetchUnauthenticated());
 
     render(

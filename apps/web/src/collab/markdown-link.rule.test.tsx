@@ -12,23 +12,15 @@ import type { SiteLinkCandidate } from "@knotebook/shared";
 import { attachTestElementRenderer } from "@/test/element-renderer";
 
 /**
- * ProseMirror EditorView：已驗證 `@tiptap/pm` 這些路徑從 apps/web 直接 import
- * 會 MODULE_NOT_FOUND，且 Vite/vitest 在 transform 階段就炸（不是執行期）。
- * （`prosemirror-view` 自 `collab/code-block-caret.ts` 起是 apps/web 的直接依賴，已不在此列；
- * 這裡沒有改用它的型別，維持原樣。）這裡直接用 `any` 走 repo 既有的互通慣例（同 `AnyEditor`）。
+ * ProseMirror EditorView: importing these `@tiptap/pm` paths directly from apps/web gives MODULE_NOT_FOUND, and Vite/vitest blows up at the transform stage (not at run time). (`prosemirror-view` has been a direct dependency of apps/web since `collab/code-block-caret.ts` and is no longer in that group; its type isn't used here.) So `any` is used, following the repo's existing interop convention (same as `AnyEditor`).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 理由見上方註解
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see the comment above
 type AnyView = any;
 
 /**
- * ⚠ **不要沿用 `NoteEditor.test.ts` 的 `typeInput`**：它是該檔 `describe` 內未匯出的
- * 區域函式，且本體直接呼叫 `buildNoteEditorOptions` 的 `editorProps.handleTextInput`
- * ——那條完全繞過 input rule 的 plugin 鏈（規則掛在 `inputRulesPlugin` 的
- * `props.handleTextInput`，dist `:4166`）。照它做的測試永遠測不到本檔要驗的規則。
+ * ⚠ **Don't reuse `NoteEditor.test.ts`'s `typeInput`**: it's a local function inside that file's `describe`, not exported, and it calls `buildNoteEditorOptions`'s `editorProps.handleTextInput` directly, which bypasses the input rule plugin chain entirely (the rule hangs on `inputRulesPlugin`'s `props.handleTextInput`). A test written that way can never exercise the rule tested here.
  *
- * 這支才是讓 editorProps 與所有 plugin 依序有機會處理的正確驅動方式：走
- * `view.someProp("handleTextInput", …)`，座標一律取自 `view.state.selection`（不自己傳
- * 位置——這個 repo 曾因為沒同步 selection 而誤判並寫進 CHANGELOG，事後才翻案）。
+ * This one drives it correctly, giving editorProps and all plugins a chance in order: through `view.someProp("handleTextInput", ...)`, with coordinates always taken from `view.state.selection` (positions aren't passed in by hand: not syncing the selection once led this repo to a wrong conclusion that made it into the CHANGELOG).
  */
 function typeChar(view: AnyView, ch: string): void {
   const { from, to } = view.state.selection;
@@ -42,36 +34,30 @@ function typeString(view: AnyView, s: string): void {
   for (const ch of s) typeChar(view, ch);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 /**
- * 掛載一顆**非共編**的真編輯器，接上本檔要測的 markdown 連結 extension。headless 下
- * `SuggestionMenu.openSuggestionMenu` 會 early-return（下面的建議選單案要用到 mounted），
- * 所以一律 `mount()`。
+ * Mounts a **non-collab** real editor with the markdown link extension under test. Headless, `SuggestionMenu.openSuggestionMenu` returns early (the suggestion-menu case below needs it mounted), so always `mount()`.
  *
- * ⚠ 這支 helper 本身**同時是執行期守衛**：`@tiptap/core` 若跟 BlockNote 解到
- * 不同實例，`createMarkdownLinkExtension` 建出的 `Extension`/`InputRule` 對 BlockNote
- * 內部用來註冊 `addInputRules` 的那套機制而言就是「不認識的異物」——規則會靜默不觸發、
- * 零型別錯誤，只有下面這些「掛真編輯器、真的打字、斷言真的轉換」的測試會紅。
+ * ⚠ This helper is **also a run-time guard**: if `@tiptap/core` resolves to a different instance than BlockNote's, the `Extension`/`InputRule` built by `createMarkdownLinkExtension` are foreign objects to the mechanism BlockNote uses internally to register `addInputRules`: the rule silently never fires with zero type errors, and only the tests that mount a real editor, really type and assert a real conversion go red.
  */
 function mountedEditor(siteLinks?: SiteLinkEnvRef): { editor: AnyEditor; editorRef: EditorRef; container: HTMLElement } {
   const editorRef: EditorRef = { current: null };
   const editor = BlockNoteEditor.create({
     schema: noteSchema,
     _tiptapOptions: { extensions: [createMarkdownLinkExtension({ editorRef, siteLinks })] },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNoteEditorOptions 的完整型別要求完整 schema 三元組
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNoteEditorOptions's full type requires the full schema triple
   } as any) as AnyEditor;
   editorRef.current = editor;
   const container = document.createElement("div");
   document.body.appendChild(container);
   editor.mount(container);
-  attachTestElementRenderer(editor); // #269：wikilink 的 toDOM 要它（見 helper 檔頭）
+  attachTestElementRenderer(editor); // #269: wikilink's toDOM needs it (see the helper's file header)
   return { editor, editorRef, container };
 }
 
-/** 掛載一顆**共編**的真編輯器（withCollaboration + 自己的 Y.Doc），撤銷語意
- * 測量要用真的 Yjs `UndoManager`——非共編沒有它（`history` extension 不存在）。 */
+/** Mounts a **collab** real editor (withCollaboration + its own Y.Doc): measuring undo semantics needs the real Yjs `UndoManager`, which non-collab doesn't have (no `history` extension). */
 function mountedCollabEditor(siteLinks?: SiteLinkEnvRef): { doc: Y.Doc; editor: AnyEditor; container: HTMLElement } {
   const doc = new Y.Doc();
   const editorRef: EditorRef = { current: null };
@@ -84,18 +70,18 @@ function mountedCollabEditor(siteLinks?: SiteLinkEnvRef): { doc: Y.Doc; editor: 
         user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
       },
       _tiptapOptions: { extensions: [createMarkdownLinkExtension({ editorRef, siteLinks })] },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
     } as any),
   ) as AnyEditor;
   editorRef.current = editor;
   const container = document.createElement("div");
   document.body.appendChild(container);
   editor.mount(container);
-  attachTestElementRenderer(editor); // #269：wikilink 的 toDOM 要它（見 helper 檔頭）
+  attachTestElementRenderer(editor); // #269: wikilink's toDOM needs it (see the helper's file header)
   return { doc, editor, container };
 }
 
-describe("createMarkdownLinkExtension：input rule 觸發（掛真編輯器，逐字元模擬）", () => {
+describe("createMarkdownLinkExtension: input rule firing (real editor, simulated character by character)", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
 
@@ -104,15 +90,13 @@ describe("createMarkdownLinkExtension：input rule 觸發（掛真編輯器，�
     container.remove();
   });
 
-  it("hello [a](https://x.com) → 整份文件精確斷言（不是「有沒有出現 link」——off-by-one 見本檔註解）", () => {
+  it("hello [a](https://x.com) -> exact assertion on the whole document (not just whether a link appears, so an off-by-one is caught)", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
 
     typeString(view, "hello [a](https://x.com)");
 
-    // ⚠ 整份文件精確斷言：若 handler 誤用 matchedLength 往左反推位置（而不是用
-    // `run()` 給的 range），「hello 」的空格會被多吃一格，變成 `[{"text":"hello"},{link}]`
-    // ——這條斷言會抓到那個 off-by-one。
+    // ⚠ Whole-document exact assertion: if the handler used matchedLength to work back the position (instead of the range given by `run()`), the space in "hello " would be eaten one position too far, giving `[{"text":"hello"},{link}]`; this assertion catches that off-by-one.
     expect(editor.document).toHaveLength(1);
     expect(editor.document[0]!.content).toEqual([
       { type: "text", text: "hello ", styles: {} },
@@ -125,8 +109,7 @@ describe("createMarkdownLinkExtension：input rule 觸發（掛真編輯器，�
   });
 });
 
-// ── 文件端守衛：拒絕方向與正向方向都要 ──────────────────────────
-describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不影響觸發", () => {
+describe("document-side guard: a mark inside the range prevents firing, a mark outside the range doesn't", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
 
@@ -135,7 +118,7 @@ describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不�
     container.remove();
   });
 
-  it("拒絕方向案 1：「[ ＋粗體 a ＋ ](https://x.com」打 ) → 不轉換，粗體還在（範圍內含 mark）", () => {
+  it("reject: '[ + bold a + ](https://x.com' then typing ) -> not converted, bold stays (a mark inside the range)", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
     editor.insertInlineContent(["[", { type: "text", text: "a", styles: { bold: true } }, "](https://x.com"]);
@@ -148,12 +131,11 @@ describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不�
     ]);
   });
 
-  it("拒絕方向案 2：孤兒 [ ＋既有 link 再打 ](https://z.com) → 不轉換（唯一擋得下來的是這條守衛——resolveTrailingMarkdownLink 會回命中、run() 的位置驗證也會通過）", () => {
+  it("reject: an orphan [ + an existing link then typing ](https://z.com) -> not converted (the guard blocks it even though resolveTrailingMarkdownLink would return a match and run()'s position validation would pass)", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
     typeString(view, "[[c](https://x.com)");
-    // 中繼態：SuggestionMenu 的內建偵測在 block 開頭吃掉第一個 [ 開選單，第二個 [
-    // 留在文件——形成「孤兒 [ ＋ link(c)」（形）。
+    // Intermediate state: SuggestionMenu's built-in detection eats the first [ at block start and opens the menu, the second [ stays in the document, forming an "orphan [ + link(c)" shape.
     expect(editor.document[0]!.content).toEqual([
       { type: "text", text: "[", styles: {} },
       { type: "link", href: "https://x.com", content: [{ type: "text", text: "c", styles: {} }] },
@@ -168,13 +150,10 @@ describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不�
     ]);
   });
 
-  it("正向方向：粗體緊鄰但在範圍外（editor.replaceBlocks 明寫成兩個 node）→ 必須照常觸發", () => {
+  it("positive: bold right next to the range but outside it (editor.replaceBlocks writes two explicit nodes) -> must still fire", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
-    // ⚠ 這一案的構造方式承重、照字面「打字」造不出來：接在粗體後面打的字本身就是
-    // 粗體（stored marks），會讓語法整段落在範圍內、被守衛正確拒絕。
-    // 實測過三種構造，這裡挑的是其中一種——**不是唯一造得出來的**（見下一案
-    // `unsetMark` 那條，那條更貼近真實使用者操作：打完粗體按 Ctrl+B 關掉再打連結）。
+    // ⚠ How this case is built matters, and it can't be made by literally typing: text typed after bold is itself bold (stored marks), which puts the whole syntax inside the range and the guard correctly rejects it. Several constructions can reproduce this; this is one of them (the `unsetMark` case next is closer to real user action: type bold, press Ctrl+B to turn it off, then type the link).
     editor.replaceBlocks(
       [editor.document[0]!],
       [
@@ -197,12 +176,10 @@ describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不�
     ]);
   });
 
-  it("正向方向（更貼近真實使用者）：打完粗體按 Ctrl+B 關掉（unsetMark）再逐字打連結 → 必須照常觸發", () => {
+  it("positive (closer to a real user): type bold, press Ctrl+B to turn it off (unsetMark), then type the link character by character -> must still fire", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
-    // 反例：`insertInlineContent` 一段粗體文字後、用
-    // `unsetMark("bold")` 關掉 stored mark（等同使用者打完粗體按 Ctrl+B），再逐字
-    // 打連結語法——比上一案的 `replaceBlocks` 構造更貼近真實輸入路徑。
+    // After `insertInlineContent` of a bold text, `unsetMark("bold")` turns off the stored mark (same as the user pressing Ctrl+B after typing bold), then the link syntax is typed character by character: closer to the real input path than the previous case's `replaceBlocks` construction.
     editor.insertInlineContent([{ type: "text", text: "粗", styles: { bold: true } }]);
     editor._tiptapEditor.commands.unsetMark("bold");
 
@@ -215,8 +192,7 @@ describe("文件端守衛：範圍內帶 mark 不觸發、範圍外的 mark 不�
   });
 });
 
-// ── 前面沒涵蓋的四條 ──────────────────────────────────
-describe("MAX_LINK_SCAN 與截短後的左界重守衛", () => {
+describe("MAX_LINK_SCAN and the left-boundary re-guard after truncation", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
 
@@ -225,7 +201,7 @@ describe("MAX_LINK_SCAN 與截短後的左界重守衛", () => {
     container.remove();
   });
 
-  it("段落遠超 MAX_LINK_SCAN、尾端合法連結 → 仍要觸發", () => {
+  it("paragraph far longer than MAX_LINK_SCAN with a valid link at the end -> still fires", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
     const filler = "x".repeat(600);
@@ -238,14 +214,10 @@ describe("MAX_LINK_SCAN 與截短後的左界重守衛", () => {
     ]);
   });
 
-  it("截短後 recon 剛好頂到左界 → 不得觸發（截短重新製造的左界盲點）", () => {
+  it("after truncation recon reaches exactly the left boundary -> must not fire (the left-boundary blind spot that truncation recreates)", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
-    // ⚠ 從 `MAX_LINK_SCAN` 推導，不寫死數字——缺口：寫死 483/500 時，把
-    // 常數改成 400 這一檔仍全綠（邊界案靜默退化成「反正解析不出連結」，因為 pad 沒
-    // 跟著常數變小，markdown 長度不再等於新常數，測的東西早就不是這條左界盲點了）。
-    // "[" + pad + "](https://x.com)" 共 pad.length + 17 個字元，要讓整條 markdown
-    // 恰好等於 MAX_LINK_SCAN，pad 長度就是 `MAX_LINK_SCAN - 17`。
+    // ⚠ Derived from `MAX_LINK_SCAN`, not a hard-coded number: with a hard-coded 483/500, changing the constant to 400 would stay green (the boundary case silently degrades to "no link can be parsed anyway", because pad doesn't shrink with the constant, markdown length no longer equals the new constant, and what is tested is no longer this left-boundary blind spot). "[" + pad + "](https://x.com)" is pad.length + 17 characters; to make the markdown exactly MAX_LINK_SCAN long, the pad length is `MAX_LINK_SCAN - 17`.
     const pad = "a".repeat(MAX_LINK_SCAN - 17);
     const prefix = "b".repeat(51);
     const markdown = `[${pad}](https://x.com)`;
@@ -253,12 +225,11 @@ describe("MAX_LINK_SCAN 與截短後的左界重守衛", () => {
 
     typeString(view, `${prefix}${markdown}`);
 
-    // 沒有觸發：整段仍是純文字。
     expect(editor.document[0]!.content).toEqual([{ type: "text", text: `${prefix}${markdown}`, styles: {} }]);
   });
 });
 
-describe("建議選單開著時不觸發", () => {
+describe("doesn't fire while the suggestion menu is open", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
 
@@ -267,7 +238,7 @@ describe("建議選單開著時不觸發", () => {
     container.remove();
   });
 
-  it("openSuggestionMenu(\"[[\") 後打完整串 → 文件不出現 link", () => {
+  it("after openSuggestionMenu(\"[[\") typing the whole string -> no link appears in the document", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
 
@@ -281,7 +252,7 @@ describe("建議選單開著時不觸發", () => {
   });
 });
 
-describe("形——網址內未跳脫的 )", () => {
+describe("shape: unescaped ) inside the URL", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
 
@@ -290,7 +261,7 @@ describe("形——網址內未跳脫的 )", () => {
     container.remove();
   });
 
-  it("[a](https://x.com/foo)bar) → 短連結 ＋ 純文字 bar)，且與 pasteMarkdown 同一串的終態相等", () => {
+  it("[a](https://x.com/foo)bar) -> short link + plain text bar), and the end state equals pasteMarkdown's for the same string", () => {
     ({ editor, container } = mountedEditor());
     const view = editor._tiptapEditor.view;
     const input = "[a](https://x.com/foo)bar)";
@@ -315,26 +286,19 @@ describe("形——網址內未跳脫的 )", () => {
 });
 
 /**
- * 對**我們自己的規則**跑「觸發 → Backspace →
- * Ctrl+Z」，量測結果與一般 input rule 的既有現象並列：
+ * Runs "fire -> Backspace -> Ctrl+Z" on our own rule and sets the results beside the existing behaviour of an ordinary input rule:
  *
- * | 情境 | Backspace 後 | 第 1 次 Ctrl+Z | 第 2 次 Ctrl+Z |
+ * | Scenario | After Backspace | 1st Ctrl+Z | 2nd Ctrl+Z |
  * |---|---|---|---|
- * | 連續打字（無停頓） | 退回純文字 `hello [a](https://x.com)` | **整段清空**（不是回到純文字） | 仍空（無 stack 可撤） |
- * | 打完後停頓 ≥500ms 再 Backspace | 同上 | **連結重新出現** | 直接清空（見下方 ⚠） |
+ * | continuous typing (no pause) | back to plain text `hello [a](https://x.com)` | **whole paragraph cleared** (not back to plain text) | still empty (nothing left to undo) |
+ * | pause >= 500ms after typing, then Backspace | same | **link reappears** | cleared directly (see below) |
  *
- * ✅ **兩情境的 Backspace 行為與一般 input rule 一致**（退回完整純文字）；
- * Ctrl+Z 的分格行為也與一般 input rule 的機制（Yjs `captureTimeout` 合併窗口）一致——
- * **我們的規則沒有語意逆行的獨有現象**。
+ * Backspace behaves like an ordinary input rule in both scenarios (back to the full plain text), and the Ctrl+Z step splitting follows the same mechanism as an ordinary input rule (the Yjs `captureTimeout` merge window), so our rule has no semantically reversed behaviour of its own.
  *
- * ⚠ 「停頓」情境的第 2 次 Ctrl+Z 量到的是**直接清空**、不是「回到純
- * 文字」：三段式需要**前綴與觸發字元之間也停頓 >500ms**
- * 才成立；這裡只在打完之後 `stopCapturing()` 一次，整段輸入仍合併
- * 成同一個 Yjs stack item，第 2 次 Ctrl+Z 因此直接撤掉那整格。這是合併窗口的
- * 正常行為，不是我們的規則多了一種新行為。
+ * In the "pause" scenario the second Ctrl+Z clears directly instead of going back to plain text: the three-stage result needs a pause > 500ms between the prefix and the trigger character as well; here `stopCapturing()` is called once after typing, so the whole input stays merged in one Yjs stack item and the second Ctrl+Z undoes that whole item. That is normal merge-window behaviour, not a new behaviour of our rule.
  */
-describe("我方規則的撤銷語意測量（觸發 → Backspace → Ctrl+Z，與對照組並列）", () => {
-  it("連續打字（無停頓，真實連打節奏）：Backspace 退回純文字，Ctrl+Z 一次整段清空", () => {
+describe("undo semantics of our rule (fire -> Backspace -> Ctrl+Z, alongside the control)", () => {
+  it("continuous typing (no pause, real typing rhythm): Backspace returns to plain text, one Ctrl+Z clears the whole paragraph", () => {
     const { doc, editor, container } = mountedCollabEditor();
     const view = editor._tiptapEditor.view;
     const manager = collabUndoManager(editor)!;
@@ -354,13 +318,13 @@ describe("我方規則的撤銷語意測量（觸發 → Backspace → Ctrl+Z，
     }
   });
 
-  it("打完停頓 ≥500ms 再 Backspace：Ctrl+Z 第一下讓連結重新出現（不是回到純文字）", () => {
+  it("pause >= 500ms after typing, then Backspace: the first Ctrl+Z makes the link reappear (not back to plain text)", () => {
     const { doc, editor, container } = mountedCollabEditor();
     const view = editor._tiptapEditor.view;
     const manager = collabUndoManager(editor)!;
     try {
       typeString(view, "hello [a](https://x.com)");
-      manager.stopCapturing(); // 等價於使用者停頓 >500ms（量測紀律）
+      manager.stopCapturing(); // equivalent to the user pausing > 500ms
       editor._tiptapEditor.commands.undoInputRule();
       expect(editor.document[0]!.content).toEqual([{ type: "text", text: "hello [a](https://x.com)", styles: {} }]);
 
@@ -381,7 +345,7 @@ function siteEnv(notes: SiteLinkCandidate[]): SiteLinkEnvRef & { requests: unkno
   return { current: env, requests };
 }
 
-describe("#269 W3 input rule：站內連結 → wikilink", () => {
+describe("#269 input rule: on-site link -> wikilink", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
   afterEach(() => {
@@ -389,7 +353,7 @@ describe("#269 W3 input rule：站內連結 → wikilink", () => {
     container.remove();
   });
 
-  it("快取命中：直接插 wikilink（label 規則：文字＝標題 ⇒ 空；錨點進 prop）；整份文件精確斷言", () => {
+  it("cache hit: inserts a wikilink directly (label rule: text equal to the title -> empty; the anchor goes into a prop); exact assertion on the whole document", () => {
     ({ editor, container } = mountedEditor(siteEnv([ALPHA])));
     typeString(editor._tiptapEditor.view, "see [Alpha](/n/alice/alpha#b-h1)");
     expect(editor.document[0]!.content).toEqual([
@@ -398,7 +362,7 @@ describe("#269 W3 input rule：站內連結 → wikilink", () => {
     ]);
   });
 
-  it("未命中：插一般連結並排後備（一筆、帶所在 block id）", async () => {
+  it("cache miss: inserts an ordinary link and queues a fallback (one entry, carrying the containing block id)", async () => {
     const env = siteEnv([]);
     ({ editor, container } = mountedEditor(env));
     typeString(editor._tiptapEditor.view, "see [x](/n/bob/secret)");
@@ -407,7 +371,7 @@ describe("#269 W3 input rule：站內連結 → wikilink", () => {
     expect(env.requests).toEqual([[{ blockIds: [editor.document[0]!.id], href: "/n/bob/secret", text: "x", parsed: { path: { kind: "n", handle: "bob", slug: "secret" }, anchorBlockId: "" } }]]);
   });
 
-  it("外站連結：照舊插一般連結、不排後備", async () => {
+  it("external link: inserts an ordinary link as before, no fallback queued", async () => {
     const env = siteEnv([ALPHA]);
     ({ editor, container } = mountedEditor(env));
     typeString(editor._tiptapEditor.view, "see [x](https://example.com/n/alice/alpha)");
@@ -416,7 +380,7 @@ describe("#269 W3 input rule：站內連結 → wikilink", () => {
     expect(env.requests).toEqual([]);
   });
 
-  it("mark 守衛照舊：孤兒 [ ＋既有 link 再打 ](站內網址) → 不轉換、不插 wikilink", () => {
+  it("mark guard as before: an orphan [ + an existing link then typing ](on-site URL) -> not converted, no wikilink inserted", () => {
     ({ editor, container } = mountedEditor(siteEnv([ALPHA])));
     const view = editor._tiptapEditor.view;
     typeString(view, "[[c](https://x.com)");
@@ -426,13 +390,12 @@ describe("#269 W3 input rule：站內連結 → wikilink", () => {
 });
 
 /**
- * W11（input rule 那一列；共編組態、不用 fake timers）：立即 Backspace（undoInputRule）是否回到 `[文字](網址)` 純文字；
- * 停頓與否下第一下 Ctrl+Z 的結果。MEASURED 是預期值（與一般連結對照組同形）；實測不同就照實改。
+ * Input-rule row of the undo-after-wikilink conversion (collab configuration, no fake timers): does an immediate Backspace (undoInputRule) go back to the `[text](url)` plain text; and what the first Ctrl+Z gives with or without a pause. MEASURED is the expected value (same shape as the ordinary-link control).
  */
 const MEASURED_RULE = { backspaceRestoresText: true, continuousUndoClears: true, pausedUndoRestoresWikilink: true } as const;
 
-describe("#269 W11 input rule 轉 wikilink 的撤銷（量到的結果即斷言）", () => {
-  it(`連續打字：Backspace 回到純文字＝${String(MEASURED_RULE.backspaceRestoresText)}；第一下 Ctrl+Z 整段清空＝${String(MEASURED_RULE.continuousUndoClears)}`, () => {
+describe("#269 undo of an input rule converting to a wikilink (the measured results are the assertions)", () => {
+  it(`continuous typing: Backspace back to plain text =${String(MEASURED_RULE.backspaceRestoresText)}; first Ctrl+Z clears the whole paragraph =${String(MEASURED_RULE.continuousUndoClears)}`, () => {
     const { doc, editor, container } = mountedCollabEditor(siteEnv([ALPHA]));
     const manager = collabUndoManager(editor)!;
     try {
@@ -449,7 +412,7 @@ describe("#269 W11 input rule 轉 wikilink 的撤銷（量到的結果即斷言�
     }
   });
 
-  it(`打完停頓再 Backspace：第一下 Ctrl+Z 讓 wikilink 重新出現＝${String(MEASURED_RULE.pausedUndoRestoresWikilink)}`, () => {
+  it(`pause after typing then Backspace: first Ctrl+Z makes the wikilink reappear =${String(MEASURED_RULE.pausedUndoRestoresWikilink)}`, () => {
     const { doc, editor, container } = mountedCollabEditor(siteEnv([ALPHA]));
     const manager = collabUndoManager(editor)!;
     try {

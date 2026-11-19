@@ -34,9 +34,8 @@ const ADMIN_USER: UserDto = {
   avatar: null,
 };
 
-// 站台管理（#247 起是第二棵樹裡的 modal）：`/settings/users`（舊書籤）轉 `/admin/users`；`/admin/*` 不在主樹——
-// 主樹對它落在 `/*` 的 HomePage 當背景。guard 串接、轉址與導覽的細節守在 `components/admin/AdminModal.test.tsx`。
-describe("App route tree — /settings/users → /admin/users（站台管理 modal，#247）", () => {
+// Site admin (a modal in the second tree since #247): `/settings/users` (old bookmark) redirects to `/admin/users`; `/admin/*` isn't in the main tree, which renders HomePage (matching `/*`) as the background. Guard chaining, redirects and navigation are covered in `components/admin/AdminModal.test.tsx`.
+describe("App route tree - /settings/users -> /admin/users (site admin modal, #247)", () => {
   function mockFetchForRedirect() {
     return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -96,7 +95,7 @@ describe("App route tree — /settings/users → /admin/users（站台管理 mod
     vi.unstubAllGlobals();
   });
 
-  it("admin 深連結 /settings/users → 轉址 /admin/users（站台管理 modal，不是設定 modal）", async () => {
+  it("admin deep link /settings/users redirects to /admin/users (site admin modal, not the settings modal)", async () => {
     vi.stubGlobal("fetch", mockFetchForRedirect());
     renderAt("/settings/users");
 
@@ -106,7 +105,7 @@ describe("App route tree — /settings/users → /admin/users（站台管理 mod
     expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  it("admin 深連結 /admin/users → 直達站台 modal；主樹不含 /admin/*（背景是 /* 的 HomePage：New note 在）", async () => {
+  it("admin deep link /admin/users opens the site modal directly; the main tree has no /admin/* (background is HomePage via /*: New note present)", async () => {
     vi.stubGlobal("fetch", mockFetchForRedirect());
     renderAt("/admin/users");
 
@@ -117,16 +116,9 @@ describe("App route tree — /settings/users → /admin/users（站台管理 mod
   });
 });
 
-// issue #19 的回歸釘用：把 NotePage 模組換成「測試放行才 resolve 的 stub（不含 AppShell）」。
-// vi.mock 是 hoisted 的、對整個檔案的 NotePage import 生效——但 factory 是惰性的：
-// lazy 版的 App 只有在 /notes/:ref 真的 render 時才觸發 import()，那時閘門已由測試架好，
-// factory 停在閘門上、fallback 一直掛著，斷言不必跟任何計時賽跑；若有人把 NotePage 改回
-// 靜態 import（迴歸），factory 在檔頭 import ./App 時就被呼叫——閘門還沒架（null）、立刻
-// resolve，stub 一開始就頂上、fallback 從未存在，下面對「New note」（AppShell 的招牌）的
-// 斷言在 stub 的空殼上永遠找不到 → 紅。
-// （先前是「2 秒後 resolve」＋waitFor 上限 1.5 秒；全套平行負載下 1.5 秒內等不到 AppShell
-// 就會假紅，所以改成閘門。閘門只在測試內架起，所以靜態 import 的迴歸不會卡死在收集階段。）
-// 上面的 redirect 測試不 render NotePage，factory 不會被觸發，不受影響。
+// Regression pin for #19: NotePage's module is replaced by a stub that resolves only when the test releases it (no AppShell inside).
+// vi.mock is hoisted and applies to the whole file's NotePage import, but the factory is lazy: the lazy App only triggers import() when /notes/:ref really renders, by which time the test has set up the gate; the factory stalls on the gate, the fallback stays up, and assertions don't race any timer. If NotePage were switched back to a static import (the regression), the factory would run while ./App is imported at the top of the file, before the gate exists (null), resolve immediately, and the stub would be in place from the start with no fallback ever, so the "New note" (AppShell landmark) assertion below never finds it on the stub's empty shell and fails.
+// A gate instead of a timed resolve avoids flakes under full-suite parallel load; it is created only inside the test, so a static-import regression can't hang collection.
 const notePageGate = vi.hoisted(() => ({ pending: null as Promise<void> | null, release: () => {} }));
 vi.mock("./pages/NotePage", async () => {
   if (notePageGate.pending) await notePageGate.pending;
@@ -134,22 +126,18 @@ vi.mock("./pages/NotePage", async () => {
 });
 
 /**
- * issue #19（回歸釘）：NotePage 走 lazy 之後，chunk 載入中側欄（layout route 的 AppShell）仍在、不是空白頁。
- * 本案守的是「NotePage 是 lazy」與「chunk 載入中殼在場」；fallback 的長相與「側欄是同一個節點」由
- * `App.appShellLayout.test.tsx` 守。
+ * Regression pin for #19: with NotePage lazy, the sidebar (the layout route's AppShell) is still present while the chunk loads, not a blank page. This case guards "NotePage is lazy" and "shell present while the chunk loads"; the fallback's shape and "sidebar is the same node" are covered by `App.appShellLayout.test.tsx`.
  *
- * ⚠ 不可用「doMock + await import("./App")」的寫法（第一版就是，假守衛）：檔頭的靜態
- * import 已經把 ./App 連同真 NotePage 快取住，測試內的動態 import 拿到同一份快取，
- * mock 根本沒生效。現行寫法在 NotePage 改回靜態 import 時會在「New note」等待處紅。
+ * ⚠ Don't use "doMock + await import("./App")": the static import at the top already caches ./App with the real NotePage, so a dynamic import in the test returns the same cache and the mock never applies (a fake guard). The current form fails at the "New note" wait if NotePage reverts to a static import.
  */
-describe("App route tree — NotePage lazy：chunk 載入中殼在場（issue #19）", () => {
+describe("App route tree - NotePage lazy: shell present while the chunk loads (#19)", () => {
   afterEach(() => {
-    // 測試中途紅掉也要放行，別讓 factory 永遠懸著（後面 describe 若 render /notes/… 會卡住）。
+    // Release the gate even if the test fails midway, so the factory isn't left hanging (a later describe rendering /notes/... would stall).
     notePageGate.release();
     vi.unstubAllGlobals();
   });
 
-  it("chunk 載入中：側欄殼在（New note 按鈕在），不是空白頁", async () => {
+  it("while the chunk loads: sidebar shell present (New note button), not a blank page", async () => {
     notePageGate.pending = new Promise<void>(resolve => {
       notePageGate.release = resolve;
     });
@@ -182,32 +170,23 @@ describe("App route tree — NotePage lazy：chunk 載入中殼在場（issue #1
       </QueryClientProvider>,
     );
 
-    // fallback 掛著（閘門未放行，stub 不可能 resolve）時，AppShell 的招牌元素必須在場——
-    // 等待上限用全域 asyncUtilTimeout，多久都不會讓斷言跑出 fallback 期間。
+    // While the fallback is up (gate not released) the AppShell landmark must be present; the unbounded wait can't outlast the fallback period.
     await waitFor(() => expect(screen.getByText("New note")).toBeInTheDocument());
-    // 「Loading…」可能同時出現在 fallback 本體與 NoteList 的載入態——至少一份
-    //（AppShell 在場 + 載入文案在場＝fallback 的完整形狀）。
+    // "Loading…" may appear in both the fallback and NoteList's loading state: at least one (AppShell present + loading text = the fallback's full shape).
     expect(screen.getAllByText("Loading…").length).toBeGreaterThanOrEqual(1);
-    // 反向釘：此刻還在 fallback，stub 不得已經頂上（閘門沒放行就頂上＝NotePage 不是 lazy）。
+    // Still in the fallback: the stub must not be up before release (if it were, NotePage isn't lazy).
     expect(screen.queryByText("notepage-stub-without-appshell")).not.toBeInTheDocument();
 
-    // 放行後 stub 必須頂上：證明擋住 fallback 的正是這支 mock 的閘門（mock 沒生效、
-    // 真 NotePage 被載入的話，這裡等不到 stub → 紅）。
+    // After release the stub must take over: proves this mock's gate is what held the fallback (if the mock didn't apply and the real NotePage loaded, the stub is never found and this fails).
     notePageGate.release();
     expect(await screen.findByText("notepage-stub-without-appshell")).toBeInTheDocument();
   });
 });
 
-// #131：`useSessionGate` 開始讀 `useLocation()` 之後，`App.tsx` 的兩棵 `<Routes>` 就
-// 有了一個可觀測的分歧——主樹吃被覆寫的**背景** location、第二棵樹（只含
-// `/settings/*`）吃**真實**網址，未登入時兩棵各自 render 一個 `<Navigate>`，目標不同。
-// 兩者都是 replace，第二棵樹的 effect 後跑而覆寫前者，所以使用者落到的是真實網址那個。
+// #131: once `useSessionGate` reads `useLocation()`, App.tsx's two `<Routes>` trees diverge observably: the main tree uses the overridden **background** location, the second tree (only `/settings/*`) uses the **real** URL; signed out, each renders a `<Navigate>` with a different target. Both replace, and the second tree's effect runs later and overwrites the first, so the user ends up at the real URL's target.
 //
-// 這一案就是那個「後掛載者勝出」的守衛：把第二棵樹的 `/settings/*` 路由搬進主樹
-// （或改變兩棵樹的順序），`next` 就會**靜默**退化成背景頁（`/notes/…`）而這裡會紅。
-// ⚠ 它**不**守另一個方向：若有人改讓 guards 直接讀真實 location，這一案只會更綠。
-// 理由鏈寫在 `App.tsx` 的兩棵樹 JSDoc。
-describe("App route tree — #131：modal-over-background 未登入時，next 取真實網址而非背景頁", () => {
+// This case guards that "later-mounted wins": moving the second tree's `/settings/*` routes into the main tree (or swapping the trees' order) would silently degrade `next` to the background page (`/notes/...`) and fail here. ⚠ It does not guard the other direction: if guards were changed to read the real location directly, this case would only get greener. The reasoning chain is in the JSDoc on the two trees in `App.tsx`.
+describe("App route tree - #131: signed out with a modal over a background, next is the real URL, not the background page", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -216,13 +195,12 @@ describe("App route tree — #131：modal-over-background 未登入時，next �
     vi.unstubAllGlobals();
   });
 
-  /** 落在 /login 的探針：LoginPage 本身也會 render，但我們只要 location 逐字。 */
   function LocationProbe() {
     const location = useLocation();
     return <div data-testid="app-location">{`${location.pathname}${location.search}`}</div>;
   }
 
-  it("背景是 /notes/…、網址列是 /settings/account → /login?next=%2Fsettings%2Faccount", async () => {
+  it("background /notes/..., URL bar /settings/account -> /login?next=%2Fsettings%2Faccount", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {

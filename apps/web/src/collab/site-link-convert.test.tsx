@@ -12,11 +12,9 @@ import { createPmPlugin } from "./pm-plugin";
 import { attachTestElementRenderer } from "@/test/element-renderer";
 import { P, row, shape } from "@/test/columns-fixtures";
 
-// W4（AddMarkStep 外掛、非同步後備兩列）。
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試只碰 view 的 state／dispatch／someProp 幾個欄位，沿用 any（同 AnyEditor 的慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tests only touch a few fields of the view (state/dispatch/someProp), any kept as with AnyEditor
 type AnyView = any;
 
 const ORIGIN = window.location.origin;
@@ -30,7 +28,7 @@ function env(notes: SiteLinkCandidate[] | undefined = NOTES): SiteLinkEnv & { re
 
 function mount(e: SiteLinkEnv | null, collab = false, extra: Extension[] = []): { editor: AnyEditor; doc?: Y.Doc; container: HTMLElement } {
   const envRef: SiteLinkEnvRef = { current: e };
-  // `extra` 排在前面：tiptap 先反轉再依 priority 排序，陣列越後面的 extension 其 plugin 越前面——本外掛因此先於 `extra` 跑。
+  // `extra` goes first: tiptap reverses then sorts by priority, so extensions later in the array have earlier plugins; this plugin therefore runs before `extra`.
   const extensions = [...extra, createSiteLinkConvertExtension({ envRef })];
   let doc: Y.Doc | undefined;
   const editor = (collab
@@ -39,14 +37,14 @@ function mount(e: SiteLinkEnv | null, collab = false, extra: Extension[] = []): 
           schema: noteSchema,
           collaboration: { provider: { awareness: undefined }, fragment: (doc = new Y.Doc()).getXmlFragment(YDOC_FRAGMENT), user: { id: "u", name: "U", color: "#123456" } },
           _tiptapOptions: { extensions },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整 schema 三元組
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
         } as any),
       )
     : BlockNoteEditor.create({ schema: noteSchema, _tiptapOptions: { extensions } } as never)) as AnyEditor;
   const container = document.createElement("div");
   document.body.appendChild(container);
   editor.mount(container);
-  attachTestElementRenderer(editor); // wikilink 的 toDOM 要它（見 helper 檔頭）
+  attachTestElementRenderer(editor); // wikilink's toDOM needs it (see the helper's file header)
   return { editor, doc, container };
 }
 
@@ -61,7 +59,7 @@ function inline(editor: AnyEditor): Array<{ type: string; props?: Record<string,
   return editor.document[0]!.content as Array<{ type: string; props?: Record<string, string>; href?: string }>;
 }
 
-describe("#269 W4 AddMarkStep 外掛", () => {
+describe("#269 AddMarkStep plugin", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
   afterEach(() => {
@@ -69,7 +67,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     container.remove();
   });
 
-  it("autolink（打網址＋空白）：同一次 dispatch 內換成 wikilink（文字＝網址 ⇒ label 空）", () => {
+  it("autolink (typing a URL plus a space): replaced by a wikilink within the same dispatch (text equal to the URL -> empty label)", () => {
     ({ editor, container } = mount(env()));
     const view = editor._tiptapEditor.view;
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
@@ -79,15 +77,14 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     expect(inline(editor).some((n) => n.type === "link")).toBe(false);
   });
 
-  it("createLink（連結對話框的落地點）：換成 wikilink、label 規則（文字≠標題 ⇒ label＝文字）、錨點進 prop", () => {
+  it("createLink (where the link dialog lands): replaced by a wikilink, label rule (text differs from the title -> label = text), the anchor goes into a prop", () => {
     ({ editor, container } = mount(env()));
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
     editor.createLink(`/n/alice/alpha#b-h1`, "see this");
     expect(inline(editor).find((n) => n.type === "wikilink")?.props).toEqual({ targetNoteId: A_ID, snapshotTitle: "see this", label: "see this", anchorBlockId: "h1" });
   });
 
-  it("選取上貼網址（tiptap Link 的 handlePaste → setMark）：外掛單獨掛著時換成 wikilink、label＝被選的字（產品組態下這條路徑歸貼上 hook）", () => {
-    // 本檔的組態只掛外掛、沒有貼上 hook；產品組態（NoteEditor）裡選取上貼網址由貼上 hook 轉換，這裡量的是外掛自己的行為。
+  it("URL pasted over a selection (tiptap Link's handlePaste -> setMark): with the plugin mounted alone it becomes a wikilink with label = the selected text (in the product configuration this path belongs to the paste hook)", () => {
     ({ editor, container } = mount(env()));
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "go Alpha now" }]);
     const view = editor._tiptapEditor.view;
@@ -101,7 +98,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     expect(inline(editor).find((n) => n.type === "wikilink")?.props).toEqual({ targetNoteId: A_ID, snapshotTitle: "Alpha", label: "", anchorBlockId: "" });
   });
 
-  it("欄內（並排預留點 7）：第 2 欄段落選取上貼網址 → 換成 wikilink、列仍兩欄", () => {
+  it("inside columns: URL pasted over a selection in the paragraph of column 2 -> replaced by a wikilink, the row still has two columns", () => {
     ({ editor, container } = mount(env()));
     editor.replaceBlocks(editor.document, [row([[P("left")], [P("go Alpha now", "c2p")]], "r1")]);
     const view = editor._tiptapEditor.view;
@@ -117,7 +114,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     expect(shape(editor)).toBe("ROW[COL(paragraph:left) | COL(paragraph:go  now)]");
   });
 
-  it("快取 miss／未載入的站內網址：維持一般連結並排後備（每次動作一批）；外站連結不排", () => {
+  it("cache miss / not-yet-loaded on-site URL: stays an ordinary link and a fallback is queued (one batch per action); external links aren't queued", () => {
     const e = env([]);
     ({ editor, container } = mount(e));
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
@@ -130,7 +127,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     });
   });
 
-  it("帶 y-sync$ meta 或 knotebook:siteLinkConvert meta 的 tr：不轉", () => {
+  it("a tr with the y-sync$ meta or the knotebook:siteLinkConvert meta: not converted", () => {
     ({ editor, container } = mount(env()));
     const view = editor._tiptapEditor.view;
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "Alpha" }]);
@@ -148,9 +145,8 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     }
   });
 
-  it("別的外掛對遠端更新／轉換本身的 tr 附加 link mark（附加 tr 單獨送到本外掛）：看根 tr，不轉", () => {
-    // 測試用外掛：根 tr 帶 `test:linkify` 時附加一筆 addMark。plugin 順序排在本外掛之後（見 mount）⇒ 本外掛第一輪只看到根 tr
-    // （沒有 AddMarkStep），下一輪才單獨看到附加的 tr——只看 tr 本身的 meta 會漏掉根上的 y-sync$／siteLinkConvert。
+  it("another plugin appends a link mark to a remote update / the conversion's own tr (the appended tr reaches this plugin alone): looks at the root tr, not converted", () => {
+    // The test plugin appends an addMark when the root tr carries `test:linkify`. Plugin order puts it after this plugin (see mount), so this plugin first sees only the root tr (no AddMarkStep) and the appended tr alone in the next round; looking at the tr's own meta would miss y-sync$/siteLinkConvert on the root.
     const linkify = Extension.create({
       name: "testLinkify",
       addProseMirrorPlugins() {
@@ -174,16 +170,15 @@ describe("#269 W4 AddMarkStep 外掛", () => {
         return from === -1;
       });
       view.dispatch(view.state.tr.setMeta(meta, {}).setMeta("test:linkify", { from }));
-      // 前置：測試外掛真的附加了 link mark。
       expect(inline(editor).map((n) => n.type), meta).toEqual(["link"]);
       view.dispatch(view.state.tr.removeMark(0, view.state.doc.content.size, view.state.schema.marks.link));
     }
   });
 
-  it("打字（ReplaceStep）不觸發：既有站內一般連結內打字不會被轉", () => {
+  it("typing (ReplaceStep) doesn't trigger: typing inside an existing ordinary on-site link isn't converted", () => {
     ({ editor, container } = mount(env()));
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href: "/n/alice/alpha", content: "Alpha" }] }]);
-    expect(inline(editor).some((n) => n.type === "wikilink")).toBe(false); // replaceBlocks 是 ReplaceStep，不轉
+    expect(inline(editor).some((n) => n.type === "wikilink")).toBe(false); // replaceBlocks is a ReplaceStep, not converted
     const view = editor._tiptapEditor.view;
     let pos = -1;
     view.state.doc.descendants((n: AnyView, p: number) => {
@@ -195,7 +190,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     expect(inline(editor).some((n) => n.type === "wikilink")).toBe(false);
   });
 
-  it("連結內刪字、選取覆蓋（from < to 的 ReplaceStep）不觸發：撤銷轉換後留下的站內一般連結不會被編輯轉回", () => {
+  it("deleting inside a link or typing over a selection (a ReplaceStep with from < to) doesn't trigger: the ordinary on-site link left after undoing a conversion isn't converted back by editing", () => {
     ({ editor, container } = mount(env()));
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href: "/n/alice/alpha", content: "Alpha" }] }]);
     const view = editor._tiptapEditor.view;
@@ -204,22 +199,21 @@ describe("#269 W4 AddMarkStep 外掛", () => {
       if (start === -1 && n.isText) start = p;
       return start === -1;
     });
-    view.dispatch(view.state.tr.delete(start + 2, start + 3)); // "Alpha" → "Alha"
+    view.dispatch(view.state.tr.delete(start + 2, start + 3)); // "Alpha" -> "Alha"
     expect(inline(editor).map((n) => [n.type, n.href])).toEqual([["link", "/n/alice/alpha"]]);
     editor._tiptapEditor.commands.setTextSelection({ from: start + 1, to: start + 3 });
-    typeString(view, "y"); // "Alha" 選 "lh" 打 "y" → "Aya"
+    typeString(view, "y"); // "Alha" with "lh" selected, typing "y" -> "Aya"
     expect(inline(editor).map((n) => [n.type, n.href])).toEqual([["link", "/n/alice/alpha"]]);
   });
 
-  it("外掛單獨掛著時不收拖放（drop 歸 drop hook `withSiteLinkDrop`）：paste rule 加了 link mark，但不轉、不排後備", () => {
+  it("with the plugin mounted alone drops aren't handled (a drop belongs to the drop hook `withSiteLinkDrop`): the paste rule adds a link mark but nothing is converted or queued", () => {
     const e = env();
     ({ editor, container } = mount(e));
     const view = editor._tiptapEditor.view;
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
     const at = view.state.selection.from;
     view.dispatch(view.state.tr.insertText(`${ORIGIN}/n/alice/alpha ${ORIGIN}/n/bob/secret`, at).setMeta("uiEvent", "drop"));
-    // tiptap 的 paste rule 對外部 drop 也跑，兩個網址真的都成了 link（命中與未命中各一），而且外掛沒轉、沒排後備——
-    // 一次拖放只歸 drop hook（#352，`site-link-drop.test.tsx`），這裡沒有掛它。一次斷言整列 `[type, href]`：轉錯時紅燈訊息直接看得到 wikilink，不會與「paste rule 沒加 link」混淆。
+    // Tiptap's paste rule also runs for external drops, so both URLs really became links (one hit, one miss) while the plugin converted nothing and queued no fallback: a drop belongs to the drop hook (#352, `site-link-drop.test.tsx`), which isn't mounted here. The whole `[type, href]` row is asserted at once so a wrong conversion shows a wikilink in the failure message instead of being confused with "the paste rule added no link".
     expect(inline(editor).map((n) => [n.type, n.href])).toEqual([
       ["link", `${ORIGIN}/n/alice/alpha`],
       ["text", undefined],
@@ -228,7 +222,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     return Promise.resolve().then(() => expect(e.requests).toEqual([]));
   });
 
-  it("貼上（uiEvent=paste）歸貼上 hook：外掛單獨掛著時，空選取 pasteText 裸網址——paste rule 加了 link，但外掛不轉、不排後備", () => {
+  it("a paste (uiEvent=paste) belongs to the paste hook: with the plugin mounted alone, pasteText of a bare URL on an empty selection - the paste rule adds a link but the plugin neither converts nor queues a fallback", () => {
     const e = env();
     ({ editor, container } = mount(e));
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
@@ -237,11 +231,11 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     return Promise.resolve().then(() => expect(e.requests).toEqual([]));
   });
 
-  it("遠端更新（另一個 Y.Doc 寫進來的 link）：不轉", () => {
+  it("remote update (a link written in from another Y.Doc): not converted", () => {
     const { editor: e1, doc, container: c1 } = mount(env(), true);
     editor = e1;
     container = c1;
-    // 未編輯前 y-prosemirror 還沒把初始空文件寫進 Y.Doc（fragment 是空的）——先本地寫一次，遠端才有段落可以插字。
+    // Before any edit y-prosemirror hasn't written the initial empty document into the Y.Doc (the fragment is empty): write locally once so the remote side has a paragraph to insert into.
     editor.replaceBlocks(editor.document, [{ type: "paragraph" }]);
     const remote = new Y.Doc();
     Y.applyUpdate(remote, Y.encodeStateAsUpdate(doc!));
@@ -255,7 +249,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     expect(inline(editor).some((n) => n.type === "wikilink")).toBe(false);
   });
 
-  it("遠端更新寫進「站內網址＋空白」純文字：收端真的 autolink 加了 link（它不跳過 y-sync$），但根 tr 是遠端更新 ⇒ 不轉、不排後備", async () => {
+  it("a remote update writes on-site URL + space as plain text: the receiving side's autolink really adds a link (it doesn't skip y-sync$), but the root tr is a remote update -> not converted, no fallback queued", async () => {
     const e = env();
     const { editor: e1, doc, container: c1 } = mount(e, true);
     editor = e1;
@@ -266,7 +260,7 @@ describe("#269 W4 AddMarkStep 外掛", () => {
     const content = ((remote.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement).get(0) as Y.XmlElement).get(0) as Y.XmlElement;
     const text = new Y.XmlText();
     content.insert(0, [text]);
-    text.insert(0, `see ${ORIGIN}/n/alice/alpha `); // 不帶 link 屬性：link 只能是收端 autolink 加的
+    text.insert(0, `see ${ORIGIN}/n/alice/alpha `); // no link attribute: any link can only come from the receiver's autolink
     Y.applyUpdate(doc!, Y.encodeStateAsUpdate(remote, Y.encodeStateVector(doc!)), "remote");
     expect(inline(editor).map((n) => [n.type, n.href])).toEqual([
       ["text", undefined],
@@ -278,10 +272,10 @@ describe("#269 W4 AddMarkStep 外掛", () => {
   });
 });
 
-describe("#269 非同步後備", () => {
+describe("#269 async fallback", () => {
   afterEach(() => document.body.replaceChildren());
 
-  it("解析成功 → 一筆 transaction 換掉仍在原區塊、href 與文字都相同的連結；文字被改過的放棄；相異 href 超過 20 只問前 20 個", async () => {
+  it("resolved -> one transaction replaces links still in their original block with the same href and text; links whose text changed are dropped; with more than 20 distinct hrefs only the first 20 are asked", async () => {
     const { editor } = mount(null);
     const hrefs = Array.from({ length: 22 }, (_, i) => `/n/bob/n${i}`);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: hrefs.map((h, i) => ({ type: "link" as const, href: h, content: `t${i}` })) }]);
@@ -291,7 +285,7 @@ describe("#269 非同步後備", () => {
     const dispatchSpy = vi.spyOn(editor._tiptapEditor.view, "dispatch");
     const n = await runFallbackConversion(editor, requests, ORIGIN, resolve as never);
     expect(resolve).toHaveBeenCalledTimes(20);
-    expect(n).toBe(19); // n1 的文字對不上（request 說 "changed"）⇒ 放棄；n20、n21 超過上限沒問
+    expect(n).toBe(19); // n1's text doesn't match (the request says "changed") so it is dropped; n20 and n21 are over the cap and not asked
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     const tr = dispatchSpy.mock.calls[0]![0] as { getMeta(k: string): unknown };
     expect(tr.getMeta(SITE_LINK_CONVERT_META)).toBe(true);
@@ -300,7 +294,7 @@ describe("#269 非同步後備", () => {
     expect(types.filter((t) => t === "link")).toHaveLength(3);
   });
 
-  it("全部解析不到 → 不 dispatch", async () => {
+  it("none resolved -> no dispatch", async () => {
     const { editor } = mount(null);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href: "/n/bob/x", content: "x" }] }]);
     const spy = vi.spyOn(editor._tiptapEditor.view, "dispatch");
@@ -309,7 +303,7 @@ describe("#269 非同步後備", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("解析成功但原連結已找不到（文字被改）→ 放棄、不 dispatch", async () => {
+  it("resolved but the original link can no longer be found (text changed) -> dropped, no dispatch", async () => {
     const { editor } = mount(null);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href: "/n/bob/x", content: "x2" }] }]);
     const spy = vi.spyOn(editor._tiptapEditor.view, "dispatch");
@@ -318,7 +312,7 @@ describe("#269 非同步後備", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("等 server 期間編輯器已 unmount（換篇）→ 不套用", async () => {
+  it("the editor unmounted while waiting for the server (switched notes) -> not applied", async () => {
     const { editor, container } = mount(null);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href: "/n/bob/x", content: "x" }] }]);
     const blockId = editor.document[0]!.id;
@@ -331,17 +325,16 @@ describe("#269 非同步後備", () => {
 });
 
 /**
- * W11（兩列，量到的結果即斷言；共編組態、不用 fake timers）：
- * - AddMarkStep 外掛：轉換與建連結在**同一筆 dispatch**（appendTransaction）⇒ 預期同一撤銷格：第一下 undo 整個連結消失。
- * - 非同步後備：(a) 後備在停頓之後才落地（stopCapturing 隔開）⇒ 第一下 undo 只把 wikilink 退回一般連結，且退回後不再被自動轉換；
- *   (b) 後備緊接著落地（同一個 500ms 窗口）⇒ 第一下 undo 連建連結一起撤。MEASURED 是【推】假說，實測不同就照實改並回報。
+ * Undo measurements (two rows; the measured results are the assertions; collab configuration, no fake timers):
+ * - AddMarkStep plugin: the conversion and the link creation are in the **same dispatch** (appendTransaction), so they should share one undo cell: the first undo makes the whole link disappear.
+ * - Async fallback: (a) when the fallback lands after a pause (separated by stopCapturing), the first undo only reverts the wikilink to an ordinary link, and it isn't auto-converted again afterwards; (b) when it lands right after (same 500ms window), the first undo undoes the link creation too. MEASURED is a hypothesis derived by reasoning.
  */
 const MEASURED = { addMarkSameCell: true, fallbackAfterPauseRevertsToLink: true, fallbackImmediateRemovesAll: true } as const;
 
-describe("#269 W11 撤銷量測（外掛、後備）", () => {
+describe("#269 undo measurements (plugin, fallback)", () => {
   afterEach(() => document.body.replaceChildren());
 
-  it(`AddMarkStep 外掛：第一下 undo 整個連結（含轉換）消失＝${String(MEASURED.addMarkSameCell)}`, () => {
+  it(`AddMarkStep plugin: the first undo makes the whole link (conversion included) disappear =${String(MEASURED.addMarkSameCell)}`, () => {
     const { editor } = mount(env(), true);
     const manager = collabUndoManager(editor)!;
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
@@ -352,7 +345,7 @@ describe("#269 W11 撤銷量測（外掛、後備）", () => {
     expect((editor.document[0]!.content as unknown[]).length === 0).toBe(MEASURED.addMarkSameCell);
   });
 
-  it(`後備在停頓之後落地：第一下 undo 只退回一般連結＝${String(MEASURED.fallbackAfterPauseRevertsToLink)}；退回後不再被自動轉換`, async () => {
+  it(`fallback lands after a pause: the first undo only reverts to an ordinary link =${String(MEASURED.fallbackAfterPauseRevertsToLink)}; it isn't auto-converted again afterwards`, async () => {
     const e = env([]);
     const { editor } = mount(e, true);
     const manager = collabUndoManager(editor)!;
@@ -367,11 +360,11 @@ describe("#269 W11 撤銷量測（外掛、後備）", () => {
     const afterUndo = inline(editor).map((n) => n.type);
     expect(afterUndo.includes("link") && !afterUndo.includes("wikilink")).toBe(MEASURED.fallbackAfterPauseRevertsToLink);
     await Promise.resolve();
-    expect(e.requests).toHaveLength(1); // 撤銷（y-sync$）不會再排後備
+    expect(e.requests).toHaveLength(1); // an undo (y-sync$) doesn't queue the fallback again
     expect(inline(editor).some((n) => n.type === "wikilink")).toBe(false);
   });
 
-  it(`後備緊接著落地（同一窗口）：第一下 undo 連建連結一起撤＝${String(MEASURED.fallbackImmediateRemovesAll)}`, async () => {
+  it(`fallback lands right after (same window): the first undo undoes the link creation too =${String(MEASURED.fallbackImmediateRemovesAll)}`, async () => {
     const e = env([]);
     const { editor } = mount(e, true);
     const manager = collabUndoManager(editor)!;

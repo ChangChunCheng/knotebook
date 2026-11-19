@@ -3,17 +3,11 @@ import { describe, expect, it } from "vitest";
 import { hasMarkdownStructure } from "./paste";
 
 /**
- * 不變量測試：`hasMarkdownStructure` 必須是 BlockNote `isMarkdown` 的**子集**。
+ * Invariant: `hasMarkdownStructure` must be a **subset** of BlockNote's `isMarkdown`.
  *
- * 為什麼這條性質值得一個專門的檔案：`decideMarkdownPaste` 只在「剪貼簿同時有 HTML」
- * 時用這個門檻決定要不要把貼上從 HTML 路徑接過來。只要維持子集關係，接手就等於
- * 「與 BlockNote 相同的判斷，外加行尾正規化」——不可能把它原本會用 HTML 處理的內容
- * 拉走（那是反覆出現過的回歸：JSDoc 的 ` * ` 續行被當清單、超長 `#` 註解被
- * 當標題、psql 的 `-----|-----` 被當表格、shell 的 `1) ` 被當編號清單）。
+ * `decideMarkdownPaste` uses this threshold only when the clipboard also has HTML, to decide whether to take the paste over from the HTML path. While the subset relation holds, taking over equals "the same decision as BlockNote plus line-ending normalization" and can't pull away content BlockNote would have handled via HTML (a recurring regression: JSDoc ` * ` continuation lines taken as a list, an overlong `#` comment taken as a heading, psql's `-----|-----` taken as a table, shell `1) ` taken as a numbered list).
  *
- * oracle 直接讀 `node_modules` 裡安裝的那份原始碼來執行——**刻意不把它複製進本專案**
- * （BlockNote 是 MPL-2.0，本專案 MIT）。升版後這個檔案若消失或形狀改變，這條測試會
- * 直接紅掉，那正是應該重新確認這條不變量的時機。
+ * The oracle executes the source installed in `node_modules` directly and is deliberately not copied into this project (BlockNote is MPL-2.0, this project MIT). If that file disappears or changes shape after an upgrade this test goes red, which is the moment to re-confirm the invariant.
  */
 function loadBlockNoteIsMarkdown(): (src: string) => boolean {
   const path = `${process.cwd()}/node_modules/@blocknote/core/src/api/parsers/markdown/detectMarkdown.ts`;
@@ -24,7 +18,7 @@ function loadBlockNoteIsMarkdown(): (src: string) => boolean {
   return new Function(`${source}\nreturn isMarkdown;`)() as (src: string) => boolean;
 }
 
-/** 用真剪貼簿量到的形狀，加上一般 markdown 文件。子集關係要對整組成立。 */
+/** Shapes captured from a real clipboard plus ordinary markdown documents; the subset relation must hold across the whole set. */
 const CORPUS: Array<[string, string]> = [
   ["JSDoc 註解", "/**\n * Adds two numbers together.\n * @param {number} a - first\n */\nfunction add(a, b) {\n  return a + b;\n}"],
   ["C/Java 授權標頭", "/*\n * Copyright 2026 Someone.\n * Licensed under the Apache License.\n */"],
@@ -57,22 +51,22 @@ const CORPUS: Array<[string, string]> = [
   ["水平線", "Part one.\n\n---\n\nPart two."],
 ];
 
-describe("hasMarkdownStructure ⊆ BlockNote isMarkdown", () => {
+describe("hasMarkdownStructure is a subset of BlockNote isMarkdown", () => {
   const isMarkdown = loadBlockNoteIsMarkdown();
 
-  it("oracle 本身載得起來且行為合理（防止空跑造成假綠）", () => {
+  it("the oracle itself loads and behaves sensibly (guards against a vacuous green)", () => {
     expect(isMarkdown("# 標題\n\n內文一段")).toBe(true);
     expect(isMarkdown("就是一段普通文字，沒有任何標記。")).toBe(false);
   });
 
-  it.each(CORPUS)("%s：我們判斷為 markdown 時，BlockNote 也必須同意", (_name, source) => {
+  it.each(CORPUS)("%s: when we judge it markdown, BlockNote must agree", (_name, source) => {
     if (hasMarkdownStructure(source)) {
       expect(isMarkdown(source)).toBe(true);
     }
   });
 
-  /** 子集斷言在「我們一律回 false」時也會全綠——這條確保語料真的有踩到 true 分支。 */
-  it("語料裡確實有數項通過我們的門檻（否則上面的子集斷言是空跑）", () => {
+  /** The subset assertion would stay green even if we always returned false; this makes sure the corpus really hits the true branch. */
+  it("several corpus entries do pass our threshold (otherwise the subset assertions above run vacuously)", () => {
     const passing = CORPUS.filter(([, source]) => hasMarkdownStructure(source)).map(([name]) => name);
 
     expect(passing).toEqual(
@@ -80,7 +74,7 @@ describe("hasMarkdownStructure ⊆ BlockNote isMarkdown", () => {
     );
   });
 
-  it("整組語料裡沒有任何一項違反子集關係", () => {
+  it("no corpus entry violates the subset relation", () => {
     const violations = CORPUS.filter(([, source]) => hasMarkdownStructure(source) && !isMarkdown(source)).map(([name]) => name);
 
     expect(violations).toEqual([]);

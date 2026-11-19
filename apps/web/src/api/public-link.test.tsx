@@ -4,13 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCreatePublicLink, useDeletePublicLink, useSetPublicWidth, type PublicLinkDto } from "./public-link";
 
 /**
- * #122：public-link 快取的兩個 mutation 寫入點（
- * 故障形——這兩點寫錯不會讓任何 render 測試紅，只會讓 ShareDialog 的公開連結列或
- * 別名列「憑空消失/殘留」）：
- * - 撤公開（DELETE）：204 無 body，快取必須寫 `{token: null, slug: null}` **兩鍵**
- *   ——漏 slug＝撤公開後別名殘留畫面。
- * - 重生（PUT）：onSuccess 直寫 server 回應——server 回全形 `{token, slug}`，快取
- *   的 slug 必須保留原別名而非變 undefined。
+ * #122: the two mutation write points of the public-link cache. Failure shape: a wrong write here turns no render test red, it only makes ShareDialog's public-link row or alias row vanish or linger.
+ * - Revoke (DELETE): 204 has no body, so the cache must write `{token: null, slug: null}` (both keys); omitting slug leaves the alias on screen after revoking.
+ * - Regenerate (PUT): onSuccess writes the server response directly; the server returns the full `{token, slug}`, and the cached slug must keep the original alias instead of becoming undefined.
  */
 
 const NOTE_ID = "11111111-1111-1111-1111-111111111111";
@@ -39,7 +35,6 @@ function Harness() {
 
 function setup(fetchImpl: (method: string, url: string) => Response | Promise<Response>, seed = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  // 種既有狀態：token＋別名都在（分享面板已開過的形）
   if (seed) queryClient.setQueryData(KEY, { token: "T".repeat(43), slug: "my-alias", width: "full" } satisfies PublicLinkDto);
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
     Promise.resolve(fetchImpl((init?.method ?? "GET").toUpperCase(), String(input))),
@@ -57,8 +52,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("public-link 快取寫入點（#122）", () => {
-  it("撤公開（DELETE 204 無 body）→ 快取寫 {token: null, slug: null} 兩鍵——別名不殘留", async () => {
+describe("public-link cache write points (#122)", () => {
+  it("revoke (DELETE 204, no body) -> cache writes {token: null, slug: null}, both keys - alias doesn't linger", async () => {
     const { queryClient, getByText } = setup(() => fakeResponse(204));
     fireEvent.click(getByText("del"));
     await waitFor(() => {
@@ -66,7 +61,7 @@ describe("public-link 快取寫入點（#122）", () => {
     });
   });
 
-  it("撤公開時快取是空的 → 不憑空寫出快取項", async () => {
+  it("revoke with an empty cache -> no cache entry is created from nothing", async () => {
     const { queryClient, getByText, fetchMock } = setup(() => fakeResponse(204), false);
     fireEvent.click(getByText("del"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -74,7 +69,7 @@ describe("public-link 快取寫入點（#122）", () => {
     expect(queryClient.getQueryData(KEY)).toBeUndefined();
   });
 
-  it("重生（PUT 回全形）→ 快取直寫回應，slug 保留原別名、token 換新", async () => {
+  it("regenerate (PUT returns the full shape) -> cache gets the response directly, slug keeps the original alias, token is new", async () => {
     const NEW_TOKEN = "U".repeat(43);
     const { queryClient, getByText } = setup((method) =>
       method === "PUT" ? fakeResponse(200, { token: NEW_TOKEN, slug: "my-alias", width: "full" }) : fakeResponse(500),
@@ -85,7 +80,7 @@ describe("public-link 快取寫入點（#122）", () => {
     });
   });
 
-  it("寬度 mutation 成功 → 只合併 width：期間重生的新 token 不被舊值蓋回", async () => {
+  it("width mutation success -> merges only width: a token regenerated meanwhile isn't overwritten by the old value", async () => {
     let resolveWidth!: (r: Response) => void;
     const { queryClient, getByText, fetchMock } = setup(
       () => new Promise<Response>((resolve) => (resolveWidth = resolve)),
@@ -96,7 +91,6 @@ describe("public-link 快取寫入點（#122）", () => {
     expect(String(url)).toBe(`/api/notes/${NOTE_ID}/public-width`);
     expect((init as RequestInit).method).toBe("PUT");
     expect((init as RequestInit).body).toBe('{"width":"wide"}');
-    // 模擬等待期間別處重生了 token
     queryClient.setQueryData(KEY, { token: "U".repeat(43), slug: "my-alias", width: "full" });
     resolveWidth(fakeResponse(200, { width: "wide" }));
     await waitFor(() => {
@@ -104,7 +98,7 @@ describe("public-link 快取寫入點（#122）", () => {
     });
   });
 
-  it("寬度 mutation 成功但快取是空的 → 不寫", async () => {
+  it("width mutation success with an empty cache -> nothing written", async () => {
     const { queryClient, getByText, fetchMock } = setup(() => fakeResponse(200, { width: "wide" }), false);
     fireEvent.click(getByText("width"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));

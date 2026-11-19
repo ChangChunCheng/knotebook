@@ -10,11 +10,11 @@ import {
 } from "./widths";
 
 const sumCents = (r: readonly number[]) => Math.round(r.reduce((a, b) => a + b, 0) * 100);
-/** 兩位小數：值等於 `Math.round(v*100)/100` 產生的那個 double（`v*100` 本身不一定是整數，例如 1.1*100）。 */
+/** Equal to the double `Math.round(v*100)/100` produces; `v*100` itself isn't always an integer (e.g. 1.1*100). */
 const isTwoDecimals = (v: number) => Math.round(v * 100) / 100 === v;
 
-describe("W1 ratiosFromPixels", () => {
-  it("W1 總和＝欄數、每值兩位小數、在 [0.1,10]", () => {
+describe("ratiosFromPixels", () => {
+  it("sum equals the column count, each value has two decimals, within [0.1,10]", () => {
     for (const px of [[100, 300], [96, 2000], [1, 1, 1], [333, 333, 334, 1]]) {
       const r = ratiosFromPixels(px);
       expect(sumCents(r)).toBe(px.length * 100);
@@ -26,31 +26,31 @@ describe("W1 ratiosFromPixels", () => {
     }
   });
 
-  it("W1 極端：[96, 2000] → 第 1 欄夾在 0.1", () => expect(ratiosFromPixels([96, 2000])[0]).toBeCloseTo(0.1, 5));
+  it("extreme: [96, 2000] -> column 1 clamped at 0.1", () => expect(ratiosFromPixels([96, 2000])[0]).toBeCloseTo(0.1, 5));
 
-  // 總和 533 不整除，多數 d 會產生捨入差；第 3 欄不在 changed 裡，捨入差只能落在第 1／2 欄，第 3 欄恆為 3×333/533 ≈ 1.874 → 1.87。
-  it("W1 changed：[100+d|100−d|333] 只改第 1／2 欄，窮舉 d=-40..40，第 3 欄一律 1.87、捨入差只落在第 1／2 欄", () => {
+  // The total 533 doesn't divide evenly, so most d produce a rounding difference; column 3 isn't in changed, so the difference can only land on columns 1/2, and column 3 is always 3x333/533 = 1.874 -> 1.87.
+  it("changed: [100+d|100-d|333] changes only columns 1 and 2; over d=-40..40 column 3 is always 1.87 and the rounding difference lands only on columns 1 and 2", () => {
     let nonzero = 0;
     for (let d = -40; d <= 40; d++) {
       const px = [100 + d, 100 - d, 333];
       const s = px.reduce((a, b) => a + b, 0);
-      if (px.reduce((a, p) => a + Math.round((3 * p * 100) / s), 0) !== 300) nonzero++; // 前提：這組會產生捨入差
+      if (px.reduce((a, p) => a + Math.round((3 * p * 100) / s), 0) !== 300) nonzero++; // precondition: this set produces a rounding difference
       const r = ratiosFromPixels(px, [0, 1]);
       expect(r[2]).toBe(1.87);
       expect(sumCents(r)).toBe(300);
     }
-    expect(nonzero).toBeGreaterThan(0); // 防空真
+    expect(nonzero).toBeGreaterThan(0); // guards against a vacuous pass
   });
 
-  it("W1 捨入差給 changed 裡捨入後值最大的那欄，同值取 index 小者", () => {
-    // [1,1,1]：各 1，沒有捨入差。[2,2,2,1]：4×2/7=1.142857 → 1.14 ×3、0.571 → 0.57，總和 3.99，差 +0.01 給第 1 欄（同值取小 index）。
+  it("the rounding difference goes to the column with the largest rounded value among changed; ties take the smaller index", () => {
+    // [1,1,1]: each 1, no rounding difference. [2,2,2,1]: 4x2/7=1.142857 -> 1.14 x3, 0.571 -> 0.57, sum 3.99, the +0.01 difference goes to column 1 (ties take the smaller index).
     expect(ratiosFromPixels([2, 2, 2, 1])).toEqual([1.15, 1.14, 1.14, 0.57]);
-    // changed＝[1, 2]：差落在第 2 欄（1.14 與 1.14 同值，取 index 小者）。
+    // changed = [1, 2]: the difference lands on the second column (index 1; indexes 1 and 2 tie at 1.14, the smaller index wins).
     expect(ratiosFromPixels([2, 2, 2, 1], [1, 2])).toEqual([1.14, 1.15, 1.14, 0.57]);
   });
 });
 
-/** 決定性亂數（mulberry32）：同一個種子永遠同一串。 */
+/** Deterministic random numbers (mulberry32): the same seed always gives the same sequence. */
 function mulberry32(seed: number): () => number {
   let x = seed >>> 0;
   return () => {
@@ -61,7 +61,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-it("W2 每個輸出經 canonicalColumnsLine(columnOpenTag(w)) 非 null、且就是 w 本身（固定種子 1000 組）", () => {
+it("every output passes through canonicalColumnsLine(columnOpenTag(w)) as non-null and equal to w itself (fixed seed, 1000 sets)", () => {
   const rand = mulberry32(42);
   const int = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));
   const outputs: number[][] = [];
@@ -79,36 +79,35 @@ it("W2 每個輸出經 canonicalColumnsLine(columnOpenTag(w)) 非 null、且就�
   }
 });
 
-describe("W3 dividerResize", () => {
-  it("W3 夾 [mL, pL+pR−mR]，總和不變", () => {
+describe("dividerResize", () => {
+  it("clamped to [mL, pL+pR-mR], sum unchanged", () => {
     expect(dividerResize(300, 300, 200, 200, -500)).toEqual([200, 400]);
     expect(dividerResize(300, 300, 200, 96, 500)).toEqual([504, 96]);
     expect(dividerResize(300, 300, 200, 200, 37)).toEqual([337, 263]);
   });
 });
 
-describe("W4 expandColumnPixels", () => {
-  // 第 2、3 欄的餘裕 s = [200, 100]，扣 150 依 2:1 分攤。
-  it("W4 依餘裕比例扣", () => expect(expandColumnPixels([300, 400, 300], [96, 200, 200], 0, 150)).toEqual({ px: [450, 300, 250], granted: 150 }));
-  it("W4 need > 其他欄餘裕總和 → 只給得出餘裕", () =>
+describe("expandColumnPixels", () => {
+  it("deducts in proportion to headroom", () => expect(expandColumnPixels([300, 400, 300], [96, 200, 200], 0, 150)).toEqual({ px: [450, 300, 250], granted: 150 }));
+  it("need > total headroom of the other columns -> grants only the headroom", () =>
     expect(expandColumnPixels([300, 250], [96, 200], 0, 999)).toEqual({ px: [350, 200], granted: 50 }));
-  it("W4 need ≤ 0 不動", () => expect(expandColumnPixels([300, 300], [96, 200], 0, -10)).toEqual({ px: [300, 300], granted: 0 }));
-  it("W4 其他欄都在最小寬度 → 拖不動", () => expect(expandColumnPixels([300, 200], [96, 200], 0, 50)).toEqual({ px: [300, 200], granted: 0 }));
+  it("need <= 0 changes nothing", () => expect(expandColumnPixels([300, 300], [96, 200], 0, -10)).toEqual({ px: [300, 300], granted: 0 }));
+  it("other columns all at minimum width -> can't be dragged", () => expect(expandColumnPixels([300, 200], [96, 200], 0, 50)).toEqual({ px: [300, 200], granted: 0 }));
 });
 
-describe("W5 equalHeightWidths / addColumnWidths", () => {
-  it("W5 欄寬 ∝ 寬高比", () => expect(equalHeightWidths([2, 1])).toEqual([1.33, 0.67]));
-  it("W5 尺寸未知或不是正數 → null", () => {
+describe("equalHeightWidths / addColumnWidths", () => {
+  it("column widths proportional to aspect ratio", () => expect(equalHeightWidths([2, 1])).toEqual([1.33, 0.67]));
+  it("unknown or non-positive sizes -> null", () => {
     expect(equalHeightWidths([2, null])).toBeNull();
     expect(equalHeightWidths([2, 0])).toBeNull();
     expect(equalHeightWidths([2, -1])).toBeNull();
   });
-  it("W5 [0.5|1.5] 在尾端加欄：新欄＝既有平均，既有比例不變 → [0.5|1.5|1]", () => expect(addColumnWidths([0.5, 1.5], 2)).toEqual([0.5, 1.5, 1]));
-  it("W5 加在開頭：[1|3] → 新欄 2 插在第 1 欄、整列正規化", () => expect(addColumnWidths([1, 3], 0)).toEqual([1, 0.5, 1.5]));
+  it("[0.5|1.5] add a column at the end: new column = average of existing, existing ratios unchanged -> [0.5|1.5|1]", () => expect(addColumnWidths([0.5, 1.5], 2)).toEqual([0.5, 1.5, 1]));
+  it("add at the start: [1|3] -> new column 2 inserted as column 1, whole row normalized", () => expect(addColumnWidths([1, 3], 0)).toEqual([1, 0.5, 1.5]));
 });
 
-describe("W6 changedIndices", () => {
-  it("W6 只列出值不同的欄", () => {
+describe("changedIndices", () => {
+  it("lists only columns whose values differ", () => {
     expect(changedIndices([1, 1, 1], [1.2, 0.8, 1])).toEqual([0, 1]);
     expect(changedIndices([0.5, 1.5], [0.5, 1.5])).toEqual([]);
   });

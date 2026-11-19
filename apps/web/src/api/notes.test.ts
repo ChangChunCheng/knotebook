@@ -34,14 +34,14 @@ function client() {
 }
 
 describe("patchNotesListLastEdited", () => {
-  it("PL1 沒有 [\"notes\"] 快取：不建立快取項", () => {
+  it("no [\"notes\"] cache: no cache entry is created", () => {
     const qc = client();
     patchNotesListLastEdited(qc, "a", NEW);
     expect(qc.getQueryData(["notes"])).toBeUndefined();
     expect(qc.getQueryCache().find({ queryKey: ["notes"] })).toBeUndefined();
   });
 
-  it("PL2 清單裡沒有這一列：不寫", () => {
+  it("row not in the list: nothing written", () => {
     const qc = client();
     qc.setQueryData(["notes"], [note("a", OLD), note("b", OLD)]);
     const spy = vi.spyOn(qc, "setQueryData");
@@ -49,7 +49,7 @@ describe("patchNotesListLastEdited", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("PL3 只換那一列的 lastEdited，其他列物件與順序不變；null 變有值同樣換", () => {
+  it("only that row's lastEdited is replaced, other row objects and order unchanged; null -> value is replaced too", () => {
     const qc = client();
     const prev = [note("a", OLD), note("b", OLD), note("c", null)];
     qc.setQueryData(["notes"], prev);
@@ -57,20 +57,20 @@ describe("patchNotesListLastEdited", () => {
     const next = qc.getQueryData<NoteDto[]>(["notes"])!;
     expect(next.map((n) => n.id)).toEqual(["a", "b", "c"]);
     expect(next[1]).toEqual({ ...prev[1], lastEdited: NEW });
-    // 其他列參照不變由 TanStack 的 structural sharing 保證，不在此斷言。
+    // Other rows keeping their references is guaranteed by TanStack's structural sharing, not asserted here.
     expect(next[0]).toEqual(prev[0]);
     expect(next[2]).toEqual(prev[2]);
 
     patchNotesListLastEdited(qc, "c", NEW);
     expect(qc.getQueryData<NoteDto[]>(["notes"])![2]).toEqual({ ...prev[2], lastEdited: NEW });
 
-    // 同 at、不同 agentLabel 也要寫（相等判斷三欄都比）。
+    // Same at but different agentLabel must also be written (equality compares all three fields).
     const relabeled: LastEditedDto = { ...NEW, agentLabel: "other" };
     patchNotesListLastEdited(qc, "c", relabeled);
     expect(qc.getQueryData<NoteDto[]>(["notes"])![2]!.lastEdited).toEqual(relabeled);
   });
 
-  it("PL4 值相等（另一個新物件）或兩者皆 null：不寫", () => {
+  it("equal value (a different new object) or both null: not written", () => {
     const qc = client();
     qc.setQueryData(["notes"], [note("a", OLD), note("c", null)]);
     const spy = vi.spyOn(qc, "setQueryData");
@@ -79,7 +79,7 @@ describe("patchNotesListLastEdited", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("PL5 較舊的值或 null 不蓋掉清單裡較新的值", () => {
+  it("an older value or null doesn't overwrite a newer value in the list", () => {
     const qc = client();
     qc.setQueryData(["notes"], [note("a", NEW)]);
     const spy = vi.spyOn(qc, "setQueryData");
@@ -95,7 +95,7 @@ describe("useDeleteNote", () => {
     vi.unstubAllGlobals();
   });
 
-  it("移入成功後失效 ['trash']，原有 ['notes']／['note', id]／['backlinks'] 照舊", async () => {
+  it("after moving to trash invalidates ['trash'], existing ['notes'] / ['note', id] / ['backlinks'] unchanged", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 204, json: () => Promise.reject(new Error("no body")) } as unknown as Response));
     const qc = client();
     const spy = vi.spyOn(qc, "invalidateQueries");
@@ -107,12 +107,12 @@ describe("useDeleteNote", () => {
   });
 });
 
-describe("useCreateNote × 資料夾", () => {
+describe("useCreateNote x folder", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("mutateAsync({ folderId }) → POST /api/notes body 恰為 {\"folderId\":\"A\"}", async () => {
+  it("mutateAsync({ folderId }) -> POST /api/notes with body {\"folderId\":\"A\"}", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: () => Promise.resolve({ id: "n1" }) } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     const qc = client();
@@ -127,14 +127,14 @@ describe("useCreateNote × 資料夾", () => {
   });
 });
 
-describe("單篇查詢的 retry 選項（垃圾桶：解析層 in_trash 不重試）", () => {
+describe("single-note query retry option (trash: resolver in_trash isn't retried)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   const retryOf = (qc: QueryClient, key: readonly unknown[]) => qc.getQueryCache().find({ queryKey: key })?.options.retry;
 
-  it("沒給 retry → 沿用 QueryClient 預設（不得以 undefined 蓋掉，否則 query-core 退回 3 次）；給了就用給的", () => {
+  it("retry not given -> keeps the QueryClient default (must not override with undefined, or query-core falls back to 3 retries); a given value is used", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const qc = client();
     const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);

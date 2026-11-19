@@ -5,15 +5,11 @@ import { classifyMediaTransfer, containsMediaDataUrl, noteSchema } from "./schem
 import { integrity, mountEditor, P, row, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 
 /**
- * 最小的 DataTransfer 替身——jsdom 沒有可建構的 DataTransfer。
+ * Minimal DataTransfer stand-in: jsdom has no constructible DataTransfer.
  *
- * `types` 刻意獨立於 `html`/`text`/`markdown`/`blocknoteHtml` 之外由呼叫端明講：
- * 規則②只看 `dataTransfer.types` 有沒有列出某個格式的名字，跟該格式底下
- * `getData` 撈不撈得到內容是兩回事（例如 `vscode-editor-data` 只需要出現在
- * `types` 裡，`classifyMediaTransfer` 從不對它呼叫 `getData`）。
+ * `types` is stated by the caller independently of `html`/`text`/`markdown`/`blocknoteHtml`: the File + text-type rule only looks at whether `dataTransfer.types` lists a format's name, which is separate from whether `getData` returns content for it (e.g. `vscode-editor-data` only needs to appear in `types`; `classifyMediaTransfer` never calls `getData` on it).
  *
- * `files` 用真的 `File` 形狀（`new File([bytes], name, { type })`）——`classifyMediaTransfer`
- * 規則③④要讀 `File.type`，舊版只帶 `{ length }` 的假替身撐不住這條規則。
+ * `files` use the real `File` shape (`new File([bytes], name, { type })`): the image-file rules of `classifyMediaTransfer` read `File.type`, which a fake carrying only `{ length }` can't support.
  */
 function transfer(options: {
   files?: File[];
@@ -22,7 +18,7 @@ function transfer(options: {
   text?: string;
   markdown?: string;
   blocknoteHtml?: string;
-  /** `vscode-editor-data` 的原始內容——規則①刻意不掃這個格式，測試用得到。 */
+  /** Raw content of `vscode-editor-data`: the data-URL rule deliberately doesn't scan this format, and tests need that. */
   vscodeEditorData?: string;
 }): DataTransfer {
   const map: Record<string, string> = {};
@@ -39,43 +35,35 @@ function transfer(options: {
   } as unknown as DataTransfer;
 }
 
-/** 測試用真 `File`——預設一個位元組即可，`classifyMediaTransfer` 只讀 `.type`。 */
+/** A real `File` for tests; one byte is enough since `classifyMediaTransfer` only reads `.type`. */
 function file(name: string, type: string): File {
   return new File([new Uint8Array([1])], name, { type });
 }
 
-describe("noteSchema（image block 啟用）", () => {
-  it("有 image block", () => {
+describe("noteSchema (image block enabled)", () => {
+  it("has the image block", () => {
     expect(Object.keys(noteSchema.blockSpecs)).toContain("image");
     expect("image" in noteSchema.blockSchema).toBe(true);
   });
 
-  it("預設 block 全數保留（含 image）", () => {
-    // 這條守的是「**預設 block 不得被弄掉**」——`BlockNoteSchema.create` 的 `blockSpecs`
-    // 是整組覆寫，漏 `...defaultBlockSpecs` 的 spread 會靜默拆掉一半的編輯器。
-    // issue #94 起 schema 多了自訂的 `mermaid`，所以判定從「全等」改成「包含」；
-    // ⚠ 鑑別力不變：任何一個預設 block 掉了，這條仍然紅（下面另一條釘住自訂 block 有掛上，
-    // 兩條合起來才等於原本那條全等斷言的覆蓋範圍）。
+  it("all default blocks are kept (image included)", () => {
+    // Guards that default blocks aren't dropped: `BlockNoteSchema.create`'s `blockSpecs` overrides the whole set, so forgetting the `...defaultBlockSpecs` spread silently removes half the editor. The check is "contains" rather than equality since the schema adds custom blocks (e.g. `mermaid`); it still fails if any default block is lost, and the next test pins that the custom blocks are attached.
     expect(Object.keys(noteSchema.blockSpecs)).toEqual(expect.arrayContaining(Object.keys(defaultBlockSpecs)));
   });
 
-  it("自訂 block 有掛上，且僅限刻意新增的那些", () => {
-    // 與上一條互補：上一條擋「預設的被拿掉」，這一條擋「不小心多掛了東西」。
+  it("custom blocks are attached, and only the deliberately added ones", () => {
     const custom = Object.keys(noteSchema.blockSpecs).filter((type) => !(type in defaultBlockSpecs));
     expect(custom.sort()).toEqual(["column", "columnList", "mermaid"]);
   });
 
-  it("段落與標題這些基本 block 仍在（防止整份 schema 建錯）", () => {
+  it("basic blocks such as paragraph and heading are still there (guards against a wrongly built schema)", () => {
     expect(Object.keys(noteSchema.blockSpecs)).toEqual(expect.arrayContaining(["paragraph", "heading", "table"]));
   });
 });
 
-// `wikilink` inline content spec 掛載——防的正是「傳 `inlineContentSpecs` 忘了
-// spread `defaultInlineContentSpecs`」這個陷阱（見 schema.ts 頂端註解）：一旦漏掉，
-// `text`/`link` 會從 `noteSchema.inlineContentSpecs` 靜默消失，但不會有任何型別或
-// 執行期錯誤——只有這種明確列舉 key 的測試才擋得住。
-describe("noteSchema（wikilink inline content 掛載）", () => {
-  it("預設 inline content（text/link）全數保留，且新增了 wikilink", () => {
+// The `wikilink` inline content spec is attached: this guards the trap of passing `inlineContentSpecs` without spreading `defaultInlineContentSpecs` (see the comment at the top of schema.ts); if it's forgotten, `text`/`link` silently vanish from `noteSchema.inlineContentSpecs` with no type or runtime error, and only a test that lists the keys explicitly catches it.
+describe("noteSchema (wikilink inline content attached)", () => {
+  it("default inline content (text/link) is kept and wikilink is added", () => {
     expect(Object.keys(noteSchema.inlineContentSpecs).sort()).toEqual(
       [...Object.keys(defaultInlineContentSpecs), "wikilink"].sort(),
     );
@@ -83,24 +71,24 @@ describe("noteSchema（wikilink inline content 掛載）", () => {
 });
 
 describe("containsMediaDataUrl", () => {
-  it("認得 img src 的 base64 data URL", () => {
+  it("recognizes a base64 data URL in img src", () => {
     expect(containsMediaDataUrl('<img src="data:image/png;base64,iVBORw0KGgo=">')).toBe(true);
   });
 
-  it("認得純文字貼上的 data URL（行首）", () => {
+  it("recognizes a data URL pasted as plain text (at line start)", () => {
     expect(containsMediaDataUrl("data:image/gif;base64,R0lGOD")).toBe(true);
   });
 
-  it("認得非 base64 的 data URL（逗號結尾的參數段）", () => {
+  it("recognizes a non-base64 data URL (parameter segment ending at the comma)", () => {
     expect(containsMediaDataUrl('<img src="data:image/svg+xml,%3Csvg/%3E">')).toBe(true);
   });
 
-  it("認得 video/audio", () => {
+  it("recognizes video/audio", () => {
     expect(containsMediaDataUrl("data:video/mp4;base64,AAA")).toBe(true);
     expect(containsMediaDataUrl("data:audio/mpeg;base64,AAA")).toBe(true);
   });
 
-  it("不誤擋一般文字裡的 data: 字樣與非媒體 data URL", () => {
+  it("doesn't wrongly block the text data: in ordinary text or non-media data URLs", () => {
     expect(containsMediaDataUrl("請參考 data structures 這一章")).toBe(false);
     expect(containsMediaDataUrl("data:text/plain;base64,aGk=")).toBe(false);
     expect(containsMediaDataUrl("mydata:image/png;base64,x")).toBe(false);
@@ -109,27 +97,27 @@ describe("containsMediaDataUrl", () => {
   });
 });
 
-describe("classifyMediaTransfer（四規則）", () => {
-  describe("規則①：data URL → \"dataUrl\"", () => {
-    it("text/html 片段帶 data URL（從網頁複製圖片常見形狀）", () => {
+describe("classifyMediaTransfer (four rules)", () => {
+  describe("data URL -> \"dataUrl\"", () => {
+    it("text/html fragment carrying a data URL (the common shape when copying an image from a web page)", () => {
       expect(classifyMediaTransfer(transfer({ html: '<img src="data:image/png;base64,AAA">' }))).toBe("dataUrl");
     });
 
-    it("text/plain 帶 data URL", () => {
+    it("text/plain carrying a data URL", () => {
       expect(classifyMediaTransfer(transfer({ text: "data:image/png;base64,AAA" }))).toBe("dataUrl");
     });
 
-    it("text/markdown 帶 data URL（markdown-only：其餘格式都沒有內容）", () => {
+    it("text/markdown carrying a data URL (markdown only: no other format has content)", () => {
       expect(classifyMediaTransfer(transfer({ markdown: "![alt](data:image/png;base64,AAA)" }))).toBe("dataUrl");
     });
 
-    it("blocknote/html 帶 data URL", () => {
+    it("blocknote/html carrying a data URL", () => {
       expect(
         classifyMediaTransfer(transfer({ blocknoteHtml: '<img src="data:image/png;base64,AAA">' })),
       ).toBe("dataUrl");
     });
 
-    it("即使帶了 image 檔案，data URL 仍優先判定（規則①先於③）", () => {
+    it("a data URL still takes priority even with an image file attached", () => {
       expect(
         classifyMediaTransfer(
           transfer({ files: [file("a.png", "image/png")], html: '<img src="data:image/png;base64,AAA">' }),
@@ -137,11 +125,8 @@ describe("classifyMediaTransfer（四規則）", () => {
       ).toBe("dataUrl");
     });
 
-    // 上一條的 `types` 是空陣列，規則②的 `hasFiles && types.some(...)` 分支根本不會被
-    // 求值——只證明得了①先於③，證明不了①先於②。這條把 `types` 也一併塞進規則②會命中
-    // 的形狀（`text/html` 排在裡面），逼兩條規則同時「有機會」命中，藉此鎖死①必須先判：
-    // 若實作把②的判斷搬到①前面，這條會從 "dataUrl" 變成 "textRepresentation" 而變紅。
-    it("files + types 含 text/html + html 帶 data URL → dataUrl（規則①先於②）", () => {
+    // The previous case's `types` is an empty array, so the `hasFiles && types.some(...)` branch of the File + text-type rule is never evaluated: it shows the data-URL rule precedes the image-file rule but not the File + text-type rule. This case also puts `types` in the shape that rule would match (`text/html` listed), so both rules have a chance to match and the order is pinned: if an implementation moved the other rule's check ahead, the result would change from "dataUrl" to "textRepresentation" and this would go red.
+    it("files + types containing text/html + html carrying a data URL -> dataUrl (data URL takes priority over the text-type rule)", () => {
       expect(
         classifyMediaTransfer(
           transfer({
@@ -153,7 +138,7 @@ describe("classifyMediaTransfer（四規則）", () => {
       ).toBe("dataUrl");
     });
 
-    it("vscode-editor-data 刻意不掃 data URL——即使它的內容帶 data URL 也不算 dataUrl", () => {
+    it("vscode-editor-data is deliberately not scanned for data URLs: even a data URL inside it doesn't count as dataUrl", () => {
       expect(
         classifyMediaTransfer(
           transfer({ types: ["vscode-editor-data"], vscodeEditorData: "data:image/png;base64,AAA" }),
@@ -162,7 +147,7 @@ describe("classifyMediaTransfer（四規則）", () => {
     });
   });
 
-  describe("規則②：帶 File 且 types 含 acceptedMIMETypes 前五種任一 → \"textRepresentation\"", () => {
+  describe("File present and types contain any of the first five acceptedMIMETypes -> \"textRepresentation\"", () => {
     const image = () => [file("a.png", "image/png")];
 
     it("vscode-editor-data", () => {
@@ -191,7 +176,7 @@ describe("classifyMediaTransfer（四規則）", () => {
       expect(classifyMediaTransfer(transfer({ files: image(), types: ["text/plain"] }))).toBe("textRepresentation");
     });
 
-    it("files 全 image + text/html 帶一般 https src（非 data URL）→ 仍判 textRepresentation（規則②先於③）", () => {
+    it("all-image files + text/html with an ordinary https src (not a data URL) -> still textRepresentation (this rule takes priority over the image-file rule)", () => {
       expect(
         classifyMediaTransfer(
           transfer({
@@ -203,17 +188,17 @@ describe("classifyMediaTransfer（四規則）", () => {
       ).toBe("textRepresentation");
     });
 
-    it("沒有 File 時，即使 types 含這些格式也不算——規則②要求先有 File", () => {
+    it("without a File it doesn't count even if types contain these formats: a File is required first", () => {
       expect(classifyMediaTransfer(transfer({ types: ["text/html"], html: "<p>hello</p>" }))).toBeNull();
     });
   });
 
-  describe("規則③：files 非空且全部 File.type 以 image/ 開頭 → 放行", () => {
-    it("單一 image 檔、types 只有 Files", () => {
+  describe("non-empty files that all have File.type starting with image/ -> pass", () => {
+    it("a single image file, types is only Files", () => {
       expect(classifyMediaTransfer(transfer({ files: [file("a.png", "image/png")], types: ["Files"] }))).toBeNull();
     });
 
-    it("多個 image 檔", () => {
+    it("several image files", () => {
       expect(
         classifyMediaTransfer(
           transfer({ files: [file("a.png", "image/png"), file("b.gif", "image/gif")], types: ["Files"] }),
@@ -221,25 +206,25 @@ describe("classifyMediaTransfer（四規則）", () => {
       ).toBeNull();
     });
 
-    it("空字串 type 不算 image（不會誤放行成 nonImageFile 以外的東西）", () => {
+    it("an empty-string type doesn't count as image (it isn't let through as anything other than nonImageFile)", () => {
       expect(classifyMediaTransfer(transfer({ files: [file("a", "")], types: ["Files"] }))).toBe("nonImageFile");
     });
   });
 
-  describe("規則④：任一非 image 檔 → \"nonImageFile\"", () => {
-    it("單一 video 檔", () => {
+  describe("any non-image file -> \"nonImageFile\"", () => {
+    it("a single video file", () => {
       expect(classifyMediaTransfer(transfer({ files: [file("a.mp4", "video/mp4")], types: ["Files"] }))).toBe(
         "nonImageFile",
       );
     });
 
-    it("單一 audio 檔", () => {
+    it("a single audio file", () => {
       expect(classifyMediaTransfer(transfer({ files: [file("a.mp3", "audio/mpeg")], types: ["Files"] }))).toBe(
         "nonImageFile",
       );
     });
 
-    it("混合 image + 非 image 檔", () => {
+    it("mixed image and non-image files", () => {
       expect(
         classifyMediaTransfer(
           transfer({ files: [file("a.png", "image/png"), file("b.pdf", "application/pdf")], types: ["Files"] }),
@@ -248,13 +233,13 @@ describe("classifyMediaTransfer（四規則）", () => {
     });
   });
 
-  describe("預設放行（四規則皆不匹配）", () => {
-    it("純文字／一般 HTML 放行", () => {
+  describe("default pass (none of the four rules matches)", () => {
+    it("plain text and ordinary HTML pass", () => {
       expect(classifyMediaTransfer(transfer({ text: "hello", html: "<p>hello</p>" }))).toBeNull();
       expect(classifyMediaTransfer(transfer({}))).toBeNull();
     });
 
-    it("沒有 dataTransfer 一律放行", () => {
+    it("passes when there is no dataTransfer", () => {
       expect(classifyMediaTransfer(null)).toBeNull();
       expect(classifyMediaTransfer(undefined)).toBeNull();
     });
@@ -262,17 +247,11 @@ describe("classifyMediaTransfer（四規則）", () => {
 });
 
 /**
- * issue #43：`toExternalHTML`（複製到剪貼簿的 `text/html`、`blocksToMarkdownLossy` 的
- * markdown 匯出）拿的是 raw `props.url`，不走 #12 掛在 `resolveFileUrl` 上的渲染端
- * 守衛——把被污染的 block 複製到別的應用程式，帶過去的是 `<a href="javascript:…">`／
- * `<img src="javascript:…">`。四個檔案類 block spec 的 `toExternalHTML` 必須套同一個
- * `safeMediaUrl`。
+ * #43: `toExternalHTML` (the `text/html` copied to the clipboard and the markdown export of `blocksToMarkdownLossy`) takes the raw `props.url` and doesn't go through the render-side guard hung on `resolveFileUrl` by #12, so copying a tainted block into another app would carry `<a href="javascript:...">` / `<img src="javascript:...">`. The `toExternalHTML` of the four file-type block specs must apply the same `safeMediaUrl`.
  *
- * 測法比照 `NoteEditor.test.ts` 對 `defaultBlockSpecs.image` 的 render 守衛測試：直接
- * 呼叫 spec implementation（jsdom 有 document.createElement），不掛整個編輯器。
+ * Tested like the render-guard test for `defaultBlockSpecs.image` in `NoteEditor.test.ts`: calls the spec implementation directly (jsdom has document.createElement) without mounting a whole editor.
  */
-describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）", () => {
-  /** 本測試只碰得到的那一層：`implementation.toExternalHTML(block, editor)` → `{ dom }`。 */
+describe("toExternalHTML of file-type blocks goes through the media URL guard (#43)", () => {
   type FileSpecLike = {
     implementation: {
       meta?: { fileBlockAccept?: unknown };
@@ -282,9 +261,7 @@ describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）
   const specs = noteSchema.blockSpecs as unknown as Record<string, FileSpecLike>;
   const FILE_BLOCK_TYPES = ["audio", "file", "image", "video"] as const;
 
-  /** 假 block 帶上 `type`/`id`/`children`——被委派的原實作（`createBlockSpec` 回傳的
-   * toExternalHTML，內含 `wrapInBlockStructure`）會讀 `block.type` 吐成
-   * `data-content-type`，只給 props 的話產出的 DOM 跟 production 形狀對不上。 */
+  /** The fake block carries `type`/`id`/`children`: the delegated original (the `createBlockSpec` toExternalHTML, which includes `wrapInBlockStructure`) reads `block.type` to emit `data-content-type`, and with only props the DOM wouldn't match production's shape. */
   function block(type: string, url: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       type,
@@ -303,41 +280,40 @@ describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）
     };
   }
 
-  /** 取出實際承載 URL 的節點值：`<a href>`（file、或關掉預覽的媒體）或 `<img|video|audio src>`。 */
   function carriedUrl(dom: HTMLElement): string | null {
     const el = dom.matches("[src],[href]") ? dom : dom.querySelector("[src],[href]");
     return el ? (el.getAttribute("src") ?? el.getAttribute("href")) : null;
   }
 
   for (const type of FILE_BLOCK_TYPES) {
-    it(`${type}：危險 scheme → about:blank，絕不出現 javascript:（data-url 也是）`, () => {
+    it(`${type}: dangerous scheme -> about:blank, javascript: doesn't appear (data URLs too)`, () => {
       const { dom } = specs[type].implementation.toExternalHTML(block(type, "javascript:alert(1)"), {});
       expect(dom.outerHTML).not.toContain("javascript:");
       expect(carriedUrl(dom)).toBe("about:blank");
     });
 
-    it(`${type}：自家上傳的相對網址原樣放行`, () => {
+    it(`${type}: own-upload relative URL passes unchanged`, () => {
       const { dom } = specs[type].implementation.toExternalHTML(block(type, "/api/uploads/u1"), {});
       expect(carriedUrl(dom)).toBe("/api/uploads/u1");
     });
 
-    it(`${type}：外部 https 原樣放行`, () => {
+    it(`${type}: external https passes unchanged`, () => {
       const { dom } = specs[type].implementation.toExternalHTML(block(type, "https://example.com/a.png"), {});
       expect(carriedUrl(dom)).toBe("https://example.com/a.png");
     });
   }
 
-  it("data: URL 一樣被擋（同 #12 的白名單：只有 http/https 過關）", () => {
+  it("data: URLs are blocked too (same allow-list as #12: only http/https pass)", () => {
     const { dom } = specs.image.implementation.toExternalHTML(block("image", "data:text/html;base64,PHNjcmlwdD4="), {});
     expect(carriedUrl(dom)).toBe("about:blank");
   });
 
-  it("空 url（block 還沒有檔案）走 BlockNote 自己的 placeholder 路徑，不炸", () => {
+  it("empty url (block has no file yet) takes BlockNote's own placeholder path without breaking", () => {
     const { dom } = specs.file.implementation.toExternalHTML(block("file", ""), {});
     expect(dom).toBeInstanceOf(HTMLElement);
   });
 
-  it("showPreview:false（<a href> 分支）一樣被守（守衛在分支之前，兩條出口都要釘）", () => {
+  it("showPreview:false (the <a href> branch) is guarded too (the guard sits before the branch, so both exits are pinned)", () => {
     const { dom } = specs.video.implementation.toExternalHTML(
       block("video", "javascript:alert(1)", { showPreview: false }),
       {},
@@ -346,7 +322,7 @@ describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）
     expect(carriedUrl(dom)).toBe("about:blank");
   });
 
-  it("帶 caption（figure/figcaption 分支）一樣被守", () => {
+  it("with a caption (figure/figcaption branch) is guarded too", () => {
     const { dom } = specs.image.implementation.toExternalHTML(
       block("image", "javascript:alert(1)", { caption: "cap" }),
       {},
@@ -354,7 +330,7 @@ describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）
     expect(dom.outerHTML).not.toContain("javascript:");
   });
 
-  it("守衛覆蓋面＝上游檔案類 block 全集（meta.fileBlockAccept 為準）——上游新增第五種檔案類 block 時這條會紅，提醒把它加進 withGuardedExternalHTML", () => {
+  it("guard coverage equals the full set of upstream file-type blocks (per meta.fileBlockAccept): goes red when upstream adds another file-type block, as a reminder to add it to withGuardedExternalHTML", () => {
     const fileBlocks = Object.entries(defaultBlockSpecs)
       .filter(([, spec]) => {
         const impl = (spec as unknown as FileSpecLike).implementation;
@@ -367,17 +343,12 @@ describe("檔案類 block 的 toExternalHTML 走媒體 URL 守衛（issue #43）
 });
 
 /**
- * issue #43 的匯出鏈釘（上面那組只釘 spec 本體——若上游匯出器改讀別的
- * 註冊表而非編輯器 schema 的 blockSpecs，上面全綠而洞悄悄回來）。用真編輯器 + 真匯出
- * 鏈（`blocksToMarkdownLossy`，複製到外部的 markdown 也走 external HTML）驗到底。送 AI 走 `ai/note-markdown.ts`
- * 的 headless 序列化，那條的守衛由 `ai/note-markdown.test.ts` 釘。
+ * #43 export-chain pin (the group above only pins the spec itself; if the upstream exporter began reading some other registry than the editor schema's blockSpecs, that group would stay green and the hole would silently return). Uses a real editor + the real export chain (`blocksToMarkdownLossy`, since markdown copied outside also goes through external HTML). The path that sends content to AI uses `ai/note-markdown.ts`'s headless serialization, whose guard is pinned by `ai/note-markdown.test.ts`.
  *
- * 這條釘的是「匯出器讀編輯器的 schema」這一半；另一半「`buildNoteEditorOptions`
- * 交付的就是 `noteSchema` 本尊」由 `NoteEditor.test.ts` 的接線釘負責（本測試自己
- * hardcode `schema: noteSchema`，管不到那件事）。
+ * This pins the half "the exporter reads the editor's schema"; the other half, "`buildNoteEditorOptions` hands over `noteSchema` itself", is pinned by the wiring tests in `NoteEditor.test.ts` (this test hardcodes `schema: noteSchema` and can't cover that).
  */
-describe("issue #43 端到端：真編輯器的匯出鏈吃到守衛", () => {
-  it("blocksToMarkdownLossy 對被污染的 image 匯出 about:blank", async () => {
+describe("#43 end to end: the real editor's export chain gets the guard", () => {
+  it("blocksToMarkdownLossy exports about:blank for a tainted image", async () => {
     const editor = BlockNoteEditor.create({
       schema: noteSchema,
       initialContent: [{ type: "image", props: { url: "javascript:alert(1)", name: "x" } }],
@@ -389,17 +360,12 @@ describe("issue #43 端到端：真編輯器的匯出鏈吃到守衛", () => {
 });
 
 /**
- * issue #96：codeBlock 的語法上色選項有沒有真的接上 schema。
+ * #96: is the codeBlock syntax-highlighting option really wired into the schema.
  *
- * `createCodeBlockSpec(options)` 把 options 封在 spec 閉包裡，從 schema 物件上讀
- * 不回來——唯一誠實的觀察面是**渲染結果**：spec 的 `render` 只有在
- * `supportedLanguages` 非空時才會畫語言下拉（BlockNote 內建預設是 `{}`，下拉整個
- * 不出現）。所以這裡掛真編輯器、塞一個 codeBlock，斷言下拉存在且有我們清單裡的
- * 語言——這條紅＝有人把 `codeBlock: createCodeBlockSpec(CODE_BLOCK_OPTIONS)` 從
- * `noteSchema` 拿掉（退回無上色、空下拉的內建路徑）。
+ * `createCodeBlockSpec(options)` closes over options inside the spec, so they can't be read back from the schema object; the only honest observation surface is the **rendered result**: the spec's `render` draws the language dropdown only when `supportedLanguages` is non-empty (BlockNote's built-in default is `{}`, with no dropdown at all). So a real editor with a codeBlock is mounted and the dropdown must exist with the languages from our list; red means someone removed `codeBlock: createCodeBlockSpec(CODE_BLOCK_OPTIONS)` from `noteSchema` (falling back to the built-in path with no highlighting and an empty dropdown).
  */
-describe("issue #96：codeBlock 語言下拉接線", () => {
-  it("noteSchema 的 codeBlock 渲染出語言下拉，且清單來自 SUPPORTED_LANGUAGES", () => {
+describe("#96: codeBlock language dropdown wiring", () => {
+  it("noteSchema's codeBlock renders a language dropdown, and the list comes from SUPPORTED_LANGUAGES", () => {
     const editor = BlockNoteEditor.create({
       schema: noteSchema,
       initialContent: [{ type: "codeBlock", props: { language: "typescript" }, content: "const x = 1;" }],
@@ -422,13 +388,10 @@ describe("issue #96：codeBlock 語言下拉接線", () => {
 });
 
 /**
- * issue #96 的匯出不變量釘子：上色是 ProseMirror decoration（editor 層），**從不
- * 進文件、也從不進匯出**。這條在實作當下就綠（decoration 機制天生如此）——釘住它
- * 是防未來有人把上色改成「把 span 寫進 content」一類的實作（例如為了 SSR 或匯出
- * 也帶色），那會讓共編文件被灌入呈現細節、每個協作者的匯出都長不一樣。
+ * #96 export invariant: highlighting is a ProseMirror decoration (editor layer) that never enters the document or the export. It is green as implemented (the decoration mechanism works that way); the test pins it against a future implementation that writes spans into content (e.g. to carry colour in SSR or export), which would flood the collab document with presentation details and make every collaborator's export differ.
  */
-describe("issue #96：匯出不帶上色殘留", () => {
-  it("codeBlock 的 HTML 匯出是乾淨的 pre>code（無 shiki span、無 inline style）", async () => {
+describe("#96: export carries no highlighting residue", () => {
+  it("codeBlock's HTML export is a clean pre>code (no shiki span, no inline style)", async () => {
     const editor = BlockNoteEditor.create({
       schema: noteSchema,
       initialContent: [{ type: "codeBlock", props: { language: "typescript" }, content: 'const x = "hi";' }],
@@ -442,17 +405,12 @@ describe("issue #96：匯出不帶上色殘留", () => {
 });
 
 /**
- * issue #96：未知語言的 graceful-skip 是**承重路徑**，不只防惡意協作者——BlockNote 的
- * ``` 圍欄 input rule 是 `getLanguageId(...) ?? 原字串`（0.52.1 dist 核實），任何使用者
- * 打 ```foo 就會產生不在清單裡的 language prop。而 shiki 的 `loadLanguage()` 對 bundle
- * 外的 id 是 **throw**：這條路必須在「呼叫 loadLanguage 之前」就被 getLanguageId 的
- * undefined 擋掉，破掉的症狀是 unhandled rejection ＋ 上色靜默全滅。
+ * #96: the graceful skip for unknown languages is a **load-bearing path**, not just a defence against a malicious collaborator: BlockNote 0.52.1's ``` fence input rule is `getLanguageId(...) ?? original string`, so any user typing ```foo produces a language prop not in the list, while shiki's `loadLanguage()` **throws** for ids outside the bundle. That path must be stopped by getLanguageId's undefined before `loadLanguage` is called; when it breaks the symptoms are an unhandled rejection and highlighting silently dying everywhere.
  *
- * 對照組（typescript 有上色）先等到 .shiki decoration 真的出現，才斷言未知語言那塊
- * 沒有——不然「兩塊都還沒開始上色」也會讓斷言假綠。
+ * In the control (typescript is highlighted) the test first waits for a `.shiki` decoration to appear before asserting the unknown-language block has none; otherwise "neither block has started highlighting yet" would pass vacuously.
  */
-describe("issue #96：未知語言 graceful-skip", () => {
-  it("language 不在清單 → 不炸、無 unhandled rejection、該塊不上色（其他塊照常上色）", async () => {
+describe("#96: unknown language graceful skip", () => {
+  it("language not in the list -> no crash, no unhandled rejection, that block isn't highlighted (other blocks still are)", async () => {
     const rejections: unknown[] = [];
     const onRejection = (reason: unknown) => rejections.push(reason);
     process.on("unhandledRejection", onRejection);
@@ -468,8 +426,7 @@ describe("issue #96：未知語言 graceful-skip", () => {
     document.body.appendChild(container);
     try {
       editor.mount(container);
-      // highlighter 是 lazy（首次渲染 codeBlock 才 import shiki、載 grammar、重繪 decoration）
-      // ——輪詢等對照組出現 .shiki，逾時才失敗（同 repo「不可固定 sleep」慣例）。
+      // The highlighter is lazy (shiki is imported, the grammar loaded and decorations redrawn only when a codeBlock first renders): poll until the control shows `.shiki` and fail on timeout, no fixed sleeps.
       const deadline = Date.now() + 10_000;
       while (container.querySelector('[data-content-type="codeBlock"] .shiki') === null) {
         if (Date.now() > deadline) throw new Error("對照組（typescript）10s 內沒出現 .shiki decoration");
@@ -481,7 +438,7 @@ describe("issue #96：未知語言 graceful-skip", () => {
       expect(blocks[0]!.querySelectorAll(".shiki").length, "對照組 typescript 應該有上色").toBeGreaterThan(0);
       expect(blocks[1]!.querySelectorAll(".shiki")).toHaveLength(0);
       expect(blocks[1]!.textContent).toContain("some code");
-      // 多等一輪 macrotask 讓可能的 rejection 冒出來再收網。
+      // One more macrotask so a possible rejection surfaces before the check.
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(rejections, "graceful-skip 破掉的第一個症狀就是 unhandled rejection").toHaveLength(0);
     } finally {
@@ -492,22 +449,21 @@ describe("issue #96：未知語言 graceful-skip", () => {
   });
 });
 
-/** 從 blocks 造 fixture（不是從 markdown——markdown 進不了 mermaid block 與 wikilink inline）。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例用 any
+/** Built from blocks, not markdown: markdown can't produce a mermaid block or a wikilink inline. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, any by repo convention
 const FIXTURE: PartialBlock<any, any, any>[] = [
   { type: "paragraph", content: "第一段純文字" },
   { type: "heading", props: { level: 2 }, content: "標題二" },
   { type: "paragraph", content: [{ type: "text", text: "前面 ", styles: {} }, { type: "wikilink", props: { targetNoteId: "11111111-1111-4111-8111-111111111111", snapshotTitle: "目標筆記" } }, { type: "text", text: " 後面 ", styles: {} }, { type: "text", text: "粗體", styles: { bold: true } }] },
   { type: "mermaid", props: { code: "graph TD\n  A-->B" } },
-  // props 全不給，逼兩份 schema 的 propSchema default 值一起吃到——上面那筆有給 `code`，
-  // 兩份 schema 的 default 分歧時剛好蓋掉這條差異，parity 會假綠（實測）。
+  // No props given, so both schemas' propSchema defaults are exercised: the entry above supplies `code`, which would mask a divergence between the two schemas' defaults and let parity pass falsely.
   { type: "mermaid" },
   { type: "codeBlock", props: { language: "typescript" }, content: "const a = 1;" },
   { type: "image", props: { url: "/api/uploads/abc123", name: "pic" } },
 ];
 
-describe("#269：wikilink 新 props", () => {
-  it("web noteSchema 與 headless schema 的 wikilink propSchema 都含 label、anchorBlockId（預設空字串）", () => {
+describe("#269: new wikilink props", () => {
+  it("the wikilink propSchema of both the web noteSchema and the headless schema contains label and anchorBlockId (default empty string)", () => {
     const headless = createHeadlessNoteSchema("http://localhost/");
     for (const schema of [noteSchema, headless]) {
       const keys = Object.keys(schema.inlineContentSchema.wikilink.propSchema).sort();
@@ -516,7 +472,7 @@ describe("#269：wikilink 新 props", () => {
     }
   });
 
-  it("事實：非預設值輸出成 data-label／data-anchor-block-id；預設值不輸出；同屬性從 HTML 讀回", () => {
+  it("fact: non-default values are output as data-label / data-anchor-block-id, defaults aren't output, and the same attributes are read back from HTML", () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     const id = "11111111-1111-4111-8111-111111111111";
     const html = editor.blocksToHTMLLossy([
@@ -541,8 +497,8 @@ describe("#269：wikilink 新 props", () => {
   });
 });
 
-describe("#106 parity：headless schema 與 noteSchema 匯出逐位元組相同", () => {
-  it("同 fixture → blocks 逐欄位相同（去 id）、blocksToMarkdownLossy 逐字相同", async () => {
+describe("#106 parity: headless schema and noteSchema exports are byte-identical", () => {
+  it("same fixture -> blocks identical field by field (ids removed), blocksToMarkdownLossy identical character by character", async () => {
     const web = BlockNoteEditor.create({ schema: noteSchema, initialContent: FIXTURE });
     const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema(window.location.href), initialContent: FIXTURE });
     const strip = (bs: unknown[]) => JSON.parse(JSON.stringify(bs, (k, v) => (k === "id" ? undefined : v)));
@@ -553,20 +509,20 @@ describe("#106 parity：headless schema 與 noteSchema 匯出逐位元組相同"
     expect(a).toContain("```mermaid");
   });
 
-  it("javascript: 圖片 url 在 headless schema 匯出被消毒", async () => {
+  it("a javascript: image url is sanitized in the headless schema export", async () => {
     const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema("http://localhost/"), initialContent: [{ type: "image", props: { url: "javascript:alert(1)", name: "x" } }] });
     const md = await headless.blocksToMarkdownLossy(headless.document);
     expect(md).not.toContain("javascript:");
     expect(md).toContain("about:blank");
   });
 
-  it("相對 /api/uploads/<id> 經 headless schema 匯出原樣保留（base 對了才會過）", async () => {
+  it("a relative /api/uploads/<id> is kept as is by the headless schema export (passes when the base is right)", async () => {
     const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema("http://localhost/"), initialContent: [{ type: "image", props: { url: "/api/uploads/abc123", name: "x" } }] });
     expect(await headless.blocksToMarkdownLossy(headless.document)).toContain("/api/uploads/abc123");
   });
 });
 
-describe("並排節點", () => {
+describe("columns nodes", () => {
   type Blk = { id: string; type: string; props: Record<string, unknown>; content?: unknown; children: Blk[] };
   const allTypes = (bs: Blk[]): string[] => bs.flatMap((b) => [b.type, ...allTypes(b.children)]);
   const textOf = (b: Blk) => (Array.isArray(b.content) ? b.content.map((c: { text?: string }) => c.text).join("") : "");
@@ -581,7 +537,7 @@ describe("並排節點", () => {
     for (const m of mounted.splice(0)) m.destroy();
   });
 
-  it("S1 noteSchema 與 headless schema 都有 columnList／column，column 的 propSchema 只有 width（預設 1）", () => {
+  it("noteSchema and the headless schema both have columnList/column, and column's propSchema is exactly { width } (default 1)", () => {
     for (const schema of [noteSchema, createHeadlessNoteSchema(window.location.href)]) {
       const blocks = schema.blockSchema as Record<string, { propSchema: unknown }>;
       expect(blocks.columnList).toBeDefined();
@@ -590,7 +546,7 @@ describe("並排節點", () => {
     }
   });
 
-  it("S2 編輯器 DOM：列與欄的 class、data-id、欄寬 style（flex:N 1 0）", () => {
+  it("editor DOM: classes, data-id and the column width style (flex:N 1 0) of rows and columns", () => {
     const { container } = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]), P("z", "z9")]);
     const list = container.querySelector('[data-node-type="columnList"]');
     expect(list).not.toBeNull();
@@ -601,7 +557,7 @@ describe("並排節點", () => {
     expect(cols.map((c) => c.getAttribute("data-id"))).toEqual(["rc0", "rc1"]);
   });
 
-  it("S3 external HTML：web 與 headless 相同；列與欄只帶讀出正規形的屬性、依序", () => {
+  it("external HTML: web and headless are the same; rows and columns carry the attributes of the canonical read-out form, in order", () => {
     const ROW = row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]);
     const web = BlockNoteEditor.create({ schema: noteSchema }) as AnyEditor;
     const headless = BlockNoteEditor.create({ schema: createHeadlessNoteSchema(window.location.href) }) as AnyEditor;
@@ -620,34 +576,34 @@ describe("並排節點", () => {
     for (const banned of ["bn-block-column", "data-node-type", "data-id"]) expect(html).not.toContain(banned);
   });
 
-  describe("S4 parse", () => {
-    it("兩欄外部形 → 一列，寬度取自 flex", () => {
+  describe("parse", () => {
+    it("two-column external form -> one row, widths taken from flex", () => {
       const bs = parse('<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:2"><p>A</p></div><div data-kb-column style="flex:0.5"><p>B</p></div></div>');
       expect(bs.map((b) => b.type)).toEqual(["columnList"]);
       expect(bs[0]!.children.map((c) => c.props.width)).toEqual([2, 0.5]);
       expect(bs[0]!.children.map((c) => c.children.map(textOf))).toEqual([["A"], ["B"]]);
     });
 
-    it("flex:20 夾成 10、沒有 style 為 1", () => {
+    it("flex:20 is clamped to 10, no style gives 1", () => {
       const bs = parse('<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:20"><p>A</p></div><div data-kb-column><p>B</p></div></div>');
       expect(bs[0]!.children.map((c) => c.props.width)).toEqual([10, 1]);
     });
 
     it.each([
-      ["單欄外部形", '<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:1"><p>X</p></div></div>'],
-      ["孤立欄", '<div data-kb-column style="flex:1"><p>X</p></div>'],
-    ])("%s → 一般段落、不長出列", (_name, html) => {
+      ["single-column external form", '<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:1"><p>X</p></div></div>'],
+      ["orphan column", '<div data-kb-column style="flex:1"><p>X</p></div>'],
+    ])("%s -> ordinary paragraph, no row grows", (_name, html) => {
       const bs = parse(html);
       expect(allTypes(bs)).not.toContain("columnList");
       expect(allTypes(bs)).not.toContain("column");
       expect(bs.filter((b) => b.type === "paragraph" && textOf(b) === "X")).toHaveLength(1);
     });
 
-    it("只有 display:flex 的 div 不是列", () => {
+    it("a div with only display:flex isn't a row", () => {
       expect(allTypes(parse('<div style="display:flex"><div><p>A</p></div><div><p>B</p></div></div>'))).not.toContain("columnList");
     });
 
-    it("站內形兩欄 → 一列，id 與寬度保留", () => {
+    it("in-site two-column form -> one row, ids and widths kept", () => {
       const bs = parse('<div data-node-type="columnList" data-id="R"><div data-node-type="column" data-id="C0" style="flex:3 1 0"><p>A</p></div><div data-node-type="column"><p>B</p></div></div>');
       expect(bs.map((b) => b.type)).toEqual(["columnList"]);
       expect(bs[0]!.id).toBe("R");
@@ -656,7 +612,7 @@ describe("並排節點", () => {
     });
   });
 
-  it("S5 id：未 mount 的 headless 編輯器連讀兩次 id 相同；insertBlocks 的列與欄都拿到 id", () => {
+  it("ids: an unmounted headless editor reads the same ids twice; insertBlocks gives ids to both the row and the columns", () => {
     const editor = BlockNoteEditor.create({
       schema: createHeadlessNoteSchema("http://localhost/"),
       initialContent: [row([[P("a")], [P("b")]])],
@@ -674,7 +630,7 @@ describe("並排節點", () => {
     expect(new Set(insertedIds).size).toBe(3);
   });
 
-  it("S6 站內複製整列再貼上：兩列、新列寬度保留、id 不重複", () => {
+  it("in-site copy of a whole row then paste: two rows, the new row keeps its widths, ids aren't duplicated", () => {
     const { editor } = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r", [1.5, 1]), P("z", "z9")]);
     const view = editor.prosemirrorView!;
     let rowPos = -1;
@@ -684,7 +640,7 @@ describe("並排節點", () => {
     editor._tiptapEditor.commands.setNodeSelection(rowPos);
     const html = view.serializeForClipboard(view.state.selection.content()).dom.innerHTML;
     editor.setTextCursorPosition("z9", "end");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Plugin.key 與 props.handleDOMEvents 的型別不公開
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the types of Plugin.key and props.handleDOMEvents aren't public
     for (const plugin of view.state.plugins.filter((p) => (p as any).key.startsWith("uniqueID"))) (plugin.props.handleDOMEvents as any).paste(view, new Event("paste"));
     editor.pasteHTML(html, true);
     const rows = (editor.document as Blk[]).filter((b) => b.type === "columnList");

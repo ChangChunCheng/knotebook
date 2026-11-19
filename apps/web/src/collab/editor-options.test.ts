@@ -16,37 +16,37 @@ function build(language = "en", publicRef: PublicNoteRef = { kind: "token", toke
   return { doc, awareness, options: buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, language }) };
 }
 
-describe("buildReadonlyNoteEditorOptions（#72＋#122：公開唯讀頁兩形的編輯器選項）", () => {
-  it("fragment 用 shared 的 YDOC_FRAGMENT 本尊（寫錯名字的症狀是空白頁零錯誤——store.ts 檔頭警告過的雷）", () => {
+describe("buildReadonlyNoteEditorOptions (#72, #122: editor options for both public read-only page forms)", () => {
+  it("fragment is shared's YDOC_FRAGMENT itself (a wrong name shows up as a blank page with zero errors, as warned at the top of store.ts)", () => {
     const { doc, options } = build();
     expect(options.collaboration.fragment).toBe(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(options.collaboration.fragment).not.toBe(doc.getXmlFragment("default"));
   });
 
-  it("schema 是 noteSchema 本尊（唯讀頁要渲染的內容形狀跟編輯頁同一套）", () => {
+  it("schema is noteSchema itself (the read-only page renders the same content shapes as the edit page)", () => {
     const { options } = build();
     expect(options.schema).toBe(noteSchema);
   });
 
-  it("provider 是 { awareness } 裸物件、就是傳進來那顆 local Awareness（不掛 HocuspocusProvider）", () => {
+  it("provider is a bare { awareness } object holding the local Awareness passed in (no HocuspocusProvider)", () => {
     const { awareness, options } = build();
     expect(options.collaboration.provider).toEqual({ awareness });
     expect(options.collaboration.provider.awareness).toBe(awareness);
   });
 
-  it("collaboration.user 給匿名替身（name/color 必填——withCollaboration 沒有 user 會炸；唯讀無 cursor 顯示，值不重要）", () => {
+  it("collaboration.user is an anonymous stand-in (name/color are required: withCollaboration breaks without a user; read-only shows no cursors, so the values don't matter)", () => {
     const { options } = build();
     expect(typeof options.collaboration.user.name).toBe("string");
     expect(typeof options.collaboration.user.color).toBe("string");
     expect(options.collaboration.user.color.length).toBeGreaterThan(0);
   });
 
-  it("語言以 zh 開頭 → 掛繁中字典；其餘 → undefined（與編輯頁同一條規則，抽底層後兩邊不各寫一份）", () => {
+  it("language starting with zh -> Traditional Chinese dictionary; otherwise undefined (same rule as the edit page, shared underneath so the two sides don't each write one)", () => {
     expect(build("zh-TW").options.dictionary).toBe(blocknoteZhTW);
     expect(build("en").options.dictionary).toBeUndefined();
   });
 
-  it("resolveFileUrl 走 publicMediaUrl：自家上傳映射到公開圖端點、危險 scheme 照樣被 #12 守衛擋下", async () => {
+  it("resolveFileUrl goes through publicMediaUrl: own uploads map to the public image endpoint, dangerous schemes are still blocked by the #12 guard", async () => {
     const { options } = build();
     await expect(options.resolveFileUrl!("/api/uploads/abc")).resolves.toBe(
       `/api/public/notes/${TOKEN}/uploads/abc`,
@@ -54,25 +54,22 @@ describe("buildReadonlyNoteEditorOptions（#72＋#122：公開唯讀頁兩形的
     await expect(options.resolveFileUrl!("javascript:alert(1)")).resolves.toBe(BLOCKED_MEDIA_URL);
   });
 
-  it("resolveFileUrl 別名形（#122）：依 publicRef 映射到 by-path 圖端點", async () => {
+  it("resolveFileUrl alias form (#122): maps to the by-path image endpoint via publicRef", async () => {
     const { options } = build("en", { kind: "path", handle: "alice", slug: "my-doc" });
     await expect(options.resolveFileUrl!("/api/uploads/abc")).resolves.toBe(
       "/api/public/notes/alice/my-doc/uploads/abc",
     );
   });
 
-  it("不掛任何編輯用選項：uploadFile／pasteHandler／_tiptapOptions 都不存在（唯讀頁沒有輸入路徑，掛了就是攻擊面）", () => {
+  it("no editing options attached: uploadFile / pasteHandler / _tiptapOptions are all absent (the read-only page has no input path, so attaching them would be attack surface)", () => {
     const keys = Object.keys(build().options);
     expect(keys).not.toContain("uploadFile");
     expect(keys).not.toContain("pasteHandler");
     expect(keys).not.toContain("_tiptapOptions");
   });
 
-  // issue #99：公開唯讀頁不得出現 markdown 連結 input rule（也不得出現 `/` 選單）。
-  // 這條掛在 `_tiptapOptions.extensions` 上——上面那條「keys 不含 _tiptapOptions」已經
-  // 蘊含它，這裡另立一條斷言是為了讓「這條守衛要求什麼」在原始碼層級直接可見（不依賴
-  // 讀者自己推導「沒有 _tiptapOptions ⇒ 沒有 extensions」這一步）。
-  it("唯讀選項不含 _tiptapOptions（公開頁不得吃到 input rule 與 / 選單）", () => {
+  // #99: the public read-only page must not get the markdown link input rule (nor the `/` menu). That lives on `_tiptapOptions.extensions`; the "keys don't include _tiptapOptions" test above already implies it, and this separate assertion makes what the guard requires visible in the source without the reader deriving "no _tiptapOptions => no extensions".
+  it("read-only options don't include _tiptapOptions (the public page must not get input rules or the / menu)", () => {
     expect(build().options).not.toHaveProperty("_tiptapOptions");
   });
 });

@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 describe("useAvatars", () => {
-  it("GET /api/auth/avatars，快取鍵是 AVATARS_QUERY_KEY", async () => {
+  it("GET /api/auth/avatars; cache key is AVATARS_QUERY_KEY", async () => {
     const list: AvatarListDto = { candidates: [candidate()], auto: true, refreshable: [] };
     const calls = stubFetch(() => json(200, list));
     const { qc, wrapper } = setup();
@@ -105,7 +105,7 @@ describe("useAvatars", () => {
 });
 
 describe("useUploadAvatar", () => {
-  it("POST /api/auth/avatars：FormData 的 original、display（display.webp）、crop（JSON 字串），不補 Content-Type", async () => {
+  it("POST /api/auth/avatars: FormData has original, display (display.webp), crop (JSON string); Content-Type not set", async () => {
     const calls = stubFetch(() => json(201, candidate()));
     const { invalidate, wrapper } = setup();
     const { result } = renderHook(() => useUploadAvatar(), { wrapper });
@@ -128,7 +128,7 @@ describe("useUploadAvatar", () => {
     expect(invalidatedKeys(invalidate)).toEqual(expect.arrayContaining([AVATARS_QUERY_KEY, SESSION_QUERY_KEY, STORAGE_USAGE_QUERY_KEY]));
   });
 
-  it("顯示圖是 JPEG 時檔名用 display.jpg", async () => {
+  it("display image filename is display.jpg when it's a JPEG", async () => {
     const calls = stubFetch(() => json(201, candidate()));
     const { wrapper } = setup();
     const { result } = renderHook(() => useUploadAvatar(), { wrapper });
@@ -143,7 +143,7 @@ describe("useUploadAvatar", () => {
     expect((form.get("display") as File).name).toBe("display.jpg");
   });
 
-  it("失敗丟 ApiFail，code 是 server 給的，且不失效任何鍵", async () => {
+  it("failure throws ApiFail with the server's code and invalidates no keys", async () => {
     stubFetch(() => json(409, { error: { code: "storage_quota_exceeded", message: "full" }, storage: { incomingBytes: 5 } }));
     const { invalidate, wrapper } = setup();
     const { result } = renderHook(() => useUploadAvatar(), { wrapper });
@@ -158,7 +158,7 @@ describe("useUploadAvatar", () => {
 });
 
 describe("useUpdateAvatarDisplay", () => {
-  it("PUT /api/auth/avatars/:id/display：display、crop、version 三欄", async () => {
+  it("PUT /api/auth/avatars/:id/display: display, crop, version fields", async () => {
     const calls = stubFetch(() => json(200, candidate({ avatar: { id: ID, v: 2 } })));
     const { invalidate, wrapper } = setup();
     const { result } = renderHook(() => useUpdateAvatarDisplay(), { wrapper });
@@ -174,7 +174,7 @@ describe("useUpdateAvatarDisplay", () => {
     expect(invalidatedKeys(invalidate)).toEqual(expect.arrayContaining([AVATARS_QUERY_KEY, SESSION_QUERY_KEY, STORAGE_USAGE_QUERY_KEY]));
   });
 
-  it("avatar_outdated 丟 ApiFail 並帶 code", async () => {
+  it("avatar_outdated throws ApiFail with that code", async () => {
     stubFetch(() => json(409, { error: { code: "avatar_outdated", message: "old" } }));
     const { wrapper } = setup();
     const { result } = renderHook(() => useUpdateAvatarDisplay(), { wrapper });
@@ -187,7 +187,7 @@ describe("useUpdateAvatarDisplay", () => {
 });
 
 describe("useSelectAvatar", () => {
-  it("PUT /api/auth/avatar 送 { candidateId }；成功後 session 快取的 avatar 立刻是新值，三個鍵都失效", async () => {
+  it("PUT /api/auth/avatar sends { candidateId }; on success the session cache's avatar is the new value immediately and three keys are invalidated", async () => {
     const next = user({ avatar: { id: ID, v: 3, pending: false } });
     const calls = stubFetch(() => json(200, next));
     const { qc, invalidate, wrapper } = setup();
@@ -202,7 +202,7 @@ describe("useSelectAvatar", () => {
     expect(invalidatedKeys(invalidate)).toEqual(expect.arrayContaining([AVATARS_QUERY_KEY, SESSION_QUERY_KEY, STORAGE_USAGE_QUERY_KEY]));
   });
 
-  it("candidateId 為 null（不使用頭貼）送 null，session 的 avatar 變 null", async () => {
+  it("null candidateId (no avatar) sends null; session avatar becomes null", async () => {
     const calls = stubFetch(() => json(200, user({ avatar: null })));
     const { qc, wrapper } = setup();
     qc.setQueryData(SESSION_QUERY_KEY, user({ avatar: { id: ID, v: 3, pending: false } }));
@@ -214,7 +214,7 @@ describe("useSelectAvatar", () => {
     expect(qc.getQueryData<UserDto>(SESSION_QUERY_KEY)?.avatar).toBeNull();
   });
 
-  it("404 丟 ApiFail，session 快取不動", async () => {
+  it("404 throws ApiFail; session cache unchanged", async () => {
     stubFetch(() => json(404, { error: { code: "not_found", message: "gone" } }));
     const { qc, wrapper } = setup();
     const before = user({ avatar: { id: ID, v: 1, pending: false } });
@@ -230,7 +230,7 @@ describe("useSelectAvatar", () => {
 });
 
 describe("useDeleteAvatar", () => {
-  it("DELETE /api/auth/avatars/:id，三個鍵都失效", async () => {
+  it("DELETE /api/auth/avatars/:id invalidates three keys", async () => {
     const calls = stubFetch(() => json(204));
     const { invalidate, wrapper } = setup();
     const { result } = renderHook(() => useDeleteAvatar(), { wrapper });
@@ -241,7 +241,7 @@ describe("useDeleteAvatar", () => {
     expect(invalidatedKeys(invalidate)).toEqual(expect.arrayContaining([AVATARS_QUERY_KEY, SESSION_QUERY_KEY, STORAGE_USAGE_QUERY_KEY]));
   });
 
-  it("失敗丟 ApiFail", async () => {
+  it("failure throws ApiFail", async () => {
     stubFetch(() => json(409, { error: { code: "server_busy", message: "busy" } }));
     const { wrapper } = setup();
     const { result } = renderHook(() => useDeleteAvatar(), { wrapper });
@@ -254,23 +254,22 @@ describe("useDeleteAvatar", () => {
 });
 
 describe("fetchAvatarOriginal", () => {
-  it("GET /api/auth/avatars/:id/original 帶 cookie，回 Blob", async () => {
+  it("GET /api/auth/avatars/:id/original sends the cookie and returns a Blob", async () => {
     const calls = stubFetch(() => new Response("png-bytes", { status: 200, headers: { "content-type": "image/png" } }));
     const blob = await fetchAvatarOriginal(ID);
     expect(calls[0]).toMatchObject({ method: "GET", url: `/api/auth/avatars/${ID}/original`, credentials: "include" });
-    // 不用 toBeInstanceOf(Blob)：測試裡的全域 Blob 是 jsdom 的，Node 內建 fetch 的 response.blob()
-    // 依 Node 版本可能回 Node 自己的 Blob（Node 22 就是），instanceof 會跨 realm 失敗；改看標記、型別與內容。
+    // Not toBeInstanceOf(Blob): the global Blob in tests is jsdom's, while Node's built-in fetch response.blob() may return Node's own Blob (Node 22 does), so instanceof fails across realms; check the tag, type and content instead.
     expect(Object.prototype.toString.call(blob)).toBe("[object Blob]");
     expect(blob.type).toBe("image/png");
     expect(await blob.text()).toBe("png-bytes");
   });
 
-  it("非 2xx 丟 ApiFail，code 取自 server", async () => {
+  it("non-2xx throws ApiFail, code from the server", async () => {
     stubFetch(() => json(404, { error: { code: "not_found", message: "gone" } }));
     await expect(fetchAvatarOriginal(ID)).rejects.toMatchObject({ name: "ApiFail", status: 404, code: "not_found" });
   });
 
-  it("非 2xx 且 body 不是約定的錯誤形：退回 internal", async () => {
+  it("non-2xx whose body isn't the agreed error shape: falls back to internal", async () => {
     stubFetch(() => new Response("<html>", { status: 502 }));
     const err = await fetchAvatarOriginal(ID).catch(e => e);
     expect(err).toBeInstanceOf(ApiFail);

@@ -2,11 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BlockNoteEditor } from "@blocknote/core";
 import { noteSchema } from "./schema";
 
-// 已驗證：BlockNote 的 paste 同步走 `view.pasteHTML/pasteText`；tiptap Link 的 `handlePaste`
-// （選取上貼網址）與 paste rule 都在同一次 dispatch 內完成 ⇒ 呼叫返回時文件已是最終形。貼上轉換以此為前提。
-// 量到哪一形不同步：照實改期望值並回報——貼上轉換要在那一形另補偵測。
+// BlockNote's paste sync goes through `view.pasteHTML/pasteText`; the tiptap Link `handlePaste` (URL pasted over a selection) and the paste rule both finish within the same dispatch, so the document is already in its final shape when the call returns. The paste conversion relies on this; a form that turned out not to be synchronous would need its own detection there.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 const ORIGIN = window.location.origin;
@@ -31,7 +29,7 @@ function links(editor: AnyEditor): Array<{ href: string; text: string }> {
   return out;
 }
 
-describe("#269 事實：貼上在呼叫返回時就已是最終形", () => {
+describe("#269 fact: a paste is in its final shape when the call returns", () => {
   let editor: AnyEditor;
   let container: HTMLElement;
   afterEach(() => {
@@ -39,31 +37,30 @@ describe("#269 事實：貼上在呼叫返回時就已是最終形", () => {
     container.remove();
   });
 
-  it("① HTML <a>（pasteHTML）", () => {
+  it("HTML <a> (pasteHTML)", () => {
     ({ editor, container } = mounted());
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
     editor.pasteHTML(`<a href="${HREF}">x</a>`);
     expect(links(editor)).toEqual([{ href: HREF, text: "x" }]);
   });
 
-  it("② markdown [x](url)（pasteMarkdown；0.52.1 型別回 void，同步呼叫、不 await）", () => {
+  it("markdown [x](url) (pasteMarkdown; the 0.52.1 type returns void, called synchronously without await)", () => {
     ({ editor, container } = mounted());
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
     editor.pasteMarkdown(`[x](${HREF})`);
     expect(links(editor)).toEqual([{ href: HREF, text: "x" }]);
   });
 
-  it("③ 空選取貼同 origin 絕對網址（pasteText；autolink 的 paste rule）", () => {
+  it("empty selection pasting a same-origin absolute URL (pasteText; autolink's paste rule)", () => {
     ({ editor, container } = mounted());
     editor.setTextCursorPosition(editor.document[0]!.id, "end");
     editor.pasteText(` ${HREF} `);
     expect(links(editor)).toEqual([{ href: HREF, text: HREF }]);
   });
 
-  it("④ 選取文字上貼網址（tiptap Link 的 handlePaste）", () => {
+  it("URL pasted over selected text (tiptap Link's handlePaste)", () => {
     ({ editor, container } = mounted());
     const view = editor._tiptapEditor.view;
-    // 選「world」：段落內容從 1 開始（blockGroup／blockContainer／paragraph 的開 token 之後），以文字搜尋算位置。
     let from = -1;
     view.state.doc.descendants((node: { isText: boolean; text?: string }, pos: number) => {
       if (from === -1 && node.isText && String(node.text).includes("world")) from = pos + String(node.text).indexOf("world");
@@ -74,7 +71,7 @@ describe("#269 事實：貼上在呼叫返回時就已是最終形", () => {
     expect(links(editor)).toEqual([{ href: HREF, text: "world" }]);
   });
 
-  it("⑤ 站內複製貼上（blocksToHTMLLossy 的 <a>，經 pasteHTML）", () => {
+  it("in-site copy and paste (blocksToHTMLLossy's <a>, via pasteHTML)", () => {
     ({ editor, container } = mounted([{ type: "paragraph", content: [{ type: "link", href: HREF, content: "y" }] }, { type: "paragraph", content: "" }]));
     const html = editor.blocksToHTMLLossy([editor.document[0]!]);
     editor.setTextCursorPosition(editor.document[1]!.id, "end");

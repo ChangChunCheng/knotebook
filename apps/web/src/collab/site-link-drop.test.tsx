@@ -7,13 +7,12 @@ import { attachTestElementRenderer } from "@/test/element-renderer";
 import { collabUndoManager } from "./undo";
 import { runFallbackConversion, type FallbackRequest, type SiteLinkEnv, type SiteLinkEnvRef } from "./site-link-convert";
 
-// #352：以 `buildNoteEditorOptions` 掛真編輯器（產品碼原樣），送真 DOM `drop` 事件。
-// toast 換成 spy（同 `components/NoteEditor.test.ts`）：媒體阻擋會呼叫它。
+// #352: a real editor mounted with `buildNoteEditorOptions` (product code as is) and real DOM `drop` events. toast is replaced by a spy (as in `components/NoteEditor.test.ts`): media blocking calls it.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 type Options = ReturnType<typeof buildNoteEditorOptions>;
 type View = AnyEditor["_tiptapEditor"]["view"];
@@ -23,11 +22,11 @@ const ORIGIN = window.location.origin;
 const A_ID = "11111111-1111-4111-8111-111111111111";
 const NOTES: SiteLinkCandidate[] = [{ id: A_ID, title: "Alpha", slug: "alpha", groupId: null, ownerHandle: "alice" }];
 const URL_A = `${ORIGIN}/n/alice/alpha`;
-/** 側欄 `<a>` 的形（文字 `D`：轉成後 `label "D"`）。 */
+/** Sidebar <a> shape (text D, so the converted wikilink has label "D"). */
 const A_FORM = { "text/html": `<a href="${URL_A}">D</a>`, "text/plain": URL_A, "text/uri-list": URL_A };
-/** 同 A_FORM，但文字＝快取裡的標題：轉成後 `label ""`。 */
+/** Same as A_FORM but the text equals the cached title, so the converted wikilink has label "". */
 const A_ALPHA = { ...A_FORM, "text/html": `<a href="${URL_A}">Alpha</a>` };
-/** 媒體阻擋（data URL 圖）：內層回 true、PM 不送 drop tr。 */
+/** Media blocking (data-URL image): the inner handler returns true and PM sends no drop tr. */
 const MEDIA = { "text/html": `<img src="data:image/png;base64,AAAA">`, "text/plain": "x" };
 const L = (text: string) => ({ type: "link", href: URL_A, content: text });
 
@@ -93,13 +92,12 @@ function dropOn(
   v.dom.dispatchEvent(event);
 }
 
-/** 每次 drop 之後都要清 microtask 再做下一步（前提）。 */
+/** Flush microtasks after every drop, before the next step. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 6; i++) await Promise.resolve();
   await new Promise((r) => setTimeout(r, 0));
 }
 
-/** 第 i 個頂層 blockContainer 之後的位置。文字起點＝區塊起點＋2。 */
 function boundaryAfter(editor: AnyEditor, i: number): number {
   const group = view(editor).state.doc.firstChild!;
   let pos = 1;
@@ -114,7 +112,6 @@ const wikis = (editor: AnyEditor): number => count(pm(editor), /wikilink/g);
 type Inline = { type: string; props?: Record<string, unknown>; href?: string; text?: string };
 const inline = (editor: AnyEditor, i: number): Inline[] => editor.document[i]!.content as Inline[];
 const wikiProps = (editor: AnyEditor, i: number) => inline(editor, i).filter((n) => n.type === "wikilink").map((n) => n.props);
-/** 第一個文字等於 `text` 的 text node 的位置（起點）。 */
 function textPos(editor: AnyEditor, text: string): number {
   let at = -1;
   view(editor).state.doc.descendants((n: PmNode, p: number) => {
@@ -137,7 +134,7 @@ afterEach(() => {
 });
 
 describe("#352 drop hook", () => {
-  it("DL1：側欄 <a> 形（html＋plain＋uri-list）命中 → 恰一個 wikilink（label 空）、沒有一般連結、不排後備", async () => {
+  it("sidebar <a> shape (html + plain + uri-list) hit -> exactly one wikilink (empty label), no ordinary link, no fallback queued", async () => {
     const env = mkEnv();
     const { editor } = mount(env);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -148,7 +145,7 @@ describe("#352 drop hook", () => {
     expect(env.calls).toHaveLength(0);
   });
 
-  it("DL2：再多一個 application/x-knotebook-note 型別 → 結果同 DL1（判準不讀它）", async () => {
+  it("an extra application/x-knotebook-note type -> same result as the sidebar <a> shape (the decision doesn't read it)", async () => {
     const env = mkEnv();
     const { editor } = mount(env);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -159,7 +156,7 @@ describe("#352 drop hook", () => {
     expect(env.calls).toHaveLength(0);
   });
 
-  it("DL3：只有 text/plain 網址（B'，paste rule 附加 link mark）命中 → 一個 wikilink、label 空", async () => {
+  it("only a text/plain URL (the paste rule appends a link mark) hit -> one wikilink, empty label", async () => {
     const env = mkEnv();
     const { editor } = mount(env);
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -170,10 +167,10 @@ describe("#352 drop hook", () => {
   });
 
   for (const [name, data] of [
-    ["A 形", A_FORM],
-    ["B' 形", { "text/plain": URL_A }],
+    ["sidebar <a> shape", A_FORM],
+    ["plain-URL shape", { "text/plain": URL_A }],
   ] as const) {
-    it(`DL4：快取 miss（${name}）→ 維持一般連結；後備恰排一次`, async () => {
+    it(`cache miss (${name}) -> stays an ordinary link; fallback queued once`, async () => {
       const env = mkEnv([]);
       const { editor } = mount(env);
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -187,7 +184,7 @@ describe("#352 drop hook", () => {
   }
 
   for (const href of ["https://example.com/n/alice/alpha", `${ORIGIN}/p/abc`, `${ORIGIN}/n/alice/alpha?present`]) {
-    it(`DL5：不是可轉的站內連結（${href.replace(ORIGIN, "<origin>")}）→ 不轉、不排後備`, async () => {
+    it(`not a convertible on-site link (${href.replace(ORIGIN, "<origin>")}) -> not converted, no fallback queued`, async () => {
       const env = mkEnv();
       const { editor } = mount(env);
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -199,7 +196,7 @@ describe("#352 drop hook", () => {
     });
   }
 
-  /** `[p "src " L("S")]、[p "dst"]`：選取 S、設定 `view.dragging`，放在 dst 段尾。 */
+  /** `[p "src " L("S")], [p "dst"]`: selects S, sets `view.dragging` and drops at the end of dst. */
   async function internalDrag(ctrlKey: boolean): Promise<AnyEditor> {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [
@@ -215,7 +212,7 @@ describe("#352 drop hook", () => {
     return editor;
   }
 
-  it("DL6：內部搬移（dragging.move）既有一般站內連結 → 仍是一般連結", async () => {
+  it("internal move (dragging.move) of an existing ordinary on-site link -> stays an ordinary link", async () => {
     const editor = await internalDrag(false);
     expect(inline(editor, 1).map((n) => n.type)).toEqual(["text", "link"]);
     expect(inline(editor, 0).some((n) => n.type === "link")).toBe(false);
@@ -223,7 +220,7 @@ describe("#352 drop hook", () => {
     expect(wikis(editor)).toBe(0);
   });
 
-  it("DL7：內部複製拖（ctrlKey；jsdom 的 navigator.platform 不是 Mac）→ 來源仍在、複本仍是一般連結", async () => {
+  it("internal copy drag (ctrlKey; jsdom's navigator.platform isn't Mac) -> the source stays and the copy is still an ordinary link", async () => {
     const editor = await internalDrag(true);
     expect(inline(editor, 0).map((n) => n.type)).toEqual(["text", "link"]);
     expect(inline(editor, 1).map((n) => n.type)).toEqual(["text", "link"]);
@@ -231,7 +228,7 @@ describe("#352 drop hook", () => {
     expect(wikis(editor)).toBe(0);
   });
 
-  it("DL8：游標在別段；在 `X-[Alpha](url)end` 的 X 之後放下 `-<a>Alpha</a>` → 新放下的轉、既有的不轉", async () => {
+  it("caret in another paragraph; dropping `-<a>Alpha</a>` after the X of `X-[Alpha](url)end` -> the newly dropped one is converted, the existing one isn't", async () => {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [
       { type: "paragraph", content: "other" },
@@ -243,10 +240,9 @@ describe("#352 drop hook", () => {
     expect(inline(editor, 1).map((n) => n.type)).toEqual(["text", "wikilink", "text", "link", "text"]);
   });
 
-  // 範圍端點不得多涵蓋一格：緊貼既有連結 H 的前／後放下。H 用 `/notes/<id>`——快取命中（被涵蓋就會轉），
-  // 但 href 與放下的不同，PM 不會把兩者合併成一個連結。
+  // The range ends mustn't cover one position too many: drop right before/after the existing link H. H uses `/notes/<id>`: a cache hit (it would be converted if covered) but its href differs from the dropped one, so PM doesn't merge the two into one link.
   for (const side of ["前", "後"] as const) {
-    it(`DL8b：緊貼既有一般站內連結 H 的${side}方放下 → 只轉新放下的 D，H 不轉`, async () => {
+    it(`dropping next to an existing ordinary on-site link H (${side === "前" ? "before" : "after"} side) -> only the newly dropped D is converted, H isn't`, async () => {
       const { editor } = mount(mkEnv());
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: ["AAA ", { type: "link", href: `/notes/${A_ID}`, content: "H" }, " tail"] }]);
       const h = textPos(editor, "H");
@@ -258,7 +254,7 @@ describe("#352 drop hook", () => {
     });
   }
 
-  it("DL9：唯讀時、envRef.current 為 null 時 → 不轉、不拋錯", async () => {
+  it("read-only, or envRef.current is null -> not converted, no throw", async () => {
     const a = mount(mkEnv());
     a.editor.replaceBlocks(a.editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
     a.editor.isEditable = false;
@@ -274,7 +270,7 @@ describe("#352 drop hook", () => {
     expect(wikis(b.editor)).toBe(0);
   });
 
-  it("DL10（after 段）：轉換時拋錯（env.notes 拋錯）→ console.warn、維持一般連結、沒有 uncaught error", async () => {
+  it("the conversion throws (env.notes throws) -> console.warn, stays an ordinary link, no uncaught error", async () => {
     const env = mkEnv();
     env.notes = () => {
       throw new Error("boom");
@@ -289,7 +285,7 @@ describe("#352 drop hook", () => {
     expect(links(editor, "D")).toBe(1);
   });
 
-  it("DL12：在 `AAA [L] BBB` 的 AAA 之後放下兩段 → 既有 L 不轉；放下內容裡的站內連結轉", async () => {
+  it("dropping two paragraphs after AAA in `AAA [L] BBB` -> the existing L isn't converted; on-site links in the dropped content are", async () => {
     const a = mount(mkEnv());
     a.editor.replaceBlocks(a.editor.document, [{ type: "paragraph", content: ["AAA ", L("L"), " BBB"] }]);
     dropOn(a.editor, 3 + 3, { "text/html": "<p>new</p><p>two</p>", "text/plain": "x" });
@@ -306,7 +302,7 @@ describe("#352 drop hook", () => {
     expect(wikis(b.editor)).toBe(1);
   });
 
-  it("DL13：座標 (1,1)（jsdom 走 SideMenu 的 synthetic drop）→ hook 只跑一次、結果同 DL1", async () => {
+  it("coordinates (1,1) (in jsdom SideMenu's synthetic drop) -> the hook runs once, same result as the sidebar <a> shape", async () => {
     const env = mkEnv();
     let calls = 0;
     const { editor } = mount(env, (opts) => {
@@ -326,10 +322,10 @@ describe("#352 drop hook", () => {
   });
 
   for (const [name, html] of [
-    ["img 開頭", `<img src="https://example.com/x.png"><p>two <a href="${URL_A}">D</a></p>`],
-    ["hr 開頭", `<hr><p>two <a href="${URL_A}">D</a></p>`],
+    ["starts with img", `<img src="https://example.com/x.png"><p>two <a href="${URL_A}">D</a></p>`],
+    ["starts with hr", `<hr><p>two <a href="${URL_A}">D</a></p>`],
   ] as const) {
-    it(`DL14：區塊邊界放下${name}的內容；下一段以既有 NEXT 開頭 → NEXT 不轉、D 轉`, async () => {
+    it(`dropping content that ${name} at a block boundary; the next paragraph starts with the existing NEXT -> NEXT isn't converted, D is`, async () => {
       const { editor } = mount(mkEnv());
       editor.replaceBlocks(editor.document, [
         { type: "paragraph", content: "AAA" },
@@ -343,7 +339,7 @@ describe("#352 drop hook", () => {
     });
   }
 
-  it("DL15：文件結尾（size−1）放下 A 形 → D 轉、既有 H 不轉", async () => {
+  it("dropping the sidebar <a> shape at document end (size-1) -> D is converted, the existing H isn't", async () => {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [
       { type: "paragraph", content: [L("H")] },
@@ -356,15 +352,14 @@ describe("#352 drop hook", () => {
     expect(links(editor, "H")).toBe(1);
   });
 
-  /** DL16／DL16b 的第二次放下：沒有 drop tr 的三形。 */
   const NO_DROP_TR = {
-    媒體阻擋: (editor: AnyEditor) => dropOn(editor, 5, MEDIA),
+    "media blocking": (editor: AnyEditor) => dropOn(editor, 5, MEDIA),
     Files: (editor: AnyEditor) => dropOn(editor, 5, {}, { files: [new File(["x"], "a.png", { type: "image/png" })] }),
-    "只有 uri-list": (editor: AnyEditor) => dropOn(editor, 5, { "text/uri-list": URL_A }),
+    "uri-list only": (editor: AnyEditor) => dropOn(editor, 5, { "text/uri-list": URL_A }),
   } as const;
 
   for (const [name, second] of Object.entries(NO_DROP_TR)) {
-    it(`DL16：miss 放下後再做一次沒有 drop tr 的放下（${name}）→ D、H 維持一般連結，後備次數不變`, async () => {
+    it(`after a miss drop, another drop with no drop tr (${name}) -> D and H stay ordinary links, fallback count unchanged`, async () => {
       const env = mkEnv([]);
       const { editor } = mount(env);
       editor.replaceBlocks(editor.document, [
@@ -382,7 +377,7 @@ describe("#352 drop hook", () => {
       expect(env.calls).toHaveLength(1);
     });
 
-    it(`DL16b：miss 放下後快取載入，再做一次沒有 drop tr 的放下（${name}）→ 先前的 D 仍是一般連結`, async () => {
+    it(`after a miss drop the cache loads, then another drop with no drop tr (${name}) -> the earlier D is still an ordinary link`, async () => {
       const env = mkEnv([]);
       const { editor } = mount(env);
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "xxxxxxxxxxxx" }]);
@@ -400,7 +395,7 @@ describe("#352 drop hook", () => {
   const cells = Array.from({ length: 8 }, (_, i) => `<td>c${i}</td>`).join("");
   const WIDE = `<table><tr><td>a</td></tr><tr>${cells}<td>z <a href="${URL_A}">D</a></td></tr></table>`;
   for (const where of ["段中", "區塊邊界"] as const) {
-    it(`DL17：寬表格（fixTables 補格把連結往後推），放在${where} → D 轉、既有 H 與 NEXT 不轉`, async () => {
+    it(`wide table (fixTables pads cells and pushes the link back), dropped ${where === "段中" ? "mid-paragraph" : "at a block boundary"} -> D is converted, the existing H and NEXT aren't`, async () => {
       const { editor } = mount(mkEnv());
       editor.replaceBlocks(editor.document, [
         { type: "paragraph", content: ["AAA ", L("H")] },
@@ -415,12 +410,12 @@ describe("#352 drop hook", () => {
     });
   }
 
-  /** 媒體阻擋的放下：hook 啟用（記錄設成 null）、內層回 true、PM 不送 drop tr。之後由測試同步送自己的 tr。 */
+  /** Media-blocked drop: the hook is armed (record set to null), the inner handler returns true and PM sends no drop tr; the test then sends its own tr synchronously. */
   function armWithoutDropTr(editor: AnyEditor): void {
     dropOn(editor, 5, MEDIA);
   }
 
-  it("DLp1：drop tr 的最後一個 StepMap 不止一段（setNodeMarkup）→ 記 null、不轉", async () => {
+  it("the last StepMap of the drop tr has more than one range (setNodeMarkup) -> records null, not converted", async () => {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: ["AAA ", L("H")] }]);
     const v = view(editor);
@@ -436,7 +431,7 @@ describe("#352 drop hook", () => {
     expect(wikis(editor)).toBe(0);
   });
 
-  it("DLp2：記錄映射後成為空範圍（緊貼 H 插入再刪除）→ 不轉（不把緊鄰的既有連結收進來）", async () => {
+  it("the record maps to an empty range (insert next to H then delete) -> not converted (the adjacent existing link isn't collected)", async () => {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: ["AAA ", L("H"), " tail"] }]);
     const v = view(editor);
@@ -451,13 +446,12 @@ describe("#352 drop hook", () => {
 });
 
 /**
- * DL11（量法：共編組態、不用 fake timers、`stopCapturing()` 只放在 drop 之前）。
- * 量到的結果即斷言；後備兩列比照 `site-link-convert.test.tsx`，改由 drop 觸發。
+ * Undo measurement (collab configuration, no fake timers, `stopCapturing()` only before the drop). The measured results are the assertions; the two fallback rows mirror `site-link-convert.test.tsx` but are triggered by a drop.
  */
 const MEASURED_DROP = { undoRemovesWholeDrop: true, fallbackAfterPauseRevertsToLink: true, fallbackImmediateRemovesAll: true } as const;
 
-describe("#352 DL11 撤銷量測（共編）", () => {
-  it(`同步命中：undo 一次整個拖放消失＝${String(MEASURED_DROP.undoRemovesWholeDrop)}`, async () => {
+describe("#352 undo measurements (collab)", () => {
+  it(`synchronous hit: one undo removes the whole drop =${String(MEASURED_DROP.undoRemovesWholeDrop)}`, async () => {
     const { editor } = mount(mkEnv());
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "abc" }]);
     const manager = collabUndoManager(editor)!;
@@ -485,7 +479,7 @@ describe("#352 DL11 撤銷量測（共編）", () => {
     return { editor, env, before, manager };
   }
 
-  it(`後備在停頓之後落地：undo 一次只退回一般連結＝${String(MEASURED_DROP.fallbackAfterPauseRevertsToLink)}；退回後不再被轉`, async () => {
+  it(`fallback lands after a pause: one undo only reverts to an ordinary link =${String(MEASURED_DROP.fallbackAfterPauseRevertsToLink)}; it isn't converted again afterwards`, async () => {
     const { editor, env, manager } = await missThenFallback(true);
     manager.undo();
     expect(links(editor, "D") === 1 && wikis(editor) === 0).toBe(MEASURED_DROP.fallbackAfterPauseRevertsToLink);
@@ -494,7 +488,7 @@ describe("#352 DL11 撤銷量測（共編）", () => {
     expect(wikis(editor)).toBe(0);
   });
 
-  it(`後備緊接著落地（同一窗口）：undo 一次連放下一起撤＝${String(MEASURED_DROP.fallbackImmediateRemovesAll)}`, async () => {
+  it(`fallback lands right after (same window): one undo undoes the drop too =${String(MEASURED_DROP.fallbackImmediateRemovesAll)}`, async () => {
     const { editor, before, manager } = await missThenFallback(false);
     manager.undo();
     expect(pm(editor) === before).toBe(MEASURED_DROP.fallbackImmediateRemovesAll);

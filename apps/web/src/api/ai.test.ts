@@ -3,17 +3,13 @@ import { ApiFail } from "./client";
 import { streamAiAction } from "./ai";
 
 /**
- * `POST /api/ai` 的手寫 SSE client。`fetch` 整個被 stub 掉，
- * 用一個真的 `ReadableStream<Uint8Array>` 模擬 server 端 `raw.write("event: ...\ndata:
- * ...\n\n")` 的位元組流——包含跨 chunk 斷行的情形（核心風險：`event: delta\n` 跟
- * `data: {...}\n\n` 被切在兩次 `reader.read()` 裡）。
+ * Hand-written SSE client of `POST /api/ai`. `fetch` is stubbed entirely; a real `ReadableStream<Uint8Array>` simulates the byte stream of the server's `raw.write("event: ...\ndata: ...\n\n")`, including lines broken across chunks (the core risk: `event: delta\n` and `data: {...}\n\n` split over two `reader.read()` calls).
  */
 
 function encode(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-/** 把整段 SSE 文字依 `chunks` 指定的切點切開，模擬多次 `reader.read()` 回傳。 */
 function sseBody(chunks: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -39,12 +35,12 @@ function fakeResponse({ ok, status, json, body }: FakeResponseInit): Response {
   } as unknown as Response;
 }
 
-describe("streamAiAction（手寫 SSE client）", () => {
+describe("streamAiAction (hand-written SSE client)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("多 chunk 斷行重組：event/data 被切在不同 chunk 裡仍能正確組回並逐一回呼 delta", async () => {
+  it("reassembles lines broken across chunks: event/data split over different chunks are recombined and delta is called back for each", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         fakeResponse({
@@ -74,7 +70,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     expect(deltas).toEqual(["你好", "，世界"]);
   });
 
-  it("delta 逐一回呼：三個 delta 事件依序觸發三次 onDelta", async () => {
+  it("delta callbacks one by one: three delta events trigger onDelta three times in order", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         fakeResponse({
@@ -103,7 +99,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     expect(deltas).toEqual(["A", "B", "C"]);
   });
 
-  it("error 事件 → 丟 ApiFail(code, message)，不再繼續讀取", async () => {
+  it("error event -> throws ApiFail(code, message), stops reading", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         fakeResponse({
@@ -122,7 +118,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     expect(onDelta).not.toHaveBeenCalled();
   });
 
-  it("pre-stream 503 JSON → ApiFail('ai_not_configured')", async () => {
+  it("pre-stream 503 JSON -> ApiFail('ai_not_configured')", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         fakeResponse({
@@ -145,7 +141,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     ).rejects.toMatchObject(new ApiFail(503, "ai_not_configured", "AI isn't set up on this site. Contact the site admin."));
   });
 
-  it("abort：傳入的 AbortSignal 原封不動轉交給 fetch", async () => {
+  it("abort: the given AbortSignal is passed to fetch unchanged", async () => {
     const controller = new AbortController();
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
       Promise.resolve(fakeResponse({ ok: true, status: 200, body: sseBody(["event: done\ndata: {}\n\n"]) })),
@@ -158,7 +154,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     expect(init.signal).toBe(controller.signal);
   });
 
-  it("送出的 init 帶 Content-Type: application/json 與 credentials: include", async () => {
+  it("the init sent has Content-Type: application/json and credentials: include", async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
       Promise.resolve(fakeResponse({ ok: true, status: 200, body: sseBody(["event: done\ndata: {}\n\n"]) })),
     );
@@ -181,7 +177,7 @@ describe("streamAiAction（手寫 SSE client）", () => {
     expect(JSON.parse(String(init.body))).toEqual({ action_id: "a1", note_id: "n1", text: "hi" });
   });
 
-  it("#263：instruction／focus 有傳才帶進 body，沒傳就不出現", async () => {
+  it("#263: instruction/focus are in the body only when passed", async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
       Promise.resolve(fakeResponse({ ok: true, status: 200, body: sseBody(["event: done\ndata: {}\n\n"]) })),
     );

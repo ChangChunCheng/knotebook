@@ -3,14 +3,13 @@ import { describe, expect, it } from "vitest";
 import { COLUMN_GAP_PX, COLUMN_MIN_IMAGE_PX, COLUMN_MIN_TEXT_PX } from "./layout";
 
 /**
- * `index.css` 並排段落的源碼守衛。BlockNote 的 CSS 在 lazy chunk、晚於 `index.css`，
- * 兩邊都未分層——不錨 `.bn-editor` 的覆寫同特異度必輸、靜默不生效且 jsdom 全綠；數值要與 `layout.ts` 的常數同一份。
- * 守不到的：規則有沒有真的進 build 產物（Lightning CSS 會靜默丟掉解析不了的選擇器）——build 後 grep `dist/assets/*.css`。
+ * Source guard for the columns section of `index.css`. BlockNote's CSS lives in a lazy chunk, later than `index.css`, and neither is layered: an override that doesn't anchor `.bn-editor` always loses at equal specificity, silently has no effect, and jsdom stays green; values must be the same as `layout.ts`'s constants.
+ * Not covered: whether the rules really make it into the build output (Lightning CSS silently drops selectors it can't parse) - grep `dist/assets/*.css` after build.
  */
 
 const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\r\n/g, "\n");
 
-/** 選擇器清單逐字等於 `selector` 的規則區塊內容（取最後一個——CSS 也是後者生效）。 */
+/** Contents of the rule block whose selector list is verbatim `selector` (the last one is taken, since in CSS the later one wins). */
 function block(selector: string): string | undefined {
   const blocks: string[] = [];
   const re = /([^{}]+)\{([^{}]*)\}/g;
@@ -44,32 +43,32 @@ function declarations(body: string): Record<string, string> {
   return out;
 }
 
-describe("index.css 並排段落", () => {
-  it("CSS1 每條規則逐字存在，選擇器清單的每一項都以 `.bn-editor ` 開頭", () => {
+describe("index.css columns section", () => {
+  it("every rule exists verbatim and every item in the selector list starts with `.bn-editor `", () => {
     for (const [selector] of RULES) {
       expect(block(selector), selector).toBeDefined();
       for (const part of selector.split(",")) expect(part.trim().startsWith(".bn-editor "), part).toBe(true);
     }
   });
 
-  it("CSS2 宣告值與 layout.ts 的常數相同（gap、兩個 min-width）", () => {
+  it("declared values equal layout.ts's constants (gap, the two min-widths)", () => {
     for (const [selector, expected] of RULES) {
       const actual = declarations(block(selector) ?? "");
       for (const [prop, value] of Object.entries(expected)) expect(actual[prop], `${selector} ${prop}`).toBe(value);
     }
   });
 
-  it("CSS2b 欄只歸零左右 padding、上下照 core 的 12px：欄規則不得有 `padding`／`padding-block` 等其他 padding 宣告", () => {
+  it("columns zero only the left/right padding and keep core's 12px top/bottom: column rules must not have `padding`, `padding-block` or other padding declarations", () => {
     const actual = declarations(block(RULES[1][0]) ?? "");
     expect(Object.keys(actual).filter((prop) => prop.startsWith("padding"))).toEqual(["padding-inline"]);
   });
 
-  it("CSS3 段落在窄視窗段之後、版本 diff 樣式之前；image 欄規則排在欄的 200px 規則之後", () => {
+  it("the section comes after the narrow-viewport section and before the version diff styles; the image column rule comes after the column 200px rules", () => {
     const at = css.indexOf(".bn-editor .bn-block-column-list {");
     expect(at).toBeGreaterThan(css.indexOf("@media (width < 48rem) {"));
     expect(at).toBeLessThan(css.indexOf(".kb-diff [data-diff="));
     expect(css.indexOf("@media (width < 48rem) {")).toBeGreaterThan(-1);
-    // image 欄的 96px 與 `:first-child`／`:last-child` 的 200px 同特異度 (0,3,0)，只靠排在後面贏；兩欄列的兩欄必是首或尾。
+    // The image column's 96px has the same specificity (0,3,0) as the 200px of `:first-child`/`:last-child` and wins only by coming later; the two columns of a two-column row are always first or last.
     const textMin = css.indexOf(".bn-editor .bn-block-column:last-child {");
     expect(textMin).toBeGreaterThan(-1);
     expect(css.indexOf('.bn-editor .bn-block-column[data-kb-col-kind="image"] {')).toBeGreaterThan(textMin);

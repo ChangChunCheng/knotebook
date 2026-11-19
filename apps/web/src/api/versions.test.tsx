@@ -40,10 +40,10 @@ function listBody(over: Partial<VersionListDto> = {}): VersionListDto {
   };
 }
 
-/** "AQID" ＝ bytes [1,2,3] */
+/** "AQID" is bytes [1,2,3] */
 const SNAP = (id: string) => ({ id, seq: 1, ydoc: "AQID" });
 
-/** 預設 harness 關 retry；要守 hook 自己的 `retry: false` 的案傳 `new QueryClient()`（不關 retry）進來。 */
+/** The default harness turns retry off; a case guarding the hook's own `retry: false` passes `new QueryClient()` (retry not disabled). */
 function setup(
   handler: (url: string, init?: RequestInit) => Response,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -66,15 +66,15 @@ function setup(
 describe("api/versions", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("查詢鍵：清單在 ['notes'] 前綴下、快照在獨立前綴 ['note-versions', noteId, id]", () => {
+  it("query keys: list is under the ['notes'] prefix, snapshot under its own prefix ['note-versions', noteId, id]", () => {
     expect(versionsKey(NOTE)).toEqual(["notes", NOTE, "versions"]);
-    // #258：清單鍵＝versionsKey 前綴＋"list"＋篩選，invalidate(versionsKey) 一次刷到兩種篩選。
+    // #258: list key = versionsKey prefix + "list" + filter, so invalidate(versionsKey) refreshes both filters at once.
     expect(versionListKey(NOTE, "all")).toEqual(["notes", NOTE, "versions", "list", "all"]);
     expect(versionListKey(NOTE, "manual")).toEqual(["notes", NOTE, "versions", "list", "manual"]);
     expect(versionSnapshotKey(NOTE, V1)).toEqual(["note-versions", NOTE, V1]);
   });
 
-  it("invalidate ['notes'] 會重抓清單、不會重抓快照", async () => {
+  it("invalidate ['notes'] refetches the list, not the snapshot", async () => {
     const { calls, queryClient, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions?limit=50`) return fakeResponse(200, listBody());
       if (url === `/api/notes/${NOTE}/versions/1`) return fakeResponse(200, SNAP(V1));
@@ -91,7 +91,7 @@ describe("api/versions", () => {
     expect(calls.filter((c) => c.endsWith("/versions/1")).length).toBe(before.snap);
   });
 
-  it("同 seq、不同 id → 不命中快取，各打一次（搬移會讓同一個 seq 指向不同內容）", async () => {
+  it("same seq, different id -> cache miss, one request each (a move can make the same seq point to different content)", async () => {
     let served = V1;
     const { calls, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions/1`) return fakeResponse(200, SNAP(served));
@@ -106,7 +106,7 @@ describe("api/versions", () => {
     expect(Array.from(second.result.current.data!)).toEqual([1, 2, 3]);
   });
 
-  it("回應 id 與要的不符 → 丟棄（error＝VersionSnapshotMismatch、沒有 data）並 invalidate 清單", async () => {
+  it("response id differs from the requested one -> discarded (error = VersionSnapshotMismatch, no data) and the list is invalidated", async () => {
     const { calls, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions?limit=50`) return fakeResponse(200, listBody());
       if (url === `/api/notes/${NOTE}/versions/1`) return fakeResponse(200, SNAP(V1_OTHER));
@@ -123,9 +123,8 @@ describe("api/versions", () => {
     await waitFor(() => expect(calls.filter((c) => c.includes("?limit=50")).length).toBe(listCalls + 1));
   });
 
-  it("快照失敗（404）→ error，不重試：快照端點恰打一次（QueryClient 不關 retry，守 hook 自己的 retry: false）", async () => {
-    // 刻意用**不關 retry** 的 QueryClient：拿掉 hook 的 `retry: false` 的話 query-core 預設重試 3 次
-    //（退避約 7 秒，塞得進全域等待上限），isError 出現時已打 4 次 → 計次紅。
+  it("snapshot failure (404) -> error, no retry: snapshot endpoint hit once (QueryClient doesn't disable retry, guarding the hook's own retry: false)", async () => {
+    // Deliberately a QueryClient that doesn't disable retry: without the hook's `retry: false`, query-core's default retries 3 times (backoff about 7 s, which fits within the global wait limit), so 4 requests have been made by the time isError appears and the count assertion fails.
     const { calls, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions/1`) return fakeResponse(404, { error: { code: "not_found", message: "x" } });
       throw new Error(`unexpected fetch: ${url}`);
@@ -135,7 +134,7 @@ describe("api/versions", () => {
     expect(calls.filter((c) => c === `GET /api/notes/${NOTE}/versions/1`)).toHaveLength(1);
   });
 
-  it("清單游標：before 與 limit 照實帶上；第二頁用上一頁的 nextBefore", async () => {
+  it("list cursor: before and limit are sent as given; the second page uses the previous page's nextBefore", async () => {
     const { calls, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions?limit=50`) return fakeResponse(200, listBody({ nextBefore: 51 }));
       if (url === `/api/notes/${NOTE}/versions?before=51&limit=50`) return fakeResponse(200, listBody());
@@ -150,7 +149,7 @@ describe("api/versions", () => {
     await expect(fetchVersionList(NOTE, { before: 7, limit: 1 })).rejects.toThrow("unexpected fetch");
   });
 
-  it("enabled=false → 不打清單", async () => {
+  it("enabled=false -> list not requested", async () => {
     const { calls, wrapper } = setup(() => {
       throw new Error("unexpected fetch");
     });
@@ -159,7 +158,7 @@ describe("api/versions", () => {
     expect(calls).toEqual([]);
   });
 
-  it("fetchCurrent 一律重抓（staleTime 0）：連呼叫兩次打兩次 limit=1，回 current", async () => {
+  it("fetchCurrent always refetches (staleTime 0): two calls make two limit=1 requests, returns current", async () => {
     let dirty = false;
     const { calls, queryClient } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions?limit=1`)
@@ -172,7 +171,7 @@ describe("api/versions", () => {
     expect(calls.filter((c) => c.endsWith("?limit=1"))).toHaveLength(2);
   });
 
-  it("saveVersion：名稱去頭尾空白；全空白或 null → body 不帶 name", async () => {
+  it("saveVersion: name is trimmed; all-whitespace or null -> body has no name", async () => {
     const bodies: unknown[] = [];
     setup((url, init) => {
       if (url === `/api/notes/${NOTE}/versions` && init?.method === "POST") {
@@ -187,7 +186,7 @@ describe("api/versions", () => {
     expect(bodies).toEqual([{ name: "里程碑" }, {}, {}]);
   });
 
-  it("applyVersion：POST …/:seq/apply，body 恰為 { versionId, discardUnsaved }", async () => {
+  it("applyVersion: POST .../:seq/apply, body is { versionId, discardUnsaved }", async () => {
     const seen: Array<{ url: string; body: unknown }> = [];
     setup((url, init) => {
       seen.push({ url, body: JSON.parse(String(init?.body)) });
@@ -198,11 +197,11 @@ describe("api/versions", () => {
     expect(out.current.baseSeq).toBe(2);
   });
 
-  it("base64ToBytes：二進位往返（含 0x00 與 0xff）", () => {
+  it("base64ToBytes: binary round trip (including 0x00 and 0xff)", () => {
     expect(Array.from(base64ToBytes("AP8A"))).toEqual([0, 255, 0]);
   });
 
-  it("快照 query 在 useQuery 層也是 Infinity staleTime：重新掛載不重抓", async () => {
+  it("snapshot query also has Infinity staleTime at the useQuery level: remount doesn't refetch", async () => {
     const { calls, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions/1`) return fakeResponse(200, SNAP(V1));
       throw new Error(`unexpected fetch: ${url}`);
@@ -217,7 +216,7 @@ describe("api/versions", () => {
     expect(calls.filter((c) => c.endsWith("/versions/1"))).toHaveLength(1);
   });
 
-  it("#258 清單篩選：kind=manual 照實帶上（與 before、limit 並用）；全部時不帶 kind；兩種篩選各一份快取", async () => {
+  it("#258 list filter: kind=manual is sent as given (together with before and limit); no kind for all; each filter has its own cache entry", async () => {
     const { calls, queryClient, wrapper } = setup((url) => {
       if (url === `/api/notes/${NOTE}/versions?limit=50`) return fakeResponse(200, listBody());
       if (url === `/api/notes/${NOTE}/versions?kind=manual&limit=50`) return fakeResponse(200, listBody({ nextBefore: 9 }));
@@ -242,7 +241,7 @@ describe("api/versions", () => {
     expect(calls.at(-1)).toBe(`GET /api/notes/${NOTE}/versions?kind=auto`);
   });
 
-  it("#258 以 versionsKey 前綴 invalidate → 兩種篩選的清單都被標記並（有人訂閱時）重抓；current 單發重抓的鍵也在前綴下", async () => {
+  it("#258 invalidating by the versionsKey prefix marks both filters' lists and refetches them (when subscribed); the single-shot current refetch key is also under the prefix", async () => {
     const { calls, queryClient, wrapper } = setup((url) => {
       if (url.includes("?")) return fakeResponse(200, listBody());
       throw new Error(`unexpected fetch: ${url}`);
@@ -261,7 +260,7 @@ describe("api/versions", () => {
     ].sort());
   });
 
-  it("#258 自動版本改名（PATCH）成功 → 帶 kind 的清單立刻重抓，轉成手動的那一版會出現在「僅手動」", async () => {
+  it("#258 renaming an auto version (PATCH) succeeds -> the list with kind refetches at once, and the version turned manual appears in the manual-only list", async () => {
     let renamed = false;
     const row = (kind: "auto" | "manual") => ({ id: V1, seq: 1, kind, name: null, editors: [], baseSeq: null, base: null, createdAt: "x" });
     const { calls, wrapper } = setup((url, init) => {

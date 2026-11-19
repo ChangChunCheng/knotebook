@@ -12,29 +12,17 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * Issue #68：NoteRouteErrorBoundary 的 resetKey 選型（`useParams().ref` 而非
- * `location.key`）的整合守門——**在 /notes/:ref 的錯誤畫面上開、關設定 modal，
- * 不得觸發 reload**。
+ * Integration guard for NoteRouteErrorBoundary's resetKey choice (`useParams().ref`, not `location.key`): opening and closing the settings modal on a /notes/:ref error screen must not trigger a reload (#68).
  *
- * 機制（三步實測數據，改壞會直接對不上）：
- * - 初始 /notes/my-note：location.key=`default`、params.ref=`my-note`
- * - 開設定 modal：主樹 `<Routes location={backgroundLocation}>` 覆寫 context，
- *   NoteRoute 讀到的是被保存的背景 location——key **仍 `default`**、ref 不變，
- *   boundary 實例不重掛、error 態保留
- * - 關閉 modal：SettingsModal 走 `navigate(backgroundLocation)`，react-router 8
- *   對 Location 物件導航會產生**新的 key**（實測 `so4qa1lk` 之類）——ref 仍
- *   `my-note`。**若 resetKey 是 location.key，componentDidUpdate 就在這一步
- *   reload**（突變驗證：把 App.tsx 的 resetKey 改成 useLocation().key → 本檔
- *   主案紅 reload=1、control 案仍綠；兩案一起紅＝harness 壞了不是突變被抓到）。
+ * Mechanism:
+ * - Initial /notes/my-note: location.key=`default`, params.ref=`my-note`
+ * - Opening the settings modal: the main tree's `<Routes location={backgroundLocation}>` overrides the context, so NoteRoute reads the saved background location: key stays `default`, ref unchanged, the boundary instance isn't remounted and keeps its error state
+ * - Closing the modal: SettingsModal calls `navigate(backgroundLocation)`, and react-router 8 generates a new key for navigation to a Location object; ref is still `my-note`. If resetKey were `useLocation().key`, componentDidUpdate would reload at this step: the main case fails with reload=1 while the control stays green.
  *
- * 獨立成檔：SettingsModal.test.tsx 的多案斷言依賴真 NotePage 替身（note-editor
- * testid），檔案級 mock 掉 NotePage 會廢掉它們；App.errorBoundary.test.tsx 則是
- * 最小接線判準的定位，本檔需要 Toaster＋設定樹＋UserMenu 整套 harness。
+ * Separate file: SettingsModal.test.tsx's multi-case assertions depend on a real NotePage stand-in (note-editor testid), which a file-level NotePage mock would break; App.errorBoundary.test.tsx is the minimal-wiring check, whereas this file needs the whole Toaster + settings tree + UserMenu harness.
  */
 
-// vi.mock 是 hoisted 的，factory 不得引用檔頭 const（TDZ）——message 內聯。
-// 一律 throw：主案/control 案的路徑分歧由旗標（種/不種）決定，與 mock 無關，
-// 因此本檔**沒有**案子順序相依（不像 App.errorBoundary.test.tsx 的案 11）。
+// vi.mock is hoisted, so the factory can't reference header consts (TDZ): the message is inlined. Always throws: main/control paths diverge by the seeded flag, not the mock, so case order doesn't matter in this file (unlike the chunk-error case in App.errorBoundary.test.tsx).
 vi.mock("./pages/NotePage", () => ({
   default: function NotePageMock(): never {
     throw new Error("Failed to fetch dynamically imported module: https://x/assets/NotePage-abc.js");
@@ -104,7 +92,6 @@ function fakeResponse({ ok, status, json }: FakeResponseInit): Response {
   return { ok, status, json: json ?? (() => Promise.reject(new Error("no body"))) } as unknown as Response;
 }
 
-/** #175 control 4 用：同一個群組裡的兩篇群組筆記（`/g/<groupId>/<slug>`）。 */
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const GROUP_NOTE: NoteDto = {
   ...NOTE,
@@ -134,7 +121,7 @@ function stubFetch(notes: NoteDto[] = [NOTE, OTHER_NOTE]) {
       }
       if (url === "/api/folders") return Promise.resolve(new Response(JSON.stringify(FOLDER_LIST_EMPTY), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url === "/api/notes" && method === "GET") {
-        // 第三案要從側欄點另一篇：清單給兩篇
+        // Two notes, so a later case can click the other one in the sidebar.
         return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(notes) }));
       }
       if (url.endsWith("/backlinks") && method === "GET") {
@@ -148,9 +135,7 @@ function stubFetch(notes: NoteDto[] = [NOTE, OTHER_NOTE]) {
   );
 }
 
-/** App.tsx 接線不傳 reload prop、boundary 走預設 `location.reload()`——只能從
- * global 攔（App.errorBoundary.test.tsx 案 11 同法；MemoryRouter 不讀 global
- * location，兩把 stubGlobal 互不干擾）。 */
+/** App.tsx wiring passes no reload prop, so the boundary uses the default `location.reload()`: it can only be intercepted via the global (same technique as App.errorBoundary.test.tsx; MemoryRouter doesn't read the global location, so the two stubGlobal calls don't interfere). */
 function stubLocationReload() {
   const reload = vi.fn();
   vi.stubGlobal("location", { ...window.location, reload });
@@ -173,15 +158,13 @@ function renderNoteRoute(initialEntry = "/notes/my-note") {
   );
 }
 
-/** DropdownMenuTrigger（UserMenu）只掛 onPointerDown，純 fireEvent.click 開不了
- * （SettingsModal.test.tsx 既有註解）。錯誤畫面（B）在 layout route 的完整 AppShell 裡，UserMenu
- * 可正常互動（已實測）。 */
+/** DropdownMenuTrigger (UserMenu) only has onPointerDown, so a plain fireEvent.click can't open it (see SettingsModal.test.tsx). The error screen sits inside the layout route's full AppShell, so UserMenu is interactive. */
 function openUserMenu(userDisplayName: string): void {
   fireEvent.pointerDown(screen.getByRole("button", { name: userDisplayName }), { button: 0 });
 }
 
 beforeEach(async () => {
-  sessionStorage.clear(); // 旗標各案自設：主案種（進 B 穩態）、control 案不種
+  sessionStorage.clear(); // Each case sets its own flag: the main case seeds it (reaching the stable error screen), controls don't
   await i18n.changeLanguage("en");
   stubFetch();
 });
@@ -191,9 +174,9 @@ afterEach(() => {
   localStorage.removeItem("sidebar.tab");
 });
 
-describe("resetKey 選型守門——錯誤畫面上開/關設定 modal 不觸發 reload（issue #68）", () => {
-  it("主案：B 畫面上開設定 → 關閉（navigate(backgroundLocation) 產新 location key）→ reload 零次、錯誤畫面仍在", async () => {
-    sessionStorage.setItem(FLAG_KEY, "1"); // 短路自動 reload，進 B 穩態
+describe("resetKey choice: opening/closing the settings modal on the error screen does not reload (#68)", () => {
+  it("main: open settings on the error screen, then close (navigate(backgroundLocation) yields a new location key) -> zero reloads, error screen stays", async () => {
+    sessionStorage.setItem(FLAG_KEY, "1"); // short-circuits the auto reload, reaching the stable error screen
     const reload = stubLocationReload();
 
     renderNoteRoute();
@@ -205,50 +188,39 @@ describe("resetKey 選型守門——錯誤畫面上開/關設定 modal 不觸�
     fireEvent.click(screen.getByText("Settings"));
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument());
-    // 開 modal 期間：背景 location（含其 key）被保存原封不動，ref 不變 → 不 reload；
-    // 背景錯誤畫面仍在 DOM（Radix aria-hidden 不影響 getByText）
+    // While the modal is open the background location (key included) is preserved and ref is unchanged, so no reload; the background error screen stays in the DOM (Radix aria-hidden doesn't affect getByText).
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // 關鍵斷言：關閉走 navigate(backgroundLocation) → location key 換新、ref 沒變
-    // → resetKey（=ref）不動 → 不 reload。resetKey 若改回 location.key，這裡紅。
+    // Closing navigates with navigate(backgroundLocation): new location key, same ref, so resetKey (=ref) is unchanged and there is no reload. If resetKey reverted to location.key, this fails.
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
-  // Positive control：證明主案攔的那條 spy 路徑是活的——旗標不種 → componentDidCatch
-  // 走首次路徑 → 經真實 App.tsx 接線的**預設** seam（location.reload()）自動 reload
-  // 恰一次＋停在載入畫面。seam 或 stubGlobal 行為若哪天斷了，此案先紅，主案的
-  // 「spy=0」才不會淪為守著空氣的負向斷言。
-  // 前提：jsdom 預設 navigator.onLine === true——主案突變能紅、本案能
-  // reload 都依賴它；若 jsdom 改預設，離線分支會讓兩案假綠/假紅，先查這條。
-  it("positive control：旗標不種 → 真實接線的預設 seam 自動 reload 恰一次＋載入畫面", async () => {
+  // Positive control: proves the spy path the main case watches is live. With no flag seeded, componentDidCatch takes the first-error path and auto-reloads through the real App.tsx wiring's default seam (location.reload()) once, ending on the loading screen. If the seam or stubGlobal ever breaks, this fails first, so the main case's "spy=0" can't become a vacuous negative assertion.
+  // Relies on jsdom's default navigator.onLine === true (this case's reload and the main case's ability to fail both depend on it); if jsdom changes that, the offline branch would falsely pass/fail both cases: check this first.
+  it("positive control: no flag seeded -> default seam of the real wiring auto-reloads once and shows the loading screen", async () => {
     const reload = stubLocationReload();
 
     renderNoteRoute();
 
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
-    // 載入畫面（reloading 態）而非錯誤畫面——鑑別式斷言（側欄在兩種畫面都在）
+    // Loading screen (reloading state), not the error screen: a discriminating assertion (the sidebar is present in both)
     expect(screen.getAllByText(LOADING_TEXT).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(CHUNK_ERROR_TEXT)).not.toBeInTheDocument();
     expect(screen.queryByText(CRASH_TEXT)).not.toBeInTheDocument();
     expect(sessionStorage.getItem(FLAG_KEY)).not.toBeNull();
-    // 「恰一次」在 waitFor 外再釘一遍——waitFor 內那句只保證「曾達到 1」
+    // Re-pin the count outside waitFor: the check inside only proves it reached 1 at some point.
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  // 第二個 control：上面那案證明 componentDidCatch → 預設 seam 活著，
-  // 主案守的卻是 componentDidUpdate → 預設 seam ——單元層案 8a 走的是注入 prop。
-  // 若有人把 componentDidUpdate 改成直接呼叫 window.location.reload()（繞過
-  // doReload），主案會靜靜退化成恆真而上面的 control 照樣綠。這一案封住交集：
-  // 錯誤畫面上點側欄**另一篇**筆記（ref 真的變）→ componentDidUpdate 經預設
-  // seam reload 恰一次。
-  it("control 2：錯誤畫面上導航到另一篇筆記 → componentDidUpdate 經預設 seam reload 恰一次", async () => {
-    sessionStorage.setItem(FLAG_KEY, "1"); // 進 B 穩態
+  // Second control: the one above shows componentDidCatch -> default seam is live, but the main case guards componentDidUpdate -> default seam (the unit-level case injects a prop instead). If componentDidUpdate were changed to call window.location.reload() directly (bypassing doReload), the main case would silently degrade to vacuously true while the control above stays green. This case covers that intersection: clicking another note in the sidebar on the error screen (ref really changes) makes componentDidUpdate reload once via the default seam.
+  it("control 2: navigating to another note from the error screen -> componentDidUpdate reloads once via the default seam", async () => {
+    sessionStorage.setItem(FLAG_KEY, "1");
     const reload = stubLocationReload();
 
     renderNoteRoute();
@@ -256,53 +228,46 @@ describe("resetKey 選型守門——錯誤畫面上開/關設定 modal 不觸�
     await waitFor(() => expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument());
     expect(reload).not.toHaveBeenCalled();
 
-    // 側欄清單載入後點另一篇（react-router Link，MemoryRouter 內正常導航）。
-    // 側欄是 tab 化的單一面板（預設「我的筆記」），「Other Note」只列一次；
-    // 這裡沿用 `getAllByRole` 取第一個，單數也成立。
+    // getAllByRole takes the first match; the default tab lists "Other Note" once.
     await waitFor(() => expect(screen.getAllByRole("link", { name: /Other Note/ }).length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByRole("link", { name: /Other Note/ })[0]);
 
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
     expect(reload).toHaveBeenCalledTimes(1);
-    // 旗標不被清（導航觸發的 reload 不清旗標；落地若又失敗直接進 B）
+    // The flag is not cleared (a navigation-triggered reload doesn't clear it; if the landing fails again it goes straight to the error screen)
     expect(sessionStorage.getItem(FLAG_KEY)).not.toBeNull();
-    // #122 附註：側欄連結如今是 /n/ 新形——本案順帶就是「舊形→新形跨 pattern 換頁」
-    // 的 resetKey 守門（ref → handle/slug，鍵必變 → reload 恰一次）。
+    // #122: sidebar links now use the /n/ form, so this case also covers resetKey across route patterns (ref -> handle/slug changes the key -> reload once).
   });
 
-  it("control 3（#122 新形）：/n/ 開頁由 NotePage 承接（非 /* catch-all），/n/→/n/ 換筆記 resetKey 變 → reload 恰一次", async () => {
+  it("control 3 (#122 /n/ form): /n/ page is handled by NotePage (not the /* catch-all); switching notes /n/ -> /n/ changes resetKey -> reload once", async () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = stubLocationReload();
 
-    // 以新形開頁：出現的是 NotePage 子樹的錯誤畫面（mock 必 throw）＝route 承接證明
-    // ——若 /n/a/b 被 `/*` 吃掉，這裡會渲染 HomePage、看不到 CHUNK_ERROR_TEXT。
+    // Opening via the /n/ form shows the NotePage subtree's error screen (the mock always throws), proving the route is handled; if /n/a/b were swallowed by `/*`, HomePage would render and CHUNK_ERROR_TEXT would be absent.
     renderNoteRoute("/n/plain/my-note");
     await waitFor(() => expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument());
     expect(reload).not.toHaveBeenCalled();
 
-    // 新形之間換筆記：resetKey（`${handle}/${slug}`）變 → 預設 seam reload 恰一次
     await waitFor(() => expect(screen.getAllByRole("link", { name: /Other Note/ }).length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByRole("link", { name: /Other Note/ })[0]);
 
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
-    // waitFor 內那句只保證「曾達到 1」——外面再釘一遍抓晚到的第二次（同檔既有慣例）
+    // The check inside waitFor only proves 1 was reached at some point; re-pin outside it to catch a late second reload (same convention as above)
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("control 4（#175 第三形）：/g/ 開頁由 NotePage 承接（非 /* catch-all），/g/→/g/ 換筆記 resetKey（`g:${groupId}/${slug}`）變 → reload 恰一次", async () => {
+  it("control 4 (#175 /g/ form): /g/ page is handled by NotePage (not the /* catch-all); switching notes within a group changes resetKey (`g:${groupId}/${slug}`) -> reload once", async () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = stubLocationReload();
     stubFetch([GROUP_NOTE, OTHER_GROUP_NOTE]);
-    // 兜底落「與我共享」（`/api/groups` 回 []）→ 先選 Shared with me tab，預設的「我的筆記」看不到這兩篇。
+    // Falls back to "Shared with me" (`/api/groups` returns []), so select that tab first; the default "My notes" tab doesn't list these two notes.
     localStorage.setItem("sidebar.tab", "shared");
 
-    // 以 /g/ 形開頁：出現 NotePage 子樹的錯誤畫面＝route 承接證明（被 `/*` 吃掉會渲染 HomePage）。
     renderNoteRoute(`/g/${GROUP_ID}/group-note`);
     await waitFor(() => expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument());
     expect(reload).not.toHaveBeenCalled();
 
-    // 同一群組內換到另一篇：側欄連結是 canonical 的 `/g/<groupId>/<slug>`（群組不在 useGroups → 兜底落
-    // 「與我共享」，連結形不受段落影響）。resetKey 若沒有第三形（落到 `ref`＝undefined），兩頁鍵相同、不 reload。
+    // Switching to another note in the same group: sidebar links are the canonical `/g/<groupId>/<slug>` (the group isn't in useGroups, so notes fall back to "Shared with me"; the link form doesn't depend on the section). If resetKey lacked the third form (falling to `ref` = undefined), both pages would share a key and not reload.
     await waitFor(() => expect(screen.getAllByRole("link", { name: /Other Group Note/ }).length).toBeGreaterThan(0));
     const link = screen.getAllByRole("link", { name: /Other Group Note/ })[0];
     expect(link).toHaveAttribute("href", `/g/${GROUP_ID}/other-group-note`);

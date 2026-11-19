@@ -15,9 +15,7 @@ import {
   type ViewLike,
 } from "./paste-rule";
 
-// 貼上各情境的期望值逐字取自實際貼上的輸出（含單一欄、整列複製、複製欄的情境）。
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM 的 Plugin／Node 在 apps/web 值層級拿不到
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM's Plugin/Node aren't available at the value level in apps/web
 type Any = any;
 
 const cleanups: (() => void)[] = [];
@@ -36,7 +34,7 @@ function mount(content: PartialBlockLike[], opts?: { rule?: boolean; extensions?
 
 const viewOf = (editor: AnyEditor) => editor.prosemirrorView! as unknown as ViewLike & Any;
 
-/** 貼上前先叫 uniqueID 外掛的 paste handler（真貼上時它會先跑，讓貼進來的 id 重配）。 */
+/** Runs uniqueID's paste handler first, as a real paste does, so pasted ids get reassigned. */
 function arm(editor: AnyEditor): void {
   const view = editor.prosemirrorView!;
   for (const plugin of view.state.plugins.filter((p) => (p as Any).key.startsWith("uniqueID"))) (plugin.props.handleDOMEvents as Any).paste(view, new Event("paste"));
@@ -64,7 +62,6 @@ function sliceHasColumnList(slice: SliceLike): boolean {
   return has;
 }
 
-/** 第一個 columnList 整個選起來，回 `blocknote/html`（站內複製整列）。 */
 function copyFirstRow(editor: AnyEditor): string {
   const view = editor.prosemirrorView!;
   let rowPos = -1;
@@ -82,7 +79,6 @@ const MD = '<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-co
 const EXT = '<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:1"><p>X</p></div><div data-kb-column style="flex:1.5"><p>Y</p></div></div>';
 const EXT_MIXED = "<p>intro</p>" + EXT + "<p>outro</p>";
 
-/** paste7.mjs 的 W()。 */
 const W = (): PartialBlockLike[] => [
   P("x", "x0"),
   P("", "e0"),
@@ -103,7 +99,6 @@ const PLACES: Record<string, Place> = {
   "col mid": (ed) => caret(ed, textPos(ed, "def", 1)),
 };
 
-// [來源, 位置, shape, 欄寬]——paste7.mjs（COLCTX=2）輸出逐行。
 const PR1: [string, string, string, string][] = [
   ["md", "top empty", "paragraph:x  ROW[COL(paragraph:X) | COL(paragraph:Y)]  paragraph:abc  paragraph:p{paragraph}  ROW[COL(paragraph:def,paragraph) | COL(paragraph:c)]  paragraph:z", "1/1.5,1/1"],
   ["md", "top start", "paragraph:x  paragraph  ROW[COL(paragraph:X) | COL(paragraph:Y)]  paragraph:abc  paragraph:p{paragraph}  ROW[COL(paragraph:def,paragraph) | COL(paragraph:c)]  paragraph:z", "1/1.5,1/1"],
@@ -142,7 +137,7 @@ function pasteFrom(editor: AnyEditor, how: string, internalHtml: string): void {
   else editor.pasteHTML(internalHtml, true);
 }
 
-describe("三種來源 × 位置：頂層貼入完整、非頂層攤平", () => {
+describe("three sources x positions: top-level paste keeps the whole row, non-top-level flattens", () => {
   it.each(PR1)("%s @ %s", (how, place, expected, w) => {
     const editor = mount(W());
     const internalHtml = copyFirstRow(editor);
@@ -155,7 +150,6 @@ describe("三種來源 × 位置：頂層貼入完整、非頂層攤平", () => 
   });
 });
 
-/** copycol-fix.mjs／copycol2.mjs 的 W()。 */
 const W2 = (): PartialBlockLike[] => [
   P("x", "x0"),
   P("", "e0"),
@@ -178,7 +172,6 @@ const PLACES2: Record<string, Place> = {
   "col1 empty": (ed) => ed.setTextCursorPosition("e1", "start"),
 };
 
-/** 在 W2 上選取 → 走 core 的複製（`selectedFragmentToHTML`）→ 換位置 → `pasteHTML(raw)`。 */
 function copyPaste(sel: string, place: string, rule: boolean): AnyEditor {
   const editor = mount(W2(), { rule });
   const [from, to] = SELS[sel]!(editor);
@@ -190,7 +183,6 @@ function copyPaste(sel: string, place: string, rule: boolean): AnyEditor {
   return editor;
 }
 
-// [選取, 位置, shape]——copycol-fix.mjs（COLCTX=2）的 [rule] 輸出；copycol2.mjs CORE=1 的 [core] 與之逐行相同。
 const PR2: [string, string, string][] = [
   ["two blocks in col1 (de|f..gh|i)", "top empty", "paragraph:x  paragraph:f  paragraph:gh  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c)]  paragraph:z"],
   ["two blocks in col1 (de|f..gh|i)", "top end abc", "paragraph:x  paragraph  paragraph:abcf  paragraph:gh  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c)]  paragraph:z"],
@@ -206,7 +198,7 @@ const PR2: [string, string, string][] = [
   ["within def only", "col1 empty", "paragraph:x  paragraph  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph:e) | COL(paragraph:c)]  paragraph:z"],
 ];
 
-describe("PR2 從欄內複製再貼上：與不裝規則時相同", () => {
+describe("copy from inside a column then paste: same as without the rule", () => {
   it.each(PR2)("%s @ %s", (sel, place, expected) => {
     const ruled = copyPaste(sel, place, true);
     expect(shape(ruled)).toBe(expected);
@@ -215,8 +207,7 @@ describe("PR2 從欄內複製再貼上：與不裝規則時相同", () => {
   });
 });
 
-// copycol2.mjs 的 [rule] 輸出。順序：最後一欄中間到列下方、列上方到第 1 欄中間 → 不出現新的列；
-// 第 1 欄中間到第 2 欄中間 → 頂層成為新的一列。
+// Order: from the middle of the last column to below the row, and from above the row to the middle of column 1 -> no new row appears; from the middle of column 1 to the middle of column 2 -> the top level becomes a new row.
 const PR3: [string, string, string, number][] = [
   ["col2 c -> z below (c| .. z)", "top empty", "paragraph:x  paragraph:c  paragraph:z  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c)]  paragraph:z", 1],
   ["col2 c -> z below (c| .. z)", "col2 end c", "paragraph:x  paragraph  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:cc,paragraph:z)]  paragraph:z", 1],
@@ -226,7 +217,7 @@ const PR3: [string, string, string, number][] = [
   ["cross col1 mid -> col2 mid (de|f .. c)", "col2 end c", "paragraph:x  paragraph  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c,paragraph:f,paragraph:ghi,paragraph,paragraph:c)]  paragraph:z", 1],
 ];
 
-describe("跨出欄邊界的選取", () => {
+describe("selection crossing column boundaries", () => {
   it.each(PR3)("%s @ %s", (sel, place, expected, rows) => {
     const editor = copyPaste(sel, place, true);
     expect(shape(editor)).toBe(expected);
@@ -235,7 +226,7 @@ describe("跨出欄邊界的選取", () => {
   });
 });
 
-describe("單欄外部 HTML 照一般 block 剖析", () => {
+describe("single-column external HTML parsed as ordinary blocks", () => {
   const rest = "paragraph:abc  paragraph:p{paragraph}  ROW[COL(paragraph:def,paragraph) | COL(paragraph:c)]  paragraph:z";
   it.each([
     ["kb single col", '<div data-kb-columns style="display:flex;gap:16px"><div data-kb-column style="flex:1"><p>X</p></div></div>', `paragraph:x  paragraph:X  ${rest}`, "1/1"],
@@ -256,7 +247,7 @@ describe("單欄外部 HTML 照一般 block 剖析", () => {
   });
 });
 
-/** 外部兩欄 HTML 經 core（editorProps 的 transformPasted 先跑）之後、我們的規則會收到的 slice。 */
+/** The slice our rule receives for the external two-column HTML, after core's editorProps transformPasted has run. */
 function rawExternalSlice(): SliceLike {
   let captured: SliceLike | null = null;
   const capture = Extension.create({
@@ -284,8 +275,8 @@ function rawExternalSlice(): SliceLike {
 const at = (pos: number) => ({ pos, inside: -1 });
 const DROP_EVENT = { clientX: 1, clientY: 1 } as DragEvent;
 
-describe("外部拖入：位置看落點、不看游標", () => {
-  it("游標在欄內、落點在頂層 → 列完整（封閉 slice）", () => {
+describe("external drag-in: position follows the drop point, not the caret", () => {
+  it("caret in a column, drop point at top level -> row intact (closed slice)", () => {
     const raw = rawExternalSlice();
     expect(raw.openStart).toBeGreaterThan(0);
     const editor = mount(W(), { rule: false });
@@ -300,7 +291,7 @@ describe("外部拖入：位置看落點、不看游標", () => {
     expect(sliceHasColumnList(out)).toBe(true);
   });
 
-  it("游標在頂層、落點在子 block 內 → 攤平", () => {
+  it("caret at top level, drop point inside a child block -> flattened", () => {
     const raw = rawExternalSlice();
     const editor = mount(W(), { rule: false });
     const view = viewOf(editor);
@@ -311,7 +302,6 @@ describe("外部拖入：位置看落點、不看游標", () => {
   });
 });
 
-/** dropnest2.mjs 的 D()。 */
 const D = (): PartialBlockLike[] => [
   P("x", "x0"),
   row([[P("a", "a1")], [P("b", "b1")]], "r1"),
@@ -321,7 +311,7 @@ const D = (): PartialBlockLike[] => [
   P("z", "z9"),
 ];
 
-describe("站內拖曳（view.dragging）", () => {
+describe("in-site drag (view.dragging)", () => {
   function dragging(editor: AnyEditor): { view: Any; slice: SliceLike } {
     const view = viewOf(editor);
     const doc = view.state.doc;
@@ -336,9 +326,9 @@ describe("站內拖曳（view.dragging）", () => {
   }
 
   it.each([
-    ["子 block 文字內", (ed: AnyEditor) => blockPos(ed, "k1") + 2],
-    ["子 block 之間（縮排群組內）", (ed: AnyEditor) => blockPos(ed, "k1")],
-  ])("落點在%s → 攤平，不產生巢狀列", (_name, dropAt) => {
+    ["inside a child block's text", (ed: AnyEditor) => blockPos(ed, "k1") + 2],
+    ["between child blocks (inside the indent group)", (ed: AnyEditor) => blockPos(ed, "k1")],
+  ])("drop point %s -> flattened, no nested rows", (_name, dropAt) => {
     const editor = mount(D(), { rule: false });
     const { view, slice } = dragging(editor);
     vi.spyOn(view, "posAtCoords").mockReturnValue(at(dropAt(editor)));
@@ -346,7 +336,7 @@ describe("站內拖曳（view.dragging）", () => {
     expect(sliceHasColumnList(columnsTransformPasted(slice, view))).toBe(false);
   });
 
-  it("落點在頂層 → 原樣交還 PM（同一個 slice 物件）", () => {
+  it("drop point at top level -> handed back to PM as is (the same slice object)", () => {
     const editor = mount(D(), { rule: false });
     const { view, slice } = dragging(editor);
     vi.spyOn(view, "posAtCoords").mockReturnValue(at(blockPos(editor, "y0")));
@@ -355,8 +345,8 @@ describe("站內拖曳（view.dragging）", () => {
   });
 });
 
-describe("drop 落點的生命週期", () => {
-  it("同步取得、取過即清、microtask 後清回 null", async () => {
+describe("drop point lifecycle", () => {
+  it("obtained synchronously, cleared once taken, cleared back to null after a microtask", async () => {
     const editor = mount(W(), { rule: false });
     const view = viewOf(editor);
     vi.spyOn(view, "posAtCoords").mockReturnValue(at(5));
@@ -368,7 +358,7 @@ describe("drop 落點的生命週期", () => {
     expect(takeDropPoint()).toBeNull();
   });
 
-  it("posAtCoords 回 null（落在文件外）→ 沒有落點", () => {
+  it("posAtCoords returns null (outside the document) -> no drop point", () => {
     const editor = mount(W(), { rule: false });
     const view = viewOf(editor);
     vi.spyOn(view, "posAtCoords").mockReturnValue(null);
@@ -380,7 +370,7 @@ describe("drop 落點的生命週期", () => {
 describe("withColumnsDropPoint", () => {
   type DropEvents = { drop: (view: unknown, event: DragEvent) => boolean; paste?: () => boolean };
 
-  it("先記落點再交給原 handler，回傳值照原 handler", () => {
+  it("records the drop point before handing to the original handler; return value follows the original handler", () => {
     const editor = mount(W(), { rule: false });
     const view = viewOf(editor);
     vi.spyOn(view, "posAtCoords").mockReturnValue(at(7));
@@ -401,7 +391,7 @@ describe("withColumnsDropPoint", () => {
     expect(seen).toEqual([7, 7]);
   });
 
-  it("view 為 null（NoteEditor 測試的呼叫法）→ 不丟例外、不記落點", () => {
+  it("view is null (how the NoteEditor tests call it) -> no throw, no drop point recorded", () => {
     const seen: (number | null)[] = [];
     const combined = withColumnsDropPoint<DropEvents>({
       drop: () => {
@@ -414,8 +404,8 @@ describe("withColumnsDropPoint", () => {
   });
 });
 
-describe("PR9 5 欄的列貼在頂層", () => {
-  it("照貼成一列 5 欄、不丟例外、不裁欄", () => {
+describe("row with 5 columns pasted at top level", () => {
+  it("pasted as one 5-column row, no exception, columns not trimmed", () => {
     const source = mount([row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")], [P("d", "d1")], [P("e", "e1")]], "r5")], { rule: false });
     const html = copyFirstRow(source);
     const editor = mount(W());
@@ -429,8 +419,8 @@ describe("PR9 5 欄的列貼在頂層", () => {
   });
 });
 
-describe("PR10 列貼進表格格子", () => {
-  it("不丟例外、文件合法、表格裡沒有 columnList、兩欄文字進了該格", () => {
+describe("row pasted into a table cell", () => {
+  it("no exception, document valid, no columnList inside the table, both columns' text went into that cell", () => {
     const table: PartialBlockLike = {
       id: "t1",
       type: "table",
@@ -442,14 +432,14 @@ describe("PR10 列貼進表格格子", () => {
     expect(() => editor.pasteHTML(EXT)).not.toThrow();
     expect(integrity(editor).valid).toBe(true);
     expect(rowCount(editor)).toBe(0);
-    // core 的 transformPasted（editorProps，先跑）把兩欄轉成行內＋換行，併進游標所在的格子。
+    // Core's transformPasted (editorProps, runs first) turns the two columns into inline content + line breaks and merges them into the cell holding the caret.
     const cell = (editor.document[1] as Any).content.rows[0].cells[0];
     expect(cell.content.map((c: { text: string }) => c.text).join("")).toBe("aX\nYa");
   });
 });
 
-describe("含子 block 的列貼進欄內", () => {
-  it("攤平時子 block 跟著它的父 block，不產生巢狀列", () => {
+describe("row containing child blocks pasted into a column", () => {
+  it("on flattening child blocks follow their parent block, no nested rows", () => {
     const source = mount([row([[withChildren(P("m", "m1"), [P("n", "n1")])], [P("o", "o1")]], "rs")], { rule: false });
     const html = copyFirstRow(source);
     const editor = mount(W());
@@ -463,15 +453,14 @@ describe("含子 block 的列貼進欄內", () => {
   });
 });
 
-describe("單獨一欄（Ctrl＋點欄整欄複製）", () => {
-  // 整欄 NodeSelection 的 slice 只有一個 column、沒有 columnList；不換掉的話 PM 會把它包成補了空欄的列，
-  // 頂層貼上時長進段落的子 block（巢狀列；不裝規則時 `paragraph{ROW[COL(paragraph:c) | COL(paragraph)]}`）。
+describe("a single column (Ctrl+click copies the whole column)", () => {
+  // A whole-column NodeSelection's slice has only a column, no columnList; without replacing it PM wraps it in a row padded with an empty column, which at top level grows into a paragraph's child block (nested row; without the rule: `paragraph{ROW[COL(paragraph:c) | COL(paragraph)]}`).
   it.each([
     ["top empty", "paragraph:x  paragraph:c  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c)]  paragraph:z"],
     ["top end abc", "paragraph:x  paragraph  paragraph:abc  paragraph:c  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c)]  paragraph:z"],
     ["col2 end c", "paragraph:x  paragraph  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph) | COL(paragraph:c,paragraph:c)]  paragraph:z"],
     ["col1 empty", "paragraph:x  paragraph  paragraph:abc  ROW[COL(paragraph:def,paragraph:ghi,paragraph:c) | COL(paragraph:c)]  paragraph:z"],
-  ])("貼到 %s → 平鋪成欄內的 block，不產生新列或巢狀列", (place, expected) => {
+  ])("pasted into %s -> laid flat as blocks in the column, no new row or nested row", (place, expected) => {
     const editor = mount(W2());
     const view = editor.prosemirrorView!;
     editor._tiptapEditor.commands.setNodeSelection(findNodeById(view.state.doc as Any, "rowc1", "column")!.pos);

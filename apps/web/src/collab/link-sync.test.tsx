@@ -14,9 +14,7 @@ import { insertWikilink } from "@/components/wikilink/spec";
 import type { CollabState } from "./connection";
 import { createLinkSync } from "./link-sync";
 
-// `createLinkSync` 對 400 的處理會 `toast()` + 查 i18n 文案（見 link-sync.ts 的
-// `handleFailure`）——換成最小替身，避免這個檔案的單元測試依賴真的 Radix
-// toast store／i18next 初始化時序（同 `NoteEditor.test.ts` 的 toast mock 手法）。
+// `createLinkSync` on a 400 calls `toast()` and looks up i18n text (see `handleFailure` in link-sync.ts): replaced by a minimal stand-in so this file's unit tests don't depend on the real Radix toast store / i18next init timing (same toast mock technique as `NoteEditor.test.ts`).
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 const i18nMock = vi.hoisted(() => ({ t: vi.fn((key: string) => key) }));
@@ -26,7 +24,7 @@ const NOTE_ID = "11111111-1111-1111-1111-111111111111";
 const TARGET_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const TARGET_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const LINKS_PATH = `/api/notes/${NOTE_ID}/links`;
-/** 與 link-sync.ts 內的 `DEBOUNCE_MS` 對齊（該常數未匯出，這裡用同值常數避免魔數重複打字打錯）。 */
+/** Matches `DEBOUNCE_MS` in link-sync.ts (not exported; the same value here avoids a repeated magic number being mistyped). */
 const DEBOUNCE_MS_FOR_TEST = 2_000;
 
 function wikilinkElement(targetNoteId: string): Y.XmlElement {
@@ -36,9 +34,7 @@ function wikilinkElement(targetNoteId: string): Y.XmlElement {
   return el;
 }
 
-/** 直接操作 Y.Doc 的 XmlFragment（不透過編輯器）：把 fragment 內容換成一個 paragraph，
- * 底下巢狀放給定的 wikilink 節點——模擬「使用者編輯完內容，wikilink 集合變成這樣」。
- * 整段包在 `doc.transact` 裡：只觸發一次 `update` 事件，符合一次真實編輯的樣子。 */
+/** Operates directly on the Y.Doc XmlFragment (not through the editor): replaces the fragment content with one paragraph holding the given wikilink nodes, simulating "after the user edited, the wikilink set becomes this". Wrapped in one `doc.transact` so only one `update` event fires, like one real edit. */
 function setWikilinks(doc: Y.Doc, targetNoteIds: string[]): void {
   doc.transact(() => {
     const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
@@ -54,7 +50,7 @@ function connected(role: "owner" | "editor" | "viewer" | "none"): CollabState {
 }
 
 describe("extractLinkTargets", () => {
-  it("遞迴走訪找出巢狀 wikilink 節點的 targetNoteId：去重、排序、濾掉非 uuid 格式", () => {
+  it("recursively finds targetNoteId of nested wikilink nodes: deduplicated, sorted, non-uuid values filtered out", () => {
     const doc = new Y.Doc();
     setWikilinks(doc, [TARGET_B, TARGET_A, TARGET_B, "not-a-uuid"]);
 
@@ -63,7 +59,7 @@ describe("extractLinkTargets", () => {
     doc.destroy();
   });
 
-  it("fragment 空、或完全沒有 wikilink 節點 → 空陣列", () => {
+  it("empty fragment, or no wikilink nodes at all -> empty array", () => {
     const doc = new Y.Doc();
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [new Y.XmlElement("paragraph")]);
 
@@ -96,7 +92,7 @@ describe("createLinkSync", () => {
     }) as unknown as RequestInit;
   }
 
-  it("synced 後立即提交一次，不等 debounce", async () => {
+  it("commits once right after synced, without waiting for the debounce", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -109,7 +105,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenCalledWith(LINKS_PATH, linksBody([TARGET_A]));
   });
 
-  it("start() 本身不提交：沒收到 synced 之前，doc 變動也不會送出", async () => {
+  it("start() itself doesn't commit: doc changes before synced don't send either", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
     linkSync.start();
@@ -120,7 +116,7 @@ describe("createLinkSync", () => {
     expect(api).not.toHaveBeenCalled();
   });
 
-  it("未變不送：debounce 之後重算集合與上次成功提交相同就不再打 API", async () => {
+  it("no send when unchanged: after the debounce the recomputed set equals the last successful commit, so no API call", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -129,14 +125,13 @@ describe("createLinkSync", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api).toHaveBeenCalledTimes(1);
 
-    // 內容變動但重算後的 wikilink 集合不變（例如打字、或再插入同一個目標）。
     setWikilinks(doc, [TARGET_A]);
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS_FOR_TEST);
 
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  it("集合真的變動：debounce 之後重送新的完整集合", async () => {
+  it("set really changed: after the debounce the new full set is sent again", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -152,7 +147,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenLastCalledWith(LINKS_PATH, linksBody([TARGET_A, TARGET_B]));
   });
 
-  it("debounce 會用最新一次變動重新計時，不是每次變動各自算 2s", async () => {
+  it("the debounce restarts from the latest change, not 2s per change", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -163,25 +158,22 @@ describe("createLinkSync", () => {
 
     setWikilinks(doc, [TARGET_A, TARGET_B]);
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS_FOR_TEST - 1);
-    setWikilinks(doc, [TARGET_A, TARGET_B]); // 同一集合，但重置了 debounce 計時
+    setWikilinks(doc, [TARGET_A, TARGET_B]); // same set, but it reset the debounce timer
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS_FOR_TEST - 1);
-    expect(api).toHaveBeenCalledTimes(1); // 還沒滿 2s 靜止，不該送
+    expect(api).toHaveBeenCalledTimes(1); // not yet 2s of quiet, shouldn't send
 
     await vi.advanceTimersByTimeAsync(1);
     expect(api).toHaveBeenCalledTimes(2);
   });
 
-  it("遠端更新（非本地 origin 的 Y.applyUpdate）一樣觸發 debounce 重算提交（含遠端）", async () => {
-    // `doc.on("update", …)` 的 handler（`onDocUpdate`）刻意不檢查事件的 origin 參數——
-    // 這裡專門用「另一個 Y.Doc 编輯後 Y.applyUpdate 回本體、origin 給一個跟本地 transact
-    // 明顯不同的字串」來造出貨真價實的「遠端」更新（不是同一個 doc 上用預設 origin 呼叫
-    // `doc.transact`），確保就算未來有人把 `onDocUpdate` 改成只認本地 origin，這裡也會紅。
+  it("a remote update (Y.applyUpdate with a non-local origin) also triggers the debounced recompute and commit (remote included)", async () => {
+    // The `doc.on("update", ...)` handler (`onDocUpdate`) deliberately doesn't check the event's origin: a genuinely remote update is built by editing another Y.Doc and Y.applyUpdate-ing it back with an origin clearly different from the local transact's (not by calling `doc.transact` on the same doc with the default origin), so this goes red if `onDocUpdate` is ever changed to accept only the local origin.
     api = vi.fn().mockResolvedValue(undefined);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
     linkSync.start();
     linkSync.onSynced();
     await vi.advanceTimersByTimeAsync(0);
-    expect(api).toHaveBeenCalledTimes(1); // 初始空集合
+    expect(api).toHaveBeenCalledTimes(1); // initial empty set
     expect(api).toHaveBeenLastCalledWith(LINKS_PATH, linksBody([]));
 
     const remote = new Y.Doc();
@@ -196,7 +188,7 @@ describe("createLinkSync", () => {
     remote.destroy();
   });
 
-  it("重連重置必重送：每次 onSynced 都重置快取，內容沒變也重送一次", async () => {
+  it("a reconnect always resends: every onSynced resets the cache, so even unchanged content is sent once more", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -212,7 +204,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenLastCalledWith(LINKS_PATH, linksBody([TARGET_A]));
   });
 
-  it("stop() 之後不再有任何提交（監聽已移除、排程已清空）", async () => {
+  it("after stop() no more commits (listener removed, schedule cleared)", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -230,7 +222,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  it("409 not_loaded：1s 後重試一次，仍失敗就放棄、不再自動重試", async () => {
+  it("409 not_loaded: retries once after 1s, gives up if it still fails, no more automatic retries", async () => {
     api = vi
       .fn()
       .mockRejectedValueOnce(new ApiFail(409, "not_loaded", "x"))
@@ -244,17 +236,17 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(999);
-    expect(api).toHaveBeenCalledTimes(1); // 還沒滿 1s
+    expect(api).toHaveBeenCalledTimes(1); // not yet 1s
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(api).toHaveBeenCalledTimes(2); // 唯一一次重試
+    expect(api).toHaveBeenCalledTimes(2); // the single retry
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(api).toHaveBeenCalledTimes(2); // 放棄，不會有第三次
-    expect(toastMock).not.toHaveBeenCalled(); // not_loaded 全程靜默（無 UI 路徑）
+    expect(api).toHaveBeenCalledTimes(2); // gave up, no third call
+    expect(toastMock).not.toHaveBeenCalled(); // not_loaded is silent throughout (no UI path)
   });
 
-  it("409 not_loaded 重試就成功：狀態回復正常，之後未變不再送", async () => {
+  it("409 not_loaded succeeds on retry: state returns to normal, and nothing is sent again when unchanged", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(409, "not_loaded", "x")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -267,10 +259,10 @@ describe("createLinkSync", () => {
 
     setWikilinks(doc, [TARGET_A]);
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS_FOR_TEST);
-    expect(api).toHaveBeenCalledTimes(2); // 未變不送
+    expect(api).toHaveBeenCalledTimes(2); // unchanged: not sent
   });
 
-  it("409 server_busy（非 not_loaded）：視同 5xx 走指數退避，不是 1s 的快速重試", async () => {
+  it("409 server_busy (not not_loaded): treated like 5xx with exponential backoff, not the 1s quick retry", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(409, "server_busy", "x")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -281,20 +273,16 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(999);
-    expect(api).toHaveBeenCalledTimes(1); // 退避起始值是 1s，not_loaded 的 1s 剛好同值，
-    // 用下一步的倍增行為（下一個測試）才真正區分兩者；這裡先確認沒有在 1s 之前就重試。
+    expect(api).toHaveBeenCalledTimes(1);
+    // The backoff starts at 1s, the same value as not_loaded's 1s; only the doubling in the next test tells them apart. This just confirms no retry before 1s.
 
     await vi.advanceTimersByTimeAsync(1);
     expect(api).toHaveBeenCalledTimes(2);
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("409 server_busy 連續失敗兩次：第二次重試落在 +2000ms（指數倍增），不是 not_loaded 那種「用掉一次就放棄」", async () => {
-    // 這條測試專門把 server_busy 與 not_loaded 兩條路徑徹底分開驗證：not_loaded 在
-    // 第一次重試失敗後就會放棄（見前一個 describe 區塊「409 not_loaded：1s 後重試一次，
-    // 仍失敗就放棄」），若實作把 409 分流誤改成「一律走 not_loaded 的快速重試＋單次放棄」
-    // （例如漏判 `err.code !== "not_loaded"`），這裡第二次失敗之後 api 會停在 2 次不再
-    // 重試——下面 +1999ms 仍是 2 次、+2000ms 才變 3 次的斷言就會紅。
+  it("409 server_busy failing twice in a row: the second retry lands at +2000ms (exponential doubling), not not_loaded's give-up after one retry", async () => {
+    // Separates the server_busy and not_loaded paths: not_loaded gives up after its first retry fails (see the not_loaded test above); if an implementation routed every 409 through not_loaded's quick retry + single give-up (e.g. by missing `err.code !== "not_loaded"`), api would stop at 2 calls after the second failure, and the assertions below (still 2 at +1999ms, 3 at +2000ms) would go red.
     api = vi
       .fn()
       .mockRejectedValueOnce(new ApiFail(409, "server_busy", "x"))
@@ -308,19 +296,18 @@ describe("createLinkSync", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(1_000); // 第一次退避：1s 後重試，第二次也失敗
+    await vi.advanceTimersByTimeAsync(1_000); // first backoff: retry after 1s, the second attempt also fails
     expect(api).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(1_999);
-    expect(api).toHaveBeenCalledTimes(2); // 倍增後的延遲是 2s，還沒到——若走 not_loaded
-    // 的「放棄」邏輯，這裡永遠停在 2 次，等再久都不會變。
+    expect(api).toHaveBeenCalledTimes(2); // the doubled delay is 2s, not reached yet (with not_loaded's give-up logic it would stay at 2 forever, however long the wait)
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(api).toHaveBeenCalledTimes(3); // 第三次重試準時落在 +2000ms，證明是指數倍增
+    expect(api).toHaveBeenCalledTimes(3); // the third retry lands at +2000ms, proving exponential doubling
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("5xx 退避上限 60s：連續失敗時延遲倍增，超過上限後鎖在 60s", async () => {
+  it("5xx backoff capped at 60s: delays double on consecutive failures and lock at 60s once past the cap", async () => {
     api = vi.fn().mockRejectedValue(new ApiFail(500, "internal", "x"));
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -341,7 +328,7 @@ describe("createLinkSync", () => {
     }
   });
 
-  it("網路層錯誤（非 ApiFail，`api()` 對網路失敗丟原生 Error）：視同 5xx 走退避", async () => {
+  it("network-layer error (not ApiFail; `api()` throws a native Error on network failure): treated like 5xx with backoff", async () => {
     api = vi.fn().mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -355,7 +342,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
-  it("403：閂住不再送，直到 onCollabState 觀察到 connected+canEdit 才解閂並立即重送", async () => {
+  it("403: latches and stops sending until onCollabState sees connected+canEdit, then unlatches and resends immediately", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(403, "forbidden", "x")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -365,17 +352,14 @@ describe("createLinkSync", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api).toHaveBeenCalledTimes(1);
 
-    // 閂住期間：內容再變、等再久都不會送。
     setWikilinks(doc, [TARGET_A, TARGET_B]);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(api).toHaveBeenCalledTimes(1);
 
-    // 還沒解閂：connected 但角色不能編輯。
     linkSync.onCollabState(connected("viewer"));
     await vi.advanceTimersByTimeAsync(0);
     expect(api).toHaveBeenCalledTimes(1);
 
-    // 解閂條件成立：connected + canEdit。
     linkSync.onCollabState(connected("editor"));
     await vi.advanceTimersByTimeAsync(0);
 
@@ -383,7 +367,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenLastCalledWith(LINKS_PATH, linksBody([TARGET_A, TARGET_B]));
   });
 
-  it("403 解閂後再次呼叫 onCollabState 不會重複觸發（閂已經不是 403 了）", async () => {
+  it("after a 403 unlatch, calling onCollabState again doesn't trigger again (the latch is no longer 403)", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(403, "forbidden", "x")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -397,10 +381,10 @@ describe("createLinkSync", () => {
 
     linkSync.onCollabState(connected("owner"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(api).toHaveBeenCalledTimes(2); // 未變不送，不是「又解閂了一次」
+    expect(api).toHaveBeenCalledTimes(2); // unchanged so not sent, not "unlatched again"
   });
 
-  it("400：閂住並 toast；集合維持觸發 400 當下的內容就一直閂著", async () => {
+  it("400: latches and toasts; stays latched while the set stays as it was when the 400 happened", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(400, "invalid_body", "x"));
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -412,13 +396,12 @@ describe("createLinkSync", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
     expect(toastMock).toHaveBeenCalledWith({ title: "errors.invalid_body", variant: "destructive" });
 
-    // 內容不變：即使 doc 觸發 update 事件、等很久，仍然閂著。
     setWikilinks(doc, [TARGET_A]);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  it("400 解閂：重算結果與觸發 400 的集合內容不同時解閂並送出新集合", async () => {
+  it("400 unlatch: when the recomputed result differs from the set that triggered the 400, unlatches and sends the new set", async () => {
     api = vi.fn().mockRejectedValueOnce(new ApiFail(400, "invalid_body", "x")).mockResolvedValueOnce(undefined);
     setWikilinks(doc, [TARGET_A]);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
@@ -435,7 +418,7 @@ describe("createLinkSync", () => {
     expect(api).toHaveBeenLastCalledWith(LINKS_PATH, linksBody([TARGET_A, TARGET_B]));
   });
 
-  it("onCollabState 在未閂住時是 no-op（不會意外送出）", async () => {
+  it("onCollabState is a no-op when not latched (doesn't send by accident)", async () => {
     api = vi.fn().mockResolvedValue(undefined);
     const linkSync = createLinkSync({ noteId: NOTE_ID, doc, api });
     linkSync.start();
@@ -447,14 +430,7 @@ describe("createLinkSync", () => {
   });
 });
 
-// ── 走訪等價測試─────────────────────────────────────────────
-//
-// server 端不依賴 BlockNote，無法測「editor 半邊」（server 端只測 docClock）；這裡補上
-// 唯一能驗證「Y.Doc 走訪抽取集合 == editor.document 遍歷抽取集合」的地方：用
-// mount harness（`BlockNoteEditor.create` + `editor.mount`，headless 下 y-prosemirror
-// 不會把內容寫回 Y.Doc，見 `menu.test.tsx` 檔頭同名章節）造一個綁定同一個 Y.Doc 的真編輯器，
-// 用 `insertWikilink`（wikilink spec）插入真正的 wikilink 節點，比對兩條路徑抽出的
-// targetNoteId 集合。
+// The server doesn't depend on BlockNote, so it can't test the "editor half" (the server only tests docClock); this is the place that verifies "set extracted by walking the Y.Doc == set extracted by walking editor.document": a mount harness (`BlockNoteEditor.create` + `editor.mount`; headless y-prosemirror doesn't write content back to the Y.Doc) builds a real editor bound to the same Y.Doc, inserts real wikilink nodes with `insertWikilink` (the wikilink spec), and compares the targetNoteId sets extracted by the two paths.
 type ElementRendererHandle = (node: ReactNode, container: HTMLElement) => void;
 
 const TestElementRenderer = forwardRef<ElementRendererHandle>((_props, ref) => {
@@ -474,13 +450,7 @@ const TestElementRenderer = forwardRef<ElementRendererHandle>((_props, ref) => {
 TestElementRenderer.displayName = "TestElementRenderer";
 
 function mountedEditorOnDoc(doc: Y.Doc) {
-  // `withCollaboration`（同 `NoteEditor.tsx` 的 `buildNoteEditorOptions`）不是把
-  // `collaboration` 這個欄位單純透傳給 `BlockNoteEditor.create`——它會把真正的
-  // `CollaborationExtension(options.collaboration)` 塞進回傳物件的 `extensions`
-  // 陣列（`@blocknote/core` 的 `collaboration` 欄位本身不是原生選項，純綁定邏輯全在
-  // 這支擴充功能裡）；直接把 `collaboration: {...}` 傳給 `.create()` 不會真的把
-  // y-prosemirror 接上這個 Y.Doc，寫入操作就不會落地進 fragment，本測試會靜默失敗
-  // （`extractLinkTargets(doc)` 永遠是空集合）。
+  // `withCollaboration` (as in `buildNoteEditorOptions` of `NoteEditor.tsx`) doesn't just pass the `collaboration` field through to `BlockNoteEditor.create`: it puts a real `CollaborationExtension(options.collaboration)` into the returned object's `extensions` array (`collaboration` isn't a native `@blocknote/core` option; all the binding logic lives in that extension). Passing `collaboration: {...}` straight to `.create()` wouldn't wire y-prosemirror to this Y.Doc, writes wouldn't land in the fragment, and this test would fail silently (`extractLinkTargets(doc)` always empty).
   const options = withCollaboration({
     schema: noteSchema,
     collaboration: {
@@ -488,7 +458,7 @@ function mountedEditorOnDoc(doc: Y.Doc) {
       user: { name: "tester", color: "#000" },
     },
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 menu.test.tsx）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple, any by repo convention (same as menu.test.tsx)
   const editor = BlockNoteEditor.create(options) as BlockNoteEditor<any, any, any>;
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -510,7 +480,7 @@ function mountedEditorOnDoc(doc: Y.Doc) {
   return { editor, container };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 function extractViaEditorDocument(editor: BlockNoteEditor<any, any, any>): string[] {
   const found: string[] = [];
 
@@ -542,9 +512,9 @@ function extractViaEditorDocument(editor: BlockNoteEditor<any, any, any>): strin
   return [...new Set(found)].sort();
 }
 
-describe("走訪等價：Y.Doc 走訪抽取集合 == editor.document 遍歷抽取集合", () => {
+describe("traversal equivalence: set extracted by walking the Y.Doc == set extracted by walking editor.document", () => {
   let doc: Y.Doc;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
@@ -564,14 +534,14 @@ describe("走訪等價：Y.Doc 走訪抽取集合 == editor.document 遍歷抽�
     vi.unstubAllGlobals();
   });
 
-  it("單一 wikilink：兩條路徑抽出同一個目標", () => {
+  it("single wikilink: both paths extract the same target", () => {
     insertWikilink(editor, { targetNoteId: TARGET_A, snapshotTitle: "A" });
 
     expect(extractLinkTargets(doc)).toEqual(extractViaEditorDocument(editor));
     expect(extractLinkTargets(doc)).toEqual([TARGET_A]);
   });
 
-  it("多個 wikilink 分散在不同 block：兩條路徑抽出的集合一致", () => {
+  it("several wikilinks spread over different blocks: both paths extract the same set", () => {
     insertWikilink(editor, { targetNoteId: TARGET_A, snapshotTitle: "A" });
 
     const firstBlockId = editor.document[0]!.id;
@@ -586,7 +556,7 @@ describe("走訪等價：Y.Doc 走訪抽取集合 == editor.document 遍歷抽�
     expect(viaDoc).toEqual([TARGET_A, TARGET_B].sort());
   });
 
-  it("沒有任何 wikilink：兩條路徑都是空集合", () => {
+  it("no wikilinks: both paths give an empty set", () => {
     editor.insertInlineContent(["plain text, no links here"]);
 
     expect(extractLinkTargets(doc)).toEqual([]);

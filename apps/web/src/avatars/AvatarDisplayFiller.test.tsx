@@ -78,13 +78,13 @@ describe("AvatarDisplayFiller", () => {
     vi.unstubAllGlobals();
   });
 
-  it("不渲染任何節點", () => {
+  it("renders no nodes", () => {
     const { ui } = setup(null);
     const { container } = render(ui);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("目前頭貼待補（pending）→ 讀原圖並帶版本把顯示圖送回", async () => {
+  it("current avatar pending -> reads the original and sends the display image back with the version", async () => {
     const { calls, ui } = setup({ id: ID, v: 4, pending: true });
     render(ui);
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
@@ -92,9 +92,9 @@ describe("AvatarDisplayFiller", () => {
   });
 
   it.each([
-    ["pending 為 false", { id: ID, v: 4, pending: false }],
-    ["沒有頭貼（null）", null],
-  ] as const)("%s → 什麼都不做", async (_name, avatar) => {
+    ["pending is false", { id: ID, v: 4, pending: false }],
+    ["no avatar (null)", null],
+  ] as const)("%s -> does nothing", async (_name, avatar) => {
     const { calls, ui } = setup(avatar);
     render(ui);
     await settle();
@@ -102,7 +102,7 @@ describe("AvatarDisplayFiller", () => {
     expect(puts(calls)).toHaveLength(0);
   });
 
-  it("換頁重掛（卸載再掛載）後，同一版不再重送", async () => {
+  it("after a remount from a page change (unmount then mount), the same version isn't sent again", async () => {
     const { calls, ui } = setup({ id: ID, v: 4, pending: true });
     const first = render(ui);
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
@@ -113,22 +113,21 @@ describe("AvatarDisplayFiller", () => {
     expect(puts(calls)).toHaveLength(1);
   });
 
-  it("換了使用者（同一分頁）：前一位的處理記憶作廢，同一組 (id, v) 對新使用者重新處理", async () => {
+  it("user switched (same tab): the previous user's processed memory is invalidated, the same (id, v) is processed again for the new user", async () => {
     const { calls, ui, queryClient } = setup({ id: ID, v: 4, pending: true });
     render(ui);
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
     await settle();
-    // 寫入成功後失效的重抓先落地，免得它蓋掉下面換人的資料。
+    // Let the refetch invalidated after a successful write land first, so it doesn't overwrite the next user's data below.
     await act(async () => {
       queryClient.setQueryData(SESSION_QUERY_KEY, { ...user(null), id: "u-bob" });
-      await settle(); // react-query 的通知排在下一個 tick，等畫面與 effect 跟上
+      await settle(); // react-query notifications are queued for the next tick; wait for render and effects to catch up
     });
-    // 記憶已清：同一組 (id, v) 可以再排（新使用者不會繼承前一位的「已處理」）。
     enqueueFill({ id: ID, v: 4 });
     await waitFor(() => expect(puts(calls)).toHaveLength(2));
   });
 
-  it("同一個使用者重新載入（id 不變）不清記憶", async () => {
+  it("same user reloaded (id unchanged) doesn't clear the memory", async () => {
     const { calls, ui, queryClient } = setup({ id: ID, v: 4, pending: true });
     render(ui);
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
@@ -139,7 +138,7 @@ describe("AvatarDisplayFiller", () => {
     expect(puts(calls)).toHaveLength(1);
   });
 
-  it("版本過期（409 avatar_outdated）只重抓、不當成寫入：因空間不足失敗的項目不被重排", async () => {
+  it("stale version (409 avatar_outdated) only refetches, not treated as a write: items that failed for lack of space aren't requeued", async () => {
     const OTHER = "1a2b3c4d-d9cb-469f-a165-70867728950f";
     const { calls, ui, queryClient } = setup(null, url =>
       url.includes(ID)
@@ -157,12 +156,12 @@ describe("AvatarDisplayFiller", () => {
     expect(puts(calls)).toHaveLength(2);
   });
 
-  it("登出（外殼卸載）後另一位登入：前一位排隊中的項目不會被處理", async () => {
+  it("another user signs in after logout (shell unmount): the previous user's queued items aren't processed", async () => {
     const alice = setup(null);
     const first = render(alice.ui);
     await settle();
-    (await import("./filler-runtime")).configureForClient(alice.queryClient); // 補產已載入、可以處理
-    const release = registerCropOpen(ID); // 讓 alice 的項目停在佇列裡
+    (await import("./filler-runtime")).configureForClient(alice.queryClient); // backfill is loaded and can be processed
+    const release = registerCropOpen(ID); // keeps alice's item in the queue
     enqueueFill({ id: ID, v: 1 });
     first.unmount();
     const bob = setup(null, undefined, "u-bob");

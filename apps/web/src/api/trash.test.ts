@@ -54,7 +54,7 @@ function fakeResponse(status: number, body?: unknown): Response {
   } as unknown as Response;
 }
 
-/** 記下每次 `method url body`；同一個 `method url` 依序取回應（用完就重複最後一個）；未列的 throw。 */
+/** Records each `method url body`; for the same `method url` responses are returned in order (the last repeats once exhausted); unlisted calls throw. */
 function stubFetch(routes: Record<string, Array<() => Response>>) {
   const calls: Array<{ method: string; url: string; body: unknown }> = [];
   const used: Record<string, number> = {};
@@ -97,7 +97,7 @@ afterEach(() => {
 });
 
 describe("chunkIds", () => {
-  it("AT1 空→[]；200→1 批；201→[200,1]；450→[200,200,50]，順序同輸入", () => {
+  it("empty -> []; 200 -> 1 chunk; 201 -> [200,1]; 450 -> [200,200,50], order same as input", () => {
     expect(chunkIds([])).toEqual([]);
     expect(chunkIds(ids(200)).map((c) => c.length)).toEqual([200]);
     expect(chunkIds(ids(201)).map((c) => c.length)).toEqual([200, 1]);
@@ -108,14 +108,14 @@ describe("chunkIds", () => {
     expect(chunks[1]![0]).toBe("id-200");
   });
 
-  it("AT1b size ≤ 0 → RangeError（不會無窮迴圈）", () => {
+  it("size <= 0 -> RangeError (no infinite loop)", () => {
     expect(() => chunkIds(ids(3), 0)).toThrow(RangeError);
     expect(() => chunkIds(ids(3), -1)).toThrow(RangeError);
   });
 });
 
 describe("useTrash", () => {
-  it("AT0 打 GET /api/trash，key 是 ['trash']", async () => {
+  it("GET /api/trash, key is ['trash']", async () => {
     const list = trashList([trashItem({ id: "a", title: "A" })]);
     stubFetch({ "GET /api/trash": [() => fakeResponse(200, list)] });
     const qc = client();
@@ -126,7 +126,7 @@ describe("useTrash", () => {
 });
 
 describe("restoreTrashIds", () => {
-  it("AT2 450 個 id → 依序 3 次 POST，restored／skipped 依批次串接", async () => {
+  it("450 ids -> 3 POSTs in order, restored/skipped concatenated per batch", async () => {
     const input = ids(450);
     const batch = (n: number): TrashRestoreResultDto => ({ restored: [note(`r${n}`)], skipped: [{ id: `s${n}`, reason: "not_in_trash" }] });
     const calls = stubFetch({
@@ -139,7 +139,7 @@ describe("restoreTrashIds", () => {
     expect(result.skipped.map((s) => s.id)).toEqual(["s1", "s2", "s3"]);
   });
 
-  it("AT3 第二批 409 server_busy → TrashBatchError（cause＝ApiFail、partial＝第一批），第三批沒送", async () => {
+  it("second batch 409 server_busy -> TrashBatchError (cause = ApiFail, partial = first batch), third batch not sent", async () => {
     const first: TrashRestoreResultDto = { restored: [note("r1"), note("r1b")], skipped: [] };
     const calls = stubFetch({ "POST /api/trash/restore": [() => fakeResponse(200, first), BUSY, () => fakeResponse(200, first)] });
     const err = await restoreTrashIds(ids(450)).catch((e: unknown) => e);
@@ -153,7 +153,7 @@ describe("restoreTrashIds", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("AT3 第一批就失敗 → partial 為空結果", async () => {
+  it("first batch fails -> partial is an empty result", async () => {
     stubFetch({ "POST /api/trash/restore": [BUSY] });
     const err = (await restoreTrashIds(ids(3)).catch((e: unknown) => e)) as TrashBatchError<TrashRestoreResultDto>;
     expect(err).toBeInstanceOf(TrashBatchError);
@@ -162,7 +162,7 @@ describe("restoreTrashIds", () => {
 });
 
 describe("purgeTrashIds", () => {
-  it("AT4 分批 POST /api/trash/purge，purged／skipped 串接", async () => {
+  it("batched POST /api/trash/purge, purged/skipped concatenated", async () => {
     const input = ids(201);
     const calls = stubFetch({
       "POST /api/trash/purge": [
@@ -176,7 +176,7 @@ describe("purgeTrashIds", () => {
     expect(result).toEqual({ purged: ["p1", "p2", "p3"], skipped: [{ id: "s1", reason: "not_found" }, { id: "s2", reason: "not_in_trash" }] });
   });
 
-  it("AT4 空陣列 → 0 次請求、回空結果", async () => {
+  it("empty array -> 0 requests, empty result", async () => {
     const calls = stubFetch({});
     await expect(purgeTrashIds([])).resolves.toEqual({ purged: [], skipped: [] });
     await expect(restoreTrashIds([])).resolves.toEqual({ restored: [], skipped: [] });
@@ -185,7 +185,7 @@ describe("purgeTrashIds", () => {
 });
 
 describe("invalidateTrashRelated", () => {
-  it("AT5 失效的 key 恰為 trash／notes／folders／favorites／backlinks／每篇 note／兩支解析層前綴", () => {
+  it("invalidated keys: trash / notes / folders / favorites / backlinks / each note / the two resolver prefixes", () => {
     const qc = client();
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateTrashRelated(qc, ["a", "b"]);
@@ -203,21 +203,21 @@ describe("invalidateTrashRelated", () => {
     ]);
   });
 
-  it("失效 ['favorites']：最愛清單在 server 端濾掉垃圾桶裡的筆記，還原後要重抓才會回來", () => {
+  it("invalidates ['favorites']: the server filters trashed notes out of the favorites list, so it must refetch to bring them back after restore", () => {
     const qc = client();
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateTrashRelated(qc, ["a"]);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["favorites"] });
   });
 
-  it("AT-F 失效 ['folders']（資料夾：還原會照原路徑重建資料夾）", () => {
+  it("invalidates ['folders'] (restore rebuilds folders along the original path)", () => {
     const qc = client();
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateTrashRelated(qc, ["a"]);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["folders"] });
   });
 
-  it("AT5b 舊形 /notes/:ref 的解析層（['note', slug] 停在 404 in_trash、noteId 在這批）也被失效；別篇的不動", async () => {
+  it("old-form /notes/:ref resolver (['note', slug] stuck at 404 in_trash, noteId in this batch) is invalidated too; other notes' are untouched", async () => {
     const qc = client();
     const failWith = (noteId: string) => () => {
       const fail = new ApiFail(404, "in_trash", "x");
@@ -227,7 +227,7 @@ describe("invalidateTrashRelated", () => {
     await qc.fetchQuery({ queryKey: ["note", "my-slug"], queryFn: failWith("a"), retry: false }).catch(() => undefined);
     await qc.fetchQuery({ queryKey: ["note", "vanity-zzz"], queryFn: failWith("z"), retry: false }).catch(() => undefined);
     await qc.fetchQuery({ queryKey: ["note", "gone"], queryFn: () => Promise.reject(new ApiFail(404, "not_found", "x")), retry: false }).catch(() => undefined);
-    // error 態本來就帶 isInvalidated=true，所以改看「被哪些 filter 選中」：把每次失效的 filter 套回快取
+    // An error state already has isInvalidated=true, so look at which filters select it instead: apply each invalidation filter back onto the cache
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateTrashRelated(qc, ["a"]);
     const hit = new Set(spy.mock.calls.flatMap(([filters]) => qc.getQueryCache().findAll(filters).map((q) => JSON.stringify(q.queryKey))));
@@ -237,11 +237,11 @@ describe("invalidateTrashRelated", () => {
   });
 });
 
-describe("useRestoreTrash／usePurgeTrash", () => {
+describe("useRestoreTrash / usePurgeTrash", () => {
   const trashInvalidations = (spy: { mock: { calls: unknown[][] } }) =>
     spy.mock.calls.filter(([arg]) => JSON.stringify((arg as { queryKey?: unknown } | undefined)?.queryKey) === '["trash"]').length;
 
-  it("AT6 useRestoreTrash 成功、失敗都失效 ['trash']", async () => {
+  it("useRestoreTrash invalidates ['trash'] on both success and failure", async () => {
     stubFetch({
       "POST /api/trash/restore": [
         () => fakeResponse(200, { restored: [], skipped: [] }),
@@ -257,7 +257,7 @@ describe("useRestoreTrash／usePurgeTrash", () => {
     expect(trashInvalidations(spy)).toBe(2);
   });
 
-  it("AT6 usePurgeTrash 成功、失敗都失效 ['trash']", async () => {
+  it("usePurgeTrash invalidates ['trash'] on both success and failure", async () => {
     stubFetch({
       "POST /api/trash/purge": [
         () => fakeResponse(200, { purged: ["a"], skipped: [] }),
@@ -273,7 +273,7 @@ describe("useRestoreTrash／usePurgeTrash", () => {
     expect(trashInvalidations(spy)).toBe(2);
   });
 
-  /** 移入時常駐層重抓拿到 404 → status error、data 留著舊 DTO。 */
+  /** When moved to trash, the resident layer's refetch gets 404 -> status error, data keeps the old DTO. */
   async function residentInError(qc: QueryClient, id: string) {
     qc.setQueryData(["note", id], note(id, "old"));
     await qc
@@ -282,7 +282,7 @@ describe("useRestoreTrash／usePurgeTrash", () => {
     expect(qc.getQueryState(["note", id])?.status).toBe("error");
   }
 
-  it("AT10 還原成功 → 常駐層 ['note', id] 被蓋回 success、data 是回應那篇", async () => {
+  it("restore success -> resident-layer ['note', id] is overwritten back to success, data is the restored note", async () => {
     const restored = note("n1", "restored");
     stubFetch({ "POST /api/trash/restore": [() => fakeResponse(200, { restored: [restored], skipped: [] })] });
     const qc = client();
@@ -293,7 +293,7 @@ describe("useRestoreTrash／usePurgeTrash", () => {
     expect(qc.getQueryData(["note", "n1"])).toEqual(restored);
   });
 
-  it("AT10 中途失敗：已成功那批的 partial.restored 也蓋回常駐層", async () => {
+  it("failure midway: partial.restored of the batches already done is also written back to the resident layer", async () => {
     const restored = note("n1", "restored");
     stubFetch({ "POST /api/trash/restore": [() => fakeResponse(200, { restored: [restored], skipped: [] }), BUSY] });
     const qc = client();
@@ -305,9 +305,8 @@ describe("useRestoreTrash／usePurgeTrash", () => {
   });
 });
 
-// 資料夾（還原後展開）：還原照原路徑重建的資料夾與祖先要展開。
-describe("useRestoreTrash × 還原後展開", () => {
-  const CHAIN = folderChain("R", 3); // R1 ⊃ R2 ⊃ R3
+describe("useRestoreTrash x expansion after restore", () => {
+  const CHAIN = folderChain("R", 3); // R1 contains R2 contains R3
   const inFolder = (id: string, folderId: string): NoteDto => ({ ...note(id), folderId });
   const foldersReply = (folders: unknown[]) => () => fakeResponse(200, { folders });
   const folderGets = (calls: Array<{ method: string; url: string }>) => calls.filter((c) => c.method === "GET" && c.url === "/api/folders").length;
@@ -315,7 +314,7 @@ describe("useRestoreTrash × 還原後展開", () => {
     for (const id of ids) setCollapsed(`folder:${id}`, true);
   };
 
-  it("TR-F1 還原成功（['folders'] 沒有 observer）→ 先收合的 folder:A 被展開", async () => {
+  it("restore success (no observer on ['folders']) -> previously collapsed folder:A is expanded", async () => {
     stubFetch({
       "POST /api/trash/restore": [() => fakeResponse(200, { restored: [inFolder("n1", "A")], skipped: [] })],
       "GET /api/folders": [foldersReply([folderDto({ id: "A", name: "A" })])],
@@ -327,13 +326,13 @@ describe("useRestoreTrash × 還原後展開", () => {
     await waitFor(() => expect(isCollapsed("folder:A")).toBe(false));
   });
 
-  it("掛著 useFolders observer（我的筆記 tab 的形）→ 還原成功後新資料夾與祖先展開、GET /api/folders 恰好 1 次、沒有 unhandled rejection", async () => {
+  it("with a useFolders observer mounted (the My notes tab shape) -> after restore success the new folders and ancestors are expanded, GET /api/folders happens once, no unhandled rejection", async () => {
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);
     try {
       const calls = stubFetch({
         "POST /api/trash/restore": [() => fakeResponse(200, { restored: [inFolder("n1", "R3")], skipped: [] })],
-        // 第一次是 observer 掛載時（舊的、還沒有重建的資料夾）；之後是還原後
+        // The first is when the observer mounts (old, rebuilt folders not there yet); the later one is after restore
         "GET /api/folders": [foldersReply([]), foldersReply(CHAIN)],
       });
       const qc = client();
@@ -356,7 +355,7 @@ describe("useRestoreTrash × 還原後展開", () => {
     }
   });
 
-  it("TR-F2 分批中途失敗（TrashBatchError）→ 已還原那幾篇的資料夾展開", async () => {
+  it("failure midway in a batch (TrashBatchError) -> folders of the notes already restored are expanded", async () => {
     stubFetch({
       "POST /api/trash/restore": [() => fakeResponse(200, { restored: [inFolder("n1", "A")], skipped: [] }), BUSY],
       "GET /api/folders": [foldersReply([folderDto({ id: "A", name: "A" }), folderDto({ id: "B", name: "B" })])],
@@ -370,8 +369,8 @@ describe("useRestoreTrash × 還原後展開", () => {
   });
 });
 
-describe("站台垃圾桶設定", () => {
-  it("AT7 GET /api/admin/trash/settings；PATCH {retentionDays:null} 成功後 setQueryData 並失效 ['trash']", async () => {
+describe("site trash settings", () => {
+  it("GET /api/admin/trash/settings; after a successful PATCH {retentionDays:null} setQueryData and invalidate ['trash']", async () => {
     const calls = stubFetch({
       "GET /api/admin/trash/settings": [() => fakeResponse(200, { retentionDays: 7 })],
       "PATCH /api/admin/trash/settings": [() => fakeResponse(200, { retentionDays: null })],
