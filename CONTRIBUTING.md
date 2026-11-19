@@ -171,7 +171,7 @@ Types in use include `feat`, `fix`, `docs`, `test`, `style`, `refactor`, `perf`,
 
 ### CHANGELOG
 
-[`CHANGELOG.md`](CHANGELOG.md) follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). A pull request that changes anything users, self-hosters or API clients can notice adds its entry under `## [Unreleased]` (replacing `_Nothing yet._` if that's all there is), in the right subsection: `Upgrade notes`, `Added`, `Changed`, `Fixed`, `Removed` or `Security`. Releases move that section under a version heading (see [docs/releasing.md](docs/releasing.md)). The existing entries share a style:
+[`CHANGELOG.md`](CHANGELOG.md) follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). A pull request that changes anything users, self-hosters or API clients can notice adds its entry under `## [Unreleased]` (replacing `_Nothing yet._` if that's all there is), in the right subsection: `Upgrade notes`, `Added`, `Changed`, `Fixed`, `Removed` or `Security`. Releases move that section under a version heading, and older minor series move to [`docs/changelog/`](docs/changelog/) (see [docs/releasing.md](docs/releasing.md)). The existing entries share a style:
 
 - each entry starts with **one bold sentence** saying what changed, from the point of view of the person using it, followed by the details;
 - it describes behaviour, not code: what used to happen, what happens now, and any limits, in plain language;
