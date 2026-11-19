@@ -17,10 +17,12 @@ export interface CreateApiTokenInput {
   expiresInDays: 30 | 90 | 365 | null;
 }
 
-/** The plaintext `token` is in this response only; the caller must show it. The query cache never holds it (the list is always refetched). */
+/** The plaintext `token` is in this response only; the caller must show it. The query cache never holds it (the list is always refetched).
+ * `gcTime: 0`: don't keep the plaintext in the mutation cache for 5 min after the dialog is done with it. */
 export function useCreateApiToken() {
   const queryClient = useQueryClient();
   return useMutation({
+    gcTime: 0,
     mutationFn: (body: CreateApiTokenInput) =>
       api<CreatedApiTokenDto>("/api/auth/tokens", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
