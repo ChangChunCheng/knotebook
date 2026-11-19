@@ -40,7 +40,7 @@ On `SIGTERM`/`SIGINT` it stops background scans, then calls `collab.destroy()` *
 
 `buildApp` in `apps/server/src/app.ts` wires everything together. It sets up cookie, multipart and form parsing, a global `onRequest` guard that requires `application/json` on bodies (with exemptions for uploads, `text/markdown` file write-backs and the OAuth form endpoints), the shared error format, security headers, `/healthz`, and the rate limiters (`apps/server/src/http/limiters.ts`). Then it registers one Fastify plugin per area from `apps/server/src/routes/`, for example:
 
-- `routes/notes.ts`: notes, their content (`GET /api/notes/:id/content`), edits and reverts (`/api/notes/:id/edits`), and the collab token;
+- `routes/notes.ts`: notes and the collab token; it also registers `routes/note-content.ts` (a note's content, `GET /api/notes/:id/content`, and edits and reverts, `/api/notes/:id/edits`) and `routes/note-sharing.ts` (shares, the public link and its alias and width);
 - `routes/note-versions.ts`, `routes/trash.ts`, `routes/folders.ts`, `routes/favorites.ts`, `routes/groups.ts`, `routes/search.ts`, `routes/uploads.ts`;
 - `routes/auth.ts`, `routes/oidc*.ts`, `routes/api-tokens.ts`, `routes/oauth*.ts`: sign-in and credentials (next section);
 - `routes/admin-*.ts`: Site admin;
@@ -139,8 +139,6 @@ Markdown conversion itself (what syntax maps to which block, colors, columns, es
 
 ### End to end: an agent calls `edit_note` and an open tab updates
 
-Function and file names are as of v0.17.1.
-
 1. The MCP client sends `POST /api/mcp`. The global JSON guard in `app.ts` runs, then `app.authenticateAny` (`auth/bearer.ts`) resolves the bearer token from `api_tokens` and its scope.
 2. The handler in `apps/server/src/routes/mcp.ts` creates a stateless `McpServer` for this one request, registers the tools allowed by the token's scope (`registerMcpTools` in `apps/server/src/mcp/register.ts`), and hands the request to the SDK's `WebStandardStreamableHTTPServerTransport` (the Fastify/Web bridge is `apps/server/src/mcp/transport.ts`).
 3. The SDK calls `editNote` in `apps/server/src/mcp/tools/edit-note.ts` (through `runTool`, which turns unexpected exceptions into a tool error). In order, it checks the token's write scope (`requireWriteScope`, `apps/server/src/mcp/write-scope.ts`), validates the arguments against the same schema as REST `POST /api/notes/:id/edits` (`apps/server/src/notes/schemas.ts`; a `rename` branches off here and never touches the document), resolves the caller's role (`resolveRole` in `apps/server/src/notes/service.ts`), and takes from the `edit` rate limiter.
@@ -151,7 +149,7 @@ Function and file names are as of v0.17.1.
 8. The direct connection disconnects, which triggers `onStoreDocument` (`collab/store.ts`): `note_states` is saved, a backup may be written, the search index is rewritten, and `collab/versions.ts` marks the note as pending for an automatic version.
 9. Back in `applyEdit`, `insertEditRecord` writes the `note_ai_edits` row (trimming the note's history to `RETENTION` rows) and `updateNoteLinks` refreshes `note_links`. When `applyEdit` returns, `applyToNote` updates the agent's presence, so its cursor shows at the changed section in open tabs. The tool replies with the `editId`, the new fingerprint and the outline.
 
-REST `POST /api/notes/:id/edits` (`routes/notes.ts`) takes the same path from step 4 on.
+REST `POST /api/notes/:id/edits` (`routes/note-content.ts`) takes the same path from step 4 on.
 
 ## Search
 
