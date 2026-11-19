@@ -9,8 +9,8 @@ import { contentStart, createTestEditor, renderAiHost, selectInBlock, stubAiFetc
 import { IMG, P } from "@/test/columns-fixtures";
 import { layoutHostTrigger, waitForMenuShown } from "@/test/color-menu-host";
 
-// 格式工具列的顏色鈕：10 種內建色之外每段多一個「自訂…」，點了在同一個 dropdown 裡開自訂色面板。
-// 掛法照 `AiToolbar.test.tsx`：工具列由 `SelectionAiController` 經 `FormattingToolbarController` 掛上，選一段文字讓它出現。
+// The formatting toolbar's color button: besides the 10 built-in colors each section has one more "Custom...", which opens the custom color panel inside the same dropdown.
+// Mounted like `AiToolbar.test.tsx`: the toolbar is mounted by `SelectionAiController` via `FormattingToolbarController`; select a run of text to make it appear.
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
 const COLORS = ["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
@@ -27,12 +27,12 @@ afterEach(() => {
 
 function renderHost(editor: AnyEditor) {
   stubAiFetch({ actions: [REWRITE] });
-  // 圖示與預覽用的是 block 種類的選擇器，production 靠全域 observer 登記；與 `main.tsx` 同序，先裝再掛。
+  // The icon and preview use the block-kind selector, which production registers through a global observer; same order as `main.tsx`: install it first, then mount.
   installCustomColors(document.body);
   renderAiHost({ editor, children: <SelectionAiController /> });
 }
 
-/** 兩段：`top`（p0）與 `target text`（p1）；p1 的文字可帶樣式。掛好後選取 p1 的 `target`，等工具列與 AI 鈕都出現。 */
+/** Two blocks: `top` (p0) and `target text` (p1); p1's text can carry styles. After mounting, selects `target` in p1 and waits for the toolbar and the AI button to appear. */
 async function mount(styles: Record<string, string> = {}): Promise<AnyEditor> {
   const editor = createTestEditor([
     { id: "p0", type: "paragraph", content: "top" },
@@ -40,7 +40,7 @@ async function mount(styles: Record<string, string> = {}): Promise<AnyEditor> {
   ]);
   renderHost(editor);
   selectInBlock(editor, "p1", 0, 6);
-  // AI 鈕要等動作清單載入才出現；等它在，後面的步驟不會被這次工具列重繪打斷。
+  // The AI button only appears after the action list loads; waiting for it keeps later steps from being interrupted by this toolbar re-render.
   await screen.findByRole("button", { name: "AI" });
   await waitFor(() => expect(colorsButton()).not.toBeNull());
   return editor;
@@ -55,8 +55,8 @@ const button = (name: string) => screen.getByRole("button", { name, hidden: true
 const wait = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
 
 /**
- * `.bn-toolbar` 是 `overflow-x: auto`，floating-ui 把它當成顏色鈕的裁切祖先；jsdom 裡它的框是 0×0，
- * hide 中介層就判定顏色鈕被裁掉、把 dropdown 標成 display:none。給工具列一個包住顏色鈕的框（須在開選單之前呼叫）。
+ * `.bn-toolbar` is `overflow-x: auto`, which floating-ui treats as the color button's clipping ancestor; in jsdom its box is 0x0, so the hide
+ * middleware decides the color button is clipped and marks the dropdown display:none. Gives the toolbar a box that encloses the color button (call before opening the menu).
  */
 function layoutToolbar(): () => void {
   const toolbar = document.querySelector<HTMLElement>(".bn-formatting-toolbar")!;
@@ -70,23 +70,23 @@ function layoutToolbar(): () => void {
   };
 }
 
-/** Menu.Item 的 checked 為真時右側是勾號 svg，為 false 時是 `.bn-tick-space` 佔位。 */
+/** A Menu.Item with checked true has a tick svg on the right; false has a `.bn-tick-space` placeholder. */
 const isChecked = (el: Element) => el.querySelector(".bn-tick-space") === null && el.querySelector("svg") !== null;
 
-/** p1 開頭 `target` 那段文字目前的樣式。 */
+/** Current style of the `target` run at the start of p1. */
 function targetStyles(editor: AnyEditor): Record<string, string> {
   const content = editor.getBlock("p1")!.content as Array<{ text: string; styles: Record<string, string> }>;
   return content.find((c) => c.text.startsWith("target"))!.styles;
 }
 
-/** 開顏色選單，等 dropdown 掛上，並讓 Mantine 開選單時排的初始聚焦計時器（含工具列 trap 啟用後的那一個）跑完。 */
+/** Opens the color menu, waits for the dropdown to mount, and lets Mantine's initial focus timer run out (including the one after the toolbar trap activates). */
 async function openColors() {
   fireEvent.click(colorsButton()!);
   await waitFor(() => expect(dropdown()).not.toBeNull());
   await wait(50);
 }
 
-/** 開選單 → 點「自訂…」（`detail` 0＝鍵盤啟動，色碼框取得焦點），等面板掛上。 */
+/** Opens the menu and clicks "Custom..." (`detail` 0 = keyboard activation, the hex field gets focus); waits for the panel to mount. */
 async function openPanel(section: "text" | "background" = "text") {
   await openColors();
   fireEvent.click(item(`${section}-color-custom`), { detail: 0 });
@@ -94,7 +94,7 @@ async function openPanel(section: "text" | "background" = "text") {
 }
 
 describe("KnotebookColorStyleButton", () => {
-  it("TB1 顏色選單：兩段各 10 個內建色項（data-test 不變）加一個「自訂…」", async () => {
+  it("color menu: each of the two sections has 10 built-in color items (data-test unchanged) plus one \"Custom...\"", async () => {
     await mount();
     await openColors();
     const ids = (prefix: string) =>
@@ -104,7 +104,7 @@ describe("KnotebookColorStyleButton", () => {
     expect(item("text-color-custom")).toHaveTextContent("Custom…");
   });
 
-  it("TB2 選取文字是正規形色碼：「自訂…」打勾、default 不打勾", async () => {
+  it("selected text with a canonical hex color: \"Custom...\" is checked and default is not", async () => {
     await mount({ textColor: "#ff6600" });
     await openColors();
     expect(isChecked(item("text-color-custom"))).toBe(true);
@@ -113,7 +113,7 @@ describe("KnotebookColorStyleButton", () => {
     expect(isChecked(item("background-color-default"))).toBe(true);
   });
 
-  it("TB2 選取文字是非正規形的 rgb(1, 2, 3)：文字段沒有任何一項打勾，兩個「自訂…」都不打勾", async () => {
+  it("selected text with a non-canonical rgb(1, 2, 3): no item in the text section is checked and neither \"Custom...\" is checked", async () => {
     await mount({ textColor: "rgb(1, 2, 3)" });
     await openColors();
     for (const c of [...COLORS, "custom"]) expect(isChecked(item(`text-color-${c}`)), `text-color-${c}`).toBe(false);
@@ -121,7 +121,7 @@ describe("KnotebookColorStyleButton", () => {
     expect(isChecked(item("background-color-default"))).toBe(true);
   });
 
-  it("TB3 「自訂…」開面板、選單不關；輸入 #ff6600 按 Apply → 套到選取文字、選單關、工具列圖示換成該色", async () => {
+  it("\"Custom...\" opens the panel and the menu stays open; entering #ff6600 and pressing Apply applies it to the selected text, closes the menu and the toolbar icon changes to that color", async () => {
     const editor = await mount();
     await openPanel();
     expect(colorsButton()).toHaveAttribute("aria-expanded", "true");
@@ -136,7 +136,7 @@ describe("KnotebookColorStyleButton", () => {
     });
   });
 
-  it("TB4 內建色 background-color-red：套用、選單關（行為與原生相同）", async () => {
+  it("built-in color background-color-red: applies and the menu closes (same as native)", async () => {
     const editor = await mount();
     await openColors();
     fireEvent.click(item("background-color-red"));
@@ -144,8 +144,8 @@ describe("KnotebookColorStyleButton", () => {
     expect(colorsButton()).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("TB5 沒有最近色時，面板最後一個 Apply 按 Tab 繞回 Back，顏色 dropdown 仍在工具列裡", async () => {
-    // jsdom 的 fireEvent.click 不聚焦，dropdown 的 trap 比工具列的先註冊；真瀏覽器是相反的順序，由 e2e 驗。
+  it("with no recent colors, Tab on the panel's last Apply wraps to Back and the color dropdown stays in the toolbar", async () => {
+    // jsdom's fireEvent.click does not focus, and the dropdown's trap registers before the toolbar's; a real browser has the opposite order, covered by e2e.
     await mount();
     const restore = layoutHostTrigger(colorsButton()!);
     const restoreToolbar = layoutToolbar();
@@ -167,7 +167,7 @@ describe("KnotebookColorStyleButton", () => {
     }
   });
 
-  it("TB6 Back：回到項目列表，焦點在文字段的「自訂…」", async () => {
+  it("Back returns to the item list with focus on the text section's \"Custom...\"", async () => {
     await mount();
     await openPanel();
     fireEvent.click(button("Back"));
@@ -175,16 +175,16 @@ describe("KnotebookColorStyleButton", () => {
     expect(panel()).toBeNull();
   });
 
-  it("TB7 面板開著時文件在選取之前多了一段（工具列重繪）：焦點留在色碼框、面板不關、已輸入的字還在", async () => {
+  it("a paragraph is added before the selection while the panel is open (toolbar re-render): focus stays in the hex field, the panel stays open and the typed text remains", async () => {
     const editor = await mount();
     await openPanel();
     const hex = hexInput();
     hex.focus();
     fireEvent.change(hex, { target: { value: "#ff6" } });
     await wait(20);
-    // 基準：插入之前焦點就在色碼框。這裡紅表示是焦點初次進入工具列時的搶焦點，不是重繪那一次。
+    // Baseline: focus was in the hex field before the insert. A failure here means focus was grabbed when focus first entered the toolbar, not by the re-render.
     expect(document.activeElement).toBe(hex);
-    // 選取被重映射 → 工具列的定位變 → 工具列重繪，Mantine 的 focus trap 重新收到 ref，排一次 focusNode
+    // Selection remapped -> toolbar position changes -> toolbar re-renders; Mantine's focus trap receives the ref again and schedules a focusNode.
     act(() => {
       editor.insertBlocks([{ type: "paragraph", content: "x" }], "p0", "before");
     });
@@ -194,7 +194,7 @@ describe("KnotebookColorStyleButton", () => {
     expect(hex.value).toBe("#ff6");
   });
 
-  it("TB8 從面板按 Back 之後工具列重繪：dropdown 的初始聚焦佔位元素已放回，焦點留在 dropdown 裡", async () => {
+  it("after Back from the panel, a toolbar re-render: the dropdown's initial-focus placeholder is restored and focus stays inside the dropdown", async () => {
     const editor = await mount();
     await openPanel();
     fireEvent.click(button("Back"));
@@ -204,18 +204,18 @@ describe("KnotebookColorStyleButton", () => {
       editor.insertBlocks([{ type: "paragraph", content: "x" }], "p0", "before");
     });
     await wait(30);
-    // 面板借走的 data-autofocus 要還回去：只剩佔位元素那一個，工具列重新聚焦時落在它身上，不會跳出 dropdown。
+    // The data-autofocus the panel borrowed must be returned: only the placeholder element has it, so when the toolbar refocuses focus lands on it and does not jump out of the dropdown.
     expect(dd.querySelectorAll("[data-autofocus]")).toHaveLength(1);
     expect(dd.contains(document.activeElement)).toBe(true);
   });
 
-  it("TB9 選取的 block 都沒有行內內容（選到圖片）：工具列在，但沒有顏色鈕", async () => {
+  it("selected blocks have no inline content (an image selected): the toolbar is present but has no color button", async () => {
     const editor = createTestEditor([P("x", "x"), IMG("img"), P("z", "z")]);
     renderHost(editor);
     act(() => {
       editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
     });
-    // 等到自家的檔案刪除鈕出現，確定這次選取的工具列已經畫完，再斷言顏色鈕不在。
+    // Wait for our own file-delete button so this selection's toolbar has rendered; otherwise "no color button" could pass before the toolbar exists.
     await waitFor(() => expect(document.querySelector(".bn-formatting-toolbar [data-kb-file-delete]")).not.toBeNull());
     expect(colorsButton()).toBeNull();
   });

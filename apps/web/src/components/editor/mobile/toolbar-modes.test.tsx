@@ -58,8 +58,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("格式列", () => {
-  it("依序：返回、粗體、斜體、底線、刪除線、程式碼、連結、靠左、置中、靠右、縮排、取消縮排、顏色", async () => {
+describe("format row", () => {
+  it("order: Back, bold, italic, underline, strikethrough, code, link, align left, center, right, indent, outdent, color", async () => {
     await mount();
     formatMode();
     const f = dict().formatting_toolbar;
@@ -86,7 +86,7 @@ describe("格式列", () => {
     ["underline", "Underline"],
     ["strike", "Strike"],
     ["code", "Code"],
-  ] as const)("%s 鈕套用到選取、按下狀態跟著實際樣式，再按取消", async (style, label) => {
+  ] as const)("%s button applies to the selection, the pressed state follows the actual style, pressing again cancels", async (style, label) => {
     await mount();
     selectInBlock(editor, "a", 0, 5);
     formatMode();
@@ -99,7 +99,7 @@ describe("格式列", () => {
     expect(button(label)).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("游標移到已有樣式的字，按下狀態跟著變", async () => {
+  it("moving the caret to styled text changes the pressed state accordingly", async () => {
     await mount([{ id: "a", type: "paragraph", content: [{ type: "text", text: "bold", styles: { bold: true } }, { type: "text", text: " plain", styles: {} }] } as never]);
     formatMode();
     placeCursor(editor, "a", 2);
@@ -108,7 +108,7 @@ describe("格式列", () => {
     expect(button("Bold")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("連結鈕呼叫 onCreateLink；游標在連結裡時是按下狀態", async () => {
+  it("the link button calls onCreateLink; with the caret in a link it is pressed", async () => {
     await mount([{ id: "a", type: "paragraph", content: [{ type: "link", href: "https://example.com", content: [{ type: "text", text: "site", styles: {} }] }, { type: "text", text: " tail", styles: {} }] } as never]);
     formatMode();
     expect(button("Create link")).toHaveAttribute("aria-pressed", "false");
@@ -118,8 +118,8 @@ describe("格式列", () => {
     expect(button("Create link")).toHaveAttribute("aria-pressed", "true");
   });
 
-  describe("對齊", () => {
-    it("三顆分開的鈕：作用在游標所在的區塊，別的區塊不動", async () => {
+  describe("alignment", () => {
+    it("three separate buttons: they act on the block at the caret and leave other blocks alone", async () => {
       await mount();
       placeCursor(editor, "b", 2);
       formatMode();
@@ -132,7 +132,7 @@ describe("格式列", () => {
       expect(editor.getBlock("b")!.props.textAlignment).toBe("left");
     });
 
-    it("選取跨兩個區塊：兩個都套用", async () => {
+    it("selection spanning two blocks: both are applied", async () => {
       await mount();
       selectWholeBlocks(editor, "a", "b");
       formatMode();
@@ -141,7 +141,7 @@ describe("格式列", () => {
       expect(editor.getBlock("b")!.props.textAlignment).toBe("right");
     });
 
-    it("按下狀態跟著區塊的對齊", async () => {
+    it("pressed state follows the block's alignment", async () => {
       await mount();
       placeCursor(editor, "a", 1);
       formatMode();
@@ -155,8 +155,8 @@ describe("格式列", () => {
     });
   });
 
-  describe("縮排", () => {
-    it("第二個區塊可縮排、不可取消縮排；縮排後換過來；第一個區塊兩顆都停用", async () => {
+  describe("indent", () => {
+    it("the second block can be indented but not outdented, and after indenting it swaps; the first block has both disabled", async () => {
       await mount();
       placeCursor(editor, "b", 1);
       formatMode();
@@ -175,7 +175,7 @@ describe("格式列", () => {
     });
   });
 
-  it("顏色鈕：長得像桌機那顆「A」，字色是目前文字色、小方塊是目前背景色", async () => {
+  it("color button: looks like the desktop \"A\", text color is the current text color, the small square is the current background color", async () => {
     await mount([{ id: "a", type: "paragraph", content: [{ type: "text", text: "tint", styles: { textColor: "red", backgroundColor: "yellow" } }] } as never]);
     placeCursor(editor, "a", 2);
     formatMode();
@@ -186,14 +186,14 @@ describe("格式列", () => {
     expect(icon.closest(".bn-root")).not.toBeNull();
   });
 
-  it("連結以外所有鈕都不搶焦點（mousedown 被擋）", async () => {
+  it("every button except link does not steal focus (mousedown is blocked)", async () => {
     await mount();
     formatMode();
     for (const b of within(root()).getAllByRole("button")) expect(fireEvent.mouseDown(b)).toBe(false);
   });
 });
 
-describe("區塊類型列", () => {
+describe("block type row", () => {
   const blockTypeMode = () => fireEvent.click(button("Change block type"));
   const expectedNames = () =>
     blockTypeSelectItems(editor.dictionary)
@@ -202,7 +202,7 @@ describe("區塊類型列", () => {
       )
       .map((item) => item.name);
 
-  it("項目與桌機區塊類型選單同一份（同順序、同集合），前面是返回", async () => {
+  it("items are the same list as the desktop block type menu (same order, same set), preceded by Back", async () => {
     await mount();
     blockTypeMode();
     const names = expectedNames();
@@ -210,7 +210,7 @@ describe("區塊類型列", () => {
     expect(labels()).toEqual(["Back", ...names]);
   });
 
-  it("按項目：游標所在區塊換類型，別的區塊不動；目前的類型是按下狀態", async () => {
+  it("pressing an item: the block at the caret changes type and other blocks stay; the current type is pressed", async () => {
     await mount();
     placeCursor(editor, "b", 2);
     blockTypeMode();
@@ -225,7 +225,7 @@ describe("區塊類型列", () => {
     expect(button(dict().slash_menu.paragraph.title)).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("可收合標題與一般標題是兩個不同的項目", async () => {
+  it("a collapsible heading and an ordinary heading are two different items", async () => {
     await mount();
     placeCursor(editor, "a", 1);
     blockTypeMode();
@@ -235,7 +235,7 @@ describe("區塊類型列", () => {
     expect(button(dict().slash_menu.heading.title)).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("選取跨兩個區塊：兩個都換", async () => {
+  it("selection spanning two blocks: both change type", async () => {
     await mount();
     selectWholeBlocks(editor, "a", "b");
     blockTypeMode();
@@ -246,8 +246,8 @@ describe("區塊類型列", () => {
 
   const TABLE = { id: "t", type: "table", content: { type: "tableContent", rows: [{ cells: ["x", "y"] }, { cells: ["z", "w"] }] } } as never;
 
-  describe("目前區塊不能換類型（表格、程式碼區塊）", () => {
-    it("游標在表格儲存格：主列 ¶ 鈕停用、點了不進模式；段落裡可按", async () => {
+  describe("current block cannot change type (table, code block)", () => {
+    it("caret in a table cell: the main row's block type button is disabled and pressing does not enter the mode; inside a paragraph it can be pressed", async () => {
       await mount([P("hello", "a"), TABLE]);
       placeCursor(editor, "a", 1);
       expect(button("Change block type")).not.toHaveAttribute("aria-disabled");
@@ -257,13 +257,13 @@ describe("區塊類型列", () => {
       expect(root()).toHaveAttribute("data-mobile-toolbar-mode", "main");
     });
 
-    it("游標在程式碼區塊：¶ 鈕停用", async () => {
+    it("caret in a code block: the block type button is disabled", async () => {
       await mount([{ id: "c", type: "codeBlock", content: "line1\nline2" } as never, P("z", "z")]);
       placeCursor(editor, "c", 2);
       expect(button("Change block type")).toHaveAttribute("aria-disabled", "true");
     });
 
-    it("模式開著時游標移進表格：所有項目停用，點了不動內容", async () => {
+    it("caret moves into a table while the mode is open: all items are disabled and pressing leaves the content alone", async () => {
       await mount([P("hello", "a"), TABLE]);
       placeCursor(editor, "a", 1);
       blockTypeMode();
@@ -275,7 +275,7 @@ describe("區塊類型列", () => {
       expect(JSON.stringify(editor.document)).toBe(before);
     });
 
-    it("段落＋表格一起選：只換段落，表格內容不動", async () => {
+    it("paragraph + table selected together: only the paragraph changes, the table content stays", async () => {
       await mount([P("hello", "a"), TABLE]);
       act(() => editor._tiptapEditor.commands.setTextSelection({ from: textPos(editor, "hello", 0), to: textPos(editor, "w", 1) }));
       expect(editor.getSelection()!.blocks.map((block) => block.type)).toEqual(["paragraph", "table"]);
@@ -287,7 +287,7 @@ describe("區塊類型列", () => {
       expect(JSON.stringify(editor.getBlock("t")!.content)).toBe(tableBefore);
     });
 
-    it("段落＋程式碼區塊一起選：程式碼區塊的內容不被清掉", async () => {
+    it("paragraph + code block selected together: the code block's content is not cleared", async () => {
       await mount([P("hello", "a"), CB("c", "keep me")]);
       act(() => editor._tiptapEditor.commands.setTextSelection({ from: textPos(editor, "hello", 0), to: textPos(editor, "keep me", 3) }));
       blockTypeMode();
@@ -298,14 +298,14 @@ describe("區塊類型列", () => {
     });
   });
 
-  it("每顆鈕不搶焦點", async () => {
+  it("no button steals focus", async () => {
     await mount();
     blockTypeMode();
     for (const b of within(root()).getAllByRole("button")) expect(fireEvent.mouseDown(b)).toBe(false);
   });
 });
 
-describe("色盤", () => {
+describe("palette", () => {
   const colorsButton = () => button("Colors");
   const panel = () => document.querySelector<HTMLElement>("[data-mobile-color-panel]");
   const row = (section: "Text" | "Background") => within(panel()!).getByRole("group", { name: section });
@@ -319,7 +319,7 @@ describe("色盤", () => {
     formatMode();
   }
 
-  it("開色盤：模式是 color、色盤在膠囊下方的獨立區塊、顏色鈕是按下狀態", async () => {
+  it("opening the palette: mode is color, the palette is a separate block under the capsule, the color button is pressed", async () => {
     await mountSelected();
     expect(panel()).toBeNull();
     openColors();
@@ -331,20 +331,20 @@ describe("色盤", () => {
     expect(within(root()).getByRole("button", { name: "Back" })).toBeInTheDocument();
   });
 
-  it("開色盤：焦點從編輯器移進工具列、工具列不卸載", async () => {
+  it("opening the palette: focus moves from the editor into the toolbar and the toolbar does not unmount", async () => {
     await mountSelected();
     expect(inEditor()).toBe(true);
     openColors();
     expect(inEditor()).toBe(false);
     expect(root().contains(document.activeElement)).toBe(true);
     expect(document.activeElement).not.toBe(document.body);
-    // NotePage 靠焦點是否仍在工具列內判斷「還在編輯中」：再等一輪確認焦點沒掉到 body
+    // NotePage decides "still editing" from whether focus is still inside the toolbar: wait one more round to confirm focus did not fall to body
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
     expect(root().contains(document.activeElement)).toBe(true);
     expect(root().isConnected).toBe(true);
   });
 
-  it("兩列：文字色一列、背景色一列，第一格是預設、其後是九種內建色、最後是「自訂…」", async () => {
+  it("two rows: text colors in one, background colors in the other; the first cell is default, then nine built-in colors, last is \"Custom...\"", async () => {
     await mountSelected();
     openColors();
     const names = dict().color_picker.colors;
@@ -356,7 +356,7 @@ describe("色盤", () => {
     expect(groups).toEqual(["Text", "Background"]);
   });
 
-  it("色票視覺 32、點擊區 44", async () => {
+  it("swatches are 32 visually with a 44 hit area", async () => {
     await mountSelected();
     openColors();
     const cell = swatch("Text", "Red");
@@ -364,7 +364,7 @@ describe("色盤", () => {
     expect(cell.querySelector(".bn-color-icon")).toHaveClass("size-8");
   });
 
-  it("選文字色：套到原本的選取（編輯器已失焦），目前那格有外圈（aria-pressed）", async () => {
+  it("choosing a text color applies to the original selection (the editor has lost focus) and the current cell has an outer ring (aria-pressed)", async () => {
     await mountSelected();
     openColors();
     fireEvent.click(swatch("Text", "Red"));
@@ -377,7 +377,7 @@ describe("色盤", () => {
     expect(inEditor()).toBe(false);
   });
 
-  it("選背景色套到選取；預設（Auto）清除", async () => {
+  it("choosing a background color applies to the selection; default (Auto) clears it", async () => {
     await mountSelected();
     openColors();
     fireEvent.click(swatch("Background", "Yellow"));
@@ -391,7 +391,7 @@ describe("色盤", () => {
     expect(editor.getActiveStyles().textColor).toBeUndefined();
   });
 
-  it("「自訂…」在色盤裡換頁，輸入色碼套用後回到色票頁；顏色寫進選取", async () => {
+  it("\"Custom...\" flips the palette to another page; entering a hex and applying returns to the swatch page and the color is written to the selection", async () => {
     await mountSelected();
     openColors();
     fireEvent.click(within(row("Background")).getByRole("button", { name: "Custom…" }));
@@ -406,7 +406,7 @@ describe("色盤", () => {
     expect(root().contains(document.activeElement)).toBe(true);
   });
 
-  it("自訂頁的「返回」回到色票頁、不套用", async () => {
+  it("the custom page's Back returns to the swatch page without applying", async () => {
     await mountSelected();
     openColors();
     fireEvent.click(within(row("Text")).getByRole("button", { name: "Custom…" }));
@@ -417,9 +417,9 @@ describe("色盤", () => {
   });
 
   it.each([
-    ["再按一次顏色鈕", () => fireEvent.click(colorsButton())],
-    ["按返回", () => fireEvent.click(within(root()).getByRole("button", { name: "Back" }))],
-  ])("%s：回到 format 模式、焦點回編輯器、選取原樣保留", async (_name, leave) => {
+    ["pressing the color button again", () => fireEvent.click(colorsButton())],
+    ["pressing Back", () => fireEvent.click(within(root()).getByRole("button", { name: "Back" }))],
+  ])("%s: returns to format mode, focus returns to the editor, the selection is kept as it was", async (_name, leave) => {
     await mountSelected();
     const before = { from: editor.prosemirrorState.selection.from, to: editor.prosemirrorState.selection.to };
     openColors();
@@ -432,7 +432,7 @@ describe("色盤", () => {
     expect(colorsButton()).toHaveAttribute("aria-pressed", "false");
   });
 
-  describe("色盤高度", () => {
+  describe("palette height", () => {
     let viewport: EventTarget & { height: number; offsetTop: number; scale: number };
     let frames: Array<() => void>;
     const setKeyboard = (inset: number) => {
@@ -454,7 +454,7 @@ describe("色盤", () => {
     });
     const settle = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 260)));
 
-    it("鍵盤穩定開著時記下高度；鍵盤收起後色盤用記下的高度，工具列貼在色盤上方", async () => {
+    it("the height is remembered while the keyboard is stably open; after the keyboard collapses the palette uses the remembered height and the toolbar sits right above the palette", async () => {
       await mount([P("hello world", "a")], <MobileToolbarSpacer />);
       act(() => editor.focus());
       selectInBlock(editor, "a", 0, 5);
@@ -465,14 +465,14 @@ describe("色盤", () => {
       setKeyboard(0);
       expect(panel()!.style.minHeight).toBe("310px");
       expect(root().style.bottom).toBe("0px");
-      // 色盤佔掉的高度也要讓文件尾端留出來
+      // the palette's height must also be left free at the end of the document: 370 = 310 palette + 60 toolbar clearance (PHONE_EDIT_TOOLBAR_CLEARANCE_PX)
       expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("370px");
       fireEvent.click(colorsButton());
       expect(panel()).toBeNull();
       expect(document.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!.style.height).toBe("60px");
     });
 
-    it("鍵盤高度還在變動（收起動畫中途）不記", async () => {
+    it("a keyboard height that is still changing (mid collapse animation) is not remembered", async () => {
       await mount([P("hello world", "a")]);
       act(() => editor.focus());
       setKeyboard(310);
@@ -488,14 +488,14 @@ describe("色盤", () => {
       expect(panel()!.style.minHeight).toBe("310px");
     });
 
-    it("沒有記錄時用預設高度", async () => {
+    it("with no remembered height the default height is used", async () => {
       await mountSelected();
       openColors();
       expect(panel()!.style.minHeight).toBe("280px");
     });
   });
 
-  it("色盤開著時點內文（編輯器取回焦點）：回到 format 模式、色盤收起", async () => {
+  it("clicking body text while the palette is open (the editor regains focus): returns to format mode and the palette collapses", async () => {
     await mountSelected();
     openColors();
     expect(panel()).not.toBeNull();
@@ -504,7 +504,7 @@ describe("色盤", () => {
     expect(panel()).toBeNull();
   });
 
-  it("色盤開著時選取有反白 decoration、關掉後沒有；AI 框那把 key 不受影響", async () => {
+  it("while the palette is open the selection has a highlight decoration, removed after closing; the AI box's key is unaffected", async () => {
     await mountSelected();
     const extension = editor.getExtension(ShowSelectionExtension)!;
     act(() => extension.showSelection(true, SELECTION_AI_HIGHLIGHT_KEY));
@@ -519,7 +519,7 @@ describe("色盤", () => {
     expect([...extension.store.state.enabledSet]).toEqual([SELECTION_AI_HIGHLIGHT_KEY]);
   });
 
-  it("按返回離開色盤：自己那把反白 key 與屬性一定關掉", async () => {
+  it("leaving the palette with Back: its own highlight key and attributes are turned off", async () => {
     await mountSelected();
     const extension = editor.getExtension(ShowSelectionExtension)!;
     openColors();
@@ -529,7 +529,7 @@ describe("色盤", () => {
     expect(editor.domElement!.hasAttribute(MOBILE_COLOR_PANEL_OPEN_ATTR)).toBe(false);
   });
 
-  it("色盤開著時，游標避讓的下緣預留色盤高加工具列外框高", async () => {
+  it("while the palette is open, caret avoidance reserves at the bottom the palette height plus toolbar outer height", async () => {
     await mountSelected();
     const margin = () => (editor.prosemirrorView!.props as { scrollMargin?: { bottom?: number } }).scrollMargin?.bottom;
     expect(margin()).toBe(68);
@@ -539,7 +539,7 @@ describe("色盤", () => {
     expect(margin()).toBe(68);
   });
 
-  it("「自訂…」頁比記下的高度高：spacer 與游標避讓改用量到的高度", async () => {
+  it("the \"Custom...\" page is taller than the remembered height: the spacer and caret avoidance use the measured height", async () => {
     let report: () => void = () => {};
     vi.stubGlobal(
       "ResizeObserver",
@@ -562,7 +562,7 @@ describe("色盤", () => {
     expect((editor.prosemirrorView!.props as { scrollMargin?: { bottom?: number } }).scrollMargin?.bottom).toBe(488);
   });
 
-  it("minHeight 不超過可視高度扣掉工具列；轉向後重算", async () => {
+  it("minHeight does not exceed the visible height minus the toolbar; recomputed after rotation", async () => {
     vi.stubGlobal("innerHeight", 800);
     await mountSelected();
     openColors();
@@ -574,14 +574,14 @@ describe("色盤", () => {
     expect(panel()!.style.minHeight).toBe("188px");
   });
 
-  it("突變守衛：移進工具列的焦點只能是工具列內的元素", async () => {
+  it("focus moved into the toolbar must be an element inside the toolbar", async () => {
     await mountSelected();
     openColors();
     expect(document.activeElement!.closest("[data-mobile-edit-toolbar]")).toBe(root());
   });
 });
 
-describe("連結（真的對話框）", () => {
+describe("link (real dialog)", () => {
   function LinkHost({ target }: { target: AnyEditor }) {
     const { t } = useTranslation();
     const ref = useRef(target);
@@ -607,7 +607,7 @@ describe("連結（真的對話框）", () => {
     renderAiHost({ editor, children: <LinkHost target={editor} /> });
   }
 
-  it("選了字按連結：對話框預填那段字；送出（文字沒改）→ 只加連結、粗體保留、選取還在、焦點回編輯器", async () => {
+  it("selecting text then pressing link: the dialog is prefilled with that text; submitting (text unchanged) only adds the link, keeps bold and the selection and returns focus to the editor", async () => {
     await mountLinkHost();
     act(() => editor.focus());
     selectInBlock(editor, "a", 0, 5);
@@ -626,7 +626,7 @@ describe("連結（真的對話框）", () => {
     expect(editor.getSelectedText()).toBe("hello");
   });
 
-  it("游標在連結裡：網址預填成那個連結的網址", async () => {
+  it("caret inside a link: the URL is prefilled with that link's URL", async () => {
     editor = createTestEditor([{ id: "a", type: "paragraph", content: [{ type: "link", href: "https://example.com", content: [{ type: "text", text: "site", styles: {} }] }] } as never]);
     stubAiFetch({ actions: [] });
     renderAiHost({ editor, children: <LinkHost target={editor} /> });
@@ -638,8 +638,8 @@ describe("連結（真的對話框）", () => {
   });
 });
 
-describe("BlockNoteScope（工具列在 BlockNoteView 外面，與正式版同位置）", () => {
-  it("顏色鈕的 A 與色盤都在自己的 .bn-root 底下，不是編輯器的那一個", async () => {
+describe("BlockNoteScope (toolbar outside BlockNoteView, same position as production)", () => {
+  it("the color button's A and the palette are under their own .bn-root, not the editor's", async () => {
     editor = createTestEditor([P("hello world", "a")]);
     stubAiFetch({ actions: [] });
     render(
@@ -671,7 +671,7 @@ describe("BlockNoteScope（工具列在 BlockNoteView 外面，與正式版同�
   });
 });
 
-describe("連結（編輯既有連結、空白）", () => {
+describe("link (editing an existing link, whitespace)", () => {
   function LinkHost2({ target }: { target: AnyEditor }) {
     const { t } = useTranslation();
     const ref = useRef(target);
@@ -698,7 +698,7 @@ describe("連結（編輯既有連結、空白）", () => {
   const flatten = (content: { type: string; href?: string; text?: string; content?: { text: string }[] }[]) =>
     content.map((item) => (item.type === "link" ? `link(${item.href}):${item.content!.map((c) => c.text).join("")}` : item.text));
 
-  it("游標在既有連結裡改網址：文字不變、只換 href、不會多出字", async () => {
+  it("caret in an existing link, editing the URL: text unchanged, only href changes, no extra characters appear", async () => {
     editor = createTestEditor([
       { id: "a", type: "paragraph", content: [{ type: "link", href: "https://old.example", content: [{ type: "text", text: "site", styles: {} }] }, { type: "text", text: " tail", styles: {} }] } as never,
     ]);
@@ -713,7 +713,7 @@ describe("連結（編輯既有連結、空白）", () => {
     expect(flatten(editor.getBlock("a")!.content as never)).toEqual(["link(https://new.example):site", " tail"]);
   });
 
-  it("選取帶尾端空白、文字不改：整段文字逐字不變", async () => {
+  it("selection with trailing whitespace and text unchanged: the whole text is verbatim unchanged", async () => {
     editor = createTestEditor([P("hello world", "a")]);
     stubAiFetch({ actions: [] });
     renderAiHost({ editor, children: <LinkHost2 target={editor} /> });
@@ -728,7 +728,7 @@ describe("連結（編輯既有連結、空白）", () => {
     { id: "a", type: "paragraph", content: [{ type: "text", text: "x ", styles: {} }, { type: "link", href: "https://old.example", content: [{ type: "text", text: "site", styles: {} }] }, { type: "text", text: " tail", styles: {} }] } as never,
   ];
 
-  it("選取剛好是整條連結：文字與網址都預填、連結鈕是按下狀態", async () => {
+  it("selection is exactly the whole link: text and URL are both prefilled and the link button is pressed", async () => {
     editor = createTestEditor(LINK_DOC);
     stubAiFetch({ actions: [] });
     renderAiHost({ editor, children: <LinkHost2 target={editor} /> });
@@ -741,7 +741,7 @@ describe("連結（編輯既有連結、空白）", () => {
     expect(screen.getByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("https://old.example");
   });
 
-  it("連結在段首、選取剛好是整條連結：同樣預填、鈕按下", async () => {
+  it("link at the start of a paragraph and the selection is exactly the whole link: prefilled the same way, button pressed", async () => {
     editor = createTestEditor([
       { id: "a", type: "paragraph", content: [{ type: "link", href: "https://old.example", content: [{ type: "text", text: "site", styles: {} }] }, { type: "text", text: " tail", styles: {} }] } as never,
     ]);
@@ -755,7 +755,7 @@ describe("連結（編輯既有連結、空白）", () => {
     expect(await screen.findByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("https://old.example");
   });
 
-  it("游標在連結前、後：不算在連結裡（鈕不亮）", async () => {
+  it("caret before or after a link: not counted as inside the link (button not lit)", async () => {
     editor = createTestEditor(LINK_DOC);
     stubAiFetch({ actions: [] });
     renderAiHost({ editor, children: <LinkHost2 target={editor} /> });
@@ -769,7 +769,7 @@ describe("連結（編輯既有連結、空白）", () => {
     expect(button("Create link")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("選取從連結中間拉到連結外：當一般選取，新連結剛好涵蓋選取的字", async () => {
+  it("selection dragged from the middle of a link to outside it: treated as an ordinary selection, the new link covers exactly the selected text", async () => {
     editor = createTestEditor(LINK_DOC);
     stubAiFetch({ actions: [] });
     renderAiHost({ editor, children: <LinkHost2 target={editor} /> });
@@ -784,8 +784,8 @@ describe("連結（編輯既有連結、空白）", () => {
   });
 });
 
-describe("色盤長高時把選取捲出來", () => {
-  it("色盤實際高度變大（例如進「自訂…」頁）：送一筆 scrollIntoView，編輯器沒有焦點也送", async () => {
+describe("scrolling the selection into view when the palette grows", () => {
+  it("palette actual height grows (e.g. entering the \"Custom...\" page): sends a scrollIntoView, even when the editor has no focus", async () => {
     let report: () => void = () => {};
     vi.stubGlobal(
       "ResizeObserver",

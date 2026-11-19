@@ -35,7 +35,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 interface ServerOpts {
-  /** `GET /api/trash` 的 retentionDays；`"pending"`＝永不回。 */
+  /** `GET /api/trash` retentionDays; `"pending"` = never responds. */
   retention?: number | null | "pending";
   del?: () => Response | Promise<Response>;
   restore?: (ids: string[], call: number) => Response;
@@ -125,7 +125,7 @@ describe("FolderDeleteDialog", () => {
     act(() => dismissAllToasts());
   });
 
-  it("FD1 有筆記：標題、內文、送出 → DELETE /api/folders/A → toast＋Undo", async () => {
+  it("with notes: title, body, submit sends DELETE /api/folders/A, then toast + Undo", async () => {
     const calls = stubServer({ del: deleted(["p1", "p2"]) });
     renderDialog(A);
     expect(screen.getByRole("dialog", { name: "Delete folder “A”?" })).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe("FolderDeleteDialog", () => {
     await waitFor(() => expect(dialog()).toBeNull());
   });
 
-  it("FD2 Undo → POST /api/trash/restore body {ids: trashedNoteIds}", async () => {
+  it("Undo POSTs /api/trash/restore with body {ids: trashedNoteIds}", async () => {
     const calls = stubServer({ del: deleted(["p1", "p2"]), restore: () => json({ restored: [P1, P2], skipped: [] }) });
     renderDialog(A);
     await screen.findByText(DF3_A);
@@ -146,7 +146,7 @@ describe("FolderDeleteDialog", () => {
     await waitFor(() => expect(calls.filter((c) => c.key === "POST /api/trash/restore").map((c) => c.body)).toEqual([{ ids: ["p1", "p2"] }]));
   });
 
-  it("FD3 無筆記 → toast「Folder deleted」、沒有 Undo", async () => {
+  it("no notes: toast \"Folder deleted\", no Undo", async () => {
     stubServer({ del: deleted([]) });
     renderDialog(B);
     expect(await screen.findByText("This folder will be deleted. There are no notes in it.")).toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("FolderDeleteDialog", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("FD4 共享 → 標題 Remove folder、按鈕 Remove、toast 報放置篇數、沒有 Undo", async () => {
+  it("shared: title Remove folder, button Remove, the toast reports the number of placements, no Undo", async () => {
     stubServer();
     renderDialog(SF);
     expect(screen.getByRole("dialog", { name: "Remove folder “SF”?" })).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe("FolderDeleteDialog", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("FD5 403 folder_delete_blocked → 錯誤 toast、框關閉", async () => {
+  it("403 folder_delete_blocked: error toast, dialog closes", async () => {
     stubServer({ del: () => json({ error: { code: "folder_delete_blocked", message: "x" } }, 403) });
     renderDialog(A);
     await screen.findByText(DF3_A);
@@ -174,7 +174,7 @@ describe("FolderDeleteDialog", () => {
     await waitFor(() => expect(dialog()).toBeNull());
   });
 
-  describe("FD6 送出中關不掉、兩鈕 disabled", () => {
+  describe("cannot be closed while submitting, both buttons disabled", () => {
     async function startHeld() {
       let release: () => void = () => {};
       const held = new Promise<Response>((resolve) => (release = () => resolve(deleted(["p1", "p2"])())));
@@ -195,7 +195,7 @@ describe("FolderDeleteDialog", () => {
       await waitFor(() => expect(dialog()).toBeNull());
     });
 
-    it("✕", async () => {
+    it("the close button", async () => {
       const release = await startHeld();
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(dialog()).not.toBeNull();
@@ -203,7 +203,7 @@ describe("FolderDeleteDialog", () => {
       await waitFor(() => expect(dialog()).toBeNull());
     });
 
-    it("點框外", async () => {
+    it("clicking outside", async () => {
       const release = await startHeld();
       await clickOutside();
       expect(dialog()).not.toBeNull();
@@ -212,7 +212,7 @@ describe("FolderDeleteDialog", () => {
     });
   });
 
-  it("FD7 Undo 250 篇、第二批 429 → 錯誤 toast 的描述「Restored 200 notes」", async () => {
+  it("Undo of 250 notes where the second batch gets 429: the error toast's description is \"Restored 200 notes\"", async () => {
     const ids = Array.from({ length: 250 }, (_, i) => `n${i}`);
     stubServer({
       del: deleted(ids),
@@ -228,19 +228,19 @@ describe("FolderDeleteDialog", () => {
     expect(await screen.findByText("Restored 200 notes")).toBeInTheDocument();
   });
 
-  it("FD8 保留天數未載到 → purgeUnknown；載到 null → purgeNever", async () => {
+  it("retention days not yet loaded: purgeUnknown; loaded as null: purgeNever", async () => {
     stubServer({ retention: "pending" });
     renderDialog(A);
     expect(await screen.findByText(/when the trash's keeping period ends\./)).toBeInTheDocument();
   });
 
-  it("FD8 保留天數 null → purgeNever", async () => {
+  it("retention days null: purgeNever", async () => {
     stubServer({ retention: null });
     renderDialog(A);
     expect(await screen.findByText(/aren't deleted automatically\./)).toBeInTheDocument();
   });
 
-  it("FD9 開著的那篇在子樹裡：送出時 leavingRef 已設、成功導回首頁、toast 恰一則、Undo 導回那篇", async () => {
+  it("the open note is in the subtree: leavingRef is already set on submit, success navigates home, one toast, Undo navigates back to that note", async () => {
     const ctl = controls({ phase: "connected", role: "owner" });
     let leavingAtDelete: boolean | null = null;
     stubServer({
@@ -261,7 +261,7 @@ describe("FolderDeleteDialog", () => {
     await waitFor(() => expect(location()).toBe(canonicalNotePath(P2 as NoteDto)));
   });
 
-  it("FD9b 開著的筆記在被移除的共享資料夾裡 → 不離場：location 不變、leavingRef 維持 false、只出一則 toast", async () => {
+  it("the open note is inside the removed shared folder: it does not leave: location unchanged, leavingRef stays false, one toast", async () => {
     const ctl: NotePageControls = { noteId: "s1", state: { phase: "connected", role: "editor" }, leavingRef: { current: false }, openEdits: () => {} };
     let leavingAtDelete: boolean | null = null;
     stubServer({
@@ -280,7 +280,7 @@ describe("FolderDeleteDialog", () => {
     expect(document.querySelectorAll('li[data-swipe-direction][data-state="open"]')).toHaveLength(1);
   });
 
-  it("FD10 同上但 500：非終態 → leavingRef 撥回 false、不導頁", async () => {
+  it("the open note is in the subtree and the request fails with 500 (non-terminal): leavingRef is reset to false, no navigation", async () => {
     const ctl = controls({ phase: "connected", role: "owner" });
     stubServer({ del: () => json({ error: { code: "internal", message: "x" } }, 500) });
     renderDialog(A, { controls: ctl, path: canonicalNotePath(P2) });
@@ -291,7 +291,7 @@ describe("FolderDeleteDialog", () => {
     expect(location()).toBe(canonicalNotePath(P2));
   });
 
-  it("FD10 同上但 500：終態 → 導回首頁", async () => {
+  it("the open note is in the subtree and the request fails with 500 (terminal): navigates home", async () => {
     const ctl = controls({ phase: "deleted" });
     stubServer({ del: () => json({ error: { code: "internal", message: "x" } }, 500) });
     renderDialog(A, { controls: ctl, path: canonicalNotePath(P2) });

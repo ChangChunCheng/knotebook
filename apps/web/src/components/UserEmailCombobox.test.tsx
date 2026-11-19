@@ -47,7 +47,7 @@ function Harness({ onSubmit, exclude, inDialog = false }: { onSubmit: (email: st
   );
 }
 
-/** 預設 harness 關 retry；要守 `useUserSuggestions` 自己的 `retry: false` 的案傳 `new QueryClient()`（不關 retry）進來。 */
+/** The default harness disables retry; cases guarding `useUserSuggestions`' own `retry: false` pass `new QueryClient()` (retry left on). */
 function renderHarness(
   props: Parameters<typeof Harness>[0],
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -77,7 +77,7 @@ describe("UserEmailCombobox", () => {
     vi.unstubAllGlobals();
   });
 
-  it("≥ 2 字、debounce 之後才查；清單列顯示名稱＋email；ARIA 狀態", async () => {
+  it(">= 2 characters and after the debounce before querying; rows show name + email; ARIA state", async () => {
     const fetchMock = suggestFetch();
     renderHarness({ onSubmit: vi.fn() });
     expect(input()).toHaveAttribute("aria-expanded", "false");
@@ -97,7 +97,7 @@ describe("UserEmailCombobox", () => {
     expect(input()).not.toHaveAttribute("aria-activedescendant");
   });
 
-  it("鍵盤：↓／↑ 移動（循環）、Enter 選取填入 email 且不送出表單", async () => {
+  it("keyboard: Down/Up move (wrapping), Enter selects and fills the email without submitting the form", async () => {
     suggestFetch();
     const onSubmit = vi.fn();
     renderHarness({ onSubmit });
@@ -120,12 +120,11 @@ describe("UserEmailCombobox", () => {
     expect(input()).toHaveAttribute("aria-expanded", "false");
     expect(onSubmit).not.toHaveBeenCalled();
 
-    // 選完再按 Enter（沒有選中項目）→ 照常送出表單
     fireEvent.submit(input().form!);
     expect(onSubmit).toHaveBeenCalledWith("andy@example.com");
   });
 
-  it("點選項目填入 email", async () => {
+  it("clicking an option fills the email", async () => {
     suggestFetch();
     renderHarness({ onSubmit: vi.fn() });
     const list = await typeAndWaitForList("an");
@@ -136,7 +135,7 @@ describe("UserEmailCombobox", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("沒有選中項目時 Enter 不攔：打的完整 email 照樣送出", async () => {
+  it("Enter does not intercept when nothing is highlighted: a fully typed email submits as usual", async () => {
     suggestFetch([]);
     const onSubmit = vi.fn();
     renderHarness({ onSubmit });
@@ -146,7 +145,7 @@ describe("UserEmailCombobox", () => {
     expect(onSubmit).toHaveBeenCalledWith("someone@example.com");
   });
 
-  it("Esc 收起清單，但不關掉外層 Dialog", async () => {
+  it("Esc closes the list but not the outer Dialog", async () => {
     suggestFetch();
     const onSubmit = vi.fn();
     renderHarness({ onSubmit, inDialog: true });
@@ -155,12 +154,12 @@ describe("UserEmailCombobox", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
-    // 清單已收起時 Esc 照常交給 Dialog
+    // With the list already closed, Esc is left to the Dialog
     fireEvent.keyDown(input(), { key: "Escape" });
     expect(onSubmit).toHaveBeenCalledWith("__dialog_closed__");
   });
 
-  it("excludeUserIds 裡的人不出現", async () => {
+  it("people in excludeUserIds are not listed", async () => {
     suggestFetch();
     renderHarness({ onSubmit: vi.fn(), exclude: [ANN.userId] });
     const list = await typeAndWaitForList("an");
@@ -169,16 +168,16 @@ describe("UserEmailCombobox", () => {
     expect(options[0]).toHaveAccessibleName("Andy Exampleandy@example.com");
   });
 
-  it("查詢失敗 → 沒有清單，輸入框照常可用；不重試（恰打一次）", async () => {
+  it("query failure: no list, input stays usable, no retry (one request)", async () => {
     const fetchMock = vi.fn(() => Promise.resolve({ ok: false, status: 429, json: () => Promise.resolve({ error: { code: "too_many_requests", message: "x" } }) } as unknown as Response));
     vi.stubGlobal("fetch", fetchMock);
-    // 這一案刻意用**不關 retry** 的 QueryClient：守的是 `useUserSuggestions` 自己的 `retry: false`（被節流了還重試
-    // 只會更糟）。元件不顯示錯誤，所以等查詢本身進 error 態；拿掉 `retry: false` 的話 query-core 預設重試 3 次
-    //（退避約 7 秒，塞得進全域等待上限），進 error 態時已打 4 次 → 計次紅。
+    // Deliberately a QueryClient with retry left on: this guards `useUserSuggestions`' own `retry: false` (retrying a throttled request
+    // only makes it worse). The component shows no error, so wait for the query itself to reach error; without `retry: false` query-core
+    // retries 3 times by default (about 7s of backoff, which fits inside the global wait limit), so 4 requests would have been made by then and the count assertion fails.
     const queryClient = new QueryClient();
     renderHarness({ onSubmit: vi.fn() }, queryClient);
     fireEvent.change(input(), { target: { value: "an" } });
-    // 掛載時空字串那支（enabled false）也在快取裡、恆 pending，所以找「有任何一支進了 error」。
+    // The empty-string query from mount (enabled false) is also in the cache and stays pending, so look for any query in error.
     const anyErrored = () => queryClient.getQueryCache().findAll({ queryKey: ["userSuggest"] }).some((q) => q.state.status === "error");
     await waitFor(() => expect(anyErrored()).toBe(true));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -188,8 +187,8 @@ describe("UserEmailCombobox", () => {
 });
 
 /**
- * 群組加成員那格（#331 收多個地址）：`multiple`；`locked` 勾起來＝批次加入跑的期間（readOnly）。
- * `pasteAs`：比照 #331 的 handlePaste——擋掉預設貼上、在外層直接改值（不經過 onChange）。
+ * Group add-member field (#331, several addresses): `multiple`; `locked` set = batch add running (readOnly).
+ * `pasteAs`: like GroupMembersSection's handlePaste - prevents the default paste and sets the value outside (not through onChange).
  */
 function MultiHarness({ inputRef, pasteAs }: { inputRef?: RefObject<HTMLInputElement | null>; pasteAs?: string }) {
   const [value, setValue] = useState("");
@@ -229,12 +228,11 @@ function renderMulti(props: Parameters<typeof MultiHarness>[0] = {}) {
   );
 }
 
-/** 打字：值與游標一起換（游標預設在最後）。 */
 function typeAt(text: string, caret = text.length): void {
   fireEvent.change(input(), { target: { value: text, selectionStart: caret, selectionEnd: caret } });
 }
 
-describe("UserEmailCombobox multiple（群組加成員的多地址框）", () => {
+describe("UserEmailCombobox multiple (group add-member field with several addresses)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -243,7 +241,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     vi.unstubAllGlobals();
   });
 
-  it("text＋inputMode email（不是 type=email：原生驗證會擋多個地址）；ref 指向輸入框", () => {
+  it("text + inputMode email (not type=email: native validation would reject several addresses); ref points at the input", () => {
     suggestFetch();
     const ref = createRef<HTMLInputElement>();
     renderMulti({ inputRef: ref });
@@ -252,7 +250,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(ref.current).toBe(input());
   });
 
-  it("改中間那個地址：只拿游標所在的地址去查；選取只換那一個、不多補分隔，游標放在分隔後面", async () => {
+  it("editing a middle address queries only the address at the caret; selecting replaces just that one without appending a separator and puts the caret after the separator", async () => {
     const fetchMock = suggestFetch();
     renderMulti();
     typeAt("a@x.com, an, c@y.com", "a@x.com, an".length);
@@ -267,7 +265,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("全形分隔（，；、與全形空白）也算邊界；在最後一個地址選取 → 補「, 」，其他地址原樣不動", async () => {
+  it("full-width separators (U+FF0C, U+FF1B, U+3001 and U+3000) also count as boundaries; selecting at the last address appends \", \" and leaves the other addresses untouched", async () => {
     const fetchMock = suggestFetch();
     renderMulti();
     typeAt("a@x.com，b@y.com；c@z.com、d@w.com　an");
@@ -280,7 +278,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("選完接著打下一個：查的是新打的那一段，框裡已有的地址不再建議（不分大小寫）", async () => {
+  it("after a selection, typing the next address queries only the new segment; addresses already in the field are not suggested again (case-insensitive)", async () => {
     const fetchMock = suggestFetch();
     renderMulti();
     typeAt("ANN@example.com, an");
@@ -291,7 +289,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(options[0]).toHaveAccessibleName("Andy Exampleandy@example.com");
   });
 
-  it("游標在分隔上（前後都不是地址）→ 不查、不開清單", async () => {
+  it("caret on a separator (no address on either side): no query, list stays closed", async () => {
     const fetchMock = suggestFetch();
     renderMulti();
     typeAt("ann@example.com, ");
@@ -300,7 +298,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("readOnly（批次加入跑的期間）：開著的清單收起，↓ 不開、改值也不開，不能選取", async () => {
+  it("readOnly (batch add running): an open list closes, Down and value changes do not open it, nothing can be selected", async () => {
     suggestFetch();
     renderMulti();
     typeAt("a@x.com, an");
@@ -318,15 +316,15 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(input()).toHaveValue("a@x.com, and");
   });
 
-  it("游標移到另一個地址 → 舊地址的清單收起，Enter 不會換掉游標所在的地址", async () => {
+  it("moving the caret to another address closes the old address's list; Enter does not replace the address under the caret", async () => {
     suggestFetch();
     renderMulti();
-    // React 的 onSelect 要先看到 focusin（記下作用中的輸入框），之後 mouseup／keyup 時比對選取範圍有沒有變
+    // React's onSelect must first see focusin (to record the active input); on later mouseup/keyup it compares the selection range for changes
     input().focus();
     fireEvent.focusIn(input());
     typeAt("bob@example.com, an");
     await screen.findByRole("listbox", { name: "People you know" });
-    // 點一下把游標放進 bob 那個地址（用 mouseup：前面的測試按過選項的 mousedown，React 要等 mouseup 才再算選取）
+    // Put the caret inside bob's address with mouseup: React only recomputes the selection on mouseup (an option's mousedown in earlier tests does not count)
     input().setSelectionRange(2, 2);
     fireEvent.mouseUp(input());
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -334,7 +332,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(input()).toHaveValue("bob@example.com, an");
   });
 
-  it("外層接手的貼上（擋掉預設、直接改值）→ 清單收起", async () => {
+  it("a paste handled by the outer component (default prevented, value set directly) closes the list", async () => {
     suggestFetch();
     renderMulti({ pasteAs: "a@x.com, b@y.com" });
     typeAt("an");
@@ -344,7 +342,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("選取後值沒變（選的就是打完整的那個、後面已有分隔）→ 游標放到分隔後；接著打字游標不會被拉回去", async () => {
+  it("selection that leaves the value unchanged (the selected address is the fully typed one and a separator already follows) moves the caret after the separator; typing on does not pull the caret back", async () => {
     suggestFetch();
     renderMulti();
     typeAt("ann@example.com, c@y.com", 2);
@@ -358,7 +356,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
     expect(input().selectionStart).toBe("ann@example.com, c@y.comx".length);
   });
 
-  it("輸入法選字中的 Enter 不選取（交給輸入法）", async () => {
+  it("Enter while an IME is composing does not select (left to the IME)", async () => {
     suggestFetch();
     renderMulti();
     typeAt("an");
@@ -370,7 +368,7 @@ describe("UserEmailCombobox multiple（群組加成員的多地址框）", () =>
   });
 });
 
-describe("UserEmailCombobox 選項的頭貼", () => {
+describe("UserEmailCombobox option avatars", () => {
   const REF = { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", v: 4 };
 
   beforeEach(async () => {
@@ -387,7 +385,7 @@ describe("UserEmailCombobox 選項的頭貼", () => {
     return within(list).getAllByRole("option")[0]!;
   }
 
-  it("有頭貼：選項首位是頭像，src 帶版本、lazy，外層 aria-hidden", async () => {
+  it("with an avatar: the option starts with the image, src carries the version and is lazy, the wrapper is aria-hidden", async () => {
     const option = await firstOption([{ ...ANN, avatar: REF }]);
     const avatar = option.firstElementChild as HTMLElement;
     const img = avatar.querySelector("img");
@@ -396,7 +394,7 @@ describe("UserEmailCombobox 選項的頭貼", () => {
     expect(avatar).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("avatar 為 null：首字、沒有 img；可及名稱不含首字", async () => {
+  it("avatar null: initial letter and no img; the accessible name excludes the initial", async () => {
     const option = await firstOption([ANN]);
     const avatar = option.firstElementChild as HTMLElement;
     expect(avatar.querySelector("img")).toBeNull();
@@ -404,14 +402,14 @@ describe("UserEmailCombobox 選項的頭貼", () => {
     expect(screen.getByRole("option", { name: "Ann Exampleann@example.com" })).toBe(option);
   });
 
-  it("舊 server 沒有 avatar 欄：不丟錯、顯示首字", async () => {
+  it("old server without the avatar field: no error, shows the initial", async () => {
     const legacy = { ...ANN } as Record<string, unknown>;
     delete legacy.avatar;
     const option = await firstOption([legacy as unknown as UserSuggestionDto]);
     expect((option.firstElementChild as HTMLElement).textContent).toBe("A");
   });
 
-  it("圖載入失敗 → 退回首字", async () => {
+  it("image load failure falls back to the initial", async () => {
     const option = await firstOption([{ ...ANN, avatar: REF }]);
     const avatar = option.firstElementChild as HTMLElement;
     fireEvent.error(avatar.querySelector("img")!);

@@ -7,8 +7,8 @@ import { ManagementShell, type ManagementNavItemSpec } from "./ManagementShell";
 import { rememberPanelReturn, type PanelLocationState } from "@/lib/panel-return";
 import { stubLayoutTier } from "@/test/layout-tier";
 
-// #247。jsdom 不套 Tailwind：`hidden`／`flex` 只能以 class 斷言，真實顯示由 e2e 截圖驗。
-// matchMedia：`src/test/setup.ts:28-40` 的全域 stub 恆回 matches:false（＝窄視窗）；寬視窗案自己 stubGlobal。
+// #247. jsdom does not apply Tailwind: `hidden`/`flex` can only be asserted via classes, real display is verified by e2e screenshots.
+// matchMedia: the global stub in `src/test/setup.ts` always returns matches:false (= narrow viewport); wide-viewport cases stub it themselves.
 
 const ITEMS: ManagementNavItemSpec[] = [
   { to: "/settings/account", label: "Account info" },
@@ -76,7 +76,7 @@ function stubWideViewport() {
   );
 }
 
-describe("ManagementShell（#247）", () => {
+describe("ManagementShell (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -84,7 +84,7 @@ describe("ManagementShell（#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("slot：標題是唯一的 DialogTitle、副文字、描述、計數、children 落在 [data-management-content]", async () => {
+  it("slots: the title is the DialogTitle, with subtext, description and count; children land in [data-management-content]", async () => {
     renderShell({ subtitle: "Admin" });
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const headings = within(dialog).getAllByRole("heading");
@@ -93,27 +93,27 @@ describe("ManagementShell（#247）", () => {
     expect(dialog).toHaveAccessibleDescription("Panel description");
     expect(within(dialog).getByText("Admin")).toBeInTheDocument();
     expect(within(dialog).getByText("7")).toHaveAttribute("aria-hidden", "true");
-    expect(within(dialog).getByRole("link", { name: "Storage" })).toBeInTheDocument(); // 計數不進可及名稱
+    expect(within(dialog).getByRole("link", { name: "Storage" })).toBeInTheDocument(); // the count does not enter the accessible name
     expect(within(dialog).getByRole("navigation", { name: "Settings" })).toBeInTheDocument();
     expect(contentBox()).toContainElement(screen.getByText("slot content"));
     expect(contentBox()).toHaveAttribute("tabindex", "-1");
   });
 
-  it("項次轉傳 backgroundLocation（突變：拿掉 state 轉傳要紅）", async () => {
+  it("items forward backgroundLocation", async () => {
     renderShell({ state: { backgroundLocation: BG } });
     fireEvent.click(await screen.findByRole("link", { name: "Account info" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/account"));
     expect(screen.getByTestId("location")).toHaveAttribute("data-bg", "/n/tester/my-note");
   });
 
-  it("沒有 backgroundLocation 時不帶 state（深連結）", async () => {
+  it("no state is passed without backgroundLocation (deep link)", async () => {
     renderShell();
     fireEvent.click(await screen.findByRole("link", { name: "Account info" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/account"));
     expect(screen.getByTestId("location")).toHaveAttribute("data-bg", "");
   });
 
-  it("end 生效：/groups/g1/roles 時帶 end 的「Members」沒有 aria-current", async () => {
+  it("end takes effect: at /groups/g1/roles \"Members\" (with end) has no aria-current", async () => {
     renderShell({
       path: "/groups/g1/roles",
       items: [
@@ -125,17 +125,16 @@ describe("ManagementShell（#247）", () => {
     expect(screen.getByRole("link", { name: "Members" })).not.toHaveAttribute("aria-current");
   });
 
-  it("✕ 呼叫 onOpenChange(false)", async () => {
+  it("the close button calls onOpenChange(false)", async () => {
     const { onOpenChange } = renderShell();
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("窄寬度停在項次層：左卡也有一顆 Close（md:hidden），點了關；內容層只有右卡那一顆", async () => {
+  it("narrow width stays on the items layer: the left card also has a Close button (md:hidden) that closes when clicked; the content layer has the right card's Close", async () => {
     const { onOpenChange } = renderShell();
     await settle();
-    // 內容層：只有右卡的 ✕。
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
     const closes = screen.getAllByRole("button", { name: "Close" });
@@ -147,7 +146,7 @@ describe("ManagementShell（#247）", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("兩顆 ✕ 與返回鈕在觸控裝置都撐出 44px 的點擊範圍", async () => {
+  it("the two close buttons and the back button all extend a 44px hit area on touch devices", async () => {
     renderShell();
     await settle();
     const right = screen.getByRole("button", { name: "Close" });
@@ -155,24 +154,24 @@ describe("ManagementShell（#247）", () => {
     for (const button of [right, back]) expect(button).toHaveClass("pointer-coarse:after:-inset-2", "pointer-coarse:after:absolute");
     fireEvent.click(back);
     const itemsCard = document.querySelector<HTMLElement>('[data-management-card="items"]')!;
-    // 與右卡的 ✕ 同一個位置（卡的右上角 right-2 top-2），兩層切換時不跳。
+    // Same position as the right card's close button (the card's top right, right-2 top-2), so switching layers does not make it jump.
     expect(within(itemsCard).getByRole("button", { name: "Close" })).toHaveClass("pointer-coarse:after:-inset-2", "absolute", "right-2", "top-2");
   });
 
-  it("Esc 呼叫 onOpenChange(false)", async () => {
+  it("Esc calls onOpenChange(false)", async () => {
     const { onOpenChange } = renderShell();
     await settle();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
-  it("面板內恰一顆 Close（突變：拿掉 dialog.tsx 的 size==='panel' 判斷要紅）", async () => {
+  it("the panel has a single Close button (relies on the size==='panel' check in dialog.tsx)", async () => {
     renderShell();
     await settle();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
   });
 
-  it("右卡 DOM 順序：返回鈕 → ✕ → 內容容器", async () => {
+  it("right card DOM order: back button -> close button -> content container", async () => {
     renderShell();
     await screen.findByRole("dialog");
     const kids = Array.from(contentCard().children);
@@ -181,7 +180,7 @@ describe("ManagementShell（#247）", () => {
     expect(kids[2]).toBe(contentBox());
   });
 
-  it("開啟後焦點在返回鈕、不是任何項次（Radix removeLinks；突變：加 onOpenAutoFocus 聚焦項次要紅）", async () => {
+  it("after opening, focus is on the back button, not on any item (Radix removeLinks; an onOpenAutoFocus that focuses an item would break it)", async () => {
     renderShell();
     const back = await screen.findByRole("button", { name: "Back to sections" });
     await waitFor(() => expect(document.activeElement).toBe(back));
@@ -189,7 +188,7 @@ describe("ManagementShell（#247）", () => {
     for (const link of screen.getAllByRole("link")) expect(document.activeElement).not.toBe(link);
   });
 
-  it("雙層初始＝內容層：左卡 hidden＋md:flex（不含裸 flex）、右卡 flex", async () => {
+  it("two layers start on the content layer: left card hidden + md:flex (no bare flex), right card flex", async () => {
     renderShell();
     await screen.findByRole("dialog");
     expect(itemsCard().classList).toContain("hidden");
@@ -199,7 +198,7 @@ describe("ManagementShell（#247）", () => {
     expect(contentCard().classList).not.toContain("hidden");
   });
 
-  it("按返回：左卡顯示、右卡隱藏（不含裸 flex）、網址不變、焦點在 aria-current 的項次", async () => {
+  it("pressing back: left card shows, right card hides (no bare flex), the URL is unchanged, focus is on the aria-current item", async () => {
     renderShell();
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
@@ -212,7 +211,7 @@ describe("ManagementShell（#247）", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("link", { name: "Sign-in" })));
   });
 
-  it("返回後點「目前所在」的項次：pathname 不變也要回內容層，焦點在 [data-management-content]", async () => {
+  it("after back, clicking the current item: returns to the content layer even though pathname is unchanged, focus on [data-management-content]", async () => {
     renderShell();
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Back to sections" }));
@@ -224,7 +223,7 @@ describe("ManagementShell（#247）", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/settings/login");
   });
 
-  it("連續兩次「返回→點同一項」都會把焦點送到內容容器（seq 遞增，不是只觸發一次）", async () => {
+  it("two consecutive \"back -> click the same item\" both send focus to the content container (seq increments, it does not fire once)", async () => {
     renderShell();
     await settle();
     for (let i = 0; i < 2; i += 1) {
@@ -235,7 +234,7 @@ describe("ManagementShell（#247）", () => {
     }
   });
 
-  it("寬視窗（matchMedia matches:true）：點項次不搬焦點", async () => {
+  it("wide viewport (matchMedia matches:true): clicking an item does not move focus", async () => {
     stubWideViewport();
     renderShell();
     await settle();
@@ -247,7 +246,7 @@ describe("ManagementShell（#247）", () => {
   });
 });
 
-describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () => {
+describe("ManagementShell on phones (< 640): back stack of the bottom sheet", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -255,7 +254,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     vi.unstubAllGlobals();
   });
 
-  it("MS-P1 從選單開（panelStart＋panelReturn）：停在項次清單；左上角「Back to menu」、沒有 ✕；點它 → sheet 收完後 onOpenChange(false)，再重開選單", async () => {
+  it("opened from the menu (panelStart + panelReturn): stays on the item list; top-left \"Back to menu\", no close button; clicking it calls onOpenChange(false) after the sheet finishes closing, then reopens the menu", async () => {
     stubLayoutTier("phone");
     const reopen = vi.fn();
     const state: PanelLocationState = { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) };
@@ -273,7 +272,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(onOpenChange.mock.invocationCallOrder[0]!).toBeLessThan(reopen.mock.invocationCallOrder[0]!);
   });
 
-  it("MS-P2 選項次 → 內容層：左上角同一個位置是「Back to sections」、仍沒有 ✕；按它回項次清單", async () => {
+  it("choosing an item -> content layer: the same top-left position shows \"Back to sections\", still no close button; pressing it returns to the item list", async () => {
     stubLayoutTier("phone");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list" } satisfies PanelLocationState });
     await settle();
@@ -288,7 +287,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(within(itemsCard()).getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("MS-P3 深連結（沒有 panelStart）：直接停在那一頁；退到項次清單後的「‹」名稱是 Close、只關不重開", async () => {
+  it("deep link (no panelStart): stays on that page; after backing out to the item list the back arrow is named Close and only closes without reopening", async () => {
     stubLayoutTier("phone");
     const reopen = vi.fn();
     rememberPanelReturn(reopen);
@@ -302,7 +301,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(reopen).not.toHaveBeenCalled();
   });
 
-  it("MS-P4 內容層按 Esc：整個關掉、不重開選單", async () => {
+  it("Esc on the content layer: closes everything and does not reopen the menu", async () => {
     stubLayoutTier("phone");
     const reopen = vi.fn();
     const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
@@ -314,7 +313,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(reopen).not.toHaveBeenCalled();
   });
 
-  it("MS-P6 點 sheet 外（上方的縫）：手機整個關掉、不重開選單；640 以上點外面不關（有未存輸入的表單）", async () => {
+  it("clicking outside the sheet (the gap above): closes everything on phones and does not reopen the menu; at 640 and above clicking outside does not close (forms may have unsaved input)", async () => {
     stubLayoutTier("phone");
     const reopen = vi.fn();
     const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
@@ -333,7 +332,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
     expect(wide.onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("MS-P5 640 以上：panelStart 不作用（照舊停在內容層），有 ✕、沒有「Back to menu」", async () => {
+  it("640 and above: panelStart has no effect (stays on the content layer), there is a close button and no \"Back to menu\"", async () => {
     stubLayoutTier("overlay");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(() => {}) } });
     await settle();
@@ -343,7 +342,7 @@ describe("ManagementShell 手機（< 640）：貼底 sheet 的返回堆疊", () 
   });
 });
 
-describe("ManagementShell 手機：「返回選單」只給真的從選單打開的那一次", () => {
+describe("ManagementShell on phones: \"Back to menu\" only for the open that really came from the menu", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -351,16 +350,16 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     vi.unstubAllGlobals();
   });
 
-  it("MS-P7 打開後 panelStart／panelReturn 從這一筆歷史拿掉（只留 backgroundLocation）；重新整理或上一頁／下一頁回到這一筆＝深連結：停在那一頁，清單的「‹」是 Close、不重開選單", async () => {
+  it("after opening, panelStart/panelReturn are removed from this history entry (only backgroundLocation stays); a reload or back/forward to this entry = deep link: stays on that page, the list's back arrow is Close and does not reopen the menu", async () => {
     stubLayoutTier("phone");
     const reopen = vi.fn();
     renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } satisfies PanelLocationState });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveAttribute("data-state-keys", "backgroundLocation"));
-    // 這一筆仍是從選單開的那一次：清單上的「‹」照樣是 Back to menu
+    // This entry is still the one opened from the menu: the list's back arrow is still Back to menu
     expect(within(itemsCard()).getByRole("button", { name: "Back to menu" })).toBeInTheDocument();
     cleanup();
 
-    // 同一筆歷史再掛一次（重新整理、上一頁／下一頁）：state 只剩 backgroundLocation
+    // Mounting the same history entry again (reload, back/forward): state keeps only backgroundLocation
     const { onOpenChange } = renderShell({ state: { backgroundLocation: BG } });
     await settle();
     expect(contentCard().classList).toContain("flex");
@@ -372,7 +371,7 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(reopen).not.toHaveBeenCalled();
   });
 
-  it("MS-P8 在 640 以上從選單打開、之後縮到手機寬度：清單的「‹」是 Close，按了只關、不重開選單", async () => {
+  it("opened from the menu at 640 or wider and then shrunk to phone width: the list's back arrow is Close, it only closes and does not reopen the menu", async () => {
     const tier = stubLayoutTier("overlay");
     const reopen = vi.fn();
     const { onOpenChange } = renderShell({ state: { backgroundLocation: BG, panelStart: "list", panelReturn: rememberPanelReturn(reopen) } });
@@ -386,7 +385,7 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(reopen).not.toHaveBeenCalled();
   });
 
-  it("MS-P9 手機上卡貼齊 sheet：托盤不留內距，卡只有上圓角、左右與底沒有邊框，safe area 是卡的內距", async () => {
+  it("on phones the card is flush with the sheet: the tray has no padding, the card has only top rounded corners and no border on the sides and bottom, the safe area is the card's padding", async () => {
     stubLayoutTier("phone");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
     await settle();
@@ -396,12 +395,12 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     for (const card of [itemsCard(), contentCard()]) expect(card).toHaveClass("max-sm:rounded-t-xl", "max-sm:rounded-b-none", "max-sm:border-x-0", "max-sm:border-b-0");
     expect(itemsCard()).toHaveClass("max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]", "max-sm:pl-[max(1rem,env(safe-area-inset-left))]");
     expect(contentCard()).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]", "max-sm:pl-[env(safe-area-inset-left)]");
-    // 卡貼齊 sheet 左緣：兩層的「‹」自己退開左側 safe area
+    // The card is flush with the sheet's left edge: the back arrows of both layers step aside by the left safe area themselves
     expect(within(itemsCard()).getByRole("button", { name: "Close" })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
     expect(within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true })).toHaveClass("max-sm:left-[max(0.5rem,env(safe-area-inset-left))]");
   });
 
-  it("MS-P10 手機上面板與選單 sheet 同一個表面：卡用 popover 底色、上圓角 12px，托盤不再有毛玻璃與品牌底", async () => {
+  it("on phones the panel and the menu sheet share one surface: the card uses the popover background with 12px top corners, and the tray no longer has frosted glass or the brand background", async () => {
     stubLayoutTier("phone");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
     await settle();
@@ -414,7 +413,7 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(tray.className).not.toMatch(/max-sm:rounded-t-2xl/);
   });
 
-  it("MS-P11 手機上項次清單的列像選單的列：48px 高、16px 一般字重、相貼、4px 圓角、灰色按壓／焦點底色，目前項次也沒有常駐品牌色；列尾有「›」", async () => {
+  it("on phones the item list rows look like menu rows: 48px high, 16px regular weight, adjacent, 4px corners, grey press/focus background, the current item has no persistent brand color; each row ends with a chevron", async () => {
     stubLayoutTier("phone");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
     await settle();
@@ -434,15 +433,15 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
         "max-sm:focus-visible:bg-accent",
       );
     }
-    // 清單區自己捲動（矮螢幕放不下的列要捲得到），列頭在它之外
+    // The list area scrolls itself (rows that do not fit a short screen must be reachable); the row header sits outside it
     const nav = within(itemsCard()).getByRole("navigation");
     expect(nav).toHaveClass("max-sm:gap-0", "max-sm:min-h-0", "max-sm:flex-1", "max-sm:overflow-y-auto", "max-sm:-mx-2", "max-sm:px-2");
     expect(nav.contains(within(itemsCard()).getByText("Settings"))).toBe(false);
-    // 目前所在的項次（/settings/login）：手機把品牌底與粗體都蓋掉
+    // The current item (/settings/login): on phones the brand background and bold are overridden
     const current = within(itemsCard()).getByRole("link", { name: "Sign-in" });
     expect(current).toHaveClass("max-sm:bg-transparent", "max-sm:font-normal", "max-sm:text-foreground");
     expect(rows.filter((row) => row !== current).some((row) => /max-sm:bg-transparent/.test(row.className))).toBe(false);
-    // 「›」只在手機顯示、不進可及名稱；有計數的列（Storage）計數在「›」之前
+    // The chevron shows only on phones and is not part of the accessible name; in a row with a count (Storage) the count comes before the chevron
     for (const row of rows) {
       const chevron = row.querySelector("svg");
       expect(chevron).not.toBeNull();
@@ -453,7 +452,7 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(within(itemsCard()).getByRole("link", { name: "Storage" }).querySelector("svg")).not.toHaveClass("ml-auto");
   });
 
-  it("MS-P12 手機上標題 18px、列頭有髮絲線，兩層的「‹」落在同一個位置且透明底", async () => {
+  it("on phones the title is 18px and the row header has a hairline; the back arrows of both layers sit in the same position with a transparent background", async () => {
     stubLayoutTier("phone");
     renderShell({ state: { backgroundLocation: BG, panelStart: "list" } });
     await settle();
@@ -463,14 +462,14 @@ describe("ManagementShell 手機：「返回選單」只給真的從選單打開
     expect(header).toHaveClass("max-sm:h-12", "max-sm:border-b", "max-sm:border-border");
     const listBack = within(itemsCard()).getByRole("button", { name: "Close" });
     const contentBack = within(contentCard()).getByRole("button", { name: "Back to sections", hidden: true });
-    // 「‹」的底色是 sheet 的表面（看起來透明，但捲動的內容經過時遮住）；內容區頂端讓出「‹」的位置
+    // The back arrow's background is the sheet's surface (looks transparent but hides content scrolling past); the content area's top leaves room for the arrow
     for (const back of [listBack, contentBack]) expect(back).toHaveClass("max-sm:top-[26px]", "max-sm:bg-popover");
     expect(contentBox()).toHaveClass("pt-12", "max-sm:pt-16");
-    // 列頭的髮絲線拉滿卡的全寬（往兩側退掉卡的內距），標題左緣不動
+    // The header's hairline spans the card's full width (extending past the card's padding on both sides), the title's left edge does not move
     expect(header).toHaveClass("max-sm:-ml-[max(1rem,env(safe-area-inset-left))]", "max-sm:-mr-[max(1rem,env(safe-area-inset-right))]", "max-sm:pl-[calc(max(1rem,env(safe-area-inset-left))+2.5rem)]");
   });
 
-  it("MS-P13 640 以上的列、標題與卡維持原樣：36px 高、14px、品牌色的目前項次、沒有手機專屬的底色", async () => {
+  it("at 640 and above the rows, title and card stay as before: 36px high, 14px, brand-colored current item, no phone-specific background", async () => {
     stubWideViewport();
     renderShell();
     await settle();

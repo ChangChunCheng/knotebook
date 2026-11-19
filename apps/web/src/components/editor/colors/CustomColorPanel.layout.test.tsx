@@ -4,11 +4,11 @@ import i18n from "@/i18n";
 import { declaredContentWidth } from "@/test/color-menu-host";
 import { CustomColorPanel } from "./CustomColorPanel";
 
-// 讓 lazy 的 picker 永遠載不完，面板停在 Suspense fallback
+// The lazy picker never finishes loading, so the panel stays on the Suspense fallback
 vi.mock("./ColorfulPicker", () => new Promise(() => {}));
 
-describe("CustomColorPanel 版面", () => {
-  it("PN13 picker 還在載入時，fallback 與 react-colorful 同為 200px 寬、放得進面板", async () => {
+describe("CustomColorPanel layout", () => {
+  it("while the picker is loading, the fallback is as wide as react-colorful (200px) and fits in the panel", async () => {
     await i18n.changeLanguage("en");
     const { container } = render(
       <CustomColorPanel

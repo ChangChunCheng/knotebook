@@ -2,51 +2,51 @@ import { describe, expect, it } from "vitest";
 import { SHORTCUT_CATEGORIES, SHORTCUTS, visibleShortcuts } from "./shortcut-list";
 
 /**
- * 條目資料與篩選。
- * 「清單 id ⇔ e2e 標籤」的雙向核對在 shortcut-e2e-coverage.test.ts；這裡只守資料形與站台能力篩選。
+ * Entry data and filtering. The two-way check between list ids and e2e tags is in shortcut-e2e-coverage.test.ts;
+ * this file guards only the data shape and the site capability filtering.
  */
 
 const ids = (site: { aiAvailable: boolean; aiInstruct: boolean }) => visibleShortcuts(site).flatMap((g) => g.entries.map((e) => e.id));
 
-describe("L1 分類", () => {
-  it("恰為規定的順序", () => {
+describe("categories", () => {
+  it("are in the prescribed order", () => {
     expect([...SHORTCUT_CATEGORIES]).toEqual(["global", "typing", "markdown", "formatting", "columns", "sidebar", "presentation", "ai", "mouse"]);
   });
 });
 
-describe("L3 條目資料", () => {
-  it("非空", () => expect(SHORTCUTS.length).toBeGreaterThan(0));
-  it("id 不重複", () => {
+describe("entry data", () => {
+  it("non-empty", () => expect(SHORTCUTS.length).toBeGreaterThan(0));
+  it("ids are unique", () => {
     const all = SHORTCUTS.map((e) => e.id);
     expect(new Set(all).size).toBe(all.length);
   });
-  it("每條的分類都在清單內", () => {
+  it("each entry's category is in the list", () => {
     for (const e of SHORTCUTS) expect(SHORTCUT_CATEGORIES, e.id).toContain(e.category);
   });
-  it("每條至少一種按法", () => {
+  it("each entry has at least one way to press", () => {
     for (const e of SHORTCUTS) expect(e.keys.length, e.id).toBeGreaterThan(0);
   });
 });
 
-describe("L4 站台能力篩選", () => {
-  it("AI 全關：沒有 requires 的條目、沒有 ai 分類", () => {
+describe("site capability filtering", () => {
+  it("AI all off: no entry with requires, no ai category", () => {
     const groups = visibleShortcuts({ aiAvailable: false, aiInstruct: false });
     const shown = groups.flatMap((g) => g.entries);
     expect(shown.some((e) => e.requires !== undefined)).toBe(false);
     expect(groups.some((g) => g.category === "ai")).toBe(false);
   });
 
-  it("AI 全開：aiSelect、aiSend、aiClose 都在", () => {
+  it("AI all on: aiSelect, aiSend, aiClose are all present", () => {
     expect(ids({ aiAvailable: true, aiInstruct: true })).toEqual(expect.arrayContaining(["aiSelect", "aiSend", "aiClose"]));
   });
 
-  it("有 AI 但沒有 Instruct：aiSelect、aiClose 在、aiSend 不在", () => {
+  it("AI present without Instruct: aiSelect and aiClose present, aiSend absent", () => {
     const shown = ids({ aiAvailable: true, aiInstruct: false });
     expect(shown).toEqual(expect.arrayContaining(["aiSelect", "aiClose"]));
     expect(shown).not.toContain("aiSend");
   });
 
-  it("三種組合都不回空分類，且分類順序照 SHORTCUT_CATEGORIES", () => {
+  it("none of the three combinations returns an empty category, and the category order follows SHORTCUT_CATEGORIES", () => {
     for (const site of [
       { aiAvailable: false, aiInstruct: false },
       { aiAvailable: true, aiInstruct: false },
@@ -61,8 +61,8 @@ describe("L4 站台能力篩選", () => {
   });
 });
 
-describe("L5 redo", () => {
-  it("Mac 另列、不含 Y（Chrome Mac 的 ⌘Y 是開歷史記錄）", () => {
+describe("redo", () => {
+  it("Mac is listed separately and excludes Y (Chrome on Mac uses Cmd+Y for history)", () => {
     const redo = SHORTCUTS.find((e) => e.id === "redo");
     expect(redo, "redo 條目").toBeDefined();
     expect(redo!.macKeys, "redo 的 macKeys").toBeDefined();
@@ -72,12 +72,12 @@ describe("L5 redo", () => {
   });
 });
 
-describe("L6 多按法的分隔語意（sep）", () => {
-  it("keys 有兩個以上的條目都有 sep", () => {
+describe("separator semantics for multiple ways (sep)", () => {
+  it("every entry with two or more keys has sep", () => {
     for (const e of SHORTCUTS) if (e.keys.length > 1) expect(e.sep, e.id).toBeDefined();
   });
 
-  it("不同動作（pair）與同一件事的不同按法（or）", () => {
+  it("different actions (pair) versus different ways of doing the same thing (or)", () => {
     const sepOf = (id: string) => SHORTCUTS.find((e) => e.id === id)?.sep;
     for (const id of ["indent", "moveBlock", "presentNav", "heading", "checklist", "aiSend", "inlineMarks"]) expect(sepOf(id), id).toBe("pair");
     for (const id of ["redo", "bullet"]) expect(sepOf(id), id).toBe("or");

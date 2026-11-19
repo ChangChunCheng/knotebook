@@ -10,8 +10,8 @@ import { ShortcutsDialog } from "./ShortcutsDialog";
 import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
- * 外殼（ShortcutsDialog）＋真的內容元件（ShortcutsLazy）合在一起的行為：開啟落點、Tab 循環、選分類不關對話框。
- * 外殼單獨的行為（lazy 邊界、名稱、還焦點）在 ShortcutsDialog.test.tsx（內容換成替身）；內容單獨的在 ShortcutsLazy.test.tsx。
+ * Behaviour of the shell (ShortcutsDialog) plus the real content component (ShortcutsLazy) together: the opening landing point, Tab cycling, and choosing a category not closing the dialog.
+ * The shell alone (lazy boundary, name, focus return) is in ShortcutsDialog.test.tsx (content replaced by a stand-in); the content alone is in ShortcutsLazy.test.tsx.
  */
 
 function stubFetch() {
@@ -24,7 +24,7 @@ function stubFetch() {
   );
 }
 
-/** 照 AppShell 的掛法：說明視窗一直掛著，開關與起始頁由外面的 state 控制，外面有導覽 context。 */
+/** Mounted like AppShell: the help dialog stays mounted, open state and start page are controlled by outer state, and there is a tour context outside. */
 function renderHost(start: () => void) {
   stubFetch();
   let setOpen: (open: boolean, page?: ShortcutsStartPage) => void = () => {};
@@ -75,15 +75,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("ShortcutsDialog＋ShortcutsContent", () => {
-  it("W1 第一次開啟（chunk 還在下載）：對話框先有名稱；內容到了之後焦點落在右卡內容區，名稱是「General」", async () => {
+describe("ShortcutsDialog + ShortcutsContent", () => {
+  it("first open (chunk still downloading): the dialog has a name first; once the content arrives focus lands in the right card's content area and the name is \"General\"", async () => {
     renderOpen();
     expect(await screen.findByRole("dialog", { name: "Help" })).toBeInTheDocument();
     const region = await screen.findByRole("region", { name: "General" });
     await waitFor(() => expect(region).toHaveFocus());
   });
 
-  it("W2 Tab 在內容區與 ✕ 之間循環（左欄分類鈕與窄螢幕的返回鈕夾在中間）", async () => {
+  it("Tab cycles between the content area and the close button (the left column's category buttons and the narrow-screen back button sit between)", async () => {
     renderOpen();
     const region = await screen.findByRole("region", { name: "General" });
     await waitFor(() => expect(region).toHaveFocus());
@@ -94,7 +94,7 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     expect(region).toHaveFocus();
   });
 
-  it("W3 DOM 順序：✕ → 左欄分類鈕 → 右卡內容區（開啟落點與 Tab 循環依賴它）", async () => {
+  it("DOM order: close button -> left column category buttons -> right card content area (the opening landing point and Tab cycling depend on it)", async () => {
     renderOpen();
     const region = await screen.findByRole("region", { name: "General" });
     const dialog = screen.getByRole("dialog", { name: "Help" });
@@ -105,7 +105,7 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     expect(order(firstCategory, region)).toBe(true);
   });
 
-  it("W4 選分類：對話框不關、右卡換成那一類（Esc 才關）", async () => {
+  it("choosing a category: the dialog stays open and the right card switches to that category (Esc closes it)", async () => {
     const onOpenChange = vi.fn();
     renderOpen(onOpenChange);
     await screen.findByRole("region", { name: "General" });
@@ -116,7 +116,7 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
-  it("起始頁在「功能導覽」時按〔Start tour〕：說明視窗關掉，start 恰被呼叫一次", async () => {
+  it("start page on the feature tour, pressing Start tour: the help dialog closes and start is called once", async () => {
     const start = vi.fn();
     const host = renderHost(start);
     await host.setOpen(true, "tour");
@@ -126,7 +126,7 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it("從「通用」頁切到「Feature tour」再按〔Start tour〕：說明視窗關掉，start 恰被呼叫一次", async () => {
+  it("switching from the General page to Feature tour and pressing Start tour: the help dialog closes and start is called once", async () => {
     const start = vi.fn();
     const host = renderHost(start);
     await host.setOpen(true, "global");
@@ -137,8 +137,8 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it("關閉動畫還沒跑完（內容仍掛著）就再以「通用」打開：這一次從「通用」開始，不沿用上一次的頁", async () => {
-    // jsdom 沒有動畫：讓對話框內容看起來有關閉動畫，Radix 就會等 animationend 才卸載，內容停在畫面上。
+  it("reopening on General before the close animation has finished (content still mounted): starts on General this time, not the previous page", async () => {
+    // jsdom has no animation: make the dialog content look like it has a close animation, so Radix waits for animationend before unmounting and the content stays on screen.
     const realGetComputedStyle = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element, pseudo?: string | null) => {
       const real = realGetComputedStyle(el, pseudo);
@@ -158,8 +158,8 @@ describe("ShortcutsDialog＋ShortcutsContent", () => {
   });
 });
 
-describe("手機（< 640）", () => {
-  it("W-P1 開啟時停在分類清單，焦點落在清單的「‹」：在對話框裡、所在的卡不是藏起來的那一層（內容區在藏起來的卡裡、沒有拿到焦點）", async () => {
+describe("phone (< 640)", () => {
+  it("opening stays on the category list with focus on the list's back arrow: inside the dialog, and the card it is in is not the hidden layer (the content area is in the hidden card and gets no focus)", async () => {
     stubLayoutTier("phone");
     renderOpen();
     const dialog = await screen.findByRole("dialog", { name: "Help" });

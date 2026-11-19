@@ -25,7 +25,7 @@ function PlainItem({ onClick }: { onClick: () => void }) {
 }
 
 describe("KeepOpenMenuItem", () => {
-  it("KO1 點了不關選單，onClick 收到帶 detail 的事件；一般項目點了選單會關", async () => {
+  it("clicking does not close the menu and onClick receives an event carrying detail; clicking an ordinary item closes the menu", async () => {
     const editor = createTestEditor([{ id: "p1", type: "paragraph", content: "x" }]);
     const keep = vi.fn();
     const plain = vi.fn();

@@ -56,14 +56,14 @@ describe("MobileEditToolbar", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("主列項目依序：AI、插入、Aa、圖片、轉換區塊、復原、重做、收起鍵盤", async () => {
+  it("main row items in order: AI, insert, Aa, image, convert block, undo, redo, collapse keyboard", async () => {
     await mount();
     expect(labels()).toEqual(MAIN_ROW);
     expect(root()).toHaveAttribute("data-mobile-toolbar-mode", "main");
     expect(root()).toHaveAttribute("role", "toolbar");
   });
 
-  it("掛著時 <html> 帶 data-has-mobile-edit-toolbar（index.css 據此擋下拉重新整理），卸載後拿掉", async () => {
+  it("while mounted <html> carries data-has-mobile-edit-toolbar (index.css uses it to block pull-to-refresh), removed after unmount", async () => {
     await mount();
     expect(document.documentElement).toHaveAttribute("data-has-mobile-edit-toolbar");
     rerenderHost({ editor, children: null });
@@ -71,22 +71,22 @@ describe("MobileEditToolbar", () => {
     expect(document.documentElement).not.toHaveAttribute("data-has-mobile-edit-toolbar");
   });
 
-  it("沒有 AI 動作：沒有 AI 鈕，其餘照舊", async () => {
+  it("without an AI action: no AI button, the rest unchanged", async () => {
     await mount({ actions: [] });
     expect(labels()).toEqual(MAIN_ROW.slice(1));
   });
 
-  it("不可編輯：沒有 AI 鈕", async () => {
+  it("not editable: no AI button", async () => {
     await mount({ editable: false });
     expect(labels()).toEqual(MAIN_ROW.slice(1));
   });
 
-  it("每顆鈕 44×44（class）", async () => {
+  it("every button is 44x44 (class)", async () => {
     await mount();
     for (const b of within(root()).getAllByRole("button")) expect(b).toHaveClass("size-11");
   });
 
-  it("按下：mousedown 被擋（編輯器不失焦），pointerdown 不擋（WebKit 擋了就不發 click）；收起鍵盤那顆也一樣", async () => {
+  it("pressing: mousedown is blocked (the editor keeps focus), pointerdown is not (WebKit sends no click if it is blocked); the collapse-keyboard button too", async () => {
     await mount();
     for (const name of MAIN_ROW) {
       expect(fireEvent.mouseDown(button(name)), `${name} mousedown`).toBe(false);
@@ -94,7 +94,7 @@ describe("MobileEditToolbar", () => {
     }
   });
 
-  it("收起鍵盤：焦點離開編輯器", async () => {
+  it("collapse keyboard: focus leaves the editor", async () => {
     await mount();
     act(() => editor.focus());
     expect(editor.domElement!.contains(document.activeElement)).toBe(true);
@@ -104,7 +104,7 @@ describe("MobileEditToolbar", () => {
     expect(editor.domElement!.contains(document.activeElement)).toBe(false);
   });
 
-  it("AI：沒有選取 → aria-disabled，點了不開框；選了文字 → 可按，點了開框", async () => {
+  it("AI: no selection -> aria-disabled, clicking does not open the box; text selected -> pressable, clicking opens the box", async () => {
     await mount();
     placeCursor(editor, "a", 2);
     expect(button("AI")).toHaveAttribute("aria-disabled", "true");
@@ -117,8 +117,8 @@ describe("MobileEditToolbar", () => {
     expect(session.state.phase).toBe("input");
   });
 
-  describe("＋插入", () => {
-    it("游標在有字的段落：後面插一段空段落、游標移過去、開 slash 選單，原本的字不動", async () => {
+  describe("insert (+)", () => {
+    it("caret in a paragraph with text: inserts an empty paragraph after it, moves the caret there and opens the slash menu; the existing text is untouched", async () => {
       await mount();
       placeCursor(editor, "a", 5);
       const menu = editor.getExtension(SuggestionMenu)!;
@@ -132,7 +132,7 @@ describe("MobileEditToolbar", () => {
       expect(editor.getTextCursorPosition().block.id).toBe(editor.document[1]!.id);
     });
 
-    it("游標在空段落：就在那裡開，不多插區塊、不插字", async () => {
+    it("caret in an empty paragraph: opens right there, inserting no extra block and no text", async () => {
       await mountWith([P("", "e"), P("second", "b")]);
       placeCursor(editor, "e", 0);
       fireEvent.click(button("Insert block"));
@@ -141,7 +141,7 @@ describe("MobileEditToolbar", () => {
       expect(editor.document[0]!.content).toEqual([]);
     });
 
-    it("選了文字再按：選取的字還在（不被換成 /）", async () => {
+    it("pressing with text selected: the selected text stays (not replaced by /)", async () => {
       await mount();
       selectInBlock(editor, "a", 0, 5);
       fireEvent.click(button("Insert block"));
@@ -149,7 +149,7 @@ describe("MobileEditToolbar", () => {
       expect(JSON.stringify(editor.document)).not.toContain('"/"');
     });
 
-    it("選到圖片再按：圖片還在，後面多一段空段落", async () => {
+    it("pressing with an image selected: the image stays and an empty paragraph is added after it", async () => {
       await mountWith([P("x", "x"), IMG("img"), P("z", "z")]);
       act(() => {
         editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
@@ -160,7 +160,7 @@ describe("MobileEditToolbar", () => {
       expect(editor.document[2]!.content).toEqual([]);
     });
 
-    it("空的程式碼區塊再按：後面多一段空段落、游標在新的那段、選單開（程式碼裡選單不會開）", async () => {
+    it("pressing in an empty code block: an empty paragraph is added after it, the caret is in the new paragraph and the menu opens (the menu would not open inside code)", async () => {
       await mountWith([CB("c"), P("z", "z")]);
       placeCursor(editor, "c", 0);
       fireEvent.click(button("Insert block"));
@@ -169,7 +169,7 @@ describe("MobileEditToolbar", () => {
       expect(editor.getExtension(SuggestionMenu)!.shown()).toBe(true);
     });
 
-    it("程式碼區塊裡再按：沒有字面的 /，後面多一段空段落並開選單", async () => {
+    it("pressing inside a code block: no literal /, an empty paragraph is added after it and the menu opens", async () => {
       await mountWith([{ id: "c", type: "codeBlock", content: "let x" } as never, P("z", "z")]);
       placeCursor(editor, "c", 3);
       fireEvent.click(button("Insert block"));
@@ -179,7 +179,7 @@ describe("MobileEditToolbar", () => {
     });
   });
 
-  it("圖片：在游標所在區塊之後插入圖片區塊並開檔案面板，並收起浮動格式工具列", async () => {
+  it("image: inserts an image block after the caret's block, opens the file panel and collapses the floating formatting toolbar", async () => {
     await mount();
     placeCursor(editor, "a", 3);
     const formatting = editor.getExtension(FormattingToolbarExtension)!;
@@ -191,7 +191,7 @@ describe("MobileEditToolbar", () => {
     expect(formatting.store.state).toBe(false);
   });
 
-  it("圖片：選到圖片再按 → 插在它後面，原圖還在", async () => {
+  it("image: pressing with an image selected inserts after it and the original image stays", async () => {
     await mountWith([P("x", "x"), IMG("img"), P("z", "z")]);
     act(() => {
       editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
@@ -202,7 +202,7 @@ describe("MobileEditToolbar", () => {
     expect(editor.getExtension(FilePanelExtension)!.store.state).toBe(editor.document[2]!.id);
   });
 
-  it("復原、重做呼叫編輯器的 undo／redo", async () => {
+  it("undo and redo call the editor's undo/redo", async () => {
     await mount();
     const undo = vi.spyOn(editor, "undo");
     const redo = vi.spyOn(editor, "redo");
@@ -213,8 +213,8 @@ describe("MobileEditToolbar", () => {
     expect(redo).toHaveBeenCalledTimes(1);
   });
 
-  describe("模式", () => {
-    it("Aa → format 模式：只剩「返回」＋格式鈕；返回 → 主列", async () => {
+  describe("modes", () => {
+    it("Aa -> format mode: only Back plus the format buttons remain; Back -> main row", async () => {
       await mount();
       fireEvent.click(button("Text formatting"));
       expect(root()).toHaveAttribute("data-mobile-toolbar-mode", "format");
@@ -225,7 +225,7 @@ describe("MobileEditToolbar", () => {
       expect(labels()).toEqual(MAIN_ROW);
     });
 
-    it("¶ → blockType 模式：以「返回」開頭", async () => {
+    it("the block type (pilcrow) button -> blockType mode: begins with Back", async () => {
       await mount();
       fireEvent.click(button("Change block type"));
       expect(root()).toHaveAttribute("data-mobile-toolbar-mode", "blockType");
@@ -234,13 +234,13 @@ describe("MobileEditToolbar", () => {
       expect(root()).toHaveAttribute("data-mobile-toolbar-mode", "main");
     });
 
-    it("子模式的鈕一樣不搶焦點（mousedown 被擋）", async () => {
+    it("sub-mode buttons also do not steal focus (mousedown is blocked)", async () => {
       await mount();
       fireEvent.click(button("Text formatting"));
       for (const b of within(root()).getAllByRole("button")) expect(fireEvent.mouseDown(b)).toBe(false);
     });
 
-    it("format 模式的粗體鈕套到選取", async () => {
+    it("the bold button in format mode applies to the selection", async () => {
       await mount();
       selectInBlock(editor, "a", 0, 5);
       fireEvent.click(button("Text formatting"));
@@ -249,7 +249,7 @@ describe("MobileEditToolbar", () => {
     });
   });
 
-  describe("跟著鍵盤", () => {
+  describe("follows the keyboard", () => {
     let viewport: EventTarget & { height: number; offsetTop: number; scale: number };
     let frames: Array<() => void>;
 
@@ -272,7 +272,7 @@ describe("MobileEditToolbar", () => {
       Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
     });
 
-    it("bottom 等於鍵盤高度；鍵盤收起時加 safe area 底距", async () => {
+    it("bottom equals the keyboard height; when the keyboard collapses the safe-area bottom padding is added", async () => {
       await mount();
       expect(root().style.bottom).toBe("0px");
       expect(root().className).toContain("pb-[calc(0.5rem+env(safe-area-inset-bottom))]");
@@ -284,7 +284,7 @@ describe("MobileEditToolbar", () => {
       expect(root().style.bottom).toBe("0px");
     });
 
-    it("編輯器捲動的下緣預留鍵盤高加工具列外框高、其餘邊保留原值；卸載後等於掛上前", async () => {
+    it("the editor scroll's bottom edge reserves keyboard height plus toolbar outer height, other edges keep their original values; after unmount it equals the value before mounting", async () => {
       editor = createTestEditor([P("hello world", "a")]);
       stubAiFetch({ actions: [] });
       ({ rerenderHost } = renderAiHost({ editor, children: <Probe /> }));
@@ -308,7 +308,7 @@ describe("MobileEditToolbar", () => {
       expect({ scrollMargin: props().scrollMargin, scrollThreshold: props().scrollThreshold }).toEqual(before);
     });
 
-    it("頁首釘在頁面頂端（手機上捲的是文件）：上緣的 margin 與 threshold 都加上頁首高；卸載後還原", async () => {
+    it("header pinned to the top of the page (on phones the document scrolls): the top margin and threshold both add the header height; restored after unmount", async () => {
       document.documentElement.style.setProperty(STICKY_TOP_VAR, "90px");
       try {
         editor = createTestEditor([P("hello world", "a")]);
@@ -333,7 +333,7 @@ describe("MobileEditToolbar", () => {
       }
     });
 
-    it("鍵盤升起且編輯器有焦點：補一次捲動到游標；沒有焦點、或鍵盤收起時不補", async () => {
+    it("keyboard up and the editor focused: scrolls to the caret once more; with no focus, or when the keyboard collapses, it does not", async () => {
       await mount();
       const dispatch = vi.spyOn(editor.prosemirrorView!, "dispatch");
       const scrolled = () => dispatch.mock.calls.filter(([tr]) => (tr as { scrolledIntoView: boolean }).scrolledIntoView).length;
@@ -350,7 +350,7 @@ describe("MobileEditToolbar", () => {
 });
 
 describe("MobileToolbarButton", () => {
-  it("停用用 aria-disabled：沒有原生 disabled、點擊不呼叫 onClick、mousedown 仍被擋", () => {
+  it("disabled uses aria-disabled: no native disabled, a click does not call onClick, mousedown is still blocked", () => {
     const onClick = vi.fn();
     const view = render(
       <MobileToolbarButton label="Stuck" disabled onClick={onClick}>
@@ -382,7 +382,7 @@ describe("MobileToolbarSpacer", () => {
     Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
   });
 
-  it("aria-hidden；高度＝鍵盤高加工具列外框高（safe area 由內文卡的下內距給，這裡不加）", () => {
+  it("aria-hidden; height = keyboard height plus toolbar outer height (the safe area is supplied by the content card's bottom padding, not added here)", () => {
     const view = render(<MobileToolbarSpacer />);
     const spacer = () => view.container.querySelector<HTMLElement>("[data-mobile-toolbar-spacer]")!;
     expect(spacer()).toHaveAttribute("aria-hidden", "true");

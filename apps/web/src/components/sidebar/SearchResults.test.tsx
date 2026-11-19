@@ -64,7 +64,7 @@ const ALPHA_SHARED = note("n3", "alpha shared", {
 const BETA = note("n4", "Beta");
 const FIXTURE = [ALPHA_PLAN, ALPHA_GROUP, ALPHA_SHARED, BETA];
 
-/** #93：`/api/search` 的回應（預設空）。測試可換成自己的處理（回 Response 或 Promise）。 */
+/** #93: the `/api/search` response (empty by default). A test can swap in its own handler (returning a Response or a Promise). */
 const EMPTY_SEARCH = () => fakeResponse(true, 200, { hits: [], nextCursor: null });
 let searchHandler: (url: string) => Response | Promise<Response> = EMPTY_SEARCH;
 let searchUrls: string[] = [];
@@ -116,7 +116,7 @@ function escapeRe(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** 以 `^標題` 取結果列連結（可及名稱是「標題 位置」）。 */
+/** Gets a result row link by `^title` (its accessible name is "title location"). */
 function rowLink(title: string): HTMLElement {
   return screen.getByRole("link", { name: new RegExp("^" + escapeRe(title)) });
 }
@@ -126,7 +126,7 @@ describe("SearchResults", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("SR1：扁平結果、server 順序、位置行與結果數", async () => {
+  it("flat results, server order, location line and result count", async () => {
     stubFetch(FIXTURE);
     renderResults("alpha");
     await screen.findByRole("link", { name: /^Alpha Plan/ });
@@ -145,14 +145,14 @@ describe("SearchResults", () => {
     expect(screen.getByRole("status")).toHaveTextContent("3 title matches");
   });
 
-  it("SR1：只剩一筆時是 1 result", async () => {
+  it("with only one result it says 1 result", async () => {
     stubFetch(FIXTURE);
     renderResults("beta");
     await screen.findByRole("link", { name: /^Beta/ });
     expect(screen.getByRole("status").textContent).toMatch(/\b1 title match$/);
   });
 
-  it("SR1：zh-TW 的結果數", async () => {
+  it("result count in zh-TW", async () => {
     await i18n.changeLanguage("zh-TW");
     stubFetch(FIXTURE);
     renderResults("alpha");
@@ -160,7 +160,7 @@ describe("SearchResults", () => {
     expect(screen.getByRole("status")).toHaveTextContent("標題符合 · 3 篇");
   });
 
-  it("SR2：高亮只標第一個命中、保留原大小寫、標題文字完整", async () => {
+  it("highlight marks only the first hit, keeps the original case, and the title text is complete", async () => {
     stubFetch([note("s1", "Has A Slug")]);
     renderResults("a sl");
     const link = await screen.findByRole("link", { name: /^Has A Slug/ });
@@ -171,7 +171,7 @@ describe("SearchResults", () => {
     expect(link.querySelector("div")?.textContent).toBe("Has A Slug");
   });
 
-  it("SR3：toLowerCase 後長度改變的標題照樣列出、不標 mark、標題完整", async () => {
+  it("a title whose length changes after toLowerCase is still listed, with no mark and the full title", async () => {
     stubFetch([note("s1", "İstanbul notes")]);
     renderResults("notes");
     const link = await screen.findByRole("link", { name: /^İstanbul notes/ });
@@ -179,7 +179,7 @@ describe("SearchResults", () => {
     expect(link.querySelector("div")?.textContent).toBe("İstanbul notes");
   });
 
-  it("SR4：查詢字串一律字面比對（括號不丟錯、點不當萬用字元）", async () => {
+  it("the query string is matched literally (parentheses do not throw, a dot is not a wildcard)", async () => {
     stubFetch([note("s1", "x (y)"), note("s2", "axb")]);
     const first = renderResults("(");
     await screen.findByRole("link", { name: /^x \(y\)/ });
@@ -192,7 +192,7 @@ describe("SearchResults", () => {
     expect(await screen.findByText("No notes match your search.")).toBeInTheDocument();
   });
 
-  it("SR5：無命中——0 results、提示可見、沒有 listitem", async () => {
+  it("no hit: 0 results, the hint is visible, no listitem", async () => {
     stubFetch(FIXTURE);
     renderResults("zzz");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("0 title matches"));
@@ -200,7 +200,7 @@ describe("SearchResults", () => {
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
 
-  it("SR6：不放 ⋮、href 為 canonicalNotePath、可及名稱含位置、aria-current 與樂觀 active", async () => {
+  it("no kebab, href is canonicalNotePath, the accessible name includes the location, aria-current and optimistic active", async () => {
     stubFetch(FIXTURE);
     renderResults("alpha", ALPHA_PLAN.id);
     await screen.findByRole("link", { name: /^Alpha Plan/ });
@@ -218,7 +218,7 @@ describe("SearchResults", () => {
     expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
-  it("SR7：notes pending → Loading…；500 → role=alert", async () => {
+  it("notes pending: Loading...; 500: role=alert", async () => {
     stubFetch("pending");
     const first = renderResults("a");
     expect(screen.getByText("Loading…")).toBeInTheDocument();
@@ -232,7 +232,7 @@ describe("SearchResults", () => {
     expect(screen.getByTestId("sidebar-search")).toHaveClass("flex-1");
   });
 
-  it("SR8：長標題——標題與位置元素 truncate、連結 min-w-0", async () => {
+  it("long title: the title and location elements truncate, the link has min-w-0", async () => {
     stubFetch([note("s1", "L".repeat(120))]);
     renderResults("l");
     const link = await screen.findByRole("link");
@@ -244,7 +244,7 @@ describe("SearchResults", () => {
   });
 });
 
-describe("SearchResults × 資料夾路徑", () => {
+describe("SearchResults x folder path", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -253,7 +253,7 @@ describe("SearchResults × 資料夾路徑", () => {
     vi.unstubAllGlobals();
   });
 
-  it("SR-F1 搜到 p2 → 第二行「My notes › A › A1」，title 同字", async () => {
+  it("a search hit on p2: the second line shows the folder path, with the same title text", async () => {
     const p2 = note("p2", "Deep note", { folderId: "A1" });
     const folders = [folderDto({ id: "A", name: "A" }), folderDto({ id: "A1", name: "A1", parentId: "A" })];
     vi.stubGlobal(
@@ -272,7 +272,7 @@ describe("SearchResults × 資料夾路徑", () => {
   });
 });
 
-describe("SearchResults × 內文符合（#93）", () => {
+describe("SearchResults x body matches (#93)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     searchUrls = [];
@@ -289,7 +289,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     matches: matchedOn === "title" ? [] : [{ sectionId: "s1", heading: "", snippet: "body text" }],
   });
   const searchBody = (hits: NoteSearchHitDto[]) => fakeResponse(true, 200, { hits, nextCursor: null });
-  /** 可外部放行的 /api/search 回應。 */
+  /** A /api/search response that can be released from outside. */
   function deferredSearch() {
     const pending: Array<(r: Response) => void> = [];
     searchHandler = () => new Promise<Response>((resolve) => pending.push(resolve));
@@ -299,7 +299,7 @@ describe("SearchResults × 內文符合（#93）", () => {
   const noMatch = () => screen.queryAllByText("No notes match your search.");
   const region = () => screen.getByRole("region", { name: "Search results" });
 
-  /** lazy 是模組級單例：先用真計時器掛一次，讓後面的 fake timers 案不必等 chunk。 */
+  /** lazy is a module-level singleton: mount once with real timers first so the later fake-timer cases do not have to wait for the chunk. */
   async function warmLazy() {
     stubFetch(FIXTURE);
     const r = renderResults("warmup");
@@ -323,7 +323,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     return { ...r, setQuery: (q: string) => r.rerender(tree(q)) };
   }
 
-  it("S2 noMatch：標題 0＋內文 pending → 沒有、有「Searching…」；回空 → 恰一個；error → 沒有；stale 的空批 → 沒有", async () => {
+  it("noMatch: title 0 + body pending: absent and \"Searching...\" shown; empty reply: one; error: absent; stale empty batch: absent", async () => {
     stubFetch(FIXTURE);
     let pending = deferredSearch();
     const a = renderResults("zzz");
@@ -340,21 +340,21 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(noMatch()).toHaveLength(0);
     b.unmount();
 
-    // stale 的空批：舊批本身是空的（標題 0、內文 0 → 先看到 noMatch）；改字後防抖中、新請求未回都是 stale → noMatch 消失（舊的空批
-    // 不能拿來斷定新字也沒有命中）；新批回空 → noMatch 再出現。舊批若有結果，rows.length > 0 本來就不顯示，殺不掉「拿掉 !stale」。
+    // Stale empty batch: the old batch itself is empty (title 0, body 0 -> noMatch first); after the text changes, being in the debounce or with the new request not back are both stale -> noMatch disappears
+    // (the old empty batch cannot be used to conclude the new text has no hits too); once the new batch comes back empty noMatch reappears. If the old batch had results, rows.length > 0 would hide it anyway, which would not show whether `!stale` was removed.
     searchHandler = EMPTY_SEARCH;
     const c = renderControlled("qqq");
     await waitFor(() => expect(noMatch()).toHaveLength(1));
     pending = deferredSearch();
     c.setQuery("qqqq");
-    expect(noMatch()).toHaveLength(0); // 防抖中：stale（query !== debounced）
+    expect(noMatch()).toHaveLength(0); // during the debounce: stale (query !== debounced)
     await waitFor(() => expect(searchUrls.some((u) => qOf(u) === "qqqq")).toBe(true));
-    expect(noMatch()).toHaveLength(0); // 新請求在路上：stale（placeholder）
+    expect(noMatch()).toHaveLength(0); // new request in flight: stale (placeholder)
     act(() => pending[0]!(searchBody([])));
     await waitFor(() => expect(noMatch()).toHaveLength(1));
   });
 
-  it("S3 標題 0 但內文 2 篇 → 沒有 noMatch", async () => {
+  it("title 0 but body hits in 2 notes: no noMatch", async () => {
     stubFetch(FIXTURE);
     searchHandler = () => searchBody([bodyHit(BETA), bodyHit(ALPHA_PLAN)]);
     renderResults("zzz");
@@ -362,13 +362,13 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(noMatch()).toHaveLength(0);
   });
 
-  it("S4 合併去重：標題與內文都中的筆記只出現一列（帶片段）；只中標題的一列、沒有片段；計數是列出的項數", async () => {
+  it("merge and dedup: a note hit in both title and body appears as one row (with a snippet); a title-only note is one row without a snippet; the count is the number of listed items", async () => {
     stubFetch(FIXTURE);
     searchHandler = () => searchBody([bodyHit(ALPHA_PLAN, "both"), bodyHit(ALPHA_SHARED, "title")]);
     renderResults("alpha");
     await waitFor(() => expect(within(region()).getAllByTestId("body-match")).toHaveLength(1));
     const rows = within(region()).getAllByTestId("search-hit");
-    expect(rows).toHaveLength(3); // 標題命中：Alpha Plan、Alpha Group、alpha shared
+    expect(rows).toHaveLength(3); // title hits: Alpha Plan, Alpha Group, alpha shared
     expect(screen.getAllByRole("link", { name: /^Alpha Plan/ })).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /^alpha shared/ })).toHaveLength(1);
     const planRow = rows.find((r) => within(r).queryByRole("link", { name: /^Alpha Plan/ }))!;
@@ -378,7 +378,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(screen.getByRole("status")).toHaveTextContent("3 results");
   });
 
-  it("S4c 一篇多處命中：每處一項，篇數行數的是項數（3 篇只中標題＋1 篇 3 處命中＝6 筆結果），不是篇數（4）", async () => {
+  it("several hits in one note: one item per hit, and the note-count line counts items (3 title-only notes + 1 note with 3 hits = 6 results), not notes (4)", async () => {
     stubFetch(FIXTURE);
     const multi: NoteSearchHitDto = {
       note: BETA,
@@ -392,13 +392,13 @@ describe("SearchResults × 內文符合（#93）", () => {
     searchHandler = () => searchBody([multi]);
     renderResults("alpha");
     await waitFor(() => expect(within(region()).getAllByTestId("body-match")).toHaveLength(3));
-    const titleOnly = 3; // Alpha Plan、Alpha Group、alpha shared 只有標題命中
+    const titleOnly = 3; // Alpha Plan, Alpha Group, alpha shared have only title hits
     expect(within(region()).getAllByTestId("search-hit")).toHaveLength(titleOnly + 3);
     expect(screen.getByRole("status")).toHaveTextContent(`${titleOnly + 3} results`);
     expect(screen.getByRole("status")).not.toHaveTextContent("4 results");
   });
 
-  it("S4b 只中內文的排在標題命中之後（標題命中照清單順序、其餘照 server 順序）", async () => {
+  it("body-only notes come after title hits (title hits in list order, the rest in server order)", async () => {
     stubFetch(FIXTURE);
     searchHandler = () => searchBody([bodyHit(BETA), bodyHit(ALPHA_PLAN, "both")]);
     renderResults("alpha");
@@ -407,7 +407,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(titles.at(-1)).toBe("Beta");
   });
 
-  it("S6 版面：內文區最近的 overflow-y-auto 祖先＝標題清單所在的容器；status 不在裡面；側欄恰一個 status", async () => {
+  it("layout: the nearest overflow-y-auto ancestor of the body section is the container holding the title list; the status is not inside it; the sidebar has one status", async () => {
     stubFetch(FIXTURE);
     renderResults("alpha");
     const body = await screen.findByTestId("sidebar-search-results");
@@ -418,7 +418,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(within(screen.getByTestId("sidebar-search")).getAllByRole("status")).toHaveLength(1);
   });
 
-  it("S7 防抖：a→ab→abc→abcd 各隔 100 ms → 推過 300 ms → /api/search 恰一次、q=abcd", async () => {
+  it("debounce: a -> ab -> abc -> abcd 100 ms apart, then advancing past 300 ms: /api/search is called once with q=abcd", async () => {
     await warmLazy();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const r = renderControlled("a");
@@ -433,7 +433,7 @@ describe("SearchResults × 內文符合（#93）", () => {
     expect(searchUrls.map(qOf)).toEqual(["abcd"]);
   });
 
-  it("S8 重新掛載不重發：abcd 回來 → a（lazy 卸載）→ 100 ms 內 ab（重新掛載）→ 推過 300 ms → 只多一次 q=ab", async () => {
+  it("remount does not resend: abcd comes back -> a (lazy unmounts) -> ab within 100 ms (remount) -> advancing past 300 ms: only one more request, q=ab", async () => {
     await warmLazy();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const r = renderControlled("abcd");
@@ -453,12 +453,12 @@ describe("SearchResults × 內文符合（#93）", () => {
 });
 
 describe("highlightTitle", () => {
-  it("找不到、或小寫化改變長度 → 回原字串", () => {
+  it("not found, or lowercasing changes the length: returns the original string", () => {
     expect(highlightTitle("Beta", "zz")).toBe("Beta");
     expect(highlightTitle("İstanbul", "stan")).toBe("İstanbul");
   });
 
-  it("兩處命中只標第一個、保留原大小寫", () => {
+  it("two hits: only the first is marked, original case kept", () => {
     const { container } = render(<>{highlightTitle("Alpha alpha", "alpha")}</>);
     const marks = container.querySelectorAll("mark");
     expect(marks).toHaveLength(1);

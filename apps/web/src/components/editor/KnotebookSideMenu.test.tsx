@@ -17,10 +17,9 @@ import { P, row, shape, withChildren, type AnyEditor, type PartialBlockLike } fr
 import { KnotebookSideMenu, NotePathContext } from "./KnotebookSideMenu";
 import { HeadingAnchorButtons } from "./HeadingAnchorButtons";
 
-// 拖曳把手選單＝四個預設項＋「複製段落連結」。jsdom 沒有 elementsFromPoint：
-// 墊一支回傳該段落的 elementsFromPoint，再對編輯器發一次真的 mousemove，讓 BlockNote 的 SideMenuView 自己算出 state。
-// 不直接 `store.setState`：那樣 SideMenuView 內部的 state 仍是 undefined，點把手時 `freezeMenu()` 拋
-// `Cannot set properties of undefined (setting 'show')`（vitest 記成 unhandled error、exit 1）。
+// The drag handle menu = four default items + "copy block link". jsdom has no elementsFromPoint: install one that returns the paragraph, then fire a real
+// mousemove on the editor so BlockNote's SideMenuView computes the state itself. Not `store.setState` directly: SideMenuView's internal state would stay
+// undefined and clicking the handle makes `freezeMenu()` throw `Cannot set properties of undefined (setting 'show')` (vitest records an unhandled error and exits 1).
 
 describe("#269 KnotebookDragHandleMenu", () => {
   const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
@@ -33,7 +32,7 @@ describe("#269 KnotebookDragHandleMenu", () => {
     Reflect.deleteProperty(document, "elementsFromPoint");
   });
 
-  it("四個預設項照列＋複製段落連結；點擊複製 origin＋notePath＋#b-<block id>", async () => {
+  it("lists the four default items plus copy block link; clicking copies origin + notePath + #b-<block id>", async () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: [{ id: "blk1", type: "paragraph", content: "hello" }] as never });
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -53,7 +52,7 @@ describe("#269 KnotebookDragHandleMenu", () => {
       fireEvent.mouseMove(paragraph, { clientX: 0, clientY: 0 });
     });
     expect(editor.getExtension(SideMenuExtension)!.store.state?.block?.id).toBe("blk1");
-    const handle = await screen.findByLabelText("Open block menu"); // BlockNote 0.52.1 英文字典 side_menu.drag_handle_label
+    const handle = await screen.findByLabelText("Open block menu"); // BlockNote 0.52.1 English dictionary side_menu.drag_handle_label
     fireEvent.click(handle);
     expect(await screen.findByText("Delete")).toBeInTheDocument();
     expect(screen.getByText("Colors")).toBeInTheDocument();
@@ -61,8 +60,8 @@ describe("#269 KnotebookDragHandleMenu", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/n/h/note#b-blk1`));
   });
 
-  it("非 ASCII slug：把手選單（未編碼的 canonical 路徑）與標題「#」（編碼過的 location.pathname）複製出同一字串", async () => {
-    // 真瀏覽器的 location.pathname 對 CJK slug 回百分比編碼形；canonicalNotePath 回原字（NotePage.tsx 收斂 effect 的註解）。
+  it("non-ASCII slug: the handle menu (unencoded canonical path) and the heading # (encoded location.pathname) copy the same string", async () => {
+    // A real browser's location.pathname returns the percent-encoded form for a CJK slug; canonicalNotePath returns the raw characters.
     window.history.pushState(null, "", "/n/h/%E4%B8%AD%E6%96%87");
     try {
       const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: [{ id: "hd1", type: "heading", content: "Section" }] as never });
@@ -106,7 +105,7 @@ describe("#269 KnotebookDragHandleMenu", () => {
   });
 });
 
-describe("側選單「Delete」不收欄", () => {
+describe("side menu \"Delete\" does not collapse columns", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -128,7 +127,7 @@ describe("側選單「Delete」不收欄", () => {
     return editor;
   }
 
-  /** 對文字為 `text` 的 block 開 ⋮⋮、點「Delete」。 */
+  /** Opens the drag handle menu on the block whose text is `text` and clicks "Delete". */
   async function deleteVia(editor: AnyEditor, text: string, id: string): Promise<void> {
     const el = screen.getByText(text);
     Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
@@ -142,74 +141,74 @@ describe("側選單「Delete」不收欄", () => {
 
   const R2 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")];
 
-  it("SM1：欄內唯一 block 刪掉 → 列與兩欄都在、該欄補空段落", async () => {
+  it("deleting the only block in a column: the row and both columns remain, an empty paragraph fills the column", async () => {
     const editor = mount(R2());
     await deleteVia(editor, "b", "b1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z");
   });
 
-  it("SM2：跨兩欄選取後對 a 刪除 → 整個選取（a 與 b）被刪、列仍兩欄", async () => {
+  it("selecting across two columns then deleting a: the whole selection (a and b) is deleted, the row still has two columns", async () => {
     const editor = mount(R2());
     act(() => editor.setSelection("a1", "b1"));
-    // 事實釘：跨欄選取的 blocks 第 2 項是 column 節點本身。
+    // Fact pinned: the second item of a cross-column selection's blocks is the column node itself.
     expect(editor.getSelection()!.blocks.map((b) => b.type)).toEqual(["paragraph", "column"]);
     await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
   });
 
-  // 跨欄選取只刪選取範圍、點第 2 欄以後或列內的 block 也算多選。
+  // A cross-column selection deletes only the selected range; a block in the second or later column, or inside the row, also counts as a multi-selection.
   const C1 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
 
-  it("SM2b：同一選取下對 b 刪除 → 展開後的集合含 b，刪 a 與 b", async () => {
+  it("same selection, deleting b: the expanded set contains b, so a and b are deleted", async () => {
     const editor = mount(R2());
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "b", "b1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
   });
 
-  it("SM2c：[a｜b,q] 選 a→b 後對 a 刪除 → 沒選到的 q 保留（C1）", async () => {
+  it("[a | b,q] select a->b then delete a: the unselected q is kept", async () => {
     const editor = mount(C1());
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
   });
 
-  it("SM2d：[a｜b｜c] 選 a→b 後對 a 刪除 → 三欄都在、前兩欄補空段落", async () => {
+  it("[a | b | c] select a->b then delete a: all three columns remain, the first two are filled with empty paragraphs", async () => {
     const editor = mount([P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")]);
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph) | COL(paragraph:c)]  paragraph:z");
   });
 
-  it("SM2e：從列上方選到第 2 欄（x→b）後對 x 刪除 → x、a、b 刪掉，q 保留（C7）", async () => {
+  it("selecting from above the row to the second column (x->b) then deleting x: x, a, b are deleted, q is kept", async () => {
     const editor = mount(C1());
     act(() => editor.setSelection("x", "b1"));
     await deleteVia(editor, "x", "x");
     expect(shape(editor)).toBe("ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
   });
 
-  it("SM2f：同 SM2e 的選取對 a 刪除 → 同 SM2e", async () => {
+  it("the same x->b selection, deleting a: same result as deleting x", async () => {
     const editor = mount(C1());
     act(() => editor.setSelection("x", "b1"));
     await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
   });
 
-  it("SM2g：[a｜b,q] 選 a→b 後對 b 刪除 → 同 SM2c（R2）", async () => {
+  it("[a | b,q] select a->b then delete b: same result as deleting a", async () => {
     const editor = mount(C1());
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "b", "b1");
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph) | COL(paragraph:q)]  paragraph:z");
   });
 
-  it("SM2h：從列上方選到列下方（x→z）後對列內的 a 刪除 → 整列連 x、z 刪掉", async () => {
+  it("selecting from above the row to below it (x->z) then deleting a inside the row: the whole row plus x and z are deleted", async () => {
     const editor = mount(R2());
     act(() => editor.setSelection("x", "z"));
     await deleteVia(editor, "a", "a1");
     expect(shape(editor)).toBe("paragraph");
   });
 
-  it("SM2i：一般筆記（沒有並排）選 a→b 後對 a 刪除 → 刪整個選取，同 core", async () => {
+  it("a plain note (no columns), select a->b then delete a: deletes the whole selection, same as core", async () => {
     const editor = mount([P("a", "a1"), P("b", "b1"), P("c", "c1")]);
     act(() => editor.setSelection("a1", "b1"));
     await deleteVia(editor, "a", "a1");
@@ -217,7 +216,7 @@ describe("側選單「Delete」不收欄", () => {
   });
 });
 
-describe("⋮⋮「取消並排」", () => {
+describe("handle menu \"Ungroup columns\"", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -239,7 +238,7 @@ describe("⋮⋮「取消並排」", () => {
     return editor;
   }
 
-  /** 對文字為 `text` 的 block 開 ⋮⋮，等選單出現（以「Delete」為準）。 */
+  /** Opens the handle menu on the block whose text is `text` and waits for the menu (keyed on "Delete"). */
   async function openMenu(editor: AnyEditor, text: string, id: string): Promise<void> {
     const el = screen.getByText(text);
     Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
@@ -253,7 +252,7 @@ describe("⋮⋮「取消並排」", () => {
 
   const R2 = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")];
 
-  it("SM4：欄內 block 的 ⋮⋮ 有「Ungroup columns」，點了整列攤平成 x a b z", async () => {
+  it("the handle of a block inside a column has \"Ungroup columns\"; clicking flattens the row into x a b z", async () => {
     const editor = mount(R2());
     await openMenu(editor, "b", "b1");
     fireEvent.click(screen.getByText("Ungroup columns"));
@@ -261,14 +260,14 @@ describe("⋮⋮「取消並排」", () => {
     expect(i18n.t("note.columns.ungroup", { lng: "zh-TW" })).toBe("取消並排");
   });
 
-  it("SM5：頂層 block 的 ⋮⋮ 沒有「Ungroup columns」", async () => {
+  it("the handle of a top-level block has no \"Ungroup columns\"", async () => {
     const editor = mount(R2());
     await openMenu(editor, "x", "x");
     expect(screen.queryByText("Ungroup columns")).toBeNull();
   });
 });
 
-describe("C7 欄內的側邊選單只留 ⋮⋮", () => {
+describe("the side menu inside a column keeps only the handle", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -292,7 +291,7 @@ describe("C7 欄內的側邊選單只留 ⋮⋮", () => {
     return editor;
   }
 
-  /** 讓 SideMenuView 指向文字為 `text` 的 block，等 ⋮⋮ 出現。 */
+  /** Points SideMenuView at the block whose text is `text` and waits for the handle to appear. */
   async function hover(editor: AnyEditor, text: string, id: string): Promise<void> {
     const el = screen.getByText(text);
     Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
@@ -305,20 +304,20 @@ describe("C7 欄內的側邊選單只留 ⋮⋮", () => {
 
   const NESTED = () => [P("x", "x"), row([[withChildren(P("a", "a1"), [P("n", "n1")])], [P("b", "b1")]], "r"), P("z", "z")];
 
-  it("C7-1：欄的直接子 block → 只有 ⋮⋮、沒有 Add block", async () => {
+  it("a direct child block of a column: only the handle, no Add block", async () => {
     const editor = mount(NESTED());
     await hover(editor, "b", "b1");
     expect(screen.queryByLabelText("Add block")).toBeNull();
   });
 
-  it("C7-2：欄內巢狀子 block → 同樣只有 ⋮⋮", async () => {
+  it("a nested child block inside a column: likewise only the handle", async () => {
     const editor = mount(NESTED());
     expect(editor.getParentBlock("n1")?.id).toBe("a1");
     await hover(editor, "n", "n1");
     expect(screen.queryByLabelText("Add block")).toBeNull();
   });
 
-  it("C7-3：欄外 block → Add block 與 ⋮⋮ 都在；再移到欄內 → Add block 消失", async () => {
+  it("a block outside columns: Add block and the handle are both present; moving into a column removes Add block", async () => {
     const editor = mount(NESTED());
     await hover(editor, "x", "x");
     expect(screen.getByLabelText("Add block")).toBeInTheDocument();
@@ -326,7 +325,7 @@ describe("C7 欄內的側邊選單只留 ⋮⋮", () => {
     expect(screen.queryByLabelText("Add block")).toBeNull();
   });
 
-  it("C7-4：欄內 ⋮⋮ 的選單項不變（刪除、取消並排、顏色、複製段落連結）", async () => {
+  it("the handle menu items inside a column are unchanged (delete, ungroup columns, colors, copy block link)", async () => {
     const editor = mount(NESTED());
     await hover(editor, "b", "b1");
     fireEvent.click(screen.getByLabelText("Open block menu"));
@@ -337,7 +336,7 @@ describe("C7 欄內的側邊選單只留 ⋮⋮", () => {
   });
 });
 
-describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
+describe("handle color submenu and custom color panel", () => {
   beforeEach(async () => {
     localStorage.clear();
     resetRecentColorsForTest();
@@ -373,11 +372,11 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
   const hexInput = () => screen.getByRole("textbox", { name: "Hex color", hidden: true }) as HTMLInputElement;
   const button = (name: string) => screen.getByRole("button", { name, hidden: true }) as HTMLButtonElement;
 
-  /** 讓 SideMenuView 指向文字為 `text` 的 block，等 ⋮⋮ 出現。 */
+  /** Points SideMenuView at the block whose text is `text` and waits for the handle to appear. */
   async function hover(editor: AnyEditor, text: string, id: string): Promise<void> {
     const el = screen.getByText(text);
     Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
-    // 表格的欄寬調整外掛在 mousemove 時呼叫 posAtCoords，要用到 jsdom 沒有的 elementFromPoint
+    // The table column-resize plugin calls posAtCoords on mousemove, which needs elementFromPoint that jsdom lacks
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => el });
     act(() => {
       fireEvent.mouseMove(el, { clientX: 0, clientY: 0 });
@@ -386,14 +385,14 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     await screen.findByLabelText("Open block menu");
   }
 
-  /** 點 ⋮⋮ 開選單，等選單掛上，並讓 Mantine 開選單時排的初始聚焦計時器跑完。 */
+  /** Clicks the handle to open the menu, waits for it to mount, and lets the initial focus timer Mantine schedules when opening the menu run out. */
   async function openHandleMenu(): Promise<void> {
     fireEvent.click(handle());
     expect(await screen.findByText("Delete")).toBeInTheDocument();
     await act(() => new Promise<void>((r) => setTimeout(r, 0)));
   }
 
-  /** 從「Colors」以鍵盤（→）開子選單，等文字段或底色段的「自訂…」出現。 */
+  /** Opens the submenu from "Colors" with the keyboard (right arrow) and waits for the text section's or background section's "Custom..." to appear. */
   async function openColorsSub(): Promise<void> {
     const colors = colorsItem()!;
     colors.focus();
@@ -401,7 +400,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     await waitFor(() => expect(item("text-color-custom") ?? item("background-color-custom")).not.toBeNull());
   }
 
-  /** 開 ⋮⋮ → Colors → 該段的「自訂…」（`detail` 0＝鍵盤啟動），等面板掛上。 */
+  /** Opens handle -> Colors -> that section's "Custom..." (`detail` 0 = keyboard activation) and waits for the panel to mount. */
   async function openPanel(section: "text" | "background"): Promise<void> {
     await openHandleMenu();
     await openColorsSub();
@@ -409,7 +408,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     await waitFor(() => expect(panel()).not.toBeNull());
   }
 
-  /** 把手選單已關：dropdown 不在；⋮⋮ 若還在則 aria-expanded 為 false（套色改了文件之後 side menu 可能整個收起）。 */
+  /** The handle menu is closed: dropdown absent; if the handle is still there, aria-expanded is false (after applying a color changes the document, the side menu may collapse entirely). */
   async function expectMenuClosed(): Promise<void> {
     await waitFor(() => {
       expect(handleMenu()).toBeNull();
@@ -417,7 +416,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     });
   }
 
-  /** 等 lazy 載入的 react-colorful 掛好。 */
+  /** Waits for the lazily loaded react-colorful to mount. */
   async function sliders(): Promise<void> {
     await waitFor(() => expect(screen.getAllByRole("slider", { hidden: true })).toHaveLength(2));
   }
@@ -425,7 +424,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
   const TABLE = (id: string): PartialBlockLike =>
     ({ id, type: "table", content: { type: "tableContent", rows: [{ cells: ["cell a", "cell b"] }] } }) as PartialBlockLike;
 
-  it("DH1：段落的 ⋮⋮ → Colors → 子選單有 Text、Background 兩段與兩個「Custom…」；其他項照舊", async () => {
+  it("paragraph handle -> Colors -> the submenu has Text and Background sections with two \"Custom...\" items; other items are unchanged", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openHandleMenu();
@@ -440,7 +439,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(document.querySelectorAll('[data-test^="background-color-"]')).toHaveLength(11);
   });
 
-  it("DH1：子選單的內建色 red（底色）→ 套到該 block、選單關", async () => {
+  it("the submenu's built-in color red (background) applies to the block and closes the menu", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openHandleMenu();
@@ -450,9 +449,9 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     await expectMenuClosed();
   });
 
-  it("DH2：表格的 ⋮⋮ → Colors → 只有 Text 段，沒有任何 background-color-* 項", async () => {
+  it("table handle -> Colors -> only the Text section, no background-color-* items", async () => {
     const editor = mount([P("x", "x"), TABLE("tb")]);
-    // 前提：表格 block 有 textColor、沒有 backgroundColor
+    // Precondition: a table block has textColor but no backgroundColor
     expect(Object.keys(editor.getBlock("tb")!.props)).toContain("textColor");
     expect(Object.keys(editor.getBlock("tb")!.props)).not.toContain("backgroundColor");
     await hover(editor, "cell a", "tb");
@@ -463,9 +462,9 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(screen.queryByText("Background")).toBeNull();
   });
 
-  it("DH3：沒有顏色 prop 的 block（codeBlock）→ ⋮⋮ 選單沒有 Colors", async () => {
+  it("a block without color props (codeBlock): the handle menu has no Colors", async () => {
     const editor = mount([P("x", "x"), { id: "cb", type: "codeBlock", content: "let code" } as PartialBlockLike]);
-    // 前提：codeBlock 既沒有 textColor 也沒有 backgroundColor
+    // Precondition: codeBlock has neither textColor nor backgroundColor
     expect(Object.keys(editor.getBlock("cb")!.props)).not.toContain("textColor");
     expect(Object.keys(editor.getBlock("cb")!.props)).not.toContain("backgroundColor");
     await hover(editor, "let code", "cb");
@@ -474,7 +473,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(screen.queryByText("Colors")).toBeNull();
   });
 
-  it("DH4：Custom… → 把手選單仍開、內容換成面板；輸入 #00ff00 按 Apply → 該 block 底色寫入、選單關", async () => {
+  it("Custom...: the handle menu stays open and its content becomes the panel; entering #00ff00 and pressing Apply writes the block background and closes the menu", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openPanel("background");
@@ -487,7 +486,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     await expectMenuClosed();
   });
 
-  it("DH5：沒有最近色時，面板最後一個 Apply 按 Tab 繞回 Back，把手選單不關", async () => {
+  it("with no recent colors, Tab on the panel's last Apply wraps to Back and the handle menu stays open", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     const restore = layoutHostTrigger(handle());
@@ -515,7 +514,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     }
   });
 
-  it("DH6：面板開著時該 block 被刪掉 → 不丟例外、文件裡沒有寫入 #00ff00、選單關", async () => {
+  it("block deleted while the panel is open: no exception, #00ff00 is not written into the document, the menu closes", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openPanel("background");
@@ -523,7 +522,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     act(() => editor.removeBlocks(["t1"]));
     expect(editor.getBlock("t1")).toBeUndefined();
     await act(() => new Promise<void>((r) => setTimeout(r, 50)));
-    // 選單開著時 side menu 是凍結的，block 被刪掉後 ⋮⋮ 與面板都還在
+    // While the menu is open the side menu is frozen: after the block is deleted, the handle and the panel are still there
     expect(panel()).not.toBeNull();
     expect(handle()).toHaveAttribute("aria-expanded", "true");
     expect(() => fireEvent.click(button("Apply"))).not.toThrow();
@@ -531,7 +530,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(JSON.stringify(editor.document)).not.toContain("#00ff00");
   });
 
-  it("DH7：面板的 Back → 回到把手選單的項目列表，焦點在「Colors」", async () => {
+  it("the panel's Back returns to the handle menu's item list with focus on \"Colors\"", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openPanel("text");
@@ -542,13 +541,13 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(handle()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("DH8：block 底色是 #ff6600 → 子選單的底色段「Custom…」打勾、default 不打勾；開面板時色碼框是 #ff6600", async () => {
+  it("block background is #ff6600: the submenu's background-section \"Custom...\" is checked and default is not; opening the panel shows #ff6600 in the hex field", async () => {
     const editor = mount([P("x", "x"), { ...P("target", "t1"), props: { backgroundColor: "#ff6600" } } as PartialBlockLike]);
     expect(editor.getBlock("t1")!.props.backgroundColor).toBe("#ff6600");
     await hover(editor, "target", "t1");
     await openHandleMenu();
     await openColorsSub();
-    // Menu.Item 打勾時右側是勾號 svg，沒打勾時是 `.bn-tick-space` 佔位
+    // A checked Menu.Item has a tick svg on the right; an unchecked one has a `.bn-tick-space` placeholder
     const isChecked = (el: Element) => el.querySelector(".bn-tick-space") === null && el.querySelector("svg") !== null;
     expect(isChecked(item("background-color-custom")!)).toBe(true);
     expect(isChecked(item("background-color-default")!)).toBe(false);
@@ -557,7 +556,7 @@ describe("⋮⋮ 的顏色子選單與自訂色面板", () => {
     expect(hexInput().value).toBe("#ff6600");
   });
 
-  it("DH9：面板開著時按 Escape 關掉把手選單，再開一次 → 回到項目列表，不是面板", async () => {
+  it("Escape while the panel is open closes the handle menu; reopening shows the item list, not the panel", async () => {
     const editor = mount([P("x", "x"), P("target", "t1")]);
     await hover(editor, "target", "t1");
     await openPanel("text");

@@ -5,7 +5,7 @@ import { Awareness } from "y-protocols/awareness";
 import { usePresencePeople } from "./usePresencePeople";
 import { setRemote, userState } from "./test-awareness";
 
-// #293：訂閱 awareness、rAF 一幀合併、簽章沒變不 setState、cursorOf 讀即時值。
+// #293: subscribes to awareness, merges within one rAF frame, no setState when the signature is unchanged, cursorOf reads the live value.
 
 let frames: FrameRequestCallback[] = [];
 const awarenesses: Awareness[] = [];
@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe("usePresencePeople", () => {
-  it("UP1 首次 render 就有既有的人；之後新人推一幀後出現", () => {
+  it("the first render already has the existing people; a new person appears after a frame is pushed", () => {
     const aw = newAwareness();
     setRemote(aw, 10, userState("u-a", "Ann"));
     const perRender: string[][] = [];
@@ -65,7 +65,7 @@ describe("usePresencePeople", () => {
       perRender.push(r.people.map((p) => p.key));
       return r;
     });
-    // 第一次 render 就有（lazy initializer），不是 effect 補算後的第二次
+    // Present on the first render (lazy initializer), not on a second render after an effect computes it
     expect(perRender[0]).toEqual(["user:u-a"]);
     act(() => {
       setRemote(aw, 11, userState("u-b", "Bob"));
@@ -75,7 +75,7 @@ describe("usePresencePeople", () => {
     expect(result.current.people.map((p) => p.key)).toEqual(["user:u-a", "user:u-b"]);
   });
 
-  it("UP2 同一幀內多次 change 只 render 一次（推幀前不動）", () => {
+  it("several changes within one frame render only once (nothing moves before the frame is pushed)", () => {
     const aw = newAwareness();
     render(<Probe awareness={aw} />);
     const before = renders;
@@ -91,7 +91,7 @@ describe("usePresencePeople", () => {
     expect(keys()).toEqual(["user:u-a", "user:u-b", "user:u-c"]);
   });
 
-  it("UP3 只有心跳變 → 不重繪", () => {
+  it("only a heartbeat change: no re-render", () => {
     const aw = newAwareness();
     setRemote(aw, 10, userState("u-a", "Ann", { beat: 1 }));
     render(<Probe awareness={aw} />);
@@ -103,7 +103,7 @@ describe("usePresencePeople", () => {
     expect(renders).toBe(before);
   });
 
-  it("UP4／UP5 游標位置變不重繪但 cursorOf 讀到新值；有無游標變才重繪", () => {
+  it("a cursor position change does not re-render, yet cursorOf reads the new value; gaining or losing a cursor re-renders", () => {
     const aw = newAwareness();
     const first = { anchor: { p: 1 }, head: { p: 1 } };
     const second = { anchor: { p: 2 }, head: { p: 2 } };
@@ -124,7 +124,7 @@ describe("usePresencePeople", () => {
     expect(latest!.people[0].hasCursor).toBe(false);
   });
 
-  it("UP6 換 awareness：舊的 change 不再影響、新的有人就出現、順序重新起算", () => {
+  it("switching awareness: old changes no longer matter, people in the new one appear, order restarts", () => {
     const oldAw = newAwareness();
     const { rerender } = render(<Probe awareness={oldAw} />);
     act(() => {
@@ -150,7 +150,7 @@ describe("usePresencePeople", () => {
     expect(keys()).toEqual(["user:u-a", "user:u-b"]);
   });
 
-  it("UP7 卸載：取消待處理的幀、解除 change 訂閱", () => {
+  it("unmount: cancels the pending frame and unsubscribes from change", () => {
     const aw = newAwareness();
     const base = changeObservers(aw);
     const { unmount } = render(<Probe awareness={aw} />);
@@ -164,7 +164,7 @@ describe("usePresencePeople", () => {
     expect(changeObservers(aw)).toBe(base);
   });
 
-  it("UP8 awareness 為 null → 空名單、cursorOf 回 null", () => {
+  it("awareness null: empty list, cursorOf returns null", () => {
     const { result } = renderHook(() => usePresencePeople(null, "u-me"));
     expect(result.current.people).toEqual([]);
     expect(result.current.cursorOf("user:u-a")).toBeNull();

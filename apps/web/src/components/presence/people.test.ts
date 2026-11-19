@@ -14,7 +14,7 @@ import {
 import { agentState, userState } from "./test-awareness";
 import { firstGrapheme as libFirstGrapheme, hasVisibleText as libHasVisibleText } from "@/lib/first-grapheme";
 
-// #293：名單、合併、排序、簽章、容量；首字只驗 re-export。me＝"u-me"、本分頁 clientID＝1。
+// #293: list, merging, ordering, signature, capacity; the first grapheme is only checked as a re-export. me = "u-me", this tab's clientID = 1.
 const ME = "u-me";
 const MY_CLIENT = 1;
 const UUID = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -33,11 +33,11 @@ function onlyUser(entries: [number, unknown][]): UserPresencePerson {
 }
 
 describe("presencePeople", () => {
-  it("PP1 自己的 clientID 略過（即使 user.id 是別人）", () => {
+  it("this client's own clientID is skipped (even if user.id is someone else's)", () => {
     expect(people([[MY_CLIENT, userState("u-a", "Ann")]])).toEqual([]);
   });
 
-  it("PP2 我的另一個分頁略過；我自己憑證的 AI 照樣一項", () => {
+  it("another tab of mine is skipped; an AI under my own credential still counts as one entry", () => {
     const list = people([
       [2, userState(ME, "Me")],
       [3, agentState("me", "Claude")],
@@ -45,7 +45,7 @@ describe("presencePeople", () => {
     expect(list.map((p) => p.key)).toEqual(["agent:3"]);
   });
 
-  it("PP3 同一人多分頁合併：角色取高、名字取 since 大者；舊版 client 不改變結果", () => {
+  it("tabs of the same person merge: the higher role wins, the name comes from the larger since; an old-version client does not change the result", () => {
     const merged = [
       [10, userState("u-a", "Ann 新", { role: "viewer", since: 200 })],
       [11, userState("u-a", "Ann 舊", { role: "editor", since: 100 })],
@@ -55,7 +55,7 @@ describe("presencePeople", () => {
     expect(onlyUser([...merged, [12, userState("u-a", "Ann 更舊", { field: false })]])).toMatchObject(expected);
   });
 
-  it("PP4 since 同分或缺席：都沒有取 clientID 大者；有 since=0 勝過缺席（−∞）", () => {
+  it("equal or missing since: when neither has it the larger clientID wins; since=0 beats missing (-infinity)", () => {
     expect(
       onlyUser([
         [31, userState("u-a", "大", { role: "editor" })],
@@ -70,7 +70,7 @@ describe("presencePeople", () => {
     ).toBe("有 since");
   });
 
-  it("PP5 有無游標：任一份有就算有", () => {
+  it("with or without cursor: any one having it counts as having", () => {
     expect(
       onlyUser([
         [10, userState("u-a", "Ann", { cursor: { anchor: {}, head: {} } })],
@@ -85,7 +85,7 @@ describe("presencePeople", () => {
     ).toBe(false);
   });
 
-  it("PP6 AI 不合併：每個 clientID 一項、顏色一律 AGENT_PRESENCE_COLOR", () => {
+  it("AI does not merge: one entry per clientID, color AGENT_PRESENCE_COLOR", () => {
     const list = people([
       [20, agentState("bob", "Claude", { color: "#000000" })],
       [21, agentState("bob", "Cursor", { color: "#000000" })],
@@ -95,7 +95,7 @@ describe("presencePeople", () => {
     expect(list[0]).toMatchObject({ kind: "agent", clientId: 20, handle: "bob", label: "Claude" });
   });
 
-  it("PP7 非物件、沒有 user、空或非字串的 user.id → 略過", () => {
+  it("a non-object, no user, or an empty or non-string user.id is skipped", () => {
     expect(
       people([
         [10, null],
@@ -108,7 +108,7 @@ describe("presencePeople", () => {
     ).toEqual([]);
   });
 
-  it("PP8 舊版 client：只有 user → 無角色、無頭貼、游標照實", () => {
+  it("old-version client: only user gives no role, no avatar, cursor as is", () => {
     expect(onlyUser([[10, { user: { id: "u-a", name: "Ann" }, cursor: CURSOR }]])).toMatchObject({
       name: "Ann",
       role: null,
@@ -117,23 +117,23 @@ describe("presencePeople", () => {
     });
   });
 
-  it("PP9 惡意頭貼 → null；合法 → { id, v }", () => {
+  it("a malicious avatar gives null; a valid one gives { id, v }", () => {
     for (const avatar of ["https://evil/x.png", "javascript:alert(1)", { id: "../x", v: 1 }, { id: UUID, v: 1e300 }]) {
       expect(onlyUser([[10, userState("u-a", "Ann", { avatar })]]).avatar).toBeNull();
     }
     expect(onlyUser([[10, userState("u-a", "Ann", { avatar: { id: UUID, v: 3 } })]]).avatar).toEqual({ id: UUID, v: 3 });
   });
 
-  it("PP10 knotebook.v === 2 → 整欄當缺席", () => {
+  it("knotebook.v === 2: the whole field counts as absent", () => {
     const state = { user: { id: "u-a", name: "Ann" }, knotebook: { v: 2, kind: "user", role: "owner", avatar: null, since: 1 } };
     expect(onlyUser([[10, state]]).role).toBeNull();
   });
 
-  it("PP11 角色不在白名單 → null", () => {
+  it("a role not in the allow list gives null", () => {
     expect(onlyUser([[10, userState("u-a", "Ann", { role: "admin" })]]).role).toBeNull();
   });
 
-  it("PP14 kind 不是 user／agent → 角色、頭貼都不採用", () => {
+  it("a kind that is not user/agent: neither role nor avatar is used", () => {
     const state = {
       user: { id: "u-a", name: "Ann" },
       knotebook: { v: 1, kind: "bogus", role: "owner", avatar: { id: UUID, v: 1 }, since: 9 },
@@ -141,18 +141,18 @@ describe("presencePeople", () => {
     expect(onlyUser([[10, state]])).toMatchObject({ role: null, avatar: null });
   });
 
-  it("PP12 kind: agent 卻缺 label 或 handle → 不出現", () => {
+  it("kind: agent but missing label or handle: does not appear", () => {
     expect(people([[20, { user: { name: "x" }, knotebook: { v: 1, kind: "agent", handle: "bob" } }]])).toEqual([]);
     expect(people([[21, { user: { name: "x" }, knotebook: { v: 1, kind: "agent", label: "Claude" } }]])).toEqual([]);
   });
 
-  it("PP13 人的顏色＝collabUserColor(userId)，不讀 state.user.color", () => {
+  it("a person's color = collabUserColor(userId), state.user.color is not read", () => {
     expect(onlyUser([[10, userState("u-a", "Ann", { color: "#ff0000" })]]).color).toBe(collabUserColor("u-a"));
   });
 });
 
 describe("presenceCursor", () => {
-  it("取有 cursor 且 since 最大者；AI 取該 clientID；不存在 → null", () => {
+  it("picks the one with a cursor and the largest since; for AI picks that clientID; a missing one gives null", () => {
     const c10 = { anchor: { c: 10 }, head: { c: 10 } };
     const c11 = { anchor: { c: 11 }, head: { c: 11 } };
     const one = new Map<number, unknown>([
@@ -177,7 +177,7 @@ function user(id: string): PresencePerson {
 }
 
 describe("orderBySeen", () => {
-  it("依進場序；離開即移除；再回來排最後", () => {
+  it("in order of arrival; removed on leaving; coming back goes last", () => {
     const [a, b, c] = [user("a"), user("b"), user("c")];
     let r = orderBySeen(new Map(), [b, a], 0);
     expect(r.people.map((p) => p.key)).toEqual(["user:b", "user:a"]);
@@ -191,7 +191,7 @@ describe("orderBySeen", () => {
 });
 
 describe("presenceSignature", () => {
-  it("游標位置不算；有無游標、名字、角色、頭貼 v、人數都算", () => {
+  it("cursor position does not count; having a cursor, name, role, avatar v and headcount do", () => {
     const sig = (entries: [number, unknown][]) => presenceSignature(people(entries));
     const base = sig([[10, userState("u-a", "Ann", { role: "editor", cursor: CURSOR, avatar: { id: UUID, v: 1 } })]]);
     expect(
@@ -220,7 +220,7 @@ describe("presenceLayout", () => {
     [5, 5, 0, 1, 4, 5],
     [6, 4, 2, 1, 5, 6],
     [9, 4, 5, 1, 8, 9],
-  ])("total=%i → 寬 %i/%i、窄 %i/%i、精簡 0/%i", (total, ws, wm, ns, nm, cm) => {
+  ])("total=%i -> wide %i/%i, narrow %i/%i, compact 0/%i", (total, ws, wm, ns, nm, cm) => {
     expect(presenceLayout(total)).toEqual({
       wide: { shown: ws, more: wm },
       narrow: { shown: ns, more: nm },
@@ -230,7 +230,7 @@ describe("presenceLayout", () => {
 });
 
 describe("firstGrapheme", () => {
-  it("people 仍轉出與 lib 同一支 firstGrapheme / hasVisibleText", () => {
+  it("people still re-exports the same firstGrapheme / hasVisibleText as lib", () => {
     expect(firstGrapheme).toBe(libFirstGrapheme);
     expect(hasVisibleText).toBe(libHasVisibleText);
   });

@@ -11,14 +11,14 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { siteLimitChange, siteLimitsDto } from "@/test/site-limits-fixtures";
 
 /**
- * #247：三個管理面板的右卡內不出現實心鈕（brandDeep／brandSolid／default）。渲染期掃描——
- * 每頁以真 AppRoutes 渲染、fixture 給到最大權限，等內容載入後取 [data-management-content] 內所有
- * `button`、`a[class]`、`[role="button"]`。由面板開出的巢狀對話框（送出鈕照原規則用 brandDeep）是 portal，
- * 本來就渲染在 content 之外；再過濾 `closest('[role="dialog"]')` 是面板本身的，只是保險。
- * 逐 token 精確比對：`hover:bg-brand-deep`、`bg-brand-soft`、`data-[state=checked]:bg-brand` 是別的 token，不受影響。
- * `minButtons` 防空真：該頁至少要掃到這麼多個面板層元素（button／a[class]／role=button）。
+ * #247: the right card of the three management panels contains no solid button (brandDeep / brandSolid / default). Scanned at render time:
+ * each page renders through the real AppRoutes with fixtures granting maximum permission, and after the content loads takes every
+ * `button`, `a[class]` and `[role="button"]` inside [data-management-content]. Nested dialogs opened from a panel (their submit button uses brandDeep per
+ * the usual rule) are portals and render outside content anyway; the extra filter on `closest('[role="dialog"]')` for the panel's own is only a safeguard.
+ * Matching is per token exactly: `hover:bg-brand-deep`, `bg-brand-soft` and `data-[state=checked]:bg-brand` are different tokens and unaffected.
+ * `minButtons` guards against vacuous passes: the page must scan at least this many panel-level elements (button / a[class] / role=button).
  *
- * PANEL_PAGES 尾端加了群組四頁、站台六頁（端點 fixture 在 `PANEL3_GETS`，由 panelFetch 精確比對 URL）。
+ * PANEL_PAGES ends with the four group pages and six site pages (endpoint fixtures in `PANEL3_GETS`, matched on exact URL by panelFetch).
  */
 const SOLID_TOKENS = ["bg-brand-deep", "bg-brand", "bg-primary", "bg-destructive"];
 
@@ -51,7 +51,7 @@ const T = "2026-01-01T00:00:00.000Z";
 const PLAN = { id: "11111111-1111-4111-8111-111111111111", name: "Basic", quotaBytes: 2147483648, userCount: 1, groupCount: 1, overQuotaCount: 0, isDefaultForUsers: true, isDefaultForGroups: true, createdAt: T, updatedAt: T };
 const PLAN_STORAGE = { planId: PLAN.id, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648 };
 const PROVIDER_ID = "22222222-2222-4222-8222-222222222222";
-/** 站台限制：17 項齊全；兩項已調整（各多一顆「恢復預設」／「改回自動」）、一項 env 鎖住、修改紀錄一列。 */
+/** Site limits: all 17 items present; two adjusted (each with an extra "restore default" / "back to auto" button), one locked by env, one change-log row. */
 const SITE_LIMITS_FIXTURE: SiteLimitsDto = siteLimitsDto(
   {
     noteMaxBytes: { value: 5242881, source: "env", locked: true, stored: 2097152 },
@@ -60,12 +60,12 @@ const SITE_LIMITS_FIXTURE: SiteLimitsDto = siteLimitsDto(
   },
   { changes: [siteLimitChange()] },
 );
-/** 群組／站台十頁的最大權限 fixture（admin、canManageGroup／canManageMembers 皆 true、各表至少一列）。 */
+/** Maximum-permission fixtures for the ten group/site pages (admin, canManageGroup/canManageMembers both true, at least one row per table). */
 const PANEL3_GETS: Record<string, unknown> = {
   [`/api/groups/${GROUP_ID}/members`]: [
     { userId: "u-admin", email: "admin@example.com", displayName: "Admin", roleId: "r-admin", builtin: "admin" },
     { userId: "u-b", email: "b@example.com", displayName: "B", roleId: "r-member", builtin: "member" },
-    // 第二位管理員：「關於」頁的 Leave 鈕只在「我不是唯一管理員」時渲染（`isLastAdmin`），少了它 Leave 永遠掃不到。
+    // A second admin: the About page's Leave button renders only when I am not the only admin (`isLastAdmin`); without it Leave would never be scanned.
     { userId: "u-c", email: "c@example.com", displayName: "C", roleId: "r-admin", builtin: "admin" },
   ],
   [`/api/groups/${GROUP_ID}/roles`]: [adminRole(), memberRole(), customRole({ id: "r-custom", name: "Reader", memberCount: 0 })],
@@ -106,8 +106,8 @@ function json(body: unknown): Response {
 }
 
 /**
- * 回傳 `{ fetch, unexpected }`：沒 stub 的請求記進 `unexpected` 再 reject。只 throw 的話那個 query
- * 只會進錯誤態、測試不會紅；每案在掃描前斷言 `unexpected` 為空（ready 逾時時也先報它，才看得出缺哪支端點）。
+ * Returns `{ fetch, unexpected }`: requests with no stub are recorded in `unexpected` and then rejected. Throwing alone would only put that query
+ * in the error state and the test would stay green; each case asserts `unexpected` is empty before scanning (also reported first when ready times out, so the missing endpoint is visible).
  */
 export function panelFetch(user: UserDto) {
   const unexpected: string[] = [];
@@ -145,8 +145,8 @@ export interface PanelPageCase {
 }
 
 /**
- * 登入頁的密碼表單只看 `/api/auth/me`（先到），已連結登入方式那組看 `/api/auth/identities`（後到）——
- * 只等密碼鈕會在 identities 還在載入時就掃（實測只掃到 1 顆）。所以兩邊都等：「Unlink」列內鈕＋「Link Google」。
+ * The login page's password form depends only on `/api/auth/me` (arrives first), the linked sign-in methods on `/api/auth/identities` (arrives later) -
+ * waiting only for the password button would scan while identities is still loading (once only 1 button was scanned). So wait for both: the "Unlink" in-row button + "Link Google".
  */
 async function loginReady(passwordButton: string): Promise<unknown> {
   await screen.findByRole("button", { name: "Unlink" });
@@ -155,9 +155,9 @@ async function loginReady(passwordButton: string): Promise<unknown> {
 }
 
 /**
- * 站台：登入——頂部開關（`/api/admin/auth/settings`）、服務列（`/providers`）、列內「已連結」格（每列一支 `/impact`）是三支各自到的請求；
- * 只等其中一支會在其他還在載入時就掃。以登入服務的資料列定位、等「已連結」格從「—」變成 1；
- * 「登入期限與 token」組由 `/api/admin/limits` 另畫，也要等它的儲存鈕出現。
+ * Site: sign-in - the top switch (`/api/admin/auth/settings`), the provider rows (`/providers`) and the in-row "linked" cell (one `/impact` per row) are three separately arriving requests;
+ * waiting for only one would scan while the others are still loading. Locates the sign-in provider data row and waits for the "linked" cell to change from a dash to 1;
+ * the "sign-in period and token" group is drawn separately from `/api/admin/limits`, so wait for its save button too.
  */
 async function adminLoginReady(): Promise<unknown> {
   await screen.findByRole("switch", { name: "Allow self-registration with a password" });
@@ -165,35 +165,35 @@ async function adminLoginReady(): Promise<unknown> {
   return within(await screen.findByRole("row", { name: "SSO" })).findByText("1");
 }
 
-/** 站台：AI 代理——供應商、模型、動作三支請求各自到；三者都等到才掃。 */
+/** Site: AI agents - the providers, models and actions requests arrive separately; wait for all three before scanning. */
 async function adminAiReady(): Promise<unknown> {
   await screen.findByRole("row", { name: "Claude" });
-  await screen.findAllByText("Claude Sonnet"); // 模型名在供應商列的「模型」格與明細列的模型子表各出現一次
+  await screen.findAllByText("Claude Sonnet"); // the model name appears once in the provider row's model cell and once in the details row's model sub-table
   return screen.findByText("Custom action");
 }
 
 export const PANEL_PAGES: PanelPageCase[] = [
-  { name: "個人：帳戶資訊", path: "/settings/account", ready: () => screen.findByRole("button", { name: "Save URL name" }), minButtons: 2 },
-  { name: "個人：登入（有密碼）", path: "/settings/login", ready: () => loginReady("Change password"), minButtons: 3 },
-  { name: "個人：登入（SSO-only）", path: "/settings/login", user: SSO_ADMIN, ready: () => loginReady("Add password"), minButtons: 3 },
-  { name: "個人：授權", path: "/settings/authorization", ready: () => screen.findByText("Script"), minButtons: 7 }, // token 區三顆（建立＋列內鉛筆＋紅垃圾桶，#247；之前是建立＋改名＋撤銷，數目相同）＋MCP 教學三顆「Copy」＋一個 docs 外連 <a class>
-  // 開關只看 config；用量那組（無 button，但同頁）要等 `/api/storage` 到才算載完。
-  { name: "個人：儲存空間", path: "/settings/storage", ready: async () => { await screen.findByRole("switch"); return screen.findByText(/\(Basic\)/); }, minButtons: 1 },
-  { name: "個人：群組", path: "/settings/groups", ready: async () => within(await screen.findByRole("dialog")).findByText("Team Alpha"), minButtons: 0 }, // 背景 NoteList 側欄也有同名群組
-  { name: "個人：關於", path: "/settings/about", ready: () => screen.findByText("LICENSE"), minButtons: 3 }, // 三個外連 <a class>（repo、docs/、LICENSE）
-  { name: "群組：成員", path: `/groups/${GROUP_ID}`, ready: () => screen.findByText("b@example.com"), minButtons: 9 }, // 實測 9：三列紅垃圾桶（Remove <email>）＋「Add」＋三列角色下拉觸發鈕＋新增成員的角色下拉觸發鈕（Select 觸發鈕是 button、無實心底色）
-  { name: "群組：角色", path: `/groups/${GROUP_ID}/roles`, ready: () => screen.findByRole("region", { name: "Reader" }), minButtons: 21 }, // 實測 21：New role＋三張角色卡各 6 個權限 switch＋自訂角色的鉛筆、紅垃圾桶
-  { name: "群組：儲存空間", path: `/groups/${GROUP_ID}/storage`, ready: () => screen.findByText("@admin"), minButtons: 1 }, // 實測 1：自動版本 switch
-  { name: "群組：關於", path: `/groups/${GROUP_ID}/about`, ready: async () => { await screen.findByRole("button", { name: "Delete group" }); return screen.findByRole("button", { name: "Leave group" }); }, minButtons: 3 }, // 實測 3：Save name、Leave group、Delete group（Leave 等成員清單到、且非唯一管理員才出現）
-  { name: "站台：使用者", path: "/admin/users", ready: async () => { await screen.findByText("b@example.com"); return screen.findByText("Alice"); }, minButtons: 11 }, // 實測 11：Create invitation＋兩列重設鈕＋兩列啟用 switch＋兩列撤銷垃圾桶（邀請表兩列 pending）＋四個角色／方案下拉觸發鈕
-  { name: "站台：群組", path: "/admin/groups", ready: () => screen.findByRole("combobox", { name: "Storage plan for Team Alpha" }), minButtons: 1 }, // 實測 1：只有方案下拉觸發鈕（沒有刪除鈕）
-  { name: "站台：登入", path: "/admin/login", ready: adminLoginReady, minButtons: 11 }, // 實測 11：兩個存取 switch、「登入期限與 token」組的 Save（兩項都在預設，沒有恢復預設鈕）、Add sign-in service、列內自動建帳 switch、插頭／鉛筆／圖示／紅垃圾桶、啟用 switch、明細區 Copy
-  { name: "站台：儲存方案", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 10 }, // 實測 10：New plan、Edit／Delete Basic、Save defaults、兩個預設方案下拉觸發鈕、自動版本 switch、版本設定 Save、垃圾桶開關、垃圾桶 Save
-  { name: "站台：AI 代理", path: "/admin/ai", ready: adminAiReady, minButtons: 15 }, // 實測 15：供應商（Add provider＋插頭／鉛筆／垃圾桶＋switch）、模型（Add model＋switch＋鉛筆／垃圾桶）、動作（Add action＋上移／下移＋switch＋鉛筆／垃圾桶）
-  { name: "站台：站台限制", path: "/admin/limits", ready: async () => within(await screen.findByRole("region", { name: "Rate limits" })).findByRole("button", { name: "Save" }), minButtons: 5 }, // 實測 5：三個區塊各一顆 Save、解析 worker 數的 Back to auto、寫筆記內容次數的 Restore default
+  { name: "personal: account info", path: "/settings/account", ready: () => screen.findByRole("button", { name: "Save URL name" }), minButtons: 2 },
+  { name: "personal: sign-in (with password)", path: "/settings/login", ready: () => loginReady("Change password"), minButtons: 3 },
+  { name: "personal: sign-in (SSO-only)", path: "/settings/login", user: SSO_ADMIN, ready: () => loginReady("Add password"), minButtons: 3 },
+  { name: "personal: authorization", path: "/settings/authorization", ready: () => screen.findByText("Script"), minButtons: 7 }, // token section three (create + in-row pencil + red trash, #247; same count as the earlier create + rename + revoke) + three "Copy" in the MCP guide + one external docs <a class>
+  // The switch depends only on config; the usage group (no button, but on the same page) counts as loaded only once `/api/storage` arrives.
+  { name: "personal: storage", path: "/settings/storage", ready: async () => { await screen.findByRole("switch"); return screen.findByText(/\(Basic\)/); }, minButtons: 1 },
+  { name: "personal: groups", path: "/settings/groups", ready: async () => within(await screen.findByRole("dialog")).findByText("Team Alpha"), minButtons: 0 }, // the background NoteList sidebar also has a group with the same name
+  { name: "personal: about", path: "/settings/about", ready: () => screen.findByText("LICENSE"), minButtons: 3 }, // three external <a class> links (repo, docs/, LICENSE)
+  { name: "group: members", path: `/groups/${GROUP_ID}`, ready: () => screen.findByText("b@example.com"), minButtons: 9 }, // 9: three red trash (Remove <email>) + "Add" + three row role dropdown triggers + the add-member role dropdown trigger (a Select trigger is a button with no solid background)
+  { name: "group: roles", path: `/groups/${GROUP_ID}/roles`, ready: () => screen.findByRole("region", { name: "Reader" }), minButtons: 21 }, // 21: New role + three role cards with 6 permission switches each + the custom role's pencil and red trash
+  { name: "group: storage", path: `/groups/${GROUP_ID}/storage`, ready: () => screen.findByText("@admin"), minButtons: 1 }, // 1: the auto-versions switch
+  { name: "group: about", path: `/groups/${GROUP_ID}/about`, ready: async () => { await screen.findByRole("button", { name: "Delete group" }); return screen.findByRole("button", { name: "Leave group" }); }, minButtons: 3 }, // 3: Save name, Leave group, Delete group (Leave appears only once the member list has arrived and I am not the only admin)
+  { name: "site: users", path: "/admin/users", ready: async () => { await screen.findByText("b@example.com"); return screen.findByText("Alice"); }, minButtons: 11 }, // 11: Create invitation + two reset buttons + two enable switches + two revoke trashes (two pending rows in the invite table) + four role/plan dropdown triggers
+  { name: "site: groups", path: "/admin/groups", ready: () => screen.findByRole("combobox", { name: "Storage plan for Team Alpha" }), minButtons: 1 }, // 1: the plan dropdown trigger (no delete button)
+  { name: "site: sign-in", path: "/admin/login", ready: adminLoginReady, minButtons: 11 }, // 11: two access switches, Save of the "sign-in period and token" group (both items at default, so no restore-default button), Add sign-in service, the in-row auto-create-account switch, plug/pencil/icon/red trash, enable switch, details Copy
+  { name: "site: storage plans", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 10 }, // 10: New plan, Edit/Delete Basic, Save defaults, two default-plan dropdown triggers, the auto-versions switch, versions settings Save, trash switch, trash Save
+  { name: "site: AI agents", path: "/admin/ai", ready: adminAiReady, minButtons: 15 }, // 15: providers (Add provider + plug/pencil/trash + switch), models (Add model + switch + pencil/trash), actions (Add action + move up/down + switch + pencil/trash)
+  { name: "site: site limits", path: "/admin/limits", ready: async () => within(await screen.findByRole("region", { name: "Rate limits" })).findByRole("button", { name: "Save" }), minButtons: 5 }, // 5: one Save in each of the three blocks, Back to auto for the parse worker count, Restore default for the note write count
 ];
 
-describe("面板內無實心鈕（#247、渲染期）", () => {
+describe("no solid buttons inside panels (#247, at render time)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -201,7 +201,7 @@ describe("面板內無實心鈕（#247、渲染期）", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(PANEL_PAGES)("$name（$path）", async ({ path, user, ready, minButtons }) => {
+  it.each(PANEL_PAGES)("$name ($path)", async ({ path, user, ready, minButtons }) => {
     const { fetch, unexpected } = panelFetch(user ?? ADMIN);
     vi.stubGlobal("fetch", fetch);
     render(
@@ -223,12 +223,12 @@ describe("面板內無實心鈕（#247、渲染期）", () => {
     const content = document.querySelector<HTMLElement>("[data-management-content]");
     expect(content, "找不到 [data-management-content]——這頁沒有坐在 ManagementShell 裡").not.toBeNull();
     const panel = content!.closest('[role="dialog"]');
-    // `a[class]`：`<Button asChild><Link/></Button>` 渲染成帶 class 的 <a>，也要掃。
+    // `a[class]`: `<Button asChild><Link/></Button>` renders as an <a> with a class, which must be scanned too.
     const buttons = Array.from(content!.querySelectorAll<HTMLElement>('button, a[class], [role="button"]')).filter(
       (b) => b.closest('[role="dialog"]') === panel,
     );
     expect(buttons.length).toBeGreaterThanOrEqual(minButtons);
-    // 每顆列出命中的 token、可及名稱（aria-label 或 textContent 前 40 字）與 outerHTML 前段，紅了才看得出是哪顆。
+    // For each, list the matched token, accessible name (aria-label or the first 40 chars of textContent) and the start of outerHTML, so a failure shows which one.
     const offenders = buttons
       .map((b) => ({ b, hits: SOLID_TOKENS.filter((token) => b.classList.contains(token)) }))
       .filter(({ hits }) => hits.length > 0)

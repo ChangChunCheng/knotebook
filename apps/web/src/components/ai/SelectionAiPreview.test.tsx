@@ -15,8 +15,8 @@ function makePreview(afterText: string): AiPreview {
   return { before: [para("a1", "original middle sentence")], after: [para("n1", afterText)], noChange: false };
 }
 
-describe("SelectionAiPreview（#263）", () => {
-  it("只渲染被改的區塊，每塊照 diff 標記（added／deleted／changed）", async () => {
+describe("SelectionAiPreview (#263)", () => {
+  it("renders only the changed blocks, each marked per diff (added/deleted/changed)", async () => {
     render(
       <ThemeProvider>
         <SelectionAiPreview preview={makePreview("totally new text")} onReady={() => {}} />
@@ -30,7 +30,7 @@ describe("SelectionAiPreview（#263）", () => {
     expect(marks.every((mark) => mark === "added" || mark === "deleted" || mark === "changed")).toBe(true);
   });
 
-  it("就緒訊號：掛載後 onReady(那份 preview)；preview 換新 → 先 onReady(null) 再 onReady(新的)；卸載 → onReady(null)", async () => {
+  it("ready signal: onReady(that preview) after mount; a new preview calls onReady(null) then onReady(the new one); unmount calls onReady(null)", async () => {
     const onReady = vi.fn();
     const first = makePreview("first result");
     const second = makePreview("second result");
@@ -51,10 +51,10 @@ describe("SelectionAiPreview（#263）", () => {
     expect(onReady.mock.calls.at(-1)).toEqual([null]);
   });
 
-  it("#269：只改快照的 wikilink 區塊（AI 往返後 snapshotTitle≠label）不標記；快取沒有筆記清單（titleOf 為空）也照常渲染", async () => {
+  it("#269: a wikilink block changed only in its snapshot (snapshotTitle differs from label after the AI round trip) is not marked; also renders when the cache has no note list (titleOf empty)", async () => {
     const wl = (snap: string) => ({ type: "wikilink", props: { targetNoteId: "11111111-1111-4111-8111-111111111111", snapshotTitle: snap, label: "L", anchorBlockId: "" } });
     const preview: AiPreview = { before: [{ id: "a", type: "paragraph", content: [wl("Target")], children: [] }], after: [{ id: "a", type: "paragraph", content: [wl("L")], children: [] }], noChange: false };
-    // 未變更區塊的 wikilink 由 MemberWikilink 渲染（要 QueryClient 與 Router）；queries 預設停用 ⇒ 不發 /api/notes、快取保持空。
+    // Wikilinks in unchanged blocks are rendered by MemberWikilink (needs QueryClient and Router); queries are disabled by default, so no /api/notes request is made and the cache stays empty.
     const queryClient = new QueryClient({ defaultOptions: { queries: { enabled: false } } });
     render(
       <MemoryRouter>
@@ -69,7 +69,7 @@ describe("SelectionAiPreview（#263）", () => {
     expect(box.querySelector("[data-diff]")?.getAttribute("data-diff") ?? "context").toBe("context");
   });
 
-  it("#269：變動區塊內的 wikilink（無 label）以快取的現行標題呈現——titleOf 有傳到 renderDiff，不顯示兩側快照", async () => {
+  it("#269: a wikilink without label inside a changed block shows the cached current title - titleOf reaches renderDiff and the two snapshots are not shown", async () => {
     const ID = "11111111-1111-4111-8111-111111111111";
     const wl = (snap: string) => ({ type: "wikilink", props: { targetNoteId: ID, snapshotTitle: snap, label: "", anchorBlockId: "" } });
     const text = (t: string) => ({ type: "text", text: t, styles: {} });
@@ -78,7 +78,7 @@ describe("SelectionAiPreview（#263）", () => {
       after: [{ id: "a", type: "paragraph", content: [wl("Other"), text(" y")], children: [] }],
       noChange: false,
     };
-    // queries 停用 ⇒ 不發 /api/notes；清單只從預先放進快取的資料來（hook 被動訂閱）。
+    // Queries are disabled, so no /api/notes request; the list only comes from data placed in the cache beforehand (the hook subscribes passively).
     const queryClient = new QueryClient({ defaultOptions: { queries: { enabled: false } } });
     queryClient.setQueryData(["notes"], [{ id: ID, title: "Live", ownerHandle: "ann", groupId: null, slug: "live" }]);
     render(
@@ -98,7 +98,7 @@ describe("SelectionAiPreview（#263）", () => {
     expect(block).not.toHaveTextContent("Other");
   });
 
-  it("並排擴大成整列：before／after 都是一列（右欄 b → B）→ 渲染不丟例外、看得到 B、onReady 被呼叫", async () => {
+  it("columns expanded to a whole row: before and after are both one row (right column b -> B): renders without throwing, B is visible, onReady is called", async () => {
     const twoCols = (id: string, left: DiffBlock, right: DiffBlock): DiffBlock => ({
       id,
       type: "columnList",
@@ -125,15 +125,15 @@ describe("SelectionAiPreview（#263）", () => {
   });
 });
 
-describe("index.css：框選 AI 預覽的樣式規則（#263）", () => {
+describe("index.css: styles for the selection AI preview (#263)", () => {
   const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8");
-  it("沒有上下文塊的淡色規則（#263 後續：預覽不再帶前後上下文，surround 已移除）", () => {
+  it("no faint rule for context blocks (the preview carries no surrounding context)", () => {
     expect(css).not.toContain('data-diff="surround"');
   });
-  it("框內唯讀編輯器左右內距歸零，選擇器墊到 (0,3,0)", () => {
+  it("the read-only editor in the box has zero left/right padding, with the selector raised to (0,3,0)", () => {
     expect(css).toMatch(/\.kb-ai-preview \.bn-editor\.bn-editor \{[^}]*padding-inline: 0;/);
   });
-  it("四種色條改 inset box-shadow 並拿掉 border-left，選擇器 (0,4,0)", () => {
+  it("the four color bars use inset box-shadow with border-left removed, selector (0,4,0)", () => {
     for (const mark of ["added", "deleted", "changed", "moved"]) {
       expect(css).toMatch(new RegExp(`\\.kb-ai-preview \\.kb-diff \\[data-diff="${mark}"\\] > \\.bn-block \\{[^}]*border-left: 0;[^}]*box-shadow: inset 3px 0 0 `));
     }

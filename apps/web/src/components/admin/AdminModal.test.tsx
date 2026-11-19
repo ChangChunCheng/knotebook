@@ -9,8 +9,7 @@ import { ThemeProvider } from "@/theme";
 import { AppRoutes } from "@/App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 站台管理 modal（`/admin/*`，#247）：真 `AppRoutes`（驗的是 guard 串接、兩棵樹與 layout route 有沒有接對）。
-// 前身 `pages/AdminPage.test.tsx`（#174、#201）——本檔取代它。
+// Site admin modal (`/admin/*`, #247): the real `AppRoutes`, so guard chaining, the two route trees and the layout route are checked as wired.
 
 function fakeResponse(status: number, body?: unknown): Response {
   return { ok: status < 400, status, json: () => (body === undefined ? Promise.reject(new Error("no body")) : Promise.resolve(body)) } as unknown as Response;
@@ -19,7 +18,7 @@ function fakeResponse(status: number, body?: unknown): Response {
 const ADMIN_USER: UserDto = { id: "u-admin", email: "admin@example.com", handle: "admin", displayName: "Admin", isAdmin: true, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null };
 const PLAIN_USER: UserDto = { ...ADMIN_USER, id: "u-plain", handle: "plain", displayName: "Plain", isAdmin: false };
 const BG = { pathname: "/n/admin/some-note", search: "", hash: "", state: null, key: "bg1" } as Location;
-/** 站台限制頁只驗「點了換成該區塊」，不需要任何項目。 */
+/** The site limits page is only checked for "clicking swaps in that section", so it needs no items. */
 const SITE_LIMITS_EMPTY: SiteLimitsDto = { items: [], machine: { cpus: 2, cpuSource: "os", memoryBytes: 2 * 1024 ** 3, memorySource: "os" }, changes: [] };
 
 function mockFetch(getUser: () => UserDto | null) {
@@ -83,10 +82,11 @@ function renderAt(entry: string | { pathname: string; state?: unknown }, fetchMo
 }
 
 /**
- * 「不閃設定面板」負面判準：轉址過程中掛進 DOM 的任何 `[role=dialog]`，可及名稱（`aria-labelledby` 指到的
- * `DialogTitle` 文字）不得是設定面板的標題「Settings」。只記錄、不判斷「必須等於目的地」（群組 modal 會先是備用標題）。
- * 記 `addedNodes`（含子孫）而不是回呼當下 `querySelectorAll`——閃一下的節點可能在回呼跑之前就被移除了（同本檔
- * 「不先閃一下 modal」那案）；標題也先在被加入的子樹裡找（節點已脫離 document 時 `getElementById` 找不到）。
+ * Negative criterion for "no flash of the settings panel": any `[role=dialog]` mounted during the redirect must not have the settings
+ * panel title "Settings" as accessible name (the `DialogTitle` text `aria-labelledby` points to). It only records and does not require the
+ * name to equal the destination (the group modal first shows a fallback title). Records `addedNodes` (with descendants) rather than
+ * querying in the callback: a flashing node may be removed before the callback runs. The title is also looked up inside the added
+ * subtree first (`getElementById` does not find nodes already detached from the document).
  */
 function watchDialogTitles() {
   const titles = new Set<string>();
@@ -110,7 +110,7 @@ function watchDialogTitles() {
   return { titles, stop: () => observer.disconnect() };
 }
 
-describe("AdminModal（/admin/*，#247）", () => {
+describe("AdminModal (/admin/*, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -118,7 +118,7 @@ describe("AdminModal（/admin/*，#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("M1 六項（nav 可及名稱 Site admin）：Users／Groups／Sign-in／Storage plans／AI agents／Site limits；沒有「Back to notes」；/admin/users 是 aria-current", async () => {
+  it("six items (nav accessible name Site admin): Users/Groups/Sign-in/Storage plans/AI agents/Site limits; no \"Back to notes\"; /admin/users is aria-current", async () => {
     renderAt("/admin/users", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     const nav = within(dialog).getByRole("navigation", { name: "Site admin" });
@@ -140,13 +140,13 @@ describe("AdminModal（/admin/*，#247）", () => {
     ["/admin/auth", "/admin/login"],
     ["/admin/versions", "/admin/storage"],
     ["/admin/xyz", "/admin/users"],
-  ])("M2 轉址 %s → %s（在 AdminModal 外、RequireAdmin 內）", async (from, to) => {
+  ])("redirects %s -> %s (outside AdminModal, inside RequireAdmin)", async (from, to) => {
     renderAt(from, mockFetch(() => ADMIN_USER));
     await waitFor(() => expect(path()).toBe(to));
     expect(await screen.findByRole("dialog", { name: "Site admin" })).toBeInTheDocument();
   });
 
-  it("M3 守衛：非 admin 深連結 /admin/ai → /（不打任何 admin API、不出現站台 modal）；未登入 → /login?next=%2Fadmin%2Fai；mustChangePassword 的 admin → /change-password", async () => {
+  it("guard: non-admin deep link /admin/ai -> / (no admin API calls, no site modal); signed out -> /login?next=%2Fadmin%2Fai; admin with mustChangePassword -> /change-password", async () => {
     const plain = mockFetch(() => PLAIN_USER);
     const v1 = renderAt("/admin/ai", plain);
     await waitFor(() => expect(path()).toBe("/"));
@@ -165,7 +165,7 @@ describe("AdminModal（/admin/*，#247）", () => {
     await waitFor(() => expect(path()).toBe("/change-password"));
   });
 
-  it("M4 背景：深連結 /admin/users 時主樹落在 /* 的 HomePage（New note 在背景）；Esc → /", async () => {
+  it("background: deep link /admin/users leaves the main tree on the /* HomePage (New note in the background); Esc -> /", async () => {
     renderAt("/admin/users", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     expect(screen.getByRole("button", { name: "New note", hidden: true })).toBeInTheDocument();
@@ -174,7 +174,7 @@ describe("AdminModal（/admin/*，#247）", () => {
   });
 
   it.each([["/settings/users"], ["/admin"], ["/admin/auth"], ["/admin/versions"]])(
-    "M5 %s 轉到站台 modal 的過程不閃設定面板（中途掛進的 dialog 標題從不是 Settings）",
+    "redirect from %s to the site modal does not flash the settings panel (no dialog mounted midway ever has the title Settings)",
     async (from) => {
       const watcher = watchDialogTitles();
       try {
@@ -189,7 +189,7 @@ describe("AdminModal（/admin/*，#247）", () => {
     },
   );
 
-  it("M6 帶 backgroundLocation 開啟 → 切項次後 state 仍在 → ✕ 關閉回背景頁", async () => {
+  it("opens with backgroundLocation -> state survives switching items -> the close button returns to the background page", async () => {
     renderAt({ pathname: "/admin/users", state: { backgroundLocation: BG } }, mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     fireEvent.click(within(within(dialog).getByRole("navigation", { name: "Site admin" })).getByRole("link", { name: "Groups" }));
@@ -199,7 +199,7 @@ describe("AdminModal（/admin/*，#247）", () => {
     await waitFor(() => expect(path()).toBe(BG.pathname));
   });
 
-  it("M7 各項次的內容：Groups／Sign-in／Storage plans／AI agents／Site limits 點了都換成該區塊（h1）", async () => {
+  it("each item's content: clicking Groups/Sign-in/Storage plans/AI agents/Site limits swaps in that section (h1)", async () => {
     renderAt("/admin/users", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     const nav = within(within(dialog).getByRole("navigation", { name: "Site admin" }));
@@ -216,7 +216,7 @@ describe("AdminModal（/admin/*，#247）", () => {
     }
   });
 
-  it("M8 「Storage plans」頁同時有方案表、版本總開關與保留政策表單", async () => {
+  it("the \"Storage plans\" page has the plan table, the version master switch and the retention policy form", async () => {
     renderAt("/admin/storage", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     expect(await within(dialog).findByRole("heading", { level: 1, name: "Storage plans" })).toBeInTheDocument();

@@ -6,7 +6,7 @@ import { dismissAllToasts } from "@/components/ui/toast";
 import { ADMIN_ROLE, EMPTY_GROUP_USAGE, GROUP_ADMIN, GROUP_MEMBER, ME, callsTo, groupFetch, member, ok, renderGroupRoute } from "./group-test-utils";
 
 const USAGE = {
-  // usedBytes 刻意與 byKind 之和（3 MB）不同：佔比分母必須取 byKind 之和，兩者相同時「分母取錯」測不出來。
+  // usedBytes deliberately differs from the sum of byKind (3 MB): the share denominator must be the byKind sum - when they are equal a wrong denominator would go undetected.
   usedBytes: 4 * 1048576,
   quotaBytes: 10 * 1048576,
   planName: "Team",
@@ -28,7 +28,7 @@ async function openStorage(group: GroupDto, usage: unknown, extra: Parameters<ty
   return { dialog, fetchMock };
 }
 
-describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
+describe("GroupStorageSection (/groups/:id/storage, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -37,28 +37,28 @@ describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("依類型與依成員的佔比分母取五類之和", async () => {
+  it("the by-kind and by-member shares use the sum of the five kinds as denominator", async () => {
     const { dialog } = await openStorage(GROUP_ADMIN, USAGE);
     await within(dialog).findByTestId("by-kind-image");
-    // 2 / (2 + 1)＝66.7%
+    // image 2 MB / byKind sum 3 MB
     expect(parseFloat((within(dialog).getByTestId("by-kind-bar-image") as HTMLElement).style.width)).toBeCloseTo(66.667, 2);
-    // 「依成員」的分母同為五類之和：bob 的 2 MB / 3 MB
+    // The by-member denominator is also the five-kind sum: bob's 2 MB / 3 MB
     const memberBar = within(dialog).getAllByTestId("by-member-row")[0]!.querySelector<HTMLElement>("[data-testid='by-member-bar']")!;
     expect(parseFloat(memberBar.style.width)).toBeCloseTo(66.667, 2);
   });
 
-  it("S1 用量＋依類型五列恆在（含 0 的列）", async () => {
+  it("usage plus the five by-kind rows are present (including rows of 0)", async () => {
     const { dialog } = await openStorage(GROUP_ADMIN, USAGE);
     await waitFor(() => expect(within(dialog).getByTestId("storage-usage")).toHaveTextContent("4 MB"));
     expect(within(dialog).getByRole("heading", { name: "By type" })).toBeInTheDocument();
-    // 依類型的列以 data-testid 取（保留 by-kind-*；不再以 closest("section") 圈範圍）。
+    // By-kind rows are found by data-testid (by-kind-* kept; not scoped by closest("section")).
     const kinds: Array<[string, string]> = [["image", "Images"], ["audio", "Audio"], ["video", "Video"], ["document", "Documents"], ["other", "Other"]];
     for (const [kind, label] of kinds) {
       expect(within(within(dialog).getByTestId(`by-kind-${kind}`)).getByText(label)).toBeInTheDocument();
     }
   });
 
-  it("S2 依成員：只列 bytes>0；顯示名稱＋灰字 @handle；已刪除使用者彙總成一列；佔比條寬度以 byKind 之和為分母", async () => {
+  it("by member: only bytes>0 are listed; shows name plus grey @handle; deleted users are aggregated into one row; the share bar width uses the byKind sum as denominator", async () => {
     const { dialog } = await openStorage(GROUP_ADMIN, {
       ...USAGE,
       byMember: [...USAGE.byMember, { userId: "u-zero", handle: "zero", displayName: "Zero", bytes: 0 }],
@@ -71,13 +71,13 @@ describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
     expect(within(rows[0]).getByText("2 MB")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Deleted user")).toBeInTheDocument();
     expect(within(rows[1]).queryByText(/^@/)).not.toBeInTheDocument();
-    // 分母＝byKind 之和（3 MB），不是 usedBytes：2/3 → 66.666…%
+    // denominator = byKind sum (3 MB), not usedBytes: 2/3 -> 66.666...%
     const bar = rows[0].querySelector<HTMLElement>("[data-testid='by-member-bar']")!;
     expect(parseFloat(bar.style.width)).toBeCloseTo(66.667, 2);
     expect(within(dialog).queryByText("Zero")).not.toBeInTheDocument();
   });
 
-  it("S3 依成員沒有任何列 → 「This group's notes have no files yet.」；說明是佔用者語意（兩語言）；byKind 和為 0 時不 NaN", async () => {
+  it("no by-member rows: \"This group's notes have no files yet.\"; the description is in the occupant sense (both languages); no NaN when the byKind sum is 0", async () => {
     const { dialog } = await openStorage(GROUP_ADMIN, EMPTY_GROUP_USAGE);
     await within(dialog).findByRole("heading", { name: "By member" });
     expect(within(dialog).getByText("This group's notes have no files yet.")).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
     expect(dialog.innerHTML).not.toContain("NaN");
   });
 
-  it("S4 一般成員（無 canManageGroup）也看得到用量（放寬）；版本開關 disabled＋只有…可以變更；說明含「版本不佔額度」", async () => {
+  it("an ordinary member (no canManageGroup) also sees usage; the versions switch is disabled with a note on who can change it; the description says versions do not count toward the quota", async () => {
     const { dialog, fetchMock } = await openStorage(GROUP_MEMBER, USAGE);
     await waitFor(() => expect(within(dialog).getByTestId("storage-usage")).toBeInTheDocument());
     expect(callsTo(fetchMock, "GET", `/api/groups/${GROUP_MEMBER.id}/storage`).length).toBeGreaterThanOrEqual(1);
@@ -108,7 +108,7 @@ describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
     expect(callsTo(fetchMock, "PATCH", `/api/groups/${GROUP_MEMBER.id}`)).toHaveLength(0);
   });
 
-  it("S5 canManageGroup → 版本開關可切換，PATCH body 恰為 { autoVersions:false }（自 main 版 SettingsGroupDetailSection.test.tsx:634 搬來）", async () => {
+  it("canManageGroup: the versions switch can be toggled, PATCH body is { autoVersions:false }", async () => {
     let group: GroupDto = { ...GROUP_ADMIN, autoVersions: true };
     const fetchMock = groupFetch(() => [group], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE)], (url, method, init) => {
       if (url === `/api/groups/${GROUP_ADMIN.id}` && method === "PATCH") {
@@ -126,7 +126,7 @@ describe("GroupStorageSection（/groups/:id/storage，#247）", () => {
     await waitFor(() => expect(screen.getByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "false"));
   });
 
-  it("S6 站台總開關關閉 → 管理者也 disabled＋站台已關閉（自 main 版 :672 搬來）", async () => {
+  it("site master switch off: even managers see it disabled + the site-disabled note", async () => {
     await openStorage(GROUP_ADMIN, USAGE, (url, method) =>
       url === "/api/auth/config" && method === "GET"
         ? ok({ providers: [], registration: { enabled: false, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: false })

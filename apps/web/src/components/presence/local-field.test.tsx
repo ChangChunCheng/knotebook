@@ -7,7 +7,7 @@ import { PRESENCE_FIELD, type AvatarRef, type Role } from "@knotebook/shared";
 import { resetLocalPresenceFieldForTest, useLocalPresenceField } from "./local-field";
 import { fakeProvider, type FakeProvider } from "./test-awareness";
 
-// #293：本分頁的 `knotebook` 欄；重連（authenticated）同值重寫、斷線（close）清遠端舊 meta。
+// #293: this tab's `knotebook` field; on reconnect (authenticated) it is rewritten with the same value, on disconnect (close) stale remote meta is cleared.
 
 const UUID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const awarenesses: Awareness[] = [];
@@ -30,7 +30,7 @@ function mount(initial: Props) {
   return renderHook((props: Props) => useLocalPresenceField(props), { initialProps: initial });
 }
 
-/** 遠端各自建 Awareness，clock 推到 2，產生「本機收到的那份」update。 */
+/** Each remote builds its own Awareness with the clock pushed to 2, producing the update "as received locally". */
 function remoteAt2(): { id: number; update: Uint8Array } {
   const r = newAwareness();
   r.setLocalState({ user: { id: `u-${r.clientID}`, name: "R" } });
@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("useLocalPresenceField", () => {
-  it("LF1 寫入 knotebook 欄", () => {
+  it("writes the knotebook field", () => {
     const aw = newAwareness();
     mount({ provider: { awareness: aw }, role: "owner", name: "Ann", avatar: null });
     expect(field(aw)).toEqual({ v: 1, kind: "user", role: "owner", avatar: null, since: 1000 });
@@ -69,13 +69,13 @@ describe("useLocalPresenceField", () => {
     ["role null", { role: null, name: "Ann" }],
     ["role none", { role: "none", name: "Ann" }],
     ["name null", { role: "owner", name: null }],
-  ] as const)("LF2 %s → 不寫", (_label, input) => {
+  ] as const)("%s: no write", (_label, input) => {
     const aw = newAwareness();
     mount({ provider: { awareness: aw }, role: input.role, name: input.name, avatar: null });
     expect(field(aw)).toBeUndefined();
   });
 
-  it("LF3 角色變了重寫、since 不變", () => {
+  it("a role change rewrites, since is unchanged", () => {
     const aw = newAwareness();
     const { rerender } = mount({ provider: { awareness: aw }, role: "owner", name: "Ann", avatar: null });
     now = 2000;
@@ -83,7 +83,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toMatchObject({ role: "viewer", since: 1000 });
   });
 
-  it("LF4 值沒變不寫（每次新的、內容相同的 avatar 物件）", () => {
+  it("an unchanged value is not written (each time a new avatar object with the same content)", () => {
     const aw = newAwareness();
     const provider = { awareness: aw };
     const { rerender } = mount({ provider, role: "owner", name: "Ann", avatar: { id: UUID, v: 1 } });
@@ -93,7 +93,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toMatchObject({ avatar: { id: UUID, v: 1 } });
   });
 
-  it("LF5 改名 since 更新", () => {
+  it("a rename updates since", () => {
     const aw = newAwareness();
     const { rerender } = mount({ provider: { awareness: aw }, role: "owner", name: "Ann", avatar: null });
     now = 3000;
@@ -101,7 +101,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toMatchObject({ since: 3000 });
   });
 
-  it("LF6 (a) 換 awareness 對新的寫、since 沿用", () => {
+  it("switching awareness writes to the new one, since is kept", () => {
     const first = newAwareness();
     const { rerender } = mount({ provider: { awareness: first }, role: "owner", name: "Ann", avatar: null });
     now = 4000;
@@ -110,7 +110,7 @@ describe("useLocalPresenceField", () => {
     expect(field(second)).toEqual({ v: 1, kind: "user", role: "owner", avatar: null, since: 1000 });
   });
 
-  it("LF6 (b) 卸載再掛載（同分頁 NotePage 重掛）since 仍沿用", () => {
+  it("unmount and remount (NotePage remount in the same tab): since is still kept", () => {
     const first = newAwareness();
     const { unmount } = mount({ provider: { awareness: first }, role: "owner", name: "Ann", avatar: null });
     unmount();
@@ -120,12 +120,12 @@ describe("useLocalPresenceField", () => {
     expect(field(second)).toMatchObject({ since: 1000 });
   });
 
-  it("LF7 provider 沒有 awareness（NotePage 測試的 stub 形）→ 不丟錯", () => {
+  it("a provider without awareness (the stub shape in NotePage tests): no throw", () => {
     expect(() => mount({ provider: {}, role: "owner", name: "Ann", avatar: null })).not.toThrow();
     expect(() => mount({ provider: null, role: "owner", name: "Ann", avatar: null })).not.toThrow();
   });
 
-  it("LF12 deps 離開又回到原值（重連時 role owner→null→owner）→ 不重寫", () => {
+  it("deps leave and return to the original value (role owner -> null -> owner on reconnect): no rewrite", () => {
     const aw = newAwareness();
     const provider = { awareness: aw };
     const { rerender } = mount({ provider, role: "owner", name: "Ann", avatar: null });
@@ -138,7 +138,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toEqual({ v: 1, kind: "user", role: "owner", avatar: null, since: 1000 });
   });
 
-  it("LF12 StrictMode 掛載（effect 跑兩次）只寫一次", () => {
+  it("StrictMode mount (effect runs twice) writes once", () => {
     const aw = newAwareness();
     const spy = vi.spyOn(aw, "setLocalStateField");
     renderHook(() => useLocalPresenceField({ provider: { awareness: aw }, role: "owner", name: "Ann", avatar: null }), {
@@ -148,7 +148,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toMatchObject({ role: "owner", since: 1000 });
   });
 
-  it("LF8 頭貼變了 since 更新", () => {
+  it("an avatar change updates since", () => {
     const aw = newAwareness();
     const { rerender } = mount({ provider: { awareness: aw }, role: "owner", name: "Ann", avatar: { id: UUID, v: 1 } });
     now = 4000;
@@ -156,7 +156,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toMatchObject({ since: 4000, avatar: { id: UUID, v: 2 } });
   });
 
-  it("LF9 authenticated → 同值重寫（clock＋1），不換 props 的 rerender 後也成立", () => {
+  it("authenticated rewrites the same value (clock + 1), also after a rerender without changed props", () => {
     const aw = newAwareness();
     const provider = fakeProvider(aw);
     const props: Props = { provider, role: "owner", name: "Ann", avatar: null };
@@ -180,7 +180,7 @@ describe("useLocalPresenceField", () => {
     expect(field(aw)).toEqual(before);
   });
 
-  it("LF9 本機還沒有這欄時 authenticated 不寫", () => {
+  it("authenticated does not write when this client has no such field yet", () => {
     const aw = newAwareness();
     const provider = fakeProvider(aw);
     mount({ provider, role: null, name: "Ann", avatar: null });
@@ -192,12 +192,12 @@ describe("useLocalPresenceField", () => {
     expect(clock(aw)).toBe(c);
   });
 
-  it("LF10 卸載或換 provider 後，舊 provider 的事件無效", () => {
+  it("after unmount or switching provider, the old provider's events have no effect", () => {
     const aw = newAwareness();
     const remote = remoteAt2();
     const oldProvider = fakeProvider(aw);
     const { rerender, unmount } = mount({ provider: oldProvider, role: "owner", name: "Ann", avatar: null });
-    // 留一筆「無 state 的遠端 meta」，close 若還有效就會被刪掉
+    // Leave a "remote meta with no state": close would delete it if it were still effective
     applyAwarenessUpdate(aw, remote.update, "server");
     removeAwarenessStates(aw, [remote.id], "provider");
     const c = clock(aw);
@@ -220,7 +220,7 @@ describe("useLocalPresenceField", () => {
     expect(aw.meta.has(remote.id)).toBe(true);
   });
 
-  it("LF11 close → 只刪本機以外、已沒有 state 的遠端 meta；重連後同 clock 的現況被收下", () => {
+  it("close deletes only remote meta other than local that no longer has state; after reconnect the current state with the same clock is accepted", () => {
     const aw = newAwareness();
     const provider = fakeProvider(aw);
     mount({ provider, role: "owner", name: "Ann", avatar: null });
@@ -239,7 +239,7 @@ describe("useLocalPresenceField", () => {
     expect(aw.getStates().has(r1.id)).toBe(true);
   });
 
-  it("LF11 對照：不掛 hook 時同 clock 的現況被函式庫忽略", () => {
+  it("contrast: without the hook, current state with the same clock is ignored by the library", () => {
     const aw = newAwareness();
     const r1 = remoteAt2();
     applyAwarenessUpdate(aw, r1.update, "server");

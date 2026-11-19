@@ -9,7 +9,7 @@ import { SelectionAiController, PHONE_EDIT_TOOLBAR_CLEARANCE_PX, formattingToolb
 import { stubLayoutTier } from "@/test/layout-tier";
 import { STICKY_TOP_VAR } from "@/lib/page-scroll";
 
-// flip 換成會記錄呼叫參數的直通版本：驗證手機時傳了下緣內縮。
+// flip is replaced by a pass-through that records its arguments: verifies the bottom inset passed on phones.
 const flipSpy = vi.hoisted(() => vi.fn());
 vi.mock("@floating-ui/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@floating-ui/react")>();
@@ -32,7 +32,7 @@ const DOC = [
   { id: "img", type: "image", props: { url: "https://example.com/a.png" } },
 ];
 
-// prosemirror-tables 不是 app 的直接依賴：從 @blocknote/core 的位置解析，拿到它實際用的那份 CellSelection。
+// prosemirror-tables is not a direct dependency of the app: resolved from @blocknote/core's location to get the CellSelection it actually uses.
 const coreRequire = createRequire(createRequire(import.meta.url).resolve("@blocknote/core"));
 const { CellSelection } = coreRequire("prosemirror-tables") as { CellSelection: { create(doc: unknown, anchor: number, head: number): never } };
 
@@ -61,13 +61,13 @@ async function mount(doc: unknown[] = DOC) {
   return ai;
 }
 
-describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
+describe("SelectionAiController (#263: toolbar suppression and AI button)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("按 AI 鈕開框；框開著且選取在 target 內 → 內建工具列收起；關框後恢復", async () => {
+  it("the AI button opens the box; while the box is open and the selection is inside the target the built-in toolbar hides; it comes back after the box closes", async () => {
     await mount();
     selectInBlock(editor, "p1", 0, 5);
     fireEvent.click(await screen.findByRole("button", { name: "AI" }));
@@ -77,7 +77,7 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     await waitFor(() => expect(toolbar()).not.toBeNull());
   });
 
-  it("串流中在 target 外做非空選取 → 工具列出現、框不關、AI 鈕停用", async () => {
+  it("non-empty selection outside the target while streaming: toolbar appears, box stays open, AI button disabled", async () => {
     const ai = await mount();
     selectInBlock(editor, "p1", 0, 5);
     fireEvent.click(await screen.findByRole("button", { name: "AI" }));
@@ -91,7 +91,7 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     expect(ai.calls).toHaveLength(1);
   });
 
-  it("Ctrl+A 全選後開框 → 工具列收起（全選算在 target 內）", async () => {
+  it("opening the box after Ctrl+A hides the toolbar (select-all counts as inside the target)", async () => {
     await mount();
     act(() => {
       editor._tiptapEditor.commands.selectAll();
@@ -101,7 +101,7 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     await waitFor(() => expect(toolbar()).toBeNull());
   });
 
-  it("NodeSelection（選到圖片）→ 工具列照上游出現，但沒有 AI 項", async () => {
+  it("NodeSelection (an image selected): the toolbar appears as upstream but has no AI item", async () => {
     await mount();
     act(() => {
       editor._tiptapEditor.commands.setNodeSelection(contentStart(editor, "img") - 1);
@@ -110,7 +110,7 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
   });
 
-  it("AI 項是一顆 icon 鈕：沒有下拉、沒有 aria-expanded", async () => {
+  it("the AI item is a single icon button: no dropdown, no aria-expanded", async () => {
     await mount();
     selectInBlock(editor, "p1", 0, 5);
     const button = await screen.findByRole("button", { name: "AI" });
@@ -118,18 +118,18 @@ describe("SelectionAiController（#263：工具列壓制與 AI 鈕）", () => {
     expect(button).not.toHaveAttribute("aria-expanded");
     expect(button.querySelector('svg[data-icon="sparkles"]')).not.toBeNull();
     fireEvent.click(button);
-    // 舊版的下拉清單畫在工具列根元素裡；新版按下只開框（框裡才有動作 chip）。
+    // The old dropdown list was drawn inside the toolbar root; now pressing only opens the box (the action chips live in the box).
     expect(within(toolbarRoot).queryByRole("button", { name: REWRITE.name })).not.toBeInTheDocument();
   });
 });
 
-describe("SelectionAiController（手機：一律掛 controller，選文字時壓住工具列）", () => {
+describe("SelectionAiController (phone: controller always mounted, toolbar suppressed while text is selected)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("phone：非空選取也沒有 formatting toolbar，AI session 仍可開", async () => {
+  it("phone: even a non-empty selection has no formatting toolbar, the AI session can still open", async () => {
     stubLayoutTier("phone");
     await mount();
     selectInBlock(editor, "p1", 0, 5);
@@ -141,7 +141,7 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
     expect(await screen.findByTestId("selection-ai-box")).toBeInTheDocument();
   });
 
-  it("phone：選到圖片區塊 → 工具列照舊出現（含刪除鈕）；改選文字 → 收起；再選圖片 → 又出現，只有一份", async () => {
+  it("phone: selecting an image block shows the toolbar as before (with the delete button); selecting text hides it; selecting the image again shows it again, as a single instance", async () => {
     stubLayoutTier("phone");
     await mount();
     act(() => {
@@ -158,7 +158,7 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
     expect(document.querySelectorAll(".bn-formatting-toolbar")).toHaveLength(1);
   });
 
-  it("phone：選到跨儲存格（CellSelection）→ 工具列出現；游標在儲存格內選文字 → 沒有", async () => {
+  it("phone: a cross-cell selection (CellSelection) shows the toolbar; selecting text inside a cell does not", async () => {
     stubLayoutTier("phone");
     await mount([
       { id: "t1", type: "table", content: { type: "tableContent", rows: [{ cells: ["cell a", "cell b"] }, { cells: ["cell c", "cell d"] }] } },
@@ -183,7 +183,7 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
     await waitFor(() => expect(toolbar()).toBeNull());
   });
 
-  it("docked → phone → docked：工具列消失再恢復，最後只有一份", async () => {
+  it("docked -> phone -> docked: the toolbar disappears then comes back, ending as a single instance", async () => {
     const tier = stubLayoutTier("docked");
     await mount();
     selectInBlock(editor, "p1", 0, 5);
@@ -195,7 +195,7 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
     expect(screen.getAllByRole("button", { name: "Bold" })).toHaveLength(1);
   });
 
-  it("docked：同樣的選取出現 formatting toolbar", async () => {
+  it("docked: the same selection shows the formatting toolbar", async () => {
     stubLayoutTier("docked");
     await mount();
     selectInBlock(editor, "p1", 0, 5);
@@ -204,7 +204,7 @@ describe("SelectionAiController（手機：一律掛 controller，選文字時�
   });
 });
 
-describe("SelectionAiController（手機：浮動工具列翻到下方時避開編輯工具列）", () => {
+describe("SelectionAiController (phone: the floating toolbar avoids the edit toolbar when flipped below)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     flipSpy.mockClear();
@@ -219,14 +219,14 @@ describe("SelectionAiController（手機：浮動工具列翻到下方時避開�
     vi.stubGlobal("innerHeight", 800);
     Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
   }
-  // flip 的選項可以是函式（定位當下才算，手機上要讀釘在頂端的頁首高）：先求值再讀。
+  // flip options can be a function (evaluated at positioning time; on phones it reads the pinned header height): evaluate first, then read.
   const bottoms = () =>
     flipSpy.mock.calls.map(([options]) => {
       const resolved = typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options;
       return (resolved as { padding?: { bottom?: number } } | undefined)?.padding?.bottom;
     });
 
-  it("phone：flip 的下緣內縮編輯工具列的外框高度，不加鍵盤高（視窗邊界本來就是視覺視窗）", async () => {
+  it("phone: flip's bottom inset is the edit toolbar's outer height, without adding the keyboard height (the viewport boundary is already the visual viewport)", async () => {
     stubLayoutTier("phone");
     stubKeyboard(300);
     await mount();
@@ -238,7 +238,7 @@ describe("SelectionAiController（手機：浮動工具列翻到下方時避開�
     expect(bottoms().filter((bottom) => bottom !== undefined && bottom !== PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual([]);
   });
 
-  it("docked：flip 沿用預設（沒有內縮）", async () => {
+  it("docked: flip keeps the default (no inset)", async () => {
     stubLayoutTier("docked");
     stubKeyboard(300);
     await mount();
@@ -251,14 +251,14 @@ describe("SelectionAiController（手機：浮動工具列翻到下方時避開�
 describe("formattingToolbarMiddleware", () => {
   const names = (bottomPadding: number) => formattingToolbarMiddleware(bottomPadding).map((middleware) => middleware.name);
 
-  it("手機：先限制寬度（size），shift 左右各留 8px 並以整個視窗為邊界，才輪到 flip", () => {
+  it("phone: width is limited first (size), then shift keeps 8px on each side with the whole viewport as boundary, then flip", () => {
     expect(names(PHONE_EDIT_TOOLBAR_CLEARANCE_PX)).toEqual(["offset", "size", "shift", "flip"]);
   });
 
-  it("手機：flip 的上緣內縮釘在頂端的頁首高（定位當下讀 --kb-sticky-top），下緣內縮編輯工具列", () => {
+  it("phone: flip's top inset is the pinned header height (read at positioning time from --kb-sticky-top) and the bottom inset is the edit toolbar", () => {
     const flipOf = () => formattingToolbarMiddleware(PHONE_EDIT_TOOLBAR_CLEARANCE_PX).find((middleware) => middleware.name === "flip")!;
     const padding = () => {
-      // @floating-ui/react 包過的 middleware 把原本的選項放在 options[0]。
+      // The middleware wrapped by @floating-ui/react keeps the original options in options[0].
       const options = (flipOf().options as unknown[])[0];
       const resolved = (typeof options === "function" ? (options as (state: unknown) => unknown)({}) : options) as { padding: { top: number; bottom: number } };
       return resolved.padding;
@@ -272,7 +272,7 @@ describe("formattingToolbarMiddleware", () => {
     }
   });
 
-  it("桌機：與 BlockNote 預設相同，不限制寬度", () => {
+  it("desktop: same as BlockNote's default, no width limit", () => {
     expect(names(0)).toEqual(["offset", "shift", "flip"]);
   });
 });

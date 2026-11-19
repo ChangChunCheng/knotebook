@@ -21,8 +21,8 @@ let session!: AiSessionValue;
 let editor: AnyEditor;
 
 /**
- * 照 `SelectionAiBox` 的條件掛 `SelectionAiResult`：`phase === "done"` 才渲染，`anchorOk` 由活動錨點的 `verifyAnchor` 算、
- * 隨每次 editor 交易重算（框裡用同一個 useEditorState 形）。另由真正的框重驗一次。
+ * Mounts `SelectionAiResult` under the same condition as `SelectionAiBox`: only when `phase === "done"`; `anchorOk` comes from the active
+ * anchor's `verifyAnchor`, recomputed on every editor transaction (same useEditorState form as in the box). The real box also re-verifies it once.
  */
 function ResultHost() {
   session = useAiSession();
@@ -58,13 +58,13 @@ async function runToDone(ai: { calls: AiCall[] }, actionId: string, result: stri
 
 const docText = () => JSON.stringify(editor.document);
 
-describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
+describe("SelectionAiResult (#263 preview state, real lazy module)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("預覽就緒後套用啟用；按套用 → idle、文件換字", async () => {
+  it("apply is enabled once the preview is ready; applying goes to idle and the document text changes", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");
     const apply = screen.getByRole("button", { name: "Apply" });
@@ -74,19 +74,19 @@ describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
     expect(docText()).toContain("SUMMARY TEXT");
   });
 
-  it("預覽只顯示被改的區塊（.kb-ai-preview 之內）：前後的 p0／p2 不在預覽裡，也沒有任何 surround 標記", async () => {
+  it("the preview shows only the changed blocks (inside .kb-ai-preview): the surrounding p0/p2 are not in it and there are no surround markers", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");
     const preview = await screen.findByTestId("selection-ai-preview");
     expect(preview.closest(".kb-ai-preview")).not.toBeNull();
     await waitFor(() => expect(preview).toHaveTextContent("SUMMARY TEXT"));
-    expect(preview).toHaveTextContent("alpha beta gamma"); // 原文（deleted）仍在
+    expect(preview).toHaveTextContent("alpha beta gamma"); // the original (deleted) text is still present
     expect(preview).not.toHaveTextContent("context before");
     expect(preview).not.toHaveTextContent("context after");
     expect(preview.querySelector('[data-diff="surround"]')).toBeNull();
   });
 
-  it("noChange → 顯示「沒有變更」、預覽就緒後套用仍停用", async () => {
+  it("noChange shows the no-changes message and apply stays disabled once the preview is ready", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "alpha beta gamma\r\n");
     expect(screen.getByText("No changes — the result is the same as the original text.")).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
   });
 
-  it("錨點 changed（未套用）→ 沒有套用、沒有重試，只剩捨棄；捨棄 → idle", async () => {
+  it("anchor changed (not applied): no apply, no retry, only discard; discard goes to idle", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");
     act(() => {
@@ -106,7 +106,7 @@ describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
     expect(session.state.phase).toBe("idle");
   });
 
-  it("direct 自動套用後：按鈕列是還原／關閉；還原成功 → 回到套用／捨棄／重試", async () => {
+  it("after a direct auto-apply: the button row is revert/close; a successful revert returns to apply/discard/retry", async () => {
     const ai = await mount();
     await runToDone(ai, REWRITE.id, "REWRITTEN TEXT");
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
@@ -115,7 +115,7 @@ describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
     for (const name of ["Apply", "Discard", "Retry"]) expect(await screen.findByRole("button", { name })).toBeInTheDocument();
   });
 
-  it("已套用且插入的內容又被改 → 還原鈕停用（錨點失效時 canRevert 為假），框只剩關閉可用", async () => {
+  it("applied and the inserted content edited again: revert is disabled (canRevert is false once the anchor is invalid), only close remains usable", async () => {
     const ai = await mount();
     await runToDone(ai, REWRITE.id, "REWRITTEN TEXT");
     const s = session.state;
@@ -127,7 +127,7 @@ describe("SelectionAiResult（#263 預覽態，真的 lazy 模組）", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
   });
 
-  it("重試以同一組 request 重送", async () => {
+  it("retry resends the same request", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));

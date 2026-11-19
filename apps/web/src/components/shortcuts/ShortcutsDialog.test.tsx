@@ -6,21 +6,22 @@ import i18n from "@/i18n";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
 /**
- * 快捷鍵介紹頁的對話框外殼：lazy 邊界、名稱與描述（sr-only 的 DialogTitle／Description）、焦點（開啟聚焦內容區、
- * Tab 在內容區與 ✕ 之間循環、關閉還焦點）。內容元件換成替身——它自己的行為在 ShortcutsLazy.test.tsx，與外殼合起來的行為在 ShortcutsDialog.panel.test.tsx。
+ * The shortcut guide's dialog shell: lazy boundary, name and description (sr-only DialogTitle/Description), focus (opening focuses the content area,
+ * Tab cycles between the content area and the close button, closing returns focus). The content component is replaced by a stand-in - its own behaviour is in
+ * ShortcutsLazy.test.tsx, and together with the shell in ShortcutsDialog.panel.test.tsx.
  *
- * ⚠⚠ D1 必須是本檔第一個 `it`：`vi.mock` 的 factory 一個檔只執行一次，`React.lazy` 的結果又永久快取
- * （同 App.lazyPages.test.tsx 的做法）。`mockState.loaded` 由 factory 設——factory 執行＝lazy 的第一次動態 import；
- * 所以 D1 斷言 open=false 時它還是 false，換成靜態 import 就會紅。
+ * The open=false case must be the first `it` in this file: a `vi.mock` factory runs once per file and the `React.lazy` result is cached for good
+ * (same technique as App.lazyPages.test.tsx). `mockState.loaded` is set by the factory - the factory running is lazy's first dynamic import -
+ * so that case asserts it is still false when open=false, and a static import would turn it red.
  */
 
 const mockState = vi.hoisted(() => ({ loaded: false }));
 
 vi.mock("@/components/shortcuts/ShortcutsLazy", () => {
   mockState.loaded = true;
-  // 替身只重現外殼依賴的契約：一個 `[data-shortcuts-content]` 的可聚焦內容區；不得含別的可聚焦元素（否則它不再是最後一個 tabbable）。
-  // 手機時外殼傳 `listBack`（分類清單的「‹」），替身才多畫那一顆。
-  // 真內容元件的版面、分類切換與焦點在 ShortcutsLazy.test.tsx 與 ShortcutsDialog.panel.test.tsx。
+  // The stand-in reproduces only the contract the shell depends on: a focusable `[data-shortcuts-content]` content area; it must not contain other focusable elements
+  // (otherwise it is no longer the last tabbable). On phones the shell passes `listBack` (the category list's back arrow) and the stand-in draws that one too.
+  // The real content component's layout, category switching and focus are in ShortcutsLazy.test.tsx and ShortcutsDialog.panel.test.tsx.
   return {
     ShortcutsContent: ({ listBack }: { listBack?: { label: string; onBack: () => void } }) => (
       <>
@@ -37,7 +38,7 @@ vi.mock("@/components/shortcuts/ShortcutsLazy", () => {
   };
 });
 
-/** 每案自己建一份 ref：計時器洩到下一案時（Radix 卸載後 setTimeout(0) 才發 onCloseAutoFocus）不會碰到別案的 ref。 */
+/** Each case builds its own ref: when a timer leaks into the next case (after Radix unmounts, setTimeout(0) fires onCloseAutoFocus) it does not touch another case's ref. */
 function newRef(): RefObject<HTMLElement | null> {
   return createRef<HTMLElement>();
 }
@@ -57,13 +58,13 @@ beforeEach(async () => {
 });
 
 describe("ShortcutsDialog", () => {
-  it("D1 open=false：沒有 dialog，內容 chunk 還沒載入", () => {
+  it("open=false: no dialog, the content chunk is not loaded yet", () => {
     render(ui(false, () => {}));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockState.loaded).toBe(false);
   });
 
-  it("D2 open=true：dialog 有名稱與描述、內容出現、✕ 名稱 Close", async () => {
+  it("open=true: the dialog has a name and description, the content appears, the close button is named Close", async () => {
     render(ui(true, () => {}));
     const dialog = await screen.findByRole("dialog", { name: "Help" });
     expect(dialog).toHaveAccessibleDescription("Feature tour, what is new in this version, and common keyboard shortcuts and typing triggers");
@@ -72,7 +73,7 @@ describe("ShortcutsDialog", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("D3 Esc 與點 ✕ 都呼叫 onOpenChange(false)", async () => {
+  it("Esc and clicking the close button both call onOpenChange(false)", async () => {
     const onOpenChange = vi.fn();
     render(ui(true, onOpenChange));
     await screen.findByRole("dialog", { name: "Help" });
@@ -83,7 +84,7 @@ describe("ShortcutsDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("D4 關閉後焦點回到 returnFocusRef 指的元素（不是開啟前碰巧停的那顆）", async () => {
+  it("after closing, focus returns to the element returnFocusRef points at (not whatever happened to have focus before opening)", async () => {
     const onOpenChange = vi.fn();
     const ref = newRef();
     const view = render(ui(false, onOpenChange, ref));
@@ -97,12 +98,12 @@ describe("ShortcutsDialog", () => {
     await waitFor(() => expect(target).toHaveFocus());
   });
 
-  it("D5 returnFocusRef 指向已移除的元素：關閉不丟錯", async () => {
+  it("returnFocusRef pointing at a removed element: closing does not throw", async () => {
     const onOpenChange = vi.fn();
     const ref = newRef();
     const view = render(ui(false, onOpenChange, ref));
     const gone = document.createElement("button");
-    ref.current = gone; // 從沒掛進 document：isConnected 為 false
+    ref.current = gone; // never attached to the document: isConnected is false
     view.rerender(ui(true, onOpenChange, ref));
     await screen.findByRole("dialog", { name: "Help" });
     expect(() => view.rerender(ui(false, onOpenChange, ref))).not.toThrow();
@@ -110,7 +111,7 @@ describe("ShortcutsDialog", () => {
     expect(ref.current).toBeNull();
   });
 
-  it("D6 內容 chunk 已載入過時，再開一次：焦點直接落在內容區", async () => {
+  it("when the content chunk was already loaded, opening again lands focus directly in the content area", async () => {
     const onOpenChange = vi.fn();
     const ref = newRef();
     const view = render(ui(true, onOpenChange, ref));
@@ -122,7 +123,7 @@ describe("ShortcutsDialog", () => {
     await waitFor(() => expect(region).toHaveFocus());
   });
 
-  describe("手機（< 640）：沒有 ✕，分類清單的「‹」", () => {
+  describe("phone (< 640): no close button, the category list's back arrow", () => {
     afterEach(() => vi.unstubAllGlobals());
 
     function Controlled({ reopen, returnFocusRef }: { reopen: (() => void) | null; returnFocusRef: RefObject<HTMLElement | null> }) {
@@ -136,7 +137,7 @@ describe("ShortcutsDialog", () => {
       );
     }
 
-    it("開啟時焦點落在清單的「‹」（對話框裡、看得見的那一層），不是藏起來的內容區", async () => {
+    it("opening lands focus on the list's back arrow (inside the dialog, the visible layer), not on the hidden content area", async () => {
       stubLayoutTier("phone");
       render(<Controlled reopen={vi.fn()} returnFocusRef={newRef()} />);
       const dialog = await screen.findByRole("dialog", { name: "Help" });
@@ -145,7 +146,7 @@ describe("ShortcutsDialog", () => {
       expect(dialog.contains(document.activeElement)).toBe(true);
     });
 
-    it("在 640 以上打開、之後縮到手機寬度：清單的「‹」名稱是 Close，按了只關、不重開選單", async () => {
+    it("opened at 640 or wider and then shrunk to phone width: the list's back arrow is named Close, pressing it only closes and does not reopen the menu", async () => {
       const tier = stubLayoutTier("overlay");
       const reopen = vi.fn();
       render(<Controlled reopen={reopen} returnFocusRef={newRef()} />);
@@ -158,7 +159,7 @@ describe("ShortcutsDialog", () => {
       expect(reopen).not.toHaveBeenCalled();
     });
 
-    it("從選單開：「Back to menu」關掉，收完後重開選單（不還焦點）", async () => {
+    it("opened from the menu: \"Back to menu\" closes, then reopens the menu once the close finishes (no focus return)", async () => {
       stubLayoutTier("phone");
       const reopen = vi.fn();
       const returnFocusRef = newRef();
@@ -172,7 +173,7 @@ describe("ShortcutsDialog", () => {
       expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "target" }));
     });
 
-    it("不是從選單開：「‹」的名稱是 Close、只關、焦點照常還回去；Esc 也關、不重開選單", async () => {
+    it("not opened from the menu: the back arrow is named Close, only closes, focus is returned as usual; Esc also closes and does not reopen the menu", async () => {
       stubLayoutTier("phone");
       const returnFocusRef = newRef();
       render(<Controlled reopen={null} returnFocusRef={returnFocusRef} />);
@@ -192,7 +193,7 @@ describe("ShortcutsDialog", () => {
     });
   });
 
-  it("D7 Tab 在內容區與 ✕ 之間循環（FocusScope loop；✕ 在 DOM 最前面）", async () => {
+  it("Tab cycles between the content area and the close button (FocusScope loop; the close button is first in the DOM)", async () => {
     render(ui(true, () => {}));
     const region = await screen.findByRole("region", { name: "stub region" });
     region.focus();
@@ -203,7 +204,7 @@ describe("ShortcutsDialog", () => {
     expect(region).toHaveFocus();
   });
 
-  it("D8 對話框本身 outline-none：首開時焦點先落在 Content（chunk 未到），不能畫出瀏覽器預設的 focus-visible 外框（白框閃爍）", async () => {
+  it("the dialog itself is outline-none: on first open focus first lands on Content (chunk not arrived) and the browser's default focus-visible outline (a white flash) must not be drawn", async () => {
     render(ui(true, () => {}));
     const dialog = await screen.findByRole("dialog", { name: "Help" });
     expect(dialog).toHaveAttribute("data-shortcuts-dialog");

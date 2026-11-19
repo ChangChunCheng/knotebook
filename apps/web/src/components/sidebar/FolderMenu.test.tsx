@@ -19,13 +19,13 @@ import { liveNotesUnder } from "./folder-index";
 import { __resetFolderSortForTests, setFolderSort } from "./folder-sort";
 import { pressTrigger } from "@/test/menu-trigger";
 
-// 數 `liveNotesUnder` 呼叫次數（FM10：選單關著時不掃筆記）；行為照原本（包真函式）。
+// Counts `liveNotesUnder` calls (the menu does not scan notes while closed); behaviour unchanged (wraps the real function).
 vi.mock("@/components/sidebar/folder-index", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/sidebar/folder-index")>();
   return { ...actual, liveNotesUnder: vi.fn(actual.liveNotesUnder) };
 });
 
-// 資料夾列 ⋮：照真實掛法渲染在 NoteList 內。
+// The folder row's kebab: rendered inside NoteList as in production.
 afterEach(() => {
   localStorage.clear();
   __resetCollapseForTests();
@@ -49,7 +49,7 @@ interface Server {
 
 function stubServer(opts: Server = {}) {
   const calls: Array<{ key: string; body: unknown }> = [];
-  // 有狀態：DELETE 之後重抓的資料夾清單不含被刪的那個（FM8 才走得到「⋮ 已卸載」）。
+  // Stateful: after DELETE the refetched folder list no longer contains the deleted one (so the case where the kebab is unmounted can be reached).
   let folders = opts.folders ?? [];
   vi.stubGlobal(
     "fetch",
@@ -102,11 +102,11 @@ function renderList(props: Partial<NoteListProps> = {}, opts: { tab?: SidebarTab
 
 const trigger = (name: string) => screen.findByRole("button", { name: `Folder menu for ${name}` });
 async function openMenu(name: string): Promise<HTMLElement> {
-  // Radix DropdownMenu 的 trigger 只聽 pointerdown。
+  // Radix DropdownMenu's trigger only listens to pointerdown.
   pressTrigger(await trigger(name));
   return screen.findByRole("menu");
 }
-/** 選單內容的骨架：menuitem／menuitemradio 用名稱，分隔線 `—`、小標 `[label]`。 */
+/** Skeleton of the menu content: menuitem/menuitemradio by name, separator `—`, subheading `[label]`. */
 function skeleton(menu: HTMLElement): string[] {
   return Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="separator"], [role="group"] > [id], div[id]:not([role])'))
     .filter((el) => el.closest('[role="menu"]') === menu)
@@ -132,7 +132,7 @@ describe("FolderMenu", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("FM1 個人資料夾：項目順序、排序小標與三項（Last modified 已選）、每個 menuitem 有圖示、刪除紅字", async () => {
+  it("personal folder: item order, sort subheading and three items (Last modified selected), every menuitem has an icon, delete is red", async () => {
     stubServer({ folders: [A] });
     renderList();
     const menu = await openMenu("A");
@@ -143,7 +143,7 @@ describe("FolderMenu", () => {
     expect(within(menu).getByRole("group")).toHaveAttribute("aria-labelledby");
   });
 
-  it("FM2 共享私人：沒有 New note；刪除項叫 Remove folder", async () => {
+  it("shared private: no New note; the delete item is called Remove folder", async () => {
     stubServer({ folders: [sharedFolder({ id: "SF", name: "SF" })] });
     renderList({}, { tab: "shared" });
     const menu = await openMenu("SF");
@@ -152,14 +152,14 @@ describe("FolderMenu", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Delete folder" })).toBeNull();
   });
 
-  it("FM3 群組資料夾、自訂角色「刪除、不能編輯」（manage false、deleteNotes true）：只有排序小標與三項（沒有落單的分隔線）", async () => {
+  it("group folder with a custom role that can delete but not edit (manage false, deleteNotes true): only the sort subheading and three items (no orphaned separator)", async () => {
     stubServer({ groups: [R], folders: [groupFolder({ id: "RF", name: "RF", groupId: "R", edit: false, create: false, delete: true })] });
     renderList({}, { tab: "workspace" });
     const menu = await openMenu("RF");
     expect(skeleton(menu)).toEqual(["[Sort by]", "Name", "Last modified", "Size"]);
   });
 
-  it("FM4 第 5 層：New subfolder 不可執行（aria-disabled、名稱只有項目名、說明在描述、沒有 data-disabled、點了不開框）；第 4 層可按", async () => {
+  it("level 5: New subfolder is not actionable (aria-disabled, the name is just the item name, the explanation is in the description, no data-disabled, clicking opens no dialog); level 4 is pressable", async () => {
     stubServer({ folders: folderChain("L", 5) });
     renderList();
     let menu = await openMenu("L5");
@@ -181,7 +181,7 @@ describe("FolderMenu", () => {
     expect(within(ok).queryByText("Folders can be nested up to 5 levels")).toBeNull();
   });
 
-  it("FM5 群組資料夾 manage 但不能刪筆記、子樹有活筆記 → Delete folder 不可執行；子樹沒有活筆記 → 可按", async () => {
+  it("group folder with manage but no right to delete notes and live notes in the subtree: Delete folder is not actionable; with no live notes in the subtree it is pressable", async () => {
     const GF = groupFolder({ id: "GF", name: "GF", groupId: "G", delete: false });
     const GE = groupFolder({ id: "GE", name: "GE", groupId: "G", delete: false });
     stubServer({ groups: [G], folders: [GF, GE], notes: [groupNote({ id: "g1", title: "g1", group: G, folderId: "GF" })] });
@@ -203,7 +203,7 @@ describe("FolderMenu", () => {
     expect(await screen.findByRole("dialog", { name: "Delete folder “GE”?" })).toBeInTheDocument();
   });
 
-  it("FM6 排序：選 Name → 存 localStorage、選單仍開、Name 已選、清單順序變；卸載重掛仍是 Name", async () => {
+  it("sort: choosing Name saves to localStorage, the menu stays open, Name is selected, list order changes; unmount and remount is still Name", async () => {
     const older = personalNote({ id: "pa", title: "Alpha", folderId: "A", updatedAt: "2026-01-01T00:00:00.000Z" });
     const newer = personalNote({ id: "pb", title: "Beta", folderId: "A", updatedAt: "2026-03-01T00:00:00.000Z" });
     stubServer({ folders: [A], notes: [older, newer] });
@@ -223,7 +223,7 @@ describe("FolderMenu", () => {
     expect(within(again).getByRole("menuitemradio", { name: "Name" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("FM7 New note → onCreateNote(undefined, A)；New subfolder → 建立框、body {name: X, parentId: A}；Rename → 預填；Delete folder → 確認框", async () => {
+  it("New note calls onCreateNote(undefined, A); New subfolder opens the create dialog with body {name: X, parentId: A}; Rename prefills; Delete folder opens the confirm dialog", async () => {
     const calls = stubServer({ folders: [A] });
     const onCreateNote = vi.fn();
     renderList({ onCreateNote });
@@ -245,7 +245,7 @@ describe("FolderMenu", () => {
     expect(await screen.findByRole("dialog", { name: "Delete folder “A”?" })).toBeInTheDocument();
   });
 
-  it("FM8 框關閉後焦點回 ⋮（再讓出兩輪事件迴圈仍在）；刪除成功後 ⋮ 已卸載 → 不丟錯", async () => {
+  it("after the dialog closes focus returns to the kebab (still there after yielding two event-loop turns); after a successful delete the kebab is unmounted and nothing throws", async () => {
     stubServer({ folders: [A] });
     renderList();
     fireEvent.click(within(await openMenu("A")).getByRole("menuitem", { name: "Rename" }));
@@ -254,7 +254,7 @@ describe("FolderMenu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const menuButton = await trigger("A");
     await waitFor(() => expect(menuButton).toHaveFocus());
-    // 讓出兩輪（0 ms 的 timer 只是讓 Radix 卸載後的焦點處理跑完，不是等時間）
+    // Yield two turns (the 0 ms timer only lets Radix's post-unmount focus handling finish; it is not waiting for time)
     for (let i = 0; i < 2; i++) await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
     expect(menuButton).toHaveFocus();
 
@@ -263,13 +263,13 @@ describe("FolderMenu", () => {
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Folder deleted", { exact: true })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // 重抓後 A 不在了：⋮ 已卸載（不搶焦點的 isConnected 那條路），焦點不會停在脫離 DOM 的節點上
+    // After the refetch A is gone: the kebab is unmounted (the isConnected path that does not steal focus), so focus does not stay on a detached node
     await waitFor(() => expect(screen.queryByRole("button", { name: "Folder menu for A" })).toBeNull());
     expect(menuButton.isConnected).toBe(false);
     expect(document.activeElement?.isConnected).toBe(true);
   });
 
-  it("FM10 刪除擋下的判斷只在選單內容掛載時才算：選單關著時 liveNotesUnder 0 次、打開後 ≥ 1 次", async () => {
+  it("the delete-block check is computed only while the menu content is mounted: liveNotesUnder 0 times while closed, at least once after opening", async () => {
     const GF = groupFolder({ id: "GF", name: "GF", groupId: "G", delete: false });
     stubServer({ groups: [G], folders: [GF], notes: [groupNote({ id: "g1", title: "g1", group: G, folderId: "GF" })] });
     renderList({}, { tab: "workspace" });
@@ -277,7 +277,7 @@ describe("FolderMenu", () => {
     await screen.findByRole("link", { name: "g1" });
     const calls = vi.mocked(liveNotesUnder);
     calls.mockClear();
-    // 寫排序 store：每份 FolderMenu 自己訂閱它（useFolderSort）而重繪，NoteList 也因 useFolderSortOf 換新函式而重組節點；選單一直關著
+    // Writes the sort store: each FolderMenu subscribes to it itself (useFolderSort) and re-renders, and NoteList also recomposes nodes because useFolderSortOf returns a new function; the menu stays closed throughout
     act(() => {
       setFolderSort("GF", "name");
     });
@@ -288,24 +288,24 @@ describe("FolderMenu", () => {
     expect(calls.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("FM11 建立中：⋮ 的 New note 暫時不能按（Radix disabled，同列上的「＋」）", async () => {
+  it("while creating: the kebab's New note is temporarily unpressable (Radix disabled, same as the \"+\" on the row)", async () => {
     stubServer({ folders: [A] });
     renderList({ createNotePending: true });
     const menu = await openMenu("A");
     const item = within(menu).getByRole("menuitem", { name: "New note" });
     expect(item).toHaveAttribute("data-disabled");
-    // 讀屏也要知道不能按（Radix 在 disabled 時設的 aria-disabled 不得被蓋掉）
+    // Screen readers must also know it is unpressable (aria-disabled set by Radix on disabled must not be overwritten)
     expect(item).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("FM12 從 ⋮ 開框（含 chunk 已快取的第二次起）：輸入框拿到焦點，選單關閉時不把焦點搶回 ⋮", async () => {
+  it("opening a dialog from the kebab (including from the second time on when the chunk is cached): the input gets focus, and closing the menu does not take focus back to the kebab", async () => {
     stubServer({ folders: [A] });
     renderList();
     for (const item of ["Rename", "New subfolder", "Rename"]) {
       fireEvent.click(within(await openMenu("A")).getByRole("menuitem", { name: item }));
       const input = await screen.findByRole("textbox", { name: "Folder name" });
       await waitFor(() => expect(input).toHaveFocus());
-      // 再讓出兩輪：Radix 選單卸載後的還焦點若會搶，在這裡出現
+      // Yield two more turns: if Radix's focus return after the menu unmounts would steal focus, it shows here
       for (let i = 0; i < 2; i++) await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
       expect(input).toHaveFocus();
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -314,7 +314,7 @@ describe("FolderMenu", () => {
     }
   });
 
-  it("FM13 開過框之後，Esc 關選單仍把焦點還給 ⋮（「不還焦點」只限開框那一次）", async () => {
+  it("after a dialog has been opened, Esc closing the menu still returns focus to the kebab (the \"no focus return\" applies to the dialog open only)", async () => {
     stubServer({ folders: [A] });
     renderList();
     fireEvent.click(within(await openMenu("A")).getByRole("menuitem", { name: "Rename" }));
@@ -330,7 +330,7 @@ describe("FolderMenu", () => {
     await waitFor(() => expect(menuButton).toHaveFocus());
   });
 
-  it("FM9 zh：可及名稱「A 的資料夾選單」、三個排序字、「已達最多 5 層」", async () => {
+  it("zh: the kebab's accessible name, the three sort labels and the max-levels text", async () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ folders: folderChain("L", 5) });
     renderList();
@@ -341,8 +341,8 @@ describe("FolderMenu", () => {
   });
 });
 
-// ⋮「新增筆記」在 A1 建立時，A1 與祖先 A 都寫成展開（AppShell.handleNewNote 的祖先展開）。
-describe("FolderMenu × AppShell：⋮ 新增筆記展開祖先", () => {
+// The kebab's "New note" creating in A1 writes both A1 and its ancestor A as expanded (AppShell.handleNewNote's ancestor expansion).
+describe("FolderMenu x AppShell: kebab New note expands ancestors", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -356,7 +356,7 @@ describe("FolderMenu × AppShell：⋮ 新增筆記展開祖先", () => {
     return <div data-testid="note-route">{`${handle}/${slug}`}</div>;
   }
 
-  it("FM7b A1 的 ⋮ → New note；POST 回來前 A、A1 都被收合 → 成功後兩者都展開、導到新筆記", async () => {
+  it("A1's kebab -> New note; before the POST returns A and A1 are both collapsed -> after success both are expanded and it navigates to the new note", async () => {
     let release: () => void = () => {};
     const held = new Promise<Response>((resolve) => (release = () => resolve(json(personalNote({ id: "created", title: "Untitled" }), 201))));
     const calls = stubServer({ folders: [A, folderDto({ id: "A1", name: "A1", parentId: "A" })], post: () => held });
@@ -389,7 +389,7 @@ describe("FolderMenu × AppShell：⋮ 新增筆記展開祖先", () => {
   });
 });
 
-describe("FolderMenu 手機 sheet", () => {
+describe("FolderMenu phone sheet", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -400,7 +400,7 @@ describe("FolderMenu 手機 sheet", () => {
     act(() => dismissAllToasts());
   });
 
-  it("FM-S1 手機：貼底 sheet、最上面是資料夾名稱；動作列與排序列都是 48px；640 以上沒有標題、列照舊", async () => {
+  it("phone: bottom sheet with the folder name on top; action rows and sort rows are 48px; at 640 and above there is no title and the rows are as before", async () => {
     stubLayoutTier("phone");
     stubServer({ folders: [A] });
     const { view } = renderList();

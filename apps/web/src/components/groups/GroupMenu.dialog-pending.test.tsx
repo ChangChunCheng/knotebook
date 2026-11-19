@@ -7,8 +7,8 @@ import { adminRole, groupDto } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { GroupMenu } from "./GroupMenu";
 
-// 改名對話框的 chunk 還沒到時，使用者又選了刪除：最後只該剩刪除對話框（一次只開一個）。
-// 改名 chunk 卡在手動放行的 promise 上；vi.mock 整檔生效，所以獨立成檔。
+// If the user picks delete before the rename dialog's chunk has arrived, only the delete dialog should remain (one open at a time).
+// The rename chunk is held on a manually released promise; `vi.mock` applies to the whole file, so this is its own file.
 const gate = vi.hoisted(() => {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -23,7 +23,7 @@ vi.mock("./GroupNameDialog", async (importOriginal) => {
 
 const GROUP = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Workshop A" }, adminRole());
 
-describe("GroupMenu — 對話框一次只開一個", () => {
+describe("GroupMenu - only one dialog opens at a time", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -40,7 +40,7 @@ describe("GroupMenu — 對話框一次只開一個", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("改名 chunk 還沒到就選刪除 → 只剩刪除對話框，放行後改名也不會冒出來", async () => {
+  it("picking delete before the rename chunk arrives leaves only the delete dialog, and the rename one does not appear after release", async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>

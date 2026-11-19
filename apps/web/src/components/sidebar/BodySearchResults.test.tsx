@@ -27,7 +27,7 @@ const LOCATION = { groupIds: new Set<string>(), folders: indexFolders(FOLDERS) }
 const N1 = note("n1", "First", { folderId: "A1" });
 const N2 = note("n2", "Second");
 const NOTES = [N1, N2];
-const FAR = `${"x".repeat(18)}0123456789abNeedle tail`; // 命中在第 30 字
+const FAR = `${"x".repeat(18)}0123456789abNeedle tail`; // the hit is at the 30th character
 
 function readyState(hits: NoteSearchHitDto[], over: Partial<Extract<BodySearchState, { kind: "ready" }>> = {}): BodySearchState {
   return { kind: "ready", hits, forQuery: "needle", stale: false, hasMore: false, loadingMore: false, moreError: null, loadMore: () => {}, ...over };
@@ -83,21 +83,20 @@ function renderView(state: BodySearchState, opts: ViewOpts = {}) {
 }
 const region = () => screen.getByRole("region", { name: "搜尋結果" });
 
-describe("BodySearchView 合併列表", () => {
+describe("BodySearchView merged list", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("zh-TW");
   });
 
-  it("B1 ready：每處內文命中各一項、三行（標題標亮／資料夾路徑／片段標亮），不顯示段落標題；遠命中片段以 … 開頭", () => {
+  it("ready: each in-text hit is one item with three lines (highlighted title / folder path / highlighted snippet), no section heading shown; a far hit's snippet starts with an ellipsis", () => {
     renderView(readyState([
       hit(N1, [m("_top", "", "a needle here")]),
       hit(N2, [m("h1", "Intro", "needle one"), m("h2", "", "two needle"), m("h3", "Third", FAR)]),
     ]));
     const items = within(region()).getAllByTestId("search-hit");
-    expect(items).toHaveLength(4); // 1 + 3，一篇 3 處命中就 3 項
+    expect(items).toHaveLength(4); // 1 + 3: a note with 3 hits gives 3 items
     const matches = within(region()).getAllByTestId("body-match");
     expect(matches).toHaveLength(4);
-    // 第一項（N1 / A1）：三行
     const first = matches[0]!;
     const lines = first.querySelectorAll(":scope > div");
     expect(lines).toHaveLength(3);
@@ -106,10 +105,8 @@ describe("BodySearchView 合併列表", () => {
     expect(lines[1]).toHaveAttribute("title", "我的筆記 › A › A1");
     expect(lines[2]!.textContent).toBe("a needle here");
     expect(lines[2]!.querySelector("mark")).toHaveTextContent("needle");
-    // 段落標題不顯示（Intro／Third 都不出現）
     expect(screen.queryByText("Intro")).toBeNull();
     expect(screen.queryByText("Third")).toBeNull();
-    // 同一篇的三項各自重複標題與路徑，片段不同
     for (const [i, snippet] of [[1, "needle one"], [2, "two needle"], [3, "…0123456789abNeedle tail"]] as const) {
       const ls = matches[i]!.querySelectorAll(":scope > div");
       expect(ls).toHaveLength(3);
@@ -120,7 +117,7 @@ describe("BodySearchView 合併列表", () => {
     expect(matches[3]!.querySelector("div:nth-child(3) mark")).toHaveTextContent("Needle");
   });
 
-  it("B1b 沒有「另 N 處」：不論幾處命中都全列，沒有展開鈕", () => {
+  it("no \"N more\" line: all hits are listed however many there are, no expand button", () => {
     renderView(readyState([hit(N2, [m("h1", "Intro", "needle one"), m("h2", "B", "two needle"), m("h3", "C", "three needle")])]));
     expect(within(region()).getAllByTestId("body-match")).toHaveLength(3);
     expect(screen.queryByTestId("body-more")).toBeNull();
@@ -128,13 +125,13 @@ describe("BodySearchView 合併列表", () => {
     expect(region().querySelectorAll("[aria-expanded]")).toHaveLength(0);
   });
 
-  it("B1d 標題行（第一行）與位置行（第二行）：同樣的灰色小字，只差標題行是粗體（內文命中項 MatchItem 與只命中標題的 SearchRow 都一樣）；mark 保留", () => {
+  it("the title line (first) and the location line (second): the same small grey text, differing only in that the title line is bold (same for a body-hit MatchItem and a title-only SearchRow); mark is kept", () => {
     const strip = (el: Element) => el.className.split(/\s+/).filter((c) => c !== "mt-0.5").sort().join(" ");
     const noBold = (el: Element) => strip(el).split(" ").filter((c) => c !== "font-semibold").join(" ");
     const check = (lines: ArrayLike<Element>) => {
       expect(lines[0]!.className).toContain("font-semibold");
       expect(lines[1]!.className).not.toContain("font-semibold");
-      expect(noBold(lines[0]!)).toBe(strip(lines[1]!)); // 除了粗體，其餘 class 完全相同
+      expect(noBold(lines[0]!)).toBe(strip(lines[1]!)); // apart from bold, the class is identical
       expect(lines[0]!.className).toContain("text-muted-foreground");
       expect(lines[0]!.className).toContain("text-[11px]");
       expect(lines[0]!.className).not.toMatch(/font-medium|text-\[1[23]px\]/);
@@ -146,7 +143,7 @@ describe("BodySearchView 合併列表", () => {
     check(within(region()).getAllByTestId("search-hit").at(-1)!.querySelectorAll("a > div"));
   });
 
-  it("B1e 同一篇有多項（目前開著的那篇）：只有第一項帶 aria-current=page，其餘項不帶", () => {
+  it("several items of the same note (the one currently open): only the first has aria-current=page, the rest do not", () => {
     function Open({ id }: { id: string }) {
       const { setActiveNoteId } = useActiveNote();
       useEffect(() => setActiveNoteId(id), [id, setActiveNoteId]);
@@ -164,7 +161,7 @@ describe("BodySearchView 合併列表", () => {
     expect(links.map((a) => a.getAttribute("aria-current"))).toEqual(["page", null, null, null]);
   });
 
-  it("B1f 目前開著的那篇：兩行 meta 改用 text-brand-on-soft（灰字疊在 brand-soft 上不到 AA 4.5:1），其餘項仍是灰字", () => {
+  it("the currently open note: both meta lines use text-brand-on-soft (grey on brand-soft is below AA 4.5:1), other items stay grey", () => {
     function Open({ id }: { id: string }) {
       const { setActiveNoteId } = useActiveNote();
       useEffect(() => setActiveNoteId(id), [id, setActiveNoteId]);
@@ -187,7 +184,7 @@ describe("BodySearchView 合併列表", () => {
     expect(open!.className).toContain("group");
   });
 
-  it("B1c 標題標亮：第一行的 mark 是標題命中的字（用 titleLowerQuery）", () => {
+  it("title highlight: the mark on the first line is the title's matched text (uses titleLowerQuery)", () => {
     const hot = note("n3", "Needle Notes");
     renderView(readyState([hit(hot, [m("_top", "", "needle in body")])]), { notes: [hot] });
     const match = within(region()).getByTestId("body-match");
@@ -195,7 +192,7 @@ describe("BodySearchView 合併列表", () => {
     expect(match.querySelector(":scope > div:nth-child(3) mark")).toHaveTextContent("needle");
   });
 
-  it("B1d 只有標題命中（沒有內文片段）→ 兩行（標題＋路徑），不是 body-match，點了不帶 kbFind", () => {
+  it("title-only hit (no body snippet): two lines (title + path), not a body-match, clicking carries no kbFind", () => {
     renderView(readyState([]), { titleNotes: [N1] });
     const item = within(region()).getByTestId("search-hit");
     expect(within(item).getAllByRole("link")).toHaveLength(1);
@@ -208,8 +205,8 @@ describe("BodySearchView 合併列表", () => {
     expect(lastLocation).toMatchObject({ pathname: canonicalNotePath(N1), hash: "", state: null });
   });
 
-  it("B1e 排序與攤平：標題命中的篇在前；同篇多處命中連在一起、照 server 順序；標題＋內文都中的篇不另列「只有標題」", () => {
-    // titleNotes: [N1, N3]（N1 也有內文命中）；server：N2(2 處)、N1(2 處)
+  it("ordering and flattening: notes with title hits come first; several hits of one note stay together in server order; a note hit in both title and body is not listed again as title-only", () => {
+    // titleNotes: [N1, N3] (N1 also has body hits); server: N2 (2 hits), N1 (2 hits)
     const N3 = note("n3", "Third needle");
     renderView(
       readyState([
@@ -224,10 +221,10 @@ describe("BodySearchView 合併列表", () => {
       return `${link.querySelector("div")!.textContent}|${link.getAttribute("href")!.split("#b-")[1] ?? "-"}`;
     });
     expect(seq).toEqual(["First|c", "First|d", "Third needle|-", "Second|a", "Second|b"]);
-    expect(within(region()).getAllByTestId("body-match")).toHaveLength(4); // N3 只有標題命中：不是 body-match
+    expect(within(region()).getAllByTestId("body-match")).toHaveLength(4); // N3 has only a title hit: not a body-match
   });
 
-  it("B2 pending／error／rateLimited 各一句；標題命中的列照顯示；載入更多鈕、載入中 disabled、moreError 清單還在", () => {
+  it("pending / error / rateLimited each have one sentence; rows with title hits still show; load-more button, disabled while loading, the list stays on moreError", () => {
     const first = renderView({ kind: "pending" }, { titleNotes: [N1] });
     expect(within(region()).getByText("正在搜尋內文…")).toBeInTheDocument();
     expect(within(region()).getAllByTestId("search-hit")).toHaveLength(1);
@@ -252,7 +249,7 @@ describe("BodySearchView 合併列表", () => {
     expect(within(region()).getByText("無法搜尋內文。")).toBeInTheDocument();
   });
 
-  it("B3 region「搜尋結果」在 pending／error／ready 三態都找得到", () => {
+  it("the search results region is found in all three states pending / error / ready", () => {
     for (const s of [{ kind: "pending" } as const, { kind: "error", rateLimited: false } as const, readyState([])]) {
       const r = renderView(s);
       expect(region()).toHaveAttribute("data-testid", "sidebar-search-results");
@@ -260,19 +257,19 @@ describe("BodySearchView 合併列表", () => {
     }
   });
 
-  it("B3b onStatus：ready 回報列出的項數（每處命中一項）與 more；pending／unmount 回 null", () => {
+  it("onStatus: ready reports the number of listed items (one per hit) and more; pending / unmount report null", () => {
     const onStatus = vi.fn();
     const a = renderView({ kind: "pending" }, { onStatus });
     expect(onStatus).toHaveBeenLastCalledWith(null);
     a.unmount();
     onStatus.mockClear();
     const b = renderView(readyState([hit(N2, [m("_top", "", "needle"), m("h1", "", "needle 2")])], { hasMore: true }), { titleNotes: [N1], onStatus });
-    expect(onStatus).toHaveBeenLastCalledWith({ count: 3, more: true }); // 標題 1 項＋N2 兩處命中 2 項
+    expect(onStatus).toHaveBeenLastCalledWith({ count: 3, more: true }); // 1 title item + 2 items for N2's two hits
     b.unmount();
     expect(onStatus).toHaveBeenLastCalledWith(null);
   });
 
-  it("B3c stale（舊字的內文結果）→ onStatus 回報 null，篇數行不把舊查詢的內文命中算進去；非 stale 才回報", () => {
+  it("stale (body results of an old query): onStatus reports null and the note-count line does not count the old query's body hits; it reports when not stale", () => {
     const onStatus = vi.fn();
     const a = renderView(readyState([hit(N2, [m("_top", "", "needle")])], { stale: true }), { titleNotes: [N1], onStatus });
     expect(onStatus).toHaveBeenLastCalledWith(null);
@@ -282,7 +279,7 @@ describe("BodySearchView 合併列表", () => {
     expect(onStatus).toHaveBeenLastCalledWith({ count: 2, more: false });
   });
 
-  it("B4 交叉比對：不在清單的 hit 不顯示；改名後用清單的名字與 canonicalNotePath", () => {
+  it("cross-check: a hit not in the list is not shown; after a rename the list's name and canonicalNotePath are used", () => {
     const renamed = note("n2", "Renamed now");
     const gone = note("zz", "Gone");
     renderView(readyState([hit(gone, [m("_top", "", "needle")]), hit(note("n2", "Old name"), [m("_top", "", "needle")])]), { notes: [N1, renamed] });
@@ -294,21 +291,21 @@ describe("BodySearchView 合併列表", () => {
     expect(screen.queryByText("Gone")).not.toBeInTheDocument();
   });
 
-  it("B5 matches: [] 的 body hit → 只有標題列、沒有片段", () => {
+  it("a body hit with matches: [] gives only the title row, no snippet", () => {
     renderView(readyState([hit(N1, [])]));
     const item = within(region()).getByTestId("search-hit");
     expect(within(item).queryByTestId("body-match")).toBeNull();
     expect(within(item).getAllByRole("link")).toHaveLength(1);
   });
 
-  it("B6 matchedOn: title 的 hit 不單獨成列（標題命中以 titleNotes 為準）", () => {
+  it("a hit with matchedOn: title does not become its own row (title hits come from titleNotes)", () => {
     renderView(readyState([hit(N1, [], "title"), hit(N2, [m("_top", "", "needle")], "both")]));
     const items = within(region()).getAllByTestId("search-hit");
     expect(items).toHaveLength(1);
     expect(within(items[0]!).getAllByRole("link")[0]!.querySelector("div")!.textContent).toBe("Second");
   });
 
-  it("B7 forQuery：state 的 forQuery 是 abc（當下的字已是 abcd）→ 照 abc 裁前文並標亮", () => {
+  it("forQuery: the state's forQuery is abc (the current text is already abcd): the leading text is trimmed and highlighted per abc", () => {
     const s = `${"x".repeat(18)}0123456789ababc tail`;
     renderView(readyState([hit(N1, [m("_top", "", s)])], { forQuery: "abc", stale: true }));
     const snippet = within(region()).getByTestId("body-match").querySelector(":scope > div:nth-child(3)")!;
@@ -316,13 +313,13 @@ describe("BodySearchView 合併列表", () => {
     expect(snippet.querySelector("mark")).toHaveTextContent("abc");
   });
 
-  it("B8 ready、stale、hasMore false → 沒有載入更多；清單照顯示", () => {
+  it("ready, stale, hasMore false: no load-more; the list shows as is", () => {
     renderView(readyState([hit(N1, [m("_top", "", "needle")])], { stale: true, hasMore: false }));
     expect(screen.queryByRole("button", { name: "載入更多" })).not.toBeInTheDocument();
     expect(within(region()).getAllByTestId("search-hit")).toHaveLength(1);
   });
 
-  it("noMatch：沒有任何列、ready、非 stale → 有；stale 或有標題命中的列 → 沒有", () => {
+  it("noMatch: no rows, ready, not stale: shown; stale or with title-hit rows: not shown", () => {
     const a = renderView(readyState([]));
     expect(screen.getAllByText("沒有符合搜尋的筆記。")).toHaveLength(1);
     a.unmount();
@@ -334,7 +331,7 @@ describe("BodySearchView 合併列表", () => {
   });
 });
 
-describe("BodySearchView 點擊", () => {
+describe("BodySearchView click", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("zh-TW");
     lastLocation = { pathname: "", hash: "", state: null };
@@ -342,7 +339,7 @@ describe("BodySearchView 點擊", () => {
   });
   const matchLink = (i = 0) => within(region()).getAllByTestId("body-match")[i]!;
 
-  it("C1 點別篇的 match → pathname 是該篇、hash #b-<id>、查詢字在 navigation state（不在網址）；requestAnchor 沒被叫", () => {
+  it("clicking a match of another note: pathname is that note, hash #b-<id>, the query is in the navigation state (not in the URL); requestAnchor is not called", () => {
     const anchors = { currentNoteId: null, requestAnchor: vi.fn(), scrollToTop: vi.fn() };
     renderView(readyState([hit(N2, [m("h1", "Intro", "needle")])]), { anchors });
     expect(matchLink()).toHaveAttribute("href", `${canonicalNotePath(N2)}#b-h1`);
@@ -351,7 +348,7 @@ describe("BodySearchView 點擊", () => {
     expect(anchors.requestAnchor).not.toHaveBeenCalled();
   });
 
-  it("C2 同篇：requestAnchor(id, 查詢字) 一次、hash 變、pathname 不變", () => {
+  it("same note: requestAnchor(id, query) once, hash changes, pathname unchanged", () => {
     const anchors = { currentNoteId: N2.id, requestAnchor: vi.fn(), scrollToTop: vi.fn() };
     renderView(readyState([hit(N2, [m("h1", "Intro", "needle")])]), { anchors });
     fireEvent.click(matchLink());
@@ -360,14 +357,14 @@ describe("BodySearchView 點擊", () => {
     expect(lastLocation).toMatchObject({ pathname: "/start", hash: "#b-h1" });
   });
 
-  it("C2b 查詢字用 forQuery（產出這批的字），不是當下的字", () => {
+  it("the query is forQuery (the text that produced this batch), not the current text", () => {
     const anchors = { currentNoteId: N2.id, requestAnchor: vi.fn(), scrollToTop: vi.fn() };
     renderView(readyState([hit(N2, [m("h1", "Intro", "abc")])], { forQuery: "abc", stale: true }), { anchors });
     fireEvent.click(matchLink());
     expect(anchors.requestAnchor).toHaveBeenCalledWith("h1", "abc");
   });
 
-  it("C3 _top：別篇沒有 hash、查詢字在 state；同篇 requestAnchor(_top, 查詢字)、不 scrollToTop", () => {
+  it("_top: another note has no hash and the query is in state; the same note calls requestAnchor(_top, query) and does not scrollToTop", () => {
     const other = { currentNoteId: null, requestAnchor: vi.fn(), scrollToTop: vi.fn() };
     const r = renderView(readyState([hit(N2, [m("_top", "", "needle")])]), { anchors: other });
     expect(matchLink()).toHaveAttribute("href", canonicalNotePath(N2));
@@ -379,12 +376,12 @@ describe("BodySearchView 點擊", () => {
     fireEvent.click(matchLink());
     expect(same.requestAnchor).toHaveBeenCalledWith("_top", "needle");
     expect(same.scrollToTop).not.toHaveBeenCalled();
-    // 同篇 `_top` 也把查詢字寫進目前這筆 history 的 state（replace，不多一筆），重整才跳得回去
+    // `_top` in the same note also writes the query into the current history entry's state (replace, no extra entry), so a reload can jump back
     expect(lastLocation).toEqual({ pathname: "/start", hash: "", state: { kbFind: "needle" } });
-    expect(lastNavType).toBe("REPLACE"); // 不多一筆 history
+    expect(lastNavType).toBe("REPLACE"); // no extra history entry
   });
 
-  it("C4 Ctrl＋點擊 → 不 preventDefault、網址不變、requestAnchor 沒被叫", () => {
+  it("Ctrl + click: no preventDefault, URL unchanged, requestAnchor not called", () => {
     const anchors = { currentNoteId: N2.id, requestAnchor: vi.fn(), scrollToTop: vi.fn() };
     renderView(readyState([hit(N2, [m("h1", "Intro", "needle")])]), { anchors });
     expect(fireEvent.click(matchLink(), { ctrlKey: true })).toBe(true);
@@ -392,7 +389,7 @@ describe("BodySearchView 點擊", () => {
     expect(anchors.requestAnchor).not.toHaveBeenCalled();
   });
 
-  it("C5 點 match 與點標題列都會 setActiveNoteId", () => {
+  it("clicking a match and clicking a title row both setActiveNoteId", () => {
     const r = renderView(readyState([hit(N2, [m("h1", "Intro", "needle")])]));
     fireEvent.click(matchLink());
     expect(activeId).toBe(N2.id);
@@ -402,7 +399,7 @@ describe("BodySearchView 點擊", () => {
     fireEvent.click(within(within(region()).getByTestId("search-hit")).getAllByRole("link")[0]!);
     expect(activeId).toBe(N1.id);
   });
-  it("C6 一篇多處命中：每一項點下去都帶對的 sectionId 與 kbFind（別篇 navigate／同篇 requestAnchor）", () => {
+  it("several hits in one note: each item carries the right sectionId and kbFind when clicked (navigate for another note / requestAnchor for the same note)", () => {
     const hits = [hit(N2, [m("h1", "A", "needle one"), m("h2", "B", "needle two"), m("_top", "", "needle top")])];
     const expected = [
       { hash: "#b-h1", id: "h1" },

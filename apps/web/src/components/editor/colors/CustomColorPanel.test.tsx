@@ -18,7 +18,7 @@ import { applyColor } from "./apply-color";
 import { ColorMenuBody, useColorMenu } from "./ColorMenuBody";
 import { KeepOpenMenuItem } from "./KeepOpenMenuItem";
 
-// 包住原函式、照常寫入，只是讓測試看得到呼叫（ESM 命名匯出不能直接 spyOn）。
+// Wraps the original and still writes through, only making calls visible to the test (ESM named exports cannot be spied on directly).
 vi.mock("./apply-color", async (orig) => {
   const m = await orig<typeof import("./apply-color")>();
   return { ...m, applyColor: vi.fn(m.applyColor) };
@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** 只有 `(pointer: fine)` 依 `fine` 回報，其餘查詢恆不符合。 */
+/** Only `(pointer: fine)` is reported according to `fine`; every other query never matches. */
 function stubPointer(fine: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: fine && query === "(pointer: fine)",
@@ -93,14 +93,14 @@ const panel = () => document.querySelector<HTMLElement>(".kb-color-panel");
 const hexInput = () => screen.getByRole("textbox", { name: "Hex color", hidden: true }) as HTMLInputElement;
 const button = (name: string) => screen.getByRole("button", { name, hidden: true }) as HTMLButtonElement;
 
-/** 開選單 → 點「自訂…」，等面板掛上。`detail` 0 表示鍵盤啟動。 */
+/** Opens the menu and clicks "Custom..."; waits for the panel. `detail` 0 means keyboard activation. */
 async function openPanel(detail = 0) {
   await openHostMenu();
   fireEvent.click(customItem(), { detail });
   await waitFor(() => expect(panel()).not.toBeNull());
 }
 
-/** 等 lazy 載入的 react-colorful 掛好，回傳兩個 slider（飽和度方塊、色相）。 */
+/** Waits for the lazy react-colorful to mount; returns the two sliders (saturation square, hue). */
 async function sliders() {
   return waitFor(() => {
     const s = screen.getAllByRole("slider", { hidden: true });
@@ -113,8 +113,8 @@ function typeHex(value: string) {
   fireEvent.change(hexInput(), { target: { value } });
 }
 
-describe("CustomColorPanel／ColorMenuBody", () => {
-  it("PN1 開面板：選單仍開、面板取代項目列表、焦點在面板內", async () => {
+describe("CustomColorPanel / ColorMenuBody", () => {
+  it("opening the panel: the menu stays open, the panel replaces the item list, focus is inside the panel", async () => {
     mount();
     await openPanel();
     expect(trigger()).toHaveAttribute("aria-expanded", "true");
@@ -127,7 +127,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(panel()!.contains(document.activeElement)).toBe(true);
   });
 
-  it("PN2 輸入 F60 按 Enter：以 #ff6600 套用、選單關閉、記進最近用過", async () => {
+  it("typing F60 and pressing Enter applies #ff6600, closes the menu and records it in recent colors", async () => {
     const { editor } = mount();
     await openPanel();
     typeHex("F60");
@@ -139,7 +139,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(readRecentColors()[0]).toBe("#ff6600");
   });
 
-  it("PN2 輸入法選字中的 Enter 不套用、選單仍開", async () => {
+  it("Enter while an IME is composing does not apply and the menu stays open", async () => {
     mount();
     await openPanel();
     typeHex("#ff6600");
@@ -151,7 +151,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(applyMock).toHaveBeenCalledTimes(1);
   });
 
-  it("PN3 不合法的 #ff66：標 aria-invalid、顯示提示、Apply 停用", async () => {
+  it("invalid #ff66: aria-invalid, a hint is shown, Apply is disabled", async () => {
     mount();
     await openPanel();
     typeHex("#ff66");
@@ -163,7 +163,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(trigger()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("PN4 色碼框裡的 ArrowDown 不被 preventDefault、焦點留在色碼框", async () => {
+  it("ArrowDown in the hex field is not preventDefault-ed and focus stays in the field", async () => {
     mount();
     await openPanel();
     const input = hexInput();
@@ -173,7 +173,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(document.activeElement).toBe(input);
   });
 
-  it("PN5 點最近用過的第 3 個：套用該色、選單關閉、它移到最前面", async () => {
+  it("clicking the 3rd recent color applies it, closes the menu and moves it to the front", async () => {
     localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(["#111111", "#222222", "#333333"]));
     const { editor } = mount();
     await openPanel();
@@ -185,7 +185,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(readRecentColors()).toEqual(["#333333", "#111111", "#222222"]);
   });
 
-  it("PN6 Tab 繞回：有最近色時最後一個是第 3 個色塊", async () => {
+  it("Tab wraps: with recent colors the last stop is the 3rd swatch", async () => {
     localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(["#111111", "#222222", "#333333"]));
     mount();
     const restore = layoutHostTrigger();
@@ -209,7 +209,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     }
   });
 
-  it("PN6 Tab 繞回：沒有最近色時最後一個是 Apply", async () => {
+  it("Tab wraps: with no recent colors the last stop is Apply", async () => {
     mount();
     const restore = layoutHostTrigger();
     try {
@@ -233,7 +233,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     }
   });
 
-  /** 在色碼框上送一個鍵，回傳 document 的 keydown 監聽收到的鍵。 */
+  /** Sends a key on the hex field; returns the key the document keydown listener received. */
   async function keysReachingDocument(key: string) {
     mount();
     await openPanel();
@@ -249,38 +249,38 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     }
   }
 
-  it("PN7 色碼框的 Tab 傳得到 document", async () => {
+  it("Tab in the hex field reaches the document", async () => {
     expect(await keysReachingDocument("Tab")).toEqual(["Tab"]);
   });
 
-  it("PN7 色碼框的 Escape 傳得到 document", async () => {
+  it("Escape in the hex field reaches the document", async () => {
     expect(await keysReachingDocument("Escape")).toEqual(["Escape"]);
   });
 
-  it("PN7 色碼框的 ArrowDown 傳不到 document", async () => {
+  it("ArrowDown in the hex field does not reach the document", async () => {
     expect(await keysReachingDocument("ArrowDown")).toEqual([]);
   });
 
   const sliderLabels = async () => (await sliders()).map((s) => s.getAttribute("aria-label"));
 
-  it("PN8 兩個 slider 的 aria-label 改成 i18n 字串，re-render 後仍在", async () => {
+  it("the two sliders' aria-labels are i18n strings and survive a re-render", async () => {
     mount();
     await openPanel();
     expect(await sliderLabels()).toEqual(["Saturation and brightness", "Hue"]);
 
-    // 改色碼讓 HexColorPicker 以新的 color prop 重新 render
+    // change the hex so HexColorPicker re-renders with the new color prop
     typeHex("#ff6600");
     typeHex("#00ff00");
     expect(await sliderLabels()).toEqual(["Saturation and brightness", "Hue"]);
-    // 鍵盤調整色相：只有 react-colorful 內部 state 變動、外層不一定 re-render（拖曳同一路徑）
+    // Adjusting hue by keyboard: only react-colorful's internal state changes and the outer component may not re-render (same path as dragging)
     const [, hue] = await sliders();
-    // react-colorful 只看 which／keyCode
+    // react-colorful only looks at which/keyCode
     fireEvent.keyDown(hue!, { key: "ArrowRight", keyCode: 39, which: 39 });
     await waitFor(() => expect(hexInput().value).not.toBe("#00ff00"));
     expect(await sliderLabels()).toEqual(["Saturation and brightness", "Hue"]);
   });
 
-  it("PN8 換成 zh-TW 後 slider 的 aria-label 跟著換", async () => {
+  it("after switching to zh-TW the sliders' aria-labels follow", async () => {
     mount();
     await openPanel();
     expect(await sliderLabels()).toEqual(["Saturation and brightness", "Hue"]);
@@ -288,14 +288,14 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(await sliderLabels()).toEqual(["飽和度與亮度", "色相"]);
   });
 
-  it("PN9 (pointer: fine) 時聚焦色碼框", async () => {
+  it("(pointer: fine) focuses the hex field", async () => {
     stubPointer(true);
     mount();
     await openPanel(1);
     expect(document.activeElement).toBe(hexInput());
   });
 
-  it("PN9 (pointer: coarse) 以點擊開啟時焦點在面板根", async () => {
+  it("(pointer: coarse) opened by click: focus is on the panel root", async () => {
     stubPointer(false);
     mount();
     await openPanel(1);
@@ -304,14 +304,14 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(document.activeElement).toBe(panel());
   });
 
-  it("PN9 (pointer: coarse) 以鍵盤開啟（detail 0）時聚焦色碼框", async () => {
+  it("(pointer: coarse) opened by keyboard (detail 0) focuses the hex field", async () => {
     stubPointer(false);
     mount();
     await openPanel(0);
     expect(document.activeElement).toBe(hexInput());
   });
 
-  it("PN10 Back：回到項目列表、焦點在「自訂…」；關掉再開仍是項目列表", async () => {
+  it("Back returns to the item list with focus on \"Custom...\"; closing and reopening still shows the item list", async () => {
     mount();
     await openPanel();
     fireEvent.click(button("Back"));
@@ -331,7 +331,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(panel()).toBeNull();
   });
 
-  it("PN11 Back、Apply、最近用過的色塊都在 Tab 順序裡", async () => {
+  it("Back, Apply and the recent color swatches are all in the Tab order", async () => {
     localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(["#111111", "#222222"]));
     mount();
     await openPanel();
@@ -340,7 +340,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     }
   });
 
-  it("PN12 輸入合法色碼只更新預覽與方塊、不寫入；按 Enter 才寫入一次", async () => {
+  it("entering a valid hex only updates the preview and the square without writing; Enter writes once", async () => {
     const { editor } = mount();
     await openPanel();
     const [saturation] = await sliders();
@@ -361,7 +361,7 @@ describe("CustomColorPanel／ColorMenuBody", () => {
     expect(applyMock).toHaveBeenCalledTimes(1);
   });
 
-  it("PN13 面板的內容寬度容得下 react-colorful 的寬度，不會撐出橫向捲軸", async () => {
+  it("the panel's content width fits react-colorful's width without causing a horizontal scrollbar", async () => {
     mount();
     await openPanel();
     await sliders();

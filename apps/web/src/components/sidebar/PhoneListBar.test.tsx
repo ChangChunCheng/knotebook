@@ -13,12 +13,12 @@ function renderBar(overrides: { query?: string } = {}) {
   return { onQueryChange, onOpen, onClose, searchRef };
 }
 
-describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
+describe("PhoneListBar (the search bar while the search layer is open)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  it("搜尋框 44 高、16px 字級（防 iOS 放大），沒有 Ctrl K 徽章，沒有 New note", () => {
+  it("the search box is 44 high with 16px text (prevents iOS zoom), no Ctrl K badge, no New note", () => {
     renderBar();
     const input = screen.getByRole("textbox", { name: "Search notes" });
     expect(input).toHaveClass("h-11");
@@ -28,7 +28,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
     expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
   });
 
-  it("右側是 44 高的 Cancel：點了清空字、讓搜尋框失焦並關搜尋層", () => {
+  it("on the right is a 44-high Cancel: clicking clears the text, blurs the search box and closes the search layer", () => {
     const { onQueryChange, onClose, searchRef } = renderBar({ query: "alp" });
     const cancel = screen.getByRole("button", { name: "Cancel" });
     expect(cancel).toHaveClass("h-11");
@@ -41,7 +41,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
     expect(input).not.toHaveFocus();
   });
 
-  it("聚焦呼叫 onOpen；失焦不關（點結果、收鍵盤都會失焦）", () => {
+  it("focus calls onOpen; blur does not close (tapping a result or dismissing the keyboard both blur)", () => {
     const { onOpen, onClose } = renderBar();
     const input = screen.getByRole("textbox", { name: "Search notes" });
     fireEvent.focus(input);
@@ -50,7 +50,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("打字呼叫 onQueryChange；Esc 清空、失焦並關搜尋層", () => {
+  it("typing calls onQueryChange; Esc clears, blurs and closes the search layer", () => {
     const { onQueryChange, onClose } = renderBar({ query: "x" });
     const input = screen.getByRole("textbox", { name: "Search notes" });
     fireEvent.change(input, { target: { value: "xy" } });
@@ -62,7 +62,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("列高 56（內距 6＋44＋6）加底部 safe area", () => {
+  it("row height 56 (padding 6 + 44 + 6) plus the bottom safe area", () => {
     const { searchRef } = renderBar();
     const bar = searchRef.current?.closest("[data-phone-list-bar]");
     expect(bar).not.toBeNull();
@@ -70,7 +70,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
     expect(bar).toHaveClass("pt-1.5");
   });
 
-  describe("鍵盤開著", () => {
+  describe("keyboard open", () => {
     let viewport: EventTarget & { height: number; offsetTop: number; scale: number };
     let frames: Array<() => void>;
 
@@ -99,7 +99,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
       return document.querySelector<HTMLElement>("[data-phone-list-bar]")!;
     }
 
-    it("鍵盤收著：列在文件流裡（沒有 margin-bottom），手機上 sticky 釘在視窗底；有 Cancel 與 safe area", () => {
+    it("keyboard closed: the bar is in the document flow (no margin-bottom), sticky pinned to the window bottom on phones; has Cancel and the safe area", () => {
       renderBar();
       expect(bar()).not.toHaveClass("fixed");
       expect(bar()).toHaveClass("max-sm:sticky", "max-sm:bottom-0");
@@ -108,7 +108,7 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
       expect(bar().className).toContain("env(safe-area-inset-bottom)");
     });
 
-    it("鍵盤升起：列仍在文件流裡、sticky 的 bottom＝鍵盤高（頂到鍵盤上方）、同高的 margin-bottom（最後的結果捲得到列上方），只留搜尋框，沒有 Cancel、沒有 safe area 內距", () => {
+    it("keyboard up: the bar stays in the document flow, sticky bottom = keyboard height (against the top of the keyboard) with an equal margin-bottom (the last results can scroll above the bar); only the search box remains, no Cancel, no safe-area padding", () => {
       renderBar();
       setKeyboard(300);
       expect(bar()).not.toHaveClass("fixed");
@@ -120,14 +120,14 @@ describe("PhoneListBar（搜尋層開著時的搜尋列）", () => {
       expect(bar().className).not.toContain("env(safe-area-inset-bottom)");
     });
 
-    it("高度差在門檻以內：不算鍵盤，列照舊", () => {
+    it("a height difference within the threshold does not count as a keyboard: the bar stays as before", () => {
       renderBar();
       setKeyboard(60);
       expect(bar()).not.toHaveClass("fixed");
       expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
 
-    it("鍵盤收起：回到文件流、Cancel 回來", () => {
+    it("keyboard dismissed: back to the document flow, Cancel returns", () => {
       renderBar();
       setKeyboard(300);
       setKeyboard(0);

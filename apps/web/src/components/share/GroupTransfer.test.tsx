@@ -20,10 +20,10 @@ import {
   type TransferTarget,
 } from "./GroupTransfer";
 
-// #216：⋮ 選單的「移動到群組」「複製到群組」（原 MoveToGroupSection 的測試搬來）。
-// 寬螢幕＝右側 flyout（Radix Sub；各層往旁層疊）；窄／觸控（matchMedia 不命中 WIDE_POINTER_QUERY）＝就地向下展開。
-// 子選單是逐層清單（destination-level）：這組案的群組都沒有資料夾、筆記在根層、`GET /api/folders` 回空，
-// 第一層與 #216 的平清單同項同序（上下半部之間的分隔線不是 menuitem），斷言照舊不放寬。資料夾層的案在檔尾「逐層子選單」與「寬螢幕層疊」。
+// #216: the menu's "Move to group" / "Copy to group". Wide screens use a flyout on the right (Radix Sub; each level stacks beside the previous); narrow/touch
+// (matchMedia misses WIDE_POINTER_QUERY) expands in place downward. The submenu is a level-by-level list (destination-level): the groups in these cases have no folders,
+// the note is at the root and `GET /api/folders` returns empty, so the first level has the same items in the same order as the flat list of #216 (the separator between the
+// upper and lower halves is not a menuitem), and the assertions are not loosened. Cases with folder levels are at the end of the file (level-by-level submenu and wide-screen stacking).
 
 function fakeResponse({ ok, status, json }: { ok: boolean; status: number; json?: () => Promise<unknown> }): Response {
   return { ok, status, json: json ?? (() => Promise.reject(new Error("no body"))) } as unknown as Response;
@@ -55,7 +55,7 @@ const GB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const GC = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const GROUP_A = groupDto({ id: GA, name: "Workshop A" }, memberRole());
 const GROUP_C = groupDto({ id: GC, name: "Workshop C" }, memberRole());
-/** 成員但角色沒有新建旗標——不得出現在候選裡。 */
+/** A member whose role has no create flag - must not appear among the candidates. */
 const GROUP_B = groupDto(
   { id: GB, name: "Readers" },
   memberRole({ permissions: { ...memberRole().permissions, create: false, edit: false } }),
@@ -91,14 +91,14 @@ const GROUP_NOTE: NoteDto = { ...MOVED, id: NOTE.id };
 
 interface Server {
   groups: GroupDto[];
-  /** `GET /api/folders`（⋮ 子選單掛著時會讀；預設空）。 */
+  /** `GET /api/folders` (read while the kebab submenu is mounted; empty by default). */
   folders: FolderDto[];
   shares: ShareDto[];
   token: string | null;
   latest: NoteDto;
   move?: () => Response | Promise<Response>;
   copy?: () => Response | Promise<Response>;
-  /** 這些 URL 的 GET 懸置，直到 `release(url, response)`。 */
+  /** GETs of these URLs hang until `release(url, response)`. */
   hold?: Set<string>;
 }
 
@@ -139,7 +139,7 @@ function stub(init: Partial<Server> = {}) {
   };
 }
 
-/** 就地展開形（窄／觸控）＝寬判準不成立；`on=false` 即寬（flyout）。jsdom 預設落在窄，所以 flyout 案一律要明確注入寬。 */
+/** In-place expand form (narrow/touch) = the wide criterion does not hold; `on=false` is wide (flyout). jsdom defaults to narrow, so flyout cases must inject wide explicitly. */
 function stubInlineMode(on: boolean): void {
   mockWidePointer(!on);
 }
@@ -174,13 +174,13 @@ function openMenu(): void {
   fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
 }
 
-/** 開 ⋮ 並等群組清單載入（觸發項出現）。 */
+/** Opens the kebab and waits for the group list to load (the trigger item appears). */
 async function openMenuReady(testId: "note-menu-move-to" | "note-menu-copy-to" = "note-menu-copy-to") {
   openMenu();
   return screen.findByTestId(testId);
 }
 
-/** flyout 形：鍵盤 → 展開第二層（Radix SubTrigger）。 */
+/** Flyout form: keyboard expands the second level (Radix SubTrigger). */
 async function openFlyout(trigger: HTMLElement): Promise<HTMLElement> {
   trigger.focus();
   fireEvent.keyDown(trigger, { key: "ArrowRight" });
@@ -193,7 +193,7 @@ async function pickFlyout(testId: "note-menu-move-to" | "note-menu-copy-to", nam
   fireEvent.click(within(sub).getByRole("menuitem", { name }));
 }
 
-describe("⋮ 選單：移動／複製到群組（#216）", () => {
+describe("kebab menu: move/copy to group (#216)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -205,7 +205,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("沒有可選群組（沒有任何角色同時有新建與編輯）→ 移動不出現；複製只剩「建立副本」", async () => {
+  it("no selectable group (no role has both create and edit): Move does not appear and Copy has only \"Make a copy\"", async () => {
     const CREATE_ONLY = groupDto(
       { id: GB, name: "Create only" },
       memberRole({ permissions: { ...memberRole().permissions, create: true, edit: false } }),
@@ -218,7 +218,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["Make a copy"]);
   });
 
-  it("flyout 形：移動／複製觸發項前各有自己的圖示（與其他選單項同款 mr-2 h-4 w-4），右側箭頭仍在", async () => {
+  it("flyout form: the move/copy trigger items each have their own icon (same mr-2 h-4 w-4 as other menu items) and the arrow on the right remains", async () => {
     stub();
     renderMenu();
     const move = await openMenuReady("note-menu-move-to");
@@ -233,8 +233,8 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(copy.querySelector('svg[data-icon="chevron-right"]')).not.toBeNull();
   });
 
-  // 選項矩陣。
-  it("矩陣：自己的個人筆記 -> 移動＝候選群組；複製＝建立副本＋候選群組（create＋edit）", async () => {
+  // Option matrix.
+  it("matrix: own personal note -> move = candidate groups; copy = make a copy + candidate groups (create + edit)", async () => {
     stub({ groups: [GROUP_A, GROUP_B, GROUP_C] });
     renderMenu();
     expect(await openMenuReady("note-menu-move-to")).toHaveTextContent("Move to…");
@@ -250,7 +250,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     ]);
   });
 
-  it("矩陣：群組筆記 -> 沒有移動；複製＝建立副本（原群組）、我的筆記、其餘群組（不含原群組）", async () => {
+  it("matrix: group note -> no move; copy = make a copy (original group), my notes, the other groups (excluding the original group)", async () => {
     stub({ groups: [GROUP_A, GROUP_C] });
     renderMenu(GROUP_NOTE);
     await openMenuReady();
@@ -263,7 +263,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     ]);
   });
 
-  it("zh-TW：群組筆記的複製第二層有「我的筆記」、沒有「個人空間」（與側欄 tab 同名）", async () => {
+  it("zh-TW: the second level of copying a group note has the my-notes entry and not the personal-space one (which shares its name with the sidebar tab)", async () => {
     await i18n.changeLanguage("zh-TW");
     stub({ groups: [GROUP_A, GROUP_C] });
     renderMenu(GROUP_NOTE);
@@ -274,7 +274,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(labels).not.toContain("個人空間");
   });
 
-  it("矩陣：群組筆記、我在該群組只能讀（無 create／edit）-> 沒有建立副本、仍有我的筆記（與其餘可用群組）", async () => {
+  it("matrix: group note where I can only read in that group (no create/edit) -> no make a copy, still my notes (and the other usable groups)", async () => {
     const READER_A = groupDto(
       { id: GA, name: "Workshop A" },
       memberRole({ permissions: { ...memberRole().permissions, create: false, edit: false } }),
@@ -288,7 +288,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
   it.each([
     ["viewer", VIEWER_PERMS],
     ["editor", { ...EDITOR_PERMS, moveToGroup: false }],
-  ] as const)("矩陣：別人分享給我的個人筆記（%s）-> 沒有移動；複製＝我的筆記＋我 create＋edit 的群組", async (role, permissions) => {
+  ] as const)("matrix: a personal note shared with me (%s) -> no move; copy = my notes + groups where I have create + edit", async (role, permissions) => {
     stub({ groups: [GROUP_A, GROUP_B, GROUP_C] });
     renderMenu({ ...NOTE, role, ownerId: "someone", ownerHandle: "someone", permissions: { ...permissions } });
     const sub = await openFlyout(await openMenuReady());
@@ -300,7 +300,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     ]);
   });
 
-  it("自己的個人筆記「建立副本」：確認框標題與按鈕同為 Make a copy（POST body {}）", async () => {
+  it("own personal note \"make a copy\": the confirm dialog title and button are both Make a copy (POST body {})", async () => {
     const s = stub();
     renderMenu();
     await pickFlyout("note-menu-copy-to", "Make a copy");
@@ -310,14 +310,14 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(s.calls.find((c) => c.url === URLS.copy)?.body).toEqual({}));
   });
 
-  it("flyout：候選只列 create＋edit 為真的群組", async () => {
+  it("flyout: candidates list only groups where create and edit are both true", async () => {
     stub({ groups: [GROUP_A, GROUP_B, GROUP_C] });
     renderMenu();
     const sub = await openFlyout(await openMenuReady("note-menu-move-to"));
     expect(within(sub).getAllByRole("menuitem").map((e) => e.textContent)).toEqual(["Workshop A", "Workshop C"]);
   });
 
-  it("我的筆記／建立副本：複製確認文案與 POST body（個人 {}、原群組 {groupId}）", async () => {
+  it("my notes / make a copy: copy confirm text and POST body (personal {}, original group {groupId})", async () => {
     const s = stub();
     renderMenu(GROUP_NOTE);
     await pickFlyout("note-menu-copy-to", "My notes");
@@ -339,7 +339,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(s2.calls.find((c) => c.url === URLS.copy)?.body).toEqual({ groupId: GA }));
   });
 
-  it("移動確認：列出被移除的人名、公開連結關閉、網址與擁有權；提交鈕 destructive；等 shares／public-link 都到才可按", async () => {
+  it("move confirm: lists the names of people removed, the public link closing, the address and ownership; the submit button is destructive; pressable only once both shares and public-link have arrived", async () => {
     stub({ shares: [BOB, CAROL], token: TOKEN });
     renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop A");
@@ -355,11 +355,10 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(dialog).toHaveTextContent("Its version history is cleared and doesn't come back.");
     const submit = within(dialog).getByRole("button", { name: "Move into group" });
     expect(submit).toHaveClass("bg-destructive");
-    // 選單已關
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("移動確認：沒有逐人分享、沒有 token → 不提被移除的人與公開連結；取消 → 框關閉、不發 /move", async () => {
+  it("move confirm: no per-person shares and no token: the removed people and the public link are not mentioned; cancel closes the dialog and sends no /move", async () => {
     const s = stub();
     renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop A");
@@ -373,7 +372,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(s.calls.filter((c) => c.url === URLS.move)).toEqual([]);
   });
 
-  it("移動成功 → 先重讀筆記、再 POST /move 帶 { groupId }；快取收斂成群組形（寫入先後由 api/note-move.test 守）", async () => {
+  it("move success: re-reads the note first, then POST /move with { groupId }; the cache converges to the group shape (write order is covered by api/note-move.test)", async () => {
     const s = stub({ shares: [BOB], token: TOKEN });
     const qc = renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop C");
@@ -395,7 +394,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(qc.getQueryData(["note", NOTE.id])).toEqual(MOVED);
   });
 
-  it("I2：shares 或 public-link 尚未成功之前，移動的提交鈕停用；到齊才可按", async () => {
+  it("move's submit button is disabled until shares and public-link have succeeded; pressable once both have arrived", async () => {
     for (const url of [URLS.shares, URLS.link]) {
       const s = stub({ hold: new Set([url]) });
       renderMenu();
@@ -412,7 +411,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     }
   });
 
-  it("I3：移動送出前檢查還在飛時再按提交鈕 -> 鈕停用、不重送（筆記只重讀 1 次）", async () => {
+  it("pressing submit again while the pre-submit check of a move is in flight: the button is disabled and nothing is resent (the note is re-read once)", async () => {
     const s = stub();
     renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop A");
@@ -427,7 +426,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(s.calls.filter((c) => c.url === URLS.move)).toEqual([]);
   });
 
-  it("I4：複製不發 /shares、/public-link 請求", async () => {
+  it("copy sends no /shares or /public-link requests", async () => {
     const s = stub();
     renderMenu(GROUP_NOTE);
     await pickFlyout("note-menu-copy-to", "Workshop C");
@@ -436,7 +435,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(s.calls.filter((c) => c.url === URLS.shares || c.url === URLS.link)).toEqual([]);
   });
 
-  it("I1：flyout 內按 Esc 只關第二層（選單仍開、焦點回子選單觸發項）；再按 Esc 才關選單", async () => {
+  it("Esc inside the flyout closes only the second level (menu still open, focus returns to the submenu trigger); a second Esc closes the menu", async () => {
     stub();
     renderMenu();
     const trigger = await openMenuReady("note-menu-move-to");
@@ -451,7 +450,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("確認框關閉（取消）後焦點回 ⋮ 觸發鈕", async () => {
+  it("after the confirm dialog closes (cancel) focus returns to the kebab trigger", async () => {
     stub();
     renderMenu();
     await pickFlyout("note-menu-copy-to", "Workshop A");
@@ -461,7 +460,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "More" })).toHaveFocus());
   });
 
-  it("送出前檢查不過（重讀到已是群組筆記）→ 不發 /move、changedElsewhere toast、框關閉", async () => {
+  it("pre-submit check fails (the re-read shows it is already a group note): no /move, changedElsewhere toast, dialog closes", async () => {
     const s = stub();
     renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop A");
@@ -475,7 +474,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("移動失敗 409 → destructive toast（errors.conflict）、框關閉", async () => {
+  it("move fails with 409: destructive toast (errors.conflict), dialog closes", async () => {
     stub({ move: () => failJson(409, "conflict") });
     renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop A");
@@ -487,7 +486,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("複製確認是 outline 提交鈕；成功 → toast「Copied into …」附「Open copy」（altText），點了導到副本的 /g/ 網址；不重讀筆記、不發 /move", async () => {
+  it("copy confirm is an outline submit button; success shows a \"Copied into ...\" toast with \"Open copy\" (altText), clicking navigates to the copy's /g/ URL; the note is not re-read and no /move is sent", async () => {
     const s = stub();
     renderMenu();
     await pickFlyout("note-menu-copy-to", "Workshop A");
@@ -512,7 +511,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(await screen.findByText("copy page")).toBeInTheDocument();
   });
 
-  it("群組筆記也能複製到其他群組 → POST /copy 帶 { groupId }", async () => {
+  it("a group note can also be copied to another group: POST /copy with { groupId }", async () => {
     const s = stub();
     renderMenu(GROUP_NOTE);
     await pickFlyout("note-menu-copy-to", "Workshop C");
@@ -521,7 +520,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(s.calls.find((c) => c.url === URLS.copy)?.body).toEqual({ groupId: GC }));
   });
 
-  it("複製送出掛著時再按 → 鈕停用、POST /copy 仍只 1 次", async () => {
+  it("pressing again while a copy submit is pending: the button is disabled and POST /copy still happens once", async () => {
     const s = stub({ copy: () => new Promise<Response>(() => {}) });
     renderMenu();
     await pickFlyout("note-menu-copy-to", "Workshop A");
@@ -535,7 +534,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     expect(s.calls.filter((c) => c.url === URLS.copy)).toHaveLength(1);
   });
 
-  it("複製失敗 → destructive toast（errors.group_not_found）、框關閉", async () => {
+  it("copy fails: destructive toast (errors.group_not_found), dialog closes", async () => {
     stub({ copy: () => failJson(404, "group_not_found") });
     renderMenu();
     await pickFlyout("note-menu-copy-to", "Workshop A");
@@ -544,10 +543,10 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  describe("就地展開形（窄視窗／觸控）", () => {
+  describe("in-place expand form (narrow viewport / touch)", () => {
     beforeEach(() => stubInlineMode(true));
 
-    it("就地展開形：移動／複製觸發項前各有自己的圖示，右側箭頭（向下）仍在", async () => {
+    it("in-place expand form: the move/copy trigger items each have their own icon and the right-side arrow (pointing down) remains", async () => {
       stub();
       renderMenu();
       const move = await openMenuReady("note-menu-move-to");
@@ -562,7 +561,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       expect(copy.querySelector('svg[data-icon="chevron-down"]')).not.toBeNull();
     });
 
-    it("沒有 flyout：點觸發項 → 同一個選單內向下展開（縮排的群組項），aria-expanded 同步；再點收合", async () => {
+    it("no flyout: clicking the trigger expands downward inside the same menu (indented group items) with aria-expanded in sync; clicking again collapses", async () => {
       stub();
       renderMenu();
       const trigger = await openMenuReady("note-menu-move-to");
@@ -573,7 +572,6 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       expect(trigger).toHaveAttribute("aria-expanded", "true");
       const items = screen.getAllByRole("menuitem", { name: /Workshop/ });
       expect(items.map((e) => e.textContent)).toEqual(["Workshop A", "Workshop C"]);
-      // 同一個 menu 內（沒有第二個 menu）、縮排
       expect(screen.getAllByRole("menu")).toHaveLength(1);
       expect(screen.getByRole("menu")).toContainElement(items[0]);
       expect(items[0]).toHaveClass("pl-6");
@@ -584,7 +582,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       expect(screen.getByRole("menu")).toBeInTheDocument();
     });
 
-    it("同時只展開一組；鍵盤：→ 展開、← 收合並留在選單；Esc 先收合（選單仍開）、再 Esc 才關選單", async () => {
+    it("one group expands at a time; keyboard: right expands, left collapses and stays in the menu; Esc first collapses (menu still open), a second Esc closes the menu", async () => {
       stub();
       renderMenu();
       const move = await openMenuReady("note-menu-move-to");
@@ -613,7 +611,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     });
 
-    it("挑群組 → 選單關閉、開同一份確認框；移動確認內容與 flyout 形相同，確認後 POST /move", async () => {
+    it("picking a group closes the menu and opens the same confirm dialog; the move confirm content equals the flyout form, and confirming POSTs /move", async () => {
       const s = stub({ shares: [BOB], token: TOKEN });
       renderMenu();
       fireEvent.click(await openMenuReady("note-menu-move-to"));
@@ -630,7 +628,7 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       await waitFor(() => expect(s.calls.find((c) => c.url === URLS.move)?.body).toEqual({ groupId: GA }));
     });
 
-    it("複製：挑群組 → 確認 → POST /copy、toast 附 Open copy", async () => {
+    it("copy: pick a group, confirm, POST /copy, toast with Open copy", async () => {
       const s = stub();
       renderMenu();
       fireEvent.click(await openMenuReady("note-menu-copy-to"));
@@ -641,13 +639,13 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
       expect(screen.getByRole("button", { name: "Open copy" })).toBeInTheDocument();
     });
 
-    it("關選單再開 → 回到收合態", async () => {
+    it("closing and reopening the menu returns to the collapsed state", async () => {
       stub();
       renderMenu();
       const trigger = await openMenuReady();
       fireEvent.click(trigger);
       expect(trigger).toHaveAttribute("aria-expanded", "true");
-      fireEvent.keyDown(trigger, { key: "Escape" }); // 展開中第一次 Esc 只收合
+      fireEvent.keyDown(trigger, { key: "Escape" }); // the first Esc while expanded only collapses
       fireEvent.keyDown(trigger, { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
       openMenu();
@@ -656,13 +654,13 @@ describe("⋮ 選單：移動／複製到群組（#216）", () => {
   });
 });
 
-// 確認框帶資料夾、「建立副本」落點與退回。直接渲染 GroupTransferDialog。
-describe("GroupTransferDialog：資料夾目的地", () => {
+// The confirm dialog with folders, the destination of "make a copy" and the fallback. Renders GroupTransferDialog directly.
+describe("GroupTransferDialog: folder destination", () => {
   const GG = "dddddddd-dddd-dddd-dddd-dddddddddddd";
   const GROUP_G = groupDto({ id: GG, name: "G" }, memberRole());
   const IN_A: NoteDto = { ...NOTE, folderId: "A" };
   const GROUP_NOTE_IN_GF: NoteDto = { ...MOVED, id: NOTE.id, groupId: GG, group: { id: GG, name: "G" }, folderId: "GF" };
-  /** 別人分享給我、我自己把它放在共享私人資料夾 S1（放置 id 不得跟著複製）。 */
+  /** A note shared with me that I placed in shared private folder S1 (the placement id must not follow the copy). */
   const SHARED_IN_S1: NoteDto = {
     ...NOTE,
     role: "editor",
@@ -672,7 +670,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     folderId: "S1",
   };
 
-  /** 照 NoteMenu 的掛法：onClose 卸載確認框（不卸載的話 modal 會把 toast 藏在 aria-hidden 後面）。 */
+  /** Mounted like NoteMenu: onClose unmounts the confirm dialog (otherwise the modal would hide the toast behind aria-hidden). */
   function DialogHost({ note, pick }: { note: NoteDto; pick: GroupTransferPick }) {
     const [open, setOpen] = useState(true);
     return open ? <GroupTransferDialog note={note} pick={pick} onClose={() => setOpen(false)} /> : null;
@@ -698,7 +696,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
   const copyBodies = (s: ReturnType<typeof stub>) => s.calls.filter((c) => c.url === URLS.copy).map((c) => c.body);
   const moveBodies = (s: ReturnType<typeof stub>) => s.calls.filter((c) => c.url === URLS.move).map((c) => c.body);
 
-  /** 依序回 replies 的 /copy。 */
+  /** Replies to /copy in order from `replies`. */
   function copySequence(...replies: Array<() => Response>) {
     return () => {
       const next = replies.shift();
@@ -718,7 +716,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     vi.unstubAllGlobals();
   });
 
-  it("GT-F1 duplicate：筆記在 A → POST /copy {folderId:A}；筆記在根 → {}", async () => {
+  it("duplicate: note in A -> POST /copy {folderId:A}; note at root -> {}", async () => {
     let s = stub();
     renderDialog(IN_A, { kind: "copy", target: { type: "duplicate" } });
     let dialog = await screen.findByRole("dialog");
@@ -738,7 +736,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     expect(await screen.findByText("Copied to your notes")).toBeInTheDocument();
   });
 
-  it("GT-F2 inPlace：群組筆記在 GF → POST /copy {groupId:G, folderId:GF}", async () => {
+  it("inPlace: group note in GF -> POST /copy {groupId:G, folderId:GF}", async () => {
     const s = stub();
     renderDialog(GROUP_NOTE_IN_GF, { kind: "copy", target: { type: "inPlace", group: GROUP_G } });
     const dialog = await screen.findByRole("dialog");
@@ -747,7 +745,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     await waitFor(() => expect(copyBodies(s)).toEqual([{ groupId: GG, folderId: "GF" }]));
   });
 
-  it('GT-F3 personal 帶 folder（共享筆記）→ {folderId:A}、說明含 "My notes › A"、鈕 Copy to my notes；不帶 → {}、說明照現行', async () => {
+  it('personal with a folder (shared note): {folderId:A}, description contains "My notes › A", button Copy to my notes; without a folder: {} and the description as it is now', async () => {
     let s = stub();
     renderDialog(SHARED_IN_S1, { kind: "copy", target: { type: "personal", folder: { id: "A", path: "My notes › A" } } });
     let dialog = await screen.findByRole("dialog");
@@ -767,7 +765,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     await waitFor(() => expect(copyBodies(s)).toEqual([{}]));
   });
 
-  it('GT-F4 group 帶 folder → {groupId:G, folderId:GF}、說明含 "G › GF"；成功 toast 照現行（群組名）', async () => {
+  it('group with a folder: {groupId:G, folderId:GF}, description contains "G › GF"; the success toast as it is now (group name)', async () => {
     const s = stub();
     renderDialog(NOTE, { kind: "copy", target: { type: "group", group: GROUP_G, folder: { id: "GF", path: "G › GF" } } });
     const dialog = await screen.findByRole("dialog");
@@ -778,7 +776,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     expect(screen.getByRole("button", { name: "Open copy" })).toBeInTheDocument();
   });
 
-  it('GT-F5 MoveDialog 帶 folder → 說明 Move this note into "G › GF"?、body {groupId, folderId}、toast Moved into "G › GF"；不帶 → body 鍵恰 [groupId]', async () => {
+  it('MoveDialog with a folder: description Move this note into "G › GF"?, body {groupId, folderId}, toast Moved into "G › GF"; without a folder: body keys are [groupId]', async () => {
     let s = stub();
     renderDialog(NOTE, { kind: "move", target: { type: "group", group: GROUP_G, folder: { id: "GF", path: "G › GF" } } });
     let dialog = await screen.findByRole("dialog");
@@ -808,7 +806,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     ["duplicate", IN_A, { type: "duplicate" } as TransferTarget, { folderId: "A" }, {}],
     ["inPlace", GROUP_NOTE_IN_GF, { type: "inPlace", group: GROUP_G } as TransferTarget, { groupId: GG, folderId: "GF" }, { groupId: GG }],
   ])(
-    "GT-F6 建立副本（%s）第一次 404 folder_not_found → 不帶 folderId 重送一次、toast 退回根層且有 Open copy、['folders'] 被失效",
+    "make a copy (%s) first gets 404 folder_not_found: resent once without folderId, the toast falls back to the root level with Open copy, ['folders'] is invalidated",
     async (_name, note, target, first, second) => {
       const s = stub({ copy: copySequence(() => failJson(404, "folder_not_found"), () => okJson(COPY, 201)) });
       const { queryClient } = renderDialog(note, { kind: "copy", target });
@@ -820,7 +818,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     },
   );
 
-  it("GT-F6 退回重送也失敗 → 照現行錯誤 toast、共送兩次", async () => {
+  it("the fallback resend also fails: the current error toast, sent twice in total", async () => {
     const s = stub({ copy: copySequence(() => failJson(404, "folder_not_found"), () => failJson(404, "group_not_found")) });
     renderDialog(IN_A, { kind: "copy", target: { type: "duplicate" } });
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Make a copy" }));
@@ -831,7 +829,7 @@ describe("GroupTransferDialog：資料夾目的地", () => {
   it.each([
     ["personal", SHARED_IN_S1, { type: "personal", folder: { id: "A", path: "My notes › A" } } as TransferTarget, "Copy to my notes"],
     ["group", NOTE, { type: "group", group: GROUP_G, folder: { id: "GF", path: "G › GF" } } as TransferTarget, "Copy into group"],
-  ])("GT-F7 明選資料夾（%s）404 folder_not_found → 不重試、toast Folder not found.、['folders']／['notes'] 被失效", async (_name, note, target, button) => {
+  ])("an explicitly chosen folder (%s) gets 404 folder_not_found: no retry, toast Folder not found., ['folders']/['notes'] are invalidated", async (_name, note, target, button) => {
     const s = stub({ copy: copySequence(() => failJson(404, "folder_not_found"), () => okJson(COPY, 201)) });
     const { queryClient } = renderDialog(note, { kind: "copy", target });
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: button }));
@@ -839,11 +837,11 @@ describe("GroupTransferDialog：資料夾目的地", () => {
     await act(async () => {});
     expect(copyBodies(s)).toHaveLength(1);
     expect(queryClient.getQueryState(["folders"])?.isInvalidated).toBe(true);
-    // ['folders'] 失敗時 useCopyNote 的 onSettled 也會失效；['notes'] 失敗時只有 invalidateFolderRelated 會失效。
+    // When ['folders'] fails useCopyNote's onSettled also invalidates; when ['notes'] fails only invalidateFolderRelated does.
     expect(queryClient.getQueryState(["notes"])?.isInvalidated).toBe(true);
   });
 
-  it("GT-F8 zh：已建立副本（原資料夾已不在，放在最上層）；已移到「我的筆記 › A」", async () => {
+  it("zh: the copy-created text (original folder gone, placed at the top level) and the moved-to text", async () => {
     await i18n.changeLanguage("zh-TW");
     stub({ copy: copySequence(() => failJson(404, "folder_not_found"), () => okJson(COPY, 201)) });
     renderDialog(IN_A, { kind: "copy", target: { type: "duplicate" } });
@@ -855,9 +853,9 @@ describe("GroupTransferDialog：資料夾目的地", () => {
   });
 });
 
-// ⋮ 的逐層子選單。寬＝flyout（jsdom 預設）；窄／觸控＝就地展開。
-// 焦點與子選單換層在 jsdom 只守「程式有搬焦點／狀態有變」，真瀏覽器由 e2e 41 驗。
-describe("⋮ 逐層子選單", () => {
+// The kebab's level-by-level submenu. Wide = flyout (jsdom default); narrow/touch = expand in place. In jsdom focus and submenu level changes are only checked as
+// "the code moved focus / the state changed"; real browsers are covered by e2e 41.
+describe("kebab level-by-level submenu", () => {
   const GG = "dddddddd-dddd-dddd-dddd-dddddddddddd";
   const GH = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
   const G = groupDto({ id: GG, name: "G" }, memberRole());
@@ -869,10 +867,10 @@ describe("⋮ 逐層子選單", () => {
   const GF = groupFolder({ id: "GF", name: "GF", groupId: GG });
   const HF = groupFolder({ id: "HF", name: "HF", groupId: GH });
   const SF = sharedFolder({ id: "SF", name: "SF" });
-  /** 個人 A ⊃ A1、B；群組 G、H 沒有資料夾。 */
+  /** Personal A contains A1, B; groups G, H have no folders. */
   const BASE_SERVER = { groups: [G, H], folders: [A, A1, B] };
 
-  /** 可及名稱：aria-label 優先，否則去掉 aria-hidden 的子元素。 */
+  /** Accessible name: aria-label first, otherwise the aria-hidden children are removed. */
   function accessibleName(el: Element): string {
     const label = el.getAttribute("aria-label");
     if (label !== null) return label;
@@ -881,7 +879,7 @@ describe("⋮ 逐層子選單", () => {
     return (clone.textContent ?? "").trim();
   }
   const names = (container: HTMLElement) => within(container).queryAllByRole("menuitem").map(accessibleName);
-  /** 項目與分隔線依 DOM 序（分隔線記成 "—"）。 */
+  /** Items and separators in DOM order (a separator is recorded as an em dash). */
   const entries = (container: HTMLElement) =>
     Array.from(container.querySelectorAll('[role="menuitem"], [role="separator"]')).map((el) =>
       el.getAttribute("role") === "separator" ? "—" : accessibleName(el),
@@ -889,7 +887,7 @@ describe("⋮ 逐層子選單", () => {
   const placeBodies = (s: ReturnType<typeof stub>) => s.calls.filter((c) => c.method === "PUT" && c.url === URLS.place).map((c) => c.body);
   const subMenu = (name = "Move to…") => screen.queryByRole("menu", { name });
 
-  /** 開 ⋮ → 鍵盤開 Move to… 的子選單（寬形層疊的第一層），等它有 expected 這些項。 */
+  /** Opens the kebab, then the Move to... submenu by keyboard (the first level of the wide stacked form), and waits for it to have the `expected` items. */
   async function openMoveSub(expected: string[]): Promise<HTMLElement> {
     const sub = await openFlyout(await openMenuReady("note-menu-move-to"));
     await waitFor(() => expect(names(sub)).toEqual(expected));
@@ -907,7 +905,7 @@ describe("⋮ 逐層子選單", () => {
     vi.unstubAllGlobals();
   });
 
-  /** 項目的第一個子元素若是 svg，回它的 data-icon；否則 null。 */
+  /** If an item's first child is an svg, returns its data-icon; otherwise null. */
   const leadIcons = (container: HTMLElement) =>
     Object.fromEntries(
       within(container)
@@ -915,7 +913,7 @@ describe("⋮ 逐層子選單", () => {
         .map((el) => [accessibleName(el), el.firstElementChild instanceof SVGElement ? el.firstElementChild.getAttribute("data-icon") : null]),
     );
 
-  /** 層疊形：在 parent 這一層名為 name 的 SubTrigger 上按 →，回傳它開出的子選單（Radix 以觸發項當子選單的名稱）。 */
+  /** Stacked form: presses right on the SubTrigger named `name` at the `parent` level and returns the submenu it opens (Radix names the submenu after its trigger). */
   async function openCascade(parent: HTMLElement, name: string): Promise<HTMLElement> {
     const trigger = within(parent).getByRole("menuitem", { name });
     trigger.focus();
@@ -923,9 +921,9 @@ describe("⋮ 逐層子選單", () => {
     return screen.findByRole("menu", { name });
   }
 
-  // 寬形改成層疊（Radix 巢狀子選單，下方「寬螢幕層疊」describe 的 WC 案）；原本這裡的 flyout 逐層案
-  // 已刪或改寫成 WC 案／窄形案。這裡留與形態無關、在寬形照綠的案（同空間移動、反灰、確認框、前導圖示）；寬形 SubTrigger 不帶「, open」。
-  it("NM-D8 點「B」（沒有子資料夾）→ 選單關、不開確認框、PUT {folderId:B}、toast「Moved to “B”」", async () => {
+  // The wide form is stacked (Radix nested submenus; see the WC cases in the wide-screen stacking describe below). The cases here are independent of the form
+  // and stay green in the wide form (same-space move, greyed items, confirm dialog, leading icons); the wide SubTrigger has no ", open".
+  it("clicking \"B\" (no subfolders): the menu closes, no confirm dialog, PUT {folderId:B}, and the moved-to toast shows", async () => {
     const s = stub(BASE_SERVER);
     renderMenu();
     const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -937,7 +935,7 @@ describe("⋮ 逐層子選單", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("NM-D10 Copy to… 第一層選「Make a copy」→ CopyDialog 標題 Make a copy", async () => {
+  it("Copy to... first level, picking \"Make a copy\": the CopyDialog title is Make a copy", async () => {
     stub(BASE_SERVER);
     renderMenu();
     const sub = await openFlyout(await openMenuReady("note-menu-copy-to"));
@@ -947,7 +945,7 @@ describe("⋮ 逐層子選單", () => {
     expect(within(dialog).getByRole("heading", { name: "Make a copy" })).toBeInTheDocument();
   });
 
-  it("NM-D11 筆記在 B（沒有子資料夾）→ 第一層有 Top level、B 那一項 aria-disabled", async () => {
+  it("note in B (no subfolders): the first level has Top level and the B item is aria-disabled", async () => {
     stub(BASE_SERVER);
     renderMenu({ ...NOTE, folderId: "B" });
     const sub = await openMoveSub(["Top level", "A", "B", "G", "H"]);
@@ -955,7 +953,7 @@ describe("⋮ 逐層子選單", () => {
     expect(within(sub).getByRole("menuitem", { name: "Top level" })).not.toHaveAttribute("aria-disabled");
   });
 
-  it("NM-D12 群組筆記（edit）→ Move to… 只列本群組資料夾；只讀 → 沒有 Move to…；共享筆記 → 只列共享資料夾", async () => {
+  it("group note (edit): Move to... lists only this group's folders; read-only: no Move to...; shared note: lists only shared folders", async () => {
     const IN_G: NoteDto = { ...MOVED, groupId: GG, group: { id: GG, name: "G" } };
     stub({ groups: [G, H], folders: [A, GF, HF, SF] });
     renderMenu(IN_G);
@@ -978,7 +976,7 @@ describe("⋮ 逐層子選單", () => {
     await openMoveSub(["SF"]);
   });
 
-  it("NM-D19 層疊目的地項目前導圖示：資料夾 folder、群組 users；A 的子選單裡 Move here 為 corner-down-right、A1 folder；圖示 aria-hidden、mr-2 h-4 w-4", async () => {
+  it("leading icons of stacked destination items: folder -> folder, group -> users; in A's submenu Move here is corner-down-right and A1 is folder; icons are aria-hidden, mr-2 h-4 w-4", async () => {
     stub(BASE_SERVER);
     renderMenu();
     const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -993,7 +991,7 @@ describe("⋮ 逐層子選單", () => {
     expect(leadIcons(a)).toEqual({ "Move here": "corner-down-right", A1: "folder" });
   });
 
-  it("NM-D20 層疊 Copy to…：建立副本 copy、群組筆記的「我的筆記」user、群組 users；Top level 為 house", async () => {
+  it("stacked Copy to...: make a copy -> copy, a group note's my-notes entry -> user, group -> users; Top level is house", async () => {
     const IN_G: NoteDto = { ...MOVED, groupId: GG, group: { id: GG, name: "G" }, folderId: "GF" };
     stub({ groups: [G, H], folders: [A, GF, HF, SF] });
     renderMenu(IN_G);
@@ -1003,7 +1001,7 @@ describe("⋮ 逐層子選單", () => {
     expect(leadIcons(sub)).toEqual({ "Make a copy": "copy", "Top level": "house", GF: "folder", "My notes": "user", H: "users" });
   });
 
-  it("NM-D18 筆記在 A1：移到 B → toast 用短名「B」；按 Undo → PUT 回 {folderId:A1}", async () => {
+  it("note in A1, moving to B: the toast uses the short name B; pressing Undo PUTs back {folderId:A1}", async () => {
     const s = stub(BASE_SERVER);
     renderMenu({ ...NOTE, folderId: "A1" });
     const sub = await openMoveSub(["Top level", "A", "B", "G", "H"]);
@@ -1013,12 +1011,12 @@ describe("⋮ 逐層子選單", () => {
     await waitFor(() => expect(placeBodies(s)).toEqual([{ folderId: "B" }, { folderId: "A1" }]));
   });
 
-  describe("就地展開形（窄視窗／觸控）", () => {
+  describe("in-place expand form (narrow viewport / touch)", () => {
     beforeEach(() => {
       stubInlineMode(true);
     });
 
-    /** 開 ⋮、展開 Move to…，等縮排區有 expected 這些項。 */
+    /** Opens the kebab, expands Move to..., and waits for the indented area to have the `expected` items. */
     async function expandMove(expected: string[]): Promise<{ trigger: HTMLElement; group: HTMLElement }> {
       const trigger = await openMenuReady("note-menu-move-to");
       fireEvent.click(trigger);
@@ -1027,7 +1025,7 @@ describe("⋮ 逐層子選單", () => {
       return { trigger, group };
     }
 
-    it("NM-I1 展開 → 縮排的 A（帶 >）…；點 A → 縮排區換成 [Back, Move here, A1]、觸發項仍在、焦點在 Back", async () => {
+    it("expanding shows an indented A (with >) and the rest; clicking A swaps the indented area to [Back, Move here, A1], the trigger stays and focus is on Back", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { trigger, group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1044,7 +1042,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.getAllByRole("menu")).toHaveLength(1);
     });
 
-    it("窄形（就地展開）第二層的 Back：文字恰為「Back」（無「‹」）、前導 chevron-left（aria-hidden、與 chevron-right 同尺寸 class）", async () => {
+    it("narrow (in-place) second-level Back: the text is Back (no chevron character) with a leading chevron-left (aria-hidden, same size class as chevron-right)", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1061,7 +1059,7 @@ describe("⋮ 逐層子選單", () => {
       expect(chevronRightClass).toContain("w-4");
     });
 
-    it("NM-I5 就地展開形目的地項目前導圖示：資料夾 folder、群組 users；Back 為 chevron-left、Move here 為 corner-down-right", async () => {
+    it("leading icons of in-place destination items: folder -> folder, group -> users; Back is chevron-left, Move here is corner-down-right", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1071,7 +1069,7 @@ describe("⋮ 逐層子選單", () => {
       expect(leadIcons(screen.getByRole("group", { name: "Move to…" }))).toEqual({ Back: "chevron-left", "Move here": "corner-down-right", A1: "folder" });
     });
 
-    it("NM-I2 第二層 ArrowLeft → 回第一層（仍展開）；第一層 ArrowLeft → 收合", async () => {
+    it("ArrowLeft on the second level returns to the first level (still expanded); ArrowLeft on the first level collapses", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { trigger, group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1087,7 +1085,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.getByRole("menu")).toBeInTheDocument();
     });
 
-    it("NM-I3 第二層按 Esc → 收合、選單仍開；再展開 → 第一層", async () => {
+    it("Esc on the second level collapses with the menu still open; expanding again gives the first level", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { trigger, group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1100,7 +1098,7 @@ describe("⋮ 逐層子選單", () => {
       expect(names(screen.getByRole("group", { name: "Move to…" }))).toEqual(["A, open", "B", "G", "H"]);
     });
 
-    it("NM-I4 第二層時再點觸發項收合 → 再展開回第一層；第二層時改展開 Copy to… → 回頭展開 Move to… 也是第一層", async () => {
+    it("clicking the trigger on the second level collapses it and expanding again returns to the first level; on the second level, expanding Copy to... and then going back to Move to... also gives the first level", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { trigger, group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1119,9 +1117,9 @@ describe("⋮ 逐層子選單", () => {
       expect(names(screen.getByRole("group", { name: "Move to…" }))).toEqual(["A, open", "B", "G", "H"]);
     });
 
-    // flyout 形另有 Radix `MenuSub` 自己的保險（父選單關閉或卸載時呼叫 onOpenChange(false) → 子選單關閉重設 path），
-    // 主選單關閉與選定後的重設只有在就地展開形才是唯一一道：這兩案守它。
-    it("NM-I5（就地展開版）第二層時點選單外關掉整個選單 → 再開、展開 → 第一層", async () => {
+    // The flyout form has Radix `MenuSub`'s own safeguard (when the parent menu closes or unmounts it calls onOpenChange(false), which closes the submenu and resets the path);
+    // the in-place form has no such Radix safeguard; these two cases guard the reset on menu close and after selection.
+    it("(in-place version) clicking outside the menu on the second level closes the whole menu; reopening and expanding gives the first level", async () => {
       stub(BASE_SERVER);
       renderMenu();
       const { group } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1133,7 +1131,7 @@ describe("⋮ 逐層子選單", () => {
       expect(names(screen.getByRole("group", { name: "Move to…" }))).toEqual(["A, open", "B", "G", "H"]);
     });
 
-    it("NM-I6（就地展開版）第二層選定（確認框）→ 取消後再開、展開 → 第一層", async () => {
+    it("(in-place version) selecting on the second level (confirm dialog), then cancel, reopen and expand gives the first level", async () => {
       stub({ ...BASE_SERVER, folders: [A, A1, B, GF] });
       renderMenu();
       const { group } = await expandMove(["A, open", "B", "G, open", "H"]);
@@ -1146,7 +1144,7 @@ describe("⋮ 逐層子選單", () => {
       expect(names(screen.getByRole("group", { name: "Move to…" }))).toEqual(["A, open", "B", "G, open", "H"]);
     });
 
-    it("NM-D12（窄形）群組筆記（edit）→ Move to… 只列本群組資料夾；只讀 → 沒有 Move to…；共享筆記 → 只列共享資料夾", async () => {
+    it("narrow: group note (edit): Move to... lists only this group's folders; read-only: no Move to...; shared note: lists only shared folders", async () => {
       const IN_G: NoteDto = { ...MOVED, groupId: GG, group: { id: GG, name: "G" } };
       stub({ groups: [G, H], folders: [A, GF, HF, SF] });
       renderMenu(IN_G);
@@ -1169,10 +1167,10 @@ describe("⋮ 逐層子選單", () => {
       await expandMove(["SF"]);
     });
 
-    // flyout 形的窄形版——所在層 path 只剩窄形在用（不看 path.length，見 `livePath`）。
+    // Narrow version of the flyout form - the level's path is used by the narrow form (path.length is not consulted, see `livePath`).
     const moveGroup = () => screen.getByRole("group", { name: "Move to…" });
 
-    it("NM-I7 在 A › A1 時 A1 被刪（folders 重抓）→ 顯示 A 那層；按「Back」恰退一層到第一層", async () => {
+    it("at A > A1, A1 is deleted (folders refetch): shows the A level; pressing Back goes back one level to the first level", async () => {
       const s = stub({ ...BASE_SERVER, folders: [A, A1, A2, B] });
       const qc = renderMenu();
       await expandMove(["A, open", "B", "G", "H"]);
@@ -1188,7 +1186,7 @@ describe("⋮ 逐層子選單", () => {
       await waitFor(() => expect(names(moveGroup())).toEqual(["A", "B", "G", "H"]));
     });
 
-    it("NM-I8 在 A 那層時 A 被刪 → 顯示第一層；第一層 ArrowLeft 收合（不是回「上一層」）", async () => {
+    it("at the A level, A is deleted: shows the first level; ArrowLeft on the first level collapses (it does not go back to a previous level)", async () => {
       const s = stub(BASE_SERVER);
       const qc = renderMenu();
       const { trigger } = await expandMove(["A, open", "B", "G", "H"]);
@@ -1204,7 +1202,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.getByRole("menu")).toBeInTheDocument();
     });
 
-    it("NM-I9 在 A 那層時 A 被刪 → 第一層點「B, open」→ 進 B 那層（不接在失效的 A 後面）", async () => {
+    it("at the A level, A is deleted: clicking \"B, open\" on the first level enters the B level (not appended after the invalid A)", async () => {
       const B1 = folderDto({ id: "B1", name: "B1", parentId: "B" });
       const s = stub({ ...BASE_SERVER, folders: [A, A1, B, B1] });
       const qc = renderMenu();
@@ -1221,12 +1219,12 @@ describe("⋮ 逐層子選單", () => {
     });
   });
 
-  // 寬螢幕（≥48rem 且可 hover）＝往旁層疊的 Radix 巢狀子選單。
-  // 有子資料夾的項目＝SubTrigger（可及名稱＝項目文字，不帶「, open」），展開後第一項「Move here／Copy here」、群組第一項「Top level」；
-  // 沒有「Back」；層數照實際樹；Esc 只收一層（②）；選單開著時跨過寬窄判準 → 整個選單關（④）。
-  describe("寬螢幕層疊", () => {
+  // Wide screens (>= 48rem and hover-capable) use Radix nested submenus stacked sideways. An item with subfolders is a SubTrigger (accessible name = item text, no ", open");
+  // once expanded the first item is "Move here / Copy here", for groups "Top level"; there is no "Back"; the number of levels follows the actual tree; Esc closes one level only;
+  // crossing the wide/narrow criterion while the menu is open closes the whole menu.
+  describe("wide-screen stacking", () => {
     const GF1 = groupFolder({ id: "GF1", name: "GF1", groupId: GG, parentId: "GF" });
-    /** 個人 A ⊃ A1、B；群組 G 有 GF ⊃ GF1；H 沒有資料夾。 */
+    /** Personal A contains A1, B; group G has GF containing GF1; H has no folders. */
     const WIDE_SERVER = { groups: [G, H], folders: [A, A1, B, GF, GF1] };
     const haspopup = (el: Element) => el.getAttribute("aria-haspopup") === "menu";
 
@@ -1234,7 +1232,7 @@ describe("⋮ 逐層子選單", () => {
       mockWidePointer(true);
     });
 
-    it("WC1 個人筆記在根：Move to… 第一層＝[A, B, G, H]（分隔線在 B 與 G 之間）；A、G 是 SubTrigger、B、H 不是；沒有「, open」、沒有 Back；每個 SubTrigger 恰一個 aria-hidden 的 chevron", async () => {
+    it("personal note at root: Move to... first level = [A, B, G, H] (separator between B and G); A and G are SubTriggers, B and H are not; no \", open\", no Back; each SubTrigger has one aria-hidden chevron", async () => {
       stub(WIDE_SERVER);
       renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1256,7 +1254,7 @@ describe("⋮ 逐層子選單", () => {
       }
     });
 
-    it("WC2 在「A」上 → → 開出新的子選單 [Move here, A1]、焦點在 Move here；Move to… 子選單仍在", async () => {
+    it("pressing right on A opens a new submenu [Move here, A1] with focus on Move here; the Move to... submenu stays", async () => {
       stub(WIDE_SERVER);
       renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1266,7 +1264,7 @@ describe("⋮ 逐層子選單", () => {
       await waitFor(() => expect(within(a).getByRole("menuitem", { name: "Move here" })).toHaveFocus());
       expect(subMenu()).toBe(sub);
       expect(screen.getAllByRole("menu")).toHaveLength(3);
-      // 每層 SubContent 限高、限寬、可捲（只斷 class 存在；版面以真瀏覽器手測為準）。
+      // Each level of SubContent has max height, max width and scrolls (only the class presence is asserted; layout is left to manual testing in a real browser).
       for (const level of [sub, a]) {
         expect(level.className).toMatch(/(^| )max-h-\[/);
         expect(level.className).toMatch(/(^| )max-w-\[/);
@@ -1274,7 +1272,7 @@ describe("⋮ 逐層子選單", () => {
       }
     });
 
-    it("WC3 筆記在 A：A 觸發項不反灰、A 的子選單「Move here」aria-disabled；筆記在 A1：A 的子選單裡「A1」aria-disabled", async () => {
+    it("note in A: the A trigger is not greyed, A's submenu \"Move here\" is aria-disabled; note in A1: in A's submenu \"A1\" is aria-disabled", async () => {
       stub(WIDE_SERVER);
       renderMenu({ ...NOTE, folderId: "A" });
       let sub = await openMoveSub(["Top level", "A", "B", "G", "H"]);
@@ -1296,7 +1294,7 @@ describe("⋮ 逐層子選單", () => {
       expect(within(a).getByRole("menuitem", { name: "Move here" })).not.toHaveAttribute("aria-disabled");
     });
 
-    it("WC4 開「G」→ [Top level, GF]（GF 是 SubTrigger）；點 Top level → 選單關、移入確認框說明 G；再開到 GF → [Move here, GF1]、選 GF1 → 說明含 G › GF › GF1、不送 PUT", async () => {
+    it("opening G gives [Top level, GF] (GF is a SubTrigger); clicking Top level closes the menu and opens the move confirm describing G; opening through to GF gives [Move here, GF1] and choosing GF1 gives a description containing G > GF > GF1 and no PUT", async () => {
       const s = stub(WIDE_SERVER);
       renderMenu();
       let sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1321,7 +1319,7 @@ describe("⋮ 逐層子選單", () => {
       expect(placeBodies(s)).toEqual([]);
     });
 
-    it("WC5 5 層鏈每層都能展開，第 4 層的子選單有一般項 D5；6 層鏈（轉移產生的更深樹）照實際樹展開到 E6", async () => {
+    it("a 5-level chain can be expanded at every level and the 4th level's submenu has an ordinary item D5; a 6-level chain (a deeper tree produced by a transfer) expands to E6 per the actual tree", async () => {
       stub({ groups: [G, H], folders: folderChain("D", 5) });
       renderMenu();
       let level = await openMoveSub(["D1", "G", "H"]);
@@ -1340,7 +1338,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.getAllByRole("menu")).toHaveLength(7);
     });
 
-    it("WC6 第二層（A 的子選單）按 Esc → 只收 A 的子選單、焦點回「A」、Move to… 仍開；再按 Esc → Move to… 收起、主選單仍開、焦點回 Move to…", async () => {
+    it("Esc on the second level (A's submenu) closes only A's submenu, focus returns to A and Move to... stays open; another Esc closes Move to..., the main menu stays open and focus returns to Move to...", async () => {
       stub(WIDE_SERVER);
       renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1358,7 +1356,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.getByTestId("note-menu-move-to")).toHaveFocus();
     });
 
-    it("WC7 第二層 ← → A 的子選單收起、焦點回「A」、Move to… 仍開（Radix 內建、沒有被攔）", async () => {
+    it("left arrow on the second level closes A's submenu, focus returns to A and Move to... stays open (Radix built-in, not intercepted)", async () => {
       stub(WIDE_SERVER);
       renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1371,7 +1369,7 @@ describe("⋮ 逐層子選單", () => {
       expect(within(sub).getByRole("menuitem", { name: "A" })).toHaveFocus();
     });
 
-    it("WC8 開 A → 點「A1」（葉子）→ 選單關、PUT {folderId:A1}、toast「Moved to “A1”」、沒有確認框", async () => {
+    it("opening A and clicking \"A1\" (a leaf): the menu closes, PUT {folderId:A1}, the moved-to toast shows, no confirm dialog", async () => {
       const s = stub(WIDE_SERVER);
       renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1383,7 +1381,7 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
 
-    it("WC9 Copy to…：第一層 [Make a copy, A, B, G, H]、G 的子選單第一項 Top level；筆記在 A → A 的子選單「Copy here」不反灰；群組筆記的 My notes（有個人資料夾）是 SubTrigger", async () => {
+    it("Copy to...: first level [Make a copy, A, B, G, H], G's submenu starts with Top level; note in A: A's submenu \"Copy here\" is not greyed; a group note's My notes (with personal folders) is a SubTrigger", async () => {
       stub(WIDE_SERVER);
       renderMenu();
       let sub = await openFlyout(await openMenuReady("note-menu-copy-to"));
@@ -1412,7 +1410,7 @@ describe("⋮ 逐層子選單", () => {
       expect(haspopup(within(sub).getByRole("menuitem", { name: "My notes" }))).toBe(true);
     });
 
-    it("WC10 GET /api/folders 掛著 → 第一層沒有 SubTrigger（G 也是一般項）；放行後 A、G 變成 SubTrigger", async () => {
+    it("with GET /api/folders hanging the first level has no SubTrigger (G is an ordinary item too); after release A and G become SubTriggers", async () => {
       const s = stub({ ...WIDE_SERVER, hold: new Set([URLS.folders]) });
       renderMenu();
       const sub = await openFlyout(await openMenuReady("note-menu-move-to"));
@@ -1421,12 +1419,12 @@ describe("⋮ 逐層子選單", () => {
       await act(async () => s.release(URLS.folders, okJson({ folders: WIDE_SERVER.folders })));
       await waitFor(() => expect(names(sub)).toEqual(["A", "B", "G", "H"]));
       expect(within(sub).getAllByRole("menuitem").filter(haspopup).map(accessibleName)).toEqual(["A", "G"]);
-      // 焦點原本在一般項「G」，換成 SubTrigger 時元件重掛：不得掉到 body，交還給這一層。
+      // Focus was on the ordinary item "G"; when it becomes a SubTrigger the component remounts: focus must not fall to body, it is handed back to this level.
       await waitFor(() => expect(document.activeElement).not.toBe(document.body));
       expect(sub.contains(document.activeElement)).toBe(true);
     });
 
-    it("WC11 開著 A 的子選單時 A 被刪（folders 重抓）→ A 觸發項與它的子選單都消失、Move to… 仍開、不 throw", async () => {
+    it("A is deleted (folders refetch) while A's submenu is open: the A trigger and its submenu both disappear, Move to... stays open, no throw", async () => {
       const s = stub(WIDE_SERVER);
       const qc = renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1440,13 +1438,13 @@ describe("⋮ 逐層子選單", () => {
       expect(screen.queryByRole("menu", { name: "A" })).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "Move here" })).toBeNull();
       expect(subMenu()).toBe(sub);
-      // 焦點原本在 A 子選單的「Move here」，跟著卸載：不得掉到 body，交還給 Move to… 這一層。
+      // Focus was on "Move here" in A's submenu and unmounts with it: it must not fall to body, it is handed back to the Move to... level.
       await waitFor(() => expect(document.activeElement).not.toBe(document.body));
       expect(sub.contains(document.activeElement)).toBe(true);
     });
 
-    it("WC11b 在 A › A1 的子選單裡時 A1 被刪 → A1 的子選單消失、焦點交還給 A 的子選單（不是更外層、不掉到 body）", async () => {
-      // A 另有子資料夾 AX：A1 被刪後 A 仍是 SubTrigger、A 的子選單仍開。
+    it("while in A > A1's submenu A1 is deleted: A1's submenu disappears and focus is handed back to A's submenu (not an outer level, not body)", async () => {
+      // A also has a subfolder AX: after A1 is deleted A is still a SubTrigger and A's submenu stays open.
       const AX = folderDto({ id: "AX", name: "AX", parentId: "A" });
       const s = stub({ ...WIDE_SERVER, folders: [A, A1, A2, AX, B, GF, GF1] });
       const qc = renderMenu();
@@ -1465,7 +1463,7 @@ describe("⋮ 逐層子選單", () => {
       expect(a.contains(document.activeElement)).toBe(true);
     });
 
-    it("WC15 A 的子選單開著時資料夾重抓、但不影響 A（B 改名）→ A 的子選單仍開、焦點不動", async () => {
+    it("A's submenu open while folders refetch without affecting A (B renamed): A's submenu stays open and focus does not move", async () => {
       const s = stub(WIDE_SERVER);
       const qc = renderMenu();
       const sub = await openMoveSub(["A", "B", "G", "H"]);
@@ -1481,7 +1479,7 @@ describe("⋮ 逐層子選單", () => {
       expect(a1).toHaveFocus();
     });
 
-    it("WC12 選單開著時跨過寬窄判準 → 整個選單關；再開是新形的第一層（寬→窄、窄→寬）", async () => {
+    it("crossing the wide/narrow criterion while the menu is open closes the whole menu; reopening gives the first level of the new form (wide -> narrow, narrow -> wide)", async () => {
       const mq = mockWidePointer(true);
       stub(WIDE_SERVER);
       renderMenu();
@@ -1505,7 +1503,7 @@ describe("⋮ 逐層子選單", () => {
       await waitFor(() => expect(names(again)).toEqual(["A", "B", "G", "H"]));
     });
 
-    it("WC13 zh：SubTrigger 可及名稱恰為「A」（窄形同一份資料仍是「A，開啟下一層」）；子選單第一項「移動到這裡」；群組子選單第一項「根目錄」", async () => {
+    it("zh: the SubTrigger's accessible name is the folder name alone (the narrow form on the same data adds an open-next-level suffix); the submenu's first item is the move-here text; the group submenu's first item is the root text", async () => {
       await i18n.changeLanguage("zh-TW");
       stub(WIDE_SERVER);
       renderMenu();
@@ -1529,7 +1527,7 @@ describe("⋮ 逐層子選單", () => {
       await waitFor(() => expect(names(screen.getByRole("group", { name: "移動到…" }))).toEqual(["A，開啟下一層", "B", "G，開啟下一層", "H"]));
     });
 
-    it("WC14 名稱很長的資料夾：SubTrigger 的名稱放在有 truncate class 的 span", async () => {
+    it("a folder with a very long name: the SubTrigger's name sits in a span with a truncate class", async () => {
       const LONG = "L".repeat(80);
       stub({ groups: [G, H], folders: [folderDto({ id: "LONG", name: LONG }), folderDto({ id: "LC", name: "LC", parentId: "LONG" })] });
       renderMenu();
@@ -1546,21 +1544,21 @@ describe("isSameSpaceMove", () => {
   const place = (space: DestSpace): DestinationPick["target"] => ({ kind: "place", space, folder: null });
   const pick = (kind: "move" | "copy", target: DestinationPick["target"]): DestinationPick => ({ kind, target, groups: [], index: indexFolders([]) });
   const groupNote: NoteDto = { ...NOTE, groupId: GA };
-  /** 別人分享給我的筆記：移動來源的上半部是「與我共享」（`noteDestSource`）。 */
+  /** A note shared with me: the upper half of the move source is "Shared with me" (`noteDestSource`). */
   const sharedWithMe: NoteDto = { ...NOTE, ownerId: "u2", role: "editor", permissions: { ...EDITOR_PERMS } };
 
-  it("個人筆記移到我的筆記、共享筆記移到共享 → true", () => {
+  it("a personal note moved to my notes and a shared note moved to shared: true", () => {
     expect(isSameSpaceMove(NOTE, pick("move", place({ kind: "personal" })))).toBe(true);
     expect(isSameSpaceMove(sharedWithMe, pick("move", place({ kind: "shared" })))).toBe(true);
   });
-  it("群組筆記移到自己的群組 → true", () => {
+  it("a group note moved to its own group: true", () => {
     expect(isSameSpaceMove(groupNote, pick("move", place({ kind: "group", groupId: GA, name: "A" })))).toBe(true);
   });
-  it("個人筆記移到群組、群組筆記移到別的群組 → false", () => {
+  it("a personal note moved to a group, a group note moved to another group: false", () => {
     expect(isSameSpaceMove(NOTE, pick("move", place({ kind: "group", groupId: GA, name: "A" })))).toBe(false);
     expect(isSameSpaceMove(groupNote, pick("move", place({ kind: "group", groupId: GC, name: "C" })))).toBe(false);
   });
-  it("複製、建立副本 → false", () => {
+  it("copy and make a copy: false", () => {
     expect(isSameSpaceMove(NOTE, pick("copy", place({ kind: "personal" })))).toBe(false);
     expect(isSameSpaceMove(NOTE, pick("copy", { kind: "makeCopy" }))).toBe(false);
     expect(isSameSpaceMove(NOTE, pick("move", { kind: "makeCopy" }))).toBe(false);
