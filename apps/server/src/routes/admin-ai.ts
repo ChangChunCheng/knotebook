@@ -482,13 +482,14 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
     app.patch("/api/admin/ai/actions/:id", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI action with that id.");
+      // A second line behind http/uuid-params.ts, which already lowercases UUID path params.
       const id = rawId.toLowerCase();
 
       const parsed = patchActionSchema.safeParse(request.body);
       if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       const { name, systemPrompt, userTemplate, modelId, applyMode, sortOrder, enabled } = parsed.data;
 
-      // #263: Instruct also needs {{instruction}} ({{focus}} optional). The lowercase here is a second line behind http/uuid-params.ts.
+      // #263: Instruct also needs {{instruction}} ({{focus}} optional).
       if (id === INSTRUCT_ACTION_ID) {
         if (applyMode === "direct") return sendError(reply, 400, "instruct_preview_only", "Instruct actions can only be applied after a preview.");
         if (userTemplate !== undefined && !userTemplate.includes("{{instruction}}")) {

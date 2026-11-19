@@ -59,7 +59,7 @@ const TOO_MANY_REQUESTS_MESSAGE = "Too many requests. Wait a moment and try agai
 
 const MAX_DERIVE_ATTEMPTS = 3;
 
-// `.refine`, not `.max`: sendInvalidBody only surfaces custom messages. 254 must equal MAX_EMAIL_CLAIM_LENGTH in routes/oidc.ts.
+// `.refine`, not `.max`: sendInvalidBody only surfaces custom messages. MAX_REGISTER_EMAIL_LENGTH must equal MAX_EMAIL_CLAIM_LENGTH in routes/oidc.ts.
 const emailField = z
   .string()
   .trim()
@@ -73,8 +73,8 @@ const displayNameField = z
   .refine(s => [...s].length <= MAX_REGISTER_DISPLAY_NAME_LENGTH, `The display name can be at most ${MAX_REGISTER_DISPLAY_NAME_LENGTH} characters.`)
   .optional();
 
+// The register and accept-invite bodies are strict: no field can set is_admin / must_change_password.
 const registerBodySchema = z.object({ email: emailField, password: z.string(), displayName: displayNameField }).strict();
-// strict on both bodies: no field can set is_admin / must_change_password.
 const acceptInviteBodySchema = z.object({ token: z.string(), email: emailField, password: z.string(), displayName: displayNameField }).strict();
 const inspectInviteBodySchema = z.object({ token: z.string() }).strict();
 

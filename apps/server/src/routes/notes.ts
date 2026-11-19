@@ -67,7 +67,6 @@ import {
   deriveUniqueAutoSlug,
   fallbackAutoSlug,
   isSlugUniqueViolation,
-  // Shared with notes/create.ts: both retry loops must use the same 5.
   MAX_AUTO_SLUG_RETRIES,
   prepareSlugForPatch,
   resolveNoteIdFromRef,
@@ -364,7 +363,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         const role = await resolveRole(deps.db, userId, id);
         if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
         if (!deps.limiters.contentRead.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many reads. Wait a moment and try again.");
-        // Only token readers show presence (a cookie read is the user's own browser). Removing the request.tokenId guard is blocked by tsc (TS2345); note-presence.test.ts only guards the outcome (no extra awareness client for cookie readers).
+        // Only token readers show presence (a cookie read is the user's own browser).
         if (request.tokenId) {
           const label = await currentAgentLabel(deps.db, request.tokenId);
           if (label) {

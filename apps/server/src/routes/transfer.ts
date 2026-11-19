@@ -163,7 +163,7 @@ export function transferRoutes(deps: TransferRouteDeps) {
         // Only errors thrown before streamExport's try reach here, so its finally didn't run: log and onExportEnd here. After hijack Fastify won't reply for us: destroy the socket.
         request.log.warn({ ...pgErrorSummary(err) }, "整包匯出串流前失敗");
         reply.raw.destroy();
-        // Idempotent; the finally below also covers streamExport throwing before its own try.
+        // Release before onExportEnd (same order as streamExport's finally); the release in finally is idempotent.
         release();
         deps.testHooks?.onExportEnd?.("aborted");
         request.log.info(
