@@ -2,9 +2,9 @@ import { vi } from "vitest";
 import { WIDE_POINTER_QUERY } from "@/lib/wide-pointer";
 
 /**
- * `vi.stubGlobal("matchMedia")`：`WIDE_POINTER_QUERY` -> `wide`；`others(query)` 為 true 的 query -> true；其餘 false。
- * 每個 query 一組 change 監聽；`setWide(next)` 改值並同步通知 `WIDE_POINTER_QUERY` 的監聽（呼叫端自己包 act）。
- * 呼叫端 `afterEach(() => { vi.unstubAllGlobals(); })` 還原。
+ * `vi.stubGlobal("matchMedia")`: `WIDE_POINTER_QUERY` -> `wide`; queries for which `others(query)` is true -> true; everything else false.
+ * One set of change listeners per query; `setWide(next)` changes the value and synchronously notifies the `WIDE_POINTER_QUERY` listeners (callers wrap it in act themselves).
+ * Callers restore with `afterEach(() => { vi.unstubAllGlobals(); })`.
  */
 export function mockWidePointer(wide: boolean, others?: (query: string) => boolean): { setWide(next: boolean): void; listenerCount(): number } {
   let current = wide;
@@ -41,7 +41,6 @@ export function mockWidePointer(wide: boolean, others?: (query: string) => boole
       current = next;
       for (const listener of [...listenersOf(WIDE_POINTER_QUERY)]) listener();
     },
-    /** `WIDE_POINTER_QUERY` 目前註冊中的 change 監聽數。 */
     listenerCount() {
       return listenersOf(WIDE_POINTER_QUERY).size;
     },

@@ -2,23 +2,23 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * BlockNote 深色覆寫的 parity 守門測試。
+ * Parity guard for BlockNote dark overrides.
  *
- * 背景見 `index.css` 覆寫區塊上方的註解：浮層（slash menu／formatting
- * toolbar／file panel 等）只有 `bn-root` 沒有 `bn-container`，且 BlockNote
- * 的 CSS 必晚於 `index.css` 載入，所以覆寫選擇器定死為
- * `.dark .bn-root[data-color-scheme="dark"]`（specificity (0,3,0) 才贏得過
- * 內建 `.bn-root[data-color-scheme=dark]` 的 (0,2,0)）。
+ * Background: see the comment above the override block in `index.css`: floating layers (slash menu / formatting
+ * toolbar / file panel etc.) have only `bn-root` and no `bn-container`, and BlockNote's
+ * CSS always loads after `index.css`, so the override selector is fixed as
+ * `.dark .bn-root[data-color-scheme="dark"]` (specificity (0,3,0) is what beats the
+ * built-in `.bn-root[data-color-scheme=dark]`'s (0,2,0)).
  *
- * 這裡守兩件事：
- * 1. 覆寫的每個 `--bn-colors-*` 變數名都要在 BlockNote 目前安裝版本的深色
- *    區塊裡存在——升級改名會讓宣告靜默失效（CSS 自訂屬性名打錯不會報錯，
- *    只是套用不到），靠這條測試在改名當下就炸開。
- * 2. 覆寫選擇器的完整字面量（含 `.dark ` 前綴）確實出現在原始碼裡——拿掉
- *    前綴會讓 specificity 掉回 (0,2,0)，與內建打平、輸給後載的 lazy chunk。
+ * This guards two things:
+ * 1. Every overridden `--bn-colors-*` variable name must exist in the dark block of the currently installed BlockNote
+ *    version - a rename on upgrade would silently invalidate the declaration (a mistyped CSS custom property name
+ *    reports no error, it just doesn't apply); this test blows up at the moment of the rename.
+ * 2. The full literal of the override selector (including the `.dark ` prefix) really appears in the source - removing
+ *    the prefix drops specificity back to (0,2,0), tying with the built-in and losing to the later-loaded lazy chunk.
  *
- * oracle 直接讀 node_modules 裡安裝的 `@blocknote/react/dist/style.css`
- * （BlockNote 是 MPL-2.0，本專案 MIT，刻意不複製進本專案）。
+ * The oracle reads `@blocknote/react/dist/style.css` installed in node_modules directly
+ * (BlockNote is MPL-2.0 and this project is MIT, so it is deliberately not copied into this project).
  */
 
 function readIndexCssWithoutComments(): string {
@@ -38,8 +38,8 @@ function extractOverrideBlock(cssNoComments: string): string {
   return cssNoComments.slice(start, end + 1);
 }
 
-describe("BlockNote 深色覆寫 parity", () => {
-  it("覆寫的每個 --bn-colors-* 變數名都存在於已安裝的 BlockNote 深色定義中", () => {
+describe("BlockNote dark override parity", () => {
+  it("every overridden --bn-colors-* variable name exists in the installed BlockNote dark definition", () => {
     const cssNoComments = readIndexCssWithoutComments();
     const overrideBlock = extractOverrideBlock(cssNoComments);
 
@@ -61,9 +61,9 @@ describe("BlockNote 深色覆寫 parity", () => {
     }
   });
 
-  it("覆寫選擇器的完整字面量（含 .dark 前綴）出現在 index.css 中", () => {
-    // 拿掉 `.dark ` 前綴會讓 specificity 掉回 (0,2,0)，與 BlockNote 內建的
-    // `.bn-root[data-color-scheme=dark]` 打平，輸給後載的 lazy chunk CSS。
+  it("the full literal of the override selector (including the .dark prefix) appears in index.css", () => {
+    // Removing the `.dark ` prefix drops specificity back to (0,2,0), tying with BlockNote's built-in
+    // `.bn-root[data-color-scheme=dark]` and losing to the later-loaded lazy chunk CSS.
     const cssNoComments = readIndexCssWithoutComments();
     expect(cssNoComments).toMatch(OVERRIDE_SELECTOR);
   });

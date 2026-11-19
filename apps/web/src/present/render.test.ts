@@ -33,15 +33,15 @@ function slideHost(sections: RenderedSection[], h: number, v = 0): HTMLDivElemen
   return host;
 }
 
-describe("renderDeck：XSS 不變式（渲染管線）", () => {
-  it("wikilink snapshotTitle 是 <img src=x onerror=…> → 只是文字", () => {
+describe("renderDeck: XSS invariants (render pipeline)", () => {
+  it("wikilink snapshotTitle of <img src=x onerror=...> -> only text", () => {
     const sections = deck([{ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: "n1", snapshotTitle: "<img src=x onerror=alert(1)>" } }] }]);
     const host = slideHost(sections, 0);
     expect(host.querySelector("img")).toBeNull();
     expect(host.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 
-  it("mermaid code 含 </code><script> → job 的 code 是原文、DOM 沒有 script", () => {
+  it("mermaid code containing </code><script> -> the job's code is the original, the DOM has no script", () => {
     const code = "graph TD\n</code><script>alert(1)</script>";
     const sections = deck([{ type: "mermaid", props: { code } }]);
     const host = slideHost(sections, 0);
@@ -49,7 +49,7 @@ describe("renderDeck：XSS 不變式（渲染管線）", () => {
     expect(sections[0].slides[0].content!.mermaid.map((j) => j.code)).toEqual([code]);
   });
 
-  it("caption／檔名含 HTML → 文字", () => {
+  it("caption / file name containing HTML -> text", () => {
     const sections = deck([
       { type: "image", props: { url: "https://e/i.png", caption: "<b>cap</b>" } },
       { type: "file", props: { url: "https://e/f.pdf", name: "<i>f</i>.pdf" } },
@@ -60,14 +60,14 @@ describe("renderDeck：XSS 不變式（渲染管線）", () => {
     expect(host.textContent).toContain("<i>f</i>.pdf");
   });
 
-  it("codeBlock(language=mermaid) 不成圖：是 pre>code、沒有 mermaid job", () => {
+  it("codeBlock(language=mermaid) isn't drawn as a diagram: it's pre>code with no mermaid job", () => {
     const sections = deck([{ type: "codeBlock", props: { language: "mermaid" }, content: "graph TD" }]);
     const host = slideHost(sections, 0);
     expect(host.querySelector("pre > code")!.textContent).toBe("graph TD");
     expect(sections[0].slides[0].content!.mermaid).toEqual([]);
   });
 
-  it("javascript: 媒體 → img 還在、沒有 src 或 src 為 about:blank、絕不是 javascript:（regexp 不收 about:blank，消毒器刪掉 src）", () => {
+  it("javascript: media -> img remains with no src or src about:blank, never javascript: (the regexp doesn't accept about:blank, the sanitizer drops src)", () => {
     const sections = deck([{ type: "image", props: { url: "javascript:alert(1)" } }]);
     const img = slideHost(sections, 0).querySelector("img");
     expect(img).not.toBeNull();
@@ -76,7 +76,7 @@ describe("renderDeck：XSS 不變式（渲染管線）", () => {
     expect(src ?? "").not.toMatch(/^javascript:/i);
   });
 
-  it("消毒層確實接在管線上：BlockNote 匯出的 class／style／data-language／data-node-view-wrapper 都被刪", () => {
+  it("the sanitizer is really in the pipeline: BlockNote export's class / style / data-language / data-node-view-wrapper are all removed", () => {
     const sections = deck(
       [
         { type: "codeBlock", props: { language: "ts" }, content: "x" },
@@ -91,8 +91,8 @@ describe("renderDeck：XSS 不變式（渲染管線）", () => {
   });
 });
 
-describe("renderDeck：頁別處理", () => {
-  it("公開變體：file block 連到 /api/uploads/<id> 映射到公開端點；同頁 mailto: 文字連結保留", () => {
+describe("renderDeck: member vs public pages", () => {
+  it("public variant: a file block link to /api/uploads/<id> maps to the public endpoint; a mailto: text link on the same page is kept", () => {
     const sections = deck(
       [
         { type: "file", props: { url: "/api/uploads/abc", name: "a.pdf" } },
@@ -107,7 +107,7 @@ describe("renderDeck：頁別處理", () => {
     expect(links[1].hasAttribute("data-kn-media")).toBe(false);
   });
 
-  it("video／audio 有 controls；checkbox disabled；表格包裝層帶 data-prevent-swipe", () => {
+  it("video / audio have controls; checkbox disabled; table wrapper carries data-prevent-swipe", () => {
     const sections = deck([
       { type: "video", props: { url: "https://e/v.mp4" } },
       { type: "audio", props: { url: "https://e/a.mp3" } },
@@ -121,7 +121,7 @@ describe("renderDeck：頁別處理", () => {
     expect(host.querySelector(".kn-present-table")!.hasAttribute("data-prevent-swipe")).toBe(true);
   });
 
-  it("已登入 wikilink 三態（未就緒 href 以 encodeURIComponent 組）", () => {
+  it("signed-in wikilink three states (the not-ready href is built with encodeURIComponent)", () => {
     const blocks = [{ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: "a b", snapshotTitle: "Snap" } }] }];
     expect(slideHost(deck(blocks, "T", memberCtx(() => ({ kind: "pending" }))), 0).querySelector("a")!.getAttribute("href")).toBe("/notes/a%20b");
     const found = slideHost(deck(blocks, "T", memberCtx(() => ({ kind: "found", href: "/n/u/x", title: "Now" }))), 0).querySelector("a")!;
@@ -130,20 +130,20 @@ describe("renderDeck：頁別處理", () => {
   });
 });
 
-describe("renderDeck：封面、比對鍵", () => {
-  it("標題含標記 → 封面 <h1> 只有文字", () => {
+describe("renderDeck: cover and comparison keys", () => {
+  it("title containing markup -> cover <h1> is text only", () => {
     const host = slideHost(deck([], "<img src=x onerror=alert(1)>"), 0);
     expect(host.querySelector("h1")!.textContent).toBe("<img src=x onerror=alert(1)>");
     expect(host.querySelector("img")).toBeNull();
   });
 
-  it.each(["", "   "])("空／空白標題 %j → note.titlePlaceholder＋kn-present-untitled", (title) => {
+  it.each(["", "   "])("empty / blank title %j -> note.titlePlaceholder plus kn-present-untitled", (title) => {
     const h1 = slideHost(deck([], title), 0).querySelector("h1")!;
     expect(h1.textContent).toBe("Untitled");
     expect(h1.className).toBe("kn-present-untitled");
   });
 
-  it("previousKeys 與本次相同的張 content 為 null（沿用 DOM）；改了的張重建", () => {
+  it("slides whose previousKeys match this run have content null (reuse the DOM); changed slides are rebuilt", () => {
     const blocks = [{ id: "h2a", type: "heading", props: { level: 2 }, content: "A" }, { id: "p1", type: "paragraph", content: "one" }];
     const first = deck(blocks);
     const keys = new Map(first.flatMap((s) => s.slides.map((sl) => [sl.id, sl.key] as const)));
@@ -154,7 +154,7 @@ describe("renderDeck：封面、比對鍵", () => {
     expect(changed[0].slides[0].content).toBeNull();
   });
 
-  it("標題改了只重建封面", () => {
+  it("title changed -> only the cover is rebuilt", () => {
     const blocks = [{ id: "h2a", type: "heading", props: { level: 2 }, content: "A" }];
     const first = deck(blocks, "Old");
     const keys = new Map(first.flatMap((s) => s.slides.map((sl) => [sl.id, sl.key] as const)));
@@ -163,7 +163,7 @@ describe("renderDeck：封面、比對鍵", () => {
     expect(next[1].slides[0].content).toBeNull();
   });
 
-  it("titleOnly：只有標題的 heading 張為 true；有內文為 false；空封面為 true", () => {
+  it("titleOnly: a heading slide with only a title is true; with body text false; an empty cover is true", () => {
     const sections = deck([
       { id: "h1", type: "heading", props: { level: 2 }, content: "A" },
       { id: "h2", type: "heading", props: { level: 2 }, content: "B" },
@@ -173,8 +173,8 @@ describe("renderDeck：封面、比對鍵", () => {
   });
 });
 
-describe("renderDeck：並排", () => {
-  it("含列的 Y.Doc → 投影片內有 [data-kb-columns]，列與兩欄的正規形 style 保留、沒有 data-nesting-level", () => {
+describe("renderDeck: columns", () => {
+  it("Y.Doc with a row -> the slide has [data-kb-columns], row and column canonical-form styles kept, no data-nesting-level", () => {
     const host = slideHost(deck([row([[P("L", "l")], [P("R", "r")]], "row", [1.5, 1])]), 0);
     const list = host.querySelector("[data-kb-columns]");
     expect(list).not.toBeNull();

@@ -15,17 +15,14 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 vi.mock("@/lib/clipboard", () => ({ copyText: vi.fn(async () => true) }));
 
-// 歷程：獨立頁 `/admin/users` → 併進設定 modal（`/settings/users`，
-// 逐案有意識重寫）→ 搬回獨立頁 `/admin/users`
-// （`pages/AdminPage.tsx`，殼是 `AppShell`）→ #247 改回 modal（第二棵樹的 `AdminModal`）。
-// 本檔各案直接查 heading/row 的寫法不依賴外殼，只換了那一則外殼 smoke。
-// - fetch mock 裡的 `/api/notes`、`/api/groups`：站台管理 modal 疊在主樹的背景 `HomePage` 上，
-//   背景側欄的 NoteList 會打這兩支。
-// - #247：狀態欄與列尾文字鈕（Disable／Enable／Promote）改為角色下拉＋啟用 toggle，舊的按鈕案由檔尾 U 系列取代；
-//   停用確認 dialog 疊在站台管理 modal 上，U6／U7 以 dialog 名稱「Disable this user?」定位。
+// Cases here query headings / rows directly and don't depend on the shell; only the shell smoke case does.
+// - `/api/notes` and `/api/groups` in the fetch mock: the site admin modal sits over the main tree's background `HomePage`,
+//   whose sidebar NoteList calls these two.
+// - The status column and trailing text buttons (Disable / Enable / Promote) became a role dropdown plus an enable toggle (#247); the old button cases are replaced by the cases in the `users table (#247)` describe;
+//   the disable-confirm dialog stacks over the site admin modal, and its cases locate it by the dialog name "Disable this user?".
 //
-// 「非 admin → 導 `/`」與未登入導向在 `components/admin/AdminModal.test.tsx`（route-level，驗證
-// `RequireAdmin` 有接對），這裡不重複。
+// "Non-admin -> redirect to `/`" and the signed-out redirect are in `components/admin/AdminModal.test.tsx` (route level, verifying
+// that `RequireAdmin` is wired), not repeated here.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -87,8 +84,8 @@ const DISABLED_OTHER: AdminUserDto = {
   avatar: null,
 };
 
-/** 已是 admin、但不是目前登入者本人的一列——降級（demote）與 `last_site_admin` 案要的是
- * 「別人的管理員列」，跟「自己那列 disabled」是兩件獨立的事，不能共用同一筆 fixture。 */
+/** A row that is already admin but isn't the current login - the demote and `last_site_admin` cases need
+ * "someone else's admin row"; that and "own row disabled" are two independent things, so they can't share one fixture. */
 const OTHER_ADMIN: AdminUserDto = {
   id: "u-other-admin",
   email: "carol@example.com",
@@ -107,9 +104,9 @@ const OTHER_ADMIN: AdminUserDto = {
 
 const ADMIN_USERS_URL = "/api/admin/users";
 
-/** 基本 fetch mock：`/api/auth/me`（一律回 `ADMIN_USER`——本檔
- * 每一案都需要 admin 才能通過 `RequireAdmin`，「非 admin」的路由層行為已在
- * `SettingsModal.test.tsx` 覆蓋，不重複）、`/api/notes`（背景 `HomePage` 需要）。 */
+/** Basic fetch mock: `/api/auth/me` (always `ADMIN_USER` - every case in this file
+ * needs admin to pass `RequireAdmin`; the "non-admin" route-level behavior is covered in
+ * `SettingsModal.test.tsx`, not repeated), `/api/notes` (needed by the background `HomePage`). */
 function baseFetchHandlers(): (url: string, method: string) => Response | null {
   return (url: string, method: string): Response | null => {
     if (url === "/api/groups" && method === "GET") {
@@ -137,8 +134,8 @@ function baseFetchHandlers(): (url: string, method: string) => Response | null {
 }
 
 /**
- * `/api/auth/config` 的預設回應，只在各 stub 丟 `unexpected fetch` 之前當 fallback 用：`InvitesGroup` 在群組頂層讀它，
- * 每個渲染使用者頁的案都會打。不放進 `baseFetchHandlers`——各 stub 先問 base、後判自己的 config，放進去會遮蔽各案自己的設定。
+ * Default `/api/auth/config` response, used only as a fallback before each stub throws `unexpected fetch`: `InvitesGroup` reads it at the group top level,
+ * and every case that renders the users page calls it. Not put in `baseFetchHandlers` - each stub asks base first and then judges its own config, so putting it there would shadow each case's own setting.
  */
 function defaultAuthConfig(url: string, method: string): Response | null {
   if (url !== "/api/auth/config" || method !== "GET") return null;
@@ -163,7 +160,7 @@ function renderUsersRoute(fetchMock: ReturnType<typeof vi.fn>) {
   );
 }
 
-describe("SettingsUsersSection（/admin/users：站台管理頁的使用者區）", () => {
+describe("SettingsUsersSection (/admin/users: the users area of the site admin page)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -173,7 +170,7 @@ describe("SettingsUsersSection（/admin/users：站台管理頁的使用者區�
     vi.unstubAllGlobals();
   });
 
-  it("外殼 smoke：/admin/users 在站台管理 modal（dialog 名為 Site admin）裡", async () => {
+  it("shell smoke: /admin/users is inside the site admin modal (dialog named Site admin)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -189,10 +186,9 @@ describe("SettingsUsersSection（/admin/users：站台管理頁的使用者區�
 
     renderUsersRoute(fetchMock);
 
-    // 本檔第一次載入 AdminSections lazy chunk
+    // First load of the AdminSections lazy chunk in this file
     expect(await screen.findByRole("heading", { name: "User management" })).toBeInTheDocument();
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
-    // 站台管理 modal 左卡的項次導覽，Users 項是目前頁。
     expect(within(within(dialog).getByRole("navigation", { name: "Site admin" })).getByRole("link", { name: "Users" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -201,7 +197,7 @@ describe("SettingsUsersSection（/admin/users：站台管理頁的使用者區�
   });
 });
 
-describe("使用者表的儲存空間與方案", () => {
+describe("storage and plan in the users table", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -221,7 +217,7 @@ describe("使用者表的儲存空間與方案", () => {
     });
   }
 
-  it("用量格：一般／無上限／已超過、恰好等於（警示色，>=）", async () => {
+  it("usage cell: normal / unlimited / over / exactly equal (warning color, >=)", async () => {
     const FULL: AdminUserDto = { ...ACTIVE_OTHER, id: "u-full", email: "full@example.com", storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 1048576, quotaBytes: 1048576 } };
     renderUsersRoute(stub([ACTIVE_OTHER, OVER, FREE, FULL]));
     expect(await screen.findByText("over@example.com")).toBeInTheDocument();
@@ -231,7 +227,7 @@ describe("使用者表的儲存空間與方案", () => {
     expect(screen.getByText("0 B of 2 GB")).not.toHaveClass("text-destructive");
   });
 
-  it("欄寬：主欄與 email 欄按 1 : 1.5 分配（主欄不再獨佔 2/3，擠壓 email）", async () => {
+  it("column widths: the main column and the email column split 1 : 1.5 (the main column no longer takes 2/3 alone and squeezes email)", async () => {
     renderUsersRoute(stub([ACTIVE_OTHER]));
     expect(await screen.findByText("alice@example.com")).toBeInTheDocument();
     expect(screen.getAllByRole("table")[0].style.getPropertyValue("--kb-table-cols")).toBe(
@@ -239,7 +235,7 @@ describe("使用者表的儲存空間與方案", () => {
     );
   });
 
-  it("改方案：PATCH {planId}；成功後該列下拉顯示新方案", async () => {
+  it("changing the plan: PATCH {planId}; after success the row's dropdown shows the new plan", async () => {
     const updated = { ...ACTIVE_OTHER, storage: { planId: BIG_ID, planName: "Big", usedBytes: 0, quotaBytes: null } };
     const fetchMock = stub([ACTIVE_OTHER], (url, method) =>
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH" ? fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) }) : null);
@@ -251,11 +247,11 @@ describe("使用者表的儲存空間與方案", () => {
     const patch = fetchMock.mock.calls.find(([u, i]) => String(u) === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && (i as RequestInit).method === "PATCH");
     expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({ planId: BIG_ID });
     expect(screen.getByText("0 B (no limit)")).toBeInTheDocument();
-    // 成功後方案清單（人數）要重抓——PATCH 之後 GET storage-plans 又發了一次
+    // After success the plan list (member counts) must be refetched - GET storage-plans fires once more after the PATCH
     await waitFor(() => expect(fetchMock.mock.calls.filter(([u, i]) => String(u) === "/api/admin/storage-plans" && ((i as RequestInit | undefined)?.method ?? "GET") === "GET").length).toBeGreaterThanOrEqual(2));
   });
 
-  it("儲存中（PATCH 未回）：下拉 disabled 且顯示剛選的方案，不彈回舊方案", async () => {
+  it("while saving (PATCH not returned): the dropdown is disabled and shows the just-chosen plan, doesn't jump back to the old plan", async () => {
     renderUsersRoute(stub([ACTIVE_OTHER], (url, method) =>
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH" ? (new Promise(() => undefined) as unknown as Response) : null));
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
@@ -265,7 +261,7 @@ describe("使用者表的儲存空間與方案", () => {
     expect(displayedLabel(select)).toBe("Big");
   });
 
-  it("改方案失敗（404 storage_plan_not_found）：toast，下拉留在原方案", async () => {
+  it("plan change failure (404 storage_plan_not_found): toast, the dropdown stays on the original plan", async () => {
     const fetchMock = stub([ACTIVE_OTHER], (url, method) =>
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH"
         ? fakeResponse({ ok: false, status: 404, json: () => Promise.resolve({ error: { code: "storage_plan_not_found", message: "x" } }) })
@@ -275,11 +271,11 @@ describe("使用者表的儲存空間與方案", () => {
     await chooseOption(select, "Big");
     expect(await screen.findByText("Plan not found")).toBeInTheDocument();
     expect(selectedValue(select)).toBe(BASIC_ID);
-    // 失敗也重抓方案清單（方案可能剛被刪）
+    // Failure also refetches the plan list (the plan may have just been deleted)
     await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u) === "/api/admin/storage-plans").length).toBeGreaterThanOrEqual(2));
   });
 
-  it("列上的方案不在清單裡 → 下拉仍顯示該方案（補一個 option），不是清單第一個", async () => {
+  it("a row's plan isn't in the list -> the dropdown still shows that plan (adds an option), not the first in the list", async () => {
     const NEWPLAN_ID = "99999999-9999-4999-8999-999999999999";
     const row: AdminUserDto = { ...ACTIVE_OTHER, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
     renderUsersRoute(stub([row]));
@@ -289,12 +285,12 @@ describe("使用者表的儲存空間與方案", () => {
     expect(await optionLabels(select)).toContain("Brand new");
   });
 
-  it("方案清單失敗：方案欄只顯示方案名、沒有下拉", async () => {
+  it("plan list failure: the plan column shows only the plan name, no dropdown", async () => {
     const fetchMock = stub([ACTIVE_OTHER], (url, method) =>
       url === "/api/admin/storage-plans" && method === "GET" ? fakeResponse({ ok: false, status: 500, json: () => Promise.resolve({ error: { code: "internal", message: "x" } }) }) : null);
     renderUsersRoute(fetchMock);
     expect(await screen.findByText(ACTIVE_OTHER.email)).toBeInTheDocument();
-    // 等待點：清單 pending 時 plans 也是 undefined、「沒有下拉」恆真——先等請求真的發出，再讓失敗結果落地
+    // Wait point: while the list is pending plans is also undefined and "no dropdown" is always true - first wait for the request to actually go out, then let the failure land
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === "/api/admin/storage-plans")).toBe(true));
     for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(screen.queryByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` })).not.toBeInTheDocument();
@@ -302,7 +298,7 @@ describe("使用者表的儲存空間與方案", () => {
   });
 });
 
-describe("使用者表（#247）", () => {
+describe("users table (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -327,13 +323,11 @@ describe("使用者表（#247）", () => {
   }
   const posts = (fetchMock: ReturnType<typeof vi.fn>, url: string) =>
     fetchMock.mock.calls.filter(([u, i]) => String(u) === url && (i as RequestInit | undefined)?.method === "POST");
-  /** 使用者表的列名＝email（`nameColumn` 是 Email 欄）。 */
   const rowOf = (email: string) => screen.getByRole("row", { name: email });
 
-  it("U1 欄位：User（顯示名稱＋灰字 @handle）、Email、Storage、Last active、Role、Plan、Actions、Enabled；沒有 Status 欄、沒有列尾文字鈕", async () => {
+  it("columns: User (display name plus gray @handle), Email, Storage, Last active, Role, Plan, Actions, Enabled; no Status column, no trailing text buttons", async () => {
     renderUsersRoute(stubUsers(() => [SELF_ROW, ACTIVE_OTHER]));
     await screen.findByText(ACTIVE_OTHER.email);
-    // 欄序：主欄 → 資訊欄（Email、Storage、最後活動）→ 可編輯欄（Role、Plan）→ 操作（#286）→ 啟用。
     expect(within(screen.getByRole("table", { name: "Users" })).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "User",
       "Email",
@@ -344,7 +338,6 @@ describe("使用者表（#247）", () => {
       "Actions",
       "Enabled",
     ]);
-    // 啟用 switch 的可及名稱＝表頭「Enabled」＋該列 email（aria-labelledby 兩個 id）
     expect(within(rowOf(ACTIVE_OTHER.email)).getByRole("switch", { name: `Enabled ${ACTIVE_OTHER.email}` })).toBeInTheDocument();
     const row = within(rowOf(ACTIVE_OTHER.email));
     expect(row.getByText("Alice")).toBeInTheDocument();
@@ -352,7 +345,7 @@ describe("使用者表（#247）", () => {
     expect(row.queryByRole("button", { name: /^(Disable|Enable|Promote to admin)$/ })).not.toBeInTheDocument();
   });
 
-  it("U2 角色下拉：一般 → 管理員送 promote；管理員 → 一般送 demote（bodyless POST）", async () => {
+  it("role dropdown: regular -> admin sends promote; admin -> regular sends demote (bodyless POST)", async () => {
     let rows = [SELF_ROW, ACTIVE_OTHER, OTHER_ADMIN];
     const fetchMock = stubUsers(() => rows, (url, method) => {
       if (method !== "POST") return null;
@@ -380,7 +373,7 @@ describe("使用者表（#247）", () => {
     await waitFor(() => expect(selectedValue(carol)).toBe("user"));
   });
 
-  it("U2b promote 204 之後、名單重抓（GET）延遲期間：下拉值恆為 admin（不先彈回 user）", async () => {
+  it("after promote 204, while the list refetch (GET) is delayed: the dropdown value stays admin (doesn't bounce back to user first)", async () => {
     let rows = [SELF_ROW, ACTIVE_OTHER];
     let holdGet = false;
     let releaseGet: () => void = () => {};
@@ -408,14 +401,14 @@ describe("使用者表（#247）", () => {
     expect(selectedValue(alice)).toBe("admin");
   });
 
-  it("U3 自己那列：角色下拉 disabled＋title「You can't remove your own admin role.」", async () => {
+  it("own row: role dropdown disabled + title \"You can't remove your own admin role.\"", async () => {
     renderUsersRoute(stubUsers(() => [SELF_ROW, ACTIVE_OTHER]));
     const mine = await screen.findByRole("combobox", { name: `Role for ${SELF_ROW.email}` });
     expect(mine).toBeDisabled();
     expect(mine).toHaveAttribute("title", "You can't remove your own admin role.");
   });
 
-  it("U4 demote 409 last_site_admin → 下拉彈回管理員＋錯誤列的紅字是站台那句（不是群組的 last_admin 文案）", async () => {
+  it("demote 409 last_site_admin -> the dropdown bounces back to admin + the error row's red text is the site sentence (not the group's last_admin text)", async () => {
     const fetchMock = stubUsers(() => [SELF_ROW, OTHER_ADMIN], (url, method) =>
       url === `${ADMIN_USERS_URL}/${OTHER_ADMIN.id}/demote` && method === "POST"
         ? fakeResponse({ ok: false, status: 409, json: () => Promise.resolve({ error: { code: "last_site_admin", message: "x" } }) })
@@ -424,7 +417,7 @@ describe("使用者表（#247）", () => {
     renderUsersRoute(fetchMock);
     const carol = await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` });
     await chooseOption(carol, "User");
-    // 列層級錯誤走資料列之後的錯誤列，不放在角色那格（會撐寬 max-content 軌）。
+    // Row-level errors go in the error row after the data row, not in the role cell (it would widen the max-content track).
     const errorRow = await screen.findByRole("row", { name: `${OTHER_ADMIN.email} error` });
     expect(within(rowOf(OTHER_ADMIN.email)).queryByRole("alert")).toBeNull();
     const alert = within(errorRow).getByRole("alert");
@@ -433,7 +426,7 @@ describe("使用者表（#247）", () => {
     expect(selectedValue(carol)).toBe("admin");
   });
 
-  it("U5 角色 pending 時下拉 disabled、顯示剛選的值；再改一次不送第二發", async () => {
+  it("while the role is pending the dropdown is disabled and shows the just-chosen value; changing it again doesn't send a second request", async () => {
     const fetchMock = stubUsers(() => [SELF_ROW, ACTIVE_OTHER], (url, method) =>
       url === `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote` && method === "POST" ? new Promise<Response>(() => {}) : null,
     );
@@ -442,7 +435,6 @@ describe("使用者表（#247）", () => {
     await chooseOption(alice, "Admin");
     await waitFor(() => expect(alice).toBeDisabled());
     expect(selectedValue(alice)).toBe("admin");
-    // disabled 的觸發鈕打不開選單，改不了值
     fireEvent.keyDown(alice, { key: "Enter" });
     expect(screen.queryByRole("listbox")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -450,7 +442,7 @@ describe("使用者表（#247）", () => {
     expect(posts(fetchMock, `${ADMIN_USERS_URL}/${ACTIVE_OTHER.id}/promote`)).toHaveLength(1);
   });
 
-  it("U6 啟用 toggle：關 → 先開確認框（不送）→ 確認 → POST disable、重抓後 toggle 為關；開（已停用者）→ 直接 POST enable", async () => {
+  it("enable toggle: turning off -> opens the confirm dialog first (nothing sent) -> confirm -> POST disable, after the refetch the toggle is off; turning on (a disabled user) -> POST enable directly", async () => {
     let rows = [SELF_ROW, ACTIVE_OTHER, DISABLED_OTHER];
     const fetchMock = stubUsers(() => rows, (url, method) => {
       if (method !== "POST") return null;
@@ -481,7 +473,7 @@ describe("使用者表（#247）", () => {
     expect(screen.queryByRole("dialog", { name: "Disable this user?" })).not.toBeInTheDocument();
   });
 
-  it("U7 停用確認框按取消 → 不送任何請求、toggle 留在開", async () => {
+  it("cancelling the disable confirm dialog -> no request, the toggle stays on", async () => {
     const fetchMock = stubUsers(() => [SELF_ROW, ACTIVE_OTHER]);
     renderUsersRoute(fetchMock);
     fireEvent.click(await screen.findByRole("switch", { name: `Enabled ${ACTIVE_OTHER.email}` }));
@@ -492,7 +484,7 @@ describe("使用者表（#247）", () => {
     expect(fetchMock.mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === "POST")).toHaveLength(0);
   });
 
-  it("U8 自己那列的啟用 toggle：照常渲染、恆為開、aria-disabled＋title「You can't disable your own account.」；按下不送、不開確認框", async () => {
+  it("own row's enable toggle: renders as usual, always on, aria-disabled + title \"You can't disable your own account.\"; pressing sends nothing and opens no confirm dialog", async () => {
     const fetchMock = stubUsers(() => [SELF_ROW, ACTIVE_OTHER]);
     renderUsersRoute(fetchMock);
     const mine = await screen.findByRole("switch", { name: `Enabled ${SELF_ROW.email}` });
@@ -505,27 +497,26 @@ describe("使用者表（#247）", () => {
     expect(fetchMock.mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === "POST")).toHaveLength(0);
   });
 
-  it("U9 最後活動（#267）：視窗內顯示「Online」、更早顯示日期＋時間（toLocaleString(en, short/short)）、null 顯示「Not recorded」（不看 lastLoginAt）", async () => {
+  it("last active (#267): inside the window shows \"Online\", older shows date + time (toLocaleString(en, short/short)), null shows \"Not recorded\" (lastLoginAt isn't consulted)", async () => {
     const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
     const justOutside = ago(ONLINE_WINDOW_MS + 60_000);
     const dateTime = (iso: string) => new Date(iso).toLocaleString("en", { dateStyle: "short", timeStyle: "short" });
     renderUsersRoute(stubUsers(() => [
       SELF_ROW,
-      { ...ACTIVE_OTHER, lastLoginAt: "2026-09-01T00:00:00.000Z", lastActiveAt: ago(3 * 60_000) }, // 寫入間隔（1 分鐘）之外、上線視窗（5 分鐘）之內
+      { ...ACTIVE_OTHER, lastLoginAt: "2026-09-01T00:00:00.000Z", lastActiveAt: ago(3 * 60_000) }, // outside the write interval (1 minute), inside the online window (5 minutes)
       { ...DISABLED_OTHER, lastLoginAt: "2026-09-01T00:00:00.000Z", lastActiveAt: null },
       { ...OTHER_ADMIN, lastActiveAt: justOutside },
     ]));
     await screen.findByText(ACTIVE_OTHER.email);
-    // 依格的可及名稱（＝內容）找，不依欄序號（欄序見 U1）。
     const lastActiveCell = (email: string, text: string) => within(rowOf(email)).getByRole("cell", { name: text });
     expect(lastActiveCell(SELF_ROW.email, dateTime("2026-10-01T09:12:00.000Z"))).toBeInTheDocument();
-    expect(dateTime("2026-10-01T09:12:00.000Z")).toMatch(/\d{1,2}:\d{2}/); // 有時間，不只日期
+    expect(dateTime("2026-10-01T09:12:00.000Z")).toMatch(/\d{1,2}:\d{2}/); // has a time, not just a date
     expect(lastActiveCell(ACTIVE_OTHER.email, "Online")).toBeInTheDocument();
     expect(lastActiveCell(DISABLED_OTHER.email, "Not recorded")).toBeInTheDocument();
     expect(lastActiveCell(OTHER_ADMIN.email, dateTime(justOutside))).toBeInTheDocument();
   });
 
-  it("U10角色變更失敗 → 錯誤列「＜email＞ error」；再改一次成功 → 錯誤列消失、不留空的 alert", async () => {
+  it("role change failure -> error row \"<email> error\"; changing again succeeds -> the error row disappears and leaves no empty alert", async () => {
     let fail = true;
     let rows = [SELF_ROW, OTHER_ADMIN];
     const fetchMock = stubUsers(() => rows, (url, method) => {
@@ -549,7 +540,7 @@ describe("使用者表（#247）", () => {
     await waitFor(() => expect(selectedValue(carol)).toBe("user"));
   });
 
-  it("U11 錯誤狀態以使用者 id 為鍵：角色、啟用、停用確認三處的失敗各自只進自己那列的錯誤列；一列開始新動作只清自己那列", async () => {
+  it("error state is keyed by user id: failures in role, enable and disable-confirm each go only into their own row's error row; a row starting a new action clears only its own row", async () => {
     const notFound = () => fakeResponse({ ok: false, status: 404, json: () => Promise.resolve({ error: { code: "user_not_found", message: "x" } }) });
     const fetchMock = stubUsers(() => [SELF_ROW, ACTIVE_OTHER, OTHER_ADMIN, DISABLED_OTHER], (url, method) => {
       if (method !== "POST") return null;
@@ -563,7 +554,6 @@ describe("使用者表（#247）", () => {
     renderUsersRoute(fetchMock);
     const errorRowOf = (email: string) => screen.queryByRole("row", { name: `${email} error` });
 
-    // 角色下拉的失敗：只有 carol 有錯誤列
     await chooseOption(await screen.findByRole("combobox", { name: `Role for ${OTHER_ADMIN.email}` }), "User");
     await waitFor(() => expect(errorRowOf(OTHER_ADMIN.email)).not.toBeNull());
     expect(errorRowOf(ACTIVE_OTHER.email)).toBeNull();
@@ -571,14 +561,12 @@ describe("使用者表（#247）", () => {
     expect(errorRowOf(SELF_ROW.email)).toBeNull();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
 
-    // 啟用開關（開）的失敗：bob 的錯誤列出現；bob 開始動作時清的是 bob 自己那列，carol 的錯誤列還在
     fireEvent.click(screen.getByRole("switch", { name: `Enabled ${DISABLED_OTHER.email}` }));
     await waitFor(() => expect(errorRowOf(DISABLED_OTHER.email)).not.toBeNull());
     expect(within(errorRowOf(DISABLED_OTHER.email)!).getByRole("alert")).toHaveTextContent("We couldn't find that user.");
     expect(within(errorRowOf(OTHER_ADMIN.email)!).getByRole("alert")).toHaveTextContent("The site needs at least one enabled admin.");
     expect(errorRowOf(ACTIVE_OTHER.email)).toBeNull();
 
-    // 停用確認後的失敗：alice 的錯誤列出現；另兩列的錯誤列不受影響
     fireEvent.click(screen.getByRole("switch", { name: `Enabled ${ACTIVE_OTHER.email}` }));
     const confirm = await screen.findByRole("dialog", { name: "Disable this user?" });
     fireEvent.click(within(confirm).getByRole("button", { name: "Disable" }));
@@ -591,7 +579,7 @@ describe("使用者表（#247）", () => {
   });
 });
 
-describe("重設密碼（#286）", () => {
+describe("reset password (#286)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -638,7 +626,7 @@ describe("重設密碼（#286）", () => {
     });
   }
 
-  it("R1 hasPassword:false 的列沒有重設鈕；有密碼的列（含自己那列）有", async () => {
+  it("hasPassword:false rows have no reset button; rows with a password (including your own row) do", async () => {
     renderUsersRoute(stub(() => [SELF_ROW, ACTIVE_OTHER, NO_PASSWORD]));
     await screen.findByText(NO_PASSWORD.email);
     expect(within(rowOf(NO_PASSWORD.email)).queryByRole("button", { name: actionName(NO_PASSWORD.email) })).toBeNull();
@@ -646,7 +634,7 @@ describe("重設密碼（#286）", () => {
     expect(within(rowOf(SELF_ROW.email)).getByRole("button", { name: actionName(SELF_ROW.email) })).toBeInTheDocument();
   });
 
-  it("R2 停用列的鈕 aria-disabled＋title 說明原因；點了不開對話框", async () => {
+  it("a disabled row's button is aria-disabled + title explains why; clicking doesn't open the dialog", async () => {
     renderUsersRoute(stub(() => [SELF_ROW, DISABLED_OTHER]));
     const button = await within(await screen.findByRole("row", { name: DISABLED_OTHER.email })).findByRole("button", { name: actionName(DISABLED_OTHER.email) });
     expect(button).toHaveAttribute("aria-disabled", "true");
@@ -656,7 +644,7 @@ describe("重設密碼（#286）", () => {
     expect(screen.queryByRole("dialog", { name: "Reset password" })).toBeNull();
   });
 
-  it("R3 主流程：選時數 → POST 確切 body → 結果畫面（連結、到期時間）→ 複製（成功／失敗 toast）→ 完成 → 再開回到表單、明文已消失", async () => {
+  it("main flow: choose hours -> POST the exact body -> result screen (link, expiry) -> copy (success / failure toast) -> done -> reopening returns to the form with the plaintext gone", async () => {
     const expiresAt = "2030-01-02T03:04:00.000Z";
     const fetchMock = stub(() => [SELF_ROW, ACTIVE_OTHER], {
       extra: (url, method) =>
@@ -699,7 +687,7 @@ describe("重設密碼（#286）", () => {
     expect(selectedValue(screen.getByLabelText("Link expires after"))).toBe("1");
   });
 
-  it("R4 待用連結：顯示到期句；Cancel link 送 DELETE，重抓後那一行消失、對話框仍開著", async () => {
+  it("pending link: shows the expiry sentence; Cancel link sends DELETE, after the refetch that line disappears and the dialog stays open", async () => {
     let rows = [SELF_ROW, { ...ACTIVE_OTHER, passwordResetExpiresAt: PENDING_AT }];
     const fetchMock = stub(() => rows, {
       extra: (url, method) => {
@@ -720,7 +708,7 @@ describe("重設密碼（#286）", () => {
     expect(screen.getByRole("dialog", { name: "Reset password" })).toBeInTheDocument();
   });
 
-  it("R5 帳密登入關閉：說明段、Create link disabled、待用連結改 pendingSuspended、Cancel link 仍可送", async () => {
+  it("password sign-in off: the description paragraph, Create link disabled, pending links become pendingSuspended, Cancel link can still be sent", async () => {
     const fetchMock = stub(() => [SELF_ROW, { ...ACTIVE_OTHER, passwordResetExpiresAt: PENDING_AT }], {
       passwordLoginEnabled: false,
       extra: (url, method) => (url === resetUrl(ACTIVE_OTHER.id) && method === "DELETE" ? fakeResponse({ ok: true, status: 204 }) : null),
@@ -734,7 +722,7 @@ describe("重設密碼（#286）", () => {
     await waitFor(() => expect(calls(fetchMock, resetUrl(ACTIVE_OTHER.id), "DELETE")).toHaveLength(1));
   });
 
-  it("R6 產生失敗（409 user_disabled）：對話框關閉、列錯誤顯示 errors.user_disabled", async () => {
+  it("create failure (409 user_disabled): the dialog closes, the row error shows errors.user_disabled", async () => {
     const fetchMock = stub(() => [SELF_ROW, ACTIVE_OTHER], {
       extra: (url, method) =>
         url === resetUrl(ACTIVE_OTHER.id) && method === "POST"
@@ -749,7 +737,7 @@ describe("重設密碼（#286）", () => {
     expect(within(errorRow).getByRole("alert")).toHaveTextContent("This account is disabled. Enable it before resetting its password.");
   });
 
-  it("M1 產生請求進行中按 Esc 關閉：回應回來後結果被丟棄，再開是表單、沒有明文", async () => {
+  it("pressing Esc to close while the create request is in flight: after the response returns the result is discarded; reopening shows the form, no plaintext", async () => {
     let release: () => void = () => {};
     const fetchMock = stub(() => [SELF_ROW, ACTIVE_OTHER], {
       extra: (url, method) =>
@@ -774,9 +762,9 @@ describe("重設密碼（#286）", () => {
   });
 
   it.each([
-    ["成功", () => fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ token: "knbp_LATE", expiresAt: PENDING_AT }) })],
-    ["失敗", () => fakeResponse({ ok: false, status: 409, json: () => Promise.resolve({ error: { code: "user_disabled", message: "x" } }) })],
-  ] as const)("N1 產生進行中關閉、回應前又重開：上一次開啟的請求%s晚到，不影響新開的對話框", async (_label, late) => {
+    ["success", () => fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ token: "knbp_LATE", expiresAt: PENDING_AT }) })],
+    ["failure", () => fakeResponse({ ok: false, status: 409, json: () => Promise.resolve({ error: { code: "user_disabled", message: "x" } }) })],
+  ] as const)("closed while generating, reopened before the response: the previous open's request arriving late (%s) doesn't affect the newly opened dialog", async (_label, late) => {
     let release: () => void = () => {};
     const fetchMock = stub(() => [SELF_ROW, ACTIVE_OTHER], {
       extra: (url, method) =>
@@ -802,7 +790,7 @@ describe("重設密碼（#286）", () => {
     expect(screen.queryByRole("row", { name: `${ACTIVE_OTHER.email} error` })).toBeNull();
   });
 
-  it("M2 取消失敗（DELETE 404 user_not_found）：對話框關閉、列錯誤顯示 errors.user_not_found", async () => {
+  it("cancel failure (DELETE 404 user_not_found): the dialog closes, the row error shows errors.user_not_found", async () => {
     const fetchMock = stub(() => [SELF_ROW, { ...ACTIVE_OTHER, passwordResetExpiresAt: PENDING_AT }], {
       extra: (url, method) =>
         url === resetUrl(ACTIVE_OTHER.id) && method === "DELETE"
@@ -817,7 +805,7 @@ describe("重設密碼（#286）", () => {
     expect(within(errorRow).getByRole("alert")).toHaveTextContent("We couldn't find that user.");
   });
 
-  it("N2a 產生進行中：取消連結鈕也停用", async () => {
+  it("while generating: the cancel-link button is also disabled", async () => {
     const hang = () => new Promise<Response>(() => {}) as unknown as Response;
     const fetchMock = stub(() => [SELF_ROW, { ...ACTIVE_OTHER, passwordResetExpiresAt: PENDING_AT }], {
       extra: (url, method) => (url === resetUrl(ACTIVE_OTHER.id) && (method === "POST" || method === "DELETE") ? hang() : null),
@@ -828,7 +816,7 @@ describe("重設密碼（#286）", () => {
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel link" })).toBeDisabled());
   });
 
-  it("N2b 取消進行中：產生連結鈕也停用", async () => {
+  it("while cancelling: the generate-link button is also disabled", async () => {
     const fetchMock = stub(() => [SELF_ROW, { ...ACTIVE_OTHER, passwordResetExpiresAt: PENDING_AT }], {
       extra: (url, method) => (url === resetUrl(ACTIVE_OTHER.id) && method === "DELETE" ? (new Promise<Response>(() => {}) as unknown as Response) : null),
     });
@@ -838,7 +826,7 @@ describe("重設密碼（#286）", () => {
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Create link" })).toBeDisabled());
   });
 
-  it("R7 點對話框外面不關閉", async () => {
+  it("clicking outside the dialog doesn't close it", async () => {
     renderUsersRoute(stub(() => [SELF_ROW, ACTIVE_OTHER]));
     await openFor(ACTIVE_OTHER.email);
     await clickOutside();
@@ -846,7 +834,7 @@ describe("重設密碼（#286）", () => {
   });
 });
 
-describe("邀請（#285）", () => {
+describe("invitations (#285)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -879,7 +867,7 @@ describe("邀請（#285）", () => {
     return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      // 邀請列表先於 base（base 的空陣列只給別組用）
+      // The invitations GET is handled before base (base's empty array serves the other groups).
       if (url === INVITES_URL && method === "GET") return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve((opts.getInvites ?? (() => []))()) }));
       const custom = opts.extra?.(url, method) ?? baseFetchHandlers()(url, method);
       if (custom) return Promise.resolve(custom);
@@ -905,13 +893,13 @@ describe("邀請（#285）", () => {
     return screen.findByRole("dialog", { name: "Create an invitation" });
   };
 
-  it("I1 頁首有「Create invitation」鈕，沒有「Create user」", async () => {
+  it("the header has a \"Create invitation\" button and no \"Create user\"", async () => {
     renderUsersRoute(stub());
     expect(await screen.findByRole("button", { name: "Create invitation" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create user" })).toBeNull();
   });
 
-  it("I2 主流程：預設 3 天、七個選項 → POST 確切 body → 結果畫面（連結）→ 邀請表重抓 → 完成 → 再開回到表單、明文已消失", async () => {
+  it("main flow: default 3 days, seven options -> POST the exact body -> result screen (link) -> the invitation table is refetched -> done -> reopening returns to the form with the plaintext gone", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -940,7 +928,7 @@ describe("邀請（#285）", () => {
     expect(selectedValue(screen.getByLabelText("Link expires after"))).toBe("3");
   });
 
-  it("I3a 備註：原樣送出（trim 由 server 做）", async () => {
+  it("note: sent as typed (trim is done by the server)", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -950,7 +938,7 @@ describe("邀請（#285）", () => {
     expect(bodyOf(calls(fetchMock, INVITES_URL, "POST")[0])).toEqual({ expiresInDays: 3, label: "  Alice  " });
   });
 
-  it("I3a' 備註只有空白：body 不帶 label", async () => {
+  it("note of only whitespace: the body has no label", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -960,7 +948,7 @@ describe("邀請（#285）", () => {
     expect(bodyOf(calls(fetchMock, INVITES_URL, "POST")[0])).toEqual({ expiresInDays: 3 });
   });
 
-  it("I3b 備註以 code point 計：100 個 emoji（JS length 200）照常送出", async () => {
+  it("note counts code points: 100 emoji (JS length 200) are sent as usual", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -970,7 +958,7 @@ describe("邀請（#285）", () => {
     expect(calls(fetchMock, INVITES_URL, "POST")).toHaveLength(1);
   });
 
-  it("I3c 備註 101 字：顯示 labelTooLong、沒有 POST", async () => {
+  it("note of 101 characters: shows labelTooLong, no POST", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -980,21 +968,20 @@ describe("邀請（#285）", () => {
     expect(calls(fetchMock, INVITES_URL, "POST")).toHaveLength(0);
   });
 
-  it("I4 帳密關閉：對話框有說明、Create link disabled", async () => {
+  it("password sign-in off: the dialog has an explanation, Create link disabled", async () => {
     renderUsersRoute(stub({ passwordLoginEnabled: false }));
     const dialog = await openCreate();
     expect(await within(dialog).findByText("Password sign-in is off on this site, so invitations can't be created or used.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Create link" })).toBeDisabled();
   });
 
-  it("I5 點對話框外面不關閉、已填內容仍在", async () => {
+  it("clicking outside the dialog doesn't close it and typed content remains", async () => {
     renderUsersRoute(stub());
     const dialog = await openCreate();
     fireEvent.change(within(dialog).getByLabelText("Note (optional)"), { target: { value: "keep me" } });
     await clickOutside();
     expect(screen.getByRole("dialog", { name: "Create an invitation" })).toBeInTheDocument();
     expect(screen.getByLabelText("Note (optional)")).toHaveValue("keep me");
-    // 提示文字以 aria-describedby 連到輸入框
     expect(screen.getByLabelText("Note (optional)")).toHaveAccessibleDescription("Only admins see it, in the invitations list. Up to 100 characters.");
   });
 
@@ -1007,26 +994,23 @@ describe("邀請（#285）", () => {
     inv({ id: "i-expired", label: "Dave", status: "expired" }),
   ];
 
-  it("I6 邀請表：表頭、狀態文字、使用的帳號、副標、只有 pending 有撤銷鈕（無備註鈕名到秒、彼此不同）", async () => {
+  it("invitation table: header, status text, the account used, subtitle, only pending rows have a revoke button (without a note, button names include seconds so they differ from each other)", async () => {
     renderUsersRoute(stub({ getInvites: () => TABLE_ROWS }));
     const table = await screen.findByRole("table", { name: "Invitations" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Invitation", "Status", "Expires", "Used by", "Actions"]);
     const row = (name: string | RegExp) => within(table).getByRole("row", { name });
     expect(within(row(/Alice/)).getByText("Unused")).toBeInTheDocument();
     expect(within(row(/Bob/)).getByText("Used")).toBeInTheDocument();
-    // 非 pending 的狀態與「—」用 muted（前例 ApiTokensSection.test）
     expect(within(row(/Alice/)).getByText("Unused")).not.toHaveClass("text-muted-foreground");
     expect(within(row(/Bob/)).getByText("Used")).toHaveClass("text-muted-foreground");
     expect(within(row(/Dave/)).getByText("—")).toHaveClass("text-muted-foreground");
     expect(within(row(/Bob/)).getByText("bob@example.com")).not.toHaveClass("text-muted-foreground");
-    // 到期欄的內容
     expect(within(row(/Alice/)).getByText(new Date(EXPIRES_AT).toLocaleString("en", { dateStyle: "short", timeStyle: "short" }))).toBeInTheDocument();
     expect(within(row(/Carol/)).getByText("Revoked")).toBeInTheDocument();
     expect(within(row(/Dave/)).getByText("Expired")).toBeInTheDocument();
     expect(within(row(/Bob/)).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(row(/Alice/)).getByText("—")).toBeInTheDocument();
     expect(within(row(/Dave/)).getByText("—")).toBeInTheDocument();
-    // createdBy 為 null 的列，副標以 "Created " 開頭（不是 "Created by"）
     expect(within(row(/Carol/)).getByText(/^Created (?!by)/)).toBeInTheDocument();
     expect(within(row(/Alice/)).getByText(/^Created by admin@example\.com, /)).toBeInTheDocument();
 
@@ -1043,7 +1027,7 @@ describe("邀請（#285）", () => {
     expect(within(row(/Dave/)).queryByRole("button", { name: /^Revoke invitation/ })).toBeNull();
   });
 
-  it("I7 撤銷：確認框 → DELETE → 重抓", async () => {
+  it("revoke: confirm dialog -> DELETE -> refetch", async () => {
     let rows = [inv({ id: "i-p1", label: "Alice" })];
     const fetchMock = stub({
       getInvites: () => rows,
@@ -1065,7 +1049,7 @@ describe("邀請（#285）", () => {
     expect(await screen.findByText("No invitations yet.")).toBeInTheDocument();
   });
 
-  it("I7b 撤銷失敗（409 invite_used）：toast 為 errors.invite_used", async () => {
+  it("revoke failure (409 invite_used): toast is errors.invite_used", async () => {
     const fetchMock = stub({
       getInvites: () => [inv({ id: "i-p1", label: "Alice" })],
       extra: (url, method) =>
@@ -1089,7 +1073,7 @@ describe("邀請（#285）", () => {
   const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   const okCreated = () => fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ invite: inv({ id: "i-late" }), token: "knbi_LATE" }) });
 
-  it("I10 建立請求進行中按 Esc 關閉：回應回來後結果被丟棄，再開是表單、沒有明文", async () => {
+  it("pressing Esc to close while the create request is in flight: after the response returns the result is discarded; reopening shows the form, no plaintext", async () => {
     const hang = hangingPost();
     const fetchMock = stub({ extra: hang.extra });
     renderUsersRoute(fetchMock);
@@ -1107,9 +1091,9 @@ describe("邀請（#285）", () => {
   });
 
   it.each([
-    ["成功", okCreated],
-    ["失敗", () => fakeResponse({ ok: false, status: 403, json: () => Promise.resolve({ error: { code: "password_login_disabled", message: "x" } }) })],
-  ] as const)("I11 送出後關閉、回應前又重開：上一次開啟的請求%s晚到，不影響新開的對話框", async (_label, late) => {
+    ["success", okCreated],
+    ["failure", () => fakeResponse({ ok: false, status: 403, json: () => Promise.resolve({ error: { code: "password_login_disabled", message: "x" } }) })],
+  ] as const)("closed after submitting, reopened before the response: the previous open's request arriving late (%s) doesn't affect the newly opened dialog", async (_label, late) => {
     const hang = hangingPost();
     const fetchMock = stub({ extra: hang.extra });
     renderUsersRoute(fetchMock);
@@ -1128,7 +1112,7 @@ describe("邀請（#285）", () => {
     expect(within(reopened).queryByRole("alert")).toBeNull();
   });
 
-  it("I12 送出後關閉再重開（舊請求還沒回）：送出鈕是 Create link 且可按，不是 Creating…／disabled", async () => {
+  it("after submit, close and reopen (the old request hasn't returned): the submit button is Create link and clickable, not Creating... / disabled", async () => {
     const hang = hangingPost();
     const fetchMock = stub({ extra: hang.extra });
     renderUsersRoute(fetchMock);
@@ -1143,7 +1127,7 @@ describe("邀請（#285）", () => {
     expect(within(reopened).queryByRole("button", { name: "Creating…" })).toBeNull();
   });
 
-  it("I13 建立失敗（403 password_login_disabled）：對話框內 role=alert 顯示該錯誤，表單仍在", async () => {
+  it("create failure (403 password_login_disabled): role=alert in the dialog shows that error, the form remains", async () => {
     const fetchMock = stub({
       extra: (url, method) =>
         url === INVITES_URL && method === "POST"
@@ -1158,7 +1142,7 @@ describe("邀請（#285）", () => {
     expect(within(dialog).getByRole("button", { name: "Create link" })).toBeEnabled();
   });
 
-  it("I14 長度檢查先 trim：前後空白不算字數（100 字加空白照常送出）", async () => {
+  it("the length check trims first: leading / trailing whitespace doesn't count (100 characters plus whitespace is sent as usual)", async () => {
     const fetchMock = stub({ extra: createdResponse() });
     renderUsersRoute(fetchMock);
     const dialog = await openCreate();
@@ -1168,7 +1152,7 @@ describe("邀請（#285）", () => {
     expect(calls(fetchMock, INVITES_URL, "POST")).toHaveLength(1);
   });
 
-  it("I7c 撤銷遇到 409 invite_used：toast 之後列表重抓", async () => {
+  it("revoke hits 409 invite_used: toast, then the list is refetched", async () => {
     const fetchMock = stub({
       getInvites: () => [inv({ id: "i-p1", label: "Alice" })],
       extra: (url, method) =>
@@ -1187,12 +1171,12 @@ describe("邀請（#285）", () => {
 
   const SUSPENDED = "Password sign-in is off, so unused invitations can't be used right now. Turn it back on and the ones that haven't expired work again.";
 
-  it("I8 帳密關閉 → 表上方 role=status 提示", async () => {
+  it("password sign-in off -> role=status notice above the table", async () => {
     renderUsersRoute(stub({ passwordLoginEnabled: false, getInvites: () => [inv({ id: "i-p1", label: "Alice" })] }));
     expect(await screen.findByRole("status")).toHaveTextContent(SUSPENDED);
   });
 
-  it("I8b 帳密開啟 → 沒有提示（等 config 與邀請列都到了才判）", async () => {
+  it("password sign-in on -> no notice (judged only after both config and the invitation rows have arrived)", async () => {
     const fetchMock = stub({ getInvites: () => [inv({ id: "i-p1", label: "Alice" })] });
     renderUsersRoute(fetchMock);
     await screen.findByRole("button", { name: "Revoke invitation Alice" });
@@ -1203,13 +1187,13 @@ describe("邀請（#285）", () => {
     expect(screen.queryByText(SUSPENDED)).toBeNull();
   });
 
-  it("I9 沒有邀請 → No invitations yet.", async () => {
+  it("no invitations -> No invitations yet.", async () => {
     renderUsersRoute(stub());
     expect(await screen.findByText("No invitations yet.")).toBeInTheDocument();
   });
 });
 
-describe("使用者表的頭貼", () => {
+describe("avatars in the users table", () => {
   const REF = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", v: 2 };
 
   beforeEach(async () => {
@@ -1238,7 +1222,7 @@ describe("使用者表的頭貼", () => {
     return within(row).getByText("Alice").previousElementSibling as HTMLElement;
   }
 
-  it("有頭貼：名稱前有頭像，src 帶版本、lazy，外層 aria-hidden", async () => {
+  it("with an avatar: an avatar before the name, src carries the version, lazy, outer aria-hidden", async () => {
     const avatar = await renderWith({ ...ACTIVE_OTHER, avatar: REF });
     const img = avatar.querySelector("img");
     expect(img).toHaveAttribute("src", avatarUrl(REF.id, REF.v));
@@ -1246,13 +1230,13 @@ describe("使用者表的頭貼", () => {
     expect(avatar).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("avatar 為 null：首字、沒有 img", async () => {
+  it("avatar is null: the initial letter, no img", async () => {
     const avatar = await renderWith(ACTIVE_OTHER);
     expect(avatar.querySelector("img")).toBeNull();
     expect(avatar.textContent).toBe("A");
   });
 
-  it("舊 server 沒有 avatar 欄：不丟錯、顯示首字", async () => {
+  it("old server without an avatar field: no throw, shows the initial letter", async () => {
     const row = { ...ACTIVE_OTHER } as Record<string, unknown>;
     delete row.avatar;
     const avatar = await renderWith(row as unknown as AdminUserDto);
@@ -1260,7 +1244,7 @@ describe("使用者表的頭貼", () => {
     expect(avatar.textContent).toBe("A");
   });
 
-  it("圖載入失敗 → 退回首字", async () => {
+  it("image load failure -> falls back to the initial letter", async () => {
     const avatar = await renderWith({ ...ACTIVE_OTHER, avatar: REF });
     fireEvent.error(avatar.querySelector("img")!);
     expect(avatar.querySelector("img")).toBeNull();

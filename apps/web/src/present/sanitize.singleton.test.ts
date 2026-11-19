@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import DOMPurify from "dompurify";
 
-// 單例不受污染。⚠ 本檔不得在頂層 import ./sanitize——要先量 import 之前的基準。
-describe("DOMPurify 預設單例不受 present/sanitize 污染（mermaid 共用它）", () => {
-  it("import 並跑過一次我們的淨化之後，預設單例對兩個輸入的結果逐字相同", async () => {
+// The default singleton isn't polluted. Don't import ./sanitize at top level in this file: the baseline must be measured before the import.
+describe("DOMPurify default singleton isn't polluted by present/sanitize (mermaid shares it)", () => {
+  it("after importing and running our sanitizer once, the default singleton gives byte-identical results for two inputs", async () => {
     const svgInput = '<svg><a href="https://x">t</a></svg>';
     const dataImg = '<img src="data:image/png;base64,AAA">';
     const before = [
       DOMPurify.sanitize(svgInput, { USE_PROFILES: { svg: true } }),
       DOMPurify.sanitize(dataImg),
     ];
-    expect(before[1]).toContain('src="data:image/png;base64,AAA"'); // 基準本身要保留 data: src，否則下面比對沒有鑑別力
+    expect(before[1]).toContain('src="data:image/png;base64,AAA"'); // The baseline itself must keep the data: src, otherwise the comparison below can't discriminate
 
     const { sanitizeSlideFragment } = await import("./sanitize");
     sanitizeSlideFragment(`<p>x</p>${dataImg}<span href="https://e">y</span>`);

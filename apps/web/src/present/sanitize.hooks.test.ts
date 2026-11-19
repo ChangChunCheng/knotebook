@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-// 連續呼叫兩次，`uponSanitizeAttribute` hook 每個屬性只被呼叫一次。
 const calls = vi.hoisted(() => ({ attr: [] as string[] }));
 
 vi.mock("dompurify", async (importOriginal) => {
@@ -21,8 +20,8 @@ vi.mock("dompurify", async (importOriginal) => {
   return { default: factory };
 });
 
-describe("sanitize 的 hook 只在模組頂層註冊一次", () => {
-  it("同一個輸入淨化兩次：屬性 hook 被呼叫的次數＝屬性數 × 2（不是越疊越多）", async () => {
+describe("sanitize's hooks are registered once at module top level", () => {
+  it("sanitizing the same input twice: the attribute hook call count = attribute count x 2 (doesn't stack up)", async () => {
     const { sanitizeSlideFragment } = await import("./sanitize");
     sanitizeSlideFragment('<p data-foo="1">x</p>');
     const once = calls.attr.length;

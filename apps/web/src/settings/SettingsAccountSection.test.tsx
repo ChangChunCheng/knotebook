@@ -9,12 +9,11 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 密碼三形（#187；#247 起在「登入」頁 `/settings/login`＝`SettingsLoginSection`）：`hasPassword === false`
-// → 不渲染 `ChangePasswordForm`；帳密登入有效值開時改渲染「加上密碼」表單、關時只有說明。
-// 帳戶資訊頁（`SettingsAccountSection`）只有頭貼、顯示名稱與網址名稱三區塊。
-// 走真正的 `AppRoutes`（同 SettingsModal.test.tsx/SettingsUsersSection.test.tsx 慣例，
-// 不拆開重建等價樹）——驗證的是「有沒有接對」。fetch 樁比照
-// `SettingsUsersSection.test.tsx:89-101`。
+// Three password forms (#187; since #247 on the sign-in page `/settings/login` = `SettingsLoginSection`): `hasPassword === false`
+// -> `ChangePasswordForm` isn't rendered; when password sign-in is effectively on, an "add a password" form renders instead, when off only the explanation.
+// The account info page (`SettingsAccountSection`) has only three blocks: avatar, display name and URL name.
+// Runs through the real `AppRoutes` (same convention as SettingsModal.test.tsx / SettingsUsersSection.test.tsx,
+// not rebuilding an equivalent tree) - it verifies the wiring. The fetch stub follows `SettingsUsersSection.test.tsx`.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -108,7 +107,7 @@ function renderLoginSettings(user: UserDto, passwordLoginEnabled = true) {
   return queryClient;
 }
 
-describe("SettingsLoginSection（hasPassword／帳密登入有效值 三形）", () => {
+describe("SettingsLoginSection (hasPassword / effective password sign-in, three shapes)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -118,21 +117,21 @@ describe("SettingsLoginSection（hasPassword／帳密登入有效值 三形）",
     vi.unstubAllGlobals();
   });
 
-  it("hasPassword:true → 渲染 ChangePasswordForm", async () => {
+  it("hasPassword:true -> renders ChangePasswordForm", async () => {
     const queryClient = renderLoginSettings(PASSWORD_USER);
 
-    // 本檔第一次載入登入頁 lazy chunk
+    // First load of the sign-in page lazy chunk in this file
     await waitFor(
       () => expect(screen.getByRole("heading", { name: "Change your password" })).toBeInTheDocument(),
     );
     expect(screen.getByLabelText("Current password")).toBeInTheDocument();
-    // 「不存在」斷言的等待點：identities 已落地（有效值開）——否則關閉說明句本來就還沒出現，斷言空真。
+    // Wait point for the "absent" assertion: identities have landed (effective value on) - otherwise the off-explanation simply isn't there yet and the assertion is vacuous.
     await waitFor(() => expect(queryClient.getQueryData(["identities"])).toBeDefined());
     expect(screen.queryByText(/This site only allows signing in through a sign-in service right now/)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Add a password" })).not.toBeInTheDocument();
   });
 
-  it("hasPassword:false＋有效值開 →「Add a password」表單取代舊的 SSO-only 文案；沒有改密碼表單", async () => {
+  it("hasPassword:false + effective on -> the \"Add a password\" form replaces the old SSO-only text; no change-password form", async () => {
     renderLoginSettings(SSO_ONLY_USER);
     expect(await screen.findByRole("heading", { name: "Add a password" })).toBeInTheDocument();
     expect(screen.getByLabelText("New password")).toBeInTheDocument();
@@ -140,28 +139,27 @@ describe("SettingsLoginSection（hasPassword／帳密登入有效值 三形）",
     expect(screen.queryByRole("heading", { name: "Change your password" })).not.toBeInTheDocument();
   });
 
-  it("hasPassword:false＋有效值關 → 只有說明、沒有表單", async () => {
+  it("hasPassword:false + effective off -> only the explanation, no form", async () => {
     renderLoginSettings(SSO_ONLY_USER, false);
     expect(await screen.findByText("This site only allows signing in through a sign-in service right now.")).toBeInTheDocument();
     expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
   });
 
-  it("hasPassword:true＋有效值關 → 改密碼表單仍在＋說明句", async () => {
+  it("hasPassword:true + effective off -> the change-password form stays plus the explanation", async () => {
     renderLoginSettings(PASSWORD_USER, false);
     expect(await screen.findByLabelText("Current password")).toBeInTheDocument();
-    // 說明句要等 identities 落地才出現（改密碼表單先以預設「開」渲染）——用 findBy 等。
+    // The explanation appears only after identities land (the change-password form first renders with the default "on"), so wait with findBy.
     expect(await screen.findByText("This site only allows signing in through a sign-in service right now; your password is only used to prove it's you when linking an account.")).toBeInTheDocument();
   });
 });
 
 /**
- * #122：帳號區的使用者名（handle）欄。
- * - 兩個分支（有密碼／SSO-only）都要渲染——OIDC 使用者正是 handle 派生自
- *   preferred_username、最可能想改名的族群（早退分支要重構）。
- * - 成功後 invalidateQueries **全清**（handle 已反正規化進未來的 NoteDto，改名罕見、全清最保險）。
- * - 警語含 /n/、/p/ 網址形＝刻意提前（對應功能緊隨上線，文案一次寫全——非 drift）。
+ * #122: the user name (handle) field in the account section.
+ * - Both branches (with password / SSO-only) must render: OIDC users, whose handle derives from preferred_username, are the most likely to want a rename.
+ * - After success invalidateQueries clears everything (the handle is denormalized into future NoteDtos; renames are rare, so clearing all is safest).
+ * - The warning mentions the /n/ and /p/ URL forms on purpose, ahead of those features, so the text is written once (not drift).
  */
-describe("SettingsAccountSection——使用者名欄（#122）", () => {
+describe("SettingsAccountSection - URL name field (#122)", () => {
   const HANDLE_WARNING =
     "The name used in your public links (/p/<handle>/…). It appears in every /n/ and /p/ link you share (token links don't include it). After a rename those links stop working immediately, and the old name is freed: anyone, including you, can take it. If someone else takes it, an old link that matches one of their notes leads to their note.";
 
@@ -175,8 +173,8 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
   });
 
   function renderWithProfilePatch(user: UserDto, patchResponse: () => Response) {
-    // 可變的 me 樁：/api/auth/me 讀 userRef.current——成功案把它翻成
-    // 新值，才能斷言「全清 refetch 後畫面顯示新 handle」；固定樁下那個宣稱是假的。
+    // Mutable me stub: /api/auth/me reads userRef.current - the success case flips it to the new value, so the claim
+    // "after the clear-all refetch the screen shows the new handle" can be asserted; with a fixed stub that claim would be false.
     const userRef = { current: user };
     const patchBodies: unknown[] = [];
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -206,21 +204,21 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
     return { fetchMock, patchBodies, invalidateSpy, userRef };
   }
 
-  it("顯示現行 handle 與警語（含 /n/、/p/ 網址形——刻意提前的完整文案）", async () => {
+  it("shows the current handle and the warning (including the /n/ and /p/ URL forms - the full text on purpose ahead of those features)", async () => {
     renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
     const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     expect(input.value).toBe("tester");
     expect(screen.getByText(HANDLE_WARNING)).toBeInTheDocument();
   });
 
-  it("SSO-only（hasPassword=false）也看得到、可編輯（早退分支已重構）", async () => {
+  it("SSO-only (hasPassword=false) also sees it and can edit it", async () => {
     renderWithProfilePatch(SSO_ONLY_USER, () => fakeResponse({ ok: true, status: 200 }));
     const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     expect(input.value).toBe("tester");
     expect(input).not.toBeDisabled();
   });
 
-  it("帳戶資訊頁依序是頭貼、顯示名稱、網址名稱三區塊（密碼、登入方式、token、用量都搬走了，#247）", async () => {
+  it("account info page has three blocks in order: avatar, display name, URL name (password, sign-in methods, tokens and usage moved elsewhere, #247)", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const res = baseFetchHandlers(PASSWORD_USER)(String(input), (init?.method ?? "GET").toUpperCase());
       if (res) return Promise.resolve(res);
@@ -236,31 +234,31 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
       </QueryClientProvider>,
     );
     const h1 = await screen.findByRole("heading", { level: 1, name: "Account info" });
-    // 範圍限在頁面本身（SettingsPage 根＝h1 所在 header 的父層）：Radix DialogTitle 也是 h2，掃全頁會掃到它。
+    // Scope to the page itself (SettingsPage root = the parent of the header with the h1): Radix DialogTitle is also an h2, and scanning the whole page would pick it up.
     const page = h1.closest("header")!.parentElement!;
     expect(within(page).getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Profile picture", "Display name", "URL name"]);
   });
 
-  it("改名成功：PATCH body 正規化後送出、invalidateQueries **全清**（無過濾參數）、全清 refetch 後畫面顯示新值＋成功 toast", async () => {
+  it("rename success: PATCH body sent normalized, invalidateQueries clears **everything** (no filter), after the clear-all refetch the screen shows the new value plus a success toast", async () => {
     const updated: UserDto = { ...PASSWORD_USER, handle: "new-me" };
     const { patchBodies, invalidateSpy, userRef } = renderWithProfilePatch(PASSWORD_USER, () => {
-      userRef.current = updated; // PATCH 落地＝server 端已改——之後的 /me 回新值
+      userRef.current = updated; // PATCH landing means the server has changed; later /me calls return the new value
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) });
     });
     const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New-Me" } });
     fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
     await waitFor(() => expect(patchBodies).toHaveLength(1));
-    expect(patchBodies[0]).toEqual({ handle: "new-me" }); // 正規化（小寫）後送出
+    expect(patchBodies[0]).toEqual({ handle: "new-me" }); // sent normalized (lowercase)
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
     expect(invalidateSpy.mock.calls.some((args) => args.length === 0 || args[0] === undefined)).toBe(true);
-    // 顯示新值：靠 setValue(null) 回「顯示現值」＋setQueryData 寫入的新
-    // session——少了 setValue(null) 欄位會停在原文 "New-Me" 而紅
+    // Showing the new value relies on setValue(null) returning to "show current value" plus the new session written by setQueryData;
+    // without setValue(null) the field stays on the raw "New-Me" and the case goes red.
     await waitFor(() => expect(input.value).toBe("new-me"));
-    await screen.findByText("URL name saved."); // 成功 toast
+    await screen.findByText("URL name saved.");
   });
 
-  it("M1 釘：PATCH 落地即 setQueryData 更新 session——/me refetch **尚未回應**時也顯示新值（不閃回舊名一個 RTT）", async () => {
+  it("PATCH landing immediately updates the session via setQueryData: the new value also shows while the /me refetch has **not responded yet** (no flash back to the old name for one RTT)", async () => {
     const updated: UserDto = { ...PASSWORD_USER, handle: "new-me" };
     let meCalls = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -282,7 +280,7 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
         if (meCalls === 1) {
           return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(PASSWORD_USER) }));
         }
-        return new Promise<Response>(() => {}); // 之後的 refetch 永不回應——新值只能來自 setQueryData
+        return new Promise<Response>(() => {}); // Later refetches never respond: the new value can only come from setQueryData
       }
       if (url === "/api/folders") return Promise.resolve(new Response(JSON.stringify(FOLDER_LIST_EMPTY), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url === "/api/notes" && method === "GET") {
@@ -307,21 +305,21 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
     const input = (await screen.findByLabelText("URL name")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "New-Me" } });
     fireEvent.click(screen.getByRole("button", { name: "Save URL name" }));
-    await waitFor(() => expect(input.value).toBe("new-me")); // refetch 懸掛中——值來自 setQueryData
+    await waitFor(() => expect(input.value).toBe("new-me")); // refetch is hanging: the value comes from setQueryData
     await screen.findByText("URL name saved.");
   });
 
-  it("值未變（含只變大小寫）→ Save 鈕 disabled（no-op 改名不打端點——額度只計成功，前端就該擋）", async () => {
+  it("unchanged value (including a case-only change) -> Save is disabled (a no-op rename doesn't hit the endpoint; the quota counts only successes, so the frontend should block it)", async () => {
     renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
     const input = await screen.findByLabelText("URL name");
     expect(screen.getByRole("button", { name: "Save URL name" })).toBeDisabled();
-    fireEvent.change(input, { target: { value: "TESTER" } }); // 正規化後同值
+    fireEvent.change(input, { target: { value: "TESTER" } }); // same value after normalization
     expect(screen.getByRole("button", { name: "Save URL name" })).toBeDisabled();
     fireEvent.change(input, { target: { value: "different" } });
     expect(screen.getByRole("button", { name: "Save URL name" })).not.toBeDisabled();
   });
 
-  it("409 handle_taken → 顯示對應文案", async () => {
+  it("409 handle_taken -> shows the matching text", async () => {
     renderWithProfilePatch(PASSWORD_USER, () =>
       fakeResponse({ ok: false, status: 409, json: () => Promise.resolve({ error: { code: "handle_taken", message: "x" } }) }),
     );
@@ -331,7 +329,7 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
     await waitFor(() => expect(screen.getByText("That URL name is already taken.")).toBeInTheDocument());
   });
 
-  it("429 too_many_requests → 顯示對應文案", async () => {
+  it("429 too_many_requests -> shows the matching text", async () => {
     renderWithProfilePatch(PASSWORD_USER, () =>
       fakeResponse({ ok: false, status: 429, json: () => Promise.resolve({ error: { code: "too_many_requests", message: "x" } }) }),
     );
@@ -341,7 +339,7 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
     await waitFor(() => expect(screen.getByText("Too many requests. Please slow down.")).toBeInTheDocument());
   });
 
-  it("非法格式：前端就地呈現、不打 API", async () => {
+  it("invalid format: shown inline by the frontend, no API call", async () => {
     const { fetchMock } = renderWithProfilePatch(PASSWORD_USER, () => fakeResponse({ ok: true, status: 200 }));
     const input = await screen.findByLabelText("URL name");
     fireEvent.change(input, { target: { value: "Bad Name!" } });
@@ -355,11 +353,11 @@ describe("SettingsAccountSection——使用者名欄（#122）", () => {
   });
 });
 
-describe("SetPasswordForm（#187）", () => {
+describe("SetPasswordForm (#187)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("送出 → POST /api/auth/password/set {newPassword}、成功 toast；兩次不同就地錯誤不送；409 → 對應文案", async () => {
+  it("submit -> POST /api/auth/password/set {newPassword}, success toast; mismatch -> inline error, not sent; 409 -> matching text", async () => {
     const posts: unknown[] = [];
     let status = 204;
     const handlers = baseFetchHandlers(SSO_ONLY_USER);
@@ -396,7 +394,7 @@ describe("SetPasswordForm（#187）", () => {
     expect(await screen.findByText("This account already has a password. Use Change password instead.")).toBeInTheDocument();
   });
 
-  it("新密碼太短 → client 端擋下、不打 API", async () => {
+  it("new password too short -> blocked on the client, no API call", async () => {
     const posts: unknown[] = [];
     const handlers = baseFetchHandlers(SSO_ONLY_USER);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -424,11 +422,11 @@ describe("SetPasswordForm（#187）", () => {
   });
 });
 
-describe("SetPasswordForm——送出後的狀態切換（#187）", () => {
+describe("SetPasswordForm - state switch after submit (#187)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => vi.unstubAllGlobals());
 
-  /** /me 讀可變 userRef（比照 renderWithProfilePatch）：POST 落地＝server 已有密碼，之後的 /me 回 hasPassword:true。 */
+  /** /me reads the mutable userRef (like renderWithProfilePatch): POST landing = the server has a password, later /me returns hasPassword:true. */
   function renderSetPassword(postStatus: number) {
     const userRef = { current: SSO_ONLY_USER };
     const handlers = (url: string, method: string) => baseFetchHandlers(userRef.current)(url, method);
@@ -462,7 +460,7 @@ describe("SetPasswordForm——送出後的狀態切換（#187）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add password" }));
   }
 
-  it("成功 → session 與 identities 重抓：「Add a password」消失、改密碼表單出現", async () => {
+  it("success -> session and identities are refetched: \"Add a password\" disappears and the change-password form appears", async () => {
     const { identityGets } = renderSetPassword(204);
     await waitFor(() => expect(identityGets()).toBe(1));
     await submit();
@@ -471,7 +469,7 @@ describe("SetPasswordForm——送出後的狀態切換（#187）", () => {
     await waitFor(() => expect(identityGets()).toBe(2));
   });
 
-  it("409 password_already_set → 錯誤文案之外也重抓 session：畫面切到改密碼表單", async () => {
+  it("409 password_already_set -> besides the error text, the session is also refetched: the screen switches to the change-password form", async () => {
     const { identityGets } = renderSetPassword(409);
     await waitFor(() => expect(identityGets()).toBe(1));
     await submit();
@@ -487,7 +485,7 @@ interface AccountCall {
   body: unknown;
 }
 
-/** 帳號頁 × 自動儲存版本：`/me` 固定回 `user`，PATCH /api/auth/profile 回 `profileReply`——開關翻面只能來自 setQueryData（沒有 refetch 路徑）。 */
+/** Account page x auto-save versions: `/me` always returns `user`, PATCH /api/auth/profile returns `profileReply` - the switch can only flip via setQueryData (there is no refetch path). */
 function renderAutoVersions({ user, siteOn, profileReply }: { user: UserDto; siteOn: boolean; profileReply?: UserDto }): AccountCall[] {
   const calls: AccountCall[] = [];
   const handlers = baseFetchHandlers(user, true, siteOn);
@@ -518,7 +516,7 @@ function renderAutoVersions({ user, siteOn, profileReply }: { user: UserDto; sit
   return calls;
 }
 
-describe("帳號頁 × 自動儲存版本", () => {
+describe("account page x auto-save versions", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -528,11 +526,11 @@ describe("帳號頁 × 自動儲存版本", () => {
     vi.unstubAllGlobals();
   });
 
-  it("開關反映 user.autoVersions；切換 → PATCH /api/auth/profile 的 body 恰為 { autoVersions:false }（不觸發改名流程）", async () => {
+  it("the switch reflects user.autoVersions; toggling -> the PATCH /api/auth/profile body is exactly { autoVersions:false } (doesn't trigger the rename flow)", async () => {
     const calls = renderAutoVersions({ user: { ...PASSWORD_USER, autoVersions: true }, siteOn: true, profileReply: { ...PASSWORD_USER, autoVersions: false } });
     const sw = await screen.findByRole("switch", { name: "Automatic versions" });
     expect(sw).toHaveAttribute("aria-checked", "true");
-    await waitFor(() => expect(sw).toBeEnabled()); // toBeEnabled 在 config 到之前就成立（siteOff 預設當作開）；這裡只確認可點，config 是否載入由「站台關閉」案守
+    await waitFor(() => expect(sw).toBeEnabled()); // toBeEnabled already holds before config arrives (siteOff defaults to on); this only confirms it is clickable, whether config loaded is covered by the "site off" case
     fireEvent.click(sw);
     await waitFor(() => expect(calls.find((c) => c.method === "PATCH" && c.url === "/api/auth/profile")?.body).toEqual({ autoVersions: false }));
     await waitFor(() => expect(screen.getByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "false"));
@@ -540,22 +538,22 @@ describe("帳號頁 × 自動儲存版本", () => {
     expect(calls.some((c) => c.method === "PATCH" && JSON.stringify(c.body).includes("handle"))).toBe(false);
   });
 
-  it("user.autoVersions=false → 開關 aria-checked=false（與上一案區分）", async () => {
+  it("user.autoVersions=false -> the switch has aria-checked=false (distinguishes from the previous case)", async () => {
     renderAutoVersions({ user: { ...PASSWORD_USER, autoVersions: false }, siteOn: true });
     expect(await screen.findByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("站台總開關關閉（/api/auth/config autoVersionsEnabled:false）→ 開關 disabled＋看得見的「站台已關閉自動儲存」", async () => {
+  it("site master switch off (/api/auth/config autoVersionsEnabled:false) -> the switch is disabled plus a visible \"auto-save is turned off for the site\" note", async () => {
     renderAutoVersions({ user: { ...PASSWORD_USER, autoVersions: true }, siteOn: false });
     const sw = await screen.findByRole("switch", { name: "Automatic versions" });
     await waitFor(() => expect(sw).toBeDisabled());
     expect(screen.getByText("Automatic saving is turned off for the whole site")).toBeInTheDocument();
   });
 
-  it("站台總開關開啟 → 開關 enabled、沒有「站台已關閉」說明", async () => {
+  it("site master switch on -> the switch is enabled and there is no \"site turned it off\" note", async () => {
     const calls = renderAutoVersions({ user: { ...PASSWORD_USER, autoVersions: true }, siteOn: true });
     const sw = await screen.findByRole("switch", { name: "Automatic versions" });
-    // toBeEnabled 在 config 到之前就成立——先等 /api/auth/config 的請求發出，再讓回應與 react-query 通知落地，才斷言「沒有站台已關閉」
+    // toBeEnabled already holds before config arrives: first wait for the /api/auth/config request to go out, then let the response and the react-query notification land, before asserting there's no "site turned it off" note
     await waitFor(() => expect(calls.some((c) => c.method === "GET" && c.url === "/api/auth/config")).toBe(true));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -566,7 +564,7 @@ describe("帳號頁 × 自動儲存版本", () => {
   });
 });
 
-describe("SettingsAccountSection——顯示名稱（#247）", () => {
+describe("SettingsAccountSection - display name (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -576,9 +574,9 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
   });
 
   /**
-   * 可變的 me 樁（比照本檔 handle describe `:170-172` 的 `userRef`）：成功案在 PATCH 落地時把 userRef 翻成新值，
-   * 之後的 /me 回新值——固定樁下「全清 refetch 後畫面顯示新名」那個宣稱是假的。
-   * `hangMeAfterFirst`：第二次以後的 /me 永不回應——此時畫面上的新值只可能來自 `setQueryData`（M1 形）。
+   * Mutable me stub (like the `userRef` in this file's handle describe): the success case flips userRef to the new value when the PATCH lands,
+   * and later /me calls return the new value - with a fixed stub the claim "after the clear-all refetch the screen shows the new name" would be false.
+   * `hangMeAfterFirst`: /me never responds from the second call on - the new value on screen can then only come from `setQueryData`.
    */
   function renderWithDisplayNamePatch(
     patchResponse: (body: { displayName: string }, userRef: { current: UserDto }) => Response,
@@ -618,7 +616,7 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     return { patchBodies, queryClient, userRef };
   }
 
-  it("頁首是「Account info」，顯示名稱區塊在網址名稱區塊之前", async () => {
+  it("the header is \"Account info\", and the display name block comes before the URL name block", async () => {
     renderWithDisplayNamePatch(() => fakeResponse({ ok: true, status: 200 }));
     expect(await screen.findByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument();
     const h2 = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
@@ -626,9 +624,9 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     expect(h2.indexOf("Display name")).toBeLessThan(h2.indexOf("URL name"));
   });
 
-  it("成功：PATCH {displayName}（trim 後）→ session 快取為新名、成功 toast、全清 refetch 後欄位顯示新值", async () => {
+  it("success: PATCH {displayName} (trimmed) -> session cache has the new name, success toast, after the clear-all refetch the field shows the new value", async () => {
     const { patchBodies, queryClient } = renderWithDisplayNamePatch((body, userRef) => {
-      userRef.current = { ...PASSWORD_USER, displayName: body.displayName }; // PATCH 落地＝server 端已改
+      userRef.current = { ...PASSWORD_USER, displayName: body.displayName }; // PATCH landing means the server has changed
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(userRef.current) });
     });
     const input = (await screen.findByLabelText("Display name")) as HTMLInputElement;
@@ -641,7 +639,7 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     await waitFor(() => expect(input.value).toBe("Alice W"));
   });
 
-  it("M1 形：/me refetch 永不回應時也顯示新值（新值只可能來自 setQueryData）", async () => {
+  it("/me refetch never responds and the new value still shows (it can only come from setQueryData)", async () => {
     renderWithDisplayNamePatch(
       (body, userRef) => {
         userRef.current = { ...PASSWORD_USER, displayName: body.displayName };
@@ -656,7 +654,7 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     await waitFor(() => expect(input.value).toBe("Alice W"));
   });
 
-  it("失敗：server 400 invalid_body → 行內 alert、不 toast 成功", async () => {
+  it("failure: server 400 invalid_body -> inline alert, no success toast", async () => {
     renderWithDisplayNamePatch(() =>
       fakeResponse({ ok: false, status: 400, json: () => Promise.resolve({ error: { code: "invalid_body", message: "x" } }) }),
     );
@@ -667,7 +665,7 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     expect(screen.queryByText("Display name updated.")).not.toBeInTheDocument();
   });
 
-  it("長度以 code point 計：100 個 emoji（200 個 UTF-16 單位）可存；101 個就地擋下、不打 API", async () => {
+  it("length counts code points: 100 emoji (200 UTF-16 units) can be saved; 101 are blocked inline with no API call", async () => {
     const { patchBodies } = renderWithDisplayNamePatch((body) =>
       fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ ...PASSWORD_USER, displayName: body.displayName }) }),
     );
@@ -681,7 +679,7 @@ describe("SettingsAccountSection——顯示名稱（#247）", () => {
     await waitFor(() => expect(patchBodies).toEqual([{ displayName: "😀".repeat(100) }]));
   });
 
-  it("值未變或全空白 → 儲存鈕 disabled", async () => {
+  it("unchanged or all-blank value -> save button disabled", async () => {
     renderWithDisplayNamePatch(() => fakeResponse({ ok: true, status: 200 }));
     const input = await screen.findByLabelText("Display name");
     expect(screen.getByRole("button", { name: "Save display name" })).toBeDisabled();

@@ -11,8 +11,8 @@ function rule(selectorStart: string): string {
 }
 
 describe("present.css", () => {
-  it("每條規則都錨在 .kn-present 或 :root.dark .kn-present 底下（不碰全域）", () => {
-    // 媒體查詢的外殼（`@media (…) {`）不是選擇器；拿掉外殼後，裡面的規則照樣要錨在 .kn-present 底下。
+  it("every rule is anchored under .kn-present or :root.dark .kn-present (touches nothing global)", () => {
+    // The `@media (...) {` wrapper isn't a selector; with it stripped, the rules inside must still be anchored under .kn-present.
     const selectors = css
       .replace(/@media[^{]*\{/g, "")
       .split("}")
@@ -23,14 +23,14 @@ describe("present.css", () => {
     for (const selector of selectors) expect(selector, selector).toMatch(/^(\.kn-present|:root\.dark \.kn-present)\b/);
   });
 
-  it.each(Object.keys(COLORS_DEFAULT))("色名 %s：淺色與深色的字色、底色逐值等於 BlockNote 匯出的常數（末列）", (name) => {
+  it.each(Object.keys(COLORS_DEFAULT))("color name %s: light and dark text and background colors equal BlockNote's exported constants value by value", (name) => {
     expect(rule(`.kn-present [data-text-color="${name}"]`)).toContain(`color: ${COLORS_DEFAULT[name].text};`);
     expect(rule(`.kn-present [data-background-color="${name}"]`)).toContain(`background-color: ${COLORS_DEFAULT[name].background};`);
     expect(rule(`:root.dark .kn-present [data-text-color="${name}"]`)).toContain(`color: ${COLORS_DARK_MODE_DEFAULT[name].text};`);
     expect(rule(`:root.dark .kn-present [data-background-color="${name}"]`)).toContain(`background-color: ${COLORS_DARK_MODE_DEFAULT[name].background};`);
   });
 
-  it("手機（width < 40rem）：投影片的 H1／H2／H3 縮小且仍是 h1 > h2 > h3，寫在桌面規則之後才蓋得過", () => {
+  it("phone (width < 40rem): slide H1 / H2 / H3 shrink and remain h1 > h2 > h3, written after the desktop rules so they override", () => {
     const phone = css.match(/@media \(width < 40rem\) \{\s*\.kn-present \.kn-slide-body h1 \{[^@]*?\n\}/);
     expect(phone).not.toBeNull();
     const size = (h: string) => Number(new RegExp(`\\.kn-slide-body ${h} \\{ font-size: ([\\d.]+)em;`).exec(phone![0])?.[1]);
@@ -39,27 +39,27 @@ describe("present.css", () => {
     expect(size("h3")).toBe(1.25);
     expect(size("h1")).toBeGreaterThan(size("h2"));
     expect(size("h2")).toBeGreaterThan(size("h3"));
-    // 桌面的 h4 是 1.2em：手機的 h3 仍比它大。
+    // The desktop h4 is 1.2em: the phone h3 must still be larger than it.
     expect(size("h3")).toBeGreaterThan(1.2);
     for (const h of ["h1", "h2", "h3"]) {
       expect(css.indexOf(phone![0])).toBeGreaterThan(css.indexOf(`.kn-present .kn-slide-body ${h} { font-size: `));
     }
   });
 
-  it("無轉場規則存在（deck.ts 的 NO_TRANSITION_CLASS）", () => {
+  it("no transition rule exists (NO_TRANSITION_CLASS in deck.ts)", () => {
     expect(rule(".kn-present .reveal.kn-present-no-transition .slides section")).toContain("transition: none !important;");
   });
 
-  it("E6：沒有溢出的投影片 touch-action:none（溢出的帶 data-prevent-swipe，維持瀏覽器捲動）", () => {
+  it("non-overflowing slides get touch-action:none (overflowing ones carry data-prevent-swipe to keep browser scrolling)", () => {
     expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe])")).toContain("touch-action: none;");
   });
 
-  it("並排——堆疊的列 display:block !important、列的 gap 24px !important（蓋過正規形 inline style）", () => {
+  it("columns: a stacked row is display:block !important with row gap 24px !important (overrides the canonical inline style)", () => {
     expect(rule(".kn-present .kn-slide-body [data-kb-columns][data-stacked] {")).toContain("display: block !important;");
     expect(rule(".kn-present .kn-slide-body [data-kb-columns] {")).toContain("gap: 24px !important;");
   });
 
-  it("E6：未溢出投影片裡沒橫向溢出的 <pre> 也 touch-action:none（<pre> 是捲動容器，否則從短程式碼起手的滑動不換頁）", () => {
+  it("a <pre> that doesn't overflow horizontally inside a non-overflowing slide also gets touch-action:none (<pre> is a scroll container; otherwise a swipe starting on short code wouldn't change slides)", () => {
     expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe])")).toContain("touch-action: none;");
   });
 });

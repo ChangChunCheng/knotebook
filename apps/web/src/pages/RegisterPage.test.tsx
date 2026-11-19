@@ -12,7 +12,7 @@ import { expectCardControls44 } from "@/test/card-controls";
 function fakeResponse(status: number, body?: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: body === undefined ? () => Promise.reject(new Error("no body")) : () => Promise.resolve(body) } as unknown as Response;
 }
-/** 實心鈕的 class（比照 `LinkAccountPage.test.tsx:62` 的 `SOLID_BG`）。 */
+/** Same solid-button class as `SOLID_BG` in `LinkAccountPage.test.tsx`. */
 const SOLID_BG = /(^|\s)bg-(primary|destructive|brand|brand-deep)(\s|$)/;
 const USER: UserDto = { id: "u1", email: "new@example.com", handle: "new", displayName: "New", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null };
 const OPEN: AuthConfigDto = {
@@ -60,13 +60,13 @@ async function fillAndSubmit(values: { email: string; displayName?: string; pass
   fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 }
 
-describe("RegisterPage（#187）", () => {
+describe("RegisterPage (#187)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("帳密表單；即使有會建帳的服務也沒有任何 SSO 註冊鈕或分隔線；恰一顆實心鈕", async () => {
+  it("password form; no SSO sign-up button or divider even when a provider can create accounts; exactly one solid button", async () => {
     const { queryClient } = setup("/register", OPEN);
-    // 表單在載入中就顯示，不能當等待點；等 config 落地再斷言「沒有 SSO 鈕」。
+    // The form renders while config is loading, so it can't be the wait point; wait for config to land before asserting there is no SSO button.
     await waitFor(() => expect(queryClient.getQueryData(AUTH_CONFIG_QUERY_KEY)).toBeDefined());
     expect(await screen.findByRole("button", { name: "Create account" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
@@ -76,7 +76,7 @@ describe("RegisterPage（#187）", () => {
     expect(solid.map(el => el.textContent)).toEqual(["Create account"]);
   });
 
-  it("卡片頁例外：Create account 鈕 lg（h-11），四個輸入框也 h-11（整欄等高）", async () => {
+  it("card-page exception: Create account button is lg (h-11) and the four inputs are also h-11 (equal height per column)", async () => {
     setup("/register", OPEN);
     const submit = await screen.findByRole("button", { name: "Create account" });
     const targets = [submit, ...["#register-email", "#register-display-name", "#register-password", "#register-confirm"].map((sel) => document.querySelector(sel)!)];
@@ -86,21 +86,21 @@ describe("RegisterPage（#187）", () => {
     }
   });
 
-  it("送出成功 → POST {email, password, displayName}、導向 /", async () => {
+  it("submit success -> POST {email, password, displayName}, navigates to /", async () => {
     const { calls } = setup("/register", OPEN);
     await fillAndSubmit({ email: "new@example.com", displayName: "New", password: "correct-horse-battery", confirm: "correct-horse-battery" });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
     expect(calls.find(c => c.url === "/api/auth/register")!.body).toEqual({ email: "new@example.com", password: "correct-horse-battery", displayName: "New" });
   });
 
-  it("顯示名留白 → body 沒有 displayName 鍵（server 以 email local-part 代入）", async () => {
+  it("blank display name -> body has no displayName key (the server derives it from the email local part)", async () => {
     const { calls } = setup("/register", OPEN);
     await fillAndSubmit({ email: "new@example.com", displayName: "   ", password: "correct-horse-battery", confirm: "correct-horse-battery" });
     await waitFor(() => expect(calls.some(c => c.url === "/api/auth/register")).toBe(true));
     expect(calls.find(c => c.url === "/api/auth/register")!.body).toEqual({ email: "new@example.com", password: "correct-horse-battery" });
   });
 
-  it("帶合法 next → 成功後導過去、「Sign in」連結轉交 next", async () => {
+  it("valid next -> navigates there after success; the Sign in link forwards next", async () => {
     setup("/register?next=%2Fn%2Falice%2Fx", OPEN);
     const link = await screen.findByRole("link", { name: "Already have an account? Sign in" });
     expect(link.getAttribute("href")).toBe("/login?next=%2Fn%2Falice%2Fx");
@@ -108,7 +108,7 @@ describe("RegisterPage（#187）", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/alice/x"));
   });
 
-  it("上限：email 超過 254 字元、顯示名超過 100 個 code point → 就地錯誤、不送出；恰 100 個 code point → 送出", async () => {
+  it("limits: email over 254 chars or display name over 100 code points -> inline error, not submitted; exactly 100 code points -> submitted", async () => {
     const { calls } = setup("/register", OPEN);
     await fillAndSubmit({ email: `${"a".repeat(243)}@example.com`, password: "correct-horse-battery", confirm: "correct-horse-battery" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Email can be at most 254 characters.");
@@ -117,14 +117,14 @@ describe("RegisterPage（#187）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Display name can be at most 100 characters.");
     expect(calls.some(c => c.url === "/api/auth/register")).toBe(false);
-    // 恰 100 個 code point（200 個 UTF-16 單位）要送得出去——以 UTF-16 計會把 51–100 個 emoji 誤擋。
+    // Exactly 100 code points (200 UTF-16 units) must submit; counting UTF-16 units would wrongly reject 51-100 emoji.
     fireEvent.change(screen.getByLabelText("Display name (optional)"), { target: { value: "😀".repeat(100) } });
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     await waitFor(() => expect(calls.some(c => c.url === "/api/auth/register")).toBe(true));
     expect((calls.find(c => c.url === "/api/auth/register")!.body as { displayName: string }).displayName).toBe("😀".repeat(100));
   });
 
-  it("兩次密碼不同、太短 → 就地錯誤、不送出", async () => {
+  it("mismatched or too-short passwords -> inline error, not submitted", async () => {
     const { calls } = setup("/register", OPEN);
     await fillAndSubmit({ email: "a@example.com", password: "correct-horse-battery", confirm: "different-horse-battery" });
     expect(await screen.findByText("The passwords don't match.")).toBeInTheDocument();
@@ -135,30 +135,30 @@ describe("RegisterPage（#187）", () => {
     expect(calls.some(c => c.url === "/api/auth/register")).toBe(false);
   });
 
-  it("409 email_taken → errors.email_taken 文案", async () => {
+  it("409 email_taken -> errors.email_taken message", async () => {
     setup("/register", OPEN, { register: () => fakeResponse(409, { error: { code: "email_taken", message: "x" } }) });
     await fillAndSubmit({ email: "taken@example.com", password: "correct-horse-battery", confirm: "correct-horse-battery" });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("That email is already in use."));
   });
 
-  it("RG4：帳密自助註冊關 → 導回 /login；不顯示表單", async () => {
+  it("password self-registration off -> redirects to /login; no form", async () => {
     setup("/register", { ...OPEN, registration: { enabled: false, providerIds: [] } });
-    // 等待點＝導向後的 LocationProbe（載入中先顯示表單，不能當等待點）。
+    // Wait on the LocationProbe after the redirect (the form shows while loading, so it can't be the wait point).
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/login"));
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
   });
 
-  it("RG4b：帶合法 next 的 /register 在帳密自助註冊不可用時 → 導回 /login?next=…", async () => {
+  it("/register with a valid next while password self-registration is unavailable -> redirects to /login?next=...", async () => {
     setup("/register?next=%2Fn%2Falice%2Fx", { ...OPEN, registration: { enabled: false, providerIds: [] } });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/login?next=%2Fn%2Falice%2Fx"));
   });
 
-  it("RG4d：帳密自助註冊不可用＋不合法 next → 導到不帶 next 的 /login", async () => {
+  it("self-registration unavailable + invalid next -> /login without next", async () => {
     setup("/register?next=%2F%2Fevil.example", { ...OPEN, registration: { enabled: false, providerIds: [] } });
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/login"));
   });
 
-  it("RG4e：帳密自助註冊不可用、config 先回、session 晚回且已登入 → 不導 /login，落在 /", async () => {
+  it("self-registration unavailable, config returns first and a signed-in session later -> no redirect to /login, lands on /", async () => {
     let resolveMe: (r: Response) => void = () => {};
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -178,13 +178,12 @@ describe("RegisterPage（#187）", () => {
       </QueryClientProvider>,
     );
     await waitFor(() => expect(queryClient.getQueryData(AUTH_CONFIG_QUERY_KEY)).toBeDefined());
-    // session 未知時不導走（照常顯示表單）。
     expect(screen.queryByTestId("location")).not.toBeInTheDocument();
     await act(async () => resolveMe(fakeResponse(200, USER)));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/"));
   });
 
-  it("RG4c：config 讀取失敗（500）→ 不導走，照常顯示表單（server 是最終裁決）", async () => {
+  it("config load failure (500) -> no redirect, form shows as usual (the server is the final authority)", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/me") return fakeResponse(401, { error: { code: "unauthorized", message: "x" } });
@@ -208,34 +207,34 @@ describe("RegisterPage（#187）", () => {
     expect(screen.queryByTestId("location")).not.toBeInTheDocument();
   });
 
-  it("RG2：帳密登入有效值關、服務會建帳 → 導回 /login；沒有帳密表單、沒有 SSO 註冊鈕", async () => {
+  it("password sign-in effectively off, service can create accounts -> redirects to /login; no password form, no SSO sign-up button", async () => {
     setup("/register", { ...OPEN, passwordLogin: { enabled: false } });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/login"));
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
   });
 
-  it("不合法 next（/login）→ 註冊成功後落 /（web 層 safeNextPath）", async () => {
+  it("invalid next (/login) -> lands on / after registration (web-layer safeNextPath)", async () => {
     setup("/register?next=%2Flogin", OPEN);
     await fillAndSubmit({ email: "new@example.com", password: "correct-horse-battery", confirm: "correct-horse-battery" });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
   });
 
-  it("已登入＋不合法 next（//evil.example）→ 導 /", async () => {
+  it("signed in + invalid next (//evil.example) -> navigates to /", async () => {
     setup("/register?next=%2F%2Fevil.example", OPEN, { me: USER });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
   });
 
-  it("已登入＋合法 next → 導 next", async () => {
+  it("signed in + valid next -> navigates to next", async () => {
     setup("/register?next=%2Fn%2Falice%2Fx", OPEN, { me: USER });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/alice\/x$/));
   });
 
-  it("已登入者打開 /register → 導 /", async () => {
+  it("signed-in user opening /register -> navigates to /", async () => {
     setup("/register", OPEN, { me: USER });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
   });
-  describe("註冊入口", () => {
+  describe("registration entry", () => {
     const A = "11111111-1111-4111-8111-111111111111";
     const B = "22222222-2222-4222-8222-222222222222";
     const TWO_P: AuthConfigDto["providers"] = [
@@ -250,28 +249,28 @@ describe("RegisterPage（#187）", () => {
     });
     const divider = () => document.querySelector('[aria-hidden="true"].border-t');
 
-    it("RG1：帳密自助可用、providerIds [A] → 有表單；沒有任何 Sign up with；沒有分隔線", async () => {
+    it("password self-registration available, providerIds [A] -> form; no Sign up with; no divider", async () => {
       const { queryClient } = setup("/register", cfg(true, true, [A]));
       await waitFor(() => expect(queryClient.getQueryData(AUTH_CONFIG_QUERY_KEY)).toBeDefined());
       expect(await screen.findByLabelText("Email")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
       expect(divider()).toBeNull();
     });
-    it("RG3：帳密自助關、帳密開、providerIds [A] → 導回 /login；沒有表單、沒有 Sign up with、沒有分隔線", async () => {
+    it("self-registration off, password sign-in on, providerIds [A] -> redirects to /login; no form, no Sign up with, no divider", async () => {
       setup("/register", cfg(false, true, [A]));
       await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/login"));
       expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
       expect(divider()).toBeNull();
     });
-    it("RG5：帳密自助可用、providerIds [] → 有表單；沒有 Sign up with；沒有分隔線", async () => {
+    it("self-registration available, providerIds [] -> form; no Sign up with; no divider", async () => {
       const { queryClient } = setup("/register", cfg(true, true, []));
       await waitFor(() => expect(queryClient.getQueryData(AUTH_CONFIG_QUERY_KEY)).toBeDefined());
       expect(await screen.findByLabelText("Email")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
       expect(divider()).toBeNull();
     });
-    it("RG6（未載入）：config 永不回應 → 表單在（沒有導走）；沒有 Sign up with", async () => {
+    it("config never responds (not loaded) -> form present (no redirect); no Sign up with", async () => {
       vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
         if (String(input) === "/api/auth/me") return Promise.resolve(fakeResponse(401, { error: { code: "unauthorized", message: "x" } }));
         return new Promise<Response>(() => {});
@@ -286,7 +285,7 @@ describe("RegisterPage（#187）", () => {
       expect(await screen.findByLabelText("Email")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
     });
-    it("RG7：沒有 providerIds 鍵 → 視同 []：有表單、沒有 Sign up with、不拋錯", async () => {
+    it("no providerIds key -> treated as []: form, no Sign up with, no throw", async () => {
       const noKey = { providers: TWO_P, registration: { enabled: true }, passwordLogin: { enabled: true }, autoVersionsEnabled: true } as unknown as AuthConfigDto;
       const { queryClient } = setup("/register", noKey);
       await waitFor(() => expect(queryClient.getQueryData(AUTH_CONFIG_QUERY_KEY)).toEqual(noKey));
@@ -296,7 +295,7 @@ describe("RegisterPage（#187）", () => {
   });
 });
 
-describe("邀請模式（#285）", () => {
+describe("invite mode (#285)", () => {
   const KEY = "knotebook:invite-token";
   const TOKEN = "knbi_X";
   const EXPIRES_AT = "2026-10-30T08:00:00.000Z";
@@ -372,10 +371,10 @@ describe("邀請模式（#285）", () => {
   });
 
   it.each([
-    ["RG4 形", RG4],
+    ["registration off, no providers", RG4],
     ["OPEN", OPEN],
-    ["RG3 形", RG3],
-  ])("V1 掛載（config＝%s）：fragment 被清、鍵寫入、inspect body、邀請表單；沒有 SSO 鈕", async (_name, cfg) => {
+    ["registration off, one provider", RG3],
+  ])("mount (config = %s): fragment cleared, key stored, inspect body, invite form; no SSO button", async (_name, cfg) => {
     const { calls } = setupInvite(`/register#invite=${TOKEN}`, {}, { cfg });
     expect(await screen.findByRole("heading", { name: "Create an account" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Email")).toBeInTheDocument();
@@ -387,17 +386,17 @@ describe("邀請模式（#285）", () => {
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByLabelText("Confirm password")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Sign up with/ })).not.toBeInTheDocument();
-    expect(expectCardControls44()).toBeGreaterThan(0); // 邀請表單
+    expect(expectCardControls44()).toBeGreaterThan(0);
   });
 
-  it("V2 重新整理：鍵已存在、網址只有 /register → inspect 帶存的 token、出現表單", async () => {
+  it("reload: key exists and URL is just /register -> inspect uses the stored token, form appears", async () => {
     sessionStorage.setItem(KEY, TOKEN);
     const { calls } = setupInvite("/register");
     expect(await screen.findByLabelText("Email")).toBeInTheDocument();
     expect(inspectCalls(calls)[0]!.body).toEqual({ token: TOKEN });
   });
 
-  it("V3 已登入：只有「請先登出」提示、不呼叫 inspect、鍵不存在；登出後出現表單並寫入鍵", async () => {
+  it("signed in: only the sign-out-first notice, inspect not called, key absent; after sign-out the form appears and the key is stored", async () => {
     sessionStorage.setItem(KEY, "stale");
     const { calls, state } = setupInvite(`/register#invite=${TOKEN}`, { me: () => fakeResponse(200, USER) });
     const signOut = await screen.findByRole("button", { name: "Sign out" });
@@ -415,7 +414,7 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("V4 登出後重新整理：以 /register 重新渲染 → 仍是邀請表單，不是一般註冊頁", async () => {
+  it("reload after sign-out: re-rendering at /register still shows the invite form, not the normal register page", async () => {
     const first = setupInvite(`/register#invite=${TOKEN}`, { me: () => fakeResponse(200, USER) });
     const signOut = await screen.findByRole("button", { name: "Sign out" });
     first.state.me = () => fail(401, "unauthorized");
@@ -424,14 +423,14 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
     first.view.unmount();
     vi.unstubAllGlobals();
-    // 卸載 cleanup 會刪鍵；整頁重新整理不會跑 cleanup，所以這裡補回「重新整理後鍵還在」的前提。
+    // Unmount cleanup deletes the key; a full page reload doesn't run cleanup, so restore the 'key survives reload' precondition here.
     sessionStorage.setItem(KEY, TOKEN);
     setupInvite("/register");
     expect(await screen.findByLabelText("Email")).toBeInTheDocument();
     expect(screen.getByText(/^This invitation works once and expires .+\.$/)).toBeInTheDocument();
   });
 
-  it("V5 SPA 離開：表單出現後導到 /login → 鍵被刪", async () => {
+  it("SPA navigation away: navigating to /login after the form appears removes the key", async () => {
     setupInvite(`/register#invite=${TOKEN}`);
     await screen.findByLabelText("Email");
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
@@ -440,7 +439,7 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("V6 inspect 410：invite_invalid 全文＋回登入、鍵被刪", async () => {
+  it("inspect 410: full invite_invalid text plus back-to-login, key removed", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { inspect: () => fail(410, "invite_invalid") });
     expect(await screen.findByText("This invitation is invalid, already used, revoked, or expired. Ask the site administrator for a new one.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to sign in" }).getAttribute("href")).toBe("/login");
@@ -448,14 +447,14 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("V6 inspect 403：passwordLoginOff 全文、沒有表單、鍵仍在", async () => {
+  it("inspect 403: full passwordLoginOff text, no form, key kept", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { inspect: () => fail(403, "password_login_disabled") });
     expect(await screen.findByText("Password sign-in is turned off on this site right now, so this invitation can't be used. Ask the site administrator.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("V6 inspect 403 但碼不是 password_login_disabled（如 Origin 失敗的 forbidden）→ 一般錯誤文字、不顯示帳密關閉、鍵仍在", async () => {
+  it("inspect 403 with a code other than password_login_disabled (e.g. forbidden from an Origin failure) -> generic error text, not the password-off message, key kept", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { inspect: () => fail(403, "forbidden") });
     expect(await screen.findByText("You don't have permission to do that.")).toBeInTheDocument();
     expect(screen.queryByText(/Password sign-in is turned off/)).not.toBeInTheDocument();
@@ -463,7 +462,7 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("I-1 A 送出中 → 同頁換成 B → A 晚回 410：B 的表單仍在、storage 鍵仍是 B（舊 token 的 forget 不刪新鍵）", async () => {
+  it("A submitting -> same page switches to B -> A's late 410: B's form remains and the storage key is still B (the old token's forget doesn't delete the new key)", async () => {
     let resolveAccept: (r: Response) => void = () => {};
     setupInvite(`/register#invite=${TOKEN}`, { accept: () => new Promise<Response>((resolve) => (resolveAccept = resolve)) });
     await fillAndSubmit({ email: "a@example.com", password: PASSWORD, confirm: PASSWORD });
@@ -480,14 +479,14 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBe("knbi_B");
   });
 
-  it("V6 inspect 429：too_many_requests 全文、沒有 invite_invalid 文字、鍵仍在", async () => {
+  it("inspect 429: full too_many_requests text, no invite_invalid text, key kept", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { inspect: () => fail(429, "too_many_requests") });
     expect(await screen.findByText("Too many requests. Please slow down.")).toBeInTheDocument();
     expect(screen.queryByText(/This invitation is invalid/)).not.toBeInTheDocument();
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("V7 /me 回 500：錯誤文字＋Try again、沒有 checking；改回 401 後重試 → 出現表單", async () => {
+  it("/me returns 500: error text plus Try again, no checking state; retry after it returns 401 -> form appears", async () => {
     const { state } = setupInvite(`/register#invite=${TOKEN}`, { me: () => fail(500, "internal") });
     const retry = await screen.findByRole("button", { name: "Try again" });
     expect(screen.queryByText("Checking the invitation…")).not.toBeInTheDocument();
@@ -499,7 +498,7 @@ describe("邀請模式（#285）", () => {
     expect(await screen.findByLabelText("Email")).toBeInTheDocument();
   });
 
-  it("V7 /me 失敗但不是 ApiFail（網路錯誤）→ errors.fallback 全文＋Try again", async () => {
+  it("/me fails with a non-ApiFail error (network) -> full errors.fallback text plus Try again", async () => {
     setupInvite(`/register#invite=${TOKEN}`, {
       me: () => {
         throw new TypeError("network");
@@ -510,7 +509,7 @@ describe("邀請模式（#285）", () => {
     expect(screen.queryByText("Couldn't load your session.")).not.toBeInTheDocument();
   });
 
-  it("非表單畫面（載入錯誤、已登入、失效、帳密關閉）都有 h1「Create an account」", async () => {
+  it("non-form screens (load error, signed in, invalid, password sign-in off) all have the h1 \"Create an account\"", async () => {
     const heading = () => screen.getByRole("heading", { level: 1, name: "Create an account" });
     const first = setupInvite(`/register#invite=${TOKEN}`, { me: () => fail(500, "internal") });
     await screen.findByRole("button", { name: "Try again" });
@@ -529,9 +528,9 @@ describe("邀請模式（#285）", () => {
     heading();
   });
 
-  it("I-1 一般註冊頁（自助註冊開）→ 同頁改成 #invite=（貼新連結）：進邀請模式、inspect 帶新 token、鍵為新 token、hash 清掉", async () => {
+  it("normal register page (self-registration on) -> same page switches to #invite= (new link pasted): enters invite mode, inspect uses the new token, key is the new token, hash cleared", async () => {
     const { calls } = setupInvite("/register", {}, { cfg: OPEN });
-    // 一般模式才有「Already have an account?」連結，邀請表單沒有。
+    // Only normal mode has the "Already have an account?" link; the invite form doesn't.
     expect(await screen.findByRole("link", { name: "Already have an account? Sign in" })).toBeInTheDocument();
     expect(inspectCalls(calls)).toHaveLength(0);
     act(() => navigateFn!(`/register#invite=${TOKEN}`));
@@ -542,7 +541,7 @@ describe("邀請模式（#285）", () => {
     expect(screen.queryByRole("link", { name: "Already have an account? Sign in" })).not.toBeInTheDocument();
   });
 
-  it("I-1 自助註冊關：一般註冊頁導到 /login → 再打開 #invite= 連結：進邀請模式、不被導走", async () => {
+  it("self-registration off: normal register page redirects to /login, then opening an #invite= link enters invite mode and isn't redirected", async () => {
     const { calls } = setupInvite("/register");
     await waitFor(() => expect(fullPath()).toBe("/login"));
     act(() => navigateFn!(`/register#invite=${TOKEN}`));
@@ -551,12 +550,12 @@ describe("邀請模式（#285）", () => {
     await waitFor(() => expect(fullPath()).toBe("/register"));
   });
 
-  // 合流 #309：「自助註冊不可用 → 導回 /login」只屬於一般模式（OpenRegistration）。放到外層 RegisterPage 的話，
-  // 邀請連結會在 config 已載入時被導走（e2e 03-share-revoke 走的就是自助註冊關閉時的邀請連結）。
+  // "Self-registration unavailable -> redirect to /login" applies only to normal mode (OpenRegistration). Placed in the outer RegisterPage,
+  // an invite link would be redirected once config has loaded (e2e 03-share-revoke uses an invite link while self-registration is off).
   it.each([
-    ["自助註冊關（RG4 形）", RG4, () => fakeResponse(200, { expiresAt: EXPIRES_AT }), /^This invitation works once and expires .+\.$/],
-    ["帳密登入關", { ...OPEN, passwordLogin: { enabled: false } }, () => fail(403, "password_login_disabled"), /^Password sign-in is turned off on this site right now/],
-  ] as const)("邀請模式不受一般模式的導向影響（%s）：停在 /register、顯示邀請畫面", async (_name, cfg, inspect, expected) => {
+    ["self-registration off", RG4, () => fakeResponse(200, { expiresAt: EXPIRES_AT }), /^This invitation works once and expires .+\.$/],
+    ["password sign-in off", { ...OPEN, passwordLogin: { enabled: false } }, () => fail(403, "password_login_disabled"), /^Password sign-in is turned off on this site right now/],
+  ] as const)("invite mode ignores normal-mode redirects (%s): stays on /register, shows the invite screen", async (_name, cfg, inspect, expected) => {
     const { calls } = setupInvite(`/register#invite=${TOKEN}`, { inspect }, { cfg });
     expect(await screen.findByText(expected)).toBeInTheDocument();
     await waitFor(() => expect(fullPath()).toBe("/register"));
@@ -564,7 +563,7 @@ describe("邀請模式（#285）", () => {
     expect(screen.queryByTestId("location")).not.toBeInTheDocument();
   });
 
-  it("I-1 邀請 A 回 410 → 同頁換成 #invite=B：B 被 inspect、出現表單、不再顯示 A 的失效、鍵為 B", async () => {
+  it("invite A returns 410 -> same page switches to #invite=B: B is inspected, form appears, A's invalid state is gone, key is B", async () => {
     let n = 0;
     const { calls } = setupInvite(`/register#invite=${TOKEN}`, {
       inspect: () => (++n === 1 ? fail(410, "invite_invalid") : fakeResponse(200, { expiresAt: EXPIRES_AT })),
@@ -579,7 +578,7 @@ describe("邀請模式（#285）", () => {
     await waitFor(() => expect(fullPath()).toBe("/register"));
   });
 
-  it("I-1 換 token 重置表單 state：A 的表單有錯誤 → 換成 B 後欄位是空的、沒有舊錯誤", async () => {
+  it("switching token resets form state: A's form has an error -> after switching to B the fields are empty and the old error is gone", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { accept: () => fail(409, "email_taken") });
     await fillAndSubmit({ email: "taken@example.com", password: PASSWORD, confirm: PASSWORD });
     expect(await screen.findByRole("alert")).toHaveTextContent("That email is already in use.");
@@ -588,10 +587,10 @@ describe("邀請模式（#285）", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("V8 成功：不理 ?next、導 /、session 快取＝回應、鍵被刪，過程中從未閃出「已登入」", async () => {
+  it("success: ignores ?next, navigates to /, session cache = response, key removed, and the signed-in notice never flashes in between", async () => {
     const seen: string[] = [];
-    // 收被加進來的節點文字與 characterData 的新文字：同一個 task 內「加上又拿掉」的閃現，body.textContent 在 callback
-    // 時已看不到；React 原地改同位置 <p> 的文字則只產生 characterData，不是 addedNodes。
+    // Collect text of added nodes plus new characterData text: a flash that is added and removed within one task is no longer in body.textContent by callback time,
+    // and React updating the text of a <p> in place only produces characterData, not addedNodes.
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) seen.push(node.textContent ?? "");
@@ -612,14 +611,14 @@ describe("邀請模式（#285）", () => {
     }
   });
 
-  it("V8 顯示名有填 → accept body 帶 displayName", async () => {
+  it("display name filled -> accept body has displayName", async () => {
     const { calls } = setupInvite(`/register#invite=${TOKEN}`);
     await fillAndSubmit({ email: "new@example.com", displayName: "New", password: PASSWORD, confirm: PASSWORD });
     await waitFor(() => expect(acceptCalls(calls)).toHaveLength(1));
     expect(acceptCalls(calls)[0]!.body).toEqual({ token: TOKEN, email: "new@example.com", password: PASSWORD, displayName: "New" });
   });
 
-  it("V9 accept 410：無效狀態、鍵被刪", async () => {
+  it("accept 410: invalid state, key removed", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { accept: () => fail(410, "invite_invalid") });
     await fillAndSubmit({ email: "new@example.com", password: PASSWORD, confirm: PASSWORD });
     expect(await screen.findByText(/^This invitation is invalid/)).toBeInTheDocument();
@@ -627,7 +626,7 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("V9 accept 409 email_taken：表單上方 alert、表單仍在、鍵仍在", async () => {
+  it("accept 409 email_taken: alert above the form, form and key remain", async () => {
     setupInvite(`/register#invite=${TOKEN}`, { accept: () => fail(409, "email_taken") });
     await fillAndSubmit({ email: "taken@example.com", password: PASSWORD, confirm: PASSWORD });
     expect(await screen.findByRole("alert")).toHaveTextContent("That email is already in use.");
@@ -635,7 +634,7 @@ describe("邀請模式（#285）", () => {
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("V10 客戶端檢查：密碼太短、不一致 → 就地錯誤、沒有 accept", async () => {
+  it("client-side checks: short or mismatched password -> inline error, no accept", async () => {
     const { calls } = setupInvite(`/register#invite=${TOKEN}`);
     await fillAndSubmit({ email: "a@example.com", password: "short", confirm: "short" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Password is too short.");
@@ -646,15 +645,15 @@ describe("邀請模式（#285）", () => {
     expect(acceptCalls(calls)).toHaveLength(0);
   });
 
-  it("V11 同步取得：session 快取已是已登入、第一次 render 就是已登入提示，沒有被導去 /", async () => {
+  it("synchronous read: session cache already signed in -> first render shows the signed-in notice, no redirect to /", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     queryClient.setQueryData(SESSION_QUERY_KEY, USER);
     setupInvite(`/register#invite=${TOKEN}`, { me: () => fakeResponse(200, USER) }, { queryClient });
     const SIGNED_IN = "You're signed in as new@example.com. Sign out to use this invitation.";
     expect(screen.getByText(SIGNED_IN)).toBeInTheDocument();
     expect(fullPath()).not.toBe("/");
-    // 本案（fragment 來源）守「已登入先 Navigate」：router 的更新在 transition 裡，晚一步的導向要等它落地才看得到。
-    // 「token 晚到」在這裡殺不到（清 fragment 的 navigate 會把路徑蓋回來），由下一案（storage 來源）守。
+    // This case guards "signed-in navigates first": the router update runs in a transition, so a late redirect only shows once it settles.
+    // "Token arrives late" can't be caught here (the fragment-clearing navigate rewrites the path); the next case (storage source) covers it.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     });
@@ -662,9 +661,9 @@ describe("邀請模式（#285）", () => {
     expect(fullPath()).toBe("/register");
   });
 
-  it("V11 同步取得（storage 來源）：沒有 fragment、鍵已存在、session 快取已是已登入 → 不會被導去 /", async () => {
-    // 守「token 晚到、第一次 render 為 null 而先 Navigate("/")」：fragment 來源的案子會被「清 fragment 的 navigate」
-    // 蓋掉晚一步的誤導向，這條沒有 fragment，沒有東西蓋。（「已登入先 Navigate」由上一案守。）
+  it("synchronous read (storage source): no fragment, key exists, session cache already signed in -> not redirected to /", async () => {
+    // Guards "token arrives late, first render is null and navigates to '/' first": in the fragment-source case the fragment-clearing navigate
+    // overwrites a late wrong redirect; with no fragment here, nothing overwrites it. ("Signed-in navigates first" is covered by the previous case.)
     sessionStorage.setItem(KEY, TOKEN);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     queryClient.setQueryData(SESSION_QUERY_KEY, USER);
@@ -678,13 +677,13 @@ describe("邀請模式（#285）", () => {
     expect(fullPath()).toBe("/register");
   });
 
-  it("V12 無 token（RG4 形）：一般模式導到 /login、沒有 inspect 請求", async () => {
+  it("no token (registration off, no providers): normal mode redirects to /login, no inspect request", async () => {
     const { calls } = setupInvite("/register");
     await waitFor(() => expect(fullPath()).toBe("/login"));
     expect(inspectCalls(calls)).toHaveLength(0);
   });
 
-  it("V13 邀請表單頁恰一顆實心鈕（Create account）", async () => {
+  it("invite form page has exactly one solid button (Create account)", async () => {
     setupInvite(`/register#invite=${TOKEN}`);
     await screen.findByLabelText("Email");
     const solid = [...screen.getAllByRole("button"), ...screen.queryAllByRole("link")].filter((el) => SOLID_BG.test(el.className));
@@ -692,9 +691,9 @@ describe("邀請模式（#285）", () => {
   });
 });
 
-describe("密碼長度提示的字數來自 shared 常數", () => {
-  // 註冊頁與改密碼表單共用這條文案；數字寫死會在常數改動後說謊。拿掉代建對話框後，這是它僅剩的守衛。
-  it.each(["en", "zh-TW"])("%s：changePassword.passwordHint 以 {{min}} 插值", (language) => {
+describe("password length hint number comes from the shared constant", () => {
+  // The register page and the change-password form share this string; a hard-coded number would go stale when the constant changes.
+  it.each(["en", "zh-TW"])("%s: changePassword.passwordHint interpolates {{min}}", (language) => {
     expect(i18n.getResource(language, "translation", "changePassword.passwordHint")).toContain("{{min}}");
   });
 });

@@ -35,7 +35,7 @@ const MEMBER_G = groupDto({ id: "g-member", name: "RD Weekly" }, memberRole());
 const CUSTOM_G = groupDto({ id: "g-custom", name: "Book club" }, customRole({ name: "Reader" }));
 const NULL_G = groupDto({ id: "g-null", name: "Orphan" }, null);
 
-describe("SettingsGroupsOverview（#247，唯讀）", () => {
+describe("SettingsGroupsOverview (#247, read-only)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -43,19 +43,19 @@ describe("SettingsGroupsOverview（#247，唯讀）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("標題、說明、「你在 N 個群組裡」", async () => {
+  it("title, description, \"you're in N groups\"", async () => {
     renderOverview([ADMIN_G, MEMBER_G, CUSTOM_G]);
     expect(screen.getByRole("heading", { level: 1, name: "Groups" })).toBeInTheDocument();
     expect(screen.getByText("Groups you belong to, and your role in each. Create or manage groups from the sidebar.")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 2, name: "You're in 3 groups" })).toBeInTheDocument();
   });
 
-  it("單數：「You're in 1 group」", async () => {
+  it("singular: \"You're in 1 group\"", async () => {
     renderOverview([MEMBER_G]);
     expect(await screen.findByRole("heading", { level: 2, name: "You're in 1 group" })).toBeInTheDocument();
   });
 
-  it("我的角色走 roleLabel：內建 admin→Admin、內建 member→Member（不是空白）、自訂→其名", async () => {
+  it("my role goes through roleLabel: built-in admin -> Admin, built-in member -> Member (not blank), custom -> its name", async () => {
     renderOverview([ADMIN_G, MEMBER_G, CUSTOM_G]);
     const admin = await screen.findByRole("row", { name: "WRATB" });
     expect(within(admin).getByText("Admin")).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("SettingsGroupsOverview（#247，唯讀）", () => {
     expect(within(screen.getByRole("row", { name: "Book club" })).getByText("Reader")).toBeInTheDocument();
   });
 
-  it("權限 pill：每列先一顆 Read，其餘只列 true 的旗標、順序同 GROUP_ROLE_FLAGS", async () => {
+  it("permission pill: each row starts with one Read, the rest list only the flags that are true, in the order of GROUP_ROLE_FLAGS", async () => {
     renderOverview([ADMIN_G, MEMBER_G, CUSTOM_G]);
     const admin = await screen.findByRole("row", { name: "WRATB" });
     expect(pillsOf(admin)).toEqual(["Read", "Create", "Edit", "Delete", "Manage public links", "Manage members", "Manage roles & group"]);
@@ -71,27 +71,27 @@ describe("SettingsGroupsOverview（#247，唯讀）", () => {
     expect(pillsOf(screen.getByRole("row", { name: "Book club" }))).toEqual(["Read"]);
   });
 
-  it("myRole: null（型別上可能）→ 角色「—」、只有 Read pill、不 throw", async () => {
+  it("myRole: null (possible by type) -> role shows a dash, only the Read pill, no throw", async () => {
     renderOverview([NULL_G]);
     const row = await screen.findByRole("row", { name: "Orphan" });
     expect(within(row).getByText("—")).toBeInTheDocument();
     expect(pillsOf(row)).toEqual(["Read"]);
   });
 
-  it("沒有任何連結、沒有任何按鈕（無 ⋮、無「新增群組」、群組名不是連結）", async () => {
+  it("no links and no buttons (no menu button, no \"New group\", the group name isn't a link)", async () => {
     renderOverview([ADMIN_G, MEMBER_G]);
     await screen.findByText("WRATB");
     expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("表名 Groups；欄名 Group／My role／Permissions", async () => {
+  it("table name Groups; column names Group / My role / Permissions", async () => {
     renderOverview([ADMIN_G, MEMBER_G]);
     const table = await screen.findByRole("table", { name: "Groups" });
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Group", "My role", "Permissions"]);
   });
 
-  it("零個群組 → 空狀態句", async () => {
+  it("zero groups -> empty-state sentence", async () => {
     renderOverview([]);
     expect(await screen.findByText("You're not in any group yet.")).toBeInTheDocument();
   });

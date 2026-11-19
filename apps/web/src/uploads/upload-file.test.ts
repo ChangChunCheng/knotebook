@@ -4,17 +4,17 @@ import { ApiFail } from "@/api/client";
 import { removeBlocksKeepColumns } from "@/collab/columns/keep-columns";
 import { IMG, P, mountEditor, row, shape } from "@/test/columns-fixtures";
 
-// 包一層照呼叫原實作的 spy；不用 automock——那會讓 UP1 的真編輯器清除變成什麼都不做。
+// A spy wrapper that calls through to the original implementation; no automock - that would make the real-editor cleanup case do nothing.
 vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
   const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
   return { ...m, removeBlocksKeepColumns: vi.fn(m.removeBlocksKeepColumns) };
 });
 beforeEach(() => {
-  vi.mocked(removeBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+  vi.mocked(removeBlocksKeepColumns).mockReset(); // Don't write it as an arrow that returns directly: the function returned by beforeEach would be called as teardown; mockReset also clears the mockImplementationOnce queue and restores the wrapped original implementation
 });
 
-// toast 換成 spy——同 `NoteEditor.test.ts` 的手法：這裡要斷言的是「有沒有提示、
-// 提示了幾次、文案是什麼」，不必把 Radix 整套渲染起來。
+// The toast is replaced with a spy - same technique as `NoteEditor.test.ts`: what is asserted here is
+// "whether there was a hint, how many times, and what text", with no need to render the whole of Radix.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 
@@ -40,7 +40,7 @@ function file(name = "a.png", type = "image/png", parts: BlobPart[] = [new Uint8
 
 const ONE_MIB = 1048576;
 
-/** 建一個「聲稱」大小為 `size` 位元組的 File——不真的配置那麼多記憶體。 */
+/** Claims the size without allocating it. */
 function fileOfSize(size: number): File {
   const f = file();
   Object.defineProperty(f, "size", { value: size });
@@ -52,7 +52,7 @@ const translate = (key: string) => `t:${key}`;
 describe("postUpload", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("成功：POST 到 /api/notes/:id/uploads（FormData 帶 file 欄位），回傳 {id, url}", async () => {
+  it("success: POST to /api/notes/:id/uploads (FormData with a file field), returns {id, url}", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -68,7 +68,7 @@ describe("postUpload", () => {
     expect((init.body as FormData).get("file")).toBeInstanceOf(File);
   });
 
-  it("noteId 經 encodeURIComponent（呼應 api/notes.ts 既有慣例）", async () => {
+  it("noteId goes through encodeURIComponent (matching the existing convention in api/notes.ts)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -80,7 +80,7 @@ describe("postUpload", () => {
     expect(url).toBe(`/api/notes/${encodeURIComponent("weird/id with space")}/uploads`);
   });
 
-  it("前驗：檔案超過傳入的上限 → 直接丟 ApiFail(413, file_too_large)，不發請求", async () => {
+  it("pre-check: a file over the given limit -> throws ApiFail(413, file_too_large) directly, no request sent", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -91,7 +91,7 @@ describe("postUpload", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("前驗：剛好等於上限 → 照發", async () => {
+  it("pre-check: exactly at the limit -> sent as usual", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -102,7 +102,7 @@ describe("postUpload", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("沒給上限 → 不前驗，大檔照發", async () => {
+  it("no limit given -> no pre-check, a large file is sent as usual", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -113,7 +113,7 @@ describe("postUpload", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("server 端回應非 2xx → reject ApiFail（低階函式可 reject）", async () => {
+  it("server responds non-2xx -> rejects ApiFail (the low-level function may reject)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -124,13 +124,13 @@ describe("postUpload", () => {
 });
 
 describe("createUploadFile", () => {
-  // toastOncePerCode 的去重 Map 是 module 級的，跨測試共用同一份——
-  // 若每個測試都把假時鐘釘在同一個絕對時間點（例如都歸零），前一個測試對同一個 code
-  // 留下的時間戳跟下一個測試的「now」會相等或極接近，`now - last < 5000` 恆成立，
-  // 下一個測試永遠被當成還在去重窗口內、假紅到看不出真正的行為（實測踩過）。改成每個
-  // 測試起跑時把時鐘往前推一大段（遠大於 5 秒的去重窗口），讓不同測試對同一個 code
-  // 的判定天然互不相干；`flushMacrotask` 也改用 `advanceTimersByTimeAsync`，真實
-  // `setTimeout` 在假時鐘生效時本來就不會被觸發。
+  // The dedup Map of toastOncePerCode is module-level and shared across tests -
+  // if every test pinned the fake clock to the same absolute time (e.g. all zero), the timestamp the previous test left for the same code
+  // would equal or nearly equal the next test's "now", `now - last < 5000` would always hold,
+  // and the next test would always be treated as still inside the dedup window and fail falsely, hiding the real behaviour (this has been hit). So at the start of each
+  // test the clock is pushed forward by a large amount (far more than the 5 s dedup window), so that the judgement for the same code
+  // across tests is naturally independent; `flushMacrotask` also uses `advanceTimersByTimeAsync`, since a real
+  // `setTimeout` isn't triggered while the fake clock is in effect.
   let testClockBase = 0;
   beforeEach(() => {
     toastMock.mockClear();
@@ -143,12 +143,12 @@ describe("createUploadFile", () => {
     vi.useRealTimers();
   });
 
-  // `transact` 不執行回呼：helper 照呼叫原實作但不碰文件；刪除的實際效果由 UP1（真編輯器）驗。
+  // `transact` doesn't run the callback: the helper calls through to the original implementation but doesn't touch the document; the real effect of deletion is verified with the real editor.
   function fakeEditor(blocks: Set<string>) {
     return {
       getBlock: vi.fn((id: string) => (blocks.has(id) ? { id } : undefined)),
       transact: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試替身，同 repo 慣例的 BlockNoteEditor<any,any,any>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test stand-in, the repo's BlockNoteEditor<any,any,any> convention
     } as unknown as BlockNoteEditor<any, any, any>;
   }
 
@@ -156,7 +156,7 @@ describe("createUploadFile", () => {
     await vi.advanceTimersByTimeAsync(0);
   }
 
-  it("成功：回傳 url，不 toast、不移除 block", async () => {
+  it("success: returns the url, no toast, no block removal", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -173,7 +173,7 @@ describe("createUploadFile", () => {
     expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("maxUploadBytes getter 回 1 MiB：擋 1.5 MiB 的檔，不發請求，回傳空字串並 toast file_too_large", async () => {
+  it("maxUploadBytes getter returns 1 MiB: blocks a 1.5 MiB file, no request, returns an empty string and toasts file_too_large", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const uploadFile = createUploadFile({
@@ -189,7 +189,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledWith({ title: "t:errors.file_too_large" });
   });
 
-  it("maxUploadBytes getter 回 undefined：不前驗，照發", async () => {
+  it("maxUploadBytes getter returns undefined: no pre-check, sent as usual", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -205,7 +205,7 @@ describe("createUploadFile", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("maxUploadBytes getter 每次上傳當下才讀：同一支 uploadFile，值變了下一次就用新值", async () => {
+  it("maxUploadBytes getter is read at upload time: the same uploadFile uses the new value on the next upload after it changes", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -226,7 +226,7 @@ describe("createUploadFile", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("失敗（4xx）：絕不 reject，回傳空字串 sentinel", async () => {
+  it("failure (4xx): never rejects, returns the empty-string sentinel", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -237,7 +237,7 @@ describe("createUploadFile", () => {
     await expect(uploadFile(file(), "b1")).resolves.toBe("");
   });
 
-  it("失敗：placeholder block 在 macrotask 後被清掉（updateBlock 已經跑完才移除，不搶在它前面）", async () => {
+  it("failure: the placeholder block is removed after a macrotask (updateBlock has finished before the removal, the removal doesn't race ahead of it)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -247,9 +247,9 @@ describe("createUploadFile", () => {
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: editor }, translate });
 
     await uploadFile(file(), "b1");
-    // 剛 resolve 完（等同 handleFileInsertion 的 `await editor.uploadFile(...)` 那一行剛
-    // 跑完），此時同步接續的 `editor.updateBlock(...)` 尚未有機會執行，我們的清除也還
-    // 沒發生——因為它排在 macrotask。
+    // Just resolved (equivalent to the line `await editor.uploadFile(...)` in handleFileInsertion just
+    // finishing); at this point the synchronously following `editor.updateBlock(...)` hasn't had a chance to run, and our cleanup hasn't
+    // happened either - because it is queued as a macrotask.
     expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
 
     await flushMacrotask();
@@ -257,7 +257,7 @@ describe("createUploadFile", () => {
     expect(vi.mocked(removeBlocksKeepColumns)).toHaveBeenCalledWith(editor, ["b1"]);
   });
 
-  it("失敗且沒有 blockId（例如呼叫端沒有 insertedBlockId）：不嘗試移除任何 block", async () => {
+  it("failure with no blockId (e.g. the caller has no insertedBlockId): no attempt to remove any block", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -271,12 +271,12 @@ describe("createUploadFile", () => {
     expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("失敗但 block 已被使用者手動刪除（getBlock 找不到）：靜默略過，不丟例外", async () => {
+  it("failure but the block was already deleted manually by the user (getBlock can't find it): silently skipped, no exception", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const editor = fakeEditor(new Set()); // b1 不存在
+    const editor = fakeEditor(new Set()); // b1 doesn't exist
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: editor }, translate });
 
     await uploadFile(file(), "b1");
@@ -285,12 +285,12 @@ describe("createUploadFile", () => {
     expect(vi.mocked(removeBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("失敗但 editorRef.current 為 null（editor 已卸載）：靜默略過，不丟例外", async () => {
+  it("failure but editorRef.current is null (the editor is unmounted): silently skipped, no exception", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試替身，同 repo 慣例的 BlockNoteEditor<any,any,any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test stand-in, the repo's BlockNoteEditor<any,any,any> convention
     const editorRef: { current: BlockNoteEditor<any, any, any> | null } = { current: null };
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef, translate });
 
@@ -298,7 +298,7 @@ describe("createUploadFile", () => {
     await expect(flushMacrotask()).resolves.toBeUndefined();
   });
 
-  it("失敗：toast 文案是 errors.<code>", async () => {
+  it("failure: the toast text is errors.<code>", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -312,7 +312,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledWith({ title: "t:errors.unsupported_media_type" });
   });
 
-  it("toast 去重：同 code 在 5 秒內連續失敗只顯示一則", async () => {
+  it("toast dedup: consecutive failures of the same code within 5 seconds show only one toast", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -328,7 +328,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
-  it("toast 去重窗口過後：超過 5 秒的同 code 失敗再次提示", async () => {
+  it("after the toast dedup window: a failure of the same code after more than 5 seconds prompts again", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) }),
     );
@@ -345,7 +345,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledTimes(2);
   });
 
-  it("批次後續檔案續傳：一個檔案失敗不影響下一個檔案成功", async () => {
+  it("batch continuation: one file failing doesn't affect the next file succeeding", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -365,7 +365,6 @@ describe("createUploadFile", () => {
     expect(results).toEqual(["", "/api/uploads/u2"]);
   });
 
-  /** 收得到 opts 的翻譯樁：把插值參數印進字串，斷言才看得到數字有沒有傳到。 */
   const translateWithOpts = (key: string, opts?: Record<string, unknown>) =>
     opts === undefined ? `t:${key}` : `t:${key}:${JSON.stringify(opts)}`;
 
@@ -376,7 +375,7 @@ describe("createUploadFile", () => {
     });
   }
 
-  it("409 storage_quota_exceeded 帶數字：title＝errors.storage_quota_exceeded、description＝storage.quotaDetail（formatBytes 後的兩數）", async () => {
+  it("409 storage_quota_exceeded with numbers: title = errors.storage_quota_exceeded, description = storage.quotaDetail (the two numbers after formatBytes)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(quota409({ incomingBytes: 700, usedBytes: 1572864, quotaBytes: 1048576 })));
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: fakeEditor(new Set(["b1"])) }, translate: translateWithOpts });
     await uploadFile(file(), "b1");
@@ -387,7 +386,7 @@ describe("createUploadFile", () => {
     });
   });
 
-  it("409 storage_quota_exceeded 沒數字（看不到該空間用量）：description＝storage.quotaFullGeneric", async () => {
+  it("409 storage_quota_exceeded without numbers (that storage usage isn't visible): description = storage.quotaFullGeneric", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(quota409({ incomingBytes: 700 })));
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: fakeEditor(new Set(["b1"])) }, translate: translateWithOpts });
     await uploadFile(file(), "b1");
@@ -395,7 +394,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledWith({ title: "t:errors.storage_quota_exceeded", description: "t:storage.quotaFullGeneric" });
   });
 
-  it("usedBytes 有、quotaBytes 為 null → 不印半套數字，退回通用文案", async () => {
+  it("usedBytes present, quotaBytes null -> don't print half a pair of numbers, fall back to the generic text", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(quota409({ incomingBytes: 700, usedBytes: 5, quotaBytes: null })));
     const uploadFile = createUploadFile({ noteId: "note-1", editorRef: { current: fakeEditor(new Set(["b1"])) }, translate: translateWithOpts });
     await uploadFile(file(), "b1");
@@ -403,7 +402,7 @@ describe("createUploadFile", () => {
     expect(toastMock).toHaveBeenCalledWith({ title: "t:errors.storage_quota_exceeded", description: "t:storage.quotaFullGeneric" });
   });
 
-  it("去重仍以碼為準：5 秒內先有數字、再沒數字的兩次 409 只 toast 一次", async () => {
+  it("dedup is still by code: two 409s within 5 seconds, first with numbers and then without, toast only once", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(quota409({ incomingBytes: 1, usedBytes: 1, quotaBytes: 1 }))
       .mockResolvedValueOnce(quota409({ incomingBytes: null })));
@@ -416,10 +415,10 @@ describe("createUploadFile", () => {
   });
 });
 
-describe("createUploadFile 真編輯器", () => {
+describe("createUploadFile with a real editor", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("UP1：欄內的圖片 placeholder 上傳失敗 → macrotask 後該欄剩空段落、列仍在", async () => {
+  it("an image placeholder inside a column fails to upload -> after a macrotask the column is left with an empty paragraph and the row remains", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(

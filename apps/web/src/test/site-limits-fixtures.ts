@@ -1,9 +1,9 @@
 import { SITE_LIMIT_KEYS, SITE_LIMITS, type SiteLimitChangeDto, type SiteLimitItemDto, type SiteLimitKey, type SiteLimitsDto } from "@knotebook/shared";
 
 /**
- * 站台限制 fixture：17 項齊全、都在預設或自動，形狀同伺服器 `view()` 的回應
- * （自動項帶 `source: "auto"` 與 `autoValue`，`parseWorkers` 另帶 `autoSource`）。
- * `patch` 逐項覆寫，`rest` 覆寫 `machine`／`changes`。
+ * Site limits fixture: every item present, all at default or auto, shaped like the response of the server's `view()`
+ * (auto items carry `source: "auto"` and `autoValue`, `parseWorkers` also carries `autoSource`).
+ * `patch` overrides items one by one, `rest` overrides `machine` / `changes`.
  */
 export const SITE_LIMITS_MACHINE: SiteLimitsDto["machine"] = { cpus: 8, cpuSource: "os", memoryBytes: 16 * 1024 ** 3, memorySource: "cgroup-v2" };
 

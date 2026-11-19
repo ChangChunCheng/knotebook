@@ -20,7 +20,6 @@ const dto = siteLimitsDto;
 interface Server {
   data: SiteLimitsDto;
   patch?: (body: unknown) => Response | Promise<Response>;
-  /** 設成真值後，之後的 GET 回 500。 */
   failGet?: boolean;
 }
 
@@ -57,7 +56,7 @@ const field = (name: string) => screen.getByLabelText(name, { selector: "input" 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 const loaded = () => screen.findByRole("heading", { level: 1, name: "Site limits" }).then(() => screen.findByLabelText("Note size limit", { selector: "input" }));
 
-describe("SettingsLimitsSection（站台限制分頁）", () => {
+describe("SettingsLimitsSection (site limits tab)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -66,7 +65,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("依分類分三組（批次讀寫沒項目不畫、登入兩項不在這頁），最後是最近的修改", async () => {
+  it("grouped by category into three groups (batch read/write has no items so isn't drawn, the two sign-in items aren't on this page), the recent changes last", async () => {
     setup({ data: dto() });
     await loaded();
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
@@ -88,7 +87,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(block("Rate limits").getAllByRole("group")).toHaveLength(9);
   });
 
-  it("每列有「預設 X · 範圍 A–B」，速率限制列多視窗（per minute／per 10 minutes／per hour）", async () => {
+  it("every row shows its default and range; rate-limit rows add the window (per minute / per 10 minutes / per hour)", async () => {
     setup({ data: dto() });
     await loaded();
     expect(row("Note size limit").getByText("Default 5 MiB · Range 1–5 MiB")).toBeInTheDocument();
@@ -99,7 +98,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Bulk downloads").getByText("Default 10 times · Range 1–10 times · per hour")).toBeInTheDocument();
   });
 
-  it("中文：「預設 X · 範圍 A–B」與「每 N 分鐘」", async () => {
+  it("Chinese: the default / range text and the \"every N minutes\" wording", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ data: dto() });
     await screen.findByLabelText("筆記大小上限", { selector: "input" });
@@ -108,7 +107,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(within(screen.getByRole("group", { name: "解析 worker 數" })).getByText("預設 自動 · 範圍 1–4 個")).toBeInTheDocument();
   });
 
-  it("env 項：輸入框 disabled、.env 說明；在範圍內但沒對齊的值照 bytes 原樣顯示、不標超出範圍", async () => {
+  it("env item: the input is disabled with the .env note; a value in range but not aligned is shown as bytes as-is, not marked out of range", async () => {
     setup({ data: dto({ noteMaxBytes: { value: 3_145_729, source: "env", locked: true } }) });
     await loaded();
     expect(field("Note size limit")).toBeDisabled();
@@ -116,11 +115,11 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Note size limit").getByText("Set by NOTE_MAX_BYTES in .env. To change it, edit .env and restart the server.")).toBeInTheDocument();
     expect(row("Note size limit").queryByText("Outside the range this page can set.")).not.toBeInTheDocument();
     expect(row("Note size limit").queryByText(/is not applied/)).not.toBeInTheDocument();
-    expect(row("Note size limit").queryByText("MiB")).not.toBeInTheDocument(); // 原文已帶單位，框旁不再標 MiB
+    expect(row("Note size limit").queryByText("MiB")).not.toBeInTheDocument(); // the original text already carries the unit, so no MiB label beside the box
     expect(field("Note size limit")).toHaveAccessibleDescription(/Set by NOTE_MAX_BYTES in \.env/);
   });
 
-  it("env 值 5242881 超出範圍也沒對齊 → bytes 原值（分位）＋「超出管理頁可調範圍」", async () => {
+  it("env value 5242881 out of range and not aligned -> raw bytes (digit-grouped) plus \"out of the range adjustable on the admin page\"", async () => {
     setup({ data: dto({ noteMaxBytes: { value: 5_242_881, source: "env", locked: true } }) });
     await loaded();
     expect(field("Note size limit")).toHaveValue("5 242 881 bytes");
@@ -128,7 +127,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(field("Note size limit")).toHaveAccessibleDescription(/Outside the range this page can set\./);
   });
 
-  it("中文：沒對齊的 env 值一樣以空格分位、照 API 單位顯示", async () => {
+  it("Chinese: an unaligned env value is also space-grouped and shown in API units", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ data: dto({ noteMaxBytes: { value: 5_242_881, source: "env", locked: true }, parseTimeoutMs: { value: 12_345, source: "env", locked: true } }) });
     await screen.findByLabelText("筆記大小上限", { selector: "input" });
@@ -137,7 +136,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(within(screen.getByRole("group", { name: "筆記大小上限" })).getByText("超出管理頁可調範圍。")).toBeInTheDocument();
   });
 
-  it("env 值 104857600 對齊但超出範圍 → 以輸入單位顯示 100 MiB＋「超出管理頁可調範圍」", async () => {
+  it("env value 104857600 aligned but out of range -> shown as 100 MiB in the input unit plus \"out of the range adjustable on the admin page\"", async () => {
     setup({ data: dto({ noteMaxBytes: { value: 104_857_600, source: "env", locked: true } }) });
     await loaded();
     expect(field("Note size limit")).toHaveValue("100");
@@ -145,7 +144,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Note size limit").getByText("Outside the range this page can set.")).toBeInTheDocument();
   });
 
-  it("env 的 worker 數 8（env 可給、超出管理頁範圍）→ 顯示 8、單位是 workers、標超出範圍", async () => {
+  it("env worker count 8 (env may give it, beyond the admin page's range) -> shows 8, unit is workers, marked out of range", async () => {
     setup({ data: dto({ parseWorkers: { value: 8, source: "env", locked: true } }) });
     await loaded();
     expect(field("Number of parse workers")).toHaveValue("8");
@@ -154,7 +153,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Number of parse workers").getByText("Outside the range this page can set.")).toBeInTheDocument();
   });
 
-  it("單位分單複數：值是 1 時框旁是單數", async () => {
+  it("units are singular/plural: when the value is 1 the label beside the box is singular", async () => {
     setup({ data: dto({ parseWorkers: { value: 1, source: "admin", stored: 1 }, rateTransferExport: { value: 1, source: "admin", stored: 1 } }) });
     await loaded();
     expect(row("Number of parse workers").getByText("worker")).toBeInTheDocument();
@@ -163,7 +162,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Number of parse workers").getByText("workers")).toBeInTheDocument();
   });
 
-  it("env 鎖住但管理頁也存了值 → 「管理頁存的值 X 不會生效」", async () => {
+  it("env-locked but the admin page also stored a value -> \"the value X stored on the admin page won't take effect\"", async () => {
     setup({ data: dto({ parseTimeoutMs: { value: 12_345, source: "env", locked: true, stored: 8_000 } }) });
     await loaded();
     expect(field("Parse time limit")).toHaveValue("12 345 ms");
@@ -171,7 +170,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Parse time limit").getByText("The value saved on this page (8 seconds) is not applied.")).toBeInTheDocument();
   });
 
-  it("env 給的值對齊時以輸入單位顯示", async () => {
+  it("when the env value is aligned it's shown in the input unit", async () => {
     setup({ data: dto({ parseWorkerMemoryMb: { value: 2_048, source: "env", locked: true } }) });
     await loaded();
     expect(field("Memory per worker")).toHaveValue("2048");
@@ -179,7 +178,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Memory per worker").queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("自動項：輸入框空白、placeholder 是自動值、標「自動：N（依 CPU）」", async () => {
+  it("auto item: input blank, placeholder is the auto value, labelled \"auto: N (by CPU)\"", async () => {
     setup({ data: dto() });
     await loaded();
     expect(field("Number of parse workers")).toHaveValue("");
@@ -191,27 +190,27 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(field("Number of parse workers")).toHaveAccessibleDescription(/Auto: 4 \(based on CPUs\)/);
   });
 
-  it("自動值沒對齊輸入刻度 → 不放 placeholder，原值寫在「自動：…」", async () => {
+  it("auto value not aligned to the input step -> no placeholder, the raw value is written in \"auto: ...\"", async () => {
     setup({ data: dto({ parseQueueWaitMs: { value: 54_380, autoValue: 54_380 } }) });
     await loaded();
     expect(field("Longest wait for a worker")).not.toHaveAttribute("placeholder");
     expect(row("Longest wait for a worker").getByText("Auto: 54 380 ms")).toBeInTheDocument();
   });
 
-  it("自動項依記憶體 → 「依記憶體」", async () => {
+  it("auto item by memory -> \"by memory\"", async () => {
     setup({ data: dto({ parseWorkers: { value: 2, autoValue: 2, autoSource: "memory" } }) });
     await loaded();
     expect(row("Number of parse workers").getByText("Auto: 2 (based on memory)")).toBeInTheDocument();
   });
 
-  it("storedIgnored → 「存的值 X 超出目前範圍，未套用」", async () => {
+  it("storedIgnored -> \"stored value X is out of the current range, not applied\"", async () => {
     setup({ data: dto({ uploadMaxBytes: { stored: 20 * 1_048_576, storedIgnored: true } }) });
     await loaded();
     expect(row("Upload size limit").getByText("The saved value 20 MiB is outside the current range and is not applied.")).toBeInTheDocument();
     expect(field("Upload size limit")).toHaveValue("10");
   });
 
-  it("輸入 0.5、1.5、空白（非自動項）→ 行內錯誤、不發 PATCH", async () => {
+  it("typing 0.5, 1.5, blank (non-auto item) -> inline error, no PATCH", async () => {
     const { patches } = setup({ data: dto() });
     await loaded();
     for (const [label, value, blockName] of [
@@ -228,7 +227,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(patches()).toEqual([]);
   });
 
-  it("超出範圍 → 「請輸入 A 到 B 的整數」（輸入單位）、不發 PATCH", async () => {
+  it("out of range -> \"enter an integer from A to B\" (input unit), no PATCH", async () => {
     const { patches } = setup({ data: dto() });
     await loaded();
     fireEvent.change(field("Note size limit"), { target: { value: "6" } });
@@ -238,7 +237,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(patches()).toEqual([]);
   });
 
-  it("自動項打了值又清空 → 不送那個 key、沒有錯誤；只送變更過的 key（以 API 單位）", async () => {
+  it("auto item: typed a value then cleared -> that key isn't sent, no error; only changed keys are sent (in API units)", async () => {
     const { patches } = setup({ data: dto() });
     await loaded();
     fireEvent.change(field("Number of parse workers"), { target: { value: "2" } });
@@ -250,7 +249,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
   });
 
-  it("已調整的自動項清空後儲存 → 送 null（改回自動）、沒有驗證錯誤", async () => {
+  it("an adjusted auto item cleared then saved -> sends null (back to auto), no validation error", async () => {
     const { patches } = setup({ data: dto({ parseWorkers: { value: 2, source: "admin", stored: 2 } }) });
     await loaded();
     expect(field("Number of parse workers")).toHaveValue("2");
@@ -260,18 +259,18 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(block("Parse workers").queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("各區塊各自儲存：改了兩個區塊，按其中一個只送該區塊的 key；值沒變的不送", async () => {
+  it("each section saves on its own: change two sections, pressing one sends only that section's keys; unchanged values aren't sent", async () => {
     const { patches } = setup({ data: dto() });
     await loaded();
     fireEvent.change(field("Note content writes"), { target: { value: "20" } });
     fireEvent.change(field("AI actions"), { target: { value: "29" } });
-    fireEvent.change(field("AI actions"), { target: { value: "30" } }); // 改回與目前值相同
+    fireEvent.change(field("AI actions"), { target: { value: "30" } }); // changed back to the same as the current value
     fireEvent.change(field("Note size limit"), { target: { value: "2" } });
     fireEvent.click(block("Rate limits").getByRole("button", { name: "Save" }));
     await waitFor(() => expect(patches()).toEqual([{ set: { rateEdit: 20 } }]));
   });
 
-  it("自動項輸入了值 → 送那個值", async () => {
+  it("auto item with a value typed -> sends that value", async () => {
     const { patches } = setup({ data: dto() });
     await loaded();
     fireEvent.change(field("Number of parse workers"), { target: { value: "2" } });
@@ -279,7 +278,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     await waitFor(() => expect(patches()).toEqual([{ set: { parseWorkers: 2 } }]));
   });
 
-  it("已調整：標「已調整」；「恢復預設」送 null；自動項的鈕是「改回自動」", async () => {
+  it("adjusted: marked \"adjusted\"; \"restore default\" sends null; an auto item's button is \"back to auto\"", async () => {
     const { patches } = setup({
       data: dto({
         rateSearch: { value: 30, source: "admin", stored: 30 },
@@ -297,7 +296,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     await waitFor(() => expect(patches()).toEqual([{ set: { rateSearch: null } }, { set: { parseWorkers: null } }]));
   });
 
-  it("「恢復預設」成功後清掉該列先前的驗證錯誤", async () => {
+  it("\"restore default\" success clears that row's earlier validation error", async () => {
     const { patches } = setup({ data: dto({ rateSearch: { value: 30, source: "admin", stored: 30 } }) });
     await loaded();
     fireEvent.change(field("Searches"), { target: { value: "abc" } });
@@ -308,7 +307,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     await waitFor(() => expect(row("Searches").queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("伺服器回 409 limit_locked_by_env → 區塊頂顯示該文案", async () => {
+  it("server returns 409 limit_locked_by_env -> that text shows at the top of the section", async () => {
     setup({
       data: dto(),
       patch: () => res(409, { error: { code: "limit_locked_by_env", message: "noteMaxBytes is set by the server's environment variable NOTE_MAX_BYTES." } }),
@@ -321,7 +320,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(within(screen.getByRole("region", { name: "Rate limits" })).queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("伺服器回 400 → 「數值不在可調範圍內」，不顯示英文 message", async () => {
+  it("server returns 400 -> \"value is not in the adjustable range\", the English message isn't shown", async () => {
     setup({
       data: dto(),
       patch: () => res(400, { error: { code: "invalid_body", message: "noteMaxBytes must be a multiple of 1048576." } }),
@@ -333,7 +332,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(screen.queryByText(/multiple of/)).not.toBeInTheDocument();
   });
 
-  describe("記憶體警告", () => {
+  describe("memory warning", () => {
     const WARNING = /^May exceed memory/;
     const twoGiB = (cpus: number) =>
       dto(
@@ -341,7 +340,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
         { machine: { cpus, cpuSource: "os", memoryBytes: 2 * GiB, memorySource: "os" } },
       );
 
-    it("worker 數自動、記憶體上限改成 512 → 用重算的 N＝2 → 2788.8 MB > 2048 → 出現；仍可儲存", async () => {
+    it("worker count auto, memory limit changed to 512 -> uses the recomputed N = 2 -> 2788.8 MB > 2048 -> appears; still savable", async () => {
       const { patches } = setup({ data: twoGiB(8) });
       await loaded();
       fireEvent.change(field("Memory per worker"), { target: { value: "512" } });
@@ -353,10 +352,9 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
       await waitFor(() => expect(patches()).toEqual([{ set: { parseWorkerMemoryMb: 512 } }]));
     });
 
-    it("同上但 2 個 CPU → N＝1 → 1994.4 MB ≤ 2048 → 不出現；仍可儲存", async () => {
+    it("same but 2 CPUs -> N = 1 -> 1994.4 MB <= 2048 -> doesn't appear; still savable", async () => {
       const { patches } = setup({ data: twoGiB(2) });
       await loaded();
-      // 改之前：1 × (1024 + 150) + 1000 再加 20% ＝ 2608.8 MB > 2048，單數 worker
       expect(block("Parse workers").getByText(WARNING)).toHaveTextContent("about 2609 MB needed (1 worker × (1024 + 150) MB + 1000 MB, plus 20%)");
       fireEvent.change(field("Memory per worker"), { target: { value: "512" } });
       expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
@@ -367,7 +365,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     });
   });
 
-  it("解析時限、記憶體、排隊等待三列有調低後果的說明", async () => {
+  it("the parse time limit, memory and queue wait rows have notes about the consequences of lowering", async () => {
     setup({ data: dto() });
     await loaded();
     expect(row("Parse time limit").getByText(/^Lowering this may reject writes of densely formatted content/)).toBeInTheDocument();
@@ -377,20 +375,20 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(row("Note size limit").queryByText(/^Lowering this/)).not.toBeInTheDocument();
   });
 
-  it("解析 worker 區塊頂端：CPU 數、GiB、記憶體來源都從 machine 取（en／zh 逐字）", async () => {
+  it("top of the parse worker section: CPU count, GiB and memory source all come from machine (en / zh verbatim)", async () => {
     setup({ data: dto({}, { machine: { cpus: 8, cpuSource: "os", memoryBytes: 16 * GiB, memorySource: "cgroup-v2" } }) });
     await loaded();
     expect(block("Parse workers").getByText("This server: 8 CPUs, 16 GiB memory (cgroup-v2)")).toBeInTheDocument();
-    expect(screen.queryByText(/^May exceed memory/)).not.toBeInTheDocument(); // 4 × (1024 + 150) + 1000 再加 20% 遠低於 16 GiB
+    expect(screen.queryByText(/^May exceed memory/)).not.toBeInTheDocument(); // 4 x (1024 + 150) + 1000 plus 20% is far below 16 GiB
   });
 
-  it("只有 1 個 CPU → 單數「1 CPU」", async () => {
+  it("only 1 CPU -> singular \"1 CPU\"", async () => {
     setup({ data: dto({}, { machine: { cpus: 1, cpuSource: "os", memoryBytes: 16 * GiB, memorySource: "os" } }) });
     await loaded();
     expect(block("Parse workers").getByText("This server: 1 CPU, 16 GiB memory (os)")).toBeInTheDocument();
   });
 
-  it("說明文字與「調低後…」都掛在輸入框的 aria-describedby；記憶體警告是 status", async () => {
+  it("the description text and the \"after lowering...\" note are both attached via the input's aria-describedby; the memory warning is a status", async () => {
     setup({ data: dto({ parseWorkers: { value: 1, autoValue: 1, autoSource: "memory" } }, { machine: { cpus: 8, cpuSource: "os", memoryBytes: 2 * GiB, memorySource: "os" } }) });
     await loaded();
     expect(field("Memory per worker")).toHaveAccessibleDescription(/Memory each worker may use./);
@@ -399,14 +397,14 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(block("Parse workers").getByRole("status")).toHaveTextContent(/^May exceed memory/);
   });
 
-  it("解析 worker 區塊頂端（zh）", async () => {
+  it("top of the parse worker section (zh)", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ data: dto({}, { machine: { cpus: 6, cpuSource: "os", memoryBytes: 12 * GiB, memorySource: "cgroup-v1" } }) });
     await screen.findByLabelText("筆記大小上限", { selector: "input" });
     expect(screen.getByText("這台伺服器：6 個 CPU、12 GiB 記憶體（cgroup-v1）")).toBeInTheDocument();
   });
 
-  it("修改紀錄表：已不存在的帳號、預設（X）／自動（X）、輸入單位；不在註冊表的 key 照列", async () => {
+  it("change log table: accounts that no longer exist, default (X) / auto (X), input units; keys not in the registry are listed as is", async () => {
     const actor = { id: "u-a", email: "alice@example.com", displayName: "Alice" };
     const changes: SiteLimitChangeDto[] = [
       { id: "c1", key: "noteMaxBytes", oldValue: null, newValue: 2_097_152, oldEffective: 5_242_880, newEffective: 2_097_152, actor, changedAt: "2026-01-02T03:04:05.000Z" },
@@ -417,7 +415,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     setup({ data: dto({}, { changes }) });
     await loaded();
     const table = within(screen.getByRole("table", { name: "Recent changes" }));
-    const rows = table.getAllByRole("row").slice(1); // 第一列是表頭
+    const rows = table.getAllByRole("row").slice(1); // the first row is the header
     expect(rows).toHaveLength(4);
     const text = rows.map((r) => r.textContent ?? "");
     expect(text[0]).toContain("alice@example.com");
@@ -431,7 +429,7 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(text[3]).toContain("7 → 1234567");
   });
 
-  it("已有資料時背景重抓失敗：輸入到一半的內容與各區塊都還在，不換成錯誤", async () => {
+  it("background refetch fails when data already exists: half-typed input and all sections remain, no switch to an error", async () => {
     const server: Server = { data: dto() };
     const { queryClient } = setup(server);
     await loaded();
@@ -445,13 +443,13 @@ describe("SettingsLimitsSection（站台限制分頁）", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("兩個分頁的 key 合起來剛好是整份註冊表、互不重疊", () => {
+  it("the keys of the two tabs together are exactly the whole registry, with no overlap", () => {
     const keys = [...categoryKeys("signIn"), ...PAGE_CATEGORIES.flatMap((category) => categoryKeys(category))];
     expect(new Set(keys).size).toBe(keys.length);
     expect([...keys].sort()).toEqual([...SITE_LIMIT_KEYS].sort());
   });
 
-  it("沒有修改紀錄 → 「還沒有修改」", async () => {
+  it("no change log -> \"no changes yet\"", async () => {
     setup({ data: dto() });
     await loaded();
     expect(screen.getByText("No changes yet.")).toBeInTheDocument();

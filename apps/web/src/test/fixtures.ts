@@ -1,11 +1,11 @@
 import type { GroupDto, GroupRoleDto, NotePermissions } from "@knotebook/shared";
 
 /**
- * #175：web 測試 fixture 的共用形。`NoteDto.permissions` 與
- * `GroupDto.myRole`（物件）是 #175 新增／改形的欄位，逐檔手抄容易抄錯形——集中在這裡。
+ * Shared shapes of the web test fixtures. `NoteDto.permissions` and
+ * `GroupDto.myRole` (an object) are fields added / reshaped in #175; copying them by hand per file is error-prone, so they live here.
  *
- * 各 permissions 形對應 server `notes/service.ts` 的三件組（owner／逐人分享 editor／viewer）；
- * 群組筆記的 permissions 由群組角色旗標推得，測試要什麼組合就自己展開覆寫。
+ * The permissions shapes correspond to the server's `notes/service.ts` triple (owner / per-person-shared editor / viewer);
+ * a group note's permissions are derived from the group role flags, so tests expand and override whatever combination they need.
  */
 export const OWNER_PERMS: NotePermissions = {
   read: true,
@@ -17,7 +17,6 @@ export const OWNER_PERMS: NotePermissions = {
   moveToGroup: true,
 };
 
-/** 逐人分享 editor：只有 read／edit。 */
 export const EDITOR_PERMS: NotePermissions = {
   read: true,
   edit: true,
@@ -28,10 +27,8 @@ export const EDITOR_PERMS: NotePermissions = {
   moveToGroup: false,
 };
 
-/** 逐人分享 viewer：只有 read。 */
 export const VIEWER_PERMS: NotePermissions = { ...EDITOR_PERMS, edit: false };
 
-/** 內建管理員角色（七旗標全真）。`memberCount`＝掛這個角色的人數。 */
 export function adminRole(overrides: Partial<GroupRoleDto> = {}): GroupRoleDto {
   return {
     id: "r-admin",
@@ -51,7 +48,7 @@ export function adminRole(overrides: Partial<GroupRoleDto> = {}): GroupRoleDto {
   };
 }
 
-/** 內建一般成員角色（read／create／edit 為真，其餘假——與 0012 種的內建角色同形）。 */
+/** Read / create / edit true, the rest false: same shape as the built-in role seeded by migration 0012. */
 export function memberRole(overrides: Partial<GroupRoleDto> = {}): GroupRoleDto {
   return {
     id: "r-member",
@@ -72,7 +69,7 @@ export function memberRole(overrides: Partial<GroupRoleDto> = {}): GroupRoleDto 
 }
 
 /**
- * 以角色組出 `GroupDto`：兩個 `canManage*` 取角色旗標（非成員站台 admin 的 OR 不在這裡模擬——要測那形就覆寫）。
+ * Builds a `GroupDto` from a role: the two `canManage*` take the role flags (the OR for a non-member site admin isn't simulated here - override to test that shape).
  */
 export function groupDto(base: { id: string; name: string; createdAt?: string }, role: GroupRoleDto | null): GroupDto {
   return {
@@ -86,7 +83,6 @@ export function groupDto(base: { id: string; name: string; createdAt?: string },
   };
 }
 
-/** #175：自訂角色（預設六個可設旗標全關＝只能閱讀、沒人掛）。 */
 export function customRole(overrides: Partial<GroupRoleDto> = {}): GroupRoleDto {
   return {
     id: "r-custom",

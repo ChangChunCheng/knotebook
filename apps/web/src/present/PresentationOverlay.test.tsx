@@ -40,7 +40,6 @@ vi.mock("react-router", async (importOriginal) => {
 
 const BASE = "/n/tester/my-note";
 
-/** 章：H2 a（含段落）、H3 a2（縱向）、H2 b；封面帶一個 wikilink（test 19）。 */
 function makeDoc(extra: unknown[] = []): Y.Doc {
   const editor = createExportEditor();
   return blocksToYDoc(
@@ -63,7 +62,7 @@ function LocationProbe() {
 }
 
 function ThemeSwitch() {
-  const { setTheme } = useTheme(); // theme.tsx 的 setTheme；theme.test.tsx 同手法
+  const { setTheme } = useTheme();
   return <button type="button" aria-label="switch-theme-dark" onClick={() => setTheme("dark")} />;
 }
 
@@ -105,12 +104,12 @@ function setup({ entry = `${BASE}?present`, windowSearch, props, strict = false,
   return { ...result, queryClient, rerenderWith: (p: PresentationOverlayProps) => result.rerender(wrap(tree(p))) };
 }
 
-/** 等到 reveal 建好（不等就緒——config 核對失敗的案永遠不會就緒）。 */
+/** Waits until reveal is built (not until ready: cases where the config check fails never become ready). */
 const instance = async () => {
   await waitFor(() => expect(FakeReveal.instances.length).toBeGreaterThan(0));
   return FakeReveal.instances.at(-1)!;
 };
-/** 等到 controller 走完 initialize().then（掛了 slidechanged 監聽＝已核對、已定位、已宣告就緒）。 */
+/** Waits for the controller to finish initialize().then (slidechanged listener attached = checked, positioned, ready announced). */
 const ready = async () => {
   const deck = await instance();
   await waitFor(() => expect(deck.listenerCount("slidechanged")).toBe(1));
@@ -119,7 +118,7 @@ const ready = async () => {
 const loc = () => screen.getByTestId("loc").textContent;
 const slideEl = (id: string) => document.querySelector<HTMLElement>(`[data-kn-slide-id="${id}"]`)!;
 
-describe("PresentationOverlay（fake reveal）", () => {
+describe("PresentationOverlay (fake reveal)", () => {
   let fake: FakeFullscreen | null = null;
 
   beforeEach(async () => {
@@ -138,7 +137,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     document.documentElement.classList.remove("dark");
   });
 
-  it("初始化：自建 .reveal > .slides、設定照 `reveal-config`、沒有任何 id／data-id", async () => {
+  it("init: builds its own .reveal > .slides, config follows `reveal-config`, no id / data-id", async () => {
     setup();
     const deck = await ready();
     expect(deck.el.className).toContain("reveal");
@@ -147,7 +146,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(document.querySelectorAll(".reveal .slides section[data-kn-slide-id]")).toHaveLength(4);
   });
 
-  it("test 2：ready 後外殼不聽 Esc；reveal 的 keyboard[27] → 離開、navigate 恰一次", async () => {
+  it("after ready the shell doesn't listen to Esc; reveal's keyboard[27] leaves, navigate exactly once", async () => {
     setup();
     const deck = await ready();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -157,7 +156,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("總覽開著時 Esc 只關總覽；O 切換總覽", async () => {
+  it("with the overview open, Esc closes only the overview; O toggles the overview", async () => {
     setup();
     const deck = await ready();
     act(() => deck.pressKey(79));
@@ -168,7 +167,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(nav.fn).not.toHaveBeenCalled();
   });
 
-  it("F → 外殼的 toggleFullscreen（requestFullscreen 一次）", async () => {
+  it("F -> the shell's toggleFullscreen (requestFullscreen once)", async () => {
     fake = installFakeFullscreen();
     setup();
     const deck = await ready();
@@ -176,7 +175,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(fake.requestFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("test 20：config 核對失敗 → 外殼顯示 configRefused、overlay 拆除（destroy 一次、.reveal 移除）；之後 Esc 恰一次", async () => {
+  it("config check failure -> shell shows configRefused, overlay torn down (destroy once, .reveal removed); a later Esc navigates exactly once", async () => {
     FakeReveal.configOverride = { postMessage: true };
     setup();
     const deck = await instance();
@@ -187,17 +186,17 @@ describe("PresentationOverlay（fake reveal）", () => {
     await waitFor(() => expect(nav.fn).toHaveBeenCalledTimes(1));
   });
 
-  it("test 20：初始化前查詢字串斷言失敗（window.location.search 不是 ?present）→ 不建 reveal、configRefused", async () => {
+  it("query-string assertion fails before init (window.location.search is not ?present) -> no reveal built, configRefused", async () => {
     setup({ windowSearch: "?present&hash=true" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Presentation settings were unexpected, so playback stopped");
     expect(FakeReveal.instances).toHaveLength(0);
-    expect(document.querySelector(".kn-present")).toBeNull(); // overlay 已卸載
+    expect(document.querySelector(".kn-present")).toBeNull();
     expect(nav.fn).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(nav.fn).toHaveBeenCalledTimes(1));
   });
 
-  it("初始匯出 throw（microtask 裡、錯誤邊界接不到）→ 外殼顯示 app.noteCrash、不建 reveal、沒有 uncaught exception", async () => {
+  it("initial export throws (in a microtask, the error boundary can't catch it) -> shell shows app.noteCrash, no reveal built, no uncaught exception", async () => {
     const uncaught = vi.fn();
     process.on("uncaughtException", uncaught);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -211,14 +210,14 @@ describe("PresentationOverlay（fake reveal）", () => {
       expect(FakeReveal.instances).toHaveLength(0);
       expect(document.querySelector(".reveal")).toBeNull();
       expect(uncaught).not.toHaveBeenCalled();
-      expect(consoleError).toHaveBeenCalledWith(failure); // 錯誤物件要留在 console，正式環境才查得到
+      expect(consoleError).toHaveBeenCalledWith(failure); // The error object must stay in the console so it can be found in production.
     } finally {
       consoleError.mockRestore();
       process.off("uncaughtException", uncaught);
     }
   });
 
-  it("更新時匯出 throw（防抖 timer 裡）→ 外殼顯示 app.noteCrash、overlay 拆除（destroy 一次）、沒有 uncaught exception", async () => {
+  it("export throws on update (inside the debounce timer) -> shell shows app.noteCrash, overlay torn down (destroy once), no uncaught exception", async () => {
     const uncaught = vi.fn();
     process.on("uncaughtException", uncaught);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -232,8 +231,8 @@ describe("PresentationOverlay（fake reveal）", () => {
       });
       rerenderWith({ variant: "public", doc: makeDoc(), title: "Renamed", publicRef });
       expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong on this page.");
-      // 錯誤訊息與 overlay 卸載同一個 commit，但 effect cleanup（dispose → destroy）排在之後的 scheduler task；
-      // 事件迴圈卡 ≥1 ms 時 findByRole 收尾的 setTimeout(0) 會先到（CI 負載下紅過）。
+      // The error message and the overlay unmount land in the same commit, but the effect cleanup (dispose -> destroy) runs in a later scheduler task;
+      // if the event loop stalls for >= 1 ms, findByRole's closing setTimeout(0) arrives first (went red under CI load).
       await waitFor(() => expect(deck.destroy).toHaveBeenCalledTimes(1));
       expect(document.querySelector(".reveal")).toBeNull();
       expect(uncaught).not.toHaveBeenCalled();
@@ -244,7 +243,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     }
   });
 
-  it("卸載後：投影片 DOM 清空、keyboard handler 不再碰 reveal 與外殼（reveal 6.0.2 interval 洩漏的緩解）", async () => {
+  it("after unmount: slide DOM emptied, keyboard handler no longer touches reveal or the shell (mitigates the reveal 6.0.2 interval leak)", async () => {
     fake = installFakeFullscreen();
     const { unmount } = setup();
     const deck = await ready();
@@ -258,7 +257,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     nav.fn.mockClear();
     deck.isOverview.mockClear();
     deck.toggleOverview.mockClear();
-    // reveal 的 interval 會一直留住 config.keyboard——handler 必須已和這次簡報斷開。
+    // reveal's interval keeps config.keyboard alive, so the handler must already be detached from this presentation.
     deck.pressKey(27);
     deck.pressKey(79);
     deck.pressKey(70);
@@ -268,7 +267,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(nav.fn).not.toHaveBeenCalled();
   });
 
-  it("test 8：initialize resolve 前卸載 → resolve 後才 destroy、恰一次", async () => {
+  it("unmount before initialize resolves -> destroy only after it resolves, exactly once", async () => {
     FakeReveal.autoResolve = false;
     const { unmount } = setup();
     await waitFor(() => expect(FakeReveal.instances).toHaveLength(1));
@@ -282,20 +281,20 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(deck.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("test 17（fake 版）：StrictMode 下恰一個 .reveal、恰建一份 reveal", async () => {
+  it("under StrictMode exactly one .reveal and exactly one reveal created", async () => {
     setup({ strict: true });
     await ready();
     expect(document.querySelectorAll(".reveal")).toHaveLength(1);
     expect(FakeReveal.instances).toHaveLength(1);
   });
 
-  it("深連結到縱向投影片 → slide(h, v) 的 v 為 1", async () => {
+  it("deep link to a vertical slide -> slide(h, v) has v = 1", async () => {
     setup({ entry: `${BASE}?present#/a2` });
     const deck = await ready();
     expect(deck.slide).toHaveBeenCalledWith(1, 1);
   });
 
-  it.each(["#/%E0%A4%A", "#/nope", "#/", "#/1", "#/2/0", "#x"])("hash %s 找不到投影片 → 不 throw、明確 slide(0, 0) 回封面、仍 ready", async (hash) => {
+  it.each(["#/%E0%A4%A", "#/nope", "#/", "#/1", "#/2/0", "#x"])("hash %s matches no slide -> no throw, explicit slide(0, 0) returns to the cover, still ready", async (hash) => {
     setup({ entry: `${BASE}?present${hash}` });
     const deck = await ready();
     expect(deck.slide).toHaveBeenCalledWith(0, 0);
@@ -303,7 +302,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("換頁 → hash 以 replace 寫 #/<id>（不增 history）", async () => {
+  it("slide change -> hash written as #/<id> with replace (history isn't extended)", async () => {
     setup();
     const deck = await ready();
     act(() => deck.slide(2, 0));
@@ -311,13 +310,13 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(nav.fn).toHaveBeenLastCalledWith({ pathname: BASE, search: "?present", hash: "#/b" }, { replace: true, state: null });
   });
 
-  it("test 19：首次建置後含 wikilink 的封面 DOM 有 wikilink 文字（匯出在 microtask）", async () => {
+  it("after the first build the cover DOM with a wikilink contains the wikilink text (the export runs in a microtask)", async () => {
     setup();
     await ready();
     expect(slideEl("_title").textContent).toContain("Meeting Notes");
   });
 
-  it("已登入 wikilink 讀渲染當下的 ['notes'] 快取（命中 → 現行標題）", async () => {
+  it("signed-in wikilink reads the ['notes'] cache at render time (hit -> current title)", async () => {
     setup({
       notes: [{ id: "n1", title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }],
     });
@@ -325,8 +324,8 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(slideEl("_title").querySelector("a")!.textContent).toBe("Renamed meeting");
   });
 
-  it("#269：文件存大寫 targetNoteId、['notes'] 快取是小寫 id ⇒ 命中（可點的連結＋現行標題），不是斷鏈", async () => {
-    // 必須含 a–f：全數字 id 的 toUpperCase() 不變，測不出大小寫。
+  it("#269: the document stores an uppercase targetNoteId and the ['notes'] cache has lowercase ids => hit (clickable link plus current title), not a broken link", async () => {
+    // Must contain a-f: an all-digit id is unchanged by toUpperCase(), so case handling wouldn't be exercised.
     const hex = "abcdef12-3456-4789-8abc-def123456789";
     expect(hex.toUpperCase()).not.toBe(hex);
     const note: NoteDto = { id: hex, title: "Renamed meeting", ownerId: "u1", role: "owner", createdAt: "", updatedAt: "", slug: "renamed", slugIsCustom: false, prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS };
@@ -342,13 +341,13 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(slideEl("_title").querySelector(".kn-present-wikilink-broken")).toBeNull();
   });
 
-  it("test 6：100 ms 內 5 次更新 → 一次重切；持續更新 > 2 s → 至少套用一次", async () => {
+  it("5 updates within 100 ms -> one re-slice; sustained updates > 2 s -> applied at least once", async () => {
     const doc = makeDoc();
     setup({ props: { variant: "member", doc, title: "My Note" } });
     await ready();
     const initialCalls = vi.mocked(renderDeck).mock.calls.length;
-    // 合法的內容變動：在文件裡第一段文字（標題 A 的 XmlText）前插一個字——直接往 fragment 塞元素會產生
-    // BlockNote 讀不懂的結構。
+    // A valid content change: insert one character before the first text (the XmlText of heading A) in the document; pushing an element straight into the fragment
+    // produces a structure BlockNote can't read.
     const firstText = (node: Y.XmlFragment | Y.XmlElement): Y.XmlText | null => {
       for (const child of node.toArray()) {
         if (child instanceof Y.XmlText) return child;
@@ -369,15 +368,15 @@ describe("PresentationOverlay（fake reveal）", () => {
     await new Promise((r) => setTimeout(r, 700));
     expect(vi.mocked(renderDeck).mock.calls.length).toBe(initialCalls + 1);
 
-    // 持續每 100 ms 打一字，直到重切發生（上限 6 s）。不用「打滿 2.3 s 就驗」的固定窗：maxWait 2 s
-    // 只留 300 ms 餘裕，平行負載下計時器晚到就假紅。改證「trailing 計時器從未有機會到期」：
-    // debouncer.schedule() 在 insert 的交易內同步呼叫，所以第 i 次 schedule 落在 [打字前, 打字後] 之間；
-    // 重切時刻取 renderDeck 被呼叫的當下（≥ 計時器實際到期）。於是
-    //   相鄰兩次 schedule 的間隔 ≤ 後一次的「打字後」− 前一次的「打字前」，
-    //   最後一次 schedule 到重切 ≤ 重切時刻 − 最後一次的「打字前」，
-    // 這些上界全都 < UPDATE_DEBOUNCE_MS ⇒ 這次重切只可能是 maxWait 觸發的。只量打字與重切本身，
-    // 不把 sleep／輪詢的延遲算進去，CPU 卡頓造成的假紅只剩「真的卡在兩次 schedule 之間」一種。
-    // maxWait 的精確時刻由 debounce.test.ts 以 fake timers 守。
+    // Type one character every 100 ms until the re-slice happens (cap 6 s). A fixed 'verify after typing for 2.3 s' window is avoided: maxWait is 2 s,
+    // leaving only 300 ms of slack, so a late timer under parallel load would give a false red. Instead prove the trailing timer never had a chance to expire:
+    // debouncer.schedule() is called synchronously inside the insert's transaction, so the i-th schedule falls between [before typing, after typing];
+    // the re-slice time is taken when renderDeck is called (>= when the timer actually fired). Hence
+    //   the gap between consecutive schedules <= the later one's 'after typing' - the earlier one's 'before typing',
+    //   last schedule to re-slice <= re-slice time - the last one's 'before typing',
+    // and all these upper bounds are < UPDATE_DEBOUNCE_MS => this re-slice can only have been triggered by maxWait. Only typing and the re-slice itself are measured,
+    // not sleep/poll latency, so a CPU stall can only cause a false red if it really lands between two schedules.
+    // The exact maxWait instant is covered by debounce.test.ts with fake timers.
     const fireTimes: number[] = [];
     const realRenderDeck = vi.mocked(renderDeck).getMockImplementation()!;
     vi.mocked(renderDeck).mockImplementation((input) => {
@@ -395,7 +394,7 @@ describe("PresentationOverlay（fake reveal）", () => {
       }
       expect(fireTimes.length).toBeGreaterThan(0);
       const fire = fireTimes[0];
-      // 計時器回呼不會插進同步的 typeChar 中間：重切前完成的輸入＝「打字後」不晚於重切的那些。
+      // A timer callback can't interleave with the synchronous typeChar: inputs completed before the re-slice are those whose 'after typing' is not later than it.
       const sent = keys.filter((k) => k.after <= fire);
       expect(sent.length).toBeGreaterThan(0);
       const gapBounds = sent.slice(1).map((k, i) => k.after - sent[i].before);
@@ -406,15 +405,14 @@ describe("PresentationOverlay（fake reveal）", () => {
     }
   });
 
-  it("test 7：目前那張被刪 → slide() 到前一張、hash replace；目前那張內容變 → 捲頂；別張變 → 不捲、不重建目前那張", async () => {
+  it("current slide deleted -> slide() to the previous one, hash replaced; current slide content changed -> scroll to top; other slide changed -> no scroll, current slide not rebuilt", async () => {
     const editor = createExportEditor();
     const v1 = makeDoc();
     const { rerenderWith } = setup({ props: { variant: "public", doc: v1, title: "My Note", publicRef: { kind: "token", token: "t" } } });
     const deck = await ready();
-    act(() => deck.slide(1, 1)); // 到 a2
+    act(() => deck.slide(1, 1));
     await waitFor(() => expect(loc()).toBe(`${BASE}?present#/a2`));
 
-    // 別張（b）內容變：目前那張不重建、不捲頂
     const a2Body = slideEl("a2").querySelector(".kn-slide-body")!.firstChild;
     const scrollSet = vi.fn();
     Object.defineProperty(slideEl("a2"), "scrollTop", { configurable: true, set: scrollSet, get: () => 0 });
@@ -429,11 +427,9 @@ describe("PresentationOverlay（fake reveal）", () => {
     await waitFor(() => expect(slideEl("b").textContent).toContain("B changed"));
     expect(slideEl("a2").querySelector(".kn-slide-body")!.firstChild).toBe(a2Body);
     expect(scrollSet).not.toHaveBeenCalled();
-    // 結構沒變 → 只 syncSlide 有變的那張、不 sync
     expect(deck.syncSlide).toHaveBeenCalledWith(slideEl("b"));
     expect(deck.sync).not.toHaveBeenCalled();
 
-    // 目前那張內容變：捲頂
     const v3 = blocksToYDoc(editor, [
       { id: "p0", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: "n1", snapshotTitle: "Meeting Notes" } }] },
       { id: "a", type: "heading", props: { level: 2 }, content: "A" },
@@ -444,7 +440,6 @@ describe("PresentationOverlay（fake reveal）", () => {
     rerenderWith({ variant: "public", doc: v3, title: "My Note", publicRef: { kind: "token", token: "t" } });
     await waitFor(() => expect(scrollSet).toHaveBeenCalledWith(0));
 
-    // 目前那張被刪（a2 的標題沒了）→ 前一張 a
     const v4 = blocksToYDoc(editor, [
       { id: "p0", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: "n1", snapshotTitle: "Meeting Notes" } }] },
       { id: "a", type: "heading", props: { level: 2 }, content: "A" },
@@ -456,10 +451,10 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(nav.fn).toHaveBeenLastCalledWith({ pathname: BASE, search: "?present", hash: "#/a" }, { replace: true, state: null });
     expect(deck.slide).toHaveBeenLastCalledWith(1, 0);
     expect(deck.sync).toHaveBeenCalled();
-    expect(deck.destroy).not.toHaveBeenCalled(); // 不重建 reveal
+    expect(deck.destroy).not.toHaveBeenCalled();
   });
 
-  it("主題切換 → mermaid 以新主題重畫", async () => {
+  it("theme switch -> mermaid redrawn with the new theme", async () => {
     setup({ props: { variant: "public", doc: makeDoc([{ id: "m", type: "mermaid", props: { code: "graph TD" } }]), title: "T", publicRef: { kind: "token", token: "t" } } });
     await ready();
     await waitFor(() => expect(mermaid.renderMermaid).toHaveBeenCalledWith("graph TD", "light"));
@@ -469,7 +464,7 @@ describe("PresentationOverlay（fake reveal）", () => {
     expect(mermaid.renderMermaid).toHaveBeenLastCalledWith("graph TD", "dark");
   });
 
-  it("mermaid 世代號：先發的晚回 → 丟掉，DOM 是後發的結果（每張世代號，舊結果丟）", async () => {
+  it("mermaid generation counter: an earlier request returning late is discarded and the DOM holds the later result (one counter per slide, stale results dropped)", async () => {
     let resolveFirst: (value: { ok: true; svg: string }) => void = () => {};
     mermaid.renderMermaid
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))

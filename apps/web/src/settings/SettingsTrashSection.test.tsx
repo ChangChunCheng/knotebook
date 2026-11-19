@@ -7,7 +7,7 @@ import { TRASH_SETTINGS_QUERY_KEY } from "@/api/trash";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { SiteTrashGroup } from "./SettingsTrashSection";
 
-// 站台垃圾桶設定（#181）。單獨渲染 `SiteTrashGroup`，查詢一律經垃圾桶 region 圈定；整頁排列在 SettingsStorageSection.test.tsx。
+// Site trash settings (#181). Renders `SiteTrashGroup` alone, and queries always go through the trash region; the page-level arrangement is in SettingsStorageSection.test.tsx.
 
 const URL_ = "/api/admin/trash/settings";
 const EN_DESCRIPTION =
@@ -56,7 +56,7 @@ const area = () => within(screen.getByRole("region", { name: i18n.t("admin.trash
 const daysField = () => area().getByLabelText("Days to keep");
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
+describe("SiteTrashGroup (site trash settings, #181)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -65,7 +65,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("ST-1 GET 7 → 標題 Trash、開關勾、天數 7、說明句（精確版，含每次最多 2,000 篇）", async () => {
+  it("GET 7 -> title Trash, switch checked, days 7, the description sentence (exact version, including at most 2,000 notes per run)", async () => {
     setup({ settings: { retentionDays: 7 } });
     expect(await screen.findByRole("switch", { name: "Delete automatically" })).toHaveAttribute("aria-checked", "true");
     expect(area().getByRole("heading", { level: 2, name: "Trash" })).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().getByText(EN_DESCRIPTION)).toBeInTheDocument();
   });
 
-  it("ST-2 改 30 → Save → PATCH {retentionDays:30}、toast", async () => {
+  it("change to 30 -> Save -> PATCH {retentionDays:30}, toast", async () => {
     const { patches } = setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "Delete automatically" });
     fireEvent.change(daysField(), { target: { value: "30" } });
@@ -84,7 +84,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("ST-2b PATCH 懸著時 Save disabled（不重送）；回應後恢復", async () => {
+  it("Save is disabled while the PATCH hangs (no resend); recovers after the response", async () => {
     let release: (r: Response) => void = () => {};
     const { patches } = setup({
       settings: { retentionDays: 7 },
@@ -99,12 +99,12 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     await waitFor(() => expect(area().getByRole("button", { name: "Save" })).not.toBeDisabled());
   });
 
-  it("ST-3 0／3651／abc／1.5／空 → 行內錯誤、不送；改字就清掉錯誤", async () => {
+  it("0 / 3651 / abc / 1.5 / empty -> inline error, not sent; changing the text clears the error", async () => {
     const { patches } = setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "Delete automatically" });
     for (const value of ["0", "3651", "abc", "1.5", ""]) {
       fireEvent.change(daysField(), { target: { value } });
-      // 改欄位會清掉上一組的錯誤——下面的 alert 是這一組送出才出現的
+      // Changing the field clears the previous group's error - the alert below only appears when this group is submitted
       expect(area().queryByRole("alert")).not.toBeInTheDocument();
       fireEvent.click(area().getByRole("button", { name: "Save" }));
       expect(await area().findByRole("alert")).toHaveTextContent(INVALID);
@@ -113,7 +113,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(patches()).toEqual([]);
   });
 
-  it("ST-3c 出現行內錯誤後切開關 → 錯誤消失", async () => {
+  it("toggling the switch after an inline error appears -> the error disappears", async () => {
     setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "Delete automatically" });
     fireEvent.change(daysField(), { target: { value: "0" } });
@@ -123,7 +123,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("ST-3b 邊界 1 與 3650 → 都送出 PATCH", async () => {
+  it("boundaries 1 and 3650 -> both send a PATCH", async () => {
     const { patches } = setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "Delete automatically" });
     fireEvent.change(daysField(), { target: { value: "1" } });
@@ -136,7 +136,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("ST-8 儲存成功後清掉本地值：server 之後改成 40、重抓 → 欄位顯示 40", async () => {
+  it("after a successful save the local value is cleared: if the server later changes to 40 and it refetches -> the field shows 40", async () => {
     const server: Server = { settings: { retentionDays: 7 } };
     const { queryClient } = setup(server);
     await screen.findByRole("switch", { name: "Delete automatically" });
@@ -148,7 +148,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     await waitFor(() => expect(daysField()).toHaveValue("40"));
   });
 
-  it("ST-8b 儲存成功後也清掉本地開關：server 原為 null → 打開存 30 → server 改回 null、重抓 → 開關未勾", async () => {
+  it("after a successful save the local switch is also cleared: server was null -> turn on and save 30 -> server goes back to null, refetch -> the switch is unchecked", async () => {
     const server: Server = { settings: { retentionDays: null } };
     const { queryClient } = setup(server);
     fireEvent.click(await screen.findByRole("switch", { name: "Delete automatically" }));
@@ -161,7 +161,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().queryByLabelText("Days to keep")).not.toBeInTheDocument();
   });
 
-  it("ST-4 關開關 → 天數欄消失 → Save → PATCH {retentionDays:null}", async () => {
+  it("turning the switch off -> the days field disappears -> Save -> PATCH {retentionDays:null}", async () => {
     const { patches } = setup({ settings: { retentionDays: 7 } });
     fireEvent.click(await screen.findByRole("switch", { name: "Delete automatically" }));
     expect(area().getByRole("switch", { name: "Delete automatically" })).toHaveAttribute("aria-checked", "false");
@@ -171,7 +171,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(await screen.findByText("Trash settings saved", { exact: true })).toBeInTheDocument();
   });
 
-  it("ST-4b 天數填了不合法的值再關開關 → Save 照樣送 {retentionDays:null}、沒有行內錯誤（關閉時不驗天數）", async () => {
+  it("typing an invalid days value then turning the switch off -> Save still sends {retentionDays:null}, no inline error (days aren't validated while off)", async () => {
     const { patches } = setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "Delete automatically" });
     fireEvent.change(daysField(), { target: { value: "abc" } });
@@ -182,7 +182,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(area().queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("ST-5 server null → 開關未勾、沒有天數欄；打開 → 天數欄預設 7；沒按 Save 就沒有 PATCH", async () => {
+  it("server null -> switch unchecked, no days field; turning on -> days field defaults to 7; no PATCH without pressing Save", async () => {
     const { patches } = setup({ settings: { retentionDays: null } });
     const sw = await screen.findByRole("switch", { name: "Delete automatically" });
     expect(sw).toHaveAttribute("aria-checked", "false");
@@ -193,7 +193,7 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(patches()).toEqual([]);
   });
 
-  it("ST-6a PATCH 400 → 行內 errors.invalid_body", async () => {
+  it("PATCH 400 -> inline errors.invalid_body", async () => {
     setup({ settings: { retentionDays: 7 }, patch: () => res(400, { error: { code: "invalid_body", message: "x" } }) });
     await screen.findByRole("switch", { name: "Delete automatically" });
     fireEvent.change(daysField(), { target: { value: "9" } });
@@ -201,19 +201,19 @@ describe("SiteTrashGroup（站台垃圾桶設定，#181）", () => {
     expect(await area().findByRole("alert")).toHaveTextContent(i18n.t("errors.invalid_body"));
   });
 
-  it("ST-6b GET 500 → 同標題 region 內 role=alert", async () => {
+  it("GET 500 -> role=alert inside the same-titled region", async () => {
     setup({ settings: { retentionDays: 7 }, get: () => Promise.resolve(res(500, { error: { code: "boom", message: "x" } })) });
     expect(await area().findByRole("alert")).toHaveTextContent(i18n.t("errors.fallback"));
     expect(area().queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("ST-6c GET 懸著 → 同標題 region 內 Loading…", async () => {
+  it("GET hangs -> Loading... inside the same-titled region", async () => {
     setup({ settings: { retentionDays: 7 }, get: () => new Promise<Response>(() => {}) });
     expect(area().getByText("Loading…")).toBeInTheDocument();
     expect(area().queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("ST-7 zh-TW 說明句逐字＝精確版（從下一次檢查開始刪除、每次最多 2,000 篇）", async () => {
+  it("zh-TW description sentence is verbatim the exact version (deletes from the next check, at most 2,000 notes per run)", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ settings: { retentionDays: 7 } });
     await screen.findByRole("switch", { name: "自動永久刪除" });
