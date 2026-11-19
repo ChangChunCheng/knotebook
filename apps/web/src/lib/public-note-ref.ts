@@ -2,6 +2,8 @@
  * `/p/:token` and `/p/:handle/:slug` share one page/editor/image mapping through this union, not a bare token (#122).
  * The `/p/` page URL is assembled by `publicAliasPath` in shared (validated input, not encoded); the API path here encodes
  * defensively, so the two deliberately do not share code.
+ * API paths are built only by `publicNoteApiPath` (the page query and publicMediaUrl both use it); building them
+ * elsewhere lets the two drift into broken images.
  */
 export type PublicNoteRef =
   | { kind: "token"; token: string }

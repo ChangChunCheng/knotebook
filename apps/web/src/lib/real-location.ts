@@ -4,7 +4,7 @@ import { UNSAFE_NavigationContext, type Location, type NavigationType } from "re
 /**
  * The browser's real router location (#179). The main tree's `<Routes location={state?.backgroundLocation ?? location}>`
  * overrides `useLocation()`, so a background page (NotePage) cannot see the real `/settings/*` URL or its state; its
- * URL-canonicalizing effect needs them to leave the URL alone while a modal is open.
+ * URL-canonicalizing effect needs them to leave the URL alone while a modal is open (switching to the note URL would close it).
  * Also carries the real `navigationType`: a `<Routes>` with a `location` prop reports **"POP"** to its subtree.
  * `null` outside `AppRoutes` = no background override.
  */
@@ -26,7 +26,7 @@ export function useRealNavigationType(): NavigationType | null {
  * still lags. A non-transition re-render in that gap would see the old location, and `navigate(…, { replace: true })`
  * would replace the entry just navigated to (401 redirect, another note clicked). Callers compare with their rendered
  * `location.key`; unequal = a navigation is in flight.
- * Uses `UNSAFE_NavigationContext` (the `navigator` type exposes no `location`); undefined for other routers = "cannot tell".
+ * Uses `UNSAFE_NavigationContext` (the `navigator` type exposes no `location`); undefined for other routers = "cannot tell"; callers proceed as usual.
  */
 export function useHistoryLocationKey(): () => string | undefined {
   const { navigator } = useContext(UNSAFE_NavigationContext);

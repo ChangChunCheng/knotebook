@@ -21,6 +21,7 @@ import {
 /**
  * #229: does **not** import reveal (entry side).
  * - `z-[60]`: above the drawer and dialogs (z-50), below toasts (z-[100]); AppShell's Ctrl+K backs off while `[role="dialog"]` exists.
+ * - Loading, error, chunk failure and config refusal are shell content; × and Esc can leave in every state.
  * - One Esc entry at a time: the shell's document listener until reveal is ready, then reveal's keyboard[27] calls the same
  *   onEsc; leaving is idempotent (leftRef).
  * - Query normalization is deferred while a navigation is in flight (same guard as NotePage's convergence).

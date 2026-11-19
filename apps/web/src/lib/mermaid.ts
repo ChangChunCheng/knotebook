@@ -48,12 +48,16 @@ function cacheKey(code: string, theme: MermaidTheme): string {
 /**
  * mermaid references the id everywhere (root id, `<style>` selectors, marker urls, aria), so
  * identical diagrams on one page need distinct ids. The match must not eat following digits
- * (`mermaid-1` vs `mermaid-12`) and uses a capture group instead of lookbehind: lookbehind needs
- * Safari 16.4, and a pattern inside a `new RegExp` string is not transpiled.
+ * (`mermaid-1` vs `mermaid-12`). The capture group `(^|[^A-Za-z0-9])` requires a non-alphanumeric
+ * before the id (not `xmermaid-1`) and replaces lookbehind: Vite's default target includes
+ * safari16, lookbehind needs Safari 16.4, and a pattern inside a `new RegExp` string is not
+ * transpiled, so old Safari would throw a SyntaxError on a cache hit and crash the component.
  *
  * Known gaps: label text equal to the id is rewritten too; ids from mermaid's global counters
  * without the `mermaid-N` prefix (sankey `node-N`, sequence `actorN`, architecture `IconifyId…`)
  * are not rewritten, since that needs knowledge of every way each diagram type references them.
+ * They only collide between identical diagrams on one page, which render the same, so a copy's
+ * `url(#…)` resolving to the first one is invisible.
  */
 export function rewriteMermaidId(svg: string, oldId: string, newId: string): string {
   if (oldId === newId) return svg;

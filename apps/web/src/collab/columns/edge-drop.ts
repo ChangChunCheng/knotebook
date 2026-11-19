@@ -1,6 +1,6 @@
 /**
  * Takes over ⋮⋮ drops through `handleDrop`: by then every `handleDOMEvents.drop` (PasteRule, UniqueID) has run, and returning true makes PM `preventDefault()` and clear `view.dragging`.
- * `buildInsert` first runs on the predicted document (X removed) to validate; then two `editor.transact` calls in one undo step: remove X, then insert.
+ * `buildInsert` first runs on the predicted document (X removed) to validate; then two `editor.transact` calls in one undo step: remove X (no column cleanup), then insert.
  * y-prosemirror diffs once per view update; with removal and insertion in one transaction the diff wraps and rewrites the unrelated blocks between the two spots, losing text a peer types there.
  * `stopCapturing` isn't called between them, so the UndoManager merges the two.
  * Neither transaction carries `uiEvent` (PasteRule would run over the diff range when `uiEvent === "drop"` and turn URLs in the middle blocks into links); both carry `preventAutolink`
@@ -171,7 +171,7 @@ function isBlockMove(editor: AnyEditor, view: EditorView, event: DragEvent, drag
 }
 
 /**
- * Replaces the only empty paragraph E of a column with X (PM's default would leave `[E, X]`). E must not be inside any X's subtree (dragging E itself, or a row
+ * When a column's only block is an empty, unformatted paragraph E, replaces E with X (PM's default would leave `[E, X]` or `[X, E]`). E must not be inside any X's subtree (dragging E itself, or a row
  * dropped into its own empty column: removing X would delete the column too), and PM's own `dropPoint` must also land inside the column.
  * `edgeTargetAt` returns null here for "not an edge", so `isBlockMove` has to filter read-only / synthetic / copy drags first.
  */

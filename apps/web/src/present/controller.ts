@@ -28,7 +28,7 @@ import { COVER_ID } from "./slides";
  * reveal merges the URL query into its config: `?present` is asserted before init and every getConfig() key (and the
  * <html> classes, on the next rAF) re-checked after; a mismatch → shell.onFatal("present.configRefused").
  * Positioning reads the router hash `#/<id>`: reveal's own readURL matches no slide because slides have no id / data-id.
- * On updates, media paused by reveal is resumed when the current slide's content is unchanged.
+ * Updates never rebuild reveal, so fullscreen is unaffected; media paused by reveal resumes when the current slide's content is unchanged.
  */
 export type PresentationSource =
   | { variant: "member"; doc: Y.Doc; title: string }

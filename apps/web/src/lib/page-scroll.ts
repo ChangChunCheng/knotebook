@@ -4,14 +4,16 @@ import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 /**
  * On phones (< 640) the document itself scrolls (the browser toolbar can collapse and content
  * extends behind the bottom toolbar); from 640 up the framed container scrolls. Code that targets
- * the scroll container checks `scrollsPage(root)` first. Public pages are not in the frame.
+ * the scroll container (scroll to top, visible height, scroll to a collaborator's cursor) checks
+ * `scrollsPage(root)` first and uses the window when true, since that container doesn't scroll on
+ * phones. Public pages are outside the frame and scroll their own container even on phones.
  */
 export const PHONE_PAGE_SCROLL_ATTR = "data-phone-page-scroll";
 
 /**
  * Flags on `<html>` that index.css phone styles key off. Not `html:has([…])`: a `:has()` anchored
- * on `<html>` makes any DOM insertion recompute styles for the whole document, slowing menus and
- * dialogs on long notes.
+ * on `<html>` may make any DOM insertion or removal recompute styles for the whole document, slowing
+ * menus, dialogs and image zoom on long notes.
  */
 export const ROOT_FLAGS = {
   pageScroll: "data-has-phone-page-scroll",
@@ -41,10 +43,10 @@ export function useRootFlag(attr: string, active: boolean): void {
   }, [attr, active]);
 }
 
-/** px height (incl. notch safe area) of the pinned phone note header; index.css uses it as block `scroll-margin-top`. */
+/** px height (incl. notch safe area) of the pinned phone note header; index.css uses it as block `scroll-margin-top`, so a block scrolled to is not hidden under the header. */
 export const STICKY_TOP_VAR = "--kb-sticky-top";
 
-/** px from the viewport top to the bottom of the pinned part of the phone list; index.css uses it as row `scroll-margin-top`. */
+/** px from the viewport top to the bottom of the pinned part of the phone list; index.css uses it as row `scroll-margin-top`, so a row focused by keyboard or screen reader is not hidden under the top bar. */
 export const LIST_STICKY_TOP_VAR = "--kb-list-sticky-top";
 
 export function scrollsPage(root: Element | null | undefined): boolean {
@@ -146,6 +148,8 @@ function visibleBox(el: Element): DOMRect | null {
 /**
  * Linear scan, not binary search: in side-by-side columns later columns' blocks come later in the
  * document but their positions restart at the top, so position does not increase with order.
+ * Cost is bounded by the caller: `useTierScrollAnchor` runs it only on devices that may cross 640,
+ * at most once per frame.
  */
 export function captureScrollAnchor(container: Element, items: AnchorItems, top: number): ScrollAnchor | null {
   for (const item of container.querySelectorAll<HTMLElement>(items.itemSelector)) {
@@ -189,11 +193,13 @@ export interface TierScrollAnchorOptions extends AnchorItems {
  * Phone scrolls the document and 640+ scrolls the container; both start at 0 on a switch and lay
  * out differently, so remember "first visible item + distance from the top" and scroll that item
  * back after the switch.
+ * - Only its own scroll counts (document on phone, container at 640+; table/menu scrolls are
+ *   ignored), at most one measurement per frame; the last one before the switch is restored.
  * - From 640 up, recorded only on devices that may return to phone width.
  * - Skipped while the media query has flipped but React has not switched tiers (the document is
  *   clamped to 0): when `isPhone()` disagrees with the layout's tier.
- * - Nothing is recorded or restored while the container is invisible or outside the
- *   document-scroll frame.
+ * - Nothing is recorded or restored while the container is invisible (the record is kept for a
+ *   later switch while visible) or outside the document-scroll frame.
  */
 export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
   const phone = useIsPhone();

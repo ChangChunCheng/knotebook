@@ -78,7 +78,7 @@ export function rowsOf(view: EditorView): RowBox[] {
       const colId = child.getAttribute("data-id");
       if (child.getAttribute("data-node-type") !== COLUMN_TYPE || !colId) continue;
       const colRect = child.getBoundingClientRect();
-      // contentDOM: offset 0 is the start of the node's content, so subtract 1 for the position before the node.
+      // Column and row DOM is itself the contentDOM: offset 0 is the start of the node's content, so subtract 1 for the position before it.
       columns.push({ id: colId, pos: view.posAtDOM(child, 0) - 1, left: colRect.left, right: colRect.right });
     }
     rows.push({

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-/** A height difference above this counts as the keyboard being open: above the scrollbar width and the transient address-bar difference, below any on-screen keyboard. */
+/** A height difference above this counts as the keyboard being open: above the scrollbar width and the transient address-bar difference, below any on-screen keyboard (a design trade-off). */
 export const KEYBOARD_OPEN_THRESHOLD_PX = 80;
 
 export function readKeyboardInset(): number {

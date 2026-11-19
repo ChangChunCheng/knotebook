@@ -1,7 +1,8 @@
 /**
  * Sets `data-caret-inside` on the code block holding the caret. `:focus-within` can't do it: focus stays on the `.ProseMirror`
  * root, an ancestor of the block. Touch devices have no hover, so this is the only way to show the language dropdown.
- * Recomputed on focus changes because tiptap's focusEvents plugin dispatches a transaction. View-only: not in Yjs or the undo stack.
+ * Recomputed on focus changes because tiptap's focusEvents plugin dispatches a transaction; `setEditable` recomputes too (via
+ * `view.setProps`). View-only: not in Yjs or the undo stack.
  */
 import { Extension } from "@tiptap/core";
 // Must be the same prosemirror-view copy BlockNote uses (the range mirrors BlockNote's on purpose): on a split, the view's

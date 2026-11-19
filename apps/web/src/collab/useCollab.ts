@@ -30,8 +30,9 @@ export function collabUrl(location: { protocol: string; host: string } = window.
 /**
  * Backoff for the token function (ms), used for 5xx/429/network errors: "can't get a token now"
  * is not an authorization failure and must not kick or log out; 401 is the exception (session
- * gone, no retry). Defined in shared because the server's revocation re-validation deadline and
- * delete-gate TTL derive from it (`useCollab.test.tsx` pins the deadline relationship).
+ * gone, no retry). Defined in shared: the server's revocation re-validation deadline is
+ * deliberately shorter than their sum (fail-closed) and the delete-gate TTL assumes it
+ * (`useCollab.test.tsx` pins the deadline).
  */
 const TOKEN_RETRY_DELAYS_MS = COLLAB_TOKEN_RETRY_DELAYS_MS;
 
@@ -43,7 +44,9 @@ const RECONNECT_FALLBACK_MS = 1_000;
 /**
  * Whole-connection retry (ms) after the token backoff is exhausted or a non-authorization
  * rejection (#39, #35): the provider then neither closes the socket nor fetches a token, so
- * nothing else recovers. Longer than the token backoff; the last entry repeats. Capped at 60 s
+ * nothing else recovers. An order of magnitude longer than the token backoff (that 7.5 s round
+ * already showed it is not a blip; don't hammer a failing server); the last entry repeats, so it
+ * never gives up (slow beats stopping). Capped at 60 s
  * and jittered: the collab-token limit is one per-user 60/min bucket across tabs
  * (`COLLAB_TOKEN_LIMIT` on the server), and a fixed 30 s plus the 7.5 s token backoff would be
  * 5 requests per 37.5 s, so 8 tabs alone would make 64 req/min; a server restart also hits all
@@ -288,6 +291,9 @@ export function useCollab({ noteId, onUnauthorized, onDocUpdate }: UseCollabOpti
     };
 
     // `synced` only fires on the false→true edge, so the handler only sets true (sticky, see `UseCollabResult.synced`).
+    // No initial `provider.synced` check: this provider is brand new and connect() is async, so it
+    // can't be synced yet (unlike NotePage's guard, whose provider comes from state). No explicit
+    // unsubscribe: provider.destroy()'s removeAllListeners does it.
     // The doc-update debounce (#106) attaches inside "synced", not the effect body, or the initial
     // sync batch would invalidate the note query on page open; `??=` keeps a reconnect from
     // attaching twice. Guard: the "initial sync batch doesn't count" test.

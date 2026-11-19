@@ -8,7 +8,8 @@ import { withColumnsLayout } from "./columns/layout-extension";
 // Media data URLs must never reach block props: BlockNote turns pasted images into data URLs
 // when there is no `uploadFile`, and that base64 would bloat the Y.Doc, `note_states` and backups.
 // Plain image files go through `uploadFile` (never base64); `classifyMediaTransfer` blocks the
-// rest (data URLs with no real `File`, e.g. an image copied from a web page).
+// rest (data URLs with no real `File`, e.g. an image copied from a web page). audio/video/file
+// blocks have no Upload tab and only embed URLs, so the guard doesn't distinguish types.
 
 /**
  * #43: file-type blocks' `toExternalHTML` (clipboard copy, drag `text/html`, markdown export)
@@ -19,7 +20,7 @@ import { withColumnsLayout } from "./columns/layout-extension";
  * for `safeMediaUrl`.
  *
  * Relies on three things, each pinned by a test: the exporter reads the spec from the editor's
- * schema; the editor receives `noteSchema` itself (`NoteEditor.test.ts`); the file-type blocks
+ * schema (`schema.test.ts` #43 end-to-end group); the editor receives `noteSchema` itself (`NoteEditor.test.ts`); the file-type blocks
  * are exactly audio/file/image/video (`meta.fileBlockAccept` parity test). A red one after a BlockNote
  * upgrade means one of these changed.
  *
@@ -88,6 +89,8 @@ export const TEXT_REPRESENTATION_MIME_TYPES = [
  * - A `File` plus any `TEXT_REPRESENTATION_MIME_TYPES` type → `"textRepresentation"`:
  *   BlockNote's `handleFileInsertion` abandons the file path when these rank before `"Files"`;
  *   same criterion, blocked uniformly.
+ * - Files, all `image/*` (empty `File.type` isn't) → allow: they create no data URL and go through `uploadFile`.
+ * - Any other file → `"nonImageFile"`.
  */
 export function classifyMediaTransfer(data: DataTransfer | null | undefined): BlockedTransferReason | null {
   if (!data) return null;

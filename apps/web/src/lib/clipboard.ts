@@ -1,6 +1,7 @@
 /**
  * `navigator.clipboard` is missing in non-secure contexts (plain-http LAN is a supported
  * topology), so the deprecated `execCommand("copy")` path stays as the fallback.
+ * Never throws; on false (both paths failed), show the URL so the user can copy it by hand.
  */
 export async function copyText(text: string): Promise<boolean> {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {

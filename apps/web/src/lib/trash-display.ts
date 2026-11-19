@@ -6,7 +6,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export const DAY_MS = 86_400_000;
 
-/** Never "less than 1 day", so a just-trashed item shows the full retention; null purgeAt = never auto-deleted. */
+/** Rounds up and never shows under 1 day: just trashed = full retention; under a day or past purgeAt awaiting the next purge = 1 day. null purgeAt = never auto-deleted. */
 export function remainingLabel(purgeAt: string | null, now: number, t: Translate): string | null {
   if (purgeAt === null) return null;
   return t("trash.daysLeft", { count: Math.max(1, Math.ceil((Date.parse(purgeAt) - now) / DAY_MS)) });

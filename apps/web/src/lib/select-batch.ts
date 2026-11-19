@@ -9,7 +9,7 @@ import type { SelectionTarget } from "@/components/sidebar/select-model";
 import type { SelectionNode } from "@/lib/sidebar-selection";
 
 /**
- * Batch execution for select mode in the ordinary tabs (#181).
+ * Batch execution for select mode in the ordinary tabs (#181). Import only from the SelectLazy chain and tests.
  * - No mutation hook: a batch must finish even if the action bar or drawer unmounts midway.
  * - Sequential, reusing the single-note endpoints' transactions, permissions and capacity checks; this is also what makes
  *   stopping and reporting "how many are done" possible.

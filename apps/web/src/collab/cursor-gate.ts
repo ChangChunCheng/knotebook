@@ -6,7 +6,7 @@ const CURSOR_FIELD = "cursor";
 
 /**
  * #293: drops non-null `cursor` writes while read-only. BlockNote 0.52.1 always gives `.ProseMirror` `tabIndex="0"`, and the y-prosemirror cursor plugin writes `cursor` on `focusin` and every view update
- * based only on `view.hasFocus()`; making the editor unfocusable would stop read-only users from selecting and copying.
+ * based only on `view.hasFocus()`, with no option to disable it; making the editor unfocusable would stop read-only users from selecting and copying.
  * - Only `setLocalStateField("cursor", …)` is intercepted (`setLocalState({ cursor })` would bypass it; no caller does that). null always passes: clearing on blur, and the old plugin's destroy on the read-only remount (`NoteEditor.cursor.test.tsx`).
  * - #312: `getStates()` returns sanitised remote states (`remote-states.ts`); only the copy handed to BlockNote is wrapped, the avatar row reads the raw provider awareness.
  */

@@ -1,7 +1,10 @@
 import { targetFromList, type NoteDto, type SiteLinkCandidate, type SiteLinkTarget, type SiteNoteHref } from "@knotebook/shared";
 import { api } from "@/api/client";
 
-/** #269: the sync layer is the `["notes"]` cache; the session endpoints also cover the redirect table / prev_slug / legacy slugs. */
+/**
+ * #269: both layers use the writer's permissions: sync = the `["notes"]` cache (their visible list); async fallback =
+ * the session endpoints, which also cover the redirect table / prev_slug / legacy slugs.
+ */
 export type CacheResolution = { kind: "hit"; target: SiteLinkTarget } | { kind: "miss" } | { kind: "unknown" };
 
 export function resolveFromCache(notes: readonly SiteLinkCandidate[] | undefined, parsed: SiteNoteHref): CacheResolution {

@@ -2,8 +2,11 @@
  * Replaces the native resize handle (core ignores columns: its limit is the editor width) for images in columns, by capturing `mousedown` / `touchstart` on the editor DOM and stopping propagation.
  * - Up to `Ck` (content box of the block holding the image) only the image changes; beyond it the other columns yield in proportion to their spare room above their minimum width, and the handle stops when it's used up.
  *   Column widths change only in the preview stylesheet until release.
+ * - Not in a column or read-only: not intercepted, native handle as usual. Shrinking the image never shrinks columns.
  * - Stacked row: a column's width is the row's width, so the limit is the row width and columns don't move.
- * - Esc, `touchcancel`, unmount, the row's column ids changing mid-drag, or the image disappearing cancel without writing.
+ * - Release: no movement → no write; otherwise `previewWidth` and the changed widths in one transaction, as their own undo step.
+ * - Esc, `touchcancel`, unmount, the row's column ids changing mid-drag, or the image disappearing cancel without writing and restore
+ *   the pre-press image width. Read-only at release writes nothing.
  */
 import { COLUMN_LIST_TYPE, COLUMN_TYPE } from "@knotebook/shared";
 import type { BlockNoteEditor } from "@blocknote/core";
@@ -111,7 +114,7 @@ export function attachColumnImageResize(editor: AnyEditor, dom: HTMLElement, sig
       offChange?.();
       if (commit && moved && editor.isEditable) {
         const value = Math.round(width);
-        // No widened column, or ratios equal to the document's: `writeColumnWidths` writes nothing, so write only `previewWidth`.
+        // No widened column, or ratios equal to the document's: `writeColumnWidths` writes nothing, so write only `previewWidth` (still its own undo step).
         if (!(next && writeColumnWidths(editor, row.rowId, next, { previewWidth: { blockId: id, value } }))) {
           asUndoStep(editor, () => editor.updateBlock(id, { props: { previewWidth: value } }));
         }

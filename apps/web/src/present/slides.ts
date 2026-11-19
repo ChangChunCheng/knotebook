@@ -1,4 +1,5 @@
 /**
+ * Pure functions (no DOM, no Y.Doc). Only top-level blocks count; child blocks go with their parent.
  * Relative levels: the smallest level among top-level headings = L1 (chapter, horizontal), the smallest level greater than L1
  * = L2 (section, vertical; may not exist); deeper headings stay inside the slide. A divider starts a new chapter.
  * The cover chapter always exists with ID `_title`. An empty slide (kind not heading/cover and all blocks blank) is skipped;

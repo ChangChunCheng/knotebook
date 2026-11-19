@@ -7,6 +7,7 @@ import { COLUMN_LIST_TYPE, COLUMN_TYPE } from "@knotebook/shared";
  * Multi-selection is decided on the expanded set (core requires the clicked block to be in `blocks`, which fails across columns). A clicked block whose ancestor columnList is in the set also counts, but
  * not ordinary parent blocks: otherwise selecting one word in a parent and opening ⋮⋮ on a child would delete the parent with its unselected siblings.
  * With no column / row items the result equals core's rule.
+ * Anything that would need core internals or fight core selection/undo falls back to core behaviour.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's three generic parameters (repo convention)

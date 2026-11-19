@@ -2,7 +2,7 @@
  * - PM also calls `transformPasted` for in-site drags (`view.dragging.slice`), so "a dropped row at a non-top-level point → flatten" lives here; `handleDOMEvents.drop` only records the drop point. External drag-ins use the drop point too.
  * - Core's `transformPasted` runs before plugins: in a table cell blocks are already inline content plus line breaks, so rows aren't visible here.
  * - The slice is closed at top level because PM's `Slice.maxOpen` would split the row (first column merged into the caret paragraph, plus an extra empty column);
- *   cost: pasting at the start of a non-empty paragraph adds an empty paragraph.
+ *   cost: with paragraph + row + paragraph the first paragraph doesn't merge into the caret paragraph, and pasting at the start of a non-empty paragraph adds an empty paragraph.
  * - Single-column rows here come from copying inside a column (external single-column HTML is rejected by shared `columns.ts`), rebuilt by PM from `data-pm-slice`'s open context.
  * `Slice` / `Fragment` aren't available at value level in apps/web, so the constructor is taken from the slice passed in.
  */

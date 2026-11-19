@@ -62,17 +62,18 @@ export function createMarkdownLinkExtension({ editorRef, siteLinks }: { editorRe
             if (!editor) return null;
             // Doesn't fire while any suggestion menu is open (`shown()` is shared across triggers, also true for the `/` menu), matching the existing precedence of the `[[` detection.
             // Known limitation: a link can't be typed while a menu is open; Esc closes it.
+            // To block only `[[`, compare `menu.store.state?.triggerCharacter === "[["` (not on the extension itself) and update this limitation and its test names.
             if (editor.getExtension(SuggestionMenu)?.shown?.()) return null;
 
             const scanned = text.length > MAX_LINK_SCAN ? text.slice(-MAX_LINK_SCAN) : text;
             const hit = resolveTrailingMarkdownLink(editor, scanned);
             if (!hit) return null;
-            // Truncation reintroduces a left-boundary blind spot: the parser is immune to `\[` and `![` only because it sees the character left of `[`.
+            // Truncation reintroduces a left-boundary blind spot: the parser is immune to `\[` and `![` only because it sees the character left of `[`; a match reaching the truncated left edge hides it, so it is rejected.
             if (scanned.length < text.length && hit.matchedLength === scanned.length) return null;
 
             const index = scanned.length - hit.matchedLength;
             // `run()` computes the document range as `match[0].length - text.length`, so `text` must be the reconstructed string including the trailing `)`.
-            // `index` is relative to the truncated `scanned` while tiptap sets `result.input` to the untruncated `text`; `run()` reads neither.
+            // `index` is relative to the truncated `scanned` while tiptap sets `result.input` to the untruncated `text`; `run()` reads neither. The two disagree after truncation, so don't compute positions from `match.index`/`match.input`.
             return { text: scanned.slice(index), index, data: { href: hit.href, label: hit.text } };
           },
           handler: ({ state, range, match, chain }) => {

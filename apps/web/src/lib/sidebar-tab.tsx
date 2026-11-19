@@ -46,7 +46,11 @@ export function writeSidebarTab(tab: SidebarTab): void {
 }
 
 export interface SidebarTabActions {
-  /** `reveal: false` switches the tab without moving the screen (e.g. restoring the pre-tour tab). */
+  /**
+   * Switching to another tab ends selection (clicking the current one does not); by default it brings the list into view
+   * (phone: back to the list; floating: opens the drawer). `reveal: false` switches the tab without moving the screen
+   * (e.g. restoring the pre-tour tab).
+   */
   showTab: (tab: SidebarTab, options?: { reveal?: boolean }) => void;
   updateSelection: (op: SelectionOp) => void;
   endSelectionIfActive: () => boolean;

@@ -200,7 +200,7 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
     },
 
     onCollabState(state: CollabState) {
-      // Repeated calls are no-ops when `latch !== "403"`, so no edge detection is needed.
+      // The only way out of the 403 latch: reconnected with role back to editor+. Repeated calls are no-ops when `latch !== "403"`, so no edge detection is needed.
       if (latch === "403" && state.phase === "connected" && canEdit(state.role)) {
         latch = "none";
         attemptSubmit();

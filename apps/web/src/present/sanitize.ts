@@ -9,6 +9,7 @@ import { COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, COLUMNS_STYLE } from "@knotebook/sh
  * - Private instance: mermaid 11 attaches persistent hooks to DOMPurify's default singleton, and ours would affect mermaid's
  *   sanitizing. Use only `DOMPurify(window)` (source guard in sanitize.test.ts).
  * - Hooks are registered once at module top level (addHook inside a function would stack a layer per call).
+ * - The element hook runs before the attribute hook: whether an `input` is kept is decided in `uponSanitizeElement`.
  * - `ADD_URI_SAFE_ATTR`: the allowlisted data-* values are not URLs and must not go through the URI check ("Meeting: notes" would be deleted).
  * - A lowercase `data:` is the form DOMPurify itself lets through (DATA_URI_TAGS) and that we have to block.
  */

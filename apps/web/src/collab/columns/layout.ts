@@ -1,4 +1,4 @@
-// The three pixel constants equal the columns section of `index.css` (`gap`, two `min-width`s); change both together (`columns-css.guard.test.ts` compares them).
+// The three pixel constants equal the columns section of `index.css` (`gap`, two `min-width`s); change both together (`columns-css.guard.test.ts` compares them). Design values.
 import { COLUMN_TYPE } from "@knotebook/shared";
 
 export const COLUMN_GAP_PX = 24;

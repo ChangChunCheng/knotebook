@@ -24,6 +24,7 @@ export function isTerminal(state: CollabState): boolean {
   return state.phase === "kicked" || state.phase === "deleted";
 }
 
+// Use this, not `isTerminal`, for stopping reconnects, `disconnect()` and making editing (editor, title, versions, presentation) read-only.
 // ⚠ `outdated` must not be added to `isTerminal`: that would trigger NotePage's toast + redirect to `/`.
 export function stopsReconnect(state: CollabState): boolean {
   return isTerminal(state) || state.phase === "outdated";

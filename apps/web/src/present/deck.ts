@@ -128,8 +128,8 @@ export function withoutTransition(revealEl: HTMLElement, run: () => void): void 
   try {
     run();
   } finally {
-    // reveal 6.0.2's slide() reads offsetWidth / offsetHeight after changing classes, which reflows for us; this line is a
-    // safeguard that does not depend on that. Re-check when upgrading reveal.
+    // Without a reflow before removing the class, a pure-DOM change still animates. reveal 6.0.2's slide() happens to reflow
+    // (it reads offsetWidth / offsetHeight after changing classes); this line doesn't rely on that. Re-check when upgrading reveal.
     void revealEl.offsetHeight;
     revealEl.classList.remove(NO_TRANSITION_CLASS);
   }

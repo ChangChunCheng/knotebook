@@ -1,6 +1,7 @@
 /**
  * Must **not** import reveal (entry side). Handles only fullscreen we requested ourselves (owned / pending / exitWanted):
  * an exit wanted while pending is performed by whichever comes first, the resolve or fullscreenchange.
+ * Every exit goes through safeExit(), and every finalization point clears exitWanted. All call sites run before navigate.
  * Explicit leaves call exitOwnedFullscreen() directly; unmount-style leaves (shell, NotePage / PublicNotePage unmount) go
  * through exitFullscreenIfLeftPresentation() in present-url.ts.
  */

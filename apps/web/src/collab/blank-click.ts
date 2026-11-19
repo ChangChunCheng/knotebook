@@ -1,6 +1,7 @@
 /**
- * A press on blank space outside `.bn-editor` only blurs the editor and leaves a NodeSelection frame (image / code / mermaid)
- * in place; clicks there come through here to turn it into a caret.
+ * A press on blank space outside `.bn-editor` (column padding, the area beside the column) only blurs the editor and leaves a
+ * NodeSelection frame (image / code / mermaid) in place; so does one on the editor root or its container below the last block.
+ * Clicks there come through here to turn it into a caret.
  */
 
 interface SelectionLike {

@@ -41,6 +41,7 @@ export interface ReadonlyNoteEditorOptionsInput {
 }
 
 // Anonymous visitors have no session, so `/api/uploads/:id` would 401: `resolveFileUrl` is {@link publicMediaUrl}. No editing options are attached: a read-only page has no input path, so they'd only add attack surface.
+// `editable={false}` comes from PublicNoteEditor's BlockNoteView.
 export function buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, language }: ReadonlyNoteEditorOptionsInput) {
   const resolvePublicUrl = publicMediaUrl(publicRef);
   return withCollaboration({

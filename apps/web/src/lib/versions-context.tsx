@@ -5,7 +5,8 @@ import { PHONE_QUERY, isPhone } from "@/lib/layout-tiers";
 
 /**
  * Without a provider it returns a no-op default (`enabled: false`): the AI components' test host (`test/ai-host.tsx`) and
- * the sidebar's per-row ⋮ (outside the provider) rely on it.
+ * the sidebar's per-row ⋮ (outside the provider) rely on it, so every entry point renders only when `enabled`.
+ * open() opens `sheet` below 640, otherwise `panel` (floating at 640-1279, third column from 1280).
  * Crossing 640 closes the panel and preview; crossing 1280 keeps them (same component, list scroll kept).
  */
 
@@ -46,7 +47,8 @@ export interface VersionsContextValue {
   onlyChanges: boolean;
   /** List filter (#258), one for the whole site in localStorage; **not reset when the note changes**. Affects only the list and compare options. */
   kindFilter: VersionKindFilter;
-  /** Reported by `VersionPreview`, the only one that can measure the width. */
+  /** Content box ≥ `SPLIT_MIN_WIDTH` and not `forceSingle`; when false the banner hides the side-by-side / single buttons.
+   * Reported by `VersionPreview`, the only one that can measure the width. */
   previewWide: boolean;
   /** A "side by side" chosen while narrow stays in `splitMode` and resumes when wide again. "Differences only" works only in single column. */
   splitActive: boolean;

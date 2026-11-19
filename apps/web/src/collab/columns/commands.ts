@@ -14,6 +14,7 @@ export function canInsertColumns(editor: AnyEditor): boolean {
   return block.type !== "table" && editor.getParentBlock(block.id) === undefined;
 }
 
+// A block with children isn't empty: replacing it would lose them, so the row is inserted after it instead.
 function isEmptyParagraph(block: { type: string; content?: unknown; children: unknown[] }): boolean {
   return block.type === "paragraph" && Array.isArray(block.content) && block.content.length === 0 && block.children.length === 0;
 }

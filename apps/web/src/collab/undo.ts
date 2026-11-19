@@ -16,7 +16,11 @@ import type { UndoManager } from "yjs";
  * The manager is deliberately not rebuilt: `destroy()` keeps `undoStack`/`redoStack`, so
  * re-subscribing revives the history, whereas a rebuild drops it; and the old instance holds the
  * plugin's `stack-item-added` listener (cursor restore), so the later `destroy()` would tear down
- * the wrong object.
+ * the wrong object. Selection restore also survives the remount: the stack-item selection meta is
+ * keyed by `binding`, a single plugin-level instance.
+ *
+ * No cross-note bleed: each note gets its own Y.Doc/provider and `useCreateBlockNote` deps are
+ * `[doc, provider]`, so switching notes builds a new editor and a new UndoManager.
  */
 
 interface YUndoPluginState {
@@ -41,7 +45,7 @@ export function armCollabUndoManager(manager: UndoManager): void {
   // Without it undo works but redo is dead: undo's origin is the manager itself, and an untracked origin makes the handler return early.
   manager.trackedOrigins.add(manager);
   manager.doc.on("afterTransaction", manager.afterTransactionHandler);
-  // Symmetry with `destroy()`; `super.destroy()` clears subscriptions anyway, but this avoids a leak if the unmount order ever changes.
+  // Symmetry with `destroy()`; `super.destroy()` clears subscriptions anyway, but this avoids a leak if the unmount order ever changes. `destroy` is bound in the UndoManager constructor, so passing it unbound is safe.
   manager.doc.on("destroy", manager.destroy);
 }
 
@@ -93,7 +97,9 @@ const DENORMALIZE_ORIGIN = "knotebook:undo-denormalize";
 const guardedManagers = new WeakMap<UndoManager, () => void>();
 
 /**
- * Idempotent. Hooks the public `captureTransaction` option (yjs 13.6.32) and wraps `redo`, which
+ * Idempotent. Hooks the public `captureTransaction` option (yjs 13.6.32) to refuse discriminator
+ * hits (so `afterTransactionHandler` returns early: redoStack survives and the normalization stays
+ * off undoStack), and wraps `redo`, which
  * must first clear the refused normalization; otherwise the restored content sits next to it as
  * two parallel blockGroups (PM renders only the first, so redo looks like it did nothing).
  *
@@ -113,7 +119,7 @@ export function guardEmptyDocNormalization(manager: UndoManager): void {
     invalidate();
     return;
   }
-  // Duck-typed like `isXmlElement`.
+  // scope[0] is the collab fragment yUndoPlugin was built with; duck-typed like `isXmlElement`.
   const fragment = manager.scope[0] as unknown as { length: number; get: (index: number) => unknown; delete: (index: number, length: number) => void };
   if (typeof fragment?.get !== "function" || typeof fragment.delete !== "function") return;
 
@@ -161,6 +167,7 @@ export function guardEmptyDocNormalization(manager: UndoManager): void {
 
 // Arm now and on every mount: under StrictMode the remount's onMount fires while our onMount subscription is torn down
 // (the re-run effect's immediate arm catches it); an editable flip doesn't re-run the effect, so only onMount sees it.
+// Each half is pinned in `undo.test.tsx` (removing `arm()` fails only the StrictMode test, removing `onMount` only the `editable` tests).
 export function keepCollabUndoAlive(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor: BlockNoteEditor<any, any, any>,
@@ -180,6 +187,7 @@ export function useCollabUndoLifeline(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor: BlockNoteEditor<any, any, any>,
 ): void {
-  // Layout effect so re-subscribing lands in the same commit as the ref attach.
+  // Layout effect only so re-subscribing lands in the same commit as the ref attach (no visible
+  // frame with undo detached); the arm order above also holds for useEffect, which would work too.
   useLayoutEffect(() => keepCollabUndoAlive(editor), [editor]);
 }

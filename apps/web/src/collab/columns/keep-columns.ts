@@ -4,6 +4,7 @@ import { removeAndInsertBlocks, type Block, type BlockIdentifier, type BlockNote
  * Our own removals / replacements skip column cleanup: core's `removeBlocks` / `replaceBlocks` run `fixColumnList`, which removes an emptied column and flattens a one-column row.
  * `removeAndInsertBlocks(…, { fixColumns: false })` keeps the columns (an emptied one gets an empty paragraph from PM's replace fitter). In collaboration, B deleting the image
  * in the sibling column with core's `removeBlocks` would flatten the row and eat A's text in the remaining column. (guard: `keep-columns.guard.test.ts`)
+ * Out of scope: core's own keyboard paths (table and code-block delete keys) still collapse columns.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's three generic parameters (repo convention)

@@ -1,3 +1,4 @@
+// Runs on the predicted doc (X removed), then the real one; targets are re-found by id so both give the same step positions.
 // A separate module so `edge-drop.ts` calls it through a module import and tests can `vi.spyOn` it (calls within one module use local bindings).
 import { COLUMN_LIST_TYPE, COLUMN_TYPE, COLUMNS_MAX } from "@knotebook/shared";
 import type { EditorView } from "prosemirror-view";

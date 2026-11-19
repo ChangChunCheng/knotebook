@@ -39,8 +39,9 @@ export function focusAfterRemove({ trigger, instance, nextId, prevId }: RemoveCo
 }
 
 /**
- * Waits a macrotask: TanStack Query notifies observers via setTimeout(0) before mutateAsync
- * resolves and React re-renders in a microtask, so the row is unmounted by then.
+ * Relies on TanStack Query queuing its setTimeout(0) observer notification at onSuccess's
+ * setQueryData (before mutateAsync resolves) and React re-rendering in a microtask, so one
+ * macrotask later the row is unmounted.
  */
 export function focusAfterRemoveLater(ctx: RemoveContext): void {
   window.setTimeout(() => focusAfterRemove(ctx), 0);

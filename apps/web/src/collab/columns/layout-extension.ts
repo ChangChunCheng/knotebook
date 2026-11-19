@@ -2,7 +2,7 @@
  * Stacking and image-column marking are node decorations on rows and columns (`data-stacked`, `data-kb-col-kind`), not direct DOM edits: PM's DOMObserver would read those as
  * document changes (jsdom can't show this; e2e covers it). No `style` is emitted: a column's renderHTML writes `flex:N 1 0` and a decoration style would override it.
  * - Attached to the block spec rather than an editor option: every `noteSchema` editor needs it and read-only options forbid `_tiptapOptions`. `withColumnsLayout` returns a new object so the headless
- *   schema (server) doesn't pick the plugin up.
+ *   schema (server) doesn't pick the plugin up. The presentation export schema carries it too but never mounts, so the plugin view never runs.
  * - `view()` scans once on creation: a static read-only editor gets no `update()` without transactions.
  * - A column's kind changes with its content while the row width stays the same, so ResizeObserver doesn't fire; on document change recompute with the last measured width (keyed by row id).
  */

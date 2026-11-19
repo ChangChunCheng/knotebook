@@ -1,6 +1,8 @@
 import type { Location } from "react-router";
 
 /**
+ * Phone panel back stack: the first-level ‹ closes the sheet and reopens the menu it was opened
+ * from, if any (deep links, buttons and shortcuts only close).
  * Only one panel exists at a time, so only the latest callback is remembered; history state holds
  * only serializable values, hence the token. `forgetPanelReturn` on close so a later navigation
  * with the same token (e.g. a reload) only closes without reopening.

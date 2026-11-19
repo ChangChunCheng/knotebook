@@ -1,4 +1,5 @@
 /**
+ * Touch only (pointerType, not viewport width); shared by links, wikilinks and presence avatars.
  * Android fires `contextmenu` at the moment of a long press (its threshold can be shorter than
  * 500 ms), so one arriving mid-press is intercepted; a mouse right-click is not. After a long
  * press the browser may send mousedown/mouseup/click on release, which `suppressing()` tells the

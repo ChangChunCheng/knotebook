@@ -1,11 +1,11 @@
 /**
  * Backspace at a column's start / Delete at a column's end. Core leaves an extra empty paragraph here, removes the row's other empty columns, misplaces the block,
- * and Delete at the end of the last column of a row at the document end throws.
+ * and Delete at the end of the last column of a row at the document end throws. Not about lost text (core keeps it); about structure, order and the throw.
  * - Doesn't call `fixColumnList`: it removes all empty columns of the row, including ones left empty on purpose. A source column that became empty is deleted; when the row would be left with
  *   two columns, the other column's content replaces the row in one step (deleting the column first in two steps makes PM add an empty column back).
  * - `priority: 1000`: must run before core's Backspace/Delete chain (50); return false to hand back.
  * - `undoInputRule` is tried first: it is the first step of core's Backspace chain, which we pre-empt, so otherwise a just-fired input rule couldn't be undone.
- * - Delete excludes code blocks: core deletes an empty code block and collapses the column.
+ * - Delete in a code block is left to core's own code-block Delete (which deletes an empty code block and collapses the column); the swallow cases skip it too.
  * - Tests need a real keydown (`view.someProp("handleKeyDown", …)`); `commands.keyboardShortcut()` replays multi-step transactions and measures artifacts.
  */
 import { Extension, isTextSelection, type Editor } from "@tiptap/core";
@@ -28,7 +28,7 @@ function edgeContext(state: Editor["state"]): EdgeContext | null {
   const { selection } = state;
   if (!isTextSelection(selection) || !selection.empty) return null;
   const { $from } = selection;
-  // Right after the document loads, y-prosemirror's _forceRerender can leave a TextSelection whose parent is a column at the row's start.
+  // When a document that starts with a row has just loaded, y-prosemirror's _forceRerender can leave a TextSelection whose parent is a column.
   if (!$from.parent.isTextblock) return null;
   const ctx = columnContextOf($from as Any);
   if (!ctx) return null;
@@ -85,6 +85,7 @@ function apply(editor: BnEditor, state: Editor["state"], build: (tr: Any) => num
   return true;
 }
 
+// tiptap callbacks only get the tiptap editor; `transact` / `asUndoStep` need the BlockNote one, so it comes from `editorRef` (as in markdown-link).
 export function createColumnEdgeKeymapExtension(opts: { editorRef: EditorRef }): Extension {
   return Extension.create({
     name: "knotebookColumnEdgeKeys",

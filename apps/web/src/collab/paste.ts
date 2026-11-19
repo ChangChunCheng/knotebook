@@ -10,6 +10,7 @@
 
 import { collectBlockIds, convertPastedMermaidBlocks, type MermaidPasteEditor } from "./mermaid-paste";
 
+// `mode` is a VS Code languageId (`.md` gives `markdown`); `md` doesn't occur in practice and `mdx` only with the MDX extension, but both are harmless.
 // Not covered, so still code blocks: `quarto`, `rmd`, `mdc`, and `plaintext` when there is no language association.
 const MARKDOWN_LANGUAGE_MODES = new Set(["markdown", "md", "mdx"]);
 
@@ -124,6 +125,7 @@ type DefaultPasteHandler = (options?: {
   plainTextAsMarkdown?: boolean;
 }) => boolean | undefined;
 
+// Same check as BlockNote's default flow (`$from` and `$to` parents both `spec.code`).
 // Not `getTextCursorPosition()`: it converts the surrounding blocks via `nodeToBlock` (a dozen throw points), and a throw here silently disables the whole paste.
 function isCursorInCodeBlock(editor: PasteTargetEditor): boolean {
   return editor.transact(
@@ -131,7 +133,7 @@ function isCursorInCodeBlock(editor: PasteTargetEditor): boolean {
   );
 }
 
-/** Errors thrown by before/after are swallowed; they only skip the conversion. */
+/** `before` runs before the paste inserts anything; `after` after the insertion and the mermaid conversion. Errors thrown by either are swallowed; they only skip the conversion. */
 export interface PasteConversionHook {
   before(editor: unknown): unknown;
   after(editor: unknown, snapshot: unknown): void;

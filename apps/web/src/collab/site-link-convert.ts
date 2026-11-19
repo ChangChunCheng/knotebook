@@ -49,8 +49,8 @@ function convertLinks(tr: Any, links: readonly SiteLinkRange[], env: SiteLinkEnv
  * Not local actions: `y-sync$` (remote, undo/redo), our own conversion, and drops/pastes, which
  * each have one owner (`withSiteLinkDrop`, `createSiteLinkPasteHook`). The link mark from the
  * paste rule (also run on drop) arrives in a separate appended tr; if the plugin took it too, a
- * cache miss would queue the same link twice for the fallback (a late second request could
- * convert it back after an undo).
+ * cache miss would queue the same link twice for the fallback (doubling its share of the cap; a
+ * late second request could convert it back after an undo).
  */
 function isForeign(tr: Any): boolean {
   const ui = tr.getMeta("uiEvent");
@@ -188,7 +188,7 @@ export async function runFallbackConversion(
     }),
   );
   // After unmount tiptap's `view` is a stub (`isDestroyed` false, dispatch hits a detached state),
-  // so check BlockNote's `headless` instead.
+  // so check BlockNote's `headless` instead (it flips synchronously on tiptap mount/unmount).
   if (resolved.size === 0 || !editor || editor.headless) return 0;
   const view = editor._tiptapEditor.view;
   // Match href and text inside blocks that still exist, so links edited meanwhile aren't converted.
@@ -205,7 +205,8 @@ export async function runFallbackConversion(
 
 /**
  * Converts the range `recordPasteRanges` recorded rather than block ids, so an inline paste
- * that keeps block ids is caught too. An empty range (pure deletion) is skipped:
+ * that keeps block ids is caught too, and pasted text identical to adjacent existing text isn't
+ * mistaken for the pasted copy. An empty range (pure deletion) is skipped:
  * `collectSiteLinks`' point ranges include endpoints and would pick up an adjacent existing link.
  */
 export function createSiteLinkPasteHook(envRef: SiteLinkEnvRef): PasteConversionHook {

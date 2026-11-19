@@ -2,8 +2,9 @@ import * as Y from "yjs";
 
 /**
  * Soft check: the server does not check browser collab updates, so actions that insert a lot at
- * once (paste, drop, in-app AI apply) estimate "current size + growth" first. The estimate has
- * error; REST, MCP and batch write-back are still checked exactly by the server. When the raw
+ * once (paste, drop, in-app AI apply) estimate "current size + growth" first. Typing is not
+ * blocked and deletion is always allowed. The estimate's error can let a note slightly exceed the
+ * limit; REST, MCP and batch write-back are still checked exactly by the server. When the raw
  * size would block, a garbage-collected copy is measured instead, because the UndoManager keeps
  * locally deleted tombstones that the server collects ({@link noteStateBytes}).
  */
@@ -31,7 +32,10 @@ export function utf8Bytes(s: string): number {
   return encoder.encode(s).byteLength;
 }
 
-/** Re-measures a garbage-collected copy only above `remeasureAbove`: about 5x the cost of a raw encode. */
+/**
+ * Re-measures a garbage-collected copy only above `remeasureAbove` (the size that would block or
+ * warn): about 5x the cost of a raw encode and proportional to the whole doc.
+ */
 export function noteStateBytes(doc: Y.Doc, remeasureAbove?: number): number {
   const raw = Y.encodeStateAsUpdate(doc);
   if (remeasureAbove === undefined || raw.byteLength <= remeasureAbove) return raw.byteLength;
@@ -152,7 +156,10 @@ export function formatNoteLimit(bytes: number): string {
   return `${Number.isInteger(kb) ? kb : Math.max(kb, 0.1).toFixed(1)} KB`;
 }
 
-/** Reads doc and limit at call time: a closure fixed at editor creation must see current values. */
+/**
+ * Returned fn: true = over the limit, notify() already called, don't insert. Reads doc and limit
+ * at call time: a closure fixed at editor creation must see current values.
+ */
 export function createNoteSizeGuard(getDoc: () => Y.Doc, getLimit: () => number | undefined, notify: (limitBytes: number) => void): (growthBytes: number) => boolean {
   return growthBytes => {
     const limit = getLimit();

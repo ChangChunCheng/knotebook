@@ -23,6 +23,7 @@ interface YSyncState {
 
 export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number | null {
   if (typeof cursor !== "object" || cursor === null) return null;
+  // Only `head`: the caret is at the moving end of a selection.
   const head = (cursor as { head?: unknown }).head;
   if (head == null) return null;
   const plugin = editor.getExtension("ySync")?.prosemirrorPlugins?.[0];
@@ -54,6 +55,7 @@ export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number |
 }
 
 // On phones the document scrolls, not the container (`lib/page-scroll.ts`): scroll the document instead, to 1/3 of the visible height below the header.
+// Doesn't change the selection or take focus.
 export function createCursorScroller({ editor, getRoot }: { editor: AnyEditor; getRoot: () => HTMLElement | null }): CursorScroller {
   return (cursor) => {
     const root = getRoot();

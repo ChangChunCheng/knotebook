@@ -5,7 +5,7 @@ import { createContext, useContext } from "react";
 export type ShortcutsStartPage = "tour" | "global";
 
 export interface ShortcutsDialogApi {
-  /** `reopenMenu`: on phones the "‹" of the item list closes the dialog and calls it. */
+  /** `returnFocusTo` defaults to the element focused at open; `page` defaults to "global"; `reopenMenu`: on phones the "‹" of the item list closes the dialog and calls it (omitted: only closes). */
   open: (returnFocusTo?: HTMLElement | null, page?: ShortcutsStartPage, reopenMenu?: () => void) => void;
 }
 

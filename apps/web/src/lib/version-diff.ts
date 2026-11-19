@@ -139,7 +139,8 @@ const LATIN_OR_DIGIT = /[\p{Script=Latin}\p{Nd}]/u;
 const SEPARATOR = /[\s\p{P}]/u;
 
 /**
- * A run of Latin letters/digits is one token, every other character its own. Character bigrams are too loose for English
+ * A run of Latin letters/digits is one token; whitespace and punctuation only separate; every other character (CJK,
+ * emoji, U+FFFC) is its own token, per code point. Character bigrams are too loose for English
  * (unrelated paragraphs often pass 0.5); token bigrams are word pairs for English and character pairs for CJK.
  */
 function tokensOf(text: string): string[] {
@@ -346,6 +347,8 @@ function diffLevel(a: readonly DiffBlock[], b: readonly DiffBlock[], ctx: Ctx): 
     posOfB[bi] = out.length - 1;
   });
 
+  // A deletion goes after the out position of its nearest preceding paired block in a (several after one anchor keep a
+  // order), else at the start.
   // The anchor skips pairs that are empty on both sides with different ids (1b can pair a deleted empty line with a new one
   // arbitrarily far away, which would show the deletion far from where it was).
   let headInsert = 0;
@@ -545,7 +548,8 @@ function renderLevel(
     const src = (e.status === "deleted" ? e.before : e.after)!;
     const mark = markOf(e);
     const inline = e.status === "changed" && INLINE_DIFF_TYPES.has(src.type);
-    // A column-width change is visible when marked on the column itself, but the "view before/after" dialog renders a column alone and cannot show its width.
+    // A column-width change is visible when marked on the column itself, but the "view before/after" dialog renders a column alone and cannot show its width,
+    // so columns and rows are not counted as non-text changes.
     const nonText = e.status === "changed" && !inline && !ID_PAIRED_TYPES.has(src.type);
     const content = inline ? inlineDiff(e.before!.content, e.after!.content, opts.wikilinkText) : src.content;
     out.push({ ...src, id: e.key, content, children: renderLevel(e.children, marks, opts, ctx, src.type) });
@@ -596,10 +600,11 @@ export interface SplitRow {
 
 /**
  * Rows for side-by-side alignment over top-level entries (children follow their parent). Uses indexes, not ids: duplicate
- * ids would collide as `data-id` in the DOM.
+ * ids would collide as `data-id` in the DOM; each pane's top-level `.bn-block-outer` maps one-to-one to a/b in document order.
  * Anchors = paired entries with `moved === false` (matched by object identity). Pairs empty on both sides (1b can pair
  * them very far apart) are a second tier: anchors only if both indexes lie strictly between adjacent anchors, otherwise a
- * far-paired empty line would claim an anchor first and demote every genuinely unchanged block after it. Non-increasing
+ * far-paired empty line would claim an anchor first and demote every genuinely unchanged block after it. They are
+ * processed in b order, and promoted ones count as anchors for later empty pairs. Non-increasing
  * pairs are demoted. Between anchors, the unaligned a and b indexes pair up row by row; the side with extras gets null opposite.
  * Invariant: left and right (ignoring null) each strictly increase; every index of a and b appears exactly once.
  */

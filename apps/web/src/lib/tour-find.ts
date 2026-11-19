@@ -9,7 +9,8 @@ import { TOUR_TARGET_ATTR, type TourTargetId } from "@/lib/tour-targets";
 
 /**
  * The sidebar exists twice (static card and drawer) with the same attribute: while the drawer is open Radix marks
- * everything outside it `aria-hidden`, so the drawer's copy wins. CSS invisibility is not checked here.
+ * everything outside it `aria-hidden`, so the drawer's copy wins. CSS invisibility is not checked here; the tour checks
+ * element size separately.
  */
 export function findTourTarget(id: TourTargetId, root: ParentNode = document): Element | null {
   for (const el of root.querySelectorAll(`[${TOUR_TARGET_ATTR}="${id}"]`)) {

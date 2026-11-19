@@ -3,12 +3,13 @@ import { useSyncExternalStore } from "react";
 /**
  * Phone = Tailwind `sm` (640px), overlay = `xl` (1280px). Query strings use the form Tailwind
  * emits (`not all and (min-width: …)`), not range syntax, so CSS and JS classify the same width
- * identically on older browsers.
+ * identically on older browsers. JS imports these constants/hooks; don't write matchMedia(...)
+ * elsewhere.
  */
 export const PHONE_QUERY = "not all and (min-width: 40rem)";
 export const OVERLAY_QUERY = "not all and (min-width: 80rem)";
 export const NO_HOVER_QUERY = "(hover: none)";
-/** Heading outline only (Tailwind `md`); not a layout tier. */
+/** Heading outline only: below Tailwind `md` it uses the bubble + bottom sheet instead of the rail; not a layout tier. */
 export const OUTLINE_COMPACT_QUERY = "not all and (min-width: 48rem)";
 
 function matches(query: string): boolean {
