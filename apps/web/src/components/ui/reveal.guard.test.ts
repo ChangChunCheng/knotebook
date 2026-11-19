@@ -2,22 +2,22 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * 來源層守衛：hover 浮出（`ui/reveal.ts` 的 `BASE`／`SCOPE`）與側欄拖曳把手的線
- * （`PaneResizeHandle.tsx`，側欄與版本面板共用）的 class 必須是**完整字面**。
+ * Source-level guard: the classes for hover reveal (`BASE` / `SCOPE` in `ui/reveal.ts`) and the sidebar drag handle's line
+ * (`PaneResizeHandle.tsx`, shared by the sidebar and the versions panel) must be complete literals.
  *
- * 守的是：完整字面被改成樣板拼接（`` `group-hover/${scope}:…` ``）——Tailwind v4 靜態掃描原始碼
- * 產生 CSS，拼出來的 class 撈不到、靜默不產生；jsdom 測試只斷言 class 字串，照綠；而 build 產物
- * grep 也是盲的，因為 Tailwind 連測試檔一起掃，測試檔逐字寫著同一批 class 會把它們補回產物
- * 。所以只有讀原始碼的守衛看得到這個形。也因為會被補回，樣板化在今天的產物裡
- * 其實還是對的——它是**潛伏回歸**：等哪天測試改寫、刪掉那些字面（本檔自己也逐字寫著幾條），才會靜默壞掉。
+ * It guards against the complete literals being turned into template concatenation (`` `group-hover/${scope}:…` ``): Tailwind v4 generates CSS by statically
+ * scanning source, so assembled classes are not found and silently produce nothing; jsdom tests only assert class strings and stay green;
+ * and a grep of the build output is blind to it too, because Tailwind scans test files as well, and test files that spell out the same classes
+ * add them back into the output. So only a guard that reads the source sees this shape. Because they get added back, templating is still correct
+ * in today's output: it is a latent regression that breaks silently once the tests are rewritten and drop those literals (this file itself also spells out a few).
  *
- * 守不到的：字面本身打錯字、或 class 名不存在（照樣是完整字面，這裡放行）；用 `+` 串接字串拼出來
- * 的形（本檔只找 `${` 與反引號）；`BASE`／`SCOPE`／把手線以外的地方。
+ * Not caught: a typo in the literal or a nonexistent class name (still a complete literal, so it passes); forms built with `+` string concatenation
+ * (this file looks only for `${` and backticks); anywhere other than `BASE` / `SCOPE` / the handle line.
  *
- * 掃描語意：對 raw 原始碼切出片段——`reveal.ts` 從 `const BASE =` 到 `SCOPE` 物件字面的結尾
- * `};`；`PaneResizeHandle.tsx` 取含 `w-0.5 rounded-full` 錨點的那一行。錨點失效會先紅（reveal.ts：錨點索引
- * 斷言；PaneResizeHandle：含錨點的行恰好 1 行——錨點消失或被抄進註解多出一行都紅），不會因為改了寫法就默默變成
- * 掃空字串。
+ * Scan semantics: fragments are cut from the raw source: for `reveal.ts` from `const BASE =` to the end `};` of the `SCOPE` object literal;
+ * for `PaneResizeHandle.tsx` the line containing the `w-0.5 rounded-full` anchor. A stale anchor fails first (reveal.ts: the anchor index
+ * assertion; PaneResizeHandle: exactly one line must contain the anchor, so the anchor disappearing or being copied into a comment fails either way), so a changed spelling
+ * cannot silently turn into scanning an empty string.
  */
 
 const root = `${process.cwd()}/src`;
@@ -30,11 +30,11 @@ function between(source: string, start: string, end: string): string {
   return source.slice(from, to + end.length);
 }
 
-describe("hover 浮出與拖曳把手的 class 來源層守衛", () => {
-  it("reveal.ts 的 BASE 與 SCOPE 是完整字面（沒有樣板拼接）", () => {
+describe("source-level guard for hover-reveal and drag-handle classes", () => {
+  it("BASE and SCOPE in reveal.ts are complete literals (no template concatenation)", () => {
     const source = readFileSync(`${root}/components/ui/reveal.ts`, "utf8").replace(/\r\n/g, "\n");
     const segment = between(source, "const BASE =", "\n};");
-    // 片段真的涵蓋四個 scope（錨點沒漂走）。
+    // proves the segment really spans all four scopes (the anchor has not drifted)
     for (const scope of ["grouprow", "noterow", "folderrow", "avatarcell"]) {
       expect(segment).toContain(`group-hover/${scope}:opacity-100`);
     }
@@ -43,7 +43,7 @@ describe("hover 浮出與拖曳把手的 class 來源層守衛", () => {
     expect(segment).not.toContain("`");
   });
 
-  it("reveal.ts 的 REVEAL_ONLY 是完整字面（沒有樣板拼接），且觸控兩種判準都隱藏", () => {
+  it("REVEAL_ONLY in reveal.ts is a complete literal (no template concatenation) and is hidden under both touch criteria", () => {
     const source = readFileSync(`${root}/components/ui/reveal.ts`, "utf8").replace(/\r\n/g, "\n");
     const segment = between(source, "const REVEAL_ONLY =", "\n} as const;");
     expect(segment).toContain("group-hover/noterow:opacity-100");
@@ -53,7 +53,7 @@ describe("hover 浮出與拖曳把手的 class 來源層守衛", () => {
     expect(segment).not.toContain("`");
   });
 
-  it("PaneResizeHandle.tsx 把手線的 class 是完整字面（沒有樣板拼接）", () => {
+  it("the handle line's class in PaneResizeHandle.tsx is a complete literal (no template concatenation)", () => {
     const source = readFileSync(`${root}/components/PaneResizeHandle.tsx`, "utf8").replace(/\r\n/g, "\n");
     const lines = source.split("\n").filter((line) => line.includes("w-0.5 rounded-full"));
     expect(lines).toHaveLength(1);

@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { Input } from "./input";
 
 /**
- * 觸控裝置上輸入欄位字級 16px（iOS Safari 聚焦字級小於 16px 的欄位會把整頁放大）。
- * jsdom 不套 CSS，這裡守來源的 class 字面；真正的 computed font-size 在瀏覽器量。
+ * Input fields use 16px text on touch devices (iOS Safari zooms the whole page when focusing a field smaller than 16px).
+ * jsdom applies no CSS, so this guards the class literals in source; the real computed font-size must be measured in a browser.
  */
 
 const TOKEN = "pointer-coarse:text-base";
@@ -26,7 +26,7 @@ function sourceFiles(dir = ""): string[] {
   return out;
 }
 
-/** 剝掉區塊註解與行尾 `//` 註解，避免註解裡的字面干擾。 */
+/** Strip block comments and trailing `//` comments so literals in comments do not interfere. */
 function code(path: string): string {
   return readFileSync(`${root}/${path}`, "utf8")
     .replace(/\r\n/g, "\n")
@@ -34,7 +34,7 @@ function code(path: string): string {
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
-/** 從開頭 `<` 往後走到標籤結尾 `>`（略過字串與 `{}` 內的 `=>`）。 */
+/** From the opening `<` to the tag closing `>` (skipping strings and `=>` inside `{}`). */
 function tagEnd(source: string, from: number): number {
   let depth = 0;
   let quote: string | null = null;
@@ -50,7 +50,6 @@ function tagEnd(source: string, from: number): number {
   return source.length;
 }
 
-/** 字串常值（雙引號、單引號）裡的 class token。 */
 function literalTokens(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(/"([^"]*)"|'([^']*)'/g)) out.push(...(m[1] ?? m[2] ?? "").split(/\s+/).filter(Boolean));
@@ -58,8 +57,8 @@ function literalTokens(text: string): string[] {
 }
 
 /**
- * 標籤 className 的 class token：只看 className 的值（字串常值、`{...}` 裡的字串常值，以及它引用的同檔 const 的字串常值），
- * 不看別的屬性。比對時整個 token 要完全相等，`sm:text-base`、`placeholder:text-lg`、`data-x="…"` 都不算。
+ * A tag's className class tokens: only the className value is read (string literals, string literals inside `{...}`, and string literals of same-file consts it references),
+ * not other attributes. A token must match exactly: `sm:text-base`, `placeholder:text-lg` and `data-x="..."` do not count.
  */
 function classTokens(tag: string, source: string): string[] {
   const at = tag.indexOf("className=");
@@ -85,8 +84,8 @@ function classTokens(tag: string, source: string): string[] {
   return out;
 }
 
-describe("輸入欄位基底", () => {
-  it("Input：觸控 16px；呼叫端寫死的 text-[13px] 不會把它吃掉（twMerge 不合併不同 variant）", () => {
+describe("input field base", () => {
+  it("Input: 16px on touch; a caller's hard-coded text-[13px] does not swallow it (twMerge does not merge different variants)", () => {
     const { container } = render(<Input className="h-8 text-[13px]" />);
     const set = tokens(container.querySelector("input")!.className);
     expect(set.has(TOKEN)).toBe(true);
@@ -94,26 +93,24 @@ describe("輸入欄位基底", () => {
   });
 });
 
-describe("程式碼區塊語言下拉（BlockNote 內建原生 select）", () => {
-  it("index.css：觸控時字級 16px，選擇器與上一條 12px 規則一致、未分層", () => {
+describe("code block language dropdown (BlockNote's built-in native select)", () => {
+  it("index.css: 16px text on touch, with the same selector as the preceding 12px rule and not layered", () => {
     const css = readFileSync(`${root}/index.css`, "utf8").replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "");
     const selector = ".bn-editor .bn-block-content[data-content-type=codeBlock] > div > select";
     const blocks = css.match(/@media \(pointer: coarse\)\s*\{(?:[^{}]|\{[^{}]*\})*\}/g) ?? [];
     const rule = blocks.find((block) => block.includes(selector));
     expect(rule, "沒有 pointer: coarse 區塊處理語言下拉").toBeDefined();
     expect(rule).toMatch(/font-size:\s*var\(--text-base\)/);
-    // 要排在 12px 那條規則之後（同 specificity，後者勝）。
+    // It must come after the 12px rule (same specificity, the later one wins).
     expect(css.indexOf(rule!)).toBeGreaterThan(css.indexOf(`${selector} {`));
   });
 });
 
-describe("原生 input／select／textarea 都有觸控 16px", () => {
-  // 不吃字級的 input 型別。
+describe("native input / select / textarea all have 16px on touch", () => {
   const NON_TEXT = /type="(?:checkbox|radio|range|file|hidden)"/;
-  // 已經大於等於 16px 的字級，不需要觸控另設。
   const BIG = /^text-(?:base|lg|xl|\d?xl)$/;
 
-  it("每個原生欄位的 class（含同檔 const 引用）帶 pointer-coarse:text-base，或本來就 ≥ 16px", () => {
+  it("every native field's classes (including same-file const references) carry pointer-coarse:text-base or are already >= 16px", () => {
     const missing: string[] = [];
     for (const path of sourceFiles()) {
       if (path === "components/ui/input.tsx") continue;

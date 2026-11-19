@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 describe("toast action", () => {
-  it("action：渲染動作鈕、點擊呼叫 onClick 並關閉該 toast", async () => {
+  it("action: renders the action button; a click calls onClick and closes that toast", async () => {
     const onClick = vi.fn();
     render(<Toaster />);
     const store = renderHook(() => useToasts());
@@ -23,13 +23,13 @@ describe("toast action", () => {
     expect(screen.queryByText("x")).toBeNull();
   });
 
-  it("action.altText 有給就用它、沒給才退回 label", async () => {
+  it("action.altText is used when given and label is the fallback", async () => {
     render(<Toaster />);
     act(() => {
       toast({ title: "a", action: { label: "Open", onClick: vi.fn(), altText: "Copy is in My notes" } });
     });
     await screen.findByRole("button", { name: "Open" });
-    // 依賴 @radix-ui/react-toast 的內部屬性 data-radix-toast-announce-alt（非公開 API）；升級改名會讓此測試變紅（不會假綠），屆時對照 Radix 原始碼更新選擇器。
+    // Relies on the internal attribute data-radix-toast-announce-alt of @radix-ui/react-toast (not public API); a rename on upgrade turns this test red (no false green), and then the selector must be updated against Radix's source.
     expect(document.querySelector('[data-radix-toast-announce-alt="Copy is in My notes"]')).not.toBeNull();
     act(() => dismissAllToasts());
     act(() => {
@@ -41,7 +41,7 @@ describe("toast action", () => {
 });
 
 describe("toast viewport safe area", () => {
-  it("四邊內距都是 max(16px, safe area)：瀏海、Home 指示條與橫拿的側邊下不被蓋住", () => {
+  it("padding on all four sides is max(16px, safe area): not covered by the notch, the home indicator or the sides in landscape", () => {
     render(<Toaster />);
     const viewport = document.querySelector("ol");
     expect(viewport).not.toBeNull();

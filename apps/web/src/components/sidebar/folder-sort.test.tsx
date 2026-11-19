@@ -19,11 +19,11 @@ function SortProbe({ id, folderId }: { id: string; folderId: string }) {
 }
 
 describe("folder-sort store", () => {
-  it("FS1 沒存過 → recent", () => {
+  it("nothing stored -> recent", () => {
     expect(folderSortOf("f1")).toBe("recent");
   });
 
-  it("FS2 setFolderSort(\"f1\",\"name\") → localStorage 存字面值、folderSortOf 回 name；\"recent\" 也寫字面值", () => {
+  it("setFolderSort(\"f1\",\"name\") stores the literal value in localStorage and folderSortOf returns name; \"recent\" is also written literally", () => {
     setFolderSort("f1", "name");
     expect(localStorage.getItem("sidebar.sort.folder:f1")).toBe("name");
     expect(folderSortOf("f1")).toBe("name");
@@ -31,12 +31,12 @@ describe("folder-sort store", () => {
     expect(localStorage.getItem("sidebar.sort.folder:f1")).toBe("recent");
   });
 
-  it("FS3 存的值不認得 → 預設", () => {
+  it("unrecognized stored value -> default", () => {
     localStorage.setItem("sidebar.sort.folder:f1", "bogus");
     expect(folderSortOf("f1")).toBe("recent");
   });
 
-  it("FS4 setItem 丟例外 → 覆蓋層生效（先查覆蓋層：localStorage 裡的舊值不會蓋掉剛選的）", () => {
+  it("setItem throws -> the overlay takes effect (it is checked first, so an old localStorage value does not override the fresh choice)", () => {
     localStorage.setItem("sidebar.sort.folder:f1", "size");
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwQuota);
     expect(() => setFolderSort("f1", "name")).not.toThrow();
@@ -44,14 +44,14 @@ describe("folder-sort store", () => {
     expect(folderSortOf("f1")).toBe("name");
   });
 
-  it("FS4b getItem 丟例外 → folderSortOf 回預設、useFolderSort 不崩", () => {
+  it("getItem throws -> folderSortOf returns the default and useFolderSort does not crash", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(throwQuota);
     expect(folderSortOf("f1")).toBe("recent");
     render(<SortProbe id="a" folderId="f1" />);
     expect(screen.getByTestId("a")).toHaveTextContent("recent");
   });
 
-  it("FS5 同一 id 兩個元件：一處改另一處重繪；setFolderSort 後 useFolderSortOf 換新函式且查得到新值，沒變動時重繪回同一個", () => {
+  it("two components on one id: a change in one re-renders the other; after setFolderSort useFolderSortOf returns a new function that sees the new value, and without a change re-renders return the same one", () => {
     const seen: Array<(folderId: string) => FolderSort> = [];
     function SortOfProbe({ tick }: { tick: number }) {
       seen.push(useFolderSortOf());

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import i18n from "@/i18n";
 import { SidebarLazyBoundary } from "./SidebarLazyBoundary";
 
-// 錯誤訊息照 Chromium 的裸動態 import 失敗措辭（ErrorBoundary.tsx 的 CHUNK_ERROR_PATTERNS）。
+// Error text follows Chromium's wording for a failed bare dynamic import (CHUNK_ERROR_PATTERNS in ErrorBoundary.tsx).
 function Boom(): never {
   throw new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/SelectLazy-abc.js");
 }
@@ -29,7 +29,7 @@ describe("SidebarLazyBoundary", () => {
     sessionStorage.clear();
   });
 
-  it("LB1 chunk=\"select\" 第一次失敗：用 select 自己的額度重載一次，trash 的額度不動", async () => {
+  it("chunk=\"select\" first failure: reloads once using select's own allowance, trash's allowance is untouched", async () => {
     render(
       <SidebarLazyBoundary chunk="select" fallback={null}>
         <Boom />
@@ -40,7 +40,7 @@ describe("SidebarLazyBoundary", () => {
     expect(sessionStorage.getItem(TRASH_FLAG)).toBeNull();
   });
 
-  it("LB2 select 的額度已用過：不重載，原位顯示錯誤＋重試，errorClassName 套在外框", async () => {
+  it("select's allowance already used: no reload; error plus retry shown in place, errorClassName applied to the outer frame", async () => {
     sessionStorage.setItem(SELECT_FLAG, "1");
     render(
       <SidebarLazyBoundary chunk="select" fallback={null} errorClassName="kb-test-frame">
@@ -54,7 +54,7 @@ describe("SidebarLazyBoundary", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it("LB4 chunk=\"folder\" 第一次失敗：用 folder 自己的額度重載一次，select／trash 的額度不動", async () => {
+  it("chunk=\"folder\" first failure: reloads once using folder's own allowance, select's and trash's allowances are untouched", async () => {
     render(
       <SidebarLazyBoundary chunk="folder" fallback={null}>
         <Boom />
@@ -66,7 +66,7 @@ describe("SidebarLazyBoundary", () => {
     expect(sessionStorage.getItem(TRASH_FLAG)).toBeNull();
   });
 
-  it("LB3 chunk=\"select\" 載入成功：清掉 select 自己的額度，trash 的額度不動", async () => {
+  it("chunk=\"select\" loads successfully: clears select's own allowance, trash's allowance is untouched", async () => {
     sessionStorage.setItem(SELECT_FLAG, "1");
     sessionStorage.setItem(TRASH_FLAG, "1");
     render(

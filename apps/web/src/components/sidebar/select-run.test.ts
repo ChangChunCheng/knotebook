@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { SidebarTabActions } from "@/lib/sidebar-tab";
 import { beginSelectRun, endSelectRun, updateSelectRun, useSelectRun } from "./select-run";
 
-// 批次進行中的 provider 層 store（#181，RN1–RN4）。store 是模組層：每案新建 owner（前一案失敗不連累下一案）。
+// Provider-level store for in-progress batches (#181). The store is module-level, so each test creates a fresh owner to keep a failure from carrying into the next test.
 
 function owner(): SidebarTabActions {
   return {
@@ -16,7 +16,7 @@ function owner(): SidebarTabActions {
 }
 
 describe("select-run", () => {
-  it("RN1 同一 owner：第一次 begin true、第二次 false；end 後又可 begin", () => {
+  it("same owner: first begin is true, second is false; begin works again after end", () => {
     const a = owner();
     expect(beginSelectRun(a, 2)).toBe(true);
     expect(beginSelectRun(a, 2)).toBe(false);
@@ -25,7 +25,7 @@ describe("select-run", () => {
     endSelectRun(a);
   });
 
-  it("RN2 兩個 owner 互不影響", () => {
+  it("two owners do not affect each other", () => {
     const a = owner();
     const b = owner();
     expect(beginSelectRun(a, 2)).toBe(true);
@@ -38,7 +38,7 @@ describe("select-run", () => {
     act(() => endSelectRun(b));
   });
 
-  it("RN3 兩個讀者在 update 後一起重繪、讀到同一個 progress；end 後都回 null", () => {
+  it("two readers re-render together after update and read the same progress; both return null after end", () => {
     const a = owner();
     const first = renderHook(() => useSelectRun(a));
     const second = renderHook(() => useSelectRun(a));
@@ -54,7 +54,7 @@ describe("select-run", () => {
     expect(second.result.current).toBeNull();
   });
 
-  it("RN4 begin 之後 progress 是 { done: 0, total }", () => {
+  it("after begin, progress is { done: 0, total }", () => {
     const a = owner();
     const view = renderHook(() => useSelectRun(a));
     act(() => {

@@ -13,41 +13,39 @@ import {
 } from "./article-column";
 
 /**
- * 文章欄的**共用守衛**（#115 改版後；體例比照 `rows.equal-height.test.ts`）。
+ * Shared guard for the article column (after #115; same pattern as `rows.equal-height.test.ts`).
  *
- * #115 起頁首／頁尾回到滿卡寬（置左置右）；文章欄的消費端是內文欄本身——站內編輯器、
- * 公開頁、版本預覽單欄（#297 起三段寬度經 `articleColumn(width)` 取得）。jsdom 不套 CSS、
- * 算不出左緣座標，單元層能守的三件事：
+ * Since #115 the header and footer span the full card width (left/right aligned); the article column's consumers are the body column itself: the in-site editor,
+ * the public page and the single-column version preview (since #297 the three widths come from `articleColumn(width)`). jsdom applies no CSS and cannot compute
+ * left-edge coordinates, so the unit level can guard these things:
  *
- *   (a) 常數字面固定（消費端的斷言是從常數推導的同義反覆，鑑別力全靠這一條）
- *   (c) BlockNote 那 54px 是升版哨兵——54 已無生產端消費者，但 `<md` 的
- *       `.bn-editor.bn-editor{padding-inline:1.25rem}` 覆寫（index.css）是以
- *       「原值 54」為前提做的設計，升版改掉要紅給人重新評估，不是靜默錯開
- *   (d) 三個消費端都經 `articleColumn()` 取欄寬、三段 class 只寫在 article-column.ts；
- *       頁首（NotePage）／頁尾（BacklinksSection）**不得**把欄加回去
+ *   - the constant literals are fixed (the consumers' assertions are derived from the constants and are tautologies, so this pin is what gives them teeth)
+ *   - BlockNote's 54px is an upgrade sentinel: 54 no longer has a production consumer, but the `<md` override
+ *     `.bn-editor.bn-editor{padding-inline:1.25rem}` (index.css) was designed assuming the original value 54; an upgrade that changes it must fail
+ *     so someone re-evaluates it, not silently misalign
+ *   - all three consumers get the column width via `articleColumn()` and the three width classes are written only in article-column.ts;
+ *     the header (NotePage) and footer (BacklinksSection) must not add the column back
  *
- *   (e) `<md` 的對齊耦合：index.css 覆寫的 `1.25rem`（20px）＝頁首/頁尾的 `px-5`
- *       （20px）。#88 時代這種推導由案 (b) 釘住（70 = 16 + 54），拆掉 (b) 之後
- *       這條 20↔20 就是新的無守衛缺口——這裡把三邊的字面綁在一起。
+ *   - `<md` alignment coupling: the `1.25rem` (20px) override in index.css equals the header/footer `px-5` (20px). Nothing else ties these two 20px values together, so
+ *     the literals on the three sides are tied together here.
  *
- *   (f) #465 釘住大綱時欄讓出的寬度（`standard-pinned` 字面裡的 rem）與大綱的面板寬、
- *       間距、面板右緣離容器右緣的常數綁在一起；`canPinOutline` 的門檻也從同一個保留寬度推得。
+ *   - when #465 pins the outline, the width the column yields (the rem in the `standard-pinned` literal) is tied to the outline's panel width,
+ *     the gap, and the constant for the panel's right-edge distance from the container's right edge; the `canPinOutline` threshold derives from the same reserved width.
  *
- * 守不到的（誠實邊界）：
- *   - 把常數本身改成別的值——單一消費端下仍是合法操作。
- *   - `<md` 覆寫是否真的進 build 產物——jsdom 讀不到 dist，(e) 只讀 src；靠
- *     build 後 `grep "bn-editor.bn-editor" apps/web/dist/assets/*.css`（見
- *     index.css 註解）。
+ * Not guarded (honest limits):
+ *   - changing a constant itself to another value: still a legitimate operation with a single consumer.
+ *   - whether the `<md` override really ends up in the build output: jsdom cannot read dist and the `<md` check reads only src;
+ *     check it after a build with `grep "bn-editor.bn-editor" apps/web/dist/assets/*.css` (see the comment in index.css).
  */
 
-/** 消費端：內文欄的三處（#297 起都經 `articleColumn(width)`）。 */
+/** Consumers: the body column's three places (since #297 all via `articleColumn(width)`). */
 const CONSUMERS = [
   { label: "內文（NoteEditor 置中 wrapper）", path: "src/components/NoteEditor.tsx" },
   { label: "公開頁（PublicNotePage）", path: "src/pages/PublicNotePage.tsx" },
   { label: "版本預覽單欄（VersionPreview）", path: "src/components/versions/VersionPreview.tsx" },
 ] as const;
 
-/** 不得把欄加回去的兩個舊消費端（#115 前是頁首／頁尾）。 */
+/** The two former consumers that must not add the column back (before #115 they were the header / footer). */
 const NON_CONSUMERS = [
   { label: "頁首（NotePage）", path: "src/pages/NotePage.tsx" },
   { label: "頁尾（BacklinksSection）", path: "src/components/BacklinksSection.tsx" },
@@ -57,23 +55,21 @@ function readSource(relativePath: string): string {
   return readFileSync(`${process.cwd()}/${relativePath}`, "utf8");
 }
 
-/** 剝掉註解，避免註解裡提到的 class 字樣影響結構判斷。 */
+/** Strip comments so class names mentioned in comments do not affect the structure checks. */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
-/** `src/` 下所有 .ts／.tsx（相對 web 根、`/` 分隔）。 */
 function listSources(): string[] {
   return readdirSync(`${process.cwd()}/src`, { recursive: true, encoding: "utf8" })
     .map((p) => `src/${p.replace(/\\/g, "/")}`)
     .filter((p) => /\.tsx?$/.test(p));
 }
 
-describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 articleColumn）", () => {
-  it("(a) 常數字面固定", () => {
+describe("article column guard (#115 header/footer span the full card width; #297 three widths via articleColumn)", () => {
+  it("constant literals are fixed", () => {
     expect(ARTICLE_COLUMN).toBe("mx-auto w-full max-w-[clamp(42.5rem,85%,66rem)]");
     expect(ARTICLE_COLUMN_PADDING).toBe("px-4 max-md:px-0");
-    // #297：三段寬度；標準＝上面那條舊字串。#465：再加釘住大綱時的標準寬。
     expect(ARTICLE_COLUMN_MAX).toEqual({
       standard: "max-w-[clamp(42.5rem,85%,66rem)]",
       wide: "max-w-[clamp(42.5rem,92.5%,88rem)]",
@@ -86,7 +82,7 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     expect(articleColumn("wide")).toBe("mx-auto w-full max-w-[clamp(42.5rem,92.5%,88rem)]");
     expect(articleColumn("full")).toBe("mx-auto w-full max-w-none");
 
-    // #465 釘住：不帶選項時與上面同形；過場只加在標準寬的兩態，未釘住要明寫 left-0（`left: auto` 不能過場）。
+    // Pinned (#465): without options it has the same shape as above; the transition is added only to the standard width's two states, and unpinned must say left-0 explicitly (`left: auto` cannot transition).
     expect(ARTICLE_COLUMN_PIN_MOTION).toBe("transition-[max-width,left] duration-150 ease-out motion-reduce:transition-none");
     expect(articleColumn("standard-pinned")).toBe(
       "mx-auto w-full max-w-[min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem))] left-[min(0px,calc((100%_-_min(clamp(42.5rem,85%,66rem),calc(100%_-_17.875rem)))/2_-_17.875rem))]",
@@ -101,36 +97,34 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     expect(articleColumn("full", { pinMotion: true })).toBe("mx-auto w-full max-w-none");
     expect(articleColumn("standard", { pinMotion: false })).toBe(ARTICLE_COLUMN);
 
-    // 釘住只對標準寬有效。
     expect(articleColumnState("standard", true)).toBe("standard-pinned");
     expect(articleColumnState("standard", false)).toBe("standard");
     expect(articleColumnState("wide", true)).toBe("wide");
     expect(articleColumnState("full", true)).toBe("full");
   });
 
-  it("(c) BlockNote `.bn-editor` 的 padding-inline 仍是常數宣告的 54px（升版哨兵）", () => {
-    // 讀**實際載入的那一份**：`NoteEditor.tsx` 只 import `@blocknote/mantine/style.css`，
-    // 它 `@import` 進 `@blocknote/react/style.css`（後者再帶進 core 的樣式）。core 的
-    // dist 只是其中一層，單讀它的話「mantine／react 那層覆寫了 padding」會靜默漏掉
-    // ——而那正是這條要防的情境。讀 react bundle 的路徑寫法比照
-    // `theme.blocknote-vars.test.ts` 的既有慣例。
+  it("BlockNote `.bn-editor` padding-inline is still the 54px the constant declares (upgrade sentinel)", () => {
+    // Read the file that is actually loaded: `NoteEditor.tsx` imports only `@blocknote/mantine/style.css`, which `@import`s
+    // `@blocknote/react/style.css` (which pulls in core's styles). Core's dist is just one layer; reading only it would silently miss
+    // a padding override from the mantine/react layer, which is exactly what this guards against. The way the react bundle path is read follows
+    // the existing convention in `theme.blocknote-vars.test.ts`.
     const cssPath = `${process.cwd()}/node_modules/@blocknote/react/dist/style.css`;
     const css = readFileSync(cssPath, "utf8");
 
-    // dist 是 minify 過的單行。只取**選擇器就是 `.bn-editor` 本身**的規則：前一個
-    // 字元必須是規則邊界（`}`／`,`／檔首），否則 `.bn-comment-editor .bn-editor{padding:0}`
-    // 這種後代形也會被算進來（那條是留言編輯器的，與文章欄無關）。
+    // dist is minified into one line. Take only rules whose selector is `.bn-editor` itself: the previous character must be a rule boundary
+    // (`}`, `,` or start of file), otherwise a descendant form like `.bn-comment-editor .bn-editor{padding:0}`
+    // (the comment editor's, unrelated to the article column) would be counted.
     const bareRules = [...css.matchAll(/(?:^|[},])\s*\.bn-editor\s*\{([^}]*)\}/g)].map((match) => match[1]);
     expect(bareRules.length, `${cssPath} 找不到裸 \`.bn-editor{…}\` 規則`).toBeGreaterThan(0);
 
-    // 跨所有裸規則收集 padding 宣告：**恰好一條、且就是 54px**。多一條（後面某層加了
-    // 覆寫、由後者勝出）或值變了都會紅——只斷「有出現 54px」的話，後面補一條
-    // `padding-inline:16px` 依然全綠而版面靜默錯開。
+    // Collect padding declarations across all bare rules: exactly one, and it is 54px. An extra one (an override added by a later layer wins) or a changed value
+    // fails; asserting only that 54px appears would stay green after a later `padding-inline:16px` is added
+    // while the layout silently misaligns.
     const paddings = bareRules.flatMap((decls) => [...decls.matchAll(/padding(?:-inline)?\s*:\s*[^;]+/g)].map((m) => m[0]));
     expect(paddings).toEqual([`padding-inline:${BN_EDITOR_INLINE_PADDING_PX}px`]);
   });
 
-  it("(d) 三個消費端經 articleColumn() 取欄寬；三段 class 只在 article-column.ts；頁首/頁尾不得把欄加回去", () => {
+  it("the three consumers get the column width via articleColumn(); the three width classes are only in article-column.ts; the header/footer must not add the column back", () => {
     for (const { label, path } of CONSUMERS) {
       const source = readSource(path);
       const importLine = /import \{([^}]*)\} from "@\/components\/ui\/article-column";/.exec(source);
@@ -138,13 +132,13 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
       expect(/\barticleColumn\b/.test(importLine![1]), `${label} 的 import 應含 articleColumn`).toBe(true);
       const code = stripComments(source);
       expect(/\barticleColumn\(/.test(code), `${label} 應實際呼叫 articleColumn(…)`).toBe(true);
-      // 欄寬的單一真相在 article-column.ts：消費端不得繞過函式自寫任何一段的 max-w。
+      // The single source of the column width is article-column.ts: consumers must not bypass the function by writing any width's max-w themselves.
       expect(code, `${label} 不得自寫 clamp 欄寬`).not.toMatch(/max-w-\[clamp\(/);
       expect(code, `${label} 不得自寫全寬 class`).not.toMatch(/max-w-none/);
     }
 
-    // 全 src 掃一次：article-column.ts 之外沒有人寫文章欄的 clamp（下限 42.5rem 是它的指紋；
-    // 釘住那態把 clamp 包在 min() 裡，所以不限定 `max-w-[` 開頭）。
+    // Scan all of src once: nobody outside article-column.ts writes the article column's clamp (the 42.5rem lower bound is its fingerprint;
+    // the pinned state wraps the clamp in min(), so the match does not require starting with `max-w-[`).
     const offenders = listSources()
       .filter((p) => !/\.test\./.test(p) && p !== "src/components/ui/article-column.ts")
       .filter((p) => /clamp\(42\.5rem/.test(stripComments(readSource(p))));
@@ -152,17 +146,17 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
 
     for (const { label, path } of NON_CONSUMERS) {
       const code = stripComments(readSource(path));
-      // #115：頁首/頁尾滿卡寬。把欄（或自寫 clamp）加回去＝回到 #88 前後那種
-      // 「三處對齊」布局，是刻意拆掉的行為，不得靜默復活。
+      // #115: header/footer span the full card width. Adding the column (or a hand-written clamp) back would restore the pre-#88 style of
+      // three aligned places, which was deliberately removed and must not silently return.
       expect(code, `${label}（${path}）不得 import/使用文章欄常數`).not.toMatch(/article-column/);
       expect(code, `${label} 不得自己寫死欄寬`).not.toMatch(/max-w-\[clamp\(/);
     }
   });
 
-  it("(e) `<md` 對齊耦合：index.css 覆寫的 20px ＝ 頁首/頁尾的 px-5", () => {
-    // index.css 那半：`@media (width < 48rem)` 內的 `.bn-editor.bn-editor` 覆寫。
-    // 只認疊 class 形——寫回裸 `.bn-editor` 會輸給 BlockNote 的 (0,1,0)（載入順序
-    // 必晚於本檔），這條斷言讓「降級成裸選擇器」當場紅，而不是靜默不生效。
+  it("`<md` alignment coupling: the 20px override in index.css = the header/footer px-5", () => {
+    // The index.css half: the `.bn-editor.bn-editor` override inside `@media (width < 48rem)`.
+    // Only the stacked-class form is accepted: a bare `.bn-editor` would lose to BlockNote's (0,1,0) (its CSS loads after this file),
+    // and this assertion fails at once on a downgrade to the bare selector instead of it silently not applying.
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8");
     const override = /@media \(width < 48rem\)\s*\{[^{}]*\.bn-editor\.bn-editor\s*\{([^}]*)\}/.exec(css);
     expect(override, "index.css 應有 `<md` 的 `.bn-editor.bn-editor` 疊 class 覆寫").not.toBeNull();
@@ -170,18 +164,16 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     expect(value, "覆寫應宣告 padding-inline（rem）").not.toBeNull();
     const overridePx = Number(value![1]) * 16;
 
-    // 頁首/頁尾那半：兩個非消費端都用 `px-5`（Tailwind spacing scale：5 × 4 = 20px）。
     for (const { label, path } of NON_CONSUMERS) {
       expect(/\bpx-5\b/.test(stripComments(readSource(path))), `${label} 應用 px-5 滿卡寬內距`).toBe(true);
     }
     expect(overridePx, "`<md` 內文左緣應與頁首/頁尾的 px-5（20px）共線").toBe(5 * 4);
   });
 
-  it("(f) 釘住保留的寬度與大綱常數綁在一起", () => {
+  it("the reserved width when pinned is tied to the outline constants", () => {
     const pinned = ARTICLE_COLUMN_MAX["standard-pinned"];
     const standardClamp = /^max-w-\[(clamp\([^)]*\))\]$/.exec(ARTICLE_COLUMN_MAX.standard)![1];
 
-    // 欄寬：min(標準欄寬, 容器 − 保留)。
     const maxPart = /^max-w-\[(min\((clamp\([^)]*\)),calc\(100%_-_([\d.]+)rem\)\))\] /.exec(pinned);
     expect(maxPart, "standard-pinned 應以 max-w-[min(標準 clamp, calc(100% - Nrem))] 開頭").not.toBeNull();
     const [, columnWidth, innerClamp, reserveRem] = maxPart!;
@@ -190,13 +182,11 @@ describe("文章欄守衛（#115 頁首/頁尾滿卡寬；#297 三段寬度經 a
     expect(reservePx, "保留＝面板＋間距＋面板右緣離容器右緣").toBe(OUTLINE_PIN_RESERVED_WIDTH);
     expect(reservePx).toBe(286);
 
-    // 位移：置中後右側空白不到「面板＋間距＋面板右緣離容器右緣」才往左讓，且用的是同一個欄寬式。
     const leftPart = /left-\[min\(0px,calc\(\(100%_-_(.+)\)\/2_-_([\d.]+)rem\)\)\]$/.exec(pinned);
     expect(leftPart, "standard-pinned 應以 left-[min(0px, calc((100% - 欄寬)/2 - Nrem))] 結尾").not.toBeNull();
     expect(leftPart![1], "left 的欄寬式應與 max-w 相同").toBe(columnWidth);
     expect(Number(leftPart![2]) * 16, "欄右緣離容器右緣至少面板＋間距＋面板右緣離容器右緣").toBe(OUTLINE_PIN_RESERVED_WIDTH);
 
-    // 能不能釘：剩下的欄寬至少 OUTLINE_MIN_PINNED_COLUMN。
     expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx - 1)).toBe(false);
     expect(canPinOutline(OUTLINE_MIN_PINNED_COLUMN + reservePx)).toBe(true);
     expect(canPinOutline(925)).toBe(false);

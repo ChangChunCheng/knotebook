@@ -3,11 +3,9 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dismissAllToasts, dismissToast, toast, useToasts } from "./toast";
 
-// 回歸測試：apps/web/src/components/ui/toast.tsx 的 id 產生器曾用
-// crypto.randomUUID()，在非 secure context（LAN plain-http，
-// 正當拓撲）該 API 不存在 → toast() 每次呼叫都拋 TypeError。這裡用
-// vi.stubGlobal 模擬「沒有 randomUUID」的 crypto 形狀，確認 toast()
-// 不再依賴它。
+// Regression: the id generator in apps/web/src/components/ui/toast.tsx used crypto.randomUUID(), which does not exist in a non-secure context
+// (plain-http LAN, a legitimate topology), so every toast() call threw TypeError. vi.stubGlobal fakes a crypto
+// without randomUUID and checks that toast() no longer depends on it.
 
 afterEach(() => {
   dismissAllToasts();
@@ -16,7 +14,6 @@ afterEach(() => {
 
 describe("toast()", () => {
   it("does not throw when crypto.randomUUID is unavailable (non-secure context)", () => {
-    // 模擬非 secure context 的 crypto 形狀——存在但沒有 randomUUID。
     vi.stubGlobal("crypto", {});
 
     let id = "";
@@ -49,16 +46,14 @@ describe("toast()", () => {
     expect(result.current.map((t) => t.id)).toEqual([id2]);
   });
 
-  it("#115：viewport 帶 pointer-events-none、toast item 帶 pointer-events-auto（成對不變量）", () => {
-    // 源碼掃描（本檔是 .ts、渲染 Radix viewport 又需要 provider 整組）：空 viewport
-    // 是右下角一塊 fixed 命中區，缺 `pointer-events-none` 會擋住右下角歷史泡泡的下緣；
-    // 但這個 class 只有在 item 自帶 `pointer-events-auto` 時才安全——兩者成對，
-    // 拆開任一半都要紅。
+  it("#115: the viewport carries pointer-events-none and the toast item carries pointer-events-auto (a pair)", () => {
+    // Source scan (this file is .ts, and rendering the Radix viewport needs the whole provider set): an empty viewport is a fixed hit area at the bottom right,
+    // and without `pointer-events-none` it would block the lower edge of the bottom-right history bubble; but that class is safe only when the item
+    // carries `pointer-events-auto` itself. The two come as a pair: removing either half must turn it red.
     //
-    // ⚠ 掃描前必須剝掉 `//` 註解（比照 theme.* 系列守衛慣例）：toast.tsx 的
-    // 說明註解本身就含這兩個字面量，不剝的話「守衛守住的是自己的註解」——
-    // 第一版正是這樣被突變測試（把兩個 class 都拔掉仍 4/4 綠）翻案的。錨定也
-    // 收緊到**帶引號的 class 字面量開頭**，不吃 cn(...) 區塊裡的任意文字。
+    // Strip `//` comments before scanning (same convention as the theme.* guards): toast.tsx's explanatory comments contain these two literals,
+    // and without stripping the guard would be guarding its own comments. Anchoring is also tightened to the start of a quoted class literal,
+    // not arbitrary text inside the cn(...) block.
     const raw = readFileSync(`${process.cwd()}/src/components/ui/toast.tsx`, "utf8");
     const source = raw.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 

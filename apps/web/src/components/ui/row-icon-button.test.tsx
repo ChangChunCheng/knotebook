@@ -4,8 +4,8 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./dialog";
 import { Pencil, Trash } from "./icons";
 import { RowIconButton } from "./row-icon-button";
 
-describe("RowIconButton（列內動作一律 icon 鈕）", () => {
-  it("ghost＋size icon（h-8 w-8，ROW_ICON_BUTTON）；aria-label 與 title 都是 label；中性色", () => {
+describe("RowIconButton (row actions are icon buttons)", () => {
+  it("ghost with size icon (h-8 w-8, ROW_ICON_BUTTON); aria-label and title are both the label; neutral color", () => {
     render(<RowIconButton label="Edit Basic" icon={<Pencil className="h-4 w-4" />} />);
     const button = screen.getByRole("button", { name: "Edit Basic" });
     expect(button).toHaveAttribute("title", "Edit Basic");
@@ -14,14 +14,14 @@ describe("RowIconButton（列內動作一律 icon 鈕）", () => {
     expect(button.className).not.toMatch(/(^|\s)border-input(\s|$)/);
   });
 
-  it("tone=destructive：ROW_ICON_DANGER（text-destructive＋hover:bg-destructive/10），不是 destructive 變體（無 bg-destructive）", () => {
+  it("tone=destructive: ROW_ICON_DANGER (text-destructive + hover:bg-destructive/10), not the destructive variant (no bg-destructive)", () => {
     render(<RowIconButton label="Delete Basic" tone="destructive" icon={<Trash className="h-4 w-4" />} />);
     const button = screen.getByRole("button", { name: "Delete Basic" });
     expect(button).toHaveClass("text-destructive", "hover:bg-destructive/10");
     expect(button).not.toHaveClass("bg-destructive");
   });
 
-  it("softDisabled：aria-disabled（ROW_ICON_DANGER 的 aria-disabled:opacity-40 生效）＋title 換成原因；點了不呼叫 onClick；不是原生 disabled", () => {
+  it("softDisabled: aria-disabled (so ROW_ICON_DANGER's aria-disabled:opacity-40 applies) with the title replaced by the reason; clicking does not call onClick; it is not a native disabled", () => {
     const onClick = vi.fn();
     render(
       <RowIconButton label="Remove a@x" tone="destructive" softDisabled softDisabledReason="Only admin" onClick={onClick} icon={<Trash className="h-4 w-4" />} />,
@@ -35,7 +35,7 @@ describe("RowIconButton（列內動作一律 icon 鈕）", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("當 DialogTrigger asChild 的子元素：一般態點了開對話框；softDisabled 點了不開", () => {
+  it("as the child of DialogTrigger asChild: a normal button opens the dialog when clicked; a softDisabled one does not", () => {
     const { rerender } = render(
       <Dialog>
         <DialogTrigger asChild>

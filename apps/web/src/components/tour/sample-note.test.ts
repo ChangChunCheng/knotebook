@@ -22,7 +22,7 @@ afterEach(() => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
 
-/** 帶 `Y.Doc` 共編的真編輯器（不需要 provider）；沒有 collaboration 的編輯器走 prosemirror-history，不是線上那條路徑。 */
+/** Real editor with `Y.Doc` collaboration (no provider needed); an editor without collaboration uses prosemirror-history, not the production path. */
 function mountCollab(doc: Y.Doc): AnyEditor {
   const editor = BlockNoteEditor.create(
     withCollaboration({
@@ -32,14 +32,14 @@ function mountCollab(doc: Y.Doc): AnyEditor {
         fragment: doc.getXmlFragment(YDOC_FRAGMENT),
         user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's options type requires the full schema triple
     } as any),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   ) as any as AnyEditor;
   const el = document.createElement("div");
   document.body.appendChild(el);
   editor.mount(el);
-  attachTestElementRenderer(editor); // 連結的 toDOM 要它
+  attachTestElementRenderer(editor); // the link's toDOM needs it
   cleanups.push(() => {
     editor.unmount();
     el.remove();
@@ -48,7 +48,7 @@ function mountCollab(doc: Y.Doc): AnyEditor {
   return editor;
 }
 
-/** 一篇剛建好的空筆記：文件已同步、只有一個空段落。 */
+/** A fresh empty note: document synced, one empty paragraph. */
 async function mountEmptyNote(): Promise<{ editor: AnyEditor; doc: Y.Doc }> {
   const doc = new Y.Doc();
   const editor = mountCollab(doc);
@@ -76,7 +76,7 @@ const BLOCK_TYPES_WITH_AI = [
   "paragraph",
   "paragraph",
 ];
-// 沒開 AI：少了倒數第二段的 AI 句
+// without AI the second-to-last block (the AI sentence) is omitted
 const BLOCK_TYPES = BLOCK_TYPES_WITH_AI.filter((_, i) => i !== BLOCK_TYPES_WITH_AI.length - 2);
 
 describe("createSampleNote", () => {
@@ -86,7 +86,7 @@ describe("createSampleNote", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
-  it("只打一次 POST /api/notes，body 只有 title；成功後筆記清單被重抓", async () => {
+  it("sends one POST /api/notes whose body has only title; the note list is refetched after success", async () => {
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const note = await createSampleNote(queryClient, t);
@@ -99,7 +99,7 @@ describe("createSampleNote", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["notes"] });
   });
 
-  it("標題依目前介面語言", async () => {
+  it("title follows the current UI language", async () => {
     const tZh = i18n.getFixedT("zh-TW");
     await createSampleNote(new QueryClient(), tZh);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -107,7 +107,7 @@ describe("createSampleNote", () => {
     expect(tZh("tourGuide.sample.title")).not.toBe(t("tourGuide.sample.title"));
   });
 
-  it("POST 失敗 → 拋出錯誤、不重抓清單", async () => {
+  it("POST failure -> throws and does not refetch the list", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 500,
@@ -121,13 +121,13 @@ describe("createSampleNote", () => {
 });
 
 describe("seedSampleNote", () => {
-  it("空筆記 → 寫入，回傳 true，block 種類依序如預期", async () => {
+  it("empty note -> writes, returns true, block types are as expected in order", async () => {
     const { editor } = await mountEmptyNote();
     expect(seedSampleNote(editor, NOTE, t, true)).toBe(true);
     expect(types(editor)).toEqual(BLOCK_TYPES_WITH_AI);
   });
 
-  it("文件已經有內容 → 什麼都不做，回傳 false", async () => {
+  it("document already has content -> does nothing, returns false", async () => {
     const { editor } = await mountEmptyNote();
     editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "已經有字" }]);
     const before = JSON.stringify(editor.document);
@@ -135,7 +135,7 @@ describe("seedSampleNote", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  it("沒開 AI → 寫入時不放 AI 句，其餘內容不變，最後仍是空段落", async () => {
+  it("AI off -> the write omits the AI sentence, the rest is unchanged, and the last block is still an empty paragraph", async () => {
     const { editor } = await mountEmptyNote();
     expect(seedSampleNote(editor, NOTE, t, false)).toBe(true);
     expect(types(editor)).toEqual(BLOCK_TYPES);
@@ -147,9 +147,9 @@ describe("seedSampleNote", () => {
   });
 
   it.each([
-    ["只有一個流程圖", [{ type: "mermaid", props: { code: "graph LR\n  A --> B" } }]],
-    ["只有一個空標題", [{ type: "heading", props: { level: 2 } }]],
-  ])("文件%s（沒有文字的非段落 block）→ 視為有內容，不寫入", async (_name, blocks) => {
+    ["a diagram only", [{ type: "mermaid", props: { code: "graph LR\n  A --> B" } }]],
+    ["an empty heading only", [{ type: "heading", props: { level: 2 } }]],
+  ])("document with %s (non-paragraph block without text) -> counts as having content, nothing written", async (_name, blocks) => {
     const { editor } = await mountEmptyNote();
     editor.replaceBlocks(editor.document, blocks);
     const before = JSON.stringify(editor.document);
@@ -157,7 +157,7 @@ describe("seedSampleNote", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  it("連結指向筆記自己", async () => {
+  it("the link points at the note itself", async () => {
     const { editor } = await mountEmptyNote();
     seedSampleNote(editor, NOTE, t, true);
     const links = (editor.document as { content?: { type: string; props?: Record<string, string> }[] }[])
@@ -167,7 +167,7 @@ describe("seedSampleNote", () => {
     expect(links[0]!.props).toMatchObject({ targetNoteId: NOTE.id, snapshotTitle: NOTE.title });
   });
 
-  it("AI 站框選的那句在倒數第二段，最後是空段落", async () => {
+  it("the sentence selected by the AI stop is in the second-to-last paragraph and the last block is an empty paragraph", async () => {
     const blocks = buildSampleBlocks(t, NOTE, true);
     const last = blocks[blocks.length - 1]!;
     const sentence = blocks[blocks.length - 2]!;
@@ -175,7 +175,7 @@ describe("seedSampleNote", () => {
     expect(sentence).toMatchObject({ type: "paragraph", content: [{ text: t("tourGuide.sample.aiSentence") }] });
   });
 
-  it("寫入不進撤銷：寫入後撤銷，文件不變", async () => {
+  it("the write is not undoable: undo after writing leaves the document unchanged", async () => {
     const { editor } = await mountEmptyNote();
     const manager = collabUndoManager(editor)!;
     expect(manager).toBeDefined();
@@ -185,7 +185,7 @@ describe("seedSampleNote", () => {
     expect(types(editor)).toEqual(BLOCK_TYPES_WITH_AI);
   });
 
-  it("寫入是一個交易、一次 Y 更新", async () => {
+  it("the write is one transaction and one Y update", async () => {
     const { editor, doc } = await mountEmptyNote();
     await tick();
     const updates: number[] = [];
@@ -197,11 +197,11 @@ describe("seedSampleNote", () => {
     expect(updates).toHaveLength(1);
   });
 
-  it("決定要寫入之後、交易開始之前，另一個分頁的字才同步到 → 不寫入、那段字還在", async () => {
+  it("text from another tab syncs after the decision to write but before the transaction starts -> nothing is written and that text stays", async () => {
     const docA = new Y.Doc();
     const a = mountCollab(docA);
     await tick();
-    // 兩邊從同一份空文件開始，免得各自的預設段落合併成兩段
+    // Both sides start from the same empty document, so their default paragraphs do not merge into two paragraphs.
     const docB = new Y.Doc();
     Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
     const b = mountCollab(docB);
@@ -210,7 +210,7 @@ describe("seedSampleNote", () => {
     b.prosemirrorView!.dispatch(b.prosemirrorView!.state.tr.insertText("typed elsewhere"));
     await tick();
 
-    // 遠端的字在 `seedSampleNote` 開始執行之後、交易開始之前才到
+    // The remote text arrives after `seedSampleNote` has started but before the transaction begins.
     const original = a.transact.bind(a);
     vi.spyOn(a, "transact").mockImplementation(((fn: Parameters<typeof original>[0]) => {
       Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB, Y.encodeStateVector(docA)));

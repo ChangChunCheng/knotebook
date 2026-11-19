@@ -39,7 +39,7 @@ afterEach(() => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-/** 帶 Y.Doc 共編的真編輯器（掛上交易過濾外掛並 mount），登記成示範筆記的編輯器。 */
+/** Real editor with Y.Doc collaboration (the transaction-filter plugin attached and mounted), registered as the sample note's editor. */
 async function setup(
   blocks: unknown[] = [{ type: "paragraph", content: "intro" }, { type: "paragraph" }],
 ): Promise<{ doc: Y.Doc; editor: TourEditor }> {
@@ -54,9 +54,9 @@ async function setup(
         user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
       },
       _tiptapOptions: { extensions: [createTourTransactionFilterExtension()] },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's options type requires the full schema triple
     } as any),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   ) as any as TourEditor;
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -66,13 +66,12 @@ async function setup(
     el.remove();
   });
   await tick();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試用的 block 輸入
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- block input for tests
   editor.replaceBlocks(editor.document, blocks as any);
   cleanups.push(registerEditor(NOTE_ID, editor));
   return { doc, editor };
 }
 
-/** 文件的快照：block 結構＋Y 的完整狀態＋撤銷堆疊深度。 */
 function snapshot(doc: Y.Doc, editor: TourEditor) {
   return {
     blocks: JSON.stringify(editor.document),
@@ -84,22 +83,22 @@ function snapshot(doc: Y.Doc, editor: TourEditor) {
 const menuOf = (editor: TourEditor) => editor.getExtension(SuggestionMenu)!;
 
 describe("canRunLiveStop", () => {
-  it("編輯器已登記、可編輯、最後一段是空段落 → 成立", async () => {
+  it("editor registered, editable and ending with an empty paragraph -> holds", async () => {
     await setup();
     expect(canRunLiveStop(NOTE_ID)).toBe(true);
   });
 
-  it("沒有登記的編輯器（或 id 不符）→ 不成立", async () => {
+  it("no registered editor (or id mismatch) -> does not hold", async () => {
     await setup();
     expect(canRunLiveStop("other")).toBe(false);
   });
 
-  it("最後一段有字 → 不成立", async () => {
+  it("the last paragraph has text -> does not hold", async () => {
     await setup([{ type: "paragraph" }, { type: "paragraph", content: "typed" }]);
     expect(canRunLiveStop(NOTE_ID)).toBe(false);
   });
 
-  it("最後一個 block 不是段落、或段落有子 block → 不成立", async () => {
+  it("the last block is not a paragraph, or the paragraph has child blocks -> does not hold", async () => {
     await setup([{ type: "paragraph" }, { type: "heading", props: { level: 2 } }]);
     expect(canRunLiveStop(NOTE_ID)).toBe(false);
     cleanups.pop()!();
@@ -108,13 +107,13 @@ describe("canRunLiveStop", () => {
     expect(canRunLiveStop(NOTE_ID)).toBe(false);
   });
 
-  it("唯讀 → 不成立", async () => {
+  it("read-only -> does not hold", async () => {
     const { editor } = await setup();
     editor.isEditable = false;
     expect(canRunLiveStop(NOTE_ID)).toBe(false);
   });
 
-  it("讀文件時拋錯 → 不成立、不往外拋", async () => {
+  it("reading the document throws -> does not hold and does not rethrow", async () => {
     const { editor } = await setup();
     vi.spyOn(editor, "document", "get").mockImplementation(() => {
       throw new Error("boom");
@@ -124,8 +123,8 @@ describe("canRunLiveStop", () => {
   });
 });
 
-describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", () => {
-  it("開 [[ 選單：選單開著，文件、Y 狀態、撤銷堆疊都不變", async () => {
+describe("startTourTrigger / stopTourTrigger (real editor with Y.Doc)", () => {
+  it("opening the [[ menu: the menu is open and the document, Y state and undo stack are unchanged", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     expect(startTourTrigger(editor, "[[")).toBe(true);
@@ -134,7 +133,7 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect(editor._tiptapEditor.state.doc.textContent).toBe("intro");
   });
 
-  it("開 / 選單也一樣", async () => {
+  it("opening the / menu works the same", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     expect(startTourTrigger(editor, "/")).toBe(true);
@@ -142,13 +141,13 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect(snapshot(doc, editor)).toEqual(before);
   });
 
-  it("游標放進最後的空段落", async () => {
+  it("the cursor is placed in the last empty paragraph", async () => {
     const { editor } = await setup();
     startTourTrigger(editor, "[[");
     expect(editor.getTextCursorPosition().block.id).toBe(editor.document.at(-1)!.id);
   });
 
-  it("結束後選單關了、文件前後相同、選取還原", async () => {
+  it("after stopping the menu is closed, the document is identical and the selection is restored", async () => {
     const { doc, editor } = await setup();
     editor._tiptapEditor.commands.setTextSelection({ from: 3, to: 5 });
     const before = snapshot(doc, editor);
@@ -160,7 +159,7 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect([from, to]).toEqual([3, 5]);
   });
 
-  it("選單先被別人關掉再結束：不拋錯、文件不變", async () => {
+  it("the menu is closed by someone else before stopping: no throw and the document is unchanged", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     startTourTrigger(editor, "[[");
@@ -170,7 +169,7 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect(snapshot(doc, editor)).toEqual(before);
   });
 
-  it("重複開不會把游標已經移走的位置當成要還原的選取", async () => {
+  it("opening repeatedly does not treat a cursor position that has since moved as the selection to restore", async () => {
     const { editor } = await setup();
     editor._tiptapEditor.commands.setTextSelection({ from: 3, to: 5 });
     startTourTrigger(editor, "[[");
@@ -180,7 +179,7 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect([from, to]).toEqual([3, 5]);
   });
 
-  it("重複開、重複關、沒開過就關：都是空操作", async () => {
+  it("repeated open, repeated close and closing without opening are all no-ops", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     expect(() => stopTourTrigger(editor)).not.toThrow();
@@ -191,7 +190,7 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
     expect(snapshot(doc, editor)).toEqual(before);
   });
 
-  it("開著選單時，使用者打的字被擋下（過濾開著），文件不變", async () => {
+  it("while the menu is open, typing by the user is blocked (the filter is on) and the document is unchanged", async () => {
     const { doc, editor } = await setup();
     startLiveTrigger(NOTE_ID, "[[");
     const before = snapshot(doc, editor);
@@ -205,8 +204,8 @@ describe("startTourTrigger／stopTourTrigger（帶 Y.Doc 的真編輯器）", ()
   });
 });
 
-describe("startLiveTrigger／stopLiveTrigger（站點用）", () => {
-  it("進站：過濾開、選單開；離站：選單關、過濾關", async () => {
+describe("startLiveTrigger / stopLiveTrigger (for stops)", () => {
+  it("entering: filter on, menu open; leaving: menu closed, filter off", async () => {
     const { editor } = await setup();
     startLiveTrigger(NOTE_ID, "[[");
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(true);
@@ -216,7 +215,7 @@ describe("startLiveTrigger／stopLiveTrigger（站點用）", () => {
     expect(isTriggerMenuShown(editor, "[[")).toBe(false);
   });
 
-  it("關選單時拋錯：過濾照樣關掉（錯誤照常往外拋給引擎記錄）", async () => {
+  it("an error while closing the menu: the filter is still turned off (the error is rethrown for the engine to log)", async () => {
     const { editor } = await setup();
     startLiveTrigger(NOTE_ID, "[[");
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(true);
@@ -227,13 +226,13 @@ describe("startLiveTrigger／stopLiveTrigger（站點用）", () => {
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(false);
   });
 
-  it("沒有登記的編輯器：什麼都不做、不拋錯", () => {
+  it("no registered editor: does nothing and does not throw", () => {
     expect(getTourNoteEditor(NOTE_ID)).toBeNull();
     expect(() => startLiveTrigger(NOTE_ID, "[[")).not.toThrow();
     expect(() => stopLiveTrigger(NOTE_ID)).not.toThrow();
   });
 
-  it("開關不經任何註冊或拆外掛", async () => {
+  it("toggling does not register or unregister any plugin", async () => {
     const { editor } = await setup();
     const tiptap = editor._tiptapEditor;
     const register = vi.spyOn(tiptap, "registerPlugin");
@@ -247,7 +246,7 @@ describe("startLiveTrigger／stopLiveTrigger（站點用）", () => {
   });
 });
 
-/** 一個有尺寸、掛著導覽目標屬性的元素（單元測試沒有真的選單畫面，借它當選單的根）。 */
+/** An element with a size carrying the tour target attribute (unit tests have no real menu UI, so it stands in as the menu root). */
 function fakeTargetEl(id: string, parent: Element = document.body): HTMLElement {
   const el = document.createElement("div");
   el.setAttribute("data-kb-tour-target", id);
@@ -256,8 +255,8 @@ function fakeTargetEl(id: string, parent: Element = document.body): HTMLElement 
   return el;
 }
 
-describe("isTriggerMenuShown：看是哪個觸發字的選單", () => {
-  it("開的是 / 時，[[ 不算開著；開的是 [[ 時，/ 不算開著", async () => {
+describe("isTriggerMenuShown: depends on which trigger's menu it is", () => {
+  it("when / is open [[ does not count as open, and when [[ is open / does not", async () => {
     const { editor } = await setup();
     startTourTrigger(editor, "/");
     expect(isTriggerMenuShown(editor, "/")).toBe(true);
@@ -268,7 +267,7 @@ describe("isTriggerMenuShown：看是哪個觸發字的選單", () => {
     expect(isTriggerMenuShown(editor, "/")).toBe(false);
   });
 
-  it("選單關了就都不算", async () => {
+  it("with the menu closed neither counts", async () => {
     const { editor } = await setup();
     startTourTrigger(editor, "/");
     stopTourTrigger(editor);
@@ -277,8 +276,8 @@ describe("isTriggerMenuShown：看是哪個觸發字的選單", () => {
   });
 });
 
-describe("liveTriggerTarget：/ 選單", () => {
-  it("演示中、/ 選單開著：指 / 選單；上一站留在畫面上的 [[ 選單不算", async () => {
+describe("liveTriggerTarget: / menu", () => {
+  it("live and the / menu open: points at the / menu; a [[ menu left on screen by the previous stop does not count", async () => {
     const { editor } = await setup();
     const oldMenu = fakeTargetEl("wikilinkMenu");
     startTourTrigger(editor, "/");
@@ -288,7 +287,7 @@ describe("liveTriggerTarget：/ 選單", () => {
     expect(oldMenu).not.toBe(menu);
   });
 
-  it("開著的是 [[ 選單時，/ 站不當成演示（改指流程圖）", async () => {
+  it("when the open menu is the [[ menu, the / stop is not treated as live (it points at the diagram instead)", async () => {
     const { editor } = await setup();
     const chart = fakeTargetEl("flowchart", editor.domElement);
     fakeTargetEl("slashMenu");
@@ -297,7 +296,7 @@ describe("liveTriggerTarget：/ 選單", () => {
     expect(liveTriggerTarget(NOTE_ID, "/", "slashMenu", "flowchart")).toEqual([chart]);
   });
 
-  it("/ 選單關掉：改指筆記裡現成的流程圖", async () => {
+  it("/ menu closed: points at the ready-made diagram in the note", async () => {
     const { editor } = await setup();
     const chart = fakeTargetEl("flowchart", editor.domElement);
     fakeTargetEl("slashMenu");
@@ -308,7 +307,7 @@ describe("liveTriggerTarget：/ 選單", () => {
 });
 
 describe("liveTriggerTarget", () => {
-  it("演示中、選單開著：指選單；選單的畫面還沒出現時回空陣列（引擎會等）", async () => {
+  it("live with the menu open: points at the menu; when the menu UI has not appeared yet it returns an empty array (the engine waits)", async () => {
     const { editor } = await setup();
     const link = fakeTargetEl("wikilink", editor.domElement);
     startTourTrigger(editor, "[[");
@@ -318,7 +317,7 @@ describe("liveTriggerTarget", () => {
     expect(link).not.toBe(menu);
   });
 
-  it("選單因故關掉：改指筆記裡現成的成品", async () => {
+  it("the menu closed for some reason: points at the ready-made result in the note", async () => {
     const { editor } = await setup();
     const link = fakeTargetEl("wikilink", editor.domElement);
     fakeTargetEl("wikilinkMenu");
@@ -327,7 +326,7 @@ describe("liveTriggerTarget", () => {
     expect(liveTriggerTarget(NOTE_ID, "[[", "wikilinkMenu", "wikilink")).toEqual([link]);
   });
 
-  it("不是導覽開的選單（使用者自己開的）：不當成演示，指現成的成品", async () => {
+  it("a menu not opened by the tour (opened by the user): not treated as live, points at the ready-made result", async () => {
     const { editor } = await setup();
     const link = fakeTargetEl("wikilink", editor.domElement);
     fakeTargetEl("wikilinkMenu");
@@ -336,7 +335,7 @@ describe("liveTriggerTarget", () => {
     expect(liveTriggerTarget(NOTE_ID, "[[", "wikilinkMenu", "wikilink")).toEqual([link]);
   });
 
-  it("沒有在演示（靜態站）：指現成的成品，不看選單；現成的也沒有就回空陣列", async () => {
+  it("not live (static stop): points at the ready-made result, ignoring the menu; with no ready-made result it returns an empty array", async () => {
     const { editor } = await setup();
     expect(liveTriggerTarget(NOTE_ID, "[[", "wikilinkMenu", "wikilink")).toEqual([]);
     fakeTargetEl("wikilinkMenu");
@@ -344,9 +343,9 @@ describe("liveTriggerTarget", () => {
     expect(liveTriggerTarget(NOTE_ID, "[[", "wikilinkMenu", "wikilink")).toEqual([link]);
   });
 
-  it("退路只在示範筆記的編輯器裡找（別處同 id 的元素不算），找到的第一次捲進視窗、之後不再捲", async () => {
+  it("the fallback looks only inside the sample note's editor (same-id elements elsewhere do not count); a found element is scrolled into view the first time and not again", async () => {
     const { editor } = await setup();
-    fakeTargetEl("wikilink"); // 編輯器外面的同 id 元素（例如版本預覽）
+    fakeTargetEl("wikilink"); // a same-id element outside the editor (e.g. a version preview)
     expect(liveTriggerTarget(NOTE_ID, "[[", "wikilinkMenu", "wikilink")).toEqual([]);
     const link = fakeTargetEl("wikilink", editor.domElement);
     const scroll = vi.fn();
@@ -358,9 +357,9 @@ describe("liveTriggerTarget", () => {
   });
 });
 
-describe("wikilink 站點接進引擎", () => {
+describe("wikilink stop wired into the engine", () => {
   const CTX_BASE: StopContext = { searchQuery: "", aiActions: [], sampleNoteId: NOTE_ID, liveStops: true };
-  /** 站序裡跟在演示站後面的一般站：目標是一個有尺寸的元素，引擎才會立刻進站。 */
+  /** A regular stop following the live stop in the sequence: its target is an element with a size, so the engine enters it at once. */
   function lastStop(): TourStopEntry {
     const el = fakeTargetEl("userMenu");
     return { stop: { id: "userMenu", titleKey: "x", bodyKey: "x", target: () => [el] } };
@@ -373,7 +372,7 @@ describe("wikilink 站點接進引擎", () => {
     return engine;
   }
 
-  it("進站開選單與過濾；下一步、結束、卸載都收乾淨，文件不變", async () => {
+  it("entering opens the menu and filter; next, finish and unmount all clean up and the document is unchanged", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     const menu = fakeTargetEl("wikilinkMenu");
@@ -394,7 +393,7 @@ describe("wikilink 站點接進引擎", () => {
     }
   });
 
-  it("上一步回到演示站：選單重新開", async () => {
+  it("Back to the live stop: the menu opens again", async () => {
     const { editor } = await setup();
     fakeTargetEl("wikilinkMenu");
     const engine = await runStops(CTX_BASE, editor);
@@ -407,7 +406,7 @@ describe("wikilink 站點接進引擎", () => {
     engine.end("close");
   });
 
-  it("不能演示（liveStops 為 false）：不開選單、不開過濾，指現成的連結", async () => {
+  it("cannot go live (liveStops is false): no menu and no filter, points at the ready-made link", async () => {
     const { editor } = await setup();
     const engine = await runStops({ ...CTX_BASE, liveStops: false }, editor);
     expect(engine.getSnapshot().index).toBe(0);
@@ -423,7 +422,7 @@ describe("wikilink 站點接進引擎", () => {
     ["slash", "/", "overlay", "floating"],
     ["wikilink", "[[", "phone", "phone"],
     ["slash", "/", "phone", "phone"],
-  ] as const)("寬視窗以外也跑 prepare（%s 站，%s）：選單開、過濾開；一般站只有側欄浮動時不跑", async (stopId, trigger, tier: LayoutTier, layout) => {
+  ] as const)("prepare also runs outside the wide window (%s stop, %s): menu and filter on; a regular stop does not run it on a floating sidebar", async (stopId, trigger, tier: LayoutTier, layout) => {
     const { editor } = await setup();
     stubLayoutTier(tier);
     expect(tourLayout()).toBe(layout);
@@ -433,21 +432,21 @@ describe("wikilink 站點接進引擎", () => {
     stopLiveTrigger(NOTE_ID);
     const plain = vi.fn();
     prepareStop({ id: "tabs", titleKey: "x", bodyKey: "x", target: () => [], prepare: plain }, CTX_BASE);
-    // 側欄浮動時切 tab 會打開抽屜，所以一般站不跑；手機沒有抽屜，照跑。
+    // Switching tabs on a floating sidebar opens the drawer, so regular stops do not run there; phones have no drawer, so they do.
     expect(plain).toHaveBeenCalledTimes(layout === "phone" ? 1 : 0);
   });
 });
 
-describe("slash 站點接進引擎", () => {
+describe("slash stop wired into the engine", () => {
   const CTX_BASE: StopContext = { searchQuery: "", aiActions: [], sampleNoteId: NOTE_ID, liveStops: true };
   function lastStop(): TourStopEntry {
     const el = fakeTargetEl("userMenu");
     return { stop: { id: "userMenu", titleKey: "x", bodyKey: "x", target: () => [el] } };
   }
 
-  /** 兩個演示站接在一起（[[ 在前、/ 在後），選單畫面用假元素代替。 */
+  /** Two live stops chained ([[ first, / second), with a fake element standing in for the menu UI. */
   async function run(ctx: StopContext, editor: TourEditor) {
-    // 編輯器自己的 DOM 會在交易之後被 ProseMirror 重畫、把外來的假元素清掉：改讓「編輯器的 DOM」指向另一個固定的容器。
+    // The editor's own DOM is repainted by ProseMirror after a transaction, which would wipe the foreign fake element: point "the editor's DOM" at another fixed container instead.
     const host = document.createElement("div");
     document.body.appendChild(host);
     vi.spyOn(editor, "domElement", "get").mockReturnValue(host);
@@ -460,7 +459,7 @@ describe("slash 站點接進引擎", () => {
     return { engine, chart, slashMenu };
   }
 
-  it("從 [[ 站走到 / 站：[[ 選單收掉、/ 選單打開，挖亮選單與流程圖；文件不變", async () => {
+  it("going from the [[ stop to the / stop: the [[ menu closes, the / menu opens, the menu and the diagram are highlighted, and the document is unchanged", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     const { engine, chart, slashMenu } = await run(CTX_BASE, editor);
@@ -474,7 +473,7 @@ describe("slash 站點接進引擎", () => {
     expect(snapshot(doc, editor)).toEqual(before);
   });
 
-  it("離開 / 站（下一步、結束、卸載）：選單與過濾都收乾淨，文件不變", async () => {
+  it("leaving the / stop (next, finish, unmount): menu and filter are cleaned up and the document is unchanged", async () => {
     const { doc, editor } = await setup();
     const before = snapshot(doc, editor);
     for (const leaveBy of ["next", "close", "unmount"] as const) {
@@ -491,7 +490,7 @@ describe("slash 站點接進引擎", () => {
     }
   });
 
-  it("上一步回到 / 站：選單重新開", async () => {
+  it("Back to the / stop: the menu opens again", async () => {
     const { editor } = await setup();
     const { engine } = await run(CTX_BASE, editor);
     engine.next();
@@ -505,7 +504,7 @@ describe("slash 站點接進引擎", () => {
     engine.end("close");
   });
 
-  it("不能演示（liveStops 為 false）：不開選單，只挖亮現成的流程圖，卡片不是演示樣態", async () => {
+  it("cannot go live (liveStops is false): no menu, only the ready-made diagram is highlighted and the card is not in live mode", async () => {
     const { editor } = await setup();
     const ctx = { ...CTX_BASE, liveStops: false };
     const { engine, chart } = await run(ctx, editor);
@@ -518,7 +517,7 @@ describe("slash 站點接進引擎", () => {
     engine.end("close");
   });
 
-  it("/ 選單中途被關掉：只剩流程圖", async () => {
+  it("the / menu is closed midway: only the diagram remains", async () => {
     const { editor } = await setup();
     const { engine, chart } = await run(CTX_BASE, editor);
     engine.next();
@@ -528,7 +527,7 @@ describe("slash 站點接進引擎", () => {
     engine.end("close");
   });
 
-  it("筆記裡沒有流程圖（被使用者刪了）：選單開著時只挖亮選單", async () => {
+  it("the note has no diagram (deleted by the user): with the menu open only the menu is highlighted", async () => {
     const { editor } = await setup();
     const slashMenu = fakeTargetEl("slashMenu");
     startLiveTrigger(NOTE_ID, "/");
@@ -548,7 +547,7 @@ describe("installLiveStopInput", () => {
     handlers.next.mockReset();
     handlers.back.mockReset();
     editorSide = vi.fn();
-    // 編輯器那一側的監聽：在 window 的 capture 之後才輪到。
+    // The editor-side listener: it only gets its turn after the window capture phase.
     document.body.addEventListener("keydown", editorSide);
     document.body.addEventListener("click", editorSide);
     uninstall = installLiveStopInput(handlers);
@@ -567,7 +566,7 @@ describe("installLiveStopInput", () => {
     return event;
   }
 
-  it("→ 和 Enter 下一步、← 上一步；都不送進編輯器", () => {
+  it("right arrow and Enter go to the next stop, left arrow goes back; none of them reaches the editor", () => {
     for (const key of ["ArrowRight", "Enter"]) {
       const event = press({ key });
       expect(event.defaultPrevented, key).toBe(true);
@@ -579,7 +578,7 @@ describe("installLiveStopInput", () => {
     expect(editorSide).not.toHaveBeenCalled();
   });
 
-  it("其他按鍵（方向鍵、字元、Tab、Backspace）一律擋下，不換站", () => {
+  it("other keys (arrows, characters, Tab, Backspace) are blocked and do not change the stop", () => {
     for (const key of ["ArrowDown", "ArrowUp", "a", "Tab", "Backspace", "/", "["]) {
       expect(press({ key }).defaultPrevented, key).toBe(true);
     }
@@ -588,14 +587,14 @@ describe("installLiveStopInput", () => {
     expect(editorSide).not.toHaveBeenCalled();
   });
 
-  it("Esc 不在這裡處理：照常往下傳（遮罩在同一層接）", () => {
+  it("Esc is not handled here: it propagates as usual (the overlay takes it at the same level)", () => {
     const event = press({ key: "Escape" });
     expect(event.defaultPrevented).toBe(false);
     expect(editorSide).toHaveBeenCalledTimes(1);
     expect(handlers.next).not.toHaveBeenCalled();
   });
 
-  it("輸入法組字中的按鍵擋下，但不換站", () => {
+  it("keys during IME composition are blocked but do not change the stop", () => {
     const event = press({ key: "Process", keyCode: 229, isComposing: true });
     expect(event.defaultPrevented).toBe(true);
     press({ key: "Enter", isComposing: true });
@@ -603,24 +602,24 @@ describe("installLiveStopInput", () => {
     expect(editorSide).not.toHaveBeenCalled();
   });
 
-  it("按住不放不連續跳站", () => {
+  it("holding a key does not skip stops repeatedly", () => {
     press({ key: "ArrowRight", repeat: true });
     expect(handlers.next).not.toHaveBeenCalled();
   });
 
-  it("功能鍵放行（連編輯器也收得到）", () => {
+  it("function keys pass through (even the editor receives them)", () => {
     for (const key of ["F5", "F12"]) expect(press({ key }).defaultPrevented, key).toBe(false);
     expect(editorSide).toHaveBeenCalledTimes(2);
   });
 
-  it("Ctrl／Meta／Alt 組合鍵一律不送進編輯器；瀏覽器快捷鍵不 preventDefault，所以照常有效", () => {
+  it("Ctrl / Meta / Alt combinations never reach the editor; browser shortcuts are not preventDefault-ed so they still work", () => {
     for (const init of [{ key: "r", ctrlKey: true }, { key: "l", metaKey: true }, { key: "c", ctrlKey: true }, { key: "ArrowLeft", altKey: true }, { key: "I", ctrlKey: true, shiftKey: true }]) {
       expect(press(init).defaultPrevented, JSON.stringify(init)).toBe(false);
     }
     expect(editorSide).not.toHaveBeenCalled();
   });
 
-  it("Ctrl／Meta＋z、y、v、x、a 與 Ctrl／Alt／Meta＋Enter 另外 preventDefault，也不換站", () => {
+  it("Ctrl / Meta + z, y, v, x, a and Ctrl / Alt / Meta + Enter are additionally preventDefault-ed and do not change the stop", () => {
     const combos = [
       { key: "z", ctrlKey: true },
       { key: "Z", metaKey: true, shiftKey: true },
@@ -638,7 +637,7 @@ describe("installLiveStopInput", () => {
     expect(handlers.back).not.toHaveBeenCalled();
   });
 
-  it.each(["wikilinkMenu", "slashMenu"])("%s 上的點擊擋下；別處的點擊放行", (menuId) => {
+  it.each(["wikilinkMenu", "slashMenu"])("clicks on %s are blocked; clicks elsewhere pass through", (menuId) => {
     const menu = fakeTargetEl(menuId);
     const item = document.createElement("button");
     menu.appendChild(item);
@@ -654,7 +653,7 @@ describe("installLiveStopInput", () => {
     expect(onOther).toHaveBeenCalledTimes(1);
   });
 
-  it("格式工具列上的點擊擋下（不會真的開 AI 框）", () => {
+  it("clicks on the format toolbar are blocked (the AI box does not really open)", () => {
     const popover = document.createElement("div");
     popover.setAttribute("data-kb-formatting-toolbar-popover", "");
     const button = document.createElement("button");
@@ -666,7 +665,7 @@ describe("installLiveStopInput", () => {
     expect(onButton).not.toHaveBeenCalled();
   });
 
-  it("拆除後完全放行", () => {
+  it("everything passes through after teardown", () => {
     uninstall();
     expect(press({ key: "a" }).defaultPrevented).toBe(false);
     expect(press({ key: "ArrowRight" }).defaultPrevented).toBe(false);
@@ -675,7 +674,7 @@ describe("installLiveStopInput", () => {
   });
 });
 
-describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
+describe("startLiveSelection / stopLiveSelection (AI stop)", () => {
   const SENTENCE = i18n.t("tourGuide.sample.aiSentence");
   const BLOCKS = [{ type: "paragraph", content: "intro" }, { type: "paragraph", content: SENTENCE }, { type: "paragraph" }];
   const AI_CTX: StopContext = {
@@ -690,7 +689,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     return state.doc.textBetween(state.selection.from, state.selection.to);
   };
 
-  /** 格式工具列的假浮層：裡面有一顆有尺寸、名稱是 AI 的鈕。 */
+  /** Fake floating layer of the format toolbar: contains a sized button named AI. */
   function fakeToolbar(): HTMLButtonElement {
     const popover = document.createElement("div");
     popover.setAttribute("data-kb-formatting-toolbar-popover", "");
@@ -702,7 +701,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     return button;
   }
 
-  it("進站：選取正好是那一句；離站：選取收合、過濾關掉", async () => {
+  it("entering: the selection is exactly that sentence; leaving: the selection collapses and the filter is turned off", async () => {
     const { editor } = await setup(BLOCKS);
     startLiveSelection(NOTE_ID);
     expect(selectedText(editor)).toBe(SENTENCE);
@@ -712,7 +711,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(false);
   });
 
-  it("文件、Y 狀態、撤銷堆疊前後都不變", async () => {
+  it("document, Y state and undo stack are unchanged before and after", async () => {
     const { doc, editor } = await setup(BLOCKS);
     const before = snapshot(doc, editor);
     startLiveSelection(NOTE_ID);
@@ -721,7 +720,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(snapshot(doc, editor)).toEqual(before);
   });
 
-  it("那一句不在（使用者改掉了）：框第一個非空段落", async () => {
+  it("the sentence is gone (changed by the user): selects the first non-empty paragraph", async () => {
     const { editor } = await setup([
       { type: "paragraph" },
       { type: "heading", props: { level: 2 }, content: "title" },
@@ -733,7 +732,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     stopLiveSelection(NOTE_ID);
   });
 
-  it("沒有任何非空段落：不選取、不拋錯，過濾照樣能關", async () => {
+  it("no non-empty paragraph: nothing is selected, no throw, and the filter can still be turned off", async () => {
     const { editor } = await setup([{ type: "paragraph" }]);
     expect(() => startLiveSelection(NOTE_ID)).not.toThrow();
     expect(editor._tiptapEditor.state.selection.empty).toBe(true);
@@ -741,7 +740,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(false);
   });
 
-  it("過濾開著：取代選取的交易被擋，那一句還在且仍是選取", async () => {
+  it("with the filter on: a transaction replacing the selection is blocked, and the sentence is still there and selected", async () => {
     const { doc, editor } = await setup(BLOCKS);
     startLiveSelection(NOTE_ID);
     const before = snapshot(doc, editor);
@@ -753,7 +752,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     stopLiveSelection(NOTE_ID);
   });
 
-  it("呼叫順序：先 focus，再用一筆帶 scrollIntoView 的交易設選取", async () => {
+  it("call order: focus first, then set the selection with a transaction carrying scrollIntoView", async () => {
     const { editor } = await setup(BLOCKS);
     const order: string[] = [];
     vi.spyOn(editor, "focus").mockImplementation(() => {
@@ -770,7 +769,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     stopLiveSelection(NOTE_ID);
   });
 
-  it("重複進站不再設一次選取；沒開始過就離站、重複離站都是空操作", async () => {
+  it("entering repeatedly does not set the selection again; leaving without starting and leaving repeatedly are no-ops", async () => {
     const { editor } = await setup(BLOCKS);
     expect(() => stopLiveSelection(NOTE_ID)).not.toThrow();
     startLiveSelection(NOTE_ID);
@@ -782,12 +781,12 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(editor._tiptapEditor.state.selection.empty).toBe(true);
   });
 
-  it("沒有登記的編輯器：什麼都不做、不拋錯", () => {
+  it("no registered editor: does nothing and does not throw", () => {
     expect(() => startLiveSelection(NOTE_ID)).not.toThrow();
     expect(() => stopLiveSelection(NOTE_ID)).not.toThrow();
   });
 
-  it("目標：工具列浮層裡名稱是 AI 的鈕；工具列沒出現、或浮層外有同名鈕都不算", () => {
+  it("target: the button named AI inside the toolbar layer; no toolbar, or a same-named button outside the layer, does not count", () => {
     expect(liveSelectionTarget()).toEqual([]);
     const outside = document.createElement("button");
     outside.setAttribute("aria-label", i18n.t("ai.toolbar.trigger"));
@@ -797,7 +796,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(liveSelectionTarget()).toEqual([ai]);
   });
 
-  it("接進引擎：進站選取那一句、AI 鈕被挖亮；下一步、結束、卸載都收合選取並關過濾，文件不變", async () => {
+  it("wired into the engine: entering selects the sentence and highlights the AI button; next, finish and unmount collapse the selection and turn the filter off, and the document is unchanged", async () => {
     const { doc, editor } = await setup(BLOCKS);
     const before = snapshot(doc, editor);
     const ai = fakeToolbar();
@@ -821,7 +820,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     }
   });
 
-  it("側欄浮動時也跑 prepare；沒有示範筆記的編輯器就不是演示", async () => {
+  it("prepare also runs on a floating sidebar; without the sample note's editor it is not live", async () => {
     const { editor } = await setup(BLOCKS);
     stubLayoutTier("overlay");
     prepareStop(STOPS.ai, AI_CTX);
@@ -830,7 +829,7 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
     expect(STOPS.ai.live?.({ ...AI_CTX, sampleNoteId: "other" })).toBe(false);
   });
 
-  it("手機不跑：不框選、不開過濾，也沒有目標（手機選取文字不浮出格式工具列）", async () => {
+  it("does not run on phones: no selection, no filter and no target (selecting text on a phone does not raise the format toolbar)", async () => {
     const { editor } = await setup(BLOCKS);
     stubLayoutTier("phone");
     const before = editor._tiptapEditor.state.selection.toJSON();
@@ -841,12 +840,12 @@ describe("startLiveSelection／stopLiveSelection（AI 站）", () => {
   });
 });
 
-describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
+describe("live stops do not raise the on-screen keyboard (the editor's inputmode)", () => {
   const CTX_LIVE: StopContext = { searchQuery: "", aiActions: [], sampleNoteId: NOTE_ID, liveStops: true };
   const SENTENCE = i18n.t("tourGuide.sample.aiSentence");
   const view = (editor: TourEditor) => editor._tiptapEditor.view.dom;
 
-  it("[[ 與 / 站：聚焦之前就設成 none、選單照開，離站拿掉（原本沒有）且編輯器失焦", async () => {
+  it("[[ and / stops: inputmode is set to none before focusing and the menu still opens; on leaving it is removed (it was absent) and the editor blurs", async () => {
     const { editor } = await setup();
     const dom = view(editor);
     let atFocus: string | null = "unset";
@@ -856,7 +855,7 @@ describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
       startLiveTrigger(NOTE_ID, trigger);
       expect(dom.getAttribute("inputmode"), trigger).toBe("none");
       expect(isTriggerMenuShown(editor, trigger)).toBe(true);
-      // 演示中送出的交易（例如選單關閉前的狀態更新）不會把屬性洗掉。
+      // Transactions dispatched while live (e.g. a state update before the menu closes) must not wipe the attribute.
       editor._tiptapEditor.view.dispatch(editor._tiptapEditor.state.tr.setMeta("probe", true));
       expect(dom.getAttribute("inputmode"), trigger).toBe("none");
       stopLiveTrigger(NOTE_ID);
@@ -866,7 +865,7 @@ describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
     expect(atFocus).toBe("none");
   });
 
-  it("原本就有值：還原成原本的值；重複開始、重複結束都不會弄丟", async () => {
+  it("an existing value is restored to its original; repeated start and repeated stop never lose it", async () => {
     const { editor } = await setup();
     const dom = view(editor);
     dom.setAttribute("inputmode", "text");
@@ -878,12 +877,12 @@ describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
     expect(dom.getAttribute("inputmode")).toBe("text");
   });
 
-  it("離站時編輯器已經從登記處撤掉，或回報已銷毀（暫時卸載）：照樣還原在當初那個元素上", async () => {
+  it("the editor was already removed from the registry or reports destroyed (temporary unmount) on leaving: it is still restored on the original element", async () => {
     const { editor } = await setup();
     const dom = view(editor);
     startLiveTrigger(NOTE_ID, "[[");
     expect(dom.getAttribute("inputmode")).toBe("none");
-    // 登記處換成別篇：stopLiveTrigger 從登記處拿不到這篇的編輯器。
+    // The registry is swapped to another note, so stopLiveTrigger cannot get this note's editor from it.
     const unregister = registerEditor("another-note", editor);
     stopLiveTrigger(NOTE_ID);
     expect(dom.hasAttribute("inputmode")).toBe(false);
@@ -898,7 +897,7 @@ describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
     expect(dom.hasAttribute("inputmode")).toBe(false);
   });
 
-  it("AI 站（框選演示句）一樣：設成 none，離站還原", async () => {
+  it("the AI stop (selecting the sample sentence) is the same: set to none and restored on leaving", async () => {
     const { editor } = await setup([{ type: "paragraph", content: SENTENCE }, { type: "paragraph" }]);
     const dom = view(editor);
     startLiveSelection(NOTE_ID);
@@ -907,7 +906,7 @@ describe("演示站不叫出螢幕鍵盤（編輯器的 inputmode）", () => {
     expect(dom.hasAttribute("inputmode")).toBe(false);
   });
 
-  it("走引擎：下一步、上一步、結束（✕／Esc／跳過）、卸載，每一種離站都還原", async () => {
+  it("through the engine: next, back, finish (close / Esc / Skip) and unmount all restore on leaving", async () => {
     const { editor } = await setup();
     const dom = view(editor);
     fakeTargetEl("wikilinkMenu");

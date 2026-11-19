@@ -11,8 +11,8 @@ import { __resetCollapseForTests } from "@/components/sidebar/collapse";
 import { personalNote } from "@/test/select-fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 一般 tab 選取模式的 lazy chunk（SelectLazy）還沒到時的佔位：jsdom 下 import 幾乎即到、量不到佔位，
-// 所以讓 SelectLazy 的載入卡在手動放行的 promise 上（照 AppShell.trash-lazy.test.tsx）。
+// Placeholder while the normal-tab select chunk (SelectLazy) is pending: under jsdom the import resolves almost instantly,
+// so SelectLazy's load is held on a manually released promise (as in AppShell.trash-lazy.test.tsx).
 
 const gate = vi.hoisted(() => {
   let release!: () => void;
@@ -68,7 +68,7 @@ function stubFetch() {
 const panel = () => screen.getByRole("tabpanel");
 const header = () => panel().querySelector("[data-sidebar-header]") as HTMLElement;
 
-describe("一般 tab 選取模式 chunk 載入中的佔位", () => {
+describe("placeholder while the normal-tab select chunk loads", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -77,7 +77,7 @@ describe("一般 tab 選取模式 chunk 載入中的佔位", () => {
     vi.unstubAllGlobals();
   });
 
-  it("chunk 還沒到：清單仍是平常的列（p1 是連結）、標題列只有名稱；放行後換成勾選框、焦點在 Done", async () => {
+  it("before the chunk arrives the list keeps its usual rows (p1 is a link) and the header shows only the name; on release it swaps to checkboxes with focus on Done", async () => {
     stubFetch();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

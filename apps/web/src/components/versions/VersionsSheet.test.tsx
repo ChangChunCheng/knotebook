@@ -26,7 +26,7 @@ const SNAP = (n: number) => `/api/notes/${NOTE}/versions/${n}`;
 
 function b64(blocks: unknown[]): string {
   const doc = new Y.Doc();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock 泛型三元組
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock generic triple
   blocksToYXmlFragment(BlockNoteEditor.create({ schema: noteSchema }), blocks as any, doc.getXmlFragment(YDOC_FRAGMENT));
   return btoa(String.fromCharCode(...Y.encodeStateAsUpdate(doc)));
 }
@@ -53,7 +53,7 @@ const list = (versions: VersionDto[], nextBefore: number | null = null): Version
   nextBefore,
 });
 
-/** 整頁只在手機（< 640）出現：版面段固定在 phone。 */
+/** The full page appears only on phones (< 640): the layout tier is pinned to phone. */
 function installMatchMedia() {
   stubLayoutTier("phone");
   return () => {
@@ -68,7 +68,7 @@ function Host({ doc }: { doc: Y.Doc }) {
       <button type="button" onClick={value.open}>host-open</button>
       <span data-testid="s-state">{JSON.stringify({ mode: value.mode, preview: value.preview })}</span>
       <span data-testid="s-compare">{JSON.stringify(value.compareRight)}</span>
-      {/* 模擬「寬版先開了只看差異」：controller 的 onlyChanges 跨斷點不重設。 */}
+      {/* Simulates 'show only differences was turned on in the wide layout': the controller's onlyChanges is not reset across breakpoints. */}
       <button type="button" onClick={() => value.setOnlyChanges(true)}>host-only-changes</button>
       <span data-testid="s-only">{String(value.onlyChanges)}</span>
       {value.mode === "sheet" && <VersionsSheet doc={doc} lastEdited={{ byHandle: "ann", agentLabel: null, at: "2026-10-09T00:00:00.000Z" } as never} />}
@@ -76,7 +76,7 @@ function Host({ doc }: { doc: Y.Doc }) {
   );
 }
 
-/** 模擬頁首 ⋮ 開整頁——選單項按下後即卸載；`fake-menu-trigger` 是交給整頁的 returnFocusRef（NotePage 的 ⋮ 鈕）。 */
+/** Simulates the header kebab menu opening the full page - the menu item unmounts once pressed; `fake-menu-trigger` is the returnFocusRef handed to the page (NotePage's kebab button). */
 function MenuHost({ doc }: { doc: Y.Doc }) {
   const value = useVersionsController({ noteId: NOTE, enabled: true });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -132,7 +132,7 @@ describe("VersionsSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("步一：全螢幕 dialog（名稱「Version history」）、返回鈕、最後編輯、目前狀態、清單、底部儲存鈕", async () => {
+  it("list step: a full-screen dialog (named Version history), back button, last edit, current state, list and bottom save button", async () => {
     stub({ [LIST]: list([ver(2), ver(1)]) });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -144,7 +144,7 @@ describe("VersionsSheet", () => {
     expect(within(sheet).getByRole("button", { name: "Save current version" })).toBeInTheDocument();
   });
 
-  it("步一：「返回」與篩選鈕在手機夠大（返回高 44、篩選高 36）；步二的「清單」鈕也是 44", async () => {
+  it("list step: the Back and filter buttons are big enough on phones (Back 44 high, filter 36); the preview step's List button is 44 too", async () => {
     stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -155,7 +155,7 @@ describe("VersionsSheet", () => {
     expect(await within(sheet).findByRole("button", { name: /^List/ })).toHaveClass("h-11");
   });
 
-  it("步一的列內有編輯者頭貼群，可及名稱不變", async () => {
+  it("list step: a row has an editor avatar group and the accessible name is unchanged", async () => {
     const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
     stub({ [LIST]: list([ver(2, { editors: [{ handle: "alice", agentLabel: "Claude", avatar: { id: ID, v: 2 } }, { handle: "bob", agentLabel: null, avatar: null }] }), ver(1)]) });
     renderSheet();
@@ -166,7 +166,7 @@ describe("VersionsSheet", () => {
     expect(row).toHaveTextContent("alice (Claude), bob ·");
   });
 
-  it("步二頁首摘要旁有編輯者頭貼群（文字摘要不變）", async () => {
+  it("preview step: an editor avatar group sits beside the header summary (the text summary is unchanged)", async () => {
     const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
     stub({ [LIST]: list([ver(2, { editors: [{ handle: "alice", agentLabel: null, avatar: { id: ID, v: 2 } }] }), ver(1)]) });
     renderSheet();
@@ -179,7 +179,7 @@ describe("VersionsSheet", () => {
     expect(header).toHaveTextContent("· alice");
   });
 
-  it("點列 → 步二：標題「List · 名稱 (短 id)」、單欄 diff（沒有並排鈕；容器寬 1600 仍單欄）、底部 上一版｜套用 名稱 (短 id)｜下一版", async () => {
+  it("clicking a row -> preview step: title 'List - name (short id)', a single-column diff (no side-by-side button; still single column at container width 1600), bottom Previous | Apply name (short id) | Next", async () => {
     widthRef.current = 1600;
     stub({ [LIST]: list([ver(2), ver(1)]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) }, [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
@@ -195,7 +195,7 @@ describe("VersionsSheet", () => {
     expect(footer.getByRole("button", { name: "Newer version" })).toBeDisabled();
   });
 
-  it("步二頁首列 2 是左右一對下拉（左 seq 2 → 右 Current state）＋只看差異；右選 seq 1 → compareRight＝seq 1；底部「較舊的版本」只換左、右保持", async () => {
+  it("preview step header row 2 is a left/right pair of dropdowns (left seq 2 -> right Current state) plus show-only-differences; choosing seq 1 on the right -> compareRight = seq 1; the bottom Older version button changes only the left and the right stays", async () => {
     stub({ [LIST]: list([ver(2), ver(1)]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) }, [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -206,11 +206,11 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(left).toHaveTextContent(vlabel(2)));
     expect(right).toHaveTextContent("Current state");
     expect(row.getByText("→")).toHaveAttribute("aria-hidden", "true");
-    // 整頁（觸控沒有 hover 看不到 title）保留文字鈕，不是橫幅那種圖示鈕。
+    // The full page (touch has no hover, so title is not visible) keeps the text button, not the banner's icon button.
     const only = row.getByRole("button", { name: "Only changes" });
     expect(only).toHaveTextContent("Only changes");
     expect(only.querySelector("svg")).toBeNull();
-    // 整頁一律單欄（forceSingle）——預覽區沒有欄標頭列，下拉只有列 2 那一對（寬 800 ≥ 720 也一樣）。
+    // The full page is always single column (forceSingle): the preview area has no column header row, so the only dropdowns are the pair in row 2 (the same at width 800 >= 720).
     await within(sheet).findByTestId("diff-single");
     expect(within(sheet).queryByTestId("diff-split-head")).toBeNull();
     expect(within(sheet).getAllByRole("button", { name: "Left side" })).toHaveLength(1);
@@ -226,7 +226,7 @@ describe("VersionsSheet", () => {
     expect(screen.getByTestId("s-compare")).toHaveTextContent(JSON.stringify(vtarget(1)));
   });
 
-  it("「只看差異」：寬版先開著 → 整頁步二的開關顯示 on，按一下關回 off", async () => {
+  it("show only differences: turned on in the wide layout first -> the full page's preview-step switch shows on, and one press turns it off", async () => {
     stub({ [LIST]: list([ver(2), ver(1)]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) }, [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     fireEvent.click(screen.getByText("host-only-changes"));
@@ -240,7 +240,7 @@ describe("VersionsSheet", () => {
     expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("關整頁後焦點回到開啟前的元素（受控 Dialog 沒有 Trigger，Radix 不會自己還原）", async () => {
+  it("after closing the full page focus returns to the element from before opening (a controlled Dialog has no Trigger, so Radix does not restore it by itself)", async () => {
     stub({ [LIST]: list([ver(1)]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -260,7 +260,7 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
-  it("開啟前的焦點元素（⋮ 選單項）在關閉前已卸載 → 關整頁後焦點退回 returnFocusRef（頁首 ⋮ 鈕）", async () => {
+  it("the element focused before opening (a kebab menu item) is unmounted before closing -> after closing the full page focus falls back to returnFocusRef (the header kebab button)", async () => {
     stub({ [LIST]: list([ver(1)]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -273,7 +273,7 @@ describe("VersionsSheet", () => {
     const item = screen.getByText("menu-item");
     item.focus();
     expect(document.activeElement).toBe(item);
-    // 同一批次：開整頁＋選單項卸載（同 NoteMenu 的 setMenuOpen(false)＋versions.open()）。整頁掛載當下記到的是選單項。
+    // Same batch: opening the full page plus the menu item unmounting (like NoteMenu's setMenuOpen(false) + versions.open()). When the full page mounts, what was recorded is the menu item.
     fireEvent.click(item);
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
     expect(screen.queryByText("menu-item")).not.toBeInTheDocument();
@@ -283,7 +283,7 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "fake-menu-trigger" })));
   });
 
-  it("開整頁時焦點在 body → 關閉後退回 returnFocusRef（⋮ 鈕），不是還給 body", async () => {
+  it("focus is on body when the full page opens -> after closing it falls back to returnFocusRef (the kebab button), not body", async () => {
     stub({ [LIST]: list([ver(1)]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -295,7 +295,7 @@ describe("VersionsSheet", () => {
     );
     (document.activeElement as HTMLElement | null)?.blur();
     expect(document.activeElement).toBe(document.body);
-    // fireEvent.click 不移動焦點：整頁掛載當下 activeElement 仍是 body。
+    // fireEvent.click does not move focus: activeElement is still body when the full page mounts.
     fireEvent.click(screen.getByText("menu-item"));
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
     await waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true));
@@ -304,7 +304,7 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "fake-menu-trigger" })));
   });
 
-  it("步二頁首列 2（左右下拉＋只看差異）允許換行（flex-wrap；320 px 不溢出是依 class 推論，真瀏覽器量測留 e2e）", async () => {
+  it("preview step header row 2 (left/right dropdowns + show only differences) may wrap (flex-wrap; that it does not overflow at 320 px is inferred from the classes, real-browser measurement is left to e2e)", async () => {
     stub({ [LIST]: list([ver(2), ver(1)]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) }, [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -312,7 +312,7 @@ describe("VersionsSheet", () => {
     expect(await within(sheet).findByTestId("sheet-compare-row")).toHaveClass("flex-wrap");
   });
 
-  it("上一版／下一版：在 seq 間移動（預覽對象帶著那一列的名稱，#272），最舊那版的上一版 disabled", async () => {
+  it("Previous / Next: move between seqs (the preview target carries that row's name, #272), and Previous is disabled on the oldest version", async () => {
     stub({ [LIST]: list([ver(2), ver(1, { kind: "manual", name: "初稿" })]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) }, [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -324,7 +324,7 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(sState().preview).toEqual(vtarget(2)));
   });
 
-  it("窄視窗：預覽中的那一版被改名 → 頁首「List · …」與套用鈕立刻換成新名稱（清單那一列優先，不停在選取時記下的名稱）", async () => {
+  it("narrow window: the previewed version is renamed -> the header List button and the apply button switch to the new name at once (the list row takes precedence over the name remembered at selection)", async () => {
     stub({ [LIST]: list([ver(2), ver(1)]), [SNAP(2)]: { id: vid(2), seq: 2, ydoc: b64(V2) } });
     const { queryClient } = renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -340,7 +340,7 @@ describe("VersionsSheet", () => {
     expect(footerOf(sheet).getByRole("button", { name: `Apply ${vlabel(2, "改好的名字")}` })).toBeEnabled();
   });
 
-  it("‹ 清單 → 回步一並離開預覽；‹ 返回 → 關整頁（mode=null）", async () => {
+  it("List back button -> returns to the list step and leaves the preview; Back button -> closes the full page (mode=null)", async () => {
     stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
@@ -352,27 +352,27 @@ describe("VersionsSheet", () => {
     expect(screen.queryByRole("dialog", { name: "Version history" })).not.toBeInTheDocument();
   });
 
-  it("從整頁外 pointerdown＋click 關閉時預覽也停（不留 mode=null 的孤兒預覽）", async () => {
+  it("closing with pointerdown + click outside the full page also stops the preview (no orphan preview left with mode=null)", async () => {
     stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
     fireEvent.click(await within(sheet).findByRole("button", { name: vrow(1) }));
     await within(sheet).findByRole("button", { name: /^List/ });
     expect(sState()).toEqual({ mode: "sheet", preview: vtarget(1) });
-    // Radix 對左鍵的「點外面」延到 click 才判（deferPointerDownOutside），所以 pointerdown＋click 一組送。
+    // Radix defers a left-button "click outside" until click (deferPointerDownOutside), so send pointerdown + click as a pair.
     const outside = screen.getByTestId("s-state");
     fireEvent.pointerDown(outside, { button: 0 });
     fireEvent.click(outside, { button: 0 });
     await waitFor(() => expect(sState()).toEqual({ mode: null, preview: null }));
   });
 
-  it("Esc：步二回清單（preventDefault、整頁留著），步一再按才關整頁（同樣 preventDefault）", async () => {
+  it("Esc: the preview step goes back to the list (preventDefault, the full page stays), and a press on the list step closes the full page (also preventDefault)", async () => {
     stub({ [LIST]: list([ver(1)]), [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) } });
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "Version history" });
     fireEvent.click(await within(sheet).findByRole("button", { name: vrow(1) }));
     const listButton = await within(sheet).findByRole("button", { name: /^List/ });
-    // fireEvent 回傳 false＝事件被 preventDefault（NotePage 的 Esc 監聽以 defaultPrevented 讓路）。
+    // fireEvent returning false means the event was preventDefault-ed (NotePage's Esc listener yields on defaultPrevented).
     expect(fireEvent.keyDown(listButton, { key: "Escape" })).toBe(false);
     await waitFor(() => expect(sState()).toEqual({ mode: "sheet", preview: null }));
     expect(screen.getByRole("dialog", { name: "Version history" })).toBeInTheDocument();
@@ -380,7 +380,7 @@ describe("VersionsSheet", () => {
     await waitFor(() => expect(sState()).toEqual({ mode: null, preview: null }));
   });
 
-  it("步二按「套用 名稱 (短 id)」→ 走 requestApply（先重抓 current，不 dirty 直接 POST apply）", async () => {
+  it("preview step: pressing 'Apply name (short id)' goes through requestApply (refetches current first, then POSTs apply directly when not dirty)", async () => {
     const calls = stub({
       [LIST]: list([ver(1)]),
       [SNAP(1)]: { id: vid(1), seq: 1, ydoc: b64(V1) },
@@ -393,11 +393,10 @@ describe("VersionsSheet", () => {
     fireEvent.click(footerOf(sheet).getByRole("button", { name: `Apply ${vlabel(1)}` }));
     await waitFor(() => expect(calls).toContain(`/api/notes/${NOTE}/versions/1/apply`));
     expect(calls.indexOf(`/api/notes/${NOTE}/versions?limit=1`)).toBeLessThan(calls.indexOf(`/api/notes/${NOTE}/versions/1/apply`));
-    // 套用成功 → 離開預覽回步一（useApplyFlow 的成功路徑）。
     await waitFor(() => expect(sState()).toEqual({ mode: "sheet", preview: null }));
   });
 
-  it("篩選（#258）：步一的「目前狀態」與清單之間有「All／Manual only」；按下改打 kind=manual；列只有自動版本有 Auto-save pill；沒有符合時顯示空狀態", async () => {
+  it("filter (#258): between the current state and the list on the list step there is All / Manual only; pressing it requests kind=manual; only auto versions have the Auto-save pill; an empty state shows when nothing matches", async () => {
     stub({
       [LIST]: list([ver(3, { kind: "manual", name: "里程碑" }), ver(2), ver(1)]),
       [LIST_MANUAL]: { ...list([ver(3, { kind: "manual", name: "里程碑" })]), current: list([ver(3)]).current },
@@ -418,7 +417,7 @@ describe("VersionsSheet", () => {
     expect(window.localStorage.getItem(KIND_FILTER_STORAGE_KEY)).toBe("manual");
   });
 
-  it("篩選（#258）：僅手動且沒有符合 → 空狀態一行灰字；「目前狀態」仍在", async () => {
+  it("filter (#258): manual only with no match -> a one-line grey empty state; the current state is still shown", async () => {
     window.localStorage.setItem(KIND_FILTER_STORAGE_KEY, "manual");
     stub({ [LIST_MANUAL]: { ...list([]), current: { baseSeq: 2, base: baseRef(2), dirty: true, nextSeq: 3, autoEnabled: true } } });
     renderSheet();

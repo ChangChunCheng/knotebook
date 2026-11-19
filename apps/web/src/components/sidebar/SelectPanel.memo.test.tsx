@@ -14,13 +14,13 @@ import { Folder } from "@/components/ui/icons";
 import { personalNote } from "@/test/select-fixtures";
 import { FOLDER_LIST_EMPTY, folderDto } from "@/test/folder-fixtures";
 
-// 只包一層計數（NS14：勾一列時哪些列重算了位置行），行為照原本（照 TrashPanel.test.tsx）。
+// Wraps only to count which rows recompute their position line; behavior is unchanged (same approach as TrashPanel.test.tsx).
 vi.mock("@/components/sidebar/tree", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/sidebar/tree")>();
   return { ...actual, noteLocationLabel: vi.fn(actual.noteLocationLabel) };
 });
 
-// NS14f：資料夾列勾選框（label 內的 `Folder` 圖示）每重繪一次就呼叫一次；只包計數、行為照原本。
+// Called once per re-render of the folder row's checkbox (the `Folder` icon inside its label); wraps only to count, behavior unchanged.
 vi.mock("@/components/ui/icons", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui/icons")>();
   return { ...actual, Folder: vi.fn(actual.Folder) };
@@ -53,7 +53,7 @@ const NOTES = ["p1", "p2", "p3"].map((id) => personalNote({ id, title: id }));
 const panel = () => screen.getByRole("tabpanel");
 const checkbox = (id: string) => panel().querySelector(`input[type="checkbox"][data-selection-key="note:${id}"]`) as HTMLInputElement;
 
-describe("一般 tab 選取列的 memo", () => {
+describe("normal-tab select rows memo", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -62,7 +62,7 @@ describe("一般 tab 選取列的 memo", () => {
     vi.unstubAllGlobals();
   });
 
-  it("NS14 最近 tab：勾一列只重算那一列的位置行", async () => {
+  it("recent tab: ticking one row recomputes only that row's position line", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -107,7 +107,7 @@ describe("一般 tab 選取列的 memo", () => {
     expect(calls.mock.calls.map(([note]) => note.id)).toEqual(["p1", "p2"]);
   });
 
-  it("NS14f 我的筆記：勾資料夾 A 只重繪 A 那列（三個資料夾列，Folder 圖示只多畫一次）", async () => {
+  it("my notes: ticking folder A redraws only A's row (of three folder rows, the Folder icon is drawn once more)", async () => {
     const folders = ["A", "B", "C"].map((id) => folderDto({ id, name: id }));
     vi.stubGlobal(
       "fetch",
@@ -139,7 +139,6 @@ describe("一般 tab 選取列的 memo", () => {
     const header = () => panel().querySelector("[data-sidebar-header]") as HTMLElement;
     await within(panel()).findAllByRole("link");
     fireEvent.click(within(header()).getByRole("button", { name: "Select" }));
-    // 3 篇＋3 個資料夾。
     expect(await within(panel()).findAllByRole("checkbox")).toHaveLength(6);
     const folderBox = (id: string) => panel().querySelector(`input[type="checkbox"][data-selection-key="folder:${id}"]`) as HTMLInputElement;
 

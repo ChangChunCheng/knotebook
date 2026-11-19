@@ -31,7 +31,7 @@ async function closeWithEscape() {
 }
 
 describe("ui/select", () => {
-  it("兩種 variant 都渲染 combobox，帶可及名稱與 data-value", () => {
+  it("both variants render a combobox with an accessible name and data-value", () => {
     for (const variant of ["field", "inline"] as const) {
       const { trigger, unmount } = renderSelect({ variant, value: "editor" });
       expect(selectedValue(trigger())).toBe("editor");
@@ -40,7 +40,7 @@ describe("ui/select", () => {
     }
   });
 
-  it("field 的外框 class 與 Input 同一組（h-8、border-input、pointer-coarse:text-base）；inline 沒有 border-input", () => {
+  it("the field variant's frame classes match Input's (h-8, border-input, pointer-coarse:text-base); inline has no border-input", () => {
     const field = renderSelect({ variant: "field" });
     for (const c of ["h-8", "border-input", "pointer-coarse:text-base"]) expect(field.trigger()).toHaveClass(c);
     field.unmount();
@@ -49,7 +49,7 @@ describe("ui/select", () => {
     expect(inline.trigger()).toHaveClass("border-dashed");
   });
 
-  it("開選單列出全部選項，目前值那一項 aria-selected=true", async () => {
+  it("opening the menu lists all options and the current value's option has aria-selected=true", async () => {
     const { trigger } = renderSelect();
     expect(await optionLabels(trigger())).toEqual(["Viewer", "Editor"]);
     fireEvent.keyDown(trigger(), { key: "Enter" });
@@ -57,7 +57,7 @@ describe("ui/select", () => {
     expect(screen.getByRole("option", { name: "Editor" })).toHaveAttribute("aria-selected", "false");
   });
 
-  it("chooseOption 後 onValueChange 收到選項的 value，元件不自己改值", async () => {
+  it("after chooseOption onValueChange receives the option's value and the component does not change the value itself", async () => {
     const { trigger, onValueChange } = renderSelect();
     await chooseOption(trigger(), "Editor");
     expect(onValueChange).toHaveBeenCalledTimes(1);
@@ -66,7 +66,7 @@ describe("ui/select", () => {
     expect(displayedLabel(trigger())).toBe("Viewer");
   });
 
-  it("disabled 的選項點不到、disabled 的元件開不了", async () => {
+  it("a disabled option cannot be clicked and a disabled component cannot be opened", async () => {
     const options = [...ROLES, { value: "owner", label: "Owner", disabled: true }];
     const { trigger, onValueChange, unmount } = renderSelect({ options });
     fireEvent.keyDown(trigger(), { key: "Enter" });
@@ -85,7 +85,7 @@ describe("ui/select", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("Esc 關選單、焦點回觸發鈕", async () => {
+  it("Esc closes the menu and focus returns to the trigger", async () => {
     const { trigger } = renderSelect();
     trigger().focus();
     fireEvent.keyDown(trigger(), { key: "Enter" });
@@ -94,7 +94,7 @@ describe("ui/select", () => {
     await waitFor(() => expect(trigger()).toHaveFocus());
   });
 
-  it("鍵盤：ArrowDown 開、方向鍵移動、Enter 選取", async () => {
+  it("keyboard: ArrowDown opens, arrow keys move, Enter selects", async () => {
     const { trigger, onValueChange } = renderSelect();
     trigger().focus();
     await act(async () => {
@@ -112,7 +112,7 @@ describe("ui/select", () => {
     expect(onValueChange).toHaveBeenCalledWith("editor");
   });
 
-  it('value 為空字串且有 "" 選項：顯示該選項 label，選它回呼收到 ""', async () => {
+  it('value is an empty string and an "" option exists: shows the label of that option, and choosing it calls back with ""', async () => {
     const { trigger, onValueChange } = renderSelect({ options: WITH_AUTO, value: "" });
     expect(displayedLabel(trigger())).toBe("Auto");
     expect(trigger()).toHaveAttribute("data-value", "");
@@ -123,13 +123,13 @@ describe("ui/select", () => {
     expect(onValueChange).toHaveBeenLastCalledWith("gpt");
   });
 
-  it('目前值不是 "" 時選 "" 選項，回呼收到 ""', async () => {
+  it('when the current value is not "", choosing the "" option calls back with ""', async () => {
     const { trigger, onValueChange } = renderSelect({ options: WITH_AUTO, value: "gpt" });
     await chooseOption(trigger(), "Auto");
     expect(onValueChange).toHaveBeenCalledWith("");
   });
 
-  it('value 為空字串且沒有 "" 選項：顯示 placeholder；value 不在 options：顯示 placeholder', () => {
+  it('value is an empty string and there is no "" option: shows the placeholder; value not in options: shows the placeholder', () => {
     const a = renderSelect({ value: "", placeholder: "Pick one" });
     expect(displayedLabel(a.trigger())).toBe("Pick one");
     expect(selectedValue(a.trigger())).toBe("");
@@ -139,7 +139,7 @@ describe("ui/select", () => {
     expect(selectedValue(b.trigger())).toBe("nope");
   });
 
-  it("<label htmlFor=id>：getByLabelText 找得到觸發鈕、點 label 會讓觸發鈕取得焦點", () => {
+  it("<label htmlFor=id>: getByLabelText finds the trigger and clicking the label focuses the trigger", () => {
     render(
       <>
         <label htmlFor="role-id">Member role</label>
@@ -153,7 +153,7 @@ describe("ui/select", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('表單內、沒有 "" 選項：值與選項從空變成真值時，不會回呼 ""', async () => {
+  it('inside a form with no "" option: when the value and options go from empty to real values, no "" callback happens', async () => {
     const onValueChange = vi.fn();
     function Harness() {
       const [loaded, setLoaded] = useState(false);
@@ -179,7 +179,7 @@ describe("ui/select", () => {
     expect(onValueChange).not.toHaveBeenCalled();
   });
 
-  it('表單內、有 "" 選項：值從尚未在清單的值變成清單內的值時，不會回呼', async () => {
+  it('inside a form with an "" option: when the value goes from one not yet in the list to one in the list, no callback happens', async () => {
     const onValueChange = vi.fn();
     function Harness() {
       const [loaded, setLoaded] = useState(false);
@@ -205,7 +205,7 @@ describe("ui/select", () => {
     expect(onValueChange).not.toHaveBeenCalled();
   });
 
-  it("name 有給：form 送出的 FormData 取得到目前值；沒給 name 則沒有該欄位", () => {
+  it("with name: the submitted FormData has the current value; without name there is no such field", () => {
     const named = render(
       <form>
         <Select variant="field" aria-label="Role" name="role" value="editor" onValueChange={() => {}} options={ROLES} />
@@ -221,7 +221,7 @@ describe("ui/select", () => {
     expect([...new FormData(bare.container.querySelector("form")!).keys()]).toEqual([]);
   });
 
-  it("在 Dialog 內：開著選單按 Esc，選單關、Dialog 還在", async () => {
+  it("inside a Dialog: Esc with the menu open closes the menu and the Dialog stays", async () => {
     const onOpenChange = vi.fn();
     function Harness() {
       const [value, setValue] = useState("viewer");
@@ -248,7 +248,7 @@ describe("ui/select", () => {
     expect(selectedValue(trigger)).toBe("editor");
   });
 
-  it("每個選項在觸發鈕內有隱藏的撐寬副本（aria-hidden），可及名稱與 data-value 不變", () => {
+  it("each option has a hidden width-reserving copy inside the trigger (aria-hidden) and the accessible name and data-value are unchanged", () => {
     const { trigger } = renderSelect({ value: "viewer" });
     const sizers = Array.from(trigger().querySelectorAll("[data-select-sizer]"));
     expect(sizers.map((s) => s.textContent)).toEqual(["Viewer", "Editor"]);
@@ -261,7 +261,7 @@ describe("ui/select", () => {
     expect(selectedValue(trigger())).toBe("viewer");
   });
 
-  it("長 label：觸發鈕文字所在元素有 truncate", () => {
+  it("long label: the element holding the trigger text has truncate", () => {
     const options = [{ value: "a", label: "Alice Example Long Name (alice.example.long@example.com)" }];
     const { trigger } = renderSelect({ options, value: "a" });
     expect(trigger().querySelector("[data-select-text]")).toHaveClass("truncate");
