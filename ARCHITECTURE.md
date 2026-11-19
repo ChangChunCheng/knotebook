@@ -160,7 +160,7 @@ Search covers note titles and body text. The body is indexed one row per section
 - extraction: `apps/server/src/notes/search-text.ts`;
 - writing: `apps/server/src/notes/search-index.ts` and `apps/server/src/notes/tx/search-index.ts`, called from `onStoreDocument`, when a note is copied, and by the backfill;
 - backfill: `backfillSearchIndex` in `search-index.ts` runs in the background after the server starts listening, picking up notes whose index is missing or was built by an older extractor version. It can be resumed and is aborted on shutdown;
-- querying: `apps/server/src/notes/search-sql.ts` builds the SQL (case-insensitive substring match on titles and sections, joined with the notes the user can see), `notes/search-query.ts` runs it, and `notes/search-snippet.ts` picks the snippets. REST (`routes/search.ts`) and MCP `search_notes` share it.
+- querying: `apps/server/src/notes/search-sql.ts` builds the SQL (case-insensitive substring match on titles and sections, joined with the notes the user can see), `notes/search-query.ts` runs it, and `notes/search-snippet.ts` picks the snippets. REST (`routes/search.ts`) and MCP `search_notes` share it. A `pg_trgm` GIN index on `lower(note_search_sections.body)` (`nss_body_trgm_idx`) serves body matches for queries with three letters or digits in a row; shorter queries use `position()`. Which characters count depends on the database's `LC_CTYPE`, which the server checks once at startup (`initCjkTrigramMode` in `search-sql.ts`).
 
 ## The web app (`apps/web`)
 
