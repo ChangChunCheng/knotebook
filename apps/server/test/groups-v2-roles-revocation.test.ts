@@ -201,7 +201,7 @@ describe("#175 角色變更的踢線（真連線）", () => {
     const contributors = await createRole(admin.session, groupId, "Contributors", { ...NONE, create: true });
     await assignRole(admin.session, groupId, member.id, contributors);
 
-    // cookie session 走 `authenticateAny("notes:write")`；buildCollabTestApp 有協作元件，部署閘門放行 content
+    // cookie session 走 `authenticateTokenOrSession("notes:write")`；buildCollabTestApp 有協作元件，部署閘門放行 content
     const created = await api(member.session, "POST", "/api/notes", { groupId, title: "Pitch", content: "contributed-text" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ role: "viewer", groupId, ownerId: null, permissions: { read: true, edit: false } });

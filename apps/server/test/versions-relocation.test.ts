@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { groups, noteVersions, notes, users } from "../src/db/schema.js";
 import type { GroupRacePoint } from "../src/groups/test-hook.js";
 import { seedDoc } from "./copy-helpers.js";
@@ -130,7 +130,7 @@ describe("載入中的筆記（真 collab）", () => {
     expect((await s.move()).status).toBe(200);
     await waitFor("狀態重建", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.initialized === true);
     expect(s.ctx.collab.versions.debugState(s.note.id)!.spaceKey).toBe(`g:${s.g.id}`);
-    const p = topLevelContainers(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as import("yjs").XmlElement;
+    const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as import("yjs").XmlElement;
     client.doc.transact(() => (p.get(0) as import("yjs").XmlText).insert(0, "群組時期"));
     await waitFor("server 收到", 5_000, () => docText(live).includes("群組時期"));
     client.disconnect();

@@ -80,7 +80,7 @@ export default function PublicNotePage() {
   // Paragraph anchors (#269): noteKey is the public ref identity (shared with PublicNoteEditor via publicRefIdentity); ready once the doc decodes.
   const [anchorRoot, setAnchorRoot] = useState<HTMLElement | null>(null);
   const publicKey = publicRefIdentity(publicRef);
-  const blockAnchor = useBlockAnchor({ noteKey: publicKey, ready: doc !== null, root: anchorRoot, ignore: presenting, currentNoteId: null });
+  const blockAnchor = useBlockAnchor({ noteKey: publicKey, ready: doc !== null, root: anchorRoot, ignoreInitialAnchor: presenting, currentNoteId: null });
   // The title "#" button overlays the article column wrapper (`relative`).
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
   // Right-side heading outline (#465; desktop and tablet, phones have their own entry). No version bubbles on the public page; while

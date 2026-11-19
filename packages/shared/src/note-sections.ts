@@ -15,7 +15,7 @@ export interface SectionInfo {
 }
 
 /** Also returns columnList rows, not only blockContainers. */
-export function topLevelContainers(fragment: Y.XmlFragment): Y.XmlElement[] {
+export function topLevelBlocks(fragment: Y.XmlFragment): Y.XmlElement[] {
   const group = fragment.get(0);
   if (!(group instanceof Y.XmlElement) || group.nodeName !== "blockGroup") return [];
   const out: Y.XmlElement[] = [];
@@ -62,7 +62,7 @@ function headingLevel(content: Y.XmlElement | null): number | null {
 export function sectionize(fragment: Y.XmlFragment): SectionInfo[] {
   const sections: SectionInfo[] = [{ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 0, blockIds: [] }];
   let current = sections[0]!;
-  for (const c of topLevelContainers(fragment)) {
+  for (const c of topLevelBlocks(fragment)) {
     const content = blockContent(c);
     const level = headingLevel(content);
     const id = c.getAttribute("id") ?? "";
@@ -107,7 +107,7 @@ export function canonicalizeElements(elements: Y.XmlElement[]): string {
 /** `blockIds` must be top-level and in document order, else null (fingerprint mismatch). */
 export function canonicalizeSection(fragment: Y.XmlFragment, blockIds: string[]): string | null {
   if (blockIds.length === 0) return "";
-  const containers = topLevelContainers(fragment);
+  const containers = topLevelBlocks(fragment);
   const byId = new Map(containers.map((c, i) => [c.getAttribute("id") ?? "", { c, i }]));
   const picked: Y.XmlElement[] = [];
   let lastIndex = -1;

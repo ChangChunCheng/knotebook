@@ -173,7 +173,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T13：transfer token 打 authenticateAny 路由一律 401 且不查 DB；cookie-only 路由不看 header（無 cookie 401）", async () => {
+  it("T13：transfer token 打 authenticateTokenOrSession 路由一律 401 且不查 DB；cookie-only 路由不看 header（無 cookie 401）", async () => {
     const ctx = await buildCollabTestApp();
     const o = await ownerWithPat(ctx.db);
     const t = await issueDirect(ctx.db, o.patId, o.noteId, "download");
@@ -705,7 +705,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, randomUUID(), { token: t.token })).statusCode).toBe(404);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(200);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(429);
-    // 同一本帳：同一使用者的 PAT 打 authenticateAny 路由也被擋（key 相同）
+    // 同一本帳：同一使用者的 PAT 打 authenticateTokenOrSession 路由也被擋（key 相同）
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${o.pat}` } })).statusCode).toBe(429);
   });
 

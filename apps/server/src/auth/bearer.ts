@@ -31,7 +31,7 @@ const LAST_USED_THROTTLE_MS = 60_000;
  * path runs, with no cookie fallback (the web client never sends it). Don't call `app.authenticate` for the cookie fallback:
  * `sendError` calls `reply.send()`, so a header set afterwards is silently lost.
  */
-export function createAuthenticateAny(deps: BearerDeps) {
+export function createAuthenticateTokenOrSession(deps: BearerDeps) {
   // Per-app instance: a module-level singleton would share state across test files (the last_used_at guard tests would flip with run order).
   // An evicted entry costs only one extra UPDATE, no error path.
   const lastUsedTouchedAt = new BoundedMap<number>(DEFAULT_MAX_KEYS);
@@ -68,7 +68,7 @@ export function createAuthenticateAny(deps: BearerDeps) {
     sendError(reply, 401, "unauthorized", invalidToken ? "The token is invalid or expired." : "Not signed in.");
   }
 
-  return function authenticateAny(required: RequiredScope, challenge: string = required) {
+  return function authenticateTokenOrSession(required: RequiredScope, challenge: string = required) {
     return async function preHandler(request: FastifyRequest, reply: FastifyReply): Promise<void> {
       const rawHeader = typeof request.headers.authorization === "string" ? request.headers.authorization : undefined;
       const parsed = parseAuthorizationHeader(rawHeader);

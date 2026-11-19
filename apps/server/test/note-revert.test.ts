@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { apiTokens, noteAiEdits } from "../src/db/schema.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 import type { EditingTestHooks } from "../src/notes/editing/apply.js";
@@ -33,8 +33,8 @@ async function setup(md = "# A\n\n第一段\n\n# B\n\n第二段", opts: Paramete
   return { ctx, u, note, client, token, tokenId, content, post, list, revert };
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
-const ids = (doc: Y.Doc) => topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
-/** 直接讀原始 Y 的頂層（不經 shared 的 topLevelContainers，被測函式壞掉時 oracle 不跟著壞）。 */
+const ids = (doc: Y.Doc) => topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+/** 直接讀原始 Y 的頂層（不經 shared 的 topLevelBlocks，被測函式壞掉時 oracle 不跟著壞）。 */
 const rawTop = (doc: Y.Doc) =>
   (doc.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement).toArray().map(n => `${(n as Y.XmlElement).nodeName}:${(n as Y.XmlElement).getAttribute("id")}`);
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signTestSession({ userId, tv: 0 })}`;
@@ -453,7 +453,7 @@ describe("撤回", () => {
 
   it("GET /edits 的守衛：非成員 → 404；角色檢查之後才消耗 CONTENT_READ_LIMIT；耗盡 → 429", async () => {
     // 這條路由宣稱三道守衛（scope、角色、限流）卻一個斷言都沒有。
-    // **scope 那道刻意不另造案**：它是 `authenticateAny("notes:read")` 的共用機制，已由
+    // **scope 那道刻意不另造案**：它是 `authenticateTokenOrSession("notes:read")` 的共用機制，已由
     // `api-token-auth.test.ts` 的「read token 打 POST /api/notes → 403 insufficient_scope」釘住，
     // 而本檔的 token 一律含 `notes:read`，造不出有意義的變體。這裡守角色與限流兩道。
     const s = await setup(undefined, { limiters: { contentRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) } });

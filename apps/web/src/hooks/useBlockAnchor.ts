@@ -256,7 +256,7 @@ export function useMemberBlockAnchor(opts: MemberBlockAnchorOptions): BlockAncho
     noteKey: opts.noteId,
     ready: memberAnchorReady({ syncedFor: opts.collab.syncedFor, noteId: opts.noteId }),
     root: opts.root,
-    ignore: opts.presenting,
+    ignoreInitialAnchor: opts.presenting,
     currentNoteId: opts.noteId ?? null,
   });
 }
@@ -266,8 +266,8 @@ export interface UseBlockAnchorOptions {
   noteKey: string | undefined;
   ready: boolean;
   root: HTMLElement | null;
-  /** True while presenting (?present): #b- hashes are ignored. */
-  ignore?: boolean;
+  /** True while presenting (?present): both the `#b-` hash and the search-hit find state from location.state are ignored. */
+  ignoreInitialAnchor?: boolean;
   currentNoteId: string | null;
 }
 
@@ -277,8 +277,8 @@ export function useBlockAnchor(opts: UseBlockAnchorOptions): BlockAnchorApi {
   const location = useLocation();
   const hashRef = useRef(location.hash);
   hashRef.current = location.hash;
-  const ignoreRef = useRef(opts.ignore ?? false);
-  ignoreRef.current = opts.ignore ?? false;
+  const ignoreRef = useRef(opts.ignoreInitialAnchor ?? false);
+  ignoreRef.current = opts.ignoreInitialAnchor ?? false;
   const noteKeyRef = useRef(opts.noteKey);
   noteKeyRef.current = opts.noteKey;
   const stateRef = useRef(location.state);

@@ -63,7 +63,7 @@ describe("POST /api/auth/password/set（#187）", () => {
     expect((await setPw(app, await cookieOf(u.id), { newPassword: "short" })).json().error.code).toBe("password_too_short");
     expect((await setPw(app, await cookieOf(u.id), { newPassword: NEW_PW, extra: 1 })).json().error.code).toBe("invalid_body");
     expect((await app.inject({ method: "POST", url: "/api/auth/password/set", payload: { newPassword: NEW_PW } })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // 有效 PAT（scope 足以通過 authenticateTokenOrSession）、不帶 cookie：401 只能來自「只認 session」。
     const { token } = await seedTokenForUser(db, u.id);
     expect(
       (await app.inject({ method: "POST", url: "/api/auth/password/set", headers: bearer(token), payload: { newPassword: NEW_PW } })).statusCode,

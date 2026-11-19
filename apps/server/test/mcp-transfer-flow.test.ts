@@ -25,7 +25,7 @@ describe("M2a：同一母憑證並發簽發——① 的 FOR NO KEY UPDATE 序�
     const { app, db } = await buildTestApp({ mcpTestHooks: { issueTransferToken: seam } });
     const pool = db.$client;
     const o = await ownerWithPat(db);
-    // 暖身：先打一發，讓 authenticateAny 的 touchLastUsed（對 api_tokens 的 UPDATE，60 秒節流）在交錯開始前就做完——
+    // 暖身：先打一發，讓 authenticateTokenOrSession 的 touchLastUsed（對 api_tokens 的 UPDATE，60 秒節流）在交錯開始前就做完——
     // 否則它會撞在第一發的列鎖上，被 waitForBlockedOrSettled 當成「第二發 blocked」的假證據。
     expect((await mcpPost(app, rpc("tools/list"), { token: o.pat })).statusCode).toBe(200);
     for (let i = 0; i < 4; i++) await issueDirect(db, o.patId, o.noteId, "upload");

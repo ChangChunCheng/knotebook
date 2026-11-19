@@ -40,7 +40,7 @@ export function noteContentRoutes(deps: NoteContentRouteDeps) {
        * ⚠ Authorization is complete here: like the direct connection of the AI write path, this path doesn't go through collab's onAuthenticate.
        * The limiter comes after the role check so "none" 404s don't consume (see CONTENT_READ_LIMIT).
        */
-      app.get("/api/notes/:id/content", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
+      app.get("/api/notes/:id/content", { preHandler: app.authenticateTokenOrSession("notes:read") }, async (request, reply) => {
         const { id } = request.params as { id: string };
         // Redundant with resolveRole's guard; kept so "no invalid uuid reaches SQL" doesn't rest on another module's private choice.
         if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
@@ -73,7 +73,7 @@ export function noteContentRoutes(deps: NoteContentRouteDeps) {
       });
 
       /** The limiter comes after the role check (404/403 don't consume) but before any mount or direct connection: a 429 must leave nothing written or recorded. bodyLimit (shared with POST /api/mcp) 413 → content_too_large; the same number as MD's .max(262_144) but in bytes, so over-long markdown hits it before zod's 400. */
-      app.post("/api/notes/:id/edits", { preHandler: app.authenticateAny("notes:write"), bodyLimit: WRITE_BODY_LIMIT }, async (request, reply) => {
+      app.post("/api/notes/:id/edits", { preHandler: app.authenticateTokenOrSession("notes:write"), bodyLimit: WRITE_BODY_LIMIT }, async (request, reply) => {
         const { id } = request.params as { id: string };
         if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
         const parsed = editBodySchema.safeParse(request.body ?? {});
@@ -120,7 +120,7 @@ export function noteContentRoutes(deps: NoteContentRouteDeps) {
       });
 
       /** Read path: never opens a direct connection or reloads an unloaded document. */
-      app.get("/api/notes/:id/edits", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
+      app.get("/api/notes/:id/edits", { preHandler: app.authenticateTokenOrSession("notes:read") }, async (request, reply) => {
         const { id } = request.params as { id: string };
         if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
         const userId = request.user!.id;
@@ -133,7 +133,7 @@ export function noteContentRoutes(deps: NoteContentRouteDeps) {
       });
 
       /** No body, so the input check is on editId: a non-uuid is 404 before SQL (pg's cast error would be a 500). Uses the same queue as the /edits write. */
-      app.post("/api/notes/:id/edits/:editId/revert", { preHandler: app.authenticateAny("notes:write") }, async (request, reply) => {
+      app.post("/api/notes/:id/edits/:editId/revert", { preHandler: app.authenticateTokenOrSession("notes:write") }, async (request, reply) => {
         const { id, editId } = request.params as { id: string; editId: string };
         if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
         if (!UUID_RE.test(editId)) return sendError(reply, 404, "not_found", "No edit with that id.");

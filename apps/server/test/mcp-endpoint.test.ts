@@ -172,7 +172,7 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(body.error.message).toContain("Not Acceptable");
   });
 
-  // Origin 守衛——四發全部帶有效 token：守衛排在 `authenticateAny` 之後，
+  // Origin 守衛——四發全部帶有效 token：守衛排在 `authenticateTokenOrSession` 之後，
   // 不帶 token 一律先拿 401，會讓人誤以為守衛沒接上。
   it("案 7a：Origin ＝ Host ＝ evil.example（都不是 PUBLIC_URL host）→ 403", async () => {
     const { app, token } = await appWithToken();

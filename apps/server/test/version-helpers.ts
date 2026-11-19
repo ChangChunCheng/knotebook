@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import type { Db } from "../src/db/index.js";
 import { noteVersions, notes } from "../src/db/schema.js";
 import type { VersionDocsHost } from "../src/collab/versions.js";
@@ -50,7 +50,7 @@ export function deepDoc(depth: number): Y.Doc {
 
 /** 對第 i 顆頂層段落的 XmlText 做一次編輯（一個 transaction）。 */
 export function editPara(doc: Y.Doc, i: number, fn: (t: Y.XmlText) => void): void {
-  const p = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[i]!.get(0) as Y.XmlElement;
+  const p = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[i]!.get(0) as Y.XmlElement;
   doc.transact(() => fn(p.get(0) as Y.XmlText));
 }
 

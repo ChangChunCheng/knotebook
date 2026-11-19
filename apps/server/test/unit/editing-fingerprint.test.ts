@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
-import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelBlocks } from "@knotebook/shared";
 import { EMPTY_SECTION_FINGERPRINT, fingerprintForIds, fingerprintOf, outlineOf } from "../../src/notes/editing/fingerprint.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
@@ -19,7 +19,7 @@ async function docWith(blocks: Array<Record<string, unknown>>): Promise<Y.Doc> {
 const COL = (id: string, children: Array<Record<string, unknown>>, width = 1) => ({ id, type: "column", props: { width }, children });
 const ROW = (id: string, cols: Array<Record<string, unknown>>) => ({ id, type: "columnList", children: cols });
 const para = (id: string, text: string) => ({ id, type: "paragraph", content: text });
-// 在未改 topLevelContainers 的碼上實跑取得
+// 在未改 topLevelBlocks 的碼上實跑取得
 const GOLDEN_OUTLINE = [["_top", 0, "e3b0c44298fc1c14"], ["ha", 12, "70cfcd4d638d7496"], ["hb", 4, "69c7d471720fc8fd"]];
 const GOLDEN_WHOLE = "02384cdbb1c6229a";
 const GOLDEN_BLOCKS = [
@@ -73,7 +73,7 @@ describe("fingerprint", () => {
   it("fingerprintForIds：順序改變或缺 id → null；空 → EMPTY_SECTION_FINGERPRINT", async () => {
     const doc = await docWith([{ type: "paragraph", content: "1" }, { type: "paragraph", content: "2" }]);
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
-    const [a, b] = topLevelContainers(f).map(c => c.getAttribute("id")!);
+    const [a, b] = topLevelBlocks(f).map(c => c.getAttribute("id")!);
     expect(fingerprintForIds(f, [a, b])).toMatch(/^[0-9a-f]{16}$/);
     expect(fingerprintForIds(f, [b, a])).toBeNull();
     expect(fingerprintForIds(f, [a, "zzz"])).toBeNull();
@@ -92,7 +92,7 @@ describe("fingerprint", () => {
       { id: "a-y", type: "paragraph", content: "Y" },
     ]);
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
-    expect(topLevelContainers(f).map(c => c.getAttribute("id"))).toEqual(["c-h", "b-x", "a-y"]);
+    expect(topLevelBlocks(f).map(c => c.getAttribute("id"))).toEqual(["c-h", "b-x", "a-y"]);
     const { outline } = doc.transact(() => outlineOf(f));
     const sec = outline[1]!;
     expect(sec.blockIds).toEqual(["c-h", "b-x", "a-y"]);
