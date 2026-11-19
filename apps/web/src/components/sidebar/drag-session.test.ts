@@ -25,8 +25,7 @@ afterEach(() => {
 });
 
 /**
- * 拖曳狀態 store（離開樹容器的判定、事件順序與狀態清理、兩個 0.5 秒計時怎麼算）。
- * DragOverResult 一律手造；容器照真實 DOM 形：`[data-sidebar-instance]` 裡的 `[data-sidebar-list]`（beginDrag 收的是後者）。
+ * DragOverResults are hand-built; containers follow the real DOM shape: `[data-sidebar-list]` inside `[data-sidebar-instance]` (beginDrag receives the former).
  */
 
 const SOURCE: DragSource = { noteId: "A", space: "personal", folderId: null, title: "Alpha" };
@@ -62,7 +61,7 @@ function outsideEl(): HTMLElement {
   return el;
 }
 
-/** document 上目前掛著的 dragover 監聽數（依 add／remove 的呼叫順序回放）；capture 才算 true 那格。 */
+/** Current dragover listener count on document, replayed from the add/remove calls; `capture` counts those added with capture. */
 function trackDragoverListeners(): () => { capture: number; bubble: number } {
   const add = vi.spyOn(document, "addEventListener");
   const remove = vi.spyOn(document, "removeEventListener");
@@ -112,7 +111,7 @@ describe("drag-session", () => {
     document.body.innerHTML = "";
   });
 
-  it("beginDrag：active true、記來源；takeDropZone 之後來源清空", () => {
+  it("beginDrag: active is true and the source is recorded; takeDropZone clears the source", () => {
     const { view } = setup();
     expect(view().active).toBe(true);
     expect(getDragSource()).toEqual(SOURCE);
@@ -122,7 +121,7 @@ describe("drag-session", () => {
     expect(getDragSource()).toBeNull();
   });
 
-  it("DS1 第一發 hold 起算：DELAY−1 未呼叫，再 1 呼叫一次、引數是 spring F", () => {
+  it("the first hold starts the timer: not called at DELAY-1, called once 1 later, with the spring F argument", () => {
     const { over, advance, onHold } = setup();
     over(overF);
     advance(DRAG_HOVER_DELAY_MS - 1);
@@ -132,14 +131,14 @@ describe("drag-session", () => {
     expect(onHold).toHaveBeenCalledWith(springF);
   });
 
-  it("DS2 之後不再 dragover 也照樣到時呼叫", () => {
+  it("still fires on time without further dragovers", () => {
     const { over, advance, onHold } = setup();
     over(overF);
     advance(DRAG_HOVER_DELAY_MS);
     expect(onHold).toHaveBeenCalledTimes(1);
   });
 
-  it("DS3 同列第二發在中途不重起：從第一發起算滿 DELAY 就呼叫", () => {
+  it("a second event on the same row mid-wait does not restart the timer: fires DELAY after the first", () => {
     const { over, advance, onHold } = setup();
     over(overF);
     advance(DRAG_HOVER_DELAY_MS / 2);
@@ -149,7 +148,7 @@ describe("drag-session", () => {
     expect(onHold).toHaveBeenCalledWith(springF);
   });
 
-  it("DS4 換到 hold null 的列 → 永遠不呼叫；換到另一個有 hold 的列 → 從換列那一發重新起算", () => {
+  it("moving to a row whose hold is null -> never fires; moving to another row with a hold -> timer restarts from that event", () => {
     const { over, advance, onHold } = setup();
     over(overF);
     advance(DRAG_HOVER_DELAY_MS - 1);
@@ -167,7 +166,7 @@ describe("drag-session", () => {
     expect(onHold).toHaveBeenCalledWith(springG);
   });
 
-  it("DS5 容器外的 document dragover → scope null、計時取消、預覽收起；容器內 → 不清", () => {
+  it("document dragover outside the container -> scope null, timer cancelled, preview collapsed; inside the container -> nothing cleared", () => {
     const { over, advance, onHold, row, view } = setup();
     over(overF);
     act(() => setPreview(PREVIEW_B));
@@ -187,7 +186,7 @@ describe("drag-session", () => {
     expect(onHold).not.toHaveBeenCalled();
   });
 
-  it("DS6 takeDropZone 回最後一發（被接受）的 zone，並清狀態、計時與 document 監聽", () => {
+  it("takeDropZone returns the zone of the last accepted event and clears state, timer and document listener", () => {
     const listeners = trackDragoverListeners();
     const { over, advance, onHold, row, view } = setup();
     expect(listeners()).toEqual({ capture: 1, bubble: 0 });
@@ -210,7 +209,7 @@ describe("drag-session", () => {
     expect(view()).toBe(snapshot);
   });
 
-  it("DS7 endDrag 冪等、清狀態與監聽，不動 creating", () => {
+  it("endDrag is idempotent, clears state and listeners, leaves creating alone", () => {
     const listeners = trackDragoverListeners();
     const { over, advance, onHold, view } = setup();
     over(overF);
@@ -234,7 +233,7 @@ describe("drag-session", () => {
     expect(view().creating).toBeNull();
   });
 
-  it("DS8 預覽中一發換到別列 → 預覽收起；從這一發起算滿 DELAY 呼叫 onHold(stack X) 一次", () => {
+  it("while previewing, an event on another row collapses the preview; DELAY after that event onHold(stack X) is called once", () => {
     const { over, advance, onHold, view } = setup();
     over({ zone: zoneStack, row: "preview", hold: null });
     act(() => setPreview(PREVIEW_B));
@@ -248,7 +247,7 @@ describe("drag-session", () => {
     expect(onHold).toHaveBeenCalledWith(stackX);
   });
 
-  it("DS9 預覽中 row preview 與 row note:B 各一發 → 預覽保留、回 true", () => {
+  it("while previewing, one event on row preview and one on row note:B -> preview kept, returns true", () => {
     const { over, view } = setup();
     act(() => setPreview(PREVIEW_B));
     expect(over({ zone: zoneStack, row: "preview", hold: null })).toBe(true);
@@ -258,7 +257,7 @@ describe("drag-session", () => {
     expect(view().scope).toBe("preview");
   });
 
-  it("DS10 zone null → false、scope null；zone 非 null → true、scope＝dropScopeKey", () => {
+  it("null zone -> false and scope null; non-null zone -> true and scope is dropScopeKey", () => {
     const { over, view } = setup();
     expect(over(overF)).toBe(true);
     expect(view().scope).toBe("folder:F");
@@ -270,7 +269,7 @@ describe("drag-session", () => {
     expect(view().scope).toBe("list");
   });
 
-  it("DS11 結果相同的連續兩發 → 快照 Object.is 相同、render 次數不變", () => {
+  it("two consecutive identical results -> snapshot is Object.is-equal, render count unchanged", () => {
     vi.useFakeTimers();
     const { list } = mountSidebar();
     let renders = 0;
@@ -292,7 +291,7 @@ describe("drag-session", () => {
     expect(renders).toBe(rendersBefore);
   });
 
-  it("DS12 兩個容器：在另一份容器（c2）內發 → 視為離開；在發起的容器（c1）內 → 不清", () => {
+  it("two containers: an event inside the other container (c2) counts as leaving; inside the originating container (c1) clears nothing", () => {
     vi.useFakeTimers();
     const c1 = mountSidebar();
     const c2 = mountSidebar();
@@ -314,7 +313,7 @@ describe("drag-session", () => {
     expect(onHold).not.toHaveBeenCalled();
   });
 
-  it("DS13 takeDropZone 取最後一發：後發被拒 → null；後來離開樹 → null；只有一發被接受 → 該 zone", () => {
+  it("takeDropZone uses the last event: later one rejected -> null; later left the tree -> null; only one accepted -> that zone", () => {
     const { over } = setup();
     over(overF);
     over({ zone: null, row: "note:Q", hold: null });
@@ -344,7 +343,7 @@ describe("drag-session", () => {
     expect(zone).toEqual(zoneG);
   });
 
-  it("DS14 document 監聽是 capture：容器外元素自己 stopPropagation 也照樣清標示", () => {
+  it("the document listener is capture: an element outside the container calling stopPropagation still clears the marker", () => {
     const { over, view } = setup();
     over(overF);
     const blocker = outsideEl();
@@ -355,7 +354,7 @@ describe("drag-session", () => {
     expect(view().scope).toBeNull();
   });
 
-  it("DS15 離開樹後回到同一列 → 從最後這一發起算滿 DELAY，onHold 恰一次", () => {
+  it("leaving the tree and returning to the same row -> DELAY counted from the last event, onHold called once", () => {
     const { over, advance, onHold } = setup();
     over(overF);
     advance(DRAG_HOVER_DELAY_MS / 2);
@@ -372,7 +371,7 @@ describe("drag-session", () => {
     expect(onHold).toHaveBeenCalledTimes(1);
   });
 
-  it("setPreview／setCreating 各自獨立；takeDropZone 收起預覽但不動 creating", () => {
+  it("setPreview and setCreating are independent; takeDropZone collapses the preview but leaves creating alone", () => {
     const { view } = setup();
     act(() => setPreview(PREVIEW_B));
     act(() => setCreating(PREVIEW_B));
@@ -383,7 +382,7 @@ describe("drag-session", () => {
     expect(view()).toEqual({ active: false, scope: null, preview: null, creating: PREVIEW_B });
   });
 
-  it("beginDrag 時已在拖曳 → 舊的計時、標示、預覽與監聽一併清掉，只剩一個 capture 監聽", () => {
+  it("beginDrag while already dragging -> old timer, marker, preview and listeners are cleared, leaving one capture listener", () => {
     const listeners = trackDragoverListeners();
     const { over, advance, onHold, view } = setup();
     over(overF);
@@ -395,7 +394,7 @@ describe("drag-session", () => {
     expect(onHold).not.toHaveBeenCalled();
   });
 
-  it("沒有拖曳時 applyDragOver 回 false、不起計時、不改 view", () => {
+  it("applyDragOver without a drag returns false, starts no timer and leaves the view alone", () => {
     vi.useFakeTimers();
     const hook = renderHook(() => useDragView());
     const onHold = vi.fn<(hold: HoldAction) => void>();

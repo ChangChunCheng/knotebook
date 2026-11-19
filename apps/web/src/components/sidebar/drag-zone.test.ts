@@ -23,10 +23,9 @@ import { indexFolders } from "./folder-index";
 import { buildTabNodes } from "./tree";
 
 /**
- * 拖曳的區域落點、可拖判準、疊資料夾取名。
- * fixture：個人 F ⊃ F1、X ⊃ Z、空資料夾 E、鏈 C1 ⊃ … ⊃ C5；根層筆記 A、R、O（folderId 指向不存在的資料夾）；F 裡 N1、N2；Z 裡 Z1；
- * C4 裡 B4、C5 裡 B5；群組 G（edit）有 GF、根層 g1、GF 裡 g2、唯讀 gr；群組 H 有 HF、h1；共享 SF、共享筆記 s1、兜底群組筆記 sg（群組 K 不在 groupIds）。
- * 樹一律以 buildTabNodes 建再 buildDropLookup，不手寫 lookup。斷言形 `[zone kind, 落點 folderId, scope 鍵, row, hold]`。
+ * Fixture: personal F > F1, X > Z, empty folder E, chain C1 > ... > C5; root notes A, R, O (folderId points to a missing folder); N1, N2 in F; Z1 in Z;
+ * B4 in C4, B5 in C5; group G (edit) with GF, root g1, g2 in GF, read-only gr; group H with HF, h1; shared SF, shared note s1, fallback group note sg (group K is not in groupIds).
+ * Trees are built with buildTabNodes then buildDropLookup rather than a hand-written lookup. Assertion shape: `[zone kind, drop folderId, scope key, row, hold]`.
  */
 
 const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) => string;
@@ -113,37 +112,37 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
 });
 
-describe("evaluateDragOver：我的筆記", () => {
-  it("DZ1 根層 A 拖到展開的資料夾列 F → 落點 F、標示 F 的範圍、不計時", () => {
+describe("evaluateDragOver: my notes", () => {
+  it("root note A dragged onto the expanded folder row F -> drop target F, F's scope highlighted, no timer", () => {
     expect(over("myNotes", "A", folder("F"))).toEqual(["place", "F", "folder:F", "folder:F", null]);
   });
 
-  it("DZ2 A 拖到 F 裡的 N1 → 落點 F；停留可疊（母層 F）", () => {
+  it("A dragged onto N1 inside F -> drop target F; hovering can stack (parent F)", () => {
     expect(over("myNotes", "A", note("N1"))).toEqual(["place", "F", "folder:F", "note:N1", stack("N1", "F")]);
   });
 
-  it("DZ3 F 裡的 N1 拖到根層 R → 落點根目錄（整份清單）；停留可疊（母層根層）", () => {
+  it("N1 from F dragged onto root note R -> drop target is the root (whole list); hovering can stack (parent is root)", () => {
     expect(over("myNotes", "N1", note("R"))).toEqual(["place", null, "list", "note:R", stack("R", null)]);
   });
 
-  it("DZ4 空白處：N1 → 根目錄；A 已在根層 → 不是落點；離開樹容器 → 全空", () => {
+  it("blank area: N1 -> root; A already at root -> not a drop target; leaving the tree container -> everything empty", () => {
     expect(over("myNotes", "N1", BLANK)).toEqual(["place", null, "list", null, null]);
     expect(over("myNotes", "A", BLANK)).toEqual(NONE);
     expect(over("myNotes", "N1", OUTSIDE)).toEqual(NONE);
   });
 
-  it("DZ5 原處不是落點：N1 → 同資料夾的 N2 仍可疊；N1 → F 列、A → 自己都什麼都沒有", () => {
+  it("staying in place is not a drop target: N1 onto N2 in the same folder can still stack; N1 onto row F, and A onto itself, give nothing", () => {
     expect(over("myNotes", "N1", note("N2"))).toEqual([null, undefined, null, "note:N2", stack("N2", "F")]);
     expect(over("myNotes", "N1", folder("F"))).toEqual([null, undefined, null, "folder:F", null]);
     expect(over("myNotes", "A", note("A"))).toEqual([null, undefined, null, "note:A", null]);
   });
 
-  it("DZ6 巢狀取最近：A → Z 裡的筆記、A → Z 列 → 落點都是 Z", () => {
+  it("nested picks the nearest: A onto a note in Z, and A onto row Z -> drop target is Z in both", () => {
     expect(over("myNotes", "A", note("Z1"))).toEqual(["place", "Z", "folder:Z", "note:Z1", stack("Z1", "Z")]);
     expect(over("myNotes", "A", folder("Z"))).toEqual(["place", "Z", "folder:Z", "folder:Z", null]);
   });
 
-  it("DZ7 空資料夾 E 的「沒有筆記」行 → readDragTarget 讀出 folder E → 落點 E", () => {
+  it("the \"no notes\" line of empty folder E -> readDragTarget reads folder E -> drop target E", () => {
     const container = document.createElement("div");
     container.innerHTML = '<ul><li data-node-kind="folder" data-node-id="E"><button type="button">E</button><ul><li><p>No notes</p></li></ul></li></ul>';
     const empty = container.querySelector("p");
@@ -152,26 +151,26 @@ describe("evaluateDragOver：我的筆記", () => {
     expect(over("myNotes", "A", target)).toEqual(["place", "E", "folder:E", "folder:E", null]);
   });
 
-  it("DZ9 預覽塊 → 建新資料夾；previewAnchor 那一列（同一輪 dragover 還指到舊列）視同預覽", () => {
+  it("preview block -> creates a new folder; the previewAnchor row (the same dragover round still points at the old row) counts as the preview", () => {
     const preview: Shape = ["stack", undefined, "preview", "preview", null];
     expect(over("myNotes", "A", PREVIEW)).toEqual(preview);
     expect(over("myNotes", "A", note("N2"), { previewAnchor: "N2" })).toEqual(preview);
     expect(over("myNotes", "A", note("N1"), { previewAnchor: "N2" })).toEqual(["place", "F", "folder:F", "note:N1", stack("N1", "F")]);
   });
 
-  it("DZ10 B 所在資料夾深度 = FOLDER_DEPTH_MAX → 不疊、只照區域；深度 4 → 可疊", () => {
+  it("B's folder depth = FOLDER_DEPTH_MAX -> no stacking, zone only; depth 4 -> can stack", () => {
     expect(over("myNotes", "A", note("B5"))).toEqual(["place", "C5", "folder:C5", "note:B5", null]);
     expect(over("myNotes", "A", note("B4"))).toEqual(["place", "C4", "folder:C4", "note:B4", stack("B4", "C4")]);
   });
 
-  it("DZ11 彈簧：同空間收合的資料夾 → spring；展開 → 不計時", () => {
+  it("spring: a collapsed folder in the same space -> spring; expanded -> no timer", () => {
     expect(over("myNotes", "A", folder("F"), { collapsed: ["F"] })).toEqual(["place", "F", "folder:F", "folder:F", { kind: "spring", folderId: "F" }]);
     expect(over("myNotes", "A", folder("F"))).toEqual(["place", "F", "folder:F", "folder:F", null]);
   });
 });
 
-describe("evaluateDragOver：群組", () => {
-  it("DZ8 本群組列／根層筆記／空白處 → 群組根目錄；別群組任何列 → 不是落點", () => {
+describe("evaluateDragOver: group", () => {
+  it("own-group row / root note / blank area -> group root; any row of another group -> not a drop target", () => {
     expect(over("workspace", "g2", group("G"))).toEqual(["place", null, "group:G", null, null]);
     expect(over("workspace", "g1", group("G"))).toEqual(NONE);
     expect(over("workspace", "g2", group("H"))).toEqual(NONE);
@@ -181,29 +180,29 @@ describe("evaluateDragOver：群組", () => {
     expect(over("workspace", "g2", note("g1"))).toEqual(["place", null, "group:G", "note:g1", stack("g1", null)]);
   });
 
-  it("DZ11 別群組的收合資料夾不展開", () => {
+  it("a collapsed folder of another group does not spring open", () => {
     expect(over("workspace", "g1", folder("HF"), { collapsed: ["HF"] })).toEqual(NONE);
     expect(over("workspace", "g1", folder("GF"), { collapsed: ["GF"] })).toEqual(["place", "GF", "folder:GF", "folder:GF", { kind: "spring", folderId: "GF" }]);
   });
 
-  it("DZ12 B 不可放置（同群組唯讀）→ 不疊", () => {
+  it("B is not droppable (read-only in the same group) -> no stacking", () => {
     expect(over("workspace", "g1", note("gr"))).toEqual([null, undefined, null, "note:gr", null]);
   });
 });
 
-describe("evaluateDragOver：與我共享", () => {
-  it("DZ12 B 是兜底的群組筆記 → 不疊；共享資料夾列照常是落點", () => {
+describe("evaluateDragOver: shared with me", () => {
+  it("B is a fallback group note -> no stacking; a shared folder row is still a drop target", () => {
     expect(over("shared", "s1", note("sg"))).toEqual([null, undefined, null, "note:sg", null]);
     expect(over("shared", "s1", folder("SF"))).toEqual(["place", "SF", "folder:SF", "folder:SF", null]);
   });
 
-  it("DZ4 共享資料夾 SF 裡的 s2 拖到空白處 → 根目錄（整份清單）", () => {
+  it("s2 in shared folder SF dragged to a blank area -> root (whole list)", () => {
     expect(over("shared", "s2", BLANK)).toEqual(["place", null, "list", null, null]);
   });
 });
 
 describe("canDragNote", () => {
-  it("DZ13 個人＝可；群組看 permissions.edit；共享 editor／viewer 可、兜底群組筆記不可", () => {
+  it("personal: allowed; group: depends on permissions.edit; shared editor/viewer: allowed; fallback group note: not allowed", () => {
     expect(canDragNote(personalNote({ id: "p", title: "p" }), "personal")).toBe(true);
     expect(canDragNote(groupNote({ id: "ge", title: "ge", group: G }), "group:G")).toBe(true);
     expect(canDragNote(groupNote({ id: "gv", title: "gv", group: G, edit: false }), "group:G")).toBe(false);
@@ -229,7 +228,7 @@ describe("readDragTarget", () => {
     return { container, outside };
   }
 
-  it("DZ14 <a> 內的元素與文字節點 → note；容器本身 → blank；容器外與 null → outside；預覽塊內任何一處 → preview", () => {
+  it("elements and text nodes inside <a> -> note; the container itself -> blank; outside it and null -> outside; anywhere inside the preview block -> preview", () => {
     const { container, outside } = tree();
     const span = container.querySelector('[data-node-id="N1"] span');
     expect(readDragTarget(span, container)).toEqual({ kind: "note", id: "N1" });
@@ -241,7 +240,7 @@ describe("readDragTarget", () => {
     expect(readDragTarget(container.querySelector('[data-node-id="N2"] span'), container)).toEqual({ kind: "preview" });
   });
 
-  it("DZ14 認不得的 data-node-kind、缺 data-node-id → outside（不是落點）", () => {
+  it("unrecognized data-node-kind or missing data-node-id -> outside (not a drop target)", () => {
     const container = document.createElement("div");
     container.innerHTML = '<ul><li data-node-kind="weird" data-node-id="W"><span>w</span></li><li data-node-kind="note"><span>no id</span></li></ul>';
     const [weird, noId] = Array.from(container.querySelectorAll("span"));
@@ -251,7 +250,7 @@ describe("readDragTarget", () => {
 });
 
 describe("stackFolderName", () => {
-  it("DZ15 同層既有名不分大小寫，挑第一個沒被用的；skip 再跳一號", () => {
+  it("names already used at the same level are compared case-insensitively and the first unused one is picked; skip advances one more", () => {
     expect(stackFolderName([], t)).toBe("New folder");
     expect(stackFolderName(["New folder"], t)).toBe("New folder 2");
     expect(stackFolderName(["new folder", "New Folder 2"], t)).toBe("New folder 3");
@@ -259,7 +258,7 @@ describe("stackFolderName", () => {
     expect(stackFolderName(["new folder", "New Folder 2"], t, new Set(["NEW FOLDER 3"]))).toBe("New folder 4");
   });
 
-  it("DZ15 字串壞掉（每次回同一個字）→ 最多試 taken.size + 1 次就停，回最後一個候選", () => {
+  it("broken name source (returns the same string every time) -> stops after at most taken.size + 1 tries and returns the last candidate", () => {
     let calls = 0;
     const stuck = (): string => {
       calls += 1;
@@ -270,7 +269,7 @@ describe("stackFolderName", () => {
     expect(calls).toBe(2);
   });
 
-  it("DZ15 zh-TW", async () => {
+  it("zh-TW", async () => {
     await i18n.changeLanguage("zh-TW");
     expect(stackFolderName([], t)).toBe("新資料夾");
     expect(stackFolderName(["新資料夾"], t)).toBe("新資料夾 2");
@@ -278,14 +277,14 @@ describe("stackFolderName", () => {
 });
 
 describe("buildDropLookup", () => {
-  it("DZ16 位置取樹上（兜底後）的：不存在的資料夾 → 根層深度 0；GF 裡的筆記深度 1、空間 group:G", () => {
+  it("position is taken from the tree (after fallback): a missing folder -> root, depth 0; a note in GF -> depth 1, space group:G", () => {
     expect(LOOKUP.myNotes.notes.get("O")).toEqual({ space: "personal", folderId: null, folderDepth: 0, placeable: true, title: "O" });
     expect(LOOKUP.workspace.notes.get("g2")).toEqual({ space: "group:G", folderId: "GF", folderDepth: 1, placeable: true, title: "g2" });
     expect(LOOKUP.workspace.folders.get("GF")).toEqual({ space: "group:G", depth: 1 });
     expect(LOOKUP.myNotes.folders.get("Z")).toEqual({ space: "personal", depth: 2 });
   });
 
-  it("DZ16 群組 tab 只收 groupIds 裡的群組", () => {
+  it("the group tab accepts only groups in groupIds", () => {
     const lookup = buildDropLookup(buildTabNodes("workspace", NOTES, GROUPS, INDEX), "workspace", new Set(["G"]));
     expect(lookup.notes.has("g1")).toBe(true);
     expect(lookup.notes.has("h1")).toBe(false);
@@ -296,7 +295,7 @@ describe("buildDropLookup", () => {
 describe("isDragEnabled", () => {
   const ok = { finePointer: true, tab: "myNotes", selectionActive: false, creating: false, nodesReady: true } as const;
 
-  it("DZ17 五項全可 → true；任一項不可 → false；群組、與我共享也可", () => {
+  it("all five items allowed -> true; any one not allowed -> false; groups and shared-with-me also work", () => {
     expect(isDragEnabled(ok)).toBe(true);
     expect(isDragEnabled({ ...ok, tab: "workspace" })).toBe(true);
     expect(isDragEnabled({ ...ok, tab: "shared" })).toBe(true);

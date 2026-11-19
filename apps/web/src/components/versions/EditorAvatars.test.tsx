@@ -11,27 +11,26 @@ const ed = (handle: string, over: Partial<VersionEditorDto> = {}): VersionEditor
 function group(container: HTMLElement): HTMLElement {
   return container.firstElementChild as HTMLElement;
 }
-/** 圓形頭像本體（不含「+N」）。 */
 function circles(el: HTMLElement): HTMLElement[] {
   return Array.from(el.querySelectorAll<HTMLElement>("[data-editor-avatar]"));
 }
 
 describe("EditorAvatars", () => {
-  it("1 人：一個頭像、沒有 +N；整塊 aria-hidden", () => {
+  it("1 person: one avatar, no +N; the whole block is aria-hidden", () => {
     const { container } = render(<EditorAvatars editors={[ed("alice")]} />);
     expect(group(container)).toHaveAttribute("aria-hidden", "true");
     expect(circles(group(container))).toHaveLength(1);
     expect(group(container).textContent).toBe("A");
   });
 
-  it("3 人：三個頭像、沒有 +N；順序同輸入", () => {
+  it("3 people: three avatars, no +N; same order as the input", () => {
     const { container } = render(<EditorAvatars editors={[ed("alice"), ed("bob"), ed("carol")]} />);
     const els = circles(group(container));
     expect(els.map((e) => e.textContent)).toEqual(["A", "B", "C"]);
     expect(group(container).textContent).toBe("ABC");
   });
 
-  it("5 人：前三個頭像＋「+2」（純文字、aria-hidden）", () => {
+  it("5 people: the first three avatars plus +2 (plain text, aria-hidden)", () => {
     const { container } = render(<EditorAvatars editors={["alice", "bob", "carol", "dave", "erin"].map((h) => ed(h))} />);
     const els = circles(group(container));
     expect(els.map((e) => e.textContent)).toEqual(["A", "B", "C"]);
@@ -40,7 +39,7 @@ describe("EditorAvatars", () => {
     expect(more).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("同一個 handle 以人與 agent 兩種身分出現 → 只畫一個", () => {
+  it("the same handle appearing as both a person and an agent -> drawn once", () => {
     const { container } = render(
       <EditorAvatars editors={[ed("alice", { avatar: { id: ID_A, v: 1 } }), ed("alice", { agentLabel: "claude", avatar: { id: ID_A, v: 1 } }), ed("bob")]} />,
     );
@@ -49,13 +48,13 @@ describe("EditorAvatars", () => {
     expect(group(container).querySelectorAll("img")).toHaveLength(1);
   });
 
-  it("去重後才算上限：4 筆其中 2 筆同 handle → 3 個頭像、沒有 +N", () => {
+  it("the limit applies after deduplication: 4 entries with 2 sharing a handle -> 3 avatars, no +N", () => {
     const { container } = render(<EditorAvatars editors={[ed("alice"), ed("alice", { agentLabel: "x" }), ed("bob"), ed("carol")]} />);
     expect(circles(group(container))).toHaveLength(3);
     expect(group(container).textContent).not.toContain("+");
   });
 
-  it("兩個已刪除的使用者（handle 空字串）合成一個「?」占位，沒有 img", () => {
+  it("two deleted users (empty-string handle) merge into one ? placeholder with no img", () => {
     const { container } = render(<EditorAvatars editors={[ed(""), ed("")]} />);
     const els = circles(group(container));
     expect(els).toHaveLength(1);
@@ -63,21 +62,21 @@ describe("EditorAvatars", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
-  it("agent 編輯者畫本人頭貼（img、src 經 avatarUrl），不是 AI 圖示", () => {
+  it("an agent editor draws its own avatar picture (img, src via avatarUrl), not the AI icon", () => {
     const { container } = render(<EditorAvatars editors={[ed("alice", { agentLabel: "claude", avatar: { id: ID_B, v: 3 } })]} />);
     const img = container.querySelector("img")!;
     expect(img.getAttribute("src")).toBe(avatarUrl(ID_B, 3));
     expect(container.querySelector("svg")).toBeNull();
   });
 
-  it("avatar 欄缺（舊 server）→ 首字、不丟錯", () => {
+  it("missing avatar field (old server) -> first letter, no throw", () => {
     const legacy = { handle: "alice", agentLabel: null } as unknown as VersionEditorDto;
     const { container } = render(<EditorAvatars editors={[legacy]} />);
     expect(container.querySelector("img")).toBeNull();
     expect(group(container).textContent).toBe("A");
   });
 
-  it("沒有編輯者 → 不渲染", () => {
+  it("no editors -> nothing rendered", () => {
     const { container } = render(<EditorAvatars editors={[]} />);
     expect(container.firstElementChild).toBeNull();
   });

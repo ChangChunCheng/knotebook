@@ -12,11 +12,11 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { WikilinkContext, type WikilinkMode } from "./context";
 import { insertWikilink, WikilinkInline } from "./spec";
 
-describe("匯出（headless BlockNoteEditor）", () => {
+describe("export (headless BlockNoteEditor)", () => {
   const blocks = (props: Record<string, string>) => [
     { type: "paragraph" as const, content: ["See ", { type: "wikilink" as const, props: { targetNoteId: "note-1", snapshotTitle: "Meeting Notes", label: "", anchorBlockId: "", ...props } }, " now."] },
   ];
-  it("blocksToHTMLLossy：<a href=/notes/<id>>，文字 label 優先、否則 snapshotTitle；錨點進 href；外層 data-* 照帶", () => {
+  it("blocksToHTMLLossy: <a href=/notes/<id>>, the text label first and otherwise snapshotTitle; the anchor goes into href; the outer data-* attributes are carried over", () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     const plain = editor.blocksToHTMLLossy(blocks({}));
     expect(plain).toContain('data-inline-content-type="wikilink"');
@@ -25,11 +25,11 @@ describe("匯出（headless BlockNoteEditor）", () => {
     const labelled = editor.blocksToHTMLLossy(blocks({ label: "L", anchorBlockId: "b1" }));
     expect(labelled).toContain('<a href="/notes/note-1#b-b1">L</a>');
   });
-  it("blocksToMarkdownLossy：[文字](/notes/<id>)；顯示文字全空時退到 href（永不從匯出消失）", () => {
+  it("blocksToMarkdownLossy: [text](/notes/<id>); when the display text is empty it falls back to href (so the link never disappears from the export)", () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     expect(editor.blocksToMarkdownLossy(blocks({}))).toContain("[Meeting Notes](/notes/note-1)");
-    // 全空時連結文字＝href：HTML 照樣是 <a>；markdown 由 BlockNote 0.52.1 的 htmlToMarkdown `formatLink`（文字等於網址時輸出裸網址）
-    // 收成 `/notes/note-1`——實測如此（計畫原期望 `[/notes/note-1](/notes/note-1)`），文字仍在匯出裡。
+    // With an all-empty label the link text equals the href: HTML is still an `<a>`; markdown goes through `formatLink` in BlockNote 0.52.1's htmlToMarkdown (which emits a bare URL when the text equals the URL)
+    // and comes out as `/notes/note-1`; the text is still in the export.
     expect(editor.blocksToHTMLLossy(blocks({ snapshotTitle: "" }))).toContain('<a href="/notes/note-1">/notes/note-1</a>');
     expect(editor.blocksToMarkdownLossy(blocks({ snapshotTitle: "" }))).toContain("See /notes/note-1 now.");
   });
@@ -68,7 +68,7 @@ interface RenderOpts {
 }
 
 function renderWikilink(opts: RenderOpts) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試替身：元件只讀 isEditable／getBlock，走 repo 慣例的 BlockNoteEditor<any,any,any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test stand-in: the component reads only isEditable / getBlock; BlockNoteEditor<any,any,any> per repo convention
   const editor = (opts.editor ?? { isEditable: false }) as unknown as BlockNoteEditor<any, any, any>;
   const anchors: BlockAnchorApi = { currentNoteId: null, requestAnchor: vi.fn(), scrollToTop: vi.fn(), ...opts.anchors };
   const tree = (
@@ -93,7 +93,7 @@ function renderWikilink(opts: RenderOpts) {
   return { anchors };
 }
 
-/** 可編輯的編輯器替身：`focus`（工具列關閉時拉回焦點）。 */
+/** Editable editor stand-in with `focus` (pulls focus back when the toolbar closes). */
 const EDITABLE_STUB = { isEditable: true, focus: () => {} };
 
 const pendingClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,7 +113,7 @@ describe("MemberWikilink", () => {
     dismissAllToasts();
   });
 
-  it("清單未到：<a href=/notes/<id>[#b-…]>，文字 label 優先否則 snapshotTitle；活連結樣式；一般點擊同分頁導航", () => {
+  it("list not arrived: <a href=/notes/<id>[#b-...]>, the text label first and otherwise snapshotTitle; live-link style; a plain click navigates in the same tab", () => {
     renderWikilink({ queryClient: pendingClient(), props: { targetNoteId: TARGET.id, snapshotTitle: "Snap", anchorBlockId: "b1" } });
     const link = screen.getByRole("link", { name: "Snap" });
     expect(link).toHaveAttribute("href", `/notes/${TARGET.id}#b-b1`);
@@ -123,7 +123,7 @@ describe("MemberWikilink", () => {
     expect(loc()).toBe(`/notes/${TARGET.id}#b-b1`);
   });
 
-  it("活連結與斷鏈都帶導覽目標屬性（功能導覽在沒有現場演示時指它）", () => {
+  it("live links and broken links both carry the tour target attribute (the feature tour falls back to it when the [[ menu is not live)", () => {
     renderWikilink({ queryClient: pendingClient(), props: { targetNoteId: TARGET.id, snapshotTitle: "Snap" } });
     expect(screen.getByRole("link", { name: "Snap" })).toHaveAttribute("data-kb-tour-target", "wikilink");
     cleanup();
@@ -131,8 +131,8 @@ describe("MemberWikilink", () => {
     expect(screen.getByText("Deleted Note")).toHaveAttribute("data-kb-tour-target", "wikilink");
   });
 
-  it("列表查詢失敗（重試耗盡，isPending=false 但 data 仍是 undefined）：跟清單未到同一態，不是斷鏈，不編造「筆記不存在」", async () => {
-    // 蓋掉 beforeEach 那個永不 resolve 的 stub：這裡要真的落到 error 終態（isPending 變 false、data 從未拿到過）。
+  it("list query failure (retries exhausted, isPending=false but data still undefined): the same state as the list not having arrived, not a broken link, and no invented note-does-not-exist", async () => {
+    // Overrides the never-resolving stub from beforeEach: here the query must really reach the error terminal state (isPending false, data never received).
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
     const queryClient = pendingClient();
     renderWikilink({ queryClient, props: { targetNoteId: TARGET.id, snapshotTitle: "Snap" } });
@@ -146,7 +146,7 @@ describe("MemberWikilink", () => {
     expect(screen.queryByText("This linked note no longer exists.")).not.toBeInTheDocument();
   });
 
-  it("命中：文字＝label（有）或現行標題；href＝canonical＋錨點；點擊導航到 canonical", () => {
+  it("hit: the text is the label (if any) or the current title; href is canonical plus the anchor; a click navigates to canonical", () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id, snapshotTitle: "Old", anchorBlockId: "h2" } });
     const link = screen.getByRole("link", { name: TARGET.title });
     expect(link).toHaveAttribute("href", `${canonicalNotePath(TARGET)}#b-h2`);
@@ -154,14 +154,14 @@ describe("MemberWikilink", () => {
     expect(loc()).toBe(`${canonicalNotePath(TARGET)}#b-h2`);
   });
 
-  it("命中且有 label：顯示 label，不顯示現行標題", () => {
+  it("hit with a label: shows the label, not the current title", () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id, snapshotTitle: "Old", label: "Custom" } });
     expect(screen.getByRole("link", { name: "Custom" })).toHaveAttribute("href", canonicalNotePath(TARGET));
     expect(screen.queryByText(TARGET.title)).not.toBeInTheDocument();
   });
 
-  it("#269：文件存大寫 targetNoteId、清單是小寫 id ⇒ 命中（活連結、現行標題），不是斷鏈", () => {
-    // 必須含 a–f：TARGET.id 全是數字，toUpperCase() 不變，測不出大小寫。
+  it("#269: the document stores an uppercase targetNoteId and the list has a lowercase id => hit (live link, current title), not a broken link", () => {
+    // Must contain a-f: TARGET.id is all digits and toUpperCase() leaves it unchanged, so case would not be tested.
     const hex: NoteDto = { ...TARGET, id: "abcdef12-3456-4789-8abc-def123456789" };
     expect(hex.id.toUpperCase()).not.toBe(hex.id);
     renderWikilink({ queryClient: loadedClient([hex]), props: { targetNoteId: hex.id.toUpperCase(), snapshotTitle: "Old" } });
@@ -169,7 +169,7 @@ describe("MemberWikilink", () => {
     expect(screen.queryByText("Old")).not.toBeInTheDocument();
   });
 
-  it("斷鏈（清單到了卻沒有這個 id）：<span> 斷鏈樣式（不是連結）、label 或 snapshotTitle；點擊只 toast", () => {
+  it("broken link (the list arrived but lacks this id): a <span> in broken-link style (not a link), label or snapshotTitle; a click only toasts", () => {
     renderWikilink({ queryClient: loadedClient([]), props: { targetNoteId: "44444444-4444-4444-4444-444444444444", snapshotTitle: "Deleted Note" } });
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     const span = screen.getByText("Deleted Note");
@@ -180,7 +180,7 @@ describe("MemberWikilink", () => {
     expect(loc()).toBe("/start?x=1");
   });
 
-  it("修飾鍵（Ctrl／Meta／Shift／Alt）與非左鍵點擊：不 preventDefault、不導航（交給瀏覽器開新分頁）", () => {
+  it("modifier keys (Ctrl / Meta / Shift / Alt) and non-left-button clicks: not preventDefault-ed and no navigation (left to the browser to open a new tab)", () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id } });
     const link = screen.getByRole("link", { name: TARGET.title });
     for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
@@ -189,14 +189,14 @@ describe("MemberWikilink", () => {
     }
   });
 
-  it("可編輯時一般點擊：與唯讀相同——preventDefault、同分頁導航（工具列改由 hover／長按開，見 WikilinkToolbar.test.tsx）", () => {
+  it("a plain click when editable: same as read-only - preventDefault and same-tab navigation (the toolbar now opens by hover / long-press, see WikilinkToolbar.test.tsx)", () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id }, editor: EDITABLE_STUB });
     const link = screen.getByRole("link", { name: TARGET.title });
     expect(fireEvent.click(link)).toBe(false);
     expect(loc()).toBe(canonicalNotePath(TARGET));
   });
 
-  it("唯讀：觸控按壓中的 contextmenu 不攔（保留系統長按選單）、長按也不攔後續 click", async () => {
+  it("read-only: a contextmenu during a touch press is not intercepted (keeping the system long-press menu) and a long-press does not block the following click", async () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id } });
     const link = screen.getByRole("link", { name: TARGET.title });
     fireEvent.pointerDown(link, { pointerType: "touch", clientX: 1, clientY: 1 });
@@ -207,7 +207,7 @@ describe("MemberWikilink", () => {
     expect(loc()).toBe(canonicalNotePath(TARGET));
   });
 
-  it("可編輯時 <a> 不可原生拖曳（draggable=false：拖出的 text/html 放回編輯器會變一般連結）；唯讀不設 draggable", () => {
+  it("when editable the <a> is not natively draggable (draggable=false: dragged text/html dropped back into the editor would become a plain link); read-only does not set draggable", () => {
     renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id }, editor: EDITABLE_STUB });
     expect(screen.getByRole("link", { name: TARGET.title })).toHaveAttribute("draggable", "false");
     cleanup();
@@ -215,7 +215,7 @@ describe("MemberWikilink", () => {
     expect(screen.getByRole("link", { name: TARGET.title })).not.toHaveAttribute("draggable");
   });
 
-  it("同篇＋錨點：requestAnchor(id)、只改 hash（pathname／search 不變），不換頁", () => {
+  it("same note plus anchor: requestAnchor(id) and only the hash changes (pathname / search unchanged), no page change", () => {
     const { anchors } = renderWikilink({
       queryClient: loadedClient([TARGET]),
       props: { targetNoteId: TARGET.id, anchorBlockId: "b9" },
@@ -226,7 +226,7 @@ describe("MemberWikilink", () => {
     expect(loc()).toBe("/start?x=1#b-b9");
   });
 
-  it("同篇無錨點：scrollToTop、網址不變", () => {
+  it("same note without anchor: scrollToTop and the URL is unchanged", () => {
     const { anchors } = renderWikilink({ queryClient: loadedClient([TARGET]), props: { targetNoteId: TARGET.id }, anchors: { currentNoteId: TARGET.id } });
     fireEvent.click(screen.getByRole("link"));
     expect(anchors.scrollToTop).toHaveBeenCalledTimes(1);
@@ -234,14 +234,14 @@ describe("MemberWikilink", () => {
   });
 });
 
-describe("PublicWikilink（不呼叫 useNotes）", () => {
+describe("PublicWikilink (does not call useNotes)", () => {
   const links = (list: PublicLinkDto[]): WikilinkMode => ({ mode: "public", links: new Map(list.map((l) => [l.id, l])) });
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("沒有 QueryClientProvider 也能渲染（不呼叫 useNotes）、零 fetch；有自訂公開網址的目標成 <a href=/p/…[#b-…]>、label 優先", () => {
+  it("renders without a QueryClientProvider (does not call useNotes) with zero fetches; a target with a custom public URL becomes <a href=/p/...[#b-...]> and the label wins", () => {
     const fetchSpy = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchSpy);
     renderWikilink({ mode: links([{ id: TARGET.id, title: "Public Title", path: "/p/tester/pub" }]), props: { targetNoteId: TARGET.id, anchorBlockId: "x1" } });
@@ -250,7 +250,6 @@ describe("PublicWikilink（不呼叫 useNotes）", () => {
     fireEvent.click(link);
     expect(loc()).toBe("/p/tester/pub#b-x1");
     expect(fetchSpy).not.toHaveBeenCalled();
-    // label 優先：同一個公開目標帶 label 時顯示 label、不顯示公開標題。
     cleanup();
     renderWikilink({ mode: links([{ id: TARGET.id, title: "Public Title", path: "/p/tester/pub" }]), props: { targetNoteId: TARGET.id, label: "L" } });
     expect(screen.getByRole("link", { name: "L" })).toHaveAttribute("href", "/p/tester/pub");
@@ -258,13 +257,13 @@ describe("PublicWikilink（不呼叫 useNotes）", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("不在 links 裡（非公開、只有 token 形、已刪）：純文字 <span>（不可點、無連結樣式）", () => {
+  it("not in links (non-public, token form only, deleted): a plain-text <span> (not clickable, no link style)", () => {
     renderWikilink({ mode: links([]), props: { targetNoteId: TARGET.id, snapshotTitle: "Snap", label: "Lab" } });
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByText("Lab")).not.toHaveClass("underline");
   });
 
-  it("同篇錨點：links 沒有、但本頁有該區塊 ⇒ <a href=#b-…>，點擊 requestAnchor＋只改 hash；本頁沒有該區塊 ⇒ 純文字", () => {
+  it("same-note anchor: not in links but the block is on this page => <a href=#b-...>, and a click does requestAnchor and only changes the hash; the block is not on this page => plain text", () => {
     const { anchors } = renderWikilink({
       mode: links([]),
       props: { targetNoteId: TARGET.id, snapshotTitle: "Here", anchorBlockId: "b1" },
@@ -275,7 +274,7 @@ describe("PublicWikilink（不呼叫 useNotes）", () => {
     fireEvent.click(link);
     expect(anchors.requestAnchor).toHaveBeenCalledWith("b1");
     expect(loc()).toBe("/start?x=1#b-b1");
-    // 反面：錨點指向本頁沒有的區塊（stub 的 getBlock 對 "zz" 回 undefined）⇒ 純文字，不是捲不到的 <a href="#b-zz">。
+    // Counter-case: an anchor pointing at a block this page lacks (the stub's getBlock returns undefined for "zz") => plain text, not an <a href="#b-zz"> that cannot scroll.
     cleanup();
     renderWikilink({
       mode: links([]),
@@ -288,9 +287,9 @@ describe("PublicWikilink（不呼叫 useNotes）", () => {
 });
 
 describe("insertWikilink", () => {
-  it("新 props 預設空字串；呼叫端可帶 label／anchorBlockId；補一個 trailing space", () => {
+  it("new props default to the empty string; the caller may pass label / anchorBlockId; a trailing space is added", () => {
     const insertInlineContent = vi.fn();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試替身只需要 insertInlineContent
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the test stand-in needs only insertInlineContent
     const editorStub = { insertInlineContent } as any;
     insertWikilink(editorStub, { targetNoteId: "n1", snapshotTitle: "Meeting Notes" });
     expect(insertInlineContent).toHaveBeenLastCalledWith([

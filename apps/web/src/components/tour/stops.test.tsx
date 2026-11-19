@@ -30,9 +30,9 @@ import type { FolderListDto } from "@knotebook/shared";
 import { stopTitle } from "./sequence";
 import { FULL_TOUR, prepareStop, STOPS, stopBody, stopScreen, stopShownIn, stopTarget, type StopContext, type StopId } from "./stops";
 
-// 測試宿主照筆記頁的接線：真的 AppShell（側欄、搜尋框、tab 列、新增鈕、使用者選單），
-// 主內容區放筆記頁頁首用的同一批元件（「‹」、漢堡鈕、分享、⋮）、右下角的版本泡泡與手機底部的圓形鈕。
-// 版面一律經 `stubLayoutTier` 換（`docked`＝寬視窗、`overlay`＝側欄浮動、`phone`＝手機）。
+// The test host follows the note page wiring: a real AppShell (sidebar, search box, tab list, new button, user menu), with the same components as the note header in the main area
+// (back chevron, hamburger, share, kebab menu), the version bubble at the bottom right and the phone's bottom round button.
+// Layout is always switched via `stubLayoutTier` (`docked` = wide window, `overlay` = floating sidebar, `phone` = phone).
 
 const USER: UserDto = {
   id: "u1",
@@ -85,7 +85,6 @@ function stubFetch(folders: FolderListDto = FOLDER_LIST_EMPTY) {
   );
 }
 
-/** 寬視窗或側欄浮動（640～1279）；手機另用 `stubLayoutTier("phone")`。 */
 function stubViewport(narrow: boolean) {
   stubLayoutTier(narrow ? "overlay" : "docked");
 }
@@ -102,15 +101,15 @@ function NotePageStandIn({ withShare }: { withShare: boolean }) {
         <NoteMenu note={NOTE} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />
       </header>
       <CornerStack />
-      {/* 手機筆記畫面底部的圓形鈕（筆記頁只在手機掛，同 NotePage）。 */}
+      {/* Round button at the bottom of the phone note screen (the note page mounts it only on phones, as NotePage does). */}
       {phone && <NoteBrowseBar note={NOTE} />}
-      {/* 示範筆記裡現成的 `[[` 連結。 */}
+      {/* A ready-made `[[` link in the sample note. */}
       <a href="/somewhere" {...tourTarget("wikilink")}>
         linked note
       </a>
-      {/* 示範筆記裡用 `/` 插的流程圖。 */}
+      {/* A diagram inserted with `/` in the sample note. */}
       <div {...tourTarget("flowchart")}>a flowchart</div>
-      {/* 框選後浮出的格式工具列（真的是 portal 出來的浮層，這裡直接放在頁面裡）。 */}
+      {/* Format toolbar that appears after a selection (really a portal layer; placed directly in the page here). */}
       <div data-kb-formatting-toolbar-popover="">
         <button type="button" aria-label="Bold">
           B
@@ -135,7 +134,7 @@ async function renderPage({
         <MemoryRouter initialEntries={[at]}>
           <ActiveNoteProvider>
             <Routes>
-              {/* 首頁（手機上就是清單畫面）。 */}
+              {/* Home page (on a phone it is the list screen). */}
               <Route path="/" element={<AppShell inert={inert}>{null}</AppShell>} />
               <Route
                 path="/n/:handle/:slug"
@@ -151,7 +150,7 @@ async function renderPage({
       </ThemeProvider>
     </QueryClientProvider>,
   );
-  // 使用者選單要等 /api/auth/me 回來才有名稱。
+  // The user menu has no name until /api/auth/me returns.
   await screen.findByRole("button", { name: USER.displayName });
 }
 
@@ -174,8 +173,8 @@ afterEach(() => {
   localStorage.removeItem("sidebar.tab");
 });
 
-describe("站點表", () => {
-  it("完整導覽的順序；每個站點恰好出現一次", () => {
+describe("stop table", () => {
+  it("full tour order; each stop appears once", () => {
     expect(FULL_TOUR).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
     expect(Object.keys(STOPS).sort()).toEqual([...FULL_TOUR].sort());
     for (const id of FULL_TOUR) expect(STOPS[id].id).toBe(id);
@@ -184,7 +183,7 @@ describe("站點表", () => {
   it.each([
     ["en", tourEn],
     ["zh-TW", tourZhTW],
-  ] as const)("%s：每站的標題、說明（含側欄浮動與手機的說明）都有字", (_lang, bundle) => {
+  ] as const)("%s: every stop's title and body (including the floating-sidebar and phone bodies) have text", (_lang, bundle) => {
     for (const stop of Object.values(STOPS)) {
       for (const key of [stop.titleKey, stop.bodyKey, stop.narrowBodyKey, stop.phoneTitleKey, stop.phoneBodyKey].filter((k) => k !== undefined)) {
         const value = key.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], bundle);
@@ -194,14 +193,14 @@ describe("站點表", () => {
   });
 });
 
-describe("寬視窗：目標", () => {
+describe("wide window: targets", () => {
   beforeEach(() => stubViewport(false));
 
-  it("每站都找得到，而且是側欄卡片／頁首裡的那一顆", async () => {
+  it("every stop is found, and is the one inside the sidebar card / header", async () => {
     await renderPage();
     const side = within(aside());
     const header = within(pageHeader());
-    // folders 的目標在「我的筆記」標題列；預設 tab 就是我的筆記。
+    // the folders target is in the My notes header; the default tab is My notes
     await waitFor(() => expect(stopTarget(STOPS.folders, ctx())).toHaveLength(1));
 
     const expected: Record<StopId, HTMLElement[]> = {
@@ -219,11 +218,11 @@ describe("寬視窗：目標", () => {
     for (const id of FULL_TOUR) expect(stopTarget(STOPS[id], ctx()), id).toEqual(expected[id]);
   });
 
-  it("頁面上沒有目標時回空陣列", () => {
+  it("returns an empty array when the page has no target", () => {
     for (const id of FULL_TOUR) expect(stopTarget(STOPS[id], ctx()), id).toEqual([]);
   });
 
-  it("頁首的寬度鈕看得到時一起挖亮（分享、寬度、⋮），被容器查詢收起（量不到尺寸）時只挖亮分享與 ⋮", () => {
+  it("the header's width button is highlighted together when visible (share, width, kebab menu), and only share and kebab menu when a container query hides it (no measurable size)", () => {
     const make = (id: string, size: number) => {
       const el = document.createElement("button");
       el.setAttribute("data-kb-tour-target", id);
@@ -240,22 +239,22 @@ describe("寬視窗：目標", () => {
     for (const el of [share, width, more]) el.remove();
   });
 
-  it("頁首要分享鈕與 ⋮ 都在才算找到（只找到一顆不挖亮）", async () => {
+  it("the header target needs both the share button and the kebab menu (finding only one highlights nothing)", async () => {
     await renderPage({ withShare: false });
     expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument();
     expect(stopTarget(STOPS.header, ctx())).toEqual([]);
   });
 
-  it("說明用寬視窗那一句", () => {
+  it("the body uses the wide-window text", () => {
     const t = i18n.getFixedT("en");
     for (const stop of Object.values(STOPS)) expect(stopBody(t, stop), stop.id).toBe(stopBody(t, stop, "wide"));
   });
 });
 
-describe("側欄浮動（640～1279）：目標", () => {
+describe("floating sidebar (640-1279): targets", () => {
   beforeEach(() => stubViewport(true));
 
-  it("側欄裡的站改指頁首的漢堡鈕；版本仍指右下角的泡泡（640 以上都有）；頁首不變", async () => {
+  it("stops in the sidebar point at the header's hamburger button; versions still point at the bottom-right bubble (present from 640 up); the header is unchanged", async () => {
     await renderPage();
     const header = within(pageHeader());
     const hamburger = header.getByRole("button", { name: "Open sidebar" });
@@ -275,7 +274,7 @@ describe("側欄浮動（640～1279）：目標", () => {
     for (const id of FULL_TOUR) expect(stopTarget(STOPS[id], ctx()), id).toEqual(expected[id]);
   });
 
-  it("說明：有窄視窗那一句的站用它", () => {
+  it("body: stops that have a narrow-window text use it", () => {
     const narrowOnes = Object.values(STOPS).filter((s) => s.narrowBodyKey !== undefined).map((s) => s.id);
     expect(narrowOnes.sort()).toEqual(["folders", "newNote", "search", "tabs", "userMenu"]);
     const t = i18n.getFixedT("en");
@@ -283,13 +282,12 @@ describe("側欄浮動（640～1279）：目標", () => {
   });
 });
 
-describe("手機：目標", () => {
+describe("phone: targets", () => {
   beforeEach(() => stubLayoutTier("phone"));
 
-  /** 手機清單畫面頂列（頭像在這裡）。 */
   const topBar = () => within(document.querySelector<HTMLElement>("[data-phone-top-bar]")!);
 
-  it("清單上的站在清單畫面指真的東西：tab 列、右下的新增筆記鈕、我的筆記標題列的新增資料夾鈕、左下的搜尋鈕、頂列的頭像", async () => {
+  it("list stops point at real things on the list screen: the tab list, the new-note button at the bottom right, the new-folder button in the My notes header, the search button at the bottom left, the avatar in the top row", async () => {
     await renderPage({ at: "/" });
     const side = within(aside());
     await waitFor(() => expect(stopTarget(STOPS.folders, ctx())).toHaveLength(1));
@@ -305,7 +303,7 @@ describe("手機：目標", () => {
     expect(stopTarget(STOPS.search, ctx())[0]).toHaveAttribute("data-phone-fab", "search");
   });
 
-  it("筆記畫面上的站：頁首的分享與 ⋮、版本改指 ⋮（手機沒有泡泡）、[[ 與 / 的成品；AI 站沒有目標", async () => {
+  it("stops on the note screen: the header's share and kebab menu, versions pointing at the kebab menu (phones have no bubble), the [[ and / results; the AI stop has no target", async () => {
     await renderPage();
     const header = within(pageHeader());
     const more = header.getByRole("button", { name: "More" });
@@ -321,22 +319,22 @@ describe("手機：目標", () => {
     expect(screen.queryByTestId("versions-bubble")).not.toBeInTheDocument();
   });
 
-  it("筆記畫面上清單不可互動：tab 列、資料夾鈕、頭像在那裡查不到（要先回清單）", async () => {
+  it("the list is not interactive on the note screen: the tab list, folder button and avatar cannot be found there (go back to the list first)", async () => {
     await renderPage();
     for (const id of ["tabs", "folders", "userMenu"] as const) expect(stopTarget(STOPS[id], ctx()), id).toEqual([]);
   });
 
-  it("哪一站在哪個畫面：手機分清單與示範筆記，其他版面一律在示範筆記上", () => {
+  it("which stop is on which screen: phones split between the list and the sample note, other layouts are always on the sample note", () => {
     expect(FULL_TOUR.filter((id) => stopScreen(STOPS[id], "phone") === "list")).toEqual(["tabs", "newNote", "folders", "search", "userMenu"]);
     for (const layout of ["wide", "floating"] as const) expect(FULL_TOUR.filter((id) => stopScreen(STOPS[id], layout) === "list")).toEqual([]);
   });
 
-  it("手機上沒有的站只有 AI；其他版面每站都在", () => {
+  it("the only stop the phone lacks is AI; other layouts have every stop", () => {
     expect(FULL_TOUR.filter((id) => !stopShownIn(STOPS[id], "phone"))).toEqual(["ai"]);
     for (const layout of ["wide", "floating"] as const) expect(FULL_TOUR.filter((id) => !stopShownIn(STOPS[id], layout))).toEqual([]);
   });
 
-  it("prepare 照跑（沒有抽屜）：新增筆記、資料夾先切到我的筆記，畫面留在清單", async () => {
+  it("prepare still runs (there is no drawer): new note and folders switch to My notes first and the screen stays on the list", async () => {
     localStorage.setItem("sidebar.tab", "recent");
     await renderPage({ at: "/" });
     const controls = getShellControls()!;
@@ -347,7 +345,7 @@ describe("手機：目標", () => {
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
   });
 
-  it("prepare 只換 tab、不換畫面：在筆記畫面上跑也不會被帶回清單（換畫面由導覽自己做）", async () => {
+  it("prepare only switches the tab, not the screen: running it on the note screen does not bring you back to the list (the tour changes screens itself)", async () => {
     localStorage.setItem("sidebar.tab", "recent");
     await renderPage();
     act(() => prepareStop(STOPS.newNote, ctx()));
@@ -357,7 +355,7 @@ describe("手機：目標", () => {
     expect(aside()).not.toHaveAttribute("data-phone-list-shown");
   });
 
-  it("說明與標題：預設讀目前的版面；手機有自己那一句的站用它", () => {
+  it("body and title: read the current layout by default; stops with their own phone text use it", () => {
     const phoneOnes = Object.values(STOPS).filter((s) => s.phoneBodyKey !== undefined).map((s) => s.id);
     expect(phoneOnes.sort()).toEqual(["folders", "header", "newNote", "search", "slash", "tabs", "userMenu", "versions"]);
     const t = i18n.getFixedT("en");
@@ -368,16 +366,16 @@ describe("手機：目標", () => {
   });
 });
 
-// 資料夾名稱是使用者自己取的：取成跟任何目標同名，也不能把目標搶走。
+// Folder names are user-chosen: even a name equal to any target's must not steal the target.
 const COLLIDING_NAMES = [USER.displayName, "New note", "New folder", "Search notes", "Share", "More", "Open sidebar", "Sidebar sections", "Version history"];
 
-describe("使用者內容撞名", () => {
+describe("user content name clashes", () => {
   beforeEach(() => {
     stubViewport(false);
     stubFetch({ folders: COLLIDING_NAMES.map((name, i) => folderDto({ id: `f-${i}`, name })) });
   });
 
-  /** tabpanel 裡、名稱撞上目標的資料夾元素（一般模式是資料夾列；選取模式是帶 `aria-label` 的資料夾鈕）。標題列的動作鈕不算。 */
+  /** Folder element inside the tabpanel whose name clashes with a target (in normal mode the folder row; in select mode the folder button with an `aria-label`). Header action buttons do not count. */
   function collidingInPanel(): Element[] {
     const panel = aside().querySelector("[role=tabpanel]")!;
     return Array.from(panel.querySelectorAll("button, input")).filter(
@@ -387,7 +385,7 @@ describe("使用者內容撞名", () => {
     );
   }
 
-  /** 側欄卡片裡、tabpanel 外、名稱是 `name` 的那顆鈕（帳號列、底部的新增筆記）。 */
+  /** The button named `name` inside the sidebar card but outside the tabpanel (the account row, the bottom new-note button). */
   function outsidePanel(name: string): HTMLElement {
     const found = within(aside())
       .getAllByRole("button", { name })
@@ -400,7 +398,7 @@ describe("使用者內容撞名", () => {
     return new Map(FULL_TOUR.map((id) => [id, stopTarget(STOPS[id], ctx())]));
   }
 
-  it("一般模式：每站仍指原本的目標，沒有一站指到資料夾", async () => {
+  it("normal mode: every stop still points at its own target and none points at a folder", async () => {
     await renderPage();
     const side = within(aside());
     await waitFor(() => expect(collidingInPanel().length).toBeGreaterThanOrEqual(COLLIDING_NAMES.length));
@@ -412,13 +410,13 @@ describe("使用者內容撞名", () => {
     expect(targets.get("search")).toEqual([side.getByRole("textbox", { name: "Search notes" })]);
   });
 
-  it("選取模式：資料夾鈕以資料夾名當 aria-label，仍不會被當成目標", async () => {
+  it("select mode: the folder button uses the folder name as its aria-label and still is not taken as a target", async () => {
     await renderPage();
     const side = within(aside());
     await waitFor(() => expect(side.getByRole("button", { name: "Select" })).toBeEnabled());
     act(() => side.getByRole("button", { name: "Select" }).click());
     await side.findByRole("button", { name: "Done" });
-    // 撞名真的成立：選取樹裡有 aria-label 就是使用者名稱的資料夾鈕，而且在 DOM 裡排在帳號列前面。
+    // The name clash is real: the select tree has a folder button whose aria-label is the user's name, and it comes before the account row in the DOM.
     const folderButton = await waitFor(() => {
       const el = collidingInPanel().find((e) => e.getAttribute("aria-label") === USER.displayName);
       expect(el).toBeDefined();
@@ -434,13 +432,13 @@ describe("使用者內容撞名", () => {
   });
 });
 
-describe("背景不可互動（簡報模式的 AppShell inert）", () => {
+describe("non-interactive background (AppShell inert in presentation mode)", () => {
   const ALL_IDS: TourTargetId[] = ["tabs", "newNote", "newFolder", "search", "share", "noteMenu", "versions", "userMenu", "drawerButton", "wikilink", "flowchart"];
 
-  it.each([false, true])("側欄浮動＝%s：十一個目標都查不到", async (narrow) => {
+  it.each([false, true])("floating sidebar = %s: none of the eleven targets can be found", async (narrow) => {
     stubViewport(narrow);
     await renderPage({ inert: true });
-    // 元素都還在 DOM 裡（帶著屬性），只是在 inert 範圍內。版本泡泡在側欄浮動時（640～1279）也在。
+    // The elements are still in the DOM (with their attributes), only inside the inert range. The version bubble is present on a floating sidebar (640-1279) too.
     for (const id of ALL_IDS) {
       expect(document.querySelector(`[data-kb-tour-target="${id}"]`), id).not.toBeNull();
     }
@@ -449,8 +447,8 @@ describe("背景不可互動（簡報模式的 AppShell inert）", () => {
   });
 });
 
-describe("手機：背景不可互動", () => {
-  it("「‹」與底部的圓形鈕也查不到", async () => {
+describe("phone: non-interactive background", () => {
+  it("the back chevron and the bottom round button cannot be found either", async () => {
     stubLayoutTier("phone");
     await renderPage({ inert: true });
     await waitFor(() => expect(document.querySelector('[data-kb-tour-target="phoneNewNote"]')).not.toBeNull());
@@ -462,8 +460,8 @@ describe("手機：背景不可互動", () => {
   });
 });
 
-describe("漢堡鈕", () => {
-  it("沒有筆記頁頁首的頁面（窄版頂列）也找得到", async () => {
+describe("hamburger button", () => {
+  it("also found on pages without a note header (the narrow top row)", async () => {
     stubViewport(true);
     await renderPage({ home: true });
     expect(document.querySelector("main header")).toBeNull();
@@ -472,10 +470,10 @@ describe("漢堡鈕", () => {
   });
 });
 
-describe("側欄兩份：抽屜開著取抽屜那份，關著取固定卡片那份", () => {
+describe("two sidebars: with the drawer open the drawer one is used, otherwise the fixed card one", () => {
   beforeEach(() => stubViewport(true));
 
-  it("使用者選單、搜尋框、tab 列；抽屜開著時頁首的漢堡鈕被蓋住、查不到", async () => {
+  it("user menu, search box, tab list; with the drawer open the header's hamburger button is covered and cannot be found", async () => {
     await renderPage();
     const card = aside();
     expect(findUserMenuTrigger()?.closest("aside")).toBe(card);
@@ -499,7 +497,7 @@ describe("側欄兩份：抽屜開著取抽屜那份，關著取固定卡片那�
 });
 
 describe("prepare", () => {
-  it("寬視窗：newNote、folders 先切到「我的筆記」並結束選取模式", async () => {
+  it("wide window: newNote and folders first switch to My notes and leave select mode", async () => {
     stubViewport(false);
     localStorage.setItem("sidebar.tab", "recent");
     await renderPage();
@@ -512,11 +510,11 @@ describe("prepare", () => {
       expect(endSelection, id).toHaveBeenCalledTimes(1);
       endSelection.mockRestore();
     }
-    // 切 tab 之後「新增資料夾」才出現在標題列。
+    // the New folder button appears in the header only after switching tabs
     await waitFor(() => expect(stopTarget(STOPS.folders, ctx())).toHaveLength(1));
   });
 
-  it("側欄浮動：不跑 prepare——tab 不變、抽屜維持關閉", async () => {
+  it("floating sidebar: prepare does not run - the tab stays and the drawer remains closed", async () => {
     stubLayoutTier("overlay");
     localStorage.setItem("sidebar.tab", "recent");
     await renderPage();
@@ -531,7 +529,7 @@ describe("prepare", () => {
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
   });
 
-  it("沒有登記的側欄時什麼都不做、不拋錯", () => {
+  it("with no registered sidebar it does nothing and does not throw", () => {
     stubViewport(false);
     expect(getShellControls()).toBeNull();
     for (const id of FULL_TOUR) expect(() => prepareStop(STOPS[id], ctx())).not.toThrow();
@@ -539,31 +537,30 @@ describe("prepare", () => {
 });
 
 describe("precondition", () => {
-  it("搜尋框有字時 tabs、folders、search 不成立（搜尋中 tab 列與標題列不渲染，也不清掉使用者的字）；其他站照常", () => {
+  it("while the search box has text tabs, folders and search do not hold (the tab list and header are not rendered while searching, and the user's text is not cleared); other stops work as usual", () => {
     const applies = (q: string) => FULL_TOUR.filter((id) => STOPS[id].precondition?.(ctx(q, [AI_ACTION])) ?? true);
     expect(applies("")).toEqual(FULL_TOUR);
     expect(applies("ab")).toEqual(["newNote", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
-    // 空白也算搜尋中（同 AppShell 的判準）。
+    // whitespace also counts as searching (same check as AppShell)
     expect(applies(" ")).toEqual(["newNote", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
   });
 });
 
-describe("AI 站的 precondition", () => {
+describe("precondition of the AI stop", () => {
   const applies = (aiActions: readonly AiActionDto[]) => STOPS.ai.precondition?.(ctx("", aiActions)) ?? true;
 
-  it("站台有 AI 動作才成立；沒有（載入失敗、未設定）就整站略過", () => {
+  it("holds only when the site has AI actions; without them (load failure, not configured) the whole stop is skipped", () => {
     expect(applies([AI_ACTION])).toBe(true);
     expect(applies([])).toBe(false);
   });
 
-  it("沒有 AI 動作：完整導覽少掉 AI 站", () => {
+  it("no AI actions: the full tour omits the AI stop", () => {
     const planned = FULL_TOUR.filter((id) => STOPS[id].precondition?.(ctx("", [])) ?? true);
     expect(planned).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "slash", "userMenu"]);
   });
 });
 
-// 說明文字：每站的標題與說明、快捷鍵的修飾鍵、說明裡提到的名稱與介面上的名稱一致。
-describe("說明文字", () => {
+describe("body text", () => {
   const TITLES: Record<"en" | "zh-TW", Record<StopId, string>> = {
     en: {
       tabs: "Sidebar sections",
@@ -591,13 +588,13 @@ describe("說明文字", () => {
     },
   };
 
-  /** 手機另有標題的站（手機沒有側欄）。 */
+  /** Stops with their own phone title (phones have no sidebar). */
   const PHONE_TITLES: Record<"en" | "zh-TW", Partial<Record<StopId, string>>> = {
     en: { tabs: "Lists of notes" },
     "zh-TW": { tabs: "筆記清單" },
   };
 
-  /** 寬視窗說明裡一定要有的片段（快捷鍵用 `{mod}` 代表修飾鍵）。 */
+  /** Fragments the wide-window body must contain (`{mod}` stands for the shortcut modifier key). */
   const WIDE_PARTS: Record<"en" | "zh-TW", Record<StopId, string[]>> = {
     en: {
       tabs: ["hover over one to see its name"],
@@ -625,7 +622,7 @@ describe("說明文字", () => {
     },
   };
 
-  /** 側欄浮動（640～1279）時說明裡一定要有的片段；沒列的站沿用寬視窗那句。 */
+  /** Fragments the floating-sidebar (640-1279) body must contain; stops not listed keep the wide-window text. */
   const FLOATING_PARTS: Record<"en" | "zh-TW", Partial<Record<StopId, string[]>>> = {
     en: {
       tabs: ["Open the sidebar from here"],
@@ -643,7 +640,7 @@ describe("說明文字", () => {
     },
   };
 
-  /** 手機說明裡一定要有的片段；沒列的站沿用寬視窗那句（AI 站手機不停，不看）。 */
+  /** Fragments the phone body must contain; stops not listed keep the wide-window text (the AI stop is not shown on phones, so it is not checked). */
   const PHONE_PARTS: Record<"en" | "zh-TW", Partial<Record<StopId, string[]>>> = {
     en: {
       tabs: ["This row of icons", "lists of notes"],
@@ -667,9 +664,9 @@ describe("說明文字", () => {
     },
   };
 
-  /** 只在側欄浮動時出現的「打開側欄」補句；寬視窗與手機的說明不能混進去。 */
+  /** The "open the sidebar" sentence appears only on a floating sidebar; the wide-window and phone texts must not contain it. */
   const FLOATING_SENTENCE = { en: /open the sidebar/i, "zh-TW": /打開側欄/ } as const;
-  /** 手機沒有側欄、沒有角落的泡泡，也多半沒有鍵盤與滑鼠；清單上的站就在清單上指真的東西，不必叫人先按「‹」：手機的說明不提這些。 */
+  /** Phones have no sidebar, no corner bubble, and mostly no keyboard or mouse; list stops point at real things on the list, so nobody needs to press the back chevron first: phone texts mention none of these. */
   const NOT_ON_PHONE = {
     en: /sidebar|bottom-right|bottom-left|\bPress\b|\bClick\b|hover|\bdrag\b|‹/i,
     "zh-TW": /側欄|右下角|左下角|按 Ctrl|按 ⌘|滑鼠|拖|‹/,
@@ -679,7 +676,7 @@ describe("說明文字", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each(["en", "zh-TW"] as const)("%s：每站的標題與說明（寬、側欄浮動、手機）", (lng) => {
+  it.each(["en", "zh-TW"] as const)("%s: every stop's title and body (wide, floating sidebar, phone)", (lng) => {
     vi.stubGlobal("navigator", { platform: "Win32" });
     const t = i18n.getFixedT(lng);
     for (const id of FULL_TOUR) {
@@ -717,7 +714,7 @@ describe("說明文字", () => {
     }
   });
 
-  it.each(["en", "zh-TW"] as const)("%s：站 6 在側欄浮動時也指右下角的泡泡（640 以上都有），說明不提 ⋮；手機改講 ⋮ 裡的「版本歷史」", (lng) => {
+  it.each(["en", "zh-TW"] as const)("%s: stop 6 on a floating sidebar also points at the bottom-right bubble (present from 640 up) and its body does not mention the kebab menu; on a phone it talks about Version history inside the kebab menu", (lng) => {
     const t = i18n.getFixedT(lng);
     const wide = stopBody(t, STOPS.versions, "wide");
     expect(stopBody(t, STOPS.versions, "floating")).toBe(wide);
@@ -728,7 +725,7 @@ describe("說明文字", () => {
     expect(phone).toContain(t("note.menu.versions"));
   });
 
-  it.each(["en", "zh-TW"] as const)("%s：Mac 顯示 ⌘、其他平台顯示 Ctrl+，沒有未代入的 {{mod}}；手機的說明不提快捷鍵", (lng) => {
+  it.each(["en", "zh-TW"] as const)("%s: Mac shows the Command symbol, other platforms show Ctrl+, no unsubstituted {{mod}} remains; the phone body does not mention shortcuts", (lng) => {
     const t = i18n.getFixedT(lng);
     const all = (layout: "wide" | "floating") => FULL_TOUR.map((id) => stopBody(t, STOPS[id], layout)).join("\n");
     for (const layout of ["wide", "floating"] as const) {
@@ -753,27 +750,27 @@ describe("說明文字", () => {
     }
   });
 
-  it("說明裡提到的名稱與介面上的名稱一致（兩種語言）", () => {
+  it("names mentioned in the body match the names in the UI (both languages)", () => {
     for (const lng of ["en", "zh-TW"] as const) {
       const t = i18n.getFixedT(lng);
       const body = (id: StopId) => stopBody(t, STOPS[id], "wide");
       const floatingBody = (id: StopId) => stopBody(t, STOPS[id], "floating");
       const phoneBody = (id: StopId) => stopBody(t, STOPS[id], "phone");
-      // 站 1：舉例提到的分頁名稱要與側欄一致（不鎖分頁數量）。
+      // Stop 1: the example tab names must match the sidebar (the tab count is not locked).
       for (const key of ["sidebar.myNotes", "sidebar.workspace", "sidebar.shared", "sidebar.trash"]) {
         for (const text of [body("tabs"), floatingBody("tabs"), phoneBody("tabs")]) expect(text, `${lng} ${key}`).toContain(t(key));
       }
-      // 站 2：新增筆記的鈕名（側欄底部那顆）；放進的地方是「我的筆記」。
+      // Stop 2: the new-note button's name (the one at the bottom of the sidebar); the place it goes into is My notes.
       expect(stopTitle(t, STOPS.newNote)).toBe(t("home.newNote"));
       expect(floatingBody("newNote")).toContain(t("home.newNote"));
       expect(body("newNote")).toContain(t("sidebar.myNotes"));
       expect(phoneBody("newNote")).toContain(t("sidebar.myNotes"));
-      // 站 3：筆記 ⋮ 選單裡的「移動到…」、標題列在「我的筆記」。
+      // Stop 3: "Move to..." in the note kebab menu, and the header is under My notes.
       for (const text of [body("folders"), phoneBody("folders")]) {
         expect(text).toContain(t("note.menu.moveTo"));
         expect(text).toContain(t("sidebar.myNotes"));
       }
-      // 站 5：分享鈕與 ⋮ 裡的四個項目（手機的 ⋮ 也有）；寬度子選單與它的三個選項只在 640 以上的 ⋮ 裡，手機不提。
+      // Stop 5: the four items in the share button and kebab menu (the phone's kebab menu has them too); the width submenu and its three options exist only in the kebab menu from 640 up, and phones do not mention them.
       expect(body("header")).toContain(t("share.button"));
       for (const key of ["note.menu.present", "note.menu.aiEdits", "note.menu.moveTo", "note.menu.copyTo"]) {
         expect(body("header"), `${lng} ${key}`).toContain(t(key));
@@ -784,9 +781,9 @@ describe("說明文字", () => {
         expect(floatingBody("header"), `${lng} ${key}`).toContain(t(key));
       }
       expect(phoneBody("header")).not.toContain(t("note.width.label"));
-      // 站 10：入口叫「說明」，與使用者選單那一格一致。
+      // Stop 10: the entry is called Help, matching the user menu item.
       for (const text of [body("userMenu"), floatingBody("userMenu"), phoneBody("userMenu")]) expect(text).toContain(t("userMenu.help"));
-      // 站 10 提到的三頁，名稱要跟說明視窗左欄的頁名一致。
+      // The three pages mentioned in stop 10 must be named the same as the page names in the help dialog's left column.
       const nav = (lng === "en" ? shortcutsEn : shortcutsZhTW).helpGuide.nav;
       for (const text of [body("userMenu"), floatingBody("userMenu"), phoneBody("userMenu")]) {
         if (lng === "en") {
@@ -801,7 +798,7 @@ describe("說明文字", () => {
     }
   });
 
-  it.each(["en", "zh-TW"] as const)("%s：站點文案沒有拿快捷鍵介紹當入口名稱", (lng) => {
+  it.each(["en", "zh-TW"] as const)("%s: stop texts do not use the keyboard shortcuts page as the entry name", (lng) => {
     const t = i18n.getFixedT(lng);
     const text = FULL_TOUR.flatMap((id) => (["wide", "floating", "phone"] as const).map((layout) => stopBody(t, STOPS[id], layout))).join("\n");
     expect(text).not.toMatch(/Keyboard shortcuts|快捷鍵介紹/);

@@ -25,7 +25,7 @@ function stubFetch() {
   );
 }
 
-/** 與 NoteEditor 的接法相同：state 在面板與錯誤外框的共同祖先，寬度以 CSS 變數往下傳。 */
+/** Wired like NoteEditor: state lives in the common ancestor of the panel and the error frame, and the width is passed down as a CSS variable. */
 function Host({ doc }: { doc: Y.Doc }) {
   const value = useVersionsController({ noteId: NOTE, enabled: true });
   const panelWidth = useVersionsPanelWidth();
@@ -54,7 +54,7 @@ async function renderPanel() {
 }
 const widthVar = (row: HTMLElement) => row.style.getPropertyValue("--versions-panel-width");
 
-describe("版本面板寬度把手（#274）", () => {
+describe("versions panel width handle (#274)", () => {
   let setPointerCapture: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -73,7 +73,7 @@ describe("版本面板寬度把手（#274）", () => {
     document.body.style.userSelect = "";
   });
 
-  it("預設：320px、aria-valuenow/min/max、可聚焦、把手伸進內文卡與面板之間的間隙（right-full）、寬度走 CSS 變數", async () => {
+  it("default: 320px, aria-valuenow/min/max, focusable, the handle reaches into the gap between the body card and the panel (right-full), and the width goes through a CSS variable", async () => {
     const { panel, handle, row } = await renderPanel();
     expect(widthVar(row)).toBe("320px");
     expect(handle).toHaveAttribute("aria-valuenow", "320");
@@ -82,16 +82,16 @@ describe("版本面板寬度把手（#274）", () => {
     expect(handle).toHaveAttribute("aria-orientation", "vertical");
     expect(handle.tabIndex).toBe(0);
     expect(panel.contains(handle)).toBe(true);
-    // Tab 順序：把手是面板最後一個子元素（不是第一個停點）。
+    // Tab order: the handle is the panel's last child (not the first stop).
     expect(panel.lastElementChild).toBe(handle);
     expect(handle).toHaveClass("absolute", "right-full", "w-3", "cursor-col-resize");
     expect(handle).not.toHaveClass("left-0");
-    // 面板根不得裁切（overflow-hidden 在內層），否則 right-full 的把手會被裁掉。
+    // The panel root must not clip (overflow-hidden is on the inner layer), or the right-full handle would be clipped.
     expect(panel).not.toHaveClass("overflow-hidden");
     expect(panel.querySelector(":scope > .overflow-hidden")).not.toBeNull();
   });
 
-  it("把手在浮動與固定兩段都顯示（class 契約）；固定段（xl）面板為 relative、寬度吃 CSS 變數，浮動段寬度夾在卡寬 - 3rem 內", async () => {
+  it("the handle shows in both the floating and the fixed section (class contract); in the fixed section (xl) the panel is relative and takes its width from the CSS variable, and in the floating section the width is clamped to card width - 3rem", async () => {
     const { panel, handle } = await renderPanel();
     expect(handle).not.toHaveClass("max-md:hidden");
     expect(handle).not.toHaveClass("max-xl:hidden");
@@ -100,7 +100,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(panel).not.toHaveClass("xl:w-80");
   });
 
-  it("把手在面板外：清單內距還原為 p-2，不再留 pl-3", async () => {
+  it("the handle is outside the panel: the list padding is back to p-2 with no pl-3", async () => {
     const { panel } = await renderPanel();
     const list = panel.querySelector("ul");
     expect(list).not.toBeNull();
@@ -108,7 +108,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(list).not.toHaveClass("pl-3");
   });
 
-  it("錯誤外框與面板同一個寬度來源（同吃 CSS 變數、同兩段定位），不再寫死 md:w-80", async () => {
+  it("the error frame and the panel share one width source (the same CSS variable and the same two-section positioning), with no hard-coded md:w-80", async () => {
     const { panel } = await renderPanel();
     const frame = screen.getByTestId("error-frame");
     expect(frame).toHaveClass("xl:w-[var(--versions-panel-width)]", "w-[min(var(--versions-panel-width),calc(100%_-_3rem))]", "absolute", "xl:relative");
@@ -120,7 +120,7 @@ describe("版本面板寬度把手（#274）", () => {
     }
   });
 
-  it("拖曳：往左變寬（把手在左緣）、夾在 240／560、拖曳中鎖 body、放開才寫入", async () => {
+  it("drag: dragging left widens it (the handle is on the left edge), clamped to 240 / 560, locks body while dragging, and writes only on release", async () => {
     const { handle, row } = await renderPanel();
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 500, pointerId: 1 });
@@ -147,12 +147,12 @@ describe("版本面板寬度把手（#274）", () => {
     expect(document.body.style.userSelect).toBe("");
     expect(document.body.style.cursor).toBe("");
 
-    // 拖曳已結束：之後的 move 不再改寬度（clientX 選 450 → 若沒結束會算成 370）。
+    // Dragging has ended: later moves no longer change the width (clientX 450 would compute to 370 if it had not ended).
     fireEvent.pointerMove(handle, { clientX: 450, pointerId: 1 });
     expect(widthVar(row)).toBe("240px");
   });
 
-  it("鍵盤：往外（ArrowLeft）變寬 16px、ArrowRight 變窄、Home／End、每次都寫入", async () => {
+  it("keyboard: outward (ArrowLeft) widens by 16px, ArrowRight narrows, Home / End, and every press writes", async () => {
     const { handle, row } = await renderPanel();
 
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
@@ -178,7 +178,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(handle).toHaveAttribute("aria-valuenow", "560");
   });
 
-  it("雙擊回 320 並清掉儲存", async () => {
+  it("double-click returns to 320 and clears the stored value", async () => {
     const { handle, row } = await renderPanel();
     fireEvent.keyDown(handle, { key: "End" });
     expect(window.localStorage.getItem(KEY)).toBe("560");
@@ -187,7 +187,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
-  it("不動側欄的鍵：sidebar.width 不被碰", async () => {
+  it("leaves the sidebar's key alone: sidebar.width is untouched", async () => {
     window.localStorage.setItem("sidebar.width", "300");
     const { handle } = await renderPanel();
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
@@ -195,7 +195,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(window.localStorage.getItem(KEY)).toBe("336");
   });
 
-  /** 設定 560、實際只有 300（浮動段被 CSS 夾窄）。 */
+  /** Setting 560 with only 300 actually available (the floating section is squeezed by CSS). */
   function stubClamped(tier: "overlay" | "docked") {
     window.localStorage.setItem(KEY, "560");
     stubLayoutTier(tier);
@@ -216,22 +216,22 @@ describe("版本面板寬度把手（#274）", () => {
     });
   }
 
-  it("浮動段被 CSS 夾窄時（設定 560、實際 300）：aria-valuenow 報實際寬度，往變寬方向不把設定值往下改", async () => {
+  it("when the floating section is squeezed by CSS (setting 560, actual 300): aria-valuenow reports the actual width and widening does not lower the setting", async () => {
     stubClamped("overlay");
     const { handle, row } = await renderPanel();
     expect(widthVar(row)).toBe("560px");
     expect(handle).toHaveAttribute("aria-valuenow", "300");
-    // 往變寬的方向、還沒超過設定值：不寫入，設定值不被往下改。
+    // Widening direction, not yet past the setting: nothing is written, so the setting is not lowered.
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
     expect(widthVar(row)).toBe("560px");
     expect(window.localStorage.getItem(KEY)).toBe("560");
-    // 往變窄的方向照常從實際寬度起算並寫入。
+    // narrowing starts from the actual width (300 - 16), and is written
     fireEvent.keyDown(handle, { key: "ArrowRight" });
     expect(widthVar(row)).toBe("284px");
     expect(window.localStorage.getItem(KEY)).toBe("284");
   });
 
-  it("浮動段被夾窄時：按下放開沒有移動，設定值不變", async () => {
+  it("when the floating section is squeezed: press and release without moving leaves the setting unchanged", async () => {
     stubClamped("overlay");
     const { handle } = await renderPanel();
     fireEvent.pointerDown(handle, { button: 0, clientX: 500, pointerId: 1 });
@@ -239,7 +239,7 @@ describe("版本面板寬度把手（#274）", () => {
     expect(window.localStorage.getItem(KEY)).toBe("560");
   });
 
-  it("固定段（寬度不會被夾）：不採用量到的寬度，aria-valuenow 與鍵盤都從設定值起算", async () => {
+  it("fixed section (the width is not clamped): the measured width is not used, and aria-valuenow and the keyboard both start from the setting", async () => {
     stubClamped("docked");
     const { handle } = await renderPanel();
     expect(handle).toHaveAttribute("aria-valuenow", "560");
@@ -254,7 +254,7 @@ describe("版本面板寬度把手（#274）", () => {
     ["300.5", "320"],
     ["", "320"],
     ["400", "400"],
-  ])("讀到 %j → %spx", async (raw, expected) => {
+  ])("reading %j -> %spx", async (raw, expected) => {
     window.localStorage.setItem(KEY, raw);
     const { row, handle } = await renderPanel();
     expect(widthVar(row)).toBe(`${expected}px`);

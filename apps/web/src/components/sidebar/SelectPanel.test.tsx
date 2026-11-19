@@ -17,7 +17,6 @@ import { groupNote, personalNote, sharedNote } from "@/test/select-fixtures";
 import { FOLDER_LIST_EMPTY, folderDto, groupFolder } from "@/test/folder-fixtures";
 import { __resetFolderSortForTests } from "@/components/sidebar/folder-sort";
 
-// 一般 tab 的選取模式：標題列「選取」、選取模式標題列（含 Esc）與勾選樹（#181，NS1–NS13）。
 
 afterEach(() => {
   localStorage.clear();
@@ -52,7 +51,7 @@ const S1 = sharedNote({ id: "s1", title: "s1", role: "viewer" });
 const ALL_NOTES = [P1, P2, P3, G1A, G1B, G2A, S1];
 const fav = (noteId: string, favoritedAt: string): FavoriteDto => ({ noteId, favoritedAt });
 
-/** `notes` 是可變的盒子：改 `box.notes` 後 invalidate 就重抓到新清單（NS10）。`pending: true` 讓 `GET /api/notes` 永不回。 */
+/** `notes` is a mutable box: after changing `box.notes`, invalidate to refetch the new list. `pending: true` makes `GET /api/notes` never respond. */
 function stubFetch(box: { notes: NoteDto[]; groups?: GroupDto[]; folders?: FolderDto[]; favorites?: FavoriteDto[]; pending?: boolean }) {
   vi.stubGlobal(
     "fetch",
@@ -75,7 +74,7 @@ function stubFetch(box: { notes: NoteDto[]; groups?: GroupDto[]; folders?: Folde
   );
 }
 
-/** 可控 matchMedia（`AppShell.tabs.test.tsx` 的 `stubControllableMatchMedia` 沒有 export，照抄）；`afterEach` 的 `vi.unstubAllGlobals()` 還原。 */
+/** Controllable matchMedia (`stubControllableMatchMedia` in `AppShell.tabs.test.tsx` is not exported, so this copies it); `vi.unstubAllGlobals()` in `afterEach` restores it. */
 function stubMatchMedia(narrow: boolean) {
   const mql = {
     matches: narrow,
@@ -87,7 +86,7 @@ function stubMatchMedia(narrow: boolean) {
     removeListener: () => {},
     dispatchEvent: () => false,
   };
-  // 只有 OVERLAY_QUERY 回 mql；其餘 query（例如 WIDE_POINTER_QUERY）一律不成立。
+  // Only OVERLAY_QUERY returns an mql; every other query (e.g. WIDE_POINTER_QUERY) does not match.
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => (query === OVERLAY_QUERY ? mql : { ...mql, matches: false })),
@@ -98,14 +97,11 @@ function stubMatchMedia(narrow: boolean) {
 interface RenderOpts {
   tab?: SidebarTab;
   queryClient?: QueryClient;
-  /** 外殼帶 `data-sidebar-drawer`（抽屜那份）。 */
   drawer?: boolean;
   toaster?: boolean;
-  /** 外殼之外的內容（主內容區的探針）。 */
   outside?: ReactNode;
 }
 
-/** 骨架＋一份側欄實例外殼（`data-sidebar-instance`）。 */
 function renderPanel(opts: RenderOpts = {}) {
   if (opts.tab) localStorage.setItem("sidebar.tab", opts.tab);
   const queryClient = opts.queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -141,7 +137,6 @@ const checkedIds = () =>
 const selectButton = () => within(header()).getByRole("button", { name: "Select" });
 const headerButtonNames = () => within(header()).queryAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent);
 
-/** 等「選取」可按（筆記到了）→ 按 → 等 lazy chunk 到（標題列「0 selected」＋勾選框）。 */
 async function enterSelect(): Promise<void> {
   const select = await within(header()).findByRole("button", { name: "Select" });
   await waitFor(() => expect(select).toBeEnabled());
@@ -161,7 +156,7 @@ async function renderSelecting(opts: RenderOpts & { notes?: NoteDto[]; groups?: 
 const pressEsc = (target: Element | Document = document.body, init: KeyboardEventInit = {}) => fireEvent.keyDown(target, { key: "Escape", ...init });
 const selecting = () => within(header()).queryByRole("button", { name: "Done" }) !== null;
 
-describe("一般 tab 的選取模式", () => {
+describe("normal-tab select mode", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -171,8 +166,8 @@ describe("一般 tab 的選取模式", () => {
     vi.unstubAllGlobals();
   });
 
-  describe("NS1 標題列「選取」鈕", () => {
-    it("我的筆記依序 Select、New personal note；Select 是 24px 圖示鈕、帶 title／data-sidebar-select", async () => {
+  describe("header Select button", () => {
+    it("my notes shows Select then New personal note; Select is a 24px icon button with title and data-sidebar-select", async () => {
       stubFetch({ notes: ALL_NOTES });
       renderPanel();
       await within(panel()).findByRole("link", { name: "p1" });
@@ -185,7 +180,7 @@ describe("一般 tab 的選取模式", () => {
       expect(select).toBeEnabled();
     });
 
-    it("最近只有 Select", async () => {
+    it("recent has only Select", async () => {
       stubFetch({ notes: ALL_NOTES });
       renderPanel({ tab: "recent" });
       await within(panel()).findAllByRole("link");
@@ -193,7 +188,7 @@ describe("一般 tab 的選取模式", () => {
       expect(selectButton()).toBeEnabled();
     });
 
-    it("與我共享 Select、New folder", async () => {
+    it("shared with me shows Select and New folder", async () => {
       stubFetch({ notes: ALL_NOTES });
       renderPanel({ tab: "shared" });
       await within(panel()).findByRole("link", { name: /^s1/ });
@@ -201,7 +196,7 @@ describe("一般 tab 的選取模式", () => {
       expect(selectButton()).toBeEnabled();
     });
 
-    it("群組 Select、New group", async () => {
+    it("groups shows Select and New group", async () => {
       stubFetch({ notes: ALL_NOTES });
       renderPanel({ tab: "workspace" });
       await within(panel()).findByRole("button", { name: "G1" });
@@ -209,21 +204,21 @@ describe("一般 tab 的選取模式", () => {
       expect(selectButton()).toBeEnabled();
     });
 
-    it("0 篇 → disabled", async () => {
+    it("0 notes -> disabled", async () => {
       stubFetch({ notes: [], groups: [] });
       renderPanel();
       await within(panel()).findByText("No notes yet.");
       expect(selectButton()).toBeDisabled();
     });
 
-    it("只有空群組 → disabled", async () => {
+    it("only an empty group -> disabled", async () => {
       stubFetch({ notes: [P1] });
       renderPanel({ tab: "workspace" });
       await within(panel()).findByRole("button", { name: "G1" });
       expect(selectButton()).toBeDisabled();
     });
 
-    it("筆記載入中 → disabled", async () => {
+    it("notes loading -> disabled", async () => {
       stubFetch({ notes: ALL_NOTES, pending: true });
       renderPanel();
       expect(await within(panel()).findByText("Loading…")).toBeInTheDocument();
@@ -231,7 +226,7 @@ describe("一般 tab 的選取模式", () => {
     });
   });
 
-  it("NS2 進入：0 selected、Select all／Done；勾選框全未勾；沒有連結、⋮、New personal note；焦點在 Done", async () => {
+  it("entering: 0 selected, Select all / Done; all checkboxes unticked; no links, no kebab menu, no New personal note; focus on Done", async () => {
     stubFetch({ notes: ALL_NOTES });
     renderPanel();
     await within(panel()).findByRole("link", { name: "p1" });
@@ -248,7 +243,7 @@ describe("一般 tab 的選取模式", () => {
     expect(done).toHaveFocus();
   });
 
-  it("NS2b 兩份實例（靜態卡＋抽屜）共用選取：焦點只由發起的那一份移動（進入→它的 Done、完成→它的 Select）", async () => {
+  it("two instances (static card + drawer) share the selection: only the instance that started it moves focus (entering -> its Done, finishing -> its Select)", async () => {
     stubFetch({ notes: ALL_NOTES });
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -267,7 +262,7 @@ describe("一般 tab 的選取模式", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    // 從 DOM 裡第一份發起：React 依樹序跑 layout effect，若兩份都聚焦，焦點會落在後掛的第二份。
+    // Start from the first copy in the DOM: React runs layout effects in tree order, so if both copies focused, focus would land on the later-mounted second copy.
     const first = screen.getByTestId("static");
     await within(first).findByRole("link", { name: "p1" });
     fireEvent.click(within(first).getByRole("button", { name: "Select" }));
@@ -279,7 +274,7 @@ describe("一般 tab 的選取模式", () => {
     expect(await within(first).findByRole("button", { name: "Select" })).toHaveFocus();
   });
 
-  it("NS3 點列文字：勾、1 selected、bg-brand-soft；再點取消", async () => {
+  it("click row text: ticked, 1 selected, bg-brand-soft; clicking again unticks", async () => {
     await renderSelecting();
     fireEvent.click(within(panel()).getByText("p1"));
     expect(checkbox("p1")).toBeChecked();
@@ -291,21 +286,21 @@ describe("一般 tab 的選取模式", () => {
     expect(checkbox("p1").closest("label")).not.toHaveClass("bg-brand-soft");
   });
 
-  it("NS4 Shift：點 p1 → Shift 點 p3 → 三篇勾", async () => {
+  it("Shift: click p1 then Shift-click p3 -> three notes ticked", async () => {
     await renderSelecting();
     fireEvent.click(checkbox("p1"));
     fireEvent.click(checkbox("p3"), { shiftKey: true });
     expect(checkedIds()).toEqual(["p1", "p2", "p3"]);
   });
 
-  it("NS4b Ctrl：點 p1 → Ctrl 點 p3 → 只有 p1、p3", async () => {
+  it("Ctrl: click p1 then Ctrl-click p3 -> only p1 and p3", async () => {
     await renderSelecting();
     fireEvent.click(checkbox("p1"));
     fireEvent.click(checkbox("p3"), { ctrlKey: true });
     expect(checkedIds()).toEqual(["p1", "p3"]);
   });
 
-  it("NS4c 點列文字帶修飾鍵（Firefox 不轉送給勾選框，由 label 自己切換）：Shift 走範圍、Ctrl 只切一次", async () => {
+  it("clicking row text with a modifier (Firefox does not forward it to the checkbox; the label toggles itself): Shift selects a range, Ctrl toggles once", async () => {
     await renderSelecting();
     const title = (id: string) => within(checkbox(id).closest("label") as HTMLElement).getByText(id, { exact: true });
     fireEvent.click(checkbox("p1"));
@@ -315,12 +310,12 @@ describe("一般 tab 的選取模式", () => {
     expect(checkedIds()).toEqual(["p1", "p3"]);
   });
 
-  it("NS5 群組 tab：群組列是 button[aria-expanded]、沒有勾選框；只有三篇有勾選框；沒有群組的「＋」與 ⋮", async () => {
+  it("group tab: group rows are button[aria-expanded] without a checkbox; only the three notes have checkboxes; no group plus button or kebab menu", async () => {
     await renderSelecting({ tab: "workspace" });
     for (const name of ["G1", "G2"]) {
       const row = within(panel()).getByRole("button", { name });
       expect(row).toHaveAttribute("aria-expanded", "true");
-      // 群組列（主鈕所在的那一列）沒有勾選框；子筆記在列下方的導引線容器裡。
+      // the group row (the one holding the main button) has no checkbox; child notes sit in the guide-line container below it
       expect(row.parentElement?.querySelector("input")).toBeNull();
     }
     expect(within(panel()).getAllByRole("checkbox")).toHaveLength(3);
@@ -329,7 +324,7 @@ describe("一般 tab 的選取模式", () => {
     expect(within(panel()).queryByRole("button", { name: "Group actions for G1" })).toBeNull();
   });
 
-  it("NS6 收合與全選：全選只勾看得到的；展開後字樣變回 Select all；再全選三篇；取消全選", async () => {
+  it("collapse and select all: select all ticks only visible notes; after expanding the label returns to Select all; selecting all again ticks three; deselect all", async () => {
     await renderSelecting({ tab: "workspace" });
     fireEvent.click(within(panel()).getByRole("button", { name: "G1" }));
     expect(within(panel()).getByRole("button", { name: "G1" })).toHaveAttribute("aria-expanded", "false");
@@ -348,7 +343,7 @@ describe("一般 tab 的選取模式", () => {
     expect(within(header()).getByText("0 selected")).toBeInTheDocument();
   });
 
-  it("NS7 收合後仍算：勾 g1a → 收合 → 1 selected；Shift 的錨點不在可見序 → 退化成單列切換", async () => {
+  it("still counted after collapsing: tick g1a, collapse -> 1 selected; a Shift anchor outside the visible order degrades to a single-row toggle", async () => {
     await renderSelecting({ tab: "workspace" });
     fireEvent.click(checkbox("g1a"));
     fireEvent.click(within(panel()).getByRole("button", { name: "G1" }));
@@ -361,8 +356,8 @@ describe("一般 tab 的選取模式", () => {
     expect(within(header()).getByText("2 selected")).toBeInTheDocument();
   });
 
-  describe("NS8 Esc 與完成", () => {
-    it("焦點在勾選框上按 Esc → 平常標題列、焦點在 Select；Done 同；再進入是 0 selected", async () => {
+  describe("Esc and Done", () => {
+    it("Esc on a checkbox -> normal header, focus on Select; Done does the same; entering again shows 0 selected", async () => {
       await renderSelecting();
       checkbox("p1").focus();
       pressEsc(checkbox("p1"));
@@ -381,7 +376,7 @@ describe("一般 tab 的選取模式", () => {
       expect(checkedIds()).toEqual([]);
     });
 
-    it("NS8b 已被處理的 Esc（document capture 先 preventDefault，模擬抽屜 Radix）→ 仍在選取；拿掉後一般 Esc 會離開", async () => {
+    it("an already-handled Esc (document capture calls preventDefault first, simulating the Radix drawer) -> still selecting; a plain Esc leaves once it is removed", async () => {
       await renderSelecting();
       const swallow = (event: KeyboardEvent) => event.preventDefault();
       document.addEventListener("keydown", swallow, { capture: true });
@@ -395,7 +390,7 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8c 有抽屜以外的 dialog → 仍在選取；移除後一般 Esc 會離開", async () => {
+    it("a dialog other than the drawer is open -> still selecting; a plain Esc leaves once it is removed", async () => {
       await renderSelecting();
       const dialog = document.createElement("div");
       dialog.setAttribute("role", "dialog");
@@ -410,14 +405,14 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8d 焦點不在側欄（寬螢幕、body）→ 離開選取、焦點在 Select", async () => {
+    it("focus outside the sidebar (wide screen, body) -> leaves select mode, focus on Select", async () => {
       await renderSelecting();
       document.body.focus();
       pressEsc(document.body);
       expect(await within(header()).findByRole("button", { name: "Select" })).toHaveFocus();
     });
 
-    it("NS8e 主內容區的輸入框按 Esc → 仍在選取、焦點仍在 input；對 body 按 Esc 會離開", async () => {
+    it("Esc in an input in the main content -> still selecting, focus stays on the input; Esc on body leaves", async () => {
       await renderSelecting({
         outside: (
           <main>
@@ -435,7 +430,7 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8f 消耗事件：勾選框上的 Esc 離開選取、同一個事件物件 defaultPrevented", async () => {
+    it("consumed event: Esc on a checkbox leaves select mode and the same event object is defaultPrevented", async () => {
       await renderSelecting();
       const target = checkbox("p1");
       const event = createEvent.keyDown(target, { key: "Escape" });
@@ -444,7 +439,7 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8g 窄螢幕、只有靜態卡（抽屜關著）→ 仍在選取；回到寬螢幕後一般 Esc 會離開", async () => {
+    it("narrow screen with only the static card (drawer closed) -> still selecting; after returning to a wide screen a plain Esc leaves", async () => {
       const mql = stubMatchMedia(true);
       await renderSelecting();
       pressEsc(document.body);
@@ -455,14 +450,14 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8g' 窄螢幕的抽屜那份看得見：對 body 按 Esc 會離開", async () => {
+    it("narrow screen with the drawer copy visible: Esc on body leaves", async () => {
       stubMatchMedia(true);
       await renderSelecting({ drawer: true });
       pressEsc(document.body);
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8h 組字中的 Esc → 仍在選取；一般 Esc 會離開", async () => {
+    it("Esc during IME composition -> still selecting; a plain Esc leaves", async () => {
       await renderSelecting();
       pressEsc(document.body, { isComposing: true });
       expect(selecting()).toBe(true);
@@ -471,7 +466,7 @@ describe("一般 tab 的選取模式", () => {
       await waitFor(() => expect(selecting()).toBe(false));
     });
 
-    it("NS8i 開著 toast：第一下 Esc 只關 toast、仍在選取；第二下離開", async () => {
+    it("with a toast open: the first Esc only closes the toast and keeps selecting; the second leaves", async () => {
       await renderSelecting({ toaster: true });
       act(() => {
         toast({ title: "x" });
@@ -480,8 +475,8 @@ describe("一般 tab 的選取模式", () => {
       const toastLi = item.closest("li") as HTMLElement;
       expect(toastLi).toHaveAttribute("data-state", "open");
 
-      // 真瀏覽器在 listener 之間跑 microtask：Radix 關 toast 的更新在 SelectHeader 的 bubble 之前就 commit（所以 ④b 要在 window
-      // capture 記錄）。jsdom 的 fireEvent 同步派發不會 flush，在 body 上補一個 flushSync 模擬那個時間點。
+      // Real browsers run microtasks between listeners: Radix's toast-close update commits before SelectHeader's bubble listener (so whether a toast was open must be recorded in the window
+      // capture listener). jsdom's synchronous fireEvent dispatch does not flush, so a flushSync on body simulates that moment.
       const flush = () => {
         flushSync(() => {});
       };
@@ -499,8 +494,7 @@ describe("一般 tab 的選取模式", () => {
     });
   });
 
-  it("NS15 Esc 監聽的清理：選取中多出恰兩個 keydown 監聽（window capture＋document bubble），完成與卸載後歸零", async () => {
-    // 記錄 window／document 上目前掛著的 keydown 監聽（目標＋capture＋函式本身）。
+  it("Esc listener cleanup: selecting adds two keydown listeners (window capture + document bubble), and both are gone after finishing and after unmount", async () => {
     const live = new Set<string>();
     const ids = new Map<unknown, number>();
     const spies = [window, document].map((target) => {
@@ -542,7 +536,7 @@ describe("一般 tab 的選取模式", () => {
       );
       await within(panel()).findByRole("link", { name: "p1" });
       const base = new Set(live);
-      // 只數 window capture 與 document bubble：平常的列每列 ⋮（Radix Menu）在 document capture 各掛一個，隨列重掛會換新函式。
+      // Count only window capture and document bubble: each normal row's kebab menu (Radix Menu) attaches a document-capture listener that is replaced by a new function when the row remounts.
       const extra = () =>
         [...live]
           .filter((key) => !base.has(key) && /^(W:capture|D:bubble)#/.test(key))
@@ -564,7 +558,7 @@ describe("一般 tab 的選取模式", () => {
     }
   });
 
-  it("NS9 最近 tab：兩行（標題＋位置）都在 label 內", async () => {
+  it("recent tab: both lines (title + location) are inside the label", async () => {
     await renderSelecting({ tab: "recent" });
     const label = checkbox("g1a").closest("label") as HTMLElement;
     expect(label).toHaveTextContent("g1a");
@@ -572,8 +566,7 @@ describe("一般 tab 的選取模式", () => {
     expect(checkbox("p1").closest("label")).toHaveTextContent("My notes");
   });
 
-  it("最愛 tab 的選取：勾選樹是兩行列、順序與平常一致", async () => {
-    // 加入時間新到舊：g1a、p2、s1。
+  it("favorites tab select mode: the checkbox tree has two-line rows in the usual order", async () => {
     await renderSelecting({
       tab: "favorites",
       favorites: [fav("g1a", "2026-03-03T00:00:00.000Z"), fav("p2", "2026-03-02T00:00:00.000Z"), fav("s1", "2026-03-01T00:00:00.000Z")],
@@ -589,7 +582,7 @@ describe("一般 tab 的選取模式", () => {
     expect(checkbox("p2").closest("label")).toHaveTextContent("My notes");
   });
 
-  it("最愛 tab：標題列只有 Select，有列時可按", async () => {
+  it("favorites tab: the header has only Select, enabled when there are rows", async () => {
     stubFetch({ notes: ALL_NOTES, favorites: [fav("p1", "2026-03-01T00:00:00.000Z")] });
     renderPanel({ tab: "favorites" });
     await within(panel()).findAllByRole("link");
@@ -597,19 +590,19 @@ describe("一般 tab 的選取模式", () => {
     expect(selectButton()).toBeEnabled();
   });
 
-  it("最愛 tab 沒有列 → Select disabled", async () => {
+  it("favorites tab without rows -> Select disabled", async () => {
     stubFetch({ notes: ALL_NOTES, favorites: [] });
     renderPanel({ tab: "favorites" });
     await within(panel()).findByText(/No favorites yet/);
     expect(selectButton()).toBeDisabled();
   });
 
-  it("NS9b 與我共享：s1 列帶 Viewer", async () => {
+  it("shared with me: row s1 carries Viewer", async () => {
     await renderSelecting({ tab: "shared" });
     expect(checkbox("s1").closest("label")).toHaveTextContent("Viewer");
   });
 
-  it("NS10 重抓後消失的篇不算", async () => {
+  it("a note that disappears after a refetch does not count", async () => {
     const { queryClient, box } = await renderSelecting();
     fireEvent.click(checkbox("p1"));
     fireEvent.click(checkbox("p2"));
@@ -622,7 +615,7 @@ describe("一般 tab 的選取模式", () => {
     expect(checkbox("p2")).toBeNull();
   });
 
-  it("NS15 選取中清單重抓後沒有可勾的篇（群組 tab 只剩空群組）：仍是選取標題列與勾選樹，群組列沒有「＋」與 ⋮", async () => {
+  it("refetch while selecting leaves nothing tickable (group tab has only empty groups): still the select header and checkbox tree, group rows have no plus button or kebab menu", async () => {
     const { queryClient, box } = await renderSelecting({ tab: "workspace" });
     fireEvent.click(checkbox("g1a"));
     expect(within(header()).getByText("1 selected")).toBeInTheDocument();
@@ -636,12 +629,11 @@ describe("一般 tab 的選取模式", () => {
     expect(within(panel()).queryByRole("button", { name: "New note in G1" })).toBeNull();
     expect(within(panel()).queryByRole("button", { name: "Group actions for G1" })).toBeNull();
     expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
-    // 對照：離開選取後是平常的群組列（有群組 ⋮）。
     fireEvent.click(within(header()).getByRole("button", { name: "Done" }));
     expect(await within(panel()).findByRole("button", { name: "Group actions for G1" })).toBeInTheDocument();
   });
 
-  it("NS15b 選取中清單重抓後完全沒有節點（我的筆記清空）：選取標題列＋平常的空狀態句，沒有勾選框", async () => {
+  it("refetch while selecting leaves no nodes at all (my notes emptied): select header plus the usual empty-state text, no checkboxes", async () => {
     const { queryClient, box } = await renderSelecting();
     fireEvent.click(checkbox("p1"));
     box.notes = ALL_NOTES.filter((note) => note.groupId !== null || note.role !== "owner");
@@ -653,7 +645,7 @@ describe("一般 tab 的選取模式", () => {
     expect(within(panel()).queryAllByRole("checkbox")).toHaveLength(0);
   });
 
-  it("NS11 捲動容器不換、捲動位置保留（進入與完成）", async () => {
+  it("the scroll container is not replaced and the scroll position is kept (on entering and finishing)", async () => {
     stubFetch({ notes: ALL_NOTES });
     renderPanel();
     await within(panel()).findByRole("link", { name: "p1" });
@@ -669,7 +661,7 @@ describe("一般 tab 的選取模式", () => {
     expect(container.scrollTop).toBe(120);
   });
 
-  it("NS13 zh-TW：已選 0 項、全選、完成；選取鈕 aria-label 選取", async () => {
+  it("zh-TW: 已選 0 項, 全選, 完成; the select button's aria-label is 選取", async () => {
     await i18n.changeLanguage("zh-TW");
     try {
       stubFetch({ notes: ALL_NOTES });
@@ -685,8 +677,7 @@ describe("一般 tab 的選取模式", () => {
   });
 });
 
-// ── 選取模式遇上資料夾
-describe("選取模式 × 資料夾", () => {
+describe("select mode with folders", () => {
   const FA = personalNote({ id: "fa1", title: "fa1", folderId: "A" });
   const FA2 = personalNote({ id: "fa2", title: "fa2", folderId: "A1" });
   const ROOT = personalNote({ id: "root3", title: "root3" });
@@ -718,8 +709,7 @@ describe("選取模式 × 資料夾", () => {
     __resetFolderSortForTests();
   });
 
-  // 資料夾列換成可勾（原斷言「列內沒有勾選框」「全選只勾 root3」反轉成下列）。
-  it("NS-F1 我的筆記：資料夾 A 列有 button[aria-expanded] 與勾選框 folder:A；A 底下 fa1 有；收合 A → 全選勾可見的 A 與 root3", async () => {
+  it("my notes: folder A's row has a button[aria-expanded] and checkbox folder:A, as does fa1 under A; after collapsing A, select all ticks the visible A and root3", async () => {
     stubFolders();
     renderPanel();
     await enterSelect();
@@ -736,7 +726,7 @@ describe("選取模式 × 資料夾", () => {
     expect(within(header()).getByText("2 selected")).toBeInTheDocument();
   });
 
-  it("NS-F2 選取模式最近 tab：fa2 第二行 title「My notes › A › A1」", async () => {
+  it("recent tab in select mode: fa2's second line has the full folder path as its title", async () => {
     stubFolders();
     renderPanel({ tab: "recent" });
     await enterSelect();
@@ -746,9 +736,8 @@ describe("選取模式 × 資料夾", () => {
   });
 });
 
-// ── 資料夾可勾（NSf1–NSf6）
-describe("選取模式 × 資料夾可勾", () => {
-  // 我的筆記：A ⊃ { q1, q2 }、B（空）、根層 q3。可見序＝folder:A、q1、q2、folder:B、q3。
+describe("select mode with tickable folders", () => {
+  // My notes: A > { q1, q2 }, B (empty), root q3. Visible order: folder:A, q1, q2, folder:B, q3.
   const FA = folderDto({ id: "A", name: "A" });
   const FB = folderDto({ id: "B", name: "B" });
   const Q1 = personalNote({ id: "q1", title: "q1", folderId: "A" });
@@ -758,7 +747,7 @@ describe("選取模式 × 資料夾可勾", () => {
 
   const folderRow = (id: string) => panel().querySelector(`[data-node-kind="folder"][data-node-id="${id}"]`) as HTMLElement;
   const folderBox = (id: string) => panel().querySelector(`input[type="checkbox"][data-selection-key="folder:${id}"]`) as HTMLInputElement | null;
-  /** 資料夾列（列的第一個子元素）裡的折疊鈕；不綁它是不是列的直接子元素（NSf1 另斷言它不在 label 內）。 */
+  /** Collapse button inside the folder row (the row's first child); not tied to being a direct child of the row (the first test asserts it is outside the label). */
   const chevron = (id: string) => folderRow(id).firstElementChild!.querySelector("button[aria-expanded]") as HTMLButtonElement;
 
   beforeEach(async () => {
@@ -770,7 +759,7 @@ describe("選取模式 × 資料夾可勾", () => {
     __resetFolderSortForTests();
   });
 
-  it("NSf1 資料夾列：勾選框 folder:A（可及名稱 A）與獨立的 button[aria-expanded]（可及名稱 A、不在 label 內）；點 chevron 只收合、點名稱才勾", async () => {
+  it("folder row: checkbox folder:A (accessible name A) and a separate button[aria-expanded] (accessible name A, outside the label); clicking the chevron only collapses, clicking the name ticks", async () => {
     await renderSelecting(MINE);
     const toggle = chevron("A");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -793,7 +782,7 @@ describe("選取模式 × 資料夾可勾", () => {
     expect(label).toHaveClass("bg-brand-soft");
   });
 
-  it("NSf2 勾 A → 1 selected；再勾 A 裡的 q1 → 2 selected（標題列不去重）", async () => {
+  it("tick A -> 1 selected; also tick q1 inside A -> 2 selected (the header does not deduplicate)", async () => {
     await renderSelecting(MINE);
     fireEvent.click(folderBox("A")!);
     expect(within(header()).getByText("1 selected")).toBeInTheDocument();
@@ -802,7 +791,7 @@ describe("選取模式 × 資料夾可勾", () => {
     expect(checkedIds()).toEqual(["folder:A", "q1"]);
   });
 
-  it("NSf3 收合 A 後全選 → A、B、q3 勾到、A 的子項沒有（展開後 q1、q2 未勾）", async () => {
+  it("select all after collapsing A ticks A, B and q3 but not A's children (q1 and q2 are unticked after expanding)", async () => {
     await renderSelecting(MINE);
     fireEvent.click(chevron("A"));
     fireEvent.click(within(header()).getByRole("button", { name: "Select all" }));
@@ -816,7 +805,7 @@ describe("選取模式 × 資料夾可勾", () => {
     expect(within(header()).getByRole("button", { name: "Select all" })).toBeInTheDocument();
   });
 
-  it("選取列的勾選框是自繪的（筆記列與資料夾列）：appearance-none、不含 accent-brand", async () => {
+  it("select-row checkboxes are custom-drawn (note rows and folder rows): appearance-none, no accent-brand", async () => {
     await renderSelecting(MINE);
     const boxes = [checkbox("q2"), folderBox("B")!];
     for (const box of boxes) {
@@ -826,13 +815,13 @@ describe("選取模式 × 資料夾可勾", () => {
     }
   });
 
-  it("NSf4 Shift 範圍含資料夾列：q2 → Shift q3 ＝ q2、B、q3；Shift＋點資料夾名稱（label 自己切換）也走範圍", async () => {
+  it("Shift range includes folder rows: q2 then Shift q3 = q2, B, q3; Shift-clicking a folder name (the label toggles itself) also selects a range", async () => {
     await renderSelecting(MINE);
     fireEvent.click(checkbox("q2"));
     fireEvent.click(checkbox("q3"), { shiftKey: true });
     expect(checkedIds()).toEqual(["q2", "folder:B", "q3"]);
 
-    // 清空（錨點一併清掉）：全選 → 取消全選。
+    // select all + deselect all clears the selection and the Shift anchor
     fireEvent.click(within(header()).getByRole("button", { name: "Select all" }));
     fireEvent.click(within(header()).getByRole("button", { name: "Deselect all" }));
     expect(checkedIds()).toEqual([]);
@@ -841,7 +830,7 @@ describe("選取模式 × 資料夾可勾", () => {
     expect(checkedIds()).toEqual(["q1", "q2", "folder:B"]);
   });
 
-  it("NSf5 群組 tab：群組列不可勾；群組下的資料夾 GF 可勾", async () => {
+  it("group tab: group rows are not tickable; folder GF under a group is", async () => {
     const GF = groupFolder({ id: "GF", name: "GF", groupId: G1.id });
     const inGF = groupNote({ id: "g1f", title: "g1f", group: G1, folderId: "GF" });
     await renderSelecting({ tab: "workspace", notes: [inGF, G1B, G2A], folders: [GF] });
@@ -856,14 +845,13 @@ describe("選取模式 × 資料夾可勾", () => {
     expect(checkedIds()).toEqual(["folder:GF"]);
   });
 
-  it("NSf6 我的筆記只有空資料夾（沒有個人筆記）→ Select 可按、進入後有資料夾勾選框", async () => {
+  it("my notes with only an empty folder (no personal notes) -> Select is enabled and entering shows a folder checkbox", async () => {
     await renderSelecting({ notes: [S1], groups: [], folders: [FB] });
     expect(within(panel()).getAllByRole("checkbox")).toEqual([folderBox("B")]);
   });
 });
 
-// ── 選取模式沒有列上星星
-describe("選取模式 × 列上星星", () => {
+describe("select mode with row stars", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -872,7 +860,7 @@ describe("選取模式 × 列上星星", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["myNotes", "recent", "shared", "workspace"] as const)("%s：平常的列有星星，進入選取模式後沒有任何星星按鈕", async (tab) => {
+  it.each(["myNotes", "recent", "shared", "workspace"] as const)("%s: normal rows have stars; after entering select mode there are no star buttons", async (tab) => {
     stubFetch({ notes: ALL_NOTES, favorites: [fav("p1", "2026-03-01T00:00:00.000Z")] });
     renderPanel({ tab });
     await within(panel()).findAllByRole("button", { name: "Favorite" });

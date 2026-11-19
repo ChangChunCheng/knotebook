@@ -7,7 +7,7 @@ import { toast } from "@/components/ui/toast";
 import { useTour, type TourApi } from "@/lib/tour-context";
 import { START_TIMEOUT_MS, TourProvider } from "./TourProvider";
 
-// 導覽 chunk 下載得很慢：到 15 秒上限時還沒載到。chunk 載到之後的流程在 TourProvider.test.tsx。
+// The tour chunk downloads so slowly that it is still pending at the 15 s limit. The flow after the chunk loads is in TourProvider.test.tsx.
 const chunk = vi.hoisted(() => {
   let release = () => {};
   const arrived = new Promise<void>((resolve) => {
@@ -43,7 +43,7 @@ beforeEach(async () => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/notes" && (init?.method ?? "GET").toUpperCase() === "POST") posts += 1;
-      // 建示範筆記一律失敗：這裡只要看到 chunk 載到之後開始流程真的跑了，不必走完。
+      // Creating the sample note always fails: it is enough to see that the flow really started after the chunk loaded; it need not run to the end.
       return new Response(JSON.stringify({ error: { code: "internal", message: "x" } }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
@@ -59,8 +59,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("導覽 chunk 到上限時還沒載到", () => {
-  it("一則載入失敗的提示；chunk 之後才到也不會自己開始；再按一次照常開始", async () => {
+describe("tour chunk still pending at the limit", () => {
+  it("one load-failure toast; a chunk arriving later does not start the tour by itself; pressing start again proceeds normally", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

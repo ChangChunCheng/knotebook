@@ -4,14 +4,14 @@ import { buildSequence, stopTitle } from "./sequence";
 import { FULL_TOUR, STOPS, type StopId } from "./stops";
 
 describe("buildSequence", () => {
-  it("序列照完整導覽的順序，最後一站是 userMenu，沒有任何一站帶版本標記", () => {
+  it("sequence follows the full tour order, the last stop is userMenu, and no stop carries a version marker", () => {
     const seq = buildSequence(FULL_TOUR);
     expect(seq.map((e) => e.id)).toEqual([...FULL_TOUR]);
     expect(seq[seq.length - 1]!.id).toBe("userMenu");
     for (const entry of seq) expect(Object.keys(entry)).toEqual(["id"]);
   });
 
-  it("不改呼叫端傳入的陣列", () => {
+  it("does not mutate the array passed by the caller", () => {
     const full: [StopId, ...StopId[]] = ["tabs", "userMenu"];
     buildSequence(full);
     expect(full).toEqual(["tabs", "userMenu"]);
@@ -23,7 +23,7 @@ describe("stopTitle", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("標題就是站點標題，兩種語言都沒有版本前綴", async () => {
+  it("the title is the stop title, with no version prefix in either language", async () => {
     const title = i18n.t(STOPS.header.titleKey);
     expect(stopTitle(i18n.t, STOPS.header)).toBe(title);
     expect(title).not.toMatch(/New in v|v\d+\.\d+\.\d+/);

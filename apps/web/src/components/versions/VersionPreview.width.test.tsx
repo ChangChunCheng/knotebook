@@ -24,7 +24,7 @@ class FakeRO {
 }
 function b64(blocks: unknown[]): string {
   const doc = new Y.Doc();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock 泛型三元組
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock generic triple
   blocksToYXmlFragment(BlockNoteEditor.create({ schema: noteSchema }), blocks as any, doc.getXmlFragment(YDOC_FRAGMENT));
   return btoa(String.fromCharCode(...Y.encodeStateAsUpdate(doc)));
 }
@@ -40,7 +40,7 @@ function Host() {
   );
 }
 
-describe("VersionPreview 寬度量尺（loading 也畫在 ref wrapper 裡）", () => {
+describe("VersionPreview width gauge (loading is also drawn inside the ref wrapper)", () => {
   const original = globalThis.ResizeObserver;
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -52,7 +52,7 @@ describe("VersionPreview 寬度量尺（loading 也畫在 ref wrapper 裡）", (
     vi.unstubAllGlobals();
   });
 
-  it("先 loading（快照還沒回）時量尺已掛在 wrapper 上；資料回來後回報 1200 → 自動並排", async () => {
+  it("while loading (snapshot not back yet) the gauge is already on the wrapper; once data arrives and 1200 is reported -> automatic side-by-side", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     const body = (json: unknown) => ({ ok: true, status: 200, json: () => Promise.resolve(json) }) as Response;

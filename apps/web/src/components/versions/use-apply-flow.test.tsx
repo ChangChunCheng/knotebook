@@ -8,8 +8,8 @@ import { Toaster, dismissAllToasts } from "@/components/ui/toast";
 import { VersionsProvider, useVersions, useVersionsController } from "@/lib/versions-context";
 import { useApplyFlow } from "./use-apply-flow";
 
-// useApplyFlow × controller 的 `onApplied`：只在套用成功、且 mutateAsync resolve 之後通知；
-// 通知本身出錯不得把成功變成錯誤 toast（它排在 closeDialog／stopPreview 之後）。
+// useApplyFlow x the controller's `onApplied`: notified only after a successful apply and after mutateAsync resolves;
+// an error from the notification itself must not turn success into an error toast (it runs after closeDialog / stopPreview).
 const NOTE = "n1";
 const V1: VersionDto = { id: vid(1), seq: 1, kind: "manual", name: null, editors: [], baseSeq: null, base: null, createdAt: "2026-10-09T00:00:00.000Z" };
 const CURRENT: VersionCurrentDto = { baseSeq: 2, base: baseRef(2), dirty: false, nextSeq: 3, autoEnabled: true };
@@ -54,14 +54,14 @@ function jsonResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: () => Promise.resolve(body) } as Response;
 }
 
-describe("useApplyFlow × onApplied", () => {
+describe("useApplyFlow x onApplied", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("409 version_unsaved_changes → 不呼叫 onApplied（改跳三選一）", async () => {
+  it("409 version_unsaved_changes -> onApplied is not called (the three-choice dialog appears instead)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -79,7 +79,7 @@ describe("useApplyFlow × onApplied", () => {
     expect(onApplied).not.toHaveBeenCalled();
   });
 
-  it("成功 → onApplied 恰一次，且在 apply 回應 resolve 之後才呼叫", async () => {
+  it("success -> onApplied is called once, and only after the apply response resolves", async () => {
     const order: string[] = [];
     let resolveApply!: (r: Response) => void;
     vi.stubGlobal(
@@ -100,7 +100,6 @@ describe("useApplyFlow × onApplied", () => {
     renderFlow(onApplied);
     fireEvent.click(screen.getByText("h-apply-now"));
     await waitFor(() => expect(order).toEqual(["apply-request"]));
-    // 回應還沒回來：不得提前通知。
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
     });
@@ -114,7 +113,7 @@ describe("useApplyFlow × onApplied", () => {
     expect(await screen.findByText("Applied agile-beaver (0001aaa)")).toBeInTheDocument();
   });
 
-  it("onApplied 丟錯 → 仍是成功路徑：對話框關、預覽離開、成功 toast，沒有錯誤 toast", async () => {
+  it("onApplied throws -> still the success path: dialog closed, preview left, success toast and no error toast", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -138,7 +137,7 @@ describe("useApplyFlow × onApplied", () => {
     expect(screen.queryByText(i18n.t("errors.fallback"))).not.toBeInTheDocument();
   });
 
-  it("requestApply 連點：進行中的第二次直接 return——fetchCurrent 與 apply 各只打一次；結束後可再套用", async () => {
+  it("requestApply double-click: the second call while in flight just returns, so fetchCurrent and apply are each called once; applying again works after it finishes", async () => {
     const calls: string[] = [];
     const pending: Array<(r: Response) => void> = [];
     vi.stubGlobal(
@@ -156,7 +155,7 @@ describe("useApplyFlow × onApplied", () => {
     fireEvent.click(screen.getByText("h-request"));
     fireEvent.click(screen.getByText("h-request"));
     await waitFor(() => expect(count(APPLY1)).toBe(1));
-    // 第一次的 apply 還懸著：多等一段，第二次點擊不得補打。
+    // The first apply is still pending: wait a while longer, the second click must not fire another request.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
     });
@@ -166,7 +165,6 @@ describe("useApplyFlow × onApplied", () => {
       pending[0](jsonResponse(200, { current: CURRENT }));
     });
     expect(await screen.findByText(`Applied ${vlabel(1)}`)).toBeInTheDocument();
-    // 進行中旗標在結束後放開：再點一次照常走完整流程。
     fireEvent.click(screen.getByText("h-request"));
     await waitFor(() => expect(count(APPLY1)).toBe(2));
     expect(count(`/api/notes/${NOTE}/versions?limit=1`)).toBe(2);

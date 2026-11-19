@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("folderDeleteFacts", () => {
-  it("DF1 子資料夾數不含自己、活筆記含孫層、containsOpen；共享資料夾 shared", () => {
+  it("subfolder count excludes itself, live notes include the grandchild level, containsOpen; shared folder gets shared", () => {
     const index = indexFolders([
       folderDto({ id: "A", name: "A" }),
       folderDto({ id: "A1", name: "A1", parentId: "A" }),
@@ -49,7 +49,7 @@ describe("folderDeleteFacts", () => {
 });
 
 describe("folderDeleteBody", () => {
-  it("DF2 zh-TW 各情形逐字", async () => {
+  it("zh-TW wording for each case, verbatim", async () => {
     await i18n.changeLanguage("zh-TW");
     expect(folderDeleteBody(facts(2, 3), 7, t)).toBe("資料夾（含 2 個子資料夾）會刪除，其中 3 篇筆記會移到垃圾桶，7 天後自動永久刪除。從垃圾桶還原時會照原路徑重建資料夾。");
     expect(folderDeleteBody(facts(0, 1), null, t)).toBe("資料夾會刪除，其中 1 篇筆記會移到垃圾桶，不會自動清除。從垃圾桶還原時會照原路徑重建資料夾。");
@@ -60,7 +60,7 @@ describe("folderDeleteBody", () => {
     expect(folderDeleteBody(facts(0, 1), undefined, t)).toBe("資料夾會刪除，其中 1 篇筆記會移到垃圾桶，保留期滿後自動永久刪除。從垃圾桶還原時會照原路徑重建資料夾。");
   });
 
-  it("DF3 en 各情形逐字（每段完整句、單複數跟各段自己的 count）", () => {
+  it("en wording for each case, verbatim (each part a full sentence, singular/plural follows that part's own count)", () => {
     expect(folderDeleteBody(facts(2, 3), 7, t)).toBe(
       "The folder and its 2 subfolders will be deleted. The 3 notes in it will move to the trash. Notes in the trash are permanently deleted after 7 days. Restoring from the trash rebuilds the folders along the original path.",
     );

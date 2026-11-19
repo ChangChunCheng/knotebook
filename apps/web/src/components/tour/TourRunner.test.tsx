@@ -45,8 +45,8 @@ import { SCREEN_TIMEOUT_MS, TARGET_TIMEOUT_MS, waitForFrames, type TourStopEntry
 import type { StopContext, StopDef, StopId } from "./stops";
 import { TourRunner, type TourRunnerProps } from "./TourRunner";
 
-// 測試宿主照 App 的接線：導覽住在 `<Routes>` 外面；首頁與筆記頁各自渲染一份 AppShell（換頁時側欄換新的一份）。
-// 筆記頁放頁首那批元件（漢堡鈕、分享、⋮、標題框）與右下角的版本泡泡。
+// The test host mirrors the App wiring: the tour lives outside `<Routes>`; the home and note pages each render their own AppShell (the sidebar is a fresh one after navigation).
+// The note page includes the header components (hamburger, share, kebab menu, title box) and the version bubble at the bottom right.
 
 const USER: UserDto = {
   id: "u1",
@@ -88,19 +88,17 @@ const OTHER_PATH = canonicalNotePath(OTHER);
 const CONNECTED: CollabState = { phase: "connected", role: "owner" };
 const AI_ACTION: AiActionDto = { id: "rewrite", name: "Rewrite", applyMode: "preview", kind: "quick" };
 
-// ── 假 server ────────────────────────────────────────────────────────────────
 
 interface FetchCall {
   method: string;
   url: string;
-  /** 發出請求當下的位置。 */
-  at: string;
+  at: string; // location when the request was sent
 }
 
 let calls: FetchCall[] = [];
 let aiActions: AiActionDto[] | "error" = [];
 let deleteStatus = 204;
-/** 設了就讓 `GET /api/ai/actions` 卡到它 resolve。 */
+/** When set, `GET /api/ai/actions` blocks until it resolves. */
 let aiGate: Promise<void> | null = null;
 
 function json(body: unknown, status = 200): Response {
@@ -128,16 +126,14 @@ function stubFetch() {
   );
 }
 
-// ── 視窗寬窄與元素尺寸 ────────────────────────────────────────────────────────
 
-// 版面一律經 `stubLayoutTier` 換：`docked`＝寬視窗、`overlay`＝側欄浮動（640～1279）、`phone`＝手機（比 640 窄）。
+// Layout is always switched through `stubLayoutTier`: `docked` = wide window, `overlay` = floating sidebar (640 to 1279), `phone` = phone (narrower than 640).
 let tierControl: ReturnType<typeof stubLayoutTier> | null = null;
 
 function stubTier(tier: LayoutTier) {
   tierControl = stubLayoutTier(tier);
 }
 
-/** 寬視窗或側欄浮動。 */
 function stubViewport(narrow: boolean) {
   stubTier(narrow ? "overlay" : "docked");
 }
@@ -169,7 +165,6 @@ const RECTS: Record<TourTargetId, [number, number, number, number]> = {
   wikilink: [300, 200, 120, 20],
   flowchart: [300, 400, 400, 120],
 };
-/** 尺寸是 0 的目標（＝畫面上看不到）。 */
 let hiddenTargets = new Set<TourTargetId>();
 
 function stubRects() {
@@ -190,7 +185,6 @@ function padded([left, top, width, height]: [number, number, number, number]) {
   return { x: left - HOLE_PADDING, y: top - HOLE_PADDING, width: width + HOLE_PADDING * 2, height: height + HOLE_PADDING * 2 };
 }
 
-// ── 宿主 ────────────────────────────────────────────────────────────────────
 
 let currentPath = "";
 let routerNavigate: NavigateFunction | null = null;
@@ -210,7 +204,7 @@ function HomeStandIn() {
   );
 }
 
-/** 筆記頁的標題框掛不掛（拿掉＝示範筆記的畫面「出不來」，換畫面會一直等）。 */
+/** Whether the note page's title box is mounted (removed = the sample note's screen never appears, so a screen change waits forever). */
 let noteTitleShown = true;
 
 function NoteStandIn() {
@@ -229,13 +223,13 @@ function NoteStandIn() {
           <NoteMenu note={note} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />
         </header>
         <CornerStack />
-        {/* 手機筆記畫面底部的圓形鈕（同 NotePage，只在手機掛）。 */}
+        {/* Round button at the bottom of the phone note screen (as in NotePage; mounted only on phones). */}
         {phone && <NoteBrowseBar note={note} />}
-        {/* 示範筆記裡現成的 `[[` 連結（沒有編輯器時，演示站改指它）。 */}
+        {/* A ready-made `[[` link in the sample note (when there is no editor, the live stop points at it). */}
         <a href="/somewhere" {...tourTarget("wikilink")}>
           linked note
         </a>
-        {/* 示範筆記裡用 `/` 插的流程圖（沒有編輯器時，`/` 站改指它）。 */}
+        {/* A diagram inserted with `/` in the sample note (when there is no editor, the `/` stop points at it). */}
         <div {...tourTarget("flowchart")}>a flowchart</div>
       </VersionsProvider>
     </AppShell>
@@ -245,14 +239,13 @@ function NoteStandIn() {
 let queryClient: QueryClient;
 
 /**
- * 可以延後生效的 history：導頁先記下來，`manual` 時要測試呼叫 `commit()` 才換位置（模擬 BrowserRouter 在 transition 裡才跟上的空檔）。
- * 只做這些測試用得到的：push／replace，沒有 go。
+ * History whose navigations can take effect later: a navigation is recorded first, and in `manual` mode the test calls `commit()` to change location (simulating the gap where BrowserRouter catches up inside a transition).
+ * Only what these tests need: push/replace, no go.
  */
 class DeferredHistory {
   location: Location;
   type: NavigationType = NavigationType.Pop;
   manual = false;
-  /** 每一次 push／replace 的目標路徑，依呼叫順序。 */
   readonly calls: { action: NavigationType; pathname: string }[] = [];
   private pending: { action: NavigationType; location: Location }[] = [];
   private seq = 0;
@@ -337,7 +330,7 @@ function Host({ initial, runner, history }: { initial: string; runner: ReactNode
   );
 }
 
-/** 照開始流程的形：導到示範筆記、等它的頁面掛上才回傳。 */
+/** Follows the start flow: navigates to the sample note and returns once its page is mounted. */
 async function fakePrepareSample(signal: AbortSignal): Promise<NoteDto | null> {
   act(() => void routerNavigate!(SAMPLE_PATH));
   const ready = await waitForFrames(() => (document.querySelector(`[data-note-id="${SAMPLE.id}"]`) ? true : null), signal, 5000);
@@ -350,9 +343,8 @@ interface StartOptions {
   returnTo?: string;
   props?: Partial<TourRunnerProps>;
   strict?: boolean;
-  /** 開始前在畫面上做的事（打開抽屜、打搜尋字）。 */
   before?: () => Promise<void> | void;
-  /** 用可以延後生效的 history 代替 MemoryRouter。 */
+  /** Uses a history with deferrable commits instead of MemoryRouter. */
   history?: DeferredHistory;
 }
 
@@ -398,7 +390,7 @@ async function goToLast() {
   for (const title of FULL_TITLES.slice(1)) await next(title);
 }
 
-/** 假站點：目標借用真元件上的屬性；`leave` 可以拿來數。 */
+/** Fake stops: the target borrows attributes of real components; `leave` calls can be counted. */
 function fakeEntry(id: string, targetId: TourTargetId, extra: Partial<StopDef> = {}): TourStopEntry & { leave: ReturnType<typeof vi.fn> } {
   const leave = vi.fn();
   const stop: StopDef = {
@@ -435,8 +427,8 @@ afterEach(() => {
   routerNavigate = null;
 });
 
-describe("一輪完整導覽（寬視窗）", () => {
-  it("從筆記頁打開：九站依序、挖洞對準每站的目標、n / N；最後〔保留示範筆記〕→ 回原頁、焦點在帳號列、不刪", async () => {
+describe("a full tour round (wide window)", () => {
+  it("opened from the note page: nine stops in order, the hole on each stop's target, n / N; finally Keep sample note -> back to the original page, focus on the account row, nothing deleted", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     expect(currentPath).toBe(SAMPLE_PATH);
@@ -448,7 +440,7 @@ describe("一輪完整導覽（寬視窗）", () => {
       ["New note", padded(RECTS.newNote)],
       ["Folders", padded(RECTS.newFolder)],
       ["Search", padded(RECTS.search)],
-      // 分享鈕與 ⋮ 的聯集。
+      // union of the share button and the kebab menu
       ["Share and more", padded([900, 10, 100, 30])],
       ["Version history", padded(RECTS.versions)],
       ["Link to another note", padded(RECTS.wikilink)],
@@ -459,7 +451,6 @@ describe("一輪完整導覽（寬視窗）", () => {
       await next(title);
       expect(progress()).toBe(`${i + 2} / 9`);
       await waitFor(() => expect(hole()).toEqual(rect));
-      // 說明裡的修飾鍵要代入：不能留下字面的 {{mod}}。
       expect(card(), title).not.toHaveAccessibleDescription(/\{\{/);
       if (title === "Search") expect(card()).toHaveAccessibleDescription(/Ctrl\+K/);
     }
@@ -468,13 +459,12 @@ describe("一輪完整導覽（寬視窗）", () => {
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
     expect(overlay()).toBeNull();
     expect(currentPath).toBe(OTHER_PATH);
-    // 焦點在帳號列，不是選單項。
     expect(document.activeElement).toBe(findUserMenuTrigger());
     expect(document.activeElement).toBe(screen.getByRole("button", { name: USER.displayName }));
     expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 
-  it("整輪只有一個遮罩實例（換站不重掛）；換站時報讀區讀出新的一站", async () => {
+  it("one overlay instance for the whole round (no remount on stop changes); the live region announces the new stop on each change", async () => {
     await startTour();
     await findCard("Sidebar sections");
     const root = overlay();
@@ -489,7 +479,7 @@ describe("一輪完整導覽（寬視窗）", () => {
     expect(document.querySelectorAll("[data-tour-overlay]")).toHaveLength(1);
   });
 
-  it("上一步回前一站", async () => {
+  it("Back returns to the previous stop", async () => {
     await startTour();
     await findCard("Sidebar sections");
     await next("New note");
@@ -499,8 +489,8 @@ describe("一輪完整導覽（寬視窗）", () => {
   });
 });
 
-describe("開始流程", () => {
-  it("示範筆記還沒準備好之前不蓋遮罩；prepareSample 收到中止訊號", async () => {
+describe("start flow", () => {
+  it("no overlay before the sample note is ready; prepareSample receives the abort signal", async () => {
     let release: (note: NoteDto | null) => void = () => {};
     let received: AbortSignal | null = null;
     const prepareSample = vi.fn((signal: AbortSignal) => {
@@ -518,7 +508,7 @@ describe("開始流程", () => {
     release(null);
   });
 
-  it("prepareSample 回 null（沒辦法開始）→ 不出遮罩、onFinished 一次；AI 動作照樣只讀過一次（和準備示範筆記同時發出）", async () => {
+  it("prepareSample returns null (cannot start) -> no overlay and one onFinished; AI actions are still read once (issued at the same time as preparing the sample note)", async () => {
     const prepareSample = vi.fn(async () => null);
     const { onFinished } = await startTour({ props: { prepareSample } });
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
@@ -527,7 +517,7 @@ describe("開始流程", () => {
     expect(calls.filter((c) => c.url === "/api/ai/actions")).toHaveLength(1);
   });
 
-  it("prepareSample 回 null → onStarted 不呼叫，onFinished 帶 started=false", async () => {
+  it("prepareSample returns null -> onStarted is not called and onFinished gets started=false", async () => {
     const prepareSample = vi.fn(async () => null);
     const { onStarted, onFinished } = await startTour({ props: { prepareSample } });
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
@@ -535,7 +525,7 @@ describe("開始流程", () => {
     expect(onStarted).not.toHaveBeenCalled();
   });
 
-  it("讀 AI 動作期間離開頁面 → 第一站沒出現過：onStarted 不呼叫，onFinished 帶 started=false", async () => {
+  it("leaving the page while reading AI actions -> stop 1 never appeared: onStarted is not called and onFinished gets started=false", async () => {
     let release: () => void = () => {};
     aiGate = new Promise<void>((resolve) => {
       release = resolve;
@@ -551,7 +541,7 @@ describe("開始流程", () => {
     expect(currentPath).toBe("/login");
   });
 
-  it("等第一站目標期間離開頁面 → onStarted 不呼叫，onFinished 帶 started=false", async () => {
+  it("leaving the page while waiting for stop 1's target -> onStarted is not called and onFinished gets started=false", async () => {
     hiddenTargets = new Set(["tabs"]);
     const { onStarted, onFinished } = await startTour({ props: { stops: [fakeEntry("one", "tabs"), fakeEntry("two", "userMenu")] } });
     await waitFor(() => expect(calls.some((c) => c.url === "/api/ai/actions")).toBe(true));
@@ -564,7 +554,7 @@ describe("開始流程", () => {
     expect(onStarted).not.toHaveBeenCalled();
   });
 
-  it("等第一站目標出現前不發 onStarted，目標出現後恰好一次", async () => {
+  it("onStarted is not fired before stop 1's target appears and is fired once after it appears", async () => {
     hiddenTargets = new Set(["tabs"]);
     const { onStarted } = await startTour({ props: { stops: [fakeEntry("one", "tabs"), fakeEntry("two", "userMenu")] } });
     await waitFor(() => expect(calls.some((c) => c.url === "/api/ai/actions")).toBe(true));
@@ -577,7 +567,7 @@ describe("開始流程", () => {
     expect(onStarted).toHaveBeenCalledTimes(1);
   });
 
-  it("第一站出現時 onStarted 恰好一次：換站、往回走、重繪都不再呼叫；正常結束 started=true", async () => {
+  it("onStarted fires once when stop 1 appears: changing stops, going back and re-rendering do not call it again; a normal finish has started=true", async () => {
     const { onStarted, onFinished } = await startTour();
     await findCard("Sidebar sections");
     expect(onStarted).toHaveBeenCalledTimes(1);
@@ -593,7 +583,7 @@ describe("開始流程", () => {
     expect(onFinished).not.toHaveBeenCalled();
   });
 
-  it("結束的結果：〔保留示範筆記〕與〔刪除〕→ completed、✕ → closed，都是 started=true", async () => {
+  it("finish results: Keep sample note and Delete -> completed, close -> closed, all with started=true", async () => {
     for (const [name, reason] of [
       ["Keep sample note", "completed"],
       ["Delete sample note", "completed"],
@@ -610,7 +600,7 @@ describe("開始流程", () => {
     }
   });
 
-  it("進過站之後位置離開示範筆記 → started=true、reason=left", async () => {
+  it("location leaves the sample note after reaching a stop -> started=true, reason=left", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     act(() => void routerNavigate!("/login"));
@@ -618,14 +608,14 @@ describe("開始流程", () => {
     expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "left" });
   });
 
-  it("StrictMode（開發模式掛載會跑兩次 effect）：onStarted 也只呼叫一次", async () => {
+  it("StrictMode (dev mounting runs effects twice): onStarted is still called once", async () => {
     const { onStarted } = await startTour({ strict: true });
     await findCard("Sidebar sections");
     await new Promise((r) => setTimeout(r, 50));
     expect(onStarted).toHaveBeenCalledTimes(1);
   });
 
-  it("StrictMode（開發模式掛載會跑兩次 effect）：示範筆記只準備一次、AI 動作只讀一次", async () => {
+  it("StrictMode (dev mounting runs effects twice): the sample note is prepared once and AI actions are read once", async () => {
     const { prepareSample } = await startTour({ strict: true });
     await findCard("Sidebar sections");
     expect(prepareSample).toHaveBeenCalledTimes(1);
@@ -633,7 +623,7 @@ describe("開始流程", () => {
     expect(document.querySelectorAll("[data-tour-overlay]")).toHaveLength(1);
   });
 
-  it("搜尋框有字：少掉 tab 列、資料夾、搜尋三站，從「新增筆記」開始、共 6 站", async () => {
+  it("search box has text: the tab list, folder and search stops are dropped, starting from New note for 6 stops", async () => {
     await startTour({
       before: () => {
         fireEvent.change(screen.getByRole("textbox", { name: "Search notes" }), { target: { value: "ab" } });
@@ -644,7 +634,7 @@ describe("開始流程", () => {
   });
 });
 
-describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
+describe("the stop count uses the AI actions read from the server at start", () => {
   const aiOnly = (ctxAi: (n: number) => void) =>
     [
       fakeEntry("ai", "tabs", {
@@ -656,7 +646,7 @@ describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
       fakeEntry("last", "userMenu"),
     ] satisfies TourStopEntry[];
 
-  it("快取裡是空的、API 回非空 → AI 站在序列裡", async () => {
+  it("cache is empty and the API returns non-empty -> the AI stop is in the sequence", async () => {
     queryClient.setQueryData(["ai-actions"], []);
     aiActions = [AI_ACTION];
     const seen: number[] = [];
@@ -666,7 +656,7 @@ describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
     expect(seen).toEqual([1]);
   });
 
-  it("整輪只讀一次：在示範筆記準備好之前就發出，prepareSample 拿到的與算站點用的是同一次讀取", async () => {
+  it("read once per round: issued before the sample note is ready, and what prepareSample receives is the same read used to compute the stops", async () => {
     aiActions = [AI_ACTION];
     const seen: number[] = [];
     const order: string[] = [];
@@ -675,7 +665,7 @@ describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
       const note = await fakePrepareSample(signal);
       order.push(`sample ready, ai fetched=${calls.some((c) => c.url === "/api/ai/actions")}`);
       received = await ai;
-      // 之後再讀就是空的：站點若自己另讀一次，AI 站會不見。
+      // A later read would be empty: if the stops did their own read, the AI stop would disappear.
       aiActions = [];
       return note;
     });
@@ -687,7 +677,7 @@ describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
     expect(calls.filter((c) => c.url === "/api/ai/actions")).toHaveLength(1);
   });
 
-  it("API 失敗 → 沒有 AI 站", async () => {
+  it("API failure -> no AI stop", async () => {
     aiActions = "error";
     await startTour({ props: { stops: aiOnly(() => {}) } });
     await findCard("fake.last");
@@ -695,8 +685,8 @@ describe("站數讀的是開始時向 server 讀到的 AI 動作", () => {
   });
 });
 
-describe("導覽中位置離開示範筆記 → 結束", () => {
-  it("被導到 /login：遮罩消失、離站收拾一次、不導回原頁、onFinished", async () => {
+describe("location leaves the sample note during the tour -> finish", () => {
+  it("redirected to /login: overlay disappears, leave cleanup runs once, no navigation back to the original page, onFinished", async () => {
     const first = fakeEntry("one", "tabs");
     const { onFinished } = await startTour({ props: { stops: [first, fakeEntry("two", "userMenu")] } });
     await findCard("fake.one");
@@ -707,7 +697,7 @@ describe("導覽中位置離開示範筆記 → 結束", () => {
     expect(currentPath).toBe("/login");
   });
 
-  it("上一頁回到打開前的頁面：導覽結束、不重複導頁", async () => {
+  it("Back to the page from before opening: the tour finishes without a duplicate navigation", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     act(() => void routerNavigate!(-1));
@@ -716,7 +706,7 @@ describe("導覽中位置離開示範筆記 → 結束", () => {
     expect(currentPath).toBe(OTHER_PATH);
   });
 
-  it("同一篇只換 search（例如簡報模式的 ?present）不算離開", async () => {
+  it("the same note with only a changed search (e.g. ?present in presentation mode) does not count as leaving", async () => {
     await startTour();
     await findCard("Sidebar sections");
     act(() => void routerNavigate!(`${SAMPLE_PATH}?x=1`));
@@ -725,8 +715,8 @@ describe("導覽中位置離開示範筆記 → 結束", () => {
   });
 });
 
-describe("鍵盤", () => {
-  it("Esc：結束、回原頁、不刪示範筆記", async () => {
+describe("keyboard", () => {
+  it("Esc: finishes, returns to the original page, does not delete the sample note", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     await next("New note");
@@ -737,7 +727,7 @@ describe("鍵盤", () => {
     expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 
-  it("導回原頁是取代歷史：結束後按上一頁不會回到示範筆記", async () => {
+  it("returning to the original page replaces history: Back after finishing does not go to the sample note", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
@@ -748,7 +738,7 @@ describe("鍵盤", () => {
     expect(currentPath).toBe(OTHER_PATH);
   });
 
-  it("✕ 與第 1 站的「跳過」也一樣：結束、回原頁、不刪", async () => {
+  it("close and stop 1's Skip behave the same: finish, return to the original page, no deletion", async () => {
     for (const name of ["Close", "Skip feature tour"]) {
       const { onFinished, unmount } = await startTour();
       await findCard("Sidebar sections");
@@ -760,7 +750,7 @@ describe("鍵盤", () => {
     expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 
-  it("導覽中 Ctrl+K 不聚焦搜尋框（沒有導覽時會）", async () => {
+  it("Ctrl+K does not focus the search box during the tour (it does without a tour)", async () => {
     await startTour();
     await findCard("Sidebar sections");
     const search = screen.getByRole("textbox", { name: "Search notes" });
@@ -774,7 +764,7 @@ describe("鍵盤", () => {
     expect(document.activeElement).toBe(search);
   });
 
-  it("焦點在「下一步」；Tab 在卡片內循環", async () => {
+  it("focus is on Next; Tab cycles within the card", async () => {
     await startTour();
     await findCard("Sidebar sections");
     const c = within(card());
@@ -788,8 +778,8 @@ describe("鍵盤", () => {
   });
 });
 
-describe("現場演示站的鍵盤與焦點", () => {
-  /** 第一站是演示站（`live` 回 true）、第二站是一般站。 */
+describe("live stop keyboard and focus", () => {
+  /** The first stop is a live stop (`live` returns true), the second is a regular stop. */
   const liveThenStatic = (live: StopDef["live"] = () => true) => [
     fakeEntry("live", "tabs", { live }),
     fakeEntry("plain", "userMenu"),
@@ -800,7 +790,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     return event;
   };
 
-  it("演示站：卡片不搶焦點、讀出換站按鍵；→ 下一步，其他按鍵擋下", async () => {
+  it("live stop: the card does not take focus and announces the stop-change keys; the right arrow goes to the next stop and other keys are blocked", async () => {
     const stops = liveThenStatic();
     const outside = document.createElement("button");
     document.body.appendChild(outside);
@@ -818,14 +808,14 @@ describe("現場演示站的鍵盤與焦點", () => {
     expect(card()).not.toHaveTextContent("← → to change stops");
     expect(card().contains(document.activeElement)).toBe(true);
 
-    // 一般站不攔鍵盤，回上一站用卡片上的〔Back〕。
+    // A regular stop does not intercept keys; going back uses the card's Back button.
     fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
     await findCard("fake.live");
     expect(progress()).toBe("1 / 2");
     outside.remove();
   });
 
-  it("演示站：Enter 也是下一步；Esc 結束導覽", async () => {
+  it("live stop: Enter also goes to the next stop; Esc ends the tour", async () => {
     const { onFinished } = await startTour({ props: { stops: liveThenStatic() } });
     await findCard("fake.live");
     press({ key: "Enter" });
@@ -841,7 +831,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     await waitFor(() => expect(onFinished).toHaveBeenCalledWith({ started: true, reason: "closed" }));
   });
 
-  it("離開演示站後鍵盤放行", async () => {
+  it("keys pass through after leaving the live stop", async () => {
     await startTour({ props: { stops: liveThenStatic() } });
     await findCard("fake.live");
     press({ key: "ArrowRight" });
@@ -849,7 +839,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     expect(press({ key: "a" }).defaultPrevented).toBe(false);
   });
 
-  it("這一輪不演示（live 回 false）：不攔鍵盤、焦點進卡片、沒有換站提示", async () => {
+  it("this round is not live (live returns false): keys are not intercepted, focus enters the card, no stop-change hint", async () => {
     await startTour({ props: { stops: liveThenStatic(() => false) } });
     await findCard("fake.live");
     expect(card()).not.toHaveTextContent("← → to change stops");
@@ -859,7 +849,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     expect(progress()).toBe("1 / 2");
   });
 
-  it("站點拿到的情境帶示範筆記的 id；示範筆記沒有登記的編輯器時 liveStops 是 false", async () => {
+  it("the context handed to the stops carries the sample note's id; with no registered editor for the sample note liveStops is false", async () => {
     const seen: StopContext[] = [];
     const stops = [fakeEntry("live", "tabs", { live: (ctx) => (seen.push(ctx), ctx.liveStops) })];
     await startTour({ props: { stops } });
@@ -871,7 +861,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     }
   });
 
-  it("示範筆記的編輯器可編輯、最後是空段落：liveStops 是 true（演示站的 live 回 true）", async () => {
+  it("the sample note's editor is editable and ends with an empty paragraph: liveStops is true (the live stop's live returns true)", async () => {
     const editor = {
       isEditable: true,
       document: [{ type: "paragraph", children: [], content: [] }],
@@ -891,7 +881,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     }
   });
 
-  it("換進演示站、目標還沒畫出來的那幾格：鍵盤已經攔住（連按 Enter 送不進編輯器），目標出現後照常演示", async () => {
+  it("switching to a live stop while its target is not drawn yet: keys are already intercepted (repeated Enter cannot reach the editor), and the stop runs normally once the target appears", async () => {
     hiddenTargets = new Set(["versions"]);
     const stops = [fakeEntry("plain", "userMenu"), fakeEntry("live", "versions", { live: () => true })];
     const editorSide = vi.fn();
@@ -902,12 +892,12 @@ describe("現場演示站的鍵盤與焦點", () => {
       expect(press({ key: "a" }).defaultPrevented).toBe(false);
       editorSide.mockClear();
       fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
-      // 換站等目標：畫面上還是上一站，但下一站的 prepare 已經跑了。
+      // Switching stops waits for the target: the screen still shows the previous stop, but the next stop's prepare has already run.
       await waitFor(() => expect(press({ key: "Enter" }).defaultPrevented).toBe(true));
       expect(press({ key: "Enter" }).defaultPrevented).toBe(true);
       expect(editorSide).not.toHaveBeenCalled();
       expect(progress()).toBe("1 / 2");
-      // 攔鍵盤看「正在準備的那一站」，卡片的樣子仍只看畫面上那一站：上一站是一般站，不顯示換站提示、焦點留在卡片。
+      // Key interception follows the stop being prepared, while the card's look follows only the stop on screen: the previous stop is regular, so there is no stop-change hint and focus stays in the card.
       expect(card()).not.toHaveTextContent("← → to change stops");
       expect(card().contains(document.activeElement)).toBe(true);
       hiddenTargets = new Set();
@@ -918,7 +908,7 @@ describe("現場演示站的鍵盤與焦點", () => {
     }
   });
 
-  it("導覽卸載後鍵盤放行", async () => {
+  it("keys pass through after the tour unmounts", async () => {
     const { unmountRunner } = await startTour({ props: { stops: liveThenStatic() } });
     await findCard("fake.live");
     expect(press({ key: "a" }).defaultPrevented).toBe(true);
@@ -928,8 +918,8 @@ describe("現場演示站的鍵盤與焦點", () => {
   });
 });
 
-describe("等不到目標就跳站", () => {
-  it("版本泡泡與 `[[` 連結一直是 0 尺寸 → 跳過這兩站，接著到後面的一站（站號照原本的序）", async () => {
+describe("stops are skipped when the target never appears", () => {
+  it("the version bubble and the `[[` link stay at size 0 -> both stops are skipped and the tour continues to the next one (stop numbers keep the original order)", async () => {
     hiddenTargets = new Set(["versions", "wikilink"]);
     await startTour();
     await findCard("Sidebar sections");
@@ -940,8 +930,8 @@ describe("等不到目標就跳站", () => {
   }, TARGET_TIMEOUT_MS * 2 + 5000);
 });
 
-describe("窄視窗：開始時抽屜開著", () => {
-  it("先關抽屜、等它從 DOM 消失才準備示範筆記；第 1 站指漢堡鈕", async () => {
+describe("narrow window: the drawer is open at start", () => {
+  it("closes the drawer and waits for it to leave the DOM before preparing the sample note; stop 1 points at the hamburger button", async () => {
     stubViewport(true);
     const drawerAtPrepare: boolean[] = [];
     const prepareSample = vi.fn(async (signal: AbortSignal) => {
@@ -963,8 +953,8 @@ describe("窄視窗：開始時抽屜開著", () => {
   });
 });
 
-describe("寬窄判準改變", () => {
-  it("導覽中變窄：當站目標改成漢堡鈕、說明換窄視窗那一句", async () => {
+describe("the wide/narrow breakpoint changes", () => {
+  it("narrowing during the tour: the current stop's target becomes the hamburger button and the body switches to the narrow-window text", async () => {
     await startTour();
     await findCard("Sidebar sections");
     expect(hole()).toEqual(padded(RECTS.tabs));
@@ -974,7 +964,7 @@ describe("寬窄判準改變", () => {
     expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.narrowBody"));
   });
 
-  it("只有窄視窗說明、目標不變的站：跨過判準時說明跟著換，挖洞不動", async () => {
+  it("a stop with only narrow-window text and an unchanged target: the body follows when crossing the breakpoint and the hole does not move", async () => {
     const entry = fakeEntry("one", "tabs", { narrowBodyKey: "fake.one.narrowBody" });
     await startTour({ props: { stops: [entry, fakeEntry("two", "userMenu")] } });
     await findCard("fake.one");
@@ -987,8 +977,8 @@ describe("寬窄判準改變", () => {
   });
 });
 
-describe("結束後還原側欄 tab", () => {
-  it("寬視窗：開始前在「群組」，導覽中切到「我的筆記」，結束後回到「群組」", async () => {
+describe("sidebar tab restored after finishing", () => {
+  it("wide window: on Groups before the tour, switched to My notes during it, back on Groups after finishing", async () => {
     localStorage.setItem("sidebar.tab", "workspace");
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
@@ -1000,7 +990,7 @@ describe("結束後還原側欄 tab", () => {
     expect(localStorage.getItem("sidebar.tab")).toBe("workspace");
   });
 
-  it("窄視窗不呼叫 showTab（窄視窗切 tab 會打開抽屜）：導覽中變窄後結束，tab 不動、抽屜不開", async () => {
+  it("a narrow window does not call showTab (switching tabs there opens the drawer): after narrowing during the tour and finishing, the tab stays and the drawer does not open", async () => {
     localStorage.setItem("sidebar.tab", "workspace");
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
@@ -1015,8 +1005,8 @@ describe("結束後還原側欄 tab", () => {
   });
 });
 
-describe("結束後的焦點", () => {
-  it("從首頁打開：原觸發鈕所在的側欄已卸載 → 焦點在新掛上的帳號列", async () => {
+describe("focus after finishing", () => {
+  it("opened from the home page: the sidebar that held the trigger button is unmounted -> focus lands on the newly mounted account row", async () => {
     const { onFinished, startedWith } = await startTour({ initial: "/" });
     await goToLast();
     fireEvent.click(within(card()).getByRole("button", { name: "Keep sample note" }));
@@ -1029,7 +1019,7 @@ describe("結束後的焦點", () => {
     expect(document.activeElement).toBe(account);
   });
 
-  it("窄視窗：焦點在漢堡鈕", async () => {
+  it("narrow window: focus is on the hamburger button", async () => {
     stubViewport(true);
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
@@ -1039,7 +1029,7 @@ describe("結束後的焦點", () => {
     expect(document.activeElement).toBe(within(document.querySelector(`[data-note-id="${OTHER.id}"]`)!).getByRole("button", { name: "Open sidebar" }));
   });
 
-  it("查找函式回 null → 回到的那頁的標題框", async () => {
+  it("the lookup function returns null -> the title box of the page returned to", async () => {
     const { onFinished } = await startTour({ props: { returnFocus: () => null } });
     await findCard("Sidebar sections");
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
@@ -1049,8 +1039,8 @@ describe("結束後的焦點", () => {
   });
 });
 
-describe("〔刪除〕", () => {
-  it("先回到原頁再移到垃圾桶；成功跳可復原的提示；焦點仍在帳號列", async () => {
+describe("Delete", () => {
+  it("returns to the original page first, then moves the note to the trash; a success toast with undo appears; focus stays on the account row", async () => {
     const { onFinished } = await startTour();
     await goToLast();
     fireEvent.click(within(card()).getByRole("button", { name: "Delete sample note" }));
@@ -1063,7 +1053,7 @@ describe("〔刪除〕", () => {
     expect(document.activeElement).toBe(findUserMenuTrigger());
   });
 
-  it("移到垃圾桶失敗 → 一次錯誤提示，沒有垃圾桶提示；導覽照樣結束", async () => {
+  it("moving to the trash fails -> one error toast and no trash toast; the tour still finishes", async () => {
     deleteStatus = 500;
     const { onFinished } = await startTour();
     await goToLast();
@@ -1076,8 +1066,8 @@ describe("〔刪除〕", () => {
   });
 });
 
-describe("卸載", () => {
-  it("導覽中卸載：畫面上那站收拾一次、遮罩消失、不呼叫 onFinished、不導頁", async () => {
+describe("unmount", () => {
+  it("unmounting during the tour: the visible stop cleans up once, the overlay disappears, onFinished is not called and there is no navigation", async () => {
     const first = fakeEntry("one", "tabs");
     const { onFinished, unmountRunner } = await startTour({ props: { stops: [first, fakeEntry("two", "userMenu")] } });
     await findCard("fake.one");
@@ -1090,16 +1080,16 @@ describe("卸載", () => {
   });
 });
 
-describe("手機（比 640 窄）", () => {
+describe("phone (narrower than 640)", () => {
   beforeEach(() => stubTier("phone"));
 
-  /** 手機各站：標題、挖洞、該在的位置（清單是 `/`，其餘在示範筆記上）。 */
+  /** Phone stops: title, hole, and where each should be (the list is `/`, the rest are on the sample note). */
   const PHONE_STOPS: [string, { x: number; y: number; width: number; height: number }, string][] = [
     ["Lists of notes", padded(RECTS.tabs), "/"],
     ["New note", padded(RECTS.phoneNewNote), "/"],
     ["Folders", padded(RECTS.newFolder), "/"],
     ["Search", padded(RECTS.phoneSearch), "/"],
-    // 分享鈕與 ⋮ 的聯集。
+    // union of the share button and the kebab menu
     ["Share and more", padded([900, 10, 100, 30]), SAMPLE_PATH],
     ["Version history", padded(RECTS.noteMenu), SAMPLE_PATH],
     ["Link to another note", padded(RECTS.wikilink), SAMPLE_PATH],
@@ -1109,11 +1099,11 @@ describe("手機（比 640 窄）", () => {
 
   const avatar = () => within(document.querySelector<HTMLElement>("[data-phone-top-bar]")!).getByRole("button", { name: USER.displayName });
 
-  it("清單上的站在清單指真的東西，筆記上的站回示範筆記，最後一站回清單指頭像；AI 站立刻跳過、不佔號；結束停在清單、焦點在頭像", async () => {
+  it("stops on the list point at real things on the list, stops on the note go back to the sample note, and the last stop returns to the list and points at the avatar; the AI stop is skipped immediately and takes no number; finishing leaves you on the list with focus on the avatar", async () => {
     aiActions = [AI_ACTION];
     const { onFinished } = await startTour({ initial: "/" });
     for (const [i, [title, rect, path]] of PHONE_STOPS.entries()) {
-      // AI 站要是等了 TARGET_TIMEOUT_MS 才跳，findCard 的預設等待（1 秒）會先逾時。
+      // If the AI stop waited TARGET_TIMEOUT_MS before skipping, findCard's default wait (1 s) would time out first.
       if (i === 0) await findCard(title);
       else await next(title);
       expect(progress(), title).toBe(`${i + 1} / ${PHONE_STOPS.length}`);
@@ -1128,7 +1118,7 @@ describe("手機（比 640 窄）", () => {
     expect(document.activeElement).toBe(avatar());
   });
 
-  it("從筆記開始：先回清單走清單上的站；中途在筆記上的站按 Esc → 回清單、焦點在頭像（不是標題框），tab 切回開始前的", async () => {
+  it("starting from a note: first returns to the list for the list stops; Esc on a note stop midway -> back to the list with focus on the avatar (not the title box) and the tab restored to its pre-start value", async () => {
     localStorage.setItem("sidebar.tab", "workspace");
     const { onFinished } = await startTour();
     await findCard("Lists of notes");
@@ -1143,7 +1133,7 @@ describe("手機（比 640 窄）", () => {
     expect(getShellControls()!.getTab()).toBe("workspace");
   });
 
-  it("往回走：第一個筆記上的站按 Back 回到清單上的搜尋站，再 Next 回示範筆記", async () => {
+  it("going back: Back on the first note stop returns to the search stop on the list, then Next returns to the sample note", async () => {
     await startTour({ initial: "/" });
     await findCard("Lists of notes");
     for (const title of ["New note", "Folders", "Search", "Share and more"]) await next(title);
@@ -1156,11 +1146,10 @@ describe("手機（比 640 窄）", () => {
     await waitFor(() => expect(hole()).toEqual(padded([900, 10, 100, 30])));
   });
 
-  it("換畫面期間卡片藏起來、不挖洞，畫面出來才現身", async () => {
+  it("during a screen change the card is hidden with no hole, and shown once the screen appears", async () => {
     await startTour({ initial: "/" });
     await findCard("Lists of notes");
     for (const title of ["New note", "Folders", "Search"]) await next(title);
-    // 記下換畫面期間每次 DOM 變動時卡片的樣子。
     const seen: { hidden: boolean; hole: boolean }[] = [];
     const observer = new MutationObserver(() => {
       const el = document.querySelector("[data-tour-card]");
@@ -1173,7 +1162,7 @@ describe("手機（比 640 窄）", () => {
     expect(card()).not.toHaveClass("invisible");
   });
 
-  it("在清單上的站時位置跑到別篇筆記 → 結束（left）", async () => {
+  it("location moves to another note while on a list stop -> finish (left)", async () => {
     const { onFinished } = await startTour({ initial: "/" });
     await findCard("Lists of notes");
     act(() => void routerNavigate!(OTHER_PATH));
@@ -1181,7 +1170,7 @@ describe("手機（比 640 窄）", () => {
   });
 });
 
-describe("手機：換畫面與離開", () => {
+describe("phone: screen changes and leaving", () => {
   beforeEach(() => stubTier("phone"));
   afterEach(() => {
     noteTitleShown = true;
@@ -1189,7 +1178,7 @@ describe("手機：換畫面與離開", () => {
 
   const avatar = () => within(document.querySelector<HTMLElement>("[data-phone-top-bar]")!).getByRole("button", { name: USER.displayName });
 
-  it("清單上的站按上一頁（同一個路徑的清單）→ 結束（left）", async () => {
+  it("Back on a list stop (the list at the same path) -> finish (left)", async () => {
     const { onFinished } = await startTour({ initial: "/" });
     await findCard("Lists of notes");
     expect(currentPath).toBe("/");
@@ -1198,7 +1187,7 @@ describe("手機：換畫面與離開", () => {
     expect(overlay()).toBeNull();
   });
 
-  it("換畫面是取代歷史：清單與示範筆記來回幾次後按上一頁，回到開始導覽前的那一頁", async () => {
+  it("screen changes replace history: after switching between the list and the sample note several times, Back returns to the page from before the tour started", async () => {
     const { onFinished } = await startTour();
     await findCard("Lists of notes");
     for (const title of ["New note", "Folders", "Search", "Share and more"]) await next(title);
@@ -1211,7 +1200,7 @@ describe("手機：換畫面與離開", () => {
     expect(currentPath).toBe(OTHER_PATH);
   });
 
-  it("回到清單時捲回頂端", async () => {
+  it("scrolls back to the top when returning to the list", async () => {
     const scrollY = vi.spyOn(window, "scrollY", "get").mockReturnValue(300);
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     await startTour({ initial: "/" });
@@ -1220,14 +1209,14 @@ describe("手機：換畫面與離開", () => {
     scrollY.mockRestore();
   });
 
-  it("螢幕鍵盤蓋住的部分卡片一律讓開（視覺視窗變矮）", async () => {
+  it("the card always avoids the part covered by the on-screen keyboard (the visual viewport gets shorter)", async () => {
     vi.stubGlobal("visualViewport", { height: window.innerHeight - 300, offsetTop: 0, scale: 1, addEventListener: () => {}, removeEventListener: () => {} });
     await startTour({ initial: "/" });
     await findCard("Lists of notes");
     await waitFor(() => expect(Number.parseFloat(card().style.maxHeight)).toBeLessThanOrEqual(window.innerHeight - 300 - 16));
   });
 
-  it(`示範筆記的畫面 ${SCREEN_TIMEOUT_MS} ms 內出不來（例如在別處被移到垃圾桶）→ 結束（left），遮罩收掉`, async () => {
+  it(`the sample note's screen does not appear within ${SCREEN_TIMEOUT_MS} ms (e.g. it was trashed elsewhere) -> finish (left) and the overlay is removed`, async () => {
     const { onFinished } = await startTour({ initial: "/" });
     await findCard("Lists of notes");
     for (const title of ["New note", "Folders", "Search"]) await next(title);
@@ -1239,7 +1228,7 @@ describe("手機：換畫面與離開", () => {
     expect(overlay()).toBeNull();
   }, SCREEN_TIMEOUT_MS * 3);
 
-  it("換畫面途中按 Esc（正從清單換到示範筆記）→ 回清單、焦點在頭像", async () => {
+  it("Esc during a screen change (from the list to the sample note) -> back to the list with focus on the avatar", async () => {
     const { onFinished } = await startTour({ initial: "/" });
     await findCard("Lists of notes");
     for (const title of ["New note", "Folders", "Search"]) await next(title);
@@ -1252,7 +1241,7 @@ describe("手機：換畫面與離開", () => {
     expect(document.activeElement).toBe(avatar());
   });
 
-  it("換畫面的導頁還沒生效（畫面上仍是清單）就按 Esc：照樣取代成清單，不會停在示範筆記上", async () => {
+  it("Esc before the screen-change navigation has taken effect (the list is still on screen): it is still replaced with the list and does not end up on the sample note", async () => {
     const history = new DeferredHistory("/");
     const { onFinished } = await startTour({ initial: "/", history });
     await findCard("Lists of notes");
@@ -1268,7 +1257,7 @@ describe("手機：換畫面與離開", () => {
     expect(currentPath).toBe("/");
   });
 
-  it("離開到別篇筆記：不拉回清單，但側欄 tab 還原成開始前的", async () => {
+  it("leaving to another note: not pulled back to the list, but the sidebar tab is restored to its pre-start value", async () => {
     localStorage.setItem("sidebar.tab", "workspace");
     const { onFinished } = await startTour({ initial: "/" });
     await findCard("Lists of notes");
@@ -1281,8 +1270,8 @@ describe("手機：換畫面與離開", () => {
   });
 });
 
-describe("導覽中跨過 640 與 1280", () => {
-  it("第 1 站：側欄鈕 ↔ 清單畫面的 tab 列（換到清單）↔ 側欄鈕（回示範筆記）↔ 側欄的 tab 列，標題與說明跟著換", async () => {
+describe("crossing 640 and 1280 during the tour", () => {
+  it("stop 1: sidebar button <-> the list screen's tab list (switching to the list) <-> sidebar button (back on the sample note) <-> the sidebar's tab list, with the title and body following", async () => {
     stubTier("overlay");
     await startTour();
     await findCard("Sidebar sections");
@@ -1306,7 +1295,7 @@ describe("導覽中跨過 640 與 1280", () => {
     expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.tabs.body"));
   });
 
-  it("版本站：寬與側欄浮動都指泡泡，手機改指 ⋮", async () => {
+  it("version stop: wide and floating-sidebar layouts point at the bubble, phone points at the kebab menu", async () => {
     stubTier("docked");
     await startTour();
     await findCard("Sidebar sections");
@@ -1321,7 +1310,7 @@ describe("導覽中跨過 640 與 1280", () => {
     expect(card()).toHaveAccessibleDescription(i18n.t("tourGuide.stops.versions.phoneBody"));
   });
 
-  it("「n / N」跟著版面數：有 AI 站時手機少數一站", async () => {
+  it("'n / N' follows the layout's count: with an AI stop the phone counts one fewer", async () => {
     aiActions = [AI_ACTION];
     stubTier("overlay");
     await startTour();
@@ -1334,7 +1323,7 @@ describe("導覽中跨過 640 與 1280", () => {
     await waitFor(() => expect(progress()).toBe("7 / 10"));
   });
 
-  it("停在手機上沒有的站時換到手機：卡片留在原站（不挖洞），「n / N」把它算進去；往回走照常", async () => {
+  it("switching to a phone while on a stop the phone lacks: the card stays on that stop (no hole) and 'n / N' counts it; going back works as usual", async () => {
     const skipped = fakeEntry("two", "share", { skipOnPhone: true });
     await startTour({ props: { stops: [fakeEntry("one", "noteMenu"), skipped, fakeEntry("three", "userMenu")] } });
     await findCard("fake.one");
@@ -1348,7 +1337,7 @@ describe("導覽中跨過 640 與 1280", () => {
     expect(progress()).toBe("1 / 2");
   });
 
-  it("往回走時跳過手機上沒有的站也是立刻的", async () => {
+  it("skipping a stop the phone lacks while going back is immediate too", async () => {
     stubTier("phone");
     const skipped = fakeEntry("two", "share", { skipOnPhone: true });
     await startTour({ props: { stops: [fakeEntry("one", "noteMenu"), skipped, fakeEntry("three", "userMenu")] } });

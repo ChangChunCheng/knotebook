@@ -31,7 +31,7 @@ const hintRegion = () => card().querySelector('[aria-live="polite"]:not([data-to
 const stepRegion = () => document.querySelector("[data-tour-step-announcement]");
 const buttonNames = () => Array.from(card().querySelectorAll("button")).map((b) => b.getAttribute("aria-label") ?? b.textContent);
 
-/** document 的 capture 監聽：BlockNote 選單的「點外面就關」掛在這一層（floating-ui `useDismiss`）。 */
+/** Document capture listener: BlockNote menus' "click outside to close" (floating-ui `useDismiss`) lives at this layer. */
 function documentCaptureSpy(type: string) {
   const spy = vi.fn();
   document.addEventListener(type, spy, true);
@@ -47,8 +47,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("卡片的角色與名稱", () => {
-  it("role=dialog、aria-modal=false、名稱是標題、描述是說明、有 data-tour-card", () => {
+describe("card role and name", () => {
+  it("role=dialog, aria-modal=false, name is the title, description is the body, has data-tour-card", () => {
     renderOverlay();
     const dialog = screen.getByRole("dialog", { name: "Search" });
     expect(dialog).toHaveAttribute("aria-modal", "false");
@@ -56,34 +56,34 @@ describe("卡片的角色與名稱", () => {
     expect(dialog).toHaveAttribute("data-tour-card");
   });
 
-  it("站數顯示 n / N", () => {
+  it("stop count is shown as n / N", () => {
     renderOverlay({ step: 2, total: 5 });
     expect(card()).toHaveTextContent("2 / 5");
   });
 });
 
-describe("按鈕依站序", () => {
-  it("第 1 站：跳過、下一步、✕；沒有上一步", () => {
+describe("buttons by stop position", () => {
+  it("stop 1: Skip, Next, close; no Back", () => {
     renderOverlay({ step: 1, total: 5 });
     expect(buttonNames()).toEqual(["Skip feature tour", "Next", "Close"]);
   });
 
-  it("中間的站：上一步、下一步、✕；沒有跳過", () => {
+  it("middle stop: Back, Next, close; no Skip", () => {
     renderOverlay({ step: 3, total: 5 });
     expect(buttonNames()).toEqual(["Back", "Next", "Close"]);
   });
 
-  it("最後一站：上一步、保留、刪除、✕；沒有下一步", () => {
+  it("last stop: Back, Keep, Delete, close; no Next", () => {
     renderOverlay({ step: 5, total: 5 });
     expect(buttonNames()).toEqual(["Back", "Keep sample note", "Delete sample note", "Close"]);
   });
 
-  it("只有一站時：第 1 站也是最後一站，只有保留、刪除、✕（不另放跳過）", () => {
+  it("with a single stop: stop 1 is also the last, with only Keep, Delete, close (no Skip)", () => {
     renderOverlay({ step: 1, total: 1 });
     expect(buttonNames()).toEqual(["Keep sample note", "Delete sample note", "Close"]);
   });
 
-  it("每顆鈕呼叫自己的動作", () => {
+  it("each button calls its own action", () => {
     const first = renderOverlay({ step: 1, total: 5 });
     fireEvent.click(screen.getByRole("button", { name: "Skip feature tour" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -103,7 +103,7 @@ describe("按鈕依站序", () => {
     expect(last.h.onNext).not.toHaveBeenCalled();
   });
 
-  it("zh-TW 的按鈕字樣", async () => {
+  it("zh-TW button labels", async () => {
     await i18n.changeLanguage("zh-TW");
     const { unmount } = renderOverlay({ step: 1, total: 5 });
     expect(buttonNames()).toEqual(["跳過功能導覽", "下一步", "關閉"]);
@@ -114,8 +114,8 @@ describe("按鈕依站序", () => {
   });
 });
 
-describe("導覽開著時全站快捷鍵讓路", () => {
-  it("isOverlayOpen() 掛著為 true、卸載後回到 false", () => {
+describe("site-wide shortcuts yield while the tour is open", () => {
+  it("isOverlayOpen() is true while mounted and false after unmounting", () => {
     expect(isOverlayOpen()).toBe(false);
     const { unmount } = renderOverlay();
     expect(isOverlayOpen()).toBe(true);
@@ -124,27 +124,27 @@ describe("導覽開著時全站快捷鍵讓路", () => {
   });
 });
 
-describe("卡面", () => {
-  it("用 cardSurface", () => {
+describe("card surface", () => {
+  it("uses cardSurface", () => {
     renderOverlay();
     for (const cls of cardSurface.split(" ")) expect(card()).toHaveClass(cls);
   });
 
-  it("卡片容器本身聚焦時不畫瀏覽器預設外框", () => {
+  it("no default browser outline when the card container itself is focused", () => {
     renderOverlay();
     expect(card()).toHaveClass("outline-none");
   });
 });
 
-describe("演示站模式", () => {
-  it("有 aria-live=polite 的提示「← → 換站、Esc 結束」", () => {
+describe("live stop mode", () => {
+  it("has an aria-live=polite hint for changing stops with the arrow keys and ending with Esc", () => {
     renderOverlay({ live: true });
     const region = hintRegion();
     expect(region).not.toBeNull();
     expect(region).toHaveTextContent("← → to change stops, Esc to end");
   });
 
-  it("一般站沒有提示字，但 live region 先掛著（換到演示站時才讀得出來）", () => {
+  it("a regular stop has no hint text, but the live region is mounted ahead of time (so it is announced when switching to a live stop)", () => {
     const view = renderOverlay();
     const region = hintRegion();
     expect(region).not.toBeNull();
@@ -155,8 +155,8 @@ describe("演示站模式", () => {
   });
 });
 
-describe("換站時報讀器讀得到新的一站", () => {
-  it("掛上時不報（焦點進卡片時 dialog 本身會被讀出）；換站後報「n / N、標題、說明」", () => {
+describe("screen readers announce the new stop on a stop change", () => {
+  it("no announcement on mount (the dialog itself is read when focus enters the card); after a stop change it announces n / N, title, body", () => {
     const view = renderOverlay({ step: 2, total: 5 });
     const region = stepRegion();
     expect(region).not.toBeNull();
@@ -168,7 +168,7 @@ describe("換站時報讀器讀得到新的一站", () => {
     expect(region).toHaveTextContent("3 / 5: Folders. Create folders here.");
   });
 
-  it("換站看 stopKey：同一站只換了號碼與說明（跨過版面）不再報；換站時號碼沒變也照報", () => {
+  it("stop change is judged by stopKey: the same stop with only a new number and body (crossing a layout) is not announced again; a stop change with the same number is still announced", () => {
     const view = renderOverlay({ step: 7, stopKey: 6, total: 10, title: "Link", body: "Type [[." });
     const region = stepRegion();
     view.rerenderWith({ step: 7, stopKey: 7, total: 9, title: "Slash", body: "Type /." });
@@ -177,7 +177,7 @@ describe("換站時報讀器讀得到新的一站", () => {
     expect(region).toHaveTextContent("7 / 9: Slash. Type /.");
   });
 
-  it("往回走也報；live region 一直是同一個元素（不重掛）", () => {
+  it("going back is announced too; the live region stays the same element (no remount)", () => {
     const view = renderOverlay({ step: 3, total: 5, title: "Folders", body: "Create folders here." });
     const region = stepRegion();
     view.rerenderWith({ step: 2, title: "New note", body: "Click here to create a note." });
@@ -188,7 +188,7 @@ describe("換站時報讀器讀得到新的一站", () => {
     expect(region).not.toHaveTextContent("?.");
   });
 
-  it("標題以標點結尾就不再補句點（中英各種結尾），沒有標點才補", async () => {
+  it("a title ending in punctuation gets no extra period (English and Chinese endings); one without punctuation gets one", async () => {
     const view = renderOverlay({ step: 1, total: 5 });
     let step = 1;
     const read = (title: string) => {
@@ -216,7 +216,7 @@ describe("換站時報讀器讀得到新的一站", () => {
     expect(read("忘了")).toMatch(/：忘了。Body\.$/);
   });
 
-  it("zh-TW 的格式", async () => {
+  it("zh-TW format", async () => {
     await i18n.changeLanguage("zh-TW");
     const view = renderOverlay({ step: 1, total: 4, title: "側欄分類", body: "側欄有五個分類。" });
     view.rerenderWith({ step: 2, title: "新增筆記", body: "按這裡新增一篇筆記。" });
@@ -224,8 +224,8 @@ describe("換站時報讀器讀得到新的一站", () => {
   });
 });
 
-describe("window capture 的 pointerdown 攔截", () => {
-  it("卡片按鈕、卡片文字、遮罩：defaultPrevented，而且 document 的 capture 監聽收不到", () => {
+describe("window-capture pointerdown interception", () => {
+  it("card button, card text, overlay: defaultPrevented, and the document capture listener does not receive it", () => {
     renderOverlay();
     const targets = [
       screen.getByRole("button", { name: "Next" }),
@@ -242,7 +242,7 @@ describe("window capture 的 pointerdown 攔截", () => {
     }
   });
 
-  it("遮罩與卡片以外（例如通知）不攔", () => {
+  it("anything other than the overlay and card (e.g. a toast) is not intercepted", () => {
     renderOverlay();
     const outside = document.createElement("button");
     document.body.appendChild(outside);
@@ -254,7 +254,7 @@ describe("window capture 的 pointerdown 攔截", () => {
     expect(doc.spy).toHaveBeenCalledTimes(1);
   });
 
-  it("pointerdown 被攔下後，按鈕的 click 照常觸發動作", () => {
+  it("after pointerdown is intercepted, the button's click still fires its action", () => {
     const first = renderOverlay({ step: 1, total: 5 });
     for (const name of ["Skip feature tour", "Next", "Close"]) {
       const btn = screen.getByRole("button", { name });
@@ -277,7 +277,7 @@ describe("window capture 的 pointerdown 攔截", () => {
     expect(last.h.onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("卸載後監聽拆掉（同一支函式、同一個 capture 旗標）", () => {
+  it("listener is removed on unmount (same function, same capture flag)", () => {
     const add = vi.spyOn(window, "addEventListener");
     const remove = vi.spyOn(window, "removeEventListener");
     const { unmount } = renderOverlay();
@@ -290,15 +290,15 @@ describe("window capture 的 pointerdown 攔截", () => {
   });
 });
 
-describe("沒有「每次登入都顯示」", () => {
-  it("卡片裡沒有 checkbox", () => {
+describe("no 'show on every login' option", () => {
+  it("no checkbox in the card", () => {
     renderOverlay({ step: 1, total: 5 });
     expect(card().querySelector('input[type="checkbox"], [role="checkbox"], [role="switch"]')).toBeNull();
   });
 });
 
-describe("最後一站", () => {
-  it("兩顆鈕的 aria-describedby 指向那句提問；說明句另有自己的元素", () => {
+describe("last stop", () => {
+  it("both buttons' aria-describedby point at the question; the body text has its own element", () => {
     renderOverlay({ step: 5, total: 5, body: "Press Ctrl+/ or open Help from here." });
     const question = screen.getByText("Keep the sample note, or move it to the trash?");
     expect(question.id).not.toBe("");
@@ -310,7 +310,7 @@ describe("最後一站", () => {
     expect(card()).toHaveAccessibleDescription("Press Ctrl+/ or open Help from here.");
   });
 
-  it("〔刪除〕的可及名稱含可見字樣、破壞性外觀；〔保留〕不是", () => {
+  it("Delete's accessible name contains its visible text and it looks destructive; Keep does not", () => {
     renderOverlay({ step: 5, total: 5 });
     const del = screen.getByRole("button", { name: "Delete sample note" });
     expect(del).toHaveTextContent("Delete");
@@ -318,12 +318,12 @@ describe("最後一站", () => {
     expect(screen.getByRole("button", { name: "Keep sample note" })).not.toHaveClass("text-destructive");
   });
 
-  it("其他站沒有那句提問", () => {
+  it("other stops do not have the question", () => {
     renderOverlay({ step: 4, total: 5 });
     expect(screen.queryByText("Keep the sample note, or move it to the trash?")).toBeNull();
   });
 
-  it("預設焦點在〔保留示範筆記〕，Tab 依序走到〔刪除〕再到 ✕", () => {
+  it("default focus is on Keep sample note; Tab goes to Delete, then close", () => {
     renderOverlay({ step: 5, total: 5 });
     expect(screen.getByRole("button", { name: "Keep sample note" })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "Tab" });
@@ -333,8 +333,8 @@ describe("最後一站", () => {
   });
 });
 
-describe("焦點與 Tab 迴圈", () => {
-  it("一般站預設焦點在「下一步」；換站後再放回「下一步」", () => {
+describe("focus and Tab loop", () => {
+  it("a regular stop focuses Next by default; focus returns to Next after a stop change", () => {
     const view = renderOverlay({ step: 2, total: 5 });
     const next = screen.getByRole("button", { name: "Next" });
     expect(next).toHaveFocus();
@@ -343,13 +343,13 @@ describe("焦點與 Tab 迴圈", () => {
     expect(screen.getByRole("button", { name: "Next" })).toHaveFocus();
   });
 
-  it("走到最後一站時焦點換到〔保留示範筆記〕", () => {
+  it("on reaching the last stop focus moves to Keep sample note", () => {
     const view = renderOverlay({ step: 4, total: 5 });
     view.rerenderWith({ step: 5 });
     expect(screen.getByRole("button", { name: "Keep sample note" })).toHaveFocus();
   });
 
-  it("演示站不搶焦點（焦點留在編輯器）", () => {
+  it("a live stop does not take focus (it stays in the editor)", () => {
     const editor = document.createElement("div");
     editor.tabIndex = 0;
     document.body.appendChild(editor);
@@ -362,7 +362,7 @@ describe("焦點與 Tab 迴圈", () => {
     editor.remove();
   });
 
-  it("Tab 在最後一顆後回到第一顆、Shift+Tab 在第一顆回到最後一顆；事件不往下傳", () => {
+  it("Tab after the last button returns to the first and Shift+Tab on the first returns to the last; the event does not propagate further", () => {
     renderOverlay({ step: 2, total: 5 });
     const back = screen.getByRole("button", { name: "Back" });
     const next = screen.getByRole("button", { name: "Next" });
@@ -380,7 +380,7 @@ describe("焦點與 Tab 迴圈", () => {
     expect(doc.spy).not.toHaveBeenCalled();
   });
 
-  it("演示站不攔 Tab（焦點留在編輯器，交給演示站處理；搶進卡片會讓選單關掉）", () => {
+  it("a live stop does not intercept Tab (focus stays in the editor and the live stop handles it; pulling focus into the card would close the menu)", () => {
     renderOverlay({ live: true });
     const editor = document.createElement("div");
     editor.tabIndex = 0;
@@ -397,7 +397,7 @@ describe("焦點與 Tab 迴圈", () => {
     editor.remove();
   });
 
-  it("焦點跑到卡片外時，Tab 把它帶回卡片", () => {
+  it("when focus is outside the card, Tab brings it back into the card", () => {
     renderOverlay({ step: 2, total: 5 });
     const outside = document.createElement("button");
     document.body.appendChild(outside);
@@ -412,7 +412,7 @@ describe("焦點與 Tab 迴圈", () => {
 });
 
 describe("Esc", () => {
-  it("在 window capture 接走：焦點在卡片外（例如編輯器）也關，document 的監聽收不到", () => {
+  it("taken at window capture: Esc closes even when focus is outside the card (e.g. in the editor), and the document listener does not receive it", () => {
     const { h } = renderOverlay({ live: true });
     const editor = document.createElement("div");
     editor.tabIndex = 0;
@@ -430,7 +430,7 @@ describe("Esc", () => {
   it.each([
     ["isComposing", { isComposing: true }],
     ["keyCode 229", { keyCode: 229 }],
-  ])("輸入法組字中的 Esc 讓給輸入法（%s）：不關、不攔", (_name, init) => {
+  ])("Esc during IME composition is left to the IME (%s): does not close or intercept", (_name, init) => {
     const { h } = renderOverlay({ live: true });
     const editor = document.createElement("div");
     editor.tabIndex = 0;
@@ -445,13 +445,13 @@ describe("Esc", () => {
     expect(doc.spy).toHaveBeenCalledTimes(1);
   });
 
-  it("焦點在卡片內也一樣只關一次", () => {
+  it("with focus inside the card it still closes once", () => {
     const { h } = renderOverlay();
     fireEvent.keyDown(screen.getByRole("button", { name: "Next" }), { key: "Escape" });
     expect(h.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("其他鍵不攔（演示站的鍵盤另外處理）", () => {
+  it("other keys are not intercepted (live-stop keyboard is handled separately)", () => {
     const { h } = renderOverlay({ live: true });
     const doc = documentCaptureSpy("keydown");
     const notCancelled = fireEvent.keyDown(document.body, { key: "a" });
@@ -461,14 +461,14 @@ describe("Esc", () => {
     expect(h.onClose).not.toHaveBeenCalled();
   });
 
-  it("卸載後 Esc 不再呼叫", () => {
+  it("Esc no longer calls after unmount", () => {
     const { h, unmount } = renderOverlay();
     unmount();
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(h.onClose).not.toHaveBeenCalled();
   });
 
-  it("每次都用最新的 onClose（換站後傳進來的新函式）", () => {
+  it("always uses the latest onClose (a new function passed in after a stop change)", () => {
     const view = renderOverlay();
     const latest = vi.fn();
     view.rerenderWith({ onClose: latest });
@@ -478,11 +478,11 @@ describe("Esc", () => {
   });
 });
 
-describe("遮罩：挖洞、外框、箭頭", () => {
+describe("overlay: hole, outline, arrow", () => {
   const hole = () => document.querySelector("[data-tour-hole]");
   const ring = () => document.querySelector("[data-tour-ring]");
 
-  it("挖洞與外框比目標外擴 6px、圓角 8px", () => {
+  it("hole and outline extend 6px beyond the target with an 8px corner radius", () => {
     renderOverlay();
     for (const el of [hole(), ring()]) {
       expect(el).not.toBeNull();
@@ -496,14 +496,14 @@ describe("遮罩：挖洞、外框、箭頭", () => {
     expect(ring()).toHaveClass("stroke-brand");
   });
 
-  it("目標動了，挖洞跟著動", () => {
+  it("when the target moves the hole follows", () => {
     const view = renderOverlay();
     view.rerenderWith({ target: { left: 40, top: 300, width: 10, height: 10 } });
     expect(hole()).toHaveAttribute("x", String(40 - HOLE_PADDING));
     expect(hole()).toHaveAttribute("y", String(300 - HOLE_PADDING));
   });
 
-  it("有目標時畫箭頭；沒有目標時不挖洞、不畫箭頭，卡片照樣在", () => {
+  it("draws an arrow when there is a target; with no target there is no hole or arrow and the card is still shown", () => {
     const view = renderOverlay();
     expect(document.querySelector("[data-tour-arrow]")).not.toBeNull();
     view.rerenderWith({ target: null });
@@ -513,7 +513,7 @@ describe("遮罩：挖洞、外框、箭頭", () => {
     expect(card()).toBeInTheDocument();
   });
 
-  it("遮罩是全畫面 fixed、z-[95]，畫在 body 底下（不受頁面的 stacking context 影響）", () => {
+  it("the overlay is fixed full-screen with z-[95], rendered under body (unaffected by the page's stacking contexts)", () => {
     renderOverlay();
     const root = document.querySelector("[data-tour-overlay]")!;
     expect(root.parentElement).toBe(document.body);
@@ -521,7 +521,7 @@ describe("遮罩：挖洞、外框、箭頭", () => {
     expect(root.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("forced-colors：外框用 Highlight，另有一圈 CanvasText 外框只在高對比時出現", () => {
+  it("forced-colors: the outline uses Highlight, and an extra CanvasText outline appears only in high contrast", () => {
     renderOverlay();
     expect(ring()).toHaveClass("forced-colors:stroke-[Highlight]");
     const outline = document.querySelector("[data-tour-ring-contrast]");
@@ -529,7 +529,7 @@ describe("遮罩：挖洞、外框、箭頭", () => {
     expect(outline).toHaveClass("hidden", "forced-colors:inline", "forced-colors:stroke-[CanvasText]");
   });
 
-  it("挖洞、外框、箭頭、卡片都不做過渡，換站時一起跳到新位置（也就沒有要為 prefers-reduced-motion 關掉的動畫）", () => {
+  it("hole, outline, arrow and card have no transitions and jump together to the new position on a stop change (so there is no animation to disable for prefers-reduced-motion)", () => {
     renderOverlay();
     const parts = [hole()!, ring()!, document.querySelector("[data-tour-ring-contrast]")!, document.querySelector("[data-tour-arrow]")!, card()];
     for (const el of parts) {
@@ -541,8 +541,8 @@ describe("遮罩：挖洞、外框、箭頭", () => {
   });
 });
 
-describe("卡片位置", () => {
-  it("下方放得下時放在目標下方（依卡片實際尺寸）", () => {
+describe("card position", () => {
+  it("placed below the target when it fits below (using the card's actual size)", () => {
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
     renderOverlay();
@@ -551,7 +551,7 @@ describe("卡片位置", () => {
     expect(Number.parseFloat(style.top)).toBeGreaterThan(TARGET.top + TARGET.height);
   });
 
-  it("卡片尺寸變了（換站後說明變長）重新放位置；卸載時停止觀察", () => {
+  it("repositions when the card size changes (a longer body after a stop change); stops observing on unmount", () => {
     const observers: { cb: ResizeObserverCallback; observed: Element[]; disconnected: boolean }[] = [];
     vi.stubGlobal(
       "ResizeObserver",
@@ -583,7 +583,7 @@ describe("卡片位置", () => {
     expect(mine!.disconnected).toBe(true);
   });
 
-  it("視窗縮放時重新算位置", () => {
+  it("recomputes the position when the window is resized", () => {
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
     renderOverlay({ target: null });
@@ -599,13 +599,13 @@ describe("卡片位置", () => {
   });
 });
 
-describe("卡片避開 safe area 與呼叫端給的邊帶", () => {
+describe("the card avoids the safe area and the bands given by the caller", () => {
   function sized() {
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
   }
 
-  it("keepOut：沒有挖洞時在邊帶之間置中，最大高度扣掉邊帶", () => {
+  it("keepOut: with no hole the card is centered between the bands and the max height subtracts them", () => {
     sized();
     renderOverlay({ target: null, keepOut: { top: 100, right: 0, bottom: 200, left: 0 } });
     const top = 100 + 8;
@@ -614,7 +614,7 @@ describe("卡片避開 safe area 與呼叫端給的邊帶", () => {
     expect(card().style.maxHeight).toBe(`${bottom - top}px`);
   });
 
-  it("safe area（讀 env() 的量測元素）：卡片不進瀏海與 Home 指示條", () => {
+  it("safe area (a measuring element reading env()): the card stays out of the notch and the home indicator", () => {
     sized();
     const real = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element, pseudo?: string | null) => {
@@ -622,13 +622,13 @@ describe("卡片避開 safe area 與呼叫端給的邊帶", () => {
       if (!(el instanceof HTMLElement) || !el.className.includes("safe-area-inset-top")) return style;
       return { ...style, paddingTop: "47px", paddingRight: "0px", paddingBottom: "34px", paddingLeft: "0px" } as CSSStyleDeclaration;
     });
-    // 挖洞貼在視窗頂端：沒有 safe area 時卡片會放在挖洞正下方。
+    // The hole hugs the viewport top: without the safe area the card would sit right below the hole.
     renderOverlay({ target: { left: 20, top: 0, width: 40, height: 10 } });
     expect(Number.parseFloat(card().style.top)).toBeGreaterThanOrEqual(47 + 8);
     expect(card().style.maxHeight).toBe(`${window.innerHeight - 47 - 34 - 16}px`);
   });
 
-  it("safe area 與 keepOut 每邊取大的", () => {
+  it("per side the larger of safe area and keepOut", () => {
     sized();
     const real = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element, pseudo?: string | null) => {
@@ -641,8 +641,8 @@ describe("卡片避開 safe area 與呼叫端給的邊帶", () => {
   });
 });
 
-describe("換畫面時藏起卡片", () => {
-  it("hidden：卡片不可見、遮罩還在；現身後焦點回到主要動作", () => {
+describe("card is hidden while the screen changes", () => {
+  it("hidden: the card is invisible while the overlay stays; once shown, focus returns to the primary action", () => {
     const view = renderOverlay({ hidden: true, target: null });
     expect(card()).toHaveClass("invisible");
     expect(document.querySelector("[data-tour-overlay]")).not.toBeNull();
@@ -653,8 +653,8 @@ describe("換畫面時藏起卡片", () => {
   });
 });
 
-describe("被蓋住的部分（螢幕鍵盤）", () => {
-  it("blocked：卡片一律讓開，畫面小到放掉 keepOut 時也一樣", () => {
+describe("covered area (on-screen keyboard)", () => {
+  it("blocked: the card always avoids it, even when the screen is small enough that keepOut is dropped", () => {
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
     const keepOut = { top: window.innerHeight / 2, right: 0, bottom: window.innerHeight / 2, left: 0 };
