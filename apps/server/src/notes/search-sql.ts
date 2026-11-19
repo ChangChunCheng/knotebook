@@ -1,23 +1,83 @@
 /**
- * #93：全文搜尋的查詢**組裝**（只組不執行）。從 `mcp/queries.ts` 搬來並擴充：MCP 與
- * REST 都經 `notes/search-query.ts` 的 `searchNotesForUser` 用它。`mcp/queries.ts` 檔頭的三條 drizzle 雷照樣成立：
- * 三支 select 每次現造、集合運算的 ORDER BY 只收輸出欄位名（所以 rank 先 `.as("rank")`）、不用 LIKE。
+ * #93: builds the full-text search queries (builds only, never runs them). Moved here from `mcp/queries.ts` and
+ * extended; MCP and REST both use it through `searchNotesForUser` in `notes/search-query.ts`.
+ * The two drizzle pitfalls in the `mcp/queries.ts` header apply here too: branch selects are single-use, so the three
+ * are built fresh for every query, and a set operation's ORDER BY only takes output column names, so rank is
+ * `.as("rank")` first.
+ * The query string is never used as a raw LIKE pattern: the body trigram path escapes it with `escapeLike`.
  *
- * 比對：標題 `position(lower(q) in lower(title)) > 0`；內文 `EXISTS (… note_search_sections … position(lower(q) in
- * lower(body)) > 0)`——兩者 OR 成一個 `extraWhere` 交給 `visibleNoteBranches`，三支各帶同一個相關子查詢。索引列與權限無關，
- * **可見性只來自三支 union**。`body_hit` 與 WHERE 各算一次同一個 EXISTS（各支 WHERE 不能引用自己的輸出別名）。
- * rank：標題完全相等 0、前綴 1、包含 2、只中內文 3。
+ * Matching: title `position(lower(q) in lower(title)) > 0`; body `EXISTS (… note_search_sections … <bodyMatch>)`, where
+ * `bodyMatch` is the trigram-friendly LIKE or `position(lower(q) in lower(body)) > 0` depending on `usesTrigramPath(q)`
+ * (the two forms are equivalent). Title and body are ORed into one `extraWhere` for `visibleNoteBranches`, so each of the
+ * three branches carries the same correlated subquery. Index rows carry no permissions: **visibility comes only from
+ * the three-branch union**. `body_hit` and WHERE each evaluate the same EXISTS (a branch's WHERE can't reference its own
+ * output aliases).
+ * rank: title equals the query 0, title starts with it 1, title contains it 2, body only 3.
  *
- * matches 第二句：只吃第一句回來、`body_hit` 為真的那一頁 id（伺服器自己產生的清單），以 `inArray` 帶入——
- * **不得**寫成 `` sql`= ANY(${ids})` ``（drizzle 把 sql 模板裡的 JS 陣列展開成 `($1, $2, …)`，`ANY(($1,$2))` 報錯）。
- * 每篇最多 `SEARCH_MATCHES_PER_NOTE` 個、按 `ord`；窗口＝命中前 40、命中、命中後 160 個 code point（PG 的字元＝code point），
- * 摘錄在 JS 端選（`notes/search-snippet.ts`）。
+ * The second (matches) statement takes only the ids on the first statement's page whose `body_hit` is true (a list the
+ * server built itself) and passes them with `inArray`. **Do not** write `` sql`= ANY(${ids})` ``: drizzle expands a JS
+ * array in an sql template into `($1, $2, …)`, and `ANY(($1,$2))` is an error.
+ * Up to `SEARCH_MATCHES_PER_NOTE` matches per note, in `ord` order; the window is 40 code points before the hit, the hit
+ * and 160 after (a PG character is a code point); the snippet is picked in JS (`notes/search-snippet.ts`).
  */
 import { and, asc, desc, inArray, or, sql, type SQL } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
+import { escapeLike } from "../db/like.js";
+import { pgErrorSummary } from "../db/pg-errors.js";
 import { noteSearchSections, notes } from "../db/schema.js";
 import { visibleNoteBranches } from "./list-query.js";
+
+/**
+ * Whether the database's pg_trgm extracts trigrams from CJK text. pg_trgm decides what is a word character from the
+ * database's `LC_CTYPE`: under a UTF-8 locale CJK characters yield trigrams, under `C` only ASCII letters and digits do.
+ * Set once at startup by `initCjkTrigramMode`. Until then (or if the probe fails) it is false: queries without 3 ASCII letters or
+ * digits in a row keep the `position()` form, which is never slower than before, and ASCII queries still use the index on any locale.
+ */
+let cjkYieldsTrigrams = false;
+
+export function setCjkYieldsTrigrams(value: boolean): void {
+  cjkYieldsTrigrams = value;
+}
+
+/** Three CJK characters (built from code points: the source tree keeps CJK string literals out of src/). */
+const CJK_SAMPLE = String.fromCodePoint(0x8cc7, 0x6599, 0x5eab);
+
+/** Asks the database itself whether `show_trgm` returns trigrams for CJK text. */
+export async function probeCjkTrigrams(db: DbOrTx): Promise<boolean> {
+  const res = await db.execute<{ ok: boolean }>(sql`select coalesce(array_length(show_trgm(${CJK_SAMPLE}::text), 1), 0) > 0 as ok`);
+  return res.rows[0]?.ok === true;
+}
+
+/** The logger shape `initCjkTrigramMode` needs (pino and Fastify loggers fit). */
+export type SearchModeLog = { info(obj: object, msg: string): void; warn(obj: object, msg: string): void };
+
+/**
+ * Startup step: probes the database and sets the routing mode. A failed probe keeps the fallback mode and never stops the
+ * server; only the SQLSTATE and constraint name are logged, never the error body.
+ */
+export async function initCjkTrigramMode(db: DbOrTx, log: SearchModeLog): Promise<void> {
+  try {
+    const yields = await probeCjkTrigrams(db);
+    setCjkYieldsTrigrams(yields);
+    log.info({ cjkYieldsTrigrams: yields }, yields ? "search: queries with 3 letters or digits in a row use the trigram index" : "search: queries without 3 ASCII letters or digits in a row keep the position() form");
+  } catch (err) {
+    setCjkYieldsTrigrams(false);
+    log.warn({ ...pgErrorSummary(err) }, "search: could not check pg_trgm CJK support, continuing with the fallback (queries without 3 ASCII letters or digits in a row keep the position() form)");
+  }
+}
+
+/**
+ * Picks the body match form. A query with a run of 3+ characters that yield trigrams uses
+ * `lower(body) LIKE lower('%' || escapeLike(q) || '%')`, which can use `nss_body_trgm_idx`; anything else uses
+ * `position(...)`. Both forms return the same rows (deterministic collation, UTF8), so a wrong guess only costs speed:
+ * a query with no trigrams makes the index useless, so LIKE seq-scans and is slower than position().
+ * Which characters yield trigrams depends on the database's `LC_CTYPE` (see `cjkYieldsTrigrams`): alphabetic characters and decimal digits
+ * under a UTF-8 locale, only ASCII letters and digits under `C`.
+ */
+export function usesTrigramPath(q: string): boolean {
+  return (cjkYieldsTrigrams ? /[\p{Alphabetic}\p{Nd}]{3}/u : /[A-Za-z0-9]{3}/).test(q);
+}
 
 export const SEARCH_MATCHES_PER_NOTE = 3;
 export const SNIPPET_LEAD_CP = 40;
@@ -47,7 +107,14 @@ export interface NoteSearchQueryOpts {
 export function buildNoteSearchQuery(db: DbOrTx, opts: NoteSearchQueryOpts) {
   const q = opts.query;
   const titleHit = sql`position(lower(${q}) in lower(${notes.title})) > 0`;
-  const bodyHit = sql`exists (select 1 from ${noteSearchSections} where ${noteSearchSections.noteId} = ${notes.id} and ${noteSearchSections.sourceKind} = 'note' and position(lower(${q}) in lower(${noteSearchSections.body})) > 0)`;
+  // The pattern is escaped in JS and lower()ed in PG. lower() never creates or changes `\`, `%` or `_`, so this equals
+  // escaping after lower(), and the SQL carries no backslash literal (unaffected by standard_conforming_strings).
+  // The title match stays on position(): it is ORed with the EXISTS, so it can only be a Filter and no index would help
+  // (hence no title trigram index).
+  const bodyMatch = usesTrigramPath(q)
+    ? sql`lower(${noteSearchSections.body}) like lower(${"%" + escapeLike(q) + "%"})`
+    : sql`position(lower(${q}) in lower(${noteSearchSections.body})) > 0`;
+  const bodyHit = sql`exists (select 1 from ${noteSearchSections} where ${noteSearchSections.noteId} = ${notes.id} and ${noteSearchSections.sourceKind} = 'note' and ${bodyMatch})`;
   // 未取別名的 rank 運算式：keyset 述詞要在各支 WHERE 裡用（WHERE 不能引用輸出別名）。同一個 sql 片段重複嵌入是安全的。
   const rankExpr = sql<number>`case
     when lower(${notes.title}) = lower(${q}) then 0

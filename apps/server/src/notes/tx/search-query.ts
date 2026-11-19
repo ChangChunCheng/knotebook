@@ -6,6 +6,7 @@
  * 儲存配額的結構守衛 ⑥ 只管它自己的檔案範圍，本檔的 `setTransaction` 不在其禁止之列。
  * 第二句只在 id 清單非空時發出；id 清單取自第一句的前 `limit` 列（第 `limit + 1` 列只用來判 truncated）。
  */
+import { sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { buildNoteSearchQuery, buildSearchMatchesQuery, type NoteSearchRow, type SearchMatchRow, type SearchPageKey } from "../search-sql.js";
 
@@ -26,6 +27,9 @@ export interface NoteSearchResult {
 
 export async function runNoteSearchInTx(tx: Tx, input: NoteSearchInput): Promise<NoteSearchResult> {
   await tx.setTransaction({ isolationLevel: "repeatable read", accessMode: "read only" });
+  // The body EXISTS is a per-row SubPlan, so the estimated cost is far above jit_above_cost and JIT compile time
+  // dominates the run time of the trigram path.
+  await tx.execute(sql`set local jit = off`);
   const rows = await buildNoteSearchQuery(tx, input);
   const ids = rows.slice(0, input.limit).filter(r => r.bodyHit).map(r => r.id);
   const matches = ids.length === 0 ? [] : (await tx.execute<SearchMatchRow>(buildSearchMatchesQuery({ query: input.query, ids }))).rows;

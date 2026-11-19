@@ -4,7 +4,6 @@ import { USER_SUGGEST_MAX_RESULTS, type UserSuggestResponse } from "@knotebook/s
 import { users } from "../src/db/schema.js";
 import type { Db } from "../src/db/index.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
-import { escapeLike } from "../src/routes/users.js";
 import { buildTestApp, freshLimiters } from "./helpers.js";
 import { cookieOf, seedGroup } from "./group-helpers.js";
 
@@ -26,12 +25,6 @@ async function emails(app: FastifyInstance, userId: string, q: string): Promise<
   expect(res.statusCode).toBe(200);
   return (res.json() as UserSuggestResponse).users.map(u => u.email);
 }
-
-describe("escapeLike", () => {
-  it("跳脫 \\、%、_", () => {
-    expect(escapeLike("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
-  });
-});
 
 describe("GET /api/users/suggest", () => {
   it("只回同群組成員：陌生人不出現；形狀正確", async () => {

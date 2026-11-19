@@ -20,6 +20,7 @@ import { backfillSearchIndex } from "./notes/search-index.js";
 import { logNotesOverCap, watchNotesOverCap } from "./notes/note-size-startup.js";
 import { redactDbError } from "./lib/redact-db-error.js";
 import { SiteLimits } from "./site-limits/store.js";
+import { initCjkTrigramMode } from "./notes/search-sql.js";
 import { parseSettingsLogFields } from "./site-limits/boot-log.js";
 
 // 獨立的 pino instance：`initializeInstance` 與 migration 皆在 `buildApp()` 之前就要跑
@@ -109,6 +110,10 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // pg_trgm's word characters depend on the database locale; the search path choice reads the result (see `usesTrigramPath`).
+  // A failed check keeps the fallback and never blocks startup.
+  await initCjkTrigramMode(db, logger);
 
   // #397：站台限制（env＞管理頁存的值＞預設／自動）。migration 之後、`buildApp` 之前載入，經 `AppDeps.siteLimits` 傳入；
   // 讀不到 DB → 開機失敗（同 migration）。`limitEnv` 必須就是 `config.limitEnv`（鎖定狀態唯一來源）。

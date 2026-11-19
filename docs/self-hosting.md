@@ -71,7 +71,7 @@ Either file runs the tag named by `KNOTEBOOK_VERSION` in `.env` (written without
 
 By default `docker compose up -d` also starts the bundled PostgreSQL (the `db` service), and nothing in this section applies. To use a PostgreSQL server you run yourself instead — on the machine running Docker or on another host:
 
-1. **Create a database and an account for Knotebook.** The server creates its tables itself — migrations run every time it starts, and they include a `drizzle` schema that records which ones have run — so the account in `DATABASE_URL` has to be able to create schemas and tables in that database. Making it the owner of the database is enough; it doesn't need to be a superuser, and the database needs no extensions:
+1. **Create a database and an account for Knotebook.** The server creates its tables itself — migrations run every time it starts, and they include a `drizzle` schema that records which ones have run — so the account in `DATABASE_URL` has to be able to create schemas and tables in that database. Making it the owner of the database is enough; it doesn't need to be a superuser. Knotebook uses one extension, `pg_trgm` (for search), and the server creates it itself: it ships with PostgreSQL's contrib modules, and a database's owner may create it (see [The pg_trgm extension](#the-pg_trgm-extension) below):
 
    ```sql
    CREATE ROLE knotebook LOGIN PASSWORD '...';
@@ -113,13 +113,23 @@ A host firewall between the bridge and PostgreSQL has to let the connection thro
 
 **Database logs.** When PostgreSQL rejects a statement, its own error log can quote the values involved: a unique violation writes the duplicate key in `DETAIL`, a check violation writes the whole row. `log_error_verbosity = terse` leaves `DETAIL` out of PostgreSQL's own log; it doesn't change what Knotebook logs. Set it if you ship that log to another system. It needs a superuser: put it in `postgresql.conf` or run `ALTER SYSTEM SET log_error_verbosity = 'terse';` and then `SELECT pg_reload_conf();`.
 
-**Versions.** From an empty database, every migration runs and the server starts and signs in on the stock `postgres:16` (16.15) and `postgres:17` (17.11) images, without pgvector; the bundled database and the test suites use PostgreSQL 17 (`pgvector/pgvector:pg17`). Older versions haven't been tried.
+**Versions.** From an empty database, every migration runs and the server starts and signs in on the stock `postgres:16` (16.16) and `postgres:17` (17.12) images, without pgvector; the bundled database and the test suites use PostgreSQL 17 (`pgvector/pgvector:pg17`). Older versions haven't been tried.
+
+### The pg_trgm extension
+
+Search uses PostgreSQL's `pg_trgm` extension, and the server creates it in its database when it runs migration 0042 (`CREATE EXTENSION IF NOT EXISTS pg_trgm`). `pg_trgm` is one of PostgreSQL's contrib modules, included in the official packages and images, and it is a *trusted* extension, so the database's owner can create it without being a superuser. If it can't be created, the migration fails, nothing of it is applied, and the server doesn't start; `docker compose logs app` shows the database's error. Some setups need a step first:
+
+- **A package without the contrib modules** (some minimal Linux packages split them out): install them, for example `postgresql-contrib` on Debian or Ubuntu.
+- **Azure Database for PostgreSQL – Flexible Server**: add `PG_TRGM` to the `azure.extensions` server parameter.
+- **`pg_trgm` already installed in another schema** (on Supabase, for example, extensions live in `extensions`): the migration skips creating it, and creating the index then fails unless that schema is on the account's `search_path`. Add it (`ALTER ROLE knotebook SET search_path = public, extensions;`) or create the extension in `public`.
+
+How much it speeds up search depends on the database's character classification (`LC_CTYPE`): with `C`, `pg_trgm` treats only ASCII letters and digits as part of a word, so a search without three ASCII letters or digits in a row (Chinese, Japanese, Korean, Greek, Cyrillic, accented-only text and so on) keeps the previous search path: not faster, not slower, same results. The server checks this at startup. With a UTF-8 locale those searches get the speed-up too. The bundled database and the stock `postgres` images use `en_US.utf8`. Searches for one or two characters never use the index.
 
 ## Using `docker run` with your own PostgreSQL
 
 If you already run PostgreSQL and don't want Compose, the image runs on its own with `docker run`. To run the bundled database alongside it, use Compose instead (see [Compose services and volumes](#compose-services-and-volumes)) — it also gives you the healthcheck, the log size limit and the volumes below without writing them out yourself.
 
-The database needs what [Using your own PostgreSQL](#using-your-own-postgresql) describes: a database owned by the account in `DATABASE_URL`, no extensions, PostgreSQL 16 or 17 (see **Versions** there). In `.env` (start from `.env.example`), set at least the variables marked required in [Environment variables](#environment-variables): `DATABASE_URL`, `APP_SECRET`, `PUBLIC_URL`, and, for the first start on an empty database, `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `docker run --env-file` takes each line literally, so don't put quotes around values. `BUNDLED_DB` and `KNOTEBOOK_VERSION` don't matter here.
+The database needs what [Using your own PostgreSQL](#using-your-own-postgresql) describes: a database owned by the account in `DATABASE_URL`, with the `pg_trgm` extension available (see [The pg_trgm extension](#the-pg_trgm-extension)), PostgreSQL 16 or 17 (see **Versions** there). In `.env` (start from `.env.example`), set at least the variables marked required in [Environment variables](#environment-variables): `DATABASE_URL`, `APP_SECRET`, `PUBLIC_URL`, and, for the first start on an empty database, `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `docker run --env-file` takes each line literally, so don't put quotes around values. `BUNDLED_DB` and `KNOTEBOOK_VERSION` don't matter here.
 
 ```sh
 docker run -d --name knotebook \
@@ -537,6 +547,12 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
    docker compose exec -T db psql -U knotebook knotebook -At -c "DELETE FROM user_avatars RETURNING original_file" > avatar-files.txt
    docker compose exec -T app sh -c 'cd /app/uploads && xargs rm -f' < avatar-files.txt
    ```
+
+**Faster search (migration 0042).**
+
+1. **Migration 0042 turns on the `pg_trgm` extension and adds one index**, `nss_body_trgm_idx`, on the text of the search index (`note_search_sections`). It changes no row. The bundled database and the stock `postgres` images include `pg_trgm`; on a PostgreSQL server of your own, see [Using your own PostgreSQL](#using-your-own-postgresql). Back up the database first as usual.
+2. **Building the index takes a moment on a large site.** While it is built, the server hasn't started yet, and writes to the search index wait: roughly a minute per million sections of note text (a few seconds for a few thousand notes).
+3. **Rolling back:** the previous version doesn't use the index or the extension; both stay, and PostgreSQL still keeps the index up to date on writes to the search index even though nothing reads it. After upgrading again, searches use the index again.
 
 **Upgrading to v0.16 (server-side sessions, site limits, favorites, profile pictures).**
 

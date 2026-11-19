@@ -2,7 +2,8 @@
  * #108／#93：`search_notes`——標題＋內文、大小寫不敏感的字面子字串比對，範圍＝呼叫者看得見的筆記。
  *
  * - 查詢在 `notes/search-query.ts` 的 `searchNotesForUser`（同一個 REPEATABLE READ READ ONLY 交易兩句：列表＋matches）。
- *   ⚠ 不用 LIKE／ILIKE（`%`／`_` 會變萬用字元）。
+ *   ⚠ Never use the query string itself as a LIKE/ILIKE pattern (`%` and `_` would become wildcards); the body
+ *   trigram path always runs it through `escapeLike` (see `notes/search-sql.ts`).
  * - **不做游標分頁**：`ORDER BY` 首鍵是 rank；回一個不可能算錯的 `truncated`。**不得發明 `cursor`／`nextCursor`。**
  * - 輸出兩個變體：`canRead`＝註冊時的 `ctx.collab && ctx.editing`（與 `register.ts` 讀取工具的閘門同一個判準）——
  *   沒有讀取工具的部署上，description 與 `sectionId` 的說明不提 read_note_section／outline／延遲。

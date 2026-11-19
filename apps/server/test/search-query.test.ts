@@ -183,14 +183,18 @@ describe("S18 隔離等級", () => {
       const u = await seedUser(db);
       const n = await seedIndexedNote(db, { ownerId: u.id }, "t", [{ id: "p", text: "snapword here" }]);
       const res = await db.transaction(async tx => {
-        // 第一句走 select builder（不經 tx.execute）；第二句（matches）是交易內第一個 tx.execute——在它之前插入另一條連線的刪除（autocommit）。
+        // The first tx.execute is `set local jit = off`, which takes no snapshot. The first statement goes through the
+        // select builder, not tx.execute, so the matches statement is the second tx.execute: the other connection's
+        // delete (autocommit) goes in right before it.
         let wiped = false;
+        let executes = 0;
         const proxied = new Proxy(tx, {
           get(target, prop, recv) {
             const v = Reflect.get(target, prop, recv);
             if (prop === "execute" && typeof v === "function") {
               return async (...args: unknown[]) => {
-                if (!wiped) {
+                executes += 1;
+                if (!wiped && executes === 2) {
                   wiped = true;
                   await other.query("delete from note_search_sections where note_id = $1", [n.id]);
                 }
