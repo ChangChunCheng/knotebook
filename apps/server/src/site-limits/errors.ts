@@ -1,4 +1,4 @@
-/** #397：`SiteLimits.update` 的驗證錯誤；路由對應成 HTTP。訊息一律英文（#372）。 */
+// Messages are English only (HTTP layer).
 import { siteLimitDef, siteLimitStep, type SiteLimitKey } from "@knotebook/shared";
 
 /** → 409 limit_locked_by_env */
@@ -22,7 +22,7 @@ export class LimitRangeError extends Error {
   }
 }
 
-/** → 400 invalid_body（step 用 API 單位） */
+/** → 400 invalid_body (step is in API units) */
 export class LimitStepError extends Error {
   readonly step: number;
   constructor(readonly key: SiteLimitKey) {

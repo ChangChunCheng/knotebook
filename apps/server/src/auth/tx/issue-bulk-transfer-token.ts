@@ -3,20 +3,17 @@ import type { Tx } from "../../db/tx.js";
 import { apiTokens, transferTokens } from "../../db/schema.js";
 import type { BulkAccess, BulkRange } from "../transfer-token.js";
 
-/** 交易外算好的純資料（S14）：明文產生與 `hashToken()` 都在呼叫端，SQL 參數只有雜湊、id 與範圍。 */
 export interface IssueBulkTransferTokenInput {
   tokenHash: string;
   parentTokenId: string;
   access: BulkAccess;
-  /** id 一律小寫（呼叫端正規化）。 */
+  /** Ids are lowercase (the caller normalizes). */
   range: BulkRange;
-  /** `MAX_ACTIVE_BULK_TOKENS`；以參數傳入讓本檔只依賴型別。 */
   maxActive: number;
-  /** `BULK_TRANSFER_TTL_MINUTES`；以 bind 參數進 `make_interval`。 */
   ttlMinutes: number;
 }
 
-/** 測試縫（生產不注入）：`beforeLock` 在 ① 之前 await（可刪母列造 revoked）；`afterCount` 在 ② 之後、③ 之前 await。 */
+/** Tests only. `beforeLock` holds no lock, so a test can delete the parent to produce `revoked`; `afterCount` runs after the count, before the INSERT. */
 export interface IssueBulkTransferTokenSeam {
   beforeLock?: () => Promise<void>;
   afterCount?: () => Promise<void>;
@@ -25,11 +22,9 @@ export interface IssueBulkTransferTokenSeam {
 export type IssueBulkTransferTokenResult = { kind: "issued"; id: string; expiresAt: Date } | { kind: "revoked" } | { kind: "too_many_active" };
 
 /**
- * bulk transfer：簽發一支 bulk 權杖。三句（比照 `issueTransferTokenInTx`）：
- * ① 鎖母列 `FOR NO KEY UPDATE`——序列化同一支母憑證的簽發，② 的計數因此不會兩邊都讀到 2；0 列＝認證後母憑證被撤銷。
- * ② 數這支母憑證「未過期」的 bulk 權杖（`purpose = 'bulk'`；upload／download 不佔名額）；≥ `maxActive` → too_many_active。
- * ③ INSERT：`note_id` 不給、`access`／`range` 落庫，`expires_at = least(now() + ttl, 母憑證到期)`。
- * 母憑證恰在 `now()` 到期撞 `transfer_tokens_expiry_chk` 由呼叫端在交易外映射。
+ * Same shape as `issueTransferTokenInTx`: locking the parent serializes issuance so the count can't read 2 on both sides; 0 rows means the
+ * parent was revoked after authentication. Counts only the parent's unexpired bulk tokens. `expires_at = least(now() + ttl, parent expiry)`.
+ * A parent expiring exactly at `now()` hits `transfer_tokens_expiry_chk`, mapped by the caller outside the transaction.
  */
 export async function issueBulkTransferTokenInTx(tx: Tx, input: IssueBulkTransferTokenInput, seam?: IssueBulkTransferTokenSeam): Promise<IssueBulkTransferTokenResult> {
   await seam?.beforeLock?.();
