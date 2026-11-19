@@ -1,11 +1,4 @@
-/**
- * Transaction body for placing a note into or out of a folder (owned/group placement and shared placement). Takes only `tx`,
- * plain data and the test hook. Takes no structure lock (placement doesn't change structure).
- * Lock order: (group note) groups KEY SHARE → target folder KEY SHARE → note (personal/group `FOR UPDATE`; shared `FOR KEY SHARE`, so the owner's writes aren't blocked).
- * Rechecks after locking, in the entry order: note authorization → folder visibility → space.
- * Writes: personal/group = `UPDATE notes SET folder_id` (skipped if already there); shared = upsert/delete in `note_placements` (unchanged → 0 rows).
- * Doesn't touch `updated_at`, slug or version. Failures throw `TxAbort`; the 23503 from a revoked share and the KF00x trigger errors are mapped by the service layer.
- */
+/** Shared placements lock the note FOR KEY SHARE so the owner's writes aren't blocked. */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { notePlacements, notes } from "../../db/schema.js";
@@ -21,12 +14,10 @@ import {
 import { sameFolderSpace, type FolderSpace } from "../space.js";
 import { folderAccessInTx, lockFolderInTx, lockGroupsKeyShareInTx } from "./lock.js";
 
-/** owned = the caller owns a personal note; group = group note (caller needs `can_edit`); shared = a share recipient (editor/viewer) organizing their own placement. */
 export type PlaceMode = { kind: "owned" } | { kind: "group"; groupId: string } | { kind: "shared" };
 
 export interface PlaceNoteInput {
   by: string;
-  /** Ids are lowercase; `folderId` null = root level. */
   noteId: string;
   folderId: string | null;
   mode: PlaceMode;

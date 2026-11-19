@@ -1,9 +1,6 @@
 /**
- * Folder service: the single entry point shared by REST and MCP.
- * Every operation follows: validate input (name, ids) → fast authorization outside the transaction → consume the `folder` limiter
- * → test hook → transaction (`folders/tx/*`) → map errors. Failures are returned as HTTP-shaped errors
- * (REST sends them directly; MCP maps by code).
- * A `.transaction(` callback here must be one `xInTx(tx, …)` call (enforced by `test/unit/s14-structure.test.ts`).
+ * A `.transaction(` callback here must be one `xInTx(tx, …)` call (`test/unit/s14-structure.test.ts`).
+ * Callers pass ids already lowercased (routes, MCP `FOLDER_ID`); only the UUID shape is checked here, and the transactions compare ids with plain `===`.
  */
 import { and, asc, isNull, sql } from "drizzle-orm";
 import type { ErrorCode, FolderDeleteResultDto, FolderDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
@@ -64,10 +61,6 @@ export async function listFolders(db: Db, userId: string): Promise<FolderDto[]> 
   return listVisibleFolders(db, userId);
 }
 
-/**
- * Ids (`parent.folderId`, `space.groupId`) are lowercased by the caller; only the UUID shape is checked here.
- * Order: name → location visibility (404) → manage permission (403) → limiter → `folder-authorized` test hook → transaction (rechecks everything).
- */
 export async function createFolder(
   deps: FolderServiceDeps,
   input: { by: string; name: string; parent: { folderId: string } | { space: FolderSpaceDto } },
@@ -88,11 +81,10 @@ export async function createFolder(
     const requested = input.parent.space;
     let space: FolderSpace;
     if (requested.kind === "group") {
-      // Non-UUID, nonexistent, non-member and no-read-role all return the same 404.
+      // Same 404 for every case, so group existence doesn't leak.
       if (!UUID_RE.test(requested.groupId)) return fail(404, "group_not_found", GROUP_NOT_FOUND_MESSAGE);
       space = { kind: "group", groupId: requested.groupId };
       const m = await loadCreateTarget(deps.db, input.by, requested.groupId);
-      // Same derivation as inside the transaction (folderPermissions): null = invisible, !manage = the role can't edit.
       const perms = m === undefined ? null : folderPermissions(space, input.by, m);
       if (perms === null) return fail(404, "group_not_found", GROUP_NOT_FOUND_MESSAGE);
       if (!perms.manage) return fail(403, "forbidden", FOLDER_GROUP_ROOT_FORBIDDEN_MESSAGE);
@@ -114,18 +106,13 @@ export async function createFolder(
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
-    // Defence in depth: the parent/child space trigger can only fire if the space changed after the pre-read; same shape as invisible.
+    // Defence in depth: the trigger only fires if the space changed after the pre-read; reported as invisible.
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }
   return { kind: "ok", folder: toFolderDto(out.row, out.permissions) };
 }
 
-/**
- * Rename and/or move (same space only). `folderId` is lowercased by `lowercaseUuidParams` in the app layer and `parentId` by the route; only the UUID shape is checked here.
- * Order: name → own visibility (404) → new parent's visibility (non-UUID or invisible → 404) → same space (400) → manage permission (403)
- * → limiter → `folder-authorized` test hook → transaction (rechecks everything, then cycle, depth, name clash).
- */
 export async function updateFolder(
   deps: FolderServiceDeps,
   input: { by: string; folderId: string; name?: string; parentId?: string | null },
@@ -168,7 +155,7 @@ export async function updateFolder(
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
-    // Defence in depth: same space was already checked in the transaction; KF002 can only fire if the space changed after the pre-read; same shape as invisible.
+    // Defence in depth: KF002 only fires if the space changed after the pre-read; reported as invisible.
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }
@@ -176,15 +163,8 @@ export async function updateFolder(
 }
 
 /**
- * `folderId` is lowercased by `lowercaseUuidParams` in the app layer; only the UUID shape is checked here.
- * Order: visibility (404) → manage permission (403) → (personal/group) pre-read the subtree's live notes; any present and
- * the caller can't delete → 403 `folder_delete_blocked` → limiter → `folder-authorized` test hook → open a collab gate for each
- * pre-read note → `folder-delete-gated` test hook → transaction → `release()` every gate **whether it succeeded or failed**
- * (a gate left open for a note that moved out of the subtree after the pre-read would block new connections until its TTL;
- * `releaseDeletingGate` only releases live notes).
- * Shared: notes aren't touched (placements CASCADE), so no pre-read and no gates.
- * `onlyIfEmpty`: live notes in the pre-read → 409 `folder_not_empty`, checked before `folder_delete_blocked`, without consuming the limiter
- * or opening gates; past that point the pre-read is empty, so no gates are opened. Subfolders and placements are judged only in the transaction (authoritative).
+ * Gates are released on success and failure: a gate left open for a note that moved out after the pre-read would block new connections until its TTL.
+ * Shared folders skip the pre-read and gates: their notes aren't touched (placements CASCADE).
  */
 export async function deleteFolder(
   deps: FolderServiceDeps,
@@ -212,7 +192,7 @@ export async function deleteFolder(
   const hookCtx: GroupHookCtx = { folderId, ...(access.space.kind === "group" ? { groupId: access.space.groupId } : {}) };
   await deps.groupTestHook?.("folder-authorized", hookCtx);
 
-  // allSettled, like the delete-all path in `routes/groups.ts`: gates aren't supposed to throw, but if one rejects, the ones already opened must be released before rethrowing.
+  // allSettled: a rejecting gate must not leave the already-opened ones unreleased.
   const settled = await Promise.allSettled(liveIds.map(id => deps.collabHooks.beforeNoteDeleted(id)));
   const gates: NoteDeleteGate[] = settled.flatMap(s => (s.status === "fulfilled" ? [s.value] : []));
   const releaseAll = (): void => {
@@ -229,7 +209,7 @@ export async function deleteFolder(
   };
   let result: FolderDeleteResultDto;
   try {
-    // Test hook inside the try so a throwing hook still reaches the finally's releaseAll.
+    // Inside the try so a throwing hook still reaches the finally's releaseAll.
     await deps.groupTestHook?.("folder-delete-gated", hookCtx);
     result = await deps.db.transaction(tx => deleteFolderInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
@@ -242,11 +222,6 @@ export async function deleteFolder(
   return { kind: "ok", result };
 }
 
-/**
- * Places a note into or out of a folder. `noteId` is lowercased by `lowercaseUuidParams` in the app layer and `folderId` by the route; only the UUID shape is checked here.
- * Order (note authorization comes before the folder): note authorization (404; group note without edit permission 403) → mode → folder visibility (404) → space (400)
- * → limiter → `note-folder-authorized` test hook → transaction (rechecks everything) → returns a `NoteDto` from the caller's view.
- */
 export async function placeNote(
   deps: FolderServiceDeps,
   input: { by: string; noteId: string; folderId: string | null },
@@ -278,10 +253,10 @@ export async function placeNote(
     await deps.db.transaction(tx => placeNoteInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
-    // Share revoked after the in-transaction recheck but before the upsert (revoking doesn't lock notes): same shape as not visible.
+    // Share revoked after the recheck but before the upsert (revoking doesn't lock notes): reported as not visible.
     const fk = foreignKeyViolationConstraint(err);
     if (fk === "note_placements_share_fk") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);
-    // Defence in depth: the folder was already locked KEY SHARE and its space checked in the transaction; FK/trigger errors only come from drift outside that, same shape as invisible.
+    // Defence in depth: the folder was locked and its space checked in the transaction; these only come from drift outside that.
     if (fk === "notes_folder_fk" || fk === "note_placements_folder_id_folders_id_fk" || isFolderSpaceViolation(err)) {
       return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     }
@@ -289,7 +264,7 @@ export async function placeNote(
     throw err;
   }
 
-  // Narrow race: the note was moved or lost permission between commit and re-read: same shape as not visible.
+  // Narrow race: moved or demoted between commit and re-read: reported as not visible.
   const fields = await loadNoteFields(deps.db, noteId, by);
   const access = await resolveNoteAccess(deps.db, by, noteId);
   if (fields === undefined || access.role === "none") return fail(404, "not_found", NOTE_NOT_FOUND_MESSAGE);

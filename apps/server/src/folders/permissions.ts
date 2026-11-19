@@ -3,7 +3,6 @@ import type { FolderSpace } from "./space.js";
 
 export interface FolderRoleFlags { canRead: boolean; canCreate: boolean; canEdit: boolean; canDelete: boolean }
 
-/** null = not visible. personal/shared: visible only to the owner. group: needs role flags with `canRead`. */
 export function folderPermissions(space: FolderSpace, userId: string, flags: FolderRoleFlags | null): FolderPermissionsDto | null {
   switch (space.kind) {
     case "personal":

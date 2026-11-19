@@ -1,8 +1,3 @@
-/**
- * #175: member-change transaction bodies. All three start with `lockGroup` and count admins with a separate statement, `countAdmins`
- * (see the header of `groups/queries.ts`). Takes only `tx`, plain data and the test hook, which lets the concurrency test for the admin
- * invariant make a second request hit the same lock after it's taken but before any write. Business rejections throw `TxAbort`.
- */
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, users } from "../../db/schema.js";
@@ -14,7 +9,6 @@ const notFound = (): TxAbort => new TxAbort(404, "not_found", GROUP_NOT_FOUND_ME
 const roleNotFound = (): TxAbort => new TxAbort(404, "role_not_found", "No role with that id.");
 const lastAdmin = (): TxAbort => new TxAbort(409, "last_admin", "The group needs at least one admin.");
 
-/** Add only: already a member → 409 `already_member` and the existing role is **not** changed. `roleId` null = built-in member. Returns the role actually attached. */
 export async function addMemberInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string; roleId: string | null },
@@ -36,11 +30,7 @@ export async function addMemberInTx(
   return { roleId: role.id, builtin: role.builtin };
 }
 
-/**
- * Changes a member's role (doesn't guard against privilege escalation: includes granting/revoking built-in admin, and the caller themselves).
- * The only hard limit: every group keeps at least one built-in admin; changing the last admin to another role → 409. An unchanged role is a no-op
- * (no UPDATE; `noteIds` null = nobody is kicked).
- */
+/** No privilege-escalation guard by design; the only hard limit is the last built-in admin. */
 export async function setMemberRoleInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string; roleId: string },
@@ -57,6 +47,7 @@ export async function setMemberRoleInTx(
     .where(and(eq(groupMembers.groupId, input.groupId), eq(groupMembers.userId, input.targetUserId)));
   if (!current) throw notFound();
   const member = { email: current.email, displayName: current.displayName, roleId: next.id, builtin: next.builtin };
+  // noteIds: null = role unchanged, nobody is kicked.
   if (current.roleId === next.id) return { member, noteIds: null };
   if (current.builtin === "admin" && next.builtin !== "admin" && (await countAdmins(tx, input.groupId)) <= 1) throw lastAdmin();
   await hook?.("group-members-checked", { groupId: input.groupId });
@@ -67,7 +58,6 @@ export async function setMemberRoleInTx(
   return { member, noteIds: (await groupNoteIdsQuery(tx, input.groupId)).map(r => r.id) };
 }
 
-/** Remove or leave. Returns the ids of all group notes (kick list after commit: every group note × this member). */
 export async function removeMemberInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string },

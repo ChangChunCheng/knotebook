@@ -1,11 +1,7 @@
 /**
- * #103, #175: group query builders and in-transaction helpers. Routes are in `routes/groups.ts`; transaction bodies in `groups/tx/*`.
- *
- * **Invariant: every group keeps at least one member holding the built-in admin role.** Any transaction that changes
- * `group_members` rows or their `role_id` first calls `lockGroup()` (`SELECT … FROM groups WHERE id=$g FOR UPDATE`) and only then
- * counts with a **separate statement**, `countAdmins()`: under READ COMMITTED a later arrival gets a fresh snapshot for the new
- * statement only after it obtains the lock (without the lock, two concurrent demotions could both pass and leave 0 admins).
- * Don't merge the lock and the count into one statement, and don't switch to REPEATABLE READ.
+ * Invariant: every group keeps at least one built-in admin. Transactions changing `group_members` / `role_id` call `lockGroup()` first and then count
+ * with a separate statement, `countAdmins()`: under READ COMMITTED the new statement only gets a fresh snapshot once the lock is held.
+ * Don't merge them into one statement or switch to REPEATABLE READ.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import {
@@ -18,17 +14,15 @@ import { hasUnstorableChar } from "../oauth/storable.js";
 
 export type { DbOrTx, Tx } from "../db/tx.js";
 
-/** 404 `not_found` message for group routes; non-member, nonexistent and malformed id must produce byte-identical responses. */
+/** Identical for non-member, nonexistent and malformed id. */
 export const GROUP_NOT_FOUND_MESSAGE = "No group with that id.";
-/** 409 `not_admin` message for transfer-on-delete (#175); non-UUID, non-member and non-admin must produce byte-identical responses. */
+/** Identical for non-UUID, non-member and non-admin. */
 export const NOT_ADMIN_MESSAGE = "The transfer target must be an admin of this group.";
 export const GROUP_NAME_MAX = 80;
 
 /**
- * Rejects NUL and lone surrogates first (`hasUnstorableChar`): NUL in a `text` column is 22021 (a 500), and a lone surrogate
- * would be silently replaced by U+FFFD when the pg driver encodes UTF-8. Then trims; length counts **code points** (same unit
- * as the DB `length()`), so 80 single-code-point emoji fit but composed emoji (flags, skin tones, ZWJ sequences) take several
- * code points each; see `docs/api.md`. Returns the trimmed name, or null if invalid.
+ * NUL in a `text` column is 22021 (a 500); the pg driver silently turns a lone surrogate into U+FFFD. Length counts code points (DB `length()`),
+ * so composed emoji take several; see `docs/api.md`.
  */
 export function validateGroupName(raw: string): string | null {
   if (hasUnstorableChar(raw)) return null;
@@ -37,7 +31,6 @@ export function validateGroupName(raw: string): string | null {
   return length >= 1 && length <= GROUP_NAME_MAX ? name : null;
 }
 
-/** Role columns plus the number of members holding the role (correlated subquery). Built per call because drizzle builders are single-use. */
 function roleColumns() {
   return {
     roleId: groupRoles.id,
@@ -68,7 +61,6 @@ interface RoleColumnsRow {
   memberCount: number | null;
 }
 
-/** Role columns → DTO; null when the LEFT JOIN found no role (non-member). */
 export function toGroupRoleDto(r: RoleColumnsRow): GroupRoleDto | null {
   if (r.roleId === null) return null;
   return {
@@ -88,7 +80,6 @@ export function toGroupRoleDto(r: RoleColumnsRow): GroupRoleDto | null {
   };
 }
 
-/** `GroupDto`: both `canManage*` flags = role flag OR site admin (member or not). */
 export function toGroupDto(row: { id: string; name: string; createdAt: Date; autoVersions: boolean } & RoleColumnsRow, isSiteAdmin: boolean): GroupDto {
   const myRole = toGroupRoleDto(row);
   return {
@@ -103,13 +94,11 @@ export function toGroupDto(row: { id: string; name: string; createdAt: Date; aut
 }
 
 export interface GroupAccess {
-  /** The caller's role in the group; null for a non-member (only possible for a site admin). */
   role: GroupRoleDto | null;
   manageMembers: boolean;
   manageGroup: boolean;
 }
 
-/** One group plus the caller's role; shared by `groupAccess` and the `POST`/`PATCH /api/groups…` responses. */
 export function groupWithMyRoleQuery(db: DbOrTx, groupId: string, userId: string) {
   return db
     .select({ id: groups.id, name: groups.name, createdAt: groups.createdAt, autoVersions: groups.autoVersions, ...roleColumns() })
@@ -120,10 +109,7 @@ export function groupWithMyRoleQuery(db: DbOrTx, groupId: string, userId: string
     .limit(1);
 }
 
-/**
- * The caller's visibility and manage rights for a group. null → always 404 (malformed id, nonexistent group, or non-member who isn't
- * a site admin); the three are indistinguishable. **A member without the read flag still sees the group itself.**
- */
+/** null → 404 for malformed id, nonexistent group and non-member non-admin alike. A member without the read flag still sees the group. */
 export async function groupAccess(db: DbOrTx, groupId: string, user: { id: string; isAdmin: boolean }): Promise<GroupAccess | null> {
   if (!UUID_RE.test(groupId)) return null;
   const [row] = await groupWithMyRoleQuery(db, groupId, user.id);
@@ -133,13 +119,12 @@ export async function groupAccess(db: DbOrTx, groupId: string, user: { id: strin
   return { role: dto.myRole, manageMembers: dto.canManageMembers, manageGroup: dto.canManageGroup };
 }
 
-/** Row lock for admin-count transactions (their first step). Returns false if the group doesn't exist (caller throws 404). */
 export async function lockGroup(tx: Tx, groupId: string): Promise<boolean> {
   const rows = await tx.select({ id: groups.id }).from(groups).where(eq(groups.id, groupId)).for("update");
   return rows.length > 0;
 }
 
-/** Members holding the **built-in admin** role (a custom role with all seven flags doesn't count). **Must be a separate statement after `lockGroup`.** */
+/** Must be a separate statement after `lockGroup`. Custom roles with all seven flags don't count. */
 export async function countAdmins(tx: Tx, groupId: string): Promise<number> {
   const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
@@ -149,7 +134,6 @@ export async function countAdmins(tx: Tx, groupId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** A role of this group (`roleId` already passed `UUID_RE`); undefined if it belongs to another group (→ 404 `role_not_found`). */
 export async function roleInGroup(db: DbOrTx, groupId: string, roleId: string) {
   const [row] = await db
     .select({ id: groupRoles.id, builtin: groupRoles.builtin })
@@ -159,7 +143,6 @@ export async function roleInGroup(db: DbOrTx, groupId: string, roleId: string) {
   return row;
 }
 
-/** Id of a built-in role. Each group has exactly one admin and one member role (the unique index caps it at one; group creation creates both). */
 export async function builtinRoleId(db: DbOrTx, groupId: string, builtin: BuiltinGroupRole): Promise<string> {
   const [row] = await db
     .select({ id: groupRoles.id })
@@ -170,11 +153,6 @@ export async function builtinRoleId(db: DbOrTx, groupId: string, builtin: Builti
   return row.id;
 }
 
-/**
- * `GET /api/groups`: the caller's groups, ordered by the caller's role (built-in admin → built-in member → custom, same CASE as
- * `listRolesQuery`), then name, then id. Built, not executed, so the route and the EXPLAIN test share one query shape.
- * The sidebar groups tab lists groups in this order.
- */
 export function listMyGroupsQuery(db: DbOrTx, userId: string) {
   return db
     .select({ id: groups.id, name: groups.name, createdAt: groups.createdAt, autoVersions: groups.autoVersions, ...roleColumns() })
@@ -189,10 +167,6 @@ export function listMyGroupsQuery(db: DbOrTx, userId: string) {
     );
 }
 
-/**
- * `GET /api/groups/:id/roles`: built-in admin, built-in member, then the rest by `lower(name)`, `id`. Visible to any member
- * and to non-member site admins (same authorization as `GET …/members`).
- */
 export function listRolesQuery(db: DbOrTx, groupId: string) {
   return db
     .select(roleColumns())
@@ -205,16 +179,11 @@ export function listRolesQuery(db: DbOrTx, groupId: string) {
     );
 }
 
-/** Ids of all notes in the group (kick list when members move or change role). Uses `notes_group_slug_idx` (leading column `group_id`). */
 export function groupNoteIdsQuery(db: DbOrTx, groupId: string) {
   return db.select({ id: notes.id }).from(notes).where(eq(notes.groupId, groupId));
 }
 
-/**
- * #175: custom role name. Rejects NUL and lone surrogates (`hasUnstorableChar`, like `validateGroupName`), then trim → NFC;
- * length 1..40 code points (same unit as the DB `group_roles_name_len_chk`). Invalid → null. Reserved names are checked separately
- * by `isReservedRoleName` (409, not 400). Returns the **normalized** value: store this, so `' reader '` and `Reader` collide under the `lower()` index.
- */
+/** Returns the normalized value; store it so `' reader '` and `Reader` collide under the `lower()` index. Reserved names are checked separately (409). */
 export function validateRoleName(raw: string): string | null {
   if (hasUnstorableChar(raw)) return null;
   const name = normalizeRoleName(raw);
@@ -234,7 +203,6 @@ export function roleFlagValues(f: GroupRoleFlags) {
   };
 }
 
-/** One role (with `memberCount`), same row shape as `listRolesQuery`; a role of another group → empty array. */
 export function roleByIdQuery(db: DbOrTx, groupId: string, roleId: string) {
   return db
     .select(roleColumns())
@@ -243,7 +211,6 @@ export function roleByIdQuery(db: DbOrTx, groupId: string, roleId: string) {
     .limit(1);
 }
 
-/** Members holding this role (kick list for `updateRoleInTx`/`deleteRoleInTx`). */
 export function roleHolderIdsQuery(db: DbOrTx, groupId: string, roleId: string) {
   return db
     .select({ userId: groupMembers.userId })

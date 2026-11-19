@@ -1,7 +1,3 @@
-/**
- * Folder visibility and listing. Visibility and permissions are derived in one place, `folderAccessOf`,
- * so invisible and nonexistent folders look the same (null).
- */
 import { and, asc, eq, inArray, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import type { FolderDto, FolderPermissionsDto } from "@knotebook/shared";
 import type { DbOrTx } from "../db/tx.js";
@@ -16,19 +12,17 @@ export type FolderRow = typeof folders.$inferSelect;
 export interface FolderAccess {
   folder: FolderRow;
   space: FolderSpace;
-  /** Group folders: the caller's role flags (null for non-members). Always null for personal/shared. */
   flags: FolderRoleFlags | null;
   permissions: FolderPermissionsDto;
 }
 
-/** The single derivation of visibility and permissions; null = not visible. */
+/** The single derivation of visibility and permissions; invisible looks the same as nonexistent (null). */
 export function folderAccessOf(folder: FolderRow, flags: FolderRoleFlags | null, userId: string): FolderAccess | null {
   const space = folderSpaceOfRow(folder);
   const permissions = folderPermissions(space, userId, flags);
   return permissions === null ? null : { folder, space, flags, permissions };
 }
 
-/** Folder row plus the caller's role flags (LEFT JOIN; personal/shared rows have a NULL `group_id`, so the join never matches). */
 function accessColumns() {
   return {
     folder: folders,
@@ -40,7 +34,6 @@ function accessColumns() {
   };
 }
 
-/** Not locked; limit 1. `folderId` must already have passed `UUID_RE`. */
 export function folderAccessQuery(db: DbOrTx, userId: string, folderId: string) {
   return db
     .select(accessColumns())
@@ -61,7 +54,6 @@ export function folderAccessFromRow(row: FolderAccessRow | undefined, userId: st
   return folderAccessOf(row.folder, flags, userId);
 }
 
-/** Non-UUID or invisible → null (same shape as nonexistent). */
 export async function resolveFolderAccess(db: DbOrTx, userId: string, folderId: string): Promise<FolderAccess | null> {
   if (!UUID_RE.test(folderId)) return null;
   const [row] = await folderAccessQuery(db, userId, folderId.toLowerCase());
@@ -79,18 +71,12 @@ export function toFolderDto(row: FolderRow, permissions: FolderPermissionsDto): 
   };
 }
 
-/**
- * Visibility predicate shared by both list queries: owner (personal/shared) or group member with `can_read`.
- * Needs the same LEFT JOINs as `folderAccessQuery`.
- */
+/** Needs the same LEFT JOINs as `folderAccessQuery`. */
 function visibleFolderWhere(userId: string): SQL {
   return or(eq(folders.ownerId, userId), and(isNotNull(groupMembers.userId), eq(groupRoles.canRead, true)))!;
 }
 
-/**
- * `GET /api/folders`. Throws if the SQL filter selects a row that `folderAccessOf` hides: the two encode one visibility
- * rule, so a mismatch is a bug, and failing is better than leaking a folder or silently dropping one.
- */
+/** Throws instead of hiding a row: a SQL/`folderAccessOf` mismatch is a bug, and failing beats leaking or silently dropping a folder. */
 export async function listVisibleFolders(db: DbOrTx, userId: string): Promise<FolderDto[]> {
   const rows = await db
     .select(accessColumns())
@@ -107,21 +93,15 @@ export async function listVisibleFolders(db: DbOrTx, userId: string): Promise<Fo
     );
   const accesses = rows.map(row => folderAccessFromRow(row, userId));
   const hidden = accesses.filter(a => a === null).length;
-  // The message omits folder ids; the error log keeps only the count.
+  // No folder ids in the message; the error log keeps only the count.
   if (hidden > 0) throw new Error(`listVisibleFolders: SQL 篩選與 folderAccessOf 不一致（${hidden} 列）`);
   return accesses.map(a => toFolderDto(a!.folder, a!.permissions));
 }
 
 export type FolderKind = FolderSpace["kind"];
 export const FOLDER_KINDS: readonly FolderKind[] = ["group", "personal", "shared"];
-/** Keyset key; `spaceId` is the group id for group folders, otherwise the owner id. */
 export interface FolderPageKey { kind: FolderKind; spaceId: string; id: string }
 
-/**
- * Paged list for MCP `list_folders`. Same visibility predicate and the same mismatch-throws rule as `listVisibleFolders`.
- * Keyset order is (kind, space id, id); `limit + 1` rows are fetched to compute `hasMore`. Each row carries the root-to-leaf
- * `path` (the outer column is spelled `"folders"."id"` with the table name, see `NOTES_FOLDER_ID` in `sql.ts`) and `groupName`.
- */
 export async function listVisibleFoldersPage(
   db: DbOrTx,
   userId: string,
@@ -136,6 +116,7 @@ export async function listVisibleFoldersPage(
     .select({
       ...accessColumns(),
       groupName: groups.name,
+      // Table-qualified literal so the correlated CTE can't bind the inner alias.
       path: folderPathJsonSql(sql.raw('"folders"."id"')),
     })
     .from(folders)
@@ -154,7 +135,7 @@ export async function listVisibleFoldersPage(
     .limit(opts.limit + 1);
   const page = rows.slice(0, opts.limit).map(row => ({ row, access: folderAccessFromRow(row, userId) }));
   const hidden = page.filter(p => p.access === null).length;
-  // The message omits folder ids; the error log keeps only the count.
+  // No folder ids in the message; the error log keeps only the count.
   if (hidden > 0) throw new Error(`listVisibleFoldersPage: SQL 篩選與 folderAccessOf 不一致（${hidden} 列）`);
   return {
     rows: page.map(({ row, access }) => ({

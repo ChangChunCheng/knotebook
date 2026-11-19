@@ -1,7 +1,4 @@
-/**
- * #175: creates a group. One transaction creates the group, the two built-in roles (admin: all seven flags; member: read/create/edit,
- * the same flags as migration 0012) and attaches the creator as admin. Takes only `tx` and plain data.
- */
+/** The member role's flags match migration 0012. */
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups } from "../../db/schema.js";
 

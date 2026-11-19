@@ -1,11 +1,4 @@
-/**
- * Transaction body for creating a folder (root-level or under a parent). Takes only `tx`, plain data and the test hook.
- * Order: (group space) groups KEY SHARE → structure lock → (parent form) parent row KEY SHARE → recheck visibility, same space and
- * manage permission (same order as the service layer) → depth → count → INSERT.
- * Failures throw `TxAbort`. The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service layer maps it to 409 `folder_name_taken`.
- * Callers must use READ COMMITTED: the statement after the structure lock takes a fresh snapshot (see the header of `lock.ts`).
- * Error messages live in `../messages.ts`, shared with the service layer's fast path so the 404/403 bodies are identical.
- */
+/** Callers must use READ COMMITTED (see `lock.ts`). The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service maps it. */
 import { count, sql } from "drizzle-orm";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderPermissionsDto } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
@@ -30,7 +23,6 @@ export interface CreateFolderInput {
   by: string;
   name: string;
   lockTimeoutMs: number;
-  /** Pre-read outside the transaction: the space comes from the parent folder or the request. Ids are lowercase. */
   target: { kind: "parent"; folderId: string; space: FolderSpace } | { kind: "root"; space: FolderSpace };
 }
 
@@ -41,7 +33,6 @@ export async function createFolderInTx(
 ): Promise<{ row: FolderRow; permissions: FolderPermissionsDto }> {
   const { target } = input;
   const space = target.space;
-  // Addressed by folder id → folder_not_found; addressed by group id → group_not_found.
   const notFound = (): TxAbort =>
     target.kind === "parent"
       ? new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE)

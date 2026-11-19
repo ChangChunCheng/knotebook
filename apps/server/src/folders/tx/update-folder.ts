@@ -1,9 +1,5 @@
 /**
- * Transaction body for renaming/moving a folder; moves stay within one space. Takes only `tx`, plain data and the test hook.
- * Order: (group space) groups KEY SHARE → structure lock → the folder itself (with `name` → `FOR UPDATE`; move only → plain read,
- * since UPDATE of `parent_id` takes NO KEY UPDATE and needn't block placements) → its visibility → (moving under a folder) new parent KEY SHARE
- * → new parent visibility → same space → manage permission → (move) cycle → depth → UPDATE. Nothing changed → no UPDATE (`changed: false`).
- * Failures throw `TxAbort`; the 23505 for a sibling name clash is mapped by the service layer to 409 `folder_name_taken`.
+ * A move-only update reads the folder without FOR UPDATE: UPDATE of `parent_id` takes NO KEY UPDATE and needn't block placements.
  * Callers must use READ COMMITTED (see `lock.ts`).
  */
 import { eq, sql } from "drizzle-orm";
@@ -26,12 +22,10 @@ import { folderAccessInTx, lockFolderInTx, lockFolderSpacesInTx, lockGroupsKeySh
 
 export interface UpdateFolderInput {
   by: string;
-  /** Pre-read outside the transaction; ids are lowercase. */
   folderId: string;
   space: FolderSpace;
-  /** Already normalized (`normalizeFolderName`); undefined = no rename. */
+  /** Must already be normalized with `normalizeFolderName`. */
   name?: string;
-  /** undefined = don't move; null = move to the root. */
   parentId?: string | null;
   lockTimeoutMs: number;
 }
@@ -58,9 +52,8 @@ export async function updateFolderInTx(
   const access = await folderAccessInTx(tx, input.by, self);
   if (access === null) throw notFound();
 
-  // Moving to the current parent counts as no move (depth isn't checked: an over-deep tree produced by a transfer can still be renamed; depth is only checked on create and move).
+  // Depth isn't checked on a no-op move or rename: an over-deep tree produced by a transfer must stay renamable.
   const moving = input.parentId !== undefined && input.parentId !== self.parentId;
-  // Order: visibility of both folders (invisible = nonexistent, even if also cross-space) → same space → manage permission → cycle → depth.
   if (moving && input.parentId !== null && input.parentId !== undefined) {
     const parent = await lockFolderInTx(tx, input.parentId, "key share");
     if (!parent || (await folderAccessInTx(tx, input.by, parent)) === null) throw notFound();

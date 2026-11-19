@@ -1,22 +1,16 @@
-/**
- * Path-based folder rebuild used by restore. Takes only `tx` and plain data.
- * Callers (`restoreNotesInTx`) must hold the space's structure lock; rename and create take the same lock, so a name can't be taken between "not found" and INSERT (no 23505).
- */
+/** Callers hold the space's structure lock (rename and create take it too), so a name can't be taken between lookup and INSERT. */
 import { and, asc, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { folders } from "../../db/schema.js";
 import type { FolderSpace } from "../space.js";
 import { folderSpaceWhere } from "../sql.js";
 
-/**
- * Walks root to leaf: per level, selects the folder under the parent with `lower(name) = lower($seg)` (the same comparison as the
- * sibling unique index), lowest id first, and INSERTs it (`created_by = by`) if missing. Segment names must already be NFC.
- * Depth and count limits are **not** checked (restore must not fail on them). `segments` must be non-empty. Returns the leaf id.
- */
+/** Depth and count limits are not checked: restore must not fail on them. */
 export async function ensureFolderPathInTx(tx: Tx, space: FolderSpace, segments: readonly string[], by: string): Promise<string> {
   if (segments.length === 0) throw new Error("ensureFolderPathInTx: segments 不得為空");
   let parentId: string | null = null;
   for (const seg of segments) {
+    // lower() matches the sibling unique index, so a miss here means the INSERT can't collide; segments must already be NFC.
     const [hit]: Array<{ id: string }> = await tx
       .select({ id: folders.id })
       .from(folders)

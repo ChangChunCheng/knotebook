@@ -1,11 +1,8 @@
 /**
- * Locks and in-transaction reads for folder transactions. Takes only `tx`, plain data and the test hook.
- * Global lock order: (1) groups row locks → (2) structure locks (by key string) → (3) folder rows (by id) → (4) note rows → (5) quota advisory lock. Callers acquire in this order.
- * Each structure lock takes three statements, like `storage/tx/quota.ts`: `set_config('lock_timeout', …, true)` → `pg_advisory_xact_lock`
- * (alone; waiting too long gives 55P03, which routes map to 409 server_busy) → `set local lock_timeout to default`.
- * Keys use the prefix `knotebook.folders:`, separate from the quota lock's `knotebook.storage:`.
- * Transactions that take structure locks must be READ COMMITTED: the statement after the lock takes a fresh snapshot that sees folders
- * committed by the previous holder. Under REPEATABLE READ the snapshot is fixed at the first statement, so depth/cycle/name checks would read a stale tree.
+ * Global lock order: groups rows → structure locks (by key string) → folder rows (by id) → note rows → quota advisory lock.
+ * Structure locks need READ COMMITTED: the next statement takes a fresh snapshot that sees folders committed by the previous holder;
+ * under REPEATABLE READ the depth/cycle/name checks would read a stale tree.
+ * lock_timeout is set before and reset right after each advisory lock (as in `storage/tx/quota.ts`), so only that wait is bounded; 55P03 maps to 409 server_busy.
  */
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
@@ -22,14 +19,11 @@ export async function lockGroupsKeyShareInTx(tx: Tx, groupIds: readonly string[]
 }
 
 export interface FolderSpaceLockOpts {
-  /** Max wait per key (ms), a positive integer; the caller passes `storageLockTimeoutMs`. */
   lockTimeoutMs: number;
-  /** Test hook (never injected in production): fired once with `"folder-structure-locked"` after all keys are taken. */
   hook?: GroupTestHook;
   hookCtx?: GroupHookCtx;
 }
 
-/** Takes structure locks one by one in `sortedSpaceLockKeys` order, then fires the hook once. */
 export async function lockFolderSpacesInTx(tx: Tx, spaces: readonly FolderSpace[], opts: FolderSpaceLockOpts): Promise<void> {
   const keys = sortedSpaceLockKeys(spaces);
   if (keys.length === 0) return;
@@ -50,7 +44,7 @@ export async function lockFolderInTx(tx: Tx, folderId: string, strength: "key sh
   return row;
 }
 
-/** Group role flags, read without locking: callers already hold groups KEY SHARE, so membership is stable. Non-member → null. */
+/** Callers already hold groups KEY SHARE, so membership is stable and no lock is needed. */
 export async function memberFlagsInTx(tx: Tx, userId: string, groupId: string): Promise<FolderRoleFlags | null> {
   const [row] = await tx
     .select({ canRead: groupRoles.canRead, canCreate: groupRoles.canCreate, canEdit: groupRoles.canEdit, canDelete: groupRoles.canDelete })
@@ -61,7 +55,6 @@ export async function memberFlagsInTx(tx: Tx, userId: string, groupId: string): 
   return row ?? null;
 }
 
-/** In-transaction visibility and permissions (same derivation as `folderAccessFromRow`: `folderAccessOf`). Not visible → null. */
 export async function folderAccessInTx(tx: Tx, userId: string, folder: FolderRow): Promise<FolderAccess | null> {
   const space = folderSpaceOfRow(folder);
   const flags = space.kind === "group" ? await memberFlagsInTx(tx, userId, space.groupId) : null;

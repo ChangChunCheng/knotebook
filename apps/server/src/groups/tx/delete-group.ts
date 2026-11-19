@@ -1,18 +1,8 @@
 /**
- * #175: the two group-deletion transactions: `transferGroupInTx` (move notes to a built-in admin) and `deleteGroupWithNotesInTx`
- * (delete with notes). Roles and members go via FK CASCADE. Takes only `tx`, plain data and the test hook (no `Db`, no `deps`);
- * the delete-all gate (`beforeNoteDeleted`), post-commit file deletion and kicking connections happen in the route.
- *
- * Lock order (global: groups → structure locks → folder rows → note rows → quota lock):
- * - transfer: `lockGroup` (groups FOR UPDATE) → structure locks of the group and the recipient's personal space (by key) → group notes
- *   FOR UPDATE (**ascending id**, same as trash move/restore/permanent delete and `deleteNotesInTx`; #181) → the recipient's quota lock →
- *   INSERT the new top-level folder, `UPDATE folders`, re-home each note.
- *   Writing folders after the note locks is a deliberate deviation: a group folder's FOR UPDATE is only taken by folder deletion, which first needs
- *   groups KEY SHARE (blocked by `lockGroup`); structure writes in the recipient's space (create, rename, move, rebuild from path) first take the recipient's structure lock.
- * - delete-all: `lockGroup` → group structure lock → group notes FOR UPDATE (by id) → `deleteNotesInTx` → `DELETE groups` (group folders CASCADE);
- *   no quota lock.
- * Every transaction touching group-space folders takes groups KEY SHARE first, which conflicts with `lockGroup`; creates/moves/copies into the group
- * that arrive after the lock get 23503 on commit or find the group gone → 404.
+ * Lock order: groups → structure locks → folder rows → note rows → quota lock; group notes by ascending id, like trash move/restore/purge and `deleteNotesInTx`.
+ * Transfer writes folders after the note locks on purpose: a group folder's FOR UPDATE is only taken by folder deletion, which first needs groups KEY SHARE
+ * (blocked by `lockGroup`), and structure writes in the recipient's space take its structure lock first.
+ * Every transaction touching group-space folders takes groups KEY SHARE first, so it conflicts with `lockGroup`.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
@@ -33,39 +23,18 @@ import type { GroupTestHook } from "../test-hook.js";
 
 export interface TransferGroupInput {
   groupId: string;
-  /** Already passed `UUID_RE` and lowercased (the route does this before the transaction). */
   transferTo: string;
-  /** User who triggered the deletion (`created_by` of the new top-level folder). */
   by: string;
-  /** Name of the new top-level folder when the normalized group name is empty (the route picks it from `Accept-Language`). */
   fallbackFolderName: string;
-  /** Wait limit (ms) for structure and space locks. */
   lockTimeoutMs: number;
 }
 
 export interface GroupDeletionResult {
-  /** Notes locked and handled in the transaction by the group predicate (transfer: moved out; delete-all: deleted). */
   noteIds: string[];
-  /** All members, read with `tx` **before** `DELETE groups` cascades. */
+  /** Read before `DELETE groups` cascades them away. */
   memberIds: string[];
 }
 
-/**
- * Moves all group notes to `transferTo` as personal notes, then deletes the group. Steps:
- * - `lockGroup` (nonexistent → 404); `transferTo` must be a member with builtin='admin' (checked after the lock), else 409 `not_admin`
- * - read all members (before CASCADE); structure locks of the group and of `transferTo`'s personal space (before locking group notes)
- * - group notes FOR UPDATE (by id); processing order is then sorted in JS by created_at, id so the smaller `-N` suffix on a name clash is deterministic
- * - storage quota: attachment total → `transferTo`'s personal-space lock and check (before `writeSlugInTx`; if it doesn't fit → StorageQuotaExceeded, nothing written)
- * - version history: reset via `resetNoteVersionsInTx({ groupId })`, one pass by group predicate, before group_id changes
- * - folders: if the group has folders, or the trash holds root-level notes with a path snapshot → create a new top-level folder in `transferTo`'s
- *   personal root (group name, loosely normalized, with suffix); if the group has folders → **one** `UPDATE folders` re-homes the whole tree to
- *   `transferTo` and hangs the group's root folders under the new top level (the same-space trigger checks the whole tree at statement end)
- * - per note, `writeSlugInTx` (scope = `transferTo`'s personal space, base = old slug): the same UPDATE changes ownership, clears prev and handles the placement,
- *   and clears public_token/public_slug (like move.ts; the result is an unshared personal note; the publicLink limiter isn't charged);
- *   slug_is_custom and updated_at are untouched
- * - `recordRedirectsInTx`: writes `/g/<g>/<old slug>` for the current slug only
- * - `DELETE groups` (roles and members CASCADE; folders no longer belong to the group)
- */
 export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?: GroupTestHook): Promise<GroupDeletionResult> {
   if (!(await lockGroup(tx, input.groupId))) throw new TxAbort(404, "not_found", GROUP_NOT_FOUND_MESSAGE);
   const [target] = await tx
@@ -81,14 +50,14 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
   await lockFolderSpacesInTx(tx, [{ kind: "group", groupId: input.groupId }, { kind: "personal", ownerId: input.transferTo }], {
     lockTimeoutMs: input.lockTimeoutMs, ...(hook ? { hook } : {}), hookCtx: { groupId: input.groupId },
   });
-  // Lock order is by id (see the header); the processing order is sorted separately in JS by created_at, id. created_at is taken as a microsecond integer (JS Date has only millisecond precision and would misorder within the same millisecond).
+  // Processed in created_at, id order; created_at as a microsecond integer because JS Date is millisecond-only and would misorder ties, so collision suffixes are assigned deterministically.
   const locked = await tx
     .select({
       id: notes.id,
       slug: notes.slug,
       createdUs: sql<string>`(extract(epoch from ${notes.createdAt}) * 1000000)::bigint`,
       folderId: notes.folderId,
-      // "In the trash with a snapshot": a stale snapshot left on a live note (restored by older code during a rollback) doesn't count; such notes follow the normal root-level rule.
+      // A stale snapshot on a live note (restored by older code during a rollback) doesn't count.
       trashedWithPath: sql<boolean>`${notes.trashFolderPath} is not null and ${notes.deletedAt} is not null`,
     })
     .from(notes)
@@ -99,10 +68,8 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
     .map(r => ({ ...r, us: BigInt(r.createdUs) }))
     .sort((x, y) => (x.us < y.us ? -1 : x.us > y.us ? 1 : x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
 
-  // Storage quota: all group notes are FOR UPDATE, so incoming = the sum of their attachments (including notes that joined the group after the gates opened).
-  // The recipient's personal-space lock is taken **before** the first writeSlugInTx (pinned by `storage-quota-race.test.ts`). On rejection nothing is written.
-  // SUM by group predicate (the rows are all locked, so it's the same set); not `inArray(…, ids)`: one bind parameter per note would exceed
-  // the protocol limit (65535) for a big group and 500.
+  // The recipient's quota lock comes before the first writeSlugInTx (pinned by `storage-quota-race.test.ts`).
+  // SUM by group predicate, not `inArray(…, ids)`: a bind parameter per note exceeds the protocol limit (65535) for big groups.
   const [sumRow] = await tx
     .select({ incoming: sumUploadSizeSql() })
     .from(uploads)
@@ -112,10 +79,9 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
     lockTimeoutMs: input.lockTimeoutMs, hook, hookCtx: { groupId: input.groupId },
   });
 
-  // Version history: cleared by group predicate in one pass **before** group_id changes (rows are all FOR UPDATE; no ANY($ids)).
+  // By group predicate, before group_id changes.
   await resetNoteVersionsInTx(tx, { groupId: input.groupId });
 
-  // Create the new top level only if there are folders, or trashed notes that will be rebuilt from their path snapshot.
   const [anyFolder] = await tx.select({ id: folders.id }).from(folders).where(eq(folders.groupId, input.groupId)).limit(1);
   const groupHasFolders = anyFolder !== undefined;
   let top: { id: string; name: string } | null = null;
@@ -124,7 +90,7 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
     const baseName = normalizeFolderNameLoose(g!.name, input.fallbackFolderName);
     top = await createSystemTopFolderInTx(tx, { ownerId: input.transferTo, baseName, by: input.by });
   }
-  // One statement for the whole tree: the parent/child same-space trigger is AFTER ROW and checks at statement end; separate statements would see mixed spaces midway.
+  // One statement: the same-space trigger is AFTER ROW and checks at statement end; separate statements would see mixed spaces midway.
   if (top !== null && groupHasFolders) {
     await tx
       .update(folders)
@@ -133,8 +99,7 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
   }
 
   for (const row of rows) {
-    // Three kinds of rows: in a folder → keep (the folder already moved to the recipient's space); root-level without snapshot → new top level;
-    // root-level with snapshot (original folder deleted) → folder_id stays NULL and the snapshot is prefixed with the name **actually written** for the new top level (suffix included), so restore rebuilds the original path under it.
+    // The snapshot is prefixed with the name actually written for the new top level (suffix included), so restore rebuilds the path under it.
     const place = row.folderId !== null || top === null
       ? {}
       : row.trashedWithPath
@@ -160,14 +125,8 @@ export async function transferGroupInTx(tx: Tx, input: TransferGroupInput, hook?
 }
 
 /**
- * Deletes the group together with its notes. **The route opens the gates (`beforeNoteDeleted`, which borrow connections) before the transaction**;
- * this function doesn't touch gates.
- * Steps: `lockGroup` (nonexistent → 404) → group structure lock (same position as in transfer) → L = group notes FOR UPDATE (by group predicate, not by the
- * gated list: notes that entered the group after the gates are in L too, an accepted cost) → read members (before CASCADE) → `deleteNotesInTx(L)`
- * (same as permanent delete / expiry purge; L includes trashed group notes) → `DELETE groups` (group folders CASCADE).
- * `deleteNotesInTx` also takes FOR UPDATE on L first (a re-lock in the same transaction, no wait; #188), so delete-all × upload is guarded by either lock and
- * removing the FOR UPDATE here would pass the current integration tests. It stays because "lock whatever the group predicate reaches" defines delete-all and
- * shouldn't depend on today's premise that no path can move a note out of a group without `lockGroup`.
+ * Locks by group predicate, not the gated list, so notes that entered after the gates are included. `deleteNotesInTx` re-locks them (#188), but this lock
+ * stays so delete-all doesn't depend on no path moving a note out of a group without `lockGroup`.
  */
 export async function deleteGroupWithNotesInTx(
   tx: Tx,
