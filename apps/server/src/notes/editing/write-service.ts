@@ -1,7 +1,6 @@
 /**
  * All write paths for a note must share one `NoteWriteQueue` (`buildApp` creates it once): serialization underpins the #137 corruption fix and the revert idempotency guard (see `queue.ts`). Authorization and rate limiting are deliberately not here: they answer differently on REST and MCP.
  * Presence targets must come from `presenceTargetForWrite(op, afterBlockIds)`, never the request's `section_id` (a heading id that no longer exists after the write).
- * `createWithContent`'s catch maps `ParserBusyError` → `parser_busy` and `NoteTooLargeError` → `too_large` after deleting the new row; anything else (a queue timeout included) → 500 `internal`, not 503 (docs/ai-editing.md). That timeout is unreachable in practice (a fresh id has no concurrent writer).
  * Test gaps: `applyDeps()`'s throw is unreachable and unguarded (`create_note` skips the deployment-shape gate, so it's the only thing that speaks up); `write-body-limit.test.ts` derives its cases from `WRITE_BODY_LIMIT`, so only the hard-coded 300000 tests in `note-edits.test.ts`/`mcp-endpoint.test.ts` notice the value changing, and only upwards.
  */
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
@@ -585,9 +584,6 @@ export class NoteWriteService {
     return { ok: true, created: true, noteId: r.noteId, unboundWikilinks: r.unbound };
   }
 
-  /**
-   * Parse and validate before the insert; returns the parse error or `parser_busy` without creating a row.
-   */
   async prepareContent(log: FastifyBaseLogger, input: { userId: string; tokenId: string | null; content: string }): Promise<PreparedContent | { ok: false; kind: "parse"; code: ParseError; detail?: ParseDetail } | ParserBusy> {
     const candidates = await visibleNoteTargets(this.deps.db, input.userId);
     const agentLabel = input.tokenId ? await currentAgentLabel(this.deps.db, input.tokenId) : null;
@@ -611,7 +607,7 @@ export class NoteWriteService {
     }
   }
 
-  /** Bad content creates no row (parse comes first); apply gets blocks, not markdown, so content isn't parsed and rebound twice. A failure after the insert deletes the new row: `parser_busy` and `too_large` are returned as such, anything else, a queue timeout included, as `internal` (500). Creation without content doesn't come here. */
+  /** Bad content creates no row (parse comes first); apply gets blocks, not markdown, so content isn't parsed and rebound twice. A failure after the insert deletes the new row: `parser_busy`, `too_large` and a too-complex apply (as a parse error) are returned as such, anything else, a queue timeout included, as `internal` (500, not 503: docs/ai-editing.md; that timeout is unreachable in practice, a fresh id has no concurrent writer). Creation without content doesn't come here. */
   async createWithContent(
     log: FastifyBaseLogger,
     input: {

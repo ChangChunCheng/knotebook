@@ -1,4 +1,4 @@
-// Single source for request string schemas (invariant S: format guard → NUL rejection); MCP reuses them, and a route→route dependency would couple route modules. `MD`'s `.max(262_144)` and the `POST /edits` bodyLimit are the same number in different units (UTF-16 units vs bytes); both are needed. `NOTE_ID` needs `UUID_RE` from `notes/service.ts`, so this isn't a pure leaf.
+// Single source for request string schemas (format guard, then NUL rejection, so request strings never reach SQL unchecked); MCP reuses them, and a route→route dependency would couple route modules. `MD`'s `.max(262_144)` and the `POST /edits` bodyLimit are the same number in different units (UTF-16 units vs bytes); both are needed. `NOTE_ID` needs `UUID_RE` from `notes/service.ts`, so this isn't a pure leaf.
 import { z } from "zod";
 import { SECTION_ID_RE } from "@knotebook/shared";
 import { UUID_RE } from "./service.js";

@@ -1,8 +1,8 @@
 /**
  * Lock order: source note FOR UPDATE → target groups FOR KEY SHARE → target folder FOR KEY SHARE (an exception to the global order: the source is always personal and the target a group folder, so it isn't in any group-space folder transaction's note set).
  * The groups lock excludes `lockGroup` (delete group, member and role changes), so the membership read holds until commit; it doesn't block group renames (a non-key UPDATE is FOR NO KEY UPDATE; a test guards that FOR SHARE would stall it). Every write that changes existing membership or role flags must `lockGroup` first (`POST …/roles` only adds roles nobody holds, so it's exempt).
- * The space lock (`assertSpaceRoomInTx`) comes after those two row locks and before the shares delete and the group-scope slug write; no lock when the attachments total 0 (the source personal space only shrinks). After it only the FU-held note's uploads rows and the `users` FK KEY SHARE are taken.
- * `uploads.charged_to_id` → the mover is set after `writeSlugInTx` returns, outside its callback: the callback re-runs after a savepoint rollback on a slug collision and this must run once. All attachments are charged to the mover regardless of uploader (the caller is the owner).
+ * The space lock (`assertSpaceRoomInTx`) comes after the row locks above and before the shares delete and the group-scope slug write; no lock when the attachments total 0 (the source personal space only shrinks).
+ * `uploads.charged_to_id` → the mover is set after `writeSlugInTx` returns, outside its callback: the callback re-runs after a savepoint rollback on a slug collision and this must run once. All attachments are charged to the mover regardless of uploader (the caller is the owner). It adds only the held note's uploads rows and the `users` FK KEY SHARE after the space lock.
  * A delete-group racing this: the KEY SHARE waits for the delete to commit → 0 rows → 404. After the lock the group can't be deleted, so the UPDATE can't hit FK 23503; the `charged_to_id` → users FK only fires if the mover's account is hard-deleted mid-transaction (no such path in `src/`). The 23503 → 404 mapping in `notes/move-note.ts` is defence in depth.
  * No cycle with `lockGroup` paths: none of them locks a personal note after taking the groups lock, and the UPDATE's FK check would take this KEY SHARE anyway (we take it earlier).
  */
@@ -25,6 +25,7 @@ export interface MoveNoteInput {
   userId: string;
   /** `request.user.handle`, already normalized (redirect key); the transaction must not query users. */
   userHandle: string;
+  /** Lowercased: compared with `!==` against `folder.groupId`. */
   groupId: string;
   /** Caller checked visibility and group; null = group root. */
   folderId: string | null;

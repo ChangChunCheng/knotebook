@@ -90,7 +90,7 @@ export async function cutVersionInTx(tx: Tx, input: CutVersionInput): Promise<{ 
   if (!note) throw new VersionCutAbort({ kind: "note-deleted" });
   if (snap === null) throw new VersionCutAbort({ kind: "fingerprint-failed", cause: captureError });
   const spaceKey = spaceKeyOf(note);
-  // Differs → stale (a move interleaved).
+  // A different space key means a move interleaved.
   if (note.baseFingerprint !== input.expectBaseFingerprint || spaceKey !== input.expectSpaceKey) {
     throw new VersionCutAbort({ kind: "stale", baseFingerprint: note.baseFingerprint, spaceKey });
   }
