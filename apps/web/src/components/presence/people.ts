@@ -122,7 +122,7 @@ function entries(states: ReadonlyMap<number, unknown>, myClientId: number, myUse
 }
 
 /**
- * Excludes my clientID and any state with my user id (my other tabs). One item per AI clientID; humans merged by user
+ * Excludes my clientID and any human state with my user id (my other tabs); agent states are never excluded. One item per AI clientID; humans merged by user
  * id. Sorted by key only: display order is `orderBySeen`'s job.
  */
 export function presencePeople(states: ReadonlyMap<number, unknown>, myClientId: number, myUserId: string): PresencePerson[] {

@@ -10,7 +10,7 @@ import "@/i18n/management-strings";
  * them), shared with `ScopeChecksField` (still used by the OAuth consent page); move and delete also show them as the bold
  * label, followed by an inline description that doesn't repeat the name. Turning off edit disables move/delete and clears them (same direction as
  * `scopeFromChecks(false, …) === "notes:read"`). Move uses `tone="destructive"` (irreversible); delete uses the default
- * tone (trash is restorable). Each shows its consequence hint, linked by aria-describedby, only while on. Toggles in a
+ * tone (trash is restorable). Each shows its consequence hint, linked by aria-describedby, only while on. Toggles in an
  * apply-on-submit create dialog are a deliberate exception (see the ui/switch.tsx header).
  */
 export function ScopeTogglesField({

@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 
 /**
- * Navigates to "/" after success and lets `ChangePasswordGate` pass once `mustChangePassword` is false; the page doesn't decide whether to
- * skip the gate.
+ * After success it only navigates to "/"; `ChangePasswordGate` lets the user through once `mustChangePassword` is false,
+ * so the page doesn't decide whether to skip the gate.
  * The success toast doesn't ask to sign in again because there is no logout (the server re-issues the session; see `ChangePasswordForm`).
  */
 export default function ChangePasswordPage() {

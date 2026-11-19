@@ -380,7 +380,7 @@ export function AiSessionProvider(props: {
     editor.getExtension(ShowSelectionExtension)?.showSelection(highlight, SELECTION_AI_HIGHLIGHT_KEY);
   }, [editor, highlight]);
 
-  // In practice editable only turns false when the role is demoted to viewer.
+  // In practice editable turns false on a demotion to viewer or when the outdated-client gate (#269) trips.
   useEffect(() => {
     if (!editable) closeInternal();
   }, [editable, closeInternal]);
