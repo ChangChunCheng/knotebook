@@ -52,37 +52,37 @@ function Probe() {
   );
 }
 
-describe("常數", () => {
-  it("tab 列順序", () => {
+describe("constants", () => {
+  it("tab bar order", () => {
     expect(SIDEBAR_TABS).toEqual(["recent", "favorites", "myNotes", "workspace", "shared", "trash"]);
   });
 
-  it("預設 tab 仍是我的筆記（最愛排第二，不是預設）", () => {
+  it("the default tab is still My Notes (Favorites is second, not the default)", () => {
     expect(DEFAULT_SIDEBAR_TAB).toBe("myNotes");
   });
 });
 
 describe("readSidebarTab", () => {
-  it("缺鍵 → 預設", () => {
+  it("missing key -> default", () => {
     expect(readSidebarTab()).toBe("myNotes");
   });
 
-  it.each(SIDEBAR_TABS)("合法值 %s 回自己", (tab) => {
+  it.each(SIDEBAR_TABS)("valid value %s returns itself", (tab) => {
     localStorage.setItem("sidebar.tab", tab);
     expect(readSidebarTab()).toBe(tab);
   });
 
-  it("ST1b：trash 是合法值", () => {
+  it("trash is a valid value", () => {
     localStorage.setItem("sidebar.tab", "trash");
     expect(readSidebarTab()).toBe("trash");
   });
 
-  it.each(["bogus", ""])("無效值 %j → 預設", (raw) => {
+  it.each(["bogus", ""])("invalid value %j -> default", (raw) => {
     localStorage.setItem("sidebar.tab", raw);
     expect(readSidebarTab()).toBe("myNotes");
   });
 
-  it("getItem 丟例外 → 預設", () => {
+  it("getItem throwing -> default", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
@@ -91,21 +91,21 @@ describe("readSidebarTab", () => {
 });
 
 describe("writeSidebarTab", () => {
-  it("setItem 丟例外時不 throw", () => {
+  it("does not throw when setItem throws", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
     expect(() => writeSidebarTab("workspace")).not.toThrow();
   });
 
-  it("正常寫入", () => {
+  it("writes normally", () => {
     writeSidebarTab("workspace");
     expect(localStorage.getItem("sidebar.tab")).toBe("workspace");
   });
 });
 
 describe("SidebarTabProvider", () => {
-  it("預存 shared → probe 顯示 shared；showTab 切換並寫入 storage", () => {
+  it("pre-stored shared -> probe shows shared; showTab switches and writes to storage", () => {
     localStorage.setItem("sidebar.tab", "shared");
     render(
       <SidebarTabProvider>
@@ -118,7 +118,7 @@ describe("SidebarTabProvider", () => {
     expect(localStorage.getItem("sidebar.tab")).toBe("recent");
   });
 
-  it("選了最愛 → 寫進 storage；卸載重掛後仍是最愛", () => {
+  it("choosing Favorites -> written to storage; still Favorites after unmount and remount", () => {
     const first = render(
       <SidebarTabProvider>
         <Probe />
@@ -136,7 +136,7 @@ describe("SidebarTabProvider", () => {
     expect(screen.getByTestId("tab")).toHaveTextContent("favorites");
   });
 
-  it("setItem 丟例外時 showTab 仍切換", () => {
+  it("showTab still switches when setItem throws", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
@@ -151,7 +151,7 @@ describe("SidebarTabProvider", () => {
         <Probe />
       </SidebarTabProvider>,
     );
-    // 直接呼叫：同步丟出的例外會從 act 冒出來，不會被 jsdom 當成 window error 吞掉。
+    // Call directly: an exception thrown synchronously bubbles out of act, instead of being swallowed by jsdom as a window error.
     act(() => {
       (actions as SidebarTabActions | null)?.showTab("workspace");
     });
@@ -159,8 +159,8 @@ describe("SidebarTabProvider", () => {
   });
 });
 
-describe("無 provider", () => {
-  it("actions 兩次 render 同一物件、showTab 不 throw；state 為預設", () => {
+describe("without a provider", () => {
+  it("actions are the same object across two renders, showTab does not throw; state is the default", () => {
     const { result, rerender } = renderHook(() => useSidebarTabActions());
     const first = result.current;
     rerender();
@@ -171,8 +171,8 @@ describe("無 provider", () => {
   });
 });
 
-describe("actions 穩定", () => {
-  it("provider 重繪、切 tab 後，只消費 actions 的 memo 元件不重繪、actions 同一物件", () => {
+describe("actions are stable", () => {
+  it("after the provider re-renders and tabs switch, a memo component consuming only actions does not re-render and actions is the same object", () => {
     let renders = 0;
     const seen: SidebarTabActions[] = [];
     const Counter = memo(function Counter() {
@@ -224,8 +224,8 @@ function withDrawer(spy: (open: boolean) => void, children: ReactNode) {
   return <SidebarDrawerContext.Provider value={{ setOpen: spy }}>{children}</SidebarDrawerContext.Provider>;
 }
 
-describe("showTab 窄螢幕開抽屜", () => {
-  it("窄 → setOpen(true) 恰一次", () => {
+describe("showTab opens the drawer on a narrow screen", () => {
+  it("narrow -> setOpen(true) called once", () => {
     stubMatchMedia(true);
     const spy = vi.fn();
     render(
@@ -241,7 +241,7 @@ describe("showTab 窄螢幕開抽屜", () => {
     expect(spy).toHaveBeenCalledWith(true);
   });
 
-  it("寬 → 不呼叫", () => {
+  it("wide -> not called", () => {
     stubMatchMedia(false);
     const spy = vi.fn();
     render(
@@ -256,7 +256,7 @@ describe("showTab 窄螢幕開抽屜", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("抽屜 context 換物件：actions 仍同一個、showTab 呼叫新的 setOpen", () => {
+  it("when the drawer context object changes: actions stay the same, showTab calls the new setOpen", () => {
     stubMatchMedia(true);
     const spy = vi.fn();
     const spy2 = vi.fn();
@@ -285,7 +285,7 @@ describe("showTab 窄螢幕開抽屜", () => {
   });
 });
 
-describe("showTab 手機：回清單、不開抽屜", () => {
+describe("showTab on phone: back to the list, no drawer", () => {
   function renderWithList(tier: LayoutTier, drawerSpy: (open: boolean) => void, backToList: () => void) {
     stubLayoutTier(tier);
     return render(
@@ -300,7 +300,7 @@ describe("showTab 手機：回清單、不開抽屜", () => {
     );
   }
 
-  it("手機 → 呼叫 backToList 恰一次、抽屜不開；tab 照樣切換並寫入", () => {
+  it("phone -> backToList called once, drawer not opened; the tab still switches and is written", () => {
     const drawer = vi.fn();
     const backToList = vi.fn();
     renderWithList("phone", drawer, backToList);
@@ -311,7 +311,7 @@ describe("showTab 手機：回清單、不開抽屜", () => {
     expect(localStorage.getItem("sidebar.tab")).toBe("workspace");
   });
 
-  it("浮動段 → 開抽屜、不呼叫 backToList", () => {
+  it("floating tier -> opens the drawer, does not call backToList", () => {
     const drawer = vi.fn();
     const backToList = vi.fn();
     renderWithList("overlay", drawer, backToList);
@@ -320,7 +320,7 @@ describe("showTab 手機：回清單、不開抽屜", () => {
     expect(backToList).not.toHaveBeenCalled();
   });
 
-  it("固定段 → 兩個都不呼叫", () => {
+  it("fixed tier -> neither is called", () => {
     const drawer = vi.fn();
     const backToList = vi.fn();
     renderWithList("docked", drawer, backToList);
@@ -353,7 +353,7 @@ function SelectionProbe() {
   );
 }
 
-describe("選取狀態", () => {
+describe("selection state", () => {
   function startWithA() {
     render(
       <SidebarTabProvider>
@@ -367,21 +367,21 @@ describe("選取狀態", () => {
     expect(screen.getByTestId("keys")).toHaveTextContent("note:a");
   }
 
-  it("ST8a：選取在 provider；點目前所在的 tab 不結束選取", () => {
-    startWithA(); // 預設在 myNotes
+  it("selection lives in the provider; clicking the current tab does not end selection", () => {
+    startWithA(); // defaults to myNotes
     fireEvent.click(screen.getByRole("button", { name: "show-myNotes" }));
     expect(screen.getByTestId("active")).toHaveTextContent("true");
     expect(screen.getByTestId("keys")).toHaveTextContent("note:a");
   });
 
-  it("ST8b：換到別的 tab 才結束選取", () => {
+  it("switching to another tab ends selection", () => {
     startWithA();
     fireEvent.click(screen.getByRole("button", { name: "show-recent" }));
     expect(screen.getByTestId("active")).toHaveTextContent("false");
     expect(screen.getByTestId("keys")).toBeEmptyDOMElement();
   });
 
-  it("ST9：endSelectionIfActive 選取中回 true 並結束；再呼叫回 false", () => {
+  it("endSelectionIfActive returns true and ends while selecting; calling again returns false", () => {
     let actions: SidebarTabActions | null = null;
     const Grab = () => {
       actions = useSidebarTabActions();
@@ -409,7 +409,7 @@ describe("選取狀態", () => {
     expect(screen.getByTestId("active")).toHaveTextContent("false");
   });
 
-  it("ST10：start、toggle 三次、end 之後，只消費 actions 的 memo 元件不重繪、actions 同一物件", () => {
+  it("after start, three toggles and end, a memo component consuming only actions does not re-render and actions is the same object", () => {
     let renders = 0;
     const seen: SidebarTabActions[] = [];
     const Counter = memo(function Counter() {
@@ -443,7 +443,7 @@ describe("選取狀態", () => {
     expect(actions).toBe(seen[0]);
   });
 
-  it("ST11：actionsRef 指向 useSidebarTabActions() 的同一物件，重繪後不變", () => {
+  it("actionsRef points to the same object as useSidebarTabActions() and does not change after re-render", () => {
     let fromHook: SidebarTabActions | null = null;
     let ref: { current: SidebarTabActions | null } | null = null;
     const Grab = () => {
@@ -475,14 +475,14 @@ describe("選取狀態", () => {
     expect(current()).toBe(fromHook);
   });
 
-  it("ST12：無 provider → endSelectionIfActive 回 false 不 throw；selection 是 EMPTY_SELECTION", () => {
+  it("no provider -> endSelectionIfActive returns false without throwing; selection is EMPTY_SELECTION", () => {
     const actions = renderHook(() => useSidebarTabActions()).result.current;
     expect(actions.endSelectionIfActive()).toBe(false);
     expect(() => actions.updateSelection({ type: "start" })).not.toThrow();
     expect(renderHook(() => useSidebarTabState()).result.current.selection).toBe(EMPTY_SELECTION);
   });
 
-  it("ST13：getSelectionSession 非選取中為 null；start 後為 n、toggle 不變、end 後 null；再 start 是不同的 n+1", () => {
+  it("getSelectionSession is null while not selecting; after start it is n, toggle leaves it unchanged, after end null; a new start gives a different n+1", () => {
     let actions: SidebarTabActions | null = null;
     const Grab = () => {
       actions = useSidebarTabActions();
@@ -511,8 +511,8 @@ describe("選取狀態", () => {
   });
 });
 
-describe("搜尋跳轉的常駐標記：切到別的 tab ＝離開搜尋 → 清", () => {
-  it("showTab 切到不同的 tab → 清一次；切到同一個 tab → 不清", () => {
+describe("persistent search marker: switching to another tab = leaving search -> clear", () => {
+  it("showTab to a different tab -> clears once; to the same tab -> does not clear", () => {
     stubMatchMedia(false);
     const cleared = vi.fn();
     const off = onSearchMarkClear(cleared);

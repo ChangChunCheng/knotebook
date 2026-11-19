@@ -5,15 +5,15 @@ const LIST: PhoneScreen = { kind: "list" };
 const SEARCH: PhoneScreen = { kind: "search" };
 const note = (path: string): PhoneScreen => ({ kind: "note", path });
 
-describe("phone-scroll：手機換畫面時文件捲到哪", () => {
-  it("剛進手機寬度（沒有上一個畫面）：不動", () => {
+describe("phone-scroll: where the document scrolls when the phone changes screen", () => {
+  it("just entered phone width (no previous screen): unchanged", () => {
     const memory = createPhoneScrollMemory();
     expect(enterPhoneScreen(memory, null, LIST, null)).toBeNull();
     expect(enterPhoneScreen(memory, null, note("/n/a/x"), null)).toBeNull();
     expect(enterPhoneScreen(memory, null, SEARCH, null)).toBeNull();
   });
 
-  it("清單 → 筆記從頂端開始；筆記 → 清單回到離開時的位置", () => {
+  it("list -> note starts at the top; note -> list returns to where it was left", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, LIST, 640);
     expect(enterPhoneScreen(memory, LIST, note("/n/a/x"), null)).toBe(0);
@@ -21,7 +21,7 @@ describe("phone-scroll：手機換畫面時文件捲到哪", () => {
     expect(enterPhoneScreen(memory, note("/n/a/x"), LIST, null)).toBe(640);
   });
 
-  it("同一個畫面：不動（清單上換了 modal 路徑、同一篇換了 hash）", () => {
+  it("same screen: unchanged (modal path changed on the list, hash changed on the same note)", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, LIST, 300);
     expect(enterPhoneScreen(memory, LIST, LIST, null)).toBeNull();
@@ -29,22 +29,22 @@ describe("phone-scroll：手機換畫面時文件捲到哪", () => {
     expect(enterPhoneScreen(memory, SEARCH, SEARCH, null)).toBeNull();
   });
 
-  it("筆記 → 另一篇：頂端；同一篇改了網址（收斂）：不動", () => {
+  it("note -> another note: top; same note with a changed URL (convergence): unchanged", () => {
     const memory = createPhoneScrollMemory();
     expect(enterPhoneScreen(memory, note("/n/a/x"), note("/n/a/y"), null)).toBe(0);
     expect(enterPhoneScreen(memory, note("/n/a/x"), note("/n/a/renamed"), "/n/a/x")).toBeNull();
   });
 
-  it("清單 → 搜尋層：頂端；Cancel 回清單：回到原位", () => {
+  it("list -> search layer: top; Cancel back to the list: returns to the original position", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, LIST, 480);
     expect(enterPhoneScreen(memory, LIST, SEARCH, null)).toBe(0);
-    // 搜尋層裡的捲動不記成清單的位置。
+    // Scrolling inside the search layer is not recorded as the list's position.
     rememberPhoneScroll(memory, SEARCH, 900);
     expect(enterPhoneScreen(memory, SEARCH, LIST, null)).toBe(480);
   });
 
-  it("搜尋層蓋在筆記上：Cancel（同一篇）回到那篇原本的位置；點到同一篇（網址相同）也是", () => {
+  it("search layer over a note: Cancel (same note) returns to that note's original position; so does clicking the same note (same URL)", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, note("/n/a/x"), 1500);
     expect(enterPhoneScreen(memory, note("/n/a/x"), SEARCH, null)).toBe(0);
@@ -52,7 +52,7 @@ describe("phone-scroll：手機換畫面時文件捲到哪", () => {
     expect(enterPhoneScreen(memory, SEARCH, note("/n/a/x"), null)).toBe(1500);
   });
 
-  it("搜尋層蓋在筆記上、點了別篇：頂端；之後再從清單開搜尋層、點回原來那篇：頂端（舊位置不沿用）", () => {
+  it("search layer over a note, clicking another note: top; later opening the search layer from the list and clicking the original note: top (the old position is not reused)", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, note("/n/a/x"), 1500);
     enterPhoneScreen(memory, note("/n/a/x"), SEARCH, null);
@@ -63,7 +63,7 @@ describe("phone-scroll：手機換畫面時文件捲到哪", () => {
     expect(enterPhoneScreen(memory, SEARCH, note("/n/a/x"), null)).toBe(0);
   });
 
-  it("搜尋層蓋在筆記上時按系統返回到清單：回到清單的位置", () => {
+  it("system back from a search layer over a note to the list: returns to the list's position", () => {
     const memory = createPhoneScrollMemory();
     rememberPhoneScroll(memory, LIST, 360);
     enterPhoneScreen(memory, LIST, note("/n/a/x"), null);
@@ -72,7 +72,7 @@ describe("phone-scroll：手機換畫面時文件捲到哪", () => {
     expect(enterPhoneScreen(memory, SEARCH, LIST, null)).toBe(360);
   });
 
-  it("phoneScreenKey：筆記帶路徑，其他只看種類；沒有畫面是空字串", () => {
+  it("phoneScreenKey: notes carry the path, others look at the kind only; no screen is an empty string", () => {
     expect(phoneScreenKey(null)).toBe("");
     expect(phoneScreenKey(LIST)).toBe("list");
     expect(phoneScreenKey(SEARCH)).toBe("search");

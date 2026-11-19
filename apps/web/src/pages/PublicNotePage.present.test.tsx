@@ -27,7 +27,7 @@ vi.mock("react-router", async (importOriginal) => {
     ...mod,
     useNavigate: () => {
       const real = mod.useNavigate();
-      // useMemo：包裝函式的身分跟 real 一樣穩定（像真的 useNavigate），否則把 navigate 放進 effect deps 的碼每次 render 都重跑
+      // useMemo: the wrapper's identity is as stable as the real one (like the real useNavigate); otherwise code that puts navigate in effect deps would rerun on every render
       return useMemo(
         () =>
           ((...args: Parameters<typeof real>) => {
@@ -60,7 +60,7 @@ const V2 = [
   { id: "b", type: "heading", props: { level: 2 }, content: "B" },
 ];
 
-/** 回應可在測試中換；只回公開端點，其餘一律炸（匿名頁不得打需要登入的 API）。 */
+// Only public endpoints are answered; anything else throws, because an anonymous page must not call authenticated APIs.
 const server = vi.hoisted(() => ({ status: 200, body: null as unknown, calls: [] as string[] }));
 function stubFetch() {
   vi.stubGlobal(
@@ -73,8 +73,8 @@ function stubFetch() {
       return Promise.resolve({
         ok: server.status === 200,
         status: server.status,
-        // 每次回**新的**物件（structuredClone），等同真瀏覽器每次 JSON 解析——回同一個參照的話，關掉 structural sharing
-        // 也看不出差別，這一案就沒有鑑別力
+        // Return a **new** object each time (structuredClone), equivalent to a real browser parsing JSON each time - returning the same
+        // reference would make turning off structural sharing indistinguishable, and this case could not detect it.
         json: () => Promise.resolve(server.status === 200 ? structuredClone(server.body) : { error: { code: server.status === 404 ? "not_found" : "internal", message: "x" } }),
       } as unknown as Response);
     }),
@@ -115,11 +115,11 @@ function renderPublic(entry: string) {
 const ready = async () => {
   await waitFor(() => expect(FakeReveal.instances.length).toBeGreaterThan(0));
   const deck = FakeReveal.instances.at(-1)!;
-  await waitFor(() => expect(deck.listenerCount("slidechanged")).toBe(1)); // 已就緒（見 fake-reveal.ts）
+  await waitFor(() => expect(deck.listenerCount("slidechanged")).toBe(1)); // ready (see fake-reveal.ts)
   return deck;
 };
 
-describe("公開頁 × 簡報", () => {
+describe("public page x presentation", () => {
   let fake: FakeFullscreen | null = null;
 
   beforeEach(async () => {
@@ -140,7 +140,7 @@ describe("公開頁 × 簡報", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("頁首「簡報模式」按鈕 → push ?present（帶旗標）、requestFullscreen 早於導頁、外殼出現", async () => {
+  it("the header presentation-mode button -> pushes ?present (with the flag), requestFullscreen comes before the navigation, the shell appears", async () => {
     fake = installFakeFullscreen();
     renderPublic(`/p/${TOKEN}`);
     fireEvent.click(await screen.findByRole("button", { name: "Present" }));
@@ -149,13 +149,13 @@ describe("公開頁 × 簡報", () => {
     expect(await screen.findByRole("dialog", { name: "Public Note — presentation" })).toBeInTheDocument();
   });
 
-  it("簡報中只打公開端點（不打 /api/auth/me、/api/notes）", async () => {
+  it("during presentation only public endpoints are hit (not /api/auth/me or /api/notes)", async () => {
     renderPublic(`/p/${TOKEN}?present`);
     await ready();
     expect(new Set(server.calls)).toEqual(new Set([`GET /api/public/notes/${TOKEN}`]));
   });
 
-  it("test 21：PublicPageFrame 根有 inert；外殼與 overlay 的祖先都沒有", async () => {
+  it("PublicPageFrame root has inert; neither the shell nor any ancestor of the overlay does", async () => {
     renderPublic(`/p/${TOKEN}?present`);
     const deck = await ready();
     expect(screen.getByTestId("public-note-editor").closest("[inert]")).not.toBeNull();
@@ -163,7 +163,7 @@ describe("公開頁 × 簡報", () => {
     expect(deck.el.closest("[inert]")).toBeNull();
   });
 
-  it("重抓到內容不同的新 Y.Doc → 經防抖重切、停在同一張（b 的新索引）", async () => {
+  it("a refetch that brings a new Y.Doc with different content -> re-split after debounce, stays on the same slide (b's new index)", async () => {
     const queryClient = renderPublic(`/p/${TOKEN}?present`);
     const deck = await ready();
     act(() => deck.slide(2, 0)); // b
@@ -176,7 +176,7 @@ describe("公開頁 × 簡報", () => {
     expect(screen.getByTestId("loc").textContent).toBe(`/p/${TOKEN}?present#/b`);
   });
 
-  it("資料相同的重抓不重切（react-query structural sharing 讓 doc 不換）", async () => {
+  it("a refetch with identical data does not re-split (react-query structural sharing keeps the doc unchanged)", async () => {
     const queryClient = renderPublic(`/p/${TOKEN}?present`);
     await ready();
     const calls = vi.mocked(renderDeck).mock.calls.length;
@@ -186,7 +186,7 @@ describe("公開頁 × 簡報", () => {
     expect(vi.mocked(renderDeck).mock.calls.length).toBe(calls);
   });
 
-  it("重抓 404 → 簡報層卸載、顯示失效卡、退出我們的全螢幕", async () => {
+  it("refetch 404 -> the presentation layer unmounts, shows the invalid card, leaves our fullscreen", async () => {
     fake = installFakeFullscreen();
     const queryClient = renderPublic(`/p/${TOKEN}?present`);
     await ready();
@@ -200,7 +200,7 @@ describe("公開頁 × 簡報", () => {
     expect(fake.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("#234 重抓 404 → 網址拿掉 ?present 與投影片 hash；replace 導頁、不新增歷史", async () => {
+  it("#234 refetch 404 -> the URL drops ?present and the slide hash; navigates by replace, no new history entry", async () => {
     const queryClient = renderPublic(`/p/${TOKEN}?present#/b`);
     await ready();
     nav.fn.mockClear();
@@ -212,7 +212,7 @@ describe("公開頁 × 簡報", () => {
     expect(stripCalls).toEqual([[{ pathname: `/p/${TOKEN}`, search: "", hash: "" }, { replace: true }]]);
   });
 
-  it("#234 先 404（非簡報）、之後才導到 ?present#/b → 一樣被 replace 拿掉", async () => {
+  it("#234 404 first (not presenting), then navigating to ?present#/b -> removed by replace just the same", async () => {
     server.status = 404;
     renderPublic(`/p/${TOKEN}`);
     expect(await screen.findByText("This link doesn't exist or is no longer active.")).toBeInTheDocument();
@@ -223,7 +223,7 @@ describe("公開頁 × 簡報", () => {
     expect(replaceCalls).toEqual([[{ pathname: `/p/${TOKEN}`, search: "", hash: "" }, { replace: true }]]);
   });
 
-  it("重抓非 404 失敗 → 簡報層不動（續渲快照）", async () => {
+  it("refetch fails with a non-404 -> the presentation layer is untouched (keeps rendering the snapshot)", async () => {
     const queryClient = renderPublic(`/p/${TOKEN}?present`);
     const deck = await ready();
     server.status = 500;

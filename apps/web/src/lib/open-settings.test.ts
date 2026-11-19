@@ -4,7 +4,7 @@ import type { Location } from "react-router";
 import { openSettings } from "./open-settings";
 
 describe("openSettings", () => {
-  it("導到 /settings/account，並帶目前 location 當 backgroundLocation；手機從項次清單開始（panelStart）", () => {
+  it("navigates to /settings/account with the current location as backgroundLocation; on phone starts from the item list (panelStart)", () => {
     const navigate = vi.fn();
     const location = { pathname: "/n/tester/my-note", search: "?x=1", hash: "#b-1", state: null, key: "k" } as Location;
     openSettings(navigate, location);
@@ -12,7 +12,7 @@ describe("openSettings", () => {
     expect(navigate).toHaveBeenCalledWith("/settings/account", { state: { backgroundLocation: location, panelStart: "list" } });
   });
 
-  it("從選單開（reopenMenu）：state 帶 token，面板用它找得回重開選單的 callback；關掉（forget）後就找不到", () => {
+  it("opening from the menu (reopenMenu): state carries a token, with which the panel finds the callback that reopens the menu; after forgetting (forget) it can no longer be found", () => {
     const navigate = vi.fn();
     const location = { pathname: "/", search: "", hash: "", state: null, key: "k" } as Location;
     const reopen = vi.fn();

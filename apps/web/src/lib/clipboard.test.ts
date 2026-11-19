@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { copyText } from "./clipboard";
 
 /**
- * `navigator.clipboard` 只存在於 secure context（https 或 localhost）。自架最常見的
- * 拓撲之一是明文 http 的區網位址，那裡整個 API 都不存在——所以每個 case 都得能
- * 分別控制「clipboard API 在不在」與「execCommand 成不成功」。
+ * `navigator.clipboard` exists only in secure contexts (https or localhost). One of the most common self-hosted topologies is a
+ * plain-http LAN address, where the whole API is missing, so each case must separately control whether the clipboard API exists
+ * and whether execCommand succeeds.
  */
 function stubClipboard(writeText: (() => Promise<void>) | null): void {
   vi.stubGlobal("navigator", writeText === null ? {} : { clipboard: { writeText } });
@@ -19,13 +19,13 @@ function stubExecCommand(result: boolean | (() => never)): ReturnType<typeof vi.
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  // 兩支 document 方法是用 defineProperty 補上的（jsdom 沒有實作），逐案清掉避免外溢。
+  // The two document methods are added with defineProperty (jsdom does not implement them); clear them per case to avoid leaking.
   Reflect.deleteProperty(document, "execCommand");
   Reflect.deleteProperty(document, "queryCommandEnabled");
 });
 
 describe("copyText", () => {
-  it("secure context：用 navigator.clipboard.writeText", async () => {
+  it("secure context: uses navigator.clipboard.writeText", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     stubClipboard(writeText);
     const execCommand = stubExecCommand(true);
@@ -35,7 +35,7 @@ describe("copyText", () => {
     expect(execCommand).not.toHaveBeenCalled();
   });
 
-  it("非 secure context（沒有 navigator.clipboard）：退回 execCommand 仍然複製得到", async () => {
+  it("non-secure context (no navigator.clipboard): falls back to execCommand and still copies", async () => {
     stubClipboard(null);
     const execCommand = stubExecCommand(true);
 
@@ -43,7 +43,7 @@ describe("copyText", () => {
     expect(execCommand).toHaveBeenCalledWith("copy");
   });
 
-  it("clipboard API 存在但拋錯（權限被拒）：退回 execCommand", async () => {
+  it("clipboard API present but throws (permission denied): falls back to execCommand", async () => {
     stubClipboard(() => Promise.reject(new Error("denied")));
     const execCommand = stubExecCommand(true);
 
@@ -51,14 +51,14 @@ describe("copyText", () => {
     expect(execCommand).toHaveBeenCalledWith("copy");
   });
 
-  it("兩條路都失敗 → false（呼叫端據此顯示手動複製的退路）", async () => {
+  it("both paths fail -> false (the caller uses this to show the manual-copy fallback)", async () => {
     stubClipboard(null);
     stubExecCommand(false);
 
     await expect(copyText("x")).resolves.toBe(false);
   });
 
-  it("execCommand 拋錯也算失敗，不往外拋", async () => {
+  it("an execCommand throw also counts as failure and is not rethrown", async () => {
     stubClipboard(null);
     stubExecCommand(() => {
       throw new Error("nope");
@@ -68,13 +68,12 @@ describe("copyText", () => {
   });
 
   /**
-   * 這條釘的是實測過的真實失敗：Radix 的 modal dialog 會裝一個 document 級
-   * `focusin` 監聽器，只要焦點落到容器外就同步搶回去。textarea 若掛在
-   * `document.body`，`select()` 之後焦點立刻被奪走，`execCommand("copy")` 在沒有
-   * 焦點的 textarea 上執行——Chromium 實測仍回傳 `true` 但剪貼簿是空的，於是使用者
-   * 看到「已複製」卻什麼都沒複製到。所以 textarea 必須掛進焦點所在的 dialog 容器內。
+   * Pins a real failure: Radix's modal dialog installs a document-level `focusin` listener that synchronously grabs focus back whenever
+   * it lands outside the container. A textarea attached to `document.body` loses focus right after `select()`, and
+   * `execCommand("copy")` runs on an unfocused textarea: Chromium still returns `true` but the clipboard is empty, so the user
+   * sees "copied" with nothing copied. So the textarea must be attached inside the dialog container that has focus.
    */
-  it("焦點在 modal dialog 內時，暫時的 textarea 要掛在該 dialog 裡而非 document.body", async () => {
+  it("when focus is inside a modal dialog, the temporary textarea is attached inside that dialog, not document.body", async () => {
     stubClipboard(null);
     const dialog = document.createElement("div");
     dialog.setAttribute("role", "dialog");
@@ -101,12 +100,10 @@ describe("copyText", () => {
   });
 
   /**
-   * D.4：host 選擇器擴為 `[role="dialog"],[role="menu"]`——內文卡的 ⋮ 選單
-   * （Radix DropdownMenu，`role="menu"`）跟 dialog 是同一套 focus-trap surface。
-   * 鏡像上面 dialog 那一案的寫法，換成 `role="menu"` 容器，沒有這條，擴充的分支
-   * 零守衛（改壞了/沒改都測不出來）。
+   * The host selector is widened to `[role="dialog"],[role="menu"]`: the note card's ⋮ menu (Radix DropdownMenu, `role="menu"`) is
+   * the same focus-trap surface as a dialog. Mirrors the dialog case above with a `role="menu"` container, to cover the widened selector branch.
    */
-  it("焦點在 role=menu 容器內時，暫時的 textarea 要掛在該容器裡而非 document.body", async () => {
+  it("when focus is inside a role=menu container, the temporary textarea is attached inside that container, not document.body", async () => {
     stubClipboard(null);
     const menu = document.createElement("div");
     menu.setAttribute("role", "menu");
@@ -133,9 +130,9 @@ describe("copyText", () => {
     menu.remove();
   });
 
-  it("瀏覽器回報 copy 指令不可用（queryCommandEnabled false）→ 一律當失敗，不誤報成功", async () => {
+  it("browser reports the copy command unavailable (queryCommandEnabled false) -> always treated as failure, no false success", async () => {
     stubClipboard(null);
-    stubExecCommand(true); // 焦點被搶走的情境下 Chromium 仍會回 true——不能只信它
+    stubExecCommand(true); // Chromium still returns true when focus has been stolen, so it cannot be trusted alone
     Object.defineProperty(document, "queryCommandEnabled", {
       value: vi.fn(() => false),
       configurable: true,
@@ -145,7 +142,7 @@ describe("copyText", () => {
     await expect(copyText("x")).resolves.toBe(false);
   });
 
-  it("fallback 不留下暫時的 textarea", async () => {
+  it("fallback leaves no temporary textarea behind", async () => {
     stubClipboard(null);
     stubExecCommand(true);
 

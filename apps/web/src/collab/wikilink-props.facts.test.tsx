@@ -10,18 +10,16 @@ import { YDOC_FRAGMENT, canonicalizeElements, topLevelContainers } from "@knoteb
 import "@/i18n";
 import { noteSchema } from "./schema";
 
-// BlockNote／y-prosemirror 的事實，量到的結果即斷言。
-// ⚠ 量測案的期望值（MEASURED）是【推】假說：實跑與假說不同時，照實測改 MEASURED、把差異寫進回報——
-// 不得為了湊假說改產品碼。CHANGELOG ③ 依這裡的結果決定寫不寫、怎麼寫。
+// Facts about BlockNote / y-prosemirror: the expected values are the observed behaviour, so when they change,
+// update the expectation, not the product code.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; any per repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同一個別名也拿來標 PM 的 Node（prosemirror-model 不是 apps/web 的依賴）與 prop callback，沿用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the same alias also types PM nodes (prosemirror-model is not a dependency of apps/web) and prop callbacks; keep any
 type AnyView = any;
 
 const TARGET = "22222222-2222-4222-8222-222222222222";
 
-/** 照 `NoteEditor` 的真實掛載：`BlockNoteView` 在 QueryClient＋Router 底下（WikilinkInline 用 useNotes／useNavigate）。 */
 function mountInView(editor: AnyEditor) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
   return render(
@@ -33,7 +31,6 @@ function mountInView(editor: AnyEditor) {
   );
 }
 
-/** 舊文件：`p1` 段落（帶段落預設屬性）＝「before 」＋wikilink（只有 targetNoteId／snapshotTitle 兩個屬性）＋「 after」；`p2` 段落＝「second」。 */
 function legacyDoc(): Y.Doc {
   const doc = new Y.Doc();
   const group = new Y.XmlElement("blockGroup");
@@ -41,8 +38,8 @@ function legacyDoc(): Y.Doc {
   const c1 = new Y.XmlElement("blockContainer");
   c1.setAttribute("id", "p1");
   const p1 = new Y.XmlElement("paragraph");
-  // 段落自己的預設屬性先寫齊（編輯器寫過的舊筆記本來就有）：否則 move 時段落補寫預設值也會讓 p1 的正規化變，
-  // MEASURED_CANONICAL.move 就分不出是不是 wikilink 補寫造成的。
+  // Write the paragraph's default props up front (notes written by the editor already have them): otherwise `move` would also
+  // backfill paragraph defaults, changing p1's normalization, and MEASURED_CANONICAL.move could not tell whether the wikilink backfill caused it.
   p1.setAttribute("backgroundColor", "default");
   p1.setAttribute("textAlignment", "left");
   p1.setAttribute("textColor", "default");
@@ -83,12 +80,11 @@ function collabEditor(doc: Y.Doc): AnyEditor {
     withCollaboration({
       schema: noteSchema,
       collaboration: { provider: { awareness: undefined }, fragment: doc.getXmlFragment(YDOC_FRAGMENT), user: { id: "u1", name: "U", color: "#123456" } },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整 schema 三元組（同 markdown-link.rule.test.tsx）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema generic triple (same as markdown-link.rule.test.tsx)
     } as any),
   ) as AnyEditor;
 }
 
-/** 游標放到 p1 段落「before 」的 `be|fore` 處（PM 位置以文字搜尋算，不寫死）。 */
 function caretInBefore(editor: AnyEditor): void {
   const view: AnyView = editor._tiptapEditor.view;
   let target = -1;
@@ -105,16 +101,15 @@ function pressEnter(editor: AnyEditor): void {
 }
 
 type Op = "open" | "type" | "split" | "move" | "paste";
-/** 【推】假說（`mappedIdentity` 成立的子元素被跳過，只有節點被重建時才補寫）。實測不同就照實改。 */
+/** Whether the old wikilink's Y attributes get the default props backfilled (children whose `mappedIdentity` holds are skipped; only a rebuilt node is backfilled). */
 const MEASURED: Record<Op, boolean> = { open: false, type: false, split: true, move: true, paste: true };
 /**
- * 【推】假說：p1 的正規化（＝MCP 段落指紋的輸入）是否因補寫而變。只量 open／move（兩者都不改 p1 的文字）。
- * 與 MEASURED 分開記：`canonicalizeElements` 若略去「等於預設值」的屬性，補寫了也不會變——兩者可能不一致，各自照實測。
- * CHANGELOG ③ 只看這一組。
+ * Whether p1's normalization (the input of the MCP paragraph fingerprint) changes because of the backfill. Only open / move are
+ * recorded (neither changes p1's text). Kept apart from MEASURED: if `canonicalizeElements` omits attributes equal to the default,
+ * a backfill would not change it, so the two can disagree.
  */
 const MEASURED_CANONICAL: Record<"open" | "move", boolean> = { open: false, move: true };
 
-/** p1 container 底下（原件）各 wikilink 的 Y 屬性鍵（排序）。 */
 function p1WikilinkAttrKeys(doc: Y.Doc): string[][] {
   const out: string[][] = [];
   for (const c of topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).filter((x) => x.getAttribute("id") === "p1")) {
@@ -157,7 +152,7 @@ async function measure(op: Op): Promise<{
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
-    // 編輯器讀舊 Y.Doc 時，舊 wikilink 的新 props 讀成預設 ""。
+    // When the editor reads the old Y.Doc, the old wikilink's new props read as the default "".
     const legacyProps =
       (editor.getBlock("p1")?.content as Array<{ type: string; props?: Record<string, unknown> }> | undefined)?.find((n) => n.type === "wikilink")?.props ?? null;
     const p1Text = ((editor.getBlock("p1")?.content ?? []) as Array<{ type: string; text?: string }>).map((n) => (n.type === "text" ? n.text : "")).join("");
@@ -168,10 +163,10 @@ async function measure(op: Op): Promise<{
   }
 }
 
-describe("#269 事實：新 props 在真編輯器（BlockNoteView 掛載）裡的往返", () => {
+describe("#269 facts: round trip of the new props in a real editor (BlockNoteView mounted)", () => {
   afterEach(() => document.body.replaceChildren());
 
-  it("blocks 序列化（blocksToFullHTML＝internal serializer；不是 blocknote/html 剪貼簿那份）→ tryParseHTMLToBlocks 保留 label 與 anchorBlockId", () => {
+  it("blocks serialization (blocksToFullHTML = the internal serializer, not the blocknote/html clipboard one) -> tryParseHTMLToBlocks keeps label and anchorBlockId", () => {
     const editor = BlockNoteEditor.create({
       schema: noteSchema,
       initialContent: [{ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: TARGET, snapshotTitle: "S", label: "L", anchorBlockId: "b1" } }] }],
@@ -187,9 +182,9 @@ describe("#269 事實：新 props 在真編輯器（BlockNoteView 掛載）裡�
     }
   });
 
-  it("站內複製貼上：blocknote/html＝view.serializeForClipboard 的 innerHTML 帶兩個 data-*，經 pasteHTML(html, true)（raw）貼出的 wikilink 帶 label 與 anchorBlockId", () => {
-    // BlockNote 0.52.1 copyExtension：`blocknote/html` = `view.serializeForClipboard(selection.content()).dom.innerHTML`；
-    // 貼上時 `blocknote/html` 一律走 `editor.pasteHTML(html, true)`（PM 的 raw paste，不重解析成 blocks）。
+  it("in-site copy/paste: blocknote/html = innerHTML of view.serializeForClipboard carries two data-* attributes, and a wikilink pasted through pasteHTML(html, true) (raw) keeps label and anchorBlockId", () => {
+    // BlockNote 0.52.1 copyExtension: `blocknote/html` = `view.serializeForClipboard(selection.content()).dom.innerHTML`;
+    // on paste, `blocknote/html` always goes through `editor.pasteHTML(html, true)` (PM raw paste, not re-parsed into blocks).
     const editor = BlockNoteEditor.create({
       schema: noteSchema,
       initialContent: [
@@ -200,7 +195,6 @@ describe("#269 事實：新 props 在真編輯器（BlockNoteView 掛載）裡�
     const mountedView = mountInView(editor);
     try {
       const view: AnyView = editor._tiptapEditor.view;
-      // 選取第一個段落的全部 inline content（位置以節點搜尋算，不寫死）。
       let range: { from: number; to: number } | null = null;
       view.state.doc.descendants((node: AnyView, pos: number) => {
         if (range === null && node.type.name === "paragraph") range = { from: pos + 1, to: pos + 1 + node.content.size };
@@ -221,18 +215,18 @@ describe("#269 事實：新 props 在真編輯器（BlockNoteView 掛載）裡�
   });
 });
 
-describe("#269 量測（CHANGELOG ③）：舊 wikilink 被新分頁補寫預設屬性的條件", () => {
+describe("#269 facts: when a newer tab backfills default props onto an old wikilink", () => {
   afterEach(() => document.body.replaceChildren());
 
   for (const op of ["open", "type", "split", "move", "paste"] as const) {
-    it(`${op}：Y 屬性補寫＝${String(MEASURED[op])}（量到的結果即斷言）`, async () => {
+    it(`${op}: Y attribute backfill is ${String(MEASURED[op])}`, async () => {
       const r = await measure(op);
-      // 前置：type 的「不補寫」只有在字真的打進去時才有意義。
+      // Precondition: type's "not backfilled" only means something if the text was really typed.
       if (op === "type") expect(r.p1Text).toContain("bexfore");
       expect(r.backfilled).toBe(MEASURED[op]);
-      // paste 的「補寫＝true」是貼出的副本帶齊屬性；來源 p1 原件不被補寫（複製不碰來源）。
+      // For paste, backfilled = true because the pasted copy carries all attributes; the source p1 is not backfilled (copying does not touch the source).
       if (op === "paste") expect(r.p1OriginalAttrKeys).toEqual([["snapshotTitle", "targetNoteId"]]);
-      // open／move 不改 p1 的文字：p1 的正規化（＝MCP 段落指紋的輸入）有沒有變，只取決於屬性補寫。
+      // open / move do not change p1's text, so whether p1's normalization (the input of the MCP paragraph fingerprint) changed depends only on the attribute backfill.
       if (op === "open" || op === "move") expect(r.p1CanonicalChanged).toBe(MEASURED_CANONICAL[op]);
       if (op === "open") expect(r.legacyProps).toMatchObject({ targetNoteId: TARGET, snapshotTitle: "Legacy Title", label: "", anchorBlockId: "" });
     });

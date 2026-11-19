@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * `lib/mermaid.ts` 的單元測試。
+ * Unit tests for `lib/mermaid.ts`.
  *
- * ⚠ **mermaid 本體在 jsdom 裡跑不起來**：`mermaid.render()` 會暫時往 `document.body` 插一個
- * 隱藏 div 做文字量測（mermaid 11 型別檔 148-151 行逐字說明），而 jsdom 沒有 layout、
- * 沒有 `SVGElement.getBBox`。所以這一層的測試一律把 `mermaid` 模組整個 mock 掉，只驗**我們**
- * 的行為（id 產生、initialize 參數、錯誤不外拋、主題對映）。真正的渲染由 e2e 覆蓋。
+ * mermaid itself cannot run in jsdom: `mermaid.render()` temporarily inserts a hidden div into `document.body` for text measurement
+ * (documented in the mermaid 11 type file), and jsdom has no layout and no `SVGElement.getBBox`. So these tests mock the whole
+ * `mermaid` module and verify only OUR behaviour (id generation, initialize arguments, errors not thrown outward, theme mapping).
+ * Real rendering is covered by e2e.
  */
 
 const renderMock = vi.hoisted(() => vi.fn());
@@ -14,9 +14,9 @@ const initializeMock = vi.hoisted(() => vi.fn());
 const parseMock = vi.hoisted(() => vi.fn());
 
 /**
- * `default` 用 getter：`renderMermaid` 在 try 裡解構 `{ default: mermaid } = await import("mermaid")`，
- * 讀 `default` 的那一刻就是「載入完成」。`onLoad` 讓測試在那一刻插手（模擬下載期間被取消），
- * `loadError` 讓它丟錯（模擬 chunk 載入失敗）。
+ * `default` is a getter: `renderMermaid` destructures `{ default: mermaid } = await import("mermaid")` inside a try, so reading
+ * `default` is the moment loading completes. `onLoad` lets a test intervene at that moment (simulating cancellation during the
+ * download), `loadError` makes it throw (simulating a chunk load failure).
  */
 const loadHooks = vi.hoisted(() => ({ onLoad: null as (() => void) | null, loadError: null as Error | null }));
 
@@ -36,44 +36,43 @@ beforeEach(() => {
   parseMock.mockReset();
   parseMock.mockResolvedValue(true);
   loadHooks.onLoad = null;
+  // After the network recovers a redraw succeeds (the failure was not cached).
   loadHooks.loadError = null;
   resetMermaidForTests();
 });
 
-/** 一個由測試手動 resolve 的 promise。 */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
   return { promise, resolve };
 }
 
-/** 等到 `predicate()` 成立（佇列每項之間會讓出一個 macrotask，所以要等 macrotask，不是只 flush microtask）。 */
+/** Waits until `predicate()` holds (the queue yields a macrotask between items, so wait for macrotasks, not only flush microtasks). */
 async function until(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 50 && !predicate(); i++) await new Promise((r) => setTimeout(r, 0));
   expect(predicate()).toBe(true);
 }
 
-/** 像 mermaid 一樣把 id 寫進輸出各處的假 SVG（根 id、style 選擇器、marker 與 url() 引用）。 */
+/** Fake SVG that writes the id everywhere like mermaid does (root id, style selectors, marker and url() references). */
 function svgFor(id: string): string {
   return `<svg id="${id}"><style>#${id} .node{fill:red}</style><marker id="${id}_flowchart-v2-pointEnd"/><path marker-end="url(#${id}_flowchart-v2-pointEnd)"/></svg>`;
 }
 
 describe("nextMermaidId", () => {
-  it("每次回傳不同的 id", () => {
+  it("returns a different id each time", () => {
     const ids = new Set([nextMermaidId(), nextMermaidId(), nextMermaidId()]);
     expect(ids.size).toBe(3);
   });
 
-  it("id 是合法的 DOM id（字母開頭、只含 [A-Za-z0-9-]）", () => {
-    // mermaid 會把這個 id 拿去當 DOM 元素的 id 與 SVG 內部的 id 前綴，
-    // 數字開頭或含特殊字元會產生無效的選擇器。
+  it("the id is a valid DOM id (starts with a letter, contains only [A-Za-z0-9-])", () => {
+    // mermaid uses this id as a DOM element id and as the SVG-internal id prefix; a leading digit or special characters produce invalid selectors.
     expect(nextMermaidId()).toMatch(/^[A-Za-z][A-Za-z0-9-]*$/);
   });
 
-  it("不使用 crypto.randomUUID", () => {
-    // 這個 repo 的正當拓撲包含 LAN plain-http（非 secure context），那裡
-    // `crypto.randomUUID` **不存在**——`ui/toast.tsx` 已經為同一個原因改用模組層級計數器。
-    // jsdom/Node 有 polyfill，所以只有這條斷言擋得住這個雷。
+  it("does not use crypto.randomUUID", () => {
+    // This repo's legitimate topologies include LAN plain-http (not a secure context), where `crypto.randomUUID` does not exist
+    // (`ui/toast.tsx` switched to a module-level counter for the same reason). jsdom/Node have a polyfill, so this assertion is
+    // what detects the problem.
     const spy = vi.spyOn(globalThis.crypto, "randomUUID");
     nextMermaidId();
     expect(spy).not.toHaveBeenCalled();
@@ -82,50 +81,50 @@ describe("nextMermaidId", () => {
 });
 
 describe("renderMermaid", () => {
-  it("成功時回傳 svg", async () => {
+  it("returns the svg on success", async () => {
     renderMock.mockResolvedValue({ svg: "<svg id='x'></svg>" });
     const result = await renderMermaid("graph TD; A-->B;", "light");
     expect(result).toEqual({ ok: true, svg: "<svg id='x'></svg>" });
   });
 
-  it("語法錯誤時回傳 ok:false 與訊息，不外拋", async () => {
-    // `suppressErrorRendering: true` 下，語法錯由 `render()` 自己 throw。
+  it("a syntax error returns ok:false with the message and does not throw", async () => {
+    // With suppressErrorRendering: true, render() itself throws on a syntax error.
     renderMock.mockRejectedValue(new Error("Parse error on line 2"));
     const result = await renderMermaid("not a diagram", "light");
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toContain("Parse error");
   });
 
-  it("⚠ 以 suppressErrorRendering:true 初始化（否則 render 語法錯會把錯誤圖留在 document.body）", async () => {
-    // 用瀏覽器看畫面才發現：預設設定下 `render()` 的拋錯路徑會在 body 留下一張
-    // 「Syntax error in text」的圖，逃出元件邊界、每重繪一次多一張。當時靠先 `parse()` 擋；
-    // #344 改成這個設定（mermaid 在兩條拋錯路徑都先清掉暫時容器），body 沒有殘留由 e2e 06 在真瀏覽器驗。
+  it("initializes with suppressErrorRendering:true (otherwise a render syntax error leaves the error diagram in document.body)", async () => {
+    // By default the throwing path of `render()` leaves a "Syntax error in text" diagram in body, which escapes the component boundary
+    // and adds one per redraw. This used to be avoided by calling `parse()` first; #344 switched to this setting (mermaid clears the
+    // temporary container on both throwing paths), and that nothing is left in body is checked in a real browser by `e2e/tests/06-mermaid.spec.ts`.
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("graph TD; A-->B;", "light");
     expect(initializeMock).toHaveBeenCalledWith(expect.objectContaining({ suppressErrorRendering: true }));
   });
 
-  it("不先 parse（render 內部本來就會 parse，先 parse 是每張圖重工一次）", async () => {
+  it("does not parse first (render parses internally anyway, so parsing first repeats the work for every diagram)", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("graph TD; A-->B;", "light");
     expect(renderMock).toHaveBeenCalledTimes(1);
     expect(parseMock).not.toHaveBeenCalled();
   });
 
-  it("非 Error 的 reject 也收得住", async () => {
+  it("a non-Error reject is also handled", async () => {
     renderMock.mockRejectedValue("boom");
     const result = await renderMermaid("x", "light");
     expect(result.ok).toBe(false);
   });
 
-  it("以 securityLevel:strict 與 htmlLabels:false 初始化", async () => {
-    // 圖是用 dangerouslySetInnerHTML 塞進 DOM 的，這兩個設定是第一道防線
-    // （strict 模式背後是 mermaid 內建的 dompurify）。第二道是呼叫端對產出 SVG 的斷言。
+  it("initializes with securityLevel:strict and htmlLabels:false", async () => {
+    // The diagram is put into the DOM with dangerouslySetInnerHTML, so these two settings are the first line of defense (strict mode is
+    // backed by mermaid's built-in dompurify). The second is the caller's assertion on the produced SVG.
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("graph TD; A-->B;", "light");
     expect(initializeMock).toHaveBeenCalledWith(
-      // `htmlLabels` 兩個位置都要：全域鍵是 mermaid 11 的新位置，`flowchart.*` 是舊版相容。
-      // 只斷言其中一個的話，另一個被刪掉不會轉紅（突變實測）。
+      // `htmlLabels` is needed in both places: the global key is the new location in mermaid 11, `flowchart.*` is the legacy-compatible one.
+      // Asserting only one of them means deleting the other would not turn the test red.
       expect.objectContaining({
         securityLevel: "strict",
         startOnLoad: false,
@@ -135,7 +134,7 @@ describe("renderMermaid", () => {
     );
   });
 
-  it("主題對映：light → default、dark → dark", async () => {
+  it("theme mapping: light -> default, dark -> dark", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("graph TD; A-->B;", "light");
     expect(initializeMock).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "default" }));
@@ -144,36 +143,36 @@ describe("renderMermaid", () => {
     expect(initializeMock).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark" }));
   });
 
-  it("同一個主題連續渲染只 initialize 一次", async () => {
+  it("rendering the same theme repeatedly initializes once", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("a", "light");
     await renderMermaid("b", "light");
     expect(initializeMock).toHaveBeenCalledTimes(1);
   });
 
-  it("主題換手時重新 initialize", async () => {
+  it("re-initializes when the theme changes", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("a", "light");
     await renderMermaid("a", "dark");
     expect(initializeMock).toHaveBeenCalledTimes(2);
   });
 
-  it("不呼叫 bindFunctions（圖裡的 click 宣告不得變成真的 handler）", async () => {
+  it("does not call bindFunctions (click declarations in a diagram must not become real handlers)", async () => {
     const bindFunctions = vi.fn();
     renderMock.mockResolvedValue({ svg: "<svg></svg>", bindFunctions });
     await renderMermaid("graph TD; A-->B; click A callback", "light");
     expect(bindFunctions).not.toHaveBeenCalled();
   });
 
-  it("空白原始碼直接回 ok:false，不打 mermaid", async () => {
+  it("blank source returns ok:false directly without calling mermaid", async () => {
     const result = await renderMermaid("   \n  ", "light");
     expect(result.ok).toBe(false);
     expect(renderMock).not.toHaveBeenCalled();
   });
 });
 
-describe("序列化佇列（#344 C）", () => {
-  it("一次只畫一張：前一張沒畫完，下一張不開始", async () => {
+describe("serialization queue (#344)", () => {
+  it("one at a time: the next does not start until the previous finishes", async () => {
     const first = deferred<{ svg: string }>();
     renderMock.mockImplementationOnce(() => first.promise).mockResolvedValueOnce({ svg: "<svg>b</svg>" });
 
@@ -189,8 +188,8 @@ describe("序列化佇列（#344 C）", () => {
     expect(renderMock).toHaveBeenCalledTimes(2);
   });
 
-  it("兩張之間讓出主執行緒：前一張畫完時排的 macrotask，會在下一張開始之前執行", async () => {
-    // 這就是「使用者的輸入插得進兩張圖之間」：mermaid 自己的佇列在兩張之間只走 microtask。
+  it("yields the main thread between diagrams: a macrotask queued when the previous one finishes runs before the next starts", async () => {
+    // This is what lets user input slip in between two diagrams: mermaid's own queue goes through only microtasks between them.
     const order: string[] = [];
     renderMock.mockImplementation(async (_id: string, code: string) => {
       order.push(`render:${code}`);
@@ -201,7 +200,7 @@ describe("序列化佇列（#344 C）", () => {
     expect(order).toEqual(["render:a", "macrotask", "render:b"]);
   });
 
-  it("每張之前先等一個 frame（畫好的圖先上螢幕、IntersectionObserver 先回報）：frame 沒來之前不開始", async () => {
+  it("waits one frame before each (so the drawn diagram reaches the screen and IntersectionObserver reports first): does not start until the frame arrives", async () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
     try {
@@ -224,7 +223,7 @@ describe("序列化佇列（#344 C）", () => {
     }
   });
 
-  it("分頁在背景（rAF 不跑）時不等 frame，佇列不會卡住", async () => {
+  it("when the tab is in the background (rAF does not run) it does not wait for a frame, and the queue does not stall", async () => {
     const raf = vi.fn();
     vi.stubGlobal("requestAnimationFrame", raf);
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
@@ -238,7 +237,7 @@ describe("序列化佇列（#344 C）", () => {
     }
   });
 
-  it("排隊中被取消的項目輪到時不畫、以 AbortError reject，且不擋後面的項目", async () => {
+  it("an item cancelled while queued is not drawn when its turn comes, rejects with AbortError, and does not block later items", async () => {
     const first = deferred<{ svg: string }>();
     renderMock.mockImplementationOnce(() => first.promise).mockResolvedValue({ svg: "<svg>c</svg>" });
 
@@ -256,7 +255,7 @@ describe("序列化佇列（#344 C）", () => {
     expect(renderMock.mock.calls.map((call) => call[1])).toEqual(["a", "c"]);
   });
 
-  it("輪到時已被取消的項目直接跳過，不付讓出的那一個 frame", async () => {
+  it("an item already cancelled when its turn comes is skipped without paying the yielded frame", async () => {
     let frames = 0;
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       frames += 1;
@@ -271,15 +270,15 @@ describe("序列化佇列（#344 C）", () => {
       const c = renderMermaid("c", "light");
       await expect(b).rejects.toMatchObject({ name: "AbortError" });
       await c;
-      expect(frames).toBe(1); // 只有 c 等了 frame
+      expect(frames).toBe(1); // only c waited for a frame
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("rAF 一直沒來（等待途中分頁被切到背景）：100 ms 保底後照樣開始", async () => {
+  it("rAF never arrives (the tab went to the background while waiting): starts after the 100 ms fallback anyway", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    vi.stubGlobal("requestAnimationFrame", () => 0); // 永遠不回呼
+    vi.stubGlobal("requestAnimationFrame", () => 0); // never calls back
     try {
       renderMock.mockResolvedValue({ svg: "<svg></svg>" });
       const p = renderMermaid("a", "light");
@@ -293,46 +292,45 @@ describe("序列化佇列（#344 C）", () => {
     }
   });
 
-  it("讓出主執行緒的那段期間被取消，也不畫", async () => {
-    // 先排的 timer 先跑：abort 落在「通過第一次檢查之後、讓出結束之前」。
+  it("cancelled during the yield is not drawn either", async () => {
     const controller = new AbortController();
+    // The timer queued first runs first: the abort lands after the first check and before the yield ends.
     setTimeout(() => controller.abort(), 0);
     const p = renderMermaid("a", "light", { signal: controller.signal });
     await expect(p).rejects.toMatchObject({ name: "AbortError" });
     expect(renderMock).not.toHaveBeenCalled();
   });
 
-  it("下載 mermaid 期間被取消（捲走、卸載）：載完也不畫，以 AbortError reject", async () => {
+  it("cancelled while mermaid is downloading (scrolled away, unmounted): not drawn after loading, rejects with AbortError", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     const controller = new AbortController();
-    loadHooks.onLoad = () => controller.abort(); // 取消落在「開始載入之後、載入完成之前」
+    loadHooks.onLoad = () => controller.abort(); // the cancel lands between the start of loading and its completion
     const p = renderMermaid("a", "light", { signal: controller.signal });
     await expect(p).rejects.toMatchObject({ name: "AbortError" });
     expect(renderMock).not.toHaveBeenCalled();
     expect(initializeMock).not.toHaveBeenCalled();
   });
 
-  it("mermaid chunk 載入失敗：轉成 ok:false（不 reject——簡報模式不帶 signal，靠的是永不 reject）", async () => {
+  it("mermaid chunk load failure: converted to ok:false (does not reject - presentation mode passes no signal and relies on never rejecting)", async () => {
     loadHooks.loadError = new Error("Failed to fetch dynamically imported module");
     await expect(renderMermaid("a", "light")).resolves.toEqual({ ok: false, message: "Failed to fetch dynamically imported module" });
     expect(renderMock).not.toHaveBeenCalled();
 
-    // 網路恢復後重畫要能成功（失敗沒有被快取、佇列沒有卡住）
     loadHooks.loadError = null;
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await expect(renderMermaid("a", "light")).resolves.toEqual({ ok: true, svg: "<svg></svg>" });
   });
 
-  it("沒給 signal 的呼叫（簡報模式）照常 resolve", async () => {
+  it("a call without a signal (presentation mode) resolves normally", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await expect(renderMermaid("a", "light")).resolves.toEqual({ ok: true, svg: "<svg></svg>" });
   });
 });
 
-describe("結果快取（#344 B）", () => {
+describe("result cache (#344)", () => {
   const idOf = (svg: string) => /<svg id="([^"]+)"/.exec(svg)![1]!;
 
-  it("同主題同原始碼第二次直接拿快取、不再 render，而且 id 換成新的（同頁兩張不撞 id）", async () => {
+  it("second request for the same theme and source takes the cache without rendering, and the id is replaced with a new one (two on one page do not collide)", async () => {
     renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
     const first = await renderMermaid("graph TD; A-->B;", "light");
     const second = await renderMermaid("graph TD; A-->B;", "light");
@@ -344,11 +342,10 @@ describe("結果快取（#344 B）", () => {
     const secondSvg = second.ok ? second.svg : "";
     const secondId = idOf(secondSvg);
     expect(secondId).not.toBe(firstId);
-    // 每一處引用（根 id、style 選擇器、marker id、url() 引用）都換掉了
     expect(secondSvg).toBe(svgFor(secondId));
   });
 
-  it("快取命中不排隊：前面有張圖正在畫，命中的照樣立即回來", async () => {
+  it("a cache hit does not queue: even while another diagram is drawing, a hit returns immediately", async () => {
     renderMock.mockResolvedValueOnce({ svg: "<svg>x</svg>" });
     await renderMermaid("x", "light");
 
@@ -362,7 +359,7 @@ describe("結果快取（#344 B）", () => {
     await busy;
   });
 
-  it("同頁兩張相同原始碼同時請求：只 render 一次，第二張拿到換過 id 的副本", async () => {
+  it("two identical sources requested at once on one page: rendered once, the second gets a copy with a replaced id", async () => {
     renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
     const [a, b] = await Promise.all([renderMermaid("same", "light"), renderMermaid("same", "light")]);
     expect(renderMock).toHaveBeenCalledTimes(1);
@@ -372,25 +369,25 @@ describe("結果快取（#344 B）", () => {
     expect(b.ok && b.svg).toBe(svgFor(idB));
   });
 
-  it("主題是鍵的一部分：同原始碼換主題要重畫", async () => {
+  it("theme is part of the key: the same source with another theme redraws", async () => {
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("a", "light");
     await renderMermaid("a", "dark");
     expect(renderMock).toHaveBeenCalledTimes(2);
   });
 
-  it("失敗不快取（chunk 載入失敗這類暫時性錯誤之後要能重試成功）", async () => {
+  it("failures are not cached (a transient error such as a chunk load failure must be retryable)", async () => {
     renderMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ svg: "<svg></svg>" });
     expect((await renderMermaid("a", "light")).ok).toBe(false);
     expect(await renderMermaid("a", "light")).toEqual({ ok: true, svg: "<svg></svg>" });
     expect(renderMock).toHaveBeenCalledTimes(2);
   });
 
-  it(`LRU：上限 ${MERMAID_CACHE_LIMIT} 筆，最久沒用的先丟，命中會刷新順序`, async () => {
+  it(`LRU: limit of ${MERMAID_CACHE_LIMIT} entries, the least recently used is dropped first, a hit refreshes the order`, async () => {
     renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
     for (let i = 0; i < MERMAID_CACHE_LIMIT; i++) await renderMermaid(`c${i}`, "light");
-    await renderMermaid("c0", "light"); // 命中：c0 變最新，c1 變最舊
-    await renderMermaid("fresh", "light"); // 超過上限：丟掉 c1
+    await renderMermaid("c0", "light"); // hit: c0 becomes newest, c1 becomes oldest
+    await renderMermaid("fresh", "light"); // over the limit: drops c1
     expect(renderMock).toHaveBeenCalledTimes(MERMAID_CACHE_LIMIT + 1);
 
     expect(cachedMermaid("c0", "light")).not.toBeNull();
@@ -399,35 +396,35 @@ describe("結果快取（#344 B）", () => {
     expect(cachedMermaid("fresh", "light")).not.toBeNull();
   });
 
-  it("cachedMermaid：沒畫過回 null，空原始碼回 null", () => {
+  it("cachedMermaid: returns null when never drawn, and null for empty source", () => {
     expect(cachedMermaid("never", "light")).toBeNull();
     expect(cachedMermaid("   ", "light")).toBeNull();
   });
 });
 
 describe("rewriteMermaidId", () => {
-  it("⚠ 不吃後續數字：換 mermaid-1 不會動到 mermaid-12", () => {
+  it("does not consume following digits: replacing mermaid-1 does not touch mermaid-12", () => {
     const svg = `<svg id="mermaid-1"><style>#mermaid-1 .a{}</style><g id="mermaid-12"/><path marker-end="url(#mermaid-1_arrow)"/></svg>`;
     expect(rewriteMermaidId(svg, "mermaid-1", "mermaid-40")).toBe(
       `<svg id="mermaid-40"><style>#mermaid-40 .a{}</style><g id="mermaid-12"/><path marker-end="url(#mermaid-40_arrow)"/></svg>`,
     );
   });
 
-  it("前面緊接英數字的不換（不是這個 id 的引用）；字串開頭與相鄰兩處都換", () => {
+  it("not replaced when immediately preceded by an alphanumeric (not a reference to this id); replaced at string start and for two adjacent occurrences", () => {
     expect(rewriteMermaidId("xmermaid-1 chart-title-mermaid-1", "mermaid-1", "mermaid-2")).toBe("xmermaid-1 chart-title-mermaid-2");
     expect(rewriteMermaidId("mermaid-1 #mermaid-1,#mermaid-1", "mermaid-1", "mermaid-2")).toBe("mermaid-2 #mermaid-2,#mermaid-2");
   });
 
-  it("⚠ 不用 lookbehind（Safari 16.0–16.3 不支援，寫在 new RegExp 字串裡也不會被轉譯）", () => {
+  it("does not use lookbehind (Safari 16.0-16.3 does not support it, and writing it in a new RegExp string is not transpiled)", () => {
     expect(rewriteMermaidId.toString()).not.toMatch(/\(\?<[!=]/);
   });
 });
 
-describe("directive 鎖定", () => {
-  it("secure 清單鎖住會打開 HTML／CSS 注入面的鍵，且保留 mermaid 內建的六個", async () => {
-    // ⚠ 這組鎖**不是**在承諾「圖表不會載入外部資源」——那個能力跟筆記裡用網址嵌入圖片
-    // 同一等級，只擋 mermaid 沒有意義（見 `mermaidConfig` 的說明）。鎖它們是為了讓標籤
-    // 維持 SVG `<text>`、不讓圖注入任意 CSS。
+describe("directive lock", () => {
+  it("the secure list locks the keys that open HTML/CSS injection surfaces and keeps mermaid's six built-in ones", async () => {
+    // This lock does not promise that diagrams cannot load external resources: that is on a par with embedding an image by URL in a note,
+    // so blocking only mermaid is pointless (see the `mermaidConfig` comment). It is locked so labels stay SVG `<text>` and diagrams
+    // cannot inject arbitrary CSS.
     renderMock.mockResolvedValue({ svg: "<svg></svg>" });
     await renderMermaid("graph TD; A-->B;", "light");
 
@@ -446,8 +443,8 @@ describe("directive 鎖定", () => {
         "altFontFamily",
       ]),
     );
-    // ⚠ **不該**鎖的兩個：sanitize 會遞迴，巢狀鍵已被涵蓋；鎖整個物件只會讓
-    // `flowchart.curve` 與官方文件教的 `theme:"base"` ＋ 自訂色靜默失效（實測）。
+    // Two that should NOT be locked: sanitize recurses so nested keys are already covered, and locking the whole object would
+    // silently break `flowchart.curve` and the `theme:"base"` + custom colors that the official docs teach.
     expect(config.secure).not.toContain("flowchart");
     expect(config.secure).not.toContain("themeVariables");
   });

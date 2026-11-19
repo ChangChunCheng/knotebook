@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("customColorSelectors (#378)", () => {
-  it("CC1 inline 兩條、block 三條，inline 不含 :has", () => {
+  it("inline gets two rules, block gets three; inline does not include :has", () => {
     const inline = customColorSelectors("inline", "textColor", "#ff6600");
     expect(inline).toEqual([
       '[data-style-type="textColor"][data-value="#ff6600"]',
@@ -33,28 +33,28 @@ describe("customColorSelectors (#378)", () => {
 });
 
 describe("ensureCustomColor (#378)", () => {
-  it("CC2 重複登記只建一個 style、三條規則", () => {
+  it("registering twice creates one style element and three rules", () => {
     ensureCustomColor("block", "textColor", "#ff6600");
     ensureCustomColor("block", "textColor", "#ff6600");
     expect(document.querySelectorAll(`#${CUSTOM_COLORS_STYLE_ID}`)).toHaveLength(1);
     expect(styleEl()!.sheet!.cssRules.length).toBe(3);
   });
 
-  it("CC3b 型別之外的 prop 不產生規則", () => {
+  it("props outside the type produce no rule", () => {
     ensureCustomColor("block", 'x"], *, [data-x="' as never, "#ff6600");
     ensureCustomColor("inline", "color" as never, "#ff6600");
     expect(styleEl()?.sheet?.cssRules.length ?? 0).toBe(0);
   });
 
-  // 含大括號的值即使放行，jsdom 的 insertRule 也會自己拒絕；這案只證明「最後不會有規則」，
-  // 擋下注入的是下一案（單一規則內跳出屬性選擇器、不靠解析器拒絕）。
-  it("CC3 含大括號的值不留下規則（解析器也會拒絕）", () => {
+  // A value containing braces would be rejected by jsdom's insertRule on its own; this case only proves that no rule is left in the end.
+  // The next case is what blocks injection (escaping the attribute selector within a single rule, without relying on the parser rejecting it).
+  it("a value with braces leaves no rule (the parser would also reject it)", () => {
     ensureCustomColor("block", "textColor", '#ff6600"] , * { color: red } [');
     expect(styleEl()?.sheet?.cssRules.length ?? 0).toBe(0);
   });
 
   it.each(["#FF6600", "rgb(255, 102, 0)", "red;x:y", 'x"], *, [data-x="', "#f60"])(
-    "CC3 非正規形不產生規則：%s",
+    "a non-canonical value produces no rule: %s",
     (bad) => {
       ensureCustomColor("block", "textColor", bad);
       ensureCustomColor("inline", "backgroundColor", bad);
@@ -62,7 +62,7 @@ describe("ensureCustomColor (#378)", () => {
     },
   );
 
-  it("CC4 computed：:has 讓子 block 繼承、inline 底色、簡報內文字色", () => {
+  it("computed: :has lets child blocks inherit, inline background, text color inside slides", () => {
     document.body.innerHTML =
       '<div class="bn-block"><div class="bn-block-content" data-text-color="#ff6600"></div>' +
       '<div class="bn-block-group"><div class="bn-block"><p id="child">child</p></div></div></div>' +
@@ -76,7 +76,7 @@ describe("ensureCustomColor (#378)", () => {
     expect(getComputedStyle(document.getElementById("pres")!).color).toBe("rgb(0, 0, 255)");
   });
 
-  it("CC5 :has 規則被瀏覽器拒絕時，其餘規則仍登記、不丟例外", () => {
+  it("when the browser rejects the :has rule, the other rules are still registered and no exception is thrown", () => {
     const orig = CSSStyleSheet.prototype.insertRule;
     vi.spyOn(CSSStyleSheet.prototype, "insertRule").mockImplementation(function (this: CSSStyleSheet, rule: string, index?: number) {
       if (rule.includes(":has(")) throw new DOMException("bad", "SyntaxError");
@@ -97,13 +97,13 @@ const flush = async () => {
 const OBSERVER_KEY = Symbol.for("knotebook.customColors.observer");
 
 describe("installCustomColors (#378)", () => {
-  it("OB1 安裝前已存在的色碼元素，安裝時全量掃描登記", () => {
+  it("color-code elements that exist before install are registered by a full scan on install", () => {
     document.body.innerHTML = '<span data-style-type="textColor" data-value="#ff6600">x</span>';
     installCustomColors();
     expect(selectors()).toContain('[data-style-type="textColor"][data-value="#ff6600"]');
   });
 
-  it("OB2 安裝後直接掛上 body 的裸 span 也登記（元素本身要比對選擇器）", async () => {
+  it("a bare span attached directly to body after install is also registered (the element itself must be matched against the selector)", async () => {
     installCustomColors();
     const span = document.createElement("span");
     span.setAttribute("data-style-type", "textColor");
@@ -113,7 +113,7 @@ describe("installCustomColors (#378)", () => {
     expect(selectors()).toContain('[data-style-type="textColor"][data-value="#ff6600"]');
   });
 
-  it("OB3 安裝後掛上含 block 色碼後代的容器，登記 block 規則", async () => {
+  it("a container attached after install with block-color descendants registers the block rules", async () => {
     installCustomColors();
     const div = document.createElement("div");
     div.innerHTML = '<p data-text-color="#00ff00"></p>';
@@ -122,7 +122,7 @@ describe("installCustomColors (#378)", () => {
     expect(selectors()).toContain('[data-text-color="#00ff00"]');
   });
 
-  it("OB4 屬性改成色碼時登記；非顏色的 data-value 不登記", async () => {
+  it("registers when an attribute becomes a color code; a non-color data-value is not registered", async () => {
     document.body.innerHTML =
       '<p id="p" data-background-color="red"></p><span id="l" data-style-type="link" data-value="#123456"></span>';
     installCustomColors();
@@ -135,7 +135,7 @@ describe("installCustomColors (#378)", () => {
     expect(sels.some((s) => s.includes("#123456") || s.includes("#abcdef"))).toBe(false);
   });
 
-  it("OB4b 非正規形的屬性值不登記", async () => {
+  it("a non-canonical attribute value is not registered", async () => {
     installCustomColors();
     const p = document.createElement("p");
     p.setAttribute("data-text-color", "#FF6600");
@@ -144,7 +144,7 @@ describe("installCustomColors (#378)", () => {
     expect(styleEl()?.sheet?.cssRules.length ?? 0).toBe(0);
   });
 
-  it("OB5 連裝兩次：只有一個 style，且重裝會斷開舊 observer", () => {
+  it("installing twice leaves one style element, and reinstalling disconnects the old observer", () => {
     document.body.innerHTML = '<span data-style-type="textColor" data-value="#ff6600">x</span>';
     const spy = vi.spyOn(MutationObserver.prototype, "disconnect");
     installCustomColors();

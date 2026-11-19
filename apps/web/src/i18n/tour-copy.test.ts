@@ -9,9 +9,9 @@ import tourEnRaw from "./tour.en.json?raw";
 import tourZhTWRaw from "./tour.zh-TW.json?raw";
 
 /**
- * 功能導覽的 lazy 字串包（`tourGuide.*`，只由導覽的 lazy 鏈經 `tour-strings.ts` 註冊）。
- * 主 JSON 的 parity（`index.test.ts`）不涵蓋這兩檔，所以 parity、無空字串、無重複鍵、與主檔不重疊都在這裡。
- * 骨架同 shortcuts-copy.test.ts。
+ * Lazy string bundle for the feature tour (`tourGuide.*`, registered only by the tour's lazy chain via `tour-strings.ts`).
+ * The main-JSON parity test (`index.test.ts`) does not cover these two files, so parity, no empty strings, no duplicate keys and no overlap with the main file are checked here.
+ * Same skeleton as shortcuts-copy.test.ts.
  */
 
 function leaves(value: unknown, prefix = ""): [string, unknown][] {
@@ -19,7 +19,7 @@ function leaves(value: unknown, prefix = ""): [string, unknown][] {
   return Object.entries(value).flatMap(([key, child]) => leaves(child, prefix ? `${prefix}.${key}` : key));
 }
 
-/** 同 `index.test.ts`：`JSON.parse` 遇重複鍵只留最後一份，直接掃原始文字。 */
+/** Same as `index.test.ts`: `JSON.parse` keeps only the last of duplicate keys, so scan the raw text. */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
   const stack: { keys: Set<string> | null; expectKey: boolean }[] = [];
@@ -50,28 +50,28 @@ const BUNDLES = [
   ["zh-TW", tourZhTW],
 ] as const;
 
-describe("兩語系鍵集合相同、頂層只有 tourGuide", () => {
-  it("鍵集合相同", () => {
+describe("both locales have the same key set, top level is only tourGuide", () => {
+  it("same key set", () => {
     const keys = (bundle: unknown) => leaves(bundle).map(([k]) => k).sort();
     expect(keys(tourZhTW)).toEqual(keys(tourEn));
   });
 
-  it("頂層恰一個鍵 tourGuide", () => {
+  it("exactly one top-level key, tourGuide", () => {
     expect(Object.keys(tourEn)).toEqual(["tourGuide"]);
     expect(Object.keys(tourZhTW)).toEqual(["tourGuide"]);
   });
 });
 
-describe("每個值都是非空字串", () => {
+describe("every value is a non-empty string", () => {
   it.each(BUNDLES)("%s", (_name, bundle) => {
     const bad = leaves(bundle).filter(([, v]) => typeof v !== "string" || v.trim().length === 0);
     expect(bad.map(([k]) => k)).toEqual([]);
   });
 });
 
-// 讀原始文字：deep merge 的 addResourceBundle 會把 tourGuide 併進 i18n 初始化時那份主 JSON 物件（同一個 import），
-// 所以 import 進來的主 JSON 在 tour-strings 載入後已帶 tourGuide 鍵。
-describe("主 JSON 沒有 tourGuide 頂層鍵", () => {
+// Read the raw text: deep-merge addResourceBundle merges tourGuide into the main JSON object from i18n init (the same import),
+// so after tour-strings loads, the imported main JSON already has a tourGuide key.
+describe("main JSON has no tourGuide top-level key", () => {
   it.each([
     ["en", enRaw],
     ["zh-TW", zhTWRaw],
@@ -80,7 +80,7 @@ describe("主 JSON 沒有 tourGuide 頂層鍵", () => {
   });
 });
 
-describe("包沒有重複鍵", () => {
+describe("bundle has no duplicate keys", () => {
   it.each([
     ["en", tourEnRaw],
     ["zh-TW", tourZhTWRaw],
@@ -89,18 +89,18 @@ describe("包沒有重複鍵", () => {
   });
 });
 
-// 「導覽」兩個字已經是窄視窗側欄抽屜的名稱（`sidebar.drawerTitle`、`sidebar.openDrawer`），
-// 這個功能一律寫「功能導覽」，免得和抽屜混在一起。
-describe("zh-TW 沒有不帶「功能」的「導覽」", () => {
-  it("每個值", () => {
+// 「導覽」 alone is already the name of the narrow-viewport sidebar drawer (`sidebar.drawerTitle`, `sidebar.openDrawer`);
+// this feature is always written 「功能導覽」 so the two are not confused.
+describe("zh-TW has no 「導覽」 without 「功能」", () => {
+  it("every value", () => {
     const bad = leaves(tourZhTW).filter(([, v]) => typeof v === "string" && /(?<!功能)導覽/.test(v));
     expect(bad).toEqual([]);
   });
 });
 
-// 最後一站那句提問要獨立成一把鍵：卡片的兩顆鈕以 `aria-describedby` 指向它，併在站點說明裡的話，
-// 報讀器每顆鈕都會把整段說明念一次。
-describe("最後一站的提問是獨立的鍵，不在站點說明裡", () => {
+// The last stop's question must be its own key: the card's two buttons point to it with `aria-describedby`; if it were
+// merged into the stop description, a screen reader would read the whole description for each button.
+describe("the last stop's question is its own key, not part of the stop description", () => {
   const QUESTION = { en: "Keep the sample note, or move it to the trash?", "zh-TW": "要保留示範筆記，還是移到垃圾桶？" } as const;
   it.each(BUNDLES)("%s", (name, bundle) => {
     expect(bundle.tourGuide.keepOrDeleteSample).toBe(QUESTION[name]);
@@ -109,8 +109,8 @@ describe("最後一站的提問是獨立的鍵，不在站點說明裡", () => {
   });
 });
 
-describe("註冊後可用、不覆寫主檔", () => {
-  it("包裡的鍵查得到，主檔的鍵照舊", () => {
+describe("available after registration, main file not overridden", () => {
+  it("bundle keys resolve, and the main file's keys are unchanged", () => {
     expect(i18n.t("tourGuide.progress", { lng: "en", n: 1, total: 7 })).toBe("1 / 7");
     expect(i18n.t("userMenu.help", { lng: "zh-TW" })).toBe("說明");
     expect(i18n.t("userMenu.logout", { lng: "en" })).toBe("Log out");

@@ -9,8 +9,8 @@ import foldersEnRaw from "./folders.en.json?raw";
 import foldersZhTWRaw from "./folders.zh-TW.json?raw";
 
 /**
- * 資料夾對話框的 lazy 字串包（`folderDialogs.*`，只由 FolderLazy 鏈經 `folder-strings.ts` 註冊；形照 `select-copy.test.ts`）。
- * 主 JSON 的 parity（`index.test.ts`）不涵蓋這兩檔，所以 parity、逐字、與主檔不重疊、無重複鍵都在這裡。
+ * Lazy string bundle for the folder dialogs (`folderDialogs.*`, registered only by the FolderLazy chain via `folder-strings.ts`; same shape as `select-copy.test.ts`).
+ * The main-JSON parity test (`index.test.ts`) does not cover these two files, so parity, literal text, no overlap with the main file and no duplicate keys are checked here.
  */
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -22,7 +22,7 @@ function get(obj: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-/** 同 `select-copy.test.ts`：`JSON.parse` 遇重複鍵只留最後一份，直接掃原始文字。 */
+/** Same as `select-copy.test.ts`: `JSON.parse` keeps only the last of duplicate keys, so scan the raw text. */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
   const stack: { keys: Set<string> | null; expectKey: boolean }[] = [];
@@ -48,18 +48,18 @@ function duplicateKeys(raw: string): string[] {
   return dups;
 }
 
-describe("FC1 folders 包：兩語系鍵集合相同、頂層只有 folderDialogs", () => {
-  it("鍵集合相同", () => {
+describe("folders bundle: both locales have the same key set, top level is only folderDialogs", () => {
+  it("same key set", () => {
     expect(flattenKeys(foldersZhTW).sort()).toEqual(flattenKeys(foldersEn).sort());
   });
 
-  it("頂層恰一個鍵 folderDialogs", () => {
+  it("exactly one top-level key, folderDialogs", () => {
     expect(Object.keys(foldersEn)).toEqual(["folderDialogs"]);
     expect(Object.keys(foldersZhTW)).toEqual(["folderDialogs"]);
   });
 });
 
-describe("FC2 資料夾文案字面", () => {
+describe("folder copy literals", () => {
   const ZH: Record<string, string> = {
     "folderDialogs.renameTitle": "重新命名資料夾",
     "folderDialogs.nameLabel": "資料夾名稱",
@@ -92,8 +92,8 @@ describe("FC2 資料夾文案字面", () => {
   for (const [key, text] of Object.entries(EN)) it(`en ${key}`, () => expect(get(foldersEn, key)).toBe(text));
 });
 
-// 讀原始文字：deep merge 的 addResourceBundle 會把 folderDialogs 併進 i18n 初始化時那份主 JSON 物件。
-describe("FC3 主 JSON 沒有 folderDialogs 頂層鍵（字串只進 lazy 包）", () => {
+// Read the raw text: deep-merge addResourceBundle merges folderDialogs into the main JSON object from i18n init.
+describe("main JSON has no folderDialogs top-level key (strings go only into the lazy bundle)", () => {
   it.each([
     ["en", enRaw],
     ["zh-TW", zhTWRaw],
@@ -102,14 +102,14 @@ describe("FC3 主 JSON 沒有 folderDialogs 頂層鍵（字串只進 lazy 包）
   });
 });
 
-describe("FC4 註冊後可用", () => {
-  it("folderDialogs.deleted：en／zh-TW", () => {
+describe("available after registration", () => {
+  it("folderDialogs.deleted: en / zh-TW", () => {
     expect(i18n.t("folderDialogs.deleted", { count: 2, lng: "en" })).toBe("Folder deleted; 2 notes moved to the trash");
     expect(i18n.t("folderDialogs.deleted", { count: 2, lng: "zh-TW" })).toBe("已刪除資料夾，2 篇筆記已移到垃圾桶");
   });
 });
 
-describe("FC5 每個 _one 都有 _other", () => {
+describe("every _one has an _other", () => {
   it.each([
     ["en", foldersEn],
     ["zh-TW", foldersZhTW],
@@ -120,7 +120,7 @@ describe("FC5 每個 _one 都有 _other", () => {
   });
 });
 
-describe("FC6 folders 包沒有重複鍵", () => {
+describe("folders bundle has no duplicate keys", () => {
   it.each([
     ["en", foldersEnRaw],
     ["zh-TW", foldersZhTWRaw],

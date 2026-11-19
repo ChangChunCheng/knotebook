@@ -12,8 +12,6 @@ import { folderDto } from "@/test/folder-fixtures";
 import { personalNote } from "@/test/select-fixtures";
 import { placeNoteWithUndo } from "./note-place";
 
-// ⋮ 同空間移動＋復原。真的 QueryClient、假 fetch 只收 PUT /api/notes/n1/folder。
-
 function fakeResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: () => Promise.resolve(body) } as unknown as Response;
 }
@@ -23,7 +21,6 @@ const fail = (status: number, code: string): Reply => ({ status, body: { error: 
 
 const PUT_URL = "/api/notes/n1/folder";
 
-/** 依序回 replies；記下每次的 body。 */
 function stubPut(replies: Reply[]) {
   const bodies: unknown[] = [];
   vi.stubGlobal(
@@ -59,7 +56,7 @@ function setup() {
   return { queryClient, t: i18n.t.bind(i18n) };
 }
 
-/** 目前畫面上的 toast（Radix Toast Root 是 `<li>`）。 */
+/** The toast currently on screen (the Radix Toast Root is an `<li>`). */
 function toastItems(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>("ol li"));
 }
@@ -85,7 +82,7 @@ describe("placeNoteWithUndo", () => {
     act(() => dismissAllToasts());
   });
 
-  it("NP1 放進 A1：PUT {folderId:A1} → toast「Moved to “A1”」有 Undo；A、A1 展開；['note','n1'] 是回應 dto", async () => {
+  it("moving into A1: PUT {folderId:A1} -> 'Moved to' toast naming A1, with Undo; A and A1 expand; ['note','n1'] is the response dto", async () => {
     const bodies = stubPut([{ status: 200, body: PLACED_A1 }]);
     const { queryClient, t } = setup();
     setCollapsed("folder:A", true);
@@ -101,7 +98,7 @@ describe("placeNoteWithUndo", () => {
     expect(queryClient.getQueryData(["note", "n1"])).toEqual(PLACED_A1);
   });
 
-  it("NP2 回根層：body {folderId:null}、toast「Moved to “Top level”」", async () => {
+  it("back to the root: body {folderId:null}, 'Moved to' toast naming Top level", async () => {
     const bodies = stubPut([{ status: 200, body: PLACED_ROOT }]);
     const { queryClient, t } = setup();
 
@@ -114,7 +111,7 @@ describe("placeNoteWithUndo", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("NP3 404 folder_not_found → destructive toast「Folder not found.」、沒有 Undo、['folders'] 被失效、只送一次", async () => {
+  it("404 folder_not_found -> destructive toast 'Folder not found.', no Undo, ['folders'] invalidated, sent once", async () => {
     const bodies = stubPut([fail(404, "folder_not_found")]);
     const { queryClient, t } = setup();
     expect(queryClient.getQueryState(["folders"])?.isInvalidated).toBe(false);
@@ -128,7 +125,7 @@ describe("placeNoteWithUndo", () => {
     expect(bodies).toHaveLength(1);
   });
 
-  it("NP4 按 Undo → PUT {folderId:<from>}；成功後原 toast 消失、沒有新 toast", async () => {
+  it("pressing Undo -> PUT {folderId:<from>}; on success the original toast disappears and no new toast appears", async () => {
     const bodies = stubPut([
       { status: 200, body: PLACED_A1 },
       { status: 200, body: PLACED_B },
@@ -146,7 +143,7 @@ describe("placeNoteWithUndo", () => {
     expect(toastItems()).toHaveLength(0);
   });
 
-  it("NP4 復原回 404 → destructive 錯誤 toast、復原只送一次", async () => {
+  it("Undo returning 404 -> destructive error toast, Undo sent once", async () => {
     const bodies = stubPut([{ status: 200, body: PLACED_A1 }, fail(404, "folder_not_found")]);
     const { queryClient, t } = setup();
     await act(() => placeNoteWithUndo({ noteId: "n1", from: "B", to: { folderId: "A1", name: "A1" }, index: INDEX, queryClient, t }));
@@ -159,7 +156,7 @@ describe("placeNoteWithUndo", () => {
     expect(bodies).toEqual([{ folderId: "A1" }, { folderId: "B" }]);
   });
 
-  it("NP7 zh：name＝資料夾短名「A」→ 畫面出現「已移到「A」」與「復原」", async () => {
+  it("zh: name = the folder's short name 'A' -> the screen shows 「已移到「A」」 and 「復原」", async () => {
     await i18n.changeLanguage("zh-TW");
     stubPut([{ status: 200, body: { ...PLACED_A1, folderId: "A" } }]);
     const { queryClient, t } = setup();
@@ -170,7 +167,7 @@ describe("placeNoteWithUndo", () => {
     expect(screen.getByRole("button", { name: "復原" })).toBeInTheDocument();
   });
 
-  it("NP6 409 folder_too_deep 的錯誤字帶入上限、不含 {{max}}", async () => {
+  it("409 folder_too_deep: the error text carries the limit and does not contain {{max}}", async () => {
     stubPut([fail(409, "folder_too_deep")]);
     const { queryClient, t } = setup();
 
@@ -182,11 +179,10 @@ describe("placeNoteWithUndo", () => {
   });
 });
 
-// 拖曳的放置：optimistic 時 PUT 前先改 ["notes"]，失敗回滾；⋮ 不帶 optimistic，行為不變。
+// Drag-drop placement: with optimistic, ['notes'] is updated before the PUT and rolled back on failure; ⋮ does not use optimistic, so its behaviour is unchanged.
 describe("placeNoteWithUndo optimistic", () => {
   const CACHED: NoteDto[] = [personalNote({ id: "n1", title: "Note", folderId: null }), personalNote({ id: "n2", title: "Other", folderId: "B" })];
 
-  /** PUT 先掛著，respond(reply) 才回。 */
   function stubDeferredPut() {
     const bodies: unknown[] = [];
     let respond: (reply: Reply) => void = () => {
@@ -221,7 +217,7 @@ describe("placeNoteWithUndo optimistic", () => {
     act(() => dismissAllToasts());
   });
 
-  it("NP-O1 optimistic：PUT 回應前 ['notes'] 裡 n1 的 folderId 已是 A1、其他篇不變；回應後照常 toast", async () => {
+  it("optimistic: before the PUT responds, n1's folderId in ['notes'] is already A1 and the other notes are unchanged; after the response the toast shows as usual", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -236,7 +232,7 @@ describe("placeNoteWithUndo optimistic", () => {
     expect(await screen.findByText("Moved to “A1”", { exact: true })).toBeInTheDocument();
   });
 
-  it("NP-O2 optimistic＋PUT 404 → ['notes'] 回到快照、錯誤 toast「Folder not found.」", async () => {
+  it("optimistic + PUT 404 -> ['notes'] returns to the snapshot, error toast 'Folder not found.'", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -252,7 +248,7 @@ describe("placeNoteWithUndo optimistic", () => {
     expect(toastRoot("Folder not found.")).toHaveClass("bg-destructive");
   });
 
-  it("NP-O3 不帶 optimistic（⋮）→ PUT 回應前 ['notes'] 不變", async () => {
+  it("without optimistic (the kebab menu) -> ['notes'] is unchanged before the PUT responds", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -265,7 +261,7 @@ describe("placeNoteWithUndo optimistic", () => {
     await act(() => done);
   });
 
-  it("NP-O4 optimistic 但 ['notes'] 沒有快取 → 照常送 PUT、失敗也不寫入 ['notes']", async () => {
+  it("optimistic but ['notes'] has no cache -> the PUT is still sent, and on failure ['notes'] is not written", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
 
@@ -278,7 +274,7 @@ describe("placeNoteWithUndo optimistic", () => {
     expect(await screen.findByText("You don't have permission to do that.", { exact: true })).toBeInTheDocument();
   });
 
-  it("NP-O5 optimistic＋PUT 期間別處改了 n2 → PUT 失敗只還原 n1，n2 的新值留著", async () => {
+  it("optimistic + n2 changed elsewhere during the PUT -> a failed PUT restores only n1, n2's new value stays", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -293,7 +289,7 @@ describe("placeNoteWithUndo optimistic", () => {
     expect(folderOf(queryClient, "n2")).toBe("A");
   });
 
-  it("NP-O8 optimistic＋PUT 403 → ['notes'] 被失效（被取消的重抓要補回來）", async () => {
+  it("optimistic + PUT 403 -> ['notes'] is invalidated (the cancelled refetch must be made up)", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -307,7 +303,7 @@ describe("placeNoteWithUndo optimistic", () => {
     expect(queryClient.getQueryState(["notes"])?.isInvalidated).toBe(true);
   });
 
-  it("NP-O6 optimistic 只取消 ['notes'] 本身：進行中的 ['notes','n1','versions'] 照常 fetching", async () => {
+  it("optimistic cancels ['notes'] itself: an in-flight ['notes','n1','versions'] keeps fetching", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);
@@ -322,7 +318,7 @@ describe("placeNoteWithUndo optimistic", () => {
     await act(() => done);
   });
 
-  it("NP-O7 optimistic：PUT 回應前目標 A1 與祖先 A 已寫成展開", async () => {
+  it("optimistic: before the PUT responds, the target A1 and its ancestor A are already written as expanded", async () => {
     const { bodies, respond } = stubDeferredPut();
     const { queryClient, t } = setup();
     queryClient.setQueryData(["notes"], CACHED);

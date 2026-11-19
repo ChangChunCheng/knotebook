@@ -26,11 +26,11 @@ describe("backTarget", () => {
 });
 
 describe("historyIdx", () => {
-  it("讀 history.state.idx", () => {
+  it("reads history.state.idx", () => {
     stubHistoryState({ usr: null, key: "k", idx: 4 });
     expect(historyIdx()).toBe(4);
   });
-  it("state 為 null 或 idx 不是數字 → null", () => {
+  it("state null or idx not a number -> null", () => {
     stubHistoryState(null);
     expect(historyIdx()).toBeNull();
     stubHistoryState({ idx: "3" });
@@ -39,13 +39,13 @@ describe("historyIdx", () => {
 });
 
 describe("recordListIdx / readListIdx", () => {
-  it("記下目前序號，讀得回來", () => {
+  it("records the current index and reads it back", () => {
     stubHistoryState({ idx: 3 });
     recordListIdx();
     expect(readListIdx()).toBe(3);
   });
 
-  it("目前序號讀不到時不覆寫舊記錄", () => {
+  it("does not overwrite the old record when the current index cannot be read", () => {
     stubHistoryState({ idx: 3 });
     recordListIdx();
     stubHistoryState(null);
@@ -53,7 +53,7 @@ describe("recordListIdx / readListIdx", () => {
     expect(readListIdx()).toBe(3);
   });
 
-  it("沒記錄、內容不是整數 → null", () => {
+  it("no record, or content not an integer -> null", () => {
     expect(readListIdx()).toBeNull();
     sessionStorage.setItem("nav.listIdx", "abc");
     expect(readListIdx()).toBeNull();
@@ -61,7 +61,7 @@ describe("recordListIdx / readListIdx", () => {
     expect(readListIdx()).toBeNull();
   });
 
-  it("sessionStorage 讀寫丟錯 → readListIdx 回 null、recordListIdx 不丟", () => {
+  it("sessionStorage read/write throwing -> readListIdx returns null, recordListIdx does not throw", () => {
     stubHistoryState({ idx: 3 });
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");

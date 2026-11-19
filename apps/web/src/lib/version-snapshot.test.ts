@@ -9,7 +9,7 @@ import { forkLiveBlocks, ydocBytesToBlocks } from "./version-snapshot";
 function docWith(blocks: unknown[]): Y.Doc {
   const doc = new Y.Doc();
   const writer = BlockNoteEditor.create({ schema: noteSchema });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote PartialBlock 泛型三元組，repo 慣例
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote PartialBlock generic triple, repo convention
   blocksToYXmlFragment(writer, blocks as any, doc.getXmlFragment(YDOC_FRAGMENT));
   return doc;
 }
@@ -23,8 +23,8 @@ const BLOCKS = [
   },
 ];
 
-describe("version-snapshot（不 mount 讀快照）", () => {
-  it("ydocBytesToBlocks：快照 bytes → blocks，id、型別、wikilink 的 targetNoteId 全保留", () => {
+describe("version-snapshot (reads a snapshot without mounting)", () => {
+  it("ydocBytesToBlocks: snapshot bytes -> blocks, with id, type and the wikilink's targetNoteId all kept", () => {
     const bytes = Y.encodeStateAsUpdate(docWith(BLOCKS));
     const blocks = ydocBytesToBlocks(bytes);
     expect(blocks.map((b) => [b.id, b.type])).toEqual([
@@ -35,11 +35,11 @@ describe("version-snapshot（不 mount 讀快照）", () => {
     expect(inline.find((x) => x.type === "wikilink")?.props?.targetNoteId).toBe("note-2");
   });
 
-  it("真空文件（fragment 沒有任何節點）→ []", () => {
+  it("a truly empty document (the fragment has no node) -> []", () => {
     expect(ydocBytesToBlocks(Y.encodeStateAsUpdate(new Y.Doc()))).toEqual([]);
   });
 
-  it("forkLiveBlocks：讀得到活文件內容，且活文件零寫入（沒有任何 update 事件、state vector 不變）", () => {
+  it("forkLiveBlocks: reads the live document's content with zero writes to it (no update event, state vector unchanged)", () => {
     const live = docWith(BLOCKS);
     const sv = Y.encodeStateVector(live);
     let updates = 0;
@@ -52,7 +52,7 @@ describe("version-snapshot（不 mount 讀快照）", () => {
     expect(Array.from(Y.encodeStateVector(live))).toEqual(Array.from(sv));
   });
 
-  it("forkLiveBlocks：活文件含 schema 不認得的節點時，讀取不會把刪除寫回活文件（fork 承重）", () => {
+  it("forkLiveBlocks: when the live document has a node the schema does not recognize, reading does not write a deletion back to the live document (what the fork is there for)", () => {
     const live = docWith(BLOCKS);
     const group = live.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement;
     const bogus = new Y.XmlElement("kbNoSuchNode");
@@ -69,12 +69,12 @@ describe("version-snapshot（不 mount 讀快照）", () => {
     expect(group.toArray()).toContain(bogus);
   });
 
-  it("forkLiveBlocks 讀的是當下快照：先前讀出的結果不隨活文件改動，再讀才看到新狀態", () => {
+  it("forkLiveBlocks reads the current snapshot: an earlier result does not follow later changes of the live document; reading again sees the new state", () => {
     const live = docWith(BLOCKS);
     const before = forkLiveBlocks(live);
+    // The top-level child is the whole blockGroup, so delete(0, 1) empties the document.
     live.getXmlFragment(YDOC_FRAGMENT).delete(0, 1);
     expect(before.map((b) => b.id)).toEqual(["h1", "p1"]);
-    // 頂層唯一子節點是整個 blockGroup，delete(0,1) 等於清空文件
     expect(forkLiveBlocks(live)).toEqual([]);
   });
 });

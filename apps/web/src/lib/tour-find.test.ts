@@ -9,22 +9,22 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("導覽的三種版面", () => {
+describe("the tour's three layouts", () => {
   it.each([
     ["docked", "wide"],
     ["overlay", "floating"],
     ["phone", "phone"],
-  ] as const)("%s → %s", (tier: LayoutTier, layout) => {
+  ] as const)("%s -> %s", (tier: LayoutTier, layout) => {
     stubLayoutTier(tier);
     expect(tourLayout()).toBe(layout);
   });
 
-  it("沒有 matchMedia 時當寬視窗", () => {
+  it("without matchMedia, treated as a wide window", () => {
     vi.stubGlobal("matchMedia", undefined);
     expect(tourLayout()).toBe("wide");
   });
 
-  it("跨過 640 或 1280 時重畫", () => {
+  it("redraws when crossing 640 or 1280", () => {
     const tier = stubLayoutTier("docked");
     function Probe() {
       return createElement("p", null, useTourLayout());
@@ -42,7 +42,7 @@ describe("導覽的三種版面", () => {
   });
 });
 
-describe("導覽結束後要聚焦的使用者選單觸發鈕", () => {
+describe("user menu trigger to focus after the tour ends", () => {
   function mount() {
     document.body.innerHTML = `
       <button data-kb-tour-target="drawerButton">Open sidebar</button>
@@ -54,19 +54,19 @@ describe("導覽結束後要聚焦的使用者選單觸發鈕", () => {
     };
   }
 
-  it("寬視窗：側欄的帳號列", () => {
+  it("wide window: the account row in the sidebar", () => {
     stubLayoutTier("docked");
     const { account } = mount();
     expect(findUserMenuReturnTarget()).toBe(account);
   });
 
-  it("側欄浮動：開抽屜的側欄鈕（使用者選單在已經關掉的抽屜裡）", () => {
+  it("floating sidebar: the sidebar button that opens the drawer (the user menu is inside the closed drawer)", () => {
     stubLayoutTier("overlay");
     const { hamburger } = mount();
     expect(findUserMenuReturnTarget()).toBe(hamburger);
   });
 
-  it("手機：清單頂列的頭像；在筆記畫面（清單不可互動）時查不到", () => {
+  it("phone: the avatar in the list's top bar; not found on the note screen (the list is not interactive)", () => {
     stubLayoutTier("phone");
     document.body.innerHTML = `<aside><button data-kb-tour-target="userMenu">Ann</button></aside>`;
     const avatar = document.querySelector("aside button");
@@ -75,7 +75,7 @@ describe("導覽結束後要聚焦的使用者選單觸發鈕", () => {
     expect(findUserMenuReturnTarget()).toBeNull();
   });
 
-  it("每次呼叫都重查：換殼後拿到的是新掛上的那顆", () => {
+  it("queried on every call: after a shell swap it returns the newly mounted one", () => {
     stubLayoutTier("docked");
     mount();
     document.body.innerHTML = `<aside><button data-kb-tour-target="userMenu">Ann</button></aside>`;

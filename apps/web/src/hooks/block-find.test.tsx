@@ -10,9 +10,10 @@ import { clearSearchMark } from "./search-mark";
 import { findMatchBlock, sectionUnits } from "./block-find";
 
 /**
- * #93：點片段跳到命中的 block。DOM 照 BlockNote 的形（`VersionPreview.tsx` 的實測註解）：
- * `.bn-editor > .bn-block-group > .bn-block-outer[data-id] > .bn-block > .bn-block-content[data-content-type] > .bn-inline-content`，
- * 巢狀子 block 在 `.bn-block > .bn-block-group > .bn-block-outer`；並排列是 `.bn-block-group` 下的 `[data-node-type="columnList"]`。
+ * #93: clicking a snippet jumps to the matching block. DOM follows BlockNote's shape (see `VersionPreview.tsx`):
+ * `.bn-editor > .bn-block-group > .bn-block-outer[data-id] > .bn-block > .bn-block-content[data-content-type] > .bn-inline-content`,
+ * nested child blocks sit in `.bn-block > .bn-block-group > .bn-block-outer`; a side-by-side row is
+ * `[data-node-type="columnList"]` under `.bn-block-group`.
  */
 type B = { id: string; type?: string; level?: number; text?: string; children?: B[]; extra?: string; inner?: string; attrs?: string; toggle?: "open" | "collapsed" };
 const H = (id: string, level: number, text: string): B => ({ id, type: "heading", level, text });
@@ -46,8 +47,8 @@ afterEach(() => {
 });
 const idOf = (el: HTMLElement | null) => el?.getAttribute("data-id") ?? null;
 
-describe("foldedIndexOf（標亮與跳轉共用的比對）", () => {
-  it("大小寫折疊、全形大寫折成全形小寫、全形≠半形（server 的 lower() 不做 NFKC）、長度會變的字 → -1", () => {
+describe("foldedIndexOf (matching shared by highlighting and jumping)", () => {
+  it("case folds, fullwidth uppercase folds to fullwidth lowercase, fullwidth != halfwidth (the server's lower() does no NFKC), length-changing characters -> -1", () => {
     expect(foldedIndexOf("Hello NEEDLE", "needle")).toBe(6);
     expect(foldedIndexOf("ＡＢＣ", "ａｂｃ")).toBe(0);
     expect(foldedIndexOf("ABC", "ａｂｃ")).toBe(-1);
@@ -55,8 +56,8 @@ describe("foldedIndexOf（標亮與跳轉共用的比對）", () => {
   });
 });
 
-describe("sectionUnits（切法與 note-sections.ts 的 sectionize 一致）", () => {
-  it("同級或更高級 heading 開新段；較深的子標題不另成段；_top 是第一個 heading 之前", () => {
+describe("sectionUnits (splits the same way as sectionize in note-sections.ts)", () => {
+  it("a heading of the same or a higher level starts a new section; deeper subheadings do not; _top is everything before the first heading", () => {
     root = buildRoot([P("t1", "top a"), H("h1", 1, "One"), P("a", "a"), H("h2", 2, "Sub"), P("b", "b"), H("h3", 1, "Two"), P("c", "c")]);
     expect(sectionUnits(root, "_top")!.map(idOf)).toEqual(["t1"]);
     expect(sectionUnits(root, "h1")!.map(idOf)).toEqual(["h1", "a", "h2", "b"]);
@@ -64,13 +65,13 @@ describe("sectionUnits（切法與 note-sections.ts 的 sectionize 一致）", (
     expect(sectionUnits(root, "nope")).toBeNull();
   });
 
-  it("## 開頭之後遇到 # → 新段（level <= 目前段）", () => {
+  it("a # after a ## starts a new section (level <= current)", () => {
     root = buildRoot([H("h2", 2, "Sub"), P("a", "a"), H("h1", 1, "Top"), P("b", "b")]);
     expect(sectionUnits(root, "h2")!.map(idOf)).toEqual(["h2", "a"]);
     expect(sectionUnits(root, "h1")!.map(idOf)).toEqual(["h1", "b"]);
   });
 
-  it("欄內的 heading 不切段（並排列是一個頂層單位）", () => {
+  it("a heading inside a column does not split (a side-by-side row is one top-level unit)", () => {
     root = buildRoot([H("h1", 1, "One"), { columns: [[H("hc", 1, "In column")], [P("pc", "x")]] }, P("after", "after")]);
     const units = sectionUnits(root, "h1")!;
     expect(units).toHaveLength(3);
@@ -79,13 +80,13 @@ describe("sectionUnits（切法與 note-sections.ts 的 sectionize 一致）", (
 });
 
 describe("findMatchBlock", () => {
-  it("F1 一般段落：範圍內第一個含字的 block；範圍外的命中不算", () => {
+  it("ordinary paragraph: first block with the text inside the range; a match outside the range does not count", () => {
     root = buildRoot([P("t1", "needle in top"), H("h1", 1, "One"), P("a", "nothing"), P("b", "has the Needle here"), P("c", "needle again"), H("h2", 1, "Two"), P("d", "needle")]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("b");
     expect(idOf(findMatchBlock(root, "h2", "needle"))).toBe("d");
   });
 
-  it("F2 _top：從開頭到第一個 heading 之前", () => {
+  it("_top: from the start up to the first heading", () => {
     root = buildRoot([P("t1", "x"), P("t2", "a needle"), H("h1", 1, "One"), P("a", "needle")]);
     expect(idOf(findMatchBlock(root, "_top", "needle"))).toBe("t2");
     root.remove();
@@ -93,30 +94,30 @@ describe("findMatchBlock", () => {
     expect(findMatchBlock(root, "_top", "needle")).toBeNull();
   });
 
-  it("F3 嵌套清單子項：回最內層真正含字的 block，不是外層", () => {
+  it("nested list item: returns the innermost block that really contains the text, not the outer one", () => {
     root = buildRoot([H("h1", 1, "One"), P("outer", "parent item", [P("mid", "child", [P("deep", "grandchild needle")])]), P("z", "tail")]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("deep");
   });
 
-  it("F3b 欄內命中：回欄內那個 block", () => {
+  it("match inside a column: returns that block inside the column", () => {
     root = buildRoot([H("h1", 1, "One"), { columns: [[P("l", "left")], [P("r", "right needle")]] }]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("r");
   });
 
-  it("F4 找不到 → null（呼叫端退回段落標題）；空字串 → null", () => {
+  it("not found -> null (the caller falls back to the section heading); empty string -> null", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "nothing")]);
     expect(findMatchBlock(root, "h1", "needle")).toBeNull();
     expect(findMatchBlock(root, "h1", "")).toBeNull();
   });
 
-  it("F5 大小寫與全形：與標亮同一套（toLowerCase；全形大寫折成全形小寫；全形≠半形）", () => {
+  it("case and fullwidth: same rules as highlighting (toLowerCase; fullwidth uppercase folds to fullwidth lowercase; fullwidth != halfwidth)", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "ａｂｃ lower fullwidth"), P("b", "Mixed CASE here")]);
     expect(idOf(findMatchBlock(root, "h1", "case"))).toBe("b");
     expect(idOf(findMatchBlock(root, "h1", "ＡＢＣ"))).toBe("a");
     expect(findMatchBlock(root, "h1", "abc")).toBeNull();
   });
 
-  it("F6 程式碼區塊的語言選單選項不算文字；標題 block 自己的文字算", () => {
+  it("code block language menu options do not count as text; a heading block's own text does", () => {
     root = buildRoot([
       H("h1", 1, "Needle title"),
       { id: "code", type: "codeBlock", text: "let x", extra: "<div><select><option>Needle lang</option></select></div>" },
@@ -128,15 +129,15 @@ describe("findMatchBlock", () => {
   });
 });
 
-describe("收合的 toggle", () => {
+describe("collapsed toggle", () => {
   const T = (id: string, text: string, toggle: "open" | "collapsed", children: B[]): B => ({ id, type: "toggleListItem", text, toggle, children });
 
-  it("T1 命中在收合 toggle 的子項（可多層）→ 回最外層收合的 toggle，不是被藏起來的子項", () => {
+  it("match in a collapsed toggle's child (any depth) -> returns the outermost collapsed toggle, not the hidden child", () => {
     root = buildRoot([H("h1", 1, "One"), T("t", "parent", "collapsed", [P("c", "child needle", [P("d", "deep needle")])]), P("z", "tail")]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("t");
   });
 
-  it("T2 展開的 toggle → 照舊回最內層；外層展開、內層收合 → 回內層那顆收合的", () => {
+  it("expanded toggle -> innermost block as usual; outer expanded and inner collapsed -> the collapsed inner one", () => {
     root = buildRoot([H("h1", 1, "One"), T("t", "parent", "open", [P("c", "child needle")])]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("c");
     root.remove();
@@ -144,14 +145,14 @@ describe("收合的 toggle", () => {
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("u");
   });
 
-  it("T3 toggle 自己的文字命中、本身收合 → 回它自己", () => {
+  it("toggle's own text matches and it is collapsed -> returns itself", () => {
     root = buildRoot([H("h1", 1, "One"), T("t", "parent needle", "collapsed", [P("c", "x")])]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("t");
   });
 });
 
-describe("表格與 mermaid", () => {
-  it("TB1 表格格子是 <td><p>、沒有 .bn-inline-content：命中回表格那顆 block", () => {
+describe("tables and mermaid", () => {
+  it("table cells are <td><p> without .bn-inline-content: a match returns the table block", () => {
     root = buildRoot([
       H("h1", 1, "One"),
       P("a", "nothing"),
@@ -160,14 +161,14 @@ describe("表格與 mermaid", () => {
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("tbl");
   });
 
-  it("TB2 mermaid 讀 data-code（server 索引收的是 code 屬性）", () => {
+  it("mermaid reads data-code (the server index takes the code attribute)", () => {
     root = buildRoot([H("h1", 1, "One"), { id: "mm", type: "mermaid", inner: "<svg></svg>", attrs: ' data-code="graph TD; A--&gt;Needle"' }]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("mm");
   });
 });
 
-describe("重複 id 的段", () => {
-  it("同 id 的 heading 出現第二次 → 只取第一段（server 只收第一段）", () => {
+describe("duplicate ids", () => {
+  it("a second heading with the same id -> only the first section is used (the server only takes the first)", () => {
     root = buildRoot([H("dup", 1, "One"), P("a", "first"), H("dup", 1, "One again"), P("b", "second needle")]);
     expect(sectionUnits(root, "dup")!.map(idOf)).toEqual(["dup", "a"]);
     expect(findMatchBlock(root, "dup", "needle")).toBeNull();
@@ -179,7 +180,7 @@ describe("scrollToBlock + findText", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it("G1 有命中 → 捲到並高亮含字的 block，不是 heading", () => {
+  it("match found -> scrolls to and highlights the block containing the text, not the heading", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "nothing"), P("b", "the needle")]);
     const cancel = scrollToBlock(root, "h1", "needle");
     const flash = root.querySelector(`[${ANCHOR_FLASH_ATTR}]`);
@@ -188,7 +189,7 @@ describe("scrollToBlock + findText", () => {
     cancel();
   });
 
-  it("G2 範圍內找不到 → 退回段落標題；不帶 findText → 照舊標題", () => {
+  it("not found in range -> falls back to the section heading; without findText -> heading as before", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "nothing")]);
     scrollToBlock(root, "h1", "needle")();
     root.querySelector(`[${ANCHOR_FLASH_ATTR}]`)?.remove();
@@ -197,7 +198,7 @@ describe("scrollToBlock + findText", () => {
     cancel();
   });
 
-  it("G3 _top：有命中 → 高亮該 block；沒有 → 捲回頂端、不高亮", () => {
+  it("_top: match -> highlights that block; no match -> scrolls back to the top without highlighting", () => {
     root = buildRoot([P("t1", "a needle"), H("h1", 1, "One")]);
     const c1 = scrollToBlock(root, "_top", "needle");
     expect(root.querySelector(`[${ANCHOR_FLASH_ATTR}]`)?.getAttribute(ANCHOR_FLASH_ATTR)).toBe("t1");
@@ -211,7 +212,7 @@ describe("scrollToBlock + findText", () => {
   });
 });
 
-describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面", () => {
+describe("scroll position: search jumps scroll to the middle, ordinary anchors to the top", () => {
   let spy: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     spy = vi.fn();
@@ -219,19 +220,19 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
   });
   const blocks = () => spy.mock.calls.map((c) => c[0]);
 
-  it("P1 帶 findText 且命中 → center", () => {
+  it("findText with a match -> center", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "the needle")]);
     scrollToBlock(root, "h1", "needle")();
     expect(blocks()).toEqual([{ block: "center" }]);
   });
 
-  it("P2 帶 findText 但範圍內找不到、退回段落標題 → 也是 center", () => {
+  it("findText but nothing found in range, falling back to the section heading -> also center", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "nothing")]);
     scrollToBlock(root, "h1", "needle")();
     expect(blocks()).toEqual([{ block: "center" }]);
   });
 
-  it("P3 _top 有命中 → center；_top 沒命中 → 捲到頂（不呼叫 scrollIntoView）", () => {
+  it("_top with a match -> center; _top without -> scrolls to the top (scrollIntoView is not called)", () => {
     root = buildRoot([P("t1", "a needle"), H("h1", 1, "One")]);
     scrollToBlock(root, "_top", "needle")();
     expect(blocks()).toEqual([{ block: "center" }]);
@@ -244,13 +245,13 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     expect(root.scrollTo).toHaveBeenCalledWith({ top: 0 });
   });
 
-  it("P4 一般 #b- 錨點（不帶 findText）→ start", () => {
+  it("ordinary #b- anchor (no findText) -> start", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "the needle")]);
     scrollToBlock(root, "h1")();
     expect(blocks()).toEqual([{ block: "start" }]);
   });
 
-  it("P5 浮層蓋在命中的 block 上（不是標題）；置中時捲動對準該 block 自己那一行（.bn-block-content），不是整個 outer", () => {
+  it("the overlay sits on the matching block (not the heading); when centering, scroll aligns to that block's own line (.bn-block-content), not the whole outer", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "the needle")]);
     const cancel = scrollToBlock(root, "h1", "needle");
     expect(root.querySelector(`[${ANCHOR_FLASH_ATTR}]`)?.getAttribute(ANCHOR_FLASH_ATTR)).toBe("b");
@@ -260,7 +261,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     cancel();
   });
 
-  it("P7 父項包著很多子項：置中對準父項自己那一行，不是含全部子項的 outer；子項自己的那一行不會被選到", () => {
+  it("parent wraps many children: centering aligns to the parent's own line, not the outer containing all children; a child's own line is not selected", () => {
     root = buildRoot([H("h1", 1, "One"), P("parent", "the needle", [P("c1", "child 1"), P("c2", "child 2")])]);
     scrollToBlock(root, "h1", "needle")();
     const ctx = spy.mock.contexts[0] as HTMLElement;
@@ -269,7 +270,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     expect(blocks()).toEqual([{ block: "center" }]);
   });
 
-  it("P8 那一行本身比捲動容器高 → 退回 start（仍對準那一行）；剛好不高於容器 → center", () => {
+  it("when that line is taller than the scroll container -> falls back to start (still aligned to that line); not taller -> center", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "the needle")]);
     Object.defineProperty(root, "clientHeight", { configurable: true, value: 500 });
     const line = root.querySelector<HTMLElement>('[data-id="b"] > .bn-block > .bn-block-content')!;
@@ -283,13 +284,13 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     expect(blocks()).toEqual([{ block: "center" }]);
   });
 
-  it("P9 一般錨點（start）對準 outer 本身，不是 content line", () => {
+  it("ordinary anchor (start) aligns to the outer itself, not the content line", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "x")]);
     scrollToBlock(root, "b")();
     expect(spy.mock.contexts[0]).toBe(root.querySelector('[data-id="b"]'));
   });
 
-  describe("手機：文件在捲（root 在 data-phone-page-scroll 的外框裡，不自己捲）", () => {
+  describe("phone: the document scrolls (root sits inside the data-phone-page-scroll frame and does not scroll itself)", () => {
     let frame: HTMLElement;
     beforeEach(() => {
       stubLayoutTier("phone");
@@ -306,12 +307,12 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
       frame.setAttribute(PHONE_PAGE_SCROLL_ATTR, "");
       document.body.appendChild(frame);
       frame.appendChild(r);
-      // root 撐成整篇的高度：比的必須是看得到的高度（視窗 844 − 頁首 100 = 744），不是它。
+      // root stretches to the full note height: what must be compared is the visible height (viewport 844 - header 100 = 744), not that.
       Object.defineProperty(r, "clientHeight", { configurable: true, value: 5000 });
       return r;
     }
 
-    it("P10 那一行比「視窗扣掉頁首」高 → start；不高於 → center", () => {
+    it("line taller than 'viewport minus header' -> start; not taller -> center", () => {
       root = framed(buildRoot([H("h1", 1, "One"), P("b", "the needle")]));
       const line = root.querySelector<HTMLElement>('[data-id="b"] > .bn-block > .bn-block-content')!;
       line.getBoundingClientRect = () => ({ height: 745 }) as DOMRect;
@@ -323,7 +324,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
       expect(blocks()).toEqual([{ block: "center" }]);
     });
 
-    it("P11 _top 沒命中 → 捲文件回頂端，root 不動", () => {
+    it("_top without a match -> scrolls the document back to the top, root does not move", () => {
       const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
       root = framed(buildRoot([P("t1", "plain"), H("h1", 1, "One")]));
       root.scrollTo = vi.fn() as unknown as typeof root.scrollTo;
@@ -333,7 +334,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
       windowScroll.mockRestore();
     });
 
-    it("P12 useBlockAnchor 的 scrollToTop（同篇的頂端連結）→ 捲文件回頂端", () => {
+    it("useBlockAnchor's scrollToTop (same-note top link) -> scrolls the document back to the top", () => {
       const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
       root = framed(buildRoot([P("t1", "plain")]));
       root.scrollTo = vi.fn() as unknown as typeof root.scrollTo;
@@ -355,7 +356,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     onApi?.(api);
     return null;
   }
-  it("M7 requestAnchor(id, findText) 把 findText 傳進 scrollToBlock：閃並捲到命中的 block（center），不是標題；不帶 findText 才是標題（start）", () => {
+  it("requestAnchor(id, findText) passes findText into scrollToBlock: flashes and scrolls to the matching block (center), not the heading; without findText it is the heading (start)", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "nothing"), P("b", "the needle")]);
     let api!: ReturnType<typeof useBlockAnchor>;
     render(
@@ -375,7 +376,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
     expect(blocks()).toEqual([{ block: "start" }]);
   });
 
-  it("P6 經 useBlockAnchor：只有 #b- hash（複製出去的段落連結）→ start；hash＋state.kbFind（搜尋跳轉）→ center", () => {
+  it("via useBlockAnchor: only a #b- hash (a copied paragraph link) -> start; hash + state.kbFind (search jump) -> center", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "needle")]);
     const a = render(
       <MemoryRouter initialEntries={[{ pathname: "/n", hash: "#b-h1" }]}>
@@ -394,7 +395,7 @@ describe("捲動位置：搜尋跳轉捲到中間，一般錨點捲到最上面"
   });
 });
 
-describe("搜尋跳轉的常駐標記", () => {
+describe("persistent search marker", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -414,7 +415,7 @@ describe("搜尋跳轉的常駐標記", () => {
     return root;
   };
 
-  it("K1 閃兩下之後還在：帶 findText 的跳轉過了 2 s、10 s 浮層仍在，且是 .kn-anchor-mark（常駐）", () => {
+  it("stays after the two flashes: a jump with findText still shows the overlay at 2 s and 10 s, and it is .kn-anchor-mark (persistent)", () => {
     vi.useFakeTimers();
     scrollToBlock(fresh(), "h1", "needle");
     expect(overlays()).toHaveLength(1);
@@ -424,7 +425,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()[0]!.getAttribute(ANCHOR_FLASH_ATTR)).toBe("b");
   });
 
-  it("K1b 閃爍等捲動穩定才開始：跳轉當下是 pending（沒有 mark class）；目標位置還在動就一直 pending；連續兩個 frame 不動 → 換成 mark", () => {
+  it("flashing starts only after scrolling settles: pending at the jump (no mark class); pending while the target position keeps moving; two consecutive frames without movement -> becomes mark", () => {
     vi.useFakeTimers();
     const r = fresh();
     let top = 500;
@@ -436,16 +437,16 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(ov.classList.contains(ANCHOR_PENDING_CLASS)).toBe(true);
     expect(ov.classList.contains(ANCHOR_MARK_CLASS)).toBe(false);
     for (let i = 0; i < 10; i++) {
-      top -= 40; // 捲動中：每個 frame 位置都變
+      top -= 40; // scrolling: the position changes every frame
       vi.advanceTimersByTime(16);
     }
     expect(ov.classList.contains(ANCHOR_MARK_CLASS)).toBe(false);
-    vi.advanceTimersByTime(100); // 停下來
+    vi.advanceTimersByTime(100); // stops
     expect(ov.classList.contains(ANCHOR_MARK_CLASS)).toBe(true);
     expect(ov.classList.contains(ANCHOR_PENDING_CLASS)).toBe(false);
   });
 
-  it("K1c 捲動一直不穩定也不能永遠不閃：ANCHOR_SETTLE_MAX_MS 後強制開始", () => {
+  it("continuous unsettled scrolling does not postpone flashing forever: it starts forcibly after ANCHOR_SETTLE_MAX_MS", () => {
     vi.useFakeTimers();
     const r = fresh();
     let top = 0;
@@ -459,7 +460,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()[0]!.classList.contains(ANCHOR_MARK_CLASS)).toBe(true);
   });
 
-  it("K1d 開始閃之後重新對位只改位置：同一個元素、class 不變、不重建（動畫不會重播）", async () => {
+  it("after flashing starts, realignment only changes the position: same element, same class, not rebuilt (the animation does not replay)", async () => {
     vi.useFakeTimers();
     const r = fresh();
     scrollToBlock(r, "h1", "needle");
@@ -470,20 +471,18 @@ describe("搜尋跳轉的常駐標記", () => {
     const records: MutationRecord[] = [];
     const mo = new MutationObserver((recs) => records.push(...recs));
     mo.observe(document.body, { childList: true, subtree: true });
-    // 內容變動 → MutationObserver → 下一個 frame 重新對位
     r.querySelector('[data-id="a"] .bn-inline-content')!.textContent = "changed";
     await vi.advanceTimersByTimeAsync(100);
     expect(overlays()).toHaveLength(1);
     expect(overlays()[0]).toBe(ov);
     expect(ov.className).toBe(classBefore);
-    // 浮層沒有被移除／重新加入（只有 style 變）
     records.push(...mo.takeRecords());
     const touched = records.filter((rec) => rec.type === "childList" && [...rec.addedNodes, ...rec.removedNodes].includes(ov));
     expect(touched).toHaveLength(0);
     mo.disconnect();
   });
 
-  it("K1e prefers-reduced-motion: reduce 下搜尋標記照樣進入閃爍（JS 不看這個設定，CSS 也不關 .kn-anchor-mark 的動畫）", () => {
+  it("under prefers-reduced-motion: reduce the search marker still enters the flash (JS ignores this setting, and CSS does not disable the .kn-anchor-mark animation)", () => {
     vi.useFakeTimers();
     const mm = vi.fn().mockImplementation((q: string) => ({
       matches: q.includes("reduce"), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false,
@@ -496,8 +495,8 @@ describe("搜尋跳轉的常駐標記", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    // 注意：這一段只是字串層的輔助；主守衛是 e2e 44（reduce 那一輪）在真瀏覽器裡取樣底色。
-    // CSS：reduced-motion 區塊裡關動畫的規則必須排除 .kn-anchor-mark（不能選到它），且 mark 規則本身有 animation
+    // This part is only a string-level helper; the real-browser check is the reduce run of `e2e/tests/44-fulltext-search.spec.ts`, which samples the background color.
+    // CSS: the rule that disables animation inside the reduced-motion block must exclude .kn-anchor-mark, and the mark rule itself must have an animation.
     const css = indexCssRaw.replace(/\r\n/g, "\n");
     const start = css.indexOf("@media (prefers-reduced-motion: reduce) {\n  .kn-anchor-flash");
     expect(start).toBeGreaterThan(-1);
@@ -507,7 +506,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(css).toMatch(/\.kn-anchor-flash\.kn-anchor-mark \{[^}]*animation: kn-anchor-mark/);
   });
 
-  it("K2 一般錨點（不帶 findText）仍是 2 s 後消失，而且沒有常駐 class", () => {
+  it("ordinary anchor (no findText) still disappears after 2 s and has no persistent class", () => {
     vi.useFakeTimers();
     scrollToBlock(fresh(), "h1");
     expect(overlays()).toHaveLength(1);
@@ -516,7 +515,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()).toHaveLength(0);
   });
 
-  it("K3 Esc 清掉；別的鍵不清", () => {
+  it("Esc clears it; other keys do not", () => {
     vi.useFakeTimers();
     scrollToBlock(fresh(), "h1", "needle");
     esc({ key: "a" });
@@ -527,7 +526,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()).toHaveLength(0);
   });
 
-  it("K4 別人的 Esc 不被搶：已經 preventDefault（後註冊的監聽才 preventDefault 也算）、輸入法組字中、有對話框開著 → 標記留著", () => {
+  it("someone else's Esc is not stolen: already preventDefault'ed (a listener registered later calling preventDefault counts too), IME composing, a dialog open -> the marker stays", () => {
     vi.useFakeTimers();
     scrollToBlock(fresh(), "h1", "needle");
     esc({}, (e) => e.preventDefault());
@@ -548,7 +547,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()).toHaveLength(0);
   });
 
-  it("K5 clearSearchMark()（關閉搜尋）清掉；之後再呼叫是空操作", () => {
+  it("clearSearchMark() (closing search) clears it; calling it again is a no-op", () => {
     scrollToBlock(fresh(), "h1", "needle");
     expect(overlays()).toHaveLength(1);
     clearSearchMark();
@@ -556,7 +555,7 @@ describe("搜尋跳轉的常駐標記", () => {
     clearSearchMark();
   });
 
-  it("K6 還在等 block 出現時就關閉搜尋 → block 出現後不會才冒出標記", async () => {
+  it("closing search while still waiting for the block to appear -> no marker shows up once the block appears", async () => {
     root = buildRoot([P("t1", "x")]);
     scrollToBlock(root, "nope", "needle");
     clearSearchMark();
@@ -569,7 +568,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays()).toHaveLength(0);
   });
 
-  it("K7 區塊被重繪（元素換掉、同一個 data-id）→ 標記還在並重新對位；區塊被刪掉 → 標記移除、不再找", async () => {
+  it("block re-rendered (element replaced, same data-id) -> marker stays and realigns; block deleted -> marker removed and no more lookups", async () => {
     const r = fresh();
     scrollToBlock(r, "h1", "needle");
     const old = r.querySelector<HTMLElement>('[data-id="b"]')!;
@@ -582,7 +581,7 @@ describe("搜尋跳轉的常駐標記", () => {
     await waitFor(() => expect(overlays()).toHaveLength(0));
   });
 
-  it("K8 找不到命中字、停在 _top：沒有浮層就沒有標記（捲回頂端）", () => {
+  it("no match, parked at _top: no overlay means no marker (scrolled back to the top)", () => {
     root = buildRoot([P("t1", "plain"), H("h1", 1, "One")]);
     root.scrollTo = vi.fn() as unknown as typeof root.scrollTo;
     scrollToBlock(root, "_top", "needle");
@@ -601,7 +600,7 @@ describe("搜尋跳轉的常駐標記", () => {
     </MemoryRouter>
   );
 
-  it("K9 再點另一個搜尋結果：舊標記移除、換到新的位置（畫面上只有一個）", () => {
+  it("clicking another search result: old marker removed and moved to the new position (one on screen)", () => {
     const r = buildRoot([H("h1", 1, "One"), P("a", "alpha"), H("h2", 1, "Two"), P("b", "beta")]);
     root = r;
     let api!: ReturnType<typeof useBlockAnchor>;
@@ -612,7 +611,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays().map((o) => o.getAttribute(ANCHOR_FLASH_ATTR))).toEqual(["b"]);
   });
 
-  it("K10 筆記內的一般錨點（wikilink／#b-）不清掉搜尋標記；它自己 2 s 後消失、標記還在", () => {
+  it("an ordinary anchor inside the note (wikilink / #b-) does not clear the search marker; it disappears itself after 2 s and the marker stays", () => {
     vi.useFakeTimers();
     const r = buildRoot([H("h1", 1, "One"), P("a", "alpha"), H("h2", 1, "Two"), P("b", "beta")]);
     root = r;
@@ -625,7 +624,7 @@ describe("搜尋跳轉的常駐標記", () => {
     expect(overlays().map((o) => o.getAttribute(ANCHOR_FLASH_ATTR))).toEqual(["a"]);
   });
 
-  it("K11 離開這篇（noteKey 改變）→ 標記消失，不留在別篇", () => {
+  it("leaving this note (noteKey changes) -> the marker disappears and does not carry over to another note", () => {
     const r = buildRoot([H("h1", 1, "One"), P("a", "alpha")]);
     root = r;
     let api!: ReturnType<typeof useBlockAnchor>;
@@ -637,7 +636,7 @@ describe("搜尋跳轉的常駐標記", () => {
   });
 });
 
-describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () => {
+describe("useBlockAnchor reads navigation state (another note / full page load)", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -648,7 +647,7 @@ describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () =>
   }
   const flashed = () => document.querySelector(`[${ANCHOR_FLASH_ATTR}]`)?.getAttribute(ANCHOR_FLASH_ATTR) ?? null;
 
-  it("H1 hash＋state.kbFind → 閃的是含字的 block", () => {
+  it("hash + state.kbFind -> the block containing the text flashes", () => {
     root = buildRoot([H("h1", 1, "One"), P("a", "x"), P("b", "needle")]);
     render(
       <MemoryRouter initialEntries={[{ pathname: "/n", hash: "#b-h1", state: { kbFind: "needle" } }]}>
@@ -658,7 +657,7 @@ describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () =>
     expect(flashed()).toBe("b");
   });
 
-  it("H2 只有 hash（沒有 state，例如複製出去的連結）→ 閃 heading", () => {
+  it("hash only (no state, e.g. a copied link) -> the heading flashes", () => {
     root = buildRoot([H("h1", 1, "One"), P("b", "needle")]);
     render(
       <MemoryRouter initialEntries={[{ pathname: "/n", hash: "#b-h1" }]}>
@@ -668,7 +667,7 @@ describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () =>
     expect(flashed()).toBe("h1");
   });
 
-  it("H3 沒有 hash、只有 state（_top 片段）→ 在 _top 範圍找", () => {
+  it("no hash, only state (_top snippet) -> searches within the _top range", () => {
     root = buildRoot([P("t1", "a needle"), H("h1", 1, "One")]);
     render(
       <MemoryRouter initialEntries={[{ pathname: "/n", state: { kbFind: "needle" } }]}>
@@ -678,7 +677,7 @@ describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () =>
     expect(flashed()).toBe("t1");
   });
 
-  it("findTextFromState 只認非空字串", () => {
+  it("findTextFromState accepts only non-empty strings", () => {
     expect(findTextFromState({ kbFind: "x" })).toBe("x");
     expect(findTextFromState({ kbFind: "" })).toBeNull();
     expect(findTextFromState({ kbFind: 3 })).toBeNull();
@@ -686,7 +685,7 @@ describe("useBlockAnchor 讀 navigation state（別篇／整頁載入）", () =>
   });
 });
 
-describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () => {
+describe("search marker cancellation: exceptions while waiting for readiness, and Esc", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -716,7 +715,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     return { r, view, setApi: (x: ReturnType<typeof useBlockAnchor>) => (api = x) };
   };
 
-  it("PA 還沒就緒（pending）時關閉搜尋 → 就緒後照樣捲過去，但不留標記", () => {
+  it("closing search while not ready (pending) -> still scrolls over once ready, but leaves no marker", () => {
     const { r, view, setApi } = pendingSetup();
     clearSearchMark();
     view.rerender(ui(r, true, setApi));
@@ -724,7 +723,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  it("PB 還沒就緒時按 Esc → 就緒後照樣捲過去，但不留標記", async () => {
+  it("Esc while not ready -> still scrolls once ready, but leaves no marker", async () => {
     const { r, view, setApi } = pendingSetup();
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     await new Promise((res) => setTimeout(res, 10));
@@ -733,7 +732,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  it("PD 沒人取消：就緒後照常留標記（對照組）；下一次跳轉不繼承上一次的取消", () => {
+  it("nobody cancels: the marker stays once ready (control); the next jump does not inherit the previous cancellation", () => {
     const { r, view, setApi } = pendingSetup();
     clearSearchMark();
     view.rerender(ui(r, true, setApi));
@@ -744,7 +743,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(ovs()).toHaveLength(1);
   });
 
-  /** 模擬 BlockNote 的 OverrideEscape：焦點在編輯器按 Esc → 先 blur()，再讓 ProseMirror preventDefault。 */
+  /** Simulates BlockNote's OverrideEscape: Esc with focus in the editor -> blur() first, then ProseMirror preventDefault. */
   function editor(onKey: (e: KeyboardEvent, pm: HTMLElement) => void): HTMLElement {
     const pm = document.createElement("div");
     pm.className = "ProseMirror";
@@ -763,7 +762,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
   };
   const escOn = (el: Element) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 
-  it("PC 焦點在編輯器按 Esc：BlockNote blur 後 preventDefault → 這一下就清掉標記（不用按兩次）", () => {
+  it("Esc with focus in the editor: BlockNote blurs then preventDefault -> this one press clears the marker (no double press)", () => {
     const pm = editor((e, el) => {
       el.blur();
       e.preventDefault();
@@ -774,7 +773,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(ovs()).toHaveLength(0);
   });
 
-  it("PC2 slash menu 的 Esc（preventDefault、焦點留在編輯器）→ 標記留著", () => {
+  it("slash menu's Esc (preventDefault, focus stays in the editor) -> the marker stays", () => {
     const pm = editor((e) => e.preventDefault());
     mark();
     escOn(pm);
@@ -782,7 +781,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(ovs()).toHaveLength(1);
   });
 
-  it("PC3 AI 框／mermaid 的 Esc（stopPropagation，window 收不到）→ 標記留著", () => {
+  it("AI box / mermaid Esc (stopPropagation, window never receives it) -> the marker stays", () => {
     const pm = editor((e, el) => {
       el.blur();
       e.preventDefault();
@@ -794,7 +793,7 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(ovs()).toHaveLength(1);
   });
 
-  it("PC4 編輯器外別處 preventDefault 的 Esc（焦點在 body）→ 標記留著", () => {
+  it("Esc preventDefault'ed elsewhere outside the editor (focus on body) -> the marker stays", () => {
     mark();
     const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     window.addEventListener("keydown", (ev) => ev.preventDefault(), { once: true });
@@ -803,14 +802,14 @@ describe("搜尋標記的取消：等就緒期間與 Esc 的例外（M3）", () 
     expect(ovs()).toHaveLength(1);
   });
 
-  it("M3 按下當下有開著的 toast：這一下 Esc 只關 toast（Radix 不 preventDefault），標記留著；toast 關後的下一下才清", () => {
+  it("a toast is open at keypress: that Esc only closes the toast (Radix does not preventDefault) and the marker stays; the next Esc after the toast closes clears it", () => {
     mark();
     const toast = document.createElement("li");
     toast.setAttribute("data-swipe-direction", "right");
     toast.setAttribute("data-state", "open");
     document.body.appendChild(toast);
     escOn(document.body);
-    toast.setAttribute("data-state", "closed"); // 真瀏覽器：到 bubble 時 toast 可能已關
+    toast.setAttribute("data-state", "closed"); // real browser: the toast may already be closed by the time it bubbles
     vi.advanceTimersByTime(10);
     expect(ovs()).toHaveLength(1);
     escOn(document.body);

@@ -17,8 +17,8 @@ const { useNoteOverLimit, NOTE_OVER_LIMIT_CHECK_MS } = await import("./useNoteOv
 
 afterEach(() => vi.useRealTimers());
 
-describe("useNoteOverLimit（超過上限的提示）", () => {
-  it("已經超過上限：只新增的變動不重量（量回收過的複本很貴）；有刪除的變動才重量，回到上限內就消失", async () => {
+describe("useNoteOverLimit (over-limit notice)", () => {
+  it("already over the limit: additions-only changes are not re-measured (measuring a compacted copy is expensive); only changes with deletions re-measure, and the notice clears once back under the limit", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     const doc = new Y.Doc();
     doc.getText("t").insert(0, "x".repeat(5_000));
@@ -40,7 +40,7 @@ describe("useNoteOverLimit（超過上限的提示）", () => {
     expect(hook.result.current).toBe(false);
   });
 
-  it("還在上限內：新增的變動照樣節流重量（可能因此超過）", async () => {
+  it("still under the limit: additions are still throttled and re-measured (may go over as a result)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     const doc = new Y.Doc();
     doc.getText("t").insert(0, "x".repeat(100));

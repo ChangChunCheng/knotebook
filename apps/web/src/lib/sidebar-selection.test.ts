@@ -8,7 +8,7 @@ function run(ops: SelectionOp[], from: SidebarSelection = EMPTY_SELECTION): Side
 }
 
 describe("selectAllState", () => {
-  it("SS-A1 只看可見列：空→none；全在→all；部分→some；只在收合子樹→none", () => {
+  it("only visible rows count: empty -> none; all present -> all; partial -> some; only in a collapsed subtree -> none", () => {
     expect(selectAllState([], new Set(["a"]))).toBe("none");
     expect(selectAllState(["a", "b"], new Set(["a", "b"]))).toBe("all");
     expect(selectAllState(["a", "b"], new Set(["a"]))).toBe("some");
@@ -19,7 +19,7 @@ describe("selectAllState", () => {
 const keysOf = (state: SidebarSelection) => [...state.keys].sort();
 
 describe("reduceSelection", () => {
-  it("SL1 start／end：start 進入、end 回 EMPTY_SELECTION；非選取中 end 回原 state", () => {
+  it("start / end: start enters, end returns EMPTY_SELECTION; end while not selecting returns the original state", () => {
     const started = run([{ type: "start" }]);
     expect(started.active).toBe(true);
     expect(started.keys.size).toBe(0);
@@ -30,7 +30,7 @@ describe("reduceSelection", () => {
     expect(reduceSelection(idle, { type: "end" })).toBe(idle);
   });
 
-  it("SL2 toggle：加入、再 toggle 移除；anchor 是最後 toggle 的鍵", () => {
+  it("toggle: adds, toggling again removes; anchor is the last toggled key", () => {
     const added = run([{ type: "start" }, { type: "toggle", key: "a" }]);
     expect(keysOf(added)).toEqual(["a"]);
     expect(added.anchor).toBe("a");
@@ -42,7 +42,7 @@ describe("reduceSelection", () => {
     expect(removed.anchor).toBe("a");
   });
 
-  it("SL3 range：錨點到 key 之間全部加入、不取消區間外、anchor 不動", () => {
+  it("range: adds everything between the anchor and key, does not deselect outside the range, anchor stays", () => {
     const first = run([{ type: "start" }, { type: "toggle", key: "b" }, { type: "range", key: "d", order: ORDER }]);
     expect(keysOf(first)).toEqual(["b", "c", "d"]);
     expect(first.anchor).toBe("b");
@@ -51,7 +51,7 @@ describe("reduceSelection", () => {
     expect(second.anchor).toBe("b");
   });
 
-  it("SL4 range 退化成單列切換：沒有錨點、錨點不在 order、key 不在 order", () => {
+  it("range degenerates into a single-row toggle: no anchor, anchor not in order, key not in order", () => {
     const noAnchor = run([{ type: "start" }, { type: "range", key: "d", order: ORDER }]);
     expect(keysOf(noAnchor)).toEqual(["d"]);
     expect(noAnchor.anchor).toBe("d");
@@ -65,7 +65,7 @@ describe("reduceSelection", () => {
     expect(outside.anchor).toBe("z");
   });
 
-  it("SL5 setAll／clear：setAll 換成給的鍵、anchor 不變；clear 清空且 anchor null", () => {
+  it("setAll / clear: setAll replaces with the given keys, anchor unchanged; clear empties and anchor is null", () => {
     const all = run([{ type: "start" }, { type: "toggle", key: "e" }, { type: "setAll", keys: ["a", "c"] }]);
     expect(keysOf(all)).toEqual(["a", "c"]);
     expect(all.anchor).toBe("e");
@@ -75,7 +75,7 @@ describe("reduceSelection", () => {
     expect(cleared.active).toBe(true);
   });
 
-  it("SL6 非選取中 toggle／range／setAll／clear 都回原 state", () => {
+  it("while not selecting, toggle / range / setAll / clear all return the original state", () => {
     const idle = EMPTY_SELECTION;
     expect(reduceSelection(idle, { type: "toggle", key: "a" })).toBe(idle);
     expect(reduceSelection(idle, { type: "range", key: "c", order: ORDER })).toBe(idle);
@@ -83,17 +83,17 @@ describe("reduceSelection", () => {
     expect(reduceSelection(idle, { type: "clear" })).toBe(idle);
   });
 
-  it("SL7 selectionKey 是 kind:id", () => {
+  it("selectionKey is kind:id", () => {
     expect(selectionKey({ kind: "note", id: "x" })).toBe("note:x");
   });
 
-  it("SL8 SIDEBAR_SELECT_BUTTON：標題列裡帶 data-sidebar-select 的鈕", () => {
+  it("SIDEBAR_SELECT_BUTTON: the button in the title row carrying data-sidebar-select", () => {
     expect(SIDEBAR_SELECT_BUTTON).toBe("[data-sidebar-header] button[data-sidebar-select]");
   });
 });
 
-describe("資料夾鍵", () => {
-  it("SS-F1 folder:a 與 note:a 是兩個鍵、toggle 互不影響", () => {
+describe("folder keys", () => {
+  it("folder:a and note:a are two keys, toggling one does not affect the other", () => {
     expect(selectionKey({ kind: "folder", id: "a" })).toBe("folder:a");
     const state = run([{ type: "start" }, { type: "toggle", key: selectionKey({ kind: "folder", id: "a" }) }, { type: "toggle", key: selectionKey({ kind: "note", id: "a" }) }]);
     expect(keysOf(state)).toEqual(["folder:a", "note:a"]);

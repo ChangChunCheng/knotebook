@@ -23,7 +23,7 @@ function renderHome() {
   );
 }
 
-describe("HomePage 手機", () => {
+describe("HomePage phone", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -32,18 +32,18 @@ describe("HomePage 手機", () => {
     vi.unstubAllGlobals();
   });
 
-  it("手機：不渲染空狀態卡與頂列（清單蓋滿畫面）", async () => {
+  it("phone: renders no empty-state card and no top bar (the list fills the screen)", async () => {
     stubLayoutTier("phone");
     const { container } = renderHome();
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
 
-  it.each(["overlay", "docked"] as const)("%s：照舊顯示空狀態", async (tier) => {
+  it.each(["overlay", "docked"] as const)("%s: empty state shown as before", async (tier) => {
     stubLayoutTier(tier);
     const { container } = renderHome();
     expect(await screen.findByText("No notes yet.")).toBeInTheDocument();
-    // 內文卡 640 起有圓角與框，手機（這一段不渲染）才貼邊。
+    // The content card has rounded corners and a border from 640 up; on phone (this tier is not rendered) it is flush.
     expect(container.firstElementChild).toHaveClass("rounded-xl", "border", "max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 });

@@ -24,7 +24,7 @@ const PENDING: PendingLinkDto = {
 };
 const USER = { id: "u1", email: "u@example.com", handle: "u", displayName: "U", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null } satisfies UserDto;
 
-/** 依「METHOD url」回應；沒列到的回 404 JSON（不 throw——導向後的頁面可能打別的 API）。 */
+/** Responds by `METHOD url`; an unlisted route returns a 404 JSON instead of throwing, because the page after a navigation may call other APIs. */
 function mockFetch(routes: Record<string, () => Response | Promise<Response>>) {
   const calls: Call[] = [];
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -43,7 +43,7 @@ function LocationProbe() {
   return <div data-testid="loc">{`${location.pathname}${location.search}`}</div>;
 }
 
-/** 預設 harness 關 retry；要守頁面自己的 `retry: false` 的案傳 `new QueryClient()`（不關 retry）進來。 */
+/** The default harness turns retry off; a case that guards the page's own `retry: false` passes `new QueryClient()` (retry not disabled). */
 function renderAt(path: string, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })): QueryClient {
   render(
     <QueryClientProvider client={queryClient}>
@@ -59,23 +59,22 @@ function renderAt(path: string, queryClient = new QueryClient({ defaultOptions: 
   return queryClient;
 }
 const loc = () => screen.getByTestId("loc").textContent;
-/** `button.tsx` 的實心變體（default／destructive／brandSolid／brandDeep）的底色 class——同 `SettingsGroupRolesSection.test.tsx:91` 的判法。 */
+/** Background classes of the `button.tsx` solid variants (default / destructive / brandSolid / brandDeep); same check as in `SettingsGroupRolesSection.test.tsx`. */
 const SOLID_BG = /(^|\s)bg-(primary|destructive|brand|brand-deep)(\s|$)/;
-/** errors.oidc_link_expired 的英文。LoginPage 掛載時會以 replace 把 ?error= 從網址清掉，所以「導到 /login?error=…」
- * 只能用「登入頁顯示了這則文案、網址最後是 /login」來斷言。 */
+/** English text of errors.oidc_link_expired. LoginPage clears ?error= from the URL with replace on mount, so "navigated to /login?error=..."
+ * can only be asserted as "the login page shows this text and the final URL is /login". */
 const LINK_EXPIRED_TEXT = "This linking request has expired or was replaced. Please sign in again.";
 
-describe("LinkAccountPage（#187 /link-account）", () => {
+describe("LinkAccountPage (#187 /link-account)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("顯示 email 與 provider 名；methods 決定密碼欄與 SSO 鈕；一顆實心鈕（密碼確認）", async () => {
+  it("shows the email and provider name; methods decide the password field and SSO button; one solid button (password confirm)", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
     renderAt("/link-account");
-    // 本檔第一次載入 LinkAccountPage lazy chunk
     expect(
       await screen.findByText(/This email \(u@example\.com\) already has an account/),
     ).toBeInTheDocument();
@@ -84,12 +83,12 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(screen.getByRole("button", { name: "Confirm with password and link" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm by signing in with GitLab" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    // 一個畫面至多一顆實心鈕（button.tsx 檔頭規範）：只有密碼確認是實心，SSO 與取消是 outline。
+    // At most one solid button per screen (rule in the header of button.tsx): only the password confirm is solid; SSO and cancel are outline.
     const solid = screen.getAllByRole("button").filter(b => SOLID_BG.test(b.className));
     expect(solid.map(b => b.textContent)).toEqual(["Confirm with password and link"]);
   });
 
-  it("卡片頁例外：密碼確認、SSO 證明、取消三顆鈕都是 lg（h-11），密碼欄也 h-11（整欄等高）", async () => {
+  it("card page exception: password confirm, SSO proof and cancel are all lg (h-11), and the password field is also h-11 (all fields equal height)", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
     renderAt("/link-account");
     const targets = [
@@ -104,14 +103,14 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     }
   });
 
-  it("methods.password=false → 沒有密碼欄，只有 SSO 鈕", async () => {
+  it("methods.password=false -> no password field, only the SSO button", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, { ...PENDING, methods: { password: false, providers: PENDING.methods.providers } }) });
     renderAt("/link-account");
     await screen.findByRole("button", { name: "Confirm by signing in with GitLab" });
     expect(screen.queryByLabelText("Password for this account")).not.toBeInTheDocument();
   });
 
-  it("密碼送出：body 帶 password 與 pendingId；成功寫 ['me'] 並導向**回應的** next（不讀網址參數）", async () => {
+  it("password submit: body carries password and pendingId; on success writes ['me'] and navigates to the `next` from the response (not from the URL parameter)", async () => {
     const calls = mockFetch({
       "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING),
       "POST /api/auth/oidc/pending/confirm": () => fakeResponse(200, { user: USER, next: "/change-password" }),
@@ -125,7 +124,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(qc.getQueryData(["me"])).toEqual(USER);
   });
 
-  it("錯密碼 → alert 顯示 invalid_credentials 文案、留在本頁；429 too_many_attempts → 附等待秒數", async () => {
+  it("wrong password -> alert shows the invalid_credentials text and stays on this page; 429 too_many_attempts -> adds the wait seconds", async () => {
     let n = 0;
     mockFetch({
       "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING),
@@ -140,7 +139,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Try again in 5s."));
   });
 
-  it("confirm 回 409 oidc_link_expired → 導 /login?error=oidc_link_expired（登入頁顯示該文案、網址的 error 隨後被清掉）", async () => {
+  it("confirm returns 409 oidc_link_expired -> goes to /login?error=oidc_link_expired (the login page shows that text, and the URL's error is cleared afterwards)", async () => {
     mockFetch({
       "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING),
       "POST /api/auth/oidc/pending/confirm": () => err(409, "oidc_link_expired"),
@@ -154,7 +153,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     await waitFor(() => expect(loc()).toBe("/login"));
   });
 
-  it("SSO 鈕 → POST prove/<id> 帶 pendingId，回 {url} 後整頁導過去", async () => {
+  it("SSO button -> POST prove/<id> with pendingId; after {url} comes back, a full-page navigation to it", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     const calls = mockFetch({
@@ -167,7 +166,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(calls.find(c => c.url.includes("/prove/"))!.body).toEqual({ pendingId: "pid-1" });
   });
 
-  it("取消 → POST cancel、toast 說明、導 /login", async () => {
+  it("cancel -> POST cancel, explanatory toast, goes to /login", async () => {
     const calls = mockFetch({
       "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING),
       "POST /api/auth/oidc/pending/cancel": () => fakeResponse(204),
@@ -180,10 +179,10 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(await screen.findByText(/This email is already in use/)).toBeInTheDocument();
   });
 
-  it("沒有可用證明方式（409 oidc_link_no_proof_method）→ 只顯示說明與「回登入頁」；pending 不重試（恰打一次）", async () => {
+  it("no usable proof method (409 oidc_link_no_proof_method) -> only the explanation and a \"back to login\" button; the pending query does not retry (called exactly once)", async () => {
     const calls = mockFetch({ "GET /api/auth/oidc/pending": () => err(409, "oidc_link_no_proof_method") });
-    // 這一案刻意用**不關 retry** 的 QueryClient：守的是頁面 `["oidc-pending"]` 查詢自己的 `retry: false`。
-    // 拿掉它的話 query-core 預設重試 3 次（退避約 7 秒，塞得進全域等待上限），錯誤畫面出現時已打 4 次 → 計次紅。
+    // This case deliberately uses a QueryClient that does NOT disable retry: it guards the page's own `retry: false` on the `["oidc-pending"]` query.
+    // Without it query-core retries 3 times by default (backoff ~7 s, within the global wait limit), so the error screen would appear after 4 calls -> the count goes red.
     renderAt("/link-account", new QueryClient());
     expect(await screen.findByText(/has no other way to confirm it's you/)).toBeInTheDocument();
     expect(calls.filter((c) => c.method === "GET" && c.url === "/api/auth/oidc/pending")).toHaveLength(1);
@@ -192,14 +191,14 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(screen.queryByLabelText("Password for this account")).not.toBeInTheDocument();
   });
 
-  it("?error=oidc_link_proof_mismatch → 顯示該文案、網址的 error 被清掉；不在白名單的碼 → fallback", async () => {
+  it("?error=oidc_link_proof_mismatch -> shows that text and the URL's error is cleared; a code not on the allow list -> fallback", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
     renderAt("/link-account?error=oidc_link_proof_mismatch");
     expect(await screen.findByRole("alert")).toHaveTextContent("The identity you signed in with isn't one already linked to this account.");
     await waitFor(() => expect(loc()).toBe("/link-account"));
   });
 
-  it("?error=oidc_state_mismatch／oidc_claim_too_long→ 顯示各自的文案、不是 fallback", async () => {
+  it("?error=oidc_state_mismatch / oidc_claim_too_long -> each shows its own text, not the fallback", async () => {
     for (const [code, text] of [
       ["oidc_state_mismatch", "Your sign-in session expired or is invalid. Please try signing in again."],
       ["oidc_claim_too_long", "Your identity provider sent an email address or account ID that is too long to use."],
@@ -211,13 +210,13 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     }
   });
 
-  it("?error=constructor（不在白名單）→ fallback 文案、不炸", async () => {
+  it("?error=constructor (not on the allow list) -> fallback text, does not blow up", async () => {
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING) });
     renderAt("/link-account?error=constructor");
     expect(await screen.findByRole("alert")).toHaveTextContent("An unexpected error occurred.");
   });
 
-  it("沒有 pending（401）→ 安靜導 /login、不送任何 confirm；帶著 ?error=oidc_link_expired 時一起轉", async () => {
+  it("no pending (401) -> quietly goes to /login without sending any confirm; with ?error=oidc_link_expired it is carried along", async () => {
     for (const [path, expectAlert] of [["/link-account", false], ["/link-account?error=oidc_link_expired", true]] as const) {
       const calls = mockFetch({
         "GET /api/auth/oidc/pending": () => err(401, "unauthorized"),
@@ -226,7 +225,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
       renderAt(path);
       expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
       if (expectAlert) {
-        // 一起轉過去的 ?error= 由 LoginPage 顯示——網址上的 error 會被它以 replace 清掉，所以斷言文案。
+        // The carried-over ?error= is shown by LoginPage, which clears the URL's error with replace, so assert the text.
         expect(await screen.findByRole("alert")).toHaveTextContent(LINK_EXPIRED_TEXT);
       } else {
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -237,7 +236,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     }
   });
 
-  it("provider 已被刪（providerDisplayName null）→ 以通用名稱顯示；HTML 形的 provider 名渲染成字面", async () => {
+  it("provider deleted (providerDisplayName null) -> shown with a generic name; an HTML-shaped provider name is rendered literally", async () => {
     const evil = '<img src=x onerror="alert(1)">';
     mockFetch({ "GET /api/auth/oidc/pending": () => fakeResponse(200, { ...PENDING, providerDisplayName: null, methods: { password: false, providers: [{ id: "22222222-2222-2222-2222-222222222222", displayName: evil }] } }) });
     renderAt("/link-account");
@@ -246,7 +245,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(document.querySelector("img[src='x']")).toBeNull();
   });
 
-  it("GET pending 回 409 oidc_link_expired（帳號已刪／email 已改）→ 導 /login、登入頁顯示該文案，不停在 Loading", async () => {
+  it("GET pending returns 409 oidc_link_expired (account deleted / email changed) -> goes to /login, the login page shows that text, does not stay on Loading", async () => {
     const calls = mockFetch({
       "GET /api/auth/oidc/pending": () => err(409, "oidc_link_expired"),
       "GET /api/auth/config": () => fakeResponse(200, { providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true } }),
@@ -258,7 +257,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(calls.some(c => c.method === "POST")).toBe(false);
   });
 
-  it("先密碼 429（附倒數）再按 SSO 且 prove 失敗 → 只顯示 prove 的錯誤，不殘留倒數", async () => {
+  it("password 429 (with a countdown) then SSO with a failing prove -> only the prove error is shown, no countdown left over", async () => {
     mockFetch({
       "GET /api/auth/oidc/pending": () => fakeResponse(200, PENDING),
       "POST /api/auth/oidc/pending/confirm": () => err(429, "too_many_attempts", { retryAfterMs: 4200 }),
@@ -273,7 +272,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
     expect(screen.getByRole("alert")).not.toHaveTextContent("Try again in");
   });
 
-  it("GET pending 遇到 401／409 以外的失敗（500、網路錯誤）→ 顯示通用錯誤與 outline 的「回登入頁」，不停在 Loading", async () => {
+  it("GET pending fails with anything other than 401 / 409 (500, network error) -> generic error and an outline \"back to login\" button, does not stay on Loading", async () => {
     for (const fail of [() => err(500, "internal"), () => Promise.reject(new TypeError("Failed to fetch"))]) {
       mockFetch({
         "GET /api/auth/oidc/pending": fail,
@@ -291,7 +290,7 @@ describe("LinkAccountPage（#187 /link-account）", () => {
       cleanup();
     }
   });
-  it("provider-icon：「Confirm by signing in with X」鈕文字前有圖示；icon null 不渲染", async () => {
+  it("provider-icon: the \"Confirm by signing in with X\" button has an icon before the text; a null icon is not rendered", async () => {
     mockFetch({
       "GET /api/auth/oidc/pending": () =>
         fakeResponse(200, {

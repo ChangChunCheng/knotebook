@@ -11,11 +11,11 @@ import { ARTICLE_COLUMN_MAX, articleColumn } from "@/components/ui/article-colum
 import { ThemeProvider } from "@/theme";
 import PublicNotePage from "./PublicNotePage";
 
-// 比照 NotePage.test.tsx 的最小替身慣例：BlockNote 需要一整套 jsdom 沒有的 DOM/Range
-// API，這裡只驗「頁面把正確的 doc/publicRef 交給唯讀編輯器」——選項本身的契約
-// （fragment 名、resolveFileUrl 映射…）守在 collab/editor-options.test.ts。
-// data-ref 序列化成 kind:值——別只吐 kind（那樣「傳錯篇的 ref」測不出來）。
-// 替身也像真的一樣把「編輯器」交給 onEditor：一份只有一個 H2 的文件，標題大綱才有東西可列。
+// Follows NotePage.test.tsx's minimal stand-in convention: BlockNote needs a whole set of DOM / Range APIs jsdom lacks, so this only
+// verifies that the page hands the right doc/publicRef to the read-only editor - the contract of the options themselves (fragment name,
+// resolveFileUrl mapping, ...) is guarded in collab/editor-options.test.ts.
+// data-ref is serialized as kind:value - not just the kind (that would not catch "passed the wrong note's ref").
+// The stand-in also hands the "editor" to onEditor like the real one: with a document that has a single H2, the heading outline has something to list.
 const FAKE_EDITOR = vi.hoisted(() => ({
   document: [{ id: "h-intro", type: "heading", props: { level: 2 }, content: [{ type: "text", text: "Intro" }] }],
   onChange: () => () => {},
@@ -49,9 +49,7 @@ vi.mock("@/components/PublicNoteEditor", async () => {
     },
   };
 });
-// 簡報層本身另有測試（`PublicNotePage.present.test.tsx`）；這裡只要它掛得上。
 vi.mock("@/present/lazy", () => ({ LazyPresentation: () => <div data-testid="presentation-stub" /> }));
-// 大綱本身另有測試；這裡只驗它掛在哪、拿到什麼。
 const outlineProps = vi.hoisted(() => [] as Array<import("@/components/outline/NoteOutline").NoteOutlineProps>);
 vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/components/outline/NoteOutline")>();
@@ -63,7 +61,7 @@ vi.mock("@/components/outline/NoteOutline", async (importOriginal) => {
     },
   };
 });
-// 手機的泡泡與底部面板本身另有測試；這裡記下拿到什麼。泡泡替身是一顆按了就呼叫 onOpen 的鈕（同點一下）。
+// The bubble stub is a button that calls onOpen when pressed.
 const phoneStubs = vi.hoisted(() => ({
   bubble: [] as Array<import("@/components/outline/OutlineScrollBubble").OutlineScrollBubbleProps>,
   sheet: [] as Array<import("@/components/outline/OutlineSheet").OutlineSheetProps>,
@@ -85,13 +83,12 @@ vi.mock("@/components/outline/OutlineSheet", async (importOriginal) => ({
     return <div data-testid="sheet-stub" data-open={String(props.open)} />;
   },
 }));
-// jsdom 沒有版面：容器寬度由測試指定（同真的 hook，兩個元素都掛上才有值）。
+// jsdom has no layout: the test sets the container width.
 const outlineBox = vi.hoisted(() => ({ value: { width: 1072, height: 700, firstLineTop: null } }));
 vi.mock("@/components/outline/use-outline-box", () => ({
   useOutlineBox: (scrollEl: HTMLElement | null, columnEl: HTMLElement | null) => (scrollEl !== null && columnEl !== null ? outlineBox.value : null),
 }));
 
-// 浮動層的內部行為由 ImageZoomLayer.test.tsx 守；這裡只看頁面把它放進有放大功能的欄裡、且唯讀。
 vi.mock("@/components/media-zoom/ImageZoomLayer", async () => {
   const { useMediaZoom } = await import("@/components/media-zoom/context");
   return {
@@ -121,11 +118,11 @@ interface PublicNoteBody {
   title: string;
   ydoc: string;
   links?: Array<{ id: string; title: string; path: string }>;
-  /** #297：故意放寬成 string——P3 要送 server 不認得的值。 */
+  /** #297: deliberately widened to string so a test can send a value the server does not know. */
   width?: string;
 }
 
-/** 只回應公開端點；**任何**其他請求（尤其 /api/auth/me）都直接炸——匿名頁不得打到需要登入的東西。 */
+/** Answers public endpoints only; anything else (especially /api/auth/me) throws, because an anonymous page must not call authenticated APIs. */
 function mockFetch(handler: (url: string) => { status: number; body: unknown } | null) {
   const calls: string[] = [];
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -144,11 +141,11 @@ function mockFetch(handler: (url: string) => { status: number; body: unknown } |
 }
 
 function renderPage(entry = `/p/${TOKEN}`) {
-  // 刻意**不**在測試端關 retry（會遮蔽的形）：頁面自己的 `retry: false`
-  // 必須承重——它一被拿掉，404/429 案就會重試三次，錯誤畫面要等第四次失敗才出現。
-  // 守法是**計次**：404、429 兩案都在錯誤畫面出現後斷言公開端點恰被打一次（重試的話已是 4 次）。
-  // 不靠 waitFor 時限：react-query 預設退避 1+2+4≈7 秒，塞得進全域 asyncUtilTimeout（test/setup.ts）。
-  // 路由樹帶兩形（與 App.tsx 同構）：形的判別在頁內 useParams。
+  // Deliberately NOT disabling retry on the test side (a shape that would mask): the page's own `retry: false` must carry weight - once it
+  // is removed, the 404/429 cases would retry three times and the error screen would appear only after the fourth failure.
+  // The guard is counting: both the 404 and 429 cases assert that the public endpoint was hit exactly once after the error screen appears
+  // (4 calls with retries). It does not rely on a waitFor timeout: react-query's default backoff of 1+2+4 = ~7 s fits within the global
+  // asyncUtilTimeout (test/setup.ts). The route tree carries both forms (same structure as App.tsx): the form is decided in-page by useParams.
   const queryClient = new QueryClient();
   render(
     <QueryClientProvider client={queryClient}>
@@ -173,8 +170,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀頁）", () => {
-  it("200：標題＋唯讀徽章＋Knotebook 連回 /，doc 解碼後交給唯讀編輯器（token 一併帶到）", async () => {
+describe("PublicNotePage (#72 /p/:token + #122 /p/:handle/:slug no-login read-only page)", () => {
+  it("200: title + read-only badge + Knotebook linking back to /, the doc is decoded and handed to the read-only editor (the token is passed along too)", async () => {
     const body: PublicNoteBody = {
       title: "公開的筆記",
       ydoc: ydocBase64((fragment) => {
@@ -196,13 +193,11 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(screen.getByTestId("public-note-editor")).toHaveAttribute("data-links", "[]");
     expect(screen.getByRole("heading", { name: "公開的筆記" })).toBeInTheDocument();
     expect(screen.getByText("Read-only")).toBeInTheDocument();
-    // Knotebook 字樣連回首頁（匿名者點了會被 RequireAuth 導去 /login，那是預期行為）
     expect(screen.getByRole("link", { name: /Knotebook/ })).toHaveAttribute("href", "/");
-    // 整頁只打過公開端點——尤其不得打 /api/auth/me（匿名頁零 auth 相依）
     expect(calls).toEqual([`GET /api/public/notes/${TOKEN}`]);
   });
 
-  it("手機頁首：簡報鈕只剩圖示（可及名稱不變）、唯讀徽章收成一個點（文字只給螢幕閱讀器）", async () => {
+  it("phone header: the presentation button is icon-only (accessible name unchanged), the read-only badge collapses into a dot (text only for screen readers)", async () => {
     const body: PublicNoteBody = { title: "公開的筆記", ydoc: EMPTY_YDOC_UPDATE_B64 };
     vi.stubGlobal("fetch", mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null)).fn);
     renderPage();
@@ -220,7 +215,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(dot).toHaveClass("sm:hidden");
   });
 
-  it("#462：文章欄裡有放大功能與唯讀的圖片浮動層（浮動層掛在文章欄上）", async () => {
+  it("#462: the article column has the zoom feature and a read-only image floating layer (the layer is attached to the article column)", async () => {
     const body: PublicNoteBody = { title: "公開的筆記", ydoc: EMPTY_YDOC_UPDATE_B64 };
     vi.stubGlobal("fetch", mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null)).fn);
     renderPage();
@@ -231,7 +226,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(screen.getByTestId("article-column")).toContainElement(layer);
   });
 
-  it("公開頁沒有最愛星號，也不打最愛清單（#334）", async () => {
+  it("the public page has no favorites star and does not hit the favorites list (#334)", async () => {
     const body: PublicNoteBody = { title: "公開的筆記", ydoc: ydocBase64(() => {}) };
     const { fn, calls } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null));
     vi.stubGlobal("fetch", fn);
@@ -243,7 +238,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(calls.some((c) => c.includes("/api/favorites"))).toBe(false);
   });
 
-  it("別名形 /p/<handle>/<slug>（#122）：打 by-path 端點、path 形 ref 交給編輯器、零 auth fetch", async () => {
+  it("alias form /p/<handle>/<slug> (#122): hits the by-path endpoint, the path-form ref is handed to the editor, zero auth fetch", async () => {
     const body: PublicNoteBody = {
       title: "別名的筆記",
       ydoc: ydocBase64((fragment) => {
@@ -260,28 +255,28 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     const queryClient = renderPage("/p/alice/my-doc");
 
     const editor = await screen.findByTestId("public-note-editor");
-    expect(editor.dataset.ref).toBe("path:alice/my-doc"); // token 形誤判會在這裡現形
+    expect(editor.dataset.ref).toBe("path:alice/my-doc"); // a misjudged token form would show up here
     expect(screen.getByRole("heading", { name: "別名的筆記" })).toBeInTheDocument();
     expect(calls).toEqual(["GET /api/public/notes/alice/my-doc"]);
-    // 快取真的落在 by-path key（突變驗證）：queryKey 若寫死 token 形，URL 與畫面
-    // 全對、只有快取格錯——所有別名頁共用一格，換頁會先渲染前一篇。fetch 斷言
-    // 看不到這件事，必須直接驗 key。
+    // The cache really lands under the by-path key: if the queryKey were hardcoded to the token form, the URL and the screen would all be
+    // right and only the cache slot wrong - every alias page would share one slot and switching pages would first render the previous
+    // note. A fetch assertion cannot see this; the key must be checked directly.
     expect(queryClient.getQueryState(["public-note-by-path", "alice", "my-doc"])?.status).toBe("success");
   });
 
-  it("別名形 404（改名／清別名後的舊連結）→ 同一張失效卡；恰打一次（retry:false 在別名形也承重）", async () => {
+  it("alias form 404 (old link after rename / alias cleanup) -> the same invalid card; hit exactly once (retry:false carries weight in the alias form too)", async () => {
     const { fn, calls } = mockFetch((url) =>
       url === "/api/public/notes/alice/gone" ? { status: 404, body: { error: { code: "not_found" } } } : null,
     );
     vi.stubGlobal("fetch", fn);
     renderPage("/p/alice/gone");
-    // 逐字（比照 token 404 案）：塌到泛用分支會渲染 errors.fallback，非本文案
+    // Verbatim (same as the token 404 case): collapsing into the generic branch would render errors.fallback, not this text.
     expect(await screen.findByRole("alert")).toHaveTextContent("This link doesn't exist or is no longer active.");
     expect(screen.queryByTestId("public-note-editor")).not.toBeInTheDocument();
     expect(calls).toEqual(["GET /api/public/notes/alice/gone"]);
   });
 
-  it("空文件 payload（AAA=）→ 正常渲染空文件，不 throw、不顯示錯誤卡", async () => {
+  it("empty document payload (AAA=) -> renders an empty document normally, no throw, no error card", async () => {
     const { fn } = mockFetch((url) =>
       url === `/api/public/notes/${TOKEN}`
         ? { status: 200, body: { title: "空筆記", ydoc: EMPTY_YDOC_UPDATE_B64 } satisfies PublicNoteBody }
@@ -296,7 +291,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(screen.queryByText("This link doesn't exist or is no longer active.")).not.toBeInTheDocument();
   });
 
-  it("404（撤銷／token 錯）→ 失效卡，不掛編輯器；恰打一次（頁面 retry: false 承重——404 是常見合法結果，重試只啃節流額度）", async () => {
+  it("404 (revoked / wrong token) -> invalid card, the editor is not mounted; hit exactly once (the page's retry: false carries weight - 404 is a common legitimate outcome, and a retry only eats throttle quota)", async () => {
     const { fn, calls } = mockFetch((url) =>
       url === `/api/public/notes/${TOKEN}`
         ? { status: 404, body: { error: { code: "not_found", message: "This link doesn't exist or no longer works." } } }
@@ -313,7 +308,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(calls).toEqual([`GET /api/public/notes/${TOKEN}`]);
   });
 
-  it("非 404 的失敗（429 節流）→ 顯示 errors.<code> 文案而非失效卡（連結可能還活著，不能誤告使用者「已失效」）", async () => {
+  it("non-404 failure (429 throttle) -> shows the errors.<code> text, not the invalid card (the link may still be alive, so the user must not be wrongly told 'invalid')", async () => {
     const { fn, calls } = mockFetch((url) =>
       url === `/api/public/notes/${TOKEN}`
         ? { status: 429, body: { error: { code: "too_many_requests", message: "請求過於頻繁" } } }
@@ -323,19 +318,18 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
 
     renderPage();
 
-    // 逐字斷 errors.too_many_requests 的文案（不是 errors.fallback）——非 404 分支
-    // 塌縮成一律 fallback 的突變要在這裡紅。
+    // Assert the errors.too_many_requests text verbatim (not errors.fallback): a regression collapsing the non-404 branch to always
+    // fallback must fail here.
     await waitFor(() => expect(screen.getByText("Too many requests. Please slow down.")).toBeInTheDocument());
-    // 頁面的 `retry: false` 守門（見 renderPage 註解）：節流後還重試三次只會更糟。
+    // The page's `retry: false` guard (see the renderPage comment): retrying three times after a throttle only makes things worse.
     expect(calls).toEqual([`GET /api/public/notes/${TOKEN}`]);
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.queryByText("This link doesn't exist or is no longer active.")).not.toBeInTheDocument();
     expect(screen.queryByTestId("public-note-editor")).not.toBeInTheDocument();
   });
 
-  // 背景 refetch（react-query 預設 focus/reconnect 會重抓）的兩條呈現規則（
-  // Minor 1）：非 404 失敗不得把看到一半的內容翻成錯誤卡；404 則必須翻成失效卡
-  //（撤銷的即時傳播）。
+  // Two presentation rules for a background refetch (react-query refetches on focus / reconnect by default): a non-404 failure must not
+  // flip half-viewed content into an error card; a 404 must flip it into the invalid card (instant propagation of revocation).
   const CONTENT_BODY: PublicNoteBody = {
     title: "公開的筆記",
     ydoc: ydocBase64((fragment) => {
@@ -345,7 +339,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     }),
   };
 
-  it("背景 refetch 非 404 失敗（500）→ 既有內容續渲，不翻錯誤卡（一時的網路失敗，下次成功自癒）", async () => {
+  it("background refetch non-404 failure (500) -> existing content keeps rendering, no flip to the error card (a transient network failure that heals on the next success)", async () => {
     let respond: { status: number; body: unknown } = { status: 200, body: CONTENT_BODY };
     const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? respond : null));
     vi.stubGlobal("fetch", fn);
@@ -358,14 +352,14 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       await queryClient.refetchQueries();
     });
 
-    // 先等 query 真的進 error 態再斷 DOM——不然「內容還在」可能只是翻卡尚未發生的
-    // 假綠（404 那案實測狀態更新晚一拍）。
+    // First wait until the query really enters the error state, then assert the DOM - otherwise "content still there" might be a false
+    // green from a flip that has not happened yet (the state update lags one beat in the 404 case).
     await waitFor(() => expect(queryClient.getQueryState(["public-note", TOKEN])?.status).toBe("error"));
     expect(screen.getByTestId("public-note-editor")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("背景 refetch 撞 404（連結被撤銷）→ 翻成失效卡（正在看的人要知道連結死了，不是繼續掛著舊快照）", async () => {
+  it("background refetch hits 404 (link revoked) -> flips to the invalid card (the viewer must know the link died, not keep an old snapshot)", async () => {
     let respond: { status: number; body: unknown } = { status: 200, body: CONTENT_BODY };
     const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? respond : null));
     vi.stubGlobal("fetch", fn);
@@ -384,7 +378,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(screen.queryByTestId("public-note-editor")).not.toBeInTheDocument();
   });
 
-  it("#269：payload 的 links 交給唯讀編輯器；舊 server（沒有 links）當成 []", async () => {
+  it("#269: the payload's links are handed to the read-only editor; an old server (no links) is treated as []", async () => {
     const links = [{ id: "11111111-1111-4111-8111-111111111111", title: "T", path: "/p/a/b" }];
     const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body: { title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, links } } : null));
     vi.stubGlobal("fetch", fn);
@@ -392,7 +386,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
     expect(await screen.findByTestId("public-note-editor")).toHaveAttribute("data-links", JSON.stringify(links));
   });
 
-  describe("#297 公開頁寬度（payload 的 width）", () => {
+  describe("#297 public page width (the payload's width)", () => {
     const STANDARD_MAX = "max-w-[clamp(42.5rem,85%,66rem)]";
     async function columnFor(body: PublicNoteBody): Promise<HTMLElement> {
       const { fn } = mockFetch((url) => (url === `/api/public/notes/${TOKEN}` ? { status: 200, body } : null));
@@ -402,24 +396,24 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       return screen.getByTestId("article-column");
     }
 
-    it("P1 width: full → 全寬，沒有標準的 max-w", async () => {
+    it("width: full -> full width, no standard max-w", async () => {
       const column = await columnFor({ title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, width: "full" });
       expect(column).toHaveClass("mx-auto", "w-full", "max-w-none");
       expect(column).not.toHaveClass(STANDARD_MAX);
     });
 
-    it("P2 缺 width（舊 server）→ 標準", async () => {
+    it("missing width (old server) -> standard", async () => {
       const column = await columnFor({ title: "N", ydoc: EMPTY_YDOC_UPDATE_B64 });
       expect(column).toHaveClass("mx-auto", "w-full", STANDARD_MAX);
     });
 
-    it("P3 不認得的 width → 標準", async () => {
+    it("unrecognized width -> standard", async () => {
       const column = await columnFor({ title: "N", ydoc: EMPTY_YDOC_UPDATE_B64, width: "bogus" });
       expect(column).toHaveClass("mx-auto", "w-full", STANDARD_MAX);
     });
   });
 
-  describe("#465 右側標題大綱", () => {
+  describe("#465 right-side heading outline", () => {
     beforeEach(() => {
       window.localStorage.clear();
     });
@@ -436,7 +430,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       await screen.findByTestId("public-note-editor");
     }
 
-    it("桌機：掛在頁首之後、捲動容器之前（不在捲動容器裡）；拿到捲動容器與標題，沒有泡泡；沒有偏好時可以釘但沒釘", async () => {
+    it("desktop: mounted after the header and before the scroll container (not inside it); receives the scroll container and headings, no bubble; with no preference it can be pinned but is not", async () => {
       stubLayoutTier("docked");
       await renderWithHeadings();
       const stub = await screen.findByTestId("outline-stub");
@@ -456,10 +450,9 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       await waitFor(() => expect(column).toHaveClass(...articleColumn("standard", { pinMotion: true }).split(" ")));
     });
 
-    it("標準寬＋釘住偏好 → 欄一出現就是釘住寬度、那一次沒有過場；一個畫格後才有過場；大綱拿到 pinned", async () => {
+    it("standard width + pinned preference -> the column appears at the pinned width right away with no transition that time; a transition only after one frame; the outline receives pinned", async () => {
       window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
       stubLayoutTier("docked");
-      // 欄每一次 class 的值（屬性變動紀錄的舊值，加上最後的現值）。
       const records: MutationRecord[] = [];
       const observer = new MutationObserver((list) => records.push(...list));
       observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
@@ -479,13 +472,13 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(props.pinAvailable).toBe(true);
     });
 
-    it("捲動容器固定保留捲軸位置（捲軸出現與否不改寬度，能不能釘不會在門檻附近來回切）", async () => {
+    it("the scroll container always reserves the scrollbar position (whether a scrollbar appears does not change the width, so whether it can be pinned does not flip back and forth near the threshold)", async () => {
       stubLayoutTier("docked");
       await renderWithHeadings();
       expect(screen.getByTestId("article-column").parentElement).toHaveClass("sm:[scrollbar-gutter:stable]");
     });
 
-    it("全寬＋釘住偏好 → 欄是全寬、不能釘（只有細線）", async () => {
+    it("full width + pinned preference -> the column is full width and cannot be pinned (only a thin line)", async () => {
       window.localStorage.setItem(OUTLINE_PINNED_STORAGE_KEY, "1");
       stubLayoutTier("docked");
       await renderWithHeadings(undefined, "full");
@@ -500,7 +493,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(window.localStorage.getItem(OUTLINE_PINNED_STORAGE_KEY)).toBe("1");
     });
 
-    it("640-767：同樣是手機形（泡泡、底部面板），沒有細線；768 以上才是細線", async () => {
+    it("640-767: also phone-shaped (bubble, bottom panel), no thin line; from 768 up it is a thin line", async () => {
       stubLayoutTier("compact");
       phoneStubs.bubble = [];
       await renderWithHeadings();
@@ -509,7 +502,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.scrollTarget).toBe(screen.getByTestId("article-column").parentElement!);
     });
 
-    it("手機：沒有細線；位置泡泡在捲動容器之外的零高度錨點裡、聽捲動容器的捲動，有底部面板；頁面沒有 ⋮", async () => {
+    it("phone: no thin line; the position bubble is inside a zero-height anchor outside the scroll container and listens to the scroll container's scrolling, has a bottom panel; the page has no kebab", async () => {
       stubLayoutTier("phone");
       phoneStubs.bubble = [];
       phoneStubs.sheet = [];
@@ -525,19 +518,18 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(scroll.contains(bubble)).toBe(false);
       expect(bubble.closest("[data-outline-anchor]")).not.toBeNull();
       expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "false");
-      // 唯讀頁：沒有編輯區要避讓。
       expect(props.inputRoot ?? null).toBeNull();
       expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
       act(() => bubble.click());
       expect(screen.getByTestId("sheet-stub")).toHaveAttribute("data-open", "true");
-      // 面板關閉時焦點回到點開它的泡泡（沒有觸發鈕，不然會掉到 body）。
+      // When the panel closes, focus returns to the bubble that opened it (there is no trigger button, otherwise it would fall to body).
       const restore = phoneStubs.sheet[phoneStubs.sheet.length - 1]!.restoreFocus;
       expect(restore).toEqual(expect.any(Function));
       act(() => restore!());
       expect(document.activeElement).toBe(bubble);
     });
 
-    it("桌機：沒有泡泡與底部面板", async () => {
+    it("desktop: no bubble and no bottom panel", async () => {
       stubLayoutTier("docked");
       phoneStubs.bubble = [];
       phoneStubs.sheet = [];
@@ -547,7 +539,7 @@ describe("PublicNotePage（#72 /p/:token＋#122 /p/:handle/:slug 免登入唯讀
       expect(phoneStubs.sheet).toHaveLength(0);
     });
 
-    it("簡報中（?present）：桌機也不掛", async () => {
+    it("during presentation (?present): not mounted even on desktop", async () => {
       stubLayoutTier("docked");
       await renderWithHeadings(`/p/${TOKEN}?present`);
       expect(await screen.findByTestId("presentation-stub")).toBeInTheDocument();

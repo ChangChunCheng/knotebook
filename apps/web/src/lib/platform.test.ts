@@ -12,11 +12,11 @@ describe("isMacPlatform", () => {
     vi.stubGlobal("navigator", { platform });
     expect(isMacPlatform()).toBe(false);
   });
-  it("沒有 platform 欄位 -> false 且不丟錯", () => {
+  it("no platform field -> false and does not throw", () => {
     vi.stubGlobal("navigator", {});
     expect(isMacPlatform()).toBe(false);
   });
-  it("iPhone -> false（只認 Mac；iOS 外接鍵盤顯示 Ctrl）", () => {
+  it("iPhone -> false (only Mac counts; iOS with an external keyboard shows Ctrl)", () => {
     vi.stubGlobal("navigator", { platform: "iPhone" });
     expect(isMacPlatform()).toBe(false);
   });
