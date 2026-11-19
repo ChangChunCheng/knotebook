@@ -3,9 +3,6 @@ import type { NoteDto, ShareDto } from "@knotebook/shared";
 import { api } from "./client";
 import type { PublicLinkDto } from "./public-link";
 
-/** On success, write `['shares']` and `['public-link']` before `['note']`, synchronously: a group note's ShareDialog reads
- * public-link and would flash "public" with the old token. `refetchAfterFailure` awaits those two before note and groups;
- * call it with `void`, never return it from onError (TanStack would wait, and `retry: 3` delays the error by about 7 s). */
 function writeMovedNote(queryClient: QueryClient, note: NoteDto): void {
   queryClient.setQueryData(["note", note.id], note);
   void queryClient.invalidateQueries({ queryKey: ["notes"] });
@@ -14,12 +11,16 @@ function writeMovedNote(queryClient: QueryClient, note: NoteDto): void {
   void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
 }
 
+/** Writes `['shares']` and `['public-link']` before `['note']`, synchronously: a group note's ShareDialog reads
+ * public-link and would flash "public" with the old token. */
 export function applyMovedNote(queryClient: QueryClient, noteId: string, note: NoteDto): void {
   queryClient.setQueryData<ShareDto[]>(["shares", noteId], []);
   queryClient.setQueryData<PublicLinkDto>(["public-link", noteId], prev => (prev ? { ...prev, token: null, slug: null } : prev));
   writeMovedNote(queryClient, note);
 }
 
+/** Awaits shares and public-link before invalidating note and groups. Call it with `void`; never return it from onError
+ * (TanStack would wait, and `retry: 3` delays the error by about 7 s). */
 export async function refetchAfterFailure(queryClient: QueryClient, noteId: string): Promise<void> {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["shares", noteId] }),

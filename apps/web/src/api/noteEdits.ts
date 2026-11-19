@@ -4,7 +4,8 @@ import { api } from "./client";
 
 export const NOTE_EDITS_QUERY_KEY = (noteId: string) => ["note-edits", noteId] as const;
 
-/** `enabled` is required: fetch only while the edits dialog is open (`AiEditsDialog.test.tsx` guards this; NotePage tests can't). */
+/** `enabled` is required: fetch only while the edits dialog is open. `AiEditsDialog.test.tsx` guards this; NotePage tests
+ * can't (their catch-all mock answers it, and a rejection would only sit in this query's error state). */
 export function useNoteEdits(noteId: string, options: { enabled: boolean }): UseQueryResult<NoteEditDto[]> {
   return useQuery({
     queryKey: NOTE_EDITS_QUERY_KEY(noteId),

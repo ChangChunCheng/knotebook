@@ -5,9 +5,10 @@ export interface SiteLimitDef {
   type: "int";
   unit: SiteLimitUnit;
   default: number | "auto";
-  /** Admin page range; env values have their own range in config.ts. */
+  /** Admin page range (inclusive); env values have their own range in config.ts. */
   min: number;
   max: number;
+  /** Existing env names only; don't add new ones. */
   env?: "NOTE_MAX_BYTES" | "PARSE_WORKERS" | "PARSE_WORKER_MEMORY_MB" | "PARSE_TIMEOUT_MS" | "PARSE_QUEUE_WAIT_MS";
   category: SiteLimitCategory;
   /** Display only; server tests assert it equals the constant in rate-limit.ts. */
@@ -73,7 +74,9 @@ export interface SiteLimitItemDto {
   value: number;
   source: SiteLimitSource;
   locked: boolean;
+  /** The `site_limits` value, returned even when env-locked or ignored. */
   stored: number | null;
+  /** The stored value is outside the current range and not applied. */
   storedIgnored?: true;
   autoValue?: number;
   autoSource?: "cpu" | "memory";
@@ -81,6 +84,7 @@ export interface SiteLimitItemDto {
 
 export interface SiteLimitChangeDto {
   id: string;
+  /** Keys not in the registry are returned as-is (the UI shows the raw key). */
   key: string;
   oldValue: number | null;
   newValue: number | null;
@@ -99,6 +103,7 @@ export interface SiteLimitsDto {
     memoryBytes: number;
     memorySource: "cgroup-v2" | "cgroup-v1" | "os";
   };
+  /** Latest 50, changed_at DESC, id DESC. */
   changes: SiteLimitChangeDto[];
 }
 

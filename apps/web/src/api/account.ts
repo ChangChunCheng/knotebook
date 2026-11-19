@@ -30,7 +30,8 @@ export function useSetPassword() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (newPassword: string) => api<void>("/api/auth/password/set", { method: "POST", body: JSON.stringify({ newPassword }) }),
-    // Refetch on 409 password_already_set too. Identities change because `unlinkable` depends on having a password.
+    // Refetch on 409 password_already_set too (the form switches to change-password). Session: hasPassword changed and the
+    // server re-signed it; identities: `unlinkable` depends on having a password.
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: IDENTITIES_QUERY_KEY });

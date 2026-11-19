@@ -6,6 +6,7 @@ import zhTW from "./management.zh-TW.json";
 // needs; add new admin.*/settings.* keys to management.*.json. Every file using these keys imports it
 // itself, since pages like AuthorizePage are reachable without opening settings (management-copy.test.ts checks).
 // addResourceBundle mutates the main JSON module objects (i18next doesn't clone resources), so tests read it via `?raw`.
+// `true, false`: deep merge, never overwriting main keys (idempotent).
 i18n.addResourceBundle("en", "translation", en, true, false);
 i18n.addResourceBundle("zh-TW", "translation", zhTW, true, false);
 export const MANAGEMENT_STRINGS_READY = true;

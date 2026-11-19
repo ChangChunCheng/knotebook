@@ -10,7 +10,8 @@ export interface PublicLinkDto {
   width: NoteWidth;
 }
 
-/** The server answers 403/404 without `permissions.managePublicLink`; callers then pass "" to keep the query disabled. */
+/** The server answers 403/404 without `permissions.managePublicLink`; callers then pass "" to keep the query disabled.
+ * `ShareDialog` fetches this on note load (for the trigger icon), not only when the dialog opens. */
 export function usePublicLink(noteId: string): UseQueryResult<PublicLinkDto> {
   return useQuery({
     queryKey: ["public-link", noteId],
@@ -19,7 +20,7 @@ export function usePublicLink(noteId: string): UseQueryResult<PublicLinkDto> {
   });
 }
 
-/** Every PUT regenerates the token (not idempotent). The client PUTs only when token is null (Regenerate PUTs on purpose). The response is written straight into the cache, with no refetch. */
+/** Every PUT regenerates the token (not idempotent). The client PUTs only when token is null (Regenerate PUTs on purpose). The response is written straight into the cache, with no refetch (saves a round trip and keeps the sticky selection from an extra refetch). */
 export function useCreatePublicLink(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({

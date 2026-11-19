@@ -1,6 +1,8 @@
 // Callers run normalizeTableWidths and relativizeSiteUploads after parsing and before findStructureError.
 // markdownToHTML drops line structure, so canonical columns lines get a one-off marker attribute first and
-// column elements without it are rejected. Traversal is iterative: nesting depth comes from the caller's markdown.
+// column elements without it are rejected. The marked line keeps the line structure, so it tokenizes the same;
+// inside code blocks it is escaped text, not an element. Traversal is iterative: nesting depth comes from the caller's markdown.
+// Uses global `document` (server: EditingRuntime.installGlobals()); importing this file doesn't touch the DOM.
 import { markdownToHTML } from "@blocknote/core";
 import { COLUMNS_OPEN_TAG, COLUMNS_STYLE, COLUMN_LIST_TYPE, COLUMN_TYPE, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, COLUMNS_MAX, COLUMNS_MIN } from "./columns.js";
 import { SIZE_PX_MAX, SIZE_PX_MIN, isSizePx } from "./note-sizes.js";
@@ -102,6 +104,7 @@ const PRE_SPLIT = /(<pre\b[\s\S]*?(?:<\/pre\s*>|$))/i;
 const PRE_WHOLE = /^<pre\b/i;
 // #386: tryParseHTMLToBlocks turns the `\n` after each `<br>` into a leading space. Remove only that `\n`
 // (spaces after `<br>` are the author's) and skip hand-written `<pre>`, where newlines matter.
+// A newline after `<br>` doesn't render, so removing it keeps semantics; `<br>` in code blocks is escaped text and can't match.
 function dropNewlineAfterBreaks(html: string): string {
   return html
     .split(PRE_SPLIT)
@@ -109,11 +112,15 @@ function dropNewlineAfterBreaks(html: string): string {
     .join("");
 }
 
-/** Parse the returned `html`, not your own markdownToHTML output: it has the `<br>` fix applied. */
+/**
+ * Parse the returned `html` (from the unmarked input), not your own markdownToHTML output: it has the `<br>` fix applied.
+ * Checks run event handlers, then columns, then size; the first failure is the reported error.
+ */
 export function checkNoteMarkdownSyntax(input: string, placement: MarkdownPlacement): { ok: true; html: string } | { ok: false; error: MarkdownSyntaxError } {
-  // BlockNote's markdown → HTML keeps `\r`, which would become a space.
+  // BlockNote's markdown → HTML keeps `\r`, which would become a space. Web paste normalizes earlier (collab/paste.ts);
+  // this is the shared entry for all markdown writes.
   const markdown = input.replace(/\r\n?/g, "\n");
-  // Marker name absent from the input (case-insensitive), so the input can't forge it.
+  // Marker name absent from the input (case-insensitive, like HTML attribute names), so the input can't forge it.
   const lower = markdown.toLowerCase();
   let mark = "data-kb-line";
   while (lower.includes(mark)) mark += "x";
@@ -140,6 +147,7 @@ export function checkNoteMarkdownSyntax(input: string, placement: MarkdownPlacem
 type Rec = Record<string, unknown>;
 const isRec = (x: unknown): x is Rec => x !== null && typeof x === "object" && !Array.isArray(x);
 
+// Copy-on-write: `fix` returns its input unchanged to mean "no change"; an untouched tree returns the same array.
 function mapBlocksCow<B>(blocks: B[], fix: (b: Rec) => Rec): B[] {
   const nodes: Rec[] = [];
   const parent: number[] = [];
@@ -173,7 +181,7 @@ function mapBlocksCow<B>(blocks: B[], fix: (b: Rec) => Rec): B[] {
 
 const isPositiveFinite = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v > 0;
 
-/** core parses empty colwidth segments to NaN, 0 or negatives; those become undefined. */
+/** core parses empty colwidth segments to NaN, 0 or negatives; those become undefined. Copy-on-write: no change returns the same array. */
 export function normalizeTableWidths<B>(blocks: B[]): B[] {
   return mapBlocksCow(blocks, b => {
     if (b.type !== "table" || !isRec(b.content) || !Array.isArray(b.content.columnWidths)) return b;
@@ -203,6 +211,7 @@ export function relativizeSiteUploads<B>(blocks: B[], baseOrigin: string): B[] {
 
 const isSizeValue = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v >= SIZE_PX_MIN && v <= SIZE_PX_MAX;
 
+/** When both a columns and a size rule fail, returns unsupported_columns. */
 export function findStructureError(blocks: readonly unknown[], placement: MarkdownPlacement): MarkdownShapeError | null {
   const stack: Array<[unknown, number, unknown, boolean]> = [];
   for (const b of blocks) stack.push([b, 0, undefined, false]);

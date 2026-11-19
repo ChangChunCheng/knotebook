@@ -2,6 +2,7 @@ import * as Y from "yjs";
 
 // Sections are only the single blockGroup's direct blockContainer/columnList children; deeper nodes are content.
 // nodeName is camelCase even though toString() prints lowercase.
+// The canonical serialization excludes ids; the fingerprint is not a security boundary.
 export const TOP_SECTION_ID = "_top";
 export const SECTION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -13,6 +14,7 @@ export interface SectionInfo {
   blockIds: string[];
 }
 
+/** Also returns columnList rows, not only blockContainers. */
 export function topLevelContainers(fragment: Y.XmlFragment): Y.XmlElement[] {
   const group = fragment.get(0);
   if (!(group instanceof Y.XmlElement) || group.nodeName !== "blockGroup") return [];
@@ -32,6 +34,7 @@ function blockContent(container: Y.XmlElement): Y.XmlElement | null {
 }
 
 // Iterative: nesting depth is client-controlled. Delta inserts, because toString() prints marks as XML tags.
+// Children are pushed in reverse so pops come out in preorder; only XmlText/XmlElement are taken (XmlHook is filtered).
 function textOf(node: Y.XmlElement | Y.XmlText): string {
   let s = "";
   const stack: Array<Y.XmlElement | Y.XmlText> = [node];

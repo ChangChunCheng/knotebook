@@ -17,7 +17,7 @@ export interface CreateApiTokenInput {
   expiresInDays: 30 | 90 | 365 | null;
 }
 
-/** The plaintext `token` is in this response only; the caller must show it. It isn't written to the query cache (the list is always refetched), but useMutation still keeps the response in the mutation cache for the default gcTime of 5 min: same JS heap, not a security boundary. */
+/** The plaintext `token` is in this response only; the caller must show it. The query cache never holds it (the list is always refetched). */
 export function useCreateApiToken() {
   const queryClient = useQueryClient();
   return useMutation({

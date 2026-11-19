@@ -84,8 +84,9 @@ export function useDeleteAiProvider() {
   });
 }
 
-/** `onSettled`, not `onSuccess`: the server marks a provider degraded only when the test fails,
- * so the degraded badge needs a refetch after an error. */
+/** `onSettled`, not `onSuccess`: only a test that fails on an undecryptable key marks the provider degraded, and degraded
+ * providers get 503 before the test runs, so only the error path changes the badge. Success still invalidates, like every
+ * admin-ai mutation. */
 export function useTestAiProvider() {
   const queryClient = useQueryClient();
   return useMutation({

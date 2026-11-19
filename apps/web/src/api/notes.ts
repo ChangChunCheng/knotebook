@@ -55,7 +55,8 @@ export function useNotes(): UseQueryResult<NoteDto[]> {
   });
 }
 
-/** `retry` is set only when given: an explicit `undefined` would override the QueryClient default. */
+/** `retry` is set only when given: an explicit `undefined` would override the QueryClient default and query-core
+ * would fall back to 3 retries. */
 export interface NoteQueryOptions {
   enabled?: boolean;
   retry?: UseQueryOptions<NoteDto>["retry"];

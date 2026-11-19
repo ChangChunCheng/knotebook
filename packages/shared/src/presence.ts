@@ -2,11 +2,13 @@
 import type { AvatarRef } from "./avatar.js";
 import { YDOC_FRAGMENT } from "./ydoc.js";
 
+// Our own awareness field: BlockNote owns `user` and y-prosemirror owns `cursor`.
 export const PRESENCE_FIELD = "knotebook";
 
 export const AGENT_PRESENCE_COLOR = "#7c3aed";
 
-// Hashed, not random, so a user has one color everywhere; fixed saturation and lightness stay readable in both themes.
+// Hashed, not random, so a user has one color everywhere; fixed saturation and lightness stay readable in both themes
+// (y-prosemirror uses it for both the cursor line and the name label background).
 export function collabUserColor(seed: string): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i += 1) {

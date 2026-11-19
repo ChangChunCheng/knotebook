@@ -5,10 +5,12 @@ import { notifyAvatarWritten } from "@/avatars/display-filler";
 import { api, ApiFail } from "./client";
 import { STORAGE_USAGE_QUERY_KEY } from "./storage";
 
-/** Avatar writes also invalidate storage usage: both the original and the display image count toward it. */
+// Image reads always use shared `avatarUrl`; never build image URLs here.
+
 export const AVATARS_QUERY_KEY = ["avatars"] as const;
 
-/** Refetch without a write having happened (background fill found a stale version); writes use `invalidateAvatarRelated`. */
+/** Refetch without a write having happened (background fill found a stale version); writes use `invalidateAvatarRelated`.
+ * Storage usage is included: both the original and the display image count toward it. */
 export function invalidateAvatarQueries(qc: QueryClient): Promise<unknown> {
   return Promise.all([
     qc.invalidateQueries({ queryKey: AVATARS_QUERY_KEY }),
@@ -58,9 +60,11 @@ export interface UpdateAvatarDisplayInput {
   crop: AvatarCropUpload;
   /** The candidate's `avatar.v` as the caller saw it; the server answers `avatar_outdated` if it isn't current. */
   version: number;
+  /** Lets the background fill abort on timeout so a stuck request doesn't stall its queue. */
   signal?: AbortSignal;
 }
 
+/** Doesn't touch the cache: shared by re-crop (useUpdateAvatarDisplay) and the background fill, which each invalidate on their own. */
 export function putAvatarDisplay({ id, display, crop, version, signal }: UpdateAvatarDisplayInput): Promise<AvatarCandidateDto> {
   const form = new FormData();
   form.append("display", display, displayFileName(display));
@@ -89,7 +93,7 @@ export function useRefreshOidcAvatar() {
   });
 }
 
-/** `null` = no avatar (initials). */
+/** `null` = no avatar (initials). The response is written to the session cache so the avatar switches immediately. */
 export function useSelectAvatar() {
   const qc = useQueryClient();
   return useMutation({
@@ -110,6 +114,7 @@ export function useDeleteAvatar() {
   });
 }
 
+/** Not `api()`: the response is a blob, not JSON. */
 export async function fetchAvatarOriginal(id: string, signal?: AbortSignal): Promise<Blob> {
   const response = await fetch(`/api/auth/avatars/${encodeURIComponent(id)}/original`, { credentials: "include", signal });
   if (!response.ok) {

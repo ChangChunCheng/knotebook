@@ -119,6 +119,7 @@ export function resolveFromList<T extends SiteLinkCandidate>(path: SiteNotePath,
   }
 }
 
+/** The single implementation: the web cache resolver and the web AI must call it rather than write their own. */
 export function targetFromList(path: SiteNotePath, list: readonly SiteLinkCandidate[]): SiteLinkTarget | undefined {
   const hit = resolveFromList(path, list);
   return hit ? { id: hit.id, title: hit.title } : undefined;
@@ -160,7 +161,10 @@ function mapTableContent(content: { type: "tableContent"; rows?: Array<{ cells?:
   return changed ? { ...content, rows } : content;
 }
 
-/** isInlineType filters ordinary blocks only; table cells are always walked. */
+/**
+ * isInlineType filters ordinary blocks only; table cells are always walked.
+ * Copy-on-write: `map` returns its input unchanged to mean "no change"; an untouched tree returns the same array.
+ */
 export function mapInlineArrays<B>(blocks: B[], map: InlineArrayMapper, isInlineType?: (type: string) => boolean): B[] {
   let changed = false;
   const out = (blocks as unknown as AnyBlock[]).map((block) => {
@@ -231,6 +235,7 @@ export function escapeLinkText(text: string): string {
     .replace(/<(?=(.?))/gs, (m, next: string) => (lessThanOpensMarkup(next === "" ? undefined : next) ? `\\${m}` : m));
 }
 
+/** `undefined` (nothing follows) counts: the next node may supply a tag-opening char. */
 export function lessThanOpensMarkup(next: string | undefined): boolean {
   return next === undefined || /[A-Za-z/!?]/.test(next);
 }

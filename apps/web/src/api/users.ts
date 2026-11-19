@@ -9,13 +9,14 @@ export function fetchUserSuggestions(q: string): Promise<UserSuggestResponse> {
   return api<UserSuggestResponse>(`/api/users/suggest?q=${encodeURIComponent(q)}`);
 }
 
-/** Expects trimmed input; the bounds are the same constants as the server's zod schema. */
+/** Expects trimmed, debounced input; the bounds are the same constants as the server's zod schema. */
 export function isSuggestQuery(q: string): boolean {
   return q.length >= USER_SUGGEST_MIN_QUERY && q.length <= USER_SUGGEST_MAX_QUERY;
 }
 
-/** Errors (incl. 429) just mean no suggestions. The key includes the user id because logout doesn't clear the cache;
- * it is read without subscribing since the key is recomputed on every keystroke. */
+/** Errors (incl. 429) just mean no suggestions: a full email still submits. `keepPreviousData` avoids flashing while typing.
+ * The key includes the user id because logout doesn't clear the cache. The id is read from the session cache without
+ * subscribing or fetching `/api/auth/me` (always present once logged in), since the key is recomputed on every keystroke. */
 export function useUserSuggestions(q: string, enabled: boolean): UseQueryResult<UserSuggestionDto[]> {
   const userId = useQueryClient().getQueryData<UserDto | null>(SESSION_QUERY_KEY)?.id ?? null;
   return useQuery({

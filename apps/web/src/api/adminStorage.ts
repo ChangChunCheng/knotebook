@@ -4,11 +4,11 @@ import { api } from "./client";
 import { ADMIN_USERS_QUERY_KEY } from "./admin";
 import { ADMIN_GROUPS_QUERY_KEY, ADMIN_STORAGE_PLANS_QUERY_KEY, STORAGE_USAGE_QUERY_KEY, groupStorageKey } from "./storage";
 
-/** Plan names and limits show in the user and group tables and in own usage, so plan mutations invalidate all four keys. */
 export function useAdminStoragePlans(): UseQueryResult<StoragePlansResponse> {
   return useQuery({ queryKey: ADMIN_STORAGE_PLANS_QUERY_KEY, queryFn: () => api<StoragePlansResponse>("/api/admin/storage-plans") });
 }
 
+/** Plan names and limits show in the user and group tables and in own usage, so plan mutations invalidate all four keys. */
 export function useInvalidateStorageAdmin(): () => void {
   const queryClient = useQueryClient();
   return () => {

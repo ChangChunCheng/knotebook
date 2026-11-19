@@ -18,7 +18,8 @@ export function useUpdateHandle() {
   });
 }
 
-/** Same as `useUpdateHandle`: display names are joined into many responses (members, version editors, shares). */
+/** Sends only `displayName` so the server skips the rename transaction and quota. Otherwise same as `useUpdateHandle`:
+ * display names are joined into many responses (members, version editors, shares). */
 export function useUpdateDisplayName() {
   const queryClient = useQueryClient();
   return useMutation({

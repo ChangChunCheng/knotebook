@@ -3,6 +3,7 @@ import type { ErrorCode, StorageQuotaErrorDetail } from "@knotebook/shared";
 /** `retryAfterMs`, `storage` and `noteId` are not constructor params: many callers depend on the constructor signature. */
 export class ApiFail extends Error {
   public retryAfterMs?: number;
+  /** `usedBytes`/`quotaBytes` are present only when visible to the caller; any malformed field drops the whole object. */
   public storage?: StorageQuotaErrorDetail;
   public noteId?: string;
 

@@ -32,6 +32,7 @@ const NotePage = lazy(() => import("./pages/NotePage"));
 
 // Rarely used pages are lazy (#201). LoginPage and HomePage stay in the entry bundle (first screens), and so do
 // the modal shells (SettingsModal/GroupModal/AdminModal): the modal frame must appear at once, only content waits.
+// scripts/check-bundle-size.mjs also requires the AdminSections chunk to exist.
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
 const LinkAccountPage = lazy(() => import("./pages/LinkAccountPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
@@ -76,6 +77,7 @@ const AdminLimitsSection = lazy(() => import("./components/admin/AdminSections")
 
 // `key={chunk}`: sibling routes share element type and position, so React would reuse one boundary and carry its
 // error state and retry budget to the next page. Not resetKey, whose change in the error state reloads the page.
+// ChunkLoadBeacon must stay inside Suspense, or it loops reloading (see ErrorBoundary.tsx).
 function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "page"; children: ReactNode }) {
   return (
     <LazyRouteErrorBoundary key={chunk} resetKey={undefined} chunk={chunk} frame={frame}>
@@ -90,7 +92,8 @@ function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "page
 const PublicNotePage = lazy(() => import("./pages/PublicNotePage"));
 
 // resetKey from route params, not location.key: closing a settings modal creates a new key, which would look like a
-// note switch and reload. ChunkLoadBeacon must stay inside Suspense, or it loops reloading (see ErrorBoundary.tsx).
+// note switch and reload. Cost: navigating again to the same params doesn't retry.
+// ChunkLoadBeacon must stay inside Suspense, or it loops reloading (see ErrorBoundary.tsx).
 function NoteRoute() {
   // The `g:` prefix is defensive only: group ids are uuids and can't equal a handle.
   const { ref, handle, groupId, slug } = useParams();
@@ -111,7 +114,8 @@ function NoteRoute() {
 }
 
 // Own fallback and boundary: NotePageFallback/NoteRouteErrorBoundary render an AppShell that fetches /api/auth/me
-// and shows the sidebar, which an anonymous page must not do. No ChunkLoadBeacon: that flag mechanism is NotePage-only.
+// and shows the sidebar, which an anonymous page must not do. No ChunkLoadBeacon or auto-reload budget: the public
+// page relies on the error card's manual retry (full reload).
 function PublicNoteRoute() {
   return (
     <PublicNoteErrorBoundary>
@@ -129,6 +133,7 @@ function PublicNoteRoute() {
  * guards don't run. Never add panel paths to the main tree, or the background page stops rendering.
  * Logged out under a modal, both trees redirect to /login; the second tree's effect runs last, so `next` is the real
  * URL (App.test.tsx); if a modal route moves out of the second tree, `next` silently becomes the background page.
+ * Only with backgroundLocation state do the trees disagree; both Navigates replace, so one history entry results.
  * /change-password is outside ChangePasswordGate because it is the gate's target.
  */
 export function AppRoutes() {
@@ -169,7 +174,8 @@ export function AppRoutes() {
             </LazyPageRoute>
           }
         />
-        {/* Public share pages: anonymous, outside RequireAuth. PublicNotePage tells the two forms apart by params. */}
+        {/* Public share pages: anonymous, outside RequireAuth. PublicNotePage tells the two forms apart by params.
+            /p must stay out of shared EXCLUDED_PREFIXES so the SPA fallback serves it (noindex is set server-side). */}
         <Route path="/p/:token" element={<PublicNoteRoute />} />
         <Route path="/p/:handle/:slug" element={<PublicNoteRoute />} />
         <Route element={<RequireAuth />}>
@@ -227,7 +233,8 @@ export function AppRoutes() {
               <Route path="about" element={<GroupAboutSection />} />
               <Route path="*" element={<GroupSubpathRedirect />} />
             </Route>
-            {/* Redirects outside AdminModal (no modal flash) but inside RequireAdmin (non-admins go straight to /). */}
+            {/* Redirects outside AdminModal (no modal flash) but inside RequireAdmin (non-admins go straight to /).
+                Inside ChangePasswordGate so a forced password change comes before the admin check. */}
             <Route element={<RequireAdmin />}>
               <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
               <Route path="/admin/auth" element={<Navigate to="/admin/login" replace />} />

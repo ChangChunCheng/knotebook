@@ -1,6 +1,7 @@
 import { AVATAR_DISPLAY_SIZE, MAX_AVATAR_DISPLAY_BYTES, type AvatarCropDto } from "@knotebook/shared";
 
-// Separate chunk, loaded only via dynamic import(): the server does no image processing.
+// Separate chunk (dynamic import() only, keeps it out of the main bundle). The server only checks header and size,
+// so the display image (256 px square) is made here.
 // `deps` exists for tests, since jsdom has no canvas.
 
 /** `name` is a string literal because the main-bundle check uses it as a marker (class names get minified). */

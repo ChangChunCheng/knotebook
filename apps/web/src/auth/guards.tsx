@@ -58,6 +58,7 @@ export function RequireAuth() {
   return screen ?? <Outlet />;
 }
 
+// Also handles logged-out users, so it is safe even if mounted outside RequireAuth.
 export function RequireAdmin() {
   const { screen, user } = useSessionGate();
 
@@ -67,6 +68,7 @@ export function RequireAdmin() {
 }
 
 // No "already on /change-password" check needed: App.tsx mounts that route outside this gate.
+// Like RequireAdmin, also handles logged-out users, so it is safe even if mounted outside RequireAuth.
 export function ChangePasswordGate() {
   const { screen, user } = useSessionGate();
 

@@ -5,6 +5,9 @@ import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { bodySearchGate } from "@/components/sidebar/body-search-gate";
 import { ApiFail, api } from "./client";
 
+// Keep this module inside the lazy body-search chunk (imported via BodySearchResults, re-exported by BodySearchLazy);
+// a static import from the main bundle would pull it back in.
+
 export function fetchNoteSearch(
   q: string,
   opts: { limit: number; match: "all" | "body"; cursor?: string; signal?: AbortSignal },
@@ -14,8 +17,8 @@ export function fetchNoteSearch(
   return api<NoteSearchResultDto>(`/api/search?${params.toString()}`, opts.signal ? { signal: opts.signal } : {});
 }
 
-/** Imported only by the lazy BodySearchLazy chunk (components/sidebar/BodySearchLazy.tsx). */
 export type BodySearchState =
+  /** First load, or the debounced text hasn't passed the gate. */
   | { kind: "pending" }
   | { kind: "error"; rateLimited: boolean }
   | {
@@ -24,6 +27,7 @@ export type BodySearchState =
       hits: NoteSearchHitDto[];
       /** Snippets and highlights use this, not the current query: an old batch has no hits for the new text. */
       forQuery: string;
+      /** Showing the old query's results (debouncing, or the new query's first page is in flight). */
       stale: boolean;
       /** Includes `!stale`: while debouncing the key is still the old query, so a click would fetch (and count against the rate limit) its next page. */
       hasMore: boolean;
@@ -36,9 +40,11 @@ type SearchPage = NoteSearchResultDto & { forQuery: string };
 
 const isRateLimited = (err: unknown) => err instanceof ApiFail && err.status === 429;
 
-/** Key includes the user id: logout doesn't clear the cache. `retry: false`: the search rate limit (60/min, shared with MCP)
- * would only be hit sooner. No focus/reconnect refetch: an infinite query refetches every loaded page. Known cost: remounting the
- * same query after 30 s (or an invalidated key) still refetches every page. */
+/** Debouncing is done by the caller (`SearchResults`), so remounts don't refire. Key includes the user id: logout doesn't
+ * clear the cache. `retry: false`: the search rate limit (60/min, shared with MCP) would only be hit sooner. No focus/reconnect
+ * refetch: an infinite query refetches every loaded page, each counting against the rate limit. Known cost: remounting the
+ * same query after 30 s (or an invalidated key) still refetches every page. `keepPreviousData` keeps the last batch (marked
+ * stale) while the query changes, so the list doesn't flash. */
 export function useBodySearch({ query, debounced }: { query: string; debounced: string }): BodySearchState {
   const userId = useQueryClient().getQueryData<UserDto | null>(SESSION_QUERY_KEY)?.id ?? null;
   const q = useInfiniteQuery({

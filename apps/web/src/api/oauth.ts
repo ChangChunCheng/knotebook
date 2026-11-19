@@ -18,6 +18,7 @@ export function useOauthRequest(req: string | null): UseQueryResult<OauthRequest
   });
 }
 
+/** Both decisions consume the pending request; the server clamps `scope` to what was requested (`narrowerScope`). */
 export type OauthDecisionBody =
   | { req: string; decision: "deny" }
   | { req: string; decision: "allow"; scope: TokenScope };

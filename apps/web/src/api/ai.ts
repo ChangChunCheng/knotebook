@@ -14,6 +14,7 @@ interface ApiErrorPayload {
   message: string;
 }
 
+/** Separate from client.ts `isApiErrorBody` because this path doesn't use `api()`. */
 function parseErrorBody(body: unknown): ApiErrorPayload | null {
   if (typeof body !== "object" || body === null) return null;
   const error = (body as { error?: unknown }).error;
@@ -23,6 +24,7 @@ function parseErrorBody(body: unknown): ApiErrorPayload | null {
   return typeof code === "string" && typeof message === "string" ? { code, message } : null;
 }
 
+/** null for frames without an `event:` line (e.g. whitespace keep-alive); callers skip them. */
 function parseSseFrame(frame: string): { event: string; data: unknown } | null {
   let event = "";
   let dataLine = "";
@@ -79,6 +81,7 @@ export async function streamAiAction(
   }
 
   const reader = response.body?.getReader();
+  // Defensive: the server always sends a stream body.
   if (!reader) return;
 
   const decoder = new TextDecoder();

@@ -42,7 +42,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     css: true,
-    // Well above asyncUtilTimeout in test/setup.ts, so a slow wait fails with the query's own error, not a vitest timeout.
+    // Well above test/setup.ts's 10 s asyncUtilTimeout, so even two slow waits in one test fail with the query's own
+    // error, not a vitest timeout.
     testTimeout: 30_000,
   },
 });

@@ -1,5 +1,6 @@
 // Clean-room MIT code (don't import or consult @blocknote/xl-multi-column). Node names match core's
-// columnList/column so core's UniqueID, fixColumnList and SideMenu handling apply.
+// columnList/column so core's UniqueID, fixColumnList, keyboard and SideMenu handling apply.
+// Only renderHTML/toExternalHTML closures touch document (at mount/export); importing doesn't touch the DOM.
 // External columns must be in a valid external row, or PM wraps a lone one into a row with an empty column.
 // The site-form column rule is unrestricted: copy-paste inside a column rebuilds through it. Not `context: "columnList/"`: that makes such a paste throw.
 // Changing a node name, group, content or prop changes the note schema: bump NOTE_SCHEMA_VERSION.

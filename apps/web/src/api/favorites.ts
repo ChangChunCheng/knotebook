@@ -11,12 +11,14 @@ import {
 import type { FavoriteDto } from "@knotebook/shared";
 import { ApiFail, api } from "./client";
 
+/** Holds only which notes and when they were added; titles and positions come from `["notes"]`. */
 export const FAVORITES_QUERY_KEY = ["favorites"] as const;
 // Adding is optimistic; removal waits for the 204 (removal is always confirmed first). Add and remove share one mutation key so
 // "this note is pending" and "other toggles in flight" can both be queried.
 const FAVORITE_SET_KEY = ["favorites", "set"] as const;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
+/** Callers show the toast themselves: the wording differs per entry point. */
 export function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -28,6 +30,7 @@ interface FavoriteVars {
   noteId: string;
 }
 
+// No staleTime: like other lists, relies on refetch-on-focus to pick up changes made in other tabs.
 export function useFavorites(options: { enabled?: boolean } = {}): UseQueryResult<FavoriteDto[]> {
   return useQuery({
     queryKey: FAVORITES_QUERY_KEY,
@@ -63,6 +66,7 @@ export function useAddFavorite(): UseMutationResult<FavoriteDto, unknown, Favori
     mutationKey: FAVORITE_SET_KEY,
     mutationFn: ({ noteId }: FavoriteVars) => api<FavoriteDto>(`/api/favorites/${encodeURIComponent(noteId)}`, { method: "PUT" }),
     onMutate: async ({ noteId }) => {
+      // Cancel only the list's own refetch so it can't overwrite the optimistic row.
       await queryClient.cancelQueries({ queryKey: FAVORITES_QUERY_KEY, exact: true });
       const before = queryClient.getQueryData<FavoriteDto[]>(FAVORITES_QUERY_KEY);
       const inserted = before !== undefined && !before.some((f) => f.noteId === noteId);
@@ -107,6 +111,7 @@ export function useFavoriteStatus(noteId: string): { ready: boolean; favorite: b
     ready: query.isSuccess,
     // Tied to ready: after a failed read the cache still holds the old list, but the entry must show "not favorite".
     favorite: query.isSuccess && (query.data?.some((f) => f.noteId === noteId) ?? false),
+    // From mutation state, not local isPending: it survives reopening the menu, preventing interleaved toggles.
     pending: pendingFor.length > 0,
   };
 }

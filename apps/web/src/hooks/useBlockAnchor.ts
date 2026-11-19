@@ -24,6 +24,7 @@ export const ANCHOR_FLASH_ATTR = "data-anchor-flash";
 export const ANCHOR_MARK_CLASS = "kn-anchor-mark";
 /** Until scrolling settles; otherwise the flash animation would finish mid-scroll. */
 export const ANCHOR_PENDING_CLASS = "kn-anchor-pending";
+/** Stop waiting for scroll to settle after this and flash anyway, so the mark always appears. */
 export const ANCHOR_SETTLE_MAX_MS = 1_000;
 
 export function blockIdFromHash(hash: string): string | null {
@@ -109,6 +110,7 @@ function runScroll(root: HTMLElement, resolve: () => Resolved, align: ScrollLogi
     let frame: number | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Flash only once the block's position is stable for two frames, or the animation plays during the scroll.
+    // Starting only swaps the class and repositioning only moves the overlay, so the animation never restarts.
     let settleFrame: number | undefined;
     let settleTimer: ReturnType<typeof setTimeout> | undefined;
     let settleCap: ReturnType<typeof setTimeout> | undefined;
@@ -216,6 +218,7 @@ function runScroll(root: HTMLElement, resolve: () => Resolved, align: ScrollLogi
 }
 
 // Ids already match BLOCK_ANCHOR_RE (no CSS.escape). The timer covers prefers-reduced-motion, where no animationend fires.
+// Callers cancel the previous job before requesting another anchor in the same note, so at most one overlay exists.
 export function scrollToBlock(root: HTMLElement, blockId: string, findText?: string, scrollOnly = false): () => void {
   const align: ScrollLogicalPosition = findText === undefined ? "start" : "center";
   const persist = findText !== undefined && !scrollOnly;
@@ -259,9 +262,11 @@ export function useMemberBlockAnchor(opts: MemberBlockAnchorOptions): BlockAncho
 }
 
 export interface UseBlockAnchorOptions {
+  /** Note id (undefined while resolving), or the public ref on public pages. */
   noteKey: string | undefined;
   ready: boolean;
   root: HTMLElement | null;
+  /** True while presenting (?present): #b- hashes are ignored. */
   ignore?: boolean;
   currentNoteId: string | null;
 }

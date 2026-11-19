@@ -54,6 +54,7 @@ export function selectionInsideAnchor({ doc, selection }: PMLike, blockIds: read
   return from >= range.from && to <= range.to;
 }
 
+// Wikilinks render like the sent markdown ([text](/notes/<id>[#b-…]), text escaped by escapeLinkText) so focus text matches it.
 export function leafText(node: PMNode, titleOf?: (id: string) => string | undefined): string {
   if (node.type.name === "wikilink") {
     const id = String(node.attrs.targetNoteId ?? "");

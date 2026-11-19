@@ -12,9 +12,12 @@ export interface AdminUserDto {
   isAdmin: boolean;
   disabledAt: string | null;
   createdAt: string;
+  /** null = no login since the upgrade. */
   lastLoginAt: string | null;
+  /** Last session request, collab connection or edit, or login; null = never. */
   lastActiveAt: string | null;
   hasPassword: boolean;
+  /** Only an unused, unrevoked, unexpired link; shown even while password login is off. */
   passwordResetExpiresAt: string | null;
   storage: SpaceStorageDto;
   /** Also null while the display image isn't ready yet. */
@@ -39,7 +42,8 @@ export function useAdminInvites(): UseQueryResult<AdminInviteDto[]> {
   });
 }
 
-/** `gcTime: 0` for the same reason as `useCreatePasswordReset`. */
+/** Invalidation isn't returned, so the one-time token shows without waiting for the list refetch.
+ * `gcTime: 0` for the same reason as `useCreatePasswordReset`. */
 export function useCreateInvite() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -64,7 +68,8 @@ export function useRevokeInvite() {
   });
 }
 
-/** `gcTime: 0`: don't keep the one-time token in the mutation cache for 5 min (hygiene; same JS heap, not a security boundary). */
+/** Invalidation isn't returned, so the one-time token shows without waiting for the list refetch.
+ * `gcTime: 0`: don't keep the one-time token in the mutation cache for 5 min (hygiene; same JS heap, not a security boundary). */
 export function useCreatePasswordReset() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -90,7 +95,8 @@ export function useCancelPasswordReset() {
   });
 }
 
-/** No body, so `api()` adds no JSON content type (see `client.ts`). Returning the invalidation promise makes
+/** No body, so `api()` adds no JSON content type (see `client.ts`): a JSON content type with an empty body
+ * would get 400 `FST_ERR_CTP_EMPTY_JSON_BODY`. Returning the invalidation promise makes
  * `mutateAsync` resolve after the list refetch, so a just-changed role/toggle doesn't flip back. */
 function useAdminUserAction(action: "disable" | "enable" | "promote" | "demote") {
   const queryClient = useQueryClient();
@@ -117,6 +123,8 @@ export function useDemoteAdminUser() {
   return useAdminUserAction("demote");
 }
 
+/** The response is the full row, so it replaces the cached row (the dropdown shows the new plan without waiting for a
+ * refetch). Own usage is invalidated in case the admin changed their own plan. */
 export function useAssignUserPlan() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -126,7 +134,7 @@ export function useAssignUserPlan() {
       queryClient.setQueryData<AdminUserDto[]>(ADMIN_USERS_QUERY_KEY, (rows) => rows?.map((r) => (r.id === updated.id ? updated : r)));
       void queryClient.invalidateQueries({ queryKey: STORAGE_USAGE_QUERY_KEY });
     },
-    // Refetch plans on failure too: 404 storage_plan_not_found means the plan was just deleted.
+    // Refetch plans on failure too: 404 storage_plan_not_found means the plan was just deleted, and the dropdown must stop listing it.
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ADMIN_STORAGE_PLANS_QUERY_KEY });
     },

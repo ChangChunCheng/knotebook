@@ -3,6 +3,7 @@
 export const STORAGE_PLAN_NAME_MAX = 40;
 /** 2^50: upper bound of DB CHECK storage_plans_quota_chk. */
 export const STORAGE_QUOTA_MAX_BYTES = 1125899906842624;
+/** Initial quota of the built-in Basic plan in the migration: 2 GiB (the UI labels it GB, 1024-based). */
 export const BASIC_STORAGE_QUOTA_BYTES = 2147483648;
 
 /** `quotaBytes` null: unlimited. */
@@ -49,7 +50,10 @@ export function kindOfMime(mime: string): StorageKind {
   return "other";
 }
 
-/** `userId` null: uploader deleted (on delete set null) or no uploader recorded; all such rows are merged. */
+/**
+ * Grouped by uploads.charged_to_id (who brought the bytes in: uploader, mover or copier). `userId` null: that account was
+ * deleted (on delete set null) or none was recorded (no COALESCE with uploader_id); such rows are merged.
+ */
 export interface GroupStorageMemberUsageDto {
   userId: string | null;
   handle: string | null;
@@ -58,6 +62,7 @@ export interface GroupStorageMemberUsageDto {
 }
 
 export interface GroupStorageUsageDto extends StorageUsageDto {
+  /** Only bytes > 0; bytes descending, ties by userId ascending, null last. */
   byMember: GroupStorageMemberUsageDto[];
 }
 
@@ -74,6 +79,7 @@ export interface StoragePlanDto {
   quotaBytes: number | null;
   userCount: number;
   groupCount: number;
+  /** Always 0 when quotaBytes is null. */
   overQuotaCount: number;
   isDefaultForUsers: boolean;
   isDefaultForGroups: boolean;
@@ -112,6 +118,7 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   let value = n / 1024;
   let i = 0;
+  // Compare the rounded value so 1048575 bytes (1023.999 KB) prints "1 MB", not "1024 KB".
   while (i < BYTE_UNITS.length - 1 && Number(value.toFixed(1)) >= 1024) {
     value /= 1024;
     i++;

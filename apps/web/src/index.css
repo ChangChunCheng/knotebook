@@ -13,7 +13,7 @@
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0); /* #ffffff */
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: oklch(1 0 0); /* same as --card; popovers rely on border + shadow */
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
@@ -21,7 +21,7 @@
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.94 0.004 264); /* below 0.97 so hover shows on --background */
+  --accent: oklch(0.94 0.004 264); /* 0.97 would be only 0.003 off --background (0.967): no visible hover */
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
@@ -38,9 +38,11 @@
   --brand-deep: oklch(0.470 0.064 275.7);
   --brand-fg: oklch(0.985 0 0);
 
-  /* Independent of the accent. */
+  /* Independent of the accent. WCAG 2 contrast (mark keeps the row text color): text 15.9:1, lowest
+     --brand-on-soft (active row) 5.8:1. */
   --search-highlight: oklch(0.924 0.12 95.746);
 
+  /* Sole color source for the swatch UI; each equals that color's light --brand (theme.accent-vars.test.ts). */
   --brand-swatch-indigo: oklch(0.550 0.064 275.7);
   --brand-swatch-blue: oklch(0.550 0.052 244.4);
   --brand-swatch-teal: oklch(0.550 0.050 183.3);
@@ -49,7 +51,8 @@
   --brand-swatch-gold: oklch(0.550 0.098 82.4);
 
   /* Shiki's css-variables theme emits var(--code-…). Not derived from --brand: syntax colors must not change with
-     the accent (theme.code-highlight-vars.test.ts). */
+     the accent (theme.code-highlight-vars.test.ts). Values from GitHub Light (contrast already verified on a
+     similar light gray). */
   --code-foreground: #1f2328;
   --code-background: #f6f8fa;
   --code-token-comment: #59636e;
@@ -66,9 +69,10 @@
   --code-token-inserted: #116329;
 }
 
-/* Anchored at :root (#154): BlockNote puts a `dark` class and data-color-scheme on .bn-root, so a bare `.dark` rule
-   would re-declare the indigo fallback inside the editor and reset the user's accent. Only :root/html rules may
-   declare theme variables (theme.accent-vars.test.ts). */
+/* Anchored at :root (#154): BlockNote puts a `dark` class on .bn-root and its portal element (and data-color-scheme
+   on .bn-root), so a bare `.dark` rule would re-declare the indigo fallback inside the editor and reset the user's
+   accent. The dark class and data-accent are only set on <html>, so anchoring at :root loses no match. Only
+   :root/html rules may declare theme variables (theme.accent-vars.test.ts). */
 :root.dark {
   --background: oklch(0.172 0.007 258.4); /* #0e1013 */
   --foreground: oklch(0.982 0.002 247.8);
@@ -98,8 +102,10 @@
   --brand-deep: oklch(0.721 0.058 275.7);
   --brand-fg: oklch(0.213 0.008 264.4);
 
+  /* Text 8.1:1, lowest --brand-on-soft 5.2:1. */
   --search-highlight: oklch(0.420 0.080 85);
 
+  /* Each equals that color's dark --brand. */
   --brand-swatch-indigo: oklch(0.681 0.058 275.7);
   --brand-swatch-blue: oklch(0.677 0.048 244.4);
   --brand-swatch-teal: oklch(0.700 0.046 183.3);
@@ -107,7 +113,8 @@
   --brand-swatch-rose: oklch(0.670 0.048 18.4);
   --brand-swatch-gold: oklch(0.747 0.089 82.4);
 
-  /* Every --code-* variable needs a dark value, or it silently inherits the light one. */
+  /* Every --code-* variable needs a dark value, or it silently inherits the light one. Values from GitHub Dark; the
+     background sits between page #0e1013 and card #1a1d23. */
   --code-foreground: #e6edf3;
   --code-background: #15181e;
   --code-token-comment: #8b949e;
@@ -263,7 +270,8 @@ body {
 
 /* Firefox's standard properties stay inside @supports (-moz-appearance: none): once set, Chromium 121+ ignores all
    ::-webkit-scrollbar styling. The picker's scrollbar can't share these rules: an unsupported ::picker(select) voids
-   the whole selector list (theme.scrollbar-guard.test.ts). */
+   the whole selector list (theme.scrollbar-guard.test.ts). If -moz-appearance is ever removed, Firefox just falls back
+   to default scrollbars. Both rule sets must use only these variables. */
 :root {
   --scrollbar-size: 10px;
 
@@ -306,26 +314,29 @@ body {
   }
 }
 
-/* The app's only native radio; tint it with the accent. */
+/* Accent-tint only the share dialog's access radios (scoped by name). They stay native: Radix RadioGroup would touch
+   AccessSection's latch/sticky invariant. */
 input[name="share-access"] {
   accent-color: var(--color-brand);
 }
 
 /* Backlinks strip (36px row). Must be a top-level rule after the global scrollbar rules: a Tailwind arbitrary variant
-   lands in @layer utilities, which loses to unlayered rules. */
+   lands in @layer utilities, which loses to unlayered rules. Geometry: BACKLINKS_SCROLL_ROW in components/ui/rows.ts. */
 .scrollbar-x-thin::-webkit-scrollbar {
   height: 6px;
 }
 
-/* A 1px thumb border: with the default 2px border the 6px track would leave a 2px thumb. */
+/* A 1px thumb border: with the global 2px inset (--scrollbar-thumb-inset) the 6px track would leave a 2px thumb. */
 .scrollbar-x-thin::-webkit-scrollbar-thumb {
   border-width: 1px;
 }
 
-/* BlockNote dark overrides. Menus are portaled under .bn-root without .bn-container, and BlockNote's CSS loads later,
-   so this exact (0,3,0) selector is needed. Keep it in this Tailwind-processed file: these var() references stop
+/* BlockNote overrides. Keep the dark selector exactly `.dark .bn-root[data-color-scheme="dark"]` (0,3,0); don't
+   broaden it or anchor it on .bn-container: menus are portaled under .bn-root without .bn-container, and BlockNote's
+   later-loaded built-in is (0,2,0). Keep these rules in this Tailwind-processed file: their var() references stop
    `@theme inline` from dropping the --color-* variables. */
-/* Follow --card rather than BlockNote's white, which matches --card only by coincidence. */
+/* Follow --card rather than BlockNote's white, which matches --card only by coincidence. (0,2,0) beats the built-in
+   bare .bn-root (0,1,0) regardless of load order. */
 .bn-root[data-color-scheme="light"] {
   --bn-colors-editor-background: var(--color-card);
 }
@@ -339,7 +350,7 @@ input[name="share-access"] {
   --bn-colors-tooltip-text: var(--color-foreground);
   --bn-colors-hovered-background: var(--color-accent);
   --bn-colors-hovered-text: var(--color-accent-foreground);
-  --bn-colors-selected-background: oklch(0.363 0.015 264.4); /* no token for this shade */
+  --bn-colors-selected-background: oklch(0.363 0.015 264.4); /* one step lighter than --accent; no token for it */
   --bn-colors-selected-text: var(--color-foreground);
   --bn-colors-disabled-background: var(--color-muted);
   --bn-colors-disabled-text: var(--color-muted-foreground);
@@ -351,7 +362,9 @@ input[name="share-access"] {
 /* Accent outline instead of BlockNote's hard-coded blue; it must stay, as the only sign that Delete removes the block.
    .bn-editor lifts it over the later-loaded built-in (0,2,0); both forms are needed because ProseMirror-selectednode
    can sit on .bn-block-content or its parent. Colored only while focus is in .bn-container, or it lingers after blur;
-   :focus-within on the rule itself would fall back to the built-in blue. */
+   :focus-within on the rule itself would fall back to the built-in blue. Breakage silently reverts to blue
+   (theme.block-selection-guard.test.ts). A selected node outside .bn-editor (the invisible drag preview) keeps the
+   built-in blue. border-radius comes from the built-in rule. */
 .bn-editor .bn-block-content.ProseMirror-selectednode > *,
 .bn-editor .ProseMirror-selectednode > .bn-block-content > * {
   outline: 2px solid var(--kb-node-frame, transparent);
@@ -367,7 +380,8 @@ input[name="share-access"] {
 }
 
 /* Links (#153): preflight strips `a` color and underline, and BlockNote doesn't restore them; the underline is the
-   accessibility cue. Uses the link mark attribute, not bare `a`, and not the HTMLAttributes className: Tiptap writes that key
+   accessibility cue; matches the wikilink style (components/wikilink/spec.tsx). Uses the link mark attribute, not bare
+   `a` (would hit anchors in toolbars, menus and custom blocks), and not the HTMLAttributes className: Tiptap writes that key
    as a literal `classname=` attribute. The .bn-editor anchor is required: BlockNote's CSS loads later (both unlayered), and (0,2,0)
    also beats preflight (@layer base; unlayered styles beat any layer). --color-brand, not --brand: see theme.link-guard.test.ts. */
 .bn-editor [data-inline-content-type="link"] {
@@ -375,7 +389,8 @@ input[name="share-access"] {
   text-decoration-line: underline;
 }
 
-/* With the phone color palette open, a selection highlight would hide the color just applied. */
+/* With the phone color palette open, a selection highlight would hide the color just applied. Other highlights (e.g.
+   the AI box) lack the attribute and are unchanged. */
 .bn-editor[data-mobile-color-open] [data-show-selection] {
   background-color: transparent;
   outline: 2px solid var(--color-brand);
@@ -390,11 +405,15 @@ input[name="share-access"] {
 }
 
 /* External-link icon only on hrefs that parse as http(s). Selectors match the literal href, so list each form the
-   URL parser accepts; leading whitespace or embedded tabs are missed (docs/known-limitations.md). Not computed in JS:
-   the link mark only takes static HTMLAttributes. Keep a comma list, not :is(): theme.link-guard.test.ts splits on
-   commas. mask-image with currentColor, so the icon follows --color-brand. Lightning CSS has dropped rules before: after editing,
+   URL parser accepts; match "http:" with the colon, or "httpfoo:" would match. Leading whitespace or embedded tabs are
+   missed (docs/known-limitations.md); misses only under-mark, never mis-mark. Not computed in JS: the link mark only
+   takes static HTMLAttributes, and per-link attributes would mean a schema change (stored in Yjs) or mutating
+   ProseMirror's DOM. Keep a comma list, not :is(): theme.link-guard.test.ts splits on commas. The icon path lives only
+   here (lucide external-link, the components/ui/icons.tsx vocabulary); a React version must share one source.
+   mask-image with currentColor, so the icon follows --color-brand. Lightning CSS has dropped rules before: after editing,
    grep the build output for `mask`. The margins are asymmetric on purpose (visual balance). Known flaw: the icon can wrap alone
-   onto the next line (docs/known-limitations.md). */
+   onto the next line (docs/known-limitations.md); margins can't fix it. Clicking the icon acts as the link, so no
+   pointer-events: none. */
 .bn-editor [data-inline-content-type="link"][href^="http:" i]::after,
 .bn-editor [data-inline-content-type="link"][href^="https:" i]::after,
 .bn-editor [data-inline-content-type="link"][href^="//"]::after,
@@ -427,15 +446,17 @@ input[name="share-access"] {
   hyphens: auto;
 }
 
-/* :not([data-text-alignment]) above matters: BlockNote sets the attribute only for non-default alignment.
-   break-all, not overflow-wrap: anywhere, which won't break while the line has another break point. Not wikilinks:
-   titles shouldn't split mid-word. Unquoted attribute, or theme.link-guard.test.ts would collect it. */
+/* :not([data-text-alignment]) above matters: BlockNote sets the attribute only for non-default alignment, and its
+   alignment rules are !important anyway. break-all, not overflow-wrap: anywhere, which won't break while the line has
+   another break point. Not wikilinks (also <a>): titles shouldn't split mid-word. Unquoted attribute, or
+   theme.link-guard.test.ts would collect it. */
 .bn-editor .bn-inline-content [data-inline-content-type=link],
 .bn-editor .bn-inline-content code {
   word-break: break-all;
 }
 
-/* BlockNote hard-codes a dark box; .bn-editor beats its later-loaded (0,2,0). */
+/* BlockNote hard-codes a dark box even in light mode; .bn-editor beats its later-loaded (0,2,0). Token colors need no
+   rule: shiki writes inline var(--code-token-…). */
 .bn-editor .bn-block-content[data-content-type=codeBlock] {
   color: var(--code-foreground);
   background-color: var(--code-background);
@@ -446,7 +467,9 @@ input[name="share-access"] {
 /* Language dropdown at the top-right, like the mermaid button (top-left covers where users place the caret).
    [data-caret-inside] stands in for hover on touch (focus is on the editor root, so :focus-within fails). Hidden via
    opacity to stay in the Tab order, with pointer-events: none so a tap on the corner doesn't open it. Without the
-   .bn-editor anchor it silently falls back to the built-in top-left (theme.code-highlight-vars.test.ts). */
+   .bn-editor anchor it silently falls back to the built-in top-left (theme.code-highlight-vars.test.ts). Full opacity
+   when shown: alpha blending makes contrast vary with the background (the built-in .5 gives only 3.1:1). The mermaid
+   button deliberately skips pointer-events: none (see MermaidView.tsx). */
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
   /* Required: the built-in left:18px plus our right would stretch it across the first line. */
   left: auto;
@@ -454,14 +477,15 @@ input[name="share-access"] {
   pointer-events: none;
   transition: opacity 0.15s;
 
-  /* min-width, not width: a longer label widens it (right-anchored) instead of being clipped. */
+  /* 6rem (96px) fits the widest label (Markdown, ~86px with padding and arrow), so the width doesn't jump when the
+     language changes. min-width, not width: a longer label widens it (right-anchored) instead of being clipped. */
   min-width: 6rem;
   white-space: nowrap;
 }
 
 /* Shared by the mermaid button and the code block <select>. The border carries the edge (the background nearly
-   matches the block). Not in a layer: BlockNote's CSS is unlayered, and unlayered wins; so this rule also beats
-   utility classes on the element. */
+   matches the block), so it can't be --border (~1.2:1 on the light code background). Not in a layer: BlockNote's
+   CSS is unlayered, and unlayered wins; so this rule also beats utility classes on the element. */
 .block-control,
 .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
   @apply absolute top-1 right-1 rounded-sm border border-muted-foreground bg-popover px-2 py-1 text-xs text-muted-foreground;
@@ -492,7 +516,7 @@ input[name="share-access"] {
   outline-offset: 1px;
 }
 
-/* Unlayered like .block-control, to beat its `absolute`. */
+/* Unlayered like .block-control, so `> .block-control { position: static }` below beats .block-control's absolute. */
 .block-control-group {
   @apply absolute top-1 right-1 flex items-stretch gap-1;
 }
@@ -502,7 +526,8 @@ input[name="share-access"] {
   position: static;
 }
 
-/* iOS zooms the page when focusing a select under 16px. */
+/* iOS zooms the page when focusing a select under 16px. Unlayered with the same selector, to beat .block-control's
+   text-xs. */
 @media (pointer: coarse) {
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select {
     font-size: var(--text-base);
@@ -538,7 +563,9 @@ input[name="share-access"] {
   color: var(--color-foreground);
 }
 
-/* Progressive enhancement; the native-list rules above must stay outside @supports for other browsers. */
+/* Progressive enhancement (Chromium 135+, Safari 27; not Firefox): the native-list rules above stay outside
+   @supports, or Firefox gets black option text on a dark list again. The picker and options mirror the
+   DropdownMenuContent/DropdownMenuItem tokens (components/ui/dropdown-menu.tsx; theme.code-highlight-vars.test.ts). */
 @supports (appearance: base-select) {
   /* Both selectors are required, or the list stays an OS widget. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select,
@@ -557,7 +584,8 @@ input[name="share-access"] {
     transition: transform 0.15s;
   }
 
-  /* Read-only: no arrow, label kept right-aligned. Firefox keeps its native arrow. */
+  /* Read-only: no arrow, label kept right-aligned. display: none is fine: a pseudo-element, and a disabled select
+     isn't tabbable. Firefox keeps its native arrow: fixing it needs appearance: none, which conflicts with base-select. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:disabled {
     justify-content: flex-end;
   }
@@ -571,7 +599,7 @@ input[name="share-access"] {
   }
 
   /* base-select moves focus into the <option>, so the select is neither :focus nor :focus-within. Not merged above:
-     an unknown :open would void the selector list. */
+     an unknown :open would void the selector list. The touch handoff is covered by e2e 30-code-block-touch. */
   .bn-editor .bn-block-content[data-content-type=codeBlock] > div > select:open {
     opacity: 1;
     pointer-events: auto;
@@ -602,15 +630,18 @@ input[name="share-access"] {
   }
 }
 
-/* Doubled class to beat BlockNote's later-loaded .bn-editor (a single one silently fails). 48rem must match
-   max-md:px-0 in ui/article-column.ts. The side menu is clipped at 640–767px (docs/known-limitations.md). */
+/* Doubled class to beat BlockNote's later-loaded .bn-editor (a single one silently fails, and jsdom can't catch it:
+   grep the built CSS for bn-editor.bn-editor). 48rem must match max-md:px-0 in components/ui/article-column.ts.
+   1.25rem lines the text up with the header/footer px-5. The side menu is clipped at 640–767px
+   (docs/known-limitations.md). */
 @media (width < 48rem) {
   .bn-editor.bn-editor {
     padding-inline: 1.25rem;
   }
 }
 
-/* Set BlockNote's --level instead of font-size, so we needn't beat its (0,5,0) font-size rule. */
+/* Set BlockNote's --level instead of font-size, so we needn't beat its (0,5,0) font-size rule. Doubled class: (0,4,0)
+   beats BlockNote's later-loaded (0,1,0)/(0,2,0) --level rules. H1 has no data-level (the default isn't rendered). */
 .bn-editor.bn-editor [data-content-type="heading"]:not([data-level]) {
   --level: 2em;
 }
@@ -620,6 +651,7 @@ input[name="share-access"] {
 .bn-editor.bn-editor [data-content-type="heading"][data-level="3"] {
   --level: 1.25em;
 }
+/* Same sizes for --prev-level, or the heading type-change transition starts from BlockNote's default size. */
 .bn-editor.bn-editor [data-prev-level="1"] {
   --prev-level: 2em;
 }
@@ -642,7 +674,8 @@ input[name="share-access"] {
 }
 
 /* BlockNote hard-codes 36px + 1.5 × font size so the buttons align with the first line; recomputed for our sizes. The side
-   menu of an H1 carries data-level="1", unlike the H1 block itself. */
+   menu of an H1 carries data-level="1", unlike the H1 block itself. Doubled class: (0,4,0) beats BlockNote's (0,3,0)
+   regardless of load order. */
 .bn-side-menu.bn-side-menu[data-block-type="heading"][data-level="1"] {
   height: 84px;
 }
@@ -653,7 +686,8 @@ input[name="share-access"] {
   height: 66px;
 }
 
-/* Fades while the table can scroll further right. Fallback: lib/table-scroll-hint.ts sets data-kb-more-right. */
+/* Fades while the table can scroll further right. Fallback: lib/table-scroll-hint.ts sets data-kb-more-right.
+   Doubled class: (0,4,0) beats BlockNote's later-loaded .tableWrapper rule (0,3,0). */
 @property --kb-table-fade {
   syntax: "<length>";
   inherits: false;
@@ -689,7 +723,8 @@ input[name="share-access"] {
   }
 }
 
-/* In the height-capped flex menu, rows would shrink below a touch target. */
+/* In the height-capped flex menu, rows would shrink below a touch target. .bn-mantine: don't tie with the
+   later-loaded rule of the same specificity. */
 /* 40rem matches PHONE_QUERY (lib/layout-tiers.ts). */
 @media (width < 40rem) {
   .bn-mantine .bn-suggestion-menu-item {
@@ -698,7 +733,9 @@ input[name="share-access"] {
 }
 
 /* Anchored on .bn-editor to beat BlockNote's later-loaded CSS. Gap and min widths must match collab/columns/layout.ts
-   (columns-css.guard.test.ts). The image min-width wins only by coming later: keep the order. */
+   (columns-css.guard.test.ts). The image min-width wins only by coming later: keep the order. Zero column padding
+   keeps content width proportional to the flex ratio. Stacking uses display: block so the inline flex is ignored
+   without !important. */
 .bn-editor .bn-block-column-list {
   gap: 24px;
   align-items: flex-start;
@@ -729,7 +766,8 @@ input[name="share-access"] {
 }
 /* While dragging, controls outside view.dom would swallow the drop. Children are listed too (an explicit `auto`
    overrides an inherited `none`). Not the whole floating-ui portal: it holds drop targets. The formatting toolbar is listed too:
-   core selects the dragged block, and the toolbar above it would catch the drop. */
+   core selects the dragged block, and the toolbar above it would catch the drop. Unlayered: the divider's
+   pointer-events-auto utility (@layer utilities) must lose to it. */
 .kb-dragging [data-kb-formatting-toolbar-popover],
 .kb-dragging [data-kb-formatting-toolbar-popover] *,
 .kb-dragging [data-kb-side-menu-popover],
@@ -746,7 +784,8 @@ input[name="share-access"] {
 
 .bn-editor img[data-kb-zoomable] { cursor: zoom-in; }
 
-/* 16px so it doesn't cover the divider (it has the higher z-index). Must out-specify mantine's later-loaded rules. */
+/* 16px so it doesn't cover the divider. Shrink the button and svg too (24px / 22px by default), or they overflow onto
+   the divider; the side menu (z-index 20) sits above it (5). Must out-specify mantine's later-loaded rules. */
 .bn-container [data-kb-column-side-menu] .bn-side-menu {
   width: 16px;
 }
@@ -790,13 +829,15 @@ input[name="share-access"] {
   border-radius: 2px;
 }
 
-/* Literal colors, not --brand (#154: brand tokens are reset inside .bn-root). */
+/* Literal colors, not --brand (#154: a bare .dark rule would reset it inside .bn-root). */
 .kb-diff [data-diff="added"] > .bn-block { border-left: 3px solid oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
 .kb-diff [data-diff="deleted"] > .bn-block { border-left: 3px solid oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); text-decoration: line-through; opacity: 0.85; }
 .kb-diff [data-diff="changed"] > .bn-block { border-left: 3px solid oklch(0.8 0.15 85); background: oklch(0.8 0.15 85 / 0.1); }
 .kb-diff [data-diff="moved"] > .bn-block { border-left: 3px dashed oklch(0.65 0.02 260); }
 .kb-diff [data-diff="collapsed"] > .bn-block { color: var(--muted-foreground); font-style: italic; }
-/* Columns and column lists carry data-diff themselves (no .bn-block child). */
+/* Columns and column lists carry data-diff themselves (no .bn-block child). 8px start padding keeps the bar off the
+   first character; (0,4,0) beats the column padding reset regardless of order. Inset shadows can't dash, so moved
+   columns use solid. */
 .kb-diff .bn-editor [data-node-type="column"][data-diff] { padding-inline-start: 8px; }
 .kb-diff [data-node-type="column"][data-diff="added"] { box-shadow: inset 3px 0 0 oklch(0.72 0.17 152); background: oklch(0.72 0.17 152 / 0.12); }
 .kb-diff [data-node-type="column"][data-diff="deleted"] { box-shadow: inset 3px 0 0 oklch(0.63 0.2 25); background: oklch(0.63 0.2 25 / 0.1); }
@@ -806,7 +847,8 @@ input[name="share-access"] {
 .kb-diff [data-node-type="columnList"][data-diff="deleted"] { outline: 1px dashed oklch(0.63 0.2 25); outline-offset: 4px; }
 .kb-diff [data-node-type="columnList"][data-diff="moved"] { outline: 1px dashed oklch(0.65 0.02 260); outline-offset: 4px; }
 
-/* AI preview wraps like the body: no inline padding, and inset shadows instead of a border that takes text width. */
+/* AI preview wraps like the body: no inline padding, and inset shadows instead of a border that takes text width.
+   (0,3,0) beats both .bn-editor paddings; the (0,4,0) bars beat the (0,3,0) diff rules regardless of order. */
 .kb-ai-preview .bn-editor.bn-editor { padding-inline: 0; }
 .kb-ai-preview .kb-diff [data-diff="added"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.72 0.17 152); }
 .kb-ai-preview .kb-diff [data-diff="deleted"] > .bn-block { border-left: 0; box-shadow: inset 3px 0 0 oklch(0.63 0.2 25); }
@@ -844,7 +886,8 @@ input[name="share-access"] {
   pointer-events: none;
   animation: kn-anchor-flash 2s ease-out;
 }
-/* Pending until scrolling settles, then blinks; ends lit. */
+/* Pending until scrolling settles, then blinks; ends lit. Removed on Esc, closing search, the next jump or leaving
+   the note, not on animation end. */
 @keyframes kn-anchor-mark {
   0%,
   40%,
@@ -879,8 +922,9 @@ input[name="share-access"] {
 }
 
 /* The document scrolls on phones (lib/page-scroll.ts). scroll-margin-top, not scroll-padding-top, which counts the
-   header's buttons as covered. overscroll-behavior on html and body: browsers differ. Flags are html attributes, not
-   html:has(), which can restyle the whole document on any DOM change. The html/body background is the card color so Safari's
+   header's buttons as covered, so closing the ⋮ menu scrolls the document back up. overscroll-behavior on html and
+   body: browsers differ. Flags are html attributes, not html:has(), which can restyle the whole document on any DOM
+   change. The html/body background is the card color so Safari's
    translucent bottom toolbar and bounce area match the content. Pull-to-refresh is blocked on list screens (including the
    full-screen search layer) and while editing (accidental reloads); reading a note still allows it. */
 @media (width < 40rem) {
@@ -943,7 +987,8 @@ input[name="share-access"] {
   }
 }
 /* Override Radix's inline positioning. will-change must go too: it makes the wrapper the containing block for fixed
-   descendants, so the backdrop wouldn't cover the viewport. */
+   descendants, so the backdrop wouldn't cover the viewport. The backdrop is the wrapper's ::before; a click on it is
+   an outside click, so Radix closes the menu. */
 [data-radix-popper-content-wrapper]:has(> .kb-menu-sheet) {
   position: fixed !important;
   inset: auto 0 0 0 !important;

@@ -27,6 +27,7 @@ export function normalizeMarkdown(s: string): string {
   return s.replace(/\r\n?/g, "\n").trim();
 }
 
+// The model returns the original text when the request is out of scope.
 export function isNoChange(result: string, original: string): boolean {
   return normalizeMarkdown(result) === normalizeMarkdown(original);
 }

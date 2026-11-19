@@ -6,6 +6,7 @@ export const FOLDERS_QUERY_KEY = ["folders"] as const;
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
+/** Not in tree order; the tree is built in components/sidebar/folder-index.ts. */
 export async function fetchFolders(): Promise<FolderDto[]> {
   return (await api<FolderListDto>("/api/folders")).folders;
 }

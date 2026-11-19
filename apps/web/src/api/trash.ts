@@ -10,8 +10,6 @@ import {
 import { expandAfterRestore } from "@/components/sidebar/folder-index";
 import { api, ApiFail } from "./client";
 
-/** Restore and purge are plain functions: the toast's undo runs after the note menu unmounts, when per-call
- * `useMutation` callbacks no longer fire. Emptying purges only the listed ids, so later arrivals survive. */
 export const TRASH_QUERY_KEY = ["trash"] as const;
 export const TRASH_SETTINGS_QUERY_KEY = ["admin", "trash-settings"] as const;
 
@@ -52,6 +50,8 @@ async function postInBatches<T>(path: string, ids: readonly string[], empty: () 
   return result;
 }
 
+/** Plain functions, not hooks: the toast's undo runs after the note menu unmounts, when per-call `useMutation`
+ * callbacks no longer fire. */
 export function restoreTrashIds(ids: readonly string[]): Promise<TrashRestoreResultDto> {
   return postInBatches<TrashRestoreResultDto>(
     "/api/trash/restore",
@@ -64,6 +64,7 @@ export function restoreTrashIds(ids: readonly string[]): Promise<TrashRestoreRes
   );
 }
 
+/** Emptying the trash purges only the listed ids, so notes trashed afterwards survive. */
 export function purgeTrashIds(ids: readonly string[]): Promise<TrashPurgeResultDto> {
   return postInBatches<TrashPurgeResultDto>(
     "/api/trash/purge",

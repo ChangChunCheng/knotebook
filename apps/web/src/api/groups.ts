@@ -22,6 +22,7 @@ export function useGroups(): UseQueryResult<GroupDto[]> {
   });
 }
 
+/** `enabled` lets callers stop once they're no longer a member (the server answers 404). */
 export function useGroupMembers(groupId: string, options: { enabled?: boolean } = {}): UseQueryResult<GroupMemberDto[]> {
   return useQuery({
     queryKey: groupMembersKey(groupId),
@@ -30,6 +31,7 @@ export function useGroupMembers(groupId: string, options: { enabled?: boolean } 
   });
 }
 
+/** Role dropdowns need role ids; in a group with no regular members, the member role's id is only available here. */
 export function useGroupRoles(groupId: string): UseQueryResult<GroupRoleDto[]> {
   return useQuery({
     queryKey: groupRolesKey(groupId),
@@ -105,7 +107,8 @@ export function useAddMember(groupId: string) {
   });
 }
 
-/** Doesn't invalidate: bulk add calls it per address and invalidates once at the end. */
+/** Add only, despite PUT: an existing member gets 409 already_member. Omitting `roleId` means the built-in member role.
+ * Doesn't invalidate: bulk add calls it per address and invalidates once at the end. */
 export function addGroupMember(groupId: string, { email, roleId }: { email: string; roleId?: string }): Promise<GroupMemberDto> {
   return api<GroupMemberDto>(`/api/groups/${encodeURIComponent(groupId)}/members`, {
     method: "PUT",
@@ -164,7 +167,7 @@ export function useUpdateRole(groupId: string) {
       queryClient.setQueryData<GroupRoleDto[]>(groupRolesKey(groupId), (rows) => rows?.map((row) => (row.id === updated.id ? updated : row)));
       void invalidateSingleNoteKeys(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["notes"] });
-      // Same extra keys as useInvalidateGroupsAndNotes; `['groups']` is refetched in onSettled.
+      // Not via useInvalidateGroupsAndNotes: `['groups']` is returned from onSettled so isPending spans it.
       // edit/delete flags decide who sees the group trash.
       void queryClient.invalidateQueries({ queryKey: ["trash"] });
       // Group folder permissions follow the role flags.
@@ -176,6 +179,7 @@ export function useUpdateRole(groupId: string) {
   });
 }
 
+/** Holders fall back to the built-in member role. */
 export function useDeleteRole(groupId: string) {
   const queryClient = useQueryClient();
   const invalidate = useInvalidateGroupsAndNotes();

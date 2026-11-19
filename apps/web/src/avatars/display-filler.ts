@@ -7,6 +7,7 @@ import { resetFillerUser, setFillerUserChangeHandler } from "./filler-user";
 
 export interface FillTarget {
   id: string;
+  /** Sent back as the version precondition. */
   v: number;
 }
 
@@ -18,9 +19,11 @@ export interface EncodeModule {
 export interface FillerDeps {
   fetchOriginal(id: string, signal?: AbortSignal): Promise<Blob>;
   putDisplay(input: { id: string; display: Blob; crop: AvatarCropUpload; version: number; signal?: AbortSignal }): Promise<unknown>;
+  /** Refetch only; doesn't mean an avatar was written (this module signals writes itself). */
   invalidate(): void;
   loadEncode?: () => Promise<EncodeModule>;
   backoffMs?: number;
+  /** Per request (ms), for fetching the original and sending the display image; a timeout counts as failure, not retried. */
   timeoutMs?: number;
 }
 
@@ -50,6 +53,7 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
+// Safe to call on every render (only swaps the reference).
 export function configureFiller(next: FillerDeps): void {
   deps = next;
 }
@@ -149,6 +153,7 @@ async function fill(item: QueueItem, active: FillerDeps, started: number): Promi
   const timeoutMs = active.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const original = await active.fetchOriginal(item.id, AbortSignal.timeout(timeoutMs));
   const encode = await loadEncode();
+  // Dynamic like ./encode, to stay out of the main bundle.
   const { centeredCrop } = await import("./crop-math");
   const bitmap = await encode.decodeImage(original);
   let display: Blob;

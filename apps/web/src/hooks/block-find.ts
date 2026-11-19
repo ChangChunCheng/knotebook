@@ -3,7 +3,7 @@ import { foldedIndexOf } from "@/lib/search-match";
 
 // Sections must match sectionize in note-sections.ts: only top-level units (blocks and columnList rows) count, and
 // nested or in-column headings don't start sections. Blocks are matched on their own text, so the innermost matching
-// block wins. The query is a single substring, as on the server.
+// block wins. The query is a single substring, as on the server. Matching uses foldedIndexOf, like the snippet highlight.
 const GROUP = ".bn-editor > .bn-block-group";
 const OUTER_SELF = ":scope > .bn-block > .bn-block-content";
 

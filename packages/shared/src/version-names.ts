@@ -1,4 +1,5 @@
 // Derived from the uuid's random v4 bits, not stored. Names repeat (4096 combinations); the short id disambiguates.
+// 65536 is divisible by 64, so `% 64` on four hex digits is uniform.
 // The word lists are frozen once released: any change, even appending, renames existing versions.
 // No imports: e2e imports this file by relative path.
 export const VERSION_NAME_ADJECTIVES: readonly string[] = [

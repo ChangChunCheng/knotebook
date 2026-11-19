@@ -1,4 +1,5 @@
-// "Base" (notes.version_base_seq): the version the current content continues from; null if none.
+// "Base" (notes.version_base_seq): the version the current content continues from; null if never saved or
+// the base couldn't be written back after an apply.
 import type { AvatarRef } from "./avatar.js";
 
 /** Code points. */
@@ -16,7 +17,10 @@ export const VERSION_AUTO_WAIT_MINUTES_MAX = 60;
 
 export type VersionKind = "auto" | "manual";
 
-/** `handle` is current ("" if deleted); `agentLabel` is a snapshot. `avatar` is the user's own, even on AI rows. */
+/**
+ * `handle` is current ("" if deleted); `agentLabel` is a snapshot. `avatar` is the user's own, even on AI rows;
+ * null for a deleted user, no avatar, or a display image not ready yet.
+ */
 export interface VersionEditorDto {
   handle: string;
   agentLabel: string | null;
@@ -24,8 +28,11 @@ export interface VersionEditorDto {
 }
 
 export interface VersionBaseRefDto {
+  /** null: old data whose base was deleted before the upgrade. */
   id: string | null;
+  /** Only while not deleted. */
   name: string | null;
+  /** The base row no longer exists. */
   deleted: boolean;
 }
 
@@ -46,6 +53,7 @@ export interface VersionCurrentDto {
   base: VersionBaseRefDto | null;
   dirty: boolean;
   nextSeq: number;
+  /** Effective value: enabled for the site and the space. */
   autoEnabled: boolean;
 }
 

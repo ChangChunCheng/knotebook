@@ -10,6 +10,8 @@ const OPEN_TOAST = 'li[data-swipe-direction][data-state="open"]';
 // Yields to others' Esc: skipped while composing, with an overlay or toast open (Radix Toast doesn't preventDefault),
 // or when already defaultPrevented after all listeners ran (setTimeout 0). Exception: BlockNote's OverrideEscape
 // blurs the editor and then preventDefaults, so an Esc that left the editor still clears.
+// The toast check runs at keydown (capture) since the same Esc closes the toast. The AI box and mermaid stop
+// propagation, and the slash menu's Esc keeps focus in the editor, so neither clears.
 export function watchSearchEscape(onEscape: () => void): () => void {
   let toastOpenAt: Event | null = null;
   const capture = (event: KeyboardEvent) => {

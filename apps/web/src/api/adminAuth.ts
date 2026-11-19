@@ -52,7 +52,10 @@ export interface PatchAuthProviderBody {
   clientSecret?: string;
   enabled?: boolean;
   sortOrder?: number;
+  /** Uploads go through useUploadAuthProviderIcon. */
   iconKind?: Exclude<ProviderIconKind, "upload">;
+  /** The table toggle sends it alone; the edit dialog sends it only when the issuer changes (the confirm choice, or an
+   * explicit false if it was off). */
   autoCreateEnabled?: boolean;
 }
 

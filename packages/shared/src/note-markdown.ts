@@ -1,9 +1,11 @@
+// Markdown round-trips lose wikilink targets and turn mermaid into codeBlock(language=mermaid); restore with the
+// web's rules (bind only on a unique title match). Link titles are lost for good: BlockNote links only have href.
+// Duplicate or missing titles stay plain text and are counted.
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "./ydoc.js";
 import { mapInlineArrays } from "./site-link.js";
 
-// Markdown round-trips lose wikilink targets and turn mermaid into codeBlock(language=mermaid); restore with the
-// web's rules (bind only on a unique title match). Link titles are lost for good: BlockNote links only have href.
+// Same pattern as the server's notes/service.ts; deliberately not shared.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Blank input parses to one empty paragraph; a looser "no content" test would also count a divider as blank.

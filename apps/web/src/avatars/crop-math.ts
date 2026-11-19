@@ -13,7 +13,9 @@ export interface CropView {
   offset: Point;
 }
 
+/** Max viewport px per original px. */
 const MAX_PIXEL_ZOOM = 4;
+/** Max scale as a multiple of minScale. */
 const MAX_ZOOM_RATIO = 8;
 
 function assertSize(width: number, height: number): void {

@@ -30,11 +30,13 @@ export type { WikilinkTarget };
 export interface ApplyDeps {
   notes: readonly SiteLinkCandidate[];
   siteOrigin?: string;
+  /** "nested": the AI result must not contain columns. */
   placement: MarkdownPlacement;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyBlock = Block<any, any, any>;
 
+/** buildPreview and applyAiResult must use this same blocks array, so what is applied is exactly what was previewed. */
 export interface PreparedResult {
   blocks: AnyBlock[];
   unboundCount: number;
@@ -69,6 +71,7 @@ export function prepareAiResult(
   const parsed = relativizeSiteUploads(normalizeTableWidths(restoreMermaidBlocks(raw)), new URL(document.baseURI).origin);
   const shape = findStructureError(parsed, deps.placement);
   if (shape !== null) return { invalid: shape };
+  // Unsupported colors reject the whole result: the editor wouldn't display them, so they must not be stored silently.
   if (normalizeNoteColors(parsed) !== null) return { invalid: "unsupported_color" };
   if (isBlankParseResult(parsed)) return { empty: true };
   const [rebound, unboundCount] = rebindWikilinks(
@@ -76,6 +79,7 @@ export function prepareAiResult(
     [...deps.notes],
     (type) => editor.schema.blockSchema[type]?.content === "inline",
   );
+  // Resolved only from the loaded notes cache, with no fallback lookup.
   const [blocks] = convertSiteLinks(rebound, (_href, p) => targetFromList(p.path, deps.notes) ?? null, deps.siteOrigin ?? window.location.origin);
   return { blocks, unboundCount };
 }
@@ -84,7 +88,8 @@ export type ApplyOutcome =
   | { ok: true; insertedIds: string[]; replacedSnapshot: AnyBlock[] }
   | { ok: false; reason: "missing" | "changed" };
 
-// Also true when the first and last blocks are in different columns; the list is contiguous, so checking the ends suffices.
+// Also true when the first and last blocks are in different columns; the list is contiguous and a span over a whole
+// row includes the row (caught above), so checking the ends suffices.
 export function selectionTouchesColumns(editor: Pick<AnyEditor, "getParentBlock">, blocks: readonly AnyBlock[]): boolean {
   if (blocks.length === 0) return false;
   if (hasColumnBlock(blocks)) return true;
@@ -128,7 +133,8 @@ export function hasNonTextBlock(editor: AnyEditor, blockIds: string[]): boolean 
 export function applyAiResult(editor: AnyEditor, anchor: AiAnchor, prepared: PreparedResult): ApplyOutcome {
   const verdict = verifyAnchor(editor, anchor);
   if (verdict !== "ok") return { ok: false, reason: verdict };
-  // The check compares content, not position: if the anchor was indented or moved into a column during preview, recheck structure where it is now.
+  // The check compares content, not position: if the anchor was indented or moved into a column during preview,
+  // recheck structure where it is now, else it would write nested rows and break ids.
   if (findStructureError(prepared.blocks, anchorPlacement(editor, anchor.blockIds)) !== null) return { ok: false, reason: "changed" };
   // verifyAnchor already returned "missing" for absent ids, so getBlock is non-null here.
   const replacedSnapshot = anchor.blockIds.map((id) => editor.getBlock(id)!);
@@ -139,7 +145,8 @@ export function applyAiResult(editor: AnyEditor, anchor: AiAnchor, prepared: Pre
 
 export type RevertOutcome = "ok" | "stale";
 
-/** Staleness is decided only here, so a panel can't forget the check and overwrite others' edits. insertedAnchor must be captured with captureAnchor right after applyAiResult succeeds. */
+/** Staleness is decided only here, so a panel can't forget the check and overwrite others' edits. insertedAnchor must
+ * be captured with captureAnchor of its returned insertedIds right after applyAiResult succeeds. */
 export function revertAiResult(
   editor: AnyEditor,
   insertedAnchor: AiAnchor,

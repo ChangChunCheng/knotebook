@@ -1,3 +1,4 @@
+/** Awareness and DTOs carry only this, never a URL. */
 export interface AvatarRef {
   id: string;
   v: number;
@@ -37,12 +38,14 @@ export interface UserAvatarDto {
   pending: boolean;
 }
 
+/** Square, in original-image pixels. */
 export interface AvatarCropDto {
   x: number;
   y: number;
   size: number;
 }
 
+/** width/height: the original after decoding and orientation; the server checks the crop box fits and stores them. */
 export interface AvatarCropUpload extends AvatarCropDto {
   width: number;
   height: number;
@@ -51,6 +54,7 @@ export interface AvatarCropUpload extends AvatarCropDto {
 export interface AvatarCandidateDto {
   id: string;
   source: "upload" | "oidc";
+  /** null when no enabled sign-in provider matches the OIDC source. */
   providerName: string | null;
   avatar: AvatarRef;
   pending: boolean;
@@ -64,6 +68,7 @@ export interface AvatarCandidateDto {
 }
 
 export interface AvatarListDto {
+  /** Newest first. */
   candidates: AvatarCandidateDto[];
   auto: boolean;
   refreshable: { identityId: string; providerName: string }[];

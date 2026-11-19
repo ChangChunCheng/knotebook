@@ -1,8 +1,13 @@
 // Traverse with firstElementChild/nextElementSibling and an explicit stack: jsdom's `children` is O(children) per read,
 // and nesting depth comes from user markdown. Importing this file must not touch the DOM.
+// Run after checkNoteMarkdownSyntax and before tryParseHTMLToBlocks, on its syntaxCheckRoot DOM
+// (shared by the server's parseMarkdownForNote and the web AI's prepareAiResult).
 import { syntaxCheckRoot } from "./note-markdown-write.js";
 
-/** BlockNote re-parses the whole subtree of every nested blockquote, so depth costs time. 128 still allows ~60 nested list levels (`<ul>` + `<li>` each). */
+/**
+ * In element levels below the syntax-check root (its children are depth 1).
+ * BlockNote re-parses the whole subtree of every nested blockquote, so depth costs time. 128 still allows ~60 nested list levels (`<ul>` + `<li>` each).
+ */
 export const MAX_HTML_DEPTH = 128;
 
 export function htmlDepth(root: Element): number {
@@ -40,6 +45,8 @@ const isMergeRoot = (el: Element): boolean =>
 // Equivalence with BlockNote's own merge is checked by the server's editing-paragraph-merge.test.ts.
 // Skipped subtrees: data-content-type elements (the editor-internal form; its parse rule uses contentElement and does not merge
 // paragraphs) and <figcaption> (own text extraction). Quotes inside them are left to BlockNote: possibly slow, bounded by the server worker's time limit.
+// Stops at a merge root (the outer merge already takes the inner <p>s); <pre> is still walked.
+// Assumes findParseGuardFailure already rejected "p p"; such content is outside the tested equivalence.
 export function premergeInto(root: Element): boolean {
   const doc = root.ownerDocument;
   let changed = false;
@@ -63,7 +70,7 @@ export function premergeInto(root: Element): boolean {
   return changed;
 }
 
-/** Mutates `root`; run other checks on it first. */
+/** `html` is checkNoteMarkdownSyntax's output and `root` its syntaxCheckRoot. Mutates `root`; run other checks on it first. */
 export function premergedHtml(html: string, root: Element): string {
   if (!MERGE_ROOT_TAG.test(html) || PLAINTEXT_TAG.test(html)) return html;
   return premergeInto(root) ? root.innerHTML : html;
@@ -76,7 +83,7 @@ export function premergeParagraphs(html: string): string {
 
 // Lower bound on the block count (a line starting with a letter after a blank line always starts a block): past the
 // limit, a full parse would be too. Fence-like input is skipped: BlockNote 0.52's `markdownToHTML` isn't CommonMark there.
-// Only the server has a block limit. A file with another error may then report too_many_blocks instead of that error.
+// Server only (web AI has no block limit). A file that also has another error may report too_many_blocks instead.
 const FENCE_LIKE = /`{3,}|~{3,}/;
 const BLANK = /^[ \t]*$/;
 const STARTS_WITH_LETTER = /^\p{L}/u;

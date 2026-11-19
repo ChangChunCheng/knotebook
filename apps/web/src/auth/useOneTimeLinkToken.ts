@@ -18,10 +18,13 @@ export function useOneTimeLinkToken(opts: { param: string; storageKey: string; u
   const location = useLocation();
   const navigate = useNavigate();
   const fragmentToken = parseFragmentParam(location.hash, param);
+  // Taken during render, not in an effect, so the first render already has it. A new fragment token (a newly
+  // pasted link) replaces the state at render and isn't blocked by an earlier forget().
   const [token, setToken] = useState(() => fragmentToken ?? readSessionToken(storageKey));
   if (fragmentToken !== null && fragmentToken !== token) setToken(fragmentToken);
   const forgotten = useRef<string | null>(null);
 
+  // .has(), so an empty #param= is cleared from the URL too.
   const hasFragmentParam = new URLSearchParams(location.hash.replace(/^#/, "")).has(param);
   useEffect(() => {
     if (hasFragmentParam) navigate({ pathname: location.pathname, search: location.search }, { replace: true });

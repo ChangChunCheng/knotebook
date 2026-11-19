@@ -1,4 +1,5 @@
-// Importing this file doesn't touch the DOM; shared's tsconfig sets no `lib`, so DOM types come by default.
+// Importing this file doesn't touch the DOM; shared's tsconfig sets no `lib`, so DOM types come by default and no
+// reference directive is added.
 // isSafeMediaUrl allows relative URLs (own uploads) and "" (BlockNote's "no file yet" placeholder); embeds don't
 // (isAllowedEmbedUrl("") is false, pinned by the web's media-url.test.ts). data:, javascript:, file: and blob: are always blocked.
 // Must stay in sync with the web's noteSchema: run the parity cases in apps/web/src/collab/schema.test.ts.
@@ -54,12 +55,14 @@ function resolvesToHttp(raw: string, base?: string): boolean {
 }
 export function isAllowedEmbedUrl(raw: string): boolean { return resolvesToHttp(raw, undefined); }
 // `base` is required (shared has no window); a wrong one turns relative /api/uploads/<id> into about:blank.
+// Web wraps these with window.location.href (apps/web/src/lib/media-url.ts); the server passes the jsdom URL (PUBLIC_URL origin).
 export function isSafeMediaUrl(raw: string, base: string): boolean { return raw === "" ? true : resolvesToHttp(raw, base); }
 export function safeMediaUrl(raw: string, base: string): string { return isSafeMediaUrl(raw, base) ? raw : BLOCKED_MEDIA_URL; }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention, as in apps/web/src/collab/schema.ts)
 type FileBlockSpecLike = { implementation: { toExternalHTML?: (this: any, block: any, ...rest: any[]) => unknown } };
 // #43: rewrite props.url, not the returned DOM: the delegated implementation also emits data-url.
+// `this` and `...rest` are forwarded unchanged so upstream signature changes still work.
 export function withGuardedExternalHTML<Spec extends FileBlockSpecLike>(spec: Spec, base: string): Spec {
   const original = spec.implementation.toExternalHTML;
   if (!original) return spec;
@@ -86,7 +89,7 @@ export function createHeadlessNoteSchema(base: string) {
       pre.append(code);
       return { dom: pre };
     },
-  })(); // createBlockSpec returns a factory
+  })(); // createBlockSpec returns a factory; createInlineContentSpec returns the spec
   const wikilinkSpec = createInlineContentSpec(wikilinkConfig, {
     render: () => ({ dom: document.createElement("span") }),
     // Same HTML as the web's wikilink toExternalHTML (components/wikilink/spec.tsx).

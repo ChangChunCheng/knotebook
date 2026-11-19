@@ -1,5 +1,6 @@
 // Markdown for MCP/REST reads and the web AI (#222). `blocksToMarkdownLossy` drops all colors, so each top-level node is
-// classified: block or cell colors, sized images or tables and column rows become HTML the write side accepts; inline-only
+// classified: block or cell colors and sized images or tables become HTML the write side accepts; column rows keep the
+// canonical div lines and each column's content is classified the same way; inline-only
 // colors stay markdown with `<span style>` (less HTML for weak models). Working per top-level node keeps BlockNote's
 // flattening, so read → write → read is stable; with nothing to change the output is byte-identical to the lossy export.
 // Uses global `document`/`Element` (server: `EditingRuntime.installGlobals()`); importing this file doesn't touch the DOM.
@@ -13,6 +14,8 @@ import { escapeLinkText, lessThanOpensMarkup } from "./site-link.js";
 
 const STYLE_CSS = { textColor: "color", backgroundColor: "background-color" } as const;
 const BLOCK_COLOR_ATTRS = ["data-text-color", "data-background-color"] as const;
+// Editor-only: style is an rgb copy of the canonical colors; data-level/url/start duplicate the tag, src and <ol start>,
+// so dropping them still round-trips.
 const NOISE_ATTRS = ["class", "classname", "style", "data-editable", "data-nesting-level", "data-inline-content-type", "target", "rel", "data-level", "data-url", "data-start"];
 const INLINE_TAGS = new Set(["SPAN", "STRONG", "EM", "S", "U", "CODE", "A", "B", "I", "DEL", "MARK", "SUB", "SUP"]);
 /** Unicode Po punctuation, so the converter treats them like the `<`/`>` that replace them. */
@@ -35,6 +38,7 @@ const elementsOf = (root: Element): Element[] => [root, ...Array.from(root.query
 const hasBlockColor = (root: Element): boolean => elementsOf(root).some(el => !colorStyleType(el) && BLOCK_COLOR_ATTRS.some(a => blockColorShown(el, a)));
 const colorSpans = (root: Element): Element[] => elementsOf(root).filter(el => colorStyleType(el) && shown(el.getAttribute("data-value")));
 
+// Rows with data-nesting-level (indented under a paragraph) are invalid and flatten like ordinary nodes.
 const isRow = (el: Element): boolean => el.matches("div[data-kb-columns]") && !el.hasAttribute("data-nesting-level");
 /** The exact width is `data-preview-width` (on the `img`, or on the `figure` when captioned); `width` is truncated. */
 function imageWidth(el: Element): number | null {
@@ -162,7 +166,8 @@ function tokenizeInlineColors(root: Element, tokens: Map<string, string>): void 
 }
 
 // BlockNote's HTML → markdown never escapes text, so `[\[Draft\] …]` wouldn't round-trip (#269). Markdown branch only:
-// raw HTML blocks aren't unescaped on write. Run after tokenizeInlineColors.
+// raw HTML blocks aren't unescaped on write, so each round-trip would add a backslash. Run after tokenizeInlineColors
+// (its placeholder chars aren't in the escape set).
 function escapeNoteLinkText(root: Node): boolean {
   let changed = false;
   const visit = (n: Node, inLink: boolean): void => {
@@ -220,6 +225,7 @@ function edgeBlankLength(s: string, first: boolean): number {
 
 // Run after hoistEmphasisWhitespace: whitespace at the start of a styled run is then already a sibling of the `<br>`.
 // A following inline element (code, link, colored span) doesn't count: the whitespace sits inside it and round-trips as is.
+// External HTML puts `<br>` outside style elements, so there's no need to look inside them.
 function spacedAfter(br: Element): boolean {
   const next = br.nextSibling;
   return next !== null && next.nodeType === 3 && /^[ \t]/.test(next.nodeValue ?? "");
@@ -235,6 +241,7 @@ function blockishAfter(br: Element): boolean {
 // breaks in list items, cells and headings (the parser rejects `\` there), and block-like next lines. A placeholder
 // stands in because the converter escapes `<`. External HTML never puts `<br>` inside `<code>`/`<pre>` (inline code splits
 // at a break; code blocks use a newline character), so no exclusion is needed.
+// `<br> L2` keeps the space because dropNewlineAfterBreaks in note-markdown-write.ts removes only the `\n`.
 function tokenizeInlineBreaks(root: ParentNode, placeholder: string): number {
   let n = 0;
   for (const br of Array.from(root.querySelectorAll("br"))) {
@@ -247,6 +254,7 @@ function tokenizeInlineBreaks(root: ParentNode, placeholder: string): number {
 }
 // Must not occur anywhere in the HTML or text, because breaks are restored by replacing across the whole markdown.
 // Repeated to the length of `<br>` because the converter pads table columns by character count.
+// Private-use chars because the converter keeps them verbatim; null (all in use) means breaks aren't rewritten.
 function uniquePlaceholder(haystack: string): string | null {
   for (let cp = 0xe000; cp <= 0xf8ff; cp += 1) {
     const c = String.fromCharCode(cp);
@@ -276,6 +284,8 @@ function escapeMarkdownText(s: string): string {
   return out;
 }
 const MD_TEXT_BLOCKS = "p,li,td,th,h1,h2,h3,h4,h5,h6,blockquote";
+// Skips code/pre (output verbatim), site-link text (escapeNoteLinkText escapes it; don't escape twice), and figure
+// text or text outside MD_TEXT_BLOCKS (the converter doesn't treat it as markdown inline text).
 function escapeTextNodes(root: ParentNode): boolean {
   let changed = false;
   const walker = document.createTreeWalker(root as Node, 0x4 /* SHOW_TEXT */);
@@ -294,6 +304,7 @@ function escapeTextNodes(root: ParentNode): boolean {
 
 // Only the block markers BlockNote's parser recognizes. `|$` because the next text node may begin with whitespace.
 // A list item's child paragraphs are parsed as blocks and get escaped; the item's own inline content doesn't.
+// `*`, `_`, backtick, `~` and `<` are absent: escapeMarkdownText already escapes them.
 const BLOCK_MARK = /^(?:#{1,6}(?=\s|$)|>|[-+](?=\s|$)|-\s*-\s*-[-\s]*$)/;
 const ORDERED_NUM = /^\d+(?=[.)](?:\s|$))/;
 const isItemInline = (b: Element): boolean =>
@@ -332,7 +343,7 @@ function escapeBlockStarts(root: ParentNode): boolean {
   }
   return changed;
 }
-/** Order matters: breaks are judged on the hoisted text, and escaping comes last. */
+/** Order matters: breaks are judged on the hoisted text, and escaping, which doesn't affect leading whitespace, comes last. */
 function prepareForMarkdown(root: ParentNode, ctx: Ctx): boolean {
   const hoisted = hoistEmphasisWhitespace(root);
   const n = ctx.brToken === null ? 0 : tokenizeInlineBreaks(root, ctx.brToken);
@@ -410,6 +421,7 @@ export function blocksToNoteMarkdown(editor: AnyEditor, blocks: Parameters<AnyEd
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
   const text = tpl.content.textContent ?? "";
+  // Placeholder chars already in the text: fall back to HTML for inline colors rather than risk a wrong replace.
   const inlineOk = !text.includes(TOKEN_OPEN) && !text.includes(TOKEN_CLOSE);
   const ctx: Ctx = { tokens: new Map(), inlineOk, brToken: uniquePlaceholder(html + text), breaks: 0 };
   const restoreBreaks = (md: string): string => (ctx.breaks === 0 || ctx.brToken === null ? md : md.split(ctx.brToken).join("<br>"));
