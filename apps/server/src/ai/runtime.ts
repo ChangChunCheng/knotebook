@@ -17,9 +17,9 @@ export function createAiRuntime(): AiRuntime {
 export type AiProviderRow = typeof aiProviders.$inferSelect;
 
 /**
- * Pure (no DB) so unit tests pass fake rows. Disabled providers are never degraded but are still returned for upgrade: a v1 blob left
- * on a disabled row could be copied into an enabled provider, undoing #14. Returns ids only,
- * so plaintext keys never leave the decrypting line.
+ * No DB access, so unit tests pass fake rows. Disabled providers are never degraded but are
+ * still returned for upgrade: a v1 blob left on a disabled row could be copied into an enabled
+ * provider, undoing #14. Returns ids only, so plaintext keys never leave the decrypting line.
  */
 export function checkProviderKeys(
   providers: AiProviderRow[],

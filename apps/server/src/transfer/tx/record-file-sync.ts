@@ -14,7 +14,7 @@ export interface RecordFileSyncInput {
   noteId: string;
   baseKey: string;
   appliedBodySha: Buffer;
-  /** In document order: `created_at` is `now() + i` microseconds. */
+  /** In document order. */
   rows: Array<typeof noteAiEdits.$inferInsert>;
 }
 

@@ -60,7 +60,7 @@ export interface ListNotesArgs {
   limit?: number;
 }
 
-/** The timestamp is `updatedAtMs` (the sort key), not `updatedAt`: a cursor of different precision silently drops rows (see `mcp/queries.ts`). The two are equal in JS only because node-postgres truncates timestamptz to milliseconds. */
+/** The timestamp is `updatedAtMs` (the sort key), not `updatedAt`: a cursor of different precision silently drops rows (see `mcp/queries.ts`). The two are equal in JS only because node-postgres truncates timestamptz to milliseconds (an implementation detail, don't rely on it). */
 function encodeCursor(row: { updatedAtMs: Date; id: string }): string {
   return Buffer.from(`${row.updatedAtMs.toISOString()}${CURSOR_SEP}${row.id}`, "utf8").toString("base64url");
 }

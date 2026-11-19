@@ -63,7 +63,7 @@ export async function applySync(
   sv: Uint8Array,
   plan: SyncPlan,
   cur: { ids: string[] },
-  // `normalizedId`: the lone empty paragraph when there are 0 base blocks; replaced only once, like the 0-block case.
+  // `normalizedId`: the base had 0 blocks and the current doc is one empty paragraph; replaced once, like the `cur.ids.length === 0` case.
   opts: { yieldFn?: () => Promise<void>; now?: () => number; normalizedId?: string } = {},
 ): Promise<Applied> {
   const yieldFn = opts.yieldFn ?? yieldToLoop;

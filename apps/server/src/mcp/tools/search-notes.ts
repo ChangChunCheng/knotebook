@@ -20,7 +20,7 @@ import type { McpToolCtx } from "../context.js";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const MAX_QUERY = 200;
-/** `,"matchesTruncated":true` in both copies is about 56. */
+/** `,"matchesTruncated":true` in both copies is about 50 (24 + 26). */
 const MATCHES_TRUNCATED_RESERVE = 64;
 
 // Model-facing: only say things true on every deployment shape (pinned in test/mcp-search.test.ts).

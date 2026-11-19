@@ -31,9 +31,9 @@ export function insertedRow(
  * `lastEdited` fields are still null. A miss means the note was deleted or the caller removed
  * from the group meanwhile; the content is already written, so the caller falls back to the
  * insert row (a stale `lastEdited` beats an AI retry creating a second note). The select
- * builders are single-use, so build the branch fresh each call.
+ * builders are single-use, so build the branch fresh each call. The grouped branch requires
+ * `can_read`: the creator has `can_create`, which implies `can_read` (`group_roles_read_implied_chk`).
  */
-/** The grouped branch requires `can_read`; the creator always has it (`group_roles_read_implied_chk`). */
 export async function rereadVisibleNote(
   ctx: Pick<McpToolCtx, "db" | "userId">,
   noteId: string,
