@@ -1,8 +1,3 @@
-/**
- * 資料夾：筆記結果帶 `folder`（呼叫者視角，AG-F1）。
- * NF＝三種空間、AF1＝被分享者看不到擁有者的資料夾、AF2＝單篇回應、AF3＝名稱截斷、AF4＝名稱查不到、AF5＝鏡像、AF6＝describe 字串；
- * LF1＝兩支查詢（`loadFolderNames`／`loadFolderPath`）對真 DB。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -41,7 +36,6 @@ async function searchNotes(app: FastifyInstance, auth: McpAuth, query: string): 
   const out = ok(await callTool(app, auth, "search_notes", { query }));
   return new Map((out.notes as NoteOut[]).map(n => [n.id, n]));
 }
-/** 整個 HTTP 回應本文（JSON-RPC 信封＋structuredContent＋鏡像 text）。 */
 async function rawCall(app: FastifyInstance, auth: McpAuth, name: string, args: unknown): Promise<string> {
   const res = await mcpPost(app, rpc("tools/call", { name, arguments: args }), auth);
   expect(res.statusCode, res.body).toBe(200);
@@ -53,8 +47,8 @@ async function noteOf(app: FastifyInstance, auth: McpAuth, name: string, args: u
   return out.note as NoteOut;
 }
 
-describe("NF1 三種空間：list_notes 與 search_notes 的 folder", () => {
-  it("個人筆記在個人資料夾、群組筆記在群組資料夾 → { id, name }；根層 → null", async () => {
+describe("list_notes and search_notes folder across the three spaces", () => {
+  it("personal note in a personal folder, group note in a group folder -> { id, name }; root -> null", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "NF1", [{ userId: u.id, role: "admin" }]);
@@ -75,8 +69,8 @@ describe("NF1 三種空間：list_notes 與 search_notes 的 folder", () => {
   });
 });
 
-describe("AF1 被分享者看不到擁有者的資料夾（AG-F1）", () => {
-  it("B 的 list_notes／search_notes：folder null、wire 上沒有擁有者的資料夾名與 id；B 放進自己的 shared 資料夾 → 看到自己的；擁有者仍看到自己的", async () => {
+describe("a shared recipient can't see the owner's folder", () => {
+  it("B's list_notes/search_notes: folder null, and the wire contains neither the owner's folder name nor id; B places it in B's own shared folder -> sees their own; the owner still sees theirs", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await seedUser(ctx.db);
     const b = await seedUser(ctx.db);
@@ -91,7 +85,7 @@ describe("AF1 被分享者看不到擁有者的資料夾（AG-F1）", () => {
     expect((await listNotes(ctx.app, bAuth)).get(n.id)!.folder).toBeNull();
     expect((await searchNotes(ctx.app, bAuth, "afone")).get(n.id)!.folder).toBeNull();
     for (const wire of [await rawCall(ctx.app, bAuth, "list_notes", {}), await rawCall(ctx.app, bAuth, "search_notes", { query: "afone" })]) {
-      expect(wire).toContain(n.id); // 前提：這篇真的在回應裡
+      expect(wire).toContain(n.id); // precondition: this note is really in the response
       expect(wire).not.toContain("SECRET-");
       expect(wire).not.toContain(secret.id);
     }
@@ -103,7 +97,7 @@ describe("AF1 被分享者看不到擁有者的資料夾（AG-F1）", () => {
     expect((await listNotes(ctx.app, ownerAuth)).get(n.id)!.folder).toEqual({ id: secret.id, name: secretName });
   });
 
-  it("另一位被分享者 C 的放置不會漏給 B：B 沒放置 → folder null、wire 上沒有 C 的資料夾名與 id；C 看到自己的", async () => {
+  it("another recipient C's placement doesn't leak to B: B hasn't placed it -> folder null, no C folder name or id on the wire; C sees their own", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await seedUser(ctx.db);
     const b = await seedUser(ctx.db);
@@ -119,7 +113,7 @@ describe("AF1 被分享者看不到擁有者的資料夾（AG-F1）", () => {
     expect((await listNotes(ctx.app, bAuth)).get(n.id)!.folder).toBeNull();
     expect((await searchNotes(ctx.app, bAuth, "afthree")).get(n.id)!.folder).toBeNull();
     for (const wire of [await rawCall(ctx.app, bAuth, "list_notes", {}), await rawCall(ctx.app, bAuth, "search_notes", { query: "afthree" })]) {
-      expect(wire).toContain(n.id); // 前提：這篇真的在回應裡
+      expect(wire).toContain(n.id); // precondition: this note is really in the response
       expect(wire).not.toContain("CFOLDER-");
       expect(wire).not.toContain(cFolder.id);
     }
@@ -127,8 +121,8 @@ describe("AF1 被分享者看不到擁有者的資料夾（AG-F1）", () => {
   });
 });
 
-describe("AF2 單篇回應都帶 folder", () => {
-  it("create_note（不帶 folder_id → null）、copy_note（個人，根層 → null）、move_note_to_group（→ 群組根層 null）、restore_note（回原資料夾）", async () => {
+describe("single-note responses all carry folder", () => {
+  it("create_note (no folder_id -> null), copy_note (personal, root -> null), move_note_to_group (-> group root null), restore_note (back to the original folder)", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "AF2", [{ userId: u.id, role: "admin" }]);
@@ -156,8 +150,8 @@ describe("AF2 單篇回應都帶 folder", () => {
   });
 });
 
-describe("AF3 名稱截斷", () => {
-  it("80 個 \" → name 40 個＋nameTruncated、逃脫後 ≤ 80；80 個中文不截、沒有旗標鍵", async () => {
+describe("name truncation", () => {
+  it("80 \" characters -> name 40 + nameTruncated, at most 80 after escaping; 80 Chinese characters are not cut and carry no flag key", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const quotes = await seedFolder(ctx.db, { personal: u.id }, { name: '"'.repeat(80) });
@@ -176,8 +170,8 @@ describe("AF3 名稱截斷", () => {
   });
 });
 
-describe("AF4 名稱查不到（兩句之間資料夾被刪）", () => {
-  it("noteSummariesForModel：viewerFolderId 指向不存在的 uuid → folder null、不 throw；同批查得到的照常帶名稱", async () => {
+describe("name lookup fails (the folder is deleted between the two statements)", () => {
+  it("noteSummariesForModel: viewerFolderId pointing to a nonexistent uuid -> folder null, no throw; ones found in the same batch still carry their names", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const f = await seedFolder(ctx.db, { personal: u.id }, { name: "Real" });
@@ -192,8 +186,8 @@ describe("AF4 名稱查不到（兩句之間資料夾被刪）", () => {
   });
 });
 
-describe("AF5 鏡像", () => {
-  it("list_notes：content[0].text 逐字＝JSON.stringify(structuredContent)，且含 folder", async () => {
+describe("mirror", () => {
+  it("list_notes: content[0].text is verbatim JSON.stringify(structuredContent) and contains folder", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const f = await seedFolder(ctx.db, { personal: u.id }, { name: "Mirror" });
@@ -205,8 +199,8 @@ describe("AF5 鏡像", () => {
   });
 });
 
-describe("AF6 describe 字串（`NS_FOLDER_DESCRIBE`）", () => {
-  it("tools/list 上 list_notes 的 notes.items.folder 說明逐字＝`NS_FOLDER_DESCRIBE`，且不提 read_note_outline", async () => {
+describe("describe string (`NS_FOLDER_DESCRIBE`)", () => {
+  it("tools/list: the notes.items.folder description of list_notes is verbatim `NS_FOLDER_DESCRIBE` and doesn't mention read_note_outline", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const res = await mcpPost(ctx.app, rpc("tools/list"), await tokenOf(ctx.db, u.id, R));
@@ -222,8 +216,8 @@ describe("AF6 describe 字串（`NS_FOLDER_DESCRIBE`）", () => {
   });
 });
 
-describe("LF1 loadFolderNames／loadFolderPath對真 DB", () => {
-  it("名稱：空集合／全 null 不查、去重、查無的 id 不在 Map；路徑：根 → 葉、單層、查無 → null", async () => {
+describe("loadFolderNames / loadFolderPath against a real DB", () => {
+  it("names: empty set / all null -> no query, deduplicated, a missing id isn't in the Map; paths: root -> leaf, single level, missing -> null", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const [a, b, c] = await seedFolderChain(ctx.db, { personal: u.id }, ["A", "B 資料", 'C"q']);

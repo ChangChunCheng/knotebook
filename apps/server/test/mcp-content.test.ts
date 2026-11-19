@@ -1,11 +1,8 @@
 /**
- * #108：`read_note_outline`／`read_note_section`。
+ * The whole family uses `buildCollabTestApp` (the production shape): by the deployment gate (`mcp/register.ts`: tools that read the live doc register only when both `collab`
+ * and `editing` exist) these two tools are **only registered when both are present**, so an app without collab doesn't advertise them at all (the shape assertion for that side is in the MCP write tests).
  *
- * 全族走 `buildCollabTestApp`（＝生產形態）：依部署形態閘門（`mcp/register.ts`：要讀 live doc 的工具只在 `collab` 與 `editing` 都在時註冊），這兩支工具
- * **只在兩者都在時才註冊**，無 collab 的 app 上整條不宣告（那一面的形狀斷言在 MCP 寫入測試）。
- *
- * ⚠ `callTool`／`payloadOf` 與 `mcp-notes.test.ts` 的同名 helper 是**兩份**：`test/mcp-helpers.ts`
- * 沒有收進去，因為它們各自只有幾行。兩份若日後分岔，症狀只是測試自己讀錯欄位。
+ * callTool/payloadOf are copies of the same helpers in several other MCP test files, deliberately not moved into mcp-helpers.ts (a few lines each).
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -24,7 +21,7 @@ import type { FastifyInstance } from "fastify";
 
 const PASSWORD = "correct-horse-battery";
 const NUL = String.fromCharCode(0);
-/** 沒有配對的高位／低位代理（`String.prototype.isWellFormed` 要 ES2024 lib，本 repo 是 ES2023）。 */
+/** An unpaired high/low surrogate (`String.prototype.isWellFormed` needs the ES2024 lib; this repo targets ES2023). */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 interface ToolResultBody {
@@ -36,7 +33,7 @@ interface ToolResultBody {
 interface ToolCall {
   status: number;
   result: ToolResultBody;
-  /** 整個 wire body 的字串（「指紋一個字都不得出現」那種掃描用）。 */
+  /** The whole wire body as a string, for scans that a fingerprint must not appear anywhere. */
   raw: string;
 }
 
@@ -75,7 +72,7 @@ async function callTool(app: FastifyInstance, token: string, name: string, args:
   return { status: res.statusCode, result: res.json().result, raw: res.body };
 }
 
-/** 成功呼叫的 `structuredContent`（順手守住鏡像等式）。 */
+/** `structuredContent` of a successful call; also guards the mirror equality. */
 function payloadOf<T>(call: ToolCall): T {
   expect(call.status).toBe(200);
   expect(call.result.isError).toBeUndefined();
@@ -100,7 +97,7 @@ const sectionOf = async (app: FastifyInstance, token: string, noteId: string, se
     })
   );
 
-/** REST 側的同一篇 outline——`sectionId`／`fingerprint` 的**獨立**真相（MCP 不得自己算一份）。 */
+/** The same outline from REST: the **independent** truth for `sectionId`/`fingerprint` (MCP must not compute its own). */
 async function restOutline(app: FastifyInstance, noteId: string, token: string) {
   const res = await getContent(app, noteId, token);
   expect(res.statusCode).toBe(200);
@@ -117,7 +114,7 @@ interface Scene {
   email: string;
 }
 
-/** owner ＋ 一顆 PAT（token 名稱固定 "Claude Code" ⇒ agent label "claude"）＋ 一篇筆記。 */
+/** owner + one PAT (token name fixed to "Claude Code" => agent label "claude") + one note. */
 async function scene(
   markdown: string | null,
   opts: Parameters<typeof buildCollabTestApp>[0] = {},
@@ -139,11 +136,11 @@ async function scene(
   return { ctx, ownerId: owner.id, ownerHandle, token, tokenId, noteId: note.id, email, disconnect };
 }
 
-/** ⚠ heading 一律**同級**：`## B` 會被 sectionize 併進 A 段（#106 三棒踩過三次）。 */
+/** Headings must all be the same level: `## B` is merged into section A by sectionize. */
 const TWO_SECTIONS = "# A\n\n第一段內容\n\n# B\n\n第二段內容";
 
 describe("#108 read_note_outline", () => {
-  it("以標題開頭的筆記：_top 存在且 chars 0，其餘每段 sectionId ＝該 heading block 的 id（案 12）", async () => {
+  it("note that starts with a heading: _top exists with chars 0, every other section's sectionId = that heading block's id", async () => {
     const s = await scene(TWO_SECTIONS);
     const out = await outlineOf(s.ctx.app, s.token, s.noteId);
     expect(out.sections).toHaveLength(3);
@@ -151,7 +148,7 @@ describe("#108 read_note_outline", () => {
     expect(out.sections[0]!.chars).toBe(0);
     expect(out.sections.map(x => x.heading)).toEqual(["", "A", "B"]);
     expect(out.sections.map(x => x.level)).toEqual([0, 1, 1]);
-    // sectionId 的真相在 REST（＝該 heading block 的 id）——MCP 不得自己編一套。
+    // The truth for sectionId is REST (= that heading block's id); MCP must not invent its own.
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     expect(out.sections.map(x => x.sectionId)).toEqual(rest.map(x => x.sectionId));
     expect(out.note.role).toBe("owner");
@@ -161,7 +158,7 @@ describe("#108 read_note_outline", () => {
     s.disconnect();
   });
 
-  it("從未開過的筆記：sections 只有 _top、totalChars 0，不報錯（案 13）", async () => {
+  it("a note never opened: sections only _top, totalChars 0, no error", async () => {
     const s = await scene(null);
     const out = await outlineOf(s.ctx.app, s.token, s.noteId);
     expect(out.sections).toHaveLength(1);
@@ -170,19 +167,17 @@ describe("#108 read_note_outline", () => {
     expect(out.lastEdited).toBeNull();
   });
 
-  // 案 14a：**逐欄位的 key 集合**，不是「不含 16 個十六進位字元」那種啟發式
-  // （一個叫 `deadbeefdeadbeef` 的標題就會讓啟發式誤紅）。殺掉的寫法＝照抄 `outlineOf`
-  // 的回傳值（那會帶 `fingerprint` 與 `blockIds`）。
+  // Compare the **key set of each field**, not a heuristic like "contains no 16 hex chars" (a heading called `deadbeefdeadbeef` would turn the heuristic red).
+  // What it kills: copying `outlineOf`'s return value (which carries `fingerprint` and `blockIds`).
   //
-  // ⚠ **`headingTruncated` 這一族的守衛不是下面那條 key 集合斷言**（實測推翻了先前的假設）：
-  // 寫成 `headingTruncated: false` 時抓到它的是 `outputSchema`
-  // 的 `z.literal(true)`（本檔十條會一起紅，紅法是 `isError`）；寫成 `undefined` 時**本檔
-  // 一條都不紅**——那一半由 `test/unit/mcp-outline-page.test.ts` 直接對物件的 key 集合守。
-  it("outline 的頂層／note／每個 entry 的 key 集合逐字相符，一個指紋都沒有（案 14a）", async () => {
+  // The guard for the `headingTruncated` family is not the key-set assertion below: writing `headingTruncated: false` is caught by `outputSchema`'s
+  // `z.literal(true)` (ten tests in this file go red, as `isError`); writing `undefined` turns **nothing** in this file red - that half is guarded by
+  // `test/unit/mcp-outline-page.test.ts` on the object's key set.
+  it("outline's top-level / note / every entry key set match exactly, with no fingerprint at all", async () => {
     const s = await scene(TWO_SECTIONS);
     const call = await callTool(s.ctx.app, s.token, "read_note_outline", { note_id: s.noteId });
     const out = payloadOf<OutlinePayload>(call);
-    // #381：唯一的指紋是標題的 `titleFingerprint`（rename 的 if_match）；內文的整篇／逐段指紋照舊一個都沒有（下面兩道）。
+    // #381: the only fingerprint is the title's `titleFingerprint` (rename's if_match); no whole-note or per-section body fingerprint appears (the two checks below).
     expect(Object.keys(out).sort()).toEqual(
       ["folder", "lastEdited", "nextSectionOffset", "note", "sections", "titleFingerprint", "totalChars", "truncated"].sort()
     );
@@ -191,10 +186,10 @@ describe("#108 read_note_outline", () => {
     for (const entry of out.sections) {
       expect(Object.keys(entry).sort()).toEqual(["chars", "heading", "level", "sectionId"].sort());
     }
-    // 未被截斷時**沒有** `headingTruncated` 這把 key（不是 `undefined`）。
+    // When not truncated the `headingTruncated` key is **absent** (not `undefined`).
     expect(out.sections.every(e => !("headingTruncated" in e))).toBe(true);
-    // 第二道、非啟發式的守衛：把 REST 算出來的**真值**逐一拿去掃 wire body。整篇指紋與
-    // 每一段的指紋都不得出現在 `read_note_outline` 的回應裡的任何位置（含被塞進 heading）。
+    // Second, non-heuristic guard: scan the wire body for the **real values** computed by REST. Neither the whole-note fingerprint nor any section fingerprint may appear
+    // anywhere in the `read_note_outline` response (including inside a heading).
     const content = (await getContent(s.ctx.app, s.noteId, s.token)).json() as {
       fingerprint: string;
       outline: Array<{ fingerprint: string }>;
@@ -206,11 +201,11 @@ describe("#108 read_note_outline", () => {
     s.disconnect();
   });
 
-  it("超過 100 段：第一頁 100 筆 ＋ truncated ＋ nextSectionOffset 100，section_offset 接得上", async () => {
+  it("more than 100 sections: first page 100 entries + truncated + nextSectionOffset 100, section_offset continues it", async () => {
     const many = Array.from({ length: 105 }, (_, i) => `# S${i}\n\nbody ${i}`).join("\n\n");
     const s = await scene(many);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
-    expect(rest).toHaveLength(106); // _top ＋ 105 段
+    expect(rest).toHaveLength(106); // _top + 105 sections
 
     const p1 = await outlineOf(s.ctx.app, s.token, s.noteId);
     expect(p1.sections).toHaveLength(MCP_PAGE_MAX);
@@ -221,25 +216,24 @@ describe("#108 read_note_outline", () => {
     expect(p2.sections).toHaveLength(6);
     expect(p2.truncated).toBe(false);
     expect(p2.nextSectionOffset).toBeNull();
-    // 兩頁湊回全集、順序與 REST 一致、無重複無遺漏。
     const seen = [...p1.sections, ...p2.sections].map(x => x.sectionId);
     expect(seen).toEqual(rest.map(x => x.sectionId));
     expect(new Set(seen).size).toBe(106);
     s.disconnect();
   });
 
-  it("section_offset 大於總段數 → sections 空、truncated false、nextSectionOffset null（不是錯誤）", async () => {
+  it("section_offset beyond the section count -> sections empty, truncated false, nextSectionOffset null (not an error)", async () => {
     const s = await scene(TWO_SECTIONS);
     const out = await outlineOf(s.ctx.app, s.token, s.noteId, 500);
     expect(out.sections).toEqual([]);
     expect(out.truncated).toBe(false);
     expect(out.nextSectionOffset).toBeNull();
-    // 溢出仍然是一次成功的呼叫，`totalChars` 照樣是整篇的。
+    // Overflow is still a successful call, and `totalChars` is still the whole note's.
     expect(out.totalChars).toBeGreaterThan(0);
     s.disconnect();
   });
 
-  it("heading 與 note.title 截到逃脫後 200 並附 *Truncated", async () => {
+  it("heading and note.title are cut to 200 after escaping and carry *Truncated", async () => {
     const huge = "H".repeat(260_000);
     const s = await scene(`# ${huge}\n\ntail line`, {}, "T".repeat(260_000));
     const out = await outlineOf(s.ctx.app, s.token, s.noteId);
@@ -250,12 +244,12 @@ describe("#108 read_note_outline", () => {
     expect(heading.heading.length).toBe(MCP_TEXT_MAX);
     expect(heading.heading).toBe("H".repeat(MCP_TEXT_MAX));
     expect(heading.headingTruncated).toBe(true);
-    // `chars` 是**沒有被截斷的**真實長度——模型靠它決定要讀幾發。
+    // `chars` is the **untruncated** real length; the model decides how many reads to make from it.
     expect(heading.chars).toBeGreaterThan(260_000);
     s.disconnect();
   });
 
-  it("totalChars 是整篇字數，不是這一頁的（分頁前後相同）", async () => {
+  it("totalChars is the whole note's count, not this page's (same before and after paging)", async () => {
     const many = Array.from({ length: 105 }, (_, i) => `# S${i}\n\nbody ${i}`).join("\n\n");
     const s = await scene(many);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
@@ -264,8 +258,7 @@ describe("#108 read_note_outline", () => {
     const p2 = await outlineOf(s.ctx.app, s.token, s.noteId, MCP_PAGE_MAX);
     expect(p1.totalChars).toBe(whole);
     expect(p2.totalChars).toBe(whole);
-    // 對照面：這一頁自己的加總**不等於** totalChars，否則上面兩行在「只加這一頁」的
-    // 寫法下也會過。
+    // Control: this page's own sum is **not** equal to totalChars, otherwise the two lines above would also pass for an implementation that sums only this page.
     expect(p2.sections.reduce((n, o) => n + o.chars, 0)).toBeLessThan(whole);
     s.disconnect();
   });
@@ -274,7 +267,7 @@ describe("#108 read_note_outline", () => {
 describe("#108 read_note_section", () => {
   const LONG = "L".repeat(9_000);
 
-  it("超過 4000 字元的段落：切片、nextOffset、下一發接得上（案 14）", async () => {
+  it("section over 4000 chars: sliced, nextOffset, the next call continues it", async () => {
     const s = await scene(`# Long\n\n${LONG}`);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     const target = rest[1]!;
@@ -297,22 +290,21 @@ describe("#108 read_note_section", () => {
       acc += last.section.markdown;
       next = last.nextOffset;
     }
-    expect(acc).toBe(full); // 逐頁接回去＝REST 的整段
+    expect(acc).toBe(full);
     expect(last.truncated).toBe(false);
     s.disconnect();
   });
 
-  // 切點落在代理對（surrogate pair）中間時，`truncateCodeUnits` 會退一格回 3999 個 code unit。
-  // **`nextOffset` 必須跟著退**——寫死 `offset + 4000` 會讓下一頁從低位代理開始，接回去的
-  // 內容少一個 code unit、而且兩頁各自帶著一個孤立代理（JSON 序列化不報錯，只是安靜送出
-  // 壞字元）。這一案是 `nextOffset === 實際回傳長度` 這條的唯一守衛。
-  it("切點落在代理對中間時 nextOffset 跟著退一格，逐頁接回去仍逐字等於整段", async () => {
+  // When the cut lands in the middle of a surrogate pair, `truncateCodeUnits` steps back one to 3999 code units. **`nextOffset` must step back with it**: hard-coding
+  // `offset + 4000` would start the next page at the low surrogate, so the stitched content is one code unit short and each page carries a lone surrogate (JSON
+  // serialization doesn't complain, it silently sends bad characters). This test is the only guard for `nextOffset === actual returned length`.
+  it("when the cut lands in the middle of a surrogate pair nextOffset steps back one, and stitching the pages back is still byte-identical to the whole section", async () => {
     const s = await scene(`# E\n\n${"\u{1F600}".repeat(5_000)}`);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     const target = rest[1]!;
     const full = (await getContent(s.ctx.app, s.noteId, s.token, target.sectionId)).json().section.markdown as string;
-    // 非空轉守衛：天真的 `slice(0, 4000)` 在這份輸入上**真的**會切出孤立代理。這一行若紅，
-    // 代表 fixture 的前綴長度變了、切點不再落在代理對中間，下面兩條就失去意義。
+    // Non-vacuity guard: a naive `slice(0, 4000)` **really** cuts a lone surrogate on this input. If this line goes red, the fixture's prefix length changed and the cut no longer
+    // lands inside a surrogate pair, which makes the two assertions below meaningless.
     expect(LONE_SURROGATE.test(full.slice(0, MCP_SECTION_CHARS))).toBe(true);
 
     const p1 = await sectionOf(s.ctx.app, s.token, s.noteId, target.sectionId);
@@ -333,7 +325,7 @@ describe("#108 read_note_section", () => {
     s.disconnect();
   });
 
-  it("被截斷的那一發不含 fingerprint，但含解釋用的 note 文案（案 14b）", async () => {
+  it("the truncated call carries no fingerprint but does carry the explanatory note text", async () => {
     const s = await scene(`# Long\n\n${LONG}`);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     const call = await callTool(s.ctx.app, s.token, "read_note_section", {
@@ -344,19 +336,18 @@ describe("#108 read_note_section", () => {
     expect(p1.truncated).toBe(true);
     expect("fingerprint" in p1.section).toBe(false);
     expect(typeof p1.note).toBe("string");
-    // 非啟發式：那一段的**真值**一個字都不得出現在 wire 上。
+    // Non-heuristic: the **real value** of that section must not appear on the wire at all.
     expect(call.raw).not.toContain(rest[1]!.fingerprint);
     s.disconnect();
   });
 
-  // 案 14c 前半（後半「那個值送進 edit_note 會被接受」在寫入測試）。殺掉的寫法＝矯枉過正到
-  // 「永遠不回指紋」——那會讓 `replace_section` 對長段落整個不可用。
+  // What it kills: overcorrecting to "never return a fingerprint", which would make `replace_section` unusable on long sections. (The second half, "that value
+  // sent to edit_note is accepted", is in the write tests.)
   //
-  // ⚠ 這條收緊的理由是**正確性**：不要讓人改自己沒看完的東西（讀了前 4000 字元就
-  // `replace_section`，會吃掉沒讀到的尾巴，而且模型不會知道自己刪了什麼）。**它不是安全
-  // 防線**——一發大 `offset` 的呼叫也算「結束該段的那一頁」，照樣拿得到指紋（見
-  // 的誠實降級），所以它只保護循序讀取的模型。
-  it("讀完整段（最後一發 truncated false）含 fingerprint，且與 REST 的段落指紋逐字相同（案 14c 前半）", async () => {
+  // The reason for withholding is **correctness**: don't let someone edit what they haven't fully read (`replace_section` after reading the first 4000 characters
+  // would eat the unread tail and the model wouldn't know what it deleted). **It is not a security boundary**: a call with a large `offset` also counts as the page that ends the section
+  // and still gets the fingerprint (see the header of `src/mcp/tools/read-note-section.ts`), so it only protects models that read sequentially.
+  it("reading the whole section (last call truncated false) includes the fingerprint, identical to REST's section fingerprint", async () => {
     const s = await scene(`# Long\n\n${LONG}`);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     const target = rest[1]!;
@@ -367,25 +358,25 @@ describe("#108 read_note_section", () => {
     expect(tail.nextOffset).toBeNull();
     expect(tail.section.fingerprint).toBe(target.fingerprint);
     expect("note" in tail).toBe(false);
-    // 短段落（一發就讀完）同樣拿得到指紋。
+    // A short section (read in one call) gets the fingerprint too.
     const top = await sectionOf(s.ctx.app, s.token, s.noteId, "_top");
     expect(top.truncated).toBe(false);
     expect(top.section.fingerprint).toBe(rest[0]!.fingerprint);
     s.disconnect();
   });
 
-  it("回應不含 heading（它就在 markdown 第一行），key 集合逐字相符", async () => {
+  it("response doesn't include the heading (it's already on the markdown's first line), key set matches exactly", async () => {
     const s = await scene(TWO_SECTIONS);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     const done = await sectionOf(s.ctx.app, s.token, s.noteId, rest[1]!.sectionId);
     expect(Object.keys(done).sort()).toEqual(["lastEdited", "nextOffset", "section", "truncated"].sort());
     expect(Object.keys(done.section).sort()).toEqual(["chars", "fingerprint", "id", "level", "markdown"].sort());
     expect("heading" in done.section).toBe(false);
-    expect(done.section.markdown.startsWith("# A")).toBe(true); // heading 本來就在第一行
+    expect(done.section.markdown.startsWith("# A")).toBe(true);
     s.disconnect();
   });
 
-  it("不存在的 section_id → section_not_found（不是 not_found）（案 15）", async () => {
+  it("nonexistent section_id -> section_not_found (not not_found)", async () => {
     const s = await scene(TWO_SECTIONS);
     const call = await callTool(s.ctx.app, s.token, "read_note_section", {
       note_id: s.noteId,
@@ -397,19 +388,17 @@ describe("#108 read_note_section", () => {
     s.disconnect();
   });
 
-  // 案 16：不合 `SECTION_ID_RE` 的 `section_id` 在 **schema 層**被擋（格式 guard
-  // ＋ NUL 兩關），也就是**在 handler 之外**。
-  // ⚠ 這裡刻意**不寫**「沒有任何 SQL 被送出」——`section_id` 從來不進 SQL（`readNoteContent`
-  //   → `outlineOf` → 記憶體裡的 `find`），那半斷言恆真。也不寫「不觸發任何文件載入」——
-  //   `documents.size` 在讀路徑上本來就不會增加，同樣是類別錯置。
-  // ⚠ **正向對照不可省**：沒有它，負向斷言在「`read_note_section` 根本沒被包進 `runTool()`」
-  //   的寫法下與它要殺的寫法**同時恆真**，守衛靜默失效。
-  it("不合格式的 section_id／note_id（含 NUL 那一發）在 handler 之外被擋（案 16）", async () => {
+  // A `section_id` that doesn't match `SECTION_ID_RE` is blocked at the **schema layer** (format guard + NUL check), i.e. **outside the handler**.
+  // Deliberately **no** "no SQL was sent" assertion: `section_id` never reaches SQL (`readNoteContent` -> `outlineOf` -> in-memory `find`), so it would always be true;
+  //   likewise no "no document load": `documents.size` never grows on the read path, same category error.
+  // **The positive control is mandatory**: without it, the negative assertion is vacuously true both for correct code and for code where `read_note_section`
+  //   was never wrapped in `runTool()`, and the guard silently stops working.
+  it("malformed section_id / note_id (including the one with NUL) are blocked outside the handler", async () => {
     const seen: string[] = [];
     const s = await scene(TWO_SECTIONS, { mcpTestHooks: { beforeTool: name => void seen.push(name) } });
     const count = (): number => seen.filter(n => n === "read_note_section").length;
 
-    // 正向對照：一發合法的呼叫，證明這支工具**真的**經過 `runTool()`。
+    // Positive control: one valid call proves this tool **really** goes through `runTool()`.
     const ok = await sectionOf(s.ctx.app, s.token, s.noteId, "_top");
     expect(ok.section.id).toBe("_top");
     expect(count()).toBe(1);
@@ -418,26 +407,25 @@ describe("#108 read_note_section", () => {
       const call = await callTool(s.ctx.app, s.token, "read_note_section", { note_id: s.noteId, section_id: bad });
       expect(call.status).toBe(200);
       expect(call.result.isError).toBe(true);
-      // ⚠ `.refine(noNul)` 在 JSON Schema 裡看不見，但 SDK 的 `validateToolInput` 真的會跑它。
+      // `.refine(noNul)` is invisible in the JSON Schema, but the SDK's `validateToolInput` really runs it.
       expect(call.result.content[0]!.text).toContain("Input validation error");
-      expect(count()).toBe(1); // 計數不動＝zod 把它擋在 handler 之外
+      expect(count()).toBe(1); // count unchanged = zod blocked it outside the handler
     }
 
-    // `note_id` 的格式 guard（`NOTE_ID` 的 `UUID_RE`）：沒有它，非法 uuid 會落到
-    // `resolveRole` 被收斂成 `not_found`——症狀相近但**碼不同**，而且那條路上的格式關就
-    // 寄託在另一個模組的私有選擇上了（突變實測：拿掉 `.regex(UUID_RE)` 全族仍綠）。
+    // Format guard for `note_id` (`UUID_RE` in `NOTE_ID`): without it an illegal uuid falls through to `resolveRole` and is folded into `not_found` - a similar symptom
+    // but a **different code**, and that format check would then rest on a private choice of another module.
     for (const bad of ["not-a-uuid", `x${NUL}y`]) {
       const call = await callTool(s.ctx.app, s.token, "read_note_outline", { note_id: bad });
       expect(call.result.isError).toBe(true);
       expect(call.result.content[0]!.text).toContain("Input validation error");
-      expect("structuredContent" in call.result).toBe(false); // SDK 自產的 (4a)，沒有我們的 code
+      expect("structuredContent" in call.result).toBe(false); // so it carries no `code` from us
     }
     s.disconnect();
   });
 });
 
-describe("#108 兩支內容工具的共同接線", () => {
-  it("role === none 的 id 與根本不存在的 id → not_found，且兩者的結果逐位元組同形（案 17）", async () => {
+describe("#108 shared wiring of the two content tools", () => {
+  it("an id with role === none and an id that doesn't exist -> not_found, with byte-identical results", async () => {
     const s = await scene(TWO_SECTIONS);
     const stranger = await s.ctx.createUser({ email: `x-${randomUUID()}@example.com`, password: PASSWORD });
     const secret = await s.ctx.createNote(stranger.id, "Secret");
@@ -449,19 +437,18 @@ describe("#108 兩支內容工具的共同接線", () => {
       const missing = await callTool(s.ctx.app, s.token, tool, { note_id: ghost, ...args });
       expect(hidden.result.isError).toBe(true);
       expect(hidden.result.structuredContent!.code).toBe("not_found");
-      // 「存在但你沒權限」與「不存在」不得可辨——連訊息字串都一樣。
+      // "Exists but you have no permission" and "doesn't exist" must be indistinguishable, down to the message string.
       expect(hidden.result.structuredContent).toEqual(missing.result.structuredContent);
       expect(hidden.result.content[0]!.text).toBe(missing.result.content[0]!.text);
     }
     s.disconnect();
   });
 
-  // 「找不到不洩漏」與「拒絕路徑不 touch presence」的交界：`touch` 只看文件有沒有載入、**不看角色**。presence 若排在
-  // `role === "none"` 的 early return 之前，任何持 PAT 的人只要猜得到 note id，就能讓
-  // `handle (claude)` 出現在**真正協作者**的畫面上——那同時是存在性洩漏與拒絕路徑的副作用。
-  // ⚠ 這一案的前提是那篇筆記**真的在 `hocuspocus.documents` 裡**（所以要讓陌生人自己連上去
-  //   seed 一份內容）；用一顆沒人開過的筆記測，`touch` 本來就是 no-op，斷言恆真。
-  it("role === none 的拒絕路徑不 touch presence——即使那篇筆記正在被別人編輯", async () => {
+  // The boundary between "not-found doesn't leak" and "the rejection path doesn't touch presence": `touch` only checks whether the document is loaded and **doesn't look at the role**.
+  // If presence ran before the `role === "none"` early return, anyone holding a PAT who can guess a note id could make `handle (claude)` appear on the screen of the **real collaborators** -
+  // both an existence leak and a side effect of the rejection path.
+  // The premise: that note is **really in `hocuspocus.documents`** (so a stranger connects and seeds some content); with a never-opened note `touch` is a no-op and the assertion is vacuous.
+  it("the role === none rejection path doesn't touch presence - even while someone else is editing that note", async () => {
     const s = await scene(TWO_SECTIONS);
     const strangerEmail = `x-${randomUUID()}@example.com`;
     const stranger = await s.ctx.createUser({ email: strangerEmail, password: PASSWORD });
@@ -478,8 +465,7 @@ describe("#108 兩支內容工具的共同接線", () => {
     await tick();
     expect(secretDoc.awareness.getStates().get(presenceClientId(secret.id, s.tokenId))).toBeUndefined();
 
-    // 對照面：同一顆 token 打**自己看得見的**筆記時確實會現身——上面那條不是「presence
-    // 根本沒接上」的恆真斷言。
+    // Control: the same token on a note it **can** see does show up, so the assertion above isn't vacuous because presence is simply not wired.
     await outlineOf(s.ctx.app, s.token, s.noteId);
     await tick();
     const ownDoc = s.ctx.collab.hocuspocus.documents.get(s.noteId)!;
@@ -490,7 +476,7 @@ describe("#108 兩支內容工具的共同接線", () => {
     s.disconnect();
   });
 
-  it("讀路徑零副作用：兩支各 10 發後 note_states／backup／documents.size／last_edited 四欄都不變（案 18）", async () => {
+  it("read path has zero side effects: after 10 calls of each of the two tools, note_states / backup / documents.size / last_edited are all unchanged", async () => {
     const s = await scene(TWO_SECTIONS);
     await waitFor("server 收到編輯", 5_000, () =>
       docText(s.ctx.collab.hocuspocus.documents.get(s.noteId)!).includes("第二段內容")
@@ -512,9 +498,8 @@ describe("#108 兩支內容工具的共同接線", () => {
     expect(after.version).toBe(before.version);
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
     expect((await s.ctx.db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, s.noteId))).length).toBe(backups);
-    // ⚠ 這一行是**事後量**：它抓得到「讀完之後文件留在記憶體裡」，抓不到「過程中載入又
-    //   卸載」（那條路上真正會留下痕跡的是 `note_states.version` 與 backup 列，由上面兩行守）。
-    //   比照案 16 的處置，恆真的那半在這裡標明，不要當成「絕不開直連」的完整守衛。
+    // This line measures **after the fact**: it catches "the document stays in memory after reading" but not "loaded and unloaded during the call" (the traces left on that path are
+    // `note_states.version` and backup rows, guarded by the two lines above). The vacuously true half is marked here; don't treat it as a complete guard for "never opens a direct connection".
     expect(s.ctx.collab.hocuspocus.documents.size).toBe(0);
     const rowAfter = (await s.ctx.db.select().from(notes).where(eq(notes.id, s.noteId)))[0]!;
     expect({
@@ -532,25 +517,23 @@ describe("#108 兩支內容工具的共同接線", () => {
     });
   });
 
-  it("吃 contentRead 桶；role === none 的失敗不啃桶（案 31）", async () => {
+  it("consumes the contentRead limiter; failures with role === none don't eat it", async () => {
     const s = await scene(TWO_SECTIONS, { limiters: { contentRead: new FixedWindowLimiter({ limit: 2, windowMs: 600_000 }) } });
     const ghost = randomUUID();
-    // 五發打不到的筆記：全部 not_found，**一點都不啃桶**（`consume` 排在 `resolveRole` 之後）。
+    // Five calls on notes it can't reach: all not_found, **consuming none of the limiter** (`consume` comes after `resolveRole`).
     for (let i = 0; i < 5; i += 1) {
       const call = await callTool(s.ctx.app, s.token, "read_note_outline", { note_id: ghost });
       expect(call.result.structuredContent!.code).toBe("not_found");
     }
-    // 桶還是滿的：兩發成功，第三發才 429。
     expect((await outlineOf(s.ctx.app, s.token, s.noteId)).sections).toHaveLength(3);
     expect((await sectionOf(s.ctx.app, s.token, s.noteId, "_top")).section.id).toBe("_top");
-    // 被 429 擋下的那一發**不得留下痕跡**：presence 排在桶之後，所以 awareness 的
-    // clock 不會前進。這一段是「presence 不在桶之前」唯一的守衛——沒有它，把 touch 提到
-    // 扣桶之前不會有任何測試變紅（突變實測過）。
+    // The call blocked by 429 must **leave no trace**: presence is ordered after the limiter, so awareness's clock doesn't advance. This is the only guard for
+    // "presence is not before the limiter" - without it, moving touch before the limiter consumption turns no test red.
     const doc = s.ctx.collab.hocuspocus.documents.get(s.noteId)!;
     const clientId = presenceClientId(s.noteId, s.tokenId);
     await tick();
     const clockBefore = doc.awareness.meta.get(clientId)?.clock;
-    expect(clockBefore).toBeGreaterThan(0); // 對照面：前兩發成功的呼叫**有**現身
+    expect(clockBefore).toBeGreaterThan(0); // control: the first two successful calls **did** show up
     const third = await callTool(s.ctx.app, s.token, "read_note_outline", { note_id: s.noteId });
     expect(third.result.isError).toBe(true);
     expect(third.result.structuredContent!.code).toBe("too_many_requests");
@@ -559,12 +542,9 @@ describe("#108 兩支內容工具的共同接線", () => {
     s.disconnect();
   });
 
-  // presence：形狀比照 `note-presence.test.ts`。
-  // ⚠ **顯示名的逐字斷言是這一份組字實作唯一的守衛**：`routes/notes.ts:552`／`:634`／`:710`
-  //   已經各有一份同樣的組字（handle、空格、左括號、agent label、右括號），MCP 是**第四份**，
-  //   而 #138 的 UI 靠這個字串。只斷言 target 的話，名字寫成別的形不會紅。抽成
-  //   `presenceIdentity()` 留給 #138 後續。
-  it("token 讀者現身（顯示名／顏色逐字）、outline 落文件開頭、section 落該段第一顆；cookie 讀者不 touch", async () => {
+  // presence: shape follows `note-presence.test.ts`.
+  // Asserting the full display name, not just the target, catches a change to the name presenceIdentity composes (handle, space, left paren, agent label, right paren), which the UI relies on.
+  it("token readers show up (display name / color verbatim), outline lands at the document start, section lands on the section's first block; cookie readers don't touch", async () => {
     const s = await scene(TWO_SECTIONS);
     const id = presenceClientId(s.noteId, s.tokenId);
     const doc = s.ctx.collab.hocuspocus.documents.get(s.noteId)!;
@@ -580,8 +560,8 @@ describe("#108 兩支內容工具的共同接線", () => {
     };
     const expectedName = `${s.ownerHandle} (claude)`;
 
-    // cookie 讀者先跑：MCP 的 session 路徑 `tokenId` 為 null，不得 touch。
-    // ⚠ `mcpPost` 的 `cookie` 收的是**值**（helper 自己組 `SESSION_COOKIE=`），不是整條 header。
+    // The cookie reader runs first: MCP's session path has `tokenId` null and must not touch.
+    // `mcpPost`'s `cookie` takes the **value** (the helper builds `SESSION_COOKIE=` itself), not the whole header.
     const cookie = await signTestSession({ userId: s.ownerId, tv: 0 });
     const viaCookie = await mcpPost(
       s.ctx.app,
@@ -595,9 +575,9 @@ describe("#108 兩支內容工具的共同接線", () => {
     await tick();
     await waitFor("名字到達", 2_000, () => remote()?.user?.name === expectedName);
     expect(remote()!.user!.color).toBe(PRESENCE_COLOR);
-    // 本檔第一次 touch 這組 (noteId, tokenId)：clock 為 1 ⇒ 上面那發 cookie 呼叫沒有 touch。
+    // First touch of this (noteId, tokenId) in this file: clock is 1 => the cookie call above didn't touch.
     expect(doc.awareness.meta.get(id)?.clock).toBe(1);
-    expect(cursorText()).toContain("A"); // outline → 文件開頭
+    expect(cursorText()).toContain("A");
 
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
     await sectionOf(s.ctx.app, s.token, s.noteId, rest[2]!.sectionId);
@@ -607,10 +587,9 @@ describe("#108 兩支內容工具的共同接線", () => {
     s.disconnect();
   });
 
-  // 對「分頁不是快照」的處置 (b)：逐字寫進工具 description 給模型看。沒有這一案，
-  // 刪掉那句話不會有任何東西變紅（處置 (a)＝寫進 known-limitations）。斷言的是**送到
-  // wire 上的 `tools/list`**，不是原始碼常數——改對了常數卻沒接上 `registerTool` 也抓得到。
-  it("tools/list 的逐字文案在 wire 上出現（分頁警告、讀完才給指紋）", async () => {
+  // Mitigation for "pagination is not a snapshot": the sentence is written verbatim into the tool description the model sees. Without this test, deleting that sentence turns nothing red.
+  // It asserts the `tools/list` **sent on the wire**, not the source constant, so a corrected constant that isn't wired into `registerTool` is also caught.
+  it("tools/list verbatim text appears on the wire (pagination warning, fingerprint only after a full read)", async () => {
     const s = await scene(null);
     const res = await mcpPost(s.ctx.app, rpc("tools/list"), { token: s.token });
     expect(res.statusCode).toBe(200);
@@ -624,14 +603,14 @@ describe("#108 兩支內容工具的共同接線", () => {
     );
   });
 
-  it("runTool() 涵蓋率：beforeTool 看到的名字集合逐字等於四支唯讀工具", async () => {
+  it("runTool() coverage: the names beforeTool sees are exactly the four read-only tools", async () => {
     const seen: string[] = [];
     const s = await scene(TWO_SECTIONS, { mcpTestHooks: { beforeTool: name => void seen.push(name) } });
     payloadOf<Record<string, unknown>>(await callTool(s.ctx.app, s.token, "list_notes"));
     payloadOf<Record<string, unknown>>(await callTool(s.ctx.app, s.token, "search_notes", { query: "a" }));
     await outlineOf(s.ctx.app, s.token, s.noteId);
     await sectionOf(s.ctx.app, s.token, s.noteId, "_top");
-    // 漏把某一支包進 `runTool()` 不會有任何編譯錯誤——未捕捉例外會被 SDK 原樣送進模型脈絡。
+    // Forgetting to wrap one tool in `runTool()` causes no compile error: an uncaught exception would be sent into the model's context as is.
     expect([...new Set(seen)].sort()).toEqual(
       ["list_notes", "read_note_outline", "read_note_section", "search_notes"].sort()
     );
@@ -639,8 +618,8 @@ describe("#108 兩支內容工具的共同接線", () => {
   });
 });
 
-describe("#240 大寫 note_id（MCP 讀取）", () => {
-  /** 前置全部做完才 seed：回傳時 debounce 窗剛開始。 */
+describe("#240 uppercase note_id (MCP read)", () => {
+  /** Seed only after all preconditions are done: when it returns, the debounce window has just started. */
   async function liveScene(markdown: string) {
     const ctx = await buildCollabTestApp();
     const email = `l1-${randomUUID()}@example.com`;
@@ -657,20 +636,20 @@ describe("#240 大寫 note_id（MCP 讀取）", () => {
     return d !== null && xmlOf(d).includes(text);
   };
 
-  it("L1a live doc 比 note_states 新：大寫 note_id 的 outline 讀到 live 的段落，note.id 回小寫", async () => {
+  it("live doc newer than note_states: outline with an uppercase note_id reads the live paragraph, note.id comes back lowercase", async () => {
     const s = await liveScene("# Head\n\n第一段內容");
     const outline = await outlineOf(s.ctx.app, s.token, s.noteId.toUpperCase());
-    // 排最前：拿掉轉小寫時 outline 從 note_states 讀，那裡還沒有 Head。
+    // Ordered first: with the lowercasing removed the outline would read from note_states, which doesn't have Head yet.
     expect(outline.sections.map(e => e.heading)).toContain("Head");
-    expect(await stateHas(s.ctx, s.noteId, "Head")).toBe(false); // 讀發生在 debounce 窗內；變真＝這案失去鑑別力
+    expect(await stateHas(s.ctx, s.noteId, "Head")).toBe(false); // the read happens inside the debounce window; if this turns true the test loses its discriminating power
     console.log(`[L1a] seed→斷言 ${Date.now() - s.seededAt} ms（store debounce 2000 ms）`);
     expect(outline.note.id).toBe(s.noteId);
     s.client.disconnect();
   });
 
-  it("L1b live doc 比 note_states 新：大寫 note_id 的 read_note_section(_top) 讀到 live 內容", async () => {
+  it("live doc newer than note_states: read_note_section(_top) with an uppercase note_id reads the live content", async () => {
     const MARK = `MARK-${randomUUID()}`;
-    const s = await liveScene(`${MARK}\n\n# 尾段`); // MARK 在第一個標題之前＝_top 段，不必先讀 outline 拿 section id
+    const s = await liveScene(`${MARK}\n\n# 尾段`); // MARK precedes the first heading = the _top section, so no outline read is needed to get a section id
     const section = await sectionOf(s.ctx.app, s.token, s.noteId.toUpperCase(), "_top");
     expect(section.section.markdown).toContain(MARK);
     expect(await stateHas(s.ctx, s.noteId, MARK)).toBe(false);
@@ -678,7 +657,7 @@ describe("#240 大寫 note_id（MCP 讀取）", () => {
     s.client.disconnect();
   });
 
-  it("L2 大寫 note_id 讀取 → presence 以小寫 id 現身", async () => {
+  it("reading with an uppercase note_id -> presence appears with the lowercase id", async () => {
     const s = await scene("# A\n\n第一段內容");
     const doc = s.ctx.collab.hocuspocus.documents.get(s.noteId)!;
     await outlineOf(s.ctx.app, s.token, s.noteId.toUpperCase());

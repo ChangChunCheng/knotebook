@@ -1,9 +1,3 @@
-/**
- * #175：`PATCH`／`DELETE /api/groups/:id/roles/:roleId`（閱讀恆真；
- * 旗標不蘊含；內建管理員不可改、內建一般成員只准改旗標；刪自訂角色持有者改掛內建一般成員）。
- * 自訂角色一律以 `POST …/roles` 建，或 `seedRole(…, { canRead: true, … })` 明寫可讀。
- * 回讀一律走 `GET …/roles`／`GET …/members`；踢線看 spy 的 `onGroupAccessChanged`。
- */
 import { describe, expect, it } from "vitest";
 import type { GroupMemberDto, GroupRoleDto, GroupRoleFlags } from "@knotebook/shared";
 import { buildTestApp } from "./helpers.js";
@@ -14,11 +8,10 @@ import {
 const NONE: GroupRoleFlags = { create: false, edit: false, delete: false, managePublicLink: false, manageMembers: false, manageGroup: false };
 const ALL: GroupRoleFlags = { create: true, edit: true, delete: true, managePublicLink: true, manageMembers: true, manageGroup: true };
 const ADMIN_PERMISSIONS = { read: true, ...ALL };
-/** 內建一般成員的預設六旗標（`seedGroup`／0012：新建＋編輯）。 */
+/** Default flags of the built-in plain member (`seedGroup`, migration 0012: create + edit). */
 const MEMBER_FLAGS: GroupRoleFlags = { ...NONE, create: true, edit: true };
 const sorted = (xs: readonly string[]): string[] => [...xs].sort();
 
-/** 管理員 A、成員 B、C（內建一般成員）、兩篇群組筆記＋一篇 A 的個人筆記（不在踢線名單裡）。 */
 async function setup() {
   const spy = spyCollabHooks();
   const { app, db } = await buildTestApp({ collabHooks: spy });
@@ -55,7 +48,6 @@ async function setup() {
     return res.json() as GroupMemberDto[];
   };
   const memberOf = async (u: SeededUser): Promise<GroupMemberDto | undefined> => (await members()).find(m => m.userId === u.id);
-  /** 第 `nth` 次（1 起算）`onGroupAccessChanged` 呼叫的（筆記, 使用者），兩邊都排序。 */
   const kickCall = (nth: number): { noteIds: string[]; userIds: string[] } => {
     const call = spy.onGroupAccessChanged.mock.calls[nth - 1];
     expect(call, `第 ${nth} 次 onGroupAccessChanged`).toBeDefined();
@@ -64,8 +56,8 @@ async function setup() {
   return { app, db, spy, a, b, c, g, groupNotes, adminCookies, createRole, patch, del, roles, members, memberOf, kickCall };
 }
 
-describe("#175 PATCH／DELETE …/roles/:roleId：授權", () => {
-  it("PATCH 授權矩陣：401／404×3（逐位元組相同）／403／200／站台 admin 200", async () => {
+describe("#175 PATCH/DELETE .../roles/:roleId: authorization", () => {
+  it("PATCH authorization matrix: 401 / 404 x3 (byte-identical) / 403 / 200 / site admin 200", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "PATCH",
@@ -75,7 +67,7 @@ describe("#175 PATCH／DELETE …/roles/:roleId：授權", () => {
     });
   });
 
-  it("DELETE 授權矩陣：401／404×3（逐位元組相同）／403／204／站台 admin 204", async () => {
+  it("DELETE authorization matrix: 401 / 404 x3 (byte-identical) / 403 / 204 / site admin 204", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "DELETE",
@@ -84,7 +76,7 @@ describe("#175 PATCH／DELETE …/roles/:roleId：授權", () => {
     });
   });
 
-  it("授權看的是呼叫者的 manageGroup（不是 manageMembers）：只有 manageMembers → PATCH／DELETE 皆 403 且沒寫入；只有 manageGroup → 200／204；403 先於 :roleId 檢查與 body 檢查", async () => {
+  it("authorization checks the caller's manageGroup (not manageMembers): only manageMembers -> PATCH/DELETE both 403 with nothing written; only manageGroup -> 200/204; 403 comes before the :roleId and body checks", async () => {
     const { db, g, b, patch, del, roles, createRole } = await setup();
     const target = await createRole("Target", NONE);
     const doorman = await seedRole(db, g.id, "Doorman", { canRead: true, canManageMembers: true });
@@ -109,7 +101,7 @@ describe("#175 PATCH／DELETE …/roles/:roleId：授權", () => {
     expect((await roles()).map(r => r.builtin ?? r.name)).toEqual(["admin", "member", "Doorman", "Renamer"]);
   });
 
-  it("身為內建一般成員的站台 admin → PATCH 200、DELETE 204", async () => {
+  it("site admin who is a built-in plain member -> PATCH 200, DELETE 204", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const owner = await seedUser(db);
     const siteAdmin = await seedUser(db, { isAdmin: true });
@@ -126,8 +118,8 @@ describe("#175 PATCH／DELETE …/roles/:roleId：授權", () => {
   });
 });
 
-describe("#175 PATCH …/roles/:roleId（改角色）", () => {
-  it("改自訂角色：改名＋改旗標一起 → 200、body 為新值；改成 create-only → 200；GET 回讀一致；memberCount＝實際掛的人數", async () => {
+describe("#175 PATCH .../roles/:roleId (edit role)", () => {
+  it("edit custom role: rename + flags together -> 200 with new values in the body; changing to create-only -> 200; GET read-back matches; memberCount = actual number of holders", async () => {
     const { db, g, b, c, patch, roles, createRole } = await setup();
     const role = await createRole("Editors", { ...NONE, edit: true });
     await setMemberRole(db, g.id, b.id, role.id);
@@ -150,7 +142,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((await roles()).find(r => r.id === role.id)).toEqual(createOnly.json());
   });
 
-  it("自撞：Reader 改名 READER → 200（只撞自己）；Writer 改名 reader → 409 role_name_taken 且名稱不變；改名 管理員 → 409", async () => {
+  it("self-collision: renaming Reader to READER -> 200 (only collides with itself); renaming Writer to reader -> 409 role_name_taken and the name is unchanged; renaming to a reserved name -> 409", async () => {
     const { patch, roles, createRole } = await setup();
     const reader = await createRole("Reader", NONE);
     const writer = await createRole("Writer", { ...NONE, edit: true });
@@ -167,7 +159,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((await roles()).map(r => r.builtin ?? r.name)).toEqual(["admin", "member", "READER", "Writer"]);
   });
 
-  it("內建管理員：PATCH 旗標（全開）或名稱 → 皆 409 builtin_role；回讀不變", async () => {
+  it("built-in admin: PATCH flags (all on) or name -> 409 builtin_role; read-back unchanged", async () => {
     const { g, patch, roles } = await setup();
     const before = (await roles()).find(r => r.id === g.adminRoleId);
     expect(before).toMatchObject({ builtin: "admin", name: null, permissions: ADMIN_PERMISSIONS });
@@ -179,7 +171,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((await roles()).find(r => r.id === g.adminRoleId)).toEqual(before);
   });
 
-  it("內建一般成員：改旗標（拿掉新建）→ 200；改名 → 409 builtin_role；回讀名稱仍 null", async () => {
+  it("built-in plain member: changing flags (removing create) -> 200; rename -> 409 builtin_role; read-back name stays null", async () => {
     const { g, patch, roles } = await setup();
     const res = await patch(g.memberRoleId, { permissions: { ...NONE, edit: true } });
     expect(res.statusCode, res.body).toBe(200);
@@ -192,7 +184,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((await roles()).find(r => r.id === g.memberRoleId)).toEqual(res.json());
   });
 
-  it("錯誤形：:roleId 非 UUID／別群組的角色 → 404 role_not_found；{}、帶 read、多鍵、缺旗標 → 400 invalid_body；name 空 → 400 invalid_name；都沒寫入", async () => {
+  it("error shapes: non-UUID :roleId / role of another group -> 404 role_not_found; {}, with read, extra keys, missing flag -> 400 invalid_body; empty name -> 400 invalid_name; nothing written in any case", async () => {
     const { app, db, a, patch, roles, createRole } = await setup();
     const role = await createRole("Keep", NONE);
     const other = await seedGroup(db, "Other", [{ userId: a.id, role: "admin" }]);
@@ -202,7 +194,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
       expect(res.statusCode, roleId).toBe(404);
       expect(res.json()).toEqual({ error: { code: "role_not_found", message: "No role with that id." } });
     }
-    // 順序：非 UUID 的 404 先於 body 的 400
+    // Ordering: a non-UUID 404 comes before the body 400.
     const badBoth = await patch("not-a-uuid", {});
     expect(badBoth.statusCode).toBe(404);
     expect(badBoth.json().error.code).toBe("role_not_found");
@@ -220,7 +212,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((elsewhere.json() as GroupRoleDto[]).find(r => r.id === otherRole)?.name).toBe("Elsewhere");
   });
 
-  it("錯誤順序：保留名檢查先於查角色——內建一般成員改名 Admin、內建管理員改名 Member、別群組的角色／不存在的 UUID 帶保留名 → 皆 409 role_name_taken；都沒寫入", async () => {
+  it("error order: the reserved-name check comes before the role lookup - renaming the built-in plain member to Admin, the built-in admin to Member, or another group's role / a missing UUID to a reserved name -> all 409 role_name_taken; nothing written", async () => {
     const { app, db, a, g, patch, roles } = await setup();
     const before = await roles();
     const other = await seedGroup(db, "Other", [{ userId: a.id, role: "admin" }]);
@@ -241,7 +233,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect((elsewhere.json() as GroupRoleDto[]).find(r => r.id === otherRole)?.name).toBe("Elsewhere");
   });
 
-  it("踢線：只改 delete／managePublicLink／manageMembers／manageGroup、只改名、送同值 → 0 次；edit 關／開 → 各恰 1 次（群組兩篇, [B, C]）；沒有人掛的角色改 edit → 0 次", async () => {
+  it("revocation: changing only delete/managePublicLink/manageMembers/manageGroup, only the name, or sending the same values -> 0 calls; edit off/on -> exactly 1 call each (group's two notes, [B, C]); changing edit on a role nobody holds -> 0 calls", async () => {
     const { db, g, b, c, spy, groupNotes, patch, createRole, kickCall } = await setup();
     const writers = await createRole("Writers", { ...NONE, edit: true });
     await setMemberRole(db, g.id, b.id, writers.id);
@@ -270,7 +262,7 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
     expect(spy.onGroupAccessChanged).toHaveBeenCalledTimes(2);
   });
 
-  it("把內建一般成員的編輯與新建關掉 → 200、read 仍 true、踢線（群組兩篇, [B, C]）恰 1 次，內建管理員 A 不在名單", async () => {
+  it("turning off edit and create on the built-in plain member -> 200, read stays true, revocation (group's two notes, [B, C]) exactly once, built-in admin A not in the list", async () => {
     const { g, a, b, c, spy, groupNotes, patch, roles, kickCall } = await setup();
     const res = await patch(g.memberRoleId, { permissions: NONE });
     expect(res.statusCode, res.body).toBe(200);
@@ -283,8 +275,8 @@ describe("#175 PATCH …/roles/:roleId（改角色）", () => {
   });
 });
 
-describe("#175 DELETE …/roles/:roleId（刪角色）", () => {
-  it("刪自訂角色：持有者 B、C 改掛內建一般成員、角色消失、踢線（群組兩篇, [B, C]）恰 1 次；刪沒人掛的 → 204、不踢；同名可再建", async () => {
+describe("#175 DELETE .../roles/:roleId (delete role)", () => {
+  it("delete custom role: holders B and C move to the built-in plain member, the role is gone, revocation (group's two notes, [B, C]) exactly once; deleting one nobody holds -> 204 with no revocation; the same name can be created again", async () => {
     const { db, g, b, c, spy, groupNotes, del, roles, memberOf, createRole, kickCall, app, adminCookies } = await setup();
     const readers = await createRole("Readers", NONE);
     await setMemberRole(db, g.id, b.id, readers.id);
@@ -307,7 +299,7 @@ describe("#175 DELETE …/roles/:roleId（刪角色）", () => {
     expect(again.statusCode, again.body).toBe(201);
   });
 
-  it("刪內建（管理員／一般成員）→ 409 builtin_role；角色四列不變", async () => {
+  it("deleting a built-in role (admin / plain member) -> 409 builtin_role; the four role rows are unchanged", async () => {
     const { g, del, roles, createRole } = await setup();
     await createRole("One", NONE);
     await createRole("Two", NONE);
@@ -321,7 +313,7 @@ describe("#175 DELETE …/roles/:roleId（刪角色）", () => {
     expect(await roles()).toEqual(before);
   });
 
-  it("錯誤形：:roleId 非 UUID／別群組的角色 → 404 role_not_found，別群組的角色沒被刪", async () => {
+  it("error shapes: non-UUID :roleId / role of another group -> 404 role_not_found, the other group's role is not deleted", async () => {
     const { app, db, a, del } = await setup();
     const other = await seedGroup(db, "Other", [{ userId: a.id, role: "admin" }]);
     const otherRole = await seedRole(db, other.id, "Elsewhere", { canRead: true });
@@ -334,7 +326,7 @@ describe("#175 DELETE …/roles/:roleId（刪角色）", () => {
     expect((list.json() as GroupRoleDto[]).map(r => r.id)).toContain(otherRole);
   });
 
-  it("不受影響：刪掉自訂角色、改掉內建一般成員旗標之後，唯一的內建管理員 A 仍是內建管理員", async () => {
+  it("unaffected: after deleting a custom role and changing the built-in plain member's flags, the only built-in admin A is still the built-in admin", async () => {
     const { db, g, a, b, del, patch, memberOf, createRole } = await setup();
     const custom = await createRole("Temp", { ...NONE, edit: true });
     await setMemberRole(db, g.id, b.id, custom.id);

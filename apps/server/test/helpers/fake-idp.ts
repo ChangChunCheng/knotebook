@@ -3,11 +3,8 @@ import { SignJWT, exportJWK, generateKeyPair } from "jose";
 import type { CustomFetch } from "openid-client";
 
 /**
- * In-process mock IdP harness。
- *
- * 不開真 socket：回傳一個符合 `openid-client` 的 `CustomFetch` 函式，依 URL 分派
- * discovery/token/userinfo/jwks 回應；`authorize()` 是 nonce/state/code 的唯一來源
- * （模擬瀏覽器對 authorize endpoint 的頂層導航——server 端從不 fetch 這個 URL）。
+ * In-process mock IdP: no real socket; returns an `openid-client` `CustomFetch` that dispatches discovery/token/userinfo/jwks responses by URL.
+ * `authorize()` is the only source of nonce/state/code (it simulates the browser's top-level navigation to the authorize endpoint - the server never fetches that URL).
  */
 
 export interface FakeIdpClaims {
@@ -15,43 +12,31 @@ export interface FakeIdpClaims {
   email?: string;
   email_verified?: boolean;
   name?: string;
-  /** #122：handle 派生的首選候選——id_token 與 userinfo 兩邊都吐（後者供「userinfo
-   * 本來就被打時順手讀」的測試形；只加型別不加吐出點＝那形造不出來）。 */
+  /** #122: first-choice handle candidate, emitted in both id_token and userinfo (the latter for tests where userinfo is called anyway and read opportunistically; without an emit point that shape can't be built). */
   preferred_username?: string;
-  /** 頭貼網址——id_token 與 userinfo 兩邊都吐（id_token 那邊可用 `omitFromIdToken(["picture"])`
-   * 省略，造出「只在 userinfo」的形）。 */
+  /** Avatar URL, emitted in both; `omitFromIdToken(["picture"])` drops it from the id_token to build the "userinfo only" shape. */
   picture?: string;
 }
 
-// #131：加 "authorization_endpoint" 是為了造出「discovery 成功、但 buildAuthorizationUrl
-// 拋錯」的形——那是**本 harness** 造得出來、到得了 login handler 第四個出口（外層
-// catch）的路徑（那個 catch 也包住 randomState／PKCE／sealOidcState 等，理論上都會拋）。缺
-// jwks_uri 會更早在 getConfiguration 就被擋成 OidcUnavailableError（不同分支），缺
-// userinfo_endpoint 則完全不影響這兩者。
-// #187：省略 `token_endpoint_auth_methods_supported` 造出「沒宣告 client_secret_post」的形（測試連線的 warning）。
+// #131: adding "authorization_endpoint" builds the shape "discovery succeeds but buildAuthorizationUrl throws" - the path this harness can build that reaches the login
+// handler's 4th exit (the outer catch, which also wraps randomState/PKCE/sealOidcState). A missing jwks_uri is stopped earlier in getConfiguration as
+// OidcUnavailableError (a different branch); a missing userinfo_endpoint doesn't affect either.
+// #187: omitting `token_endpoint_auth_methods_supported` builds the "client_secret_post not declared" shape (test-connection warning).
 export type FakeIdpOmittableMetadataKey = "userinfo_endpoint" | "jwks_uri" | "authorization_endpoint" | "token_endpoint_auth_methods_supported";
 export type FakeIdpOmittableIdTokenKey = "email" | "email_verified" | "nonce" | "preferred_username" | "picture";
 export type FakeIdpFailTarget = "token" | "userinfo" | "discovery";
 
 export interface FakeIdp {
   fetch: CustomFetch;
-  /** 預置下一次 `authorize()` 要簽發的身分。`authorize()` 消費後必須重新呼叫才能再次
-   * 使用——強制每個測試流程顯式預置，不留可能串到別次流程的殘留狀態。 */
+  /** Presets the identity the next `authorize()` signs; it is consumed there and must be set again, so each test flow sets it explicitly and no residue can leak into another flow. */
   setNextLogin(claims: FakeIdpClaims): void;
-  /** 解析 login route 302 的 `location`，記錄 state/nonce/code_challenge，回傳一次性
-   * `code` + 原樣回送的 `state`。未先 `setNextLogin()` 即呼叫 → throw。 */
   authorize(location: string): { code: string; state: string };
-  /** 下一次打中 `target` 的請求回傳失敗回應——一次性，消費即還原。 */
   failNext(target: FakeIdpFailTarget): void;
-  /** discovery metadata 回應中省略指定欄位；傳空陣列即還原（不省略任何欄位）。 */
   omitFromMetadata(keys: FakeIdpOmittableMetadataKey[]): void;
-  /** id_token claims 中省略指定欄位；傳空陣列即還原。 */
   omitFromIdToken(keys: FakeIdpOmittableIdTokenKey[]): void;
   /**
-   * 下一次 `/userinfo` 回應以此覆寫（讓 ID token 與
-   * userinfo 的 claims 可以刻意分歧，供「ID token 有值者為準」的合併釘測試使用）——
-   * 疊在 `setNextLogin` 預置的 claims 之上（只換掉這裡指定的欄位），一次性、消費即
-   * 還原（比照 `failNext` 慣例，不留可能串到別次流程的殘留狀態）。
+   * Overrides the next `/userinfo` response so ID token and userinfo claims can deliberately differ (for the "ID token value wins" merge test); layered over the claims
+   * from `setNextLogin` (replaces only the named fields), one-shot, restored when consumed (like `failNext`, no leftover state).
    */
   overrideNextUserinfo(claims: Partial<FakeIdpClaims>): void;
   counts: { discovery: number; token: number; userinfo: number };
@@ -60,9 +45,7 @@ export interface FakeIdp {
 interface AuthorizedCode {
   claims: FakeIdpClaims;
   nonce: string;
-  /** token endpoint 於交換時驗證（PKCE 綁定釘）。 */
   codeChallenge: string;
-  /** token endpoint 於交換時驗證（redirect_uri 綁定釘）。 */
   redirectUri: string | null;
 }
 
@@ -77,16 +60,14 @@ function bodyToParams(body: unknown): URLSearchParams {
 }
 
 export function createFakeIdp(issuerUrl: string): FakeIdp {
-  // 啟動時建 RS256 金鑰對（惰性 await——`createFakeIdp` 本身同步回傳，jwks/token
-  // endpoint 的 fetch handler 內才真的需要它，屆時 await 這個共用 promise）。
+  // RS256 key pair generated at startup (awaited lazily: `createFakeIdp` returns synchronously and only the jwks/token endpoint fetch handlers need it, at which point they await this shared promise).
   const keyPairPromise = generateKeyPair("RS256");
   const kid = randomUUID();
 
   let nextLogin: FakeIdpClaims | undefined;
   const authorizedCodes = new Map<string, AuthorizedCode>();
-  // `code` 一次性消費即刪，userinfo endpoint 收到的是
-  // access_token（非 code），claims 必須另存一份、以 access_token 為 key，否則 userinfo
-  // handler 物理上拿不到身分資料。
+  // `code` is consumed and deleted on use, while the userinfo endpoint receives an access_token (not a code), so claims must be stored a second time keyed by access_token;
+  // otherwise the userinfo handler has no way to get the identity.
   const accessTokenClaims = new Map<string, FakeIdpClaims>();
 
   let failTarget: FakeIdpFailTarget | undefined;
@@ -121,7 +102,6 @@ export function createFakeIdp(issuerUrl: string): FakeIdp {
 
     const code = randomBytes(16).toString("hex");
     authorizedCodes.set(code, { claims: nextLogin, nonce, codeChallenge, redirectUri });
-    // 消費——強制下一次 authorize() 前必須重新 setNextLogin()。
     nextLogin = undefined;
 
     return { code, state };
@@ -178,23 +158,18 @@ export function createFakeIdp(issuerUrl: string): FakeIdp {
       if (!code || !record) {
         return jsonResponse({ error: "invalid_grant" }, 400);
       }
-      // 一次性消費：同一個 code 二次使用回 400。
       authorizedCodes.delete(code);
 
-      // redirect_uri 綁定釘：token request 送的
-      // redirect_uri 必須與 authorize() 記錄的（login 302 的 authorize URL 上那個）
-      // 逐字元相同——真實 IdP 的既定行為（RFC 6749 §4.1.3）。callback 端若誤用
-      // `request.host`/`request.protocol` 組 currentUrl（而非 `oidcRedirectUri(config)`）
-      // 會在這裡露餡：openid-client 從 currentUrl 重新推導出的 redirect_uri 會跟
-      // login 送出的不同，交換必須失敗，不能悄悄放行。
+      // redirect_uri binding: the redirect_uri sent in the token request must equal, character for character, the one authorize() recorded (the one in the login 302's authorize URL) -
+      // standard IdP behaviour (RFC 6749 section 4.1.3). If the callback built currentUrl from `request.host`/`request.protocol` instead of `oidcRedirectUri(config)`, it shows here:
+      // openid-client would re-derive a redirect_uri different from the one login sent, and the exchange must fail rather than pass silently.
       const redirectUri = params.get("redirect_uri");
       if (redirectUri !== record.redirectUri) {
         return jsonResponse({ error: "invalid_grant", error_description: "redirect_uri mismatch" }, 400);
       }
 
-      // PKCE 綁定釘：驗 code_verifier 雜湊後確實
-      // 等於 authorize() 記錄的 code_challenge（S256）——callback 端若漏傳或傳錯
-      // `pkceCodeVerifier`（例如漏帶 unseal 出的 state payload）會在這裡露餡。
+      // PKCE binding: the hash of code_verifier must equal the code_challenge (S256) recorded by authorize() - a callback that omits or mis-passes `pkceCodeVerifier`
+      // (e.g. forgets the unsealed state payload) shows up here.
       const codeVerifier = params.get("code_verifier");
       const expectedChallenge = codeVerifier ? createHash("sha256").update(codeVerifier).digest("base64url") : undefined;
       if (expectedChallenge !== record.codeChallenge) {
@@ -226,8 +201,7 @@ export function createFakeIdp(issuerUrl: string): FakeIdp {
         .setProtectedHeader({ alg: "RS256", kid })
         .setIssuer(issuerUrl)
         .setAudience(clientId ?? "")
-        // oauth4webapi 硬性要求 id_token 帶 `iat`
-        // （實測 `JWT "iat" claim missing`）——`setExpirationTime` 不會連帶補上 `iat`。
+        // oauth4webapi requires `iat` in the id_token (`JWT "iat" claim missing`); `setExpirationTime` doesn't add `iat`.
         .setIssuedAt()
         .setExpirationTime("5m")
         .sign(privateKey);
@@ -248,16 +222,13 @@ export function createFakeIdp(issuerUrl: string): FakeIdp {
       if (consumeFailNext("userinfo")) {
         return jsonResponse({ error: "server_error" }, 500);
       }
-      // `processUserInfoResponse` 先驗 `sub` 為 string、再比對
-      // `expectedSubject`——回空物件必炸。真的依 Bearer token 查回預置身分。
+      // `processUserInfoResponse` checks that `sub` is a string and compares it with `expectedSubject`, so an empty object always fails; look up the preset identity by Bearer token.
       const authHeader = options.headers.authorization ?? options.headers.Authorization;
       const accessToken = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : undefined;
       const claims = accessToken ? accessTokenClaims.get(accessToken) : undefined;
       if (!claims) {
         return jsonResponse({ error: "invalid_token" }, 401);
       }
-      // 覆寫疊在預置 claims 之上、一次性消費——讓這次 userinfo 回應能刻意
-      // 與 ID token 分歧。
       const effective: FakeIdpClaims = userinfoOverride ? { ...claims, ...userinfoOverride } : claims;
       userinfoOverride = undefined;
       const body: Record<string, unknown> = { sub: effective.sub };

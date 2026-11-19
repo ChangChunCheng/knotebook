@@ -1,8 +1,7 @@
 /**
- * #175 C4：刪群組（兩模式，轉移／全刪）與成員同時建筆記。任何順序都不 500：
- *   刪除先拿到 lockGroup → 建立的 INSERT 卡在 FK KEY SHARE（pg_stat_activity 見 Lock）→ 刪除 commit 後 23503 → 404 group_not_found；
- *   建立先 commit → 刪除以群組述詞把它撈進去（轉移＝成為 transferTo 的個人筆記；全刪＝一起刪）。
- * 另一案：刪空群組（全刪模式）× 同時加人（`addMemberInTx` 的 lockGroup 決定這個交錯是 404 還是 500）。
+ * Any ordering must not return 500. Delete first: holds lockGroup, the create's INSERT blocks on the FK KEY SHARE (shows as Lock in pg_stat_activity), and after the delete commits gets 23503 -> 404 group_not_found.
+ * Create first: commits, and the delete picks the note up through the group predicate (transfer: becomes transferTo's personal note; delete all: deleted with the group).
+ * Also: deleting an empty group (delete-all mode) x concurrent add member, where `addMemberInTx`'s lockGroup decides between 404 and 500.
  */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -12,8 +11,8 @@ import type { GroupRacePoint } from "../src/groups/test-hook.js";
 import { buildTestApp } from "./helpers.js";
 import { cookieOf, seedGroup, seedUser, waitForBlockedOrSettled } from "./group-helpers.js";
 
-describe("#175 C4：刪群組 × 同時建立", () => {
-  it("C4 刪除（轉移）先鎖（group-delete-locked）→ 建立卡在 FK → 刪除 204、建立 404 group_not_found、沒有孤兒列", async () => {
+describe("#175 delete group x concurrent create", () => {
+  it("delete (transfer) takes the lock first (group-delete-locked) -> create blocks on the FK -> delete 204, create 404 group_not_found, no orphan row", async () => {
     const state: { fire?: () => Promise<LightMyRequestResponse>; second?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const holder: { pool?: import("pg").Pool } = {};
     const built = await buildTestApp({
@@ -38,12 +37,12 @@ describe("#175 C4：刪群組 × 同時建立", () => {
     expect(await built.db.select().from(notes).where(eq(notes.title, "late"))).toEqual([]);
   });
 
-  it("C4 轉移與建立不定序（membership-checked 之後才發轉移）：建立先 → 201／204 且該篇成為 transferTo 的個人筆記；轉移先 → 404／204、沒有孤兒", async () => {
+  it("transfer and create in either order (transfer fired after membership-checked): create first -> 201/204 and the note becomes transferTo's personal note; transfer first -> 404/204, no orphan", async () => {
     const state: { second?: Promise<LightMyRequestResponse>; fire?: () => Promise<LightMyRequestResponse> } = {};
     const built = await buildTestApp({
       groupTestHook: async (point: GroupRacePoint) => {
         if (point !== "membership-checked" || !state.fire || state.second) return;
-        state.second = state.fire(); // 通常建立會先完成（不保證——兩種結局都接受，見下）
+        state.second = state.fire(); // create usually finishes first (not guaranteed; both outcomes accepted, see below)
       },
     });
     const [admin, member] = await Promise.all([seedUser(built.db), seedUser(built.db)]);
@@ -52,7 +51,7 @@ describe("#175 C4：刪群組 × 同時建立", () => {
       built.app.inject({ method: "DELETE", url: `/api/groups/${g.id}`, cookies: await cookieOf(admin.id), payload: { mode: "transfer", transferTo: admin.id } });
     const create = await built.app.inject({ method: "POST", url: "/api/notes", cookies: await cookieOf(member.id), payload: { groupId: g.id, title: "early" } });
     const del = await state.second!;
-    // 兩種結局之一（誰先拿到 groups 列的鎖取決於排程），但**都不是 500**、群組都沒了。
+    // Either outcome is possible (who gets the groups row lock first depends on scheduling), but neither is a 500 and the group is gone.
     const outcome = `${create.statusCode}/${del.statusCode}`;
     expect(["201/204", "404/204"]).toContain(outcome);
     expect(await built.db.select().from(groups).where(eq(groups.id, g.id))).toEqual([]);
@@ -64,7 +63,7 @@ describe("#175 C4：刪群組 × 同時建立", () => {
     }
   });
 
-  it("C4 全刪與建立不定序（membership-checked 之後才發全刪）：建立先 → 201／204 且該篇被刪；全刪先 → 404／204；兩者都沒有孤兒", async () => {
+  it("delete all and create in either order (delete all fired after membership-checked): create first -> 201/204 and the note is deleted; delete all first -> 404/204; no orphans", async () => {
     const state: { second?: Promise<LightMyRequestResponse>; fire?: () => Promise<LightMyRequestResponse> } = {};
     const built = await buildTestApp({
       groupTestHook: async (point: GroupRacePoint) => {
@@ -85,7 +84,7 @@ describe("#175 C4：刪群組 × 同時建立", () => {
     expect(await built.db.select().from(notes).where(eq(notes.title, "early"))).toEqual([]);
   });
 
-  it("C4 建立先 commit（序列：先 await 建立再刪）→ 轉移把它撈進去", async () => {
+  it("create commits first (sequential: await the create, then delete) -> transfer picks the note up", async () => {
     const built = await buildTestApp();
     const [admin, member] = await Promise.all([seedUser(built.db), seedUser(built.db)]);
     const g = await seedGroup(built.db, "G", [{ userId: admin.id, role: "admin" }, { userId: member.id, role: "member" }]);
@@ -101,7 +100,7 @@ describe("#175 C4：刪群組 × 同時建立", () => {
     expect(await built.db.select().from(groups).where(eq(groups.id, g.id))).toEqual([]);
   });
 
-  it("刪空群組 × 同時加人：刪除先鎖 → PUT …/members 卡在加人的 lockGroup → 刪除 204、加人 404 not_found（不是 500）、沒有成員列", async () => {
+  it("deleting an empty group x concurrent add member: delete takes the lock first -> PUT .../members blocks on the add's lockGroup -> delete 204, add 404 not_found (not 500), no member row", async () => {
     const state: { fire?: () => Promise<LightMyRequestResponse>; second?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const holder: { pool?: import("pg").Pool } = {};
     const built = await buildTestApp({

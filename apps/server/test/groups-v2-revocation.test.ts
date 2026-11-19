@@ -1,8 +1,4 @@
-/**
- * #175 的端到端踢線（群組筆記）：全部走真路由（hook 只在路由裡被呼叫）＋真 CollabHooks。
- * 群組筆記由成員以 `POST /api/notes {groupId}` 建立（群組持有，沒有 owner、沒有逐人分享）。
- * 「續留」一律等過重驗 deadline 再斷言（沒回應的重驗在 deadline 到期才會被關）。
- */
+/** "Stays connected" assertions always wait past the reverification deadline (an unresponsive reverification is only closed when the deadline expires). */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { COLLAB_CLOSE_NOTE_DELETED, COLLAB_CLOSE_REVOKED, NOTE_SCHEMA_VERSION, YDOC_FRAGMENT, type GroupRoleDto } from "@knotebook/shared";
@@ -50,7 +46,6 @@ async function user(ctx: CollabTestCtx, email: string): Promise<{ id: string; se
   return { id: u.id, session: await ctx.loginAs(email, PASSWORD) };
 }
 
-/** `creator` 建群組、加入 `members`（email，預設內建一般成員）；回 groupId。 */
 async function makeGroup(creator: HttpSession, members: string[], name = "Crew"): Promise<string> {
   const g = await api(creator, "POST", "/api/groups", { name });
   expect(g.status).toBe(201);
@@ -59,14 +54,12 @@ async function makeGroup(creator: HttpSession, members: string[], name = "Crew")
   return id;
 }
 
-/** 成員在群組裡建一篇群組筆記，回 id。 */
 async function createGroupNote(session: HttpSession, groupId: string, title: string): Promise<string> {
   const res = await api(session, "POST", "/api/notes", { groupId, title });
   expect(res.status).toBe(201);
   return (res.json as { id: string }).id;
 }
 
-/** 群組的內建一般成員角色 id（走 `GET …/roles`）。 */
 async function memberRoleId(session: HttpSession, groupId: string): Promise<string> {
   const res = await api(session, "GET", `/api/groups/${groupId}/roles`);
   expect(res.status).toBe(200);
@@ -74,9 +67,9 @@ async function memberRoleId(session: HttpSession, groupId: string): Promise<stri
 }
 
 /**
- * 在觸發重驗**之前**登記：`userId` 在這篇上那條連線的下一次 `onTokenSync` 完成時回 true。
- * `CollabServer.onNextTokenSync` 的回呼在 `onTokenSync` 的 `finally` 裡派送，位置在
- * `handle.setReadOnly(...)` 之後（`collab/server.ts` 的 `onTokenSync`）——確定性等待，取代固定 sleep。
+ * Register before triggering reverification: resolves true when `userId`'s connection on this note finishes its next `onTokenSync`.
+ * `CollabServer.onNextTokenSync` callbacks are dispatched in `onTokenSync`'s `finally`, after `handle.setReadOnly(...)`
+ * (`onTokenSync` in `collab/server.ts`) - a deterministic wait that replaces a fixed sleep.
  */
 async function armTokenSync(ctx: CollabTestCtx, noteId: string, userId: string): Promise<() => boolean> {
   await waitFor("連線已登記進索引", 5_000, () => [...ctx.collab.connectionsOfNote(noteId)].some(c => c.userId === userId));
@@ -88,8 +81,8 @@ async function armTokenSync(ctx: CollabTestCtx, noteId: string, userId: string):
   return () => synced;
 }
 
-describe("#175 踢線（群組筆記）", () => {
-  it("移人：只靠群組取得存取的人 10 秒內被 close(revoked)；管理員那條續留", async () => {
+describe("#175 revocation (group notes)", () => {
+  it("removing a member: someone with access only through the group is closed (revoked) within 10 seconds; the admin's connection stays", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-v1@example.com");
     const member = await user(ctx, "m-v1@example.com");
@@ -104,7 +97,7 @@ describe("#175 踢線（群組筆記）", () => {
     expect(adminClient.closes).toEqual([]);
   });
 
-  it("#240 移人的 :userId 大寫：只靠群組取得存取的人 10 秒內被 close(revoked)", async () => {
+  it("#240 removing a member with an uppercase :userId: someone with access only through the group is closed (revoked) within 10 seconds", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-r5@example.com");
     const member = await user(ctx, "m-r5@example.com");
@@ -115,7 +108,7 @@ describe("#175 踢線（群組筆記）", () => {
     await waitFor("被移出的人被踢", 10_000, () => revoked(memberClient.closes));
   });
 
-  it("換成只讀自訂角色：成員續留但變唯讀（寫入不再傳到管理員那邊）", async () => {
+  it("switching to a read-only custom role: member stays but becomes read-only (writes no longer reach the admin)", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-v2@example.com");
     const member = await user(ctx, "m-v2@example.com");
@@ -134,7 +127,7 @@ describe("#175 踢線（群組筆記）", () => {
     expect(memberClient.closes).toEqual([]);
   });
 
-  it("從只讀自訂角色換回內建一般成員：成員續留且解除唯讀（寫入傳到管理員那邊）", async () => {
+  it("switching from a read-only custom role back to the built-in plain member: member stays and read-only is lifted (writes reach the admin)", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-v3@example.com");
     const member = await user(ctx, "m-v3@example.com");
@@ -144,7 +137,7 @@ describe("#175 踢線（群組筆記）", () => {
     expect((await api(admin.session, "PATCH", `/api/groups/${groupId}/members/${member.id}`, { roleId: reader })).status).toBe(200);
 
     const adminClient = await admin.session.connect(noteId);
-    const memberClient = await member.session.connect(noteId); // 以只讀角色連上：唯讀
+    const memberClient = await member.session.connect(noteId);
     const synced = await armTokenSync(ctx, noteId, member.id);
     const back = await memberRoleId(admin.session, groupId);
     expect((await api(admin.session, "PATCH", `/api/groups/${groupId}/members/${member.id}`, { roleId: back })).status).toBe(200);
@@ -154,10 +147,9 @@ describe("#175 踢線（群組筆記）", () => {
     expect(memberClient.closes).toEqual([]);
   });
 
-  it("加人／改名／刪空群組：沒有任何連線被關", async () => {
-    // 鑑別範圍只有「沒有誤關」：即使實作誤觸發重驗，這些人仍有存取權、重驗不會關他們，所以這案對「多呼叫了
-    // hook」沒有鑑別力。守「這三個事件不呼叫 onGroupAccessChanged」的是 groups-members（加人）與
-    // groups-v2-delete（刪群組）的 spy 斷言。
+  it("add member / rename / delete empty group: no connection is closed", async () => {
+    // Only discriminates against wrongly closed connections: even if the implementation wrongly triggered reverification, these people keep access and wouldn't be closed,
+    // so this test can't detect extra hook calls. That is guarded by the spy assertions in groups-members (add member) and groups-v2-delete (delete group).
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-v4@example.com");
     const member = await user(ctx, "m-v4@example.com");
@@ -177,8 +169,8 @@ describe("#175 踢線（群組筆記）", () => {
   });
 });
 
-describe("#175 移動的踢線", () => {
-  it("個人→群組：只靠逐人分享的人 10 秒內被 close(revoked)；同時是新群組成員的分享對象續留；owner 續留且仍可寫（寫入傳到群組另一位成員那邊）", async () => {
+describe("#175 revocation on move", () => {
+  it("personal -> group: someone with access only through a per-user share is closed (revoked) within 10 seconds; a share recipient who is also a member of the new group stays; the owner stays and can still write (writes reach another group member)", async () => {
     const ctx = await buildApp();
     const owner = await user(ctx, "owner-mv1@example.com");
     const sharedOnly = await user(ctx, "c-mv1@example.com");
@@ -204,7 +196,7 @@ describe("#175 移動的踢線", () => {
     expect(ownerClient.closes).toEqual([]);
   });
 
-  it("create-only 角色（能新建、不能編輯）移入：owner 續留但重驗後變唯讀——collab-token 回 viewer、寫入不再傳到群組管理員那邊", async () => {
+  it("create-only role (can create, cannot edit) moving in: owner stays but becomes read-only after reverification - collab-token returns viewer and writes no longer reach the group admin", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-mv2@example.com");
     const owner = await user(ctx, "owner-mv2@example.com");
@@ -213,7 +205,7 @@ describe("#175 移動的踢線", () => {
     expect((await api(admin.session, "PATCH", `/api/groups/${groupId}/members/${owner.id}`, { roleId: contributor })).status).toBe(200);
     const { id: noteId } = await ctx.createNote(owner.id, "personal note");
 
-    const ownerClient = await owner.session.connect(noteId); // 個人筆記的 owner：可寫
+    const ownerClient = await owner.session.connect(noteId);
     const synced = await armTokenSync(ctx, noteId, owner.id);
     const moved = await api(owner.session, "POST", `/api/notes/${noteId}/move`, { groupId });
     expect(moved.status).toBe(200);
@@ -225,25 +217,25 @@ describe("#175 移動的踢線", () => {
 
     const adminClient = await admin.session.connect(noteId);
     insertParagraph(ownerClient.doc, "after-move-readonly");
-    // 輔助斷言，不是主判定：`sleep(1_000)` 之後的負向斷言在傳播慢（超過 1 秒）時可能假綠——同檔正向案給傳播 10 秒。
-    // 主判定由上面的 armTokenSync（owner 那條連線完成重驗）與 collab-token 回 `viewer` 承擔。
+    // Secondary assertion, not the verdict: a negative assertion after `sleep(1_000)` can pass falsely when propagation takes over a second (the positive tests in this file allow 10 seconds).
+    // The verdict is carried by armTokenSync above (the owner's connection finished reverification) and collab-token returning `viewer`.
     await sleep(1_000);
     expect(text(adminClient.doc)).not.toContain("after-move-readonly");
     expect(ownerClient.closes).toEqual([]);
   });
 });
 
-describe("#175 複製", () => {
-  it("來源有人在線、有未落盤編輯 → 複製取 live fork、副本含那段文字；複製後立刻以 provider 開副本看到同樣內容；在線者不被踢", async () => {
+describe("#175 copy", () => {
+  it("source has an online user with unflushed edits -> copy takes a live fork and the copy contains that text; opening the copy with a provider right after copying shows the same content; the online user is not kicked", async () => {
     const ctx = await buildApp();
     const owner = await user(ctx, "owner-cp1@example.com");
     const { id: noteId } = await ctx.createNote(owner.id, "personal note");
     const ownerClient = await owner.session.connect(noteId);
     insertParagraph(ownerClient.doc, "live-unsaved-text");
     await waitFor("編輯到達 server 的 live doc", 5_000, () => text(ctx.collab.hocuspocus.documents.get(noteId)!).includes("live-unsaved-text"));
-    // 「未落盤」：onStoreDocument debounce 2 秒，此刻 note_states 還沒有這段（有列也不含它）。本案依賴這 2 秒的窗口
-    // （`STORE_DEBOUNCE_MS`，buildApp 沒有注入點）：本機實測單案約 0.5 秒、約 4 倍餘裕。窗口不夠時（store 先跑）是下一行
-    // 這條前置斷言紅，不會變成沒走到 live fork 的假綠。
+    // "Unflushed": onStoreDocument debounces 2 seconds, so note_states doesn't hold this text yet (and a row, if any, wouldn't contain it). This test relies on that window
+    // (`STORE_DEBOUNCE_MS`; buildApp has no injection point); a single run takes about 0.5 s, roughly 4x margin on the 2 s window. If the store runs first, the precondition assertion on the next line fails
+    // instead of silently passing without reaching the live fork.
     const persisted = await loadDoc(ctx.db, noteId);
     expect(persisted === null ? "" : text(persisted)).not.toContain("live-unsaved-text");
 
@@ -259,8 +251,8 @@ describe("#175 複製", () => {
   });
 });
 
-describe("#175 刪群組的踢線", () => {
-  it("轉移：群組筆記上只靠群組取得存取的成員 10 秒內被 close(revoked)；transferTo 那條續留、collab-token 回 role owner、寫入落盤", async () => {
+describe("#175 revocation on group delete", () => {
+  it("transfer: a member with access only through the group is closed (revoked) within 10 seconds; transferTo's connection stays, collab-token returns role owner, writes are persisted", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-dg1@example.com");
     const member = await user(ctx, "m-dg1@example.com");
@@ -272,8 +264,8 @@ describe("#175 刪群組的踢線", () => {
     const adminSynced = await armTokenSync(ctx, noteId, admin.id);
     expect((await api(admin.session, "DELETE", `/api/groups/${groupId}`, { mode: "transfer", transferTo: admin.id })).status).toBe(204);
     await waitFor("只靠群組取得存取的成員被踢", 10_000, () => revoked(memberClient.closes));
-    // 釘的是「transferTo 也重驗」這個呼叫面（拿掉 `[transferTo]` 那一批，這裡逾時紅）；
-    // 行為面等價：transferTo 必是內建管理員＝本來就可寫，不重驗下面的寫入照樣落盤。
+    // Pins the call surface "transferTo is also reverified" (without the `[transferTo]` batch this times out);
+    // behaviourally equivalent otherwise: transferTo is the built-in admin and already writable, so writes would persist even without reverification.
     await waitFor("transferTo 那條連線完成重驗（setReadOnly 之後）", 10_000, adminSynced);
     await sleep(REVERIFY_DEADLINE_MS + 1_000);
     expect(adminClient.closes).toEqual([]);
@@ -283,7 +275,7 @@ describe("#175 刪群組的踢線", () => {
     expect((token.json as { role: string }).role).toBe("owner");
 
     insertParagraph(adminClient.doc, "after-transfer");
-    // 落盤＝onStoreDocument（debounce 2 秒）寫進 note_states；唯讀連線的更新會被 server 丟掉、不會落盤。
+    // Persisted = onStoreDocument (2 second debounce) writes note_states; a read-only connection's updates are dropped by the server and never persist.
     const persistDeadline = Date.now() + 10_000;
     let persisted = "";
     while (Date.now() < persistDeadline && !persisted.includes("after-transfer")) {
@@ -295,7 +287,7 @@ describe("#175 刪群組的踢線", () => {
     expect(adminClient.closes).toEqual([]);
   });
 
-  it("全刪：P0 上的連線收 CLOSE(note-deleted)（不是 revoked）", async () => {
+  it("delete all: connections on P0 get CLOSE(note-deleted) (not revoked)", async () => {
     const ctx = await buildApp();
     const admin = await user(ctx, "admin-dg2@example.com");
     const member = await user(ctx, "m-dg2@example.com");
@@ -312,10 +304,10 @@ describe("#175 刪群組的踢線", () => {
     expect(ctx.collab.connectionsOfNote(noteId).size).toBe(0);
   });
 
-  it("全刪：gate 之後才進群組的筆記（L \\ P0）上的連線，在 commit 後 10 秒內被關，reason 是 revoked 而不是 note-deleted（代價）", async () => {
-    // `buildCollabTestApp` 沒有 `groupTestHook` 注入面，「gate 之後、交易之前」改由包住真 `beforeNoteDeleted` 來卡：
-    // 路由先取 P0、對 P0 每篇 await `beforeNoteDeleted`（Promise.allSettled），全數落定後才進交易——在包裝裡、真 gate
-    // 開完之後才建筆記並連上，時點與 `group-delete-gated` 同一段（P0 之後、交易之前）。`gatedIds` 佐證新筆記不在 P0。
+  it("delete all: connections on notes that joined the group after the gate (L \\ P0) are closed within 10 seconds after commit with reason revoked, not note-deleted (a known cost)", async () => {
+    // `buildCollabTestApp` has no `groupTestHook` injection point, so "after the gates, before the transaction" is reached by wrapping the real `beforeNoteDeleted`:
+    // the route fetches P0 and awaits `beforeNoteDeleted` for every note in P0 (Promise.allSettled) before entering the transaction; inside the wrapper, once the real gates are done,
+    // the note is created and connected - the same window as `group-delete-gated` (after P0, before the transaction). `gatedIds` confirms the new note is not in P0.
     const gatedIds: string[] = [];
     const holder: { onGated: (() => Promise<void>) | null } = { onGated: null };
     const ctx = await buildCollabTestApp({

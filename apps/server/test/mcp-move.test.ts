@@ -1,7 +1,4 @@
-/**
- * #180：MCP `move_note_to_group`（V1–V13）＋ M-G2（move 半）。
- * 讀 live doc 的斷言（V1 的 read_note_outline、V2 的 edit_note、V4 的逐位元組比較、V13）用 collab app；其餘用 buildTestApp。
- */
+/** Assertions that read the live doc (read_note_outline, edit_note, the byte comparison, version history) use the collab app; the rest use buildTestApp. */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -18,9 +15,9 @@ import { cookieOf, noteState, seedGroup, seedNote, seedRole, seedShare, seedUser
 import { seedAttachment, giveGroupQuota } from "./storage-helpers.js";
 import { noteBase, versionsOf } from "./version-helpers.js";
 
-/** #239：move_note_to_group 只在 notes:move 時註冊——本檔呼叫它的案（成功與失敗皆是）一律用讀寫搬移憑證，期望值不動。 */
+/** #239: move_note_to_group registers only with notes:move, so every call to it in this file (success or failure) uses a read-write-move token; expected values unchanged. */
 const RWM = "notes:read notes:write notes:move" as const;
-/** #239 M2：讀寫無搬移憑證（清單上沒有 move_note_to_group）。 */
+/** Read-write token without move: move_note_to_group isn't on its tool list. */
 const RW = "notes:read notes:write" as const;
 const FORBIDDEN_MOVE = "Only the owner of a personal note can move it into a group; this note is someone else's, or it is already in a group.";
 const GROUP_NO_CREATE = "No group with that id among your groups where your role can create notes.";
@@ -49,7 +46,7 @@ async function moved(app: FastifyInstance, token: string, noteId: string, groupI
 const redirectCount = async (db: Db) => (await db.select().from(noteRedirects)).length;
 
 describe("#180 move_note_to_group", () => {
-  it("V1 正路：shares／公開連結清掉、AI 紀錄留著、updated_at 不動、舊 /n/ 轉到它一個月、原分享對象 not_found", async () => {
+  it("happy path: shares / public link cleared, AI records kept, updated_at unchanged, the old /n/ redirects to it for a month, the former share recipients get not_found", async () => {
     const ctx = await buildCollabTestApp();
     const [owner, friend] = await Promise.all([seedUser(ctx.db), seedUser(ctx.db)]);
     const g = await seedGroup(ctx.db, "Team", [{ userId: owner.id, role: "member" }]);
@@ -81,7 +78,7 @@ describe("#180 move_note_to_group", () => {
     expect((await call(ctx.app, { token: ft }, "read_note_outline", { note_id: n.id })).structuredContent!.code).toBe("not_found");
   });
 
-  it("V2 create-only 角色移入 → role viewer；接著 edit_note → forbidden", async () => {
+  it("create-only role moving in -> role viewer; then edit_note -> forbidden", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "Team", [{ userId: me.id, role: "member" }]);
@@ -92,7 +89,7 @@ describe("#180 move_note_to_group", () => {
     expect((await call(ctx.app, { token }, "edit_note", { note_id: n.id, op: "append", markdown: "x" })).structuredContent).toEqual({ code: "forbidden", message: EDIT_FORBIDDEN });
   });
 
-  it("V3 踢線：被拒的（group_not_found、forbidden、配額、server_busy）零次；成功恰一次（分享對象 ∪ 呼叫者）；大寫 note_id 收到的是小寫 id", async () => {
+  it("revocation: rejected calls (group_not_found, forbidden, quota, server_busy) trigger it zero times; success exactly once (share recipients + caller); an uppercase note_id gets the lowercase id", async () => {
     const spy = spyCollabHooks();
     const busy = { on: false };
     const { app, db, uploadsDir } = await buildTestApp({
@@ -107,13 +104,13 @@ describe("#180 move_note_to_group", () => {
     expect((await move(app, token, n.id, randomUUID())).structuredContent!.code).toBe("group_not_found");
     const ft = (await seedTokenForUser(db, friend.id, RWM)).token;
     expect((await move(app, ft, n.id, g.id)).structuredContent!.code).toBe("forbidden");
-    // 配額拒絕（V6 形）：另一個配額 10 的群組、帶 11 B 附件的筆記
+    // Quota rejection: another group with a quota of 10, and a note with an 11 B attachment.
     const full = await seedGroup(db, "Full", [{ userId: owner.id, role: "member" }]);
     await giveGroupQuota(db, full.id, 10);
     const heavy = await seedNote(db, { ownerId: owner.id });
     await seedAttachment(db, uploadsDir, heavy.id, owner.id, 11);
     expect((await move(app, token, heavy.id, full.id)).structuredContent!.code).toBe("storage_quota_exceeded");
-    // server_busy（V8 形）：空間鎖縫拋 55P03（空間鎖只在有附件時取）
+    // server_busy: the space-lock seam throws 55P03 (the space lock is only taken when there are attachments).
     busy.on = true;
     expect((await move(app, token, heavy.id, g.id)).structuredContent!.code).toBe("server_busy");
     busy.on = false;
@@ -128,7 +125,7 @@ describe("#180 move_note_to_group", () => {
     expect(spy.onGroupAccessChanged.mock.calls[1]![0]).toEqual([n2.id]);
   });
 
-  it("V4 forbidden 三形（分享 editor、分享 viewer、群組筆記 admin）逐位元組相同；陌生人與不存在 → not_found 與 read_note_outline 同字", async () => {
+  it("forbidden in three shapes (shared editor, shared viewer, group note admin) is byte-identical; a stranger and a nonexistent note -> not_found with the same words as read_note_outline", async () => {
     const ctx = await buildCollabTestApp();
     const [owner, ed, vw, stranger] = await Promise.all([seedUser(ctx.db), seedUser(ctx.db), seedUser(ctx.db), seedUser(ctx.db)]);
     const g = await seedGroup(ctx.db, "Team", [{ userId: ed.id, role: "admin" }, { userId: vw.id, role: "member" }]);
@@ -151,7 +148,7 @@ describe("#180 move_note_to_group", () => {
     expect(JSON.stringify((await move(ctx.app, st, randomUUID(), g.id)).structuredContent)).toBe(outline);
   });
 
-  it("V5 group_not_found 三形（不存在、非成員、成員無 can_create）逐位元組相同＝GROUP_NO_CREATE ≠ create_note 的；非 uuid → SDK 驗證形；筆記不變", async () => {
+  it("group_not_found in three shapes (nonexistent, non-member, member without can_create) is byte-identical and equals GROUP_NO_CREATE, which differs from create_note's; non-uuid -> SDK validation shape; note unchanged", async () => {
     const { app, db } = await buildTestApp();
     const [me, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const foreign = await seedGroup(db, "Foreign", [{ userId: other.id, role: "admin" }]);
@@ -171,7 +168,7 @@ describe("#180 move_note_to_group", () => {
     expect(await noteState(db.$client, n.id)).toEqual(before);
   });
 
-  it("V6 配額：manageGroup 成員 → 帶數字與 extra 三數；一般成員 → 不帶；筆記／shares／轉址／slug 全不變", async () => {
+  it("quota: manageGroup member -> numbers and three extra figures; plain member -> none; note / shares / redirects / slug all unchanged", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [admin, member, friend] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: member.id, role: "member" }]);
@@ -200,7 +197,7 @@ describe("#180 move_note_to_group", () => {
     });
   });
 
-  it("V7 conflict：REST 移動持 FOR UPDATE（note-move-locked）時 MCP 移到另一群組 → 卡鎖 → conflict、筆記留在第一個群組", async () => {
+  it("conflict: while a REST move holds FOR UPDATE (note-move-locked), the MCP move to another group blocks -> conflict, the note stays in the first group", async () => {
     type RaceState = { fire?: () => Promise<Result>; second?: Promise<Result>; interleave?: string };
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
@@ -225,26 +222,26 @@ describe("#180 move_note_to_group", () => {
     expect(first.statusCode).toBe(200);
     expect(second.structuredContent).toEqual({ code: "conflict", message: CONFLICT });
     expect(await noteState(db.$client, n.id)).toMatchObject({ owner_id: null, group_id: g1.id });
-    // V3 的 conflict 半（被拒的各案（V4–V8）零次）：只有 REST 那發成功的移動踢線，MCP 被拒的那發不踢。
+    // The conflict half of the revocation rule (rejected cases revoke zero times): only the REST move that succeeded revokes; the rejected MCP call doesn't.
     expect(spy.onGroupAccessChanged).toHaveBeenCalledTimes(1);
   });
 
   for (const code of ["55P03", "40P01", "40001"]) {
-    it(`V8 server_busy（storage-space-locked 縫拋 ${code}）→ MOVE_BUSY、筆記不變`, async () => {
+    it(`server_busy (storage-space-locked seam throws ${code}) -> MOVE_BUSY, note unchanged`, async () => {
       const { app, db, uploadsDir } = await buildTestApp({
         groupTestHook: async point => { if (point === "storage-space-locked") throw Object.assign(new Error(code), { code }); },
       });
       const o = await seedUser(db);
       const g = await seedGroup(db, "G", [{ userId: o.id, role: "admin" }]);
       const n = await seedNote(db, { ownerId: o.id });
-      await seedAttachment(db, uploadsDir, n.id, o.id, 10); // 空間鎖只在 incomingBytes > 0 時取（storage/tx/quota.ts:51）
+      await seedAttachment(db, uploadsDir, n.id, o.id, 10); // the space lock is only taken when incomingBytes > 0 (storage/tx/quota.ts)
       const before = await noteState(db.$client, n.id);
       expect((await move(app, (await seedTokenForUser(db, o.id, RWM)).token, n.id, g.id)).structuredContent).toEqual({ code: "server_busy", message: BUSY });
       expect(await noteState(db.$client, n.id)).toEqual(before);
     });
   }
 
-  it("V9 tokenWrite limit 1：先一發 create_note 用掉 → move too_many_requests、筆記不變；move 不扣 edit 桶（移動前後 edit 剩餘相同）", async () => {
+  it("tokenWrite limit 1: one create_note uses it up first -> move too_many_requests, note unchanged; move doesn't charge the edit limiter (the edit remainder is the same before and after)", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ tokenWrite, edit }) });
@@ -253,10 +250,10 @@ describe("#180 move_note_to_group", () => {
     const n = await seedNote(db, { ownerId: me.id });
     const before = await noteState(db.$client, n.id);
     const { token } = await seedTokenForUser(db, me.id, RWM);
-    expect((await call(app, { token }, "create_note", {})).isError).toBeUndefined(); // 不帶 content：只扣 tokenWrite，不扣 edit
+    expect((await call(app, { token }, "create_note", {})).isError).toBeUndefined(); // without content: charges only tokenWrite, not edit
     expect((await move(app, token, n.id, g.id)).structuredContent).toEqual({ code: "too_many_requests", message: TOKEN_RATE });
     expect(await noteState(db.$client, n.id)).toEqual(before);
-    // edit 那半：session 路徑不扣 tokenWrite，搬一篇之後 edit 桶仍是滿的。
+    // The edit half: the session path doesn't charge tokenWrite, so after moving one note the edit limiter is still full.
     const cookie = Object.values(await cookieOf(me.id))[0]!;
     expect((await call(app, { cookie }, "move_note_to_group", { note_id: n.id, group_id: g.id })).isError).toBeUndefined();
     let left = 0;
@@ -264,7 +261,7 @@ describe("#180 move_note_to_group", () => {
     expect(left).toBe(EDIT_LIMIT.limit);
   });
 
-  it("V10 session MCP 移動成功", async () => {
+  it("session MCP move succeeds", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);
@@ -275,9 +272,9 @@ describe("#180 move_note_to_group", () => {
     expect((r.structuredContent!.note as Note).owner).toMatchObject({ kind: "group", id: g.id });
   });
 
-  // #239 M2：讀寫無搬移憑證的清單上沒有 move_note_to_group（register.ts 依 canMove 註冊），跳過清單直接呼叫 → SDK 的
-  // 未知工具名形（同 mcp-tools-list 案 10 的 edit_note），不是 insufficient_scope；筆記仍是個人筆記。
-  it("#239 M2：讀寫憑證 tools/call move_note_to_group → Tool not found、筆記仍是個人筆記", async () => {
+  // #239: a read-write token without move has no move_note_to_group on its list (register.ts registers by canMove); calling it directly, skipping the list, gets the SDK's
+  // unknown-tool form (like edit_note in mcp-tools-list), not insufficient_scope; the note stays personal.
+  it("#239: read-write token tools/call move_note_to_group -> Tool not found, the note stays personal", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "admin" }]);
@@ -290,7 +287,7 @@ describe("#180 move_note_to_group", () => {
     expect(await noteState(db.$client, n.id)).toMatchObject({ owner_id: me.id, group_id: null });
   });
 
-  it("V12 模型面字串 wire 斷言（全部）", async () => {
+  it("model-facing strings asserted on the wire (all)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const { token } = await seedTokenForUser(db, me.id, RWM);
@@ -307,11 +304,11 @@ describe("#180 move_note_to_group", () => {
     expect(tool.inputSchema.properties.group_id!.description).toBe(GID);
     expect(tool.inputSchema.properties.note_id!.description).toBe("The note's id, as returned by list_notes or search_notes.");
     expect(tool.outputSchema.properties.note!.description).toBe(OUT);
-    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "note_id"]); // 資料夾：多 folder_id
+    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "note_id"]); // folders: one more key, folder_id
     for (const s of [DESC, GID, OUT]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
   });
 
-  it("V13 版本歷史：先存一版 → MCP 搬移載入中的筆記 → note_versions 清空、計數 0、基底 NULL；spaceKey g:<id>、autoEnabled 依群組開關重算", async () => {
+  it("version history: save one version first -> MCP moves the loaded note -> note_versions cleared, count 0, base NULL; spaceKey g:<id>, autoEnabled recomputed from the group's switch", async () => {
     const PASSWORD = "correct-horse-battery";
     const ctx = await buildCollabTestApp();
     const email = `v13-${randomUUID()}@example.com`;
@@ -319,7 +316,7 @@ describe("#180 move_note_to_group", () => {
     const note = await ctx.createNote(u.id);
     const session = await ctx.loginAs(email, PASSWORD);
     const g = await seedGroup(ctx.db, "G", [{ userId: u.id, role: "admin" }]);
-    await ctx.db.update(groups).set({ autoVersions: false }).where(eq(groups.id, g.id)); // 個人預設開、群組關 → 重算後應為 false
+    await ctx.db.update(groups).set({ autoVersions: false }).where(eq(groups.id, g.id)); // personal default on, group off -> false after the recompute
     const client = await seedContent(ctx, session, note.id, "個人時期的內容");
     const live = ctx.collab.hocuspocus.documents.get(note.id)!;
     await ctx.collab.versions.cutIfDirty(note.id, live, { kind: "manual" });
@@ -334,7 +331,7 @@ describe("#180 move_note_to_group", () => {
     client.disconnect();
   });
 
-  it("M-G2-move {note_id, group_id, groupId} → SDK 驗證錯誤、筆記零變更", async () => {
+  it("{note_id, group_id, groupId} -> SDK validation error, note unchanged", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);
@@ -347,7 +344,7 @@ describe("#180 move_note_to_group", () => {
     expect(await noteState(db.$client, n.id)).toEqual(before);
   });
 
-  it("大寫 group_id → 成功；owner.id、url、DB group_id 小寫", async () => {
+  it("uppercase group_id -> success; owner.id, url and DB group_id are lowercase", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);
@@ -358,7 +355,7 @@ describe("#180 move_note_to_group", () => {
     expect((await noteState(db.$client, n.id)).group_id).toBe(g.id);
   });
 
-  it("自訂網址：slug_is_custom 保留、群組 url 用同一個自訂 slug、舊 /n/<handle>/<自訂> 轉到它", async () => {
+  it("custom URL: slug_is_custom kept, the group url uses the same custom slug, the old /n/<handle>/<custom> redirects to it", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);

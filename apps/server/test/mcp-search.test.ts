@@ -1,6 +1,3 @@
-/**
- * #93：MCP search_notes 的輸出（M1 MCP 層、M3、M5 端到端、M8）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -24,7 +21,6 @@ async function call(app: FastifyInstance, token: string, name: string, args: unk
 }
 const hitsOf = (p: Record<string, unknown>) => p.notes as Hit[];
 
-/** `tools/list` 裡我們會讀到的那幾層 JSON Schema（只列本檔用到的鍵）。 */
 type Described = { description?: string };
 type MatchSchema = { properties: { sectionId: Described } };
 type HitSchema = { properties: { matchedOn: Described; matches: Described & { items: MatchSchema } } };
@@ -41,8 +37,8 @@ async function toolsList(app: FastifyInstance, token: string) {
   return { body: res.body, tools: res.json().result.tools as ListedTool[] };
 }
 
-describe("M8 描述逐字（兩種部署形態）", () => {
-  it("有 collab（讀取工具在）：description、query 與 sectionId 的說明逐字；舊句不在", async () => {
+describe("verbatim descriptions (two deployment shapes)", () => {
+  it("with collab (read tools present): description, query and sectionId descriptions are verbatim; the old sentence is absent", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: `m8-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -60,7 +56,7 @@ describe("M8 描述逐字（兩種部署形態）", () => {
     expect(body).not.toContain("Searches note titles only");
   });
 
-  it("無 collab：description 與 sectionId 說明是另一版，不含 read_note_section／outline／seconds", async () => {
+  it("without collab: description and sectionId descriptions are another version, not containing read_note_section / outline / seconds", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const { token } = await seedTokenForUser(db, u.id, "notes:read");
@@ -75,8 +71,8 @@ describe("M8 描述逐字（兩種部署形態）", () => {
   });
 });
 
-describe("M1（MCP 層）／M9", () => {
-  it("matchedOn 三值；title 時 matches 為空；頂層 key 恰為 notes、truncated，沒有 cursor／頂層 matchedOn", async () => {
+describe("MCP layer", () => {
+  it("matchedOn takes three values; with title the matches is empty; top-level keys are exactly notes and truncated, with no cursor / top-level matchedOn", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const { token } = await seedTokenForUser(db, u.id, "notes:read");
@@ -95,8 +91,8 @@ describe("M1（MCP 層）／M9", () => {
   });
 });
 
-describe("M3 matches 接 read_note_section", () => {
-  it("最多 3 個、文件順序；sectionId 讀得到且含命中字；heading 與 outline 同段相同", async () => {
+describe("matches connect to read_note_section", () => {
+  it("at most 3, in document order; the sectionId can be read and contains the matched word; the heading equals the outline's for the same section", async () => {
     const ctx = await buildCollabTestApp();
     const email = `m3-${randomUUID()}@example.com`;
     const u = await ctx.createUser({ email, password: PASSWORD });
@@ -119,8 +115,8 @@ describe("M3 matches 接 read_note_section", () => {
   });
 });
 
-describe("M5 端到端", () => {
-  it("40 個 U+0001 前文＋命中 → 摘錄含整段命中、逃脫後 ≤ 160", async () => {
+describe("end to end", () => {
+  it("40 U+0001 as the prefix + a match -> the excerpt contains the whole match, at most 160 after escaping", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const { token } = await seedTokenForUser(db, u.id, "notes:read");

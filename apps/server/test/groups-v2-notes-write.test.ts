@@ -1,7 +1,4 @@
-/**
- * #175：建立（REST）、刪除、分享、公開連結對群組筆記的判準。C13／C14 的交錯用
- * groupTestHook 在「授權之後、寫入之前」以 SQL 把個人筆記移進群組（模擬移動）。
- */
+/** Interleave tests use groupTestHook to move a personal note into the group with SQL (simulating the move) after authorization and before the write. */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -27,10 +24,6 @@ async function scene(db: Db) {
 
 interface MoverState { point?: GroupRacePoint; noteId?: string; groupId?: string; reopenToken?: string }
 
-/**
- * 在指定的注入點把某篇個人筆記移進群組（清 owner、設 group、清 token／別名——移動會做的事）。
- * `reopenToken` 有值時，移動之後再以群組管理員的身分重開 token（C14 的三方交錯）。
- */
 function moverHook(db: () => Db, state: MoverState) {
   return async (point: GroupRacePoint, ctx: { noteId?: string }) => {
     if (point !== state.point || ctx.noteId !== state.noteId) return;
@@ -40,7 +33,7 @@ function moverHook(db: () => Db, state: MoverState) {
 }
 
 describe("#175 POST /api/notes {groupId}", () => {
-  it("成員（內建一般成員）：帶與不帶 content 都 201，role editor、owner 欄 null、groupId／group 有值、permissions 取角色；個人建立仍是 owner", async () => {
+  it("member (built-in plain member): 201 with and without content, role editor, owner column null, groupId/group set, permissions from the role; personal create is still owner", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const bare = await call(app, "POST", "/api/notes", s.member.id, { groupId: s.g.id, title: "Plan" });
@@ -51,24 +44,24 @@ describe("#175 POST /api/notes {groupId}", () => {
     });
     const byAdmin = await call(app, "POST", "/api/notes", s.admin.id, { groupId: s.g.id, title: "Plan" });
     expect(byAdmin.json()).toMatchObject({ role: "editor", slug: "plan-2", permissions: { delete: true, managePublicLink: true, changeSlug: true } });
-    // 群組範圍去重：同一人的個人筆記同名不佔群組的位子
+    // Slugs are deduplicated per scope: the group notes "plan"/"plan-2" don't occupy the member's personal scope, hence "plan", not "plan-3".
     const personal = await call(app, "POST", "/api/notes", s.member.id, { title: "Plan" });
     expect(personal.json()).toMatchObject({ role: "owner", slug: "plan", groupId: null, group: null, permissions: ALL });
     expect((await noteState(db.$client, bare.json().id)).owner_id).toBeNull();
   });
 
-  it("帶 content＋groupId（解除互斥）→ 過了 schema（無 collab 的 app 在部署閘門回 400 invalid_body，與個人建立同一道閘）", async () => {
+  it("content with groupId (exclusion lifted) -> passes the schema (an app without collab gets 400 invalid_body from the deployment gate, the same gate as personal create)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const res = await call(app, "POST", "/api/notes", s.member.id, { groupId: s.g.id, content: "# Hi" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("invalid_body");
-    // 訊息是部署閘門那一句，不是 schema 的互斥訊息——互斥若還在，這裡會是「content 與 groupId 不可同時出現」。
+    // The message is the deployment gate's, not the schema's mutual-exclusion message, which would show if the exclusion were still there.
     expect(res.json().error.message).toBe("This deployment cannot create a note with content. Send the request again without content.");
-    // 帶 collab 的完整形在 note-create-content.test.ts 補一案
+    // The full collab variant is covered in note-create-content.test.ts.
   });
 
-  it("非成員／非成員站台 admin／群組不存在 → 404 group_not_found（三者逐位元組相同）；成員缺新建旗標 → 403 forbidden；非 UUID → 400", async () => {
+  it("non-member, non-member site admin and missing group -> 404 group_not_found (byte-identical for all three); member lacking the create flag -> 403 forbidden; non-UUID -> 400", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const bodies = [
@@ -82,7 +75,7 @@ describe("#175 POST /api/notes {groupId}", () => {
     const reader = await call(app, "POST", "/api/notes", s.reader.id, { groupId: s.g.id });
     expect(reader.statusCode).toBe(403);
     expect(reader.json().error.code).toBe("forbidden");
-    // 能編輯但沒有新建旗標 → 同樣 403：判準是 can_create，不是 can_edit（只讀角色分不出這兩者）。
+    // Can edit but lacks the create flag -> also 403: the criterion is can_create, not can_edit (a read-only role can't tell them apart).
     await setMemberRole(db, s.g.id, s.reader.id, await seedRole(db, s.g.id, "Editor", { canRead: true, canEdit: true }));
     const editorNoCreate = await call(app, "POST", "/api/notes", s.reader.id, { groupId: s.g.id });
     expect(editorNoCreate.statusCode).toBe(403);
@@ -91,7 +84,7 @@ describe("#175 POST /api/notes {groupId}", () => {
     expect(await db.select().from(notes).where(eq(notes.groupId, s.g.id))).toEqual([]);
   });
 
-  it("成員檢查之後群組被刪（FK 23503）→ 404 group_not_found，沒有建出任何列", async () => {
+  it("group deleted after the membership check (FK 23503) -> 404 group_not_found, no row created", async () => {
     const holder: { db?: Db } = {};
     const built = await buildTestApp({
       groupTestHook: async (point, ctx) => {
@@ -108,8 +101,8 @@ describe("#175 POST /api/notes {groupId}", () => {
   });
 });
 
-describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", () => {
-  it("DELETE：群組筆記看 permissions.delete（一般成員 403、非成員 404、管理員 204；#181 起是移到垃圾桶——列還在、deleted_at 非 NULL）", async () => {
+describe("#175 DELETE, shares and public-link permission criteria", () => {
+  it("DELETE: group notes follow permissions.delete (plain member 403, non-member 404, admin 204; moved to trash since #181: row remains, deleted_at set)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const gn = await seedNote(db, { groupId: s.g.id });
@@ -123,7 +116,7 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
     expect(rows[0]!.deletedBy).toBe(s.admin.id);
   });
 
-  it("shares 三支：群組筆記一律 403（manageShares 恆 false，連管理員也是）；殘留列 404；授權窗——授權為個人 owner、之後被移進群組 → PUT 409 note_in_group、不留分享列", async () => {
+  it("shares endpoints: always 403 for group notes (manageShares is always false, even for the admin); leftover row 404; authorization window: authorized as personal owner, then moved into a group -> PUT 409 note_in_group, no share row left", async () => {
     const state: MoverState = {};
     const holder: { db?: Db } = {};
     const built = await buildTestApp({ groupTestHook: moverHook(() => holder.db!, state) });
@@ -138,7 +131,6 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
     ] as const) {
       expect((await call(app, method, url, s.admin.id, payload)).statusCode, `${method} ${url}`).toBe(403);
     }
-    // 非成員拿著群組筆記上的殘留分享列（群組筆記殘留分享列，DB 直塞）→ 404，與不存在的筆記逐位元組相同。
     await seedShare(db, gn.id, s.outsider.id, "editor");
     const leftover = await call(app, "PUT", `/api/notes/${gn.id}/shares`, s.outsider.id, { email: s.member.email, role: "viewer" });
     const missing = await call(app, "PUT", "/api/notes/00000000-0000-4000-8000-00000000dead/shares", s.outsider.id, { email: s.member.email, role: "viewer" });
@@ -149,11 +141,11 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
     expect(raced.statusCode).toBe(409);
     expect(raced.json().error.code).toBe("note_in_group");
     expect(await sharesOf(db, mine.id)).toEqual([]);
-    // 交錯確實發生了：筆記此刻在群組裡（hook 沒觸發的話，PUT 會 200 而筆記仍是個人的）。
+    // The interleave really happened: the note is in the group now (had the hook not fired, the PUT would return 200 and the note would still be personal).
     expect((await noteState(db.$client, mine.id)).group_id).toBe(s.g.id);
   });
 
-  it("public-link：群組筆記看 managePublicLink（一般成員 403、管理員 200）；別名 PUT 對群組筆記 400（不是 500）", async () => {
+  it("public-link: group notes follow managePublicLink (plain member 403, admin 200); alias PUT on a group note is 400 (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const gn = await seedNote(db, { groupId: s.g.id });
@@ -167,7 +159,7 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
     expect((await noteState(db.$client, gn.id)).public_slug).toBeNull();
   });
 
-  it("C13：token PUT 授權為個人 owner、之後被移進群組 → 409 conflict、token 沒被寫進群組筆記；C14 三方交錯：移動 → 群組重開 token → 過時的別名 PUT → 400", async () => {
+  it("token PUT authorized as personal owner and then moved into a group -> 409 conflict, token not written into the group note; three-way interleave: move -> group reopens token -> stale alias PUT -> 400", async () => {
     const state: MoverState = {};
     const holder: { db?: Db } = {};
     const built = await buildTestApp({ groupTestHook: moverHook(() => holder.db!, state) });
@@ -181,8 +173,8 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
     expect(put.json().error.code).toBe("conflict");
     expect(await noteState(db.$client, a.id)).toMatchObject({ group_id: s.g.id, public_token: null });
 
-    // C14 三方交錯：授權（個人 owner）→ 移進群組（token 清掉）→ 群組管理員重開 token → 過時的別名 PUT。
-    // 舊述詞 `public_token IS NOT NULL` 在這一刻為真——沒有 `group_id IS NULL` 就撞 CHECK → 500。
+    // Three-way interleave: authorize (personal owner) -> move into the group (token cleared) -> group admin reopens the token -> stale alias PUT.
+    // The old predicate `public_token IS NOT NULL` is true by then; without `group_id IS NULL` it would hit the CHECK and return 500.
     const b = await seedNote(db, { ownerId: s.member.id }, { publicToken: "t".repeat(43) });
     Object.assign(state, { noteId: b.id, reopenToken: "u".repeat(43) });
     const res = await call(app, "PUT", `/api/notes/${b.id}/public-link/slug`, s.member.id, { slug: "my-alias" });
@@ -191,8 +183,8 @@ describe("#175 DELETE／shares／public-link 的新判準（#17–19、#22）", 
   });
 });
 
-describe("#175 GET /api/notes/:id/backlinks 的群組來源（路由層接線）", () => {
-  it("群組筆記連到個人筆記：成員看得到來源（groupId 有值、ownerHandle null）；只拿到目標分享的非成員看不到", async () => {
+describe("#175 GET /api/notes/:id/backlinks group sources (route wiring)", () => {
+  it("group note linking to a personal note: members see the source (groupId set, ownerHandle null); a non-member who only got the target shared does not", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const target = await seedNote(db, { ownerId: s.member.id }, { title: "Target" });
@@ -210,13 +202,13 @@ describe("#175 GET /api/notes/:id/backlinks 的群組來源（路由層接線）
   });
 });
 
-describe("#186 PATCH /api/notes/:id：帶 title 一律要 permissions.edit（不論有沒有帶 slug）", () => {
+describe("#186 PATCH /api/notes/:id: a title always requires permissions.edit (with or without slug)", () => {
   async function titleOf(db: Db, noteId: string) {
     const [r] = await db.select({ title: notes.title }).from(notes).where(eq(notes.id, noteId));
     return r!.title;
   }
 
-  it("只有 managePublicLink（無 edit）的角色：只帶 slug → 200；slug＋title → 403 且 title／slug 未變；只帶 title → 403", async () => {
+  it("role with only managePublicLink (no edit): slug alone -> 200; slug + title -> 403 with title and slug unchanged; title alone -> 403", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     await setMemberRole(db, s.g.id, s.reader.id, await seedRole(db, s.g.id, "LinkMgr", { canRead: true, canManagePublicLink: true }));
@@ -242,7 +234,7 @@ describe("#186 PATCH /api/notes/:id：帶 title 一律要 permissions.edit（不
     expect(await titleOf(db, gn.id)).toBe("Original");
   });
 
-  it("同時有 edit 與 changeSlug 的角色（內建管理員）帶 slug＋title → 200，兩者都寫入；只有 edit 的一般成員帶 slug → 403（不誤傷也不放寬）", async () => {
+  it("role with both edit and changeSlug (built-in admin): slug + title -> 200 and both written; plain member with only edit: slug -> 403 (neither over- nor under-blocked)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const gn = await seedNote(db, { groupId: s.g.id }, { title: "Original" });
@@ -258,7 +250,7 @@ describe("#186 PATCH /api/notes/:id：帶 title 一律要 permissions.edit（不
     expect(await titleOf(db, gn.id)).toBe("ByMember");
   });
 
-  it("個人筆記：owner 帶 slug＋title → 200；被分享的 editor 帶 title → 200、帶 slug → 403", async () => {
+  it("personal note: owner with slug + title -> 200; shared editor with title -> 200, with slug -> 403", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const pn = await seedNote(db, { ownerId: s.outsider.id }, { title: "Mine" });

@@ -29,8 +29,8 @@ const getIds = (app: TestApp["app"], cookies: Record<string, string>) => app.inj
 const unlink = (app: TestApp["app"], cookies: Record<string, string>, id: string) =>
   app.inject({ method: "DELETE", url: `/api/auth/identities/${id}`, cookies });
 
-describe("GET /api/auth/identities（#187）", () => {
-  it("回 identities（providers、unlinkable、不含 sub）、linkable、hasPassword、passwordLoginEnabled（有效值）", async () => {
+describe("GET /api/auth/identities (#187)", () => {
+  it("returns identities (providers, unlinkable, no sub), linkable, hasPassword and the effective passwordLoginEnabled", async () => {
     const { app, db } = await buildTestApp();
     const pa = await seedAuthProvider(db, { issuerUrl: A, displayName: "A", template: "gitlab" });
     const pb = await seedAuthProvider(db, { issuerUrl: B, displayName: "B", template: "google" });
@@ -48,15 +48,15 @@ describe("GET /api/auth/identities（#187）", () => {
     expect(body).toMatchObject({ hasPassword: true, passwordLoginEnabled: true });
   });
 
-  it("Bearer（PAT）→ 401；未登入 → 401", async () => {
+  it("Bearer (PAT) -> 401; not logged in -> 401", async () => {
     const { app, db } = await buildTestApp();
     expect((await app.inject({ method: "GET", url: "/api/auth/identities" })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // Valid PAT (scope enough for authenticateAny) with no cookie: the 401 can only come from the endpoint accepting sessions only.
     const { token } = await seedTokenForUser(db, (await seedUser(db)).id);
     expect((await app.inject({ method: "GET", url: "/api/auth/identities", headers: bearer(token) })).statusCode).toBe(401);
   });
 
-  it("尾斜線形：provider 填 `https://a.example/`、identity 為無斜線——resolved_issuer 寫入前不對、寫入後對", async () => {
+  it("trailing-slash shape: provider is `https://a.example/`, identity has no slash - resolved_issuer is wrong before being written and right after", async () => {
     const { app, db } = await buildTestApp();
     const p = await seedAuthProvider(db, { issuerUrl: `${A}/`, displayName: "A" });
     const u = await seedUser(db);
@@ -70,7 +70,7 @@ describe("GET /api/auth/identities（#187）", () => {
     expect(after.linkable).toEqual([]);
   });
 
-  it("passwordLoginEnabled 是有效值：DB 關 → false；env 強制＋DB 關 → true", async () => {
+  it("passwordLoginEnabled is the effective value: DB off -> false; env force + DB off -> true", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db);
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -82,8 +82,7 @@ describe("GET /api/auth/identities（#187）", () => {
   });
 });
 
-describe("unlinkable 與 DELETE 逐格一致（#187）", () => {
-  // 每格：目標身分在 A（A 啟用）。cells＝密碼 × DB 值 × 第二身分（無／B 啟用／B 停用）。
+describe("unlinkable matches DELETE cell by cell (#187)", () => {
   const cells: Array<[boolean, boolean, "none" | "enabled" | "disabled", boolean]> = [];
   for (const hasPassword of [false, true]) {
     for (const dbValue of [true, false]) {
@@ -93,7 +92,7 @@ describe("unlinkable 與 DELETE 逐格一致（#187）", () => {
       }
     }
   }
-  it.each(cells)("密碼=%s、DB=%s、第二身分=%s → unlinkable=%s 且 DELETE 結果一致", async (hasPassword, dbValue, second, expected) => {
+  it.each(cells)("password=%s, DB=%s, second identity=%s -> unlinkable=%s and DELETE agrees", async (hasPassword, dbValue, second, expected) => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     if (second !== "none") {
@@ -111,7 +110,7 @@ describe("unlinkable 與 DELETE 逐格一致（#187）", () => {
     if (!expected) expect(res.json().error.code).toBe("last_login_method");
   });
 
-  it("env 強制＋DB 關、有密碼＋一個身分 → 仍 409（解除連結的判斷看 DB 值，不看 env）", async () => {
+  it("env force + DB off, password + one identity -> still 409 (the unlink decision looks at the DB value, not env)", async () => {
     const { app, db } = await buildTestApp({ config: { ...testConfig, passwordLoginForceEnable: true } });
     await seedAuthProvider(db, { issuerUrl: A });
     const u = await insertPasswordUser(db);
@@ -123,8 +122,8 @@ describe("unlinkable 與 DELETE 逐格一致（#187）", () => {
   });
 });
 
-describe("DELETE /api/auth/identities/:id（#187）", () => {
-  it("不屬本人、不存在、非 UUID → 404 not_found；身分不動", async () => {
+describe("DELETE /api/auth/identities/:id (#187)", () => {
+  it("not mine, missing, non-UUID -> 404 not_found; identity untouched", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     const me = await insertPasswordUser(db);
@@ -139,7 +138,7 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     expect(await identitiesOf(db, other.id)).toEqual([{ issuer: A, sub: "so" }]);
   });
 
-  it("路徑 id 大寫 → 與小寫同義（204、身分刪掉）", async () => {
+  it("uppercase path id behaves like lowercase (204, identity deleted)", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     const u = await insertPasswordUser(db);
@@ -148,7 +147,7 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([]);
   });
 
-  it("同交易清掉吻合的 users.oidc_*；之後跑開機補登不會讓它復活（不吻合的舊欄不動）", async () => {
+  it("the same transaction clears a matching users.oidc_*; a later boot backfill doesn't resurrect it (a non-matching legacy column is left alone)", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     const u = await insertPasswordUser(db);
@@ -170,7 +169,7 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([]);
   });
 
-  it("不撤 session：解除後同一顆 cookie 打 /me 仍 200", async () => {
+  it("does not revoke sessions: after unlinking, the same cookie still gets 200 from /me", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     const u = await insertPasswordUser(db);
@@ -180,7 +179,7 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies })).statusCode).toBe(200);
   });
 
-  it("C10：同人並發解除最後兩個身分——另一連線持 users 鎖並刪了 X → 這邊解除 Y 等它提交 → 409 last_login_method", async () => {
+  it("concurrent unlink of the last two identities by one user: another connection holds the users lock and has deleted X -> unlinking Y here waits for its commit -> 409 last_login_method", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: A });
     await seedAuthProvider(db, { issuerUrl: B });
@@ -204,9 +203,9 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([{ issuer: B, sub: "sb" }]);
   });
 
-  // 這案不呼叫防自鎖的第二關（holder 以手打 SQL 擺出解除交易的鎖足跡）：守的只是「登入影響 0 列照樣簽 session」。
-  // 解除連結與登入的真並發（C24）見下一案。
-  it("登入撞上解除已刪未提交的身分 → 等它提交、0 列照樣簽 session", async () => {
+  // This test doesn't exercise the anti-lockout second check (the holder lays out the unlink transaction's lock footprint with hand-written SQL): it only guards
+  // that a login whose update affects 0 rows still signs a session. Real concurrency of unlink and login is in the next test.
+  it("login hitting an identity deleted by an uncommitted unlink -> waits for its commit, still signs the session with 0 rows affected", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const u = await insertPasswordUser(t.db);
     const idA = await identity(t.db, u.id, A, "sa");
@@ -227,7 +226,7 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     }
   });
 
-  it("C24：真解除連結持 users 鎖卡在身分列上 → 真 SSO 登入（同帳號另一身分）不等 users、照樣完成；放行後解除連結 → 204、無 40P01", async () => {
+  it("a real unlink holds the users lock and is blocked on the identity row -> a real SSO login (another identity of the same account) doesn't wait on users and completes; after release the unlink -> 204 with no 40P01", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "b", issuerUrl: B }] });
     const u = await insertPasswordUser(t.db);
     const idA = await identity(t.db, u.id, A, "sa");
@@ -235,12 +234,12 @@ describe("DELETE /api/auth/identities/:id（#187）", () => {
     const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<"timeout">(r => setTimeout(() => r("timeout"), ms))]);
     const holder = await holderFor(t.db);
     try {
-      // holder＝「登入 A 進行中」的鎖足跡（登入分支：site_settings FOR SHARE＋UPDATE 該身分列，未提交）。
+      // holder = the lock footprint of a login of A in progress (login branch: site_settings FOR SHARE + UPDATE of that identity row, uncommitted).
       await holder.query("begin");
       await holder.query("select 1 from site_settings where singleton for share");
       await holder.query("update user_identities set last_login_at = now() where id = $1", [idA]);
       const del = unlink(t.app, await cookieOf(u.id), idA);
-      // 真解除連結已持 users NKU＋site_settings SHARE，卡在刪 A 那一列。
+      // The real unlink already holds users NKU + site_settings SHARE and is blocked deleting A's row.
       expect(await waitForBlockedOrSettled(t.db.$client, del)).toBe("blocked");
       const login = ssoRoundTrip(t.app, t.idp("b"), { loginUrl: `/api/auth/oidc/login/${t.provider("b").id}`, claims: { sub: "sb", email: u.email } });
       const r = await within(login, 5000);

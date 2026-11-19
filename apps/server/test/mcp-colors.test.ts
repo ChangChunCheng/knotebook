@@ -1,14 +1,3 @@
-/**
- * #222：MCP／REST 讀寫筆記的文字色／底色（整合層）。
- *
- * - 寫入：無法顯示的色值（不在色盤的色名、半透明色等）整筆拒絕——MCP `edit_note`／`create_note` 的工具錯誤 `unsupported_color`、
- *   REST `POST /api/notes/:id/edits`／`POST /api/notes` 的 400；錯誤訊息列出可用色名；什麼都不存。
- * - 讀取：`read_note_section` 帶出顏色（寫入端認得的 HTML），拿讀到的原文與指紋 `replace_section`
- *   寫回，再讀一次逐字相同。
- *
- * ⚠ `callTool`／`payloadOf`／`errorOf` 與 `mcp-edit-note.test.ts` 等的同名 helper 是又一份
- * （同樣的理由：各自只有幾行）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -31,6 +20,7 @@ interface ToolCall {
   result: ToolResultBody;
 }
 
+// callTool/payloadOf/errorOf are copies of the same helpers in several other MCP test files, deliberately not moved into mcp-helpers.ts (a few lines each).
 async function callTool(app: FastifyInstance, token: string, name: string, args: unknown = {}): Promise<ToolCall> {
   const res = await mcpPost(app, rpc("tools/call", { name, arguments: args }), { token });
   return { status: res.statusCode, result: res.json().result };
@@ -89,8 +79,8 @@ async function createColored(s: Scene): Promise<string> {
   return note.id;
 }
 
-describe("#222 MCP 寫入：收內建色名與色碼", () => {
-  it("create_note 帶短寫大寫色碼 → 成功，read_note_section 讀回小寫 #rrggbb", async () => {
+describe("#222 MCP write: built-in color names and color codes are accepted", () => {
+  it("create_note with a short uppercase color code -> succeeds, read_note_section reads back lowercase #rrggbb", async () => {
     const s = await scene();
     const { note } = payloadOf<{ note: { id: string } }>(
       await callTool(s.ctx.app, s.token, "create_note", { title: "H", content: '<span style="color:#F60">x</span>' })
@@ -102,7 +92,7 @@ describe("#222 MCP 寫入：收內建色名與色碼", () => {
     expect(sec.section.markdown).toContain('<span style="color:#ff6600">x</span>');
   });
 
-  it("create_note 帶無法顯示的色值（不在色盤的色名）→unsupported_color、訊息列出 10 個色名、一列都不建", async () => {
+  it("create_note with an undisplayable color (a color name outside the palette) -> unsupported_color, message lists the 10 color names, no row created", async () => {
     const s = await scene();
     const err = errorOf(await callTool(s.ctx.app, s.token, "create_note", { title: "T", content: BAD }));
     expect(err.code).toBe("unsupported_color");
@@ -110,7 +100,7 @@ describe("#222 MCP 寫入：收內建色名與色碼", () => {
     expect(await countNotes(s)).toBe(0);
   });
 
-  it("edit_note 帶無法顯示的色值（不在色盤的色名）→unsupported_color、內容位元組相同、修改紀錄零新增", async () => {
+  it("edit_note with an undisplayable color (a color name outside the palette) -> unsupported_color, content byte-identical, no new edit records", async () => {
     const s = await scene();
     const noteId = await createColored(s);
     const beforeState = await stateBytes(s, noteId);
@@ -123,8 +113,8 @@ describe("#222 MCP 寫入：收內建色名與色碼", () => {
   });
 });
 
-describe("#222 REST 寫入：同一條管線、400 unsupported_color", () => {
-  it("POST /api/notes/:id/edits 與 POST /api/notes {content} → 400 unsupported_color，訊息列出色名", async () => {
+describe("#222 REST write: same pipeline, 400 unsupported_color", () => {
+  it("POST /api/notes/:id/edits and POST /api/notes {content} -> 400 unsupported_color, message lists the color names", async () => {
     const s = await scene();
     const noteId = await createColored(s);
     const beforeState = await stateBytes(s, noteId);
@@ -142,7 +132,7 @@ describe("#222 REST 寫入：同一條管線、400 unsupported_color", () => {
     expect(await countNotes(s)).toBe(before);
   });
 
-  it("POST /api/notes 帶 #F60 → 201；帶 tomato → 400 且訊息逐字", async () => {
+  it("POST /api/notes with #F60 -> 201; with tomato -> 400 and the exact message", async () => {
     const s = await scene();
     const ok = await s.ctx.app.inject({ method: "POST", url: "/api/notes", headers: bearer(s.token), payload: { title: "H", content: '<span style="color:#F60">x</span>' } });
     expect(ok.statusCode).toBe(201);
@@ -154,11 +144,11 @@ describe("#222 REST 寫入：同一條管線、400 unsupported_color", () => {
   });
 });
 
-describe("#222 讀取帶出顏色，讀 → replace_section 寫回 → 再讀一致", () => {
-  it("read_note_section 的 markdown 帶出三種顏色；原文＋指紋寫回後再讀逐字相同", async () => {
+describe("#222 reads carry colors; read -> replace_section write-back -> read again is identical", () => {
+  it("read_note_section markdown carries three kinds of color; after writing back the original text + fingerprint, reading again is identical", async () => {
     const s = await scene();
     const noteId = await createColored(s);
-    // section id 跟著 heading block 走，replace_section 之後會換——每次讀都重拿大綱。
+    // The section id follows the heading block and changes after replace_section, so re-fetch the outline on every read.
     const colorsId = async () =>
       payloadOf<{ sections: Array<{ sectionId: string; heading: string }> }>(
         await callTool(s.ctx.app, s.token, "read_note_outline", { note_id: noteId })
@@ -170,7 +160,7 @@ describe("#222 讀取帶出顏色，讀 → replace_section 寫回 → 再讀一
     const r1 = await read();
     expect(r1.truncated).toBe(false);
     const md1 = r1.section.markdown;
-    // 只有行內顏色的段落維持 markdown，span 夾在裡面；整段／儲存格顏色才整段 HTML。
+    // Paragraphs with only inline colors stay markdown with the span inside; whole-paragraph/cell colors become whole-paragraph HTML.
     expect(md1).toContain('\nplain <span style="color:red">red</span> and <span style="color:blue;background-color:yellow">both</span>\n');
     expect(md1).toContain('<p data-background-color="yellow" data-text-color="purple">whole paragraph</p>');
     expect(md1).toContain('<td data-background-color="blue">c</td>');
@@ -182,7 +172,6 @@ describe("#222 讀取帶出顏色，讀 → replace_section 寫回 → 再讀一
     const r2 = await read();
     expect(r2.section.markdown).toBe(md1);
 
-    // 其他段落（無色）的輸出不受影響：仍是純 markdown。
     const rest = await getContent(s.ctx.app, noteId, s.token);
     expect(rest.json().markdown).toContain("# Other\n\nplain\n");
   });

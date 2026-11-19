@@ -1,7 +1,4 @@
-/**
- * #200：MCP `read_note_image`（M1 讀圖半、M5、M6）。
- * 模型面字串寫字面值（#200、<MAX> = 5242880）。
- */
+/** Model-facing strings are written as literals (<MAX> = 5242880). */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -22,10 +19,10 @@ const DESC_TOKEN =
   "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image; larger ones are refused — download those with create_transfer_token instead.";
 const DESC_SESSION =
   "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image; larger ones are refused.";
-/** 並排：有寬度的圖片也讀成 `<figure>`；不提表格格子；位址以舉例寫（舊的絕對網址也含 id）。 */
+/** Columns: images with a width are also read as `<figure>`; table cells aren't mentioned; the address is given as an example (old absolute URLs also contain the id). */
 const SECTION_SENTENCE =
   "An uploaded image's address contains its upload id, for example `/api/uploads/<id>` in `![name](/api/uploads/<id>)` or, for an image with a caption or shown at a set width, in `<figure><img … src=\"/api/uploads/<id>\" …>…</figure>`; see them with read_note_image.";
-/** 並排功能加入前的句子：只講到有說明的 figure，有寬度的圖片上線後就不完整。 */
+/** Sentence from before the columns feature: it only covers figures with captions, which is incomplete once images with widths ship. */
 const OLD_SECTION_SENTENCE =
   "Uploaded images appear as `![name](/api/uploads/<id>)`, or inside `<figure><img src=\"/api/uploads/<id>\">…</figure>` when captioned; see them with read_note_image.";
 
@@ -41,7 +38,7 @@ async function toolsOf(app: FastifyInstance, auth: { token?: string; cookie?: st
 }
 
 describe("#200 read_note_image", () => {
-  it("M1 讀寫／唯讀 token、session、無 collab 都有；token 與 session 描述二選一", async () => {
+  it("read-write / read-only token, session and no-collab all have it; the token and session descriptions are either-or", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     for (const scope of ["notes:read", "notes:read notes:write"] as const) {
@@ -55,7 +52,7 @@ describe("#200 read_note_image", () => {
     expect((await toolsOf(plain.app, { token: (await seedTokenForUser(plain.db, u.id, "notes:read")).token })).map(t => t.name)).toContain("read_note_image");
   });
 
-  it("M5 正路：content[1] 是 image、data 解回原位元組、mimeType 取 DB、鏡像等式；/api/uploads/<id> 形亦可", async () => {
+  it("happy path: content[1] is an image, data decodes to the original bytes, mimeType comes from the DB, mirror equality; the /api/uploads/<id> form also works", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const me = await seedUser(db);
     const n = await seedNote(db, { ownerId: me.id });
@@ -71,7 +68,7 @@ describe("#200 read_note_image", () => {
     }
   });
 
-  it("M5 not_found：不存在與看不到的筆記逐位元組相同；查無上傳、檔案不在磁碟逐位元組相同", async () => {
+  it("not_found: a nonexistent note and an invisible note are byte-identical; a missing upload and a file absent from disk are byte-identical", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [me, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const mine = await seedNote(db, { ownerId: me.id });
@@ -89,7 +86,7 @@ describe("#200 read_note_image", () => {
     expect(JSON.stringify(d)).toBe(JSON.stringify(c));
   });
 
-  it("M5 上限邊界：size＝上限 → 成功；上限＋1 → file_too_large（token 版含 noteId、session 版指向瀏覽器）；實檔比 DB size 大 → 同 file_too_large", async () => {
+  it("size limit boundary: size = limit -> success; limit + 1 -> file_too_large (token version includes noteId, session version points to the browser); a real file larger than the DB size -> the same file_too_large", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const me = await seedUser(db);
     const n = await seedNote(db, { ownerId: me.id });
@@ -115,7 +112,7 @@ describe("#200 read_note_image", () => {
     expect((await read(app, token, n.id, lying)).structuredContent!.code).toBe("file_too_large");
   });
 
-  it("M5 扣 contentRead：limit 1 → 第二發 too_many_requests", async () => {
+  it("charges contentRead: limit 1 -> the second call is too_many_requests", async () => {
     const contentRead = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ contentRead }) });
     const me = await seedUser(db);
@@ -126,7 +123,7 @@ describe("#200 read_note_image", () => {
     expect((await read(app, token, n.id, id)).structuredContent!.code).toBe("too_many_requests");
   });
 
-  it("M5 放寬：別篇的上傳、讀得到那一篇 → 成功且 noteId 是上傳所屬；讀不到那一篇 → 與查無逐位元組相同", async () => {
+  it("relaxed: an upload of another note that I can read -> success and noteId is the note the upload belongs to; one I can't read -> byte-identical to a missing upload", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [me, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const a = await seedNote(db, { ownerId: me.id });
@@ -140,17 +137,17 @@ describe("#200 read_note_image", () => {
     expect(ok.structuredContent).toMatchObject({ noteId: b.id, uploadId: inB });
     const denied = await read(app, token, a.id, inC);
     expect(denied.structuredContent).toEqual({ code: "not_found", message: NOT_READABLE });
-    // #200：超過上限時回的 noteId 是**上傳所屬**的那一篇（download token 綁在那一篇），不是傳進來的 note_id。
+    // #200: the noteId returned when over the limit is the note the **upload belongs to** (the download token is bound to that note), not the passed-in note_id.
     const [bigInB] = await db.insert(uploads).values({ noteId: b.id, uploaderId: other.id, mime: "image/png", size: MAX + 1 }).returning({ id: uploads.id });
     const over = await read(app, token, a.id, bigInB!.id);
     expect(over.structuredContent).toMatchObject({ code: "file_too_large", noteId: b.id, bytes: MAX + 1 });
     expect(String(over.structuredContent!.message)).toContain(`for note ${b.id}.`);
-    // 先判讀不讀得到、再判大小：屬於讀不到的 C 篇、size＝上限＋1 的上傳，仍是與查無逐位元組相同的 not_found（不洩漏 noteId 與大小）。
+    // Readability is judged before size: an upload of an unreadable note C with size = limit + 1 is still the same not_found as a missing one (no noteId or size leak).
     const [bigInC] = await db.insert(uploads).values({ noteId: c.id, uploaderId: other.id, mime: "image/png", size: MAX + 1 }).returning({ id: uploads.id });
     expect((await read(app, token, a.id, bigInC!.id)).structuredContent).toEqual({ code: "not_found", message: NOT_READABLE });
   });
 
-  it("大寫 note_id：上傳屬於該篇 → 成功、noteId 是小寫", async () => {
+  it("uppercase note_id: the upload belongs to that note -> success, noteId is lowercase", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const me = await seedUser(db);
     const n = await seedNote(db, { ownerId: me.id });
@@ -161,7 +158,7 @@ describe("#200 read_note_image", () => {
     expect(r.structuredContent).toMatchObject({ noteId: n.id });
   });
 
-  it("M6 read_note_section 讀回三種形：無 caption → ![name](/api/uploads/<id>)；有 caption → <figure><img …src=…><figcaption>；有寬度 → <figure><img … width>；句在 wire 上", async () => {
+  it("read_note_section reads back three shapes: no caption -> ![name](/api/uploads/<id>); caption -> <figure><img ... src=...><figcaption>; width -> <figure><img ... width>; the sentence is on the wire", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id });
@@ -195,7 +192,7 @@ describe("#200 read_note_image", () => {
     expect(res.body).toContain(JSON.stringify(SECTION_SENTENCE).slice(1, -1));
   });
 
-  it("M6b 並排功能加入前的圖片句不在 wire 上（讀寫、唯讀 token 與 session 都查）", async () => {
+  it("the pre-columns image sentence isn't on the wire (read-write and read-only tokens and session are all checked)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auths = [
@@ -205,7 +202,7 @@ describe("#200 read_note_image", () => {
     ];
     for (const auth of auths) {
       const res = await mcpPost(ctx.app, rpc("tools/list"), auth);
-      expect(res.body).toContain(JSON.stringify(SECTION_SENTENCE).slice(1, -1)); // 假綠守衛：清單上有 read_note_section
+      expect(res.body).toContain(JSON.stringify(SECTION_SENTENCE).slice(1, -1)); // false-green guard: read_note_section is on the list
       expect(res.body).not.toContain(JSON.stringify(OLD_SECTION_SENTENCE).slice(1, -1));
       expect(res.body).not.toContain("Uploaded images appear as");
     }

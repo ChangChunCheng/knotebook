@@ -1,7 +1,4 @@
-/**
- * #175 PATCH（row 12）。轉址列用 seedRedirect 直插（寫轉址的生產路徑只有移動）；
- * 「移進群組」以 SQL 模擬移動。
- */
+/** Redirect rows are inserted with seedRedirect (the only production path that writes redirects is move); "moved into a group" is simulated with SQL. */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -23,8 +20,8 @@ async function redirectRow(db: Db, oldPath: string) {
   return (await db.select().from(noteRedirects).where(eq(noteRedirects.oldPath, oldPath)))[0];
 }
 
-describe("#175 PATCH 的權限", () => {
-  it("群組：只讀角色改標題 403、一般成員改標題 200 但改 slug 403、管理員改 slug 200；個人：editor 改 slug 403、owner 200", async () => {
+describe("#175 PATCH permissions", () => {
+  it("group: read-only role title edit 403, plain member title edit 200 but slug edit 403, admin slug edit 200; personal: editor slug edit 403, owner 200", async () => {
     const { app, db } = await buildTestApp();
     const [admin, member, reader, owner, editor] = await Promise.all(Array.from({ length: 5 }, () => seedUser(db)));
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: member.id, role: "member" }, { userId: reader.id, role: "member" }]);
@@ -40,12 +37,12 @@ describe("#175 PATCH 的權限", () => {
     expect((await patch(app, mine.id, owner.id, { slug: "yes" })).json()).toMatchObject({ slug: "yes", ownerHandle: owner.handle });
   });
 
-  it("群組 editor 改標題的 auto slug 在**群組**範圍去重——同人個人筆記同名不加 -2；同群組另一篇同名加 -2；撞 notes_group_slug_idx 的真競態重試成功", async () => {
+  it("group editor title change: auto slug is deduplicated in the group scope - a same-named personal note of the same person adds no -2, another same-named note in the group adds -2; a real race hitting notes_group_slug_idx retries successfully", async () => {
     const holder: { db?: Db; groupId?: string; armed?: boolean } = {};
     const built = await buildTestApp({
       slugUpdateTestHook: async candidate => {
         if (!holder.armed) return;
-        holder.armed = false; // 只搶插一次：讓第一輪 UPDATE 撞 notes_group_slug_idx
+        holder.armed = false; // race-insert only once so the first UPDATE round hits notes_group_slug_idx
         await holder.db!.insert(notes).values({ groupId: holder.groupId!, title: "racer", slug: candidate });
       },
     });
@@ -63,10 +60,10 @@ describe("#175 PATCH 的權限", () => {
     holder.armed = true;
     const raced = await patch(app, c.id, member.id, { title: "Roadmap" });
     expect(raced.statusCode).toBe(200);
-    expect(raced.json().slug).toBe("roadmap-4"); // roadmap-3 被搶插者佔走，重探測後落在 -4
+    expect(raced.json().slug).toBe("roadmap-4"); // roadmap-3 was taken by the racing insert; the re-probe lands on -4
   });
 
-  it("群組筆記的自訂 slug 撞同群組另一篇 → 409 slug_taken（認 notes_group_slug_idx）；撞別的群組或個人筆記同名不算", async () => {
+  it("custom slug of a group note colliding with another note in the same group -> 409 slug_taken (recognizes notes_group_slug_idx); same name in another group or a personal note doesn't count", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
@@ -82,7 +79,7 @@ describe("#175 PATCH 的權限", () => {
     expect((await patch(app, n.id, admin.id, { slug: "mine" })).json()).toMatchObject({ slug: "mine", groupId: g.id });
   });
 
-  it("格 2 授權之後、UPDATE 之前被移進群組（呼叫者是該群組成員）→ 409 conflict；標題未寫入", async () => {
+  it("moved into a group after authorization and before the UPDATE (caller is a member of that group) -> 409 conflict; title not written", async () => {
     const holder: { db?: Db; noteId?: string; groupId?: string } = {};
     const built = await buildTestApp({
       slugUpdateTestHook: async () => {
@@ -99,7 +96,7 @@ describe("#175 PATCH 的權限", () => {
     const n = await seedNote(db, { ownerId: u.id }, { title: "Before Move" });
     Object.assign(holder, { noteId: n.id, groupId: g.id });
     const res = await patch(app, n.id, u.id, { title: "Moved Meanwhile" });
-    // #175：格 2 的 UPDATE 帶授權時的歸屬（owner_id = u）當 scope 述詞；列已被移進群組 → 0 列 → 列在 → 409。
+    // #175: the UPDATE carries the authorization-time owner (owner_id = u) as its scope predicate; the row has moved into a group -> 0 rows -> row exists -> 409.
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("conflict");
     const [row] = await db.select({ title: notes.title, groupId: notes.groupId }).from(notes).where(eq(notes.id, n.id));
@@ -107,22 +104,22 @@ describe("#175 PATCH 的權限", () => {
   });
 });
 
-describe("#175：寫 prev 時刪同路徑轉址", () => {
-  it("R1：N1 移進群組留下 /n/h/c15 轉址；N2 取 c15 再自訂改名 → prev=c15 且轉址被刪 → /n/h/c15 解到 N2", async () => {
+describe("#175 writing prev deletes the redirect at the same path", () => {
+  it("N1 moved into a group leaves a /n/h/c15 redirect; N2 takes c15 and then renames to custom -> prev=c15 and the redirect is deleted -> /n/h/c15 resolves to N2", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "member" }]);
     const n1 = await seedNote(db, { groupId: g.id }, { slug: "c15", slugIsCustom: true });
     await seedRedirect(db, `/n/${u.handle}/c15`, n1.id);
     const n2 = await seedNote(db, { ownerId: u.id });
-    expect((await patch(app, n2.id, u.id, { slug: "c15" })).statusCode).toBe(200); // 活網址勝轉址
-    expect(await redirectRow(db, `/n/${u.handle}/c15`)).toBeDefined(); // auto→custom 不寫 prev、不刪
+    expect((await patch(app, n2.id, u.id, { slug: "c15" })).statusCode).toBe(200); // a live URL wins over a redirect
+    expect(await redirectRow(db, `/n/${u.handle}/c15`)).toBeDefined(); // auto -> custom writes no prev and deletes nothing
     expect((await patch(app, n2.id, u.id, { slug: "c15b" })).json().prevSlug).toBe("c15");
     expect(await redirectRow(db, `/n/${u.handle}/c15`)).toBeUndefined();
     expect((await byPath(app, u.handle, "c15", u.id)).json().id).toBe(n2.id);
   });
 
-  it("群組 scope 不刪轉址（DELETE 只在個人 scope 發）：管理員把群組筆記的自訂 slug 改掉 → prev 寫入，但 /n/<管理員>/<舊 slug> 的轉址仍在", async () => {
+  it("group scope does not delete redirects (DELETE is only issued in personal scope): an admin changing a group note's custom slug writes prev, but the /n/<admin>/<old slug> redirect remains", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
@@ -133,19 +130,19 @@ describe("#175：寫 prev 時刪同路徑轉址", () => {
     expect(await redirectRow(db, `/n/${admin.handle}/gold`)).toMatchObject({ noteId: mine.id });
   });
 
-  it("R2（誤刪反例）：舊列是 auto、prev 原樣保留時不刪較新的轉址", async () => {
+  it("wrong-delete counterexample: old row is auto and prev is kept unchanged -> the newer redirect is not deleted", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "member" }]);
     const n3 = await seedNote(db, { ownerId: u.id }, { slug: "auto3", prevSlug: "pp" });
     const n4 = await seedNote(db, { groupId: g.id }, { slug: "pp" });
     await seedRedirect(db, `/n/${u.handle}/pp`, n4.id);
-    expect((await patch(app, n3.id, u.id, { slug: "r3" })).json().prevSlug).toBe("pp"); // CASE：舊列 auto → prev 不變
+    expect((await patch(app, n3.id, u.id, { slug: "r3" })).json().prevSlug).toBe("pp"); // old row is auto -> prev unchanged
     expect(await redirectRow(db, `/n/${u.handle}/pp`)).toBeDefined();
     expect((await byPath(app, u.handle, "pp", u.id)).json().id).toBe(n4.id);
   });
 
-  it("並發：A 把 N 改成自訂 foo 並持列鎖；B 改成 bar 被擋；A commit 後 B 讀到被覆寫的 custom 版 → prev=foo、刪 /n/h/foo", async () => {
+  it("concurrency: A renames N to custom foo and holds the row lock; B renames to bar and is blocked; after A commits B reads the overwritten custom version -> prev=foo and /n/h/foo is deleted", async () => {
     const state: { noteId?: string; second?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const holder: { app?: FastifyInstance; db?: Db; userId?: string } = {};
     const hook: SlugPatchTestHook = async (point, ctx) => {
@@ -171,7 +168,7 @@ describe("#175：寫 prev 時刪同路徑轉址", () => {
     expect((await byPath(app, u.handle, "foo", u.id)).json().id).toBe(n.id);
   });
 
-  it("授權後被移進群組（移入交錯）→ 409 conflict；slug 不寫、移動留下的轉址保留；授權後被刪 → 404", async () => {
+  it("moved into a group after authorization -> 409 conflict; slug not written, the redirect left by the move is kept; deleted after authorization -> 404", async () => {
     const state: { noteId?: string; groupId?: string; handle?: string; mode?: "move" | "delete" } = {};
     const holder: { db?: Db } = {};
     const built = await buildTestApp({
@@ -202,10 +199,10 @@ describe("#175：寫 prev 時刪同路徑轉址", () => {
   });
 });
 
-describe("#175：PATCH 格 2（只改標題）授權後被真的移進呼叫者不在的群組", () => {
+describe("#175 PATCH title-only: note really moved into a group the caller is not in after authorization", () => {
   const NOT_FOUND = { error: { code: "not_found", message: "No note with that id." } };
 
-  it("逐人分享 editor 改標題；slugUpdateTestHook（格 2 UPDATE 之前）裡 owner 以 POST …/move 把筆記移進別的群組 → 409 conflict、標題未寫、回應不含群組名", async () => {
+  it("shared editor changes the title; inside slugUpdateTestHook (before the title-only UPDATE) the owner moves the note into another group via POST .../move -> 409 conflict, title not written, response does not contain the group name", async () => {
     const holder: { app?: FastifyInstance; fire?: () => Promise<void> } = {};
     const built = await buildTestApp({
       slugUpdateTestHook: async () => {
@@ -236,7 +233,7 @@ describe("#175：PATCH 格 2（只改標題）授權後被真的移進呼叫者�
     expect(row).toEqual({ title: "Original", groupId: g.id, ownerId: null });
   });
 
-  it("授權之後被刪 → 404 not_found（0 列分流的另一支；ownershipChanged 讀不到列）", async () => {
+  it("deleted after authorization -> 404 not_found (the other branch of the 0-row split; ownershipChanged can't read the row)", async () => {
     const holder: { db?: Db; noteId?: string } = {};
     const built = await buildTestApp({
       slugUpdateTestHook: async () => {

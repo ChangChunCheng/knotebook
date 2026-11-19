@@ -1,6 +1,3 @@
-/**
- * #175：MCP 對群組筆記（讀得到、`edit_note` 改得動）。harness 照 mcp-notes／mcp-content 兩檔。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -24,15 +21,15 @@ async function callTool(app: FastifyInstance, token: string, name: string, args:
   return res.json().result as { isError?: true; structuredContent?: Record<string, unknown> & { code?: string; message?: string } };
 }
 
-/** 成功路徑的 `notes`：先斷工具沒回錯（否則紅在「工具回了 internal」這一行，而不是之後讀 `notes` 時的 TypeError）。 */
+/** `notes` of the success path: first assert the tool didn't return an error (otherwise it goes red at "the tool returned internal", not at a later TypeError reading `notes`). */
 async function notesOf(app: FastifyInstance, token: string, name: string, args: unknown = {}) {
   const result = await callTool(app, token, name, args);
   expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
   return result.structuredContent as { notes: Array<Record<string, unknown>>; nextCursor?: string | null };
 }
 
-describe("#175 list_notes／search_notes 的群組筆記", () => {
-  it("三支混在一起以 limit 2 翻頁湊回全集；群組列 owner={kind:group}、url /g/、role editor／viewer、從不 owner；無閱讀旗標看不到", async () => {
+describe("#175 list_notes / search_notes group notes", () => {
+  it("three kinds mixed, paged with limit 2 back to the full set; group rows have owner={kind:group}, url /g/, role editor/viewer, never owner; no-read-flag members can't see them", async () => {
     const { app, db } = await buildTestApp();
     const [me, other, reader, blind] = await Promise.all(Array.from({ length: 4 }, () => seedUser(db)));
     const g = await seedGroup(db, "Team", [
@@ -68,7 +65,7 @@ describe("#175 list_notes／search_notes 的群組筆記", () => {
     expect((await notesOf(app, blindToken, "list_notes")).notes).toEqual([]);
   });
 
-  it("search_notes：rank（完全相等 → 前綴 → 子字串）跨三支成立；非成員的群組筆記不出現", async () => {
+  it("search_notes: rank (exact -> prefix -> substring) holds across the three kinds; a non-member's group notes don't appear", async () => {
     const { app, db } = await buildTestApp();
     const [me, outsider] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -86,8 +83,8 @@ describe("#175 list_notes／search_notes 的群組筆記", () => {
   });
 });
 
-describe("#175 read_note_outline／edit_note 的群組筆記（需 collab）", () => {
-  it("成員讀群組筆記的 outline：note.owner 是群組（INNER JOIN 時是 not_found）；一般成員 append 成功並留紀錄；只讀角色 forbidden 且訊息不提 owner", async () => {
+describe("#175 read_note_outline / edit_note group notes (needs collab)", () => {
+  it("a member reads a group note's outline: note.owner is the group (with INNER JOIN it was not_found); a plain member's append succeeds and leaves a record; a read-only role gets forbidden and the message doesn't mention owner", async () => {
     const ctx = await buildCollabTestApp();
     const memberEmail = `m-${randomUUID()}@example.com`;
     const member = await ctx.createUser({ email: memberEmail, password: PASSWORD });
@@ -119,9 +116,7 @@ describe("#175 read_note_outline／edit_note 的群組筆記（需 collab）", (
   });
 });
 
-// ───────────────────────────── #175：create_note {group_id} ─────────────────────────────
-
-/** 兩句專用訊息，逐字（測試**不**從實作 import——字面值才釘得住規格）。 */
+/** The two dedicated messages, verbatim (the test deliberately does **not** import them from the implementation: a literal pins the wording). */
 const E1_GROUP_NOT_FOUND = "No group with that id among the groups you belong to.";
 const E2_CREATE_FORBIDDEN = "Your role in that group can't create notes. Leave out `group_id` to create a personal note.";
 const RW = "notes:read notes:write" as const;
@@ -135,7 +130,7 @@ interface CreatedNote {
   lastEdited: { at: string; byHandle: string; agentLabel: string | null } | null;
 }
 
-/** 成功呼叫的 `note`：先斷工具沒回錯（否則紅在「回了 internal」這一行，而不是之後讀 `note` 時的 TypeError）。 */
+/** `note` of the success path: first assert the tool didn't return an error (otherwise it goes red at "the tool returned internal", not at a later TypeError reading `note`). */
 async function createdNote(app: FastifyInstance, token: string, args: unknown): Promise<CreatedNote> {
   const result = await callTool(app, token, "create_note", args);
   expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
@@ -146,7 +141,7 @@ async function noteCount(db: Db): Promise<number> {
   return (await db.select({ id: notes.id }).from(notes)).length;
 }
 
-/** `edit` 桶（測試自己持有的那一顆）還剩幾格：一路 consume 到被拒。 */
+/** Remaining slots of the `edit` limiter the test holds: consume until rejected. */
 function cellsLeft(limiter: FixedWindowLimiter, userId: string): number {
   let n = 0;
   while (limiter.consume(userId)) n += 1;
@@ -154,7 +149,7 @@ function cellsLeft(limiter: FixedWindowLimiter, userId: string): number {
 }
 
 describe("#175 create_note {group_id}", () => {
-  it("A 一般成員：群組列、owner＝群組、url /g/、role editor；slug 去重範圍＝該群組（不對稱測資：個人那發另得 plan-3）", async () => {
+  it("plain member: group row, owner = group, url /g/, role editor; slug dedup scope = that group (asymmetric data: the personal call gets plan-3 instead)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -178,7 +173,7 @@ describe("#175 create_note {group_id}", () => {
     expect(personal.owner).toEqual({ kind: "user", handle: me.handle });
   });
 
-  it("反向：個人有 plan、群組沒有任何筆記 → 群組那發 slug 就是 plan（個人筆記不佔群組範圍）", async () => {
+  it("reverse: personal has plan, the group has no notes -> the group call's slug is plan (personal notes don't occupy the group scope)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -189,7 +184,7 @@ describe("#175 create_note {group_id}", () => {
     expect(inGroup.url).toBe(`/g/${g.id}/plan`);
   });
 
-  it("B 帶 content（collab app）：內容落盤、note_ai_edits 一列、role editor、owner 是群組、lastEdited 非 null（rereadVisibleNote 走了 grouped 分支）", async () => {
+  it("with content (collab app): content persisted, one note_ai_edits row, role editor, owner is the group, lastEdited non-null (rereadVisibleNote took the grouped branch)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "Team", [{ userId: me.id, role: "member" }]);
@@ -205,7 +200,7 @@ describe("#175 create_note {group_id}", () => {
     expect(JSON.stringify(content.json())).toContain("群組內容");
   });
 
-  it("C create-only 角色：不帶與帶 content 都建得成、role viewer（不是 editor）、之後 edit_note forbidden、同一把 token 的 REST revert 也是 403 forbidden", async () => {
+  it("create-only role: creates with and without content, role viewer (not editor), later edit_note forbidden, the same token's REST revert is also 403 forbidden", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "Team", [{ userId: me.id, role: "member" }]);
@@ -226,8 +221,8 @@ describe("#175 create_note {group_id}", () => {
       expect(String(denied.structuredContent!.message)).not.toContain("owner");
     }
 
-    // docs/mcp.md「undone by anyone who can edit the note, which leaves out the creator…」的依據：
-    // 帶 content 建出的那一篇有一列 note_ai_edits（回應不帶 editId，從 DB 取），create-only 的建立者撤回它 → 403。
+    // Basis for the docs/mcp.md statement that undo is limited to people who can edit the note, which leaves out a create-only creator:
+    // the note created with content has one note_ai_edits row (the response carries no editId, so read it from the DB); the create-only creator undoing it -> 403.
     const edits = await ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, filled.id));
     expect(edits).toHaveLength(1);
     const revert = await ctx.app.inject({ method: "POST", url: `/api/notes/${filled.id}/edits/${edits[0]!.id}/revert`, headers: bearer(token) });
@@ -235,7 +230,7 @@ describe("#175 create_note {group_id}", () => {
     expect(revert.json().error.code).toBe("forbidden");
   });
 
-  it("D 非成員的群組與不存在的 uuid：零新增列、edit 桶不啃、structuredContent 逐位元組相同、group_not_found＋E1、不是 NOTE_NOT_FOUND_MESSAGE", async () => {
+  it("non-member's group and a nonexistent uuid: zero new rows, edit limiter not charged, structuredContent byte-identical, group_not_found + E1_GROUP_NOT_FOUND, not NOTE_NOT_FOUND_MESSAGE", async () => {
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
     const ctx = await buildCollabTestApp({ limiters: { edit } });
     const [me, other] = await Promise.all([seedUser(ctx.db), seedUser(ctx.db)]);
@@ -259,7 +254,7 @@ describe("#175 create_note {group_id}", () => {
     expect(JSON.stringify(nonMember.structuredContent)).toBe(JSON.stringify(missing.structuredContent));
   });
 
-  it("E 是成員但角色沒有新建旗標：零新增列、edit 桶不啃、forbidden", async () => {
+  it("member whose role lacks the create flag: zero new rows, edit limiter not charged, forbidden", async () => {
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
     const ctx = await buildCollabTestApp({ limiters: { edit } });
     const me = await seedUser(ctx.db);
@@ -277,7 +272,7 @@ describe("#175 create_note {group_id}", () => {
     expect(r.structuredContent!.message).toBe(E2_CREATE_FORBIDDEN);
   });
 
-  it("F 站台 admin 非成員：與一般非成員／不存在的 uuid 的 structuredContent 逐位元組相同（無豁免）", async () => {
+  it("non-member site admin: structuredContent byte-identical to an ordinary non-member / nonexistent uuid (no exemption)", async () => {
     const { app, db } = await buildTestApp();
     const [admin, plain, other] = await Promise.all([seedUser(db, { isAdmin: true }), seedUser(db), seedUser(db)]);
     const foreign = await seedGroup(db, "Foreign", [{ userId: other.id, role: "admin" }]);
@@ -296,7 +291,7 @@ describe("#175 create_note {group_id}", () => {
     expect(JSON.stringify(asAdmin.structuredContent)).toBe(JSON.stringify(adminMissing.structuredContent));
   });
 
-  it("G group_id 不是 uuid：零新增列、isError 且沒有 structuredContent（SDK 輸入驗證形，無 code）", async () => {
+  it("group_id is not a uuid: zero new rows, isError and no structuredContent (SDK input validation shape, no code)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -308,8 +303,8 @@ describe("#175 create_note {group_id}", () => {
     expect(r.structuredContent).toBeUndefined();
   });
 
-  it("H 成員檢查之後群組被刪（membership-checked 縫）：不帶與帶 content 都回 group_not_found＋E1（不是 internal）、零新增列", async () => {
-    // 刪空群組：只有空群組可刪，本案群組無筆記。hook 拿 db 的方式：app 建好才有 db，所以用 holder。
+  it("group deleted after the membership check (membership-checked seam): with and without content both return group_not_found + E1_GROUP_NOT_FOUND (not internal), zero new rows", async () => {
+    // Only empty groups can be deleted, and this test's group has no notes. The hook can only get `db` after the app is built, hence the holder.
     const holder: { db?: Db } = {};
     const hook: GroupTestHook = async (point, hctx) => {
       if (point === "membership-checked") await holder.db!.delete(groups).where(eq(groups.id, hctx.groupId!));
@@ -339,7 +334,7 @@ describe("#175 create_note {group_id}", () => {
     expect(r2.structuredContent!.message).toBe(E1_GROUP_NOT_FOUND);
   });
 
-  it("I 大寫 uuid 的 group_id：成功，owner.id 與 url 都是小寫", async () => {
+  it("uppercase uuid group_id: succeeds, owner.id and url are lowercase", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -351,10 +346,8 @@ describe("#175 create_note {group_id}", () => {
   });
 });
 
-// ───────────────────────────── #180：create_note 改鍵名 group_id ─────────────────────────────
-
-describe("#180 create_note 的 group_id 與 strict 註冊", () => {
-  it("M-G1 用舊鍵 groupId（合法群組 id）→ 先斷零新增筆記，再斷 SDK 輸入驗證錯誤（isError、無 code、訊息含 groupId）", async () => {
+describe("#180 create_note's group_id and strict registration", () => {
+  it("old key groupId (valid group id) -> first assert zero new notes, then the SDK input validation error (isError, no code, message contains groupId)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -371,7 +364,7 @@ describe("#180 create_note 的 group_id 與 strict 註冊", () => {
     expect(result.content[0]!.text).toContain("groupId");
   });
 
-  it("M-G3 REST POST /api/notes {groupId} 照舊 201（鍵名偏離只在 MCP，createBodySchema 不動）", async () => {
+  it("REST POST /api/notes {groupId} is still 201 (the key rename only applies to MCP, createBodySchema is unchanged)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -381,14 +374,12 @@ describe("#180 create_note 的 group_id 與 strict 註冊", () => {
   });
 });
 
-// ───────────────────────────── #239 W9：notes:move 不管 create_note／edit_note ─────────────────────────────
-
-describe("#239 W9：notes:move 不管 create_note／edit_note", () => {
-  it("讀寫無搬移憑證：create_note {group_id} 成功、owner 是群組；edit_note append 群組筆記成功", async () => {
+describe("#239 notes:move doesn't govern create_note / edit_note", () => {
+  it("read-write token without move: create_note {group_id} succeeds and the owner is the group; edit_note append on a group note succeeds", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "Team", [{ userId: me.id, role: "admin" }]);
-    // 第三參數明寫讀寫（無 notes:move），不依賴 seedTokenForUser 的預設值——預設值日後若改，這案的意圖不能跟著變。
+    // The third argument says read-write (no notes:move) explicitly instead of relying on `seedTokenForUser`'s default: if the default changes, this test's intent must not change with it.
     const { token } = await seedTokenForUser(ctx.db, me.id, "notes:read notes:write");
     const created = await createdNote(ctx.app, token, { title: "W9", group_id: g.id });
     expect(created.owner.kind).toBe("group");
