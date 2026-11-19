@@ -9,7 +9,7 @@ export function wireCost(v: unknown): number {
 /** `,"pageCutShort":true` in both copies is about 42. */
 export const PAGE_CUT_RESERVE = 64;
 
-/** Always returns at least 1: a single item is far below the budget by the per-field limits. */
+/** Returns at least 1 when `costs` is non-empty (a single item is far below the budget by the per-field limits); 0 for empty `costs`. */
 export function countWithinWireBudget(costs: readonly number[], base: number, budget: number = MCP_LIST_WIRE_BUDGET): number {
   let total = base;
   let n = 0;

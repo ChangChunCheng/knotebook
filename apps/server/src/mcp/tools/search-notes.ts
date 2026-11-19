@@ -2,8 +2,13 @@
  * Never use the query as a LIKE/ILIKE pattern (`%`/`_` would be wildcards); the trigram path
  * escapes it with `escapeLike`. No cursor paging: the leading ORDER BY key is rank. Matches
  * are added in note order until the next would exceed `MCP_SEARCH_WIRE_BUDGET` (50 notes × 3
- * matches can exceed the 262 144 sentinel); `matchedOn` is per note. Uses its own `search`
- * limiter, charged before the query.
+ * matches ≈ 328 000 can exceed the 262 144 sentinel); the first match that would exceed it
+ * stops the loop (no skip-and-retry) and sets top-level `matchesTruncated: true`. List and
+ * matches come from one REPEATABLE READ READ ONLY transaction. Two variants by `canRead`
+ * (`collab && editing` at registration): without read tools, the description and `sectionId`
+ * don't mention read_note_section/outline. `matchedOn` is per note (one top-level value means
+ * nothing for a mixed list). Uses its own `search` limiter, charged before the query; it
+ * doesn't touch `contentRead`.
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";

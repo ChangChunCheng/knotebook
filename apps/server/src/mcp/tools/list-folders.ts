@@ -1,4 +1,4 @@
-/** The wire-budget cut is only a backstop (50 items are far below it), so the description doesn't promise "fewer when". */
+/** Same visibility predicate as REST `GET /api/folders`; ordered by keyset (kind, space, id), not tree order. An invisible group is the same `group_not_found` as a nonexistent one. The wire-budget cut is only a backstop (worst case about 2 563 per item, 50 items far below it), so the description doesn't promise "fewer when". */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FOLDER_KINDS, listVisibleFoldersPage, type FolderKind, type FolderPageKey } from "../../folders/queries.js";

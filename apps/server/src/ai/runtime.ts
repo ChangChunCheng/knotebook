@@ -54,7 +54,7 @@ export async function selfCheckAiKeys(db: Db, appSecret: string, runtime: AiRunt
   const { upgradableIds } = checkProviderKeys(providers, appSecret, runtime, log);
   if (upgradableIds.length === 0) return;
 
-  // Migration for #14. A failed upgrade must not block startup: the old ciphertext still works.
+  // Migration for #14: only rows decryptable with the current APP_SECRET are rewritten, so broken data isn't made worse. A failed upgrade must not block startup (the old ciphertext still works); the next start retries.
   let upgraded = 0;
   for (const id of upgradableIds) {
     const provider = providers.find(row => row.id === id);

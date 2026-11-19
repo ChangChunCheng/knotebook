@@ -5,6 +5,8 @@
  * download records a salted hash of each such link's exported text (in the base segment
  * table's `links`, no migration) and write-back treats a matching text as "no custom text".
  * Only links with an empty `label` are recorded; bases downloaded before this use the old rule.
+ * The recorded text must be computed like the export (`wikilinkVisibleText`, as `wikilinksToLinks`
+ * does), or hashes won't match.
  */
 import { mapInlineArrays, wikilinkVisibleText, type WikilinkProps } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
@@ -41,7 +43,7 @@ export function exportedLinkTextOf(segments: readonly TransferSegment[], key: Bu
   return (targetId, text) => set.has(linkTextHash(key, salt, targetId, text));
 }
 
-/** `snapshotTitle` becomes the target's current title, as the "text = current title" rule stores. Copy-on-write. */
+/** Clears a parsed wikilink's label when (target, label) is a recorded exported text, and sets `snapshotTitle` to the target's current title when `titleOf` finds it (as the "text = current title" rule stores). Empty labels are untouched. Copy-on-write. */
 export function keepLabelFree<B>(
   blocks: B[],
   exported: (targetId: string, text: string) => boolean,

@@ -1,6 +1,9 @@
 /**
  * File names are cosmetic: write-back trusts only the frontmatter `id`. Files are matched
- * before folders when names clash (a folder yields); a clash appends ` (n)`, n from 2.
+ * before folders when names clash (a folder yields); a clash appends ` (n)`, n from 2. Names
+ * clash case-folded per directory, files and folders in one namespace; same kind ordered by
+ * `createdAt`, then `id`. Paths may exceed Windows' 260. `dirs` are sorted by full path in
+ * code-unit order.
  */
 import type { FolderSpaceDto } from "@knotebook/shared";
 import type { BulkRange } from "../auth/transfer-token.js";

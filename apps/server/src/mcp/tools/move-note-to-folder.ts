@@ -32,7 +32,7 @@ export async function moveNoteToFolderTool(args: { note_id: string; folder_id: s
   if (denied) return denied;
   const out = await placeNote(folderServiceDeps(ctx), { by: ctx.userId, noteId: args.note_id, folderId: args.folder_id });
   if (out.kind === "error") return folderFailureToToolError("move_note_to_folder", out);
-  // A shared note must read the shared branch; a miss means the share was revoked or the note moved after commit.
+  // A shared note must be read through the shared branch (the caller's folder is their own placement); a miss means the share was revoked or the note moved after commit.
   const row = await rereadAnyVisibleNote(ctx, args.note_id);
   if (!row) return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
   const [note] = await noteSummariesForModel(ctx.db, [row]);

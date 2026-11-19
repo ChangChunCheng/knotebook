@@ -1,7 +1,9 @@
 /**
- * Hardcodes `method: "POST"` (only `/api/mcp` POST is served). The body isn't carried: it goes
+ * Hardcodes `method: "POST"` (only `/api/mcp` POST is served; the name is generic, and using it
+ * for another method would silently build a wrong `Request`). The body isn't carried: it goes
  * through `handleRequest`'s `parsedBody` because Fastify already consumed the stream. The
- * Response's status/headers/text must be materialized before the server closes.
+ * Response's status/headers/text must be materialized before the server closes (discipline only:
+ * no test can tell today).
  */
 import type { FastifyReply, FastifyRequest } from "fastify";
 

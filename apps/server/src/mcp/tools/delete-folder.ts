@@ -1,4 +1,4 @@
-/** The service owns the transaction; this file must not contain a deleted_at literal. `readTrashRetentionDays` runs before the service charges its limiter. */
+/** Deletes the folder and its subfolders and trashes the subtree's live notes, all or nothing; in a shared private tree only folders are deleted. Reply ids are the first `MCP_DELETE_FOLDER_IDS_MAX` by id. No empty-only option and no permanent delete. The service owns the transaction; this file must not contain a deleted_at literal. `readTrashRetentionDays` runs before the service charges its limiter. */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../../auth/tx/admin-site-settings.js";

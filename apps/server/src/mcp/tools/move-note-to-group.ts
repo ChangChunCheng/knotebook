@@ -1,4 +1,4 @@
-/** Both annotations equal the SDK defaults, written out so clients needn't depend on them. No `edit` limiter (REST move has none), no presence, `updated_at` untouched. */
+/** Same behavior as REST move (shared `notes/move-note.ts`); outside the collab gate (DB only; kicking goes through collabHooks, a no-op without collab). Both annotations equal the SDK defaults, written out so clients needn't depend on them. No `edit` limiter (REST move has none), no presence, `updated_at` untouched. */
 import { eq } from "drizzle-orm";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { formatBytes } from "@knotebook/shared";

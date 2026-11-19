@@ -1,6 +1,8 @@
 /**
  * The branch selects are single-use: drizzle builders are mutable, so reusing them in a
- * second `unionAll` silently yields a malformed query (guard: `test/unit/mcp-query-builders.test.ts`).
+ * second `unionAll` silently yields a malformed query, and the corruption is retroactive (the first
+ * query's `toSQL()` changes too) (guard: `test/unit/mcp-query-builders.test.ts`). Visibility
+ * semantics live only in `notes/list-query.ts`.
  * ORDER BY on a set operation accepts only output column names, so rank is aliased first.
  */
 import { desc, sql, type SQL } from "drizzle-orm";
@@ -19,7 +21,8 @@ export interface NoteListCursor {
  * goes through JS `Date` (milliseconds), so a microsecond key would silently drop rows in
  * the same millisecond. It must be a named output column (set-operation ORDER BY).
  * `.mapWith(notes.updatedAt)` is required: a raw `sql` expression has no column, so drizzle
- * would return pg's raw string and `toISOString()` would throw (tsc can't catch it).
+ * would return pg's raw string and `toISOString()` would throw (tsc can't catch it). Numbers are
+ * unaffected (node-postgres's int parser stays), so `rank` in `notes/search-sql.ts` needs no `mapWith`.
  */
 const updatedAtMsExpr = sql`date_trunc('milliseconds', ${notes.updatedAt})`.mapWith(notes.updatedAt);
 

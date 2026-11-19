@@ -5,7 +5,7 @@ import type { SlugScope } from "../notes/slug.js";
 import type { NoteSummaryRow } from "./dto.js";
 import type { McpToolCtx } from "./context.js";
 
-/** Pass `owner` by scope: never fill `ctx.userHandle` for a group note (it would become `/n/<me>/<slug>`). `editorHandle` is null because only the re-read-miss race reaches here. */
+/** Pass `owner` by scope: never fill `ctx.userHandle` for a group note (it would become `/n/<me>/<slug>`). `editorHandle` is null: if the row's `last_edited_by` is set it is the caller, and only the re-read-miss race reaches here. */
 export function insertedRow(
   row: typeof notes.$inferSelect,
   owner: { ownerHandle: string | null; groupName: string | null }
@@ -32,7 +32,8 @@ export function insertedRow(
  * from the group meanwhile; the content is already written, so the caller falls back to the
  * insert row (a stale `lastEdited` beats an AI retry creating a second note). The select
  * builders are single-use, so build the branch fresh each call. The grouped branch requires
- * `can_read`: the creator has `can_create`, which implies `can_read` (`group_roles_read_implied_chk`).
+ * `can_read`: the creator has `can_create`, which implies `can_read` (`group_roles_read_implied_chk`). Same visibility semantics as
+ * `list_notes`/`search_notes`, no new query shape.
  */
 export async function rereadVisibleNote(
   ctx: Pick<McpToolCtx, "db" | "userId">,
@@ -44,7 +45,7 @@ export async function rereadVisibleNote(
   return row;
 }
 
-/** A miss means the note was moved, purged or demoted after the restore commit. */
+/** A restorer is the owner of a personal note or has can_edit (⇒ can_read) in the group, so owned then grouped suffice. A miss means the note was moved, purged or demoted after the restore commit. */
 export async function rereadOwnOrGroupNote(
   ctx: Pick<McpToolCtx, "db" | "userId">,
   noteId: string

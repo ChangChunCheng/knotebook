@@ -23,7 +23,7 @@ export interface Applied {
   perRegion: Array<{ beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null }>;
 }
 
-/** `same` regions aren't recorded. `recordable` degenerate form (`after_block_ids: []`, null fingerprint) would hit `anchor_chk` for a non-delete row; unreachable in theory (see `recordableAfter`). */
+/** `same` regions aren't recorded. Delete rows carry `anchor` and `after_block_ids: []`, others `anchor: null` (the file_sync branch of `note_ai_edits_anchor_chk`). `recordable` degenerate form (`after_block_ids: []`, null fingerprint) would hit `anchor_chk` for a non-delete row; unreachable in theory (see `recordableAfter`). */
 export function fileSyncRows(p: {
   noteId: string;
   userId: string;

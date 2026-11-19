@@ -1,7 +1,13 @@
 /**
- * Token path only: a session is a same-origin browser that can already upload and view with
- * its cookie. The plaintext appears only in the response body; the DB holds only the hash.
- * `download` charges `contentRead` but doesn't touch presence (signing isn't reading).
+ * A short-lived, single-note, single-purpose token so a shell `curl` can upload or download an
+ * image: an MCP credential can't be sent from a shell and image bytes don't fit in tool
+ * arguments. The order is a contract: upload → `requireWriteScope` (charges `tokenWrite`) →
+ * `resolveNoteAccess` (none → the same not_found string; upload + viewer → forbidden) →
+ * download → charge `contentRead` (no presence: signing isn't reading) → upload → storage-full
+ * pre-check (full → storage_quota_exceeded, nothing signed) → transaction (only those three
+ * statements) → cleanup outside it. Token path only: a session is a same-origin browser that
+ * can already upload and view with its cookie. The plaintext appears only in the response
+ * body; SQL parameters carry only the hash; `runTool` logs only `{err, tool}` on exceptions.
  */
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -67,7 +73,14 @@ export const createTransferTokenOutput = {
   next: z.string().describe("What to do with the reply, and what its status codes mean."),
 };
 
-/** Wording is pinned by `test/transfer-tokens.test.ts`: 403/429 don't burn the token (the per-IP `bearerMiss` 429 only replaces a 401), 413/415/400 do. */
+/** Wording is pinned by `test/transfer-tokens.test.ts`. 403/429 don't burn the token (the per-IP
+ * `bearerMiss` 429 only replaces a 401), so the text says "this rejection doesn't use up the
+ * token", not "the token is still unused": in the bearerMiss case it may already be used.
+ * 413/415/400 burn it. A 404 is either the pre-consumption role re-check or the note deleted
+ * mid-upload. A note deleted after issue but before upload gives 401 (token row cascaded), covered
+ * by "A 401 means the token can't be used". storage_quota_exceeded: space already full → token not
+ * consumed (the same token works once space is freed); doesn't fit → in-transaction 409, token
+ * burned. server_busy burns the token. */
 export const UPLOAD_NEXT =
   "The reply is JSON `{id, url}`. Put the image in the note with edit_note using markdown `![description](url)`, with " +
   "`url` exactly as returned (`/api/uploads/<id>`, relative). The token is good for one upload until `expiresAt`. A 401 " +

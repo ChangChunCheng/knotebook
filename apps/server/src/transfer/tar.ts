@@ -3,7 +3,9 @@
  * understand it) with an ASCII fallback name. The `Z_SYNC_FLUSH` callback waits for the
  * downstream, so it is the backpressure (`drain` is only a backstop). Every wait races the
  * internal abort signal: if the downstream is destroyed, flush and `drain` never settle. An
- * abort sends no trailers; the caller destroys the socket (curl exits 18).
+ * abort sends no trailers; the caller destroys the socket (curl exits 18). After `abort()`,
+ * pending and later calls reject with `TarAbortError`; the writer also aborts on `out`
+ * close/error; `finish()` succeeds only on `out`'s 'finish'.
  */
 import { createHash } from "node:crypto";
 import { once } from "node:events";

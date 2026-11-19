@@ -36,7 +36,7 @@ export const FOLDER_DELETE_BLOCKED_MESSAGE =
 export const FOLDER_CONTENT_CHANGED_MESSAGE = "The folder's contents changed while it was being deleted, so nothing was deleted. Try again.";
 export const FOLDER_POSITION_AMBIGUOUS_MESSAGE = "Pass at most one of `parent_id`, `group_id` and `shared: true`, so nothing was created.";
 export const CREATE_BUSY_MESSAGE = "The server was busy, so no note was created. Try again in a moment.";
-/** No numbers: the quota is a server constant the model shouldn't depend on. */
+/** The `folder` limiter is charged before any write, so "nothing was changed" is true for all five tools. No numbers: the quota is a server constant the model shouldn't depend on. */
 export const FOLDER_RATE_LIMITED_MESSAGE = "Too many folder changes right now, so nothing was changed. Try again in a moment.";
 
 export type FolderTool = "create_folder" | "rename_folder" | "move_folder" | "move_note_to_folder" | "delete_folder";
@@ -53,7 +53,7 @@ export function folderNameErrorMessage(reason: "unstorable" | "control" | "lengt
 
 /**
  * Unlisted codes throw (wiring bug). `invalid_body` is pre-checked by callers, so reaching
- * it here means drift; `folder_cross_space` only applies to moving folders and placement.
+ * it here means drift; `folder_cross_space` only applies to moving folders and placement (create inherits the parent's space, rename has no parent, delete doesn't check space).
  */
 export function folderFailureToToolError(tool: FolderTool, f: { code: ErrorCode }): ToolErrorResult {
   switch (f.code) {

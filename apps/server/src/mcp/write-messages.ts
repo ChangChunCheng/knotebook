@@ -15,7 +15,7 @@ export function writeFailureMessage(code: ParseError | "empty_section", detail?:
       if (detail === "too_complex") return "That markdown is too complex to process within the server's time and memory limits, so nothing was written. Split it into smaller writes or simplify its formatting.";
       return "That markdown contains something this editor cannot store. Plain markdown — headings, text, lists, code, tables — works.";
     case "unsupported_color":
-      // Colors come from `PALETTE_COLORS`; #rgb/#rrggbb are normalized on write (`canonicalColor` in shared).
+      // Colors come from `PALETTE_COLORS`; #rgb/#rrggbb are normalized to lowercase #rrggbb on write (`canonicalColor` in shared).
       return `That markdown uses a color this editor cannot show, so nothing was written. Use one of: ${PALETTE_COLORS.join(", ")}, or a hex color written #rgb or #rrggbb, such as #ff6600.`;
     case "unsupported_columns":
       // Also returned for flex/grid divs and any `data-node-type` element, hence "layout or editor-internal HTML".
@@ -32,5 +32,5 @@ export function writeFailureMessage(code: ParseError | "empty_section", detail?:
   }
 }
 
-/** Deliberately differs from `create_note`'s `GROUP_NOT_FOUND_MESSAGE`, which reports a missing create right as `forbidden`; here it isn't distinguished. */
+/** Deliberately differs from `create_note`'s `GROUP_NOT_FOUND_MESSAGE`, which reports a missing create right as `forbidden`; here it isn't distinguished. Covers nonexistent, non-member, member without `can_create`, and deleted after the check. */
 export const GROUP_NO_CREATE_MESSAGE = "No group with that id among your groups where your role can create notes.";

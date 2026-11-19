@@ -1,9 +1,11 @@
 /**
  * `fingerprint` comes only with the page that ends the section. This is for correctness, not
  * security: `replace_section` replaces the whole section, so a model that read only the first
- * 4000 characters would eat the unread tail. A huge `offset` also counts as the end page
- * (accepted). `heading` isn't returned: it has no length limit and is the first line of
- * `markdown` anyway. `section_id` never reaches SQL.
+ * 4000 UTF-16 code units would eat the unread tail. A huge `offset` also counts as the end page
+ * (accepted), so it protects an honest sequential reader only: never describe it as a security
+ * boundary; the `truncated` note is explanation, not a guard. `heading` isn't returned: it has
+ * no length limit and is the first line of `markdown` anyway. `section_id` never reaches SQL,
+ * so only the format and NUL checks (`SEC`) apply.
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -21,7 +23,7 @@ export const READ_NOTE_SECTION_DESCRIPTION =
   `At most ${MCP_SECTION_CHARS} characters per call: while \`truncated\` is true, call again with \`offset\` ` +
   "set to `nextOffset`. The `fingerprint` you need to replace this section arrives with the page that " +
   "finishes it, so read to the end before you rewrite it. " +
-  // "for example": images inside nodes exported wholesale as HTML take that HTML form, and old collapsed-block images have absolute URLs.
+  // "for example": images inside nodes exported wholesale as HTML take that HTML form, and old collapsed-block images have absolute URLs, which is why the main clause says only that the address contains the upload id; table cells aren't mentioned (they hold no width-set images).
   "An uploaded image's address contains its upload id, for example `/api/uploads/<id>` in `![name](/api/uploads/<id>)` or, for an image with " +
   "a caption or shown at a set width, in `<figure><img … src=\"/api/uploads/<id>\" …>…</figure>`; see them with read_note_image.";
 
@@ -86,7 +88,7 @@ export interface ReadNoteSectionArgs {
 export async function readNoteSection(args: ReadNoteSectionArgs, ctx: McpToolCtx): Promise<CallToolResult> {
   const access = await authorizeNoteRead(ctx, args.note_id, args.section_id);
   if (!access.ok) return access.error;
-  // Unreachable over HTTP (registered only with collab and editing); `ctx.editing` is optional in the types.
+  // Unreachable over HTTP (registered only with collab and editing); `ctx.editing` is optional in the types; `runTool()` turns it into `internal`.
   if (ctx.editing === undefined) throw new Error("read_note_section：editing runtime 缺席（不該被註冊）");
 
   let result: Awaited<ReturnType<typeof readNoteContent>>;
@@ -102,8 +104,8 @@ export async function readNoteSection(args: ReadNoteSectionArgs, ctx: McpToolCtx
 
   const { id, level, chars, markdown, fingerprint } = result.section;
   const offset = args.offset ?? 0;
-  // `nextOffset` is `offset + length actually returned`, not `+ 4000`: when the cut backed
-  // off one unit inside a surrogate pair, a fixed 4000 would give both pages a lone surrogate.
+  // Slices with `truncateCodeUnits` (raw length, never splitting a surrogate pair; not `truncateText`, see `limits.ts`). `nextOffset` is `offset + length actually returned`, not `+ 4000`: when the cut backed
+  // off one unit inside a surrogate pair, a fixed 4000 would give both pages a lone surrogate, silently (serialization doesn't fail).
   const page = truncateCodeUnits(markdown.slice(offset), MCP_SECTION_CHARS);
   return toolResult({
     section: {

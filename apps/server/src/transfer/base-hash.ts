@@ -30,7 +30,7 @@ export function newSalt(): Buffer {
   return randomBytes(16);
 }
 
-/** `body` must already be normalized (`normalizeBody`). */
+/** `body` must already be normalized (`normalizeBody`); `lines` are its untrimmed lines (trimmed here); `kinds` has one 0/1 per line. */
 export function baseHashes(
   key: Buffer,
   salt: Buffer,

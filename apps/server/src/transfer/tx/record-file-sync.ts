@@ -3,7 +3,8 @@
  * `created_at` is `now() + i microseconds` so `listEdits` ordering and trimming are
  * deterministic for this request's rows. All three steps share one transaction (else the
  * INSERT would stay without the base being written). Returns the ids of rows that survive
- * the trim (beyond 100 regions, earlier rows of this request are trimmed).
+ * the trim (beyond 100 regions, earlier rows of this request are trimmed). The trim is per
+ * note. Errors carrying content (`before_blocks`) are redacted by the caller outside the transaction.
  */
 import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 import { AI_EDITS_RETENTION } from "@knotebook/shared";

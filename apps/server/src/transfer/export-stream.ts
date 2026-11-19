@@ -1,9 +1,15 @@
 /**
+ * Directories first, then notes in full-path code-unit order, the manifest last; batches of
+ * 50. Each batch: checkpoint (token row still there + user gate) → re-query the batch with the
+ * same visibility and scope (gone or out of scope → `skipped: gone`) → build and write entries
+ * (with backpressure), yield → one INSERT of bases. A failed checkpoint or base insert aborts.
  * Abort = `writer.abort()` + `reply.raw.destroy()` with no tar/gzip/chunked trailer (curl
  * exits 18). Client disconnect is detected on `reply.raw`'s close, not `request.raw` (see
  * `routes/ai.ts`). The outcome is fixed at the moment of decision: abort sets `aborted` before
- * destroy, the close handler sets `client_closed` only if no outcome is set. The info log
- * carries counts and ids only, never titles, paths, tokens or content.
+ * destroy, `done` is set when `finish()` resolves, and the close handler sets `client_closed`
+ * only if no outcome is set and `!writableFinished`, otherwise it only aborts (idempotent).
+ * finally: release the slot → `onExportEnd` → prune bases only on `done` → one info log line
+ * (counts and ids only, never titles, paths, tokens or content).
  */
 import { setImmediate as setImmediateP } from "node:timers/promises";
 import { eq } from "drizzle-orm";
@@ -101,7 +107,7 @@ export async function streamExport(p: StreamExportParams): Promise<void> {
       if (outcome !== null) break;
       await p.hooks?.beforeBatch?.(b);
       if (outcome !== null) break;
-      // Expiry is deliberately not checked: it doesn't abort a stream already started.
+      // The token row still exists (revoking it or its parent cascades) and the user gate passes; expiry is deliberately not checked: it doesn't abort a stream already started.
       const [tok] = await p.db.select({ id: transferTokens.id }).from(transferTokens).where(eq(transferTokens.id, p.tokenId)).limit(1);
       const g = tok === undefined ? null : await p.gate.checkUser(p.userId);
       if (g === null || g.status !== "ok" || g.user.mustChangePassword) {

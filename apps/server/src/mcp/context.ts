@@ -1,4 +1,4 @@
-/** Tools are standalone `(args, ctx)` functions so tests can call handlers without HTTP; identity and resources come from here, not `FastifyRequest`. */
+/** Tools are standalone `(args, ctx)` functions so tests can call handlers without HTTP; identity and resources come from here, not `FastifyRequest`. `collab`/`editing`/`presence` are optional: without collab the live-doc tools aren't registered. */
 import type { FastifyBaseLogger } from "fastify";
 import type { TokenScope } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
@@ -27,7 +27,7 @@ export interface McpToolCtx {
     edit: FixedWindowLimiter;
     tokenWrite: FixedWindowLimiter;
     search: FixedWindowLimiter;
-    /** Same instance as the upload endpoint and REST copy. */
+    /** Charged per copied attachment by `copy_note`; same instance as the upload endpoint and REST copy. */
     upload: FixedWindowLimiter;
     /** Same instance as `foldersRoutes`; separate from `edit` (see `FOLDER_LIMIT`). */
     folder: FixedWindowLimiter;
@@ -36,7 +36,7 @@ export interface McpToolCtx {
   userId: string;
   userHandle: string;
   tokenId: string | null;
-  /** Read tools need only `notes:read`, which `authenticateAny` guarantees; `write-scope.ts` uses these two to decide write/move/delete. A session skips scope checks. */
+  /** Read tools need only `notes:read`, which `authenticateAny` guarantees; `write-scope.ts` uses these two to decide write/move/delete. A session skips scope checks and the token limiter. */
   authKind: "token" | "session";
   /** null = session (full rights). */
   tokenScope: TokenScope | null;

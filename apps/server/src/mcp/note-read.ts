@@ -53,7 +53,7 @@ export async function readOutlineForTool(ctx: McpToolCtx, noteId: string): Promi
 
 export type NoteReadAccess = { ok: true; role: Role } | { ok: false; error: ToolErrorResult };
 
-/** A `{ ok: false }` result's error must be returned as-is, with nothing else done. `section` undefined = the whole note. */
+/** A `{ ok: false }` result's error must be returned as-is, with nothing else done. `section` undefined = the whole note (presence at the document start); otherwise presence lands on that section's first block. */
 export async function authorizeNoteRead(
   ctx: McpToolCtx,
   noteId: string,
@@ -64,7 +64,7 @@ export async function authorizeNoteRead(
   if (!ctx.limiters.contentRead.consume(ctx.userId)) {
     return { ok: false, error: toolError("too_many_requests", READ_RATE_LIMITED_MESSAGE) };
   }
-  // A cookie session is a browser user: no presence. Reads stay side-effect free apart from the in-process `shownLinks` record.
+  // A cookie session is a browser user: no presence. `touch` acts only on a loaded doc (a no-op when nobody is online), so reads stay side-effect free apart from the in-process `shownLinks` record.
   if (ctx.tokenId !== null) {
     const label = await currentAgentLabel(ctx.db, ctx.tokenId);
     if (label !== null) {

@@ -1,4 +1,4 @@
-/** The output is an object so it can only grow: `truncated` keeps its name and means "there is a next page". `deletedAt:`/`deletedBy:` here are read mappings, registered in `trash-structure.test.ts`. */
+/** Keyset = millisecond `deleted_at` DESC, id DESC (same as REST); at most `MCP_PAGE_MAX` per page, fewer when cut by the wire budget (`pageCutShort`). The output is an object so it can only grow: `truncated` keeps its name and means "there is a next page". `deletedAt:`/`deletedBy:` here are read mappings, registered in `trash-structure.test.ts`. */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { TrashItemDto } from "@knotebook/shared";

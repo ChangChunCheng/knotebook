@@ -13,8 +13,9 @@ function deriveKeyId(key: Buffer): string {
 }
 
 /**
- * v2 binds providerId as GCM AAD, so copying one provider's ciphertext into another row fails
- * to decrypt (#14). v1 (no AAD) is read-only and upgraded at startup (`selfCheckAiKeys`).
+ * v2 (all writes) binds providerId as GCM AAD, so copying one provider's ciphertext into another
+ * row fails to decrypt (#14). v1 (no AAD) is read-only; decryptable v1 rows are upgraded in place
+ * at startup (`selfCheckAiKeys`), and re-entering a key in admin writes v2.
  */
 export type EncryptedApiKeyVersion = 1 | 2;
 

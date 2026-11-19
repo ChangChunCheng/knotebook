@@ -1,7 +1,8 @@
 /**
  * Wire size is about 2.1 × payload: the mirrored text repeats the payload, JSON-escaped. The
  * overall 262 144 sentinel lives in `test/mcp-size.test.ts`; exceeding it means a per-field
- * limit below was missed, not that the sentinel should be raised.
+ * limit below was missed, not that the sentinel should be raised. Measure the wire response,
+ * not the payload, or the mirror's cost disappears from the sentinel.
  */
 
 /** Counted after JSON escaping (UTF-16 code units, excluding quotes). */
@@ -12,7 +13,7 @@ export const MCP_SECTION_CHARS = 4000;
 /** After JSON escaping; budget 158 plus one `…` on each side. */
 export const MCP_SNIPPET_MAX = 160;
 
-/** The sentinel in `test/mcp-size.test.ts` is 262 144; the 22 144 gap is left for the JSON-RPC envelope. */
+/** The production target at which search_notes stops adding matches, not the sentinel (262 144 in `test/mcp-size.test.ts`); the 22 144 gap is left for the JSON-RPC envelope and `id`. */
 export const MCP_SEARCH_WIRE_BUDGET = 240_000;
 
 /*
@@ -30,7 +31,7 @@ export const MCP_LIST_WIRE_BUDGET = 240_000;
 export const MCP_FOLDER_PAGE_MAX = 50;
 export const MCP_DELETE_FOLDER_IDS_MAX = 100;
 
-/** Matches well-formed `JSON.stringify` (scanned over 0x0000–0xFFFF in `test/unit/mcp-limits.test.ts`). C1, DEL and U+2028/2029 aren't escaped. */
+/** Matches well-formed `JSON.stringify` (scanned over 0x0000–0xFFFF in `test/unit/mcp-limits.test.ts`). C1, DEL and U+2028/2029 aren't escaped. A lone surrogate costs 6; a valid pair is counted by `stepAt` as 2. */
 function escapedUnitCost(code: number): number {
   if (code < 0x20) return code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d ? 2 : 6;
   if (code === 0x22 || code === 0x5c) return 2;
@@ -61,7 +62,8 @@ export function escapedLength(s: string): number {
  * kept or dropped whole (a lone surrogate serializes silently). Returns `truncated` so the
  * DTO `*Truncated` flags are decided in one place. Short fields only: `read_note_section`
  * uses `truncateCodeUnits` because newlines in markdown would make escaped counting cut
- * nearly every page below 4000.
+ * nearly every page below 4000 (`instructions` and docs promise 4000 characters); raw counting
+ * is safe there: at most 13 wire units per code unit, about 52 000.
  */
 export function truncateText(s: string, max: number = MCP_TEXT_MAX): { text: string; truncated: boolean } {
   let cost = 0;
@@ -75,7 +77,7 @@ export function truncateText(s: string, max: number = MCP_TEXT_MAX): { text: str
   return { text: s, truncated: false };
 }
 
-/** Raw length; `nextOffset` relies on the result being a prefix whose length is the advance. */
+/** Raw length, backing off one unit when the cut falls inside a surrogate pair; `nextOffset` relies on the result being a prefix whose length is the advance. */
 export function truncateCodeUnits(s: string, max: number): { text: string; truncated: boolean } {
   if (s.length <= max) return { text: s, truncated: false };
   const code = s.charCodeAt(max - 1);

@@ -1,4 +1,4 @@
-/** `isAdmin` is read only on rejection (ctx doesn't carry it), like `create-transfer-token.ts`. */
+/** Outside the collab gate (`loadNoteDoc` reads `note_states` without collab). Limiters in order: `tokenWrite` (`requireMoveScope` with `group_id`) → `edit` → `upload` (per copied attachment). `isAdmin` is read only on rejection (ctx doesn't carry it), like `create-transfer-token.ts`. */
 import { eq } from "drizzle-orm";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { formatBytes } from "@knotebook/shared";
@@ -62,7 +62,7 @@ export const copyNoteInputNoMove = {
   folder_id: FOLDER_ID.optional().describe(COPY_FOLDER_ID_DESCRIBE_NO_MOVE),
 };
 
-/** Ends "then try again", not "reconnect": the tool is listed and the scope is re-read per request. */
+/** Reachable over HTTP (copy_note is listed for read-write credentials). Ends "then try again", not "reconnect": the tool is listed and the scope is re-read per request. */
 export const COPY_NEEDS_MOVE_MESSAGE =
   "Copying a note into a group needs the notes:move scope, and this credential doesn't have it, so nothing was copied. " +
   'Leave out group_id to copy into your personal notes, or ask the user to turn on "Move to groups (can\'t be undone)" (notes:move) for this ' +

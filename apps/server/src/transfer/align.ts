@@ -3,7 +3,11 @@
  * stack at about 5 000 blocks and `[seg, ...rest]` is O(n²) (the UI can save notes beyond `MAX_BLOCKS`).
  * Groups are tried only when per-block can't complete a solution from that start, at most
  * `cap` group exports per start. Failures are memoized per `(i, pos)`; the first complete
- * solution by priority wins.
+ * solution by priority wins; none → `segs: null` (not writable back). Numbered items compare
+ * without their number, and child lines may be indented `delta` more on the whole-note side.
+ * Leading/trailing empty paragraphs are 0-line segments; a middle one takes one blank line.
+ * Per block before groups; 1 separator line before 0. Groups take the longest same-family run
+ * first (export of `(i, j)` cached). `MAX_BLOCKS` only limits writes.
  */
 import { lineKey } from "./normalize.js";
 

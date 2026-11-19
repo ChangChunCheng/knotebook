@@ -2,10 +2,12 @@
  * The raw shape only flattens fields for the model: never pass the discriminatedUnion as `inputSchema` (the advertised
  * JSON Schema silently becomes `properties: {}`). The object fed to the schema must be
  * spread key by key: `.strict()` rejects `{section_id: undefined}` as `unrecognized_keys`.
- * `outline` carries fingerprints on success only (REST parity); on `fingerprint_mismatch`
- * the view is stale, so none. That outline uses `loadNoteDoc` + `outlineOf`, not
- * `readNoteContent`, so the response structurally contains no markdown.
- * `section_id` never reaches SQL (an in-memory `find`).
+ * `outline` carries fingerprints only on success (REST parity: `docs/ai-editing.md` promises
+ * consecutive writes need no re-read); error responses never do: the view is stale and a fresh
+ * token would invite a blind retry. The `fingerprint_mismatch` outline uses `loadNoteDoc` +
+ * `outlineOf`, not `readNoteContent`, so the response structurally contains no markdown.
+ * `section_id` never reaches SQL (an in-memory `find`), so only the format and NUL checks
+ * apply, both in `SEC`.
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -35,14 +37,16 @@ export const EDIT_NOTE_DESCRIPTION =
   "read to its end) or from a previous edit_note reply; the whole note's from a previous " +
   // Revert is allowed for editors, not only the owner (`routes/notes.ts`). The subject is
   // "a change to the content" so rename isn't included. Rename needs `if_match` too, so
-  // "last title written wins" no longer applies to MCP.
+  // "last title written wins" no longer applies to MCP (web title edits are still last-write-wins;
+  // that isn't this tool's behavior). Don't make "can undo it" unconditional: the full conditions
+  // are in `editId`'s `.describe()`.
   "edit_note reply; the title's (`titleFingerprint`) from read_note_outline or a previous rename's reply. " +
   "A change to the content is recorded in the note's history, where anyone who can edit the " +
   "note can usually undo it. A rename is not recorded: to undo it, rename the " +
   "note back. Unless the note has a custom URL, its URL follows the new title and the old URL usually stops " +
   "working. A rename's reply has `title`, `titleFingerprint` and `url` instead of `editId`, `fingerprint`, `outline` and `unboundWikilinks`.";
 
-/** `op` is a `z.enum` because a raw shape can't express the per-op required matrix; the string sets are compared in `test/unit/mcp-write-schemas.test.ts`. */
+/** `op` is a `z.enum` because a raw shape can't express the per-op required matrix; the string sets are compared in `test/unit/mcp-write-schemas.test.ts`. Other fields reuse the `notes/schemas.ts` bases as `BASE.optional().describe()`. */
 export const editNoteInput = {
   note_id: NOTE_ID.describe("The note's id, as returned by list_notes or search_notes."),
   op: z
@@ -54,7 +58,7 @@ export const editNoteInput = {
     "The new markdown. Required for every operation except delete_section and rename. Colors are HTML, as read_note_section " +
       `returns them: colored text is <span style="color:red">…</span> inside the markdown; a block's own color is ` +
       `e.g. <p data-background-color="yellow">…</p>. For a color, use one of these names: ${PALETTE_COLORS.join(", ")}, or a hex color such as #ff6600 (written #rgb or #rrggbb). ` +
-      // "Writes take 2 to 4" speaks of writes only (reads may show more); images with showPreview off read back no width.
+      // "Writes take 2 to 4" speaks of writes only (reads may show more); the size sentence doesn't mention images in table cells (widths there aren't supported yet); images with showPreview off read back no width.
       `Side-by-side columns are HTML, exactly as read_note_section returns them: <div data-kb-columns style="display:flex;gap:16px"> holding ` +
       `<div data-kb-column style="flex:N"> columns (N is the relative width, 0.1 to 10, at most two decimals), each of these tags and its </div> ` +
       "on a line of its own, each column with markdown inside, a blank line after its opening tag and another before its </div>. " +
@@ -66,7 +70,7 @@ export const editNoteInput = {
       "(as read_note_section returns it), except inside code or a block written as HTML. " +
       WRITE_NOTE_LINK_SENTENCE
   ),
-  // Rename needs it too; title and body fingerprints don't cover each other.
+  // Rename needs it too, so the failure clause doesn't say "the note changed": title and body fingerprints don't cover each other.
   if_match: FP.optional().describe(
     "The fingerprint of what you are replacing. Required for every operation except append; the write fails if what you " +
       "are replacing changed since you got that fingerprint. For rename it is the title's `titleFingerprint`, from " +
@@ -82,10 +86,12 @@ export const RENAME_BRANCH = z.object({ op: z.literal("rename"), title: TITLE, i
 export const mcpEditBodySchema = z.discriminatedUnion("op", [...editBodySchema.options, RENAME_BRANCH]);
 
 export const editNoteOutput = {
-  // Revert conditions (`editRevertable` in `revert.ts`, `RETENTION` (`AI_EDITS_RETENTION`, 100) in `apply.ts`), kept
-  // here because `.describe()` has no length budget. Two branches: non-delete ops need the
-  // written blocks to still exist with the same fingerprint; `delete_section` needs the
-  // anchor still at top level and `before_blocks` not restored (e.g. browser Ctrl-Z → 409 stale).
+  // Revert conditions (`editRevertable` in `revert.ts`, `RETENTION` (`AI_EDITS_RETENTION`, 100, trimmed in the same
+  // transaction) in `apply.ts`), kept here because `.describe()` has no length budget. Two
+  // branches: non-delete ops need the written blocks to still exist with the same fingerprint;
+  // `delete_section` (which also returns an `editId`, so both must be described) needs the
+  // anchor still at top level and `before_blocks` not restored (browser Ctrl-Z restores the
+  // blocks with their original ids → 409 stale).
   editId: z
     .string()
     .optional()
@@ -125,7 +131,7 @@ export const editNoteOutput = {
       "How many `[[wikilinks]]` in what you wrote were left as plain text because no note you can see has that " +
         "exact title, or more than one does."
     ),
-  // Optional so a successful rename (title/url only) passes the SDK's `validateToolOutput`.
+  // Optional so a successful rename (title/url only) passes the SDK's `validateToolOutput`; the five content ops still return all four.
   title: z.string().max(MCP_TEXT_MAX).optional().describe("After a rename, the note's new title."),
   titleTruncated: z.literal(true).optional(),
   titleFingerprint: z
@@ -144,7 +150,7 @@ export interface EditNoteArgs {
   title?: string;
 }
 
-/** Doesn't name an owner: a group note has none, and whoever manages access is the owner for personal notes. */
+/** Doesn't name an owner: a group note has none (edit rights come from whoever manages the group's members; for a personal note, the owner), and "whoever manages your access to it" covers both. */
 export const FORBIDDEN_MESSAGE =
   "You can read this note but not change it. Ask whoever manages your access to it for editing rights.";
 const MISMATCH_MESSAGE =
@@ -153,7 +159,7 @@ const MISMATCH_MESSAGE =
 /** An UPDATE hitting 0 rows while the row exists can only mean ownership changed (moved into a group, or group deleted and transferred). */
 export const RENAME_CONFLICT_MESSAGE =
   "The note was moved into a group, or its group was deleted, after your access was checked, so its title was not changed. Try again.";
-/** No outline: rename doesn't touch the live doc. "most likely" because a wrong-kind fingerprint (e.g. the body's) lands here too. */
+/** Same code as content ops but no outline: rename doesn't touch the live doc, and the new title's fingerprint can only come from a re-read. "most likely" because a wrong-kind fingerprint (e.g. the body's) lands here too. */
 export const RENAME_MISMATCH_MESSAGE =
   "`if_match` is not the fingerprint of the note's current title — most likely the title was changed after you got that " +
   "fingerprint — so the note was not renamed. Call read_note_outline to see the current title and its `titleFingerprint`, " +
@@ -187,7 +193,7 @@ export async function editNote(args: EditNoteArgs, ctx: McpToolCtx): Promise<Cal
   });
   if (!parsed.success) return toolError("invalid_body", invalidBodyMessage(args.op, parsed.error.issues));
 
-  // Rename is before `resolveRole`, the `edit` limiter and `writes.available`: it doesn't touch the live doc and REST title PATCH is unthrottled.
+  // Rename is before `resolveRole`, the `edit` limiter and `writes.available`: it doesn't touch the live doc, so it must not throw on a deployment without the write service, and REST title PATCH is unthrottled.
   if (parsed.data.op === "rename") return renameViaMcp(ctx, args.note_id, parsed.data.title, parsed.data.if_match);
   const data = parsed.data;
 
@@ -249,8 +255,9 @@ async function mismatchError(ctx: McpToolCtx, args: EditNoteArgs): Promise<CallT
 }
 
 /**
- * Doesn't write `note_ai_edits` or touch `last_edited_*`/presence/the write queue.
- * The owner handle comes from `row.ownerId`, not `ctx.userHandle` (a shared editor renaming
+ * Doesn't write `note_ai_edits` or touch `last_edited_*`/presence/the write queue; `updated_at`
+ * does change. The fingerprint comparison and the write are both in `renameNoteTitle` (pre-read
+ * compare + conditional UPDATE). A missing owner handle throws (→ `internal`). The owner handle comes from `row.ownerId`, not `ctx.userHandle` (a shared editor renaming
  * someone else's note must get the owner's handle). Authorization comes before the
  * fingerprint comparison, so a user who can't see the note gets not_found.
  */

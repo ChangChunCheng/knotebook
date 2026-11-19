@@ -1,11 +1,15 @@
 /**
- * The output has no content fingerprints (except `titleFingerprint`, the title is fully
- * readable anyway): a smaller response, and getting a comparison value now costs a recorded,
- * revertable `append`, not an untraceable read. Don't claim the model "can't" get one.
+ * The output has no content fingerprints (except `titleFingerprint`: the title is readable in
+ * `note.title` unless cut at 200, and it doesn't cover content fingerprints): a smaller
+ * response, and this isn't a security boundary: on a note with content, getting a comparison
+ * value without reading now costs a recorded, revertable non-empty `append`, not an untraceable
+ * read. Don't claim the model "can't" get one.
  * No markdown export, so this path never touches jsdom.
  * Paging is not a snapshot: no edit op is safe, because a new section starts at a heading of
  * the same or higher level (`current.level === 0 || level <= current.level` in
- * `note-sections.ts`). `replace_section` without a heading dissolves into the previous
+ * `note-sections.ts`; a `#` inside a `##` section counts). `insert_after`/`append` add a
+ * section per inserted heading of that level; `replace_section` with two such headings splits
+ * into two, and `replace_section` without a heading dissolves into the previous
  * section, `delete_section` removes one, `replace_all` rebuilds all ids. The description
  * carries a verbatim sentence for this (pinned in `mcp-content.test.ts`; don't delete).
  */
@@ -78,7 +82,7 @@ export const readNoteOutlineOutput = {
     .describe("The fingerprint of the note's whole title, even when `note.title` is cut. Renaming the note needs it as `if_match`."),
 };
 
-/** Null at the root, or if the folder is deleted between the two statements. */
+/** The caller's folder (group notes and owners: `notes.folder_id`; sharees: their own placement) with its full path; null at the root or if the folder is deleted between the two statements. */
 export async function outlineFolderFor(
   db: DbOrTx,
   note: { id: string; ownerId: string | null; groupId: string | null; folderId: string | null },
@@ -97,7 +101,7 @@ export interface ReadNoteOutlineArgs {
   section_offset?: number;
 }
 
-/** A row can vanish between `resolveRole` and here. LEFT JOIN users: an INNER JOIN would make group notes (no owner) not_found. */
+/** A row can vanish between `resolveRole` and here. LEFT JOIN users and groups: an INNER JOIN on users would make group notes (no owner) not_found. */
 async function loadNoteHeader(
   db: Db,
   noteId: string
@@ -130,7 +134,7 @@ export async function readNoteOutline(args: ReadNoteOutlineArgs, ctx: McpToolCtx
   // Same string as the role path: the three not-founds must be indistinguishable.
   if (header === undefined) return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
 
-  // Only `outline`: whole-note and per-section fingerprints are dropped.
+  // Computed in the parse worker (tiny notes on the main thread): all workers busy → server_busy, too large → too_complex. Only `outline` is kept: whole-note and per-section fingerprints are dropped.
   const read = await readOutlineForTool(ctx, args.note_id);
   if ("error" in read) return read.error;
   const { outline } = read;

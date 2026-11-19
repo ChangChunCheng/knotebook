@@ -22,7 +22,7 @@ export function folderRefForModel(id: string, name: string): FolderRefForModel {
   return { id, name: cut.text, ...(cut.truncated ? { nameTruncated: true as const } : {}) };
 }
 
-/** personal/shared omit the owner id (only the user sees it, like REST `toFolderSpaceDto`). */
+/** personal/shared omit the owner id (only the user sees it, like REST `toFolderSpaceDto`); group names are cut at the group `owner.name` limit (`MCP_TEXT_MAX`). */
 export const folderForModelSchema = z.object({
   id: z.string(),
   name: z.string().max(MCP_FOLDER_NAME_MAX),

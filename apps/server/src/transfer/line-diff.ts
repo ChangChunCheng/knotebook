@@ -4,7 +4,11 @@
  * would make every line look changed). On Myers overflow: unique-line anchors (patience LIS),
  * recursing between anchors; a sub-span with no anchors degrades (`degradedLines`). Global
  * work and depth caps degrade everything unprocessed. Yields by time budget at the d loop and
- * each sub-span entry, one timer shared across the recursion.
+ * each sub-span entry, one timer shared across the recursion. Ties take the standard
+ * delete-before-insert backtrack. Anchors are line pairs unique on both sides within the sub-span
+ * (uniqueness recomputed per sub-span); an agent line that is a candidate for both a kind-0 and a
+ * kind-1 key anchors neither. A Myers step is one diagonal per d iteration plus one per snake
+ * advance (prefix/suffix stripping and anchor scans excluded).
  */
 import { LINE_HASH_BYTES, hmacOf } from "./base-hash.js";
 import { lineKey, normalizeNumbered } from "./normalize.js";

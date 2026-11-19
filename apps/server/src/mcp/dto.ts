@@ -47,7 +47,7 @@ export interface NoteSummaryForModel {
   title: string;
   /**
    * Only present (as `true`) when truncated. `z.literal(true)` catches `false`; `undefined`
-   * is invisible on the wire (JSON.stringify drops it), so the conditional spread is discipline.
+   * is invisible on the wire (JSON.stringify drops it), so the conditional spread is discipline; `exactOptionalPropertyTypes` is off, so types don't catch it either.
    */
   titleTruncated?: true;
   owner: NoteOwnerForModel;

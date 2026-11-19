@@ -2,7 +2,8 @@
  * `section_offset` is a section index, deliberately not named like `read_note_section`'s
  * `offset` (code units). Fingerprints are dropped here by default; only `edit_note`'s success
  * response passes `withFingerprints: true` (REST parity). Error responses must never carry
- * them: the view is stale and a fresh token would invite a blind retry. `edit_note` puts
+ * them: the view is stale and a fresh token would invite a blind retry; the flag defaults off,
+ * so only a deliberate opt-in can leak fingerprints. `edit_note` puts
  * `truncated` inside `outline` and drops `nextSectionOffset` (no tool accepts that cursor).
  */
 import { z } from "zod";
@@ -48,7 +49,7 @@ export interface OutlinePage {
   nextSectionOffset: number | null;
 }
 
-/** The boundary is `>`, not `>=`: with exactly 100 sections a further page would be empty, and `truncated: true` would cost the model a pointless call. */
+/** An offset at or past the end isn't an error: empty sections, `truncated: false`, `nextSectionOffset: null`. The boundary is `>`, not `>=`: with exactly 100 sections a further page would be empty, and `truncated: true` would cost the model a pointless call. */
 export function buildOutlinePage(
   entries: readonly OutlinePageInput[],
   sectionOffset: number,

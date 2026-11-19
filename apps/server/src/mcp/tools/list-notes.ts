@@ -3,10 +3,11 @@
  * PATCH (nothing in `notes/editing/` writes it), so rows can be missed when a row moves from
  * below the cursor to above it. The opposite also happens: a note shared with you, a group
  * you join, or a note moved into your group (`notes/tx/move.ts`, which doesn't write
- * `updatedAt`) joins the visible set (recomputed per page) with its unchanged `updated_at`,
+ * `updatedAt`, even when a slug clash renames it) joins the visible set (recomputed per page) with its unchanged `updated_at`,
  * and if that falls in a section already paged past, no page shows it. The model can't
- * detect this, so `LIST_NOTES_DESCRIPTION` says so verbatim (pinned in `mcp-notes.test.ts`;
- * don't delete). `hasMore` comes from `.limit(limit + 1)`, never a second query.
+ * detect this, so `LIST_NOTES_DESCRIPTION` must state all three causes verbatim (pinned in
+ * `mcp-notes.test.ts`; don't delete). `hasMore` comes from `.limit(limit + 1)`, never a second
+ * query (the branch selects are single-use).
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";

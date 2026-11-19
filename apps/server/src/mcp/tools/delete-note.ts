@@ -1,4 +1,4 @@
-/** Trashing goes only through `trashNote` (`trashNotesInTx` is the only deleted_at writer); this file must not contain a deleted_at literal. */
+/** Trashing goes only through `trashNote` (`trashNotesInTx` is the only deleted_at writer); this file must not contain a deleted_at literal. Order: `requireDeleteScope` first (a rejection did nothing) → `resolveNoteAccess` (none → not_found, no delete right → forbidden) → settings existence guard → `edit` limiter (REST doesn't charge one) → `trashNote` (retryable → server_busy) → after-commit read (miss → not_found). */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../../auth/tx/admin-site-settings.js";

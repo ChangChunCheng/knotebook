@@ -4,7 +4,8 @@ import type { TemplateVars } from "./upstream.js";
 /**
  * Soft guard (#263): no classifier and no escaping of marker content, so substituted text
  * containing `</text>` can forge a boundary; accepted (docs/known-limitations.md). Prepended
- * server-side, admins can't change it, applied only to Instruct (by the id read back from the DB).
+ * server-side, admins can't change it, applied only to Instruct (by the id read back from the DB). It refers only to the three fixed
+ * markers, not to template wording.
  */
 export const INSTRUCT_GUARD_PROMPT = [
   "You are editing one passage of a note. The user message has three tagged parts: <instruction> is what the user wants done, <selected> is the part of the passage the user highlighted (it may be empty), and <text> is the passage itself.",
@@ -15,7 +16,7 @@ export const INSTRUCT_GUARD_PROMPT = [
   "3. If <selected> is not empty, apply the instruction to that part; your reply is still the full replacement for <text>, with the rest left as it is wherever possible. If <selected> is empty, the instruction applies to all of <text>.",
 ].join("\n");
 
-/** Prepended to every action's prompt; a hint, not a filter (the web rejects bad output before applying). Mirrors `docs/ai.md`. */
+/** Prepended first in every action's system prompt (admins can't change it); a hint, not a filter (the web rejects non-compliant output with `unsupported_columns`/`unsupported_size`). Mirrors `docs/ai.md`. */
 export const MARKUP_GUARD_PROMPT = [
   "The note content you are given is Markdown and may include HTML that the editor uses for side-by-side columns and for sizes. Wherever your reply keeps that content, keep its HTML as it is:",
   "- Every <div data-kb-columns …> and <div data-kb-column …> line, and each </div> line that closes one, stays exactly as written, on a line of its own, with the blank lines around it unchanged. Inside a column, write Markdown as usual.",

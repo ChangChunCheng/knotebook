@@ -5,7 +5,10 @@
  * paragraph now (`isLoneEmptyParagraph`), which `applySync` replaces.
  * Delete-region anchor: `P` after, else `N` before; neither → scan current neighbours,
  * excluding blocks being removed; none found → `replaceWithEmpty` if everything goes, else
- * `deferred` (`applySync` finds the neighbour after the inserts).
+ * `deferred` (`applySync` finds the neighbour after the inserts and rewrites, before merge).
+ * A rewrite whose pre-parse equals its base blocks is `same` (no write, ids kept). Anchors
+ * `P`/`N` are the last/first block of the nearest unchanged segment; 0-line segments are never
+ * anchors; P and N are outside every region, so this sync never removes them.
  */
 import * as Y from "yjs";
 import { topLevelContainers } from "@knotebook/shared";
@@ -35,7 +38,7 @@ export function matchesBase(segments: readonly TransferSegment[], cur: { ids: re
   return k === cur.ids.length;
 }
 
-/** A never-opened note (0 base blocks) shows this shape after the browser normalizes it on open: treated as untouched. */
+/** A never-opened note (0 base blocks) shows this shape after the browser normalizes it on open: treated as untouched. Empty text nodes left after deleting count as empty; paragraph attributes (color, alignment) are ignored. */
 export function isLoneEmptyParagraph(fragment: Y.XmlFragment): boolean {
   const top = topLevelContainers(fragment);
   if (top.length !== 1) return false;

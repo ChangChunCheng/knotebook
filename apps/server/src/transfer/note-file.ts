@@ -1,4 +1,4 @@
-/** `loadNoteState` opens no direct connection and touches no presence. Writes no DB: the caller writes the base with `insertBases`. */
+/** Shared by single-note download and whole-export. Workers all busy for too long → `ParserBusyError`; timeout or out of memory → `NoteReadTooComplexError`. `loadNoteState` opens no direct connection and touches no presence. Writes no DB: the caller writes the base with `insertBases`. */
 import { canonicalNotePath } from "@knotebook/shared";
 import type { CollabServer } from "../collab/server.js";
 import type { Db } from "../db/index.js";

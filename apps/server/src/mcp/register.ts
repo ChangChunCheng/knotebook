@@ -1,6 +1,7 @@
 /**
  * Filtering `tools/list` is not a security boundary (a client can `tools/call` an unlisted
- * name); the real checks are the `require*Scope()` calls inside each write tool.
+ * name); the real checks are the `require*Scope()` calls inside each write tool. The filter
+ * only avoids advertising what can't be served.
  * Every tool must go through `runTool()` (it keeps raw exception messages out of the model's context); add new tool names to the `beforeTool` name sets
  * in the tests, or nothing guards the wrapping. Register as `.strict()` objects.
  * Call order matters: `registerTool` resets `listChanged` to `true`, so this runs before
@@ -9,6 +10,7 @@
  * Gate: tools that read the live doc register only with `collab && editing` (`canRead`).
  * Which side of the gate a tool belongs on is decided by "does it read a live doc", not by
  * which tool it resembles; tests catch a tool silently moving but not one placed wrongly.
+ * `open_notes_as_files` is inside the gate: its token's export mounts the doc.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -90,7 +92,8 @@ export function hasOpenNotesAsFiles(ctx: Pick<McpToolCtx, "authKind" | "collab" 
 
 export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
   // This filter is not the security boundary. The registry is the tool list, so the write
-  // check's `insufficient_scope` is dead over HTTP, except `copy_note` with `group_id`.
+  // check's `insufficient_scope` is dead over HTTP (don't pin it in integration tests; same for
+  // move_note_to_group's move check), except `copy_note` with `group_id`.
   const canWrite = canWriteNotes(ctx);
   const canMove = canMoveNotes(ctx);
   const canDelete = canDeleteNotes(ctx);
@@ -140,9 +143,10 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
   }
 
   // `create_note` is outside the gate: without `content` it never touches the live doc, and
-  // REST `POST /api/notes` is unconditional too.
+  // REST `POST /api/notes` is unconditional too; with `content` but no collab it returns
+  // `invalid_body`, like REST's 400 (`createNote` checks `ctx.writes.available`).
   // `.strict()` everywhere: a raw shape silently drops unknown keys, so an old `groupId` would
-  // create a personal note and a misspelled `ifMatch` would skip the fingerprint check.
+  // create a personal note and a misspelled `ifMatch` would skip the fingerprint check. A bare `.strict()` ZodObject keeps `inputSchema.properties` intact.
   if (canWrite) {
     server.registerTool(
       "create_note",
@@ -165,7 +169,7 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
     );
   }
 
-  // Outside the collab gate (REST copy is unconditional). `idempotentHint` omitted: every call creates a new note.
+  // Outside the collab gate (REST copy is unconditional; `loadNoteDoc` reads `note_states` without collab). Under canWrite; with `group_id` the handler also checks notes:move at run time. `idempotentHint` omitted: every call creates a new note.
   if (canWrite) {
     server.registerTool(
       "copy_note",
@@ -214,7 +218,7 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
     async args => runTool("list_trash", ctx, () => listTrash(args, ctx))
   );
 
-  // `idempotentHint` omitted: a second call returns not_found.
+  // `idempotentHint` omitted: a second call returns not_found. MCP has no permanent delete or empty-trash.
   if (canDelete) {
     server.registerTool(
       "delete_note",
@@ -295,7 +299,7 @@ export function registerMcpTools(server: McpServer, ctx: McpToolCtx): void {
     );
   }
 
-  // `idempotentHint` omitted: a second call returns not_found.
+  // `idempotentHint` omitted: a second call returns not_found. delete_folder trashes its subtree's notes, hence notes:delete.
   if (canDelete) {
     server.registerTool(
       "delete_folder",

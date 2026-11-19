@@ -1,7 +1,9 @@
 /**
  * Only our own results. The SDK builds its own errors (unknown tool, schema mismatch, ...)
  * without `code` or `structuredContent`, so "every error carries `code`" is false. The SDK
- * also validates the whole result outside `runTool()`'s try/catch (see `toolResultWithImage`).
+ * also validates the whole result outside `runTool()`'s try/catch, so a failure there is a
+ * JSON-RPC protocol error, not a `toolError` (see `toolResultWithImage`). Both builders share the
+ * mirror rule (`content[0].text` is exactly `JSON.stringify(structuredContent)`), so they live together.
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -36,7 +38,8 @@ export function toolResult<T extends Record<string, unknown>>(payload: T): CallT
 /**
  * The image block is a second element outside `structuredContent` (base64 appears once on
  * the wire). The SDK's whole-result validation runs outside `runTool()`'s try/catch, so a
- * failure would be a protocol error; unreachable today (valid base64, string mimeType).
+ * failure would be a protocol error; unreachable today (valid base64, string mimeType). Cost: one
+ * `atob` plus one object copy over a string up to about 7 MB per success; acceptable.
  */
 export function toolResultWithImage<T extends Record<string, unknown>>(
   payload: T,

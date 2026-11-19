@@ -5,6 +5,9 @@
  * check (decided by blank lines, not by type). Region text that is blank after stripping
  * closed comments drops an insert and turns a rewrite into a delete. Whether text that
  * parses to `empty_content` still has text after stripping needs a parse: `sync-plan.ts`.
+ * A body blank (also after stripping closed comments) is `empty_content`. A boundary check fires
+ * when the adjacent agent line exists, is non-blank and isn't the pair of the base's adjacent
+ * line; the adjoining text runs out to a blank line.
  */
 import { markdownToHTML, type PartialBlock } from "@blocknote/core";
 import type { TransferSegment } from "../db/schema.js";
@@ -93,7 +96,7 @@ function comparable(b: unknown): unknown {
   return out;
 }
 
-/** Compares parse(k + adjoining text) with parse(k), taking parse(k)'s block count (a flattened 1-id segment parses into 2 blocks). `parse` returning null = failure. */
+/** Compares parse(k + adjoining text) with parse(k), taking parse(k)'s block count (a flattened 1-id segment parses into 2 blocks), taking from the start when the text follows, from the end when it precedes, and comparing without `id` and numbered `start`; any parse failure → false. `parse` returning null = failure. */
 export function makeBoundaryCheck(parse: (markdown: string) => AnyPartialBlock[] | null | Promise<AnyPartialBlock[] | null>): CheckBoundary {
   return async (kText, adjText, side) => {
     const k = await parse(kText);
@@ -209,7 +212,7 @@ export async function findRegions(
     return seenLines ? { a0: M, a1: M - 1 } : { a0: 0, a1: -1 };
   });
 
-  // Exact pre-filter: if no line outside unchanged segments looks like a fence opening, skip the parser (quadratic on interleavings like `*a _b`).
+  // Exact pre-filter: if no line outside unchanged segments looks like a fence opening, skip the parser (quadratic on interleavings like `*a _b`); exact because the line `trailingOpenFenceLine` returns always matches `FENCE_LIKE`.
   const inUnchanged = new Uint8Array(M);
   for (let k = 0; k < S; k++) {
     if (!unchanged[k] || segments[k]!.count === 0) continue;

@@ -6,7 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
  * into `!res.ok` and becomes UpstreamError.
  */
 
-/** `upstreamBody` is for the caller's log only; never put it in the SSE error sent to the client. */
+/** `upstreamBody` (cut to 2048 chars) is for the caller's log only: never log the whole err (a fetch error message can hold a credentialed URL) and never put it in the SSE error sent to the client. */
 export class UpstreamError extends Error {
   constructor(
     public status: number,
@@ -153,7 +153,8 @@ const ANTHROPIC_MAX_TOKENS = 4096;
 /**
  * SDK errors propagate as-is (the caller's catch-all treats all error types alike).
  * `redirect: "manual"`: the SDK's `x-api-key` isn't stripped by undici on cross-origin
- * redirects, so a hijacked upstream answering 302 would receive the plaintext key.
+ * redirects, so a hijacked upstream answering 302 would receive the plaintext key. Only
+ * `text_delta` text is forwarded; thinking deltas are dropped on purpose.
  */
 export function streamAnthropic(opts: AnthropicOpts): UpstreamHandle {
   const controller = new AbortController();

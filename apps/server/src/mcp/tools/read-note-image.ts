@@ -1,4 +1,4 @@
-/** "No such upload", "can't read its note" and "file missing" share one sentence so existence isn't leaked (REST's 403/404 split is a pre-existing tradeoff). */
+/** Outside the collab gate and registered for every credential (reads only DB and disk); the description depends on `authKind` because a session has no `create_transfer_token`. "No such upload", "can't read its note" and "file missing" share one sentence within MCP so existence isn't leaked (REST's 403/404 split is a pre-existing tradeoff). */
 import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { z } from "zod";

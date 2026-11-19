@@ -1,4 +1,4 @@
-/** `tryAcquire()` returns a release that works only once: a slot-level `release()` called twice would free another holder's slot. */
+/** One full export at a time per app (one slot per `transferRoutes` instance). `tryAcquire()` returns a release that works only once: a slot-level `release()` called twice would free another holder's slot. */
 export class ExportSlot {
   private holder: symbol | null = null;
 

@@ -3,6 +3,8 @@
  * the fork mount in `sync-apply.ts`, never nested (`runtime.acquire()` isn't re-entrant).
  * Same precondition as `decide.ts`. `SyncPlan` keeps no scratch doc: on a merge-fingerprint
  * mismatch the caller reruns `planSync` with a new fork. `ParserBusyError` propagates (→ 503).
+ * Any region parse failure is a whole-file 400 (including text that survives comment stripping
+ * but parses to `empty_content`). One user's parses run one at a time in the pool.
  */
 import type { PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
@@ -44,7 +46,7 @@ export interface PlanSyncInput {
   siteOrigin: string;
   /** Not given = the old rule (only the target's current title counts). */
   exportedLinkText?: (targetId: string, text: string) => boolean;
-  /** Shared across fingerprint-mismatch retries so the whole write-back has one worker-time budget. */
+  /** Shared across fingerprint-mismatch retries so the whole write-back has one worker-time budget; not given = a fresh budget for this run, and exhausting it fails the whole file (`unsupported_block`/`too_complex`). */
   fileBudget?: ParseBudget;
   yieldFn?: () => Promise<void>;
   now?: () => number;

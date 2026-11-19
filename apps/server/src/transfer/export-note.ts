@@ -1,7 +1,9 @@
 /**
  * No DB I/O while the lease is held (`titles` are looked up by the caller before mounting).
  * Yields hold the lease without acquiring, which is safe: acquire isn't re-entrant, and live
- * doc edits during a yield don't affect this fork. Group exports run inside the same mount.
+ * doc edits during a yield don't affect this fork (non-reentrant acquire only forbids nested
+ * acquisition). Zero blocks → empty body, no segments, no mount. The body uses `toNoteMarkdown`,
+ * the same as MCP reads. Group exports run synchronously in the same mount (no yield, no new session).
  */
 import type * as Y from "yjs";
 import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
@@ -35,9 +37,9 @@ export interface ExportNoteOptions {
   linkHash?: (targetId: string, text: string) => string;
 }
 
-/** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`). */
+/** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`); an empty doc returns "" without mounting, as there. */
 export async function exportNoteBody(runtime: EditingRuntime, doc: Y.Doc, titles: ReadonlyMap<string, string>): Promise<string> {
-  // Don't mount an empty doc: mounting normalizes it into one empty paragraph, which would mismatch the ids.
+  // Mounting would normalize an empty doc into one empty paragraph; return "" without mounting, as `exportNoteForTransfer` does.
   if (topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).length === 0) return "";
   const s = await EditorSession.open(runtime, doc);
   try {
@@ -78,7 +80,7 @@ export async function exportNoteForTransfer(
     yields++;
     const lines = bodyLines(normalizeBody(body));
     const types = top.map(b => b.type as string);
-    // Mount changed top-level ids (e.g. BlockNote renames duplicate ids): the segment table no longer matches, so degrade to not writable back.
+    // Mount changed top-level ids (e.g. BlockNote renames duplicate ids): the segment table no longer matches, so degrade to not writable back: the body is still produced and the manifest marks it `mergeable: false`.
     if (top.length !== ids.length || top.some((b, i) => b.id !== ids[i])) {
       return { body, lines, ids, fps, types, segments: null, lineKinds: lineKindsOf(null, types, lines.length), stats: { groupCalls: 0, capHits: 0, groupUsedWhilePerMatched: 0, yields } };
     }
