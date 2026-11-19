@@ -1,7 +1,4 @@
-/**
- * #181：「看得到」的單一閘口與讀取面（第 1～6、8 點；「移入前看得到、移入後看不到、還原又看得到」；
- * A2-6 目標在垃圾桶照記連結）。垃圾桶狀態以 `markTrashed`／`markRestored` 直寫（不經 `trashNotesInTx`）。
- */
+// Trash state is written directly with `markTrashed`/`markRestored` (not via `trashNotesInTx`).
 import { randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -30,8 +27,8 @@ const listIds = async (app: FastifyInstance, userId: string): Promise<string[]> 
   ((await inject(app, "GET", "/api/notes", userId)).json() as NoteDto[]).map(n => n.id);
 const token = () => randomBytes(32).toString("base64url");
 
-describe("V1 GET /api/notes", () => {
-  it("owner 的個人筆記、逐人分享 editor 的視角、群組 admin 的群組筆記：移入後消失、還原後回來；旁觀者全程都在", async () => {
+describe("GET /api/notes", () => {
+  it("owner's personal note, a per-person shared editor's view, a group admin's group note: gone after the move, back after restore; the bystander is present throughout", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const friend = await seedUser(db);
@@ -64,8 +61,8 @@ describe("V1 GET /api/notes", () => {
   });
 });
 
-describe("V2 搜尋", () => {
-  it("searchNotesForUser 以標題命中：移入後不在結果、還原後回來（個人與群組各一；旁觀者全程都在）", async () => {
+describe("search", () => {
+  it("searchNotesForUser matching by title: not in results after the move, back after restore (one personal and one group; the bystander is present throughout)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -84,8 +81,8 @@ describe("V2 搜尋", () => {
   });
 });
 
-describe("V3 單篇讀取三形", () => {
-  it("GET /api/notes/:id、/by-path、/by-group-path：移入後 404——有垃圾桶權者 in_trash（帶 noteId）、其他人 not_found（與不存在的 id 逐位元組相同）；還原後 200", async () => {
+describe("three single-note read forms", () => {
+  it("GET /api/notes/:id, /by-path, /by-group-path: 404 after the move - callers with trash rights get in_trash (with noteId), everyone else not_found (byte-for-byte the same as a nonexistent id); 200 after restore", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const friend = await seedUser(db);
@@ -96,7 +93,6 @@ describe("V3 單篇讀取三形", () => {
     await seedShare(db, n.id, friend.id, "editor");
     const personal = [`/api/notes/${n.id}`, `/api/notes/by-path/${owner.handle}/v3-personal`];
     const grouped = [`/api/notes/${gn.id}`, `/api/notes/by-group-path/${g.id}/v3-group`];
-    // 有垃圾桶權者（個人＝owner、群組＝admin）看 in_trash；分享 editor 與一般成員（無刪除權）看 not_found。
     const views: Array<[string, string, string, string | null]> = [
       ...personal.map((url): [string, string, string, string | null] => [url, owner.id, "owner", n.id]),
       ...grouped.map((url): [string, string, string, string | null] => [url, owner.id, "admin", gn.id]),
@@ -121,8 +117,8 @@ describe("V3 單篇讀取三形", () => {
   });
 });
 
-describe("V4 公開兩形＋附件", () => {
-  it("移入後四支全部 404（body 與 token 不存在逐位元組相同）、記進 miss 桶；還原後 200", async () => {
+describe("public forms + attachments", () => {
+  it("after the move all four endpoints are 404 (body byte-for-byte the same as a nonexistent token) and count into the miss bucket; 200 after restore", async () => {
     const publicMiss = new FixedWindowLimiter({ limit: 4, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ publicMiss }) });
     const owner = await seedUser(db);
@@ -144,12 +140,12 @@ describe("V4 公開兩形＋附件", () => {
     expect(missing.statusCode).toBe(404);
 
     await markTrashed(pool(db), p.id, owner.id);
-    // 四形先全部打完再一次比對（不在第一個失敗就停）：任一形漏判，× 訊息會列出是哪一形。
+    // All four forms are hit first and compared together (not stopping at the first failure): if any form is missed, the failure message lists which one.
     const trashed: Array<[string, LightMyRequestResponse]> = [];
     for (const url of urls) trashed.push([url, await get(url, "10.0.0.2")]);
     expect(Object.fromEntries(trashed.map(([url, res]) => [url, res.statusCode]))).toEqual(Object.fromEntries(urls.map(url => [url, 404])));
     for (const [url, res] of trashed) expect(res.body, url).toBe(missing.body);
-    // 四發都記進 miss 桶（額度 4）：同一 IP 的第五發即使打存在的公開筆記也 429。
+    // All four hits count into the miss bucket (quota 4): a fifth hit from the same IP is 429 even against an existing public note.
     expect((await get(`/api/public/notes/${otherTok}`, "10.0.0.2")).statusCode).toBe(429);
 
     await markRestored(pool(db), p.id);
@@ -157,8 +153,8 @@ describe("V4 公開兩形＋附件", () => {
   });
 });
 
-describe("V5 GET /api/uploads/:id", () => {
-  it("owner 移入後 403，body 與陌生人對同一 upload 的 403 相同；還原後 200", async () => {
+describe("GET /api/uploads/:id", () => {
+  it("after the move the owner gets 403, body the same as a stranger's 403 for the same upload; 200 after restore", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const stranger = await seedUser(db);
@@ -181,8 +177,8 @@ describe("V5 GET /api/uploads/:id", () => {
   });
 });
 
-describe("V6 反向連結（來源在垃圾桶）", () => {
-  it("自己的 A、分享給讀者的 A'、讀者所在群組的 A''：各自移入 → B 的反向連結不含它、還原 → 含；旁觀者 C 全程都在", async () => {
+describe("backlinks (source in trash)", () => {
+  it("own A, A' shared with the reader, A'' in the reader's group: each moved -> B's backlinks do not contain it, restored -> they do; bystander C is present throughout", async () => {
     const { app, db } = await buildTestApp();
     const reader = await seedUser(db);
     const other = await seedUser(db);
@@ -208,8 +204,8 @@ describe("V6 反向連結（來源在垃圾桶）", () => {
   });
 });
 
-describe("V7 A2-6：目標在垃圾桶、連結照記", () => {
-  it("B 移入 → writeLinksInTx(A→B) 仍 applied 且 note_links 有 (A,B) → 還原 B → B 的反向連結含 A", async () => {
+describe("target in trash, links still recorded", () => {
+  it("B moved -> writeLinksInTx(A->B) is still applied and note_links has (A,B) -> restore B -> B's backlinks contain A", async () => {
     const { db } = await buildTestApp();
     const owner = await seedUser(db);
     const a = await seedNote(db, { ownerId: owner.id }, { title: "A" });
@@ -223,8 +219,8 @@ describe("V7 A2-6：目標在垃圾桶、連結照記", () => {
   });
 });
 
-describe("V8 wikilink 候選", () => {
-  it("visibleNoteTargets／visibleTitlesByIds：自有、分享、群組三支各一，移入後不含、還原後含", async () => {
+describe("wikilink candidates", () => {
+  it("visibleNoteTargets/visibleTitlesByIds: own, shared and group, one each; not included after the move, included after restore", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const other = await seedUser(db);
@@ -258,7 +254,7 @@ describe("V8 wikilink 候選", () => {
   });
 });
 
-describe("V9 站內連結解析", () => {
+describe("in-site link resolution", () => {
   const ORIGIN = testConfig.publicUrl.origin;
   const resolveWith = async (db: Db, scope: SiteLinkScope, href: string) => {
     const parsed = parseSiteNoteHref(href, ORIGIN);
@@ -266,7 +262,7 @@ describe("V9 站內連結解析", () => {
     return createSiteLinkResolver(db, scope).resolve(href, parsed);
   };
 
-  it("群組範圍：垃圾桶筆記的 /g/ 與 /notes/<id> 兩形回 null、活筆記回 {id,title}；使用者範圍也回 null；還原後解得到", async () => {
+  it("group scope: both the /g/ and /notes/<id> forms of a trashed note return null, a live note returns {id,title}; user scope also returns null; resolves again after restore", async () => {
     const { db } = await buildTestApp();
     const admin = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
@@ -287,7 +283,7 @@ describe("V9 站內連結解析", () => {
     expect(await resolveWith(db, group, `/notes/${a.id}`)).toEqual({ id: a.id, title: "A" });
   });
 
-  it("查找序不變：活筆記 B 的 prev_slug 等於垃圾桶筆記 A 的現行 slug → 以 A 的 slug 解析回 null（不解到 B）；by-group-path 也 404（admin in_trash 指向 A、一般成員 not_found）", async () => {
+  it("lookup order unchanged: live note B's prev_slug equals trashed note A's current slug -> resolves to null by A's slug (not to B); by-group-path is also 404 (admin gets in_trash pointing at A, an ordinary member not_found)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const member = await seedUser(db);
@@ -296,7 +292,7 @@ describe("V9 站內連結解析", () => {
     await seedNote(db, { groupId: g.id }, { title: "B", slug: "v9-b", prevSlug: "v9-shared" });
     await markTrashed(pool(db), a.id, admin.id);
     expect(await resolveWith(db, { kind: "group", groupId: g.id }, `/g/${g.id}/v9-shared`)).toBeNull();
-    // REST 照同一查找序解到垃圾桶裡的 A（不是 B）：admin 有垃圾桶權 → in_trash 帶 A 的 id；一般成員 → not_found。
+    // REST resolves by the same lookup order to A in the trash (not B): admin with trash right -> in_trash with A's id; ordinary member -> not_found.
     const res = await inject(app, "GET", `/api/notes/by-group-path/${g.id}/v9-shared`, admin.id);
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: { code: "in_trash", message: "This note is in the trash." }, noteId: a.id });
@@ -307,8 +303,8 @@ describe("V9 站內連結解析", () => {
   });
 });
 
-describe("V10 公開頁 links", () => {
-  it("公開 P 的 wikilink 指向有別名的 T：T 移入 → links 不含 T；還原 → 含", async () => {
+describe("public page links", () => {
+  it("public P's wikilink points to T which has an alias: T moved -> links does not contain T; restored -> contains it", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const pTok = token();
@@ -325,8 +321,8 @@ describe("V10 公開頁 links", () => {
   });
 });
 
-describe("V11 resolveNoteAccess 矩陣", () => {
-  it("群組六角色＋非成員、個人 owner／分享 editor／viewer：移入後每一格 none；還原後回原值", async () => {
+describe("resolveNoteAccess matrix", () => {
+  it("six group roles + non-member, personal owner / shared editor / viewer: every cell is none after the move; back to the original values after restore", async () => {
     const { db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const gn = await seedNote(db, { groupId: s.groupId });
@@ -347,7 +343,7 @@ describe("V11 resolveNoteAccess 矩陣", () => {
     const snapshot = async () => Promise.all(cells.map(([, u, n]) => resolveNoteAccess(db, u, n)));
 
     const before = await snapshot();
-    expect(before.filter(a => a.role !== "none")).toHaveLength(9); // 非成員以外都有權（前提）
+    expect(before.filter(a => a.role !== "none")).toHaveLength(9); // everyone except the non-member has rights (precondition)
     await markTrashed(pool(db), gn.id, s.admin.id);
     await markTrashed(pool(db), pn.id, owner.id);
     const trashed = await snapshot();
@@ -359,8 +355,8 @@ describe("V11 resolveNoteAccess 矩陣", () => {
   });
 });
 
-describe("V12 resolveTrashedNoteAccess 矩陣", () => {
-  it("群組垃圾桶筆記：admin、editDelete 為 true；member、deleteOnly、editOnly、readOnly、outsider 為 false", async () => {
+describe("resolveTrashedNoteAccess matrix", () => {
+  it("group trashed note: admin and editDelete are true; member, deleteOnly, editOnly, readOnly, outsider are false", async () => {
     const { db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const gn = await seedNote(db, { groupId: s.groupId });
@@ -371,7 +367,7 @@ describe("V12 resolveTrashedNoteAccess 矩陣", () => {
     }
   });
 
-  it("個人垃圾桶筆記：owner true；分享 editor、陌生人 false", async () => {
+  it("personal trashed note: owner true; shared editor and stranger false", async () => {
     const { db } = await buildTestApp();
     const owner = await seedUser(db);
     const editor = await seedUser(db);
@@ -384,7 +380,7 @@ describe("V12 resolveTrashedNoteAccess 矩陣", () => {
     expect(await resolveTrashedNoteAccess(db, stranger.id, pn.id), "陌生人").toBe(false);
   });
 
-  it("活筆記對 owner false；不存在的 id、非 UUID 一律 false（不 throw）", async () => {
+  it("a live note is false for the owner; a nonexistent id and a non-UUID are always false (no throw)", async () => {
     const { db } = await buildTestApp();
     const owner = await seedUser(db);
     const live = await seedNote(db, { ownerId: owner.id });
@@ -394,8 +390,8 @@ describe("V12 resolveTrashedNoteAccess 矩陣", () => {
   });
 });
 
-describe("V13 noteIsLive", () => {
-  it("活 true、垃圾桶 false、不存在 false、非 UUID false（不 throw）", async () => {
+describe("noteIsLive", () => {
+  it("live true, trashed false, nonexistent false, non-UUID false (no throw)", async () => {
     const { db } = await buildTestApp();
     const owner = await seedUser(db);
     const live = await seedNote(db, { ownerId: owner.id });
@@ -408,8 +404,8 @@ describe("V13 noteIsLive", () => {
   });
 });
 
-describe("V14 容量不排除", () => {
-  it("readSpaceUsage（產品碼）：個人與群組空間的用量在移入前後相同（垃圾桶附件照算）", async () => {
+describe("capacity is not excluded", () => {
+  it("readSpaceUsage (production code): usage of personal and group spaces is the same before and after the move (trashed attachments still count)", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "admin" }]);
@@ -428,8 +424,6 @@ describe("V14 容量不排除", () => {
   });
 });
 
-// ───────────────────────────── V15／V16：每個單篇授權端點（表驅動） ─────────────────────────────
-
 type Ctx = Awaited<ReturnType<typeof buildCollabTestApp>>;
 
 interface Fixture {
@@ -443,7 +437,7 @@ interface Fixture {
   groupId: string;
 }
 
-/** owner 的個人筆記 n：有內容、一則 AI 修改紀錄、一版、開了 token、分享給 friend、一個附件；owner 是群組 g 的 admin（move 用）。 */
+/** The owner's personal note n: has content, one AI edit record, one version, a token opened, shared with friend, one attachment; the owner is admin of group g (for move). */
 async function fixture(ctx: Ctx): Promise<Fixture> {
   const db = ctx.db;
   const owner = await seedUser(db);
@@ -516,10 +510,9 @@ async function send(app: FastifyInstance, row: Row, f: Fixture, userId: string):
   return inject(app, row.method, row.url(f), userId, row.payload?.(f));
 }
 
-/** 同一列、同一位使用者，筆記 id 換成隨機 uuid（其餘欄沿用）。 */
 const withRandomNote = (f: Fixture): Fixture => ({ ...f, noteId: randomUUID() });
 
-describe("V15 每個單篇授權端點：移入前不是授權 404 → 移入後 404（與隨機 uuid 逐位元組相同）→ 還原後同移入前", () => {
+describe("every single-note authorization endpoint: before the move not an authorization 404 -> after the move 404 (byte-for-byte the same as a random uuid) -> after restore same as before the move", () => {
   it.each(ROWS.map(r => [r.name, r] as const))("%s", async (_name, row) => {
     const ctx = await buildCollabTestApp();
     const [f1, f2, f3] = [await fixture(ctx), await fixture(ctx), await fixture(ctx)];
@@ -541,7 +534,7 @@ describe("V15 每個單篇授權端點：移入前不是授權 404 → 移入後
     expect(restored.statusCode, `${row.name} 還原後：${restored.body}`).toBe(before.statusCode);
   });
 
-  it("POST …/collab-token：移入前 owner → 移入後 none（200，不是 404）→ 還原後 owner", async () => {
+  it("POST .../collab-token: owner before the move -> none after the move (200, not 404) -> owner after restore", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: owner.id });
@@ -558,8 +551,8 @@ describe("V15 每個單篇授權端點：移入前不是授權 404 → 移入後
   });
 });
 
-describe("V16 對照：同一張表對別人的活筆記（陌生人視角）全部是同一條 404", () => {
-  it("每一列：陌生人打 owner 的活筆記 → 404，body 與隨機 uuid 逐位元組相同", async () => {
+describe("control: the same table against a stranger's view of someone else's live note is all the same 404", () => {
+  it("each row: a stranger hitting the owner's live note -> 404, body byte-for-byte the same as a random uuid", async () => {
     const ctx = await buildCollabTestApp();
     const f = await fixture(ctx);
     const stranger = await seedUser(ctx.db);

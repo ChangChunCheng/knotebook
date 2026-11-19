@@ -1,7 +1,6 @@
-/**
- * 沒有自訂文字的 wikilink（顯示目標的現行標題）——下載後目標改名，在舊副本裡改含那個連結的段落再寫回，
- * 連結文字不得被凍結成自訂文字（`transfer/link-texts.ts`）。L1–L4 四案；L5 是這版之前下載的副本（基底沒有 `links`）。
- */
+// A wikilink with no custom text displays the target's current title: after the target is renamed following a download, editing the paragraph
+// that contains that link in the old copy and writing back must not freeze the link text into custom text (`transfer/link-texts.ts`).
+// The last case is a copy downloaded before this version (the base has no `links`).
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { notes, transferBases } from "../src/db/schema.js";
@@ -24,7 +23,6 @@ async function scene(label = "") {
     { type: "paragraph", content: "Para E2" },
   ]);
   const renameTarget = (title: string) => ctx.db.update(notes).set({ title }).where(eq(notes.id, target.id));
-  /** 現況每個 wikilink 的 label 與 snapshotTitle（fork 上開一次 session 讀；不寫回）。 */
   const links = async () => {
     const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, note.id);
     const s = await EditorSession.open(testEditingRuntime, doc);
@@ -35,14 +33,14 @@ async function scene(label = "") {
       s.close();
     }
   };
-  /** 讀者看到的第一段（下載＝MCP 讀出：沒有自訂文字的連結顯示目標的現行標題）。 */
+  /** The first paragraph as the reader sees it (download = MCP read: a link without custom text shows the target's current title). */
   const firstPara = async () => (await downloadNote(ctx.app, bulk.token, note.id)).body.split("\n").find(l => l.startsWith("Para E1"))!;
   return { ctx, u, pat, bulk, note, target, renameTarget, links, firstPara };
 }
 const href = (id: string) => `/notes/${id}`;
 
-describe("寫回時保住「沒有自訂文字」的 wikilink", () => {
-  it("L1 下載 → 目標改名 → 舊副本改含連結的段落（連結文字沒動）→ 200 applied、label 仍空、顯示現行標題；之後再改名仍跟著變", async () => {
+describe("write-back keeps wikilinks that have no custom text", () => {
+  it("download -> target renamed -> old copy edits the paragraph containing the link (link text untouched) -> 200 applied, label still empty, shows the current title; a later rename still follows", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect(d.body).toContain(`[Target v1](${href(s.target.id)})`);
@@ -56,7 +54,7 @@ describe("寫回時保住「沒有自訂文字」的 wikilink", () => {
     expect(await s.firstPara()).toBe(`Para E1 edited links [Target v3](${href(s.target.id)}) here.`);
   });
 
-  it("L2 agent 把連結文字改成自訂字（目標下載後也改了名）→ 存成自訂 label；改成基底的 snapshotTitle 也算自訂", async () => {
+  it("agent changes the link text to custom text (target also renamed after download) -> stored as a custom label; changing it to the base's snapshotTitle also counts as custom", async () => {
     for (const text of ["My own words", "Old snapshot"]) {
       const s = await scene();
       const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -69,7 +67,7 @@ describe("寫回時保住「沒有自訂文字」的 wikilink", () => {
     }
   });
 
-  it("L3 目標沒改名、agent 改了同段其他字 → label 仍空；之後改名跟著變", async () => {
+  it("target not renamed, agent edits other words in the same paragraph -> label still empty; a later rename follows", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace(" here.", " over here.")));
@@ -79,7 +77,7 @@ describe("寫回時保住「沒有自訂文字」的 wikilink", () => {
     expect(await s.firstPara()).toBe(`Para E1 links [Target v2](${href(s.target.id)}) over here.`);
   });
 
-  it("L4 連結原本就有自訂文字 → 目標改名、改同段其他字寫回 → 保持那個自訂文字", async () => {
+  it("link already had custom text -> target renamed, other words in the paragraph edited and written back -> the custom text is kept", async () => {
     const s = await scene("Custom words");
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect(d.body).toContain(`[Custom words](${href(s.target.id)})`);
@@ -90,7 +88,7 @@ describe("寫回時保住「沒有自訂文字」的 wikilink", () => {
     expect(await s.firstPara()).toBe(`Para E1 edited links [Custom words](${href(s.target.id)}) here.`);
   });
 
-  it("L5 基底段表沒有 links（這版之前下載的副本）→ 照舊規則：下載時的標題存成自訂文字", async () => {
+  it("base paragraph table has no links (copy downloaded before this version) -> old rule: the title at download time is stored as custom text", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const [row] = await s.ctx.db.select().from(transferBases).where(eq(transferBases.key, d.fm.base!));

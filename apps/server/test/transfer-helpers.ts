@@ -1,7 +1,4 @@
-/**
- * #200：transfer token 測試共用（REST 與 MCP 兩族）。`uploads.test.ts` 的 multipart 手組與 `rawSocketPost` 是檔內私有，
- * 這裡另寫一份，不動那支檔。
- */
+// The multipart assembly and `rawSocketPost` in `uploads.test.ts` are private to that file; a separate copy is written here.
 import { eq, sql } from "drizzle-orm";
 import type { TokenScope } from "@knotebook/shared";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -13,7 +10,7 @@ import type { Db } from "../src/db/index.js";
 import { seedTokenForUser } from "./editing-helpers.js";
 import { seedNote, seedUser } from "./group-helpers.js";
 
-/** 完整 8-byte PNG signature＋任意內容（`detectImageMimeType` 要完整簽章）。 */
+/** A complete 8-byte PNG signature plus arbitrary content (`detectImageMimeType` requires the full signature). */
 export const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03]);
 const BOUNDARY = "knotebookTransferBoundary";
 export const MULTIPART = `multipart/form-data; boundary=${BOUNDARY}`;
@@ -29,7 +26,6 @@ export function fieldOnlyBody(): Buffer {
   return Buffer.from(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello\r\n--${BOUNDARY}--\r\n`, "utf-8");
 }
 
-/** 一位使用者＋一篇他的個人筆記＋一支 PAT（預設讀寫）。 */
 export async function ownerWithPat(
   db: Db,
   scope: TokenScope = "notes:read notes:write",
@@ -40,7 +36,7 @@ export async function ownerWithPat(
   return { userId: user.id, pat: token, patId: tokenId, noteId: note.id };
 }
 
-/** 直接跑簽發交易（不經 MCP；不扣任何桶、不經 gate）。被拒就丟錯——測試要的是一支真的簽出來的 token。 */
+/** Runs the issuing transaction directly (not via MCP; charges no bucket, no gate). Throws if rejected - the test wants a really issued token. */
 export async function issueDirect(db: Db, parentTokenId: string, noteId: string, purpose: TransferPurpose): Promise<{ token: string; id: string }> {
   const token = generateTransferToken();
   const r = await db.transaction(tx =>
@@ -50,7 +46,7 @@ export async function issueDirect(db: Db, parentTokenId: string, noteId: string,
   return { token, id: r.id };
 }
 
-/** 讓一支子 token 過期。`created_at` 一起往前推，否則撞 `transfer_tokens_expiry_chk`（expires_at > created_at）。 */
+/** Expires a child token. `created_at` is moved back too, otherwise it hits `transfer_tokens_expiry_chk` (expires_at > created_at). */
 export async function expireToken(db: Db, id: string): Promise<void> {
   await db
     .update(transferTokens)

@@ -1,14 +1,10 @@
-/**
- * #181 垃圾桶整合測試共用的種子與量測。**只在測試裡直寫 `deleted_at`**（不經 `trashNotesInTx`）——`test/` 不受 src 的守衛管轄。
- *
- */
+// Writes deleted_at directly (not via trashNotesInTx); only tests may, since test/ is outside the src guard.
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
 import type { Db } from "../src/db/index.js";
 import { groupMembers } from "../src/db/schema.js";
 import { cookieOf, seedGroup, seedRole, seedUser, type SeededUser } from "./group-helpers.js";
 
-/** 測試用直接移入（不經 trashNotesInTx）：deleted_at = now() - $ago::interval、deleted_by = $by。 */
 export async function markTrashed(pool: Pool, noteId: string, by: string | null, ago = "0 seconds"): Promise<void> {
   const { rowCount } = await pool.query(
     `update notes set deleted_at = now() - $2::interval, deleted_by = $3 where id = $1`,
@@ -22,7 +18,7 @@ export async function markRestored(pool: Pool, noteId: string): Promise<void> {
   if (rowCount !== 1) throw new Error(`markRestored: ${noteId} 命中 ${rowCount} 列`);
 }
 
-/** 兩欄現值；`deleted_at` 取文字形（微秒精度）。筆記不存在 → undefined。 */
+/** `deleted_at` is read as text to keep microsecond precision. */
 export async function trashCols(pool: Pool, noteId: string): Promise<{ deleted_at: string | null; deleted_by: string | null } | undefined> {
   const { rows } = await pool.query<{ deleted_at: string | null; deleted_by: string | null }>(
     `select deleted_at::text as deleted_at, deleted_by from notes where id = $1`,
@@ -33,16 +29,15 @@ export async function trashCols(pool: Pool, noteId: string): Promise<{ deleted_a
 
 export interface SixRoleScene {
   groupId: string;
-  admin: SeededUser;      // 內建管理員（七旗標）
-  member: SeededUser;     // 內建一般成員（讀＋建＋編，無刪）
-  editDelete: SeededUser; // 自訂 { canRead, canEdit, canDelete }
-  deleteOnly: SeededUser; // 自訂 { canRead, canDelete }
-  editOnly: SeededUser;   // 自訂 { canRead, canEdit }
-  readOnly: SeededUser;   // 自訂 { canRead }
-  outsider: SeededUser;   // 非成員
+  admin: SeededUser; // built-in admin (all seven flags)
+  member: SeededUser; // built-in ordinary member (read, create, edit; no delete)
+  editDelete: SeededUser; // custom { canRead, canEdit, canDelete }
+  deleteOnly: SeededUser; // custom { canRead, canDelete }
+  editOnly: SeededUser; // custom { canRead, canEdit }
+  readOnly: SeededUser; // custom { canRead }
+  outsider: SeededUser; // non-member
 }
 
-/** 第二張表的六種角色＋非成員，同一個群組。 */
 export async function sixRoleScene(db: Db): Promise<SixRoleScene> {
   const admin = await seedUser(db);
   const member = await seedUser(db);
@@ -68,7 +63,6 @@ export async function sixRoleScene(db: Db): Promise<SixRoleScene> {
   return { groupId: g.id, admin, member, editDelete, deleteOnly, editOnly, readOnly, outsider };
 }
 
-/** `app.inject` 的簡寫：`userId` 為 null ＝不帶 cookie。 */
 export const inject = async (
   app: FastifyInstance,
   method: "GET" | "POST" | "DELETE" | "PATCH" | "PUT",

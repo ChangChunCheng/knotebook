@@ -18,7 +18,7 @@ async function uploaded() {
 const get = (app: Awaited<ReturnType<typeof uploaded>>["app"], path: string) => app.inject({ method: "GET", url: path });
 
 describe("GET /api/auth/providers/:id/icon", () => {
-  it("S6：免登入 200、原樣位元組、content-type＝偵測值、nosniff、CSP default-src 'none'; sandbox；v＝現版本 → immutable", async () => {
+  it("no login needed: 200, bytes verbatim, content-type is the detected one, nosniff, CSP default-src 'none'; sandbox; v = current version -> immutable", async () => {
     const { app, p, bytes } = await uploaded();
     const res = await get(app, `/api/auth/providers/${p.id}/icon?v=1`);
     expect(res.statusCode).toBe(200);
@@ -29,7 +29,7 @@ describe("GET /api/auth/providers/:id/icon", () => {
     expect(res.headers["cache-control"]).toBe(IMMUTABLE);
   });
 
-  it("S6：v 不等、缺、非數字 → no-cache（仍回現行圖）", async () => {
+  it("v mismatched, missing or non-numeric -> no-cache (still returns the current image)", async () => {
     const { app, p, bytes } = await uploaded();
     for (const q of ["?v=0", "?v=2", "", "?v=abc", "?v="]) {
       const res = await get(app, `/api/auth/providers/${p.id}/icon${q}`);
@@ -39,14 +39,14 @@ describe("GET /api/auth/providers/:id/icon", () => {
     }
   });
 
-  it("v 必須字串完全相等——01、1.0、+1、空白、重複兩次都 no-cache", async () => {
+  it("v must match the string exactly: 01, 1.0, +1, whitespace and a duplicated v are all no-cache", async () => {
     const { app, p } = await uploaded();
     for (const q of ["?v=01", "?v=1.0", "?v=%2B1", "?v=%201", "?v=1&v=1"]) {
       expect((await get(app, `/api/auth/providers/${p.id}/icon${q}`)).headers["cache-control"], q).toBe("no-cache");
     }
   });
 
-  it("S6：停用中服務 200；JPEG 的 content-type 是 image/jpeg；大寫 UUID 也找得到", async () => {
+  it("disabled provider is still 200; JPEG content-type is image/jpeg; uppercase UUID is found too", async () => {
     const { app, db, cookies, p } = await uploaded();
     await db.update(authProviders).set({ enabled: false }).where(eq(authProviders.id, p.id));
     expect((await get(app, `/api/auth/providers/${p.id}/icon?v=1`)).statusCode).toBe(200);
@@ -57,7 +57,7 @@ describe("GET /api/auth/providers/:id/icon", () => {
     expect(jpeg.headers["cache-control"]).toBe(IMMUTABLE);
   });
 
-  it("S6：icon_kind≠upload → 404「No sign-in service icon with that id.」；改成 gitlab 後 → 404；刪除有上傳圖的服務後同網址 200 → 404；非 UUID → 404", async () => {
+  it("icon_kind != upload -> 404 'No sign-in service icon with that id.'; after switching to gitlab -> 404; same URL 200 then 404 after deleting a provider that had an uploaded image; non-UUID -> 404", async () => {
     const { app, db, cookies, p } = await uploaded();
     const plain = await seedAuthProvider(db, { issuerUrl: "https://b.example" });
     const notUpload = await get(app, `/api/auth/providers/${plain.id}/icon?v=0`);
@@ -66,7 +66,7 @@ describe("GET /api/auth/providers/:id/icon", () => {
     const patched = await app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${p.id}`, cookies, payload: { iconKind: "gitlab" } });
     expect(patched.statusCode).toBe(200);
     expect((await get(app, `/api/auth/providers/${p.id}/icon?v=1`)).statusCode).toBe(404);
-    // 刪服務，圖跟著刪——被刪的列原本**有**上傳圖。
+    // Deleting the provider deletes its image too; the deleted row did have an uploaded image.
     const doomed = await seedAuthProvider(db, { issuerUrl: "https://c.example" });
     expect((await putIcon(app, doomed.id, multipartBody([iconFile(pngBytes())]), { cookies })).statusCode).toBe(200);
     const doomedUrl = `/api/auth/providers/${doomed.id}/icon?v=1`;

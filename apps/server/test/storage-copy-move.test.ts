@@ -1,6 +1,3 @@
-/**
- * 複製與移入群組的配額（複製／移入、S14（複製／移動）、S15(b)）。
- */
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildTestApp, freshLimiters, type TestApp } from "./helpers.js";
@@ -15,7 +12,7 @@ const move = async (app: FastifyInstance, noteId: string, userId: string, groupI
   app.inject({ method: "POST", url: `/api/notes/${noteId}/move`, cookies: await cookieOf(userId), payload: { groupId } });
 const noteCount = async (pool: import("pg").Pool) => (await pool.query("select count(*)::int n from notes")).rows[0].n as number;
 
-/** 來源筆記：每個 size 一個附件（DB size 照給、磁碟小 PNG），文件引用全部。 */
+/** Source note: one attachment per size (DB size as given, small PNG on disk), all referenced by the document. */
 async function srcWith(db: TestApp["db"], uploadsDir: string, owner: { ownerId: string } | { groupId: string }, uploaderId: string, sizes: number[], title = "Src") {
   const n = await seedNote(db, owner, { title });
   const ids: string[] = [];
@@ -24,9 +21,9 @@ async function srcWith(db: TestApp["db"], uploadsDir: string, owner: { ownerId: 
   return { id: n.id, uploadIds: ids };
 }
 
-describe("複製", () => {
-  it("到已滿個人空間（有附件）→ 預檢 409（incomingBytes null、owner 看得到三數）；不建筆記、磁碟無新檔、不扣 upload 桶", async () => {
-    // upload 桶只給 1 張：被拒後桶裡那 1 張還在，才證明預檢在 consumeMany 之前。
+describe("copy", () => {
+  it("to a full personal space (with attachments) -> pre-check 409 (incomingBytes null, owner sees the three numbers); no note created, no new file on disk, upload bucket not charged", async () => {
+    // The upload bucket allows only 1: after the rejection that 1 is still there, proving the pre-check runs before consumeMany.
     const uploadBucket = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload: uploadBucket }) });
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
@@ -44,11 +41,11 @@ describe("複製", () => {
     expect(uploadBucket.consume(b.id)).toBe(true);
   });
 
-  it("未滿但放不下 → 交易內 409（incomingBytes＝實際複製的位元組）；無新筆記、被拒後已複製的檔清掉", async () => {
+  it("not full but does not fit -> 409 inside the transaction (incomingBytes = bytes actually copied); no new note, files already copied are cleaned up after the rejection", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const a = await seedUser(db);
     await giveUserQuota(db, a.id, 1000);
-    const src = await srcWith(db, uploadsDir, { ownerId: a.id }, a.id, [300, 400]); // 用量已 700，副本要再 700
+    const src = await srcWith(db, uploadsDir, { ownerId: a.id }, a.id, [300, 400]); // usage is already 700, the copy needs another 700
     const [notesBefore, filesBefore] = [await noteCount(db.$client), await filesIn(uploadsDir)];
     const r = await copy(app, src.id, a.id);
     expect(r.statusCode).toBe(409);
@@ -57,7 +54,7 @@ describe("複製", () => {
     expect(await filesIn(uploadsDir)).toEqual(filesBefore);
   });
 
-  it("到已滿群組：manageGroup → 三數；一般成員 → 只有 incomingBytes", async () => {
+  it("to a full group: manageGroup -> three numbers; ordinary member -> incomingBytes only", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [gAdmin, gMember] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: gAdmin.id, role: "admin" }, { userId: gMember.id, role: "member" }]);
@@ -77,7 +74,7 @@ describe("複製", () => {
     expect(await filesIn(uploadsDir)).toEqual(filesBefore);
   });
 
-  it("磁碟遺失的附件不計 incoming：恰好因此放得下 → 201", async () => {
+  it("attachments missing on disk are not counted as incoming: it fits exactly because of that -> 201", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const a = await seedUser(db);
     await giveUserQuota(db, a.id, 1000);
@@ -85,13 +82,13 @@ describe("複製", () => {
     const ok = await seedAttachment(db, uploadsDir, n.id, a.id, 200);
     const gone = await seedAttachment(db, uploadsDir, n.id, a.id, 500, { noFile: true });
     await seedDoc(db, n.id, imageDoc([`/api/uploads/${ok}`, `/api/uploads/${gone}`]));
-    // 用量 700；副本若算兩個要 700（超）、只算實際複製的 200 → 900 ≤ 1000
+    // Usage 700; counting two would need 700 (over), counting only the 200 actually copied gives 900 <= 1000.
     const r = await copy(app, n.id, a.id);
     expect(r.statusCode).toBe(201);
     expect(await usedOf(db.$client, { kind: "user", id: a.id })).toBe(900);
   });
 
-  it("來源文件引用同一附件兩次、剩餘恰好一份 → 201（incoming 只算一次）", async () => {
+  it("source document references the same attachment twice, exactly one copy fits -> 201 (incoming counted once)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const a = await seedUser(db);
     await giveUserQuota(db, a.id, 600);
@@ -103,7 +100,7 @@ describe("複製", () => {
     expect(await usedOf(db.$client, { kind: "user", id: a.id })).toBe(600);
   });
 
-  it("配額 0 的空間、與已超額的空間——無附件的複製都 201（預檢只在有附件要複製時做）", async () => {
+  it("space with quota 0 and an over-quota space - a copy without attachments is 201 either way (the pre-check runs only when there are attachments to copy)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [z, over] = await Promise.all([seedUser(db), seedUser(db)]);
     await giveUserQuota(db, z.id, 0);
@@ -117,8 +114,8 @@ describe("複製", () => {
   });
 });
 
-describe("移入群組（移入形）", () => {
-  it("移進已滿群組（有附件）→ 409；owner／shares／轉址／slug 全不變", async () => {
+describe("move into a group", () => {
+  it("move into a full group (with attachments) -> 409; owner/shares/redirects/slug all unchanged", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [o, s] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: o.id, role: "admin" }]);
@@ -135,7 +132,7 @@ describe("移入群組（移入形）", () => {
     expect((await db.$client.query("select count(*)::int n from note_redirects")).rows[0].n).toBe(0);
   });
 
-  it("成功 → 個人用量降、群組用量升；無附件筆記移進已滿（含配額 0）群組 → 200", async () => {
+  it("success -> personal usage down, group usage up; a note without attachments moved into a full group (including quota 0) -> 200", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: o.id, role: "admin" }]);
@@ -151,7 +148,7 @@ describe("移入群組（移入形）", () => {
     expect((await move(app, plain.id, o.id, g0.id)).statusCode).toBe(200);
   });
 
-  it("一般成員（可新建）移入被拒 → 只有 incomingBytes", async () => {
+  it("ordinary member (may create) rejected on move-in -> incomingBytes only", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [admin, m] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: m.id, role: "member" }]);
@@ -164,9 +161,9 @@ describe("移入群組（移入形）", () => {
   });
 });
 
-describe("busy 映射（S14 複製／移動形）與 S15(b)", () => {
+describe("busy mapping (copy/move) and lock_timeout scope", () => {
   for (const code of ["40P01", "55P03"]) {
-    it(`縫 storage-space-locked 拋 ${code}：複製 → 409 server_busy、已複製的檔已清、無新筆記；移動 → 409 server_busy、筆記不變`, async () => {
+    it(`test hook storage-space-locked throws ${code}: copy -> 409 server_busy, copied files cleaned up, no new note; move -> 409 server_busy, note unchanged`, async () => {
       const { app, db, uploadsDir } = await buildTestApp({
         groupTestHook: async point => { if (point === "storage-space-locked") throw Object.assign(new Error(code), { code }); },
       });
@@ -187,7 +184,7 @@ describe("busy 映射（S14 複製／移動形）與 S15(b)", () => {
     });
   }
 
-  it("S15(b)：storageLockTimeoutMs=200；複製取得空間鎖之後，insertNoteWithAutoSlug 等另一連線未 commit 的同 slug 300 ms → 對方 rollback 後複製 201（取鎖後的列鎖等待不受 lock_timeout 限）", async () => {
+  it("storageLockTimeoutMs=200; after the copy takes the space lock, insertNoteWithAutoSlug waits 300 ms on another connection's uncommitted same slug -> after the other side rolls back the copy is 201 (the row-lock wait after taking the lock is not bound by lock_timeout)", async () => {
     const holder: { ownerId?: string; started?: boolean; inserted?: boolean; pool?: import("pg").Pool } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       storageLockTimeoutMs: 200,
@@ -197,8 +194,9 @@ describe("busy 映射（S14 複製／移動形）與 S15(b)", () => {
         const c = await holder.pool!.connect();
         try {
           await c.query("begin");
-          // holder 自己的等待設上限：若副本的 slug 寫入跑到空間鎖之前（鎖序被破壞），副本未 commit 的 'plan' 已在，這句等複製、
-          // 複製又在縫上等這個 hook——JS 層互等、PG 偵測不到（突變實測：卡到測試逾時）。設上限後 2 s 即 55P03，案子快速紅。
+          // The holder's own wait gets an upper bound: if the copy's slug write ran before the space lock (lock order broken), the copy's
+          // uncommitted 'plan' already exists, this statement waits for the copy, and the copy waits on this hook at the test hook - a
+          // deadlock at the JS level that PG cannot detect (the test would hang until timeout). With the bound, a 55P03 after 2 s fails the case fast.
           await c.query("set local lock_timeout = '2000ms'");
           await c.query("insert into notes (owner_id, slug, title) values ($1, 'plan', 'Other')", [holder.ownerId]);
         } catch (err) {
@@ -214,14 +212,14 @@ describe("busy 映射（S14 複製／移動形）與 S15(b)", () => {
     const o = await seedUser(db);
     holder.ownerId = o.id;
     await giveUserQuota(db, o.id, 10_000);
-    // 來源的 slug 是 seedNote 給的隨機值；副本以標題 "Plan" 派生 'plan'——正是 holder 未 commit 的那個。
+    // The source's slug is a random value from seedNote; the copy derives 'plan' from the title "Plan" - exactly the one the holder has uncommitted.
     const src = await srcWith(db, uploadsDir, { ownerId: o.id }, o.id, [10], "Plan");
     const t0 = Date.now();
     const r = await copy(app, src.id, o.id);
     expect(holder.inserted).toBe(true);
     expect(r.statusCode).toBe(201);
     expect(r.json().slug).toBe("plan");
-    // 至少等到對方 rollback（300 ms，留 50 ms 量測誤差）：證明複製真的在唯一索引上等過、且等超過 200 ms 沒被 lock_timeout 打斷。
+    // Wait at least until the other side rolls back (300 ms, 50 ms measurement slack): proves the copy really waited on the unique index and was not cut off by lock_timeout after more than 200 ms.
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
   });
 });

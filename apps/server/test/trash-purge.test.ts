@@ -1,4 +1,3 @@
-/** #181：保留期清理工作。 */
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,8 +25,8 @@ const expired = async (db: Db, owner: string, ago = "8 days") => {
   return n.id;
 };
 
-describe("PU1 到期邊界與附件", () => {
-  it("停用帳號的筆記照樣清理；7 天＋1 分鐘前的刪、7 天－1 分鐘前與活筆記留下", async () => {
+describe("expiry boundary and attachments", () => {
+  it("notes of a disabled account are purged too; deleted 7 days + 1 minute ago goes, 7 days - 1 minute ago and live notes stay", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db, { disabled: true });
     const old = await seedNote(db, { ownerId: owner.id });
@@ -48,8 +47,8 @@ describe("PU1 到期邊界與附件", () => {
   });
 });
 
-describe("PU2 保留天數改動下一輪才生效", () => {
-  it("NULL 不刪、改回 7 後刪；縮短同理", async () => {
+describe("a change of retention days takes effect on the next round", () => {
+  it("NULL deletes nothing, after setting back to 7 it deletes; shortening likewise", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const purger = createTrashPurger({ db, log: silent, uploadsDir });
@@ -70,8 +69,8 @@ describe("PU2 保留天數改動下一輪才生效", () => {
   });
 });
 
-describe("PU3 單輪上限", () => {
-  it("batchSize 2、maxBatches 3，7 篇到期 → 6 再 1", async () => {
+describe("per-round limit", () => {
+  it("batchSize 2, maxBatches 3, 7 notes due -> 6 then 1", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     for (let i = 0; i < 7; i += 1) await expired(db, owner.id);
@@ -81,8 +80,8 @@ describe("PU3 單輪上限", () => {
   });
 });
 
-describe("PU4 與還原併發（SKIP LOCKED）", () => {
-  it("還原持鎖時 runOnce 回 0 且不等鎖；放行後 x 活著", async () => {
+describe("concurrent with restore (SKIP LOCKED)", () => {
+  it("while restore holds the lock runOnce returns 0 without waiting; after release x is alive", async () => {
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     let entered!: () => void;
@@ -111,8 +110,8 @@ describe("PU4 與還原併發（SKIP LOCKED）", () => {
   });
 });
 
-describe("PU5／PU6 重入與 stop", () => {
-  it("兩發同時：第二發回 0、總數等於到期數；第二發根本沒開交易（SKIP LOCKED 之外另有重入擋）", async () => {
+describe("re-entry and stop", () => {
+  it("two at once: the second returns 0, total equals the number due; the second never opened a transaction (a re-entry guard besides SKIP LOCKED)", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     for (let i = 0; i < 3; i += 1) await expired(db, owner.id);
@@ -127,7 +126,7 @@ describe("PU5／PU6 重入與 stop", () => {
     expect(txs, "清理交易只開一次").toBe(1);
   });
 
-  it("stop() 之後 runOnce 回 0、不刪", async () => {
+  it("after stop() runOnce returns 0 and deletes nothing", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const x = await expired(db, owner.id);
@@ -138,8 +137,8 @@ describe("PU5／PU6 重入與 stop", () => {
   });
 });
 
-describe("PU7 log 不帶標題", () => {
-  it("輸出含 purged:1、不含標題標記字串", async () => {
+describe("log does not carry the title", () => {
+  it("output contains purged:1 and not the title marker string", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const marker = "SECRET-TITLE-MARKER-9f3a";
@@ -159,8 +158,8 @@ describe("PU7 log 不帶標題", () => {
   });
 });
 
-describe("PU8 排程", () => {
-  it("startTrashPurge → 到期筆記在 5 s 內消失；app.close() 之後新造的不被刪", async () => {
+describe("scheduling", () => {
+  it("startTrashPurge -> due notes disappear within 5 s; ones created after app.close() are not deleted", async () => {
     const { app, db } = await buildTestApp({ startTrashPurge: true, trashPurgeFirstDelayMs: 50, trashPurgeIntervalMs: 50 });
     const owner = await seedUser(db);
     const a = await expired(db, owner.id);
@@ -171,7 +170,7 @@ describe("PU8 排程", () => {
     expect(await exists(db, b)).toBe(true);
   });
 
-  it("沒有 startTrashPurge → 不排程", async () => {
+  it("without startTrashPurge -> nothing scheduled", async () => {
     const { app, db } = await buildTestApp({ trashPurgeFirstDelayMs: 50, trashPurgeIntervalMs: 50 });
     const owner = await seedUser(db);
     const a = await expired(db, owner.id);
@@ -181,8 +180,8 @@ describe("PU8 排程", () => {
   });
 });
 
-describe("PU9 交易爆不先刪檔", () => {
-  it("trigger raise → runOnce reject、列／uploads／磁碟檔都在；拿掉 trigger 再跑刪掉", async () => {
+describe("a failing transaction does not delete files first", () => {
+  it("trigger raise -> runOnce rejects, rows/uploads/disk files all still there; after removing the trigger the next run deletes them", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const x = await expired(db, owner.id);
@@ -203,8 +202,8 @@ describe("PU9 交易爆不先刪檔", () => {
   });
 });
 
-describe("PU10 刪檔失敗的 log 只記 name／code／uploadId", () => {
-  it("缺檔 → log.error 的物件鍵恰為 name、code、uploadId，沒有 err", async () => {
+describe("the log of a failed file delete records only name/code/uploadId", () => {
+  it("missing file -> the keys of the log.error object are exactly name, code, uploadId, no err", async () => {
     const uploadsDir = mkdtempSync(path.join(tmpdir(), "kn-pu10-"));
     const calls: unknown[] = [];
     await deleteUploadFiles(uploadsDir, ["00000000-0000-4000-8000-000000000001"], { error: obj => calls.push(obj) });
@@ -212,8 +211,8 @@ describe("PU10 刪檔失敗的 log 只記 name／code／uploadId", () => {
   });
 });
 
-describe("PU11 讀不到 site_settings 列", () => {
-  it("runOnce 回 0、warn { table }、不刪", async () => {
+describe("unreadable site_settings row", () => {
+  it("runOnce returns 0, warn { table }, nothing deleted", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const x = await expired(db, owner.id);
@@ -226,8 +225,8 @@ describe("PU11 讀不到 site_settings 列", () => {
   });
 });
 
-describe("PU12 第 k 批失敗仍記前面已刪的篇數", () => {
-  it("batchSize 1、第二篇的刪除被 trigger 擋 → reject，log 有 purged:1", async () => {
+describe("a failure in batch k still records the count already deleted before it", () => {
+  it("batchSize 1, the second note's delete is blocked by a trigger -> rejects, the log has purged:1", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     await expired(db, owner.id, "10 days");

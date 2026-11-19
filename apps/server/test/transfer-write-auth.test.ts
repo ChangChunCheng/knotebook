@@ -1,7 +1,3 @@
-/**
- * bulk transfer（write）：`PUT /api/transfer/notes` 的認證與 body 外殼（W-A1–W-A10）。
- * 只斷言在讀入 frontmatter **之前**就決定的出口；handler 解碼成功後即進入寫回。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { BULK_TRANSFER_INVALID_MESSAGE, BULK_TRANSFER_PAT_MESSAGE, BULK_TRANSFER_REQUIRED_MESSAGE, TRANSFER_PURPOSE_MESSAGE } from "../src/auth/transfer-auth.js";
@@ -28,8 +24,8 @@ async function scene(opts: { bearerMiss?: FixedWindowLimiter; parentScope?: Toke
 const errOf = (r: { json(): unknown }) => (r.json() as { error: { code: string; message: string } }).error;
 const FILE = "---\nknotebook: 1\n---\nhello";
 
-describe("requireBulk(\"write\")：W-A 矩陣", () => {
-  it("W-A1 無 header＋有效 session cookie → 401（不回退 cookie）、不吃 bearerMiss", async () => {
+describe("requireBulk('write'): auth matrix", () => {
+  it("no header + valid session cookie -> 401 (no cookie fallback), does not charge bearerMiss", async () => {
     const s = await scene({ bearerMiss: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) });
     const cookies = await cookieOf(s.u.id);
     for (let i = 0; i < 3; i++) {
@@ -40,14 +36,14 @@ describe("requireBulk(\"write\")：W-A 矩陣", () => {
     expect((await bulkPut(s.ctx.app, "knbt_nope", FILE)).statusCode).toBe(401);
   });
 
-  it("W-A2 有效 knb_ PAT → 401＋BULK_TRANSFER_PAT_MESSAGE", async () => {
+  it("valid knb_ PAT -> 401 + BULK_TRANSFER_PAT_MESSAGE", async () => {
     const s = await scene();
     const r = await bulkPut(s.ctx.app, s.pat.token, FILE);
     expect(r.statusCode).toBe(401);
     expect(errOf(r)).toEqual({ code: "unauthorized", message: BULK_TRANSFER_PAT_MESSAGE });
   });
 
-  it("W-A3 access='read' 的 bulk（唯讀母憑證簽的）→ 403 insufficient_scope、不帶 WWW-Authenticate（守 RO description「This credential can't send notes back.」）", async () => {
+  it("bulk with access='read' (issued from a read-only parent credential) -> 403 insufficient_scope, no WWW-Authenticate (guards the read-only description 'This credential can't send notes back.')", async () => {
     const s = await scene({ parentScope: "notes:read", access: "read" });
     const r = await bulkPut(s.ctx.app, s.bulk.token, FILE);
     expect(r.statusCode).toBe(403);
@@ -55,28 +51,28 @@ describe("requireBulk(\"write\")：W-A 矩陣", () => {
     expect(r.headers["www-authenticate"]).toBeUndefined();
   });
 
-  // 上一案的母憑證本身也沒有 notes:write，scope 檢查單獨就擋得下——這案讓母憑證有 notes:write，只剩 `access` 承重。
-  it("W-A3c access='read' 的 bulk、母憑證有 notes:write → 仍 403 insufficient_scope（權杖本身的 access 承重）", async () => {
+  // In the previous case the parent credential also lacks notes:write, so the scope check alone blocks it; here the parent credential has notes:write, leaving only `access` load-bearing.
+  it("bulk with access='read' and a parent credential with notes:write -> still 403 insufficient_scope (the token's own access is load-bearing)", async () => {
     const s = await scene({ parentScope: "notes:read notes:write", access: "read" });
     const r = await bulkPut(s.ctx.app, s.bulk.token, FILE);
     expect(r.statusCode).toBe(403);
     expect(errOf(r)).toEqual({ code: "insufficient_scope", message: "This token's scope doesn't allow this action." });
   });
 
-  it("W-A3 對照：同一支唯讀權杖讀取照常 200（只擋寫）", async () => {
+  it("control: the same read-only token reads fine with 200 (only writes are blocked)", async () => {
     const s = await scene({ parentScope: "notes:read", access: "read" });
     const r = await s.ctx.app.inject({ method: "GET", url: `/api/transfer/notes/${s.note.id}`, headers: { authorization: `Bearer ${s.bulk.token}` } });
     expect(r.statusCode).toBe(200);
   });
 
-  it("W-A3b access='read' 的 bulk＋使用者已停權 → 401＋BULK_TRANSFER_INVALID_MESSAGE（閘門排在 access 檢查之前）", async () => {
+  it("bulk with access='read' + user suspended -> 401 + BULK_TRANSFER_INVALID_MESSAGE (the gate comes before the access check)", async () => {
     const s = await scene({ parentScope: "notes:read", access: "read", disabled: true });
     const r = await bulkPut(s.ctx.app, s.bulk.token, FILE);
     expect(r.statusCode).toBe(401);
     expect(errOf(r)).toEqual({ code: "unauthorized", message: BULK_TRANSFER_INVALID_MESSAGE });
   });
 
-  it("W-A4 access='write'，但母憑證之後被改成唯讀 scope → 403 insufficient_scope", async () => {
+  it("access='write' but the parent credential was later changed to a read-only scope -> 403 insufficient_scope", async () => {
     const s = await scene();
     await s.ctx.db.update(apiTokens).set({ scope: "notes:read" }).where(eq(apiTokens.id, s.pat.tokenId));
     const r = await bulkPut(s.ctx.app, s.bulk.token, FILE);
@@ -84,7 +80,7 @@ describe("requireBulk(\"write\")：W-A 矩陣", () => {
     expect(errOf(r)).toEqual({ code: "insufficient_scope", message: "This token's scope doesn't allow this action." });
   });
 
-  it("W-A5 upload／download 權杖 → 403「This transfer token can't be used for this action.」", async () => {
+  it("upload/download tokens -> 403 'This transfer token can't be used for this action.'", async () => {
     const s = await scene();
     for (const purpose of ["upload", "download"] as const) {
       const t = await issueDirect(s.ctx.db, s.pat.tokenId, s.note.id, purpose);
@@ -95,8 +91,8 @@ describe("requireBulk(\"write\")：W-A 矩陣", () => {
   });
 });
 
-describe("body 外殼：415／Origin／413／UTF-8", () => {
-  it("W-A6 Content-Type: application/json（帶 body）→ 415「This request needs Content-Type text/markdown.」、基底未變", async () => {
+describe("body envelope: 415 / Origin / 413 / UTF-8", () => {
+  it("Content-Type: application/json (with a body) -> 415 'This request needs Content-Type text/markdown.', base unchanged", async () => {
     const s = await scene();
     const before = (await basesOf(s.ctx.db)).length;
     const r = await bulkPut(s.ctx.app, s.bulk.token, JSON.stringify({ a: 1 }), { contentType: "application/json" });
@@ -105,7 +101,7 @@ describe("body 外殼：415／Origin／413／UTF-8", () => {
     expect((await basesOf(s.ctx.db)).length).toBe(before);
   });
 
-  it("W-A7 text/markdown＋Origin: https://evil.example → 403「Origin check failed」；同一請求不帶 Origin → 通過 onRequest（新增 → 201）", async () => {
+  it("text/markdown + Origin: https://evil.example -> 403 'Origin check failed'; the same request without Origin passes onRequest (new note -> 201)", async () => {
     const s = await scene();
     const bad = await bulkPut(s.ctx.app, s.bulk.token, FILE, { origin: "https://evil.example" });
     expect(bad.statusCode).toBe(403);
@@ -114,7 +110,7 @@ describe("body 外殼：415／Origin／413／UTF-8", () => {
     expect(good.statusCode).toBe(201);
   });
 
-  it("W-A8（256 KiB，同 WRITE_BODY_LIMIT）body 256 KiB＋1 byte → 413 content_too_large；恰 256 KiB → 201 寫入", async () => {
+  it("256 KiB (same as WRITE_BODY_LIMIT): body of 256 KiB + 1 byte -> 413 content_too_large; exactly 256 KiB -> 201 written", async () => {
     const s = await scene();
     expect(TRANSFER_WRITE_BODY_LIMIT).toBe(262_144);
     expect(TRANSFER_WRITE_BODY_LIMIT).toBe(WRITE_BODY_LIMIT);
@@ -125,14 +121,14 @@ describe("body 外殼：415／Origin／413／UTF-8", () => {
     expect(exact.statusCode).toBe(201);
   });
 
-  it("W-A9 body 非 UTF-8 → 400 invalid_body＋INVALID_UTF8_MESSAGE", async () => {
+  it("body not UTF-8 -> 400 invalid_body + INVALID_UTF8_MESSAGE", async () => {
     const s = await scene();
     const r = await bulkPut(s.ctx.app, s.bulk.token, Buffer.from([0xff, 0xfe, 0x00]));
     expect(r.statusCode).toBe(400);
     expect(errOf(r)).toEqual({ code: "invalid_body", message: INVALID_UTF8_MESSAGE });
   });
 
-  it("W-A10 其他路由（POST /api/notes）帶 text/markdown → 仍 415「This request needs Content-Type application/json.」", async () => {
+  it("other routes (POST /api/notes) with text/markdown -> still 415 'This request needs Content-Type application/json.'", async () => {
     const s = await scene();
     const r = await s.ctx.app.inject({ method: "POST", url: "/api/notes", headers: { "content-type": "text/markdown", authorization: `Bearer ${s.pat.token}` }, payload: "# hi" });
     expect(r.statusCode).toBe(415);

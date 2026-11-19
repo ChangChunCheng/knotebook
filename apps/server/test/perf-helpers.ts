@@ -1,22 +1,20 @@
 /**
- * 效能測試共用的量法：不比絕對毫秒（機器忙、CI 慢就紅），比「規模加倍時變幾倍」與「相對於同一台機器當下的雜訊」。
- * - {@link expectLinear}：同一形量 N/8 與 N，`t(N) / t(N/8) < 24`（線性約 8–16，GC 與快取讓大的那份稍慢；平方約 64：差八倍
- *   ——平方項只要佔 N 處時間的一半以上，比例就超過 24；比量 N/4 對 N 的「4 對 16」鑑別度更高，全套平行跑、機器忙時也不會誤紅）。先空跑一次
- *   N/8 暖機（JIT），再交錯量三輪（N/8、N、N/8、N、N/8、N），兩邊各取最小值（偶發的 GC 停頓、平行跑的其他測試不會每輪都落在同一邊）。
- *   `t(N)` 低於 `floorMs`（至少 250 ms）直接算過：這些形平方時都是秒級到幾十秒；另有寬鬆的絕對上限 `maxMs` 擋爆量。
- * - {@link yieldToLoop}：每量一次之前都讓出事件迴圈（setImmediate）。`await` 一個同步的回傳值只讓出 microtask，vitest worker 的 RPC
- *   （onTaskUpdate，60 秒逾時）是 macrotask：一串量測若全程沒讓出，在 2 vCPU 的 CI 上會同步佔住 worker 超過 60 秒，整套以
- *   `Timeout calling "onTaskUpdate"` 判紅（PR #400 的 CI）。每一段同步的工作要控制在約 5 秒內（慢機器上）。
- * - {@link loopStall}／{@link idleStall}／{@link stallLimit}：主執行緒停頓。門檻＝max(下限, 3 × 同一段時間閒置時量到的停頓)：閒置時的
- *   停頓就是這台機器當下的 GC 與排程雜訊；工作跑回主執行緒時停頓是整段轉換的時間（秒級），仍然遠超過。
+ * Scale-based perf measurement: absolute milliseconds are not compared (busy machine or slow CI would go red); instead the ratio when size grows and the idle noise of the same machine.
+ * - expectLinear: measures N/8 and N; asserts t(N) / t(N/8) < 24 (linear is about 8-16, GC and cache make the larger a bit slower; quadratic is about 64, eight times
+ *   apart: a quadratic term taking half of the time at N already exceeds 24; more discriminating than N/4 vs N ("4 vs 16"), and does not false-fail when the full suite runs in parallel on a busy machine).
+ *   One warm-up run of N/8 (JIT), then three interleaved rounds (N/8, N, N/8, N, N/8, N), taking the minimum on each side (an occasional GC pause or parallel test does not land on the same side every round).
+ *   If t(N) is below floorMs (at least 250 ms) it passes outright: these shapes are seconds to tens of seconds when quadratic; a loose absolute cap maxMs catches blow-ups.
+ * - yieldToLoop: yield the event loop before every measurement. Awaiting a synchronous value yields only microtasks; the vitest worker's RPC
+ *   (onTaskUpdate, 60 s timeout) is a macrotask: a run of measurements that never yields can hold the worker synchronously for over 60 s on a 2-vCPU CI and fail the whole suite with
+ *   `Timeout calling "onTaskUpdate"` (CI of PR #400). Keep each synchronous stretch under about 5 s (on slow machines).
+ * - loopStall / idleStall / stallLimit: main-thread stalls. Threshold = max(floor, 3 x the stall measured while idle over the same period): idle
+ *   stalls are this machine's current GC and scheduling noise; when work runs back on the main thread the stall is the whole conversion (seconds), which still far exceeds it.
  */
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { expect } from "vitest";
 
-/** 讓出事件迴圈一次（setImmediate）：讓 vitest worker 的 RPC 與計時器有機會跑。量測之間、建大文件的各步之間都要呼叫。 */
 export const yieldToLoop = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
-/** 量一次（毫秒）。先讓出事件迴圈（見 {@link yieldToLoop}）。 */
 export async function timeIt(f: () => unknown): Promise<number> {
   await yieldToLoop();
   const t = performance.now();
@@ -25,28 +23,28 @@ export async function timeIt(f: () => unknown): Promise<number> {
 }
 
 export interface LinearOpts {
-  /** `t(2n)` 低於這個值就不看比例（預設、也是下限 250 ms）。 */
+  /** Below this `t(N)` the ratio is not checked (default and minimum 250 ms). */
   floorMs?: number;
-  /** `t(N)` 的絕對上限（預設 30 s，2 倍超額配置的機器上線性的形也會慢到 4–5 倍）：平方回來時仍會超過或比例先紅。 */
+  /** Absolute cap on `t(N)` (default 30 s; on a 2x over-provisioned machine even a linear shape can be 4-5x slower); a quadratic shape still exceeds it or trips the ratio first. */
   maxMs?: number;
 }
-/** 量 `run(N/8)` 與 `run(N)`（`run` 回它自己量到的毫秒；N 要能被 8 整除），斷言線性（見檔頭）。回兩個值給呼叫端記錄。 */
+/** `run(n)` returns the milliseconds it measured itself (e.g. via timeIt); N must be divisible by 8. */
 export async function expectLinear(name: string, run: (n: number) => Promise<number> | number, N: number, opts: LinearOpts = {}): Promise<[number, number]> {
   if (N % 8 !== 0) throw new Error(`expectLinear: N=${N} 要能被 8 整除`);
   const small = N / 8;
   const floorMs = Math.max(250, opts.floorMs ?? 250);
   const maxMs = opts.maxMs ?? 30_000;
   await yieldToLoop();
-  await run(small); // 暖機
+  await run(small); // warm-up
   let t1 = Infinity;
   let t2 = Infinity;
   for (let round = 0; round < 3; round++) {
-    // 每一次量測之間讓出事件迴圈：整串量測不能同步佔住 vitest worker（見 {@link yieldToLoop}）
+    // Yield between measurements: the run must not hold the vitest worker synchronously (see yieldToLoop).
     await yieldToLoop();
     t1 = Math.min(t1, await run(small));
     await yieldToLoop();
     t2 = Math.min(t2, await run(N));
-    if (t2 > maxMs) break; // 平方回來時不必再跑兩輪
+    if (t2 > maxMs) break; // a quadratic shape needs no more rounds
   }
   console.log(`[perf] ${name}: N/8=${small} ${Math.round(t1)} ms, N=${N} ${Math.round(t2)} ms, ratio ${(t2 / Math.max(t1, 0.001)).toFixed(2)}`);
   expect(t2, `${name}: t(N) 的絕對上限`).toBeLessThan(maxMs);
@@ -54,7 +52,6 @@ export async function expectLinear(name: string, run: (n: number) => Promise<num
   return [t1, t2];
 }
 
-/** 主執行緒停頓：開始量 → `stop()` 回最大停頓（毫秒）。 */
 export function loopStall(): { stop(): number } {
   const h = monitorEventLoopDelay({ resolution: 10 });
   h.enable();
@@ -66,6 +63,7 @@ export function loopStall(): { stop(): number } {
     last = now;
   }, 10);
   return {
+    /** `stop()` returns the largest stall in ms. */
     stop(): number {
       clearInterval(iv);
       h.disable();
@@ -74,12 +72,10 @@ export function loopStall(): { stop(): number } {
   };
 }
 
-/** 閒置 `ms` 毫秒期間的最大停頓（這台機器當下的雜訊）。 */
 export async function idleStall(ms = 500): Promise<number> {
   const m = loopStall();
   await new Promise(r => setTimeout(r, ms));
   return m.stop();
 }
 
-/** 停頓門檻：max(下限, 3 × 閒置基準)。 */
 export const stallLimit = (baseline: number, floorMs: number): number => Math.max(floorMs, 3 * baseline);

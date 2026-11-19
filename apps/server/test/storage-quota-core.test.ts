@@ -1,7 +1,4 @@
-/**
- * `assertSpaceRoomInTx`／`storage/usage.ts` 直測（S15 函式層）。
- * 交易一律 `db.transaction(tx => …)`（READ COMMITTED），另一方用另一條 pool 連線。
- */
+// Transactions are always `db.transaction(tx => ...)` (READ COMMITTED); the other side uses another pool connection.
 import { describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { sql } from "drizzle-orm";
@@ -15,24 +12,26 @@ import { spaceLockKey } from "../src/storage/space.js";
 
 const opts = { lockTimeoutMs: 60_000 };
 const lockTimeoutOf = async (pool: Pool) => (await pool.query<{ lock_timeout: string }>("show lock_timeout")).rows[0]!.lock_timeout;
-const sqlShow = () => sql`show lock_timeout`; // `show` 的結果欄名就是設定名
+const sqlShow = () => sql`show lock_timeout`; // the result column of `show` is the setting name
 
 describe("assertSpaceRoomInTx", () => {
-  it("incoming ≤ 0 → 不取鎖、不讀配額（另一交易持同空間鎖時也立刻回；已超額也不拋）", async () => {
+  it("incoming <= 0 -> takes no lock and reads no quota (returns at once even when another transaction holds the same space lock; no throw when already over quota)", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 0);
-    // 已超額（100 > 0）：若讀了配額與 SUM，`used + incoming > quota` 會拋——不拋才證明沒讀
+    // Already over quota (100 > 0): if quota and SUM were read, `used + incoming > quota` would throw - not throwing proves they were not read.
     const n = await seedNote(db, { ownerId: u.id });
     await seedAttachment(db, uploadsDir, n.id, u.id, 100);
     const holder = await db.$client.connect();
     try {
       await holder.query("begin");
       await holder.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [spaceLockKey({ kind: "user", id: u.id })]);
-      // 「沒取鎖」的確定性證明（不量牆鐘）：鎖被 holder 持住，這裡只要去取就一定等——函式自己的上限給 1 ms、交易本身也先
-      // `set local lock_timeout = '1ms'`（防「沒先 set_config 就取鎖」的寫法落回 session 的 0＝無限等），所以取鎖＝立刻 55P03 → 紅；
-      // 兩筆都順利 commit 才證明沒取鎖。與機器快慢無關。
-      // 另在同一交易內數本連線持有的 advisory 鎖：擋住「改用 pg_try_advisory_xact_lock」或「取了別把鍵」這類不會被上面擋下的寫法。
+      // Deterministic proof of "no lock taken" (no wall clock): the holder holds the lock, so any attempt to take it must wait - the
+      // function's own limit is 1 ms and the transaction itself first runs `set local lock_timeout = '1ms'` (so a write that takes
+      // the lock without set_config first cannot fall back to the session's 0 = wait forever), so taking the lock = immediate 55P03 -> red;
+      // both committing proves no lock was taken. Independent of machine speed.
+      // Also count the advisory locks this connection holds in the same transaction: blocks variants the above would not catch, such as
+      // switching to pg_try_advisory_xact_lock or taking a different key.
       const noLock = { lockTimeoutMs: 1 };
       for (const incoming of [0, -5]) {
         await db.transaction(async tx => {
@@ -48,7 +47,7 @@ describe("assertSpaceRoomInTx", () => {
     }
   });
 
-  it("used + incoming == quota → 過；> quota → StorageQuotaExceeded（409、storage_quota_exceeded、帶 space／三數，數字 typeof number）", async () => {
+  it("used + incoming == quota -> passes; > quota -> StorageQuotaExceeded (409, storage_quota_exceeded, carries space and the three numbers, typeof number)", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
@@ -61,7 +60,7 @@ describe("assertSpaceRoomInTx", () => {
     for (const k of ["usedBytes", "quotaBytes", "incomingBytes"] as const) expect(typeof err[k], k).toBe("number");
   });
 
-  it("群組空間只算群組筆記；個人空間只算 owner 的個人筆記；配額 NULL → 一律過", async () => {
+  it("a group space counts only group notes; a personal space counts only the owner's personal notes; quota NULL -> always passes", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -76,7 +75,7 @@ describe("assertSpaceRoomInTx", () => {
     await db.transaction(tx => assertSpaceRoomInTx(tx, { kind: "user", id: u.id }, 10 ** 12, opts));
   });
 
-  it("鎖後 SUM 看得到前一持鎖者已 commit 的列（兩句、READ COMMITTED）；縫在取鎖之後觸發一次、帶 hookCtx", async () => {
+  it("after the lock, SUM sees rows committed by the previous lock holder (two statements, READ COMMITTED); the test hook fires once after taking the lock, with hookCtx", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
@@ -99,14 +98,14 @@ describe("assertSpaceRoomInTx", () => {
       expect(err).toMatchObject({ usedBytes: 700 });
       expect(calls).toEqual([["storage-space-locked", { noteId: n.id }]]);
     } finally {
-      // 斷言在 commit 前失敗時，別把持鎖、帶未提交列的交易還回 pool
+      // If the assertion fails before commit, do not return the lock-holding, uncommitted transaction to the pool.
       if (!committed) await holder.query("rollback");
       holder.release();
     }
     expect(await usedOf(db.$client, { kind: "user", id: u.id })).toBe(700);
   });
 
-  it("同一空間 id 大寫與小寫取的是同一把鎖（第二筆被擋）", async () => {
+  it("the same space id in upper and lower case takes the same lock (the second one is blocked)", async () => {
     const { db } = await buildTestApp();
     const g = await seedGroup(db, "G", []);
     await giveGroupQuota(db, g.id, 1000);
@@ -119,23 +118,23 @@ describe("assertSpaceRoomInTx", () => {
     }));
     let second: Promise<void> | undefined;
     try {
-      // 縫在取鎖之後才觸發：第一筆進了縫＝已持鎖，再發第二筆（不數 pg_locks——整個 cluster 共用，平行的測試檔會干擾）
+      // The test hook fires only after the lock is taken: the first one entering the hook holds the lock, then send the second (pg_locks is not counted - it is cluster-wide and parallel test files would interfere).
       await inHook;
       second = db.transaction(tx => assertSpaceRoomInTx(tx, { kind: "group", id: g.id.toLowerCase() }, 1, opts));
       expect(await waitForBlockedOrSettled(db.$client, second)).toBe("blocked");
     } finally {
-      // 斷言失敗也要放行第一筆，否則它永遠停在縫上、持著連線，拖到 hook 逾時
+      // Release the first even if the assertion fails, otherwise it stays on the hook holding a connection until the hook times out.
       release();
     }
     await first;
     await second;
   });
 
-  it("S15 函式層：lock_timeout 只罩取鎖那一句——等太久 → 55P03；取到之後回到維運者在 database 層設的值（不是硬寫 0）", async () => {
+  it("function level: lock_timeout covers only the lock statement - waiting too long -> 55P03; after acquiring, it returns to the value the operator set at database level (not a hard-coded 0)", async () => {
     const { db, url } = await freshDb();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
-    // database 層設 7s（`TO DEFAULT` 要回到這個值）；只有之後新開的連線吃得到，故另開 pool
+    // The database-level setting is 7s (`TO DEFAULT` must return to it); only connections opened afterwards see it, hence a separate pool.
     const dbName = (await db.$client.query<{ d: string }>("select current_database() as d")).rows[0]!.d;
     await db.$client.query(`alter database "${dbName}" set lock_timeout = '7s'`);
     const pool2 = new Pool({ connectionString: url, max: 2 });
@@ -166,7 +165,7 @@ describe("assertSpaceRoomInTx", () => {
     }
   });
 
-  it("lockTimeoutMs 必須是正整數（0／負數／小數 → throw，不送進 PG）；預設值 5000", async () => {
+  it("lockTimeoutMs must be a positive integer (0/negative/fraction -> throw, not sent to PG); default 5000", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     for (const bad of [0, -1, 1.5, Number.NaN]) {
@@ -177,7 +176,7 @@ describe("assertSpaceRoomInTx", () => {
 });
 
 describe("storage/usage.ts", () => {
-  it("readSpaceUsage：數字 typeof number、planName；不存在的空間 → null", async () => {
+  it("readSpaceUsage: numbers are typeof number, planName; missing space -> null", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     const planName = `core-${u.id.slice(0, 8)}`;
@@ -192,7 +191,7 @@ describe("storage/usage.ts", () => {
     expect(await readSpaceUsage(db, { kind: "group", id: "00000000-0000-4000-8000-000000000000" })).toBeNull();
   });
 
-  it("canViewSpaceUsage：個人＝本人或站台 admin；群組＝manageGroup（含非成員站台 admin），一般成員與非成員 false；空間 id 大寫同效", async () => {
+  it("canViewSpaceUsage: personal = the user or a site admin; group = manageGroup (including a non-member site admin), ordinary member and non-member false; an uppercase space id works the same", async () => {
     const { db } = await buildTestApp();
     const [owner, other, admin, gAdmin, gMember] = await Promise.all([seedUser(db), seedUser(db), seedUser(db, { isAdmin: true }), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: gAdmin.id, role: "admin" }, { userId: gMember.id, role: "member" }]);
@@ -204,12 +203,11 @@ describe("storage/usage.ts", () => {
     expect(await canViewSpaceUsage(db, me(gMember), { kind: "group", id: g.id })).toBe(false);
     expect(await canViewSpaceUsage(db, me(other), { kind: "group", id: g.id })).toBe(false);
     expect(await canViewSpaceUsage(db, me(admin, true), { kind: "group", id: g.id })).toBe(true);
-    // 空間 id 大寫（路由傳入原值）與小寫同效
     expect(await canViewSpaceUsage(db, me(owner), { kind: "user", id: owner.id.toUpperCase() })).toBe(true);
     expect(await canViewSpaceUsage(db, me(gAdmin), { kind: "group", id: g.id.toUpperCase() })).toBe(true);
   });
 
-  it("listSpaceUsage：一次 GROUP BY；值 typeof number；沒有附件的空間不在 Map 裡", async () => {
+  it("listSpaceUsage: one GROUP BY; values typeof number; a space without attachments is not in the Map", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     const na = await seedNote(db, { ownerId: a.id });

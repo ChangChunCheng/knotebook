@@ -1,9 +1,7 @@
-/**
- * #181：交易內存活重讀（表前五列的循序案）。在「授權之後、交易之前」的測試縫裡以
- * `trashNotesInTx` 把筆記移入垃圾桶——繞過路由授權——再讓操作跑完：回該處原本的 not_found，筆記沒被改到。
- * 每案配一個對照：同一縫裡不移入 → 操作照常成功（縫本身沒弄壞流程）。
- * 後半：改標題、公開連結五支、切版（`cutVersionInTx`）、掃描（`scanDue`）、連結轉換（含 backfill 群組分支照記）。
- */
+// In-transaction liveness re-read: in the hook between authorization and the transaction, `trashNotesInTx` moves the note
+// to trash (bypassing route authorization), then the operation runs to completion: it returns the not_found it had at that point and the note is untouched.
+// Every case has a control: the same hook without moving -> the operation succeeds (the hook itself does not break the flow).
+// Second half: title change, five public-link endpoints, version cut (`cutVersionInTx`), scan (`scanDue`), link conversion (including backfill's group branch).
 import { describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -28,7 +26,7 @@ import { NO_PENDING, fakeHost, paraDoc, pendingOf, seedOldNote, versionsOf } fro
 
 const NOT_FOUND = { error: { code: "not_found", message: "No note with that id." } };
 
-/** 縫的狀態：`target` 有值時，縫第一次觸發就把那篇移入垃圾桶（新交易，commit 後才放行操作）。 */
+/** Hook state: when `target` is set, the first trigger moves that note to trash (a new transaction, released only after commit). */
 interface Seam {
   db?: Db;
   target?: { id: string; by: string };
@@ -53,7 +51,6 @@ const slugSeam = (s: Seam): SlugPatchTestHook => async (p, ctx) => {
   if (p === "authorized") await fireSeam(s, ctx.noteId);
 };
 
-/** 縫恰觸發一次、ctx 是本篇；有移入的話，移入成功。 */
 function expectSeam(s: Seam, noteId: string, trashed: boolean): void {
   expect(s.hits).toBe(1);
   expect(s.ctxNoteId).toBe(noteId);
@@ -64,10 +61,10 @@ const noteCount = async (db: Db) => (await db.select({ n: sql<number>`count(*)::
 const req = async (app: FastifyInstance, method: "POST" | "PUT" | "PATCH" | "DELETE", url: string, userId: string, payload?: unknown) =>
   app.inject({ method, url, cookies: await cookieOf(userId), payload: payload as Record<string, unknown> });
 
-describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
+describe("#181 in-transaction liveness re-read: moved to trash after authorization", () => {
   for (const trash of [true, false]) {
-    const tag = trash ? "授權後移入 → 404 not_found，筆記沒被搬、分享與公開欄位不變" : "對照：縫裡不移入 → 200 照常搬移";
-    it(`RR-MV 搬移（note-move-authorized）：${tag}`, async () => {
+    const tag = trash ? "moved to trash after authorization -> 404 not_found, note not moved, shares and public fields unchanged" : "control: no move to trash in the hook -> 200, moved as usual";
+    it(`move (note-move-authorized): ${tag}`, async () => {
       const s: Seam = { hits: 0 };
       const built = await buildTestApp({ groupTestHook: groupSeam("note-move-authorized", s) });
       s.db = built.db;
@@ -83,7 +80,7 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
 
       expectSeam(s, n.id, trash);
       if (trash) {
-        // 狀態碼不承重：commit 後 authorizeRow 也回 404，rollback 靠下面的狀態斷言守，精簡時勿拿掉
+        // The status code carries no weight (authorizeRow also returns 404 after commit); the rollback is guarded by the state assertions below.
         expect(res.statusCode).toBe(404);
         expect(res.json()).toEqual(NOT_FOUND);
         expect(await noteState(db.$client, n.id)).toEqual(before);
@@ -99,8 +96,8 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
   }
 
   for (const trash of [true, false]) {
-    const tag = trash ? "授權後移入 → 404 not_found，uploads 0 列、磁碟不多檔" : "對照：縫裡不移入 → 201，uploads 1 列、磁碟多一檔";
-    it(`RR-UP 上傳（upload-authorized）：${tag}`, async () => {
+    const tag = trash ? "moved to trash after authorization -> 404 not_found, 0 uploads rows, no extra file on disk" : "control: no move to trash in the hook -> 201, 1 uploads row, one more file on disk";
+    it(`upload (upload-authorized): ${tag}`, async () => {
       const s: Seam = { hits: 0 };
       const built = await buildTestApp({ groupTestHook: groupSeam("upload-authorized", s) });
       s.db = built.db;
@@ -128,8 +125,8 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
   }
 
   for (const trash of [true, false]) {
-    const tag = trash ? "授權後移入 → 404 not_found，notes 總數不變" : "對照：縫裡不移入 → 201，notes 多一篇";
-    it(`RR-CP 複製（note-copy-authorized）：${tag}`, async () => {
+    const tag = trash ? "moved to trash after authorization -> 404 not_found, total notes unchanged" : "control: no move to trash in the hook -> 201, one more note";
+    it(`copy (note-copy-authorized): ${tag}`, async () => {
       const s: Seam = { hits: 0 };
       const built = await buildTestApp({ groupTestHook: groupSeam("note-copy-authorized", s) });
       s.db = built.db;
@@ -154,8 +151,8 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
   }
 
   for (const trash of [true, false]) {
-    const tag = trash ? "授權後移入 → 404 not_found，分享不變" : "對照：縫裡不移入 → 200，多一筆分享";
-    it(`RR-SH 分享（share-authorized）：${tag}`, async () => {
+    const tag = trash ? "moved to trash after authorization -> 404 not_found, shares unchanged" : "control: no move to trash in the hook -> 200, one more share";
+    it(`share (share-authorized): ${tag}`, async () => {
       const s: Seam = { hits: 0 };
       const built = await buildTestApp({ groupTestHook: groupSeam("share-authorized", s) });
       s.db = built.db;
@@ -182,11 +179,11 @@ describe("#181 交易內存活重讀：授權之後被移入垃圾桶", () => {
     });
   }
 
-  const cells: Array<[string, { slug: string | null }, string | null]> = [["格 1 自訂 slug", { slug: "x-new" }, "x-new"], ["格 4 slug:null", { slug: null }, null]];
+  const cells: Array<[string, { slug: string | null }, string | null]> = [["custom slug", { slug: "x-new" }, "x-new"], ["slug:null", { slug: null }, null]];
   for (const [cell, body, wantSlug] of cells) {
     for (const trash of [true, false]) {
-      const tag = trash ? "授權後移入 → 404 not_found（不是 409），slug／prev_slug／updated_at 不變" : "對照：縫裡不移入 → 200，slug 改了";
-      it(`RR-PS 改網址 ${cell}（slugPatchTestHook authorized）：${tag}`, async () => {
+      const tag = trash ? "moved to trash after authorization -> 404 not_found (not 409), slug/prev_slug/updated_at unchanged" : "control: no move to trash in the hook -> 200, slug changed";
+      it(`change URL ${cell} (slugPatchTestHook authorized): ${tag}`, async () => {
         const s: Seam = { hits: 0 };
         const built = await buildTestApp({ slugPatchTestHook: slugSeam(s) });
         s.db = built.db;
@@ -226,10 +223,10 @@ const conversionOf = async (db: Db, id: string) =>
 const linkTargetsOf = async (db: Db, id: string) =>
   (await db.select({ t: noteLinks.targetNoteId }).from(noteLinks).where(eq(noteLinks.sourceNoteId, id))).map(r => r.t).sort();
 
-describe("#181 交易內存活重讀（下）：改標題、公開連結、切版、掃描、連結轉換", () => {
+describe("#181 in-transaction liveness re-read (second half): title, public link, version cut, scan, link conversion", () => {
   for (const trash of [true, false]) {
-    const tag = trash ? "UPDATE 前移入 → 404 not_found（不是 409），title／slug／updated_at 不變" : "對照：縫裡不移入 → 200，標題改了";
-    it(`RR-RN 改標題 REST（slugUpdateTestHook）：${tag}`, async () => {
+    const tag = trash ? "moved to trash before the UPDATE -> 404 not_found (not 409), title/slug/updated_at unchanged" : "control: no move to trash in the hook -> 200, title changed";
+    it(`change title via REST (slugUpdateTestHook): ${tag}`, async () => {
       const s: Seam = { hits: 0 };
       const built = await buildTestApp({ slugUpdateTestHook: () => fireSeam(s, undefined) });
       s.db = built.db;
@@ -255,7 +252,7 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
     });
   }
 
-  it("RR-RN 改標題直呼 renameNoteTitle：pre-read 之前已移入 → gone，hook 沒被呼叫（pre-read 就短路，不進探測迴圈）", async () => {
+  it("change title by calling renameNoteTitle directly: already moved before the pre-read -> gone, the hook is not called (the pre-read short-circuits, never entering the probe loop)", async () => {
     const { db } = await freshDb();
     const owner = await seedUser(db);
     const n = await seedNote(db, { ownerId: owner.id }, { title: "舊" });
@@ -275,41 +272,41 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
   const SLUG_400 = { error: { code: "invalid_body", message: "Can't set a public URL: the note has no public link, is a group note, or changed owner after you sent this." } };
   type Pub = Awaited<ReturnType<typeof publicCols>>;
   const plCases: Array<{
-    id: string; what: string; method: "PUT" | "DELETE"; path: string; body?: unknown;
+    what: string; method: "PUT" | "DELETE"; path: string; body?: unknown;
     seed: { publicToken?: string; publicSlug?: string };
     trashed: { status: number; json?: unknown };
     control: { status: number; cols: (c: Pub) => void };
   }> = [
     {
-      id: "RR-PL1", what: "token PUT", method: "PUT", path: "public-link", seed: {},
+      what: "token PUT", method: "PUT", path: "public-link", seed: {},
       trashed: { status: 404, json: NOT_FOUND },
       control: { status: 200, cols: c => expect(c.token).not.toBeNull() },
     },
     {
-      id: "RR-PL2", what: "token DELETE", method: "DELETE", path: "public-link", seed: { publicToken: "d".repeat(43), publicSlug: "alias-pl2" },
+      what: "token DELETE", method: "DELETE", path: "public-link", seed: { publicToken: "d".repeat(43), publicSlug: "alias-pl2" },
       trashed: { status: 404, json: NOT_FOUND },
       control: { status: 204, cols: c => expect([c.token, c.slug]).toEqual([null, null]) },
     },
     {
-      id: "RR-PL3", what: "寬度 PUT", method: "PUT", path: "public-width", body: { width: "wide" }, seed: {},
+      what: "width PUT", method: "PUT", path: "public-width", body: { width: "wide" }, seed: {},
       trashed: { status: 404, json: NOT_FOUND },
       control: { status: 200, cols: c => expect(c.width).toBe("wide") },
     },
     {
-      id: "RR-PS2", what: "別名 PUT", method: "PUT", path: "public-link/slug", body: { slug: "alias-new" }, seed: { publicToken: "s".repeat(43) },
+      what: "alias PUT", method: "PUT", path: "public-link/slug", body: { slug: "alias-new" }, seed: { publicToken: "s".repeat(43) },
       trashed: { status: 400, json: SLUG_400 },
       control: { status: 200, cols: c => expect(c.slug).toBe("alias-new") },
     },
     {
-      id: "RR-PS3", what: "別名 DELETE", method: "DELETE", path: "public-link/slug", seed: { publicToken: "x".repeat(43), publicSlug: "alias-ps3" },
+      what: "alias DELETE", method: "DELETE", path: "public-link/slug", seed: { publicToken: "x".repeat(43), publicSlug: "alias-ps3" },
       trashed: { status: 204 },
       control: { status: 204, cols: c => expect(c.slug).toBeNull() },
     },
   ];
   for (const c of plCases) {
     for (const trash of [true, false]) {
-      const tag = trash ? `授權後移入 → ${c.trashed.status}（原落空路徑），公開欄位不變` : `對照：縫裡不移入 → ${c.control.status}`;
-      it(`${c.id} ${c.what}（public-link-authorized）：${tag}`, async () => {
+      const tag = trash ? `moved to trash after authorization -> ${c.trashed.status} (the existing no-match path), public fields unchanged` : `control: no move to trash in the hook -> ${c.control.status}`;
+      it(`${c.what} (public-link-authorized): ${tag}`, async () => {
         const s: Seam = { hits: 0 };
         const built = await buildTestApp({ groupTestHook: groupSeam("public-link-authorized", s) });
         s.db = built.db;
@@ -335,8 +332,8 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
   }
 
   for (const trash of [true, false]) {
-    const tag = trash ? "移入後 → VersionCutAbort note-deleted，note_versions 0 新列" : "對照：活筆記 → 切出 1 版";
-    it(`RR-CV 切版 cutVersionInTx：${tag}`, async () => {
+    const tag = trash ? "after the move to trash -> VersionCutAbort note-deleted, 0 new note_versions rows" : "control: live note -> 1 version cut";
+    it(`version cut cutVersionInTx: ${tag}`, async () => {
       const { db } = await freshDb();
       const owner = await seedUser(db);
       const n = await seedNote(db, { ownerId: owner.id });
@@ -366,7 +363,7 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
     });
   }
 
-  it("RR-SC 掃描 scanDue：兩篇到期、其一在垃圾桶 → 回 1、只切活的；垃圾桶那篇待切仍在；還原後下一輪切出來", async () => {
+  it("scan scanDue: two notes due, one in trash -> returns 1, only the live one is cut; the trashed one's pending cut remains; the next round after restore cuts it", async () => {
     const { db } = await freshDb();
     const owner = await seedUser(db);
     const live = await seedNote(db, { ownerId: owner.id });
@@ -396,9 +393,9 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
 
   for (const trash of [true, false]) {
     const tag = trash
-      ? "移入後 → 列仍 pending、attempts 不變、內容未改、沒有「連結轉換前」版本（含站內網址、只有 wikilink 兩形）"
-      : "對照：活筆記 → 兩篇標 done，含網址那篇轉成 wikilink";
-    it(`RR-LC 連結轉換：${tag}`, async () => {
+      ? "after the move to trash -> rows still pending, attempts unchanged, content untouched, no 'before link conversion' version (both the in-site URL and the wikilink-only forms)"
+      : "control: live note -> both notes marked done, the one with the URL converted to a wikilink";
+    it(`link conversion: ${tag}`, async () => {
       const ctx = await buildCollabTestApp();
       const owner = await seedUser(ctx.db);
       const a = await seedNote(ctx.db, { ownerId: owner.id }, { title: "A" });
@@ -429,7 +426,7 @@ describe("#181 交易內存活重讀（下）：改標題、公開連結、切�
     });
   }
 
-  it("RR-LC2 backfill 群組分支照記：群組筆記 S 的 wikilink 指向同群組垃圾桶筆記 T → note_links 有 (S,T)、S 標 done", async () => {
+  it("backfill's group branch still records: wikilink of group note S points at trashed note T of the same group -> note_links has (S,T), S marked done", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "G", [{ userId: owner.id, role: "admin" }]);

@@ -1,6 +1,3 @@
-/**
- * bulk transfer：單篇下載 `GET /api/transfer/notes/:id` 與自行撤銷。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -28,8 +25,8 @@ const mcpMarkdown = async (ctx: Awaited<ReturnType<typeof buildCollabTestApp>>, 
   return r.markdown;
 };
 
-describe("單篇下載", () => {
-  it("N1 200：content-type、8 行 frontmatter＋本文＝MCP 讀出；base 對到一列基底（user、note、key_id、salt、line_hashes、segments、applied_* NULL）", async () => {
+describe("single-note download", () => {
+  it("200: content-type, 8-line frontmatter + body = what MCP reads; base maps to one base row (user, note, key_id, salt, line_hashes, segments, applied_* NULL)", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -58,7 +55,7 @@ describe("單篇下載", () => {
     expect(base!.appliedTitleSha).toBeNull();
   });
 
-  it("N2 404 同字（TRANSFER_NOTE_NOT_FOUND_MESSAGE）：不存在的 uuid、看不到的、垃圾桶、非 uuid、%00", async () => {
+  it("404 with the same text (TRANSFER_NOTE_NOT_FOUND_MESSAGE): nonexistent uuid, invisible, trash, non-uuid, %00", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -77,7 +74,7 @@ describe("單篇下載", () => {
     expect(errOf({ json: () => JSON.parse(bodies[0]!) })).toEqual({ code: "not_found", message: TRANSFER_NOTE_NOT_FOUND_MESSAGE });
   });
 
-  it("N3 403 不在範圍：personal 權杖讀群組筆記；folder 權杖讀資料夾外；group 權杖讀別群組", async () => {
+  it("403 out of scope: personal token reading a group note; folder token reading outside the folder; group token reading another group", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -99,7 +96,7 @@ describe("單篇下載", () => {
     expect((await bulkGet(ctx.app, `/api/transfer/notes/${inside.id}`, folder.token)).statusCode).toBe(200);
   });
 
-  it("N4 contentRead limit 1：先 404 不扣、之後 200、再一發 429＋Retry-After", async () => {
+  it("contentRead limit 1: 404 first does not charge, then 200, one more request 429 + Retry-After", async () => {
     const ctx = await buildCollabTestApp({ limiters: { contentRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) } });
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -112,7 +109,7 @@ describe("單篇下載", () => {
     expect(String(r.headers["retry-after"])).toMatch(/^[1-9]\d*$/);
   });
 
-  it("N4b HEAD /api/transfer/notes/:id → 404、不扣 contentRead（exposeHeadRoute: false）", async () => {
+  it("HEAD /api/transfer/notes/:id -> 404, does not charge contentRead (exposeHeadRoute: false)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { contentRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) } });
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -123,7 +120,7 @@ describe("單篇下載", () => {
     expect((await bulkGet(ctx.app, `/api/transfer/notes/${nn.id}`, b.token)).statusCode).toBe(200);
   });
 
-  it("N5 content-disposition：CJK＋emoji＋/ 的標題 → filename* 解回 sanitizeTitle(title).md", async () => {
+  it("content-disposition: a title with CJK + emoji + / -> filename* decodes to sanitizeTitle(title).md", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -138,7 +135,7 @@ describe("單篇下載", () => {
     expect(decodeURIComponent(m![1]!)).toBe(sanitizeTitle(title) + ".md");
   });
 
-  it("N6／N7 live：別的 client 改了內容 → 下載的是 live 內容；不 touch presence（awareness 沒有這支權杖的 entry）", async () => {
+  it("live: another client edits the content -> the download is the live content; does not touch presence (awareness has no entry for this token)", async () => {
     const ctx = await buildCollabTestApp();
     const email = `o-${randomUUID()}@example.com`;
     const owner = await ctx.createUser({ email, password: PASSWORD });
@@ -157,7 +154,7 @@ describe("單篇下載", () => {
     client.disconnect();
   });
 
-  it("N8 wikilink 目標讀者看不到 → 連結文字退到 snapshotTitle（與 MCP 讀出相同、不露現行標題）", async () => {
+  it("wikilink target the reader cannot see -> link text falls back to snapshotTitle (same as MCP reads, does not reveal the current title)", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -172,7 +169,7 @@ describe("單篇下載", () => {
     expect(body).not.toContain("SECRET-現行標題");
   });
 
-  it("N9 保留：同篇連抓 11 次 → 這位讀者這篇 ≤ 10 列；另一位讀者同篇的列不受影響", async () => {
+  it("retention: fetching the same note 11 times -> at most 10 rows for this reader and note; another reader's rows for the same note are unaffected", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const v = await seedUser(ctx.db);
@@ -188,7 +185,7 @@ describe("單篇下載", () => {
     expect((await basesOf(ctx.db, { userId: v.id, noteId: n.id })).length).toBe(3);
   });
 
-  it("N10 撤銷：DELETE → 204、列不見、之後 GET → 401；已滿 3 支 → 撤銷一支 → 第 4 支可簽", async () => {
+  it("revoke: DELETE -> 204, row gone, later GET -> 401; with 3 already full -> revoke one -> a 4th can be issued", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -204,7 +201,7 @@ describe("單篇下載", () => {
     expect((await callTool(ctx.app, p2.token, "open_notes_as_files", {})).isError).toBeUndefined();
   });
 
-  it("N11 兩位讀者抓同一篇 → 兩列 salt 不同、line_hashes 不同", async () => {
+  it("two readers fetch the same note -> two rows with different salt and different line_hashes", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const v = await seedUser(ctx.db);
@@ -221,7 +218,7 @@ describe("單篇下載", () => {
     expect(a!.lineHashes.equals(c!.lineHashes)).toBe(false);
   });
 
-  it("N12 有寫回路由：PUT /api/transfer/notes 不帶 body → 不是 404（回 400）、帶 text/markdown → 不是 415；基底沒變", async () => {
+  it("write-back route exists: PUT /api/transfer/notes without a body -> not 404 (400), with text/markdown -> not 415; base unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
@@ -235,7 +232,7 @@ describe("單篇下載", () => {
     expect((await basesOf(ctx.db)).length).toBe(before);
   });
 
-  it("N13 範圍物件已看不到：shared 空間資料夾 F 被刪（只刪放置、筆記仍可見）→ 該篇 403 RANGE_GONE", async () => {
+  it("range object no longer visible: shared-space folder F deleted (only the placement, the note is still visible) -> that note 403 RANGE_GONE", async () => {
     const ctx = await buildCollabTestApp();
     const a = await seedUser(ctx.db);
     const bUser = await seedUser(ctx.db);

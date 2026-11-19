@@ -1,7 +1,3 @@
-/**
- * #397：每人 API token 上限（`apiTokensPerUser`）由 PAT 建立、OAuth 同意決定、OAuth 換 token 三處現讀 `siteLimits`。
- * actor 一律是本測試在同一個 DB 建的 admin。
- */
 import { describe, expect, it } from "vitest";
 import { apiTokens } from "../src/db/schema.js";
 import { buildTestApp, createUserAndLogin, freshLimiters } from "./helpers.js";
@@ -18,7 +14,6 @@ async function fillPats(db: Parameters<typeof seedTokenForUser>[0], userId: stri
   return tokens;
 }
 
-/** 註冊 client 並走完 authorize，回可直接送 decision 的 req 與 client_id。 */
 async function startFlow(app: Awaited<ReturnType<typeof buildTestApp>>["app"]) {
   const registered = await app.inject({ method: "POST", url: "/oauth/register", payload: { client_name: "Test client", redirect_uris: ["http://127.0.0.1:1234/cb"] } });
   const clientId = registered.json().client_id as string;
@@ -35,8 +30,8 @@ async function startFlow(app: Awaited<ReturnType<typeof buildTestApp>>["app"]) {
   return new URL(res.headers.location as string, ISSUER).searchParams.get("req")!;
 }
 
-describe("apiTokensPerUser 立即生效", () => {
-  it("PAT 建立：上限降到 2 後第 3 支 409 token_limit，訊息帶當下值；既有 3 支都還能用", async () => {
+describe("apiTokensPerUser takes effect immediately", () => {
+  it("PAT creation: after lowering the limit to 2 the 3rd is 409 token_limit with the current value in the message; the existing 3 still work", async () => {
     const { app, db, siteLimits, close } = await buildTestApp({
       limiters: freshLimiters({ patCreate: new FixedWindowLimiter({ limit: 100, windowMs: 3_600_000 }) }),
     });
@@ -57,7 +52,6 @@ describe("apiTokensPerUser 立即生效", () => {
         expect((await app.inject({ method: "GET", url: "/api/notes", headers: bearer(token) })).statusCode).toBe(200);
       }
 
-      // 上限調高後同一位使用者又能建立。
       await siteLimits.update(admin.id, { apiTokensPerUser: 4 });
       expect((await create("again")).statusCode).toBe(201);
       const overAgain = await create("extra again");
@@ -68,7 +62,7 @@ describe("apiTokensPerUser 立即生效", () => {
     }
   });
 
-  it("OAuth 同意決定：上限降到 2 後 409 token_limit，訊息帶當下值", async () => {
+  it("OAuth consent decision: after lowering the limit to 2 -> 409 token_limit with the current value in the message", async () => {
     const { app, db, siteLimits, close } = await buildTestApp();
     try {
       const admin = await seedUser(db, { isAdmin: true });
@@ -85,7 +79,7 @@ describe("apiTokensPerUser 立即生效", () => {
     }
   });
 
-  it("OAuth 換 token：同意之後上限降到 2 且已有 2 支，換發 invalid_grant，訊息帶當下值", async () => {
+  it("OAuth token exchange: limit lowered to 2 after consent with 2 already existing -> invalid_grant with the current value in the message", async () => {
     const { app, db, siteLimits, close } = await buildTestApp();
     try {
       const admin = await seedUser(db, { isAdmin: true });

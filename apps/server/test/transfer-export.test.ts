@@ -1,6 +1,3 @@
-/**
- * bulk transfer：整包匯出 `GET /api/transfer/export`。一律走真 HTTP（`exportRaw`）。
- */
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
@@ -25,7 +22,6 @@ const PASSWORD = "correct horse battery staple";
 const manifestOf = (entries: TarEntry[]) => JSON.parse(entries.find(e => e.path === ".knotebook/manifest.json")!.data.toString("utf8"));
 const filesOf = (entries: TarEntry[]) => entries.filter(e => e.type === "file" && e.path !== ".knotebook/manifest.json");
 
-/** 一位使用者＋唯讀 PAT＋（預設 all 範圍的）bulk 權杖。 */
 async function userWithBulk(ctx: Ctx, range?: BulkRange) {
   const u = await seedUser(ctx.db);
   const pat = await seedTokenForUser(ctx.db, u.id, "notes:read");
@@ -41,8 +37,8 @@ async function manyOwned(ctx: Ctx, ownerId: string, n: number): Promise<string[]
   return seedManyNotesInFolder(ctx.db.$client, { ownerId }, f.id, n);
 }
 
-describe("E1–E4：包的形", () => {
-  it("E1 基本形：目錄 → 筆記（完整路徑 code unit 序）→ manifest 最後；frontmatter 8 行、base 各自不同且各對到一列基底；manifest 各欄", async () => {
+describe("archive shape", () => {
+  it("basic shape: directory -> notes (full path in code unit order) -> manifest last; frontmatter 8 lines, each base differs and maps to one base row; manifest fields", async () => {
     const ctx = await buildCollabTestApp();
     const { u, b } = await userWithBulk(ctx);
     const other = await seedUser(ctx.db);
@@ -98,7 +94,7 @@ describe("E1–E4：包的形", () => {
     expect((await basesOf(ctx.db, { userId: u.id })).length).toBe(4);
   });
 
-  it("E2 可見性矩陣：owner、分享 viewer／editor、群組 editor／viewer／create-only（role viewer）在；垃圾桶、非成員群組、canRead:false 角色不在", async () => {
+  it("visibility matrix: owner, shared viewer/editor, group editor/viewer/create-only (role viewer) are in; trash, non-member groups, canRead:false roles are not", async () => {
     const ctx = await buildCollabTestApp();
     const { u, b } = await userWithBulk(ctx);
     const o = await seedUser(ctx.db);
@@ -129,7 +125,7 @@ describe("E1–E4：包的形", () => {
     expect((m.folders as Array<{ path: string }>).map(f => f.path)).not.toContain("Groups/gB");
   });
 
-  it("E3 四種範圍：personal／shared／group／folder（只有子樹、路徑前綴完整），shared 空間資料夾（placement）", async () => {
+  it("four scopes: personal/shared/group/folder (subtree only, full path prefix), shared-space folder (placement)", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const o = await seedUser(ctx.db);
@@ -154,7 +150,7 @@ describe("E1–E4：包的形", () => {
     void gn;
   });
 
-  it("E3b 範圍縮小時路徑照完整集合命名：同層資料夾 a:b／a_b 清洗後撞名，對第二個簽 folder 權杖 → 路徑同 all 範圍（a_b (2)）", async () => {
+  it("a narrower scope still names paths against the full set: sibling folders a:b / a_b collide after sanitising; a folder token for the second gives the same path as the all scope (a_b (2))", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const f1 = await seedFolder(ctx.db, { personal: u.id }, { name: "a:b" });
@@ -171,7 +167,7 @@ describe("E1–E4：包的形", () => {
     expect(sub.filter(e => e.type === "dir").map(e => e.path)).toEqual(["My notes", "My notes/a_b (2)"]);
   });
 
-  it("E4 檔名：A／a 重名、非法字元、空標題 Untitled", async () => {
+  it("file names: A/a duplicates, illegal characters, empty title Untitled", async () => {
     const ctx = await buildCollabTestApp();
     const { u, b } = await userWithBulk(ctx);
     const a1 = await seedNote(ctx.db, { ownerId: u.id }, { title: "A" });
@@ -184,8 +180,8 @@ describe("E1–E4：包的形", () => {
   });
 });
 
-describe("E5–E7b、E18：413、全站 1 個、桶", () => {
-  it("E5 413：範圍內 3 001 篇 → 413 JSON too_many_notes＋TOO_MANY_NOTES_MESSAGE、未 hijack；之後同一 app 的小範圍權杖立刻 200（slot 已放）", async () => {
+describe("413, one per site, bucket", () => {
+  it("413: 3 001 notes in scope -> 413 JSON too_many_notes + TOO_MANY_NOTES_MESSAGE, not hijacked; afterwards a small-scope token on the same app is 200 at once (slot released)", async () => {
     const ctx = await buildCollabTestApp();
     const { u, b } = await userWithBulk(ctx);
     await manyOwned(ctx, u.id, TRANSFER_EXPORT_MAX_NOTES + 1);
@@ -198,7 +194,7 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect(ok.status).toBe(200);
   }, 120_000);
 
-  it("E6 全站 1 個：A 停在 beforeBatch(0)；B → 429＋Retry-After 30；放行 A 後 B → 200", async () => {
+  it("one per site: A stopped at beforeBatch(0); B -> 429 + Retry-After 30; after releasing A, B -> 200", async () => {
     const g = gate();
     let first = true;
     const hooks: ExportTestHooks = {
@@ -225,7 +221,7 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect((await exportRaw(ctx.baseUrl, B.b.token)).status).toBe(200);
   });
 
-  it("E7 transferExport limit 1 → 第二發 429＋Retry-After ≥ 1＋訊息給分鐘數（視窗剛開：60 分鐘）", async () => {
+  it("transferExport limit 1 -> second request 429 + Retry-After >= 1 + message gives minutes (window just opened: 60 minutes)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { transferExport: new FixedWindowLimiter({ limit: 1, windowMs: 3_600_000 }) } });
     const { b } = await userWithBulk(ctx);
     expect((await exportRaw(ctx.baseUrl, b.token)).status).toBe(200);
@@ -235,7 +231,7 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect(JSON.parse(r.body.toString("utf8"))).toEqual({ error: { code: "too_many_requests", message: exportRateLimitedMessage(3_600_000) } });
   });
 
-  it("E7b 忙碌不扣桶：limit 2；A 停住時 B 連打 3 發都 429（Retry-After 30）；放行後 B → 200", async () => {
+  it("busy does not charge the bucket: limit 2; while A is stopped B sends 3 requests, all 429 (Retry-After 30); after release B -> 200", async () => {
     const g = gate();
     let first = true;
     const hooks: ExportTestHooks = { beforeBatch: async () => { if (first) { first = false; await g.wait; } } };
@@ -256,7 +252,7 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect((await exportRaw(ctx.baseUrl, B.b.token)).status).toBe(200);
   });
 
-  it("E18 範圍物件已看不到（group 權杖、已退群）→ 403 RANGE_GONE、未扣桶；另一位使用者的匯出占著 slot 時仍回 403 不是 429（gone 在拿 slot 之前判）", async () => {
+  it("range object no longer visible (group token, left the group) -> 403 RANGE_GONE, bucket not charged; while another user's export holds the slot it is still 403, not 429 (gone is decided before taking the slot)", async () => {
     const g = gate();
     let held = false;
     const hooks: ExportTestHooks = {
@@ -272,7 +268,6 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     const grp = await seedGroup(ctx.db, "G", [{ userId: u.id, role: "member" }]);
     const t = await tokenFor(ctx, u.id, { kind: "group", groupId: grp.id });
     await ctx.db.delete(groupMembers).where(eq(groupMembers.userId, u.id));
-    // 另一位使用者的匯出停在 slot 內
     const v = await seedUser(ctx.db);
     await seedNote(ctx.db, { ownerId: v.id });
     const pv = exportRaw(ctx.baseUrl, await tokenFor(ctx, v.id));
@@ -281,16 +276,15 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     try {
       r = await exportRaw(ctx.baseUrl, t);
     } finally {
-      g.open(); // 斷言失敗時也放行，免得另一發卡到逾時
+      g.open(); // release also when an assertion fails, so the other request is not stuck until timeout
     }
     expect(r.status).toBe(403);
     expect(JSON.parse(r.body.toString("utf8")).error).toEqual({ code: "forbidden", message: RANGE_GONE_MESSAGE });
     expect((await pv).status).toBe(200);
-    // 桶沒扣：同一位使用者的 all 權杖仍能匯出一次（limit 1）
     expect((await exportRaw(ctx.baseUrl, await tokenFor(ctx, u.id))).status).toBe(200);
   });
 
-  it("E22 串流本體在 writeHead 之前丟錯 → 斷線、slot 仍放；照樣記一行 info（鍵集合同 E21、outcome aborted）、onExportEnd(aborted)", async () => {
+  it("stream body throws before writeHead -> disconnect, slot still released; one info line is still logged (same key set as the whole-archive line, outcome aborted), onExportEnd(aborted)", async () => {
     let boom = true;
     let called = false;
     const chunks: string[] = [];
@@ -314,7 +308,6 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
       e => ({ ok: false as const, e }),
     );
     expect(called).toBe(true);
-    // 沒送出任何標頭就斷線：用戶端拿到連線錯誤（或不完整回應）
     if (first.ok) expect(first.r.complete).toBe(false);
     await vi.waitFor(() => expect(ends).toEqual(["aborted"]));
     const infos = chunks.map(c => JSON.parse(c) as Record<string, unknown>).filter(o => o.msg === "bulk transfer export");
@@ -326,7 +319,7 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect((await exportRaw(ctx.baseUrl, await tokenFor(ctx, v.id))).status).toBe(200);
   });
 
-  it("E23 HEAD /api/transfer/export → 404、不扣桶、不拿 slot（exposeHeadRoute: false）", async () => {
+  it("HEAD /api/transfer/export -> 404, bucket not charged, no slot taken (exposeHeadRoute: false)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { transferExport: new FixedWindowLimiter({ limit: 1, windowMs: 3_600_000 }) } });
     const { b } = await userWithBulk(ctx);
     const h = await ctx.app.inject({ method: "HEAD", url: "/api/transfer/export", headers: { authorization: `Bearer ${b.token}` } });
@@ -334,13 +327,13 @@ describe("E5–E7b、E18：413、全站 1 個、桶", () => {
     expect((await exportRaw(ctx.baseUrl, b.token)).status).toBe(200);
   });
 
-  it("E19 ERROR_CODES 含 too_many_notes", () => {
+  it("ERROR_CODES contains too_many_notes", () => {
     expect(ERROR_CODES).toContain("too_many_notes");
   });
 });
 
-describe("E8–E13：途中變化、檢查點、中止、基底", () => {
-  it("E8 途中變化（beforeBatch(1)）：退出 B-team、第 1 批裡一篇 My notes 進垃圾桶 → skipped gone、不在檔案；第 0 批全在", async () => {
+describe("changes midway, checkpoints, abort, bases", () => {
+  it("change midway (beforeBatch(1)): leaves B-team and a My notes note in batch 1 goes to trash -> skipped gone, not in the file; batch 0 is all there", async () => {
     let atBatch1: (() => Promise<void>) | null = null;
     const hooks: ExportTestHooks = { beforeBatch: async i => { if (i === 1 && atBatch1) await atBatch1(); } };
     const ctx = await buildCollabTestApp({ transferTestHooks: hooks });
@@ -362,7 +355,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     const entries = readTarGz(r.body);
     const m = manifestOf(entries);
     const files = filesOf(entries).map(e => e.path);
-    // 前提：B-team 與 m0 排在第 50 位之後（第 1 批）
+    // precondition: B-team and m0 sort after the 50th note (batch 1)
     expect(files.filter(p => p.startsWith("Groups/A-team/"))).toHaveLength(50);
     expect(new Set((m.skipped as Array<{ id: string; reason: string }>).map(s => `${s.id}:${s.reason}`))).toEqual(new Set([...bNotes, mNotes[0]!].map(id => `${id}:gone`)));
     expect(files.some(p => p.startsWith("Groups/B-team/"))).toBe(false);
@@ -375,7 +368,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     return manyOwned(ctx, userId, 51);
   }
 
-  it("E9 途中到期（beforeBatch(1) 讓權杖過期）→ 照常完成（≥ 51 篇、beforeBatch(1) 確實被呼叫）", async () => {
+  it("expires midway (beforeBatch(1) expires the token) -> completes as usual (>= 51 notes, beforeBatch(1) really called)", async () => {
     let onB1: (() => Promise<void>) | null = null;
     let called1 = false;
     const ctx = await buildCollabTestApp({ transferTestHooks: { beforeBatch: async i => { if (i === 1) { called1 = true; await onB1?.(); } } } });
@@ -390,7 +383,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     expect(filesOf(readTarGz(r.body))).toHaveLength(51);
   });
 
-  it("E10 途中撤銷（beforeBatch(1) 刪權杖列）→ complete false、讀不出完整包、onExportEnd(aborted)；之後新權杖可再匯出", async () => {
+  it("revoked midway (beforeBatch(1) deletes the token row) -> complete false, no complete archive readable, onExportEnd(aborted); a new token can export again afterwards", async () => {
     let onB1: (() => Promise<void>) | null = null;
     let called1 = false;
     const ends: ExportOutcome[] = [];
@@ -410,7 +403,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     expect((await exportRaw(ctx.baseUrl, await tokenFor(ctx, u.id))).complete).toBe(true);
   });
 
-  it("E11 途中停權 → 同 E10（aborted）", async () => {
+  it("suspended midway -> same as revoked midway (aborted)", async () => {
     let onB1: (() => Promise<void>) | null = null;
     let called1 = false;
     const ends: ExportOutcome[] = [];
@@ -428,7 +421,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     await vi.waitFor(() => expect(ends).toEqual(["aborted"]));
   });
 
-  it("E12 用戶端斷線（不靠時序）：第 1 篇之後停住；用戶端 destroy；server 觀察到 close 再放行 → client_closed、afterNote 次數 < 總篇數；slot 已放", async () => {
+  it("client disconnect (timing-independent): stopped after the first note; client destroys; server observes close, then releases -> client_closed, afterNote count < total notes; slot released", async () => {
     const g = gate();
     let after = 0;
     let closed = false;
@@ -465,7 +458,7 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
     expect((await exportRaw(ctx.baseUrl, await tokenFor(ctx, v.id))).status).toBe(200);
   });
 
-  it("E13 基底：完成後列數＝檔案數；第 1 批的 INSERT 失敗 → aborted、afterNote 恰 100、第 0 批 50 列在 DB", async () => {
+  it("bases: after completion row count = file count; the INSERT of batch 1 fails -> aborted, afterNote exactly 100, batch 0's 50 rows are in the DB", async () => {
     let onB1: (() => Promise<void>) | null = null;
     let after = 0;
     const ends: ExportOutcome[] = [];
@@ -498,8 +491,8 @@ describe("E8–E13：途中變化、檢查點、中止、基底", () => {
   });
 });
 
-describe("E14–E17：not mergeable、標頭、presence、live", () => {
-  it("E14 forceUnmergeable 一篇 → manifest 該項 mergeable:false、基底 segments NULL、檔照樣在；其他項沒有 mergeable 鍵", async () => {
+describe("not mergeable, headers, presence, live", () => {
+  it("forceUnmergeable on one note -> that manifest entry has mergeable:false, base segments NULL, file still present; other entries have no mergeable key", async () => {
     let target = "";
     const ctx = await buildCollabTestApp({ transferTestHooks: { forceUnmergeable: id => id === target } });
     const { u, b } = await userWithBulk(ctx);
@@ -519,13 +512,13 @@ describe("E14–E17：not mergeable、標頭、presence、live", () => {
     expect(b2!.segments).not.toBeNull();
   });
 
-  it("E14b（門檻 256 KiB）檔案超過寫回上限 → manifest 該項 tooLargeToSend:true；剛好在上限內的與一般檔沒有這個鍵", async () => {
+  it("threshold 256 KiB: file over the write-back limit -> that manifest entry has tooLargeToSend:true; one just within the limit and ordinary files have no such key", async () => {
     const ctx = await buildCollabTestApp();
     const { u, b } = await userWithBulk(ctx);
     const big = await seedNote(ctx.db, { ownerId: u.id }, { title: "big" });
     const near = await seedNote(ctx.db, { ownerId: u.id }, { title: "near" });
     const small = await seedNote(ctx.db, { ownerId: u.id }, { title: "small" });
-    // big ≈ 280 KB（超過 256 KiB、遠低於舊的 1 MiB）；near ≈ 240 KB（在 256 KiB 內）
+    // big is about 280 KB (over 256 KiB, far below the old 1 MiB); near is about 240 KB (within 256 KiB).
     await seedMd(ctx.db, big.id, Array.from({ length: 70 }, (_, i) => `p${i} ${"x".repeat(4000)}`).join("\n\n"));
     await seedMd(ctx.db, near.id, Array.from({ length: 60 }, (_, i) => `p${i} ${"x".repeat(4000)}`).join("\n\n"));
     await seedMd(ctx.db, small.id, "small body");
@@ -540,7 +533,7 @@ describe("E14–E17：not mergeable、標頭、presence、live", () => {
     expect(m.notes).toContainEqual({ path: "My notes/small.md", id: small.id, role: "owner" });
   });
 
-  it("E15 標頭：application/gzip、content-disposition、nosniff", async () => {
+  it("headers: application/gzip, content-disposition, nosniff", async () => {
     const ctx = await buildCollabTestApp();
     const { b } = await userWithBulk(ctx);
     const r = await exportRaw(ctx.baseUrl, b.token);
@@ -549,7 +542,7 @@ describe("E14–E17：not mergeable、標頭、presence、live", () => {
     expect(r.headers["x-content-type-options"]).toBe("nosniff");
   });
 
-  it("E16／E17 live 內容、不 touch presence", async () => {
+  it("live content, does not touch presence", async () => {
     const ctx = await buildCollabTestApp();
     const email = `o-${randomUUID()}@example.com`;
     const owner = await ctx.createUser({ email, password: PASSWORD });
@@ -567,8 +560,8 @@ describe("E14–E17：not mergeable、標頭、presence、live", () => {
   });
 });
 
-describe("E20：背壓中斷線（真 HTTP、用戶端 pause）", () => {
-  it("8 篇 × 2 MiB base64：用戶端不讀 → server 卡住（afterNote 連續 ≥ 2 s 不增加且 ≤ N−2）；destroy → 5 s 內 client_closed、slot 已放", async () => {
+describe("disconnect under backpressure (real HTTP, client pause)", () => {
+  it("8 notes x 2 MiB base64: client does not read -> server stalls (afterNote does not grow for >= 2 s and stays <= N-2); destroy -> client_closed within 5 s, slot released", async () => {
     const N = 8;
     let after = 0;
     let closed = false;
@@ -590,7 +583,6 @@ describe("E20：背壓中斷線（真 HTTP、用戶端 pause）", () => {
       req.on("error", () => {});
       setTimeout(() => reject(new Error("no response")), 30_000);
     });
-    // 判卡：afterNote 連續 ≥ 2 s 沒增加
     let last = -1;
     let since = Date.now();
     const t0 = Date.now();
@@ -612,8 +604,8 @@ describe("E20：背壓中斷線（真 HTTP、用戶端 pause）", () => {
   }, 180_000);
 });
 
-describe("E21：log 不洩內容", () => {
-  it("整包（含 unmergeable 與 failed）＋單篇＋中止（trigger 形）：log 不含任何標記；整包 info 行鍵集合恰為規定的鍵＋pino 自帶欄", async () => {
+describe("log does not leak content", () => {
+  it("whole archive (with unmergeable and failed) + single note + abort (trigger form): the log contains no marker; the whole-archive info line has exactly the specified keys plus pino's own fields", async () => {
     const chunks: string[] = [];
     let unm = "";
     let fail = "";
@@ -645,7 +637,7 @@ describe("E21：log 不洩內容", () => {
     const r = await exportRaw(ctx.baseUrl, b.token);
     expect(r.complete).toBe(true);
     expect((await ctx.app.inject({ method: "GET", url: `/api/transfer/notes/${ids[2]}`, headers: { authorization: `Bearer ${b.token}` } })).statusCode).toBe(200);
-    // 中止：≥ 51 篇、第 1 批前建 trigger，raise 的訊息裡放標記
+    // Abort: >= 51 notes, a trigger created before batch 1, with the marker in the raised message.
     await manyOwned(ctx, u.id, 51);
     const TRIG_MARK = "TRIGMARK-" + randomUUID().slice(0, 8);
     const pool = ctx.db.$client;
@@ -669,7 +661,6 @@ describe("E21：log 不洩內容", () => {
     expect(Object.keys(first).sort()).toEqual(["bytes", "hostname", "level", "ms", "msg", "notMergeable", "notes", "outcome", "pid", "range", "reqId", "skipped", "time", "tokenId", "userId"]);
     expect(first).toMatchObject({ notMergeable: 1, skipped: 1, notes: 2, outcome: "done", userId: u.id });
     expect(infos[1]).toMatchObject({ outcome: "aborted" });
-    // 報告用：貼一行原文（UTF-8 讀回由呼叫端做）
     console.log("[E21 info line] " + JSON.stringify(first));
   }, 120_000);
 });

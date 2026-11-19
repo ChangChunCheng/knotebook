@@ -22,7 +22,6 @@ const lastLoginOf = async (db: Db, id: string) =>
   (await db.execute<{ t: string | null }>(sql`select last_login_at::text as t from users where id = ${id}`)).rows[0]!.t;
 const register = (app: TestApp["app"], payload: object) => app.inject({ method: "POST", url: "/api/auth/register", payload });
 
-/** 另一條連線（同 test/admin-auth-patch.test.ts:171-175）。 */
 async function holderFor(db: TestApp["db"]): Promise<Client> {
   const [{ current_database: dbName }] = (await db.execute<{ current_database: string }>(sql`select current_database()`)).rows;
   const dsn = new URL(process.env.TEST_DATABASE_URL!);
@@ -32,8 +31,8 @@ async function holderFor(db: TestApp["db"]): Promise<Client> {
   return holder;
 }
 
-describe("POST /api/auth/register（#187）", () => {
-  it("成功 → 201 UserDto、簽 session（可打 /me）、must_change_password=false、handle 派生自 email local-part", async () => {
+describe("POST /api/auth/register (#187)", () => {
+  it("success -> 201 UserDto, session issued (/me works), must_change_password=false, handle derived from the email local-part", async () => {
     const { app, db } = await buildTestApp();
     const res = await register(app, { email: "new.user@example.com", password: PW, displayName: "New User" });
     expect(res.statusCode).toBe(201);
@@ -50,13 +49,13 @@ describe("POST /api/auth/register（#187）", () => {
     expect(await lastLoginOf(db, res.json().id)).not.toBeNull();
   });
 
-  it("沒給顯示名 → 用 email local-part", async () => {
+  it("no display name -> uses the email local-part", async () => {
     const { app } = await buildTestApp();
     const res = await register(app, { email: "solo@example.com", password: PW });
     expect(res.json().displayName).toBe("solo");
   });
 
-  it("email 前後空白與大寫 → 存成正規化小寫；之後以小寫登入成功；顯示名含 NUL → 400、不是 500", async () => {
+  it("email with surrounding whitespace and uppercase -> stored normalized lowercase; later login with lowercase works; display name containing NUL -> 400, not 500", async () => {
     const { app, db } = await buildTestApp();
     const res = await register(app, { email: "  Alice@X.Example ", password: PW });
     expect(res.statusCode).toBe(201);
@@ -70,7 +69,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(await db.select().from(users).where(eq(users.email, "bob@x.example"))).toEqual([]);
   });
 
-  it("上限：email 255 字元 → 400（英文訊息）、254 → 201；顯示名 101 個 code point → 400、100 個 → 201", async () => {
+  it("limits: email of 255 chars -> 400 (English message), 254 -> 201; display name of 101 code points -> 400, 100 -> 201", async () => {
     const { app, db } = await buildTestApp();
     const emailOf = (n: number) => `${"a".repeat(n - "@example.com".length)}@example.com`;
     const long = await register(app, { email: emailOf(255), password: PW });
@@ -78,7 +77,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(long.json().error.message).toBe("The email can be at most 254 characters.");
     const longLocal = await register(app, { email: emailOf(254), password: PW });
     expect(longLocal.statusCode).toBe(201);
-    // 不帶顯示名時預設值＝local-part（242 字元）截到前 100 個 code point。
+    // Without a display name the default is the local-part (242 chars), truncated to the first 100 code points.
     expect(longLocal.json().displayName).toBe("a".repeat(100));
     const [longRow] = await db.select().from(users).where(eq(users.id, longLocal.json().id));
     expect(longRow!.displayName).toBe("a".repeat(100));
@@ -87,7 +86,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect((await register(app, { email: "n2@example.com", password: PW, displayName: "😀".repeat(100) })).statusCode).toBe(201);
   });
 
-  it("email 已存在 → 409；既有 `Alice@x`（大小寫混合舊列）時以 `alice@x` 註冊 → 409 email_taken", async () => {
+  it("email already exists -> 409; registering `alice@x` when `Alice@x` (old mixed-case row) exists -> 409 email_taken", async () => {
     const { app, db } = await buildTestApp();
     await insertPasswordUser(db, { email: "taken@example.com" });
     expect((await register(app, { email: "taken@example.com", password: PW })).json().error.code).toBe("email_taken");
@@ -97,7 +96,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(res.json().error.code).toBe("email_taken");
   });
 
-  it("密碼太短 → 400 password_too_short；body 不合 → 400 invalid_body（英文訊息）", async () => {
+  it("password too short -> 400 password_too_short; invalid body -> 400 invalid_body (English message)", async () => {
     const { app } = await buildTestApp();
     expect((await register(app, { email: "a@example.com", password: "short" })).json().error.code).toBe("password_too_short");
     const bad = await register(app, { email: "not-an-email", password: PW });
@@ -105,7 +104,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect((await register(app, { email: "a@example.com", password: PW, isAdmin: true })).statusCode).toBe(400);
   });
 
-  it("帳密自助註冊關 → 403 registration_disabled（快速路徑，不 hash）", async () => {
+  it("password self-registration off -> 403 registration_disabled (fast path, no hashing)", async () => {
     const { app, db } = await buildTestApp();
     await db.update(siteSettings).set({ registrationEnabled: false });
     const res = await register(app, { email: "x@example.com", password: PW });
@@ -114,7 +113,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(vi.mocked(hashPassword)).not.toHaveBeenCalled();
   });
 
-  it("帳密登入有效值關 → 403 password_login_disabled；兩者皆關 → registration_disabled；env 強制＋DB 關 → 201", async () => {
+  it("effective password login off -> 403 password_login_disabled; both off -> registration_disabled; env force + DB off -> 201", async () => {
     const { app, db } = await buildTestApp();
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
     expect((await register(app, { email: "p@example.com", password: PW })).json().error.code).toBe("password_login_disabled");
@@ -125,13 +124,13 @@ describe("POST /api/auth/register（#187）", () => {
     expect((await register(forced.app, { email: "p@example.com", password: PW })).statusCode).toBe(201);
   });
 
-  it("讀不到 site_settings 列 → 註冊視同關（403 registration_disabled）", async () => {
+  it("unreadable site_settings row -> registration treated as off (403 registration_disabled)", async () => {
     const { app, db } = await buildTestApp();
     await db.delete(siteSettings);
     expect((await register(app, { email: "x@example.com", password: PW })).json().error.code).toBe("registration_disabled");
   });
 
-  it("RG-C7 帳密自助註冊只看 registration_enabled＋帳密有效值，與服務的自動建帳無關", async () => {
+  it("password self-registration depends only on registration_enabled plus the effective password-login value, not on providers' auto-create", async () => {
     const { app, db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: "https://idp.example", autoCreateEnabled: true });
     await db.update(siteSettings).set({ registrationEnabled: false });
@@ -139,13 +138,12 @@ describe("POST /api/auth/register（#187）", () => {
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("registration_disabled");
     expect(await db.select().from(users)).toHaveLength(0);
-    // 全部服務都沒開自動建帳＋站台開（預設）→ 照常註冊。
     const b = await buildTestApp();
     await seedAuthProvider(b.db, { issuerUrl: "https://idp.example", autoCreateEnabled: false });
     expect((await register(b.app, { email: "y@example.com", password: PW })).statusCode).toBe(201);
   });
 
-  it("HashBusyError → 429 server_busy、不建帳", async () => {
+  it("HashBusyError -> 429 server_busy, no account created", async () => {
     const { app, db } = await buildTestApp();
     vi.mocked(hashPassword).mockRejectedValueOnce(new HashBusyError());
     const res = await register(app, { email: "busy@example.com", password: PW });
@@ -154,13 +152,13 @@ describe("POST /api/auth/register（#187）", () => {
     expect(await db.select().from(users).where(eq(users.email, "busy@example.com"))).toEqual([]);
   });
 
-  it("per-IP 限流（REGISTER_LIMIT）：額度用完 → 429 too_many_requests", async () => {
+  it("per-IP limit (REGISTER_LIMIT): quota used up -> 429 too_many_requests", async () => {
     const { app } = await buildTestApp({ limiters: freshLimiters({ register: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     expect((await register(app, { email: "one@example.com", password: PW })).statusCode).toBe(201);
     expect((await register(app, { email: "two@example.com", password: PW })).json().error.code).toBe("too_many_requests");
   });
 
-  it("handle 撞名重試：local-part 對應的 handle 已被佔 → 派生出另一個、仍 201", async () => {
+  it("handle collision retry: the local-part's handle is taken -> another one is derived, still 201", async () => {
     const { app, db } = await buildTestApp();
     await db.insert(users).values({ email: "someone@else.example", displayName: "X", handle: "dup" });
     await db.insert(handles).values({ handle: "dup", userId: (await db.select({ id: users.id }).from(users).where(eq(users.handle, "dup")))[0]!.id, state: "live" });
@@ -169,7 +167,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(res.json().handle).not.toBe("dup");
   });
 
-  it("C9：快速路徑讀到開、交易內 FOR SHARE 等關閉提交後讀到關 → 403 registration_disabled、無建帳", async () => {
+  it("fast path reads on, FOR SHARE inside the transaction waits for the close to commit and reads off -> 403 registration_disabled, no account", async () => {
     const { app, db } = await buildTestApp();
     const holder = await holderFor(db);
     try {
@@ -187,7 +185,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(await db.select().from(users).where(eq(users.email, "c9@example.com"))).toEqual([]);
   });
 
-  it("C27：同形，關的是帳密登入 → 403 password_login_disabled、無建帳", async () => {
+  it("same shape, but password login is the one turned off -> 403 password_login_disabled, no account", async () => {
     const { app, db } = await buildTestApp();
     const holder = await holderFor(db);
     try {
@@ -204,7 +202,7 @@ describe("POST /api/auth/register（#187）", () => {
     expect(await db.select().from(users).where(eq(users.email, "c27@example.com"))).toEqual([]);
   });
 
-  it("C3（SSO 先 → 註冊 409）：另一連線持有同 email 的未提交 users 列（＝SSO 首登建帳途中）→ 註冊等它提交 → 409 email_taken", async () => {
+  it("SSO first, then register -> 409: another connection holds an uncommitted users row with the same email (SSO first login mid-creation) -> register waits for its commit -> 409 email_taken", async () => {
     const { app, db } = await buildTestApp();
     const holder = await holderFor(db);
     try {
@@ -221,7 +219,7 @@ describe("POST /api/auth/register（#187）", () => {
     }
   });
 
-  it("RG-R：交易的非預期 DB 錯誤 → 500，log 遮蔽（context「註冊」、無 password hash、無 params）；users／handles 無新列", async () => {
+  it("unexpected DB error in the transaction -> 500, log masked (context 'register', no password hash, no params); users/handles have no new rows", async () => {
     const out: string[] = [];
     const lines: Array<{ msg?: string; obj: Record<string, unknown> }> = [];
     const { app, db } = await buildTestApp({}, {

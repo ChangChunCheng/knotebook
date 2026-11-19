@@ -1,4 +1,3 @@
-// 自動儲存三層開關與站台清除設定。開關「下一次載入才生效」由其他測試驗。
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -12,8 +11,8 @@ async function call(app: FastifyInstance, method: "GET" | "PATCH" | "POST", url:
   return app.inject({ method, url, ...(who ? { cookies: await cookieOf(who) } : {}), ...(payload !== undefined ? { payload: payload as object } : {}) });
 }
 
-describe("站台設定 /api/admin/versions/settings", () => {
-  it("只有站台管理員；GET 預設 7／30／開；PATCH 單欄合併；違反 1 ≤ F ≤ D ≤ 3650 → 400 且不改；非整數、空 body、多欄 → 400", async () => {
+describe("site settings /api/admin/versions/settings", () => {
+  it("site admin only; GET defaults 7/30/on; PATCH merges a single field; violating 1 <= F <= D <= 3650 -> 400 and nothing changes; non-integer, empty body, several fields -> 400", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const user = await seedUser(db);
@@ -34,7 +33,7 @@ describe("站台設定 /api/admin/versions/settings", () => {
     expect((await call(app, "PATCH", url, user.id, { keepAllDays: 2 })).statusCode).toBe(403);
   });
 
-  it("site_settings 沒有列 → GET／PATCH 500，log.error 物件開頭帶 table", async () => {
+  it("no site_settings row -> GET/PATCH 500, the log.error object starts with table", async () => {
     const logs = captureLogs();
     const { app, db } = await buildTestApp({}, logs.options);
     const admin = await seedUser(db, { isAdmin: true });
@@ -44,7 +43,7 @@ describe("站台設定 /api/admin/versions/settings", () => {
     expect(logs.lines.filter(l => l.level === "error" && l.obj.table === "site_settings").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("總開關進公開的 /api/auth/config", async () => {
+  it("the master switch is in the public /api/auth/config", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     expect((await app.inject({ method: "GET", url: "/api/auth/config" })).json().autoVersionsEnabled).toBe(true);
@@ -52,7 +51,7 @@ describe("站台設定 /api/admin/versions/settings", () => {
     expect((await app.inject({ method: "GET", url: "/api/auth/config" })).json().autoVersionsEnabled).toBe(false);
   });
 
-  it("#272 案 25：autoWaitMinutes——GET 預設 5；PATCH 1、60 成功；0、61 → 400 範圍句；1.5、\"5\" → 400「Invalid request body.」；都不存；DB 直寫 0 → 23514", async () => {
+  it("#272: autoWaitMinutes - GET default 5; PATCH 1 and 60 succeed; 0 and 61 -> 400 with the range sentence; 1.5 and the string '5' -> 400 'Invalid request body.'; none stored; writing 0 directly in the DB -> 23514", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const url = "/api/admin/versions/settings";
@@ -78,8 +77,8 @@ describe("站台設定 /api/admin/versions/settings", () => {
   });
 });
 
-describe("個人開關 PATCH /api/auth/profile", () => {
-  it("只帶 autoVersions：純 UPDATE、回寫入後的 UserDto、/me 立刻反映、連改 6 次不消耗改名額度", async () => {
+describe("personal switch PATCH /api/auth/profile", () => {
+  it("autoVersions only: plain UPDATE, returns the written UserDto, /me reflects it at once, 6 changes in a row do not consume the rename quota", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const handlesBefore = await db.select().from(handles).where(eq(handles.userId, u.id));
@@ -88,13 +87,13 @@ describe("個人開關 PATCH /api/auth/profile", () => {
       expect(r.statusCode).toBe(200);
       expect(r.json()).toMatchObject({ id: u.id, handle: u.handle, autoVersions: i % 2 === 0 });
     }
-    // 最後一次寫 false（≠ 初值 true）：gate 快取若沒被 invalidate，/me 會回第一次 authenticate 快取到的 true。
+    // The last write is false (!= initial true): if the gate cache were not invalidated, /me would return the true cached by the first authenticate.
     expect((await call(app, "GET", "/api/auth/me", u.id)).json().autoVersions).toBe(false);
     expect(await db.select().from(handles).where(eq(handles.userId, u.id))).toEqual(handlesBefore);
-    expect((await call(app, "PATCH", "/api/auth/profile", u.id, { handle: `${u.handle}-x` })).statusCode).toBe(200); // 額度沒被吃
+    expect((await call(app, "PATCH", "/api/auth/profile", u.id, { handle: `${u.handle}-x` })).statusCode).toBe(200); // quota not consumed
   });
 
-  it("autoVersions 與不合法／已被占用的 handle 一起送 → 400／409，auto_versions 不變；兩欄都合法 → 同一交易都生效", async () => {
+  it("autoVersions sent with an invalid or already taken handle -> 400/409, auto_versions unchanged; both fields valid -> both take effect in the same transaction", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const other = await seedUser(db);
@@ -105,28 +104,28 @@ describe("個人開關 PATCH /api/auth/profile", () => {
     expect(ok.json()).toMatchObject({ handle: `${u.handle}-y`, autoVersions: false });
   });
 
-  it("空 body、型別錯 → 400；既有只帶 handle 的行為不變（回應帶 autoVersions）", async () => {
+  it("empty body, wrong type -> 400; existing handle-only behaviour unchanged (response carries autoVersions)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     for (const body of [{}, { autoVersions: "no" }, { handle: 5 }]) expect((await call(app, "PATCH", "/api/auth/profile", u.id, body)).statusCode).toBe(400);
     expect((await call(app, "PATCH", "/api/auth/profile", u.id, { handle: `${u.handle}-z` })).json()).toMatchObject({ handle: `${u.handle}-z`, autoVersions: true });
   });
 
-  it("登入回應與 /api/auth/me 都帶 autoVersions", async () => {
+  it("both the login response and /api/auth/me carry autoVersions", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const password = "correct-horse-battery";
     await db.update(users).set({ autoVersions: false, passwordHash: await hashPassword(password) }).where(eq(users.id, u.id));
     expect((await call(app, "GET", "/api/auth/me", u.id)).json().autoVersions).toBe(false);
-    // 登入回應的值取自 DB（不是寫死 true）：先設 false 再登入。
+    // The login response value comes from the DB (not hard-coded true): set false first, then log in.
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: u.email, password } });
     expect(login.statusCode).toBe(200);
     expect(login.json()).toMatchObject({ id: u.id, autoVersions: false });
   });
 });
 
-describe("群組開關 PATCH /api/groups/:id", () => {
-  it("manageGroup 才能改；只帶 autoVersions 可；空 body 400；GroupDto 與 GET /api/groups 帶 autoVersions；POST /api/groups 仍只收 name", async () => {
+describe("group switch PATCH /api/groups/:id", () => {
+  it("manageGroup only; autoVersions alone is fine; empty body 400; GroupDto and GET /api/groups carry autoVersions; POST /api/groups still accepts only name", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db);
     const member = await seedUser(db);
@@ -136,7 +135,7 @@ describe("群組開關 PATCH /api/groups/:id", () => {
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ id: g.id, name: "G", autoVersions: false });
     expect((await db.select({ a: groups.autoVersions }).from(groups).where(eq(groups.id, g.id)))[0]!.a).toBe(false);
-    // 先 PATCH false 再 GET：清單若沒選這欄（預設 true 補位）只有在關閉後才分辨得出來。
+    // PATCH false first, then GET: if the list did not select this column (filled with default true) it could be told apart only after turning it off.
     expect((await call(app, "GET", "/api/groups", member.id)).json()[0]).toMatchObject({ id: g.id, autoVersions: false });
     expect((await call(app, "PATCH", `/api/groups/${g.id}`, admin.id, {})).statusCode).toBe(400);
     expect((await call(app, "PATCH", `/api/groups/${g.id}`, admin.id, { name: "G2", autoVersions: true })).json()).toMatchObject({ name: "G2", autoVersions: true });

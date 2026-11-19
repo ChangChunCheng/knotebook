@@ -1,7 +1,4 @@
-/**
- * #93：onStoreDocument 的索引接線。
- * WS 形走 buildCollabTestApp；決定性時序（含 logger／抽取失敗）直接呼叫 createNoteStore。
- */
+// The WS form goes through buildCollabTestApp; deterministic timing (logger / extraction failures) calls createNoteStore directly.
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -18,7 +15,6 @@ import { captureLog, indexRows, noteStateVersion, stateRow, waitIndexed } from "
 
 const PASSWORD = "correct-horse-battery";
 
-/** 在 client.doc 裡造出 BlockNote 形的一段：fragment > blockGroup > blockContainer(id) > paragraph > text。回 XmlText 以便之後刪字。 */
 function writeParagraph(doc: Y.Doc, id: string, text: string): Y.XmlText {
   const f = doc.getXmlFragment(YDOC_FRAGMENT);
   let group = f.get(0) as Y.XmlElement | undefined;
@@ -37,8 +33,8 @@ function writeParagraph(doc: Y.Doc, id: string, text: string): Y.XmlText {
   return t;
 }
 
-describe("S1 一般落盤（WS）", () => {
-  it("WS 編輯 → 落盤後索引與內容一致；刪掉一段字（docClock 不變）→ 落盤後舊字搜不到", async () => {
+describe("normal persist (WS)", () => {
+  it("WS edit -> index matches content after persist; deleting a run of text (docClock unchanged) -> the old text is not searchable after persist", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "s1@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -47,14 +43,14 @@ describe("S1 一般落盤（WS）", () => {
     const t = writeParagraph(client.doc, "p1", "keep SECRETWORD tail");
     await waitIndexed(ctx.db, note.id, b => b.includes("SECRETWORD"));
     expect((await indexRows(ctx.db, note.id)).map(r => [r.sectionId, r.body])).toEqual([["_top", "keep SECRETWORD tail"]]);
-    t.delete(5, 11); // 刪 "SECRETWORD "——Yjs 的刪除不推進 state vector
+    t.delete(5, 11); // deletes 'SECRETWORD ' - a Yjs delete does not advance the state vector
     await waitIndexed(ctx.db, note.id, b => !b.includes("SECRETWORD"));
     expect((await indexRows(ctx.db, note.id)).map(r => r.body)).toEqual(["keep tail"]);
     client.disconnect();
   });
 });
 
-describe("S2 AI 路徑（mergeDiff 的 disconnect＝落盤點，回應前索引已完成）", () => {
+describe("AI path (mergeDiff disconnect is the persist point; the index is done before the response)", () => {
   async function setupAi() {
     const ctx = await buildCollabTestApp({ limiters: { edit: new FixedWindowLimiter({ limit: 1000, windowMs: 60_000 }) } });
     const u = await ctx.createUser({ email: "s2@example.com", password: PASSWORD });
@@ -66,13 +62,13 @@ describe("S2 AI 路徑（mergeDiff 的 disconnect＝落盤點，回應前索引�
     return { ctx, note, client, token };
   }
 
-  it("replace_section 回應後立即：新段落 id 可搜、舊 id 的列消失", async () => {
+  it("right after the replace_section response: the new paragraph id is searchable, the old id's row is gone", async () => {
     const { ctx, note, client, token } = await setupAi();
     const before = (await getContent(ctx.app, note.id, token)).json();
     const oldB = before.outline[2];
     const res = await ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: bearer(token), payload: { op: "replace_section", section_id: oldB.sectionId, markdown: "# B2\n\ncharlie line", if_match: oldB.fingerprint } });
     expect(res.statusCode).toBe(201);
-    const rows = await indexRows(ctx.db, note.id); // 不等待：回應之前索引已寫完
+    const rows = await indexRows(ctx.db, note.id); // no waiting: the index is already written before the response
     expect(rows.map(r => r.body).join("\n")).toContain("charlie line");
     expect(rows.map(r => r.sectionId)).not.toContain(oldB.sectionId);
     const after = (await getContent(ctx.app, note.id, token)).json();
@@ -80,7 +76,7 @@ describe("S2 AI 路徑（mergeDiff 的 disconnect＝落盤點，回應前索引�
     client.disconnect();
   });
 
-  it("revert 回應後立即：內容回到前一版", async () => {
+  it("right after the revert response: content is back to the previous version", async () => {
     const { ctx, note, client, token } = await setupAi();
     const res = await ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: bearer(token), payload: { op: "append", markdown: "delta line" } });
     expect(res.statusCode).toBe(201);
@@ -92,7 +88,7 @@ describe("S2 AI 路徑（mergeDiff 的 disconnect＝落盤點，回應前索引�
     client.disconnect();
   });
 
-  it("POST /api/notes 帶 content → 201 之後立即可搜", async () => {
+  it("POST /api/notes with content -> searchable right after the 201", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "s2c@example.com", password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
@@ -102,16 +98,16 @@ describe("S2 AI 路徑（mergeDiff 的 disconnect＝落盤點，回應前索引�
   });
 });
 
-describe("S6 失敗隔離", () => {
-  it("indexer 丟例外（經 collab wrapper）→ 落盤、備份、last_edited 照寫，warn 一行", async () => {
+describe("failure isolation", () => {
+  it("indexer throws (via the collab wrapper) -> persist, backup and last_edited still written, one warn", async () => {
     const ctx = await buildCollabTestApp({ storeSearchHooks: { indexer: async () => { throw new Error("indexer boom"); } } });
     const owner = await ctx.createUser({ email: "s6@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("s6@example.com", PASSWORD);
     const client = await session.connect(note.id);
     writeParagraph(client.doc, "p1", "still persisted");
-    // 等的是 collab wrapper 的最後一步（last_edited 在 noteStore.onStoreDocument resolve 之後才寫）——
-    // 只等 warn 出現會在 last_edited UPDATE 之前就放行。
+    // Wait for the collab wrapper's last step (last_edited is written only after noteStore.onStoreDocument resolves);
+    // waiting only for the warn would release before the last_edited UPDATE.
     const deadline = Date.now() + 10_000;
     for (;;) {
       const [row] = await ctx.db.select({ at: notes.lastEditedAt }).from(notes).where(eq(notes.id, note.id));
@@ -128,7 +124,7 @@ describe("S6 失敗隔離", () => {
     client.disconnect();
   });
 
-  it("indexer 與 logger 都丟例外 → onStoreDocument 仍 resolve", async () => {
+  it("indexer and logger both throw -> onStoreDocument still resolves", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -140,7 +136,7 @@ describe("S6 失敗隔離", () => {
     expect(await noteStateVersion(db, n.id)).toBe(1);
   });
 
-  it("抽取丟例外 → 落盤照常、不開索引交易、warn 一行", async () => {
+  it("extraction throws -> persist as usual, no index transaction opened, one warn", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -156,7 +152,7 @@ describe("S6 失敗隔離", () => {
     expect(warns.filter(w => w.msg.startsWith("全文索引抽取失敗"))).toHaveLength(1);
   });
 
-  it("抽取與 logger 都丟例外 → onStoreDocument 仍 resolve、落盤照常", async () => {
+  it("extraction and logger both throw -> onStoreDocument still resolves, persist as usual", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -169,8 +165,8 @@ describe("S6 失敗隔離", () => {
   });
 });
 
-describe("S7／S8 敵意與巨大文件", () => {
-  it("S7：WS 送進 5000 層深＋NUL＋落單代理＋2001 個段落 → 落盤成功、文件卸載（沒被 pin）、索引 2000 列＋capped", async () => {
+describe("hostile and huge documents", () => {
+  it("WS sends 5000 levels deep + NUL + lone surrogate + 2001 paragraphs -> persist succeeds, document unloads (not pinned), index has 2000 rows + capped", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "s7@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -208,7 +204,7 @@ describe("S7／S8 敵意與巨大文件", () => {
     expect((await stateRow(ctx.db, note.id))!.capped).toBe(true);
   });
 
-  it("S8：mcp-size (i) 的 260 000 字 heading 筆記 → heading 存 1000、body 在上限內且含尾巴", async () => {
+  it("a note with a 260 000-char heading (mcp-size) -> heading stored as 1000, body within the limit and keeps its tail", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "s8@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -224,7 +220,7 @@ describe("S7／S8 敵意與巨大文件", () => {
   });
 });
 
-describe("直接呼叫 createNoteStore，決定性", () => {
+describe("calling createNoteStore directly, deterministic", () => {
   async function storeWithCounters() {
     const { db } = await freshDb();
     const u = await seedUser(db);
@@ -240,7 +236,7 @@ describe("直接呼叫 createNoteStore，決定性", () => {
     return { db, n, calls, store, warns };
   }
 
-  it("S9：同內容連續兩次落盤 → 第二次不開索引交易、source_version 推進；afterUnloadDocument 後快取清掉", async () => {
+  it("same content persisted twice -> the second opens no index transaction, source_version advances; the cache is cleared after afterUnloadDocument", async () => {
     const { db, n, calls, store } = await storeWithCounters();
     const doc = new Y.Doc();
     await store.onLoadDocument(n.id, doc);
@@ -256,14 +252,14 @@ describe("直接呼叫 createNoteStore，決定性", () => {
     expect((await stateRow(db, n.id))!.sourceVersion).toBe(3);
   });
 
-  it("S9 自癒：bump 命中 0 列 → 同一次落盤就改走完整交易（這次就索引好），之後回到 bump", async () => {
+  it("self-healing: bump hits 0 rows -> the same persist switches to the full transaction (indexed this time), then back to bump", async () => {
     const { db, n, calls, store } = await storeWithCounters();
     const doc = new Y.Doc();
     await store.onLoadDocument(n.id, doc);
     writeParagraph(doc, "p", "heal");
     await store.onStoreDocument(n.id, doc);
     const goodHash = (await stateRow(db, n.id))!.contentHash;
-    // 索引被別人改過：hash 與段落內容都不再描述這篇
+    // The index was changed by someone else: hash and section contents no longer describe this note.
     await db.execute(sql`update note_search_state set content_hash = 'other' where note_id = ${n.id}::uuid`);
     await db.execute(sql`update note_search_sections set body = 'stale' where note_id = ${n.id}::uuid`);
     await store.onStoreDocument(n.id, doc);
@@ -272,12 +268,11 @@ describe("直接呼叫 createNoteStore，決定性", () => {
     expect(st.contentHash).toBe(goodHash);
     expect(st.sourceVersion).toBe(await noteStateVersion(db, n.id));
     expect((await indexRows(db, n.id)).map(r => r.body).join("\n")).toContain("heal");
-    // 完整交易寫成功後快取回填 → 同內容再落盤走 bump
     await store.onStoreDocument(n.id, doc);
     expect(calls).toEqual({ index: 2, bump: 2 });
   });
 
-  it("S15：落盤之後、索引之前對 doc 插入新字 → 索引內容＝落盤快照、source_version＝落盤版本", async () => {
+  it("new text inserted into the doc after persist but before indexing -> indexed content = the persisted snapshot, source_version = the persisted version", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -294,7 +289,7 @@ describe("直接呼叫 createNoteStore，決定性", () => {
     expect(back.getXmlFragment(YDOC_FRAGMENT).toString()).not.toContain("LATEWORD");
   });
 
-  it("落盤時筆記已被刪 → 不呼叫 indexer、不 warn、快取一併清掉", async () => {
+  it("note already deleted at persist time -> indexer not called, no warn, cache cleared too", async () => {
     const { db, n, calls, store, warns } = await storeWithCounters();
     const doc = new Y.Doc();
     await store.onLoadDocument(n.id, doc);
@@ -306,8 +301,8 @@ describe("直接呼叫 createNoteStore，決定性", () => {
     await store.onStoreDocument(n.id, doc);
     expect(calls).toEqual({ index: 1, bump: 0 });
     expect(warns).toEqual([]);
-    // 快取看得見的唯一方式：把同一列放回去（cascade 已帶走 note_states 與索引），同內容再落盤一次——
-    // 快取清掉了才會走完整交易（index: 2）；殘留的雜湊會讓它走 bump（bump: 1，命中 0 列）。
+    // The only way to observe the cache: put the same row back (cascade took note_states and the index) and persist the same
+    // content again - a cleared cache goes the full transaction (index: 2); a leftover hash would go bump (bump: 1, hits 0 rows).
     await db.insert(notes).values(noteRow!);
     await store.onStoreDocument(n.id, doc);
     expect(calls).toEqual({ index: 2, bump: 0 });

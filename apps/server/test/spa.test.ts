@@ -5,12 +5,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestApp } from "./helpers.js";
 
-// 逐字契約：
-//   - fallback 僅 GET/HEAD；以 pathname（去 query）判定
-//   - 排除前綴為 segment 邊界：/api、/collab、/healthz、/assets，#131 起再加 /oauth 與
-//     /.well-known（`/x` 本身或 `/x/...`；`/collaborators` 不受 `/collab` 牽連）
-//   - Accept 子字串含 text/html 才算（`*/*` 不算）
-//   - /assets/* 缺檔 → 404（webDist 不存在或未傳 → 全 JSON 404，既有行為）
+// Verbatim contract:
+//   - the fallback is GET/HEAD only; decided on the pathname (query stripped)
+//   - excluded prefixes match at a segment boundary: /api, /collab, /healthz, /assets, plus /oauth and /.well-known since #131
+//     (`/x` itself or `/x/...`; `/collaborators` is not caught by `/collab`)
+//   - Accept counts only if it contains text/html as a substring (`*/*` does not)
+//   - a missing /assets/* file -> 404 (with no webDist, or none passed, every path is the JSON 404, as before)
 describe("SPA fallback", () => {
   let webDist: string;
 
@@ -19,15 +19,13 @@ describe("SPA fallback", () => {
     writeFileSync(path.join(webDist, "index.html"), "<!doctype html><title>knotebook spa</title>");
     mkdirSync(path.join(webDist, "assets"));
     writeFileSync(path.join(webDist, "assets", "app.js"), "console.log('app');");
-    // 根目錄的靜態檔（apps/web/public → dist 根）：瀏覽器分頁圖示。
     writeFileSync(path.join(webDist, "favicon.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
-    // #336：安裝成 app 用的 manifest 同樣放在 dist 根目錄。
     writeFileSync(path.join(webDist, "manifest.webmanifest"), '{"name":"Knotebook","display":"standalone"}');
   });
 
-  it("GET /manifest.webmanifest → 200 application/manifest+json（#336；static 送，不被 SPA fallback 吞成 index.html）", async () => {
+  it("GET /manifest.webmanifest -> 200 application/manifest+json (#336; sent by static, not swallowed into index.html by the SPA fallback)", async () => {
     const { app } = await buildTestApp({}, { webDist });
-    // 瀏覽器抓 manifest 的 Accept 是 */*；再用 text/html 證明即使如此也不會落進 fallback。
+    // Browsers fetch the manifest with Accept */*; text/html is also tried to prove it does not fall into the fallback even then.
     for (const accept of ["*/*", "text/html"]) {
       const res = await app.inject({ method: "GET", url: "/manifest.webmanifest", headers: { accept } });
       expect(res.statusCode).toBe(200);
@@ -42,65 +40,64 @@ describe("SPA fallback", () => {
     rmSync(webDist, { recursive: true, force: true });
   });
 
-  // 真實瀏覽器常見的 Accept header（Chrome/Firefox 導覽請求），子字串含 text/html。
   const BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
 
-  it("GET /nope + Accept: text/html → index.html 200", async () => {
+  it("GET /nope + Accept: text/html -> index.html 200", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/nope", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("text/html");
     expect(res.body).toContain("knotebook spa");
-    // index.html 決定載入哪一組 /assets/*，每次都要回 server 確認
+    // index.html decides which /assets/* set loads, so it must be revalidated every time.
     expect(res.headers["cache-control"]).toBe("no-cache");
   });
 
-  it("真實瀏覽器 Accept 字串（含 text/html 子字串）→ index.html", async () => {
+  it("real browser Accept string (contains the text/html substring) -> index.html", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/nope", headers: { accept: BROWSER_ACCEPT } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("knotebook spa");
   });
 
-  it("Accept: */* → JSON 404（*/* 不算 text/html 子字串）", async () => {
+  it("Accept: */* -> JSON 404 (*/* does not count as a text/html substring)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/nope", headers: { accept: "*/*" } });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("無 Accept header（curl/fetch/app.inject 預設）→ JSON 404", async () => {
+  it("no Accept header (curl/fetch/app.inject default) -> JSON 404", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/nope" });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("POST /nope（即使 Accept: text/html）→ 既有 JSON 404（fallback 僅 GET/HEAD）", async () => {
+  it("POST /nope (even with Accept: text/html) -> the existing JSON 404 (fallback is GET/HEAD only)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "POST", url: "/nope", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("GET /assets/missing.js → 404（/assets 排除 SPA fallback，JSON body 皆可，狀態碼是重點）", async () => {
+  it("GET /assets/missing.js -> 404 (/assets is excluded from the SPA fallback; any JSON body is fine, the status code is the point)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/assets/missing.js", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);
   });
 
-  it("GET /assets/app.js → 200 且內容正確（走 @fastify/static，不經 fallback）", async () => {
+  it("GET /assets/app.js -> 200 with correct content (served by @fastify/static, not the fallback)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/assets/app.js" });
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe("console.log('app');");
-    // 檔名帶內容 hash：快取一年、不 revalidate
+    // The file name carries a content hash: cache for a year, no revalidation.
     expect(res.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
   });
 
-  it("GET /favicon.svg → 200 image/svg+xml（dist 根目錄的檔案由 static 送，不被 SPA fallback 吞成 index.html）", async () => {
+  it("GET /favicon.svg -> 200 image/svg+xml (a file at the dist root is served by static, not swallowed into index.html by the SPA fallback)", async () => {
     const { app } = await buildTestApp({}, { webDist });
-    // 瀏覽器抓圖示的 Accept 是 image/*；再用 text/html 證明即使如此也不會落進 fallback。
+    // Browsers fetch the icon with Accept image/*; text/html is also tried to prove it does not fall into the fallback even then.
     for (const accept of ["image/avif,image/webp,image/*,*/*;q=0.8", "text/html"]) {
       const res = await app.inject({ method: "GET", url: "/favicon.svg", headers: { accept } });
       expect(res.statusCode).toBe(200);
@@ -111,50 +108,48 @@ describe("SPA fallback", () => {
     }
   });
 
-  it("GET /collaborators + text/html → index.html（segment 邊界證明：不受 /collab 排除牽連）", async () => {
+  it("GET /collaborators + text/html -> index.html (segment boundary: not caught by the /collab exclusion)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/collaborators", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("knotebook spa");
   });
 
-  it("GET /api/nope + text/html → JSON 404（/api 排除 SPA fallback）", async () => {
+  it("GET /api/nope + text/html -> JSON 404 (/api is excluded from the SPA fallback)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/api/nope", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("GET /api/nope?x=1 + text/html → JSON 404（判定用 pathname，query string 不影響排除前綴比對）", async () => {
+  it("GET /api/nope?x=1 + text/html -> JSON 404 (the pathname is used, the query string does not affect the excluded-prefix match)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/api/nope?x=1", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  // #131 起 /oauth 與 /.well-known 在排除清單。**這兩個前綴自己的 404 不在本檔測**：
-  // #132 之後它們由各自 prefix plugin 的 notFound 承接（回 RFC 形），與
-  // oauth-metadata.test.ts 重複。本檔留下面兩條 segment 邊界的正對照：`/oauthx` 不該被
-  // 前綴比對誤傷，且它們是「fallback 真的有註冊」的唯一非空驗證。
-  it("#131 正對照：GET /oauthx + text/html → index.html（segment 邊界）", async () => {
+  // #131 put /oauth and /.well-known on the exclusion list. Their own 404s are not tested here: since #132 they are handled by
+  // each prefix plugin's notFound (RFC shape), which duplicates oauth-metadata.test.ts. This file keeps the two positive controls
+  // below, which check that the prefix match stops at a segment boundary (`/oauthx` and `/.well-knownx` still get index.html).
+  it("#131 positive control: GET /oauthx + text/html -> index.html (segment boundary)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/oauthx", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("knotebook spa");
   });
 
-  it("#131 正對照：GET /.well-knownx + text/html → index.html", async () => {
+  it("#131 positive control: GET /.well-knownx + text/html -> index.html", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/.well-knownx", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("knotebook spa");
   });
 
-  // #132：這案守兩件事——(a) `/authorize` 沒被 EXCLUDED_PREFIXES 或某條 server route
-  // 吃掉（否則 404 JSON）；(b) SPA fallback 這條 HTML 出口確實經過 securityHeaders
-  // （順帶確認 `/authorize` 這條也走同一條掛標頭的出口）。server 不知道 SPA 路由，App.tsx 的
-  // route 拿掉它不會紅——那半由 AuthorizePage.test.tsx 守。
-  it("/authorize 由 SPA fallback 服務且帶 frame-ancestors 'none'", async () => {
+  // Guards two things: `/authorize` is not swallowed by EXCLUDED_PREFIXES or a server route (else JSON 404), and the SPA
+  // fallback's HTML exit really goes through securityHeaders (confirming `/authorize` uses the same header-adding exit). The
+  // server does not know SPA routes, so removing the route from App.tsx does not go red here - AuthorizePage.test.tsx guards that half.
+  it("/authorize is served by the SPA fallback with frame-ancestors 'none'", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/authorize?req=abc", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
@@ -162,17 +157,17 @@ describe("SPA fallback", () => {
     expect(res.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
   });
 
-  it("GET /nope?foo=bar + text/html → index.html（query string 不影響 fallback 命中）", async () => {
+  it("GET /nope?foo=bar + text/html -> index.html (the query string does not affect fallback matching)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/nope?foo=bar", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("knotebook spa");
   });
 
-  // issue #101：CSP 掛在**這條路徑**（手動回 index.html 的地方）——CSP 只對 HTML 文件
-  // 有意義。政策內容本身由 `test/unit/security-headers.test.ts` 逐條釘住，這裡守的是
-  // 「有沒有真的掛上去」與「hash 是不是從**這次送出的這份 body** 算的」。
-  it("index.html 回應帶 CSP，且 script-src 的 hash 就是這份 body 裡那段 inline script 的 sha256", async () => {
+  // #101: CSP is attached on this path (where index.html is returned by hand) - CSP only matters for HTML documents. The policy
+  // content is pinned clause by clause in test/unit/security-headers.test.ts; this guards that it is really attached and that
+  // the hash is computed from the body actually sent this time.
+  it("index.html response carries CSP, and the script-src hash is the sha256 of the inline script in this very body", async () => {
     const inline = 'document.documentElement.classList.add("dark");';
     const dist = mkdtempSync(path.join(tmpdir(), "knotebook-csp-"));
     writeFileSync(
@@ -186,7 +181,7 @@ describe("SPA fallback", () => {
       expect(res.statusCode).toBe(200);
       const csp = res.headers["content-security-policy"];
       expect(csp, "index.html 回應沒有 CSP").toBeTypeOf("string");
-      // oracle 獨立於實作：直接對送出的 body 裡的 script 內文算一次 sha256。
+      // Oracle independent of the implementation: sha256 the script text in the body as sent.
       const served = /<script>([\s\S]*?)<\/script>/.exec(res.body)![1]!;
       const hash = createHash("sha256").update(served, "utf8").digest("base64");
       expect(csp).toContain(`'sha256-${hash}'`);
@@ -197,12 +192,11 @@ describe("SPA fallback", () => {
     }
   });
 
-  // ⚠ 曾經的嚴重漏洞：`@fastify/static` 的 `wildcard:false` 仍會為 root 下
-  // **實際存在的每個檔案**各註冊一條路由，而 `index.html` 就是其中之一——於是
-  // `GET /index.html` 會由 static 送出同一份 SPA（App.tsx 的 `/*` route 讓它渲染
-  // 首頁、session cookie 是 lax 照送＝已登入），卻**一個安全標頭都沒有**。
-  // 政策整份被 11 個字元繞過。這條釘住那個入口也走掛標頭的路徑。
-  it("GET /index.html 也要有 CSP——static 不得把 index.html 直接送出去（繞過整份政策）", async () => {
+  // A past serious hole: `@fastify/static` with `wildcard:false` still registers a route for every file that actually exists
+  // under root, including `index.html`, so `GET /index.html` was served by static as the same SPA (App.tsx's `/*` route renders
+  // the home page, and the lax session cookie is sent = signed in) with no security header at all - the whole policy bypassed
+  // with 11 characters. This pins that entry through the header-adding path too.
+  it("GET /index.html must also carry CSP - static must not serve index.html directly (bypassing the whole policy)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/index.html", headers: { accept: "text/html" } });
 
@@ -214,16 +208,16 @@ describe("SPA fallback", () => {
     expect(res.headers["referrer-policy"]).toBe("no-referrer");
   });
 
-  it("JSON 404 不掛 CSP（那條路徑不是 HTML 文件）", async () => {
+  it("JSON 404 carries no CSP (that path is not an HTML document)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/api/nope", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);
     expect(res.headers["content-security-policy"]).toBeUndefined();
   });
 
-  // CSP 只對 HTML 有意義，但 `nosniff` 是逐回應的便宜標頭，JSON 與
-  // 靜態 JS 也該有——所以它掛在全域 onSend，不是只掛在 SPA 那條路徑上。
-  it("nosniff 掛在**每個**回應上（JSON 與靜態資產也算），不只 HTML", async () => {
+  // CSP only matters for HTML, but `nosniff` is a cheap per-response header that JSON and static JS should have too - so it
+  // sits on the global onSend, not only on the SPA path.
+  it("nosniff is on every response (JSON and static assets too), not only HTML", async () => {
     const { app } = await buildTestApp({}, { webDist });
 
     const json = await app.inject({ method: "GET", url: "/api/nope" });
@@ -234,14 +228,14 @@ describe("SPA fallback", () => {
     expect(asset.headers["x-content-type-options"], "靜態資產缺 nosniff").toBe("nosniff");
   });
 
-  it("#72：/p/ 前綴的 HTML fallback 帶 X-Robots-Tag: noindex（token 連結不進搜尋引擎）", async () => {
+  it("#72: HTML fallback under the /p/ prefix carries X-Robots-Tag: noindex (token links stay out of search engines)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     const res = await app.inject({ method: "GET", url: "/p/whatever-token", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-robots-tag"]).toBe("noindex");
   });
 
-  it("#72：/p 本身、//p/、/P/ 變體同樣 noindex（判定與 log 遮罩共用正規化——只修一邊就會漏掉這些變體）", async () => {
+  it("#72: /p itself and the //p/ and /P/ variants are noindex too (the check shares normalization with log masking - fixing only one side would miss these variants)", async () => {
     const { app } = await buildTestApp({}, { webDist });
     for (const url of ["/p", "//p/some-token", "/P/some-token"]) {
       const res = await app.inject({ method: "GET", url, headers: { accept: "text/html" } });
@@ -250,7 +244,7 @@ describe("SPA fallback", () => {
     }
   });
 
-  it("#72 反向：其他路徑的 HTML fallback **不得**帶 X-Robots-Tag——條件標頭掛錯層＝整站 noindex", async () => {
+  it("#72 reverse: HTML fallback on other paths must NOT carry X-Robots-Tag - a conditional header on the wrong layer would noindex the whole site", async () => {
     const { app } = await buildTestApp({}, { webDist });
     for (const url of ["/", "/nope", "/notes/some-ref", "/pnot-a-prefix"]) {
       const res = await app.inject({ method: "GET", url, headers: { accept: "text/html" } });
@@ -258,7 +252,7 @@ describe("SPA fallback", () => {
       expect(res.headers["x-robots-tag"], url).toBeUndefined();
     }
   });
-  it("不傳 webDist → GET /nope 仍是既有 JSON 404（既有行為不受影響）", async () => {
+  it("webDist not passed -> GET /nope is still the existing JSON 404 (existing behaviour unaffected)", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/nope", headers: { accept: "text/html" } });
     expect(res.statusCode).toBe(404);

@@ -1,6 +1,3 @@
-/**
- * #93：全文索引整合測試共用。種子與讀列都直打 DB（被測的是索引寫入／查詢，不是種子路徑）。
- */
 import { asc, eq } from "drizzle-orm";
 import * as Y from "yjs";
 import type { Db } from "../src/db/index.js";
@@ -14,7 +11,7 @@ export async function seedNoteState(db: Db, noteId: string, doc: Y.Doc, version 
   await db.insert(noteStates).values({ noteId, ydoc: Buffer.from(Y.encodeStateAsUpdate(doc)), version });
 }
 
-/** 模擬一次落盤：note_states 換內容、version 設成指定值（`persistNoteState` 的效果；不是被測方）。 */
+/** Stands in for `persistNoteState` (not under test): replaces note_states content and sets version. */
 export async function setNoteState(db: Db, noteId: string, doc: Y.Doc, version: number): Promise<void> {
   await db.update(noteStates).set({ ydoc: Buffer.from(Y.encodeStateAsUpdate(doc)), version }).where(eq(noteStates.noteId, noteId));
 }
@@ -39,7 +36,6 @@ export async function noteStateVersion(db: Db, noteId: string): Promise<number |
   return row?.version;
 }
 
-/** 建一篇有內容且已建好索引的筆記（version 1）。 */
 export async function seedIndexedNote(db: Db, owner: { ownerId: string } | { groupId: string }, title: string, blocks: Blk[]): Promise<{ id: string; slug: string }> {
   const note = await seedNote(db, owner, { title });
   const doc = searchDoc(blocks);
@@ -49,7 +45,6 @@ export async function seedIndexedNote(db: Db, owner: { ownerId: string } | { gro
   return note;
 }
 
-/** 輪詢直到 pred 對該篇的索引列成立（且狀態列追上 note_states.version）。 */
 export async function waitIndexed(db: Db, noteId: string, pred: (bodies: string) => boolean, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -60,14 +55,13 @@ export async function waitIndexed(db: Db, noteId: string, pred: (bodies: string)
   throw new Error(`waitIndexed 逾時（${ms}ms）：${noteId}`);
 }
 
-/** 收 warn／info 的 logger（斷言「warn 一行」用）。 */
 export function captureLog(): { log: { warn(obj: object, msg: string): void; info(obj: object, msg: string): void }; warns: Array<{ obj: object; msg: string }>; infos: Array<{ obj: object; msg: string }> } {
   const warns: Array<{ obj: object; msg: string }> = [];
   const infos: Array<{ obj: object; msg: string }> = [];
   return { log: { warn: (obj, msg) => warns.push({ obj, msg }), info: (obj, msg) => infos.push({ obj, msg }) }, warns, infos };
 }
 
-/** 一個可外部放行的閘：測試縫裡 `await gate.wait()` 卡住、測試端 `gate.open()` 放行；`reached` 在第一次進入時 resolve。 */
+/** A gate the test hook blocks on with `await gate.wait()`; `gate.open()` releases it and `reached` resolves on first entry. */
 export function makeGate(): { wait: () => Promise<void>; open: () => void; reached: Promise<void> } {
   let open!: () => void;
   let enter!: () => void;

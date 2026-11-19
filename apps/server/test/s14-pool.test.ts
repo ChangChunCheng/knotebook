@@ -1,8 +1,9 @@
 /**
- * #175 S14 (c)（PATCH 形）：以 max=3 的小 pool 起 app，並發 max+1 個自訂 slug 改名（每篇舊 slug 是自訂、
- * 同路徑有轉址列——走 `patchSlugInTx` 的 DELETE 分支）。全部 200、轉址全刪、之後其他請求照常。pool 設 2 秒借連線逾時：S14 被違反時
- * 表現為 500，而不是把整支測試卡到逾時。hook 在 `patchSlugInTx` 內當柵欄：等到 3 個交易同時持有連線（或 1 秒）才放行。
- * pool 走生產的 `createPool`（保險絲）。
+ * A small pool (max=3) with max+1 concurrent custom-slug renames (each note's old slug is custom and a redirect row exists
+ * on the same path, so `patchSlugInTx`'s DELETE branch runs). All 200, redirects all deleted, other requests fine afterwards.
+ * The pool has a 2 s connection-acquire timeout, so borrowing a second pool connection while holding a transaction connection shows as a 500
+ * instead of hanging the test until it times out; it is built with production's `createPool`, whose acquire timeout is that fuse.
+ * A hook inside `patchSlugInTx` acts as a barrier: released once 3 transactions hold connections at once (or after 1 s).
  */
 import { describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
@@ -17,8 +18,8 @@ import { UserGate } from "../src/auth/session.js";
 import { buildTestApp, freshDb } from "./helpers.js";
 import { cookieOf, seedGroup, seedNote, seedRedirect, seedUser, waitForBlockedOrSettled } from "./group-helpers.js";
 
-describe("S14 (c)：PATCH 短交易在小 pool 下不卡死", () => {
-  it("max=3、並發 4 個自訂改名 → 全 200、轉址全刪；之後 GET /api/notes 照常", async () => {
+describe("PATCH short transactions do not deadlock on a small pool", () => {
+  it("max=3, 4 concurrent custom renames -> all 200, redirects all deleted; GET /api/notes works afterwards", async () => {
     const target = await freshDb();
     const pool = createPool({ databaseUrl: target.url, databasePoolMax: 3, databasePoolConnectionTimeoutMs: 2_000 });
     const db = createDb(pool);
@@ -46,20 +47,23 @@ describe("S14 (c)：PATCH 短交易在小 pool 下不卡死", () => {
 });
 
 /**
- * #175 全刪形：`DELETE /api/groups/:id` `{ mode: "delete" }` 的 gate（`beforeNoteDeleted`）在交易之前開完；
- * 交易內只用 tx。假 gate 要**真的借連線**（`loadNoteAudience(db, …)`，生產 gate 同一支，collab/server.ts:938），否則 noop gate
- * 碰不到 pool、這組案量不到 S14。柵欄兩道：① `group-delete-locked`（交易內）等 3 個交易同時持連線（或 1 秒）；
- * ② 假 gate 內等「來自 3 個不同群組」的呼叫同時到達（或 1 秒）——只數呼叫次數的話，每群組 2 篇，3 個呼叫可能只來自 2 個交易。
+ * Delete-all-notes shape: `DELETE /api/groups/:id` `{ mode: "delete" }` opens its gate (`beforeNoteDeleted`) before the
+ * transaction; inside the transaction only tx is used. The fake gate must really borrow a connection (`loadNoteAudience(db, ...)`,
+ * the same call the production gate makes in collab/server.ts) or a noop gate never touches the pool. Two barriers:
+ * `group-delete-locked` (in the transaction) waits for 3 transactions holding connections at once (or 1 s); the fake gate waits
+ * for calls from 3 different groups (or 1 s) - counting calls alone is not enough, since each group has 2 notes and 3 calls
+ * could come from only 2 transactions.
  */
-describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死", () => {
+describe("deleting a group (delete mode) does not deadlock on a small pool", () => {
   const POOL_OPTS = { databasePoolMax: 3, databasePoolConnectionTimeoutMs: 2_000 } as const;
 
-  /** 假 gate：可選的「N 個不同群組同時到達」柵欄＋真的借連線；記錄開了幾道、release 了幾道。 */
   function makeGate(db: Db, groupOfNote: Map<string, string>, distinctGroups: number) {
-    // 以「這篇是第幾次被 gate」分輪：正確碼只有第 0 輪（交易外）。突變「交易外那份留著、交易內再開一次 gate」會多出第 1 輪
-    // （交易內、3 個交易同時持連線）；第 1 輪要等 3 個不同群組同時到才放行，才會同時借連線而把 pool 借光。先前的柵欄（不分輪、
-    // 只有一個集合）抓不到這個形：第 0 輪的集合已滿，交易內那輪直接通過、各交易錯開借連線，(a) 的狀態碼全 204，只剩 gate 次數
-    // 斷言會紅。分輪柵欄比先前的柵欄嚴格；純搬移（gate 從交易外移進交易、不留交易外那份）兩種柵欄都抓得到。
+    // Rounds are numbered by how many times this note has been gated: correct code has only round 0 (outside the tx). Keeping
+    // the outside gate and also opening one inside the tx would add round 1 (inside, 3 txs holding connections), which
+    // waits for 3 different groups to arrive and so borrows connections simultaneously and drains the pool. A single-set barrier
+    // misses it: round 0's set is already full, the in-tx round passes straight through, transactions borrow staggered, and
+    // all status codes stay 204 so only the gate-count assertion goes red. The per-round barrier is stricter; a pure move
+    // (gate moved into the tx with no outside copy) is caught by both.
     const roundOf = new Map<string, number>();
     const arrivedByRound = new Map<number, Set<string>>();
     const stat = { opened: 0, released: 0 };
@@ -83,7 +87,7 @@ describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死",
   const del = async (app: FastifyInstance, userId: string, groupId: string) =>
     app.inject({ method: "DELETE", url: `/api/groups/${groupId}`, cookies: await cookieOf(userId), payload: { mode: "delete" } });
 
-  it("(a) max=3、並發 4 個全刪（四個群組各 2 篇）→ 全 204、筆記全刪；之後 GET /api/notes 照常", async () => {
+  it("max=3, 4 concurrent delete-alls (four groups of 2 notes) -> all 204, notes deleted; GET /api/notes works afterwards", async () => {
     const target = await freshDb();
     const pool = createPool({ databaseUrl: target.url, ...POOL_OPTS });
     const db = createDb(pool);
@@ -126,7 +130,7 @@ describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死",
     }
   });
 
-  it("(a') max=3、同一群組並發 4 個全刪 → 恰一個 204、三個 404 not_found；被 404 的請求開的 gate 都 release；之後 GET /api/notes 照常", async () => {
+  it("max=3, 4 concurrent delete-alls on the same group -> exactly one 204, three 404 not_found; the gates opened by the 404 requests are all released; GET /api/notes works afterwards", async () => {
     const target = await freshDb();
     const pool = createPool({ databaseUrl: target.url, ...POOL_OPTS });
     const db = createDb(pool);
@@ -145,8 +149,9 @@ describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死",
       expect(codes).toEqual([204, 404, 404, 404]);
       for (const r of results) if (r.statusCode === 404) expect(r.json().error.code).toBe("not_found");
       expect(await target.db.select({ id: notes.id }).from(notes).where(inArray(notes.id, ids))).toEqual([]);
-      // 贏家的 gate 不 release（刪除成功，閘門留給 TTL／刪除本身）；其餘每個請求開的 gate 都 release：
-      // 贏家取得的筆記清單恆為那 2 篇（它 commit 之前沒人能刪），所以 released ＝ opened − 2。
+      // The winner's gate is not released (deletion succeeded; the gate is left to the TTL / the delete itself); every other
+      // request's gate is released. The winner's note list is always those 2 notes (nobody can delete them before it commits),
+      // so released = opened - 2.
       expect(gate.stat.opened).toBeGreaterThanOrEqual(2);
       expect(gate.stat.released).toBe(gate.stat.opened - 2);
       const after = await app.inject({ method: "GET", url: "/api/notes", cookies: await cookieOf(admin.id) });
@@ -156,9 +161,9 @@ describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死",
     }
   });
 
-  // (b) 的鑑別力（拿掉保護時 (a)(a')(b) 全紅：全刪得 500）：它守的是「交易內、lockGroup 之後不得再向 pool 借連線」——
-  // 在全刪的 lockGroup 之後、交易內多借一條連線（對小 pool 做 `select 1`）時，pool 會被借光。
-  it("(b) max=3、1 個全刪＋3 個在該群組建筆記的請求（全刪持鎖時才發）→ 全刪 204、建立全 404 group_not_found；之後照常", async () => {
+  // Guards "inside the transaction after lockGroup, no further borrowing from the pool": borrowing one more connection there
+  // (a `select 1` on the small pool) drains the pool; without the protection the previous cases and this one all fail with 500.
+  it("max=3, 1 delete-all plus 3 note creations in that group (sent only while the delete-all holds the lock) -> delete-all 204, creations all 404 group_not_found; fine afterwards", async () => {
     const target = await freshDb();
     const pool = createPool({ databaseUrl: target.url, ...POOL_OPTS });
     const db = createDb(pool);
@@ -173,7 +178,7 @@ describe("S14 全刪形：刪群組（delete 模式）在小 pool 下不卡死",
         if (point !== "group-delete-locked" || state.fired) return;
         state.fired = true;
         state.creates = fire!();
-        // 用 target.pool（不是小 pool）看鎖等待：小 pool 此刻可能已被占滿。
+        // Watch lock waits with target.pool (not the small pool): the small pool may be full by now.
         state.interleave = await waitForBlockedOrSettled(target.db.$client, Promise.race(state.creates));
       },
     });

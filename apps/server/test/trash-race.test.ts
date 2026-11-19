@@ -1,9 +1,7 @@
-/**
- * #181：垃圾桶交易彼此的併發。以拋棄式 pg 實跑：一方卡在鎖後縫，
- * 另一方送出後以 `waitForLockWaiters` 確認它真的在等鎖（交錯真的發生），放行後斷言結果只會是指定的那一種。
- * 「移入×上傳」的另一形（個人筆記、既有附件）在 `notes-delete-race.test.ts`；這裡是群組筆記、成員上傳，並接著永久刪除。
- * RC-DL：刪群組（全刪／轉移）× 多 id 永久刪除／還原的鎖序（統一依 id 鎖之後不再成環），以及還原／永久刪除被併發犧牲時的 409。
- */
+// Races between trash transactions, run on a throwaway pg: one side stops at a post-lock hook, the other is sent and confirmed with `waitForLockWaiters` to be really waiting
+// on the lock (the interleaving really happened), then released and the outcome asserted to be exactly the specified one.
+// The other form of move to trash x upload (personal note, existing attachment) is in `notes-delete-race.test.ts`; here it is a group note with a member upload, followed by permanent delete.
+// The lock-order cases cover deleting a group (delete-all / transfer) x multi-id permanent delete/restore (locking by id removes the cycle), and the 409 when a restore/permanent delete is sacrificed concurrently.
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
@@ -32,7 +30,7 @@ const purge = (app: FastifyInstance, by: string, ids: string[]) => inject(app, "
 const restoredIds = (r: Res) => (r.json() as TrashRestoreResultDto).restored.map(n => n.id);
 const exists = async (pool: Pool, id: string) => (await pool.query(`select 1 from notes where id = $1`, [id])).rowCount === 1;
 
-/** 一次性測試縫：`on` 登記的處理第一次觸發時拿掉並執行，其餘觸發直接放行；`hits` 記每個點被觸發幾次。 */
+/** One-shot test hook: the handler registered by `on` is removed and run on first trigger, later triggers pass through; `hits` counts how many times each point fired. */
 class Seams {
   private readonly handlers = new Map<string, () => Promise<void>>();
   readonly hits = new Map<string, number>();
@@ -46,7 +44,6 @@ class Seams {
     this.handlers.delete(name);
     await fn();
   }
-  /** 在 name 卡住：`entered` 在進縫時 resolve，`open()` 放行。 */
   hold(name: string): { entered: Promise<void>; open: () => void } {
     let open!: () => void;
     let enter!: () => void;
@@ -61,12 +58,11 @@ class Seams {
   readonly group: GroupTestHook = point => this.fire(point);
 }
 
-/** 等請求走進縫；它若先回應了（沒走到縫）就直接失敗，不空等。 */
 async function entered(seam: Promise<void>, req: Promise<Res>): Promise<void> {
   await Promise.race([seam, req.then(r => { throw new Error(`請求沒走到縫就回了 ${r.statusCode} ${r.body}`); })]);
 }
 
-/** 等 n 條連線卡在鎖上；逾時就先放行、讓在途請求收尾，再把逾時丟出去（不留懸著的請求）。 */
+/** Waits for n connections stuck on locks; on timeout it releases first so in-flight requests finish, then throws the timeout (no dangling requests). */
 async function blockedOrBail(pool: Pool, n: number, bail: () => void, inflight: Array<Promise<unknown>>): Promise<void> {
   try {
     await waitForLockWaiters(pool, n);
@@ -77,8 +73,8 @@ async function blockedOrBail(pool: Pool, n: number, bail: () => void, inflight: 
   }
 }
 
-describe("RC1 移入 × 移入", () => {
-  it("第一個卡在鎖後、第二個等鎖 → 204／404；後到那次的 release 不收掉先到那次的閘門；deleted_by 是第一個人", async () => {
+describe("move to trash x move to trash", () => {
+  it("first stops after the lock, second waits on the lock -> 204 / 404; the later one's release does not release the earlier one's gate; deleted_by is the first person", async () => {
     const seams = new Seams();
     const ctx = await buildCollabTestApp({ collabHooks: (server, log) => createCollabHooks(server, log), groupTestHook: seams.group });
     const pool: Pool = ctx.db.$client;
@@ -97,7 +93,7 @@ describe("RC1 移入 × 移入", () => {
     const r2 = await d2;
     expect(r2.statusCode, r2.body).toBe(404);
     expect(r2.json()).toEqual(NOT_FOUND);
-    // release 是 fire-and-forget（404 不等它）：等後到那次的 releaseDeletingGate 跑完再看閘門。
+    // release is fire-and-forget (the 404 does not wait for it): wait for the later request's releaseDeletingGate to finish before looking at the gate.
     expect(rel).toHaveBeenCalledTimes(1);
     expect(await rel.mock.results.at(-1)!.value).toBe(false);
     expect(ctx.collab.isDeleting(n.id)).toBe(true);
@@ -105,8 +101,8 @@ describe("RC1 移入 × 移入", () => {
   });
 });
 
-describe("RC2 還原 × 永久刪除", () => {
-  it("(a) 還原卡在鎖後、永久刪除等鎖 → 還原 1 篇、永久刪除 skipped not_in_trash、筆記活著", async () => {
+describe("restore x permanent delete", () => {
+  it("restore stops after the lock, permanent delete waits on the lock -> restores 1 note, permanent delete skipped not_in_trash, the note is alive", async () => {
     const seams = new Seams();
     const hooks = spyCollabHooks();
     const { app, db, uploadsDir } = await buildTestApp({ groupTestHook: seams.group, collabHooks: hooks });
@@ -135,7 +131,7 @@ describe("RC2 還原 × 永久刪除", () => {
     expect(hooks.onNotesRestored.mock.calls).toEqual([[[n.id]]]);
   });
 
-  it("(b) 永久刪除卡在鎖後、還原（預判已過）等鎖 → 永久刪除 1 篇、還原 skipped not_found、列與附件檔都不在", async () => {
+  it("permanent delete stops after the lock, restore (pre-check already passed) waits on the lock -> permanent delete 1 note, restore skipped not_found, row and attachment files are gone", async () => {
     const seams = new Seams();
     const hooks = spyCollabHooks();
     const { app, db, uploadsDir } = await buildTestApp({ groupTestHook: seams.group, collabHooks: hooks });
@@ -165,8 +161,8 @@ describe("RC2 還原 × 永久刪除", () => {
   });
 });
 
-describe("RC3 還原 × 清理", () => {
-  it("(a) 還原卡在鎖後 → 清理 SKIP LOCKED 不等鎖、回 0；還原後下一輪也不刪（活筆記）", async () => {
+describe("restore x cleanup", () => {
+  it("restore stops after the lock -> cleanup SKIP LOCKED does not wait and returns 0; after the restore the next round does not delete either (live note)", async () => {
     const seams = new Seams();
     const { app, db, uploadsDir } = await buildTestApp({ groupTestHook: seams.group });
     const pool = db.$client;
@@ -198,7 +194,7 @@ describe("RC3 還原 × 清理", () => {
     expect(await trashCols(pool, n.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("(b) 清理卡在鎖後、還原等鎖 → 清理刪掉、還原 skipped not_found", async () => {
+  it("cleanup stops after the lock, restore waits on the lock -> cleanup deletes, restore skipped not_found", async () => {
     const seams = new Seams();
     const { app, db, uploadsDir } = await buildTestApp({ groupTestHook: seams.group });
     const pool = db.$client;
@@ -223,7 +219,6 @@ describe("RC3 還原 × 清理", () => {
   });
 });
 
-/** RC4 的場景：群組筆記、管理員移入與永久刪除、一般成員（有編輯權）上傳。 */
 async function uploadScene() {
   const seams = new Seams();
   const built = await buildTestApp({ groupTestHook: seams.group });
@@ -236,13 +231,13 @@ async function uploadScene() {
 }
 const uploadRows = async (db: Db, noteId: string) => (await db.select({ id: uploads.id }).from(uploads).where(eq(uploads.noteId, noteId))).map(r => r.id);
 
-describe("RC4 移入 × 上傳，之後永久刪除", () => {
-  it("(a) 上傳卡在交易內（持 KEY SHARE）、移入等鎖 → 上傳 201、移入 204；永久刪除連同該附件檔刪掉，磁碟沒有孤兒", async () => {
+describe("move to trash x upload, then permanent delete", () => {
+  it("upload stops inside the transaction (holding KEY SHARE), trash waits on the lock -> upload 201, trash 204; permanent delete removes the attachment file too, no orphan on disk", async () => {
     const s = await uploadScene();
     const up = s.seams.hold("storage-space-locked");
     let replied!: () => void;
     const uploadReplied = new Promise<void>(r => { replied = r; });
-    // 移入拿到鎖之後等上傳回完應答再繼續（不和上傳 commit 後的回應競速）。
+    // After the trash gets the lock it waits for the upload's response to be sent before continuing (does not race the response after the upload commits).
     s.seams.on("note-trash-locked", () => uploadReplied);
 
     const uploading = upload(s.app, s.noteId, s.member.id, 8);
@@ -264,7 +259,7 @@ describe("RC4 移入 × 上傳，之後永久刪除", () => {
     expect(await filesIn(s.uploadsDir)).toEqual([]);
   });
 
-  it("(b) 移入卡在鎖後、上傳（已授權）等鎖 → 移入 204、上傳 404 not_found、uploads 0 列、磁碟無新檔；之後永久刪除照常", async () => {
+  it("trash stops after the lock, upload (already authorized) waits on the lock -> trash 204, upload 404 not_found, uploads has 0 rows, no new file on disk; permanent delete afterwards works as usual", async () => {
     const s = await uploadScene();
     const tr = s.seams.hold("note-trash-locked");
 
@@ -287,11 +282,11 @@ describe("RC4 移入 × 上傳，之後永久刪除", () => {
   });
 });
 
-describe("RC5 角色降級 × 還原", () => {
+describe("role downgrade x restore", () => {
   const demote = (pool: Pool, groupId: string, userId: string) =>
     pool.query(`update group_roles set can_delete = false where id = (select role_id from group_members where group_id = $1 and user_id = $2)`, [groupId, userId]);
 
-  it("(a) 還原（預判已過）卡在鎖後，期間 can_delete 被拿掉 → 交易內重判 skipped not_found、仍在垃圾桶", async () => {
+  it("restore (pre-check already passed) stops after the lock while can_delete is removed -> re-judged inside the transaction as skipped not_found, still in trash", async () => {
     const seams = new Seams();
     const hooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ groupTestHook: seams.group, collabHooks: hooks });
@@ -313,7 +308,7 @@ describe("RC5 角色降級 × 還原", () => {
     expect(hooks.onNotesRestored).not.toHaveBeenCalled();
   });
 
-  it("(b) 先降級再還原 → 預判就 not_found（沒進交易）、仍在垃圾桶", async () => {
+  it("downgrade first, then restore -> not_found already at the pre-check (never enters the transaction), still in trash", async () => {
     const seams = new Seams();
     const { app, db } = await buildTestApp({ groupTestHook: seams.group });
     const pool = db.$client;
@@ -332,11 +327,11 @@ describe("RC5 角色降級 × 還原", () => {
 });
 
 /**
- * RC-DL：刪群組 × 多 id 永久刪除／還原的鎖序（實跑撞到過的形，會死結）。
- * 兩篇 a < b（id），但全刪的掃描順序（實體或 `notes_group_slug_idx` 的 slug 序）與轉移的 created_at 序都是 b 先。
- * 修法：全刪、轉移都改依 id 升冪鎖（與垃圾桶三支、`deleteNotesInTx` 同序），轉移的 slug 處理順序另在 JS 依 created_at, id 排。
- * 決定性的造法：測試連線先持 a 的列鎖 → 永久刪除／還原排在 a 上（什麼都還沒鎖）→ 刪群組也排在 a 上 → 測試放掉 a：
- * a 的佇列先進先出，永久刪除／還原先拿到 a、再拿 b、commit；刪群組之後才拿到鎖。改回舊鎖序（刪群組先鎖 b 再等 a）就成環 → 40P01。
+ * Deleting a group x multi-id permanent delete/restore lock order (a shape that deadlocked in real runs).
+ * Two notes a < b by id, but delete-all's scan order (physical, or the slug order of `notes_group_slug_idx`) and transfer's created_at order both go b first.
+ * The fix: delete-all and transfer both lock in ascending id (same order as the three trash endpoints and `deleteNotesInTx`), and transfer's slug processing order is sorted in JS by created_at, id.
+ * Deterministic construction: the test connection holds a's row lock first -> permanent delete/restore queues on a (nothing locked yet) -> deleting the group also queues on a -> the test releases a:
+ * a's queue is FIFO, so permanent delete/restore gets a first, then b, and commits; deleting the group gets its locks after. Reverting to the old lock order (group delete locks b then waits on a) forms a cycle -> 40P01.
  */
 async function deadlockScene(order: "scan" | "created") {
   const seams = new Seams();
@@ -349,11 +344,11 @@ async function deadlockScene(order: "scan" | "created") {
   const g = await seedGroup(db, "RC-DL", [{ userId: admin.id, role: "admin" }]);
   const [a, b] = [randomUUID(), randomUUID()].sort();
   const now = Date.now();
-  // b 先插（實體順序在前）、slug 較小（`(group_id, slug)` 索引掃描也是 b 先）、created_at 也較早——舊的全刪與轉移鎖序都是
-  // b 先、a 後；永久刪除／還原是 a 先。
+  // b is inserted first (earlier physical order), has the smaller slug (an index scan on `(group_id, slug)` is also b first) and the earlier created_at - the old delete-all and transfer lock order was
+  // b then a; permanent delete/restore goes a first.
   await db.insert(notes).values({ id: b!, groupId: g.id, slug: "dl-1", createdAt: new Date(now - 60_000) });
   await db.insert(notes).values({ id: a!, groupId: g.id, slug: "dl-2", createdAt: new Date(now) });
-  // 移入是 UPDATE、會寫新的 tuple：照 b、a 的順序寫，新版本的實體順序才維持 b 先。
+  // Moving to trash is an UPDATE and writes new tuples: write in b, a order so the new versions keep b first physically.
   for (const id of [b!, a!]) await markTrashed(pool, id, admin.id);
   if (order === "scan") {
     const { rows } = await pool.query<{ id: string }>(`select id from notes where group_id = $1`, [g.id]);
@@ -362,7 +357,6 @@ async function deadlockScene(order: "scan" | "created") {
   return { ...built, pool, seams, logs, hooks, admin, groupId: g.id, a: a!, b: b! };
 }
 
-/** 測試連線持 a 的列鎖；回放鎖函式。 */
 async function holdRow(pool: Pool, id: string): Promise<{ client: PoolClient; release: () => Promise<void> }> {
   const client = await pool.connect();
   await client.query("begin");
@@ -379,7 +373,6 @@ async function holdRow(pool: Pool, id: string): Promise<{ client: PoolClient; re
   };
 }
 
-/** holder 持 a → first 排在 a 上 → 刪群組也排在 a 上 → 放掉 a。回兩條請求。 */
 async function queueBehindA(
   s: Awaited<ReturnType<typeof deadlockScene>>,
   first: () => Promise<Res>,
@@ -402,8 +395,8 @@ async function queueBehindA(
 const unhandled = (s: { logs: ReturnType<typeof captureLogs> }) => s.logs.lines.filter(l => l.msg === "unhandled error");
 
 for (const mode of ["delete", "transfer"] as const) {
-  describe(`RC-DL ${mode === "delete" ? "全刪" : "轉移"} × 多 id 永久刪除`, () => {
-    it("兩邊都依 id 鎖 → 不死結：永久刪除 200 purged [a, b]、刪群組 204、log 沒有 unhandled error", async () => {
+  describe(`deleting a group (${mode === "delete" ? "delete all" : "transfer"}) x multi-id permanent delete`, () => {
+    it("both sides lock by id -> no deadlock: permanent delete 200 purged [a, b], group delete 204, no unhandled error in the log", async () => {
       const s = await deadlockScene(mode === "delete" ? "scan" : "created");
       const body = mode === "delete" ? { mode } : { mode, transferTo: s.admin.id };
       const { firstReq, deleting } = await queueBehindA(s, () => purge(s.app, s.admin.id, [s.a, s.b]), body);
@@ -413,17 +406,17 @@ for (const mode of ["delete", "transfer"] as const) {
       expect(pr.json()).toEqual({ purged: [s.a, s.b], skipped: [] } satisfies TrashPurgeResultDto);
       expect(dr.statusCode, dr.body).toBe(204);
       expect(await s.db.select({ id: groups.id }).from(groups).where(eq(groups.id, s.groupId))).toEqual([]);
-      // 轉移也是 0 篇被轉走：兩篇在它拿到鎖之前已被永久刪除。
+      // Transfer also moved 0 notes: both were permanently deleted before it got the lock.
       expect([await exists(s.pool, s.a), await exists(s.pool, s.b)]).toEqual([false, false]);
       expect(unhandled(s)).toEqual([]);
     });
   });
 }
 
-describe("RC-DL 轉移 × 多 id 還原", () => {
-  it("不死結：還原 200 restored [a, b]；轉移 204，兩篇成了接收者的個人筆記且活著；log 沒有 unhandled error", async () => {
+describe("transfer x multi-id restore", () => {
+  it("no deadlock: restore 200 restored [a, b]; transfer 204, both become the recipient's personal notes and alive; no unhandled error in the log", async () => {
     const s = await deadlockScene("created");
-    // 轉移拿到鎖之後卡在第一個 slug 候選，等還原的回應（還原 commit 後的重讀）回完才放行——否則重讀與轉移 commit 競速。
+    // After getting the lock, transfer stops at the first slug candidate until restore's response (the re-read after restore's commit) is done - otherwise the re-read races the transfer's commit.
     const cand = s.seams.hold("group-transfer-slug-candidate");
     const { firstReq, deleting } = await queueBehindA(s, () => restore(s.app, s.admin.id, [s.a, s.b]), {
       mode: "transfer",
@@ -453,10 +446,10 @@ describe("RC-DL 轉移 × 多 id 還原", () => {
   });
 });
 
-describe("RC-DL 的防禦縱深：還原／永久刪除的交易被併發犧牲 → 409 server_busy", () => {
+describe("defence in depth: a restore/permanent delete transaction sacrificed concurrently -> 409 server_busy", () => {
   for (const code of ["40P01", "40001"]) {
     for (const op of ["purge", "restore"] as const) {
-      it(`${op} 交易內丟 ${code} → 409 server_busy、什麼都沒做、log 沒有 unhandled error`, async () => {
+      it(`${op} throws ${code} inside the transaction -> 409 server_busy, nothing done, no unhandled error in the log`, async () => {
         const logs = captureLogs();
         const hooks = spyCollabHooks();
         const point = op === "purge" ? "note-purge-locked" : "note-restore-locked";

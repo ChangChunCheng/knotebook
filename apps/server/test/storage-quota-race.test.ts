@@ -1,11 +1,10 @@
-/**
- * 儲存配額的並發案（R1–R6、R13；R10–R12 在檔尾。其餘是既有案的重驗、不在本檔：
- * C22（groups-v2-delete-race）、#188（notes-delete-race）、groups-v2-move-race 的移動 × 刪群組案）。
- * 先手停在 `storage-space-locked`（取得空間鎖、lock_timeout 復原之後）或既有縫，另一方在縫裡發出；`waitForBlockedOrSettled`
- * 回 "blocked" 才證明測到的是交錯。race 一律注入 storageLockTimeoutMs = 60000。
- * 另一方從發出到結束的耗時一律 < 10 s：60 s 的空間鎖等待上限之下，「blocked 之後很快完成」分得出「先手放行後立刻輪到」與
- * 「一路等到逾時」；死結（40P01）由 PG 的 deadlock_timeout（預設 1 s）偵測，不受這個上限影響。
- */
+// Race cases are injected with storageLockTimeoutMs = 60000. The first mover stops at `storage-space-locked` (space lock taken, after
+// lock_timeout is restored) or an existing test hook, and the other side fires from the hook; `waitForBlockedOrSettled` returning
+// "blocked" proves an interleaving was really tested.
+// The other side's time from firing to finish is always < 10 s: under the 60 s space-lock wait cap, "finished quickly after blocked"
+// distinguishes "first mover released, then its turn" from "waited all the way to timeout"; deadlocks (40P01) are detected by PG's
+// deadlock_timeout (default 1 s) and are unaffected by this cap.
+// Existing cases re-verified elsewhere are not repeated here: groups-v2-delete-race.test.ts, notes-delete-race.test.ts (#188), and the move x delete-group cases of groups-v2-move-race.test.ts.
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { Pool } from "pg";
@@ -22,7 +21,7 @@ import {
 } from "./storage-helpers.js";
 
 const RACE = { storageLockTimeoutMs: 60_000 };
-/** 另一方（在縫裡發出的那筆）從發出到結束的上限；超過＝有人在等 60 s 的 lock_timeout。 */
+/** Upper bound for the other side (fired in the hook) from firing to finish; above it someone waited on the 60 s lock_timeout. */
 const OTHER_MAX_MS = 10_000;
 const copy = async (app: FastifyInstance, noteId: string, userId: string, payload: Record<string, unknown> = {}) =>
   app.inject({ method: "POST", url: `/api/notes/${noteId}/copy`, cookies: await cookieOf(userId), payload });
@@ -36,19 +35,17 @@ interface Holder {
   db?: Db;
   fired?: boolean;
   other?: Promise<LightMyRequestResponse>;
-  /** 另一方從發出到結束的耗時（ms）。 */
   otherMs?: number;
   interleave?: string;
   fire?: () => Promise<LightMyRequestResponse>;
 }
 
-/** 測試失敗（斷言丟出）時仍在跑的另一方：afterEach 等它們結束，不讓請求拖進下一案。 */
+/** Other sides still running when a test fails (an assertion throws): afterEach waits for them so requests do not leak into the next case. */
 const pending: Array<Promise<unknown>> = [];
 afterEach(async () => {
   await Promise.allSettled(pending.splice(0));
 });
 
-/** 先手判斷式 match 為真的那一次 `point`（預設 storage-space-locked）：發 holder.fire()、等 blocked/settled、放行。 */
 function raceHook(
   holder: Holder,
   match: (ctx: { noteId?: string; groupId?: string }) => boolean,
@@ -59,13 +56,12 @@ function raceHook(
     holder.fired = true;
     const t0 = Date.now();
     holder.other = holder.fire!();
-    // 存進 pending 的是 .finally() 衍生的新 promise：另一方 reject 時它也 reject，afterEach 收之前不接 catch 會被記成 unhandled rejection。
+    // What is stored in pending is the new promise derived by .finally(): it rejects too when the other side rejects, and without a catch before afterEach collects it would be recorded as an unhandled rejection.
     pending.push(holder.other.finally(() => { holder.otherMs = Date.now() - t0; }).catch(() => {}));
     holder.interleave = await waitForBlockedOrSettled(holder.db!.$client, holder.other);
   };
 }
 
-/** 案尾共同斷言：交錯真的發生、另一方沒有等到逾時。 */
 async function settleOther(holder: Holder): Promise<LightMyRequestResponse> {
   const res = await holder.other!;
   expect(holder.interleave).toBe("blocked");
@@ -73,8 +69,8 @@ async function settleOther(holder: Holder): Promise<LightMyRequestResponse> {
   return res;
 }
 
-describe("R1 並發上傳搶配額", () => {
-  it("確定性版：第一筆停在縫上時第二筆 blocked；第一筆 201、第二筆以第一筆 commit 後的 SUM 判定 → 409（三數）", async () => {
+describe("concurrent uploads racing for quota", () => {
+  it("deterministic version: while the first stops at the hook the second is blocked; first 201, second decided by the SUM after the first commits -> 409 (three numbers)", async () => {
     const holder: Holder = {};
     const { app, db } = await buildTestApp({ ...RACE, groupTestHook: raceHook(holder, () => true) });
     Object.assign(holder, { app, db });
@@ -89,14 +85,18 @@ describe("R1 並發上傳搶配額", () => {
     expect(second.json()).toEqual(quotaBody({ incomingBytes: 600, usedBytes: 600, quotaBytes: 1000 }));
   });
 
-  it("剩 500、20 個並發各 100 → 恰 5 個 201；終態 SUM = quota；磁碟恰多 5 個檔", async () => {
-    // 縫上的窗口：持鎖者停到「本庫有連線在等 advisory 鎖」或 300 ms。正常碼下其餘請求排在鎖上、持鎖者幾乎不停；空間鎖若
-    // 失效，沒有人等 advisory 鎖，同時在交易裡的每一筆都在縫上停滿 300 ms、各自讀到舊 SUM → 超賣。沒有這個窗口時，拿掉空間鎖
-    // （突變）本機 5/5 次仍不超賣（交易太短、自然交錯碰不到）。
-    // 配額 500（不是 1000）：app 的 pool 預設 10 條，同時在交易裡的至多 10 筆；配額恰為 10 × 100 時，空間鎖失效下
-    // 觀察到的終態也只到 1000＝看不出超賣（其餘 10 筆等連線，實測是等到前 10 筆 commit 後才被 preHandler 預檢擋下）。這是觀察、
-    // 不是保證的上界（等連線的請求何時過預檢、何時讀 SUM 看排程）——放得下的筆數取 < 10，讓失效時同時在交易裡的筆數多於放得下的筆數。
-    // 探測走獨立的 1 條連線：app 的 pool（預設 10 條）會被停在縫上的交易佔滿，在縫裡借它查 pg_stat_activity 會互等到測試逾時（實測）。
+  it("500 left, 20 concurrent of 100 each -> exactly 5 are 201; final SUM = quota; exactly 5 more files on disk", async () => {
+    // Window at the hook: the lock holder stops until "some connection in this DB waits on an advisory lock" or 300 ms. In correct
+    // code the other requests queue on the lock and the holder barely stops; if the space lock stops working nobody waits on an
+    // advisory lock, so every request in a transaction stops the full 300 ms at the hook and reads the old SUM -> oversell. Without
+    // this window, removing the space lock would not reliably oversell (transactions too short for natural interleaving to hit).
+    // Quota is 500 (not 1000): the app pool defaults to 10 connections, so at most 10 requests are in a transaction at once; with
+    // quota exactly 10 x 100, even with the space lock broken the final state only reaches 1000 = no visible oversell (the other 10
+    // wait for connections, and are rejected by the preHandler pre-check once the first 10 commit). That is an observation, not a
+    // guaranteed bound (when a connection-waiting request passes the pre-check and reads SUM depends on scheduling) - so the number
+    // that fits is < 10, so that when broken more requests are in transactions than fit.
+    // Probe through a separate 1-connection pool: the app's pool (10 by default) is filled by transactions stopped at the hook, and
+    // borrowing from it inside the hook to query pg_stat_activity would deadlock until the test times out.
     const probe: { pool?: Pool } = {};
     const built = await buildTestApp({
       ...RACE,
@@ -124,7 +124,7 @@ describe("R1 並發上傳搶配額", () => {
   });
 });
 
-describe("R2 上傳 ∥ 移入同群組（兩序）", () => {
+describe("upload and move-in racing on the same group (both orders)", () => {
   async function scene(hookOf: (h: Holder) => GroupTestHook) {
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: hookOf(holder) });
@@ -139,7 +139,7 @@ describe("R2 上傳 ∥ 移入同群組（兩序）", () => {
     return { holder, app, db, o, g, gn, pn };
   }
 
-  it("上傳先持群組空間鎖 → 移入 blocked → 上傳 201（600）→ 移入 409（600+500>1000），筆記仍是個人筆記", async () => {
+  it("upload takes the group space lock first -> move-in blocked -> upload 201 (600) -> move-in 409 (600+500>1000), the note is still personal", async () => {
     let ids: { gn?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.gn));
     ids = { gn: s.gn.id };
@@ -154,7 +154,7 @@ describe("R2 上傳 ∥ 移入同群組（兩序）", () => {
     expect(rows[0]).toEqual({ owner_id: s.o.id, group_id: null });
   });
 
-  it("移入先持群組空間鎖 → 上傳 blocked → 移入 200（500）→ 上傳 409（500+600>1000）", async () => {
+  it("move-in takes the group space lock first -> upload blocked -> move-in 200 (500) -> upload 409 (500+600>1000)", async () => {
     let ids: { pn?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.pn));
     ids = { pn: s.pn.id };
@@ -168,8 +168,8 @@ describe("R2 上傳 ∥ 移入同群組（兩序）", () => {
   });
 });
 
-describe("R3 移動持筆記 FOR UPDATE 時上傳同篇", () => {
-  it("上傳的顯式 KEY SHARE 被擋（blocked）；移動 commit 後上傳算群組空間 → 群組放不下 → 409（個人空間無上限也沒用）", async () => {
+describe("upload on the same note while a move holds the note FOR UPDATE", () => {
+  it("the upload's explicit KEY SHARE is blocked; after the move commits the upload counts for the group space -> the group cannot fit -> 409 (an unlimited personal space does not help)", async () => {
     let ids: { n?: string } = {};
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: raceHook(holder, ctx => ctx.noteId === ids.n, "note-move-locked") });
@@ -191,7 +191,7 @@ describe("R3 移動持筆記 FOR UPDATE 時上傳同篇", () => {
   });
 });
 
-describe("R4 複製 ∥ 上傳到同一目標空間（兩序）", () => {
+describe("copy and upload to the same target space (both orders)", () => {
   async function scene(hookOf: (h: Holder) => GroupTestHook) {
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: hookOf(holder) });
@@ -207,7 +207,7 @@ describe("R4 複製 ∥ 上傳到同一目標空間（兩序）", () => {
     return { holder, app, db, uploadsDir, a, src, an };
   }
 
-  it("複製先持 a 的空間鎖 → 上傳 blocked → 複製 201（600）→ 上傳 409", async () => {
+  it("copy takes a's space lock first -> upload blocked -> copy 201 (600) -> upload 409", async () => {
     let ids: { src?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.src));
     ids = { src: s.src.id };
@@ -220,7 +220,7 @@ describe("R4 複製 ∥ 上傳到同一目標空間（兩序）", () => {
     expect(await usedOf(s.db.$client, { kind: "user", id: s.a.id })).toBe(600);
   });
 
-  it("上傳先持 a 的空間鎖 → 複製（已複製完檔）blocked → 上傳 201 → 複製 409、已複製的檔清掉、無副本", async () => {
+  it("upload takes a's space lock first -> copy (files already copied) blocked -> upload 201 -> copy 409, copied files cleaned up, no copy", async () => {
     let ids: { an?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.an));
     ids = { an: s.an.id };
@@ -236,7 +236,7 @@ describe("R4 複製 ∥ 上傳到同一目標空間（兩序）", () => {
   });
 });
 
-describe("R5 轉移 ∥ 上傳到接收者的個人筆記（兩序；無 40P01）", () => {
+describe("transfer and upload to the recipient's personal note (both orders; no 40P01)", () => {
   async function scene(hookOf: (h: Holder) => GroupTestHook) {
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: hookOf(holder) });
@@ -250,7 +250,7 @@ describe("R5 轉移 ∥ 上傳到接收者的個人筆記（兩序；無 40P01�
     return { holder, app, db, b, g, bn };
   }
 
-  it("轉移先持 b 的空間鎖 → 上傳 blocked → 轉移 204 → 上傳 409", async () => {
+  it("transfer takes b's space lock first -> upload blocked -> transfer 204 -> upload 409", async () => {
     let ids: { g?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.groupId === ids.g && ctx.noteId === undefined));
     ids = { g: s.g.id };
@@ -262,7 +262,7 @@ describe("R5 轉移 ∥ 上傳到接收者的個人筆記（兩序；無 40P01�
     expect(up.json()).toEqual(quotaBody({ incomingBytes: 600, usedBytes: 600, quotaBytes: 1000 }));
   });
 
-  it("上傳先持 b 的空間鎖 → 轉移（已鎖群組與筆記）blocked → 上傳 201 → 轉移 409 storage_quota_exceeded（不是 server_busy）", async () => {
+  it("upload takes b's space lock first -> transfer (group and notes already locked) blocked -> upload 201 -> transfer 409 storage_quota_exceeded (not server_busy)", async () => {
     let ids: { bn?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.bn));
     ids = { bn: s.bn.id };
@@ -275,8 +275,8 @@ describe("R5 轉移 ∥ 上傳到接收者的個人筆記（兩序；無 40P01�
   });
 });
 
-describe("R6 上傳持被轉移群組某篇的 KEY SHARE", () => {
-  it("轉移的群組筆記 FOR UPDATE blocked；上傳 201 算群組 → 轉移的 incoming 含它 → 接收者放不下 → 409", async () => {
+describe("upload holds KEY SHARE on a note of the group being transferred", () => {
+  it("the transferred group's notes FOR UPDATE are blocked; upload 201 counts for the group -> the transfer's incoming includes it -> the recipient cannot fit -> 409", async () => {
     let ids: { gn?: string } = {};
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: raceHook(holder, ctx => ctx.noteId === ids.gn) });
@@ -298,7 +298,7 @@ describe("R6 上傳持被轉移群組某篇的 KEY SHARE", () => {
   });
 });
 
-describe("R13 複製→接收者個人空間 ∥ 轉移→同一接收者（空間鎖先於 slug 寫入；兩序都不死結）", () => {
+describe("copy to the recipient's personal space and transfer to the same recipient (space lock before the slug write; no deadlock in either order)", () => {
   async function scene(hookOf: (h: Holder) => GroupTestHook) {
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: hookOf(holder) });
@@ -308,7 +308,7 @@ describe("R13 複製→接收者個人空間 ∥ 轉移→同一接收者（空�
     const g = await seedGroup(db, "G", [{ userId: b.id, role: "admin" }]);
     const gn = await seedNote(db, { groupId: g.id }, { title: "X", slug: "x" });
     await seedAttachment(db, uploadsDir, gn.id, b.id, 10);
-    const src = await seedNote(db, { ownerId: b.id }, { title: "X" }); // 副本以標題派生 slug "x"，與轉移那篇撞同一個 (b, x)
+    const src = await seedNote(db, { ownerId: b.id }, { title: "X" }); // the copy derives slug "x" from the title, colliding with the transferred note's (b, x)
     const att = await seedAttachment(db, uploadsDir, src.id, b.id, 10);
     await seedDoc(db, src.id, imageDoc([`/api/uploads/${att}`]));
     return { holder, app, db, b, g, src };
@@ -316,7 +316,7 @@ describe("R13 複製→接收者個人空間 ∥ 轉移→同一接收者（空�
   const slugsOf = async (db: Db, ownerId: string) =>
     (await db.$client.query<{ slug: string }>("select slug from notes where owner_id = $1 and slug like 'x%' order by slug", [ownerId])).rows.map(r => r.slug);
 
-  it("轉移先持 b 的空間鎖 → 複製 blocked（在 insertNoteWithAutoSlug 之前）→ 轉移 204、複製 201；slug x 與 x-2", async () => {
+  it("transfer takes b's space lock first -> copy blocked (before insertNoteWithAutoSlug) -> transfer 204, copy 201; slugs x and x-2", async () => {
     let ids: { g?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.groupId === ids.g && ctx.noteId === undefined));
     ids = { g: s.g.id };
@@ -328,7 +328,7 @@ describe("R13 複製→接收者個人空間 ∥ 轉移→同一接收者（空�
     expect(await slugsOf(s.db, s.b.id)).toEqual(["x", "x-2"]);
   });
 
-  it("複製先持 b 的空間鎖 → 轉移 blocked（在 writeSlugInTx 之前）→ 複製 201、轉移 204", async () => {
+  it("copy takes b's space lock first -> transfer blocked (before writeSlugInTx) -> copy 201, transfer 204", async () => {
     let ids: { src?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.src));
     ids = { src: s.src.id };
@@ -341,7 +341,7 @@ describe("R13 複製→接收者個人空間 ∥ 轉移→同一接收者（空�
   });
 });
 
-describe("移動形：移入群組 ∥ 複製進同一群組（空間鎖先於群組範圍 slug 寫入；兩序都不死結）", () => {
+describe("move form: move-in to a group and copy into the same group (space lock before the group-scoped slug write; no deadlock in either order)", () => {
   async function scene(hookOf: (h: Holder) => GroupTestHook) {
     const holder: Holder = {};
     const { app, db, uploadsDir } = await buildTestApp({ ...RACE, groupTestHook: hookOf(holder) });
@@ -350,9 +350,9 @@ describe("移動形：移入群組 ∥ 複製進同一群組（空間鎖先於�
     await giveUserQuota(db, o.id, null);
     const g = await seedGroup(db, "G", [{ userId: o.id, role: "admin" }]);
     await giveGroupQuota(db, g.id, null);
-    const pn = await seedNote(db, { ownerId: o.id }, { title: "Y", slug: "y" }); // 移入時以舊 slug "y" 在群組範圍去重
+    const pn = await seedNote(db, { ownerId: o.id }, { title: "Y", slug: "y" }); // move-in dedupes within the group by its old slug "y"
     await seedAttachment(db, uploadsDir, pn.id, o.id, 10);
-    const src = await seedNote(db, { ownerId: o.id }, { title: "Y" }); // 副本以標題派生 slug "y"，與移入那篇撞同一個 (G, y)
+    const src = await seedNote(db, { ownerId: o.id }, { title: "Y" }); // the copy derives slug "y" from the title, colliding with the moved note's (G, y)
     const att = await seedAttachment(db, uploadsDir, src.id, o.id, 10);
     await seedDoc(db, src.id, imageDoc([`/api/uploads/${att}`]));
     return { holder, app, db, o, g, pn, src };
@@ -360,7 +360,7 @@ describe("移動形：移入群組 ∥ 複製進同一群組（空間鎖先於�
   const groupSlugs = async (db: Db, groupId: string) =>
     (await db.$client.query<{ slug: string }>("select slug from notes where group_id = $1 order by slug", [groupId])).rows.map(r => r.slug);
 
-  it("移入先持群組空間鎖 → 複製 blocked（在 insertNoteWithAutoSlug 之前）→ 移入 200、複製 201；群組 slug y 與 y-2", async () => {
+  it("move-in takes the group space lock first -> copy blocked (before insertNoteWithAutoSlug) -> move-in 200, copy 201; group slugs y and y-2", async () => {
     let ids: { pn?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.pn));
     ids = { pn: s.pn.id };
@@ -372,7 +372,7 @@ describe("移動形：移入群組 ∥ 複製進同一群組（空間鎖先於�
     expect(await groupSlugs(s.db, s.g.id)).toEqual(["y", "y-2"]);
   });
 
-  it("複製先持群組空間鎖 → 移入 blocked（在 writeSlugInTx 之前）→ 複製 201、移入 200", async () => {
+  it("copy takes the group space lock first -> move-in blocked (before writeSlugInTx) -> copy 201, move-in 200", async () => {
     let ids: { src?: string } = {};
     const s = await scene(h => raceHook(h, ctx => ctx.noteId === ids.src));
     ids = { src: s.src.id };
@@ -385,7 +385,6 @@ describe("移動形：移入群組 ∥ 複製進同一群組（空間鎖先於�
   });
 });
 
-/** 管理端兩支指派（使用者方案、群組方案）一起發。 */
 const assignBoth = async (app: FastifyInstance, adminId: string, ids: { userId: string; groupId: string }, planId: string) => {
   const cookies = await cookieOf(adminId);
   return Promise.all([
@@ -394,13 +393,14 @@ const assignBoth = async (app: FastifyInstance, adminId: string, ids: { userId: 
   ]);
 };
 
-describe("R10 指派方案不擋進行中的新增（非鍵 UPDATE＝NO KEY UPDATE，與 FK KEY SHARE 互容）", () => {
-  // 各案守的性質：
-  // - 前兩案（上傳停在縫上）：指派**不取空間鎖**。上傳停在縫上時持的是筆記列 KEY SHARE＋空間 advisory 鎖，還沒 INSERT uploads、
-  //   沒有 users／groups 列的鎖——所以這兩案抓不到「指派升成鍵鎖」，只抓得到「指派去取空間鎖」。個人筆記那案守使用者指派、
-  //   群組筆記那案守群組指派（上傳的空間是哪一個，就只有那一支指派會撞到它的鎖）。
-  // - 第三案（另一連線持 FK KEY SHARE）：指派的 UPDATE 是 **NO KEY UPDATE**（與 FK KEY SHARE 互容），兩支都守。
-  // 縫裡只等「blocked 或 settled」、不等兩支指派完成：指派若被上傳交易的鎖擋住（blocked），在縫裡等它完成就是互等到測試逾時。
+describe("assigning a plan does not block in-flight additions (a non-key UPDATE = NO KEY UPDATE, compatible with FK KEY SHARE)", () => {
+  // What each case guards. The first two (upload stopped at the hook): assignment does not take the space lock. An upload stopped at
+  // the hook holds the note row's KEY SHARE plus the space advisory lock, with no INSERT into uploads yet and no lock on users/groups
+  // rows - so these two cannot catch "assignment upgraded to a key lock", only "assignment takes the space lock". The personal-note case
+  // guards the user assignment and the group-note case the group assignment (only the one matching the upload's space can hit its lock).
+  // The third case (another connection holds FK KEY SHARE): the assignment UPDATE is NO KEY UPDATE (compatible with FK KEY SHARE); covers both.
+  // In the hook wait only for "blocked or settled", not for both assignments to finish: if an assignment is blocked by the upload
+  // transaction's lock, waiting for it to finish inside the hook would deadlock until the test times out.
   async function assignDuringUpload(noteSpace: "user" | "group") {
     const holder: Holder & { both?: Promise<LightMyRequestResponse[]>; ids?: { userId: string; groupId: string }; admin?: string; plan?: string } = {};
     const { app, db } = await buildTestApp({
@@ -424,15 +424,15 @@ describe("R10 指派方案不擋進行中的新增（非鍵 UPDATE＝NO KEY UPDA
     expect(up.statusCode, up.body).toBe(201);
   }
 
-  it("上傳（個人筆記）停在 storage-space-locked 時，管理員改 owner 的方案、改群組方案 → 都 settled（200）", async () => {
+  it("upload (personal note) stopped at storage-space-locked, admin changes the owner's plan and the group plan -> both settled (200)", async () => {
     await assignDuringUpload("user");
   });
 
-  it("上傳（群組筆記）停在 storage-space-locked 時，管理員改 owner 的方案、改群組方案 → 都 settled（200）", async () => {
+  it("upload (group note) stopped at storage-space-locked, admin changes the owner's plan and the group plan -> both settled (200)", async () => {
     await assignDuringUpload("group");
   });
 
-  it("另一連線持 users 列與 groups 列的 FK KEY SHARE（未 commit 的 uploads／notes INSERT）時，兩支指派 → settled", async () => {
+  it("another connection holds FK KEY SHARE on the users and groups rows (uncommitted uploads/notes INSERT) -> both assignments settled", async () => {
     const { app, db } = await buildTestApp();
     const [admin, o] = await Promise.all([seedUser(db, { isAdmin: true }), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: o.id, role: "admin" }]);
@@ -454,9 +454,9 @@ describe("R10 指派方案不擋進行中的新增（非鍵 UPDATE＝NO KEY UPDA
   });
 });
 
-describe("R11 刪方案 ∥ 指派／改預設（FK 在 DB 端裁決）", () => {
-  // holder 交易在 finally 一律 rollback（已 commit 時是無害的 WARNING），連線不帶著未結束的交易回 pool。
-  it("(a) 另一連線把使用者指派到 P（未 commit）→ 刪 P blocked → 對方 commit → 409 storage_plan_in_use", async () => {
+describe("deleting a plan racing with assignment / default change (the FK decides on the DB side)", () => {
+  // The holder transaction is always rolled back in finally (a harmless WARNING if already committed), so no connection returns to the pool with an unfinished transaction.
+  it("another connection assigns a user to P (uncommitted) -> deleting P blocked -> the other commits -> 409 storage_plan_in_use", async () => {
     const { app, db } = await buildTestApp();
     const [admin, u] = await Promise.all([seedUser(db, { isAdmin: true }), seedUser(db)]);
     const p = await seedPlan(db, "P", 1);
@@ -477,7 +477,7 @@ describe("R11 刪方案 ∥ 指派／改預設（FK 在 DB 端裁決）", () => 
     }
   });
 
-  it("(b) 另一連線刪 P（未 commit）→ 指派到 P blocked → 對方 commit → 404 storage_plan_not_found", async () => {
+  it("another connection deletes P (uncommitted) -> assigning to P blocked -> the other commits -> 404 storage_plan_not_found", async () => {
     const { app, db } = await buildTestApp();
     const [admin, u] = await Promise.all([seedUser(db, { isAdmin: true }), seedUser(db)]);
     const p = await seedPlan(db, "P", 1);
@@ -498,7 +498,7 @@ describe("R11 刪方案 ∥ 指派／改預設（FK 在 DB 端裁決）", () => 
     }
   });
 
-  it("(c) 另一連線把使用者預設改成 P（未 commit）→ 刪 P blocked（子查詢快照看不到）→ 對方 commit → 409 storage_plan_is_default", async () => {
+  it("another connection changes the user default to P (uncommitted) -> deleting P blocked (the subquery snapshot cannot see it) -> the other commits -> 409 storage_plan_is_default", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const p = await seedPlan(db, "P", 1);
@@ -520,8 +520,8 @@ describe("R11 刪方案 ∥ 指派／改預設（FK 在 DB 端裁決）", () => 
   });
 });
 
-describe("R12 S14 小 pool（max=3、借連線逾時 2 s：違反 S14 表現為 500 而不是卡死）", () => {
-  /** app 用 max=3 的獨立 pool；種子與探測走 freshDb 自己的 pool（預設 10 條），不跟 app 搶連線。 */
+describe("small pool (max=3, connection-acquire timeout 2 s: borrowing a second connection inside a transaction shows as 500 instead of hanging)", () => {
+  /** The app uses its own max=3 pool; seeding and probing use freshDb's pool (default 10) so they do not compete with it for connections. */
   async function smallPoolApp(opts: { hook?: GroupTestHook; limiters?: ReturnType<typeof freshLimiters> } = {}) {
     const target = await freshDb();
     const pool = createPool({ databaseUrl: target.url, databasePoolMax: 3, databasePoolConnectionTimeoutMs: 2_000 });
@@ -534,8 +534,10 @@ describe("R12 S14 小 pool（max=3、借連線逾時 2 s：違反 S14 表現為 
     return { ...built, seedDb: target.db, pool };
   }
   /**
-   * 第一個取得空間鎖的交易在縫上等「另外 2 條連線也在等 advisory 鎖」（或 5 s；正常時看到 2 就立刻返回，5 s 只防慢機器上請求晚到造成假紅）——讓 3 條連線同時被交易占住。
-   * 看到的等待數記進 `ref.seen`：案尾斷言 2，證明 pool 的 3 條連線真的同時在交易裡（柵欄不是逾時放行的）。
+   * The first transaction to take the space lock waits at the hook until 2 other connections are also waiting on the advisory lock (or
+   * 5 s; normally it returns at once on seeing 2, 5 s only guards against false red when requests arrive late on slow machines), so all 3
+   * connections are held by transactions at once. The wait count seen is stored in `ref.seen`: the final assertion is 2, proving the pool's
+   * 3 connections really were in transactions at the same time (the barrier was not released by timeout).
    */
   const barrier = (ref: { pool?: Pool; seen?: number }): GroupTestHook => {
     let first = true;
@@ -546,7 +548,7 @@ describe("R12 S14 小 pool（max=3、借連線逾時 2 s：違反 S14 表現為 
     };
   };
 
-  it("max+1 個並發同空間上傳 → 全 201；之後 GET /api/storage 照常", async () => {
+  it("max+1 concurrent uploads to the same space -> all 201; GET /api/storage works afterwards", async () => {
     const ref: { pool?: Pool; seen?: number } = {};
     const s = await smallPoolApp({ hook: barrier(ref) });
     ref.pool = s.seedDb.$client;
@@ -563,7 +565,7 @@ describe("R12 S14 小 pool（max=3、借連線逾時 2 s：違反 S14 表現為 
     }
   });
 
-  it("max+1 個並發移入同群組（各有附件）→ 全 200", async () => {
+  it("max+1 concurrent move-ins to the same group (each with attachments) -> all 200", async () => {
     const ref: { pool?: Pool; seen?: number } = {};
     const s = await smallPoolApp({ hook: barrier(ref) });
     ref.pool = s.seedDb.$client;
@@ -580,11 +582,13 @@ describe("R12 S14 小 pool（max=3、借連線逾時 2 s：違反 S14 表現為 
     }
   });
 
-  it("一筆大量附件（200 個）的複製：複製在 copyFile 之後、取空間鎖之前（note-copy-files-copied）時發 max+1 筆同空間上傳＋1 筆另一空間上傳 → 都在複製放行前完成、全 201", async () => {
-    // copyFile 不持空間鎖。上傳從複製自己的縫裡發出，交錯是確定的：正常碼下複製只占 1 條連線、不持空間鎖，
-    // 5 筆上傳輪流用剩下 2 條連線、在縫的 4 s 窗口內完成；若複製在 copyFile 前就取了空間鎖（回歸），同空間上傳卡在鎖上占住
-    // 那 2 條連線，其餘上傳借連線 2 s 逾時 → 500。
-    // copy 依附件數扣 upload 桶（200 張 > 預設 UPLOAD_LIMIT 120）：本案換大桶（形照 test/groups-v2-copy.test.ts 的 freshLimiters({ upload })）。
+  it("copy of a note with many attachments (200): max+1 uploads to the same space plus 1 to another space fired while the copy is after copyFile and before taking the space lock (note-copy-files-copied) -> all finish before the copy is released, all 201", async () => {
+    // copyFile holds no space lock. Uploads are fired from the copy's own hook so the interleaving is deterministic: in correct code the
+    // copy takes only 1 connection and no space lock, the 5 uploads take turns on the remaining 2 connections and finish within the hook's
+    // 4 s window; if the copy took the space lock before copyFile (a regression), same-space uploads would block on the lock holding those
+    // 2 connections and the rest would time out borrowing a connection after 2 s -> 500.
+    // Copy charges the upload bucket per attachment (200 > default UPLOAD_LIMIT 120): this case uses a big bucket (shape follows
+    // freshLimiters({ upload }) in test/groups-v2-copy.test.ts).
     const box: { fired?: boolean; done?: boolean; reqs?: Array<Promise<LightMyRequestResponse>>; app?: FastifyInstance; a?: string; other?: string; an?: string; on?: string } = {};
     const hook: GroupTestHook = async point => {
       if (point !== "note-copy-files-copied" || box.fired) return;

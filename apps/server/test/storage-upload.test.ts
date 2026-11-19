@@ -1,6 +1,3 @@
-/**
- * 上傳的配額（S3（上傳形）、S4、S5（上傳形）、S14（上傳形）、S15(a)）。
- */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
@@ -14,7 +11,7 @@ import { cookieOf, seedGroup, seedNote, seedShare, seedUser } from "./group-help
 import { QUOTA_BOUNDARY, filesIn, giveGroupQuota, giveUserQuota, multipartFile, pngOf, quotaBody, seedAttachment, upload, usedOf } from "./storage-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// In this file the default space-lock limit is 60 s (5000 ms in production), so the wall-clock bound of "the injected short limit took effect" stays far from both ends - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -23,8 +20,8 @@ vi.mock("../src/storage/tx/quota.js", async () => ({
 const rowsOf = async (db: Awaited<ReturnType<typeof buildTestApp>>["db"], noteId: string) =>
   db.select({ size: uploads.size }).from(uploads).where(eq(uploads.noteId, noteId));
 
-describe("上傳：配額判定", () => {
-  it("方案 1000：600 → 201；600 → 409（owner 看得到三數）、磁碟無新檔、無新列；400 → 201（等於上限）；之後 preHandler 409（incomingBytes null）", async () => {
+describe("upload: quota decisions", () => {
+  it("plan 1000: 600 -> 201; 600 -> 409 (owner sees three numbers), no new file on disk, no new row; 400 -> 201 (equal to the limit); then the preHandler 409 (incomingBytes null)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
@@ -45,7 +42,7 @@ describe("上傳：配額判定", () => {
     expect(await usedOf(db.$client, { kind: "user", id: u.id })).toBe(1000);
   });
 
-  it("preHandler 預檢在讀 body 之前回應：真 socket 送 9 MB body，回應的 409 在 body 送完前就到（且仍是結構化 JSON）", async () => {
+  it("preHandler pre-check responds before the body is read: a real socket sends a 9 MB body and the 409 arrives before the body is fully sent (still structured JSON)", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 0);
@@ -68,9 +65,9 @@ describe("上傳：配額判定", () => {
         r.on("end", () => resolve({ status: r.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf-8") }));
       });
       clientReq = req;
-      req.on("error", () => { /* server 讀完上限後砍線屬預期（drainWithCap） */ });
+      req.on("error", () => { /* the server cutting the connection after reading the limit is expected (drainWithCap) */ });
       req.once("socket", s => s.on("error", () => {}));
-      // 64 KB 一塊、每塊之間讓出事件迴圈，讓回應有機會在送完前到達
+      // 64 KB per chunk, yielding to the event loop between chunks so the response can arrive before sending finishes.
       const CHUNK = 64 * 1024;
       const pump = (): void => {
         while (written < body.length) {
@@ -85,8 +82,8 @@ describe("上傳：配額判定", () => {
       guard = setTimeout(() => reject(new Error("timeout")), 20_000);
     });
     clearTimeout(guard);
-    // client 端的連線生死不是本案要驗的東西：先砍 client socket 再 app.close()，否則 keep-alive／仍在寫的 body 會讓
-    // graceful shutdown 等它自然結束（同 test/uploads.test.ts `rawSocketPost` 的說明）。
+    // The client connection's lifecycle is not what this case tests: destroy the client socket before app.close(), otherwise keep-alive
+    // or a body still being written makes the graceful shutdown wait for it (same note as `rawSocketPost` in test/uploads.test.ts).
     clientReq!.destroy();
     expect(res.status).toBe(409);
     expect(JSON.parse(res.body)).toEqual(quotaBody({ incomingBytes: null, usedBytes: 0, quotaBytes: 0 }));
@@ -95,8 +92,8 @@ describe("上傳：配額判定", () => {
   }, 30_000);
 });
 
-describe("上傳：依空間計量與數字可見性（S3 上傳形）", () => {
-  it("A 的個人筆記分享給 B（editor），B 上傳 → 算 A；B 被拒時只有 incomingBytes；A 被拒時三數", async () => {
+describe("upload: metering by space and number visibility", () => {
+  it("A's personal note shared to B (editor), B uploads -> counts for A; when B is rejected only incomingBytes; when A is rejected three numbers", async () => {
     const { app, db } = await buildTestApp();
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     await giveUserQuota(db, a.id, 1000);
@@ -113,7 +110,7 @@ describe("上傳：依空間計量與數字可見性（S3 上傳形）", () => {
     expect(ra.json()).toEqual(quotaBody({ incomingBytes: 200, usedBytes: 900, quotaBytes: 1000 }));
   });
 
-  it("群組筆記：一般成員被拒 → 只有 incomingBytes；manageGroup 被拒 → 三數；非成員的站台 admin 對筆記沒有角色 → 404；manageGroup 的預檢 409 → 三數（null incoming）", async () => {
+  it("group note: ordinary member rejected -> incomingBytes only; manageGroup rejected -> three numbers; a non-member site admin has no role on the note -> 404; manageGroup's pre-check 409 -> three numbers (null incoming)", async () => {
     const { app, db } = await buildTestApp();
     const [gAdmin, gMember, site] = await Promise.all([seedUser(db), seedUser(db), seedUser(db, { isAdmin: true })]);
     const g = await seedGroup(db, "G", [{ userId: gAdmin.id, role: "admin" }, { userId: gMember.id, role: "member" }]);
@@ -123,12 +120,12 @@ describe("上傳：依空間計量與數字可見性（S3 上傳形）", () => {
     expect((await upload(app, n.id, gMember.id, 200)).json()).toEqual(quotaBody({ incomingBytes: 200 }));
     expect((await upload(app, n.id, gAdmin.id, 200)).json()).toEqual(quotaBody({ incomingBytes: 200, usedBytes: 900, quotaBytes: 1000 }));
     expect((await upload(app, n.id, gAdmin.id, 100)).statusCode).toBe(201);
-    // 站台 admin 不是成員：對筆記沒有角色 → 404（不是配額問題）；以「群組管理者」的 preHandler 形確認三數
+    // A site admin who is not a member has no role on the note -> 404 (not a quota issue); the three numbers are confirmed through the group manager's preHandler shape.
     expect((await upload(app, n.id, site.id, 8)).statusCode).toBe(404);
     expect((await upload(app, n.id, gAdmin.id, 8)).json()).toEqual(quotaBody({ incomingBytes: null, usedBytes: 1000, quotaBytes: 1000 }));
   });
 
-  it("站台 admin 是他人個人筆記的 editor 分享對象：被拒時看得到三數（交易內 409 與預檢 409 皆然）；一般 editor 同情境只有 incomingBytes", async () => {
+  it("site admin as an editor share target on someone's personal note: rejected sees three numbers (both in-transaction 409 and pre-check 409); an ordinary editor in the same situation sees incomingBytes only", async () => {
     const { app, db } = await buildTestApp();
     const [a, site, plain] = await Promise.all([seedUser(db), seedUser(db, { isAdmin: true }), seedUser(db)]);
     await giveUserQuota(db, a.id, 1000);
@@ -144,8 +141,8 @@ describe("上傳：依空間計量與數字可見性（S3 上傳形）", () => {
   });
 });
 
-describe("上傳：無上限與已超額（S4、S5 上傳形）", () => {
-  it("S4：配額 NULL → 大量上傳皆 201", async () => {
+describe("upload: unlimited and already over quota", () => {
+  it("quota NULL -> many uploads all 201", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, null);
@@ -153,7 +150,7 @@ describe("上傳：無上限與已超額（S4、S5 上傳形）", () => {
     for (let i = 0; i < 3; i++) expect((await upload(app, n.id, u.id, 5 * 1024 * 1024)).statusCode).toBe(201);
   });
 
-  it("S5：直插使 used > quota → 上傳 409；大附件的筆記移到垃圾桶仍 409（垃圾桶照算）；永久刪除後可再上傳", async () => {
+  it("direct insert makes used > quota -> upload 409; a note with big attachments moved to the trash still 409 (trash still counts); after permanent delete uploading works again", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const u = await seedUser(db);
     await giveUserQuota(db, u.id, 1000);
@@ -169,9 +166,9 @@ describe("上傳：無上限與已超額（S4、S5 上傳形）", () => {
   });
 });
 
-describe("上傳：busy 映射與真逾時（S14 上傳形、S15(a)）", () => {
+describe("upload: busy mapping and real timeout", () => {
   for (const [label, code] of [["40P01", "40P01"], ["55P03", "55P03"], ["40001", "40001"]] as const) {
-    it(`S14：縫 storage-space-locked 拋 ${label} → 409 server_busy、已寫的檔已 unlink、無新列`, async () => {
+    it(`test hook storage-space-locked throws ${label} -> 409 server_busy, written file unlinked, no new row`, async () => {
       const { app, db, uploadsDir } = await buildTestApp({
         groupTestHook: async point => {
           if (point === "storage-space-locked") throw Object.assign(new Error(label), { code });
@@ -189,7 +186,7 @@ describe("上傳：busy 映射與真逾時（S14 上傳形、S15(a)）", () => {
     });
   }
 
-  it("交易內任何其他拋出（非 pg 錯誤）→ 500，檔一樣 unlink", async () => {
+  it("any other throw in the transaction (non-pg error) -> 500, the file is unlinked just the same", async () => {
     const { app, db, uploadsDir } = await buildTestApp({
       groupTestHook: async point => { if (point === "storage-space-locked") throw new Error("boom"); },
     });
@@ -201,7 +198,7 @@ describe("上傳：busy 映射與真逾時（S14 上傳形、S15(a)）", () => {
     expect(await filesIn(uploadsDir)).toEqual(before);
   });
 
-  it("S15(a)：storageLockTimeoutMs=200；上傳 A 停在縫上，同空間上傳 B 真的拿到 55P03 → 409 server_busy（< 20 s：注入值有生效，不是本檔預設 60 s）、B 的檔已 unlink；A 之後 201", async () => {
+  it("storageLockTimeoutMs=200; upload A stopped at the hook, upload B to the same space really gets 55P03 -> 409 server_busy (< 20 s: the injected value took effect, not this file's default 60 s), B's file unlinked; A is 201 afterwards", async () => {
     const holder: { app?: FastifyInstance; noteId?: string; userId?: string; b?: LightMyRequestResponse; bMs?: number } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       storageLockTimeoutMs: 200,
@@ -220,7 +217,7 @@ describe("上傳：busy 映射與真逾時（S14 上傳形、S15(a)）", () => {
     const a = await upload(app, n.id, u.id, 100);
     expect(holder.b!.statusCode).toBe(409);
     expect(holder.b!.json().error.code).toBe("server_busy");
-    // 200 ms 與本檔預設 60 s 之間的界線放 20 s：注入值若沒一路傳到 `assertSpaceRoomInTx`（落回預設），B 要等約 60 s 才逾時 → 紅
+    // The 20 s bound sits between 200 ms and this file's default 60 s: if the injected value did not reach `assertSpaceRoomInTx` all the way (falling back to the default), B would wait about 60 s before timing out -> red.
     expect(holder.bMs!).toBeLessThan(INJECTED_LOCK_TIMEOUT_BOUND_MS);
     expect(a.statusCode).toBe(201);
     const after = await filesIn(uploadsDir);
@@ -229,8 +226,8 @@ describe("上傳：busy 映射與真逾時（S14 上傳形、S15(a)）", () => {
   });
 });
 
-describe("上傳：既有契約不變", () => {
-  it("筆記不存在 → 404 not_found（preHandler）；viewer → 403；上限 413 仍先於配額交易", async () => {
+describe("upload: existing contracts unchanged", () => {
+  it("note missing -> 404 not_found (preHandler); viewer -> 403; the 413 limit still comes before the quota transaction", async () => {
     const { app, db } = await buildTestApp();
     const [o, v] = await Promise.all([seedUser(db), seedUser(db)]);
     await giveUserQuota(db, o.id, 10);

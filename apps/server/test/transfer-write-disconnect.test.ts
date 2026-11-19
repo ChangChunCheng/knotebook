@@ -1,7 +1,4 @@
-/**
- * bulk transfer：S14 斷線語意——用戶端斷線**不中止寫回**、只記 `clientClosed`；偵測只掛
- * `reply.raw` 的 close（PUT 上 `request.raw` 的 close 在 body 讀完時就觸發）。真 HTTP（`putRaw`），不用 inject。
- */
+// A client disconnect does not abort the write-back, it only logs `clientClosed`; detection hangs only on `reply.raw`'s close (on PUT, `request.raw`'s close fires as soon as the body is read). Real HTTP (`putRaw`), not inject.
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { noteAiEdits, transferBases } from "../src/db/schema.js";
@@ -31,8 +28,8 @@ async function scene(opts: Opts = {}) {
   return { ctx, u, bulk, note, writeLines, errorLines };
 }
 
-describe("S14 斷線語意", () => {
-  it("D1 正常完成 → clientClosed false", async () => {
+describe("disconnect semantics", () => {
+  it("normal completion -> clientClosed false", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await putRaw(s.ctx.baseUrl, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "D1 change")));
@@ -41,15 +38,15 @@ describe("S14 斷線語意", () => {
     expect(s.writeLines()[0]).toMatchObject({ result: "applied", clientClosed: false });
   });
 
-  it("D2 佇列中斷線 → 照常完成（筆記恰改一次、applied_body_sha 已寫）、clientClosed true、沒有 error log；同檔重送 → unchanged", async () => {
+  it("disconnect while queued -> completes as usual (note changed exactly once, applied_body_sha written), clientClosed true, no error log; resending the same file -> unchanged", async () => {
     const hold = gate();
     const entered = gate();
     const closed = gate();
     let holding = true;
     let handlers = 0;
     const s = await scene({
-      // 占位的第一發停在 afterRecord（已合併、紀錄已寫、仍在佇列內）：第二份副本在這時才下載（含第一發的修改），所以它排在
-      // 佇列裡、之後真的寫入（現行規則下，在第一發寫入之前下載的副本會被判 note_changed）。
+      // The placeholder first request stops at afterRecord (merged, record written, still in the queue): the second copy is downloaded only now
+      // (including the first's change), so it queues and really writes afterwards (under current rules a copy downloaded before the first's write would be judged note_changed).
       editingTestHooks: {
         afterRecord: async () => {
           if (!holding) return;
@@ -74,7 +71,7 @@ describe("S14 斷線語意", () => {
     const text2 = editBody(d2.text, b => b.replace("Para 3", "D2 change"));
     const p2 = putRaw(s.ctx.baseUrl, s.bulk.token, text2, { destroyAfter: destroy.wait });
     await waitFor("第二發進 handler", 3_000, () => handlers === 2);
-    await sleep(200); // 讓它走到佇列等待
+    await sleep(200); // let it reach the queue wait
     destroy.open();
     await closed.wait;
     hold.open();
@@ -91,7 +88,7 @@ describe("S14 斷線語意", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, text2)).json()).toMatchObject({ result: "unchanged" });
   });
 
-  it("D3 合併中斷線（beforeRecord 內等到 close）→ 紀錄照寫、1 列", async () => {
+  it("disconnect during merge (waiting for close inside beforeRecord) -> record still written, 1 row", async () => {
     const closed = gate();
     const destroy = gate();
     const s = await scene({
@@ -111,7 +108,7 @@ describe("S14 斷線語意", () => {
     expect(await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.note.id))).toHaveLength(1);
   });
 
-  it("D4 body 送一半就斷 → 不進 handler（syncFile 沒被呼叫）、筆記與基底未變、沒有 error log", async () => {
+  it("disconnect halfway through the body -> does not reach the handler (syncFile not called), note and base unchanged, no error log", async () => {
     let merges = 0;
     let handlers = 0;
     const s = await scene({
@@ -130,7 +127,7 @@ describe("S14 斷線語意", () => {
     expect(s.errorLines()).toEqual([]);
   });
 
-  it("D5 handler 開始前就斷線 → clientClosed true（掛上監聽後補查 destroyed）", async () => {
+  it("disconnect before the handler starts -> clientClosed true (destroyed is re-checked after attaching the listener)", async () => {
     const entered = gate();
     const proceed = gate();
     const destroy = gate();

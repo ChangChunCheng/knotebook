@@ -23,8 +23,8 @@ const login = (app: Awaited<ReturnType<typeof buildTestApp>>["app"], email: stri
   app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password } });
 const turnOff = (db: Awaited<ReturnType<typeof buildTestApp>>["db"]) => db.update(siteSettings).set({ passwordLoginEnabled: false });
 
-describe("POST /api/auth/login 在帳密登入關閉時（#187）", () => {
-  it("六種帳號一律 403 password_login_disabled、body 逐字相同；不跑 argon2", async () => {
+describe("POST /api/auth/login while password login is off (#187)", () => {
+  it("six kinds of account all get 403 password_login_disabled with identical bodies; argon2 is not run", async () => {
     const { app, db } = await buildTestApp();
     const ok = await insertPasswordUser(db, { password: PW });
     const wrong = await insertPasswordUser(db, { password: PW });
@@ -54,7 +54,7 @@ describe("POST /api/auth/login 在帳密登入關閉時（#187）", () => {
     expect(vi.mocked(verifyPassword)).not.toHaveBeenCalled();
   });
 
-  it("關閉期間的請求不記 LoginThrottle：關閉時打 6 次，開回後同 email 第 1 次錯密碼仍是 401（不是 429）", async () => {
+  it("requests while off do not feed LoginThrottle: 6 attempts while off, then the first wrong password after re-enabling is 401, not 429", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { password: PW });
     await turnOff(db);
@@ -63,14 +63,14 @@ describe("POST /api/auth/login 在帳密登入關閉時（#187）", () => {
     expect((await login(app, u.email, "wrong-password-xx")).statusCode).toBe(401);
   });
 
-  it("結構驗證仍在前：body 不合 → 400（不是 403）", async () => {
+  it("shape validation still runs first: invalid body -> 400, not 403", async () => {
     const { app, db } = await buildTestApp();
     await turnOff(db);
     const res = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "x@example.com" } });
     expect(res.statusCode).toBe(400);
   });
 
-  it("env 強制＋DB 關 → 正常登入（對 200、錯 401 且吃 throttle）", async () => {
+  it("env force + DB off -> normal login (correct 200, wrong 401 and throttled)", async () => {
     const { app, db } = await buildTestApp({ config: { ...testConfig, passwordLoginForceEnable: true } });
     const u = await insertPasswordUser(db, { password: PW });
     await turnOff(db);
@@ -79,7 +79,7 @@ describe("POST /api/auth/login 在帳密登入關閉時（#187）", () => {
     expect((await login(app, u.email, "wrong-password-xx")).statusCode).toBe(429);
   });
 
-  it("讀不到 site_settings 列 → 視同開：照常登入＋log.error", async () => {
+  it("unreadable site_settings row -> treated as on: login works and log.error is emitted", async () => {
     const logs = captureLogs();
     const { app, db } = await buildTestApp({}, logs.options);
     const u = await insertPasswordUser(db, { password: PW });
@@ -89,10 +89,10 @@ describe("POST /api/auth/login 在帳密登入關閉時（#187）", () => {
   });
 });
 
-describe("帳密關閉時照常的路徑（#187／23、B21、B23、B26）", () => {
+describe("paths that keep working while password login is off (#187)", () => {
   const A = "https://idp-a.example";
 
-  it("B21：透過 X 首次登入（服務開自動建帳）在帳密關閉時照常建帳", async () => {
+  it("first login via an external provider (auto-create on) still creates the account while password login is off", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     await turnOff(t.db);
     const email = `sso-${randomUUID()}@example.com`;
@@ -101,7 +101,7 @@ describe("帳密關閉時照常的路徑（#187／23、B21、B23、B26）", () =
     expect(await t.db.select({ id: users.id }).from(users).where(eq(users.email, email))).toHaveLength(1);
   });
 
-  it("B23：旗標帳號在關閉期間打 Bearer → 401（mustChangePassword 照擋）", async () => {
+  it("flagged account using Bearer while off -> 401 (mustChangePassword still blocks)", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { mustChangePassword: true });
     const pat = generateAccessToken();
@@ -110,7 +110,7 @@ describe("帳密關閉時照常的路徑（#187／23、B21、B23、B26）", () =
     expect((await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: `Bearer ${pat}` } })).statusCode).toBe(401);
   });
 
-  it("B26：DB 關時密碼帳號以同 email 的 SSO 首登 → /link-account、methods.password=true、對密碼連結成功並簽 session", async () => {
+  it("password account with DB off, first SSO login with the same email -> /link-account, methods.password=true, linking by password succeeds and issues a session", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const u = await insertPasswordUser(t.db, { password: PW });
     await turnOff(t.db);
@@ -125,7 +125,7 @@ describe("帳密關閉時照常的路徑（#187／23、B21、B23、B26）", () =
     expect(await identitiesOf(t.db, u.id)).toEqual([{ issuer: A, sub: "sa" }]);
   });
 
-  it("B26：關閉期間連結頁的錯密碼 401、吃 LoginThrottle（5 次後第 6 次 429，對密碼也 429）", async () => {
+  it("wrong password on the link page while off -> 401 and counts toward LoginThrottle (6th attempt after 5 is 429, even with the correct password)", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const v = await insertPasswordUser(t.db, { password: PW });
     await turnOff(t.db);
@@ -138,8 +138,8 @@ describe("帳密關閉時照常的路徑（#187／23、B21、B23、B26）", () =
   });
 });
 
-describe("關閉帳密登入不影響既有憑證（#187）", () => {
-  it("關閉前的密碼 session：/api/auth/me 200、token_version 不變；PAT 與 OAuth access token 打 Bearer 端點照常", async () => {
+describe("turning password login off does not affect existing credentials (#187)", () => {
+  it("password session from before: /api/auth/me 200 and token_version unchanged; PAT and OAuth access token still work on Bearer endpoints", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { password: PW });
     const loginRes = await login(app, u.email, PW);
@@ -162,7 +162,7 @@ describe("關閉帳密登入不影響既有憑證（#187）", () => {
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies: { [SESSION_COOKIE]: session } })).statusCode).toBe(200);
     const [after] = await db.select({ tv: users.tokenVersion }).from(users).where(eq(users.id, u.id));
     expect(after!.tv).toBe(before!.tv);
-    // `GET /api/mcp` 認證通過後回 405（test/api-token-auth.test.ts 的哨兵用法）；401 就是 Bearer 被拒。
+    // `GET /api/mcp` returns 405 once auth passes; a 401 means the Bearer was rejected.
     for (const token of [pat, oauth]) {
       const res = await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: `Bearer ${token}` } });
       expect(res.statusCode).toBe(405);
@@ -170,20 +170,20 @@ describe("關閉帳密登入不影響既有憑證（#187）", () => {
   });
 });
 
-describe("GET /api/auth/config 的 passwordLogin.enabled＝有效值（#187）", () => {
+describe("GET /api/auth/config passwordLogin.enabled is the effective value (#187)", () => {
   it.each([
     [true, false, true],
     [false, false, false],
     [true, true, true],
     [false, true, true],
-  ] as const)("DB=%s、env 強制=%s → %s", async (dbValue, forced, expected) => {
+  ] as const)("DB=%s, env force=%s -> %s", async (dbValue, forced, expected) => {
     const { app, db } = await buildTestApp({ config: { ...testConfig, passwordLoginForceEnable: forced } });
     await db.update(siteSettings).set({ passwordLoginEnabled: dbValue });
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
     expect(res.json().passwordLogin).toEqual({ enabled: expected });
   });
 
-  it("不揭露是否 env 強制：回應只有 enabled 一個鍵", async () => {
+  it("does not reveal whether env forces it: the response has only the enabled key", async () => {
     const { app } = await buildTestApp({ config: { ...testConfig, passwordLoginForceEnable: true } });
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
     expect(Object.keys(res.json().passwordLogin)).toEqual(["enabled"]);
