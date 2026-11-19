@@ -4,13 +4,11 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, clickEndOfParagraph, createNote, editorLocator, loginAs, waitForEditorSelection } from "./helpers.js";
 
 /**
- * #229 簡報模式：E1 入口與導覽、E2 即時更新保位、E3 公開連結、E4 CSP、E5 改名不斷簡報、
- * E6 觸控（CDP Input.dispatchTouchEvent）、E7 側欄進入。
- *
- * - 「目前投影片」一律讀 DOM：`.reveal .slides section.present[data-kn-slide-id]`（reveal 實例不外露）。
- * - 內容用貼上 markdown 建（14-table-hover 的手法）：標題 → `##`／`###`，表格 → markdown table。
- * - 全螢幕：headless chromium 下的行為；「瀏覽器吃掉 Esc」以 `document.exitFullscreen()` 模擬，之後等 > 300 ms
- *   （防連退窗口）再按 Esc。
+ * - The "current slide" is always read from the DOM: `.reveal .slides section.present[data-kn-slide-id]` (the reveal
+ *   instance is not exposed).
+ * - Content is built by pasting markdown (the approach of 14-table-hover): headings -> `##` / `###`, tables -> markdown table.
+ * - Fullscreen: behaviour under headless chromium; "the browser swallows Esc" is simulated with
+ *   `document.exitFullscreen()`, then wait > 300 ms (the anti-double-exit window) before pressing Esc.
  */
 
 const ORIGIN = E2E_ORIGIN;
@@ -21,7 +19,7 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   const editor = editorLocator(page);
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
-  // 同 34-columns 的 pasteMarkdown：Ctrl+End 後等 ProseMirror 讀回選取再貼（E6 第二次貼在已有內容的筆記上，沒等會貼在點擊處）
+  // As with pasteMarkdown in 34-columns: after Ctrl+End wait for ProseMirror to read back the selection before pasting (E6 pastes a second time into a note that already has content; without the wait the paste lands at the click point)
   await waitForEditorSelection(page);
   await page.evaluate((text) => navigator.clipboard.writeText(text), markdown);
   await page.keyboard.press("ControlOrMeta+v");
@@ -53,10 +51,9 @@ async function leaveFullscreenLikeBrowserEsc(page: Page): Promise<void> {
   await page.evaluate(async () => {
     if (document.fullscreenElement) await document.exitFullscreen();
   });
-  await page.waitForTimeout(350); // 300 ms 防連退窗口
+  await page.waitForTimeout(350); // the 300 ms anti-double-exit window
 }
 
-/** 觸控手勢（CDP Input.dispatchTouchEvent）。 */
 async function swipe(page: Page, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
   const steps = 10;
@@ -90,7 +87,7 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 10×3000 的灰色 PNG：載入後讓投影片溢出（E6 的延遲載入圖片）。 */
+/** A 10x3000 grey PNG: makes the slide overflow once loaded (E6's lazily loaded image). */
 function tallPng(width = 10, height = 3000): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
@@ -118,28 +115,26 @@ async function adminPageWithNote(browser: Browser, title: string, markdown: stri
   return { context, page };
 }
 
-test("E1：⋮ 進入、換頁寫 hash 不增 history、O 總覽／Esc 只關總覽、兩段 Esc 回筆記、編輯器未重掛 [sc:presentOverview] [sc:presentExit]", async ({ browser }) => {
+test("E1: enter from the more menu, page changes write the hash without adding history, O overview / Esc closes only the overview, two Esc presses return to the note, the editor is not remounted [sc:presentOverview] [sc:presentExit]", async ({ browser }) => {
   test.setTimeout(120_000);
   const title = `E2E present ${Date.now()}`;
   const { context, page } = await adminPageWithNote(browser, title, DECK);
   try {
     await expect(editorLocator(page).getByText("b2 text")).toBeVisible({ timeout: 15_000 });
-    // 進入簡報前另外打一段，回來後斷言它還在
     await editorLocator(page).getByText("b2 text").click();
     await page.keyboard.press("End");
-    await waitForEditorSelection(page); // click→End 後等 PM 讀回選取再打字（helpers 註解：不等會打在點擊處）
+    await waitForEditorSelection(page); // after click -> End wait for PM to read back the selection before typing (see the helpers comment: otherwise it types at the click point)
     await page.keyboard.type(" typed-before-present");
     await expect(editorLocator(page).getByText("b2 text typed-before-present")).toBeVisible();
     await page.evaluate(() => { (document.querySelector('[data-testid="note-editor"]') as HTMLElement & { __kn?: number }).__kn = 1; });
 
-    // 編輯器 block 帶 data-id；簡報的 <section> 不帶 id／data-id。
+    // The editor's blocks carry data-id and the presentation's slides do not (control for the count of 0 below)
     expect(await page.locator('[data-testid="note-editor"] [data-id]').count()).toBeGreaterThan(0);
 
     await presentFromHeaderMenu(page, title);
     expect(new URL(page.url()).search).toBe("?present");
     expect(await page.locator(".reveal .slides section[id], .reveal .slides section[data-id]").count()).toBe(0);
 
-    // 分支 A＝headless chromium 真的進全螢幕。
     await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
 
     const historyLength = await page.evaluate(() => history.length);
@@ -159,14 +154,15 @@ test("E1：⋮ 進入、換頁寫 hash 不增 history、O 總覽／Esc 只關總
     await expect(page.getByRole("dialog", { name: `${title} — presentation` })).toBeVisible();
 
     await leaveFullscreenLikeBrowserEsc(page);
-    await expect(page.getByRole("dialog", { name: `${title} — presentation` })).toBeVisible(); // 第一下只退全螢幕
+    // The first Esc only exits fullscreen; the presentation stays open
+    await expect(page.getByRole("dialog", { name: `${title} — presentation` })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(new URL(page.url()).search).toBe("");
     await expect(editorLocator(page).getByText("b2 text typed-before-present")).toBeVisible();
     expect(await page.evaluate(() => (document.querySelector('[data-testid="note-editor"]') as HTMLElement & { __kn?: number }).__kn)).toBe(1);
 
-    // 旁證（不是驗證：沒斷言 reveal.css 的 html／body overflow 規則真的套用）：列印媒體下內文仍看得到。
+    // Corroboration (not verification: it does not assert that reveal.css's html / body overflow rules were really applied): under print media the content is still visible.
     await page.emulateMedia({ media: "print" });
     await expect(editorLocator(page).getByText("b2 text")).toBeVisible();
     await page.emulateMedia({ media: "screen" });
@@ -175,10 +171,10 @@ test("E1：⋮ 進入、換頁寫 hash 不增 history、O 總覽／Esc 只關總
   }
 });
 
-test("E1b：總覽（O）連距離 ≥3 的遠張也有內容；離開總覽後遠張又是 display:none (#390)", async ({ browser }) => {
+test("E1b: overview (O) also has content on far slides at distance >= 3; after leaving the overview far slides are display:none again (#390)", async ({ browser }) => {
   test.setTimeout(120_000);
   const title = `E2E overview ${Date.now()}`;
-  // 封面＋6 章：最後一章離封面 ≥ 4，超出一般模式的 viewDistance（3），總覽的 viewDistance 是 10
+  // Cover + 6 chapters: the last chapter is >= 4 from the cover, beyond the normal viewDistance (3); the overview's viewDistance is 10
   const deck = [1, 2, 3, 4, 5, 6].flatMap((n) => [`## Chapter ${n}`, "", `text ${n}`, ""]).join("\n");
   const { context, page } = await adminPageWithNote(browser, title, deck);
   try {
@@ -189,12 +185,11 @@ test("E1b：總覽（O）連距離 ≥3 的遠張也有內容；離開總覽後�
       const r = s.getBoundingClientRect();
       return { display: getComputedStyle(s).display, sized: r.width > 0 && r.height > 0 };
     });
-    // 一般模式：遠張被 reveal 的 unload 蓋回 display:none（也驗到 inline important 蓋得掉）
     await expect.poll(async () => (await farState()).display).toBe("none");
 
     await page.keyboard.press("o");
     await expect(page.locator(".reveal.overview")).toBeVisible();
-    // 總覽：遠張 display 不是 none 且有尺寸（Tailwind preflight 的 [hidden] important 曾壓掉 reveal 的 inline display）
+    // Overview: a far slide's display is not none and it has a size (Tailwind preflight's [hidden] important once overrode reveal's inline display)
     await expect.poll(async () => { const st = await farState(); return st.display !== "none" && st.sized; }).toBe(true);
 
     await page.keyboard.press("Escape");
@@ -206,7 +201,7 @@ test("E1b：總覽（O）連距離 ≥3 的遠張也有內容；離開總覽後�
   }
 });
 
-test("E2：A 播放中、B 編輯——A 3 s 內看到變動且停在同一張；B 刪掉 A 目前那張的起始標題 → A 到前一張", async ({ browser }) => {
+test("E2: A presenting and B editing - A sees the change within 3 s and stays on the same slide; B deletes the starting heading of A's current slide -> A moves to the previous slide", async ({ browser }) => {
   test.setTimeout(150_000);
   const title = `E2E present live ${Date.now()}`;
   const { context: contextA, page: pageA } = await adminPageWithNote(browser, title, DECK);
@@ -227,20 +222,21 @@ test("E2：A 播放中、B 編輯——A 3 s 內看到變動且停在同一張�
     const b2 = await slideIdContaining(pageA, "Section B2");
     await expect.poll(() => currentSlideId(pageA)).toBe(b2);
 
-    // B 在第一章加字。B 剛打開筆記、編輯器沒有焦點：click → End → waitForEditorSelection 不夠，得焦計時器可能把游標拉回點擊處
-    // （PM 與 DOM 仍對齊），" plus" 就打在字中間（CI 失敗的快照都是 "alph plus admin a text"）。clickEndOfParagraph 確認游標在段尾。
+    // B adds text in the first chapter. B has just opened the note and the editor has no focus: click -> End ->
+    // waitForEditorSelection is not enough, since a focus-acquisition timer may pull the caret back to the click point (PM and
+    // DOM still agree) and " plus" would be typed in the middle of the word. clickEndOfParagraph confirms the caret is at the
+    // paragraph end.
     await clickEndOfParagraph(pageB, editorLocator(pageB).getByText("alpha text"));
     await pageB.keyboard.type(" plus");
     await expect(pageA.locator(".reveal .slides").getByText("alpha text plus")).toBeAttached({ timeout: 3_000 });
     expect(await currentSlideId(pageA)).toBe(b2);
 
-    // B 把 A 目前那張的起始標題（### Section B2）改成段落→ 那張消失 → A 到前一張（Chapter B）
     await editorLocator(pageB).getByText("Section B2").click();
     await pageB.keyboard.press("Home");
     await waitForEditorSelection(pageB);
-    // 當初記「Ctrl+Alt+0 在 headless chromium 約五成不生效（B 端標題仍是 heading）」，改成在 block 開頭按 Backspace（BlockNote 會把
-    // 非段落 block 轉成段落）。那個症狀多半就是上面這個競態：快捷鍵吃的是 PM 的 state.selection，還停在前一段（alpha text plus，本來就是段落）
-    // 時 Ctrl+Alt+0 等於沒做——Backspace 一樣會落在舊位置，所以光換鍵不能修，要靠上一行的等待（讀碼推論，未重跑 Ctrl+Alt+0 驗證；Backspace 保留）。
+    // Backspace at the block start turns the heading into a paragraph (used instead of Ctrl+Alt+0, which seemed flaky in headless
+    // Chromium). Either key acts on PM's state.selection; without the wait above it would still sit in the previous paragraph, so
+    // the key would act there (Ctrl+Alt+0 changes nothing, Backspace deletes a character).
     await pageB.keyboard.press("Backspace");
     await expect(editorLocator(pageB).locator('[data-content-type="heading"]', { hasText: "Section B2" })).toHaveCount(0);
     const chapterB = await slideIdContaining(pageA, "Chapter B");
@@ -252,7 +248,7 @@ test("E2：A 播放中、B 編輯——A 3 s 內看到變動且停在同一張�
   }
 });
 
-test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出來、回焦重抓後更新並保位、撤銷後關層顯示失效卡", async ({ browser }) => {
+test("E3: anonymous opens the public-link presentation - wikilink as plain text, image loads, update after refocus refetch keeps position, after revoke the overlay closes and shows the dead-link card", async ({ browser }) => {
   test.setTimeout(180_000);
   const ownerContext = await browser.newContext();
   const anonContext = await browser.newContext();
@@ -260,13 +256,13 @@ test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出
     const owner = await ownerContext.newPage();
     await loginAs(owner, ADMIN.email, ADMIN.password);
     const stamp = String(Date.now());
-    const targetTitle = `E2E wikitarget ${stamp}`; // 查詢只打 stamp：髒疊上舊的 wikitarget 筆記不會被選到
+    const targetTitle = `E2E wikitarget ${stamp}`; // the query types only the stamp: an old wikitarget note on a dirty stack is not picked
     await createNote(owner, targetTitle);
     const title = `E2E present public ${Date.now()}`;
     await createNote(owner, title);
     const noteId = await noteIdFromUrl(owner);
 
-    // 圖：走 API 真上傳（同 11-public-share 的「真上傳」要求），再以 markdown 圖片語法放進筆記。
+    // Image: real upload through the API (the "real upload" requirement of 11-public-share), then placed into the note with markdown image syntax.
     const upload = await owner.request.post(`/api/notes/${noteId}/uploads`, {
       headers: { Origin: ORIGIN },
       multipart: { file: { name: "tall.png", mimeType: "image/png", buffer: tallPng(40, 40) } },
@@ -276,28 +272,26 @@ test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出
     await pasteMarkdown(owner, ["## Slide One", "", "one text", "", `![pic](${imageUrl})`, "", "## Slide Two", "", "two text", ""].join("\n"));
     await expect(editorLocator(owner).getByText("two text")).toBeVisible({ timeout: 15_000 });
 
-    // wikilink：在 Slide Two 內文後打 [[ ＋目標標題前綴，選第一個建議
     await editorLocator(owner).getByText("two text").click();
     await owner.keyboard.press("End");
     await waitForEditorSelection(owner);
     await owner.keyboard.type(" see [[");
     await owner.keyboard.type(stamp);
     await expect(owner.locator(".bn-suggestion-menu")).toBeVisible({ timeout: 10_000 });
-    // 先等 target 出現在選單裡：['notes'] 快取還沒收到它時，第一項會是「建立並連結」
+    // First wait for the target to appear in the menu: until the ['notes'] cache has it, the first item is "create and link"
     await expect(owner.locator(".bn-suggestion-menu").getByText(targetTitle, { exact: true })).toBeVisible({ timeout: 10_000 });
     await owner.keyboard.press("Enter");
-    // #269 E6：給這個 wikilink 一段自己的文字（label），公開簡報要顯示 label、且仍是純文字
+    // #269: give this wikilink its own text (label); the public presentation must show the label and still as plain text
     const labelText = `E2E label ${stamp}`;
     const wikilink = editorLocator(owner).locator('[data-inline-content-type="wikilink"]');
     await expect(wikilink).toHaveCount(1, { timeout: 10_000 });
-    await wikilink.hover(); // 編輯模式 hover 出工具列（點擊會直接跳轉）
+    await wikilink.hover(); // in edit mode hover shows the toolbar (a click would navigate)
     const toolbar = owner.getByRole("dialog", { name: "Note link" });
     await toolbar.getByRole("button", { name: "Edit text" }).click();
     await toolbar.getByRole("textbox", { name: "Link text" }).fill(labelText);
     await toolbar.getByRole("button", { name: "Save" }).click();
     await expect(wikilink).toHaveText(labelText, { timeout: 10_000 });
 
-    // 公開連結（同 11-public-share 的 ShareDialog 操作）
     await owner.getByRole("button", { name: "Share", exact: true }).click();
     const dialog = owner.getByRole("dialog", { name: "Share note" });
     const publicRadio = dialog.getByRole("radio", { name: /^Public link/ });
@@ -318,21 +312,19 @@ test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出
     await expect(anon.locator(".reveal.ready")).toBeVisible({ timeout: 15_000 });
     expect(new URL(anon.url()).search).toBe("?present");
     const twoId = await slideIdContaining(anon, "Slide Two");
-    // wikilink 純文字、label 優先（#269 E6）：簡報顯示 label、不顯示目標標題，且不在任何 <a> 裡
     await expect(anon.locator(".reveal .slides").getByText(labelText, { exact: false })).toBeAttached();
     expect(await anon.locator(".reveal .slides a", { hasText: labelText }).count()).toBe(0);
     expect(await anon.locator(".reveal .slides").getByText(targetTitle, { exact: false }).count()).toBe(0);
-    // 圖：公開端點、真的解得出像素
     const img = anon.locator(`.reveal .slides img[src*="/api/public/notes/${token}/uploads/"]`);
     await expect(img).toBeAttached();
     await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
 
-    // 停在 Slide Two；owner 改 Slide One → 匿名端回焦重抓後更新、仍在 Slide Two
     await anon.keyboard.press("ArrowRight");
     await anon.keyboard.press("ArrowRight");
     await expect.poll(() => currentSlideId(anon)).toBe(twoId);
-    // 編輯器此時沒焦點（Share 對話框 Escape 後焦點在 Share 鈕）：點擊的 focus 會排 PM 的 20 ms selectionToDOM，可能把 End 拉回點擊處
-    // （兩次都打成 "one updated text"）——clickEndOfParagraph 確認游標真的在這段的尾端，見 helpers.ts。
+    // The editor has no focus now (after Escape in the Share dialog focus is on the Share button): the click's focus schedules
+    // PM's 20 ms selectionToDOM, which may pull End back to the click point (both runs typed "one updated text") -
+    // clickEndOfParagraph confirms the caret is really at the end of this paragraph, see helpers.ts.
     await clickEndOfParagraph(owner, editorLocator(owner).getByText("one text"));
     await owner.keyboard.type(" updated");
     await expect(async () => {
@@ -341,12 +333,10 @@ test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出
     }).toPass({ timeout: 30_000 });
     expect(await currentSlideId(anon)).toBe(twoId);
 
-    // 匿名直接開 /p/<token>?present（E3 原文）
     await anon.goto(`/p/${token}?present`);
     await expect(anon.locator(".reveal.ready")).toBeVisible({ timeout: 15_000 });
     expect(new URL(anon.url()).search).toBe("?present");
 
-    // 撤銷（切回 Members only，同 11-public-share）→ 匿名端回焦後簡報層關閉、顯示失效卡
     await owner.getByRole("button", { name: "Share", exact: true }).click();
     await owner.getByRole("dialog", { name: "Share note" }).getByRole("radio", { name: /^Members only/ }).check();
     await owner.keyboard.press("Escape");
@@ -361,7 +351,7 @@ test("E3：匿名開公開連結簡報——wikilink 純文字、圖片載得出
   }
 });
 
-test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 → 零 CSP violation（含正向對照）", async ({ page }) => {
+test("E4: presentation chunk/CSS, mermaid, code, overview, fullscreen toggle -> zero CSP violations (with positive control)", async ({ page }) => {
   test.setTimeout(120_000);
   interface Violation { directive: string; blockedURI: string }
   await page.addInitScript(() => {
@@ -374,11 +364,10 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   const title = `E2E present csp ${Date.now()}`;
   await createNote(page, title);
   await pasteMarkdown(page, ["## Code", "", "```ts", 'const x = "hi";', "```", "", "## Diagram", "", "## Video", ""].join("\n"));
-  // mermaid（同 09-csp 的 slash 流程）
   const editor = editorLocator(page);
   await editor.getByText("Diagram").click();
   await page.keyboard.press("End");
-  await waitForEditorSelection(page); // 不等的話 Enter 落在點擊處、把標題從中間拆開（見下方「影片落在哪一張」）
+  await waitForEditorSelection(page); // without the wait, Enter lands at the click point and splits the heading in the middle (see "which slide the video lands on" below)
   await page.keyboard.press("Enter");
   await editor.pressSequentially("/diagram");
   await page.getByText("Flowcharts and diagrams with Mermaid").click();
@@ -388,8 +377,8 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   await source.press("Escape");
   await expect(editor.locator("svg[aria-roledescription]").first()).toBeVisible({ timeout: 20_000 });
 
-  // 影片（E4 明列）：video 沒有上傳路徑，只能 embed 網址——用同源、剛上傳的 png（只要求載入不觸發
-  // CSP、不要求能播；media-src 是 'self' http: https:）。面板是本 app 的 components/FilePanel.tsx。
+  // Video: video has no upload path, only an embed URL - use the same-origin png just uploaded (it only has to load without a
+  // CSP violation, not play; media-src is 'self' http: https:). The panel is this app's components/FilePanel.tsx.
   const noteId = await noteIdFromUrl(page);
   const upload = await page.request.post(`/api/notes/${noteId}/uploads`, {
     headers: { Origin: ORIGIN },
@@ -397,7 +386,7 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   });
   expect(upload.status()).toBe(201);
   const { url: mediaUrl } = (await upload.json()) as { url: string };
-  // 前面 mermaid 步驟留下的浮動格式工具列可能蓋住「Video」標題而攔截點擊（重複跑約三成逾時）；Escape 收掉它。
+  // The floating formatting toolbar left by the earlier mermaid step may cover the "Video" heading and intercept the click; Escape closes it.
   await page.keyboard.press("Escape");
   await editor.getByText("Video").click();
   await page.keyboard.press("End");
@@ -405,7 +394,7 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   await page.keyboard.press("Enter");
   await editor.pressSequentially("/video");
   await page.getByText("Resizable video with caption").click();
-  // slash 插入後 BlockNote 自動開檔案面板；本 app 的面板對非 image block 沒有 tab 列，直接是 Embed 表單
+  // After a slash insert BlockNote opens the file panel by itself; this app's panel has no tab bar for non-image blocks, just the Embed form
   await page.getByPlaceholder("Paste a link…").fill(`${ORIGIN}${mediaUrl}`);
   await page.getByRole("button", { name: "Embed", exact: true }).click();
   await expect(editor.locator("video").first()).toBeAttached({ timeout: 10_000 });
@@ -417,19 +406,20 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   await page.keyboard.press("o");
   await page.keyboard.press("f");
   await page.keyboard.press("f");
-  // 影片落在哪一張取決於前面點擊把游標放在字中間的位置（重複跑時標題會被拆開、block 次序也會變），所以不假設「含 Video 字樣的那張」，
-  // 改找「含 <video> 的那張」再逐張往右走過去（這份牌組全是 H2，沒有縱向堆疊）。
-  // （標題被拆開多半是 click→End 後 PM 還沒讀回選取、Enter 落在點擊處；上面已加 waitForEditorSelection，這個不假設位置的找法照留。）
+  // Which slide the video lands on depends on where the earlier click put the caret in the text (on repeat runs the heading gets
+  // split and the block order changes), so do not assume "the slide containing the word Video": find "the slide containing
+  // <video>" and walk right to it (this deck is all H2, no vertical stacks).
+  // (The heading split is mostly click -> End with PM not yet having read back the selection and Enter landing at the click
+  // point; waitForEditorSelection was added above, and this position-agnostic lookup is kept.)
   const videoSlide = await page.evaluate(() => document.querySelector(".reveal .slides section[data-kn-slide-id]:has(video)")?.getAttribute("data-kn-slide-id") ?? null);
   expect(videoSlide, "簡報裡找不到含 <video> 的投影片").not.toBeNull();
   for (let i = 0; i < 8 && (await currentSlideId(page)) !== videoSlide; i++) await page.keyboard.press("ArrowRight");
   await expect.poll(() => currentSlideId(page)).toBe(videoSlide);
   await expect(page.locator(`section[data-kn-slide-id="${videoSlide}"] video[controls]`)).toBeAttached();
-  await page.waitForTimeout(500); // 讓 video 的載入嘗試發生後再收 violation
+  await page.waitForTimeout(500); // let the video's load attempt happen before collecting violations
 
   const violations = await page.evaluate(() => (window as unknown as { __cspViolations: Violation[] }).__cspViolations);
   expect(violations, `CSP 擋到了自己的東西：${JSON.stringify(violations)}`).toEqual([]);
-  // 正向對照（同 09-csp）：注入 inline script 必須被擋
   const pwned = await page.evaluate(() => {
     const script = document.createElement("script");
     script.textContent = "window.__cspPositiveControl = true;";
@@ -439,7 +429,7 @@ test("E4：簡報 chunk／CSS、mermaid、程式碼、總覽、全螢幕切換 �
   expect(pwned).toBe(false);
 });
 
-test("E5：播放中改名 → 網址換 slug、?present＋hash 保留、仍在同一張、簡報層同一實例", async ({ page }) => {
+test("E5: renaming during playback -> URL switches slug, ?present + hash kept, same slide, same presentation layer instance", async ({ page }) => {
   test.setTimeout(120_000);
   await loginAs(page, ADMIN.email, ADMIN.password);
   const title = `E2E present rename ${Date.now()}`;
@@ -468,7 +458,7 @@ test("E5：播放中改名 → 網址換 slug、?present＋hash 保留、仍在�
   expect(await page.evaluate(() => (document.querySelector(".reveal") as HTMLElement & { __kn?: number }).__kn)).toBe(1);
 });
 
-test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與表格手指捲動不換頁；延遲載入圖片後變溢出；控制箭頭換頁", async ({ browser }) => {
+test("E6: touch - swiping on a non-overflowing slide changes slide; finger scrolling on an overflowing slide or table does not change slide; a lazily loaded image makes it overflow; control arrow changes slide", async ({ browser }) => {
   test.setTimeout(180_000);
   const title = `E2E present touch ${Date.now()}`;
   const longLines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n\n");
@@ -495,7 +485,7 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
 
     const page = await mobile.newPage();
     await loginAs(page, ADMIN.email, ADMIN.password);
-    // 圖片回應掛住，走到 Picture 之後才放行（img load 重算）——用 deferred 控制，不假設時間
+    // The image response is held and released only after reaching Picture (img load recompute) - controlled with a deferred, assuming no timing
     let releaseImage: () => void = () => {};
     const imageGate = new Promise<void>((resolve) => {
       releaseImage = resolve;
@@ -515,19 +505,16 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
     const child = await slideIdContaining(page, "child text");
     const picture = await slideIdContaining(page, "Picture");
 
-    // 封面 → Short（鍵盤），在 Short 上水平滑動 → 換到 Long
     await page.keyboard.press("ArrowRight");
     await expect.poll(() => currentSlideId(page)).toBe(short);
     await swipe(page, { x: 330, y: 320 }, { x: 60, y: 320 });
     await expect.poll(() => currentSlideId(page)).toBe(long);
 
-    // Long 溢出：垂直滑動 → 捲動、不換頁
     await expect(page.locator(`section[data-kn-slide-id="${long}"]`)).toHaveAttribute("data-prevent-swipe", "");
     await swipe(page, { x: 200, y: 520 }, { x: 200, y: 160 });
     await expect.poll(() => page.locator(`section[data-kn-slide-id="${long}"]`).evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
     expect(await currentSlideId(page)).toBe(long);
 
-    // 控制箭頭 → Table；在表格上水平滑動 → 包裝層 scrollLeft 增加、不換頁
     await page.locator(".reveal .controls .navigate-right").tap();
     await expect.poll(() => currentSlideId(page)).toBe(tableSlide);
     const wrap = page.locator(`section[data-kn-slide-id="${tableSlide}"] .kn-present-table`);
@@ -536,7 +523,7 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
     await expect.poll(() => wrap.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
     expect(await currentSlideId(page)).toBe(tableSlide);
 
-    // 短程式碼區塊（<pre> 是 overflow-x:auto 的捲動容器，內容放得下也是）：從它上面起手的橫滑要換頁，不是死區
+    // Short code block (<pre> is an overflow-x:auto scroll container even when the content fits): a horizontal swipe starting on it must change slide, not be a dead zone
     await page.locator(".reveal .controls .navigate-right").tap();
     await expect.poll(() => currentSlideId(page)).toBe(codeSlide);
     const shortPre = page.locator(`section[data-kn-slide-id="${codeSlide}"] pre`);
@@ -545,7 +532,6 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
     await swipe(page, { x: shortBox.x + shortBox.width - 20, y: shortBox.y + shortBox.height / 2 }, { x: shortBox.x + 20, y: shortBox.y + shortBox.height / 2 });
     await expect.poll(() => currentSlideId(page)).toBe(wideSlide);
 
-    // 寬程式碼區塊（橫向溢出）：橫滑是捲動程式碼、不換頁
     const widePre = page.locator(`section[data-kn-slide-id="${wideSlide}"] pre`);
     await expect(widePre).toHaveAttribute("data-prevent-swipe", "");
     const wideBox = (await widePre.boundingBox())!;
@@ -553,14 +539,13 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
     await expect.poll(() => widePre.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
     expect(await currentSlideId(page)).toBe(wideSlide);
 
-    // 有縱向子投影片的章：沒溢出，手指向上滑 → 進到下一張縱向投影片（touch-action:none 的 app 修正守著；pan-y 會讓這步壞掉）
+    // A chapter with vertical sub-slides: no overflow, swiping up with a finger -> goes to the next vertical slide (guarded by the app's touch-action:none fix; pan-y would break this step)
     await page.locator(".reveal .controls .navigate-right").tap();
     await expect.poll(() => currentSlideId(page)).toBe(stack);
     expect(await page.locator(`section[data-kn-slide-id="${stack}"]`).getAttribute("data-prevent-swipe")).toBeNull();
     await swipe(page, { x: 200, y: 520 }, { x: 200, y: 160 });
     await expect.poll(() => currentSlideId(page)).toBe(child);
 
-    // Picture：圖還沒到 → 不溢出；到了 → 溢出、垂直滑動捲動不換頁
     await page.locator(".reveal .controls .navigate-right").tap();
     await expect.poll(() => currentSlideId(page)).toBe(picture);
     const pictureSection = page.locator(`section[data-kn-slide-id="${picture}"]`);
@@ -577,7 +562,7 @@ test("E6：觸控——未溢出的投影片滑動換頁；溢出的投影片與
   }
 });
 
-test("E7：側欄別篇 ⋮「簡報模式」→ 直接打開那篇的簡報；Esc（滿版）→ 落在那篇的一般筆記頁", async ({ page }) => {
+test("E7: sidebar more menu of another note, \"Present\" -> opens that note's presentation directly; Esc (fullscreen) -> lands on that note's regular note page", async ({ page }) => {
   test.setTimeout(120_000);
   await loginAs(page, ADMIN.email, ADMIN.password);
   const target = `E2E present target ${Date.now()}`;

@@ -3,19 +3,22 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, noteIdFromUrl, openSiteAdmin, selectionAiBox, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 並排排版讀寫面（真瀏覽器半）：
- * E1 REST 讀出 div 形、原樣寫回不變、5 欄被拒；E2 #305 REST 改字、圖片寬度與表格欄寬不變；
- * E3 站內 AI（Rewrite，ai-stub `/echo`）改字、寬度不變；E4 從左欄拖選到右欄 → 錨點擴大成整列，套用後列仍在。
- *
- * - 內容一律貼 markdown（純文字剪貼簿 → `collab/paste.ts` 接手；同 34-columns 的 `pasteMarkdown`）。
- * - e2e 不能 import shared：正規字面（`COLUMNS_OPEN_TAG`、`columnOpenTag`）在本檔逐字另寫一份，兩邊要一起改。
- * - REST 走頁面的 session cookie（`page.request`），寫入帶 Origin（同 27-site-links）。
- * - `/echo` 回最後一則 user 訊息、第一個 `Original` 換成 `Rewritten`；內建動作的 user template 是 `{{text}}`，所以回的是選取的 markdown。
- *   E3、E4 都要走「預覽 → Apply」：E3 的錨點含圖片，`hasNonTextBlock` 擋下自動套用；E4 的錨點是並排列，裡面只有文字 block，不擋，
- *   Rewrite 是 direct 時會自動套用、沒有 Apply 鈕。所以 describe 的 beforeAll 以 admin API 把內建 Rewrite 設成 preview（04 的
- *   `setRewriteApplyMode` 同法），afterAll 還原成改之前讀到的值——不依賴 04 的 afterAll 有沒有改回、也不依賴新安裝的預設。
- * - provider 在 describe 的 beforeAll 自建並勾「Default model」（理由同 25-selection-ai-box：全套順序下別的 spec 留下的 provider 指向 `/slow`）。
- *   跑完後站台的預設 model 留在 `/echo` 這顆（同 04／10／25 的慣例：各 spec 自建 provider、勾自己的預設）。
+ * - Content is always pasted as markdown (plain-text clipboard -> `collab/paste.ts` takes over; same as `pasteMarkdown` in
+ *   34-columns).
+ * - e2e cannot import shared: the canonical literals (`COLUMNS_OPEN_TAG`, `columnOpenTag`) are written out again verbatim in this
+ *   file; change both together.
+ * - REST goes through the page's session cookie (`page.request`), and writes carry an Origin (as in 27-site-links).
+ * - `/echo` returns the last user message with the first `Original` replaced by `Rewritten`; the built-in action's user template
+ *   is `{{text}}`, so what comes back is the selected markdown.
+ *   E3 and E4 both go through "preview -> Apply": E3's anchor contains an image, so `hasNonTextBlock` blocks auto-apply; E4's
+ *   anchor is a side-by-side row with only text blocks, which does not block, so when Rewrite is direct it applies automatically
+ *   and there is no Apply button. So the describe's beforeAll sets the built-in Rewrite to preview through the admin API (same
+ *   method as `setRewriteApplyMode` in 04) and afterAll restores the value read before the change - it depends neither on 04's
+ *   afterAll having restored it nor on a fresh install's default.
+ * - The provider is created in the describe's beforeAll with "Default model" ticked (same reason as 25-selection-ai-box: in a
+ *   full run the provider other specs leave behind points at `/slow`).
+ *   After the run the site's default model stays on this `/echo` one (same convention as 04 / 10 / 25: each spec creates its
+ *   own provider and ticks its own default).
  */
 
 const RUN = Date.now();
@@ -25,7 +28,6 @@ const COL = '[data-node-type="column"]';
 const IMAGE = '[data-content-type="image"]';
 const COLUMNS_OPEN_TAG = '<div data-kb-columns style="display:flex;gap:16px">';
 const columnOpenTag = (width: string) => `<div data-kb-column style="flex:${width}">`;
-/** 1×1 RGBA PNG。 */
 const PNG_1X1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 const TABLE_120 = '<table><tr><th colwidth="120">h1</th><th>h2</th></tr><tr><td>c1</td><td>c2</td></tr></table>';
 
@@ -53,12 +55,10 @@ function figure(url: string, alt: string): string {
   return `<figure><img alt="${alt}" src="${url}" width="300"></figure>`;
 }
 
-/** `ROW2`：兩欄寬 1／1.5，右欄 H2「設備規格」＋段落「型號：x」；左欄內容由呼叫端給。 */
 function row2(left: string): string {
   return [COLUMNS_OPEN_TAG, columnOpenTag("1"), "", left, "", "</div>", columnOpenTag("1.5"), "", "## 設備規格", "", "型號：x", "", "</div>", "</div>"].join("\n");
 }
 
-/** 在筆記最後貼上 markdown（34-columns 的 pasteMarkdown）。 */
 async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
   await editorLocator(page).click();
@@ -68,7 +68,6 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.keyboard.press("ControlOrMeta+v");
 }
 
-/** 走 API 上傳一張 1×1 PNG 到這篇（同 22-presentation），回傳 `/api/uploads/…`。 */
 async function uploadPng(page: Page, noteId: string): Promise<string> {
   const res = await page.request.post(`/api/notes/${noteId}/uploads`, {
     headers: { Origin: ORIGIN },
@@ -88,14 +87,16 @@ async function postEdit(page: Page, noteId: string, data: Record<string, string>
   return page.request.post(`/api/notes/${noteId}/edits`, { headers: { Origin: ORIGIN }, data });
 }
 
-/** 主編輯器第一張表格第一欄的 `col` 寬（prosemirror-tables 的 TableView 把 colwidth 寫成 `style.width`）。 */
+/** Width of the first `col` in the main editor's first table (prosemirror-tables' TableView writes colwidth as `style.width`). */
 function firstColWidth(page: Page): Promise<string> {
   return editorLocator(page).locator("table colgroup col").first().evaluate((el) => (el as HTMLElement).style.width);
 }
 
 /**
- * E2／E3 共用：貼「一段開頭文字 ＋ 圖片寬 300 ＋ 第一欄寬 120 的表格 ＋ 一段文字」，等兩個尺寸都在編輯器裡（瀏覽器端 parse）。
- * 開頭文字讓 E3 的全選從文字起頭（Chromium 的 Ctrl+A 落成 TextSelection，見 25-selection-ai-box），圖片一定在選取內。
+ * Shared by E2 / E3: paste "a leading text + an image of width 300 + a table whose first column is 120 wide + a text", and wait
+ * until both sizes are in the editor (parsed in the browser).
+ * The leading text lets E3's select-all start at text (Ctrl+A in Chromium lands as a TextSelection, see 25-selection-ai-box), so
+ * the image is certainly inside the selection.
  */
 async function pasteSized(page: Page, noteId: string, paragraph: string): Promise<void> {
   const url = await uploadPng(page, noteId);
@@ -107,14 +108,13 @@ async function pasteSized(page: Page, noteId: string, paragraph: string): Promis
   await expect.poll(() => firstColWidth(page)).toBe("120px");
 }
 
-/** 圖片與表格所在 block 的 id（寫入或 AI 套用換掉 block 時 id 會變——用來證明它們真的被重寫過，不是原地沒動）。 */
+/** Block ids of the image and the table (the ids change when a write or an AI apply replaces the blocks - used to prove they really were rewritten, not left untouched). */
 async function sizedBlockIds(page: Page): Promise<Array<string | null>> {
   const editor = editorLocator(page);
   const idOf = (el: Element) => el.closest("[data-id]")?.getAttribute("data-id") ?? null;
   return [await editor.locator(IMAGE).first().evaluate(idOf), await editor.locator("table").first().evaluate(idOf)];
 }
 
-/** 圖片與表格都換成新 block（id 都不在 `before` 裡），且寬度 300、第一欄 120px 照舊。 */
 async function expectSizesKept(page: Page, before: Array<string | null>): Promise<void> {
   const editor = editorLocator(page);
   await expect.poll(async () => (await sizedBlockIds(page)).map((id) => id !== null && !before.includes(id))).toEqual([true, true]);
@@ -124,7 +124,7 @@ async function expectSizesKept(page: Page, before: Array<string | null>): Promis
   await expect.poll(() => firstColWidth(page)).toBe("120px");
 }
 
-test("E1：REST 讀出 div 形 → 原樣 replace_all 送回 201、列不變、再讀逐字相同 → 5 欄 400 unsupported_columns、筆記沒變", async ({ page }) => {
+test("E1: REST reads the div form -> replace_all writes it back unchanged with 201, the row is unchanged and a re-read is verbatim identical -> 5 columns get 400 unsupported_columns and the note is unchanged", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "E1");
   const noteId = await noteIdFromUrl(page);
@@ -136,7 +136,7 @@ test("E1：REST 讀出 div 形 → 原樣 replace_all 送回 201、列不變、�
   await expect(rows.first().locator(COL)).toHaveCount(2);
   await expect(editor.getByText("after", { exact: true })).toBeVisible();
 
-  // 貼上經共編送到 server 有時間差：讀到含「after」與圖片寬度才算 server 看到了
+  // The paste reaches the server through collab with a delay: it counts as seen by the server once the read contains "after" and the image width
   let original!: Content;
   await expect(async () => {
     original = await readContent(page, noteId);
@@ -148,7 +148,7 @@ test("E1：REST 讀出 div 形 → 原樣 replace_all 送回 201、列不變、�
   expect(lines.filter((l) => l.startsWith("<div data-kb-column "))).toEqual([columnOpenTag("1"), columnOpenTag("1.5")]);
   expect(original.markdown).toContain(figure(url, "A 點"));
 
-  // 原樣寫回：201；replace_all 換掉每個 block 的 id，等列的 data-id 換掉＝頁面收到這次寫入，再看列與兩欄內容
+  // Write back unchanged: 201; replace_all replaces every block's id, so wait until the row's data-id changes = the page received this write, then check the row and both columns' content
   const rowIdBefore = await rows.first().getAttribute("data-id");
   expect(rowIdBefore).toBeTruthy();
   const same = await postEdit(page, noteId, { op: "replace_all", markdown: original.markdown, if_match: original.fingerprint });
@@ -164,9 +164,8 @@ test("E1：REST 讀出 div 形 → 原樣 replace_all 送回 201、列不變、�
   const reread = await readContent(page, noteId);
   expect(reread.markdown).toBe(original.markdown);
 
-  // 5 欄：400 unsupported_columns，再讀逐字相同
   const fiveCols = [COLUMNS_OPEN_TAG, ...["k1", "k2", "k3", "k4", "k5"].flatMap((t) => [columnOpenTag("1"), "", t, "", "</div>"]), "</div>", ""].join("\n");
-  // 指紋比對在剖析之前：讀與送之間若有別的更新進來會回 409——只在 409 時重讀指紋再送，最後一發必須是 400 unsupported_columns
+  // The fingerprint comparison happens before parsing: if another update arrives between the read and the send it answers 409 - re-read the fingerprint and resend only on 409; the last request must be 400 unsupported_columns
   let status = 0;
   let body = "";
   await expect(async () => {
@@ -185,7 +184,7 @@ test("E1：REST 讀出 div 形 → 原樣 replace_all 送回 201、列不變、�
   expectNoPageErrors(errors);
 });
 
-test("E2（#305）：貼 figure 寬 300 與第一欄寬 120 的表格 → REST 讀 _top、old 換 new、replace_section → 文字變、寬度與欄寬不變", async ({ page }) => {
+test("E2 (#305): paste a figure with width 300 and a table with first column 120 -> REST reads _top, old -> new, replace_section -> text changes, width and column width stay", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "E2");
   const noteId = await noteIdFromUrl(page);
@@ -218,10 +217,9 @@ test("E2（#305）：貼 figure 寬 300 與第一欄寬 120 的表格 → REST �
 });
 
 type ApplyMode = "direct" | "preview";
-/** beforeAll 改 Rewrite 之前讀到的 applyMode；afterAll 還原成它。 */
 let originalRewriteMode: ApplyMode | undefined;
 
-/** 04 的 `setRewriteApplyMode` 同法（那支沒 export）：以 admin API 改內建 Rewrite 的 applyMode；第一次呼叫時記下原值。 */
+/** Same method as `setRewriteApplyMode` in 04 (that one is not exported): changes the built-in Rewrite's applyMode through the admin API; the first call records the original value. */
 async function setRewriteApplyMode(page: Page, applyMode: ApplyMode): Promise<void> {
   const listed = await page.request.get("/api/admin/ai/actions");
   expect(listed.status()).toBe(200);
@@ -233,9 +231,9 @@ async function setRewriteApplyMode(page: Page, applyMode: ApplyMode): Promise<vo
   expect(res.status()).toBe(200);
 }
 
-test.describe("站內 AI（ai-stub /echo）", () => {
+test.describe("in-app AI (ai-stub /echo)", () => {
   test.afterAll(async ({ browser }) => {
-    if (originalRewriteMode === undefined) return; // beforeAll 沒走到改值那步
+    if (originalRewriteMode === undefined) return;
     const context = await browser.newContext();
     try {
       const page = await context.newPage();
@@ -270,13 +268,12 @@ test.describe("站內 AI（ai-stub /echo）", () => {
       await expect(modelDialog).not.toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page).toHaveURL(/\/$/);
-      await setRewriteApplyMode(page, "preview"); // E4 的錨點沒有非文字 block，direct 會自動套用（見檔頭）
+      await setRewriteApplyMode(page, "preview"); // E4's anchor has no non-text block, so direct would auto-apply (see the header)
     } finally {
       await context.close();
     }
   });
 
-  /** 框裡按 Rewrite → 等預覽出現 `expected` → Apply → 框關。 */
   async function rewriteAndApply(box: Locator, expected: string): Promise<void> {
     await box.getByRole("button", { name: "Rewrite", exact: true }).click();
     await expect(box.getByTestId("selection-ai-preview")).toContainText(expected, { timeout: 15_000 });
@@ -286,7 +283,7 @@ test.describe("站內 AI（ai-stub /echo）", () => {
     await expect(box).toBeHidden();
   }
 
-  test("E3（站內 AI 半）：圖片寬 300＋第一欄寬 120 的表格＋「Original words」→ 全選 → Rewrite → 套用 → 「Rewritten words」、寬度與欄寬不變", async ({ page }) => {
+  test("E3 (in-app AI half): image width 300 + table with first column 120 + \"Original words\" -> select all -> Rewrite -> apply -> \"Rewritten words\", width and column width unchanged", async ({ page }) => {
     test.setTimeout(120_000);
     const errors = await startNote(page, "E3");
     const noteId = await noteIdFromUrl(page);
@@ -308,7 +305,7 @@ test.describe("站內 AI（ai-stub /echo）", () => {
     expectNoPageErrors(errors);
   });
 
-  test("E4：從左欄文字拖選到右欄文字 → 工具列有 AI 鈕 → Rewrite → 套用 → 仍一列兩欄、左欄「Rewritten left」", async ({ page }) => {
+  test("E4: drag-select from left column text to right column text -> the toolbar has an AI button -> Rewrite -> apply -> still one row with two columns, left column \"Rewritten left\"", async ({ page }) => {
     test.setTimeout(120_000);
     const errors = await startNote(page, "E4");
     const editor = editorLocator(page);
@@ -321,7 +318,6 @@ test.describe("站內 AI（ai-stub /echo）", () => {
     const rowIdBefore = await rows.first().getAttribute("data-id");
     expect(rowIdBefore).toBeTruthy();
 
-    // 滑鼠從左欄文字開頭拖到右欄段落結尾（跨欄的 TextSelection）
     const from = (await editor.getByText("Original left", { exact: true }).boundingBox())!;
     const to = (await editor.getByText("型號：x", { exact: true }).boundingBox())!;
     await page.mouse.move(from.x + 2, from.y + from.height / 2);
@@ -335,7 +331,6 @@ test.describe("站內 AI（ai-stub /echo）", () => {
     await expect(box).toBeVisible();
     await rewriteAndApply(box, "Rewritten left");
 
-    // 整列被 AI 結果換掉（錨點擴大成整列）：新列、仍只有一列（沒有巢狀列）、兩欄
     await expect.poll(() => rows.first().getAttribute("data-id")).not.toBe(rowIdBefore);
     await expect(rows).toHaveCount(1);
     await expect(cols).toHaveCount(2);

@@ -2,16 +2,21 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs, waitForEditorSelection } from "./helpers.js";
 
 /**
- * code block 的語言下拉搬進方塊內右上角，平常隱形。觸控沒有 hover，叫出它的路是「點進程式碼」
- * （`apps/web/src/collab/code-block-caret.ts` 掛 `data-caret-inside` → `index.css` 讓下拉現身）。
- * 單元測試守得到屬性有沒有掛、CSS 規則在不在；這裡守**只有真瀏覽器才有**的三件事：
- * (a) 隱形時 `pointer-events:none` 真的讓點擊穿過（hit-test），點那一角不會被看不見的下拉吃掉；
- * (b) 點進程式碼後下拉真的現身、且點得到——**不靠 hover**：Chromium 的觸控模擬點擊本身也會把 `:hover`
- *     掛到被點的元素上，所以斷言前先把滑鼠位置移開並確認 block 沒有 `:hover`，現身只能來自 caret 那條；
- * (c) 點下拉時焦點從編輯器交給 select：編輯器 blur → caret 屬性拿掉，清單展開後焦點又移進 option，
- *     下拉本體必須靠 `select:open`（`index.css` 的 `@supports (appearance: base-select)` 裡）繼續現身、
- *     繼續吃得到點擊，不能在交接時退回 `pointer-events:none`；最後在展開的清單裡點一個語言，確認真的改得到。
- *     （這段只在支援 base-select 的瀏覽器成立；Playwright 的 Chromium 支援。）
+ * The code block's language dropdown lives in the top-right corner of the block and is invisible normally. Touch has no hover,
+ * so the way to bring it up is "tap into the code" (`apps/web/src/collab/code-block-caret.ts` sets `data-caret-inside` and
+ * `index.css` makes the dropdown appear).
+ * Unit tests guard that the attribute is set and the CSS rule exists; this guards three things that exist only in a real browser:
+ * (a) while invisible, `pointer-events:none` really lets the tap through (hit-test): tapping that corner is not swallowed by
+ *     the unseen dropdown;
+ * (b) after tapping into the code the dropdown really appears and is tappable, **not via hover**: Chromium's touch-emulated tap
+ *     also puts `:hover` on the tapped element, so before asserting, the mouse position is moved away and the block is
+ *     confirmed not to be `:hover`, so appearing can only come from the caret path;
+ * (c) when tapping the dropdown focus passes from the editor to the select: the editor blurs -> the caret attribute is
+ *     removed, and after the list opens focus moves into an option, so the dropdown itself must stay visible through
+ *     `select:open` (in the `@supports (appearance: base-select)` block of `index.css`) and keep receiving taps, and must not
+ *     fall back to `pointer-events:none` during the handover; finally a language is tapped in the open list to confirm it can
+ *     really be changed.
+ *     (This part holds only in browsers that support base-select; Playwright's Chromium does.)
  */
 
 const codeBlock = (page: Page) => page.locator('[data-testid="note-editor"] [data-content-type="codeBlock"]');
@@ -27,7 +32,6 @@ async function tap(page: Page, locator: Locator): Promise<void> {
   await page.touchscreen.tap(at.x, at.y);
 }
 
-/** 下拉的計算樣式與「它中心點的 hit-test 是不是它自己」。 */
 function selectState(page: Page) {
   return codeBlock(page)
     .locator("select")
@@ -39,7 +43,7 @@ function selectState(page: Page) {
     });
 }
 
-test("30 觸控：語言下拉隱形時不吃點擊；點進程式碼就現身、點得到；點它時焦點交接不讓它縮回去", async ({ browser }) => {
+test("30 touch: the language dropdown does not take taps when invisible; tapping into the code shows it and it is tappable; the focus handover on tapping it does not make it retract", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ hasTouch: true });
   try {
@@ -52,23 +56,22 @@ test("30 觸控：語言下拉隱形時不吃點擊；點進程式碼就現身�
     await editor.pressSequentially("intro");
     await waitForEditorSelection(page);
     await page.keyboard.press("Enter");
-    // ``` 圍欄 input rule（同 08-code-highlight）。
     await editor.pressSequentially("```ts ");
     await expect(codeBlock(page)).toHaveCount(1);
     await editor.pressSequentially("const answer = 42;");
     const select = codeBlock(page).locator("select");
     await expect(select).toHaveValue("typescript");
 
-    // (a) 游標移出程式碼（點上面那段）、滑鼠也不在 block 上 ⇒ 隱形，且中心點的點擊穿過它。
     await tap(page, editor.getByText("intro", { exact: true }));
     await page.mouse.move(1, 1);
     await expect.poll(() => codeBlock(page).evaluate((el) => el.matches(":hover"))).toBe(false);
     await expect.poll(async () => (await selectState(page)).opacity).toBe("0");
+    // (a) With the caret outside the code and the mouse not on the block, the dropdown is invisible and a tap at its centre passes through it.
     const hidden = await selectState(page);
     expect(hidden.pointerEvents, "隱形時要 pointer-events:none").toBe("none");
     expect(hidden.hitIsSelect, `隱形的下拉不得吃掉那一角的點擊（命中 ${hidden.hit}）`).toBe(false);
 
-    // (b) 點進程式碼（第一行左段，離右上角的下拉很遠）⇒ 現身且點得到；hover 先移開，證明不是 :hover 撐的。
+    // (b) Tap into the code (the first line's left part, far from the dropdown at the top right) => it appears and is tappable; hover is moved away first, to prove it is not held up by :hover.
     const code = codeBlock(page).locator("code");
     const codeBox = await code.boundingBox();
     if (!codeBox) throw new Error("code 沒有 bounding box");
@@ -82,19 +85,19 @@ test("30 觸控：語言下拉隱形時不吃點擊；點進程式碼就現身�
     expect(shown.pointerEvents, "現身時要點得到").toBe("auto");
     expect(shown.hitIsSelect, `現身的下拉中心點要命中它自己（命中 ${shown.hit}）`).toBe(true);
 
-    // (c) 點下拉：清單展開、焦點交給它（base-select 會再移進被選中的 option），編輯器 blur ⇒ caret 屬性拿掉。
-    //     手指一離開 block，下拉本體要靠 `select:open` 留著、仍點得到（`:focus` 撐不住：焦點在 option 上）。
+    // (c) Tap the dropdown: the list opens and focus goes to it (base-select then moves it into the selected option), the editor blurs => the caret attribute is removed.
+    //     Once the finger leaves the block, the dropdown itself must stay through `select:open` and remain tappable (`:focus` cannot hold it: focus is on the option).
     await tap(page, select);
     await expect.poll(() => select.evaluate((el) => el.contains(document.activeElement))).toBe(true);
     await expect(codeBlock(page)).not.toHaveAttribute("data-caret-inside");
     await page.mouse.move(1, 1);
     await expect.poll(() => codeBlock(page).evaluate((el) => el.matches(":hover"))).toBe(false);
-    await page.waitForTimeout(300); // 等過 0.15s 的 opacity transition：要縮回去的話這時已經縮了
+    await page.waitForTimeout(300); // wait out the 0.15s opacity transition: if it were going to retract, it would have by now
     const handedOver = await selectState(page);
     expect(handedOver.opacity, "清單開著時下拉本體不得淡出").toBe("1");
     expect(handedOver.pointerEvents, "焦點交接後不得縮回 pointer-events:none").toBe("auto");
 
-    // 在展開的清單裡點 Python（headless Chromium 的 base-select 清單是真 DOM，tap 得到）。
+    // In headless Chromium the base-select list is real DOM, so the option can be tapped.
     const python = select.locator('option[value="python"]');
     await expect(python).toBeInViewport();
     await tap(page, python);

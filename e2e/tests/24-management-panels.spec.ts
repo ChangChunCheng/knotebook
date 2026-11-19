@@ -3,11 +3,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { ADMIN, createNote, loginAs, openGroupPanel, openSiteAdmin, showSidebarTab } from "./helpers.js";
 
 /**
- * #247：三個管理面板（個人設定、群組、站台管理）的外殼在真瀏覽器裡的行為——
- * 1440×900 三面板截圖、390×844 雙層（開啟即內容層、返回到項次層）與兩條焦點時序（useLayoutEffect，jsdom 測不到）、
- * 開啟焦點落點（寬在 ✕、窄在返回鈕）、內容層 `getByRole("dialog", { name })`（左卡 hidden 時標題仍是
- * aria-labelledby 直接引用的節點）、Esc 回背景頁、舊網址轉址、全站 outline hover 填色三處。
- * 目視用截圖：設了 `PANELS_SCREENSHOT_DIR` 才截，未設就略過；本檔不寫任何絕對路徑。
+ * The two focus-timing cases use useLayoutEffect, which jsdom cannot see. The content level's `getByRole("dialog", { name })`
+ * works because, while the left card is hidden, the title is still the node referenced directly by aria-labelledby.
+ * Screenshots for visual inspection: taken only when `PANELS_SCREENSHOT_DIR` is set, otherwise skipped; this file writes no
+ * absolute path.
  */
 const shotDir = process.env.PANELS_SCREENSHOT_DIR;
 async function shot(page: Page, name: string): Promise<void> {
@@ -24,9 +23,11 @@ async function createGroup(page: Page, name: string): Promise<void> {
 }
 
 /**
- * 外框 outline 鈕 hover 要填色：hover 後背景要「等於」`--brand-deep` 的實際色（`button.tsx` outline 變體的
- * `hover:bg-brand-deep`）。只斷「不是透明」不夠：`transition-colors` 的第一個中間影格就會過關（截圖會截到半途），
- * 呼叫端若另加了底色（at rest 就不透明）也會過關——兩者都讓斷言失去鑑別力。期望色在頁內用暫時元素解析 CSS 變數得到。
+ * An outline button's hover must fill: after hover the background must **equal** the actual colour of `--brand-deep` (the
+ * `hover:bg-brand-deep` of the outline variant in `button.tsx`). "Not transparent" is not enough: the first intermediate frame
+ * of `transition-colors` would pass (a screenshot would catch it midway), and so would a caller adding its own background
+ * (opaque at rest) - both remove the assertion's discriminating power. The expected colour is obtained in the page by
+ * resolving the CSS variable on a temporary element.
  */
 async function expectOutlineHoverFilled(page: Page, scope: ReturnType<Page["locator"]>, name: string): Promise<void> {
   const button = scope.getByRole("button", { name, exact: true });
@@ -43,7 +44,7 @@ async function expectOutlineHoverFilled(page: Page, scope: ReturnType<Page["loca
   await expect.poll(async () => button.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(brandDeep);
 }
 
-/** 元素的框整個落在視窗內（不只是「部分可見」）。用框量、不用 `toBeInViewport()`：後者有一點交集就過關。 */
+/** The element's whole box is inside the viewport (not just "partly visible"). Uses the box rather than `toBeInViewport()`, which passes with any intersection. */
 async function expectInViewport(page: Page, locator: ReturnType<Page["locator"]>): Promise<void> {
   await expect(locator).toBeVisible();
   const box = await locator.boundingBox();
@@ -55,8 +56,8 @@ async function expectInViewport(page: Page, locator: ReturnType<Page["locator"]>
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
 }
 
-test.describe.serial("24 管理面板（#247）", () => {
-  test("24-1 1440×900：三個面板各開一次（標題、左卡項次 aria-current；個人設定另驗開啟焦點在 ✕）→ Esc 回背景頁", async ({ browser }) => {
+test.describe.serial("24 management panels (#247)", () => {
+  test("24-1 1440x900: open each of the three panels once (title, left-card item aria-current; personal settings also checks focus lands on the close button on open) -> Esc returns to the background page", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
       const page = await context.newPage();
@@ -65,20 +66,18 @@ test.describe.serial("24 管理面板（#247）", () => {
       const groupName = `E2E Panels ${Date.now()}`;
       await createGroup(page, groupName);
 
-      // 個人設定
       await page.getByRole("button", { name: "admin", exact: true }).click();
       await page.getByRole("menuitem", { name: "Settings" }).click();
       const settings = page.getByRole("dialog", { name: "Settings" });
       await expect(settings.getByRole("navigation", { name: "Settings" }).getByRole("link", { name: "Account info" })).toHaveAttribute("aria-current", "page");
       await expect(settings.getByRole("button", { name: "Close" })).toBeFocused();
-      // 截圖前等右卡 lazy 區塊真的畫出來（否則截到「Loading…」）。
+      // Before the screenshot wait for the right card's lazy block to really draw (otherwise it captures "Loading...").
       await expect(settings.getByRole("heading", { level: 1 })).toBeVisible();
       await shot(page, "24-settings-1440.png");
       await page.keyboard.press("Escape");
       await expect(page).toHaveURL(/\/$/);
       await expect(settings).toHaveCount(0);
 
-      // 群組
       await openGroupPanel(page, groupName);
       const group = page.getByRole("dialog", { name: groupName });
       await expect(group.getByRole("navigation", { name: groupName }).getByRole("link", { name: "Members" })).toHaveAttribute("aria-current", "page");
@@ -87,12 +86,11 @@ test.describe.serial("24 管理面板（#247）", () => {
       await page.keyboard.press("Escape");
       await expect(page).toHaveURL(/\/$/);
 
-      // 站台管理
       const admin = await openSiteAdmin(page);
       await expect(admin.getByRole("navigation", { name: "Site admin" }).getByRole("link", { name: "Users" })).toHaveAttribute("aria-current", "page");
       await expect(admin.getByRole("heading", { level: 1, name: "User management" })).toBeVisible();
-      // #267：「最後活動」欄——管理員自己剛才的 session 請求就是活動，那列顯示 Online。
-      // 依表名／列名（＝email）／格名查詢，不依欄序號。
+      // #267: the "Last active" column - the admin's own session request just now counts as activity, so that row shows Online.
+      // Query by table name / row name (= email) / cell name, not by column index.
       const usersTable = admin.getByRole("table", { name: "Users", exact: true });
       await expect(usersTable.getByRole("columnheader", { name: "Last active", exact: true })).toHaveCount(1);
       await expect(usersTable.getByRole("row", { name: ADMIN.email, exact: true }).getByRole("cell", { name: "Online", exact: true })).toBeVisible();
@@ -104,7 +102,7 @@ test.describe.serial("24 管理面板（#247）", () => {
     }
   });
 
-  test("24-2 390×844：開啟即內容層（dialog 可及名稱仍在、焦點在返回鈕）→ 返回到項次層（焦點在 aria-current 項次）→ 再點該項次回內容層（焦點在內容容器）", async ({ browser }) => {
+  test("24-2 390x844: opening lands on the content level (dialog accessible name present, focus on the back button) -> back goes to the item level (focus on the aria-current item) -> clicking that item returns to the content level (focus on the content container)", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     try {
       const page = await context.newPage();
@@ -118,11 +116,10 @@ test.describe.serial("24 管理面板（#247）", () => {
       await expect(back).toBeFocused();
       await expect(dialog.getByRole("navigation", { name: "Site admin" })).toBeHidden();
       await expect(dialog.getByRole("heading", { level: 1, name: "User management" })).toBeVisible();
-      // 窄視窗內容層：使用者表比 390 寬，曾把右卡推出視窗右緣——左上角的返回鈕要整顆在視窗內。手機的 sheet 沒有 ✕（返回堆疊）。
+      // Narrow content level: the users table is wider than 390 and once pushed the right card past the viewport's right edge - the back button at the top left must be entirely inside the viewport. A phone sheet has no close button (back stack).
       await expect(dialog.getByText(ADMIN.email, { exact: true })).toBeVisible();
       await expectInViewport(page, back);
       await expect(dialog.getByRole("button", { name: "Close" })).toHaveCount(0);
-      // 手機上表格是卡片：不橫捲（各列控制項的位置由 26 逐列量）。
       const region = dialog.getByRole("region", { name: "Users", exact: true });
       expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       await shot(page, "24-admin-390-content.png");
@@ -144,7 +141,7 @@ test.describe.serial("24 管理面板（#247）", () => {
     }
   });
 
-  test("24-3 舊網址轉址：/settings/groups/<id> → /groups/<id>；/settings/users → /admin/users；/admin、/admin/auth、/admin/versions → 站台 modal 對應項次", async ({ browser }) => {
+  test("24-3 old URL redirects: /settings/groups/<id> -> /groups/<id>; /settings/users -> /admin/users; /admin, /admin/auth, /admin/versions -> the matching item of the site modal", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
       const page = await context.newPage();
@@ -177,7 +174,7 @@ test.describe.serial("24 管理面板（#247）", () => {
     }
   });
 
-  test("24-4 全站 outline hover 填色（三處截圖）：分享面板、改密碼頁、刪除群組確認框的取消鈕", async ({ browser }) => {
+  test("24-4 site-wide outline hover fill (three places, screenshots): the share panel, the change-password page, the cancel button of the delete-group confirmation", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
       const page = await context.newPage();
@@ -186,7 +183,6 @@ test.describe.serial("24 管理面板（#247）", () => {
       const groupName = `E2E Outline ${Date.now()}`;
       await createGroup(page, groupName);
 
-      // 1. 刪除群組確認框的 Cancel（outline）
       await page.getByRole("complementary").getByRole("button", { name: `Group actions for ${groupName}` }).click();
       await page.getByRole("menuitem", { name: "Delete group" }).click();
       const del = page.getByRole("dialog", { name: "Delete group?" });
@@ -194,8 +190,9 @@ test.describe.serial("24 管理面板（#247）", () => {
       await shot(page, "24-outline-delete-cancel.png");
       await del.getByRole("button", { name: "Cancel", exact: true }).click();
 
-      // 2. 分享面板：群組筆記的分享面板沒有 outline 鈕（只有說明、連結與公開連結 switch）——改在個人筆記的分享面板，
-      //    選「Members only」後出現的加人表單送出鈕「Add」（`ShareDialog.tsx:181`，variant outline）做 hover 斷言。
+      // 2. Share panel: a group note's share panel has no outline button (only the explanation, link and the public link switch),
+      //    so use a personal note's share panel and hover-assert the add-member form's submit button "Add" (variant outline,
+      //    `ShareDialog.tsx`) that appears after choosing "Members only".
       await createNote(page, `E2E Outline note ${Date.now()}`);
       await page.getByRole("button", { name: "Share", exact: true }).click();
       const share = page.getByRole("dialog", { name: "Share note" });
@@ -205,23 +202,23 @@ test.describe.serial("24 管理面板（#247）", () => {
       await shot(page, "24-outline-share.png");
       await page.keyboard.press("Escape");
 
-      // 3. 改密碼頁（整頁，`tone="page"`）：只有 brandSolid 送出鈕、沒有 outline 鈕——只截圖，不做 hover 斷言。
       await page.goto("/change-password");
-      // 截圖前等頁面真的畫出來（lazy chunk）：未旗標的帳號也能直接開這頁（路由不擋）。
+      // Wait for the page to really draw (lazy chunk) before the screenshot: an unflagged account can also open this page directly (the route does not block).
       await expect(page.getByRole("button", { name: "Change password", exact: true })).toBeVisible();
+      // This page has only a brandSolid submit button and no outline button, so it is screenshot only (no hover assertion).
       await shot(page, "24-outline-change-password.png");
     } finally {
       await context.close();
     }
   });
 
-  test("24-5 1280×720：右卡內容長過面板時在右卡內捲動，托盤不撐出面板、✕ 留在視窗內（panel 的 grid 軌道 minmax(0,1fr)）", async ({ browser }) => {
+  test("24-5 1280x720: when the right card's content is longer than the panel it scrolls inside the right card, the tray does not push out of the panel and the close button stays in the viewport (the panel's grid track is minmax(0,1fr))", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     try {
       const page = await context.newPage();
       await loginAs(page, ADMIN.email, ADMIN.password);
       await expect(page).toHaveURL(/\/$/);
-      // 「Authorization」頁有 API token 區＋MCP 接法三步，空帳號也比 720 高的面板長，不必另外灌資料。
+      // The "Authorization" page has an API token section plus a three-step MCP setup, which is taller than the 720 panel even for an empty account, so no extra data is needed.
       await page.goto("/settings/authorization");
       const dialog = page.getByRole("dialog", { name: "Settings" });
       await expect(dialog.getByRole("heading", { level: 1, name: "Authorization" })).toBeVisible();
@@ -232,8 +229,8 @@ test.describe.serial("24 管理面板（#247）", () => {
           message: "右卡內容區要自己捲動（scrollHeight > clientHeight）；軌道被內容撐大時兩者相等、整塊溢出視窗",
         })
         .toBeGreaterThan(0);
-      // 托盤（內容區的祖父）不得超出 DialogContent（role=dialog 本身）的框。
       const overflow = await content.evaluate((el) => {
+        // The tray is the content area's grandparent.
         const tray = el.parentElement!.parentElement!.getBoundingClientRect();
         const box = el.closest('[role="dialog"]')!.getBoundingClientRect();
         return Math.max(box.left - tray.left, box.top - tray.top, tray.right - box.right, tray.bottom - box.bottom);

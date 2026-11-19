@@ -6,13 +6,14 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, editorLocator, loginAs, setAutoWait, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 量測（不是功能斷言）：舊筆記第一下按鍵／開了就關是否多切一版；2000 區塊在真瀏覽器的預覽耗時。
- * 數字印成 `MEASURE-…` 行，寫進文件。期望（不多切）是產品要求——成立就留著當守衛；
- * 不成立就是發現，停下回報。
+ * Measurement (not a functional assertion): whether the first keystroke / opening and closing on an old note cuts an extra
+ * version; how long a 2000-block preview takes in a real browser.
+ * Numbers are printed as `MEASURE-...` lines. The expectation (no extra version) is a product requirement: if it holds this
+ * stays as a guard; if it does not, that is a finding to report.
  */
 const COMPOSE = ["compose", "-p", process.env.E2E_PROJECT || "knotebook-e2e", "-f", "../docker-compose.yml", "-f", "../docker-compose.e2e.yml"];
 const ORIGIN = E2E_ORIGIN;
-/** 40×40 灰色 PNG（1×1 在編輯器裡點不到）。 */
+/** 40x40 grey PNG (a 1x1 cannot be clicked in the editor). */
 const PNG_40 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAIAAAADnC86AAAAK0lEQVR4nO3NMQ0AAAwDoMqv7JpYsgcMkD6JWCwWi8VisVgsFovFYrFYfGcPqfaI6W3y9QAAAABJRU5ErkJggg==",
   "base64",
@@ -26,8 +27,9 @@ async function versionCount(request: APIRequestContext, id: string): Promise<num
 }
 
 /**
- * #272：等那篇的版本數穩定——離開後落盤（debounce 2 s）寫待切、停手 X（測試縫 2 s）後掃描器（e2e 疊每秒一輪）切；
- * 連續 6 秒不變才算穩定（X 2＋掃描 1＋落盤 2＋餘裕）。
+ * #272: wait for that note's version count to settle - after leaving, persistence (debounce 2 s) marks it pending, and after
+ * the idle wait X (test hook, 2 s) the scanner (one pass per second on the e2e stack) cuts it; settled = unchanged for 6
+ * consecutive seconds (X 2 + scan 1 + persist 2 + margin).
  */
 async function settledCount(request: APIRequestContext, id: string): Promise<number> {
   let last = -1;
@@ -44,7 +46,7 @@ async function settledCount(request: APIRequestContext, id: string): Promise<num
   throw new Error(`settledCount: 版本數 30 秒內沒有穩定（最後一次 ${last}）`);
 }
 
-// #272：23a 用測試縫把等待 X 壓成 2 秒；每一案結束一律設回站台設定（失敗中途也一樣——設定是整座疊共用的）。
+// #272: 23a uses a test hook to shrink the wait X to 2 seconds; after every case always set it back to the site setting (also when it failed midway - the setting is shared by the whole stack).
 test.afterEach(async ({ page }) => {
   await setAutoWait(page, null).catch(() => undefined);
 });
@@ -55,15 +57,13 @@ async function openAndWait(page: Page, path: string) {
   await editorLocator(page).waitFor({ timeout: 15_000 });
 }
 
-test("23a：舊 schema 形的筆記——開了就關、在 heading／paragraph／清單項各打一字再刪、圖片 caption 改了再清空，各多切幾版", async ({ page }) => {
-  // 四輪 roundTrip（加開了就關一輪）各含載入／離開與 settle 等待（#272 起穩定窗 6 s），留餘裕。
+test("23a: old-schema note - open and close, type and delete one character in each of heading / paragraph / list item, change an image caption and clear it: how many extra versions each cuts", async ({ page }) => {
   test.setTimeout(240_000);
   await loginAs(page, ADMIN.email, ADMIN.password);
   await setAutoWait(page, 2);
   const created = await page.request.post("/api/notes", { data: { title: `E2E legacy ${Date.now()}` } });
   expect(created.ok()).toBe(true);
   const note = (await created.json()) as { id: string; ownerHandle: string; slug: string };
-  // 圖：走 API 真上傳（同 22-presentation），url 交給 seed 寫進 image 區塊。
   const upload = await page.request.post(`/api/notes/${note.id}/uploads`, {
     headers: { Origin: ORIGIN },
     multipart: { file: { name: "legacy.png", mimeType: "image/png", buffer: PNG_40 } },
@@ -79,17 +79,17 @@ test("23a：舊 schema 形的筆記——開了就關、在 heading／paragraph�
   await openAndWait(page, path);
   await expect(editorLocator(page)).toContainText("Legacy paragraph");
   await expect(editorLocator(page).locator(`img[src*="${imageUrl}"]`)).toBeVisible({ timeout: 15_000 });
-  // 等 WS 把更新送到 server 再離開（沒有可等待的訊號，只能固定等）。
+  // Wait for the WS to deliver the update to the server before leaving (there is no signal to wait on, so a fixed wait).
   await page.waitForTimeout(3_000);
   await page.goto("/");
   const openClose = await settledCount(page.request, note.id);
 
-  /** 開那篇 → 做一件「做完等於沒做」的事 → 離開，回傳這一輪多切的版本數。 */
   let before = openClose;
+  /** Opens the note, does something that nets out to no change, leaves, and returns how many extra versions that round cut. */
   async function roundTrip(act: () => Promise<void>): Promise<number> {
     await openAndWait(page, path);
     await act();
-    // 等 WS 把更新送到 server 再離開（沒有可等待的訊號，只能固定等）。
+    // Wait for the WS to deliver the update to the server before leaving (there is no signal to wait on, so a fixed wait).
     await page.waitForTimeout(3_000);
     await page.goto("/");
     const after = await settledCount(page.request, note.id);
@@ -100,14 +100,13 @@ test("23a：舊 schema 形的筆記——開了就關、在 heading／paragraph�
   const typeAndDelete = (text: string) => async () => {
     await editorLocator(page).getByText(text).click();
     await page.keyboard.press("End");
-    await waitForEditorSelection(page); // click→End 後等 PM 讀回選取（helpers 註解）；三種 block 都是純文字段尾
+    await waitForEditorSelection(page);
     await page.keyboard.type("x");
     await page.keyboard.press("Backspace");
   };
   const heading = await roundTrip(typeAndDelete("Legacy heading"));
   const paragraph = await roundTrip(typeAndDelete("Legacy paragraph"));
   const numbered = await roundTrip(typeAndDelete("Legacy numbered"));
-  // 圖片沒有文字可打：點選圖片 → formatting toolbar 的「Edit caption」改成 x → 再開一次清空，最後 caption 回到預設 ""。
   const image = await roundTrip(async () => {
     const editCaption = async (value: string) => {
       await editorLocator(page).locator(`img[src*="${imageUrl}"]`).click();
@@ -130,7 +129,7 @@ test("23a：舊 schema 形的筆記——開了就關、在 heading／paragraph�
   expect(typeDelete).toBe(0);
 });
 
-test("23b：2000 區塊筆記，點版本列到 diff 標記出現的耗時（真瀏覽器）", async ({ page }) => {
+test("23b: 2000-block note, time from clicking a version row to the diff marks appearing (real browser)", async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1500, height: 900 });
   await loginAs(page, ADMIN.email, ADMIN.password);
@@ -138,7 +137,7 @@ test("23b：2000 區塊筆記，點版本列到 diff 標記出現的耗時（真
   const created = await page.request.post("/api/notes", { data: { title: `E2E 2000 ${Date.now()}`, content } });
   expect(created.ok()).toBe(true);
   const note = (await created.json()) as { id: string; ownerHandle: string; slug: string };
-  // #272：帶 content 建立不再立刻切出 v1——先手動存一版「created」，作為「建立時的內容」那一版。
+  // #272: creating with content no longer cuts v1 right away - first save one version "created" manually, as the version of "the content at creation".
   const saved = await page.request.post(`/api/notes/${note.id}/versions`, { headers: { Origin: ORIGIN }, data: { name: "created" } });
   expect(saved.status()).toBe(201);
   await openAndWait(page, `/n/${note.ownerHandle}/${note.slug}`);
@@ -150,14 +149,16 @@ test("23b：2000 區塊筆記，點版本列到 diff 標記出現的耗時（真
   await expect(dialog).not.toBeVisible();
   await page.getByTestId("versions-bubble").click();
   const panel = page.getByTestId("versions-panel");
-  // 點 created 而不是剛存的那一版：比較是左右一對，點列只換左邊、右邊預設是目前狀態（Current state）。剛存的那一版
-  // 內容與目前狀態相同，兩邊沒有差異；created（建立時的內容）與目前狀態差在第 0 段。
+  // Click created, not the version just saved: the comparison is a left/right pair, clicking a row changes only the left, and the
+  // right defaults to the current state. The version just saved has the same content as the current state, so there is no
+  // difference; created (the content at creation) differs from the current state in paragraph 0.
   const row = panel.getByRole("button", { name: /^created \(/ });
   await expect(row).toBeVisible({ timeout: 15_000 });
   const t0 = Date.now();
   await row.click();
-  // 看並排（diff-split）而不是單欄：1500 px 視窗開著面板時預覽區約 810 px，≥ 720 px 門檻就自動並排，DOM 上沒有 diff-single。
-  // 等並排欄內第一個非 context 的 data-diff 標記可見（並排兩側各自標記，不一定是 "changed"）。
+  // Look at side-by-side (diff-split), not single column: with the panel open in a 1500 px window the preview area is about 810 px,
+  // past the 720 px threshold, so it goes side by side automatically and the DOM has no diff-single.
+  // Wait for the first non-context data-diff mark in the side-by-side columns to be visible (both sides are marked independently, not necessarily "changed").
   await expect(page.locator('[data-testid="diff-split"] [data-diff]:not([data-diff="context"])').first()).toBeVisible({
     timeout: 60_000,
   });

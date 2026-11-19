@@ -2,21 +2,17 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { ADMIN, chooseSelectOption, clickByPointer, createNote, editorLocator, loginAs, randomEmail } from "./helpers.js";
 
 /**
- * #297 內文欄三段寬度（真瀏覽器量測）：
- * - E1 站內：頁首寬度鈕按一下換下一種（標準 → 寬 → 全寬 → 標準），多個視窗寬下欄寬＝`expected()`（clamp 公式，代入實量的 W）；重整後仍記得。
- * - E2 頁首：{en, zh-TW} 下頁首都不被裁。視窗 640–1279 側欄浮在筆記上、不佔寬，寬度鈕只看頁首 content box：
- *   恰在 ≥ 696 px（`@min-[43.5rem]`）時出現，門檻兩側各量一格，⋮ 都不被裁；視窗 ≥ 1280 側欄固定在左側
- *   （預設與 320 px 兩種寬度），1280、1440 兩格同樣不被裁、可見性與 content box 一致。
- * - E4 站內：⋮ 選單的「Width」子選單（Radix 巢狀選單）選寬度，欄寬照公式、寬度鈕的名稱跟著換。
- * - E3 公開頁（e2e）：owner 在分享對話框設全寬 → 匿名讀者的欄寬＝W、超過標準上限 1056。
- *
- * W＝欄的父層（捲動容器，無 padding）的 clientWidth：max-width 的百分比以它解析；以實量 W 對公式，捲軸只改變 W、不影響判定。
- * 每次量測印一行 `MEASURE …`。
+ * W = clientWidth of the column's parent (the scroll container, no padding): max-width percentages resolve against it; checking
+ * the formula against the measured W means a scrollbar only changes W and does not affect the verdict.
+ * E2: for viewports 640-1279 the sidebar floats over the note and takes no width, so the width button looks only at the header
+ * content box and appears at exactly >= 696 px (`@min-[43.5rem]`); for viewports >= 1280 the sidebar is fixed on the left
+ * (default and 320 px widths).
+ * Each measurement prints a `MEASURE ...` line.
  */
 
 const RUN_ID = Date.now();
 
-/** 標準 clamp(42.5rem,85%,66rem)、寬 clamp(42.5rem,92.5%,88rem)、全寬不設上限；再被 w-full 夾在 W 以內。 */
+/** Standard clamp(42.5rem,85%,66rem), wide clamp(42.5rem,92.5%,88rem), full width has no cap; then bounded by w-full to within W. */
 const CLAMP = { standard: { ratio: 0.85, cap: 1056 }, wide: { ratio: 0.925, cap: 1408 } } as const;
 type Mode = "standard" | "wide" | "full";
 function expected(mode: Mode, W: number): number {
@@ -26,13 +22,12 @@ function expected(mode: Mode, W: number): number {
 }
 
 const MODE_LABEL: Record<Mode, string> = { standard: "Standard", wide: "Wide", full: "Full width" };
-/** 寬度鈕的可及名稱：目前值與按下去會變成的下一種。 */
 const CYCLE_LABEL: Record<Mode, string> = {
   standard: "Width: Standard — click for Wide",
   wide: "Width: Wide — click for Full width",
   full: "Width: Full width — click for Standard",
 };
-/** 頁首寬度鈕的門檻：header content box ≥ 43.5rem。 */
+/** Threshold at which the header width button appears: header content box >= 43.5rem. */
 const HEADER_EDGE = 696;
 
 async function measureColumn(page: Page): Promise<{ col: number; W: number }> {
@@ -56,7 +51,7 @@ async function loginAndCreateNote(page: Page, title: string, email: string = ADM
   await editor.pressSequentially("Width measurement paragraph.");
 }
 
-test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得", async ({ page }) => {
+test("E1 in-app three widths: column width follows the formula, selection applies, and survives reload", async ({ page }) => {
   test.setTimeout(120_000);
   await loginAndCreateNote(page, `E2E note width E1 ${RUN_ID}`);
   await setViewport(page, 1920, 1000);
@@ -66,7 +61,6 @@ test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得",
   const seenW: number[] = [];
   for (const mode of ["standard", "wide", "full"] as const) {
     await setViewport(page, 1920, 1000);
-    // 按一下換下一種；起點已經是標準，第一輪不按。
     if (mode !== "standard") await button.click();
     await expect(button).toHaveAttribute("aria-label", CYCLE_LABEL[mode]);
     for (const vw of [1920, 1440, 1280, 1200, 900, 700, 640]) {
@@ -78,7 +72,7 @@ test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得",
       expect(Math.abs(col - want), `E1 ${mode} vw=${vw} W=${W}`).toBeLessThanOrEqual(1);
     }
   }
-  // 視窗清單要涵蓋兩端：W ≥ 1523（三段都到各自上限／全寬）與 W < 680（三段都＝W）。
+  // The viewport list must cover both ends: W >= 1523 (all three reach their caps / full width) and W < 680 (all three = W).
   expect(Math.max(...seenW)).toBeGreaterThanOrEqual(1523);
   expect(Math.min(...seenW)).toBeLessThan(680);
 
@@ -90,7 +84,7 @@ test("E1 站內三段寬度：欄寬照公式、選了就換、重整仍記得",
   expect(Math.abs(after.col - after.W)).toBeLessThanOrEqual(1);
 });
 
-test("E4 ⋮ 的 Width 子選單：選 Wide / Full width，欄寬照公式、寬度鈕名稱跟著換", async ({ page }) => {
+test("E4 Width submenu of the more menu: choosing Wide / Full width, column width follows the formula and the width button's name changes", async ({ page }) => {
   test.setTimeout(90_000);
   await loginAndCreateNote(page, `E2E note width E4 ${RUN_ID}`);
   await setViewport(page, 1440, 1000);
@@ -126,10 +120,10 @@ async function measureHeader(header: Locator, widthButton: Locator, more: Locato
   return { ...box, moreRight: moreBox.x + moreBox.width, visible: await widthButton.isVisible() };
 }
 
-test("E2 頁首不裁切：浮動段（640–1279）與固定段（≥ 1280）× 中英文；寬度鈕恰在 content box ≥ 696 時出現", async ({ page }) => {
+test("E2 header not clipped: floating range (640-1279) and fixed range (>= 1280) x English/Chinese; the width button appears exactly when content box >= 696", async ({ page }) => {
   test.setTimeout(180_000);
   await loginAndCreateNote(page, `E2E note width E2 ${RUN_ID}`);
-  // 等「最後編輯」出現，讓頁首最擠。
+  // Wait for "last edited" to show, so the header is at its most crowded.
   await expect(async () => {
     await page.reload();
     await expect(page.getByTestId("last-edited")).toBeVisible();
@@ -170,16 +164,14 @@ test("E2 頁首不裁切：浮動段（640–1279）與固定段（≥ 1280）×
         return m;
       };
 
-      // 固定段：側欄在左側佔寬，兩格都要不裁切，可見性與 content box 一致。
       for (const vw of [1280, 1440]) await check(vw);
 
-      // 浮動段：側欄不佔寬，content box ≈ 視窗 − 66，寬度鈕只看它。640 時不夠寬（隱藏），1279 時夠寬（可見）。
+      // Floating range: the sidebar takes no width, so the content box ~ viewport - 66 and the width button looks only at it.
       const narrow = await check(640);
       expect(narrow.visible, `${tag}：640 時寬度鈕要隱藏`).toBe(false);
       const wide = await check(1279);
       expect(wide.visible, `${tag}: width button must be visible at 1279`).toBe(true);
 
-      // 邊界：在 (640, 1279] 二分找最小可見 vw，兩側各量一格（check 內已斷言不裁切、可見性與 contentW 一致）。
       let lo = 640;
       let hi = 1279;
       while (hi - lo > 1) {
@@ -201,14 +193,14 @@ test("E2 頁首不裁切：浮動段（640–1279）與固定段（≥ 1280）×
   }
 });
 
-test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄，站內寬度不受影響", async ({ browser, request }) => {
+test("E3 public page: full width set in the share dialog -> an anonymous reader sees a W-wide column, and the in-app width is unaffected", async ({ browser, request }) => {
   test.setTimeout(120_000);
   const ownerContext = await browser.newContext();
   const anonContext = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   try {
     const owner = await ownerContext.newPage();
-    // 用新註冊的帳號當 owner：public-link 的 PUT/DELETE 每人 10 次/10 分鐘（PUBLIC_LINK_LIMIT），
-    // 整套序跑到這裡時 admin 已被 11／16／18／22／27 用滿，再開公開連結會吃 429。
+    // Use a newly registered account as owner: PUT/DELETE of the public-link allow 10 per user per 10 minutes (PUBLIC_LINK_LIMIT);
+    // by this point of a serial run admin has used up its quota in 11 / 16 / 18 / 22 / 27, and opening another public link would get a 429.
     const email = randomEmail();
     const password = "e2e-note-width-pw";
     expect((await request.post("/api/auth/register", { data: { email, password } })).status()).toBe(201);
@@ -230,7 +222,7 @@ test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄
     await expect(widthSelect).toHaveAttribute("data-value", "standard");
 
     const anon = await anonContext.newPage();
-    // 內容 flush 是非同步的（collab 2 s debounce）：重載到看見內文為止。
+    // Content flush is asynchronous (collab 2 s debounce): reload until the body text is seen.
     await expect(async () => {
       await anon.goto(`/p/${token}`);
       await expect(anon.getByText("Width measurement paragraph.")).toBeVisible({ timeout: 2_000 });
@@ -251,7 +243,7 @@ test("E3 公開頁：分享對話框設全寬 → 匿名讀者看到 W 寬的欄
     expect(Math.abs(after.col - after.W)).toBeLessThanOrEqual(1);
     expect(after.col).toBeGreaterThan(1056 + 1);
 
-    // 站內寬度是 owner 自己這台瀏覽器的偏好，不跟著公開頁走。
+    // The in-app width is a preference of the owner's own browser and does not follow the public page.
     await owner.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     await expect(owner.getByRole("button", { name: /^Width/ })).toHaveAttribute("aria-label", CYCLE_LABEL.standard);

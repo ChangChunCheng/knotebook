@@ -2,19 +2,19 @@ import { expect, test } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs } from "./helpers.js";
 
 /**
- * issue #101：CSP 的端到端驗證。單元測試（`security-headers.test.ts`）釘住政策內容、
- * 整合測試（`spa.test.ts`）釘住標頭有掛上去且 hash 從送出的 body 推導——**只有真瀏覽器
- * 驗得到的是「這份政策會不會把我們自己的東西擋掉」**：
+ * issue #101: end-to-end check of CSP. Unit tests (`security-headers.test.ts`) pin the policy content and integration tests
+ * (`spa.test.ts`) pin that the header is attached and the hash derives from the body actually sent; what only a real
+ * browser can show is **whether this policy blocks our own things**:
  *
- * ① 首屏防閃的 inline script 必須通過（被擋的症狀是深色模式**每次開頁閃白**，
- *    而且沒有任何單元測試會紅——這是本條 issue 最主要的回歸風險）；
- * ② 共編 WebSocket（`wss://<same host>/collab`）要能連上（`connect-src 'self'`
- *    是否涵蓋同源 ws，各瀏覽器歷史上不一致）；
- * ③ 編輯器實際會用到的注入不得觸發 violation——本檔真的跑過的是：shiki 的 token
- *    inline style、slash 選單（BlockNote 浮層）、mermaid 的 lazy chunk 與產出的 SVG。
+ * 1. The first-paint anti-flash inline script must pass (when blocked the symptom is dark mode **flashing white on every
+ *    page open** and no unit test goes red; this is the main regression risk of that issue);
+ * 2. The collab WebSocket (`wss://<same host>/collab`) must connect (whether `connect-src 'self'` covers same-origin ws has
+ *    been inconsistent across browsers);
+ * 3. Injections the editor actually uses must not trigger a violation: shiki's token inline style, the slash menu (a
+ *    BlockNote overlay), mermaid's lazy chunk and its generated SVG.
  *
- * 判準是**瀏覽器自己回報的 CSP violation**（`securitypolicyviolation` 事件），不是
- * console 字串比對——後者會隨瀏覽器改文案而靜默失效。
+ * The criterion is the **CSP violation the browser itself reports** (the `securitypolicyviolation` event), not console
+ * string matching, which silently breaks when a browser rewords its message.
  */
 
 interface Violation {
@@ -22,9 +22,9 @@ interface Violation {
   blockedURI: string;
 }
 
-test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報零 CSP violation", async ({ page }) => {
+test("note + code block + diagram + collab connection: browser reports zero CSP violations", async ({ page }) => {
   const violations: Violation[] = [];
-  // 在任何頁面腳本之前註冊，才抓得到首屏那一段 inline script 被擋的情形。
+  // Registered before any page script, so a blocked first-paint inline script is caught.
   await page.addInitScript(() => {
     (window as unknown as { __cspViolations: Violation[] }).__cspViolations = [];
     document.addEventListener("securitypolicyviolation", (event) => {
@@ -35,11 +35,11 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
     });
   });
 
-  // 把當頁收到的 violation 搬進 test 這側累積。本檔目前**只有一次真正的文件導覽**
-  // （`page.goto("/login")`），之後換筆記都是 react-router 的 client-side 導覽，收集器
-  // 不會被 addInitScript 重置——所以這裡是防禦性的：哪天有人在中間加一次整頁導覽，
-  // 沒有 drain 就會把前一頁的證據丟掉。（陣列不清空，同一則 violation 會被計兩次，
-  // 只影響錯誤訊息不影響判定。）
+  // Move the violations received on the current page into the test side. This file currently has a single real document
+  // navigation (`page.goto("/login")`); later note switches are react-router client-side navigations, so the collector is
+  // not reset by addInitScript. Draining is therefore defensive: if someone adds a full-page navigation in between, without
+  // a drain the previous page's evidence would be lost. (The array is not cleared, so one violation can be counted twice,
+  // which only affects the error message, not the verdict.)
   const drain = async () => {
     const collected = await page.evaluate(
       () => (window as unknown as { __cspViolations: Violation[] }).__cspViolations,
@@ -49,7 +49,6 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
 
   await loginAs(page, ADMIN.email, ADMIN.password);
 
-  // 第一頁：程式碼區塊（shiki 的 lazy chunk ＋ token 的 inline style）。
   await createNote(page, `E2E csp code ${Date.now()}`);
   const editor = editorLocator(page);
   await editor.click();
@@ -58,9 +57,9 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
   await expect(page.locator('[data-testid="note-editor"] .shiki').first()).toBeVisible({ timeout: 20_000 });
   await drain();
 
-  // 第二頁：mermaid（lazy chunk ＋ 注入的 inline style ＋ 產出的 SVG ＋ slash 選單這個
-  // BlockNote 浮層）。⚠ 另開一篇而不是接在上面：游標若還在 code block 裡，`/diagram`
-  // 會被當成程式碼文字，slash 選單不會開（首跑實測 timeout）。
+  // Page 2: mermaid (lazy chunk + injected inline style + generated SVG + the slash menu, a BlockNote overlay). Use a
+  // separate note rather than continuing above: if the caret is still in the code block, `/diagram` is taken as code text
+  // and the slash menu does not open.
   await createNote(page, `E2E csp diagram ${Date.now()}`);
   const editor2 = editorLocator(page);
   await editor2.click();
@@ -74,12 +73,12 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
     timeout: 20_000,
   });
 
-  // 共編連線：badge 進到 Connected＝WebSocket 沒被 connect-src 擋掉（locale 釘死 en-US，
-  // 見 playwright.config.ts）。
+  // The Connected badge means the WebSocket was not blocked by connect-src
   await expect(page.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 20_000 });
 
-  // 首屏防閃 script 若被擋，瀏覽器會發一則 script-src 的 violation——由下面那條總斷言
-  // 涵蓋（這裡不另外宣稱「script 有跑」：那要靠時序旁證，不如直接看 violation）。
+  // If the first-paint anti-flash script were blocked, the browser would emit a script-src violation, which the overall
+  // assertion below covers (no separate claim that "the script ran": that needs timing evidence, and looking at violations
+  // directly is better).
   const csp = await page.evaluate(() =>
     document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"),
   );
@@ -88,9 +87,9 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
   await drain();
   expect(violations, `CSP 擋到了自己的東西：${JSON.stringify(violations)}`).toEqual([]);
 
-  // ⚠ **正向對照**：上面那條「零 violation」在「CSP 根本沒送出」時也會綠——那是這個
-  // repo 反覆出現的假綠形。所以這裡證明政策真的在**這個瀏覽器**生效：注入一段
-  // inline script，它必須被擋（不執行）且產生一則 script-src violation。
+  // Positive control: the zero-violation assertion above would also be green if no CSP were sent at all (a false-green shape
+  // that recurs in this repo). So prove the policy is in force in **this browser**: inject an inline script, which must be
+  // blocked (not run) and produce a script-src violation.
   const pwned = await page.evaluate(() => {
     const script = document.createElement("script");
     script.textContent = "window.__cspPositiveControl = true;";
@@ -102,9 +101,9 @@ test("載入筆記＋程式碼區塊＋圖表＋共編連線：瀏覽器回報�
   const afterControl = await page.evaluate(
     () => (window as unknown as { __cspViolations: Violation[] }).__cspViolations,
   );
-  // ⚠ 比對要接受 script-src **家族**：Chromium 對 `<script>` **元素**回報的
-  // `violatedDirective` 是 `script-src-elem`（規範裡 script-src 的細分），不是
-  // `script-src`——寫死後者會讓這條正向對照永遠紅（首跑實測）。
+  // The match must accept the script-src **family**: for a `<script>` **element** Chromium reports `violatedDirective` as
+  // `script-src-elem` (a refinement of script-src in the spec), not `script-src`; hard-coding the latter would keep this
+  // positive control permanently red.
   expect(
     afterControl.some((v) => v.directive.startsWith("script-src")),
     `正向對照沒有拿到 script-src 家族的 violation：${JSON.stringify(afterControl)}`,

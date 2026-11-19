@@ -3,11 +3,11 @@ import { E2E_ORIGIN } from "./ports.js";
 import { ADMIN } from "./tests/helpers.js";
 
 /**
- * e2e 疊起來後、所有 spec 之前：以管理員 API 建一個名為「SSO」的登入服務，指向 fake-idp 的根 issuer
- * （`http://fake-idp:9400`，client `knotebook-e2e`／secret `e2e-oidc-secret`，見 `stubs/fake-idp.mjs`），啟用並打開自動建帳。
- * 05、19、20、26 以「Sign in with SSO」定位這顆按鈕。以前由 `OIDC_*` 環境變數在首次啟動匯入（已移除）。
- * 冪等：疊不 down 就重跑時，已有名為「SSO」的服務就不再建，但仍補一次 PATCH 啟用＋自動建帳（19-6 中途失敗可能留下關閉的狀態）。
- * 回呼網址是一般形式 `/api/auth/oidc/callback/<id>`；舊回呼網址（legacy_callback）只有 server 整合測試涵蓋，管理 API 建不出來。
+ * Runs once before all specs: creates an enabled "SSO" provider with auto-create accounts on, pointing at fake-idp's root issuer
+ * (client credentials in `stubs/fake-idp.mjs`). Specs locate its button by "Sign in with SSO".
+ * Idempotent when the stack is re-run without `down`: an existing "SSO" provider is not recreated but is still PATCHed
+ * enabled, because a failed earlier run can leave it disabled.
+ * The callback URL is the regular `/api/auth/oidc/callback/<id>` form; the admin API cannot create a provider with a legacy callback URL (that case is covered by server integration tests).
  */
 const SSO_NAME = "SSO";
 
@@ -30,7 +30,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
         "建立 SSO 服務",
       )
     ).json() as { id: string }).id;
-    // 建立時一律停用、不自動建帳；secret 已隨建立送出，這裡直接啟用並打開自動建帳。
+    // Creation always leaves it disabled with auto-create off; the secret is already sent, so enable it and turn auto-create on.
     await check(await api.patch(`/api/admin/auth/providers/${id}`, { data: { enabled: true, autoCreateEnabled: true } }), "啟用 SSO 服務");
   } finally {
     await api.dispose();

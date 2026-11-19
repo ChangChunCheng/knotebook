@@ -1,26 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN, createUserViaInvite, editorLocator, loginAs, openGroupPanel, randomEmail, showSidebarTab } from "./helpers.js";
 
-/**
- * #175 群組 v2：刪群組的兩個模式。
- *
- * 轉移段：A 建第二使用者 B → A 建群組 G1、在 G1 建筆記 X、打一句字、記下 `/g/` 網址 → A 在群組版分享面板打開
- * Public link、記下公開網址 → A 從群組面板加 B（內建一般成員）→ B 開 X（徽章 Editor）→ A 側欄 G1 ⋮ → Delete group，
- * 對話框預設「Give them to an admin」、接手者是 A → 確認 → B 10 秒內被踢回首頁、側欄沒有 X 也沒有 G1 →
- * A 的「My notes」出現 X；開舊的 `/g/` 網址收斂成 `/n/<A>/<slug>`、內容還在 → A 的分享面板是個人形、Private 已勾
- * （轉移清掉公開連結）→ 匿名開舊公開網址顯示失效文案。
- *
- * 全刪段：A 建群組 G2、在 G2 建筆記 Y、加 B → B 開 Y → A 側欄 G2 ⋮ → Delete group → 選「Delete everything」、
- * 確認鈕在勾「I understand…」之前不能按 → 勾、按 → B 10 秒內「This note has been deleted.」→ A 側欄沒有 G2、
- * 開 Y 的 `/g/` 網址顯示無效連結文案。
- *
- * 斷言形沿用 15-groups／17-groups-roles（兩個 context、邀請建第二使用者、`editorLocator`、10 秒 SLA）。
- * 群組與筆記留著不清：e2e 疊每次 `stack:down -v` 重置。
- */
+/** Groups and notes are left in place: the e2e stack is reset by `stack:down -v` each time. */
 
 const PASSWORD = "e2e-delete-user-pw";
 
-/** A 用側欄群組「＋」建群組（同 15）。 */
 async function createGroup(adminPage: Page, name: string): Promise<void> {
   await showSidebarTab(adminPage, "Groups");
   const sidebar = adminPage.getByRole("complementary");
@@ -32,7 +16,6 @@ async function createGroup(adminPage: Page, name: string): Promise<void> {
   await expect(sidebar.getByRole("button", { name, exact: true })).toBeVisible();
 }
 
-/** A 在群組段「＋」建筆記、改標題，等網址收斂成 `/g/<id>/<title slug>`、共編連上；回傳 canonical 網址（同 15／17）。 */
 async function createGroupNote(adminPage: Page, groupName: string, title: string): Promise<string> {
   const sidebar = adminPage.getByRole("complementary");
   await sidebar.getByRole("button", { name: `New note in ${groupName}` }).click();
@@ -49,7 +32,6 @@ async function createGroupNote(adminPage: Page, groupName: string, title: string
   return adminPage.url();
 }
 
-/** A：側欄群組 ⋮ →「Members & settings」（群組面板）→ 以 email 加成員（預設內建一般成員）→ Escape 關群組面板（同 15）。 */
 async function addMember(adminPage: Page, groupName: string, email: string): Promise<void> {
   await openGroupPanel(adminPage, groupName);
   await adminPage.getByLabel("Email address", { exact: true }).fill(email);
@@ -59,7 +41,6 @@ async function addMember(adminPage: Page, groupName: string, email: string): Pro
   await expect(adminPage.getByRole("button", { name: `Remove ${email}` })).toHaveCount(0);
 }
 
-/** A：側欄群組 ⋮ → Delete group，回傳對話框。 */
 async function openDeleteGroupDialog(adminPage: Page, groupName: string) {
   await showSidebarTab(adminPage, "Groups");
   const sidebar = adminPage.getByRole("complementary");
@@ -70,7 +51,7 @@ async function openDeleteGroupDialog(adminPage: Page, groupName: string) {
   return dialog;
 }
 
-test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開連結關閉）→ 全部刪除（勾選才能按、成員看到已刪除）", async ({ browser }) => {
+test("delete group: transfer to admin (members kicked, old URL redirects, public link closed) -> delete everything (tick required, members see it deleted)", async ({ browser }) => {
   test.setTimeout(180_000);
   const adminContext = await browser.newContext();
   const userContext = await browser.newContext();
@@ -81,11 +62,9 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await expect(adminPage).toHaveURL(/\/$/);
     const sidebar = adminPage.getByRole("complementary");
 
-    // ── 1. A 以邀請建第二使用者 B（同 15／17）──────────────────────────────────
     const secondEmail = randomEmail();
     await createUserViaInvite(adminPage, { email: secondEmail, password: PASSWORD, displayName: "E2E Delete Member" });
 
-    // ── 2. 轉移段：A 建 G1、在 G1 建 X、打一句字、記下 /g/ 網址 ──────────────────
     const g1 = `E2E Transfer ${Date.now()}`;
     await createGroup(adminPage, g1);
     const titleX = `E2E transfer note ${Date.now()}`;
@@ -96,7 +75,6 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await adminPage.keyboard.type(sentenceX);
     await expect(editorLocator(adminPage)).toContainText(sentenceX);
 
-    //    A：群組版分享面板打開 Public link，記下公開網址（寫法同 16 的 `Public link URL`）
     await adminPage.getByRole("button", { name: "Share", exact: true }).click();
     const shareDialog = adminPage.getByRole("dialog", { name: "Share note" });
     await expect(shareDialog.getByText(/every member whose role can read has access/)).toBeVisible();
@@ -108,12 +86,11 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     const publicPath = `/p/${token}`;
     await adminPage.keyboard.press("Escape");
     await expect(shareDialog).not.toBeVisible();
-    // 轉移前公開網址是活的（否則後面的「失效」沒有鑑別力）
+    // Before the transfer the public URL is alive (otherwise the later "dead" check has no discriminating power)
     const anonPage = await anonContext.newPage();
     await anonPage.goto(publicPath);
     await expect(anonPage.getByRole("heading", { name: titleX })).toBeVisible({ timeout: 15_000 });
 
-    // ── 3. A 加 B；B 登入 → 側欄開 X → 徽章 Editor ────────────────────────
     await addMember(adminPage, g1, secondEmail);
     const userPage = await userContext.newPage();
     await loginAs(userPage, secondEmail, PASSWORD);
@@ -126,10 +103,9 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await expect(userPage).toHaveURL(groupUrlX);
     const userBadge = userPage.getByRole("status").filter({ hasText: /^Connected/ });
     await expect(userBadge).toBeVisible({ timeout: 15_000 });
-    await expect(userBadge).toHaveText("Connected"); // #335：能編輯者徽章只寫「Connected」
+    await expect(userBadge).toHaveText("Connected");
     await expect(userPage.locator('[data-testid="note-editor"] [contenteditable="true"]')).toHaveCount(1, { timeout: 15_000 });
 
-    // ── 4. A：G1 ⋮ → Delete group → 預設轉移、接手者是 A → 確認 ──────────────────
     const deleteG1 = await openDeleteGroupDialog(adminPage, g1);
     await expect(deleteG1.getByRole("radio", { name: "Give them to an admin" })).toBeChecked();
     const adminSelect = deleteG1.getByLabel("Admin who gets the notes");
@@ -138,7 +114,6 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await deleteG1.getByRole("button", { name: "Delete group", exact: true }).click();
     await expect(deleteG1).not.toBeVisible({ timeout: 15_000 });
 
-    // ── 5. B：10 秒內被踢回 "/"、側欄沒有 X、沒有 G1（形同 15 的 B 段）───────────────
     await expect(userPage.getByText("You no longer have access to this note.", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(userPage).toHaveURL(/\/$/, { timeout: 10_000 });
     await showSidebarTab(userPage, "Recent", userSidebar);
@@ -146,7 +121,6 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await showSidebarTab(userPage, "Groups", userSidebar);
     await expect(userSidebar.getByRole("button", { name: g1, exact: true })).toHaveCount(0, { timeout: 10_000 });
 
-    // ── 6. A：「My notes」出現 X；開舊 /g/ 網址 → 收斂成 /n/<A>/<slug>、內容還在 ─────────
     await showSidebarTab(adminPage, "Groups");
     await expect(sidebar.getByRole("button", { name: g1, exact: true })).toHaveCount(0, { timeout: 10_000 });
     await expect((await showSidebarTab(adminPage, "My notes")).getByRole("link", { name: titleX })).toBeVisible({ timeout: 10_000 });
@@ -155,7 +129,6 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await expect(adminPage.getByRole("status").filter({ hasText: /^Connected/ })).toBeVisible({ timeout: 15_000 });
     await expect(editorLocator(adminPage)).toContainText(sentenceX, { timeout: 15_000 });
 
-    // ── 7. A：分享面板是個人形、Private 已勾；匿名開舊公開網址 → 失效文案 ─────────────
     await adminPage.getByRole("button", { name: "Share", exact: true }).click();
     await expect(shareDialog).toBeVisible();
     const accessGroup = shareDialog.getByRole("radiogroup", { name: "Access" });
@@ -169,20 +142,18 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
       timeout: 15_000,
     });
 
-    // ── 8. 全刪段：A 建 G2、在 G2 建 Y、加 B；B 開 Y（徽章「Connected」＝能編輯）──────────────────
     const g2 = `E2E Purge ${Date.now()}`;
     await createGroup(adminPage, g2);
     const titleY = `E2E purge note ${Date.now()}`;
     const groupUrlY = await createGroupNote(adminPage, g2, titleY);
     await addMember(adminPage, g2, secondEmail);
-    // B 直接開網址：B 的側欄清單不一定已重抓到新群組，這段要測的是刪除，不是側欄。
+    // B opens the URL directly: B's sidebar list may not have refetched the new group yet, and this part tests deletion, not the sidebar.
     await userPage.goto(groupUrlY);
     await expect(userPage).toHaveURL(groupUrlY);
     await expect(userBadge).toBeVisible({ timeout: 15_000 });
-    await expect(userBadge).toHaveText("Connected"); // #335：能編輯者徽章只寫「Connected」
+    await expect(userBadge).toHaveText("Connected");
     await expect(userPage.locator('[data-testid="note-editor"] [contenteditable="true"]')).toHaveCount(1, { timeout: 15_000 });
 
-    // ── 9. A：G2 ⋮ → Delete group → Delete everything → 勾選前確認鈕 disabled → 勾 → 按 ──
     const deleteG2 = await openDeleteGroupDialog(adminPage, g2);
     await deleteG2.getByRole("radio", { name: "Delete everything" }).check();
     const confirmG2 = deleteG2.getByRole("button", { name: "Delete group", exact: true });
@@ -192,10 +163,8 @@ test("刪群組：轉移給管理員（成員被踢、舊網址轉址、公開�
     await confirmG2.click();
     await expect(deleteG2).not.toBeVisible({ timeout: 15_000 });
 
-    // ── 10. B：10 秒內「This note has been deleted.」──────────────────────────
     await expect(userPage.getByText("This note has been deleted.", { exact: true })).toBeVisible({ timeout: 10_000 });
 
-    // ── 11. A：側欄沒有 G2；開 Y 的 /g/ 網址 → 無效連結文案 ──────────────────────
     await showSidebarTab(adminPage, "Groups");
     await expect(sidebar.getByRole("button", { name: g2, exact: true })).toHaveCount(0, { timeout: 10_000 });
     await adminPage.goto(groupUrlY);

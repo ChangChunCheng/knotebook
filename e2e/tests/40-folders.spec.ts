@@ -17,16 +17,16 @@ import {
 } from "./helpers.js";
 
 /**
- * 資料夾（e2e 列中本 PR 的部分）。
- * 每個 test 以 `createUserViaInvite` 開自己的使用者並登入它：資料夾排在根層筆記前、預設展開，留在共用的 ADMIN 帳號會改變其他 spec
- * 的可見列。ADMIN 只用來發邀請。整頁載入筆記頁後碰側欄前先等「Note title」（lazy NotePage 的 fallback 會換殼）；
- * 負向斷言前先等正向錨點；toast 斷言錨定全字。
+ * Folders e2e.
+ * Each test creates its own user with `createUserViaInvite` and logs in as it: folders sort before root notes and are expanded by
+ * default, so staying on the shared ADMIN account would change other specs' visible rows. ADMIN is used only to send
+ * invitations. After a full page load of a note page, wait for "Note title" before touching the sidebar (the lazy NotePage's
+ * fallback swaps the shell); wait for the positive anchor before negative assertions; toast assertions anchor the whole text.
  */
 
 const RUN = Date.now();
 const PASSWORD = "e2e-folders-pw";
 
-/** ADMIN 發邀請建一個新使用者，在 `page` 以它登入（落在 `/`）。 */
 async function asNewUser(page: Page, displayName: string): Promise<string> {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await expect(page).toHaveURL(/\/$/);
@@ -39,8 +39,8 @@ async function asNewUser(page: Page, displayName: string): Promise<string> {
 }
 
 /**
- * 從資料夾的「＋」或 ⋮「New note」建的筆記：等網址第一跳（untitled）與新筆記的標題框（Untitled）→ 改標題 → 等第二跳。
- * 群組筆記走 `/g/`，個人筆記走 `/n/`。
+ * A note created from a folder's "+" or more menu "New note": wait for the first URL jump (untitled) and the new note's title
+ * input (Untitled) -> rename -> wait for the second jump. Group notes use `/g/`, personal notes `/n/`.
  */
 async function titleNewNote(page: Page, title: string, kind: "n" | "g"): Promise<void> {
   const first = kind === "n" ? /\/n\/[^/]+\/untitled-[0-9a-f]{8}$/ : /\/g\/[0-9a-f-]{36}\/untitled-[0-9a-f]{8}$/;
@@ -52,12 +52,11 @@ async function titleNewNote(page: Page, title: string, kind: "n" | "g"): Promise
   await page.waitForURL((url) => !/\/untitled-[0-9a-f]{8}$/.test(url.pathname), { timeout: 15_000 });
 }
 
-/** 資料夾列裡的筆記連結（可及名稱以標題開頭）。 */
 function noteLink(scope: Locator, title: string): Locator {
   return scope.getByRole("link", { name: new RegExp("^" + reEscape(title)) });
 }
 
-test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料夾建筆記、路徑行、改名（焦點回 ⋮）、撞名、刪除與還原", async ({ page }) => {
+test("40-1 personal folder full flow: create a folder and subfolder, create a note in the subfolder, path line, rename (focus returns to the more menu), name clash, delete and restore", async ({ page }) => {
   test.setTimeout(180_000);
   const F = `F ${RUN}`;
   const S = `S ${RUN}`;
@@ -67,19 +66,16 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   const sidebar = page.getByRole("complementary");
   let panel = await showSidebarTab(page, "My notes");
 
-  // ── 建 F、F ⋮ New subfolder → S ─────────────────────────────────────────────
   await createFolder(page, panel.getByRole("button", { name: "New folder", exact: true }), F);
   await folderMenuItem(page, panel, F, "New subfolder");
   await submitFolderName(page, "New folder", S);
   await expect(folderRow(folderRow(panel, F), S)).toBeVisible();
 
-  // ── S ⋮ New note → 改標題 → 側欄 S 底下有那篇 ─────────────────────────────────
   await folderMenuItem(page, panel, S, "New note");
   await titleNewNote(page, title, "n");
   panel = await showSidebarTab(page, "My notes");
   await expect(noteLink(folderRow(panel, S), title)).toBeVisible({ timeout: 15_000 });
 
-  // ── 搜尋標題 → 第二行「My notes › F › S」──────────────────────────────────────
   const search = sidebar.getByRole("textbox", { name: "Search notes" });
   await search.fill(title);
   const result = sidebar.getByTestId("sidebar-search").getByRole("link", { name: new RegExp("^" + reEscape(title)) });
@@ -87,7 +83,7 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   await search.fill("");
   panel = await showSidebarTab(page, "My notes");
 
-  // ── 改名：先 Esc 取消 → 焦點回 S 的 ⋮（長期守衛）→ 再改名成 T ──────
+  // Rename: Esc to cancel first -> focus returns to S's more menu (long-term guard) -> then rename to T
   await folderMenuItem(page, panel, S, "Rename");
   const renameDialog = page.getByRole("dialog", { name: "Rename folder", exact: true });
   const renameInput = renameDialog.getByRole("textbox", { name: "Folder name", exact: true });
@@ -101,7 +97,6 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   await expect(folderMenuButton(panel, T)).toBeFocused();
   await expect(noteLink(folderRow(panel, T), title)).toBeVisible();
 
-  // ── 在 F 底下建只差大小寫的 t → 行內撞名錯誤、框不關 ───────────────────────────
   await folderMenuItem(page, panel, F, "New subfolder");
   const createDialog = page.getByRole("dialog", { name: "New folder", exact: true });
   const createInput = createDialog.getByRole("textbox", { name: "Folder name", exact: true });
@@ -113,7 +108,6 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   await createDialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(createDialog).not.toBeVisible();
 
-  // ── 刪 F：確認框內文含「1 note」與「1 subfolder」→ toast → 開著的那篇在裡面 → 回首頁 ──
   await folderMenuItem(page, panel, F, "Delete folder");
   const deleteDialog = page.getByRole("dialog", { name: `Delete folder “${F}”?`, exact: true });
   await expect(deleteDialog).toBeVisible();
@@ -123,7 +117,6 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   await expect(toastWithTitle(page, "Folder deleted; 1 note moved to the trash")).toBeVisible({ timeout: 15_000 });
   await expect(page).toHaveURL(/\/$/);
 
-  // ── 垃圾桶 tab：那篇第二行以「F › T · 」開頭 → 還原 ─────────────────────────────
   const trash = await showSidebarTab(page, "Trash");
   const row = trash.getByRole("listitem").filter({ hasText: title });
   await expect(row).toContainText(`${F} › ${T} · `, { timeout: 15_000 });
@@ -131,13 +124,12 @@ test("40-1 個人資料夾全流程：建資料夾與子資料夾、在子資料
   await row.getByRole("button", { name: `Restore ${title}`, exact: true }).click();
   await expect(toastWithTitle(page, "Restored 1 note")).toBeVisible({ timeout: 15_000 });
 
-  // ── 我的筆記重新出現 F › T 與那篇（還原照原路徑重建資料夾）──────────────────────
   panel = await showSidebarTab(page, "My notes");
   await expect(folderRow(folderRow(panel, F), T)).toBeVisible({ timeout: 15_000 });
   await expect(noteLink(folderRow(panel, T), title)).toBeVisible();
 });
 
-test("40-2 深度：5 層鏈的第 5 層 ⋮「New subfolder」不可執行並說明上限", async ({ page }) => {
+test("40-2 depth: at level 5 of a 5-level chain, more menu \"New subfolder\" cannot run and explains the limit", async ({ page }) => {
   test.setTimeout(120_000);
   await asNewUser(page, "E2E Folders Depth");
   const panel = await showSidebarTab(page, "My notes");
@@ -154,8 +146,8 @@ test("40-2 深度：5 層鏈的第 5 層 ⋮「New subfolder」不可執行並�
   const item = menu.getByRole("menuitem", { name: "New subfolder", exact: true });
   await expect(item).toHaveAttribute("aria-disabled", "true");
   await expect(menu.getByText("Folders can be nested up to 5 levels", { exact: true })).toBeVisible();
-  // 被擋項仍在焦點序裡（aria-disabled、不是 Radix disabled）；Enter 不開框、選單仍開。
-  // 不用 click：Playwright 把 aria-disabled="true" 視為 disabled，click 會等到逾時。
+  // The blocked item stays in the focus order (aria-disabled, not Radix disabled); Enter does not open the box and the menu stays open.
+  // Do not click: Playwright treats aria-disabled="true" as disabled and click would wait until timeout.
   await item.focus();
   await expect(item).toBeFocused();
   await page.keyboard.press("Enter");
@@ -165,10 +157,10 @@ test("40-2 深度：5 層鏈的第 5 層 ⋮「New subfolder」不可執行並�
   await expect(menu).not.toBeVisible();
 });
 
-test("40-3 排序保留：資料夾內依名稱排序，重新整理後仍是名稱、⋮ 裡 Name 已選", async ({ page }) => {
+test("40-3 sort is kept: sorted by name within a folder, still by name after reload, and Name is selected in the more menu", async ({ page }) => {
   test.setTimeout(150_000);
   const F = `Sort ${RUN}`;
-  // 依序建立 C、A、B：預設「最近修改」是 B、A、C；依名稱是 A、B、C。
+  // Created in order C, A, B: the default "recently modified" is B, A, C; by name it is A, B, C.
   const titles = { a: `E2E Sort A ${RUN}`, b: `E2E Sort B ${RUN}`, c: `E2E Sort C ${RUN}` };
   await asNewUser(page, "E2E Folders Sort");
   let panel = await showSidebarTab(page, "My notes");
@@ -186,12 +178,11 @@ test("40-3 排序保留：資料夾內依名稱排序，重新整理後仍是名
   await trigger.hover();
   await trigger.click();
   await page.getByRole("menu").getByRole("menuitemradio", { name: "Name", exact: true }).click();
-  // 選了不關選單
   await expect(page.getByRole("menu").getByRole("menuitemradio", { name: "Name", exact: true })).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
   await expect(links).toHaveText([titles.a, titles.b, titles.c]);
 
-  // 整頁載入首頁（page.goto 是完整的文件載入，等同重新整理；不再另外 reload）
+  // Full page load of the home page (page.goto is a full document load, equal to a reload; no extra reload)
   await page.goto("/");
   panel = await showSidebarTab(page, "My notes");
   await expect(folderRow(panel, F).getByRole("link")).toHaveText([titles.a, titles.b, titles.c], { timeout: 15_000 });
@@ -202,7 +193,7 @@ test("40-3 排序保留：資料夾內依名稱排序，重新整理後仍是名
   await page.keyboard.press("Escape");
 });
 
-test("40-4 群組資料夾：群組列建資料夾、在裡面建筆記；一般成員的 ⋮「Delete folder」被擋下並說明", async ({ browser }) => {
+test("40-4 group folders: create a folder from the group row and a note in it; a regular member's more menu \"Delete folder\" is blocked with an explanation", async ({ browser }) => {
   test.setTimeout(180_000);
   const groupName = `E2E Fold G ${RUN}`;
   const GF = `GF ${RUN}`;
@@ -211,7 +202,6 @@ test("40-4 群組資料夾：群組列建資料夾、在裡面建筆記；一般
   const bContext = await browser.newContext();
   try {
     const aPage = await aContext.newPage();
-    // ADMIN 發兩張邀請：A（建群組的人）、B（之後以內建一般成員加入）
     await loginAs(aPage, ADMIN.email, ADMIN.password);
     await expect(aPage).toHaveURL(/\/$/);
     const aEmail = randomEmail();
@@ -222,7 +212,6 @@ test("40-4 群組資料夾：群組列建資料夾、在裡面建筆記；一般
     await loginAs(aPage, aEmail, PASSWORD);
     await expect(aPage).toHaveURL(/\/$/);
 
-    // ── A 建群組 G（同 15／17）─────────────────────────────────────────────────
     const sidebar = aPage.getByRole("complementary");
     let workspace = await showSidebarTab(aPage, "Groups");
     await sidebar.getByRole("button", { name: "New group", exact: true }).click();
@@ -232,20 +221,18 @@ test("40-4 群組資料夾：群組列建資料夾、在裡面建筆記；一般
     await expect(groupDialog).not.toBeVisible();
     await expect(workspace.getByRole("button", { name: groupName, exact: true })).toBeVisible();
 
-    // ── 群組列「New folder in G」建 GF → GF ⋮ New note ─────────────────────────────
     await createFolder(aPage, workspace.getByRole("button", { name: `New folder in ${groupName}`, exact: true }), GF);
     await folderMenuItem(aPage, workspace, GF, "New note");
     await titleNewNote(aPage, title, "g");
     workspace = await showSidebarTab(aPage, "Groups");
     await expect(noteLink(folderRow(workspace, GF), title)).toBeVisible({ timeout: 15_000 });
 
-    // ── A 把 B 加進群組（預設內建一般成員 Member：能編輯、不能刪除）───────────────────
+    // A adds B without a role, so B is the built-in regular member (can edit, cannot delete).
     await openGroupPanel(aPage, groupName);
     await aPage.getByLabel("Email address", { exact: true }).fill(bEmail);
     await aPage.getByRole("button", { name: "Add", exact: true }).click();
     await expect(aPage.getByRole("button", { name: `Remove ${bEmail}` })).toBeVisible();
 
-    // ── B：GF ⋮ → Delete folder 不可執行、說明「This folder has notes you can't delete」──
     const bPage = await bContext.newPage();
     await loginAs(bPage, bEmail, PASSWORD);
     await expect(bPage).toHaveURL(/\/$/);
@@ -264,7 +251,7 @@ test("40-4 群組資料夾：群組列建資料夾、在裡面建筆記；一般
   }
 });
 
-test("40-5 390 手機清單：長名稱資料夾、用它的「＋」建筆記，清單內層包層沒有任何列超出", async ({ page }) => {
+test("40-5 390 phone list: a long-named folder, create a note with its \"+\", and no row in the list's inner wrapper overflows", async ({ page }) => {
   test.setTimeout(120_000);
   const longName = `F ${RUN} ${"Long folder name for the narrow drawer ".repeat(2).slice(0, 60)}`.trimEnd();
   const title = `E2E Fold Narrow ${RUN}`;
@@ -272,7 +259,6 @@ test("40-5 390 手機清單：長名稱資料夾、用它的「＋」建筆記�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  // 手機的清單是整個側欄；在筆記畫面時要先按「Back to notes」。
   const openDrawer = (): Promise<Locator> => openListOnCompact(page);
 
   let drawer = await openDrawer();
@@ -283,12 +269,11 @@ test("40-5 390 手機清單：長名稱資料夾、用它的「＋」建筆記�
   await plus.click();
   await titleNewNote(page, title, "n");
 
-  // 換成筆記畫面：碰側欄前先等「Note title」，再回清單
   await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible();
   drawer = await openDrawer();
   drawerPanel = await showSidebarTab(page, "My notes", drawer);
   await expect(noteLink(folderRow(drawerPanel, longName), title)).toBeVisible({ timeout: 15_000 });
-  // 清單內層包層是 overflow-x-clip（安全網）：清單本身恆不溢出，量包層的內容寬度。淺層在手機清單裡不該有任何列超出。
+  // The list's inner wrapper is overflow-x-clip (a safety net): the list itself never overflows, so measure the wrapper's content width. No row in the shallow levels of the phone list may overflow.
   const wrapper = drawerPanel.locator("[data-sidebar-list] > div");
   expect(await wrapper.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

@@ -3,62 +3,45 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, createNote, editorLocator, loginAs } from "./helpers.js";
 
 /**
- * issue #160 的迴歸守門：hover 表格時整頁多出一條 document 層級的滾軸、版面跳動。
+ * Regression guard for issue #160: hovering a table adds a document-level scrollbar and shifts the layout.
  *
- * 成因（見 `NoteEditor.tsx` 置中 wrapper 上 #160 的註解）：BlockNote 表格 hover 的
- * 「新增列／欄」按鈕（`.bn-extend-button`）經 FloatingPortal 掛到
- * `editor.portalElement`，floating-ui 預設 `position: absolute`。往上找不到 positioned
- * 祖先，containing block 就落到 `<html>`，穿過所有 `overflow-hidden`／`overflow-y-auto`。
- * 只有在**表格下緣（或右緣）捲出視窗外**時才會露餡。
+ * Cause (see the #160 comment on the centring wrapper in `NoteEditor.tsx`): BlockNote's table hover "add row / column"
+ * buttons (`.bn-extend-button`) are mounted through FloatingPortal into `editor.portalElement`, and floating-ui defaults to
+ * `position: absolute`. With no positioned ancestor, the containing block falls to `<html>` and passes through every
+ * `overflow-hidden` / `overflow-y-auto`. It shows only when the **table's bottom (or right) edge is scrolled out of the
+ * viewport**.
  *
- * ⚠ **為什麼 hover 最後一欄而不是最後一列**（開發期實測踩過的雷，別改回去）：兩顆
- * 「新增」按鈕（`TableHandlesController.tsx`）都是錨在 `references.tableReference`
- * ——**整張表格**的 bounding rect，不是被 hover 的那一格；`TableHandles.ts` 的
- * `mouseMoveHandler` 有兩條分支會把它們翻成 true：
- * - cell 分支（:337-340）：`showAddOrRemoveColumnsButton` 只看
- *   `colIndex === 最後一欄`（跟列無關），`showAddOrRemoveRowsButton` 只看
- *   `rowIndex === 最後一列`——各自獨立判斷，不要求同時成立。
- * - wrapper 分支（:287-309）：滑鼠貼著表格**下緣 20px 內**（`belowTable`）時
- *   `showAddOrRemoveRowsButton` 也會翻 true；貼著**右緣 20px 內**（`toRightOfTable`）
- *   時 `showAddOrRemoveColumnsButton` 同理。
- * 兩條分支的「新增列」觸發條件都蘊含「表格下緣在滑鼠底下、必然在視窗內」（cell 分支
- * 直接 hover 到那一列；wrapper 分支貼著下緣本身就要在視窗內才點得到），撐不出破綻。
- * 但「新增欄」的 cell 分支只看 `colIndex`，跟列無關——可以在 hover **最上面那列、
- * 最後一欄**時就成立，這時候按鈕拉伸到的表格「下緣」完全不需要在視窗附近。這才是
- * 能在不捲動、不需要 Playwright auto-scroll 的情況下重現 #160 的路徑。
- * 真正錨在被 hover 那一列／格、位置會跟著它走的是**列/格拖曳把手**
- *（`rowReference`／`cellReference`），不是這兩顆新增按鈕——它們不會往右／往下溢出
- * 視窗，產生不了滾軸（`columnReference` 在表格上緣捲出視窗上方時一樣在視窗外，只是
- * 往上溢出不長滾軸，不是這條測試要守的東西）。
+ * Why hover the last column and not the last row (do not change it back): both "add" buttons (`TableHandlesController.tsx`)
+ * are anchored to `references.tableReference`, the bounding rect of the **whole table**, not the hovered cell;
+ * `mouseMoveHandler` in `TableHandles.ts` has two branches that turn them true:
+ * - cell branch: `showAddOrRemoveColumnsButton` looks only at `colIndex === last column` (independent of the row), and
+ *   `showAddOrRemoveRowsButton` only at `rowIndex === last row`; each is decided independently.
+ * - wrapper branch: with the mouse within 20px **below the table** (`belowTable`) `showAddOrRemoveRowsButton` also turns
+ *   true; within 20px **right of the table** (`toRightOfTable`) `showAddOrRemoveColumnsButton` likewise.
+ * The "add row" conditions of both branches imply the table's bottom edge is under the mouse and therefore inside the
+ * viewport (the cell branch hovers that row; the wrapper branch must be at the edge itself to be reachable), so they cannot
+ * expose the bug. But the cell branch's "add column" looks only at `colIndex`, so it holds when hovering the **top row, last
+ * column**, and then the button stretches to the table's bottom edge, which need not be near the viewport. That is the path
+ * that reproduces #160 without scrolling and without Playwright's auto-scroll.
  *
- * 第一版誤用「hover 最後一列最後一格」重現：`.hover()` 的 auto-scroll-into-view 會把
- * 目標（也就是最後一列）捲進視窗，順便讓表格下緣跟著捲回可見範圍，結果對修好前的
- * build 也量到假綠——已改用上面「hover 最上面那列、最後一欄」的路徑，見下面的前提斷言
- * 斷言（確保 hover 目標不需要、也沒有觸發 auto-scroll）。
+ * An earlier version reproduced with "hover the last cell of the last row": `.hover()`'s auto-scroll-into-view scrolls the
+ * target (the last row) into the viewport, which also brings the table's bottom edge back into view, so it measured a false
+ * green even on the pre-fix build. It now uses the "top row, last column" path above; see the precondition assertions below
+ * (the hover target needs no auto-scroll and does not trigger one).
  *
- * 為什麼只有 e2e 驗得到：這是真實的 CSS containing block／floating-ui 幾何計算，
- * jsdom 沒有 layout，`getBoundingClientRect` 全部回 0——單元測試（見
- * `NoteEditor.layout.test.tsx`）只能守「wrapper 帶 `relative` 這個 class」，守不到
- * 「浮層真的被收在裡面」這件事本身。
+ * Why only e2e can check this: it is real CSS containing-block / floating-ui geometry, and jsdom has no layout
+ * (`getBoundingClientRect` returns 0). The unit test (`NoteEditor.layout.test.tsx`) can guard only that the wrapper has the
+ * `relative` class, not that the floating layer is actually contained.
  *
- * 重現手法（垂直案）：貼上一份夠長的 markdown 表格（純文字、不帶 text/html →
- * 落我們自己的 `collab/paste.ts` 出口 1，`decideMarkdownPaste`〔:151-180〕直接
- * `return source`、呼叫端接著 `editor.pasteMarkdown`——不是 BlockNote 的
- * `defaultPasteHandler`；跟 `06-mermaid.spec.ts` 的貼上手法同源），讓表格整體高度
- * 遠超過縮小過的視窗；把編輯器的捲動容器捲回頂端，此時表格下緣落在
- * 視窗外（用 `getBoundingClientRect().bottom > window.innerHeight` 驗證這個前提）。
- * 然後 hover 表頭最後一欄（在視窗內，完全不用捲動）。
  *
- * 水平孿生案（`showAddOrRemoveColumnsButton`／`showAddOrRemoveRowsButton` 互換
- * 軸向）：貼一份夠寬的表格，讓表格右緣落在視窗外，hover **最後一列第一欄**（在視窗
- * 內，不用捲動），觸發「新增列」按鈕拉伸成表格全寬，右緣落在視窗外。
- * #162 之前的殘留（已裁，見下面斷言旁的說明）：`.bn-extend-button` 掛在 `relative`
- * 的置中 wrapper 下，但 wrapper 本身沒有設 `overflow`——超出 wrapper 右緣的部分會
- * 變成**上一層捲動容器**（`overflow-y-auto`，CSS 規則讓 `overflow-x` 隨之升成
- * `auto`）的橫向可捲溢出，不是 document 層級的（本檔開發期實機量到：800px 視窗、
- * 20 欄表格，hover 最後一列前捲動容器 `scrollWidth` 506，hover 後變 2480——這兩個
- * 數字修好後不變，`scrollWidth` 不受 `overflow-x` 影響，見 (A)）。#162 起這層補上
- * `overflow-x-clip`（見 `NoteEditor.tsx` :423 附近的註解）裁掉它。
+ * Horizontal twin: hover the first cell of the last row (inside the viewport, no scrolling). That turns on
+ * `showAddOrRemoveRowsButton` (it looks only at rowIndex), and the "add row" button then stretches to the full table width,
+ * with its right edge outside the viewport.
+ * Leftover from before #162 (resolved; see the note by the assertion below): `.bn-extend-button` hangs under the `relative`
+ * centring wrapper, but the wrapper itself sets no `overflow`, so the part beyond its right edge becomes horizontally
+ * scrollable overflow of the **scroll container one level up** (`overflow-y-auto`; CSS promotes its `overflow-x` to `auto`
+ * accordingly), not document-level. Since #162 that layer has `overflow-x-clip` (see the comment in `NoteEditor.tsx`), which
+ * clips it.
  */
 
 const TABLE_ROWS = 30;
@@ -72,10 +55,10 @@ function buildMarkdownTable(rows: number): string {
   return [header, separator, ...body].join("\n") + "\n";
 }
 
-// 20 欄：`@blocknote/core/src/blocks/Table/TableExtension.ts` 的
-// `EMPTY_CELL_WIDTH = 120`，經 `editor.css`（`td:not([colwidth])` 規則）套成
-// `min-width: 120px`——沒有明確設欄寬的 td/th 一律至少 120px。20 欄 × 120px =
-// 2400px，遠超過下面 800px 的視窗寬，不看內容長度也穩定觸發水平溢出。
+// 20 columns: `EMPTY_CELL_WIDTH = 120` in `@blocknote/core/src/blocks/Table/TableExtension.ts`, applied by `editor.css`
+// (`td:not([colwidth])` rule) as `min-width: 120px`, so a td/th without an explicit column width is at least 120px.
+// 20 columns x 120px = 2400px, far beyond the 800px viewport width below, so horizontal overflow is triggered reliably
+// whatever the content length.
 const WIDE_TABLE_COLS = 20;
 const WIDE_TABLE_ROWS = 2;
 const WIDE_LAST_ROW_FIRST_CELL = `W${WIDE_TABLE_ROWS}C1`;
@@ -101,28 +84,25 @@ async function documentScrollGeometry(page: Page) {
 }
 
 /**
- * 等一輪，讓剛才那次程式化捲動（`scrollTop`／`scrollLeft` 賦值）觸發的原生 `scroll`
- * 事件先燒完，再讓呼叫端去 hover。
+ * Wait one tick so the native `scroll` events fired by our programmatic scrolling (`scrollTop` / `scrollLeft` assignments)
+ * finish before the caller hovers.
  *
- * 機制（有行號可查，不是猜測）：`TableHandlesController.tsx:146-174` 的
- * `whileElementsMounted` 等於 `autoUpdate(reference, floating, callback,
- * { ancestorScroll: true, ... })`——表格浮層一旦掛上去，之後每次祖先捲動都會呼叫
- * `hideHandlesIfNotFrozen()`（`TableHandles.ts:916-923`），把 `show` 與兩個
- * `showAddOrRemove*Button` 設回 false、`emitUpdate()`，浮層卸載。若我們自己觸發的
- * `scrollTop`／`scrollLeft` 賦值所排出的 `scroll` 事件還沒燒完就呼叫 `.hover()`，
- * 剛掛上去的浮層會在下一輪立刻被這個「祖先一捲動就收起來」的安全機制拆掉——開發期
- * 實測：拿掉這個等待，`.bn-extend-button` 穩定量到 0 顆（連續多次都是 0，不是偶發
- * flake）。`.tableWrapper`（`scrollTableWrapperToLeft` 捲的那層）跟編輯器捲動容器
- * （`scrollEditorToTop` 捲的那層）一樣，都是 `ancestorScroll: true` 會盯上的祖先，
- * 同一個機制、同一顆等待。
+ * Mechanism: `whileElementsMounted` in `TableHandlesController.tsx` is `autoUpdate(reference, floating, callback,
+ * { ancestorScroll: true, ... })`, so once the table floating layer is mounted, every ancestor scroll calls
+ * `hideHandlesIfNotFrozen()` (`TableHandles.ts`), which sets `show` and both `showAddOrRemove*Button` back to false and
+ * `emitUpdate()`, unmounting the layer. If `.hover()` runs before the `scroll` events queued by our own assignments have
+ * fired, the just-mounted layer is torn down on the next tick by this "close on any ancestor scroll" safeguard; without this
+ * wait `.bn-extend-button` was consistently found 0 times (not an occasional flake). `.tableWrapper` (scrolled by
+ * `scrollTableWrapperToLeft`) and the editor scroll container (scrolled by `scrollEditorToTop`) are both ancestors that
+ * `ancestorScroll: true` watches: same mechanism, same wait.
  */
 async function waitForScrollEventsToSettle(page: Page) {
   await page.waitForTimeout(100);
 }
 
-/** 把編輯器的捲動容器捲回頂端。節點鏈同 `NoteEditor.layout.test.tsx`（那份單元測試
- * 守著這條鏈的 class；這裡沿用同一條鏈找節點，兩邊改動要一起看）：note-editor 的
- * parent 是置中 wrapper，再上一層才是真正會捲動的容器（`overflow-y-auto`）。 */
+/** Scrolls the editor's scroll container back to the top. The node chain is the same as in `NoteEditor.layout.test.tsx`
+ * (that unit test guards the chain's classes; keep the two in sync): the note-editor's parent is the centring wrapper, and
+ * the real scroll container (`overflow-y-auto`) is one level above it. */
 async function scrollEditorToTop(page: Page) {
   await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
@@ -133,15 +113,13 @@ async function scrollEditorToTop(page: Page) {
 }
 
 /**
- * 把表格自己的橫向捲動容器（BlockNote 的 `.tableWrapper`，跟 `scrollEditorToTop`
- * 捲的那個垂直容器是不同層——開發期實測發現的第三層捲動）捲回最左邊。
+ * Scrolls the table's own horizontal scroll container (BlockNote's `.tableWrapper`, a third scroll layer separate from the
+ * vertical container `scrollEditorToTop` scrolls) back to the far left.
  *
- * 貼上夠寬的表格後，游標落在最後一格，瀏覽器會把 `.tableWrapper` 的
- * `scrollLeft` 自動捲到接近表格尾端以保持游標可見（跟垂直案「貼上後看到的是
- * 表格尾端」是同一種瀏覽器行為，只是這次是水平的、發生在表格自己的 wrapper
- * 上，不是編輯器的捲動容器）。不捲回左邊的話，表格右緣一開始就已經在視窗內，
- * 水平孿生案量不到 #160 的現象（開發期實測：這裡不重設，`tableRight` 量到
- * 775 < 800 的視窗寬，前提斷言直接紅）。
+ * After pasting a wide table the caret is in the last cell, and the browser auto-scrolls `.tableWrapper`'s `scrollLeft` near
+ * the table's end to keep it visible (the same browser behaviour as "after the vertical paste you see the end of the table",
+ * but horizontal and on the table's own wrapper, not the editor scroll container). Without scrolling back, the table's right
+ * edge starts inside the viewport and the horizontal twin cannot show #160 (the precondition assertion goes red).
  */
 async function scrollTableWrapperToLeft(page: Page) {
   await page.evaluate(() => {
@@ -152,11 +130,11 @@ async function scrollTableWrapperToLeft(page: Page) {
   await waitForScrollEventsToSettle(page);
 }
 
-test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸", async ({ page, context }) => {
+test("hovering the last column of a table (bottom edge outside the viewport) does not create a page-wide scrollbar", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: E2E_ORIGIN });
 
-  // 縮小視窗高度：不用打幾十行填充文字也能可靠讓表格下緣落在視窗外，寬度不動
-  // 避免碰到 <768 的窄視窗版面（見 10-responsive.spec.ts）。
+  // Shrink the viewport height: a table's bottom edge reliably falls outside the viewport without typing dozens of filler
+  // lines, and the width stays 1280 so the sidebar keeps its fixed layout (640-1279 it is a drawer, below 640 the list is its own screen; see 10-responsive.spec.ts).
   await page.setViewportSize({ width: 1280, height: 500 });
 
   await loginAs(page, ADMIN.email, ADMIN.password);
@@ -170,12 +148,11 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
 
   const table = editor.locator("table").first();
   await expect(table).toBeVisible({ timeout: 10_000 });
-  // 表格真的解析成表格（不是逐字貼成程式碼區塊）：最後一格的內容要看得到。
   await expect(editor.getByText(`R${TABLE_ROWS}C3`)).toBeVisible();
 
   await scrollEditorToTop(page);
 
-  // 前提：表格下緣真的在視窗外，否則這條測試量不到 #160 的現象。
+  // Precondition: the table's bottom edge really is outside the viewport, otherwise this test cannot show #160.
   const { tableBottom, viewportHeight } = await page.evaluate(() => {
     const tableEl = document.querySelector('[data-testid="note-editor"] table');
     return {
@@ -185,24 +162,18 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
   });
   expect(tableBottom, "表格下緣必須在視窗外，測試才量得到 #160").toBeGreaterThan(viewportHeight);
 
-  // 對照：hover 前，document 本身不該有可捲溢出（表格自己的捲動由編輯器的
-  // overflow-y-auto 容器吃掉）。
   const before = await documentScrollGeometry(page);
   expect(before.scrollHeight, "hover 前 document 就不該溢出（高度）").toBeLessThanOrEqual(before.clientHeight);
   expect(before.scrollWidth, "hover 前 document 就不該溢出（寬度）").toBeLessThanOrEqual(before.clientWidth);
 
-  // hover 表頭最後一欄：這格本身就在視窗內（第一列，捲回頂端後一定看得到），不需要
-  // Playwright 幫忙捲動——這正是我們要的：hover 的目標在畫面上，但「新增欄」按鈕的
-  // 錨點（整張表格）下緣不在。
   const lastHeaderCell = editor.getByText(LAST_HEADER, { exact: true }).first();
 
-  // ⚠ 前提斷言：hover 目標本身必須已經在視窗內，`.hover()` 才不會先幫我們
-  // auto-scroll——一旦 Playwright 覺得目標不在視窗內而自動捲動，很可能連帶把表格
-  // 下緣也捲回可見範圍，這條測試就會對「沒修好」的 build 量出假綠（開發期第一版
-  // 用「hover 最後一列最後一格」正是這樣踩雷的，見檔頭）。
-  // ⚠ 這條只是便宜的早退檢查（在已知的建置條件下應該恆真，紅了代表測試本身的假設
-  // 被破壞，不代表 #160 本身）——真正擋住「auto-scroll 把 bug 現象捲沒」這個假綠
-  // 通道的，是 hover **之後**那條複驗（下面 `tableBottomAfterHover`）。
+  // Precondition: the hover target must already be inside the viewport so `.hover()` does not auto-scroll first: if
+  // Playwright scrolls, it likely brings the table's bottom edge back into view too, and this test would measure a false
+  // green on an unfixed build (the first version, hovering the last cell of the last row, hit exactly that; see the header).
+  // This is only a cheap early exit (it should always hold under the known build conditions; red means the test's own
+  // assumption broke, not #160). What really blocks the "auto-scroll scrolls the symptom away" false-green channel is the
+  // recheck **after** the hover (`tableBottomAfterHover` below).
   const targetBox = await lastHeaderCell.boundingBox();
   expect(targetBox, "hover 目標必須有幾何（已渲染）").not.toBeNull();
   expect(
@@ -212,18 +183,15 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
 
   await lastHeaderCell.hover();
 
-  // BlockNote 表格 hover 的按鈕/把手是真實 DOM mousemove 監聽觸發（見
-  // `TableHandles.ts` 的 `mouseMoveHandler`），`.hover()` 送出的是真實輸入事件，會
-  // 命中。用 `toBeAttached`（不用 `toBeVisible`）：這裡只需要確認浮層真的掛載了
-  // （代表 hover 命中、`showAddOrRemoveColumnsButton` 翻成 true），至於它在不在畫面
-  // 上不是這條測試要驗的性質——`toBeVisible` 不看祖先的 overflow 裁切，修好之後這顆
-  // 按鈕的上半段其實仍看得見，用 `toBeVisible` 反而測不出「有沒有掛載」跟「有沒有
-  // 露到 document 外」的差別。
+  // BlockNote's table hover buttons/handles are triggered by real DOM mousemove listeners (see `mouseMoveHandler` in
+  // `TableHandles.ts`); `.hover()` sends real input events, which hit. Use `toBeAttached` (not `toBeVisible`): all that is
+  // needed here is that the floating layer really mounted (the hover hit and `showAddOrRemoveColumnsButton` turned true);
+  // whether it is on screen is not the property under test, and `toBeVisible` ignores ancestor overflow clipping (after the
+  // fix the top half of this button is still visible), so it could not tell "mounted" from "leaked outside the document".
   await expect(page.locator(".bn-extend-button-add-remove-columns").first()).toBeAttached({ timeout: 5_000 });
 
-  // 複驗：hover 完之後，表格下緣依然必須在視窗外——如果 hover 這個
-  // 動作本身把表格捲回了可見範圍，下面的「document 不溢出」斷言就會對任何 build
-  // 都恆綠，量不到 #160。
+  // Recheck: after hovering, the table's bottom edge must still be outside the viewport; if the hover itself scrolled the
+  // table back into view, the "document does not overflow" assertion below would be green for any build and could not show #160.
   const tableBottomAfterHover = await page.evaluate(
     () => document.querySelector('[data-testid="note-editor"] table')?.getBoundingClientRect().bottom ?? 0,
   );
@@ -231,19 +199,16 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
     viewportHeight,
   );
 
-  // 核心斷言：hover 之後 document 仍然不該有可捲溢出。這是 #160 修好/沒修好的分野。
   const after = await documentScrollGeometry(page);
   expect(after.scrollHeight, "hover 後 document 不該多出一條全頁滾軸（#160）").toBeLessThanOrEqual(
     after.clientHeight,
   );
-  // 修法不得把「全頁滾軸」換成「內文捲動容器的橫向滾軸」——這裡量的是
-  // document 本身，跟下面水平孿生案量捲動容器是兩個不同層級，互相補位。
+  // The fix must not turn the "page-wide scrollbar" into a "horizontal scrollbar on the content scroll container": this
+  // measures the document itself, a different level from what the horizontal twin below measures on the scroll container;
+  // they complement each other.
   expect(after.scrollWidth, "hover 後 document 不該多出橫向滾軸").toBeLessThanOrEqual(after.clientWidth);
 
-  // 補：再往下一層量捲動容器本身（節點鏈同 `scrollEditorToTop`：note-editor
-  // 的 parent 是置中 wrapper，再上一層才是捲動容器）——這裡的表格沒有超寬（垂直案
-  // 只把表格撐高，不撐寬），所以捲動容器不該因為這次 hover 多出橫向可捲溢出；水平
-  // 孿生案的表格本身就超寬，那條測試在它自己的核心斷言裡驗這一層（見 #162）。
+  // This table is not wide (the vertical case makes it taller, not wider), so this hover must not add horizontal overflow to the scroll container; the horizontal twin covers the wide case.
   const scrollWrapperGeo = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
     const scrollWrapper = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
@@ -254,7 +219,7 @@ test("hover 表格最後一欄（下緣在視窗外）不會撐出全頁滾軸",
   );
 });
 
-test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案）不會撐出全頁滾軸，內文區也不長橫向滾軸", async ({
+test("hovering the first cell of the last row (right edge outside the viewport, horizontal twin) does not create a page-wide scrollbar or a horizontal scrollbar in the content area", async ({
   page,
   context,
 }) => {
@@ -263,9 +228,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E table hover wide ${Date.now()}`);
 
-  // 縮小視窗寬度（不動高度）：讓 20 欄的表格右緣可靠地落在視窗外，同時列數壓在 2
-  // 列就好——不需要像垂直案那樣捲動，表格本來就矮到整張都在預設視窗高度內。
-  // 先建筆記再縮：800 寬時側欄收成抽屜，建筆記的鈕在固定側欄裡。
+  // Create the note first, then shrink: at width 800 the sidebar collapses into a drawer, and the new-note button is in the fixed sidebar.
   await page.setViewportSize({ width: 800, height: 700 });
 
   const editor = editorLocator(page);
@@ -283,7 +246,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
 
   await scrollTableWrapperToLeft(page);
 
-  // 前提：表格右緣真的在視窗外，否則這條測試量不到水平孿生案的現象。
+  // Precondition: the table's right edge really is outside the viewport, otherwise this test cannot show the horizontal twin's symptom.
   const { tableRight, viewportWidth } = await page.evaluate(() => {
     const tableEl = document.querySelector('[data-testid="note-editor"] table');
     return {
@@ -297,15 +260,13 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   expect(before.scrollHeight, "hover 前 document 就不該溢出（高度）").toBeLessThanOrEqual(before.clientHeight);
   expect(before.scrollWidth, "hover 前 document 就不該溢出（寬度）").toBeLessThanOrEqual(before.clientWidth);
 
-  // hover 最後一列第一欄：這格在視窗內（表格左緣貼著文章欄左側，不需要橫向捲動就
-  // 看得到），觸發 `showAddOrRemoveRowsButton`（跟欄無關，只看 rowIndex 是不是最後
-  // 一列）——「新增列」按鈕會拉伸成表格全寬，右緣落在視窗外。
+  // Hovering the first cell of the last row turns on the "add row" button, stretched to the full table width (see the header)
   const lastRowFirstCell = editor.getByText(WIDE_LAST_ROW_FIRST_CELL, { exact: true });
 
-  // 前提斷言（同前一條的精神，換成水平軸）：hover 目標本身必須已經在視窗內，
-  // `.hover()` 才不會 auto-scroll 把表格右緣也捲回可見範圍。
-  // ⚠ 這條只是便宜的早退檢查——真正擋住假綠通道的是 hover 之後那條複驗（下面
-  // `tableRightAfterHover`）。
+  // Precondition (same spirit as the previous test, on the horizontal axis): the hover target must already be inside the
+  // viewport so `.hover()` does not auto-scroll the table's right edge back into view.
+  // This is only a cheap early exit; what really blocks the false-green channel is the recheck after the hover
+  // (`tableRightAfterHover` below).
   const targetBox = await lastRowFirstCell.boundingBox();
   expect(targetBox, "hover 目標必須有幾何（已渲染）").not.toBeNull();
   expect(
@@ -328,27 +289,17 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   expect(after.scrollHeight, "hover 後 document 不該多出全頁滾軸（高度）").toBeLessThanOrEqual(after.clientHeight);
   expect(after.scrollWidth, "hover 後 document 不該多出全頁滾軸（寬度）").toBeLessThanOrEqual(after.clientWidth);
 
-  // issue #162：再往下一層量捲動容器本身（節點鏈同 `scrollEditorToTop`：note-editor
-  // 的 parent 是置中 wrapper，再上一層才是捲動容器）——這裡的表格本身就超寬，是這條
-  // 測試唯一能量到「橫向可捲溢出」殘留的地方（垂直案的表格不超寬，量不到）。
-  // 斷言分兩層，缺一即弱化：
-  //
-  // (A) 計算後的 `overflow-x`：守「Tailwind 的 `overflow-x-clip` utility 真的產出了
-  //     規則」這件事本身——這是**靜態屬性**，跟有沒有 hover 無關（拿掉上面整段 hover
-  //     這條也會綠）。⚠ 不能斷言 `scrollWidth <= clientWidth`：開發期拋棄式腳本量過
-  //     （三個 `width:200px` 的 div，內容都放 `width:1000px` 子節點），Chromium 的
-  //     `scrollWidth` 完全不受 `overflow-x` 是 `auto`／`hidden`／`clip` 影響，三者
-  //     都回 1000——量的是內容本身的幾何範圍，不是「有沒有可捲/可見的溢出」，修好
-  //     前後這個數字不會變（本檔第一版斷言用它，對修好的 build 也判紅，已改用這
-  //     道）。真正決定「有沒有橫向捲軸」的是計算後的 `overflow-x` 本身：CSS
-  //     Overflow Module Level 3 §3.1
-  //     （https://www.w3.org/TR/css-overflow-3/#overflow-properties）「The
-  //     visible/clip values of overflow compute to auto/hidden (respectively) if
-  //     one of overflow-x or overflow-y is neither visible nor clip」——本層
-  //     `overflow-y` 是 `auto`，所以我們寫的 `overflow-x: clip` 計算值會被推成
-  //     `hidden`（見 `NoteEditor.tsx` :423 附近的註解）。下面斷言的計算值是對這條
-  //     e2e 自己的節點鏈量的，不是套用合成 div 腳本的結果——拿掉 `overflow-x-clip`
-  //     重跑本檔（突變驗證）量到 `Received: "auto"`。
+  // (A) Computed `overflow-x`: guards that Tailwind's `overflow-x-clip` utility really produced the rule. This is a **static
+  //     property** independent of hover (it would stay green even if the whole hover part above were removed). Do not assert
+  //     `scrollWidth <= clientWidth`: in Chromium `scrollWidth` is unaffected by `overflow-x` being `auto` / `hidden` / `clip`
+  //     (three `width:200px` divs with a `width:1000px` child all return 1000); it measures the content's own geometric
+  //     extent, not whether scrollable/visible overflow exists, so it does not change between fixed and unfixed (an earlier
+  //     version asserted it and went red even on the fixed build). What decides whether a horizontal scrollbar exists is the
+  //     computed `overflow-x` itself: CSS Overflow Module Level 3 section 3.1
+  //     (https://www.w3.org/TR/css-overflow-3/#overflow-properties) "The visible/clip values of overflow compute to
+  //     auto/hidden (respectively) if one of overflow-x or overflow-y is neither visible nor clip". This layer's `overflow-y`
+  //     is `auto`, so our `overflow-x: clip` computes to `hidden` (see the comment in `NoteEditor.tsx`). Without
+  //     `overflow-x-clip` the computed value is `auto`.
   const scrollWrapperOverflowX = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
     const scrollWrapper = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null | undefined;
@@ -364,12 +315,11 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
     "#162：捲動容器的橫向 overflow 不該計算成 auto/scroll（有溢出時就會長捲軸）",
   ).not.toBe("scroll");
 
-  // (B) 使用者真的摸不摸得到：(A) 只守「class 有沒有生效」，不守「hover 之後使用者
-  //     實際滾不滾得動」。把游標移到捲動容器內、但落在 `.tableWrapper`／extend
-  //     按鈕**下方**空白處的點（這裡的表格只有 2 列很矮，下面有空白），送一次橫向
-  //     滾輪，量 `scrollWrapper.scrollLeft` 有沒有被推動。真瀏覽器實測（見
-  //     `NoteEditor.tsx` :423 附近的註解）：`hidden` 下這個動作 `scrollLeft` 恆為
-  //     0，`auto` 下同動作是 300。
+  // (B) Whether the user can actually reach it: (A) guards only that the class took effect, not whether the user can
+  //     actually scroll after the hover. Move the cursor to a point inside the scroll container but in the blank area
+  //     **below** `.tableWrapper` / the extend button (this table has only 2 short rows, so there is blank space below),
+  //     send one horizontal wheel, and check whether `scrollWrapper.scrollLeft` moved. In a real browser, under `hidden` this
+  //     leaves `scrollLeft` at 0, and under `auto` it moves (see the comment in `NoteEditor.tsx`).
   const scrollWrapperBox = await page.evaluate(() => {
     const editorRoot = document.querySelector('[data-testid="note-editor"]');
     const sw = editorRoot?.closest(".overflow-y-auto") as HTMLElement | null;
@@ -380,9 +330,9 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
   const extendBtnBoxForWheel = await page.locator(".bn-extend-button-add-remove-rows").first().boundingBox();
   expect(scrollWrapperBox, "捲動容器必須有幾何（已渲染）").not.toBeNull();
   expect(tableBoxForWheel, "表格必須有幾何（已渲染）").not.toBeNull();
-  // extend 按鈕必須有幾何——沒有的話 `wheelY` 會退回表格下緣＋20，落進 `.tableWrapper`
-  // 的 22px 下內距（`editor.css:137-146` 的 `--bn-table-widget-size`），滾輪被它吃掉，
-  // (B) 對任何 build 都恆綠。
+  // The extend button must have geometry: without it `wheelY` falls back to the table bottom + 20 and lands in
+  // `.tableWrapper`'s 22px bottom padding (`--bn-table-widget-size` in `editor.css`), which swallows the wheel, and (B)
+  // would be green for any build.
   expect(
     extendBtnBoxForWheel,
     "extend 按鈕必須有幾何——沒有的話 wheelY 會退回表格下緣+20，落進 .tableWrapper 的 22px 下內距而被它吃掉滾輪",
@@ -396,15 +346,14 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
     if (wheelY >= scrollWrapperBox.y + scrollWrapperBox.height) {
       wheelY = scrollWrapperBox.y + scrollWrapperBox.height / 2;
     }
-    // 滾輪測試點刻意落在捲動容器左緣附近（`scrollWrapperBox.x + 8`），不是水平置中——
-    // 置中的點落在文章欄（ARTICLE_COLUMN 置中 wrapper）內，可能踩進 `.bn-editor`
-    // （pmView.dom）內部，會被下面 (204-209)/(230-238) 的機制卸載 extend 按鈕（量測見
-    // 下方註解）。實測（見下方 `wheelPointHit`）：本測試 800px 視窗下，文章欄的
-    // `clamp` 下限（680px）比捲動容器可用寬度（約 506px）還寬，wrapper 因此撐滿
-    // 捲動容器整寬（不是縮窄置中），`.bn-editor` 縮在 wrapper 自己的 `px-4`
-    // （`ARTICLE_COLUMN_PADDING`，16px）內距裡面；`+8` 還沒推進到內距內側的
-    // `.bn-editor`，命中的是 wrapper 自己（`elementFromPoint` 量到 class 含
-    // `max-w-[clamp(...)]`／`px-4` 那個 div），不是它的子孫、也不是 `.tableWrapper`。
+    // The wheel point is deliberately near the scroll container's left edge (`scrollWrapperBox.x + 8`), not horizontally
+    // centred: a centred point falls inside the article column (the ARTICLE_COLUMN centring wrapper) and may step into
+    // `.bn-editor` (pmView.dom), where the mechanism described below unmounts the extend button. In this test's 800px
+    // viewport the article column's `clamp` minimum (680px) is wider than the scroll container's usable width (about 506px),
+    // so the wrapper fills the container's full width (not narrowed and centred) and `.bn-editor` sits inside the wrapper's
+    // own `px-4` padding (`ARTICLE_COLUMN_PADDING`, 16px); `+8` has not reached the `.bn-editor` inside the padding and hits
+    // the wrapper itself (`elementFromPoint` returns the div whose class contains `max-w-[clamp(...)]` / `px-4`), neither a
+    // descendant nor `.tableWrapper`.
     const wheelX = scrollWrapperBox.x + 8;
     expect(
       wheelY,
@@ -413,18 +362,15 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
 
     await page.mouse.move(wheelX, wheelY);
 
-    // 前提（已用 `document.elementFromPoint(wheelX, wheelY)` 量測，不是猜）：這個點
-    // 必須落在 pmView.dom（`.bn-editor`）之外，且不在 `.tableWrapper` 內——
-    // `TableHandles.ts:204-209` 對「`event.target` 不在 `pmView.dom` 內」的
-    // mousemove 直接 `return`，完全不動 `show`／`showAddOrRemove*Button`，extend
-    // 按鈕留住。反例（開發期量過，換成水平置中的點）：命中的是 TrailingNode 的
-    // `.bn-trailing-block` widget（在 `.bn-editor` 內部，鏈：widget →
-    // `.bn-block-group` → `.bn-editor`），會落進 `domCellAround`
-    // （`TableHandles.ts:104-134`）回傳 `undefined`、`:230-238` 卸載按鈕的路徑——
-    // 量測證實真的會卸載，只是不是同一個 tick：`mouse.move()` 剛結束、還沒等待就查
-    // 按鈕仍掛著，插入 `waitForTimeout(300)` 後按鈕才從 DOM 消失（重繪送達要時間）。
-    // 這裡選在 wrapper 自己的內距，從根本上不會進 `domCellAround` 的判斷，不必依賴
-    // 那個窄窗口。
+    // Precondition (checked with `document.elementFromPoint(wheelX, wheelY)`): this point must be outside pmView.dom
+    // (`.bn-editor`) and not inside `.tableWrapper`. For a mousemove whose `event.target` is not inside `pmView.dom`,
+    // `TableHandles.ts` simply `return`s without touching `show` / `showAddOrRemove*Button`, so the extend button stays.
+    // Counter-example (a horizontally centred point): it hits TrailingNode's `.bn-trailing-block` widget (inside
+    // `.bn-editor`; chain widget -> `.bn-block-group` -> `.bn-editor`), which goes into `domCellAround` returning `undefined`
+    // and the unmount path in `TableHandles.ts`; the button really is unmounted, but not in the same tick: right after
+    // `mouse.move()` it is still mounted, and it disappears from the DOM only after a wait (the re-render takes time).
+    // Choosing the wrapper's own padding keeps this out of the `domCellAround` decision altogether, so it does not depend on
+    // that narrow window.
     const wheelPointHit = await page.evaluate(
       ([x, y]) => {
         const el = document.elementFromPoint(x, y);
@@ -439,7 +385,7 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
       },
       [wheelX, wheelY],
     );
-    // 除錯用：滾輪測試點實際命中的元素
+    // Debug aid: the element the wheel point actually hit
     console.log("wheel point hit:", wheelPointHit);
     expect(
       wheelPointHit.insideBnEditor,
@@ -450,9 +396,9 @@ test("hover 表格最後一列第一欄（右緣在視窗外，水平孿生案�
       `滾輪測試點不得落在 .tableWrapper 內——命中元素 class="${wheelPointHit.className}"`,
     ).toBe(false);
 
-    // 等 300ms 再斷言：這個點在 `.bn-editor` 外，理論上按鈕完全不受這次 mousemove
-    // 影響，所以不管等多久都該還掛著——跟上面反例「在 `.bn-editor` 內的點 300ms 後
-    // 消失」對照，這才是真正測到「點在外面」這件事本身，不是賭一個時序窗口。
+    // Wait 300ms before asserting: this point is outside `.bn-editor`, so in theory the button is unaffected by this
+    // mousemove and stays mounted however long we wait; compared with the counter-example above (a point inside `.bn-editor`
+    // disappearing after 300ms), this tests "the point is outside" itself rather than betting on a timing window.
     await page.waitForTimeout(300);
     await expect(
       page.locator(".bn-extend-button-add-remove-rows").first(),

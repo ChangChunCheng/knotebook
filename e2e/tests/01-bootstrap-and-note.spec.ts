@@ -2,20 +2,18 @@ import { test, expect } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs } from "./helpers.js";
 
 /**
- * env bootstrap admin 首登 → **不被強制改密碼**（#187）
- * → 直接進站，建筆記、打字、重整後內容還在。
- *
- * 強制改密碼不再有 e2e 覆蓋（代建已移除），由 `auth/guards.test.tsx`、`pages/ChangePasswordPage.test.tsx` 與 server 測試守。
- * `ADMIN.password` 是全疊唯一的 admin 密碼，後續 spec 直接用它登入。
+ * Forced password change has no e2e coverage (admin-created accounts were removed); see `auth/guards.test.tsx`,
+ * `pages/ChangePasswordPage.test.tsx` and server tests.
+ * `ADMIN.password` is the stack's only admin password; later specs log in with it.
  */
-test("env admin 首登不強改密 → 直接進站、建筆記 → 重整後內容還在", async ({ page }) => {
+test("env admin first login skips forced password change -> creates a note -> content survives reload", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await expect(page).toHaveURL(/\/$/);
 
-  // `toHaveURL(/\/$/)` 單獨不夠：旗標帳號登入後也會先導到 `/`（網址會短暫是 `/`），
-  // 再由 ChangePasswordGate 在 render 時 `<Navigate replace>` 走，斷言可能在導走之前就通過。
-  // 所以再等 AppShell 的「New note」鈕出現（旗標帳號進不了 AppShell），然後確認網址不在
-  // `/change-password`；`createNote` 稍後點這顆鈕，旗標帳號會在這裡找不到鈕而紅。
+  // `toHaveURL(/\/$/)` alone is not enough: a flagged account also lands on `/` first and ChangePasswordGate then
+  // `<Navigate replace>`s away at render, so the assertion can pass before the redirect. Wait for AppShell's "New note"
+  // button (flagged accounts never reach AppShell), then check the URL is not `/change-password`; `createNote` clicks that
+  // button next.
   await expect(page.getByRole("button", { name: "New note", exact: true })).toBeVisible();
   await expect(page).not.toHaveURL(/\/change-password/);
 
@@ -27,20 +25,17 @@ test("env admin 首登不強改密 → 直接進站、建筆記 → 重整後內
   await editor.click();
   await editor.pressSequentially(bodyText);
 
-  // 筆記正文走 Y.Doc 共編，server 端 `onStoreDocument` 是 debounce 2000ms 才落地
-  // 到 Postgres（`STORE_DEBOUNCE_MS`，見 apps/server/src/collab/server.ts）——重整
-  // 前要等這個窗口過去，否則重整後拿到的是還沒落盤的舊內容（假陰性）。已知遞延：
-  // 固定 `waitForTimeout(2_500)` 只是「賭」debounce 一定準時觸發＋落盤一定夠快，CI
-  // 較慢的跑者上這個賭注會輸——改用 `expect(...).toPass()` 主動重試「重整＋斷言」，
-  // 直到內容真的落盤為止，語意上等價但不再是固定睡眠賭時序。
+  // Note body syncs over a Y.Doc; the server's `onStoreDocument` persists to Postgres only after a 2000ms debounce
+  // (`STORE_DEBOUNCE_MS` in apps/server/src/collab/server.ts), so a reload has to wait for that window or it reads stale
+  // content. A fixed `waitForTimeout(2_500)` would bet on the debounce firing on time and the write being fast enough, which
+  // loses on slower CI runners; `expect(...).toPass()` retries "reload + assert" until the content is really persisted.
   //
-  // 這裡**不需要**「重整前等 client 無未同步更新」的屏障（issue #33 的建議 b）：
-  // `createNote` 已保證打字發生在連線 OPEN 且首次 sync 完成之後（見 helpers.ts），而
-  // `@hocuspocus/provider` 預設 `flushDelay: false`——y-prosemirror 在 transaction 結束
-  // 時同步發出 Y update、provider 同步寫進已 OPEN 的 socket，`pressSequentially` 返回
-  // 時每一鍵的更新都已同步交給 socket（不再進 messageQueue）。剩下的只有 server 端落盤延遲，正是上面 toPass 在等的
-  //（且 @hocuspocus/server 在最後一條連線關閉時對 onStoreDocument 走 executeNow，
-  // reload 掐斷唯一 client 並不會讓 debounce 中的更新蒸發）。
+  // No "client has no unsynced updates" barrier is needed before the reload (issue #33, suggestion b): `createNote`
+  // guarantees typing starts after the connection is OPEN and the first sync is done (see helpers.ts), and
+  // `@hocuspocus/provider` defaults to `flushDelay: false`, so y-prosemirror emits each Y update synchronously into the open
+  // socket and every keystroke has been handed to the socket when `pressSequentially` returns. What remains is the
+  // server-side persist delay that the toPass above waits for (and @hocuspocus/server runs onStoreDocument via executeNow
+  // when the last connection closes, so a reload dropping the only client does not lose a pending debounced update).
   await expect(async () => {
     await page.reload();
     await expect(page.getByLabel("Note title")).toHaveValue(title);
@@ -49,15 +44,10 @@ test("env admin 首登不強改密 → 直接進站、建筆記 → 重整後內
 });
 
 /**
- * #99：手打完整的 markdown 連結語法 `[文字](網址)`，打完尾端 `)` 的當下轉成真連結。
- *
- * 直接以 `ADMIN.password` 登入（#187 起疊內 admin 密碼不再被改過）。
- *
- * `)` 是這條 input rule 的單一字元觸發（Playwright 合成
- * 按鍵一次只送一個字元，對這個 feature 反而無害），`pressSequentially` 逐字元
- * 送出即可測到。
+ * #99: `)` is the single-character trigger of that input rule, so `pressSequentially` typing one character at a time
+ * exercises it.
  */
-test("手打 markdown 連結語法 [文字](網址) 自動轉成真連結", async ({ page }) => {
+test("typing markdown link syntax [text](url) converts it to a real link", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await expect(page).toHaveURL(/\/$/);
 

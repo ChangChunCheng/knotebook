@@ -2,15 +2,18 @@ import { expect, test } from "@playwright/test";
 import { ADMIN, createNote, loginAs, noteIdFromUrl } from "./helpers.js";
 
 /**
- * 換篇空窗：在筆記 A 按 New note，react-router 先換網址、畫面在 startTransition 裡才換。
- * 空窗裡 A 的標題框仍可打字；修好前 blur 會把字存進 A（A 被改名）。
- * CPU 節流拉長空窗；捕獲階段的 input 監聽確認字真的打進了 A 的標題框（沒打進＝沒重現，測試直接紅，不假綠）。
- * ⚠ 紅在「沒重現空窗」那句＝環境太快、節流不夠拉出空窗，不是產品回歸（調高 THROTTLE_RATE）；產品回歸紅在最後讀 A 標題那句。
+ * Note-switch gap: pressing New note in note A makes react-router change the URL first, and the screen swaps only inside
+ * startTransition. During the gap A's title input still accepts typing; before the fix its blur saved the text into A (A got
+ * renamed).
+ * CPU throttling stretches the gap; a capture-phase input listener confirms the text really went into A's title input (if not,
+ * the gap was not reproduced and the test fails directly, no false green).
+ * Red at "gap not reproduced" = the environment is too fast and the throttle does not stretch the gap, not a product
+ * regression (raise THROTTLE_RATE); a product regression goes red at the final read of A's title.
  */
 
 const THROTTLE_RATE = 20;
 
-test("29 換篇空窗：在 A 按 New note 後立刻對標題框打字＋blur，A 不得被改名；新筆記照常命名", async ({ page }) => {
+test("29 note-switch gap: typing into the title and blurring right after pressing New note in A must not rename A; the new note is named as usual", async ({ page }) => {
   test.setTimeout(120_000);
   await loginAs(page, ADMIN.email, ADMIN.password);
   const stamp = Date.now();
@@ -19,7 +22,6 @@ test("29 換篇空窗：在 A 按 New note 後立刻對標題框打字＋blur，
   const idA = await noteIdFromUrl(page);
 
   const titleInput = page.getByLabel("Note title");
-  // 標記 A 的標題框，並記下空窗裡打到它的 input 事件
   await titleInput.evaluate((el) => {
     el.setAttribute("data-e2e-note-a", "");
     document.addEventListener(
@@ -47,7 +49,6 @@ test("29 換篇空窗：在 A 按 New note 後立刻對標題框打字＋blur，
   const typedIntoA = await page.evaluate(() => (window as unknown as { __e2eTypedIntoA?: boolean }).__e2eTypedIntoA === true);
   expect(typedIntoA, "沒重現空窗：字沒打進 A 的標題框").toBe(true);
 
-  // 新筆記照常命名：等新的標題框（不是 A 那個）掛上，值是 Untitled
   const newInput = page.locator('input[aria-label="Note title"]:not([data-e2e-note-a])');
   await expect(newInput).toHaveValue("Untitled", { timeout: 15_000 });
   const titleB = `E2E stale title B ${stamp}`;
@@ -62,7 +63,7 @@ test("29 換篇空窗：在 A 按 New note 後立刻對標題框打字＋blur，
   const resB = await page.request.get(`/api/notes/${idB}`);
   expect(((await resB.json()) as { title: string }).title).toBe(titleB);
 
-  // A 的標題沒變。放在 B 命名之後讀：空窗那次 blur 若送了 PATCH，早在 B 的存檔與網址收斂之前就落地了
+  // A's title is unchanged. Read after B is named: if the blur in the gap sent a PATCH, it would have landed well before B's save and the URL settling
   const resA = await page.request.get(`/api/notes/${idA}`);
   expect(resA.status()).toBe(200);
   expect(((await resA.json()) as { title: string }).title).toBe(titleA);
