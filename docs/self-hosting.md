@@ -123,7 +123,7 @@ Search uses PostgreSQL's `pg_trgm` extension, and the server creates it in its d
 - **Azure Database for PostgreSQL – Flexible Server**: add `PG_TRGM` to the `azure.extensions` server parameter.
 - **`pg_trgm` already installed in another schema** (on Supabase, for example, extensions live in `extensions`): the migration skips creating it, and creating the index then fails unless that schema is on the account's `search_path`. Add it (`ALTER ROLE knotebook SET search_path = public, extensions;`) or create the extension in `public`.
 
-How much it speeds up search depends on the database's character classification (`LC_CTYPE`): with `C`, `pg_trgm` treats only ASCII letters and digits as part of a word, so searches for Chinese, Japanese or Korean text don't get faster (results are the same). The bundled database and the stock `postgres` images use `en_US.utf8`. Searches for one or two characters never use the index.
+How much it speeds up search depends on the database's character classification (`LC_CTYPE`): with `C`, `pg_trgm` treats only ASCII letters and digits as part of a word, so a search without three ASCII letters or digits in a row (Chinese, Japanese, Korean, Greek, Cyrillic, accented-only text and so on) keeps the previous search path: not faster, not slower, same results. The server checks this at startup. With a UTF-8 locale those searches get the speed-up too. The bundled database and the stock `postgres` images use `en_US.utf8`. Searches for one or two characters never use the index.
 
 ## Using `docker run` with your own PostgreSQL
 

@@ -27,9 +27,8 @@ export interface NoteSearchResult {
 
 export async function runNoteSearchInTx(tx: Tx, input: NoteSearchInput): Promise<NoteSearchResult> {
   await tx.setTransaction({ isolationLevel: "repeatable read", accessMode: "read only" });
-  // Must come after SET TRANSACTION. The body EXISTS is a per-row SubPlan, so the estimated cost is far above
-  // jit_above_cost and JIT compiling alone takes ~300 ms, longer than the trigram path takes to run (on a million
-  // sections with the three-branch union, a rare word took ~450 ms with JIT and ~130 ms without).
+  // The body EXISTS is a per-row SubPlan, so the estimated cost is far above jit_above_cost and JIT compile time
+  // dominates the run time of the trigram path.
   await tx.execute(sql`set local jit = off`);
   const rows = await buildNoteSearchQuery(tx, input);
   const ids = rows.slice(0, input.limit).filter(r => r.bodyHit).map(r => r.id);

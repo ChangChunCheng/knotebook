@@ -9,7 +9,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ### Changed
 
-- **Searching for three or more letters or digits in a row is much faster on a site with many notes.** Search used to read the text of every note you can see; now a search such as `kubernetes` or `資料庫` looks the words up in an index first, so a rare word, or one that isn't anywhere, comes back quickly however many notes there are (measured with a million sections of note text: from about 2.7 seconds to about 0.15). Results are the same as before. Searches for one or two characters, such as most two-character Chinese words, work as before. This applies to the sidebar, `GET /api/search` and MCP `search_notes` alike.
+- **Searching for three or more letters or digits in a row is much faster on a site with many notes.** Search used to read the text of every note you can see; now a search such as `kubernetes` or `資料庫` looks the words up in an index first, so a rare word, or one that isn't anywhere, comes back quickly however many notes there are (measured with a million sections of note text: from about 2.7 seconds to about 0.15). Results are the same as before. Searches for one or two characters, such as most two-character Chinese words, work as before. On a database whose character classification (`LC_CTYPE`) is `C`, a search without three ASCII letters or digits in a row (Chinese, Japanese, Korean, Greek, Cyrillic, accented-only text) also works as before; the speed-up for those needs a UTF-8 locale, as in the bundled database. This applies to the sidebar, `GET /api/search` and MCP `search_notes` alike.
 
 ### Upgrade notes
 

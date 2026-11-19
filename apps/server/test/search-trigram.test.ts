@@ -4,7 +4,7 @@ import { freshDb } from "./helpers.js";
 import { seedUser } from "./group-helpers.js";
 import { seedIndexedNote } from "./search-helpers.js";
 import { escapeLike } from "../src/db/like.js";
-import { buildNoteSearchQuery } from "../src/notes/search-sql.js";
+import { buildNoteSearchQuery, setCjkYieldsTrigrams } from "../src/notes/search-sql.js";
 import { searchNotesForUser } from "../src/notes/search-query.js";
 import { runNoteSearchInTx } from "../src/notes/tx/search-query.js";
 import type { Db } from "../src/db/index.js";
@@ -63,13 +63,21 @@ describe("hits through the real queries", () => {
       ["zzqx", []],
     ];
     const sorted = (ids: string[]) => [...ids].sort();
-    for (const [q, ids] of expected) {
-      const mcp = await searchNotesForUser(db, { userId: u.id, query: q, limit: 20 });
-      expect(sorted(mcp.rows.map(r => r.id)), `MCP q=${q}`).toEqual(sorted(ids));
-      const bodyOnly = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, bodyOnly: true }));
-      expect(sorted(bodyOnly.rows.map(r => r.id)), `bodyOnly q=${q}`).toEqual(sorted(ids));
-      const paged = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, page: { after: null } }));
-      expect(sorted(paged.rows.map(r => r.id)), `page q=${q}`).toEqual(sorted(ids));
+    try {
+      for (const cjk of [true, false]) {
+        setCjkYieldsTrigrams(cjk);
+        for (const [q, ids] of expected) {
+          const mode = `cjkYieldsTrigrams=${cjk} q=${q}`;
+          const mcp = await searchNotesForUser(db, { userId: u.id, query: q, limit: 20 });
+          expect(sorted(mcp.rows.map(r => r.id)), `MCP ${mode}`).toEqual(sorted(ids));
+          const bodyOnly = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, bodyOnly: true }));
+          expect(sorted(bodyOnly.rows.map(r => r.id)), `bodyOnly ${mode}`).toEqual(sorted(ids));
+          const paged = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, page: { after: null } }));
+          expect(sorted(paged.rows.map(r => r.id)), `page ${mode}`).toEqual(sorted(ids));
+        }
+      }
+    } finally {
+      setCjkYieldsTrigrams(false);
     }
   });
 });
@@ -84,10 +92,10 @@ function executedTrigramScans(node: PlanNode): number {
 /**
  * Fixture for the plan assertions: one user owns 2000 notes with 20 sections of ~500 characters each (a fixed vocabulary
  * that contains none of the query words); both tables are ANALYZEd.
- * The size matters (measured): whether the body EXISTS in WHERE becomes a hashed SubPlan depends on how many notes are
+ * The size matters: whether the body EXISTS in WHERE becomes a hashed SubPlan depends on how many notes are
  * visible, and once hashed, whether the SubPlan uses a trigram bitmap scan or a seq scan depends on the size of
  * note_search_sections. With 1000 notes × 3-20 short sections the planner picks a seq scan inside the SubPlan; at
- * 2000 × 20 × ~500 characters (40k sections) both shapes use nss_body_trgm_idx. Takes about 8-9 s, mostly GIN maintenance.
+ * 2000 × 20 × ~500 characters (40k sections) both shapes use nss_body_trgm_idx.
  */
 async function seedPlanFixture(db: Db, pool: import("pg").Pool): Promise<string> {
   const u = await seedUser(db);
