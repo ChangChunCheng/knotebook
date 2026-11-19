@@ -1,25 +1,12 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { NOTE_WIDTHS, type NoteWidth } from "@knotebook/shared";
 
-/**
- * #297：站內內文寬度——每人（這台瀏覽器）每篇各自記，鍵 `note.width.<小寫 noteId>`，
- * 值 `"wide"`／`"full"`（標準＝沒有鍵）。
- *
- * 同分頁的真相是模組層的 `values` Map：第一次讀某篇時由 localStorage 種入；寫入先更新 Map、
- * 通知訂閱者，再盡力寫 localStorage——儲存被封鎖時畫面照樣套用，只是不記住。他分頁的變更
- * 經 `storage` 事件進 Map。
- *
- * `storage` 監聽只在有訂閱者時掛著；最後一個訂閱者離開時一併清空 Map（沒監聽的期間收不到
- * 他分頁的變更，留著會在回到該篇時顯示過期值；清掉後下次讀取由 localStorage 重新種入）。
- * 代價：儲存被封鎖時，換篇之間 NotePage 先渲染載入卡、訂閱數歸零，這時記在 Map 的寬度會
- * 跟著清掉——符合「封鎖時只是不記住」。
- */
+/** Values `"wide"`/`"full"` under `note.width.<lowercase noteId>` (standard = no key). Module `values` Map is the source of truth, seeded from localStorage; storage events from other tabs update it. The `storage` listener and the Map are dropped when the last subscriber leaves, because changes are missed while unlistened and would show stale values. */
 export const NOTE_WIDTH_STORAGE_PREFIX = "note.width.";
 
 const values = new Map<string, NoteWidth>();
 const listeners = new Map<string, Set<() => void>>();
 
-/** 不在 `NOTE_WIDTHS` 的值（缺鍵、壞值、舊 server 沒帶）一律當標準。 */
 export function toNoteWidth(value: unknown): NoteWidth {
   return (NOTE_WIDTHS as readonly unknown[]).includes(value) ? (value as NoteWidth) : "standard";
 }
@@ -38,7 +25,6 @@ function notifyAll(): void {
 
 function onStorage(event: StorageEvent): void {
   if (event.key === null) {
-    // 他分頁整個清空了 localStorage。
     values.clear();
     notifyAll();
     return;
@@ -71,13 +57,13 @@ export function setNoteWidth(noteId: string, width: NoteWidth): void {
     if (width === "standard") window.localStorage.removeItem(NOTE_WIDTH_STORAGE_PREFIX + id);
     else window.localStorage.setItem(NOTE_WIDTH_STORAGE_PREFIX + id, width);
   } catch {
-    // 寫不進去：只活在這個分頁的 Map 裡。
+    // Unwritable storage: the width stays only in this tab's Map.
   }
 }
 
 export function subscribeNoteWidth(noteId: string, listener: () => void): () => void {
   const id = keyOf(noteId);
-  // 每次訂閱一個新函式：同一個 listener 訂兩次也各算一次；取消訂閱只刪自己。
+  // Fresh function per subscription so the same listener subscribed twice counts twice.
   const entry = () => listener();
   if (listeners.size === 0) window.addEventListener("storage", onStorage);
   let set = listeners.get(id);
@@ -87,7 +73,6 @@ export function subscribeNoteWidth(noteId: string, listener: () => void): () => 
   }
   set.add(entry);
   return () => {
-    // 已取消過、或測試重置後的舊訂閱 → no-op。
     if (!listeners.get(id)?.delete(entry)) return;
     if (listeners.get(id)!.size === 0) listeners.delete(id);
     if (listeners.size === 0) {
@@ -99,7 +84,6 @@ export function subscribeNoteWidth(noteId: string, listener: () => void): () => 
 
 const NOOP_UNSUBSCRIBE = () => {};
 
-/** 這篇的站內寬度與 setter；`noteId` 為 null → 恆標準、setter 不作用。 */
 export function useNoteWidth(noteId: string | null): [NoteWidth, (width: NoteWidth) => void] {
   const subscribe = useCallback(
     (listener: () => void) => (noteId === null ? NOOP_UNSUBSCRIBE : subscribeNoteWidth(noteId, listener)),
@@ -115,7 +99,6 @@ export function useNoteWidth(noteId: string | null): [NoteWidth, (width: NoteWid
   return [width, setWidth];
 }
 
-/** 測試用（`src/test/setup.ts` 的 afterEach）：清 Map 與訂閱、移除 storage 監聽。 */
 export function resetNoteWidthsForTest(): void {
   values.clear();
   listeners.clear();

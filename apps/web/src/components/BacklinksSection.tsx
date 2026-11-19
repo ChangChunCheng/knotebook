@@ -7,56 +7,11 @@ import { useIsPhone } from "@/lib/layout-tiers";
 import { cn } from "@/lib/utils";
 
 /**
- * 內文卡頁尾——「N 篇筆記提及」＋來源 chips（UI）。掛在
- * `NoteEditor` 的 `footerSlot`（由 `NotePage` 組裝），讀
- * `GET /api/notes/:id/backlinks`（經 `useBacklinks`，React Query 開啟筆記時
- * fetch + 預設 focus refetch）。
- *
- * 版面（**單排**）：標籤與 chips 同一列，chips 不換行、多到放不下時**水平捲動**
- * ——內文卡的高度因此完全不受 backlinks 篇數影響（上限 MAX_BACKLINKS=200）。
- * 列高用 `SIDEBAR_ROW_HEIGHT`，與側欄底部的帳號列等高（見該常數註解）。
- *
- * chips 容器用 `overflow-x-scroll` 而非 `-auto`：**捲軸一律佔位**。`-auto` 之下
- * 捲軸只在溢出時出現，chips 的垂直位置就會隨「這篇有幾筆」跳動。軌道本身是透明的
- * （見 index.css 的滾動條區塊），沒溢出時只是留白、看不到空軌道。
- *
- * **捲軸幾何**走 `ui/rows.ts` 的 `BACKLINKS_SCROLL_ROW`（容器高＝列高＋捲軸、負
- * 邊距把 margin box 拉回列高、strip 專用的 6px 捲軸與 1px thumb border；三個
- * class token 互相咬合，理由與換算寫在該常數的註解）。此外 `items-center` 同樣
- * 載重：少了它 flex 預設 stretch 會把 chip 撐成整個內容區高。
- *
- * 這組值算出來的版面（實測，headed Chromium）：容器 border box 42px、margin box
- * 36px＝列高（負邊距抵銷），內容區 42−6＝36px，chips 置中其中 → 中心落在容器頂
- * ＋18＝列中心，與標籤共用同一條光學中線（±0.2px）；捲軸落在列的下緣之外、
- * footer `py-2` 的留白裡，距 chip 底 5.8px、距卡片裁切邊 2.0px。
- *
- * **對齊補償一定要做在 chips 這一側**（早期版本把 `mb-2.5` 加在標籤上）：那是把
- * 「標籤＋chips」整組往上拉，於是整條 backlinks 列與側欄帳號列的內容不再共線
- * （`ui/rows.ts` 的等高守衛只看盒高，抓不到），而且 0 筆、根本沒有捲軸時標籤照樣
- * 偏上——兩點都在 PR #90 實測中出現過。
- *
- * 捲軸落在 `py-2` 的留白裡，而**內文卡本身是 `overflow-hidden`**——捲軸底距卡片
- * 裁切邊只剩 2.0px，那 2px 就是全部餘裕：收成 `py-1.5` 會一點餘裕都不剩（捲軸底
- * 恰好貼齊裁切邊），再收成 `py-1` 就真的被裁掉（實測）。也別再給這一列自己加
- * `overflow-hidden`。
- *
- * 已知殘差：Firefox 的 `scrollbar-width: thin` 固定 8px（不吃上面那條 6px 覆寫），
- * 內容區只剩 34、chips 中心 ＋17 → 比標籤**高**約 1px，肉眼無感；overlay 捲軸環境
- * （iOS/Android、macOS Firefox 設「捲動時才顯示」）gutter 為 0，內容區 42、chips
- * 中心 ＋21 → 比標籤低 3px。桌機瀏覽器因為本專案對所有捲動區都套了
- * `::-webkit-scrollbar` 樣式而一律走非 overlay，故以桌機為準。
- *
- * **區塊常駐**：0 筆也保留這一列並顯示空狀態文案。改版前是 0 筆整塊隱藏，
- * 代價是反向連結這個功能完全沒有存在感（沒被連過的筆記看不出有這回事），
- * 且內文卡高度會隨有無 backlinks 跳動。
- *
- * **手機**（< 640）：這一列在內文捲動容器裡、文章欄之後，沒有提及（含查詢未完成、失敗）時整列不渲染，
- * 不留一條空白或「尚無筆記提及」佔掉手機的畫面。版本預覽開著時內文捲動容器整個藏起來，這一列跟著藏
- * （桌面版它留在預覽下方）；關掉預覽就回來。
- *
- * 查詢未完成（pending）或失敗時**只保留空列、不顯示任何文案**：此時「有幾筆」
- * 未知，寫「尚無筆記提及」會是謊報，噴錯誤訊息則對這個次要區塊太吵
- * （本頁主體已有自己的 loading/error 顯示）。
+ * The chips row uses `overflow-x-scroll` (not `-auto`) so the scrollbar always takes space and chip position does not jump with count; geometry is in `BACKLINKS_SCROLL_ROW` (`ui/rows.ts`) and `items-center` is load-bearing (stretch would make chips full height).
+ * The scrollbar sits in the footer `py-2` padding and the body card is `overflow-hidden`: only 2px remain, so do not reduce padding or add `overflow-hidden`.
+ * Alignment compensation must be on the chips side, not the label (`mb-2.5` on the label pulls the whole row off the sidebar account row centre line).
+ * Known residual: Firefox thin scrollbars (8px) put chips ~1px above the label; overlay scrollbars ~3px below.
+ * Phone: no row at all when there are no mentions (including pending/failed query), so no blank strip.
  */
 export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
   const { t } = useTranslation();
@@ -64,13 +19,12 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
   const backlinks = backlinksQuery.data;
   const settled = backlinks !== undefined;
   const phone = useIsPhone();
+  // Desktop always renders the row (empty at 0: discoverability, stable card height); phones hide it when empty. No text while pending/failed: the count is unknown.
   if (phone && (!settled || backlinks.length === 0)) return null;
 
   return (
     <div className="shrink-0 border-t border-border py-2 text-sm">
-      {/* #115：外層負責滿卡寬的分隔線與 py-2（等高的另一半，不得動）；內容列自己
-          `px-5` 滿卡寬（與頁首同距）——#88 的文章欄對齊已刻意拆除（見
-          ui/article-column.ts 檔頭與其 guard test 的反向守衛）。 */}
+      {/* the outer element owns the divider and py-2 (equal-height contract with the sidebar account row) */}
       <div className={cn("flex items-center gap-3 px-5", SIDEBAR_ROW_HEIGHT)}>
         {settled && (
           <p className="shrink-0 text-xs font-medium text-muted-foreground">
@@ -80,7 +34,6 @@ export function BacklinksSection({ noteId }: { noteId: string | undefined }) {
           </p>
         )}
         {settled && backlinks.length > 0 && (
-          // 右下角的歷史泡泡（`CornerStack`）停在內文區的下緣、本列之上，不蓋到這條 chips，所以不必在末端留位置。
           <div className={cn("flex min-w-0 flex-1 items-center gap-2 overflow-x-scroll", BACKLINKS_SCROLL_ROW)}>
             {backlinks.map((backlink) => (
               <Link

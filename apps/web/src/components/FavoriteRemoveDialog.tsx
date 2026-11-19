@@ -3,13 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /**
- * 單篇移出最愛的確認框（筆記 ⋮、頁首星號共用）。
- *
- * 不直接用 `sidebar/select-dialogs.tsx`：那個檔只准經 `SelectLazy` 引用（lazy chunk），而 ⋮ 在首包。
- * 結構照垃圾桶的 `PurgeConfirmDialog`：取消在 `DialogFooter` 的第一個子節點（開框時焦點落在它，預設動作是不移出），
- * 確認鈕是 destructive。送出中兩鈕 disabled，Esc／點框外／✕ 一律忽略，框開到結果回來。
- * 關框後的焦點由呼叫端決定（`onCloseAutoFocus`）。
- * `title` 收筆記的原始標題；空白或空字串在框內換成「無標題」佔位字，呼叫端不必處理。
+ * Not `sidebar/select-dialogs.tsx`: that is lazy-only (`SelectLazy`) but the ⋮ menu is in the initial bundle.
+ * Cancel is the first footer child so initial focus is the safe action.
  */
 interface FavoriteRemoveDialogProps {
   title: string;

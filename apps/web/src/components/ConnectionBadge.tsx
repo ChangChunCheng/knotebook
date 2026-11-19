@@ -3,22 +3,10 @@ import { useTranslation } from "react-i18next";
 import { canEdit, stopsReconnect, type CollabState } from "@/collab/connection";
 import { cn } from "@/lib/utils";
 
-/**
- * 進入「非 connected 且非終態」相位多久之後，badge 才升級成離線警示（ms，issue #48）。
- *
- * 為什麼要等：開一篇筆記的頭零點幾秒、以及正常的短暫重連，本來就會經過 connecting／
- * reconnecting-once。若一進這些相位就閃警示，每次開筆記都會看到雜訊。3 秒足以濾掉那些
- * 一閃即逝的過場，又不會拖太久才告訴使用者「你正在離線編輯」。
- */
+/** Delay before escalating to the offline warning (ms, #48): the first moments of opening a note and short reconnects pass through connecting phases and must not flash a warning. */
 export const OFFLINE_WARN_MS = 3_000;
 
-/**
- * 6 個 phase（#269 加 `outdated`：中性灰點、不升級成離線警示）→ i18n key ＋ 點色（離開 pill 徽章，改成「狀態點＋文字」的
- * 精簡形，色彩訊號集中在點上——`PHASE_STYLES` 因此由原本「2 類 className」（預設灰／
- * 警示紅）擴為「點色映射」，5 個 phase 文案分支與 #48 的計時邏輯完全零改動）。
- * `connected` 用字面值 `oklch(0.8 0.17 152)`（≈ #4ade80）而不是 Tailwind class：
- * 這裡的狀態綠是跟主題無關的語意色，用字面值。
- */
+/** `connected` uses a literal colour: the status green is theme-independent. */
 const PHASE_STYLES: Record<CollabState["phase"], { key: string; dotClassName: string; dotStyle?: CSSProperties }> = {
   connecting: { key: "note.connection.connecting", dotClassName: "bg-muted-foreground" },
   connected: { key: "note.connection.connected", dotClassName: "", dotStyle: { backgroundColor: "oklch(0.8 0.17 152)" } },
@@ -29,29 +17,9 @@ const PHASE_STYLES: Record<CollabState["phase"], { key: string; dotClassName: st
 };
 
 /**
- * 編輯頁頁頭的連線狀態徽章：顯示 `collabReducer` 的 phase（#335：不再帶角色）。
- * 連上時——能編輯的角色（owner／editor）只顯示「已連線」；不能編輯的角色（viewer／none）
- * 改顯示「唯讀」取代「已連線」（連上即顯示，不等 synced），點維持綠色（內容仍是即時的）。
- * 降級除了 toast 之外，仍有這個持續存在的視覺線索。角色本身不在徽章上出現（要看自己的角色：
- * 側欄「與我共享」列表的 Editor／Viewer 標示、群組筆記看群組面板的成員表；頭像名單不列自己）；
- * 窄視窗與螢幕閱讀器也不再讀出角色——能不能編輯已由「唯讀」與編輯器本身表達。
- *
- * issue #48：非 connected 相位**持續超過 `OFFLINE_WARN_MS`** 之後，狀態點升級成
- * 警示色，文案依 `synced` 分兩種——
- *   - 從未同步過（`synced` 為 false）：這篇筆記還沒載入伺服器內容、目前唯讀（editable 由
- *     `NotePage` 一併擋掉），文案是「尚未載入」；
- *   - 曾同步、後來斷線（`synced` 為 true）：仍可編輯，但打的字只在本機、還沒同步回去，
- *     文案是「離線編輯中」。
- * 短暫的過場（開頁的頭幾秒、幾百毫秒的重連）不升級——見 `OFFLINE_WARN_MS`。
- *
- * `role="status"` + `aria-live="polite"`：撤權／降級／離線這些狀態改變不是使用者主動
- * 觸發的，螢幕閱讀器需要被動得知，但不該打斷當下的朗讀（故 polite 而非 assertive）。
- *
- * 內部結構（e2e 語意保存；#335 之後）：
- * - 狀態點：`<span aria-hidden="true">` 純 CSS 圓點，**無文字節點**——保住
- *   `filter({hasText:/^Connected/})`（可編輯者）與 `/^Read-only/`（viewer）的 textContent 前綴不被干擾。
- * - 只有**一個**文字 span（phase 文案，或 viewer 在 connected＋synced 時的「唯讀」）；
- *   不再有 role／readOnly 兩個附屬 span，也沒有「·」分隔。
+ * Escalation (#48): after `OFFLINE_WARN_MS` outside connected, the dot turns warning and the text depends on `synced`.
+ * `role="status"` + polite: revocation/downgrade/offline are not user-initiated, so screen readers should learn of them without interruption.
+ * The status dot has no text node so e2e `hasText:/^Connected/` and `/^Read-only/` prefix matches keep working.
  */
 export function ConnectionBadge({
   state,
@@ -60,26 +28,16 @@ export function ConnectionBadge({
 }: {
   state: CollabState;
   synced: boolean;
-  /** 這個角色能不能編輯內容——離線相位拿不到 `role`（只在 connected 非 null），所以由呼叫
-   * 端算好傳進來。決定升級文案：曾同步後斷線時，可編輯角色才顯示「離線編輯中」，viewer
-   * 顯示中性的「離線」（對 viewer 說「變更尚未同步」是假話——他不能編輯、也沒有變更）。 */
+  /** Offline phases have no `role`, so the caller computes this: a viewer shows neutral "offline" ("not synced" would be false for someone with no changes). */
   canEdit: boolean;
 }) {
   const { t } = useTranslation();
 
-  // 「還不能用」已經持續超過門檻。用 timer 而非「進相位的時刻」相減，才能在跨過門檻的
-  // 當下觸發一次 re-render（否則畫面要等下一次不相關的 render 才升級）。
-  //
-  // ⚠ **「還不能用」＝非 connected，或 connected 但還沒 synced**：
-  // `onAuthenticated` 就進 `connected`，但 `provider.synced` 要再一個 round trip；若
-  // server 的 `onLoadDocument` 慢或丟錯，會永久卡在「已連線」配一篇空白唯讀
-  // 筆記。只看 phase 的話這一格永遠不升級——正是 #48 要消滅的形狀，只是方向反過來。
-  // 併進同一顆 timer 就不會誤傷正常開頁：connecting→connected→synced 走完通常 <1s，
-  // 跨不過門檻、不閃。
+  // A timer (not phase-entry subtraction) re-renders exactly when the threshold passes.
+  // "Not usable yet" includes connected-but-not-synced: `provider.synced` needs another round trip, and a slow or failing server `onLoadDocument` would otherwise stay on "Connected" over a blank read-only note forever. Same timer, so normal opens (<1s) never flash.
   const [offlineSustained, setOfflineSustained] = useState(false);
   const offlinePhase = !stopsReconnect(state) && (state.phase !== "connected" || !synced);
-  // 用 ref 讀最新值，讓 effect 的 deps 只有 offlinePhase——避免 setOfflineSustained 造成的
-  // re-render 把 effect 重跑、timer 一直被清掉重設而永遠觸發不了。
+  // Read through a ref so the effect depends only on offlinePhase; otherwise setOfflineSustained re-renders would keep resetting the timer.
   const sustainedRef = useRef(offlineSustained);
   sustainedRef.current = offlineSustained;
 
@@ -88,14 +46,12 @@ export function ConnectionBadge({
       if (sustainedRef.current) setOfflineSustained(false);
       return;
     }
-    if (sustainedRef.current) return; // 已經升級了，不必再排 timer
+    if (sustainedRef.current) return;
     const timer = setTimeout(() => setOfflineSustained(true), OFFLINE_WARN_MS);
     return () => clearTimeout(timer);
   }, [offlinePhase]);
 
   const showOffline = offlinePhase && offlineSustained;
-  // 三分支：從未同步（不管角色）→「尚未載入」；曾同步且可編輯→「離線編輯中」；曾同步但
-  // 不可編輯（viewer）→ 中性「離線」。
   const offlineKey = !synced
     ? "note.connection.offlineUnsynced"
     : roleCanEdit
@@ -103,16 +59,13 @@ export function ConnectionBadge({
       : "note.connection.offline";
   const phase = showOffline ? { key: offlineKey, dotClassName: "bg-destructive" } : PHASE_STYLES[state.phase];
 
-  // #335：viewer（含 none）一連上就以「唯讀」取代「已連線」，點仍是綠的；不看 synced（未 synced 的
-  // 編輯器本來就唯讀，說「唯讀」是真話）。連不上而升級成離線警示（含 connected 但久未 synced 的
-  // 「尚未載入」）時 showOffline 優先，文案回到警示。
+  // Viewers show "Read-only" as soon as connected (an unsynced editor is read-only anyway); showOffline takes priority.
   const readOnlyLabel = !showOffline && state.phase === "connected" && !canEdit(state.role) ? "note.readOnly" : null;
 
   return (
     <div role="status" aria-live="polite" className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
       <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", phase.dotClassName)} style={phase.dotStyle} />
-      {/* #115：視窗是手機寬，或頁首 content box 不到 36rem 時，文字只給螢幕閱讀器——
-          **不是 hidden**：容器是 aria-live，display:none 會讓窄視窗的螢幕閱讀器收不到狀態變化。 */}
+      {/* Not `hidden`: the container is aria-live and display:none would stop screen readers getting status changes. */}
       <span className="max-sm:sr-only @max-[36rem]:sr-only">{t(readOnlyLabel ?? phase.key)}</span>
     </div>
   );

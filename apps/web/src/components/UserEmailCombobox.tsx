@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { otherTokens, replaceToken, tokenAt } from "@/lib/email-list";
 import { cn } from "@/lib/utils";
 
-/** 打字停多久才查（ms）。 */
 export const SUGGEST_DEBOUNCE_MS = 200;
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -26,38 +25,19 @@ function useDebounced<T>(value: T, ms: number): T {
 export interface UserEmailComboboxProps {
   value: string;
   onChange: (email: string) => void;
-  /** 可及名稱；沒給 `placeholder` 時兼 placeholder。 */
   label: string;
   placeholder?: string;
-  /** 已在名單上的人（成員、已分享對象）不再出現在建議裡。 */
   excludeUserIds?: ReadonlyArray<string>;
-  /**
-   * 收多個地址（群組加成員，#331 批次加入）：`type="text"`（`type="email"` 的原生驗證會擋下多個地址）、
-   * 只拿游標所在的那一個地址去查、選取只換掉那一個；框裡已經打過的地址不再建議。分隔規則與 `parseEmailList` 同一份
-   * （`lib/email-list.ts`）。沒開＝單一地址（分享對話框）：`type="email"`，選取填入整格。
-   */
+  /** `type="text"` because native `type="email"` validation rejects multiple addresses; only the address under the caret is queried and replaced (separator rules shared with `parseEmailList`). */
   multiple?: boolean;
-  /** 唯讀時（批次加入跑的期間）不開清單、不能選取。 */
   readOnly?: boolean;
   onPaste?: (event: ClipboardEvent<HTMLInputElement>) => void;
   "aria-describedby"?: string;
-  /** 指向內部的 `<input>`（例如對話框關掉後把焦點還回來）。 */
   ref?: Ref<HTMLInputElement>;
   className?: string;
 }
 
-/**
- * 加成員／分享對話框共用的 email 輸入框＋「認識的人」建議（`GET /api/users/suggest`，只含同群組成員與自己分享過的對象，
- * 不是全站名錄）。WAI-ARIA combobox（list autocomplete）：輸入框 `role="combobox"`、清單 `role="listbox"`，鍵盤 ↑／↓ 移動、
- * Enter 選取、Esc 收起；`aria-activedescendant` 指向目前那一項，焦點始終留在輸入框。
- *
- * 選取只是把 email 填進輸入框，不代為送出（角色下拉還要選）。沒有選中項目時 Enter 照常送出外層表單——打完整 email
- * 一樣能加，建議清單只是輔助。≥ 2 字、停 200 ms 才查；查詢失敗就當作沒有建議。
- * `multiple` 時查的、換的都只是游標所在的那一個地址，選完補上 `, `、游標放在後面，可以接著打下一個。
- *
- * 清單用 floating-ui 定位但**不 portal**：留在對話框的 DOM 裡，點選項不算 Radix Dialog 的「點外面」。
- * 高度 32px 的輸入框沿用 `ui/input`（`ui/button.tsx` 的同列等高規範）。
- */
+/** Not portalled: the list stays in the dialog DOM so clicking an option is not a Radix Dialog "click outside". */
 export function UserEmailCombobox({
   value, onChange, label, placeholder, excludeUserIds, multiple = false, readOnly = false, onPaste,
   "aria-describedby": describedBy, ref, className,
@@ -74,10 +54,8 @@ export function UserEmailCombobox({
     },
     [ref],
   );
-  // open：使用者打過字之後才為真；選取、Esc、失焦、送出、變唯讀都收起。
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  // multiple：游標位置（打字、移動游標時更新），用來找游標所在的那一個地址；選取後要把游標放到補上的 `, ` 後面
   const [caret, setCaret] = useState(0);
   const pendingCaretRef = useRef<number | null>(null);
   if (readOnly && open) {
@@ -117,8 +95,7 @@ export function UserEmailCombobox({
     ],
   });
 
-  // Esc 要先收起清單、不關掉外層 Radix Dialog：Radix 在 document 的 capture 階段聽 Escape，
-  // 所以這裡在更早的 window capture 攔下（只在清單開著、且事件來自這個輸入框時）。
+  // Esc must close the list before the outer Radix Dialog: Radix listens in the document capture phase, so intercept earlier in window capture.
   useEffect(() => {
     if (!expanded) return;
     function onKeyDown(event: globalThis.KeyboardEvent): void {
@@ -132,7 +109,7 @@ export function UserEmailCombobox({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [expanded]);
 
-  // 選取後的新值由外層 state 寫回來，寫回之後才放游標
+  // Place the caret only after the outer state writes the new value back.
   useLayoutEffect(() => {
     const next = pendingCaretRef.current;
     const input = inputRef.current;
@@ -147,7 +124,7 @@ export function UserEmailCombobox({
       const replaced = replaceToken(value, span.start, span.end, user.email);
       setCaret(replaced.caret);
       if (replaced.text === value) {
-        // 值沒變（選的就是已經打完整的那個、後面也已有分隔）：外層不會重繪，直接放游標
+        // Value unchanged: outer state will not re-render, so place the caret directly.
         inputRef.current?.setSelectionRange(replaced.caret, replaced.caret);
       } else {
         pendingCaretRef.current = replaced.caret;
@@ -161,7 +138,7 @@ export function UserEmailCombobox({
     inputRef.current?.focus();
   }
 
-  /** multiple：游標移到另一個地址時，清單（還是舊地址的建議）收起——不然選了會換掉游標所在的那個。 */
+  // Caret moved to another address: close the stale suggestions, otherwise picking would replace the wrong address.
   function handleSelect(event: SyntheticEvent<HTMLInputElement>): void {
     const input = event.currentTarget;
     const next = input.selectionStart ?? input.value.length;
@@ -172,7 +149,7 @@ export function UserEmailCombobox({
     setCaret(next);
   }
 
-  /** #331 的貼上（換行改逗號）在外層直接改值、不經過 onChange：清單也要收起。 */
+  /** Paste (#331) changes the value outside onChange, so close the list here too. */
   function handlePaste(event: ClipboardEvent<HTMLInputElement>): void {
     onPaste?.(event);
     if (event.defaultPrevented) {
@@ -182,7 +159,7 @@ export function UserEmailCombobox({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    // 輸入法選字中的 ↑／↓／Enter 是給輸入法的（同 FilePanel、SelectionAiBox）
+    // IME composition keys belong to the IME.
     if (event.nativeEvent.isComposing) return;
     if (event.key === "ArrowDown") {
       if (!open) {
@@ -198,7 +175,6 @@ export function UserEmailCombobox({
       setActive((i) => (i <= 0 ? items.length - 1 : i - 1));
     } else if (event.key === "Enter") {
       if (expanded && activeIndex >= 0) {
-        // 選取，不送出表單
         event.preventDefault();
         pick(items[activeIndex]!);
       } else {
@@ -227,14 +203,12 @@ export function UserEmailCombobox({
         aria-label={label}
         value={value}
         onChange={(event) => {
-          // 使用者自己改了值：上一次選取留下、還沒放的游標位置作廢
           pendingCaretRef.current = null;
           onChange(event.target.value);
           if (multiple) setCaret(event.target.selectionStart ?? event.target.value.length);
           setOpen(true);
           setActive(-1);
         }}
-        // 只換游標所在的地址：游標移到別的地址（方向鍵、點一下）時收起清單、跟著換查詢
         onSelect={multiple ? handleSelect : undefined}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
@@ -258,7 +232,7 @@ export function UserEmailCombobox({
               id={optionId(index)}
               role="option"
               aria-selected={index === activeIndex}
-              // mousedown 預設會讓輸入框失焦（→ 收起清單、click 落空）：擋掉，焦點留在輸入框。
+              // mousedown would blur the input and close the list before the click lands.
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => pick(user)}
               onMouseMove={() => setActive(index)}

@@ -9,24 +9,17 @@ export interface AvatarProps {
   avatar: AvatarRef | null;
   size: number;
   ringColor?: string;
-  /** 外框與底之間那 1 px 分隔圈的顏色（＝頭像所在的底色）；預設卡片底色。 */
   offsetColor?: string;
   kind?: "user" | "agent";
   className?: string;
 }
 
-/**
- * AI 圖示色：淺色＝`AGENT_PRESENCE_COLOR`（Tailwind 只認完整字面，Avatar.test 守兩者一致）；
- * 深色改用較亮的紫，淡底上才夠對比（WCAG 1.4.11）。
- */
+/** Light = `AGENT_PRESENCE_COLOR` (Tailwind needs full literals; Avatar.test keeps them equal); dark uses a brighter purple for contrast (WCAG 1.4.11). */
 const AGENT_ICON = "text-[#7c3aed] dark:text-[#a78bfa]";
 
-/**
- * 頭像（圖、首字、AI 三形）。網址只經 `avatarUrl`，prop 只收 `AvatarRef`；
- * 圖載入失敗以 `(id, v)` 記住並退回首字。外框色是執行期動態值，只能 inline。
- */
+/** The ring colour is a runtime value, so it must be inline. */
 export function Avatar({ name, avatar, size, ringColor, offsetColor = "var(--color-card)", kind = "user", className }: AvatarProps) {
-  // 記住「哪一版」載入失敗：id／v 變了就自然重試，不必另用 effect 重設。
+  // Keyed by `id:v` so a new version retries without a reset effect.
   const imgKey = avatar ? `${avatar.id}:${avatar.v}` : null;
   const [failedKey, setFailedKey] = useState<string | null>(null);
   const showImg = kind !== "agent" && avatar !== null && imgKey !== failedKey;
