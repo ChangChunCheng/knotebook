@@ -1,10 +1,4 @@
-/**
- * 建立資料夾的交易本體（根層與父資料夾兩形）。S14：只收 `tx`／純資料／測試縫。
- * 順序：（群組空間）groups KS → 結構鎖 →（父資料夾形）父列 KS → 重判可見性、同空間、管理權（與服務層同一個入口順序） → 深度 → 數量 → INSERT。
- * 失敗一律 throw `TxAbort`。同層撞名的 23505 不在這裡接（交易已 abort），交給服務層映射 409 `folder_name_taken`。
- * 呼叫端一律 READ COMMITTED（結構鎖之後的下一句才拿新快照，見 `lock.ts` 檔頭）。
- * 錯誤訊息在 `../messages.ts`（服務層的交易外快速路徑 import 同一份，404／403 逐位元組相同）。
- */
+/** Callers must use READ COMMITTED (see `lock.ts`). The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service maps it. */
 import { count, sql } from "drizzle-orm";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderPermissionsDto } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
@@ -29,7 +23,6 @@ export interface CreateFolderInput {
   by: string;
   name: string;
   lockTimeoutMs: number;
-  /** 交易外預讀的位置；space 由父資料夾或請求決定。id 皆已小寫。 */
   target: { kind: "parent"; folderId: string; space: FolderSpace } | { kind: "root"; space: FolderSpace };
 }
 
@@ -40,7 +33,6 @@ export async function createFolderInTx(
 ): Promise<{ row: FolderRow; permissions: FolderPermissionsDto }> {
   const { target } = input;
   const space = target.space;
-  // 以資料夾 id 進來 → folder_not_found；以群組 id 進來 → group_not_found（n-2）。
   const notFound = (): TxAbort =>
     target.kind === "parent"
       ? new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE)
