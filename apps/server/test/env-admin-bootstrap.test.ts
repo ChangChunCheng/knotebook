@@ -13,13 +13,10 @@ import { createAiRuntime } from "../src/ai/runtime.js";
 import { SiteLimits } from "../src/site-limits/store.js";
 
 /**
- * `ADMIN_EMAIL`/`ADMIN_PASSWORD` env bootstrap（setup token 已
- * 退役，`initializeInstance` 是實例初始化的唯一路徑）整合測試專用 harness：不透過
- * `buildTestApp()`——那個 helper 刻意不呼叫 `initializeInstance`（見該函式說明），這裡
- * 需要「先對同一個 db 跑帶 envAdmin 的 `initializeInstance`，再拿同一個 db 建 app」這種
- * 有順序依賴的組裝，手動兜出來比硬塞進共用 helper 更直接、不影響其他測試。`limiters`
- * 不傳，沿用 `buildApp` 內建生產預設（同 buildTestApp 未收到 override 時的行為基礎，
- * 只是這裡不需要每個測試全新實例——本檔每個 it 都是全新 db/app）。
+ * Dedicated harness for the integration tests of the `ADMIN_EMAIL`/`ADMIN_PASSWORD` env bootstrap (`initializeInstance` is the only path to initialize an instance): it doesn't go through
+ * `buildTestApp()` - that helper deliberately doesn't call `initializeInstance` (see its description); here an order-dependent assembly is needed: run `initializeInstance` with an envAdmin
+ * on a db first, then build the app on the same db, which is more direct by hand than bolting it onto the shared helper, and doesn't affect other tests. `limiters` isn't passed, so `buildApp`'s
+ * built-in production defaults apply (same basis as buildTestApp without overrides; no need for a fresh instance per test since every `it` here has a fresh db/app).
  */
 async function buildAppWithEnvAdmin(envAdmin?: { email: string; password: string }) {
   const { db } = await freshDb();
@@ -29,7 +26,7 @@ async function buildAppWithEnvAdmin(envAdmin?: { email: string; password: string
     {
       config: testConfig,
       db,
-      // #397：直接呼叫 `buildApp` 的唯一一處——不碰 DB 的唯讀那份。
+      // #397: calls `buildApp` directly instead of through the helpers - uses the read-only SiteLimits that doesn't touch the DB.
       siteLimits: SiteLimits.defaults({ machine: testConfig.machine }),
       gate,
       throttle: new LoginThrottle(),
@@ -45,7 +42,7 @@ async function buildAppWithEnvAdmin(envAdmin?: { email: string; password: string
 const ENV_ADMIN = { email: "boss@example.com", password: "correct-horse-battery" };
 
 describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
-  it("空 DB + 雙 env → 啟動後該帳號可登入、isAdmin、mustChangePassword=false（#187：env 管理員不強改密碼）", async () => {
+  it("empty DB + both envs -> after startup that account can log in, isAdmin, mustChangePassword=false (#187: the env admin isn't forced to change password)", async () => {
     const { app, db } = await buildAppWithEnvAdmin(ENV_ADMIN);
 
     const [dbUser] = await db.select().from(users).where(eq(users.email, ENV_ADMIN.email));
@@ -65,12 +62,11 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
     expect(meRes.statusCode).toBe(200);
     expect(meRes.json()).toMatchObject({ isAdmin: true, mustChangePassword: false });
 
-    // instance_setup 已落地（一筆 singleton）。
     const setupRows = await db.select().from(instanceSetup);
     expect(setupRows).toHaveLength(1);
   });
 
-  it("env 管理員登入後不被「必須先改密碼」的 403 擋：POST /api/auth/tokens → 201（旗標帳號會拿 403）", async () => {
+  it("an env admin after login isn't blocked by the 'must change password first' 403: POST /api/auth/tokens -> 201 (a flagged account gets 403)", async () => {
     const { app } = await buildAppWithEnvAdmin(ENV_ADMIN);
     const loginRes = await app.inject({
       method: "POST",
@@ -90,7 +86,7 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
     expect(res.json()).toHaveProperty("token");
   });
 
-  it("大寫 ADMIN_EMAIL → DB 存小寫（單一漏斗）", async () => {
+  it("uppercase ADMIN_EMAIL -> stored lowercase in the DB (single funnel)", async () => {
     const { db } = await freshDb();
     await initializeInstance(db, { email: "BOSS-UPPER@Example.COM", password: "correct-horse-battery" });
 
@@ -99,7 +95,7 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
     expect(dbUser.email).toBe("boss-upper@example.com");
   });
 
-  it("已初始化的 DB（既有 admin）+ 雙 env → env 完全被忽略，不建立新帳號，既有帳號不變", async () => {
+  it("already-initialized DB (existing admin) + both envs -> env fully ignored, no new account created, existing account unchanged", async () => {
     const { db } = await freshDb();
     await db.insert(instanceSetup).values({ singleton: true });
     const existing = await db
@@ -114,24 +110,22 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
 
     await initializeInstance(db, ENV_ADMIN);
 
-    // env 指定的帳號完全沒被建立。
     const envUserRows = await db.select().from(users).where(eq(users.email, ENV_ADMIN.email));
     expect(envUserRows).toHaveLength(0);
 
-    // 既有帳號一筆不動。
     const allUsers = await db.select().from(users);
     expect(allUsers).toHaveLength(1);
     expect(allUsers[0]).toMatchObject({ id: existing[0]!.id, email: "existing-owner@example.com" });
   });
 
-  it("啟動重試（同一個 db 再跑一次 initializeInstance 帶同一組 envAdmin）不會建出第二個 admin", async () => {
+  it("startup retry (running initializeInstance again on the same db with the same envAdmin) doesn't create a second admin", async () => {
     const { db } = await freshDb();
     await initializeInstance(db, ENV_ADMIN);
     const afterFirst = await db.select().from(users).where(eq(users.email, ENV_ADMIN.email));
     expect(afterFirst).toHaveLength(1);
 
-    // 模擬「process 重啟後再跑一次 init」——instance_setup 已完成，第二次呼叫應直接
-    // no-op，完全不碰 bootstrap 邏輯。
+    // Simulates "the process restarts and init runs again": instance_setup is already done, so the second call should be a straight no-op
+    // that never touches the bootstrap logic.
     await initializeInstance(db, ENV_ADMIN);
 
     const afterSecond = await db.select().from(users).where(eq(users.email, ENV_ADMIN.email));
@@ -139,7 +133,7 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
     expect(afterSecond[0]!.id).toBe(afterFirst[0]!.id);
   });
 
-  it("並發啟動嘗試（同一個 db 同時兩次 initializeInstance 帶同一組 envAdmin）→ 只建立一個 admin", async () => {
+  it("concurrent startup attempts (two initializeInstance with the same envAdmin on the same db at once) -> only one admin is created", async () => {
     const { db } = await freshDb();
 
     await Promise.all([initializeInstance(db, ENV_ADMIN), initializeInstance(db, ENV_ADMIN)]);
@@ -150,10 +144,9 @@ describe("ADMIN_EMAIL/ADMIN_PASSWORD env bootstrap admin", () => {
     expect(setupRows).toHaveLength(1);
   });
 
-  it("未初始化且無 envAdmin → throw 可行動訊息", async () => {
-    const { db } = await freshDb(); // freshDb 回 {db, pool, close}——比照 gate.test.ts 解構慣例
+  it("not initialized and no envAdmin -> throws an actionable message", async () => {
+    const { db } = await freshDb(); // freshDb returns {db, pool, close} - same destructuring convention as gate.test.ts
     await expect(initializeInstance(db)).rejects.toThrow(/ADMIN_EMAIL/);
-    // 且不得留下任何副作用
     expect(await db.select().from(instanceSetup)).toHaveLength(0);
     expect(await db.select().from(users)).toHaveLength(0);
   });

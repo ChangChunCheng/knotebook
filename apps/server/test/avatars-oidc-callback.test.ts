@@ -1,7 +1,4 @@
-/**
- * OIDC callback 的頭貼接線：首登、一般登入、手動連結會排程背景下載；SSO 證明與待確認連結不會。
- * 圖片伺服器是本機 `node:http`；fake IdP 的 `picture` 指向它，下載政策注入「放行 loopback 與任意埠」。
- */
+/** The image server is a local `node:http`; the fake IdP's `picture` points at it, and the download policy is injected to allow loopback and any port. */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,7 +53,7 @@ async function imageServer(initial: Record<string, ImageRoute>): Promise<{ base:
   return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests: () => count };
 }
 
-/** 背景工作結果的收集器：`next()` 等下一筆（已到的先給），不用 sleep。 */
+/** Collector of background job results: `next()` waits for the next one (already-arrived ones first), no sleep. */
 function settledQueue() {
   const seen: OidcAvatarJobResult[] = [];
   const waiting: Array<(r: OidcAvatarJobResult) => void> = [];
@@ -100,8 +97,8 @@ const userBy = async (t: OidcTestApp, email: string) => (await t.db.select().fro
 const me = (t: OidcTestApp, cookies: Record<string, string>) => t.app.inject({ method: "GET", url: "/api/auth/me", cookies });
 const sessionOf = (cookies: Record<string, string>) => ({ [SESSION_COOKIE]: cookies[SESSION_COOKIE]! });
 
-describe("OIDC callback 頭貼：登入", () => {
-  it("首登（created）：302 之後背景建候選並自動選用，/me 的 avatar.pending 為 true", async () => {
+describe("OIDC callback avatar: login", () => {
+  it("first login (created): after the 302 the background creates the candidate and auto-selects it, /me avatar.pending is true", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 1) } });
     const { t, q } = await app2();
     const r = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "ua", email: "alice@example.com", picture: `${img.base}/a.png` } });
@@ -115,7 +112,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(body.avatar).toEqual({ id: rows[0]!.id, v: 1, pending: true });
   });
 
-  it("302 與 session 先回：圖片伺服器卡住時登入已完成、/me 沒有頭貼；放行後候選才出現", async () => {
+  it("302 and session are returned first: with the image server stuck the login is already complete and /me has no avatar; the candidate appears only after release", async () => {
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 1), hold } });
@@ -133,7 +130,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect((await me(t, sessionOf(r.cookies))).json().avatar).not.toBeNull();
   });
 
-  it("一般登入（login）：同網址不重抓，換網址就換圖", async () => {
+  it("regular login (login): same URL is not fetched again, a new URL changes the image", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 1) }, "/b.png": { body: pngFilled(64, 2) } });
     const { t, q } = await app2();
     const claims = { sub: "ua", email: "alice@example.com" };
@@ -151,7 +148,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(rows[0]).toMatchObject({ oidcPictureUrl: `${img.base}/b.png`, version: 2 });
   });
 
-  it("ID token 沒有 picture、email 在 ID token：不打 userinfo、沒有候選、last_picture_url 為 NULL", async () => {
+  it("ID token without picture, email in the ID token: userinfo not called, no candidate, last_picture_url is NULL", async () => {
     const { t, q } = await app2();
     const r = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "ua", email: "alice@example.com" } });
     expect(r.callbackRes.statusCode).toBe(302);
@@ -163,7 +160,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(idn!.lastPictureUrl).toBeNull();
   });
 
-  it("ID token 缺 email 與 picture、只有 userinfo 帶 picture：用 userinfo 的", async () => {
+  it("ID token without email and picture, only userinfo carries picture: the userinfo one is used", async () => {
     const img = await imageServer({ "/u.png": { body: pngFilled(64, 3) } });
     const { t, q } = await app2();
     t.idp("a").omitFromIdToken(["email", "picture"]);
@@ -174,10 +171,10 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(rows[0]).toMatchObject({ oidcPictureUrl: `${img.base}/u.png` });
   });
 
-  it("ID token 與 userinfo 都有 picture：ID token 的優先", async () => {
+  it("ID token and userinfo both have picture: the ID token's wins", async () => {
     const img = await imageServer({ "/id.png": { body: pngFilled(64, 4) } });
     const { t, q } = await app2();
-    // 缺 email 才會打 userinfo；userinfo 的 picture 指向不存在的路徑，若被採用會是 http_status。
+    // userinfo is only called when email is missing; the userinfo picture points at a nonexistent path, which would give http_status if used.
     t.idp("a").omitFromIdToken(["email"]);
     t.idp("a").overrideNextUserinfo({ picture: `${img.base}/other.png` });
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "ua", email: "alice@example.com", picture: `${img.base}/id.png` } });
@@ -185,7 +182,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(t.idp("a").counts.userinfo).toBe(1);
   });
 
-  it("圖片伺服器回 500：登入照常成功、沒有候選", async () => {
+  it("image server returns 500: login still succeeds, no candidate", async () => {
     const img = await imageServer({ "/a.png": { status: 500 } });
     const { t, q } = await app2();
     const r = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "ua", email: "alice@example.com", picture: `${img.base}/a.png` } });
@@ -195,7 +192,7 @@ describe("OIDC callback 頭貼：登入", () => {
     expect(await avatarsOf(t, (await userBy(t, "alice@example.com")).id)).toHaveLength(0);
   });
 
-  it("生產政策（不注入）：picture 指向 127.0.0.1:<隨機埠> → 不建候選、reason 是 bad_port（埠先於位址檢查）、登入照常", async () => {
+  it("production policy (not injected): picture pointing at 127.0.0.1:<random port> -> no candidate, reason is bad_port (port is checked before address), login still succeeds", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 1) } });
     const q = settledQueue();
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A, displayName: "A" }] }, { avatarJobHooks: q.hooks });
@@ -207,7 +204,6 @@ describe("OIDC callback 頭貼：登入", () => {
   });
 });
 
-/** 設定頁手動連結：起點 → fake IdP → callback，回 callback 回應。 */
 async function linkCallback(t: OidcTestApp, key: string, cookies: Record<string, string>, claims: { sub: string; picture?: string }) {
   t.idp(key).setNextLogin(claims);
   const start = await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${t.provider(key).id}`, cookies, payload: {} });
@@ -222,8 +218,8 @@ async function linkCallback(t: OidcTestApp, key: string, cookies: Record<string,
   });
 }
 
-describe("OIDC callback 頭貼：連結", () => {
-  it("intent=link：觸發，候選的 identity_id 是新連結的那一列", async () => {
+describe("OIDC callback avatar: link", () => {
+  it("intent=link: triggers, the candidate's identity_id is the newly linked row", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 5) } });
     const { t, q } = await app2();
     const alice = await insertPasswordUser(t.db);
@@ -236,7 +232,7 @@ describe("OIDC callback 頭貼：連結", () => {
     expect(rows[0]).toMatchObject({ identityId: idn!.id, oidcPictureUrl: `${img.base}/a.png` });
   });
 
-  it("連結失敗（身分屬別人）：不排程；柵欄之前沒有任何結果屬於失敗的那一方", async () => {
+  it("link failure (identity belongs to someone else): not scheduled; before the fence nothing belongs to the failing side", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 5) }, "/fence.png": { body: pngFilled(64, 7) } });
     const { t, q } = await app2();
     const bob = await insertPasswordUser(t.db);
@@ -248,25 +244,24 @@ describe("OIDC callback 頭貼：連結", () => {
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "uf", email: "fence@example.com", picture: `${img.base}/fence.png` } });
     const fence = await userBy(t, "fence@example.com");
     for (let r = await q.next(); r.userId !== fence.id; r = await q.next()) {
-      // 柵欄的結果之前出現的都收下，最後一起檢查。
+      // Everything that appears before the fence's result is collected, then checked together at the end.
     }
     expect(q.seen.map(r => r.userId)).toEqual([bob.id, fence.id]);
   });
 });
 
-describe("OIDC callback 頭貼：prove 與待確認連結不觸發", () => {
-  it("SSO 證明與 confirm_link 的回呼都不排程；用另一個會觸發的登入當柵欄，確認前面沒有任何結果", async () => {
+describe("OIDC callback avatar: prove and pending link don't trigger", () => {
+  it("neither SSO prove nor the confirm_link callback schedules; another login that does trigger is used as a fence, confirming nothing came before it", async () => {
     const img = await imageServer({ "/a.png": { body: pngFilled(64, 6) }, "/fence.png": { body: pngFilled(64, 7) } });
     const { t, q } = await app2();
-    // 純 SSO 帳號 U（A 的身分，沒有 picture，所以首登的工作只會得到 no_picture）。
+    // Pure SSO account U (A's identity, no picture, so the first-login job only gets no_picture).
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "ua", email: "u@example.com" } });
     expect(await q.next()).toMatchObject({ reason: "no_picture" });
-    // B 同 email 首登 → confirm_link（帶 picture，但這時還沒有身分列，不得排程）。
+    // B first-logs in with the same email -> confirm_link (with picture, but there is no identity row yet, so it must not be scheduled).
     const pend = await ssoRoundTrip(t.app, t.idp("b"), { loginUrl: loginUrl(t, "b"), claims: { sub: "ub", email: "u@example.com", picture: `${img.base}/a.png` } });
     const pending = pend.cookies[OIDC_PENDING_COOKIE]!;
     expect(pend.callbackRes.headers.location).toBe("/link-account");
     const pendingId = unsealPendingLink(testConfig.appSecret, pending, Math.floor(Date.now() / 1000))!.pendingId;
-    // 以 A 證明（帶 picture）。
     const cookies = { [OIDC_PENDING_COOKIE]: pending };
     const start = await t.app.inject({ method: "POST", url: `/api/auth/oidc/pending/prove/${t.provider("a").id}`, cookies, payload: { pendingId } });
     expect(start.statusCode, start.body).toBe(200);
@@ -279,11 +274,11 @@ describe("OIDC callback 頭貼：prove 與待確認連結不觸發", () => {
     });
     expect(callback.statusCode).toBe(302);
     expect(callback.cookies.find(c => c.name === SESSION_COOKIE)?.value).toBeTruthy();
-    // 柵欄：會觸發的登入（另一個使用者）。誤排的工作會比柵欄早開始、步驟又比整趟 SSO 少，會先結束；它若下載了圖，圖片伺服器的請求數也會多一。
+    // Fence: a login that does trigger (another user). A wrongly scheduled job would start earlier than the fence and has fewer steps than a whole SSO trip, so it would finish first; if it downloaded the image, the image server's request count would be one higher.
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: loginUrl(t, "a"), claims: { sub: "uf", email: "fence@example.com", picture: `${img.base}/fence.png` } });
     const fence = await userBy(t, "fence@example.com");
     for (let r = await q.next(); r.userId !== fence.id; r = await q.next()) {
-      // 柵欄的結果之前出現的都收下，最後一起檢查。
+      // Everything that appears before the fence's result is collected, then checked together at the end.
     }
     const u = await userBy(t, "u@example.com");
     expect(q.seen.map(r => r.userId)).toEqual([u.id, fence.id]);

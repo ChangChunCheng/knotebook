@@ -9,12 +9,11 @@ import { AiKeyDecryptError, decryptApiKey, encryptApiKey, type EncryptedApiKey }
 import { createAiRuntime, selfCheckAiKeys } from "../src/ai/runtime.js";
 
 /**
- * issue #14：AI provider 的 API key 密文以 providerId 為 AAD 綁定，並提供 v1 → v2 的
- * 遷移路徑。這一支測的是**跨越 DB 的那一段**（純加解密的行為在
- * `test/unit/ai-crypto.test.ts`）。
+ * Covers the part of issue #14 (key ciphertext bound to providerId as AAD, v1 -> v2 migration) that crosses the DB;
+ * pure crypto behaviour is in `test/unit/ai-crypto.test.ts`.
  */
 
-/** 手造一份 issue #14 之前格式的密文（v1，沒有 AAD）。 */
+/** Hand-built ciphertext in the pre-#14 format (v1, no AAD). */
 function legacyCiphertext(appSecret: string, plaintext: string): EncryptedApiKey {
   const key = createHash("sha256").update(`${appSecret}:ai-key`).digest();
   const iv = randomBytes(12);
@@ -48,14 +47,14 @@ async function readEncrypted(db: Db, id: string): Promise<EncryptedApiKey> {
   return row!.apiKeyEncrypted!;
 }
 
-describe("AI key 密文綁 providerId（issue #14）", () => {
-  it("把 A 的密文列複製到 B 的資料列 → B 解不開（不會靜靜地拿 A 的金鑰去用）", async () => {
+describe("AI key ciphertext bound to providerId (issue #14)", () => {
+  it("copying A's ciphertext row onto B's row -> B can't decrypt it (never silently uses A's key)", async () => {
     const { db } = await buildTestApp();
     const idA = randomUUID();
     const idB = randomUUID();
 
     await insertProviderWith(db, idA, encryptApiKey(testConfig.appSecret, "sk-victim-key", idA));
-    // 攻擊者（有 DB 寫入能力）把 A 的密文原樣搬到 B。
+    // An attacker with DB write access moves A's ciphertext verbatim to B.
     await insertProviderWith(db, idB, await readEncrypted(db, idA));
 
     expect(decryptApiKey(testConfig.appSecret, await readEncrypted(db, idA), idA)).toBe("sk-victim-key");
@@ -64,7 +63,7 @@ describe("AI key 密文綁 providerId（issue #14）", () => {
     expect(() => decryptApiKey(testConfig.appSecret, stolen, idB)).toThrow(AiKeyDecryptError);
   });
 
-  it("啟動自檢會把解得開的 v1 密文就地升級成 v2（遷移路徑）", async () => {
+  it("startup self-check upgrades a decryptable v1 ciphertext to v2 in place (migration path)", async () => {
     const { db } = await buildTestApp();
     const id = randomUUID();
     await insertProviderWith(db, id, legacyCiphertext(testConfig.appSecret, "sk-legacy-key"));
@@ -74,22 +73,22 @@ describe("AI key 密文綁 providerId（issue #14）", () => {
 
     const upgraded = await readEncrypted(db, id);
     expect(upgraded.v).toBe(2);
-    // 升級後的密文與這一列繫在一起：內容不變，但搬到別列就解不開了。
+    // The upgraded ciphertext is tied to this row: content unchanged, but moved to another row it can't be decrypted.
     expect(decryptApiKey(testConfig.appSecret, upgraded, id)).toBe("sk-legacy-key");
     expect(() => decryptApiKey(testConfig.appSecret, upgraded, randomUUID())).toThrow();
   });
 
-  it("解不開的密文不會被升級，也不會擋住啟動（維持降級即可）", async () => {
+  it("undecryptable ciphertext is not upgraded and doesn't block startup (staying degraded is fine)", async () => {
     const { db } = await buildTestApp();
     const id = randomUUID();
-    // 舊格式（v1）＋用別把 secret 加的密文：keyId 對不上，解不開。
+    // Old format (v1) + ciphertext encrypted with a different secret: keyId doesn't match, can't be decrypted.
     await insertProviderWith(db, id, legacyCiphertext("f".repeat(64), "sk-x"));
 
     const runtime = createAiRuntime();
     await selfCheckAiKeys(db, testConfig.appSecret, runtime, fakeLog());
 
     expect(runtime.degraded.has(id)).toBe(true);
-    // 沒被升級：升級只發生在「用目前的 APP_SECRET 解得開」的那些密文上。
+    // Not upgraded: upgrade only applies to ciphertext that decrypts with the current APP_SECRET.
     expect((await readEncrypted(db, id)).v).toBe(1);
   });
 });

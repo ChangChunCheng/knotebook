@@ -1,7 +1,4 @@
-/**
- * 資料夾：`GET`／`POST /api/folders`（入口順序、深度與數量）。
- * 控制字元與組合字元一律以 `String.fromCharCode` 組字（原始碼不放跳脫序列）。
- */
+/** Control and combining characters are always built with `String.fromCharCode` (no escape sequences in the source). */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderDto, type FolderListDto } from "@knotebook/shared";
@@ -16,7 +13,7 @@ import { buildTestApp, freshLimiters } from "./helpers.js";
 import { inject, sixRoleScene } from "./trash-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// The default space-lock limit is set to 60 s in this file (product value 5000) so the wall-clock bound for "the injected short limit took effect" is far from both - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -37,7 +34,7 @@ function created(res: LightMyRequestResponse): FolderDto {
   return res.json() as FolderDto;
 }
 
-/** 斷言狀態與錯誤碼；回 body 原文（逐位元組比對用）。 */
+/** Asserts status and error code; returns the raw body (for byte-for-byte comparison). */
 function failed(res: LightMyRequestResponse, status: number, code: string): string {
   expect(res.statusCode, res.body).toBe(status);
   expect((res.json() as { error: { code: string } }).error.code).toBe(code);
@@ -56,7 +53,7 @@ async function folderCount(db: Db): Promise<number> {
   return rows[0]!.n;
 }
 
-/** sixRoleScene ＋ create-only（讀＋建，無編輯）＋ noRead（成員、角色無閱讀）＋ 站台管理員（非成員）。 */
+/** sixRoleScene + create-only (read + create, no edit) + noRead (member, role without read) + site admin (non-member). */
 async function roleScene(db: Db) {
   const s = await sixRoleScene(db);
   const createOnly = await seedUser(db);
@@ -71,7 +68,7 @@ async function roleScene(db: Db) {
   return { ...s, createOnly, noRead, siteAdmin };
 }
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
+/** Test hook: after `arm(point, fn)`, the first time point is passed fn runs (once only). */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -89,7 +86,7 @@ function armedHook() {
 }
 
 describe("POST /api/folders", () => {
-  it("FC-1 個人根層：201、key 集合、permissions 全真、created_by＝呼叫者、GET 列得出", async () => {
+  it("personal root: 201, key set, permissions all true, created_by = caller, listed by GET", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const f = created(await post(app, u.id, { name: "Docs", space: { kind: "personal" } }));
@@ -100,7 +97,7 @@ describe("POST /api/folders", () => {
     expect(await listOf(app, u.id)).toEqual([f]);
   });
 
-  it("FC-2 共享私人根層：createNote 為 false", async () => {
+  it("private shared root: createNote is false", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const f = created(await post(app, u.id, { name: "Shared", space: { kind: "shared" } }));
@@ -108,7 +105,7 @@ describe("POST /api/folders", () => {
     expect(await folderRow(db.$client, f.id)).toMatchObject({ kind: "shared", owner_id: u.id, group_id: null, created_by: u.id });
   });
 
-  it("FC-3 群組根層：can_edit 的角色 201；無編輯 403；非成員／無閱讀／站台管理員／不存在／非 UUID 404 group_not_found 逐位元組相同", async () => {
+  it("group root: a role with can_edit 201; no edit 403; non-member/no read/site admin/nonexistent/non-UUID 404 group_not_found byte-for-byte identical", async () => {
     const { app, db } = await buildTestApp();
     const s = await roleScene(db);
     const space = { kind: "group", groupId: s.groupId };
@@ -135,7 +132,7 @@ describe("POST /api/folders", () => {
     expect(rows[0]!.n).toBe(4);
   });
 
-  it("FC-4 父資料夾：自己的 201；別人的、非成員群組的、站台管理員看別人的、隨機 uuid、\"x\" 404 逐位元組相同；群組資料夾 readOnly 403", async () => {
+  it("parent folder: own 201; someone else's, a non-member group's, a site admin viewing another's, a random uuid and 'x' give byte-for-byte identical 404; group folder readOnly 403", async () => {
     const { app, db } = await buildTestApp();
     const s = await roleScene(db);
     const other = await seedUser(db);
@@ -171,7 +168,7 @@ describe("POST /api/folders", () => {
     expect(await folderCount(db)).toBe(7);
   });
 
-  it("FC-5 名稱：NUL／落單代理／換行／81 字 400；尾端換行修掉；80 個 😀；NFC；同層不分大小寫與 NFC 撞名 409；不同父層、不同空間同名 201", async () => {
+  it("name: NUL/lone surrogate/newline/81 characters 400; trailing newline trimmed; 80 x emoji; NFC; same-level case-insensitive and NFC collisions 409; same name under a different parent or in a different space 201", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const other = await seedUser(db);
@@ -209,7 +206,7 @@ describe("POST /api/folders", () => {
     created(await post(app, other.id, { name: "Docs", space: personal }));
   });
 
-  it(`FC-6 深度：連建 ${FOLDER_DEPTH_MAX} 層 201，第 ${FOLDER_DEPTH_MAX + 1} 層 409 folder_too_deep`, async () => {
+  it(`depth: creating ${FOLDER_DEPTH_MAX} levels in a row 201, level ${FOLDER_DEPTH_MAX + 1} 409 folder_too_deep`, async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     let parent = created(await post(app, u.id, { name: "L1", space: { kind: "personal" } }));
@@ -222,7 +219,7 @@ describe("POST /api/folders", () => {
     expect(await folderCount(db)).toBe(FOLDER_DEPTH_MAX);
   });
 
-  it(`FC-7 數量：一個空間第 ${FOLDERS_PER_SPACE_MAX} 個 201、再多一個 409 folder_limit（含子層）；同人另一空間、另一位使用者照常`, async () => {
+  it(`count: the ${FOLDERS_PER_SPACE_MAX}th in a space 201, one more 409 folder_limit (including child levels); the same person's other space and another user are unaffected`, async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const other = await seedUser(db);
@@ -241,7 +238,7 @@ describe("POST /api/folders", () => {
     created(await post(app, other.id, { name: "fine", space: { kind: "personal" } }));
   });
 
-  it("FC-8 body：parentId 與 space 並帶、都不帶、未知鍵、space 形不對、name 缺或非字串 400；名稱先於位置判；大寫 parentId／groupId 201", async () => {
+  it("body: parentId together with space, neither, unknown key, malformed space, name missing or not a string 400; name is judged before position; uppercase parentId/groupId 201", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const s = await roleScene(db);
@@ -271,7 +268,7 @@ describe("POST /api/folders", () => {
     expect((await folderRow(db.$client, upperGroup.id))?.group_id).toBe(s.groupId);
   });
 
-  it("FC-9 認證：Bearer（notes:read notes:write）POST 401；Bearer notes:read GET 200；未登入 GET／POST 401", async () => {
+  it("auth: Bearer (notes:read notes:write) POST 401; Bearer notes:read GET 200; not signed in GET/POST 401", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const f = await seedFolder(db, { personal: u.id }, { name: "Mine" });
@@ -287,7 +284,7 @@ describe("POST /api/folders", () => {
     expect((await post(app, null, { name: "C", space: { kind: "personal" } })).statusCode).toBe(401);
   });
 
-  it("FC-10 節流：folder 桶上限 1——授權失敗的請求不扣；第二次成功前 429；另一位使用者不受影響", async () => {
+  it("throttle: folder bucket limit 1 - requests failing authorization aren't charged; 429 before the second success; another user unaffected", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ folder: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const u = await seedUser(db);
     const other = await seedUser(db);
@@ -301,7 +298,7 @@ describe("POST /api/folders", () => {
     expect(await folderCount(db)).toBe(2);
   });
 
-  it("FC-13 授權後、交易前群組被刪（轉移）：群組根層 404 group_not_found、父資料夾形 404 folder_not_found，與不存在逐位元組相同", async () => {
+  it("group deleted (transferred) after authorization, before the transaction: group root 404 group_not_found, parent-folder form 404 folder_not_found, byte-for-byte identical to nonexistent", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const deleteGroupOf = (adminId: string, groupId: string) => async () => {
@@ -318,12 +315,12 @@ describe("POST /api/folders", () => {
     seam.arm("folder-authorized", deleteGroupOf(b.admin.id, b.groupId));
     const parentBody = failed(await post(app, b.member.id, { name: "A", parentId: gf.id }), 404, "folder_not_found");
     expect(parentBody).toBe(failed(await post(app, b.member.id, { name: "A", parentId: RANDOM_UUID }), 404, "folder_not_found"));
-    // 只看這幾次 POST 沒建出列（群組資料夾本身的去向由刪群組決定，不在這裡斷言）。
+    // Only checks that these POSTs created no row (where the group folder itself ends up is decided by deleting the group, not asserted here).
     const { rows } = await db.$client.query<{ n: number }>("select count(*)::int as n from folders where name = 'A'");
     expect(rows[0]!.n).toBe(0);
   });
 
-  it("FC-14 交易內降權（結構鎖之後）：拿掉 can_edit → 403；拿掉閱讀或移出群組 → 404（根層 group_not_found、父資料夾 folder_not_found）", async () => {
+  it("role downgrade inside the transaction (after the structure lock): removing can_edit -> 403; removing read or removing from the group -> 404 (root: group_not_found, parent folder: folder_not_found)", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -366,7 +363,7 @@ describe("POST /api/folders", () => {
     expect(await folderCount(db)).toBe(1);
   });
 
-  it("FC-16 結構鎖等太久（另一條連線持住同空間的鎖、lock_timeout 300 ms）：409 server_busy（< 20 s：注入值有生效，不是本檔預設 60 s）、沒有建出列；鎖放掉後照常 201", async () => {
+  it("structure lock waits too long (another connection holds the same space's lock, lock_timeout 300 ms): 409 server_busy (< 20 s: the injected value took effect, not this file's default 60 s), no row created; 201 as usual after the lock is released", async () => {
     const { app, db } = await buildTestApp({ storageLockTimeoutMs: 300 });
     const u = await seedUser(db);
     const holder = await db.$client.connect();
@@ -390,7 +387,7 @@ describe("POST /api/folders", () => {
     created(await post(app, u.id, { name: "busy", space: { kind: "personal" } }));
   });
 
-  it("FC-15 預讀之後父資料夾換了空間（模擬轉移成呼叫者的個人資料夾）或被刪：404 folder_not_found，不是 500", async () => {
+  it("parent folder changed space after the pre-read (simulates a transfer to the caller's personal folder) or deleted: 404 folder_not_found, not 500", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(db);
@@ -401,7 +398,7 @@ describe("POST /api/folders", () => {
     const body = failed(await post(app, s.member.id, { name: "A", parentId: gf.id }), 404, "folder_not_found");
     expect(body).toBe(failed(await post(app, s.member.id, { name: "A", parentId: RANDOM_UUID }), 404, "folder_not_found"));
 
-    // 父資料夾在預讀之後被刪掉：交易內的 KEY SHARE 讀不到 → 404（不是 FK 23503 的 500）。
+    // The parent folder was deleted after the pre-read: the KEY SHARE read inside the transaction finds nothing -> 404 (not the 500 of FK 23503).
     const gone = await seedFolder(db, { personal: s.member.id });
     seam.arm("folder-authorized", async () => {
       await db.$client.query("delete from folders where id = $1", [gone.id]);
@@ -410,7 +407,7 @@ describe("POST /api/folders", () => {
     expect(await folderCount(db)).toBe(1);
   });
 
-  it("FC-12 S-F8：建立資料夾前後，呼叫者所有筆記的狀態（含 updated_at）與 note_states 列數不變", async () => {
+  it("creating a folder leaves the state of all the caller's notes (including updated_at) and the note_states row count unchanged", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -434,7 +431,7 @@ describe("POST /api/folders", () => {
 });
 
 describe("GET /api/folders", () => {
-  it("FC-11 群組資料夾逐角色的 permissions；非成員、無閱讀、站台管理員看不到", async () => {
+  it("permissions of group folders per role; non-members, no-read members and site admins can't see them", async () => {
     const { app, db } = await buildTestApp();
     const s = await roleScene(db);
     const gf = await seedFolder(db, { group: s.groupId }, { name: "G" });

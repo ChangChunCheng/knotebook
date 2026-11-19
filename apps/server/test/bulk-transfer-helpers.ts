@@ -1,6 +1,3 @@
-/**
- * bulk transfer 測試共用：直接簽 bulk 權杖、MCP 呼叫小工具。HTTP 端點的工具另見各測試檔。
- */
 import http from "node:http";
 import type { FastifyInstance } from "fastify";
 import * as Y from "yjs";
@@ -17,7 +14,7 @@ import { seedDoc } from "./copy-helpers.js";
 import { testEditingRuntime } from "./helpers.js";
 import { mcpPost, rpc } from "./mcp-helpers.js";
 
-/** 直接跑簽發交易（不經 MCP；不經 gate、不驗範圍可見性）。被拒就丟錯。 */
+/** Runs the issuing transaction directly (bypasses MCP and the gate, doesn't check scope visibility); throws if rejected. */
 export async function issueBulkDirect(
   db: Db,
   parentTokenId: string,
@@ -42,7 +39,7 @@ export type ToolCallResult = { isError?: true; structuredContent: Record<string,
 export const callTool = (app: FastifyInstance, token: string, name: string, args: Record<string, unknown>): Promise<ToolCallResult> =>
   mcpPost(app, rpc("tools/call", { name, arguments: args }), { token }).then(r => r.json().result as ToolCallResult);
 
-/** markdown → Y.Doc（server 端 EditorSession；`testEditingRuntime` 的 lease 一定還）。 */
+/** markdown -> Y.Doc via a server-side EditorSession (always returns the testEditingRuntime lease). */
 export async function mdDoc(markdown: string): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(testEditingRuntime, doc);
@@ -54,12 +51,11 @@ export async function mdDoc(markdown: string): Promise<Y.Doc> {
   return doc;
 }
 
-/** 直接寫 note_states（冷筆記）。 */
 export async function seedMd(db: Db, noteId: string, markdown: string): Promise<void> {
   await seedDoc(db, noteId, await mdDoc(markdown));
 }
 
-/** block JSON 直接寫 note_states（markdown 寫不出的形：toggle、有色清單、帶段落子的 bullet）。 */
+/** Writes note_states directly from block JSON (shapes markdown can't express: toggle, colored list, bullet with paragraph children). */
 export async function seedBlocks(db: Db, noteId: string, blocks: unknown[]): Promise<void> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(testEditingRuntime, doc);
@@ -80,7 +76,7 @@ export function bulkGet(app: FastifyInstance, url: string, token?: string, opts:
   });
 }
 
-/** `PUT /api/transfer/notes`（預設 `text/markdown; charset=utf-8`）。 */
+/** `PUT /api/transfer/notes` (default `text/markdown; charset=utf-8`). */
 export function bulkPut(
   app: FastifyInstance,
   token: string | undefined,
@@ -100,7 +96,6 @@ export function bulkPut(
   });
 }
 
-/** 單篇下載 → `{ text, fm, body }`（`bulkGet`＋`parseNoteFile`）。 */
 export async function downloadNote(app: FastifyInstance, token: string, noteId: string): Promise<{ text: string; fm: Record<string, string>; body: string }> {
   const r = await bulkGet(app, `/api/transfer/notes/${noteId}`, token);
   if (r.statusCode !== 200) throw new Error(`downloadNote: ${r.statusCode} ${r.body}`);
@@ -109,20 +104,19 @@ export async function downloadNote(app: FastifyInstance, token: string, noteId: 
   return { text, fm, body };
 }
 
-/** 只改本文（保留 frontmatter 8 行）。 */
+/** Changes only the body (keeps the 8 frontmatter lines). */
 export function editBody(text: string, f: (body: string) => string): string {
   const lines = text.split("\n");
   return [...lines.slice(0, 8), f(lines.slice(8).join("\n"))].join("\n");
 }
 
-/** 改 `title` 行（值用 `JSON.stringify`）。 */
 export function renameIn(text: string, title: string): string {
   return text.replace(/^title: .*$/m, `title: ${JSON.stringify(title)}`);
 }
 
 /**
- * 模擬「人」在下載之後的修改——讀路徑 fork → server 端編輯器改 → 以直連（轉換工作形的 ctx：不落款、不進 AI 修改紀錄）
- * 合併回 live doc（冷筆記會被載入、合併、落盤）。
+ * Simulates a "human" edit after the download: read-path fork -> edit in the server-side editor -> merge back into the live doc over a direct connection
+ * (conversion-work ctx: no attribution, not in the AI edit log); a cold note gets loaded, merged and persisted.
  */
 export async function humanEdit(ctx: { db: Db; collab: CollabServer }, noteId: string, f: (ed: EditorSession["editor"]) => void): Promise<void> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
@@ -140,13 +134,13 @@ export async function humanEdit(ctx: { db: Db; collab: CollabServer }, noteId: s
   });
 }
 
-/** 現況頂層 block 的 id 與型別（未 mount；比對 id 是否沿用）。 */
+/** Current top-level block ids (read from the Y.Doc without opening an editor session; for checking whether ids are reused). */
 export async function topIdsOf(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<string[]> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
   return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") as string);
 }
 
-/** 現況頂層 block 的 id、型別、純文字（行內內容串起來）與子 block 數（fork 上開一次 session 讀；不寫回）。 */
+/** Current top-level block id, type, plain text (inline content joined) and child block count (read in a session opened on a fork; not written back). */
 export async function liveBlocks(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<Array<{ id: string; type: string; text: string; children: number }>> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
   const s = await EditorSession.open(testEditingRuntime, doc);
@@ -159,7 +153,7 @@ export async function liveBlocks(ctx: { db: Db; collab: CollabServer }, noteId: 
   }
 }
 
-/** MCP 讀出的整篇 markdown（比對寫回結果用；不 touch presence）。 */
+/** Whole-note markdown as read over MCP (to compare write-back results; doesn't touch presence). */
 export async function liveMarkdown(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<string> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
   const r = await readNoteContentFromDoc(testEditingRuntime, doc);
@@ -168,8 +162,8 @@ export async function liveMarkdown(ctx: { db: Db; collab: CollabServer }, noteId
 }
 
 /**
- * `node:http` 真 HTTP 的 PUT（S14 用）。`pauseAfterHeaders`：送完 header＋body 後先等 `waitBeforeEnd`；`destroyAfter`：
- * 送完 body 後（或只送一半時）在給定的 promise 解析後 destroy 連線。回應若有就收（被 destroy 時回 null）。
+ * Real HTTP PUT via `node:http`. `pauseAfterHeaders`: after sending headers + body, wait `waitBeforeEnd` first; `destroyAfter`: after the body is sent (or half of it),
+ * destroy the connection once the given promise resolves. The response is collected if present (null when destroyed).
  */
 export function putRaw(
   baseUrl: string,
@@ -200,7 +194,7 @@ export function bulkDelete(app: FastifyInstance, token?: string) {
   return app.inject({ method: "DELETE", url: "/api/transfer/token", headers: token !== undefined ? { authorization: `Bearer ${token}` } : {} });
 }
 
-/** 一篇下載檔：前 8 行 frontmatter（兩條 `---`＋六鍵）、其後是本文。 */
+/** A downloaded file: the first 8 lines are frontmatter (two `---` plus six keys), then the body. */
 export function parseNoteFile(text: string): { keys: string[]; fm: Record<string, string>; body: string } {
   const lines = text.split("\n");
   if (lines[0] !== "---" || lines[7] !== "---") throw new Error("not an 8-line front matter");
@@ -223,11 +217,11 @@ export interface RawResponse {
   status: number;
   headers: http.IncomingHttpHeaders;
   body: Buffer;
-  /** 收到正常結尾（chunked 的結尾 chunk）＝true；中途被斷＝false。 */
+  /** true = a proper ending was received (chunked terminating chunk); false = cut midway. */
   complete: boolean;
 }
 
-/** 以 `node:http` 打整包端點、收完整回應（真 HTTP；hijack 後的中止要靠這個看，不用 inject）。 */
+/** Hits the bundle endpoint with `node:http` and collects the whole response (real HTTP; an abort after hijack is only visible this way, not with inject). */
 export function exportRaw(baseUrl: string, token: string, path = "/api/transfer/export"): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const req = http.get(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } }, res => {
@@ -247,7 +241,7 @@ export function exportRaw(baseUrl: string, token: string, path = "/api/transfer/
   });
 }
 
-/** 一個可以從外面放行的閘（測試縫裡 await 它）。 */
+/** A gate that can be released from outside (awaited inside the test hook). */
 export function gate(): { wait: Promise<void>; open: () => void } {
   let open!: () => void;
   const wait = new Promise<void>(r => {

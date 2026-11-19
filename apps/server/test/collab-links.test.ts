@@ -9,23 +9,22 @@ import { notes, noteLinks } from "../src/db/schema.js";
 import type { Db } from "../src/db/index.js";
 import { buildCollabTestApp, COLLAB_TOKEN_INIT, type CollabTestCtx, type HttpSession, type TestClient } from "./helpers.js";
 
-/** #372：409 not_loaded 的訊息（兩種成因同一句）。 */
+/** #372: message of 409 not_loaded (the two causes share one sentence). */
 const NOT_LOADED_MESSAGE =
   "Link updates need the note open in the editor: it isn't loaded on the server, or you have no open editor connection to it. Open the note and try again.";
 
 const PASSWORD = "correct-horse-battery";
 
 /**
- * 本檔一律以**真** CollabHooks 建 app（比照 collab-revocation.test.ts）：預設的
- * `noopCollabHooks.linkSyncGate` 恆回 `{ ok: false }`，會讓「在記憶體但無連線 → 409」
- * 「unload 後 → 409」這兩案例假綠（不管有沒有真的送出過 gate 查詢都是 409）——本檔要測
- * 的正是 `createCollabHooks` 委派 `CollabServer.linkSyncState` 之後、真實的記憶體狀態。
+ * Always builds the app with the **real** CollabHooks (like collab-revocation.test.ts): the default `noopCollabHooks.linkSyncGate` always returns `{ ok: false }`,
+ * which would make the "in memory but no connection -> 409" and "after unload -> 409" cases falsely green (409 whether or not a gate query was really sent) -
+ * this file tests exactly the real in-memory state after `createCollabHooks` delegates to `CollabServer.linkSyncState`.
  */
 function buildApp(): Promise<CollabTestCtx> {
   return buildCollabTestApp({ collabHooks: (server, log) => createCollabHooks(server, log) });
 }
 
-/** 輪詢等待條件成立（比照 collab-revocation/collab-store：共編收斂不可用固定 sleep 斷言）。 */
+/** Polls until the condition holds (as in collab-revocation/collab-store: collaboration convergence can't be asserted with a fixed sleep). */
 async function waitFor(label: string, timeoutMs: number, check: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -40,9 +39,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 手工在 Y.Doc 層造一個 wikilink 節點（nodeName "wikilink"、attr targetNoteId，fragment
- * 用 shared 的 YDOC_FRAGMENT）——不依賴 apps/web 的 BlockNote schema/spec，只用來讓文件
- * 內容真的變動（推進 docClock），以及供「雙 client 收斂」案驗證 Yjs 層的同步本身正確。
+ * Hand-builds a wikilink node at the Y.Doc level (nodeName "wikilink", attr targetNoteId, fragment YDOC_FRAGMENT from shared) - independent of apps/web's
+ * BlockNote schema/spec; it only makes the document content really change (advances docClock) and lets the two-client convergence case verify
+ * that Yjs-level sync itself is correct.
  */
 function insertWikilink(doc: Y.Doc, targetNoteId: string): void {
   const element = new Y.XmlElement("wikilink");
@@ -50,7 +49,6 @@ function insertWikilink(doc: Y.Doc, targetNoteId: string): void {
   doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
 }
 
-/** 走訪 fragment 樹，收集所有 wikilink 節點的 targetNoteId——供收斂斷言比對兩端內容。 */
 function extractWikilinkTargets(doc: Y.Doc): string[] {
   const targets: string[] = [];
   const walk = (node: Y.XmlFragment | Y.XmlElement): void => {
@@ -68,7 +66,7 @@ function extractWikilinkTargets(doc: Y.Doc): string[] {
   return targets;
 }
 
-/** 走真的 `POST /api/notes/:id/collab-token`（會計入 per-user limiter）取一份 token。 */
+/** Gets a token via the real `POST /api/notes/:id/collab-token` (counts against the per-user limiter). */
 async function fetchToken(session: HttpSession, noteId: string): Promise<string> {
   const res = await session.fetch(`/api/notes/${noteId}/collab-token`, COLLAB_TOKEN_INIT);
   if (!res.ok) throw new Error(`取得 collab token 失敗（${res.status}）：${await res.text()}`);
@@ -76,7 +74,7 @@ async function fetchToken(session: HttpSession, noteId: string): Promise<string>
   return body.token;
 }
 
-/** 走真的 `POST /api/notes/:id/links`——以手動 POST 複刻 client 提交語意（與 client 端無程式碼依賴）。 */
+/** Real `POST /api/notes/:id/links`: reproduces client submission semantics with a manual POST (no code dependency on the client). */
 function postLinks(session: HttpSession, noteId: string, targetIds: string[]): Promise<Response> {
   return session.fetch(`/api/notes/${noteId}/links`, {
     method: "POST",
@@ -95,10 +93,9 @@ async function readLinksClock(db: Db, noteId: string): Promise<number> {
 }
 
 /**
- * 等 server 端（`CollabServer.linkSyncState`——`linkSyncGate` 實際委派的同一個函式）真的
- * 看到 `expectedClock`：client 本地插入的編輯要經過真實的 WS 訊息往返才會反映到 server 端
- * 的 canonical Y.Doc，不能假設「client.doc 已經有這次編輯」等於「server 也已經收到」。
- * 用這個當同步點取代任意長度的 sleep——輪詢的正是 `POST /links` 實際會呼叫的同一段邏輯。
+ * Waits until the server side (`CollabServer.linkSyncState` - the same function `linkSyncGate` actually delegates to) really sees `expectedClock`: a client's local insert
+ * reaches the server's canonical Y.Doc only after a real WS round trip, so "client.doc already has the edit" doesn't mean the server received it.
+ * Used as the sync point instead of an arbitrary sleep - it polls exactly the logic `POST /links` calls.
  */
 async function waitForServerClock(ctx: CollabTestCtx, noteId: string, userId: string, expectedClock: number): Promise<void> {
   await waitFor(`server 端 linkSyncState 收斂到 clock=${expectedClock}`, 10_000, () => {
@@ -108,15 +105,13 @@ async function waitForServerClock(ctx: CollabTestCtx, noteId: string, userId: st
 }
 
 /**
- * 全斷線並等待文件真正從記憶體卸載——範本抄自 `hooks-impl.ts` 的 `beforeNoteDeleted`：
- * `flushPendingStores` 立即執行 debounce 中的 store，`unloadDocument` 在有進行中 store 時
- * 會靜默 no-op（`shouldUnloadDocument` 為 false），所以要輪詢重試。
+ * Disconnects everything and waits until the document is really unloaded from memory - template copied from `beforeNoteDeleted` in `hooks-impl.ts`:
+ * `flushPendingStores` runs the debounced store immediately, and `unloadDocument` silently no-ops while a store is in flight
+ * (`shouldUnloadDocument` false), so it is polled and retried.
  *
- * 步驟：先讓本測試自建的每個 `TestClient` 自行 `disconnect()`（provider.destroy() +
- * socket.destroy()，無自動重連——這才是「全斷線」，不是「叫它們重連」）；再呼叫
- * `hocuspocus.closeConnections(noteId)` 補一刀（v4.5.0 public API，此時應已是 no-op，
- * 純粹證明這條 runbook 路徑不依賴本測試自己持有的 client handle，未來真的 runbook
- * 腳本可能只知道 noteId）。
+ * Steps: first each `TestClient` this test built `disconnect()`s itself (provider.destroy() + socket.destroy(), no auto-reconnect - this is "all disconnected",
+ * not "asking them to reconnect"); then `hocuspocus.closeConnections(noteId)` as a backstop (v4.5.0 public API, should be a no-op by now; it only proves this runbook
+ * path doesn't depend on the client handles held by this test, since a real runbook script may only know the noteId).
  */
 async function disconnectAllAndUnload(ctx: CollabTestCtx, noteId: string, clients: readonly TestClient[]): Promise<void> {
   for (const client of clients) client.disconnect();
@@ -136,8 +131,8 @@ async function disconnectAllAndUnload(ctx: CollabTestCtx, noteId: string, client
   });
 }
 
-describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
-  it("雙 client 收斂：Y.Doc 層手工插入的 wikilink 元素在兩個 client 間同步收斂", async () => {
+describe("links collab integration - real Hocuspocus gate, real provider", () => {
+  it("two-client convergence: a wikilink element inserted by hand at the Y.Doc level converges between two clients", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links1@example.com", password: PASSWORD });
     const other = await ctx.createUser({ email: "other-links1@example.com", password: PASSWORD });
@@ -156,7 +151,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(extractWikilinkTargets(otherClient.doc)).toEqual(extractWikilinkTargets(ownerClient.doc));
   });
 
-  it("synced 首筆提交收斂：連線 synced 後首次提交 204，note_links 落地", async () => {
+  it("first submit after synced converges: first submit after the connection is synced returns 204, note_links is written", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -174,49 +169,38 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(await readLinksClock(ctx.db, note.id)).toBe(expectedClock);
   });
 
-  it("提交者自己的連線尚未登記進索引 → 409（案4同一 gate 分支的暫時性版本）；登記完成後立即收斂，1s 後重試仍收斂", async () => {
+  it("submitter's own connection not yet registered in the index -> 409 (temporary version of the same gate branch as the no-connection case); converges right after registration, still converges when retried after 1s", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links3@example.com", password: PASSWORD });
     const editor = await ctx.createUser({ email: "editor-links3@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const target = await ctx.createNote(owner.id, "Target");
     await ctx.share(note.id, editor.id, "editor");
-    // target 也要分享給 editor——否則 writeNoteLinks 的批次授權查詢會把它靜默過濾掉
-    // （見 notes-links.test.ts「無權存取的 target → 靜默過濾」），跟本測試要驗證的
-    // gate 收斂無關，會把最終斷言的 note_links 弄成假陰性。
+    // The target must be shared with the editor too - otherwise the batch authorization query of writeNoteLinks would silently filter it out
+    // (see "target without access -> silently filtered" in notes-links.test.ts), which is unrelated to the gate convergence under test
+    // and would turn the final note_links assertion into a false negative.
     await ctx.share(target.id, editor.id, "viewer");
 
     const ownerSession = await ctx.loginAs("owner-links3@example.com", PASSWORD);
     const editorSession = await ctx.loginAs("editor-links3@example.com", PASSWORD);
 
-    // owner 先連上，文件已在記憶體；並先編輯一次讓 docClock > 0——避免整個案子退化成
-    // `0 <= 0` 的邊界（那樣即使 CAS 閘門被整條拿掉、案子仍會巧合地綠）。
+    // The owner connects first so the document is in memory, and edits once so docClock > 0 - otherwise the case degrades to the `0 <= 0` boundary
+    // (and would pass by coincidence even if the CAS gate were removed entirely).
     const ownerClient = await ownerSession.connect(note.id);
     insertWikilink(ownerClient.doc, target.id);
     const editClock = docClock(ownerClient.doc);
     await waitForServerClock(ctx, note.id, owner.id, editClock);
 
-    // ⚠ 據實描述本案在測什麼（原註解宣稱的「synced 撞 connected 時序
-    // 交錯」與下面機制不符，予以更正）：
+    // What this case really tests: stalling the editor's tokenFn below creates the *state* "document in memory but the editor's own connection not yet registered in
+    // the byNote index" - the very same gate branch as the "in memory but submitter has no connection" case, except that here the unregistered state is temporary
+    // and resolves by itself. This is a state-equivalent proxy, **not** a reproduction of the "synced hits connected" timing: `onOpen` of `@hocuspocus/provider` 4.5.0
+    // is `await this.sendToken(); this.startSync();`, so `sendToken()` doesn't resolve until `gate` is released and `startSync()` (the whole y-protocol sync, ending in
+    // the client's "synced" event) hasn't begun inside the window; this client has never synced at that point.
     //
-    // 下面卡住 editor 的 tokenFn 造出的是「文件已在記憶體、但 editor 自己的連線尚未登記進
-    // byNote 索引」這個**狀態**——與案 4（在記憶體但提交者無連線）是完全同一個 gate 分支，
-    // 差別只在於這裡的「未登記」是暫時的、稍後會自己解除。這是狀態等價的 proxy，**不是**
-    // 「synced 撞 connected 窗口」那種時序交錯的重現：`@hocuspocus/provider` 的
-    // `onOpen` 實作是 `await this.sendToken(); this.startSync();`（見
-    // `@hocuspocus/provider` 4.5.0 原始碼）——`sendToken()` 在我們釋放 `gate` 之前不會
-    // resolve，`startSync()`（也就是整個 y-protocol 同步、最終導向 client 端 "synced"
-    // 事件）在窗口內根本還沒開始，這個 client 此時**從未 synced 過**，談不上「synced 已經
-    // 發生、只是 connected 還沒跑完」。
-    //
-    // 真正的「synced 撞 connected」窗口在 server 端（`@hocuspocus/server` 4.5.0
-    // `setUpNewConnection`）內部：先把已收到、排入佇列的訊息 drain 套用掉，**之後**才
-    // `await this.hooks("connected", ...)`——本專案的 `connected` hook 正是在這裡才把連線
-    // 登記進 `byNote`（見 collab/server.ts）。drain 與 connected 之間確實有一個真實窗口，
-    // 但它完全在 Hocuspocus 內部一次 async 函式呼叫之中，中間沒有任何 I/O 或公開 API 可以
-    // 掛勾暫停——沒有辦法只靠測試這一側手上的公開介面確定性地卡在那個窗口中間（要做到只能
-    // monkeypatch `Hocuspocus.prototype` 內部方法，超出「真 provider + 公開 API
-    // 複刻 client 語意」的邊界，也不是這支測試該做的事）。
+    // The real "synced hits connected" window is inside `@hocuspocus/server` 4.5.0 `setUpNewConnection`: queued messages are drained and applied first, and only **then**
+    // `await this.hooks("connected", ...)` - where our `connected` hook registers the connection into `byNote` (see collab/server.ts). That window is entirely inside one
+    // async call of Hocuspocus with no I/O or public API to pause at, so it can't be hit deterministically from this side; it would take monkeypatching
+    // `Hocuspocus.prototype`, beyond the "real provider + public API reproducing client semantics" boundary of this test.
     let releaseToken: () => void = () => {};
     const gate = new Promise<void>(resolve => {
       releaseToken = resolve;
@@ -227,8 +211,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
         return fetchToken(editorSession, note.id);
       },
     });
-    // 萬一下面的斷言先失敗、沒人再 await 這個 promise（gate 永遠不會被釋放），避免它變成
-    // unhandled rejection 汙染測試輸出。
+    // If the assertions below fail first and nobody awaits this promise (the gate is never released), avoid an unhandled rejection polluting the test output.
     void editorConnectPromise.catch(() => {});
 
     const raced = await postLinks(editorSession, note.id, [target.id]);
@@ -239,14 +222,13 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     releaseToken();
     const editorClient = await editorConnectPromise;
 
-    // 釘住 client 實際依賴的性質：synced 之後，下一個 HTTP 請求抵達時這條連線的
-    // 登記已經完成——不需要額外等待就該收斂，不是「湊巧等了 1 秒所以來得及」。
+    // Pins what the client actually relies on: after synced, by the time the next HTTP request arrives this connection's registration is already done -
+    // it should converge with no extra wait, not "converging only because we happened to wait 1 second".
     const immediate = await postLinks(editorSession, note.id, [target.id]);
     expect(immediate.status).toBe(204);
     expect(await linkedTargets(ctx.db, note.id)).toEqual([target.id]);
 
-    // 再等 1s 後重試仍然收斂——同時覆蓋「1s 重試收斂」，證明上面的立即
-    // 收斂不是曇花一現。
+    // Retry after another 1s still converges - together covering "converges on 1s retry", proving the immediate convergence above isn't a flash in the pan.
     await sleep(1_000);
     const retried = await postLinks(editorSession, note.id, [target.id]);
     expect(retried.status).toBe(204);
@@ -256,7 +238,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     ownerClient.disconnect();
   });
 
-  it("在記憶體但提交者無連線 → 409 not_loaded", async () => {
+  it("in memory but submitter has no connection -> 409 not_loaded", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links4@example.com", password: PASSWORD });
     const editor = await ctx.createUser({ email: "editor-links4@example.com", password: PASSWORD });
@@ -267,8 +249,8 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     const ownerSession = await ctx.loginAs("owner-links4@example.com", PASSWORD);
     const editorSession = await ctx.loginAs("editor-links4@example.com", PASSWORD);
 
-    // owner 連上，文件確實在記憶體裡；editor 自始至終沒有連過——與上一案（會收斂的暫時性
-    // 競態）不同，這裡驗證的是「即使文件已載入，沒有登記連線的使用者永遠拿不到 clock」。
+    // The owner connects so the document is really in memory; the editor never connected - unlike the previous case (a temporary race that converges),
+    // this verifies that even when the document is loaded, a user with no registered connection never gets a clock.
     const ownerClient = await ownerSession.connect(note.id);
     expect(ctx.collab.hocuspocus.documents.has(note.id)).toBe(true);
 
@@ -280,7 +262,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     ownerClient.disconnect();
   });
 
-  it("unload 後 → 409 not_loaded", async () => {
+  it("after unload -> 409 not_loaded", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links5@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -297,7 +279,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(await linkedTargets(ctx.db, note.id)).toEqual([]);
   });
 
-  it("後續提交冪等：CAS 命中真的重寫（兩發之間手動刪掉 note_links，第二發仍把它重建）", async () => {
+  it("a later submit is idempotent: the CAS hit really rewrites (note_links deleted by hand between two submits, the second still rebuilds it)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links6@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -315,12 +297,11 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(clockAfterFirst).toBe(expectedClock);
     expect(await linkedTargets(ctx.db, note.id)).toEqual([target.id]);
 
-    // 沒有任何新編輯——docClock 不變，第二次提交拿到的 clock 與已提交的 links_clock 相同，
-    // `<=` 閘門讓同 clock 重送仍受理（LWW）。但如果只斷言「兩次提交後最終狀態相同」，即使
-    // CAS 被誤改成嚴格的 `<`（同 clock 重送被誤判成 no-op、根本沒有真的重寫），這裡也會
-    // 巧合地綠——反正本來就沒有新編輯，狀態原地不動騙不出差異。手動在兩發之間刪掉
-    // `note_links` 列（不動 `links_clock`），讓第二發「真的執行了寫入」與「被誤判成
-    // no-op」在最終狀態上產生可觀測的差異：前者會把列重建回來，後者列會維持刪除。
+    // No new edit - docClock unchanged, so the second submit gets the same clock as the already committed links_clock, and the `<=` gate still accepts
+    // a same-clock resend (LWW). But asserting only "same final state after two submits" would pass by coincidence even if CAS were wrongly changed to strict `<`
+    // (a same-clock resend judged a no-op and not rewritten at all) - with no new edit the state stays put and can't expose a difference. So delete the
+    // `note_links` row by hand between the two submits (leaving `links_clock`), making "the second really executed the write" vs "wrongly judged a no-op"
+    // observable in the final state: the former rebuilds the row, the latter leaves it deleted.
     await ctx.db.delete(noteLinks).where(eq(noteLinks.sourceNoteId, note.id));
     expect(await linkedTargets(ctx.db, note.id)).toEqual([]);
 
@@ -332,7 +313,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     client.disconnect();
   });
 
-  it("鉗制收斂（護欄）：links_clock 被人為調高後，unload+重連的 onLoadDocument 用 LEAST 鉗回 docClock，之後提交仍收斂", async () => {
+  it("clamp convergence (guard): after links_clock is artificially raised, onLoadDocument on unload+reconnect clamps it back to docClock with LEAST, and later submits still converge", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links7@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -349,21 +330,21 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     const committedClock = await readLinksClock(ctx.db, note.id);
     expect(committedClock).toBe(editClock);
 
-    // 人為把 links_clock 調到遠高於任何 docClock 能到達的值——若 onLoadDocument 的鉗制
-    // 誤用 GREATEST（而非該用的 LEAST），這個值會原封不動地留到重連之後。
+    // Artificially set links_clock far above any value docClock can reach - if the clamp in onLoadDocument wrongly used GREATEST (instead of the right LEAST),
+    // this value would survive unchanged after reconnecting.
     const inflated = committedClock + 1_000_000;
     await ctx.db.update(notes).set({ linksClock: inflated }).where(eq(notes.id, note.id));
     expect(await readLinksClock(ctx.db, note.id)).toBe(inflated);
 
-    // 全斷線待 unload：文件真的從記憶體卸載，下一次連線才會真的重跑 onLoadDocument。
+    // Fully disconnect and wait for unload: the document is really unloaded from memory, so the next connection really re-runs onLoadDocument.
     await disconnectAllAndUnload(ctx, note.id, [client]);
     expect(ctx.collab.hocuspocus.documents.has(note.id)).toBe(false);
 
     const reconnected = await session.connect(note.id);
     const reloadedClock = docClock(reconnected.doc);
 
-    // 鉗制斷言：必須恰好等於 docClock（不只是「有變小」）——這是唯一能區分
-    // LEAST（正確：夾回 docClock）與 GREATEST（錯誤：維持人為調高值）的斷言。
+    // Clamp assertion: must equal docClock exactly (not just "became smaller"): that is what tells
+    // LEAST (right: clamp back to docClock) from GREATEST (wrong: keeps the raised value).
     const clampedClock = await readLinksClock(ctx.db, note.id);
     expect(clampedClock).toBeLessThanOrEqual(reloadedClock);
     expect(clampedClock).toBe(reloadedClock);
@@ -376,7 +357,7 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     reconnected.disconnect();
   });
 
-  it("還原 runbook（含 links_clock=0 重置）後提交收斂", async () => {
+  it("submit converges after the restore runbook (including the links_clock=0 reset)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-links8@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -392,9 +373,8 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(res1.status).toBe(204);
     expect(await readLinksClock(ctx.db, note.id)).toBe(editClock);
 
-    // 還原 runbook：closeConnections（v4.5.0 public API，見 disconnectAllAndUnload）→
-    // flushPendingStores → unloadDocument 輪詢至真的卸載 → 交易外直接把 links_clock 重置
-    // 為 0（模擬還原/重建索引 runbook 的其中一步）。
+    // Restore runbook: closeConnections (v4.5.0 public API, see disconnectAllAndUnload) -> flushPendingStores -> poll unloadDocument until really unloaded ->
+    // reset links_clock to 0 directly outside the transaction (simulates one step of the restore/rebuild-index runbook).
     await disconnectAllAndUnload(ctx, note.id, [client]);
     expect(ctx.collab.hocuspocus.documents.has(note.id)).toBe(false);
 
@@ -402,8 +382,8 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
     expect(await readLinksClock(ctx.db, note.id)).toBe(0);
 
     const reconnected = await session.connect(note.id);
-    // reconnected 建立時 onLoadDocument 的 LEAST(0, docClock) 鉗制不會把 0 往上拉——
-    // 0 已經是所有 docClock 的下界，重連後仍應維持 0（不是「被鉗回某個正值」）。
+    // The LEAST(0, docClock) clamp in onLoadDocument at reconnect never pulls 0 upward - 0 is already the lower bound of every docClock,
+    // so it should stay 0 after reconnecting (not "clamped back to some positive value").
     expect(await readLinksClock(ctx.db, note.id)).toBe(0);
 
     const res2 = await postLinks(session, note.id, [target.id]);
@@ -415,8 +395,8 @@ describe("links 共編整合——真 Hocuspocus gate、真 provider", () => {
   });
 });
 
-describe("#240 link_target_ids 的大小寫", () => {
-  it("R9 大寫的自身 id 與大小寫重複：不寫自連結、目標照常落地", async () => {
+describe("#240 case of link_target_ids", () => {
+  it("an uppercase own id and case duplicates: no self link written, targets land as usual", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-r9@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -426,12 +406,12 @@ describe("#240 link_target_ids 的大小寫", () => {
     insertWikilink(client.doc, target.id);
     await waitForServerClock(ctx, note.id, owner.id, docClock(client.doc));
     const res = await postLinks(session, note.id, [note.id.toUpperCase(), target.id, target.id.toUpperCase()]);
-    // 排最前：拿掉轉小寫時，大寫自身 id 過了 JS 過濾、在授權查詢被 DB 正規化成小寫，寫出 source = target 的列。
+    // Placed first: without the lowercasing, the uppercase own id passes the JS filter, is normalized to lowercase by the DB in the authorization query, and writes a row with source = target.
     expect(await linkedTargets(ctx.db, note.id)).toEqual([target.id]);
     expect(res.status).toBe(204);
   });
 
-  it("R9b MAX_LINK_TARGETS 個不同 id＋其中一個的大寫變體 → 204（不再假 400）", async () => {
+  it("MAX_LINK_TARGETS distinct ids + an uppercase variant of one of them -> 204 (no longer a false 400)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-r9b@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -443,6 +423,6 @@ describe("#240 link_target_ids 的大小寫", () => {
     const ids = Array.from({ length: MAX_LINK_TARGETS }, () => randomUUID());
     const res = await postLinks(session, note.id, [...ids, ids[0]!.toUpperCase()]);
     expect(res.status).toBe(204);
-    expect(await linkedTargets(ctx.db, note.id)).toEqual([]); // 隨機 id 不存在 → 授權交集為空 → 整組取代成空
+    expect(await linkedTargets(ctx.db, note.id)).toEqual([]); // the random ids don't exist -> authorization intersection is empty -> the whole set is replaced with empty
   });
 });

@@ -21,8 +21,8 @@ async function insertUser(
   return u;
 }
 
-// session.test.ts 已驗證「flip payload 首字元」是可靠的竄改手法（末字元 base64url
-// 只有部分位元有效，翻轉有極小機率不改變解碼位元組，造成假綠）。
+// session.test.ts has verified that flipping the payload's first character is a reliable tampering method (for the last character of base64url
+// only some bits are significant, so flipping it has a tiny chance of not changing the decoded bytes and giving a false green).
 function tamperToken(token: string): string {
   const [header, payload, signature] = token.split(".");
   const flipped = payload[0] === "a" ? "b" : "a";
@@ -30,7 +30,7 @@ function tamperToken(token: string): string {
 }
 
 describe("buildApp", () => {
-  it("未登入 → 401 統一格式", async () => {
+  it("not signed in -> 401 uniform shape", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "GET", url: "/__test/protected" });
@@ -38,7 +38,7 @@ describe("buildApp", () => {
     expect(res.json()).toMatchObject({ error: { code: "unauthorized" } });
   });
 
-  it("變更請求非 JSON → 415 且 code 正確", async () => {
+  it("non-JSON mutating request -> 415 with the right code", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "POST", url: "/__test/echo", payload: "x", headers: { "content-type": "text/plain" } });
@@ -46,29 +46,28 @@ describe("buildApp", () => {
     expect(res.json().error.code).toBe("unsupported_media_type");
   });
 
-  it("未知路由 → 404 統一格式", async () => {
+  it("unknown route -> 404 uniform shape", async () => {
     const { app } = await buildTestApp();
     expect((await app.inject({ method: "GET", url: "/nope" })).json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("healthz 免認證 200 且 body { ok: true }", async () => {
+  it("healthz needs no auth: 200 and body { ok: true }", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ url: "/healthz" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
   });
 
-  // content-type 守衛必須放行無 body 的變更請求
-  // （例如 POST /logout 不會帶 Content-Type/body），不能一律要求 application/json——
-  // 否則所有無 body 的變更端點都會被誤判 415。
-  it("變更請求無 body（如 POST /logout 不帶 Content-Type）→ 放行，不觸發 415", async () => {
+  // The content-type guard must let body-less mutating requests through (e.g. POST /logout sends no Content-Type/body);
+  // requiring application/json always would wrongly 415 every body-less mutating endpoint.
+  it("mutating request without body (e.g. POST /logout without Content-Type) -> allowed, no 415", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "POST", url: "/__test/echo" });
     expect(res.statusCode).not.toBe(415);
   });
 
-  it("壞 JSON body → 400（非 500，錯誤 handler 不可把 4xx 吞成 500）", async () => {
+  it("bad JSON body -> 400 (not 500; the error handler must not swallow a 4xx into a 500)", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "POST", url: "/__test/echo", payload: "{not valid json", headers: { "content-type": "application/json" } });
@@ -76,7 +75,7 @@ describe("buildApp", () => {
     expect(res.json().error.code).toBe("bad_request");
   });
 
-  it("content-type 為 text/plain;charset=application/json（CORS-safelisted 繞法）→ 仍是 415", async () => {
+  it("content-type text/plain;charset=application/json (CORS-safelisted bypass) -> still 415", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "POST", url: "/__test/echo", payload: "{}", headers: { "content-type": "text/plain;charset=application/json" } });
@@ -84,7 +83,7 @@ describe("buildApp", () => {
     expect(res.json().error.code).toBe("unsupported_media_type");
   });
 
-  it("content-type 為 application/json; charset=utf-8（MIME essence 相符）→ 通過", async () => {
+  it("content-type application/json; charset=utf-8 (MIME essence matches) -> passes", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "POST", url: "/__test/echo", payload: "{}", headers: { "content-type": "application/json; charset=utf-8" } });
@@ -92,13 +91,13 @@ describe("buildApp", () => {
     expect(res.json()).toEqual({});
   });
 
-  it("未知路由 + 變更方法 + 非 JSON body → 415（證明 onRequest 對未匹配路由也生效，GET /nope 對此無鑑別力）", async () => {
+  it("unknown route + mutating method + non-JSON body -> 415 (proves onRequest also applies to unmatched routes; GET /nope can't discriminate that)", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "POST", url: "/nope", payload: "x", headers: { "content-type": "text/plain" } });
     expect(res.statusCode).toBe(415);
   });
 
-  it("真 cookie happy path：登入使用者 → 200 且 request.user 內容正確", async () => {
+  it("real cookie happy path: signed-in user -> 200 and request.user is correct", async () => {
     const { app, db } = await buildTestApp();
     withTestRoutes(app);
     const u = await insertUser(db, { isAdmin: false, tokenVersion: 0 });
@@ -118,7 +117,7 @@ describe("buildApp", () => {
     });
   });
 
-  it("篡改 token → 401", async () => {
+  it("tampered token -> 401", async () => {
     const { app, db } = await buildTestApp();
     withTestRoutes(app);
     const u = await insertUser(db, { tokenVersion: 0 });
@@ -128,7 +127,7 @@ describe("buildApp", () => {
     expect(res.json()).toMatchObject({ error: { code: "unauthorized" } });
   });
 
-  it("gate revoked（DB disabledAt 已設定）→ 401", async () => {
+  it("gate revoked (DB disabledAt set) -> 401", async () => {
     const { app, db } = await buildTestApp();
     withTestRoutes(app);
     const u = await insertUser(db, { tokenVersion: 0, disabledAt: new Date() });
@@ -138,14 +137,14 @@ describe("buildApp", () => {
     expect(res.json()).toMatchObject({ error: { code: "unauthorized" } });
   });
 
-  it("requireAdmin：未登入 → 401", async () => {
+  it("requireAdmin: not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "GET", url: "/__test/admin" });
     expect(res.statusCode).toBe(401);
   });
 
-  it("requireAdmin：非 admin → 403", async () => {
+  it("requireAdmin: non-admin -> 403", async () => {
     const { app, db } = await buildTestApp();
     withTestRoutes(app);
     const u = await insertUser(db, { isAdmin: false, tokenVersion: 0 });
@@ -155,7 +154,7 @@ describe("buildApp", () => {
     expect(res.json()).toMatchObject({ error: { code: "forbidden" } });
   });
 
-  it("requireAdmin：admin → 通過（200）", async () => {
+  it("requireAdmin: admin -> passes (200)", async () => {
     const { app, db } = await buildTestApp();
     withTestRoutes(app);
     const u = await insertUser(db, { isAdmin: true, tokenVersion: 0 });
@@ -165,7 +164,7 @@ describe("buildApp", () => {
     expect(res.json()).toEqual({ ok: true });
   });
 
-  it("route throw → 500 統一格式，body 不洩漏 stack", async () => {
+  it("route throw -> 500 uniform shape, body leaks no stack", async () => {
     const { app } = await buildTestApp();
     withTestRoutes(app);
     const res = await app.inject({ method: "GET", url: "/__test/throw" });

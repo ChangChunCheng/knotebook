@@ -1,8 +1,8 @@
 /**
- * bulk transfer：寫回單篇的**細分段同步耗時**——找出 ≥ 100 ms 的同步段。**不進 CI**、不改 src：
- * 用 `vi.mock` 把寫回路徑上會跨模組呼叫的函式包一層計時（同步函式＝那一段就是一次同步停頓；非同步函式記牆鐘），
- * `EditorSession.open`（mount）與 `diffSince` 直接在類別上換掉。用法同 `transfer-write.bench.ts`（`BENCH_OUT`、`RUNS`、
- * `SIZES`、`REGIONS`），輸出每個函式在每次寫回裡的最大值與 p95。
+ * Bulk transfer: fine-grained synchronous timing of single-note write-back, to find synchronous segments >= 100 ms. **Not in CI**, doesn't change src:
+ * functions called across modules on the write-back path are wrapped with timers via `vi.mock` (sync function = that segment is one synchronous stall; async functions record wall clock),
+ * and `EditorSession.open` (mount) and `diffSince` are replaced directly on the class. Usage same as `transfer-write.bench.ts` (`BENCH_OUT`, `RUNS`,
+ * `SIZES`, `REGIONS`); output is the max and p95 of each function within one write-back.
  */
 import { appendFileSync } from "node:fs";
 import { performance as perf } from "node:perf_hooks";
@@ -11,7 +11,7 @@ import { it, vi } from "vitest";
 const rec = new Map<string, number[]>();
 let cur = new Map<string, number>();
 const note = (name: string, ms: number) => cur.set(name, Math.max(cur.get(name) ?? 0, ms));
-/** 保留 `this`（也拿來包原型方法）。 */
+/** Keeps `this` (also used to wrap prototype methods). */
 function wrapSync<A extends unknown[], R>(name: string, fn: (...a: A) => R): (...a: A) => R {
   return function (this: unknown, ...a: A) {
     const t0 = perf.now();

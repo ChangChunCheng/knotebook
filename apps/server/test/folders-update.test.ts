@@ -1,7 +1,4 @@
-/**
- * 資料夾：`PATCH /api/folders/:id`（改名、搬移〔只限同空間〕、入口順序）。
- * 控制字元與組合字元一律以 `String.fromCharCode` 組字（原始碼不放跳脫序列）。
- */
+/** Control and combining characters are always built with `String.fromCharCode` (no escape sequences in the source). */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
@@ -15,7 +12,7 @@ import { buildTestApp, freshLimiters } from "./helpers.js";
 import { inject, markTrashed, sixRoleScene, trashCols } from "./trash-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// The default space-lock limit is set to 60 s in this file (product value 5000) so the wall-clock bound for "the injected short limit took effect" is far from both - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -37,7 +34,7 @@ function ok(res: LightMyRequestResponse): FolderDto {
   return res.json() as FolderDto;
 }
 
-/** 斷言狀態與錯誤碼；回 body 原文（逐位元組比對用）。 */
+/** Asserts status and error code; returns the raw body (for byte-for-byte comparison). */
 function failed(res: LightMyRequestResponse, status: number, code: string): string {
   expect(res.statusCode, res.body).toBe(status);
   expect((res.json() as { error: { code: string } }).error.code).toBe(code);
@@ -48,7 +45,7 @@ const messageOf = (res: LightMyRequestResponse): string => (res.json() as { erro
 const parentOf = async (pool: Pool, id: string) => (await folderRow(pool, id))?.parent_id;
 const nameOf = async (pool: Pool, id: string) => (await folderRow(pool, id))?.name;
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
+/** Test hook: after `arm(point, fn)`, the first time point is passed fn runs (once only). */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -66,7 +63,7 @@ function armedHook() {
 }
 
 describe("PATCH /api/folders/:id", () => {
-  it("FU-1 改名：200；只差大小寫照寫；NFC 等價不寫；同層撞名 409；名稱規則同建立", async () => {
+  it("rename: 200; a case-only difference is written; NFC-equivalent isn't written; same-level collision 409; name rules same as create", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -101,12 +98,12 @@ describe("PATCH /api/folders/:id", () => {
       failed(res, 400, "invalid_body");
       expect(messageOf(res)).toBe(message);
     }
-    // 名稱先於位置判：NUL 名稱配隨機 id 也是 400。
+    // The name is judged before the position: a NUL name with a random id is also 400.
     failed(await patch(app, u.id, RANDOM_UUID, { name: `A${NUL}` }), 400, "invalid_body");
     expect(ok(await patch(app, u.id, f.id, { name: "  Trimmed\n" })).name).toBe("Trimmed");
   });
 
-  it("FU-2 搬移：到兄弟底下 200；parentId null 回根層；搬到原父層不寫（xmin 不變）；目標層已有同名 409；名稱與位置一起改", async () => {
+  it("move: under a sibling 200; parentId null back to root; moving to the original parent doesn't write (xmin unchanged); target level already has the same name 409; name and position changed together", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -139,7 +136,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await folderRow(pool, dup.id)).toMatchObject({ parent_id: b.id, name: "Dup2" });
   });
 
-  it("FU-3 成環：搬到自己、自己的子、自己的孫 409 folder_cycle，什麼都沒寫", async () => {
+  it("cycle: moving into itself, its child, its grandchild 409 folder_cycle, nothing written", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -156,7 +153,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await xminOf(pool, "folders", x!)).toBe(before);
   });
 
-  it(`FU-4 深度：高 2 的子樹搬到深 4 的父層 409、深 3 200；搬回根層看高度；超深樹改名與搬到原父層照常`, async () => {
+  it(`depth: a height-2 subtree moved under a parent of depth 4 409, depth 3 200; moving back to root is judged by height; an over-deep tree can still be renamed and moved to its original parent`, async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -170,7 +167,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(ok(await patch(app, u.id, s1!, { parentId: d[2]! })).parentId).toBe(d[2]);
     expect(await parentOf(pool, s2!)).toBe(s1);
 
-    // 轉移造出的超深樹（直接種 7 層）：H1 底下高 6，搬到根層 409；改名與「搬到原父層」不檢查深度。
+    // An over-deep tree made by a transfer (7 levels seeded directly): under H1 the height is 6, moving to root 409; renaming and "moving to the original parent" don't check depth.
     const [r, h1, ...rest] = await seedFolderChain(db, space, ["R", "H1", "H2", "H3", "H4", "H5", "H6"]);
     failed(await patch(app, u.id, h1!, { parentId: null }), 409, "folder_too_deep");
     expect(await parentOf(pool, h1!)).toBe(r);
@@ -179,7 +176,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(ok(await patch(app, u.id, rest[0]!, { parentId: null })).parentId).toBeNull();
   });
 
-  it("FU-5 跨空間：個人→自己的 shared、個人→看得到的群組、群組→個人 400；看不到的群組資料夾 404 與隨機 uuid、\"x\"、\"\" 逐位元組相同", async () => {
+  it("cross-space: personal -> own shared, personal -> a visible group, group -> personal 400; an invisible group folder 404 byte-for-byte identical to a random uuid, 'x' and ''", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -208,7 +205,7 @@ describe("PATCH /api/folders/:id", () => {
     for (const id of [p1.id, sh.id, g.id, hidden.id]) expect(await parentOf(pool, id)).toBeNull();
   });
 
-  it("FU-6 權限（群組資料夾）：admin／member／editDelete／editOnly 改名與搬移 200；deleteOnly、readOnly 403；非成員、站台管理員 404 與不存在同形", async () => {
+  it("permissions (group folder): admin/member/editDelete/editOnly rename and move 200; deleteOnly, readOnly 403; non-members and site admins 404 same shape as nonexistent", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -230,7 +227,7 @@ describe("PATCH /api/folders/:id", () => {
         failed(res, 403, "forbidden");
         expect(messageOf(res)).toBe(NOT_MANAGER);
       }
-      // 順序：可見性 → 空間 → 管理權——沒有管理權的人往跨空間目標搬得 400、往看不到的目標得 404。
+      // Order: visibility -> space -> manage rights - someone without manage rights gets 400 moving to a cross-space target and 404 to an invisible target.
       const own = await seedFolder(db, { personal: u.id });
       const cross = await patch(app, u.id, c.id, { parentId: own.id });
       failed(cross, 400, "folder_cross_space");
@@ -248,7 +245,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await folderRow(pool, c.id)).toMatchObject({ parent_id: g.id, name: "C" });
   });
 
-  it("FU-7 搬移與改名前後，子樹裡活、垃圾桶、被分享、有版本與 note_states 的筆記一個位元都沒寫", async () => {
+  it("before and after move and rename, notes in the subtree (live, trashed, shared, with versions and note_states) don't have a single bit written", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -296,7 +293,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  it("FU-8 旁觀者：改名與搬移只動那一列（兄弟、自己 shared 的同名、別人的同名資料夾 xmin 與名稱不變）", async () => {
+  it("bystanders: rename and move touch only that row (xmin and name of siblings, same-named folders in one's own shared and others' same-named folders unchanged)", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -318,7 +315,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await folderRow(pool, target.id)).toMatchObject({ name: "Renamed", parent_id: dest.id });
   });
 
-  it("FU-9 body 與認證：{}、未知鍵、型別錯 400；parentId \"x\" 404；大寫 :id 與大寫 parentId 200；Bearer、未登入 401", async () => {
+  it("body and auth: {}, unknown key, wrong type 400; parentId 'x' 404; uppercase :id and uppercase parentId 200; Bearer, not signed in 401", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -338,7 +335,7 @@ describe("PATCH /api/folders/:id", () => {
     const moved = ok(await patch(app, u.id, f.id.toUpperCase(), { parentId: dest.id.toUpperCase() }));
     expect(moved.parentId).toBe(dest.id);
     expect(await folderRow(pool, f.id)).toMatchObject({ name: "Upper", parent_id: dest.id });
-    // 大寫的「原父層」也是不搬：不寫。
+    // An uppercase "original parent" is also not a move: nothing is written.
     const x = await xminOf(pool, "folders", f.id);
     expect(ok(await patch(app, u.id, f.id, { parentId: dest.id.toUpperCase() })).parentId).toBe(dest.id);
     expect(await xminOf(pool, "folders", f.id)).toBe(x);
@@ -351,7 +348,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await nameOf(pool, f.id)).toBe("Upper");
   });
 
-  it("FU-10 節流：folder 桶上限 1——名稱不合、看不到、無管理權、跨空間的請求不扣；第二次成功前 429；另一位使用者不受影響", async () => {
+  it("throttle: folder bucket limit 1 - requests with an invalid name, invisible, without manage rights or cross-space aren't charged; 429 before the second success; another user unaffected", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ folder: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const s = await sixRoleScene(db);
     const u = s.readOnly;
@@ -373,7 +370,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await nameOf(db.$client, f.id)).toBe("first");
   });
 
-  it("FU-11 預讀之後狀態變了（縫）：父層變別人的 → 404（不是 400）；父層變自己的 shared → 400；自己被刪或換空間 → 404；群組被刪 → 404；降權 → 403／404", async () => {
+  it("state changes after the pre-read (test hooks): parent becomes someone else's -> 404 (not 400); parent becomes own shared -> 400; the folder itself deleted or changed space -> 404; group deleted -> 404; downgrade -> 403/404", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -381,14 +378,14 @@ describe("PATCH /api/folders/:id", () => {
     const stranger = await seedUser(db);
     const notFoundBody = failed(await patch(app, u.id, RANDOM_UUID, { name: "A" }), 404, "folder_not_found");
 
-    // 父層在授權之後變成別人的個人資料夾：看不到（同時也跨空間）→ 先判可見性 → 404。
+    // The parent becomes someone else's personal folder after authorization: invisible (and cross-space too) -> visibility is judged first -> 404.
     const self = await seedFolder(db, { personal: u.id }, { name: "Self" });
     const p2 = await seedFolder(db, { personal: u.id }, { name: "P2" });
     seam.arm("folder-authorized", async () => {
       await pool.query("update folders set owner_id = $2 where id = $1", [p2.id, stranger.id]);
     });
     expect(failed(await patch(app, u.id, self.id, { parentId: p2.id }), 404, "folder_not_found")).toBe(notFoundBody);
-    // 父層在授權之後變成自己的 shared 資料夾：看得到、跨空間 → 400。
+    // The parent becomes the user's own shared folder after authorization: visible, cross-space -> 400.
     const p3 = await seedFolder(db, { personal: u.id }, { name: "P3" });
     seam.arm("folder-authorized", async () => {
       await pool.query("update folders set kind = 'shared' where id = $1", [p3.id]);
@@ -396,7 +393,7 @@ describe("PATCH /api/folders/:id", () => {
     failed(await patch(app, u.id, self.id, { parentId: p3.id }), 400, "folder_cross_space");
     expect(await parentOf(pool, self.id)).toBeNull();
 
-    // 自己在授權之後被刪（改名走 FOR UPDATE、只搬走一般讀，兩條都 404）或換了空間。
+    // The folder itself is deleted after authorization (rename uses FOR UPDATE and move a plain read; both give 404) or changes space.
     for (const payload of [{ name: "gone" }, { parentId: null }]) {
       const doomed = await seedFolder(db, { personal: u.id }, { parentId: self.id });
       seam.arm("folder-authorized", async () => {
@@ -411,7 +408,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(failed(await patch(app, u.id, moved.id, { name: "x" }), 404, "folder_not_found")).toBe(notFoundBody);
     expect(await nameOf(pool, moved.id)).toBe("Moved");
 
-    // 群組在授權之後被刪（轉移）→ 404。
+    // The group is deleted after authorization (transfer) -> 404.
     const a = await sixRoleScene(db);
     const ga = await seedFolder(db, { group: a.groupId }, { name: "GA" });
     seam.arm("folder-authorized", async () => {
@@ -420,7 +417,7 @@ describe("PATCH /api/folders/:id", () => {
     });
     expect(failed(await patch(app, a.member.id, ga.id, { name: "x" }), 404, "folder_not_found")).toBe(notFoundBody);
 
-    // 結構鎖之後降權：拿掉 can_edit → 403；拿掉閱讀或移出群組 → 404。
+    // Downgrade after the structure lock: removing can_edit -> 403; removing read or removing from the group -> 404.
     const s = await sixRoleScene(db);
     const gs = await seedFolder(db, { group: s.groupId }, { name: "GS" });
     const roleOf = async (userId: string) =>
@@ -435,7 +432,7 @@ describe("PATCH /api/folders/:id", () => {
       expect(messageOf(res)).toBe(NOT_MANAGER);
       await setFlags("can_edit = true")();
     }
-    // 交易內同序：授權之後同時被拿掉 can_edit、新父層又變成自己的個人資料夾（看得到、跨空間）→ 400，不是 403。
+    // Same order inside the transaction: after authorization can_edit is removed and the new parent becomes the user's own personal folder (visible, cross-space) -> 400, not 403.
     const gp = await seedFolder(db, { group: s.groupId }, { name: "GP" });
     seam.arm("folder-authorized", async () => {
       await setFlags("can_edit = false")();
@@ -454,7 +451,7 @@ describe("PATCH /api/folders/:id", () => {
     expect(await nameOf(pool, gs.id)).toBe("GS");
   });
 
-  it("FU-12 結構鎖等太久（另一條連線持住同空間的鎖、lock_timeout 300 ms）：409 server_busy（< 20 s：注入值有生效，不是本檔預設 60 s）、沒有寫；鎖放掉後照常 200", async () => {
+  it("structure lock waits too long (another connection holds the same space's lock, lock_timeout 300 ms): 409 server_busy (< 20 s: the injected value took effect, not this file's default 60 s), nothing written; 200 as usual after the lock is released", async () => {
     const { app, db } = await buildTestApp({ storageLockTimeoutMs: 300 });
     const pool = db.$client;
     const u = await seedUser(db);

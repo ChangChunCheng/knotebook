@@ -1,6 +1,6 @@
 /**
- * 資料夾測試共用的種子與量測工具。測試檔不受結構守衛管轄，可直寫 `folders`／`note_placements`／
- * `notes.folder_id`。名稱預設隨機（同層不分大小寫唯一）。
+ * Test files aren't under the structure guard, so they may write `folders`/`note_placements`/`notes.folder_id` directly.
+ * Names default to random (unique per level, case-insensitively).
  */
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
@@ -32,7 +32,7 @@ export async function seedFolder(
   return { id: f!.id, name: f!.name };
 }
 
-/** 由根到葉建一串（names[0] 在 opts.parentId 或根層）；回 id（同序）。 */
+/** Builds a chain root -> leaf (names[0] under opts.parentId or at the root); ids in the same order. */
 export async function seedFolderChain(db: Db, space: SeedSpace, names: readonly string[], opts: { parentId?: string } = {}): Promise<string[]> {
   const ids: string[] = [];
   let parentId = opts.parentId;
@@ -73,7 +73,6 @@ export async function placementOf(pool: Pool, userId: string, noteId: string): P
   return rows[0]?.folder_id ?? null;
 }
 
-/** 以 generate_series 一句建 n 篇放在 folderId 的筆記（大子樹案用）；回 id（升冪）。 */
 export async function seedManyNotesInFolder(pool: Pool, owner: { ownerId: string } | { groupId: string }, folderId: string, n: number): Promise<string[]> {
   const tag = randomUUID().slice(0, 12);
   const [ownerId, groupId] = "groupId" in owner ? [null, owner.groupId] : [owner.ownerId, null];
@@ -86,7 +85,7 @@ export async function seedManyNotesInFolder(pool: Pool, owner: { ownerId: string
   return rows.map(r => r.id).sort();
 }
 
-/** xmin（判「沒有寫」用：UPDATE 一定換 xmin）。 */
+/** xmin (to tell "nothing was written": an UPDATE always changes xmin). */
 export async function xminOf(pool: Pool, table: "notes" | "folders", id: string): Promise<string> {
   const { rows } = await pool.query<{ x: string }>(`select xmin::text as x from ${table} where id = $1`, [id]);
   return rows[0]!.x;

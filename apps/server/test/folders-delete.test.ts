@@ -1,6 +1,3 @@
-/**
- * 資料夾：`DELETE /api/folders/:id`（只刪空資料夾、資料夾被刪、角色展開表）。
- */
 import { performance } from "node:perf_hooks";
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -33,7 +30,7 @@ import { buildCollabTestApp, buildTestApp, freshDb, freshLimiters } from "./help
 import { inject, markTrashed, sixRoleScene, trashCols } from "./trash-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// The default space-lock limit is set to 60 s in this file (product value 5000) so the wall-clock bound for "the injected short limit took effect" is far from both - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -59,10 +56,10 @@ function failed(res: LightMyRequestResponse, status: number, code: string): stri
 const messageOf = (res: LightMyRequestResponse): string => (res.json() as { error: { message: string } }).error.message;
 const sorted = (ids: readonly string[]): string[] => [...ids].sort();
 let rootSeq = 0;
-/** 同一群組根層要多棵子樹時用（同層名稱唯一）。 */
+/** For when several subtrees are needed at one group's root (names are unique per level). */
 const rootName = (): string => `R${++rootSeq}`;
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
+/** Test hook: after `arm(point, fn)`, the first time point is passed fn runs (once only). */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -82,7 +79,7 @@ function armedHook() {
   };
 }
 
-/** `beforeNoteDeleted` 換成記錄呼叫的 spy，閘門的 `release` 共用一個 spy。 */
+/** `beforeNoteDeleted` replaced by a spy recording calls; the gate's `release` shares one spy. */
 function gateSpies() {
   const release = vi.fn();
   const beforeNoteDeleted = vi.fn<CollabHooks["beforeNoteDeleted"]>(async () => ({ release }));
@@ -101,7 +98,6 @@ async function roleIdOf(pool: Pool, groupId: string, userId: string): Promise<st
   return rows[0]!.role_id;
 }
 
-/** 由葉往根讀名稱路徑。 */
 async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   const out: string[] = [];
   let cur: string | null = folderId;
@@ -114,7 +110,6 @@ async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   return out;
 }
 
-/** 這些筆記與資料夾都還在原處（失敗案「什麼都沒動」）。 */
 async function expectUntouched(pool: Pool, notesAt: ReadonlyArray<[string, string]>, folderIds: readonly string[]): Promise<void> {
   for (const [noteId, folderId] of notesAt) {
     expect((await trashCols(pool, noteId))?.deleted_at, noteId).toBeNull();
@@ -124,7 +119,7 @@ async function expectUntouched(pool: Pool, notesAt: ReadonlyArray<[string, strin
 }
 
 describe("DELETE /api/folders/:id", () => {
-  it("FD-1 個人正路：子樹活筆記進垃圾桶、快照是刪除當下的路徑；子樹垃圾桶筆記刷新快照；子樹外的筆記與資料夾不動", async () => {
+  it("personal happy path: live notes of the subtree go to the trash, the snapshot is the path at deletion time; trashed notes of the subtree refresh their snapshot; notes and folders outside the subtree untouched", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -154,7 +149,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(await noteFolderCols(pool, c)).toEqual({ folder_id: null, trash_folder_path: ["R", "X", "Y"] });
     expect(await noteFolderCols(pool, t)).toEqual({ folder_id: null, trash_folder_path: ["R", "X"] });
     expect(await trashCols(pool, t)).toEqual(tBefore);
-    // 旁觀者：子樹外的活筆記與垃圾桶筆記
+    // Bystanders: live and trashed notes outside the subtree
     expect(await noteFolderCols(pool, o)).toEqual({ folder_id: O, trash_folder_path: null });
     expect((await trashCols(pool, o))?.deleted_at).toBeNull();
     expect(await noteFolderCols(pool, uu)).toEqual({ folder_id: O, trash_folder_path: null });
@@ -163,7 +158,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(await folderRow(pool, O)).toBeDefined();
   });
 
-  it("FD-2 還原照路徑重建：R›X›Y 重建、筆記回到各自位置；沒有筆記的空子資料夾不回來", async () => {
+  it("restore rebuilds by path: R>X>Y is rebuilt, notes return to their own positions; empty subfolders without notes don't come back", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -192,7 +187,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(rows.map(r => r.name)).toEqual(["R", "X", "Y"]);
   });
 
-  it("FD-3 群組權限：有活筆記 admin／editDelete 200、member／editOnly 403 folder_delete_blocked（不開閘門）；只有垃圾桶筆記 member 200；deleteOnly／readOnly 403；outsider 404 與不存在同形", async () => {
+  it("group permissions: with live notes admin/editDelete 200, member/editOnly 403 folder_delete_blocked (gates not opened); with only trashed notes member 200; deleteOnly/readOnly 403; outsider 404 same shape as nonexistent", async () => {
     const spies = gateSpies();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks });
     const pool = db.$client;
@@ -212,7 +207,7 @@ describe("DELETE /api/folders/:id", () => {
       expect(messageOf(res)).toBe(BLOCKED);
       await expectUntouched(pool, [[sc.n, sc.X]], [sc.R, sc.X]);
     }
-    // 快速路徑擋下：閘門一個都沒開
+    // The fast path blocks it: not a single gate was opened
     expect(spies.beforeNoteDeleted).not.toHaveBeenCalled();
 
     for (const actor of [s.admin, s.editDelete]) {
@@ -242,7 +237,7 @@ describe("DELETE /api/folders/:id", () => {
     await expectUntouched(pool, [[sc.n, sc.X]], [sc.R, sc.X]);
   });
 
-  it("FD-4 共享私人：放置列消失、筆記不進垃圾桶、擁有者那邊的位置不變、不開閘門、不發任何 notes 查詢", async () => {
+  it("private shared: placement rows disappear, notes don't go to the trash, the owner's positions are unchanged, no gate opened, no notes queries sent", async () => {
     const spies = gateSpies();
     const { db, pool } = await freshDb();
     const queries: string[] = [];
@@ -261,7 +256,7 @@ describe("DELETE /api/folders/:id", () => {
 
     queries.length = 0;
     expect(ok(await del(app, sharee.id, SR!))).toEqual({ trashedNoteIds: [], deletedFolderIds: sorted([SR!, SC!]) });
-    // 共享私人樹裡沒有任何筆記的 folder_id（trigger 守）：不預讀、不鎖、不移入、不刷新快照。
+    // A private shared tree has no note with a folder_id (guarded by a trigger): no pre-read, no lock, no move to the trash, no snapshot refresh.
     expect(queries.length).toBeGreaterThan(0);
     expect(queries.filter(q => q.includes("pg_advisory_xact_lock"))).toHaveLength(1);
     expect(queries.filter(q => /\bfrom "notes"/.test(q) || /\bupdate "notes"/.test(q))).toEqual([]);
@@ -277,7 +272,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(spies.beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("FD-5 閘門：成功與三種失敗（交易內 403、409、縫裡丟錯）都對子樹活筆記各開一次、全部 release", async () => {
+  it("gates: on success and the three failures (403 inside the transaction, 409, error thrown in the test hook) each opens one gate per live note of the subtree and all are released", async () => {
     const spies = gateSpies();
     const seam = armedHook();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks, groupTestHook: seam.hook });
@@ -327,7 +322,7 @@ describe("DELETE /api/folders/:id", () => {
     await expectUntouched(pool, thrown.ids.map((id, i) => [id, [thrown.R, thrown.X, thrown.Y][i]!] as [string, string]), [thrown.R, thrown.X, thrown.Y]);
   });
 
-  it("FD-M1 閘門開完後有一篇被搬出子樹：200、不含它；它的閘門被收回（可再開），已移入的閘門仍關著", async () => {
+  it("a note moved out of the subtree after the gates were opened: 200, not included; its gate is taken back (can be opened again), already moved-in gates stay closed", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ collabHooks: (server, log) => createCollabHooks(server, log), groupTestHook: seam.hook });
     const pool: Pool = ctx.db.$client;
@@ -343,7 +338,7 @@ describe("DELETE /api/folders/:id", () => {
     });
 
     expect(ok(await del(ctx.app, u.id, R!))).toEqual({ trashedNoteIds: sorted([a, b]), deletedFolderIds: sorted([R!, X!, Y!]) });
-    // release 是 fire-and-forget：等每一次 releaseDeletingGate 跑完再看閘門。
+    // release is fire-and-forget: wait for every releaseDeletingGate to finish before looking at the gates.
     expect(rel).toHaveBeenCalledTimes(3);
     await Promise.all(rel.mock.results.map(r => r.value));
     expect(ctx.collab.isDeleting(c)).toBe(false);
@@ -353,7 +348,7 @@ describe("DELETE /api/folders/:id", () => {
     expect((await trashCols(pool, c))?.deleted_at).toBeNull();
   });
 
-  it("FD-C1 閘門開完後子樹裡多了一篇（沒開閘門）：409 conflict、什麼都沒動、閘門全收", async () => {
+  it("a note added to the subtree after the gates were opened (no gate opened for it): 409 conflict, nothing touched, all gates released", async () => {
     const spies = gateSpies();
     const seam = armedHook();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks, groupTestHook: seam.hook });
@@ -375,7 +370,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(spies.release).toHaveBeenCalledTimes(3);
   });
 
-  it("FD-M2 鎖完筆記後角色被改：拿掉 can_delete → 403 folder_delete_blocked；連 can_read 也拿掉 → 409 conflict；授權後交易前被改：拿掉 can_edit → 403 forbidden、拿掉 can_read → 404；全部不動", async () => {
+  it("role changed after the notes were locked: removing can_delete -> 403 folder_delete_blocked; removing can_read too -> 409 conflict; changed after authorization but before the transaction: removing can_edit -> 403 forbidden, removing can_read -> 404; nothing touched in all cases", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -418,7 +413,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(messageOf(r2)).toBe(CHANGED);
     await expectAllKept(noRead);
 
-    // 交易外授權之後、交易之前被改：交易內重判資料夾的可見性與管理權。
+    // Changed after authorization outside the transaction and before the transaction: the folder's visibility and manage rights are re-judged inside the transaction.
     const restoreRole = () => pool.query("update group_roles set can_read = true, can_edit = true, can_delete = true where id = $1", [roleId]);
     await restoreRole();
     const noEdit = await scene();
@@ -439,7 +434,7 @@ describe("DELETE /api/folders/:id", () => {
     await expectAllKept(hidden);
   });
 
-  it("FD-L 鎖序字面：（群組）groups KS → 結構鎖 → 子樹資料夾 FOR UPDATE 一句 → 子樹筆記 FOR UPDATE 一句（WHERE 不分狀態）", async () => {
+  it("lock order literally: (group) groups KS -> structure lock -> one FOR UPDATE statement on the subtree folders -> one FOR UPDATE statement on the subtree notes (WHERE ignores state)", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [R, X] = await seedFolderChain(db, { personal: u.id }, ["R", "X"]);
@@ -472,7 +467,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(where).toContain('"folder_id" in (');
     expect(where).not.toContain("deleted_at");
 
-    // 群組空間：第一句是 groups FOR KEY SHARE，結構鎖在它之後。
+    // Group space: the first statement is groups FOR KEY SHARE, the structure lock comes after it.
     const s = await sixRoleScene(db);
     const GR = (await seedFolder(db, { group: s.groupId }, { name: "GR" })).id;
     const gn = await noteIn(db, pool, { groupId: s.groupId }, GR);
@@ -486,7 +481,7 @@ describe("DELETE /api/folders/:id", () => {
     expect(gqs.findIndex(x => x.includes("pg_advisory_xact_lock"))).toBeGreaterThan(0);
   });
 
-  it("FD-B 大子樹：1200 篇照樣全進垃圾桶；直呼時任一句的參數數 ≤ 每批上限 + 10；1000 篇量時間", async () => {
+  it("big subtree: 1200 notes all still go to the trash; when called directly the parameter count of any statement <= per-batch limit + 10; time for 1000 notes measured", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
 
@@ -519,7 +514,7 @@ describe("DELETE /api/folders/:id", () => {
     console.log(`[FD-B] 刪含 1000 篇活筆記的資料夾：${ms.toFixed(0)} ms`);
   });
 
-  it("FD-6 雜項：Bearer 401；節流 429（404／403 不扣桶）；非 UUID 404；同一資料夾刪兩次第二次 404", async () => {
+  it("misc: Bearer 401; throttle 429 (404/403 not charged); non-UUID 404; deleting the same folder twice gives 404 the second time", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ folder: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -544,7 +539,7 @@ describe("DELETE /api/folders/:id", () => {
     failed(await del(app, u.id, f1), 404, "folder_not_found");
   });
 
-  it("FD-7 結構鎖等太久（另一條連線持住同空間的鎖、lock_timeout 300 ms）：409 server_busy（< 20 s：注入值有生效，不是本檔預設 60 s）、什麼都沒動、閘門已收；鎖放掉後照常 200", async () => {
+  it("structure lock waits too long (another connection holds the same space's lock, lock_timeout 300 ms): 409 server_busy (< 20 s: the injected value took effect, not this file's default 60 s), nothing touched, gates released; 200 as usual after the lock is released", async () => {
     const spies = gateSpies();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks, storageLockTimeoutMs: 300 });
     const pool = db.$client;
@@ -574,7 +569,6 @@ describe("DELETE /api/folders/:id", () => {
   });
 });
 
-/** 資料夾：只刪空資料夾。 */
 describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
   const NOT_EMPTY = "The folder isn't empty, so it wasn't deleted.";
   const ONLY = { onlyIfEmpty: true } as const;
@@ -585,7 +579,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(messageOf(res)).toBe(NOT_EMPTY);
   };
 
-  it("FE-1 空資料夾（個人、群組 admin、共享）→ 200、只刪那一個、沒有筆記進垃圾桶", async () => {
+  it("empty folder (personal, group admin, shared) -> 200, only that one deleted, no notes go to the trash", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -599,7 +593,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     }
   });
 
-  it("FE-2 有子資料夾（個人、共享；子資料夾裡沒有筆記）→ 409 folder_not_empty、父與子都在", async () => {
+  it("with subfolders (personal, shared; no notes in subfolders) -> 409 folder_not_empty, parent and children both remain", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -611,7 +605,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     }
   });
 
-  it("FE-3 有活筆記（個人、群組）→ 409、筆記不動、不開閘門、不扣桶（limit 1：之後刪空資料夾仍 200）", async () => {
+  it("with live notes (personal, group) -> 409, notes untouched, no gate opened, no bucket charge (limit 1: deleting an empty folder afterwards is still 200)", async () => {
     const spies = gateSpies();
     const { app, db } = await buildTestApp({
       collabHooks: spies.hooks,
@@ -637,7 +631,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(ok(await delE(app, s.admin.id, GE, ONLY))).toEqual({ trashedNoteIds: [], deletedFolderIds: [GE] });
   });
 
-  it("FE-4 只有垃圾桶筆記 → 200；那篇的快照是刪除當下的路徑、folder_id 變 null", async () => {
+  it("only trashed notes -> 200; that note's snapshot is the path at deletion time, folder_id becomes null", async () => {
     const spies = gateSpies();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks });
     const pool = db.$client;
@@ -653,7 +647,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(spies.beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("FE-5 共享私人有一筆放置 → 409、放置還在；拿掉放置後同一請求 → 200", async () => {
+  it("private shared with one placement -> 409, placement remains; after removing the placement the same request -> 200", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const owner = await seedUser(db);
@@ -671,7 +665,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(ok(await delE(app, sharee.id, S, ONLY))).toEqual({ trashedNoteIds: [], deletedFolderIds: [S] });
   });
 
-  it("FE-6 無 body、{}、{ onlyIfEmpty: false } ＝現行行為：各自那一篇進垃圾桶、各自那個資料夾被刪", async () => {
+  it("no body, {} and { onlyIfEmpty: false } = current behaviour: each one's note goes to the trash and each one's folder is deleted", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -686,7 +680,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     }
   });
 
-  it("FE-7 多餘欄位、型別不對 → 400 invalid_body；資料夾還在", async () => {
+  it("extra fields, wrong types -> 400 invalid_body; folder remains", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -697,7 +691,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(await folderRow(pool, R)).toBeDefined();
   });
 
-  it("FE-8 判斷順序：outsider 404（與不存在同形）→ readOnly 403 forbidden → editOnly 409 folder_not_empty（不是 folder_delete_blocked）；editOnly 刪空的群組資料夾 200", async () => {
+  it("judgement order: outsider 404 (same shape as nonexistent) -> readOnly 403 forbidden -> editOnly 409 folder_not_empty (not folder_delete_blocked); editOnly deleting an empty group folder 200", async () => {
     const spies = gateSpies();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks });
     const pool = db.$client;
@@ -718,7 +712,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(ok(await delE(app, s.editOnly.id, E, ONLY))).toEqual({ trashedNoteIds: [], deletedFolderIds: [E] });
   });
 
-  it("FE-9 併發（預讀時空；folder-delete-gated 縫裡動手）：① 放進一篇活筆記 → 409 folder_not_empty（不是 conflict）、那篇不動；② 建子資料夾 → 409、兩個都在", async () => {
+  it("concurrency (empty at pre-read; acting inside the folder-delete-gated test hook): (1) a live note put in -> 409 folder_not_empty (not conflict), that note untouched; (2) a subfolder created -> 409, both remain", async () => {
     const spies = gateSpies();
     const seam = armedHook();
     const { app, db } = await buildTestApp({ collabHooks: spies.hooks, groupTestHook: seam.hook });
@@ -746,7 +740,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(spies.beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("FE-10 共享：folder-delete-gated 縫裡放進一筆放置 → 409、放置還在", async () => {
+  it("shared: a placement put in inside the folder-delete-gated test hook -> 409, placement remains", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -765,7 +759,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
     expect(await folderRow(pool, S)).toBeDefined();
   });
 
-  it("FE-11 鎖序字面：個人與共享的空資料夾，不帶 body 與帶 onlyIfEmpty 各刪一次，鎖語句序列逐句相同", async () => {
+  it("lock order literally: personal and shared empty folders, deleted once without body and once with onlyIfEmpty, give identical lock statement sequences", async () => {
     const { db, pool } = await freshDb();
     const queries: string[] = [];
     const logged = drizzle(pool, { schema, logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
@@ -776,7 +770,7 @@ describe("DELETE /api/folders/:id { onlyIfEmpty }", () => {
       const F = (await seedFolder(db, space)).id;
       queries.length = 0;
       expect(ok(await delE(app, u.id, F, body))).toEqual({ trashedNoteIds: [], deletedFolderIds: [F] });
-      // 只看交易內（第一個請求另有驗證層節流的 `last_active_at` 更新，不屬刪資料夾的鎖序）。
+      // Only inside the transaction (the first request also has an auth-layer throttling `last_active_at` update, which isn't part of folder-delete's lock order).
       const begin = queries.findIndex(q => /^begin\b/i.test(q.trim()));
       expect(begin).toBeGreaterThanOrEqual(0);
       return queries

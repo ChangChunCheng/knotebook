@@ -26,8 +26,8 @@ async function insertProvider(db: Db, overrides: Partial<typeof aiProviders.$inf
   const [row] = await db
     .insert(aiProviders)
     .values({
-      // 與 admin-ai／ai-sse 的同名 helper 對齊：密文綁 providerId（issue #14），要塞既有
-      // 密文的呼叫端必須先拿得到 id。
+      // Aligned with the same-name helper in admin-ai/ai-sse: the ciphertext is bound to providerId (issue #14),
+      // so a caller inserting existing ciphertext must have the id first.
       id: overrides.id ?? randomUUID(),
       name: overrides.name ?? "Test Provider",
       type: overrides.type ?? "openai_compatible",
@@ -54,20 +54,20 @@ async function insertModel(db: Db, providerId: string, overrides: Partial<typeof
   return row;
 }
 
-describe("GET /api/ai/actions（一般 session）", () => {
-  it("未登入 → 401", async () => {
+describe("GET /api/ai/actions (regular session)", () => {
+  it("not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/ai/actions" });
     expect(res.statusCode).toBe(401);
   });
 
-  it("全新實例（seed 過內建五動作但零 provider）→ {actions: []}——未設定＝功能不存在", async () => {
+  it("fresh instance (builtin five actions seeded but zero providers) -> {actions: []} - not configured = the feature doesn't exist", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
 
-    // seed 確實已跑過（migrate 尾端呼叫 seedAiActions）：DB 裡有五筆內建動作，
-    // 但因為零 provider，解析全數失敗，清單必須是空陣列，不能因為 seed 存在就洩漏出來。
+    // The seed has really run (migrate calls seedAiActions at the end): the DB holds five builtin actions, but with zero providers resolution
+    // fails for all, and the list must be empty - the existence of the seed must not leak.
     const [seeded] = await db.select().from(aiActions).where(eq(aiActions.id, BUILTIN_ACTION_IDS[0]));
     expect(seeded).toBeDefined();
 
@@ -76,7 +76,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     expect(res.json()).toEqual({ actions: [] });
   });
 
-  it("建 provider + enabled model（未設 default）→ 五筆內建動作全出（閘門一致性正向案）", async () => {
+  it("provider + enabled model (no default set) -> all five builtin actions appear (positive case of gate consistency)", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -92,7 +92,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     }
   });
 
-  it("#263：kind——Instruct 為 instruct，其餘內建與自訂動作為 quick", async () => {
+  it("#263: kind - Instruct is instruct, the other builtin and custom actions are quick", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -111,7 +111,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("停用唯一可用的 model → 回空", async () => {
+  it("disabling the only usable model -> empty", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -123,7 +123,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     expect(res.json()).toEqual({ actions: [] });
   });
 
-  it("action.enabled=false → 不出（縱使模型可解析）", async () => {
+  it("action.enabled=false -> not listed (even though the model resolves)", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -138,7 +138,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     expect(ids).toHaveLength(BUILTIN_ACTION_IDS.length - 1);
   });
 
-  it("排序照 sortOrder, id：自訂動作 sortOrder 更小則排在內建動作之前", async () => {
+  it("order is sortOrder, id: a custom action with a smaller sortOrder comes before builtin ones", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -154,7 +154,7 @@ describe("GET /api/ai/actions（一般 session）", () => {
     expect(res.json().actions[0].id).toBe(custom.id);
   });
 
-  it("正向回退案：action 綁定的 model 已停用，但另有可用 enabled chat model → 該 action 仍出現", async () => {
+  it("positive fallback: the action's bound model is disabled but another enabled chat model exists -> the action still appears", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);

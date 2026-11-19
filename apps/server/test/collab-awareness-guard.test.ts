@@ -1,7 +1,7 @@
-// #312：協作者不能再偽造 awareness。server 依「這條連線是誰」重建每筆狀態，只接受合法的游標，
-// 不讓連線改寫別人的、server 的或過多的 clientID。偽造一律從底層 socket 直接送手工組的訊息
-// （`awareness-wire.ts`），正常更新走 provider。「什麼都沒送到」的情境，一律再由同一個送出者送一個
-// 合法的標記更新、等它到了才斷言——同一條 socket 的訊息依序處理，標記到了代表之前那則已經處理完。
+// #312: collaborators can no longer forge awareness. The server rebuilds each state from "who this connection is" and only accepts valid cursors,
+// not letting a connection rewrite someone else's, the server's or too many clientIDs. Forgery is always sent from the underlying socket as hand-built messages
+// (`awareness-wire.ts`); normal updates go through the provider. For "nothing arrived" scenarios, the same sender then sends a valid marker update and the assertion waits for it -
+// messages on one socket are processed in order, so the marker arriving means the earlier one has been handled.
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -26,21 +26,20 @@ type Peer =
 const idOf = (c: TestClient): number => c.provider.awareness!.clientID;
 const peer = (observer: TestClient, clientId: number): Peer => observer.provider.awareness!.getStates().get(clientId) as Peer;
 const clockAt = (observer: TestClient, clientId: number): number | undefined => observer.provider.awareness!.meta.get(clientId)?.clock;
-/** awareness 走 JSON：比對前先把 Yjs 物件轉成同樣的純 JSON。 */
+/** awareness goes through JSON: convert Yjs objects to the same plain JSON before comparing. */
 const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
-/** 送出的游標 → server 轉發後預期看到的樣子（正規化、不含 null 欄位）。 */
+/** Sent cursor -> what the server is expected to forward (normalized, no null fields). */
 const expectedCursor = new WeakMap<object, unknown>();
-/** observer 看到的游標是否等於 sent 正規化後的樣子。 */
 const sameCursor = (observed: unknown, sent: object): boolean => {
   if (!expectedCursor.has(sent)) throw new Error("sameCursor: no expected cursor recorded for this sent cursor");
   return isDeepStrictEqual(observed, expectedCursor.get(sent));
 };
 
 /**
- * 用 Yjs 在 client 自己的 doc 上建一個真的游標：第一段文字的第 index 個字元（第一次呼叫時寫入這段文字）。
- * 送出的是 y-prosemirror 實際送的形狀：RelativePosition 物件本身（沒用到的 type／tname／item 是 null），
- * 不是 relativePositionToJSON 的結果。`root` 時改用根 fragment 的位置（tname 有值、type 為 null）。
+ * Builds a real cursor with Yjs on the client's own doc: the index-th character of the first text (the text is written on the first call).
+ * What is sent is the shape y-prosemirror actually sends: the RelativePosition object itself (unused type/tname/item are null),
+ * not the result of relativePositionToJSON. With `root`, the position of the root fragment is used instead (tname set, type null).
  */
 function yCursor(doc: Y.Doc, index: number, root = false): { anchor: unknown; head: unknown } {
   const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
@@ -77,7 +76,7 @@ async function scene(tag: string, opts: Parameters<typeof buildCollabTestApp>[0]
   const sessionB = await ctx.loginAs(email("editor"), PASSWORD);
   const a = await sessionA.connect(note.id);
   const b = await sessionB.connect(note.id);
-  // 照 web 的形狀各自設定 user；彼此看到之後才開始（兩人的 clientID 此時都已登記在自己的連線上）
+  // Each sets user in the shape the web does; starts only after they see each other (both clientIDs are already registered on their own connections)
   a.provider.setAwarenessField("user", { id: A.id, name: "A", color: "#000000" });
   b.provider.setAwarenessField("user", { id: B.id, name: "B", color: "#000000" });
   await waitFor("A 看到 B", 5_000, () => peer(a, idOf(b))?.user?.id === B.id);
@@ -88,7 +87,7 @@ async function scene(tag: string, opts: Parameters<typeof buildCollabTestApp>[0]
   const connectAs = async (who: "other" | "viewer" | "editor") => (await ctx.loginAs(email(who), PASSWORD)).connect(note.id);
 
   let markers = 0;
-  /** sender 送一個合法的標記游標，等 observer 看到——之前從 sender 送出的訊息此時都已處理完。 */
+  /** sender sends a valid marker cursor and waits for observer to see it - everything sent from sender before is handled by then. */
   async function mark(sender: TestClient, observer: TestClient): Promise<void> {
     markers += 1;
     const cursor = yCursor(sender.doc, markers);
@@ -99,8 +98,8 @@ async function scene(tag: string, opts: Parameters<typeof buildCollabTestApp>[0]
   return { ctx, A, B, C, V, note, row, email, sessionA, sessionB, a, b, warns, warnIssues, connectAs, mark };
 }
 
-describe("collab awareness 防偽（#312）", () => {
-  it("AW1 自報的 user／knotebook／多餘欄位全被 server 值取代，合法游標原樣轉發；記一行 user-mismatch", async () => {
+describe("collab awareness forgery protection (#312)", () => {
+  it("self-reported user/knotebook/extra fields are all replaced by server values, valid cursor forwarded as is; logs one user-mismatch line", async () => {
     const s = await scene("aw1");
     const cursor = yCursor(s.b.doc, 4);
     s.b.provider.awareness!.setLocalState({
@@ -121,7 +120,7 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).toContain("user-mismatch");
   });
 
-  it("AW2 編輯者改寫別人的 clientID（高 clock）→ 其他人仍看到本人的狀態；記 foreign-client", async () => {
+  it("an editor rewriting someone else's clientID (high clock) -> others still see the real owner's state; logs foreign-client", async () => {
     const s = await scene("aw2");
     const c = await s.connectAs("other");
     c.provider.setAwarenessField("user", { id: s.C.id, name: "C", color: "#000000" });
@@ -133,7 +132,7 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).toContain("foreign-client");
   });
 
-  it("AW3 改寫 AI 代理頭像的 clientID → 仍是 AI 的名字與 agent 標記；記 server-client", async () => {
+  it("rewriting the AI agent avatar's clientID -> still the AI's name and agent marker; logs server-client", async () => {
     const s = await scene("aw3");
     const { token, tokenId } = await seedTokenForUser(s.ctx.db, s.A.id, "notes:read notes:write", "Claude Code");
     const aiId = presenceClientId(s.note.id, tokenId);
@@ -149,16 +148,16 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).toContain("server-client");
   });
 
-  it("AW3b 先佔了 AI clientID 的連線關閉時，不會把 AI 的狀態一起移除", async () => {
+  it("closing the connection that squatted on the AI clientID doesn't remove the AI's state with it", async () => {
     const s = await scene("aw3b");
     const { token, tokenId } = await seedTokenForUser(s.ctx.db, s.A.id, "notes:read notes:write", "Claude Code");
     const aiId = presenceClientId(s.note.id, tokenId);
     const aiName = `${s.row(s.A.id).handle} (claude)`;
-    // 一條還沒登記任何 clientID 的新連線，在 AI 出現之前先送這個 id
+    // A fresh connection that hasn't registered any clientID sends this id before the AI appears
     const squatter = await s.sessionB.connect(s.note.id);
     sendRaw(squatter, awarenessFrame(s.note.id, [{ clientId: aiId, clock: 1, state: { user: { id: s.B.id, name: "B" } } }]));
     await waitFor("佔位的狀態到達 A", 5_000, () => peer(s.a, aiId)?.user?.id === s.B.id);
-    // AI 第一次寫的 clock 與佔位相同，A 會忽略；第二次讀才看得到（clock 搶先是已知限制）
+    // The AI's first write has the same clock as the placeholder, A ignores it; only the second read sees it (clock being beaten to it is a known limitation)
     await getContent(s.ctx.app, s.note.id, token);
     await tick();
     await getContent(s.ctx.app, s.note.id, token);
@@ -172,7 +171,7 @@ describe("collab awareness 防偽（#312）", () => {
     expect(peer(s.a, aiId)?.knotebook?.kind).toBe("agent");
   });
 
-  it("AW4 一則訊息帶三個新 clientID → 最多一個被接受，本人照常；記 client-limit", async () => {
+  it("one message with three new clientIDs -> at most one accepted, the person's own as usual; logs client-limit", async () => {
     const s = await scene("aw4");
     const ids = [4_000_000_001, 4_000_000_002, 4_000_000_003];
     sendRaw(s.b, awarenessFrame(s.note.id, ids.map(clientId => ({ clientId, clock: 1, state: { user: { id: s.B.id, name: "x" } } }))));
@@ -180,16 +179,16 @@ describe("collab awareness 防偽（#312）", () => {
     const seen = ids.filter(id => s.a.provider.awareness!.getStates().has(id));
     expect(seen.length).toBeLessThanOrEqual(1);
     expect(peer(s.a, idOf(s.b))?.user?.id).toBe(s.B.id);
-    // 同一則訊息的三個問題去重後只寫一行
+    // The three problems in one message are deduplicated to one log line
     expect(s.warns()).toHaveLength(1);
     expect(s.warns()[0]!.obj.issues).toEqual(["client-limit"]);
   });
 
-  it("AW5 不合法的游標一律變成 null；之後的合法游標原樣轉發；記 bad-cursor", async () => {
+  it("invalid cursors always become null; later valid cursors are forwarded as is; logs bad-cursor", async () => {
     const s = await scene("aw5");
     const bad: unknown[] = [{}, { anchor: 1, head: 1 }, { anchor: { tname: "other" }, head: { tname: "other" } }];
     for (const cursor of bad) {
-      await s.mark(s.b, s.a); // 先換成一個合法游標，才分得出這一則有沒有變成 null
+      await s.mark(s.b, s.a); // First switch to a valid cursor, otherwise one can't tell whether this message became null
       s.b.provider.setAwarenessField("cursor", cursor);
       await waitFor(`A 看到 ${JSON.stringify(cursor)} 變成 null`, 5_000, () => {
         const st = peer(s.a, idOf(s.b));
@@ -203,7 +202,7 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).toContain("bad-cursor");
   });
 
-  it("AW1b 根 fragment 的位置（tname 有值、type 為 null）也原樣轉發，不記 bad-cursor", async () => {
+  it("the root fragment position (tname set, type null) is also forwarded as is, no bad-cursor logged", async () => {
     const s = await scene("aw1b");
     const cursor = yCursor(s.b.doc, 0, true);
     s.b.provider.setAwarenessField("cursor", cursor);
@@ -212,10 +211,10 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).not.toContain("bad-cursor");
   });
 
-  it("AW6 viewer 冒名、自稱 owner → 顯示為本人、角色 viewer；名字照常顯示，游標一律為 null（唯讀連線不分享位置）", async () => {
+  it("viewer impersonating and claiming to be owner -> shown as themselves, role viewer; name displays as usual, cursor always null (read-only connections don't share position)", async () => {
     const s = await scene("aw6");
     const v = await s.connectAs("viewer");
-    // 唯讀連線不寫 doc：游標用根 fragment 的位置建（同樣是合法的 Yjs 相對位置）
+    // Read-only connections don't write the doc: build the cursor with the root fragment position (also a valid Yjs relative position)
     const pos = plain(Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(v.doc.getXmlFragment(YDOC_FRAGMENT), 0)));
     v.provider.awareness!.setLocalState({
       user: { id: s.A.id, name: "boss", color: "#000000" },
@@ -230,11 +229,11 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warnIssues()).toContain("user-mismatch");
   });
 
-  it("AW7 同一人的第二個登入接手第一條連線的 clientID → 接受且不記日誌；之後兩條連線各自的狀態都看得到", async () => {
+  it("the same person's second login takes over the first connection's clientID -> accepted and not logged; afterwards both connections' states are visible", async () => {
     const s = await scene("aw7");
     const first = idOf(s.b);
-    await s.mark(s.b, s.a); // 這段文字也是下面游標的落點
-    // 第二個登入只連上、不設任何狀態：provider 送的空狀態不登記，所以接手時它還沒有自己的 clientID
+    await s.mark(s.b, s.a); // this text is also where the cursors below land
+    // The second login only connects and sets no state: the empty state the provider sends isn't registered, so at takeover time it has no clientID of its own yet
     const b2 = await s.connectAs("editor");
     const taken = yCursor(s.b.doc, 7);
     sendRaw(b2, awarenessFrame(s.note.id, [{ clientId: first, clock: 100, state: { user: { id: s.B.id, name: "B" }, cursor: taken } }]));
@@ -242,12 +241,12 @@ describe("collab awareness 防偽（#312）", () => {
     expect(peer(s.a, first)?.user?.id).toBe(s.B.id);
     expect(s.warns()).toHaveLength(0);
 
-    // 第一條連線先拿回自己的 id（它的 clock 要先跟上那則接手的 clock，否則它的更新會被忽略）
+    // The first connection takes its own id back first (its clock must catch up with the takeover's clock, otherwise its update is ignored)
     await waitFor("第一條連線收到接手的 clock", 5_000, () => (clockAt(s.b, first) ?? 0) >= 100);
     const back = yCursor(s.b.doc, 8);
     s.b.provider.setAwarenessField("cursor", back);
     await waitFor("A 看到第一條連線拿回 id", 5_000, () => sameCursor(peer(s.a, first)?.cursor, back));
-    // 第二條連線這時才設定自己的狀態
+    // The second connection only now sets its own state
     b2.provider.setAwarenessField("user", { id: s.B.id, name: "B", color: "#000000" });
     await waitFor("A 看到第二條連線自己的 id", 5_000, () => peer(s.a, idOf(b2))?.user?.id === s.B.id);
     expect(peer(s.a, first)?.user?.id).toBe(s.B.id);
@@ -255,7 +254,7 @@ describe("collab awareness 防偽（#312）", () => {
     expect(s.warns()).toHaveLength(0);
   });
 
-  it("AW8 owner 把編輯者降為 viewer → 重驗後的下一則更新顯示 viewer，游標變 null", async () => {
+  it("owner downgrades an editor to viewer -> the next update after revalidation shows viewer, cursor becomes null", async () => {
     const s = await scene("aw8", { collabHooks: (server, log) => createCollabHooks(server, log) });
     await s.mark(s.b, s.a);
     expect(peer(s.a, idOf(s.b))?.knotebook?.role).toBe("editor");
@@ -274,8 +273,8 @@ describe("collab awareness 防偽（#312）", () => {
   });
 });
 
-describe("WebSocket 訊息大小（#312）", () => {
-  it("AW9 超過上限一個位元組的訊息 → 連線以 1009 關閉", async () => {
+describe("WebSocket message size (#312)", () => {
+  it("a message one byte over the limit -> connection closes with 1009", async () => {
     const ctx = await buildCollabTestApp();
     const raw = new WebSocket(ctx.baseUrl.replace(/^http/, "ws") + "/collab");
     const closed = new Promise<number>((resolve, reject) => {
@@ -290,7 +289,7 @@ describe("WebSocket 訊息大小（#312）", () => {
     expect(await closed).toBe(1009);
   });
 
-  it("AW10 編輯者一次寫入 5 MiB 的段落 → 照常同步到 server，連線不被關掉", async () => {
+  it("an editor writing a 5 MiB paragraph at once -> still syncs to the server, connection not closed", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "size-owner@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);

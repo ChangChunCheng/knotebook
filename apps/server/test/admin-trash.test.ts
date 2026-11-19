@@ -1,4 +1,3 @@
-/** #181：`/api/admin/trash/settings`。 */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { siteSettings } from "../src/db/schema.js";
@@ -11,8 +10,8 @@ const get = (b: Built) => b.app.inject({ method: "GET", url: URL_, cookies: b.co
 const patch = (b: Built, payload: unknown) => b.app.inject({ method: "PATCH", url: URL_, cookies: b.cookies, payload: payload as object });
 const dbRow = async (b: Built) => (await b.db.select().from(siteSettings))[0]!;
 
-describe("AS1 讀與改", () => {
-  it("預設 7；改 30、null、1、3650 都照存", async () => {
+describe("read and update", () => {
+  it("default 7; 30, null, 1, 3650 are all stored", async () => {
     const b = await adminApp();
     expect((await get(b)).json()).toEqual({ retentionDays: 7 });
     for (const v of [30, null, 1, 3650]) {
@@ -25,8 +24,8 @@ describe("AS1 讀與改", () => {
   });
 });
 
-describe("AS2 權限與輸入驗證", () => {
-  it("非管理員 403、未登入 401（GET 與 PATCH）", async () => {
+describe("permissions and input validation", () => {
+  it("non-admin 403, not signed in 401 (GET and PATCH)", async () => {
     const b = await adminApp();
     await expectAdminOnly(b.app, b.db, "GET", URL_);
     await expectAdminOnly(b.app, b.db, "PATCH", URL_, { retentionDays: 5 });
@@ -39,7 +38,7 @@ describe("AS2 權限與輸入驗證", () => {
     ['"7"', { retentionDays: "7" }],
     ["缺鍵", {}],
     ["多餘鍵", { retentionDays: 7, x: 1 }],
-  ])("%s → 400 invalid_body、DB 不變", async (_n, body) => {
+  ])("%s -> 400 invalid_body, DB unchanged", async (_n, body) => {
     const b = await adminApp();
     await patch(b, { retentionDays: 9 });
     const res = await patch(b, body);
@@ -48,15 +47,15 @@ describe("AS2 權限與輸入驗證", () => {
     expect((await dbRow(b)).trashRetentionDays).toBe(9);
   });
 
-  it.each([0, 3651])("%i 的 message 是範圍句", async n => {
+  it.each([0, 3651])("message for %i is the range sentence", async n => {
     const b = await adminApp();
     const res = await patch(b, { retentionDays: n });
     expect(res.json().error.message).toBe(TRASH_RETENTION_RANGE_MESSAGE);
   });
 });
 
-describe("AS3 旁觀欄", () => {
-  it("PATCH 後其他設定欄不變、updated_at 變大", async () => {
+describe("bystander columns", () => {
+  it("after PATCH the other setting columns are unchanged and updated_at increases", async () => {
     const b = await adminApp();
     await b.db.execute(sql`update site_settings set updated_at = now() - interval '1 hour'`);
     const before = await dbRow(b);
@@ -70,8 +69,8 @@ describe("AS3 旁觀欄", () => {
   });
 });
 
-describe("AS4 讀不到 site_settings 列", () => {
-  it("GET → 500 internal，log { table: \"site_settings\" }", async () => {
+describe("site_settings row unreadable", () => {
+  it("GET -> 500 internal, log { table: 'site_settings' }", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     await b.db.$client.query(`delete from site_settings`);

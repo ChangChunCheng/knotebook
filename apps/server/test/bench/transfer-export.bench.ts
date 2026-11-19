@@ -1,12 +1,12 @@
 /**
- * bulk transfer：單篇匯出器的耗時與事件迴圈停頓。
- * **不進 CI**。用法（apps/server）：`pnpm exec tsx test/bench/transfer-export.bench.ts > <out.txt>`
+ * Bulk transfer: duration and event-loop stalls of the single-note exporter. **Not in CI.**
+ * Usage (apps/server): `pnpm exec tsx test/bench/transfer-export.bench.ts > <out.txt>`
  *
- * 矩陣：擬真混合筆記 20／200／1 000／2 000 顆 × RUNS 次；兩組：
- * - yield：預設讓出（mount 後、整篇匯出後各一次，逐顆匯出每 50 顆或距上次 ≥ 20 ms 一次；每次讓出＝連續兩次 `setImmediate`，
- *   理由見 `export-note.ts` 的 `defaultYield`）
- * - noyield：`yieldFn` 換成只等 microtask 的 no-op（≈ 不讓出）
- * 量：`exportNoteForTransfer` 總時間 p50／p95；事件迴圈最長停頓（1 ms timer 的最大間隔）與 `monitorEventLoopDelay` p99；RSS。
+ * Matrix: realistic mixed notes of 20/200/1 000/2 000 blocks x RUNS runs; two groups:
+ * - yield: default yielding (once after mount and once after the whole export; per-block export every 50 blocks or >= 20 ms since the last;
+ *   each yield = two consecutive `setImmediate`, reason in `defaultYield` of `export-note.ts`)
+ * - noyield: `yieldFn` replaced by a no-op that only awaits a microtask (~ no yielding)
+ * Measures: total `exportNoteForTransfer` time p50/p95; longest event-loop stall (max gap of a 1 ms timer) and `monitorEventLoopDelay` p99; RSS.
  */
 import { monitorEventLoopDelay, performance as perf } from "node:perf_hooks";
 import * as Y from "yjs";
@@ -26,7 +26,7 @@ const H = (t: string): Block => ({ type: "heading", content: t, props: { level: 
 const CODE = (t: string): Block => ({ type: "codeBlock", props: { language: "js" }, content: t });
 const TBL = (rows: unknown[]): Block => ({ type: "table", content: { type: "tableContent", rows } });
 
-/** 擬真混合：每 10 顆一個 heading，其餘段落／bullet／numbered 輪替，偶爾 code、table。 */
+/** Realistic mix: a heading every 10 blocks, the rest alternating paragraph/bullet/numbered, occasionally code and table. */
 function mixed(n: number): Block[] {
   return Array.from({ length: n }, (_, i) => {
     if (i % 10 === 0) return H(`Section ${i / 10}`);

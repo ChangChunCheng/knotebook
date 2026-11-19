@@ -1,6 +1,3 @@
-/**
- * 資料夾：`PUT /api/notes/:id/folder`（筆記放置與共享放置）。
- */
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
@@ -36,7 +33,7 @@ function failed(res: LightMyRequestResponse, status: number, code: string): stri
 }
 const messageOf = (res: LightMyRequestResponse): string => (res.json() as { error: { message: string } }).error.message;
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
+/** Test hook: after `arm(point, fn)`, the first time point is passed fn runs (once only). */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -68,7 +65,7 @@ async function listOf(app: FastifyInstance, userId: string): Promise<NoteDto[]> 
   return res.json() as NoteDto[];
 }
 
-/** S-F8／A3-11：放置不得碰的面（網址、公開欄、updated_at、版本、Y.Doc 狀態、轉址）。 */
+/** The surfaces a placement must not touch (url, public columns, updated_at, versions, Y.Doc state, redirects). */
 async function untouchable(pool: Pool, noteId: string) {
   const versions = await pool.query<{ n: number }>("select count(*)::int as n from note_versions where note_id = $1", [noteId]);
   const state = await pool.query("select version, updated_at::text as updated_at from note_states where note_id = $1", [noteId]);
@@ -81,7 +78,7 @@ async function untouchable(pool: Pool, noteId: string) {
   };
 }
 
-/** 放置列的 xmin（判「沒有寫」）。 */
+/** xmin of the placement row (to tell "nothing was written"). */
 async function placementXmin(pool: Pool, userId: string, noteId: string): Promise<string> {
   const { rows } = await pool.query<{ x: string }>("select xmin::text as x from note_placements where user_id = $1 and note_id = $2", [userId, noteId]);
   return rows[0]!.x;
@@ -93,7 +90,7 @@ async function roleIdOf(pool: Pool, groupId: string, userId: string): Promise<st
 }
 
 describe("PUT /api/notes/:id/folder", () => {
-  it("FP-1 個人筆記：放進自己的資料夾、移回根層、同值冪等不寫；看不到的資料夾三形逐位元組相同；跨空間 400；同資料夾的旁觀者不動", async () => {
+  it("personal note: put into own folder, move back to root, same value is idempotent and writes nothing; invisible folders in three forms byte-for-byte identical; cross-space 400; bystanders in the same folder untouched", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -107,7 +104,7 @@ describe("PUT /api/notes/:id/folder", () => {
 
     expect(ok(await put(app, u.id, n, { folderId: F })).folderId).toBe(F);
     expect((await noteFolderCols(pool, n))?.folder_id).toBe(F);
-    // 旁觀者：同一舊資料夾的另一篇、根層一篇、別人一篇
+    // Bystanders: another note in the same old folder, one at the root, one belonging to someone else
     expect((await noteFolderCols(pool, sib))?.folder_id).toBe(F0);
     expect((await noteFolderCols(pool, rootNote))?.folder_id).toBeNull();
     expect((await noteFolderCols(pool, othersNote))?.folder_id).toBeNull();
@@ -139,7 +136,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(await xminOf(pool, "notes", n)).toBe(x1);
   });
 
-  it("FP-2 群組筆記：admin／member／editDelete／editOnly 200；deleteOnly／readOnly 403；outsider 404 not_found；另一個我在的群組 400；我不在的群組 404 folder_not_found", async () => {
+  it("group note: admin/member/editDelete/editOnly 200; deleteOnly/readOnly 403; outsider 404 not_found; another group I'm in 400; a group I'm not in 404 folder_not_found", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -176,7 +173,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect((await noteFolderCols(pool, gn))?.folder_id).toBeNull();
   });
 
-  it("FP-3 共享筆記：editor 與 viewer 都能放進自己的 shared 資料夾（寫放置列）；擁有者的 folder_id、xmin、清單不變；同值不寫、兩個 shared 資料夾之間可搬；null 刪放置；放進自己的個人資料夾 400、別人的 shared 資料夾 404", async () => {
+  it("shared note: editor and viewer can both place it in their own shared folder (writes a placement row); the owner's folder_id, xmin and list are unchanged; the same value writes nothing, can move between two shared folders; null deletes the placement; own personal folder 400, someone else's shared folder 404", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const owner = await seedUser(db);
@@ -188,7 +185,7 @@ describe("PUT /api/notes/:id/folder", () => {
     await seedShare(db, n, vw.id, "viewer");
     const SE = (await seedFolder(db, { shared: ed.id })).id;
     const SV = (await seedFolder(db, { shared: vw.id })).id;
-    // 旁觀者：ed 對另一篇的放置
+    // Bystander: ed's placement on another note
     const n2 = await noteIn(db, pool, { ownerId: owner.id }, null);
     await seedShare(db, n2, ed.id, "viewer");
     await seedPlacement(pool, ed.id, n2, SE);
@@ -201,19 +198,17 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(await placementOf(pool, vw.id, n)).toBe(SV);
     expect((await listOf(app, ed.id)).find(x => x.id === n)?.folderId).toBe(SE);
     expect((await listOf(app, vw.id)).find(x => x.id === n)?.folderId).toBe(SV);
-    // 擁有者那邊看不到任何變化
     expect((await noteFolderCols(pool, n))?.folder_id).toBe(FO);
     expect(await xminOf(pool, "notes", n)).toBe(x0);
     expect((await listOf(app, owner.id)).find(x => x.id === n)?.folderId).toBe(FO);
     expect(await untouchable(pool, n)).toEqual(before);
 
-    // 同值再送：200、放置列不寫（xmin 不變）
     const px0 = await placementXmin(pool, ed.id, n);
     expect(ok(await put(app, ed.id, n, { folderId: SE })).folderId).toBe(SE);
     expect(await placementOf(pool, ed.id, n)).toBe(SE);
     expect(await placementXmin(pool, ed.id, n)).toBe(px0);
 
-    // 在自己的兩個 shared 資料夾之間搬（upsert 的 update 分支）
+    // Moving between her own two shared folders (the update branch of the upsert)
     const SE2 = (await seedFolder(db, { shared: ed.id })).id;
     expect(ok(await put(app, ed.id, n, { folderId: SE2 })).folderId).toBe(SE2);
     expect(await placementOf(pool, ed.id, n)).toBe(SE2);
@@ -235,7 +230,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(await xminOf(pool, "notes", n)).toBe(x0);
   });
 
-  it("FP-4 撤分享：放置列跟著消失，被分享者清單看不到該筆記", async () => {
+  it("share revoked: the placement row disappears with it, the shared user's list no longer shows the note", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const owner = await seedUser(db);
@@ -253,7 +248,7 @@ describe("PUT /api/notes/:id/folder", () => {
     failed(await put(app, ed.id, n, { folderId: SE }), 404, "not_found");
   });
 
-  it("FP-5 m-7：共享放置在交易內重判之後、寫入之前被撤分享 → 404 not_found（不是 500）、沒有放置列；授權後交易前被撤分享也是 404", async () => {
+  it("a shared placement revoked after the in-transaction re-judgement but before the write -> 404 not_found (not 500), no placement row; revoked after authorization but before the transaction is also 404", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -272,7 +267,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(seam.pending).toBe(false);
     expect(await placementOf(pool, ed.id, n)).toBeNull();
 
-    // 授權之後、交易之前被撤分享：交易內重判 → none → 404（不是 403）。
+    // Revoked after authorization, before the transaction: the in-transaction re-judgement -> none -> 404 (not 403).
     await seedShare(db, n, ed.id, "editor");
     seam.arm("note-folder-authorized", async () => {
       await pool.query("delete from note_shares where note_id = $1 and user_id = $2", [n, ed.id]);
@@ -284,7 +279,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(await placementOf(pool, ed.id, n)).toBeNull();
   });
 
-  it("FP-6 交易內重判：授權後群組角色被拿掉 can_edit → 403、被移出群組 → 404 not_found，都不寫；個人筆記的分享在縫裡換人，擁有者不受影響", async () => {
+  it("in-transaction re-judgement: after authorization the group role loses can_edit -> 403, removed from the group -> 404 not_found, nothing written; a personal note's share is swapped to another person in the test hook, the owner unaffected", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -300,7 +295,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(messageOf(res)).toBe(NO_ORGANIZE);
     expect((await noteFolderCols(pool, gn))?.folder_id).toBeNull();
 
-    // 授權後被移出群組：交易內先判筆記→ not_found，不是 folder_not_found。
+    // Removed from the group after authorization: inside the transaction the note is judged first -> not_found, not folder_not_found.
     seam.arm("note-folder-authorized", async () => {
       await pool.query("delete from group_members where group_id = $1 and user_id = $2", [s.groupId, s.member.id]);
     });
@@ -325,7 +320,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect((await noteFolderCols(pool, n))?.folder_id).toBe(F);
   });
 
-  it("FP-7 消失的空間與資料夾：群組在授權後被轉移 → 404 not_found；目標資料夾在授權後被刪 → 404 folder_not_found（都不是 500）", async () => {
+  it("vanishing space and folder: group transferred after authorization -> 404 not_found; target folder deleted after authorization -> 404 folder_not_found (neither is a 500)", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -353,7 +348,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect((await noteFolderCols(pool, n))?.folder_id).toBeNull();
   });
 
-  it("FP-8 垃圾桶筆記 404 not_found；S-F8／A3-11：放置前後網址、公開欄、updated_at、版本、note_states、轉址都不變（個人與群組）", async () => {
+  it("trash note 404 not_found; before and after a placement the url, public columns, updated_at, versions, note_states and redirects are all unchanged (personal and group)", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -383,7 +378,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect(await untouchable(pool, gn)).toEqual(gBefore);
   });
 
-  it("FP-L 鎖序字面：群組 groups KS → 資料夾 KS → 筆記 FOR UPDATE；共享 資料夾 KS → 筆記 KEY SHARE；個人移回根層沒有資料夾鎖", async () => {
+  it("lock order literally: group groups KS -> folder KS -> note FOR UPDATE; shared folder KS -> note KEY SHARE; personal move back to root takes no folder lock", async () => {
     const { db, pool } = await freshDb();
     const queries: string[] = [];
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
@@ -425,7 +420,7 @@ describe("PUT /api/notes/:id/folder", () => {
     expect((await noteFolderCols(pool, pn))?.folder_id).toBeNull();
   });
 
-  it("FP-9 雜項：Bearer／未登入 401；節流 429；body strict（缺 folderId、未知鍵 400）；大寫 :id 與大寫 folderId 200", async () => {
+  it("misc: Bearer/not signed in 401; throttle 429; strict body (missing folderId, unknown key 400); uppercase :id and uppercase folderId 200", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ folder: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const pool = db.$client;
     const u = await seedUser(db);

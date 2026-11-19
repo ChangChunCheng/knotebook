@@ -1,9 +1,8 @@
 /**
- * #175：`POST /api/notes/:id/copy`——個人→群組、群組→個人（與個人→個人）的複製。
- * 真共編連線的「有人在線、未落盤編輯」案在 `groups-v2-revocation.test.ts` 檔尾。
- * C19a／C19b／C19c：交易第一步對目標 groups 取 KEY SHARE＋重驗成員——複製∥移除成員兩種先後、同群組複製
- * ∥「groups FOR UPDATE → 該群組筆記 FOR UPDATE」（全刪的形）不死結。C19d：201 的 role／permissions
- * 取 (g) 交易內讀到的旗標，降級落在路由檢查與 (g) 之間時回降級後的值。
+ * The "someone online with unsaved edits" case over a real collab connection is at the end of `groups-v2-revocation.test.ts`.
+ * The first transaction step takes KEY SHARE on the target groups and re-verifies membership: copy || removing a member in both orders, and same-group copy
+ * || "groups FOR UPDATE -> that group's notes FOR UPDATE" (the delete-all shape) don't deadlock. The role/permissions of the 201 come from the flags read inside the transaction;
+ * when a downgrade lands between the route check and that read, the downgraded value is returned.
  */
 import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
@@ -34,7 +33,7 @@ const uploadsOf = (db: Db, noteId: string) =>
   db.select({ id: uploads.id, uploaderId: uploads.uploaderId, mime: uploads.mime, size: uploads.size }).from(uploads).where(eq(uploads.noteId, noteId));
 
 describe("#175 POST /api/notes/:id/copy", () => {
-  it("個人→群組：201 群組形 DTO；note_states version 1、XML 只差改寫的網址；本站附件換新 id 與新檔、外部圖與他篇附件原樣；不帶 AI 紀錄／shares／token／別名／prev／legacy／last_edited；副本 updated_at 晚於來源", async () => {
+  it("personal -> group: 201 group-shaped DTO; note_states version 1, XML differs only in the rewritten URLs; this site's attachments get new ids and new files, external images and other notes' attachments unchanged; AI log/shares/token/aliases/prev/legacy/last_edited not carried; copy's updated_at later than the source", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [owner, c] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -65,7 +64,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(body.id).not.toBe(src.id);
     const copyId = body.id as string;
 
-    // 副本的附件：恰兩列（u1、u2 各一：u1 被引用兩次也只一份），uploader＝呼叫者、mime／size 同來源，新檔 bytes 同來源。
+    // The copy's attachments: exactly two rows (one each for u1 and u2: u1 referenced twice is still one copy), uploader = caller, mime/size same as the source, new file bytes same as the source.
     const rows = await uploadsOf(db, copyId);
     expect(rows).toHaveLength(2);
     const bySize = new Map(rows.map(r => [r.size, r]));
@@ -75,7 +74,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await readFile(uploadFilePath(uploadsDir, n2.id))).toEqual(b2);
     expect(await filesIn(uploadsDir)).toEqual([...filesBefore, n1.id, n2.id].sort());
 
-    // 副本 XML：把新 id 換回舊 id 後與來源逐字相同（u3 他篇附件、外部網址原樣）；version 1。
+    // Copy XML: with new ids swapped back to old ids it is verbatim equal to the source (u3, another note's attachment, and the external URL unchanged); version 1.
     const copyXml = xmlOf((await loadDoc(db, copyId))!);
     expect(copyXml.split(`/api/uploads/${n1.id}`).length - 1).toBe(2);
     expect(copyXml).toContain(`/api/uploads/${u3}`);
@@ -83,13 +82,11 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(copyXml.replaceAll(n1.id, u1).replaceAll(n2.id, u2)).toBe(srcXml);
     expect((await db.$client.query("select version from note_states where note_id = $1", [copyId])).rows).toEqual([{ version: 1 }]);
 
-    // 來源原封不動。
     expect((await db.$client.query("select * from notes where id = $1", [src.id])).rows[0]).toEqual(srcRowBefore);
     expect(xmlOf((await loadDoc(db, src.id))!)).toBe(srcXml);
     expect((await uploadsOf(db, src.id)).map(r => r.id).sort()).toEqual([u1, u2].sort());
     expect(await readFile(uploadFilePath(uploadsDir, u1))).toEqual(b1);
 
-    // 不帶的東西。
     expect(await db.select().from(noteShares).where(eq(noteShares.noteId, copyId))).toEqual([]);
     expect(await db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, copyId))).toEqual([]);
     const { rows: [cp] } = await db.$client.query(
@@ -100,7 +97,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
       owner_id: null, group_id: g.id, public_token: null, public_slug: null, prev_slug: null, legacy_slug: null, slug_is_custom: false,
       last_edited_at: null, last_edited_by: null,
     });
-    // 副本是新筆記，`updated_at` 取 DB default——晚於來源（MCP `list_notes` 說明依賴）。
+    // The copy is a new note, `updated_at` takes the DB default - later than the source (the MCP `list_notes` description relies on this).
     const { rows: [cmp] } = await db.$client.query<{ later: boolean }>(
       "select (select updated_at from notes where id = $1) > (select updated_at from notes where id = $2) as later",
       [copyId, src.id],
@@ -109,7 +106,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(new Date(body.updatedAt).getTime()).toBeGreaterThanOrEqual(new Date(srcRowBefore.updated_at).getTime());
   });
 
-  it("群組→個人（只讀自訂角色也行）：201 owner 形；slug 在呼叫者個人範圍以標題去重", async () => {
+  it("group -> personal (a read-only custom role works too): 201 owner shape; slug is deduplicated by title within the caller's personal scope", async () => {
     const { app, db } = await buildTestApp();
     const [admin, reader] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: reader.id, role: "member" }]);
@@ -129,7 +126,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(res.json().slug).toBe(`${auto}-2`);
   });
 
-  it("來源授權：陌生人（個人筆記無分享）、非成員（群組筆記）→ 404 not_found，與不存在的 id 逐位元組相同；不建任何列", async () => {
+  it("source authorization: a stranger (personal note without shares), non-member (group note) -> 404 not_found, byte-for-byte identical to a nonexistent id; no row created", async () => {
     const { app, db } = await buildTestApp();
     const [owner, stranger, admin] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
@@ -148,7 +145,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await noteCount(db)).toBe(before);
   });
 
-  it("目標：非 UUID、不存在、非成員、成員無 can_create → 404 group_not_found（四者逐位元組相同），不建任何列、不落任何檔", async () => {
+  it("target: non-UUID, nonexistent, non-member, member without can_create -> 404 group_not_found (the four byte-for-byte identical), no row created, no file written", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [owner, admin] = await Promise.all([seedUser(db), seedUser(db)]);
     const notMine = await seedGroup(db, "NotMine", [{ userId: admin.id, role: "admin" }]);
@@ -173,7 +170,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await filesIn(uploadsDir)).toEqual(filesBefore);
   });
 
-  it("body strict：多餘鍵、groupId 非字串／null → 400 invalid_body，不建列", async () => {
+  it("strict body: extra key, groupId not a string / null -> 400 invalid_body, no row created", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -187,13 +184,13 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await noteCount(db)).toBe(before);
   });
 
-  it("複製到群組撞名：beforeInsert 搶插 → savepoint 重試成功，201", async () => {
+  it("copying into a group with a name collision: beforeInsert snatches the slug -> savepoint retry succeeds, 201", async () => {
     const holder: { db?: Db; groupId?: string; candidates: string[] } = { candidates: [] };
     const { app, db } = await buildTestApp({
       noteCreateHooks: {
         beforeInsert: async candidate => {
           holder.candidates.push(candidate);
-          // 另一條連線先 commit 一篇同 slug 的群組筆記——副本的 INSERT 撞 notes_group_slug_idx。
+          // Another connection first commits a group note with the same slug - the copy's INSERT hits notes_group_slug_idx.
           if (holder.candidates.length === 1) await seedNote(holder.db!, { groupId: holder.groupId! }, { slug: candidate });
         },
       },
@@ -212,7 +209,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect((await db.$client.query("select count(*)::int as n from note_states where note_id = $1", [res.json().id])).rows[0].n).toBe(1);
   });
 
-  it("note-copy-files-copied 縫丟錯 → 500；已複製的附件檔清掉、沒有副本筆記（縫在寫任何列之前；列的 rollback 由 drizzle 交易保證）", async () => {
+  it("note-copy-files-copied test hook throws -> 500; copied attachment files cleaned up, no copy note (the hook fires before any row is written; row rollback is guaranteed by the drizzle transaction)", async () => {
     const { app, db, uploadsDir } = await buildTestApp({
       groupTestHook: async point => {
         if (point === "note-copy-files-copied") throw new Error("boom");
@@ -233,7 +230,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await uploadCount(db)).toBe(uploadsBefore);
   });
 
-  it("C7：複製持 FOR KEY SHARE 時刪除來源 → DELETE（移入垃圾桶）卡在列鎖（blocked）→ 複製 201 → 移入 204 → 副本的圖對呼叫者仍 200；來源永久刪除後仍 200", async () => {
+  it("deleting the source while the copy holds FOR KEY SHARE -> DELETE (move to trash) blocks on the row lock (blocked) -> copy 201 -> move 204 -> the copy's image still 200 for the caller; still 200 after the source is permanently deleted", async () => {
     const holder: { app?: FastifyInstance; db?: Db; srcId?: string; cookie?: Record<string, string>; del?: Promise<{ statusCode: number }>; interleave?: string } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       groupTestHook: async point => {
@@ -259,22 +256,22 @@ describe("#175 POST /api/notes/:id/copy", () => {
     const [n1] = await uploadsOf(db, res.json().id);
     const img = await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) });
     expect(img.statusCode).toBe(200);
-    expect(await filesIn(uploadsDir)).toEqual([u1, n1!.id].sort()); // 移入垃圾桶不刪檔（#181）；副本的是自己的一份
-    // 來源永久刪除（交易本體直呼；刪檔是服務層 commit 後的事）：副本的列與圖不受影響。
+    expect(await filesIn(uploadsDir)).toEqual([u1, n1!.id].sort()); // moving to the trash doesn't delete files (#181); the copy has its own
+    // Source permanently deleted (the transaction body called directly; deleting files is the service layer's job after commit): the copy's row and image are unaffected.
     const purged = await db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [src.id], by: owner.id }));
     expect(purged.uploadIds).toEqual([u1]);
     expect(await db.select().from(notes).where(eq(notes.id, src.id))).toEqual([]);
     expect((await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(200);
   });
 
-  it("複製持鎖期間，來源的一般 UPDATE（last_edited_at）不被擋", async () => {
+  it("while the copy holds its lock, an ordinary UPDATE of the source (last_edited_at) isn't blocked", async () => {
     const holder: { db?: Db; srcId?: string; upd?: Promise<"done">; outcome?: string } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async point => {
         if (point !== "note-copy-locked") return;
         const upd = holder.db!.update(notes).set({ lastEditedAt: new Date() }).where(eq(notes.id, holder.srcId!)).then(() => "done" as const);
         holder.upd = upd;
-        // 不等 `upd` 本身：被擋的話 1 秒後放行、複製照常 commit，被擋的 UPDATE 隨即完成（不留懸掛連線）。
+        // Don't await `upd` itself: if blocked it is released after 1 second and the copy commits as usual, then the blocked UPDATE completes right away (no dangling connection).
         holder.outcome = await Promise.race([upd, new Promise<string>(r => setTimeout(() => r("timeout"), 1000))]);
       },
     });
@@ -290,7 +287,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(holder.outcome).toBe("done");
   });
 
-  it("副本公開後匿名讀得到圖；來源移入垃圾桶、再永久刪除後副本圖對 owner 仍 200", async () => {
+  it("after the copy is made public anonymous readers get the image; after the source goes to the trash and is permanently deleted the copy's image is still 200 for the owner", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Plan" });
@@ -301,14 +298,14 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(res.statusCode).toBe(201);
     const copyId = res.json().id as string;
     const [n1] = await uploadsOf(db, copyId);
-    // 圖的 id 取自副本文件（使用者實際看到的那個網址），並與副本的 uploads 列一致。
+    // The image id comes from the copy's document (the URL the user actually sees) and matches the copy's uploads row.
     const docUrl = /\/api\/uploads\/([0-9a-f-]{36})/.exec(xmlOf((await loadDoc(db, copyId))!))![1];
     expect(docUrl).toBe(n1!.id);
     const pub = await app.inject({ method: "PUT", url: `/api/notes/${copyId}/public-link`, cookies: await cookieOf(owner.id) });
     expect(pub.statusCode).toBe(200);
     const anon = await app.inject({ method: "GET", url: `/api/public/notes/${pub.json().token}/uploads/${n1!.id}` });
     expect(anon.statusCode).toBe(200);
-    // 對照：來源的附件 id 掛在副本的公開連結下讀不到（證明上一條真的靠改寫後的新 id）。
+    // Contrast: the source's attachment id read under the copy's public link doesn't work (proves the previous check really relies on the rewritten new id).
     expect((await app.inject({ method: "GET", url: `/api/public/notes/${pub.json().token}/uploads/${u1}` })).statusCode).toBe(404);
 
     expect((await app.inject({ method: "DELETE", url: `/api/notes/${src.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(204);
@@ -318,7 +315,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect((await app.inject({ method: "GET", url: `/api/uploads/${n1!.id}`, cookies: await cookieOf(owner.id) })).statusCode).toBe(200);
   });
 
-  it("出向 note_links：以複製者身分寫——他看得到的目標有列、看不到的沒有；看得到的目標的 backlinks 列出副本", async () => {
+  it("outgoing note_links: written as the copier - targets he can see have rows, ones he can't don't; the visible target's backlinks list the copy", async () => {
     const { app, db } = await buildTestApp();
     const [owner, copier] = await Promise.all([seedUser(db), seedUser(db)]);
     const visible = await seedNote(db, { ownerId: copier.id });
@@ -336,13 +333,13 @@ describe("#175 POST /api/notes/:id/copy", () => {
     const bl = await app.inject({ method: "GET", url: `/api/notes/${visible.id}/backlinks`, cookies: await cookieOf(copier.id) });
     expect(bl.statusCode).toBe(200);
     expect((bl.json().backlinks as Array<{ id: string }>).map(b => b.id)).toEqual([copyId]);
-    // 副本文件裡兩個 wikilink 都原樣保留（看不到的那個在副本裡顯示為未解析）。
+    // Both wikilinks in the copy's document are kept as is (the invisible one shows as unresolved in the copy).
     const xml = xmlOf((await loadDoc(db, copyId))!);
     expect(xml).toContain(visible.id);
     expect(xml).toContain(hidden.id);
   });
 
-  it("從沒開過的筆記（無 note_states）→ 201、副本有一列 note_states（version 1、空文件）", async () => {
+  it("a note that was never opened (no note_states) -> 201, the copy has one note_states row (version 1, empty document)", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Never opened" });
@@ -356,7 +353,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(xmlOf((await loadDoc(db, copyId))!)).toBe("");
   });
 
-  it("來源附件列在、磁碟檔不在 → 201；該節點保留原網址、不建它的 uploads 列；其他附件照常複製", async () => {
+  it("attachment row present, disk file missing -> 201; that node keeps the original URL and no uploads row is created for it; other attachments are copied as usual", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Plan" });
@@ -377,7 +374,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await filesIn(uploadsDir)).toEqual([u1, rows[0]!.id].sort());
   });
 
-  it("節流：edit 桶用盡 → 429，不建列", async () => {
+  it("throttle: edit bucket exhausted -> 429, no row created", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const owner = await seedUser(db);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Plan" });
@@ -389,12 +386,12 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(await noteCount(db)).toBe(before + 1);
   });
 
-  it("目標被拒（非成員）→ 404 group_not_found，不扣 edit 桶、不扣 upload 桶（快速檢查的成員述詞要有 userId）", async () => {
+  it("target rejected (non-member) -> 404 group_not_found, charges neither the edit bucket nor the upload bucket (the fast-check member predicate needs the userId)", async () => {
     const edit = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     const upload = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ edit, upload }) });
     const [owner, admin] = await Promise.all([seedUser(db), seedUser(db)]);
-    // 目標群組裡有別人（admin）具備 can_create；owner 不是成員。
+    // The target group has someone else (admin) with can_create; owner isn't a member.
     const notMine = await seedGroup(db, "NotMine", [{ userId: admin.id, role: "admin" }]);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Plan" });
     const u1 = await seedUpload(db, uploadsDir, src.id, owner.id);
@@ -405,7 +402,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("group_not_found");
     expect(await noteCount(db)).toBe(notesBefore);
-    // 帳：被拒的那發什麼桶都沒扣 → edit 桶剩整窗 2、upload 桶剩整窗 1。
+    // Accounting: the rejected request charged no bucket -> the edit bucket has the whole window of 2 left, the upload bucket the whole window of 1.
     expect(edit.consume(owner.id)).toBe(true);
     expect(edit.consume(owner.id)).toBe(true);
     expect(edit.consume(owner.id)).toBe(false);
@@ -413,7 +410,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(upload.consume(owner.id)).toBe(false);
   });
 
-  it("upload 桶：依會被複製的附件數扣（他篇附件、外部圖不算）；額度不夠 → 429 too_many_requests、不建列不落檔、被拒的那發不記帳", async () => {
+  it("upload bucket: charged by the number of attachments that will be copied (other notes' attachments and external images don't count); not enough quota -> 429 too_many_requests, no row, no file, the rejected request isn't charged", async () => {
     const upload = new FixedWindowLimiter({ limit: 3, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload }) });
     const owner = await seedUser(db);
@@ -424,21 +421,21 @@ describe("#175 POST /api/notes/:id/copy", () => {
     const u3 = await seedUpload(db, uploadsDir, other.id, owner.id);
     await seedDoc(db, src.id, imageDoc([`/api/uploads/${u1}`, `/api/uploads/${u1}`, `/api/uploads/${u2}`, `/api/uploads/${u3}`, EXTERNAL]));
 
-    expect((await copy(app, src.id, owner.id)).statusCode).toBe(201); // 扣 2（u1 兩次引用只算一張；u3、外部圖不算）
+    expect((await copy(app, src.id, owner.id)).statusCode).toBe(201); // charges 2 (u1 referenced twice counts once; u3 and the external image don't count)
     const [notesBefore, uploadsBefore, filesBefore] = [await noteCount(db), await uploadCount(db), await filesIn(uploadsDir)];
 
-    const second = await copy(app, src.id, owner.id); // 要 2、剩 1
+    const second = await copy(app, src.id, owner.id); // needs 2, 1 left
     expect(second.statusCode).toBe(429);
     expect(second.json()).toEqual({ error: { code: "too_many_requests", message: "Too many requests. Wait a moment and try again." } });
     expect(await noteCount(db)).toBe(notesBefore);
     expect(await uploadCount(db)).toBe(uploadsBefore);
     expect(await filesIn(uploadsDir)).toEqual(filesBefore);
-    // 帳：第一發記 2、被拒的第二發不記 → 剩恰 1 張。
+    // Accounting: the first charged 2, the rejected second isn't recorded -> exactly 1 left.
     expect(upload.consume(owner.id)).toBe(true);
     expect(upload.consume(owner.id)).toBe(false);
   });
 
-  it("upload 桶：附件張數 > 整窗額度 → 新視窗第一發 201（夾到整窗、扣滿），同窗緊接再複製 429、不建列", async () => {
+  it("upload bucket: attachment count > whole-window quota -> the first request in a new window 201 (clamped to the whole window, charged in full), another copy in the same window right after 429, no row created", async () => {
     const upload = new FixedWindowLimiter({ limit: 2, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload }) });
     const owner = await seedUser(db);
@@ -447,19 +444,19 @@ describe("#175 POST /api/notes/:id/copy", () => {
     for (let i = 0; i < 3; i++) ids.push(await seedUpload(db, uploadsDir, src.id, owner.id));
     await seedDoc(db, src.id, imageDoc(ids.map(u => `/api/uploads/${u}`)));
 
-    const first = await copy(app, src.id, owner.id); // 要 3 > 限額 2：夾成 2，新窗放行（不夾就永遠 429）
+    const first = await copy(app, src.id, owner.id); // needs 3 > limit 2: clamped to 2, the new window lets it through (without the clamp it would be 429 forever)
     expect(first.statusCode).toBe(201);
-    expect(await uploadsOf(db, first.json().id)).toHaveLength(3); // 三張照常全複製
+    expect(await uploadsOf(db, first.json().id)).toHaveLength(3); // all three are copied as usual
     const notesBefore = await noteCount(db);
 
     const second = await copy(app, src.id, owner.id);
     expect(second.statusCode).toBe(429);
     expect(second.json()).toEqual({ error: { code: "too_many_requests", message: "Too many requests. Wait a moment and try again." } });
     expect(await noteCount(db)).toBe(notesBefore);
-    expect(upload.consume(owner.id)).toBe(false); // 第一發已扣滿整窗
+    expect(upload.consume(owner.id)).toBe(false); // the first request already used the whole window
   });
 
-  it("upload 桶：沒有要複製的附件（只有他篇附件與外部圖）→ 不碰 upload 桶", async () => {
+  it("upload bucket: no attachment to copy (only other notes' attachments and external images) -> upload bucket untouched", async () => {
     const upload = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload }) });
     const owner = await seedUser(db);
@@ -470,10 +467,10 @@ describe("#175 POST /api/notes/:id/copy", () => {
 
     expect((await copy(app, src.id, owner.id)).statusCode).toBe(201);
     expect((await copy(app, src.id, owner.id)).statusCode).toBe(201);
-    expect(upload.consume(owner.id)).toBe(true); // 額度 1 還在
+    expect(upload.consume(owner.id)).toBe(true); // quota 1 is still there
   });
 
-  it("複製不踢任何人：onGroupAccessChanged、onShareChanged 都沒被呼叫", async () => {
+  it("copy kicks nobody: neither onGroupAccessChanged nor onShareChanged is called", async () => {
     const spy = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: spy });
     const [owner, c] = await Promise.all([seedUser(db), seedUser(db)]);
@@ -489,7 +486,7 @@ describe("#175 POST /api/notes/:id/copy", () => {
     expect(spy.onUserRevoked).not.toHaveBeenCalled();
   });
 
-  it("create-only 角色複製進群組 → 201，副本回應 role viewer、permissions.edit false", async () => {
+  it("create-only role copying into a group -> 201, the copy's response has role viewer, permissions.edit false", async () => {
     const { app, db } = await buildTestApp();
     const [owner, admin] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: owner.id, role: "member" }]);
@@ -507,13 +504,13 @@ describe("#175 POST /api/notes/:id/copy", () => {
   });
 });
 
-describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
+describe("#175 copy x group locks", () => {
   const membersOf = async (db: Db, groupId: string, userId: string): Promise<number> =>
     (await db.$client.query<{ n: number }>("select count(*)::int as n from group_members where group_id = $1 and user_id = $2", [groupId, userId])).rows[0]!.n;
   const notesInGroup = async (db: Db, groupId: string): Promise<string[]> =>
     (await db.$client.query<{ title: string }>("select title from notes where group_id = $1 order by title", [groupId])).rows.map(r => r.title);
 
-  it("C19a 複製先持鎖（note-copy-locked：目標 groups KEY SHARE＋來源）→ 移除成員的 lockGroup 等它 commit（blocked）→ 複製 201、移除 204；終態＝先複製、後移除", async () => {
+  it("copy first holds the lock (note-copy-locked: target groups KEY SHARE + source) -> removing a member's lockGroup waits for its commit (blocked) -> copy 201, remove 204; final state = copy first, remove after", async () => {
     const holder: { app?: FastifyInstance; db?: Db; groupId?: string; userId?: string; cookie?: Record<string, string>; rm?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async point => {
@@ -530,8 +527,8 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     const res = await copy(app, src.id, m.id, { groupId: g.id });
     const removed = await holder.rm!;
 
-    // 拿掉 (g) 的 KEY SHARE（突變實測）：來源的 KEY SHARE 不擋 lockGroup → 本行紅（settled）。整個拿掉 (g) 時
-    // 看到的終態是移除 204 先落地、複製照樣 201——非成員在群組裡建出了筆記。
+    // Removing the KEY SHARE on the target group from the transaction: the source's KEY SHARE doesn't block lockGroup -> this line goes red (settled).
+    // With it removed entirely the final state seen is: the removal 204 lands first and the copy is still 201 - a non-member created a note in the group.
     expect(holder.interleave).toBe("blocked");
     expect(res.statusCode).toBe(201);
     expect(removed.statusCode).toBe(204);
@@ -539,7 +536,7 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     expect(await notesInGroup(db, g.id)).toEqual(["Copied"]);
   });
 
-  it("C19c 移除成員先鎖（group-members-checked）→ 複製的路由檢查讀到 commit 前的成員資格而通過，交易 (g) 的 KEY SHARE 等移除 commit → 重驗 404 group_not_found；群組無新筆記、不落檔", async () => {
+  it("member removal first takes the lock (group-members-checked) -> the copy's route check reads the pre-commit membership and passes, the in-transaction KEY SHARE waits for the removal to commit -> re-verification 404 group_not_found; the group gets no new note, no file written", async () => {
     const holder: { pool?: Db["$client"]; fire?: () => Promise<LightMyRequestResponse>; second?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const built = await buildTestApp({
       groupTestHook: async point => {
@@ -561,7 +558,7 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     const removed = await app.inject({ method: "DELETE", url: `/api/groups/${g.id}/members/${m.id}`, cookies: await cookieOf(admin.id) });
     const copied = await holder.second!;
 
-    // 拿掉 (g) 的成員重驗、只留 KEY SHARE（突變實測）：複製仍 blocked，但移除 commit 後照樣 201。
+    // With the member re-verification removed and only the KEY SHARE kept: the copy is still blocked, but after the removal commits it is still 201.
     expect(holder.interleave).toBe("blocked");
     expect(removed.statusCode).toBe(204);
     expect(copied.statusCode).toBe(404);
@@ -571,7 +568,7 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     expect(await filesIn(uploadsDir)).toEqual(filesBefore);
   });
 
-  it("C19d 降級先鎖（group-members-checked）→ 複製的路由檢查讀到降級前的 admin 而通過，(g) 等降級 commit 後重讀 → 201 的 role／permissions 是降級後的 member 值，與 GET 副本一致", async () => {
+  it("downgrade first takes the lock (group-members-checked) -> the copy's route check reads the pre-downgrade admin and passes, the transaction re-reads after the downgrade commits -> the 201's role/permissions are the downgraded member values, consistent with GET of the copy", async () => {
     const holder: { pool?: Db["$client"]; fire?: () => Promise<LightMyRequestResponse>; second?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async point => {
@@ -592,7 +589,7 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     expect(holder.interleave).toBe("blocked");
     expect(demoted.statusCode).toBe(200);
     expect(copied.statusCode).toBe(201);
-    // 路由改回用交易外 `loadCreateTarget` 的值組 DTO（突變實測）→ 本行紅：回應是 admin 的 delete／managePublicLink／changeSlug true。
+    // If the route went back to building the DTO from the out-of-transaction `loadCreateTarget` value, this line goes red: the response would be admin's delete/managePublicLink/changeSlug true.
     expect(copied.json()).toMatchObject({
       groupId: g.id, group: { id: g.id, name: "G" }, role: "editor",
       permissions: { read: true, edit: true, delete: false, manageShares: false, managePublicLink: false, changeSlug: false, moveToGroup: false },
@@ -601,13 +598,13 @@ describe("#175 複製 × 群組鎖（C19a／C19b／C19c）", () => {
     expect(got.json().permissions).toEqual(copied.json().permissions);
   });
 
-  it("C19b 同群組複製（來源與目標都在 G）持 (g) 時，另一交易「groups FOR UPDATE → G 的筆記 FOR UPDATE」（刪群組・全刪的形）→ 對方等複製 commit（blocked）、兩邊都完成、沒有 40P01", async () => {
+  it("same-group copy (source and target both in G) holding the target groups KEY SHARE while another transaction does 'groups FOR UPDATE -> G's notes FOR UPDATE' (the shape of group delete-all) -> the other waits for the copy to commit (blocked), both complete, no 40P01", async () => {
     const holder: { db?: Db; groupId?: string; other?: Promise<string>; interleave?: string } = {};
     const { app, db } = await buildTestApp({
       groupTestHook: async point => {
-        // 複製交易**第一把鎖之後**的那個縫：現序是 (g) 之後（note-copy-target-locked，只持 groups KEY SHARE）。鎖序若改回
-        // 「來源 → groups」（或整個拿掉 (g)、靠 INSERT 的 FK 取 groups），第一個到的縫是 note-copy-locked（只持來源）：
-        // 對方拿得到 groups、再等來源，複製接著等 groups → 成環（突變實測 40P01）。
+        // The hook after the copy transaction's **first lock**: in the current order it is after the target groups KEY SHARE (note-copy-target-locked, holds only groups KEY SHARE).
+        // If the lock order were changed back to "source -> groups" (or the target groups KEY SHARE removed and groups taken via the INSERT's FK), the first hook reached would be
+        // note-copy-locked (holds only the source): the other side gets groups and then waits for the source, and the copy then waits for groups -> a cycle (40P01).
         if ((point !== "note-copy-target-locked" && point !== "note-copy-locked") || holder.other) return;
         holder.other = (async () => {
           const c = await holder.db!.$client.connect();

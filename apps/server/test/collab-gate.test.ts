@@ -12,11 +12,10 @@ import { signCollabToken } from "../src/collab/token.js";
 import { waitFor } from "./editing-helpers.js";
 import { buildCollabTestApp, COLLAB_TOKEN_INIT, testConfig, testSessionId } from "./helpers.js";
 
-// G1–G3：collab 連線的 note schema 版本閘門。
 const PASSWORD = "correct-horse-battery";
 
-describe("#269 舊分頁閘門（onAuthenticate）", () => {
-  it("G1：沒帶 noteSchemaVersion 的 token（sv=0）→ 握手以 client-outdated 拒；帶了相符的照常連上；日誌 cause=client-outdated、info 級", async () => {
+describe("old tab gate (onAuthenticate) (#269)", () => {
+  it("a token without noteSchemaVersion (sv=0) -> handshake refused with client-outdated; a matching one connects as usual; log cause=client-outdated at info level", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "gate-1@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -36,7 +35,7 @@ describe("#269 舊分頁閘門（onAuthenticate）", () => {
     expect(client.closes).toEqual([]);
   });
 
-  it("G1：sv 比 server 大也拒（!== 不是 <）；body 的 noteSchemaVersion 非整數視為 0", async () => {
+  it("sv greater than the server's is refused too (!==, not <); a non-integer noteSchemaVersion in the body counts as 0", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "gate-2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -49,7 +48,7 @@ describe("#269 舊分頁閘門（onAuthenticate）", () => {
     await expect(session.connect(note.id, { tokenOverride: t })).rejects.toThrow(COLLAB_REJECT_CLIENT_OUTDATED);
   });
 
-  it("G1：DB 不可用時仍回 client-outdated（閘門在任何 DB 查詢之前）；對照：sv 相符時同一個壞 DB 回 server-error", async () => {
+  it("with the DB unavailable still returns client-outdated (the gate comes before any DB query); contrast: with matching sv the same broken DB returns server-error", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "gate-3@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -65,13 +64,13 @@ describe("#269 舊分頁閘門（onAuthenticate）", () => {
     }
   });
 
-  it("G2：升級前簽、仍在 TTL 內的 token（沒有 sv 這個 claim）被拒", async () => {
+  it("a token signed before the upgrade and still within TTL (no sv claim) is refused", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "gate-4@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
     const session = await ctx.loginAs("gate-4@example.com", PASSWORD);
-    // 照 `collab/token.ts` 的鍵衍生（sha256(appSecret + ":collab")）手簽一份舊形 token——不經 signCollabToken（它一定帶 sv）。
-    // 帶 #388 的 sid：沒有 sid 的 token 在驗簽就被當壞 token（invalid-token），到不了這裡要釘的 sv 閘門。
+    // Hand-sign an old-shape token using the key derivation of `collab/token.ts` (sha256(appSecret + ":collab")) - not via signCollabToken (which always carries sv).
+    // Carries the sid from #388: a token without sid is treated as a bad token at signature verification (invalid-token) and never reaches the sv gate pinned here.
     const key = createHash("sha256").update(`${testConfig.appSecret}:collab`).digest();
     const legacy = await new SignJWT({ noteId: note.id, role: "owner", tv: 0, sid: testSessionId(owner.id) })
       .setProtectedHeader({ alg: "HS256" })
@@ -82,7 +81,7 @@ describe("#269 舊分頁閘門（onAuthenticate）", () => {
     await expect(session.connect(note.id, { tokenOverride: legacy })).rejects.toThrow(COLLAB_REJECT_CLIENT_OUTDATED);
   });
 
-  it("G3（現狀釘）：onTokenSync 重驗不讀 sv——重驗時送 sv=0 的 token，連線照樣活著", async () => {
+  it("(current behaviour pinned) onTokenSync revalidation doesn't read sv - sending an sv=0 token at revalidation, the connection stays alive", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "gate-5@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);

@@ -36,8 +36,8 @@ async function insertProvider(db: Db, overrides: Partial<typeof aiProviders.$inf
   const [row] = await db
     .insert(aiProviders)
     .values({
-      // 密文綁 providerId（issue #14）：要塞既有密文的呼叫端必須先拿到 id，所以這裡
-      // 收 `overrides.id`，比照 production 的 `POST /api/admin/ai/providers`。
+      // The ciphertext is bound to providerId (issue #14): a caller that wants to insert existing ciphertext must have the id first,
+      // so this accepts `overrides.id`, like production's `POST /api/admin/ai/providers`.
       id: overrides.id ?? randomUUID(),
       name: overrides.name ?? "Test Provider",
       type: overrides.type ?? "openai_compatible",
@@ -69,8 +69,8 @@ interface FakeUpstream {
   calls: number;
 }
 
-/** 起一個真的本機 http server 當 fake upstream——測試連線端點打真的 `fetch()`，
- * `app.inject()` 攔不到出站請求，必須用真連線才驗得到「零呼叫」與「body 不外洩」。 */
+/** Real local http server as fake upstream: the test-connection endpoint does a real `fetch()`, `app.inject()` can't intercept outbound requests,
+ * and only a real connection can verify "zero calls" and "body not leaked". */
 async function startFakeUpstream(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void): Promise<FakeUpstream> {
   const state: FakeUpstream = { baseUrl: "", calls: 0 };
   const server = http.createServer((req, res) => {
@@ -85,7 +85,7 @@ async function startFakeUpstream(handler: (req: http.IncomingMessage, res: http.
   return state;
 }
 
-describe("requireAdmin 保護：admin AI 全端點非 admin 403、未登入 401", () => {
+describe("requireAdmin guard: every admin AI endpoint is 403 for non-admin, 401 when not signed in", () => {
   const endpoints: Array<{ name: string; url: (id: string) => string; method: "GET" | "POST" | "PATCH" | "DELETE" }> = [
     { name: "GET providers", method: "GET", url: () => "/api/admin/ai/providers" },
     { name: "POST providers", method: "POST", url: () => "/api/admin/ai/providers" },
@@ -103,7 +103,7 @@ describe("requireAdmin 保護：admin AI 全端點非 admin 403、未登入 401"
   ];
 
   for (const ep of endpoints) {
-    it(`${ep.name}：非 admin → 403`, async () => {
+    it(`${ep.name}: non-admin -> 403`, async () => {
       const { app, db } = await buildTestApp();
       const nonAdmin = await insertUser(db, { email: `nonadmin-${ep.name}@example.com` });
       const cookie = await cookieFor(nonAdmin.id);
@@ -111,7 +111,7 @@ describe("requireAdmin 保護：admin AI 全端點非 admin 403、未登入 401"
       expect(res.statusCode).toBe(403);
     });
 
-    it(`${ep.name}：未登入 → 401`, async () => {
+    it(`${ep.name}: not signed in -> 401`, async () => {
       const { app } = await buildTestApp();
       const res = await app.inject({ method: ep.method, url: ep.url("00000000-0000-0000-0000-000000000000") });
       expect(res.statusCode).toBe(401);
@@ -120,7 +120,7 @@ describe("requireAdmin 保護：admin AI 全端點非 admin 403、未登入 401"
 });
 
 describe("providers CRUD", () => {
-  it("POST 建立（含 apiKey）→ 201，hasKey=true；回應絕不含 api_key_encrypted/ct/iv/tag/keyId 字樣", async () => {
+  it("POST create (with apiKey) -> 201, hasKey=true; response never contains api_key_encrypted/ct/iv/tag/keyId", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -139,12 +139,12 @@ describe("providers CRUD", () => {
     const raw = JSON.stringify(body);
     expect(raw).not.toMatch(/api_key_encrypted|"ct"|"iv"|"tag"|"keyId"/);
 
-    // DB 層真的有存密文（確認不是完全沒寫入，只是回應遮罩掉）。
+    // The DB really holds the ciphertext (so it is the response that masks it, not a missing write).
     const [row] = await db.select().from(aiProviders).where(eq(aiProviders.id, body.id));
     expect(row.apiKeyEncrypted).not.toBeNull();
   });
 
-  it("POST 未帶 apiKey → hasKey=false", async () => {
+  it("POST without apiKey -> hasKey=false", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p2@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -159,7 +159,7 @@ describe("providers CRUD", () => {
     expect(res.json()).toMatchObject({ hasKey: false });
   });
 
-  it("GET 列表：回應不含 api_key_encrypted/ct 字樣，即使 DB 裡有密文", async () => {
+  it("GET list: response has no api_key_encrypted/ct even though the DB holds ciphertext", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p3@example.com" });
     const p1Id = randomUUID();
@@ -173,7 +173,7 @@ describe("providers CRUD", () => {
     expect(res.json().providers.find((p: { name: string }) => p.name === "P1")).toMatchObject({ hasKey: true });
   });
 
-  it("PATCH 給 apiKey 覆寫後從 degraded 移除（自檢成功即移除，不重啟生效）", async () => {
+  it("PATCH with apiKey overwrite removes it from degraded (removed once the self-check succeeds, no restart needed)", async () => {
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4@example.com" });
@@ -192,9 +192,9 @@ describe("providers CRUD", () => {
     expect(runtime.degraded.has(provider.id)).toBe(false);
   });
 
-  it("改 base_url（沒同時給新金鑰）→ 既有金鑰作廢：hasKey false、DB 密文真的是 null（issue #46）", async () => {
-    // `/test` 與每一次 AI 呼叫都會把**明文** key 送到 baseUrl 指的主機，而 baseUrl 只驗格式。
-    // 不作廢的話，任何 admin 改一個明文欄位再按一下 Test，就能把金鑰送到自己的主機。
+  it("changing base_url (without a new key) invalidates the existing key: hasKey false, DB ciphertext really null (issue #46)", async () => {
+    // `/test` and every AI call send the **plaintext** key to the host baseUrl points at, and baseUrl is only format-validated.
+    // Without invalidation, any admin could change one plaintext field, press Test, and send the key to their own host.
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4c@example.com" });
@@ -212,14 +212,14 @@ describe("providers CRUD", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ hasKey: false, baseUrl: "http://attacker.example.com" });
 
-    // DB 端斷言：不是只有回應的 hasKey 變了，密文本體真的沒了。
+    // DB-side assertion: not just the response's hasKey changed; the ciphertext itself is gone.
     const [row] = await db.select().from(aiProviders).where(eq(aiProviders.id, provider.id));
     expect(row!.apiKeyEncrypted).toBeNull();
-    // 沒有金鑰就不可能是「密文解不開」——degraded 一起收掉（比照 issue #17）。
+    // With no key there can't be "undecryptable ciphertext", so degraded is cleared too (as in issue #17).
     expect(runtime.degraded.has(provider.id)).toBe(false);
   });
 
-  it("改 base_url ＋ 同一次帶新金鑰 → 用新的，不作廢（換網址換金鑰一步完成）", async () => {
+  it("changing base_url + a new key in the same request -> the new key is used, not invalidated (new URL and key in one step)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4d@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -239,9 +239,9 @@ describe("providers CRUD", () => {
     expect(decryptApiKey(testConfig.appSecret, row!.apiKeyEncrypted!, provider.id)).toBe("sk-brand-new");
   });
 
-  it("baseUrl 帶的是**同一個值**（只改名字）→ 金鑰原封不動", async () => {
-    // ⚠ 這條是整組裡最重要的：編輯表單每次送出都會把 baseUrl 一起帶上，所以判斷必須是
-    // 「跟舊值不同」而不是「有沒有帶這個欄位」——否則改一次名字就把使用者的金鑰清掉。
+  it("baseUrl sent with the **same value** (only renaming) -> key untouched", async () => {
+    // The edit form sends baseUrl on every submit, so the check must be "differs from the old value", not "field present";
+    // otherwise renaming once wipes the user's key.
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4e@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -265,8 +265,8 @@ describe("providers CRUD", () => {
     expect(decryptApiKey(testConfig.appSecret, row!.apiKeyEncrypted!, provider.id)).toBe("sk-keep-me");
   });
 
-  it("本來就沒有金鑰的 provider 改網址 → 200、hasKey 仍是 false、不噴錯", async () => {
-    // 自架 Ollama 換 port：清空是 no-op，不該有任何副作用。
+  it("provider that never had a key, changing URL -> 200, hasKey still false, no error", async () => {
+    // Self-hosted Ollama changing port: clearing is a no-op and must have no side effect.
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4f@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -282,17 +282,16 @@ describe("providers CRUD", () => {
     expect(res.json()).toMatchObject({ hasKey: false, baseUrl: "http://localhost:11435/v1" });
   });
 
-  it("改網址會留下稽核 log，訊息字串與 docs 逐字相符（docs 教人 grep 它）", async () => {
-    // `docs/self-hosting.md` 教維護者 `grep 'base URL'`、`docs/known-limitations.md` 逐字
-    // 引用這則訊息並稱它是「唯一可信的痕跡」。沒有測試釘住的話，有人改一次訊息，兩份
-    // 文件會靜默失效。
+  it("changing the URL leaves an audit log whose message matches the docs verbatim (docs tell people to grep it)", async () => {
+    // `docs/self-hosting.md` tells maintainers to `grep 'base URL'` and `docs/known-limitations.md` quotes this message verbatim
+    // as "the trustworthy trace"; without a test pinning it, changing the message silently breaks both docs.
     const lines: Array<{ msg?: string; obj: Record<string, unknown> }> = [];
     const { app, db } = await buildTestApp(
       {},
       {
         logger: {
           level: "info",
-          // pino 的 write hook：只收我們自己那一行，其餘（fastify 的 req/res）忽略。
+          // pino write hook: collect only our own line, ignore the rest (fastify req/res).
           hooks: {
             logMethod(args: unknown[], method: (...a: unknown[]) => void) {
               const [obj, msg] = args as [Record<string, unknown>, string | undefined];
@@ -308,8 +307,8 @@ describe("providers CRUD", () => {
     const id = randomUUID();
     const provider = await insertProvider(db, {
       id,
-      // 模擬新規則上線前就存在的舊資料：base_url 帶 userinfo＋query（現在的入口已會 400，只能直接寫 DB）。
-      // `from` 讀自這一列，safeTarget 必須只記 origin+pathname。
+      // Simulate data that predates the new rule: base_url with userinfo + query (the entry now rejects it with 400, so write the DB directly).
+      // `from` is read from this row; safeTarget must record only origin+pathname.
       baseUrl: "https://user:pass@evil.example.com/v1?k=secret",
       apiKeyEncrypted: encryptApiKey(testConfig.appSecret, "sk-x", id),
     });
@@ -331,13 +330,13 @@ describe("providers CRUD", () => {
       to: "https://ok.example.com/v1",
       hasKeyAfter: false,
     });
-    // 憑證與 query 都不得出現在那一行的任何欄位裡。
+    // Neither credentials nor query may appear in any field of that line.
     expect(JSON.stringify(line!.obj)).not.toContain("pass");
     expect(JSON.stringify(line!.obj)).not.toContain("secret");
 
-    // ⚠ **網址看起來沒變也要記**（這是核心修法）：觸發條件若退回
-    // 「跟 `existing` 不同才記」，攻擊者持續送 no-op PATCH 的那個競態下會一行都不輸出
-    // ——而 docs 說那行 log 是「唯一可信的痕跡」，要抓的正是那個姿勢。
+    // The line must be logged even when the URL looks unchanged (the core of the fix): if the trigger regressed to "only when different from `existing`",
+    // an attacker sending no-op PATCHes would, in the racing case, produce no line at all,
+    // and the docs call that line the trustworthy trace, which is exactly the case it must catch.
     lines.length = 0;
     const again = await app.inject({
       method: "PATCH",
@@ -349,16 +348,16 @@ describe("providers CRUD", () => {
     expect(lines.some(one => one.msg === "AI provider 的 base URL 被寫入")).toBe(true);
   });
 
-  it("併發：攻擊者的 no-op PATCH 排在受害者之後，也偷不到那把剛輸入的金鑰（TOCTOU 回歸釘）", async () => {
-    // 曾有的繞過：handler 先 SELECT 舊網址、再 UPDATE，中間沒有交易。攻擊者持續送
-    // `{baseUrl: EVIL}`（讀到的舊值就是 EVIL ⇒ 判定沒變 ⇒ 不清金鑰，但 base_url = EVIL 照
-    // 寫），只要有一發的 SELECT 落在受害者「改回正確網址＋重新輸入金鑰」的 UPDATE 之前、
-    // UPDATE 落在之後，最終列就是「攻擊者的網址 ＋ 受害者剛輸入的金鑰」。
+  it("concurrency: attacker's no-op PATCH queued after the victim's still can't steal the freshly entered key (TOCTOU regression pin)", async () => {
+    // Past bypass: the handler SELECTed the old URL, then UPDATEd, with no transaction in between. The attacker keeps sending
+    // `{baseUrl: EVIL}` (old value read as EVIL => judged unchanged => key not cleared, yet base_url = EVIL is written);
+    // if one SELECT lands before the victim's "restore correct URL + re-enter key" UPDATE and its UPDATE after,
+    // the final row is the attacker's URL + the victim's freshly entered key.
     //
-    // ⚠ 這裡**不用併發去賭那個窗口**（算過：以舊碼 7% 的命中率下界，12 輪全 miss 的
-    // 機率有四成——那根釘子有四成機會抓不到它專門要抓的回歸）。改成自己持有行鎖，把兩者
-    // 的順序釘死：攻擊者的 UPDATE 必然排在受害者 commit 之後。舊寫法（Node 端比對）在這個
-    // 順序下**必然**漏，因為它的 SELECT 不受行鎖阻擋，讀到的是受害者寫入前的舊值。
+    // The race window is not gambled on here (at the old code's 7% lower-bound hit rate, 12 rounds all missing has ~40% probability,
+    // so the pin would miss its target regression 40% of the time). Instead the test holds the row lock itself to fix the order:
+    // the attacker's UPDATE necessarily queues after the victim's commit. The old Node-side comparison necessarily misses in that
+    // order, because its SELECT is not blocked by the row lock and reads the pre-write value.
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4g@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -368,7 +367,7 @@ describe("providers CRUD", () => {
     const id = randomUUID();
     await insertProvider(db, { id, baseUrl: EVIL, apiKeyEncrypted: null });
 
-    // 另開一條連往同一個測試資料庫的原始連線（`buildTestApp` 不吐 pool）。
+    // A separate raw connection to the same test database (`buildTestApp` doesn't expose its pool).
     const [{ current_database: dbName }] = (
       await db.execute<{ current_database: string }>(sql`select current_database()`)
     ).rows;
@@ -381,7 +380,7 @@ describe("providers CRUD", () => {
       await holder.query("begin");
       await holder.query("select 1 from ai_providers where id = $1 for update", [id]);
 
-      // 攻擊者那一發：SELECT 讀得到（不受行鎖阻擋，讀到 EVIL），UPDATE 卡在鎖上。
+      // Attacker's request: the SELECT works (not blocked by the row lock, reads EVIL), the UPDATE blocks on the lock.
       const attacker = app.inject({
         method: "PATCH",
         url: `/api/admin/ai/providers/${id}`,
@@ -390,13 +389,13 @@ describe("providers CRUD", () => {
       });
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // ⚠ 證明攻擊者那一發真的卡在行鎖上：少了這道斷言，慢機器上 500ms 不夠
-      // 時它的 SELECT 會跑在受害者 commit 之後 ⇒ 讀到 GOOD ⇒ 判定有變 ⇒ 連舊碼都會通過，
-      // 這根釘子就不再測它要測的回歸了。被鎖擋住這件事本身就證明 SELECT 已經跑完。
+      // Proves the attacker's request really is blocked on the row lock: without this assertion, on a slow machine 500ms may not suffice and its SELECT
+      // would run after the victim's commit => reads GOOD => judged changed => even the old code passes, and this pin stops testing its regression.
+      // Being blocked by the lock itself proves the SELECT has already run.
       const pending = Symbol("pending");
       expect(await Promise.race([attacker, Promise.resolve(pending)])).toBe(pending);
 
-      // 受害者：改回正確網址並重新輸入金鑰（在鎖內完成，必然先 commit）。
+      // Victim: restore the correct URL and re-enter the key (done inside the lock, so it necessarily commits first).
       await holder.query(
         `update ai_providers set base_url = $1, api_key_encrypted = $2::jsonb where id = $3`,
         [GOOD, JSON.stringify(encryptApiKey(testConfig.appSecret, "sk-victim-secret", id)), id]
@@ -408,13 +407,13 @@ describe("providers CRUD", () => {
     }
 
     const [row] = await db.select().from(aiProviders).where(eq(aiProviders.id, id));
-    // 攻擊者的網址寫進去了（他本來就有權限改），但**金鑰不能跟著留下**——那一句
-    // `case when` 是拿受害者剛 commit 的網址重新比對的，所以必然清掉。
+    // The attacker's URL is written (they are allowed to change it), but the key must not survive:
+    // the `case when` re-compares against the URL the victim just committed, so it necessarily clears it.
     expect(row!.baseUrl).toBe(EVIL);
     expect(row!.apiKeyEncrypted).toBeNull();
   });
 
-  it("DELETE provider → 一併從 degraded 移除（留著會是永遠不會被清掉的髒狀態）", async () => {
+  it("DELETE provider also removes it from degraded (otherwise a dirty state that would never be cleared)", async () => {
     const runtime = createAiRuntime();
     const { app, db } = await buildTestApp({ ai: runtime });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p4b@example.com" });
@@ -432,7 +431,7 @@ describe("providers CRUD", () => {
     expect(runtime.degraded.has(provider.id)).toBe(false);
   });
 
-  it("PATCH 不給 apiKey → 密文原樣不動（hasKey 不變）", async () => {
+  it("PATCH without apiKey leaves ciphertext untouched (hasKey unchanged)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p5@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -453,7 +452,7 @@ describe("providers CRUD", () => {
     expect(row.apiKeyEncrypted).toEqual(encrypted);
   });
 
-  it("PATCH 不存在 → 404 not_found", async () => {
+  it("PATCH nonexistent -> 404 not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p6@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -467,7 +466,7 @@ describe("providers CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("baseUrl 帶帳密（user:pass@ 或只有 user@）→ POST／PATCH 皆 400 base_url_has_credentials，DB 不變；正常網址照收", async () => {
+  it("baseUrl with credentials (user:pass@ or user@ only) -> POST/PATCH both 400 base_url_has_credentials, DB unchanged; normal URL accepted", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p-cred@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -497,7 +496,7 @@ describe("providers CRUD", () => {
     const [after] = await db.select().from(aiProviders).where(eq(aiProviders.id, provider.id));
     expect(after.baseUrl).toBe(before.baseUrl);
 
-    // 網址其餘部分的 @（path／query）不是帳密，不誤殺。
+    // An @ elsewhere in the URL (path/query) is not credentials; don't reject it.
     const ok = await app.inject({
       method: "POST",
       url: "/api/admin/ai/providers",
@@ -514,7 +513,7 @@ describe("providers CRUD", () => {
     expect(okPatch.statusCode).toBe(200);
   });
 
-  it("baseUrl 格式錯（含帶帳密又格式錯）→ POST／PATCH 都是 400 invalid_body，不是 500，且 log 不含密碼", async () => {
+  it("malformed baseUrl (including credentials plus malformed) -> POST/PATCH both 400 invalid_body, not 500, and log has no password", async () => {
     const lines: unknown[] = [];
     const { app, db } = await buildTestApp(
       {},
@@ -523,7 +522,7 @@ describe("providers CRUD", () => {
           level: "info",
           hooks: {
             logMethod(args: unknown[], method: (...a: unknown[]) => void) {
-              // 只收錯誤物件（`err`）與訊息；整個 args 會帶著 req 物件（含請求 body），那不是 log 輸出。
+              // Collect only the error object (`err`) and message; the whole args carry the req object (including request body), which is not log output.
               const [obj, msg] = args as [{ err?: Error } | string, string | undefined];
               const err = typeof obj === "object" && obj !== null ? obj.err : undefined;
               lines.push({ msg, err: err ? JSON.stringify(err, Object.getOwnPropertyNames(err)) : undefined });
@@ -558,9 +557,9 @@ describe("providers CRUD", () => {
     expect(lines.length).toBeGreaterThan(0);
   });
 
-  // 空 body `{}` 全欄位皆 optional，未過濾直接 `.set({})` 會被
-  // drizzle 0.44 同步 throw "No values to set"，逃出 handler 變成裸 500。
-  it("PATCH 空 body {} → 400 invalid_body（非 500）", async () => {
+  // Empty body `{}` has all fields optional; unfiltered, `.set({})` throws "No values to set"
+  // synchronously in drizzle 0.44 and escapes the handler as a bare 500.
+  it("PATCH empty body {} -> 400 invalid_body (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p9@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -576,7 +575,7 @@ describe("providers CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  it("DELETE → 204；models cascade 刪除；關聯 actions.modelId SET NULL（DB 斷言）", async () => {
+  it("DELETE -> 204; models cascade-delete; related actions.modelId SET NULL (DB assertion)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p7@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -597,7 +596,7 @@ describe("providers CRUD", () => {
     expect(actionRow.modelId).toBeNull();
   });
 
-  it("DELETE 不存在 → 404 not_found", async () => {
+  it("DELETE nonexistent -> 404 not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p8@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -608,7 +607,7 @@ describe("providers CRUD", () => {
 });
 
 describe("POST /api/admin/ai/providers/:id/test", () => {
-  it("degraded provider → 503 provider_unavailable，不打 upstream（fake upstream 零呼叫）", async () => {
+  it("degraded provider -> 503 provider_unavailable, upstream not called (fake upstream gets zero calls)", async () => {
     const runtime = createAiRuntime();
     const upstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -626,7 +625,7 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
     expect(upstream.calls).toBe(0);
   });
 
-  it("fake upstream 200 → {ok:true}", async () => {
+  it("fake upstream 200 -> {ok:true}", async () => {
     const upstream = await startFakeUpstream((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ data: [] }));
@@ -647,7 +646,7 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
     expect(upstream.calls).toBe(1);
   });
 
-  it("anthropic 分支：打 /v1/models、帶 x-api-key + anthropic-version，不含 authorization", async () => {
+  it("anthropic branch: hits /v1/models with x-api-key + anthropic-version, no authorization", async () => {
     const seen: { url?: string; headers?: http.IncomingHttpHeaders } = {};
     const upstream = await startFakeUpstream((req, res) => {
       seen.url = req.url;
@@ -675,7 +674,7 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
     expect(seen.headers?.authorization).toBeUndefined();
   });
 
-  it("fake upstream 5xx → 錯誤碼 upstream_error，body 不含上游內容", async () => {
+  it("fake upstream 5xx -> error code upstream_error, body has no upstream content", async () => {
     const upstream = await startFakeUpstream((_req, res) => {
       res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ secret: "leaked-internal-detail-should-not-appear" }));
@@ -691,12 +690,12 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
     expect(res.body).not.toContain("leaked-internal-detail-should-not-appear");
   });
 
-  // 不另設 per-test 逾時、沿用全域 testTimeout（vitest.config.ts 120 s）：本案一定要等滿產品端的 AbortSignal.timeout(10_000)，
-  // 再加上 buildTestApp（建庫）與種資料；以前寫死 15 s 只剩約 5 s 餘裕，機器忙時建庫一慢就逾時假紅。
-  // 「上游逾時是 10 s 級」改由只量 app.inject 那一句的界線守（< 30 s）：產品端若被改成 60 s 級 → 紅，建庫快慢不影響。
-  it("上游逾時（>10s 不回應）→ upstream_error，body 不含上游內容", async () => {
+  // No per-test timeout; the global testTimeout (vitest.config.ts, 120 s) applies: this case must wait the full product-side AbortSignal.timeout(10_000),
+  // plus buildTestApp (DB creation) and seeding; a hard-coded 15 s left ~5 s slack, and slow DB creation on a busy machine caused false reds.
+  // "The upstream timeout is ~10 s" is guarded instead by bounding only the app.inject call (< 30 s): if the product became ~60 s it goes red, regardless of DB creation speed.
+  it("upstream timeout (no response for >10s) -> upstream_error, body has no upstream content", async () => {
     const upstream = await startFakeUpstream(() => {
-      // 刻意不呼叫 res.end()：讓連線掛著，逼 AbortSignal.timeout(10_000) 生效。
+      // Deliberately never call res.end(): keep the connection hanging so AbortSignal.timeout(10_000) fires.
     });
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-t4@example.com" });
@@ -710,7 +709,7 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
     expect(res.json()).toMatchObject({ error: { code: "upstream_error" } });
   });
 
-  it("provider 不存在 → 404 not_found", async () => {
+  it("nonexistent provider -> 404 not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-t5@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -720,7 +719,7 @@ describe("POST /api/admin/ai/providers/:id/test", () => {
 });
 
 describe("models CRUD", () => {
-  it("POST purpose 非 chat → 400 invalid_body", async () => {
+  it("POST purpose other than chat -> 400 invalid_body", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -736,7 +735,7 @@ describe("models CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  it("isDefault 交易唯一：設第二個 default 後第一個變 false", async () => {
+  it("isDefault is transactionally unique: setting a second default makes the first false", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m2@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -757,12 +756,11 @@ describe("models CRUD", () => {
     expect(row1.isDefault).toBe(false);
   });
 
-  // PATCH 一個不存在的 id 且帶 `{isDefault:true}`——修法前
-  // 的順序（交易內先無條件 unset 同 purpose 其他列，之後才發現 target 不存在）會讓
-  // 這種完全找不到目標的請求，靜默把既有的 default 偏好清空後才回 404，且交易仍
-  // commit（找不到列不是例外，不觸發 rollback）。必須是：整個請求無效果，404，
-  // 既有 default 原封不動。
-  it("PATCH 不存在的 id + {isDefault:true} → 404，且不動既有 default（迴歸）", async () => {
+  // PATCH of a nonexistent id with `{isDefault:true}`: before the fix, the transaction first unconditionally unset other rows of the same purpose
+  // and only then found the target missing, so a request with no target silently cleared the existing default preference before returning 404,
+  // and the transaction still committed (a missing row is not an exception, no rollback). Required: the whole request has no effect,
+  // 404, existing default untouched.
+  it("PATCH nonexistent id + {isDefault:true} -> 404, existing default untouched (regression)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m7@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -782,8 +780,8 @@ describe("models CRUD", () => {
     expect(row.isDefault).toBe(true);
   });
 
-  // models PATCH 空 body {} → 400（同 providers PATCH 理由）。
-  it("PATCH 空 body {} → 400 invalid_body（非 500）", async () => {
+  // models PATCH with empty body {} -> 400 (same reason as providers PATCH).
+  it("PATCH empty body {} -> 400 invalid_body (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m8@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -800,10 +798,9 @@ describe("models CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  // 合法 uuid 格式但不存在的 providerId——驗證 `isForeignKeyViolation`
-  // 真的接得住 drizzle 0.44 包裝過的 pg 錯誤（`DrizzleQueryError`，原始錯誤落在 `.cause`），
-  // 不是只在裸 `DatabaseError` 形狀下才生效。
-  it("POST 帶不存在的 providerId（合法 uuid）→ 400 invalid_body（非 500）", async () => {
+  // Well-formed uuid that doesn't exist as providerId: verifies `isForeignKeyViolation` really handles the pg error wrapped by drizzle 0.44
+  // (`DrizzleQueryError`, original error in `.cause`), not only a bare `DatabaseError` shape.
+  it("POST with nonexistent providerId (valid uuid) -> 400 invalid_body (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m9@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -818,7 +815,7 @@ describe("models CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  it("POST isDefault:true 交易唯一：既有 default 被 unset", async () => {
+  it("POST isDefault:true is transactionally unique: existing default is unset", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m3@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -837,7 +834,7 @@ describe("models CRUD", () => {
     expect(row.isDefault).toBe(false);
   });
 
-  it("重複 (providerId, modelId) → 409 model_taken", async () => {
+  it("duplicate (providerId, modelId) -> 409 model_taken", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m4@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -854,7 +851,7 @@ describe("models CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "model_taken" } });
   });
 
-  it("DELETE → 204；不存在 → 404 not_found", async () => {
+  it("DELETE -> 204; nonexistent -> 404 not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m5@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -868,7 +865,7 @@ describe("models CRUD", () => {
     expect(resMissing.statusCode).toBe(404);
   });
 
-  it("GET 列表形狀正確", async () => {
+  it("GET list has the right shape", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-m6@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -883,7 +880,7 @@ describe("models CRUD", () => {
 });
 
 describe("actions CRUD", () => {
-  it("GET 列表：builtin 旗標正確（內建動作 true，自訂 false）", async () => {
+  it("GET list: builtin flag correct (builtin actions true, custom false)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -898,7 +895,7 @@ describe("actions CRUD", () => {
     expect(rows.find(r => r.name === "Custom")?.builtin).toBe(false);
   });
 
-  it("#263：GET 列表帶 kind（Instruct＝instruct；內建 Rewrite 與自訂動作＝quick）", async () => {
+  it("#263: GET list carries kind (Instruct = instruct; builtin Rewrite and custom actions = quick)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-k1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -912,7 +909,7 @@ describe("actions CRUD", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("POST userTemplate 缺 {{text}} → 400 invalid_body", async () => {
+  it("POST userTemplate missing {{text}} -> 400 invalid_body", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a2@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -927,9 +924,8 @@ describe("actions CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  // 合法 uuid 格式但不存在的 modelId——同 models POST 的
-  // `isForeignKeyViolation` 解包驗證，這裡驗的是 actions 表另一個 FK（`model_id`）。
-  it("POST 帶不存在的 modelId（合法 uuid）→ 400 invalid_body（非 500）", async () => {
+  // Well-formed uuid that doesn't exist as modelId: same `isForeignKeyViolation` unwrapping as models POST, here for the actions table's other FK (`model_id`).
+  it("POST with nonexistent modelId (valid uuid) -> 400 invalid_body (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a7@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -950,8 +946,8 @@ describe("actions CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  // actions PATCH 空 body {} → 400（同 providers/models PATCH 理由）。
-  it("PATCH 空 body {} → 400 invalid_body（非 500）", async () => {
+  // actions PATCH with empty body {} -> 400 (same reason as providers/models PATCH).
+  it("PATCH empty body {} -> 400 invalid_body (not 500)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a8@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -970,7 +966,7 @@ describe("actions CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  it("POST 建立自訂動作成功；自訂動作可 DELETE", async () => {
+  it("POST creates a custom action; custom action can be DELETEd", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a3@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -992,7 +988,7 @@ describe("actions CRUD", () => {
     expect(row).toBeUndefined();
   });
 
-  it("DELETE 內建動作 → 400 builtin_action，不落地刪除", async () => {
+  it("DELETE builtin action -> 400 builtin_action, nothing deleted", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a4@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1006,7 +1002,7 @@ describe("actions CRUD", () => {
     expect(row).toBeDefined();
   });
 
-  it("PATCH sortOrder 收整數；PATCH userTemplate 缺 {{text}} → 400", async () => {
+  it("PATCH sortOrder accepts integers; PATCH userTemplate missing {{text}} -> 400", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a5@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1034,7 +1030,7 @@ describe("actions CRUD", () => {
     expect(badRes.json()).toMatchObject({ error: { code: "invalid_body" } });
   });
 
-  it("PATCH 不存在 → 404 not_found", async () => {
+  it("PATCH nonexistent -> 404 not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-a6@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1048,7 +1044,7 @@ describe("actions CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("#263 PATCH Instruct applyMode direct → 400 instruct_preview_only，DB 不變；preview 照收", async () => {
+  it("#263 PATCH Instruct applyMode direct -> 400 instruct_preview_only, DB unchanged; preview accepted", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-i1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1063,7 +1059,7 @@ describe("actions CRUD", () => {
     expect((await patch({ applyMode: "preview" })).statusCode).toBe(200);
   });
 
-  it("#263 PATCH Instruct 的 userTemplate：缺 {{instruction}} → 400；缺 {{text}} → 400；兩者都有、{{focus}} 可省 → 200", async () => {
+  it("#263 PATCH Instruct userTemplate: missing {{instruction}} -> 400; missing {{text}} -> 400; both present, {{focus}} optional -> 200", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-i2@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1081,7 +1077,7 @@ describe("actions CRUD", () => {
     expect(ok.json()).toMatchObject({ userTemplate: "Do: {{instruction}}\n{{text}}", kind: "instruct" });
   });
 
-  it("#263 大寫路徑 id 的 Instruct 同樣受限（路徑 id 先小寫化再比對）", async () => {
+  it("#263 Instruct with uppercase path id is restricted the same (path id is lowercased before comparison)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-i3@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -1094,7 +1090,7 @@ describe("actions CRUD", () => {
     expect(res.json()).toMatchObject({ error: { code: "instruct_preview_only" } });
   });
 
-  it("#263 其他動作不受 Instruct 規則影響：Rewrite 改 direct、template 只有 {{text}} 都照收；DELETE Instruct → 400 builtin_action", async () => {
+  it("#263 other actions are unaffected by Instruct rules: Rewrite to direct and template with only {{text}} accepted; DELETE Instruct -> 400 builtin_action", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-i4@example.com" });
     const cookie = await cookieFor(admin.id);

@@ -1,11 +1,4 @@
-/**
- * #334 最愛 REST。
- *
- * - `GET /api/favorites`：只回呼叫者此刻看得見、不在垃圾桶的最愛，依加入時間新到舊（同一時間依 note id 由大到小）。
- *   這幾案的紀錄直接寫進 `note_favorites`；失去讀取權與進垃圾桶只在讀取時濾掉，紀錄本身不動。
- * - `PUT /api/favorites/:id`（加入）與 `DELETE /api/favorites/:id`（移出）：404 的幾種來源逐位元組相同、
- *   重複加入保留原時間、移出恆 204 且只動呼叫者自己那列、共用 `favorite` 節流桶。
- */
+/** The GET cases write records straight into `note_favorites`; losing read access and moving to the trash only filter at read time and leave the records untouched. */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -37,17 +30,17 @@ async function favoriteRows(db: Db, userId: string): Promise<string[]> {
   return rows.map(r => r.noteId).sort();
 }
 
-describe("GET /api/favorites：排序與回應形", () => {
-  it("沒有任何最愛 → 200 []", async () => {
+describe("GET /api/favorites: order and response shape", () => {
+  it("no favorites -> 200 []", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     expect(await list(app, alice.id)).toEqual([]);
   });
 
-  it("依加入時間新到舊；favoritedAt 是毫秒精度的 ISO 字串、與存進去的時間相同", async () => {
+  it("newest first; favoritedAt is an ISO string with millisecond precision, equal to the stored time", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
-    // id 與插入順序都刻意和時間順序不同：只有依時間排才會得到 a、c、b。
+    // Both ids and insertion order deliberately differ from time order: only sorting by time yields a, c, b.
     const a = await seedNote(db, { ownerId: alice.id }, { id: "00000000-0000-4000-8000-000000000001" });
     const b = await seedNote(db, { ownerId: alice.id }, { id: "00000000-0000-4000-8000-000000000002" });
     const c = await seedNote(db, { ownerId: alice.id }, { id: "00000000-0000-4000-8000-000000000003" });
@@ -68,12 +61,12 @@ describe("GET /api/favorites：排序與回應形", () => {
     }
   });
 
-  it("加入時間相同的幾篇依 note id 由大到小（跨個人、共享、群組三種來源）", async () => {
+  it("notes added at the same time are ordered by note id descending (across personal, shared and group sources)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
     const g = await seedGroup(db, "Garden", [{ userId: alice.id, role: "member" }]);
-    // id 依插入順序遞增：不靠排序的話，表與各支的自然順序都是由小到大。
+    // Ids increase with insertion order: without the sort, the natural order of the table and every branch is ascending.
     const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
     const owned = [1, 4, 7].map(n => id(n));
     const shared = [2, 5].map(n => id(n));
@@ -92,7 +85,7 @@ describe("GET /api/favorites：排序與回應形", () => {
     expect(new Set(got.map(f => f.favoritedAt))).toEqual(new Set([same.toISOString()]));
   });
 
-  it("個人、共享、群組筆記的最愛同時存在 → 三篇都回；同來源沒加入最愛的不回", async () => {
+  it("favorites on personal, shared and group notes together -> all three returned; same-source notes not favorited aren't", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -104,7 +97,7 @@ describe("GET /api/favorites：排序與回應形", () => {
     await favorite(db, alice.id, mine.id, new Date("2026-03-01T00:00:00.000Z"));
     await favorite(db, alice.id, fromBob.id, new Date("2026-03-02T00:00:00.000Z"));
     await favorite(db, alice.id, inGroup.id, new Date("2026-03-03T00:00:00.000Z"));
-    // 每種來源各一篇看得見、但沒加入最愛的筆記：不能出現在清單裡。
+    // One visible but not favorited note per source: must not appear in the list.
     await seedNote(db, { ownerId: alice.id });
     const sharedOther = await seedNote(db, { ownerId: bob.id });
     await seedShare(db, sharedOther.id, alice.id, "editor");
@@ -114,8 +107,8 @@ describe("GET /api/favorites：排序與回應形", () => {
   });
 });
 
-describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
-  it("同群組的 alice 與 bob：alice 的最愛只出現在 alice 的清單", async () => {
+describe("GET /api/favorites: only your own, and only currently visible", () => {
+  it("alice and bob in the same group: alice's favorite appears only in alice's list", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -127,7 +120,7 @@ describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
     expect(await list(app, bob.id)).toEqual([]);
   });
 
-  it("alice 與 bob 各自把同一篇加入最愛 → 各自的清單帶各自的加入時間", async () => {
+  it("alice and bob each favorite the same note -> each list carries its own favorite time", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -142,7 +135,7 @@ describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
     expect(await list(app, bob.id)).toEqual([{ noteId: n.id, favoritedAt: bobAt.toISOString() }]);
   });
 
-  it("撤銷分享 → 不回、紀錄仍在；重新分享 → 以原本的時間回來", async () => {
+  it("share revoked -> not returned, record remains; shared again -> returns with the original time", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -160,7 +153,7 @@ describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
     expect(await list(app, alice.id)).toEqual([{ noteId: n.id, favoritedAt: at.toISOString() }]);
   });
 
-  it("群組角色改成不能讀、或被移出群組 → 不回群組的筆記；兩種情況紀錄都還在", async () => {
+  it("group role changed to unable-to-read, or removed from the group -> the group's notes aren't returned; in both cases the record remains", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -182,7 +175,7 @@ describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
     expect(await favoriteRows(db, alice.id)).toEqual([n.id]);
   });
 
-  it("移到垃圾桶 → 不回、紀錄仍在；還原 → 回來、時間不變", async () => {
+  it("moved to the trash -> not returned, record remains; restored -> returns, time unchanged", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -198,14 +191,14 @@ describe("GET /api/favorites：只回自己的、此刻看得見的", () => {
   });
 });
 
-describe("GET /api/favorites：只收 cookie", () => {
-  it("未登入 → 401", async () => {
+describe("GET /api/favorites: cookie only", () => {
+  it("not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/favorites" });
     expect(res.statusCode, res.body).toBe(401);
   });
 
-  it("只帶 Bearer token、沒有 cookie → 401", async () => {
+  it("Bearer token only, no cookie -> 401", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -216,8 +209,6 @@ describe("GET /api/favorites：只收 cookie", () => {
   });
 });
 
-// ───────────────────────────── PUT／DELETE ─────────────────────────────
-
 const NOT_FOUND_BODY = '{"error":{"code":"not_found","message":"No note with that id."}}';
 const INVALID_BODY = { error: { code: "invalid_body", message: "Invalid request body." } };
 const TOO_MANY = { error: { code: "too_many_requests", message: "Too many requests. Wait a moment and try again." } };
@@ -227,7 +218,7 @@ const put = (app: FastifyInstance, userId: string | null, id: string, payload?: 
 const del = (app: FastifyInstance, userId: string | null, id: string): Promise<LightMyRequestResponse> =>
   inject(app, "DELETE", `/api/favorites/${id}`, userId);
 
-/** 表裡的列（全部使用者）；`at` 是 UTC、微秒精度的文字，看得出有沒有截到毫秒。 */
+/** Rows of the table (all users); `at` is UTC microsecond-precision text, which shows whether milliseconds were truncated. */
 async function storedRows(db: Db): Promise<Array<{ user_id: string; note_id: string; at: string }>> {
   const { rows } = await db.$client.query<{ user_id: string; note_id: string; at: string }>(
     `select user_id::text, note_id::text, to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as at
@@ -235,11 +226,11 @@ async function storedRows(db: Db): Promise<Array<{ user_id: string; note_id: str
   );
   return rows;
 }
-/** 微秒精度的 UTC 文字 → 毫秒 ISO（只在微秒尾數是 000 時與 `toISOString()` 相同）。 */
+/** Microsecond-precision UTC text -> millisecond ISO (equals `toISOString()` only when the microsecond tail is 000). */
 const usToIso = (at: string): string => `${at.slice(0, 23)}Z`;
 
-describe("PUT /api/favorites/:id：加入", () => {
-  it("加入自己的筆記 → 200 { noteId, favoritedAt }，存成毫秒精度；再加一次（帶 `{}` 也一樣）→ 同一個字串、表中仍一列", async () => {
+describe("PUT /api/favorites/:id: add", () => {
+  it("adding your own note -> 200 { noteId, favoritedAt }, stored with millisecond precision; adding again (also with `{}`) -> the same string, still one row in the table", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -265,7 +256,7 @@ describe("PUT /api/favorites/:id：加入", () => {
     expect(await list(app, alice.id)).toEqual([dto]);
   });
 
-  it("逐人分享的 viewer、群組裡只能讀的成員都能加入", async () => {
+  it("a per-person-shared viewer and a read-only group member can both add", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -284,7 +275,7 @@ describe("PUT /api/favorites/:id：加入", () => {
     expect(await favoriteRows(db, alice.id)).toEqual([shared.id, inGroup.id].sort());
   });
 
-  it("不存在、別人沒分享的、自己在垃圾桶裡的、群組裡讀不到的、非 UUID 的 :id → 404，五者 body 逐位元組相同，表中沒有新列", async () => {
+  it("nonexistent, not shared by others, in your own trash, unreadable in the group, non-UUID :id -> 404, the five bodies byte-for-byte identical, no new row in the table", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -301,14 +292,14 @@ describe("PUT /api/favorites/:id：加入", () => {
       expect(res.statusCode, `${id} ${res.body}`).toBe(404);
       expect(res.body, id).toBe(NOT_FOUND_BODY);
     }
-    // 非 UUID 先於 body 檢查：壞 body 仍是同一個 404。
+    // A non-UUID is checked before the body: a bad body still gets the same 404.
     const badIdBadBody = await put(app, alice.id, "not-a-uuid", { extra: 1 });
     expect(badIdBadBody.statusCode).toBe(404);
     expect(badIdBadBody.body).toBe(NOT_FOUND_BODY);
     expect(await storedRows(db)).toEqual([]);
   });
 
-  it("大寫 UUID 的 :id → 200，存進去與回傳的 noteId 都是小寫", async () => {
+  it("uppercase UUID :id -> 200, both the stored and the returned noteId are lowercase", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -319,10 +310,10 @@ describe("PUT /api/favorites/:id：加入", () => {
     expect((await storedRows(db)).map(r => r.note_id)).toEqual([n.id]);
   });
 
-  it("沒有 body（也沒有 Content-Type）的 PUT → 加入時間是現在、存成整毫秒", async () => {
+  it("PUT with no body (and no Content-Type) -> favorited time is now, stored as whole milliseconds", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
-    // 五篇：pg 的 now() 剛好落在整毫秒的機率約千分之一，五篇都剛好的機率可以忽略——沒截到毫秒就一定看得出來。
+    // Five notes: pg's now() lands exactly on a whole millisecond with probability ~1/1000, and all five doing so is negligible - if the value weren't truncated to milliseconds it would certainly show.
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push((await seedNote(db, { ownerId: alice.id })).id);
 
@@ -340,16 +331,16 @@ describe("PUT /api/favorites/:id：加入", () => {
     for (const r of rows) {
       expect(r.at.endsWith("000"), r.at).toBe(true);
       expect(usToIso(r.at)).toBe(got.get(r.note_id));
-      // 資料庫與測試程序共用同一個時鐘；留 1 秒寬容。
+      // The database and the test process share one clock; allow 1 second of slack.
       const t = Date.parse(got.get(r.note_id)!);
       expect(t).toBeGreaterThanOrEqual(before - 1000);
       expect(t).toBeLessThanOrEqual(after + 1000);
     }
-    // 毫秒有保留：只截到秒的話五篇都會是 `.000000`（五篇都剛好落在整秒的機率可以忽略）。
+    // Milliseconds are kept: if truncated only to seconds, all five would be `.000000` (all five landing on a whole second is negligible).
     expect(rows.some(r => !r.at.endsWith(".000000")), rows.map(r => r.at).join(" ")).toBe(true);
   });
 
-  it("帶了 body 但不是空物件（任何欄位、陣列、JSON null）→ 400 invalid_body，不寫入；`{}` → 200", async () => {
+  it("a body that isn't an empty object (any field, array, JSON null) -> 400 invalid_body, nothing written; `{}` -> 200", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -376,7 +367,7 @@ describe("PUT /api/favorites/:id：加入", () => {
     expect(await favoriteRows(db, alice.id)).toEqual([n.id]);
   });
 
-  it("授權之後、寫入之前筆記被永久刪除 → 404（同一個 body）、不寫入、沒有 error log；縫裡不刪 → 200", async () => {
+  it("the note is permanently deleted between authorization and write -> 404 (same body), nothing written, no error log; not deleting in the test hook -> 200", async () => {
     for (const purgeInSeam of [true, false]) {
       const points: GroupRacePoint[] = [];
       const seam: { db?: Db; target?: string } = {};
@@ -413,7 +404,7 @@ describe("PUT /api/favorites/:id：加入", () => {
     }
   });
 
-  it("addFavorite 對不存在的筆記 → \"gone\"（不丟例外）", async () => {
+  it("addFavorite on a nonexistent note -> 'gone' (no exception)", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     expect(await addFavorite(db, { userId: alice.id, noteId: randomUUID() })).toBe("gone");
@@ -421,8 +412,8 @@ describe("PUT /api/favorites/:id：加入", () => {
   });
 });
 
-describe("DELETE /api/favorites/:id：移出", () => {
-  it("自己有的 → 204、列消失；沒有的 → 204；同一篇 bob 的列不動；讀不到的筆記（撤分享後）→ 204、列消失；非 UUID → 404", async () => {
+describe("DELETE /api/favorites/:id: remove", () => {
+  it("own -> 204 and the row is gone; not favorited -> 204; bob's row for the same note untouched; unreadable note (after share revoked) -> 204 and the row is gone; non-UUID -> 404", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -457,7 +448,7 @@ describe("DELETE /api/favorites/:id：移出", () => {
     expect(await favoriteRows(db, alice.id)).toEqual([mine.id]);
   });
 
-  it("大寫 UUID 的 :id 也刪得到", async () => {
+  it("uppercase UUID :id can be deleted too", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -467,8 +458,8 @@ describe("DELETE /api/favorites/:id：移出", () => {
   });
 });
 
-describe("PUT／DELETE：favorite 節流桶", () => {
-  it("PUT 與 DELETE 共用一顆、每人各自計；GET、授權前的 400 與 404 不扣；超過 → 429 且不寫入、不刪除", async () => {
+describe("PUT/DELETE: favorite throttle bucket", () => {
+  it("PUT and DELETE share one bucket, counted per person; GET, 400 before authorization and 404 aren't charged; over the limit -> 429 and nothing written or deleted", async () => {
     const { app, db } = await buildTestApp({ limiters: { favorite: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) } });
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });
@@ -497,8 +488,8 @@ describe("PUT／DELETE：favorite 節流桶", () => {
   });
 });
 
-describe("PUT／DELETE：只收 cookie", () => {
-  it("未登入 → 401；只帶 Bearer token、沒有 cookie → 401；都不寫入、不刪除", async () => {
+describe("PUT/DELETE: cookie only", () => {
+  it("not signed in -> 401; Bearer token only, no cookie -> 401; nothing written or deleted", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const n = await seedNote(db, { ownerId: alice.id });
@@ -518,8 +509,8 @@ describe("PUT／DELETE：只收 cookie", () => {
   });
 });
 
-describe("永久刪除筆記帶走最愛紀錄", () => {
-  it("垃圾桶的永久刪除 → 那篇的紀錄消失；另一篇的紀錄還在", async () => {
+describe("permanently deleting a note takes its favorite records with it", () => {
+  it("permanent delete from the trash -> that note's record is gone; another note's record remains", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const gone = await seedNote(db, { ownerId: alice.id });
@@ -533,7 +524,7 @@ describe("永久刪除筆記帶走最愛紀錄", () => {
     expect(await favoriteRows(db, alice.id)).toEqual([stays.id]);
   });
 
-  it("刪群組・全部刪除 → 群組筆記上每個人的紀錄都消失；個人筆記的紀錄還在", async () => {
+  it("delete group - delete all -> every person's records on the group's notes are gone; records on personal notes remain", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db, { displayName: "Alice" });
     const bob = await seedUser(db, { displayName: "Bob" });

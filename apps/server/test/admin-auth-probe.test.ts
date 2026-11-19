@@ -11,7 +11,7 @@ import { adminApp, captureLogs, expectAdminOnly, providerRow } from "./helpers/a
 
 const ISS = "https://idp.example.com";
 
-/** registry 的 fetch 包一層記錄器：每個出站請求的 URL、headers、body 都記下來（「不送 secret」的直接守衛）。 */
+/** Wraps the registry's fetch with a recorder: URL, headers and body of every outbound request (direct guard for "the secret is never sent"). */
 async function probeApp(idpIssuer: string, options: BuildAppOptions = {}) {
   const idp = createFakeIdp(idpIssuer);
   const requests: Array<{ url: string; headers: string; body: string }> = [];
@@ -23,7 +23,7 @@ async function probeApp(idpIssuer: string, options: BuildAppOptions = {}) {
   return { ...built, idp, requests };
 }
 
-/** #299：沒有 client ID 的服務經 POST 建（`seedAuthProvider` 種不出 NULL）。 */
+/** #299: a provider without client ID is created via POST (`seedAuthProvider` can't seed NULL). */
 async function createWithoutClientId(
   app: Awaited<ReturnType<typeof adminApp>>["app"],
   cookies: Record<string, string>,
@@ -36,14 +36,14 @@ async function createWithoutClientId(
   return res.json().id as string;
 }
 
-describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
-  it("只給站台管理員", async () => {
+describe("POST /api/admin/auth/providers/:id/test (#187)", () => {
+  it("site admins only", async () => {
     const { app, db } = await probeApp(ISS);
     const p = await seedAuthProvider(db, { issuerUrl: ISS });
     await expectAdminOnly(app, db, "POST", `/api/admin/auth/providers/${p.id}/test`);
   });
 
-  it("成功：回 IdP 的 issuer、無 warning；每次都重新 discovery（不經快取）；出站請求只有 discovery、任何 URL／header／body 都不含 secret；寫 resolved_issuer", async () => {
+  it("success: returns the IdP's issuer, no warning; discovers afresh every time (bypasses the cache); outbound requests are only discovery and no URL/header/body contains the secret; writes resolved_issuer", async () => {
     const { app, db, cookies, idp, requests } = await probeApp(ISS);
     const p = await seedAuthProvider(db, { issuerUrl: ISS, clientSecret: "test-secret" });
     for (let i = 0; i < 2; i += 1) {
@@ -51,14 +51,14 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ issuer: ISS, warnings: [] });
     }
-    // 走 registry.get（快取）的話第二次不會 discovery → 1。
+    // Going through registry.get (cached) would not discover the second time -> 1.
     expect(idp.counts).toEqual({ discovery: 2, token: 0, userinfo: 0 });
     expect(requests.map(req => new URL(req.url).pathname)).toEqual(["/.well-known/openid-configuration", "/.well-known/openid-configuration"]);
     for (const req of requests) expect(`${req.url} ${req.headers} ${req.body}`).not.toContain("test-secret");
     expect((await providerRow(db, p.id))!.resolvedIssuer).toBe(ISS);
   });
 
-  it("尾斜線形：provider 填 https://gitlab.example/、IdP 回無斜線 → 成功、resolved_issuer＝無斜線；列表 issuerResolved 轉 true", async () => {
+  it("trailing-slash form: provider has https://gitlab.example/, IdP returns no slash -> success, resolved_issuer has no slash; list issuerResolved turns true", async () => {
     const { app, db, cookies } = await probeApp("https://gitlab.example");
     const p = await seedAuthProvider(db, { issuerUrl: "https://gitlab.example/" });
     const res = await app.inject({ method: "POST", url: `/api/admin/auth/providers/${p.id}/test`, cookies });
@@ -68,18 +68,18 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
     expect(list.json().providers[0].issuerResolved).toBe(true);
   });
 
-  it("三種 warning：http issuer → insecure_issuer；metadata 沒宣告 client_secret_post → client_secret_post_not_advertised；secret 解不開 → secret_undecryptable（仍 200）", async () => {
+  it("three warnings: http issuer -> insecure_issuer; metadata doesn't advertise client_secret_post -> client_secret_post_not_advertised; secret can't be decrypted -> secret_undecryptable (still 200)", async () => {
     const { app, db, cookies, idp } = await probeApp("http://idp.lan");
     idp.omitFromMetadata(["token_endpoint_auth_methods_supported"]);
     const p = await seedAuthProvider(db, { issuerUrl: "http://idp.lan", clientSecret: null, enabled: false });
-    // 封給「別的 id」的密文：格式合法、AAD 不符 → 解不開。
+    // Ciphertext sealed for a different id: valid format, AAD mismatch -> can't be decrypted.
     await db.update(authProviders).set({ clientSecretEncrypted: sealClientSecret(testConfig.appSecret, "00000000-0000-4000-8000-000000000000", "x") });
     const res = await app.inject({ method: "POST", url: `/api/admin/auth/providers/${p.id}/test`, cookies });
     expect(res.statusCode).toBe(200);
     expect(res.json().warnings).toEqual(["insecure_issuer", "client_secret_post_not_advertised", "secret_undecryptable"]);
   });
 
-  it("P7（#299 驗收 7）沒有 client ID → 仍 200，warnings 只有 client_id_missing；仍寫 resolved_issuer", async () => {
+  it("(#299) no client ID -> still 200, warnings only client_id_missing; resolved_issuer still written", async () => {
     const { app, db, cookies } = await probeApp(ISS);
     const id = await createWithoutClientId(app, cookies, ISS);
     const res = await app.inject({ method: "POST", url: `/api/admin/auth/providers/${id}/test`, cookies });
@@ -88,7 +88,7 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
     expect((await providerRow(db, id))!.resolvedIssuer).toBe(ISS);
   });
 
-  it("P7 http issuer、沒有 client ID → client_id_missing 排在 probeWarnings 之後", async () => {
+  it("http issuer with no client ID -> client_id_missing comes after probeWarnings", async () => {
     const { app, cookies } = await probeApp("http://idp.lan");
     const id = await createWithoutClientId(app, cookies, "http://idp.lan");
     const res = await app.inject({ method: "POST", url: `/api/admin/auth/providers/${id}/test`, cookies });
@@ -96,7 +96,7 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
     expect(res.json().warnings).toEqual(["insecure_issuer", "client_id_missing"]);
   });
 
-  it("P7 四種提醒同時出現的次序：insecure_issuer → client_secret_post_not_advertised → client_id_missing → secret_undecryptable", async () => {
+  it("order when all four warnings appear: insecure_issuer -> client_secret_post_not_advertised -> client_id_missing -> secret_undecryptable", async () => {
     const { app, db, cookies, idp } = await probeApp("http://idp.lan");
     idp.omitFromMetadata(["token_endpoint_auth_methods_supported"]);
     const id = await createWithoutClientId(app, cookies, "http://idp.lan", "s3cret");
@@ -106,18 +106,18 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
     expect(res.json().warnings).toEqual(["insecure_issuer", "client_secret_post_not_advertised", "client_id_missing", "secret_undecryptable"]);
   });
 
-  it("沒有 secret → 沒有 secret_undecryptable（沒有東西可解）", async () => {
+  it("no secret -> no secret_undecryptable (nothing to decrypt)", async () => {
     const { app, db, cookies } = await probeApp(ISS);
     const p = await seedAuthProvider(db, { issuerUrl: ISS, clientSecret: null, enabled: false });
     const res = await app.inject({ method: "POST", url: `/api/admin/auth/providers/${p.id}/test`, cookies });
     expect(res.json().warnings).toEqual([]);
   });
 
-  it("discovery 失敗 → 502 oidc_discovery_failed、resolved_issuer 不寫；warn log 只帶 {providerId, issuer}，不帶錯誤訊息", async () => {
+  it("discovery failure -> 502 oidc_discovery_failed, resolved_issuer not written; warn log carries only {providerId, issuer}, no error message", async () => {
     const logs = captureLogs();
     const { app, db, cookies, idp } = await probeApp(ISS, logs.options);
     const p = await seedAuthProvider(db, { issuerUrl: ISS });
-    // 前提：同一形失敗的錯誤訊息長什麼樣（下面斷言 log 不含它；訊息為空就量不到東西）。
+    // Precondition: what the error message of this same failure looks like (the assertion below says the log doesn't contain it; an empty message would measure nothing).
     idp.failNext("discovery");
     const errMessage = await createOidcRuntimeRegistry({ fetch: idp.fetch })
       .probe(ISS)
@@ -135,11 +135,11 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
     const line = logs.lines.find(l => l.msg === "登入服務測試連線失敗");
     expect(line!.level).toBe("warn");
     expect(line!.obj).toEqual({ providerId: p.id, issuer: "https://idp.example.com/" });
-    // 排除 fastify 生命週期行：理由同下方 /discover 失敗案。
+    // Exclude fastify lifecycle lines: same reason as the /discover failure case below.
     expect(JSON.stringify(logs.lines.filter(l => l.msg !== "incoming request" && l.msg !== "request completed"))).not.toContain(errMessage);
   });
 
-  it("大寫 uuid 路徑同義；不存在 → 404 not_found", async () => {
+  it("uppercase uuid path is equivalent; nonexistent -> 404 not_found", async () => {
     const { app, db, cookies } = await probeApp(ISS);
     const p = await seedAuthProvider(db, { issuerUrl: ISS });
     expect((await app.inject({ method: "POST", url: `/api/admin/auth/providers/${p.id.toUpperCase()}/test`, cookies })).statusCode).toBe(200);
@@ -149,13 +149,13 @@ describe("POST /api/admin/auth/providers/:id/test（#187）", () => {
   });
 });
 
-describe("POST /api/admin/auth/discover（#187：儲存前試探）", () => {
-  it("只給站台管理員", async () => {
+describe("POST /api/admin/auth/discover (#187: probe before saving)", () => {
+  it("site admins only", async () => {
     const { app, db } = await probeApp(ISS);
     await expectAdminOnly(app, db, "POST", "/api/admin/auth/discover", { issuerUrl: ISS });
   });
 
-  it("成功回 issuer＋warning；不建任何列", async () => {
+  it("success returns issuer + warnings; creates no row", async () => {
     const { app, db, cookies, idp } = await probeApp("http://idp.lan");
     idp.omitFromMetadata(["token_endpoint_auth_methods_supported"]);
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/discover", cookies, payload: { issuerUrl: "http://idp.lan" } });
@@ -164,22 +164,22 @@ describe("POST /api/admin/auth/discover（#187：儲存前試探）", () => {
     expect(await db.select().from(authProviders)).toHaveLength(0);
   });
 
-  it("discovery 失敗 → 502；warn log 只帶 origin+pathname，不帶 userinfo 與錯誤訊息", async () => {
+  it("discovery failure -> 502; warn log carries only origin+pathname, no userinfo and no error message", async () => {
     const logs = captureLogs();
     const { app, cookies, idp } = await probeApp(ISS, logs.options);
     idp.failNext("discovery");
-    // issuer 帶 user:pass@ 現在在入口就 400（見下一條）；這裡改帶 query，仍驗 log 只留 origin+pathname。
+    // An issuer with user:pass@ now gets 400 at the entry (next case); a query is used here, still verifying the log keeps only origin+pathname.
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/discover", cookies, payload: { issuerUrl: "https://idp.example.com?k=query-secret-marker" } });
     expect(res.statusCode).toBe(502);
     expect(res.json().error.code).toBe("oidc_discovery_failed");
     const line = logs.lines.find(l => l.msg === "登入服務先試探失敗");
     expect(line!.obj).toEqual({ issuer: "https://idp.example.com/" });
-    // fastify 生命週期行（incoming request／request completed）在 logMethod hook 看到的是序列化前的原始 req／res 物件（含 light-my-request 的 payload）；
-    // 實際輸出經 `serializers.req`（app.ts `withTokenRedaction`）只剩 method／url／host／remote，不含 body——排除這兩種行。
+    // Fastify lifecycle lines (incoming request / request completed) are seen by the logMethod hook as the raw req/res objects before serialization (including light-my-request's payload);
+    // the real output goes through `serializers.req` (app.ts `withTokenRedaction`) and keeps only method/url/host/remote, no body - exclude those two lines.
     expect(JSON.stringify(logs.lines.filter(l => l.msg !== "incoming request" && l.msg !== "request completed"))).not.toContain("query-secret-marker");
   });
 
-  it("issuer 帶帳密 → 400 invalid_body、不打 IdP；log 不含密碼（原 userinfo 斷言移到這裡）", async () => {
+  it("issuer with credentials -> 400 invalid_body, IdP not called; log has no password", async () => {
     const logs = captureLogs();
     const { app, cookies, idp } = await probeApp(ISS, logs.options);
     for (const issuerUrl of ["https://user:pass@idp.example.com", "https://user@idp.example.com"]) {
@@ -191,7 +191,7 @@ describe("POST /api/admin/auth/discover（#187：儲存前試探）", () => {
     expect(JSON.stringify(logs.lines.filter(l => l.msg !== "incoming request" && l.msg !== "request completed"))).not.toContain("pass@");
   });
 
-  it("不合法 issuer（大寫 scheme、NUL）→ 400、不打 IdP", async () => {
+  it("invalid issuer (uppercase scheme, NUL) -> 400, IdP not called", async () => {
     const { app, cookies, idp } = await probeApp(ISS);
     for (const issuerUrl of ["HTTPS://idp.example.com", `https://idp.example.com/${String.fromCodePoint(0)}`]) {
       expect((await app.inject({ method: "POST", url: "/api/admin/auth/discover", cookies, payload: { issuerUrl } })).statusCode).toBe(400);

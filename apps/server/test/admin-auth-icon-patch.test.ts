@@ -13,15 +13,14 @@ import type { FastifyInstance } from "fastify";
 const patch = (app: FastifyInstance, cookies: Record<string, string>, id: string, payload: object) =>
   app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${id}`, cookies, payload });
 
-/** 已上傳狀態的 fixture（直寫 DB；本 fixture 不是被測方）。 */
 async function seedUploaded(db: Db, template: "gitlab" | "google" | "oidc" = "oidc") {
   const p = await seedAuthProvider(db, { issuerUrl: `https://icon-${template}.example`, template, enabled: true });
   await db.update(authProviders).set({ iconKind: "upload", iconData: pngBytes(), iconMime: "image/png", iconVersion: 3 }).where(eq(authProviders.id, p.id));
   return p;
 }
 
-describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
-  it("S1：非管理員（真 session）403、未登入 401、管理員的有效 PAT 401；DB 不變", async () => {
+describe("iconKind of PATCH /api/admin/auth/providers/:id", () => {
+  it("non-admin (real session) 403, not signed in 401, admin's valid PAT 401; DB unchanged", async () => {
     const { app, db, admin } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
@@ -32,10 +31,10 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     expect(await providerRow(db, p.id)).toEqual(before);
   });
 
-  it("S5：上傳後 PATCH {iconKind:'gitlab'} → data／mime 清空、icon_version 不變、config_version 不變、enabled 不變；回應帶換算後的 icon、不含圖檔位元組", async () => {
+  it("after upload, PATCH {iconKind:'gitlab'} -> data/mime cleared, icon_version/config_version/enabled unchanged; response carries the derived icon and no image bytes", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
-    // updated_at 先寫成過去時刻：PATCH 沒更新它就抓得到（同一交易內 now() 與 seed 時刻太近，>= 斷言抓不到）。
+    // updated_at is first set to a past time so a PATCH that fails to update it is detectable (within one transaction now() is too close to the seed time for a >= assertion to catch it).
     await db.update(authProviders).set({ updatedAt: new Date("2020-01-01T00:00:00Z") }).where(eq(authProviders.id, p.id));
     const before = await providerRow(db, p.id);
     const res = await patch(app, cookies, p.id, { iconKind: "gitlab" });
@@ -47,7 +46,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     expect(after!.updatedAt.getTime()).toBeGreaterThan(before!.updatedAt.getTime());
   });
 
-  it("S5：iconKind 與 clientSecret 一起送 → 圖清掉、icon null、secret 已更新、config_version +1", async () => {
+  it("iconKind sent together with clientSecret -> image cleared, icon null, secret updated, config_version +1", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
@@ -61,7 +60,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     expect(after!.clientSecretEncrypted).not.toEqual(before!.clientSecretEncrypted);
   });
 
-  it("S5：iconKind 與改 issuer 一起送 → 清圖＋清 secret＋自動停用", async () => {
+  it("iconKind sent together with an issuer change -> image cleared + secret cleared + auto-disabled", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
@@ -72,7 +71,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     expect(after).toMatchObject({ iconKind: "gitlab", iconData: null, iconMime: null, clientSecretEncrypted: null, resolvedIssuer: null, enabled: false, configVersion: before!.configVersion + 1 });
   });
 
-  it("S5：template／google／none 各自生效（none → icon null）；只帶 iconKind 合法", async () => {
+  it("template/google/none each take effect (none -> icon null); iconKind alone is valid", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedAuthProvider(db, { issuerUrl: "https://g.example", template: "google" });
     for (const [kind, icon] of [["none", null], ["gitlab", { type: "builtin", name: "gitlab" }], ["template", { type: "builtin", name: "google" }]] as const) {
@@ -83,7 +82,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     }
   });
 
-  it("S5：iconKind 'upload'／未知值／null → 400 invalid_body「Invalid request body.」；DB 不變", async () => {
+  it("iconKind 'upload'/unknown value/null -> 400 invalid_body (Invalid request body.); DB unchanged", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
@@ -95,7 +94,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     expect(await providerRow(db, p.id)).toEqual(before);
   });
 
-  it("已上傳的服務送不帶 iconKind 的 PATCH（改顯示名、排序、停用）→ 圖示原封不動（kind／data／mime／version）", async () => {
+  it("PATCH without iconKind on a provider with an uploaded icon (rename, reorder, disable) leaves the icon untouched (kind/data/mime/version)", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     for (const body of [{ displayName: "Renamed" }, { sortOrder: 9 }, { enabled: false }]) {
@@ -108,7 +107,7 @@ describe("PATCH /api/admin/auth/providers/:id 的 iconKind", () => {
     }
   });
 
-  it("只帶 iconKind 的 PATCH 也排在站台設定鎖之後（holder 扮演另一個站台設定寫入者；被測 PATCH 真的在跑）", async () => {
+  it("a PATCH with only iconKind also queues behind the site-settings lock (holder plays another site-settings writer; the PATCH under test really runs)", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedAuthProvider(db, { issuerUrl: "https://lock.example" });
     const [{ current_database: dbName }] = (await db.execute<{ current_database: string }>(sql`select current_database()`)).rows;

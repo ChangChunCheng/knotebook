@@ -1,20 +1,20 @@
 /**
- * bulk transfer：檔案寫回的耗時、事件迴圈停頓、端到端 HTTP、持續負載。**不進 CI**
- * （檔名是 `.bench.ts`，不在任何 vitest 設定的 include 裡）。要真 DB 與 collab server，所以跑在 vitest 裡（`buildCollabTestApp`）：
- *   apps/server 下放一份只 include 本檔的 vitest 設定（不進版控），`TEST_DATABASE_URL=… BENCH_PART=matrix|http|sustained
- *   BENCH_ENV=A|B BENCH_OUT=<輸出檔> [RUNS=30] vitest run --config <那份設定>`。
+ * Bulk transfer: file write-back duration, event-loop stalls, end-to-end HTTP, sustained load. **Not in CI**
+ * (the file name is `.bench.ts`, not in any vitest include). Needs a real DB and collab server, so it runs inside vitest (`buildCollabTestApp`):
+ *   put a vitest config that includes only this file under apps/server (not committed), `TEST_DATABASE_URL=... BENCH_PART=matrix|http|sustained
+ *   BENCH_ENV=A|B BENCH_OUT=<output file> [RUNS=30] vitest run --config <that config>`.
  *
- * - matrix：擬真混合筆記（同 `transfer-export.bench.ts` 的 `mixed`）20／200／1 000／2 000 顆 × 1／5／20 區 × 冷／熱 × 有無衝突；
- *   每格 RUNS 次。一次＝下載（不計時）→（有衝突時先由「人」改掉第一區的那顆）→ 計時 `PUT /api/transfer/notes`（`app.inject`：
- *   含路由、讀檔、可見性查詢、log，不含網路）。`transferWrite`／`tokenRead`／`contentRead` 換成不限流的實例（量耗時，不是量桶；
- *   不改任何常數）。分段時間用既有的 `editingTestHooks`（`beforeMerge`／`beforeRecord`／`afterRecord`）打點（寫回不再存版，`beforeCut` 已刪；「有衝突」那幾格現在量的是 409 note_changed 的路徑），
- *   不改 src。
- * - http：規則格（1 000 顆、5 區、熱、有衝突）走真 HTTP（`node:http`）。
- * - sustained：同一使用者每 2 s 一發、連續 180 s 寫回 1 000 顆、5 區、熱、有衝突的筆記，`transferWrite` 用預設值（30／60 s）；
- *   同時兩個共編 client（A 每 50 ms 送一個更新、B 收），量 A→B 延遲；先量 30 s 不寫回的基線。RSS 每秒取樣。
- * 環境：A＝開發機（不限資源）；B＝2 vCPU／4 GiB 參考環境（app 與 db 兩個容器以 `--cpuset-cpus` 共用同一組 2 顆 CPU、記憶體
- * 3 GiB／1 GiB；只用容器層級參數）。
- * 輸出：人看的表＋每格一行 JSON，寫到 BENCH_OUT（UTF-8）。
+ * - matrix: realistic mixed notes (same `mixed` as `transfer-export.bench.ts`) 20/200/1 000/2 000 blocks x 1/5/20 regions x cold/hot x with/without conflict;
+ *   RUNS per cell. One run = download (untimed) -> (with conflict: a "human" first edits the first region's block) -> timed `PUT /api/transfer/notes` (`app.inject`:
+ *   includes routing, file read, visibility queries, log; excludes network). `transferWrite`/`tokenRead`/`contentRead` are swapped for unlimited instances (measures duration, not buckets;
+ *   no constants changed). Phase times are marked with the existing `editingTestHooks` (`beforeMerge`/`beforeRecord`/`afterRecord`) (write-back no longer stores a version, `beforeCut` is gone; the "with conflict" cells now measure the 409 note_changed path),
+ *   without changing src.
+ * - http: the reference cell (1 000 blocks, 5 regions, hot, with conflict) over real HTTP (`node:http`).
+ * - sustained: the same user sends one every 2 s for 180 s, writing back a note of 1 000 blocks, 5 regions, hot, with conflict, `transferWrite` at defaults (30/60 s);
+ *   meanwhile two collab clients (A sends an update every 50 ms, B receives) measure A->B latency; a 30 s no-write-back baseline comes first. RSS sampled every second.
+ * Environments: A = dev machine (unrestricted); B = 2 vCPU / 4 GiB reference environment (app and db containers share the same two CPUs via `--cpuset-cpus`,
+ * memory 3 GiB / 1 GiB; container-level parameters only).
+ * Output: human-readable table + one JSON line per cell, written to BENCH_OUT (UTF-8).
  */
 import { writeFileSync, appendFileSync } from "node:fs";
 import { monitorEventLoopDelay, performance as perf } from "node:perf_hooks";
@@ -38,7 +38,7 @@ const N = (t: string): Block => ({ type: "numberedListItem", content: t });
 const H = (t: string): Block => ({ type: "heading", content: t, props: { level: 2 } });
 const CODE = (t: string): Block => ({ type: "codeBlock", props: { language: "js" }, content: t });
 const TBL = (rows: unknown[]): Block => ({ type: "table", content: { type: "tableContent", rows } });
-/** 同 `transfer-export.bench.ts`的擬真混合。 */
+/** Same realistic mix as `transfer-export.bench.ts`. */
 function mixed(n: number): Block[] {
   return Array.from({ length: n }, (_, i) => {
     if (i % 10 === 0) return H(`Section ${i / 10}`);
@@ -72,12 +72,12 @@ function out(s: string) {
   process.stdout.write(`${s}\n`);
 }
 
-/** 打點：hooks 推 `{name, t}`；每次寫回前清空。 */
+/** Phase marks: hooks push `{name, t}`; cleared before each write-back. */
 const marks: Array<{ name: string; t: number }> = [];
 const mark = (name: string) => async () => void marks.push({ name, t: perf.now() });
 const unbounded = () => new FixedWindowLimiter({ limit: () => Number.MAX_SAFE_INTEGER, windowMs: 60_000 });
 
-/** 1 ms timer 的最大間隔（同匯出 bench）＋停頓結束的時刻（歸到哪一段）＋ELD p99＋ELU。 */
+/** Max gap of a 1 ms timer (as in the export bench) + the moment the stall ended (to attribute it to a phase) + ELD p99 + ELU. */
 async function measured<T>(fn: () => Promise<T>) {
   const h = monitorEventLoopDelay({ resolution: 1 });
   h.enable();
@@ -106,7 +106,7 @@ async function measured<T>(fn: () => Promise<T>) {
   return { r, t0, t1, ms: t1 - t0, maxGap, maxGapEnd, p99: h.percentile(99) / 1e6, elu };
 }
 
-/** 停頓結束時刻落在哪一段（請求開始 → beforeMerge → beforeRecord → afterRecord → 回應）。 */
+/** Which phase the end of a stall falls in (request start -> beforeMerge -> beforeRecord -> afterRecord -> response). */
 function phaseOf(t: number, t0: number, t1: number): string {
   const pts = [{ name: "start", t: t0 }, ...marks, { name: "end", t: t1 }];
   for (let i = 0; i < pts.length - 1; i++) if (t >= pts[i]!.t && t <= pts[i + 1]!.t) return `${pts[i]!.name}→${pts[i + 1]!.name}`;
@@ -144,7 +144,7 @@ async function makeNote(s: Scene, n: number): Promise<string> {
 }
 const settled = (ctx: CollabTestCtx) => waitFor("卸載", 30_000, () => ctx.collab.hocuspocus.documents.size === 0);
 
-/** k 區的 agent 檔：改 k 顆 `Paragraph i …` 段（彼此至少隔 3 顆，各成一區）；回實際區數與第一區那顆的文字。 */
+/** Agent file with k regions: changes k `Paragraph i ...` paragraphs (at least 3 apart, one region each); returns the actual region count and the text of the first region's block. */
 function agentEdit(text: string, k: number, run: number): { body: string; regions: number; first: string | null } {
   let regions = 0;
   let first: string | null = null;
@@ -163,12 +163,12 @@ function agentEdit(text: string, k: number, run: number): { body: string; region
   });
   return { body, regions, first };
 }
-/** 「人」改掉第一區那顆（觸發衝突與存版）。 */
+/** A "human" edits the first region's block (triggers the conflict). */
 async function humanTouch(ctx: CollabTestCtx, noteId: string, firstLine: string, run: number) {
   const key = firstLine.split(" with ")[0]!;
   await humanEdit(ctx, noteId, ed => {
     const b = ed.document.find(x => JSON.stringify(x.content).includes(`${key} with`));
-    // 保留「Paragraph i with」的形，下一輪的 agentEdit／humanTouch 還找得到這顆
+    // Keep the "Paragraph i with" shape so the next round's agentEdit/humanTouch can still find this block
     if (b) ed.updateBlock(b.id, { content: `${key} with human edit ${run}` });
   });
 }
@@ -294,7 +294,7 @@ async function sustained() {
   const by = new Map<string, number>();
   for (const x of sends) by.set(x.result, (by.get(x.result) ?? 0) + 1);
   out(`寫回結果：${[...by].map(([k, v]) => `${k}×${v}`).join(" ")}；寫回耗時（200 的）${fmt(sends.filter(x => x.status === 200).map(x => x.ms))} ms`);
-  // 429 判讀：每個 60 s 固定視窗（以第一次 consume 起算，近似以 loadStart 起算）內，第幾發開始 429
+  // 429 reading: within each fixed 60 s window (counted from the first consume, approximated from loadStart), which request first gets 429
   const t429 = sends.filter(x => x.status === 429).map(x => x.at);
   out(`429 發生時刻（s，自寫回開始）：${t429.map(t => t.toFixed(0)).join(", ") || "無"}`);
   const windows = new Map<number, { ok: number; firstRejectAt: number | null }>();

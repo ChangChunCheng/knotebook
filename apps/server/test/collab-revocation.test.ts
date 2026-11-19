@@ -8,17 +8,16 @@ import { buildCollabTestApp, COLLAB_TOKEN_INIT, type CollabTestCtx, type HttpSes
 const PASSWORD = "correct-horse-battery";
 
 /**
- * 本檔一律以**真** CollabHooks 建 app。預設的 `noopCollabHooks` 會讓 shares PUT/DELETE、
- * admin disable、改密碼、notes DELETE 這些呼叫點全部空轉——撤權路徑永遠不會被觸發，
- * 每個斷言都會綠得毫無意義（測到的只是「沒人動這條連線」）。
+ * Always builds the app with the **real** CollabHooks. The default `noopCollabHooks` would turn the call sites of shares PUT/DELETE, admin disable, password change
+ * and notes DELETE into no-ops - the revocation path would never trigger and every assertion would be meaninglessly green (all it measures is "nobody touched this connection").
  */
 function buildApp(): Promise<CollabTestCtx> {
   return buildCollabTestApp({ collabHooks: (server, log) => createCollabHooks(server, log) });
 }
 
 /**
- * 輪詢等待條件成立（比照 collab-sync/collab-auth）：共編是非同步收斂的，斷言不可用固定
- * sleep，也不可只檢查一次——一律「在期限內輪詢到成立」，逾時才失敗並帶上標籤。
+ * Polls until the condition holds (as in collab-sync/collab-auth): collaboration converges asynchronously, so assertions can't use a fixed
+ * sleep nor check only once - always poll within a deadline and fail with the label on timeout.
  */
 async function waitFor(label: string, timeoutMs: number, check: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -37,14 +36,13 @@ function stateVector(doc: Y.Doc): string {
   return Buffer.from(Y.encodeStateVector(doc)).toString("hex");
 }
 
-/** 在 doc 的共編 fragment 插入一個含文字的 XML 元素——模擬 BlockNote 的一次編輯。 */
 function insertParagraph(doc: Y.Doc, text: string): void {
   const element = new Y.XmlElement("paragraph");
   element.insert(0, [new Y.XmlText(text)]);
   doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
 }
 
-/** 走真的 `POST /api/notes/:id/collab-token`（會計入 per-user limiter）取一份 token。 */
+/** Gets a token via the real `POST /api/notes/:id/collab-token` (counts against the per-user limiter). */
 async function fetchToken(session: HttpSession, noteId: string): Promise<string> {
   const res = await session.fetch(`/api/notes/${noteId}/collab-token`, COLLAB_TOKEN_INIT);
   if (!res.ok) throw new Error(`取得 collab token 失敗（${res.status}）：${await res.text()}`);
@@ -53,12 +51,11 @@ async function fetchToken(session: HttpSession, noteId: string): Promise<string>
 }
 
 /**
- * 撤權 SLA（撤銷分享 ≤10 秒）的端對端驗證。所有「撤權後多久生效」的斷言一律
- * ≤10s——這是對外承諾的上限；實際機制（機制列）是「requestToken + 5s deadline」，
- * 正常路徑遠快於此。
+ * End-to-end verification of the revocation SLA (share revoked <= 10 s). Every "how soon after revocation does it take effect" assertion is <= 10 s -
+ * the promised upper bound; the real mechanism is "requestToken + 5 s deadline", normally far faster.
  */
-describe("撤權 SLA：CollabHooks", () => {
-  it("撤銷分享：被撤者收 CLOSE(revoked) 且其後編輯不落盤；同文件另一 editor 不受影響（不得全 note 廣播）", async () => {
+describe("revocation SLA: CollabHooks", () => {
+  it("share revoked: the revoked user receives CLOSE(revoked) and later edits aren't persisted; another editor on the same document is unaffected (must not broadcast to the whole note)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case1@example.com", password: PASSWORD });
     const victim = await ctx.createUser({ email: "victim-case1@example.com", password: PASSWORD });
@@ -79,20 +76,19 @@ describe("撤權 SLA：CollabHooks", () => {
     const delRes = await ownerSession.fetch(`/api/notes/${note.id}/shares/${victim.id}`, { method: "DELETE" });
     expect(delRes.status).toBe(204);
 
-    // 斷言 1：被撤者在 SLA 內收到帶 reason 的應用層 CLOSE。
     await waitFor("被撤者收到 CLOSE(knotebook:revoked)", 10_000, () =>
       victimClient.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
     expect(Date.now() - started).toBeLessThan(10_000);
 
-    // 斷言 2：其後的編輯不落盤——server 端該連線已從 document 移除，後續 update 訊息
-    // 不會被套用，也就不會廣播給任何還在線上的人。
+    // Later edits aren't persisted - the server has removed that connection from the document, so later update messages aren't applied
+    // and thus aren't broadcast to anyone still online.
     insertParagraph(victimClient.doc, "from revoked user");
     await sleep(1_000);
     expect(ownerClient.doc.getXmlFragment(YDOC_FRAGMENT).toString()).not.toContain("from revoked user");
     expect(bystanderClient.doc.getXmlFragment(YDOC_FRAGMENT).toString()).not.toContain("from revoked user");
 
-    // 斷言 3：同文件的另一個 editor 完全不受影響（沒有被 close，且仍可繼續寫入並收斂）。
+    // The other editor on the same document is completely unaffected (not closed, and can still write and converge).
     expect(bystanderClient.closes).toEqual([]);
     insertParagraph(bystanderClient.doc, "from bystander");
     await waitFor(
@@ -103,7 +99,7 @@ describe("撤權 SLA：CollabHooks", () => {
     expect(ownerClient.doc.getXmlFragment(YDOC_FRAGMENT).toString()).toContain("from bystander");
   });
 
-  it("不合作的 client（完成 auth 後對 token 請求毫無回應）：5s deadline 到期即被 close(revoked)", async () => {
+  it("uncooperative client (no response to the token request after auth): closed with close(revoked) when the 5 s deadline expires", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case2@example.com", password: PASSWORD });
     const victim = await ctx.createUser({ email: "victim-case2@example.com", password: PASSWORD });
@@ -113,10 +109,9 @@ describe("撤權 SLA：CollabHooks", () => {
     const ownerSession = await ctx.loginAs("owner-case2@example.com", PASSWORD);
     const victimSession = await ctx.loginAs("victim-case2@example.com", PASSWORD);
 
-    // 首次（連線用）token 正常取得；之後 server 端 requestToken 觸發的每一次呼叫都回一個
-    // **永不 resolve** 的 promise——provider 因此永遠不會送出 AuthenticationMessage，等同
-    // 「完成 auth 握手後對 token 請求訊息不回應」的不合作 client。此時唯一能剝離這條連線
-    // 的就是 deadline timer。
+    // The first (connection) token is obtained normally; every call triggered later by the server's requestToken returns a promise that **never resolves** -
+    // so the provider never sends an AuthenticationMessage, equivalent to a non-cooperative client that doesn't respond to the token request message
+    // after the auth handshake. What strips this connection is then the deadline timer.
     let uncooperative = false;
     const victimClient = await victimSession.connect(note.id, {
       tokenFn: async () => {
@@ -134,22 +129,22 @@ describe("撤權 SLA：CollabHooks", () => {
       victimClient.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
 
-    // 下界斷言：close 必須是「deadline 到期」造成的，而不是某條 token 往返路徑——若實作
-    // 誤把 deadline 設得太短（或乾脆不等 client 直接關），這裡會失敗。timer 不可能早於
-    // 設定值觸發，故下界安全；上界則由上面的 SLA 斷言涵蓋。
+    // Lower-bound assertion: the close must be caused by the deadline expiring, not by some token round-trip path - if the implementation set the deadline too short
+    // (or just closed without waiting for the client) this fails. A timer can't fire earlier than its set value, so the lower bound is safe;
+    // the upper bound is covered by the SLA assertion above.
     const elapsed = Date.now() - started;
     expect(elapsed).toBeGreaterThanOrEqual(REVERIFY_DEADLINE_MS - 500);
 
-    // deadline 到期是**合法使用者最可能被誤踢**的路徑（client 只是卡在 token 退避裡沒能
-    // 在 5 秒內回話），使用者卻看到「你已失去存取權」——必須留下訊號（issue #37）。
+    // Deadline expiry is the path where a **legitimate user is most likely to be kicked by mistake** (the client was merely stuck in token backoff and couldn't answer
+    // within 5 seconds) while the user sees "you lost access" - it must leave a signal (issue #37).
     const line = ctx.collabLogs.find(one => one.obj.phase === "deadline");
     expect(line?.level).toBe("info");
     expect(line?.obj).toMatchObject({ cause: "no-reverify", noteId: note.id, userId: victim.id });
   });
 
-  it("連線期被撤權（onTokenSync 關掉連線）也要留下 phase:'reverify' 的日誌（issue #37）", async () => {
-    // 「我好好的怎麼突然被踢出來」最常見的來源是這條路，不是握手——docs 的排錯指引叫維護者
-    // grep `"cause"`，那就必須 grep 得到它。
+  it("revocation during a connection (onTokenSync closing the connection) also leaves a phase:'reverify' log (issue #37)", async () => {
+    // "Why was I suddenly kicked out" most often comes from this path, not the handshake - the docs' troubleshooting guide tells maintainers
+    // to grep `"cause"`, so it must be greppable.
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case9@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-case9@example.com", password: PASSWORD });
@@ -171,13 +166,13 @@ describe("撤權 SLA：CollabHooks", () => {
     expect(line?.obj).toMatchObject({ noteId: note.id, userId: editorUser.id, cause: "no-role" });
   });
 
-  it("停用使用者：該 user 在兩篇不同筆記上的連線皆被剝離（跨文件）", async () => {
+  it("disabled user: that user's connections on two different notes are both stripped (across documents)", async () => {
     const ctx = await buildApp();
     await ctx.createUser({ email: "admin-case3@example.com", password: PASSWORD, isAdmin: true });
     const owner = await ctx.createUser({ email: "owner-case3@example.com", password: PASSWORD });
     const target = await ctx.createUser({ email: "target-case3@example.com", password: PASSWORD });
-    // 一篇自己的、一篇被分享的——跨文件才測得出 onUserRevoked 走的是 connectionsOf(userId)
-    // 而非某一份文件的連線清單。
+    // One of their own, one shared - only across documents can it be tested that onUserRevoked goes through connectionsOf(userId)
+    // rather than one document's connection list.
     const ownNote = await ctx.createNote(target.id);
     const sharedNote = await ctx.createNote(owner.id);
     await ctx.share(sharedNote.id, target.id, "editor");
@@ -193,9 +188,8 @@ describe("撤權 SLA：CollabHooks", () => {
     const disableRes = await adminSession.fetch(`/api/admin/users/${target.id}/disable`, { method: "POST" });
     expect(disableRes.status).toBe(204);
 
-    // 停用後該使用者連 token endpoint 都會 401（gate.invalidate + tv bump），provider 的
-    // token function 取不到 token 就不會回送——這條連線因此走 deadline 分支被剝離。
-    // 兩篇筆記的連線都必須在 SLA 內斷開。
+    // After disabling, the user gets 401 even on the token endpoint (gate.invalidate + tv bump), and the provider's token function can't get a token so nothing is sent back -
+    // this connection is therefore stripped via the deadline branch. Connections on both notes must drop within the SLA.
     await waitFor("自有筆記的連線被 close(knotebook:revoked)", 10_000, () =>
       ownClient.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
@@ -207,7 +201,7 @@ describe("撤權 SLA：CollabHooks", () => {
     await waitFor("兩條連線都已從索引移除", 10_000, () => ctx.collab.connectionsOf(target.id).size === 0);
   });
 
-  it("#286：以重設連結設定新密碼 → 該使用者既有的共編連線在 10 秒內被 close(knotebook:revoked)", async () => {
+  it("#286: setting a new password via a reset link -> the user's existing collab connections are closed with close(knotebook:revoked) within 10 seconds", async () => {
     const ctx = await buildApp();
     await ctx.createUser({ email: "admin-case14@example.com", password: PASSWORD, isAdmin: true });
     const target = await ctx.createUser({ email: "target-case14@example.com", password: PASSWORD });
@@ -226,7 +220,7 @@ describe("撤權 SLA：CollabHooks", () => {
     const { token } = (await issued.json()) as { token: string };
 
     const started = Date.now();
-    // 無登入端點：不帶任何 cookie。
+    // No-login endpoint: no cookie at all.
     const done = await fetch(`${ctx.baseUrl}/api/auth/password-reset`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -241,7 +235,7 @@ describe("撤權 SLA：CollabHooks", () => {
     await waitFor("連線已從索引移除", 10_000, () => ctx.collab.connectionsOf(target.id).size === 0);
   });
 
-  it("token endpoint 暫時 5xx：client 重試期間 server 未收到重驗結果也不誤殺（deadline 內回來即撤銷 timer）", async () => {
+  it("token endpoint temporarily 5xx: during the client's retry the server not yet having the revalidation result doesn't kill by mistake (the timer is revoked when it returns within the deadline)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case4@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-case4@example.com", password: PASSWORD });
@@ -251,8 +245,8 @@ describe("撤權 SLA：CollabHooks", () => {
     const ownerSession = await ctx.loginAs("owner-case4@example.com", PASSWORD);
     const editorSession = await ctx.loginAs("editor-case4@example.com", PASSWORD);
 
-    // 重驗時的第一次取 token 模擬撞上 5xx：client 的重試策略是等 1.5s 再打一次（真的再打
-    // 一次 endpoint）。1.5s < 5s deadline，這條連線的權限其實完全沒變，不得被關掉。
+    // The first token fetch during revalidation simulates hitting a 5xx: the client's retry strategy waits 1.5 s and calls the endpoint again (really again).
+    // 1.5 s < 5 s deadline, and this connection's permissions haven't changed at all, so it must not be closed.
     let armed = false;
     let attempts = 0;
     const ownerClient = await ownerSession.connect(note.id);
@@ -267,28 +261,28 @@ describe("撤權 SLA：CollabHooks", () => {
     });
     armed = true;
 
-    // 角色沒有變（editor → editor），但 PUT /shares 一律呼叫 onShareChanged——重驗會成功，
-    // 純粹用來把這條連線推進「requestToken + deadline」的流程。
+    // The role doesn't change (editor -> editor), but PUT /shares always calls onShareChanged - revalidation succeeds,
+    // used purely to push this connection into the "requestToken + deadline" flow.
     const putRes = await ownerSession.fetch(`/api/notes/${note.id}/shares`, {
       method: "PUT",
       body: JSON.stringify({ email: "editor-case4@example.com", role: "editor" }),
     });
     expect(putRes.status).toBe(200);
 
-    // 等到超過 deadline 才斷言：若 timer 沒有被 onNextTokenSync 撤銷（或撤銷的是別條
-    // 連線的 timer），這裡就會看到一筆 revoked。
+    // Assert only after the deadline has passed: if the timer wasn't revoked by onNextTokenSync (or the revoked timer was another connection's),
+    // a revoked entry would show up here.
     await sleep(REVERIFY_DEADLINE_MS + 1_500);
     expect(editorClient.closes).toEqual([]);
     expect(attempts).toBeGreaterThanOrEqual(1);
 
-    // 連線不只「沒被關」，而且仍然真的可用。
+    // The connection is not only "not closed" but still really usable.
     insertParagraph(editorClient.doc, "still editing");
     await waitFor("未被誤殺的連線仍可寫入並收斂到 owner", 10_000, () =>
       ownerClient.doc.getXmlFragment(YDOC_FRAGMENT).toString().includes("still editing")
     );
   });
 
-  it("limiter 邊界：該 user 已用掉 59/60 次 collab-token 配額，撤權重驗仍在 deadline 內完成（不被節流拖垮）", async () => {
+  it("limiter boundary: the user has used 59/60 collab-token quota, and revocation revalidation still completes within the deadline (not dragged down by throttling)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case5@example.com", password: PASSWORD });
     const victim = await ctx.createUser({ email: "victim-case5@example.com", password: PASSWORD });
@@ -298,10 +292,10 @@ describe("撤權 SLA：CollabHooks", () => {
     const ownerSession = await ctx.loginAs("owner-case5@example.com", PASSWORD);
     const victimSession = await ctx.loginAs("victim-case5@example.com", PASSWORD);
 
-    // 連線本身耗掉第 1 次配額。
+    // The connection itself uses up the 1st quota.
     const victimClient = await victimSession.connect(note.id);
 
-    // 再手動耗掉 58 次 → 累計 59/60，重驗那一次剛好是第 60 次（仍在限額內）。
+    // Then burn 58 more by hand -> cumulative 59/60, so the revalidation is exactly the 60th (still within the limit).
     for (let i = 0; i < 58; i += 1) {
       const res = await victimSession.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
       expect(res.status).toBe(200);
@@ -315,17 +309,17 @@ describe("撤權 SLA：CollabHooks", () => {
       victimClient.closes.some(one => one.reason === COLLAB_CLOSE_REVOKED)
     );
 
-    // 上界斷言：這次 close 必須來自「token 真的回來了、重驗判定無權限」，而不是 deadline
-    // 到期的保底路徑——後者代表 client 在配額邊界上取不到 token（SLA 雖然仍成立，但慢了
-    // 5 秒，且性質是「猜測性剝離」而非「查證後剝離」）。
+    // Upper-bound assertion: this close must come from "the token really came back and revalidation judged no permission", not from the deadline fallback path -
+    // the latter means the client couldn't get a token at the quota boundary (the SLA still holds but is 5 seconds slower, and the nature is
+    // "speculative stripping" rather than "stripping after verification").
     expect(Date.now() - started).toBeLessThan(REVERIFY_DEADLINE_MS - 500);
 
-    // 佐證配額真的被用到第 60 次（重驗那次也走了同一個 endpoint）：下一次即超限。
+    // Corroborates that the quota really was used up to the 60th (the revalidation also went through the same endpoint): the next one exceeds the limit.
     const overRes = await victimSession.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
     expect(overRes.status).toBe(429);
   });
 
-  it("刪除筆記：連線者收 CLOSE(note-deleted)、DELETE 於 SLA 內回 204、刪除中重連被拒、刪後 token 200+role:'none' 但無法連線、GET 404", async () => {
+  it("deleting a note: connected users receive CLOSE(note-deleted), DELETE returns 204 within the SLA, reconnecting during deletion is refused, after deletion the token is 200+role:'none' but can't connect, GET 404", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-case6@example.com", password: PASSWORD });
     const editorUser = await ctx.createUser({ email: "editor-case6@example.com", password: PASSWORD });
@@ -346,7 +340,7 @@ describe("撤權 SLA：CollabHooks", () => {
     const delRes = await ownerSession.fetch(`/api/notes/${note.id}`, { method: "DELETE" });
     const elapsed = Date.now() - started;
 
-    // DELETE 不得掛死（beforeNoteDeleted 的輪詢有上限，逾時就記錯放行）。
+    // DELETE must not hang (the polling in beforeNoteDeleted has an upper bound; on timeout it logs an error and lets it through).
     expect(delRes.status).toBe(204);
     expect(elapsed).toBeLessThan(10_000);
 
@@ -359,23 +353,22 @@ describe("撤權 SLA：CollabHooks", () => {
     expect(ctx.collab.connectionsOfNote(note.id).size).toBe(0);
     expect(ctx.collab.hocuspocus.documents.has(note.id)).toBe(false);
 
-    // 刪除閘門仍在（TTL 內，見 DELETING_GATE_TTL_MS）：此時的重連一律以 note-deleting 拒絕。
-    // 刻意在 DELETE 回應之後才測，而不是與 DELETE 併發送出——後者的相對時序取決於兩邊
-    // 各自的 DB 往返，會是不確定性測試；閘門的 TTL 讓「刪除中」這個狀態在回應後仍持續，
-    // 因此這裡測到的是同一個閘門、同一條拒絕路徑。
+    // The deleting gate is still in place (within TTL, see DELETING_GATE_TTL_MS): a reconnect now is always refused with note-deleting.
+    // Deliberately tested after the DELETE response rather than concurrently with it - the relative timing depends on each side's own DB round trips
+    // and would be a nondeterministic test; the gate's TTL keeps the "being deleted" state after the response, so what is tested here is the same gate
+    // and the same refusal path.
     await expect(editorSession.connect(note.id)).rejects.toThrow(COLLAB_REJECT_NOTE_DELETING);
 
-    // 契約：token endpoint 對「有 session、但對該 note 無權限（含已刪除）」一律
-    // 200 + role:'none'，絕不回錯誤狀態（不當權限探測 oracle）。
+    // Contract: for "has a session but no permission on that note (including deleted)", the token endpoint always returns 200 + role:'none',
+    // never an error status (not a permission-probing oracle).
     const tokenRes = await editorSession.fetch(`/api/notes/${note.id}/collab-token`, COLLAB_TOKEN_INIT);
     expect(tokenRes.status).toBe(200);
     const tokenBody = (await tokenRes.json()) as { token: string; role: Role };
     expect(tokenBody.role).toBe("none");
 
-    // 閘門過期之後（模擬 TTL 到期）這份 token 仍然連不上：擋下它的是 onAuthenticate
-    // 重跑 resolveRole（筆記在垃圾桶 → 'none'，#181），不是刪除閘門。理由因此是 `forbidden`
-    // ——與「這篇筆記存在、但你沒有權限」完全一樣，問不出存在性（issue #35 的取捨：
-    // 「筆記被刪了」這句話由閘門在 TTL 內負責，見 DELETING_GATE_TTL_MS）。
+    // After the gate expires (simulating TTL expiry) this token still can't connect: what stops it is onAuthenticate re-running resolveRole
+    // (note in the trash -> 'none', #181), not the deleting gate. The reason is therefore `forbidden` - identical to "the note exists but you have no permission",
+    // so existence can't be asked (the trade-off of issue #35: the "note was deleted" message is the gate's job within the TTL, see DELETING_GATE_TTL_MS).
     ctx.collab.unmarkDeleting(note.id);
     await expect(editorSession.connect(note.id, { tokenOverride: tokenBody.token })).rejects.toThrow(
       COLLAB_REJECT_FORBIDDEN
@@ -386,7 +379,7 @@ describe("撤權 SLA：CollabHooks", () => {
   });
 
   for (const variant of ["upper-note", "upper-user"] as const) {
-    it(`#240 R4${variant === "upper-note" ? "a" : "b"} DELETE /shares 的${variant === "upper-note" ? " :id" : " :userId"} 大寫：被撤者 10 秒內收 CLOSE(revoked)，旁觀者不受影響`, async () => {
+    it(`#240 DELETE /shares with an uppercase${variant === "upper-note" ? " :id" : " :userId"}: the revoked user gets CLOSE(revoked) within 10 seconds, bystanders unaffected`, async () => {
       const ctx = await buildApp();
       const tag = `r4${variant}`;
       const owner = await ctx.createUser({ email: `owner-${tag}@example.com`, password: PASSWORD });
@@ -408,7 +401,7 @@ describe("撤權 SLA：CollabHooks", () => {
     });
   }
 
-  it("#240 R8 DELETE /api/notes/<大寫>：在線者收 CLOSE(note-deleted)", async () => {
+  it("#240 DELETE /api/notes/<uppercase>: online users receive CLOSE(note-deleted)", async () => {
     const ctx = await buildApp();
     const owner = await ctx.createUser({ email: "owner-r8@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);

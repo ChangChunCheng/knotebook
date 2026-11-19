@@ -1,7 +1,3 @@
-/**
- * 頭貼（`original_size + display_size`）算進個人空間配額的四個加總點，各一案：
- * `readSpaceUsage`、`assertSpaceRoomInTx`、`listSpaceUsage`、`readSpaceUsageByKind`。群組空間不含頭貼。
- */
 import { describe, expect, it } from "vitest";
 import { buildTestApp } from "./helpers.js";
 import { adminApp } from "./helpers/admin-auth.js";
@@ -13,8 +9,8 @@ import { listSpaceUsage, readSpaceUsage, readSpaceUsageByKind } from "../src/sto
 
 const opts = { lockTimeoutMs: 60_000 };
 
-describe("頭貼用量算進個人空間", () => {
-  it("readSpaceUsage(user)＝附件＋頭貼（original_size＋display_size 逐位元組）；別人的頭貼不算進來", async () => {
+describe("avatar usage counts toward personal space", () => {
+  it("readSpaceUsage(user) = attachments + avatars (original_size + display_size byte for byte); other people's avatars don't count", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -22,15 +18,15 @@ describe("頭貼用量算進個人空間", () => {
     await seedAttachment(db, uploadsDir, n.id, alice.id, 400);
     await seedAvatarRow(db, { userId: alice.id, originalSize: 5000, displaySize: 300, isCurrent: true });
     await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0 });
+    // avatar-only user (no attachments) still counts
     await seedAvatarRow(db, { userId: bob.id, originalSize: 9000, displaySize: 900, isCurrent: true });
     const usage = await readSpaceUsage(db, { kind: "user", id: alice.id });
     expect(usage?.usedBytes).toBe(400 + 5000 + 300 + 70);
     expect(typeof usage?.usedBytes).toBe("number");
-    // 只有頭貼的 bob：沒有附件也算
     expect((await readSpaceUsage(db, { kind: "user", id: bob.id }))?.usedBytes).toBe(9900);
   });
 
-  it("群組空間不含頭貼：成員有頭貼、群組用量不變", async () => {
+  it("group space excludes avatars: a member has an avatar, group usage unchanged", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: alice.id, role: "admin" }]);
@@ -44,7 +40,7 @@ describe("頭貼用量算進個人空間", () => {
     expect((await listSpaceUsage(db, "group")).get(g.id)).toBe(250);
   });
 
-  it("assertSpaceRoomInTx：配額 1000、附件 400、頭貼 500 → 需要 100 通過、101 拋 StorageQuotaExceeded（usedBytes 含頭貼）", async () => {
+  it("assertSpaceRoomInTx: quota 1000, attachments 400, avatar 500 -> needing 100 passes, 101 throws StorageQuotaExceeded (usedBytes includes avatars)", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     await giveUserQuota(db, alice.id, 1000);
@@ -57,7 +53,7 @@ describe("頭貼用量算進個人空間", () => {
     expect(err).toMatchObject({ usedBytes: 900, quotaBytes: 1000, incomingBytes: 101 });
   });
 
-  it("assertSpaceRoomInTx：別人的頭貼不佔 alice 的額度", async () => {
+  it("assertSpaceRoomInTx: other people's avatars don't take alice's quota", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -66,7 +62,7 @@ describe("頭貼用量算進個人空間", () => {
     await db.transaction(tx => assertSpaceRoomInTx(tx, { kind: "user", id: alice.id }, 1000, opts));
   });
 
-  it("assertSpaceRoomInTx：群組空間的額度不受成員頭貼影響", async () => {
+  it("assertSpaceRoomInTx: group space quota is unaffected by members' avatars", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: alice.id, role: "admin" }]);
@@ -75,7 +71,7 @@ describe("頭貼用量算進個人空間", () => {
     await db.transaction(tx => assertSpaceRoomInTx(tx, { kind: "group", id: g.id }, 100, opts));
   });
 
-  it("listSpaceUsage(user)：只有頭貼沒有附件的 carol 也在 Map 裡；alice（兩者都有）是相加值；什麼都沒有的 dave 不在", async () => {
+  it("listSpaceUsage(user): carol with only an avatar and no attachments is in the Map; alice (both) has the sum; dave with nothing isn't there", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const carol = await seedUser(db);
@@ -84,7 +80,7 @@ describe("頭貼用量算進個人空間", () => {
     await seedAttachment(db, uploadsDir, n.id, alice.id, 400);
     await seedAvatarRow(db, { userId: alice.id, originalSize: 1000, displaySize: 20, isCurrent: true });
     await seedAvatarRow(db, { userId: carol.id, originalSize: 800, displaySize: 60, isCurrent: true });
-    // 非目前的候選也佔額度
+    // non-current candidates also take quota
     await seedAvatarRow(db, { userId: alice.id, originalSize: 300, displaySize: 10, isCurrent: false });
     const m = await listSpaceUsage(db, "user");
     expect(m.get(alice.id)).toBe(1730);
@@ -93,7 +89,7 @@ describe("頭貼用量算進個人空間", () => {
     expect(m.has(dave.id)).toBe(false);
   });
 
-  it("readSpaceUsageByKind：user 的頭貼總和併入 image；群組沒有頭貼", async () => {
+  it("readSpaceUsageByKind: a user's avatar total is folded into image; groups have no avatars", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -104,14 +100,14 @@ describe("頭貼用量算進個人空間", () => {
     await seedAttachment(db, uploadsDir, gn.id, alice.id, 30);
     await seedAvatarRow(db, { userId: alice.id, originalSize: 5000, displaySize: 300, isCurrent: true });
     await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0 });
+    // avatar-only user: everything is in image
     await seedAvatarRow(db, { userId: bob.id, originalSize: 9000, displaySize: 900, isCurrent: true });
     expect(await readSpaceUsageByKind(db, { kind: "user", id: alice.id })).toEqual({ image: 5770, audio: 0, video: 0, document: 0, other: 0 });
     expect(await readSpaceUsageByKind(db, { kind: "group", id: g.id })).toEqual({ image: 30, audio: 0, video: 0, document: 0, other: 0 });
-    // 只有頭貼的使用者：頭貼全在 image
     expect(await readSpaceUsageByKind(db, { kind: "user", id: bob.id })).toEqual({ image: 9900, audio: 0, video: 0, document: 0, other: 0 });
   });
 
-  it("GET /api/storage：頭貼計入 byKind.image、各類之和＝usedBytes", async () => {
+  it("GET /api/storage: avatars count in byKind.image, sum of kinds = usedBytes", async () => {
     const b = await buildTestApp();
     const alice = await seedUser(b.db);
     const n = await seedNote(b.db, { ownerId: alice.id });
@@ -123,7 +119,7 @@ describe("頭貼用量算進個人空間", () => {
     expect(Object.values(body.byKind as Record<string, number>).reduce((a, x) => a + x, 0)).toBe(body.usedBytes);
   });
 
-  it("GET /api/groups/:id/storage：群組的 byKind 不含頭貼", async () => {
+  it("GET /api/groups/:id/storage: group byKind excludes avatars", async () => {
     const b = await buildTestApp();
     const alice = await seedUser(b.db);
     const g = await seedGroup(b.db, "G", [{ userId: alice.id, role: "admin" }]);
@@ -133,7 +129,7 @@ describe("頭貼用量算進個人空間", () => {
     expect(body.usedBytes).toBe(0);
   });
 
-  it("GET /api/admin/users：用量欄含頭貼（只有頭貼的使用者也有值）", async () => {
+  it("GET /api/admin/users: usage column includes avatars (a user with only an avatar has a value too)", async () => {
     const b = await adminApp();
     const carol = await seedUser(b.db);
     await giveUserQuota(b.db, carol.id, 10_000);
@@ -142,11 +138,11 @@ describe("頭貼用量算進個人空間", () => {
     const row = list.find((r: { id: string }) => r.id === carol.id);
     expect(row.storage.usedBytes).toBe(860);
     expect(row.storage.quotaBytes).toBe(10_000);
-    // 附件的現場 SQL 不含頭貼：860 全來自頭貼
+    // The attachments' ad-hoc SQL doesn't include avatars: all 860 comes from avatars
     expect(await usedOf(b.db.$client, { kind: "user", id: carol.id })).toBe(0);
   });
 
-  it("GET /api/admin/storage-plans：overQuotaCount 的使用者用量含頭貼（只有頭貼就超額的 carol 算一個；恰好等於上限的 bob 不算；目前頭貼未超額、加上非目前候選才超額的 eve 算一個）", async () => {
+  it("GET /api/admin/storage-plans: usage of overQuotaCount users includes avatars (carol over quota with only an avatar counts one; bob exactly at the limit doesn't; eve whose current avatar is within quota but who exceeds it with a non-current candidate counts one)", async () => {
     const b = await adminApp();
     const carol = await seedUser(b.db);
     const bob = await seedUser(b.db);
@@ -155,7 +151,7 @@ describe("頭貼用量算進個人空間", () => {
     await setUserPlan(b.db, bob.id, plan);
     await seedAvatarRow(b.db, { userId: carol.id, originalSize: 900, displaySize: 101, isCurrent: true });
     await seedAvatarRow(b.db, { userId: bob.id, originalSize: 900, displaySize: 100, isCurrent: true });
-    // eve 的目前頭貼 500 未超額，加上非目前的候選 501 才超額
+    // eve's current avatar 500 is within quota; only with the non-current candidate 501 does she exceed it
     const eve = await seedUser(b.db);
     await setUserPlan(b.db, eve.id, plan);
     await seedAvatarRow(b.db, { userId: eve.id, originalSize: 400, displaySize: 100, isCurrent: true });

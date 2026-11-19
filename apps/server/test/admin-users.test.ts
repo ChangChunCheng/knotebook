@@ -58,7 +58,7 @@ function spyCollabHooks(): CollabHooks {
 
 const EXPECTED_KEYS = ["id", "email", "handle", "displayName", "isAdmin", "disabledAt", "createdAt", "lastLoginAt", "lastActiveAt", "storage", "hasPassword", "passwordResetExpiresAt", "avatar"].sort();
 
-describe("requireAdmin 保護：全部端點非 admin 403、未登入 401", () => {
+describe("requireAdmin guard: every endpoint is 403 for non-admin, 401 when not signed in", () => {
   const endpoints: Array<{ name: string; url: (id: string) => string; method: "GET" | "POST" | "DELETE" }> = [
     { name: "GET /api/admin/users", method: "GET", url: () => "/api/admin/users" },
     { name: "POST /api/admin/users/:id/disable", method: "POST", url: id => `/api/admin/users/${id}/disable` },
@@ -73,7 +73,7 @@ describe("requireAdmin 保護：全部端點非 admin 403、未登入 401", () =
   ];
 
   for (const ep of endpoints) {
-    it(`${ep.name}：非 admin → 403`, async () => {
+    it(`${ep.name}: non-admin -> 403`, async () => {
       const { app, db } = await buildTestApp();
       const nonAdmin = await insertUser(db, { email: `nonadmin-${ep.name}@example.com` });
       const target = await insertUser(db, { email: `target-${ep.name}@example.com` });
@@ -83,7 +83,7 @@ describe("requireAdmin 保護：全部端點非 admin 403、未登入 401", () =
       expect(res.statusCode).toBe(403);
     });
 
-    it(`${ep.name}：未登入 → 401`, async () => {
+    it(`${ep.name}: not signed in -> 401`, async () => {
       const { app, db } = await buildTestApp();
       const target = await insertUser(db, { email: `target2-${ep.name}@example.com` });
 
@@ -94,7 +94,7 @@ describe("requireAdmin 保護：全部端點非 admin 403、未登入 401", () =
 });
 
 describe("GET /api/admin/users", () => {
-  it("形狀鎖（Object.keys 精確）+ 不洩漏 passwordHash/tokenVersion", async () => {
+  it("exact shape lock (Object.keys) + no leak of passwordHash/tokenVersion", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-shape@example.com" });
     const other = await insertUser(db, { email: "other-shape@example.com", displayName: "Other" });
@@ -111,7 +111,7 @@ describe("GET /api/admin/users", () => {
     expect(otherRow).toMatchObject({ id: other.id, email: "other-shape@example.com", displayName: "Other", isAdmin: false, disabledAt: null, hasPassword: true, passwordResetExpiresAt: null });
   });
 
-  it("依 createdAt asc 排序", async () => {
+  it("sorted by createdAt asc", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-order@example.com", createdAt: new Date("2026-01-01T00:00:00Z") });
     const second = await insertUser(db, { email: "second-order@example.com", createdAt: new Date("2026-01-02T00:00:00Z") });
@@ -125,8 +125,8 @@ describe("GET /api/admin/users", () => {
   });
 });
 
-describe("POST /api/admin/users（#285 已拿掉代建端點）", () => {
-  it("admin 帶任意 body POST /api/admin/users → 404（路由不存在，不是 400／405）", async () => {
+describe("POST /api/admin/users (#285 the create-on-behalf endpoint was removed)", () => {
+  it("admin POSTing any body to /api/admin/users -> 404 (route doesn't exist, not 400/405)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-rm1@example.com" });
     const cookie = await cookieFor(admin.id);
@@ -144,7 +144,7 @@ describe("POST /api/admin/users（#285 已拿掉代建端點）", () => {
 });
 
 describe("POST /api/admin/users/:id/disable", () => {
-  it("該使用者現有 session 立即失效（me → 401，不等 TTL）；login → 403 account_disabled；onUserRevoked 被呼叫", async () => {
+  it("the user's existing sessions are invalidated immediately (me -> 401, no TTL wait); login -> 403 account_disabled; onUserRevoked is called", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-d1@example.com" });
@@ -184,7 +184,7 @@ describe("POST /api/admin/users/:id/disable", () => {
     expect(collabHooks.onUserRevoked).toHaveBeenCalledTimes(1);
   });
 
-  it("disable 自己 → 400 cannot_disable_self；onUserRevoked 未被呼叫", async () => {
+  it("disabling oneself -> 400 cannot_disable_self; onUserRevoked not called", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-d2@example.com" });
@@ -200,7 +200,7 @@ describe("POST /api/admin/users/:id/disable", () => {
     expect(collabHooks.onUserRevoked).not.toHaveBeenCalled();
   });
 
-  it("disable 自己（UUID 大寫版本）→ 仍是 400 cannot_disable_self（不可靠大小寫繞過自我鎖死檢查）", async () => {
+  it("disabling oneself (uppercase UUID) -> still 400 cannot_disable_self (case can't bypass the self-lockout check)", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-d2b@example.com" });
@@ -220,7 +220,7 @@ describe("POST /api/admin/users/:id/disable", () => {
     expect(row.tokenVersion).toBe(0);
   });
 
-  it("非 UUID／不存在 → 404 user_not_found；onUserRevoked 未被呼叫", async () => {
+  it("non-UUID/nonexistent -> 404 user_not_found; onUserRevoked not called", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-d3@example.com" });
@@ -245,7 +245,7 @@ describe("POST /api/admin/users/:id/disable", () => {
     expect(collabHooks.onUserRevoked).not.toHaveBeenCalled();
   });
 
-  it("重複 disable → 204 冪等，tv 不再增加（DB 斷言）", async () => {
+  it("repeated disable -> 204 idempotent, tv doesn't increase again (DB assertion)", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const admin = await insertUser(db, { isAdmin: true, email: "admin-d4@example.com" });
@@ -272,12 +272,12 @@ describe("POST /api/admin/users/:id/disable", () => {
     const [afterSecond] = await db.select().from(users).where(eq(users.id, target.id));
     expect(afterSecond.tokenVersion).toBe(1);
 
-    // 狀態未變（早已停用）不重複呼叫 hook——第二次 disable 不應該讓 onUserRevoked
-    // 再多觸發一次（維持第一次成功停用時那一次呼叫）。
+    // State unchanged (already disabled): the hook isn't called again - a second disable must not trigger onUserRevoked once more
+    // (keep the single call from the first successful disable).
     expect(collabHooks.onUserRevoked).toHaveBeenCalledTimes(1);
   });
 
-  // #286：停用與撤銷重設連結同一交易；revoked > 0 才記 log。
+  // #286: disable and revoking the reset link happen in one transaction; the log is written only when revoked > 0.
   const REVOKE_LOG = "停用帳號時撤銷重設密碼連結";
 
   async function disableSetup() {
@@ -289,7 +289,7 @@ describe("POST /api/admin/users/:id/disable", () => {
     return { app, db, admin, target, adminCookies, lines: cap.lines };
   }
 
-  it("D-R1：有效連結 → 停用 204 並撤銷、記 log；重新啟用後連結仍撤銷、列表為 null", async () => {
+  it("valid link -> disable 204 revokes it and logs; after re-enable the link stays revoked and the list shows null", async () => {
     const { app, db, admin, target, adminCookies, lines } = await disableSetup();
     const issued = await app.inject({ method: "POST", url: `/api/admin/users/${target.id}/password-reset`, cookies: adminCookies, payload: { expiresInHours: 1 } });
     expect(issued.statusCode).toBe(201);
@@ -308,14 +308,14 @@ describe("POST /api/admin/users/:id/disable", () => {
     expect(list.json().find((u: { id: string }) => u.id === target.id)).toMatchObject({ disabledAt: null, passwordResetExpiresAt: null });
   });
 
-  it("D-R2：沒有連結 → 停用 204、不記撤銷 log", async () => {
+  it("no link -> disable 204, no revoke log", async () => {
     const { app, target, adminCookies, lines } = await disableSetup();
     const res = await app.inject({ method: "POST", url: `/api/admin/users/${target.id}/disable`, cookies: adminCookies });
     expect(res.statusCode).toBe(204);
     expect(lines.filter(l => l.msg === REVOKE_LOG)).toEqual([]);
   });
 
-  it("D-R3：已停用再停用（冪等 204）→ 不再記撤銷 log", async () => {
+  it("disabling an already disabled user (idempotent 204) -> no revoke log again", async () => {
     const { app, target, adminCookies, lines } = await disableSetup();
     const issued = await app.inject({ method: "POST", url: `/api/admin/users/${target.id}/password-reset`, cookies: adminCookies, payload: { expiresInHours: 1 } });
     expect(issued.statusCode).toBe(201);
@@ -327,7 +327,7 @@ describe("POST /api/admin/users/:id/disable", () => {
 });
 
 describe("POST /api/admin/users/:id/enable", () => {
-  it("清除 disabledAt 後可重新登入；舊 session（disable 前簽的）仍 401（tv 已 bump，不回復）", async () => {
+  it("after clearing disabledAt the user can log in again; the old session (signed before disable) is still 401 (tv was bumped, not restored)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-e1@example.com" });
     const target = await insertUser(db, { email: "target-e1@example.com" });
@@ -365,7 +365,7 @@ describe("POST /api/admin/users/:id/enable", () => {
     expect(meOld.statusCode).toBe(401);
   });
 
-  it("gate 快取內的 stale 停用狀態不能沿用：disable 前先灌一筆 revoked 快取，enable 後新 session 仍需正常 200（鎖住 gate.invalidate 呼叫，不可被無聲刪除）", async () => {
+  it("a stale disabled state in the gate cache must not be reused: seed a revoked cache entry before disable, after enable a new session still gets 200 (pins the gate.invalidate call so it can't be silently removed)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-e3@example.com" });
     const target = await insertUser(db, { email: "target-e3@example.com" });
@@ -385,9 +385,8 @@ describe("POST /api/admin/users/:id/enable", () => {
     });
     expect(disableRes.statusCode).toBe(204);
 
-    // 用舊 cookie 打 me → 401，順便把「disabledAt 已設」的 row 灌進 gate 快取
-    // （TTL 60s）——這是 disable 自己的 gate.invalidate 已經處理過的快取寫入，
-    // 之後這筆 stale 快取要靠 enable 的 gate.invalidate 清掉，不是靠 disable 那次。
+    // Calling me with the old cookie -> 401 also loads the "disabledAt set" row into the gate cache (TTL 60s) - a cache write that disable's own
+    // gate.invalidate already handled; the stale entry must be cleared by enable's gate.invalidate, not disable's.
     const staleMe = await app.inject({ method: "GET", url: "/api/auth/me", cookies: { [SESSION_COOKIE]: oldCookie } });
     expect(staleMe.statusCode).toBe(401);
 
@@ -406,13 +405,13 @@ describe("POST /api/admin/users/:id/enable", () => {
     expect(newLogin.statusCode).toBe(200);
     const newCookie = newLogin.cookies.find(c => c.name === SESSION_COOKIE)!.value;
 
-    // 若 enable 沒有呼叫 gate.invalidate，這裡會沿用上面那筆 stale 快取（row.disabledAt
-    // 仍非 null），即使拿到全新登入核發的 session 仍會被誤判成 401（不等 60s TTL 過期）。
+    // If enable didn't call gate.invalidate, the stale cache entry (disabledAt still non-null) would be reused here and even a session from a fresh login
+    // would be wrongly judged 401 (without waiting for the 60s TTL).
     const meAfterEnable = await app.inject({ method: "GET", url: "/api/auth/me", cookies: { [SESSION_COOKIE]: newCookie } });
     expect(meAfterEnable.statusCode).toBe(200);
   });
 
-  it("不存在 → 404 user_not_found", async () => {
+  it("nonexistent -> 404 user_not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-e2@example.com" });
     const adminCookie = await cookieFor(admin.id);
@@ -428,7 +427,7 @@ describe("POST /api/admin/users/:id/enable", () => {
 });
 
 describe("POST /api/admin/users/:id/promote", () => {
-  it("isAdmin=true；該使用者立即（不等 TTL）可打 admin API（gate.invalidate 生效）", async () => {
+  it("isAdmin=true; the user can call admin APIs immediately (no TTL wait; gate.invalidate takes effect)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p1@example.com" });
     const target = await insertUser(db, { email: "target-p1@example.com" });
@@ -452,7 +451,7 @@ describe("POST /api/admin/users/:id/promote", () => {
     expect(row.isAdmin).toBe(true);
   });
 
-  it("不存在 → 404 user_not_found", async () => {
+  it("nonexistent -> 404 user_not_found", async () => {
     const { app, db } = await buildTestApp();
     const admin = await insertUser(db, { isAdmin: true, email: "admin-p2@example.com" });
     const adminCookie = await cookieFor(admin.id);
@@ -467,7 +466,7 @@ describe("POST /api/admin/users/:id/promote", () => {
   });
 });
 
-/** 這幾位裡仍是「啟用中的 admin」的人數（只看本案種的人；不受其他列影響）。 */
+/** Number of these users who are still enabled admins (counts only users seeded by this case; unaffected by other rows). */
 async function enabledAdminsAmong(db: Db, ids: string[]): Promise<number> {
   const rows = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, ids), eq(users.isAdmin, true), isNull(users.disabledAt)));
   return rows.length;
@@ -475,13 +474,13 @@ async function enabledAdminsAmong(db: Db, ids: string[]): Promise<number> {
 const demote = (app: Awaited<ReturnType<typeof buildTestApp>>["app"], targetId: string, cookies: Record<string, string>) =>
   app.inject({ method: "POST", url: `/api/admin/users/${targetId}/demote`, cookies });
 
-describe("POST /api/admin/users/:id/demote（#247）", () => {
-  it("成功 204、DB is_admin=false；被降級者緊接打 admin API → 403（gate.invalidate，不等 60 秒快取）", async () => {
+describe("POST /api/admin/users/:id/demote (#247)", () => {
+  it("success 204, DB is_admin=false; the demoted user calling an admin API right after -> 403 (gate.invalidate, no 60 s cache wait)", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
     const bCookies = await cookieOf(b.id);
-    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: bCookies })).statusCode).toBe(200); // 灌 gate 快取
+    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: bCookies })).statusCode).toBe(200); // fills the gate cache
     const res = await demote(app, b.id, await cookieOf(a.id));
     expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: bCookies })).statusCode).toBe(403);
     expect(res.statusCode).toBe(204);
@@ -489,10 +488,10 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
     expect(row!.isAdmin).toBe(false);
   });
 
-  it("降自己（小寫與大寫 UUID 兩形）→ 400 cannot_demote_self；仍是 admin", async () => {
+  it("demoting oneself (lowercase and uppercase UUID) -> 400 cannot_demote_self; still admin", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
-    await seedUser(db, { isAdmin: true }); // 另一位 admin 在：證明擋下的是「自己」而不是「最後一位」
+    await seedUser(db, { isAdmin: true }); // another admin exists: proves it's blocked because the target is oneself, not because it's the last one
     for (const id of [a.id, a.id.toUpperCase()]) {
       const r = await demote(app, id, await cookieOf(a.id));
       expect(r.statusCode, id).toBe(400);
@@ -501,7 +500,7 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
     expect(await enabledAdminsAmong(db, [a.id])).toBe(1);
   });
 
-  it("不存在／非 UUID → 404 user_not_found；本來就不是 admin → 204 冪等、仍不是 admin", async () => {
+  it("nonexistent/non-UUID -> 404 user_not_found; not an admin to begin with -> 204 idempotent, still not an admin", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const plain = await seedUser(db);
@@ -516,20 +515,20 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
     expect(row!.isAdmin).toBe(false);
   });
 
-  it("序列：呼叫者已被降級但 gate 快取仍是 admin → 降唯一的 admin 得 409 last_site_admin（不是群組的 last_admin）、不寫", async () => {
+  it("sequence: caller already demoted but the gate cache still says admin -> demoting the only admin gives 409 last_site_admin (not the group's last_admin), nothing written", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
     const aCookies = await cookieOf(a.id);
-    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: aCookies })).statusCode).toBe(200); // 灌 a 的快取
-    await db.update(users).set({ isAdmin: false }).where(eq(users.id, a.id)); // 繞過端點、不 invalidate：a 的快取仍是 admin
+    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: aCookies })).statusCode).toBe(200); // fills a's cache
+    await db.update(users).set({ isAdmin: false }).where(eq(users.id, a.id)); // bypass the endpoint without invalidating: a's cache still says admin
     const r = await demote(app, b.id, aCookies);
     expect(r.statusCode).toBe(409);
     expect(r.json().error).toEqual({ code: "last_site_admin", message: "The site needs at least one active admin." });
     expect(await enabledAdminsAmong(db, [a.id, b.id])).toBe(1);
   });
 
-  it("序列，停用形：呼叫者已被停用但快取仍有效 → 只剩目標一位啟用中的 admin → 409；停用中的 admin 不算", async () => {
+  it("sequence, disabled form: caller already disabled but cache still valid -> only the target is left as an enabled admin -> 409; a disabled admin doesn't count", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
@@ -541,7 +540,7 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
     expect(r.json().error.code).toBe("last_site_admin");
   });
 
-  it("併發互降（注入縫交錯）：A 降 B 持鎖未寫時 B 降 A → B 那發卡在鎖上；恰一個 204、另一個 409 last_site_admin；剩一位啟用中的 admin", async () => {
+  it("concurrent mutual demotion (test-hook interleaving): while A's demote of B holds the lock without having written, B demoting A blocks on the lock; exactly one 204 and one 409 last_site_admin; one enabled admin remains", async () => {
     const race: { fire?: () => Promise<LightMyRequestResponse> } = {};
     let second: Promise<LightMyRequestResponse> | undefined;
     let interleave: "blocked" | "settled" | undefined;
@@ -563,7 +562,7 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
     expect(await enabledAdminsAmong(built.db, [a.id, b.id])).toBe(1);
   });
 
-  it("disabled_at 併發形：C 是已停用的 admin；A、B 同時互降 → 恰一個 204、另一個 409（計數只算啟用中的，C 不算）", async () => {
+  it("disabled_at concurrency: C is a disabled admin; A and B demote each other at once -> exactly one 204 and one 409 (count only includes enabled admins, C doesn't count)", async () => {
     const race: { fire?: () => Promise<LightMyRequestResponse> } = {};
     let second: Promise<LightMyRequestResponse> | undefined;
     let interleave: "blocked" | "settled" | undefined;
@@ -586,7 +585,7 @@ describe("POST /api/admin/users/:id/demote（#247）", () => {
   });
 });
 
-/** 照 #286 產生連結交易的形：連結列帶 created_by_id（FK 檢查對建立者的 users 列取 KEY SHARE）。 */
+/** Shape of the #286 link-generation transaction: the link row carries created_by_id (the FK check takes KEY SHARE on the creator's users row). */
 const RESET_LINK_SQL =
   "insert into one_time_links (kind, token_hash, target_user_id, created_by_id, expires_at) values ('password_reset', 'h-' || gen_random_uuid(), $1, $2, now() + interval '1 hour')";
 async function insertResetLink(db: Db, targetId: string, createdById: string): Promise<void> {
@@ -596,15 +595,15 @@ async function insertResetLink(db: Db, targetId: string, createdById: string): P
 const disableUser = (app: Awaited<ReturnType<typeof buildTestApp>>["app"], targetId: string, cookies: Record<string, string>) =>
   app.inject({ method: "POST", url: `/api/admin/users/${targetId}/disable`, cookies });
 
-describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#250）", () => {
-  it("序列：目標是唯一啟用中的 admin（呼叫者已被停用但快取仍有效）→ 409 last_site_admin；資料不變、重設連結沒被撤銷", async () => {
+describe("POST /api/admin/users/:id/disable: the last enabled admin (#250)", () => {
+  it("sequence: target is the only enabled admin (caller already disabled but cache still valid) -> 409 last_site_admin; data unchanged, reset link not revoked", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
     await insertResetLink(db, b.id, a.id);
     const aCookies = await cookieOf(a.id);
-    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: aCookies })).statusCode).toBe(200); // 灌 a 的快取
-    await db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, a.id)); // 繞過端點、不 invalidate
+    expect((await app.inject({ method: "GET", url: "/api/admin/users", cookies: aCookies })).statusCode).toBe(200); // fills a's cache
+    await db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, a.id)); // bypass the endpoint, no invalidate
     const r = await disableUser(app, b.id, aCookies);
     expect(r.statusCode).toBe(409);
     expect(r.json().error).toEqual({ code: "last_site_admin", message: "The site needs at least one active admin." });
@@ -614,7 +613,7 @@ describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#
     expect(link!.revokedAt).toBeNull();
   });
 
-  it("正常：兩位啟用中的 admin，停用其一 → 204；停用非 admin 不受影響；重複停用已停用的 admin 冪等 204", async () => {
+  it("normal: two enabled admins, disabling one -> 204; disabling a non-admin is unaffected; disabling an already disabled admin again is idempotent 204", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
@@ -626,7 +625,7 @@ describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#
     expect((await disableUser(app, b.id, aCookies)).statusCode).toBe(204);
   });
 
-  it("併發互停（raw client 先持鎖）：A 停 B、B 停 A 都卡在鎖上；放鎖後恰一個 204、另一個 409；剩一位啟用中的 admin", async () => {
+  it("concurrent mutual disable (raw client holds the lock first): A disables B and B disables A both block on the lock; after release exactly one 204 and one 409; one enabled admin remains", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
@@ -653,7 +652,7 @@ describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#
     }
   });
 
-  it("與產生重設連結並發不死鎖：連結交易先鎖目標列、停用卡在目標列、連結 INSERT 對建立者取 KEY SHARE → 兩邊都成功（不得 500／40P01）", async () => {
+  it("concurrent with link generation, no deadlock: the link transaction locks the target row first, disable blocks on the target row, the link INSERT takes KEY SHARE on the creator -> both succeed (no 500/40P01)", async () => {
     const { app, db } = await buildTestApp();
     const a = await seedUser(db, { isAdmin: true });
     const b = await seedUser(db, { isAdmin: true });
@@ -673,7 +672,7 @@ describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#
     }
   });
 
-  it("與產生重設連結並發不死鎖（降級形）：連結對象 X 是 id 比建立者大的 admin，同時降級 X → 兩邊都成功", async () => {
+  it("concurrent with link generation, no deadlock (demote form): link target X is an admin whose id is larger than the creator's, demoted at the same time -> both succeed", async () => {
     const { app, db } = await buildTestApp();
     const [lo, mid, hi] = [await seedUser(db, { isAdmin: true }), await seedUser(db, { isAdmin: true }), await seedUser(db, { isAdmin: true })].sort((x, y) => (x.id < y.id ? -1 : 1));
     const raw = await db.$client.connect();
@@ -692,7 +691,7 @@ describe("POST /api/admin/users/:id/disable：最後一位啟用中的 admin（#
   });
 
   for (const order of ["demote-first", "disable-first"] as const) {
-    it(`停用 × 降級併發互斥（${order}）：raw client 先持鎖，兩種排隊順序都恰一個 204、另一個 409；剩一位啟用中的 admin`, async () => {
+    it(`disable x demote mutual exclusion under concurrency (${order}): raw client holds the lock first, exactly one 204 and one 409; one enabled admin remains`, async () => {
       const { app, db } = await buildTestApp();
       const a = await seedUser(db, { isAdmin: true });
       const b = await seedUser(db, { isAdmin: true });

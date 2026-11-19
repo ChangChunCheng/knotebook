@@ -1,6 +1,3 @@
-/**
- * 資料夾：建立、複製、移入群組帶資料夾（複製帶資料夾與移入群組帶資料夾、KF001、入口順序）。
- */
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -44,7 +41,7 @@ function failed(res: LightMyRequestResponse, status: number, code: string): stri
 }
 const messageOf = (res: LightMyRequestResponse): string => (res.json() as { error: { message: string } }).error.message;
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
+/** Test hook: after `arm(point, fn)`, the first time point is passed fn runs (once only). */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -64,7 +61,7 @@ function armedHook() {
   };
 }
 
-/** 自訂角色「只能讀＋建」（create-only，不能放進群組資料夾）加進群組。 */
+/** Adds a custom create-only role (read + create, can't be placed in a group folder) to the group. */
 async function createOnlyMember(db: Db, groupId: string): Promise<SeededUser> {
   const u = await seedUser(db);
   const roleId = await seedRole(db, groupId, `co-${u.id.slice(0, 8)}`, { canRead: true, canCreate: true });
@@ -87,7 +84,7 @@ async function countTitled(pool: Pool, title: string): Promise<number> {
   return rows[0]!.n;
 }
 
-/** 某人擁有的個人筆記數（判「沒有建出副本／新筆記」）。 */
+/** Number of personal notes owned by someone (to tell "no copy / new note was created"). */
 async function notesOwnedBy(pool: Pool, userId: string): Promise<number> {
   const { rows } = await pool.query<{ n: number }>("select count(*)::int as n from notes where owner_id = $1", [userId]);
   return rows[0]!.n;
@@ -98,8 +95,8 @@ async function transferGroup(app: FastifyInstance, groupId: string, adminId: str
   expect(del.statusCode, del.body).toBe(204);
 }
 
-describe("POST /api/notes 帶 folderId", () => {
-  it("FN-1 個人：建在自己的資料夾 → 201、folderId 正確、DB 一致；大寫 folderId 同；Bearer（notes:write）同", async () => {
+describe("POST /api/notes with folderId", () => {
+  it("personal: created in own folder -> 201, folderId correct, DB consistent; uppercase folderId the same; Bearer (notes:write) the same", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -119,13 +116,12 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(b.folderId).toBe(F);
     expect((await noteFolderCols(pool, b.id))?.folder_id).toBe(F);
 
-    // 不帶 folderId：根層（既有行為）
     const root = okDto(await post(app, u.id, { title: "FN1 root" }), 201);
     expect(root.folderId).toBeNull();
     expect((await noteFolderCols(pool, root.id))?.folder_id).toBeNull();
   });
 
-  it("FN-1b 帶 content：建在資料夾 → 201、folderId 正確、DB 一致；看不到 404；建列撞 KF001 → 404 folder_not_found", async () => {
+  it("with content: created in folder -> 201, folderId correct, DB consistent; invisible 404; row insert hitting KF001 -> 404 folder_not_found", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const pool = ctx.db.$client;
@@ -141,7 +137,7 @@ describe("POST /api/notes 帶 folderId", () => {
     failed(bad, 404, "folder_not_found");
     expect(await countTitled(pool, "FN1 content bad")).toBe(0);
 
-    // 建列在 service 的 try 之外：KF001 原樣拋到路由的 catch（資料夾在 membership-checked 之後換到別的空間）
+    // The row insert is outside the service's try: KF001 is thrown unchanged to the route's catch (the folder moved to another space after the membership check)
     const s = await sixRoleScene(ctx.db);
     const GF = (await seedFolder(ctx.db, { group: s.groupId })).id;
     const memberToken = await seedTokenForUser(ctx.db, s.member.id, "notes:read notes:write");
@@ -158,7 +154,7 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(await countTitled(pool, "FN1 content kf001")).toBe(0);
   });
 
-  it("FN-2 群組：{groupId, 該群組資料夾} 201；一致性錯 400；看不到 404 且與不存在逐位元組相同；可見性先於群組判準；create-only 根層 201、資料夾 403", async () => {
+  it("group: {groupId, that group's folder} 201; consistency errors 400; invisible 404 byte-for-byte identical to nonexistent; visibility is judged before the group criterion; create-only root 201, folder 403", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -176,7 +172,7 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(created.folderId).toBe(GF);
     expect(created.groupId).toBe(G);
     expect((await noteFolderCols(pool, created.id))?.folder_id).toBe(GF);
-    // groupId 大寫也認
+    // groupId in uppercase is accepted too
     expect(okDto(await post(app, s.member.id, { groupId: G.toUpperCase(), folderId: GF }), 201).folderId).toBe(GF);
 
     const crossCases: Array<[string, Record<string, string>]> = [
@@ -198,7 +194,7 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(failed(await post(app, s.member.id, { groupId: G, folderId: RANDOM_UUID }), 404, "folder_not_found")).toBe(hidden);
     expect(failed(await post(app, s.member.id, { folderId: XF }), 404, "folder_not_found")).toBe(hidden);
     expect(messageOf(await post(app, s.member.id, { groupId: G, folderId: XF }))).toBe(FOLDER_NOT_FOUND);
-    // 可見性先於群組判準：非成員 → folder_not_found（不是 group_not_found）；readOnly 看不到 H 的資料夾 → 404（不是 403）
+    // Visibility is judged before the group criterion: a non-member -> folder_not_found (not group_not_found); readOnly can't see H's folder -> 404 (not 403)
     expect(failed(await post(app, s.outsider.id, { groupId: G, folderId: GF }), 404, "folder_not_found")).toBe(hidden);
     expect(failed(await post(app, s.readOnly.id, { groupId: G, folderId: HF }), 404, "folder_not_found")).toBe(hidden);
 
@@ -209,19 +205,19 @@ describe("POST /api/notes 帶 folderId", () => {
     failed(denied, 403, "forbidden");
     expect(messageOf(denied)).toBe(ROLE_FORBIDDEN);
     expect(await countTitled(pool, "FN2 co folder")).toBe(0);
-    // 能編不能建（editOnly）：既有判準先擋 → 既有 403 句
+    // Can edit but can't create (editOnly): the existing criterion blocks first -> the existing 403 sentence
     const eo = await post(app, s.editOnly.id, { groupId: G, folderId: GF });
     failed(eo, 403, "forbidden");
     expect(messageOf(eo)).toBe("Your role in this group can't create notes.");
   });
 
-  it("FN-3 消失與非 UUID：縫裡轉移群組 → 404 folder_not_found；資料夾已換空間→ 404；個人資料夾在 INSERT 前被刪 → 404；\"x\" 與隨機 uuid 逐位元組相同", async () => {
+  it("vanishing and non-UUID: group transferred inside the test hook -> 404 folder_not_found; folder moved to another space -> 404; personal folder deleted before the INSERT -> 404; 'x' and a random uuid byte-for-byte identical", async () => {
     const seam = armedHook();
     const createHooks: NoteCreateHooks = {};
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook, noteCreateHooks: createHooks });
     const pool = db.$client;
 
-    // 群組在 membership-checked 之後被轉移
+    // The group is transferred after the membership check
     const s = await sixRoleScene(db);
     const GF = (await seedFolder(db, { group: s.groupId })).id;
     seam.arm("membership-checked", () => transferGroup(app, s.groupId, s.admin.id));
@@ -231,7 +227,7 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(seam.pending).toBe(false);
     expect(await countTitled(pool, "FN3 transferred")).toBe(0);
 
-    // 資料夾在 membership-checked 之後換到別的空間（形同轉移把群組資料夾搬進接收者的個人空間；群組列還在）→ trigger KF001
+    // The folder moves to another space after the membership check (equivalent to a transfer moving the group folder into the recipient's personal space; the group row remains) -> trigger KF001
     const s2 = await sixRoleScene(db);
     const GF2 = (await seedFolder(db, { group: s2.groupId })).id;
     seam.arm("membership-checked", async () => {
@@ -243,7 +239,7 @@ describe("POST /api/notes 帶 folderId", () => {
     expect(seam.pending).toBe(false);
     expect(await countTitled(pool, "FN3 kf001")).toBe(0);
 
-    // 個人：INSERT 前（beforeInsert 縫，要帶 title 才會呼叫）資料夾被刪 → notes_folder_fk 23503
+    // Personal: the folder is deleted before the INSERT (beforeInsert test hook, which is only called when a title is given) -> notes_folder_fk 23503
     const u = await seedUser(db);
     const doomed = (await seedFolder(db, { personal: u.id })).id;
     let fired = 0;
@@ -263,8 +259,8 @@ describe("POST /api/notes 帶 folderId", () => {
   });
 });
 
-describe("POST /api/notes/:id/copy 帶 folderId", () => {
-  it("FN-4 到自己的資料夾、「建立副本」（個人與群組同一資料夾）→ 201、副本 folderId 正確；一致性錯 400；看不到 404；create-only 到群組資料夾 403", async () => {
+describe("POST /api/notes/:id/copy with folderId", () => {
+  it("to own folder, 'make a copy' (personal and group in the same folder) -> 201, copy's folderId correct; consistency errors 400; invisible 404; create-only to a group folder 403", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedUser(db);
@@ -282,7 +278,6 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
     expect(dup.folderId).toBe(F1);
     expect((await noteFolderCols(pool, dup.id))?.folder_id).toBe(F1);
 
-    // 不帶 folderId：根層（既有行為）
     const plain = okDto(await copy(app, u.id, n, {}), 201);
     expect(plain.folderId).toBeNull();
     expect((await noteFolderCols(pool, plain.id))?.folder_id).toBeNull();
@@ -319,7 +314,7 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
     expect(failed(await copy(app, s.member.id, gn, { groupId: G, folderId: RANDOM_UUID }), 404, "folder_not_found")).toBe(hidden);
     expect(failed(await copy(app, s.member.id, gn, { groupId: G, folderId: "x" }), 404, "folder_not_found")).toBe(hidden);
     expect(messageOf(await copy(app, s.member.id, gn, { groupId: G, folderId: XF }))).toBe(FOLDER_NOT_FOUND);
-    // 可見性先於群組判準：readOnly（無 can_create）看不到 H 的資料夾 → 404 folder_not_found（不是 group_not_found）
+    // Visibility is judged before the group criterion: readOnly (no can_create) can't see H's folder -> 404 folder_not_found (not group_not_found)
     expect(failed(await copy(app, s.readOnly.id, gn, { groupId: G, folderId: HF }), 404, "folder_not_found")).toBe(hidden);
 
     const co = await createOnlyMember(db, G);
@@ -330,7 +325,7 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
     expect(okDto(await copy(app, co.id, gn, { groupId: G }), 201).folderId).toBeNull();
   });
 
-  it("FN-5 複製的鎖序：群組目標 groups KS → 資料夾 KS → 來源 KS；個人目標 資料夾 KS → 來源 KS", async () => {
+  it("copy lock order: group target groups KS -> folder KS -> source KS; personal target folder KS -> source KS", async () => {
     const { db, pool } = await freshDb();
     const queries: string[] = [];
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
@@ -341,7 +336,7 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
         ...input, copy: doc, uploadsDir: tmpdir(), copiedFileIds: [], searchExtract: extractForIndex(doc.doc), lockTimeoutMs: 5000,
       }));
       const all = queries.filter(q => !TXN_CONTROL.test(q.trim())).filter(q => ROW_LOCK.test(q.trim()));
-      // 到讀來源（第一句 notes 列鎖）為止；之後的是全文索引對新副本取的鎖（`replaceNoteSearchIndexInTx`），不在這條鎖序的範圍。
+      // Up to reading the source (the first notes row lock); what follows is the lock the full-text index takes on the new copy (`replaceNoteSearchIndexInTx`), outside this lock order.
       const locks = all.slice(0, all.findIndex(q => / from "notes" /.test(q)) + 1);
       return { out, locks };
     };
@@ -366,7 +361,7 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
     expect(p.out.note.folderId).toBe(F);
   });
 
-  it("FN-6 複製的消失：縫裡刪目標資料夾 → 404 folder_not_found；縫裡轉移目標群組 → 404 folder_not_found（不是 group_not_found）；縫裡降成 create-only → 403（交易內）", async () => {
+  it("copy vanishing: target folder deleted in the test hook -> 404 folder_not_found; target group transferred in the test hook -> 404 folder_not_found (not group_not_found); downgraded to create-only in the test hook -> 403 (inside the transaction)", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -406,8 +401,8 @@ describe("POST /api/notes/:id/copy 帶 folderId", () => {
   });
 });
 
-describe("POST /api/notes/:id/move 帶 folderId", () => {
-  it("FN-7 移入群組資料夾：200、folderId、分享／公開／版本清空、updated_at 不變；不帶 folderId → 根層；一致性 400；看不到 404；create-only 403", async () => {
+describe("POST /api/notes/:id/move with folderId", () => {
+  it("move into a group folder: 200, folderId, shares/public/versions cleared, updated_at unchanged; without folderId -> root; consistency 400; invisible 404; create-only 403", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -431,7 +426,7 @@ describe("POST /api/notes/:id/move 帶 folderId", () => {
     expect(await sharesOf(db, n)).toEqual([]);
     expect((await pool.query("select count(*)::int as n from note_versions where note_id = $1", [n])).rows[0].n).toBe(0);
 
-    // 不帶 folderId：群組根層（原本在個人資料夾裡）
+    // Without folderId: group root (the note was in a personal folder)
     const n2 = await noteIn(db, pool, { ownerId: o.id }, FO);
     expect(okDto(await move(app, o.id, n2, { groupId: G }), 200).folderId).toBeNull();
     expect((await noteFolderCols(pool, n2))?.folder_id).toBeNull();
@@ -451,14 +446,14 @@ describe("POST /api/notes/:id/move 帶 folderId", () => {
     expect(failed(await move(app, o.id, n3, { groupId: G, folderId: RANDOM_UUID }), 404, "folder_not_found")).toBe(hidden);
     expect(failed(await move(app, o.id, n3, { groupId: G, folderId: "x" }), 404, "folder_not_found")).toBe(hidden);
     expect(messageOf(await move(app, o.id, n3, { groupId: G, folderId: XF }))).toBe(FOLDER_NOT_FOUND);
-    // 可見性先於群組判準：不是成員的群組＋它的資料夾 → folder_not_found（不是交易內的 group_not_found）
+    // Visibility is judged before the group criterion: a group the user isn't a member of + its folder -> folder_not_found (not the in-transaction group_not_found)
     const X = (await seedGroup(db, "X2", [{ userId: xAdmin.id, role: "admin" }])).id;
     const X2F = (await seedFolder(db, { group: X })).id;
     expect(failed(await move(app, o.id, n3, { groupId: X, folderId: X2F }), 404, "folder_not_found")).toBe(hidden);
     expect(await noteState(pool, n3)).toMatchObject({ owner_id: o.id, group_id: null });
     expect((await noteFolderCols(pool, n3))?.folder_id).toBe(FO);
 
-    // create-only（交易內判）：群組資料夾 403、什麼都沒改；群組根層照舊 200
+    // create-only (judged inside the transaction): group folder 403, nothing changed; group root still 200
     const C = (await seedGroup(db, "C", [{ userId: xAdmin.id, role: "admin" }])).id;
     const CF = (await seedFolder(db, { group: C })).id;
     const coRole = await seedRole(db, C, "co", { canRead: true, canCreate: true });
@@ -474,7 +469,7 @@ describe("POST /api/notes/:id/move 帶 folderId", () => {
     expect(okDto(await move(app, o.id, n4, { groupId: C }), 200).folderId).toBeNull();
   });
 
-  it("FN-7b 移入的消失：縫裡刪 FG → 404 folder_not_found；縫裡轉移目標群組 → 帶 folderId 404 folder_not_found、不帶 404 group_not_found", async () => {
+  it("move vanishing: FG deleted in the test hook -> 404 folder_not_found; target group transferred in the test hook -> 404 folder_not_found with folderId, 404 group_not_found without", async () => {
     const seam = armedHook();
     const { app, db } = await buildTestApp({ groupTestHook: seam.hook });
     const pool = db.$client;
@@ -501,7 +496,7 @@ describe("POST /api/notes/:id/move 帶 folderId", () => {
     expect(seam.pending).toBe(false);
     expect(await noteState(pool, n)).toMatchObject({ owner_id: o.id, group_id: null });
 
-    // 對照：不帶 folderId 的同一縫轉移 → 照舊 group_not_found
+    // Control: the same test hook transfer without folderId -> group_not_found as before
     const K = (await seedGroup(db, "K", [{ userId: admin.id, role: "admin" }, { userId: o.id, role: "member" }])).id;
     seam.arm("note-move-authorized", () => transferGroup(app, K, admin.id));
     const plain = await move(app, o.id, n, { groupId: K });
@@ -510,7 +505,7 @@ describe("POST /api/notes/:id/move 帶 folderId", () => {
     expect(await noteState(pool, n)).toMatchObject({ owner_id: o.id, group_id: null });
   });
 
-  it("FN-7c 移入的鎖序字面：筆記 FOR UPDATE → groups KS → 資料夾 KS，且資料夾 KS 在 note-move-locked 縫之前", async () => {
+  it("move-in lock order literally: note FOR UPDATE -> groups KS -> folder KS, with the folder KS before the note-move-locked test hook", async () => {
     const { db, pool } = await freshDb();
     const queries: string[] = [];
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q) } }) as unknown as Db;
