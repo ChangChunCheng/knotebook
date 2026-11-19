@@ -1,22 +1,6 @@
-/**
- * 加成員／分享對話框的使用者建議：`GET /api/users/suggest?q=`。
- *
- * **隱私邊界**：這**不是**全站名錄——全站搜尋會讓任何登入者列舉所有帳號的 email。只在呼叫者「已經認識」的人裡找：
- * ① 與呼叫者同在至少一個群組的成員（`GET /api/groups/:id/members` 本來就把他們的 email 給任何成員看）；
- *    那支哪天收回成員的 email，① 要一起拿掉，見 routes/groups.ts 該路由上的註解）；
- * ② 呼叫者把**自己的**筆記逐人分享過的對象（`GET /api/notes/:id/shares` 本來就給 owner 看）。垃圾桶裡的筆記不算（`deleted_at IS NULL`；
- *    那時分享名單在介面上看不到，還原後就又算了）。
- * 刻意**不含**「把筆記分享給我的人」：被分享者在介面上只看得到 owner 的 handle，看不到 email（`NoteDto` 只帶
- * `ownerHandle`），收進來就是把原本看不到的 email 洩出去。也排除自己與停用帳號（停用帳號仍可輸入完整 email 加入／分享，
- * 只是不出現在建議裡）。關係一斷（被移出群組、撤銷分享）下一次查詢就不再出現——每次都即時查，沒有快取。
- *
- * session-only（`app.authenticate`，不收 Bearer）：這支只服務 web 的兩個對話框；token 的 scope（`notes:*`）不涵蓋人員查詢，
- * 收 Bearer 只會讓外洩的 token 多一條撈 email 的路。
- *
- * 比對：`q` trim 後 2–100 字，對 email 與顯示名稱做不分大小寫的子字串比對（`%`／`_`／`\` 照字面，ESCAPE `\`）；
- * 排序＝前綴命中在前，再顯示名稱、id（決定性）；最多 `USER_SUGGEST_MAX_RESULTS` 筆。單句查詢（兩支 UNION 的 CTE），沒有 N+1。
- * 節流：`userSuggest` 桶（key=userId，見 `USER_SUGGEST_LIMIT`），驗證通過之後才扣。
- */
+// Not a site-wide directory (that would let any logged-in user enumerate every email): only people the caller already knows. Fellow group members (their emails are already visible via
+// GET /api/groups/:id/members; drop this branch if that is withdrawn) and people the caller shared their own non-trashed notes with. Deliberately excludes people who shared notes with me
+// (the UI shows only their handle, not email), self and disabled accounts (which can still be added or shared with by typing the full email). Queried live, no cache. Session-only: token scopes don't cover people lookup, and Bearer would give a leaked token an email-harvesting route.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -54,9 +38,7 @@ export function usersRoutes(deps: UsersRouteDeps) {
       const escaped = escapeLike(parsed.data.q);
       const contains = `%${escaped}%`;
       const prefix = `${escaped}%`;
-      // lower() 兩邊都套（樣式也交給 PG lower，避免 JS 與 PG 的大小寫規則不一致）。
-      // known：①同群組成員（group_members 自連；吃 group_members_user_idx 與 PK）；②我擁有的筆記的分享對象
-      // （notes_owner_idx → note_shares PK）。UNION 去重後再 JOIN users。
+      // lower() on both sides so JS and PG case rules can't disagree.
       const res = await deps.db.execute<{ id: string; email: string; display_name: string }>(sql`
         with known as (
           select other.user_id as id

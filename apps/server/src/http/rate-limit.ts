@@ -1,80 +1,31 @@
-/**
- * 固定視窗（fixed window）節流器，供 per-user API 節流用（collab-token、slug PATCH，
- * 等）。與 `auth/rate-limit.ts` 的 `LoginThrottle`（帳號+IP 雙軌、指數退避）
- * 是兩套不同語意，不共用實作：這裡只要「每個 key 在固定長度的視窗內最多 N 次」。
- *
- * **生產預設值唯一真相來源**：`http/limiters.ts` 的 `buildFixedLimiters()`（22 顆固定的桶）與
- * `buildAdjustableLimiters()`（9 顆站台可調的桶，`limit` 現讀 `SiteLimits`、`windowMs` 取這裡的常數）都從這裡
- * 匯出的常數取值；`buildApp` 與 `test/helpers.ts` 都走它們，不各自重複寫一份數字字面量。
- *
- * 站台管理調整額度的接點：`limit` 傳函式就每次現讀（`consume`／`consumeMany`／
- * `isBlocked` 每次呼叫都重讀）；既有呼叫點傳數字不變。`retryAfterMs` 回「這個 key 的視窗還剩幾毫秒」，給
- * `Retry-After` 用（`retryAfterSeconds` 換成秒）。
- */
+// Fixed window per key (not sliding), no backoff (unlike `LoginThrottle`). The constants below are the only production defaults; http/limiters.ts reads them.
+// A function `limit` is re-read on every consume/consumeMany/isBlocked call; windows are fixed, only limits are site-adjustable.
 import { SITE_LIMITS } from "@knotebook/shared";
 import { BoundedMap, DEFAULT_MAX_KEYS } from "../lib/bounded-map.js";
 
-// #397：9 顆站台管理可調的桶（註冊表 `rate*` 項）的 `limit` 取註冊表的預設，`windowMs` 留字面（視窗不可調，測試比對兩者相等）。
-// 生產與測試 harness 的實際建構在 `http/limiters.ts`（`limit` 現讀 `SiteLimits`）。
 
 export const COLLAB_TOKEN_LIMIT = { limit: 60, windowMs: 60_000 } as const;
 export const SLUG_PATCH_LIMIT = { limit: 10, windowMs: 600_000 } as const;
-/** `POST /api/notes/:id/uploads` 節流（key=userId，同 collabToken/slugPatch 慣例）。 */
 export const UPLOAD_LIMIT = { limit: SITE_LIMITS.rateUpload.default, windowMs: 600_000 } as const;
-/** `POST /api/ai` 節流（key=userId，同 collabToken/slugPatch/upload 慣例）。 */
 export const AI_LIMIT = { limit: SITE_LIMITS.rateAi.default, windowMs: 60_000 } as const;
-/**
- * OIDC 端點的節流額度（key=request.ip——這兩條路由發生在登入之前，無
- * userId 可用；比照 AI_LIMIT 的數值與視窗長度）。
- *
- * ⚠ **login 與 callback 各自一個 `FixedWindowLimiter` 實例，不共用**（issue #16）：一次
- * 完整的 SSO 登入必定先 login 再 callback，兩者共用一個 bucket 的話等於每次登入吃掉
- * 兩份額度，實際可用次數只有標稱的一半（共用出口 IP 的辦公室網路更早撞到）。
- * 兩者用同一組數值，但計數彼此獨立。
- */
+// Key = request.ip (no user yet). Login and callback each get their own limiter instance (#16): a shared one would charge two units per sign-in and halve the quota.
 export const OIDC_LIMIT = { limit: 30, windowMs: 60_000 } as const;
-/** #187：`POST /api/auth/register` 的 per-IP 額度（key=request.ip；註冊發生在登入之前，無 userId 可用）。 */
 export const REGISTER_LIMIT = { limit: 10, windowMs: 3_600_000 } as const;
-/**
- * #72：`PUT/DELETE /api/notes/:id/public-link` 節流（key=userId）。**GET 不吃這桶**
- * ——分享面板開啟即 GET，10 分鐘開 11 次面板是正常操作；掛上去就是 OIDC issue #16
- * 那族「共桶讓額度砍半」的變形。⚠ 這桶只管 token 兩支：#122 的別名
- * `PUT/DELETE …/public-link/slug` 併 `slugPatch` 桶、#297 的 `PUT …/public-width`
- * 用 `PUBLIC_WIDTH_LIMIT`——三顆桶的紀律與理由見 routes/notes.ts 六支總註解。
- */
+// GET is not limited (opening the share panel does a GET). Alias routes use `slugPatch`, width uses PUBLIC_WIDTH_LIMIT.
 export const PUBLIC_LINK_LIMIT = { limit: 10, windowMs: 600_000 } as const;
-/**
- * #297：`PUT /api/notes/:id/public-width` 節流（key=userId）。**先解析 body、再授權、後扣**
- * ——壞 body 的 400、陌生人的 404、無權者的 403 都不耗桶。不與 `publicLink` 共用：
- * 共用時連點幾次寬度就會把撤銷公開擠成 429，違反 docs/sharing.md「撤銷立即生效」。
- */
+// Charged after body parse and authorization; separate from publicLink so width clicks can't turn a revoke into a 429.
 export const PUBLIC_WIDTH_LIMIT = { limit: 60, windowMs: 600_000 } as const;
-/**
- * #72／#122 公開端點的雙桶（皆無登入態；token 形與別名形 `/:handle/:slug`
- * **共用同兩顆桶**）。四步序寫死在 routes/public.ts 的 `resolvePublicNote`：
- * **格式 guard → 不計數的 isBlocked(ip) 預檢 → DB 查詢 → miss 才 consume(ip)／
- * hit 才 consume（token 形 `${ip}:${token}`、別名形 `${ip}:path:${noteId}`）**
- * ——hit/miss 要查完 DB 才知道，pre-DB 若直接 consume(ip) 正常讀者也會啃 miss 額度。
- *
- * - miss 桶（key=ip，**兩形共用**）：管「解不到 noteId」的洪水與其 DB 查詢。**key
- *   不得含請求輸入**——含了就是攻擊者控制的 key space（每個亂輸入＝新 bucket 滿血
- *   額度，節流形同不存在，還會把 BoundedMap 掃空擠掉合法讀者）。120 而非 30：共用
- *   出口 IP／反代未設 TRUST_PROXY 時這把 key 會塌縮，額度要容得下多人（塌縮的退化
- *   形記 docs/known-limitations.md）。
- * - hit 桶（**只記命中**）：內容/圖片各一份。key 兩形不可能相撞（token 是 base64url
- *   無 `:`，`:path:` 中綴只出現在別名形），故同一篇筆記兩形額度各自計（乘二）＋
- *   同一 BoundedMap 的 key 基數變大——皆明示接受，記 docs/known-limitations.md。
- *   跨筆記 upload 的 404 是「解得到 noteId」的正常讀者行為，落 hit 桶不啃 miss 額度。
- */
+// Public endpoints; token and alias forms share both limiters. Order in `resolvePublicNote`: format guard → isBlocked(ip) pre-check → DB lookup → consume miss only / hit only (hit vs miss is known only after the lookup).
+// miss key = ip only: request input in the key would let an attacker mint fresh limiters and flush legitimate readers from the BoundedMap. 120 because the key collapses behind a shared IP or a proxy without TRUST_PROXY (docs/known-limitations.md).
+// hit limiters (content, image) key on ${ip}:${token} and ${ip}:path:${noteId}; they can't collide (a token has no ":", ":path:" appears only in alias keys), so each form
+// gets its own quota and the map holds more keys (accepted, docs/known-limitations.md). A cross-note upload 404 resolves a noteId, so it charges hit, not miss.
 export const PUBLIC_MISS_LIMIT = { limit: 120, windowMs: 60_000 } as const;
 export const PUBLIC_NOTE_LIMIT = { limit: 60, windowMs: 60_000 } as const;
 export const PUBLIC_UPLOAD_LIMIT = { limit: 300, windowMs: 60_000 } as const;
 
 export interface FixedWindowLimiterOptions {
-  /** 每個視窗的額度。傳函式＝每次呼叫現讀（可調額度的接點）。 */
   limit: number | (() => number);
   windowMs: number;
-  /** 視窗登記表的 key 上限，插入序淘汰最舊。預設 `DEFAULT_MAX_KEYS`。 */
   maxKeys?: number;
 }
 
@@ -83,18 +34,7 @@ interface Window {
   count: number;
 }
 
-/**
- * `consume(key)`：每次呼叫「必計數」——即使已超限，這次呼叫仍會讓計數 +1（不是只在
- * 未超限時才累加），回傳值只反映「這次呼叫本身有沒有落在限額內」。
- *
- * 視窗滾動：每個 key 各自獨立的固定視窗（非 sliding window）——`now - windowStart >=
- * windowMs` 即視為進入新視窗，計數歸零重算，不做「前一視窗按比例扣打」那種平滑處理。
- *
- * maxKeys 淘汰：交給共用的 `BoundedMap`（插入序淘汰）。只有「這個 key 開新視窗」時
- * 才會 `set()` 而移到尾端，純粹計數不觸發重排；超過上限時砍最久沒開過新視窗的
- * 那個 key。`auth/rate-limit.ts` 的 `LoginThrottle` 與 `auth/session.ts` 的 `UserGate`
- * 用的是同一個型別（issue #15）。
- */
+// Always counts, even when over the limit. Eviction is BoundedMap insertion order: only opening a new window moves a key to the tail.
 export class FixedWindowLimiter {
   private readonly limitOf: () => number;
   private readonly windowMs: number;
@@ -107,7 +47,7 @@ export class FixedWindowLimiter {
     this.windows = new BoundedMap<Window>(opts.maxKeys ?? DEFAULT_MAX_KEYS);
   }
 
-  /** #397：目前的上限（函式形的 `limit` 現讀）。MCP `copy_note` 的訊息說的是擋下這次請求的那顆桶，故讀桶本身。 */
+  /** Read from the limiter itself because the MCP `copy_note` message names the limiter that rejected the request. */
   currentLimit(): number {
     return this.limitOf();
   }
@@ -116,16 +56,11 @@ export class FixedWindowLimiter {
     return this.consumeTicket(key) !== null;
   }
 
-  /**
-   * 同 `consume`（照樣「必計數」），但放行時回這次落在的視窗的起點（`refund` 的憑據），被拒回 `null`。
-   * Minor 2：退回時要知道扣的是哪個視窗——扣完之後視窗過期、又開了新窗，退回不能減到新窗上。
-   */
+  // Like consume, still always counts; returns the window start (null when rejected) so `refund` doesn't subtract from a newer window.
   consumeTicket(key: string): number | null {
     const now = Date.now();
     let window = this.windows.get(key);
     if (!window || now - window.windowStart >= this.windowMs) {
-      // 開新視窗（cache miss 或前一視窗已過期）：`BoundedMap.set` 負責把這個 key
-      // 移到尾端並在必要時砍掉最舊的一筆。
       window = { windowStart: now, count: 0 };
       this.windows.set(key, window);
     }
@@ -133,18 +68,10 @@ export class FixedWindowLimiter {
     return window.count <= this.limitOf() ? window.windowStart : null;
   }
 
-  /**
-   * #175：一次扣 `n` 個單位——複製筆記依「會被複製的附件數」扣 upload 桶。
-   * 與 `consume` 刻意不同：**額度不足時一個都不扣**（回 false、計數不動）。`consume` 的「拒絕也計數」對單次請求是
-   * 懲罰持續重試；照搬到 n 個單位的話，一次被拒的大複製就會把整個視窗剩下的上傳額度吃光，連一般上傳都被擋。
-   * `n <= 0` 恆放行且不開新視窗（零個附件的複製不碰這個桶）。
-   * `n > limit`：夾到整窗額度——只要求一個**空窗**（count 0），放行後吃滿整窗。
-   * 否則 `count + n > limit` 對任何視窗都成立，附件張數超過整窗額度的筆記會永遠複製不了，卻回「請稍後再試」。
-   * 夾住後這種大複製每個視窗最多一發（同窗內一般上傳也被擋到窗尾）；它仍受 edit 桶節流。
-   * 「要先花約 n／limit 個視窗才傳得上去」只在附件由複製者自己上傳時成立；能看到筆記的成員（含只讀）可複製別人累積的
-   * 附件而不必先付上傳額度。附件數 ≤ limit 時每窗最多產出 limit 個新檔；附件數 > limit 的筆記在空窗時一發就產出全部 n 個新檔（扣滿該窗），
-   * 所以每窗產出的新檔數只受該筆記的附件數限制，再加上每次複製另受 edit 桶節流（docs/known-limitations.md「Anyone who can read a note can re-store its attachments…」條）。
-   */
+  // Takes nothing when short (consume's count-on-reject would let one rejected large copy eat the window's upload quota). n <= 0 opens no window.
+  // n > limit is clamped to a full empty window, else a note with more attachments than the quota could never be copied; such a copy then
+  // blocks ordinary uploads until the window ends. Any reader of a note can copy its
+  // attachments without paying upload quota, so new files per window are bounded only by attachment count and the edit limiter (docs/known-limitations.md).
   consumeMany(key: string, n: number): boolean {
     if (n <= 0) return true;
     const now = Date.now();
@@ -160,32 +87,21 @@ export class FixedWindowLimiter {
     return true;
   }
 
-  /**
-   * #72：**不計數**的預檢——只回報「此刻 consume 會不會被拒」，不動計數也不開新
-   * 視窗（過期視窗視同未滿，交給之後真正的 consume 開新窗）。公開端點的三步順序
-   * 用它在 DB 查詢前擋已超限的 IP，而不提前扣額度（見 PUBLIC_MISS_LIMIT 註解）。
-   */
+  // Non-counting, so over-limit IPs are turned away before the DB query without being charged early. An expired window counts as not full and no window is opened.
   isBlocked(key: string): boolean {
     const window = this.windows.get(key);
     if (!window || Date.now() - window.windowStart >= this.windowMs) return false;
     return window.count >= this.limitOf();
   }
 
-  /**
-   * 退回一次 `consumeTicket`（檔案寫回在解析之前就扣，解析完才知道是零區、什麼都不寫時退回）。`ticket` 是那次
-   * `consumeTicket` 回的視窗起點：只在這個 key 目前的視窗**就是那一個**、計數 > 0 時減一；視窗已換（過期後又開了新窗）、
-   * 不存在就什麼都不做——不開新窗、不讓計數變負、不減到別的視窗上。
-   */
+  // For a charge taken before the outcome is known (file write-back that finds nothing to write, a copy rejected by the note size cap). Refunds only if the key's current window is the
+  // ticket's and count > 0: an expired or reopened window is left alone, the count never goes negative and no window is opened.
   refund(key: string, ticket: number): void {
     const window = this.windows.get(key);
     if (!window || window.windowStart !== ticket || window.count === 0) return;
     window.count -= 1;
   }
 
-  /**
-   * bulk transfer：這個 key 目前的視窗還剩幾毫秒（給 `Retry-After`）。沒有視窗或已過期 → 0。
-   * 不計數、不開窗（同 `isBlocked`）。
-   */
   retryAfterMs(key: string): number {
     const window = this.windows.get(key);
     if (!window) return 0;
@@ -194,162 +110,73 @@ export class FixedWindowLimiter {
   }
 }
 
-/** `Retry-After` 的秒數：毫秒向上取整、至少 1（不送 `Retry-After: 0`）。 */
 export function retryAfterSeconds(ms: number): number {
   return Math.max(1, Math.ceil(ms / 1000));
 }
 
-/**
- * #107：Bearer token 路徑的節流（key=`token:${userId}`）。
- *
- * **只對 token 路徑**——session 路徑維持現狀（無限流），所以既有 web／e2e 行為零
- * 變動。要防的對象是失控的外部程式，不是使用者自己的瀏覽器；「MCP client 打滿不
- * 會鎖住使用者介面」是刻意設計。
- *
- * 桶由路由宣告的 `required` scope 決定：read 路由走 `tokenRead`、write 路由走
- * `tokenWrite`。扣點在 scope 檢查**通過之後**——403 `insufficient_scope` 不啃桶
- * （與 BEARER_MISS 同紀律）。
- */
+// Key token:<userId>; the route's required scope picks tokenRead or tokenWrite. Token path only, aimed at runaway external programs: the session
+// path is unlimited, so web/e2e are unaffected and a saturated MCP client never locks the UI. Charged after the scope check, so 403 insufficient_scope doesn't consume.
 export const TOKEN_READ_LIMIT = { limit: SITE_LIMITS.rateTokenRead.default, windowMs: 60_000 } as const;
 export const TOKEN_WRITE_LIMIT = { limit: SITE_LIMITS.rateTokenWrite.default, windowMs: 600_000 } as const;
 
-/**
- * #107：無效 Bearer 的節流（key=`request.ip`）。
- *
- * **consume 的觸發集合**＝scheme 不是 Bearer、前綴不是 `knb_`（含把 refresh token
- * 當 Bearer 送）、查無、過期、`checkUser` 失敗、`mustChangePassword`。
- * **403 `insufficient_scope` 不 consume**——那是合法 token，反覆重試不得連累同 IP。
- * `checkUser`／`mustChangePassword` 失敗**刻意 consume**：那是「這個帳號目前不該被
- * 任何 token 代表」，client 的重試對系統而言與無效 token 無異。
- *
- * **成功路徑不做 `isBlocked` 預檢**：有效 token 永不被同 IP 的壞 client 連累（反代
- * 共用出口 IP 時尤其重要）。**刻意接受的代價**：超限後每一發無效 Bearer 仍會做一次
- * `access_token_hash` 的 UNIQUE 索引查找才知道失敗——與公開端點「限流擋在 DB 之前」
- * 的紀律相反，理由是單筆索引查找成本遠低於那邊的多表存取，而「有效 token 不被連累」
- * 的價值更高。
- *
- * ⚠ `TRUST_PROXY` 未設時反代後全體共用同一顆桶（比照 #72 公開端點的同族退化形）。
- */
+// Key = request.ip. Consumes on a non-Bearer scheme, a non-knb_ prefix (incl. a refresh token sent as Bearer), unknown, expired, and checkUser/mustChangePassword
+// failures (no token may represent that account); insufficient_scope doesn't consume (valid token).
+// No isBlocked pre-check, so a valid token is never hurt by a bad client on the same IP; accepted cost: one UNIQUE index lookup per invalid Bearer even over
+// the limit, cheap next to the public endpoints' multi-table reads.
+// ⚠ Without TRUST_PROXY everyone behind a proxy shares one limiter.
 export const BEARER_MISS_LIMIT = { limit: 30, windowMs: 60_000 } as const;
 
-/**
- * #286／#285：一次性連結「無效」桶（key=`request.ip`），重設密碼與邀請的 inspect／完成共四個無登入端點、跨 kind 共用。
- * 比照 `BEARER_MISS_LIMIT`：**失敗才扣、有效 token 不做 `isBlocked` 預檢**。觸發集合＝token 形狀不合（body 400 不扣）、查無、
- * kind 不符、已用、已撤銷、已過期（交易外的查詢落空）；交易內並發造成的 410 不扣（那發已以有效 token 通過查詢）。
- * 代價同 Bearer：超限後無效 token 仍做一次 `token_hash` 的 UNIQUE 索引查找。
- * ⚠ `TRUST_PROXY` 未設時反代後全體共用同一顆桶（有效連結不受影響）。
- */
+// Key = request.ip, shared across kinds by the four unauthenticated reset/invite inspect/complete endpoints. Same discipline as BEARER_MISS: charged on
+// failure only (unknown, wrong kind, used, revoked, expired; a malformed token's body 400 doesn't), no isBlocked pre-check for valid tokens, so an invalid
+// token still costs one token_hash index lookup over the limit. A 410 from concurrency inside the transaction doesn't consume (that request had a valid token).
+// ⚠ Without TRUST_PROXY everyone behind a proxy shares one limiter (valid links are unaffected).
 export const ONE_TIME_LINK_MISS_LIMIT = { limit: 30, windowMs: 60_000 } as const;
-/**
- * #286／#285：每支連結（重設、邀請）的兌換嘗試桶（key=`link:${id}`）。完成端點（重設完成、邀請接受）查到有效連結、且帳密有效值為開之後才扣
- * （帳密關閉的 403 不扣，否則重新開啟後可能還要再等一小時）；inspect 不扣。擋的是持有有效連結者
- * 不斷送失敗請求（太短的密碼、hash 忙）讓 server 一直跑 argon2。
- */
+// Key link:<id>. Charged only on completion once a valid link is found and password login is on (the 403 doesn't consume, else re-enabling could mean
+// waiting an hour); inspect never charges. Stops a link holder from making the server run argon2 on failing requests.
 export const ONE_TIME_LINK_ATTEMPT_LIMIT = { limit: 10, windowMs: 3_600_000 } as const;
 
-/** #107：`POST /api/auth/tokens`（key=userId）。 */
 export const PAT_CREATE_LIMIT = { limit: 10, windowMs: 3_600_000 } as const;
 
-/**
- * #106：`PATCH /api/auth/tokens/:id`（改 agent 名稱，key=userId）。比 `PAT_CREATE_LIMIT`
- * 寬得多——改名不簽發任何憑證、不佔憑證額度，只是單語句 UPDATE；使用者在設定頁一次改好
- * 幾個名字是正常操作，這桶擋的是失控迴圈。#239 起同一個 PATCH 也調整權限（`scope`），
- * 共用這個桶：同樣是單語句 UPDATE、不簽發憑證。
- */
+// Looser than PAT_CREATE_LIMIT: rename/scope change issues no credential and is a single UPDATE.
 export const TOKEN_RENAME_LIMIT = { limit: 60, windowMs: 600_000 } as const;
 
-/**
- * #132：DCR（key=ip）。無認證端點，per-IP 擋灌表；殭屍 client 另有回收。
- * 30/h 而非更嚴：`TRUST_PROXY` 未設時反代後全體共用同一顆桶。
- */
+// Key = ip (unauthenticated endpoint; zombie clients are reclaimed separately). 30/h, not stricter: without TRUST_PROXY everyone behind a proxy shares one limiter.
 export const DCR_LIMIT = { limit: 30, windowMs: 3_600_000 } as const;
 
-/**
- * #132：`GET /oauth/authorize`（key=ip）。**每一發通過參數檢查的請求都計數**——與
- * `PUBLIC_MISS_LIMIT` 的「預檢不計數、miss 才 consume」刻意相反：authorize 沒有
- * 「查完 DB 才知 hit/miss」的性質，每發必查 DB，且合法流量是人為導航，30/min 綽綽有餘。
- */
+// Every request that passes parameter checks counts, deliberately unlike PUBLIC_MISS's non-counting pre-check: there is no hit/miss (each one queries
+// the DB), and legitimate traffic is human navigation.
 export const AUTHORIZE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
 
-/** #132：`POST /oauth/token`（key=ip）。 */
 export const TOKEN_ENDPOINT_LIMIT = { limit: 60, windowMs: 60_000 } as const;
 
-/**
- * #106：`GET /api/notes/:id/content` 與（#137）`GET /api/notes/:id/edits` 節流（key=userId）。
- * **角色檢查之後才消耗**：`role === "none"` 的 404 不啃桶（與 `PUBLIC_MISS_LIMIT` 的
- * per-IP 防列舉是兩回事——這裡呼叫者已具名，讓陌生 id 的 404 吃掉合法讀取的額度只會
- * 懲罰到自己）。120/min 對照 `TOKEN_READ_LIMIT`（300/min）：內容讀取比 metadata 重
- * （要 fork 文件、mount 一次 BlockNote），所以另設一顆更緊的桶。
- */
+// GET content and GET edits. Charged after the role check so 404s for role "none" don't consume (the caller is named, so unlike per-IP anti-enumeration
+// such a 404 would only penalise themselves). Tighter than TOKEN_READ_LIMIT: a content read forks the doc and mounts BlockNote.
 export const CONTENT_READ_LIMIT = { limit: SITE_LIMITS.rateContentRead.default, windowMs: 60_000 } as const;
 
-/**
- * #93：全文搜尋（MCP `search_notes` 與 `GET /api/search` 共用這一顆），key=userId。
- * 不與 `CONTENT_READ_LIMIT` 共用：搜尋的成本隨「呼叫者看得見的內文總量」成長，與「讀一篇」不同；共用會讓 AI 分頁讀取
- * 與側欄打字互相餓死。
- */
+// Shared by MCP search_notes and GET /api/search. Not shared with CONTENT_READ_LIMIT: search cost grows with the visible text, and sharing would let paged AI reads and sidebar typing starve each other.
 export const SEARCH_LIMIT = { limit: SITE_LIMITS.rateSearch.default, windowMs: 60_000 } as const;
 
-/**
- * bulk transfer：整包匯出 `GET /api/transfer/export`（key=userId）。整包認證後才扣（拿到
- * 全站 slot 才扣）；另有全站同時 1 個（`transfer/export-slot.ts`）；`Retry-After` 由 `retryAfterMs` 算。
- */
+// Charged after the site-wide export slot is taken (transfer/export-slot.ts, which also caps the site at 1 concurrent export).
 export const TRANSFER_EXPORT_LIMIT = { limit: SITE_LIMITS.rateTransferExport.default, windowMs: 3_600_000 } as const;
 
-/**
- * bulk transfer：檔案寫回 `PUT /api/transfer/notes`（key=userId）。只在「有區要套用」「只改名」「要新建」時扣
- * 一個單位，**在佇列內扣**；進佇列前只做不計數的 `isBlocked` 預檢；零區、同檔重送、新增去重命中不扣這顆、改扣 `tokenRead`。
- * 生產預設以函式建（每次現讀，接點）。
- */
+// One unit, charged inside the queue, only for regions to apply, a rename-only change or a create; zero regions, identical resends and deduped creates charge tokenRead instead.
 export const TRANSFER_WRITE_LIMIT = { limit: SITE_LIMITS.rateTransferWrite.default, windowMs: 60_000 } as const;
 
-/**
- * #106 寫入端（`POST /api/notes/:id/edits`、`POST …/edits/:editId/revert`、
- * `POST /api/notes` 帶 `content`；key=userId）。**角色檢查之後才消耗**（同
- * `CONTENT_READ_LIMIT` 的理由）。比讀取緊得多：每一次寫入都要 fork、mount 一次
- * BlockNote、開一次直連並落盤。
- */
+// Content writes, incl. revert and POST /api/notes with content. Charged after the role check; tighter than reads because every write forks, mounts BlockNote, opens a direct connection and persists.
 export const EDIT_LIMIT = { limit: SITE_LIMITS.rateEdit.default, windowMs: 60_000 } as const;
 
-/**
- * 資料夾寫入（`folders/service.ts` 四支：`POST /api/folders`、`PATCH /api/folders/:id`、`DELETE /api/folders/:id`、
- * `PUT /api/notes/:id/folder`，與共用同一服務層的 MCP `create_folder`／`rename_folder`／`move_folder`／`delete_folder`／
- * `move_note_to_folder`；key=userId）。**入口檢查（名稱、可見性、權限、空間）都過了才扣**，同 `EDIT_LIMIT` 的理由。
- *
- * **不與 `edit` 共桶**：這幾支只改中繼資料（資料夾列、`notes.folder_id`／`note_placements`），不 fork、不 mount BlockNote、
- * 不碰 Yjs 內文；`EDIT_LIMIT` 的 30/min 是照內容寫入的成本訂的。共桶時，側欄選取模式一次移動 31 篇以上就在第 31 篇
- * 429（網頁批次是一篇一個請求、依序送），而且會把同一分鐘 AI 編輯（REST／MCP）的額度一起吃光——OIDC issue #16 那族
- * 「共桶讓額度互相餓死」的變形。
- *
- * 600/min：側欄一次搬約 300 項以內、同一分鐘內再按「復原」（復原也是逐項送回、同樣扣這桶）都還在額度內；更大的選取在該視窗第 601 次
- * 扣桶時停下（同一分鐘內先做過別的資料夾操作會更早；停下那項起仍勾選、可再試），仍擋得住失控迴圈。每支都是一個短交易；
- * 比它重的 `DELETE /api/notes/:id`（關門、踢線、flush）在 session 路徑上根本不節流。`DELETE /api/folders/:id` 不論移入垃圾桶
- * 幾篇都只扣一次。MCP 經 token 呼叫時另先扣 `TOKEN_WRITE_LIMIT`（60／10 分鐘），實際先撞到的是那一顆。
- */
+// Charged only after the entry checks (name, visibility, permission, space). Not shared with `edit`: folder writes only change metadata, and edit's
+// 30/min would stop a 31-note sidebar move at the 31st and eat that minute's AI-edit quota.
+// 600/min fits ~300 moves plus an undo (undo is charged per item); larger selections stop at the 601st charge. DELETE /api/folders/:id charges once
+// however many notes it trashes. MCP calls through a token are charged TOKEN_WRITE_LIMIT first and hit that one earlier.
 export const FOLDER_LIMIT = { limit: 600, windowMs: 60_000 } as const;
 
-/**
- * #334 最愛的加入與移出（`PUT`／`DELETE /api/favorites/:id`；key=userId，兩支共用、各扣一次；`GET` 不扣）。
- * PUT **解析 `:id`、body 並授權之後才扣**（授權前的 400／404——非 UUID、壞 body、讀不到的筆記——不扣；扣桶之後筆記才被永久刪除的那種 404 已經扣過）；
- * DELETE 只在 `:id` 是 UUID 時扣。
- *
- * 600/min 比照 `FOLDER_LIMIT`：選取模式一次批次移出數百篇（網頁逐篇送 DELETE）仍在額度內，又擋得住失控迴圈。
- * **不與 `edit` 共桶**：切一次星號只寫一列，`EDIT_LIMIT` 的 30/min 是照內容寫入的成本訂的；共桶時批次移出會把同一分鐘
- * AI 編輯的額度吃光。固定、不進站台管理可調。
- */
+// Not shared with `edit` (one row per toggle; a bulk removal would eat the AI-edit quota). GET is free. PUT charges after parse and authorization
+// (a 404 because the note was permanently deleted after the charge stays charged); DELETE only when `:id` is a UUID. Fixed, not site-adjustable.
 export const FAVORITE_LIMIT = { limit: 600, windowMs: 60_000 } as const;
 
-/**
- * `GET /api/users/suggest`（成員／分享對話框的「認識的人」建議，key=userId）。數值比照 `SEARCH_LIMIT`：同樣是使用者
- * 邊打字邊查（web 端 200 ms debounce、≥ 2 字才發），一般輸入一個 email 只會發十來次。**不與 `search` 共用**——共用會讓
- * 側欄搜尋與加成員對話框互相餓死（同 `SEARCH_LIMIT` 不與 `CONTENT_READ_LIMIT` 共用的理由）。q 驗證失敗的 400 不扣。
- * 這桶不是隱私邊界（查詢範圍本來就只限呼叫者已看得到 email 的人），只擋失控迴圈。
- */
+// Not shared with `search`, so sidebar search and the add-member dialog can't starve each other. Not a privacy boundary (scope is already limited to emails the caller can see). q-validation 400s don't charge.
 export const USER_SUGGEST_LIMIT = { limit: 60, windowMs: 60_000 } as const;
 
-/**
- * `POST /api/auth/avatars/oidc/:identityId/refresh`（手動「改用 X 的頭貼」，key=userId）：每人每小時 10 次。
- * 每次都是一次由 server 發出的對外下載（最長 10 s），所以不與 `upload` 共桶（上傳的額度是照使用者自己送來的位元組訂的，
- * 也可由站台管理調整；這裡的成本在 server 對外連線）。固定、不進站台管理可調。身分不是本人、沒有圖片網址的 404 在扣桶之前，不扣。
- */
+// Not shared with `upload`: each call is a server-side download of up to 10 s. Fixed, not site-adjustable; 404s before the charge don't consume.
 export const AVATAR_REFRESH_LIMIT = { limit: 10, windowMs: 3_600_000 } as const;

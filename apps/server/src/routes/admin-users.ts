@@ -18,14 +18,12 @@ import type { AdminTestHook } from "../auth/admin-test-hook.js";
 import { demoteSiteAdminInTx } from "../auth/tx/admin-demote.js";
 import { readAvatarRefs } from "../avatars/read.js";
 
-/** 儲存配額：指派方案的 body（strict——多餘欄 400）。 */
 const assignPlanSchema = z.object({ planId: z.string() }).strict();
 
 export interface AdminUsersRouteDeps {
   db: Db;
   gate: UserGate;
   collabHooks: CollabHooks;
-  /** #247 降級的測試注入縫（`auth/admin-test-hook.ts`）；`undefined`＝no-op。 */
   adminTestHook?: AdminTestHook;
 }
 
@@ -37,16 +35,12 @@ interface AdminUserDto {
   isAdmin: boolean;
   disabledAt: string | null;
   createdAt: string;
-  /** #247：最後一次新簽登入 session 的時間；null＝升級後尚未登入過（不回填）。 */
   lastLoginAt: string | null;
-  /** #267：最後一次帶 session cookie 的請求、共編連線或編輯、或登入的時間（`users.last_active_at`，同一使用者至多每分鐘更新一次）；null＝從無紀錄。 */
+  /** Last request with the session cookie, collab connection or edit, or login; at most once a minute per user, except login, which always writes it (#267). null = never. */
   lastActiveAt: string | null;
   storage: SpaceStorageDto;
-  /** #286：`password_hash IS NOT NULL`（只回布林）。 */
   hasPassword: boolean;
-  /** #286：有效（未用、未撤銷、未過期）的重設連結的到期時間；至多一支。不受帳密開關影響。 */
   passwordResetExpiresAt: string | null;
-  /** 目前的頭貼；沒有頭貼、顯示圖尚未備好 → null。 */
   avatar: AvatarRef | null;
 }
 
@@ -64,9 +58,7 @@ interface AdminUserRow {
   passwordResetExpiresAt: Date | null;
 }
 
-// 只選這九欄＋兩個 SQL 表達式＋方案（storage 另組）（形狀鎖，#122 起含 handle、#247 起含 lastLoginAt、#267 起含 lastActiveAt、#286 起含
-// hasPassword／passwordResetExpiresAt）：不可帶 passwordHash/tokenVersion——`hasPassword` 只回布林，仍不 select `password_hash` 本體。即使只是
-// 內部查詢，也不要 select 出這兩欄再靠序列化階段刻意漏掉，直接在 SQL 端就不撈，斷絕任何洩漏路徑。
+// Never select passwordHash/tokenVersion (`hasPassword` is a boolean computed in SQL): not fetching them closes every leak path.
 function toAdminUserDto(row: AdminUserRow, storage: SpaceStorageDto, avatar: AvatarRef | null): AdminUserDto {
   return {
     id: row.id,
@@ -96,33 +88,22 @@ const adminUserColumns = {
   lastLoginAt: users.lastLoginAt,
   lastActiveAt: users.lastActiveAt,
   hasPassword: sql<boolean>`${users.passwordHash} is not null`,
-  // ⚠ 外層參照 `users.id` 必須留在巢狀的 `and(…)` 裡：drizzle 0.44 在單表 RETURNING（PATCH storage-plan）會把
-  // SQL 表達式**頂層**的欄位參照去掉表名，頂層的 `${users.id}` 變成 `"id"`、在子查詢內被解析成 one_time_links.id，靜默變 null。
-  // `.mapWith` 不可省：不加會拿到 pg 原始字串。
+  // ⚠ The `users.id` reference must stay inside the nested `and(…)`: drizzle 0.44 drops the table name from top-level column references in a single-table RETURNING,
+  // which would resolve to one_time_links.id and silently give null. `.mapWith` is required for the raw pg string.
   passwordResetExpiresAt: sql`(select ${oneTimeLinks.expiresAt} from ${oneTimeLinks} where ${and(eq(oneTimeLinks.targetUserId, users.id), activeOneTimeLink("password_reset"))})`.mapWith(oneTimeLinks.expiresAt),
 };
 
-/** 單一使用者的 storage 欄（PATCH 回應用；GET 列表走 GROUP BY 一次）。 */
 async function storageOfUser(db: Db, userId: string): Promise<SpaceStorageDto> {
   const usage = await readSpaceUsage(db, { kind: "user", id: userId });
   if (!usage) throw new Error(`storageOfUser: 找不到使用者 ${userId}`);
   return { planId: usage.planId, planName: usage.planName, usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes };
 }
 
-/**
- * Admin 使用者管理路由：全部端點皆需 `requireAdmin`。
- *
- * disable/enable/promote/demote 四支操作性端點對 `:id` 皆先以 `UUID_RE` 擋掉格式不合法的
- * 路徑參數（見 notes/service.ts 的 `resolveRole` 同一套理由：pg uuid 欄位對非法格式
- * 字串會直接 throw，讓它冒到全域錯誤 handler 會被誤判成 500），非法格式與「查無此
- * 使用者」統一回同一個 404 `user_not_found`，不特別區分。
- */
+// A malformed :id gets the same 404 as an unknown user (pg throws on a bad uuid string, which would surface as a 500).
 export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     app.get("/api/admin/users", { preHandler: app.requireAdmin }, async () => {
-      // 次要排序鍵 id asc（同 notes.ts GET /api/notes 清單慣例）：createdAt 精度不足以
-      // 保證唯一序，兩筆使用者在同一毫秒建立時排序會不穩定。
-      // 用量見 listSpaceUsage（附件與頭貼都沒有的使用者不在 Map 裡 → 0）；方案以 inner join 帶出（storage_plan_id NOT NULL＋FK）。
+      // Secondary key id: createdAt isn't unique at millisecond precision. Users with no attachments and no avatar are absent from the usage map → 0.
       const usage = await listSpaceUsage(deps.db, "user");
       const rows = await deps.db
         .select({ ...adminUserColumns, planId: storagePlans.id, planName: storagePlans.name, quotaBytes: storagePlans.quotaBytes })
@@ -138,24 +119,18 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
       if (!UUID_RE.test(rawId)) {
         return sendError(reply, 404, "user_not_found", "No user with that id.");
       }
-      // 正規化成小寫：pg 的 uuid 型別比對本身不分大小寫，但 `id === request.user!.id`
-      // 這個自我鎖死檢查是純 JS 字串比對——request.user!.id 來自 DB（一律小寫），若
-      // 路徑參數帶大寫版本的自己 UUID（格式仍合法，UUID_RE 帶 /i），字串比對會誤判
-      // 成「不是自己」而放行，讓 admin 能繞過 cannot_disable_self 把自己鎖死。統一在
-      // 這裡正規化，後續比對／查詢都用同一個小寫 id。
+      // Lowercase: the self-lockout check `id === request.user!.id` is a plain string compare (the DB id is lowercase), so an uppercase own UUID would bypass cannot_disable_self.
       const id = rawId.toLowerCase();
       if (id === request.user!.id) {
         return sendError(reply, 400, "cannot_disable_self", "You can't disable your own account.");
       }
 
-      // 條件式停用＋ #286 同交易撤銷重設連結（auth/tx/disable-user.ts）。
       const input = { id };
       let result: Awaited<ReturnType<typeof disableUserInTx>>;
       try {
         result = await deps.db.transaction(tx => disableUserInTx(tx, input));
       } catch (err) {
         if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
-        // 交易動到含雜湊欄的連結列：非預期的 DB 錯誤一律遮蔽後再丟（同 admin-auth.ts 刪除登入服務）。
         throw redactDbError(request.log, err, "停用帳號");
       }
 
@@ -164,8 +139,7 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
         if (!existing) {
           return sendError(reply, 404, "user_not_found", "No user with that id.");
         }
-        // 已存在但這次 UPDATE 沒命中列：代表已經是停用狀態——冪等 204，不再重複
-        // invalidate/onUserRevoked（上一次真正停用時已經處理過，狀態沒有變化）。
+        // Already disabled: idempotent 204 without repeating invalidate/onUserRevoked.
         return reply.code(204).send();
       }
 
@@ -183,12 +157,9 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
       if (!UUID_RE.test(rawId)) {
         return sendError(reply, 404, "user_not_found", "No user with that id.");
       }
-      // 正規化成小寫（見 disable 端點同一段註解）：三個 :id 端點統一套用，即使 enable/
-      // promote 本身沒有「跟自己比對」的檢查，仍保持一致行為與可預期性。
       const id = rawId.toLowerCase();
 
-      // 刻意不動 tokenVersion：disable 當下已 bump 過的 tv 維持不變，讓 disable 前簽發
-      // 的舊 session 即使在 enable 之後仍然失效（binding：只有重新登入才能拿到新 session）。
+      // tokenVersion stays as bumped at disable, so sessions issued before it remain invalid after enable.
       const [updated] = await deps.db.update(users).set({ disabledAt: null }).where(eq(users.id, id)).returning({ id: users.id });
       if (!updated) {
         return sendError(reply, 404, "user_not_found", "No user with that id.");
@@ -211,14 +182,12 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
         return sendError(reply, 404, "user_not_found", "No user with that id.");
       }
 
-      // gate 快取內的 isAdmin 若不即時失效，該使用者要等到快取 TTL（60s）過期才會被
-      // requireAdmin 認可——invalidate 讓下一次 authenticate 立刻反映新 isAdmin。
+      // Else the gate's cached isAdmin lingers for its 60 s TTL.
       deps.gate.invalidate(id);
 
       return reply.code(204).send();
     });
 
-    // #247：與 promote 對稱。自降 400（比照 disable 的小寫正規化理由，見上）；交易內鎖全部 admin 列後計數（auth/tx/admin-demote.ts）。
     app.post("/api/admin/users/:id/demote", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) {
@@ -235,13 +204,12 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
         if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
         throw err;
       }
-      // 同 promote：gate 快取的 isAdmin 不即時失效的話，被降級者 60 秒內仍過得了 requireAdmin。
       deps.gate.invalidate(id);
       return reply.code(204).send();
     });
 
-    // 儲存配額：指派使用者方案。單句非鍵 UPDATE（不取空間鎖、不擋進行中的上傳）；不檢查新方案是否小於現用量。
-    // 停權者照樣可改。非 UUID 的 :id／planId 各走自己的 404 碼（不落到 22P02 → 500）；大寫 UUID 正規化成小寫。
+    // Non-key UPDATE: takes no space lock and doesn't block uploads in progress; no check against current usage. Suspended users can be changed.
+    // A non-UUID :id or planId each get their own 404 code (instead of 22P02 → 500); uppercase UUIDs are lowercased.
     app.patch("/api/admin/users/:id/storage-plan", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "user_not_found", "No user with that id.");

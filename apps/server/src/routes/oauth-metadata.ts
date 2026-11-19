@@ -3,12 +3,7 @@ import { publicUrlIssuer, type AppConfig } from "../config.js";
 import { canonicalResource } from "../oauth/resource.js";
 import { registerRfcErrorHandlers } from "./oauth.js";
 
-/**
- * `/.well-known` 前綴 plugin。兩條無認證 GET，快取 1 小時。
- *
- * **不提供根形 PRM**：RFC 9728 §3.3 要求 `resource` 等於「插入 well-known 後綴以組出
- * 該 URL 的 resource identifier」，根形即 origin，與 resource identifier `<issuer>/api/mcp` 衝突。
- */
+/** No root-form PRM: RFC 9728 §3.3 makes `resource` the identifier with the well-known suffix inserted, which conflicts with `<issuer>/api/mcp`. */
 export function oauthMetadataRoutes(deps: { config: AppConfig }) {
   return async function register(app: FastifyInstance): Promise<void> {
     registerRfcErrorHandlers(app);

@@ -1,10 +1,5 @@
-/**
- * bulk transfer：`/api/transfer/*`。只收 `knbt_` bulk 權杖（`transferAuth.requireBulk`），
- * 不回退 cookie。讀側三支：`GET /api/transfer/notes/:id`（單篇）、`DELETE /api/transfer/token`（自行撤銷）、`GET /api/transfer/export`
- * （整包）；寫側：`PUT /api/transfer/notes`（寫回一篇／新增）。
- * 讀取零副作用：只走 `loadNoteDoc`，不開直連、不 touch presence、不動 `notes.*`；唯一的寫入是 `transfer_bases`
- * 與撤銷。HTTP 層訊息英文（`sendError`；#372）。log 不記內容、標題、檔名、權杖。
- */
+// Accepts only knbt_ bulk tokens, no cookie fallback. Reads have zero side effects (loadNoteDoc only: no direct connection, no presence, notes.* untouched); their only writes are
+// transfer_bases and self-revocation. Logs never contain content, titles, filenames or tokens.
 import { eq } from "drizzle-orm";
 import { publicUrlIssuer } from "../config.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -38,41 +33,27 @@ import { ExportSlot } from "../transfer/export-slot.js";
 import { EXPORT_BUSY_RETRY_AFTER_S, TRANSFER_EXPORT_MAX_NOTES, streamExport, type ExportTestHooks } from "../transfer/export-stream.js";
 import { inRangeIds, layoutOf, rangeGone, visibleNotes, visibleTree } from "../transfer/range.js";
 
-/** 範圍物件（群組、資料夾）使用時已看不到。 */
 export const RANGE_GONE_MESSAGE = "The group or folder this transfer token covers is no longer visible to you.";
 export const NOT_IN_RANGE_MESSAGE = "This note isn't in this transfer token's range.";
 export const TRANSFER_NOTE_NOT_FOUND_MESSAGE = "No note with that id.";
 export const TRANSFER_RATE_LIMITED_MESSAGE = "Too many requests. Wait a moment and try again.";
-/**
- * 整包的每人每小時額度（`transferExport`）用完。curl 的指令不印回應 header，所以等待時間寫在訊息裡：
- * `retryAfterMs` 換成分鐘，向上取整、至少 1（與 `Retry-After` 的秒數同一個 `retryAfterMs`）。單篇走 `contentRead`，不受這個額度影響。
- * 桶的 key 是 userId，換新權杖不會重置；等待可能比權杖的壽命（至多 30 分鐘）長，所以提醒到時候可能要新權杖。
- */
+// curl doesn't print response headers, so the wait is in the message (minutes, rounded up, at least 1). The limiter key is userId, so a new token doesn't reset it; the wait may outlast the token (≤ 30 min).
 export function exportRateLimitedMessage(retryAfterMs: number): string {
   const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
   return `You've reached your hourly limit for full downloads; it counts per person, so a new token won't reset it. Download again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}, with a new token if this one has expired by then; until then, fetch the notes you need one by one with the note command, which doesn't count toward this limit.`;
 }
-/** 全站已有一個匯出在跑（秒數與 `Retry-After` 同一個常數；curl 的指令不印 header）。 */
 export const EXPORT_BUSY_MESSAGE = `Another export is already running. Try again in ${EXPORT_BUSY_RETRY_AFTER_S} seconds.`;
 export const TOO_MANY_NOTES_MESSAGE = `The range has more than ${TRANSFER_EXPORT_MAX_NOTES} notes. Ask for a token with a smaller range.`;
-/** 寫回的 body 不是 UTF-8（fatal 解碼失敗）。 */
 export const INVALID_UTF8_MESSAGE = "The file isn't valid UTF-8.";
 
-/** 寫回（PUT）的測試縫。生產不注入。 */
 export interface WriteTestHooks {
-  /** PUT 的 `reply.raw` close handler 第一行呼叫。 */
+  /** First line of the PUT reply.raw close handler. */
   onWriteClientClose?(): void;
-  /** PUT handler 第一行 await（在掛 close 監聽之前；測試用）。 */
+  /** Awaited first in the PUT handler, before the close listener is attached. */
   beforeWriteHandler?(): Promise<void>;
 }
-/** 單篇與整包共用的測試縫（`forceUnmergeable` 兩邊都看；其餘只有整包用）＋寫回的縫。 */
 export type TransferTestHooks = ExportTestHooks & WriteTestHooks;
 
-/** HTTP 層訊息（#372 起英文；字面見 `test/unit/bulk-transfer-http-messages.test.ts`）。 */
-/**
- * 檔案寫回／新增的 400 訊息（HTTP 層，#372 起英文）：依錯誤碼與成因（`detail`、未閉合的 `fence`）說清楚是哪一種。
- * 色值、並排、尺寸三碼沿用 REST 的既有訊息（`parseErrorMessage`）。
- */
 export function transferParseMessage(code: ErrorCode, detail?: ParseDetail, fence?: string): string {
   if (code === "unsupported_block") {
     if (detail === "event_attr") return "The file has HTML with an event attribute (such as onerror or onclick), which can't be stored in a note, so nothing was written.";
@@ -92,7 +73,6 @@ export function transferParseMessage(code: ErrorCode, detail?: ParseDetail, fenc
   return parseErrorMessage(code, "Couldn't apply the file.");
 }
 
-/** 409 `base_unavailable` 的訊息，依 `error.reason`（不再合併，`note_changed` 取代 `anchors_gone`）。 */
 export const BASE_UNAVAILABLE_MESSAGES: Record<BaseUnavailableReason, string> = {
   already_sent: "Can't write back with this copy: it has already been sent back with different content. Download the note again and make your changes there.",
   other_note: "Can't write back with this copy: its base belongs to another note or another user. Download the note again and make your changes there.",
@@ -108,22 +88,19 @@ export interface TransferRouteDeps {
   gate: UserGate;
   collab: CollabServer;
   editing: EditingRuntime;
-  /** 與 app 其他路由同一個實例（`bearerMiss` 與 `authenticateAny` 共用一本帳）。 */
   limiters: {
     bearerMiss: FixedWindowLimiter;
     contentRead: FixedWindowLimiter;
     transferExport: FixedWindowLimiter;
-    /** 寫回：只在佇列內、判定檔案有改之後才扣（沒改的檔不受寫回額度影響），解析之前扣。 */
+    /** Charged inside the queue after the file is known to differ, before parsing. */
     transferWrite: FixedWindowLimiter;
-    /** 與 MCP／REST 的 Bearer 讀取同一顆（key `token:${userId}`）：零區、同檔重送、去重命中扣這顆。 */
+    /** Same limiter as MCP/REST Bearer reads: zero regions, identical resends and dedupe hits charge it. */
     tokenRead: FixedWindowLimiter;
   };
-  /** 寫入 service（全樹唯一的佇列；寫回與 edit_note 串行）。 */
   writes: NoteWriteService;
   testHooks?: TransferTestHooks;
 }
 
-/** RFC 5987 的 `filename*` 值：`encodeURIComponent` 再補逸 `'()*`。 */
 export function encodeRfc5987(s: string): string {
   return encodeURIComponent(s).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 }
@@ -138,12 +115,9 @@ export function transferRoutes(deps: TransferRouteDeps) {
     const slot = new ExportSlot();
     const site = publicUrlIssuer(deps.config.publicUrl);
 
-    /**
-     * 整包。順序是契約：1b 範圍物件看不到 → 403（不碰桶、不拿 slot）→ 2 全站 slot（忙 → 429
-     * `Retry-After: 30`，不扣桶）→ 3（同步，中間不得有 await）扣 `transferExport`，不足 → 放 slot＋429＋`Retry-After` →
-     * 4 完整可見集合命名、範圍篩；範圍內 > 3 000 篇 → 413（串流前）→ 6 hijack 串流。拿到 slot 之後任何出口都放。
-     */
-    // `exposeHeadRoute: false`：Fastify 5 預設替 GET 掛 HEAD，HEAD 會跑完整匯出、扣桶、拿 slot。
+    // Order is a contract: scope object gone → 403 (no limiter, no slot) → site-wide slot (busy → 429 Retry-After: 30, no charge) → charge transferExport synchronously (no await; short → release slot + 429)
+    // → names and range filter; > 3,000 notes → 413 before streaming → hijack. Every exit after taking the slot releases it.
+    // `exposeHeadRoute: false`: Fastify 5 adds HEAD for GET, and HEAD would run the full export, charge and take the slot.
     app.get("/api/transfer/export", { preHandler: requireBulkRead, exposeHeadRoute: false }, async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.user!.id;
       const bt = request.bulkTransfer!;
@@ -187,38 +161,33 @@ export function transferRoutes(deps: TransferRouteDeps) {
         });
       } catch (err) {
         if (!streaming) throw err;
-        // 能到這裡的只有 streamExport 自己的 try 之前（writeHead／建 writer／掛監聽）丟的錯——它的 finally 沒跑，所以
-        // log 與 onExportEnd 在這裡補（outcome 照中止語意記 aborted；鍵集合與 streamExport 那一行相同）。
-        // hijack 之後 Fastify 不再替我們回錯誤：斷 socket（中止形），只記 code／constraint。
+        // Only errors thrown before streamExport's try reach here, so its finally didn't run: log and onExportEnd here. After hijack Fastify won't reply for us: destroy the socket.
         request.log.warn({ ...pgErrorSummary(err) }, "整包匯出串流前失敗");
         reply.raw.destroy();
-        release(); // 先放 slot 再報結束（同 streamExport 的 finally 順序）；finally 再放一次是冪等的
+        // Release before onExportEnd (same order as streamExport's finally); the release in finally is idempotent.
+        release();
         deps.testHooks?.onExportEnd?.("aborted");
         request.log.info(
           { userId, tokenId: bt.parentTokenId, range: bt.range, notes: 0, skipped: 0, notMergeable: 0, bytes: 0, ms: Date.now() - started, outcome: "aborted" },
           "bulk transfer export",
         );
       } finally {
-        // release 冪等：streamExport 在 writeHead／建 writer 之前丟錯時，它自己的 finally 不會跑。
         release();
       }
     });
 
-    /** 自行撤銷：刪這支 bulk 權杖的列。 */
     app.delete("/api/transfer/token", { preHandler: requireBulkRead }, async (request: FastifyRequest, reply: FastifyReply) => {
       await deps.db.delete(transferTokens).where(eq(transferTokens.id, request.bulkTransfer!.id));
       return reply.code(204).send();
     });
 
-    /**
-     * 單篇。順序：① 看不到／不存在／垃圾桶／非 uuid → 404 同字 ② 範圍物件看不到 → 403 RANGE_GONE ③ 不在範圍 → 403
-     * ④ 扣 `contentRead`（角色與範圍檢查之後）⑤ 組檔 ⑥ 寫一列基底 ⑦ 清理（fire-and-forget）⑧ 200 text/markdown。
-     */
+    // contentRead is charged after the role and range checks.
     app.get("/api/transfer/notes/:id", { preHandler: requireBulkRead, exposeHeadRoute: false }, async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.user!.id;
       const range = request.bulkTransfer!.range;
       const { id } = request.params as { id: string };
       const access = await resolveNoteAccess(deps.db, userId, id);
+      // Same 404 text for nonexistent and invisible notes.
       if (access.role === "none") return sendError(reply, 404, "not_found", TRANSFER_NOTE_NOT_FOUND_MESSAGE);
       const tree = await visibleTree(deps.db, userId);
       if (await rangeGone(deps.db, userId, range, tree)) return sendError(reply, 403, "forbidden", RANGE_GONE_MESSAGE);
@@ -233,7 +202,7 @@ export function transferRoutes(deps: TransferRouteDeps) {
       try {
         nf = await buildNoteFile(fileDeps, userId, row, { forceUnmergeable: deps.testHooks?.forceUnmergeable?.(row.id) === true });
       } catch (err) {
-        const sent = sendDocReadError(reply, err); // 匯出的轉換在 parse worker 裡：全忙 503、太大 500 `too_complex`
+        const sent = sendDocReadError(reply, err);
         if (sent) return sent;
         throw err;
       }
@@ -247,26 +216,23 @@ export function transferRoutes(deps: TransferRouteDeps) {
         .send(nf.file);
     });
 
-    /**
-     * 寫回一篇。`text/markdown` 的 415／Origin 403 在全域 onRequest（`TEXT_BODY_EXEMPT_ROUTES`），parser 在頂層
-     * 只回 Buffer；`TRANSFER_WRITE_BODY_LIMIT`（256 KiB，同 `WRITE_BODY_LIMIT`）上限 → 413 `content_too_large`。解碼在這裡：`fatal: true`，非 UTF-8 → 400 `invalid_body`。
-     */
+    // text/markdown 415/Origin 403 are enforced in the global onRequest (TEXT_BODY_EXEMPT_ROUTES); over TRANSFER_WRITE_BODY_LIMIT (256 KiB, same as WRITE_BODY_LIMIT) → 413
+    // content_too_large; fatal UTF-8 decoding happens here (non-UTF-8 → 400 invalid_body).
     app.put("/api/transfer/notes", { preHandler: requireBulkWrite, bodyLimit: TRANSFER_WRITE_BODY_LIMIT }, async (request: FastifyRequest, reply: FastifyReply) => {
       await deps.testHooks?.beforeWriteHandler?.();
       const started = Date.now();
-      // S14 斷線守衛：只掛 `reply.raw` 的 close（實測：PUT 上 `request.raw` 的 close 在 body 讀完時就觸發）；
-      // 掛上之後立刻補查一次 `destroyed`（handler 開始之前就斷線的請求）。斷線**不改變任何流程**，只記 `clientClosed`。
+      // Only reply.raw's close: on PUT, request.raw's close fires as soon as the body is read. A disconnect changes no flow, it is only logged (clientClosed).
       let clientClosed = false;
       const onClose = () => {
         deps.testHooks?.onWriteClientClose?.();
         if (!reply.raw.writableFinished) clientClosed = true;
       };
       reply.raw.once("close", onClose);
+      // Covers a client that left before the listener was attached.
       if (reply.raw.destroyed) onClose();
       const userId = request.user!.id;
       const bt = request.bulkTransfer!;
       let noteId: string | null = null;
-      /** 寫回 log：規定鍵 11 個；錯誤出口沒算到的 diff 鍵給 null。不記標題、本文、frontmatter 值。 */
       const logLine = (result: string, d?: Partial<Pick<SyncFileOk, "applied" | "same" | "diffOverflow" | "anchored" | "degradedLines">>) =>
         request.log.info(
           {
@@ -284,18 +250,15 @@ export function transferRoutes(deps: TransferRouteDeps) {
         reply.header("retry-after", String(retryAfterSeconds(retryAfterMs)));
         return fail(429, "too_many_requests", TRANSFER_RATE_LIMITED_MESSAGE);
       };
-      // #398：解析的 worker 全忙、排隊超過上限（同 REST 的 503 形）。
       const parserBusy = () => {
         logLine("server_busy");
         return sendParserBusy(reply);
       };
-      // 筆記大小上限（`notes/note-size.ts`）：同 REST 的 413 形。
       const tooLarge = (limitBytes: number) => {
         logLine("note_too_large");
         return sendNoteTooLarge(reply, limitBytes);
       };
-      // 未預期的例外（全域 handler 回 500）也要記這一行——鍵同 ⑪ 的 11 個、diff 鍵 null、`result: "internal"`；
-      // 例外本身照舊往外丟（不吞、不改回應）。帶內容的 DB 錯誤在 service 已經 `redactDbError` 過。
+      // Unexpected exceptions are logged with the same keys (result "internal", diff keys null) and rethrown unchanged; content-bearing DB errors were already redacted in the service.
       try {
         const raw = request.body;
         let text: string;
@@ -310,7 +273,6 @@ export function transferRoutes(deps: TransferRouteDeps) {
         const tree = await visibleTree(deps.db, userId);
 
         if (file.kind === "new") {
-          // 新增筆記。
           if (await rangeGone(deps.db, userId, bt.range, tree)) return fail(403, "forbidden", RANGE_GONE_MESSAGE);
           const dest = await resolveCreateDest(deps.db, userId, bt.range, file.folderId, tree);
           if (!dest.ok) return fail(dest.status, dest.code, dest.message);
@@ -334,10 +296,10 @@ export function transferRoutes(deps: TransferRouteDeps) {
             : reply.code(200).send({ id: out.noteId, created: false, result: "unchanged", base: null });
         }
 
-        // 寫回既有筆記。順序是契約：可見 → 範圍物件 → 範圍 → 角色 → syncFile（寫回額度在 syncFile 內、判定檔案有改之後、解析之前扣）。
         noteId = file.id;
         const access = await resolveNoteAccess(deps.db, userId, file.id);
         if (access.role === "none") return fail(404, "not_found", TRANSFER_NOTE_NOT_FOUND_MESSAGE);
+        // Order is a contract: visible → range object → range → role → syncFile (which charges transferWrite after the file is known to differ, before parsing).
         if (await rangeGone(deps.db, userId, bt.range, tree)) return fail(403, "forbidden", RANGE_GONE_MESSAGE);
         const rows = await visibleNotes(deps.db, userId, { ids: [file.id] });
         const row = rows[0];
@@ -349,7 +311,6 @@ export function transferRoutes(deps: TransferRouteDeps) {
         });
         if (!out.ok) {
           if (out.kind === "base_unavailable") {
-            // 409 多帶 `error.reason`（成因；值見 `BaseUnavailableReason`），訊息依成因。log 照 ⑪ 不加鍵。
             logLine("base_unavailable");
             return reply.code(409).send({ error: { code: "base_unavailable", message: BASE_UNAVAILABLE_MESSAGES[out.reason], reason: out.reason } });
           }
