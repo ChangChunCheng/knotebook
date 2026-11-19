@@ -369,7 +369,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
         if (!deps.limiters.contentRead.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many reads. Wait a moment and try again.");
         // Only token readers show presence (a cookie read is the user's own browser). touch acts only on loaded documents, so with nobody online it is a no-op and the read
-        // stays side-effect free. Removing this tokenId check turns no test red; tsc (TS2345) catches it.
+        // stays side-effect free.
         if (request.tokenId) {
           const label = await currentAgentLabel(deps.db, request.tokenId);
           if (label) {
