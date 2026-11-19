@@ -14,7 +14,7 @@ import { PresentationShell } from "./PresentationShell";
 import PresentationOverlay from "./PresentationOverlay";
 import { createExportEditor } from "./render";
 
-// 真 reveal（不 mock），但包一層記下實例以便讀 getConfig()；`listening` 記下 controller 掛的事件（`.then()` 跑完的訊號）。
+// Real reveal (unmocked), wrapped to record the instance so getConfig() can be read; `listening` records the events the controller attached (signals that `.then()` has run).
 const captured = vi.hoisted(() => ({
   instances: [] as { getConfig(): Record<string, unknown>; getIndices(): { h: number }; next(): void }[],
   listening: [] as string[],
@@ -64,7 +64,7 @@ function App({ strict = false, doc: source }: { strict?: boolean; doc?: Y.Doc })
   return strict ? <StrictMode>{tree}</StrictMode> : tree;
 }
 
-describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
+describe("PresentationOverlay (real reveal.js 6.0.2)", () => {
   let fake: FakeFullscreen | null = null;
   let intervals: MockInstance<typeof setInterval>;
   let timeouts: MockInstance<typeof setTimeout>;
@@ -76,9 +76,9 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
     timeouts = vi.spyOn(globalThis, "setTimeout");
   });
   afterEach(async () => {
-    // 先卸載（失敗的案也走 controller teardown → reveal.destroy()），再清掉本案建的 timer：reveal 6.0.2 的
-    // setupScrollPrevention（js/reveal.js:461）每個實例一支 1 s setInterval、destroy 不清；滑鼠游標隱藏的 5 s
-    // setTimeout（controllers/pointer.js:98）也會留下（不清時每案卸載 1.5 s 後仍 pending）。
+    // Unmount first (failed cases also go through controller teardown -> reveal.destroy()), then clear the timers this case created: reveal 6.0.2's
+    // setupScrollPrevention starts a 1 s setInterval per instance that destroy doesn't clear, and the 5 s mouse-cursor-hide
+    // setTimeout (controllers/pointer.js) also lingers (without clearing, each case is still pending 1.5 s after unmount).
     cleanup();
     for (const result of intervals.mock.results) if (result.type === "return") clearInterval(result.value);
     for (const result of timeouts.mock.results) if (result.type === "return") clearTimeout(result.value);
@@ -90,7 +90,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("test 13：查詢字串鎖定——初始化前網址已正規化、鎖定鍵全符合、沒有 message 監聽、<html> 無列印 class", async () => {
+  it("query-string lock: URL normalized before init, all lock keys match, no message listener, <html> has no print class", async () => {
     window.history.replaceState(null, "", "/n/tester/my-note?present&postMessage=true&hash=true&parallaxBackgroundImage=x&print-pdf");
     const addListener = vi.spyOn(window, "addEventListener");
     try {
@@ -105,11 +105,11 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
       expect([html.contains("reveal-print"), html.contains("print-pdf"), html.contains("reveal-full-page")]).toEqual([false, false, false]);
       unmount();
     } finally {
-      addListener.mockRestore(); // 案失敗時也還原
+      addListener.mockRestore(); // Restore even when the case fails
     }
   });
 
-  it("test 15：點全螢幕鈕後按 Space → 全螢幕只切一次、reveal 只前進一張、焦點不在鈕上", async () => {
+  it("after clicking the fullscreen button, Space toggles fullscreen only once, reveal advances one slide, focus isn't on the button", async () => {
     fake = installFakeFullscreen();
     window.history.replaceState(null, "", "/n/tester/my-note?present");
     const { unmount } = render(<App />);
@@ -124,7 +124,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
     unmount();
   });
 
-  it("真 reveal：?present#/1 → reveal 的 readURL 會依索引跳，controller 拉回封面", async () => {
+  it("real reveal: ?present#/1 -> reveal's readURL jumps by index, the controller pulls back to the cover", async () => {
     window.history.replaceState(null, "", "/n/tester/my-note?present#/1");
     const { unmount } = render(<App />);
     await waitFor(() => expect(document.querySelector(".reveal.ready")).not.toBeNull());
@@ -133,7 +133,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
     unmount();
   });
 
-  it("test 17：<StrictMode> 下恰一個 .reveal、恰一個 .controls，且 .reveal 有 ready", async () => {
+  it("under <StrictMode> exactly one .reveal and one .controls, and .reveal has ready", async () => {
     window.history.replaceState(null, "", "/n/tester/my-note?present");
     const { unmount } = render(<App strict />);
     await waitFor(() => expect(document.querySelector(".reveal.ready")).not.toBeNull());
@@ -142,9 +142,9 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
     unmount();
   });
 
-  describe("並排的堆疊（controller 的三個呼叫點）", () => {
-    // 模擬 reveal.css 的 `.slides>section{display:none}`：只有 section.present 裡、已掛上文件的 .kn-slide-body 量得到寬度。
-    // jsdom 的 clientWidth 定義在 Element.prototype，HTMLElement.prototype 本來沒有自己的 descriptor → 收尾用 delete 還原。
+  describe("stacked columns (the controller's three call sites)", () => {
+    // Mimics reveal.css `.slides>section{display:none}`: only a .kn-slide-body inside section.present and attached to the document has a measurable width.
+    // jsdom defines clientWidth on Element.prototype and HTMLElement.prototype has no own descriptor, so cleanup uses delete to restore.
     beforeEach(() => {
       Object.defineProperty(HTMLElement.prototype, "clientWidth", {
         configurable: true,
@@ -165,7 +165,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
       await waitFor(() => expect(captured.listening).toContain("slidechanged"));
     };
 
-    it("PD1：封面上的列（封面不送 slidechanged）→ `.then()` 量到寬度、標 data-stacked", async () => {
+    it("row on the cover (the cover sends no slidechanged): `.then()` measures the width and sets data-stacked", async () => {
       window.history.replaceState(null, "", "/n/tester/my-note?present");
       const { unmount } = render(<App doc={coverDoc("L")} />);
       await thenDone();
@@ -173,7 +173,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
       unmount();
     });
 
-    it("PD2：第二張上的列——`.then()` 時不是 present、不標；換到那張後標 data-stacked", async () => {
+    it("row on the second slide: not present at `.then()` so not marked; marked data-stacked after navigating to it", async () => {
       window.history.replaceState(null, "", "/n/tester/my-note?present");
       const source = blocksToYDoc(createExportEditor(), [H("A", "a"), row([[P("L", "l")], [P("R", "r")]], "row")] as never, YDOC_FRAGMENT);
       const { unmount } = render(<App doc={source} />);
@@ -187,7 +187,7 @@ describe("PresentationOverlay（真 reveal.js 6.0.2）", () => {
       unmount();
     });
 
-    it("PD3：換一份 Y.Doc（封面列的文字變了）→ 防抖後 applyUpdateNow 換掉封面 body，新的列也標 data-stacked", async () => {
+    it("swapping the Y.Doc (cover row text changed): after the debounce applyUpdateNow replaces the cover body, and the new row is also marked data-stacked", async () => {
       window.history.replaceState(null, "", "/n/tester/my-note?present");
       const { rerender, unmount } = render(<App doc={coverDoc("L")} />);
       await thenDone();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COVER_ID, noteToSlides, type Section, type SlideBlock } from "./slides";
 
-// 測資：只有 noteToSlides 會讀的欄位（type、props.level、content、children）。
+// Fixtures carry only the fields noteToSlides reads.
 const p = (id: string, text = "t", children: SlideBlock[] = []): SlideBlock => ({
   id, type: "paragraph", props: {}, content: text === "" ? [] : [{ type: "text", text, styles: {} }], children,
 });
@@ -11,7 +11,7 @@ const h = (id: string, level: number, children: SlideBlock[] = [], extra: Record
 });
 const d = (id: string): SlideBlock => ({ id, type: "divider", props: {}, children: [] });
 
-/** `章:[張(該張除標題外的 block id…), …]`，章與章以兩個空白分隔——封面章一律列出。 */
+/** `section:[slide(block ids other than the title in that slide), ...]`, sections separated by two spaces - the cover section is always listed. */
 function show(sections: Section[]): string {
   return sections
     .map((s) => `${s.id}:[${s.slides
@@ -23,71 +23,71 @@ function show(sections: Section[]): string {
     .join("  ");
 }
 
-describe("noteToSlides：表（封面章一律保留）", () => {
+describe("noteToSlides: table (the cover section is always kept)", () => {
   it.each<[string, SlideBlock[], string]>([
-    ["段落 a；H2 x；段落 b；H3 y；H4 z；段落 c", [p("a"), h("x", 2), p("b"), h("y", 3), h("z", 4), p("c")], "_title:[_title(a)]  x:[x(b), y(z,c)]"],
-    ["H1 x；H2 y；H3 z", [h("x", 1), h("y", 2), h("z", 3)], "_title:[_title]  x:[x, y(z)]"],
-    ["H3 x；H3 y", [h("x", 3), h("y", 3)], "_title:[_title]  x:[x]  y:[y]"],
-    ["H2 s；H1 x（章標題前的次層標題掛封面章）", [h("s", 2), h("x", 1)], "_title:[_title, s]  x:[x]"],
-    ["H1 x；divider d；段落 a；divider e；空段落（e 整章空，略過）", [h("x", 1), d("d"), p("a"), d("e"), blank("b0")], "_title:[_title]  x:[x]  d:[d(a)]"],
-    ["H2 a；divider d；H3 y；段落 b（d 空、略過，章 ID 變 y）", [h("a", 2), d("d"), h("y", 3), p("b")], "_title:[_title]  a:[a]  y:[y(b)]"],
-    ["H1 x；H3 z（無 H2，F3：次一層＝第二高）", [h("x", 1), h("z", 3)], "_title:[_title]  x:[x, z]"],
-    ["toggle H1 x（含子 block）", [h("x", 1, [p("c1"), p("c2")], { isToggleable: true })], "_title:[_title]  x:[x]"],
-    ["無標題、無 divider", [p("a"), p("b")], "_title:[_title(a,b)]"],
+    ["paragraph a; H2 x; paragraph b; H3 y; H4 z; paragraph c", [p("a"), h("x", 2), p("b"), h("y", 3), h("z", 4), p("c")], "_title:[_title(a)]  x:[x(b), y(z,c)]"],
+    ["H1 x; H2 y; H3 z", [h("x", 1), h("y", 2), h("z", 3)], "_title:[_title]  x:[x, y(z)]"],
+    ["H3 x; H3 y", [h("x", 3), h("y", 3)], "_title:[_title]  x:[x]  y:[y]"],
+    ["H2 s; H1 x (a lower-level heading before the first section title attaches to the cover section)", [h("s", 2), h("x", 1)], "_title:[_title, s]  x:[x]"],
+    ["H1 x; divider d; paragraph a; divider e; empty paragraph (section e is entirely empty and skipped)", [h("x", 1), d("d"), p("a"), d("e"), blank("b0")], "_title:[_title]  x:[x]  d:[d(a)]"],
+    ["H2 a; divider d; H3 y; paragraph b (d is empty and skipped, the section ID becomes y)", [h("a", 2), d("d"), h("y", 3), p("b")], "_title:[_title]  a:[a]  y:[y(b)]"],
+    ["H1 x; H3 z (no H2: the next level is the second highest)", [h("x", 1), h("z", 3)], "_title:[_title]  x:[x, z]"],
+    ["toggle H1 x (with child blocks)", [h("x", 1, [p("c1"), p("c2")], { isToggleable: true })], "_title:[_title]  x:[x]"],
+    ["no title, no divider", [p("a"), p("b")], "_title:[_title(a,b)]"],
   ])("%s", (_name, blocks, expected) => {
     expect(show(noteToSlides("T", blocks))).toBe(expected);
   });
 
-  it("toggle 標題的子 block 跟父 block 走（只看頂層）：子 block 在 blocks[0].children、不在該張的 blocks 裡", () => {
+  it("children of a toggle heading follow the parent block (top level only): the children are in blocks[0].children, not in that slide's blocks", () => {
     const sections = noteToSlides("T", [h("x", 1, [p("c1")], { isToggleable: true })]);
     const slide = sections[1].slides[0];
     expect(slide.blocks.map((b) => b.id)).toEqual(["x"]);
     expect((slide.blocks[0].children ?? []).length).toBe(1);
   });
 
-  it("一般段落有子 block：整個留在同一張，子 block 不另開張", () => {
+  it("an ordinary paragraph with children: stays whole on the same slide, children don't open a new slide", () => {
     expect(show(noteToSlides("T", [h("x", 2), p("a", "t", [h("nested", 2)])]))).toBe("_title:[_title]  x:[x(a)]");
   });
 
-  it("只有 divider：每個 divider 都整章空 → 只剩封面", () => {
+  it("dividers only: every divider's section is empty -> only the cover remains", () => {
     expect(show(noteToSlides("T", [d("d1"), d("d2")]))).toBe("_title:[_title]");
   });
 
-  it("連續 divider 之間有內容：只有帶內容的那章留下", () => {
+  it("content between consecutive dividers: only sections with content remain", () => {
     expect(show(noteToSlides("T", [d("d1"), d("d2"), p("a")]))).toBe("_title:[_title]  d2:[d2(a)]");
   });
 
-  it("只有空段落：封面帶著它們（封面永不略過）", () => {
+  it("empty paragraphs only: the cover keeps them (the cover is never skipped)", () => {
     expect(show(noteToSlides("T", [blank("b1"), p("b2", "")]))).toBe("_title:[_title(b1,b2)]");
   });
 
-  it("空標題字串不影響切頁（標題由渲染層補）", () => {
+  it("an empty title string doesn't affect slide splitting (the render layer fills in the title)", () => {
     expect(show(noteToSlides("", [h("x", 2)]))).toBe("_title:[_title]  x:[x]");
   });
 
-  it("heading 頁永不空：只有標題、內文全空也保留", () => {
+  it("a heading slide is never empty: kept even when it has only a title and an empty body", () => {
     expect(show(noteToSlides("T", [h("x", 2), blank("b")]))).toBe("_title:[_title]  x:[x(b)]");
   });
 
-  it("封面 ID 恆為 _title、kind cover；divider 張 kind divider 且 divider 本身不在 blocks", () => {
+  it("cover ID is always _title with kind cover; a divider slide has kind divider and the divider itself isn't in blocks", () => {
     const sections = noteToSlides("T", [d("d"), p("a")]);
     expect(sections[0].slides[0]).toMatchObject({ id: COVER_ID, kind: "cover" });
     expect(sections[1].slides[0]).toMatchObject({ id: "d", kind: "divider" });
     expect(sections[1].slides[0].blocks.map((b) => b.id)).toEqual(["a"]);
   });
 
-  it("標題張 kind 為 heading（由標題 block 起頭的那張，不是 cover 也不是 divider）", () => {
+  it("a title slide has kind heading (the slide that starts with a heading block, neither cover nor divider)", () => {
     const sections = noteToSlides("T", [h("x", 2), p("a"), h("y", 3), p("b")]);
     expect(sections[0].slides[0].kind).toBe("cover");
     expect(sections[1].slides.map((slide) => [slide.id, slide.kind])).toEqual([["x", "heading"], ["y", "heading"]]);
   });
 
-  it("含 link／wikilink 的段落不算空白（inline content 不只文字）", () => {
+  it("a paragraph with a link / wikilink isn't blank (inline content isn't only text)", () => {
     const withLink: SlideBlock = { id: "l", type: "paragraph", props: {}, content: [{ type: "link", href: "https://x", content: [] }], children: [] };
     expect(show(noteToSlides("T", [d("d"), withLink]))).toBe("_title:[_title]  d:[d(l)]");
   });
 
-  it("列的欄內有標題 → 不為它切頁（只看頂層）", () => {
+  it("a heading inside a row's column doesn't split slides (top level only)", () => {
     const col = (id: string, children: SlideBlock[]): SlideBlock => ({ id, type: "column", props: { width: 1 }, children });
     const row: SlideBlock = { id: "r", type: "columnList", props: {}, children: [col("rc0", [h("in", 1), p("a")]), col("rc1", [p("b")])] };
     expect(show(noteToSlides("T", [h("A", 1), row]))).toBe("_title:[_title]  A:[A(r)]");

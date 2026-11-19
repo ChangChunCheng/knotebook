@@ -2,24 +2,24 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * block 選取外框（node selection）覆寫的結構守門（比照 `theme.scrollbar-guard.test.ts`）。
+ * Structural guard for the block selection outline (node selection) override (same technique as `theme.scrollbar-guard.test.ts`).
  *
- * BlockNote 內建把 node selection 畫成寫死的 `outline: 4px solid #64a0ff`。我們在
- * `index.css` 用 (0,3,0) 的選擇器把**所有** block 蓋成主題色細框——**祖先錨點
- * `.bn-editor` 一旦被拿掉**（選擇器掉回 (0,2,0)），BlockNote 的 CSS 在 NotePage
- * lazy chunk、載入順序必晚於 index.css，同 specificity 我們就輸了，藍框**靜默**
- * 回來：單元測試與 jsdom 都看不到 layout/cascade。
+ * BlockNote draws a node selection as a hard-coded `outline: 4px solid #64a0ff`. In
+ * `index.css` we use a (0,3,0) selector to override **all** blocks with a thin theme-colour outline - **once the ancestor anchor
+ * `.bn-editor` is removed** (the selector falls back to (0,2,0)), BlockNote's CSS, which in the NotePage
+ * lazy chunk always loads after index.css, wins at equal specificity and the blue outline **silently**
+ * comes back: unit tests and jsdom can't see layout / cascade.
  */
 
 function readIndexCss(): string {
   return readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-/** 抽出選取外框那條規則的兩個選擇器與宣告內容。 */
+/** Extracts the two selectors and the declaration body of the selection-outline rule. */
 function selectionRule(): { selectors: string[]; body: string } {
   const css = readIndexCss();
-  // 全檔掃描而不是只取第一條：日後若有人在前面又加一條 selectednode 規則，
-  // 只取第一條的寫法會改去驗那條、對真正的覆寫規則失去鑑別力。
+  // Scan the whole file rather than take only the first match: if someone later adds another selectednode rule before it,
+  // taking only the first would verify that one and lose its ability to discriminate the real override rule.
   const matches = [...css.matchAll(/([^}]*ProseMirror-selectednode[^{}]*)\{([^}]*)\}/g)].filter((m) => /outline/.test(m[2]!));
   expect(matches, "index.css 應**只有一條** ProseMirror-selectednode 的覆寫規則").toHaveLength(1);
   const match = matches[0]!;
@@ -32,28 +32,28 @@ function selectionRule(): { selectors: string[]; body: string } {
   };
 }
 
-describe("block 選取外框覆寫", () => {
-  it("兩種 selectednode 落點都要蓋到（可能在 .bn-block-content 自己身上或外層）", () => {
+describe("block selection outline override", () => {
+  it("both selectednode landing spots must be covered (it may be on .bn-block-content itself or an outer element)", () => {
     const { selectors } = selectionRule();
     expect(selectors).toHaveLength(2);
     expect(selectors.some((s) => /\.bn-block-content\.ProseMirror-selectednode\s*>\s*\*/.test(s))).toBe(true);
     expect(selectors.some((s) => /\.ProseMirror-selectednode\s*>\s*\.bn-block-content\s*>\s*\*/.test(s))).toBe(true);
   });
 
-  it("每個選擇器都以 .bn-editor 為錨（specificity 要贏內建的 (0,2,0)）", () => {
+  it("every selector is anchored at .bn-editor (specificity must beat the built-in (0,2,0))", () => {
     for (const selector of selectionRule().selectors) {
       expect(selector, `少了 .bn-editor 錨點就墊不到 (0,3,0)：${selector}`).toMatch(/^\.bn-editor\s/);
     }
   });
 
-  it("只在焦點還在編輯器容器內才上色：預設透明，`.bn-container:focus-within` 才把變數設成主題色（失焦後不留外框，也不退回內建亮藍）", () => {
+  it("colour only while focus is still inside the editor container: transparent by default, `.bn-container:focus-within` sets the variable to the theme colour (no outline left after blur, no fall back to the built-in bright blue)", () => {
     const { body } = selectionRule();
     expect(body).toMatch(/outline:\s*2px solid var\(--kb-node-frame,\s*transparent\)/);
     const css = readIndexCss();
     expect(css).toMatch(/\.bn-container:focus-within\s*\{[^}]*--kb-node-frame:\s*var\(--color-brand\)/);
   });
 
-  it("檔案 block 選取時的檔名底色：失焦後蓋回透明，hover 不受影響", () => {
+  it("file block selection filename background: reset to transparent after blur, hover unaffected", () => {
     const css = readIndexCss();
     const rule = css.match(/([^{}]*ProseMirror-selectednode[^{}]*bn-file-name-with-icon[^{}]*)\{([^}]*)\}/);
     expect(rule, "少了檔名底色的失焦規則").not.toBeNull();
@@ -62,13 +62,13 @@ describe("block 選取外框覆寫", () => {
     expect(rule![2]).toMatch(/background-color:\s*transparent/);
   });
 
-  it("套用到所有 block，不綁單一 block 型別", () => {
+  it("applies to all blocks, not tied to a single block type", () => {
     for (const selector of selectionRule().selectors) {
       expect(selector, `選取外框要全 app 統一，不該只挑某種 block：${selector}`).not.toContain("[data-content-type");
     }
   });
 
-  it("外框用主題色 token、且外框本身不得被移除（選取態要看得見）", () => {
+  it("the outline uses the theme colour token, and the outline itself must not be removed (the selected state must be visible)", () => {
     const { body } = selectionRule();
     expect(readIndexCss()).toContain("--kb-node-frame: var(--color-brand)");
     expect(body).not.toMatch(/outline:\s*none/);

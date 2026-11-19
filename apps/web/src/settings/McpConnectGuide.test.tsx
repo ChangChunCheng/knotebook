@@ -21,21 +21,21 @@ interface DesktopEntry {
   env: Record<string, string>;
 }
 
-/** Desktop 片段只有 `"knotebook": {…}` 一段（不含外層 mcpServers）；包一層大括號才是合法 JSON。 */
+/** The Desktop snippet is only the `"knotebook": {...}` part (without the outer mcpServers); wrapping it in braces makes valid JSON. */
 function parseDesktop(snippet: string): DesktopEntry {
   const parsed = JSON.parse(`{${snippet}}`) as Record<string, unknown>;
   expect(Object.keys(parsed)).toEqual(["knotebook"]);
   return parsed.knotebook as DesktopEntry;
 }
 
-describe("mcp-snippets（純函式）", () => {
-  it("Claude Code：-s user、http transport、Bearer <YOUR_TOKEN>", () => {
+describe("mcp-snippets (pure functions)", () => {
+  it("Claude Code: -s user, http transport, Bearer <YOUR_TOKEN>", () => {
     expect(buildClaudeCodeSnippet("https://kb.example")).toBe(
       'claude mcp add -s user --transport http knotebook https://kb.example/api/mcp --header "Authorization: Bearer <YOUR_TOKEN>"',
     );
   });
 
-  it("Desktop：header 值放 env（args 不含空白的 Bearer 值），http:// 才加 --allow-http", () => {
+  it("Desktop: the header value goes in env (args hold no Bearer value with spaces); --allow-http only for http://", () => {
     const http = parseDesktop(buildDesktopSnippet("http://kb.lan:3000"));
     expect(http).toEqual({
       command: "npx",
@@ -50,16 +50,16 @@ describe("mcp-snippets（純函式）", () => {
     expect(https.env).toEqual({ AUTH_HEADER: "Bearer <YOUR_TOKEN>" });
   });
 
-  it("Desktop 片段不含外層 mcpServers", () => {
+  it("the Desktop snippet has no outer mcpServers", () => {
     expect(buildDesktopSnippet("https://kb.example")).not.toContain("mcpServers");
     expect(buildDesktopSnippet("https://kb.example").startsWith('"knotebook": {')).toBe(true);
   });
 
-  it("OAuth Claude Code：-s user、-t http、無 header", () => {
+  it("OAuth Claude Code: -s user, -t http, no header", () => {
     expect(buildClaudeCodeOauthSnippet("https://kb.example")).toBe("claude mcp add -s user -t http knotebook https://kb.example/api/mcp");
   });
 
-  it("OAuth Desktop：cmd /c npx mcp-remote、無 env／header／--allow-http、不含 mcpServers", () => {
+  it("OAuth Desktop: cmd /c npx mcp-remote, no env / header / --allow-http, no mcpServers", () => {
     const snippet = buildDesktopOauthSnippet("https://kb.example");
     expect(parseDesktop(snippet)).toEqual({
       command: "cmd",
@@ -69,13 +69,13 @@ describe("mcp-snippets（純函式）", () => {
     expect(snippet).not.toContain("mcpServers");
   });
 
-  it("oauthAvailable：https 才為真", () => {
+  it("oauthAvailable: true only for https", () => {
     expect(oauthAvailable("https://x")).toBe(true);
     expect(oauthAvailable("http://x")).toBe(false);
   });
 });
 
-describe("McpConnectGuide（#247）", () => {
+describe("McpConnectGuide (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -84,12 +84,12 @@ describe("McpConnectGuide（#247）", () => {
 
   const endpoint = () => `${window.location.origin}/api/mcp`;
 
-  it("端點＝目前 origin＋/api/mcp", () => {
+  it("endpoint = current origin + /api/mcp", () => {
     render(<McpConnectGuide />);
     expect(screen.getByTestId("mcp-endpoint")).toHaveTextContent(endpoint());
   });
 
-  it("兩段片段以目前 origin 組出、用 <YOUR_TOKEN> 佔位，不含任何真 token", () => {
+  it("the two snippets are built from the current origin and use the <YOUR_TOKEN> placeholder, no real token", () => {
     render(<McpConnectGuide />);
     expect(screen.getByTestId("mcp-snippet-claude-code").textContent).toBe(buildClaudeCodeSnippet(window.location.origin));
     const desktop = parseDesktop(screen.getByTestId("mcp-snippet-claude-desktop").textContent!);
@@ -97,14 +97,14 @@ describe("McpConnectGuide（#247）", () => {
     expect(desktop.env.AUTH_HEADER).toBe("Bearer <YOUR_TOKEN>");
   });
 
-  it("http:// 站台 → Desktop 片段帶 --allow-http（mcp-remote 對非 https 的明示放行，docs/mcp.md How to connect）", () => {
+  it("http:// site -> the Desktop snippet carries --allow-http (mcp-remote's explicit opt-in for non-https, docs/mcp.md How to connect)", () => {
     render(<McpConnectGuide />);
     const args = parseDesktop(screen.getByTestId("mcp-snippet-claude-desktop").textContent!).args;
     expect(window.location.protocol).toBe("http:");
     expect(args).toContain("--allow-http");
   });
 
-  it("Desktop 片段下方有 Windows 包 cmd /c 的提示，連到 repo 的 docs/mcp.md How to connect", () => {
+  it("below the Desktop snippet is a hint about wrapping with cmd /c on Windows, linking to docs/mcp.md How to connect in the repo", () => {
     render(<McpConnectGuide />);
     expect(screen.getByTestId("mcp-windows-note")).toHaveTextContent(i18n.t("settings.authorization.mcp.windowsNote"));
     expect(screen.getByRole("link", { name: "See docs/mcp.md" })).toHaveAttribute(
@@ -113,7 +113,7 @@ describe("McpConnectGuide（#247）", () => {
     );
   });
 
-  it("複製鈕把對應片段原文交給 copyText，成功 toast", async () => {
+  it("the copy button hands the matching snippet text to copyText, success toast", async () => {
     render(
       <>
         <McpConnectGuide />
@@ -130,7 +130,7 @@ describe("McpConnectGuide（#247）", () => {
   const DESC = () => i18n.t("settings.authorization.mcp.oauthDescription", { days: OAUTH_APP_IDLE_DAYS });
   const HTTPS = "https://kb.example";
 
-  it("http（預設）：OAuth 段只有標題與 https 說明，沒有 OAuth 片段、描述與提醒；說明文字接線", () => {
+  it("http (default): the OAuth section has only a title and the https note, no OAuth snippets, description or reminder; the note text is wired up", () => {
     render(<McpConnectGuide />);
     expect(screen.queryByTestId("mcp-oauth-claude-code")).toBeNull();
     expect(screen.queryByTestId("mcp-oauth-claude-desktop")).toBeNull();
@@ -142,7 +142,7 @@ describe("McpConnectGuide（#247）", () => {
     expect(screen.getByText(i18n.t("settings.authorization.mcp.patDescription"))).toBeInTheDocument();
   });
 
-  it("https：OAuth 兩段片段、說明、提醒；PAT 兩段照舊", () => {
+  it("https: OAuth two snippets, description, reminder; the PAT two snippets unchanged", () => {
     render(<McpConnectGuide origin={HTTPS} />);
     expect(screen.getByText(DESC())).toBeInTheDocument();
     const code = screen.getByTestId("mcp-oauth-claude-code");
@@ -170,7 +170,7 @@ describe("McpConnectGuide（#247）", () => {
     expect(screen.queryByTestId("mcp-oauth-https-only")).toBeNull();
   });
 
-  it("https：Copy 鈕 5 顆，OAuth Desktop 那列的 Copy 交出該片段原文", async () => {
+  it("https: 5 Copy buttons; the Copy on the OAuth Desktop row hands over that snippet's text", async () => {
     render(<McpConnectGuide origin={HTTPS} />);
     expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(5);
     const row = screen.getByTestId("mcp-oauth-claude-desktop").closest("li")!;
@@ -178,7 +178,7 @@ describe("McpConnectGuide（#247）", () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(buildDesktopOauthSnippet(HTTPS)));
   });
 
-  it("https：每顆 Copy 鈕用 aria-describedby 指向自己那段片段（報讀器分得出是哪段）", () => {
+  it("https: each Copy button points to its own snippet via aria-describedby (so screen readers can tell which one)", () => {
     render(<McpConnectGuide origin={HTTPS} />);
     const ids = ["mcp-endpoint", "mcp-oauth-claude-code", "mcp-oauth-claude-desktop", "mcp-snippet-claude-code", "mcp-snippet-claude-desktop"];
     const buttons = screen.getAllByRole("button", { name: "Copy" });
@@ -189,14 +189,13 @@ describe("McpConnectGuide（#247）", () => {
     });
   });
 
-  it("兩個 h3 依序為 OAuth、PAT；不再有編號；清單不縮排：https 2 個、http 1 個", () => {
+  it("the two h3 are OAuth then PAT; no numbering; the list isn't indented: 2 for https, 1 for http", () => {
     const { container, unmount } = render(<McpConnectGuide origin={HTTPS} />);
     expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       i18n.t("settings.authorization.mcp.oauthTitle"),
       i18n.t("settings.authorization.mcp.patTitle"),
     ]);
     expect(container.textContent).not.toContain("1. ");
-    // 片段在各自標題底下：OAuth 片段在 OAuth 標題之後、PAT 標題之前；PAT 片段在 PAT 標題之後
     const [oauthH3, patH3] = screen.getAllByRole("heading", { level: 3 });
     const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
     for (const id of ["mcp-oauth-claude-code", "mcp-oauth-claude-desktop", "mcp-oauth-consent-note"]) {
@@ -217,9 +216,9 @@ describe("McpConnectGuide（#247）", () => {
     expect(httpLists[0]).toHaveClass("list-none", "pl-0");
   });
 
-  it("權限對照一句、按鈕都是 outline", () => {
+  it("one-sentence permission mapping, and all buttons are outline", () => {
     render(<McpConnectGuide />);
     expect(screen.getByText(i18n.t("settings.authorization.mcp.scopes"))).toBeInTheDocument();
-    expect(screen.queryAllByRole("button").every((b) => b.classList.contains("border-input"))).toBe(true); // 都是 outline
+    expect(screen.queryAllByRole("button").every((b) => b.classList.contains("border-input"))).toBe(true);
   });
 });

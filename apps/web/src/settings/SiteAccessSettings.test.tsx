@@ -49,11 +49,11 @@ function setup(initial: AdminAuthSettingsDto, onPatch: (body: Record<string, boo
 }
 const pwSwitch = () => screen.getByRole("switch", { name: "Allow password sign-in" });
 
-describe("SiteAccessSettings（#187）", () => {
+describe("SiteAccessSettings (#187)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("註冊 Switch：切換即 PATCH {registrationEnabled}（說明在旁）", async () => {
+  it("registration switch: toggling PATCHes {registrationEnabled} (description beside it)", async () => {
     const { patches } = setup(BASE, body => ({ ...BASE, ...body }));
     const sw = await screen.findByRole("switch", { name: "Allow self-registration with a password" });
     expect(screen.getByText("Anyone can create an account on the registration page with an email and a password. Whether a sign-in service creates accounts is set for each service below. Invitations created by an admin work either way.")).toBeInTheDocument();
@@ -62,7 +62,7 @@ describe("SiteAccessSettings（#187）", () => {
     expect(patches).toEqual([{ registrationEnabled: false }]);
   });
 
-  it("S1：群組標題、兩個開關的順序（先帳密登入、再自行註冊）與說明", async () => {
+  it("group title, order of the two switches (password sign-in first, then self-registration) and descriptions", async () => {
     setup(BASE, () => BASE);
     await screen.findByRole("switch", { name: "Allow password sign-in" });
     expect(screen.getByText("Password sign-in and registration")).toBeInTheDocument();
@@ -72,7 +72,7 @@ describe("SiteAccessSettings（#187）", () => {
     expect(screen.getByText("Anyone can create an account on the registration page with an email and a password. Whether a sign-in service creates accounts is set for each service below. Invitations created by an admin work either way.")).toBeInTheDocument();
   });
 
-  it("S2：帳密有效值關 → 自行註冊 Switch 照常可操作，可見說明以 aria-describedby 連到開關，點擊 PATCH {registrationEnabled:false}", async () => {
+  it("password effectively off -> the self-registration switch stays operable, the visible description is linked to the switch via aria-describedby, clicking PATCHes {registrationEnabled:false}", async () => {
     const { patches } = setup({ ...BASE, passwordLoginEnabled: false, passwordLoginForced: false }, body => ({ ...BASE, passwordLoginEnabled: false, ...body }));
     const sw = await screen.findByRole("switch", { name: "Allow self-registration with a password" });
     expect(sw).not.toBeDisabled();
@@ -83,16 +83,16 @@ describe("SiteAccessSettings（#187）", () => {
   });
 
   it.each([
-    ["帳密開", { passwordLoginEnabled: true, passwordLoginForced: false }],
-    ["帳密 DB 關但 env 強制開", { passwordLoginEnabled: false, passwordLoginForced: true }],
-  ])("S3：%s → 沒有不生效說明、Switch 沒有 accessible description", async (_label, patch) => {
+    ["password on", { passwordLoginEnabled: true, passwordLoginForced: false }],
+    ["password off in DB but forced on by env", { passwordLoginEnabled: false, passwordLoginForced: true }],
+  ])("%s -> no ineffective-setting note, the switch has no accessible description", async (_label, patch) => {
     setup({ ...BASE, ...patch }, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow self-registration with a password" });
     expect(screen.queryByText("Has no effect while password sign-in is off.")).not.toBeInTheDocument();
     expect(sw).not.toHaveAccessibleDescription();
   });
 
-  it("成功 PATCH 後重抓 settings（invalidate）", async () => {
+  it("after a successful PATCH settings are refetched (invalidate)", async () => {
     const { gets } = setup(BASE, body => ({ ...BASE, ...body }));
     const sw = await screen.findByRole("switch", { name: "Allow self-registration with a password" });
     expect(gets).toHaveLength(1);
@@ -100,7 +100,7 @@ describe("SiteAccessSettings（#187）", () => {
     await waitFor(() => expect(gets).toHaveLength(2));
   });
 
-  it("關閉帳密 → 先開確認 dialog 顯示 usersWithoutSso（不送 PATCH）；確認 → PATCH {passwordLoginEnabled:false}", async () => {
+  it("turning off password sign-in -> opens a confirm dialog first showing usersWithoutSso (no PATCH sent); confirm -> PATCH {passwordLoginEnabled:false}", async () => {
     const { patches } = setup(BASE, body => ({ ...BASE, ...body }));
     fireEvent.click(await screen.findByRole("switch", { name: "Allow password sign-in" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Turn off password sign-in?" }));
@@ -111,7 +111,7 @@ describe("SiteAccessSettings（#187）", () => {
     expect(patches).toEqual([{ passwordLoginEnabled: false }]);
   });
 
-  it("開啟帳密：不經 dialog、直接 PATCH true", async () => {
+  it("turning on password sign-in: PATCH true directly, no dialog", async () => {
     const { patches } = setup({ ...BASE, passwordLoginEnabled: false }, body => ({ ...BASE, ...body }));
     fireEvent.click(await screen.findByRole("switch", { name: "Allow password sign-in" }));
     await waitFor(() => expect(patches).toEqual([{ passwordLoginEnabled: true }]));
@@ -121,14 +121,14 @@ describe("SiteAccessSettings（#187）", () => {
   it.each([
     [{ enabledProviders: 0, actingAdminHasSso: true, usersWithoutSso: 0 }, "Turn on at least one sign-in service first."],
     [{ enabledProviders: 1, actingAdminHasSso: false, usersWithoutSso: 0 }, "Link a sign-in service in your own settings first."],
-  ])("開著但關不了（%o）→ Switch disabled＋原因（aria-describedby）", async (impact, reason) => {
+  ])("on but can't be turned off (%o) -> switch disabled + reason (aria-describedby)", async (impact, reason) => {
     setup({ ...BASE, passwordLoginImpact: impact }, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow password sign-in" });
     expect(sw).toBeDisabled();
     expect(document.getElementById(sw.getAttribute("aria-describedby")!)).toHaveTextContent(reason);
   });
 
-  it("可以關時（有啟用服務、本人有 SSO）→ Switch 可操作、沒有原因文字", async () => {
+  it("when it can be turned off (an enabled provider exists, and the user has SSO) -> the switch is operable, no reason text", async () => {
     setup(BASE, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow password sign-in" });
     expect(sw).not.toBeDisabled();
@@ -137,47 +137,47 @@ describe("SiteAccessSettings（#187）", () => {
     expect(screen.queryByText("Link a sign-in service in your own settings first.")).not.toBeInTheDocument();
   });
 
-  it("帳密已關：即使 enabledProviders=0 也不 disabled（要能開回來）", async () => {
+  it("password sign-in already off: not disabled even when enabledProviders=0 (it must be possible to turn it back on)", async () => {
     setup({ ...BASE, passwordLoginEnabled: false, passwordLoginImpact: { enabledProviders: 0, actingAdminHasSso: false, usersWithoutSso: 0 } }, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow password sign-in" });
     expect(sw).not.toBeDisabled();
     expect(sw).toHaveAttribute("aria-checked", "false");
   });
 
-  it("passwordLoginForced → 頂部警告；Switch 仍可操作", async () => {
+  it("passwordLoginForced -> a warning at the top; the switch is still operable", async () => {
     setup({ ...BASE, passwordLoginForced: true, passwordLoginEnabled: false }, body => ({ ...BASE, ...body }));
     expect(await screen.findByText(/forced on by the environment variable PASSWORD_LOGIN_FORCE_ENABLE/)).toBeInTheDocument();
     expect(screen.getByText("Password sign-in is forced on by the environment variable PASSWORD_LOGIN_FORCE_ENABLE. The Allow password sign-in setting below takes effect only after you remove that variable and restart.")).toBeInTheDocument();
     expect(pwSwitch()).not.toBeDisabled();
   });
 
-  it("沒有 forced → 沒有環境變數警告", async () => {
+  it("no forced -> no environment variable warning", async () => {
     setup(BASE, () => BASE);
     await screen.findByRole("switch", { name: "Allow password sign-in" });
     expect(screen.queryByText(/PASSWORD_LOGIN_FORCE_ENABLE/)).not.toBeInTheDocument();
   });
 
-  it("forced 警告是 role=status（不是 alert：頁面載入就在的靜態說明，不該打斷讀屏）", async () => {
+  it("the forced warning is role=status (not alert: a static note present when the page loads shouldn't interrupt screen readers)", async () => {
     setup({ ...BASE, passwordLoginForced: true, passwordLoginEnabled: false }, body => ({ ...BASE, ...body }));
     const warning = await screen.findByText(/forced on by the environment variable PASSWORD_LOGIN_FORCE_ENABLE/);
     expect(warning).toHaveAttribute("role", "status");
   });
 
-  it("已有資料時 refetch 失敗：開關與開著的確認 dialog 仍在，不被換成錯誤文字", async () => {
+  it("refetch fails when data already exists: the switch and an open confirm dialog stay, not replaced by error text", async () => {
     const { state, gets } = setup(BASE, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow password sign-in" });
     state.failGets = true;
     fireEvent.click(sw);
     await screen.findByRole("dialog", { name: "Turn off password sign-in?" });
     await waitFor(() => expect(gets).toHaveLength(2));
-    // 讓失敗的 refetch 結算完（query 進入 isError）再斷言。
+    // Let the failed refetch settle (the query enters isError) before asserting.
     await new Promise(r => setTimeout(r, 50));
     expect(screen.getByRole("dialog", { name: "Turn off password sign-in?" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Allow password sign-in", hidden: true })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("開確認 dialog 時重抓：人數是開 dialog 當下的（頁面載入後 server 值變了）", async () => {
+  it("refetching while the confirm dialog opens: the count is the one at the time the dialog opened (the server value changed after the page loaded)", async () => {
     const { state, gets } = setup(BASE, () => BASE);
     const sw = await screen.findByRole("switch", { name: "Allow password sign-in" });
     state.settings = { ...BASE, passwordLoginImpact: { ...BASE.passwordLoginImpact, usersWithoutSso: 7 } };
@@ -187,9 +187,8 @@ describe("SiteAccessSettings（#187）", () => {
     expect(gets).toHaveLength(2);
   });
 
-  it("409 後重抓 settings：快照過期 → 第二次 GET 回 actingAdminHasSso:false，原因文字出現、Switch 變 disabled", async () => {
+  it("after a 409 settings are refetched: the snapshot is stale -> the second GET returns actingAdminHasSso:false, the reason text appears and the switch becomes disabled", async () => {
     const { state, gets } = setup(BASE, () => {
-      // server 端狀態在頁面載入後變了；PATCH 因此 409
       state.settings = { ...BASE, passwordLoginImpact: { ...BASE.passwordLoginImpact, actingAdminHasSso: false } };
       return fakeResponse(409, { error: { code: "admin_sso_link_required", message: "x" } });
     });
@@ -203,7 +202,7 @@ describe("SiteAccessSettings（#187）", () => {
     expect(gets.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("409 → toast 錯誤文案、Switch 維持原狀", async () => {
+  it("409 -> toast error text, the switch stays as it was", async () => {
     setup(BASE, () => fakeResponse(409, { error: { code: "admin_sso_link_required", message: "x" } }));
     fireEvent.click(await screen.findByRole("switch", { name: "Allow password sign-in" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Turn off" }));

@@ -15,20 +15,20 @@ import { adminRole, groupDto, OWNER_PERMS } from "@/test/fixtures";
 import { clickOutside } from "@/test/outside-click";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 設定總 modal：兩棵 Routes 樹＋modal-over-background 機制，一律用真正的
-// `AppRoutes`（App.tsx 的唯一真相樹）跑，不拆開各自重建等價樹——驗證的是「有沒有接對」
-// （guard 複用、backgroundLocation 相依、Dialog layout route 不重掛），而不只是
-// `SettingsModal` 元件單獨渲染的行為。fetch mock 慣例同 `ChangePasswordPage.test.tsx`
-// （mock 全域 fetch，不 mock hook 本身）。
+// Settings master modal: two Routes trees plus the modal-over-background mechanism, always run through the real
+// `AppRoutes` (the single source of truth in App.tsx), not an equivalent rebuilt tree - this verifies the wiring
+// (guard reuse, backgroundLocation dependence, the Dialog layout route not remounting), not just the behavior of the
+// `SettingsModal` component rendered alone. The fetch mock convention is the same as `ChangePasswordPage.test.tsx`
+// (mock global fetch, not the hooks).
 //
-// 背景頁若是 `/notes/:ref`，`NotePage` 需要 `useCollab`（Hocuspocus/WebSocket）與真正
-// BlockNote 編輯器——兩者都不在 jsdom 測試範圍內（連線狀態機有 connection.test.ts
-// 全覆蓋，編輯器本身留給手動驗證），這裡沿用 `NotePage.test.tsx` 既有的最小替身慣例：
-// 只驗證「背景頁有沒有掛上」，不驗證編輯器/共編細節。
+// When the background page is `/notes/:ref`, `NotePage` needs `useCollab` (Hocuspocus/WebSocket) and a real
+// BlockNote editor - neither is in the jsdom test scope (the connection state machine is fully covered by connection.test.ts,
+// the editor itself is left to manual verification), so this uses the minimal-stub convention already in `NotePage.test.tsx`:
+// it only checks that the background page is mounted, not editor / collaboration details.
 
-// NoteEditor slot 化——這支替身沿用 NotePage.test.tsx 的最小替身慣例
-// （兩處綁定，見該檔的 mock），改吃 headerSlot/footerSlot 並原樣渲染，否則
-// `:239` 的 `getByLabelText("Note title")`（headerSlot 裡的 TitleInput）會落空。
+// NoteEditor is slot-based - this stub follows NotePage.test.tsx's minimal-stub convention (two bindings, see the mock in that file),
+// takes headerSlot/footerSlot and renders them as-is; otherwise `getByLabelText("Note title")`
+// (the TitleInput inside headerSlot) would not be found.
 vi.mock("@/components/NoteEditor", () => ({
   NoteEditor: ({
     editable,
@@ -49,10 +49,10 @@ vi.mock("@/components/NoteEditor", () => ({
   ),
 }));
 
-// #201：「授權」區塊在本檔只拿來驗「區塊 chunk 載入失敗被 modal 內的 boundary 接住」——
-// 替身直接丟 chunk 失敗的訊息（真實 lazy reject 經 Suspense 後也是以 render throw 抵達
-// boundary；Vite preload 那條訊息見 ErrorBoundary.tsx 的白名單）。本檔其餘案子不進 `/settings/authorization`
-// （#247 前掛在群組角色頁，該頁搬去群組 modal；「關於」頁另有案子要它的 h1，所以不掛那裡）。
+// #201: in this file the "authorization" block is used only to check that a block chunk load failure is caught by the boundary inside the modal -
+// the stub throws the chunk-failure message directly (a real lazy reject, passing through Suspense, also reaches the
+// boundary as a render throw; the Vite preload message is in ErrorBoundary.tsx's allowlist). The other cases in this file don't enter `/settings/authorization`
+// (it used to hang under the group roles page, which moved to the group modal; the "About" page has its own case that needs its h1, so it doesn't hang there).
 vi.mock("@/settings/SettingsAuthorizationSection", () => ({
   SettingsAuthorizationSection: () => {
     throw new Error("Failed to fetch dynamically imported module: https://x/assets/SettingsAuthorizationSection-abc.js");
@@ -60,10 +60,10 @@ vi.mock("@/settings/SettingsAuthorizationSection", () => ({
 }));
 
 /**
- * 「不閃設定面板」負面判準：轉址過程中掛進 DOM 的任何 `[role=dialog]`，可及名稱（`aria-labelledby` 指到的
- * `DialogTitle` 文字）不得是設定面板的標題「Settings」。只記錄、不判斷「必須等於目的地」（群組 modal 會先是備用標題）。
- * 記 `addedNodes`（含子孫）而不是回呼當下 `querySelectorAll`——閃一下的節點可能在回呼跑之前就被移除了（同本檔
- * 「不先閃一下 modal」那案）；標題也先在被加入的子樹裡找（節點已脫離 document 時 `getElementById` 找不到）。
+ * Negative criterion for "no flash of the settings panel": any `[role=dialog]` mounted into the DOM during the redirect must have an accessible name (the
+ * `DialogTitle` text that `aria-labelledby` points to) that is not the settings panel's title "Settings". It only records, and doesn't judge "must equal the destination" (the group modal first has a fallback title).
+ * It records `addedNodes` (with descendants) rather than running `querySelectorAll` at callback time - a node that flashes may be removed before the callback runs (same as the
+ * "no modal flash first" case in this file); the title is also searched within the added subtree first (`getElementById` can't find it once the node has left the document).
  */
 function watchDialogTitles() {
   const titles = new Set<string>();
@@ -90,7 +90,7 @@ function watchDialogTitles() {
 function createStubProvider() {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
-    // issue #48：背景頁是一篇正常開著、已同步的筆記——NotePage 現在用 synced 閘住 editable。
+    // issue #48: the background page is a normally opened, synced note - NotePage now gates editable on synced.
     synced: true,
     on(event: string, fn: (...args: unknown[]) => void) {
       let set = listeners.get(event);
@@ -111,7 +111,7 @@ const collab = vi.hoisted(() => ({
   onUnauthorized: undefined as (() => void) | undefined,
   doc: undefined as unknown as Y.Doc,
   provider: undefined as unknown as ReturnType<typeof createStubProvider>,
-  /** #179：每次 render 傳進 useCollab 的 noteId（真實 useCollab 依它拆線／重連）。測試自行清空。 */
+  /** #179: the noteId passed to useCollab on every render (the real useCollab tears down / reconnects by it). Tests clear it themselves. */
   noteIds: [] as (string | undefined)[],
 }));
 vi.mock("@/collab/useCollab", () => ({
@@ -173,10 +173,10 @@ const NOTE: NoteDto = {
   permissions: OWNER_PERMS,
 };
 
-/** 基本 fetch mock：`/api/auth/me`（依
- * `getLoggedInAs` 回登入者或 401）、`/api/notes`（清單，空陣列）、`/api/notes/:ref`
- * （單篇，固定回 `NOTE`）、backlinks（空）——路由守衛與 HomePage/NotePage 共同需要
- * 這些。呼叫端可疊加其餘端點的處理（例如 `POST /api/auth/password`）。 */
+/** Basic fetch mock: `/api/auth/me` (returns the logged-in user or 401 per
+ * `getLoggedInAs`), `/api/notes` (list, empty array), `/api/notes/:ref`
+ * (single note, always returns `NOTE`), backlinks (empty) - the route guards and HomePage/NotePage both need
+ * these. Callers can layer on handlers for other endpoints (e.g. `POST /api/auth/password`). */
 function baseFetchHandlers(getLoggedInAs: () => UserDto | null) {
   return (url: string, method: string): Response | null => {
     if (url === "/api/groups" && method === "GET") {
@@ -213,7 +213,6 @@ function baseFetchHandlers(getLoggedInAs: () => UserDto | null) {
     if (url.startsWith("/api/notes/") && method === "GET") {
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(NOTE) });
     }
-    // 站台管理 modal（/admin/users）：`/settings/users` 轉址過去後會打這支。
     if (url === "/api/admin/users" && method === "GET") {
       return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) });
     }
@@ -233,13 +232,11 @@ function baseFetchHandlers(getLoggedInAs: () => UserDto | null) {
   };
 }
 
-/** 真實 location（MemoryRouter 內、兩棵 Routes 之外）——斷言轉址／關閉後的落點。 */
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{location.pathname}</div>;
 }
 
-/** #179：模擬瀏覽器「上一頁」（MemoryRouter 的 navigate(-1)）。由 `HistoryNavHandle` 掛上。 */
 const historyNav: { back?: () => void; push?: (to: string) => void } = {};
 function HistoryNavHandle() {
   const navigate = useNavigate();
@@ -277,14 +274,14 @@ function renderAt(
   return queryClient;
 }
 
-/** DropdownMenuTrigger（`UserMenu`）只掛 `onPointerDown`（見 `@radix-ui/react-dropdown-menu`
- * 原始碼），純 `fireEvent.click` 開不了——這裡跟 jsdom 對 pointer event 的相容性有關，
- * 不是 bug；已用一支即棄的 scratch 測試實測驗證過（開發過程中跑過、未留痕）。 */
+/** DropdownMenuTrigger (`UserMenu`) only attaches `onPointerDown` (see the `@radix-ui/react-dropdown-menu`
+ * source), so a plain `fireEvent.click` can't open it - this is about jsdom's pointer event compatibility,
+ * not a bug. */
 function openUserMenu(userDisplayName: string): void {
   fireEvent.pointerDown(screen.getByRole("button", { name: userDisplayName }), { button: 0 });
 }
 
-describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
+describe("SettingsModal (two Routes trees, modal-over-background)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     collab.state = { phase: "connecting" };
@@ -298,7 +295,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("app 內從 /notes/x 開設定（UserMenu「Settings」入口）→ modal 與背景頁共存 DOM；關閉 → 回到背景 /notes/x", async () => {
+  it("opening settings from /notes/x inside the app (UserMenu \"Settings\" entry) -> the modal and the background page coexist in the DOM; closing -> back to the background /notes/x", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -309,9 +306,8 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
 
     renderAt(["/notes/my-note"], fetchMock);
 
-    // 這裡等的是**真實** NotePage lazy import（整條 BlockNote 相依鏈），RTL 預設 1s 在冷啟
-    // 高負載下餘裕太薄，會間歇性紅（#69；#66 那輪首跑的一次紅疑同源）——等待上限
-    // 用 test/setup.ts 的全域 asyncUtilTimeout（曾單案設 3s，全域放寬後已低於全域，移除）。
+    // This waits for the **real** NotePage lazy import (the whole BlockNote dependency chain); RTL's default 1 s has too thin a margin under cold-start
+    // load and fails intermittently (#69); the wait limit is the global asyncUtilTimeout from test/setup.ts.
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
@@ -319,23 +315,22 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     fireEvent.click(screen.getByText("Settings"));
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument());
-    // 背景頁（NotePage 的替身編輯器）仍在 DOM 裡——兩者共存，不是背景被卸載換成 modal。
     expect(screen.getByTestId("note-editor")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.queryByRole("heading", { level: 1, name: "Account info" })).not.toBeInTheDocument());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    // 關閉後仍落在背景 location（開設定前 NotePage 已把 /notes/my-note 收斂成 /n/tester/my-note，
-    // #179 起收斂走 router，背景記的就是它）——編輯器替身仍在，不是被導去別處。
+    // After closing it still lands on the background location (before opening settings NotePage had already settled /notes/my-note into /n/tester/my-note,
+    // and since #179 the settling goes through the router, so the background remembers it) - the editor stub is still there, not navigated elsewhere.
     expect(screen.getByTestId("note-editor")).toBeInTheDocument();
   });
 
-  it("backgroundLocation 跨區塊切換仍保留：/notes/x 開設定 → 切到 Storage → 再切 Groups → 關閉 → 回到 /notes/x（不是回退到 /）", async () => {
-    // 這一案專門守 `ManagementNavItem`（components/management/ManagementShell.tsx）的
-    // `state={backgroundLocation ? {...} : undefined}`——沒有它，項次互切一次後
-    // `location.state.backgroundLocation` 就會變 undefined，關閉時只能落回 `/`，靜默扯掉背景
-    // `/notes/:ref` 的共編 provider。#247 起六個項次：連切兩個新項次，背景仍要一路帶著。
+  it("backgroundLocation survives switching between sections: open settings from /notes/x -> switch to Storage -> switch to Groups -> close -> back to /notes/x (not back to /)", async () => {
+    // This case guards `ManagementNavItem` (components/management/ManagementShell.tsx)'s
+    // `state={backgroundLocation ? {...} : undefined}` - without it, after one switch between items
+    // `location.state.backgroundLocation` becomes undefined, closing can only land on `/`, and silently tears down the collab provider of the background
+    // `/notes/:ref`. Since #247 there are six items: after switching through two new items in a row, the background must still be carried along.
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -346,7 +341,6 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
 
     renderAt(["/notes/my-note"], fetchMock);
 
-    // 同前案：等真實 lazy import（等待上限見上）
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
 
     openUserMenu("Plain");
@@ -363,15 +357,15 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // 落在這篇筆記（背景已收斂成 /n/tester/my-note，見上一案），不是被錯誤地帶回 /：`AppShell`（HomePage 也用同一個殼）
-    // 一律有「New note」按鈕，不能拿來分辨兩者，這裡改斷言 `NotePage` 特有的內容——
-    // 編輯器替身仍在，且標題輸入框帶著這篇筆記的標題（HomePage 沒有這個欄位；
-    // 若 backgroundLocation 中途丟失、落回 /，這個 label 會直接查不到）。
+    // Lands on this note (the background already settled to /n/tester/my-note, see the previous case), not wrongly brought back to /: `AppShell` (HomePage uses the same shell)
+    // always has a "New note" button, so it can't tell them apart; assert something specific to `NotePage` instead -
+    // the editor stub is still there and the title input carries this note's title (HomePage has no such field;
+    // if backgroundLocation were lost midway and landed on /, this label wouldn't be found).
     expect(screen.getByTestId("note-editor")).toBeInTheDocument();
     expect(screen.getByLabelText("Note title")).toHaveValue("My Note");
   });
 
-  it("直接深連結 /settings/account（無 state）→ 背景＝HomePage（主樹吃真實 location 落到 /* catch-all）", async () => {
+  it("direct deep link /settings/account (no state) -> background = HomePage (the main tree takes the real location and falls to the /* catch-all)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -383,20 +377,20 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     renderAt(["/settings/account"], fetchMock);
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument());
-    // Radix Dialog 開啟時會把背景兄弟節點標成 `aria-hidden`（focus trap 的一部分），
-    // `getByRole` 依可及性樹過濾會找不到——這裡改用不受 `aria-hidden` 影響的
-    // `getByText`（同 `note-editor` testid 那組斷言的道理），驗證的是「HomePage 真的
-    // 有掛上」，不是可及性樹的可見度。
+    // While Radix Dialog is open it marks background siblings `aria-hidden` (part of the focus trap),
+    // and `getByRole` filters by the accessibility tree so it can't find them - use `getByText`, which isn't affected by `aria-hidden`
+    // (same reasoning as the `note-editor` testid assertions), to verify that HomePage really is mounted,
+    // not the visibility in the accessibility tree.
     expect(screen.getByText("New note")).toBeInTheDocument();
   });
 
-  // 站台管理在 /admin/*（#247 起是第二棵樹裡的 modal）：舊的 /settings/users、/settings/ai 一律轉址過去（舊書籤、
-  // 舊文件連結不斷），不先閃設定面板（負面判準）；非 admin 轉過去後再被 /admin 的 RequireAdmin 導 /。
+  // Site admin lives under /admin/* (since #247 a modal in the second tree): the old /settings/users and /settings/ai always redirect there (old bookmarks and
+  // old doc links keep working) without flashing the settings panel first (negative criterion); for a non-admin, after the redirect RequireAdmin at /admin sends them to /.
   for (const [from, to, heading] of [
     ["/settings/users", "/admin/users", "User management"],
     ["/settings/ai", "/admin/ai", "AI providers & actions"],
   ] as const) {
-    it(`admin 深連結 ${from} → 轉址 ${to}（站台管理 modal、不是設定 modal）`, async () => {
+    it(`admin deep link ${from} -> redirects to ${to} (site admin modal, not the settings modal)`, async () => {
       const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = (init?.method ?? "GET").toUpperCase();
@@ -409,8 +403,8 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
         throw new Error(`unexpected fetch: ${method} ${url}`);
       });
 
-      // 「不先閃設定面板」：目的地本身是 modal（站台管理），所以不能再斷「全程沒有 dialog」；
-      // 改斷過程中掛進的 dialog 標題從不是「Settings」（負面判準，`watchDialogTitles`）。
+      // "No settings-panel flash first": the destination is itself a modal (site admin), so we can't assert "no dialog at all";
+      // instead assert that the titles of dialogs mounted along the way are never "Settings" (negative criterion, `watchDialogTitles`).
       const watcher = watchDialogTitles();
       try {
         renderAt([from], fetchMock);
@@ -425,7 +419,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     });
   }
 
-  it("非 admin 深連結 /settings/users → 轉 /admin/users → RequireAdmin 導 /（全程不開 modal）", async () => {
+  it("non-admin deep link /settings/users -> /admin/users -> RequireAdmin sends to / (no modal opens throughout)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -449,7 +443,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/invites", expect.anything());
   });
 
-  it("admin 深連結 /settings/account → 導覽恰為六項、順序固定，**看不到**使用者／AI（站台管理不在設定裡）", async () => {
+  it("admin deep link /settings/account -> the navigation has exactly six items in fixed order and **doesn't show** Users / AI (site admin isn't inside settings)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -462,7 +456,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Account info" })).toBeInTheDocument());
     const nav = within(screen.getByRole("navigation", { name: "Settings" }));
-    // 取每個項次的標籤 span（「群組」項右側另有計數 span，textContent 會黏在一起）
+    // Take each item's label span (the "Groups" item has a count span on its right, so textContent would run together)
     expect(nav.getAllByRole("link").map((a) => a.querySelector("span")?.textContent)).toEqual([
       "Account info", "Sign-in", "Authorization", "Storage", "Groups", "About",
     ]);
@@ -470,7 +464,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(nav.queryByText("AI")).not.toBeInTheDocument();
   });
 
-  it("非 admin 深連結 /settings/account → 導覽同樣恰為六項（非 admin 也一樣）", async () => {
+  it("non-admin deep link /settings/account -> the navigation likewise has exactly six items (same as for an admin)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -490,7 +484,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(nav.queryByText("AI")).not.toBeInTheDocument();
   });
 
-  it("#247：左卡「群組」項右側顯示所屬群組數", async () => {
+  it("#247: the left card's \"Groups\" item shows the number of groups the user belongs to on its right", async () => {
     const groups = [
       groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Team Alpha" }, adminRole()),
       groupDto({ id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "Team Beta" }, adminRole()),
@@ -507,19 +501,19 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     });
     renderAt(["/settings/about"], fetchMock);
     const nav = within(await screen.findByRole("navigation", { name: "Settings" }));
-    const groupsLink = nav.getByRole("link", { name: "Groups" }); // 計數 aria-hidden，可及名稱維持「Groups」
+    const groupsLink = nav.getByRole("link", { name: "Groups" }); // the count is aria-hidden, so the accessible name stays "Groups"
     await waitFor(() => expect(within(groupsLink).getByText("2")).toHaveClass("text-muted-foreground"));
-    // 計數出現**之後**再以名稱取一次：可及名稱仍恰為「Groups」（上面那次取連結時計數還沒到）。
-    // ByRole 的字串 name 本來就是全字串精確比對（ByRoleOptions 沒有 `exact` 選項），"Groups 2" 不會命中。
+    // Get it again by name **after** the count appears: the accessible name is still exactly "Groups" (when the link was fetched above the count hadn't arrived).
+    // A string `name` in ByRole is already an exact whole-string match (ByRoleOptions has no `exact` option), so "Groups 2" wouldn't match.
     expect(nav.getByRole("link", { name: "Groups" })).toBe(groupsLink);
     expect(within(groupsLink).getByText("2")).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("#247：群組清單載入中 →「群組」項不顯示計數", async () => {
+  it("#247: while the group list is loading -> the \"Groups\" item shows no count", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      if (url === "/api/groups" && method === "GET") return new Promise<Response>(() => {}); // 永遠不回
+      if (url === "/api/groups" && method === "GET") return new Promise<Response>(() => {}); // never responds
       const res = baseFetchHandlers(() => PLAIN_USER)(url, method);
       if (res) return Promise.resolve(res);
       throw new Error(`unexpected fetch: ${method} ${url}`);
@@ -527,10 +521,10 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     renderAt(["/settings/about"], fetchMock);
     const nav = within(await screen.findByRole("navigation", { name: "Settings" }));
     const groupsLink = nav.getByRole("link", { name: "Groups" });
-    expect(within(groupsLink).queryByText(/^\d+$/)).toBeNull(); // 只有標籤，沒有計數
+    expect(within(groupsLink).queryByText(/^\d+$/)).toBeNull(); // only the label, no count
   });
 
-  it("#247：/settings → 轉址 /settings/account（掛在 SettingsModal 外、RequireAuth 內）", async () => {
+  it("#247: /settings -> redirects to /settings/account (mounted outside SettingsModal, inside RequireAuth)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const res = baseFetchHandlers(() => PLAIN_USER)(String(input), (init?.method ?? "GET").toUpperCase());
       if (res) return Promise.resolve(res);
@@ -542,10 +536,9 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("#247：未登入開 /settings → 導 /login?next=%2Fsettings（轉址在 RequireAuth 內）", async () => {
+  it("#247: opening /settings while signed out -> /login?next=%2Fsettings (the redirect is inside RequireAuth)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/auth/config") {
-        // /login 的 LoginPage 會打這支（useAuthConfig）
         return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ providers: [], registration: { enabled: false, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: true }) }));
       }
       const res = baseFetchHandlers(() => null)(String(input), (init?.method ?? "GET").toUpperCase());
@@ -557,7 +550,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("#247：面板內恰一顆 Close、恰一個 DialogTitle（＝「Settings」）", async () => {
+  it("#247: the panel has exactly one Close and exactly one DialogTitle (= \"Settings\")", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const res = baseFetchHandlers(() => PLAIN_USER)(String(input), (init?.method ?? "GET").toUpperCase());
       if (res) return Promise.resolve(res);
@@ -570,7 +563,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)).toHaveTextContent("Settings");
   });
 
-  it("/settings/account ↔ /settings/groups 切換：Dialog DOM 節點不重掛（identity 不變）", async () => {
+  it("/settings/account <-> /settings/groups switching: the Dialog DOM node isn't remounted (identity unchanged)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -590,7 +583,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByRole("dialog")).toBe(dialogBefore);
   });
 
-  it("點 modal 外面不關閉、inline 表單已輸入的文字仍在（Esc／X 照常關由 ui/dialog.test 守）", async () => {
+  it("clicking outside the modal doesn't close it and text already typed into an inline form remains (Esc / X closing as usual is covered by ui/dialog.test)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -606,7 +599,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByLabelText("Current password")).toHaveValue("keep-me-typed");
   });
 
-  it("modal 內改密碼成功 → 不導航、modal 仍開、toast 出現（onSuccess=()=>toast(...)）", async () => {
+  it("changing the password inside the modal succeeds -> no navigation, the modal stays open, a toast appears (onSuccess=()=>toast(...))", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -627,15 +620,15 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
 
     await waitFor(() => expect(screen.getByText("Password updated.")).toBeInTheDocument());
-    // 沒有導航：登入頁的改密碼標題與表單仍在——若走了強制頁那條 navigate("/") 分支，
-    // 第二棵樹整個會不 match 而卸載，這個標題會消失。
+    // No navigation: the change-password title and form of the login page are still there - if it took the forced-page `navigate("/")` branch,
+    // the second tree would stop matching and unmount, and this title would disappear.
     expect(screen.getByRole("heading", { name: "Change your password" })).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("#201：設定區塊 chunk 載入失敗（額度已用過）→ 錯誤＋重試留在 modal 內容區，外框與導覽仍在（不冒到 app 級兜底）", async () => {
-    // 先種 settings 額度旗標＝「已自動 reload 過」→ 直接進錯誤畫面（jsdom 的 location.reload
-    // 不可 stub；自動 reload 那支由 ErrorBoundary.test 案 A 守）。
+  it("#201: a settings block chunk load failure (quota already used) -> error + retry stay inside the modal content area, the frame and navigation remain (doesn't bubble to the app-level fallback)", async () => {
+    // Seed the settings quota flag = "already auto-reloaded" -> goes straight to the error screen (jsdom's location.reload
+    // can't be stubbed; the auto-reload path is covered by ErrorBoundary.test).
     sessionStorage.setItem("knotebook:chunk-reload:settings", "1");
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -657,7 +650,6 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
           ).toBeInTheDocument(),
       );
       expect(within(dialog).getByRole("button", { name: "Try again" })).toBeInTheDocument();
-      // 外框與導覽仍在：boundary 在 modal 內容區，不是包整個 modal
       expect(within(dialog).getByRole("link", { name: "Account info" })).toBeInTheDocument();
       expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
     } finally {
@@ -665,7 +657,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     }
   });
 
-  it("L1 舊網址 /settings/groups/:id → /groups/:id、/roles → /groups/:id/roles；過程中掛進的 dialog 標題從不是 Settings（負面判準）", async () => {
+  it("legacy URL /settings/groups/:id -> /groups/:id, /roles -> /groups/:id/roles; dialog titles mounted along the way are never Settings (negative criterion)", async () => {
     const G = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     for (const [from, to] of [[`/settings/groups/${G}`, `/groups/${G}`], [`/settings/groups/${G}/roles`, `/groups/${G}/roles`]] as const) {
       const watcher = watchDialogTitles();
@@ -677,7 +669,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
         });
         renderAt([from], fetchMock);
         await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(to));
-        // baseFetchHandlers 的 /api/groups 回 []：群組 modal 以備用標題「Group」顯示 not_found
+        // baseFetchHandlers returns [] for /api/groups, so the group modal shows not_found under the fallback title "Group".
         expect(await screen.findByRole("dialog", { name: "Group" })).toBeInTheDocument();
         expect([...watcher.titles]).not.toContain("Settings");
       } finally {
@@ -688,9 +680,9 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     }
   });
 
-  it("L2 舊網址帶 backgroundLocation 進入 → 轉址後關閉群組 modal 回到該背景頁（LegacyGroupRedirect 轉傳 location.state）", async () => {
+  it("legacy URL carrying backgroundLocation -> after redirect, closing the group modal returns to that background page (LegacyGroupRedirect forwards location.state)", async () => {
     const G = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-    // 背景用正規網址：`/notes/x` 這類舊形會被 NotePage 收斂成 `/n/tester/my-note`（#179），落點就不是原字串
+    // The background uses a canonical URL: legacy forms like `/notes/x` get settled by NotePage into `/n/tester/my-note` (#179), so the landing wouldn't be the original string
     const bg = { pathname: "/n/tester/my-note", search: "", hash: "", state: null, key: "bg" };
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const res = baseFetchHandlers(() => PLAIN_USER)(String(input), (init?.method ?? "GET").toUpperCase());
@@ -703,13 +695,11 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/n/tester/my-note"));
   });
 
-  // ── #179：改標題換網址後開關設定 modal，網址不得退回改標題前 ──
 
-  /** 可改名的單篇假 server：PATCH 標題時 slug 跟著標題重算（auto slug），之後所有單篇 GET
-   * （by-path、:ref、:id）一律回現行這份——模擬 server 的 prev_slug 也解得回同一篇。 */
+  /** A single-note fake server that can be renamed: a PATCH to the title recomputes the slug (auto slug), and every later single-note GET
+   * (by-path, :ref, :id) returns the current version - simulating that the server's prev_slug also resolves to the same note. */
   function renameableFetch() {
     let current: NoteDto = { ...NOTE, slugIsCustom: false };
-    /** 指定 URL 改回別篇（模擬舊 slug 被新筆記拿走）。 */
     const overrides = new Map<string, NoteDto>();
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -735,7 +725,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     };
   }
 
-  it("#179（正式 AppRoutes 接線）：改名後舊 slug 被新筆記 B 拿走 → 以 PUSH 導到舊網址會落到 B（主樹的 useNavigationType 恆為 POP，要用真實的）", async () => {
+  it("#179 (real AppRoutes wiring): after a rename the old slug is taken by new note B -> navigating to the old URL with PUSH lands on B (the main tree's useNavigationType reports POP, so the real one must be used)", async () => {
     const { fetchMock, override } = renameableFetch();
     renderAt(["/n/tester/my-note"], fetchMock);
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
@@ -760,9 +750,9 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/my-note$/);
   });
 
-  it("#179：開設定 → 關閉 → 改標題（網址換成新 slug）→ 上一頁回到設定（背景記著改名前網址）→ 不重解析：共編不重連、不再打 by-path、編輯器不重掛", async () => {
-    // 實測的形：上一頁那筆 entry 的 backgroundLocation 是改名前的 /n/tester/my-note，它既不是
-    // resolvedFor.key（已跟到新網址）也不是現行 canonical——要靠「這一篇走過的網址」記錄認得它。
+  it("#179: open settings -> close -> change the title (URL becomes the new slug) -> back to settings (the background remembers the pre-rename URL) -> no re-resolve: collab doesn't reconnect, no by-path request, the editor doesn't remount", async () => {
+    // The shape: the backgroundLocation of that back entry is the pre-rename /n/tester/my-note, which is neither
+    // resolvedFor.key (already followed to the new URL) nor the current canonical - it can only be recognized through the record of "URLs this note has been through".
     const { fetchMock } = renameableFetch();
     renderAt(["/n/tester/my-note"], fetchMock);
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
@@ -803,7 +793,7 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 
-  it("#179：改標題（網址換成新 slug）→ 開設定 → 關閉 → 網址是新 slug，不退回舊網址；共編不拆線、編輯器不重掛", async () => {
+  it("#179: change the title (URL becomes the new slug) -> open settings -> close -> the URL is the new slug, not rolled back to the old one; collab isn't torn down, the editor doesn't remount", async () => {
     const { fetchMock } = renameableFetch();
     renderAt(["/n/tester/my-note"], fetchMock);
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
@@ -821,16 +811,16 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    // 修好前：router location 停在舊網址，backgroundLocation 記的是它，關 modal 就導回 /n/tester/my-note。
+    // Regression guarded: the router location staying on the old URL, with backgroundLocation recording it, so closing the modal navigates back to /n/tester/my-note.
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/n\/tester\/renamed-note$/);
-    // 換網址（改 params）沒有被當成換筆記：傳給 useCollab 的 noteId 一路是同一篇（真實 useCollab
-    // 依 noteId 拆線重連），編輯器是同一個 DOM 節點（沒有換成佔位卡再重掛）。
+    // Changing the URL (params) must not count as switching notes: the noteId passed to useCollab stays the same note throughout (the real useCollab
+    // tears down and reconnects by noteId), and the editor is the same DOM node (not swapped for a placeholder card and remounted).
     expect(collab.noteIds.length).toBeGreaterThan(0);
     expect(collab.noteIds.filter((id) => id !== NOTE.id)).toEqual([]);
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 
-  it("#179：設定 modal 開著時這篇被改名（重抓帶回新 slug）→ modal 不被關、真實網址不動；關閉後回到新 slug", async () => {
+  it("#179: the note is renamed while the settings modal is open (the refetch brings the new slug) -> the modal isn't closed and the real URL doesn't change; after closing it returns to the new slug", async () => {
     const { fetchMock, rename } = renameableFetch();
     const queryClient = renderAt(["/n/tester/my-note"], fetchMock);
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());
@@ -845,7 +835,6 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ["note", NOTE.id] });
     });
-    // 背景頁的 note 已換成新 slug；modal 開著時收斂 effect 不動網址（真實 entry 帶 backgroundLocation）。
     await waitFor(() =>
       expect(queryClient.getQueryData<NoteDto>(["note", NOTE.id])?.slug).toBe("renamed-elsewhere"),
     );
@@ -862,9 +851,9 @@ describe("SettingsModal（兩棵 Routes 樹、modal-over-background）", () => {
     expect(screen.getByTestId("note-editor")).toBe(editor);
   });
 
-  it("#179：modal 開著時被改名 → 切到 Groups 分頁 → 上一頁回到 Account → 不重解析（共編不重連、編輯器不重掛）；關閉後到新 slug", async () => {
-    // 實測的形：若 modal 開著時去改寫當下 entry 的 backgroundLocation，上一頁回到的那筆仍記著
-    // 舊網址，背景 params 與已跟上新網址的 resolvedFor.key 對不上 → 重解析。
+  it("#179: renamed while the modal is open -> switch to the Groups tab -> back to Account -> no re-resolve (collab doesn't reconnect, the editor doesn't remount); after closing, lands on the new slug", async () => {
+    // The shape: if the current entry's backgroundLocation were rewritten while the modal is open, the entry that back returns to would still hold the
+    // old URL, the background params wouldn't match the resolvedFor.key that has already followed the new URL -> re-resolve.
     const { fetchMock, rename } = renameableFetch();
     const queryClient = renderAt(["/n/tester/my-note"], fetchMock);
     await waitFor(() => expect(screen.getByTestId("note-editor")).toBeInTheDocument());

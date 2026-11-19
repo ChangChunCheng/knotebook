@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MAX_PROVIDER_ICON_SOURCE_BYTES } from "@knotebook/shared";
 import { ProviderIconResizeError, providerIconTargetSize, resizeProviderIcon, type ResizeDeps } from "./provider-icon-resize";
 
-/** jsdom 沒有 canvas／createImageBitmap：注入替身，驗尺寸計算與 MIME。真瀏覽器路徑由 e2e 覆蓋。 */
+/** jsdom has no canvas / createImageBitmap: inject stand-ins to check the size computation and MIME. The real browser path is covered by e2e. */
 function fakeDeps(size: { width: number; height: number }, opts: { decodeFails?: boolean; noContext?: boolean; nullBlob?: boolean } = {}) {
   const close = vi.fn();
   const bitmap = { ...size, close } as unknown as ImageBitmap;
@@ -33,7 +33,7 @@ const reasonOf = async (p: Promise<unknown>) => {
 };
 
 describe("providerIconTargetSize", () => {
-  it("512×256 → 128×64；64×300 → 27×128；100×50 → 100×50（不放大）；128×128 不變；極端比例至少 1 px", () => {
+  it("512x256 -> 128x64; 64x300 -> 27x128; 100x50 -> 100x50 (not enlarged); 128x128 unchanged; extreme aspect ratios get at least 1 px", () => {
     expect(providerIconTargetSize(512, 256)).toEqual({ width: 128, height: 64 });
     expect(providerIconTargetSize(64, 300)).toEqual({ width: 27, height: 128 });
     expect(providerIconTargetSize(100, 50)).toEqual({ width: 100, height: 50 });
@@ -44,7 +44,7 @@ describe("providerIconTargetSize", () => {
 });
 
 describe("resizeProviderIcon", () => {
-  it("512×256 → canvas 128×64、drawImage(bitmap, 0, 0, 128, 64)、高品質平滑、輸出 image/png；釋放 bitmap", async () => {
+  it("512x256 -> canvas 128x64, drawImage(bitmap, 0, 0, 128, 64), high-quality smoothing, outputs image/png; the bitmap is released", async () => {
     const f = fakeDeps({ width: 512, height: 256 });
     const blob = await resizeProviderIcon(png(), f.deps);
     expect(f.canvas.width).toBe(128);
@@ -56,7 +56,7 @@ describe("resizeProviderIcon", () => {
     expect(f.close).toHaveBeenCalledTimes(1);
   });
 
-  it("64×300 → 27×128；100×50 → 100×50（不放大，只重新編碼）", async () => {
+  it("64x300 -> 27x128; 100x50 -> 100x50 (not enlarged, only re-encoded)", async () => {
     const tall = fakeDeps({ width: 64, height: 300 });
     await resizeProviderIcon(png(), tall.deps);
     expect([tall.canvas.width, tall.canvas.height]).toEqual([27, 128]);
@@ -66,14 +66,14 @@ describe("resizeProviderIcon", () => {
     expect(small.canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), "image/png");
   });
 
-  it("JPEG、WebP 也收（輸出一律 PNG）", async () => {
+  it("JPEG and WebP are also accepted (output is always PNG)", async () => {
     for (const type of ["image/jpeg", "image/webp"]) {
       const f = fakeDeps({ width: 10, height: 10 });
       expect((await resizeProviderIcon(png(10, type), f.deps)).type, type).toBe("image/png");
     }
   });
 
-  it("GIF／SVG／空 type → unsupportedType，不解碼", async () => {
+  it("GIF / SVG / empty type -> unsupportedType, no decode", async () => {
     for (const type of ["image/gif", "image/svg+xml", ""]) {
       const f = fakeDeps({ width: 10, height: 10 });
       expect(await reasonOf(resizeProviderIcon(png(10, type), f.deps)), type).toBe("unsupportedType");
@@ -81,7 +81,7 @@ describe("resizeProviderIcon", () => {
     }
   });
 
-  it("> 5 MB → tooLarge，不解碼；剛好 5 MB 放行", async () => {
+  it("> 5 MB -> tooLarge, no decode; exactly 5 MB passes", async () => {
     const big = fakeDeps({ width: 10, height: 10 });
     expect(await reasonOf(resizeProviderIcon(png(MAX_PROVIDER_ICON_SOURCE_BYTES + 1), big.deps))).toBe("tooLarge");
     expect(big.deps.decode).not.toHaveBeenCalled();
@@ -89,7 +89,7 @@ describe("resizeProviderIcon", () => {
     expect(await reasonOf(resizeProviderIcon(png(MAX_PROVIDER_ICON_SOURCE_BYTES), edge.deps))).toBe("resolved");
   });
 
-  it("解碼失敗／getContext 回 null／toBlob 回 null → unreadable；解碼後的失敗也釋放 bitmap", async () => {
+  it("decode failure / getContext returns null / toBlob returns null -> unreadable; a failure after decoding also releases the bitmap", async () => {
     expect(await reasonOf(resizeProviderIcon(png(), fakeDeps({ width: 10, height: 10 }, { decodeFails: true }).deps))).toBe("unreadable");
     const noCtx = fakeDeps({ width: 10, height: 10 }, { noContext: true });
     expect(await reasonOf(resizeProviderIcon(png(), noCtx.deps))).toBe("unreadable");

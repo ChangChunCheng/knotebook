@@ -2,12 +2,11 @@ import { vi } from "vitest";
 import { OUTLINE_COMPACT_QUERY, OVERLAY_QUERY, PHONE_QUERY } from "@/lib/layout-tiers";
 
 /**
- * `"phone"` < 640；`"compact"` 640-767（浮動段，但標題大綱已用手機形）；`"overlay"` 768-1279；`"docked"` >= 1280。
- * 手機與 compact 在 `OVERLAY_QUERY` 下都成立。
+ * `"phone"` < 640; `"compact"` 640-767 (floating tier, but the title outline already uses the phone shape); `"overlay"` 768-1279; `"docked"` >= 1280.
+ * Phone and compact both satisfy `OVERLAY_QUERY`.
  */
 export type LayoutTier = "phone" | "compact" | "overlay" | "docked";
 
-/** 各段下 `PHONE_QUERY`／`OVERLAY_QUERY` 是否成立：手機兩者皆成立，浮動只有後者，固定皆不成立。 */
 export function tierMatches(tier: LayoutTier, query: string): boolean {
   if (query === PHONE_QUERY) return tier === "phone";
   if (query === OVERLAY_QUERY) return tier !== "docked";
@@ -15,7 +14,7 @@ export function tierMatches(tier: LayoutTier, query: string): boolean {
   return false;
 }
 
-/** 視窗寬度（px）落在哪一段：與 CSS 的 `sm`（640）、`xl`（1280）同界。 */
+/** Same boundaries as CSS `sm` (640) and `xl` (1280). */
 export function tierForWidth(widthPx: number): LayoutTier {
   if (widthPx < 640) return "phone";
   if (widthPx < 768) return "compact";
@@ -24,10 +23,10 @@ export function tierForWidth(widthPx: number): LayoutTier {
 }
 
 /**
- * `vi.stubGlobal("matchMedia")`：`PHONE_QUERY`／`OVERLAY_QUERY` 依 `tier` 成立與否；`others(query)` 為 true 的 query -> true；其餘 false。
- * 每個 query 一組 change 監聽；`setLayoutTier(next)` 改段，只通知結果翻轉的 query，呼叫監聽時帶 `{ matches, media }`
- * （與真瀏覽器一致；呼叫端自己包 act）。
- * 呼叫端 `afterEach(() => { vi.unstubAllGlobals(); })` 還原。
+ * `vi.stubGlobal("matchMedia")`: `PHONE_QUERY` / `OVERLAY_QUERY` hold per `tier`; queries for which `others(query)` is true -> true; everything else false.
+ * One set of change listeners per query; `setLayoutTier(next)` changes the tier and notifies only queries whose result flipped, calling listeners with `{ matches, media }`
+ * (like a real browser; callers wrap in act themselves).
+ * Callers restore with `afterEach(() => { vi.unstubAllGlobals(); })`.
  */
 export function stubLayoutTier(
   tier: LayoutTier,

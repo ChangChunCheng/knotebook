@@ -37,7 +37,7 @@ function fakeResponse(status: number, body?: unknown): Response {
 
 interface Call { method: string; url: string; body: unknown }
 
-/** jsdom 沒有 createImageBitmap 與 canvas：stub 全域與 prototype，讓**真的** `resizeProviderIcon` 跑（型別／大小檢查與縮圖都經它）。 */
+/** jsdom has no createImageBitmap or canvas: stub the globals and prototype so the **real** `resizeProviderIcon` runs (type / size checks and resizing all go through it). */
 function stubDecoder(result: { width: number; height: number } | "fail") {
   const createImageBitmap = vi.fn(async () => {
     if (result === "fail") throw new Error("decode failed");
@@ -53,7 +53,7 @@ function stubDecoder(result: { width: number; height: number } | "fail") {
 const originalCreate = URL.createObjectURL;
 const originalRevoke = URL.revokeObjectURL;
 
-/** provider 來自 useQuery（同 AdminAuthPage 的卡片接線）：mutation 的 invalidate 會讓 prop 隨之更新。 */
+/** provider comes from useQuery (same wiring as the AdminAuthPage card): a mutation's invalidate updates the prop. */
 function LiveDialog({ fallback }: { fallback: AdminAuthProviderDto }) {
   const { data } = useQuery({
     queryKey: ADMIN_AUTH_PROVIDERS_QUERY_KEY,
@@ -82,7 +82,7 @@ function setup(
   URL.createObjectURL = createObjectURL;
   URL.revokeObjectURL = revokeObjectURL;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // 兩個 key 先進 cache（無 observer）：成功後 invalidate 會把它們標成 isInvalidated——拿掉 onSuccess 的 invalidate 就紅。
+  // Both keys are put in the cache first (no observer): after success, invalidate marks them isInvalidated - removing onSuccess's invalidate turns this red.
   queryClient.setQueryData(ADMIN_AUTH_PROVIDERS_QUERY_KEY, [provider]);
   queryClient.setQueryData(AUTH_CONFIG_QUERY_KEY, { providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true } });
   render(
@@ -109,7 +109,7 @@ describe("ProviderIconDialog", () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => {
-    // 先卸載（effect cleanup 會呼叫 URL.revokeObjectURL）再還原替身；順序反了，結束時 picked 非 null 的案會在卸載時 TypeError。
+    // Unmount first (effect cleanup calls URL.revokeObjectURL) and then restore the stubs; in the reverse order, cases ending with picked non-null would throw a TypeError on unmount.
     cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -117,8 +117,8 @@ describe("ProviderIconDialog", () => {
     URL.revokeObjectURL = originalRevoke;
   });
 
-  it("五個選項各有預覽；初始選中＝目前的 iconKind；「依範本」預覽是換算結果（不是目前的 icon）", async () => {
-    // google 範本、目前選 GitLab logo：依範本的預覽必須是 Google（拿 provider.icon 當預覽就會錯成 GitLab）。
+  it("five options each have a preview; the initial selection = the current iconKind; the \"from template\" preview is the computed result (not the current icon)", async () => {
+    // google template, currently GitLab logo selected: the from-template preview must be Google (using provider.icon as the preview would wrongly show GitLab).
     setup({ ...BASE, template: "google", iconKind: "gitlab", icon: { type: "builtin", name: "gitlab" } });
     const dialog = await openDialog();
     expect(radio(dialog, "GitLab logo")).toBeChecked();
@@ -129,14 +129,14 @@ describe("ProviderIconDialog", () => {
     expect(previewOf(dialog, "None")).toBeNull();
   });
 
-  it("目前是 upload：選中「Upload an image」、預覽是 DTO 的上傳圖網址", async () => {
+  it("currently upload: \"Upload an image\" is selected and the preview is the DTO's uploaded image URL", async () => {
     setup(UPLOADED);
     const dialog = await openDialog();
     expect(radio(dialog, "Upload an image")).toBeChecked();
     expect(previewOf(dialog, "Upload an image")).toHaveAttribute("src", UPLOADED_URL);
   });
 
-  it("點外面不關（clickOutside）；Esc 關", async () => {
+  it("clicking outside doesn't close (clickOutside); Esc closes", async () => {
     setup(BASE);
     const dialog = await openDialog();
     await clickOutside();
@@ -145,7 +145,7 @@ describe("ProviderIconDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("儲存其他選項 → PATCH {iconKind}、關閉、invalidate admin-auth 與 auth-config", async () => {
+  it("saving another option -> PATCH {iconKind}, closes, invalidates admin-auth and auth-config", async () => {
     const { calls, queryClient } = setup(BASE);
     const dialog = await openDialog();
     fireEvent.click(radio(dialog, "None"));
@@ -156,12 +156,12 @@ describe("ProviderIconDialog", () => {
     expect(queryClient.getQueryState(AUTH_CONFIG_QUERY_KEY)?.isInvalidated).toBe(true);
   });
 
-  it("選上傳＋選檔 → 真的經縮圖（512×256 畫成 128×64）、預覽換成 blob:；儲存 → PUT FormData（file＝icon.png、image/png）、關閉、invalidate", async () => {
+  it("choosing upload + a file really goes through resizing (512x256 drawn as 128x64) and the preview becomes blob:; save -> PUT FormData (file = icon.png, image/png), closes, invalidates", async () => {
     const { createImageBitmap, drawImage } = stubDecoder({ width: 512, height: 256 });
     const { calls, queryClient } = setup(BASE);
     const dialog = await openDialog();
     chooseFile(dialog, pngFile());
-    // 等待點：預覽換成 blob: 只在縮圖完成後發生。
+    // Wait point: the preview becoming blob: happens only after resizing finishes.
     await waitFor(() => expect(previewOf(dialog, "Upload an image")).toHaveAttribute("src", "blob:icon-1"));
     expect(createImageBitmap).toHaveBeenCalledTimes(1);
     expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 128, 64);
@@ -173,14 +173,14 @@ describe("ProviderIconDialog", () => {
     const file = (put!.body as FormData).get("file") as File;
     expect(file.name).toBe("icon.png");
     expect(file.type).toBe("image/png");
-    // 送出的是縮圖結果（替身 toBlob 回 8 位元組），不是 64 位元組的原檔。
+    // What is uploaded is the resized result (the stub toBlob returns 8 bytes), not the 64-byte original file.
     expect(file.size).toBe(PNG_MAGIC.length);
     expect(mutations(calls)).toHaveLength(1);
     expect(queryClient.getQueryState(ADMIN_AUTH_PROVIDERS_QUERY_KEY)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(AUTH_CONFIG_QUERY_KEY)?.isInvalidated).toBe(true);
   });
 
-  it("失敗 → 對話框內 role=alert 顯示 errors.<code>、保持開著、可再按", async () => {
+  it("failure -> role=alert in the dialog shows errors.<code>, stays open, can be pressed again", async () => {
     setup(BASE, () => fakeResponse(400, { error: { code: "invalid_body", message: "Invalid request body." } }));
     const dialog = await openDialog();
     fireEvent.click(radio(dialog, "Google logo"));
@@ -190,7 +190,7 @@ describe("ProviderIconDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  it("上傳失敗（PUT 413／415）→ 對話框內 role=alert 顯示 errors.<code>、保持開著、不 invalidate", async () => {
+  it("upload failure (PUT 413 / 415) -> role=alert in the dialog shows errors.<code>, stays open, no invalidate", async () => {
     for (const [status, code] of [
       [413, "file_too_large"],
       [415, "unsupported_media_type"],
@@ -203,7 +203,7 @@ describe("ProviderIconDialog", () => {
       chooseFile(dialog, pngFile());
       await waitFor(() => expect(previewOf(dialog, "Upload an image")).toHaveAttribute("src", "blob:icon-1"));
       fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-      // 等待點：alert 只在 PUT 回來、catch 跑完後出現。
+      // Wait point: the alert only appears after the PUT returns and catch has run.
       expect(await within(dialog).findByRole("alert"), code).toHaveTextContent(i18n.t(`errors.${code}`));
       expect(screen.getByRole("dialog"), code).toBe(dialog);
       expect(mutations(calls), code).toMatchObject([{ method: "PUT", url: `/api/admin/auth/providers/${ID}/icon` }]);
@@ -213,7 +213,7 @@ describe("ProviderIconDialog", () => {
     }
   });
 
-  it("送出中：儲存鈕 disabled、文字 Saving…", async () => {
+  it("while submitting: save button disabled, text Saving...", async () => {
     setup(BASE, () => new Promise<Response>(() => {}));
     const dialog = await openDialog();
     fireEvent.click(radio(dialog, "None"));
@@ -222,7 +222,7 @@ describe("ProviderIconDialog", () => {
     expect(saving).toBeDisabled();
   });
 
-  it("關閉時 revokeObjectURL 釋放縮圖的 blob:", async () => {
+  it("closing releases the resized blob: via revokeObjectURL", async () => {
     stubDecoder({ width: 64, height: 64 });
     const { revokeObjectURL } = setup(BASE);
     const dialog = await openDialog();
@@ -233,7 +233,7 @@ describe("ProviderIconDialog", () => {
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:icon-1"));
   });
 
-  it("選 GIF／SVG → 「只接受 PNG、JPEG、WebP」、不解碼、儲存 disabled、不送請求", async () => {
+  it("choosing GIF / SVG -> only-PNG/JPEG/WebP message, no decode, save disabled, no request", async () => {
     for (const type of ["image/gif", "image/svg+xml"]) {
       const { createImageBitmap } = stubDecoder({ width: 10, height: 10 });
       const { calls } = setup(BASE);
@@ -247,7 +247,7 @@ describe("ProviderIconDialog", () => {
     }
   });
 
-  it("> 5 MB → 「圖片不得超過 5 MB」、不解碼、不送請求", async () => {
+  it("image over 5 MB -> size-limit message, no decode, no request", async () => {
     const { createImageBitmap } = stubDecoder({ width: 10, height: 10 });
     const { calls } = setup(BASE);
     const dialog = await openDialog();
@@ -258,7 +258,7 @@ describe("ProviderIconDialog", () => {
     expect(mutations(calls)).toEqual([]);
   });
 
-  it("解碼失敗 → 「無法讀取這張圖片」、不送請求；先選好一張再選壞的 → 前一張的預覽被清掉、儲存 disabled", async () => {
+  it("decode failure -> \"can't read this image\" message, no request; choosing a good one and then a bad one -> the previous preview is cleared and save is disabled", async () => {
     stubDecoder({ width: 64, height: 64 });
     const { calls } = setup(BASE);
     const dialog = await openDialog();
@@ -272,19 +272,19 @@ describe("ProviderIconDialog", () => {
     expect(mutations(calls)).toEqual([]);
   });
 
-  it("無變更按儲存 → 關閉、不送請求；目前是 upload 且未選新檔 → 儲存可按、關閉、不送請求", async () => {
+  it("no change then save -> closes, no request; currently upload with no new file -> save is clickable, closes, no request", async () => {
     for (const provider of [BASE, UPLOADED]) {
       const { calls } = setup(provider);
       const dialog = await openDialog();
       fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-      // 等待點：對話框關閉＝handleSave 已跑完。
+      // Wait point: the dialog closing = handleSave has finished.
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
       expect(mutations(calls), provider.iconKind).toEqual([]);
       cleanupDialog();
     }
   });
 
-  it("選上傳、目前不是 upload、尚未選檔 → 儲存 disabled", async () => {
+  it("choosing upload, currently not upload, no file chosen yet -> save disabled", async () => {
     setup(BASE);
     const dialog = await openDialog();
     fireEvent.click(radio(dialog, "Upload an image"));
@@ -292,13 +292,12 @@ describe("ProviderIconDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Choose image…" })).toBeEnabled();
   });
 
-  it("競態：選檔後縮圖未完成就取消 → 再打開 → 縮圖才完成：舊結果丟棄（無預覽、未建 blob:）、上傳選項未選檔時儲存 disabled、不送 PUT", async () => {
+  it("race: choose a file, cancel before resizing finishes -> reopen -> resizing then finishes: the stale result is discarded (no preview, no blob: created), save is disabled for the upload option with no file chosen, no PUT", async () => {
     const { drawImage } = stubDecoder({ width: 64, height: 64 });
     let release!: () => void;
     const gate = new Promise<void>(resolve => {
       release = resolve;
     });
-    // 解碼卡在 gate 上：縮圖在取消時仍 pending。
     vi.stubGlobal(
       "createImageBitmap",
       vi.fn(async () => {
@@ -314,7 +313,7 @@ describe("ProviderIconDialog", () => {
 
     dialog = await openDialog();
     release();
-    // 等待點：drawImage 被呼叫＝舊的縮圖確實跑完解碼；再讓 toBlob 之後的 await 與 React 更新走完。
+    // Wait point: drawImage called = the old resize really finished decoding; then let the awaits after toBlob and the React update run through.
     await waitFor(() => expect(drawImage).toHaveBeenCalledTimes(1));
     await settle();
     expect(createObjectURL).not.toHaveBeenCalled();
@@ -326,7 +325,7 @@ describe("ProviderIconDialog", () => {
     expect(mutations(calls)).toEqual([]);
   });
 
-  it("選上傳並選好檔、或碰到錯誤 → 取消 → 再打開：選中回到目前的 iconKind、沒有舊預覽、沒有舊錯誤；按儲存不送請求", async () => {
+  it("choose upload and a file, or hit an error -> cancel -> reopen: selection returns to the current iconKind, no old preview, no old error; Save sends no request", async () => {
     stubDecoder({ width: 64, height: 64 });
     const { calls } = setup(BASE);
     let dialog = await openDialog();
@@ -345,7 +344,7 @@ describe("ProviderIconDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(mutations(calls)).toEqual([]);
   });
-  it("上傳儲存中：Cancel 停用、Esc 與右上 X 都關不掉；PUT 回來後等列表重抓完才關；重開選中 Upload，直接按 Save 不送請求", async () => {
+  it("while the upload is saving: Cancel disabled, Esc and the top-right X can't close; closes only after the PUT returns and the list refetch finishes; reopened with Upload selected, pressing Save sends no request", async () => {
     stubDecoder({ width: 64, height: 64 });
     let releasePut!: () => void;
     const putGate = new Promise<void>(resolve => {
@@ -356,7 +355,7 @@ describe("ProviderIconDialog", () => {
       releaseGet = resolve;
     });
     let putDone = false;
-    // provider 由 useQuery 供應（接線同卡片）：PUT 成功後的 invalidate 重抓到 upload 版，而且這次 GET 被 getGate 延遲。
+    // provider is supplied by useQuery (wired like the card): after the PUT succeeds the invalidate refetches the upload version, and this GET is delayed by getGate.
     const { calls } = setup(
       BASE,
       async call => {
@@ -384,7 +383,6 @@ describe("ProviderIconDialog", () => {
     expect(screen.getByRole("dialog")).toBe(dialog);
 
     releasePut();
-    // PUT 已回來、重抓（GET）還卡著：仍開著、仍是 Saving…（busy 涵蓋到重抓完成）。
     await waitFor(() => expect(calls.filter(c => c.method === "GET" && putDone).length).toBeGreaterThan(0));
     await settle();
     expect(screen.getByRole("dialog")).toBe(dialog);
@@ -395,7 +393,7 @@ describe("ProviderIconDialog", () => {
 
     releaseGet();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // 重開：列表已是 upload 版，選中的是 Upload；什麼都不動按 Save → 不送任何請求、關閉（守住：不會送 PATCH 清掉剛上傳的圖）。
+    // Reopened: the list is already the upload version and Upload is selected; pressing Save with nothing touched -> no request, closes (guards against sending a PATCH that would clear the just-uploaded image).
     const reopened = await openDialog();
     expect(radio(reopened, "Upload an image")).toBeChecked();
     const afterOpen = calls.length;
@@ -405,7 +403,7 @@ describe("ProviderIconDialog", () => {
     expect(mutations(calls).map(c => c.method)).toEqual(["PUT"]);
   });
 
-  it("PATCH 儲存中：Cancel 停用、Esc 與右上 X 都關不掉；PATCH 回來後才關", async () => {
+  it("while the PATCH is saving: Cancel disabled, Esc and the top-right X can't close; closes only after the PATCH returns", async () => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => {
       release = resolve;
@@ -428,7 +426,7 @@ describe("ProviderIconDialog", () => {
   });
 });
 
-/** 迴圈案每輪重新 render 前卸載上一輪（testing-library 的自動 cleanup 只在 afterEach 跑）。 */
+/** In looped cases unmount the previous round before each re-render (testing-library's automatic cleanup only runs in afterEach). */
 function cleanupDialog(): void {
   cleanup();
   vi.restoreAllMocks();

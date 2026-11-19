@@ -2,8 +2,8 @@ import { vi, type Mock } from "vitest";
 import { DRAG_POINTER_QUERY } from "@/components/sidebar/drag-zone";
 
 /**
- * 側欄拖曳的測試工具。jsdom 沒有 DataTransfer：以 `fireEvent.dragStart／dragOver／drop／dragEnd(el, { dataTransfer })`
- * 帶這個假物件。`setData` 會把型別推進 `types`（型別已在就不重複），所以接手後同一個物件的後續 `dragOver` 看得到自訂型別。
+ * Test utilities for sidebar dragging. jsdom has no DataTransfer: pass this fake object with `fireEvent.dragStart / dragOver / drop / dragEnd(el, { dataTransfer })`.
+ * `setData` pushes the type into `types` (no duplicate if already there), so later `dragOver` events on the same object after a handoff see the custom type.
  */
 export interface FakeDataTransfer {
   types: string[];
@@ -12,15 +12,14 @@ export interface FakeDataTransfer {
   clearData: Mock<(type?: string) => void>;
   effectAllowed: DataTransfer["effectAllowed"];
   dropEffect: DataTransfer["dropEffect"];
-  /** 只有 `{ store: true }` 時才有：編輯器內拖曳（core 的 ⋮⋮、copyExtension）會呼叫。 */
   setDragImage?: Mock<(image: Element, x: number, y: number) => void>;
   items?: unknown[];
   files?: File[];
 }
 
 /**
- * `store: true`：`setData`／`getData` 以 Map 存取、`clearData` 清掉資料與型別，另帶 `setDragImage`、空的 `items`／`files`。
- * core SideMenu 的根層 dragstart 要讀得回 ⋮⋮ 自己 `setData` 的 `blocknote/html` 才會設 `view.dragging`。預設行為不變。
+ * `store: true`: `setData` / `getData` use a Map, `clearData` clears data and types, and it also carries `setDragImage` and empty `items` / `files`.
+ * The core SideMenu's root-level dragstart must be able to read back the `blocknote/html` that the handle itself `setData`s before it sets `view.dragging`. Default behavior unchanged.
  */
 export function createFakeDataTransfer(initialTypes: readonly string[] = [], opts: { store?: boolean } = {}): FakeDataTransfer {
   const types = [...initialTypes];
@@ -59,7 +58,7 @@ export function createFakeDataTransfer(initialTypes: readonly string[] = [], opt
   };
 }
 
-/** 覆寫 `matchMedia`：只有 `DRAG_POINTER_QUERY` 依 `fine` 回報，其餘查詢恆不符合（同 `test/setup.ts`）。呼叫端 `vi.unstubAllGlobals()` 還原。 */
+/** Overrides `matchMedia`: only `DRAG_POINTER_QUERY` reports per `fine`, every other query never matches (same as `test/setup.ts`). Callers restore with `vi.unstubAllGlobals()`. */
 export function mockFinePointer(fine: boolean): void {
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: fine && query === DRAG_POINTER_QUERY,

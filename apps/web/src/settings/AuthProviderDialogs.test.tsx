@@ -39,7 +39,7 @@ const LIVE: AdminAuthProviderDto = {
   icon: { type: "builtin", name: "generic" },
 };
 
-/** 站台限制 17 項都在預設的一份回應，讓「登入期限與 token」組跟真實頁面一樣畫出來。 */
+/** Default response carrying every site-limit item, so the sign-in period and token group renders as it does on the real page. */
 const LIMITS: SiteLimitsDto = siteLimitsDto();
 
 type Handler = (method: string, url: string, body: unknown) => Response | Promise<Response> | null;
@@ -83,7 +83,7 @@ async function openCreate() {
   return within(await screen.findByRole("dialog", { name: "Add sign-in service" }));
 }
 
-describe("新增登入服務 dialog（#187）", () => {
+describe("add sign-in service dialog (#187)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -93,7 +93,7 @@ describe("新增登入服務 dialog（#187）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("點對話框外面不關閉、已填內容仍在（使用者回報：隨便點周圍就關、已填內容全丟）", async () => {
+  it("clicking outside the dialog doesn't close it and typed content remains", async () => {
     const server = fakeServer([]);
     renderSection(server.fetchMock);
     const dialog = await openCreate();
@@ -104,13 +104,13 @@ describe("新增登入服務 dialog（#187）", () => {
     expect(dialog.getByLabelText("Display name")).toHaveValue("Keep me");
   });
 
-  it("零個服務時也看得到「新增」鈕（空狀態＋新增）", async () => {
+  it("the \"Add\" button is visible even with zero services (empty state + add)", async () => {
     renderSection(fakeServer([]).fetchMock);
     await waitFor(() => expect(screen.getByText("No sign-in services yet.")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Add sign-in service" })).toBeInTheDocument();
   });
 
-  it("範本預填：預設 GitLab（https://gitlab.com）；換 Google → https://accounts.google.com；換自訂 → 空白", async () => {
+  it("template prefill: defaults to GitLab (https://gitlab.com); switching to Google -> https://accounts.google.com; switching to custom -> blank", async () => {
     renderSection(fakeServer([]).fetchMock);
     const dialog = await openCreate();
     expect(dialog.getByLabelText("Issuer URL")).toHaveValue("https://gitlab.com");
@@ -123,7 +123,7 @@ describe("新增登入服務 dialog（#187）", () => {
     expect(dialog.getByLabelText("Display name")).toHaveValue("");
   });
 
-  it("先試探 → POST /api/admin/auth/discover {issuerUrl}；顯示 issuer 與 warning；502 → 錯誤文案", async () => {
+  it("probe first -> POST /api/admin/auth/discover {issuerUrl}; shows issuer and warning; 502 -> error text", async () => {
     const server = fakeServer([]);
     let fail = false;
     server.on((method, url) =>
@@ -144,7 +144,7 @@ describe("新增登入服務 dialog（#187）", () => {
     await waitFor(() => expect(dialog.getByText("Couldn't read a usable OpenID Connect configuration from that issuer URL.")).toBeInTheDocument());
   });
 
-  it("issuer 帶帳密 → 欄位錯誤、不送出建立請求", async () => {
+  it("issuer with credentials -> field error, create request not sent", async () => {
     const server = fakeServer([]);
     renderSection(server.fetchMock);
     const dialog = await openCreate();
@@ -156,7 +156,7 @@ describe("新增登入服務 dialog（#187）", () => {
     expect(server.calls.some(c => c.method === "POST" && c.url === "/api/admin/auth/providers")).toBe(false);
   });
 
-  it("建立 → POST body（secret 留空就不帶這個鍵）→ 設定步驟顯示回呼網址並可複製、提醒貼 secret → 完成關閉", async () => {
+  it("create -> POST body (a blank secret omits the key) -> setup step shows the callback URL, copyable, reminds to paste the secret -> finish closes", async () => {
     const server = fakeServer([]);
     const created: AdminAuthProviderDto = { ...LIVE, id: "44444444-4444-4444-8444-444444444444", enabled: false, hasSecret: false, issuerResolved: false, callbackUrl: "https://notes.example.com/api/auth/oidc/callback/44444444-4444-4444-8444-444444444444" };
     server.on((method, url) => {
@@ -187,7 +187,7 @@ describe("新增登入服務 dialog（#187）", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("建立時帶了 secret → body 有 clientSecret（原樣、不 trim）、設定步驟不再提醒貼 secret；400 → 錯誤留在 dialog", async () => {
+  it("create with a secret -> body has clientSecret (as-is, not trimmed), setup step no longer reminds to paste the secret; 400 -> error stays in the dialog", async () => {
     const server = fakeServer([]);
     let reject = true;
     server.on((method, url) => {
@@ -209,7 +209,7 @@ describe("新增登入服務 dialog（#187）", () => {
     expect((posts[1]!.body as { clientSecret?: string }).clientSecret).toBe("  s3cret  ");
   });
 
-  it("欄位檢查與 server 對齊：全空白顯示名、大寫 HTTPS://、41 個 emoji → 欄位旁錯誤不送出；30 個 emoji（UTF-16 60）可送出；設定步驟標題取得焦點", async () => {
+  it("field checks match the server: all-blank display name, uppercase HTTPS://, 41 emoji -> error beside the field, not submitted; 30 emoji (UTF-16 60) submits; setup step title gets focus", async () => {
     const server = fakeServer([]);
     const created: AdminAuthProviderDto = { ...LIVE, enabled: false, hasSecret: false };
     server.on((method, url) => {
@@ -243,7 +243,7 @@ describe("新增登入服務 dialog（#187）", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Finish setting it up" })).toHaveFocus());
   });
 
-  it("secret 只有空白 → 欄位旁錯誤、不送出（不默默丟掉）", async () => {
+  it("secret of only whitespace -> error beside the field, not submitted (not silently dropped)", async () => {
     const server = fakeServer([]);
     renderSection(server.fetchMock);
     const dialog = await openCreate();
@@ -255,7 +255,7 @@ describe("新增登入服務 dialog（#187）", () => {
   });
 });
 
-describe("編輯登入服務 dialog（#187）", () => {
+describe("edit sign-in service dialog (#187)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -265,13 +265,12 @@ describe("編輯登入服務 dialog（#187）", () => {
   });
 
   async function openEdit() {
-    // 登入服務是以顯示名為名的資料列；Edit 與開關都在這一列。
     const row = within(await screen.findByRole("row", { name: "Corp SSO" }));
     fireEvent.click(row.getByRole("button", { name: "Edit" }));
     return { row, dialog: within(await screen.findByRole("dialog", { name: "Edit sign-in service" })) };
   }
 
-  it("編輯：點對話框外面不關閉、已改內容仍在（表單型守衛）", async () => {
+  it("edit: clicking outside the dialog doesn't close it and edited content remains (form guard)", async () => {
     renderSection(fakeServer([LIVE]).fetchMock);
     const { dialog } = await openEdit();
     fireEvent.change(dialog.getByLabelText("Display name"), { target: { value: "Edited name" } });
@@ -280,7 +279,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(dialog.getByLabelText("Display name")).toHaveValue("Edited name");
   });
 
-  it("只改顯示名：不出現警示；PATCH body 只有 displayName（不帶原 issuer、沒有 clientSecret 鍵）；secret 欄是唯寫（空白＋已儲存提示）", async () => {
+  it("changing only the display name: no warning; PATCH body has only displayName (no original issuer, no clientSecret key); the secret field is write-only (blank plus a stored hint)", async () => {
     const server = fakeServer([LIVE]);
     server.on((method, url, body) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${LIVE.id}`) return null;
@@ -297,11 +296,11 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(dialog.queryByText(/Changing the issuer/)).toBeNull();
     fireEvent.click(dialog.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // 只送改過的欄位——帶著舊 issuer 送出，並發時會被當成「改 issuer」而把別人的改動蓋回去。
+    // Send only the changed fields: sending the old issuer under concurrency would be treated as an issuer change and overwrite someone else's change.
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ displayName: "Corp SSO 2" });
   });
 
-  it("舊資料 issuer 帶帳密、編輯時沒動 issuer → 不擋，PATCH 只送改過的欄位", async () => {
+  it("legacy data whose issuer carries credentials, issuer untouched while editing -> not blocked, PATCH sends only the changed fields", async () => {
     const legacy = { ...LIVE, issuerUrl: "https://user:pass@idp.example.com" };
     const server = fakeServer([legacy]);
     server.on((method, url, body) => {
@@ -317,7 +316,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ displayName: "Corp SSO 2" });
   });
 
-  it("編輯時把 issuer 改成帶帳密 → 欄位錯誤、不發 PATCH", async () => {
+  it("editing the issuer to one with credentials -> field error, no PATCH", async () => {
     const server = fakeServer([LIVE]);
     renderSection(server.fetchMock);
     const { dialog } = await openEdit();
@@ -327,7 +326,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.some(c => c.method === "PATCH")).toBe(false);
   });
 
-  it("什麼都沒改就按儲存 → 不發請求、dialog 關閉", async () => {
+  it("pressing save with nothing changed -> no request, dialog closes", async () => {
     const server = fakeServer([LIVE]);
     renderSection(server.fetchMock);
     const { dialog } = await openEdit();
@@ -336,7 +335,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.some(c => c.method === "PATCH")).toBe(false);
   });
 
-  it("baseline issuer 帶尾端空白（env 匯入）：什麼都沒改 → 無警示、不發請求；只改顯示名 → body 只有 {displayName}", async () => {
+  it("baseline issuer with trailing whitespace (env import): nothing changed -> no warning, no request; only display name changed -> body has only {displayName}", async () => {
     const PADDED = { ...LIVE, issuerUrl: "https://idp.example/ " };
     const server = fakeServer([PADDED]);
     server.on((method, url, body) => {
@@ -360,7 +359,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.filter(c => c.method === "PATCH").map(c => c.body)).toEqual([{ displayName: "Corp SSO 2" }]);
   });
 
-  it("打了 secret → 按 Esc 關閉 → 重開時 secret 欄是空的", async () => {
+  it("typed a secret -> Esc closes -> after reopening the secret field is empty", async () => {
     renderSection(fakeServer([LIVE]).fetchMock);
     const first = await openEdit();
     fireEvent.change(first.dialog.getByLabelText("Client secret"), { target: { value: "typed-secret" } });
@@ -370,7 +369,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(second.dialog.getByLabelText("Client secret")).toHaveValue("");
   });
 
-  it("secret 只有空白 → 欄位旁錯誤、不送出（不默默丟掉）", async () => {
+  it("secret of only whitespace -> error beside the field, not submitted (not silently dropped)", async () => {
     const server = fakeServer([LIVE]);
     renderSection(server.fetchMock);
     const { dialog } = await openEdit();
@@ -381,7 +380,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.some(c => c.method === "PATCH")).toBe(false);
   });
 
-  it("停用中的服務改 issuer：只說會清 secret、不說會停用；同時填了 secret → 不警示", async () => {
+  it("changing the issuer of a disabled service: says only that the secret is cleared, not that it will be disabled; secret also filled -> no warning", async () => {
     renderSection(fakeServer([{ ...LIVE, enabled: false }]).fetchMock);
     const { dialog } = await openEdit();
     fireEvent.change(dialog.getByLabelText("Issuer URL"), { target: { value: "https://other.example.com" } });
@@ -391,7 +390,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(dialog.queryByText(/Changing the issuer/)).toBeNull();
   });
 
-  it("改 issuer：secret 留空 → 「會清 secret 並停用」；填了 secret → 「會停用」；送出後回 enabled=false → 開關跟著關、toast", async () => {
+  it("changing the issuer: secret left blank -> \"clears the secret and disables\"; secret filled -> \"will be disabled\"; after submit returns enabled=false -> the switch turns off with a toast", async () => {
     const server = fakeServer([LIVE]);
     server.on((method, url, body) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${LIVE.id}`) return null;
@@ -410,7 +409,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect((server.calls.find(c => c.method === "PATCH")!.body as { clientSecret?: string }).clientSecret).toBe("new-secret");
   });
 
-  it("顯示順序不是 0 以上整數 → 不送出、顯示錯誤", async () => {
+  it("display order not a non-negative integer -> not submitted, shows an error", async () => {
     const server = fakeServer([LIVE]);
     renderSection(server.fetchMock);
     const { dialog } = await openEdit();
@@ -420,7 +419,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.some(c => c.method === "PATCH")).toBe(false);
   });
 
-  it("顯示順序上限 100000（同 server）：100001 → 不送出、顯示錯誤；100000 → PATCH {sortOrder:100000}", async () => {
+  it("display order upper bound 100000 (same as server): 100001 -> not submitted, shows an error; 100000 -> PATCH {sortOrder:100000}", async () => {
     const server = fakeServer([LIVE]);
     server.on((method, url, body) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${LIVE.id}`) return null;
@@ -439,7 +438,7 @@ describe("編輯登入服務 dialog（#187）", () => {
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ sortOrder: 100000 });
   });
 
-  it("顯示名是 HTML 形：編輯 dialog 只把它放進輸入框的值（字面）、不成為元素", async () => {
+  it("display name that looks like HTML: the edit dialog only puts it in the input's value (literal), not as an element", async () => {
     const htmlName = "<b>Corp</b> & Co";
     renderSection(fakeServer([{ ...LIVE, displayName: htmlName }]).fetchMock);
     const row = within(await screen.findByRole("row", { name: htmlName }));
@@ -454,7 +453,7 @@ const HINT_EN =
   "Optional for now. Some identity providers, such as GitLab, give you a client ID only after you register a callback URL — you'll see this service's callback URL once it's added.";
 const CLIENT_ID_STEP_EN = "Copy its client ID (GitLab calls it Application ID), then enter it here with Edit.";
 
-describe("client ID 選填（#299）", () => {
+describe("client ID optional (#299)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -474,7 +473,7 @@ describe("client ID 選填（#299）", () => {
   }
   const NEW_DTO: AdminAuthProviderDto = { ...LIVE, id: "55555555-5555-4555-8555-555555555555", enabled: false, issuerResolved: false };
 
-  it("W1 client ID 留空送出 → POST body 沒有 clientId 鍵；設定步驟依序 callback、scopes、client、clientId、secret、finish，callback URL 與複製鈕照舊", async () => {
+  it("blank client ID submits -> POST body has no clientId key; setup steps in order callback, scopes, client, clientId, secret, finish; callback URL and copy button unchanged", async () => {
     const created = { ...NEW_DTO, clientId: null, hasSecret: false };
     const server = serverCreating(created);
     renderSection(server.fetchMock);
@@ -496,7 +495,7 @@ describe("client ID 選填（#299）", () => {
     await waitFor(() => expect(vi.mocked(copyText)).toHaveBeenCalledWith(created.callbackUrl));
   });
 
-  it("W2 client ID 填 \"  abc  \" → body clientId 為 \"abc\"；server 回有 client ID 的 DTO → 沒有 clientId 那一步", async () => {
+  it("client ID \"  abc  \" -> body clientId is \"abc\"; server returns a DTO with a client ID -> no clientId step", async () => {
     const server = serverCreating({ ...NEW_DTO, clientId: "abc", hasSecret: false });
     renderSection(server.fetchMock);
     const dialog = await openCreate();
@@ -509,7 +508,7 @@ describe("client ID 選填（#299）", () => {
     expect(items.some(text => text === CLIENT_ID_STEP_EN)).toBe(false);
   });
 
-  it("W3 (a) 新增的 client ID 輸入框：說明文字接在 aria-describedby、沒有 aria-required", async () => {
+  it("new client ID input: the help text is wired via aria-describedby, no aria-required", async () => {
     renderSection(fakeServer([]).fetchMock);
     const dialog = await openCreate();
     const input = dialog.getByLabelText("Client ID");
@@ -517,7 +516,7 @@ describe("client ID 選填（#299）", () => {
     expect(input).not.toHaveAttribute("aria-required");
   });
 
-  it("W3 (b) client ID 超過 512 字 → 欄位錯誤、不送出；輸入框的描述同時含錯誤與說明", async () => {
+  it("client ID over 512 chars -> field error, not submitted; the input's description includes both the error and the help text", async () => {
     const server = fakeServer([]);
     renderSection(server.fetchMock);
     const dialog = await openCreate();
@@ -545,7 +544,7 @@ describe("client ID 選填（#299）", () => {
   }
   const NO_ID: AdminAuthProviderDto = { ...LIVE, clientId: null, enabled: false, hasSecret: false };
 
-  it("W4 沒有 client ID 的服務：什麼都不改按儲存 → 不發請求；沒有 aria-required", async () => {
+  it("service without a client ID: saving with nothing changed -> no request; no aria-required", async () => {
     const { server, dialog } = await openEditOf(NO_ID);
     expect(dialog.getByLabelText("Client ID")).toHaveValue("");
     expect(dialog.getByLabelText("Client ID")).not.toHaveAttribute("aria-required");
@@ -554,7 +553,7 @@ describe("client ID 選填（#299）", () => {
     expect(server.calls.some(c => c.method === "PATCH")).toBe(false);
   });
 
-  it("W4 沒有 client ID 的服務：欄位只打空白並改顯示名 → PATCH body 只有 displayName", async () => {
+  it("service without a client ID: only whitespace typed in the field plus a display name change -> PATCH body has only displayName", async () => {
     const { server, dialog } = await openEditOf(NO_ID);
     fireEvent.change(dialog.getByLabelText("Client ID"), { target: { value: "   " } });
     fireEvent.change(dialog.getByLabelText("Display name"), { target: { value: "Corp SSO 2" } });
@@ -563,7 +562,7 @@ describe("client ID 選填（#299）", () => {
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ displayName: "Corp SSO 2" });
   });
 
-  it("W4 沒有 client ID 的服務：填 \"x\" → PATCH body 為 {clientId:\"x\"}", async () => {
+  it("service without a client ID: entering \"x\" -> PATCH body is {clientId:\"x\"}", async () => {
     const { server, dialog } = await openEditOf(NO_ID);
     fireEvent.change(dialog.getByLabelText("Client ID"), { target: { value: "x" } });
     fireEvent.click(dialog.getByRole("button", { name: "Save" }));
@@ -571,7 +570,7 @@ describe("client ID 選填（#299）", () => {
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ clientId: "x" });
   });
 
-  it("有 client ID 的服務把欄位清空 → 欄位錯誤「Enter a client ID.」、不發請求；輸入框有 aria-required", async () => {
+  it("clearing the client ID of a service that has one -> field error \"Enter a client ID.\", no request; input has aria-required", async () => {
     const { server, dialog } = await openEditOf(LIVE);
     const input = dialog.getByLabelText("Client ID");
     expect(input).toHaveAttribute("aria-required", "true");
@@ -582,7 +581,7 @@ describe("client ID 選填（#299）", () => {
   });
 });
 
-describe("改 issuer 的自動建帳確認框", () => {
+describe("auto-create confirmation when changing the issuer", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -595,7 +594,6 @@ describe("改 issuer 的自動建帳確認框", () => {
   const NEW_ISSUER = "https://other.example.com";
   const CONFIRM_TITLE = "Keep creating accounts after changing the issuer?";
 
-  /** PATCH 成功：把 body 合進服務並回 DTO。 */
   function patchOk(server: ReturnType<typeof fakeServer>, base: AdminAuthProviderDto): void {
     server.on((method, url, body) => {
       if (method !== "PATCH" || url !== PATH) return null;
@@ -615,7 +613,7 @@ describe("改 issuer 的自動建帳確認框", () => {
   const patches = (server: ReturnType<typeof fakeServer>) => server.calls.filter(c => c.method === "PATCH");
   const confirmDialog = async () => within(await screen.findByRole("dialog", { name: CONFIRM_TITLE }));
 
-  it("K1 開關開著、改 issuer 並同時改顯示名 → Save 跳確認框（說明用改前的名稱），尚未送 PATCH", async () => {
+  it("switch on, issuer and display name both changed -> Save opens the confirm dialog (text uses the pre-change name), PATCH not yet sent", async () => {
     const server = fakeServer([AUTO]);
     renderSection(server.fetchMock);
     const { dialog } = await openEditChangeIssuer({ rename: true });
@@ -626,8 +624,8 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)).toHaveLength(0);
   });
 
-  // 「確認框消失」由 K7 守（失敗路徑只剩編輯對話框）；這裡成功後整組 dialog 都關，斷言不到確認框單獨消失。
-  it("K2 「Turn off and save」→ 恰一個 PATCH 帶 autoCreateEnabled:false；成功後編輯對話框關閉", async () => {
+  // The confirm dialog disappearing is covered by the save-failure case below (only the edit dialog remains on the failure path); on success here the whole dialog set closes, so the confirm dialog disappearing alone can't be asserted.
+  it("\"Turn off and save\" -> exactly one PATCH with autoCreateEnabled:false; the edit dialog closes on success", async () => {
     const server = fakeServer([AUTO]);
     patchOk(server, AUTO);
     renderSection(server.fetchMock);
@@ -639,7 +637,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)[0]!.body).toEqual({ displayName: "Renamed", issuerUrl: NEW_ISSUER, autoCreateEnabled: false });
   });
 
-  it("K3 「Keep on and save」→ PATCH 的 autoCreateEnabled 為 true", async () => {
+  it("\"Keep on and save\" -> PATCH has autoCreateEnabled true", async () => {
     const server = fakeServer([AUTO]);
     patchOk(server, AUTO);
     renderSection(server.fetchMock);
@@ -650,7 +648,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)[0]!.body).toEqual({ displayName: "Renamed", issuerUrl: NEW_ISSUER, autoCreateEnabled: true });
   });
 
-  it("K4 「Cancel」→ 零個 PATCH；確認框消失；編輯對話框仍開著、Issuer URL 欄的值保留", async () => {
+  it("\"Cancel\" -> zero PATCHes; confirm dialog disappears; edit dialog stays open and the Issuer URL value is kept", async () => {
     const server = fakeServer([AUTO]);
     renderSection(server.fetchMock);
     const { dialog } = await openEditChangeIssuer();
@@ -662,7 +660,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)).toHaveLength(0);
   });
 
-  it("K4b 「Cancel」關閉確認框後，焦點在編輯對話框的 Issuer URL 欄", async () => {
+  it("after \"Cancel\" closes the confirm dialog, focus is on the edit dialog's Issuer URL field", async () => {
     const server = fakeServer([AUTO]);
     renderSection(server.fetchMock);
     const { dialog } = await openEditChangeIssuer();
@@ -672,7 +670,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     await waitFor(() => expect(edit.getByLabelText("Issuer URL")).toHaveFocus());
   });
 
-  it("K5 開關開著、只改顯示名 → 不跳確認框；body 沒有 autoCreateEnabled 鍵", async () => {
+  it("switch on, only the display name changed -> no confirm dialog; body has no autoCreateEnabled key", async () => {
     const server = fakeServer([AUTO]);
     patchOk(server, AUTO);
     renderSection(server.fetchMock);
@@ -686,7 +684,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)[0]!.body).toEqual({ displayName: "Renamed" });
   });
 
-  it("K6 開關本來關、改 issuer → 不跳確認框；body 明帶 autoCreateEnabled:false", async () => {
+  it("switch originally off, issuer changed -> no confirm dialog; body explicitly carries autoCreateEnabled:false", async () => {
     const server = fakeServer([LIVE]);
     patchOk(server, LIVE);
     renderSection(server.fetchMock);
@@ -697,7 +695,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(patches(server)[0]!.body).toEqual({ issuerUrl: NEW_ISSUER, autoCreateEnabled: false });
   });
 
-  it("K7 儲存失敗（409）→ 確認框已消失；錯誤顯示在編輯對話框的 alert；Issuer URL 欄的值仍在", async () => {
+  it("save failure (409) -> confirm dialog gone; error shown in the edit dialog's alert; Issuer URL value remains", async () => {
     const server = fakeServer([AUTO]);
     server.on((method, url) =>
       method === "PATCH" && url === PATH ? fakeResponse(409, { error: { code: "provider_secret_missing", message: "x" } }) : null,
@@ -712,7 +710,7 @@ describe("改 issuer 的自動建帳確認框", () => {
     expect(edit.getByLabelText("Issuer URL")).toHaveValue(NEW_ISSUER);
   });
 
-  it("K8 送出中：編輯對話框的儲存鈕顯示「Saving…」並 disabled，再點不會多送；resolve 後 PATCH 恰一個", async () => {
+  it("while submitting: the edit dialog's save button shows \"Saving...\" and is disabled, clicking again doesn't send twice; after resolve exactly one PATCH", async () => {
     const server = fakeServer([AUTO]);
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });

@@ -8,10 +8,9 @@ import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/tes
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { SettingsAiSection } from "./SettingsAiSection";
 
-// 同一套約定：mock 全域 fetch，讓真正的 admin-ai hooks（`@/api/adminAi`，react-query）
-// 打到假回應，不 mock hook 本身——見 ShareDialog.test.tsx/NoteList.test.tsx 的說明。
-// `SettingsAiSection` 本身不吃任何 router/session context（不像 `SettingsUsersSection`
-// 需要 `useSession` 判斷「自己那列」），直接單獨渲染即可，不必透過 `AppRoutes`。
+// Same convention: mock global fetch so the real admin-ai hooks (`@/api/adminAi`, react-query) hit fake responses, without mocking the hooks themselves - see ShareDialog.test.tsx / NoteList.test.tsx.
+// `SettingsAiSection` takes no router/session context (unlike `SettingsUsersSection`,
+// which needs `useSession` to tell "my own row"), so it renders standalone without going through `AppRoutes`.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -106,7 +105,6 @@ const ACTION_INSTRUCT: AdminAiActionDto = {
   kind: "instruct",
 };
 
-/** 三層 GET 端點的假回應——`overrides` 讓每案覆寫任一層清單，其餘沿用預設 fixture。 */
 function defaultGetHandlers(
   overrides: Partial<{ providers: AdminAiProviderDto[]; models: AdminAiModelDto[]; actions: AdminAiActionDto[] }> = {},
 ) {
@@ -144,7 +142,7 @@ function renderSection(
   return queryClient;
 }
 
-describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
+describe("SettingsAiSection (provider / model / action three-layer CRUD)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -161,7 +159,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     { dialog: "Edit model", open: () => screen.getAllByRole("button", { name: "Edit" })[1] },
     { dialog: "Add action", open: () => screen.getByRole("button", { name: "Add action" }) },
     { dialog: "Edit action", open: () => screen.getAllByRole("button", { name: "Edit" }).at(-1)! },
-  ])("「$dialog」對話框：點對話框外面不關閉、已填內容仍在（表單型守衛）", async ({ dialog, open }) => {
+  ])("\"$dialog\" dialog: clicking outside doesn't close it and typed content remains (form guard)", async ({ dialog, open }) => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -180,7 +178,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(within(dlg).getAllByRole("textbox")[0]).toHaveValue("KEEP-ME");
   });
 
-  it("三層列表渲染：providers／內嵌 models／actions", async () => {
+  it("three-layer list renders: providers / embedded models / actions", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -193,7 +191,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
 
     await waitFor(() => expect(screen.getByText(PROVIDER_A.name)).toBeInTheDocument());
     expect(screen.getByText(PROVIDER_B.name)).toBeInTheDocument();
-    // 模型名出現兩次：供應商列的「模型」欄＋明細列的模型子表（#2）。
+    // The model name appears twice: the provider row's Models column plus the model sub-table in the detail row.
     expect(screen.getAllByText(MODEL_A1.displayName)).toHaveLength(2);
     expect(screen.getByText(MODEL_A1.modelId)).toBeInTheDocument();
     expect(screen.getAllByText(MODEL_B1.displayName)).toHaveLength(2);
@@ -201,7 +199,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(screen.getByText(ACTION_CUSTOM.name)).toBeInTheDocument();
   });
 
-  it("新增 provider（含 apiKey）送出 camelCase body", async () => {
+  it("adding a provider (with apiKey) submits a camelCase body", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -241,7 +239,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     });
   });
 
-  it("baseUrl 帶帳密 → 新增與編輯都顯示明確錯誤、不送出請求", async () => {
+  it("baseUrl with credentials -> clear error on both add and edit, request not sent", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -272,7 +270,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("apiKey 已設 → edit dialog 顯示覆寫 placeholder；留空送出 PATCH 不含 apiKey 欄位", async () => {
+  it("apiKey already set -> the edit dialog shows an overwrite placeholder; leaving it blank sends a PATCH without the apiKey field", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -308,8 +306,8 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     });
   });
 
-  it("改 base_url 才提示「會清除金鑰」；同一次輸入了新金鑰就不提示（issue #46）", async () => {
-    // 事前告知：不然使用者會先看到 provider 突然不能用，才知道發生了什麼。
+  it("changing base_url warns \"this clears the key\"; entering a new key in the same edit removes the warning (issue #46)", async () => {
+    // Warn in advance: otherwise the user would first see the provider suddenly stop working before learning what happened.
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -323,30 +321,26 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
     const notice = /Changing the Base URL clears the stored API key/;
-    // 還沒動網址：不提示（改名字之類的編輯不該嚇人）。
     expect(screen.queryByText(notice)).not.toBeInTheDocument();
 
     const baseUrlInput = await screen.findByLabelText("Base URL");
     fireEvent.change(baseUrlInput, { target: { value: "http://elsewhere.example.com" } });
     expect(screen.getByText(notice)).toBeInTheDocument();
 
-    // 一併輸入了新金鑰 → 不會作廢任何東西，也就不該再提示。
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-new" } });
     expect(screen.queryByText(notice)).not.toBeInTheDocument();
 
-    // 又把它刪掉（或只剩空白）→ 提示要回來。三個條件都是每次 render 重算的衍生值，
-    // 改成 useState + useEffect 快照就會在這裡靜默壞掉。
+    // Delete it again (or leave only whitespace) -> the warning returns. All three conditions are derived values recomputed on every render;
+    // turning them into a useState + useEffect snapshot would silently break here.
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "   " } });
     expect(screen.getByText(notice)).toBeInTheDocument();
   });
 
-  it("沒有金鑰的 provider 在該供應商的明細列就看得出來；有金鑰的不顯示（#46）", async () => {
-    // 「金鑰被清掉」以前是一個完全沒有 UI 表示的狀態——供應商不顯示 hasKey，degraded 的紅字
-    // 又剛好在同一時間消失（沒金鑰就不叫「解不開」）。文件宣稱的「shows as having no key」
-    // 就是靠這一行才成立。
-    // 用現成的 PROVIDER_B（Local Ollama，hasKey:false）——自己捏 id 撞到 PROVIDER_A 的話
-    // React key 與 DOM id 都會重複，「恰好一則」這個斷言就變成建立在 reconciliation 的
-    // 未定義行為上。
+  it("a provider without a key is visible in that provider's detail row; one with a key doesn't show it (#46)", async () => {
+    // A cleared key used to have no UI representation: the provider row doesn't show hasKey and the degraded red text disappears at the same time (no key doesn't count as "can't decrypt").
+    // The documented "shows as having no key" behavior depends on this hint.
+    // Use the existing PROVIDER_B (Local Ollama, hasKey:false): inventing an id that collides with PROVIDER_A would duplicate React keys and DOM ids,
+    // and the "exactly one" assertion would rest on undefined reconciliation behavior.
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -358,18 +352,15 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     renderSection(fetchMock);
     await waitFor(() => expect(screen.getByText(PROVIDER_B.name)).toBeInTheDocument());
 
-    // ⚠ 要驗它**掛在哪一個供應商的明細列**，不能只數數量（變異實測：把顯示條件反轉成
-    // `hasKey && !degraded`，提示改掛在有金鑰的那一列、真正沒金鑰的反而不顯示，只數
-    // 數量的話 16 條測試全綠）。而三份文件唯一依靠的就是這道釘子。
-    // 供應商的說明行在緊接資料列的明細列（「＜名稱＞ details」）。
+    // Verify **which provider's detail row** carries the hint; counting isn't enough (inverting the condition to `hasKey && !degraded` would put the hint on the provider that has a key and hide it on the one without, and a count alone wouldn't notice).
+    // A provider's description line is in the detail row right after its data row ("<name> details").
     const noKeyCard = screen.getByRole("row", { name: `${PROVIDER_B.name} details` });
     const hasKeyCard = screen.getByRole("row", { name: `${PROVIDER_A.name} details` });
     expect(within(noKeyCard).getByText(/No API key stored/)).toBeInTheDocument();
     expect(within(hasKeyCard).queryByText(/No API key stored/)).not.toBeInTheDocument();
   });
 
-  it("沒有金鑰的 provider 改網址不提示「會清除金鑰」（本來就沒有東西可清）", async () => {
-    // 自架 Ollama 換 port 的情境：不該冒出一句與他無關的警告。
+  it("a provider without a key changing its URL doesn't show \"this clears the key\" (there's nothing to clear)", async () => {
     const noKey = { ...PROVIDER_A, hasKey: false };
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -387,7 +378,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(screen.queryByText(/Changing the Base URL clears/)).not.toBeInTheDocument();
   });
 
-  it("degraded provider 顯示警示與重輸提示", async () => {
+  it("degraded provider shows a warning and a re-enter hint", async () => {
     const degradedProvider: AdminAiProviderDto = { ...PROVIDER_A, degraded: true };
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -404,7 +395,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(screen.getByText(/Enter the API key again to restore it/)).toBeInTheDocument();
   });
 
-  it("測試連線失敗 → 仍 invalidate（onSettled，不是 onSuccess——degraded 徽章不過期）", async () => {
+  it("test connection failure -> still invalidates (onSettled, not onSuccess - the degraded badge must not go stale)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -429,17 +420,15 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     await waitFor(() => expect(screen.getByText(PROVIDER_A.name)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
 
-    // 失敗訊息本身也要顯示（既有的錯誤處理路徑）。
     await waitFor(() => expect(screen.getByText("AI provider is unavailable — ask an admin to re-enter the API key")).toBeInTheDocument());
 
-    // 重點：mutation 失敗仍要 invalidate（server 端只在失敗路徑對 runtime.degraded
-    // 做 add，若沿用 onSuccess，剛變 degraded 的供應商列與明細列直到下一次無關操作前都不會刷新）。
+    // Key point: a failed mutation still invalidates (the server adds to runtime.degraded only on the failure path; with onSuccess, the provider row and detail row that just became degraded wouldn't refresh until the next unrelated action).
     const keys = invalidateSpy.mock.calls.map(([arg]) => (arg as { queryKey: unknown[] }).queryKey);
     expect(keys).toContainEqual(["admin-ai"]);
     expect(keys).toContainEqual(["ai-actions"]);
   });
 
-  it("model isDefault 顯示星號徽章", async () => {
+  it("model isDefault shows a star badge", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -454,7 +443,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(screen.getByTitle("Default")).toHaveTextContent("★");
   });
 
-  it("409 model_taken → model 表單顯示錯誤文案", async () => {
+  it("409 model_taken -> the model form shows the error text", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -485,7 +474,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     await waitFor(() => expect(screen.getByText("This model already exists for the provider")).toBeInTheDocument());
   });
 
-  it("builtin action 無刪除鈕、自訂 action 有", async () => {
+  it("builtin action has no delete button, custom action has one", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -503,7 +492,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(within(customRow).getByRole("button", { name: "Delete" })).toBeInTheDocument();
   });
 
-  it("#263 Instruct 的編輯框：不渲染套用模式控制項、送出的 PATCH 不帶 applyMode", async () => {
+  it("#263 Instruct edit dialog: no apply-mode control rendered, the submitted PATCH has no applyMode", async () => {
     let patchBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -529,7 +518,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(patchBody).not.toHaveProperty("applyMode");
   });
 
-  it("#263 Instruct 的編輯框：template 提示列出三個佔位符（只讀提示那一行——userTemplate textarea 的值也在對話框的 textContent 裡，讀整個對話框會空轉）", async () => {
+  it("#263 Instruct edit dialog: the template hint lists three placeholders (read only the hint line - the userTemplate textarea value is also in the dialog's textContent, so reading the whole dialog would match vacuously)", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -548,7 +537,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(hint).not.toHaveTextContent("placeholder for the selected text");
   });
 
-  it("#263 反例：quick 動作的編輯框仍有套用模式控制項", async () => {
+  it("#263 counter-case: a quick action's edit dialog still has the apply-mode control", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -566,7 +555,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(within(dialog).getByTestId("ai-action-edit-template-hint")).toHaveTextContent("Must include a {{text}} placeholder for the selected text.");
   });
 
-  it("userTemplate 缺 {{text}} → 400 invalid_body，表單顯示錯誤", async () => {
+  it("userTemplate missing {{text}} -> 400 invalid_body, the form shows the error", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -598,11 +587,9 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     await waitFor(() => expect(screen.getByText("The request was malformed.")).toBeInTheDocument());
   });
 
-  it("新增 action 附加在清單最後：create body 帶遞增 sortOrder（回歸釘）", async () => {
-    // ACTION_BUILTIN.sortOrder=0、ACTION_CUSTOM.sortOrder=1——修法前 create body 省略
-    // `sortOrder`，server 端 `sortOrder ?? 0` 會讓新動作跟 ACTION_BUILTIN 同分變成 0，
-    // 之後上下移鈕互換同分值＝原地不動，排序對這個新動作靜默失效。這裡直接斷言送出的
-    // POST body 帶的是 `max(0,1)+1=2`，不是被省略、也不是 0。
+  it("adding an action appends it last: the create body carries an incrementing sortOrder (regression)", async () => {
+    // ACTION_BUILTIN.sortOrder=0, ACTION_CUSTOM.sortOrder=1. If the create body omitted `sortOrder`, the server's `sortOrder ?? 0` would give the new action the same 0 as ACTION_BUILTIN,
+    // and the up/down buttons swapping equal values would do nothing, silently breaking ordering for the new action. This asserts the POST body carries `max(0,1)+1=2`, not omitted and not 0.
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -639,13 +626,12 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
       const [, init] = call as [RequestInfo, RequestInit];
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       expect(body.sortOrder).toBe(2);
-      // 明確不是修法前的行為：省略欄位、或跟 ACTION_BUILTIN 同分變 0。
       expect(body.sortOrder).not.toBe(ACTION_BUILTIN.sortOrder);
       expect(body).toHaveProperty("sortOrder");
     });
   });
 
-  it("新增 action：模型下拉預設顯示 Auto，選某模型後送出的 body 帶該模型 id；套用模式選 Preview 後 body.applyMode 為 preview", async () => {
+  it("adding an action: the model dropdown defaults to Auto, after picking a model the submitted body carries that model id; picking Preview as apply mode makes body.applyMode preview", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -691,7 +677,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     });
   });
 
-  it("編輯 action：選回 Auto 後送出 modelId 為 null", async () => {
+  it("editing an action: choosing Auto again submits modelId null", async () => {
     const withModel: AdminAiActionDto = { ...ACTION_CUSTOM, modelId: MODEL_A1.id };
     let patchBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -720,7 +706,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(patchBody?.modelId).toBeNull();
   });
 
-  it("編輯 action：模型清單較晚才到時，已存的模型不會被重設成 Auto，送出仍帶原模型 id", async () => {
+  it("editing an action: when the model list arrives late, the stored model isn't reset to Auto and the submit still carries the original model id", async () => {
     const withModel: AdminAiActionDto = { ...ACTION_CUSTOM, modelId: MODEL_A1.id };
     let releaseModels: () => void = () => {};
     const modelsGate = new Promise<void>((resolve) => {
@@ -758,7 +744,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(patchBody?.modelId).toBe(MODEL_A1.id);
   });
 
-  it("新增與編輯供應商：類型下拉可選 OpenAI-compatible，送出的 type 為 openai_compatible", async () => {
+  it("adding and editing a provider: the type dropdown offers OpenAI-compatible, the submitted type is openai_compatible", async () => {
     let postBody: Record<string, unknown> | undefined;
     let patchBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -800,7 +786,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(patchBody?.type).toBe("openai_compatible");
   });
 
-  it("上下移鈕：PATCH sortOrder 對調", async () => {
+  it("up/down buttons: PATCH swaps sortOrder", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -834,12 +820,10 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     expect(JSON.parse(String(secondInit.body))).toEqual({ sortOrder: ACTION_CUSTOM.sortOrder });
   });
 
-  it("上下移鈕：mutation 進行中連點是 no-op，不送出第二組 PATCH（回歸釘）", async () => {
-    // 修法前上下移鈕只看 `!canMoveUp/Down`，沒鎖 in-flight——連點會用同一份 stale
-    // `actions` 陣列各自送出「跟相鄰項目對調」的第二組 PATCH，兩次對調彼此抵銷造成
-    // 兩列同 `sortOrder`（Edit 表單不送這個欄位救不回來）。這裡把第一支 PATCH 卡住不
-    // resolve，模擬「使用者在按鈕變 disabled 前又點了一次」，斷言全程只送出原本那
-    // 一組（2 支）PATCH，不會因為第二次點擊多出第二組。
+  it("up/down buttons: clicking repeatedly while a mutation is in flight is a no-op, no second PATCH set is sent (regression)", async () => {
+    // Without an in-flight lock (only `!canMoveUp/Down`), rapid clicks would each send a second "swap with neighbor" PATCH set from the same stale
+    // `actions` array; the two swaps cancel out and leave two rows with the same `sortOrder` (the Edit form doesn't send that field, so it can't be repaired). Here the first PATCH
+    // is held unresolved to simulate "the user clicked again before the button became disabled", and the assertion is that only the original set (2 PATCHes) is ever sent.
     let resolveFirstPatch!: (value: Response) => void;
     const firstPatchPromise = new Promise<Response>((resolve) => {
       resolveFirstPatch = resolve;
@@ -867,7 +851,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     fireEvent.click(moveUpButton);
     await waitFor(() => expect(moveUpButton).toBeDisabled());
 
-    // 第一支 PATCH 還卡著沒 resolve——按鈕此時應該已經 disabled，這次點擊要是 no-op。
+    // The first PATCH is still unresolved: the button should already be disabled, so this click must be a no-op.
     fireEvent.click(moveUpButton);
 
     resolveFirstPatch(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(ACTION_CUSTOM) }));
@@ -877,14 +861,14 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
       expect(patchCalls).toHaveLength(2);
     });
 
-    // 給第二支（鄰居項）PATCH 一輪 microtask 機會送出並讓 mutateAsync 鏈 settle，
-    // 確認全程真的只有 2 支，不是因為斷言時機太早而漏數。
+    // Give the second (neighbor) PATCH one round of microtasks to send and the mutateAsync chain to settle,
+    // so the total really is 2 and not undercounted because the assertion ran too early.
     await waitFor(() => expect(moveUpButton).not.toBeDisabled());
     const patchCalls = fetchMock.mock.calls.filter(([, reqInit]) => (reqInit as RequestInit | undefined)?.method === "PATCH");
     expect(patchCalls).toHaveLength(2);
   });
 
-  it("任一 mutation 成功 → invalidate ['admin-ai'] 前綴與 ['ai-actions']", async () => {
+  it("any mutation success -> invalidates the ['admin-ai'] prefix and ['ai-actions']", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -903,7 +887,6 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
     renderSection(fetchMock, queryClient);
 
     await waitFor(() => expect(screen.getByText(PROVIDER_A.name)).toBeInTheDocument());
-    // 供應商列的啟用 switch：可及名稱＝「Enabled」欄頭＋供應商名（對齊使用者表／登入服務表）。
     fireEvent.click(screen.getByRole("switch", { name: `Enabled ${PROVIDER_A.name}` }));
 
     await waitFor(() => {
@@ -914,7 +897,7 @@ describe("SettingsAiSection（provider／model／action 三層 CRUD）", () => {
   });
 });
 
-describe("AI 代理表格（#3）", () => {
+describe("AI settings tables (#3)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -933,7 +916,7 @@ describe("AI 代理表格（#3）", () => {
     });
   }
 
-  /** 只取這張表自己的表頭（模型子表的 sr-only 表頭也在供應商表的子樹裡）。 */
+  /** Takes only this table's own header (the model sub-table's sr-only header is also inside the provider table's subtree). */
   const ownHeaders = (table: HTMLElement) =>
     within(table)
       .getAllByRole("columnheader")
@@ -941,7 +924,7 @@ describe("AI 代理表格（#3）", () => {
       .map((cell) => cell.textContent);
   const buttonNames = (scope: HTMLElement) => within(scope).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
 
-  it("AI1 供應商表：表名 Providers、欄名 Name／Type／Base URL／Models／Actions／Enabled；列名＝供應商名，列內有類型、Base URL、模型名、Test connection／Edit／Delete（依序）與「Enabled ＜名稱＞」開關", async () => {
+  it("provider table: table name Providers, column names Name / Type / Base URL / Models / Actions / Enabled; row name = provider name, the row has type, Base URL, model names, Test connection / Edit / Delete (in order) and the \"Enabled <name>\" switch", async () => {
     renderSection(stubDefault());
     const table = await screen.findByRole("table", { name: "Providers" });
     expect(ownHeaders(table)).toEqual(["Name", "Type", "Base URL", "Models", "Actions", "Enabled"]);
@@ -953,13 +936,13 @@ describe("AI 代理表格（#3）", () => {
     expect(within(row).getByRole("switch", { name: `Enabled ${PROVIDER_A.name}` })).toBeInTheDocument();
   });
 
-  it("欄寬：供應商表名稱欄 1、Base URL 1.5、Models 1（真實掛載）", async () => {
+  it("column widths: provider table name column 1, Base URL 1.5, Models 1 (real mount)", async () => {
     renderSection(stubDefault());
     const table = await screen.findByRole("table", { name: "Providers" });
     expect(table.style.getPropertyValue("--kb-table-cols")).toBe("minmax(14ch,1fr) max-content minmax(14ch,1.5fr) minmax(14ch,1fr) 6.5rem 3.5rem");
   });
 
-  it("AI2 供應商明細列：緊接資料列、名為「＜名稱＞ details」，含金鑰說明與模型子表「Models – ＜名稱＞」（nested：沒有自己的捲動框；標題 Models＋Add model；子表列名＝模型名、副標 modelId、Edit／Delete、開關「Enabled ＜模型名＞」）", async () => {
+  it("provider detail row: right after the data row, named \"<name> details\", containing the key note and the model sub-table \"Models - <name>\" (nested: no scroll box of its own; title Models + Add model; sub-table row name = model name, subtitle modelId, Edit / Delete, switch \"Enabled <model name>\")", async () => {
     renderSection(stubDefault());
     const dataRow = await screen.findByRole("row", { name: PROVIDER_B.name });
     const details = screen.getByRole("row", { name: `${PROVIDER_B.name} details` });
@@ -975,7 +958,7 @@ describe("AI 代理表格（#3）", () => {
     expect(within(modelRow).getByRole("switch", { name: `Enabled ${MODEL_B1.displayName}` })).toBeInTheDocument();
   });
 
-  it("AI3 頁內「Add provider」「Add model」「Add action」都不是實心鈕", async () => {
+  it("the in-page \"Add provider\", \"Add model\", \"Add action\" buttons are not solid buttons", async () => {
     renderSection(stubDefault());
     await screen.findByText(ACTION_CUSTOM.name);
     for (const name of ["Add provider", "Add action"]) {
@@ -986,7 +969,7 @@ describe("AI 代理表格（#3）", () => {
     }
   });
 
-  it("AI4 動作表：群組標題與表名都是 Actions；欄名 Name／Apply mode／Model／Actions／Enabled；內建列有 Built-in 標籤、沒有 Delete；鈕的順序＝上移、下移、編輯、刪除；開關名稱「Enabled ＜動作名＞」（例外）", async () => {
+  it("action table: group title and table name are both Actions; column names Name / Apply mode / Model / Actions / Enabled; built-in rows have a Built-in label and no Delete; button order is move up, move down, edit, delete; switch name \"Enabled <action name>\" (exception)", async () => {
     renderSection(stubDefault());
     const table = await screen.findByRole("table", { name: "Actions" });
     expect(screen.getByRole("heading", { level: 2, name: "Actions" })).toBeInTheDocument();
@@ -1001,7 +984,7 @@ describe("AI 代理表格（#3）", () => {
     expect(within(custom).getByRole("switch", { name: `Enabled ${ACTION_CUSTOM.name}` })).toBeInTheDocument();
   });
 
-  it("AI5 上移／下移在清單邊界是原生 disabled（第一列不能上移、最後一列不能下移；暫時性停用）", async () => {
+  it("move up / move down are natively disabled at the list boundaries (first row can't move up, last can't move down; temporary disabling)", async () => {
     renderSection(stubDefault());
     await screen.findByRole("table", { name: "Actions" });
     expect(screen.getByRole("button", { name: `Move up ${ACTION_BUILTIN.name}` })).toBeDisabled();
@@ -1010,7 +993,7 @@ describe("AI 代理表格（#3）", () => {
     expect(screen.getByRole("button", { name: `Move up ${ACTION_CUSTOM.name}` })).not.toBeDisabled();
   });
 
-  it("AI6 模型與動作的開關（新名稱「Enabled ＜名稱＞」）照樣送 PATCH {enabled}", async () => {
+  it("the model and action switches (new name \"Enabled <name>\") still send PATCH {enabled}", async () => {
     const patches: Array<{ url: string; body: unknown }> = [];
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1038,7 +1021,7 @@ describe("AI 代理表格（#3）", () => {
     );
   });
 
-  it("AI7 測試連線的進行中與結果只出現在被測那個供應商的明細列（根元件以供應商 id 為鍵保存）", async () => {
+  it("test connection in-progress state and result appear only in the tested provider's detail row (the root component keeps them keyed by provider id)", async () => {
     const FAIL = "AI provider is unavailable — ask an admin to re-enter the API key";
     let resolveB: (res: Response) => void = () => {};
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1047,7 +1030,7 @@ describe("AI 代理表格（#3）", () => {
       const res = defaultGetHandlers({ providers: [PROVIDER_A, PROVIDER_B], models: [], actions: [] })(url, method);
       if (res) return Promise.resolve(res);
       if (method === "POST" && url === `/api/admin/ai/providers/${PROVIDER_B.id}/test`) {
-        // 先卡住，才看得到「Testing…」掛在哪一列。
+        // Hold first, so we can see which row "Testing..." lands on.
         return new Promise<Response>((resolve) => {
           resolveB = resolve;
         });
@@ -1076,7 +1059,7 @@ describe("AI 代理表格（#3）", () => {
     expect(within(details(PROVIDER_B)).queryByText("Testing…")).toBeNull();
     expect(within(details(PROVIDER_A)).queryByText(FAIL)).toBeNull();
 
-    // 成功路徑：A 的結果只掛在 A，B 的失敗結果不被蓋掉。
+    // Success path: A's result sits only on A, B's failure result isn't overwritten.
     fireEvent.click(within(screen.getByRole("row", { name: PROVIDER_A.name })).getByRole("button", { name: "Test connection" }));
     expect(await within(details(PROVIDER_A)).findByText("Connection succeeded.")).toHaveAttribute("role", "status");
     expect(within(details(PROVIDER_B)).queryByText("Connection succeeded.")).toBeNull();

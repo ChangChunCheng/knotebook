@@ -56,17 +56,14 @@ const CUSTOM: AdminAuthProviderDto = {
   icon: { type: "builtin", name: "gitlab" },
 };
 
-/** 站台限制：「登入期限與 token」組只用到這兩項，其餘照實放著。 */
 const LIMITS: SiteLimitsDto = siteLimitsDto();
 const limitsWith = (key: SiteLimitKey, patch: Partial<SiteLimitItemDto>): SiteLimitsDto => ({
   ...LIMITS,
   items: LIMITS.items.map((item) => (item.key === key ? { ...item, ...patch } : item)),
 });
 
-/** 回 Promise＝延後回應（測「進行中」狀態用）。 */
 type Handler = (method: string, url: string, body: unknown) => Response | Promise<Response> | null;
 
-/** 有狀態的假 server：GET 列表回目前的 `providers`；`on()` 掛額外端點；`calls` 記每一次請求。 */
 function fakeServer(initial: AdminAuthProviderDto[]) {
   const state = { providers: [...initial], limits: LIMITS };
   const calls: Array<{ method: string; url: string; body: unknown }> = [];
@@ -106,13 +103,11 @@ function renderSection(fetchMock: ReturnType<typeof vi.fn>) {
   return queryClient;
 }
 
-/** 一個登入服務＝以顯示名為名的資料列＋緊接的「＜名稱＞ details」明細列。 */
 const row = (name: string) => within(screen.getByRole("row", { name }));
 const details = (name: string) => within(screen.getByRole("row", { name: `${name} details` }));
-/** 名稱元素（列的 aria-labelledby 指向它）；圖示是它的前一個兄弟。 */
 const nameElementOf = (rowEl: HTMLElement) => document.getElementById(rowEl.getAttribute("aria-labelledby")!)!;
 
-describe("SettingsAuthSection（#187 /admin/auth）", () => {
+describe("SettingsAuthSection (#187 /admin/auth)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -122,7 +117,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("列＋明細列：顯示名（HTML 形渲染為字面）、範本、legacy 標記、issuer（只在列上一份）、client id、回呼網址、secret 狀態、未連線提醒、http 警示", async () => {
+  it("row + detail row: display name (HTML-looking names render literally), template, legacy marker, issuer (once, on the row), client id, callback URL, secret state, not-connected note, http warning", async () => {
     const server = fakeServer([LEGACY, CUSTOM]);
     renderSection(server.fetchMock);
     await waitFor(() => expect(screen.getByRole("row", { name: "<b>Corp</b> & Co" })).toBeInTheDocument());
@@ -132,7 +127,6 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     const legacy = row("SSO");
     expect(legacy.getByText(/Custom OIDC/)).toBeInTheDocument();
     expect(legacy.getByText(/Imported from OIDC_\*/)).toBeInTheDocument();
-    // Issuer 只在列上的 Issuer 欄：窄版重複段落已拿掉。
     expect(legacy.getByRole("cell", { name: "http://idp.lan" })).toBeInTheDocument();
     expect(screen.getAllByText("http://idp.lan")).toHaveLength(1);
     const legacyDetails = details("SSO");
@@ -152,12 +146,12 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(customDetails.queryByText(/plain http/)).toBeNull();
   });
 
-  it("零個登入服務 → 空狀態文字", async () => {
+  it("zero sign-in services -> empty-state text", async () => {
     renderSection(fakeServer([]).fetchMock);
     await waitFor(() => expect(screen.getByText("No sign-in services yet.")).toBeInTheDocument());
   });
 
-  it("複製回呼網址（明細列）→ copyText 收到 callbackUrl、toast", async () => {
+  it("copy the callback URL (detail row) -> copyText gets callbackUrl, toast", async () => {
     renderSection(fakeServer([CUSTOM]).fetchMock);
     await screen.findByRole("row", { name: "<b>Corp</b> & Co details" });
     fireEvent.click(details("<b>Corp</b> & Co").getByRole("button", { name: "Copy" }));
@@ -165,7 +159,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(vi.mocked(copyText)).toHaveBeenCalledWith(CUSTOM.callbackUrl);
   });
 
-  it("打開開關 → PATCH {enabled:true}；409 provider_secret_missing → toast、開關仍是關", async () => {
+  it("turning on the switch -> PATCH {enabled:true}; 409 provider_secret_missing -> toast, the switch stays off", async () => {
     const server = fakeServer([CUSTOM]);
     server.on((method, url) =>
       method === "PATCH" && url === `/api/admin/auth/providers/${CUSTOM.id}`
@@ -180,7 +174,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(custom.getByRole("switch", { name: "Enabled <b>Corp</b> & Co" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("W8（#299 驗收 12）沒有 client ID 的服務打開開關 → 409 provider_client_id_missing → toast、開關仍是關", async () => {
+  it("turning on a service without a client ID -> 409 provider_client_id_missing -> toast, the switch stays off", async () => {
     const server = fakeServer([{ ...CUSTOM, clientId: null, hasSecret: true }]);
     server.on((method, url) =>
       method === "PATCH" && url === `/api/admin/auth/providers/${CUSTOM.id}`
@@ -195,7 +189,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(custom.getByRole("switch", { name: "Enabled <b>Corp</b> & Co" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("關掉開關 → 先開 dialog（不送 PATCH）、顯示人數與未連線提醒；確認 → PATCH {enabled:false}、重抓後開關變關", async () => {
+  it("turning off the switch -> opens a dialog first (no PATCH), shows the member count and the not-connected note; confirm -> PATCH {enabled:false}, after the refetch the switch is off", async () => {
     const enabledUnresolved = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabledUnresolved]);
     server.on((method, url) =>
@@ -223,7 +217,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(server.calls.find(c => c.method === "PATCH")!.body).toEqual({ enabled: false });
   });
 
-  it("停用 dialog 按取消 → 不送 PATCH、開關仍開", async () => {
+  it("cancelling the disable dialog -> no PATCH, the switch stays on", async () => {
     const enabled = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabled]);
     server.on((method, url) =>
@@ -239,7 +233,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(custom.getByRole("switch", { name: "Enabled <b>Corp</b> & Co" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("刪除：啟用中的刪除鈕 aria-disabled；停用中的 → dialog（legacy 有舊回呼網址說明；確認鈕是 destructive）→ DELETE → 重抓後列消失", async () => {
+  it("delete: the delete button of an enabled service is aria-disabled; for a disabled one -> dialog (legacy shows the old callback URL note; the confirm button is destructive) -> DELETE -> after the refetch the row is gone", async () => {
     const disabledLegacy = { ...LEGACY, enabled: false };
     const server = fakeServer([disabledLegacy, { ...CUSTOM, hasSecret: true, enabled: true }]);
     server.on((method, url) => {
@@ -261,7 +255,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(server.calls.filter(c => c.method === "DELETE")).toHaveLength(1);
   });
 
-  it("刪除鈕停用的原因：明細列看得到的文字＋`title`，以 aria-describedby 連到刪除鈕；停用服務後文字消失、刪除鈕可按", async () => {
+  it("why the delete button is disabled: text visible in the detail row plus `title`, linked to the delete button via aria-describedby; after disabling the service the text goes away and delete is clickable", async () => {
     const enabled = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabled]);
     server.on((method, url) =>
@@ -291,7 +285,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(custom.getByRole("button", { name: "Delete" })).not.toHaveAttribute("aria-describedby");
   });
 
-  it("停用 dialog 與刪除 dialog 內的顯示名：HTML 形渲染為字面、不成為元素", async () => {
+  it("display name inside the disable dialog and the delete dialog: HTML-looking names render literally, not as elements", async () => {
     const enabled = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabled]);
     server.on((method, url) =>
@@ -319,13 +313,13 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(document.querySelector("b")).toBeNull();
   });
 
-  it("測試連線（列上的鈕、結果在明細列）：成功顯示 issuer、warning、能力範圍說明，列表重抓後「未連線」提醒消失；502 → 錯誤文案", async () => {
+  it("test connection (button on the row, result in the detail row): success shows issuer, warning and a capability note, after the list refetch the \"not connected\" note disappears; 502 -> error text", async () => {
     const server = fakeServer([{ ...LEGACY, issuerResolved: false }]);
     let fail = false;
     server.on((method, url) => {
       if (method !== "POST" || url !== `/api/admin/auth/providers/${LEGACY.id}/test`) return null;
       if (fail) return fakeResponse(502, { error: { code: "oidc_discovery_failed", message: "x" } });
-      server.state.providers = [{ ...LEGACY, issuerResolved: true }]; // server 端 /test 成功會寫 resolved_issuer
+      server.state.providers = [{ ...LEGACY, issuerResolved: true }]; // a successful /test on the server writes resolved_issuer
       return fakeResponse(200, { issuer: "http://idp.lan", warnings: ["insecure_issuer", "client_secret_post_not_advertised"] });
     });
     renderSection(server.fetchMock);
@@ -344,7 +338,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     await waitFor(() => expect(legacyDetails.getByText("Couldn't read a usable OpenID Connect configuration from that issuer URL.")).toBeInTheDocument());
   });
 
-  it("測試連線成功後，列表重抓回來的 issuer 變了 → 舊的「Connection OK」訊息消失（不與未連線提醒並存）", async () => {
+  it("after a successful connection test, if the refetched list has a changed issuer -> the old \"Connection OK\" message disappears (doesn't coexist with the not-connected note)", async () => {
     const server = fakeServer([{ ...LEGACY, issuerResolved: false }]);
     server.on((method, url) => {
       if (method !== "POST" || url !== `/api/admin/auth/providers/${LEGACY.id}/test`) return null;
@@ -357,7 +351,6 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     );
     server.on((method, url) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${LEGACY.id}`) return null;
-      // 模擬編輯 issuer 的結果：issuer 換掉、resolved 清空、停用
       server.state.providers = [{ ...LEGACY, issuerUrl: "http://other.lan", issuerResolved: false, enabled: false }];
       return fakeResponse(200, server.state.providers[0]);
     });
@@ -370,14 +363,13 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     const dialog = within(await screen.findByRole("dialog", { name: "Turn this sign-in service off?" }));
     fireEvent.click(dialog.getByRole("button", { name: "Turn off" }));
 
-    // Issuer 只在列上的 Issuer 欄一份（窄版重複段落已拿掉）。
     expect(await screen.findAllByText("http://other.lan")).toHaveLength(1);
     const refreshed = details("SSO");
     expect(refreshed.queryByText(/Connection OK/)).toBeNull();
     expect(refreshed.getByText(/Hasn't connected successfully yet/)).toBeInTheDocument();
   });
 
-  it("T2 兩列各自的測試結果：結果只出現在被測那一列的明細列；一列的設定變了只清掉那一列的結果", async () => {
+  it("test results per row: a result appears only in the tested row's detail row; changing one row's config clears only that row's result", async () => {
     const corp = { ...CUSTOM, hasSecret: true };
     const server = fakeServer([LEGACY, corp]);
     server.on((method, url) => {
@@ -388,7 +380,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     });
     server.on((method, url) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${CUSTOM.id}`) return null;
-      // 打開 Corp 的同時 server 端 issuer 也換了（模擬另一處改了設定）：Corp 的測試結果過期，SSO 的不受影響。
+      // Corp's issuer also changes on the server at the same moment it's turned on (simulating a config change elsewhere): Corp's test result goes stale, SSO's is unaffected.
       server.state.providers = [LEGACY, { ...corp, enabled: true, issuerUrl: "https://gitlab.other.example" }];
       return fakeResponse(200, server.state.providers[1]);
     });
@@ -412,7 +404,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(details("SSO").getByText(ok)).toBeInTheDocument();
   });
 
-  it("T3 測試進行中（POST /test 未回）：「Testing…」只在被測那一列的明細列；回應後消失", async () => {
+  it("test in progress (POST /test not returned): \"Testing...\" appears only in the tested row's detail row; disappears after the response", async () => {
     const server = fakeServer([LEGACY, { ...CUSTOM, hasSecret: true }]);
     let release: (res: Response) => void = () => {};
     server.on((method, url) =>
@@ -434,7 +426,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(details("SSO").queryByText("Testing…")).toBeNull();
   });
 
-  it("停用 dialog：actingAdminLockedOut=true → 顯示「停用後你自己將無法用登入服務登入」", async () => {
+  it("disable dialog: actingAdminLockedOut=true -> shows the warning that you won't be able to sign in with sign-in services after disabling", async () => {
     const enabled = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabled]);
     server.on((method, url) =>
@@ -449,7 +441,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(await dialog.findByText("After turning this off, you won't be able to sign in through a sign-in service yourself.")).toBeInTheDocument();
   });
 
-  it("停用 dialog：actingAdminLockedOut=false → 不顯示該句（人數已落地後才斷言）", async () => {
+  it("disable dialog: actingAdminLockedOut=false -> that sentence isn't shown (asserted after the member count has landed)", async () => {
     const enabled = { ...CUSTOM, hasSecret: true, enabled: true };
     const server = fakeServer([enabled]);
     server.on((method, url) =>
@@ -465,11 +457,11 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(dialog.queryByText("After turning this off, you won't be able to sign in through a sign-in service yourself.")).not.toBeInTheDocument();
   });
 
-  it("provider-icon：名稱前有圖示（admin DTO 已換算的 icon）；upload 的 <img src> 等於 DTO icon.url；列名不變", async () => {
+  it("provider-icon: an icon before the name (the icon computed in the admin DTO); the upload's <img src> equals the DTO's icon.url; the row name is unchanged", async () => {
     const url = `/api/auth/providers/${CUSTOM.id}/icon?v=5`;
     const server = fakeServer([LEGACY, { ...CUSTOM, iconKind: "upload", icon: { type: "upload", url } }]);
     renderSection(server.fetchMock);
-    // 等待點：列只在列表落地後才出現。
+    // Wait point: rows appear only after the list lands.
     const corp = await screen.findByRole("row", { name: "<b>Corp</b> & Co" });
     const corpIcon = nameElementOf(corp).previousElementSibling;
     expect(corpIcon?.tagName).toBe("IMG");
@@ -477,8 +469,8 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
     expect(nameElementOf(screen.getByRole("row", { name: "SSO" })).previousElementSibling).toHaveAttribute("data-provider-icon", "generic");
   });
 
-  // 「Icon」鈕是 RowIconButton：外觀（ghost、無實心底）由它自己的測試與 panel-no-solid-buttons 守，這裡只查名稱與行為。
-  it("provider-icon：兩列都有「Icon」鈕，Edit／Delete 照在；點了開出圖示對話框", async () => {
+  // The "Icon" button is a RowIconButton: its appearance (ghost, no solid fill) is guarded by its own test and panel-no-solid-buttons; here only the name and behavior are checked.
+  it("provider-icon: both rows have an \"Icon\" button, Edit / Delete are still there; clicking opens the icon dialog", async () => {
     const server = fakeServer([LEGACY, CUSTOM]);
     renderSection(server.fetchMock);
     await screen.findByRole("row", { name: "SSO" });
@@ -493,7 +485,7 @@ describe("SettingsAuthSection（#187 /admin/auth）", () => {
   });
 });
 
-describe("登入服務表格", () => {
+describe("sign-in service table", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -502,7 +494,7 @@ describe("登入服務表格", () => {
     vi.unstubAllGlobals();
   });
 
-  it("L1 表名 Sign-in services；欄名 Service／Issuer／Linked／Creates accounts／Actions／Enabled；列內：Issuer、已連結人數、Test connection／Icon／Edit／Delete（依序）、「Enabled ＜名稱＞」開關", async () => {
+  it("table name Sign-in services; column names Service / Issuer / Linked / Creates accounts / Actions / Enabled; row contents: Issuer, linked count, Test connection / Icon / Edit / Delete (in order), the \"Enabled <name>\" switch", async () => {
     renderSection(fakeServer([LEGACY, CUSTOM]).fetchMock);
     const table = await screen.findByRole("table", { name: "Sign-in services" });
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Service", "Issuer", "Linked", "Creates accounts", "Actions", "Enabled"]);
@@ -518,13 +510,13 @@ describe("登入服務表格", () => {
     expect(within(legacyRow).getByRole("switch", { name: "Enabled SSO" })).toBeInTheDocument();
   });
 
-  it("欄寬：服務欄與 Issuer 欄按 1 : 1.5 分配（真實掛載）", async () => {
+  it("column widths: service and Issuer columns split 1 : 1.5 (real mount)", async () => {
     renderSection(fakeServer([LEGACY, CUSTOM]).fetchMock);
     const table = await screen.findByRole("table", { name: "Sign-in services" });
     expect(table.style.getPropertyValue("--kb-table-cols")).toBe("minmax(14ch,1fr) minmax(14ch,1.5fr) max-content max-content 8.75rem 3.5rem");
   });
 
-  it("L3 啟用中的 Delete：aria-disabled＋title 是「Turn it off before deleting it.」，點了不開刪除對話框", async () => {
+  it("enabled Delete: aria-disabled + title \"Turn it off before deleting it.\", clicking doesn't open the delete dialog", async () => {
     renderSection(fakeServer([LEGACY]).fetchMock);
     const del = within(await screen.findByRole("row", { name: "SSO" })).getByRole("button", { name: "Delete" });
     expect(del).toHaveAttribute("title", "Turn it off before deleting it.");
@@ -533,7 +525,7 @@ describe("登入服務表格", () => {
     expect(screen.queryByRole("dialog", { name: "Delete this sign-in service?" })).not.toBeInTheDocument();
   });
 
-  it("L5 停用確認框是開框當下的快照：列上已載入的舊人數（A）不出現在框內，重抓完才顯示新人數（B）", async () => {
+  it("the disable confirm dialog is a snapshot taken when it opened: the old member count (A) already loaded on the row doesn't appear in the dialog, the new count (B) shows after the refetch finishes", async () => {
     const server = fakeServer([LEGACY]);
     let linkedUsers = 7;
     server.on((method, url) =>
@@ -553,14 +545,14 @@ describe("登入服務表格", () => {
     expect(dialog.queryByText("Linked accounts: 7")).toBeNull();
   });
 
-  it("L4 「Add sign-in service」是 outline（面板層級動作）", async () => {
+  it("\"Add sign-in service\" is outline (a panel-level action)", async () => {
     renderSection(fakeServer([]).fetchMock);
     const add = await screen.findByRole("button", { name: "Add sign-in service" });
     expect(add.className).not.toMatch(/(^|\s)bg-(primary|brand|brand-deep)(\s|$)/);
   });
 });
 
-describe("client ID 尚未填入（#299）", () => {
+describe("client ID not filled in yet (#299)", () => {
   const NO_ID: AdminAuthProviderDto = { ...CUSTOM, id: "66666666-6666-4666-8666-666666666666", displayName: "No ID SSO", clientId: null, hasSecret: true };
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -570,14 +562,14 @@ describe("client ID 尚未填入（#299）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("W6 clientId 為 null 的列：明細顯示「尚未填入」全文、有 client ID 的列照舊顯示 client ID", async () => {
+  it("row with clientId null: the detail shows the full \"not filled in yet\" text; rows with a client ID still show the client ID", async () => {
     renderSection(fakeServer([NO_ID, LEGACY]).fetchMock);
     await screen.findByRole("row", { name: "No ID SSO" });
     expect(details("No ID SSO").getByText("Not set yet. The service can't be turned on until a client ID is saved.")).toBeInTheDocument();
     expect(details("SSO").getByText("knotebook")).toBeInTheDocument();
   });
 
-  it("W7 測試連線回 client_id_missing → 明細顯示提醒；補上 client ID 後列表重抓 → 測試結果消失", async () => {
+  it("test connection returns client_id_missing -> the detail shows a reminder; after filling in the client ID and the list refetches -> the test result disappears", async () => {
     const server = fakeServer([NO_ID]);
     server.on((method, url) =>
       method === "POST" && url === `/api/admin/auth/providers/${NO_ID.id}/test`
@@ -586,7 +578,6 @@ describe("client ID 尚未填入（#299）", () => {
     );
     server.on((method, url, body) => {
       if (method !== "PATCH" || url !== `/api/admin/auth/providers/${NO_ID.id}`) return null;
-      // 只把 clientId 填上；issuerUrl 與 hasSecret 不變
       server.state.providers = [{ ...NO_ID, clientId: (body as { clientId: string }).clientId }];
       return fakeResponse(200, server.state.providers[0]);
     });
@@ -605,7 +596,7 @@ describe("client ID 尚未填入（#299）", () => {
   });
 });
 
-describe("登入期限與 token 組", () => {
+describe("sign-in period and token group", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -621,7 +612,7 @@ describe("登入期限與 token 組", () => {
   };
   const patches = (server: ReturnType<typeof fakeServer>) => server.calls.filter((c) => c.method === "PATCH" && c.url === "/api/admin/limits");
 
-  it("登入服務表之外多一組：登入有效期以小時顯示、兩列各有小字，登入服務表照在", async () => {
+  it("an extra group beside the sign-in service table: sign-in validity is shown in hours, both rows have small text, and the sign-in service table is still there", async () => {
     renderSection(fakeServer([CUSTOM]).fetchMock);
     const g = await group();
     expect(g.input("Web sign-in lasts")).toHaveValue("168");
@@ -632,7 +623,7 @@ describe("登入期限與 token 組", () => {
     expect(await screen.findByRole("table", { name: "Sign-in services" })).toBeInTheDocument();
   });
 
-  it("位置：在「允許自行註冊」開關之後、登入服務表之前", async () => {
+  it("position: after the \"allow self-registration\" switch, before the sign-in service table", async () => {
     renderSection(fakeServer([CUSTOM]).fetchMock);
     const region = await screen.findByRole("region", { name: "Session and tokens" });
     const access = await screen.findByRole("switch", { name: "Allow self-registration with a password" });
@@ -641,7 +632,7 @@ describe("登入期限與 token 組", () => {
     expect(region.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("改成 24 小時儲存 → PATCH 只送被改的那一項、以秒計", async () => {
+  it("changing to 24 hours and saving -> PATCH sends only the changed item, in seconds", async () => {
     const server = fakeServer([CUSTOM]);
     server.on((method, url) => (method === "PATCH" && url === "/api/admin/limits" ? fakeResponse(200, server.state.limits) : null));
     renderSection(server.fetchMock);
@@ -652,7 +643,7 @@ describe("登入期限與 token 組", () => {
     expect(patches(server)[0]!.body).toEqual({ set: { sessionTtlSeconds: 86400 } });
   });
 
-  it("已調整的 token 上限有「Restore default」，按下送 null", async () => {
+  it("an adjusted token limit has \"Restore default\", pressing it sends null", async () => {
     const server = fakeServer([CUSTOM]);
     server.state.limits = limitsWith("apiTokensPerUser", { value: 5, source: "admin", stored: 5 });
     server.on((method, url) => (method === "PATCH" && url === "/api/admin/limits" ? fakeResponse(200, LIMITS) : null));
@@ -664,7 +655,7 @@ describe("登入期限與 token 組", () => {
     expect(patches(server)[0]!.body).toEqual({ set: { apiTokensPerUser: null } });
   });
 
-  it("超出範圍（0 小時）→ 不送、顯示範圍錯誤", async () => {
+  it("out of range (0 hours) -> not sent, shows a range error", async () => {
     const server = fakeServer([CUSTOM]);
     renderSection(server.fetchMock);
     const g = await group();
@@ -674,7 +665,7 @@ describe("登入期限與 token 組", () => {
     expect(patches(server)).toHaveLength(0);
   });
 
-  it("已有資料時背景重抓失敗：輸入到一半的內容與整組都還在，不換成錯誤", async () => {
+  it("background refetch fails when data already exists: half-typed input and the whole group remain, no switch to an error", async () => {
     const server = fakeServer([CUSTOM]);
     const queryClient = renderSection(server.fetchMock);
     const g = await group();
@@ -688,7 +679,7 @@ describe("登入期限與 token 組", () => {
     expect(g.queryByRole("alert")).toBeNull();
   });
 
-  it("中文標題「登入期限與 token」", async () => {
+  it("zh-TW heading and notes of the sign-in period and token group", async () => {
     await i18n.changeLanguage("zh-TW");
     renderSection(fakeServer([CUSTOM]).fetchMock);
     const region = within(await screen.findByRole("region", { name: "登入期限與 token" }));
@@ -696,7 +687,7 @@ describe("登入期限與 token 組", () => {
     expect(region.getByText(/調低不會撤銷既有 token/)).toBeInTheDocument();
   });
 
-  it("載入失敗：顯示伺服器錯誤文案（跟站台限制分頁同一套），不是通用訊息", async () => {
+  it("load failure: shows the server's error text (same set as the site-limits tab), not the generic message", async () => {
     const server = fakeServer([CUSTOM]);
     server.on((method, url) => (method === "GET" && url === "/api/admin/limits" ? fakeResponse(500, { error: { code: "limit_locked_by_env", message: "x" } }) : null));
     renderSection(server.fetchMock);
@@ -704,7 +695,7 @@ describe("登入期限與 token 組", () => {
   });
 });
 
-describe("服務表的自動建帳開關", () => {
+describe("auto-create switch of the service table", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -715,14 +706,14 @@ describe("服務表的自動建帳開關", () => {
 
   const CUSTOM_PATH = `/api/admin/auth/providers/${CUSTOM.id}`;
 
-  it("AC1 每列有「Create accounts on first sign-in with ＜名稱＞」開關，aria-checked 反映 autoCreateEnabled（名稱字面不當 HTML）", async () => {
+  it("each row has a \"Create accounts on first sign-in with <name>\" switch, aria-checked reflects autoCreateEnabled (the name is not treated as HTML)", async () => {
     renderSection(fakeServer([LEGACY, CUSTOM]).fetchMock);
     await screen.findByRole("row", { name: "SSO" });
     expect(row("SSO").getByRole("switch", { name: "Create accounts on first sign-in with SSO" })).toHaveAttribute("aria-checked", "true");
     expect(row("<b>Corp</b> & Co").getByRole("switch", { name: "Create accounts on first sign-in with <b>Corp</b> & Co" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("AC2 點停用中服務的開關 → PATCH 恰 {autoCreateEnabled:true}；送出期間 disabled；成功重抓後 aria-checked=true；沒有任何 dialog", async () => {
+  it("clicking the switch of a disabled service -> PATCH exactly {autoCreateEnabled:true}; disabled while submitting; after a successful refetch aria-checked=true; no dialog at all", async () => {
     const server = fakeServer([CUSTOM]);
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -751,7 +742,7 @@ describe("服務表的自動建帳開關", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("AC3 PATCH 回 500 → toast 顯示錯誤文案、開關仍 aria-checked=false", async () => {
+  it("PATCH returns 500 -> toast shows the error text, the switch stays aria-checked=false", async () => {
     const server = fakeServer([CUSTOM]);
     server.on((method, url) =>
       method === "PATCH" && url === CUSTOM_PATH ? fakeResponse(500, { error: { code: "internal", message: "x" } }) : null,
@@ -764,7 +755,7 @@ describe("服務表的自動建帳開關", () => {
     expect(sw).toHaveAttribute("aria-checked", "false");
   });
 
-  it("AC4 服務群組說明（en 全文）可見", async () => {
+  it("the service group description (full en text) is visible", async () => {
     renderSection(fakeServer([LEGACY]).fetchMock);
     expect(
       await screen.findByText(

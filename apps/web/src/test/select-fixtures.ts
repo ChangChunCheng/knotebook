@@ -2,11 +2,11 @@ import type { GroupDto, NoteDto } from "@knotebook/shared";
 import { EDITOR_PERMS, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 
 /**
- * #181 一般 tab 選取模式的筆記 fixture（各測試共用）。
- * 權限物件一律以 `@/test/fixtures` 的三件組展開再覆寫。
+ * Note fixtures for the select mode of the regular tab (shared by tests).
+ * Permission objects always expand the triple from `@/test/fixtures` and then override.
  */
 
-/** 唯一的 NoteDto 底稿（feat/folders 合流時 folderId／sizeBytes 只加在這裡）。預設是個人筆記（role owner）。 */
+/** The single NoteDto base: add new NoteDto fields here only. Defaults to a personal note (role owner). */
 export function baseNote(o: { id: string; title: string } & Partial<NoteDto>): NoteDto {
   return {
     ownerId: "u1",
@@ -26,12 +26,10 @@ export function baseNote(o: { id: string; title: string } & Partial<NoteDto>): N
   };
 }
 
-/** 我的個人筆記：role owner、OWNER_PERMS。 */
 export function personalNote(o: { id: string; title: string } & Partial<NoteDto>): NoteDto {
   return baseNote({ role: "owner", permissions: { ...OWNER_PERMS }, ...o });
 }
 
-/** 逐人分享給我的個人筆記：editor（預設）→ EDITOR_PERMS、viewer → VIEWER_PERMS。 */
 export function sharedNote(o: { id: string; title: string; role?: "editor" | "viewer" } & Partial<NoteDto>): NoteDto {
   const role = o.role ?? "editor";
   return baseNote({
@@ -44,8 +42,8 @@ export function sharedNote(o: { id: string; title: string; role?: "editor" | "vi
 }
 
 /**
- * 群組筆記：沒有個人 owner；`edit`／`delete` 預設皆 true（角色旗標推得），`edit === false` 時 role 為 viewer。
- * `manageShares`／`moveToGroup` 恆 false（#175），測試要分辨時自己覆寫 `permissions`。
+ * Group note: no personal owner; `edit` / `delete` default to true (derived from the role flags); when `edit === false` the role is viewer.
+ * `manageShares` / `moveToGroup` are false (#175); override `permissions` yourself when a test needs to tell them apart.
  */
 export function groupNote(o: { id: string; title: string; group: GroupDto; edit?: boolean; delete?: boolean } & Partial<NoteDto>): NoteDto {
   const { group, edit = true, delete: canDelete = true, ...rest } = o;

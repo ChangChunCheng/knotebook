@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { locateSlide, repositionAfterUpdate, type SlideStructure } from "./reposition";
 
 const deck = (spec: string): SlideStructure[] =>
-  // "a:a1,a2|b:b1" → [{id:"a", slides:[a1,a2]}, {id:"b", slides:[b1]}]（章 id 取第一張，與 noteToSlides 同）
+  // "a:a1,a2|b:b1" -> [{id:"a", slides:[a1,a2]}, {id:"b", slides:[b1]}] (a section's id is its first slide, as in noteToSlides)
   spec.split("|").map((part) => {
     const ids = part.split(":")[1].split(",");
     return { id: ids[0], slides: ids.map((id) => ({ id })) };
   });
 
 describe("locateSlide", () => {
-  it("回傳 (h, v)；找不到回 null", () => {
+  it("returns (h, v); null when not found", () => {
     const d = deck("_:_title|a:a1,a2|b:b1");
     expect(locateSlide(d, "a2")).toEqual({ h: 1, v: 1 });
     expect(locateSlide(d, "b1")).toEqual({ h: 2, v: 0 });
@@ -18,57 +18,56 @@ describe("locateSlide", () => {
 });
 
 describe("repositionAfterUpdate", () => {
-  it("①目前那張仍在 → 它的新位置（結構前移：前面一章被刪）", () => {
+  it("current slide still exists -> its new position (structure moved forward: an earlier section deleted)", () => {
     const old = deck("_:_title|a:a1|b:b1,b2");
     const next = deck("_:_title|b:b1,b2");
     expect(repositionAfterUpdate(old, "b2", next)).toEqual({ h: 1, v: 1, id: "b2" });
   });
 
-  it("①結構後移：前面插入一章 → 以 ID 重算出新的 h", () => {
+  it("current slide still exists, structure moved back: a section inserted before -> new h recomputed by ID", () => {
     const old = deck("_:_title|b:b1,b2");
     const next = deck("_:_title|n:n1|b:b1,b2");
     expect(repositionAfterUpdate(old, "b2", next)).toEqual({ h: 2, v: 1, id: "b2" });
   });
 
-  it("②目前那張消失 → 舊結構中緊接在它之前的那一張（同章上一張）", () => {
+  it("current slide gone -> the slide right before it in the old structure (previous slide in the same section)", () => {
     const old = deck("_:_title|a:a1,a2,a3");
     const next = deck("_:_title|a:a1,a2");
     expect(repositionAfterUpdate(old, "a3", next)).toEqual({ h: 1, v: 1, id: "a2" });
   });
 
-  it("②章首消失 → 上一章最後一張", () => {
+  it("section's first slide gone -> last slide of the previous section", () => {
     const old = deck("_:_title|a:a1,a2|b:b1,b2");
     const next = deck("_:_title|a:a1,a2|b2:b2");
     expect(repositionAfterUpdate(old, "b1", next)).toEqual({ h: 1, v: 1, id: "a2" });
   });
 
-  it("③前一張也不在 → 舊結構中它所屬那章的第一張", () => {
+  it("previous slide also gone -> first slide of the section it belonged to in the old structure", () => {
     const old = deck("_:_title|a:a1,a2,a3");
     const next = deck("_:_title|a:a1");
     expect(repositionAfterUpdate(old, "a3", next)).toEqual({ h: 1, v: 0, id: "a1" });
   });
 
-  it("④都不在 → 封面 (0,0)", () => {
+  it("none exist -> cover (0,0)", () => {
     const old = deck("_:_title|a:a1,a2");
     const next = deck("_:_title|z:z1");
     expect(repositionAfterUpdate(old, "a2", next)).toEqual({ h: 0, v: 0, id: "_title" });
   });
 
-  it("②只退一步：前一張不在就不再往前找（落到③章首）", () => {
+  it("falls back only one step: if the previous slide is gone it doesn't keep searching backward (lands on the section's first slide)", () => {
     const old = deck("_:_title|a:a1,a2,a3,a4");
     const next = deck("_:_title|a:a1,a2");
-    // a4 消失、前一張 a3 也消失 → ③ a 章第一張 a1（不是 a2）
     expect(repositionAfterUpdate(old, "a4", next)).toEqual({ h: 1, v: 0, id: "a1" });
   });
 
-  it("③用的是**舊**結構的章首：新結構同一索引的章換了人時不跟新章首", () => {
+  it("uses the **old** structure's section start: doesn't follow the new section start when the section at the same index changed", () => {
     const old = deck("_:_title|a:a1,a2,a3");
+    // Using the new structure's section at old.h would give q1; the old structure's section start a1 is the right one.
     const next = deck("_:_title|q:q1|a1:a1");
-    // a3、a2 都消失 → 舊章首 a1 仍在（新結構 h=2）；若誤用新結構第 old.h（=1）章的章首會得 q1
     expect(repositionAfterUpdate(old, "a3", next)).toEqual({ h: 2, v: 0, id: "a1" });
   });
 
-  it("舊目前 id 不在舊結構（理論上不該發生）→ 封面", () => {
+  it("old current id not in the old structure (shouldn't happen) -> cover", () => {
     expect(repositionAfterUpdate(deck("_:_title"), "ghost", deck("_:_title|a:a1"))).toEqual({ h: 0, v: 0, id: "_title" });
   });
 });

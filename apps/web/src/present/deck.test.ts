@@ -5,7 +5,7 @@ import {
   updateSwipeGuard, watchSwipeGuards, withoutTransition,
 } from "./deck";
 
-/** "a:a1,a2|b:b1" → RenderedSection[]；每張 content 是一個 <p>id@version</p>（version 讓「內容變了」可控）。 */
+/** "a:a1,a2|b:b1" -> RenderedSection[]; each content is a <p>id@version</p> (the version makes "content changed" controllable). */
 function rendered(spec: string, version: Record<string, number> = {}, reuse: string[] = []): RenderedSection[] {
   return spec.split("|").map((part) => {
     const ids = part.split(":")[1].split(",");
@@ -30,7 +30,7 @@ function shape(slidesEl: HTMLElement): string {
 }
 
 describe("applyRenderedDeck", () => {
-  it("初次：單張章是頂層 section、多張章包 kn-present-stack；沒有任何 id／data-id", () => {
+  it("initial: a single-slide section is a top-level section, a multi-slide section is wrapped in kn-present-stack; no id / data-id", () => {
     const dom = createDeckDom();
     const result = applyRenderedDeck(dom, rendered("_:_title|a:a1,a2|b:b1"));
     expect(shape(dom.slidesEl)).toBe("_title [a1,a2] b1");
@@ -40,7 +40,7 @@ describe("applyRenderedDeck", () => {
     expect(dom.slidesEl.parentElement).toBe(dom.revealEl);
   });
 
-  it("titleOnly → section 有 kn-slide-title-only；內容放在 .kn-slide-body", () => {
+  it("titleOnly -> section has kn-slide-title-only; content goes in .kn-slide-body", () => {
     const dom = createDeckDom();
     applyRenderedDeck(dom, rendered("_:_title|t:t!"));
     const els = dom.els.get("t!")!;
@@ -49,7 +49,7 @@ describe("applyRenderedDeck", () => {
     expect(els.body.textContent).toBe("t!@0");
   });
 
-  it("結構不變、只有一張內容變 → structureChanged false、只換那張的 body；別張 body 子節點不動", () => {
+  it("structure unchanged, one slide's content changed -> structureChanged false, only that slide's body swapped; other bodies' children untouched", () => {
     const dom = createDeckDom();
     applyRenderedDeck(dom, rendered("_:_title|a:a1,a2"));
     const a1Child = dom.els.get("a1")!.body.firstChild;
@@ -59,7 +59,7 @@ describe("applyRenderedDeck", () => {
     expect(dom.els.get("a2")!.body.textContent).toBe("a2@1");
   });
 
-  it("在目前那張之前插一章：沿用的元素不離開文件", () => {
+  it("inserting a section before the current slide: reused elements never leave the document", () => {
     const dom = createDeckDom();
     document.body.append(dom.revealEl);
     try {
@@ -79,7 +79,7 @@ describe("applyRenderedDeck", () => {
     }
   });
 
-  it("刪掉一張：DOM 與 map 都移除", () => {
+  it("deleting a slide: removed from both the DOM and the map", () => {
     const dom = createDeckDom();
     applyRenderedDeck(dom, rendered("_:_title|a:a1,a2"));
     const result = applyRenderedDeck(dom, rendered("_:_title|a:a1", {}, ["_title", "a1"]));
@@ -89,7 +89,7 @@ describe("applyRenderedDeck", () => {
     expect(dom.keys.has("a2")).toBe(false);
   });
 
-  it("單張章長成多張：包進 stack；多張變單張：拆掉 stack", () => {
+  it("a single-slide section grows to several: wrapped in a stack; several shrink to one: the stack is removed", () => {
     const dom = createDeckDom();
     applyRenderedDeck(dom, rendered("_:_title|a:a1"));
     applyRenderedDeck(dom, rendered("_:_title|a:a1,a2", {}, ["_title", "a1"]));
@@ -99,15 +99,15 @@ describe("applyRenderedDeck", () => {
     expect(dom.slidesEl.querySelectorAll(`.${STACK_CLASS}`)).toHaveLength(0);
   });
 
-  it("dom.sections 記下最新結構", () => {
+  it("dom.sections records the latest structure", () => {
     const dom = createDeckDom();
     applyRenderedDeck(dom, rendered("_:_title|a:a1,a2"));
     expect(dom.sections).toEqual([{ id: "_title", slides: [{ id: "_title" }] }, { id: "a1", slides: [{ id: "a1" }, { id: "a2" }] }]);
   });
 });
 
-describe("media、轉場", () => {
-  it("playingMedia 只回正在播的 video／audio", () => {
+describe("media, transitions", () => {
+  it("playingMedia returns only video / audio that is playing", () => {
     const root = document.createElement("div");
     root.innerHTML = "<video></video><audio></audio>";
     const [video, audio] = Array.from(root.querySelectorAll<HTMLMediaElement>("video, audio"));
@@ -116,7 +116,7 @@ describe("media、轉場", () => {
     expect(playingMedia(root)).toEqual([video]);
   });
 
-  it("withoutTransition：run 期間 .reveal 帶 kn-present-no-transition，之後拿掉（run 拋錯也拿掉）", () => {
+  it("withoutTransition: .reveal carries kn-present-no-transition during run and loses it afterwards (also when run throws)", () => {
     const el = document.createElement("div");
     let during = false;
     withoutTransition(el, () => {
@@ -129,7 +129,7 @@ describe("media、轉場", () => {
   });
 });
 
-describe("data-prevent-swipe（②）", () => {
+describe("data-prevent-swipe", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   function sized(scrollHeight: number, clientHeight: number): HTMLElement {
@@ -140,7 +140,7 @@ describe("data-prevent-swipe（②）", () => {
     return section;
   }
 
-  it("溢出才設、不溢出就拿掉", () => {
+  it("set only on overflow, removed when not overflowing", () => {
     const section = sized(900, 600);
     updateSwipeGuard(section);
     expect(section.hasAttribute("data-prevent-swipe")).toBe(true);
@@ -149,7 +149,7 @@ describe("data-prevent-swipe（②）", () => {
     expect(section.hasAttribute("data-prevent-swipe")).toBe(false);
   });
 
-  it("橫向溢出的 <pre> 標 data-prevent-swipe、不溢出的不標，尺寸變化後切換", () => {
+  it("a horizontally overflowing <pre> gets data-prevent-swipe, a non-overflowing one doesn't; toggles after a size change", () => {
     const section = sized(600, 600);
     const wide = document.createElement("pre");
     const narrow = document.createElement("pre");
@@ -160,7 +160,7 @@ describe("data-prevent-swipe（②）", () => {
     Object.defineProperty(narrow, "clientWidth", { configurable: true, get: () => 300 });
     section.append(wide, narrow);
     updateSwipeGuard(section);
-    expect(section.hasAttribute("data-prevent-swipe")).toBe(false); // section 自己沒溢出，pre 的標記獨立判斷
+    expect(section.hasAttribute("data-prevent-swipe")).toBe(false); // The section itself doesn't overflow; the pre's flag is judged independently
     expect(wide.hasAttribute("data-prevent-swipe")).toBe(true);
     expect(narrow.hasAttribute("data-prevent-swipe")).toBe(false);
     wideScroll = 250;
@@ -168,7 +168,7 @@ describe("data-prevent-swipe（②）", () => {
     expect(wide.hasAttribute("data-prevent-swipe")).toBe(false);
   });
 
-  it("ResizeObserver、img load、loadedmetadata、details toggle 都觸發重算", () => {
+  it("ResizeObserver, img load, loadedmetadata and details toggle all trigger a recompute", () => {
     const observed: Element[] = [];
     let callback: ResizeObserverCallback = () => {};
     vi.stubGlobal("ResizeObserver", class {
@@ -197,7 +197,7 @@ describe("data-prevent-swipe（②）", () => {
       const child = document.createElement(tag);
       els.body.append(child);
       height = 900;
-      child.dispatchEvent(new Event(type)); // 不冒泡的事件：靠捕獲階段收
+      child.dispatchEvent(new Event(type)); // Non-bubbling events: received in the capture phase
       expect(els.section.hasAttribute("data-prevent-swipe"), type).toBe(true);
     }
     guards.disconnect();

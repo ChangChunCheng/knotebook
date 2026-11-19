@@ -8,13 +8,13 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { settle } from "@/test/outside-click";
 import { AvatarSection } from "./AvatarSection";
 
-// 背景補產的解碼與編碼（jsdom 沒有 canvas）：換成固定的假實作。
+// Background regeneration decode and encode (jsdom has no canvas): replaced with fixed fakes.
 vi.mock("@/avatars/encode", () => ({
   decodeImage: async () => ({ width: 600, height: 400, close: () => undefined }),
   renderDisplay: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/webp" }),
 }));
 
-// 裁切框本身另有測試；這裡只驗「什麼時候、帶什麼來源開它」。
+// The crop dialog has its own tests (AvatarCropDialog.test.tsx); this only checks when and with which source it opens.
 vi.mock("./AvatarCropDialog", () => ({
   AvatarCropDialog: ({ source, onOpenChange }: { source: { kind: string; file?: File; candidate?: { id: string } }; onOpenChange: (open: boolean) => void }) => (
     <div role="dialog" aria-label="Adjust picture" data-kind={source.kind} data-name={source.file?.name ?? source.candidate?.id}>
@@ -147,8 +147,8 @@ describe("AvatarSection", () => {
     vi.clearAllMocks();
   });
 
-  describe("候選格", () => {
-    it("第一格「不使用頭貼」、其後候選依清單順序；目前那格 aria-checked，其餘不是", async () => {
+  describe("candidate cells", () => {
+    it("first cell is \"No avatar\", then candidates in list order; the current one has aria-checked, the others don't", async () => {
       setup({ list: THREE });
       await ready();
       const cells = radios();
@@ -161,25 +161,25 @@ describe("AvatarSection", () => {
       expect(cells.map(c => c.getAttribute("aria-checked"))).toEqual(["false", "true", "false", "false"]);
     });
 
-    it("沒有任何目前候選 →「不使用頭貼」那格是選中的", async () => {
+    it("no current candidate -> the \"No avatar\" cell is selected", async () => {
       setup({ list: { ...THREE, candidates: THREE.candidates.map(c => ({ ...c, current: false })) } });
       await ready();
       expect(radios().map(c => c.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false"]);
     });
 
-    it("OIDC 來源的候選用登入服務名稱當格名", async () => {
+    it("an OIDC-sourced candidate uses the sign-in service name as its cell name", async () => {
       setup({ list: { candidates: [candidate(ID_A, { source: "oidc", providerName: "Corp SSO" })], auto: true, refreshable: [] } });
       await ready();
       expect(radios()[1]).toHaveAccessibleName("Picture from Corp SSO");
     });
 
-    it("已解除連結的 OIDC 候選（providerName 為 null）不叫「上傳」", async () => {
+    it("an unlinked OIDC candidate (providerName is null) isn't called \"Upload\"", async () => {
       setup({ list: { candidates: [candidate(ID_A, { source: "oidc", providerName: null })], auto: true, refreshable: [] } });
       await ready();
       expect(radios()[1]).toHaveAccessibleName("Picture from a disconnected sign-in service");
     });
 
-    it("同一天上傳的幾張，radio 與 ⋮ 的名稱各不相同（含時間）", async () => {
+    it("several uploads on the same day: radio and menu button names are distinct (including the time)", async () => {
       setup({
         list: {
           candidates: [
@@ -197,7 +197,7 @@ describe("AvatarSection", () => {
       expect(new Set(menus).size).toBe(2);
     });
 
-    it("空清單：只有「不使用頭貼」一格，顯示空狀態與用量說明", async () => {
+    it("empty list: only the \"No avatar\" cell, shows the empty state and the usage note", async () => {
       setup();
       await ready();
       expect(radios()).toHaveLength(1);
@@ -205,7 +205,7 @@ describe("AvatarSection", () => {
       expect(screen.getByText("Profile pictures count toward your storage, original and cropped.")).toBeInTheDocument();
     });
 
-    it("zh-TW 的格名與用量說明", async () => {
+    it("zh-TW cell names and usage note", async () => {
       await i18n.changeLanguage("zh-TW");
       setup({ list: THREE });
       await screen.findByRole("radiogroup", { name: "頭貼候選" });
@@ -213,7 +213,7 @@ describe("AvatarSection", () => {
       expect(screen.getByText("頭貼的原圖與裁切後的圖都會計入你的儲存空間。")).toBeInTheDocument();
     });
 
-    it("載入中顯示載入文字；載入失敗顯示錯誤與重試，重試重抓清單", async () => {
+    it("shows loading text while loading; shows error and retry on failure, retry refetches the list", async () => {
       const { calls } = setup({ listStatus: 500 });
       expect(screen.getByText("Loading pictures…")).toBeInTheDocument();
       expect(await screen.findByText("Couldn't load your pictures.")).toBeInTheDocument();
@@ -224,14 +224,14 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("roving tabindex 與鍵盤", () => {
-    it("只有目前那一格 tabIndex=0", async () => {
+  describe("roving tabindex and keyboard", () => {
+    it("only the current cell has tabIndex=0", async () => {
       setup({ list: THREE });
       await ready();
       expect(radios().map(c => c.tabIndex)).toEqual([-1, 0, -1, -1]);
     });
 
-    it("左右鍵移動焦點與唯一的 tab 停靠點（不選用、不送請求）；到頭不循環", async () => {
+    it("left / right arrows move focus and the single tab stop (without selecting or sending a request); no wrap at the ends", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       const cells = radios();
@@ -248,7 +248,7 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(0);
     });
 
-    it("上下鍵與左右鍵同樣移動焦點，到頭不循環", async () => {
+    it("up / down arrows move focus like left / right, no wrap at the ends", async () => {
       setup({ list: THREE });
       await ready();
       const cells = radios();
@@ -262,7 +262,7 @@ describe("AvatarSection", () => {
       expect(cells[0]).toHaveFocus();
     });
 
-    it("焦點離開群組後，Tab 停點回到選中的那格；群組內移動不重設", async () => {
+    it("after focus leaves the group the Tab stop returns to the selected cell; moving inside the group doesn't reset it", async () => {
       setup({ list: THREE });
       await ready();
       const cells = radios();
@@ -273,7 +273,7 @@ describe("AvatarSection", () => {
       expect(radios().map(c => c.tabIndex)).toEqual([-1, 0, -1, -1]);
     });
 
-    it("Home／End 跳到第一格與最後一格", async () => {
+    it("Home / End jump to the first and last cell", async () => {
       setup({ list: THREE });
       await ready();
       const cells = radios();
@@ -287,8 +287,8 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("選用", () => {
-    it("點一張候選送 PUT /api/auth/avatar { candidateId }，成功出 toast", async () => {
+  describe("selecting", () => {
+    it("clicking a candidate sends PUT /api/auth/avatar { candidateId }, success shows a toast", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       fireEvent.click(radios()[2]!);
@@ -298,7 +298,7 @@ describe("AvatarSection", () => {
       expect(await screen.findByText("Profile picture updated")).toBeInTheDocument();
     });
 
-    it("選「不使用頭貼」送 { candidateId: null }", async () => {
+    it("choosing \"No avatar\" sends { candidateId: null }", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       fireEvent.click(radios()[0]!);
@@ -306,7 +306,7 @@ describe("AvatarSection", () => {
       expect(JSON.parse(String(mutations(calls)[0]!.body))).toEqual({ candidateId: null });
     });
 
-    it("再點已選中的那格不送請求", async () => {
+    it("clicking the already selected cell sends no request", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       fireEvent.click(radios()[1]!);
@@ -314,7 +314,7 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(0);
     });
 
-    it("失敗：server_busy 出忙碌訊息；其他錯誤出一般錯誤；都不出成功 toast", async () => {
+    it("failure: server_busy shows the busy message; other errors show the generic error; no success toast in either case", async () => {
       const { calls } = setup({
         list: THREE,
         respond: c => (c.method === "PUT" ? json(409, { error: { code: "server_busy", message: "busy" } }) : undefined),
@@ -326,14 +326,14 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(1);
     });
 
-    it("失敗：非忙碌的錯誤出一般錯誤訊息", async () => {
+    it("failure: a non-busy error shows the generic error message", async () => {
       setup({ list: THREE, respond: c => (c.method === "PUT" ? json(500, { error: { code: "internal", message: "x" } }) : undefined) });
       await ready();
       fireEvent.click(radios()[2]!);
       expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
     });
 
-    it("404（候選剛被別的分頁刪掉）→ 重抓清單、不出錯誤 toast", async () => {
+    it("404 (candidate just deleted in another tab) -> refetches the list, no error toast", async () => {
       const { calls } = setup({
         list: THREE,
         respond: c => (c.method === "PUT" ? json(404, { error: { code: "not_found", message: "gone" } }) : undefined),
@@ -346,8 +346,8 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("⋮ 與結構", () => {
-    it("⋮ 不在任何 radio 裡；Tab 序是 radiogroup 的一個停靠點，之後各候選的 ⋮", async () => {
+  describe("menu button and structure", () => {
+    it("the menu button isn't inside any radio; Tab order is one stop for the radiogroup, then each candidate's menu button", async () => {
       setup({ list: THREE });
       await ready();
       const group = screen.getByRole("radiogroup", { name: "Picture options" });
@@ -360,7 +360,7 @@ describe("AvatarSection", () => {
       expect(order.map(el => el.getAttribute("role") ?? "menu")).toEqual(["radio", "menu", "menu", "menu"]);
     });
 
-    it("radiogroup 與 ⋮ 群組共用同一個 grid 模板，且都不是 display: contents", async () => {
+    it("the radiogroup and the menu button group share one grid template, and neither is display: contents", async () => {
       setup({ list: THREE });
       await ready();
       const group = screen.getByRole("radiogroup", { name: "Picture options" });
@@ -375,7 +375,7 @@ describe("AvatarSection", () => {
       }
     });
 
-    it("⋮ 的浮出 class 與祖先的 group/avatarcell 都在（hover 時整區的 ⋮ 才會浮出）", async () => {
+    it("the menu button's reveal class and the ancestor's group/avatarcell are both present (the whole area's menu buttons only appear on hover)", async () => {
       setup({ list: THREE });
       await ready();
       const group = screen.getByRole("radiogroup", { name: "Picture options" });
@@ -385,7 +385,7 @@ describe("AvatarSection", () => {
       expect(menu.className).toContain("group-has-[:focus-visible]/avatarcell:opacity-100");
     });
 
-    it("⋮ 視覺 24px，觸控裝置的點擊區擴到 40×44", async () => {
+    it("menu button is 24px visually; on touch devices the tap target grows to 40x44", async () => {
       setup({ list: THREE });
       await ready();
       const classes = screen.getAllByRole("button", { name: /^More actions for / })[0]!.className.split(/\s+/);
@@ -395,7 +395,7 @@ describe("AvatarSection", () => {
       );
     });
 
-    it("⋮ 的選單有「調整裁切」「刪除」兩項", async () => {
+    it("the menu has two items, \"Adjust crop\" and \"Delete\"", async () => {
       setup({ list: THREE });
       await ready();
       const menu = await openMenu(`More actions for Picture uploaded ${dateLabel("2026-02-05T12:00:00.000Z")}`);
@@ -404,8 +404,8 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("調整裁切", () => {
-    it("⋮ →「調整裁切」以該候選為來源開裁切框；框關閉後卸載", async () => {
+  describe("adjust crop", () => {
+    it("menu -> \"Adjust crop\" opens the crop dialog with that candidate as the source; unmounted after the dialog closes", async () => {
       setup({ list: THREE });
       await ready();
       const menu = await openMenu(`More actions for Picture uploaded ${dateLabel("2026-02-05T12:00:00.000Z")}`);
@@ -418,14 +418,14 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("上傳與前驗", () => {
+  describe("upload and pre-check", () => {
     const pick = (file: File) => {
       const input = screen.getByTestId("avatar-file-input") as HTMLInputElement;
       fireEvent.change(input, { target: { files: [file] } });
     };
     const fileOf = (bytes: number, name = "alice.png") => new File([new Uint8Array(bytes)], name, { type: "image/png" });
 
-    it("選檔後清掉 input 的值（同一個檔取消後再選一次才會再觸發 change）", async () => {
+    it("after choosing a file the input's value is cleared (choosing the same file again after cancelling must fire change)", async () => {
       setup();
       await ready();
       const input = screen.getByTestId("avatar-file-input") as HTMLInputElement;
@@ -441,13 +441,13 @@ describe("AvatarSection", () => {
       expect(writes).toEqual([""]);
     });
 
-    it("按鈕只接受 PNG／JPEG／WebP", async () => {
+    it("the button accepts only PNG / JPEG / WebP", async () => {
       setup();
       await ready();
       expect(screen.getByTestId("avatar-file-input")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
     });
 
-    it("maxUploadBytes=1000、選 1001 bytes → 區塊內顯示超過上限、沒開框、沒送請求", async () => {
+    it("maxUploadBytes=1000, choosing 1001 bytes -> shows over-limit in the block, no dialog opened, no request sent", async () => {
       const { calls } = setup({ maxUploadBytes: 1000 });
       await ready();
       await waitFor(() => expect(calls.some(c => c.url === "/api/auth/config")).toBe(true));
@@ -458,7 +458,7 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(0);
     });
 
-    it("剛好等於上限 → 開裁切框，並清掉先前的超限訊息", async () => {
+    it("exactly at the limit -> opens the crop dialog and clears the earlier over-limit message", async () => {
       setup({ maxUploadBytes: 1000 });
       await ready();
       await settle();
@@ -471,7 +471,7 @@ describe("AvatarSection", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
-    it("maxUploadBytes 沒有值 → 不前驗，直接開框", async () => {
+    it("maxUploadBytes has no value -> no pre-check, opens the dialog directly", async () => {
       setup({ maxUploadBytes: undefined });
       await ready();
       await settle();
@@ -481,14 +481,14 @@ describe("AvatarSection", () => {
     });
   });
 
-  describe("刪除", () => {
+  describe("delete", () => {
     async function openDelete(iso: string) {
       const menu = await openMenu(`More actions for Picture uploaded ${dateLabel(iso)}`);
       fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete" }));
       return screen.findByRole("dialog", { name: "Delete this picture?" });
     }
 
-    it("「刪除」開確認框（含釋放空間），確認前不送請求", async () => {
+    it("\"Delete\" opens a confirm dialog (mentions the freed space), no request before confirming", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       const dialog = await openDelete("2026-02-05T12:00:00.000Z");
@@ -497,14 +497,14 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(0);
     });
 
-    it("確認框指出刪的是哪一張", async () => {
+    it("the confirm dialog says which picture is being deleted", async () => {
       setup({ list: THREE });
       await ready();
       const dialog = await openDelete("2026-02-05T12:00:00.000Z");
       expect(within(dialog).getByText(`Picture uploaded ${dateLabel("2026-02-05T12:00:00.000Z")}`)).toBeInTheDocument();
     });
 
-    describe("刪除後的焦點", () => {
+    describe("focus after delete", () => {
       function stateful() {
         let candidates = THREE.candidates;
         return setup({
@@ -526,7 +526,7 @@ describe("AvatarSection", () => {
         await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete this picture?" })).not.toBeInTheDocument());
       }
 
-      it("刪中間那張 → 焦點給原位置的下一格", async () => {
+      it("deleting a middle one -> focus goes to the next cell at that position", async () => {
         stateful();
         await ready();
         await remove("2026-02-05T12:00:00.000Z");
@@ -535,7 +535,7 @@ describe("AvatarSection", () => {
         expect(radios().map(c => c.tabIndex)).toEqual([-1, -1, 0]);
       });
 
-      it("刪最後一張 → 焦點給上一格", async () => {
+      it("deleting the last one -> focus goes to the previous cell", async () => {
         stateful();
         await ready();
         await remove("2026-01-05T12:00:00.000Z");
@@ -543,7 +543,7 @@ describe("AvatarSection", () => {
         await waitFor(() => expect(radios()[2]).toHaveFocus());
       });
 
-      it("刪光所有候選 → 焦點給上傳鈕", async () => {
+      it("deleting every candidate -> focus goes to the upload button", async () => {
         let candidates = [candidate(ID_A, { current: true })];
         setup({
           respond: c => {
@@ -562,7 +562,7 @@ describe("AvatarSection", () => {
       });
     });
 
-    it("取消不送請求、框關閉", async () => {
+    it("cancel sends no request and the dialog closes", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       const dialog = await openDelete("2026-02-05T12:00:00.000Z");
@@ -571,7 +571,7 @@ describe("AvatarSection", () => {
       expect(mutations(calls)).toHaveLength(0);
     });
 
-    it("確認後送 DELETE；刪的是目前那張 → 出「改用首字」toast", async () => {
+    it("after confirming DELETE is sent; deleting the current one -> shows the \"switch to initial letter\" toast", async () => {
       const { calls } = setup({ list: THREE });
       await ready();
       const dialog = await openDelete("2026-03-05T12:00:00.000Z");
@@ -582,7 +582,7 @@ describe("AvatarSection", () => {
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete this picture?" })).not.toBeInTheDocument());
     });
 
-    it("刪的不是目前那張 → 一般的「已刪除」toast", async () => {
+    it("deleting a non-current one -> the ordinary \"deleted\" toast", async () => {
       setup({ list: THREE });
       await ready();
       const dialog = await openDelete("2026-02-05T12:00:00.000Z");
@@ -591,7 +591,7 @@ describe("AvatarSection", () => {
       expect(screen.queryByText("Deleted. Your initial is shown instead.")).not.toBeInTheDocument();
     });
 
-    it("404 → 重抓清單、框關閉", async () => {
+    it("404 -> refetches the list, dialog closes", async () => {
       const { calls } = setup({
         list: THREE,
         respond: c => (c.method === "DELETE" ? json(404, { error: { code: "not_found", message: "gone" } }) : undefined),
@@ -604,7 +604,7 @@ describe("AvatarSection", () => {
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete this picture?" })).not.toBeInTheDocument());
     });
 
-    it("server_busy → 忙碌訊息、框關閉；沒有成功 toast", async () => {
+    it("server_busy -> busy message, dialog closes; no success toast", async () => {
       setup({
         list: THREE,
         respond: c => (c.method === "DELETE" ? json(409, { error: { code: "server_busy", message: "busy" } }) : undefined),
@@ -618,8 +618,7 @@ describe("AvatarSection", () => {
     });
   });
 
-  it("目前頭貼預覽：user.avatar 有值時顯示該圖（64 px）", async () => {
-    // 預覽走 Avatar：有 avatar 就渲染 <img src=avatarUrl>。
+  it("current avatar preview: shows the image when user.avatar is set (64 px)", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     queryClient.setQueryData(["me"], { ...USER, avatar: { id: ID_A, v: 7, pending: false } });
@@ -636,7 +635,7 @@ describe("AvatarSection", () => {
   });
 });
 
-describe("AvatarSection：登入服務的頭貼", () => {
+describe("AvatarSection: sign-in service avatars", () => {
   const SSO = "Corp SSO";
   const IDENTITY_ID = "3c4d5e6f-d9cb-469f-a165-708677289511";
   const IDENTITY_B = "4d5e6f70-d9cb-469f-a165-708677289512";
@@ -670,8 +669,8 @@ describe("AvatarSection：登入服務的頭貼", () => {
     vi.clearAllMocks();
   });
 
-  describe("來源圖示", () => {
-    it("OIDC 候選疊上對應登入服務的圖示；上傳的候選與解除連結的 OIDC 候選不疊", async () => {
+  describe("source icon", () => {
+    it("an OIDC candidate overlays the matching sign-in service's icon; uploaded candidates and unlinked OIDC candidates don't", async () => {
       setup({
         identities: [identityWith(SSO, { type: "builtin", name: "gitlab" })],
         list: {
@@ -692,7 +691,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       expect(within(upload!).queryByTestId("avatar-source-icon")).toBeNull();
     });
 
-    it("管理員選「不顯示」圖示（icon 為 null）時不疊空圈", async () => {
+    it("when the admin picks \"none\" for the icon (icon is null) no empty circle is overlaid", async () => {
       setup({ identities: [identityWith(SSO, null)], list: oidcList() });
       await ready();
       await settle();
@@ -700,20 +699,20 @@ describe("AvatarSection：登入服務的頭貼", () => {
     });
   });
 
-  describe("改用 X 的頭貼", () => {
-    it("refreshable 每個身分一顆按鈕，名稱含服務名", async () => {
+  describe("use X's avatar", () => {
+    it("refreshable: one button per identity, name contains the service name", async () => {
       setup({ list: oidcList({}, [{ identityId: IDENTITY_ID, providerName: SSO }, { identityId: IDENTITY_B, providerName: "Other IdP" }]) });
       await ready();
       expect(refreshButtons().map(b => b.textContent)).toEqual(["Use my Corp SSO picture", "Use my Other IdP picture"]);
     });
 
-    it("refreshable 為空 → 沒有按鈕", async () => {
+    it("empty refreshable -> no button", async () => {
       setup({ list: oidcList() });
       await ready();
       expect(refreshButtons()).toHaveLength(0);
     });
 
-    it("按下送 POST（該身分的網址），成功 toast、清單換成回應、按鈕消失、焦點交給選中的那格", async () => {
+    it("pressing sends POST (that identity's URL): success toast, list replaced with the response, button disappears, focus goes to the selected cell", async () => {
       const after: AvatarListDto = oidcList({ id: ID_B, avatar: { id: ID_B, v: 2 } }, []);
       let refreshed = false;
       const { calls } = setup({
@@ -723,7 +722,6 @@ describe("AvatarSection：登入服務的頭貼", () => {
             refreshed = true;
             return json(200, after);
           }
-          // 成功後失效重抓的清單，server 端已是新狀態。
           return refreshed && c.url === "/api/auth/avatars" ? json(200, after) : undefined;
         },
       });
@@ -737,7 +735,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       await waitFor(() => expect(radios()[1]).toHaveFocus());
     });
 
-    it("請求進行中按鈕是 aria-disabled（仍握焦點），再按不會送第二次", async () => {
+    it("while the request is in flight the button is aria-disabled (still holds focus), pressing again doesn't send a second request", async () => {
       let release: (() => void) | undefined;
       const gate = new Promise<void>(resolve => {
         release = resolve;
@@ -759,7 +757,6 @@ describe("AvatarSection：登入服務的頭貼", () => {
       expect(mutations(calls)).toHaveLength(1);
       release?.();
       await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
-      // 還在清單裡（仍可重新取得）→ 焦點留在原按鈕。
       expect(button).toHaveFocus();
     });
 
@@ -769,7 +766,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       [409, "storage_quota_exceeded", "Storage is full"],
       [429, "too_many_requests", "Too many requests. Please slow down."],
       [500, "internal", "Something went wrong. Please try again."],
-    ])("%i %s → 對應文案，且沒有成功 toast", async (status, code, text) => {
+    ])("%i %s -> the matching text, and no success toast", async (status, code, text) => {
       setup({
         list: oidcList({}, [{ identityId: IDENTITY_ID, providerName: SSO }]),
         respond: c => (c.method === "POST" ? json(status, { error: { code, message: "x" } }) : undefined),
@@ -778,11 +775,10 @@ describe("AvatarSection：登入服務的頭貼", () => {
       fireEvent.click(refreshButtons()[0]!);
       expect(await screen.findByText(text)).toBeInTheDocument();
       expect(screen.queryByText("Profile picture updated")).not.toBeInTheDocument();
-      // 失敗後按鈕恢復可按。
       await waitFor(() => expect(refreshButtons()[0]).not.toHaveAttribute("aria-disabled"));
     });
 
-    it("404（身分剛被解除連結）→ 重抓清單，不彈錯誤", async () => {
+    it("404 (identity just unlinked) -> refetches the list, no error popup", async () => {
       let gone = false;
       const { calls } = setup({
         list: oidcList({}, [{ identityId: IDENTITY_ID, providerName: SSO }]),
@@ -791,7 +787,6 @@ describe("AvatarSection：登入服務的頭貼", () => {
             gone = true;
             return json(404, { error: { code: "not_found", message: "x" } });
           }
-          // 身分已解除連結：重抓回來的清單不再列那顆按鈕。
           return gone && c.url === "/api/auth/avatars" ? json(200, oidcList()) : undefined;
         },
       });
@@ -802,12 +797,11 @@ describe("AvatarSection：登入服務的頭貼", () => {
       fireEvent.click(button);
       await waitFor(() => expect(listCalls(calls).length).toBe(before + 1));
       await waitFor(() => expect(refreshButtons()).toHaveLength(0));
-      // 按鈕消失了，焦點交給選中的那格（不掉到 body）。
       await waitFor(() => expect(radios()[1]).toHaveFocus());
       expect(screen.queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
     });
 
-    it("zh-TW 文案", async () => {
+    it("zh-TW text", async () => {
       await i18n.changeLanguage("zh-TW");
       setup({
         list: oidcList({}, [{ identityId: IDENTITY_ID, providerName: SSO }]),
@@ -819,8 +813,8 @@ describe("AvatarSection：登入服務的頭貼", () => {
     });
   });
 
-  describe("背景補產", () => {
-    it("清單裡 pending 的候選 → 讀原圖並送回顯示圖（帶版本）；同一版重抓清單後不再送", async () => {
+  describe("background regeneration", () => {
+    it("a pending candidate in the list -> reads the original and sends back the display image (with version); after the list is refetched at the same version it isn't sent again", async () => {
       const { calls, queryClient } = setup({
         list: oidcList({ pending: true, avatar: { id: ID_A, v: 5 } }),
         respond: c => {
@@ -833,7 +827,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       await waitFor(() => expect(calls.filter(isFillCall).map(c => c.method)).toEqual(["GET", "PUT"]));
       const put = calls.find(c => c.method === "PUT" && c.url.endsWith("/display"))!;
       expect((put.body as FormData).get("version")).toBe("5");
-      // 寫入成功會失效清單；清單回來仍是同一版 pending → 不得再補一次。
+      // A successful write invalidates the list; if it comes back at the same pending version, it must not be regenerated again.
       await waitFor(() => expect(listCalls(calls).length).toBeGreaterThan(1));
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ["avatars"] });
@@ -842,7 +836,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       expect(calls.filter(isFillCall)).toHaveLength(2);
     });
 
-    it("pending 為 false 的候選（含上傳的）不補產", async () => {
+    it("candidates with pending false (including uploads) aren't regenerated", async () => {
       const { calls } = setup({
         list: { candidates: [candidate(ID_A, { source: "oidc", providerName: SSO, current: true }), candidate(ID_B)], auto: true, refreshable: [] },
       });
@@ -851,7 +845,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       expect(calls.filter(isFillCall)).toHaveLength(0);
     });
 
-    it("空間不足補不出來 → 顯示說明並掛在該格；之後任何一次頭貼寫入成功就重試、說明消失", async () => {
+    it("regeneration fails for lack of space -> shows a note attached to that cell; after any later successful avatar write it retries and the note disappears", async () => {
       let puts = 0;
       setup({
         list: {
@@ -872,13 +866,12 @@ describe("AvatarSection：登入服務的頭貼", () => {
       const note = await screen.findByText(NO_SPACE);
       expect(radios()[1]).toHaveAttribute("aria-describedby", note.id);
       expect(radios()[2]).not.toHaveAttribute("aria-describedby");
-      // 選用另一張＝一次頭貼寫入成功。
       fireEvent.click(radios()[2]!);
       await waitFor(() => expect(puts).toBe(2));
       await waitFor(() => expect(screen.queryByText(NO_SPACE)).not.toBeInTheDocument());
     });
 
-    it("選了「調整裁切」的當下就登記：補產已在跑也不送出，關掉裁切框才送", async () => {
+    it("choosing \"Adjust crop\" registers at that moment: even if regeneration is already running it isn't sent, only after the crop dialog closes", async () => {
       let open: () => void = () => undefined;
       const gate = new Promise<void>(resolve => {
         open = resolve;
@@ -904,7 +897,7 @@ describe("AvatarSection：登入服務的頭貼", () => {
       await waitFor(() => expect(calls.some(c => c.method === "PUT" && c.url.endsWith("/display"))).toBe(true));
     });
 
-    it("其他錯誤（500）不顯示空間不足說明", async () => {
+    it("other errors (500) don't show the no-space note", async () => {
       const { calls } = setup({
         list: oidcList({ pending: true }),
         respond: c => {

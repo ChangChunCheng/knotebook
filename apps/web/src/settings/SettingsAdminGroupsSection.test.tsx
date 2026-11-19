@@ -13,7 +13,7 @@ import { ADMIN_GROUPS_QUERY_KEY, ADMIN_STORAGE_PLANS_QUERY_KEY, STORAGE_USAGE_QU
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 
-// /admin/groups。群組名一律純文字（站台管理員管方案、不看群組成員與詳情）。
+// /admin/groups. Group names are always plain text (the site admin manages plans, doesn't see group members or details).
 
 function res(status: number, body?: unknown): Response {
   return { ok: status < 400, status, json: () => (body === undefined ? Promise.reject(new Error("no body")) : Promise.resolve(body)) } as unknown as Response;
@@ -57,30 +57,29 @@ function renderGroups(rows: AdminGroupDto[], extra: Handler = () => null) {
   );
   return fetchMock;
 }
-/** 等該列的方案下拉出現（＝方案清單已到）再以列名取列（列名＝群組名）。 */
+/** Waits for that row's plan dropdown (= the plan list has arrived), then finds the row by row name (= group name). */
 const rowByDropdown = async (name: string) => {
   await screen.findByRole("combobox", { name: `Storage plan for ${name}` });
   return screen.getByRole("row", { name });
 };
-/** 沒有下拉的情況（方案清單失敗）：直接以列名取列。 */
+/** For when the plan list failed and there is no dropdown to wait on. */
 const rowByName = (name: string) => screen.getByRole("row", { name });
 const requested = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls.map(([u, i]) => `${((i as RequestInit | undefined)?.method ?? "GET").toUpperCase()} ${String(u)}`);
 const PLANS_URL = "/api/admin/storage-plans";
 const plansGets = (fetchMock: ReturnType<typeof vi.fn>) =>
   fetchMock.mock.calls.filter(([u, i]) => String(u) === PLANS_URL && (((i as RequestInit | undefined)?.method ?? "GET").toUpperCase() === "GET")).length;
 const patchUrl = (g: AdminGroupDto) => `/api/admin/groups/${g.id}/storage-plan`;
-/** 讓還在路上的 promise／react-query 通知落地（負向斷言前用）。 */
+/** Lets in-flight promises and react-query notifications land; use before negative assertions. */
 const flush = async () => { for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
 
 describe("/admin/groups", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("每列：名稱、成員數、建立時間、用量（已超過警示色）、方案下拉", async () => {
+  it("each row: name, member count, creation time, usage (over-limit warning color), plan dropdown", async () => {
     renderGroups([ALPHA, BETA]);
     expect(await screen.findByRole("heading", { level: 1, name: "Groups" })).toBeInTheDocument();
     const beta = await rowByDropdown("Beta");
-    // 依格的可及名稱（＝內容）查，不依欄序號（欄序由下一案的欄名陣列守）。
     for (const text of ["Beta", "1", new Date(T).toLocaleDateString("en"), "3 MB of 2 MB"]) {
       expect(within(beta).getByRole("cell", { name: text })).toBeInTheDocument();
     }
@@ -89,29 +88,29 @@ describe("/admin/groups", () => {
     expect(within(await rowByDropdown("Alpha")).getByText("1 MB of 2 GB")).not.toHaveClass("text-destructive");
   });
 
-  it("表名 Groups、欄名 Name／Members／Created／Storage／Plan", async () => {
+  it("table name Groups, column names Name / Members / Created / Storage / Plan", async () => {
     renderGroups([ALPHA, BETA]);
     const table = await screen.findByRole("table", { name: "Groups" });
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Name", "Members", "Created", "Storage", "Plan"]);
   });
 
-  it("群組名一律純文字、不打任何成員／角色／群組用量端點", async () => {
+  it("group names are always plain text, and no member / role / group-usage endpoint is called", async () => {
     const fetchMock = renderGroups([ALPHA, BETA]);
     for (const g of [ALPHA, BETA]) {
-      // 以下拉定位列：下拉出現＝方案清單已到，本頁 query 都已落地；若名稱格會變成連結，此刻一定已是
+      // Locate rows by the dropdown: its presence means the plan list has arrived and all of this page's queries have landed; if the name cell were to become a link, it would be one by now
       const row = await rowByDropdown(g.name);
       const nameCell = within(row).getByRole("cell", { name: g.name });
       expect(nameCell).toHaveTextContent(g.name);
       expect(within(nameCell).queryByRole("link")).toBeNull();
     }
     await flush();
-    // 背景 HomePage（站台管理是疊在首頁上的 modal）的側欄會載入「我的群組」（`GET /api/groups`）與筆記清單，但 stub 回空陣列，
-    // 側欄沒有任何群組；本頁自己只打下面兩支 admin 端點——沒有成員／角色／群組用量端點，群組名沒有理由變成連結。
+    // The background HomePage (site admin is a modal over the home page) sidebar loads "my groups" (`GET /api/groups`) and the note list, but they're stubbed to empty arrays,
+    // so the sidebar has no groups; this page itself calls only the two admin endpoints below - with no member / role / group-usage endpoint, the group name has no reason to become a link.
     expect([...new Set(requested(fetchMock))].filter((r) => r.includes(" /api/admin/")).sort()).toEqual(["GET /api/admin/groups", "GET /api/admin/storage-plans"]);
     expect(requested(fetchMock).some((r) => /\/api\/groups\/[^/]+\/(members|roles|storage)$/.test(r))).toBe(false);
   });
 
-  it("同名群組：各列下拉用 aria-describedby 指到該列的建立時間格（id 依群組 id），描述可區分", async () => {
+  it("same-named groups: each row's dropdown uses aria-describedby pointing to that row's creation time cell (id based on the group id), so the descriptions tell them apart", async () => {
     const OLDER: AdminGroupDto = { ...ALPHA, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", createdAt: "2025-03-04T12:00:00.000Z" };
     renderGroups([ALPHA, OLDER]);
     const selects = await screen.findAllByRole("combobox", { name: "Storage plan for Alpha" });
@@ -121,7 +120,7 @@ describe("/admin/groups", () => {
     expect(selects[0]!.getAttribute("aria-describedby")).not.toBe(selects[1]!.getAttribute("aria-describedby"));
   });
 
-  it("改方案：PATCH {planId}；成功後下拉與用量格換成新方案，方案清單（人數）重抓，不碰個人用量 /api/storage", async () => {
+  it("changing the plan: PATCH {planId}; on success the dropdown and usage cell switch to the new plan, the plan list (member counts) is refetched, personal usage /api/storage isn't touched", async () => {
     const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648 } };
     const fetchMock = renderGroups([BETA], (url, method) => (url === patchUrl(BETA) && method === "PATCH" ? res(200, updated) : null));
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
@@ -130,15 +129,15 @@ describe("/admin/groups", () => {
     const patch = fetchMock.mock.calls.find(([u, i]) => String(u) === patchUrl(BETA) && (i as RequestInit).method === "PATCH");
     expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({ planId: BASIC_ID });
     expect(screen.getByText("3 MB of 2 GB")).not.toHaveClass("text-destructive");
-    // 成功後方案清單（人數）重抓：PATCH 之後 GET storage-plans 又發了一次——同時是下面兩條負向斷言的等待點
+    // The plan list is refetched after success; this wait is also the wait point for the negative assertions below.
     await waitFor(() => expect(plansGets(fetchMock)).toBeGreaterThanOrEqual(2));
     await flush();
     expect(fetchMock.mock.calls.some(([u]) => String(u) === "/api/storage")).toBe(false);
-    // 群組列表本身不重抓（setQueryData 已換列）：只有一次 GET /api/admin/groups
+    // The group list itself isn't refetched (setQueryData already replaced the row), so exactly one GET.
     expect(fetchMock.mock.calls.filter(([u, i]) => String(u) === "/api/admin/groups" && (((i as RequestInit | undefined)?.method ?? "GET") === "GET")).length).toBe(1);
   });
 
-  it("儲存中（PATCH 未回）：下拉 disabled 且顯示剛選的方案，不彈回舊方案", async () => {
+  it("while saving (PATCH not returned): the dropdown is disabled and shows the just-chosen plan, doesn't jump back to the old plan", async () => {
     renderGroups([BETA], (url, method) => (url === patchUrl(BETA) && method === "PATCH" ? (new Promise(() => undefined) as unknown as Promise<Response>) : null));
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
     await chooseOption(select, "Basic");
@@ -147,7 +146,7 @@ describe("/admin/groups", () => {
     expect(displayedLabel(select)).toBe("Basic");
   });
 
-  it("改方案失敗（404 group_not_found，群組剛被刪）→ toast，下拉留在原方案，方案清單重抓", async () => {
+  it("plan change failure (404 group_not_found, the group was just deleted) -> toast, the dropdown stays on the original plan, the plan list is refetched", async () => {
     const fetchMock = renderGroups([BETA], (url, method) =>
       url === patchUrl(BETA) && method === "PATCH" ? res(404, { error: { code: "group_not_found", message: "x" } }) : null);
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
@@ -155,11 +154,10 @@ describe("/admin/groups", () => {
     expect(await screen.findByText("We couldn't find that group.")).toBeInTheDocument();
     await waitFor(() => expect(selectedValue(select)).toBe(TIGHT_ID));
     expect(select).not.toBeDisabled();
-    // 失敗也重抓方案清單（方案可能剛被刪）
     await waitFor(() => expect(plansGets(fetchMock)).toBeGreaterThanOrEqual(2));
   });
 
-  it("列上的方案不在清單裡 → 下拉仍顯示該方案（補一個 option），不是清單第一個", async () => {
+  it("a row's plan isn't in the list -> the dropdown still shows that plan (adds an option), not the first in the list", async () => {
     const NEWPLAN_ID = "99999999-9999-4999-8999-999999999999";
     const row: AdminGroupDto = { ...ALPHA, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
     renderGroups([row]);
@@ -169,29 +167,29 @@ describe("/admin/groups", () => {
     expect(await optionLabels(select)).toContain("Brand new");
   });
 
-  it("方案清單失敗：方案欄只顯示方案名、沒有下拉", async () => {
+  it("plan list failure: the plan column shows only the plan name, no dropdown", async () => {
     const fetchMock = renderGroups([ALPHA], (url, method) => (url === PLANS_URL && method === "GET" ? res(500, { error: { code: "internal", message: "x" } }) : null));
     expect(await screen.findByRole("cell", { name: "Alpha" })).toBeInTheDocument();
-    // 等待點：清單 pending 時 plans 也是 undefined、「沒有下拉」恆真——先等請求真的發出，再讓失敗結果落地
+    // Wait point: while the list is pending plans is also undefined and "no dropdown" is always true - first wait for the request to actually go out, then let the failure land
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === PLANS_URL)).toBe(true));
     await flush();
     expect(screen.queryByRole("combobox", { name: "Storage plan for Alpha" })).not.toBeInTheDocument();
     expect(within(rowByName("Alpha")).getByText("Basic")).toBeInTheDocument();
   });
 
-  it("群組列表載入失敗 → 錯誤列（role=alert），沒有表格", async () => {
+  it("group list load failure -> error row (role=alert), no table", async () => {
     renderGroups([], (url, method) => (url === "/api/admin/groups" && method === "GET" ? res(500, { error: { code: "internal", message: "x" } }) : null));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("沒有群組 → 「No groups yet.」", async () => {
+  it("no groups -> \"No groups yet.\"", async () => {
     renderGroups([]);
     expect(await screen.findByText("No groups yet.")).toBeInTheDocument();
   });
 });
 
-describe("useAssignGroupPlan 的快取失效", () => {
+describe("cache invalidation of useAssignGroupPlan", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
   function setup(patchResponse: () => Response) {
@@ -207,7 +205,7 @@ describe("useAssignGroupPlan 的快取失效", () => {
   }
   const invalidated = (client: QueryClient, key: readonly unknown[]) => client.getQueryState(key)!.isInvalidated;
 
-  it("成功：換掉那一列、失效方案清單與該群組的用量 key；不失效個人用量、別的群組、群組列表", async () => {
+  it("success: replaces that row, invalidates the plan list and that group's usage key; doesn't invalidate personal usage, other groups or the group list", async () => {
     const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648 } };
     const { client, result } = setup(() => res(200, updated));
     await act(async () => { await result.current.mutateAsync({ groupId: BETA.id, planId: BASIC_ID }); });
@@ -219,7 +217,7 @@ describe("useAssignGroupPlan 的快取失效", () => {
     expect(invalidated(client, ADMIN_GROUPS_QUERY_KEY)).toBe(false);
   });
 
-  it("失敗：列不動、只失效方案清單", async () => {
+  it("failure: rows untouched, only the plan list is invalidated", async () => {
     const { client, result } = setup(() => res(404, { error: { code: "storage_plan_not_found", message: "x" } }));
     await act(async () => { await result.current.mutateAsync({ groupId: BETA.id, planId: BASIC_ID }).catch(() => undefined); });
     expect(client.getQueryData<AdminGroupDto[]>(ADMIN_GROUPS_QUERY_KEY)).toEqual([ALPHA, BETA]);

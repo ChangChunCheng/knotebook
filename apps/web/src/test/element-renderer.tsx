@@ -6,10 +6,10 @@ import { MemoryRouter } from "react-router";
 import type { BlockNoteEditor } from "@blocknote/core";
 
 /**
- * **elementRenderer**（同 `components/wikilink/menu.test.tsx`、`collab/link-sync.test.tsx` 各自內嵌的那一份）：`editor.mount()`、
- * 非 headless、又沒有 `<BlockNoteView>` 的編輯器，wikilink（React inline content）的 `toDOM` 要靠 `editor.elementRenderer` 渲染，
- * 否則丟 `elementRenderer not available, expected headless editor`。照抄 BlockNote 未匯出的 `ElementRenderer.tsx` 形，包在
- * `QueryClientProvider`／`MemoryRouter` 底下（`WikilinkInline` 用 `useNotes`／`useNavigate`；`["notes"]` 塞空陣列＝「已解析未命中」態）。
+ * **elementRenderer** (the same as the copy inlined in `components/wikilink/menu.test.tsx` and `collab/link-sync.test.tsx`): for an editor that is `editor.mount()`ed,
+ * not headless, and has no `<BlockNoteView>`, the `toDOM` of a wikilink (React inline content) needs `editor.elementRenderer` to render,
+ * otherwise it throws `elementRenderer not available, expected headless editor`. Copied from the shape of BlockNote's unexported `ElementRenderer.tsx`, wrapped in
+ * `QueryClientProvider` / `MemoryRouter` (`WikilinkInline` uses `useNotes` / `useNavigate`; an empty array in `["notes"]` = the "resolved, no hit" state).
  */
 type ElementRendererHandle = (node: ReactNode, container: HTMLElement) => void;
 
@@ -27,7 +27,7 @@ const TestElementRenderer = forwardRef<ElementRendererHandle>((_props, ref) => {
 });
 TestElementRenderer.displayName = "TestElementRenderer";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; any per repo convention
 export function attachTestElementRenderer(editor: BlockNoteEditor<any, any, any>): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   queryClient.setQueryData(["notes"], []);

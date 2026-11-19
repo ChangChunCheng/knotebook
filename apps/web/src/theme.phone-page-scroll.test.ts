@@ -3,17 +3,15 @@ import { describe, expect, it } from "vitest";
 import { LIST_STICKY_TOP_VAR, PHONE_PAGE_SCROLL_ATTR, ROOT_FLAGS, STICKY_TOP_VAR } from "@/lib/page-scroll";
 
 /**
- * 手機（< 640）上清單與筆記捲的是文件（`lib/page-scroll.ts`）。頁面層的樣式在 `index.css`：html／body 的底色、
- * 區塊讓開頁首的 scroll-margin、哪些畫面擋下拉重新整理、筆記滑入不用 transform。jsdom 不套 CSS，這裡只守原始碼。
+ * On phones (< 640) the list and notes scroll the document (`lib/page-scroll.ts`). The page-level styles are in `index.css`: the html / body background colour,
+ * the scroll-margin that makes blocks clear the header, which screens block pull-to-refresh, and note slide-in not using transform. jsdom doesn't apply CSS, so this guards only the source.
  */
 const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8")
   .replaceAll("\r\n", "\n")
   .replace(/\/\*[\s\S]*?\*\//g, "");
 
-/** 所有 `@media (width < 40rem) { … }` 區塊（只到第二層大括號）。 */
 const phoneBlocks = css.match(/@media \(width < 40rem\) \{(?:[^{}]|\{[^{}]*\})*\}/g) ?? [];
 
-/** 手機區塊裡，選擇器清單恰好是 `selectors` 的那一條規則的宣告；找不到回 null。 */
 function phoneRule(selectors: string[]): string | null {
   const want = [...selectors].sort().join("|");
   for (const block of phoneBlocks) {
@@ -27,7 +25,6 @@ function phoneRule(selectors: string[]): string | null {
 
 const APP = `html[${ROOT_FLAGS.pageScroll}]`;
 
-/** 在最外層（不在括號裡）的 `sep` 處切開。 */
 function splitTopLevel(text: string, isSep: (ch: string) => boolean): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -47,15 +44,14 @@ function splitTopLevel(text: string, isSep: (ch: string) => boolean): string[] {
 
 const ROOT_TYPES = ["html", "body", ":root"];
 
-/** 複合選擇器開頭的型別（`html`、`*`、`:root`……），沒有型別時是空字串。 */
 function typeOf(compound: string): string {
   return /^(?:[a-zA-Z][\w-]*|\*|:root)?/.exec(compound)![0].toLowerCase();
 }
 
 /**
- * 錨點可能是 `<html>`／`<body>` 的 `:has()` 選擇器。逐一看每個複合選擇器，帶 `:has(` 而且符合其一就算：
- * 型別是 html／body／:root／`*`；或沒有型別也沒有 class、id、屬性限定（裸 `:has(`、`:not(.x):has(`），
- * 而它前面的複合選擇器只有 html／body／:root（或它就是第一個）。
+ * The anchor may be a `:has()` selector on `<html>` / `<body>`. Look at each compound selector: one carrying `:has(` counts if it matches either of:
+ * the type is html / body / :root / `*`; or it has no type and no class, id or attribute qualifier (a bare `:has(`, `:not(.x):has(`),
+ * and the compound selectors before it are only html / body / :root (or it is the first).
  */
 function rootAnchoredHas(source: string): string[] {
   const hits: string[] = [];
@@ -78,18 +74,18 @@ function rootAnchoredHas(source: string): string[] {
   return hits;
 }
 
-describe("手機頁面捲動的頁面層樣式", () => {
-  it("外框在時 html 與 body 的底色是卡片色（Safari 底部工具列後面、回彈露出的區域與內容同色）", () => {
+describe("page-level styles for phone page scrolling", () => {
+  it("when the frame is present the html and body background is the card colour (the area behind Safari's bottom toolbar and revealed by bounce matches the content)", () => {
     expect(phoneRule([APP, `${APP} body`])).toMatch(/background-color:\s*var\(--color-card\);/);
   });
 
-  it("筆記的區塊（捲到段落、搜尋結果時的目標）帶 scroll-margin-top＝NoteEditor 量好的頁首高度；html 不設 scroll-padding-top（頁首自己的鈕拿回焦點時文件不會被捲走）", () => {
+  it("note blocks (the target when scrolling to a paragraph or search result) carry scroll-margin-top = the header height NoteEditor measures; html sets no scroll-padding-top (when the header's own button regains focus the document isn't scrolled away)", () => {
     const rule = phoneRule([`[${PHONE_PAGE_SCROLL_ATTR}] .bn-block-outer`, `[${PHONE_PAGE_SCROLL_ATTR}] .bn-block-content`]);
     expect(rule).toMatch(new RegExp(`scroll-margin-top:\\s*var\\(${STICKY_TOP_VAR},\\s*0px\\);`));
     expect(css).not.toContain("scroll-padding-top");
   });
 
-  it("清單畫面（含搜尋層）與編輯中的筆記擋下拉重新整理；html 與 body 都設", () => {
+  it("list screens (including the search layer) and a note being edited block pull-to-refresh; set on both html and body", () => {
     const rule = phoneRule([
       `html[${ROOT_FLAGS.listShown}]`,
       `html[${ROOT_FLAGS.listShown}] body`,
@@ -99,11 +95,11 @@ describe("手機頁面捲動的頁面層樣式", () => {
     expect(rule).toMatch(/overscroll-behavior-y:\s*contain;/);
   });
 
-  it("頁面層的規則不以 html／body／:root 當 :has() 的錨點（任何節點插入或移除都可能讓整份文件重算樣式），改看 html 上的旗標", () => {
+  it("page-level rules don't use html / body / :root as the anchor of :has() (any node insertion or removal can make the whole document recompute styles); they look at a flag on html instead", () => {
     expect(rootAnchoredHas(css)).toEqual([]);
   });
 
-  it("上一條的檢查本身認得出各種寫法（含 :not() 之後的 :has()、*:has()、最外層裸 :has()），也不誤判一般元素上的 :has()", () => {
+  it("the check above recognises the various writings (including :has() after :not(), *:has(), a bare outermost :has()) and doesn't misjudge :has() on ordinary elements", () => {
     const bad = [
       "html:has([data-x]) { a: b; }",
       "html:has([data-x]) body { a: b; }",
@@ -135,14 +131,14 @@ describe("手機頁面捲動的頁面層樣式", () => {
     for (const rule of good) expect(rootAnchoredHas(rule), rule).toEqual([]);
   });
 
-  it("這些規則都只在手機寬度（width < 40rem 之外沒有 data-phone-page-scroll／data-phone-list-shown 的規則）", () => {
+  it("these rules apply only at phone width (outside width < 40rem there is no rule with data-phone-page-scroll / data-phone-list-shown)", () => {
     const outside = phoneBlocks.reduce((rest, block) => rest.replace(block, ""), css);
     expect(outside).not.toContain(PHONE_PAGE_SCROLL_ATTR);
     expect(outside).not.toContain("data-phone-list-shown");
     for (const flag of Object.values(ROOT_FLAGS)) expect(outside).not.toContain(flag);
   });
 
-  it("筆記滑入動的是 transform（合成層），不動 left 之類會重排的屬性；浮動鈕不在滑動的元素裡（AppShell.page-scroll PS10）", () => {
+  it("note slide-in animates transform (a compositing layer), not left or other reflow properties; the floating button isn't inside the sliding element", () => {
     const frames = css.match(/@keyframes kb-phone-enter \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(frames).toMatch(/from \{\s*transform:\s*translateX\(100%\);\s*\}/);
     expect(frames).toMatch(/to \{\s*transform:\s*translateX\(0\);\s*\}/);
@@ -150,7 +146,7 @@ describe("手機頁面捲動的頁面層樣式", () => {
     expect(css).toMatch(/\.kb-phone-enter \{\s*animation:\s*kb-phone-enter 200ms ease-out;\s*\}/);
   });
 
-  it("清單列（連同列裡的連結與按鈕）帶 scroll-margin-top＝清單量好的釘住高度，焦點移過去時讓開頂列與標題列", () => {
+  it("list rows (with the links and buttons inside) carry scroll-margin-top = the pinned height the list measured, so that when focus moves there it clears the top bar and title row", () => {
     const rule = phoneRule([
       `[${PHONE_PAGE_SCROLL_ATTR}] [data-sidebar-list] [data-node-kind]`,
       `[${PHONE_PAGE_SCROLL_ATTR}] [data-sidebar-list] [data-node-kind] *`,
@@ -158,7 +154,7 @@ describe("手機頁面捲動的頁面層樣式", () => {
     expect(rule).toMatch(new RegExp(`scroll-margin-top:\\s*var\\(${LIST_STICKY_TOP_VAR},\\s*0px\\);`));
   });
 
-  it("簡報的投影片捲到頭尾不帶動背後的頁面（overscroll-behavior: contain）", () => {
+  it("presentation slides scrolled to the ends don't drag the page behind (overscroll-behavior: contain)", () => {
     const present = readFileSync(`${process.cwd()}/src/present/present.css`, "utf8").replaceAll("\r\n", "\n").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(present).toMatch(/\.kn-present \.reveal \.slides section\[data-kn-slide-id\] \{[^}]*overscroll-behavior:\s*contain;/);
   });

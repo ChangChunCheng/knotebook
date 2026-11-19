@@ -8,7 +8,6 @@ import { enterPresentationFullscreen } from "./fullscreen";
 import { isPresentingSearch } from "./present-url";
 import { PresentationErrorBoundary, PresentationShell, usePresentationShell, type PresentationShellContextValue, type PresentationShellStatus } from "./PresentationShell";
 
-// navigate 計次：包住真的 useNavigate（NotePage.test.tsx 的 navSpy 同手法）。
 const nav = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock("react-router", async (importOriginal) => {
   const mod = await importOriginal<typeof import("react-router")>();
@@ -26,7 +25,7 @@ vi.mock("react-router", async (importOriginal) => {
 
 const probe = vi.hoisted(() => ({ ctx: null as PresentationShellContextValue | null, alsoListen: false }));
 
-/** 子樹替身：拿 context；`alsoListen` 時自己也聽 Esc（模擬 reveal 的 keyboard[27] 與外殼監聽同 tick 觸發）。 */
+/** Child-tree stand-in: reads the context; with `alsoListen` it also listens to Esc itself (simulates reveal's keyboard[27] and the shell listener firing in the same tick). */
 function Child() {
   const ctx = usePresentationShell();
   useEffect(() => {
@@ -90,7 +89,7 @@ describe("PresentationShell", () => {
     vi.useRealTimers();
   });
 
-  it("未就緒時按 Esc、沒有旗標 → replace 掉 present 與 hash", async () => {
+  it("Esc before ready with no flag -> replaces away the present flag and hash", async () => {
     renderShell(["/n/tester/my-note?present#/x"]);
     pressEsc();
     await waitFor(() => expect(loc()).toBe("/n/tester/my-note|null"));
@@ -98,14 +97,14 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledWith({ pathname: "/n/tester/my-note", search: "", hash: "" }, { replace: true });
   });
 
-  it("有進入旗標 → navigate(-1)，回到進入前那筆", async () => {
+  it("with the entered flag -> navigate(-1), back to the entry before presenting", async () => {
     renderShell(["/n/tester/my-note", { pathname: "/n/tester/my-note", search: "?present", state: { knotebookPresentPushed: true } }]);
     pressEsc();
     await waitFor(() => expect(loc()).toBe("/n/tester/my-note|null"));
     expect(nav.fn).toHaveBeenCalledWith(-1);
   });
 
-  it("同一 tick 外殼監聽與 reveal 的 keyboard[27] 都觸發 → navigate 恰一次（離開冪等）", async () => {
+  it("the shell listener and reveal's keyboard[27] both fire in the same tick -> navigate exactly once (leaving is idempotent)", async () => {
     probe.alsoListen = true;
     renderShell(["/n/tester/my-note?present"]);
     await waitFor(() => expect(probe.ctx).not.toBeNull());
@@ -114,7 +113,7 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("onRevealReady(true) 之後外殼不再聽 Esc；由 onEsc（reveal 的 keyboard[27]）離開，恰一次", async () => {
+  it("after onRevealReady(true) the shell no longer listens to Esc; leaving goes through onEsc (reveal's keyboard[27]), exactly once", async () => {
     renderShell(["/n/tester/my-note?present"]);
     await waitFor(() => expect(probe.ctx).not.toBeNull());
     act(() => probe.ctx!.onRevealReady(true));
@@ -125,7 +124,7 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("× 連點兩下 → navigate 恰一次", async () => {
+  it("close button clicked twice -> navigate exactly once", async () => {
     renderShell(["/n/tester/my-note?present"]);
     const close = screen.getByRole("button", { name: "Exit presentation" });
     fireEvent.click(close);
@@ -134,7 +133,7 @@ describe("PresentationShell", () => {
     expect(nav.fn).toHaveBeenCalledTimes(1);
   });
 
-  it("播放時背後的文件不捲（html overflow hidden）；離開後還在同一篇：還原原本的 overflow 與捲動位置", () => {
+  it("while presenting, the document behind doesn't scroll (html overflow hidden); after leaving on the same page, original overflow and scroll position are restored", () => {
     const root = document.documentElement;
     root.style.overflow = "clip";
     let y = 640;
@@ -145,7 +144,7 @@ describe("PresentationShell", () => {
     try {
       const view = renderShell(["/n/tester/my-note?present"]);
       expect(root.style.overflow).toBe("hidden");
-      // 播放期間位置被動到（例如瀏覽器自己捲）：離開時捲回原處
+      // The position moved during presentation (e.g. the browser scrolled itself): scroll back on leaving
       vi.stubGlobal("scrollY", 0);
       view.unmount();
       expect(root.style.overflow).toBe("clip");
@@ -158,7 +157,7 @@ describe("PresentationShell", () => {
     }
   });
 
-  it("離開時已換到別頁（筆記被刪、連結失效、返回到清單）：只解除鎖定、不捲，位置交給那一頁", () => {
+  it("when leaving after the route changed (note deleted, link dead, back to a list): only releases the lock and doesn't scroll; that page owns the position", () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     vi.stubGlobal("scrollY", 640);
     try {
@@ -174,7 +173,7 @@ describe("PresentationShell", () => {
     }
   });
 
-  it("解除鎖定在下一個畫面的 layout effect 之前（那裡會還原清單位置，不能被蓋掉）", () => {
+  it("the lock is released before the next screen's layout effect (which restores the list position and mustn't be overwritten)", () => {
     let seen: string | null = null;
     function Next() {
       useLayoutEffect(() => {
@@ -202,7 +201,7 @@ describe("PresentationShell", () => {
     expect(seen).toBe("");
   });
 
-  it("內容區與工具列都避開瀏海與 Home 指示條（class 斷言，jsdom 無 env）", () => {
+  it("content area and toolbar both avoid the notch and home indicator (class assertions, jsdom has no env)", () => {
     renderShell(["/n/tester/my-note?present"]);
     const content = screen.getByTestId("shell-child").parentElement!;
     const toolbar = screen.getByRole("button", { name: "Exit presentation" }).parentElement!;
@@ -213,14 +212,14 @@ describe("PresentationShell", () => {
     expect(toolbar.className).toContain("env(safe-area-inset-right)");
   });
 
-  it("全螢幕中 Esc 不離開；退出後 300 ms 內忽略；超過才離開", async () => {
+  it("Esc in fullscreen doesn't leave; ignored for 300 ms after exiting; leaves after that", async () => {
     fake = installFakeFullscreen();
     renderShell(["/n/tester/my-note?present"]);
     enterPresentationFullscreen();
     await fake.grantEventFirst();
     pressEsc();
     expect(nav.fn).not.toHaveBeenCalled();
-    await fake.userExit(); // 瀏覽器吃掉第一下 Esc、退全螢幕
+    await fake.userExit(); // The browser consumes the first Esc to exit fullscreen
     fake.advance(299);
     pressEsc();
     expect(nav.fn).not.toHaveBeenCalled();
@@ -229,7 +228,7 @@ describe("PresentationShell", () => {
     await waitFor(() => expect(nav.fn).toHaveBeenCalledTimes(1));
   });
 
-  it("全螢幕中按 ×：退出我們要的全螢幕並離開（exitFullscreen 早於 navigate）", async () => {
+  it("close button in fullscreen: exits the fullscreen we requested and leaves (exitFullscreen before navigate)", async () => {
     fake = installFakeFullscreen();
     renderShell(["/n/tester/my-note?present"]);
     enterPresentationFullscreen();
@@ -240,7 +239,7 @@ describe("PresentationShell", () => {
     expect(fake.exitFullscreen.mock.invocationCallOrder[0]).toBeLessThan(nav.fn.mock.invocationCallOrder[0]);
   });
 
-  it("onFatal → 顯示 t(messageKey)、子樹卸載；之後按一次 Esc → navigate 恰一次", async () => {
+  it("onFatal -> shows t(messageKey), subtree unmounted; then one Esc -> navigate exactly once", async () => {
     renderShell(["/n/tester/my-note?present"]);
     await waitFor(() => expect(probe.ctx).not.toBeNull());
     act(() => probe.ctx!.onFatal("present.configRefused"));
@@ -250,7 +249,7 @@ describe("PresentationShell", () => {
     await waitFor(() => expect(nav.fn).toHaveBeenCalledTimes(1));
   });
 
-  it("status=loading → app.loading、沒有子樹、× 在；status=error → errorMessage、× 在", () => {
+  it("status=loading -> app.loading, no subtree, close button present; status=error -> errorMessage, close button present", () => {
     const { unmount } = renderShell(["/n/tester/my-note?present"], { status: "loading" });
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(screen.queryByTestId("shell-child")).toBeNull();
@@ -261,7 +260,7 @@ describe("PresentationShell", () => {
     expect(screen.getByRole("button", { name: "Exit presentation" })).toBeInTheDocument();
   });
 
-  it("掛上後焦點在 dialog 根；可及名稱＝present.dialogLabel（空標題用 note.titlePlaceholder）", () => {
+  it("after mount focus is on the dialog root; accessible name = present.dialogLabel (an empty title uses note.titlePlaceholder)", () => {
     const { unmount } = renderShell(["/n/tester/my-note?present"]);
     const dialog = screen.getByRole("dialog", { name: "My Note — presentation" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
@@ -271,7 +270,7 @@ describe("PresentationShell", () => {
     expect(screen.getByRole("dialog", { name: "Untitled — presentation" })).toBeInTheDocument();
   });
 
-  it("正規化：?present&hash=true#/x → ?present#/x，state 原樣保留", async () => {
+  it("normalization: ?present&hash=true#/x -> ?present#/x, state kept as is", async () => {
     renderShell([{ pathname: "/n/tester/my-note", search: "?present&hash=true", hash: "#/x", state: { knotebookPresentPushed: true } }]);
     await waitFor(() => expect(loc()).toBe('/n/tester/my-note?present#/x|{"knotebookPresentPushed":true}'));
     expect(nav.fn).toHaveBeenCalledWith(
@@ -280,18 +279,18 @@ describe("PresentationShell", () => {
     );
   });
 
-  it("全螢幕鈕：fullscreenEnabled 為 false 時不渲染", () => {
+  it("fullscreen button: not rendered when fullscreenEnabled is false", () => {
     fake = installFakeFullscreen({ enabled: false });
     renderShell(["/n/tester/my-note?present"]);
     expect(screen.queryByRole("button", { name: "Full screen" })).toBeNull();
   });
 
-  it("全螢幕鈕：mousedown 不搶焦點、點擊後焦點回根；圖示／標籤隨全螢幕狀態換", async () => {
+  it("fullscreen button: mousedown doesn't steal focus, after a click focus returns to the root; icon and label follow the fullscreen state", async () => {
     fake = installFakeFullscreen();
     renderShell(["/n/tester/my-note?present"]);
     const button = screen.getByRole("button", { name: "Full screen" });
     expect(fireEvent.mouseDown(button)).toBe(false); // defaultPrevented
-    button.focus(); // 鍵盤路徑：Tab 到按鈕再 Enter（jsdom 的 click 不移動焦點，先手動聚焦才量得到「還給根」）
+    button.focus(); // Keyboard path: Tab to the button then Enter (jsdom's click doesn't move focus, so focus manually first to be able to observe focus returning to the root)
     fireEvent.click(button);
     expect(fake.requestFullscreen).toHaveBeenCalledTimes(1);
     expect(document.activeElement).toBe(screen.getByRole("dialog"));
@@ -300,7 +299,7 @@ describe("PresentationShell", () => {
     expect(fake.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("toggleFullscreen：fullscreenEnabled 為 false → 不請求（F 不作用）", async () => {
+  it("toggleFullscreen: fullscreenEnabled false -> no request (F does nothing)", async () => {
     fake = installFakeFullscreen({ enabled: false });
     renderShell(["/n/tester/my-note?present"]);
     await waitFor(() => expect(probe.ctx).not.toBeNull());
@@ -308,12 +307,12 @@ describe("PresentationShell", () => {
     expect(fake.requestFullscreen).not.toHaveBeenCalled();
   });
 
-  it("卸載型呼叫點：網址仍含 present 時卸載不退全螢幕；不含才退", async () => {
+  it("unmount call site: unmounting while the URL still contains present doesn't exit fullscreen; without it, it does", async () => {
     fake = installFakeFullscreen();
     const first = renderShell(["/n/tester/my-note?present"]);
     enterPresentationFullscreen();
     await fake.grantEventFirst();
-    first.unmount(); // window.location 仍是 ?present（beforeEach）
+    first.unmount(); // window.location is still ?present (set in beforeEach)
     expect(fake.exitFullscreen).not.toHaveBeenCalled();
     renderShell(["/n/tester/my-note?present"]).unmount();
     expect(fake.exitFullscreen).not.toHaveBeenCalled();
@@ -322,11 +321,11 @@ describe("PresentationShell", () => {
     expect(fake.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("工具列閒置 2 s 淡出、滑鼠移動浮現", () => {
+  it("toolbar fades after 2 s idle, mouse movement brings it back", () => {
     vi.useFakeTimers();
     renderShell(["/n/tester/my-note?present"]);
     const toolbar = screen.getByRole("button", { name: "Exit presentation" }).parentElement!;
-    // classList 比對（className 恆含 hover:opacity-100／focus-within:opacity-100，toContain 是空斷言）
+    // Compare via classList (className always contains hover:opacity-100 / focus-within:opacity-100, so toContain would be an empty assertion)
     expect(toolbar.classList.contains("opacity-100")).toBe(true);
     act(() => vi.advanceTimersByTime(2000));
     expect(toolbar.classList.contains("opacity-0")).toBe(true);
@@ -336,14 +335,14 @@ describe("PresentationShell", () => {
   });
 });
 
-describe("PresentationErrorBoundary（公開頁簡報的錯誤邊界）", () => {
+describe("PresentationErrorBoundary (error boundary for presentations on public pages)", () => {
   function Boom(): never {
     throw new Error("failed to fetch dynamically imported module: /assets/PresentationOverlay-x.js");
   }
 
   beforeEach(async () => {
     await i18n.changeLanguage("en");
-    // React 會把邊界攔到的錯誤印進 console.error；比照 PublicNoteShell.test.tsx 吞掉，測試輸出才乾淨。
+    // React prints errors caught by the boundary to console.error; swallow them as PublicNoteShell.test.tsx does so the test output stays clean.
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -351,7 +350,7 @@ describe("PresentationErrorBoundary（公開頁簡報的錯誤邊界）", () => 
     vi.restoreAllMocks();
   });
 
-  it("正常時原樣渲染 children", () => {
+  it("renders children unchanged when healthy", () => {
     render(
       <PresentationErrorBoundary reload={vi.fn()}>
         <p>deck-content</p>
@@ -361,7 +360,7 @@ describe("PresentationErrorBoundary（公開頁簡報的錯誤邊界）", () => 
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("child throw → role=alert＋public.loadError 文案；按重試 → 注入的 reload 恰一次", () => {
+  it("child throw -> role=alert plus the public.loadError text; clicking retry -> the injected reload exactly once", () => {
     const reload = vi.fn();
     render(
       <PresentationErrorBoundary reload={reload}>
@@ -374,10 +373,10 @@ describe("PresentationErrorBoundary（公開頁簡報的錯誤邊界）", () => 
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("離線時重試鈕 disabled＋顯示離線說明、按了不呼叫 reload（離線 reload 只會落到瀏覽器錯誤頁）", () => {
+  it("offline: retry button disabled plus the offline note, clicking doesn't call reload (an offline reload only lands on the browser error page)", () => {
     const reload = vi.fn();
-    // 與 ErrorBoundary.test.tsx／PublicNoteShell.test.tsx 同款手法：defineProperty 蓋 instance own property，
-    // restoreAllMocks 管不到它，這裡自己刪回（回落到 prototype getter）。
+    // Same technique as ErrorBoundary.test.tsx / PublicNoteShell.test.tsx: defineProperty shadows with an own instance property,
+    // restoreAllMocks can't undo it, so delete it here (falls back to the prototype getter).
     Object.defineProperty(window.navigator, "onLine", { value: false, configurable: true });
     try {
       render(

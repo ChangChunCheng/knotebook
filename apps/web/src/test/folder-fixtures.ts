@@ -1,6 +1,5 @@
 import type { FolderDto, FolderListDto, FolderPermissionsDto, FolderSpaceDto } from "@knotebook/shared";
 
-/** 資料夾 fixture。permissions 依 space 給的值（personal 全真；shared 不能建筆記、刪＝只移除）。 */
 
 export const FOLDER_LIST_EMPTY: FolderListDto = { folders: [] };
 
@@ -22,7 +21,6 @@ export function folderDto(o: { id: string; name: string; parentId?: string | nul
   };
 }
 
-/** 群組資料夾：manage＝edit、deleteNotes＝delete、createNote＝create ∧ edit（皆預設 true）。 */
 export function groupFolder(o: {
   id: string;
   name: string;
@@ -44,7 +42,6 @@ export function sharedFolder(o: { id: string; name: string; parentId?: string | 
   return folderDto({ ...o, space: { kind: "shared" } });
 }
 
-/** 一條鏈：depth 個資料夾 `${prefix}1` ⊃ `${prefix}2` ⊃ …（深度與寬度案）。名稱同 id。 */
 export function folderChain(prefix: string, depth: number, space: FolderSpaceDto = PERSONAL): FolderDto[] {
   return Array.from({ length: depth }, (_, i) =>
     folderDto({ id: `${prefix}${i + 1}`, name: `${prefix}${i + 1}`, parentId: i === 0 ? null : `${prefix}${i}`, space }),

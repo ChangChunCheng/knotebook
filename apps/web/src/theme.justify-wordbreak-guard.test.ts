@@ -2,20 +2,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * 內文左右對齊：`text-align: justify` 與
- * `word-break: break-all` 這兩條規則是**一組**，見 `index.css` 該區塊上方的
- * 註解——單獨留 justify 會在「一小段文字 ＋ 空白 ＋ 一長串不能斷的東西」那種行
- * 把唯一的空白拉爆（680px 欄寬實測 136.4px→7.9px，見 index.css 的量測明細）。
- * 這條測試釘住「兩段同進同出」：不得只刪其中一半、也不得只改其中一半而讓另一半
- * 的存在理由消失。
+ * Body justified alignment: the `text-align: justify` and
+ * `word-break: break-all` rules are **a pair** (see the comment above that block in `index.css`):
+ * leaving justify alone stretches the only space on a line of the "short text + space + a long unbreakable thing" kind
+ * to extremes (at 680px column width, 136.4px -> 7.9px, see the measurements in index.css).
+ * This test pins "the two go in and out together": neither half may be deleted alone, and neither may be changed alone so that the other half loses its reason to exist.
  */
 
 function readIndexCssWithoutComments(): string {
   return readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-describe("內文左右對齊 ＋ 長識別字 word-break（同進同出）", () => {
-  it("text-align: justify（配 hyphens: auto）與 word-break: break-all 兩條規則必須同時存在", () => {
+describe("body justified alignment + long-identifier word-break (go in and out together)", () => {
+  it("the text-align: justify (with hyphens: auto) and word-break: break-all rules must both exist", () => {
     const css = readIndexCssWithoutComments();
 
     const hasJustify = /text-align:\s*justify;/.test(css);
@@ -32,14 +31,14 @@ describe("內文左右對齊 ＋ 長識別字 word-break（同進同出）", () 
     ).toBe(true);
   });
 
-  it("word-break: break-all 只命中 link mark 的 <a> 與行內 code，不命中 wikilink 的 <a>（#269：wikilink 不在字中間切）", () => {
+  it("word-break: break-all hits only the <a> of the link mark and inline code, not the wikilink <a> (#269: wikilinks aren't broken mid-word)", () => {
     const css = readIndexCssWithoutComments();
-    // #269 起 wikilink 也渲染成 `<a>`（外層 span 帶 data-inline-content-type="wikilink"），舊的裸 `a` 選擇器會連它一起
-    // 套上 break-all。現在 link 那支寫成**沒引號**的 `[data-inline-content-type=link]`（與本檔 `[data-content-type=…]` 同慣例）：
-    // 加上引號會被 `theme.link-guard.test.ts` 的 linkRules() 收進去，「恰好兩條規則」案就紅。
+    // Since #269 a wikilink also renders as `<a>` (the outer span carries data-inline-content-type="wikilink"), and the old bare `a` selector would put
+    // break-all on it too. The link one is now written **unquoted** as `[data-inline-content-type=link]` (same convention as `[data-content-type=...]` in this file):
+    // adding quotes would pull it into `linkRules()` of `theme.link-guard.test.ts` and make its "exactly two rules" case go red.
     const rules = [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)].filter((m) => /word-break:\s*break-all/.test(m[2]!));
     expect(rules, "word-break: break-all 應恰好一條規則").toHaveLength(1);
-    // ⚠ 逗號清單逐一拆開判（repo 慣例）。
+    // Split the comma list and judge one by one (repo convention).
     const selectors = rules[0]![1]!
       .split(",")
       .map((s) => s.trim())
