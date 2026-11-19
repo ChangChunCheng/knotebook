@@ -94,6 +94,7 @@ CI (`.github/workflows/ci.yml`) runs all of the following on every pull request,
 | Type check (including test files) | `pnpm typecheck` |
 | Lint (no warnings allowed) | `pnpm lint` |
 | Dependency licenses | `pnpm check-licenses` |
+| Relative links and `#anchors` in Markdown files | `pnpm check-doc-links` |
 | Tests of the repository scripts | `pnpm test:scripts` |
 | Shared unit tests | `pnpm --filter @knotebook/shared test` |
 | Web unit and component tests | `pnpm --filter @knotebook/web test` |
