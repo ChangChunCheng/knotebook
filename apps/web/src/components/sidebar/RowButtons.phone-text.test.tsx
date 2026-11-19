@@ -3,8 +3,8 @@ import { render, screen } from "@testing-library/react";
 import { FolderRowButton } from "./FolderRowButton";
 import { GroupRowButton } from "./GroupRowButton";
 
-describe("資料夾列與群組列的手機字級", () => {
-  it("名稱桌機 13px、手機 15px", () => {
+describe("phone text size of folder rows and group rows", () => {
+  it("name is 13px on desktop, 15px on phones", () => {
     render(
       <>
         <FolderRowButton name="Docs" open={false} onToggle={() => {}} />

@@ -11,13 +11,13 @@ import { GroupMenu } from "./GroupMenu";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 const ME: UserDto = { id: "u-me", email: "me@example.com", handle: "me", displayName: "Me", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null };
-/** 唯一的管理員（`adminRole()` 的 `memberCount` 預設 1＝掛內建管理員角色的人數）。 */
+/** The only admin (`adminRole()`'s `memberCount` defaults to 1 = the number of people holding the built-in admin role). */
 const ADMIN_GROUP: GroupDto = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Workshop A" }, adminRole());
-/** 兩位管理員之一：不是最後一位，可以退出。 */
+/** One of two admins: not the last one, so they may leave. */
 const CO_ADMIN_GROUP: GroupDto = groupDto({ id: "cccccccc-cccc-cccc-cccc-cccccccccccc", name: "Workshop C" }, adminRole({ memberCount: 2 }));
 const MEMBER_GROUP: GroupDto = groupDto({ id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "Workshop B" }, memberRole({ memberCount: 3 }));
 
-/** 刪除對話框掛載時會打 `GET …/members`（下拉）與 `GET /api/notes`（篇數）——兩支都在 `renderMenu` 統一回應。 */
+/** When the delete dialog mounts it calls `GET .../members` (dropdown) and `GET /api/notes` (count) - both are answered in `renderMenu`. */
 const ME_AS_ADMIN: GroupMemberDto = { userId: ME.id, email: ME.email, displayName: ME.displayName, roleId: "r-admin", builtin: "admin", avatar: null };
 
 function fakeResponse(status: number, body?: unknown): Response {
@@ -58,7 +58,7 @@ function renderMenu(group: GroupDto, handler: (method: string, url: string) => R
 }
 
 async function openMenu(name: string) {
-  // Radix DropdownMenu 的 trigger 只聽 onPointerDown（`NoteMenu.test.tsx:45-46,96`）。
+  // Radix DropdownMenu's trigger only listens to onPointerDown (see NoteMenu.test.tsx).
   fireEvent.pointerDown(screen.getByRole("button", { name: `Group actions for ${name}` }), { button: 0 });
   return screen.findByRole("menu");
 }
@@ -70,24 +70,24 @@ describe("GroupMenu", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("最後一位管理員形：成員與設定／重新命名／刪除群組（danger）；**沒有**退出群組", async () => {
+  it("last-admin form: members & settings / rename / delete group (danger); no leave group", async () => {
     renderMenu(ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop A");
     expect(within(menu).getByRole("menuitem", { name: "Members & settings" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
-    // class 斷言（jsdom 沒有 CSS）：danger 樣式 class 有掛上
+    // class assertion (jsdom has no CSS): the danger style class is applied
     expect(within(menu).getByRole("menuitem", { name: "Delete group" })).toHaveClass("text-destructive");
     expect(within(menu).queryByRole("menuitem", { name: "Leave group" })).not.toBeInTheDocument();
   });
 
-  it("非最後一位管理員（builtin admin、memberCount 2）：管理項齊全，退出群組排在刪除群組之後", async () => {
+  it("not the last admin (builtin admin, memberCount 2): all management items, leave group after delete group", async () => {
     renderMenu(CO_ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop C");
     const items = within(menu).getAllByRole("menuitem").map((item) => item.textContent);
     expect(items).toEqual(["Members & settings", "Rename", "Delete group", "Leave group"]);
   });
 
-  it("四項各有圖示（users、pencil、trash、log-out），class 含 mr-2 h-4 w-4", async () => {
+  it("each of the four items has an icon (users, pencil, trash, log-out), class contains mr-2 h-4 w-4", async () => {
     renderMenu(CO_ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop C");
     const icons = within(menu).getAllByRole("menuitem").map((item) => item.querySelector("svg"));
@@ -95,7 +95,7 @@ describe("GroupMenu", () => {
     for (const svg of icons) expect(svg).toHaveClass("mr-2", "h-4", "w-4");
   });
 
-  it("member 形：查看成員／退出群組；沒有改名與刪除", async () => {
+  it("member form: view members / leave group; no rename or delete", async () => {
     renderMenu(MEMBER_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop B");
     expect(within(menu).getByRole("menuitem", { name: "View members" })).toBeInTheDocument();
@@ -104,8 +104,8 @@ describe("GroupMenu", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Delete group" })).not.toBeInTheDocument();
   });
 
-  it("兩個管理旗標分開看：canManageMembers 只決定「成員與設定／查看成員」、canManageGroup 只決定重新命名與刪除（不看 myRole）", async () => {
-    // 刻意與 myRole 不一致的 fixture（自訂角色才會真的出現單一旗標；站台 admin 的 OR 也會讓兩者與角色脫鉤）
+  it("the two management flags are separate: canManageMembers decides only \"members & settings / view members\", canManageGroup only rename and delete (myRole is ignored)", async () => {
+    // A fixture deliberately inconsistent with myRole (only a custom role really yields a single flag; a site admin's OR also decouples both from the role)
     const membersOnly: GroupDto = { ...MEMBER_GROUP, id: "dddddddd-dddd-dddd-dddd-dddddddddddd", name: "Only members", canManageMembers: true, canManageGroup: false };
     const first = renderMenu(membersOnly, () => fakeResponse(500));
     let menu = await openMenu("Only members");
@@ -115,7 +115,7 @@ describe("GroupMenu", () => {
     const neither: GroupDto = { ...CO_ADMIN_GROUP, id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", name: "Neither", canManageMembers: false, canManageGroup: false };
     const second = renderMenu(neither, () => fakeResponse(500));
     menu = await openMenu("Neither");
-    // myRole 是內建管理員，但兩個旗標都假 → 與一般成員同形
+    // myRole is the built-in admin but both flags are false -> same form as an ordinary member
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["View members", "Leave group"]);
     second.unmount();
 
@@ -125,46 +125,46 @@ describe("GroupMenu", () => {
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["View members", "Rename", "Delete group", "Leave group"]);
   });
 
-  it("成員與設定 → navigate /groups/:id 並帶 backgroundLocation（#247）", async () => {
+  it("members & settings navigates to /groups/:id with backgroundLocation (#247)", async () => {
     renderMenu(ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Members & settings" }));
-    // 取 `|` 前的 pathname 整段比對：子字串比對擋不住舊目的地（`/settings/groups/<id>|` 也含 `/groups/<id>|`）
+    // Compare the whole pathname before `|`: a substring match cannot catch the old destination (`/settings/groups/<id>|` also contains `/groups/<id>|`)
     await waitFor(() => expect(screen.getByTestId("location").textContent?.split("|")[0]).toBe(`/groups/${ADMIN_GROUP.id}`));
     expect(screen.getByTestId("location").textContent).toContain('"backgroundLocation"');
     expect(screen.getByTestId("location").textContent).toContain("/n/me/some-note");
   });
 
-  it("size：預設是標準 32px icon 鈕（h-8 w-8）；sidebar 是 24px（h-6 w-6）", () => {
+  it("size: default is the standard 32px icon button (h-8 w-8); sidebar is 24px (h-6 w-6)", () => {
     const first = renderMenu(ADMIN_GROUP, () => fakeResponse(500));
     const standard = screen.getByRole("button", { name: "Group actions for Workshop A" });
     expect(standard).toHaveClass("h-8", "w-8");
     expect(standard).not.toHaveClass("h-6");
-    // 設定頁的 ⋮ 常駐，不套 hover 浮出
+    // The kebab on the settings page is always visible, no hover reveal
     expect(standard).not.toHaveClass("opacity-0");
     first.unmount();
     renderMenu(ADMIN_GROUP, () => fakeResponse(500), "sidebar");
     const compact = screen.getByRole("button", { name: "Group actions for Workshop A" });
     expect(compact).toHaveClass("h-6", "w-6");
     expect(compact).not.toHaveClass("h-8");
-    // class 斷言，不是行為斷言：jsdom 沒有 CSS，hover 浮出要在瀏覽器看
+    // A class assertion, not a behaviour one: jsdom has no CSS, hover reveal has to be checked in a browser
     expect(compact).toHaveClass("opacity-0", "data-[state=open]:opacity-100");
   });
 
-  // Radix 契約的斷言（trigger 開啟時帶 data-state="open"）；CSS 是否生效要瀏覽器看。
-  it("側欄版開選單時 trigger 帶 data-state=open（hover 浮出的「開著不消失」靠它）", async () => {
+  // Asserts the Radix contract (the trigger carries data-state="open" when open); whether the CSS works has to be checked in a browser.
+  it("the sidebar variant's trigger carries data-state=open while the menu is open (hover reveal's \"stay visible while open\" depends on it)", async () => {
     renderMenu(ADMIN_GROUP, () => fakeResponse(500), "sidebar");
     const before = screen.getByRole("button", { name: "Group actions for Workshop A" });
     expect(before).toHaveAttribute("data-state", "closed");
     await openMenu("Workshop A");
-    // modal 選單開著時其他元素被 aria-hidden，取 trigger 要 hidden: true
+    // While a modal menu is open the other elements are aria-hidden, so getting the trigger needs hidden: true
     expect(screen.getByRole("button", { name: "Group actions for Workshop A", hidden: true })).toHaveAttribute(
       "data-state",
       "open",
     );
   });
 
-  it("⋮ → 重新命名 → 取消：焦點回到 ⋮ 觸發鈕（不是掉到 body）", async () => {
+  it("kebab -> rename -> cancel: focus returns to the kebab trigger (not to body)", async () => {
     renderMenu(ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Rename" }));
@@ -174,7 +174,7 @@ describe("GroupMenu", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Group actions for Workshop A" })).toHaveFocus());
   });
 
-  it("⋮ → 刪除群組 → 取消：焦點回到 ⋮ 觸發鈕", async () => {
+  it("kebab -> delete group -> cancel: focus returns to the kebab trigger", async () => {
     renderMenu(ADMIN_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete group" }));
@@ -184,7 +184,7 @@ describe("GroupMenu", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Group actions for Workshop A" })).toHaveFocus());
   });
 
-  it("重新命名 → 開對話框預填舊名；儲存送 PATCH", async () => {
+  it("rename opens a dialog prefilled with the old name; save sends PATCH", async () => {
     const { calls } = renderMenu(ADMIN_GROUP, (method) => (method === "PATCH" ? fakeResponse(200, { ...ADMIN_GROUP, name: "Renamed" }) : fakeResponse(500)));
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Rename" }));
@@ -196,7 +196,7 @@ describe("GroupMenu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Rename group" })).not.toBeInTheDocument());
   });
 
-  it("刪除群組 → 兩模式對話框（預設轉移、下拉第一位）→ DELETE /api/groups/:id 帶 {mode:'transfer', transferTo} → 成功後對話框關閉", async () => {
+  it("delete group -> two-mode dialog (default transfer, dropdown first) -> DELETE /api/groups/:id with {mode:'transfer', transferTo} -> the dialog closes on success", async () => {
     const { calls } = renderMenu(ADMIN_GROUP, (method) => (method === "DELETE" ? fakeResponse(204) : fakeResponse(500)));
     const menu = await openMenu("Workshop A");
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete group" }));
@@ -210,7 +210,7 @@ describe("GroupMenu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete group?" })).not.toBeInTheDocument());
   });
 
-  it("刪除群組 → 409 not_admin → toast errors.not_admin，**對話框留著**、確認鈕可再按", async () => {
+  it("delete group -> 409 not_admin -> toast errors.not_admin, the dialog stays and the confirm button can be pressed again", async () => {
     const { calls } = renderMenu(ADMIN_GROUP, (method) =>
       method === "DELETE" ? fakeResponse(409, { error: { code: "not_admin", message: "x" } }) : fakeResponse(500),
     );
@@ -221,12 +221,12 @@ describe("GroupMenu", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
     await waitFor(() => expect(calls.filter((c) => c.method === "DELETE" && c.url === `/api/groups/${ADMIN_GROUP.id}`)).toHaveLength(1));
     await waitFor(() => expect(screen.getByText("The notes can only be handed to one of the group's admins. Pick someone who is still an admin.", { exact: true })).toBeInTheDocument());
-    // toast 已出現＝catch 已跑完；此時對話框仍在、確認鈕可再按
+    // The toast has appeared = the catch has finished; the dialog is still there and the confirm button can be pressed again
     expect(screen.getByRole("dialog", { name: "Delete group?" })).toBeInTheDocument();
     await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Delete group?" })).getByRole("button", { name: "Delete group" })).not.toBeDisabled());
   });
 
-  it("退出群組 → 二次確認 → DELETE /api/groups/:id/members/<me>；409 last_admin（競態後備）→ toast errors.last_admin、對話框關閉", async () => {
+  it("leave group -> second confirmation -> DELETE /api/groups/:id/members/<me>; 409 last_admin (race fallback) -> toast errors.last_admin, the dialog closes", async () => {
     const { calls } = renderMenu(MEMBER_GROUP, (method) =>
       method === "DELETE" ? fakeResponse(409, { error: { code: "last_admin", message: "x" } }) : fakeResponse(500),
     );
@@ -234,7 +234,7 @@ describe("GroupMenu", () => {
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Leave group" }));
     const dialog = await screen.findByRole("dialog", { name: "Leave group?" });
     expect(dialog).toHaveTextContent('You will lose access to the notes in "Workshop B".');
-    // 確認鈕 disabled 到 session 載完（`!user`）——先等它可按，不跟 /api/auth/me 賽跑
+    // The confirm button is disabled until the session has loaded (`!user`) - wait until it is pressable so as not to race /api/auth/me
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Leave group" })).not.toBeDisabled());
     fireEvent.click(within(dialog).getByRole("button", { name: "Leave group" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url === `/api/groups/${MEMBER_GROUP.id}/members/${ME.id}`)).toBe(true));

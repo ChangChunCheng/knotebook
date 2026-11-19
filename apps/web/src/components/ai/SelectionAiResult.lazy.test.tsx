@@ -7,8 +7,9 @@ import { useAiSession, type AiSessionValue } from "./AiSession";
 import { SelectionAiResult } from "./SelectionAiResult";
 
 /**
- * 預覽就緒訊號的時序案（#263）：lazy 預覽模組換成可控的替身——只控制「掛起／就緒／render 錯誤」三種時序，就緒時照真實模組的
- * 契約呼叫 `onReady(preview)`、卸載時 `onReady(null)`。真實模組的行為由 SelectionAiResult.test.tsx 驗（替身只放寬時序，不比真實更嚴）。
+ * Timing cases for the preview-ready signal (#263): the lazy preview module is replaced by a controllable stand-in covering only three
+ * timings (pending / ready / render error); when ready it calls `onReady(preview)` and on unmount `onReady(null)` per the real module's
+ * contract. The real module's behaviour is tested in SelectionAiResult.test.tsx (the stand-in only relaxes timing, it is not stricter than the real one).
  */
 const gate = vi.hoisted(() => ({
   mode: "ready" as "ready" | "pending" | "crash",
@@ -45,7 +46,7 @@ const SUMMARIZE: AiActionDto = { id: SUMMARIZE_ACTION_ID, name: "Summarize", app
 let session!: AiSessionValue;
 let editor: AnyEditor;
 
-/** 同 SelectionAiResult.test.tsx 的 ResultHost：`phase === "done"` 才掛（錨點此檔不改，anchorOk 恆 true）。 */
+/** Same as ResultHost in SelectionAiResult.test.tsx: mounted only when `phase === "done"` (the anchor is never changed in this file, so anchorOk is always true). */
 function ResultHost() {
   session = useAiSession();
   return session.state.phase === "done" ? <SelectionAiResult state={session.state} anchorOk run={(action) => action()} /> : null;
@@ -74,7 +75,7 @@ function setPending(): void {
   });
 }
 
-describe("SelectionAiResult：預覽就緒訊號（#263）", () => {
+describe("SelectionAiResult: preview ready signal (#263)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     gate.mode = "ready";
@@ -84,7 +85,7 @@ describe("SelectionAiResult：預覽就緒訊號（#263）", () => {
     vi.restoreAllMocks();
   });
 
-  it("lazy 模組未就緒（掛起）→ 套用停用、顯示載入中；就緒後啟用", async () => {
+  it("lazy module not ready (pending): apply is disabled and loading is shown; apply is enabled once ready", async () => {
     const ai = await mount();
     setPending();
     selectInBlock(editor, "p1", 0, 5);
@@ -102,7 +103,7 @@ describe("SelectionAiResult：預覽就緒訊號（#263）", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled());
   });
 
-  it("預覽 render 錯誤（boundary 錯誤態）→ 套用停用、顯示預覽錯誤文案、捨棄仍可用", async () => {
+  it("preview render error (boundary error state): apply is disabled, the preview error text is shown, discard still works", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const ai = await mount();
     gate.mode = "crash";
@@ -118,7 +119,7 @@ describe("SelectionAiResult：預覽就緒訊號（#263）", () => {
     expect(session.state.phase).toBe("idle");
   });
 
-  it("第二次預覽（模組已快取）：重試後新結果就緒時套用仍能啟用", async () => {
+  it("second preview (module already cached): after retry, apply can still be enabled once the new result is ready", async () => {
     const ai = await mount();
     selectInBlock(editor, "p1", 0, 5);
     act(() => session.open());

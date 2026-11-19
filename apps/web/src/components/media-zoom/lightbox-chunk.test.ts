@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadedMediaLightbox, loadMediaLightbox, prefetchMediaLightbox } from "./lightbox-chunk";
 
 describe("lightbox-chunk", () => {
-  it("同一個 promise；載好後 loadedMediaLightbox 回模組；預取不重複觸發", async () => {
+  it("returns the same promise; after loading loadedMediaLightbox returns the module; prefetching does not trigger twice", async () => {
     expect(loadedMediaLightbox()).toBeNull();
     prefetchMediaLightbox();
     const first = loadMediaLightbox();

@@ -20,7 +20,7 @@ describe("PhoneListFabs", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("兩顆 56px 圓形鈕，各有可及名稱；點了分別呼叫 onSearch／onCreateNote", () => {
+  it("two 56px round buttons, each with an accessible name; clicking calls onSearch / onCreateNote respectively", () => {
     const { onSearch, onCreateNote } = renderFabs();
     const search = screen.getByRole("button", { name: "Search notes" });
     const create = screen.getByRole("button", { name: "New note" });
@@ -31,7 +31,7 @@ describe("PhoneListFabs", () => {
     expect(onCreateNote).toHaveBeenCalledTimes(1);
   });
 
-  it("兩顆同款毛玻璃：半透明卡片底（不支援模糊時退回近乎不透明）＋背景模糊＋細框＋陰影；New note 只靠圖示的 brand 色強調、不是實心底", () => {
+  it("both share the same frosted-glass style: a translucent card background (nearly opaque where blur is unsupported) + backdrop blur + thin border + shadow; New note is emphasized only by the brand color of its icon, not a solid background", () => {
     renderFabs();
     const search = screen.getByRole("button", { name: "Search notes" });
     const create = screen.getByRole("button", { name: "New note" });
@@ -43,7 +43,7 @@ describe("PhoneListFabs", () => {
     expect(search).toHaveClass("text-foreground");
   });
 
-  it("New note 的圖示是筆（pen-line），Search 是放大鏡；圖示都 aria-hidden", () => {
+  it("the New note icon is a pen (pen-line), Search is a magnifier; icons are aria-hidden", () => {
     renderFabs();
     const create = screen.getByRole("button", { name: "New note" });
     expect(create.querySelector("svg")).toHaveAttribute("data-icon", "pen-line");
@@ -51,7 +51,7 @@ describe("PhoneListFabs", () => {
     expect(screen.getByRole("button", { name: "Search notes" }).querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("Search 在左下、New note 在右下；都貼 16px 加 safe area", () => {
+  it("Search is at bottom left, New note at bottom right; both sit 16px from the edge plus the safe area", () => {
     renderFabs();
     const search = screen.getByRole("button", { name: "Search notes" });
     const create = screen.getByRole("button", { name: "New note" });
@@ -61,7 +61,7 @@ describe("PhoneListFabs", () => {
     expect(create.className).not.toContain("left-[");
   });
 
-  it("PHONE_FAB_FOOTPRINT_PX 等於距底 16px 加鈕高 56px，且兩顆鈕的 class 仍是 bottom-[calc(1rem+…)]、h-14", () => {
+  it("PHONE_FAB_FOOTPRINT_PX equals 16px from the bottom plus the 56px button height, and both buttons' classes are still bottom-[calc(1rem+...)] and h-14", () => {
     expect(PHONE_FAB_FOOTPRINT_PX).toBe(16 + 56);
     renderFabs();
     for (const name of ["Search notes", "New note"]) {
@@ -69,19 +69,19 @@ describe("PhoneListFabs", () => {
     }
   });
 
-  it("建立中：New note 停用、Search 照常", () => {
+  it("while creating: New note is disabled, Search as usual", () => {
     renderFabs({ newNotePending: true });
     expect(screen.getByRole("button", { name: "New note" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Search notes" })).toBeEnabled();
   });
 
-  it("showNewNote 為 false（垃圾桶）：只剩 Search", () => {
+  it("showNewNote false (trash): only Search remains", () => {
     renderFabs({ showNewNote: false });
     expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
     expect(screen.getByRole("button", { name: "Search notes" })).toBeInTheDocument();
   });
 
-  describe("螢幕鍵盤", () => {
+  describe("on-screen keyboard", () => {
     let viewport: EventTarget & { height: number; offsetTop: number; scale: number };
     let frames: Array<() => void>;
 
@@ -106,7 +106,7 @@ describe("PhoneListFabs", () => {
       Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
     });
 
-    it("鍵盤升起：兩顆都不渲染；收起後回來", () => {
+    it("keyboard up: neither button renders; they return after it is dismissed", () => {
       renderFabs();
       setKeyboard(300);
       expect(screen.queryByRole("button", { name: "Search notes" })).toBeNull();
@@ -116,7 +116,7 @@ describe("PhoneListFabs", () => {
       expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
     });
 
-    it("高度差在門檻以內：不算鍵盤，照舊顯示", () => {
+    it("a height difference within the threshold does not count as a keyboard: still shown", () => {
       renderFabs();
       setKeyboard(60);
       expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();

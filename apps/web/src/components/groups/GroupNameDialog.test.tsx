@@ -44,7 +44,7 @@ describe("GroupNameDialog", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("點對話框外面不關閉、已填名稱仍在（表單型守衛）", async () => {
+  it("clicking outside the dialog does not close it and the entered name stays (form-type guard)", async () => {
     stubFetch(() => fakeResponse(201, { ...GROUP, name: "Team" }));
     const { onOpenChange } = renderCreate();
     fireEvent.change(screen.getByLabelText("Group name"), { target: { value: "keep" } });
@@ -53,7 +53,7 @@ describe("GroupNameDialog", () => {
     expect(screen.getByLabelText("Group name")).toHaveValue("keep");
   });
 
-  it("建立：Enter 送出 trim 後的名稱（POST /api/groups）、成功後 onSaved(group) 且 onOpenChange(false)", async () => {
+  it("create: Enter submits the trimmed name (POST /api/groups); on success onSaved(group) and onOpenChange(false)", async () => {
     const calls = stubFetch(() => fakeResponse(201, { ...GROUP, name: "Team" }));
     const { onSaved, onOpenChange } = renderCreate();
     const input = screen.getByLabelText("Group name");
@@ -66,7 +66,7 @@ describe("GroupNameDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("全空白不送出（建立鈕 disabled、submit 無 fetch）；server 400 invalid_name → 對話框內 alert、不關閉", async () => {
+  it("all-whitespace is not submitted (create button disabled, submit makes no fetch); server 400 invalid_name -> an alert in the dialog, it does not close", async () => {
     const calls = stubFetch(() => fakeResponse(400, { error: { code: "invalid_name", message: "x" } }));
     const { onOpenChange } = renderCreate();
     const input = screen.getByLabelText("Group name");
@@ -82,7 +82,7 @@ describe("GroupNameDialog", () => {
     expect(screen.getByRole("dialog", { name: "New group" })).toBeInTheDocument();
   });
 
-  it("改名：預填舊名、標題「Rename group」、送 PATCH /api/groups/:id", async () => {
+  it("rename: prefilled with the old name, title \"Rename group\", sends PATCH /api/groups/:id", async () => {
     const calls = stubFetch(() => fakeResponse(200, { ...GROUP, name: "New" }));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const onSaved = vi.fn();
@@ -100,7 +100,7 @@ describe("GroupNameDialog", () => {
     expect(calls[0]).toEqual({ method: "PATCH", url: `/api/groups/${GROUP.id}`, body: { name: "New" } });
   });
 
-  it("Escape → onOpenChange(false)；取消鈕同", () => {
+  it("Escape -> onOpenChange(false); so does the cancel button", () => {
     stubFetch(() => fakeResponse(500));
     const { onOpenChange } = renderCreate();
     fireEvent.keyDown(screen.getByLabelText("Group name"), { key: "Escape" });

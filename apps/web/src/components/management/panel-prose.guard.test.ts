@@ -3,12 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * #247：三個管理面板內的說明文字**不限寬**——面板內容樹不得出現 `max-w-prose`
- * （連同它的搭檔 `text-justify hyphens-auto`）。對**原始文字含註解**掃描（比照 card.guard.test.ts）：
- * 字樣常先被抄進註解再被抄回 class；改 class 時相關註解也要一併改寫。
- * 掃描集：settings/*.tsx、components/management/*.tsx、components/groups/Group*.tsx、
- * components/admin/*.tsx（後者不存在時略過）；一律排除 *.test.*。
- * 筆記內文的 `text-align: justify`（index.css，theme.justify-wordbreak-guard.test.ts 守著）不在範圍內。
+ * #247: the explanatory text inside the three management panels is not width-limited - `max-w-prose` (and its partners `text-justify hyphens-auto`)
+ * must not appear in the panel content tree. Scans the raw text including comments (like card.guard.test.ts): the wording is often copied into a comment
+ * and then back into a class, so when changing a class the related comments must be rewritten too.
+ * Scan set: settings/*.tsx, components/management/*.tsx, components/groups/Group*.tsx, components/admin/*.tsx (skipped when absent); *.test.* is always excluded.
+ * The note body's `text-align: justify` (index.css, guarded by theme.justify-wordbreak-guard.test.ts) is out of scope.
  */
 const SRC = join(process.cwd(), "src");
 const SCAN: Array<{ dir: string; match: (name: string) => boolean }> = [
@@ -31,8 +30,8 @@ function scannedFiles(): string[] {
   return out;
 }
 
-describe("面板內容不得含 max-w-prose（#247）", () => {
-  it("掃描集確實走到各目錄（防路徑寫錯而空真）", () => {
+describe("panel content must not contain max-w-prose (#247)", () => {
+  it("the scan set really reaches each directory (guards against a wrong path passing vacuously)", () => {
     const files = scannedFiles();
     expect(files).toContain("settings/SettingsLayout.tsx");
     expect(files).toContain("settings/AutoVersionsSwitch.tsx");
@@ -41,12 +40,12 @@ describe("面板內容不得含 max-w-prose（#247）", () => {
     expect(files).toContain("components/admin/AdminModal.tsx");
   });
 
-  it("沒有任何一檔含 max-w-prose（含註解）", () => {
+  it("no file contains max-w-prose (including comments)", () => {
     const offenders = scannedFiles().filter((f) => readFileSync(join(SRC, f), "utf8").includes("max-w-prose"));
     expect(offenders).toEqual([]);
   });
 
-  it("沒有任何一檔含 text-justify（左右對齊隨限寬一起拿掉）", () => {
+  it("no file contains text-justify (justified text is removed along with the width limit)", () => {
     const offenders = scannedFiles().filter((f) => readFileSync(join(SRC, f), "utf8").includes("text-justify"));
     expect(offenders).toEqual([]);
   });

@@ -17,8 +17,8 @@ import { ColumnDividers } from "./ColumnDividers";
 import { DRAG_ACTIVE_CLASS } from "./use-drag-active-class";
 
 /**
- * 可手動觸發的 ResizeObserver 替身（同 `layout-extension.test.ts`）：`fire(el)` 先斷言 el 已被 observe，再呼叫觀察它的每一個 RO——
- * 直接對沒被 observe 的元素觸發，會讓「根本沒 observe」的接線缺陷空真。版面外掛（堆疊）也用同一個替身。
+ * Manually triggerable ResizeObserver stand-in (same as `layout-extension.test.ts`): `fire(el)` first asserts el is observed, then calls every RO
+ * observing it - firing on an element that was never observed would make a missing-observe wiring bug pass vacuously. The layout extension (stacking) uses the same stand-in.
  */
 const observed = new Set<Element>();
 let instances: FakeResizeObserver[] = [];
@@ -48,7 +48,7 @@ function fire(el: Element) {
   });
 }
 
-/** animation frame 由測試手動推進：位置重量都合併到下一個 frame，`flushFrames()` 之後才看得到。 */
+/** Animation frames are advanced manually by the test: position and measurements coalesce into the next frame and are visible only after `flushFrames()`. */
 let frames = new Map<number, FrameRequestCallback>();
 let nextFrame = 1;
 function flushFrames() {
@@ -62,9 +62,10 @@ function flushFrames() {
 }
 
 /**
- * jsdom 沒有版面：rect 依身分回值。欄的 width 一變 PM 就換掉欄元素，所以 mock 掛在 prototype、每次讀 rect 時依 `data-id` 查文件現值重算：
- * 各欄 px＝`w_i / Σw × (列寬 − 溝寬總和)`，再照 flex 的 min-width 把不到最小寬度的欄固定在最小寬度、其餘照比例分剩下的寬。
- * `fixed` 給某列固定的各欄像素寬（不看文件）。
+ * jsdom has no layout: rect values depend on identity. PM replaces the column element whenever a column width changes, so the mock sits on the prototype
+ * and recomputes from the current document value (looked up by `data-id`) on every rect read: each column's px = `w_i / sum(w) * (row width - total gutter)`,
+ * then per flex min-width, columns below the minimum are pinned at it and the rest share the remaining width proportionally.
+ * `fixed` gives a row's per-column pixel widths directly (ignoring the document).
  */
 interface Layout {
   left: number;
@@ -126,7 +127,7 @@ function mockLayout(partial: Partial<Layout> = {}) {
 const cleanups: (() => void)[] = [];
 
 beforeAll(() => {
-  // jsdom 沒有 pointer capture。
+  // jsdom has no pointer capture.
   if (!HTMLElement.prototype.setPointerCapture) HTMLElement.prototype.setPointerCapture = () => {};
 });
 beforeEach(async () => {
@@ -151,8 +152,8 @@ afterEach(() => {
 });
 
 /**
- * 掛一顆共編編輯器到 `columnEl`（分隔線的 container），浮層渲染在同一個 `columnEl` 裡（同筆記頁）。
- * `editable: false` 在 render 前把編輯器設成唯讀。
+ * Mounts a collaborative editor into `columnEl` (the dividers' container); the overlay renders inside the same `columnEl` (same as on the note page).
+ * `editable: false` makes the editor read-only before render.
  */
 function setup(
   content: PartialBlockLike[],
@@ -185,7 +186,7 @@ function setup(
 
 const widths = docWidths;
 const previewTables = () => document.head.querySelectorAll("style[data-kb-col-preview]");
-/** 預覽表每一行的 `[欄 id, grow]`。 */
+/** `[column id, grow]` of each row of the preview table. */
 function previewRows(): [string, number][] {
   const text = previewTables()[0]!.textContent!;
   return text.split("\n").map((line) => {
@@ -206,12 +207,11 @@ const down = (sep: HTMLElement, clientX = 500) => fireEvent.pointerDown(sep, { p
 const move = (clientX: number) => fireEvent.pointerMove(window, { pointerId: 1, clientX });
 const up = (clientX: number) => fireEvent.pointerUp(window, { pointerId: 1, clientX });
 
-/** 兩欄文字、等寬的列 r；三欄文字的列 s。 */
 const twoCols = (id = "r", w?: number[]) => row([[P("a")], [P("b")]], id, w);
 const threeCols = (id = "s", w?: number[]) => row([[P("a")], [P("b")], [P("c")]], id, w);
 
-describe("S1 渲染", () => {
-  it("S1 兩欄列一條、三欄列兩條；aria 與標籤", () => {
+describe("rendering", () => {
+  it("a two-column row has one divider, a three-column row two; aria and labels", () => {
     const { separators } = setup([twoCols(), P("x"), threeCols()]);
     expect(separators("r").length).toBe(1);
     expect(separators("s").length).toBe(2);
@@ -224,7 +224,7 @@ describe("S1 渲染", () => {
     expect(sep.closest(".kb-column-dividers")).not.toBeNull();
   });
 
-  it("S1 列變成堆疊（data-stacked）→ 那一列沒有分隔線", () => {
+  it("a row that becomes stacked (data-stacked) has no divider", () => {
     const { separators, rowEl } = setup([twoCols(), threeCols()]);
     expect(separators("r").length).toBe(1);
     Object.defineProperty(rowEl("r"), "clientWidth", { value: 300, configurable: true });
@@ -235,22 +235,22 @@ describe("S1 渲染", () => {
     expect(separators("s").length).toBe(2);
   });
 
-  it("S1 唯讀 → 沒有分隔線", () => {
+  it("read-only: no dividers", () => {
     const { separators } = setup([twoCols(), threeCols()], { editable: false });
     expect(separators().length).toBe(0);
   });
 });
 
-describe("S2 指標拖曳", () => {
-  it("S2 移動中只改預覽表（整列每欄一行、沒有 Y update）；放開時寫一次、一個撤銷步，寫入值與預覽逐欄相同；總和不是欄數的列整列正規化", () => {
-    // 三欄各 0.6（總和 1.8 ≠ 3）、畫面三欄等寬 400px；拖第 1 條。
+describe("pointer drag", () => {
+  it("while moving only the preview table changes (one line per column of the row, no Y update); release writes once as one undo step with values equal to the preview column by column; a row whose sum is not the column count is normalized as a whole", () => {
+    // Three columns of 0.6 each (sum 1.8 != 3), shown at equal 400px each; drag the first divider.
     const capture = vi.spyOn(HTMLElement.prototype, "setPointerCapture");
     const { editor, separators, columnOf } = setup([threeCols("s", [0.6, 0.6, 0.6])], { layout: { rowWidth: 1248 } });
     const updates = countUpdates(editor);
     const manager = collabUndoManager(editor)!;
     const stack = manager.undoStack.length;
     const sep = separators("s")[0]!;
-    // 滑鼠按下的預設動作（把焦點移到分隔線、開始選字）被取消；指標事件照樣開始拖曳並 capture。
+    // The default action of mousedown (moving focus to the divider, starting text selection) is cancelled; pointer events still start the drag and capture.
     expect(fireEvent.mouseDown(sep)).toBe(false);
     down(sep, 500);
     expect(capture).toHaveBeenCalledTimes(1);
@@ -262,7 +262,7 @@ describe("S2 指標拖曳", () => {
     const grows = rows.map(([, g]) => g);
     expect(grows).toEqual(ratiosFromPixels([550, 250, 400], [0, 1]));
     expect(grows[2]).toBe(1);
-    // 預覽經樣式表到達欄元素，欄自己的 inline style 不動。
+    // The preview reaches the column elements through a stylesheet; the columns' own inline style is untouched.
     expect(["sc0", "sc1", "sc2"].map((id) => Number(getComputedStyle(columnOf(id)).flexGrow))).toEqual(grows);
     expect(columnOf("sc0").getAttribute("style")).toMatch(/flex:\s*0\.6 1 0/);
     up(650);
@@ -274,7 +274,7 @@ describe("S2 指標拖曳", () => {
     expect(widths("s")).toEqual([0.6, 0.6, 0.6]);
   });
 
-  it("S2 放開那一筆的位置沒有 pointermove 報過 → 以放開的位置寫入", () => {
+  it("when the release position was never reported by a pointermove, writes at the release position", () => {
     const { separators } = setup([twoCols()]);
     down(separators("r")[0]!, 500);
     move(520);
@@ -284,7 +284,7 @@ describe("S2 指標拖曳", () => {
     expect(previewTables().length).toBe(0);
   });
 
-  it("S2 拖曳中 pointercancel → 取消：預覽表消失、user-select 還原、之後放開不寫", () => {
+  it("pointercancel during a drag cancels: the preview table disappears, user-select is restored, a later release writes nothing", () => {
     const { editor, separators } = setup([twoCols()]);
     const updates = countUpdates(editor);
     down(separators("r")[0]!, 500);
@@ -298,7 +298,7 @@ describe("S2 指標拖曳", () => {
     expect(widths("r")).toEqual([1, 1]);
   });
 
-  it("S2 只按一下（沒有移動）→ 不寫、沒有預覽表", () => {
+  it("a click without movement writes nothing and leaves no preview table", () => {
     const { editor, separators } = setup([twoCols("r", [0.6, 1.4])]);
     const updates = countUpdates(editor);
     const sep = separators("r")[0]!;
@@ -309,7 +309,7 @@ describe("S2 指標拖曳", () => {
     expect(widths("r")).toEqual([0.6, 1.4]);
   });
 
-  it("S2 拖曳中按 Esc → 取消：預覽表消失、之後放開也不寫", () => {
+  it("Esc during a drag cancels: the preview table disappears and a later release writes nothing", () => {
     const { editor, separators } = setup([twoCols()]);
     const updates = countUpdates(editor);
     down(separators("r")[0]!, 500);
@@ -327,8 +327,8 @@ describe("S2 指標拖曳", () => {
   });
 });
 
-describe("S3b 兩欄最小寬度不同時的 aria 範圍", () => {
-  it("S3b [圖片｜文字]（最小 96／200）→ aria-valuemin 依左欄的 96、aria-valuemax 依右欄的 200", () => {
+describe("aria range when the two columns have different minimum widths", () => {
+  it("[image, text] (minimum 96/200): aria-valuemin follows the left column's 96, aria-valuemax the right column's 200", () => {
     const { separators } = setup([row([[IMG("i")], [P("b")]], "r")], { layout: { fixed: { r: [300, 700] } } });
     const sep = separators("r")[0]!;
     const total = 300 + 700;
@@ -339,8 +339,8 @@ describe("S3b 兩欄最小寬度不同時的 aria 範圍", () => {
   });
 });
 
-describe("S3 最小寬度與只改相鄰兩欄", () => {
-  it("S3 拖到最小寬度停住：[300,300]、往左拖 500 → 寫入對應 [200,400]", () => {
+describe("minimum width and changing only the two adjacent columns", () => {
+  it("stops at the minimum width: [300,300] dragged left by 500 writes [200,400]", () => {
     const { separators } = setup([twoCols()], { layout: { rowWidth: 624 } });
     down(separators("r")[0]!, 500);
     move(0);
@@ -352,9 +352,9 @@ describe("S3 最小寬度與只改相鄰兩欄", () => {
   it.each([
     [30, [0.61, 0.51]],
     [-50, [0.47, 0.65]],
-  ] as const)("S3 捨入差只落在被拖的兩欄：[0.56｜0.56｜1.88]、畫面 [300,300,1001]，拖第 1 條 %i → 第 3 欄不動", (d, expected) => {
+  ] as const)("rounding remainder lands only on the two dragged columns: [0.56, 0.56, 1.88] shown as [300,300,1001], dragging the first divider by %i leaves column 3 untouched", (d, expected) => {
     const px = [300 + d, 300 - d, 1001];
-    // 前提：各欄先四捨五入後加總不是 300（有捨入差要分配）。
+    // Precondition: after rounding each column, the sum is not 300 (there is a rounding remainder to distribute).
     const sum = px.map((p) => Math.round(((3 * p) / 1601) * 100)).reduce((a, b) => a + b, 0);
     expect(sum).not.toBe(300);
     const { editor, separators } = setup([threeCols("r", [0.56, 0.56, 1.88])], {
@@ -369,8 +369,8 @@ describe("S3 最小寬度與只改相鄰兩欄", () => {
   });
 });
 
-describe("S4 鍵盤", () => {
-  it("S4 快速連按兩次 → 一個撤銷步、undo 一次回到兩次之前；每次移 5% 的可用寬（50px）；aria 50→55→60、min／max 20／80", () => {
+describe("keyboard", () => {
+  it("two quick presses make one undo step and one undo returns to before both; each moves 5% of the available width (50px); aria 50 -> 55 -> 60, min/max 20/80", () => {
     const { editor, separators } = setup([twoCols()]);
     const manager = collabUndoManager(editor)!;
     const sep = separators("r")[0]!;
@@ -391,14 +391,14 @@ describe("S4 鍵盤", () => {
     expect(widths("r")).toEqual([1, 1]);
   });
 
-  it("S4 慢慢按（兩次間隔超過合併時間窗）→ 兩個撤銷步", async () => {
+  it("slow presses (the gap exceeds the merge window) make two undo steps", async () => {
     const { editor, separators } = setup([twoCols()]);
     const manager = collabUndoManager(editor)!;
     const sep = separators("r")[0]!;
     act(() => sep.focus());
     const stack = manager.undoStack.length;
     fireEvent.keyDown(sep, { key: "ArrowLeft" });
-    // UndoManager 以 lib0 綁定的原生 Date.now 判斷合併，fake timers 換不到，要真的等。
+    // UndoManager decides merging with the native Date.now bound by lib0, which fake timers cannot replace, so the test really waits.
     await new Promise((r) => setTimeout(r, 600));
     flushFrames();
     fireEvent.keyDown(separators("r")[0]!, { key: "ArrowLeft" });
@@ -406,7 +406,7 @@ describe("S4 鍵盤", () => {
     expect(manager.undoStack.length).toBe(stack + 2);
   });
 
-  it("S4 聚焦與失焦各切一次撤銷步，連按之間不切", () => {
+  it("focus and blur each start a new undo step; consecutive presses do not", () => {
     const { editor, separators } = setup([twoCols()]);
     const stop = vi.spyOn(collabUndoManager(editor)!, "stopCapturing");
     const sep = separators("r")[0]!;
@@ -420,7 +420,7 @@ describe("S4 鍵盤", () => {
   });
 });
 
-/** 另一個用戶端：同一份 Y 狀態的第二顆編輯器；`push()` 把它的變更送到受測的編輯器，`pull()` 反過來。 */
+/** Another client: a second editor on the same Y state; `push()` sends its changes to the editor under test, `pull()` the reverse. */
 async function remotePeer(editor: AnyEditor) {
   const docA = collabUndoManager(editor)!.doc;
   const docB = new Y.Doc();
@@ -433,9 +433,9 @@ async function remotePeer(editor: AnyEditor) {
         fragment: docB.getXmlFragment(YDOC_FRAGMENT),
         user: { id: "u2", name: "User 2", color: "hsl(200 65% 45%)" },
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
     } as any),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   ) as any as AnyEditor;
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -453,8 +453,8 @@ async function remotePeer(editor: AnyEditor) {
   };
 }
 
-describe("S5 拖曳中遠端改了列", () => {
-  it("S5 遠端刪掉整列 → 放開時不寫、預覽表消失", async () => {
+describe("remote edits to the row during a drag", () => {
+  it("remote deletes the whole row: release writes nothing, the preview table disappears", async () => {
     const { editor, separators } = setup([P("x", "x0"), twoCols()]);
     const { peer, push } = await remotePeer(editor);
     down(separators("r")[0]!, 500);
@@ -469,7 +469,7 @@ describe("S5 拖曳中遠端改了列", () => {
     expect(previewTables().length).toBe(0);
   });
 
-  it("S5 遠端加了一欄（欄 id 序列變了）→ 放開時不寫、預覽表消失", async () => {
+  it("remote adds a column (the column id sequence changes): release writes nothing, the preview table disappears", async () => {
     const { editor, separators } = setup([twoCols()]);
     const { peer, push } = await remotePeer(editor);
     down(separators("r")[0]!, 500);
@@ -484,8 +484,8 @@ describe("S5 拖曳中遠端改了列", () => {
     expect(widths("r").slice(0, 2)).toEqual([1, 1]);
   });
 
-  it("S5b 按下第 2 條分隔線後，遠端調了第 1 條並同步過來 → 放開時第 1 欄保留遠端的值，只有分隔線兩側那兩欄照拖曳結果寫", async () => {
-    // 三欄各 400px、文件 [1,1,1]。
+  it("after pressing the 2nd divider, a remote changes the 1st and syncs in: on release column 1 keeps the remote value and only the two columns beside the divider are written per the drag result", async () => {
+    // Three columns of 400px each, document [1,1,1].
     const { editor, separators } = setup([threeCols("r")], { layout: { rowWidth: 1248 } });
     const { peer, push, pull } = await remotePeer(editor);
     const manager = collabUndoManager(editor)!;
@@ -499,7 +499,6 @@ describe("S5 拖曳中遠端改了列", () => {
     expect(previewTables().length).toBe(1);
     const update = vi.spyOn(editor, "updateBlock");
     up(580);
-    // 按下時量的像素 [400, 480, 320] → [1, 1.2, 0.8]；第 1 欄被遠端改過，不蓋回 1。
     expect(ratiosFromPixels([400, 480, 320], [1, 2])).toEqual([1, 1.2, 0.8]);
     expect(widths("r")).toEqual([1.2, 1.2, 0.8]);
     expect(update.mock.calls.map((c) => c[0])).toEqual(["rc1", "rc2"]);
@@ -509,7 +508,7 @@ describe("S5 拖曳中遠端改了列", () => {
     expect((peer.getBlock("r") as unknown as { children: { props: { width: number } }[] }).children.map((c) => c.props.width)).toEqual([1.2, 1.2, 0.8]);
   });
 
-  it("S5 遠端把一欄換成新的一欄（欄數不變、id 序列變了）→ 放開時不寫、預覽表消失", async () => {
+  it("remote replaces a column with a new one (same count, id sequence changes): release writes nothing, the preview table disappears", async () => {
     const { editor, separators } = setup([threeCols("r")], { layout: { rowWidth: 1248 } });
     const { peer, push } = await remotePeer(editor);
     down(separators("r")[0]!, 500);
@@ -528,8 +527,8 @@ describe("S5 拖曳中遠端改了列", () => {
   });
 });
 
-describe("S6 拖放進行中分隔線不吃指標", () => {
-  /** 從 index.css 原樣抽出含 `.kb-dragging` 的規則（同 `use-drag-active-class.test.tsx`）。 */
+describe("dividers do not take the pointer during a drag-and-drop", () => {
+  /** Extracts the rules containing `.kb-dragging` from index.css verbatim (same as `use-drag-active-class.test.tsx`). */
   const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\r\n/g, "\n");
   function dragRules(): string {
     const out: string[] = [];
@@ -541,8 +540,8 @@ describe("S6 拖放進行中分隔線不吃指標", () => {
     return out.join("\n");
   }
 
-  it("S6 欄上有 kb-dragging → 每條分隔線本身（帶 pointer-events-auto）computed 是 none；拿掉後回到 auto", () => {
-    // jsdom 不載 Tailwind：注入兩個 utility 的效果，分隔線才真的帶著明寫的 auto（只關外層的話它照樣吃指標）。
+  it("with kb-dragging on the column, each divider itself (carrying pointer-events-auto) computes to none; removing it returns to auto", () => {
+    // jsdom does not load Tailwind: inject the effect of the two utilities so the divider really carries an explicit auto (closing only the outer element would let it still take the pointer).
     const style = document.createElement("style");
     style.textContent = `.pointer-events-none { pointer-events: none; }\n.pointer-events-auto { pointer-events: auto; }\n${dragRules()}`;
     document.head.appendChild(style);
@@ -559,8 +558,8 @@ describe("S6 拖放進行中分隔線不吃指標", () => {
   });
 });
 
-describe("S7 位置追蹤", () => {
-  it("S7 列上方的內容長高、整列往下推（文件沒變）：view.dom 的 RO 觸發 → 分隔線跟著移", () => {
+describe("position tracking", () => {
+  it("content above the row grows and pushes the row down (document unchanged): the view.dom RO fires and the dividers follow", () => {
     const { separators, viewDom } = setup([P("x", "x0"), twoCols()]);
     const sep = separators("r")[0]!;
     expect(sep.style.top).toBe("100px");
@@ -572,7 +571,7 @@ describe("S7 位置追蹤", () => {
     expect(separators("r")[0]!.style.left).toBe(`${(1024 - COLUMN_GAP_PX) / 2}px`);
   });
 
-  it("S7 版面變了但沒有任何 RO 觸發 → pointerenter 時重量、更新位置", () => {
+  it("layout changed with no RO firing: pointerenter re-measures and updates the position", () => {
     const { separators } = setup([P("x", "x0"), twoCols()]);
     layout.rowTops.r = 260;
     expect(separators("r")[0]!.style.top).toBe("100px");
@@ -580,7 +579,7 @@ describe("S7 位置追蹤", () => {
     expect(separators("r")[0]!.style.top).toBe("260px");
   });
 
-  it("S7 位置已偏時 pointerdown 只更新位置、不開始拖曳；位置對了再按才開始", () => {
+  it("when the position is stale, pointerdown only updates the position and does not start a drag; pressing again at the right position starts it", () => {
     const capture = vi.spyOn(HTMLElement.prototype, "setPointerCapture");
     const { separators } = setup([P("x", "x0"), twoCols()]);
     layout.rowTops.r = 260;
@@ -597,8 +596,8 @@ describe("S7 位置追蹤", () => {
     up(560);
   });
 
-  it("S7 不聽捲動", () => {
-    // 編輯器自己的監聽不算：spy 在編輯器掛好之後、分隔線浮層 render 之前才裝；React 在 render 的根容器上掛的事件委派（含 scroll）也不算。
+  it("does not listen to scroll", () => {
+    // The editor's own listeners do not count: the spy is installed after the editor is mounted and before the divider overlay renders; the event delegation React installs on the render root container (including scroll) does not count either.
     let add: ReturnType<typeof vi.spyOn> | undefined;
     let onWindow: ReturnType<typeof vi.spyOn> | undefined;
     const { separators, host } = setup([twoCols()], {
@@ -618,7 +617,7 @@ describe("S7 位置追蹤", () => {
   });
 });
 
-describe("S8 觸控", () => {
+describe("touch", () => {
   const stubPointer = (coarse: boolean) =>
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: coarse && query === "(pointer: coarse)",
@@ -631,7 +630,7 @@ describe("S8 觸控", () => {
       dispatchEvent: () => false,
     }));
 
-  it("S8 (pointer: coarse) → 命中區佔滿溝（24px）、未 hover／未聚焦就帶淡色常顯標記", () => {
+  it("(pointer: coarse): the hit area fills the gutter (24px) and, when not hovered or focused, carries a faint always-visible marker", () => {
     stubPointer(true);
     const { separators } = setup([twoCols()]);
     const sep = separators("r")[0]!;
@@ -640,7 +639,7 @@ describe("S8 觸控", () => {
     expect(document.activeElement).not.toBe(sep);
   });
 
-  it("S8 滑鼠（非 coarse）→ 命中區 8px、沒有常顯標記", () => {
+  it("mouse (not coarse): hit area 8px, no always-visible marker", () => {
     stubPointer(false);
     const { separators } = setup([twoCols()]);
     const sep = separators("r")[0]!;
@@ -649,8 +648,8 @@ describe("S8 觸控", () => {
   });
 });
 
-describe("S-RF 拖曳中途的意外", () => {
-  it("S-RF2 拖曳中卸載 → 預覽表移除、body 的 user-select 還原、之後的指標事件不寫", () => {
+describe("unexpected events mid-drag", () => {
+  it("unmount during a drag: the preview table is removed, body user-select is restored, later pointer events write nothing", () => {
     document.body.style.userSelect = "text";
     const { editor, separators, unmount } = setup([twoCols()]);
     const updates = countUpdates(editor);
@@ -667,7 +666,7 @@ describe("S-RF 拖曳中途的意外", () => {
     expect(updates).not.toHaveBeenCalled();
   });
 
-  it("S-RF3 拖曳中列變成堆疊 → 分隔線消失、預覽表消失、user-select 還原，之後放開不寫", () => {
+  it("the row becomes stacked during a drag: dividers and preview table disappear, user-select is restored, a later release writes nothing", () => {
     const { editor, separators, rowEl } = setup([twoCols()]);
     const updates = countUpdates(editor);
     down(separators("r")[0]!, 500);
@@ -686,9 +685,9 @@ describe("S-RF 拖曳中途的意外", () => {
   });
 
   it.each([
-    ["文件寬度與畫面成比例", [0.4, 1.6]],
-    ["文件比最小寬度還窄、畫面被最小寬度撐住", [0.3, 1.7]],
-  ] as const)("S-RF4 左欄已在最小寬度（%s），按 ← → 沒有 Y update、撤銷堆疊不變", (_label, start) => {
+    ["document width proportional to the screen", [0.4, 1.6]],
+    ["document narrower than the minimum width, screen held up by the minimum width", [0.3, 1.7]],
+  ] as const)("left column already at the minimum width (%s): pressing the left and right arrow keys makes no Y update and leaves the undo stack unchanged", (_label, start) => {
     const { editor, separators } = setup([twoCols("r", [...start])]);
     const manager = collabUndoManager(editor)!;
     const sep = separators("r")[0]!;

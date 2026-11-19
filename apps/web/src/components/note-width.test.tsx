@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { getNoteWidth, setNoteWidth, subscribeNoteWidth, useNoteWidth } from "./note-width";
 
-/** #297：站內寬度——模組層 Map 是同分頁真相，localStorage 盡力寫、`storage` 事件同步他分頁。 */
-describe("note-width（站內每篇寬度）", () => {
+/** #297: in-site width - the module-level Map is the truth within one tab, localStorage is written best-effort, and the `storage` event syncs other tabs. */
+describe("note-width (per-note width in the site)", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
-  it("N1 讀：缺鍵／壞值／standard → standard；wide／full 原值；getItem 丟例外 → standard", () => {
-    // 每個子案各用一個 id：Map 會快取第一次讀到的值，同一個 id 會讓後面的子案讀到前一案。
+  it("read: a missing key, a bad value or standard gives standard; wide/full are returned as stored; getItem throwing gives standard", () => {
+    // Each sub-case uses its own id: the Map caches the first value read, so reusing an id would let later sub-cases read the previous one.
     expect(getNoteWidth("n1-missing")).toBe("standard");
     localStorage.setItem("note.width.n1-bogus", "bogus");
     expect(getNoteWidth("n1-bogus")).toBe("standard");
@@ -25,7 +25,7 @@ describe("note-width（站內每篇寬度）", () => {
     expect(getNoteWidth("n1-blocked")).toBe("standard");
   });
 
-  it("N2 寫：wide／full 寫字串；standard 移除鍵", () => {
+  it("write: wide/full write the string; standard removes the key", () => {
     setNoteWidth("n2", "wide");
     expect(localStorage.getItem("note.width.n2")).toBe("wide");
     setNoteWidth("n2", "full");
@@ -34,7 +34,7 @@ describe("note-width（站內每篇寬度）", () => {
     expect(localStorage.getItem("note.width.n2")).toBeNull();
   });
 
-  it("N3 儲存被封鎖：選「寬」仍生效（先更新 Map 再盡力寫）", () => {
+  it("storage blocked: choosing wide still takes effect (the Map is updated first, then written best-effort)", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
@@ -44,7 +44,7 @@ describe("note-width（站內每篇寬度）", () => {
     expect(getNoteWidth("n3")).toBe("wide");
   });
 
-  it("N4 每篇各自：設 A 全寬，B 仍標準；經 setNoteWidth 改值 hook 重繪", () => {
+  it("per note: setting A to full leaves B standard; changing the value through setNoteWidth re-renders the hook", () => {
     const a = renderHook(() => useNoteWidth("n4-a"));
     const b = renderHook(() => useNoteWidth("n4-b"));
     act(() => setNoteWidth("n4-a", "full"));
@@ -52,7 +52,7 @@ describe("note-width（站內每篇寬度）", () => {
     expect(b.result.current[0]).toBe("standard");
   });
 
-  it("N5 storage 事件：只更新並通知該篇；newValue null → standard；key null → 全清並通知全部；他鍵忽略", () => {
+  it("storage event: updates and notifies only that note; newValue null gives standard; key null clears everything and notifies all; other keys are ignored", () => {
     const fa = vi.fn();
     const fb = vi.fn();
     const ua = subscribeNoteWidth("n5-a", fa);
@@ -66,7 +66,7 @@ describe("note-width（站內每篇寬度）", () => {
       window.dispatchEvent(new StorageEvent("storage", { key: "note.width.n5-a", newValue: null }));
       expect(getNoteWidth("n5-a")).toBe("standard");
 
-      // 他分頁 localStorage.clear()：儲存是共用的，所以這邊也已經空了，事件只帶 key null。
+      // Another tab's localStorage.clear(): storage is shared, so it is empty here too and the event carries only key null.
       setNoteWidth("n5-a", "wide");
       setNoteWidth("n5-b", "wide");
       fa.mockClear();
@@ -89,7 +89,7 @@ describe("note-width（站內每篇寬度）", () => {
     }
   });
 
-  it("N6 useNoteWidth(null) → standard；setter 不寫任何鍵", () => {
+  it("useNoteWidth(null) gives standard; the setter writes no key", () => {
     const { result } = renderHook(() => useNoteWidth(null));
     expect(result.current[0]).toBe("standard");
     act(() => result.current[1]("full"));
@@ -97,20 +97,20 @@ describe("note-width（站內每篇寬度）", () => {
     expect(localStorage.length).toBe(0);
   });
 
-  it("N7 大寫 id 一律轉小寫當鍵", () => {
+  it("an uppercase id is lowercased for the key", () => {
     setNoteWidth("ABC", "full");
     expect(localStorage.getItem("note.width.abc")).toBe("full");
     expect(getNoteWidth("abc")).toBe("full");
   });
 
-  it("N9 最後一個訂閱者離開時清空 Map：無人監聽期間他分頁寫入的值，再訂閱時由 localStorage 重新種入", () => {
+  it("when the last subscriber leaves the Map is cleared: a value another tab wrote while nobody was listening is seeded again from localStorage on resubscribe", () => {
     const un = subscribeNoteWidth("n9", vi.fn());
     try {
       setNoteWidth("n9", "full");
     } finally {
       un();
     }
-    // 他分頁在沒有監聽器的期間寫入（同視窗的 setItem 不發 storage 事件，正好模擬「沒收到」）。
+    // Another tab writes while there is no listener (a setItem in the same window fires no storage event, which simulates "not received").
     localStorage.setItem("note.width.n9", "wide");
     const un2 = subscribeNoteWidth("n9", vi.fn());
     try {
@@ -120,12 +120,12 @@ describe("note-width（站內每篇寬度）", () => {
     }
   });
 
-  it("N8a 設 X 寬", () => {
+  it("sets X to wide", () => {
     setNoteWidth("n8", "wide");
     expect(getNoteWidth("n8")).toBe("wide");
   });
 
-  it("N8b 下一案 X 回到標準（setup.ts 的 afterEach 重置模組 Map）", () => {
+  it("X is standard again in the next case (setup.ts's afterEach resets the module Map)", () => {
     expect(getNoteWidth("n8")).toBe("standard");
   });
 });

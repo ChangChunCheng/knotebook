@@ -14,7 +14,7 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("ZoomButton", () => {
-  it("pointerenter 與 focus 都預取放大畫面的 chunk，並照常呼叫呼叫端的處理函式", () => {
+  it("pointerenter and focus both prefetch the zoom view chunk and still call the caller's handlers", () => {
     const onPointerEnter = vi.fn();
     const onFocus = vi.fn();
     render(<ZoomButton onPointerEnter={onPointerEnter} onFocus={onFocus} />);
@@ -27,7 +27,7 @@ describe("ZoomButton", () => {
     expect(onFocus).toHaveBeenCalledTimes(1);
   });
 
-  it("掛 block-control：hover／按下／焦點回饋都在這條共用規則上", () => {
+  it("carries block-control: hover/press/focus feedback all live on this shared rule", () => {
     render(<ZoomButton />);
     expect(screen.getByRole("button").className).toContain("block-control");
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8");

@@ -18,7 +18,7 @@ function mount(doc: unknown[]): AnyEditor {
 }
 
 describe("block-type-items", () => {
-  it("applyBlockType：段落換成 H1，表格與程式碼區塊不變", () => {
+  it("applyBlockType: turns a paragraph into H1, leaving table and code block unchanged", () => {
     const editor = mount([P("alice", "a"), P("bob", "b"), TABLE, CODE]);
     const items = blockTypeItemsFor(editor);
     const h1 = items.find((item) => item.type === "heading" && item.props?.level === 1)!;
@@ -43,7 +43,7 @@ describe("block-type-items", () => {
     expect(JSON.stringify(editor.getBlock("c")!.content)).toBe(codeBefore);
   });
 
-  it("applyBlockType：目標區塊全是項目類型時全部換", () => {
+  it("applyBlockType: converts all targets when all are item types", () => {
     const editor = mount([P("alice", "a"), P("bob", "b"), P("carol", "c")]);
     const items = blockTypeItemsFor(editor);
     const h2 = items.find((item) => item.type === "heading" && item.props?.level === 2)!;
@@ -58,7 +58,7 @@ describe("block-type-items", () => {
     }
   });
 
-  it("currentBlockTypeIndex：游標在表格儲存格回 -1；在段落回段落那項的索引", () => {
+  it("currentBlockTypeIndex: returns -1 with the caret in a table cell; with the caret in a paragraph returns the paragraph item's index", () => {
     const editor = mount([P("alice", "a"), TABLE]);
     const items = blockTypeItemsFor(editor);
     placeCursor(editor, "a", 1);
@@ -69,7 +69,7 @@ describe("block-type-items", () => {
     expect(currentBlockTypeIndex(editor, items)).toBe(-1);
   });
 
-  it("blockTypeItemsFor：項目順序與名稱同 blockTypeSelectItems 依 schema 過濾的結果", () => {
+  it("blockTypeItemsFor: item order and names equal blockTypeSelectItems filtered by schema", () => {
     const editor = mount([P("alice", "a")]);
     const expected = blockTypeSelectItems(editor.dictionary).filter((item) =>
       editorHasBlockWithType(
@@ -84,8 +84,8 @@ describe("block-type-items", () => {
   });
 });
 
-describe("applyBlockType 的撤銷步（共編）", () => {
-  it("剛打完字就換類型：換類型自成一步，一次 undo 只還原類型、字還在", () => {
+describe("applyBlockType undo step (collaboration)", () => {
+  it("changing type right after typing: the type change is its own step, one undo reverts only the type and the typed text stays", () => {
     const cleanups: (() => void)[] = [];
     const m = mountEditor([P("alice", "a"), P("bob", "b")], { collab: true });
     cleanups.push(m.destroy);

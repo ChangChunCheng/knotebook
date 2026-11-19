@@ -12,11 +12,11 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("LightboxFallback", () => {
-  it("一渲染就有對話框、依原尺寸比例的灰塊與關閉鈕，焦點在關閉鈕", () => {
+  it("a dialog, a grey block in the original aspect ratio and a close button appear as soon as it renders, with focus on the close button", () => {
     vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(1024);
     const { container } = render(<LightboxFallback source={SOURCE} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "bob.png" })).toBeInTheDocument();
-    // 掛在 body 下（portal），不在 render 的容器裡；比例與「符合視窗」算法一致（jsdom 視窗 1024×768：400×200 不放大）。
+    // Mounted under body (portal), not in the render container; the ratio matches the "fit to window" computation (jsdom window 1024x768: 400x200 is not enlarged).
     expect(container.querySelector("[data-zoom-fallback]")).toBeNull();
     const skeleton = document.body.querySelector<HTMLElement>("[data-zoom-skeleton]")!;
     expect(skeleton.style.aspectRatio).toBe("400 / 200");
@@ -25,12 +25,12 @@ describe("LightboxFallback", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
   });
 
-  it("沒有原尺寸時退回中性方塊", () => {
+  it("without an original size it falls back to a neutral square", () => {
     render(<LightboxFallback source={{ ...SOURCE, naturalWidth: 0, naturalHeight: 0 }} onClose={() => {}} />);
     expect(document.body.querySelector<HTMLElement>("[data-zoom-skeleton]")!.style.aspectRatio).toBe("");
   });
 
-  it("Esc、關閉鈕、點背景都關", () => {
+  it("Esc, the close button and a background click all close it", () => {
     const onClose = vi.fn();
     render(<LightboxFallback source={SOURCE} onClose={onClose} />);
     const dialog = screen.getByRole("dialog");
@@ -40,7 +40,7 @@ describe("LightboxFallback", () => {
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 
-  it("Tab 不離開關閉鈕", () => {
+  it("Tab does not leave the close button", () => {
     render(<LightboxFallback source={SOURCE} onClose={() => {}} />);
     const close = screen.getByRole("button", { name: "Close" });
     const other = document.createElement("button");

@@ -9,8 +9,8 @@ import {
   ADMIN_ROLE, GROUP_ADMIN, GROUP_MEMBER, ME, MEMBER_ROLE, ROLES, callsTo, fail, groupFetch, member, ok, renderGroupRoute,
 } from "./group-test-utils";
 
-// 成員批次加入：貼多個地址（逗號／分號／空白／換行）與「從其他群組匯入」，兩條都開同一個對話框（BulkAddDialog），
-// 逐一 `PUT …/members`，進度（＋停止）與結果都在對話框裡。純函式（拆解、分類、停下、abort）由 bulk-add.test.ts 守。
+// Batch add members: pasting several addresses (comma/semicolon/space/newline) and "import from another group" both open the same dialog (BulkAddDialog),
+// which PUTs `.../members` one by one, with progress (plus stop) and the result inside the dialog. The pure functions (splitting, classifying, stopping, abort) are covered by bulk-add.test.ts.
 
 const URL_MEMBERS = `/api/groups/${GROUP_ADMIN.id}/members`;
 const SOURCE: GroupDto = { ...GROUP_MEMBER, name: "Team Source" };
@@ -22,8 +22,8 @@ function putBodies(fetchMock: ReturnType<typeof vi.fn>): Array<{ email: string; 
 type Extra = (url: string, method: string, body: { email: string; roleId?: string } | null) => Response | Promise<Response> | null;
 
 /**
- * `PUT` 依 email 回：known 裡的 → 201 並加進名單；`dup@` → 409 already_member；`boom@` → 500；`slow@` → 429；
- * `nope403@` → 403 forbidden；`norole@` → 404 role_not_found；其他 → 404 user_not_found。`extra` 先比對（可回 Promise 控制時序）。
+ * `PUT` responds by email: those in `known` -> 201 and added to the list; `dup@` -> 409 already_member; `boom@` -> 500; `slow@` -> 429;
+ * `nope403@` -> 403 forbidden; `norole@` -> 404 role_not_found; anything else -> 404 user_not_found. `extra` is matched first (it may return a Promise to control timing).
  */
 function membersServer(initial: GroupMemberDto[], known: string[], extra: Extra = () => null) {
   let members = [...initial];
@@ -48,7 +48,7 @@ function membersServer(initial: GroupMemberDto[], known: string[], extra: Extra 
   return fetchMock;
 }
 
-/** 手動放行的回應：`release(res)` 之前那一發 `PUT` 一直掛著。 */
+/** Manually released response: the `PUT` before `release(res)` stays pending. */
 function deferred() {
   let release!: (res: Response) => void;
   const promise = new Promise<Response>((resolve) => {
@@ -71,14 +71,14 @@ function submitEmails(dialog: HTMLElement, value: string) {
   fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 }
 
-/** 結果畫面：等「Done」出現，回傳對話框。 */
+/** Result screen: waits for "Done" and returns the dialog. */
 async function resultDialog(name = "Add members") {
   const bulkDialog = await screen.findByRole("dialog", { name });
   await within(bulkDialog).findByRole("button", { name: "Done" });
   return bulkDialog;
 }
 
-/** 結果畫面看得到的那行說明（停下原因／留在輸入框）；live region 裡另有一份（sr-only），不算。 */
+/** The description line visible on the result screen (stop reason / left in the input); the live region holds another copy (sr-only), which does not count. */
 function resultMessage(bulkDialog: HTMLElement): HTMLElement | null {
   return bulkDialog.querySelector("[data-result-message]");
 }
@@ -87,7 +87,7 @@ function outcomeRow(bulkDialog: HTMLElement, outcome: string): HTMLElement | nul
   return bulkDialog.querySelector(`[data-outcome="${outcome}"]`);
 }
 
-/** 某一類的標題與 email 清單（一行一個）；沒有這一類 → null。 */
+/** Title and email list (one per line) of a category; null when the category is absent. */
 function outcomeSummary(bulkDialog: HTMLElement, outcome: string): { label: string; emails: string[] } | null {
   const row = outcomeRow(bulkDialog, outcome);
   if (!row) return null;
@@ -99,7 +99,7 @@ function outcomeSummary(bulkDialog: HTMLElement, outcome: string): { label: stri
 
 const ME_ADMIN = () => member(ME.id, ME.email, "Me", ADMIN_ROLE);
 
-describe("成員批次加入", () => {
+describe("batch add members", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -109,7 +109,7 @@ describe("成員批次加入", () => {
     vi.unstubAllGlobals();
   });
 
-  it("貼多個地址 → 開「Add members」對話框：去重、已在名單的不送；逐一 PUT（同一個角色）；結果分類列出；沒加成的留在輸入框、角色不重設", async () => {
+  it("pasting several addresses opens the \"Add members\" dialog: deduplicated, those already in the list are not sent; PUTs one by one (same role); the result is classified; those not added stay in the input and the role is not reset", async () => {
     const initial = [ME_ADMIN(), member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)];
     const fetchMock = membersServer(initial, ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
@@ -130,16 +130,16 @@ describe("成員批次加入", () => {
     expect(outcomeSummary(bulkDialog, "alreadyMember")).toEqual({ label: "Already members (1):", emails: ["BOB@example.com"] });
     expect(outcomeSummary(bulkDialog, "invalid")).toEqual({ label: "Not an email address (1):", emails: ["nope"] });
     expect(resultMessage(bulkDialog)).toHaveTextContent(/^The addresses that weren't added are left in the email box/);
-    // 沒有帳號與格式不對的留在輸入框（依原輸入順序），角色不重設（還要再加）
+    // Those with no account or a malformed address stay in the input (in original input order) and the role is not reset (they still need adding)
     expect(input).toHaveValue("ghost@example.com, nope");
     expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(ADMIN_ROLE.id);
-    // 失效後名單重抓：新成員出現，角色是選的那個
+    // After invalidation the list is refetched: the new members appear, with the selected role
     await waitFor(() => expect(selectedValue(within(dialog).getByLabelText("Role for dave@example.com"))).toBe(ADMIN_ROLE.id));
-    // 設定 modal 裡沒有結果框（只在對話框裡）
+    // The settings modal has no result box (only the dialog does)
     expect(within(dialog).queryByText(/Added \(2\)/)).not.toBeInTheDocument();
   });
 
-  it("live region：對話框一打開就在、跑完只播停下原因與各類人數（不含 email 清單）；完成 → 關閉、焦點回輸入框", async () => {
+  it("live region: present as soon as the dialog opens; when done it announces only the stop reason and the count per category (no email list); finishing closes it and focus returns to the input", async () => {
     const put = deferred();
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"], (_url, _method, body) =>
       body?.email === "carol@example.com" ? put.promise : null,
@@ -155,7 +155,6 @@ describe("成員批次加入", () => {
     await act(async () => put.release(ok(member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE), 201)));
 
     await resultDialog();
-    // 同一個節點（常駐），內容換成摘要
     expect(within(bulkDialog).getByRole("status")).toBe(live);
     expect(live).toHaveTextContent(
       "The addresses that weren't added are left in the email box so you can fix them and try again. Added: 1. No account with this email: 1.",
@@ -168,7 +167,7 @@ describe("成員批次加入", () => {
     await waitFor(() => expect(within(dialog).getByLabelText("Email address")).toHaveFocus());
   });
 
-  it("全部加成 → 輸入框清空、角色重設；沒有「留在輸入框」的說明", async () => {
+  it("all added: the input is cleared and the role reset; no \"left in the input\" note", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     await chooseOption(within(dialog).getByLabelText("Role for new member"), "Admin");
@@ -178,11 +177,11 @@ describe("成員批次加入", () => {
     expect(resultMessage(bulkDialog)).toBeNull();
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("");
     expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(MEMBER_ROLE.id);
-    // 說明文字用開跑時的角色（跑完角色重設了，說明不跟著變）
+    // The note uses the role from when the run started (the role was reset after the run, the note does not follow)
     expect(within(bulkDialog).getByText("These addresses are added to this group as Admin.")).toBeInTheDocument();
   });
 
-  it("1 個有效地址＋1 個不像 email 的字 → 也走批次對話框（不是單人流程），格式不對的列在結果裡", async () => {
+  it("1 valid address + 1 non-email word: also goes through the batch dialog (not the single-person flow), the malformed one is listed in the result", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "carol@example.com nope");
@@ -193,7 +192,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("nope");
   });
 
-  it("跑的期間點對話框外面 → 不關、不中止（dismissOnOutside={false}）", async () => {
+  it("clicking outside the dialog while running neither closes nor aborts (dismissOnOutside={false})", async () => {
     const put = deferred();
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"], (_url, _method, body) =>
       body?.email === "carol@example.com" ? put.promise : null,
@@ -202,7 +201,7 @@ describe("成員批次加入", () => {
     submitEmails(dialog, "carol@example.com dave@example.com");
     const bulkDialog = await screen.findByRole("dialog", { name: "Add members" });
     await within(bulkDialog).findByRole("button", { name: "Stop" });
-    // 完整的「點外面」序列（只送 pointerdown 在這版 Radix 不會有作用，見 test/outside-click.ts）
+    // A full "click outside" sequence (sending only pointerdown has no effect in this Radix version, see test/outside-click.ts)
     await clickOutside();
     expect(screen.getByRole("dialog", { name: "Add members" })).toBeInTheDocument();
     expect(within(bulkDialog).getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -213,7 +212,7 @@ describe("成員批次加入", () => {
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com", "dave@example.com"]);
   });
 
-  it("server 回 409 already_member（名單還沒更新到的人）→ 記「已是成員」、繼續下一個", async () => {
+  it("server returns 409 already_member (someone the list has not caught up with): recorded as already a member, continues with the next", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "dup@example.com, carol@example.com");
@@ -224,14 +223,14 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("");
   });
 
-  it("輸入框有 aria-describedby：說明可以一次輸入多個地址", async () => {
+  it("the input has aria-describedby: the description says several addresses can be entered at once", async () => {
     const { dialog } = await openMembers(membersServer([ME_ADMIN()], []));
     expect(within(dialog).getByLabelText("Email address")).toHaveAccessibleDescription(
       "You can enter several addresses at once, separated by commas, semicolons, spaces or line breaks (full-width commas and semicolons and the enumeration comma “、” work too).",
     );
   });
 
-  it("單一地址仍走原本的單人流程（錯誤是表單下的 alert、不開對話框）；單一個不像 email 的字不送出", async () => {
+  it("a single address still goes through the original single-person flow (the error is an alert under the form, no dialog opens); a single non-email word is not submitted", async () => {
     const fetchMock = membersServer([ME_ADMIN()], []);
     const { dialog } = await openMembers(fetchMock);
     const input = within(dialog).getByLabelText("Email address");
@@ -246,7 +245,7 @@ describe("成員批次加入", () => {
     expect(putBodies(fetchMock)).toHaveLength(1);
   });
 
-  it("貼上含換行的一欄地址 → 換行變逗號（單行輸入框原本會把換行吃掉）", async () => {
+  it("pasting a column of addresses with line breaks turns the line breaks into commas (a single-line input would otherwise drop them)", async () => {
     const { dialog } = await openMembers(membersServer([ME_ADMIN()], []));
     const input = within(dialog).getByLabelText("Email address") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "x@example.com, " } });
@@ -255,7 +254,7 @@ describe("成員批次加入", () => {
     expect(input).toHaveValue("x@example.com, a@example.com, b@example.com");
   });
 
-  it("非預期錯誤（500）→ 停下：其後不送；沒加成的放回輸入框；對話框裡顯示原因", async () => {
+  it("unexpected error (500) stops: nothing is sent after it; those not added go back to the input; the reason is shown in the dialog", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "carol@example.com, boom@example.com, dave@example.com");
@@ -268,7 +267,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("boom@example.com, dave@example.com");
   });
 
-  it("403 forbidden（管理權被收回）與 404 role_not_found（角色被刪）→ 停下並說明原因", async () => {
+  it("403 forbidden (management rights revoked) and 404 role_not_found (role deleted) stop with the reason explained", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "nope403@example.com carol@example.com");
@@ -285,7 +284,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("norole@example.com, carol@example.com");
   });
 
-  it("429 → 停下並說明是節流、稍後再加其餘的", async () => {
+  it("429 stops and explains it is throttling, add the rest later", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     submitEmails(dialog, "carol@example.com slow@example.com later@example.com");
@@ -295,7 +294,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("slow@example.com, later@example.com");
   });
 
-  it("停止鈕：正在送的那一筆跑完就停，其餘記「未處理」並放回輸入框；跑的期間輸入框 readOnly", async () => {
+  it("stop button: the one being sent finishes then it stops, the rest are recorded as not processed and go back to the input; the input is readOnly while running", async () => {
     const put = deferred();
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com", "erin@example.com"], (_url, _method, body) =>
       body?.email === "dave@example.com" ? put.promise : null,
@@ -307,7 +306,7 @@ describe("成員批次加入", () => {
     const bulkDialog = await screen.findByRole("dialog", { name: "Add members" });
     expect(await within(bulkDialog).findByText("Processed 1 of 3")).toBeInTheDocument();
     expect(input).toHaveAttribute("readonly");
-    // readOnly 時貼上（含換行，會走自訂的貼上處理）也不改值
+    // While readOnly a paste (with line breaks, which goes through the custom paste handling) does not change the value either
     fireEvent.paste(input, { clipboardData: { getData: () => "x@example.com\ny@example.com" } });
     expect(input).toHaveValue("carol@example.com, dave@example.com, erin@example.com");
     fireEvent.click(within(bulkDialog).getByRole("button", { name: "Stop" }));
@@ -323,7 +322,7 @@ describe("成員批次加入", () => {
     expect(input).not.toHaveAttribute("readonly");
   });
 
-  it("跑到一半關掉對話框（✕）＝停止：不再送、沒處理的放回輸入框、焦點回輸入框；收尾期間不能再開匯入", async () => {
+  it("closing the dialog midway (X) = stop: nothing more is sent, unprocessed ones go back to the input, focus returns to the input; the import cannot be opened again while winding down", async () => {
     const put = deferred();
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"], (_url, _method, body) =>
       body?.email === "carol@example.com" ? put.promise : null,
@@ -337,7 +336,7 @@ describe("成員批次加入", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add members" })).not.toBeInTheDocument());
     const input = within(dialog).getByLabelText("Email address");
     await waitFor(() => expect(input).toHaveFocus());
-    // 還在等 carol 那一筆：匯入鈕擋著（aria-disabled，按了不開）
+    // Still waiting for carol's request: the import button is blocking (aria-disabled, pressing does not open)
     const importButton = within(dialog).getByRole("button", { name: "Import from another group…" });
     expect(importButton).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(importButton);
@@ -350,7 +349,7 @@ describe("成員批次加入", () => {
     expect(importButton).not.toHaveAttribute("aria-disabled");
   });
 
-  it("跑到一半卸載（群組 modal 關掉）→ 正在送的那一筆之後不再送", async () => {
+  it("unmounting midway (group modal closed): nothing is sent after the one in flight", async () => {
     const put = deferred();
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"], (_url, _method, body) =>
       body?.email === "carol@example.com" ? put.promise : null,
@@ -367,7 +366,7 @@ describe("成員批次加入", () => {
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com"]);
   });
 
-  it("防重入：同一個 tick 送出兩次 → 只跑一輪（每個地址只送一次，結果照常顯示）", async () => {
+  it("re-entry guard: submitting twice in the same tick runs only one round (each address is sent once, the result shows as usual)", async () => {
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com", "dave@example.com"]);
     const { dialog } = await openMembers(fetchMock);
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "carol@example.com dave@example.com" } });
@@ -381,7 +380,7 @@ describe("成員批次加入", () => {
     expect(putBodies(fetchMock).map((b) => b.email)).toEqual(["carol@example.com", "dave@example.com"]);
   });
 
-  it("結果清單：email 一行一個；超過 5 個的那一類才可捲動（tabIndex＋以類別標題命名），5 個以內不捲", async () => {
+  it("result list: one email per line; only a category with more than 5 scrolls (tabIndex + named by the category title), 5 or fewer do not scroll", async () => {
     const six = Array.from({ length: 6 }, (_, i) => `u${i + 1}@example.com`);
     const five = Array.from({ length: 5 }, (_, i) => `g${i + 1}@nowhere.test`);
     const fetchMock = membersServer([ME_ADMIN()], six);
@@ -403,11 +402,10 @@ describe("成員批次加入", () => {
     expect(plain).not.toHaveAttribute("aria-labelledby");
     expect(plain.className).not.toContain("overflow-y-auto");
     expect(plain).toHaveClass("leading-5", "text-muted-foreground");
-    // email 不進 live region
     expect(within(bulkDialog).getByRole("status")).not.toHaveTextContent("@");
   });
 
-  it("從其他群組匯入：列其他群組 → 選一個 → 勾選清單（預設全勾，排除已在這裡的人與自己）→ 取消一位 → 確認 → 同一個對話框換成進度與結果 → 完成、焦點回匯入鈕", async () => {
+  it("import from another group: lists other groups -> choose one -> checklist (all checked by default, excluding those already here and yourself) -> uncheck one -> confirm -> the same dialog switches to progress and result -> done, focus returns to the import button", async () => {
     const initial = [ME_ADMIN(), member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)];
     const sourceMembers = [
       member(ME.id, ME.email, "Me", MEMBER_ROLE),
@@ -426,7 +424,6 @@ describe("成員批次加入", () => {
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
     expect(within(importDialog).getByText(/added to this group as Admin\. This is a one-time copy/)).toBeInTheDocument();
     const source = within(importDialog).getByLabelText("Group to import from");
-    // 只列其他群組（不含目前這個）
     expect(displayedLabel(source)).toBe("Choose a group…");
     expect(await optionLabels(source)).toEqual(["Team Source"]);
     await chooseOption(source, "Team Source");
@@ -440,7 +437,6 @@ describe("成員批次加入", () => {
     fireEvent.click(within(list).getByRole("checkbox", { name: "dave@example.com" }));
     fireEvent.click(within(importDialog).getByRole("button", { name: "Add 2 people" }));
 
-    // 對話框不關：同一個對話框換成結果
     const bulkDialog = await resultDialog("Import members from another group");
     expect(bulkDialog).toBe(importDialog);
     expect(outcomeSummary(bulkDialog, "added")?.emails).toEqual(["carol@example.com", "erin@example.com"]);
@@ -448,7 +444,7 @@ describe("成員批次加入", () => {
       { email: "carol@example.com", roleId: ADMIN_ROLE.id },
       { email: "erin@example.com", roleId: ADMIN_ROLE.id },
     ]);
-    // 角色重設規則同輸入框那條：沒有東西放回輸入框 → 重設；說明文字仍是開跑時的角色
+    // Role reset rule is the same as for the input: nothing goes back to the input -> reset; the description still uses the role from when the run started
     expect(selectedValue(within(dialog).getByLabelText("Role for new member"))).toBe(MEMBER_ROLE.id);
     expect(within(bulkDialog).getByText(/added to this group as Admin\./)).toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByText("erin@example.com")).toBeInTheDocument());
@@ -458,7 +454,7 @@ describe("成員批次加入", () => {
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Import from another group…" })).toHaveFocus());
   });
 
-  it("匯入路徑：確認後焦點移到「停止」；停下（500）→ 沒加成的接在輸入框原內容後面", async () => {
+  it("import path: after confirming, focus moves to Stop; stopping (500) appends those not added after the input's original content", async () => {
     const sourceMembers = [
       member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE),
       member("u-boom", "boom@example.com", "Boom", MEMBER_ROLE),
@@ -475,7 +471,7 @@ describe("成員批次加入", () => {
     const importDialog = await screen.findByRole("dialog", { name: "Import members from another group" });
     await chooseOption(within(importDialog).getByLabelText("Group to import from"), "Team Source");
     fireEvent.click(await within(importDialog).findByRole("button", { name: "Add 3 people" }));
-    // 確認鈕被換掉：焦點不能掉到 body，移到「停止」
+    // The confirm button is replaced: focus must not fall to body, it moves to Stop
     await waitFor(() => expect(within(importDialog).getByRole("button", { name: "Stop" })).toHaveFocus());
     await act(async () => put.release(ok(member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE), 201)));
 
@@ -485,7 +481,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("typed@example.com, boom@example.com, dave@example.com");
   });
 
-  it("匯入全部成功、但輸入框還有使用者打的地址 → 不重設角色（那些還要用他選的角色加），輸入框原樣", async () => {
+  it("import fully succeeded but the input still has addresses the user typed: the role is not reset (those still need the chosen role), the input is unchanged", async () => {
     const sourceMembers = [member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE)];
     const fetchMock = membersServer([ME_ADMIN()], ["carol@example.com"], (url, method) =>
       url === `/api/groups/${SOURCE.id}/members` && method === "GET" ? ok(sourceMembers) : null,
@@ -504,7 +500,7 @@ describe("成員批次加入", () => {
     expect(within(dialog).getByLabelText("Email address")).toHaveValue("typed@example.com ");
   });
 
-  it("匯入：來源群組的成員載入失敗 → 對話框裡顯示錯誤、沒有勾選清單", async () => {
+  it("import: loading the source group's members fails: the dialog shows the error, no checklist", async () => {
     const fetchMock = membersServer([ME_ADMIN()], [], (url, method) =>
       url === `/api/groups/${SOURCE.id}/members` && method === "GET" ? fail(500, "internal") : null,
     );
@@ -516,7 +512,7 @@ describe("成員批次加入", () => {
     expect(within(importDialog).queryByRole("list", { name: "People to add" })).not.toBeInTheDocument();
   });
 
-  it("匯入：全選框可全部取消（確認鈕 disabled）再全選；取消 → 關閉、不送", async () => {
+  it("import: the select-all box can uncheck everything (confirm disabled) and check all again; cancel closes without sending", async () => {
     const sourceMembers = [member("u-carol", "carol@example.com", "Carol", MEMBER_ROLE), member("u-dave", "dave@example.com", "Dave", MEMBER_ROLE)];
     const fetchMock = membersServer([ME_ADMIN()], [], (url, method) =>
       url === `/api/groups/${SOURCE.id}/members` && method === "GET" ? ok(sourceMembers) : null,
@@ -535,7 +531,7 @@ describe("成員批次加入", () => {
     expect(putBodies(fetchMock)).toHaveLength(0);
   });
 
-  it("匯入：我不在其他群組 → 說明文字、沒有下拉", async () => {
+  it("import: I am in no other group: an explanation text, no dropdown", async () => {
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [ME_ADMIN()]);
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
@@ -545,7 +541,7 @@ describe("成員批次加入", () => {
     expect(within(importDialog).queryByLabelText("Group to import from")).not.toBeInTheDocument();
   });
 
-  it("沒有管理成員的權限 → 沒有匯入鈕", async () => {
+  it("no permission to manage members: no import button", async () => {
     renderGroupRoute(`/groups/${GROUP_MEMBER.id}`, groupFetch(() => [GROUP_MEMBER], () => [member(ME.id, ME.email, "Me", MEMBER_ROLE)]));
     const dialog = await screen.findByRole("dialog", { name: GROUP_MEMBER.name });
     await within(dialog).findByText(ME.email);

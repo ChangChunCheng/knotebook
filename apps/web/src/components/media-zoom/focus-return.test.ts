@@ -14,36 +14,36 @@ function byId(id: string): HTMLElement {
 }
 
 describe("focusReturnTarget", () => {
-  it("preferred 在頁面上：回它", () => {
+  it("preferred on the page: returns it", () => {
     build(`<div tabindex="0" id="wrap"><img id="media"></div><button id="btn">z</button>`);
     expect(focusReturnTarget(byId("btn"), byId("media"))).toBe(byId("btn"));
   });
 
-  it("preferred 已移除：回 fallback 最近的 tabindex=0 祖先", () => {
+  it("preferred removed: returns the nearest tabindex=0 ancestor of fallback", () => {
     build(`<div tabindex="0" id="wrap"><span><img id="media"></span></div><button id="btn">z</button>`);
     const btn = byId("btn");
     btn.remove();
     expect(focusReturnTarget(btn, byId("media"))).toBe(byId("wrap"));
   });
 
-  it("fallback 本身 tabindex=0：回自己", () => {
+  it("fallback itself has tabindex=0: returns itself", () => {
     build(`<div tabindex="0" id="outer"><div tabindex="0" id="media"></div></div>`);
     expect(focusReturnTarget(null, byId("media"))).toBe(byId("media"));
   });
 
-  it("tabindex=-1 的祖先跳過", () => {
+  it("ancestors with tabindex=-1 are skipped", () => {
     build(`<div tabindex="0" id="outer"><div tabindex="-1" id="inner"><img id="media"></div></div>`);
     expect(focusReturnTarget(null, byId("media"))).toBe(byId("outer"));
   });
 
-  it("都沒有可聚焦的：回 null", () => {
+  it("none focusable: returns null", () => {
     build(`<div><img id="media"></div><button id="btn">z</button>`);
     const btn = byId("btn");
     btn.remove();
     expect(focusReturnTarget(btn, byId("media"))).toBeNull();
   });
 
-  it("fallback 自己也不在頁面上：回 null", () => {
+  it("fallback itself is not on the page either: returns null", () => {
     build(`<div tabindex="0" id="wrap"><img id="media"></div>`);
     const wrap = byId("wrap");
     const media = byId("media");
@@ -51,7 +51,7 @@ describe("focusReturnTarget", () => {
     expect(focusReturnTarget(null, media)).toBeNull();
   });
 
-  it("兩者都 null：回 null", () => {
+  it("both null: returns null", () => {
     expect(focusReturnTarget(null, null)).toBeNull();
   });
 });
