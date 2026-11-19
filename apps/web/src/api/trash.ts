@@ -10,14 +10,6 @@ import {
 import { expandAfterRestore } from "@/components/sidebar/folder-index";
 import { api, ApiFail } from "./client";
 
-/**
- * #181 垃圾桶的 client 資料層。
- * - 還原／永久刪除用純函式（`restoreTrashIds`／`purgeTrashIds`），hook 只是包一層：toast 的「復原」在筆記選單卸載之後才會被按，
- *   卸載後 `useMutation` 的 per-call 回呼不跑，所以呼叫端拿建立 toast 時捕捉的 `queryClient` 直接呼叫純函式。
- * - 清空＝把清單上全部 id 送 purge：只刪使用者看到的那批，之後才移入的不受影響。
- * - 每批 ≤ `TRASH_BATCH_MAX`、依序送；任一批失敗就停（409 `server_busy` 照一般錯誤處理），丟 `TrashBatchError` 帶已完成的部分。
- */
-
 export const TRASH_QUERY_KEY = ["trash"] as const;
 export const TRASH_SETTINGS_QUERY_KEY = ["admin", "trash-settings"] as const;
 
@@ -32,7 +24,6 @@ export function chunkIds(ids: readonly string[], size: number = TRASH_BATCH_MAX)
   return chunks;
 }
 
-/** 分批送出中途失敗：`cause` 是那一批的錯誤，`partial` 是之前已成功各批的串接結果。 */
 export class TrashBatchError<T> extends Error {
   readonly cause: unknown;
   readonly partial: T;
@@ -59,6 +50,8 @@ async function postInBatches<T>(path: string, ids: readonly string[], empty: () 
   return result;
 }
 
+/** Plain functions, not hooks: the toast's undo runs after the note menu unmounts, when per-call `useMutation`
+ * callbacks no longer fire. */
 export function restoreTrashIds(ids: readonly string[]): Promise<TrashRestoreResultDto> {
   return postInBatches<TrashRestoreResultDto>(
     "/api/trash/restore",
@@ -71,6 +64,7 @@ export function restoreTrashIds(ids: readonly string[]): Promise<TrashRestoreRes
   );
 }
 
+/** Emptying the trash purges only the listed ids, so notes trashed afterwards survive. */
 export function purgeTrashIds(ids: readonly string[]): Promise<TrashPurgeResultDto> {
   return postInBatches<TrashPurgeResultDto>(
     "/api/trash/purge",
@@ -83,38 +77,33 @@ export function purgeTrashIds(ids: readonly string[]): Promise<TrashPurgeResultD
   );
 }
 
-/** 還原成功的每篇蓋回常駐層（setQueryData(["note", id], note)），清掉移入時留下的 404 error 態。 */
+/** Also clears the 404 error state the note query got when the note was trashed. */
 export function seedRestoredNotes(queryClient: QueryClient, restored: readonly NoteDto[]): void {
   for (const note of restored) queryClient.setQueryData(["note", note.id], note);
 }
 
-/**
- * 還原失敗時已還原的那幾篇：分批中途失敗（`TrashBatchError`）取 `partial.restored`，其餘一律 `[]`。
- * 只給本檔 `useRestoreTrash` 與 `lib/trash-undo.ts` 的 `undoTrash` 用（還原後展開、蓋回常駐層）。
- */
 export function partialRestored(err: unknown): NoteDto[] {
   return err instanceof TrashBatchError ? (err as TrashBatchError<TrashRestoreResultDto>).partial.restored : [];
 }
 
-/** 錯誤 → toast 標題；TrashBatchError 取 cause。 */
 export function trashErrorCause(err: unknown): unknown {
   return err instanceof TrashBatchError ? err.cause : err;
 }
 
-/** 移入／還原／永久刪除之後（不論成敗）要失效的 key。解析層前綴讓開著的「在垃圾桶裡」卡片在別處還原後重抓。 */
 export function invalidateTrashRelated(queryClient: QueryClient, ids: readonly string[]): void {
   void queryClient.invalidateQueries({ queryKey: TRASH_QUERY_KEY });
   void queryClient.invalidateQueries({ queryKey: ["notes"] });
-  // 資料夾：還原會照原路徑重建資料夾
+  // Restore recreates folders on the original path.
   void queryClient.invalidateQueries({ queryKey: ["folders"] });
-  // 最愛清單在 server 端濾掉垃圾桶裡的筆記；還原後要重抓才會回來（只失效 ["notes"] 時交集仍沒有它）。
+  // The server filters trashed notes out of favorites; invalidating `["notes"]` alone won't bring them back.
   void queryClient.invalidateQueries({ queryKey: ["favorites"] });
   void queryClient.invalidateQueries({ queryKey: ["backlinks"] });
   for (const id of ids) void queryClient.invalidateQueries({ queryKey: ["note", id] });
+  // Resolver keys too, so an open in-trash card refetches after a restore elsewhere.
   void queryClient.invalidateQueries({ queryKey: ["note-by-path"] });
   void queryClient.invalidateQueries({ queryKey: ["note-by-group-path"] });
-  // 舊形 `/notes/:ref`（slug 或 `<vanity>-<uuid>`）的解析層 key 是 `["note", ref]`，前綴比對涵蓋不到；
-  // 改認「停在 404 in_trash、noteId 是這批之一」的那幾支（noteId 由 server 給、小寫）。
+  // Legacy `/notes/:ref` keys are `["note", ref]`, which a prefix can't reach; match queries stuck on
+  // 404 in_trash for one of these ids instead (the server sends `noteId` lowercased).
   const idSet = new Set(ids);
   void queryClient.invalidateQueries({
     predicate: (query) => {
@@ -132,7 +121,7 @@ export function useRestoreTrash(): UseMutationResult<TrashRestoreResultDto, unkn
     onError: (err) => seedRestoredNotes(queryClient, partialRestored(err)),
     onSettled: (data, err, ids) => {
       invalidateTrashRelated(queryClient, ids);
-      // 資料夾：還原後展開。必須在失效之後（見 expandAfterRestore）；分批中途失敗也展開已還原的。
+      // Must run after the invalidation (see expandAfterRestore); also expands notes restored before a batch failed.
       void expandAfterRestore(queryClient, data?.restored ?? partialRestored(err));
     },
   });
@@ -150,7 +139,7 @@ export function useTrashSettings(): UseQueryResult<TrashSettingsDto> {
   return useQuery({ queryKey: TRASH_SETTINGS_QUERY_KEY, queryFn: () => api<TrashSettingsDto>("/api/admin/trash/settings") });
 }
 
-/** PATCH 站台保留天數（requireAdmin）；清單的 `retentionDays`（底部說明）跟著變，所以失效 `["trash"]`。 */
+/** The trash list shows retentionDays (footer note), so this also invalidates ["trash"]. */
 export function useUpdateTrashSettings(): UseMutationResult<TrashSettingsDto, unknown, TrashSettingsDto> {
   const queryClient = useQueryClient();
   return useMutation({

@@ -1,22 +1,14 @@
-/**
- * 在線頭像列的 awareness 欄位。`knotebook` 欄只增不改形，`v` 讓 #312 可並存；
- * 欄位刻意不含任何網址，頭貼只以 `AvatarRef` 表達。
- */
+// The `knotebook` awareness field only grows (`v` versions it) and never carries URLs; avatars go as AvatarRef.
 import type { AvatarRef } from "./avatar.js";
 import { YDOC_FRAGMENT } from "./ydoc.js";
 
-/** awareness 狀態上本 app 自己的欄位名（BlockNote 擁有 `user`、y-prosemirror 擁有 `cursor`）。 */
+// Our own awareness field: BlockNote owns `user` and y-prosemirror owns `cursor`.
 export const PRESENCE_FIELD = "knotebook";
 
-/** AI 代理的游標色與頭像外框色（server `PRESENCE_COLOR` 取這一份）。 */
 export const AGENT_PRESENCE_COLOR = "#7c3aed";
 
-/**
- * 共編游標的顏色。同一個使用者在任何裝置、任何筆記都要是同一色，所以不能用亂數——
- * 從 userId 做一個穩定的 32-bit 雜湊再映到色相環。飽和度/亮度寫死，確保深淺兩個
- * 主題下都看得見（y-prosemirror 會把這個顏色同時當游標線與名牌背景）。
- * 從 NoteEditor.tsx 原封搬來（本體逐字不變）；頭像列與 #312 的 server 端共用。
- */
+// Hashed, not random, so a user has one color everywhere; fixed saturation and lightness stay readable in both themes
+// (y-prosemirror uses it for both the cursor line and the name label background).
 export function collabUserColor(seed: string): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i += 1) {
@@ -44,7 +36,6 @@ export interface AgentPresenceField {
 
 export type PresenceField = UserPresenceField | AgentPresenceField;
 
-/** Yjs 相對位置的 JSON 形（`Y.relativePositionToJSON` 的輸出）。 */
 export interface RelativePositionJson {
   type?: { client: number; clock: number };
   tname?: string;
@@ -70,7 +61,7 @@ function parseId(x: unknown): { client: number; clock: number } | null {
 
 function parsePosition(x: unknown): RelativePositionJson | null {
   if (!isObject(x)) return null;
-  // y-prosemirror 送的是 RelativePosition 物件本身（不是 JSON 形式），沒用到的欄位是 null；null 視同沒有。
+  // y-prosemirror sends the RelativePosition object itself, with null for unused fields; treat null as absent.
   const hasType = x.type != null;
   const hasTname = x.tname != null;
   if (hasType === hasTname) return null;
@@ -95,11 +86,8 @@ function parsePosition(x: unknown): RelativePositionJson | null {
   return out;
 }
 
-/**
- * awareness 是 client 自報的資料：server 與 web 在讀 `cursor` 之前都要先過這一關
- * （y-prosemirror 遇到格式錯誤的 cursor 會直接 throw）。只接受 anchor／head 兩個
- * 合法的 Yjs 相對位置，並只用已知欄位重建結果，所以大小有上限；不合法回 null，絕不 throw。
- */
+// Awareness is client-reported and y-prosemirror throws on a malformed cursor, so check before reading `cursor`.
+// Rebuilt from known fields only, which bounds its size. Never throws; invalid input gives null.
 export function parseAwarenessCursor(x: unknown): AwarenessCursor | null {
   if (!isObject(x)) return null;
   const anchor = parsePosition(x.anchor);

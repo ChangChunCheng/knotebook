@@ -2,12 +2,7 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import type { ShareDto, ShareRole } from "@knotebook/shared";
 import { api } from "./client";
 
-/**
- * 分享名單（owner-only：`GET /api/notes/:id/shares` 對非 owner 回 403/404，見
- * `routes/notes.ts`）。呼叫端（`ShareDialog`）只在 dialog 實際開啟時掛載讀這支
- * hook 的元件，藉由元件掛載/卸載自然達成「沒開 dialog 就不打這支 API」，不需要
- * 額外的 `enabled` 旗標。
- */
+/** No `enabled` flag: only mounted while the share dialog is open. */
 export function useShares(noteId: string): UseQueryResult<ShareDto[]> {
   return useQuery({
     queryKey: ["shares", noteId],
@@ -16,12 +11,6 @@ export function useShares(noteId: string): UseQueryResult<ShareDto[]> {
   });
 }
 
-/**
- * `PUT /api/notes/:id/shares`——新增分享與改角色共用同一支（upsert 語意，見
- * server 端 `onConflictDoUpdate`）。body 用 **email**，不是 userId（server 靠
- * email 查目標使用者；契約見 routes/notes.ts 的
- * `putShareBodySchema`）。
- */
 export function usePutShare(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -36,12 +25,7 @@ export function usePutShare(noteId: string) {
   });
 }
 
-/**
- * `DELETE /api/notes/:id/shares/:userId`——移除分享（撤權）。server 端會呼叫
- * `onShareChanged` 觸發共編重驗；client 這裡除了打這支 API、
- * invalidate 分享名單快取之外不需要再做任何事——被撤權那位使用者的畫面反應
- * 是他自己那台 client 的 `useCollab` 狀態機負責的（見 NotePage 的終態處理）。
- */
+/** Only the list is invalidated: the revoked user's own client reacts through `useCollab`. */
 export function useDeleteShare(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({

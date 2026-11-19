@@ -1,21 +1,10 @@
 import type { ErrorCode, StorageQuotaErrorDetail } from "@knotebook/shared";
 
-/**
- * 對映 server 的錯誤回應。所有非 2xx 回應最終都會化為一個 `ApiFail` 被 throw：
- * - `status`：HTTP 狀態碼。
- * - `code`：server 回的 `error.code`；body 無法辨識（非 JSON、形狀不符）時退回 `'internal'`。
- * - `message`：server 回的 `error.message`；同上退回時給通用訊息。
- * - `retryAfterMs`：僅登入 429（`too_many_attempts`）會在 body 頂層附這個欄位；
- *   有值才賦值，其餘情況維持 `undefined`。刻意不放進 constructor 參數列——
- *   很多呼叫端依賴這個 constructor 簽章，不可變動。
- * - `storage`：僅 409 `storage_quota_exceeded` 會在 body 頂層附這個欄位（`incomingBytes` 恆在，`usedBytes`／`quotaBytes` 依可見性）；逐欄驗型別，不合就整個不收。
- * - `noteId`：僅 404 `in_trash` 會在 body 頂層附這個欄位（#181）。
- */
+/** `retryAfterMs`, `storage` and `noteId` are not constructor params: many callers depend on the constructor signature. */
 export class ApiFail extends Error {
   public retryAfterMs?: number;
-  /** 409 `storage_quota_exceeded` 的頂層 `storage`；形狀不合（或別的碼）一律不收——web 只取已知欄位。 */
+  /** `usedBytes`/`quotaBytes` are present only when visible to the caller; any malformed field drops the whole object. */
   public storage?: StorageQuotaErrorDetail;
-  /** 僅 404 `in_trash` 的頂層 `noteId`；型別不是字串就不收。 */
   public noteId?: string;
 
   constructor(
@@ -64,24 +53,12 @@ function parseStorageDetail(value: unknown): StorageQuotaErrorDetail | undefined
 
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
 
-/**
- * 所有 API 呼叫的共用入口：
- * - 一律 `credentials: 'include'`（session cookie）。
- * - 變更請求（method 非 GET/HEAD）且**帶了 body**、呼叫端未自帶 Content-Type 時，
- *   補上 `Content-Type: application/json`。沒有 body 的變更請求（例如
- *   `POST /api/auth/logout`）刻意不補——Fastify v5 對「有 JSON Content-Type
- *   但 body 是空字串」一律回 400 `FST_ERR_CTP_EMPTY_JSON_BODY`，補了反而炸掉。
- * - 非 2xx：嘗試把 body 解成 `{error:{code,message}}` 丟 `ApiFail`；解不出來
- *   （非 JSON、形狀不符）一律退回 `code:'internal'`，不把原始錯誤內容洩露出去。
- * - 204 No Content → resolve `undefined`；其餘 2xx → 解析 JSON body 當作 `T`。
- */
+/** `Content-Type: application/json` only when there is a body: Fastify v5 answers 400 `FST_ERR_CTP_EMPTY_JSON_BODY`
+ * to an empty JSON body (e.g. logout). Unrecognised error bodies become `"internal"` so raw server content isn't surfaced. */
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
-  // `FormData` body（uploads）：**不**補 `Content-Type`。瀏覽器的 `fetch`
-  // 對 `FormData` body 會自己算出 `multipart/form-data; boundary=...` 並設定—— 若我們
-  // 搶先補上不帶 boundary 的 `application/json`（或任何值），server 端的
-  // `@fastify/multipart` 解析器會直接判定格式錯誤，整個上傳都收不到檔案。
+  // FormData: the browser sets `multipart/form-data` with its boundary; any preset value breaks `@fastify/multipart` parsing.
   if (
     !SAFE_METHODS.has(method) &&
     init.body != null &&

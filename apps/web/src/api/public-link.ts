@@ -2,25 +2,16 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import type { NoteWidth } from "@knotebook/shared";
 import { api } from "./client";
 
-/**
- * `GET/PUT /api/notes/:id/public-link` 的回應形（server 端 routes/notes.ts）。
- * #122 起帶 `slug`（公開別名）——GET/PUT 都回**全形**：mutation 的 onSuccess
- * 直寫回應進快取，server 少回任一鍵＝快取該鍵被抹成 undefined（公開連結列或
- * 別名列憑空消失），server 測試有釘全形。`width`（公開頁寬度，#297）同屬全形三鍵。
- */
+/** GET, PUT and PUT `/slug` must return all three keys: responses are written straight into the cache, so a missing key
+ * would blank that row (server tests pin the full shape). */
 export interface PublicLinkDto {
   token: string | null;
   slug: string | null;
   width: NoteWidth;
 }
 
-/**
- * 公開連結狀態。server 只回給 `permissions.managePublicLink` 為真的人（個人筆記＝owner；群組筆記＝角色能管理
- * 公開連結的成員，#175），其餘回 403／404——所以呼叫點只在有這個權限時才帶 noteId（`ShareDialog` 與
- * `GroupNoteShareSection` 沒有時傳空字串，讓 `enabled` 擋住不發；`AccessSection` 只對個人筆記 owner 掛載）。
- * `ShareDialog` 為了選觸發鈕圖示，在筆記頁載入時就發這支（不等 dialog 開啟，見該元件的 docblock）；個人筆記面板（`AccessSection`）的三態 derive 要它與 `useShares` 首次都有資料才算
- * latch 初值。
- */
+/** The server answers 403/404 without `permissions.managePublicLink`; callers then pass "" to keep the query disabled.
+ * `ShareDialog` fetches this on note load (for the trigger icon), not only when the dialog opens. */
 export function usePublicLink(noteId: string): UseQueryResult<PublicLinkDto> {
   return useQuery({
     queryKey: ["public-link", noteId],
@@ -29,12 +20,7 @@ export function usePublicLink(noteId: string): UseQueryResult<PublicLinkDto> {
   });
 }
 
-/**
- * `PUT /api/notes/:id/public-link`——產生**或重生**（server 語意：每次都重生，
- * 非冪等；client 慣例是「選公開時 token 為 null 才 PUT」，重生鈕才是刻意再 PUT）。
- * onSuccess 直接把回應寫進快取（不 invalidate 重抓——省一趟，也讓 sticky 選擇態
- * 不經歷多餘的 refetch）。
- */
+/** Every PUT regenerates the token (not idempotent). The client PUTs only when token is null (Regenerate PUTs on purpose). The response is written straight into the cache, with no refetch (saves a round trip and keeps the sticky selection from an extra refetch). */
 export function useCreatePublicLink(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -46,12 +32,6 @@ export function useCreatePublicLink(noteId: string) {
   });
 }
 
-/**
- * `PUT /api/notes/:id/public-link/slug`——設定公開別名（#122）。server 回
- * `{token, slug}` **全形**，onSuccess 直寫（比照 useCreatePublicLink）——server
- * 若只回 `{slug}`，快取 token 會被抹成 undefined、公開連結列憑空消失（server
- * 測試釘了全形，這裡直寫是安全的）。
- */
 export function useSetPublicSlug(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -66,12 +46,7 @@ export function useSetPublicSlug(noteId: string) {
   });
 }
 
-/**
- * `DELETE /api/notes/:id/public-link/slug`——清別名（204 無 body）。**functional
- * setQueryData：只改 slug、保留 token**——照抄下面撤公開的
- * `{token: null, slug: null}` 寫法會造成同款故障（token 被抹→公開連結列
- * 消失、latch 誤述）。
- */
+/** Updates only `slug`; writing `{token: null, slug: null}` like revoke does would hide the link row. */
 export function useClearPublicSlug(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -84,10 +59,7 @@ export function useClearPublicSlug(noteId: string) {
   });
 }
 
-/** `DELETE /api/notes/:id/public-link`——撤銷（既有連結立即失效）。server 端同一支
- * UPDATE 連帶清掉公開別名，快取鏡像必須跟上——
- * 只寫 `{token: null}` 會讓別名殘留在畫面上。函式型更新：保留 `width`（server 不重設），
- * 快取空就不寫（之後 GET 會補）。 */
+/** The server clears the slug in the same UPDATE, so clear it here too; `width` is kept (the server doesn't reset it). */
 export function useDeletePublicLink(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -100,11 +72,7 @@ export function useDeletePublicLink(noteId: string) {
   });
 }
 
-/**
- * `PUT /api/notes/:id/public-width`——設定公開頁寬度（#297），回 `{ width }`。
- * onSuccess **只合併 `width`**：寬度回應晚到時，若整筆覆寫會把期間重生或撤銷之前的
- * 舊 token 寫回快取。快取空就不寫。
- */
+/** Merges only `width`: a late response would otherwise write back a token regenerated or revoked meanwhile. */
 export function useSetPublicWidth(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({

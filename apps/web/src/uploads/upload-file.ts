@@ -5,17 +5,8 @@ import { storageQuotaDescription, type Translate } from "@/lib/storage-quota-tex
 import type { EditorRef } from "@/components/wikilink/menu";
 
 /**
- * 低階上傳呼叫（`POST /api/notes/:id/uploads`，multipart 欄位 `file`）：
- * **可 reject**（`ApiFail`），呼叫端（{@link createUploadFile}）負責把它包成 BlockNote
- * 要的「絕不 reject」形狀。
- *
- * `noteId` 經 `encodeURIComponent`——`api/notes.ts`（`useNote`/`useBacklinks` 等）既有慣例。
- *
- * client 端前驗：上限取自 `/api/auth/config` 的 `maxUploadBytes`（由呼叫端傳入 `maxBytes`），
- * 拿不到（還沒載入、或 server 沒給）就不前驗，交給 server 擋。檔案大小超過上限時直接丟
- * `ApiFail(413, "file_too_large", …)`、**不發請求**——大檔案沒必要先把整包 bytes 送到 server
- * 才被拒絕；413 的 code 跟 server 端 uploads 路由真的因為 `truncated` 而拒絕時完全一致，
- * 呼叫端（`createUploadFile`）不必分辨「是 client 前驗擋下還是 server 擋下」。
+ * May reject; createUploadFile wraps it. An oversize file fails before sending, with the same 413 code the server
+ * uses, so callers needn't tell the two apart.
  */
 export async function postUpload(
   noteId: string,
@@ -33,12 +24,9 @@ export async function postUpload(
   });
 }
 
-/** 翻譯函式型別與配額說明句放在不依賴編輯器的 `lib/storage-quota-text.ts`；這裡原地轉出，既有呼叫端不用改。 */
 export { storageQuotaDescription, type Translate } from "@/lib/storage-quota-text";
 
-/** 同一個錯誤 code 在這個時間窗內只 toast 一次（module 級，跨呼叫共享）。 */
 const TOAST_DEDUPE_WINDOW_MS = 5000;
-/** code → 上一次 toast 的時間戳。 */
 const lastToastAtByCode = new Map<string, number>();
 
 function toastOncePerCode(err: unknown, translate: Translate): void {
@@ -56,39 +44,17 @@ function toastOncePerCode(err: unknown, translate: Translate): void {
 
 export interface CreateUploadFileOptions {
   noteId: string;
-  /** late-bound 編輯器參照（同 `NoteEditor.tsx`/`wikilink/menu.ts` 的 `EditorRef`）——
-   * `createUploadFile` 在 editor 建立之前就會被呼叫（掛進 `useCreateBlockNote` 的選項），
-   * 失敗時清除 placeholder block 必須讀取「當下」的 editor 實例。 */
+  /** Read at failure time: createUploadFile is created before the editor exists. */
   editorRef: EditorRef;
   translate: Translate;
-  /** late-bound 上傳上限（位元組）：`createUploadFile` 在編輯器建立時就固定成閉包，而 config 是之後才載入、
-   * 還可能被管理員調整，所以每次上傳當下才呼叫它讀「當下」的值。回傳 `undefined`＝不前驗。省略＝不前驗。 */
+  /** Called per upload: the config loads later and admins can change it. `undefined` skips the precheck. */
   maxUploadBytes?: () => number | undefined;
 }
 
 /**
- * 包成 BlockNote `editor.uploadFile` 要的形狀（**絕不 reject**）——`handleFileInsertion`
- * 對這個回傳的 promise 沒有任何 catch，reject 會變成未處理的 promise rejection，且會
- * 卡住它自己的 for 迴圈，後續要插入的檔案完全不會被處理。
- *
- * 契約（逐字）：
- * - 成功：回傳 `url`（字串），交給 `handleFileInsertion` 塞進 block props。
- * - 失敗：
- *   1. `toastOncePerCode`——同一個錯誤 code 5 秒內只提示一次，文案 `errors.<code>`
- *      （`storage_quota_exceeded` 另帶 description，見 `storageQuotaDescription`）。
- *   2. **macrotask**（`setTimeout(…, 0)`，不是 microtask）清掉 placeholder block：
- *      `handleFileInsertion` 在 `await editor.uploadFile(...)` 之後緊接著同步呼叫
- *      `editor.updateBlock(insertedBlockId, ...)`（把 `url` 設回 block props）——那一行是
- *      當前 promise resolve 之後的**微任務續體**。若我們用 microtask 排清除，會搶在那
- *      個 `updateBlock` 之前執行，先刪了 block 之後 `updateBlock` 又對著一個已經不存在
- *      的 id 操作。用 macrotask 保證「先讓 `updateBlock` 跑完，才輪到我們清除」。
- *   3. 回傳空字串 sentinel（不 reject）——`handleFileInsertion` 會把它當成
- *      `props: { url: "" }` 設回 block，隨即被上面的 macrotask 移除，使用者只會瞬間
- *      看到一個空白 placeholder 閃一下，然後連著 block 一起消失。
- *
- * 清除時的兩個靜默失敗情形（不當例外拋出——`try { … } catch {}`）：
- * - 使用者在等待期間自己刪了這個 block（`getBlock(blockId)` 找不到）。
- * - `editorRef.current` 在這段等待期間變成 `null`（例如頁面已經卸載）。
+ * Never rejects: BlockNote's handleFileInsertion has no catch, so a rejection goes unhandled and stops its loop over
+ * the remaining files. On failure it returns "" and removes the placeholder in a macrotask: handleFileInsertion calls
+ * updateBlock right after the await resolves, and a microtask would delete the block before that update.
  */
 export function createUploadFile(
   opts: CreateUploadFileOptions,
@@ -104,10 +70,10 @@ export function createUploadFile(
         try {
           const ed = editorRef.current;
           if (blockId && ed && ed.getBlock(blockId)) {
-            removeBlocksKeepColumns(ed, [blockId]); // 欄內的 placeholder 清掉不收欄
+            removeBlocksKeepColumns(ed, [blockId]);
           }
         } catch {
-          // block 已消失（或 editor 已卸載）等——靜默略過，不讓清理動作反過來炸掉呼叫端。
+          // Block or editor already gone; cleanup must not throw into the caller.
         }
       }, 0);
       return "";

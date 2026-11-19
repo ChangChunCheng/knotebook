@@ -18,42 +18,34 @@ import type {
 } from "@knotebook/shared";
 import { api } from "./client";
 
-/**
- * 版本歷史資料層。
- *
- * **兩把前綴、刻意分開**：清單在 `['notes', id, 'versions', 'list', 篩選]`（前綴 `['notes', id, 'versions']`）——筆記清單的任何 `invalidateQueries(['notes'])`
- * （建立／改名／刪除／搬移，`api/notes.ts`、`api/note-move.ts`）都會順帶重抓它，這是要的（搬移會清空版本）。
- * 快照在獨立前綴 `['note-versions', noteId, id]`：以 **`id`**（不是 seq）為鍵——搬移清空版本後同一個 seq 會指向
- * 不同內容；同一個 id 的內容永不變，所以 `staleTime: Infinity`、也不被 `['notes']` 的 invalidate 掃到。
- */
 export const VERSIONS_PAGE_SIZE = 50;
 
-/** 清單的篩選：「全部」或「僅手動」（#258）。伺服器的 `kind` 參數另收 `"auto"`，UI 不提供。 */
+/** The server also accepts "auto"; the UI doesn't offer it. */
 export type VersionKindFilter = "all" | "manual";
 
-/** 這一篇所有版本查詢的**前綴**（`invalidateQueries` 用它一次刷到所有篩選與「目前狀態」）。清單本身的鍵看 `versionListKey`。 */
+/** Under `['notes']` so any `['notes']` invalidation refetches the version lists (a move clears versions). */
 export function versionsKey(noteId: string) {
   return ["notes", noteId, "versions"] as const;
 }
 
-/** 清單查詢的鍵：`versionsKey` 之後接 `"list"` 與篩選，兩種篩選各自一份快取；以前綴 invalidate 就會同時標記兩份。 */
 export function versionListKey(noteId: string, kind: VersionKindFilter) {
   return [...versionsKey(noteId), "list", kind] as const;
 }
 
-/** 「目前狀態」的單發重抓。掛在清單 key 之下，清單 invalidate 一併涵蓋。 */
 export function versionCurrentKey(noteId: string) {
   return ["notes", noteId, "versions", "current"] as const;
 }
 
+/** Separate prefix keyed by id, not seq (a move renumbers seqs): an id's content never changes, so snapshots use
+ * `staleTime: Infinity` and sit outside the `['notes']` prefix. */
 export function versionSnapshotKey(noteId: string, id: string) {
   return ["note-versions", noteId, id] as const;
 }
 
-/** 預覽／比較對象。`seq` 拿快照、`id` 防搬移後同號不同版；`name` 是選取當下的名稱（清單裡沒有它時顯示用，#272）。 */
+/** `seq` fetches the snapshot; `id` detects a renumbered seq; `name` is the name at selection time (shown when the list lacks it). */
 export type VersionTarget = { seq: number; id: string; name: string | null };
 
-/** 快照回應的 `id` 與清單列不同（中途被搬移清空重編）——丟棄、不進快取。 */
+/** The snapshot's id differs from the list row (versions were renumbered by a move): discard, don't cache. */
 export class VersionSnapshotMismatch extends Error {
   constructor() {
     super("version snapshot id mismatch");
@@ -109,7 +101,7 @@ export function deleteVersion(noteId: string, seq: number): Promise<void> {
   return api<void>(`${base(noteId)}/${seq}`, { method: "DELETE" });
 }
 
-/** 按「套用」前一律重抓：`staleTime: 0` 讓 fetchQuery 永遠真的打一次。 */
+/** Always refetched before Apply: staleTime 0 makes fetchQuery hit the server. */
 export function fetchCurrent(queryClient: QueryClient, noteId: string): Promise<VersionCurrentDto> {
   return queryClient.fetchQuery({
     queryKey: versionCurrentKey(noteId),
@@ -118,7 +110,7 @@ export function fetchCurrent(queryClient: QueryClient, noteId: string): Promise<
   });
 }
 
-/** `filter` 由呼叫端從 `useVersions().kindFilter` 帶入（面板、整頁、比較下拉共用同一份，所以共用同一份快取）。 */
+/** Pass `useVersions().kindFilter` so panel, page and compare share one cache. */
 export function useVersionList(noteId: string, enabled: boolean, filter: VersionKindFilter = "all") {
   return useInfiniteQuery({
     queryKey: versionListKey(noteId, filter),
@@ -130,11 +122,8 @@ export function useVersionList(noteId: string, enabled: boolean, filter: Version
   });
 }
 
-/**
- * 「目前狀態」（`current`）：先讀自己這份篩選的清單；切篩選的瞬間新鍵還沒有資料，退回讀**另一個篩選已快取**的同一篇資料
- * （`current` 與篩選無關），免得副標消失、「儲存當前版本」鈕閃一下 disabled。不用 `keepPreviousData`（那會短暫顯示另一種篩選的列）。
- * 渲染時讀快取、不訂閱另一個鍵：自己的清單一到就以自己的為準；自己的查詢 error 時不退回（見下）。
- */
+/** Right after a filter switch, fall back to the other filter's cached `current` (filter-independent) so the subtitle and
+ * save button stay steady. Not `keepPreviousData`: it would show the other filter's rows. */
 export function useVersionCurrent(
   noteId: string,
   list: { data: InfiniteData<VersionListDto> | undefined; isError: boolean },
@@ -143,7 +132,7 @@ export function useVersionCurrent(
   const queryClient = useQueryClient();
   const own = list.data?.pages[0]?.current;
   if (own !== undefined) return own;
-  // 自己這份「尚無資料且不是 error」才退回另一份：自己的查詢失敗時不沿用另一份可能已過期的（副標消失、儲存鈕 disabled，與沒有快取時一致）。
+  // No fallback when our own query failed: the other copy may be stale.
   if (list.isError) return undefined;
   const other: VersionKindFilter = filter === "all" ? "manual" : "all";
   return queryClient.getQueryData<InfiniteData<VersionListDto>>(versionListKey(noteId, other))?.pages[0]?.current;
