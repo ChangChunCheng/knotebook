@@ -1,7 +1,4 @@
-/**
- * bulk transfer：基底的寫入與清理。路由檔不開交易（單句多列 INSERT；S14）。
- * DB 錯誤只記 `pgErrorSummary`（`{code, constraint}`），不記原始 err（drizzle 的 message 帶 params）。
- */
+/** DB errors log only `pgErrorSummary`: drizzle's message carries the params. */
 import { sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { Db } from "../db/index.js";
@@ -10,11 +7,10 @@ import { pgErrorSummary } from "../db/pg-errors.js";
 
 export type TransferBaseInsert = typeof transferBases.$inferInsert;
 
-/** 保留：`last_used_at` 超過 30 天刪；每 (user, note) 只留最新 10 列。 */
+/** Rows unused for 30 days are deleted; each (user, note) keeps the newest 10. */
 export const BASE_RETENTION_DAYS = 30;
 export const BASES_PER_NOTE = 10;
 
-/** 一句多列 INSERT（整包每批 ≤ 50 列）。失敗：只記 code／constraint，丟一個不帶 params 的 Error。 */
 export async function insertBases(db: Db, log: FastifyBaseLogger, rows: TransferBaseInsert[]): Promise<void> {
   if (rows.length === 0) return;
   try {
@@ -25,10 +21,7 @@ export async function insertBases(db: Db, log: FastifyBaseLogger, rows: Transfer
   }
 }
 
-/**
- * fire-and-forget 清理：① 30 天沒用過的列 ② 這位讀者這幾篇各只留最新 10 列。兩句都 `for update skip locked`
- * （window function 不能與 FOR UPDATE 同句，所以 ② 先選 key、再鎖著刪）。失敗只 warn。
- */
+/** `for update skip locked` on both statements; a window function can't share a statement with FOR UPDATE, so the per-note trim selects keys first. */
 export function pruneBases(db: Db, log: FastifyBaseLogger, userId: string, noteIds: string[]): void {
   void (async () => {
     await db.execute(

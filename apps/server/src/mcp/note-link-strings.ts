@@ -1,8 +1,4 @@
-/**
- * #269：模型面字串——**逐字取自 `docs/mcp.md`**（read_note_outline／read_note_section／Links to notes 三處），先改文件、
- * 再改這裡；`test/mcp-tools-list.test.ts` 的 #269 案逐字釘住。`unboundWikilinks`、EDIT_NOTE_DESCRIPTION、server-info 的
- * instructions 不在本 issue 的改動範圍。
- */
+/** Verbatim from `docs/mcp.md`: change the doc first; `test/mcp-tools-list.test.ts` pins them. */
 export const OUTLINE_SECTION_ID_DESCRIPTION =
   "Pass this to read_note_section. `_top` is the text before the first heading. Any other sectionId is also the id of that " +
   "heading's block, so `/notes/<note id>#b-<sectionId>` links to that heading.";

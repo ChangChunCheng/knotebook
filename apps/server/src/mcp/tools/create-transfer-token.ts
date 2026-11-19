@@ -1,15 +1,13 @@
 /**
- * #200 `create_transfer_token`：簽一支短命、單篇、單用途的 transfer token，讓模型用 shell `curl` 上傳一張圖
- * 到筆記（`upload`）或下載筆記的圖（`download`）——MCP 憑證不能從 shell 送，圖片位元組也塞不進工具引數。
- *
- * **流程順序是契約**：① upload → `requireWriteScope`（扣 `tokenWrite`）② `resolveNoteAccess`（none →
- * not_found 同字串；upload＋viewer → forbidden）③ download → 扣 `contentRead`（不 touch presence：簽 token 不是讀內容）
- * ③a upload → 儲存配額「已滿」預檢（已滿 → storage_quota_exceeded、不簽）④ 交易（`issueTransferTokenInTx`，S14：交易內只有那三句）⑤ 交易外清理（fire-and-forget）→ 結果。
- *
- * **只在 token 路徑註冊**（`register.ts`）：session 沒有母憑證可綁，而經 session 打 `/api/mcp` 的只會是同源瀏覽器，
- * 它本來就能直接用 cookie 上傳與看圖。
- *
- * **密文不進 log**：明文只在這個回應本文裡；SQL 參數只有雜湊；`runTool` 只在例外時 log `{err, tool}`。
+ * A short-lived, single-note, single-purpose token so a shell `curl` can upload or download an
+ * image: an MCP credential can't be sent from a shell and image bytes don't fit in tool
+ * arguments. The order is a contract: upload → `requireWriteScope` (charges `tokenWrite`) →
+ * `resolveNoteAccess` (none → the same not_found string; upload + viewer → forbidden) →
+ * download → charge `contentRead` (no presence: signing isn't reading) → upload → storage-full
+ * pre-check (full → storage_quota_exceeded, nothing signed) → transaction (only those three
+ * statements) → cleanup outside it. Token path only: a session is a same-origin browser that
+ * can already upload and view with its cookie. The plaintext appears only in the response
+ * body; SQL parameters carry only the hash; `runTool` logs only `{err, tool}` on exceptions.
  */
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -40,14 +38,12 @@ import { toolError, toolResult } from "../tool-result.js";
 import { requireWriteScope } from "../write-scope.js";
 import type { McpToolCtx } from "../context.js";
 
-/** 讀寫版。模型看得到的字串：改一個字要同步 docs 與逐字斷言的測試。 */
 export const CREATE_TRANSFER_TOKEN_DESCRIPTION_RW =
   "Get a short-lived token that lets a shell command upload an image to a note or download its images — your MCP " +
   "credential can't be sent that way, and image bytes don't fit in tool arguments. `upload` needs edit access and is " +
   "good for one file; `download` fetches any image uploaded to that note. Tokens expire within 10 minutes (see " +
   "`expiresAt`). The result has a ready `curl` command: send the token only to that address, in the `Authorization` header.";
 
-/** 唯讀版：不描述唯讀憑證沒有的 upload。 */
 export const CREATE_TRANSFER_TOKEN_DESCRIPTION_RO =
   "Get a short-lived token that lets a shell command download a note's images — your MCP credential can't be sent that " +
   "way, and image bytes don't fit in tool arguments. It fetches any image uploaded to that note. Tokens expire within " +
@@ -56,7 +52,7 @@ export const CREATE_TRANSFER_TOKEN_DESCRIPTION_RO =
 
 const NOTE_ID_DESCRIBE = "The note's id, as returned by list_notes or search_notes.";
 
-/** purpose 的 enum 依憑證二選一。唯讀憑證送 upload → SDK 的輸入驗證錯誤，handler 不跑、不扣 tokenWrite。 */
+/** A read-only credential sending `upload` gets the SDK's input error; the handler doesn't run. */
 export const createTransferTokenInputRw = {
   note_id: NOTE_ID.describe(NOTE_ID_DESCRIBE),
   purpose: z.enum(["upload", "download"]).describe("`upload` stores one image for the note (then reference it with edit_note); `download` fetches its images."),
@@ -66,7 +62,6 @@ export const createTransferTokenInputRo = {
   purpose: z.enum(["download"]).describe("`download` fetches its images."),
 };
 
-/** 欄名 camelCase 同既有輸出；只有 `expiresAt`、`next` 帶 describe（tools/list 的字數預算）。 */
 export const createTransferTokenOutput = {
   purpose: z.enum(["upload", "download"]),
   noteId: z.string(),
@@ -78,15 +73,14 @@ export const createTransferTokenOutput = {
   next: z.string().describe("What to do with the reply, and what its status codes mean."),
 };
 
-/**
- * upload `next`（定稿全文，含儲存配額加入的兩句 409）。逐句綁定（409 兩句在 `transfer-tokens.test.ts` 的
- * 「× 儲存配額」describe：`storage_quota_exceeded` 由「空間已滿 → 409、token 未消費、騰出後同一支 201」與「放不下 → 交易內
- * 409、token 已燒」兩案綁；`server_busy` 由 55P03 縫那案綁——token 已燒、同一支之後 401、新 token 201）；其餘：
- * 401；403／429 不燒（per-IP `bearerMiss` 的 429 只取代本來的 401，該次請求同樣沒有
- * 消費。所以措辭是「這次被拒不會用掉 token」而不是「token 仍未使用」：bearerMiss 那形的 token 可能早已用過）；404 的兩個來源——消費前的角色重驗 none（「移除分享 → 404」）
- * 與消費後筆記在上傳途中被刪（真 socket）；413／415 燒（400 亦燒）。全在 `test/transfer-tokens.test.ts`。
- * （簽發後、上傳前就刪筆記的那一形答 401——token 列已被 cascade 刪——由「A 401 means the token can't be used」涵蓋。）
- */
+/** Wording is pinned by `test/transfer-tokens.test.ts`. 403/429 don't burn the token (the per-IP
+ * `bearerMiss` 429 only replaces a 401), so the text says "this rejection doesn't use up the
+ * token", not "the token is still unused": in the bearerMiss case it may already be used.
+ * 413/415/400 burn it. A 404 is either the pre-consumption role re-check or the note deleted
+ * mid-upload. A note deleted after issue but before upload gives 401 (token row cascaded), covered
+ * by "A 401 means the token can't be used". storage_quota_exceeded: space already full → token not
+ * consumed (the same token works once space is freed); doesn't fit → in-transaction 409, token
+ * burned. server_busy burns the token. */
 export const UPLOAD_NEXT =
   "The reply is JSON `{id, url}`. Put the image in the note with edit_note using markdown `![description](url)`, with " +
   "`url` exactly as returned (`/api/uploads/<id>`, relative). The token is good for one upload until `expiresAt`. A 401 " +
@@ -96,10 +90,6 @@ export const UPLOAD_NEXT =
   "A 409 `server_busy` means the server was busy and the token is used up: ask for a new token and retry. Once the server has started reading the file, a " +
   "rejection (for example 413: too large, 415: not a PNG, JPEG, GIF or WebP image) still uses the token up.";
 
-/**
- * download `next`。403 的兩個來源（token 屬於別篇筆記、筆記已不再可讀）；404（非 UUID、查無此上傳；DB 有列
- * 但檔案不在磁碟的那形同碼，`uploads.test.ts`）；429 之後等一下、用同一支 token 重試會成功。
- */
 export const DOWNLOAD_NEXT =
   "Replace `<upload_id>` with the id from `/api/uploads/<id>` in the note's markdown. Any image uploaded to this note " +
   "can be fetched with this token until `expiresAt`. A 401 means the token can't be used — ask for a new one. A 403 " +
@@ -108,18 +98,11 @@ export const DOWNLOAD_NEXT =
 
 export const VIEWER_UPLOAD_MESSAGE = "You can read this note but not edit it, so you can't upload images to it.";
 export const REVOKED_MESSAGE = "This credential was revoked or expired while the request was being handled.";
-/**
- * 逐字。字串裡的「5」是寫死的字面值：與 `MAX_PENDING_UPLOAD_TOKENS` 的對齊由兩條斷言守——
- * `mcp-transfer.test.ts` 的基本形的 `expect(TOO_MANY_PENDING_MESSAGE).toContain(` ${MAX_PENDING_UPLOAD_TOKENS} unused upload tokens`)`
- * 與同案「第 6 支被拒」（常數本身＝5 由 `test/unit/transfer-token.test.ts` 釘）。
- */
+/** The "5" is a literal kept in step with `MAX_PENDING_UPLOAD_TOKENS` by assertions in `mcp-transfer.test.ts`. */
 export const TOO_MANY_PENDING_MESSAGE =
   "This credential already has 5 unused upload tokens. Use them, or wait for them to expire (within 10 minutes), before asking for another.";
 
-/**
- * 儲存配額已滿（可見形：呼叫者能檢視該空間用量——個人空間本人、群組 manageGroup、站台 admin）。
- * 數字以 `formatBytes` 印；`extra` 另帶兩個原始數字。綁定：`mcp-transfer.test.ts` 的配額預檢案。
- */
+/** Visible only to those who may view the space's usage (owner, manageGroup, site admin). */
 export function storageFullVisibleMessage(usedBytes: number, quotaBytes: number): string {
   return (
     `This note's storage space is full (${formatBytes(usedBytes)} of ${formatBytes(quotaBytes)} used), so no image can be uploaded to it. ` +
@@ -127,7 +110,6 @@ export function storageFullVisibleMessage(usedBytes: number, quotaBytes: number)
   );
 }
 
-/** 儲存配額已滿（不可見形：不帶數字、不帶 `extra`）。 */
 export const STORAGE_FULL_HIDDEN_MESSAGE =
   "This note's storage space is full, so no image can be uploaded to it. Ask the note's owner or a site admin for more space.";
 
@@ -138,32 +120,25 @@ export interface CreateTransferTokenArgs {
 
 export async function createTransferToken(args: CreateTransferTokenArgs, ctx: McpToolCtx): Promise<CallToolResult> {
   const parentTokenId = ctx.tokenId;
-  // `register.ts` 只在 token 路徑註冊這支；到得了這裡卻沒有母憑證＝接線錯了，交給 runTool 的 internal。
   if (ctx.authKind !== "token" || parentTokenId === null) throw new Error("create_transfer_token 只在 token 路徑註冊");
 
-  // ① upload 才扣 tokenWrite（scope、session 跳過、扣點三件事的單一入口）。
   if (args.purpose === "upload") {
     const denied = requireWriteScope(ctx);
     if (denied !== null) return denied;
   }
 
-  // ② 第 2 步：none 與「不存在」回逐位元組相同的 not_found（docs/mcp.md 的宣稱）。
   const access = await resolveNoteAccess(ctx.db, ctx.userId, args.note_id);
   if (access.role === "none") return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
   if (args.purpose === "upload" && access.role === "viewer") return toolError("forbidden", VIEWER_UPLOAD_MESSAGE);
 
-  // ③ 第 3 步：download 扣 contentRead（key userId，同 `authorizeNoteRead`）；不 touch presence。
   if (args.purpose === "download" && !ctx.limiters.contentRead.consume(ctx.userId)) {
     return toolError("too_many_requests", READ_RATE_LIMITED_MESSAGE);
   }
 
-  // ③a 配額預檢：upload 時空間已滿 → storage_quota_exceeded，不簽 token
-  //    （與上傳 preHandler 第 4a 步同一判準 `isSpaceFull`）。空間取 ② 的 `access`，不另查；兩句讀都在交易外（S14）。
   if (args.purpose === "upload") {
     const space = spaceOfNote(access);
     const usage = await readSpaceUsage(ctx.db, space);
     if (isSpaceFull(usage)) {
-      // `McpToolCtx` 沒有 isAdmin：只在已滿時讀一次（平常路徑不多一句）。
       const [me] = await ctx.db.select({ isAdmin: users.isAdmin }).from(users).where(eq(users.id, ctx.userId));
       return (await canViewSpaceUsage(ctx.db, { id: ctx.userId, isAdmin: me?.isAdmin === true }, space))
         ? toolError("storage_quota_exceeded", storageFullVisibleMessage(usage.usedBytes, usage.quotaBytes), {
@@ -174,7 +149,6 @@ export async function createTransferToken(args: CreateTransferTokenArgs, ctx: Mc
     }
   }
 
-  // ④ 交易外算好純資料（S14）：明文與雜湊都在這裡，交易內只有三句。
   const token = generateTransferToken();
   const input: IssueTransferTokenInput = {
     tokenHash: hashToken(token),
@@ -187,7 +161,6 @@ export async function createTransferToken(args: CreateTransferTokenArgs, ctx: Mc
   try {
     result = await ctx.db.transaction(tx => issueTransferTokenInTx(tx, input, ctx.hooks?.issueTransferToken));
   } catch (err) {
-    // 交易外映射：筆記在 ② 之後被刪 → not_found；母憑證恰在 now() 到期 → 視同 revoked；其餘遮蔽後丟出。
     if (isForeignKeyViolation(err) && pgErrorSummary(err).constraint === TRANSFER_TOKENS_NOTE_FK) {
       return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
     }
@@ -197,13 +170,12 @@ export async function createTransferToken(args: CreateTransferTokenArgs, ctx: Mc
   if (result.kind === "revoked") return toolError("unauthorized", REVOKED_MESSAGE);
   if (result.kind === "too_many_pending") return toolError("too_many_requests", TOO_MANY_PENDING_MESSAGE);
 
-  // ⑤ 交易外、fire-and-forget（失敗只 warn；log 只記 code／constraint，比照 redactDbError 的遮蔽）。
+  // Fire-and-forget; logs only `pgErrorSummary` (code/constraint), since the raw error can carry query parameters.
   void deleteExpiredTransferTokens(ctx.db).catch((err: unknown) => {
     ctx.log.warn({ ...pgErrorSummary(err) }, "清理過期 transfer token 失敗");
   });
 
   const upload = args.purpose === "upload";
-  // URL 用 DB 回的小寫正規形。
   const url = upload ? `${ctx.publicOrigin}/api/notes/${result.noteId}/uploads` : `${ctx.publicOrigin}/api/uploads/<upload_id>`;
   const curl = upload
     ? `curl -sS -X POST -H "Authorization: Bearer ${token}" -F "file=@<path-to-image>" "${url}"`

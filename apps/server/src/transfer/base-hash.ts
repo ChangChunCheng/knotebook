@@ -1,11 +1,8 @@
 /**
- * bulk transfer：基底的雜湊。只存雜湊、不存內容。
- *
- * - `H(x) = HMAC-SHA256(K, salt ‖ utf8(x))`；`K = sha256("${APP_SECRET}:transfer-base")`（namespace 導出子金鑰，
- *   同 `ai/crypto.ts` 的 `deriveKey`）。只拿到 DB、沒有 `APP_SECRET` 就無法對短行跑字典；鹽讓同一行在不同列的雜湊不同。
- * - `key_id = sha256(K)` 前 8 hex（同 `ai/crypto.ts` 的 `deriveKeyId`，那支未 export，照抄邏輯）。換了 `APP_SECRET`
- *   之後舊基底的 `key_id` 對不上，寫回回 409 `base_unavailable`。
- * - 行雜湊：每行先 `lineKey`（trimEnd）；`kinds[i] === 1`（numbered 段的行）再 `normalizeNumbered`；取 HMAC 前 8 bytes 依序串接。
+ * `K` is derived with a namespace like `deriveKey` in `ai/crypto.ts`; with only the DB and no
+ * `APP_SECRET`, a dictionary attack on short lines is impossible, and the salt makes the same
+ * line hash differently per row. A changed `APP_SECRET` mismatches `key_id` → write-back 409
+ * `base_unavailable`. `deriveKeyId` there isn't exported, so its logic is copied.
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { lineKey, normalizeNumbered } from "./normalize.js";
@@ -20,12 +17,11 @@ export function transferKeyId(key: Buffer): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 8);
 }
 
-/** HMAC-SHA256(key, salt ‖ utf8(x))——兩次 `update` 等價於串接，免 concat。 */
 export function hmacOf(key: Buffer, salt: Buffer, x: string): Buffer {
   return createHmac("sha256", key).update(salt).update(x, "utf8").digest();
 }
 
-/** 基底鍵（frontmatter 的 `base`）：隨機 8 bytes＝16 hex。寫回的格式守衛是 `/^[0-9a-f]{16}$/`。 */
+/** 16 hex characters: must match `BASE_RE` in `frontmatter.ts`, or write-back rejects every file. */
 export function newBaseKey(): string {
   return randomBytes(8).toString("hex");
 }
@@ -34,9 +30,7 @@ export function newSalt(): Buffer {
   return randomBytes(16);
 }
 
-/**
- * `body` 必須是**已正規化**的本文（`normalizeBody`）；`lines` 是它切出的行（未 trimEnd，這裡做）；`kinds` 每行一個（0／1）。
- */
+/** `body` must already be normalized (`normalizeBody`); `lines` are its untrimmed lines (trimmed here); `kinds` has one 0/1 per line. */
 export function baseHashes(
   key: Buffer,
   salt: Buffer,

@@ -1,20 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 /**
- * Upstream 串流薄層：兩個 provider 型別（openai_compatible／
- * anthropic）各一支函式，統一吐出「純 text delta」的 `AsyncIterable<string>`——呼叫端
- * （`routes/ai.ts` 的 `POST /api/ai` handler）完全不需要知道底層是 vLLM 風格的 SSE 逐行解析
- * 還是 `@anthropic-ai/sdk` 的事件物件，只管 `for await` 拿 delta 文字。
- *
- * `redirect: "manual"`（openai_compatible 分支）的理由：undici 對跨網域
- * 轉址只會剝掉 `Authorization`/`Cookie`，這裡帶的是自訂 `authorization: Bearer ...` header，
- * 3xx 若被追蹤會把它原樣送去第三方主機。手動模式下 3xx 直接落入 `!res.ok`（`res.ok` 只認
- * 2xx），統一映射成 `UpstreamError`，不外洩任何憑證。
+ * `redirect: "manual"`: undici strips only Authorization/Cookie on cross-origin redirects, so
+ * our custom `authorization` header would be forwarded to a third party. A 3xx then falls
+ * into `!res.ok` and becomes UpstreamError.
  */
 
-/** 非 2xx／流未建立成功時拋出。`status` 供呼叫端 log／分類；`upstreamBody`（截 2048 字元）
- * 只給呼叫端 log 用——`routes/ai.ts` 不記整個 err（fetch 錯誤的 message 可能含帶憑證的完整網址），而是把 `status` 與
- * `upstreamBody` 逐欄挑進 log。SSE 送給 client 的 error 事件訊息固定文案，絕不含這個欄位的內容。 */
+/** `upstreamBody` (cut to 2048 chars) is for the caller's log only: never log the whole err (a fetch error message can hold a credentialed URL) and never put it in the SSE error sent to the client. */
 export class UpstreamError extends Error {
   constructor(
     public status: number,
@@ -26,14 +18,11 @@ export class UpstreamError extends Error {
 }
 
 export interface UpstreamHandle {
-  /** 純 text delta（reasoning/thinking 內容已在這一層濾掉，不外流）。 */
   stream: AsyncIterable<string>;
-  /** 主動中止（額外提供；route handler 目前透過共用的 `AbortController`／傳入的 `signal`
-   * 驅動中止，不直接呼叫這個方法——保留給 unit test 或未來呼叫端直接操作單一 handle 用）。 */
+  /** Kept for tests; the route aborts through the shared signal. */
   abort(): void;
 }
 
-/** `renderUserTemplate` 的三個變數（#263）。非 Instruct 動作的 `instruction`／`focus` 一律傳空字串。 */
 export interface TemplateVars {
   text: string;
   instruction: string;
@@ -43,12 +32,8 @@ export interface TemplateVars {
 const PLACEHOLDER_RE = /\{\{(text|instruction|focus)\}\}/g;
 
 /**
- * 佔位符代入（#263 起三個佔位符）。**單次**正則掃過整個 template 一次替換完——代入值裡就算含字面
- * `{{instruction}}`，也不會在下一輪被展開（三次 `replaceAll` 依序代入會）。只做代入、不知道動作種類；Instruct 的固定標記
- * 由呼叫端（`routes/ai.ts`）先包好再傳進來。
- *
- * 替換端用**函式**形式：JS 對「替換字串」會解讀 `$&`／`$$`／`` $` ``／`$'`／`$<name>`，使用者選取的文字若剛好含這些字元組合，
- * 字串形式會靜默吃掉或扭曲它們；函式回傳值不做任何解讀，逐字元原樣貼回。
+ * A single regex pass, so a substituted value containing `{{instruction}}` isn't expanded
+ * again. The replacer is a function because string replacements interpret `$&`, `$$` etc.
  */
 export function renderUserTemplate(template: string, vars: TemplateVars): string {
   return template.replace(PLACEHOLDER_RE, (_match, name: keyof TemplateVars) => vars[name]);
@@ -56,16 +41,10 @@ export function renderUserTemplate(template: string, vars: TemplateVars): string
 
 const MAX_LOGGED_BODY_CHARS = 2048;
 
-/** 上游回應 body 進 log 前的截斷（2048 字元）；`routes/ai.ts` 記 Anthropic `APIError.error` 時共用。 */
 export function truncateBody(text: string): string {
   return text.length > MAX_LOGGED_BODY_CHARS ? `${text.slice(0, MAX_LOGGED_BODY_CHARS)}...(truncated)` : text;
 }
 
-/**
- * 逐行拆 `ReadableStream<Uint8Array>`：內部維護一個跨 chunk 的字串緩衝區，任何一行（含
- * `data: ...`）跨越兩個 chunk 邊界都會被正確重組——不能假設每個 chunk 剛好在換行處結束。
- * `\r\n`／`\n` 皆視為換行；末尾若有殘留（無結尾換行的最後一行）也會補吐一次。
- */
 async function* readSseLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -101,11 +80,7 @@ interface OpenAiChatCompletionChunk {
   choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown } }>;
 }
 
-/**
- * openai_compatible（vLLM 等）串流：`POST {baseUrl}/chat/completions`，`stream: true`。逐行
- * 解析 `data: ...`，只取 `choices[0].delta.content`——`reasoning_content`/`thinking` 這類欄位
- * 存在也完全丟棄，不拼進輸出。`data: [DONE]` 視為正常收流結束（不是錯誤）。
- */
+/** Reasoning/thinking fields are dropped on purpose; `[DONE]` is a normal end. */
 export function streamOpenAiCompatible(opts: OpenAiCompatibleOpts): UpstreamHandle {
   const controller = new AbortController();
   const onAbort = (): void => controller.abort();
@@ -150,8 +125,6 @@ export function streamOpenAiCompatible(opts: OpenAiCompatibleOpts): UpstreamHand
         try {
           parsed = JSON.parse(payload) as OpenAiChatCompletionChunk;
         } catch {
-          // 非預期的畸形行（不是我們定義的錯誤場景）：忽略、繼續解析下一行，
-          // 不讓整個串流因單行壞資料而中斷。
           continue;
         }
         const delta = parsed.choices?.[0]?.delta?.content;
@@ -174,26 +147,14 @@ interface AnthropicOpts {
   signal: AbortSignal;
 }
 
-// anthropic Messages API 要求 max_tokens；AI 快速動作（重寫/翻譯/摘要/續寫）皆是短中篇文字
-// 轉換，不是開放式長文生成，4096 足夠且不過度浪費（此為保守預設）。
+// Required by the Messages API; quick actions are short transforms.
 const ANTHROPIC_MAX_TOKENS = 4096;
 
 /**
- * anthropic 串流：`@anthropic-ai/sdk` 的 `client.messages.stream(...)`——認證（`x-api-key`）與
- * `anthropic-version` header 由 SDK 自帶，不必手動組 header。只轉發
- * `content_block_delta` 事件裡 `delta.type === "text_delta"` 的 `.text`；其餘事件類型
- * （`thinking_delta`、`message_start`……）一律忽略，不落進輸出。
- *
- * SDK 拋出的例外（`Anthropic.APIError` 及其子類別）原樣往外丟，不在此層轉譯成
- * `UpstreamError`——呼叫端（route handler）的 catch-all 對任何錯誤型別一視同仁（記 log、送
- * 固定文案的 SSE error 事件），不需要每個 provider 分支各自維持同一套錯誤型別契約。
- *
- * **安全（用真 SDK + 302 重現過）**：`fetchOptions: { redirect:
- * "manual" }`——理由同上（undici 對跨網域轉址只剝 `Authorization`/
- * `Cookie`，SDK 自帶的 `x-api-key` 不在那個剝除清單內，惡意/被劫持的 upstream 若回 302 會把
- * 明文 key 原樣送去轉址目標）。實測：預設（無此選項）302 會讓 attacker 端收到明文 key；加了
- * `redirect:"manual"` 後零外送——手動模式下 3xx 直接變成 SDK 的 `APIError`，被上層 catch-all
- * 收成固定文案 SSE error，與 openai_compatible 分支（同款 `redirect:"manual"`）行為對稱。
+ * SDK errors propagate as-is (the caller's catch-all treats all error types alike).
+ * `redirect: "manual"`: the SDK's `x-api-key` isn't stripped by undici on cross-origin
+ * redirects, so a hijacked upstream answering 302 would receive the plaintext key. Only
+ * `text_delta` text is forwarded; thinking deltas are dropped on purpose.
  */
 export function streamAnthropic(opts: AnthropicOpts): UpstreamHandle {
   const controller = new AbortController();
@@ -203,8 +164,7 @@ export function streamAnthropic(opts: AnthropicOpts): UpstreamHandle {
 
   async function* generate(): AsyncGenerator<string> {
     try {
-      // server 端執行；notes/editing/runtime.ts 把 jsdom 的 window/document 掛在 globalThis，
-      // 會觸發 SDK 的瀏覽器嗅探（internal/detect-platform.js）——這個旗標只為此而加。
+      // jsdom's window/document on globalThis (notes/editing/runtime.ts) would trigger the SDK's browser detection.
       const client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl, fetchOptions: { redirect: "manual" }, dangerouslyAllowBrowser: true });
       const stream = client.messages.stream(
         {
