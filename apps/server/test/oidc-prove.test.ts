@@ -18,7 +18,7 @@ const nowS = () => Math.floor(Date.now() / 1000);
 const lastLoginOf = async (db: Db, id: string) =>
   (await db.execute<{ t: string | null }>(sql`select last_login_at::text as t from users where id = ${id}`)).rows[0]!.t;
 
-/** 純 SSO 帳號 U（身分在 A）＋ B 同 email 首登 → pending。 */
+/** SSO-only account U (identity at A) + B first login with the same email -> pending. */
 async function ssoOnlyPending(t: OidcTestApp, next?: string) {
   await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "ua", email: "u@x.example" } });
   const [u] = await t.db.select().from(users).where(eq(users.email, "u@x.example"));
@@ -28,7 +28,6 @@ async function ssoOnlyPending(t: OidcTestApp, next?: string) {
   return { user: u!, pending, pendingId: unsealPendingLink(testConfig.appSecret, pending, nowS())!.pendingId };
 }
 
-/** prove 起點 → fake IdP authorize（以 claims 登入）→ callback。回 callback 回應與起點回應。 */
 async function prove(t: OidcTestApp, key: string, cookies: Record<string, string>, pendingId: string, claims: FakeIdpClaims) {
   const start = await t.app.inject({ method: "POST", url: `/api/auth/oidc/pending/prove/${t.provider(key).id}`, cookies, payload: { pendingId } });
   if (start.statusCode !== 200) return { start, callback: undefined };
@@ -45,8 +44,8 @@ async function prove(t: OidcTestApp, key: string, cookies: Record<string, string
 
 const app2 = (over = {}) => buildOidcApp({ providers: [{ key: "a", issuerUrl: A, displayName: "A" }, { key: "b", issuerUrl: B, displayName: "B" }] }, over);
 
-describe("SSO 證明（#187）", () => {
-  it("純 SSO 帳號：methods={password:false, providers:[A]}；以 A 證明 → B 的身分（取自 pending）連到 U、session、旗標不清、清 pending、A 的 last_login_at 更新", async () => {
+describe("SSO proof (#187)", () => {
+  it("SSO-only account: methods={password:false, providers:[A]}; proving with A -> B's identity (from pending) is linked to U, session signed, flag not cleared, pending cleared, A's last_login_at updated", async () => {
     const t = await app2();
     const { user, pending, pendingId } = await ssoOnlyPending(t, "/n/alice/x");
     await t.db.execute(sql`update users set last_login_at = null where id = ${user.id}`);
@@ -70,7 +69,7 @@ describe("SSO 證明（#187）", () => {
     expect(await lastLoginOf(t.db, user.id)).not.toBeNull();
   });
 
-  it("綁定：用 A 登入的是另一個帳號 V 的身分 → /link-account?error=oidc_link_proof_mismatch、不寫入、pending 保留；之後以密碼仍可成功（有密碼又有 A 的帳號）", async () => {
+  it("binding: the A login belongs to another account V's identity -> /link-account?error=oidc_link_proof_mismatch, nothing written, pending kept; afterwards a password still succeeds (account with a password and A's identity)", async () => {
     const t = await app2();
     const u = await insertPasswordUser(t.db, { email: "u@x.example", password: "correct-horse-battery-staple" });
     await t.db.insert(userIdentities).values({ userId: u.id, issuer: A, sub: "ua" });
@@ -88,10 +87,10 @@ describe("SSO 證明（#187）", () => {
     expect(ok.statusCode).toBe(200);
   });
 
-  it("state 的 pendingId 與當下 pending 不符（另一分頁覆蓋了 pending）→ /link-account?error=oidc_link_expired（不清 pending）；callback 時 pending 已不在 → 同；起點沒有 pending → 401", async () => {
+  it("state's pendingId doesn't match the current pending (another tab overwrote it) -> /link-account?error=oidc_link_expired (pending not cleared); pending already gone at callback -> same; start with no pending -> 401", async () => {
     const t = await app2();
     const first = await ssoOnlyPending(t);
-    // (a) callback 時 pending cookie 已不在（過期或被清——`readPendingLink` 都回 null）：只帶 state cookie 回來。
+    // The pending cookie is already gone at callback (expired or cleared: `readPendingLink` returns null either way): only the state cookie comes back.
     const s0 = await t.app.inject({ method: "POST", url: `/api/auth/oidc/pending/prove/${t.provider("a").id}`, cookies: { [OIDC_PENDING_COOKIE]: first.pending }, payload: { pendingId: first.pendingId } });
     t.idp("a").setNextLogin({ sub: "ua", email: "u@x.example" });
     const a0 = t.idp("a").authorize(s0.json().url);
@@ -102,17 +101,17 @@ describe("SSO 證明（#187）", () => {
     });
     expect(cb0.headers.location).toBe("/link-account?error=oidc_link_expired");
     expect(await identitiesOf(t.db, first.user.id)).toEqual([{ issuer: A, sub: "ua" }]);
-    // (b) 另一分頁覆蓋了 pending。
+    // Another tab overwrote the pending.
     const start = await t.app.inject({ method: "POST", url: `/api/auth/oidc/pending/prove/${t.provider("a").id}`, cookies: { [OIDC_PENDING_COOKIE]: first.pending }, payload: { pendingId: first.pendingId } });
     t.idp("a").setNextLogin({ sub: "ua", email: "u@x.example" });
     const { code, state } = t.idp("a").authorize(start.json().url);
     const stateCookie = start.cookies.find(c => c.name === OIDC_STATE_COOKIE)!.value;
-    // 同一瀏覽器另一分頁再走一次 B → pending 被覆蓋（新 pendingId）。
+    // Running B again in another tab of the same browser overwrites pending (new pendingId).
     const again = await ssoRoundTrip(t.app, t.idp("b"), { loginUrl: `/api/auth/oidc/login/${t.provider("b").id}`, claims: { sub: "ub", email: "u@x.example" } });
     const overwritten = again.cookies[OIDC_PENDING_COOKIE]!;
     const cb = await t.app.inject({ method: "GET", url: `/api/auth/oidc/callback/${t.provider("a").id}?code=${code}&state=${state}`, cookies: { [OIDC_PENDING_COOKIE]: overwritten, [OIDC_STATE_COOKIE]: stateCookie } });
     expect(cb.headers.location).toBe("/link-account?error=oidc_link_expired");
-    // 不符時不清 cookie——覆蓋後的新 pending 屬於另一分頁，仍有效。
+    // On mismatch don't clear the cookie: the new pending after overwriting belongs to the other tab and is still valid.
     expect(cb.cookies.find(c => c.name === OIDC_PENDING_COOKIE)).toBeUndefined();
     const stillThere = await t.app.inject({ method: "GET", url: "/api/auth/oidc/pending", cookies: { [OIDC_PENDING_COOKIE]: overwritten } });
     expect(stillThere.statusCode).toBe(200);
@@ -122,7 +121,7 @@ describe("SSO 證明（#187）", () => {
     expect(noPending.statusCode).toBe(401);
   });
 
-  it("起點：provider 未連結／停用／非 uuid → 404 provider_not_found（不區分）；pendingId 不符 → 409；無 body → 400；form → 415", async () => {
+  it("start: provider not linked / disabled / not a uuid -> 404 provider_not_found (indistinguishable); pendingId mismatch -> 409; no body -> 400; form -> 415", async () => {
     const t = await app2();
     const { pending, pendingId } = await ssoOnlyPending(t);
     const post = (id: string, payload?: unknown, headers?: Record<string, string>) =>
@@ -140,7 +139,7 @@ describe("SSO 證明（#187）", () => {
     expect((await post(t.provider("a").id, { pendingId })).statusCode).toBe(404);
   });
 
-  it("帳號已有待連結 issuer（B）的另一個 sub → 起點對 B 回 404 provider_not_found（與 GET pending 同一個排除），A 仍可用", async () => {
+  it("account already has another sub of the pending issuer (B) -> start for B returns 404 provider_not_found (the same exclusion as GET pending), A is still usable", async () => {
     const t = await app2();
     const u = await insertPasswordUser(t.db, { email: "u@x.example", password: "correct-horse-battery-staple" });
     await t.db.insert(userIdentities).values([{ userId: u.id, issuer: A, sub: "ua" }, { userId: u.id, issuer: B, sub: "older-b" }]);
@@ -157,13 +156,13 @@ describe("SSO 證明（#187）", () => {
     expect((await post("a")).statusCode).toBe(200);
   });
 
-  it("帳號已有 A(sub-1)＋B → 以 A 的另一個 sub 首登，證明前不揭露同 issuer 已連過；用 B 證明完 → /link-account?error=identity_already_linked、不寫入", async () => {
+  it("account has A(sub-1) + B -> first login with another sub of A doesn't reveal before proof that the same issuer was linked; after proving with B -> /link-account?error=identity_already_linked, nothing written", async () => {
     const t = await app2();
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sub-1", email: "u@x.example" } });
     const [u] = await t.db.select().from(users).where(eq(users.email, "u@x.example"));
     await t.db.insert(userIdentities).values({ userId: u!.id, issuer: B, sub: "ub" });
     const r = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sub-2", email: "u@x.example" } });
-    // 證明前：callback 只導 /link-account，GET pending 只列 B（A 被同 issuer 排除），都不透露「已有 A 的另一個 sub」。
+    // Before proof: callback only redirects to /link-account and GET pending lists only B (A is excluded as the same issuer): neither reveals "another sub of A already exists".
     expect(r.callbackRes.headers.location).toBe("/link-account");
     const pending = r.cookies[OIDC_PENDING_COOKIE]!;
     const pendingId = unsealPendingLink(testConfig.appSecret, pending, nowS())!.pendingId;
@@ -179,7 +178,7 @@ describe("SSO 證明（#187）", () => {
     expect(await t.db.select().from(userIdentities).where(eq(userIdentities.sub, "sub-2"))).toEqual([]);
   });
 
-  it("C19：往返途中證明用的 provider 被停用 → callback 302 /login?error=oidc_unavailable；身分被刪 → oidc_link_proof_mismatch", async () => {
+  it("the proof provider disabled during the round trip -> callback 302 /login?error=oidc_unavailable; identity deleted -> oidc_link_proof_mismatch", async () => {
     const t = await app2();
     const { user, pending, pendingId } = await ssoOnlyPending(t);
     const start = await t.app.inject({ method: "POST", url: `/api/auth/oidc/pending/prove/${t.provider("a").id}`, cookies: { [OIDC_PENDING_COOKIE]: pending }, payload: { pendingId } });
@@ -198,7 +197,7 @@ describe("SSO 證明（#187）", () => {
     expect(cb2.headers.location).toBe("/link-account?error=oidc_link_proof_mismatch");
   });
 
-  it("C20：往返途中目標帳號被停用 → /link-account?error=account_disabled；email 被改 → oidc_link_expired（清 pending）", async () => {
+  it("target account disabled during the round trip -> /link-account?error=account_disabled; email changed -> oidc_link_expired (pending cleared)", async () => {
     for (const [mutate, code] of [[{ disabledAt: new Date() }, "account_disabled"], [{ email: "changed@x.example" }, "oidc_link_expired"]] as const) {
       const t = await app2();
       const { user, pending, pendingId } = await ssoOnlyPending(t);
@@ -212,7 +211,7 @@ describe("SSO 證明（#187）", () => {
     }
   });
 
-  it("C21：密碼證明與 SSO 證明同時完成（同一顆 pending）→ 後到者在 users 鎖後看到身分已屬本人、冪等成功；兩顆 session 都有效", async () => {
+  it("password proof and SSO proof complete at the same time (the same pending) -> the latecomer sees after the users lock that the identity already belongs to the user and succeeds idempotently; both sessions are valid", async () => {
     const gate = { release: () => {}, entered: () => {} };
     const held = new Promise<void>(r => (gate.release = r));
     const entered = new Promise<void>(r => (gate.entered = r));
@@ -247,7 +246,7 @@ describe("SSO 證明（#187）", () => {
     }
   });
 
-  it("C24：SSO 證明持有 users 列鎖時，同一帳號的 SSO 登入（只碰 user_identities）不被擋、照樣完成，last_login_at 被 SKIP LOCKED 略過；放行後證明成功並記上、無 40P01", async () => {
+  it("while the SSO proof holds the users row lock, an SSO login of the same account (touching only user_identities) isn't blocked and completes, last_login_at is skipped by SKIP LOCKED; after release the proof succeeds and is recorded, no 40P01", async () => {
     const gate = { release: () => {}, entered: () => {} };
     const held = new Promise<void>(r => (gate.release = r));
     const entered = new Promise<void>(r => (gate.entered = r));
@@ -261,13 +260,13 @@ describe("SSO 證明（#187）", () => {
     };
     const t = await app2({ oidcTestHook: hook });
     const { user, pending, pendingId } = await ssoOnlyPending(t);
-    await t.db.execute(sql`update users set last_login_at = null where id = ${user.id}`); // 清掉 ssoOnlyPending 首登記的值
+    await t.db.execute(sql`update users set last_login_at = null where id = ${user.id}`); // clears the value ssoOnlyPending's first login recorded
     const proveP = prove(t, "a", { [OIDC_PENDING_COOKIE]: pending }, pendingId, { sub: "ua", email: "u@x.example" });
     await entered;
     const loginP = ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "ua", email: "u@x.example" } });
     try {
-      // 這一案要證明的就是「不被擋」：login 分支不寫 users，與 SSO 證明的 users 鎖不相交；交易後的 touchLastLogin 以
-      // SKIP LOCKED 取列，SSO 證明持鎖時整句 0 列、不等（#247）。
+      // This case proves "not blocked": the login branch doesn't write users, so it doesn't intersect the SSO proof's users lock; the
+      // post-transaction touchLastLogin takes the row with SKIP LOCKED, so while the SSO proof holds the lock the whole statement hits 0 rows and doesn't wait (#247).
       expect(await waitForBlockedOrSettled(t.db.$client, loginP)).toBe("settled");
       expect((await loginP).callbackRes.headers.location).toBe("/");
       expect(await lastLoginOf(t.db, user.id)).toBeNull();
@@ -278,6 +277,6 @@ describe("SSO 證明（#187）", () => {
     expect(l.callbackRes.headers.location).toBe("/");
     expect(p.callback!.headers.location).toBe("/");
     expect(await identitiesOf(t.db, user.id)).toEqual([{ issuer: A, sub: "ua" }, { issuer: B, sub: "ub" }]);
-    expect(await lastLoginOf(t.db, user.id)).not.toBeNull(); // SSO 證明 commit 後記上寫入點 3
+    expect(await lastLoginOf(t.db, user.id)).not.toBeNull(); // recorded once the SSO proof commits
   });
 });

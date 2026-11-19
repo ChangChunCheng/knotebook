@@ -30,7 +30,7 @@ async function holderFor(db: OidcTestApp["db"]): Promise<Client> {
 const start = (t: OidcTestApp, cookies: Record<string, string>, providerId: string, payload: unknown = {}) =>
   t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${providerId}`, cookies, ...(payload === undefined ? {} : { payload: payload as object }) });
 
-/** 起點 → fake IdP → callback。`callbackCookies` 可換掉 callback 時帶的 session（session 不符的案）。 */
+/** Start -> fake IdP -> callback. `callbackCookies` can replace the session sent at callback (for the session-mismatch cases). */
 async function linkRoundTrip(
   t: OidcTestApp,
   key: string,
@@ -54,8 +54,8 @@ async function linkRoundTrip(
   return { startRes, callback };
 }
 
-describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
-  it("200 {url}、封 state cookie；URL 是該 provider 的 authorization endpoint", async () => {
+describe("POST /api/auth/oidc/link/:providerId (#187)", () => {
+  it("200 {url}, state cookie sealed; the URL is that provider's authorization endpoint", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const res = await start(t, await cookieOf(u.id), t.provider("b").id);
@@ -64,7 +64,7 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     expect(res.cookies.find(c => c.name === OIDC_STATE_COOKIE)?.value).toBeTruthy();
   });
 
-  it("B7：無 body → 400；form 形 → 415（CSRF hook）；JSON 多欄 → 400", async () => {
+  it("no body -> 400; form shape -> 415 (CSRF hook); JSON with extra fields -> 400", async () => {
     const t = await twoProviders();
     const cookies = await cookieOf((await insertPasswordUser(t.db)).id);
     const id = t.provider("b").id;
@@ -74,22 +74,22 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     expect((await start(t, cookies, id, { x: 1 })).statusCode).toBe(400);
   });
 
-  it("session-only：未登入／Bearer → 401；must_change_password → 403 forbidden（擋在限流之前）", async () => {
+  it("session-only: logged out / Bearer -> 401; must_change_password -> 403 forbidden (blocked before the limiter)", async () => {
     const t = await twoProviders({ limiters: freshLimiters({ oidcLogin: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const id = t.provider("b").id;
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {} })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // Valid PAT (scope sufficient for authenticateAny), no cookie: the 401 can only come from "only accepts a session".
     const { token } = await seedTokenForUser(t.db, (await insertPasswordUser(t.db)).id);
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {}, headers: bearer(token) })).statusCode).toBe(401);
     const flagged = await insertPasswordUser(t.db, { mustChangePassword: true });
     const res = await start(t, await cookieOf(flagged.id), id);
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("forbidden");
-    // 限流額度 1 還在：被擋的那次沒有扣
+    // The limiter quota of 1 is still there: the rejected request wasn't charged
     expect((await start(t, await cookieOf((await insertPasswordUser(t.db)).id), id)).statusCode).toBe(200);
   });
 
-  it("provider 不存在／停用／非 UUID → 404 provider_not_found", async () => {
+  it("provider nonexistent / disabled / not a UUID -> 404 provider_not_found", async () => {
     const t = await twoProviders();
     const cookies = await cookieOf((await insertPasswordUser(t.db)).id);
     await t.db.execute(sql`update auth_providers set enabled = false where id = ${t.provider("b").id}`);
@@ -100,7 +100,7 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     }
   });
 
-  it("預檢：本人已有 issuer＝其 effective issuer 的身分 → 409 identity_already_linked", async () => {
+  it("pre-check: the user already has an identity whose issuer = its effective issuer -> 409 identity_already_linked", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     await t.db.insert(userIdentities).values({ userId: u.id, issuer: B, sub: "old" });
@@ -109,7 +109,7 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     expect(res.json().error.code).toBe("identity_already_linked");
   });
 
-  it("尾斜線形：provider 填 `B/`、resolved_issuer＝B → 預檢對到無斜線身分 → 409；resolved 未寫 → 預檢對不到 → 200（權威判斷在 callback）", async () => {
+  it("trailing-slash form: provider is `B/`, resolved_issuer = B -> pre-check matches the slash-less identity -> 409; resolved not written -> pre-check can't match -> 200 (the authoritative decision is at callback)", async () => {
     const resolved = await buildOidcApp({ providers: [{ key: "b", issuerUrl: `${B}/`, resolvedIssuer: B }] });
     const u = await insertPasswordUser(resolved.db);
     await resolved.db.insert(userIdentities).values({ userId: u.id, issuer: B, sub: "old" });
@@ -120,14 +120,14 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     expect((await start(unresolved, await cookieOf(v.id), unresolved.provider("b").id)).statusCode).toBe(200);
   });
 
-  it("限流吃 oidcLogin 桶：額度用完 → 429", async () => {
+  it("limiter uses the oidcLogin bucket: quota used up -> 429", async () => {
     const t = await twoProviders({ limiters: freshLimiters({ oidcLogin: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const cookies = await cookieOf((await insertPasswordUser(t.db)).id);
     expect((await start(t, cookies, t.provider("b").id)).statusCode).toBe(200);
     expect((await start(t, cookies, t.provider("b").id)).json().error.code).toBe("too_many_requests");
   });
 
-  it("discovery 失敗 → 503 oidc_unavailable", async () => {
+  it("discovery failure -> 503 oidc_unavailable", async () => {
     const t = await twoProviders();
     const cookies = await cookieOf((await insertPasswordUser(t.db)).id);
     t.idp("b").failNext("discovery");
@@ -137,8 +137,8 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
   });
 });
 
-describe("callback 的 intent: \"link\" 分支（#187）", () => {
-  it("成功 → 302 /settings/login?linked=<id>、寫身分（last_login_at 有值）；不要求 email 相同；不簽新 session", async () => {
+describe("callback intent link branch (#187)", () => {
+  it("success -> 302 /settings/login?linked=<id>, identity written (last_login_at set); doesn't require the same email; no new session", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const { callback } = await linkRoundTrip(t, "b", await cookieOf(u.id), { sub: "sb", email: "totally-different@elsewhere.example" });
@@ -148,17 +148,17 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     const [row] = await t.db.select({ at: userIdentities.lastLoginAt }).from(userIdentities).where(eq(userIdentities.userId, u.id));
     expect(row!.at).not.toBeNull();
     expect(res.cookies.find(c => c.name === SESSION_COOKIE)).toBeUndefined();
-    expect(await lastLoginOf(t.db, u.id)).toBeNull(); // 已登入時連結第二個身分：不簽 session、不寫 users.last_login_at
+    expect(await lastLoginOf(t.db, u.id)).toBeNull(); // linking a second identity while logged in: no session signed, users.last_login_at not written
   });
 
-  it("起點路徑的 provider id 大寫 → 照常連結（state 綁小寫 id，callback 不 oidc_state_mismatch）", async () => {
+  it("provider id in the start path is uppercase -> links as usual (state binds the lowercase id, callback doesn't hit oidc_state_mismatch)", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const { callback } = await linkRoundTrip(t, "b", await cookieOf(u.id), { sub: "sb" }, { providerIdInPath: t.provider("b").id.toUpperCase() });
     expect((await callback).headers.location).toBe(`/settings/login?linked=${t.provider("b").id}`);
   });
 
-  it("session 不符 → ?link_error=oidc_link_session_mismatch：沒有 session、別人的 session", async () => {
+  it("session mismatch -> ?link_error=oidc_link_session_mismatch: no session, someone else's session", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const v = await insertPasswordUser(t.db);
@@ -169,7 +169,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(await identitiesOf(t.db, u.id)).toEqual([]);
   });
 
-  it("起點之後才被停用：session 檢查吃 gate 的 60 秒快取仍過 → 鎖內重驗擋下 → ?link_error=account_disabled、不寫入", async () => {
+  it("disabled after the start: the session check passes on the gate's 60 s cache, the re-check under lock stops it -> ?link_error=account_disabled, nothing written", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const { callback } = await linkRoundTrip(t, "b", await cookieOf(u.id), { sub: "sb-disabled" }, {
@@ -179,7 +179,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(await identitiesOf(t.db, u.id)).toEqual([]);
   });
 
-  it("身分屬別人 → 302 location 恰為 /settings/login?link_error=identity_taken；已屬本人 → 冪等 linked；同 issuer 已有另一個 sub → identity_already_linked", async () => {
+  it("identity belongs to someone else -> 302 location is exactly /settings/login?link_error=identity_taken; already the caller's -> idempotent linked; the same issuer already has another sub -> identity_already_linked", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const other = await insertPasswordUser(t.db);
@@ -200,7 +200,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(await identitiesOf(t.db, w.id)).toEqual([{ issuer: B, sub: "first" }]);
   });
 
-  it("cookie 解開之前的失敗仍落 /login?error=：沒有 state cookie → oidc_state_mismatch", async () => {
+  it("failures before the cookie is unsealed still land on /login?error=: no state cookie -> oidc_state_mismatch", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const cookies = await cookieOf(u.id);
@@ -211,7 +211,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(res.headers.location).toBe("/login?error=oidc_state_mismatch");
   });
 
-  it("C11：別人的首登（未提交）正在建同一個 (issuer, sub) → 連結方等它提交 → identity_taken", async () => {
+  it("someone else's first login (uncommitted) is creating the same (issuer, sub) -> the linking side waits for its commit -> identity_taken", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const holder = await holderFor(t.db);
@@ -232,7 +232,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(await identitiesOf(t.db, u.id)).toEqual([]);
   });
 
-  it("C22（手動連結形）：另一連線持本人 users 鎖並寫入同 issuer 另一個 sub → 這邊等它提交 → identity_already_linked", async () => {
+  it("(manual link form) another connection holds this user's users lock and writes another sub of the same issuer -> this side waits for its commit -> identity_already_linked", async () => {
     const t = await twoProviders();
     const u = await insertPasswordUser(t.db);
     const holder = await holderFor(t.db);
@@ -253,7 +253,7 @@ describe("callback 的 intent: \"link\" 分支（#187）", () => {
     expect(await identitiesOf(t.db, u.id)).toEqual([{ issuer: B, sub: "sub-1" }]);
   });
 
-  it("沒有密碼的純 SSO 帳號也能從設定頁連第二個（session 是證明）", async () => {
+  it("a password-less SSO-only account can also link a second one from the settings page (the session is the proof)", async () => {
     const t = await twoProviders();
     const u = await seedUser(t.db);
     await t.db.insert(userIdentities).values({ userId: u.id, issuer: A, sub: "sa" });

@@ -24,8 +24,9 @@ const lastLoginOf = async (db: Db, id: string) =>
   (await db.execute<{ t: string | null }>(sql`select last_login_at::text as t from users where id = ${id}`)).rows[0]!.t;
 
 /**
- * 既有帳號（有密碼）＋ provider B 同 email 首登 → 停在 /link-account（內含斷言）。回 pending cookie 與 pendingId。
- * `beforeSso` 在建帳之後、SSO 之前執行（例如先替帳號插一列同 issuer 的身分）——「證明前仍是 /link-account」才真的被測到。
+ * Existing account (with password) + provider B first login with the same email -> stops at /link-account (asserted inside). Returns
+ * the pending cookie and pendingId. `beforeSso` runs after account creation and before SSO (e.g. inserting a same-issuer identity for
+ * the account first) so that "still /link-account before proof" is really tested.
  */
 async function toPending(
   t: OidcTestApp,
@@ -45,8 +46,8 @@ const twoProviders = () => buildOidcApp({ providers: [{ key: "a", issuerUrl: A, 
 const confirm = (t: OidcTestApp, cookie: string, body: unknown, extraCookies: Record<string, string> = {}) =>
   t.app.inject({ method: "POST", url: "/api/auth/oidc/pending/confirm", cookies: { [OIDC_PENDING_COOKIE]: cookie, ...extraCookies }, payload: body as object });
 
-describe("GET /api/auth/oidc/pending（#187）", () => {
-  it("200：pendingId／email／providerDisplayName／methods（每次重算）；沒有 cookie → 401", async () => {
+describe("GET /api/auth/oidc/pending (#187)", () => {
+  it("200: pendingId/email/providerDisplayName/methods (recomputed every time); no cookie -> 401", async () => {
     const t = await twoProviders();
     const { cookie, pendingId } = await toPending(t);
     const res = await t.app.inject({ method: "GET", url: "/api/auth/oidc/pending", cookies: { [OIDC_PENDING_COOKIE]: cookie } });
@@ -55,7 +56,7 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
     expect((await t.app.inject({ method: "GET", url: "/api/auth/oidc/pending" })).statusCode).toBe(401);
   });
 
-  it("純 SSO 帳號：methods.providers 列出已連結且啟用中的；provider 停用後重算 → 409 oidc_link_no_proof_method", async () => {
+  it("SSO-only account: methods.providers lists linked, enabled ones; recomputed after the provider is disabled -> 409 oidc_link_no_proof_method", async () => {
     const t = await twoProviders();
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sa", email: "sso@x.example" } });
     const r = await ssoRoundTrip(t.app, t.idp("b"), { loginUrl: `/api/auth/oidc/login/${t.provider("b").id}`, claims: { sub: "sb", email: "sso@x.example" } });
@@ -68,7 +69,7 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
     expect(res.json().error.code).toBe("oidc_link_no_proof_method");
   });
 
-  it("目標帳號 email 已改 → 409 oidc_link_expired 並清 cookie", async () => {
+  it("target account's email changed -> 409 oidc_link_expired and the cookie is cleared", async () => {
     const t = await twoProviders();
     const { user, cookie } = await toPending(t);
     await t.db.update(users).set({ email: "changed@x.example" }).where(eq(users.id, user.id));
@@ -78,7 +79,7 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
     expect(res.cookies.find(c => c.name === OIDC_PENDING_COOKIE)?.value).toBe("");
   });
 
-  it("兩個啟用中的 provider 指向帳號已連結的同一個 issuer → methods.providers 兩個都列", async () => {
+  it("two enabled providers pointing at the same issuer the account is linked to -> methods.providers lists both", async () => {
     const t = await buildOidcApp({ providers: [
       { key: "a1", issuerUrl: A, displayName: "A one", sortOrder: 1 }, { key: "a2", issuerUrl: `${A}/`, displayName: "A two", sortOrder: 2, resolvedIssuer: A },
       { key: "b", issuerUrl: B, displayName: "B" },
@@ -89,9 +90,9 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
     expect(res.json().methods.providers).toEqual([{ id: t.provider("a1").id, displayName: "A one", icon: GENERIC }, { id: t.provider("a2").id, displayName: "A two", icon: GENERIC }]);
   });
 
-  it("B14：帳號有 pending issuer 的另一個 sub＋另一 issuer 的已啟用 provider 身分＋密碼 → providers 只列另一 issuer、不列 pending issuer", async () => {
+  it("the account has another sub of the pending issuer + an identity from an enabled provider of another issuer + a password -> providers lists only the other issuer, not the pending issuer", async () => {
     const t = await twoProviders();
-    // 身分在 SSO 之前就在：B 的另一個 sub（同 issuer）與 A 的身分（另一 issuer）。列出 B 就等於證明前告訴對方「這帳號已連過 B」。
+    // These identities exist before SSO: another sub of B (same issuer) and A's identity (another issuer). Listing B would tell the other side before proof that "this account already linked B".
     const { cookie, pendingId } = await toPending(t, {
       beforeSso: async userId => {
         await t.db.insert(userIdentities).values([{ userId, issuer: B, sub: "older-sub" }, { userId, issuer: A, sub: "sa" }]);
@@ -102,7 +103,7 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
     expect(res.json()).toEqual({ pendingId, email: "target@x.example", providerDisplayName: "B", methods: { password: true, providers: [{ id: t.provider("a").id, displayName: "A", icon: GENERIC }] } });
   });
 
-  it("provider-icon：methods.providers 每項帶換算後的 icon（三範本 × 五種 kind，經 `toPublicProvider` 重新組形）；不含圖檔位元組", async () => {
+  it("provider-icon: each methods.providers entry carries a converted icon (three templates x five kinds, re-shaped through `toPublicProvider`); no image bytes", async () => {
     const t = await twoProviders();
     const matrix = await seedIconMatrix(t.db);
     const { cookie } = await toPending(t, {
@@ -117,11 +118,11 @@ describe("GET /api/auth/oidc/pending（#187）", () => {
   });
 });
 
-describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
-  it("密碼正確 → 200 {user, next:'/'}、簽 session、清 pending、寫第二列 identity；之後 B 直接登入", async () => {
+describe("POST /api/auth/oidc/pending/confirm (#187)", () => {
+  it("correct password -> 200 {user, next:'/'}, session signed, pending cleared, second identity row written; B logs in directly afterwards", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
-    expect(await lastLoginOf(t.db, user.id)).toBeNull(); // 停在 /link-account（confirm_link）不簽 session、不寫
+    expect(await lastLoginOf(t.db, user.id)).toBeNull(); // stopping at /link-account (confirm_link) signs no session and writes nothing
     await t.db.insert(userIdentities).values({ userId: user.id, issuer: A, sub: "sa" });
     const res = await confirm(t, cookie, { password: PW, pendingId });
     expect(res.statusCode).toBe(200);
@@ -134,7 +135,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(again.callbackRes.headers.location).toBe("/");
   });
 
-  it("B15：旗標為 true 的帳號以密碼連結後旗標仍 true（/api/auth/me 也是）；回應的 next 來自 pending 且已過 safeNextPath", async () => {
+  it("account with the flag true linking by password keeps the flag true (also /api/auth/me); the response's next comes from pending and has passed safeNextPath", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t, { mustChangePassword: true, next: "/n/alice/x" });
     const res = await confirm(t, cookie, { password: PW, pendingId });
@@ -145,7 +146,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(row!.m).toBe(true);
   });
 
-  it("錯密碼 → 401 invalid_credentials、不寫入；吃 LoginThrottle（同 email 鍵）：5 次後第 6 次 429，且 /api/auth/login 同 email 也 429", async () => {
+  it("wrong password -> 401 invalid_credentials, nothing written; charges LoginThrottle (same email key): the 6th after 5 -> 429, and /api/auth/login with the same email is also 429", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     for (let i = 0; i < 5; i++) {
@@ -159,14 +160,14 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(typeof sixth.json().retryAfterMs).toBe("number");
     const login = await t.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: user.email, password: PW } });
     expect(login.statusCode).toBe(429);
-    // 上一行分不出帳號軌：同一個來源 IP 的 IP 軌也是 5 次門檻，本身就擋（突變實測存活）。換來源 IP 只剩帳號軌——
-    // confirm 與 /api/auth/login 用同一個 email 鍵才會 429；鍵若不同，這裡密碼正確 → 200。
+    // The previous line can't tell the account track apart: the same source IP's IP track has the same threshold of 5 and blocks by itself.
+    // With another source IP only the account track remains: only if confirm and /api/auth/login share the same email key does it 429; with different keys a correct password here would be 200.
     const loginOtherIp = await t.app.inject({ method: "POST", url: "/api/auth/login", remoteAddress: "10.9.8.6", payload: { email: user.email, password: PW } });
     expect(loginOtherIp.statusCode).toBe(429);
     expect(await identitiesOf(t.db, user.id)).toEqual([]);
   });
 
-  it("HashBusyError → 429 server_busy", async () => {
+  it("HashBusyError -> 429 server_busy", async () => {
     const t = await twoProviders();
     const { cookie, pendingId } = await toPending(t);
     vi.mocked(verifyPassword).mockRejectedValueOnce(new HashBusyError());
@@ -175,7 +176,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(res.json().error.code).toBe("server_busy");
   });
 
-  it("B14：先驗密碼再判停用——停用＋錯密碼 → 401；停用＋對密碼 → 403 account_disabled", async () => {
+  it("password is verified before disabled is judged: disabled + wrong password -> 401; disabled + right password -> 403 account_disabled", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     await t.db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, user.id));
@@ -185,9 +186,9 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(res.json().error.code).toBe("account_disabled");
   });
 
-  it("帳號已有同 issuer 另一個 sub → 證明前是 /link-account、以密碼證明後 409 identity_already_linked", async () => {
+  it("account already has another sub of the same issuer -> /link-account before proof, 409 identity_already_linked after proving with the password", async () => {
     const t = await twoProviders();
-    // 身分要在 SSO **之前**就在：toPending 內的 `/link-account` 斷言才是「證明前不揭露同 issuer 已連過」的那一條。
+    // The identity must exist **before** SSO: the `/link-account` assertion inside toPending is then the one for "doesn't reveal before proof that the same issuer was linked".
     const { user, cookie, pendingId } = await toPending(t, {
       beforeSso: async userId => {
         await t.db.insert(userIdentities).values({ userId, issuer: B, sub: "older-sub" });
@@ -199,10 +200,11 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(await identitiesOf(t.db, user.id)).toEqual([{ issuer: B, sub: "older-sub" }]);
   });
 
-  it("tx 拒絕（403 停用）時 recordSuccess／recordFailure 都不記——帳號軌的失敗數不被清掉", async () => {
-    // 帳號軌第 5 次失敗起擋（`auth/rate-limit.ts` evaluateRecord：failureCount < 5 不擋，5 次後 2^(5-4)=2 秒）。
-    // ⚠ 最後兩步換一個來源 IP：LoginThrottle 的 IP 軌不會被 recordSuccess 清（同檔 recordSuccess 只刪帳號軌），同一個 IP
-    // 打第 5 次失敗時 IP 軌也滿 5 → 不論帳號軌有沒有被清都 429，突變看不出來。換 IP 後只剩帳號軌在決定結果。
+  it("when the transaction rejects (403 disabled) neither recordSuccess nor recordFailure is recorded: the account track's failure count isn't cleared", async () => {
+    // The account track starts blocking at the 5th failure (`auth/rate-limit.ts` evaluateRecord: failureCount < 5 doesn't block, after
+    // 5 it's 2^(5-4)=2 s). Switch to another source IP for the last two steps: LoginThrottle's IP track isn't cleared by recordSuccess
+    // (recordSuccess only deletes the account track), so from the same IP the 5th failure fills the IP track to 5 too -> 429 whether or
+    // not the account track was cleared, which would hide the difference. With another IP only the account track decides.
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     for (let i = 0; i < 4; i++) {
@@ -214,14 +216,14 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     const fromOtherIp = (password: string) =>
       t.app.inject({ method: "POST", url: "/api/auth/oidc/pending/confirm", remoteAddress: "10.9.8.7", cookies: { [OIDC_PENDING_COOKIE]: cookie }, payload: { password, pendingId } });
     expect((await fromOtherIp("wrong-password-xx")).statusCode).toBe(401);
-    // 帳號軌此時累計 5 次失敗 → 擋。突變「tx 失敗也 recordSuccess」會在 403 那步清掉帳號軌 → 這裡只剩 1 次失敗 → 200。
+    // The account track now has 5 failures -> blocks. If the transaction failing also called recordSuccess, the 403 step would clear the account track -> only 1 failure left -> 200.
     const last = await fromOtherIp(PW);
     expect(last.statusCode).toBe(429);
     expect(last.json().error.code).toBe("too_many_attempts");
     expect(await identitiesOf(t.db, user.id)).toEqual([]);
   });
 
-  it("cookie 過期：exp 已過的 pending → confirm 401 unauthorized、不寫入（與「沒有 pending」同一條路徑）", async () => {
+  it("cookie expired: pending past exp -> confirm 401 unauthorized, nothing written (the same path as \"no pending\")", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     const nowS = Math.floor(Date.now() / 1000);
@@ -234,7 +236,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(await identitiesOf(t.db, user.id)).toEqual([]);
   });
 
-  it("C18：pendingId 與 cookie 不符（另一分頁覆蓋）→ 409 oidc_link_expired；同一顆 cookie 雙送出 → 第二次冪等 200", async () => {
+  it("pendingId doesn't match the cookie (overwritten by another tab) -> 409 oidc_link_expired; the same cookie submitted twice -> the second is idempotent 200", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     const bad = await confirm(t, cookie, { password: PW, pendingId: "not-the-same" });
@@ -245,11 +247,11 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(await identitiesOf(t.db, user.id)).toEqual([{ issuer: B, sub: "sb" }]);
   });
 
-  it("confirm 時帳號 email 已改 → 409 oidc_link_expired、清 pending；在驗密碼之前判（不驗、不吃節流）", async () => {
+  it("account email changed at confirm -> 409 oidc_link_expired, pending cleared; judged before the password is verified (no verification, no throttle)", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     await t.db.update(users).set({ email: "changed@x.example" }).where(eq(users.id, user.id));
-    // 錯密碼送 5 次：route 先判帳號（routes/oidc-pending.ts 的 loadTarget 那段）才會是 409；若改成先驗密碼，第一發就是 401。
+    // Send a wrong password 5 times: only if the route judges the account first (the loadTarget part of routes/oidc-pending.ts) is it 409; if it verified the password first, the first request would be 401.
     for (let i = 0; i < 5; i++) {
       const res = await confirm(t, cookie, { password: "wrong-password-xx", pendingId });
       expect(res.statusCode).toBe(409);
@@ -257,13 +259,13 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
       expect(res.cookies.find(c => c.name === OIDC_PENDING_COOKIE)?.value).toBe("");
     }
     expect(vi.mocked(verifyPassword)).not.toHaveBeenCalled();
-    // 不吃節流：上面 5 發若記了失敗，帳號軌（與同 IP 軌）此時已滿 5 → 這一發 429。
+    // No throttle: if the 5 above had recorded failures, the account track (and the same-IP track) would already be at 5 -> this one 429.
     await t.db.update(users).set({ email: user.email }).where(eq(users.id, user.id));
     expect((await confirm(t, cookie, { password: PW, pendingId })).statusCode).toBe(200);
     expect(await identitiesOf(t.db, user.id)).toEqual([{ issuer: B, sub: "sb" }]);
   });
 
-  it("confirm 時帳號已刪 → 409 oidc_link_expired、清 pending、不驗密碼", async () => {
+  it("account deleted at confirm -> 409 oidc_link_expired, pending cleared, password not verified", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     await t.db.delete(users).where(eq(users.id, user.id));
@@ -274,7 +276,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(vi.mocked(verifyPassword)).not.toHaveBeenCalled();
   });
 
-  it("body：缺 pendingId → 400 invalid_body；form 形 → 415（CSRF hook）；沒有 pending cookie → 401", async () => {
+  it("body: missing pendingId -> 400 invalid_body; form shape -> 415 (CSRF hook); no pending cookie -> 401", async () => {
     const t = await twoProviders();
     const { cookie } = await toPending(t);
     expect((await confirm(t, cookie, { password: PW })).statusCode).toBe(400);
@@ -284,7 +286,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(none.statusCode).toBe(401);
   });
 
-  it("C23：密碼驗過之後、寫入之前本人改了密碼 → 401 invalid_credentials、不寫入", async () => {
+  it("the user changes their password after it's verified and before the write -> 401 invalid_credentials, nothing written", async () => {
     const holder: { db?: OidcTestApp["db"] } = {};
     const hook: OidcTestHook = async point => {
       if (point === "pending-confirm-verified") {
@@ -300,7 +302,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(await identitiesOf(t.db, user.id)).toEqual([]);
   });
 
-  it("pending 期間要連結的 provider 被刪掉 → GET 的 providerDisplayName 為 null；密碼證明仍能連結", async () => {
+  it("provider to link deleted while pending -> GET's providerDisplayName is null; password proof can still link", async () => {
     const t = await twoProviders();
     const { user, cookie, pendingId } = await toPending(t);
     await t.db.update(authProviders).set({ enabled: false }).where(eq(authProviders.id, t.provider("b").id));
@@ -311,7 +313,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
     expect(await identitiesOf(t.db, user.id)).toEqual([{ issuer: B, sub: "sb" }]);
   });
 
-  it("瀏覽器已登入另一個帳號 V → 完成連結後回應的 session 是目標帳號；V 的舊 session 不受影響", async () => {
+  it("browser already logged in as another account V -> after linking the response's session is the target account; V's old session unaffected", async () => {
     const t = await twoProviders();
     const v = await insertPasswordUser(t.db, { email: "v@x.example" });
     const vCookie = await signTestSession({ userId: v.id, tv: 0 });
@@ -326,7 +328,7 @@ describe("POST /api/auth/oidc/pending/confirm（#187）", () => {
 });
 
 describe("POST /api/auth/oidc/pending/cancel", () => {
-  it("204、清 pending cookie（之後 GET → 401）", async () => {
+  it("204, clears the pending cookie (GET afterwards -> 401)", async () => {
     const t = await twoProviders();
     const { cookie } = await toPending(t);
     const res = await t.app.inject({ method: "POST", url: "/api/auth/oidc/pending/cancel", cookies: { [OIDC_PENDING_COOKIE]: cookie } });

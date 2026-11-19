@@ -20,8 +20,8 @@ const silent = pino({ level: "silent" });
 const STALE_MSG = "登入進行期間服務設定已變或已刪：SSO 首登視同關閉";
 
 /**
- * R1：在 code 交換（fake IdP `/token`）之前插一段一次性動作——callback 已載入服務並驗過版本、登入交易還沒開。
- * `beforeToken` 消費即清。
+ * Inserts a one-shot action before the code exchange (fake IdP `/token`): callback has loaded the service and verified the version,
+ * the login transaction hasn't opened. `beforeToken` is cleared once consumed.
  */
 async function appWithTokenHook(seed: { autoCreateEnabled?: boolean } = {}) {
   const idp = createFakeIdp(A);
@@ -43,8 +43,8 @@ async function appWithTokenHook(seed: { autoCreateEnabled?: boolean } = {}) {
   return { app, db, idp, logs, provider, setBeforeToken };
 }
 
-describe("多 provider 的 login／callback（#187）", () => {
-  it("redirect_uri 字面：一般 provider＝<PUBLIC_URL>/api/auth/oidc/callback/<id>、legacy＝舊路徑；兩者都能走完並建帳", async () => {
+describe("login/callback with multiple providers (#187)", () => {
+  it("redirect_uri literal: a normal provider is <PUBLIC_URL>/api/auth/oidc/callback/<id>, legacy is the old path; both complete and create an account", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "l", issuerUrl: B, legacyCallback: true }] });
     const a = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sa", email: "a@x.example", name: "A" } });
     expect(a.redirectUri).toBe(`http://localhost:3000/api/auth/oidc/callback/${t.provider("a").id}`);
@@ -52,13 +52,13 @@ describe("多 provider 的 login／callback（#187）", () => {
     const l = await ssoRoundTrip(t.app, t.idp("l"), { loginUrl: "/api/auth/oidc/login", claims: { sub: "sl", email: "l@x.example", name: "L" } });
     expect(l.redirectUri).toBe("http://localhost:3000/api/auth/oidc/callback");
     expect(l.callbackRes.headers.location).toBe("/");
-    // 帶 id 的入口打到 legacy provider 也可以（redirect_uri 仍是舊路徑——legacy 不提供切換）。
+    // The id-carrying entry also works against the legacy provider (redirect_uri is still the old path: legacy doesn't offer switching).
     const l2 = await ssoRoundTrip(t.app, t.idp("l"), { loginUrl: `/api/auth/oidc/login/${t.provider("l").id}`, claims: { sub: "sl", email: "l@x.example" } });
     expect(l2.redirectUri).toBe("http://localhost:3000/api/auth/oidc/callback");
     expect(l2.callbackRes.headers.location).toBe("/");
   });
 
-  it("A 建的帳號、B（不同 issuer）同 email 首登 → 不自動合併：302 /link-account、pending cookie 帶 B 的身分與目標帳號、零寫入", async () => {
+  it("account created via A, B (different issuer) first login with the same email -> no auto-merge: 302 /link-account, pending cookie carries B's identity and the target account, zero writes", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "b", issuerUrl: B, displayName: "B" }] });
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sa", email: "same@x.example" } });
     const [u] = await t.db.select().from(users).where(eq(users.email, "same@x.example"));
@@ -75,7 +75,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await t.db.select().from(users)).toHaveLength(1);
   });
 
-  it("state cookie：providerId 不符 → oidc_state_mismatch；login 後版本變了 → oidc_unavailable；舊格式（無 providerId）→ oidc_state_mismatch", async () => {
+  it("state cookie: providerId mismatch -> oidc_state_mismatch; version changed after login -> oidc_unavailable; old format (no providerId) -> oidc_state_mismatch", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "b", issuerUrl: B }] });
     const swapped = await ssoRoundTrip(t.app, t.idp("a"), {
       loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "s", email: "s@x.example" },
@@ -96,7 +96,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(oldRes.headers.location).toBe("/login?error=oidc_state_mismatch");
   });
 
-  it("停用：login 與 callback 都拒（oidc_unavailable）；重新啟用恢復；刪除後以同 issuer 重建 → 原身分照常 login", async () => {
+  it("disabled: login and callback both refuse (oidc_unavailable); re-enabling restores; recreated with the same issuer after deletion -> the original identity logs in as usual", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const id = t.provider("a").id;
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${id}`, claims: { sub: "sa", email: "a@x.example" } });
@@ -119,7 +119,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await identitiesOf(t.db, u!.id)).toEqual([{ issuer: A, sub: "sa" }]);
   });
 
-  it("W21：服務沒開自動建帳時新 email → /login?error=registration_disabled、不建帳；已連結身分照常登入", async () => {
+  it("service without auto-create: new email -> /login?error=registration_disabled, no account; linked identity still logs in", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A, autoCreateEnabled: true }] });
     const id = t.provider("a").id;
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${id}`, claims: { sub: "old", email: "old@x.example" } });
@@ -130,7 +130,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect((await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${id}`, claims: { sub: "old", email: "old@x.example" } })).callbackRes.headers.location).toBe("/");
   });
 
-  it("W22 同一站台 A 開 B 關：新 email 經 A → 建帳；經 B → registration_disabled；站台 registration_enabled=false 不影響 A", async () => {
+  it("same site, A on and B off: new email via A -> account created; via B -> registration_disabled; site registration_enabled=false doesn't affect A", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "b", issuerUrl: B, autoCreateEnabled: false }] });
     await t.db.update(siteSettings).set({ registrationEnabled: false });
     const ra = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "na", email: "na@x.example" } });
@@ -141,7 +141,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await t.db.select().from(users)).toHaveLength(1);
   });
 
-  it("R1 (a)callback 驗過版本後、交易前服務 config_version 變了 → /login?error=oidc_unavailable、不建帳、記 warn", async () => {
+  it("service config_version changed after callback verified the version and before the transaction -> /login?error=oidc_unavailable, no account, warn logged", async () => {
     const t = await appWithTokenHook();
     const providerId = t.provider.id;
     t.setBeforeToken(async () => {
@@ -153,7 +153,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(t.logs.lines.filter(l => l.msg === STALE_MSG)).toEqual([{ msg: STALE_MSG, level: "warn", obj: { providerId } }]);
   });
 
-  it("R1 (b)callback 驗過版本後、交易前服務列被刪 → /login?error=oidc_unavailable、不建帳、記 warn", async () => {
+  it("service row deleted after callback verified the version and before the transaction -> /login?error=oidc_unavailable, no account, warn logged", async () => {
     const t = await appWithTokenHook();
     const providerId = t.provider.id;
     t.setBeforeToken(async () => {
@@ -165,7 +165,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(t.logs.lines.filter(l => l.msg === STALE_MSG)).toEqual([{ msg: STALE_MSG, level: "warn", obj: { providerId } }]);
   });
 
-  it("R1 (c) 對照：交易前只把自動建帳從關切成開（版本不變）→ 照常建帳、沒有 stale warn", async () => {
+  it("contrast: before the transaction only auto-create flipped from off to on (version unchanged) -> account created as usual, no stale warn", async () => {
     const t = await appWithTokenHook({ autoCreateEnabled: false });
     const providerId = t.provider.id;
     t.setBeforeToken(async () => {
@@ -177,7 +177,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(t.logs.lines.filter(l => l.msg === STALE_MSG)).toEqual([]);
   });
 
-  it("R1 (d) 帶 next：交易前版本變了 → /login?error=oidc_unavailable&next=…", async () => {
+  it("with next: version changed before the transaction -> /login?error=oidc_unavailable&next=...", async () => {
     const t = await appWithTokenHook();
     const providerId = t.provider.id;
     t.setBeforeToken(async () => {
@@ -188,7 +188,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await t.db.select().from(users)).toHaveLength(0);
   });
 
-  it("claim 上限：email 255 字或 sub 256 字 → oidc_claim_too_long、不封 pending、不建帳；剛好 254／255 → 照常", async () => {
+  it("claim limits: email of 255 chars or sub of 256 -> oidc_claim_too_long, pending not sealed, no account; exactly 254/255 -> as usual", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const id = t.provider("a").id;
     const email255 = "e".repeat(255 - "@x.example".length) + "@x.example";
@@ -203,7 +203,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(ok.callbackRes.headers.location).toBe("/");
   });
 
-  it("provider id 以大寫出現在 login 與 callback 網址 → 照常完成；送給 IdP 的 redirect_uri 用小寫 id", async () => {
+  it("provider id uppercase in the login and callback URLs -> completes as usual; the redirect_uri sent to the IdP uses the lowercase id", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const id = t.provider("a").id;
     const r = await ssoRoundTrip(t.app, t.idp("a"), {
@@ -215,7 +215,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(r.cookies[SESSION_COOKIE]).toBeDefined();
   });
 
-  it("兩個啟用中的 provider 指向同一個 issuer → 用 A 建的帳號用 B 直接登入（不是 confirm_link、不建第二個帳號）", async () => {
+  it("two enabled providers pointing at the same issuer -> an account created via A logs in directly via B (not confirm_link, no second account)", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a1", issuerUrl: A, clientId: "c1" }, { key: "a2", issuerUrl: `${A}/`, clientId: "c2", displayName: "Same IdP again" }] });
     await ssoRoundTrip(t.app, t.idp("a1"), { loginUrl: `/api/auth/oidc/login/${t.provider("a1").id}`, claims: { sub: "sa", email: "a@x.example" } });
     const r = await ssoRoundTrip(t.app, t.idp("a2"), { loginUrl: `/api/auth/oidc/login/${t.provider("a2").id}`, claims: { sub: "sa", email: "a@x.example" } });
@@ -224,7 +224,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await t.db.select().from(users)).toHaveLength(1);
   });
 
-  it("尾斜線形：provider 填 https://gitlab.example/、IdP 回無斜線 → 登入成功、resolved_issuer 寫成無斜線、身分存 IdP 的值", async () => {
+  it("trailing-slash form: provider is https://gitlab.example/, IdP returns without the slash -> login succeeds, resolved_issuer written without the slash, identity stores the IdP's value", async () => {
     const t = await buildOidcApp({ providers: [{ key: "g", issuerUrl: "https://gitlab.example/", idpIssuer: "https://gitlab.example" }] });
     const r = await ssoRoundTrip(t.app, t.idp("g"), { loginUrl: `/api/auth/oidc/login/${t.provider("g").id}`, claims: { sub: "sg", email: "g@x.example" } });
     expect(r.callbackRes.headers.location).toBe("/");
@@ -234,7 +234,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(i!.issuer).toBe("https://gitlab.example");
   });
 
-  it("舊回呼網址的 legacy provider，接上 0014 搬過來的身分與補登的身分 → 同帳號登入", async () => {
+  it("legacy provider on the old callback URL, with identities moved by 0014 and one registered later -> logs into the same account", async () => {
     const idp = createFakeIdp(A);
     const { app, db } = await buildTestApp({ oidcRegistry: createOidcRuntimeRegistry({ fetch: idp.fetch }) });
     const [u] = await db.insert(users).values({ email: "legacy@x.example", displayName: "Legacy" }).returning();
@@ -254,7 +254,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(p!.r).toBe(A);
   });
 
-  it("email_verified 為 false、為字串 'true'、或缺 → 結果與 true 相同（照常建帳）", async () => {
+  it("email_verified false, the string 'true', or missing -> same result as true (account created as usual)", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }] });
     const id = t.provider("a").id;
     const variants: Array<Record<string, unknown>> = [{ email_verified: false }, { email_verified: "true" }, {}];
@@ -265,7 +265,7 @@ describe("多 provider 的 login／callback（#187）", () => {
     expect(await t.db.select().from(users)).toHaveLength(3);
   });
 
-  it("oidc_link_no_proof_method：純 SSO 帳號、它連結的 provider 已停用 → 別的 provider 同 email 首登回該碼（不封 pending）", async () => {
+  it("oidc_link_no_proof_method: SSO-only account whose linked provider is disabled -> another provider's first login with the same email returns that code (pending not sealed)", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A }, { key: "b", issuerUrl: B }] });
     await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "sa", email: "p@x.example" } });
     await t.db.update(authProviders).set({ enabled: false }).where(eq(authProviders.id, t.provider("a").id));

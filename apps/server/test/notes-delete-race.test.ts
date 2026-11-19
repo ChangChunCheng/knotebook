@@ -1,8 +1,8 @@
 /**
- * #188：單篇 `DELETE /api/notes/:id` × 上傳的交錯（比照 `groups-v2-delete-race.test.ts` 的全刪上傳案，群組全刪形）。
- * #181 起 DELETE 是移到垃圾桶：`trashNotesInTx` 第一步對筆記列取 `FOR UPDATE`；上傳交易（`insertUploadInTx`）以
- * `SELECT … WHERE deleted_at IS NULL FOR KEY SHARE` 讀那篇筆記列，與 FOR UPDATE 互斥 → 等移入 commit 後重評條件不成立 → 0 列 →
- * TxAbort 404 not_found（路由先 unlink）。移入不刪 uploads，所以「孤兒檔」那一形只剩永久刪除（垃圾桶筆記本來就上傳不了：授權即 none）。
+ * `DELETE /api/notes/:id` moves the note to the trash: `trashNotesInTx` takes `FOR UPDATE` on the note row first, while the upload
+ * transaction (`insertUploadInTx`) reads the note with `SELECT ... WHERE deleted_at IS NULL FOR KEY SHARE`, which conflicts with it ->
+ * it waits for the trashing to commit, re-evaluates the condition, reads 0 rows -> TxAbort 404 not_found (the route unlinks the file first).
+ * Trashing doesn't delete uploads, so the "orphan file" shape only remains for permanent deletion (a trashed note can't be uploaded to anyway: authorization is none).
  */
 import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,6 @@ import { cookieOf, seedNote, seedUser, sleep, spyCollabHooks } from "./group-hel
 import { PNG, seedUpload } from "./copy-helpers.js";
 
 const BOUNDARY = "kbNoteDeleteRaceBoundary";
-/** 單一 PNG file part 的 multipart body（同 `uploads.test.ts` 的手組形）。 */
 function pngMultipart(): Buffer {
   return Buffer.concat([
     Buffer.from(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`, "utf-8"),
@@ -31,7 +30,7 @@ const upload = async (app: FastifyInstance, noteId: string, userId: string) =>
     payload: pngMultipart(),
   });
 
-/** 等到這個測試 DB 上至少有 `n` 條連線在等鎖，或 `other` 已結束（同 `groups-v2-delete-race.test.ts` 的 `waitForWaiters`）。 */
+/** Waits until at least `n` connections are waiting on locks on this test DB, or `other` has finished (same as `waitForWaiters` in groups-v2-delete-race.test.ts). */
 async function waitForWaiters(pool: Pool, n: number, other?: Promise<unknown>, timeoutMs = 5_000): Promise<"blocked" | "settled"> {
   let settled = false;
   void other?.then(() => { settled = true; }, () => { settled = true; });
@@ -47,12 +46,13 @@ async function waitForWaiters(pool: Pool, n: number, other?: Promise<unknown>, t
   throw new Error(`waitForWaiters(${n}) 逾時（${timeoutMs}ms）`);
 }
 
-describe("#188 單篇刪除 × 上傳", () => {
-  it("單篇 DELETE（移入垃圾桶）持筆記 FOR UPDATE 時上傳到同一篇 → 上傳交易的筆記 KEY SHARE 讀等移入 commit → 移入 204、上傳 404 not_found（讀到 0 列 → TxAbort，路由已 unlink）；uploads 只剩原本那列、磁碟沒有孤兒檔", async () => {
-    // 把移入交易停在「已持筆記 FOR UPDATE、還沒 UPDATE」（`note-trash-locked` 縫）：在這個窗裡發上傳——上傳的授權在交易外，
-    // 此時筆記還活著所以通過；交易內 `FOR KEY SHARE` 讀與 FOR UPDATE 互斥 → 等移入 commit 後 `deleted_at IS NULL` 不成立 → 404。
-    // 縫裡**不等**上傳結束（它正等這個交易的鎖），只等它卡進鎖等待。
-    // 鑑別：拿掉 `trashNotesInTx` 的 FOR UPDATE 時本案先紅在 interleave 斷言（上傳沒被擋、`settled`）。
+describe("#188 single delete x upload", () => {
+  it("single DELETE (trash) holding the note's FOR UPDATE while an upload targets the same note -> the upload's note KEY SHARE read waits for the trashing to commit -> trashing 204, upload 404 not_found (0 rows read -> TxAbort, route already unlinked); uploads keeps only the original row, no orphan file on disk", async () => {
+    // Hold the trashing transaction at "has the note FOR UPDATE, UPDATE not yet run" (`note-trash-locked` hook) and fire the upload in
+    // that window: its authorization is outside the transaction and passes because the note is still alive; the in-transaction
+    // `FOR KEY SHARE` read conflicts with FOR UPDATE, so after the trashing commits `deleted_at IS NULL` fails -> 404.
+    // The hook does not wait for the upload to finish (it is waiting for this transaction's lock), only for it to reach the lock wait.
+    // Without FOR UPDATE in `trashNotesInTx` the interleave assertion fails (the upload isn't blocked and settles).
     const holder: { app?: FastifyInstance; pool?: Pool; noteId?: string; userId?: string; up?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       collabHooks: spyCollabHooks(),
@@ -74,7 +74,7 @@ describe("#188 單篇刪除 × 上傳", () => {
     expect(holder.interleave).toBe("blocked");
     expect(delRes.statusCode).toBe(204);
     expect(upRes.statusCode).toBe(404);
-    // 與「筆記本來就不存在」的 404 逐位元組相同（uploads.test.ts 的 404 案同形）。
+    // Byte-identical to the 404 for a note that never existed (same shape as the 404 case in uploads.test.ts).
     const missing = await upload(app, "22222222-2222-2222-2222-222222222222", a.id);
     expect(missing.statusCode).toBe(404);
     expect(upRes.body).toBe(missing.body);

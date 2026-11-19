@@ -1,8 +1,3 @@
-/**
- * 筆記大小上限（`NOTE_MAX_BYTES`，`notes/note-size.ts`）：API／MCP／批次寫回／撤回／套用版本／複製只擋成長——修改後超過上限、而且比修改前大
- * 才拒絕（HTTP 413 `note_too_large` 帶 `limitBytes`；MCP 工具錯誤 `note_too_large`）。瀏覽器的協作更新不在 server 檢查（同 310006f）。
- * 已超過的筆記照常讀出與下載，刪減一律接受。上限在這裡壓到 20 000 位元組。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
@@ -19,10 +14,11 @@ import { bulkGet, bulkPut, callTool, downloadNote, editBody, issueBulkDirect, se
 const CAP = 20_000;
 const config = loadConfig({ DATABASE_URL: "postgres://u:p@localhost:5432/test", APP_SECRET: testConfig.appSecret, PUBLIC_URL: "http://localhost:3000", NOTE_MAX_BYTES: String(CAP) });
 const PASSWORD = "correct-horse-battery";
-/** n 個不同的段落（每段約 60 位元組的文字；存下的狀態每段約 270 位元組）。 */
+// Only growth is blocked; browser collab updates are not size-checked on the server; over-cap notes stay readable and downloadable.
+/** n distinct paragraphs (about 60 bytes of text each; about 270 bytes of stored state each). */
 const paras = (n: number, tag = "p") => Array.from({ length: n }, (_, k) => `${tag} ${k} lorem ipsum dolor sit amet consectetur adipiscing elit`).join("\n\n");
-const BIG = paras(450); // 狀態約 120 KB：超過 CAP
-const SMALL = paras(20); // 約 5 KB
+const BIG = paras(450); // state about 120 KB: over CAP
+const SMALL = paras(20); // about 5 KB
 
 async function scene() {
   const ctx = await buildCollabTestApp({ config });
@@ -41,8 +37,8 @@ const expect413 = (res: { statusCode: number; json(): unknown }) => {
   expect((res.json() as { error: { code: string; limitBytes: number } }).error).toMatchObject({ code: "note_too_large", limitBytes: CAP });
 };
 
-describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
-  it("REST /edits append 讓筆記超過上限 → 413（limitBytes）；內容、紀錄都沒動；上限內的照常 201", async () => {
+describe("API/MCP writes: refused when over the cap, nothing written", () => {
+  it("REST /edits append pushing a note over the cap -> 413 (limitBytes), content and records untouched; within the cap still 201", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, SMALL);
     expect((await s.edit({ op: "append", markdown: paras(30, "ok") })).statusCode).toBe(201);
@@ -56,7 +52,7 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
     await s.ctx.destroy();
   });
 
-  it("MCP edit_note → 工具錯誤 note_too_large（帶 limitBytes）", async () => {
+  it("MCP edit_note -> tool error note_too_large (with limitBytes)", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, SMALL);
     const r = await callTool(s.ctx.app, s.pat.token, "edit_note", { note_id: s.note.id, op: "append", markdown: paras(400, "big") });
@@ -65,7 +61,7 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
     await s.ctx.destroy();
   });
 
-  it("帶 content 建立（REST POST /api/notes、MCP create_note）超過上限 → 413／note_too_large，一列都沒留下", async () => {
+  it("create with content (REST POST /api/notes, MCP create_note) over the cap -> 413/note_too_large, no row left behind", async () => {
     const s = await scene();
     const count = async () => (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
     const n0 = await count();
@@ -79,7 +75,7 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
     await s.ctx.destroy();
   });
 
-  it("批次寫回（改一段變很大）→ 413；批次新增大檔 → 413、沒建", async () => {
+  it("batch write-back (one section made huge) -> 413; batch creating a huge file -> 413, not created", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, SMALL);
     const bulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "write" });
@@ -95,22 +91,22 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
     await s.ctx.destroy();
   });
 
-  it("撤回一次刪段（把大段插回去）會超過上限 → 413；刪段本身（變小）照常", async () => {
+  it("revert that undoes a section deletion (re-inserts the big section) would exceed the cap -> 413; the deletion itself (shrinking) is accepted", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, "# A\n\n" + paras(40, "a") + "\n\n# B\n\nb");
     const outline = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json().outline as Array<{ sectionId: string; heading: string; fingerprint: string }>;
     const a = outline.find(o => o.heading === "A")!;
     const del = await s.edit({ op: "delete_section", section_id: a.sectionId, if_match: a.fingerprint });
     expect(del.statusCode, del.body).toBe(201);
-    // 別處長到快滿：再把 A 段插回去就超過
-    const fill = await s.edit({ op: "append", markdown: paras(40, "fill") }); // 約 11 KB：仍在上限內
+    // Another section grows close to full: re-inserting section A then exceeds the cap
+    const fill = await s.edit({ op: "append", markdown: paras(40, "fill") }); // about 11 KB: still within the cap
     expect(fill.statusCode, fill.body).toBe(201);
     const rev = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/edits/${del.json().editId}/revert`, headers: bearer(s.pat.token) });
     expect413(rev);
     await s.ctx.destroy();
   });
 
-  it("複製一篇已經超過上限的筆記 → 413（副本是新筆記：比 0 大又超過）；上限內的照常複製", async () => {
+  it("copying a note already over the cap -> 413 (the copy is a new note: larger than 0 and over the cap); within the cap copies normally", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, BIG);
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
@@ -125,15 +121,15 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
     await s.ctx.destroy();
   });
 
-  it("套用（還原）一個比現況大、而且超過上限的版本 → 413；現況不動", async () => {
+  it("applying (restoring) a version larger than the current state and over the cap -> 413; current state untouched", async () => {
     const s = await scene();
-    await seedMd(s.ctx.db, s.note.id, BIG); // 已超過上限（上限之前就存在的筆記）
+    await seedMd(s.ctx.db, s.note.id, BIG); // already over the cap (a note that existed before the cap)
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
     const headers = { cookie, "content-type": "application/json", origin: "http://localhost:3000" };
     const saved = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/versions`, headers, payload: {} });
     expect(saved.statusCode, saved.body).toBe(201);
     const c = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json();
-    const shrink = await s.edit({ op: "replace_all", markdown: "small now", if_match: c.fingerprint }); // 變小：照常
+    const shrink = await s.edit({ op: "replace_all", markdown: "small now", if_match: c.fingerprint }); // shrinks: accepted
     expect(shrink.statusCode, shrink.body).toBe(201);
     const after = await s.stored();
     const res = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/versions/${saved.json().seq}/apply`, headers, payload: { versionId: saved.json().id, discardUnsaved: true } });
@@ -144,8 +140,8 @@ describe("API／MCP 寫入：長過上限就拒絕，什麼都沒寫", () => {
   });
 });
 
-describe("已經超過上限的筆記：照常讀出、下載；刪除與改短照樣接受", () => {
-  it("超過上限的筆記：/content、read_note_section、單篇下載都 200；刪一段、整篇換成短的 → 201", async () => {
+describe("notes already over the cap: still readable and downloadable; deleting and shortening are accepted", () => {
+  it("over-cap note: /content, read_note_section and single download all 200; deleting a section and replacing the whole note with a short one -> 201", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, "# A\n\n" + paras(220, "a") + "\n\n# B\n\n" + paras(220, "b"));
     expect(await s.stored()).toBeGreaterThan(CAP);
@@ -155,11 +151,11 @@ describe("已經超過上限的筆記：照常讀出、下載；刪除與改短�
     expect(sec.isError).toBeUndefined();
     const bulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "write" });
     expect((await bulkGet(s.ctx.app, `/api/transfer/notes/${s.note.id}`, bulk.token)).statusCode).toBe(200);
-    // 還在上限之上、但變小：接受
+    // Still above the cap but smaller: accepted
     const b = (c.json().outline as Array<{ sectionId: string; heading: string; fingerprint: string }>).find(o => o.heading === "B")!;
     const del = await s.edit({ op: "delete_section", section_id: b.sectionId, if_match: b.fingerprint });
     expect(del.statusCode, del.body).toBe(201);
-    // 超過上限的筆記不能再長大（即使只加一點）
+    // A note above the cap can't grow again (even by a little)
     expect413(await s.edit({ op: "append", markdown: "one more line" }));
     const now = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json();
     const short = await s.edit({ op: "replace_all", markdown: "short", if_match: now.fingerprint });
@@ -168,8 +164,8 @@ describe("已經超過上限的筆記：照常讀出、下載；刪除與改短�
   });
 });
 
-describe("瀏覽器的協作更新不在 server 檢查（網頁編輯器在貼上、拖放、站內 AI 套用之前自己擋）", () => {
-  it("協作用戶端貼上一大段讓筆記超過上限 → server 照常套用、轉給另一個用戶端，連線不被關", async () => {
+describe("browser collab updates aren't checked on the server (the web editor blocks before paste, drop and in-site AI apply)", () => {
+  it("collab client pastes a big chunk pushing the note over the cap -> server applies it as usual and relays it to the other client, the connection isn't closed", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await ctx.createUser({ email: "c@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -192,8 +188,8 @@ describe("瀏覽器的協作更新不在 server 檢查（網頁編輯器在貼�
   }, 60_000);
 });
 
-describe("刪減與等量改寫一律接受（依結果判斷：還在的內容沒變多、狀態一次長不超過 SLACK）", () => {
-  it("超過上限的筆記：把一段改成短一點的字（狀態可能因結構成本變大）→ REST 201、MCP 照樣成功", async () => {
+describe("shrinking and same-size rewrites are always accepted (judged by result: remaining content didn't grow, state grows at most SLACK at once)", () => {
+  it("over-cap note: rewriting a section to shorter text (state may grow from structure cost) -> REST 201, MCP also succeeds", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, "# A\n\n" + paras(220, "a") + "\n\n# B\n\nhello wonderful world");
     expect(await s.stored()).toBeGreaterThan(CAP);
@@ -206,7 +202,7 @@ describe("刪減與等量改寫一律接受（依結果判斷：還在的內容�
     await s.ctx.destroy();
   });
 
-  it("被 413 擋下的複製不吃 edit 額度：連續 35 次被擋之後，上限內的複製照樣 201", async () => {
+  it("a copy blocked by 413 doesn't consume edit quota: after 35 consecutive blocks, a within-cap copy still gives 201", async () => {
     const s = await scene();
     await seedMd(s.ctx.db, s.note.id, BIG);
     const small = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "S" });
@@ -220,8 +216,8 @@ describe("刪減與等量改寫一律接受（依結果判斷：還在的內容�
   });
 });
 
-describe("開機日誌", () => {
-  it("記下已經超過上限的筆記：篇數與 id（不記標題）；沒有就記 0", async () => {
+describe("startup log", () => {
+  it("logs the notes already over the cap: count and ids (not titles); logs 0 if none", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const big = await seedNote(ctx.db, { ownerId: u.id }, { title: "秘密標題" });
