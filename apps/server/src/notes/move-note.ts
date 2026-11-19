@@ -1,17 +1,4 @@
-/**
- * #180：移入群組的本體——REST `POST /api/notes/:id/move` 與 MCP `move_note_to_group` 共用。
- * 入口 `noteId.toLowerCase()`（MCP 的 `NOTE_ID` 與 REST 的 app 層 `lowercaseUuidParams` 送進來已是小寫；這裡保留作防禦——
- * 踢線與 live doc 以小寫字串為鍵）。順序逐條＝原路由：`resolveNoteAccess` → `none` →
- * `!permissions.moveToGroup` → `UUID_RE.test(groupId)`（MCP 的 GROUP_ID 已擋非 uuid，這一關對 MCP 永不觸發，留著為 REST）→
- * `groupId.toLowerCase()` → 交易 → catch 分類（`TxAbort`（含 `StorageQuotaExceeded`）→ `aborted`、FK → `group_not_found`
- * （防禦縱深）、`isRetryableTxError` → `busy`、其餘 rethrow）→ **commit 成功後**依序：`versions.relocated([noteId])`（版本歷史
- * 重建載入中筆記的版本狀態；commit 失敗的 catch 分支不呼叫）→ 踢線（被清分享者 ∪ 呼叫者）→ `moved`。
- * 交易內清版本由 `notes/tx/move.ts` 的 `resetNoteVersionsInTx` 自動跟著走。
- * 資料夾：帶 `folderId` 時，在 UUID 判斷之後依序判可見性（非 UUID／看不到 → 404 `folder_not_found`）
- * 與空間（不是 `groupId` 那個群組的資料夾 → 400 `folder_cross_space`），都以 `aborted` 回（outcome 聯集不變）；`can_edit`
- * 與資料夾鎖在交易內判。
- * 含 `.transaction(` ⇒ 在 S14 的 `ROUTE_FILES`。
- */
+// Callers pass lowercase ids; `toLowerCase` is kept defensively (kicks and live docs are keyed by lowercase). `versions.relocated` and the connection kick run only after a successful commit. A `.transaction(` here must be a single `moveNoteToGroupInTx` call (test/unit/s14-structure.test.ts).
 import type { CollabHooks } from "../collab/hooks.js";
 import type { VersionService } from "../collab/versions.js";
 import type { Db } from "../db/index.js";
@@ -33,13 +20,9 @@ export interface MoveNoteDeps {
 
 export type MoveOutcome =
   | { kind: "moved" }
-  /** `resolveNoteAccess` 為 none。 */
   | { kind: "not_found" }
-  /** `!permissions.moveToGroup`（只有個人筆記的 owner 為真）。 */
   | { kind: "forbidden" }
-  /** 非 UUID，或交易外 FK 23503（防禦縱深）。 */
   | { kind: "group_not_found" }
-  /** 交易內的 `TxAbort`（含子類 `StorageQuotaExceeded`）與交易外資料夾預判的失敗——原樣交給呼叫端。 */
   | { kind: "aborted"; err: TxAbort }
   | { kind: "busy" };
 
@@ -62,7 +45,6 @@ export async function moveNoteToGroup(
     }
     folderId = folder.folder.id;
   }
-  // S14：callback 整段就是 `moveNoteToGroupInTx(tx, …)`，引數是交易前備好的純資料與測試縫。
   const txInput = {
     noteId, userId: input.userId, userHandle: input.userHandle, groupId, folderId, lockTimeoutMs: deps.storageLockTimeoutMs,
   };
@@ -71,17 +53,14 @@ export async function moveNoteToGroup(
     await deps.groupTestHook?.("note-move-authorized", { noteId });
     moved = await deps.db.transaction(tx => moveNoteToGroupInTx(tx, txInput, deps.groupTestHook));
   } catch (err) {
-    // 先判子類（StorageQuotaExceeded extends TxAbort）：呼叫端要先判子類才拿得到數字；數字可見性在交易外判。
+    // Check the subclass first: `StorageQuotaExceeded` extends `TxAbort` and callers need its numbers.
     if (err instanceof TxAbort) return { kind: "aborted", err };
-    // 防禦縱深：目標資料夾在交易內已持 KEY SHARE 並判過群組，UPDATE 撞不到 `notes_folder_fk`／KF001；撞到與看不到同形。
+    // Defence in depth: the folder holds KEY SHARE and its group was checked, so the UPDATE can't hit `notes_folder_fk`/KF001.
     if (isNoteFolderSpaceViolation(err) || foreignKeyViolationConstraint(err) === "notes_folder_fk") {
       return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
     }
-    // 防禦縱深：(1) 已持目標群組列的 KEY SHARE，群組在交易中刪不掉，notes 的 UPDATE 不會撞群組 FK 23503。#247 起交易內另有
-    // `uploads.charged_to_id` → users 的 FK（(3a) 寫入移入者）：只有移入者帳號在交易中被硬刪才會撞——`src/` 目前沒有硬刪使用者的路徑。
-    // 兩者撞到都回同一條 group_not_found（catch 在交易外）。
+    // Defence in depth: the group's KEY SHARE is held. Only a hard-deleted mover account (`uploads.charged_to_id` FK; no such path in `src/`) could hit an FK here.
     if (isForeignKeyViolation(err)) return { kind: "group_not_found" };
-    // 儲存配額：空間鎖逾時（55P03）／死結（40P01，含既有的移動 × 轉移在 note_redirects 的形）／40001 → busy（REST 409 server_busy）。
     if (isRetryableTxError(err)) return { kind: "busy" };
     throw err;
   }

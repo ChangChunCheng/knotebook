@@ -1,16 +1,5 @@
-/**
- * 建立／複製進群組的目標檢查——成員資格＋角色新建旗標的判準**只有這一份實作**（#175）。
- * 三個呼叫點：`POST /api/notes {groupId}`、`POST /api/notes/:id/copy {groupId}`（兩者在 `routes/notes.ts`），
- * 以及 MCP `create_note {groupId}`（#175）。
- *
- * 回呼叫者在該群組的成員列＋角色旗標＋群組名。`undefined`＝群組不存在或不是成員（呼叫端都回同一條 404／
- * `group_not_found`）。交易外查。`POST /api/notes {groupId}` 與 MCP `create_note` 只靠這一次（撤旗標與建立之間
- * 不保證，第 5 條）；複製另在交易內持目標 groups KEY SHARE 重驗（`notes/tx/copy.ts` (g)），這裡對複製只是快速
- * 404（DTO 的角色／群組名取 (g) 交易內讀到的值；不得拿這裡的 `m` 組複製的 DTO）。
- *
- * ⚠ 本檔**不是** `tx/` 底下的檔、也不寫入任何列（S14 守衛 ① 只掃 `tx/`；`notes-slug.test.ts` 的 `.insert(notes)`
- * 源碼守衛要求這裡沒有 insert）。
- */
+// Single implementation of the membership + create-flag check (#175). Runs outside the transaction: copy rechecks inside it (`notes/tx/copy.ts`), so for copy this is only a fast 404 and the DTO must come from the in-transaction read.
+// Not under `tx/` and writes nothing: `notes-slug.test.ts` requires no `.insert(notes)` here.
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../db/tx.js";
 import { groupMembers, groupRoles, groups } from "../db/schema.js";

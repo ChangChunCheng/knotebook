@@ -1,19 +1,12 @@
-/**
- * 開機時記下已經超過大小上限的筆記（`NOTE_MAX_BYTES`，`notes/note-size.ts`）：一句 SQL 比 `note_states.ydoc` 的位元組數，記篇數與
- * 筆記 id（**只記 id，不記標題**）。不改任何東西——超過上限的筆記照常開啟、讀出，只是不能再長大。
- */
+// Logs ids only, never titles; changes nothing: over-limit notes still open and read.
 import { gt, sql } from "drizzle-orm";
 import type { Db } from "../db/index.js";
 import { noteStates } from "../db/schema.js";
 import type { SiteLimits } from "../site-limits/store.js";
 
-/** 日誌裡最多列幾個 id（其餘只算進篇數）。 */
 export const OVER_CAP_IDS_LOGGED = 1000;
 
-/**
- * `noteMaxBytes` 的生效值有變（管理頁改了）就重記一次超過新上限的筆記（#397）。**只有 `index.ts` 呼叫**；`buildApp` 不訂閱。
- * 回傳解除訂閱的函式。
- */
+// Only `index.ts` calls this; `buildApp` doesn't subscribe.
 export function watchNotesOverCap(
   siteLimits: SiteLimits,
   db: Db,

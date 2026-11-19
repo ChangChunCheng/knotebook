@@ -1,19 +1,10 @@
-/**
- * #175 的路徑查找序，自 `routes/notes.ts` 的 `resolvePath` 閉包抽出（#269：轉換工作要用同一份查找，不得抄第二份）。
- * ① 現行 slug → ② 轉址表（過期 → 刪列、當 miss）→ ③ prev_slug（limit 2；0 或 >1 → miss）。**只解路徑、不授權**。
- * `source` 決定取哪些欄位：routes 要完整列（by-path 首查即整列），轉換工作只要 `{ id, title, groupId }`。
- */
 import { and, eq, type SQL } from "drizzle-orm";
 import type { DbOrTx } from "../db/tx.js";
 import { notes } from "../db/schema.js";
 import { lookupRedirect } from "./redirects.js";
 
 export interface PathRowSource<Row> {
-  /**
-   * 以 `cond` 取列，最多 `limit` 列（每次呼叫現造 builder——drizzle builder 單次使用）。
-   * `cond` 含呼叫端的 `scopeCond`：`/n/` 形是 `eq(users.handle, handle)`，所以任何實作的 FROM 都必須
-   * JOIN `users ON users.id = notes.owner_id`（只取 `{ id, title, groupId }` 也一樣）。
-   */
+  /** `cond` includes the caller's `scopeCond`; the `/n/` form filters on `users.handle`, so every implementation must JOIN `users ON users.id = notes.owner_id`. Resolves a path only; no authorization. */
   where(cond: SQL, limit: number): PromiseLike<Row[]>;
   byId(noteId: string): PromiseLike<Row | undefined>;
 }

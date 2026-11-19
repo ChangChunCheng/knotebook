@@ -1,10 +1,4 @@
-/**
- * #269：升級後一次性把既有筆記裡的站內一般連結轉成 wikilink（含表格）。每篇整段在 `writes.runExclusive` 內（共用寫入佇列）：
- * 1 fork → 2 預掃（純 Yjs）→ 3 解析（mount 前、可查 DB）→ 4 存版本「連結轉換前」（直接 versions.cutIfDirty，**不得** writes.saveVersion）
- * → 5 headless 只改含可解連結的 block（block id 全數保留）→ 6 mergeDiff（`source:"link-convert"`、不帶 userId、expectFingerprint＝整篇）
- * → 7 `note_links` 只增補寫（每篇標 done 前一律執行）→ 8 UPDATE 標記。
- * signal 已 abort 時任何結果（含例外）都不寫標記（那篇留 pending，下次啟動再來）。日誌不記 href、標題、文字。
- */
+// Each note runs inside `writes.runExclusive` (the shared write queue). The pre-conversion version is saved via `versions.cutIfDirty` directly, never `writes.saveVersion` (it would wait on the queue we're in). If the signal is already aborted nothing writes a marker (the note stays pending). Logs never record href, title or text.
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -64,7 +58,6 @@ type NoteOutcome =
   | { kind: "deleted" }
   | { kind: "aborted" };
 
-/** 步 2：走訪 fragment 全部 `Y.XmlText` 的 delta，收集 `attributes.link.href` 能剖析的相異 href（表格也是 XmlElement 子樹，天然涵蓋）。 */
 export function scanSiteLinkHrefs(doc: Y.Doc, siteOrigin: string): Map<string, SiteNoteHref> {
   const out = new Map<string, SiteNoteHref>();
   for (const node of doc.getXmlFragment(YDOC_FRAGMENT).createTreeWalker(n => n instanceof Y.XmlText)) {
@@ -79,13 +72,10 @@ export function scanSiteLinkHrefs(doc: Y.Doc, siteOrigin: string): Map<string, S
   return out;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote Block 的泛型三元組，走 repo 慣例（同 apply.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote Block generic triple; repo convention
 type AnyBlock = { id: string; content?: unknown; children?: AnyBlock[] } & Record<string, any>;
 
-/**
- * 步 5：lease 紀律同 `prepareEdit`（持 lease 不再取 lease）。只對「自己的 content 有可解站內連結」的 block 呼叫 `updateBlock(id, { content })`
- * ——block id 全數保留、沒動到的 block 一個 Y 位元組都不變（只動含連結的 block 把正規化範圍壓到最小）。
- */
+/** Only blocks whose own content has a resolvable link are updated, keeping other blocks byte-identical and the normalization range minimal. */
 export async function prepareLinkConversion(
   deps: ApplyDeps,
   fork: Y.Doc,
@@ -115,11 +105,10 @@ export async function prepareLinkConversion(
   }
 }
 
-/** 步 7：只增不刪；target ＝ 文件裡的 wikilink 目標去掉自身、經同一解析範圍過濾；ids 為空則不查也不寫。冪等。 */
 async function backfillNoteLinks(db: Db, noteId: string, scope: SiteLinkScope, doc: Y.Doc): Promise<void> {
   const norm = normalizeLinkTargets(noteId, extractLinkTargets(doc).slice(0, MAX_LINK_TARGETS));
   if (!norm.ok || norm.targets.length === 0) return;
-  // #181：群組分支刻意不排除垃圾桶目標（目標在垃圾桶照記，還原後反向連結仍在）——勿補 deleted_at 條件。
+  // #181: the group branch deliberately doesn't exclude trashed targets, so backlinks survive a restore.
   const allowed =
     scope.kind === "user"
       ? (await visibleTitlesByIds(db, scope.userId, norm.targets)).map(t => t.id)
@@ -128,11 +117,11 @@ async function backfillNoteLinks(db: Db, noteId: string, scope: SiteLinkScope, d
   try {
     await db.insert(noteLinks).values(allowed.map(targetNoteId => ({ sourceNoteId: noteId, targetNoteId }))).onConflictDoNothing();
   } catch (err) {
-    if (!isForeignKeyViolation(err)) throw err; // 目標剛被刪：下次編輯者的全集同步會收斂
+    // Target just deleted: the next sync converges.
+    if (!isForeignKeyViolation(err)) throw err;
   }
 }
 
-/** 步 4：存「連結轉換前」。null 重來一次；skipped（uninitialized／fingerprint-failed）⇒ retry；note-deleted ⇒ deleted。 */
 async function cutBeforeConversion(deps: LinkConversionDeps, noteId: string): Promise<"ok" | "retry" | "deleted"> {
   for (let i = 0; i < 2; i += 1) {
     const { doc, transient } = await deps.versions.docFor(noteId);
@@ -145,9 +134,9 @@ async function cutBeforeConversion(deps: LinkConversionDeps, noteId: string): Pr
 }
 
 async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteId: string, signal: AbortSignal, stage: { name: string }): Promise<NoteOutcome> {
-  if (signal.aborted) return { kind: "aborted" }; // 等佇列期間收到關機：什麼都不做
+  if (signal.aborted) return { kind: "aborted" };
   stage.name = "scope";
-  // #181：垃圾桶筆記視同 deleted、跳過（列留在原狀態（pending／retry），還原後下次啟動那輪再處理；與 `scanDue` 一致）。
+  // A trashed note counts as deleted (consistent with `scanDue`); its row stays as is.
   const [meta] = await deps.db.select({ ownerId: notes.ownerId, groupId: notes.groupId }).from(notes).where(and(eq(notes.id, noteId), isNull(notes.deletedAt))).limit(1);
   if (!meta) return { kind: "deleted" };
   const scope: SiteLinkScope = meta.groupId !== null ? { kind: "group", groupId: meta.groupId } : { kind: "user", userId: meta.ownerId! };
@@ -180,9 +169,8 @@ async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteI
     const cut = await cutBeforeConversion(deps, noteId);
     if (cut === "deleted") return { kind: "deleted" };
     if (cut === "retry") {
-      // 非例外的 retry 也記一行 warn；不記 href／標題／文字。
       deps.log.warn({ noteId, stage: stage.name, err: "version-skipped" }, "站內連結轉換：單篇失敗");
-      return { kind: "retry" }; // 沒存成版本就不轉換
+      return { kind: "retry" };
     }
     stage.name = "prepare";
     const prepared = await prepareLinkConversion(applyDeps, f.fork, f.sv, resolved, deps.siteOrigin);
@@ -197,16 +185,14 @@ async function processNote(deps: LinkConversionDeps, applyDeps: ApplyDeps, noteI
     try {
       await mergeDiff(applyDeps, noteId, ctx, { targetIds: null, expectFingerprint: f.whole, anchorId: null, diff: prepared.diff, afterIds: [] });
     } catch (err) {
-      // #181：合併前一刻被移入垃圾桶（或正被移入）→ 同步 1 的 deleted（列留原狀態，還原後下次啟動再處理）。
       if (err instanceof NoteGoneError) return { kind: "deleted" };
-      if (err instanceof FingerprintMismatch) continue; // 從步 1 重來一次；再不符 ⇒ retry
+      if (err instanceof FingerprintMismatch) continue;
       throw err;
     }
     stage.name = "links";
-    await backfillNoteLinks(deps.db, noteId, scope, f.fork); // 合併成功：用合併後的 fork（同 apply-version.ts）
+    await backfillNoteLinks(deps.db, noteId, scope, f.fork);
     return { kind: "done", converted: prepared.converted, unresolved };
   }
-  // 指紋兩次不符：非例外的 retry 也記 warn。
   deps.log.warn({ noteId, stage: "merge", err: "fingerprint-mismatch" }, "站內連結轉換：單篇失敗");
   return { kind: "retry" };
 }
@@ -231,14 +217,9 @@ async function record(deps: LinkConversionDeps, row: { noteId: string; attempts:
       deps.log.error({ noteId: row.noteId, attempts: row.attempts + 1 }, "站內連結轉換：第 3 次失敗，標 failed、不再自動重試（手動重跑＝把該列改回 pending）");
     } else summary.retry += 1;
   }
-  // deleted：筆記已不在或在垃圾桶裡——列不寫（垃圾桶那種留在原狀態（pending／retry），還原後下次啟動再處理）；aborted 由呼叫端擋在這之前。
 }
 
-/**
- * 日誌不記 href、標題、文字：例外只記**類別名＋錯誤碼**。不可整個 `err` 交給 logger——drizzle 把任何查詢錯誤包成
- * `DrizzleQueryError`，message 內嵌 `params`（解析階段是連結剖出的 handle／slug，切版階段是整份 Yjs 更新＝筆記明文），pg 錯誤的
- * `detail` 也可能帶值。錯誤碼取 `err.code`，沒有再取 `err.cause.code`（pg 的 SQLSTATE、node 的 `ECONNREFUSED` 這類）。
- */
+/** Only class name and code: drizzle's `DrizzleQueryError` message embeds params (link handles/slugs, or the whole Yjs update = note plaintext), and pg errors' `detail` can carry values. */
 export function errorSummary(err: unknown): { name: string; code?: string } {
   const codeOf = (e: unknown): string | undefined =>
     typeof e === "object" && e !== null && typeof (e as { code?: unknown }).code === "string" ? (e as { code: string }).code : undefined;
@@ -268,7 +249,6 @@ async function convertOne(deps: LinkConversionDeps, row: { noteId: string; attem
   return "recorded";
 }
 
-/** 一輪：候選 `status IN ('pending','retry') AND attempts < 3`、keyset by note_id、每批 batchSize；忙的本輪最後再試一次，仍忙維持 pending。 */
 export async function runLinkConversion(deps: LinkConversionDeps, opts: { signal: AbortSignal; batchSize?: number }): Promise<LinkConversionSummary> {
   const started = Date.now();
   const batchSize = opts.batchSize ?? LINK_CONVERSION_BATCH;
@@ -304,16 +284,12 @@ export async function runLinkConversion(deps: LinkConversionDeps, opts: { signal
 export interface LinkConversion {
   start(): void;
   stop(): Promise<void>;
-  /** 整合測試直接呼叫 `runLinkConversion(conversion.deps!, …)` 用；沒有 collab 的部署為 null。 */
   readonly deps: LinkConversionDeps | null;
 }
 
 export const NOOP_LINK_CONVERSION: LinkConversion = { start() {}, stop: () => Promise.resolve(), deps: null };
 
-/**
- * `start()` 只會啟動一次（第二次 no-op），延遲 `startDelayMs`（unref timer）後跑一輪；`stop()` abort 並回傳「在途那一篇結束（或被放棄）」
- * 的 promise——**永不 reject**（`index.ts` 拿它跟 2 s 計時賽跑；reject 會跳過 `collab.destroy()`、丟掉人的待落盤編輯）。
- */
+/** `stop()` never rejects: `index.ts` races it against a 2 s timer, and a rejection would skip `collab.destroy()` and lose pending edits. */
 export function createLinkConversion(deps: LinkConversionDeps, opts: { startDelayMs?: number } = {}): LinkConversion {
   const controller = new AbortController();
   let started = false;

@@ -3,19 +3,10 @@ import { UUID_RE, type SiteLinkCandidate, type WikilinkTarget } from "@knotebook
 import type { Db } from "../../db/index.js";
 import { groupMembers, groupRoles, noteShares, notes, users } from "../../db/schema.js";
 
-/** #269：寫入者／讀者可見筆記的站內連結候選（`resolveFromList` 吃這個形）。 */
 export type VisibleNoteTarget = SiteLinkCandidate;
 
 /**
- * 使用者看得到的筆記（自有 ∪ 被分享 ∪ 所屬群組裡角色可讀的筆記；同 GET /api/notes 的三支），帶站內網址比對要的欄位。
- * #175：grouped 支 JOIN `group_roles` 並要求 `can_read`——無閱讀旗標的成員看不到群組筆記。群組筆記的 `owner_id`
- * 是 NULL，owned 支（`owner_id = $u`）結構上不會撈到它們；三支已結構性互斥（owned 要 `owner_id = $u`、
- * shared 要 `group_id IS NULL`、grouped 要 `group_id` 非 NULL——群組筆記殘留分享列也造不出重複），依 id 去重只是純防禦。
- * shared 支明寫 `group_id IS NULL`：群組筆記上的殘留分享列不算——`owner_id <> $u` 對 NULL 求值
- * 為 NULL 也會擋住，但不靠 NULL 語意。不改吃 `visibleNoteBranches`（欄位集不同，它在 wikilink 重綁路徑上）。
- * `ownerHandle`：LEFT JOIN owner——群組筆記為 NULL。
- * #269：`ids` 有給時三支各加 `inArray(notes.id, ids)`（只查這些）；給了空集合（或全是非 uuid）⇒ 不發任何查詢。
- * #181：三支都排除垃圾桶筆記（`deleted_at IS NULL`）。
+ * The three branches (owned, shared, grouped with `can_read`) are mutually exclusive: group notes have `owner_id` NULL and shared requires `group_id IS NULL` (leftover share rows on group notes don't count), so the id dedup is purely defensive. Doesn't reuse `visibleNoteBranches`: different column set, and that one is on the wikilink rebind path.
  */
 export async function visibleNoteTargets(db: Db, userId: string, ids?: readonly string[]): Promise<VisibleNoteTarget[]> {
   const only = ids === undefined ? undefined : ids.filter(id => UUID_RE.test(id)).map(id => id.toLowerCase());
@@ -35,12 +26,10 @@ export async function visibleNoteTargets(db: Db, userId: string, ids?: readonly 
   return [...byId.values()];
 }
 
-/** wikilink 重綁的候選（`{ id, title }`）——同 `visibleNoteTargets` 的可見性。 */
 export async function visibleNoteTitles(db: Db, userId: string): Promise<WikilinkTarget[]> {
   return (await visibleNoteTargets(db, userId)).map(({ id, title }) => ({ id, title }));
 }
 
-/** #269：MCP／REST 讀出的現行標題——只查 `ids`（`extractLinkTargets` 的結果）中讀者看得到的；空集合不查。 */
 export async function visibleTitlesByIds(db: Db, userId: string, ids: readonly string[]): Promise<WikilinkTarget[]> {
   return (await visibleNoteTargets(db, userId, ids)).map(({ id, title }) => ({ id, title }));
 }

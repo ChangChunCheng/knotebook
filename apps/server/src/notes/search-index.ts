@@ -1,14 +1,4 @@
-/**
- * #93：全文索引的池層包裝（本檔在 S14 的 `ROUTE_FILES`：`.transaction(` 的 callback 整段就是
- * `replaceNoteSearchIndexInTx(tx, input, hooks)`，引數只准識別字）。
- * - `extractForIndex`：同步抽取（`collab/store.ts` 在 `encodeStateAsUpdate` 的同一 tick 呼叫）。
- * - `writeSearchIndex`：開交易；`SearchIndexSkip` → 回 `"gone"`／`"stale"`；FK 違反視同 `"gone"`——**防禦性**：
- *   第 1 步已持 notes KEY SHARE，交易中的刪除會擋在 notes 列上，現行路徑到不了這個分支（沒有測試守著它；刪掉它測試仍全綠）；
- *   其餘例外 rethrow（呼叫端自己決定吞不吞：store 吞、回填記 warn）。
- * - `bumpSearchIndexVersion`：單句 UPDATE，只鎖狀態列、不碰 notes 列（刪除方持 notes 列後等狀態列，本句不等任何別的鎖
- *   ——無環）。WHERE 含 hash 與 extractor 版本：只在「索引內容就是這份」時推進。回更新列數（0＝呼叫端清快取自癒）。
- * - `backfillSearchIndex`：背景回填（見函式上方註解）。
- */
+// An FK violation counts as `"gone"` defensively: the transaction already holds notes KEY SHARE, so current paths can't reach it (no test guards it). `bumpSearchIndexVersion` locks only the state row (a deleter holds notes then waits on the state row: no cycle) and advances only when hash and extractor version match.
 import { and, asc, eq, gt, isNull, lt, ne, or, sql } from "drizzle-orm";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
@@ -67,12 +57,6 @@ export async function bumpSearchIndexVersion(db: Db, noteId: string, sourceVersi
   return updated.length;
 }
 
-/**
- * #93：回填既有筆記。`app.listen` 之後背景跑（`index.ts`）；可續、冪等、可中止。
- * 候選＝有 note_states、且（沒有狀態列 ∨ extractor 版本不同 ∨ source_version ≠ note_states.version）；keyset 依 note_id。
- * 與即時落盤任意交錯都收斂到最新落盤版本（先鎖再讀版本）；`stale`／`gone`／列已消失記 `skipped`。
- * 單篇例外（壞 ydoc 等）warn 後繼續——keyset 已前進，不會卡在同一篇。
- */
 const BACKFILL_BATCH = 20;
 const BACKFILL_PROGRESS_EVERY = 500;
 
@@ -84,7 +68,6 @@ export interface BackfillLogger {
 export interface BackfillOptions {
   signal?: AbortSignal;
   batchSize?: number;
-  /** 測試縫：每篇處理完（不論結果）之後（生產不注入）。 */
   afterEachForTest?: (noteId: string) => void | Promise<void>;
 }
 
@@ -105,6 +88,7 @@ function backfillCandidate() {
   );
 }
 
+/** Converges to the latest persisted version under any interleaving with live persists (lock first, then read the version). */
 export async function backfillSearchIndex(db: Db, log: BackfillLogger, opts: BackfillOptions = {}): Promise<BackfillResult> {
   const started = Date.now();
   const batchSize = opts.batchSize ?? BACKFILL_BATCH;
@@ -149,8 +133,7 @@ export async function backfillSearchIndex(db: Db, log: BackfillLogger, opts: Bac
           const doc = new Y.Doc();
           try {
             Y.applyUpdate(doc, row.ydoc);
-            // 上面的 ydoc 讀取（await）期間可能收到關機訊號（解碼本身是同步的，中間收不到）：寫入前再看一次，
-            // 免得在 pool 關閉途中發出寫入、撞出誤導的 failed:1 warn。
+            // Shutdown may arrive during the await above; check again so we don't write while the pool is closing and log a misleading failed:1.
             if (opts.signal?.aborted) {
               aborted = true;
               break outer;

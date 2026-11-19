@@ -1,8 +1,4 @@
-/**
- * #175：轉址表的**讀取**側（寫入一律經 `notes/tx/redirects.ts`，只在交易內）。
- * 鍵＝已正規化的完整路徑：handle 已 `normalizeHandle`、slug 已 `normalizeSlug`；群組 id 一律小寫
- * （uuid 欄的精確比對不分大小寫，這裡的字串比對分）。
- */
+// Keys are normalized full paths; group ids lowercase (a uuid column compares case-insensitively, string comparison here doesn't).
 import { and, eq, sql } from "drizzle-orm";
 import type { DbOrTx } from "../db/tx.js";
 import { noteRedirects } from "../db/schema.js";
@@ -15,11 +11,7 @@ export function groupNotePath(groupId: string, slug: string): string {
   return `/g/${groupId.toLowerCase()}/${slug}`;
 }
 
-/**
- * 查找：述詞**不含** `expires_at`；命中但已過期 → 同一個請求刪掉那一列（懶惰清理 (a)）、當 miss。
- * 刪除帶 `expires_at <= now()` 述詞：同一刻被別的交易 upsert 續命（例如移動）的列不會被誤刪。過期判斷用 DB 的
- * `now()`——與寫入 `now() + interval '1 month'` 同一個時鐘。只把路徑解成 id，**不越過授權**。
- */
+/** The expired-row delete carries `expires_at <= now()` so a row renewed concurrently (e.g. by a move) isn't deleted; uses DB `now()` like the write side. Resolves paths only, no authorization. */
 export async function lookupRedirect(db: DbOrTx, oldPath: string): Promise<string | null> {
   const [row] = await db
     .select({ noteId: noteRedirects.noteId, live: sql<boolean>`${noteRedirects.expiresAt} > now()` })

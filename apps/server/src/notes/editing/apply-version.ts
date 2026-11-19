@@ -1,10 +1,3 @@
-/**
- * 套用版本。語意是「套用」不是「還原」：快照內容以 `replace_all` 帶 block JSON
- * （**id 保留**）寫進活文件，經同一條 `NoteWriteQueue`（呼叫端 `NoteWriteService.applyVersion`）、**不寫 `note_ai_edits`**、
- * `DirectCtx.source = "version-apply"`。順序：讀版本列（404／version_mismatch）→ 快照轉 blocks（同步、不 mount、不取 lease）→
- * [fork → isDirty（409）→ beginApply → prepare → merge（expectFingerprint＝fork 的 whole；beforeDisconnect 寫基底）→ links]
- * ×（指紋不符重試一次，重試也重跑 isDirty）→ finally endApply。**不 record**。
- */
 import { BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { yXmlFragmentToBlocks } from "@blocknote/core/yjs";
 import { and, eq } from "drizzle-orm";
@@ -17,14 +10,14 @@ import { DOC_TOO_COMPLEX } from "./doc-jobs.js";
 import { FingerprintMismatch, forkAndCheck, mergeDiff, prepareEdit, updateNoteLinks, type ApplyDeps, type MergeOutput } from "./apply.js";
 import type { DirectCtx } from "./session.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例（同 apply.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention
 type AnyPartialBlock = PartialBlock<any, any, any>;
 
 export type ApplyVersionFailureCode = "not_found" | "version_mismatch" | "version_unsaved_changes";
 export interface ApplyVersionInput {
   noteId: string;
   seq: number;
-  /** 已轉小寫（路由在 UUID_RE 之後轉）。 */
+  /** Lowercased by the route (compared with `!==` against `row.id`). */
   versionId: string;
   userId: string;
   discardUnsaved: boolean;
@@ -32,12 +25,7 @@ export interface ApplyVersionInput {
 export type ApplyVersionDeps = ApplyDeps & { versions: VersionService };
 
 /**
- * 快照 → blocks。`BlockNoteEditor.create` 不 mount、不取 lease（runtime 建立時已 installGlobals，未 mount 的
- * editor 讀得到完整 blocks、wikilink 保留）。⚠ 建 editor 與讀 blocks 必須在**同一個同步區段**：EditingRuntime 換掉全域 window／
- * document 只會發生在某個 lease 的 release 裡，而那只可能在 await 之後——本函式沒有 await。
- * ⚠ 這條「同一個同步區段」**沒有測試守得到**（突變實測：兩步之間插 `await`、呼叫端改 await，`versions-apply.test.ts`
- * 照樣全綠——沒有並行的 lease 在 release；`version-blocks.test.ts` 會紅，但只因回傳變成 Promise，不是因為區段被切開），只能靠審查；
- * `version-blocks.test.ts` 第一案只驗「runtime 重建過全域之後照樣讀得到」。
+ * Creating the editor and reading blocks must stay in one synchronous section: EditingRuntime swaps the global window/document in a lease release, which can only happen after an await. No test catches a split.
  */
 export function blocksFromSnapshot(baseUrl: string, ydoc: Uint8Array): AnyPartialBlock[] {
   const snapshot = new Y.Doc();
@@ -46,11 +34,7 @@ export function blocksFromSnapshot(baseUrl: string, ydoc: Uint8Array): AnyPartia
   return yXmlFragmentToBlocks(editor, snapshot.getXmlFragment(YDOC_FRAGMENT)) as AnyPartialBlock[];
 }
 
-/**
- * merge 的 transact 成功之後、disconnect 之前。1 列 → endApply(seq, fp)；0 列或 fp 算不出來 → 基底清空、endApply(reset)。
- * 與清除（prune）的競態：基底可能指向剛被刪掉的那一版——`setVersionBase` 的 UPDATE 帶 `WHERE EXISTS`，0 列就走這裡的 reset，
- * 不另加鎖。
- */
+/** Race with pruning: the base may point at a version just deleted; `setVersionBase`'s UPDATE has `WHERE EXISTS`, so 0 rows resets the base. */
 async function writeBaseAfterApply(deps: ApplyVersionDeps, input: ApplyVersionInput, out: MergeOutput): Promise<void> {
   if (deps.testHooks?.beforeVersionBase) await deps.testHooks.beforeVersionBase();
   const fp = out.versionFingerprint;
@@ -70,11 +54,11 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
     .where(and(eq(noteVersions.noteId, input.noteId), eq(noteVersions.seq, input.seq)))
     .limit(1);
   if (!row) return { ok: false, code: "not_found" };
-  if (row.id !== input.versionId) return { ok: false, code: "version_mismatch" }; // 跨分頁搬移後的保護
+  if (row.id !== input.versionId) return { ok: false, code: "version_mismatch" };
   const blocks = blocksFromSnapshot(deps.editing.baseUrl, row.ydoc);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const f = await forkAndCheck(deps, input.noteId);
-    // fork 之後 isDirty（未初始化或算不出來都視為 dirty）；重試也重跑，discardUnsaved:false 時插進來的修改在這裡就 409。
+    // The retry reruns isDirty too, so with discardUnsaved:false an edit that slipped in gets 409.
     if (!input.discardUnsaved && (await deps.versions.isDirty(input.noteId, f.fork, f.fork))) return { ok: false, code: "version_unsaved_changes" };
     deps.versions.beginApply(input.noteId);
     try {
@@ -87,11 +71,9 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
         { op: "replace_all", isEmptyDoc: f.isEmptyDoc, section: undefined },
       );
       if ("error" in prepared) throw new Error(`套用版本時 prepare 失敗：${prepared.error}`);
-      // 筆記大小上限：套回的版本比現況大、而且超過上限 → 不套（`notes/note-size.ts`）。套用後的大小算在新文件上（在新文件上套用，編輯器的
-      // 復原紀錄不會讓被刪的內容留著），在 parse worker 裡量（`sizeTrial`，不在主執行緒做整份的套用與量測）。量不出來（逾時、
-      // worker 用完記憶體）時退回保守的上界：基底＋2 × diff＋64 仍在上限內才套。
+      // Size cap is measured on a fresh doc in the parse worker (the editor's undo history would keep deleted content alive otherwise). If the trial fails (timeout/OOM), fall back to the bound base + 2×diff + 64.
       if (deps.noteMaxBytes !== undefined && baseState !== null) {
-        const baseBytes = baseState.byteLength; // pool 會 transfer 這塊 buffer：先記下長度
+        const baseBytes = baseState.byteLength; // the pool transfers this buffer: record its length first
         const diffBytes = prepared.diff.byteLength;
         const m = await deps.editing.runDoc(input.userId, { kind: "sizeTrial", state: baseState, update: prepared.diff.slice() });
         if (m === DOC_TOO_COMPLEX) {
@@ -104,7 +86,6 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
         deps,
         input.noteId,
         ctx,
-        // 沒人改時 fork 與活文件的 whole 恆等；別人在既有區塊打字、新插入區塊、改屬性、改 mark 都會不符。
         { targetIds: null, expectFingerprint: f.whole, anchorId: null, diff: prepared.diff, afterIds: prepared.afterIds },
         { beforeDisconnect: out => writeBaseAfterApply(deps, input, out) },
       );
@@ -114,7 +95,7 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
       if (err instanceof FingerprintMismatch) continue;
       throw err;
     } finally {
-      deps.versions.endApply(input.noteId); // 清 applying：失敗路徑與成功路徑都靠這裡——#272 起 endApply(r) 不清 applying，只在 disconnect（＝落盤）之後的這一行清
+      deps.versions.endApply(input.noteId); // endApply(r) doesn't clear `applying`; only this line after disconnect (persisted) does
     }
   }
   return { ok: false, code: "version_unsaved_changes" };
