@@ -1,4 +1,4 @@
-/** Callers must use READ COMMITTED (see `lock.ts`). The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service maps it. */
+/** Callers must use READ COMMITTED (see `lock.ts`). The 23505 for a sibling name clash isn't caught here (the transaction is already aborted); the service maps it to 409 `folder_name_taken`. All failures throw `TxAbort`. */
 import { count, sql } from "drizzle-orm";
 import { FOLDER_DEPTH_MAX, FOLDERS_PER_SPACE_MAX, type FolderPermissionsDto } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";

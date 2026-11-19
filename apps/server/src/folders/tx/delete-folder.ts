@@ -1,4 +1,7 @@
-/** The subtree is selected by predicate (`subtreeFolderIdsSql`), never as an id array inside `IN`: one bind parameter per id can exceed Postgres's 65535 limit. Callers must use READ COMMITTED (see `lock.ts`). */
+/**
+ * The subtree is selected by predicate (`subtreeFolderIdsSql`), never as an id array inside `IN`: one bind parameter per id can exceed Postgres's 65535 limit. Callers must use READ COMMITTED (see `lock.ts`).
+ * Trash batches map `forbidden` → 403 and `notFound` → 409, all or nothing. With `onlyIfEmpty`, trashed notes don't count as content; a shared root with placements is not empty.
+ */
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { FolderDeleteResultDto } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
@@ -79,7 +82,7 @@ export async function deleteFolderInTx(tx: Tx, input: DeleteFolderInput, hook?: 
   const gated = new Set(input.gatedNoteIds);
   const live = locked.filter(n => n.live).map(n => n.id);
   if (onlyIfEmpty && live.length > 0) throw notEmpty();
-  // Entered the subtree after the pre-read: trashing it would let connected users keep writing.
+  // Entered the subtree after the pre-read: trashing it would let connected users keep writing, so the whole delete is rejected (409).
   if (live.some(id => !gated.has(id))) throw changed();
 
   for (let i = 0; i < live.length; i += DELETE_FOLDER_TRASH_CHUNK) {

@@ -6,7 +6,7 @@ import { folders } from "../../db/schema.js";
 import { folderNameWithSuffix } from "../names.js";
 import { folderSpaceWhere } from "../sql.js";
 
-/** Gives up after `FOLDERS_PER_SPACE_MAX + 2` tries (practically unreachable). Depth and count limits aren't checked. */
+/** Gives up after `FOLDERS_PER_SPACE_MAX + 2` tries (practically unreachable: system-created folders skip the count limit, but the root would need that many same-base names). Depth and count limits aren't checked. Returns the name actually written, suffix included. */
 export async function createSystemTopFolderInTx(tx: Tx, input: { ownerId: string; baseName: string; by: string }): Promise<{ id: string; name: string }> {
   for (let n = 1; n <= FOLDERS_PER_SPACE_MAX + 2; n++) {
     const name = folderNameWithSuffix(input.baseName, n);

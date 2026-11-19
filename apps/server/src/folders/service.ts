@@ -81,7 +81,7 @@ export async function createFolder(
     const requested = input.parent.space;
     let space: FolderSpace;
     if (requested.kind === "group") {
-      // Same 404 for every case, so group existence doesn't leak.
+      // Non-UUID, nonexistent, non-member and no-read-flag all get the same 404, so group existence doesn't leak.
       if (!UUID_RE.test(requested.groupId)) return fail(404, "group_not_found", GROUP_NOT_FOUND_MESSAGE);
       space = { kind: "group", groupId: requested.groupId };
       const m = await loadCreateTarget(deps.db, input.by, requested.groupId);
@@ -155,7 +155,7 @@ export async function updateFolder(
     if (err instanceof TxAbort) return fail(err.status as FolderFailure["status"], err.errCode, err.message);
     if (uniqueViolationConstraint(err) === "folders_sibling_name_idx") return fail(409, "folder_name_taken", FOLDER_NAME_TAKEN_MESSAGE);
     if (isRetryableTxError(err)) return fail(409, "server_busy", SERVER_BUSY_MESSAGE);
-    // Defence in depth: KF002 only fires if the space changed after the pre-read; reported as invisible.
+    // Defence in depth: same-space is already checked in the transaction; KF002 only fires if the space changed after the pre-read; reported as invisible.
     if (isFolderSpaceViolation(err)) return fail(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
     throw err;
   }
@@ -163,8 +163,10 @@ export async function updateFolder(
 }
 
 /**
- * Gates are released on success and failure: a gate left open for a note that moved out after the pre-read would block new connections until its TTL.
+ * Gates are released on success and failure: a gate left open for a note that moved out after the pre-read would block new connections until its TTL (`releaseDeletingGate` only reclaims live notes).
  * Shared folders skip the pre-read and gates: their notes aren't touched (placements CASCADE).
+ * `onlyIfEmpty`: live notes in the pre-read → 409 `folder_not_empty`, before `folder_delete_blocked`, without charging the limiter or opening gates;
+ * subfolders and placements are judged only in the transaction (authoritative).
  */
 export async function deleteFolder(
   deps: FolderServiceDeps,
@@ -192,7 +194,7 @@ export async function deleteFolder(
   const hookCtx: GroupHookCtx = { folderId, ...(access.space.kind === "group" ? { groupId: access.space.groupId } : {}) };
   await deps.groupTestHook?.("folder-authorized", hookCtx);
 
-  // allSettled: a rejecting gate must not leave the already-opened ones unreleased.
+  // allSettled: gates shouldn't throw, but if one rejects, release the already-opened ones, then rethrow.
   const settled = await Promise.allSettled(liveIds.map(id => deps.collabHooks.beforeNoteDeleted(id)));
   const gates: NoteDeleteGate[] = settled.flatMap(s => (s.status === "fulfilled" ? [s.value] : []));
   const releaseAll = (): void => {

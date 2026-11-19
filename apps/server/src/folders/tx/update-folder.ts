@@ -1,5 +1,6 @@
 /**
  * A move-only update reads the folder without FOR UPDATE: UPDATE of `parent_id` takes NO KEY UPDATE and needn't block placements.
+ * No changed value → no UPDATE (`changed: false`). A sibling-name 23505 maps to 409 `folder_name_taken`.
  * Callers must use READ COMMITTED (see `lock.ts`).
  */
 import { eq, sql } from "drizzle-orm";
@@ -24,7 +25,7 @@ export interface UpdateFolderInput {
   by: string;
   folderId: string;
   space: FolderSpace;
-  /** Must already be normalized with `normalizeFolderName`. */
+  /** Must already be normalized with `normalizeFolderName`; undefined = no rename. */
   name?: string;
   parentId?: string | null;
   lockTimeoutMs: number;

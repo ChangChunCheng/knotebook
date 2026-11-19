@@ -1,4 +1,5 @@
-/** Shared placements lock the note FOR KEY SHARE so the owner's writes aren't blocked. */
+/** Shared placements lock the note FOR KEY SHARE so the owner's writes aren't blocked.
+ * Placement never touches `updated_at`, slug or versions and takes no structure lock (it doesn't change structure). The share-revoke 23503 and KF00x trigger errors are mapped by the service. */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { notePlacements, notes } from "../../db/schema.js";
