@@ -1,9 +1,4 @@
-/**
- * #180：`copy_note(note_id, group_id?)`。行為照 REST `POST /api/notes/:id/copy`（共用 `notes/copy-note.ts`）。
- * 在 `register.ts` 的 collab 閘門**外**（REST 複製無條件註冊；`loadNoteDoc` 無 collab 時讀 `note_states`），以 `.strict()` 註冊。
- * 三本節流帳：`tokenWrite`（token 才有，`requireWriteScope`；帶 `group_id` 時改 `requireMoveScope`，#239）→ `edit`（共用函式內）→ `upload`（依附件數，共用函式內）。
- * 配額可見性：`canViewSpaceUsage`；`isAdmin` 照 `create-transfer-token.ts` 的作法只在被拒這一刻讀一次（ctx 沒有它）。
- */
+/** `isAdmin` is read only on rejection (ctx doesn't carry it), like `create-transfer-token.ts`. */
 import { eq } from "drizzle-orm";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { formatBytes } from "@knotebook/shared";
@@ -38,11 +33,9 @@ export const COPY_GROUP_ID_DESCRIBE =
   "The id of one of your groups where your role lets you create notes; the copy then belongs to the group. Leave it out to copy " +
   "into your personal notes. A group's id is the `id` in the `owner` of its notes in list_notes or search_notes.";
 
-/** 讀寫搬移與 session 的版本。 */
 export const COPY_FOLDER_ID_DESCRIBE =
   "The id of a folder to put the copy in, from list_folders; leave it out for the top level. One of your personal folders for a copy " +
   "of your own (leave out `group_id`), or one of the folders of the group you pass as `group_id`, where your role must also be able to edit notes.";
-/** 讀寫無搬移憑證的版本（不提群組資料夾）。 */
 export const COPY_FOLDER_ID_DESCRIBE_NO_MOVE =
   "The id of one of your personal folders to put the copy in, from list_folders; leave it out for the top level of your personal notes.";
 
@@ -52,41 +45,31 @@ export const copyNoteInput = {
   folder_id: FOLDER_ID.optional().describe(COPY_FOLDER_ID_DESCRIBE),
 };
 
-/**
- * #239，474 字元：讀寫無搬移憑證（`!canMoveNotes`）的版本，`register.ts` 依 `canMove` 二選一。
- * 與 COPY_NOTE_DESCRIPTION 只差首句與句尾 role 那句。不寫「this credential doesn't have it」：使用者事後升權、
- * client 未重開時快取的仍是這一版，那句會變假；本句任何時候都真。
- */
+/** No "this credential doesn't have it": after an upgrade a client that cached this version would show a false sentence. */
 export const COPY_NOTE_DESCRIPTION_NO_MOVE =
   "Copy a note you can read into a new note of your own; copying into a group needs the notes:move scope (see `group_id`). The copy gets the note's " +
   "title and its current content, and usually its own copies of the images uploaded to that note; from then on the two notes change " +
   "separately. Per-person shares, the public link and the edit history are not copied, and making the copy isn't recorded in any " +
   "note's history. The reply is the new note in the shape list_notes returns.";
 
-/** 199 字元。不寫「this credential doesn't have it」：升權未重開時快取的仍是這版（理由同上）。 */
 export const COPY_GROUP_ID_DESCRIBE_NO_MOVE =
   "Copying into a group needs a credential with the notes:move scope. Leave this out to copy into your personal notes. " +
   "A group's id is the `id` in the `owner` of its notes in list_notes or search_notes.";
 
-/** #239：讀寫無搬移憑證的 input 形——只換 `group_id`（與資料夾的 `folder_id`）的說明，型別與 `copyNoteInput` 相同。 */
 export const copyNoteInputNoMove = {
   ...copyNoteInput,
   group_id: GROUP_ID.optional().describe(COPY_GROUP_ID_DESCRIBE_NO_MOVE),
   folder_id: FOLDER_ID.optional().describe(COPY_FOLDER_ID_DESCRIBE_NO_MOVE),
 };
 
-/**
- * HTTP 上可達（讀寫憑證的清單上有 copy_note，帶 group_id 呼叫）；守衛＝`test/mcp-copy.test.ts` 的 #239 案。
- * 處置＝在「設定 → 授權」的 token 列上以鉛筆開啟搬移權。結尾是「then try again」不是「reconnect」：copy_note 已在清單上、
- * scope 每請求重讀（`requireMoveScope`），開啟後下一發帶 group_id 就會過，不必重連。
- */
+/** Ends "then try again", not "reconnect": the tool is listed and the scope is re-read per request. */
 export const COPY_NEEDS_MOVE_MESSAGE =
   "Copying a note into a group needs the notes:move scope, and this credential doesn't have it, so nothing was copied. " +
   'Leave out group_id to copy into your personal notes, or ask the user to turn on "Move to groups (can\'t be undone)" (notes:move) for this ' +
   "credential via the pencil on its row in Settings → Authorization, then try again.";
 export const copyNoteOutput = { note: noteSummarySchema.describe("The new copy, in the same shape list_notes returns.") };
 
-/** `too_many_requests`：上限由呼叫端傳入（#397：擋下這次請求那顆桶的當下上限，`FixedWindowLimiter.currentLimit()`）；視窗長度仍由 `UPLOAD_LIMIT` 內插，不手抄。 */
+/** The limit is the one of the limiter that rejected (`currentLimit()`); the window comes from `UPLOAD_LIMIT`. */
 export function copyUploadLimitMessage(limit: number): string {
   return (
     `Copying this note's images would go over your upload limit (${limit} files per ${UPLOAD_LIMIT.windowMs / 60_000} minutes, ` +
@@ -94,7 +77,7 @@ export function copyUploadLimitMessage(limit: number): string {
   );
 }
 export const COPY_BUSY_MESSAGE = "The server was busy, so no copy was made. Try again in a moment.";
-/** 不可見形只會是群組（個人空間對本人恆可見）。 */
+/** Only a group space can be invisible (a personal space is always visible to its owner). */
 export const COPY_QUOTA_HIDDEN_MESSAGE =
   "The group's storage space has no room for this note's images, so the note was not copied. Ask a site admin for more space.";
 
@@ -126,17 +109,14 @@ export interface CopyNoteArgs {
 }
 
 export async function copyNoteTool(args: CopyNoteArgs, ctx: McpToolCtx): Promise<CallToolResult> {
-  // 資料夾：帶 folder_id 時，交易外先判資料夾可見性與空間一致性（純讀、不扣任何桶），
-  // 排在下面的 scope 檢查**之前**，也在查筆記（copyNote 的 resolveNoteAccess）**之前**——看不到的群組資料夾對讀寫無搬移憑證回
-  // not_found，不是 insufficient_scope；看不到的筆記＋看不到的資料夾回的是資料夾句。所以帶 folder_id 時的錯誤優先序與 REST
-  // `POST /api/notes/:id/copy` 不同（REST 先判筆記、再判資料夾，且沒有 scope 檢查）。copyNote 內部照 REST 的順序重判一次。
+  // With folder_id, folder visibility is checked before the scope check and the note lookup,
+  // so error priority differs from REST (note first, no scope check); copyNote re-checks in REST order.
   if (args.folder_id !== undefined) {
     const folder = await resolveFolderAccess(ctx.db, ctx.userId, args.folder_id);
     if (folder === null) return toolError("not_found", FOLDER_NOT_FOUND_MESSAGE);
     if (!newNoteFolderConsistent(folder.space, args.group_id)) return toolError("invalid_body", NEW_NOTE_FOLDER_CROSS_SPACE_MESSAGE);
   }
-  // #239：帶 group_id ＝複製進群組，要 notes:move；檢查在 copyNote 之前（不建任何東西、不扣任何桶），
-  // 也在查筆記之前（不存在的 note_id 同樣先回 insufficient_scope，不成存在性 oracle）。
+  // Before the note lookup, so a nonexistent note_id also gets insufficient_scope: no existence oracle.
   const denied = args.group_id === undefined ? requireWriteScope(ctx) : requireMoveScope(ctx, COPY_NEEDS_MOVE_MESSAGE);
   if (denied !== null) return denied;
   const out = await copyNote(
@@ -169,11 +149,10 @@ export async function copyNoteTool(args: CopyNoteArgs, ctx: McpToolCtx): Promise
       if (err instanceof StorageQuotaExceeded) return quotaError(ctx, err.space, err.usedBytes, err.quotaBytes, err.incomingBytes);
       if (err.errCode === "not_found") return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
       if (err.errCode === "group_not_found") return toolError("group_not_found", GROUP_NO_CREATE_MESSAGE);
-      // 資料夾功能加入後 copyNote 另以 aborted 回三碼（交易外預判與 `notes/tx/copy.ts` 的重判）。
       if (err.errCode === "folder_not_found") return toolError("not_found", FOLDER_NOT_FOUND_MESSAGE);
       if (err.errCode === "folder_cross_space") return toolError("invalid_body", NEW_NOTE_FOLDER_CROSS_SPACE_MESSAGE);
       if (err.errCode === "forbidden") return toolError("forbidden", FOLDER_NEEDS_EDIT_MESSAGE);
-      throw err; // 未列的碼是接線錯，交給 runTool 的 internal。
+      throw err; // An unlisted code is a wiring bug; leave it to runTool's internal.
     }
     case "busy":
       return toolError("server_busy", COPY_BUSY_MESSAGE);

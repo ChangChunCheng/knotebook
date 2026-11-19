@@ -1,14 +1,9 @@
 /**
- * bulk transfer：串流寫出 `.tar.gz`（不加依賴）。
- *
- * - 路徑非 ASCII 或超過 100 bytes → 先寫一個 `x` 型 pax 標頭帶 `path` 記錄（UTF-8 原名），ustar 標頭的 name 欄放 ASCII 後備
- *   （`PaxHeader-fallback/<sha1 前 16>`）。GNU tar、bsdtar、Python tarfile 都認 pax。
- * - 每個項目寫完 `gzip.flush(Z_SYNC_FLUSH)`，等回呼——回呼要等下游消化，所以 flush 本身就是背壓（`write()` 回 false 時另等
- *   `drain`，是防線、不承重）。
- * - **所有等待都與內部 abort signal 賽跑**：gzip pipe 到不消化的下游時，下游被 destroy 之後 flush 回呼與
- *   drain 都永不 settle。`abort()` 讓 pending 的 `addFile`／`addDir`／`finish` 立刻以 `TarAbortError` reject，之後的呼叫也立刻
- *   reject；`out` 自己 `'close'`／`'error'`（socket 斷）時 writer 也會 abort。`finish()` 只有 `out` 的 `'finish'` 算成功。
- * - 中止不送 tar 結尾區塊也不送 gzip 結尾：呼叫端另外 destroy socket（curl 因此 exit 18）。
+ * A non-ASCII or over-100-byte path gets a pax header (GNU tar, bsdtar and Python tarfile
+ * understand it) with an ASCII fallback name. The `Z_SYNC_FLUSH` callback waits for the
+ * downstream, so it is the backpressure (`drain` is only a backstop). Every wait races the
+ * internal abort signal: if the downstream is destroyed, flush and `drain` never settle. An
+ * abort sends no trailers; the caller destroys the socket (curl exits 18).
  */
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -28,12 +23,11 @@ const octal = (n: number, len: number): string => n.toString(8).padStart(len - 1
 const padOf = (n: number): Buffer => Buffer.alloc((BLOCK - (n % BLOCK)) % BLOCK, 0);
 const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
-/** 名字要不要 pax：非可印 ASCII、或超過 ustar name 欄的 100 bytes。 */
 export function needsPax(name: string): boolean {
   return !PRINTABLE_ASCII.test(name) || Buffer.byteLength(name, "utf8") > 100;
 }
 
-/** ustar 標頭（512 bytes）。`name` 必須是 ≤ 100 bytes 的可印 ASCII（呼叫端給後備名）。checksum 照 POSIX：先填 8 個空白再加總。 */
+/** `name` must be printable ASCII of at most 100 bytes (the caller passes the fallback name). */
 export function ustarHeader(h: { name: string; size: number; type: "0" | "5" | "x"; mode: number; mtime: number }): Buffer {
   const b = Buffer.alloc(BLOCK, 0);
   b.write(h.name, 0, 100, "ascii");
@@ -52,7 +46,7 @@ export function ustarHeader(h: { name: string; size: number; type: "0" | "5" | "
   return b;
 }
 
-/** pax 記錄 `"<len> <key>=<value>\n"`，`len` 含它自己的位數（兩段式：位數進位時再算一次）。 */
+/** `len` counts its own digits, hence the second pass when the digit count carries. */
 export function paxRecord(key: string, value: string): Buffer {
   const body = ` ${key}=${value}\n`;
   const len = Buffer.byteLength(body, "utf8");
@@ -65,7 +59,6 @@ function fallbackName(name: string, dir: boolean): string {
   return "PaxHeader-fallback/" + createHash("sha1").update(name, "utf8").digest("hex").slice(0, 16) + (dir ? "/" : "");
 }
 
-/** 一個項目的全部位元組（pax 標頭＋記錄＋補齊、ustar 標頭、內容＋補齊）。 */
 export function entryBytes(name: string, type: "0" | "5", data: Buffer, mtime: number): Buffer[] {
   const out: Buffer[] = [];
   const dir = type === "5";
@@ -100,7 +93,6 @@ export class TarGzWriter {
     out.once("error", err => gone(err));
   }
 
-  /** gzip 之後送出的位元組數。 */
   get bytesOut(): number {
     return this.bytes;
   }
@@ -117,7 +109,6 @@ export class TarGzWriter {
     return this.addEntry(path, "0", data);
   }
 
-  /** tar 結尾（1024 bytes 零）＋gzip 結尾；只有 `out` 的 `'finish'` 算成功（先 close 或 abort → reject）。 */
   async finish(): Promise<void> {
     this.check();
     const signal = this.ac.signal;
@@ -146,7 +137,6 @@ export class TarGzWriter {
     });
   }
 
-  /** 冪等：pending 的等待全部以 `TarAbortError` reject；unpipe＋destroy gzip（不送結尾）。socket 由呼叫端 destroy。 */
   abort(reason?: unknown): void {
     if (this.ac.signal.aborted) return;
     this.ac.abort(reason ?? new Error("aborted"));

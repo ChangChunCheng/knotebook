@@ -2,9 +2,9 @@ import { codePointLength, FOCUS_MAX_CODE_POINTS, INSTRUCTION_MAX_CODE_POINTS } f
 import type { TemplateVars } from "./upstream.js";
 
 /**
- * 內建 Instruct 動作的守門 prompt（#263）。由 server 固定前置在該動作的 system prompt 之前，管理員改不掉；
- * 只對 Instruct 做（判斷依 DB 讀回的 id，見 `routes/ai.ts`）。只引用三個固定標記，不依賴 template 的字面。
- * 軟性守門：不另打分類模型、不跳脫標記內容——代入的文字含 `</text>` 之類字串可以偽造邊界，這是接受的限制（docs/known-limitations.md）。
+ * Soft guard (#263): no classifier and no escaping of marker content, so substituted text
+ * containing `</text>` can forge a boundary; accepted (docs/known-limitations.md). Prepended
+ * server-side, admins can't change it, applied only to Instruct (by the id read back from the DB).
  */
 export const INSTRUCT_GUARD_PROMPT = [
   "You are editing one passage of a note. The user message has three tagged parts: <instruction> is what the user wants done, <selected> is the part of the passage the user highlighted (it may be empty), and <text> is the passage itself.",
@@ -15,37 +15,27 @@ export const INSTRUCT_GUARD_PROMPT = [
   "3. If <selected> is not empty, apply the instruction to that part; your reply is still the full replacement for <text>, with the rest left as it is wherever possible. If <selected> is empty, the instruction applies to all of <text>.",
 ].join("\n");
 
-/**
- * 並排：送給站內 AI 的 markdown 帶並排、圖片寬度、表格欄寬的 HTML，
- * 這段要模型保留它們。server 前置在**每一個**動作的 system prompt 最前面（`routes/ai.ts`），管理員改不掉；是提示不是過濾——
- * 不照做的結果在套用前被 web 的檢查擋下（`unsupported_columns`／`unsupported_size`）。字面對應 `docs/ai.md`。
- */
+/** Prepended to every action's prompt; a hint, not a filter (the web rejects bad output before applying). Mirrors `docs/ai.md`. */
 export const MARKUP_GUARD_PROMPT = [
   "The note content you are given is Markdown and may include HTML that the editor uses for side-by-side columns and for sizes. Wherever your reply keeps that content, keep its HTML as it is:",
   "- Every <div data-kb-columns …> and <div data-kb-column …> line, and each </div> line that closes one, stays exactly as written, on a line of its own, with the blank lines around it unchanged. Inside a column, write Markdown as usual.",
   "- An image's width attribute and a table cell's colwidth attribute keep their values.",
 ].join("\n");
 
-/** 固定說明在前、空行、再接後面的 system prompt；後者為空字串時只有固定說明。 */
 export function withMarkupGuard(system: string): string {
   return system === "" ? MARKUP_GUARD_PROMPT : `${MARKUP_GUARD_PROMPT}\n\n${system}`;
 }
 
-/** 守門在前、空行、再接動作自己的 system prompt（管理員可改，只負責語氣與風格）。 */
 export function withInstructGuard(systemPrompt: string): string {
   return `${INSTRUCT_GUARD_PROMPT}\n\n${systemPrompt}`;
 }
 
-/** Instruct 的兩個額外欄位（`instruction` 已 trim；`focus` 原樣）。 */
 export interface InstructFields {
   instruction: string;
   focus?: string;
 }
 
-/**
- * 把三個變數包上固定標記；template 只決定順序與夾在中間的文字。`focus` 沒帶或為空字串都代入 `<selected></selected>`
- * （web 在「整塊選取」時不送 focus；body 帶空字串的語意與沒帶相同——守門第 3 條把空的 <selected> 解讀為「整段」）。
- */
+/** An empty `focus` is substituted like a missing one: the guard prompt reads an empty <selected> as the whole passage. */
 export function wrapInstructVars(input: { text: string; instruction: string; focus?: string }): TemplateVars {
   return {
     instruction: `<instruction>\n${input.instruction}\n</instruction>`,
@@ -56,10 +46,7 @@ export function wrapInstructVars(input: { text: string; instruction: string; foc
 
 export type InstructFieldCheck = { ok: true; instruct: InstructFields | null } | { ok: false; message: string };
 
-/**
- * `POST /api/ai` 對 `instruction`／`focus` 的 400 矩陣。`isInstruct` 由呼叫端以**小寫化後的** `action_id` 對常數判
- * （不查 DB、在角色檢查與節流之前）。長度一律以 code point 計；instruction 先 trim 再量。訊息是 HTTP 層，英文（#372）。
- */
+/** `isInstruct` comes from the lowercased `action_id` (no DB lookup), before role checks and throttling. */
 export function checkInstructFields(isInstruct: boolean, instruction: string | undefined, focus: string | undefined): InstructFieldCheck {
   if (!isInstruct) {
     if (instruction !== undefined || focus !== undefined) {

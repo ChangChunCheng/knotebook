@@ -1,10 +1,4 @@
-/**
- * #181 `delete_note(note_id)`：移到垃圾桶（同 REST `DELETE /api/notes/:id` 的權限與服務函式）。
- * 移入只能經 `trash/service.ts` 的 `trashNote`（唯一寫 deleted_at 的是 `trashNotesInTx`）；本檔不得出現 deleted_at 字面（守衛二）。
- * 流程順序是契約：`requireDeleteScope`（第一個動作，拒絕時什麼都沒做）→ `resolveNoteAccess`（none → not_found、無刪除權 → forbidden）
- * → `readTrashRetentionDays`（只當存在性守衛，排在扣桶之前）→ edit 桶（REST 不扣）→ `trashNote`
- * （可重試的交易錯誤 → server_busy）→ `loadTrashedMeta`（commit 後一讀；落空 → not_found）。
- */
+/** Trashing goes only through `trashNote` (`trashNotesInTx` is the only deleted_at writer); this file must not contain a deleted_at literal. */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../../auth/tx/admin-site-settings.js";
@@ -43,7 +37,6 @@ export const deleteNoteOutput = {
     ),
 };
 
-/** 所有 not_found 成因（不存在、看不到、已在垃圾桶、commit 後重讀落空）同一句。 */
 export const DELETE_NOT_FOUND_MESSAGE =
   "No note with that id that you can see. For example, it may not exist, may not be shared with you, may belong to a group you " +
   "aren't in or whose notes your role can't see, or may already be in the trash (list_trash shows the ones you can restore).";
@@ -59,8 +52,7 @@ export async function deleteNoteTool(args: { note_id: string }, ctx: McpToolCtx)
   if (access.role === "none") return toolError("not_found", DELETE_NOT_FOUND_MESSAGE);
   if (!access.permissions.delete) return toolError("forbidden", DELETE_FORBIDDEN_MESSAGE);
 
-  // 存在性守衛：列不在是部署壞掉，丟給 runTool 收成 internal——在扣桶與移入之前，什麼都沒做、也不花 edit 額度。值本身不用
-  // （回應的 purgeAt 取 commit 後那一刻的設定，見 loadTrashedMeta）。
+  // Existence guard before the limiter charge and the move; the value is unused (purgeAt is read after commit).
   if ((await readTrashRetentionDays(ctx.db)) === undefined) throw new Error(SITE_SETTINGS_MISSING_MESSAGE);
 
   if (!ctx.limiters.edit.consume(ctx.userId)) return toolError("too_many_requests", WRITE_RATE_LIMITED_MESSAGE);
@@ -85,7 +77,6 @@ export async function deleteNoteTool(args: { note_id: string }, ctx: McpToolCtx)
   if (out === "forbidden") return toolError("forbidden", DELETE_FORBIDDEN_MESSAGE);
 
   const id = args.note_id.toLowerCase();
-  // 落空＝commit 之後、這一讀之前被還原或永久刪除（毫秒級窗），同 move_note_to_group 的重讀落空回 not_found。
   const meta = await loadTrashedMeta(ctx.db, id);
   if (meta === undefined) return toolError("not_found", DELETE_NOT_FOUND_MESSAGE);
   const title = truncateText(meta.title);

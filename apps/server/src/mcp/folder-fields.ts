@@ -1,7 +1,3 @@
-/**
- * 資料夾：回給模型的資料夾欄位——輸入 id 的驗證、名稱與路徑的截斷、名稱與路徑的查詢。
- * 截斷一律走 `limits.ts` 的逃脫後計價（`truncateText`／`escapedLength`），旗標只在真的截時才有鍵。
- */
 import { inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { folders } from "../db/schema.js";
@@ -12,7 +8,6 @@ import { noNul } from "../notes/schemas.js";
 import { UUID_RE } from "../notes/service.js";
 import { MCP_FOLDER_NAME_MAX, MCP_FOLDER_PATH_MAX, MCP_TEXT_MAX, escapedLength, truncateText } from "./limits.js";
 
-/** 與 `NOTE_ID`（notes/schemas.ts）同形，各自一份物件：非 UUID 是輸入驗證錯誤。 */
 export const FOLDER_ID = z.string().regex(UUID_RE).refine(noNul).transform(s => s.toLowerCase());
 
 export const folderRefSchema = z.object({
@@ -27,10 +22,7 @@ export function folderRefForModel(id: string, name: string): FolderRefForModel {
   return { id, name: cut.text, ...(cut.truncated ? { nameTruncated: true as const } : {}) };
 }
 
-/**
- * `list_folders` 的一項。personal／shared 不輸出 owner id（只有本人看得到，同 REST 的 `toFolderSpaceDto`）；
- * 群組名照群組 `owner.name` 的上限截（`MCP_TEXT_MAX`）。（作者決定）不帶 `permissions`／`createdAt`。
- */
+/** personal/shared omit the owner id (only the user sees it, like REST `toFolderSpaceDto`). */
 export const folderForModelSchema = z.object({
   id: z.string(),
   name: z.string().max(MCP_FOLDER_NAME_MAX),
@@ -74,7 +66,6 @@ export function folderForModel(row: { access: FolderAccess; path: string[]; grou
   };
 }
 
-/** 陣列 JSON 去掉兩端方括號的長度：Σ(段的逃脫後長度＋2)＋段數−1；空陣列 0。 */
 export function folderPathCost(names: readonly string[]): number {
   if (names.length === 0) return 0;
   let cost = names.length - 1;
@@ -82,10 +73,7 @@ export function folderPathCost(names: readonly string[]): number {
   return cost;
 }
 
-/**
- * 每段先以 MCP_FOLDER_NAME_MAX 截；成本 > MCP_FOLDER_PATH_MAX 時從根端整段丟（至少留 1 段）。truncated＝有任何一段被截或被丟。
- * 單段截後最多 82（80＋引號），所以留下的那一段永遠在上限內。
- */
+/** A cut segment is at most 82 (80 plus quotes), so the one segment always kept is within the limit. */
 export function truncateFolderPath(names: readonly string[]): { path: string[]; truncated: boolean } {
   const cuts = names.map(name => truncateText(name, MCP_FOLDER_NAME_MAX));
   let truncated = cuts.some(c => c.truncated);
@@ -97,10 +85,7 @@ export function truncateFolderPath(names: readonly string[]): { path: string[]; 
   return { path, truncated };
 }
 
-/**
- * 一句 `select id, name from folders where id in (…)`；null／重複 id 先濾掉；空集合不發查詢。
- * 不判可見性：呼叫端傳的是對呼叫者可見的 `viewerFolderId`。查不到的 id 不在 Map 裡（兩句之間被刪）。
- */
+/** No visibility check: callers pass a `viewerFolderId` already visible to the caller. */
 export async function loadFolderNames(db: DbOrTx, ids: readonly (string | null)[]): Promise<Map<string, string>> {
   const wanted = [...new Set(ids.filter((id): id is string => id !== null))];
   const out = new Map<string, string>();
@@ -110,7 +95,6 @@ export async function loadFolderNames(db: DbOrTx, ids: readonly (string | null)[
   return out;
 }
 
-/** `folderPathJsonSql`（folders/sql.ts）根 → 葉；資料夾不在 → null。 */
 export async function loadFolderPath(db: DbOrTx, folderId: string): Promise<string[] | null> {
   const result = await db.execute<{ path: string[] | null }>(sql`select ${folderPathJsonSql(sql`${folderId}::uuid`)} as path`);
   return result.rows[0]?.path ?? null;

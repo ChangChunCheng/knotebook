@@ -1,16 +1,7 @@
 /**
- * bulk transfer：單篇匯出器——本文（＝MCP 讀出）＋段表＋每行的比對種類。
- *
- * 流程（不變量 3、4）：
- * ① 不持 lease：`topLevelFingerprints` 一次走完頂層取 id 與指紋（未 mount 的結構；mount 會正規化空文件）。零顆 → 空本文、
- *    零段、**不 mount**（同 `readNoteContentFromDoc`）。
- * ② `EditorSession.open` **一次**；mount 後頂層 id 不等於 ① → 降級：本文照出、`segments: null`（不可寫回），不丟錯。
- * ③ 整篇匯出一次（`toNoteMarkdown`，與 MCP 讀出同一支組字點）。mount 之後、整篇匯出之後各無條件讓出一次（這兩段是停頓大宗）。
- * ④ 逐顆匯出；每 `yieldEveryBlocks` 顆、或距上次讓出 ≥ `yieldAfterMs` 就 `await yieldFn()`——仍持 lease、不 acquire、
- *    不做 DB（acquire 不可重入只禁止巢狀取得；讓出期間 live doc 的修改不影響這份 fork）。
- * ⑤ DP 對齊；群組匯出在同一個 mount 內同步做（不讓出、不另開 session）。
- * ⑥ finally close。
- * 持 lease 期間零 DB I/O；`titles` 由呼叫端在 mount 前查好（`linkTitlesFor`）。
+ * No DB I/O while the lease is held (`titles` are looked up by the caller before mounting).
+ * Yields hold the lease without acquiring, which is safe: acquire isn't re-entrant, and live
+ * doc edits during a yield don't affect this fork. Group exports run inside the same mount.
  */
 import type * as Y from "yjs";
 import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
@@ -25,41 +16,28 @@ import { bodyLines, normalizeBody } from "./normalize.js";
 import { YIELD_AFTER_MS, yieldToLoop } from "./yield.js";
 
 export interface ExportedNote {
-  /** 整篇匯出原文（＝MCP 讀出）。 */
   body: string;
-  /** `bodyLines(normalizeBody(body))`。 */
   lines: string[];
   ids: string[];
   fps: string[];
   types: string[];
-  /** null＝段表對不上（不可用檔案寫回）。 */
+  /** null = can't be written back. */
   segments: TransferSegment[] | null;
   lineKinds: number[];
   stats: AlignStats & { yields: number };
 }
 
 export interface ExportNoteOptions {
-  /** 逐顆匯出每幾顆讓出一次（預設 50）。 */
   yieldEveryBlocks?: number;
-  /** 距上次讓出幾毫秒就讓出（預設 20）。 */
   yieldAfterMs?: number;
-  /** 讓出的方式（預設 `yieldToLoop`＝兩次 `setImmediate`，理由見 `yield.ts`）；測試縫。 */
   yieldFn?: () => Promise<void>;
-  /** 測試縫：段表強制 null（生產不傳）。 */
   forceUnmergeable?: boolean;
-  /**
-   * 給了就在每段記 `links`——段裡每個沒有自訂文字的 wikilink 匯出時用的文字，經這支算成雜湊（`linkTextHash` 綁好金鑰與鹽），
-   * 去重；沒有這種連結的段不帶 `links`。不給（例如只要本文的呼叫端）就不記。
-   */
   linkHash?: (targetId: string, text: string) => string;
 }
 
-/**
- * 寫回時判「筆記自下載後動過沒」用：只出整篇本文，與 `exportNoteForTransfer` 的 `body` 同一條組字——
- * 頂層零顆 → `""`、不 mount；否則 mount 一次、`toNoteMarkdown` 整篇（`transfer-write-reread.test.ts` 釘逐位元組相同）。
- * 持 lease 期間零 DB；`titles` 由呼叫端在 mount 前查好。
- */
+/** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`). */
 export async function exportNoteBody(runtime: EditingRuntime, doc: Y.Doc, titles: ReadonlyMap<string, string>): Promise<string> {
+  // Don't mount an empty doc: mounting normalizes it into one empty paragraph, which would mismatch the ids.
   if (topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).length === 0) return "";
   const s = await EditorSession.open(runtime, doc);
   try {
@@ -83,13 +61,14 @@ export async function exportNoteForTransfer(
   const yieldFn = opts.yieldFn ?? yieldToLoop;
 
   const { ids, fps } = topLevelFingerprints(doc.getXmlFragment(YDOC_FRAGMENT));
+  // Don't mount an empty doc: mounting normalizes it into one empty paragraph, which would mismatch the ids.
   if (ids.length === 0) {
     return { body: "", lines: [], ids, fps, types: [], segments: [], lineKinds: [], stats: { groupCalls: 0, capHits: 0, groupUsedWhilePerMatched: 0, yields: 0 } };
   }
 
   const s = await EditorSession.open(runtime, doc);
   try {
-    // 停頓的大宗是 mount 與整篇匯出（mount 約 170 ms、整篇約 230 ms、DP 2–3 ms），各在之後讓出一次。
+    // The big stalls are the mount and the whole-note export; yield after each.
     let yields = 0;
     await yieldFn();
     yields++;
@@ -99,8 +78,7 @@ export async function exportNoteForTransfer(
     yields++;
     const lines = bodyLines(normalizeBody(body));
     const types = top.map(b => b.type as string);
-    // mount 改了頂層 id（例如文件裡有重複的頂層 id，BlockNote mount 時會換掉重複的那個）：段表的 id／指紋對不上現況，
-    // 降級成不可寫回——本文照出（讀取不受影響），`segments: null`（manifest 標 `mergeable: false`）。
+    // Mount changed top-level ids (e.g. BlockNote renames duplicate ids): the segment table no longer matches, so degrade to not writable back.
     if (top.length !== ids.length || top.some((b, i) => b.id !== ids[i])) {
       return { body, lines, ids, fps, types, segments: null, lineKinds: lineKindsOf(null, types, lines.length), stats: { groupCalls: 0, capHits: 0, groupUsedWhilePerMatched: 0, yields } };
     }

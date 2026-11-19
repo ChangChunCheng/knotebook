@@ -1,11 +1,4 @@
-/**
- * bulk transfer：一篇的檔（frontmatter＋整篇匯出）與它的基底列。單篇下載與整包匯出共用。
- *
- * 順序：`loadNoteState`（live 就編碼、否則 `note_states` 的位元組；**不開直連**、不 touch presence）→
- * 匯出的轉換在 parse worker 裡（很小的筆記在主執行緒；`doc-jobs.ts` 的 `exportFile`：連結的現行標題經 `ask` 問主執行緒查 DB、
- * `exportNoteForTransfer`、鹽先產生，匯出時順便算段表 `links` 的連結文字雜湊）→ 算加鹽 HMAC 行雜湊（純計算）。
- * worker 全忙排太久 → `ParserBusyError`；逾時或用完記憶體 → `NoteReadTooComplexError`。這支不寫 DB：基底由呼叫端以 `insertBases` 寫。
- */
+/** `loadNoteState` opens no direct connection and touches no presence. Writes no DB: the caller writes the base with `insertBases`. */
 import { canonicalNotePath } from "@knotebook/shared";
 import type { CollabServer } from "../collab/server.js";
 import type { Db } from "../db/index.js";
@@ -23,7 +16,6 @@ export interface NoteFileDeps {
   db: Db;
   collab: CollabServer;
   editing: EditingRuntime;
-  /** `deriveTransferKey(APP_SECRET)`；每個 `transferRoutes` 實例算一次。 */
   key: Buffer;
   keyId: string;
 }

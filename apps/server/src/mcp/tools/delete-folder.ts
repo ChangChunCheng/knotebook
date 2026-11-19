@@ -1,10 +1,4 @@
-/**
- * 資料夾：`delete_folder`：刪資料夾與其下全部資料夾，子樹的活筆記一起移到垃圾桶（全有全無）；
- * 共享私人樹只刪資料夾、筆記不動。入口順序、閘門與交易都在服務層 `deleteFolder`，本檔只呼叫它、不得出現 deleted_at 字面（守衛二）。
- * 流程順序是契約：`requireDeleteScope`（第一個動作）→ `readTrashRetentionDays`（只當存在性守衛，排在服務層扣 folder 桶與任何寫入之前，
- * 同 delete_note）→ `deleteFolder`（失敗以 `folderFailureToToolError` 映射）→ ids 依 id 排序取前 `MCP_DELETE_FOLDER_IDS_MAX` 個
- * → `loadTrashedPurgeAt`（commit 後一讀）。MCP 沒有「只刪空資料夾」的選項，也沒有永久刪除。
- */
+/** The service owns the transaction; this file must not contain a deleted_at literal. `readTrashRetentionDays` runs before the service charges its limiter. */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../../auth/tx/admin-site-settings.js";
@@ -18,7 +12,6 @@ import { toolResult } from "../tool-result.js";
 import { requireDeleteScope } from "../write-scope.js";
 import type { McpToolCtx } from "../context.js";
 
-/** `delete_folder` 的工具說明。 */
 export const DELETE_FOLDER_DESCRIPTION =
   "Delete a folder and every folder inside it. The notes in them all move to the trash, each just as delete_note would move it, " +
   "and all at once: if any of them is a note your role can't move to the trash, nothing is deleted. For one of your folders for " +
@@ -38,7 +31,6 @@ export const DF_PURGE =
   "change it; list_trash shows the current date for the notes you can restore); null when no note was moved to the trash, or when " +
   "this site doesn't empty the trash on its own at the moment.";
 
-/** 註冊為 `z.object(deleteFolderInput).strict()`；只有 folder_id（不提供「只刪空資料夾」之類的選項）。 */
 export const deleteFolderInput = { folder_id: FOLDER_ID.describe(DF_FOLDER) };
 
 export const deleteFolderOutput = {
@@ -53,8 +45,7 @@ export async function deleteFolderTool(args: { folder_id: string }, ctx: McpTool
   const denied = requireDeleteScope(ctx);
   if (denied !== null) return denied;
 
-  // 存在性守衛：列不在是部署壞掉，丟給 runTool 收成 internal——在服務層扣 folder 桶與移入之前，什麼都沒做。值本身不用
-  // （回應的 purgeAt 取 commit 後那一刻的設定，見 loadTrashedPurgeAt）。
+  // Existence guard before anything is charged or moved; the value is unused (purgeAt is read after commit).
   if ((await readTrashRetentionDays(ctx.db)) === undefined) throw new Error(SITE_SETTINGS_MISSING_MESSAGE);
 
   const out = await deleteFolder(folderServiceDeps(ctx), { by: ctx.userId, folderId: args.folder_id });
@@ -62,7 +53,6 @@ export async function deleteFolderTool(args: { folder_id: string }, ctx: McpTool
 
   const all = [...out.result.trashedNoteIds].sort();
   const ids = all.slice(0, MCP_DELETE_FOLDER_IDS_MAX);
-  // 同一交易移入、移入時刻相同，任取一篇即可；沒有移入任何筆記、或 commit 後全被還原／永久刪除 → null。
   const purgeAt = await loadTrashedPurgeAt(ctx.db, ids);
   return toolResult({
     trashedNoteCount: all.length,

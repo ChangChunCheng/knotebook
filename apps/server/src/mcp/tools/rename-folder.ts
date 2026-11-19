@@ -1,6 +1,3 @@
-/**
- * 資料夾：`rename_folder`：只改名，不動位置、筆記與網址。服務層 `updateFolder` 負責入口順序與交易。
- */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FOLDER_NAME_MAX } from "@knotebook/shared";
@@ -13,7 +10,6 @@ import { toolError } from "../tool-result.js";
 import { requireWriteScope } from "../write-scope.js";
 import type { McpToolCtx } from "../context.js";
 
-/** `rename_folder` 的工具說明。 */
 export const RENAME_FOLDER_DESCRIPTION =
   "Rename a folder you can see; in a group, it needs a role that can edit notes. The name rules are the same as for create_folder. " +
   "Nothing else changes — not where the folder is, not the notes in it, not any URL. The reply is the folder, in the shape list_folders returns.";
@@ -21,7 +17,6 @@ export const RENAME_FOLDER_DESCRIPTION =
 export const RF_FOLDER = "The id of the folder to rename, from list_folders.";
 export const RF_NAME = `The new name: 1 to ${FOLDER_NAME_MAX} characters, with no line breaks or other control characters.`;
 
-/** 註冊為 `z.object(renameFolderInput).strict()`。 */
 export const renameFolderInput = {
   folder_id: FOLDER_ID.describe(RF_FOLDER),
   name: z.string().max(1000).describe(RF_NAME),

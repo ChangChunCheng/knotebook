@@ -1,12 +1,4 @@
-/**
- * #181 `list_trash`：呼叫者有垃圾桶權的垃圾桶筆記——與 `GET /api/trash` 同一支查詢（`trash/list.ts`）。
- * 每頁至多 `MCP_PAGE_MAX` 項、依 wire 預算可能更少（`pageCutShort`），以 `cursor`／`nextCursor`
- * 翻頁（keyset＝毫秒 `deleted_at` DESC, id DESC，與 REST 同鍵）；每項帶 `folderPath`。讀取類：不做 scope 檢查、不扣桶（同 `list_notes`）。
- *
- * 輸出是物件不是陣列：只增不改——`truncated` 的名字不改，意思是「還有下一頁」（≡ `nextCursor !== null`）。
- * 回給模型的標題、刪除者名、群組名一律 `truncateText`（逃脫後計），路徑走 `truncateFolderPath`，只在真的截時才帶 `*Truncated: true`。
- * 本檔的 `deletedAt:`／`deletedBy:` 是 outputSchema 與 DTO 映射（讀取），已登記在 `trash-structure.test.ts` 守衛二。
- */
+/** The output is an object so it can only grow: `truncated` keeps its name and means "there is a next page". `deletedAt:`/`deletedBy:` here are read mappings, registered in `trash-structure.test.ts`. */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { TrashItemDto } from "@knotebook/shared";
@@ -34,11 +26,9 @@ export const LIST_TRASH_DESCRIPTION =
   "`purgeAt` is when a note becomes due to be deleted permanently under the site's current trash setting " +
   "(an admin can change it, which moves every note's date), or null when this site doesn't empty the trash on its own at the moment.";
 
-/** `list_trash` 的 `.describe()`（`nextCursor` 那句在 `paging-strings.ts`）。 */
 export const LT_CURSOR_DESCRIBE = "Opaque cursor from a previous call's `nextCursor`. Omit it to start with the newest.";
 export const LT_TRUNCATED_DESCRIBE = "True when more notes follow this page — the same as `nextCursor` not being null.";
 
-/** 註冊為 `z.object(listTrashInput).strict()`。 */
 export const listTrashInput = {
   cursor: z.string().min(1).max(200).optional().describe(LT_CURSOR_DESCRIBE),
 };
@@ -104,12 +94,11 @@ function toTrashItemForModel(item: TrashItemDto): TrashItemForModel {
   };
 }
 
-/** 游標：base64url(`t|<毫秒排序鍵 ISO>|<id>`)。時間取排序鍵本身（`deletedAtMs`），不是 DTO 的 `deletedAt`（理由同 list_notes 的 encodeCursor）。 */
+/** The time is the sort key (`deletedAtMs`), not the DTO's `deletedAt` (same reason as list_notes). */
 function encodeTrashCursor(key: TrashCursor): string {
   return encodeKeysetCursor("t", [key.deletedAtMs.toISOString(), key.id]);
 }
 
-/** 不是本站發的（字元集、NUL、tag、段數）、時間段不是本站發的形（`parseCursorTimestamp`）或 id 不是 UUID → null。 */
 function decodeTrashCursor(raw: string): TrashCursor | null {
   const parts = decodeKeysetCursor(raw, "t", 2);
   if (parts === null) return null;
@@ -120,7 +109,6 @@ function decodeTrashCursor(raw: string): TrashCursor | null {
   return { deletedAtMs: at, id };
 }
 
-/** 預算的固定部分：空頁＋長度與真游標相同的佔位游標（84）＋`truncated: true`＋最長的 `retentionDays`（3650）＋`pageCutShort` 的保留。 */
 const TRASH_CURSOR_PLACEHOLDER = encodeTrashCursor({ deletedAtMs: new Date("2026-01-01T00:00:00.000Z"), id: "00000000-0000-0000-0000-000000000000" });
 export const TRASH_BASE_COST =
   wireCost({ retentionDays: 3650, items: [], truncated: true, nextCursor: TRASH_CURSOR_PLACEHOLDER }) + PAGE_CUT_RESERVE;
@@ -132,11 +120,10 @@ export async function listTrash(args: { cursor?: string }, ctx: McpToolCtx): Pro
     if (after === null) return toolError("invalid_body", BAD_CURSOR_MESSAGE);
   }
   const settings = await readTrashRetentionDays(ctx.db);
-  // 列不在是部署壞掉：丟給 runTool 收成 internal（訊息只進 log，不進模型脈絡）。
+  // A missing row is a broken deployment; the message goes to the log only.
   if (settings === undefined) throw new Error(SITE_SETTINGS_MISSING_MESSAGE);
   const page = await listTrashPage(ctx.db, ctx.userId, settings.retentionDays, { limit: MCP_PAGE_MAX, after });
   const items = page.items.map(toTrashItemForModel);
-  // 依 wire 成本截頁：截了就從被收的最後一項接著翻；沒截而查詢還有下一列就從這頁最後一項接著翻。
   const kept = countWithinWireBudget(items.map(wireCost), TRASH_BASE_COST);
   const cut = kept < items.length;
   const lastKey = cut ? page.keys[kept - 1] : page.hasMore ? page.keys[page.keys.length - 1] : undefined;

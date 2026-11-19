@@ -1,17 +1,9 @@
 /**
- * #108／#93：`search_notes`——標題＋內文、大小寫不敏感的字面子字串比對，範圍＝呼叫者看得見的筆記。
- *
- * - 查詢在 `notes/search-query.ts` 的 `searchNotesForUser`（同一個 REPEATABLE READ READ ONLY 交易兩句：列表＋matches）。
- *   ⚠ Never use the query string itself as a LIKE/ILIKE pattern (`%` and `_` would become wildcards); the body
- *   trigram path always runs it through `escapeLike` (see `notes/search-sql.ts`).
- * - **不做游標分頁**：`ORDER BY` 首鍵是 rank；回一個不可能算錯的 `truncated`。**不得發明 `cursor`／`nextCursor`。**
- * - 輸出兩個變體：`canRead`＝註冊時的 `ctx.collab && ctx.editing`（與 `register.ts` 讀取工具的閘門同一個判準）——
- *   沒有讀取工具的部署上，description 與 `sectionId` 的說明不提 read_note_section／outline／延遲。
- * - `matchedOn` 在每篇（偏離 D）：頂層一個值對混合清單沒有意義；頂層 `matchedOn` 已刪（破壞性，CHANGELOG Changed）。
- * - 摘錄：`notes/search-snippet.ts`，成本＝JSON 逃脫後（`escapedLength`），上限 `MCP_SNIPPET_MAX`。
- * - wire 預算（偏離 E）：50 篇 × 3 個最壞情形約 328 000 > N；依「筆記順序 → ord 順序」加入 match，下一個會超過
- *   `MCP_SEARCH_WIRE_BUDGET` 就停止（不跳過再試）並在頂層放 `matchesTruncated: true`。
- * - 限流：自己的 `search` 桶，查詢之前扣；`contentRead` 不受影響。
+ * Never use the query as a LIKE/ILIKE pattern (`%`/`_` would be wildcards); the trigram path
+ * escapes it with `escapeLike`. No cursor paging: the leading ORDER BY key is rank. Matches
+ * are added in note order until the next would exceed `MCP_SEARCH_WIRE_BUDGET` (50 notes × 3
+ * matches can exceed the 262 144 sentinel); `matchedOn` is per note. Uses its own `search`
+ * limiter, charged before the query.
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -28,10 +20,10 @@ import type { McpToolCtx } from "../context.js";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const MAX_QUERY = 200;
-/** `,"matchesTruncated":true` 兩份（structuredContent＋鏡像）的成本約 56，取 64。 */
+/** `,"matchesTruncated":true` in both copies is about 56. */
 const MATCHES_TRUNCATED_RESERVE = 64;
 
-// 逐字（模型面字串：只寫各部署形態都為真的話）。守衛：test/mcp-search.test.ts 的兩案（toBe 整句）。
+// Model-facing: only say things true on every deployment shape (pinned in test/mcp-search.test.ts).
 const DESC_HEAD =
   "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. " +
   "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body. ";
@@ -50,12 +42,10 @@ export function searchNotesDescription(canRead: boolean): string {
   return canRead ? SEARCH_NOTES_DESCRIPTION_READ : SEARCH_NOTES_DESCRIPTION_NO_READ;
 }
 
-/** #93：search 桶耗盡時的訊息（模型面字串，逐字）。 */
 export const SEARCH_RATE_LIMITED_MESSAGE = "Too many searches right now. Wait a moment before searching again.";
 
 export const searchNotesInput = {
-  // 不變量 S 的第一、二關在 schema 層（`noNul` 與 `routes/notes.ts` 是同一份）：
-  // 含 NUL 的字串到不了 handler，也就到不了 SQL。第三關是 drizzle 的參數化。MCP 不 trim（照收原字串）。
+  // The first two input-safety layers are in the schema (`noNul`); the third is drizzle's parameterization. MCP doesn't trim.
   query: z
     .string()
     .min(1)
@@ -117,7 +107,7 @@ export function assembleSearchPayload(
   let cut = false;
   outer: for (let i = 0; i < notes.length; i += 1) {
     for (const m of candidates[i] ?? []) {
-      const c = wireCost(m) + 2; // 逗號兩份；是上界
+      const c = wireCost(m) + 2; // Two copies of the comma; an upper bound
       if (total + c > budget) {
         cut = true;
         break outer;
@@ -148,13 +138,11 @@ export interface SearchNotesArgs {
 export async function searchNotes(args: SearchNotesArgs, ctx: McpToolCtx): Promise<CallToolResult> {
   if (!ctx.limiters.search.consume(ctx.userId)) return toolError("too_many_requests", SEARCH_RATE_LIMITED_MESSAGE);
   const limit = args.limit ?? DEFAULT_LIMIT;
-  // 多取一列判斷「還有更多」，不發第二個計數查詢。
   const { rows, matches } = await searchNotesForUser(ctx.db, { userId: ctx.userId, query: args.query, limit });
   const truncated = rows.length > limit;
   const page = truncated ? rows.slice(0, limit) : rows;
   const byNote = groupMatchesByNote(matches);
   const qlen = Array.from(args.query).length;
-  // 先建含 `folder` 的摘要再進 assembleSearchPayload：預算從 wireCost({ notes, truncated }) 起算，`folder` 自動算進去。
   const summaries = await noteSummariesForModel(ctx.db, page);
   const notes: SearchHitForModel[] = page.map((row, i) => ({ ...summaries[i]!, matchedOn: matchedOnOf(row), matches: [] }));
   const candidates = page.map(row => (row.bodyHit ? (byNote.get(row.id) ?? []).map(m => toMatch(m, qlen)) : []));
