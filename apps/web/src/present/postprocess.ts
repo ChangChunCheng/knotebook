@@ -2,19 +2,17 @@ import { normalizeAnchor } from "@knotebook/shared";
 import { renderMermaid, type MermaidTheme } from "@/lib/mermaid";
 
 /**
- * #229 投影片後處理：在消毒**之後**、只用 DOM API。
- * - 媒體（所有 img/video/audio[src] 與檔案連結 `a[data-kn-media]`）一律走頁別的媒體解析
- *   （已登入 `safeMediaUrl`、公開 `publicMediaUrl(ref)`）；`data-kn-media` 標記只來自 presentationSchema
- *   ，用來把檔案連結與文字連結分開（兩者 HTML 上分不開）。
- * - 文字連結只留 http(s)／mailto／相對網址；`href="#…"` 拿掉（reveal 會攔截並當跳頁）。
- * - mermaid 只在這裡收成 job；繪製（唯一的 innerHTML）由 `runMermaidJob` 在插入文件之後做，信任
- *   `lib/mermaid.ts` 的 strict 設定，不再過一次消毒。
+ * Runs after sanitizing, DOM API only.
+ * - Media always goes through the page kind's resolution (`safeMediaUrl` / `publicMediaUrl(ref)`); the `data-kn-media`
+ *   marker comes only from presentationSchema and tells file links from text links (identical in the HTML).
+ * - Text links keep only http(s) / mailto / relative URLs; `href="#…"` is removed (reveal would intercept it as a page jump).
+ * - mermaid is only collected into a job; drawing (the only innerHTML) happens in `runMermaidJob` after insertion, trusting
+ *   the strict config of `lib/mermaid.ts` without sanitizing again.
  */
 export type WikilinkResolution = { kind: "pending" } | { kind: "found"; href: string; title: string } | { kind: "broken" };
 
 export interface PostprocessContext {
   resolveMedia: (url: string) => string;
-  /** member：`brokenLabel`＝`t("note.wikilinkBroken")`，斷鏈 span 的 title（滑過看得到原因）。 */
   wikilinks: { kind: "member"; resolve: (targetNoteId: string) => WikilinkResolution; brokenLabel: string } | { kind: "public" };
 }
 
@@ -45,7 +43,7 @@ function openInNewTab(a: HTMLAnchorElement): void {
 function wikilinkNode(el: Element, ctx: PostprocessContext): Node {
   const targetId = el.getAttribute("data-target-note-id") ?? "";
   const snapshot = el.getAttribute("data-snapshot-title") ?? "";
-  // #269：label 優先；預設值（空）時 BlockNote 不輸出這兩個屬性。
+  // #269: label takes priority; with the default (empty) value BlockNote does not output these two attributes.
   const label = el.getAttribute("data-label") ?? "";
   const anchor = normalizeAnchor(el.getAttribute("data-anchor-block-id") ?? "");
   const hash = anchor ? `#b-${anchor}` : "";
@@ -106,7 +104,6 @@ export function postprocessSlide(root: ParentNode, ctx: PostprocessContext): Mer
   return jobs;
 }
 
-/** root 底下所有 mermaid 標記元素的 job（主題切換、更新後重畫用）。 */
 export function mermaidJobsIn(root: ParentNode): MermaidJob[] {
   return Array.from(root.querySelectorAll<HTMLElement>("[data-kn-mermaid]")).flatMap((el) => {
     const code = mermaidSource.get(el);
@@ -123,7 +120,7 @@ export async function runMermaidJob(
   const result = await renderMermaid(job.code, theme);
   if (!isCurrent()) return false;
   if (result.ok) {
-    job.el.innerHTML = result.svg; // 唯一的 innerHTML，來源是 lib/mermaid.ts（strict＋DOMPurify＋不呼叫 bindFunctions）
+    job.el.innerHTML = result.svg; // the only innerHTML; the source is lib/mermaid.ts (strict + DOMPurify + bindFunctions not called)
     return true;
   }
   if (result.message === "") {

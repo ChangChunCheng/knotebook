@@ -7,42 +7,26 @@ import { blocknoteZhTW } from "@/i18n/blocknote-zh-TW";
 import { publicMediaUrl } from "@/lib/public-media-url";
 import type { PublicNoteRef } from "@/lib/public-note-ref";
 
-/**
- * 編輯頁（`NoteEditor` 的 `buildNoteEditorOptions`）與公開唯讀頁
- * （{@link buildReadonlyNoteEditorOptions}）共用的選項底層（#72 抽出）——
- * schema／字典／collaboration 三件事兩邊必須一致，各寫一份的漂移症狀都很陰
- * （fragment 名寫錯＝空白頁零錯誤；schema 不同＝同一篇筆記兩頁渲染不同）。
- * 表格功能旗標（{@link NOTE_TABLE_SETTINGS}）也放這裡；唯讀頁不顯示表格把手，帶著無妨。
- */
+// Schema, dictionary and collaboration must match on the edit and read-only pages: a wrong fragment name = blank page with no error; different schemas = the same note renders differently.
 export interface CollabEditorBaseInput {
   doc: Y.Doc;
-  /** 共編游標協定物件。BlockNote 的 collaboration.provider 實際上只吃 `{ awareness }`
-   * 裸物件（編輯頁傳 HocuspocusProvider 的、唯讀頁傳 local `new Awareness(doc)`）。 */
   awareness: Awareness | undefined;
-  /** i18next 目前的語言代碼（`i18n.language`）。 */
   language: string;
-  /** 共編游標的名牌。唯讀頁沒有 cursor 顯示，給匿名替身即可（withCollaboration
-   * 的 user 必填——實測過）。 */
   user: { id?: string; name: string; color: string };
 }
 
-/**
- * 表格把手開放的功能：只開儲存格的字色與底色（開了之後滑鼠停在儲存格上會出現儲存格把手，列／欄把手選單多一項顏色）。
- * 拆格（`splitCells`）與標題列／欄（`headers`）維持 BlockNote 預設的關閉。測試建編輯器也用這個常數，免得與實際設定分岔。
- */
+// Tests that build an editor use this too, so it can't diverge from the real settings.
 export const NOTE_TABLE_SETTINGS = { cellTextColor: true, cellBackgroundColor: true } as const;
 
 export function buildCollabEditorBase({ doc, awareness, language, user }: CollabEditorBaseInput) {
   return {
     schema: noteSchema,
     tables: NOTE_TABLE_SETTINGS,
-    // BlockNote 的預設字典就是英文，只有 zh-TW 需要換掉。
     dictionary: language.startsWith("zh") ? blocknoteZhTW : undefined,
     collaboration: {
+      // BlockNote's collaboration.provider only reads { awareness }.
       provider: { awareness },
-      // fragment 名稱用 `@knotebook/shared` 的 `YDOC_FRAGMENT`——server 端
-      // `collab/store.ts` 存取的是同一個名字，任何一邊寫死字串就會變成兩份互不相干
-      // 的文件（看起來像「同步壞掉」，其實是連錯文件）。
+      // Same name as the server's `collab/store.ts`; a hard-coded string on either side gives two unrelated documents (looks like "sync is broken").
       fragment: doc.getXmlFragment(YDOC_FRAGMENT),
       user,
     },
@@ -51,22 +35,13 @@ export function buildCollabEditorBase({ doc, awareness, language, user }: Collab
 
 export interface ReadonlyNoteEditorOptionsInput {
   doc: Y.Doc;
-  /** local `new Awareness(doc)`（y-protocols）——唯讀頁沒有連線，不掛 HocuspocusProvider。 */
   awareness: Awareness;
-  /** 公開頁把手（#122 起兩形）：`resolveFileUrl` 依形把自家上傳網址映射到免登入的公開圖端點。 */
   publicRef: PublicNoteRef;
   language: string;
 }
 
-/**
- * 公開唯讀頁（`/p/:token` 與 `/p/:handle/:slug`）的編輯器選項。與編輯頁共用
- * {@link buildCollabEditorBase}；差異只有兩件事：
- * - `resolveFileUrl` 換成 {@link publicMediaUrl}（匿名端沒 session，`/api/uploads/:id`
- *   必 401——先過 safeMediaUrl 再依 `publicRef` 的形映射到公開圖端點）。
- * - **不掛任何編輯用選項**（uploadFile／pasteHandler／`_tiptapOptions` 的輸入攔截與
- *   `[[` 偵測）：唯讀頁沒有輸入路徑，掛了就是多餘的攻擊面。`editable={false}` 由
- *   `PublicNoteEditor` 的 `BlockNoteView` 負責。
- */
+// Anonymous visitors have no session, so `/api/uploads/:id` would 401: `resolveFileUrl` is {@link publicMediaUrl}. No editing options are attached: a read-only page has no input path, so they'd only add attack surface.
+// `editable={false}` comes from PublicNoteEditor's BlockNoteView.
 export function buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, language }: ReadonlyNoteEditorOptionsInput) {
   const resolvePublicUrl = publicMediaUrl(publicRef);
   return withCollaboration({
@@ -74,7 +49,7 @@ export function buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, lang
       doc,
       awareness,
       language,
-      // 匿名替身：name/color 必填但唯讀下不會渲染任何 cursor 名牌，值不承重。
+      // Anonymous stand-in: required, but no cursor name tag is rendered when read-only.
       user: { name: "", color: "#888888" },
     }),
     resolveFileUrl: (url: string) => Promise.resolve(resolvePublicUrl(url)),

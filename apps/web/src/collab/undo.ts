@@ -3,203 +3,77 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import type { UndoManager } from "yjs";
 
 /**
- * 共編模式下的 undo/redo 生命線（issue #97）。
+ * Keeps undo/redo alive in collaborative mode (#97).
  *
- * ## 病灶
+ * The `yUndoPlugin` view's `destroy()` calls `undoManager.destroy()` (y-prosemirror 1.3.7), which
+ * unsubscribes it from the Y.Doc (yjs 13.6.32), but a view remount reuses the same `EditorState`
+ * and so the same destroyed manager: Ctrl+Z silently does nothing. The view remounts on every
+ * `editable` flip (`@blocknote/react` 0.52.1 binds mount to a ref callback depending on it, and
+ * `NotePage` flips it false→true on every note open) and on StrictMode's simulated remount.
+ * Preventing the teardown is fragile (any new prop dependency breaks it); the sync plugin
+ * re-attaches on every `view()` but the undo plugin only tears down, so the manager is re-armed on every mount (`keepCollabUndoAlive`).
  *
- * 共編模式下 BlockNote 會 `disableExtensions: ["history"]`，把 undo/redo 換成 Yjs 的
- * `UndoManager`（由 y-prosemirror 的 `yUndoPlugin` 持有）。那個 plugin 的
- * **state** 建立一次就跟著 `EditorState` 一輩子，但它的 **view** 在 `destroy()` 時
- * 會呼叫 `undoManager.destroy()`（y-prosemirror 1.3.7 `plugins/undo-plugin.js`，
- * 逐行核實過）：
+ * The manager is deliberately not rebuilt: `destroy()` keeps `undoStack`/`redoStack`, so
+ * re-subscribing revives the history, whereas a rebuild drops it; and the old instance holds the
+ * plugin's `stack-item-added` listener (cursor restore), so the later `destroy()` would tear down
+ * the wrong object. Selection restore also survives the remount: the stack-item selection meta is
+ * keyed by `binding`, a single plugin-level instance.
  *
- * ```js
- * view: view => { …; return { destroy: () => { undoManager.destroy() } } }
- * ```
- *
- * 而 `UndoManager.destroy()`（yjs 13.6.32）做的是**解除對 Y.Doc 的訂閱**：
- *
- * ```js
- * destroy () {
- *   this.trackedOrigins.delete(this)
- *   this.doc.off('afterTransaction', this.afterTransactionHandler)
- *   this.doc.off('destroy', this.destroy)
- *   super.destroy()
- * }
- * ```
- *
- * ProseMirror 的 view 是可以被拆掉再重掛的（tiptap 的 `unmount()` 註解逐字寫著
- * 「still allow remounting at a different point in time」，BlockNote 也把
- * `mount`/`unmount` 當公開 API）——**但重掛時沿用的是同一個 `EditorState`**，
- * 也就是同一個「已經被 destroy 過」的 `UndoManager`。新的 view 會照常在它身上註冊
- * `stack-item-added`／`stack-item-popped`，`undoManager.undo()` 也照常被呼叫、
- * 不丟例外——只是它再也收不到 `afterTransaction`，`undoStack` 永遠是空的。
- * **症狀就是 Ctrl+Z／Ctrl+Shift+Z／Ctrl+Y 完全沒反應、console 零錯誤。**
- *
- * ## 這個 app 有兩條路徑會把 view 拆掉重掛（兩條都實測過）
- *
- * 1. **`editable` 一變就重掛（正式版的兇手）**：`@blocknote/react` 0.52.1 把
- *    `editor.mount()/unmount()` 綁在一個 `useCallback` 的 ref callback 上，而
- *    `editable` 是它的依賴之一（`blocknote-react.js`：
- *    `n.isEditable = t.editorProps.editable !== !1, e ? n.mount(e, …) : n.unmount()`，
- *    deps `[t.editorProps.editable, n, r, i]`）。identity 一換 React 就
- *    detach 舊 ref（→ `unmount()`）再 attach 新的（→ `mount()`）。
- *    我們的 `NotePage` 是 `editable = roleCanEdit && synced`（issue #48 的離線可見性），
- *    `synced` 每次開筆記都必然 false→true 翻一次 ⇒ **每開一篇筆記，undo 就死一次**。
- * 2. **React `StrictMode` 的模擬重掛（開發模式）**：`main.tsx` 有 `<StrictMode>`，
- *    每次掛載都會 mount → unmount → mount。所以就算把 ①（`editable` 依賴）繞掉，
- *    `pnpm dev` 下的 undo 一樣是死的。
- *
- * 換句話說「別讓 view 被拆」不是可靠的修法（下一個 prop 依賴就會再破一次），
- * **要修的不變量是「編輯器活著的期間，UndoManager 必須一直訂閱著它的 Y.Doc」**。
- *
- * ## 這不是「從外面戳私有狀態」，是補平 library 自己的不對稱
- *
- * 同一份 y-prosemirror 裡，**sync** plugin 對重掛是有處理的：它的 `view()` 每次都
- * 呼叫 `binding.initView(view)`（`sync-plugin.js:190`），而 `initView`
- * （同檔 662-668）會 `if (this.prosemirrorView != null) this.destroy()` 之後
- * **重新掛上** `beforeAllTransactions`／`afterAllTransactions`／`observeDeep`。
- * **undo plugin 的 `view()` 沒有對應的重掛動作**——它只在 `destroy` 裡拆，從不補。
- * 我們補的就是那一半。
- *
- * 順帶解釋為什麼「不重建 manager」能保住 undo 後的選取還原：`binding` 是
- * **plugin 層級的單一實例**（`sync-plugin.js:111`，在 plugin factory 裡 new 一次，
- * 不是每個 view 一個），而 undo plugin 把選取快照存成 `stackItem.meta.set(binding, …)`
- * ——binding 身分跨重掛不變，所以重掛之前那些歷史格子的游標 meta 仍然查得到。
- *
- * ## 修法
- *
- * 每次 view 掛好之後補回 `destroy()` 拆掉的那三件事。三件都是**冪等**的
- * （`trackedOrigins` 是 `Set`；lib0 的 `Observable.on` 也是往 `Set` 裡加同一個
- * 函式參照），所以第一次掛載時呼叫等同 no-op，不必先偵測「有沒有被 destroy 過」。
- *
- * ⚠ **刻意不重建 UndoManager**：`destroy()` 不會清 `undoStack`/`redoStack`，
- * 重新訂閱等於**連歷史一起復活**；重建則會把重掛前的歷史丟掉，而且 plugin 的
- * `view()` 已經把 `stack-item-added`（游標位置還原）註冊在舊實例上，換掉會讓
- * undo 之後的選取還原失效、下一次 `destroy()` 也會拆錯對象。
- *
- * ⚠ **不會串味到別篇筆記**：`useCollab` 每篇筆記各開一份 `Y.Doc`/provider，
- * `useCreateBlockNote` 的 deps 是 `[doc, provider]` ⇒ 換筆記＝全新 editor＋全新
- * `UndoManager`，這裡完全沒有跨 editor 的共用狀態。
- *
- * ## 這條修正**沒有**涵蓋的殘留缺陷（issue #100）
- *
- * 「撤銷到空白文件」之後重做仍然無效，且是確定性的：撤到空白會讓 ProseMirror 重新
- * 正規化（補回空段落、重產 block id），y-prosemirror 的 sync plugin 隨即把這個差異
- * 以 `ySyncPluginKey`——也就是 `UndoManager` 追蹤的那個 origin——寫回 Y.Doc，
- * `afterTransactionHandler` 於是當成「使用者又編輯了」而 `clear(false, true)`
- * 清掉整個 redoStack（真瀏覽器實測，約在 undo 後 12ms）。
- * 那是 library 層的問題、與本檔無關（本檔修正之前 undo/redo 是整組死的），
- * 三條可能的修法都會動到共編 undo 語意或需要上游配合——完整分析在 issue #100。
+ * No cross-note bleed: each note gets its own Y.Doc/provider and `useCreateBlockNote` deps are
+ * `[doc, provider]`, so switching notes builds a new editor and a new UndoManager.
  */
 
-/** y-prosemirror `yUndoPlugin` 的 plugin state（只取我們用得到的那一格）。 */
 interface YUndoPluginState {
   undoManager?: UndoManager;
 }
 
 /**
- * 取出目前這個 editor 的共編 `UndoManager`；非共編（`history` extension 那條路）
- * 回傳 `undefined`。
- *
- * 刻意走 `editor.getExtension("yUndo")` 再拿它自己的 `prosemirrorPlugins[0]`，
- * **不是** `import { yUndoPluginKey } from "y-prosemirror"`：後者比對的是 `PluginKey`
- * 物件身分，只要 pnpm 因為 peer 解析給了 apps/web 與 `@blocknote/core` 兩份不同的
- * y-prosemirror 實例，`getState()` 就會靜默回 `undefined`。從 extension 手上直接拿到
- * 「BlockNote 當初建出來的那一個 plugin 物件」沒有這個風險。
+ * Reads the plugin from BlockNote's own `yUndo` extension instead of importing `yUndoPluginKey`:
+ * a `PluginKey` identity check silently fails (`getState()` returns `undefined`) if pnpm gives
+ * apps/web and `@blocknote/core` two y-prosemirror instances.
  */
 export function collabUndoManager(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.tsx/wikilink/menu.ts）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor's three generic parameters; repo convention uses any (as in components/NoteEditor.tsx, components/wikilink/menu.ts)
   editor: BlockNoteEditor<any, any, any>,
 ): UndoManager | undefined {
   const plugin = editor.getExtension("yUndo")?.prosemirrorPlugins?.[0];
   return (plugin?.getState(editor.prosemirrorState) as YUndoPluginState | undefined)?.undoManager;
 }
 
-/**
- * 把 `UndoManager` 重新接回它的 Y.Doc——逐項對應 `UndoManager.destroy()` 拆掉的東西。
- * 冪等：沒被 destroy 過時呼叫是 no-op。
- */
+// Idempotent (`trackedOrigins` and lib0 `Observable.on` are Sets), so the first mount needs no destroyed check.
 export function armCollabUndoManager(manager: UndoManager): void {
-  // `afterTransactionHandler` 判斷 origin 時查的就是這個 Set，而 `destroy()` 會把自己
-  // 移除。**這一條顧的是 redo**（實測：拿掉它 undo 照常、redo 全滅）：undo 送出的
-  // transaction origin 就是 manager 自己，沒被 tracked 的話 handler 直接早退，
-  // redoStack 永遠長不出東西。
+  // Without it undo works but redo is dead: undo's origin is the manager itself, and an untracked origin makes the handler return early.
   manager.trackedOrigins.add(manager);
-  // 真正讓 undoStack 長出東西的那條訂閱（少了它 undo/redo 全滅）。
   manager.doc.on("afterTransaction", manager.afterTransactionHandler);
-  // 文件被丟棄時自動收攤（`destroy` 在 constructor 裡就 bind 過，參照穩定）。
-  // ⚠ 這一條是**對稱性/衛生**，沒有測試守著也守不到——但要小心兩件事都別寫錯：
-  // ① **它確實會被呼叫**：`Y.Doc.destroy()` 是先 `emit('destroy')` 才 `super.destroy()`
-  //    （yjs 13.6.32 dist 705-707 行）。
-  // ② **而且呼叫的當下真的有事可做**：換筆記時 `useCollab` 的 cleanup 是
-  //    `provider.destroy(); doc.destroy(); setSession(null);`（`useCollab.ts` 該 effect
-  //    的 deps 是 `[noteId, dispatch]`）——`doc.destroy()` 跑在 `setSession(null)` 之前，
-  //    而編輯器要等 session 變 null 才卸載，所以這一刻舊 view 還掛著、manager 還是活的。
-  // 淨效果仍然是零，理由是**緊接著的 `super.destroy()` 反正會把所有訂閱一次清光**
-  //（`trackedOrigins` 也隨 plugin 一起被丟棄）。保留它是為了「補回來的東西逐項對得上
-  // `destroy()` 拆掉的東西」這個好懂的不變量，也擋掉未來卸載順序改變時的訂閱殘留。
+  // Symmetry with `destroy()`; `super.destroy()` clears subscriptions anyway, but this avoids a leak if the unmount order ever changes. `destroy` is bound in the UndoManager constructor, so passing it unbound is safe.
   manager.doc.on("destroy", manager.destroy);
 }
 
-/**
- * 掛上生命線：立刻補一次，之後每次 view 重掛再補一次。回傳解除訂閱函式。
- *
- * **「立刻補一次」不是保險，是必要的**：React `StrictMode` 的模擬重掛順序是
- * 「拆 effect → detach ref（`unmount()`）→ attach ref（`mount()`，`onMount`
- * 在這裡發出）→ 重跑 effect」——`onMount` 發出的當下我們已經被解除訂閱了，
- * 只靠 `onMount` 會漏掉這一發。反過來 `editable` 翻面那條路徑不會重跑 effect，
- * 只有 `onMount` 接得到。兩條路徑各自被其中一半覆蓋，缺一不可。
- * （`undo.test.tsx` 兩邊各有一條測試釘住：拿掉 `arm()` 只有 StrictMode 那條紅，
- * 拿掉 `onMount` 只有 `editable` 那族紅。）
- *
- * ⚠ 上面那個順序對 layout effect 與 passive effect **都成立**，所以
- * {@link useCollabUndoLifeline} 換成 `useEffect` 一樣會過——別把「必須是 layout
- * effect」讀進這段話裡。選 layout 的理由只是讓補訂閱與 ref attach 收斂在同一個
- * commit 內完成，不留一個「view 已掛好但 undo 還沒接回來」的可見畫格。
- */
-
-// ── issue #100：撤到空白文件後 redo 失效 ────────────────────────────────────────
+// #100: undo to an empty document → PM normalization restores an empty paragraph → the sync
+// plugin writes it back with `ySyncPluginKey` (the origin user edits share) on a later PM
+// transaction (`binding.mux` holds it off during undo's own dispatch) → `afterTransactionHandler`
+// takes it as a new edit: `clear(false, true)` wipes redoStack, and the normalization lands on
+// undoStack (undoing it would normalize again, circular).
 //
-// 機制：undo 讓 fragment 變空 → BlockNote/PM 正規化補回空段落 → y-prosemirror
-// sync plugin 的 `view.update` 在下一筆任意 PM transaction 觸發時（回寫被
-// `binding.mux` 擋在 undo 自己的 dispatch 之外，所以總是「稍後」發生——真瀏覽器
-// 實測約 12ms），以 `ySyncPluginKey`（＝使用者編輯共用的 origin）把正規化寫回
-// Y.Doc → `UndoManager.afterTransactionHandler` 當成新編輯 → `clear(false, true)`
-// 清掉整個 redoStack。順帶把正規化推上 undoStack（再按 undo 會撤掉正規化→又空
-// →又正規化，circular）。
-//
-// 判別式（三元組合，缺一不可）：**origin=y-sync$ ∧ deleteSet 空 ∧ 結果恰為預設
-// 空文件**。使用者的任何真編輯都不滿足：全選刪除的結果同為空文件形但 deleteSet
-// 非空；在空文件打第一個字同為「純插入」但結果非空。`undo.test.tsx` 的
-// 「判別式不得過寬」一條守著這件事。
+// Discriminator (all required): origin y-sync$ ∧ a non-empty change ∧ empty deleteSet ∧ result
+// exactly the default empty document. Select-all-delete has the same shape but a non-empty deleteSet; typing
+// the first character is a pure insert, but the result isn't the empty document. `undo.test.tsx` guards that it isn't too broad.
 
-/** {@link isDefaultEmptyFragment} 走訪時每一層的最小介面（Y.XmlElement 的子集）。 */
 interface XmlNodeLike {
   nodeName?: string;
   length?: number;
   get?: (index: number) => unknown;
 }
 
-/**
- * 節點是不是指定 nodeName 且恰有 expectedLength 個子節點的 XmlElement。
- *
- * 刻意用 duck-typing 而非 `instanceof Y.XmlElement`：pnpm 只要因 peer 解析給出
- * apps/web 與 @blocknote/core 兩份不同的 yjs 實例，instanceof 就靜默恆 false
- * （同 `collabUndoManager` 不 import `yUndoPluginKey` 的理由）。`nodeName` 只有
- * XmlElement 有（XmlText/XmlHook 沒有），足以判別。
- */
+/** Duck-typed: `instanceof Y.XmlElement` is always false if pnpm gives two yjs instances. Only XmlElement has `nodeName`. */
 function isXmlElement(node: unknown, nodeName: string, expectedLength: number): node is Required<XmlNodeLike> {
   const candidate = node as XmlNodeLike | null;
   return candidate?.nodeName === nodeName && candidate.length === expectedLength && typeof candidate.get === "function";
 }
 
 /**
- * fragment 是否恰為「blockGroup > blockContainer > 空 paragraph」的預設空文件。
- *
- * ⚠ nodeName 是 **camelCase**（`blockGroup`／`blockContainer`）——`toString()` 會
- * 印成小寫，別被它騙去改這裡（#100 調查時踩過）。不檢查 attrs：id 每次正規化都
- * 重生，其餘 attrs 不影響「這是不是空文件」的判定。
+ * nodeName is camelCase (`toString()` prints lowercase). Attrs are unchecked: the id is
+ * regenerated on every normalization.
  */
 function isDefaultEmptyFragment(fragment: { length: number; get: (index: number) => unknown }): boolean {
   if (fragment.length !== 1) return false;
@@ -210,79 +84,58 @@ function isDefaultEmptyFragment(fragment: { length: number; get: (index: number)
   return isXmlElement(container.get(0), "paragraph", 0);
 }
 
-/** redo 前清掉正規化殘渣用的 origin——不在 `trackedOrigins`，所以不進歷史。 */
+/** Not in `trackedOrigins`, so clearing the residue before redo does not enter history. */
 const DENORMALIZE_ORIGIN = "knotebook:undo-denormalize";
 
 /**
- * 每個 manager 只包一次（arm 會被生命線重複呼叫，重複包會讓 wrapper 疊加）；
- * value 是「作廢殘渣記錄」的把手——**重複呼叫 guard（＝生命線 re-arm）時要作廢**：
- * 作廢不變量「captureTransaction 看得到每一筆」的前提是 manager 訂閱著
- * afterTransaction，而 #97 的病灶正是這條訂閱會在 view 重掛被拆。訂閱死掉的窗口
- * 內若有遠端更新「就地沾染」殘渣節點，identity 比對擋不住（節點沒被換掉）——
- * re-arm＝可能存在過這種窗口，一律作廢，劣化方向是已文件化的「平行空 block」，
- * fail-safe（實測過不作廢會把遠端內容連坐刪掉）。
+ * Wrapped once per manager (arm is called repeatedly). The value invalidates the residue record
+ * and is called on every re-arm: a remote update arriving while the manager was unsubscribed
+ * (#97) can contaminate the residue node in place, which the identity comparison can't detect.
+ * Invalidating degrades to a parallel empty block (fail-safe); not invalidating can delete
+ * remote content.
  */
 const guardedManagers = new WeakMap<UndoManager, () => void>();
 
 /**
- * 對 manager 裝上兩件套（冪等）：
+ * Idempotent. Hooks the public `captureTransaction` option (yjs 13.6.32) to refuse discriminator
+ * hits (so `afterTransactionHandler` returns early: redoStack survives and the normalization stays
+ * off undoStack), and wraps `redo`, which
+ * must first clear the refused normalization; otherwise the restored content sits next to it as
+ * two parallel blockGroups (PM renders only the first, so redo looks like it did nothing).
  *
- * ① `captureTransaction`：命中判別式的正規化回寫不捕捉——`afterTransactionHandler`
- *    因此提早 return，redoStack 不被清、正規化也不進 undoStack。
- *    （`captureTransaction` 是 yjs 13.6.32 的公開建構選項、實例上的普通可寫屬性，
- *    handler 逐筆呼叫 `this.captureTransaction(transaction)`——這是文件化的縫，
- *    不是戳私有內部。）
- * ② `redo`：**只清「這個 session 剛拒捕的那筆正規化、且之後沒有任何編輯沾過它」**，
- *    再 redo。不清的話 redo 恢復的內容會與殘渣並列成**兩個平行 blockGroup**
- *    （不合法結構，PM 只渲染第一個，看起來像 redo 沒生效）。
- *
- *    ⚠ 殘渣的鑑別**不能**用「fragment 長得像預設空文件」（第一版就是這樣寫，
- *    出過嚴重的錯）：那個結構可能是**本來就存在的活 baseline**——重開一篇曾被撤空
- *    的筆記後，殘渣已持久化、使用者的新編輯以它為 parent；或同 session 撤空後又
- *    打了字再 undo。此時 redo 項目的 parent 就是它，刪掉它會讓 yjs 的 `redoItem`
- *    對「已刪除且不在 redo 集合裡的 parent」直接回 null（yjs 13.6.32
- *    `structs/Item.js` redoItem），redo 整疊 pop 光、什麼都沒恢復，文件停在全空，
- *    且刪除走非 tracked origin 連 undo 都救不回——確定性資料遺失。所以改成
- *    **記錄式**：拒捕當下記住那顆剛插入的 blockGroup 節點，之後任何實質變更一來
- *    就作廢記錄；redo 前只在「記錄還在、且 fragment 此刻恰好只有那顆節點」時清除。
- *
- * 已知殘餘邊角（刻意不處理）：協作者恰在「本地撤到空 → redo」的窗口內寫入時，
- * 記錄被作廢、清理跳過，redo 會把舊內容與協作者的結構並列成兩個平行 blockGroup
- * ——Y 層無資料遺失（修正前這條路是 redo 整個死掉），見 known-limitations。
- *
- * scope[0] 就是 `yUndoPlugin` 建構時傳入的共編 fragment（`new UndoManager(ystate.type)`）。
+ * The residue is tracked by record, not by "fragment looks like the default empty document":
+ * that structure can be a live baseline (a reopened note once undone to empty, or undo-to-empty
+ * then typing then undo) and is then the parent of the redo item; deleting it makes yjs
+ * `redoItem` return null (13.6.32 `structs/Item.js`), the redo stack pops with nothing
+ * restored, and since the deletion uses an untracked origin even undo can't recover it: data
+ * loss. So on a refused capture remember the inserted blockGroup node; any substantive change
+ * invalidates it; before redo, clear only if the record still exists and the fragment is
+ * exactly that node. A collaborator writing between undo-to-empty and redo: see
+ * docs/known-limitations.md.
  */
 export function guardEmptyDocNormalization(manager: UndoManager): void {
   const invalidate = guardedManagers.get(manager);
   if (invalidate) {
-    // 已包過：這次呼叫是生命線 re-arm——作廢殘渣記錄（理由見 guardedManagers 註解）。
     invalidate();
     return;
   }
-  // scope[0] 是 yUndoPlugin 建構時的共編 fragment；duck-typing 理由見 isXmlElement。
+  // scope[0] is the collab fragment yUndoPlugin was built with; duck-typed like `isXmlElement`.
   const fragment = manager.scope[0] as unknown as { length: number; get: (index: number) => unknown; delete: (index: number, length: number) => void };
   if (typeof fragment?.get !== "function" || typeof fragment.delete !== "function") return;
 
-  // 最近一筆被拒捕的正規化實際插入的 blockGroup 節點；null＝沒有可清的殘渣。
   let pendingResidue: unknown = null;
   guardedManagers.set(manager, () => { pendingResidue = null; });
 
   const capture = manager.captureTransaction;
   manager.captureTransaction = (transaction) => {
-    // origin 以 `key` 字串比對，不 import `ySyncPluginKey` 做身分比對——pnpm 若給出
-    // 兩份 y-prosemirror 實例，PluginKey 身分比對會靜默失敗（同 collabUndoManager
-    // 不 import yUndoPluginKey 的理由）。
+    // Compare the origin's `key` string: with two y-prosemirror instances a PluginKey identity check fails silently.
     const isSyncWriteback = (transaction.origin as { key?: string } | null)?.key === "y-sync$";
-    // 判別式三條件是合取的防線，承重情形各不同（實測釘過）：使用者「清空筆記」
-    // 的回寫實際是被**第三條件**擋下的（那筆回寫發生當下 paragraph 還帶著空的
-    // text 節點、不是預設空文件形）；deleteSet 條件擋的是「刪除＋重建成空文件形」
-    // 的合成回寫；origin 條件擋非 sync 來源的純插入（例如未來 server seed）。
-    // 別因為某一條在手邊情境看起來惰性就拆掉——`undo.test.tsx` 對後兩條各有
-    // 合成 transaction 的釘子。
-    // 第四條件 `changedParentTypes.size > 0`：**這筆必須真的有插入**。yjs 對 no-op
-    // 的 transact 一樣會發 afterTransaction（PM/Y 已一致時 sync plugin 的回寫就是
-    // no-op），沒有這條的話，只要 fragment 當下長得像空文件形，no-op 也會命中、
-    // 把「活的 baseline」誤記成殘渣——正是先前那條資料遺失的另一個入口。
+    // Each condition is load-bearing (pinned by tests); don't remove one because it looks inert.
+    // The shape condition stops a user "clear note" write-back (the paragraph still has an empty
+    // text node then); deleteSet stops synthetic delete-and-rebuild write-backs; origin stops
+    // non-sync pure inserts (e.g. a future server seed). `changedParentTypes.size > 0`: yjs fires
+    // afterTransaction for no-op transacts too, which would match whenever the fragment has the
+    // empty shape and record a live baseline as residue (the data loss above).
     if (
       isSyncWriteback &&
       transaction.changedParentTypes.size > 0 &&
@@ -292,8 +145,8 @@ export function guardEmptyDocNormalization(manager: UndoManager): void {
       pendingResidue = fragment.get(0);
       return false;
     }
-    // 任何其他實質變更（使用者編輯、協作者遠端更新、undo/redo 本身）一來，殘渣就
-    // 不再「純」——它可能已成為新編輯的 parent，清掉會誤殺 redo 鏈。保守作廢。
+    // Any other substantive change (user edit, remote update, undo/redo) may make the residue the
+    // parent of a new edit, and clearing it would break the redo chain: invalidate.
     if (pendingResidue !== null && transaction.changedParentTypes.size > 0) {
       pendingResidue = null;
     }
@@ -302,30 +155,27 @@ export function guardEmptyDocNormalization(manager: UndoManager): void {
 
   const redo = manager.redo.bind(manager);
   manager.redo = () => {
-    // 三重門。**承重的是「有記錄」**（記錄的建立與作廢已保證它只可能指向純殘渣；
-    // 死窗口由 re-arm 作廢補上）；redoStack 門與 identity 門是縱深防禦——訂閱
-    // 活著時任何換掉/擠開節點的變更都會先走作廢分支，所以它們在已知路徑上到
-    // 不了，突變測試殺不掉它們是**預期的**（核實過），別因此拆掉。
+    // The record is the load-bearing gate; the redoStack and identity gates are unreachable on
+    // known paths and kept as defense in depth.
     if (pendingResidue !== null && manager.redoStack.length > 0 && fragment.length === 1 && fragment.get(0) === pendingResidue) {
       manager.doc.transact(() => { fragment.delete(0, 1); }, DENORMALIZE_ORIGIN);
     }
-    // 用過即棄同屬縱深防禦（清殘渣的 transact 與 redo 自己的 transaction 本來就會
-    // 流經 captureTransaction 的作廢分支）——保留是讓不變量在這裡直接可見。
     pendingResidue = null;
     return redo();
   };
 }
 
+// Arm now and on every mount: under StrictMode the remount's onMount fires while our onMount subscription is torn down
+// (the re-run effect's immediate arm catches it); an editable flip doesn't re-run the effect, so only onMount sees it.
+// Each half is pinned in `undo.test.tsx` (removing `arm()` fails only the StrictMode test, removing `onMount` only the `editable` tests).
 export function keepCollabUndoAlive(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor: BlockNoteEditor<any, any, any>,
 ): () => void {
   const arm = (): void => {
     const manager = collabUndoManager(editor);
     if (manager) {
       armCollabUndoManager(manager);
-      // issue #100：兩件套（captureTransaction 判別式＋redo 前清殘渣）跟著生命線裝上。
-      // 自帶冪等（WeakSet），重掛多少次都只包一層。
       guardEmptyDocNormalization(manager);
     }
   };
@@ -333,10 +183,11 @@ export function keepCollabUndoAlive(
   return editor.onMount(arm);
 }
 
-/** {@link keepCollabUndoAlive} 的 React 包裝。掛在真正持有 `<BlockNoteView>` 的元件上。 */
 export function useCollabUndoLifeline(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor: BlockNoteEditor<any, any, any>,
 ): void {
+  // Layout effect only so re-subscribing lands in the same commit as the ref attach (no visible
+  // frame with undo detached); the arm order above also holds for useEffect, which would work too.
   useLayoutEffect(() => keepCollabUndoAlive(editor), [editor]);
 }

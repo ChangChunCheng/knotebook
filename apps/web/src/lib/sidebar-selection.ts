@@ -1,9 +1,4 @@
-/**
- * 側欄選取模式的狀態。垃圾桶 tab 與一般 tab 共用同一份。
- * 鍵是 `{ kind, id }` 組成的字串，含 kind 是為資料夾（`"folder"`）與筆記同列選取。
- */
 
-/** 選取以 { kind, id } 為鍵；"folder" 已加。 */
 export type SelectionNodeKind = "note" | "folder";
 export interface SelectionNode {
   kind: SelectionNodeKind;
@@ -14,14 +9,12 @@ export function selectionKey(node: SelectionNode): string {
   return `${node.kind}:${node.id}`;
 }
 
-/** 一份側欄實例（靜態卡或抽屜）標題列的「選取」鈕。垃圾桶 tab 與一般 tab 共用：離開選取模式後焦點交給它
- *（`AppShell` 抽屜 Esc、`TrashFooter`／`SelectHeader`／`SelectActionBar` 的離開路徑）。 */
+/** Focus goes here after leaving selection mode (drawer Esc in `AppShell`, exit paths of the trash/select bars). */
 export const SIDEBAR_SELECT_BUTTON = "[data-sidebar-header] button[data-sidebar-select]";
 
 export interface SidebarSelection {
   active: boolean;
   keys: ReadonlySet<string>;
-  /** Shift＋點選的錨點：最後一次單列切換的鍵。 */
   anchor: string | null;
 }
 
@@ -42,7 +35,6 @@ function toggle(state: SidebarSelection, key: string): SidebarSelection {
   return { ...state, keys, anchor: key };
 }
 
-/** 不在選取模式時除了 `start` 一律回原 state（不累積鍵、不換物件）。 */
 export function reduceSelection(state: SidebarSelection, op: SelectionOp): SidebarSelection {
   if (op.type === "start") return { active: true, keys: new Set(), anchor: null };
   if (!state.active) return state;
@@ -52,7 +44,7 @@ export function reduceSelection(state: SidebarSelection, op: SelectionOp): Sideb
     case "toggle":
       return toggle(state, op.key);
     case "range": {
-      // 錨點到 key（含兩端）加入已選、錨點不動；錨點或 key 不在清單（重抓後消失）就退化成單列切換。
+      // The anchor or key may have vanished after a refetch: degrade to a single-row toggle.
       const from = state.anchor === null ? -1 : op.order.indexOf(state.anchor);
       const to = op.order.indexOf(op.key);
       if (from === -1 || to === -1) return toggle(state, op.key);
@@ -73,7 +65,7 @@ export function reduceSelection(state: SidebarSelection, op: SelectionOp): Sideb
 
 export type SelectAllState = "all" | "some" | "none";
 
-/** 三態全選框的狀態（只看畫面上可見的列，不看收合子樹裡勾的）：visible 空 → none；全在 keys → all；任一在 → some；否則 none。 */
+/** Looks only at visible rows, not at keys selected inside collapsed subtrees. */
 export function selectAllState(visible: readonly string[], keys: ReadonlySet<string>): SelectAllState {
   if (visible.length === 0) return "none";
   let hit = 0;

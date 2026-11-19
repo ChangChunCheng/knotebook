@@ -1,10 +1,5 @@
 import { COLUMN_LIST_TYPE, COLUMN_TYPE } from "@knotebook/shared";
 
-/**
- * 並排排版的位置判斷（純函式；`edge-keymap.ts` 用，驗證與拖放也會用）。
- * PM 的 Node／ResolvedPos 型別在 apps/web 值層級拿不到，這裡用只列出用得到欄位的寬鬆型別。
- */
-
 export interface PMNodeLike {
   type: { name: string };
   attrs: { readonly [key: string]: unknown };
@@ -24,7 +19,6 @@ export interface ResolvedPosLike {
   before(depth?: number): number;
 }
 
-/** 位置是否在頂層：$pos 的祖先（depth ≥ 2）中沒有 column、columnList、或非根 blockGroup。 */
 export function isTopLevelPosition($pos: ResolvedPosLike): boolean {
   for (let d = 2; d <= $pos.depth; d++) {
     const name = $pos.node(d).type.name;
@@ -36,7 +30,6 @@ export function isTopLevelPosition($pos: ResolvedPosLike): boolean {
 export interface ColumnContext {
   listDepth: number;
   colDepth: number;
-  /** columnList 節點起點（`$pos.before(listDepth)`）。 */
   listPos: number;
   colIndex: number;
   blockIndex: number;
@@ -45,7 +38,6 @@ export interface ColumnContext {
   block: PMNodeLike;
 }
 
-/** 游標所在的「欄的直接子 block」：$pos.depth === colDepth + 2（在該 block 的 blockContent 內）才回，否則 null。 */
 export function columnContextOf($pos: ResolvedPosLike): ColumnContext | null {
   let colDepth = -1;
   for (let d = $pos.depth; d > 0; d--) {
@@ -70,7 +62,7 @@ export function columnContextOf($pos: ResolvedPosLike): ColumnContext | null {
   };
 }
 
-/** 全文走訪（命中後只剪子樹、兄弟照走）：只在按鍵條件成立時跑，文件大小下可接受。 */
+// Whole-document walk; runs only when the key conditions hold, acceptable at typical document sizes.
 export function findNodeById(doc: PMNodeLike, id: string, type?: string): { node: PMNodeLike; pos: number } | null {
   let hit: { node: PMNodeLike; pos: number } | null = null;
   doc.descendants((node, pos) => {

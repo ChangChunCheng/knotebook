@@ -2,20 +2,18 @@ import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type RefObjec
 import { isPhone, useIsPhone } from "@/lib/layout-tiers";
 
 /**
- * 手機（< 640）上的捲動：`AppShell` 的外框不鎖高度，清單與筆記都是**文件**本身在捲（瀏覽器的工具列才會隨捲動收起，
- * 內容也才能延伸到半透明的底部工具列後面）。640 起照舊：外框鎖在視窗高、各區自己的 `overflow-y-auto` 容器在捲。
- *
- * 外框帶 `PHONE_PAGE_SCROLL_ATTR`。原本對「捲動容器」下指令的程式（捲回頂端、算可視高度、捲到協作者的游標）先問
- * `scrollsPage(root)`：成立時改對視窗做，因為那個容器在手機上不會捲。公開頁不在外框裡，手機上仍是自己的容器在捲。
+ * On phones (< 640) the document itself scrolls (the browser toolbar can collapse and content
+ * extends behind the bottom toolbar); from 640 up the framed container scrolls. Code that targets
+ * the scroll container (scroll to top, visible height, scroll to a collaborator's cursor) checks
+ * `scrollsPage(root)` first and uses the window when true, since that container doesn't scroll on
+ * phones. Public pages are outside the frame and scroll their own container even on phones.
  */
 export const PHONE_PAGE_SCROLL_ATTR = "data-phone-page-scroll";
 
 /**
- * `<html>` 上的旗標屬性：畫面上有對應的元件時才在（`useRootFlag`），`index.css` 的手機頁面層樣式（html／body 的底色、
- * 擋下拉重新整理）據此套用。元件自己身上的標記（`PHONE_PAGE_SCROLL_ATTR`、`data-phone-list-shown`、`data-mobile-edit-toolbar`）照舊。
- *
- * 不寫成 `html:has([…])`：`<html>` 一旦是 `:has()` 的錨點，頁面上任何節點插入或移除，瀏覽器都可能把整份文件的樣式重算一次，
- * 筆記越長，開關選單、對話框、圖片放大越慢。
+ * Flags on `<html>` that index.css phone styles key off. Not `html:has([…])`: a `:has()` anchored
+ * on `<html>` may make any DOM insertion or removal recompute styles for the whole document, slowing
+ * menus, dialogs and image zoom on long notes.
  */
 export const ROOT_FLAGS = {
   pageScroll: "data-has-phone-page-scroll",
@@ -23,10 +21,9 @@ export const ROOT_FLAGS = {
   editToolbar: "data-has-mobile-edit-toolbar",
 } as const;
 
-/** 同一個旗標可能同時有多個元件要（例如換頁時新舊兩份短暫並存）：最後一個離開才拿掉。 */
+// Ref-counted: during a page change the old and new page briefly both hold a flag; remove it only when the last one leaves.
 const rootFlagCounts = new Map<string, number>();
 
-/** `active` 期間在 `<html>` 上掛 `attr`（空值）。 */
 export function useRootFlag(attr: string, active: boolean): void {
   useLayoutEffect(() => {
     if (!active) return;
@@ -46,36 +43,26 @@ export function useRootFlag(attr: string, active: boolean): void {
   }, [attr, active]);
 }
 
-/**
- * `<html>` 上的 CSS 變數：手機上釘在頁面頂端的筆記頁首有多高（px，含瀏海的 safe area）。`index.css` 拿它當筆記區塊的
- * `scroll-margin-top`，捲到段落時才不會把區塊捲到頁首底下。
- */
+/** px height (incl. notch safe area) of the pinned phone note header; index.css uses it as block `scroll-margin-top`, so a block scrolled to is not hidden under the header. */
 export const STICKY_TOP_VAR = "--kb-sticky-top";
 
-/**
- * `<html>` 上的 CSS 變數：手機清單畫面釘在頂端的部分（頂列＋標題列，含瀏海的 safe area）下緣離視窗頂多遠（px）。
- * `index.css` 拿它當清單列的 `scroll-margin-top`，鍵盤或螢幕閱讀器把焦點移到某一列時，那一列不會停在頂列底下。
- */
+/** px from the viewport top to the bottom of the pinned part of the phone list; index.css uses it as row `scroll-margin-top`, so a row focused by keyboard or screen reader is not hidden under the top bar. */
 export const LIST_STICKY_TOP_VAR = "--kb-list-sticky-top";
 
-/** `root` 在手機上是不是讓文件代為捲動（在帶 `PHONE_PAGE_SCROLL_ATTR` 的外框裡、而且是手機寬度）。 */
 export function scrollsPage(root: Element | null | undefined): boolean {
   return root !== null && root !== undefined && isPhone() && root.closest(`[${PHONE_PAGE_SCROLL_ATTR}]`) !== null;
 }
 
-/** `<html>` 上某個 px 變數的值；沒有設定時 0。 */
 function readTopVar(name: string): number {
   if (typeof document === "undefined") return 0;
   const value = parseFloat(document.documentElement.style.getPropertyValue(name));
   return Number.isFinite(value) ? value : 0;
 }
 
-/** 頁面頂端釘住的筆記頁首高度（px）；沒有設定時 0。 */
 export function stickyTopInset(): number {
   return readTopVar(STICKY_TOP_VAR);
 }
 
-/** 手機清單釘在頂端的部分的下緣（px）；沒有設定時 0。 */
 export function listStickyTopInset(): number {
   return readTopVar(LIST_STICKY_TOP_VAR);
 }
@@ -87,12 +74,10 @@ function subscribeSticky(listener: () => void): () => void {
   return () => stickyListeners.delete(listener);
 }
 
-/** 讀筆記頁首高度並在它變動時重繪（頁首換行、橫幅出現時，依它算的捲動邊界要跟著換）。 */
 export function useStickyTopInset(): number {
   return useSyncExternalStore(subscribeSticky, stickyTopInset, () => 0);
 }
 
-/** 捲回頂端：手機上捲文件，其他情形捲 `root` 自己。 */
 export function scrollToTopOf(root: HTMLElement): void {
   if (scrollsPage(root)) {
     window.scrollTo({ top: 0 });
@@ -102,21 +87,17 @@ export function scrollToTopOf(root: HTMLElement): void {
   else root.scrollTop = 0;
 }
 
-/** `root` 的內容實際能被看到的高度：手機上是視窗扣掉頂端的頁首，其他情形是 `root` 自己的可視高度。 */
 export function visibleHeightOf(root: HTMLElement): number {
   return scrollsPage(root) ? Math.max(0, window.innerHeight - stickyTopInset()) : root.clientHeight;
 }
 
-/** `el` 在不在文件代為捲動的外框裡（手機上的清單與筆記；抽屜、公開頁不在）。 */
 function inPageScrollFrame(el: Element): boolean {
   return el.closest(`[${PHONE_PAGE_SCROLL_ATTR}]`) !== null;
 }
 
 /**
- * 量 `ref` 那個釘在頂端的元素，把它釘住時的下緣（`top` 加上外框高，含上方 safe area 的內距）寫進 `<html>` 的 `name` 變數，
- * 直接寫 DOM；`useStickyTopInset` 的使用者會重繪。`enabled` 為 false 或卸載時移除——只移除自己寫的值，
- * 同名變數已被別的實例改寫時不動它。元素不在文件代為捲動的外框裡（例如抽屜裡的清單）時不寫。
- * 元素被藏起來（`display: none`）時量到 0。
+ * Removes only the value this instance wrote (another instance may have rewritten it). Not
+ * written outside the document-scroll frame (e.g. a list in a drawer); measures 0 when hidden.
  */
 export function useStickyTopVar(ref: RefObject<HTMLElement | null>, enabled: boolean, name: string = STICKY_TOP_VAR): void {
   useEffect(() => {
@@ -146,9 +127,6 @@ export function useStickyTopVar(ref: RefObject<HTMLElement | null>, enabled: boo
   }, [ref, enabled, name]);
 }
 
-// ── 跨 640 時保住閱讀位置 ────────────────────────────────────────────────────────
-
-/** 閱讀位置：畫面頂端（頁首之下）第一個看得到的項目、它離那條線多遠（負數＝上緣已捲過那條線），以及當時它的高度。 */
 export interface ScrollAnchor {
   id: string;
   offset: number;
@@ -156,11 +134,9 @@ export interface ScrollAnchor {
 }
 
 export interface AnchorItems {
-  /** 項目（筆記的區塊、清單的列）。 */
   itemSelector: string;
-  /** 項目上的識別屬性。 */
   idAttr: string;
-  /** 量哪一個元素的位置（預設項目本身；區塊量它自己那一行，不含巢狀子區塊）。 */
+  /** For a block, measure its own line, excluding nested child blocks. */
   measure?: (item: HTMLElement) => Element;
 }
 
@@ -170,9 +146,10 @@ function visibleBox(el: Element): DOMRect | null {
 }
 
 /**
- * `container` 裡下緣在 `top` 之下的第一個項目（照文件順序逐項看）；沒有就 null。看不到的項目（收合的子項，量到 0×0）不算。
- * 逐項而不是二分：並排的欄位裡，第二欄的區塊在文件裡排在第一欄之後、位置卻從上面重新開始，位置不隨文件順序遞增。
- * 成本由呼叫時機控制（`useTierScrollAnchor` 只在可能跨 640 的裝置上、每個 frame 最多一次）。
+ * Linear scan, not binary search: in side-by-side columns later columns' blocks come later in the
+ * document but their positions restart at the top, so position does not increase with order.
+ * Cost is bounded by the caller: `useTierScrollAnchor` runs it only on devices that may cross 640,
+ * at most once per frame.
  */
 export function captureScrollAnchor(container: Element, items: AnchorItems, top: number): ScrollAnchor | null {
   for (const item of container.querySelectorAll<HTMLElement>(items.itemSelector)) {
@@ -184,10 +161,7 @@ export function captureScrollAnchor(container: Element, items: AnchorItems, top:
   return null;
 }
 
-/**
- * 把 `anchor` 那一項捲回離 `top` 同樣的距離（`scrollBy` 收正數＝往下捲）；找不到那一項回 false。
- * 那一項的上緣已捲過那條線時，換段後排版的寬度不同、它的高度也不同：捲過的部分照高度比例換算，停在同一段文字附近。
- */
+/** When the item's top has scrolled past the line, the width differs after the tier change, so the scrolled-past part is converted proportionally to height. */
 export function restoreScrollAnchor(container: Element, items: AnchorItems, anchor: ScrollAnchor, top: number, scrollBy: (dy: number) => void): boolean {
   const item = Array.from(container.querySelectorAll<HTMLElement>(items.itemSelector)).find((el) => el.getAttribute(items.idAttr) === anchor.id);
   if (item === undefined) return false;
@@ -199,41 +173,33 @@ export function restoreScrollAnchor(container: Element, items: AnchorItems, anch
   return true;
 }
 
-/**
- * 這台裝置會不會在 640 兩側切換：螢幕的短邊比 640 窄＝手機（轉橫拿時寬度超過 640）。桌機與平板的短邊都比 640 寬，
- * 只有手動把視窗拉過 640 才會切換，那種情況不保位置（見 docs/known-limitations.md）。
- */
+/** A screen whose short side is under 640 is a phone (wider when landscape). Desktop windows dragged across 640 do not preserve position (docs/known-limitations.md). */
 export function phoneSizedScreen(): boolean {
   return typeof screen !== "undefined" && Math.min(screen.width, screen.height) < 640;
 }
 
-/**
- * 640 起預設要不要記位置：手機（`phoneSizedScreen`），或主要指標是手指的裝置——平板分割畫面加上轉向、放大顯示的小平板、
- * 摺疊機，短邊不比 640 窄也會跨過 640。只有滑鼠這類精確指標的桌機視窗不付這份成本。
- */
+/** Also devices whose primary pointer is a finger: tablet split-screen/rotation and foldables can cross 640 with a short side above it. Mouse-only desktops skip the cost. */
 export function mayCrossTiersByDefault(): boolean {
   return phoneSizedScreen() || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
 }
 
 export interface TierScrollAnchorOptions extends AnchorItems {
-  /** 項目所在的容器；640 起它就是自己捲動的那一層。 */
   containerRef: RefObject<HTMLElement | null>;
-  /** 手機上（文件在捲）可視範圍的上緣：釘在頂端的頁首下緣。 */
   phoneTop: () => number;
-  /** 640 起要不要記位置（裝置會不會轉回手機寬度）；預設 `mayCrossTiersByDefault`。 */
   mayCrossTiers?: () => boolean;
 }
 
 /**
- * 跨 640（例如 iPhone 轉橫拿，橫拿的寬度超過 640）時保住閱讀位置：手機上捲的是文件、640 起捲的是容器，切換時兩邊都從 0 開始，
- * 而且兩種寬度的排版不同，所以記的不是捲動量，而是「頂端第一個看得到的項目＋離頂端多遠」，換段之後把同一項捲回同一處。
- *
- * - 只看這一份自己的捲動：手機上是文件的 scroll，640 起是容器的 scroll；其他元素（表格、選單）的捲動不理。
- * - 每個 frame 最多量一次，換段前最後一個 frame 的位置就是要還的位置。手機寬度時一律記；640 起只在可能轉回手機寬度的裝置（`mayCrossTiersByDefault`：
- *   手機、觸控的平板與摺疊機）上記，滑鼠操作的桌機視窗捲動時不做這件事。
- * - 媒體查詢已經翻過去、React 還沒換段的那段時間（文件此刻被夾回 0）不記：`isPhone()` 與目前排版所屬的段不一致就跳過。
- * - 容器看不到（例如在筆記頁時藏起來的清單、640–1279 收在抽屜裡的清單）時不記也不還，位置留到下次看得到時再還。
- * - 容器不在文件代為捲動的外框裡（例如抽屜裡那份清單）時整個不作用。
+ * Phone scrolls the document and 640+ scrolls the container; both start at 0 on a switch and lay
+ * out differently, so remember "first visible item + distance from the top" and scroll that item
+ * back after the switch.
+ * - Only its own scroll counts (document on phone, container at 640+; table/menu scrolls are
+ *   ignored), at most one measurement per frame; the last one before the switch is restored.
+ * - From 640 up, recorded only on devices that may return to phone width.
+ * - Skipped while the media query has flipped but React has not switched tiers (the document is
+ *   clamped to 0): when `isPhone()` disagrees with the layout's tier.
+ * - Nothing is recorded or restored while the container is invisible (the record is kept for a
+ *   later switch while visible) or outside the document-scroll frame.
  */
 export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
   const phone = useIsPhone();
@@ -272,7 +238,7 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
     tierRef.current = phone;
     const saved = savedRef.current;
     const { containerRef, phoneTop, mayCrossTiers, ...items } = optionsRef.current;
-    // 換到 640 起、而這台裝置在那裡不記位置：手機寬度時記的那一份還完就作廢，之後窄回手機寬度時不會跳回很久以前的地方。
+    // Discard the phone-width record once restored on a device that does not remember position at 640+, so narrowing later does not jump.
     if (!phone && !(mayCrossTiers ?? mayCrossTiersByDefault)()) savedRef.current = null;
     const container = containerRef.current;
     if (saved === null || container === null || saved.container !== container || !inPageScrollFrame(container) || container.getClientRects().length === 0) return;
@@ -281,8 +247,8 @@ export function useTierScrollAnchor(options: TierScrollAnchorOptions): void {
       else restoreScrollAnchor(container, items, saved.anchor, container.getBoundingClientRect().top, (dy) => (container.scrollTop += dy));
     };
     restore();
-    // 換段那次 render 之後還有元件在 effect 裡改版面（換段時才掛上的東西），下一個 frame 用同一個位置再對一次；
-    // 這期間捲動記下的位置可能量自過渡中的版面，所以用的是換段前記的那一份。
+    // Effects may still change layout after the tier-change render: align once more next frame, using
+    // the pre-change record (scroll records in that window may come from a transitional layout).
     let frame = requestAnimationFrame(() => {
       frame = 0;
       if (isPhone() === phone && container.isConnected) restore();

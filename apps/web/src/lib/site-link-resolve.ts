@@ -2,8 +2,8 @@ import { targetFromList, type NoteDto, type SiteLinkCandidate, type SiteLinkTarg
 import { api } from "@/api/client";
 
 /**
- * #269：client 端站內網址解析。同步層＝`["notes"]` 快取（使用者可見清單＝寫入者權限）；非同步後備＝三支 session 端點
- * （同樣以寫入者授權，並涵蓋轉址表／prev_slug／legacy slug）。
+ * #269: both layers use the writer's permissions: sync = the `["notes"]` cache (their visible list); async fallback =
+ * the session endpoints, which also cover the redirect table / prev_slug / legacy slugs.
  */
 export type CacheResolution = { kind: "hit"; target: SiteLinkTarget } | { kind: "miss" } | { kind: "unknown" };
 
@@ -13,7 +13,7 @@ export function resolveFromCache(notes: readonly SiteLinkCandidate[] | undefined
   return target ? { kind: "hit", target } : { kind: "miss" };
 }
 
-/** 每次轉換動作最多 20 個相異 href、單發逾時 5 s。 */
+/** Per conversion action: at most 20 distinct hrefs, 5 s timeout per request. */
 export const FALLBACK_MAX_HREFS = 20;
 export const FALLBACK_TIMEOUT_MS = 5_000;
 

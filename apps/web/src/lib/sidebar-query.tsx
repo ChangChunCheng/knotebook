@@ -1,19 +1,16 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 /**
- * 側欄搜尋字（#93 / #369）。住在 App 層（`ActiveNoteProvider` 旁）：`AppShell` 在 layout route 裡、換路由不重掛，
- * 但離開再回到這棵路由（登出重登、進出改密碼頁）仍會重掛；搜尋字放在 App 層，重掛之後搜尋框還是原來的字，「清空搜尋」才清得掉搜尋跳轉留下的常駐標記。
- * 沒有 provider（單獨 render `AppShell` 的測試）退回各自的本地 state，行為與提升前相同。抽屜開關、tab 狀態不在這裡。
- *
- * 搜尋字屬於某個使用者：`claim(userId)`（AppShell 掛載且 session 有人時呼叫）發現擁有者換人就清空；`release()`（登出）清空並放掉擁有者。
- * provider 自己不碰 session（公開頁要求零 fetch）。
+ * Sidebar search text (#93 / #369), kept at App level: `AppShell` remounts when leaving and re-entering its layout route
+ * (re-login, change-password page), and the search box must keep its text so "clear search" can still remove the
+ * persistent mark left by a search jump. Without a provider it falls back to local state.
+ * The text belongs to one user: `claim(userId)` clears it if the owner changed, `release()` (logout) clears it.
+ * The provider never touches the session (public pages must make zero fetches).
  */
 interface SidebarQueryValue {
   query: string;
   setQuery: (q: string) => void;
-  /** 目前的使用者是 `userId`：和上一個擁有者不同就清掉搜尋字，並換成新的擁有者。 */
   claim: (userId: string) => void;
-  /** 登出：清掉搜尋字、放掉擁有者。 */
   release: () => void;
 }
 const SidebarQueryContext = createContext<SidebarQueryValue | null>(null);

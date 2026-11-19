@@ -4,20 +4,15 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { scrollsPage, stickyTopInset } from "@/lib/page-scroll";
 
 /**
- * #293：點頭像捲到對方游標。
- *
- * 換算照 y-prosemirror 1.3.7 `plugins/cursor-plugin.js` 的 `createDecorations`（遠端游標就是這樣畫出來的）：
- * 同一個 `ySync` plugin state、同一支 `relativePositionToAbsolutePosition`、同一組早退條件。
- * plugin 走 `editor.getExtension("ySync")?.prosemirrorPlugins?.[0]`，**不 import `ySyncPluginKey`**——
- * 理由同 `collab/undo.ts` 的 `collabUndoManager`（pnpm 給出兩份 y-prosemirror 時 PluginKey 身分對不上）。
+ * Follows `createDecorations` in y-prosemirror 1.3.7 `plugins/cursor-plugin.js` (same `ySync` state, same `relativePositionToAbsolutePosition`, same early exits).
+ * The plugin comes from `editor.getExtension("ySync")`, **not importing `ySyncPluginKey`**: same reason as `collabUndoManager` in `collab/undo.ts` (two pnpm copies of y-prosemirror give mismatched PluginKeys).
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's three generic parameters (repo convention)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 export type CursorScroller = (cursor: unknown) => boolean;
 
-/** y-prosemirror `ySync` plugin state（只取用得到的幾格）。 */
 interface YSyncState {
   doc?: Y.Doc;
   type?: Y.XmlFragment;
@@ -26,15 +21,14 @@ interface YSyncState {
   prevSnapshot?: unknown;
 }
 
-/** 遠端 awareness `cursor.head` → 本機 PM 位置；任何一步拿不到回 null，絕不丟錯。 */
 export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number | null {
   if (typeof cursor !== "object" || cursor === null) return null;
-  // 只用 head：游標在選取的移動端。
+  // Only `head`: the caret is at the moving end of a selection.
   const head = (cursor as { head?: unknown }).head;
   if (head == null) return null;
   const plugin = editor.getExtension("ySync")?.prosemirrorPlugins?.[0];
   const ystate = plugin?.getState(editor.prosemirrorState) as YSyncState | undefined;
-  // 早退照抄 y-prosemirror createDecorations（binding 在 1.3.7 建 plugin 時就建好、不會是 null；這裡多擋一層防衛）。
+  // Early exits copied from y-prosemirror's createDecorations (the binding is never null in 1.3.7; the extra check is defensive).
   if (
     !ystate?.doc ||
     !ystate.type ||
@@ -51,7 +45,6 @@ export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number |
       ystate.doc,
       ystate.type,
       Y.createRelativePositionFromJSON(head),
-      // 本地只宣告成 Map<unknown, unknown>，不 import y-prosemirror 的 ProsemirrorMapping 內部型別；值就是 binding 自己的 mapping。
       ystate.binding.mapping as never,
     );
   } catch {
@@ -61,11 +54,8 @@ export function cursorHeadPosition(editor: AnyEditor, cursor: unknown): number |
   return Math.min(Math.max(pos, 0), editor.prosemirrorState.doc.content.size);
 }
 
-/**
- * getRoot 回 null（含版本預覽中）→ false；換算不到 → false；否則捲動容器 smooth 捲到「該行在容器高度 1/3 處」、回 true。
- * 手機上捲動容器不自己捲（文件在捲，`lib/page-scroll.ts`）：改捲文件，位置是頁首下方可視高度的 1/3 處。
- * 不動選取、不搶焦點。
- */
+// On phones the document scrolls, not the container (`lib/page-scroll.ts`): scroll the document instead, to 1/3 of the visible height below the header.
+// Doesn't change the selection or take focus.
 export function createCursorScroller({ editor, getRoot }: { editor: AnyEditor; getRoot: () => HTMLElement | null }): CursorScroller {
   return (cursor) => {
     const root = getRoot();

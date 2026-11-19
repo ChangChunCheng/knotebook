@@ -3,10 +3,9 @@ import type { BlockAnchorApi } from "@/hooks/block-anchor-context";
 import type { NotePageControls } from "@/lib/note-page-controls";
 
 /**
- * 側欄在頁面之外（layout route），而側欄的 ⋮、選取動作列、資料夾刪除要用「目前開著那篇」的控制，
- * 搜尋結果的片段點擊要用它的段落錨點 API。筆記頁把這兩份登記到外層，外層再以同一份 context 提供給側欄；
- * 頁面自己的子孫仍直接吃頁面內的 provider（沒有一個 render 的延遲）。
- * 沒有 provider＝no-op。
+ * The sidebar lives outside the page but needs the open note's controls and block-anchor API, so
+ * the page registers them with the outer layer. In-page descendants read the in-page provider
+ * directly to avoid render delay.
  */
 export interface NotePageBridge {
   setControls: (controls: NotePageControls | null) => void;
@@ -15,7 +14,6 @@ export interface NotePageBridge {
 
 export const NotePageBridgeContext = createContext<NotePageBridge | null>(null);
 
-/** 登記目前這一頁的控制與錨點 API；卸載時清掉。 */
 export function useRegisterNotePage(controls: NotePageControls | null, anchors: BlockAnchorApi): void {
   const bridge = useContext(NotePageBridgeContext);
   useLayoutEffect(() => {

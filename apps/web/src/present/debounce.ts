@@ -1,4 +1,4 @@
-/** 防抖 trailing 500 ms＋maxWait 2 s。時間以 `Date.now()` 量（vitest fake timers 會一併假造）。 */
+/** Trailing 500 ms + maxWait 2 s. Time is read with `Date.now()` so vitest fake timers apply. */
 export const UPDATE_DEBOUNCE_MS = 500;
 export const UPDATE_MAX_WAIT_MS = 2000;
 

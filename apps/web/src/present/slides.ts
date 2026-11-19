@@ -1,16 +1,14 @@
 /**
- * #229 簡報切頁：純函式，不碰 DOM、不碰 Y.Doc。
- *
- * 相對層級：頂層 heading 中最小的 level＝L1（章，橫向），大於 L1 的最小 level＝L2
- * （節，縱向；可能不存在）；更深的標題留在頁內。divider 另開一章（divider 本身不放進 blocks）。
- * 只看頂層 block，子 block 跟父 block 走。封面章永遠在、ID 恆為 `_title`。
- * 空頁（kind 不是 heading／cover 且所有 block 都是空白段落）略過；章首被略過時章 ID 跟著換。
+ * Pure functions (no DOM, no Y.Doc). Only top-level blocks count; child blocks go with their parent.
+ * Relative levels: the smallest level among top-level headings = L1 (chapter, horizontal), the smallest level greater than L1
+ * = L2 (section, vertical; may not exist); deeper headings stay inside the slide. A divider starts a new chapter.
+ * The cover chapter always exists with ID `_title`. An empty slide (kind not heading/cover and all blocks blank) is skipped;
+ * when a chapter's first slide is skipped the chapter ID changes with it.
  */
 export const COVER_ID = "_title";
 
 export type SlideKind = "cover" | "heading" | "divider";
 
-/** noteToSlides 只讀到的欄位（BlockNote 的 `Block` 結構上相容）。 */
 export interface SlideBlock {
   id: string;
   type: string;
@@ -22,12 +20,10 @@ export interface SlideBlock {
 export interface Slide<B extends SlideBlock = SlideBlock> {
   id: string;
   kind: SlideKind;
-  /** heading 張：blocks[0] 是該標題本身。 */
   blocks: B[];
 }
 
 export interface Section<B extends SlideBlock = SlideBlock> {
-  /** ＝slides[0].id（略過空頁之後）。 */
   id: string;
   slides: Slide<B>[];
 }
@@ -38,7 +34,6 @@ function headingLevel(block: SlideBlock): number | null {
   return typeof level === "number" ? level : null;
 }
 
-/** 空白 block：paragraph、沒有子 block、inline content 為空或只有空白文字（link／wikilink 等一律不算空）。 */
 export function isBlankBlock(block: SlideBlock): boolean {
   if (block.type !== "paragraph") return false;
   if ((block.children?.length ?? 0) > 0) return false;
