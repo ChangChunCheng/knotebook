@@ -1,4 +1,4 @@
-/** `avatars/oidc-fetch.ts`：IdP 頭貼下載器的界線、位址檢查與 issuer 同主機豁免。 */
+/** `avatars/oidc-fetch.ts`: the limits, address check and issuer same-host exemption of the IdP avatar downloader. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -55,7 +55,7 @@ function serve(path: string, status: number, headers: Record<string, string>, bo
 const run = (url: string, over: Partial<Parameters<typeof fetchOidcAvatar>[1]> = {}) =>
   fetchOidcAvatar(url, { issuer: ISSUER, policy: OPEN, ...over });
 
-/** 假 fetch：回固定圖片，記下被請求的網址。 */
+/** A fake fetch: returns a fixed image and records the requested URLs. */
 function fakeFetch(seen: string[] = []): typeof fetch {
   return (async (input: string | URL | Request) => {
     seen.push(String(input));
@@ -151,7 +151,7 @@ describe("limits", () => {
   it("rejects a declared content-length over the cap before reading the body", async () => {
     handlers.set("/declared", (_req, res) => {
       res.writeHead(200, { "content-type": "image/png", "content-length": String(MAX_OIDC_AVATAR_BYTES + 1) });
-      res.write(png(16)); // 其餘永遠不送
+      res.write(png(16)); // the rest is never sent
     });
     const t0 = Date.now();
     expect(await run(`${base}/declared`, { timeoutMs: 3000 })).toEqual({ ok: false, reason: "too_large" });

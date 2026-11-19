@@ -13,13 +13,13 @@ function config(publicUrl: string) {
 
 const ISSUER_URL = "https://idp.example.com";
 
-/** #187：`AppConfig.oidc` 已移除；runtime 直接收 `OidcClientSettings`。 */
+/** #187: `AppConfig.oidc` was removed; the runtime takes `OidcClientSettings` directly. */
 function oidcSettings(): OidcClientSettings {
   return { issuerUrl: ISSUER_URL, clientId: "test-client", clientSecret: "test-secret" };
 }
 
-/** 手寫 CustomFetch stub——只回應 discovery 這一個 URL，`getConfiguration()` 不會打到其他 endpoint。
- * `algs` 為 `undefined` 時整個省略該欄位（測「缺欄位」分支），否則原樣塞進 metadata。 */
+/** Hand-written CustomFetch stub: answers only the discovery URL, so `getConfiguration()` never reaches other endpoints.
+ * When `algs` is `undefined` the whole field is omitted (tests the missing-field branch); otherwise it goes into metadata as-is. */
 function discoveryOnlyFetch(algs: string[] | undefined): CustomFetch {
   return async url => {
     if (!new URL(url).pathname.endsWith("/.well-known/openid-configuration")) {
@@ -43,44 +43,44 @@ function discoveryOnlyFetch(algs: string[] | undefined): CustomFetch {
 const LEGACY = { id: "p1", legacyCallback: true };
 const PER_PROVIDER = { id: "p1", legacyCallback: false };
 
-describe("auth/oidc-client：oidcRedirectUri（login、callback、SSO 證明起點共用的單一 helper，#187）", () => {
-  it("legacy provider → <publicUrl origin>/api/auth/oidc/callback（env 匯入的那一個沿用舊回呼網址）", () => {
+describe("auth/oidc-client: oidcRedirectUri (the one helper shared by login, callback and the SSO proof start, #187)", () => {
+  it("legacy provider -> <publicUrl origin>/api/auth/oidc/callback (the one imported from env keeps the old callback URL)", () => {
     expect(oidcRedirectUri(config("https://notes.example.com"), LEGACY)).toBe(
       "https://notes.example.com/api/auth/oidc/callback"
     );
   });
 
-  it("一般 provider → <publicUrl origin>/api/auth/oidc/callback/<id>", () => {
+  it("ordinary provider -> <publicUrl origin>/api/auth/oidc/callback/<id>", () => {
     expect(oidcRedirectUri(config("https://notes.example.com"), PER_PROVIDER)).toBe(
       "https://notes.example.com/api/auth/oidc/callback/p1"
     );
   });
 
-  it("publicUrl 帶 port → 保留 port", () => {
+  it("publicUrl with a port -> the port is kept", () => {
     expect(oidcRedirectUri(config("http://192.168.1.50:3000"), PER_PROVIDER)).toBe(
       "http://192.168.1.50:3000/api/auth/oidc/callback/p1"
     );
   });
 
-  it("publicUrl 帶路徑 → 絕對路徑覆蓋（new URL 的第二參數只取 origin，不併接既有路徑）", () => {
+  it("publicUrl with a path -> the absolute path overrides (the second argument of new URL takes only the origin, it doesn't append to an existing path)", () => {
     expect(oidcRedirectUri(config("https://notes.example.com/base/path"), PER_PROVIDER)).toBe(
       "https://notes.example.com/api/auth/oidc/callback/p1"
     );
   });
 });
 
-describe("auth/oidc-client：createOidcRuntime 對 id_token_signing_alg_values_supported 的三分支判定", () => {
-  it("metadata 缺該欄位 → 視為含 RS256，不擋（getConfiguration 正常 resolve）", async () => {
+describe("auth/oidc-client: how createOidcRuntime judges id_token_signing_alg_values_supported (three branches)", () => {
+  it("metadata lacks the field -> treated as containing RS256, not blocked (getConfiguration resolves normally)", async () => {
     const runtime = createOidcRuntime(oidcSettings(), { fetch: discoveryOnlyFetch(undefined) });
     await expect(runtime.getConfiguration()).resolves.toBeDefined();
   });
 
-  it('metadata 僅含 ["HS256"]（無非對稱演算法）→ throw OidcUnavailableError', async () => {
+  it('metadata contains only HS256 (no asymmetric algorithm) -> throws OidcUnavailableError', async () => {
     const runtime = createOidcRuntime(oidcSettings(), { fetch: discoveryOnlyFetch(["HS256"]) });
     await expect(runtime.getConfiguration()).rejects.toBeInstanceOf(OidcUnavailableError);
   });
 
-  it('metadata 含 ["RS256"] → 正常通過', async () => {
+  it('metadata contains RS256 -> passes normally', async () => {
     const runtime = createOidcRuntime(oidcSettings(), { fetch: discoveryOnlyFetch(["RS256"]) });
     await expect(runtime.getConfiguration()).resolves.toBeDefined();
   });

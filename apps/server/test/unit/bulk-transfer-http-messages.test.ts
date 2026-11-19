@@ -31,36 +31,36 @@ import { UNCLOSED_FENCE_MESSAGE, unclosedFenceMessage } from "../../src/transfer
 import { EXPORT_BUSY_RETRY_AFTER_S } from "../../src/transfer/export-stream.js";
 
 /**
- * bulk transfer 的 HTTP 層訊息（英文碼；#372 起訊息也是英文）：守衛第一層，以**字面字串**釘住 bulk 端點的 HTTP 層與 auth 層
- * 訊息常數（agent 經 curl 讀到的就是 JSON 的 `message`）。「哪條路由用哪個常數」由整合測試匯入常數比對（第二層，各案名帶常數名）。
- * 行內字面（不是常數）的句子——「You don't have edit access to this note.」「This token's scope doesn't allow this action.」
- * 「The server is busy. Try again in a moment.」「Too many requests. Wait a moment and try again.」「Not signed in.」（bulk 端點收到非 Bearer
- * 的 Authorization）「This request needs Content-Type text/markdown.」「Origin check failed: …」——在整合測試以字面斷言
- * （`transfer-write.test.ts`、`transfer-bulk-auth.test.ts`、
- * `transfer-write-auth.test.ts`）；frontmatter 的八句在 `transfer-frontmatter-read.test.ts` 以字面斷言。
- * 413 `content_too_large` 走全域 errorHandler 的 `BODY_TOO_LARGE_MESSAGE`（`http/errors.ts`，#372），不在這裡。
+ * HTTP-layer messages of bulk transfer (English since #372). First guard layer: pins the bulk endpoints' HTTP-layer and auth-layer message
+ * constants as literal strings (an agent reading over curl sees the JSON `message`). Which route uses which constant is checked by integration
+ * tests that import the constants (second layer; their case names carry the constant name).
+ * Inline literal sentences (not constants), such as the no-edit-access, token-scope, server-busy, rate-limit, not-signed-in (non-Bearer
+ * Authorization on a bulk endpoint), Content-Type and Origin-check sentences, are asserted literally in integration tests
+ * (`transfer-write.test.ts`, `transfer-bulk-auth.test.ts`, `transfer-write-auth.test.ts`); the eight frontmatter sentences in
+ * `test/unit/transfer-frontmatter-read.test.ts`.
+ * 413 `content_too_large` goes through the global errorHandler's `BODY_TOO_LARGE_MESSAGE` (`http/errors.ts`, #372), so it is not covered here.
  */
-describe("bulk transfer 的 HTTP 層訊息（字面）", () => {
-  it("H1 auth 層：bulk 專用句與 #200 句分開", () => {
+describe("bulk transfer HTTP-layer messages (literal)", () => {
+  it("auth layer: the bulk-specific sentence is separate from the #200 sentence", () => {
     expect(BULK_TRANSFER_INVALID_MESSAGE).toBe("The transfer token is invalid, expired or revoked. Get a new one from the MCP tool open_notes_as_files.");
     expect(BULK_TRANSFER_INVALID_MESSAGE).not.toContain("used");
     expect(BULK_TRANSFER_REQUIRED_MESSAGE).toBe("A transfer token is required.");
     expect(BULK_TRANSFER_PAT_MESSAGE).toBe("This endpoint doesn't accept API tokens. Get a transfer token from the MCP tool open_notes_as_files.");
     expect(TRANSFER_PURPOSE_MESSAGE).toBe("This transfer token can't be used for this action.");
-    // #200 的兩句：本 PR 不動；#372 改英文
+    // The two #200 sentences.
     expect(TRANSFER_INVALID_MESSAGE).toBe("The transfer token is invalid, expired or already used.");
     expect(TRANSFER_PAT_MESSAGE).toBe("This endpoint doesn't accept API tokens. Get a transfer token from the MCP tool create_transfer_token.");
   });
 
-  it("H2 路由層（routes/transfer.ts）", () => {
+  it("route layer (routes/transfer.ts)", () => {
     expect(RANGE_GONE_MESSAGE).toBe("The group or folder this transfer token covers is no longer visible to you.");
     expect(NOT_IN_RANGE_MESSAGE).toBe("This note isn't in this transfer token's range.");
     expect(TRANSFER_NOTE_NOT_FOUND_MESSAGE).toBe("No note with that id.");
     expect(TRANSFER_RATE_LIMITED_MESSAGE).toBe("Too many requests. Wait a moment and try again.");
-    // 忙碌：秒數寫進訊息（curl 印不出 Retry-After），與 header 同一個常數。
+    // Busy: the seconds are written into the message (curl doesn't print Retry-After), using the same constant as the header.
     expect(EXPORT_BUSY_MESSAGE).toBe("Another export is already running. Try again in 30 seconds.");
     expect(EXPORT_BUSY_MESSAGE).toContain(`in ${EXPORT_BUSY_RETRY_AFTER_S} seconds`);
-    // 整包每小時額度用完：等待分鐘數寫進訊息，向上取整、至少 1；說明是每人的額度（新權杖不重置）、到時候權杖可能已過期；碼仍是 too_many_requests。
+    // Hourly whole-download quota used up: the wait in minutes is in the message, rounded up and at least 1; it says the quota is per person (a new token does not reset it) and that the token may have expired by then; the code is still too_many_requests.
     expect(exportRateLimitedMessage(37 * 60_000)).toBe(
       "You've reached your hourly limit for full downloads; it counts per person, so a new token won't reset it. Download again in 37 minutes, with a new token if this one has expired by then; until then, fetch the notes you need one by one with the note command, which doesn't count toward this limit."
     );
@@ -80,13 +80,13 @@ describe("bulk transfer 的 HTTP 層訊息（字面）", () => {
       note_changed: "Can't write back with this copy: the note has changed (its title or text) since you downloaded it. Download this note again (the note command), redo your changes in the new copy and send that.",
       reverted: "Can't write back with this copy: the changes it wrote back have been reverted. Download the note again and make your changes there.",
     });
-    // 不再合併：任何一句都不得再說「合併」（#372 起英文：merge），也不得留下舊成因 anchors_gone。
+    // No more merging: no sentence may say "merge" (English since #372), and the old cause anchors_gone must not remain.
     for (const m of Object.values(BASE_UNAVAILABLE_MESSAGES)) expect(m).not.toMatch(/merg/i);
     expect(Object.keys(BASE_UNAVAILABLE_MESSAGES)).not.toContain("anchors_gone");
     expect(NOT_MERGEABLE_MESSAGE).toBe("This note can't be written back from a file. Change it with edit_note instead.");
   });
 
-  it("H3 新增筆記的落點（transfer/create-file.ts＋借用的 folders/messages.ts）", () => {
+  it("where a new note lands (transfer/create-file.ts plus the borrowed folders/messages.ts)", () => {
     expect(CREATE_IN_SHARED_FORBIDDEN_MESSAGE).toBe("A transfer token for only notes shared with you can't create notes.");
     expect(DEST_NOT_IN_RANGE_MESSAGE).toBe("The new note's location isn't in this transfer token's range.");
     expect(SHARED_FOLDER_CREATE_FORBIDDEN_MESSAGE).toBe("New notes can't go in your folders for notes shared with you.");
@@ -95,15 +95,15 @@ describe("bulk transfer 的 HTTP 層訊息（字面）", () => {
     expect(NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE).toBe("Your role in this group can't put notes in folders.");
   });
 
-  it("H4 未閉合 code fence（transfer/regions.ts）", () => {
+  it("unclosed code fence (transfer/regions.ts)", () => {
     expect(UNCLOSED_FENCE_MESSAGE).toBe(
       "A line you added or changed opens a code block with ``` that is never closed, so everything from that line to the end of the file counts as code. Add a closing ``` (or use inline `code`) and send the file again."
     );
   });
 });
 
-describe("H3 檔案寫回的 400 訊息依成因", () => {
-  it("unsupported_block 三種成因、empty_content 兩種、too_many_blocks 帶上限、未閉合 fence 照實際記號", () => {
+describe("file write-back 400 messages by cause", () => {
+  it("unsupported_block has three causes, empty_content two, too_many_blocks carries the limit, an unclosed fence uses the actual marker", () => {
     expect(transferParseMessage("unsupported_block", "event_attr")).toBe("The file has HTML with an event attribute (such as onerror or onclick), which can't be stored in a note, so nothing was written.");
     expect(transferParseMessage("unsupported_block", "editor_internal")).toBe("The file has HTML the editor uses internally (such as an element with data-content-type), which can't be stored in a note, so nothing was written.");
     expect(transferParseMessage("unsupported_block", "dropped_element")).toBe("The file has an element the editor drops along with its content (such as <script>, <style> or <iframe>), which can't be stored in a note, so nothing was written.");

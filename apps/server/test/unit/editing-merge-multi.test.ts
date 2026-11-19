@@ -5,7 +5,7 @@ import { checkExpectations, fingerprintForIds, fingerprintsOfGroups, topLevelSna
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { docWith, withEditor } from "./fixtures/transfer-sync.js";
 
-/** bulk transfer：`mergeDiff` 多期望分支的純函式（直接吃 fragment，不經 `mergeDiff`）。 */
+/** Pure functions of mergeDiff's multi-expectation branch (take the fragment directly, not through `mergeDiff`). */
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
@@ -16,22 +16,22 @@ const expectAll = (d: Y.Doc, ids: string[]) => {
   return ids.map(id => ({ id, fp: s.fps[s.ids.indexOf(id)]! }));
 };
 
-describe("MD1–MD4", () => {
-  it("MD1 期望全符 → 通過；fingerprintsOfGroups 每組＝fingerprintForIds、空組 → null", async () => {
+describe("multi-expectation checks", () => {
+  it("all expectations match -> pass; fingerprintsOfGroups per group = fingerprintForIds, empty group -> null", async () => {
     const d = await docWith(rt, [P("a"), P("b"), P("c"), P("d")]);
     const ids = topLevelSnapshot(frag(d)).ids;
     expect(checkExpectations(frag(d), expectAll(d, [ids[1]!, ids[2]!]), [ids[0]!])).toBe(true);
     expect(fingerprintsOfGroups(frag(d), [[ids[0]!, ids[1]!], [ids[3]!], []])).toEqual([fingerprintForIds(frag(d), [ids[0]!, ids[1]!]), fingerprintForIds(frag(d), [ids[3]!]), null]);
-    expect(fingerprintsOfGroups(frag(d), [[ids[1]!, ids[0]!], ["nope"]])).toEqual([null, null]); // 順序不符／不在頂層 → null
+    expect(fingerprintsOfGroups(frag(d), [[ids[1]!, ids[0]!], ["nope"]])).toEqual([null, null]); // wrong order / not top-level -> null
   });
-  it("MD2 第二個倖存者被改 → 不符", async () => {
+  it("the second survivor was modified -> mismatch", async () => {
     const d = await docWith(rt, [P("a"), P("b"), P("c")]);
     const ids = topLevelSnapshot(frag(d)).ids;
     const exp = expectAll(d, [ids[0]!, ids[1]!]);
     await withEditor(rt, d, ed => ed.updateBlock(ids[1]!, { content: "B!" }));
     expect(checkExpectations(frag(d), exp, [])).toBe(false);
   });
-  it("MD3 錨點被刪 → 不符", async () => {
+  it("anchor deleted -> mismatch", async () => {
     const d = await docWith(rt, [P("a"), P("b"), P("c")]);
     const ids = topLevelSnapshot(frag(d)).ids;
     const exp = expectAll(d, [ids[1]!]);
@@ -39,7 +39,7 @@ describe("MD1–MD4", () => {
     expect(checkExpectations(frag(d), exp, [ids[0]!])).toBe(true);
     expect(checkExpectations(frag(d), exp, [ids[2]!])).toBe(false);
   });
-  it("MD4 倖存者被拖亂順序 → 仍通過（逐顆比指紋、不比順序）", async () => {
+  it("survivors reordered -> still passes (compares each fingerprint, not order)", async () => {
     const d = await docWith(rt, [P("a"), P("b"), P("c")]);
     const ids = topLevelSnapshot(frag(d)).ids;
     const exp = expectAll(d, [ids[0]!, ids[1]!, ids[2]!]);
@@ -53,8 +53,8 @@ describe("MD1–MD4", () => {
   });
 });
 
-describe("MD6 效能", () => {
-  it("2 000 顆倖存者 checkExpectations < 500 ms", async () => {
+describe("performance", () => {
+  it("2,000 survivors: checkExpectations < 500 ms", async () => {
     const d = await docWith(rt, Array.from({ length: 2000 }, (_, i) => P(`p${i}`)));
     const ids = topLevelSnapshot(frag(d)).ids;
     const exp = expectAll(d, ids);

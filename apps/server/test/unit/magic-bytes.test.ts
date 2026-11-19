@@ -9,62 +9,62 @@ const WEBP_BYTES = Uint8Array.from([
   0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
 ]);
 
-describe("detectImageMimeType（magic bytes）", () => {
-  it("PNG 簽名 → image/png", () => {
+describe("detectImageMimeType (magic bytes)", () => {
+  it("PNG signature -> image/png", () => {
     expect(detectImageMimeType(PNG_BYTES)).toBe("image/png");
   });
 
-  it("JPEG 簽名 → image/jpeg", () => {
+  it("JPEG signature -> image/jpeg", () => {
     expect(detectImageMimeType(JPEG_BYTES)).toBe("image/jpeg");
   });
 
-  it("GIF87a 簽名 → image/gif", () => {
+  it("GIF87a signature -> image/gif", () => {
     expect(detectImageMimeType(GIF87A_BYTES)).toBe("image/gif");
   });
 
-  it("GIF89a 簽名 → image/gif", () => {
+  it("GIF89a signature -> image/gif", () => {
     expect(detectImageMimeType(GIF89A_BYTES)).toBe("image/gif");
   });
 
-  it("WEBP 簽名（RIFF + offset 8 WEBP）→ image/webp", () => {
+  it("WEBP signature (RIFF + WEBP at offset 8) -> image/webp", () => {
     expect(detectImageMimeType(WEBP_BYTES)).toBe("image/webp");
   });
 
-  it("偽裝：純文字內容，即使呼叫端聲稱副檔名/Content-Type 是圖片 → null（只信任 bytes 本身）", () => {
+  it("disguise: plain text content, even if the caller claims an image extension/Content-Type -> null (only the bytes are trusted)", () => {
     const fakeImageClaim = { filename: "totally-a.png", contentType: "image/png" };
     const bytes = new TextEncoder().encode("<html>not an image at all</html>");
     expect(detectImageMimeType(bytes)).toBe(null);
-    // 上面的 fakeImageClaim 純粹是文件說明用——函式簽名根本不接受這種 metadata，
-    // 這正是本測試要驗證的事：偵測結果與任何外部聲稱無關。
+    // fakeImageClaim above is documentation only: the function signature doesn't accept such metadata, which is exactly what this test
+    // verifies: the detection result is independent of any external claim.
     void fakeImageClaim;
   });
 
-  it("截半 header：只有 PNG 簽名前 3 bytes → null", () => {
+  it("truncated header: only the first 3 bytes of the PNG signature -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0x89, 0x50, 0x4e]))).toBe(null);
   });
 
-  it("截半 header：只有 WEBP 的 RIFF 前綴、bytes 長度不到 offset 8 + WEBP → null", () => {
+  it("truncated header: only the RIFF prefix of WEBP, shorter than offset 8 + WEBP -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00]))).toBe(null);
   });
 
-  it("空 buffer → null", () => {
+  it("empty buffer -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([]))).toBe(null);
   });
 
-  it("RIFF 容器但不是 WEBP（例如 AVI：offset 8 是 AVI 而非 WEBP）→ null", () => {
+  it("RIFF container that is not WEBP (e.g. AVI: offset 8 is AVI, not WEBP) -> null", () => {
     const aviLike = Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x01, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20]);
     expect(detectImageMimeType(aviLike)).toBe(null);
   });
 
-  it("GIF88a（版本 byte 是 '8'，非合法的 '7'/'9'）→ null", () => {
+  it("GIF88a (version byte is '8', not a valid '7'/'9') -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x38, 0x61]))).toBe(null);
   });
 
-  it("GIF89b（suffix byte 是 'b'，非合法的 'a'）→ null", () => {
+  it("GIF89b (suffix byte is 'b', not a valid 'a') -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x62]))).toBe(null);
   });
 
-  it("JPEG 前 2 byte 符合但第 3 byte 非 FF → null", () => {
+  it("JPEG first 2 bytes match but the 3rd byte is not FF -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0xff, 0xd8, 0x00, 0x00]))).toBe(null);
   });
 });

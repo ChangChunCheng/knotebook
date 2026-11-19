@@ -1,9 +1,9 @@
 /**
- * #108 的單元那一半：`toolError()` 是**我們自己產生的**工具錯誤（(4b)）
- * 唯一的建構點，`content[0].text` 必須逐字是 `structuredContent` 的鏡像。
+ * #108, the unit half: `toolError()` is the only construction point of tool errors that **we ourselves produce**,
+ * and `content[0].text` must be a verbatim mirror of `structuredContent`.
  *
- * ⚠ SDK 自產的四條路徑（未知工具名／輸入 schema 不符／輸出驗證失敗／未捕捉例外）不在這裡，
- * 也攔不到——它們沒有 `code`、沒有 `structuredContent`（(4a)）。
+ * The four paths the SDK produces by itself (unknown tool name, input schema mismatch, output validation failure, uncaught exception) are not covered
+ * here and can't be intercepted: they have no `code` and no `structuredContent`.
  */
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "@knotebook/shared";
@@ -11,7 +11,7 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { toolError, toolResultWithImage } from "../../src/mcp/tool-result.js";
 
 describe("#108 toolError", () => {
-  it("回 isError ＋ structuredContent，且 content[0].text 逐字等於 structuredContent 的 JSON", () => {
+  it("returns isError + structuredContent, and content[0].text is exactly the JSON of structuredContent", () => {
     const result = toolError("not_found", "That note does not exist.");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({ code: "not_found", message: "That note does not exist." });
@@ -23,7 +23,7 @@ describe("#108 toolError", () => {
     });
   });
 
-  it("extra 進 structuredContent，鏡像等式仍然成立", () => {
+  it("extra goes into structuredContent, the mirror equality still holds", () => {
     const result = toolError("section_not_found", "No such section.", { outline: { sections: [], truncated: false } });
     expect(result.structuredContent).toEqual({
       code: "section_not_found",
@@ -33,15 +33,15 @@ describe("#108 toolError", () => {
     expect(result.content[0]!.text).toBe(JSON.stringify(result.structuredContent));
   });
 
-  it("code 逐字沿用 ERROR_CODES（錯誤碼單一真相）", () => {
+  it("code is taken verbatim from ERROR_CODES (single source of truth for error codes)", () => {
     for (const code of ["not_found", "forbidden", "section_not_found", "too_many_requests", "invalid_body", "internal"] as const) {
       const result = toolError(code, "x");
       expect(ERROR_CODES).toContain(result.structuredContent!.code);
     }
   });
 
-  it("鏡像是逐字的字串比對，不是「兩邊都 parse 得出來」", () => {
-    // 殺掉「content 用 JSON.stringify(…, null, 2) 或另組一份文字」的寫法。
+  it("the mirror is a verbatim string comparison, not 'both sides parse'", () => {
+    // Catches writing content with JSON.stringify(..., null, 2) or composing a separate text.
     const result = toolError("internal", `a"b\\c`);
     expect(result.content[0]!.text).toBe(JSON.stringify(result.structuredContent));
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
@@ -49,7 +49,7 @@ describe("#108 toolError", () => {
 });
 
 describe("#200 toolResultWithImage", () => {
-  it("content[0] 鏡像 structuredContent、content[1] 是 image、structuredContent 不含 data；CallToolResultSchema 驗得過", () => {
+  it("content[0] mirrors structuredContent, content[1] is an image, structuredContent has no data; passes CallToolResultSchema", () => {
     const meta = { noteId: "n", uploadId: "u", mimeType: "image/png", bytes: 3 };
     const r = toolResultWithImage(meta, { data: Buffer.from([1, 2, 3]).toString("base64"), mimeType: "image/png" });
     expect(r.content[0]).toEqual({ type: "text", text: JSON.stringify(r.structuredContent) });

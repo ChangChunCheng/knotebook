@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NoteWriteQueue, QueueBusyError } from "../../src/notes/editing/queue.js";
 
 describe("NoteWriteQueue", () => {
-  it("同 noteId 串行、不同 noteId 並行；鏈排空即刪 entry", async () => {
+  it("same noteId runs serially, different noteIds in parallel; an entry is deleted once its chain drains", async () => {
     const q = new NoteWriteQueue();
     const order: string[] = [];
     const slow = (tag: string, ms: number) => async () => { await new Promise(r => setTimeout(r, ms)); order.push(tag); return tag; };
@@ -11,17 +11,17 @@ describe("NoteWriteQueue", () => {
     expect(order).toEqual(["c", "a", "b"]);
     expect(q.size).toBe(0);
   });
-  it("等待超過 waitMs → QueueBusyError，且前一個工作照常完成", async () => {
+  it("waiting longer than waitMs -> QueueBusyError, and the previous job still completes", async () => {
     const q = new NoteWriteQueue();
     const first = q.run("n1", () => new Promise<string>(r => setTimeout(() => r("first"), 80)));
     await expect(q.run("n1", async () => "second", 10)).rejects.toBeInstanceOf(QueueBusyError);
     expect(await first).toBe("first");
   });
-  // 這一案守的是 queue.ts 的不變量「沒跑到 fn 的請求不得縮短這條鏈」。busy 是「等到逾時還沒輪到我」，
-  // 此刻前一個請求**還在跑**——若逾時的那一發把自己那格從 map 刪掉（或留下一個在 busy 當下就落地的
-  // tail），下一個到達的請求會拿到一條全新的鏈，與仍在跑的那個併行。撤回路徑沒有 if_match，冪等守衛
-  // 完全靠串行成立，一破就是「兩發併發撤回各插一次 before_blocks → 兩顆同 id 的頂層 block」。
-  it("忙碌逾時後串行不得被破壞：逾時之後抵達的請求仍須等前一個跑完（同時在飛 ≤ 1）", async () => {
+  // Guards queue.ts's invariant "a request that never reached fn must not shorten the chain". busy means "timed out waiting for my turn" while
+  // the previous request is still running: if the timed-out call removed its own slot from the map (or left a tail that lands at the moment of
+  // busy), the next arriving request would get a brand-new chain and run in parallel with the one still running. The undo path has no if_match,
+  // so its idempotency guard relies entirely on serialization; breaking it means two concurrent undos each insert before_blocks once -> two top-level blocks with the same id.
+  it("serialization is not broken after a busy timeout: a request arriving after the timeout still waits for the previous one to finish (in flight at once <= 1)", async () => {
     const q = new NoteWriteQueue();
     let inFlight = 0;
     let maxInFlight = 0;
@@ -35,13 +35,12 @@ describe("NoteWriteQueue", () => {
       return tag;
     };
     const first = q.run("n1", job("first", firstGate));
-    // 第二發等不到 → busy。它沒跑到 fn，所以不得動到 map 那一格
+    // The second call can't get its turn -> busy. It never ran fn, so it must not touch that slot in the map
     await expect(q.run("n1", job("busy", Promise.resolve()), 10)).rejects.toBeInstanceOf(QueueBusyError);
     expect(q.size).toBe(1);
-    // 第三發在 first 還在跑的時候到達
     const third = q.run("n1", job("third", Promise.resolve()), 5_000);
-    await new Promise(r => setTimeout(r, 30)); // 串行被破壞的話，這段時間足夠讓 third 併行跑完
-    expect(inFlight).toBe(1); // 前提守衛（不是本案的判準）：first 此刻確實還在飛，否則整案空轉
+    await new Promise(r => setTimeout(r, 30)); // if serialization were broken, this time is enough for third to run in parallel and finish
+    expect(inFlight).toBe(1); // precondition guard (not this case's criterion): first is really still in flight, otherwise the case spins idle
     releaseFirst();
     expect(await first).toBe("first");
     expect(await third).toBe("third");

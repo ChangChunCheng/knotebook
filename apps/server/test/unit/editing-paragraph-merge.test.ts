@@ -1,9 +1,9 @@
 /**
- * 引言、標題、summary 底下的多段落，BlockNote 0.52 自己併（`mergeParagraphs`，迴圈裡 `innerHTML +=`）是平方成長——
- * 一個引言裡 2 000 段約 21 秒。`premergeInto` 在交給它之前用同一個規則一次併好。
+ * Multiple paragraphs under a quote, heading or summary: BlockNote 0.52 merges them itself (`mergeParagraphs`, `innerHTML +=` in a loop), which
+ * grows quadratically (2,000 paragraphs in one quote take tens of seconds). `premergeInto` merges them once, with the same rule, before handing over.
  *
- * 等價：逐案比對併過與沒併過的 HTML，`tryParseHTMLToBlocks` 出來的 blocks（拿掉隨機 id）必須相同。涵蓋範圍＝下面列的形狀：
- * 70 形（`REVIEW_CASES`，原樣照抄；其中段落裡又有段落的 5 形改成驗「整筆拒絕」，不在等價範圍）加本檔原有各形。不是對任意 HTML 的證明。
+ * Equivalence: per case, the blocks from `tryParseHTMLToBlocks` (random ids removed) must be identical for merged and unmerged HTML. Coverage is the shapes below:
+ * the 70 shapes of `REVIEW_CASES` (copied as-is; the 5 with a paragraph inside a paragraph instead verify whole-write rejection) plus this file's own shapes. Not a proof for arbitrary HTML.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -29,7 +29,7 @@ async function withEditor<T>(fn: (ed: EditorSession["editor"]) => T): Promise<T>
     s.close();
   }
 }
-/** 語法檢查過的 HTML（過不了就用原字串）。 */
+/** HTML that passed the syntax check (the original string if it didn't). */
 const htmlOf = (md: string) => {
   const s = checkNoteMarkdownSyntax(md, "top");
   return s.ok ? s.html : md;
@@ -42,7 +42,6 @@ const blocksOf = (ed: EditorSession["editor"], html: string): string => {
   }
 };
 
-// ---- 70 種形狀 ----
 const REVIEW_CASES: Record<string, string> = {
   c01_md_two: "> a\n>\n> b",
   c02_ws_edges: "<blockquote><p>a </p><p> b</p></blockquote>",
@@ -118,43 +117,43 @@ Object.assign(REVIEW_CASES, {
   g5_loose_summary_ws: "<summary>\n<blockquote>\n<p>a</p>\n<p>b</p>\n</blockquote>\n</summary>",
 });
 
-/** 段落裡又有段落：在 `parseMarkdownForNote` 整筆拒絕（`nested_paragraph`），不比等價。 */
+/** A paragraph inside a paragraph: `parseMarkdownForNote` rejects the whole write (`nested_paragraph`), so no equivalence comparison. */
 const NESTED_P = new Set(["c24_button_nested_first", "c25_button_nested_later", "c26_marquee", "c27_foreignobject", "c28_mtext"]);
 
-/** 本檔各形：[名稱, markdown, 併過之後 HTML 應該有變]。 */
+/** This file's shapes: [name, markdown, whether merging should change the HTML]. */
 const CASES: Array<[string, string, boolean]> = [
-  ["兩段", "> a\n>\n> b", true],
-  ["行內格式", "> **bold** x _i_ ~~s~~ `c`\n>\n> [link](http://example.com) and **b _bi_**", true],
-  ["有色文字與有色引言", '> <span style="color:red">red</span> x\n>\n> <span style="background-color:yellow">bg</span>\n\n<blockquote data-text-color="red"><p>a</p><p><strong>b</strong></p></blockquote>', true],
-  ["空段落（HTML）", "<blockquote><p>a</p><p></p><p>b</p><p></p></blockquote>", true],
-  ["段內換行", "> a\\\n> b\n>\n> c  \n> d", true],
-  ["巢狀引言", "> a\n>\n> > b\n> >\n> > c\n>\n> d", true],
-  ["引言裡的鬆散清單", "> a\n>\n> - x\n>\n> - y\n>\n> b", true],
-  ["引言裡的標題與 code", "> # H\n>\n> p\n>\n> ```\n> code\n> ```\n>\n> q", true],
-  ["標題底下多段落（HTML）", '<h2><p>a</p><p><b>b</b> <a href="http://example.com">l</a></p></h2>', true],
-  ["清單項裡的引言", "- item\n\n  > a\n  >\n  > b\n\n- next", true],
-  ["details 裡的引言", "<details><summary>s</summary>\n\n> a\n>\n> b\n\n</details>", true],
-  ["summary 裡多段落", "<details><summary><p>a</p><p><strong>b</strong></p></summary>\n\nchild\n\n</details>", true],
-  ["巢在 details 裡的 summary", "<details><summary><p>a</p><p>b</p></summary><details><summary><p>c</p><p>d</p></summary><p>e</p></details></details>", true],
-  ["第二個 summary 不是那一行（不併它）", "<details><summary>s</summary><p>x</p><summary><p>a</p><p>b</p></summary></details>", false],
-  ["表格儲存格裡的引言", "<table><tr><td><blockquote><p>a</p><p>b</p></blockquote></td><td>x</td></tr></table>", true],
-  ["並排欄裡的引言", '<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\n> a\n>\n> b\n\n</div>\n<div data-kb-column style="flex:1">\n\nX\n\n</div>\n</div>', true],
-  ["pre 裡的引言（照樣併）", "<pre><blockquote><p>a</p><p>b</p></blockquote></pre>", true],
-  ["其他內容不受重新序列化影響", "```\n\ncode & <x> \"q\"\n```\n\n<pre>\nlead</pre>\n\n> a&nbsp;&amp;\n>\n> &lt;b&gt; <!-- c -->\n\n| h | i |\n|---|---|\n| 1 | 2 |\n\n![alt](/api/uploads/x)\n\n```mermaid\ngraph TD; A-->B\n```", true],
-  ["引言裡的圖與連結", `> a\n>\n> ![alt](/api/uploads/x)\n>\n> [[A]] and [x](/notes/${ID})`, true],
-  ["單段（不用併）", "> only one", false],
-  // #398：`<plaintext>` 讓序列化後重新剖析不等價——有它就不預先併。
-  ["<plaintext> 在引言之後（不預先併）", "> a\n>\n> b\n\n<plaintext>z", false],
-  ["<plaintext> 在引言第二段裡（不預先併）", "<blockquote><p>a</p><p>b<plaintext>z</p></blockquote>", false],
-  ["<plaintext> 在標題之後（不預先併）", "<h2><p>a</p><p>b</p></h2>\n\ntext\n\n<plaintext>z <b>y</b>", false],
-  ["多行 HTML 的空白", "<blockquote>\n<p>a</p>\n<p>b</p>\n</blockquote>", true],
-  ["多行 HTML 段落後接行內元素", "<blockquote>\n<p>a</p>\n<p>b</p>\n<em>x</em>\n</blockquote>", true],
-  ["figcaption 裡的引言（不碰）", '<figure><img src="/api/uploads/x"><figcaption><blockquote><p>a</p>\n<p>b</p></blockquote></figcaption></figure>', false],
-  ["引言裡帶 data-content-type 的子元素（照樣併）", '<blockquote><p><span data-content-type="zzz">y</span></p><p>b</p></blockquote>', true],
-  ["不在 details 裡的 summary 底下的引言（併引言）", "<summary><blockquote><p>a</p><p>b</p></blockquote></summary>", true],
+  ["two paragraphs", "> a\n>\n> b", true],
+  ["inline formatting", "> **bold** x _i_ ~~s~~ `c`\n>\n> [link](http://example.com) and **b _bi_**", true],
+  ["colored text and colored quote", '> <span style="color:red">red</span> x\n>\n> <span style="background-color:yellow">bg</span>\n\n<blockquote data-text-color="red"><p>a</p><p><strong>b</strong></p></blockquote>', true],
+  ["empty paragraph (HTML)", "<blockquote><p>a</p><p></p><p>b</p><p></p></blockquote>", true],
+  ["line break inside a paragraph", "> a\\\n> b\n>\n> c  \n> d", true],
+  ["nested quote", "> a\n>\n> > b\n> >\n> > c\n>\n> d", true],
+  ["loose list inside a quote", "> a\n>\n> - x\n>\n> - y\n>\n> b", true],
+  ["heading and code inside a quote", "> # H\n>\n> p\n>\n> ```\n> code\n> ```\n>\n> q", true],
+  ["multiple paragraphs under a heading (HTML)", '<h2><p>a</p><p><b>b</b> <a href="http://example.com">l</a></p></h2>', true],
+  ["quote inside a list item", "- item\n\n  > a\n  >\n  > b\n\n- next", true],
+  ["quote inside details", "<details><summary>s</summary>\n\n> a\n>\n> b\n\n</details>", true],
+  ["multiple paragraphs in summary", "<details><summary><p>a</p><p><strong>b</strong></p></summary>\n\nchild\n\n</details>", true],
+  ["summary nested in details", "<details><summary><p>a</p><p>b</p></summary><details><summary><p>c</p><p>d</p></summary><p>e</p></details></details>", true],
+  ["a second summary is not that line (not merged)", "<details><summary>s</summary><p>x</p><summary><p>a</p><p>b</p></summary></details>", false],
+  ["quote inside a table cell", "<table><tr><td><blockquote><p>a</p><p>b</p></blockquote></td><td>x</td></tr></table>", true],
+  ["quote inside a column", '<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\n> a\n>\n> b\n\n</div>\n<div data-kb-column style="flex:1">\n\nX\n\n</div>\n</div>', true],
+  ["quote inside pre (merged anyway)", "<pre><blockquote><p>a</p><p>b</p></blockquote></pre>", true],
+  ["other content unaffected by re-serialization", "```\n\ncode & <x> \"q\"\n```\n\n<pre>\nlead</pre>\n\n> a&nbsp;&amp;\n>\n> &lt;b&gt; <!-- c -->\n\n| h | i |\n|---|---|\n| 1 | 2 |\n\n![alt](/api/uploads/x)\n\n```mermaid\ngraph TD; A-->B\n```", true],
+  ["image and links inside a quote", `> a\n>\n> ![alt](/api/uploads/x)\n>\n> [[A]] and [x](/notes/${ID})`, true],
+  ["single paragraph (nothing to merge)", "> only one", false],
+  // #398: `<plaintext>` makes re-parsing after serialization non-equivalent, so nothing is premerged when it is present.
+  ["<plaintext> after a quote (not premerged)", "> a\n>\n> b\n\n<plaintext>z", false],
+  ["<plaintext> inside the second paragraph of a quote (not premerged)", "<blockquote><p>a</p><p>b<plaintext>z</p></blockquote>", false],
+  ["<plaintext> after a heading (not premerged)", "<h2><p>a</p><p>b</p></h2>\n\ntext\n\n<plaintext>z <b>y</b>", false],
+  ["whitespace in multi-line HTML", "<blockquote>\n<p>a</p>\n<p>b</p>\n</blockquote>", true],
+  ["multi-line HTML paragraphs followed by an inline element", "<blockquote>\n<p>a</p>\n<p>b</p>\n<em>x</em>\n</blockquote>", true],
+  ["quote inside figcaption (left alone)", '<figure><img src="/api/uploads/x"><figcaption><blockquote><p>a</p>\n<p>b</p></blockquote></figcaption></figure>', false],
+  ["quote with a child carrying data-content-type (merged anyway)", '<blockquote><p><span data-content-type="zzz">y</span></p><p>b</p></blockquote>', true],
+  ["quote under a summary that is not inside details (merged)", "<summary><blockquote><p>a</p><p>b</p></blockquote></summary>", true],
 ];
 
-describe("premergeInto：併過與沒併過，blocks 相同（70 形）", () => {
+describe("premergeInto: merged and unmerged give identical blocks (70 shapes)", () => {
   for (const [name, md] of Object.entries(REVIEW_CASES)) {
     if (NESTED_P.has(name)) continue;
     it(name, async () => {
@@ -164,7 +163,7 @@ describe("premergeInto：併過與沒併過，blocks 相同（70 形）", () => 
       expect(b).toBe(a);
     });
   }
-  it("段落裡又有段落的 5 形 → parseMarkdownForNote 整筆拒絕 nested_paragraph", async () => {
+  it("the 5 shapes with a paragraph inside a paragraph -> parseMarkdownForNote rejects the whole write with nested_paragraph", async () => {
     for (const name of NESTED_P) {
       const r = await withEditor(ed => parseMarkdownForNote(ed, REVIEW_CASES[name]!, cands, ORIGIN));
       expect(r, name).toEqual({ error: "unsupported_block", detail: "nested_paragraph" });
@@ -172,7 +171,7 @@ describe("premergeInto：併過與沒併過，blocks 相同（70 形）", () => 
   });
 });
 
-describe("premergeInto：併過與沒併過，blocks 相同（本檔各形）", () => {
+describe("premergeInto: merged and unmerged give identical blocks (this file's shapes)", () => {
   for (const [name, md, shouldChange] of CASES) {
     it(name, async () => {
       const html = htmlOf(md);
@@ -184,7 +183,7 @@ describe("premergeInto：併過與沒併過，blocks 相同（本檔各形）", 
     });
   }
 
-  it("多段落混合格式的大引言（200 段，每段輪流粗體／連結／有色字／空段落／換行）", async () => {
+  it("large quote with mixed formatting (200 paragraphs, alternating bold/link/colored text/empty paragraph/line break)", async () => {
     const kinds = [
       (k: number) => `<p><strong>b${k}</strong> t</p>`,
       (k: number) => `<p><a href="http://example.com/${k}">l${k}</a></p>`,
@@ -203,8 +202,8 @@ describe("premergeInto：併過與沒併過，blocks 相同（本檔各形）", 
 const ps = (n: number, pre = "q") => Array.from({ length: n }, (_, k) => `<p>${pre}${k}</p>`).join("");
 const mdq = (n: number) => Array.from({ length: n }, (_, k) => `> q${k}\n>`).join("\n");
 /**
- * 修前實測 2 000 段約 20–27 秒、而且平方的形。修後量表上段數的 1/8 與全部，比例 < 24（線性約 8–16、平方約 64）、
- * 不比絕對毫秒；`expectLinear`）；全部的低於 250 ms 直接算過，另有 10 秒的絕對上限。
+ * Shapes that were quadratic and took tens of seconds before the fix. After the fix, compare 1/8 of the paragraph count with the full count on the scale and
+ * require a ratio < 24 (linear is about 8-16, quadratic about 64) rather than absolute milliseconds (`expectLinear`); a full run under 250 ms passes outright, and there is also an absolute cap (`maxMs`, 30 s by default in perf-helpers.ts).
  */
 const SLOW: Array<[string, (n: number) => string, number, "ok" | "nested_paragraph"]> = [
   ["引言 2 000 段（Markdown）", n => mdq(n), 2000, "ok"],
@@ -219,7 +218,7 @@ const SLOW: Array<[string, (n: number) => string, number, "ok" | "nested_paragra
   ["頂層 <p> 經 <math><mtext> 巢 1 000 段", n => "<p>a<math><mtext>" + ps(n) + "</mtext></math></p>", 1000, "nested_paragraph"],
   ["引言裡 <p> 經 <button> 巢 2 000 段", n => "<blockquote><p>a<button>" + ps(n) + "</button></p><p>z</p></blockquote>", 2000, "nested_paragraph"],
 ];
-describe("耗時：修前 20 秒以上、平方的形，修後線性", () => {
+describe("timing: shapes that were quadratic and took over 20 seconds before the fix are linear after it", () => {
   for (const [name, mdOf, size, want] of SLOW) {
     it(name, async () => {
       await expectLinear(
@@ -239,9 +238,9 @@ describe("耗時：修前 20 秒以上、平方的形，修後線性", () => {
   }
 });
 
-describe("巢狀深度上限", () => {
+describe("nesting depth limit", () => {
   const bq = (d: number) => "<blockquote><p>a</p>".repeat(d) + "</blockquote>".repeat(d);
-  it(`DOM 深度恰 ${MAX_HTML_DEPTH} 可寫、${MAX_HTML_DEPTH + 1} 被拒（引言每層 1、裡面的 <p> 再 1：d 層引言＝深度 d＋1）`, async () => {
+  it(`DOM depth of exactly ${MAX_HTML_DEPTH} is writable, ${MAX_HTML_DEPTH + 1} is rejected (each quote level counts 1, the <p> inside counts 1 more: d quote levels = depth d+1)`, async () => {
     expect(MAX_HTML_DEPTH).toBe(128);
     const ok = await withEditor(ed => parseMarkdownForNote(ed, bq(MAX_HTML_DEPTH - 1), cands, ORIGIN));
     expect(ok).not.toHaveProperty("error");
@@ -253,7 +252,7 @@ describe("巢狀深度上限", () => {
     expect(mdOver).toEqual({ error: "unsupported_block", detail: "too_deep" });
   }, 60_000);
 
-  it("正常的深內容不受影響：清單巢 60 層、並排欄裡清單＋details＋表格", async () => {
+  it("normal deep content is unaffected: list nested 60 levels, list + details + table inside a column", async () => {
     const list60 = Array.from({ length: 60 }, (_, k) => "  ".repeat(k) + `- d${k}`).join("\n");
     const cols =
       '<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\n' +
@@ -265,11 +264,11 @@ describe("巢狀深度上限", () => {
     }
   }, 60_000);
 
-  it("#398：程式碼區塊裡的 `<T>`（泛型）不算巢狀——600 個 `<T>` 的 code block 照常解析成功（舊的字串估計會判 too_deep）", async () => {
+  it("#398: `<T>` (generics) inside a code block does not count as nesting: a code block with 600 `<T>` still parses successfully (the old string estimate would say too_deep)", async () => {
     const md = "```ts\n" + "let x: Array<T> = f<T>();\n".repeat(300) + "```";
     const r = await withEditor(ed => parseMarkdownForNote(ed, md, cands, ORIGIN));
     expect(r).not.toHaveProperty("error");
     expect((r as { blocks: Array<{ type: string }> }).blocks.map(b => b.type)).toEqual(["codeBlock"]);
   }, 60_000);
-  // 幾千層的引言（舊的「語法檢查之前的字串估計」擋的那幾形）改由 worker 的時限與堆疊上限兜住：見 `parse-pool-worker.test.ts`。
+  // Quotes thousands of levels deep (the shapes the old string estimate before the syntax check used to block) are now covered by the worker's time limit and stack limit: see `parse-pool-worker.test.ts`.
 });

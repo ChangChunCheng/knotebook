@@ -1,15 +1,15 @@
 /**
- * #108：outline 分頁（一次最多 100 筆）的邊界。
+ * #108: boundaries of outline paging (at most 100 entries at a time).
  *
- * 這一族守的是 `buildOutlinePage` 本身；「哪些欄位被丟掉／被截斷」的結果面由
- * `test/mcp-content.test.ts` 的 key 集合與長度斷言守。
+ * This family guards `buildOutlinePage` itself; which fields are dropped or truncated is covered by the key-set and length assertions in
+ * `test/mcp-content.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 import type { OutlineEntry } from "../../src/notes/editing/fingerprint.js";
 import { buildOutlinePage } from "../../src/mcp/outline-page.js";
 import { MCP_PAGE_MAX, MCP_TEXT_MAX } from "../../src/mcp/limits.js";
 
-/** 逐字帶著 `fingerprint`／`blockIds` ——這兩欄**不得**出現在回傳值裡。 */
+/** Carries `fingerprint`/`blockIds` verbatim: these two fields must NOT appear in the return value. */
 function entries(n: number, heading = (i: number) => `S${i}`): OutlineEntry[] {
   return Array.from({ length: n }, (_, i) => ({
     sectionId: i === 0 ? "_top" : `sec-${i}`,
@@ -22,21 +22,21 @@ function entries(n: number, heading = (i: number) => `S${i}`): OutlineEntry[] {
 }
 
 describe("#108 buildOutlinePage", () => {
-  it("不足 100 筆：全數回傳、truncated false、nextSectionOffset null", () => {
+  it("fewer than 100 entries: all returned, truncated false, nextSectionOffset null", () => {
     const page = buildOutlinePage(entries(7), 0);
     expect(page.sections).toHaveLength(7);
     expect(page.truncated).toBe(false);
     expect(page.nextSectionOffset).toBeNull();
   });
 
-  it("恰好 100 筆不算截斷（邊界：> 才是 truncated，>= 會多發一次空的第二頁）", () => {
+  it("exactly 100 entries is not truncation (boundary: > means truncated; >= would issue an extra empty second page)", () => {
     const page = buildOutlinePage(entries(MCP_PAGE_MAX), 0);
     expect(page.sections).toHaveLength(MCP_PAGE_MAX);
     expect(page.truncated).toBe(false);
     expect(page.nextSectionOffset).toBeNull();
   });
 
-  it("101 筆：第一頁 100 ＋ truncated ＋ nextSectionOffset 100；第二頁 1 筆收尾", () => {
+  it("101 entries: first page 100 + truncated + nextSectionOffset 100; the second page has 1 entry and ends it", () => {
     const all = entries(MCP_PAGE_MAX + 1);
     const p1 = buildOutlinePage(all, 0);
     expect(p1.sections).toHaveLength(MCP_PAGE_MAX);
@@ -46,11 +46,11 @@ describe("#108 buildOutlinePage", () => {
     expect(p2.sections).toHaveLength(1);
     expect(p2.truncated).toBe(false);
     expect(p2.nextSectionOffset).toBeNull();
-    // 兩頁湊回全集、順序不變、無重複無遺漏。
+    // The two pages put back together give the full set: order unchanged, no duplicates, none missing.
     expect([...p1.sections, ...p2.sections].map(s => s.sectionId)).toEqual(all.map(s => s.sectionId));
   });
 
-  it("sectionOffset 等於或大於總段數 → 空陣列 ＋ truncated false ＋ nextSectionOffset null（不是錯誤）", () => {
+  it("sectionOffset equal to or beyond the section count -> empty array + truncated false + nextSectionOffset null (not an error)", () => {
     for (const offset of [7, 8, 10_000]) {
       const page = buildOutlinePage(entries(7), offset);
       expect(page.sections).toEqual([]);
@@ -59,7 +59,7 @@ describe("#108 buildOutlinePage", () => {
     }
   });
 
-  it("每個 entry 的 key 集合逐字＝{sectionId, level, heading, chars}，指紋與 blockIds 都被丟掉", () => {
+  it("the key set of each entry is exactly {sectionId, level, heading, chars}; fingerprints and blockIds are dropped", () => {
     const page = buildOutlinePage(entries(3), 0);
     for (const s of page.sections) {
       expect(Object.keys(s).sort()).toEqual(["chars", "heading", "level", "sectionId"].sort());
@@ -68,12 +68,11 @@ describe("#108 buildOutlinePage", () => {
     expect(JSON.stringify(page)).not.toContain("b-0");
   });
 
-  // #108：`withFingerprints: true` 是「outline 不帶指紋」的**明文例外**，
-  // 只有 `edit_note` 的**成功**回應傳（維持與 REST 對等）。旗標**預設關閉**，所以
-  // 「忘記關」寫不出來，只有「刻意打開」寫得出來。
-  // ⚠ 反面（預設不帶指紋）**不另立一案**：上面 `:62` 那條 key 集合斷言已經是那道守衛。
-  it("withFingerprints: true → 每個 entry 多一欄 fingerprint，逐字等於輸入那一筆", () => {
-    // 逐筆不同的指紋——全用同一個值的話「取錯行」也會綠。
+  // #108: `withFingerprints: true` is the explicit exception to "outline carries no fingerprints", passed only in the successful response of
+  // `edit_note` (kept at parity with REST). The flag is off by default, so forgetting to turn it off can't happen, only deliberately turning it on.
+  // The reverse (no fingerprints by default) has no separate case: the key-set assertion above already covers it.
+  it("withFingerprints: true -> every entry gets one more field, fingerprint, equal to that input entry verbatim", () => {
+    // Different fingerprint per entry: with one shared value, picking the wrong row would also stay green.
     const input = entries(3).map((e, i) => ({ ...e, fingerprint: `abcdef01234567${i}${i}` }));
     const page = buildOutlinePage(input, 0, { withFingerprints: true });
     expect(page.sections).toHaveLength(3);
@@ -83,7 +82,7 @@ describe("#108 buildOutlinePage", () => {
     }
   });
 
-  it("heading 截到 200 並附 headingTruncated；未截斷時沒有那把 key", () => {
+  it("heading cut to 200 with headingTruncated; no such key when not truncated", () => {
     const page = buildOutlinePage(entries(2, i => (i === 1 ? "H".repeat(500) : "short")), 0);
     expect(page.sections[0]!.heading).toBe("short");
     expect("headingTruncated" in page.sections[0]!).toBe(false);
@@ -91,9 +90,9 @@ describe("#108 buildOutlinePage", () => {
     expect(page.sections[1]!.headingTruncated).toBe(true);
   });
 
-  // #177：heading 走 `truncateText`，預算按 JSON 逃脫後計。C0 一個算 6 → 只留 33 個並帶旗標；
-  // 把 `buildOutlinePage` 換回按原長度截（或繞過 `truncateText`）時這一案紅。
-  it("#177：heading 含 C0 時按逃脫後的長度截（40 個 U+0001 → 33 個 ＋ headingTruncated）", () => {
+  // #177: heading goes through `truncateText`, whose budget counts after JSON escaping. One C0 counts 6, so only 33 are kept with the flag;
+  // switching `buildOutlinePage` back to raw-length truncation (or bypassing `truncateText`) fails this case.
+  it("#177: a heading containing C0 is cut by escaped length (40 U+0001 -> 33 + headingTruncated)", () => {
     const page = buildOutlinePage(entries(2, i => (i === 1 ? "\u0001".repeat(40) : "short")), 0);
     expect(page.sections[1]!.heading).toBe("\u0001".repeat(33));
     expect(page.sections[1]!.headingTruncated).toBe(true);

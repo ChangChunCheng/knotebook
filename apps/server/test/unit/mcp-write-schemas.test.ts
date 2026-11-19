@@ -1,15 +1,14 @@
 /**
- * #108：寫入工具的 schema 與 REST 的**同一份** schema 對得起來（M14）。
+ * #108: the write tools' schemas match the **same** schemas REST uses.
  *
- * 本檔放寫入工具 schema 的同源斷言：op 集合的兩邊、M14 的 identity 斷言（21b(i)）與行為探針
- * （21b(ii)），以及 #180 起各新工具輸入欄位的 identity。
+ * This file holds the same-source assertions for the write-tool schemas: both sides of the op set, the identity assertions and the behaviour probes,
+ * and (since #180) the identity of each new tool's input fields.
  *
- * ⚠ **`op` 是唯一沒有共用物件的欄位**：REST 那邊是五個 `z.literal`（`discriminatedUnion` 的
- * 判別鍵），MCP 這邊要的是一個帶 `.describe()` 的 `z.enum`（raw shape 表達不了 union）。
- * #180 起 MCP 的 op 集合＝REST 五個 ∪ {rename}（`rename` 是 MCP 獨有，REST 刻意不加；以下 `MCP_OPS` 斷言）。
- * 兩份字串集合因此只能靠下面這一案對起來——**沒有它，日後 REST 多一個 op 只有一邊會知道，
- * 而且不會有任何測試變紅**（`editBodySchema` 多一個分支＝MCP 收不到那個 op、raw shape 多一個
- * 成員＝REST 的 `safeParse` 直接 `invalid_union_discriminator`，兩種漂移都只是「功能沒接上」）。
+ * `op` has no shared object: REST has five `z.literal` (the discriminator of the `discriminatedUnion`), while MCP needs one `z.enum` with `.describe()`
+ * (a raw shape can't express a union). Since #180 the MCP op set is REST's five plus {rename} (`rename` is MCP-only; REST deliberately doesn't add it;
+ * see the `MCP_OPS` assertion below). The two string sets can therefore only be matched by the case below: without it, if REST gained an op only one side would
+ * know (an extra `editBodySchema` branch means MCP can't receive that op; an extra raw-shape member means REST's `safeParse` fails with
+ * `invalid_union_discriminator`; either drift just leaves the feature unconnected).
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -30,18 +29,18 @@ import { deleteFolderInput } from "../../src/mcp/tools/delete-folder.js";
 import { FOLDER_ID } from "../../src/mcp/folder-fields.js";
 import { readNoteSectionOutput } from "../../src/mcp/tools/read-note-section.js";
 
-/** 寫死一份（不是從實作導出來的）——否則兩邊一起改就一起綠。 */
+/** Hard-coded copy (not derived from the implementation): otherwise a change on both sides would stay green together. */
 const OPS = ["replace_all", "replace_section", "insert_after", "append", "delete_section"];
-/** #180：MCP 多一個 op（REST 五 ∪ {rename}）。**刻意不相等**——REST `/edits` 不加 rename 是刻意的差異（rename 不進 `note_ai_edits`、REST 已有 PATCH、MCP 加 op 比另開工具便宜）。日後別「修正」成兩邊相等。 */
+/** #180: MCP has one more op (REST's five plus {rename}); deliberately unequal: REST `/edits` doesn't add rename on purpose (rename doesn't go into `note_ai_edits`, REST already has PATCH, adding an op to MCP is cheaper than another tool). Don't "fix" it to be equal later. */
 const MCP_OPS = [...OPS, "rename"];
 
-describe("#108 寫入 schema 的兩邊", () => {
-  it("editBodySchema 的五個分支 op literal 逐字等於寫死的五元陣列（含順序）", () => {
+describe("#108 both sides of the write schemas", () => {
+  it("the five branches' op literals of editBodySchema equal the hard-coded five-element array (including order)", () => {
     expect(editBodySchema.options).toHaveLength(5);
     expect(editBodySchema.options.map(o => o.shape.op.value)).toEqual(OPS);
   });
 
-  it("edit_note 的 op enum ＝ REST 五 ∪ {rename}；mcpEditBodySchema 的 literal ＝ MCP_OPS 且前五支就是 editBodySchema 的同一批物件", () => {
+  it("the op enum of edit_note = REST's five + {rename}; the literals of mcpEditBodySchema = MCP_OPS, and its first five are the same objects as in editBodySchema", () => {
     expect(editNoteInput.op.options).toEqual(MCP_OPS);
     expect(mcpEditBodySchema.options.map(o => o.shape.op.value)).toEqual(MCP_OPS);
     for (let i = 0; i < OPS.length; i += 1) expect(mcpEditBodySchema.options[i]).toBe(editBodySchema.options[i]);
@@ -49,18 +48,15 @@ describe("#108 寫入 schema 的兩邊", () => {
 });
 
 /**
- * 21b(i)（M14 的**來源**那一半）：raw shape 的六個欄位各自與 `notes/schemas.ts` 的 base
- * **同一份物件參考**，不是「兩邊碰巧寫出同樣的規則」。
+ * Identity assertion (the **source** half of the same-source check): each of the six raw-shape fields is the **same object reference** as the base in
+ * `notes/schemas.ts`, not "two sides that happen to write the same rule".
  *
- * zod 3.25.76 的 `.describe()` 對任何型別都是 `new This({ ...this._def, description })`——
- * description 以外的 `_def` 屬性與被呼叫端同一份參考：
- * - 選配欄位（`markdown`／`if_match`／`section_id`／`title`／`content`）建法固定成
- *   `BASE.optional().describe(...)`：`.optional()` 包一層 `ZodOptional`，`_def.innerType`
- *   就是 `BASE` 本身，`.describe()` 之後這個參考不變——直接 `toBe` 最乾淨。
- * - 必填欄位（`note_id`）沒有 `.optional()`，直接 `NOTE_ID.describe(...)`：沒有
- *   `innerType` 可比，但剝掉 `description` 之後剩下的 `_def`（`schema`／`effect` 等）
- *   與 `NOTE_ID._def`（同樣剝掉 description）逐一都是同一份參考，`toEqual` 遞迴比對時
- *   碰到的都是同一個物件，等同於一份更囉唆的 `toBe`。
+ * In zod 3.25.76 `.describe()` on any type is `new This({ ...this._def, description })`: apart from description the `_def` properties are the same references as the callee's.
+ * - Optional fields (`markdown`/`if_match`/`section_id`/`title`/`content`) are always built as `BASE.optional().describe(...)`: `.optional()` wraps a `ZodOptional`
+ *   whose `_def.innerType` is `BASE` itself, and that reference survives `.describe()`, so a direct `toBe` is cleanest.
+ * - The required field (`note_id`) has no `.optional()` and is `NOTE_ID.describe(...)` directly: there is no `innerType` to compare, but after stripping `description`
+ *   the remaining `_def` (`schema`/`effect` etc.) and `NOTE_ID._def` (also stripped) are the same references one by one, so `toEqual`'s recursion always meets the same
+ *   object: equivalent to a wordier `toBe`.
  */
 function expectSameSchema(field: z.ZodTypeAny, base: z.ZodTypeAny): void {
   if (field instanceof z.ZodOptional) {
@@ -72,38 +68,38 @@ function expectSameSchema(field: z.ZodTypeAny, base: z.ZodTypeAny): void {
   expect(fieldRest).toEqual(baseRest);
 }
 
-describe("#108 M14：raw shape 六個欄位與 notes/schemas.ts 的 base 同源（案 21b(i)）", () => {
-  it("editNoteInput 的 markdown／if_match／section_id／note_id 各自與 MD／FP／SEC／NOTE_ID 同源", () => {
+describe("#108 same source: the six raw-shape fields match the base in notes/schemas.ts", () => {
+  it("editNoteInput's markdown/if_match/section_id/note_id come from the same source as MD/FP/SEC/NOTE_ID", () => {
     expectSameSchema(editNoteInput.markdown, MD);
     expectSameSchema(editNoteInput.if_match, FP);
     expectSameSchema(editNoteInput.section_id, SEC);
     expectSameSchema(editNoteInput.note_id, NOTE_ID);
   });
 
-  it("#180：editNoteInput.title 與 TITLE 同源；PATCH 的 updateBodyObject.title 與 TITLE 同源", () => {
+  it("#180: editNoteInput.title comes from the same source as TITLE; so does updateBodyObject.title of PATCH", () => {
     expectSameSchema(editNoteInput.title, TITLE);
     expectSameSchema(updateBodyObject.shape.title, TITLE);
   });
 
-  it("createNoteInput 的 title／content／group_id 各自與 TITLE／MD／GROUP_ID 同源", () => {
+  it("createNoteInput's title/content/group_id come from the same source as TITLE/MD/GROUP_ID", () => {
     expectSameSchema(createNoteInput.title, TITLE);
     expectSameSchema(createNoteInput.content, MD);
     expectSameSchema(createNoteInput.group_id, GROUP_ID);
   });
 
-  it("#175：REST createBodySchema 的 groupId 與 GROUP_ID 同源（寫入側不發明第二套契約）", () => {
+  it("#175: groupId of REST createBodySchema comes from the same source as GROUP_ID (the write side doesn't invent a second contract)", () => {
     expectSameSchema(createBodySchema.shape.groupId, GROUP_ID);
     expectSameSchema(createBodySchema.shape.title, TITLE);
     expectSameSchema(createBodySchema.shape.content, MD);
   });
 
-  it("#175：GROUP_ID 收大小寫 uuid、拒非 uuid 與空字串", () => {
+  it("#175: GROUP_ID accepts uuids of any case, rejects non-uuids and empty strings", () => {
     expect(GROUP_ID.safeParse(randomUUID()).success).toBe(true);
     expect(GROUP_ID.safeParse(randomUUID().toUpperCase()).success).toBe(true);
     for (const bad of ["", "not-a-uuid", `${randomUUID()}x`, randomUUID().replace(/-/g, "")]) expect(GROUP_ID.safeParse(bad).success).toBe(false);
   });
 
-  it("#240 U-240a：NOTE_ID 把大寫／大小寫混雜的 uuid 轉成小寫；NUL、非 uuid 仍拒", () => {
+  it("#240: NOTE_ID lowercases uppercase/mixed-case uuids; NUL and non-uuids are still rejected", () => {
     const lower = "0f8fad5b-d9cb-469f-a165-70867728950e";
     const mixed = "0F8fAd5B-d9Cb-469F-a165-70867728950E";
     expect(NOTE_ID.parse(lower.toUpperCase())).toBe(lower);
@@ -114,51 +110,44 @@ describe("#108 M14：raw shape 六個欄位與 notes/schemas.ts 的 base 同源�
 });
 
 /**
- * 21b(ii)（M14 的**行為**那一半）：三發直接打 schema 物件（不經 HTTP），驗證執行期真的擋得住。
+ * Behaviour probes (the **behaviour** half): three calls straight at the schema objects (no HTTP) verify that runtime really rejects.
  *
- * ⚠ **262 145 code unit 的那一發不可以經 HTTP**（規格逐字：一份那麼長的 markdown 會先撞
- * `bodyLimit` 的 413，那個形恆綠，測不到 `MD` 的 `.max`）——只在 schema 層驗。
- * ⚠ **handler 本身不跑 raw shape 的驗證**（那是 SDK 做的）：這裡打的是 `z.object(editNoteInput)`／
- * `z.object(createNoteInput)` 這兩個物件本身，不是呼叫 `editNote()`／`createNote()`。
+ * The 262,145 code unit case must not go through HTTP: a markdown that long hits the `bodyLimit` 413 first, an always-green shape that can't exercise the `.max` of `MD`;
+ * so it is checked at schema level only. The handler itself doesn't run raw-shape validation (the SDK does): what is hit here is the `z.object(editNoteInput)`/
+ * `z.object(createNoteInput)` objects themselves, not `editNote()`/`createNote()`.
  *
- * ⚠ **NUL 與空 title 兩發的「同一份 payload 經 tools/call 打進去」後半，移到
- * `test/mcp-write-guards.test.ts`**：
- * 那半需要 `buildCollabTestApp()`（真 DB），而 `vitest.unit.config.ts`
- * 刻意不帶 `globalSetup`——那份 config 的檔頭逐字「確保 unit 測試絕不啟動 testcontainers」，
- * 是這個 repo 對「跑 `test:unit` 永遠不用 docker」的既有承諾（`package.json` 的
- * `test:unit` 腳本、以及本機測試慣例都靠它）。實測過：不手動設 `TEST_DATABASE_URL` 直接
- * `pnpm --filter @knotebook/server test:unit` 時，那半段會炸
- * 「TEST_DATABASE_URL 未設定」，把這份「本檔＝快、免 docker」的承諾打破。schema 層
- * safeParse 那一半（不需要 DB）留在這裡；HTTP 那一半搬進 `mcp-write-guards.test.ts`
- * （已經是整合測試檔）。
+ * The HTTP half of the NUL and empty-title cases (the same payload sent through tools/call) lives in `test/mcp-write-guards.test.ts`: it needs `buildCollabTestApp()`
+ * (a real DB), while `vitest.unit.config.ts` deliberately has no `globalSetup` (its header says it must never start testcontainers), the repo's existing promise that
+ * `test:unit` never needs docker. Without `TEST_DATABASE_URL`, that half fails complaining that it is not set, which would break this file's "fast, no docker" promise.
+ * The schema-level safeParse half (no DB) stays here; the HTTP half is in `mcp-write-guards.test.ts` (already an integration file).
  */
-describe("#108 M14：21b(ii) 的行為探針", () => {
-  it("markdown 262 145 code unit：z.object(editNoteInput) 直接 safeParse 拒絕，issue 指到 markdown", () => {
+describe("#108 behaviour probes", () => {
+  it("markdown of 262,145 code units: z.object(editNoteInput) safeParse rejects it directly, the issue points at markdown", () => {
     const tooLong = "x".repeat(262_145);
     const parsed = z.object(editNoteInput).safeParse({ note_id: randomUUID(), op: "append", markdown: tooLong });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues[0]!.path).toContain("markdown");
   });
 
-  it("markdown 含 NUL：z.object(editNoteInput) 直接 safeParse 拒絕，issue 指到 markdown（HTTP 那一半在 mcp-write-guards.test.ts）", () => {
+  it("markdown containing NUL: z.object(editNoteInput) safeParse rejects it directly, the issue points at markdown (the HTTP half is in mcp-write-guards.test.ts)", () => {
     const parsed = z.object(editNoteInput).safeParse({ note_id: randomUUID(), op: "append", markdown: "x" + NUL });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues[0]!.path).toContain("markdown");
   });
 
-  it("create_note 空字串 title：z.object(createNoteInput) 直接 safeParse 拒絕，issue 指到 title（HTTP 那一半在 mcp-write-guards.test.ts）", () => {
+  it("create_note with an empty title: z.object(createNoteInput) safeParse rejects it directly, the issue points at title (the HTTP half is in mcp-write-guards.test.ts)", () => {
     const parsed = z.object(createNoteInput).safeParse({ title: "" });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues[0]!.path).toContain("title");
   });
 });
 
-// #222／#378：模型面字串要講到顏色怎麼寫、收哪些名字與色碼、讀回來是同一個形（色碼讀回小寫 `#rrggbb`）——
-// 不講的話模型只會靠 read_note_section 偶然看到 HTML 去猜。
-// 色名清單寫死一份（不從 PALETTE_COLORS 導出）——否則兩邊一起改就一起綠。
-describe("#222 顏色在工具說明裡", () => {
+// #222/#378: the model-facing strings must say how to write colors, which names and hex codes are accepted, and that reading returns the same form (hex colors
+// read back as lowercase `#rrggbb`); otherwise the model could only guess from HTML it happened to see in read_note_section.
+// The color name list is hard-coded (not derived from PALETTE_COLORS): otherwise a change on both sides stays green together.
+describe("#222 colors in tool descriptions", () => {
   const NAMES = "default, gray, brown, red, orange, yellow, green, blue, purple, pink";
-  it("edit_note 的 markdown 說明：HTML 形的例子、10 個色名逐字、讀回同形", () => {
+  it("edit_note markdown description: an HTML-form example, the 10 color names verbatim, reads back in the same form", () => {
     const d = editNoteInput.markdown.description ?? "";
     expect(d).toContain(NAMES);
     expect(d).toContain('<span style="color:red">');
@@ -167,14 +156,14 @@ describe("#222 顏色在工具說明裡", () => {
     expect(d).not.toContain("Only these names are accepted");
     expect(d).toContain("read_note_section");
   });
-  it("create_note 的 content 說明指回 edit_note；read_note_section 的 markdown 說明講到顏色是 HTML、原樣寫回會保留", () => {
+  it("create_note's content description points back to edit_note; read_note_section's markdown description says colors are HTML and are kept when written back as-is", () => {
     expect(createNoteInput.content.description).toContain("Colors, side-by-side columns and sizes work as in edit_note");
     const d = readNoteSectionOutput.section.shape.markdown.description ?? "";
     expect(d).toContain("Colored text and blocks come back as HTML");
     expect(d).toContain("unchanged");
   });
-  // #379：讀出 `\<`、寫入 `\<` 是字面 `<`；兩句都要排除 code 與整塊 HTML（code 裡 `<` 原樣、整塊 HTML 裡讀成 `&lt;`；兩處反斜線都不是跳脫）。
-  it("字面 `<`：read_note_section 講讀出 `\\<`，edit_note 講寫 `\\<` 保留成文字", () => {
+  // #379: reading emits `\<`, and writing `\<` is a literal `<`; both sentences must exclude code and whole-block HTML (in code `<` stays as is, in whole-block HTML it reads as `&lt;`; the backslash is no escape in either).
+  it("literal `<`: read_note_section says reading puts a backslash before `<`, edit_note says writing a backslash before `<` keeps it as text", () => {
     expect(readNoteSectionOutput.section.shape.markdown.description).toContain(
       "Outside code and blocks that come back as HTML, a `<` that could start an HTML tag or comment comes back as `\\<`; write it back unchanged to keep it as text."
     );
@@ -184,10 +173,10 @@ describe("#222 顏色在工具說明裡", () => {
   });
 });
 
-// 並排：並排的正規標籤與欄數、尺寸的形與範圍要寫在工具說明裡；
-// 尺寸句不提表格格子裡的圖片。wire 上的整句逐字在 mcp-tools-list.test.ts。
-describe("並排與尺寸在工具說明裡", () => {
-  it("edit_note 的 markdown 說明：外層與欄的正規標籤、2 到 4 欄、figure 內的 width、第一列的 colwidth、32 到 4000", () => {
+// Columns: the canonical tags and column counts and the shape and range of sizes belong in the tool description; the size sentence doesn't mention images inside
+// table cells. The verbatim full sentence on the wire is in mcp-tools-list.test.ts.
+describe("columns and sizes in tool descriptions", () => {
+  it("edit_note markdown description: the canonical outer and column tags, 2 to 4 columns, width inside figure, colwidth in the first row, 32 to 4000", () => {
     const d = editNoteInput.markdown.description ?? "";
     expect(d).toContain('<div data-kb-columns style="display:flex;gap:16px">');
     expect(d).toContain('<div data-kb-column style="flex:N">');
@@ -197,7 +186,7 @@ describe("並排與尺寸在工具說明裡", () => {
     expect(d).toContain("whole pixels from 32 to 4000");
     expect(d).not.toContain("table cell");
   });
-  it("read_note_section 的 markdown 說明講到並排與尺寸也是 HTML；create_note 指回 edit_note", () => {
+  it("read_note_section's markdown description says columns and sizes are HTML too; create_note points back to edit_note", () => {
     const d = readNoteSectionOutput.section.shape.markdown.description ?? "";
     expect(d).toContain("side-by-side columns");
     expect(d).toContain("images shown at a set width");
@@ -206,14 +195,14 @@ describe("並排與尺寸在工具說明裡", () => {
   });
 });
 
-describe("#180 U2-c：copy_note 的輸入與 notes/schemas.ts 同源", () => {
-  it("copyNoteInput.note_id ↔ NOTE_ID；copyNoteInput.group_id（optional）↔ GROUP_ID", () => {
+describe("#180 copy_note input comes from the same source as notes/schemas.ts", () => {
+  it("copyNoteInput.note_id <-> NOTE_ID; copyNoteInput.group_id (optional) <-> GROUP_ID", () => {
     expectSameSchema(copyNoteInput.note_id, NOTE_ID);
     expectSameSchema(copyNoteInput.group_id, GROUP_ID);
     expect(copyNoteInput.group_id).toBeInstanceOf(z.ZodOptional);
   });
 
-  it("#239：copyNoteInputNoMove.note_id ↔ NOTE_ID；.group_id（optional）↔ GROUP_ID，說明是無搬移版", () => {
+  it("#239: copyNoteInputNoMove.note_id <-> NOTE_ID; .group_id (optional) <-> GROUP_ID; the description is the no-move form", () => {
     expectSameSchema(copyNoteInputNoMove.note_id, NOTE_ID);
     expectSameSchema(copyNoteInputNoMove.group_id, GROUP_ID);
     expect(copyNoteInputNoMove.group_id).toBeInstanceOf(z.ZodOptional);
@@ -221,16 +210,16 @@ describe("#180 U2-c：copy_note 的輸入與 notes/schemas.ts 同源", () => {
   });
 });
 
-describe("#180 U2-d：move_note_to_group 的輸入與 notes/schemas.ts 同源", () => {
-  it("moveNoteToGroupInput.note_id ↔ NOTE_ID；.group_id（必填，無 optional）↔ GROUP_ID", () => {
+describe("#180 move_note_to_group input comes from the same source as notes/schemas.ts", () => {
+  it("moveNoteToGroupInput.note_id <-> NOTE_ID; .group_id (required, not optional) <-> GROUP_ID", () => {
     expectSameSchema(moveNoteToGroupInput.note_id, NOTE_ID);
     expectSameSchema(moveNoteToGroupInput.group_id, GROUP_ID);
     expect(moveNoteToGroupInput.group_id).not.toBeInstanceOf(z.ZodOptional);
   });
 });
 
-describe("資料夾：四支工具的 folder_id 與 FOLDER_ID 同源", () => {
-  it("create_note／copy_note（兩版）／move_note_to_group 的 folder_id（optional）、move_note_to_folder 的 folder_id（nullable，必給）↔ FOLDER_ID；copy 兩版說明各自", () => {
+describe("folders: folder_id of four tools comes from the same source as FOLDER_ID", () => {
+  it("folder_id of create_note/copy_note (both forms)/move_note_to_group (optional) and of move_note_to_folder (nullable, required) <-> FOLDER_ID; the two copy forms have their own descriptions", () => {
     for (const field of [createNoteInput.folder_id, copyNoteInput.folder_id, copyNoteInputNoMove.folder_id, moveNoteToGroupInput.folder_id]) {
       expect(field).toBeInstanceOf(z.ZodOptional);
       expectSameSchema(field, FOLDER_ID);
@@ -243,8 +232,8 @@ describe("資料夾：四支工具的 folder_id 與 FOLDER_ID 同源", () => {
   });
 });
 
-describe("資料夾：delete_folder 的輸入", () => {
-  it("輸入鍵恰好只有 folder_id（MCP 不提供「只刪空資料夾」之類的選項），且必填、與 FOLDER_ID 同源", () => {
+describe("folders: input of delete_folder", () => {
+  it("the input keys are exactly folder_id (MCP offers no option like 'delete only empty folders'), required, and from the same source as FOLDER_ID", () => {
     expect(Object.keys(deleteFolderInput)).toEqual(["folder_id"]);
     expect(deleteFolderInput.folder_id).not.toBeInstanceOf(z.ZodOptional);
     expectSameSchema(deleteFolderInput.folder_id, FOLDER_ID);

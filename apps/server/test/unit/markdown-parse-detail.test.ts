@@ -5,7 +5,7 @@ import { EditorSession } from "../../src/notes/editing/session.js";
 import { syntaxCheckRoot } from "@knotebook/shared";
 import { DROPPED_SELECTOR, DROPPED_TAGS, hasDroppedElement, parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
 
-/** `parseMarkdownForNote` 的失敗成因（`detail`），與「會被丟掉的元素不論在哪都整筆拒絕」。 */
+/** The failure causes of `parseMarkdownForNote` (`detail`), and "elements that get dropped are rejected as a whole wherever they are". */
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
 async function parse(md: string) {
@@ -18,15 +18,15 @@ async function parse(md: string) {
 }
 const DROPPED = { error: "unsupported_block", detail: "dropped_element" };
 
-describe("parse 失敗成因", () => {
-  it("事件屬性 → unsupported_block／event_attr；編輯器內部 HTML → editor_internal", async () => {
+describe("parse failure causes", () => {
+  it("event attribute -> unsupported_block/event_attr; editor-internal HTML -> editor_internal", async () => {
     expect(await parse("<img src=x onerror=alert(1)>")).toEqual({ error: "unsupported_block", detail: "event_attr" });
     expect(await parse('<div data-content-type="paragraph">x</div>')).toEqual({ error: "unsupported_block", detail: "editor_internal" });
   });
-  it("<script>／<style>／<iframe>／<object>／<noscript>／<title>／<template>：整篇只有它們 → dropped_element（不是 empty_content）", async () => {
+  it("<script>/<style>/<iframe>/<object>/<noscript>/<title>/<template>: when they are all there is -> dropped_element (not empty_content)", async () => {
     for (const md of ["<script>alert(1)</script>", "<style>p{}</style>", '<iframe src="https://x"></iframe>', '<object data="x"></object>', "<noscript>hello</noscript>", "<title>hello</title>", "<template>hello</template>"]) expect(await parse(md), md).toEqual(DROPPED);
   });
-  it("混在其他內容裡、行內、清單或並排欄裡也整筆拒絕（不靜默拿掉，連同裡面的字）", async () => {
+  it("mixed with other content, inline, or inside a list or column also rejects the whole write (not silently removed together with the text inside)", async () => {
     const cases = [
       "para\n\n<script>alert(1)</script>",
       "<style>p{}</style>\n\npara",
@@ -39,10 +39,10 @@ describe("parse 失敗成因", () => {
     ];
     for (const md of cases) expect(await parse(md), md).toEqual(DROPPED);
   });
-  it("HTML 註解裡、code 裡的 <script> 不算；<embed> 會 parse 成 file block、不拒絕", async () => {
+  it("a <script> inside an HTML comment or in code doesn't count; <embed> parses into a file block and isn't rejected", async () => {
     expect(await parse("<!-- <script>x</script> -->")).toEqual({ error: "empty_content" });
     for (const md of ["para <!-- <script>x</script> -->", "`<script>x</script>`", "```html\n<script>x</script>\n```"]) expect("error" in (await parse(md)), md).toBe(false);
-    // `\<` 是字面 `<`：`\<script>x` 是一般段落文字，不是元素
+    // an escaped `<` (backslash + `<`) is a literal `<`: `\<script>x` is ordinary paragraph text, not an element
     const escaped = await parse("\\<script>x");
     expect("error" in escaped).toBe(false);
     if (!("error" in escaped)) expect(escaped.blocks.map(b => b.content)).toEqual([[{ type: "text", text: "<script>x", styles: {} }]]);
@@ -50,15 +50,15 @@ describe("parse 失敗成因", () => {
     expect("error" in embed).toBe(false);
     if (!("error" in embed)) expect(embed.blocks.map(b => b.type)).toEqual(["file"]);
   });
-  it("未閉合 <!-- 吞掉一切 → empty_content／unclosed_comment（吞進去的 <script> 不算）；真的空 → empty_content 無 detail", async () => {
+  it("an unclosed <!-- swallows everything -> empty_content/unclosed_comment (a <script> swallowed inside doesn't count); truly empty -> empty_content with no detail", async () => {
     expect(await parse("<!-- open")).toEqual({ error: "empty_content", detail: "unclosed_comment" });
     expect(await parse("<!-- open <script>x</script>")).toEqual({ error: "empty_content", detail: "unclosed_comment" });
     expect(await parse("   ")).toEqual({ error: "empty_content" });
   });
 });
 
-describe("字串預篩不改變結果", () => {
-  // 預篩只是捷徑：每一形都拿「直接建 DOM 查 DROPPED_SELECTOR」對照，兩者必須相同
+describe("the string pre-screen doesn't change the result", () => {
+  // The pre-screen is only a shortcut: every shape is compared with "build the DOM and query DROPPED_SELECTOR", and the two must agree
   const inputs = [
     "<p><script>x</script></p>", "<p><SCRIPT>x</SCRIPT></p>", "<p><ScRiPt src=x></p>", "<p><Title>t</Title></p>", "<TEMPLATE>t</TEMPLATE>", "<p><NoScript>n</NoScript></p>",
     "<p><svg><script>x</script></svg></p>", "<p><svg><style>x</style></svg></p>", "<p><svg><title>x</title></svg></p>", "<p><math><style>x</style></math></p>",
@@ -66,12 +66,12 @@ describe("字串預篩不改變結果", () => {
     "<p><script-x>hi</script-x></p>", "<p><scripted>hi</scripted></p>", "<p><x-title>hi</x-title></p>", "<!-- <script>x</script> --><p>a</p>", "<p>text &lt;script</p>",
     "<p>plain</p>", "",
   ];
-  it("預篩後的判斷與直接查 DOM 逐形相同；大小寫、SVG／MathML 裡的元素命中；行內 code、code block、跳脫字、註解、自訂元素不命中", () => {
+  it("the pre-screened decision equals querying the DOM, shape by shape; elements in different case, in SVG/MathML are hit; inline code, code blocks, escaped characters, comments and custom elements are not", () => {
     const direct = (html: string) => syntaxCheckRoot(html).querySelector(DROPPED_SELECTOR) !== null;
     for (const html of inputs) expect(hasDroppedElement(html), html).toBe(direct(html));
     expect(inputs.filter(hasDroppedElement)).toEqual(inputs.slice(0, 10));
   });
-  it("清單只有一份：selector 涵蓋 DROPPED_TAGS 全部", () => {
+  it("there is a single list: the selector covers all of DROPPED_TAGS", () => {
     expect(DROPPED_SELECTOR.split(", ")).toEqual([...DROPPED_TAGS]);
     for (const t of DROPPED_TAGS) expect(hasDroppedElement(`<p>a <${t}>b</${t}></p>`), t).toBe(true);
   });

@@ -1,4 +1,4 @@
-/** `avatars/oidc-picture.ts`：IdP 回報的 `picture` claim 解析與來源優先序。 */
+/** `avatars/oidc-picture.ts`: parsing of the `picture` claim reported by the IdP, and the source priority. */
 import { describe, expect, it } from "vitest";
 import { parsePictureClaim, pickPicture } from "../../src/avatars/oidc-picture.js";
 

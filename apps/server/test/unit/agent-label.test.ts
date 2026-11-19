@@ -2,30 +2,30 @@ import { describe, expect, it } from "vitest";
 import { AGENT_LABEL_RE, agentLabelOf, deriveAgentLabel } from "../../src/auth/agent-label.js";
 
 describe("deriveAgentLabel", () => {
-  it("派生表：第一個切詞 → NFKC → 小寫 → 濾字元 → 截 32 → 空則 agent", () => {
+  it("derivation table: first token -> NFKC -> lowercase -> filter characters -> truncate to 32 -> 'agent' if empty", () => {
     expect(deriveAgentLabel("Claude Code (knotebook)")).toBe("claude");
     expect(deriveAgentLabel("MCP CLI Proxy")).toBe("mcp");
-    expect(deriveAgentLabel("我的腳本")).toBe("agent");           // 全被濾掉 → fallback
+    expect(deriveAgentLabel("我的腳本")).toBe("agent");           // everything filtered out -> fallback
     expect(deriveAgentLabel("  spaced-out  name ")).toBe("spaced-out");
-    expect(deriveAgentLabel("Ｂｏｔ")).toBe("bot");                 // NFKC 全形 → 半形
-    expect(deriveAgentLabel("a".repeat(40))).toBe("a".repeat(32)); // 截 32
+    expect(deriveAgentLabel("Ｂｏｔ")).toBe("bot");                 // NFKC: full-width -> half-width
+    expect(deriveAgentLabel("a".repeat(40))).toBe("a".repeat(32)); // truncated to 32
     expect(deriveAgentLabel("")).toBe("agent");
     expect(deriveAgentLabel("!!!")).toBe("agent");
-    expect(deriveAgentLabel("my-script.v2")).toBe("my-script.v2"); // . _ - 是合法字元
-    expect(deriveAgentLabel("cursor@2")).toBe("cursor2");          // @ 被濾掉
-    expect(deriveAgentLabel("  Ｃｌａｕｄｅ  ")).toBe("claude");    // trim + NFKC 全形
+    expect(deriveAgentLabel("my-script.v2")).toBe("my-script.v2"); // . _ - are valid characters
+    expect(deriveAgentLabel("cursor@2")).toBe("cursor2");          // @ is filtered out
+    expect(deriveAgentLabel("  Ｃｌａｕｄｅ  ")).toBe("claude");    // trim + NFKC full-width
   });
 
-  it("派生值一律通過 AGENT_LABEL_RE，且 RE 與 DB CHECK api_tokens_agent_label_chk 逐字同形", () => {
+  it("derived values match AGENT_LABEL_RE, and the RE is identical to the DB CHECK api_tokens_agent_label_chk", () => {
     for (const n of ["Claude Code (knotebook)", "我的腳本", "a".repeat(40), "", "!!!", "cursor@2", "my-script.v2"]) {
       expect(AGENT_LABEL_RE.test(deriveAgentLabel(n)), n).toBe(true);
     }
-    // db/schema.ts 的 CHECK 是 `~ '^[A-Za-z0-9._-]{1,32}$'`。兩處分岔的症狀是 PATCH 過了應用層
-    // 卻在 DB 端炸成 500，沒有任何測試會提前告訴你。
+    // The CHECK in db/schema.ts is `~ '^[A-Za-z0-9._-]{1,32}$'`. If the two diverge, a PATCH passes the app layer
+    // and then fails as a 500 at the DB.
     expect(AGENT_LABEL_RE.source).toBe("^[A-Za-z0-9._-]{1,32}$");
   });
 
-  it("agentLabelOf：欄位有值時覆寫優先，NULL 時回派生值（純函式，不查 DB）", () => {
+  it("agentLabelOf: an override wins when the column is set, NULL falls back to the derived value (pure function, no DB)", () => {
     expect(agentLabelOf({ agentLabel: "bot-1", name: "Claude Code" })).toBe("bot-1");
     expect(agentLabelOf({ agentLabel: null, name: "Claude Code" })).toBe("claude");
     expect(agentLabelOf({ agentLabel: null, name: "" })).toBe("agent");

@@ -5,7 +5,7 @@ import { sealCookieJson } from "../../src/auth/sealed-cookie.js";
 
 const S = "a".repeat(64);
 const NOW = 1_790_000_000;
-/** 其餘欄位全取上限：issuer 512、sub 255、email 254、三個 id 36、pendingId 22。 */
+/** Everything else at its limit: issuer 512, sub 255, email 254, three ids of 36, pendingId 22. */
 function worst(next?: string): PendingLinkPayload {
   return {
     pendingId: newPendingId(),
@@ -19,14 +19,14 @@ function worst(next?: string): PendingLinkPayload {
   };
 }
 
-describe("pending-link cookie（#187）", () => {
-  it("往返；pendingId 是 22 字元 base64url（128 bit）；exp ≤ now → null；竄改 → null；壞 next 型別 → null", () => {
+describe("pending-link cookie (#187)", () => {
+  it("round-trips; pendingId is 22-char base64url (128 bit); exp <= now -> null; tampering -> null; a next of the wrong type -> null", () => {
     const p = worst("/n/alice/x");
     expect(p.pendingId).toMatch(/^[A-Za-z0-9_-]{22}$/);
     const sealed = sealPendingLink(S, p);
     expect(unsealPendingLink(S, sealed, NOW)).toEqual(p);
     expect(unsealPendingLink(S, sealed, p.exp)).toBeNull();
-    // 竄改：確定性地換掉 ct 的第一個 base64url 字元（`slice(0,-2)+"AA"` 約 1/256 機率等於沒改）。
+    // Tamper: deterministically replace the first base64url character of ct (`slice(0,-2)+"AA"` has about a 1/256 chance of being no change).
     const [ivPart, ctPart, tagPart] = sealed.split(".");
     const flipped = (ctPart![0] === "A" ? "B" : "A") + ctPart!.slice(1);
     expect(unsealPendingLink(S, `${ivPart}.${flipped}.${tagPart}`, NOW)).toBeNull();
@@ -34,18 +34,18 @@ describe("pending-link cookie（#187）", () => {
     expect(unsealPendingLink(S, sealPendingLink(S, { ...p, userId: undefined as unknown as string }), NOW)).toBeNull();
   });
 
-  it("namespace 隔離：state cookie 的密文不能當 pending 用，反之亦然", () => {
-    // 用 sealCookieJson 直接以 "oidc-state" namespace 封（與 sealOidcState 逐位元組同形）：不綁 OidcStatePayload 的型別，
-    // state payload 加必要欄位時本檔不必跟著改。
+  it("namespace isolation: ciphertext of the state cookie can't be used as pending, and vice versa", () => {
+    // Seal directly with sealCookieJson under the "oidc-state" namespace (byte-for-byte the same shape as sealOidcState): not tied to the type of
+    // OidcStatePayload, so this file needn't change when the state payload gains a required field.
     const state = sealCookieJson(S, "oidc-state", { state: "a", nonce: "b", codeVerifier: "c", exp: NOW + 600 });
     expect(unsealPendingLink(S, state, NOW)).toBeNull();
     expect(unsealOidcState(S, sealPendingLink(S, worst()), NOW)).toBeNull();
-    // 承重的一條：在 "oidc-state" namespace 下封一顆**欄位齊全的 pending payload**——只有 namespace 擋得住它。
-    // 上面兩條在 pending 的 NAMESPACE 被改成 "oidc-state" 時照樣 null（解得開，但被欄位檢查擋下），證明不了隔離。
+    // Load-bearing: seal a fully populated pending payload under the "oidc-state" namespace; only the namespace blocks it.
+    // The two checks above also return null if pending's NAMESPACE were changed to "oidc-state" (it decrypts but the field check rejects it), so they don't prove isolation.
     expect(unsealPendingLink(S, sealCookieJson(S, "oidc-state", worst()), NOW)).toBeNull();
   });
 
-  it("量測守衛①：next 2048＋其餘上限 → 捨棄 next，name=value < 3800（實測約 1671）", () => {
+  it("size guard 1: next 2048 + everything else at its limit -> next is dropped, name=value < 3800", () => {
     const next = "/" + "a".repeat(2047);
     const r = sealPendingLinkWithinLimit(S, worst(next));
     expect(r).not.toBeNull();
@@ -54,16 +54,16 @@ describe("pending-link cookie（#187）", () => {
     expect(pendingCookieBytes(r!.sealed)).toBeLessThan(OIDC_PENDING_MAX_COOKIE_BYTES);
   });
 
-  it("量測守衛②：next 1500（剛好放得下）＋其餘上限 → next 真的進了 cookie，且 < 3800（實測 3684；臨界值 1587）", () => {
+  it("size guard 2: next 1500 (just fits) + everything else at its limit -> next really lands in the cookie, and name=value < 3800", () => {
     const next = "/" + "a".repeat(1499);
     const r = sealPendingLinkWithinLimit(S, worst(next));
     expect(r!.droppedNext).toBe(false);
-    // 先釘住「真的進去了」——否則 next 被丟掉時下一條上界反而更綠。
+    // Pin first that it really went in: otherwise if next were dropped the next upper bound would look even greener.
     expect(unsealPendingLink(S, r!.sealed, NOW)!.next).toBe(next);
     expect(pendingCookieBytes(r!.sealed)).toBeLessThan(OIDC_PENDING_MAX_COOKIE_BYTES);
   });
 
-  it("防禦縱深：捨棄 next 後仍超過（例如 issuer 6000 字，正常到不了）→ null（不封章）", () => {
+  it("defence in depth: still over after dropping next (e.g. an issuer of 6000 characters, which normally can't happen) -> null (not sealed)", () => {
     expect(sealPendingLinkWithinLimit(S, { ...worst("/x"), issuer: "https://" + "i".repeat(6000) })).toBeNull();
   });
 });

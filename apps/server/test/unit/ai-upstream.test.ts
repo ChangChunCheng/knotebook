@@ -6,8 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(__dirname, "__fixtures__", "vllm-sse.txt");
 
-// vi.mock 會被 vitest hoist 到檔案最前面（先於下面的具名 import），所以 `streamAnthropic`
-// 匯入時拿到的必然是這支 mock 版本——不需要手動調整 import 順序。
+// vi.mock is hoisted above the named imports below, so `streamAnthropic` always gets the mock; no manual import ordering needed.
 vi.mock("@anthropic-ai/sdk", () => {
   const streamMock = vi.fn();
   const ctorMock = vi.fn().mockImplementation(() => ({ messages: { stream: streamMock } }));
@@ -16,8 +15,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 
 import { renderUserTemplate, streamAnthropic, streamOpenAiCompatible, UpstreamError } from "../../src/ai/upstream.js";
 
-/** 把字串在指定 byte offset 切成兩個 chunk 餵給 ReadableStream——用來逼真模擬「一行 SSE
- * event 跨 chunk 邊界斷開」的情境。 */
+/** Splits text at a byte offset into two chunks, to simulate one SSE event line broken across a chunk boundary. */
 function chunkedTextStream(text: string, splitAt: number): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
   const first = bytes.slice(0, splitAt);
@@ -42,11 +40,11 @@ describe("streamOpenAiCompatible", () => {
     vi.unstubAllGlobals();
   });
 
-  it("vLLM fixture：只吐 content，reasoning_content 全濾，跨 chunk 斷行的一行仍正確重組", async () => {
+  it("vLLM fixture: only content is emitted, reasoning_content is filtered out, and a line split across chunks is reassembled", async () => {
     const fixture = readFileSync(FIXTURE_PATH, "utf8");
-    // 刻意切在其中一行 JSON 的中間（"Hello" 這個 delta 的行內），而非任何 chunk 天然的換行處。
+    // Deliberately split inside one JSON line (within the "Hello" delta) rather than at a natural chunk line break.
     const splitAt = fixture.indexOf('"content":"Hello"') + 5;
-    expect(splitAt).toBeGreaterThan(5); // 確認錨點真的在 fixture 裡找到
+    expect(splitAt).toBeGreaterThan(5); // indexOf -1 would give 4: confirms the anchor exists in the fixture
 
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(chunkedTextStream(fixture, splitAt), { status: 200, headers: { "content-type": "text/event-stream" } })
@@ -80,7 +78,7 @@ describe("streamOpenAiCompatible", () => {
     ]);
   });
 
-  it("apiKey 未提供時不帶 authorization header（本機/無驗證 vLLM）", async () => {
+  it("no authorization header when apiKey is absent (local/unauthenticated vLLM)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(chunkedTextStream("data: [DONE]\n\n", 5), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -97,7 +95,7 @@ describe("streamOpenAiCompatible", () => {
     expect((init.headers as Record<string, string>).authorization).toBeUndefined();
   });
 
-  it("非 2xx → UpstreamError(status)，message 固定文案不含上游 body 內容", async () => {
+  it("non-2xx -> UpstreamError(status), with a fixed message that does not include the upstream body", async () => {
     const sentinelBody = "SENTINEL-UPSTREAM-BODY-should-not-leak-into-message";
     const fetchMock = vi.fn().mockResolvedValue(new Response(sentinelBody, { status: 502 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -122,11 +120,11 @@ describe("streamOpenAiCompatible", () => {
     expect(err.status).toBe(502);
     expect(err.message).toBe("upstream request failed");
     expect(err.message).not.toContain(sentinelBody);
-    // upstreamBody 是給呼叫端 log 用的額外欄位（不是拋給 client 的 SSE 訊息）——這裡才允許含身體內容。
+    // upstreamBody is an extra field for the caller's log (not the SSE message thrown to the client), so body content is allowed here.
     expect(err.upstreamBody).toContain(sentinelBody);
   });
 
-  it("上游錯誤 body 超過 2048 字元時截斷並附註記", async () => {
+  it("upstream error body over 2048 chars is truncated with a note", async () => {
     const hugeBody = "x".repeat(3000);
     const fetchMock = vi.fn().mockResolvedValue(new Response(hugeBody, { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -150,7 +148,7 @@ describe("streamOpenAiCompatible", () => {
     expect(err.upstreamBody).toContain("...(truncated)");
   });
 
-  it("signal 已 abort 時仍可建立 handle，串流因中止而丟出錯誤（不會卡住）", async () => {
+  it("handle can still be created when the signal is already aborted; the stream throws because of the abort (does not hang)", async () => {
     const controller = new AbortController();
     controller.abort();
     const fetchMock = vi.fn().mockRejectedValue(new DOMException("aborted", "AbortError"));
@@ -178,7 +176,7 @@ describe("streamAnthropic", () => {
     mod.__ctorMock.mockClear();
   });
 
-  it("只轉發 content_block_delta 的 text_delta；thinking_delta 等其餘事件全濾", async () => {
+  it("forwards only text_delta of content_block_delta; other events such as thinking_delta are filtered", async () => {
     const mod = (await import("@anthropic-ai/sdk")) as unknown as { __streamMock: ReturnType<typeof vi.fn> };
     async function* fakeEvents() {
       yield { type: "message_start" };
@@ -205,7 +203,7 @@ describe("streamAnthropic", () => {
     for (const d of deltas) expect(d).not.toContain("secret reasoning");
   });
 
-  it("以 apiKey/baseUrl 建構 SDK client；stream() 帶 model/max_tokens/system/messages", async () => {
+  it("constructs the SDK client from apiKey/baseUrl; stream() receives model/max_tokens/system/messages", async () => {
     const mod = (await import("@anthropic-ai/sdk")) as unknown as {
       __streamMock: ReturnType<typeof vi.fn>;
       __ctorMock: ReturnType<typeof vi.fn>;
@@ -225,11 +223,10 @@ describe("streamAnthropic", () => {
     });
     await collect(handle.stream);
 
-    // ctor 必須帶 `fetchOptions: { redirect: "manual" }`，理由同
-    // SDK 自帶的 `x-api-key` 不在 undici 轉址剝除清單內，302 會把明文 key
-    // 原樣送去第三方主機；用真 SDK + 302 重現過，加了這個選項才是零外送。
-    // `dangerouslyAllowBrowser: true`（#136）：`notes/editing/runtime.ts` 把 jsdom 的
-    // window/document 掛上 globalThis 後 SDK 的瀏覽器嗅探會誤判並 throw（editing-runtime.test.ts 釘住）。
+    // The ctor must get `fetchOptions: { redirect: "manual" }`: the SDK's own `x-api-key` header is not in undici's redirect-strip
+    // list, so a 302 would send the plaintext key to a third-party host.
+    // `dangerouslyAllowBrowser: true` (#136): once `notes/editing/runtime.ts` attaches jsdom's window/document to globalThis, the SDK's
+    // browser sniffing misfires and throws (pinned by editing-runtime.test.ts).
     expect(mod.__ctorMock).toHaveBeenCalledWith({
       apiKey: "sk-ant-test",
       baseURL: "https://custom.anthropic.example",
@@ -248,29 +245,29 @@ describe("streamAnthropic", () => {
   });
 });
 
-describe("renderUserTemplate（#263：三佔位符、單次替換）", () => {
+describe("renderUserTemplate (#263: three placeholders, single-pass replacement)", () => {
   const vars = { text: "T", instruction: "I", focus: "F" };
 
-  it("三個佔位符各自代入、可重複出現", () => {
+  it("each of the three placeholders is substituted and may repeat", () => {
     expect(renderUserTemplate("{{instruction}}|{{focus}}|{{text}}|{{text}}", vars)).toBe("I|F|T|T");
   });
 
-  it("代入值裡的字面佔位符不會被二次展開（單次正則）", () => {
+  it("literal placeholders inside substituted values are not expanded again (single regex pass)", () => {
     const tricky = { text: "{{instruction}}", instruction: "{{focus}}", focus: "{{text}}" };
     expect(renderUserTemplate("{{text}} {{instruction}} {{focus}}", tricky)).toBe("{{instruction}} {{focus}} {{text}}");
   });
 
-  it("其他 {{名字}} 原樣保留；無佔位符時原樣返回", () => {
+  it("other {{name}} placeholders stay as-is; text without placeholders is returned unchanged", () => {
     expect(renderUserTemplate("{{other}} {{text}}", vars)).toBe("{{other}} T");
     expect(renderUserTemplate("no placeholder here", vars)).toBe("no placeholder here");
   });
 
-  it("替換值含 $ 特殊字元時逐字元原樣貼回（不觸發替換模式解析：$$、$&、反引號變體、$'）", () => {
+  it("replacement values containing $ specials are pasted verbatim (no replace-pattern parsing: $$, $&, backtick variants, $')", () => {
     const weird = "$$ and $& and $` and $' and ${template literal} and $<name>";
     expect(renderUserTemplate("before {{text}} after", { ...vars, text: weird })).toBe(`before ${weird} after`);
   });
 
-  it("空字串替換值：佔位符被移除，其餘文字不變", () => {
+  it("empty replacement value: the placeholder is removed, the rest of the text is unchanged", () => {
     expect(renderUserTemplate("[{{instruction}}][{{text}}]", { text: "", instruction: "", focus: "" })).toBe("[][]");
   });
 });

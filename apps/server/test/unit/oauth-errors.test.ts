@@ -1,35 +1,35 @@
 /**
- * #132：全域 content-type 守衛用來判定「這一發是不是 RFC 形前綴」的兩個純值。
- * 放單元層（不碰 DB）——這樣 Windows 本機不必起 docker 也守得住。
+ * #132: the two pure values the global content-type guard uses to decide whether "this request is an RFC-shaped prefix".
+ * Placed at the unit level (no DB), so it can be checked on a local Windows machine without starting docker.
  */
 import { describe, expect, it } from "vitest";
 import { FORM_EXEMPT_ROUTES, isOauthScopedPath } from "../../src/http/oauth-errors.js";
 
 describe("isOauthScopedPath", () => {
-  it("兩個前綴本身與其子路徑都算", () => {
+  it("both prefixes themselves and their subpaths count", () => {
     expect(isOauthScopedPath("/oauth")).toBe(true);
     expect(isOauthScopedPath("/oauth/token")).toBe(true);
     expect(isOauthScopedPath("/.well-known")).toBe(true);
     expect(isOauthScopedPath("/.well-known/oauth-authorization-server")).toBe(true);
   });
 
-  // segment 邊界：裸 startsWith 會把 /oauthx 也算進來，那是一條普通的 SPA 路徑
-  it("segment 邊界：只是前綴開頭的路徑不算", () => {
+  // Segment boundary: a bare startsWith would also count /oauthx, which is an ordinary SPA path.
+  it("segment boundary: a path that merely starts with the prefix doesn't count", () => {
     expect(isOauthScopedPath("/oauthx")).toBe(false);
     expect(isOauthScopedPath("/oauthx/token")).toBe(false);
     expect(isOauthScopedPath("/.well-knownx")).toBe(false);
   });
 
-  it("不相干的路徑不算", () => {
+  it("unrelated paths don't count", () => {
     expect(isOauthScopedPath("/")).toBe(false);
     expect(isOauthScopedPath("/api/notes")).toBe(false);
   });
 });
 
 describe("FORM_EXEMPT_ROUTES", () => {
-  // `routeOptions.url` 在 prefix plugin 內回**含 prefix** 的完整路徑。寫成不含
-  // prefix 的 `/token`，form 端點會永遠吃 415。
-  it("鍵是含 prefix 的完整路徑", () => {
+  // `routeOptions.url` inside a prefix plugin returns the full path including the prefix. Written as `/token` without the prefix,
+  // the form endpoint would always get 415.
+  it("keys are the full paths including the prefix", () => {
     expect(FORM_EXEMPT_ROUTES.has("POST /oauth/token")).toBe(true);
     expect(FORM_EXEMPT_ROUTES.has("POST /token")).toBe(false);
   });

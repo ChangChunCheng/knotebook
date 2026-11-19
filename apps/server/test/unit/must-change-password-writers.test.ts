@@ -1,11 +1,10 @@
 /**
- * #285 V5：`must_change_password` 沒有寫入端——server 原始碼（剝掉註解後）不得出現把它設成 true 的寫法。
- * 註冊、接受邀請、OIDC 自動建帳、env bootstrap 皆為 false；只剩舊版代建、尚未改密碼的帳號帶著 true。
- * 保留的消費端（`ChangePasswordGate`、改密碼清旗標等）不在此掃描。
- * 抓得到：drizzle 欄位 `mustChangePassword: true`（key 可帶引號）、`mustChangePassword: sql\`true\``（不分大小寫）、
- * 裸 SQL 字面 `must_change_password = true`。
- * 抓不到：變數間接（`const v = true`）、raw SQL 的 INSERT 欄位清單／別的 UPDATE 寫法、字串拼接；
- * 誤報：只讀查詢的 `where must_change_password = true`、回應 DTO／TS 型別裡的 `mustChangePassword: true`、字串字面值。靠 review 補，不追求窮舉。
+ * #285: `must_change_password` has no writer: the server source (comments stripped) must not contain a way of setting it to true.
+ * Registration, accepting an invitation, OIDC auto-created accounts and env bootstrap all use false; only accounts created by an older version that haven't changed their password carry true.
+ * The consumers that remain (`ChangePasswordGate`, clearing the flag when the password changes, etc.) are not scanned here.
+ * Caught: the drizzle column `mustChangePassword: true` (the key may be quoted), `mustChangePassword: sql`true`` (case-insensitive), the bare SQL literal `must_change_password = true`.
+ * Not caught: indirection through a variable (`const v = true`), raw SQL INSERT column lists or other UPDATE forms, string concatenation;
+ * false positives: `where must_change_password = true` in read-only queries, `mustChangePassword: true` in response DTOs/TS types, string literals. Review covers the rest; exhaustive detection isn't a goal.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 
-// walk／code 與 s14-structure.test.ts 同形（複製；該檔未 export）。
+// walk/code have the same shape as in s14-structure.test.ts (copied; that file doesn't export them).
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
     const p = path.join(dir, e.name);
@@ -27,17 +26,17 @@ function code(p: string): string {
 
 const WRITERS = [/["']?mustChangePassword["']?\s*:\s*(true\b|sql`\s*true\s*`)/i, /must_change_password\s*=\s*true/i];
 
-describe("V5：must_change_password 沒有寫入端", () => {
-  it("src 內沒有任何檔把它寫成 true", () => {
+describe("must_change_password has no writer", () => {
+  it("no file under src writes it as true", () => {
     const files = walk(SRC);
-    expect(files.length).toBeGreaterThan(50); // walk 真的走到東西
+    expect(files.length).toBeGreaterThan(50); // walk really reached something
     const hits = files.filter(p => WRITERS.some(re => re.test(code(p)))).map(p => path.relative(SRC, p).split(path.sep).join("/"));
     expect(hits).toEqual([]);
-    // 正向對照：掃描真的讀得到寫入端（register.ts 顯式寫 false）——掃描空轉時這條會紅。
+    // Positive control: the scan really reads a writer (register.ts explicitly writes false); if the scan idles this goes red.
     expect(files.some(p => /mustChangePassword\s*:\s*false\b/.test(code(p)))).toBe(true);
   });
 
-  it("兩條 regex 各自認得目標形（自檢，避免守衛空轉）", () => {
+  it("both regexes recognize their target forms (self-check, so the guard can't idle)", () => {
     expect(WRITERS[0].test("set({ mustChangePassword: true })")).toBe(true);
     expect(WRITERS[0].test("set({ mustChangePassword: sql`true` })")).toBe(true);
     expect(WRITERS[0].test("set({ mustChangePassword: false })")).toBe(false);
