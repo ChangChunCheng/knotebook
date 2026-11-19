@@ -292,10 +292,14 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
     await expect(editorAvatar).toHaveCount(1, { timeout: 15_000 });
     await expect(await expectLoadedImg(editorAvatar)).toHaveAttribute("src", aliceSrc);
 
-    // 兩個畫面用的是同一個網址：伺服器只被要過一次。
+    // Both screens use the same URL, so the server is asked only once.
+    // The second screen may not show up here at all, so its request is not counted: while the image the
+    // first screen loaded is still alive, Chromium reuses it for the same URL in the same document and
+    // reports no network event; once garbage collection has freed it, the second <img> is fetched again
+    // and served from the HTTP cache. Which one happens depends on GC timing. The src check on each
+    // screen above is what shows both used the same URL.
     const hitServer = [...avatarIds.keys()].filter(id => !servedFromCache.has(id));
     expect(hitServer, `alice 的圖發出 ${avatarIds.size} 個請求，其中 ${hitServer.length} 個到了伺服器`).toHaveLength(1);
-    expect(avatarIds.size, "第二個畫面有用到同一個網址（快取命中才是這個斷言要看的）").toBeGreaterThanOrEqual(2);
   } finally {
     await Promise.all(contexts.map(ctx => ctx.close().catch(() => undefined)));
   }

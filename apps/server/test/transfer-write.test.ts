@@ -73,7 +73,8 @@ describe("W1–W7 狀態表", () => {
     expect((await baseRow(s.ctx, d.fm.base!)).appliedBodySha).not.toBeNull();
   });
 
-  // isBlocked 預檢在佇列之前：桶滿時連同檔重送都 429，所以這裡用 limit 2——寫一次、重送、再寫一篇仍成功＝重送沒扣。
+  // The write quota is only looked at once the file is known to differ from the copy it came from; nothing checks it before the note's queue.
+  // limit 2: the second note's write can only succeed if neither the resend nor the 409 was charged. With the quota then used up, the same resend still goes through.
   it("W3 寫回後同檔重送 → unchanged、不扣 transferWrite；W4 舊 base 改別段 → 409 base_unavailable、筆記未變", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
@@ -88,11 +89,14 @@ describe("W1–W7 狀態表", () => {
     expect(w4.statusCode).toBe(409);
     expect(errOf(w4)).toEqual({ code: "base_unavailable", message: BASE_UNAVAILABLE_MESSAGES.already_sent, reason: "already_sent" });
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(after);
-    // 重送與 409 都沒扣 → limit 2 還剩 1：再寫一篇仍 200
     const n2 = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "N2" });
     await seedMd(s.ctx.db, n2.id, "Only para");
     const d2 = await downloadNote(s.ctx.app, s.bulk.token, n2.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d2.text, () => "Changed para"))).statusCode).toBe(200);
+    expect(transferWrite.isBlocked(s.u.id)).toBe(true);
+    const full = await bulkPut(s.ctx.app, s.bulk.token, text);
+    expect(full.statusCode).toBe(200);
+    expect(full.json()).toMatchObject({ result: "unchanged" });
   });
 
   it("色碼：上傳 #F60 → 下載回小寫 #ff6600；原上傳檔與重新下載的檔重送都判 unchanged", async () => {
