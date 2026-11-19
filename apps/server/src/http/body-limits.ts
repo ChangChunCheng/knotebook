@@ -1,17 +1,6 @@
-/**
- * 寫入端點的 HTTP body 上限（#108）。葉節點模組，不依賴任何路由。
- *
- * ⚠ **單位是 byte**，與 `notes/schemas.ts` 的 `MD`（UTF-16 **code unit**）**數值相同、
- * 單位不同，永遠不得合併成同一個常數**：一份 262 144 code unit 的 CJK markdown ≈ 786 KB
- * UTF-8，會先撞這一道的 413、根本走不到 zod 的 400。兩道關各守一件事，都要留著。
- * 邊界形（`WRITE_BODY_LIMIT` 恰好／+1）由 `test/write-body-limit.test.ts` 四發釘住。
- */
+/** Bytes, not UTF-16 code units: numerically equal to `MD` in notes/schemas.ts but never merge them (262,144 code units of CJK is ~786 KB of UTF-8 and hits this 413 before zod's 400). */
 
-/** `POST /api/notes/:id/edits` 與 `POST /api/mcp` 共用的 body 上限（**bytes**）。不明寫就是 fastify 預設的 1 MiB。 */
 export const WRITE_BODY_LIMIT = 262_144;
 
-/**
- * bulk transfer：`PUT /api/transfer/notes` 的 body 上限（**bytes**）→ 413 `content_too_large`。與 `WRITE_BODY_LIMIT` 相同（原本是 1 MiB）：完整解析的成本隨大小與內容形狀而定（不是線性：行內格式密的 1 MiB 檔實測一發 9–22 秒，256 KiB 在已量過的形裡最慢約 5 秒）。
- * 兩者單位相同（bytes），所以直接共用；名字分開留著，下載端（`tooLargeToSend`）與寫回路由看的是這個名字。
- */
+/** Bytes → 413 content_too_large. Lowered from 1 MiB to WRITE_BODY_LIMIT because full parse cost isn't linear in size (a 1 MiB file dense in inline formatting takes 9–22 s; 256 KiB at most ~5 s in the shapes tried). Separate name because the export's tooLargeToSend flag and the write-back route read it. */
 export const TRANSFER_WRITE_BODY_LIMIT = WRITE_BODY_LIMIT;

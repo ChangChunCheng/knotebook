@@ -15,17 +15,12 @@ import { INVITE_TOKEN_KEY } from "@/auth/resetTokenStorage";
 import { useOneTimeLinkToken } from "@/auth/useOneTimeLinkToken";
 
 /**
- * #187 `/register`。與 `/login` 同層、在 `RequireAuth` 之外；已登入者導 `next`（經 safeNextPath）或 `/`。
- * 一般模式（`OpenRegistration`）只做帳密自助註冊（SSO 首登建帳走登入頁的 SSO 鈕，這裡不列）：
- * - 帳密自助註冊不可用（`registration.enabled` 且帳密有效值開才可用）→ 導回 `/login`（保留 next）；
- * - 設定或 session 讀不到（載入中或失敗）→ 照常顯示表單，不導走（server 是最終裁決）。
- * 成功（201，成功即登入）→ 寫 session 快取、導向 `safeNextPath(?next=)` 或 `/`。
- *
- * #285 邀請模式：網址帶 `#invite=…`（或同分頁重新整理後 sessionStorage 還有）時進 `InviteRegistration`，在
- * `OpenRegistration` 之前分流，不看上面的一般模式條件（自助註冊關閉也不導走）。導向因此只能放在 `OpenRegistration` 內。
- * 邀請模式的 token 處理（同步取得、fragment 由 router 清、只在未登入時寫 storage、成功／無效／卸載刪鍵、
- * 啟動清理在 `auth/resetTokenStorage.ts` 的表）全在共用 hook `useOneTimeLinkToken`。
- * 已登入要先登出：避免管理員在自己的瀏覽器測連結時，被換成新帳號。
+ * Outside `RequireAuth`, at the same level as `/login` (#187).
+ * Open mode only does password self-signup: first SSO sign-in creates accounts via the login page's SSO button. While settings or session
+ * can't be read (loading or failed) the form shows anyway, since the server is the final judge.
+ * Invite mode (#285): `#invite=...` in the URL (or still in sessionStorage after a same-tab reload). It branches before `OpenRegistration`
+ * and ignores the self-signup settings (no redirect even when self-signup is off), so redirects can only live inside `OpenRegistration`.
+ * In invite mode a signed-in user must log out first, so an admin testing a link in their own browser isn't switched to the new account.
  */
 export default function RegisterPage() {
   const { user, query, logout } = useSession();
@@ -33,9 +28,8 @@ export default function RegisterPage() {
   return token !== null ? <InviteRegistration key={token} token={token} forget={forget} user={user} sessionError={query.isError ? { code: query.error instanceof ApiFail ? query.error.code : null } : null} refetch={() => void query.refetch()} logout={logout} /> : <OpenRegistration />;
 }
 
-/** email／顯示名上限與密碼檢查，一般註冊與邀請註冊共用；回錯誤文字或 null。 */
 function validateRegistration(t: TFunction, v: { email: string; displayName: string; password: string; confirm: string }): string | null {
-  // 上限與 server 同一組常數：email 以 trim 後的 `.length` 計、顯示名以 code point 計。
+  // Limits match the server: email by trimmed `.length`, display name by code points.
   if (v.email.trim().length > MAX_REGISTER_EMAIL_LENGTH) return t("register.emailTooLong", { max: MAX_REGISTER_EMAIL_LENGTH });
   if ([...v.displayName.trim()].length > MAX_REGISTER_DISPLAY_NAME_LENGTH) return t("register.displayNameTooLong", { max: MAX_REGISTER_DISPLAY_NAME_LENGTH });
   if (v.password.length < MIN_PASSWORD_LENGTH) return t("errors.password_too_short");
@@ -59,15 +53,15 @@ function OpenRegistration() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 已登入（含剛註冊成功、session 快取剛被寫入的那次 render）→ 導 `next` 或 `/`。目的地必須與 handleSubmit 的
-  // navigate 一致，否則這行會以 `/` 蓋掉成功後要去的 next（實測：寫入快取後 user 立即為真）。
+  // Signed in (including the render right after signup writes the session cache) -> `next` or `/`. Must match handleSubmit's navigate: `user` is already truthy right after the cache write, and `/` here would override its `next`.
   if (user) return <Navigate to={nextPath ?? "/"} replace />;
 
   const loginHref = nextPath === null ? "/login" : `/login?next=${encodeURIComponent(nextPath)}`;
   const data = config.data;
   const loaded = data !== undefined;
   const passwordSignup = loaded && data.registration.enabled && data.passwordLogin.enabled;
-  // 只有 config 確實載入且不可用、且確定未登入才導走；config 或 session 載入中／失敗時顯示表單（已登入由上面那行處理）。
+  // Redirect only when config has loaded and says unavailable and the user is definitely signed out; while config or session is loading or
+  // failed, show the form (signed-in is handled above).
   if (loaded && !passwordSignup && user === null) return <Navigate to={loginHref} replace />;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -149,7 +143,7 @@ interface InviteRegistrationProps {
   logout: () => Promise<void>;
 }
 
-/** #285 邀請模式。inspect／accept 的 token 只走 POST body，不進 queryKey。 */
+/** The inspect/accept token travels only in the POST body, never in a queryKey. */
 function InviteRegistration({ token, forget, user, sessionError, refetch, logout }: InviteRegistrationProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -211,7 +205,7 @@ function InviteRegistration({ token, forget, user, sessionError, refetch, logout
     </p>
   );
 
-  // 成功後 accepted 先於 session 快取更新：不會閃出「你已登入」，也不理 `?next`。
+  // `accepted` is set before the session cache updates: avoids flashing "already signed in" and ignores `?next`.
   if (accepted) return <Navigate to="/" replace />;
 
   if (sessionError !== null && user === undefined) {

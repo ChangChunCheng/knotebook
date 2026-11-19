@@ -1,10 +1,5 @@
-/**
- * 側欄寬度：常數、夾值、localStorage 讀寫。固定側欄（`xl+`）靠拖曳把手調整；浮動側欄（`<xl`）沿用這個值，但上限是視窗寬減 4rem，且沒有把手。
- *
- * 範圍 200–480：下限讓群組內筆記列還留得下約 3 個中文字的標題；
- * 上限不相對視窗（不自動收窄），拉太寬時雙擊把手回預設。推導見 `AppShell.tsx` 檔頭「側欄寬度」。
- */
-export const SIDEBAR_WIDTH_DEFAULT = 320; // 與版本面板的預設寬度（VERSIONS_PANEL_WIDTH_DEFAULT）一致
+/** Range 200-480: the lower bound keeps about 3 CJK characters of a group note title; no upper bound relative to the window (double-click the handle to reset). Floating drawer reuses the value, capped at window width - 4rem. */
+export const SIDEBAR_WIDTH_DEFAULT = 320; // same as the versions panel's default width (VERSIONS_PANEL_WIDTH_DEFAULT)
 export const SIDEBAR_WIDTH_MIN = 200;
 export const SIDEBAR_WIDTH_MAX = 480;
 export const SIDEBAR_WIDTH_STEP = 16;
@@ -14,7 +9,7 @@ export function clampSidebarWidth(px: number): number {
   return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(px)));
 }
 
-/** 缺鍵、非整數、超出範圍、或儲存被封鎖 → 預設（不 clamp：壞值多半是舊版本或手改，回預設最不意外）。 */
+/** A bad value is usually from an old version or a hand edit: default, do not clamp. */
 export function readSidebarWidth(): number {
   try {
     const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
@@ -23,17 +18,15 @@ export function readSidebarWidth(): number {
     if (!Number.isInteger(value) || value < SIDEBAR_WIDTH_MIN || value > SIDEBAR_WIDTH_MAX) return SIDEBAR_WIDTH_DEFAULT;
     return value;
   } catch {
-    // Safari 隱私模式／被封鎖的儲存：當作沒存過。
     return SIDEBAR_WIDTH_DEFAULT;
   }
 }
 
-/** 等於預設時移除鍵（不留一個與預設同值的殘值）。 */
 export function writeSidebarWidth(px: number): void {
   try {
     if (px === SIDEBAR_WIDTH_DEFAULT) window.localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
     else window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(px));
   } catch {
-    // 寫不進去就只活在本次 session 的 state 裡。
+    // Unwritable storage: the width stays only in this session's state.
   }
 }

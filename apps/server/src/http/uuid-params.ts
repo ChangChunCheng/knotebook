@@ -1,9 +1,7 @@
 /**
- * #240 REST：路徑參數 `id`／`userId` 中 UUID 形的值轉小寫——`id`／`userId` 路徑參數的收斂點（app 層 `preValidation`，
- * 見 `app.ts`）。live doc、presence、寫入佇列、`connectionsOfNote`、`c.userId === userId` 這些以字串為鍵的結構
- * 都只認小寫；DB 的 uuid 欄不分大小寫，所以大寫 id 查得到列、卻打到另一份記憶體狀態。
- * 非 UUID 形原樣放過（各路由既有的 404 不變）；名單外的參數（`:ref`、`:handle`、`:slug`、`:editId`、`:groupId`…）不碰。
- * 守衛＝`test/unit/uuid-params.test.ts` 與整合測試。
+ * Lowercases UUID path params (#240): live doc, presence and the write queue are keyed by string and only know lowercase, while the uuid column
+ * is case-insensitive, so an uppercase id would find the row but hit separate in-memory state. Only id/userId; non-UUID values (each route's
+ * own 404) and other params (:ref, :handle, :slug, :editId, :groupId…) are untouched.
  */
 import type { FastifyRequest } from "fastify";
 import { UUID_RE } from "../notes/service.js";

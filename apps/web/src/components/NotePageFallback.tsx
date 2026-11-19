@@ -3,22 +3,10 @@ import { NarrowTopBar } from "./NarrowTopBar";
 import { cardSurface } from "./ui/card";
 import { cn } from "@/lib/utils";
 
-/**
- * NotePage chunk 載入中的 fallback——在 layout route（`AppShellLayout`）的 AppShell 裡渲染，所以
- * 「從首頁點開第一篇筆記」的瞬間側欄/選單不會消失，也不是換一份新的。
- * 內容沿用 NotePage 自己資料載入時的同款樣式與文案（`app.loading`），如此使用者
- * 看到的才真的是同一種「載入中」，分不出是在等 chunk 還是在等資料。
- * `App.appShellLayout.test.tsx` 有回歸釘：chunk 載入中側欄仍在、而且是同一個節點。
- *
- * 抽成獨立模組（issue #66）：ErrorBoundary 的 pending/reloading 畫面也要用同一份
- * ——留在 App.tsx 會形成 App ↔ ErrorBoundary 循環 import，且複製第二份會脫離
- * 上述回歸釘的保護。
- */
+/** Same look and text as NotePage own loading state; rendered inside AppShell so the sidebar survives the first note open (pinned in App.appShellLayout.test.tsx). Own module to avoid an App <-> ErrorBoundary import cycle (#66). */
 export function NotePageFallback() {
   const { t } = useTranslation();
   return (
-    // 跟 NotePage/HomePage 同一款佔位/內文卡——main 已無自身捲動，
-    // overflow-y-auto 掛在卡自己身上。
     <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]")}>
       <NarrowTopBar />
       <p className="p-6 text-sm text-muted-foreground">{t("app.loading")}</p>

@@ -11,8 +11,6 @@ export const resources = {
   "zh-TW": { translation: zhTW },
 } as const;
 
-// 偵測順序：先看 localStorage（使用者先前的選擇），沒有再看瀏覽器語言；
-// 偵測/切換後的結果一律快取回 localStorage 同一把 key，下次直接命中。
 void i18n
   .use(LanguageDetector)
   .use(initReactI18next)

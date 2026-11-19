@@ -8,17 +8,14 @@ import { REGISTRATION_DISABLED_MESSAGE } from "../site-settings.js";
 
 export interface PasswordUserInput {
   id: string;
-  /** 已 `normalizeEmail`。 */
+  /** Already normalizeEmail'd: the duplicate check compares `lower(email)` against it as-is. */
   email: string;
   displayName: string;
-  /** 交易外 hash 好的（S14）。 */
   passwordHash: string;
-  /** 第 4 次嘗試：不再探測，直接用 `user-<uuid8>`（重試契約見 `routes/account.ts`，註冊與兌換共用）。 */
   useFallbackHandle: boolean;
 }
 
 export interface RegisterUserInput extends PasswordUserInput {
-  /** env `PASSWORD_LOGIN_FORCE_ENABLE`（純資料，交易外取自 config）。 */
   passwordLoginForced: boolean;
 }
 
@@ -30,11 +27,7 @@ export interface RegisteredUser {
   tokenVersion: number;
 }
 
-/**
- * #187：註冊。`site_settings` 以 `FOR SHARE` 再讀**兩個**開關（與關閉的 `FOR NO KEY UPDATE`
- * 互斥——快速路徑讀到開、這裡讀到關的那一次會被擋下）；讀不到列＝註冊關。
- * 建帳本體在 `insertPasswordUserInTx`（與接受邀請共用）。
- */
+/** Re-reads both switches under `FOR SHARE` (excludes the closing `FOR NO KEY UPDATE`); a missing row means registration is closed. */
 export async function registerUserInTx(tx: Tx, input: RegisterUserInput): Promise<RegisteredUser> {
   const [settings] = await tx
     .select({ registrationEnabled: siteSettings.registrationEnabled, passwordLoginEnabled: siteSettings.passwordLoginEnabled })
@@ -48,11 +41,7 @@ export async function registerUserInTx(tx: Tx, input: RegisterUserInput): Promis
   return insertPasswordUserInTx(tx, input);
 }
 
-/**
- * registry-first 建帳（註冊與接受邀請共用）：`lower(email)` 先查（`users_email_unique` 大小寫敏感，擋不住 pre-v0.1
- * 的大小寫混合舊列）；並發形的最後防線是唯一鍵（呼叫端在交易外判 constraint）。本人自己選的密碼，故
- * `must_change_password=false`；`isAdmin` 不寫、取 DB 預設 false。開關由呼叫端判斷：註冊在交易內以 FOR SHARE 重判（registerUserInTx）；接受邀請在交易外判斷，交易內不讀 site_settings（#285）。
- */
+/** The lowercased email is checked first because `users_email_unique` is case-sensitive and can't stop pre-v0.1 mixed-case rows; the unique key is the final guard against races (callers map the constraint outside the tx). `must_change_password=false` (own password); `isAdmin` takes the DB default (false). The switches are the caller's job (registration re-checks in the tx, accept-invite outside). */
 export async function insertPasswordUserInTx(tx: Tx, input: PasswordUserInput): Promise<RegisteredUser> {
   const [taken] = await tx.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${input.email}`).limit(1);
   if (taken !== undefined) throw new TxAbort(409, "email_taken", "That email is already in use.");

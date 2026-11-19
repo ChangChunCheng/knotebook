@@ -1,9 +1,6 @@
-/**
- * #106：token 名稱 → agent label 的唯一派生規則（#247 起放在 shared：server 讀寫與 web 的灰字判定共用）。
- * 讀時派生、寫入時快照；server 的現值運算式是 `apps/server/src/auth/agent-label.ts` 的 `agentLabelOf`。
- * 派生表釘在 apps/server/test/unit/agent-label.test.ts；AGENT_LABEL_RE 與 DB CHECK api_tokens_agent_label_chk 同形。
- * 只用 `String.prototype.normalize`／`toLowerCase`／regex，瀏覽器可用。
- */
+// Shared so server writes and the web's grey-text check derive the same label from a token name.
+// AGENT_LABEL_RE must match the DB CHECK api_tokens_agent_label_chk.
+// Browser-safe: only normalize/toLowerCase/regex. Derived on read, snapshotted on write.
 export function deriveAgentLabel(name: string): string {
   const first = name.trim().split(/\s+/)[0] ?? "";
   const cleaned = first.normalize("NFKC").toLowerCase().replace(/[^A-Za-z0-9._-]/g, "").slice(0, 32);

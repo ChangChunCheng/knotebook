@@ -1,7 +1,6 @@
 import type { SVGProps } from "react";
 
-// 極簡內聯 SVG icon——刻意不引入 icon 套件（lucide-react 等）。這些組件用到的
-// 圖示是一組固定、數量有限的集合（隨版面改版擴充），換一個新依賴仍然不划算。
+// Inline SVG icons on purpose: no icon package (a fixed, small set; a new dependency isn't worth it).
 
 export function X(props: SVGProps<SVGSVGElement>) {
   return (
@@ -72,7 +71,6 @@ export function Trash(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 垃圾桶標題列的「選取」（#181，方框打勾）。 */
 export function SquareCheck(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="select" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -82,7 +80,7 @@ export function SquareCheck(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 編輯／重新命名／進入行內編輯（#247 列內動作）。路徑取自 lucide `pencil`（ISC），手刻同風格。 */
+/** Adapted from lucide `pencil` (ISC). */
 export function Pencil(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="pencil" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -92,7 +90,7 @@ export function Pencil(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 最愛（側欄 tab、筆記 ⋮、頁首切換鈕）。預設空心；呼叫端傳 `fill="currentColor"` 畫實心。路徑取自 lucide `star`（ISC），手刻同風格。 */
+/** Hollow by default; callers pass `fill="currentColor"` for solid. Adapted from lucide `star` (ISC). */
 export function Star(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="star" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -101,7 +99,7 @@ export function Star(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 釘選（標題導覽面板的釘住鈕）。路徑取自 lucide `pin`（ISC），手刻同風格。 */
+/** Adapted from lucide `pin` (ISC). */
 export function Pin(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="pin" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -111,7 +109,7 @@ export function Pin(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 標題導覽（窄視窗的 ⋮ 項）。路徑取自 lucide `list-tree`（ISC），手刻同風格。 */
+/** Adapted from lucide `list-tree` (ISC). */
 export function ListTree(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="list-tree" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -124,7 +122,7 @@ export function ListTree(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 側欄（浮動側欄的入口鈕）。路徑取自 lucide `panel-left`（ISC），手刻同風格。 */
+/** Adapted from lucide `panel-left` (ISC). */
 export function PanelLeft(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="panel-left" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -155,8 +153,7 @@ export function Share(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 群組（#103）：分享鈕在群組筆記上的狀態圖示。兩個人形（lucide `users` 的路徑，手刻
- * 同風格：24 viewBox、stroke 2）。 */
+/** Two people; adapted from lucide `users` (ISC). */
 export function Users(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="users" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -205,7 +202,7 @@ export function Plus(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 新增筆記（手機浮動鈕）：一支正在寫字的筆。路徑取自 lucide `pen-line`（ISC），手刻同風格。 */
+/** Adapted from lucide `pen-line` (ISC). */
 export function PenLine(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="pen-line" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -224,7 +221,6 @@ export function Link(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 側欄使用者列的齒輪，`UserMenu` 觸發鈕使用。 */
 export function Settings(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -252,7 +248,7 @@ export function Menu(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 登入服務圖示：通用的「登入」圖示（自訂 OIDC 範本的預設、上傳圖載入失敗時的退路）。單色 currentColor，風格同本檔其他圖示。 */
+/** Generic sign-in icon (default for a custom OIDC template, fallback when an uploaded image fails to load). Single colour via currentColor. */
 export function SignInGeneric(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -263,7 +259,7 @@ export function SignInGeneric(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 移動到…（⋮ 選單項）。路徑取自 lucide `folder-input`（ISC），手刻同風格。 */
+/** Adapted from lucide `folder-input` (ISC). */
 export function FolderInput(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="folder-input" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -274,7 +270,7 @@ export function FolderInput(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 資料夾（資料夾列、選單項）。路徑照稿 `FolderMenu`（lucide `folder` 同形，ISC）。 */
+/** Same shape as lucide `folder` (ISC). */
 export function Folder(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="folder" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -283,7 +279,7 @@ export function Folder(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 新增資料夾／新增子資料夾。路徑照稿 `FolderMenu`（lucide `folder-plus` 同形，ISC）。 */
+/** Same shape as lucide `folder-plus` (ISC). */
 export function FolderPlus(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="folder-plus" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -293,7 +289,7 @@ export function FolderPlus(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 新增筆記（資料夾 ⋮）。路徑照稿 `FolderMenu`（lucide `file-plus` 同形，ISC）。 */
+/** Same shape as lucide `file-plus` (ISC). */
 export function FilePlus(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="file-plus" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -303,7 +299,7 @@ export function FilePlus(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 退出群組（GroupMenu）。路徑取自 lucide `log-out`（ISC），手刻同風格。 */
+/** Adapted from lucide `log-out` (ISC). */
 export function LogOut(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="log-out" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -314,7 +310,7 @@ export function LogOut(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 複製到…（⋮ 選單項）。路徑取自 lucide `copy`（ISC），手刻同風格。 */
+/** Adapted from lucide `copy` (ISC). */
 export function Copy(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="copy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -324,7 +320,7 @@ export function Copy(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 簡報模式（⋮ 選單項、公開頁按鈕，#229）。路徑取自 lucide `presentation`（ISC），手刻同風格。 */
+/** Adapted from lucide `presentation` (ISC). */
 export function Presentation(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="presentation" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -345,7 +341,7 @@ export function History(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 框選 AI 的觸發鈕與自訂動作的通用 chip。路徑取自 lucide `sparkles`（ISC），手刻同風格。 */
+/** Adapted from lucide `sparkles` (ISC). */
 export function Sparkles(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -358,7 +354,7 @@ export function Sparkles(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 目的地的「根目錄」（Top level）。路徑取自 lucide `house`（ISC），手刻同風格。 */
+/** Adapted from lucide `house` (ISC). */
 export function House(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="house" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -368,7 +364,7 @@ export function House(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 目的地的「移動到這裡／複製到這裡」。路徑取自 lucide `corner-down-right`（ISC），手刻同風格。 */
+/** Adapted from lucide `corner-down-right` (ISC). */
 export function CornerDownRight(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="corner-down-right" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>

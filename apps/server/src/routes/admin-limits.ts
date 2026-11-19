@@ -1,4 +1,3 @@
-/** #397：站台限制（`requireAdmin`）。範圍／刻度／env 鎖的驗證在 `SiteLimits.update`，這裡只做形狀驗證與錯誤對應。 */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
@@ -12,7 +11,7 @@ import type { SiteLimits } from "../site-limits/store.js";
 
 const CHANGES_LIMIT = 50;
 
-// refine 一定要給訊息：zod 預設的 "Invalid input" 會漏進 400 的 message（回應訊息要是 "Invalid request body."）。
+// refine needs a message: zod's default "Invalid input" would leak into the 400 message.
 const patchSchema = z
   .object({
     set: z

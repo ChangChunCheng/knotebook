@@ -1,29 +1,18 @@
-/**
- * #222／#378：MCP／REST 讀寫筆記的文字色／底色——色盤、色碼判準與寫入正規化（讀出在 `note-markdown-read.ts`）。
- *
- * **寫入**（{@link normalizeNoteColors}）：markdown 解析出來的 block 裡，`textColor`／`backgroundColor`
- * 只收編輯器內建的 10 種色名（{@link PALETTE_COLORS}）與不透明色碼，色碼就地正規化成小寫 `#rrggbb`。
- * 其他值（CSS 合法但不在色盤的名稱、帶透明度的色碼、大小寫不符的 data-*）BlockNote 照樣存進 JSON，
- * 但編輯器畫面上不顯示——所以整筆拒絕，不靜默剝除。色碼判準見 {@link canonicalColor}。
- * ⚠ 走訪是**迭代**的（顯式堆疊）：巢狀深度由呼叫端的 markdown 決定，不能遞迴。
- */
+// Unknown colors are rejected, not stripped: BlockNote would store them but the editor wouldn't show them.
+// Traversal is iterative: nesting depth comes from caller-supplied markdown.
 export const PALETTE_COLORS = ["default", "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink"] as const;
 const PALETTE: ReadonlySet<string> = new Set(PALETTE_COLORS);
 const COLOR_KEYS = ["textColor", "backgroundColor"] as const;
 
-/** 讀寫兩端共用的判準：值是色盤裡的名稱（`default` 也算）。 */
 export const isPaletteColor = (v: unknown): v is string => typeof v === "string" && PALETTE.has(v);
 
-/** 自訂色的正規形：小寫 `#rrggbb`。 */
 export const CUSTOM_COLOR_RE = /^#[0-9a-f]{6}$/;
 export const isCustomColor = (v: unknown): v is string => typeof v === "string" && CUSTOM_COLOR_RE.test(v);
-/** 會顯示出顏色的值：色盤名（不含 `default`）或正規形色碼。 */
 export const isShownColor = (v: unknown): v is string => v !== "default" && (isPaletteColor(v) || isCustomColor(v));
 
 const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const RGB_RE = /^rgb\([ \t\n\r\f]*(\d+(?:\.\d+)?)[ \t\n\r\f]*,[ \t\n\r\f]*(\d+(?:\.\d+)?)[ \t\n\r\f]*,[ \t\n\r\f]*(\d+(?:\.\d+)?)[ \t\n\r\f]*\)$/;
 
-/** 把輸入正規化：色盤名原樣；`#rgb`／`#rrggbb`（含滿值 alpha）／`rgb(r, g, b)` → 小寫 `#rrggbb`；其餘 `null`。 */
 export function canonicalColor(v: unknown): string | null {
   if (typeof v !== "string") return null;
   if (isPaletteColor(v)) return v;
@@ -53,7 +42,6 @@ export function canonicalColor(v: unknown): string | null {
   return null;
 }
 
-/** 把 `rec` 上的色值就地換成正規形；遇到不收的值回 `String(原值)`。 */
 function normalizeColorsIn(rec: unknown): string | null {
   if (rec === null || typeof rec !== "object") return null;
   const r = rec as Record<string, unknown>;
@@ -68,22 +56,20 @@ function normalizeColorsIn(rec: unknown): string | null {
 }
 
 /**
- * 就地把 blocks 裡每個 `textColor`／`backgroundColor` 換成 {@link canonicalColor} 的結果；遇到不收的值
- * 回 `String(原值)`（呼叫端整筆拒絕），全部收下回 `null`。看三處：block 的 `props`、行內 text 的
- * `styles`（含連結內的 text）、表格儲存格的 `props` 與其行內內容。回傳的不保證是文件順序上的第一個；
- * 回非 `null` 時 blocks 可能已被改了一部分，呼叫端要丟掉不用。
+ * Returns String(value) of a rejected color, not necessarily the first in document order. On a non-null result `blocks` may be
+ * partly modified: discard them.
  */
 export function normalizeNoteColors(blocks: readonly unknown[]): string | null {
   const stack: unknown[] = [];
   const pushAll = (xs: readonly unknown[]) => {
-    for (const x of xs) stack.push(x); // 不用 push(...xs)：超大陣列展開成參數會爆堆疊
+    for (const x of xs) stack.push(x); // not push(...xs): spreading a huge array as arguments overflows the stack
   };
   pushAll(blocks);
   while (stack.length > 0) {
     const n = stack.pop();
     if (n === null || typeof n !== "object") continue;
     if (Array.isArray(n)) {
-      pushAll(n); // 舊形表格儲存格：直接是 inline 陣列
+      pushAll(n); // legacy table cell: a bare inline array
       continue;
     }
     const o = n as { props?: unknown; styles?: unknown; content?: unknown; children?: unknown };

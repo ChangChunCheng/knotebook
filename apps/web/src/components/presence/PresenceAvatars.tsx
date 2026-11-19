@@ -19,7 +19,7 @@ import { usePresencePeople } from "./usePresencePeople";
 
 export interface PresenceAvatarsProps {
   provider: { awareness?: Awareness | null } | null;
-  /** `state.phase === "connected"`。 */
+  /** `state.phase === "connected"`. */
   connected: boolean;
   myUserId: string;
   scrollerRef: { readonly current: CursorScroller | null };
@@ -28,39 +28,39 @@ export interface PresenceAvatarsProps {
 type Opener = PresenceKey | "more";
 
 /**
- * 三種形（頁頭是 container）：
- * - 視窗 `< 640`（`max-sm`）：精簡形，不放頭像，只有一顆「+N」（N＝所有其他人）。
- * - 視窗 `>= 640` 且頁頭 container `< 43.5rem`：窄形，最多 2 格。
- * - 其餘：寬形，最多 5 格。
- * 藏的方式是 `display:none`（不是 DOM 裡少一份），所以最多三顆「+N」同時存在、各自帶自己那組 class。
+ * Three forms (the header is a container):
+ * - viewport `< 640` (`max-sm`): compact, no avatars, one "+N" (N = everyone else);
+ * - viewport `>= 640` and header container `< 43.5rem`: narrow, at most 2 slots;
+ * - otherwise: wide, at most 5 slots.
+ * Hidden via `display:none` (not left out of the DOM), so up to three "+N" buttons exist at once, each with its own classes.
  */
-/** 寬形才顯示（視窗 `< 640` 或頁頭 container `< 43.5rem` 任一成立就藏；同頁頭寬度鈕的門檻）。 */
+/** Wide only: hidden when the viewport is `< 640` or the header container `< 43.5rem` (same threshold as the header's width toggle). */
 const WIDE_ONLY = "max-sm:hidden @max-[43.5rem]:hidden";
-/** 窄形才顯示（手機寬藏；視窗夠寬時 container 夠寬也藏）。 */
+/** Narrow only: hidden at phone width, and at viewport `>= 640` when the header container is `>= 43.5rem`. */
 const NARROW_ONLY = "max-sm:hidden sm:@min-[43.5rem]:hidden";
-/** 精簡形才顯示（只在手機寬）。 */
 const COMPACT_ONLY = "sm:hidden";
-/** 頭像在手機寬一律藏（只剩精簡 +N）；窄形留下的頭像在 640 以上不藏。 */
+/** Avatars always hide at phone width (only the compact +N remains); those the narrow form keeps aren't hidden at 640 and up. */
 const PHONE_HIDDEN = "max-sm:hidden";
 /**
- * 點擊區以 `::before` 擴大，版面高度不變：預設 32×32 px，觸控裝置（`pointer-coarse`）36×44 px；聚焦／hover 的那顆浮到上層，焦點框不被下一顆蓋住。
- * #335：頭像 24 px、疊放 `-ms-1.5`（6 px）時，下一顆的 `::before` 往左伸出量（x 方向）必須 ≤ 6 px，否則會蓋住前一顆的中心點
- * （Playwright 的 `hover()` 會一直被攔截而卡死；觸控也會點到鄰居）。所以 x、y 分開擴：x 受疊放限制（預設 4 px、觸控 6 px），
- * y 沒有鄰居，觸控裝置可放到 10 px 以維持 44 px 的觸控高度。
+ * The hit area grows via `::before` without changing layout: 32×32 px by default, 36×44 px on touch (`pointer-coarse`); the
+ * focused/hovered one rises so its focus ring isn't covered by the next. With 24 px avatars overlapping by `-ms-1.5` (6 px),
+ * the next one's `::before` may extend at most 6 px left, or it covers the previous avatar's center (Playwright `hover()`
+ * gets intercepted and hangs; touch hits the neighbour) (#335). So x and y grow separately: x is limited by the overlap
+ * (4 px default, 6 px touch); y has no neighbours, so touch gets 10 px to keep a 44 px touch height.
  */
 const HIT_BASE =
   "relative inline-flex rounded-full outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 " +
   "hover:z-10 before:absolute before:content-['']";
 const HIT = `${HIT_BASE} before:-inset-x-1 before:-inset-y-1 pointer-coarse:before:-inset-x-1.5 pointer-coarse:before:-inset-y-2.5`;
-/** 精簡 +N 視覺 32×28、點擊區 40×44；它在手機寬時是列裡唯一看得見的鈕，沒有鄰居要避開。 */
+/** Compact +N: 32×28 visual, 40×44 hit area; at phone width it is the only visible button in the row, so no neighbour to avoid. */
 const HIT_COMPACT = `${HIT_BASE} before:-inset-x-1 before:-inset-y-2`;
 
-/** 還焦點的目標要真的看得見：寬窄模式的藏法是 `display:none`，對它 `focus()` 會無聲失敗。 */
+/** `display:none` variants make `focus()` fail silently, so return focus to a visible target. */
 function focusable(el: HTMLElement | null | undefined): el is HTMLElement {
   return !!el && el.isConnected && getComputedStyle(el).display !== "none";
 }
 
-/** 使用者自填的字串（名字、token 標籤）以 `<bdi>` 隔離並截斷；翻譯樣板的其餘部分照原樣。 */
+/** User-entered strings (names, token labels) are isolated in `<bdi>` and truncated; the rest of the translation template stays as is. */
 const SLOT_OPEN = String.fromCharCode(0xe000);
 const SLOT_CLOSE = String.fromCharCode(0xe001);
 const slot = (i: number) => `${SLOT_OPEN}${i}${SLOT_CLOSE}`;
@@ -85,7 +85,7 @@ function isolated(template: string, values: readonly string[]): ReactNode {
   );
 }
 
-/** 名字沒有看得見的字（空白、只有格式字元）時用 `?`（同首字圓），不讓名稱以「，檢視者」開頭。 */
+/** `?` (as in the initial circle) when the name has no visible characters, so the label doesn't start with ", viewer". */
 function shownName(p: Extract<PresencePerson, { kind: "user" }>): string {
   return hasVisibleText(p.name) ? p.name : "?";
 }
@@ -140,7 +140,7 @@ interface PersonButtonProps {
 function PersonButton({ person, className, suppressed, onUnsuppress, onScroll, onLongPress }: PersonButtonProps) {
   const { t } = useTranslation();
   const buttonRef = useRef<HTMLButtonElement>(null);
-  // 受控：Radix 的開關意圖照收，抑制只遮住顯示。
+  // Controlled: Radix's open/close intent is still taken; suppression only masks the display.
   const [tipOpen, setTipOpen] = useState(false);
   const longPressRef = useRef(onLongPress);
   longPressRef.current = onLongPress;
@@ -161,7 +161,7 @@ function PersonButton({ person, className, suppressed, onUnsuppress, onScroll, o
             onScroll();
           }}
           onPointerDown={(e) => {
-            // 抑制中 Radix 的 pointerdown 不 onClose（`open` prop 已是 false），tipOpen 要自己關。
+            // While suppressed, Radix doesn't call onClose (`open` is already false), so close tipOpen here.
             onUnsuppress();
             setTipOpen(false);
             press.down(e);
@@ -174,7 +174,7 @@ function PersonButton({ person, className, suppressed, onUnsuppress, onScroll, o
           }}
           onKeyDown={onUnsuppress}
           onBlur={() => {
-            // 同上：抑制中 Radix 的 blur 關閉不會呼叫 onOpenChange。
+            // Same: Radix's blur close doesn't call onOpenChange while suppressed.
             onUnsuppress();
             setTipOpen(false);
           }}
@@ -223,14 +223,14 @@ function MoreButton({
 }
 
 /**
- * #293：頁頭頭像列。只有我、或非 connected → 不渲染任何節點。不加 `aria-live`。
- * 選單的 Trigger 是不包住任何頭像的隱藏兄弟節點；選單只由 +N 與長按以受控 `open` 打開。
+ * Header avatar row (#293). Renders nothing when only I am present or not connected. No `aria-live`.
+ * The menu Trigger is a hidden sibling wrapping no avatar; the menu opens only via +N and long press (controlled `open`).
  */
 export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: PresenceAvatarsProps) {
   const { t } = useTranslation();
   const { people, cursorOf } = usePresencePeople(connected ? (provider?.awareness ?? null) : null, myUserId);
   const [menu, setMenu] = useState<Opener | null>(null);
-  // 開它的那顆：關閉時 Radix 在 setTimeout(0) 才呼叫 onCloseAutoFocus，讀 ref 才是最新值。
+  // Radix calls onCloseAutoFocus in setTimeout(0); reading the ref gives the latest opener.
   const openerRef = useRef<{ opener: Opener; el: HTMLElement | null } | null>(null);
   const [suppressedKey, setSuppressedKey] = useState<PresenceKey | null>(null);
   const groupRef = useRef<HTMLDivElement>(null);
@@ -253,8 +253,8 @@ export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: 
     if (cursor !== null) scrollerRef.current?.(cursor);
   };
   const unsuppress = () => setSuppressedKey(null);
-  // `onOpenAutoFocus` 是 Radix Menu 2.1.24 的私有 prop：DropdownMenu 的型別沒公開，執行期原樣傳到 FocusScope
-  // （`react-menu dist/index.mjs:179`、`:266`）。長按聚焦到該列靠它；升 Radix 後對應的測試會先紅。
+  // `onOpenAutoFocus` is a private prop of Radix Menu 2.1.24 (untyped on DropdownMenu, forwarded to FocusScope at
+  // `react-menu dist/index.mjs:179`, `:266`); long press focusing the row relies on it, and the matching test goes red after a Radix upgrade.
   const openAutoFocus: object = {
     onOpenAutoFocus: (e: Event) => {
       const opener = openerRef.current?.opener;
@@ -267,8 +267,8 @@ export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: 
 
   return (
     <TooltipProvider delayDuration={300}>
-      {/* 疊放用 `[&>button+button]:-ms-1.5`（margin 在後一顆身上），不用 `-space-x-1.5`：被藏的窄模式 +N
-          常是最後一個 DOM 子節點，後者會讓最後一顆可見頭像也拿到 −6 px。隱藏 Trigger 放第一個子節點。 */}
+      {/* Overlap via `-ms-1.5` on the following button, not `-space-x-1.5`: a hidden +N is often the last DOM child,
+          and that would give the last visible avatar −6 px too. The hidden Trigger stays the first child. */}
       <div
         ref={groupRef}
         role="group"
@@ -295,11 +295,11 @@ export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: 
               const current = openerRef.current;
               openerRef.current = null;
               if (current === null) return;
-              // 開它的那顆已離開或被藏（寬窄切換）→ 退到列裡第一顆看得見的鈕。
+              // The opener left or is hidden (wide/narrow switch): fall back to the first visible button in the row.
               const buttons = [...(groupRef.current?.querySelectorAll<HTMLElement>("button") ?? [])];
               const target = focusable(current.el) ? current.el : buttons.find(focusable);
               if (!target) return;
-              // 長按開的（觸控）：抑制實際拿到焦點的那顆頭像的 Tooltip。
+              // Opened by long press (touch): suppress the Tooltip of the avatar that actually gets focus.
               const key = target.dataset.personKey as PresenceKey | undefined;
               if (current.opener !== "more" && key) setSuppressedKey(key);
               target.focus({ preventScroll: true });
@@ -310,8 +310,8 @@ export function PresenceAvatars({ provider, connected, myUserId, scrollerRef }: 
               <DropdownMenuItem
                 key={p.key}
                 data-person-key={p.key}
-                // 沒有游標的列不用 `disabled`：Radix 會把它從方向鍵巡覽拿掉（含螢幕閱讀器在選單裡逐項移動），而且畫成淡色。
-                // 改用 `aria-disabled`：仍可聚焦與朗讀，選取時不捲動、選單也不關。
+                // Not `disabled`: Radix would drop it from arrow-key navigation (and screen-reader traversal) and dim it.
+                // `aria-disabled` stays focusable and readable; selecting it neither scrolls nor closes the menu.
                 aria-disabled={p.hasCursor ? undefined : true}
                 className="gap-2"
                 onSelect={(e) => {

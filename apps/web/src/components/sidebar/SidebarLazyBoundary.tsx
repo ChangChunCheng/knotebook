@@ -2,13 +2,9 @@ import { Suspense, type ReactNode } from "react";
 import { ChunkLoadBeacon, LazyRouteErrorBoundary } from "@/components/ErrorBoundary";
 
 /**
- * 側欄 lazy chunk 的掛載點都包這一層（比照 `VersionsLazyBoundary`）：`chunk="trash"` 是 `TrashLazy` 的兩個掛載點（AppShell 的 tabpanel、
- * SidebarFooter），`chunk="select"` 是一般 tab 選取模式的 `SelectLazy`，`chunk="folder"` 是資料夾對話框的 `FolderLazy`，`chunk="bodySearch"` 是側欄搜尋內文區的 `BodySearchLazy`（#93），`chunk="groupDialog"` 是新增／改名／刪除群組對話框（NoteList、GroupMenu 各自 `import()`），`chunk="transferDialog"` 是筆記 ⋮ 的移動／複製確認框（NoteMenu），`chunk="mediaZoom"` 是圖片與 mermaid 的放大畫面 `MediaLightbox`（#462），掛載點是 `MediaZoomProvider`。不包的話 chunk 載入失敗會一路冒到 `AppErrorBoundary`、整個 app
- * 換成崩潰畫面：首頁沒有 route boundary；AppShell 在 layout route 裡、不在筆記頁的 route boundary 之內，掛載點的錯誤沒有別的地方接
- * （垃圾桶：tab 有持久化，壞部署時每次載入都崩；選取：選取狀態不持久化，但同一次載入裡整個 app 照樣崩）。
- * 額度別名＝`chunk`（各 chunk 各自一份）、`frame="inline"`：只在原位顯示 #66 的錯誤＋重試。同一個 chunk 的掛載點 `import()` 同一個模組，
- * 任一成功後其餘不會再以 chunk 錯誤失敗，滿足 ErrorBoundary.tsx 的收斂前提。
- * ⚠ `ChunkLoadBeacon` 必須在 `<Suspense>` **內**（見 ErrorBoundary.tsx 的 ChunkLoadBeacon 註解）。
+ * Every sidebar lazy chunk mount point is wrapped in this: there is no route boundary above it (home has none; AppShell sits in a layout route, outside the note page's boundary), so a chunk error would otherwise crash the whole app.
+ * `frame="inline"` shows the error and retry in place. Mount points of one chunk `import()` the same module, so once one succeeds the rest can't fail with a chunk error (the convergence precondition of `ErrorBoundary.tsx`).
+ * `ChunkLoadBeacon` must be inside `<Suspense>` (see its comment in `ErrorBoundary.tsx`).
  */
 export function SidebarLazyBoundary({
   chunk,
@@ -18,7 +14,6 @@ export function SidebarLazyBoundary({
 }: {
   chunk: "trash" | "select" | "folder" | "bodySearch" | "groupDialog" | "transferDialog" | "mediaZoom";
   fallback: ReactNode;
-  /** 只在錯誤態套用的外框（見 `LazyRouteErrorBoundary` 的 `inlineErrorClassName`）。 */
   errorClassName?: string;
   children: ReactNode;
 }) {

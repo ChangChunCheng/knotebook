@@ -56,8 +56,6 @@ import type { McpTestHooks } from "./mcp/hooks.js";
 import { apiTokensRoutes } from "./routes/api-tokens.js";
 import { drainWithCap } from "./http/drain.js";
 import { BODY_TOO_LARGE_MESSAGE, sendError } from "./http/errors.js";
-// #108：`stripDefaultPort` 搬到 `http/origin.ts`（與 `mcpOriginAllowed` 同一個葉節點模組，
-// 兩種比較語意的差別寫在該檔檔頭）。
 import { stripDefaultPort } from "./http/origin.js";
 import { buildAdjustableLimiters, buildFixedLimiters, mergeLimiters, type Limiters } from "./http/limiters.js";
 import { FORM_EXEMPT_ROUTES, isOauthScopedPath, sendOauthError } from "./http/oauth-errors.js";
@@ -92,9 +90,9 @@ declare module "fastify" {
   interface FastifyInstance {
     authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void>;
     requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void>;
-    /** #269：一次性站內連結轉換（沒有 collab 的部署是 no-op）。 */
+    /** No-op when there is no collab server. */
     linkConversion: LinkConversion;
-    /** #107：opt-in 的 Bearer／session 雙路徑認證，語意見 `auth/bearer.ts`。 */
+    /** Accepts a Bearer token or a cookie session; see `auth/bearer.ts`. */
     authenticateAny(
       required: RequiredScope,
       challenge?: string
@@ -102,27 +100,17 @@ declare module "fastify" {
   }
   interface FastifyRequest {
     user?: GateUser;
-    /**
-     * `authenticate` 通過時一併記下當次 session JWT 的 `tv`（與 `request.user` 同時
-     * 設定，見下方 decorator）——`POST /api/notes/:id/collab-token` 簽發
-     * collab token 時需要它塞進 `CollabTokenClaims.tv`，但 `GateUser`（`gate.check`
-     * 的回傳形狀）本身不帶 tv，故另開這個欄位，不擴充 `GateUser` 型別本身。
-     */
+    /** Session JWT `tv`; the collab-token route signs it into the token, and `GateUser` doesn't carry it. */
     sessionTv?: number;
-    /**
-     * #388：當次 session JWT 的 `sid`（`sessions.id`），與 `sessionTv` 同時設定。唯一的消費者是 `POST /api/notes/:id/collab-token`：
-     * 簽進 collab token，collab server 的 gate 檢查點據此確認這台裝置的 session 列還在。
-     */
+    /** Session JWT `sid`; signed into collab tokens so the collab gate can check the session row still exists. */
     sessionId?: string;
-    /** #107：這一發是 cookie session、API token 還是 #200 的 transfer token 認證的。錯誤 log 只印這個與 tokenId。 */
     authKind?: "session" | "token" | "transfer";
-    /** #107：token 路徑才有——落庫的正規化 scope 集合。 */
     tokenScope?: TokenScope;
-    /** #107：token 路徑才有——`api_tokens.id`（**不是**明文，明文永不進 log）。#200 transfer 路徑放**母憑證**的 id。 */
+    /** `api_tokens.id`, never the plaintext; on the transfer path, the parent token's id. */
     tokenId?: string;
-    /** #200：transfer 路徑才有（`auth/transfer-auth.ts`）。`noteId` 是 DB 的小寫正規形。 */
+    /** `noteId` is lowercase (DB form). */
     transfer?: { id: string; noteId: string; purpose: "upload" | "download"; parentTokenId: string };
-    /** bulk transfer：`/api/transfer/*` 才有（`transferAuth.requireBulk`）。`range` 的 id 一律小寫。 */
+    /** Ids in `range` are lowercase. */
     bulkTransfer?: { id: string; parentTokenId: string; access: BulkAccess; range: BulkRange };
   }
 }
@@ -130,213 +118,69 @@ declare module "fastify" {
 export interface AppDeps {
   config: AppConfig;
   db: Db;
-  /**
-   * #397：站台限制的生效值（env＞`site_limits` 的列＞預設／自動）。**必填**，讓編譯器列出所有組 `AppDeps` 的地方。
-   * `index.ts` 在 migration 之後用 `SiteLimits.load(db, { limitEnv: config.limitEnv, … })` 建；必須綁同一個 `db`、同一份
-   * `config.limitEnv`（鎖定狀態唯一來源）。直接呼叫 `buildApp` 的測試用 `SiteLimits.defaults(…)`。
-   */
+  /** Must be built on the same `db` and `config.limitEnv` (the only source of env-locked limits). */
   siteLimits: SiteLimits;
   gate: UserGate;
   throttle: LoginThrottle;
   collabHooks: CollabHooks;
-  /**
-   * 即時協作（Hocuspocus）server。**選配**：不傳就不掛 `/collab`，一般 REST 測試
-   * （`buildTestApp`）與只跑 REST 的情境完全不受影響；傳入時 `buildApp` 會把它的
-   * WebSocket upgrade handler 掛上本 app 的底層 http server。
-   */
   collab?: CollabServer;
-  /**
-   * #106：AI／API 讀寫筆記內容用的 jsdom runtime。**選配**：未傳而 `collab` 有值時
-   * `buildApp` 自己建一個（`createEditingRuntime`）；`collab` 缺席（一般 REST 測試）時
-   * 一律 `undefined`，內容路由連帶不註冊——不為只跑 REST 的 app 付一份 jsdom 的錢。
-   * 整合測試注入共用的 `testEditingRuntime`（`test/helpers.ts`），避免每個 app 各建一份。
-   */
+  /** Ignored without `collab`; content routes are then not registered, so REST-only apps don't pay for jsdom. */
   editing?: EditingRuntime;
-  /**
-   * #397：注入的 `editing` 要不要跟著這個 app 的 `siteLimits` 改解析 pool 的設定（訂閱 `onChange`、`onClose` 解除）。
-   * **預設不訂閱**：注入者自己管那份 runtime。`buildApp` 自己建的 runtime 不看這個旗標，一律訂閱。
-   */
+  /** An injected `editing` follows this app's siteLimits only when true (the injector owns it); a self-built one always does. */
   editingFollowsSiteLimits?: boolean;
-  /**
-   * 節流器（31 顆，型別 `Limiters` 在 `http/limiters.ts`）。**選配、可只給幾顆**：`buildApp` 以 `mergeLimiters` 合併——
-   * 22 顆固定的桶由 `buildFixedLimiters()` 建，9 顆站台可調的桶由 `buildAdjustableLimiters(deps.siteLimits)` 建
-   * （`limit` 現讀這個 app 的 `siteLimits`，#397）；這裡給的桶（值不是 `undefined`）蓋掉對應的那顆。
-   *
-   * `buildTestApp`/`buildCollabTestApp`（`test/helpers.ts`）經 `freshLimiters` 注入 22 顆全新固定桶＋測試覆寫——
-   * 嚴禁 module 單例，否則不同測試檔案共享同一份計數會互相汙染。
-   */
+  /** Overrides individual limiters. Tests must pass fresh instances, never a module singleton, or counts leak between test files. */
   limiters?: Partial<Limiters>;
-  /**
-   * #106（#137）：寫入路徑的測試注入縫（比照 `linkSyncTestHooks`）——`beforeMerge`／
-   * `beforeRecord`／`afterRecord`／`beforeRevertRecord` 分別在「合併之前」「寫紀錄之前」「紀錄之後、連結之前」「寫撤回紀錄之前」
-   * 被呼叫。**選配**，生產不注入＝零成本。#108 起透傳進 `NoteWriteService`（`buildApp` 建的那一個）。
-   */
   editingTestHooks?: EditingTestHooks;
-  /** #387：讀到過／寫過的連結文字表的測試縫（整合測試注入假時鐘）；未傳＝`NoteWriteService` 自建一份。生產不注入。 */
   shownLinks?: ShownLinkTexts;
-  /**
-   * #108：`/api/mcp` 的測試注入縫（比照 `editingTestHooks`）——`afterClose`／`beforeReply`／
-   * `beforeTool` 分別在「關掉 server 之後」「搬回 reply 之前」「工具 handler 進入時」被呼叫。
-   * **選配**，生產不注入＝零成本。透傳進 `McpRouteDeps.testHooks`。
-   */
   mcpTestHooks?: McpTestHooks;
-  /** bulk transfer：`/api/transfer/*` 的測試縫（生產不注入）。透傳進 `TransferRouteDeps.testHooks`。 */
   transferTestHooks?: TransferTestHooks;
-  /**
-   * #106（#137）：per-note 寫入佇列的等待上限（毫秒）。**選配**，未傳時用 `NoteWriteQueue`
-   * 自己的預設（10 s）。整合測試把它壓到 50 ms 才驗得出「佇列被占住 → 503 server_busy」，
-   * 否則那一案要等十秒。#108 起透傳進 `NoteWriteService`（`buildApp` 建的那一個）。
-   */
+  /** Milliseconds; defaults to `NoteWriteQueue`'s 10 s. */
   editingQueueWaitMs?: number;
-  /**
-   * #138：AI presence 註冊表。**選配**——未傳時 `buildApp` 自己建一個（掛在 `deps.collab`
-   * 的 hocuspocus 上；沒有 collab 就是全 no-op 的空殼）。整支的計時器由 `onClose` 的
-   * `stopAll()` 收掉。
-   */
   presence?: PresenceRegistry;
-  /** #138：`buildApp` 自建 `PresenceRegistry` 時的參數（整合測試注入 `idleMs`／`heartbeatMs`）。 */
   presenceOptions?: PresenceOptions;
-  /**
-   * `POST /api/notes/:id/links` 寫入函式（`notes/links.ts` 的 `writeNoteLinks`）的
-   * 測試注入縫，透傳進 `NotesRouteDeps`。**選配**：production／未覆寫時整段為
-   * `undefined`，`writeNoteLinks` 的 `hooks` 參數預設 `{}`，等同 no-op。整合測試唯一的
-   * 注入面是 `buildTestApp({ linkSyncTestHooks })`——route deps 本身不對外暴露，不開這個
-   * `AppDeps` 欄位測試就碰不到 `beforeLinkWrite`（見 links.ts 的 FK race 測試注入縫說明）。
-   */
   linkSyncTestHooks?: WriteNoteLinksHooks;
-  /**
-   * #122：PATCH auto slug 的測試注入縫（語意見 `NotesRouteDeps.slugUpdateTestHook`）。
-   * **選配**：production／未覆寫時 `undefined`＝no-op；整合測試唯一注入面是
-   * `buildTestApp({ slugUpdateTestHook })`（比照 `linkSyncTestHooks`）。
-   */
   slugUpdateTestHook?: (candidate: string) => void | Promise<void>;
-  /**
-   * #175：PATCH 寫 prev 短交易的測試注入縫（語意見 `NotesRouteDeps.slugPatchTestHook`）。
-   * **選配**：production／未覆寫時 `undefined`＝no-op；整合測試唯一注入面是 `buildTestApp({ slugPatchTestHook })`。
-   */
   slugPatchTestHook?: SlugPatchTestHook;
-  /**
-   * #145：**建立**路徑 auto slug 的測試注入縫（語意見 `NotesRouteDeps.noteCreateHooks`）。
-   * **選配**：production／未覆寫時 `undefined`＝no-op；整合測試唯一注入面是
-   * `buildTestApp({ noteCreateHooks })`（比照 `slugUpdateTestHook`）。
-   */
   noteCreateHooks?: NoteCreateHooks;
-  /**
-   * #103：群組相關交錯點的測試注入縫（語意見 `groups/test-hook.ts`）。**選配**：production／未覆寫時
-   * `undefined`＝no-op；整合測試的注入面是 `buildTestApp({ groupTestHook })` 與 `buildCollabTestApp({ groupTestHook })`（後者 #175 起有；帶 content 的 MCP `create_note` 要 collab app）。
-   */
   groupTestHook?: GroupTestHook;
-  /** 頭貼寫入交易的交錯縫（`avatars/tx/avatars.ts`）。選配；production 不注入，整合測試的注入面是 `buildTestApp({ avatarTestHooks })`。 */
   avatarTestHooks?: AvatarTestHooks;
-  /** IdP 頭貼下載的位址與埠政策。選配，只給測試注入（讓本機圖片伺服器通過）；未設＝`PRODUCTION_AVATAR_FETCH_POLICY`，沒有任何環境變數能放寬。 */
+  /** Test-only, to allow a local image server; defaults to `PRODUCTION_AVATAR_FETCH_POLICY`, and no env var can relax it. */
   avatarFetchPolicy?: AvatarFetchPolicy;
-  /** IdP 頭貼背景工作的結束通知。選配，只給測試等待背景工作用；production 不注入。 */
   avatarJobHooks?: OidcAvatarJobHooks;
-  /** #93：全文索引交易的測試縫（`notes/tx/search-index.ts`）。選配；production 不注入。注入面是 `buildTestApp({ searchIndexHooks })`。 */
   searchIndexHooks?: SearchIndexHooks;
-  /**
-   * 儲存配額：空間鎖等待上限（ms）。**選配、只給測試注入**（不開 env）；未設＝
-   * `DEFAULT_STORAGE_LOCK_TIMEOUT_MS`（5000）。race 測試注入 60000、逾時測試注入 200。
-   */
+  /** Milliseconds; test-only (no env var). */
   storageLockTimeoutMs?: number;
-  /**
-   * 版本歷史：每小時背景清除（啟動後 5 分鐘首跑）；#272：同一個旗標也開自動切版掃描（每 `versionAutoScanIntervalMs`）。
-   * `index.ts` 傳 true；測試 app 不傳＝都不啟動、直接呼叫 `sweep`／`scanDue`。
-   */
+  /** Also starts the auto-version scan. Tests leave it off and call `sweep`/`scanDue` directly. */
   startVersionSweep?: boolean;
-  /**
-   * #181：垃圾桶保留期清理（啟動後 5 分鐘首跑、之後每小時）。`index.ts` 傳 true；測試 app 不傳＝不啟動、直接用 `createTrashPurger`。
-   * `trashPurgeFirstDelayMs`／`trashPurgeIntervalMs` 只給測試縮短。
-   */
   startTrashPurge?: boolean;
   trashPurgeFirstDelayMs?: number;
   trashPurgeIntervalMs?: number;
-  /** #388：同帳號重登後延遲重驗舊 session 共編連線的等待（毫秒）。未設＝`RELOGIN_REVERIFY_DELAY_MS`（10 s）；只給測試縮短。 */
+  /** Delay before re-verifying the older session's collab connections after the same account signs in again. */
   reloginReverifyDelayMs?: number;
-  /** #272：自動切版掃描間隔（毫秒）。未設＝`VERSION_AUTO_SCAN_INTERVAL_MS`（30 s）；e2e 測試縫開著時 `index.ts` 傳 1000。 */
   versionAutoScanIntervalMs?: number;
-  /**
-   * 圖片上傳存放目錄的絕對路徑。**必填**——`buildApp` 啟動時會對它做一次
-   * 可寫性探測（`assertUploadsDirWritable`，見該函式說明為何不用 `accessSync`），
-   * 失敗即同步 throw、fail-fast，不等到第一個上傳請求才發現環境問題。
-   *
-   * 呼叫點：`src/index.ts`（production，目錄由 `mkdirSync(..., {recursive:true})`
-   * 保證存在後才傳入）、`test/helpers.ts` 的 `buildTestApp`/`buildCollabTestApp`
-   * （per-test 用 `mkdtempSync` 建真實 temp 目錄，`onTestFinished` 清理，比照
-   * `freshDb()` 的慣例）、`test/env-admin-bootstrap.test.ts`（手動組裝 deps，同樣
-   * 需要真實可寫目錄）。
-   */
   uploadsDir: string;
-  /**
-   * AI 執行期狀態（目前只有 `degraded` 降級集合）。**必填**——
-   * runtime 由啟動時建立並自檢（`src/index.ts` 的
-   * `createAiRuntime()` + `selfCheckAiKeys`），路由層據它解析 provider/
-   * model、套用降級判斷。呼叫點同 `uploadsDir`：`src/index.ts`（production）、
-   * `test/helpers.ts` 的 `buildTestApp`/`buildCollabTestApp`、
-   * `test/env-admin-bootstrap.test.ts`（手動組裝 deps）。
-   */
   ai: AiRuntime;
-  /**
-   * #187：OIDC runtime registry（per-app；失效鍵 (id, config_version)）。**測試注入 seam**——整合測試用
-   * `createOidcRuntimeRegistry({ fetch: fakeIdp.fetch })` 掛 in-process mock IdP。未傳時 `buildApp` 自建（production 路徑）。
-   */
   oidcRegistry?: OidcRuntimeRegistry;
-  /**
-   * #187 的連結測試縫（`auth/oidc-test-hook.ts`）；`undefined`＝no-op。**只能經這個欄位注入**：production 的 `index.ts`
-   * 組 deps 時不傳它，env／HTTP 都沒有設定它的路徑——注入面只有測試直接呼叫 `buildApp`／`buildTestApp` 時帶的 deps。
-   */
+  /** Test-only: production never sets it, and no env var or HTTP path can. */
   oidcTestHook?: OidcTestHook;
-  /**
-   * #247 站台管理員降級的測試縫（`auth/admin-test-hook.ts`）；`undefined`＝no-op。只能經這個欄位注入：production 的 `index.ts`
-   * 組 deps 時不傳它，env／HTTP 都沒有設定它的路徑。
-   */
+  /** Test-only: production never sets it, and no env var or HTTP path can. */
   adminTestHook?: AdminTestHook;
 }
 
 export interface BuildAppOptions {
-  /**
-   * 覆寫 fastify logger 設定。預設 true——`Fastify({ logger })` 的全域 request
-   * logging（production 部署需要它）。測試環境（`test/helpers.ts` 的
-   * `buildTestApp`/`buildCollabTestApp`）每支整合測試預設關閉（`{ logger: false }`）
-   * 以降低雜訊，可再覆寫回開（例如要除錯某個測試的實際請求日誌時）。
-   *
-   * 型別放寬到 fastify 自己的 logger 選項（涵蓋 `boolean`）：`test/admin-ai.test.ts` 需要
-   * 掛一個 pino `logMethod` hook 去攔截「改 base URL」那行稽核日誌——docs 逐字引用了它的
-   * 訊息字串，得有測試釘住。production 呼叫端照舊只傳 boolean。
-   */
+  /** Takes full logger options so tests can hook pino's `logMethod`. */
   logger?: FastifyServerOptions["logger"];
-  /**
-   * 前端建置產物目錄的絕對路徑（SPA fallback）。傳入時掛
-   * `@fastify/static` 服務 `/assets/*` 等實際存在的檔案，並讓未命中路由的 GET/HEAD
-   * （非 `/api`／`/collab`／`/healthz`／`/assets` 前綴、Accept 含 `text/html`）回
-   * `index.html`；不傳（或 production `src/index.ts` 啟動檢查發現目錄不存在）時，
-   * 未命中路由一律維持 JSON 404。見 `http/spa.ts`。
-   */
   webDist?: string;
-  /**
-   * `POST /api/ai` SSE idle 逾時（無 delta 即中止）覆寫值，毫秒。**測試 seam**——見
-   * `routes/ai.ts` 的 `AiRouteDeps.idleTimeoutMs` 說明（假時鐘 × 真
-   * SSE I/O 在 CI 上不可靠，改用可注入的短真實逾時代替）。**選配**：不傳沿用生產預設
-   * 60s（`routes/ai.ts` 的 `IDLE_TIMEOUT_MS`）——production（`src/index.ts` 從不傳這個
-   * 選項）與既有測試（未特別覆寫時）行為不變。
-   */
+  /** Milliseconds; test-only, because fake timers with real SSE I/O are unreliable in CI. */
   aiIdleTimeoutMs?: number;
 }
 
 const CHANGE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// JSON CSRF hook 對 multipart 上傳路由的白名單豁免——`"METHOD url"`
-// 形狀，`url` 用 `request.routeOptions.url`（route pattern，含 `:id` 這類參數佔位符，
-// 不是實際請求路徑）比對，故單一字面值即可涵蓋所有 id。
-// 登入服務圖示上傳走同一條：essence 必須 multipart（否則 415）＋Origin 不符 403。
+// Matched against the route pattern (`routeOptions.url`), so one `:id` entry covers every id.
 const MULTIPART_EXEMPT_ROUTES = new Set(["POST /api/notes/:id/uploads", "PUT /api/admin/auth/providers/:id/icon", "POST /api/auth/avatars", "PUT /api/auth/avatars/:id/display"]);
 
-/**
- * 判定這個請求是否命中 multipart 豁免白名單。`request.is404` 必須先擋——404 請求的
- * `routeOptions.url` 是 `undefined`（fastify 型別註記：is404 為真時 config.url 未設），
- * 若不擋會讓 `undefined` 意外落進 Set.has 的比對（恆 false，但語意上不該讓 404 request
- * 走到這段判定，容易在之後改動時踩雷）。
- */
+/** `is404` first: a 404 request has no route pattern. */
 function isMultipartExemptRoute(request: FastifyRequest): boolean {
   if (request.is404) return false;
   const url = request.routeOptions.url;
@@ -344,12 +188,9 @@ function isMultipartExemptRoute(request: FastifyRequest): boolean {
   return MULTIPART_EXEMPT_ROUTES.has(`${request.method} ${url}`);
 }
 
-// bulk transfer：檔案寫回收 `text/markdown`（整個檔案就是 body）。同 multipart 豁免的形：
-// essence 必須 `text/markdown`（否則 415）＋Origin 不符 403；兩條早退都先 `drainWithCap`。parser 註冊在頂層（見下方
-// `addContentTypeParser` 的註解），所以「其他路由帶 text/markdown 仍 415」靠的是這張白名單。
+// The text/markdown parser is registered app-wide, so this list is what keeps other routes at 415.
 const TEXT_BODY_EXEMPT_ROUTES = new Set(["PUT /api/transfer/notes"]);
 
-/** 同 `isMultipartExemptRoute`：先擋 `is404`（404 請求的 `routeOptions.url` 是 undefined）。 */
 function isTextBodyExemptRoute(request: FastifyRequest): boolean {
   if (request.is404) return false;
   const url = request.routeOptions.url;
@@ -358,25 +199,9 @@ function isTextBodyExemptRoute(request: FastifyRequest): boolean {
 }
 
 /**
- * multipart 豁免路由的 CSRF 防線：Origin 驗證。比較對象是
- * `new URL(origin).host` 與 **`request.host`**——不是 `hostname`：後者剝除 port，會讓
- * LAN 形狀（`192.168.1.50:3000`）與 dev（`localhost:5173`）全部誤判不符。
- *
- * `Origin: "null"`（沙箱化 iframe 等情境瀏覽器字面送出的字串 "null"）與任何無法用
- * `new URL()` 解析的 Origin 值一律視為不符——保守以對，不放行無法驗證的來源。
- * 呼叫端負責「無 Origin header → 放行」（不在此函式內判定，因為
- * `undefined` 不該被硬塞進來解讀成某種「值」）。
- *
- * **已知前提（trustProxy）**：`request.host` 在信任代理時，若請求帶 `X-Forwarded-Host`
- * 且來源 socket 通過 trustProxy 判定，會採信該 header 而非實際的 `Host` header（fastify
- * `buildRequestWithTrustProxy` 的既定行為，非本函式決定）。issue #13 之後 `trustProxy`
- * 預設是 `false`，所以預設部署下這條前提根本不成立；設了 `TRUST_PROXY` 的部署則落在
- * 「只有被信任的來源送的 header 會被採信」這一側。
- *
- * 即使在最寬鬆的 `TRUST_PROXY=true` 下也**不可從瀏覽器利用**：本站無 CORS 設定，跨源
- * 請求若帶自訂 header（如 `X-Forwarded-Host`）會觸發 preflight，瀏覽器在收不到允許的
- * CORS 回應前就會擋下；`<form>` 提交（唯一免 preflight 的跨站攻擊面）無法附加自訂
- * header。**若日後加 CORS，這個前提會失效。**
+ * Compares `host`, not `hostname`: hostname drops the port, so LAN and dev origins (e.g. localhost:5173) would be rejected.
+ * With TRUST_PROXY, `request.host` may come from X-Forwarded-Host; browsers can't send that cross-site
+ * without a CORS preflight, which this server never grants. Adding CORS breaks this assumption.
  */
 function isOriginAllowed(origin: string, requestHost: string): boolean {
   if (origin === "null") return false;
@@ -389,34 +214,16 @@ function isOriginAllowed(origin: string, requestHost: string): boolean {
   return stripDefaultPort(originHost) === stripDefaultPort(requestHost);
 }
 
-// `sendError` 定義於 `./http/errors.js`（不被任何 routes/* 依賴的葉節點模組），
-// app.ts 與各路由模組（setup.ts、auth.ts、…）都從那裡 import，不在此重新宣告——
-// 避免 app.ts ↔ routes/* 之間的循環 import（前幾輪曾靠「具名 function 宣告會被
-// ESM 整個 hoist」規避，現在直接消除循環，不用再依賴那個前提）。
-
-/** 4xx 錯誤碼映射：已知的具體碼優先，其餘 4xx 一律歸類 bad_request（不可吞成 500）。 */
 function clientErrorCode(statusCode: number): ErrorCode {
   if (statusCode === 415) return "unsupported_media_type";
-  // #106：413 一律是「送來的 body 超過該路由的 `bodyLimit`」（fastify 的 FST_ERR_CTP_BODY_TOO_LARGE）。
-  // 上傳路由不靠這條分流——它自己接住 multipart 例外並回 `file_too_large`（見 routes/uploads.ts）。
   if (statusCode === 413) return "content_too_large";
   return "bad_request";
 }
 
 
 /**
- * Fastify app 工廠：掛好 cookie 解析、統一錯誤格式（含 404/415/4xx/500）、認證/授權
- * decorator（`authenticate`/`requireAdmin`）與 `/healthz`。路由本身
- * 以 `app.register(...)` 掛進來，這裡只建骨架與接縫。
- */
-/**
- * #72：把 token 遮罩的 `req` serializer 合併進 fastify logger 設定。
- * - `false`（測試預設關 log）原樣通過；`true` 展開成物件形；物件形保留呼叫端的
- *   其餘欄位、**覆蓋 `serializers.req`**（呼叫端不得自帶——會被這裡蓋掉，這是
- *   刻意的：遮罩是安全不變量，不給關）。
- * - serializer 輸出鏡射 fastify 預設 req serializer 的欄位（method/url/version/host/
- *   remoteAddress/remotePort——與 logger-pino.js 逐欄對過：`host` 含 port、
- *   `version` 取 accept-version header），只差 url 過 `redactPublicTokens`。
+ * Always overrides `serializers.req`, even a caller's: redacting share tokens from URLs is a security invariant.
+ * Fields mirror fastify's default req serializer; only `url` differs.
  */
 function withTokenRedaction(logger: FastifyServerOptions["logger"]): FastifyServerOptions["logger"] {
   if (logger === false) return false;
@@ -439,48 +246,24 @@ function withTokenRedaction(logger: FastifyServerOptions["logger"]): FastifyServ
   };
 }
 export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyInstance {
-  // uploads 目錄可寫性探測放在最前面、任何 Fastify 初始化之前——這是一個
-  // 獨立於 HTTP 框架的環境前置條件（同 index.ts 的 migration fail-fast 精神），
-  // 失敗就不該繼續往下建 app。
   assertUploadsDirWritable(deps.uploadsDir);
 
-  // maxParamLength 預設 100：find-my-way 是量「解碼後」的 UTF-16 code unit 數，跟
-  // `titleSlug`／`validateSlug` 量的是 code point 數（60／100）不是同一把尺——
-  // astral 字元（例如 𠮷）解碼後是 2 個 UTF-16 unit，60 個 astral 字算下來就破百。
-  // #122 之後新網址不再組 `<vanity>-<uuid>` 長 ref，但**舊版發出去的長連結永久活著**
-  // （uuid 尾碼解析），這個修正不能跟著消失——守衛見 notes-slug.test.ts 的
-  // 「解碼後 UTF-16 長度 > 100 的舊形長 ref」案（414 URI Too Long 實測，連 handler
-  // 都不會被呼叫）。512 給足緩衝，不必跟著 slug 規則同步微調。必須放進 `routerOptions`，不能當 Fastify 建構子的頂層選項——頂層
-  // `maxParamLength` 是 deprecated 寫法（FSTDEP022），fastify@6 會整個移除，屆時會
-  // 靜默退回預設值 100，等於這個修正自己失效又不出任何警告；`routerOptions` 這個
-  // 寫法才是不會過期、也不會印 deprecation warning 的形式。
-  // trustProxy 由 `TRUST_PROXY` 決定，預設 `false`（issue #13）：採信一個任何人都能自己
-  // 填的 header，等於所有 per-IP 節流都能換個假 IP 繞過。反代拓撲要自己打開——見
-  // `config.ts` 的 `parseTrustProxy`，以及下面那道一次性的錯配警告。
+  // find-my-way counts decoded UTF-16 units, so old `<vanity>-<uuid>` links with astral characters exceed
+  // the default 100 and get 414. Set via routerOptions: top-level maxParamLength is deprecated (FSTDEP022)
+  // and would silently fall back to 100 once removed.
   const app = Fastify({
-    // #72：req serializer 由這裡**無條件合併**進最終 logger 設定——寫在
-    // `?? true` 的預設側會被注入 logger 整份取代（測試注入 destination 後 production
-    // 零遮罩照樣綠的假守衛形）。fastify 預設 req serializer 會印
-    // `req.url`，分享 token 走 URL（/p/、/api/public/notes/），不遮就逐筆進 log。
-    // 測試只注入 destination/stream、禁止自帶 serializers（帶了會被這裡覆蓋 req 鍵）。
+    // Wrapped after the default so an injected test logger still gets redaction.
     logger: withTokenRedaction(options.logger ?? true),
     trustProxy: deps.config.trustProxy,
     routerOptions: { maxParamLength: 512 },
   });
 
-  // 設定錯配的一次性警告（issue #13）。`TRUST_PROXY` 沒設、請求卻帶著
-  // `X-Forwarded-For`，代表前面確實有一層代理而我們沒被告知——後果不是「被繞過」而是
-  // 「拒絕服務」：`request.ip` 會是代理的位址，於是**所有使用者共用同一個 IP 軌**，任何人
-  // 連錯 5 次密碼就把整個站鎖進退避窗口。這種錯配從外部看只像「大家突然都登不進去」，
-  // 沒有訊號的話幾乎不可能診斷出來。
-  //
-  // 只警告一次：這是部署設定問題，不是每個請求的事件，重複噴只會淹掉 log。
+  // Forwarded headers without TRUST_PROXY mean an undeclared proxy: every client gets the proxy's IP, so a few
+  // failed logins lock everyone out. Warn once; it's a deployment problem, not a per-request event.
   if (!deps.config.trustProxy) {
     let warned = false;
     app.addHook("onRequest", async request => {
-      // 不只看 `x-forwarded-for`：只送 `X-Real-IP`（很常見的 nginx 樣板）或 RFC 7239
-      // `Forwarded` 的代理，症狀一模一樣（全站共用一份 IP 額度），但 fastify 推導
-      // `request.ip` 只讀 `x-forwarded-for`——那種錯配更需要被講出來，不是更不需要。
+      // Not just X-Forwarded-For: proxies that send only X-Real-IP or Forwarded cause the same shared-IP problem.
       const forwardedHeaders = ["x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host", "x-forwarded-proto"];
       if (warned || !forwardedHeaders.some(name => request.headers[name] !== undefined)) return;
       warned = true;
@@ -491,92 +274,47 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
-  // 不用 secret：session 是自帶簽章的 JWT，cookie 本身不需要再簽一次。
+  // No secret: the session cookie is already a signed JWT.
   void app.register(fastifyCookie);
 
-  // `@fastify/multipart` 必須註冊在頂層 `app`（這裡），**不可**移進
-  // `uploadsRoutes` 自己的 register 函式內——`app.register(uploadsRoutes(...))` 對
-  // `uploadsRoutes` 這個純函式（未用 `fastify-plugin` 包裝）而言會建立新的封裝
-  // 子情境，若在那個子情境內才註冊 multipart，`@fastify/multipart` 掛的
-  // content-type parser／decorator 只在該子情境內可見，不會外溢到 `app` 上其他
-  // 路由（例如 `/api/auth/login`）。這件事本身雖不影響功能正確性，但會讓「multipart
-  // parser 真的可用、只有白名單判定能擋下非豁免路由」這個不變量在生產拓撲下不成立
-  // ——`test/uploads.test.ts` 的 CSRF 迴歸測試（multipart body 打 `/api/auth/login`
-  // 仍 415）就是靠「parser 全域可用」這個前提才具備 mutation 鑑別力（見該測試檔說明），
-  // 註冊位置一旦挪動，測試看起來還是綠，但鑑別力已經悄悄消失。
-  //
-  // `limits`：`fileSize` 用註冊表的上傳上限最大值（10 MiB；實際上限在 `routes/uploads.ts` 每次請求現讀 `siteLimits`）；`parts`/`fields`/
-  // `fieldSize` 是防病態 multipart body 的粗閘（32 parts、16 fields、每個 field 1 KiB）。
-  // 刻意**不設 `limits.files`**——`routes/uploads.ts` 自己處理「多個 file part 只取
-  // 第一個，其餘 drain」；設了 `files` 上限會讓外掛在偵測到第二個 file part 時自己
-  // 丟 `FilesLimitError`（413），直接逃逸出我們手動控制的「取第一個」邏輯。
-  //
-  // `throwFileSizeLimit:false`：超過 `fileSize` 不丟例外，只把該 file part 的
-  // `.truncated` 設為 true——`routes/uploads.ts` 自己判斷 truncated 狀態、映射成
-  // 契約要求的 413 `file_too_large`，不吃外掛預設丟出的 `RequestFileTooLargeError`
-  // （那個錯誤沒有我們要的錯誤碼語意，且會在其他 file part 還沒處理完時就中斷整個
-  // `parts()` 迭代，讓「其餘 drain」做不到）。
+  // Top-level on purpose: inside uploadsRoutes' encapsulated context the parser wouldn't reach other routes,
+  // and the CSRF test (multipart to /api/auth/login must 415) would pass without proving the allowlist works.
+  // fileSize is the registry maximum; routes/uploads.ts enforces the live limit. No `limits.files`: the route
+  // keeps the first file part and drains the rest. throwFileSizeLimit:false lets the route map `.truncated`
+  // to 413 file_too_large instead of the plugin error aborting the parts() loop.
   void app.register(fastifyMultipart, {
     limits: { fileSize: SITE_LIMITS.uploadMaxBytes.max, parts: 32, fields: 16, fieldSize: 1024 },
     throwFileSizeLimit: false,
   });
 
-  // #132：`POST /oauth/token` 是 form 端點（OAuth 規格要求）。與 multipart 同層註冊在
-  // 頂層 app——放進封裝 plugin 內 parser 不會外溢，守衛測試的鑑別力會靜默消失。
+  // /oauth/token takes form bodies (OAuth spec); top-level for the same reason as multipart.
   void app.register(fastifyFormbody);
 
-  // bulk transfer：`PUT /api/transfer/notes` 的 `text/markdown` body。同 multipart／formbody 註冊在
-  // **頂層 app**（`transferRoutes` 是非 fastify-plugin 的子情境，註冊在裡面不外溢）——「parser 全域可用、只有
-  // `TEXT_BODY_EXEMPT_ROUTES` 的判定擋得下其他路由」才是這張白名單測試的鑑別力前提。parser 只回 Buffer，**解碼在路由**（fatal UTF-8）。
+  // Top-level for the same reason as multipart. Returns the raw Buffer; the route decodes it as strict UTF-8.
   app.addContentTypeParser("text/markdown", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
   });
 
-  // issue #101：`nosniff` 掛在**每一個**回應上。CSP 只對 HTML 文件有意義（掛在
-  // `http/spa.ts` 回 index.html 那條路徑），但這個標頭是逐回應的便宜防線，JSON 錯誤
-  // 與 `/assets/*.js` 也該有——擋掉「瀏覽器猜錯 content-type 就把回應當成別的型別執行」
-  // 那一族。守衛：`test/spa.test.ts` 的「nosniff 掛在每個回應上」。
+  // On every response, not only HTML (CSP is in http/spa.ts), so JSON and assets can't be MIME-sniffed.
   app.addHook("onSend", async (_request, reply) => {
     reply.header("x-content-type-options", "nosniff");
   });
 
-  // 全域 onRequest hook：只要有呼叫 setNotFoundHandler，onRequest 就會對「未匹配路由」
-  // 也執行（fastify#3120 結論）——不可把這段邏輯改掛進 setNotFoundHandler 的 options，
-  // 其只接受 preValidation/preHandler，掛 onRequest 會直接報錯。
+  // onRequest also runs for unmatched routes once setNotFoundHandler is used (fastify#3120).
   app.addHook("onRequest", async (request, reply) => {
     if (!CHANGE_METHODS.has(request.method)) return;
 
-    // 有 body 的判定：content-length 存在且非 0，或用 chunked transfer-encoding
-    // （這種請求沒有 content-length，但仍然帶 body，必須視為「有 body」）。
-    // 無 body 的變更請求（例如 POST /logout 不帶 Content-Type/body）則放行——
-    // 不能對這類請求一律要求 application/json。
+    // Chunked requests have a body but no content-length; body-less mutations (e.g. logout) pass.
     const transferEncoding = request.headers["transfer-encoding"];
     const contentLength = request.headers["content-length"];
     const hasBody = transferEncoding !== undefined || (contentLength !== undefined && contentLength !== "0");
     if (!hasBody) return;
 
-    // MIME essence 等值比對（忽略 `;charset=...` 等參數）——不可用 substring
-    // includes：`text/plain;charset=application/json` 是 CORS-safelisted 的
-    // Content-Type，若用 includes 會被誤判為合法 JSON 請求而放行，等於繞過守衛。
+    // Exact essence, not includes(): `text/plain;charset=application/json` is CORS-safelisted.
     const contentType = request.headers["content-type"];
     const essence = contentType?.split(";")[0]?.trim().toLowerCase();
 
-    // multipart 上傳路由豁免 JSON 檢查，改走「essence 必須是
-    // multipart/form-data，否則 415」+ Origin 驗證。豁免不等於不驗證：
-    // 放行任意 Content-Type 會讓 `application/json` 打上傳端點落到 `@fastify/multipart`
-    // 丟出非契約錯誤（而非我們的 415 統一格式）。
-    //
-    // drain 通則（由 `drainWithCap` helper 承接，有位元組上限）：這兩條早退路徑（essence 415、Origin 403）
-    // 回應前必須 drain 讓 Node 消費剩餘 body——不 await `end`（大檔
-    // 上傳中途拒絕不能白等整個 body 傳完才回應），也不能完全不消費（完全不消費會讓
-    // client 在傳輸中收到 network error 而非結構化 error body，i18n toast 拿不到
-    // code）。下方既有的 JSON essence 415（非豁免路由）刻意不加 drain——drain 通則涵蓋的早退路徑只有「onRequest 的 Origin 403 與 essence 415」（指
-    // multipart 豁免路由這兩條），不含一般路由的 JSON essence 415；後者在產品環境本來
-    // 就幾乎不可達（正常 client 打 JSON API 一律帶 `application/json`，這條分支只在
-    // 誤用/探測時觸發，非大檔上傳情境），不在這次擴充的 drain 範圍內。
-
-    // #132：兩個 RFC 形前綴的 415 要走 RFC 形 body。用 URL 前綴判定（404 時
-    // routeOptions.url 是 undefined），只有豁免路由收 form。
+    // OAuth prefixes get RFC-shaped 415s, matched by URL prefix because `routeOptions.url` is undefined on 404.
     const pathname = request.url.split("?")[0]!;
     if (isOauthScopedPath(pathname)) {
       const wantsForm = !request.is404 && FORM_EXEMPT_ROUTES.has(`${request.method} ${request.routeOptions.url}`);
@@ -587,6 +325,9 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       return;
     }
 
+    // Exempt routes still require their own essence (otherwise the parser throws non-contract errors) plus the
+    // Origin check. Their 415 and 403 early returns drain, with a cap, so a rejected upload gets an error body instead
+    // of a network error mid-transfer. The JSON 415 below doesn't drain: normal clients never hit it.
     if (isMultipartExemptRoute(request)) {
       if (essence !== "multipart/form-data") {
         drainWithCap(request);
@@ -597,7 +338,6 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
         drainWithCap(request);
         return sendError(reply, 403, "forbidden", "Origin check failed: the request's Origin doesn't match its Host.");
       }
-      // Origin 相符，或無 Origin header（放行）——落到 preHandler/handler。
       return;
     }
 
@@ -620,18 +360,9 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   });
 
   /**
-   * cookie session 的解析，**不送回應**——回 null 就是「這個請求沒有有效 session」，
-   * 由呼叫端決定那代表什麼。
-   *
-   * #107 把它從 `authenticate` 抽出來的理由：Bearer 那條路徑（`auth/bearer.ts` 的
-   * `authenticateAny`）不能靠呼叫 `authenticate` 來做 cookie 回退。`sendError`
-   * 內含 `reply.send()`，之後再 `reply.header()` 補 `WWW-Authenticate` 只會寫進
-   * `kReplyHeaders`、而 onSend 鏈已經排程——header 會**靜默消失**（fastify 5 實測）。
-   * 兩個 decorator 因此各自決定回應，只共用這一支解析。
-   *
-   * #267：解出有效 session 就順手記「最後活動」（`LastActiveTracker`：節流、永不等鎖、不拋）。放在這裡而不是 decorator，
-   * 是因為 `authenticate` 與 `authenticateAny` 的 session 路徑都走這支；bearer token 路徑不走，所以 token 請求不算活動。
-   * 有共編就用它那份（共編連線與變更也在那裡記），同一行程共用一張節流表；沒有共編（buildTestApp）另建一份。
+   * Returns null instead of replying. The Bearer path can't fall back by calling `authenticate`: after
+   * sendError, a `WWW-Authenticate` header is silently lost (fastify 5). Records last activity here because
+   * both session paths come through; token requests don't count as activity.
    */
   const lastActive = deps.collab?.lastActive ?? new LastActiveTracker(deps.db, app.log);
   async function resolveSessionUser(request: FastifyRequest): Promise<ResolvedSession | null> {
@@ -640,18 +371,13 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     return resolved;
   }
 
-  // 以下兩個 decorator 都以一般具名函式（而非箭頭函式綁 this）宣告，但內部完全不用
-  // `this`——`requireAdmin` 呼叫 `authenticate` 是透過閉包捕捉的外層 `app` 變數，
-  // 不依賴 fastify 呼叫時的 this 綁定，故用 `app.authenticate(...)`／
-  // `app.requireAdmin(...)`（或當作 preHandler 傳給其他路由）皆可正確運作。
   app.decorate("authenticate", async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const resolved = await resolveSessionUser(request);
     if (!resolved) {
       sendError(reply, 401, "unauthorized", "Not signed in.");
       return;
     }
-    // ⚠ `sessionTv`／`sessionId` 不得漏：`POST /api/notes/:id/collab-token` 把兩者簽進
-    // collab token，漏了會讓簽出的 token 帶 undefined。
+    // The collab-token route signs both `sessionTv` and `sessionId` into the token.
     request.user = resolved.user;
     request.sessionTv = resolved.tv;
     request.sessionId = resolved.sid;
@@ -667,13 +393,12 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
 
   app.get("/healthz", async () => ({ ok: true }));
 
-  // 31 顆節流桶：22 顆固定的＋9 顆可調的（`limit` 現讀這個 app 的 `deps.siteLimits`，#397）；測試只覆寫它要驗的那幾顆。
   const limiters = mergeLimiters(
     { ...buildFixedLimiters(), ...buildAdjustableLimiters(deps.siteLimits) } satisfies Limiters,
     deps.limiters
   );
   const storageLockTimeoutMs = deps.storageLockTimeoutMs ?? DEFAULT_STORAGE_LOCK_TIMEOUT_MS;
-  // 版本歷史：有 collab 就用它那份（已 bind hocuspocus）；沒有 collab（buildTestApp）另建一份未綁定的——REST 讀 note_states 當暫時狀態。
+  // Without collab, an unbound service: REST reads note_states as the live state.
   const versions = deps.collab?.versions ?? createVersionService({ db: deps.db, log: app.log });
   if (deps.startVersionSweep) {
     const runSweep = (): void => {
@@ -683,7 +408,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     first.unref();
     const every = setInterval(runSweep, VERSION_SWEEP_INTERVAL_MS);
     every.unref();
-    // #272：自動切版掃描。不另設首發 setTimeout（第一輪在一個間隔之後）；同時只跑一輪由 `scanDue` 自己擋。
+    // No first-run timeout; scanDue itself prevents overlapping runs.
     const runScan = (): void => {
       void versions.scanDue().catch(err => app.log.warn({ err }, "自動切版背景掃描失敗"));
     };
@@ -693,7 +418,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       clearTimeout(first);
       clearInterval(every);
       clearInterval(scanEvery);
-      // 等進行中那一輪做完手上那一篇，但至多 SCAN_STOP_GRACE_MS（2 s，與 index.ts 的關機上限共用；timer unref，不撐住行程）。
+      // Bounded so a stuck note can't stall close; same grace as the index.ts shutdown.
       await Promise.race([versions.stopScan(), new Promise<void>(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref())]);
     });
   }
@@ -714,67 +439,53 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
-  // #107：`limiters` 在上面才算出來，所以這個 decorate 必須排在它之後、任何
-  // `app.register(路由)` 之前——路由模組的 register 內會呼叫 app.authenticateAny。
-  // （`limiters` 為此上移到 authRoutes 之前；已查證 `AuthRouteDeps` 沒有 limiters 欄，
-  // 上移不改變任何行為。）
+  // Before any route registration: route plugins call app.authenticateAny.
   app.decorate(
     "authenticateAny",
     createAuthenticateAny({
       db: deps.db,
       gate: deps.gate,
-      // issuer 一律取 **origin**（`publicUrlIssuer`）。⚠ 寫成 `.href` 會多一個尾
-      // 斜線（`http://localhost:3000/`），challenge 就變成 `…3000//.well-known/…`——
-      // api-token-auth.test.ts 的第一個 it 對 resource_metadata 做逐字 toContain，會抓到。
+      // Origin, not href: href's trailing slash yields `…3000//.well-known/…`.
       issuer: publicUrlIssuer(deps.config.publicUrl),
       resolveSessionUser,
       limiters: { bearerMiss: limiters.bearerMiss, tokenRead: limiters.tokenRead, tokenWrite: limiters.tokenWrite },
     })
   );
 
-  // #240：所有路由 plugin 的 `:id`／`:userId` UUID 一律先轉小寫（preValidation 排在路由層 preHandler 之前，
-  // `app.authenticate*` 與 handler 都看到小寫；app 層 hook 套到所有子 plugin——Fastify 5.11.2 的行為）。
-  // 加在任何 `app.register(路由)` 之前。
+  // Before any route registration: app-level preValidation reaches every route plugin and runs before their
+  // preHandlers, so auth and handlers see lowercase ids.
   app.addHook("preValidation", lowercaseUuidParams);
 
   void app.register(
     authRoutes({ db: deps.db, config: deps.config, siteLimits: deps.siteLimits, gate: deps.gate, throttle: deps.throttle, collabHooks: deps.collabHooks, reloginReverifyDelayMs: deps.reloginReverifyDelayMs })
   );
-  // #107：PAT 管理端點——cookie 專用（token 不能簽發或撤銷 token），見 routes/api-tokens.ts 檔頭。
   void app.register(
     apiTokensRoutes({ db: deps.db, siteLimits: deps.siteLimits, limiters: { patCreate: limiters.patCreate, tokenRename: limiters.tokenRename } })
   );
-  // #132：同意頁的站內端點（cookie session、站內錯誤形），與 RFC 形的 /oauth 分開。
   void app.register(oauthApiRoutes({ db: deps.db, config: deps.config, siteLimits: deps.siteLimits }));
 
-  // #187：registry 是 per-app 實例（嚴禁 module 單例，同 limiters）。callback 需要 db（帳號解析交易）與 gate（建帳後 invalidate）。
+  // Per app, never a module singleton (same as limiters).
   const oidcRegistry = deps.oidcRegistry ?? createOidcRuntimeRegistry();
   void app.register(
     oidcRoutes({ config: deps.config, db: deps.db, siteLimits: deps.siteLimits, gate: deps.gate, collabHooks: deps.collabHooks, reloginReverifyDelayMs: deps.reloginReverifyDelayMs, registry: oidcRegistry, limiters: { oidcLogin: limiters.oidcLogin, oidcCallback: limiters.oidcCallback }, oidcTestHook: deps.oidcTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, avatarFetchPolicy: deps.avatarFetchPolicy, avatarJobHooks: deps.avatarJobHooks }),
   );
-  // #187：`/link-account` 頁的 API（GET／confirm／cancel、prove 起點）。密碼證明與登入共用 `deps.throttle`。
   void app.register(
     oidcPendingRoutes({ config: deps.config, db: deps.db, siteLimits: deps.siteLimits, gate: deps.gate, collabHooks: deps.collabHooks, reloginReverifyDelayMs: deps.reloginReverifyDelayMs, throttle: deps.throttle, registry: oidcRegistry, limiters: { oidcLogin: limiters.oidcLogin }, oidcTestHook: deps.oidcTestHook }),
   );
-  // #187：設定頁的手動連結起點（callback 在 oidcRoutes 的 intent: "link" 分支）。
   void app.register(oidcLinkRoutes({ db: deps.db, config: deps.config, registry: oidcRegistry, limiters: { oidcLogin: limiters.oidcLogin } }));
 
-  // #106：內容端點需要一份 jsdom runtime。**lazy**——沒有 collab 就不建（`createEditingRuntime`
-  // 會立刻 `installGlobals()` 掛 window/document，只跑 REST 的 app 不該付這個代價，也不該讓
-  // 瀏覽器嗅探在那些 process 裡失守）。有 collab 就一定有 runtime，兩者同生同滅＝路由要嘛
-  // 兩個依賴都在、要嘛整條不註冊（見 `notesRoutes` 內的註冊閘門）。
+  // Only with collab: createEditingRuntime installs jsdom globals at once, which REST-only apps shouldn't pay
+  // for or expose to browser sniffing.
   const ownEditing = deps.collab !== undefined && deps.editing === undefined;
   const editing = deps.collab ? (deps.editing ?? createEditingRuntime(deps.config, deps.siteLimits.parseLimits(), app.log)) : undefined;
   if (editing) {
-    // #397：解析 pool 跟著站台限制改——自己建的 runtime 一律訂閱；注入的只在 `editingFollowsSiteLimits` 時訂閱（注入者自己管那份
-    // runtime，整合測試的共用 runtime 跨多個 app，不能被任何一個 app 改設定）。四項（含連帶變的自動值）任一有變才 `configure`。
+    // Injected runtimes can be shared across test apps, so they follow siteLimits only when asked.
     const offSiteLimits =
       ownEditing || deps.editingFollowsSiteLimits === true
         ? deps.siteLimits.onChange(keys => {
             if (PARSE_LIMIT_KEYS.some(k => keys.has(k))) editing.parser.configure?.(deps.siteLimits.parseLimits());
           })
         : null;
-    // #398：自己建的 runtime 帶著解析的 worker pool，關 app 時一併終止（注入的那份由注入者管）。先解除訂閱再關。
     if (offSiteLimits !== null || ownEditing) {
       app.addHook("onClose", async () => {
         offSiteLimits?.();
@@ -783,18 +494,13 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     }
   }
 
-  // #138：AI presence。沒有 collab 時建的是全 no-op 空殼（每個方法都會在 `hocuspocus`
-  // 為 undefined 時立刻 return），所以這裡不必再分支。
-  // ⚠ `onClose` 的 `stopAll()` 不得省：每個 entry 都掛著一顆 `setInterval`，不收掉會讓
-  // 測試 run 在 app.close() 之後繼續掛著 handle 不結束。
+  // stopAll() is required: each entry holds a setInterval that would keep handles open after app.close().
   const presence = deps.presence ?? new PresenceRegistry(deps.collab?.hocuspocus, deps.presenceOptions);
   app.addHook("onClose", async () => {
     presence.stopAll();
   });
 
-  // #108：寫入 service **建一次**，`notesRoutes` 與 `mcpRoutes` 共用——
-  // 它持有全樹唯一的 `NoteWriteQueue`，MCP 寫入與 REST 寫入因此對同一篇筆記串行。
-  // ⚠ 這行必須排在 `editing`／`presence` 兩個區域變數之後（同 `mcpRoutes` 的註冊點）。
+  // Built once and shared with mcpRoutes: it owns the single NoteWriteQueue, so MCP and REST writes to a note serialize.
   const writes = new NoteWriteService({
     db: deps.db,
     collab: deps.collab,
@@ -808,14 +514,13 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     noteMaxBytes: () => deps.siteLimits.get("noteMaxBytes"),
   });
 
-  // #269：必用同一個 `writes`（共用佇列，與 MCP 寫入、套用版本、手動存版串行）。只建、不啟動——`index.ts` listen 之後才 start()，
-  // 測試的 app 不 start（整合測試直接呼叫 `runLinkConversion(app.linkConversion.deps!, …)`）。
+  // Same `writes`, so conversion queues behind other writes. index.ts starts it after listen; tests call runLinkConversion directly.
   const linkConversion = writes.available
     ? createLinkConversion({ db: deps.db, writes, versions, log: app.log, siteOrigin: deps.config.publicUrl.origin })
     : NOOP_LINK_CONVERSION;
   app.decorate("linkConversion", linkConversion);
   app.addHook("onClose", async () => {
-    // 與 SIGTERM 鏈同一個 2 s 上限（SCAN_STOP_GRACE_MS，與 #272 的掃描 onClose 共用）——在途那一篇不得把 app.close()／pool.end() 拖到 SIGKILL。
+    // Bounded so an in-flight note can't push app.close()/pool.end() past SIGKILL.
     await Promise.race([linkConversion.stop(), new Promise<void>(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref())]);
   });
 
@@ -841,39 +546,27 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       storageLockTimeoutMs,
     })
   );
-  // 版本歷史：cookie 專用六支；apply 只在 writes.available 時註冊（路由內判）。
   void app.register(noteVersionsRoutes({ db: deps.db, versions, writes, limiters: { edit: limiters.edit } }));
-  // #181：垃圾桶清單／還原／永久刪除（cookie-only，見 routes/trash.ts 檔頭）。
   void app.register(trashRoutes({ db: deps.db, collabHooks: deps.collabHooks, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, groupTestHook: deps.groupTestHook }));
-  // 資料夾：讀取收 Bearer notes:read、寫入 cookie-only（見 routes/folders.ts 檔頭）。
   void app.register(foldersRoutes({ db: deps.db, collabHooks: deps.collabHooks, storageLockTimeoutMs, groupTestHook: deps.groupTestHook, limiters: { folder: limiters.folder } }));
-  // #334：最愛清單／加入／移出（cookie-only，見 routes/favorites.ts 檔頭）。
   void app.register(favoritesRoutes({ db: deps.db, limiters: { favorite: limiters.favorite }, groupTestHook: deps.groupTestHook }));
-  // #103：群組管理（session-only，見 routes/groups.ts 檔頭）。
   void app.register(groupsRoutes({ db: deps.db, collabHooks: deps.collabHooks, groupTestHook: deps.groupTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, versions }));
-  // 加成員／分享對話框的「認識的人」建議（session-only，見 routes/users.ts 檔頭）。
   void app.register(usersRoutes({ db: deps.db, limiters: { userSuggest: limiters.userSuggest } }));
   void app.register(searchRoutes({ db: deps.db, limiters: { search: limiters.search } }));
   void app.register(adminUsersRoutes({ db: deps.db, gate: deps.gate, collabHooks: deps.collabHooks, adminTestHook: deps.adminTestHook }));
-  // #286：管理員替使用者產生／取消一次性重設密碼連結。
   void app.register(adminPasswordResetRoutes({ db: deps.db, config: deps.config }));
-  // #285：管理員產生／列出／撤銷邀請連結。
   void app.register(adminInvitesRoutes({ db: deps.db, config: deps.config }));
-  // 儲存配額：方案管理、預設、站台群組列表與指派（admin）；個人與群組用量檢視。
   void app.register(adminStorageRoutes({ db: deps.db }));
   void app.register(storageRoutes({ db: deps.db }));
   void app.register(adminAiRoutes({ db: deps.db, config: deps.config, runtime: deps.ai }));
-  // #187：站台管理的登入服務。與登入路由共用同一個 registry（PATCH／DELETE 要 invalidate、test／discover 用 probe）。
+  // Same registry as the login routes, so provider edits invalidate cached runtimes.
   void app.register(adminAuthRoutes({ db: deps.db, config: deps.config, registry: oidcRegistry }));
-  // 版本歷史：站台清除天數與自動儲存總開關。
   void app.register(adminVersionsRoutes({ db: deps.db }));
-  // #181：垃圾桶保留天數。
   void app.register(adminTrashRoutes({ db: deps.db }));
   void app.register(adminLimitsRoutes({ db: deps.db, siteLimits: deps.siteLimits }));
-  // #272：e2e 測試縫（只在 KNOTEBOOK_E2E_TEST_HOOKS=1 且 PUBLIC_URL 是 loopback 時；見 config.ts 的 `testHooks`）。
+  // Only with KNOTEBOOK_E2E_TEST_HOOKS=1 and a loopback PUBLIC_URL (config.ts).
   if (deps.config.testHooks) void app.register(testHookRoutes({ versions }));
-  // #187：註冊、個人設定的登入方式與加上密碼。
-  // #285：邀請端點的 miss／嘗試桶與下面的重設密碼路由拿同一組實例（跨 kind 共用）。
+  // Same oneTimeLink* instances as passwordResetRoutes, so invite and reset attempts share one budget.
   void app.register(
     accountRoutes({
       db: deps.db,
@@ -885,7 +578,6 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       limiters: { register: limiters.register, oneTimeLinkMiss: limiters.oneTimeLinkMiss, oneTimeLinkAttempt: limiters.oneTimeLinkAttempt },
     }),
   );
-  // 頭貼：候選清單與上傳（cookie-only）。
   void app.register(
     avatarsRoutes({
       db: deps.db,
@@ -898,7 +590,6 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       avatarTestHooks: deps.avatarTestHooks,
     }),
   );
-  // #286：無登入的重設密碼端點——inspect 與以一次性連結設定新密碼。
   void app.register(
     passwordResetRoutes({
       db: deps.db,
@@ -912,36 +603,27 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(
     aiRoutes({ db: deps.db, config: deps.config, runtime: deps.ai, limiters: { ai: limiters.ai }, idleTimeoutMs: options.aiIdleTimeoutMs })
   );
-  // `NotesRouteDeps.limiters` 的型別只列它實際用到的鍵（清單見該 interface；`upload` 與上傳端點共用同一個實例）——這裡傳整包
-  // `limiters` 給它，屬於變數（非物件
-  // 字面值）賦值給較窄的結構型別，TS 不做 excess property check，不需要另外
-  // pick／窄化。`uploadsRoutes` 自己的 deps 逐鍵挑它用到的三個節流器。
   void app.register(
     uploadsRoutes({
       db: deps.db,
       config: deps.config,
       siteLimits: deps.siteLimits,
       gate: deps.gate,
-      // #200：bearerMiss／tokenRead 與 authenticateAny 是**同一個實例**（同一本帳由物件同一性成立）。
+      // Same instances as authenticateAny's, so misses count against one budget.
       limiters: { upload: limiters.upload, bearerMiss: limiters.bearerMiss, tokenRead: limiters.tokenRead },
       uploadsDir: deps.uploadsDir,
       groupTestHook: deps.groupTestHook,
       storageLockTimeoutMs,
     })
   );
-  // #72 公開端點（免登入）：三步節流順序與 404 同形見 routes/public.ts 檔頭。
   void app.register(publicRoutes({ db: deps.db, uploadsDir: deps.uploadsDir, limiters: { publicMiss: limiters.publicMiss, publicNote: limiters.publicNote, publicUpload: limiters.publicUpload } }));
-  // #108：真正的 MCP 端點（六步順序、stateless 一請求一實例、Origin 守衛、bodyLimit
-  // 都在 routes/mcp.ts 的檔頭）。⚠ 註冊點必須排在 `editing` 與 `presence` 兩個區域變數
-  // 算出來之後——這裡已經在後面了。
   void app.register(
     mcpRoutes({
       db: deps.db,
       config: deps.config,
       collab: deps.collab,
       editing,
-      // 逐鍵挑，不整包轉傳——MCP 只該看得到它自己會用的六顆桶（#180：`upload` 給 copy_note，與 uploadsRoutes／notesRoutes 同一實例；
-      // `folder` 給資料夾工具，與 foldersRoutes 同一實例）。
+      // Only MCP's own limiters; upload and folder are the same instances as the REST routes'.
       limiters: { contentRead: limiters.contentRead, edit: limiters.edit, tokenWrite: limiters.tokenWrite, search: limiters.search, upload: limiters.upload, folder: limiters.folder },
       presence,
       writes,
@@ -957,8 +639,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     })
   );
 
-  // bulk transfer：`/api/transfer/*` 只在有 collab＋editing 時掛（匯出要 live doc 與 mount，同 MCP 讀取工具的閘門）。
-  // `bearerMiss` 與 authenticateAny 同一個實例；`contentRead` 與 MCP／REST 讀取同一個實例。
+  // Export needs live docs and mounts, so only with collab and editing.
   if (deps.collab && editing) {
     void app.register(
       transferRoutes({
@@ -974,7 +655,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     );
   }
 
-  // #132：兩個 RFC 形 plugin 各自帶 prefix（root notFound 由 spa.ts 獨佔）。
+  // Prefixed: the root notFound handler belongs to spa.ts.
   void app.register(
     oauthRoutes({
       db: deps.db,
@@ -987,27 +668,20 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   );
   void app.register(oauthMetadataRoutes({ config: deps.config }), { prefix: "/.well-known" });
 
-  // 共編的 WebSocket 掛在底層 http server 的 upgrade 事件上，不經 Fastify 路由——
-  // 因此與上面的路由註冊順序無關，也不會被 setNotFoundHandler／SPA fallback 攔到。
+  // WebSocket upgrades bypass Fastify routing, so neither route order nor the SPA fallback affects them.
   deps.collab?.attach(app);
 
-  // 擴充既有的 setNotFoundHandler（不是另開路由）：webDist 未傳時完全等同原本的
-  // 純 JSON 404；傳入時額外處理 SPA fallback（見 registerSpaFallback 內的完整說明）。
   registerSpaFallback(app, options.webDist);
 
-  // 4xx 不可吞成 500：fastify 內建錯誤（如壞 JSON body 的 FST_ERR_CTP_INVALID_JSON_BODY）
-  // 帶有正確的 statusCode（400），只是訊息格式不是我們的統一格式；這裡沿用該
-  // statusCode 並映射成對應的 code。只有 >=500（真正的伺服器端例外）才記錄
-  // log.error 並回覆不洩漏細節的 `internal`。
+  // Keep fastify's own 4xx status (e.g. invalid JSON → 400) rather than turning it into 500; only ≥500 is logged.
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     const status = error.statusCode ?? 500;
     if (status >= 500) {
-      // #107：錯誤 log 若要記身分，**只記 authKind 與 tokenId**——不記 token 明文，
-      // 也不記 Authorization header（`serializers.req` 本來就不印 headers）。
+      // Identity in logs is authKind and tokenId only, never the token or Authorization header.
       request.log.error({ err: error, authKind: request.authKind, tokenId: request.tokenId }, "unhandled error");
       return sendError(reply, 500, "internal", "Internal server error.");
     }
-    // #372：413 不回 fastify 原生句（"Request body is too large"），改成與其他錯誤同口吻的固定句。
+    // Fixed sentence instead of fastify's native 413 message, matching the other errors.
     const message = status === 413 ? BODY_TOO_LARGE_MESSAGE : error.message || "Bad request.";
     return sendError(reply, status, clientErrorCode(status), message);
   });

@@ -10,9 +10,9 @@ export type LinkProof = { kind: "password"; passwordHash: string } | { kind: "ss
 
 export interface LinkPendingInput {
   targetUserId: string;
-  /** pending cookie 裡的 email（已正規化）。 */
+  /** From the pending cookie, already normalized. */
   pendingEmail: string;
-  /** 要連結的新身分——**一律取自 pending cookie**，不取自 SSO 證明的第二段往返。 */
+  /** The new identity to link: always from the pending cookie, never from the SSO proof's second round trip. */
   issuer: string;
   sub: string;
   proof: LinkProof;
@@ -31,15 +31,11 @@ export interface LinkedUser {
 }
 
 /**
- * #187。**第一句**鎖目標帳號（`FOR NO KEY UPDATE`，需判「同 issuer 只能一個 sub」的 INSERT identity 交易同一個
- * 序列化點、固定「先 users 後 identity」——create 分支（全新帳號）與開機時的舊欄補登除外；NO KEY UPDATE 與 FK 的 KEY SHARE 相容，不擋同一人建筆記／PAT），之後依序：
- *   1. 列存在且 lower(email)＝pendingEmail，否則 oidc_link_expired；
- *   2. 證明：密碼 → password_hash 仍是驗過的那個字串；SSO → 證明身分屬目標帳號，否則 oidc_link_proof_mismatch（不透露是誰）；
- *   3. 停用 → account_disabled（證明之後才揭露）；
- *   4. 已有同 issuer 的其他 sub → identity_already_linked；
- *   5. INSERT … ON CONFLICT (issuer, sub) DO NOTHING；沒插進去 → 讀現有擁有者：本人＝冪等成功，別人＝identity_taken；
- *   6. must_change_password **不動**。SSO 證明另更新證明身分的 last_login_at（在 users 鎖之後）。
- * 交易外才做的：密碼雜湊比對（S14）、清 pending cookie、gate.invalidate、簽 session（呼叫端）。
+ * The first statement locks the target account row (`FOR NO KEY UPDATE`, compatible with the FK's KEY SHARE) before any identity row (the
+ * create branch and the boot backfill excepted): the serialization point for "one sub per issuer". lower(email) must equal `pendingEmail`
+ * (else `oidc_link_expired`); a password proof needs `password_hash` to still be the verified string. A proof mismatch doesn't reveal whose
+ * identity it was, and `account_disabled` is disclosed only after proof. `must_change_password` is untouched; an SSO proof also updates
+ * the proving identity's `last_login_at` (after the users lock). Password verification (argon2) and the session happen in the caller.
  */
 export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, hook?: OidcTestHook): Promise<LinkedUser> {
   const [row] = await tx
@@ -78,10 +74,8 @@ export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, h
 
   if (row.disabledAt !== null) throw new TxAbort(403, "account_disabled", "This account is disabled.");
 
-  // 「同 issuer 只能一個 sub」的判定用精確 `eq(issuer)`，不用決策／pending GET 的寬鬆 `issuerKey`（`auth/issuer.ts`）：`user_identities.issuer` 與 pending 的
-  // issuer 都是 callback 取自 IdP 的 `serverMetadata().issuer` 原字串（`routes/oidc.ts` 組 claims 處；補登的舊欄也是舊版
-  // callback 寫的），同一個 IdP 寫進來的就是同一字串；寬鬆化會把只差結尾斜線、實為不同 issuer 的身分誤判成「同帳號同 issuer 已連過」。
-  // 排除用寬鬆（寧多勿漏，防止洩漏「這帳號已連過這個 IdP」），判定用精確（寧漏勿誤擋）——兩者方向相反，**不要統一**。
+  // "One sub per issuer" uses exact eq(issuer), not the loose `issuerKey`: both strings come verbatim from the IdP. The
+  // exclusion is loose (over-exclude rather than leak), this check exact (miss rather than wrongly block): don't unify.
   const [sameIssuer] = await tx
     .select({ id: userIdentities.id })
     .from(userIdentities)
@@ -95,7 +89,7 @@ export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, h
     .onConflictDoNothing({ target: [userIdentities.issuer, userIdentities.sub] })
     .returning({ id: userIdentities.id });
   if (inserted.length === 0) {
-    // ON CONFLICT 會先等對方的交易結束；DO NOTHING 之後這一句是新的快照，看得到對方已 commit 的列【推：READ COMMITTED 逐句快照】。
+    // ON CONFLICT waited for the other transaction; this new statement's snapshot sees its committed row.
     const [owner] = await tx
       .select({ userId: userIdentities.userId })
       .from(userIdentities)
@@ -124,13 +118,7 @@ export async function linkPendingIdentityInTx(tx: Tx, input: LinkPendingInput, h
   };
 }
 
-/**
- * #187：設定頁手動連結。本人同時持有 session 與 IdP 登入就是證明——不要求 email 相同（第 3 步）。
- * **第一句**鎖本人 users 列（`FOR NO KEY UPDATE`，給「同 issuer 只能一個 sub」的判定一個序列化點），之後依序：帳號不在 → `oidc_link_session_mismatch`；
- * 停用 → `account_disabled`；`(issuer, sub)` 屬本人 → 冪等成功；屬別人 → `identity_taken`；本人已有同 issuer 另一個 sub →
- * `identity_already_linked`（精確 `eq(issuer)`，理由同上一個函式）；都不是 → INSERT（並發首登搶同一身分時 ON CONFLICT 後重讀）。
- * 不動 `must_change_password`、不寫 users、不簽 session。
- */
+/** Holding both the session and the IdP login is the proof, so the email needn't match. Exact eq(issuer), as above. */
 export async function linkIdentityToUserInTx(tx: Tx, input: { userId: string; issuer: string; sub: string }): Promise<void> {
   const [row] = await tx.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, input.userId)).for("no key update");
   if (row === undefined) throw new TxAbort(409, "oidc_link_session_mismatch", "The account that started this link no longer exists.");

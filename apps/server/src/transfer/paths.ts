@@ -1,12 +1,9 @@
 /**
- * bulk transfer：下載包的目錄配置與檔名（純函式，不碰 DB）。
- *
- * - 頂層三目錄固定英文；範圍縮小時路徑不變：命名在完整可見集合上算、再依範圍篩（見 `buildLayout`）。
- * - 檔名只是外觀：寫回只認 frontmatter 的 `id`。路徑長度不保證在 Windows 260 內。
- * - 標題經 `sanitizeTitle`；資料夾名、群組名經 `sanitizeSegment`。
- * - 判重：每個目錄一個 casefold 鍵集合；**先配檔案、再配資料夾**（撞名時資料夾讓）；
- *   同類依 `createdAt`、`id` 排序，撞名時在基名後加 ` (n)`（n 從 2 起找第一個空位）。檔與資料夾同一個命名空間。
- * - 排序：`dirs` 以完整路徑的 code unit 序（JS `<`）。
+ * File names are cosmetic: write-back trusts only the frontmatter `id`. Files are matched
+ * before folders when names clash (a folder yields); a clash appends ` (n)`, n from 2. Names
+ * clash case-folded per directory, files and folders in one namespace; same kind ordered by
+ * `createdAt`, then `id`. Paths may exceed Windows' 260. `dirs` are sorted by full path in
+ * code-unit order.
  */
 import type { FolderSpaceDto } from "@knotebook/shared";
 import type { BulkRange } from "../auth/transfer-token.js";
@@ -14,22 +11,16 @@ import type { BulkRange } from "../auth/transfer-token.js";
 export const TOP_DIRS = { personal: "My notes", group: "Groups", shared: "Shared with me" } as const;
 export type TopDirKey = keyof typeof TOP_DIRS;
 
-/** 每段最多幾個 code point（截完再 trimEnd；尾碼另計）。 */
+/** Code points, before the ` (n)` suffix. */
 export const SEGMENT_MAX = 64;
 
 /**
- * 換成 `_` 的字元——`< > : " / \ | ? *`、C0（U+0000–001F）、DEL、bidi 控制（U+202A–202E、U+2066–2069）、
- * 零寬（U+200B–200F、U+FEFF）；再加 `$`、反引號、`!`（`next` 叫模型把路徑填進雙引號裡的 `"<file>"`，
- * 這三個字元在雙引號內仍會被 shell 展開——`$(…)`、反引號會執行指令，`$VAR` 會被換掉，`!` 在互動 bash 是歷史展開）。
+ * Also `$`, backtick and `!`: `next` tells the model to put the path inside double quotes,
+ * where the shell still expands them (`$(…)`, backticks run commands, `!` is history expansion).
  */
 const ILLEGAL = /[<>:"/\\|?*$`!\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/gu;
-/** Windows 保留名（不分大小寫、含帶副檔名形）。 */
 const RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 
-/**
- * 規則 1–6（不含規則 8），順序寫死：① NFC ② 非法字元 → `_` ③ 開頭 `.` → `_` ④ 截到 64 code point（不切代理對）
- * 後 trimEnd ⑤ 去尾端 `.` 與空白、空了 → `_` ⑥ 保留名前加 `_`。
- */
 export function sanitizeSegment(raw: string): string {
   let s = raw.normalize("NFC");
   s = s.replace(ILLEGAL, "_");
@@ -42,13 +33,12 @@ export function sanitizeSegment(raw: string): string {
   return s;
 }
 
-/** `sanitizeSegment` 之後：清洗後空或只由 `_` 組成 → `Untitled`。 */
 export function sanitizeTitle(raw: string): string {
   const s = sanitizeSegment(raw);
   return /^_+$/.test(s) ? "Untitled" : s;
 }
 
-/** 判重鍵：NFC 後以 `toUpperCase().toLowerCase()` 近似 casefold（`ß`→`ss` 會多判重，無害）。 */
+/** `toUpperCase().toLowerCase()` approximates casefolding (ß→ss over-matches, harmless). */
 export function casefoldKey(s: string): string {
   return s.normalize("NFC").toUpperCase().toLowerCase();
 }
@@ -59,7 +49,7 @@ export interface LayoutNote {
   createdAt: Date;
   space: "personal" | "shared" | "group";
   groupId: string | null;
-  /** personal／group：筆記的資料夾；shared：讀者的 placement（`viewerFolderId`）。 */
+  /** For a shared note: the reader's placement. */
   folderId: string | null;
 }
 export interface LayoutFolder {
@@ -75,14 +65,11 @@ export interface LayoutGroup {
   createdAt: Date;
 }
 export interface Layout {
-  /** 範圍內的目錄，依 path 排序；不帶尾斜線。頂層三目錄 `id: null, space: null`；群組目錄 `id: null, space: {kind:"group"}`。 */
   dirs: Array<{ path: string; id: string | null; space: FolderSpaceDto | null }>;
-  /** 範圍內的筆記：noteId → 檔案路徑（含 `.md`）。 */
   files: Map<string, string>;
 }
 
 interface DirNode {
-  /** 這一段的最終名字（已清洗、已判重）；頂層目錄是固定英文。 */
   name: string;
   parent: DirNode | null;
   id: string | null;
@@ -99,7 +86,6 @@ const byCreated = <T extends { createdAt: Date; id: string }>(a: T, b: T): numbe
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 };
 
-/** 在一個目錄的鍵集合裡為 `base`（＋`ext`）找第一個不撞的名字，並登記鍵。 */
 function claim(taken: Set<string>, base: string, ext: string): string {
   let name = base + ext;
   for (let n = 2; taken.has(casefoldKey(name)); n++) name = `${base} (${n})${ext}`;
@@ -107,22 +93,16 @@ function claim(taken: Set<string>, base: string, ext: string): string {
   return name;
 }
 
-/** `node` 是 `anc` 本身或在它底下。 */
 function within(node: DirNode, anc: DirNode): boolean {
   for (let p: DirNode | null = node; p !== null; p = p.parent) if (p === anc) return true;
   return false;
 }
 
 /**
- * **命名一律在完整的可見集合上算，再依範圍篩輸出**：範圍縮小時，範圍內每一項的路徑與
- * `all` 那份逐字相同（同名群組、清洗後撞名、規則 9 都一樣）——否則先抓全部、再抓某個群組的 agent，會讓兩篇不同的筆記
- * 落到同一個本機路徑而靜默覆蓋。
- *
- * 呼叫端（單篇下載與整包匯出）一律傳**讀者可見的完整集合**：全部可見筆記的中繼資料（`all` 範圍那一支查詢）、全部可見資料夾、
- * 全部可讀群組；`range` 決定輸出哪些。範圍所指的群組／資料夾不在輸入裡 → 丟錯（呼叫端先判「範圍已看不到」→ 403）。
- *
- * 範圍涵蓋：`all`＝三個頂層目錄與全部；`personal`／`shared`＝該頂層目錄與其下；`group`＝`Groups`＋該群組
- * 目錄與其下；`folder`＝該資料夾的祖先鏈（含頂層目錄與群組目錄）＋子樹，筆記只取放在子樹裡的（shared 筆記看讀者的 placement）。
+ * Naming is computed over the reader's whole visible set and only then filtered by scope, so
+ * a path never depends on the scope: otherwise fetching everything and later one group could
+ * put two different notes at the same local path and silently overwrite one. A scope object
+ * missing from the input throws (callers check "scope gone" → 403 first).
  */
 export function buildLayout(input: { notes: LayoutNote[]; folders: LayoutFolder[]; groups: LayoutGroup[]; range: BulkRange }): Layout {
   const mk = (name: string, parent: DirNode | null, id: string | null, space: FolderSpaceDto | null): DirNode => ({
@@ -159,12 +139,11 @@ export function buildLayout(input: { notes: LayoutNote[]; folders: LayoutFolder[
   for (const f of input.folders) folderNodes.set(f.id, mk("", null, f.id, f.space));
   for (const f of input.folders) {
     const node = folderNodes.get(f.id)!;
-    // 父資料夾不在輸入裡（理論上不會：呼叫端給完整的可見集合）→ 放空間頂層。
     const parent = (f.parentId !== null ? folderNodes.get(f.parentId) : undefined) ?? spaceRoot(f.space);
     node.parent = parent;
     parent.childFolders.push({ folder: f, node });
   }
-  // 父鏈不得成環（資料夾樹由 DB trigger 保證；這裡只防呼叫端給錯）。
+  // A DB trigger keeps the folder tree acyclic; this only guards against a bad caller.
   for (const node of folderNodes.values()) {
     let depth = 0;
     for (let p: DirNode | null = node; p !== null; p = p.parent) {
@@ -186,7 +165,6 @@ export function buildLayout(input: { notes: LayoutNote[]; folders: LayoutFolder[
     noteDir.set(n.id, dir);
   }
 
-  // ① 命名：在完整的樹上由上而下，每個目錄先配檔案、再配子目錄（群組目錄只在 Groups/ 底下）。
   const notePath = new Map<string, string>();
   const allDirs: DirNode[] = [];
   const visit = (dir: DirNode, path: string): void => {
@@ -207,7 +185,6 @@ export function buildLayout(input: { notes: LayoutNote[]; folders: LayoutFolder[
   };
   for (const key of ["personal", "group", "shared"] as const) visit(tops[key], tops[key].name);
 
-  // ② 依範圍篩：`dirIn` 決定哪些目錄寫成目錄項，`noteIn` 決定哪些筆記的目錄（放的位置）落在範圍裡。
   const range = input.range;
   let dirIn: (d: DirNode) => boolean;
   let noteIn: (d: DirNode) => boolean;

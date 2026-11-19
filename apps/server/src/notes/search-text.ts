@@ -1,29 +1,12 @@
 /**
- * #93：全文索引的內文抽取（server 專用）。
- *
- * - **以位置對應 `sectionize`**：第 k 段吃掉 `topLevelContainers` 接下來的 `blockIds.length` 顆——不以 id 查表
- *   （id 可重複、可非字串）。`heading` 與 outline 同源（`sectionize` 的 heading）。
- * - **整篇前提**：任何頂層 container 的 `id` 不是字串或是空字串 → 整篇不寫 body 列、`capped`、`indexedUnits` 0。
- *   這種文件 `outlineOf` 直接 throw（`notes/editing/fingerprint.ts:20`），兩支讀取工具本來就讀不了，搜尋不得交出讀不到的 sectionId。
- * - **段落入索引的條件**：`sectionId` 原值是字串且符合 `SECTION_ID_RE`、在本篇段落 id 序列中**第一次出現**（＝`read.ts:75`
- *   的 `outline.find`——所以不論該段有沒有入索引，id 一律記為「出現過」）、body 非空。
- * - **走訪是迭代的**（顯式 stack）：深度是 client 可控的（`collab/store.ts:74-79`）。wikilink 輸出 `label`（非空時）否則 `snapshotTitle`（#269）、
- *   mermaid 輸出 `code` 屬性；媒體的 caption／name／url 一律不收。
- * - **分隔延遲輸出**：進入非 inline 元素只標記「下一段文字前要分隔」，有字要輸出時才補 `\n`——
- *   所以 body 沒有開頭／結尾／連續的結構分隔，「body 非空」才有意義。文字本身的空白不壓縮（摘錄輸出時才壓）。
- * - **清洗**：NUL 與落單代理換 U+FFFD（長度不變）——NUL 會讓整個交易 22021；落單代理經 node-postgres 本來就會變
- *   U+FFFD，明換之後「存的＝算雜湊的＝回給模型的」三者一致。
- * - **上限**：body 合計 `SEARCH_INDEX_NOTE_MAX` code unit（超過的那段截到剩餘額度、其後不入）、段落列
- *   `SEARCH_INDEX_SECTIONS_MAX`（丟棄而不併入最後一列）、heading 存前 `SEARCH_HEADING_MAX`；切點不切代理對。
- *   任一上限丟了**有內容的**段落 → `capped`。
- * - **任何規則或上限改動都要把 `SEARCH_EXTRACTOR_VERSION` +1**（回填會重做舊版本的筆記）。
+ * Sections map to `sectionize` by position, not id lookup (ids can repeat or be non-strings). A non-string/empty container id disqualifies the whole note (`outlineOf` throws on it, so the read tools can't read it and search must not hand out unreadable sectionIds). A section is indexed only if its id matches `SECTION_ID_RE` and is the first occurrence (as `outline.find` in `read.ts`; an id counts as seen whether or not it got indexed) and its body is non-empty. The walk is iterative: depth is client-controlled. Wikilinks contribute label, else `snapshotTitle`; mermaid its `code`; media caption/name/url nothing. Separators are emitted lazily so the body has no leading/trailing/repeated separators; whitespace in the text isn't collapsed. NUL and lone surrogates become U+FFFD (a NUL fails the transaction with 22021; replacing makes stored = hashed = returned text agree). Caps: body truncated at `SEARCH_INDEX_NOTE_MAX` (the section crossing it is cut to the remaining quota, later ones aren't indexed), sections beyond `SEARCH_INDEX_SECTIONS_MAX` dropped (not merged), headings keep `SEARCH_HEADING_MAX`; dropping a non-empty section sets `capped`. Any rule or limit change must bump `SEARCH_EXTRACTOR_VERSION` (backfill redoes old versions).
  */
 import { createHash } from "node:crypto";
 import * as Y from "yjs";
 import { SECTION_ID_RE, sectionize, topLevelContainers } from "@knotebook/shared";
 import { truncateCodeUnits } from "../mcp/limits.js";
 
-export const SEARCH_EXTRACTOR_VERSION = 2; // #269：wikilink 改抽 label 或 snapshotTitle（無方括號）
+export const SEARCH_EXTRACTOR_VERSION = 2;
 export const SEARCH_INDEX_NOTE_MAX = 1_048_576;
 export const SEARCH_INDEX_SECTIONS_MAX = 2000;
 export const SEARCH_HEADING_MAX = 1000;
@@ -45,7 +28,7 @@ export interface SearchExtract {
 
 const UNSTORABLE_RE = /\0|\p{Surrogate}/gu;
 
-/** NUL 與落單代理 → U+FFFD（u 旗標下成對代理是一個 code point，不被 `\p{Surrogate}` 命中）。 */
+/** With the `u` flag a paired surrogate is one code point and isn't matched by `\p{Surrogate}`. */
 export function sanitizeForIndex(s: string): string {
   return s.replace(UNSTORABLE_RE, "�");
 }
@@ -54,7 +37,6 @@ function deltaText(t: Y.XmlText): string {
   return (t.toDelta() as Array<{ insert: unknown }>).map(d => (typeof d.insert === "string" ? d.insert : "")).join("");
 }
 
-/** 一顆頂層 container 的可搜文字（迭代、分隔延遲輸出）。 */
 function containerSearchText(container: Y.XmlElement): string {
   let out = "";
   let pendingSep = false;
@@ -71,9 +53,8 @@ function containerSearchText(container: Y.XmlElement): string {
       emit(deltaText(node));
       continue;
     }
-    if (!(node instanceof Y.XmlElement)) continue; // Y.XmlHook 等：不深入（同 collab/store.ts 的已知範疇）
+    if (!(node instanceof Y.XmlElement)) continue;
     if (node.nodeName === "wikilink") {
-      // #269：以文字呈現——label 非空用 label，否則 snapshotTitle。維持純函式（不查現行標題）。
       const label: unknown = node.getAttribute("label");
       const title: unknown = node.getAttribute("snapshotTitle");
       emit(typeof label === "string" && label !== "" ? label : typeof title === "string" ? title : "");
@@ -91,10 +72,7 @@ function containerSearchText(container: Y.XmlElement): string {
   return out;
 }
 
-/**
- * `capped` 一併入雜湊（#93）：rows 相同但 capped 不同是常態可達的（恰 2000 段→加第 2001 段；空筆記→
- * 出現空 id container）。不入雜湊的話索引交易第 4 步與 store 的 bump 都只比 hash，會回 `unchanged`、狀態列的 `capped` 停在舊值。
- */
+/** `capped` is hashed: identical rows with different `capped` are reachable (2000 → 2001 sections; empty note → empty-id container), and a hash-only compare would return `unchanged` and leave `capped` stale. */
 export function searchContentHash(version: number, rows: SearchSectionRow[], capped: boolean): string {
   return createHash("sha256")
     .update(JSON.stringify([version, capped, rows.map(r => [r.sectionId, r.ord, r.heading, r.body])]))
@@ -135,7 +113,8 @@ export function extractSearchSections(fragment: Y.XmlFragment): SearchExtract {
     if (units + body.length > SEARCH_INDEX_NOTE_MAX) {
       body = truncateCodeUnits(body, SEARCH_INDEX_NOTE_MAX - units).text;
       capped = true;
-      bodyFull = true; // 其後各段不入索引：退格後 units 可能停在上限 −1，不能靠 units 判斷
+      // Truncation can stop units at MAX−1 (surrogate back-off), so units can't tell.
+      bodyFull = true;
       if (body.length === 0) continue;
     }
     units += body.length;

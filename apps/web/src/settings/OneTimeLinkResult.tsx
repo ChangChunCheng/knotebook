@@ -7,9 +7,8 @@ import { copyText } from "@/lib/clipboard";
 import "@/i18n/management-strings";
 
 /**
- * 一次性連結的「只顯示這一次」畫面（#286；之後的邀請連結共用）。放在呼叫端的 `DialogContent` 內。
- * 形狀比照 `ApiTokensSection` 的明文畫面：唯讀欄永遠可選取複製，不靠 toast；**刻意不複用 ManualCopyField**
- * （它硬寫的說明語意不對，且內含自己的 DialogDescription，同一個 DialogContent 會出現兩個）。
+ * The link is shown only this once, so the read-only field stays selectable rather than relying on a toast. Not
+ * `ManualCopyField`: its fixed text is wrong here and its own `DialogDescription` would put two in the caller's `DialogContent`.
  */
 export function OneTimeLinkResult({ title, url, expiresAt }: { title: string; url: string; expiresAt: string }) {
   const { t, i18n } = useTranslation();
@@ -31,7 +30,7 @@ export function OneTimeLinkResult({ title, url, expiresAt }: { title: string; ur
       <DialogFooter>
         <Button
           type="button"
-          // ⚠ 不用 `secondary`：淺色下與面板底幾乎同色，看起來像 hover 高亮不像按鈕（同 ApiTokensSection）。
+          // not `secondary`: nearly the panel background in light mode, so it reads as a hover highlight, not a button (same as ApiTokensSection)
           variant="outline"
           onClick={() => {
             void copyText(url).then((ok) => {

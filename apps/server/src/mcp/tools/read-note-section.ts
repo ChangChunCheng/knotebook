@@ -1,20 +1,11 @@
 /**
- * #108 `read_note_section`：一段筆記的 markdown，單次上限 4000 個 UTF-16 code unit。
- *
- * ⚠ **`fingerprint` 只隨「結束該段的那一頁」附上**。
- * **理由是正確性，不是安全**：`replace_section` 是整段取代——模型讀了前 4000 字元、以為那
- * 就是全部，寫回去就吃掉了沒讀到的尾巴，而且它不會知道自己刪了什麼。**它防的是循序讀取的
- * 誠實 agent**：`offset` 沒有上界，一發大 `offset` 的呼叫同樣算結束頁、照樣拿得到指紋
- * （這是刻意接受的降級）。**不得把這條寫成一道安全防線。**
- *
- * ⚠ `truncated` 時附上的 `note` 是**解釋性文案**（解釋為什麼沒有 `fingerprint`、怎麼拿到），
- * **不是防線**——沒有任何驗收去斷言「這個欄位存在就安全」。
- *
- * ⚠ **`heading` 刻意不回**：它在 `NoteOutlineEntry` 上沒有任何上限，留著就得再截一次；
- * 而那顆標題本來就在 `markdown` 的第一行。
- *
- * ⚠ `section_id` **從來不進 SQL**（`readNoteContent` → `outlineOf` → 記憶體裡的 `find`），
- * 所以不變量 S 對它只有前兩關（格式 guard ＋ NUL），由 `SEC` 這個 schema 承擔。
+ * `fingerprint` comes only with the page that ends the section. This is for correctness, not
+ * security: `replace_section` replaces the whole section, so a model that read only the first
+ * 4000 UTF-16 code units would eat the unread tail. A huge `offset` also counts as the end page
+ * (accepted), so it protects an honest sequential reader only: never describe it as a security
+ * boundary; the `truncated` note is explanation, not a guard. `heading` isn't returned: it has
+ * no length limit and is the first line of `markdown` anyway. `section_id` never reaches SQL,
+ * so only the format and NUL checks (`SEC`) apply.
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -32,13 +23,10 @@ export const READ_NOTE_SECTION_DESCRIPTION =
   `At most ${MCP_SECTION_CHARS} characters per call: while \`truncated\` is true, call again with \`offset\` ` +
   "set to `nextOffset`. The `fingerprint` you need to replace this section arrives with the page that " +
   "finishes it, so read to the end before you rewrite it. " +
-  // 並排：有寬度的圖片也是 `<figure>`。「for example」是舉例不是窮舉（整塊輸出成 HTML 的節點裡，圖片照該節點的 HTML 形；
-  // 舊版寫入收合區塊的圖片是含站台位址的絕對網址，所以主句只說「位址裡有 upload id」），這句只負責讓模型找到 id；
-  // 不提表格格子（格子裡不會有帶寬的圖片）。
+  // "for example": images inside nodes exported wholesale as HTML take that HTML form, and old collapsed-block images have absolute URLs, which is why the main clause says only that the address contains the upload id; table cells aren't mentioned (they hold no width-set images).
   "An uploaded image's address contains its upload id, for example `/api/uploads/<id>` in `![name](/api/uploads/<id>)` or, for an image with " +
   "a caption or shown at a set width, in `<figure><img … src=\"/api/uploads/<id>\" …>…</figure>`; see them with read_note_image.";
 
-/** 被截斷時附上的解釋文案（不是防線，見檔頭）。 */
 const TRUNCATED_NOTE =
   "This section is longer than one response. Keep reading with `offset` set to `nextOffset` until " +
   "`truncated` is false — the last page carries the `fingerprint` you need to replace this section.";
@@ -58,29 +46,24 @@ export const readNoteSectionOutput = {
   section: z.object({
     id: z.string().describe("The section id you asked for."),
     level: z.number().describe("Heading depth; `0` for the `_top` section."),
-    // ⚠ `chars` 是**純文字**長度（`sectionize` 的 `textOf`），`offset`／`nextOffset` 是
-    //   **markdown** 的 code unit——兩者不同單位（`# Long\n\n…` 那種段落 markdown 比 chars
-    //   長好幾格）。不講明的話模型會拿 `chars` 當「讀完了沒」的判準然後早收。判準同這一棒
-    //   把 `section_offset` 與 `offset` 刻意取不同名的理由。
+    // `chars` is plain-text length while `offset` counts markdown code units; unstated, a model would stop early.
     chars: z
       .number()
       .describe(
         "Rough size of the whole section in text characters. This is not the same unit as `offset` — " +
           "to tell whether you have read it all, look at `truncated` and `nextOffset`, not at this number."
       ),
-    // ⚠ #146：**不是每一頁的第一行都是標題**。兩個反例都在本檔／`note-sections.ts` 看得到：
-    //   `_top` 的 `heading` 是 `""`、`level` 是 `0`（`sectionize` 的第一個 section 就是這樣造的），
-    //   它根本沒有標題行；而 `offset > 0` 的續頁是 `markdown.slice(offset)`，從半路切。
+    // Not every page starts with a heading: `_top` has none, and a continuation page is cut midway.
     markdown: z
       .string()
       .max(MCP_SECTION_CHARS)
       .describe(
         "This page of the section, as markdown. The first page starts with the section's heading line — except " +
           "`_top`, which has no heading; a later page resumes where the last one stopped. Colored text and blocks come back as " +
-          // 並排：5 欄以上的列讀得到、原樣寫回會被拒（例外），所以括號補寫入的欄數。
+          // A row with 5 or more columns reads fine but is rejected when written back as-is, so the parenthesis gives the write limit.
           "HTML, as do images shown at a set width, tables with set column widths, and the <div> tags around side-by-side columns; " +
           "write it back unchanged to keep them (edit_note takes rows of 2 to 4 columns). " +
-          // #379：上色區塊等整塊讀成 HTML 的地方，文字裡的 `<` 是 `&lt;`；code 裡原樣——所以句首先排除這兩處。
+          // In colored and wholesale-HTML blocks a `<` in text reads as `&lt;`; in code it is as-is.
           "Outside code and blocks that come back as HTML, a `<` that could start an HTML tag or comment comes back as `\\<`; " +
           "write it back unchanged to keep it as text. " +
           READ_NOTE_LINK_SENTENCE
@@ -105,31 +88,24 @@ export interface ReadNoteSectionArgs {
 export async function readNoteSection(args: ReadNoteSectionArgs, ctx: McpToolCtx): Promise<CallToolResult> {
   const access = await authorizeNoteRead(ctx, args.note_id, args.section_id);
   if (!access.ok) return access.error;
-  // 這支工具只在 `collab` 與 `editing` 都在時才註冊，所以經 HTTP 到不了這裡。留著是
-  // 因為 `ctx.editing` 在型別上是選配——`runTool()` 會把它轉成 `internal`，不讓例外冒到 SDK。
-  // ⚠ 單元測試造得出這個場景（工具刻意設計成可單獨呼叫），只是目前沒有。
+  // Unreachable over HTTP (registered only with collab and editing); `ctx.editing` is optional in the types; `runTool()` turns it into `internal`.
   if (ctx.editing === undefined) throw new Error("read_note_section：editing runtime 缺席（不該被註冊）");
 
   let result: Awaited<ReturnType<typeof readNoteContent>>;
   try {
     result = await readNoteContent({ db: ctx.db, collab: ctx.collab, shownLinks: ctx.writes.shownLinks }, ctx.editing, args.note_id, ctx.userId, args.section_id);
   } catch (err) {
-    // 轉換在 parse worker 裡（`readNoteContent`）：全忙 → server_busy；逾時或用完記憶體 → too_complex。
     const error = docReadToolError(err);
     if (error) return error;
     throw err;
   }
   if (result === "section_not_found") return toolError("section_not_found", SECTION_NOT_FOUND_MESSAGE);
-  // 帶了 section 就不可能拿到整篇形；不收窄的話 spread 一個字串會靜默送出 {0:"…"}。
   if (!("section" in result)) throw new Error("readNoteContent 帶了 section 卻回整篇形");
 
   const { id, level, chars, markdown, fingerprint } = result.section;
   const offset = args.offset ?? 0;
-  // 切片走 `truncateCodeUnits`（按原長度、代理對不切半；不是 `truncateText`——理由見 `limits.ts`）；`nextOffset` 一律 ＝ `offset ＋ 實際回傳長度`，
-  // 不是 `offset + 4000`——退一格的那次若寫死 4000，下一頁會從低位代理開始，接回去少一個
-  // code unit、兩頁各帶一個孤立代理（序列化不報錯）。守衛＝`mcp-content.test.ts` 的
-  // 「切點落在代理對中間時 nextOffset 跟著退一格」那一案（**只有它**：全 ASCII 的案 14 在
-  // 寫死 4000 之下照樣綠，突變實測過）。
+  // Slices with `truncateCodeUnits` (raw length, never splitting a surrogate pair; not `truncateText`, see `limits.ts`). `nextOffset` is `offset + length actually returned`, not `+ 4000`: when the cut backed
+  // off one unit inside a surrogate pair, a fixed 4000 would give both pages a lone surrogate, silently (serialization doesn't fail).
   const page = truncateCodeUnits(markdown.slice(offset), MCP_SECTION_CHARS);
   return toolResult({
     section: {

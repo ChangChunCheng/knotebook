@@ -2,23 +2,18 @@ import "@/i18n/folder-strings";
 import type { FolderDto, NoteDto } from "@knotebook/shared";
 import { liveNotesUnder, subtreeFolderIds, type FolderIndex, type FolderSpaceKey } from "./folder-index";
 
-/**
- * 刪除／移除資料夾確認框的純函式。只准被 FolderLazy 鏈與測試 import。
- * 篇數＝快取中落在子樹、而且空間相符的活筆記（client 端算，server 是權威）。
- */
+/** Pure functions; import only through the FolderLazy chain and tests. Counts come from the cache (client-side; the server is authoritative). */
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export interface FolderDeleteFacts {
-  /** 子資料夾數（不含自己）。 */
+  /** Subfolders, not counting the folder itself. */
   subfolders: number;
   liveNotes: NoteDto[];
   shared: boolean;
-  /** 開著的那篇在子樹裡。 */
   containsOpen: boolean;
 }
 
-/** `spaceOf`＝筆記所在空間（呼叫端傳 `tree.ts` 的 `noteSpaceKey`；本模組不 import `tree.ts`）。 */
 export function folderDeleteFacts(
   index: FolderIndex,
   folder: FolderDto,
@@ -35,15 +30,11 @@ export function folderDeleteFacts(
   };
 }
 
-/** 串接規則（與語系無關）：前一段以「，」或「。」結尾 → 直接接；否則以一個半形空白接。 */
 function joinParts(parts: readonly string[]): string {
   return parts.reduce((acc, part) => (acc === "" ? part : /[，。]$/u.test(acc) ? acc + part : `${acc} ${part}`), "");
 }
 
-/**
- * 內文：分段串起。`retentionDays`：number＝天數、null＝不會自動清除、undefined＝還沒載到（用通用句）。
- * 一句裡有子資料夾數、篇數、天數三個會變形的數量，所以拆成各帶自己 `count` 的段再串。
- */
+/** `retentionDays`: null = never purged automatically, undefined = not loaded yet (generic sentence). Split into segments, each with its own `count`: three inflected quantities in one sentence. */
 export function folderDeleteBody(facts: FolderDeleteFacts, retentionDays: number | null | undefined, t: Translate): string {
   const count = facts.liveNotes.length;
   if (facts.shared) return count > 0 ? t("folderDialogs.removeBody", { count }) : t("folderDialogs.removeBodyEmpty");

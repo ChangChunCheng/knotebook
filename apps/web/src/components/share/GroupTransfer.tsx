@@ -33,15 +33,14 @@ import {
 
 export type GroupTransferKind = "move" | "copy";
 
-/** 使用者在逐層清單選的資料夾：`path`＝`destinationPathLabel` 的完整路徑（「我的筆記 › A」「研發組 › A › B」），確認框用。 */
+/** `path` is the full `destinationPathLabel` path ("My notes > A", "R&D > A > B"), shown in the confirm dialog. */
 export type FolderRef = { id: string; path: string };
 
 /**
- * 目標：
- * - `group`：移入群組／複製到群組，`folder` 不給＝群組根層；
- * - `inPlace`：群組筆記「建立副本」（落在來源同一資料夾）；
- * - `duplicate`：自己的個人筆記「建立副本」（落在來源同一資料夾）；
- * - `personal`：複製到我的筆記，`folder` 不給＝根層（共享筆記自己的共享放置不跟著）。
+ * - `group`: move or copy into a group; no `folder` = group root.
+ * - `inPlace`: duplicate a group note (lands in the source's folder).
+ * - `duplicate`: duplicate your own personal note (lands in the source's folder).
+ * - `personal`: copy to my notes; no `folder` = root (a shared note's own share placement doesn't carry over).
  */
 export type TransferTarget =
   | { type: "group"; group: GroupDto; folder?: FolderRef }
@@ -49,16 +48,12 @@ export type TransferTarget =
   | { type: "duplicate" }
   | { type: "personal"; folder?: FolderRef };
 
-/** 確認框要的選定結果（`GroupTransferDialog`）。 */
 export interface GroupTransferPick {
   kind: GroupTransferKind;
   target: TransferTarget;
 }
 
-/**
- * ⋮ 子選單選定的目的地（非 drill 項）。groups／index 在 `GroupTransferMenuItems` 裡算（只在選單開著時掛載），隨 pick 傳出：
- * `NoteMenuCore` 頂層不訂閱 `useGroups`／`useFolders`。
- */
+/** Groups and index are computed in `GroupTransferMenuItems` (mounted only while the menu is open) so `NoteMenuCore` needn't subscribe to `useGroups`/`useFolders`. */
 export interface DestinationPick {
   kind: GroupTransferKind;
   target: DestTarget;
@@ -66,7 +61,6 @@ export interface DestinationPick {
   index: FolderIndex;
 }
 
-/** 移動、複製各一份所在層；`NoteMenuCore` 持有，選單關閉時回到這個值。 */
 export type DestPaths = Readonly<Record<GroupTransferKind, readonly DestPathStep[]>>;
 const NO_STEPS: readonly DestPathStep[] = [];
 export const EMPTY_DEST_PATHS: DestPaths = { move: NO_STEPS, copy: NO_STEPS };
@@ -78,21 +72,15 @@ function folderRef(target: Extract<DestTarget, { kind: "place" }>, index: Folder
   return target.folder === null ? undefined : { id: target.folder.id, path: destinationPathLabel(target.space, target.folder, index, t) };
 }
 
-/**
- * 同空間移動：移動、且目的地與這篇的移動來源（`noteDestSource`）上半部同一空間——自己的個人筆記放進我的筆記、
- * 群組筆記放進本群組、共享筆記放進自己的共享私人資料夾；判準與選取模式共用 `isSameSpace`。呼叫端不跳確認、直接 PUT。
- */
+/** Callers skip the confirm dialog and PUT directly. */
 export function isSameSpaceMove(note: NoteDto, pick: DestinationPick): boolean {
   return pick.kind === "move" && pick.target.kind === "place" && isSameSpace(pick.target, noteDestSource(note, "move", pick.groups));
 }
 
 /**
- * 子選單選定的 `DestTarget` → 確認框目標。**null＝同空間移動，或到不了的分支（找不到群組）**：
- * 呼叫端用 `isSameSpaceMove` 分辨——同空間移動直接 `placeNoteWithUndo`、不跳確認（個人筆記放進我的筆記、群組筆記放進本群組、
- * 共享筆記放進自己的共享私人資料夾），其餘什麼都不做。
- * - 「建立副本」：個人筆記＝`duplicate`；群組筆記＝`inPlace`（本群組，落在來源同一資料夾，見 `copyRequest`）。
- * - 移動到其他群組（只有自己的個人筆記會有）＝`group`，選了資料夾帶完整路徑；複製到我的筆記＝`personal`、到群組＝`group`。
- * groups 與 `DestSpace` 都出自同一份 `pick.groups`（`noteDestSource`），找不到群組的分支到不了，保守回 null。
+ * `null` = same-space move or an unreachable branch; callers tell them apart with `isSameSpaceMove` and do nothing for the latter.
+ * Only your own personal notes can move to another group.
+ * Groups and `DestSpace` both come from `pick.groups` (`noteDestSource`), so a missing group is unreachable; return null conservatively.
  */
 export function transferTargetOf(note: NoteDto, pick: DestinationPick, t: Translate): TransferTarget | null {
   const { target, groups, index } = pick;
@@ -112,12 +100,11 @@ export function transferTargetOf(note: NoteDto, pick: DestinationPick, t: Transl
   return folder === undefined ? { type: "group", group } : { type: "group", group, folder };
 }
 
-/** 就地展開形（窄／觸控）一組（移動或複製）目前這一層與它的換層動作。寬形（層疊）不用 path，見 `CascadeRoot`。 */
 interface LevelNav {
   items: DestItem[];
-  /** NoteMenuCore 持有的 path（物件同一性＝沒換層）。 */
+  /** Owned by NoteMenuCore; the same object identity means the level didn't change. */
   path: readonly DestPathStep[];
-  /** 第二層起（「返回」恆第一項）；不看 path.length（見 `livePath`）。 */
+  /** Level 2+ ("back" is always first); not derived from `path.length` (see `livePath`). */
   nested: boolean;
   drill: (step: DestPathStep) => void;
   back: () => void;
@@ -125,10 +112,9 @@ interface LevelNav {
 }
 
 /**
- * 就地展開形的層內容：每個 `DestItem` 一個選單項，分隔線＝`DropdownMenuSeparator`。
- * 只在展開時掛載，期間持續存在（**不以 path 當 key**）；換層後（掛載後 path 改變）把焦點交給新層第一個未停用的項目
- * （第二層起即「返回」）。`focusOnMount`：掛載當下也交一次（手機 sheet：開啟它的觸發項隨之卸載，焦點不能掉到選單外）。
- * 返回項前導 `ChevronLeft` 圖示（`aria-hidden`）、可及名稱是「返回」；帶 `>` 的項目可及名稱＝「{{name}}，開啟下一層」。
+ * Stays mounted while expanded (don't key by `path`); focus moves to the first enabled item when the level changes
+ * (from level 2 on, that is "back").
+ * `focusOnMount` does the same at mount: in the phone sheet the trigger unmounts, so focus would fall out of the menu.
  */
 function DestinationLevelItems({
   level,
@@ -138,7 +124,6 @@ function DestinationLevelItems({
 }: {
   level: LevelNav;
   itemClassName?: string;
-  /** 項目上的 ArrowLeft（第二層起回上一層、第一層收合）。 */
   onLeft: () => void;
   focusOnMount?: boolean;
 }) {
@@ -167,10 +152,10 @@ function DestinationLevelItems({
             aria-label={drill === null ? undefined : item.accessibleName}
             onSelect={(event) => {
               if (item.kind === "back") {
-                event.preventDefault(); // 選單不關，回上一層
+                event.preventDefault(); // keep the menu open; go back a level
                 level.back();
               } else if (drill !== null) {
-                event.preventDefault(); // 選單不關，換成下一層
+                event.preventDefault(); // keep the menu open; switch to the next level
                 level.drill(drill);
               } else {
                 level.pick(item.target);
@@ -196,14 +181,15 @@ function DestinationLevelItems({
   );
 }
 
-/** 觸發項前的圖示：與 `NoteMenu` 其他項同一組 class（`mr-2 h-4 w-4`），兩種形態共用。 */
+/** Same classes as the other `NoteMenu` items (`mr-2 h-4 w-4`). */
 function TransferIcon({ kind }: { kind: GroupTransferKind }) {
   return kind === "move" ? <FolderInput className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />;
 }
 
-/** 就地展開形的一組：觸發項（Enter／Space／右鍵展開或收合，左鍵收合）＋縮排的目前這一層（同一個 menu 的一般項，上下鍵照常漫遊）。
- * 點 `>` 項＝原地換成下一層（觸發項不動、「返回」成為第一個縮排項）；第二層起 ArrowLeft 回上一層、第一層 ArrowLeft 收合。
- * 收合（再點觸發項、第一層 ArrowLeft）時呼叫端一併重設 path；Esc 的收合由 `NoteMenu` 的 `onEscapeKeyDown` 接（見 `GroupTransferMenuItems`）。 */
+/**
+ * Collapsing (clicking the trigger again, ArrowLeft on level 1) also resets path at the caller; Esc collapse is handled by `NoteMenu`'s
+ * `onEscapeKeyDown` (see `GroupTransferMenuItems`).
+ */
 function GroupInline({
   kind,
   label,
@@ -228,7 +214,7 @@ function GroupInline({
         data-testid={testId}
         aria-expanded={open}
         onSelect={(event) => {
-          event.preventDefault(); // 選單保持開著，只切換展開
+          event.preventDefault(); // keep the menu open; only toggle expansion
           onOpenChange(!open);
         }}
         onKeyDown={(event) => {
@@ -258,13 +244,7 @@ function GroupInline({
   );
 }
 
-/**
- * 手機 sheet 形的一組：子選單換掉整個 sheet 內容（主選單其他項由呼叫端以 `DropdownMenuMainLevel` 收起）。
- * - 收合時只有觸發項（右側 `>`）；點它、Enter／Space 或 ArrowRight 進入這一組。另一組展開中時整組不渲染。
- * - 展開時沒有觸發項，最上面一列恆是「返回」：第一層的返回回主選單（收合），第二層起是那一層自己的返回項（回上一層）。
- *   進入時焦點交給返回列；ArrowLeft 同返回。點 `>` 項換層、選定其他項回報（與就地展開形同一份 `DestinationLevelItems`）。
- * Esc 的收合仍由 `NoteMenu` 的 `onEscapeKeyDown` 接；收合後焦點回觸發項見 `GroupTransferMenuItems`。
- */
+/** Esc collapse is handled by `NoteMenu`'s `onEscapeKeyDown`; focus returns to the trigger afterwards (see `GroupTransferMenuItems`). */
 function GroupSheet({
   kind,
   label,
@@ -279,7 +259,7 @@ function GroupSheet({
   label: string;
   level: LevelNav;
   open: boolean;
-  /** 另一組展開中。 */
+  /** The other kind (move/copy) is expanded. */
   hidden: boolean;
   onOpenChange: (open: boolean) => void;
   testId: string;
@@ -293,7 +273,7 @@ function GroupSheet({
         ref={triggerRef}
         data-testid={testId}
         onSelect={(event) => {
-          event.preventDefault(); // 選單保持開著，換成這一組
+          event.preventDefault(); // keep the menu open; switch to this group
           onOpenChange(true);
         }}
         onKeyDown={(event) => {
@@ -319,26 +299,21 @@ function GroupSheet({
   );
 }
 
-/** 層疊每一層 `SubContent` 的 class（高度跟著 Radix 量到的可用高度、窄視窗不貼邊）。 */
 const CASCADE_CONTENT_CLASS =
   "max-h-[min(20rem,var(--radix-dropdown-menu-content-available-height))] max-w-[min(18rem,calc(100vw-2rem))] overflow-y-auto";
 
-/** 層疊形各層共用：來源、資料夾索引、選定（非 `>` 項）回報。 */
 interface CascadeProps {
   source: DestSource;
   index: FolderIndex;
   onPick: (target: DestTarget) => void;
 }
 
-/** 有下一層的資料夾／空間項（`drill` 非 null）＝層疊的 SubTrigger。 */
 type DrillItem = Extract<DestItem, { kind: "folder" | "space" }> & { drill: DestPathStep };
 
 /**
- * 層疊形（寬且可 hover）的「移動到…／複製到…」那一層：受控 Radix `Sub`，內容是第一層（`CascadeItems`）。
- * - Esc：Radix 的 SubContent 對 Esc 呼叫的是 root 的 onClose（整個選單關掉，實測），所以自己接——`preventDefault`、只收這一層、
- *   焦點回觸發項（各層的 `CascadeSub` 同法）。
- * - ArrowLeft 不攔：Radix 內建在 `SubContent` 上收起該層、焦點回觸發項。
- * - `SubContent` 走 Portal（見 `ui/dropdown-menu.tsx`），不被父層 `overflow-hidden` 裁掉，貼近視窗邊緣時 Radix 自動翻邊。
+ * Radix's SubContent calls the root's onClose on Esc (closing the whole menu), so Esc is handled here: collapse only this level and
+ * refocus the trigger (`CascadeSub` does the same). ArrowLeft is left to Radix, which collapses the level on `SubContent` and refocuses the trigger.
+ * `SubContent` is portaled (see `ui/dropdown-menu.tsx`), so a parent's `overflow-hidden` can't clip it and Radix flips it near viewport edges.
  */
 function CascadeRoot({
   kind,
@@ -351,9 +326,10 @@ function CascadeRoot({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  // 焦點所在的項目被卸載（資料夾晚到時一般項換成 SubTrigger、資料夾被刪連子選單一起消失）時焦點會掉到 body，鍵盤就出不了選單：
-  // 每次 render 後檢查，掉了就交給這一層的內容（Radix 再交給第一個可聚焦項）。必須是 useEffect：useLayoutEffect 時 Radix 的
-  // collection 還留著剛卸載的項目，focusFirst 會在 null 上呼叫 focus（三引擎實測）。子層 `CascadeSub` 同法，子層的 effect 先跑。
+  // When the focused item unmounts (late folders turn an item into a SubTrigger; a deleted folder takes its submenu with it) focus falls to
+  // body and the keyboard can't get back into the menu: after each render hand it to this level's content (Radix passes it to the first
+  // focusable item). Must be useEffect: in a layout effect Radix's collection still holds the unmounted item and focusFirst calls focus on
+  // null. `CascadeSub` does the same, and the child's effect runs first.
   useEffect(() => {
     if (open && document.activeElement === document.body) contentRef.current?.focus();
   });
@@ -378,10 +354,7 @@ function CascadeRoot({
   );
 }
 
-/**
- * 層疊的一層：`buildDestinationLevel` 去掉「返回」（寬形沒有返回，往旁層疊本身就是回上一層的路）。
- * 有下一層的項目＝`CascadeSub`；其餘＝一般項（前導圖示、反灰、選定即回報）。
- */
+/** `buildDestinationLevel` without "back": the wide form has none, since cascading sideways is itself the way back. */
 function CascadeItems({ source, path, index, onPick }: CascadeProps & { path: readonly DestPathStep[] }) {
   const { t } = useTranslation();
   const items = buildDestinationLevel({ source, path, index, t }).filter((item) => item.kind !== "back");
@@ -405,15 +378,16 @@ function CascadeItems({ source, path, index, onPick }: CascadeProps & { path: re
 }
 
 /**
- * 層疊的下一層：受控 Radix `Sub`。觸發項不設 `aria-label`——可及名稱＝項目文字（資料夾或空間名），有子選單由 Radix 的
- * `aria-haspopup`／`aria-expanded` 表達（窄形逐層的「，開啟下一層」不用在這裡）；右側箭頭是 `DropdownMenuSubTrigger`
- * 自帶的那一顆。Esc 同 `CascadeRoot`（只收這一層、焦點回這個觸發項）。內容只在打開時掛載（Radix `Presence`），遞迴不會預先展開整棵樹。
+ * No `aria-label` on the trigger: the item text (folder or space name) is the accessible name and Radix's `aria-haspopup`/`aria-expanded`
+ * convey the submenu (the narrow form's ", open next level" isn't used here); the right arrow is `DropdownMenuSubTrigger`'s own. Esc as in
+ * `CascadeRoot` (collapse only this level, refocus this trigger). Content mounts only when open (Radix `Presence`), so recursion doesn't
+ * pre-expand the tree.
  */
 function CascadeSub({ item, source, path, index, onPick }: CascadeProps & { item: DrillItem; path: readonly DestPathStep[] }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  // 焦點掉到 body 時交還給這一層（見 `CascadeRoot`；必須 useEffect）。
+  // Same focus recovery as `CascadeRoot` (must be useEffect).
   useEffect(() => {
     if (open && document.activeElement === document.body) contentRef.current?.focus();
   });
@@ -439,15 +413,6 @@ function CascadeSub({ item, source, path, index, onPick }: CascadeProps & { item
   );
 }
 
-/**
- * ⋮ 選單的「移動到…」「複製到…」兩個子選單項（#216）。內容是逐層目的地清單（`buildDestinationLevel`，
- * 規則全在 `components/sidebar/destination-level.ts`），群組＝`useGroups()`、資料夾＝`useFolders()`：還沒到時先列不需要資料夾的項目
- * （群組不帶 `>`），到了再補。第一層為空（`isEmptyDestination`）的那一組整項不渲染。
- * 兩種形態（判準 `lib/wide-pointer.ts`）：寬且可 hover＝往旁層疊的 Radix 巢狀子選單（`CascadeRoot`）；窄或觸控＝就地展開逐層（`GroupInline`）；
- * 手機 sheet 裡是同一套逐層，但換掉整個 sheet 內容、最上面一列返回（`GroupSheet`）。
- * 選單開著時跨過判準 → `onModeChange`，呼叫端關掉整個選單。
- * 選定非 `>` 項只回報（`onPick`）：同空間移動或確認框由呼叫端決定（`transferTargetOf`）。
- */
 export function GroupTransferMenuItems({
   note,
   onPick,
@@ -459,14 +424,11 @@ export function GroupTransferMenuItems({
 }: {
   note: NoteDto;
   onPick: (pick: DestinationPick) => void;
-  /** 就地展開形（窄／觸控）目前展開的是哪一組；狀態由 `NoteMenu` 持有，因為 Esc 要在 `DropdownMenuContent` 的
-   * `onEscapeKeyDown` 裡先收合、不關整個選單（Radix 的 Esc 監聽在 document，從項目的 onKeyDown 擋不住）。層疊形不用它。 */
+  /** Expanded state lives in `NoteMenu`: Esc must collapse before closing the menu, and Radix listens for Esc on document so an item's onKeyDown can't stop it. Unused by the cascade form. */
   expanded: GroupTransferKind | null;
   onExpandedChange: (kind: GroupTransferKind | null) => void;
-  /** 就地展開形兩組各自的所在層（`NoteMenuCore` 持有，選單關閉時重設）。層疊形不用它。 */
   paths: DestPaths;
   onPathChange: (kind: GroupTransferKind, path: readonly DestPathStep[]) => void;
-  /** 掛載後寬窄判準翻轉時呼叫一次（選單開著時跨過判準）；NoteMenuCore 收到就關整個選單並重設 expanded／paths。 */
   onModeChange: () => void;
 }) {
   const { t } = useTranslation();
@@ -474,12 +436,10 @@ export function GroupTransferMenuItems({
   const foldersQuery = useFolders();
   const groups = groupsQuery.data ?? NO_GROUPS;
   const index = useMemo(() => indexFolders(foldersQuery.data ?? NO_FOLDERS), [foldersQuery.data]);
-  // 窄視窗或觸控 -> 就地向下展開（手風琴）；寬且可 hover -> 往旁層疊（判準見 `lib/wide-pointer.ts`）。
   const wide = useWidePointer();
   const inline = !wide;
-  // 手機 sheet 形（`DropdownMenu` 的 `phoneSheet`）：子選單換掉整個 sheet 內容（`GroupSheet`）。
   const sheet = useMenuSheet();
-  // 掛載後判準翻轉（拖視窗寬度、外接滑鼠、平板轉向）-> 通知呼叫端關整個選單；掛載當下不呼叫。
+  // A flip after mount (window resize, external mouse, tablet rotation) tells the caller to close the whole menu; never at mount.
   const prevWide = useRef(wide);
   useEffect(() => {
     if (prevWide.current === wide) return;
@@ -488,7 +448,7 @@ export function GroupTransferMenuItems({
   }, [wide, onModeChange]);
   const triggers = useRef<Partial<Record<GroupTransferKind, HTMLDivElement | null>>>({});
   const prevExpanded = useRef<GroupTransferKind | null>(null);
-  // 收合（尤其 Esc）後焦點原本在被卸載的縮排項上 -> 還給觸發項，鍵盤不掉出選單。
+  // After a collapse (esp. Esc) focus was on the unmounted item; give it back to the trigger.
   useEffect(() => {
     const prev = prevExpanded.current;
     prevExpanded.current = expanded;
@@ -517,7 +477,7 @@ export function GroupTransferMenuItems({
     };
   };
   const openChangeOf = (kind: GroupTransferKind) => (open: boolean) => {
-    // 收合回第一層；展開另一組時，被收起的那一組也回第一層（同時只展開一組）。
+    // Collapsing returns to level 1; expanding another group returns the collapsed one to level 1 too (one group expanded at a time).
     if (!open) onPathChange(kind, NO_STEPS);
     else if (expanded !== null && expanded !== kind) onPathChange(expanded, NO_STEPS);
     onExpandedChange(open ? kind : null);

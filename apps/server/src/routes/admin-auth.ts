@@ -33,7 +33,6 @@ import {
 export interface AdminAuthRouteDeps {
   db: Db;
   config: AppConfig;
-  /** PATCH／DELETE 後 `invalidate`；test／discover 用 `probe`（不經快取）。與登入路由同一個 per-app 實例。 */
   registry: OidcRuntimeRegistry;
 }
 
@@ -44,7 +43,6 @@ const DISCOVERY_FAILED_MESSAGE = "Couldn't read a usable OIDC configuration from
 const ICON_TOO_LARGE_MESSAGE = "The image can be at most 256 KB.";
 const ICON_TYPE_MESSAGE = "Only PNG, JPEG and WebP images are accepted.";
 
-/** 路徑參數：過 UUID_RE 再轉小寫；不合法回 null（呼叫端 404）。 */
 function providerIdParam(request: FastifyRequest): string | null {
   const raw = (request.params as { id: string }).id;
   return UUID_RE.test(raw) ? raw.toLowerCase() : null;
@@ -63,20 +61,15 @@ function toAdminProviderDto(row: AdminProviderRow, config: AppConfig): AdminAuth
     sortOrder: row.sortOrder,
     legacyCallback: row.legacyCallback,
     callbackUrl: oidcRedirectUri(config, row),
-    // CHECK 保證 scheme 是小寫 http:// 或 https://（0014 `auth_providers_issuer_url_chk`）。
+    // Relies on CHECK auth_providers_issuer_url_chk keeping the scheme lowercase.
     insecureIssuer: row.issuerUrl.startsWith("http://"),
     issuerResolved: row.issuerResolved,
     createdAt: row.createdAt.toISOString(),
-    // CHECK `auth_providers_icon_kind_chk` 保證值域（比照上面 template 的轉型）。
     iconKind: row.iconKind as ProviderIconKind,
     icon: resolveProviderIcon(row),
   };
 }
 
-/**
- * #187：站台管理的登入服務 API 與 `/api/admin/auth/settings`。全部 `requireAdmin`；HTTP 層訊息英文（#372）。
- * 停用、刪除都不撤 session。
- */
 export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const settingsBodySchema = z
@@ -84,7 +77,6 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       .strict()
       .refine(body => Object.keys(body).length > 0, "Invalid request body: send at least one field.");
 
-    /** GET 與 PATCH 回同一形。讀不到列：註冊視同關、帳密視同開（兩條）＋log.error；GET 不回 500（PATCH 會）。 */
     async function settingsDto(request: FastifyRequest): Promise<AdminAuthSettingsDto> {
       const [row] = await deps.db
         .select({ registrationEnabled: siteSettings.registrationEnabled, passwordLoginEnabled: siteSettings.passwordLoginEnabled })
@@ -111,13 +103,12 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         result = await deps.db.transaction(tx => updateSiteSettingsInTx(tx, input));
       } catch (err) {
         if (err instanceof TxAbort) {
-          // 讀不到列（只可能是手改 DB）→ 500＋log.error。
           if (err.status === 500) request.log.error({ table: "site_settings" }, err.message);
           return sendError(reply, err.status, err.errCode, err.message);
         }
         throw err;
       }
-      // 有變才記（舊值是站台設定列鎖下讀的，並發不會讓它沉默）。
+      // The old value is read under the site-settings row lock, so concurrency can't silence this.
       if (result.previousPasswordLoginEnabled !== result.passwordLoginEnabled) {
         request.log.info(
           { userId: request.user!.id, passwordLoginEnabled: result.passwordLoginEnabled, passwordLoginForced: deps.config.passwordLoginForceEnable },
@@ -139,7 +130,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       const parsed = createProviderSchema.safeParse(request.body);
       if (!parsed.success) return sendInvalidBody(reply, parsed.error);
       const { template, displayName, issuerUrl, clientId, clientSecret } = parsed.data;
-      // id 先產：密文的 AAD 綁 providerId，加密當下就要知道 id。建立時一律停用——要先測試再啟用。
+      // Id first: the ciphertext AAD binds providerId. Created disabled so it is tested before use.
       const id = randomUUID();
       const clientSecretEncrypted = clientSecret !== undefined ? sealClientSecret(deps.config.appSecret, id, clientSecret) : null;
       const [row] = await deps.db
@@ -152,14 +143,14 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
           clientId: clientId ?? null,
           clientSecretEncrypted,
           enabled: false,
-          // 新服務一律不自動建帳（明寫，不靠 DB 預設）。
+          // Spelled out so it doesn't rely on the DB default.
           autoCreateEnabled: false,
-          // 新服務排最後（併發建立時可能同值——再以 createdAt、id 排，無害）。上限 100000＝PATCH 的 `sortOrder` 上限（
-          // 否則最大值已是 100000 時新列得 100001，之後編輯表單每次帶 sortOrder 都被 400）。
+          // New providers sort last (concurrent creates may tie; the list then orders by createdAt, id, harmless). Cap equals the PATCH `sortOrder` limit;
+          // otherwise a max of 100000 would produce 100001 and every later edit would 400.
           sortOrder: sql`(select least(coalesce(max(${authProviders.sortOrder}), -1) + 1, 100000) from ${authProviders})`,
         })
         .returning(adminProviderColumns())
-        // 這一句寫密文欄：非預期的 DB 錯誤不得原樣進 log（DrizzleQueryError 的 message 帶 params）。
+        // Writes the ciphertext column; DrizzleQueryError messages carry params, so redact.
         .catch((err: unknown) => {
           throw redactDbError(request.log, err, "建立登入服務");
         });
@@ -173,7 +164,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       const parsed = patchProviderSchema.safeParse(request.body);
       if (!parsed.success) return sendInvalidBody(reply, parsed.error);
       const { clientSecret, ...fields } = parsed.data;
-      // 交易外封章（S14：交易內只做 DB）。AAD 綁 id——封給這一列的密文搬到別列解不開。
+      // Sealed outside the transaction (the transaction does DB work only); AAD binds id, so ciphertext moved to another row can't be decrypted.
       const newSecretSealed = clientSecret !== undefined ? sealClientSecret(deps.config.appSecret, id, clientSecret) : undefined;
       const patchInput = { id, actorUserId: request.user!.id, ...fields, ...(newSecretSealed !== undefined ? { newSecretSealed } : {}) };
 
@@ -182,7 +173,6 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         result = await deps.db.transaction(tx => updateAuthProviderInTx(tx, patchInput));
       } catch (err) {
         if (err instanceof TxAbort) {
-          // 站台設定列鎖讀不到 site_settings 列→ 500＋log.error。
           if (err.status === 500) request.log.error({ table: "site_settings" }, err.message);
           return sendError(reply, err.status, err.errCode, err.message);
         }
@@ -192,21 +182,19 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         if (checkViolationConstraint(err) === "auth_providers_enabled_client_id_chk") {
           return sendError(reply, 409, "provider_client_id_missing", "This sign-in service has no client ID, so it can't be enabled.");
         }
-        // 非預期錯誤不得原樣進 log：這一句可能寫密文欄（DrizzleQueryError 的 message 帶 params）。
         throw redactDbError(request.log, err, "修改登入服務");
       }
-      // 提交之後才失效快取（失敗不動）。版本有變時 registry 本來就會自癒，這一行讓「只改 secret 以外」的情形也不留舊 runtime。
+      // After commit only: the registry's version self-heal misses edits that don't touch the secret.
       deps.registry.invalidate(id);
 
       const { row, previousIssuerUrl, previousAutoCreateEnabled } = result;
-      // 有變才記（前值是站台設定列鎖下讀的，並發不會讓它沉默）。
+      // The previous value is read under the site-settings row lock, so concurrency can't silence this.
       if (row.autoCreateEnabled !== previousAutoCreateEnabled) {
         request.log.info({ providerId: id, userId: request.user!.id, autoCreateEnabled: row.autoCreateEnabled }, "登入服務的自動建帳開關被變更");
       }
       if (fields.issuerUrl !== undefined) {
-        // 帶了 issuerUrl 就記一行（值相同也記——條件式記錄在並發下會整個沉默）。
-        // `hasSecretAfter`／`enabledAfter` 取 DB 回傳值；`from` 是站台設定列鎖之後的讀——改 issuer 的寫入（provider PATCH）都排在那把鎖後，是當下的值。
-        // `autoCreateEnabledAfter` 讓「改了 issuer 但保留自動建帳」一定留紀錄。
+        // Logged even when the value is equal: conditional logging goes silent under concurrency. `from` is read after the site-settings lock, which all issuer-changing writes queue behind;
+        // hasSecretAfter/enabledAfter are DB-returned values; autoCreateEnabledAfter guarantees a record when the issuer changes and auto-create is kept.
         request.log.info(
           {
             providerId: id, userId: request.user!.id, from: safeTarget(previousIssuerUrl), to: safeTarget(row.issuerUrl), hasSecretAfter: row.hasSecret, enabledAfter: row.enabled,
@@ -219,17 +207,15 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       return reply.send(toAdminProviderDto(row, deps.config));
     });
 
-    /**
-     * 登入服務圖示上傳。CSRF：`app.ts` 的 `MULTIPART_EXEMPT_ROUTES`（essence＋Origin）。
-     * 處理形比照 `routes/uploads.ts:75-150`：迴圈跑完全部 parts、只取第一個 file part、其餘 resume；每個早退都 drain。
-     * 單句 UPDATE、不開交易、不取站台設定列鎖（圖示不影響登入判斷）；不 `registry.invalidate`（圖示不影響 OIDC runtime）。
-     */
     async function requireAdminDrained(request: FastifyRequest, reply: FastifyReply): Promise<void> {
       await app.requireAdmin(request, reply);
-      // 尚未進 multipart 解析的早退一律 drain（同 routes/uploads.ts 的 authAndAuthorize）。
       if (reply.sent) drainWithCap(request);
     }
 
+    /**
+     * CSRF: MULTIPART_EXEMPT_ROUTES in app.ts. Single UPDATE, no transaction, takes only the first file part. No site-settings lock and no
+     * registry.invalidate: the icon affects neither login decisions nor the OIDC runtime.
+     */
     app.put("/api/admin/auth/providers/:id/icon", { preHandler: requireAdminDrained }, async (request, reply) => {
       const id = providerIdParam(request);
       if (id === null) {
@@ -239,7 +225,8 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
       let fileBuf: Buffer | undefined;
       let truncated = false;
       try {
-        // 每次呼叫覆寫 fileSize（與註冊選項 deepmerge；throwFileSizeLimit 沿用 false）→ 超過只設 `.truncated`、不丟例外。
+        // fileSize overrides the registered option per call; over the limit only sets `.truncated` (no throw).
+        // Run the loop to the end (no break) and resume extra file parts: that is what drains the body (see routes/uploads.ts).
         for await (const part of request.parts({ limits: { fileSize: MAX_PROVIDER_ICON_BYTES } })) {
           if (part.type !== "file") continue;
           if (fileBuf === undefined) {
@@ -262,7 +249,6 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         drainWithCap(request);
         return sendError(reply, 413, "file_too_large", ICON_TOO_LARGE_MESSAGE);
       }
-      // 只信檔頭（uploads/magic-bytes.ts:1-6）；偵測器認得 GIF，本端點不收。
       const mime = detectImageMimeType(fileBuf);
       if (mime === null || mime === "image/gif") {
         drainWithCap(request);
@@ -273,11 +259,9 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         .set({ iconKind: "upload", iconData: fileBuf, iconMime: mime, iconVersion: sql`${authProviders.iconVersion} + 1`, updatedAt: sql`now()` })
         .where(eq(authProviders.id, id))
         .returning(adminProviderColumns())
-        // params 帶整個圖檔：非預期的 DB 錯誤不得原樣進 log（同 POST／PATCH 的 redact）。
         .catch((err: unknown) => {
           throw redactDbError(request.log, err, "上傳登入服務圖示");
         });
-      // 讀不到＝不存在或剛被刪（PUT ∥ DELETE）。
       if (!row) return sendError(reply, 404, "not_found", NOT_FOUND_MESSAGE);
       return reply.send(toAdminProviderDto(row, deps.config));
     });
@@ -290,14 +274,11 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         await deps.db.transaction(tx => deleteAuthProviderInTx(tx, deleteInput));
       } catch (err) {
         if (err instanceof TxAbort) {
-          // 站台設定列鎖讀不到 site_settings 列→ 500＋log.error。
           if (err.status === 500) request.log.error({ table: "site_settings" }, err.message);
           return sendError(reply, err.status, err.errCode, err.message);
         }
-        // 與 PATCH 一致：非預期的 DB 錯誤一律遮蔽後再丟（這一句不帶密文參數，但刪的是含密文欄的列——不讓錯誤本體進 log）。
         throw redactDbError(request.log, err, "刪除登入服務");
       }
-      // 提交之後才失效快取（409／404 不動）。
       deps.registry.invalidate(id);
       return reply.code(204).send();
     });
@@ -313,7 +294,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
     app.post("/api/admin/auth/providers/:id/test", { preHandler: app.requireAdmin }, async (request, reply) => {
       const id = providerIdParam(request);
       if (id === null) return sendError(reply, 404, "not_found", NOT_FOUND_MESSAGE);
-      // 這裡刻意 SELECT 密文本體——只為了判斷「解得開嗎」（warning），內容不進任何回應、不送任何地方。
+      // Selects the ciphertext only to check that it decrypts (a warning); never returned.
       const [row] = await deps.db
         .select({
           id: authProviders.id,
@@ -332,8 +313,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
         metadata = await deps.registry.probe(row.issuerUrl);
       } catch (err) {
         if (!(err instanceof OidcUnavailableError)) throw err;
-        // 不帶 err：OidcUnavailableError 的 message 現已去敏（issuer 只用 safeTarget、不串底層 message），仍不記 err 以免日後
-        // 回歸時原始 issuer 網址（可能有 user:pass@）又跟著進 log——只記 safeTarget。
+        // err is not logged: a future regression could put the raw issuer URL (maybe with user:pass@) in the log.
         request.log.warn({ providerId: id, issuer: safeTarget(row.issuerUrl) }, "登入服務測試連線失敗");
         return sendError(reply, 502, "oidc_discovery_failed", DISCOVERY_FAILED_MESSAGE);
       }
@@ -347,7 +327,7 @@ export function adminAuthRoutes(deps: AdminAuthRouteDeps) {
           warnings.push("secret_undecryptable");
         }
       }
-      // 成功時以版本述詞寫 resolved_issuer（讀列時的版本；期間被改過就不寫——舊設定的結果不得蓋掉新設定）。不在交易內。
+      // Version predicate: a result for an old config must not overwrite a newer one.
       await recordResolvedIssuer(deps.db, row, metadata.issuer);
       const body: AdminAuthProbeResultDto = { issuer: metadata.issuer, warnings };
       return reply.send(body);

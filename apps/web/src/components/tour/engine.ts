@@ -8,48 +8,37 @@ import { NO_INSETS, unionRect, type Insets, type Rect } from "./geometry";
 import { buildSequence } from "./sequence";
 import { FULL_TOUR, prepareStop, STOPS, stopScreen, stopShownIn, stopTarget, type StopContext, type StopDef } from "./stops";
 
-/**
- * 功能導覽的引擎：站序、換站、等目標、結束後找回焦點。不碰 React，畫面與導頁由 `TourRunner` 處理。
- */
 
-/** 進站後等目標出現（而且有尺寸）的上限；等不到就跳過這一站。 */
+/** Limit for a step's target to appear (with a size) after entering; if it never does the step is skipped. */
 export const TARGET_TIMEOUT_MS = 3000;
-/**
- * 手機換畫面（清單與示範筆記之間）之後等它出來的上限。清單等不到照樣進站（目標由引擎去等）；示範筆記等不到
- * （例如它在別處被移到垃圾桶，頁面換成「在垃圾桶裡」的卡片）就當成離開示範筆記，結束導覽。
- */
+/** After a phone screen change: a list that doesn't appear still lets the step start (the engine waits for the target); a sample note that doesn't appear (e.g. trashed elsewhere, page shows the "in trash" card) counts as leaving it and ends the tour. */
 export const SCREEN_TIMEOUT_MS = 5000;
-/** 結束後找使用者選單觸發鈕的上限；導回原頁後新的側欄要一兩格畫面才掛上。 */
+/** Limit for finding the user-menu trigger after finishing; after navigating back the new sidebar takes a frame or two to mount. */
 export const RETURN_FOCUS_TIMEOUT_MS = 1000;
 
-// 型別住在首包的 context 那支（打開導覽的元件只 import 它）；這裡轉出給導覽內部用。
 export type { TourStartOptions } from "@/lib/tour-context";
 
 export interface TourStopEntry {
   stop: StopDef;
 }
 
-/** 完整導覽要走的站。 */
 export function fullTourStops(): TourStopEntry[] {
   return buildSequence(FULL_TOUR).map((e) => ({ stop: STOPS[e.id] }));
 }
 
-/** 開始時算一次前置條件：不成立的站整站拿掉，總站數只算留下的，中途不會跳號。 */
+/** Computed once at start: steps whose precondition fails are dropped entirely and the total counts only the rest, so numbers never skip mid-tour. */
 export function planStops(entries: readonly TourStopEntry[], ctx: StopContext): TourStopEntry[] {
   return entries.filter((e) => e.stop.precondition?.(ctx) ?? true);
 }
 
-/**
- * 向 server 讀一次 AI 動作（與 AI 工具列共用 `["ai-actions"]` 這個查詢）。`staleTime: 0` 讓快取裡已經有的資料也重抓：
- * 從首頁打開時快取可能還沒有資料或是舊的。讀取失敗當成沒有 AI；不重試，失敗時不讓使用者多等。
- */
+/** `staleTime: 0` refetches even cached data: opening from home the cache may be empty or stale. A failed read means no AI; no retry, so the user isn't kept waiting. Shares `["ai-actions"]` with the AI toolbar. */
 export function fetchTourAiActions(queryClient: QueryClient): Promise<AiActionDto[]> {
   return queryClient
     .fetchQuery({ queryKey: ["ai-actions"], queryFn: fetchAiActions, staleTime: 0, retry: false })
     .catch(() => []);
 }
 
-/** 全部元素都有寬高才回它們的聯集；只挖亮其中一部分會讓說明對不上。 */
+/** Only when every element has a size (highlighting part of them would not match the text). */
 export function measureTargets(els: readonly Element[]): Rect | null {
   if (els.length === 0) return null;
   const rects = els.map((el) => el.getBoundingClientRect());
@@ -57,10 +46,7 @@ export function measureTargets(els: readonly Element[]): Rect | null {
   return unionRect(rects.map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height })));
 }
 
-/**
- * 卡片上的「n / N」：只數在 `layout` 這種版面上會出現的站（手機上沒有的站立刻跳過，不佔號，中途不跳號）。
- * 畫面上那一站一定算進去：導覽中換到沒有它的版面時，卡片還停在那一站。
- */
+/** Counts only steps shown in `layout` (a step absent on phones is skipped at once and takes no number, so numbers never skip). The on-screen step always counts: after a layout change mid-tour the card may still be on a step that layout lacks. */
 export function tourProgress(stops: readonly TourStopEntry[], index: number, layout: TourLayout): { step: number; total: number } {
   const counted = stops.map((e, i) => i === index || stopShownIn(e.stop, layout));
   return {
@@ -70,15 +56,12 @@ export function tourProgress(stops: readonly TourStopEntry[], index: number, lay
 }
 
 export interface CardBands {
-  /** 卡片最好讓開的邊帶：釘住的頂列或頁首、底部的圓形鈕。畫面太小時可以疊上去（見 `cardInsets`）。 */
   keepOut: Insets;
-  /** 畫面被蓋住、卡片放進去就看不到的部分：螢幕鍵盤、鍵盤上方的編輯工具列。一律讓開。 */
   blocked: Insets;
 }
 
 const NO_BANDS: CardBands = { keepOut: NO_INSETS, blocked: NO_INSETS };
 
-/** 看得到、不在 inert 範圍內的 `selector` 元素裡，最高的上緣；沒有就回 `fallback`。 */
 function highestTop(selector: string, fallback: number): number {
   let top = fallback;
   for (const el of document.querySelectorAll(selector)) {
@@ -89,22 +72,14 @@ function highestTop(selector: string, fallback: number): number {
   return top;
 }
 
-/**
- * 鍵盤升起時 iOS 會把版面往上推（視覺視窗的 `offsetTop` 變大）：版面最上面那一段被推出畫面外，卡片放在那裡看不到。
- * 雙指放大時 `offsetTop` 也會變，但那不是鍵盤，不算。
- */
+/** iOS pushes the layout up when the keyboard rises (the visual viewport's `offsetTop` grows): the top part is off screen and a card there can't be seen. Pinch zoom also changes `offsetTop`, but that isn't the keyboard. */
 function keyboardPanTop(): number {
   const viewport = window.visualViewport;
   if (!viewport || Math.abs(viewport.scale - 1) > 0.01) return 0;
   return Math.max(0, viewport.offsetTop);
 }
 
-/**
- * 卡片要避開的畫面邊帶（px，從視窗各邊量起；瀏海等 safe area 由卡片自己另外讀）。其他版面沒有這類東西，回全 0。手機上：
- * - `keepOut` 上：清單畫面是釘住的頂列與清單標題列，筆記畫面是釘住的筆記頁首。下：看得到的圓形鈕（搜尋、新增筆記）。
- * - `blocked` 下：螢幕鍵盤與鍵盤上方的編輯工具列，取高的那個。鍵盤升起時 `window.innerHeight` 不會變小，
- *   只有視覺視窗變矮（`readKeyboardInset`），不扣掉的話卡片會落在鍵盤後面。`blocked` 上：鍵盤把版面往上推出畫面的那一段。
- */
+/** Zero outside phones. The keyboard doesn't shrink `window.innerHeight`, only the visual viewport (`readKeyboardInset`); not subtracting it would put the card behind the keyboard. `blocked` top = the part the keyboard pushes off screen. */
 export function measureCardBands(layout: TourLayout): CardBands {
   if (layout !== "phone") return NO_BANDS;
   const height = window.innerHeight;
@@ -123,10 +98,7 @@ export function measureCardBands(layout: TourLayout): CardBands {
   };
 }
 
-/**
- * 每格畫面呼叫 `check`，回非 null 就 resolve 那個值；超過 `timeoutMs` 或中止就 resolve null。
- * 第一次在呼叫當下就查。`check` 拋錯當成還沒好。
- */
+/** The first `check` runs synchronously at call time; resolves null on timeout or abort. A throwing `check` counts as not ready. */
 export function waitForFrames<T>(check: () => T | null, signal: AbortSignal, timeoutMs = Infinity): Promise<T | null> {
   return new Promise((resolve) => {
     if (signal.aborted) {
@@ -158,21 +130,18 @@ export function waitForFrames<T>(check: () => T | null, signal: AbortSignal, tim
   });
 }
 
-/**
- * 等側欄抽屜從 DOM 消失。抽屜是會鎖焦點、把外面標成 `aria-hidden` 的 modal：開著時導覽卡片按不到，
- * 要指的目標也全都查不到。沒有上限：開始流程整體的逾時由呼叫端處理。
- */
+/** Modal drawers lock focus and mark the outside `aria-hidden`: the card is unreachable and targets unfindable while it is open. No limit: the start flow's overall timeout is the caller's. */
 export async function waitForDrawerClosed(signal: AbortSignal): Promise<void> {
   await waitForFrames(() => (document.querySelector("[data-sidebar-drawer]") === null ? true : null), signal);
 }
 
-/** 路徑比對：瀏覽器的 pathname 對非 ASCII 的 slug 是百分比編碼形，`canonicalNotePath` 回的是未編碼的字。 */
+/** Browser pathname is percent-encoded for non-ASCII slugs; `canonicalNotePath` returns the raw characters. */
 export function samePath(pathname: string, path: string): boolean {
   let decoded = pathname;
   try {
     decoded = decodeURIComponent(pathname);
   } catch {
-    // 畸形的 % 序列：照原字串比。
+    // Malformed % sequence: compare the raw strings.
   }
   return decoded === path;
 }
@@ -181,11 +150,7 @@ function interactive(el: Element | null): el is HTMLElement {
   return el instanceof HTMLElement && el.isConnected && el.closest('[aria-hidden="true"], [inert]') === null;
 }
 
-/**
- * 結束後的焦點：每格畫面呼叫一次 `returnFocus()`，查到還掛在 DOM 上的元素就聚焦它（最多 `RETURN_FOCUS_TIMEOUT_MS`）；
- * 查不到退到筆記標題框，再退到主內容區（`<main>` 本來不能聚焦，補 `tabindex="-1"`）。回傳聚焦的元素。
- * 手機不退到標題框（聚焦文字框會叫出鍵盤），改退到筆記頁首回清單的「‹」。
- */
+/** Falls back to the note title box, then main (`<main>` isn't focusable: add `tabindex="-1"`). On phones not the title box (focusing a text box raises the keyboard) but the note header's "‹" back to the list. */
 export async function focusReturnTarget(returnFocus: () => Element | null, signal: AbortSignal): Promise<HTMLElement | null> {
   const found = await waitForFrames(() => {
     const el = returnFocus();
@@ -220,37 +185,32 @@ function runPrepare(entry: TourStopEntry, ctx: StopContext): void {
   }
 }
 
-/**
- * 等這一站的目標出現而且有尺寸，最多 `TARGET_TIMEOUT_MS`。目標每格畫面重查（prepare 切 tab 之後要下一格才畫出來）。
- * 目前的版面上沒有這一站（例如手機上的 AI 站）就不等，立刻回 false。
- */
+/** The target is re-queried every frame (after `prepare` switches tab it appears a frame later). If this layout has no such step (e.g. the AI step on phones) returns false at once. */
 export async function waitForStopTarget(entry: TourStopEntry, ctx: StopContext, signal: AbortSignal): Promise<boolean> {
   if (!stopShownIn(entry.stop)) return false;
   return (await waitForFrames(() => measureTargets(stopTarget(entry.stop, ctx)), signal, TARGET_TIMEOUT_MS)) !== null;
 }
 
 export type EndReason =
-  /** 最後一站〔保留示範筆記〕。 */
   | "keep"
-  /** 最後一站〔刪除〕。 */
   | "delete"
-  /** ✕、Esc、第 1 站的「跳過」。 */
+  /** ✕, Esc, or "Skip" on step 1. */
   | "close"
-  /** 位置離開了示範筆記（上一頁、重新整理、被導到登入頁、筆記在別處被刪）。 */
+  /** The location left the sample note (Back, reload, redirected to login, note deleted elsewhere). */
   | "left"
-  /** 導覽元件卸載。 */
+  /** The tour component unmounted. */
   | "unmount";
 
 export interface EngineSnapshot {
   phase: "idle" | "running" | "ended";
-  /** 畫面上那一站在站序裡的位置；還沒進第一站是 -1。 */
+  /** Position of the on-screen step in the step order; -1 before step 1. */
   index: number;
   total: number;
-  /** 畫面上那一站；換站等目標的期間仍是上一站。 */
+  /** The on-screen step; still the previous one while waiting for the next target. */
   entry: TourStopEntry | null;
-  /** 正在換站（等下一站的目標）：這段期間的下一步、上一步不動作。 */
+  /** A step change is in progress (waiting for the next target): next/back do nothing meanwhile. */
   pending: boolean;
-  /** 換站中、已經跑過 `prepare` 正在等目標的那一站；沒有在換站是 null。 */
+  /** The step whose `prepare` already ran and whose target is awaited; null when not changing steps. */
   preparing: TourStopEntry | null;
   endReason: EndReason | null;
 }
@@ -258,22 +218,17 @@ export interface EngineSnapshot {
 export type WaitForTarget = (entry: TourStopEntry, ctx: StopContext, signal: AbortSignal) => Promise<boolean>;
 
 /**
- * 導覽的狀態機。站序在建立時就定好（`planStops` 濾過）；`ctx` 也是開始時那一份。
- *
- * - 進站：先換到這一站的畫面（`StopContext.showScreen`，手機的清單／示範筆記），再 `prepare`，再等目標（`waitForTarget`），
- *   等到才算進站；等不到就往同一個方向跳下一站。
- *   往回走一路都等不到，就從原本那站往後找。最後一站不跳：它帶著〔保留示範筆記〕〔刪除〕，等不到目標也照樣進站（卡片置中）。
- * - 離站：先呼叫畫面上那站的 `leave`，再 `prepare` 下一站——演示站開的選單要先收掉，下一站才開得了自己的。
- *   開始進一站（呼叫 `prepareStop`）就一定會再呼叫一次 `leave`，跳過的、等目標等到一半就結束的也一樣。
- *   寬視窗以外 `prepareStop` 多半不跑站點的 `prepare`，`leave` 仍會被呼叫，所以站點的 `leave` 要能在 `prepare` 沒跑過時安全執行。
+ * The step order is fixed at creation (after `planStops`), and so is `ctx`.
+ * Enter: `showScreen` → `prepare` → `waitForTarget`; if the target never appears skip in the same direction; going back with none found searches forward from the original step. The last step never skips (it carries [keep sample note]/[delete]): it is entered with a centred card.
+ * Leave: the on-screen step's `leave` runs before the next `prepare`: a menu opened by a demo must close first or the next step can't open its own. Once `prepareStop` is called, `leave` is called exactly once afterwards, also for skipped or half-awaited steps.
+ * Outside wide windows `prepareStop` usually skips the step's `prepare` but `leave` still runs, so a step's `leave` must be safe without `prepare`.
  */
 export class TourEngine {
   private snapshot: EngineSnapshot;
   private readonly listeners = new Set<() => void>();
-  /** 每次換站或結束都加一：換站等目標時被結束打斷，等到的結果就不算數。 */
+  /** Incremented on every step change or finish: a result from an interrupted wait doesn't count. */
   private generation = 0;
   private waiting: AbortController | null = null;
-  /** 畫面上、還沒呼叫過 `leave` 的那一站。 */
   private shown: TourStopEntry | null = null;
 
   constructor(
@@ -298,7 +253,6 @@ export class TourEngine {
     for (const listener of [...this.listeners]) listener();
   }
 
-  /** 進第一站。 */
   begin(): Promise<void> {
     if (this.snapshot.phase !== "idle") return Promise.resolve();
     if (this.stops.length === 0) {
@@ -336,10 +290,7 @@ export class TourEngine {
     if (shown !== null) runLeave(shown, this.ctx);
   }
 
-  /**
-   * 換到這一站的畫面；這個版面上沒有的站不換（它會立刻被跳過）。換畫面失敗只記 console，照樣往下等目標。
-   * 不用換（沒有 `showScreen`）時回 null，進站的其餘步驟同步接著跑。
-   */
+  /** A failed screen change is only logged to the console and the target is awaited anyway. null when no change is needed (no `showScreen`, or the step isn't shown in this layout and will be skipped at once): the rest of entering runs synchronously. */
   private enterScreen(entry: TourStopEntry, signal: AbortSignal): Promise<void> | null {
     const show = this.ctx.showScreen;
     if (show === undefined || !stopShownIn(entry.stop)) return null;

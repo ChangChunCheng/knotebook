@@ -33,22 +33,7 @@ const LANGUAGES: { code: "en" | "zh-TW"; labelKey: string }[] = [
 
 const THEMES: Theme[] = ["light", "dark", "system"];
 
-/**
- * 顯示 displayName、語言切換（en/zh-TW）、主題切換（light/dark/system）、
- * 設定入口（所有人皆可見，開 `/settings/account`，帶目前 location 當
- * `backgroundLocation`——設定總 modal）、站台管理入口（admin only，
- * 導站台管理 modal `/admin/users`，帶 `backgroundLocation`（#247））、登出。
- * 未登入（`user` 為 `null`/`undefined`）時不渲染任何東西——這個元件只掛在
- * `<RequireAuth>` 底下的頁面，理論上此時一定已登入，但保留這道防呆，
- * 避免元件被單獨挪用到未受保護的頁面時炸掉。
- *
- * 觸發鈕是整列（圓形首字 avatar＋displayName＋齒輪），
- * 而不是只有文字的 `Button`。**e2e 名稱保護**：觸發鈕本身設
- * `aria-label={user.displayName}`，覆蓋掉子樹（avatar／文字／齒輪）自然算出的
- * accessible name；avatar 與齒輪都標 `aria-hidden="true"`，確保
- * `getByRole("button",{name:user.displayName,exact:true})` 這類既有查詢在改版
- * 前後行為不變。
- */
+/** The trigger sets `aria-label={user.displayName}` and hides avatar/gear so existing e2e name queries keep working. Renders nothing when `user` is missing (guard for use outside `<RequireAuth>`). */
 export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -57,7 +42,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
   const { release } = useSidebarQuery();
   const { theme, setTheme, accent, setAccent } = useTheme();
   const accentLabelId = useId();
-  // 說明項：這幾個 hook 必須在 `if (!user) return null` 之前。
+  // hooks must come before the early return
   const shortcuts = useShortcutsDialog();
   const tour = useTour();
   const mac = isMacPlatform();
@@ -68,15 +53,12 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
 
   async function handleLogout(): Promise<void> {
     await logout();
-    release(); // 搜尋字屬於登出的這個人：清掉（#369）
-    // #131：登出**刻意不帶** `?next=`——登出的語意是「我要離開」，不是「我暫時被擋下
-    // 來」。同理 `ChangePasswordPage` 改密後登出、`NotePage` 的 session 過期也都導裸的
-    // `/login`（對照 `auth/guards.tsx` 的 `useSessionGate`，那條才是「被擋下來」）。
+    release(); // search text belongs to the user signing out: clear it (#369)
+    // Sign-out deliberately omits `?next=` (#131): it means "leaving", not "blocked" (contrast `useSessionGate` in `auth/guards.tsx`). `ChangePasswordPage` and `NotePage` session expiry also go to bare `/login`.
     navigate("/login", { replace: true });
   }
 
-  // i18next 核心在 changeLanguage 後會自己呼叫 languageDetector.cacheUserLanguage
-  // 寫回 localStorage（見 i18next.js changeLanguage 尾聲），這裡不需要重複寫。
+  // i18next already writes the language to localStorage after changeLanguage.
   function handleLanguageChange(code: string): void {
     void i18n.changeLanguage(code);
   }
@@ -86,7 +68,6 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
     <DropdownMenu phoneSheet open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         {avatar ? (
-          // 頭像形（手機清單頂列）：只有共用頭像（圖或首字）；視覺 32、點擊範圍 44。
           <button
             ref={triggerRef}
             type="button"
@@ -108,9 +89,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             aria-label={user.displayName}
             {...tourTarget("userMenu")}
             className={cn(
-              // 列高吃 SIDEBAR_ROW_HEIGHT：與內文卡底部的 backlinks 列等高
-              // （兩者左右相鄰，見該常數註解）。p-1.5＋24px avatar 的自然高度
-              // 本來就等於它，這裡明寫出來是為了讓兩邊有機械連結、不會各改各的。
+              // Equal to the backlinks row beside it (see SIDEBAR_ROW_HEIGHT); spelled out so the two stay linked.
               "flex w-full items-center gap-2 rounded-md p-1.5 text-left text-sm hover:bg-accent/60",
               SIDEBAR_ROW_HEIGHT,
             )}
@@ -128,8 +107,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
           </button>
         )}
       </DropdownMenuTrigger>
-      {/* 寬度跟著觸發它的帳號列走（Radix 在 Content 上曝露 trigger 量到的寬度），
-          選單左右緣就跟側欄對齊；預設的 `min-w-32`（128px）比那一列窄一半。頭像形的觸發鈕只有 44 寬，改用固定下限。 */}
+      {/* Width follows the trigger (Radix exposes it); avatar-form trigger is only 44 wide, so use a fixed minimum. */}
       <DropdownMenuContent
         align="end"
         className={avatar ? "min-w-56" : "min-w-[var(--radix-dropdown-menu-trigger-width)]"}
@@ -164,11 +142,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         <DropdownMenuLabel id={accentLabelId} className="text-xs font-normal text-muted-foreground">
           {t("userMenu.accent")}
         </DropdownMenuLabel>
-        {/* gap 是承重值。滑鼠：16px 圓點（h-4 w-4）＋8px 間距（gap-2）＝圓心距 24px，恰合
-            WCAG 2.5.8 Target Size (Minimum) 的間距例外下限——縮小 gap 即不合格，
-            不得因為「看起來擠一點沒差」隨手調整。觸控：圓點放大到 28px，並用 after 把點擊範圍擴到
-            44px（見色點的 class），所以間距拉到 16px（gap-4）＝圓心距 44px，相鄰兩顆的點擊範圍剛好不重疊，
-            不再靠 24px 例外成立。 */}
+        {/* The gap is load-bearing: 16px dot + 8px gap = 24px centres, the WCAG 2.5.8 spacing floor; on touch the dots are 28px with a 44px hit area and gap-4, giving 44px centres so adjacent hit areas just do not overlap (no longer relying on the 24px exception); shrinking the gap fails. */}
         <DropdownMenuRadioGroup
           value={accent}
           onValueChange={(value) => setAccent(value as Accent)}
@@ -179,27 +153,19 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             <DropdownMenuRadioItem
               key={color}
               value={color}
-              // 純色點沒有 textContent，Radix roving focus 的 typeahead
-              // （按字母跳到對應項）需要靠 textValue 才找得到這一項。
+              // textValue is needed for typeahead because the dot has no text.
               textValue={t(`accent.${color}`)}
               aria-label={t(`accent.${color}`)}
               title={t(`accent.${color}`)}
-              // 選色不應該關掉選單——使用者可能想連續比較幾個顏色。
+              // Keep the menu open so colours can be compared.
               onSelect={(event) => event.preventDefault()}
               className={cn(
-                // 選中＝點內打勾（下方 ItemIndicator，checked 時才渲染），
-                // 焦點＝這圈 ring；兩者是正交的視覺維度（一個在點內、一個在點
-                // 外），互不覆蓋，因此鍵盤移到選中的點上時勾與 ring 同時完整
-                // 可見。wrapper 的 outline-none 清掉了瀏覽器原生 focus ring，
-                // 鍵盤在六點間移動需要自己補：Radix 在 roving focus 目前停留
-                // 的項目上放 data-highlighted，用 ring-foreground 顯示。
+                // Check (inside the dot) and focus ring (outside) are orthogonal, so both stay visible; the wrapper outline-none removes the native ring, hence data-highlighted ring.
                 "relative flex h-4 w-4 items-center justify-center rounded-full pointer-coarse:h-7 pointer-coarse:w-7 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] ring-offset-2 ring-offset-popover data-[highlighted]:ring-2 data-[highlighted]:ring-foreground",
               )}
               style={{ backgroundColor: `var(--brand-swatch-${color})` }}
             >
-              {/* text-popover：淺色 popover（白）用白勾約 4.7–5.0:1、深色
-                  popover 用深勾約 5.0–6.8:1，六色兩模式皆 ≥3:1，不需依模式
-                  切換顏色。勾純視覺，色點本身已有 aria-label。 */}
+              {/* text-popover keeps the check at >= 3:1 in both modes. */}
               <DropdownMenuItemIndicator>
                 <Check aria-hidden className="h-3 w-3 text-popover" />
               </DropdownMenuItemIndicator>
@@ -208,8 +174,7 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
         </DropdownMenuRadioGroup>
 
         <DropdownMenuSeparator />
-        {/* Ctrl+, 的提示只在 AppShell 底下才標（context 非 null）：那支監聽器在 AppShell，單獨渲染本元件時按了不會有反應。
-            提示字 aria-hidden：不進選單項的可及名稱（e2e 以名稱找項）。開法與 AppShell 的 Ctrl+, 同一條路（`openSettings`）。 */}
+        {/* Hint only under AppShell: the listener lives there. aria-hidden keeps it out of the item name (e2e). Opens via `openSettings`, same as AppShell's Ctrl+,. */}
         <DropdownMenuItem
           aria-keyshortcuts={shortcuts ? (mac ? "Meta+," : "Control+,") : undefined}
           onSelect={() => openSettings(navigate, location, () => setMenuOpen(true))}
@@ -221,27 +186,24 @@ export function UserMenu({ variant = "row" }: { variant?: "row" | "avatar" } = {
             </span>
           )}
         </DropdownMenuItem>
-        {/* 說明（快捷鍵、功能導覽、這一版新增；Ctrl+/ 也開同一個視窗）：不在 AppShell 底下（context 為 null，例如單獨渲染本元件的測試）就不渲染，免得出現點了沒反應的死項。
-            三步形照 NoteMenu 的 focus trap 規矩：preventDefault → 手動關選單 → 開對話框，並把觸發鈕交給對話框當關閉時的還焦點目標。
-            ⚠ 少了 preventDefault 選單一樣會關，單元測試守不到這一步（跟 NoteMenu 同理）；焦點回歸由 AppShell.shortcuts.test 的「Esc 關 → 焦點回 UserMenu 觸發鈕」案與 e2e 守。 */}
+        {/* Not rendered outside AppShell (no listener). Follow NoteMenu focus-trap rule: preventDefault, close menu manually, open dialog (unit tests cannot catch a missing preventDefault). The trigger is passed as the close focus target; focus return is pinned in AppShell.shortcuts.test and e2e. */}
         {shortcuts && (
           <DropdownMenuItem
             aria-keyshortcuts={mac ? "Meta+/" : "Control+/"}
             onSelect={(event) => {
               event.preventDefault();
               setMenuOpen(false);
-              // 有導覽 context 就停在「功能導覽」頁；沒有（導覽不在這棵樹上）那頁不列，停在快捷鍵的「通用」。
               shortcuts.open(triggerRef.current, tour ? "tour" : "global", () => setMenuOpen(true));
             }}
           >
             {t("userMenu.help")}
-            {/* 提示字 aria-hidden：不進選單項的可及名稱（e2e 以名稱找項）。 */}
+            {/* hint is aria-hidden (e2e finds items by name) */}
             <span aria-hidden="true" className="ml-auto pl-4 text-xs text-muted-foreground">
               {mac ? "⌘/" : "Ctrl+/"}
             </span>
           </DropdownMenuItem>
         )}
-        {/* 站台管理是 modal（#247）：帶 backgroundLocation，關閉時回到原頁。非 admin 不渲染；/admin 的 RequireAdmin 才是防線。 */}
+        {/* Modal (#247) with backgroundLocation; `RequireAdmin` on /admin is the real guard. */}
         {user.isAdmin && (
           <DropdownMenuItem onSelect={() => navigate("/admin/users", { state: panelEntryState(location, () => setMenuOpen(true)) })}>{t("userMenu.siteAdmin")}</DropdownMenuItem>
         )}

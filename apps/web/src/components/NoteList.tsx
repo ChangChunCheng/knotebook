@@ -34,24 +34,18 @@ import { DROP_SCOPE_CLASS, useSidebarDrag } from "@/components/sidebar/useSideba
 import { buildTabNodes, hasSelectableNodes, noteLocationLabel, noteSpaceKey, type LocationContext, type SidebarNode } from "@/components/sidebar/tree";
 import { tourTarget, type TourTargetId } from "@/lib/tour-targets";
 
-// 一般 tab 選取模式：只准經 SelectLazy 這個 lazy 入口（首包上限）。兩個掛點共用同一個 chunk。
+// lazy-only entry (initial-bundle cap); both mount points share one chunk
 const SelectHeader = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectHeader })));
 const SelectableTree = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectableTree })));
-// 新增群組對話框：只在開啟時才需要，lazy（首包瘦身）。
 const GroupNameDialog = lazy(() => import("@/components/groups/GroupNameDialog").then((m) => ({ default: m.GroupNameDialog })));
-// 資料夾對話框（新增／改名／刪除）：只准經 FolderLazy 這個 lazy 入口（首包上限）。
+// lazy-only entry (initial-bundle cap)
 const FolderDialogs = lazy(() => import("@/components/sidebar/FolderLazy").then((m) => ({ default: m.FolderDialogs })));
 
-/**
- * 疊資料夾建好後的改名框：`onClosed` 在關閉時以最後的名字呼叫恰一次（送出＝送出的名字、取消＝原名）；
- * `focusTarget` 在關閉當下才解析（新資料夾列是重抓後才出現的）。
- */
 export interface StackRenameHooks {
   onClosed: (finalName: string) => void;
   focusTarget: () => HTMLElement | null;
 }
 
-/** 資料夾對話框的請求（host 在每份 NoteList 實例各一份；資料夾 ⋮ 也經 `NodeContext.openFolderDialog` 開框）。 */
 export type FolderDialogRequest =
   | { kind: "create"; parent: { folderId: string } | { space: FolderSpaceDto } }
   | { kind: "rename"; folder: FolderDto; stack?: StackRenameHooks }
@@ -63,8 +57,7 @@ const EMPTY_NOTES: NoteDto[] = [];
 const EMPTY_FAVORITES: FavoriteDto[] = [];
 const EMPTY_NODES: SidebarNode[] = [];
 
-/** ApiFail → errors.<code>；其餘（網路失敗等）→ errors.fallback。與 LoginPage
- * 逐字同一套對映規則（見 client.ts 的說明）。 */
+/** same mapping as LoginPage */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -72,11 +65,7 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 分享角色徽章——只給非 owner（editor/viewer）的筆記顯示；owner 自己的筆記不需要
- * 徽章（列表本身已隱含「這是你的」），'none' 理論上不會出現在 GET /api/notes 的
- * 結果裡（server 只回傳使用者有權限看的筆記）。側欄是小字，不是 pill。
- * #182：群組筆記（`group` 非 null）一律不標——角色看群組面板的成員表（筆記頁頁首徽章不再顯示角色，#335）；
- * 只有逐人分享給我的個人筆記保留。 */
+/** Only for non-owner notes shared with me per person; group notes are never marked (#182): see the group panel member table. The note header no longer shows the role either (#335). */
 export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
   const { t } = useTranslation();
   if (group) return null;
@@ -84,25 +73,18 @@ export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteD
   return <span className="shrink-0 text-[11px] text-muted-foreground max-sm:text-xs">{t(`roles.${role}`)}</span>;
 }
 
-/** `plain`：頂層清單（我的筆記／與我共享），`pl-2`；`group`：群組導引線內，文字離線 12px；
- * `recent`：最近 tab 的兩行列（標題＋位置），角色在位置行、不放 `RoleBadge`。 */
 type RowVariant = "plain" | "group" | "recent";
 
 interface NoteRowProps {
   note: NoteDto;
   variant: RowVariant;
   location: LocationContext;
-  /** 這一篇是不是最愛；`null`＝最愛清單還沒到或讀取失敗（狀態未知，不渲染星星）。 */
+  /** `null` = favourites not loaded or failed: state unknown, no star. */
   favorite: boolean | null;
-  /** 這一篇的加入或移出送出中。 */
   favoritePending: boolean;
 }
 
-/**
- * 觸控與沒有 hover 的裝置上最愛列的星標：不是按鈕、不吃點擊，排在 ⋮ 的左邊（⋮ 一律是最右一格，各列的 ⋮ 上下對齊）；
- * 加入、移出走 ⋮ 選單。滑鼠下不顯示（那裡是最右一格的星號鈕）。星形 14px、與 ⋮ 的圖示間隔約 8px；
- * 左邊 `ms-2`（加列 gap 共 12px）與標題／角色字隔開。
- */
+/** Not a button: shown only on touch/no-hover devices (a mouse uses the star button) and takes no clicks; add and remove through ⋮. Sits left of ⋮ so every row ⋮ lines up: 14px star about 8px from ⋮, `ms-2` from the text. */
 function FavoriteMarker() {
   const { t } = useTranslation();
   return (
@@ -117,15 +99,11 @@ function FavoriteMarker() {
   );
 }
 
-/** 一列筆記：標題、徽章、⋮（`SidebarNoteMenu`）、最愛星星（`RowFavoriteStar`，最右一格），DOM 順序＝視覺順序；
- * 星星與 ⋮ 的 hover 浮出靠 `<li>` 的 `group/noterow`。
- * 靜態卡與抽屜各一份 NoteList，所以一篇筆記的星星與 ⋮ 最多各兩份 DOM——測試一律 `within(...)` 鎖定面板。 */
+/** Static card and drawer each render a NoteList, so a row can exist twice in the DOM: tests must scope with `within(...)`. DOM order equals visual order; the star's hover reveal relies on the `group/noterow` class on the `li`. */
 function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRowProps) {
   const { t } = useTranslation();
   const { activeNoteId, setActiveNoteId } = useActiveNote();
-  // #122：active 判準改吃 context 的 note.id（單一真相，理由見 lib/active-note.tsx
-  // 檔頭）——不再比對路由參數（slug 隨標題重算、網址在存檔回來後才換，URL 判斷會
-  // 有落差；前身 matchesNoteRef 已退役）。
+  // #122: active comes from context note.id (see `lib/active-note.tsx`), not route params: slug is recomputed from the title and the URL changes after the save returns.
   const active = activeNoteId === note.id;
   return (
     <li
@@ -136,23 +114,15 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         variant === "recent" ? "pl-2" : "h-11 pointer-fine:h-7",
         variant === "plain" && "pl-2",
         variant === "group" && "pl-3",
-        // #247：非 active 的列走主題色四態（與管理面板左卡項次同）：平常無底、hover
-        // `bg-brand-soft`、按下 `active:bg-brand-soft-strong`、selected `bg-brand-soft`。
-        // active 時 hover 要再深一階：twMerge 對同一個 variant 群組（`hover:bg-*`）互斥，後面這個 class
-        // 會蓋掉前面的 `hover:bg-brand-soft`——所以這裡必須走 `cn(...)`，不能字串串接。
+        // #247: the active row's hover is one shade darker; the four row states match the admin left card. twMerge treats the `hover:bg-*` group as exclusive, so the active hover override must go through `cn(...)`.
         active && "bg-brand-soft text-brand-on-soft font-medium hover:bg-brand-soft-strong",
       )}
     >
-      {/* 刻意用 `<Link>` + 自算的 active，不用 `<NavLink>`：NavLink 比對的是
-          location，舊形 `/notes/:ref`、prev_slug 等非 canonical 網址都對不上（#179 起收斂走
-          router navigate，location 與網址列一致，但 id 仍是唯一不會變的判準）。 */}
+      {/* `<Link>` + computed active, not `<NavLink>`: NavLink matches location, which fails for non-canonical URLs (old `/notes/:ref`, prev_slug). Since #179 location matches the address bar, but id is still the only stable criterion. */}
       <Link
         to={canonicalNotePath(note)}
         onClick={(event) => {
-          // 樂觀 set 僅限 plain left-click（擋 meta/ctrl/shift）：
-          // 那些組合是「開新分頁/視窗」——本頁不導航，樂觀 set 會把高亮留在沒開的
-          // 那篇。中鍵不觸發 onClick（auxclick），天然排除。alt＋左鍵（部分瀏覽器
-          // 是下載、同樣不導航）**已知未涵蓋**。
+          // Optimistic set only for a plain left-click: modified clicks open a new tab and would leave the highlight on a note that did not open. Middle-click fires auxclick, not click, so it never reaches here; alt+click (download) is a known gap.
           if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
             setActiveNoteId(note.id);
           }
@@ -164,7 +134,7 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
         )}
       >
         {variant === "recent" ? (
-          // 兩行一律 <div>：可及名稱靠 UA 預設 block 之間補空白（jsdom 不載 Tailwind，span 會黏成「標題位置」）。
+          // Both lines are `<div>` so the accessible name has a space between blocks (spans would run together as "TitleLocation"; the space comes from the UA block display; jsdom has no Tailwind).
           <>
             <div className="truncate text-[13px] max-sm:text-[15px]">{note.title}</div>
             <LocationLine label={noteLocationLabel(note, location, t)} />
@@ -181,7 +151,6 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
   );
 }
 
-/** 最近 tab 的第二行：太長時 CSS truncate，`title` 給完整路徑。 */
 function LocationLine({ label }: { label: string }) {
   return (
     <div className="mt-0.5 truncate text-[11px] text-muted-foreground max-sm:text-xs" title={label}>
@@ -190,9 +159,7 @@ function LocationLine({ label }: { label: string }) {
   );
 }
 
-/** 標題列／群組列右側的 24px「＋」圖示鈕。tab 標題列的常駐；群組列的帶 `reveal="grouprow"`
- * （列 hover 或列內有 `:focus-visible` 才顯示——鍵盤 tab 到它時一定看得見；滑鼠點過留下的
- * 焦點不算（不是 focus-within））。 */
+/** 24px icon button. Group-row variant (`reveal="grouprow"`) shows on row hover or `:focus-visible` inside, so keyboard users always see it; focus left by a mouse click does not count (not focus-within). Without `reveal` (title-row variant) it is always shown. */
 function HeaderActionButton({
   label,
   onClick,
@@ -203,15 +170,11 @@ function HeaderActionButton({
   tourTargetId,
 }: {
   label: string;
-  /** `currentTarget` 給開框的呼叫端當還焦點的對象。 */
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
-  /** 群組標題列「＋」用：讓新增群組對話框關閉時把焦點還回來。 */
   buttonRef?: RefObject<HTMLButtonElement | null>;
   reveal?: RevealScope;
-  /** 預設「＋」；「新增資料夾」傳 `FolderPlus`。 */
   icon?: (props: SVGProps<SVGSVGElement>) => ReactElement;
-  /** 功能導覽要指這顆時給（`lib/tour-targets.ts`）。 */
   tourTargetId?: TourTargetId;
 }) {
   return (
@@ -225,7 +188,6 @@ function HeaderActionButton({
       {...(tourTargetId === undefined ? {} : tourTarget(tourTargetId))}
       onClick={onClick}
       disabled={disabled}
-      // 24px。hover 浮出與觸控（`hover: none`）常駐見 `ui/reveal.ts`。
       className={cn("h-6 w-6 shrink-0", ROW_ICON_HIT, reveal && hoverReveal(reveal))}
     >
       <Icon aria-hidden="true" className="h-3.5 w-3.5" />
@@ -238,24 +200,17 @@ interface NodeContext {
   location: LocationContext;
   onCreateNote?: (groupId?: string, folderId?: string) => void;
   createNotePending: boolean;
-  /** 開資料夾對話框；`opener` 是關框時還焦點的對象。 */
   openFolderDialog: (request: FolderDialogRequest, opener: HTMLElement | null) => void;
-  /** 快取裡的筆記：資料夾 ⋮ 開啟時判斷子樹有沒有活筆記（刪除擋下）。 */
+  /** Used to block deleting a folder whose subtree has live notes. */
   notes: readonly NoteDto[];
-  /** 最愛的 noteId 集合；`null`＝最愛清單還沒到或讀取失敗（列上不渲染星星）。 */
+  /** `null` = favourites not loaded or failed: no star. */
   favoriteIds: ReadonlySet<string> | null;
-  /** 加入或移出最愛送出中的 noteId。 */
   favoritePendingIds: ReadonlySet<string>;
-  /** 拖曳的落點範圍提示鍵（`dropScopeKey`："list"｜"group:<id>"｜"folder:<id>"）；null＝不標示。 */
   dropScope: string | null;
-  /** 疊資料夾預覽或「建立中」：取代 `anchorNoteId` 那一列（`creating` 優先）。 */
   stack: { state: StackPreviewState; creating: boolean } | null;
 }
 
-/**
- * 群組 tab 的群組節點：像檔案樹的一個資料夾列（折疊主鈕見 `GroupRowButton`）。筆記掛在導引線下，線對齊圖示槽中心
- * （px-2 8＋槽寬 14 / 2 ＝ 15px）。折疊狀態是 `sidebar/collapse.ts` 的共用 store（靜態卡、抽屜、選取樹同步）。
- */
+/** Collapse state is the shared store in `sidebar/collapse.ts`; the guide line aligns with the icon slot centre (px-2 8 + 14/2 = 15px). */
 function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }>; ctx: NodeContext }) {
   const { t } = useTranslation();
   const { group } = node;
@@ -270,7 +225,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
     >
       <div className={cn("group/grouprow flex h-11 items-center gap-0.5 pr-0.75 pointer-fine:h-7 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong", ROW_ICON_ROW)}>
         <GroupRowButton name={group.name} open={open} onToggle={toggle} />
-        {/* 資料夾：能編輯群組筆記才能建資料夾；排在「＋」之前（稿 `Workshop`）。 */}
+        {/* New folder: group notes need edit rights to create a folder; placed before "+" */}
         {group.myRole?.permissions.edit && (
           <HeaderActionButton
             reveal="grouprow"
@@ -279,8 +234,7 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
             onClick={(event) => ctx.openFolderDialog({ kind: "create", parent: { space: { kind: "group", groupId: group.id } } }, event.currentTarget)}
           />
         )}
-        {/* #175：「＋」只在我的角色能在這個群組建立**且能編輯**筆記時渲染——能建不能改的人建出來的是
-            自己也改不了的空白筆記（他仍可經移入／複製把筆記放進群組）；`myRole` null＝防禦，不渲染。 */}
+        {/* #175: "+" only when the role can create and edit (create-only would make notes the user cannot edit) */}
         {group.myRole?.permissions.create && group.myRole.permissions.edit && (
           <HeaderActionButton
             reveal="grouprow"
@@ -300,15 +254,11 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
   );
 }
 
-/** 群組資料夾的 groupId（建立筆記時要同時帶）；個人／共享資料夾 → undefined。 */
 function groupIdOf(folder: FolderDto): string | undefined {
   return folder.space.kind === "group" ? folder.space.groupId : undefined;
 }
 
-/**
- * 資料夾節點：折疊主鈕見 `FolderRowButton`，子節點掛導引線（同 `GroupNode`）。折疊鍵 `folder:<id>`
- * 是 `sidebar/collapse.ts` 的共用 store。「沒有筆記」只在沒有任何子節點時出現（只有子資料夾時不說）。⋮ 見 `FolderMenu`。
- */
+/** "No notes" only when there are no children at all (not when only subfolders exist). */
 function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder" }>; ctx: NodeContext }) {
   const { t } = useTranslation();
   const { folder } = node;
@@ -387,29 +337,13 @@ function SidebarNodeList({ nodes, ctx, inGroup = false }: { nodes: SidebarNode[]
 }
 
 export interface NoteListProps {
-  /** 標題列／群組列／資料夾列的「＋」：`groupId` 給群組（含群組資料夾）、`folderId` 給資料夾、都不給＝個人根層。state 與導向都在 `AppShell.handleNewNote`。 */
   onCreateNote?: (groupId?: string, folderId?: string) => void;
   createNotePending?: boolean;
 }
 
 const MESSAGE_CLASS = "p-2 text-sm text-muted-foreground";
 
-/**
- * 側欄「目前 tab 的面板」：標題列（名稱＋該 tab 宣告的動作）＋清單（遞迴節點樹）。tabpanel 外框由
- * `AppShell` 提供（本元件假設自己在它裡面，是 flex-col 的子層）。
- * `GET /api/notes` 的 pending／error 在清單內顯示；`GET /api/groups` 的 pending／error 只影響
- * 群組 tab（與「零筆記時要等群組才知道是不是全空」），群組筆記在那期間依兜底列落與我共享、
- * 資料到了再歸位。搜尋由 `sidebar/SearchResults` 負責。
- * 最愛：每個 tab 都在這裡訂一次 `["favorites"]`（列上的星星要知道哪幾篇是最愛），轉成 id 集合經 `NodeContext` 給各列；
- * 清單還沒到或讀取失敗時列上不渲染星星。最愛 tab 的列是它與 `["notes"]` 的交集（依加入時間；標題與位置取 `["notes"]`），
- * 不等資料夾；`favorites` 失敗但有舊資料時照舊資料顯示。
- * tabpanel 的 `tabIndex={0}` 在 `AppShell`（WAI-ARIA APG：面板第一個有內容的元素不可聚焦時，Tab 要能停在面板上）。
- *
- * 選取模式：標題列「選取」由這裡渲染；進入後標題列內容換成 lazy 的 `SelectHeader`、清單內容換成
- * `SelectableTree`（`SelectLazy` chunk，fallback 是平常的名稱與列）。捲動容器 `[data-sidebar-list]` 不換（捲動位置不跳）。
- * `nodes`／`groupIds` 以 `useMemo` 穩定，選取列的 memo 才有效。焦點只由發起的那一份實例移動（`focusAfterRef`：進入→「完成」、
- * 離開→「選取」）。Esc 由 `SelectHeader` 在 document 層處理（本元件不掛）。群組折疊與選取樹共用 `sidebar/collapse.ts`。
- */
+/** GET /api/groups pending/error only affects the Groups tab (and the zero-notes empty check); until then group notes fall back to Shared-with-me rows. The tabpanel `tabIndex={0}` is in `AppShell` (APG: Tab must stop on a panel whose first content is not focusable). Selection mode swaps in lazy `SelectHeader`/`SelectableTree`; the scroll container `[data-sidebar-list]` is not swapped so scroll does not jump. Focus moves only in the initiating instance (`focusAfterRef`). Rendered as a flex-col child of `AppShell`'s tabpanel; Esc in selection mode is handled by `SelectHeader`. The Favourites tab is the intersection of favourites and `["notes"]`, in favourite order (newest first), and does not wait for folders. */
 export function NoteList({ onCreateNote, createNotePending = false }: NoteListProps) {
   const { t } = useTranslation();
   const { tab, selection } = useSidebarTabState();
@@ -417,7 +351,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const notesQuery = useNotes();
   const groupsQuery = useGroups();
   const foldersQuery = useFolders();
-  // 每個 tab 都訂：列上的星星要知道狀態；最愛 tab 的排序用同一份 query（不另打一支）。
   const favorites = useFavoriteLookup();
   const favoritesQuery = favorites.query;
   const sortOf = useFolderSortOf();
@@ -426,7 +359,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const [folderRequest, setFolderRequest] = useState<FolderDialogRequest | null>(null);
   const folderOpenerRef = useRef<HTMLElement | null>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
-  /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
+  /** Only the instance that initiated selection sets it (static card and drawer are both in the DOM). */
   const focusAfterRef = useRef<"done" | "select" | null>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -434,15 +367,14 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   const spec = tabSpec(tab);
   const groups = groupsQuery.data ?? EMPTY_GROUPS;
-  // memo：不 memo 的話每次勾選都換 `nodes`／`groupIds`，選取樹的 `onToggle` 隨之換、所有列重繪。
+  // Without memo every tick would change `nodes`/`groupIds` and re-render all rows.
   const groupIds = useMemo<ReadonlySet<string>>(() => new Set((groupsQuery.data ?? EMPTY_GROUPS).map((group) => group.id)), [groupsQuery.data]);
-  // 我的筆記／群組／與我共享等 `["folders"]`（不先平鋪再跳）；失敗且沒有舊資料 → 空索引（筆記落根層）＋錯誤列。
-  // 最近與最愛 tab 是平鋪清單、不等（資料夾只用來算位置行，晚到時位置行再補上）。
+  // My notes/Groups/Shared wait for `["folders"]` so the list does not render flat and then jump; if it failed with no old data: empty index (notes at root) plus an error row. Recent/Favourites are flat and do not wait for folders.
   const waitFolders = tab !== "recent" && tab !== "favorites" && tab !== "trash";
   const folderIndex = useMemo(() => indexFolders(foldersQuery.data ?? EMPTY_FOLDERS), [foldersQuery.data]);
   const location = useMemo<LocationContext>(() => ({ groupIds, folders: folderIndex }), [groupIds, folderIndex]);
   const foldersPending = waitFolders && foldersQuery.isPending;
-  // 看 `data` 而不是 `isSuccess`：背景重抓失敗後 status 是 error，但舊清單仍在、照舊顯示。
+  // `data`, not `isSuccess`: after a failed background refetch the old list is still shown.
   const favoritesReady = tab !== "favorites" || favoritesQuery.data !== undefined;
   const nodes = useMemo(
     () =>
@@ -452,9 +384,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     [tab, notesQuery.isSuccess, notesQuery.data, groupsQuery.data, favoritesReady, favoritesQuery.data, foldersPending, folderIndex, sortOf],
   );
   const selectable = nodes !== null && hasSelectableNodes(nodes);
-  // 「選取」鈕正握著焦點時清單空了（鈕隨之停用）：停用的鈕留不住焦點，會掉到 body；改交給所在的 tabpanel。
-  // Chromium 在 commit 寫入 disabled 時就同步把焦點移到 body 並觸發 blur（此時 React 不派送事件），Firefox／WebKit 則稍後才移；
-  // 所以掛原生 focusout，延到 microtask 再看鈕是否已停用、焦點是否落在 body。焦點本來就在別處時不動。
+  // A disabled button cannot keep focus (falls to body): hand it to the tabpanel. Chromium moves focus and blurs synchronously on disabled commit (React dispatches no event), Firefox/WebKit later: native focusout, checked in a microtask.
   useEffect(() => {
     const onFocusOut = (event: FocusEvent) => {
       const button = selectButtonRef.current;
@@ -471,7 +401,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     folderOpenerRef.current = opener;
     setFolderRequest(request);
   };
-  // 拖曳：容器事件委派；兩份實例共用 drag-session 的狀態，只有發起的那一份驅動。
   const drag = useSidebarDrag({ tab, nodes, groupIds, folderIndex, openFolderDialog });
   const listDropScoped = drag.view.scope === "list";
   const stackState = drag.view.creating ?? drag.view.preview;
@@ -490,7 +419,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   useEffect(() => {
     if (selection.active) return;
-    // 選取結束：發起的那一份把焦點交回「選取」；沒掛上 SelectHeader 就結束的「done」旗標一併清掉。
     const target = focusAfterRef.current;
     focusAfterRef.current = null;
     if (target === "select") selectButtonRef.current?.focus();
@@ -509,7 +437,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
   function renderBody(): ReactNode {
     const body = renderList();
-    // 筆記清單本身載入失敗時只顯示那一則錯誤，不疊資料夾的。
     if (foldersAlert === null || body === null || !notesQuery.isSuccess) return body;
     return (
       <>
@@ -533,9 +460,8 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
 
     if (tab === "workspace") {
       if (groupsQuery.isPending) return <p className={MESSAGE_CLASS}>{t("app.loading")}</p>;
-      // 背景 refetch 失敗時 data 仍是上一次成功的群組：錯誤句與快取清單並列，不把群組藏掉。
       if (groupsQuery.isError && groupsQuery.data === undefined) return groupsAlert;
-      // 零群組：只放說明文字、不放「新增群組」鈕——新增一律走標題列「＋」（避免兩顆同名鈕）。
+      // no "New group" button here: creating goes through the title row "+" (avoids two same-named buttons)
       if (groups.length === 0) {
         return (
           <>
@@ -558,15 +484,14 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     }
 
     if (foldersPending) return <p className={MESSAGE_CLASS}>{t("app.loading")}</p>;
-    // 上面已處理 pending／error（群組 tab 另含群組、資料夾；最愛 tab 另含最愛），到這裡 `nodes` 一定有值。
     if (nodes === null) return null;
     if (nodes.length === 0) {
       if (tab === "recent") return emptyState;
-      // 看交集而不是 `favorites` 本身：紀錄都在、但那幾篇此刻都不在 `["notes"]` 時也是空的。
+      // Intersection, not `favorites`: records may exist while none of those notes is in `["notes"]`.
       if (tab === "favorites") return <p className={MESSAGE_CLASS}>{t("sidebar.emptyFavorites")}</p>;
       if (tab === "shared") return <p className={MESSAGE_CLASS}>{t("sidebar.emptyShared")}</p>;
       if (tab === "myNotes") {
-        // 零筆記時要等群組清單才知道是 EmptyState 還是「有群組、只是沒個人筆記」——不然會閃一幀。
+        // Wait for groups to know EmptyState vs "has groups"; avoids a one-frame flash.
         if (notes.length === 0 && groupsQuery.isPending) return <p className={MESSAGE_CLASS}>{t("app.loading")}</p>;
         if (notes.length === 0 && groupsQuery.isSuccess && groups.length === 0) return emptyState;
         return <p className={MESSAGE_CLASS}>{t("sidebar.emptyMyNotes")}</p>;
@@ -592,7 +517,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           />
         );
       case "newFolder":
-        // 我的筆記與與我共享宣告這個動作：建在該 tab 的空間根層。
         return (
           <HeaderActionButton
             key={action}
@@ -614,7 +538,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           />
         );
       case "selectMode":
-        // 同 `TrashPanel` 那顆（24px 例外，button.tsx 檔頭）；字沿用首包的 `trash.select`（一般 tab 也叫「選取」，改鍵名要動首包兩語系）。
+        // Same as `TrashPanel` (24px exception, see the `ui/button.tsx` header); label reuses `trash.select` from the initial bundle, so renaming the key means editing both locales.
         return (
           <Button
             key={action}
@@ -625,9 +549,9 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             aria-label={t("trash.select")}
             title={t("trash.select")}
             disabled={!selectable}
-            // 握把：離開選取模式後經 `[data-sidebar-instance]` 找回同一份的這顆鈕聚焦（`SIDEBAR_SELECT_BUTTON`）。
+            // Focus returns here after selection mode ends (queried via SIDEBAR_SELECT_BUTTON).
             data-sidebar-select=""
-            // 已在選取模式時不重送 `start`（reducer 的 start 會清空已勾的）。
+            // start would clear the ticked items
             onClick={() => {
               if (selection.active) return;
               focusAfterRef.current = "done";
@@ -638,11 +562,10 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             <SquareCheck aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
         );
-      // 只在垃圾桶 tab 宣告，由 `TrashPanel` 自己渲染。
       case "emptyTrash":
         return null;
       default: {
-        // 加新動作 id 時這裡編譯不過，不會默默渲染成別顆鈕。
+        // exhaustiveness check
         const exhaustive: never = action;
         return exhaustive;
       }
@@ -659,7 +582,6 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     <>
       <div ref={headerRef} data-sidebar-header="" className={cn("flex items-center gap-0.5 pl-2 pr-2.75 pt-3 pb-1 pointer-coarse:pb-2.5", ROW_ICON_ROW, PHONE_LIST_HEADER_STICKY)}>
         {selection.active ? (
-          // chunk 還沒到：只有名稱（不含動作鈕）。
           <SidebarLazyBoundary chunk="select" fallback={tabLabel} errorClassName="hidden">
             <SelectHeader
               nodes={nodes ?? EMPTY_NODES}
@@ -681,23 +603,20 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           </>
         )}
       </div>
-      {/* `key={tab}`：切 tab 換新元素，捲動位置回頂端。進出選取模式不換（捲動位置不跳）。手機上不自己捲，捲的是文件（切 tab 回頂端由 `AppShell` 做）。 */}
-      {/* 安全網：橫向裁切放在內層包層——放在清單本身會因另一軸是 `overflow-y-auto` 算成 `hidden`，仍可被捲動橫移。 */}
-      {/* 拖曳的 dragstart／dragover／drop／dragend 都委派在這個容器；包層 `min-h-full`：清單下方空白也算根目錄的標示範圍。 */}
+      {/* `key={tab}` resets scroll on tab switch; toggling selection mode keeps the element (no scroll jump); phones scroll the document and reset via AppShell. */}
+      {/* Clip on the inner wrapper: an `overflow-y-auto` list computes the other axis to `hidden`, which is still scrollable. */}
+      {/* Drag events are delegated here; the wrapper is `min-h-full` so blank space below counts as root. */}
       <div key={tab} ref={listRef} data-sidebar-list="" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain", PHONE_LIST_SCROLLER)} {...drag.containerProps}>
         <div
           data-drop-scope={listDropScoped ? "" : undefined}
           className={cn(
             "min-h-full overflow-x-clip px-2",
-            // 手機：底部兩顆浮動鈕（56px＋16px 邊距＋safe area）蓋在清單上，最後一列要能捲到它們上方。
-            // 選取模式沒有浮動鈕也照留：進出選取模式時捲動範圍不變，捲在底部的位置才不跳。
+            // Floating buttons (56px + 16px + safe area) cover the list bottom. Kept in selection mode so scroll range does not change.
             "max-sm:pb-[calc(5rem+env(safe-area-inset-bottom))]",
             listDropScoped && DROP_SCOPE_CLASS,
           )}
         >
           {selection.active && nodes !== null && nodes.length > 0 && tab !== "trash" ? (
-            // chunk 還沒到：照常顯示平常的列，到了才換勾選框。選取中清單重抓後變得沒有可勾的篇（只剩空群組）也留在勾選樹：
-            // 群組列不帶「＋」與 ⋮，與選取標題列一致；完全沒有節點時是平常的空狀態句（沒有動作鈕）。
             <SidebarLazyBoundary chunk="select" fallback={<SidebarNodeList nodes={nodes} ctx={ctx} />} errorClassName="p-2">
               <SelectableTree nodes={nodes} tab={tab} location={location} />
             </SidebarLazyBoundary>
@@ -706,13 +625,13 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
           )}
         </div>
       </div>
-      {/* 對話框只在開啟時掛載，關閉時焦點還給標題列「＋」（`returnFocusRef`）。 */}
+      {/* mounted only while open */}
       {createOpen && (
         <SidebarLazyBoundary chunk="groupDialog" fallback={null} errorClassName="p-2">
           <GroupNameDialog mode="create" open onOpenChange={setCreateOpen} returnFocusRef={addGroupRef} />
         </SidebarLazyBoundary>
       )}
-      {/* 資料夾對話框：只在開啟時掛載；chunk 載入失敗時顯示 inline 錯誤（不藏起來，否則是一排沒反應的鈕）。 */}
+      {/* Inline error on chunk failure (not hidden, which would leave dead buttons). */}
       {folderRequest && (
         <SidebarLazyBoundary chunk="folder" fallback={null} errorClassName="p-2">
           <FolderDialogs request={folderRequest} returnFocusRef={folderOpenerRef} onClose={() => setFolderRequest(null)} />

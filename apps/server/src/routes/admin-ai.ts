@@ -29,21 +29,18 @@ export interface AdminAiRouteDeps {
   runtime: AiRuntime;
 }
 
-// ───────────────────────────── providers ─────────────────────────────
 
 const providerTypeEnum = z.enum(["openai_compatible", "anthropic"]);
 
-// base URL 不得帶帳密（`https://user:pass@host`、`user@host`）：Node fetch 本來就拒絕這種網址
-// （永遠連不上），而且 baseUrl 是明文欄位（DB 明文、GET 原樣回傳、進 log）——密碼不該放這裡，
-// 認證放 API key 欄位。用 URL 物件的 username／password 判斷，不用字串比對。
+// No credentials in the base URL (user:pass@host, and also user@host): Node fetch rejects them anyway and baseUrl is plaintext (DB, GET, logs); use the
+// API key field. Checked via URL username/password, not string matching.
 const BASE_URL_CREDENTIALS_CODE = "base_url_has_credentials" as const;
 const baseUrlSchema = z
   .string()
   .url()
   .refine(
     (value) => {
-      // zod 的 refine 在 `.url()` 失敗後仍會執行：`new URL` 在非法網址會 throw（ERR_INVALID_URL，且例外的 `input`
-      // 帶原字串——含密碼——會被全域 handler 寫進 log）。解析失敗一律放行，讓 `.url()` 報 400 invalid_body。
+      // zod still runs refine after `.url()` fails, and `new URL` throws with `input` (including the password) that the global handler would log; let parse failures through.
       try {
         const u = new URL(value);
         return u.username === "" && u.password === "";
@@ -54,7 +51,6 @@ const baseUrlSchema = z
     { message: "The base URL can't contain a username or password. Put credentials in the API key field.", params: { code: BASE_URL_CREDENTIALS_CODE } },
   );
 
-/** zod 失敗 → 400；帶帳密的專屬 code 讓前端能顯示明確訊息，其餘維持 invalid_body。 */
 function providerBodyError(error: z.ZodError): { code: "invalid_body" | typeof BASE_URL_CREDENTIALS_CODE; message: string } {
   const issue = error.issues[0];
   const hasCredentials = (issue as { params?: { code?: string } } | undefined)?.params?.code === BASE_URL_CREDENTIALS_CODE;
@@ -76,12 +72,7 @@ const patchProviderSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-// 只選這六欄（形狀鎖，比照 `routes/admin-users.ts` 的 `adminUserColumns` 慣例，
-// 這裡更進一步）：`hasKey` 用 SQL 端 `IS NOT NULL` 直接算出布林值，**從不** SELECT
-// `apiKeyEncrypted` 本體——密文位元組完全不進 Node process 記憶體，不是「查出來但序列化
-// 階段刻意漏掉」那種較弱的防線（任何回應絕不可含 api_key_encrypted／
-// ct/iv/tag/keyId 字樣）。issue #14 之後密文另外綁了 providerId，但那道綁定管的是
-// 「密文不能跨列使用」，跟「密文不可以出現在回應裡」是兩件事——這裡這道防線照舊。
+// `hasKey` is computed in SQL so the ciphertext never enters Node memory (stronger than omitting it at serialization). No response may contain api_key_encrypted/ct/iv/tag/keyId.
 const providerListColumns = {
   id: aiProviders.id,
   name: aiProviders.name,
@@ -115,14 +106,11 @@ function toProviderDto(row: ProviderListRow, runtime: AiRuntime): AdminAiProvide
   };
 }
 
-// ───────────────────────────── models ─────────────────────────────
 
 const createModelSchema = z.object({
   providerId: z.string().uuid(),
   modelId: z.string().min(1),
   displayName: z.string().min(1),
-  // v0.1 只開 chat（YAGNI；embedding 連 API 都不收）——`z.literal` 讓任何非 "chat" 值
-  // 在 zod 階段就 400 invalid_body，不必另外手寫檢查。
   purpose: z.literal("chat").optional(),
   isDefault: z.boolean().optional(),
   enabled: z.boolean().optional(),
@@ -152,10 +140,8 @@ function toModelDto(row: AiModelRow): AdminAiModelDto {
   };
 }
 
-// ───────────────────────────── actions ─────────────────────────────
 
 const actionApplyModeEnum = z.enum(["direct", "preview"]);
-// `{{text}}` 佔位缺失在建立時就擋（400），不留到執行期才發現太晚。
 const userTemplateSchema = z.string().min(1).refine(v => v.includes("{{text}}"), "userTemplate must contain the {{text}} placeholder.");
 
 const createActionSchema = z.object({
@@ -195,14 +181,8 @@ function toActionDto(row: AiActionRow): AdminAiActionDto {
   };
 }
 
-/**
- * Admin AI 三層 CRUD（providers/models/actions）＋provider 測試連線端點。
- * 全部端點皆需 `requireAdmin`（guard／錯誤慣例逐字比照 `routes/admin-users.ts`）；
- * body／DTO 一律 camelCase（POST /api/ai 的 snake_case 是刻意例外，與本檔無關）。
- */
 export function adminAiRoutes(deps: AdminAiRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    // ───────────── providers ─────────────
 
     app.get("/api/admin/ai/providers", { preHandler: app.requireAdmin }, async () => {
       const rows = await deps.db.select(providerListColumns).from(aiProviders).orderBy(asc(aiProviders.createdAt), asc(aiProviders.id));
@@ -217,13 +197,10 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
       const { name, type, baseUrl, apiKey } = parsed.data;
 
-      // id 在這裡就產好，不沿用 schema 的 `defaultRandom()`：密文的 AAD 綁 providerId
-      // （issue #14），加密的當下就必須已經知道 id。
+      // Generated here: the ciphertext AAD binds providerId (#14), so the id must exist before encryption.
       const id = randomUUID();
       const apiKeyEncrypted = apiKey !== undefined ? encryptApiKey(deps.config.appSecret, apiKey, id) : null;
-      // 這一句寫密文欄與 base_url：非預期的 DB 錯誤不得原樣進 log（drizzle 的 DrizzleQueryError 把整條 SQL＋params——
-      // 含 `api_key_encrypted` 的 ct／iv／tag、可能帶 `user:pass@` 的 base_url——串進 message）。ai_providers 沒有
-      // 唯一鍵或 FK，type 的 CHECK 已由 zod enum 先擋，所以這裡沒有「認得的」錯誤，一律遮蔽後交給全域 handler 回 500。
+      // DrizzleQueryError puts the SQL params (ciphertext, base_url with user:pass@) in its message, so always redact; there are no recognised errors here (ai_providers has no unique key or FK, and the zod enum pre-empts the type CHECK).
       const [row] = await deps.db
         .insert(aiProviders)
         .values({ id, name, type, baseUrl, apiKeyEncrypted })
@@ -246,10 +223,8 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
       const { name, type, baseUrl, apiKey, enabled } = parsed.data;
 
-      // 只讀 baseUrl 這一欄（**不** SELECT 密文本體，維持 `providerListColumns` 那道防線），
-      // 而且它**只供日誌的 `from` 欄位使用**，不參與「要不要清金鑰」的決定——那個判斷在 DB
-      // 端跟寫入同一句做（見下）。⚠ 它是非交易的讀，所以競態下 `from` 可能失真；`to` 與
-      // `hasKeyAfter` 才是那一行裡可信的部分。
+      // Only for the log's `from`: non-transactional, so it can be stale under races (`to` and `hasKeyAfter` are reliable). The key-clearing decision is made DB-side below.
+      // Deliberately doesn't select the ciphertext (same guard as providerListColumns).
       const [existing] = await deps.db
         .select({ baseUrl: aiProviders.baseUrl })
         .from(aiProviders)
@@ -263,7 +238,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (baseUrl !== undefined) values.baseUrl = baseUrl;
       if (enabled !== undefined) values.enabled = enabled;
 
-      // `apiKey` 給了 → 重加密覆寫；沒給 → 完全不碰這個欄位（既有密文原樣保留）。
       let newEncrypted: EncryptedApiKey | undefined;
       if (apiKey !== undefined) {
         newEncrypted = encryptApiKey(deps.config.appSecret, apiKey, id);
@@ -271,46 +245,23 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
 
       /**
-       * issue #46：**換了網址就把既有金鑰作廢**（除非同一次 PATCH 就帶了新的金鑰）。
-       *
-       * 為什麼：`/test`（與 `ai/upstream.ts` 的每一次 AI 呼叫）會把解密後的**明文** key 以
-       * `authorization: Bearer …`／`x-api-key` 送到 `baseUrl` 指的主機。`baseUrl` 只驗格式、
-       * 沒有 allowlist，所以任何 admin 只要改一個明文欄位再按一下 Test，就能把金鑰送到自己
-       * 的主機——完全不需要讀 DB，也不需要 `APP_SECRET`。產品刻意承諾「金鑰寫進去就讀不
-       * 回來」（見 `providerListColumns` 的說明），這條路把那個承諾整個繞開。
-       *
-       * 作廢是成本最低、又不限制任何 host 的切法（自架者接內網 Ollama 照常）：金鑰不再能被
-       * 「繼承」到一個新網址上，想把金鑰送到別的地方就得先自己重新輸入一次。
-       *
-       * ⚠ 這**不是**一道完整的防護：攻擊者 admin 仍可把網址指到自己主機、等另一個 admin
-       * 「咦金鑰不見了」重新輸入。差別在於那條路留得下痕跡（金鑰消失、網址變了、下面那行
-       * log），而原本那條是靜默的。殘留風險記在 docs/known-limitations.md。
+       * #46: changing baseUrl clears the stored key unless the same PATCH sets a new one. baseUrl has no allowlist, so otherwise any admin could edit baseUrl and press
+       * Test to send the decrypted key to their own host (`/test` and AI calls send it as Authorization/x-api-key) with no DB or APP_SECRET access, bypassing "keys
+       * can't be read back". Clearing the key is the cheapest cut that restricts no host (intranet Ollama keeps working). Not complete protection (an admin can still
+       * re-point and wait for another admin to re-enter the key), but it leaves traces (key gone, URL changed, the log line below). Residual risk: docs/known-limitations.md.
        */
       if (baseUrl !== undefined && apiKey === undefined) {
-        // ⚠ **比對必須在 DB 端、跟寫入同一個語句裡做**（命中率 7–28%）：
-        // 先 SELECT 再於 Node 端比對是個 TOCTOU——攻擊者持續送「網址不變」的 PATCH（讀到
-        // 舊值＝EVIL ⇒ 判定沒變 ⇒ 不清金鑰，但 `base_url = EVIL` 照寫），只要有一發的
-        // SELECT 落在受害者「改回正確網址＋重新輸入金鑰」的 UPDATE 之前、而 UPDATE 落在
-        // 之後，最終列就是「攻擊者的網址 ＋ 受害者剛輸入的金鑰」。
-        //
-        // 寫成一句 `case when` 就沒有那個窗口：PostgreSQL 的 UPDATE 對同一列取 row lock，
-        // 而 SET 右側看到的一律是該列的**舊值**——所以「網址有沒有變」永遠是拿這一次真正
-        // 要寫進去的值跟當下的舊值比，中間沒有任何人插得進來。攻擊者那發 no-op PATCH 若
-        // 排在受害者之後，它比較的是受害者剛寫進去的網址 ⇒ 判定有變 ⇒ 金鑰照樣被清掉。
-        //
-        // 附帶好處：「編輯表單每次都會帶 baseUrl，只改名字不該掉金鑰」這件事也由同一句
-        // 保證（值相同 ⇒ `is distinct from` 為 false ⇒ 原樣保留），不必再靠 Node 端比對。
+        // Compared DB-side in the same UPDATE: a Node-side SELECT-then-compare is a TOCTOU (an attacker's no-op PATCH could read the old URL between a victim's
+        // restore and key re-entry, leaving the attacker's URL with the victim's key). UPDATE locks the row and SET sees the old value, so nothing slips in;
+        // the same expression keeps the key on rename-only edits (the form always sends baseUrl).
         values.apiKeyEncrypted = sql`case when ${aiProviders.baseUrl} is distinct from ${baseUrl} then null::jsonb else ${aiProviders.apiKeyEncrypted} end`;
       }
 
-      // 空 body `{}` 全欄位皆 undefined → `values` 是空物件——
-      // drizzle 0.44 的 `.update(...).set({})` 會同步 throw "No values to set"，逃出
-      // 這支 handler 變成裸 500。在真的呼叫 `.set()` 之前擋掉，回結構化 400。
+      // drizzle 0.44 `.set({})` throws synchronously ("No values to set") and would escape as a bare 500; reject with 400 first.
       if (Object.keys(values).length === 0) {
         return sendError(reply, 400, "invalid_body", "Invalid request body: send at least one field.");
       }
 
-      // 同 POST：這一句可能寫密文欄／base_url，非預期的 DB 錯誤一律遮蔽（沒有交易、沒有業務錯誤要分流）。
       const [row] = await deps.db
         .update(aiProviders)
         .set(values)
@@ -321,20 +272,9 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
         });
       if (!row) return sendError(reply, 404, "not_found", "No AI provider with that id.");
 
-      // ⚠ **只要帶了 `baseUrl` 就記一行**：原本的條件是
-      // 「網址跟 `existing` 不同、或金鑰被清掉」，而 `existing` 那個 SELECT 是非交易的——
-      // 在攻擊者持續送 no-op PATCH 的那個競態下（他讀到的舊值就是自己的網址、hasKey 也
-      // 是 stale 的 false），兩個條件同時為 false ⇒ **一行 log 都沒有**，偏偏那正是
-      // docs 說「唯一可信的痕跡」要抓的姿勢。provider 編輯是 admin-only 的低頻操作，
-      // 一律記的噪音可以接受。
+      // Logged whenever baseUrl is given: conditioning on `existing` (a non-transactional read) can log nothing under the no-op-PATCH race, the one trace the docs rely on. Provider edits are admin-only and infrequent, so the noise is acceptable.
       if (baseUrl !== undefined) {
-        // 改網址是敏感操作（見上面那段）——留一行可稽核的紀錄。
-        //
-        // 訊息刻意寫「被寫入」而不是「被變更」：UI 每次編輯都會帶 `baseUrl`，所以只改名字
-        // 也會記一行，說「被變更」對半數的行是假話（要看 `from`／`to` 是否相同才知道）。
-        //
-        // 欄位刻意記「這一次寫完之後還有沒有金鑰」（`row.hasKey`，DB 回來的事實）而不是
-        // 「金鑰有沒有被清掉」：後者要拿 `existing` 的舊值來推，而那個讀在競態下會說謊。
+        // "written", not "changed": the UI sends baseUrl on every edit. Records row.hasKey (a DB fact) rather than "key cleared", which would be inferred from the racy read.
         request.log.info(
           {
             providerId: id,
@@ -348,23 +288,16 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
 
       if (newEncrypted !== undefined) {
-        // 重加密寫入後自檢：用目前的 APP_SECRET 立即解密剛寫入的密文——同一支 secret
-        // 剛加密完緊接著解，理論上必然成功；try/catch 是防禦性寫法（純函式契約層面，
-        // 不假設 encryptApiKey/decryptApiKey 永不出錯），不是預期會踩到的分支。成功即
-        // 從 degraded 移除（不需重開 process 就生效）。
         try {
           decryptApiKey(deps.config.appSecret, newEncrypted, id);
           deps.runtime.degraded.delete(id);
         } catch {
-          // 維持降級狀態不動——不吞出這個分支以外的行為。
+          // stay degraded
         }
       }
 
-      // 沒有金鑰就不可能是「密文解不開」——把降級狀態一起收掉，否則 provider 會卡在
-      // 「請重新輸入 API key」的 503，連「這個 provider 本來就不需要金鑰」（自架 Ollama）
-      // 都測不了。比照 issue #17 的教訓：不要留下沒有人會清的髒狀態。
-      // ⚠ 判準是 `row.hasKey`（DB 回來的結果），不是「這次有沒有清」——後者要拿上面那個
-      // 非交易的讀來推，而它在競態下會說謊，於是金鑰已經沒了卻仍卡在 503。
+      // With no key it can't be "ciphertext undecryptable": clear degraded, else key-less providers (self-hosted Ollama) stay stuck on 503 (#17).
+      // Judged by row.hasKey (DB result), not the racy non-transactional read.
       if (!row.hasKey) {
         deps.runtime.degraded.delete(id);
       }
@@ -377,11 +310,10 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI provider with that id.");
       const id = rawId.toLowerCase();
 
-      // cascade 由 FK 承擔：models 隨之刪除，關聯 actions.modelId SET NULL（走 13.2 回退鏈）。
+      // FK cascade: models are deleted and actions.modelId is set NULL.
       const [deleted] = await deps.db.delete(aiProviders).where(eq(aiProviders.id, id)).returning({ id: aiProviders.id });
       if (!deleted) return sendError(reply, 404, "not_found", "No AI provider with that id.");
-      // provider 都不在了，degraded 裡的那筆再也沒有人會去清（PATCH 重輸金鑰是唯一
-      // 的移除路徑）——留著就是永遠累積的髒狀態。
+      // Re-entering the key via PATCH is the only other way to clear a degraded entry.
       deps.runtime.degraded.delete(id);
       return reply.code(204).send();
     });
@@ -391,8 +323,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI provider with that id.");
       const id = rawId.toLowerCase();
 
-      // 這裡是唯一一處刻意 SELECT `apiKeyEncrypted` 本體的地方——測試連線需要真的
-      // plaintext key 打上游請求。絕不落進任何回應（下面只回 {ok:true} 或結構化錯誤）。
+      // The one place that selects the ciphertext: the test needs the plaintext key. It never appears in a response.
       const [row] = await deps.db.select().from(aiProviders).where(eq(aiProviders.id, id)).limit(1);
       if (!row) return sendError(reply, 404, "not_found", "No AI provider with that id.");
 
@@ -411,10 +342,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
         }
       }
 
-      // openai_compatible：`GET {baseUrl}/models`；anthropic：對稱地打官方 `/v1/models`
-      // 列表端點（與前者對稱、免花錢、不依賴任何 model id——
-      // 此處故意不引入 @anthropic-ai/sdk，改用等價的原生 fetch 呼叫，行為
-      // 與「client.models.list()」語意相同）。
       const url = row.type === "anthropic" ? `${row.baseUrl}/v1/models` : `${row.baseUrl}/models`;
       try {
         const headers: Record<string, string> =
@@ -423,18 +350,10 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
             : apiKey !== undefined
               ? { authorization: `Bearer ${apiKey}` }
               : {};
-        // 安全：`redirect: "manual"`——undici 對跨網域轉址只會剝掉
-        // `Authorization`/`Cookie`，我們的驗證是自訂 header `x-api-key`（anthropic）／
-        // 手寫 `authorization: Bearer ...`（openai_compatible 走的也是自訂組字串，非
-        // fetch 認得的標準憑證欄位），跨網域 302 會把它原樣帶去第三方主機。手動模式下
-        // 3xx 一律不追蹤，直接落入下面 `!res.ok`（3xx 不是 2xx）分支，統一映射 502
-        // `upstream_error`，不外洩任何憑證。
+        // redirect: "manual": undici strips only Authorization/Cookie on cross-origin redirects, but auth here is x-api-key or a hand-built Bearer header, so a 302 would forward the key to a third party. 3xx falls into !res.ok → 502.
         const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000), redirect: "manual" });
         if (!res.ok) {
-          // 上游 body 只 log、絕不回傳給 client（可能含 key 片段或內網資訊）；
-          // 無上限的 `res.text()` 可能把整包上游回應塞進 log——
-          // 截前 2 KiB（比照 `drainWithCap` 的位元組上限精神），避免惡意/異常上游用
-          // 超大 body 把 log 灌爆。
+          // Logged only (may hold key fragments), cut to 2 KiB so a hostile upstream can't flood the log.
           const bodyText = await res.text();
           const truncatedBody = bodyText.length > 2048 ? `${bodyText.slice(0, 2048)}...(truncated)` : bodyText;
           request.log.warn({ providerId: id, status: res.status, body: truncatedBody }, "AI provider 測試連線失敗（上游非 2xx）");
@@ -442,10 +361,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
         }
         return reply.send({ ok: true });
       } catch (err) {
-        // ⚠ 不記整個 err：base_url 帶 `user:pass@` 時 fetch 會丟「Request cannot be constructed from a URL that includes
-        // credentials: <完整網址>」——message 裡就是明文密碼（query 裡的憑證同理可能出現在別種錯誤訊息裡）。只記不含網址的
-        // 診斷欄位：錯誤名（TimeoutError／TypeError…）、底層 cause 的 name／code（ECONNREFUSED、ENOTFOUND…）、
-        // `safeTarget`（origin＋pathname）與「網址帶不帶 userinfo」——後者就是上面那種 TypeError 的成因，不記 message 也查得出來。
+        // Don't log err: fetch's TypeError for a base_url with user:pass@ contains the full URL with the password. Log only diagnostic fields without the URL.
         request.log.warn(
           { providerId: id, target: safeTarget(url), urlHasCredentials: urlHasCredentials(url), ...fetchErrorSummary(err) },
           "AI provider 測試連線失敗（逾時或網路錯誤）"
@@ -454,7 +370,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       }
     });
 
-    // ───────────── models ─────────────
 
     app.get("/api/admin/ai/models", { preHandler: app.requireAdmin }, async () => {
       const rows = await deps.db.select().from(aiModels).orderBy(asc(aiModels.createdAt), asc(aiModels.id));
@@ -468,8 +383,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
 
       try {
         const row = await deps.db.transaction(async tx => {
-          // 交易內先 unset 同 purpose 其他列，再插入——`is_default` 唯一性無 DB 約束，
-          // 純靠 server 交易保證。
+          // is_default uniqueness has no DB constraint; this transaction guarantees it.
           if (isDefault) {
             await tx.update(aiModels).set({ isDefault: false }).where(eq(aiModels.purpose, "chat"));
           }
@@ -483,7 +397,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       } catch (err) {
         if (isUniqueViolation(err)) return sendError(reply, 409, "model_taken", "This provider already has that model.");
         if (isForeignKeyViolation(err)) return sendError(reply, 400, "invalid_body", "The given provider doesn't exist.");
-        // 其餘非預期錯誤：DrizzleQueryError 的 message 帶 params（model id、顯示名稱…），不原樣進 log。
         throw redactDbError(request.log, err, "建立 AI model");
       }
     });
@@ -504,23 +417,14 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (enabled !== undefined) values.enabled = enabled;
       if (isDefault !== undefined) values.isDefault = isDefault;
 
-      // 空 body `{}` → `values` 空物件，`.set({})` 同步 throw，見
-      // providers PATCH 同款註解。
       if (Object.keys(values).length === 0) {
         return sendError(reply, 400, "invalid_body", "Invalid request body: send at least one field.");
       }
 
       try {
         const row = await deps.db.transaction(async tx => {
-          // target 列先更新、**確認真的命中**之後才 unset 同 purpose
-          // 其他列的 isDefault——原本的順序（先無條件 unset、之後才發現 target 不存在）
-          // 會讓「PATCH 不存在的 id」這種完全不該有任何效果的請求，靜默把全站的既有
-          // default 偏好清空後才回 404，交易仍然 commit（`returning()` 落空不是例外，
-          // 不會觸發 rollback）。反過來做（先更新 target、拿到列才動其他列）在同一筆
-          // 交易內是安全的：READ COMMITTED 下，這個交易尚未 commit 前，其他交易看不到
-          // target 列被改成 isDefault=true 的中間狀態，不會有「同時兩個 default」的
-          // 可觀察窗口；target 不存在時直接 return null，不做任何 unset，交易照常
-          // commit（沒有任何寫入，等同 no-op）。
+          // Update the target first and unset the others only after it matched: unsetting first let a PATCH on a nonexistent id clear the site-wide default and then 404
+          // (an empty returning() doesn't roll back). Safe inside one READ COMMITTED transaction: no other transaction can see two defaults.
           const [updated] = await tx.update(aiModels).set(values).where(eq(aiModels.id, id)).returning();
           if (!updated) return null;
           if (isDefault === true) {
@@ -542,13 +446,11 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI model with that id.");
       const id = rawId.toLowerCase();
 
-      // 刪除 model → 關聯 actions.modelId SET NULL（FK），走 13.2 回退鏈，不在此另外處理。
       const [deleted] = await deps.db.delete(aiModels).where(eq(aiModels.id, id)).returning({ id: aiModels.id });
       if (!deleted) return sendError(reply, 404, "not_found", "No AI model with that id.");
       return reply.code(204).send();
     });
 
-    // ───────────── actions ─────────────
 
     app.get("/api/admin/ai/actions", { preHandler: app.requireAdmin }, async () => {
       const rows = await deps.db.select().from(aiActions).orderBy(asc(aiActions.sortOrder), asc(aiActions.id));
@@ -576,7 +478,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
         return reply.code(201).send(toActionDto(row));
       } catch (err) {
         if (isForeignKeyViolation(err)) return sendError(reply, 400, "invalid_body", "The given model doesn't exist.");
-        // 其餘非預期錯誤：params 帶 system prompt／user template 全文，不原樣進 log。
         throw redactDbError(request.log, err, "建立 AI 動作");
       }
     });
@@ -584,14 +485,14 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
     app.patch("/api/admin/ai/actions/:id", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI action with that id.");
+      // A second line behind http/uuid-params.ts, which already lowercases UUID path params (so switching to rawId fails no test; that's not a guard gap).
       const id = rawId.toLowerCase();
 
       const parsed = patchActionSchema.safeParse(request.body);
       if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       const { name, systemPrompt, userTemplate, modelId, applyMode, sortOrder, enabled } = parsed.data;
 
-      // #263：內建 Instruct 一律預覽；它的 template 除了 {{text}}（上面 zod 已擋）還必須有 {{instruction}}，{{focus}} 選配。
-      // 以路徑 id（上面已小寫化）對常數判。app 層 http/uuid-params.ts 的 hook 本來就把 UUID 路徑參數小寫化，這裡的小寫化是第二道防線（改成 rawId 測試不會紅，勿以為是守衛缺口）。
+      // #263: Instruct also needs {{instruction}} ({{focus}} optional).
       if (id === INSTRUCT_ACTION_ID) {
         if (applyMode === "direct") return sendError(reply, 400, "instruct_preview_only", "Instruct actions can only be applied after a preview.");
         if (userTemplate !== undefined && !userTemplate.includes("{{instruction}}")) {
@@ -608,8 +509,6 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (sortOrder !== undefined) values.sortOrder = sortOrder;
       if (enabled !== undefined) values.enabled = enabled;
 
-      // 空 body `{}` → `values` 空物件，`.set({})` 同步 throw，見
-      // providers PATCH 同款註解。
       if (Object.keys(values).length === 0) {
         return sendError(reply, 400, "invalid_body", "Invalid request body: send at least one field.");
       }
@@ -629,8 +528,7 @@ export function adminAiRoutes(deps: AdminAiRouteDeps) {
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "not_found", "No AI action with that id.");
       const id = rawId.toLowerCase();
 
-      // 內建動作雙保險之一（server 端；UI 另一保險是不顯示刪除鈕）：
-      // 固定 id 一律拒刪，不論是否真存在於 DB（seed 是 idempotent，正常情況下必存在）。
+      // Server half of the built-in protection (the UI hides the button too); refuses even ids absent from the DB.
       if (BUILTIN_ACTION_IDS.includes(id)) {
         return sendError(reply, 400, "builtin_action", "Built-in actions can't be deleted.");
       }

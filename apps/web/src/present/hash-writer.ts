@@ -2,10 +2,10 @@ import type { Location, NavigateOptions, To } from "react-router";
 import { hashForSlide } from "./present-url";
 
 /**
- * #229 投影片 hash 寫入：`navigate({ pathname: latest.pathname, search: latest.search, hash }, { replace, state: latest.state })`。
- * `latest` 取自每次 render 更新的 ref（不是 effect 閉包裡的 location——否則改名收斂後會把舊 pathname 寫回）；
- * history 當下的 key 與 render 到的 key 不同＝導覽在途，延到下一次 render（flush）再寫——同 NotePage 收斂 effect 的守衛。
- * 只改 hash：收斂 effect 與 AppShell 抽屜 effect 都看 pathname，會早退。
+ * `latest` comes from a ref updated every render, not the effect closure's location (which would write the old pathname
+ * back after a rename convergence). If the history key differs from the rendered one a navigation is in flight and the
+ * write is deferred to the next render (same guard as NotePage's convergence effect). Only the hash changes, so the
+ * convergence effect and AppShell's drawer effect (both look at pathname) return early.
  */
 export interface HashWriterDeps {
   latest: () => Location;

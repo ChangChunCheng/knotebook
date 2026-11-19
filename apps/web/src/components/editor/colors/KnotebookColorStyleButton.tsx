@@ -6,10 +6,9 @@ import { ColorMenuBody, useColorMenu } from "./ColorMenuBody";
 import { KnotebookColorPicker, type ColorSectionProps } from "./KnotebookColorPicker";
 import { sectionProp, type ColorSection } from "./types";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** schema 裡有沒有這種顏色樣式（值是字串的 `textColor`／`backgroundColor`）。 */
 function hasColorStyle(editor: AnyEditor, section: ColorSection): boolean {
   const prop = sectionProp(section);
   const spec = editor.schema.styleSchema[prop];
@@ -21,7 +20,6 @@ interface ToolbarColors {
   backgroundColor: string | undefined;
 }
 
-/** 放在 `ColorMenuBody` 裡面，才拿得到切換到自訂面板的 `openPanel`。 */
 function ToolbarColorItems({ colors }: { colors: ToolbarColors }) {
   const editor = useBlockNoteEditor();
   const menu = useColorMenu()!;
@@ -32,7 +30,7 @@ function ToolbarColorItems({ colors }: { colors: ToolbarColors }) {
       color: current,
       setColor: (c) => {
         applyColor(editor, section, { kind: "inline" }, c);
-        // 等選單關掉、工具列的 focus trap 放手後再把焦點還給編輯器
+        // Return focus to the editor only after the menu closed and the toolbar's focus trap let go.
         setTimeout(() => editor.focus());
       },
       onCustom: (e: MouseEvent) =>
@@ -55,11 +53,7 @@ function ToolbarColorItems({ colors }: { colors: ToolbarColors }) {
   );
 }
 
-/**
- * 取代 BlockNote 格式工具列的顏色鈕：同樣的觸發鈕與 10 種內建色，每段多一個「自訂…」，點了在同一個 dropdown
- * 裡換成自訂色面板。顯示條件與原生相同：唯讀、選取（或游標所在）的 block 都沒有行內內容、schema 沒有任何一種
- * 顏色樣式時不顯示。
- */
+/** Shown under the same conditions as the native button (hidden when the editor is read-only, none of the selected blocks (or the caret block) has inline content, or the schema has no colour style). */
 export function KnotebookColorStyleButton() {
   const Components = useComponentsContext()!;
   const dict = useDictionary();
@@ -104,7 +98,7 @@ export function KnotebookColorStyleButton() {
         />
       </Components.Generic.Menu.Trigger>
       <Components.Generic.Menu.Dropdown className="bn-menu-dropdown bn-color-picker-dropdown">
-        {/* 工具列根節點是 Mantine focus trap，重繪時會搶焦點；拖曳把手與表格把手的選單沒有這層，不傳 */}
+        {/* pinFocus: the toolbar's focus trap steals focus on repaint; drag/table handle menus have none */}
         <ColorMenuBody pinFocus>
           <ToolbarColorItems colors={colors} />
         </ColorMenuBody>

@@ -2,17 +2,13 @@ import { FOLDER_DEPTH_MAX, type FolderDto, type GroupDto, type NoteDto } from "@
 import { canCreateAndEdit } from "@/lib/group-role";
 import { folderDepth, folderPath, isInSubtree, spaceKeyOf, subtreeHeight, type FolderIndex, type FolderSpaceKey } from "./folder-index";
 
-/**
- * 逐層目的地清單（⋮「移動到…／複製到…」子選單與選取模式目的地框共用）。
- * 首包模組：不 import 字串包（字串全在主檔 `folders.dest.*`、`note.menu.makeCopy`、`sidebar.*`）、不 import sidebar 畫面模組。
- * 一次只產一層：path 空＝第一層（上半部＝目前空間、分隔線、下半部＝其他空間）；點進空間或資料夾逐層堆疊。
- */
+/** First-bundle module: no string-bundle import (strings live in the main file) and no sidebar view imports. */
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export type DestMode = "move" | "copy";
 export type DestSpace = { kind: "personal" } | { kind: "shared" } | { kind: "group"; groupId: string; name: string };
-/** 送出用的目的地。folder null＝該空間根層。makeCopy＝「建立副本」（落在各來源自己的資料夾）。 */
+/** folder null = the space's root; `makeCopy` = "make a copy", which lands in each source's own folder. */
 export type DestTarget = { kind: "makeCopy" } | { kind: "place"; space: DestSpace; folder: FolderDto | null };
 export type DestPathStep = { kind: "space"; space: DestSpace } | { kind: "folder"; folderId: string };
 export type DestDisabledReason = "current" | "self" | "tooDeep" | "crossSpace";
@@ -32,15 +28,12 @@ export type DestItem =
 
 export interface DestSource {
   mode: DestMode;
-  /** 上半部的空間；null＝沒有上半部。 */
+  /** Upper-half space; null = no upper half. */
   current: DestSpace | null;
-  /** 上半部有沒有「建立副本」（只 copy 用）。 */
   makeCopy: boolean;
-  /** 下半部，依序。 */
   others: readonly DestSpace[];
-  /** 每個選取項目目前在 current 空間的位置（筆記＝folderId、資料夾＝parentId；null＝根層）。 */
+  /** Current position of each selected item within `current`'s space (note = folderId, folder = parentId; null = root level). */
   locations: readonly (string | null)[];
-  /** 批次要搬的資料夾（單篇恆空）。 */
   movingFolders: readonly FolderDto[];
 }
 
@@ -56,14 +49,11 @@ function groupSpace(group: GroupDto): DestSpace {
   return { kind: "group", groupId: group.id, name: group.name };
 }
 
-/**
- * 單篇（兩張表）。恆回 DestSource（不判空：判空要 index，呼叫端用 `isEmptyDestination`）。
- * groups＝useGroups() 的資料（未到給 []）；候選群組＝`canCreateAndEdit`，順序照 groups。
- */
+/** Always returns a `DestSource` (emptiness needs an index; callers use `isEmptyDestination`). `groups` is `useGroups()` data ([] until loaded); candidates are `canCreateAndEdit`, in `groups` order. */
 export function noteDestSource(note: NoteDto, mode: DestMode, groups: readonly GroupDto[]): DestSource {
   const candidates = groups.filter(canCreateAndEdit);
   const base = { mode, locations: [note.folderId], movingFolders: NO_FOLDERS };
-  // 自己的個人筆記：上半部＝我的筆記；下半部＝候選群組（copy 不列「我的筆記」，與上半部重複）。
+  // Own personal note: top half = my notes; bottom = candidate groups (copy omits "my notes", it would duplicate the top half).
   if (note.groupId === null && note.permissions.moveToGroup) {
     return { ...base, current: PERSONAL, makeCopy: mode === "copy", others: candidates.map(groupSpace) };
   }
@@ -71,26 +61,22 @@ export function noteDestSource(note: NoteDto, mode: DestMode, groups: readonly G
     const groupId = note.groupId;
     const own = groups.find((group) => group.id === groupId);
     const ownSpace: DestSpace = { kind: "group", groupId, name: own?.name ?? note.group?.name ?? "" };
-    // 群組筆記不能離開群組；本群組內移動的判準＝permissions.edit（放置權）。
+    // A group note can't leave its group; moving within the group is judged by permissions.edit (placement right).
     if (mode === "move") return { ...base, current: note.permissions.edit ? ownSpace : null, makeCopy: false, others: [] };
     const others = [PERSONAL, ...candidates.filter((group) => group.id !== groupId).map(groupSpace)];
     const ownIsCandidate = own !== undefined && canCreateAndEdit(own);
     return { ...base, current: ownIsCandidate ? ownSpace : null, makeCopy: ownIsCandidate, others };
   }
-  // 共享筆記：move＝自己的共享私人資料夾（只是自己的分類）；copy＝沒有上半部，「我的筆記」＋候選群組。
+  // Shared note: move = own shared private folder (just a personal category); copy = no top half, "my notes" + candidate groups.
   if (mode === "move") return { ...base, current: SHARED, makeCopy: false, others: [] };
   return { ...base, current: null, makeCopy: false, others: [PERSONAL, ...candidates.map(groupSpace)] };
 }
 
-/**
- * 同空間＝target 是某空間的位置、且與 source 的 current 同一空間（筆記 PUT、資料夾 PATCH，不確認）；否則跨空間。
- * ⋮ 單篇（`GroupTransfer` 的 `isSameSpaceMove`，source＝`noteDestSource`）與選取模式批次（`SelectActionBar`，source＝`batchDestSource`）共用這一份判準。
- */
+/** Same space = target is a place in the same space as the source's current one (note PUT / folder PATCH, no confirmation); otherwise cross-space. Shared by the ⋮ single-note flow (`GroupTransfer`) and the batch (`SelectActionBar`). */
 export function isSameSpace(target: DestTarget, source: DestSource): boolean {
   return target.kind === "place" && source.current !== null && spaceKey(target.space) === spaceKey(source.current);
 }
 
-/** 「整項不渲染／disabled」的唯一判準。 */
 export function isEmptyDestination(source: DestSource, index: FolderIndex, t: Translate): boolean {
   return buildDestinationLevel({ source, path: [], index, t }).length === 0;
 }
@@ -101,10 +87,7 @@ function spaceLabel(space: DestSpace, t: Translate): string {
   return space.name;
 }
 
-/**
- * 反灰（只對 move；copy 一律可按）。target folder null＝某空間根層（深度 0）。
- * `leafOrHere`：只有「放進這裡」與沒有子資料夾的資料夾項才會因「就是所在處」反灰（有子資料夾的要能點進去）。
- */
+/** Greyed-out only for move (copy is always clickable). `leafOrHere`: only "put here" and folders without children grey out for being the current place (folders with children must stay clickable to drill in). */
 function disabledFor(source: DestSource, index: FolderIndex, folder: FolderDto | null, leafOrHere: boolean): DestDisabledReason | null {
   if (source.mode !== "move") return null;
   if (source.movingFolders.length > 0) {
@@ -158,7 +141,7 @@ function rootItem(source: DestSource, index: FolderIndex, space: DestSpace, t: T
   };
 }
 
-/** 「返回」項（第二層起恆為第一項）；手機 sheet 的第一層也用它當回主選單的那一列（`share/GroupTransfer.tsx`）。 */
+/** "Back" item (always first from level 2); the phone sheet's first level also uses it as the row back to the main menu (`share/GroupTransfer.tsx`). */
 export function backItem(t: Translate): DestItem {
   const label = t("folders.dest.back");
   return { kind: "back", key: "back", label, accessibleName: label };
@@ -175,7 +158,7 @@ function firstLevel(source: DestSource, index: FolderIndex, t: Translate): DestI
     if (!source.locations.every((location) => location === null)) upper.push(rootItem(source, index, current, t));
     for (const folder of index.children(spaceKey(current), null)) upper.push(folderItem(source, index, current, folder, t));
   }
-  // 資料夾只能在同一個空間內移動：批次搬資料夾時下半部空間反灰、不能點進。
+  // Folders move only within one space: when moving folders in a batch the lower-half spaces are greyed out and can't be entered.
   const crossSpace = source.mode === "move" && source.movingFolders.length > 0;
   const lower = source.others.map((space) =>
     withDrill(
@@ -197,7 +180,6 @@ function firstLevel(source: DestSource, index: FolderIndex, t: Translate): DestI
 
 type Resolved = { kind: "space"; space: DestSpace } | { kind: "folder"; space: DestSpace; folder: FolderDto };
 
-/** 走 path；遇到已不存在的資料夾、或已不在 source 的空間 → 截到最後一個仍有效的前綴。 */
 function resolvePath(source: DestSource, path: readonly DestPathStep[], index: FolderIndex): Resolved | null {
   let last: Resolved | null = null;
   for (const step of path) {
@@ -220,7 +202,6 @@ function resolvePath(source: DestSource, path: readonly DestPathStep[], index: F
   return last;
 }
 
-/** 某一層的項目。path 指到已不存在的資料夾 → 截到最後一個仍存在的前綴（快取重抓後）。 */
 export function buildDestinationLevel(input: {
   source: DestSource;
   path: readonly DestPathStep[];
@@ -230,7 +211,6 @@ export function buildDestinationLevel(input: {
   const { source, path, index, t } = input;
   const at = resolvePath(source, path, index);
   if (at === null) return firstLevel(source, index, t);
-  // 第二層起：「返回」恆第一項、不加分隔線。
   if (at.kind === "space") {
     return [
       backItem(t),
@@ -254,10 +234,8 @@ export function buildDestinationLevel(input: {
 }
 
 /**
- * path 裡仍有效的前綴。`buildDestinationLevel` 遇到失效的步（資料夾被刪、群組不見）會**靜默截斷**到最後一個有效的前綴，
- * 所以「目前在第幾層」不能看 `path.length`：「返回」「點進」一律從這個前綴接，「返回」才恰好退一個看得到的層。
- * 判法：第 k 層建出來的「返回」下一項（空間層＝根目錄、資料夾層＝移動到這裡／複製到這裡）就是第 k 步本身。
- * ⋮ 的逐層子選單（`GroupTransfer`）與選取模式的目的地框（`SelectActionBar`）共用。
+ * The still-valid prefix of `path`. `buildDestinationLevel` **silently truncates** at a stale step (folder deleted, group gone), so the current depth can't be read from `path.length`: "back" and "drill in" must continue from this prefix so "back" goes up exactly one visible level.
+ * Detection: the item after "back" built at level k (space level = root, folder level = move/copy here) is step k itself.
  */
 export function livePath(source: DestSource, path: readonly DestPathStep[], index: FolderIndex, t: Translate): readonly DestPathStep[] {
   for (let k = 0; k < path.length; k += 1) {
@@ -276,7 +254,6 @@ export function livePath(source: DestSource, path: readonly DestPathStep[], inde
   return path;
 }
 
-/** 完整路徑字串（確認框、可及名稱）：個人「我的筆記 › A › B」、群組「研發組 › A」、共享「與我共享 › A」；根層＝空間名。 */
 export function destinationPathLabel(space: DestSpace, folder: FolderDto | null, index: FolderIndex, t: Translate): string {
   const head = spaceLabel(space, t);
   if (folder === null) return head;
@@ -284,7 +261,6 @@ export function destinationPathLabel(space: DestSpace, folder: FolderDto | null,
   return [head, ...names].join(" › ");
 }
 
-/** toast「已移到「{{name}}」」的 name：資料夾名；根層＝「根目錄」。 */
 export function destinationShortLabel(folder: FolderDto | null, t: Translate): string {
   return folder === null ? t("folders.dest.topLevel") : folder.name;
 }

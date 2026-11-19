@@ -4,56 +4,51 @@ import { cn } from "@/lib/utils";
 import "@/i18n/management-strings";
 
 /**
- * 設定與管理面板的「項目清單」共用表格。
- *
- * - 欄位順序由元件強制：主欄 → 資訊欄（text／url／fixed，彼此保留宣告順序）→ 可編輯欄（control）→ 操作鈕欄 → 啟用欄。
- *   宣告違反時開發模式 console.error，並照強制順序排。
- * - 版面：`role="table"` 是 grid，軌道由各欄 kind 算出、以 inline style 寫進 `--kb-table-cols`（Tailwind v4 只產生原始碼裡
- *   出現的 class，不能在執行期拼 arbitrary class）。表頭列與資料列是 `grid-column: 1 / -1` 的 subgrid：`max-content` 軌道在整張表
- *   取同一寬度，各欄左緣對齊表頭。列不得設 gap、水平內距或行內方向的框線（subgrid 會把它們加到邊緣項目上）；內距只在儲存格上。
- *   cell 撐滿列的內容高（grid 預設 stretch），內容一律包成單一個 `flex-1 min-w-0` 子元素，欄的水平對齊設在這個子元素上。
- * - 窄螢幕：不重排。頂層表外包 `role="region"` 的橫向捲動框，主欄 sticky 在左（不透明底、z-index 1：開關圓鈕用 translate，
- *   會建立堆疊環境）。捲動框只在內容實際溢出時可聚焦；`scroll-padding-inline-start` 取表頭主欄格的實際寬，Tab 帶捲時焦點目標
- *   落在 sticky 欄右側（WCAG 2.4.11）；目標已在框內、只是壓在 sticky 欄底下時瀏覽器不捲，由捲動框的 focus 處理補捲。
- * - 明細列與錯誤列是緊接在資料列後的獨立 row（不是 subgrid）。子表以 `nested` 宣告：沒有捲動框、主欄不 sticky（sticky 盒
- *   不能離開所屬列，子表主欄軌很寬，黏住會蓋掉同列的操作鈕與開關）、表頭列 sr-only（供開關的 aria-labelledby 引用）。
- * - 手機（< 640）：不用 subgrid 也不橫捲，每列是一張卡片（見 `PHONE_CELL`）：主欄不 sticky、表頭列只給螢幕閱讀器、
- *   資訊欄與可編輯欄前面加可見的欄名（aria-hidden）；明細列、錯誤列、子表與編輯中的合併格沿用同一套（本來就是整列寬）。
- * - 編輯中：主欄 cell 保留，其餘欄合併成一格放呼叫端的表單。
- *
- * ⚠ 版面 class／inline style 的斷言只准寫在本元件的測試；各頁測試一律語意查詢。
+ * Column order is enforced: primary, info (text/url/fixed, in declared order), control, actions, enabled; a declaration
+ * that violates it logs console.error in development and is reordered anyway.
+ * Track widths go through inline `--kb-table-cols` (Tailwind v4 only emits classes found in source, so arbitrary classes
+ * can't be built at runtime). Header and data rows are `grid-column: 1 / -1` subgrids, so `max-content` tracks share one
+ * width across the table and columns align with the header. Rows must not set gap, horizontal padding or inline-direction
+ * borders (subgrid adds them to edge items); padding lives on cells. Cells stretch to the row's content height and wrap
+ * their content in a single `flex-1 min-w-0` child, which carries the column's horizontal alignment.
+ * Narrow screens don't reflow: they scroll horizontally with a sticky primary column (opaque background, z-index 1: the
+ * switch knob's translate creates a stacking context). The scroll region is focusable only while content overflows.
+ * `scroll-padding-inline-start` is the header primary cell's width so Tab-scroll lands right of the sticky column (WCAG 2.4.11);
+ * the scroll region's focus handler covers targets already inside the box but under it. Detail and error rows are separate rows
+ * after the data row, not subgrids. Nested tables have no scroll region or sticky column (a sticky box can't leave its row,
+ * and the wide nested primary track would cover the row's buttons and switches); their header row is sr-only for the
+ * switches' `aria-labelledby`.
+ * Layout class/style assertions belong only in this component's tests; page tests use semantic queries.
  */
 
 export type SettingsTableColumnKind = "primary" | "text" | "url" | "fixed" | "control" | "actions" | "enabled";
 
 export interface SettingsTableColumn {
-  /** 欄 id：資料列以它對應 `cells`，也用來組表頭的 DOM id。 */
   id: string;
-  /** 表頭文字（`actions` 欄渲染成 sr-only）。 */
+  /** Rendered sr-only for `actions`. */
   header: string;
   kind: SettingsTableColumnKind;
-  /** 只給 `actions`：該表一列最多幾顆鈕（決定固定軌寬）。 */
+  /** `actions` only: the most buttons any row has (sets the fixed track width). */
   buttons?: number;
-  /** 只對 `primary`／`text`／`url` 有效（其餘 kind 忽略）：取代該 kind 預設的 fr 比例；未設＝預設。 */
+  /** `primary`/`text`/`url` only (ignored for other kinds): replaces the kind's default fr ratio. */
   grow?: number;
 }
 
 export type SettingsTableTone = "default" | "muted" | "danger";
 
-/** 一格的內容＋語氣（`muted` 灰字、`danger` 紅字）；`url` 欄的 `title`（全文）在內容是字串時可省。 */
 export interface SettingsTableCellSpec {
   content: ReactNode;
   tone?: SettingsTableTone;
+  /** Full text for `url` cells; may be omitted when `content` is a string. */
   title?: string;
 }
 
 export type SettingsTableCellValue = ReactNode | SettingsTableCellSpec;
 
 /**
- * 主欄：一行名稱（前可接圖示、後可接標籤）＋任意行數的灰色副標。名稱一律 bidi 隔離（沿用 token 名稱的
- * `dir="ltr"`＋`unicode-bidi:isolate`）——這幾張表的名稱全是使用者、管理員或 OAuth client 自填的。
- * `icon` 直接渲染在名稱元素的前一個兄弟位置（測試以「名稱元素的 previousElementSibling」找圖示）。
- * `weight`：名稱字重，沿用各表現行的樣式（元件不替任何表加粗）；預設一般字重。
+ * Names are always bidi-isolated (`dir="ltr"` plus `unicode-bidi:isolate`, as for token names): every name in these
+ * tables is supplied by users, admins or OAuth clients. `icon` renders as the name element's previous sibling; tests
+ * find it that way. `weight` keeps each table's existing style (the component bolds nothing); default normal.
  */
 export interface SettingsTablePrimary {
   name: string;
@@ -64,42 +59,40 @@ export interface SettingsTablePrimary {
 }
 
 export interface SettingsTableRow {
-  /** 穩定 id（資料庫 id）：列名、明細列等 DOM id 都以它組，不以名稱（名稱可重複）。 */
+  /** Stable database id: DOM ids use it, not the name (names can repeat). */
   id: string;
   primary: SettingsTablePrimary;
-  /** 資訊欄與可編輯欄（`text`／`url`／`fixed`／`control`）的內容，以欄 id 為鍵。 */
+  /** Keyed by column id. */
   cells?: Record<string, SettingsTableCellValue>;
-  /** 操作鈕欄（一律 `RowIconButton`）；不提供的動作就不渲染該鈕。 */
+  /** `RowIconButton`s only: the track width assumes 32px buttons. */
   actions?: ReactNode;
-  /** 啟用欄：收到 `aria-labelledby`（＝啟用欄表頭 id＋名稱文字 id），交給 `Switch`。 */
+  /** Receives `aria-labelledby` (enabled header id plus name text id) for the `Switch`. */
   enabled?: (labelledBy: string) => ReactNode;
-  /** 緊接在後的明細列。 */
   detail?: ReactNode;
-  /** 有值＝編輯中：主欄 cell 保留，其餘欄合併成一格放這個表單。 */
+  /** When set, the row is in edit mode: the primary cell stays and the other columns merge into one cell holding this. */
   editing?: ReactNode;
-  /** 列層級錯誤：渲染成資料列之後的錯誤列，內容 `role="alert"`；有明細列時在它之前。 */
+  /** Rendered as an error row (`role="alert"`) after the data row, before any detail row. */
   error?: ReactNode;
 }
 
 export interface SettingsTableProps {
-  /** 表格可及名稱（必填，逐表列出）；頂層表的捲動框也用它。 */
+  /** Also names a top-level table's scroll region. */
   label: string;
   columns: SettingsTableColumn[];
   rows: SettingsTableRow[];
-  /** 哪一欄的文字當列名與開關名稱（預設＝主欄；使用者表、成員表＝email 欄）。該欄內容必須是純文字。 */
+  /** Column whose text names rows and switches (default: primary). Its content must be plain text. */
   nameColumn?: string;
-  /** 零列時的提示；零列時不渲染 table 與捲動框（載入與錯誤由呼叫端在元件外處理）。 */
+  /** With zero rows neither table nor scroll region renders; loading and errors are the caller's job. */
   empty?: ReactNode;
-  /** 表格上方的標題列（不論有無資料列都渲染）；頂層表通常由 `SettingsGroup` 給標題，不用這個。 */
+  /** Rendered with or without rows; top-level tables usually take their title from `SettingsGroup` instead. */
   title?: ReactNode;
   titleAction?: ReactNode;
-  /** 子表（放在父表的明細列裡）：沒有捲動框、主欄不 sticky、表頭 sr-only、主欄內容左縮。 */
+  /** Goes in the parent's detail row. */
   nested?: boolean;
 }
 
 const KIND_RANK: Record<SettingsTableColumnKind, number> = { primary: 0, text: 1, url: 1, fixed: 1, control: 2, actions: 3, enabled: 4 };
 
-/** 照「主欄→資訊欄→可編輯欄→操作鈕欄→啟用欄」排（同級保留宣告順序）；宣告違反時開發模式 console.error。 */
 export function orderSettingsTableColumns(columns: SettingsTableColumn[]): SettingsTableColumn[] {
   const ordered = columns
     .map((column, index) => ({ column, index }))
@@ -127,7 +120,7 @@ export function orderSettingsTableColumns(columns: SettingsTableColumn[]): Setti
   return ordered;
 }
 
-/** `grow` 非有限正數（0、負數、NaN、Infinity）會讓整串 grid-template 失效，一律當沒設。 */
+/** A non-finite or non-positive `grow` would invalidate the whole grid-template, so it counts as unset. */
 function validGrow(grow: number): boolean {
   return Number.isFinite(grow) && grow > 0;
 }
@@ -136,10 +129,9 @@ function fr(column: SettingsTableColumn, fallback: number): number {
   return column.grow !== undefined && validGrow(column.grow) ? column.grow : fallback;
 }
 
-/** 啟用欄固定 56px：子表與父表都是這個寬、都在最右，開關中心才會上下對齊。 */
+/** 56px in both parent and nested tables, both rightmost, so the switch centers line up. */
 const ENABLED_TRACK = "3.5rem";
 
-/** 一欄的 grid 軌道。 */
 function settingsTableTrack(column: SettingsTableColumn, isLast: boolean): string {
   switch (column.kind) {
     case "primary":
@@ -153,7 +145,7 @@ function settingsTableTrack(column: SettingsTableColumn, isLast: boolean): strin
       return "max-content";
     case "actions": {
       const buttons = column.buttons ?? 1;
-      // 32px 鈕 ×n＋gap-1 ×(n−1)；是最後一欄時要帶 pr-3，preflight 是 border-box、內距吃在軌寬裡，所以再加 0.75rem。
+      // 32px buttons × n + gap-1 × (n−1); a last column carries pr-3, which border-box (preflight) takes out of the track, so add 0.75rem.
       return `${buttons * 2 + (buttons - 1) * 0.25 + (isLast ? 0.75 : 0)}rem`;
     }
     case "enabled":
@@ -161,31 +153,28 @@ function settingsTableTrack(column: SettingsTableColumn, isLast: boolean): strin
   }
 }
 
-/** 整張表的 `grid-template-columns`（傳入已排序的欄）。 */
 export function settingsTableTracks(ordered: SettingsTableColumn[]): string {
   return ordered.map((column, index) => settingsTableTrack(column, index === ordered.length - 1)).join(" ");
 }
 
-/** 表頭列與資料列：同一張表內這一層的 subgrid。列不得加 gap、水平內距或 items-*。 */
+/** Rows must not add gap, horizontal padding or `items-*` (subgrid). */
 const ROW_GRID = "col-span-full grid grid-cols-subgrid max-sm:flex max-sm:flex-wrap";
-/** 列間分隔：畫在列上（欄距處不斷線）。 */
+/** Drawn on the row so it doesn't break at column gaps. */
 const ROW_BORDER = "border-b border-border";
-/** 儲存格：撐滿列的內容高、內容垂直置中。 */
 const CELL = "flex items-center";
-/** 頂層表主欄（表頭格與每列主欄格）：sticky、z-index 1、不透明底；右緣分隔線只在捲動框溢出時畫（捲動框帶 `data-overflowing`）。 */
 const STICKY_CELL =
   "sticky left-0 z-[1] border-border bg-card group-data-[overflowing]/box:border-r max-sm:static max-sm:bg-transparent max-sm:group-data-[overflowing]/box:border-r-0 " +
-  // 手機沒有 sticky：格子透明、露出卡片自己的表面（popover）；編輯中列的疊色底也改疊在 popover 上。
+  // Phone has no sticky column: transparent cells show the card surface (popover), and an editing row's tint overlays the popover.
   "max-sm:[--kb-sticky-surface:var(--popover)]";
-/** 編輯中列的 sticky 主欄：淡色疊在卡片色上（`--brand-soft` 是半透明；用 inline style，不用 `bg-[…]` arbitrary 值）。 */
+/** Overlay on the card color: `--brand-soft` is translucent; inline style, not a `bg-[…]` arbitrary value. */
 const EDITING_STICKY_BACKGROUND = "linear-gradient(var(--brand-soft), var(--brand-soft)), var(--kb-sticky-surface, var(--card))";
-/** 頂層表的橫向捲動框。 */
 const SCROLL_BOX = "group/box overflow-x-auto max-sm:overflow-x-visible scroll-ps-(--kb-sticky-w) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-/** 明細 cell：不加水平內距（子表要與父表同寬；非表格內容自己帶 px-3）。 */
+/** No horizontal padding: a nested table must match the parent's width; non-table content brings its own px-3. */
 const DETAIL_CELL = "pb-3";
 /**
- * 手機＋觸控的點擊範圍（做法同 `ui/hit-area.ts`：視覺不變，`::after` 向外撐）。只在這張表的手機卡片上生效，不改共用元件。
- * 圖示鈕 32px 四邊各撐 6px＝44，鈕距拉到 12px（圓心距 44）才不互相蓋住；開關 26×14，左右各撐 10px、上下各撐 16px。
+ * Phone touch hit area: `::after` grows outward (as in `ui/hit-area.ts`), only on this table's phone cards so the
+ * shared components are unchanged. 32px icon buttons grow 6px per side to 44, with 12px spacing (44 between centers)
+ * so they do not overlap; the 26x14 switch grows 10px left/right and 16px up/down.
  */
 const TOUCH_ICON_BUTTONS =
   "max-sm:pointer-coarse:gap-3 max-sm:pointer-coarse:[&_button]:relative max-sm:pointer-coarse:[&_button]:after:absolute " +
@@ -194,11 +183,10 @@ const TOUCH_SWITCH =
   "max-sm:pointer-coarse:[&_[role=switch]]:relative max-sm:pointer-coarse:[&_[role=switch]]:after:absolute " +
   "max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-x-2.5 max-sm:pointer-coarse:[&_[role=switch]]:after:-inset-y-4 " +
   "max-sm:pointer-coarse:[&_[role=switch]]:after:content-['']";
-/** cell 內容子元素依欄種的文字行為與水平對齊。 */
 const INNER: Record<SettingsTableColumnKind, string> = {
   primary: "wrap-anywhere",
   text: "wrap-anywhere",
-  // 手機：不截斷（觸控看不到 title 的全文），改成任意處換行。
+  // Phone: no truncation (touch cannot see the title); wrap anywhere.
   url: "truncate max-sm:overflow-visible max-sm:whitespace-normal max-sm:text-clip max-sm:wrap-anywhere",
   fixed: "whitespace-nowrap",
   control: "whitespace-nowrap",
@@ -206,10 +194,9 @@ const INNER: Record<SettingsTableColumnKind, string> = {
   enabled: "flex justify-center " + TOUCH_SWITCH,
 };
 /**
- * 手機（< 640）的卡片版面：資料列改成自動換行的 flex，主欄、資訊欄、可編輯欄各占一行（資訊欄與可編輯欄前面加可見的欄名），
- * 操作鈕與啟用開關排在最後一行；表頭列只留給螢幕閱讀器。DOM 與 ARIA 角色不變。
- * 格子內容是空的（沒有操作、沒有值）就收成 sr-only：不留一行只有欄名的空列，又不把格子從版面樹拿掉（否則螢幕閱讀器的表頭對應會位移）。
- * 欄名對齊值的第一行（多行值不垂直置中）；可編輯欄是高控制項，維持置中。
+ * Phone (< 640px) card layout; DOM and ARIA roles are unchanged. Empty cells go sr-only instead of leaving the layout
+ * tree, so screen-reader header mapping does not shift. Labels align with a value's first line (multi-line values aren't
+ * vertically centered); control cells hold tall controls and stay centered.
  */
 const PHONE_CELL: Record<SettingsTableColumnKind, string> = {
   primary: "max-sm:basis-full",
@@ -218,15 +205,14 @@ const PHONE_CELL: Record<SettingsTableColumnKind, string> = {
   fixed: "max-sm:basis-full max-sm:items-start max-sm:has-[>div:empty]:sr-only",
   control: "max-sm:basis-full max-sm:has-[>div:empty]:sr-only",
   actions: "max-sm:flex-1 max-sm:has-[>div:empty]:sr-only",
-  // 觸控：開關的點擊範圍上下各撐 16px（共 46px），格子至少 48px 高，才不會伸進上一行的控制項。
+  // Touch: the switch's hit area grows 16px up and down (46px), so cells are at least 48px high to avoid reaching into the row above.
   enabled: "max-sm:ml-auto max-sm:pointer-coarse:min-h-12 max-sm:has-[>div:empty]:sr-only",
 };
 const PHONE_LABELLED: ReadonlySet<SettingsTableColumnKind> = new Set(["text", "url", "fixed", "control"]);
 
-/** 表頭文字與該欄內容同側：啟用置中、操作靠右、其餘靠左。 */
 const HEADER_INNER: Partial<Record<SettingsTableColumnKind, string>> = { actions: "text-right", enabled: "text-center" };
 
-/** 內距只在儲存格：第一格 pl-3；最後一格 pr-3，但最後一格是 enabled 時不加（56px 軌道已含留白）。 */
+/** No `pr-3` on a last `enabled` cell: its 56px track already includes the spacing. */
 function cellPadding(kind: SettingsTableColumnKind, index: number, count: number, header: boolean): string {
   return cn(header ? "py-2" : "py-2.5", index === 0 && "pl-3", index === count - 1 && kind !== "enabled" && "pr-3");
 }
@@ -266,10 +252,7 @@ function PrimaryContent({ primary, nameId }: { primary: SettingsTablePrimary; na
   );
 }
 
-/**
- * 頂層表的橫向捲動框：量內容是否溢出、表頭主欄格的實際寬。
- * `stickyKey`＝主欄的欄 id：表頭格以欄 id 為 key，id 一換就是新的 DOM 節點，effect 要重新訂閱，不能繼續觀察已脫離的舊節點。
- */
+/** `stickyKey` is the primary column id: the header cell is keyed by it, so a new id is a new DOM node and the effect must resubscribe. */
 function useScrollBox(active: boolean, stickyKey: string | undefined) {
   const boxRef = useRef<HTMLDivElement>(null);
   const headerRowRef = useRef<HTMLDivElement>(null);
@@ -284,15 +267,16 @@ function useScrollBox(active: boolean, stickyKey: string | undefined) {
     const scroller: HTMLDivElement = box;
     const sticky = stickyKey === undefined ? null : stickyHeaderRef.current;
     function measure(entries: readonly ResizeObserverEntry[]): void {
-      // 寬度只取 sticky 格自己那筆 entry 的 borderBoxSize。不以 getBoundingClientRect 補：它受 transform 影響
-      // （管理面板 Dialog 開啟時的 zoom-in-95），只有捲動框或表頭列變動的回呼會把正確值蓋成縮放後的寬。
-      // observe 之後 ResizeObserver 一定會送 sticky 格的初始 entry，所以不需要後備值。
+      // Only the sticky cell's own borderBoxSize, not getBoundingClientRect: that is skewed by the management dialog's
+      // opening zoom-in-95 transform, and callbacks for the scroll region or header row would overwrite the correct width
+      // with the scaled one. ResizeObserver always delivers the sticky cell's initial entry, so no fallback is needed.
       const width = entries.find((entry) => entry.target === sticky)?.borderBoxSize?.[0]?.inlineSize;
       if (width !== undefined) scroller.style.setProperty("--kb-sticky-w", `${width}px`);
       setOverflowing(scroller.scrollWidth > scroller.clientWidth);
     }
     measure([]);
-    // 軌道溢出不會改變 table 盒的大小——要看表頭列（它跨全部軌道）；表頭主欄格給 sticky 寬。
+    // Track overflow does not resize the table box; observe the header row, which spans all tracks. The header primary
+    // cell gives the sticky width.
     const observer = new ResizeObserver((entries) => measure(entries));
     observer.observe(scroller);
     observer.observe(headerRow);
@@ -301,25 +285,26 @@ function useScrollBox(active: boolean, stickyKey: string | undefined) {
   }, [active, stickyKey]);
 
   /**
-   * 聚焦帶捲的補捲：瀏覽器只在焦點目標落在捲動框可視範圍外時才捲（捲的時候才套用 scroll-padding）；目標整顆在框內、
-   * 只是左半壓在 sticky 主欄底下時不會捲（Chromium 實測），這裡把 scrollLeft 往左補到目標露出。只補頂層資料列
-   * （捲動框 > table > row、帶 aria-labelledby）的非主欄格：明細列、錯誤列、子表列沒有 sticky 格，控制項完全可見，
-   * 補捲反而讓滑鼠按下（先 focus）時按鈕移離游標、click 被吃掉；主欄格（sticky 格本身）裡也不補。
+   * The browser scrolls on focus (applying scroll-padding) only when the target is outside the visible area, not when it is
+   * inside but partly under the sticky column (Chromium); shift scrollLeft until it shows. Compensate only for non-primary
+   * cells of top-level data rows (scroll region > table > row with aria-labelledby): detail, error and nested rows have no
+   * sticky cell so their controls are fully visible, and scrolling would move a button from under the cursor on mousedown
+   * (focus first) and eat the click. Nor inside the primary (sticky) cell itself.
    */
   function revealPastSticky(target: Element): void {
     const scroller = boxRef.current;
     const sticky = stickyHeaderRef.current;
-    // React 的 onFocus 會穿過 portal 冒泡：列上開的對話框（DOM 在 body）裡的焦點不是表內控制項，不補。
+    // React onFocus bubbles through portals: focus in a dialog opened from a row is not a table control.
     if (scroller === null || sticky === null || !scroller.contains(target)) return;
     const row = target.closest('[role="row"]');
     if (row === null || !row.hasAttribute("aria-labelledby") || row.parentElement?.parentElement !== scroller) return;
     if (row.firstElementChild?.contains(target)) return;
     const covered = sticky.getBoundingClientRect().right - target.getBoundingClientRect().left;
-    // 進位成整數：scrollLeft 可能被取整，補不足會留下小於 1px 的遮擋。
+    // Round up: scrollLeft may be rounded, leaving a sub-pixel overlap.
     if (covered > 0) scroller.scrollLeft -= Math.ceil(covered);
   }
 
-  // 只在溢出時可聚焦；捲動框正有焦點時不移除 tabIndex，等它失焦後再依溢出狀態更新。
+  // Focusable only while overflowing; keep tabIndex while it has focus, update after blur.
   return { boxRef, headerRowRef, stickyHeaderRef, overflowing, tabbable: overflowing || focused, setFocused, revealPastSticky };
 }
 
@@ -418,7 +403,7 @@ export function SettingsTable({ label, columns, rows, nameColumn, empty, title, 
     const editing = present(row.editing);
     const hasError = present(row.error);
     const hasDetail = present(row.detail);
-    // 一組＝資料列（＋錯誤列）（＋明細列）：下框線只畫在這一組的最後一列；子表的最後一組不畫（由外層明細列畫）。
+    // A group is the data row (+ error row) (+ detail row). Bottom border only on its last row; a nested table's last group is drawn by the outer detail row.
     const groupBorder = nested && rowIndex === rows.length - 1 ? undefined : ROW_BORDER;
     const name = rowName(row);
     return (

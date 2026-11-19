@@ -2,11 +2,7 @@ import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "reac
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 
-/**
- * Radix Tooltip 薄包裝（#293）。呼叫端的 Trigger 一律另傳 `aria-describedby={undefined}`：
- * Radix 1.2.16 先放 `aria-describedby` 再展開 props（`react-tooltip dist/index.mjs:186-188`），
- * 呼叫端的 `aria-label` 已含全部資訊，不覆寫會重複朗讀（M-g）。
- */
+/** Thin Radix Tooltip wrapper (#293). Callers pass `aria-describedby={undefined}` on the Trigger: Radix 1.2.16 sets `aria-describedby` before spreading props (`react-tooltip dist/index.mjs:186-188`), and the caller's `aria-label` already carries everything, so without the override it is read twice. */
 export const TooltipProvider = TooltipPrimitive.Provider;
 export const Tooltip = TooltipPrimitive.Root;
 export const TooltipTrigger = TooltipPrimitive.Trigger;

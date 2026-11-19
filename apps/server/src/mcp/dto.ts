@@ -1,14 +1,7 @@
 /**
- * #108：回給模型的筆記摘要。
- *
- * `NoteSummary` 是 REST `NoteDto` 的**子集加 `url`**——刻意不含 `ownerId`／`createdAt`／
- * `slugIsCustom`／`prevSlug`（模型用不到，只佔脈絡）。**REST 的 `NoteDto` 一個字都不改**：
- * 它是已發佈的對外契約（`note-content.test.ts` 逐欄釘住），截斷只發生在 MCP 這一側。
- * ⚠ #175 起有一欄**不是**子集：REST 的 `ownerHandle`／`groupId`／`group` 在這裡收成一個 `owner`
- * （帶種類的物件，見 {@link NoteOwnerForModel}）。
- *
- * `url` 走 `canonicalNotePath`——與 `create_note` 同一個組字點。組字規則只能有一個
- * 實作：模型自己拼網址拼錯了就是給使用者一條打不開的連結，而且不報錯。
+ * A subset of REST `NoteDto` (a published contract, so trimming happens only here), with REST's
+ * `ownerHandle`/`groupId`/`group` collapsed into `owner`. `url` must come from
+ * `canonicalNotePath`: a hand-built URL that is wrong is a silent dead link.
  */
 import { z } from "zod";
 import { canonicalNotePath } from "@knotebook/shared";
@@ -16,18 +9,14 @@ import type { DbOrTx } from "../db/tx.js";
 import { folderRefForModel, folderRefSchema, loadFolderNames, type FolderRefForModel } from "./folder-fields.js";
 import { MCP_TEXT_MAX, truncateText } from "./limits.js";
 
-/** list_notes／search_notes 回應的 `folder` 說明；不提 read_note_outline：它只在有共編元件時註冊，這份 schema 是所有部署共用的。 */
+/** Doesn't mention read_note_outline: it only exists with collab, and this schema is shared by all deployments. */
 export const NS_FOLDER_DESCRIBE =
   "Where this note is filed for you, or null at the top level; for a note shared with you, where you filed it, not where its owner did. Only the folder itself — list_folders gives its path.";
 
 /**
- * #175：誰的筆記。個人筆記＝那個人的 handle；群組筆記＝那個群組（沒有個人 owner——nullable 的 `ownerHandle` 對模型
- * 是「這篇沒主人？」的誤導，所以換成帶種類的物件；`owner` 比 `ownerHandle` 短 6 字元——`instructions` 另因可見性句改寫再省 1，
- * 合計寬 7，量測見 `server-info.ts` 的註解）。
- *
- * #177：群組 `name` 與 `title` 同一套截斷（{@link truncateText}，按 JSON 逃脫後計）。DB 上限是 80 code point，
- * 一般名稱永遠截不到；只有塞滿需要逃脫的字元（C0 一個算 6）才會被截，此時多帶 `nameTruncated: true`——
- * 旗標語意與 `titleTruncated` 相同（只在真的被截時才有這把 key）。
+ * A tagged object rather than a nullable `ownerHandle`, which would suggest a group note has
+ * no owner. The group `name` is truncated like `title`; DB max is 80 code points, so only
+ * names full of escape-costly characters (C0 costs 6) hit it, then `nameTruncated: true`.
  */
 export type NoteOwnerForModel =
   | { kind: "user"; handle: string }
@@ -43,7 +32,7 @@ export const noteOwnerSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-/** 群組欄優先（群組筆記的 `ownerHandle` 恆 null，XOR）。兩者皆空不可能（DB `notes_owner_xor_group_chk`）——throw，不猜。 */
+/** Both empty is impossible (`notes_owner_xor_group_chk`): throw rather than guess. */
 export function ownerForModel(row: { ownerHandle: string | null; groupId: string | null; groupName: string | null }): NoteOwnerForModel {
   if (row.groupId !== null) {
     const name = truncateText(row.groupName ?? "");
@@ -57,17 +46,8 @@ export interface NoteSummaryForModel {
   id: string;
   title: string;
   /**
-   * 只在真的被截斷時才有這把 key，值恆為 `true`。
-   * ⚠ **誠實記下（三條突變都實跑過）**：
-   * 1. 寫成 `titleTruncated: false` → **`outputSchema` 的 `z.literal(true)` 抓到**（SDK 的
-   *    `validateToolOutput` 把整個結果轉成 `isError`，成功路徑的每一案都紅）。**真正的守衛
-   *    是它，不是下面的 key 集合斷言**——把 schema 一起放寬成 `z.boolean()` 時，才輪到 key
-   *    集合斷言接手。⚠ 所以「案 14a 是它唯一的守衛」不成立。
-   * 2. 寫成 `titleTruncated: undefined` → **沒有任何測試會紅**：`JSON.stringify` 會把
-   *    `undefined` 欄位整個丟掉，wire 上與「沒有這把 key」逐位元組相同；`outputSchema` 的
-   *    `.optional()` 也收它。`exactOptionalPropertyTypes` 沒開，型別同樣擋不住。
-   * 3. 因此「條件展開」這個寫法本身只是紀律（給直接呼叫 `toNoteSummary` 的測試用），
-   *    在 MCP 路徑上不是被守著的事實。**誠實缺口。**
+   * Only present (as `true`) when truncated. `z.literal(true)` catches `false`; `undefined`
+   * is invisible on the wire (JSON.stringify drops it), so the conditional spread is discipline; `exactOptionalPropertyTypes` is off, so types don't catch it either.
    */
   titleTruncated?: true;
   owner: NoteOwnerForModel;
@@ -76,11 +56,10 @@ export interface NoteSummaryForModel {
   role: string;
   updatedAt: string;
   lastEdited: { at: string; byHandle: string; agentLabel: string | null } | null;
-  /** 資料夾：呼叫者視角的所在資料夾——共享筆記是呼叫者自己的放置，不是擁有者的；根層 null。只帶這一層，不帶路徑。 */
+  /** For a shared note this is the caller's own placement, not the owner's. */
   folder: FolderRefForModel | null;
 }
 
-/** `outputSchema` 用的 zod 形；欄位順序與 {@link NoteSummaryForModel} 一致。 */
 export const noteSummarySchema = z.object({
   id: z.string(),
   title: z.string().max(MCP_TEXT_MAX),
@@ -96,11 +75,9 @@ export const noteSummarySchema = z.object({
   folder: folderRefSchema.nullable().describe(NS_FOLDER_DESCRIBE),
 });
 
-/** `visibleNoteBranches` 的一列（多取的幾欄在這裡被丟掉）。 */
 export interface NoteSummaryRow {
   id: string;
   title: string;
-  /** 群組筆記恆 null（沒有個人 owner，#175）。 */
   ownerHandle: string | null;
   groupId: string | null;
   groupName: string | null;
@@ -109,11 +86,10 @@ export interface NoteSummaryRow {
   lastEditedAt: Date | null;
   lastEditedAgentLabel: string | null;
   editorHandle: string | null;
-  /** 呼叫者視角：owned／grouped＝notes.folder_id、shared＝自己的放置（`visibleNoteBranches` 的 `viewerFolderId`）。 */
   viewerFolderId: string | null;
 }
 
-/** folderName 是 viewerFolderId 查到的名稱；viewerFolderId 非 null 卻查不到（兩句之間資料夾被刪）→ folder: null（不編造名稱）。 */
+/** `folderName` is undefined when the folder was deleted between statements → `folder: null`. */
 export function toNoteSummary(row: NoteSummaryRow, role: string, folderName: string | undefined): NoteSummaryForModel {
   const title = truncateText(row.title);
   return {
@@ -125,8 +101,7 @@ export function toNoteSummary(row: NoteSummaryRow, role: string, folderName: str
     url: canonicalNotePath({ ownerHandle: row.ownerHandle, groupId: row.groupId, slug: row.slug }),
     role,
     updatedAt: row.updatedAt.toISOString(),
-    // 四欄同進同出，與 REST 的 `toNoteDto` 同一形：`last_edited_at` 是 null 就整個為 null；
-    // 編輯者帳號被刪（FK `set null`）時 handle 落空 → 空字串。
+    // last_edited_by is FK `set null`: a deleted editor gives handle "".
     lastEdited: row.lastEditedAt
       ? { at: row.lastEditedAt.toISOString(), byHandle: row.editorHandle ?? "", agentLabel: row.lastEditedAgentLabel }
       : null,
@@ -134,11 +109,7 @@ export function toNoteSummary(row: NoteSummaryRow, role: string, folderName: str
   };
 }
 
-/**
- * 一次 `loadFolderNames` 後逐列 `toNoteSummary`。名稱另查而不改 `visibleNoteBranches`（REST 清單不必付 join）；`viewerFolderId`
- * 對呼叫者本來就可見（個人筆記的資料夾在 owner 的空間、群組筆記的在該群組、放置只指向放置者自己的 shared 資料夾——0034 的
- * trigger），所以這一句不另判可見性。
- */
+/** Names are looked up separately so REST lists don't pay for the join. `viewerFolderId` is always visible to the caller (a trigger keeps placements in the placer's own space). */
 export async function noteSummariesForModel(
   db: DbOrTx,
   rows: ReadonlyArray<NoteSummaryRow & { role: string }>,

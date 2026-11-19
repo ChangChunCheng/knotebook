@@ -2,11 +2,7 @@ import { useVersionList, type VersionTarget } from "@/api/versions";
 import { useVersions } from "@/lib/versions-context";
 import { versionLabel } from "./version-labels";
 
-/**
- * 預覽／比較對象的標籤「名稱 (短 id)」（#272）：清單裡還有這一版就用清單那一列（改名之後立刻反映），
- * 清單沒有（被「僅手動」篩掉、或在還沒載入的那一頁）才用選取時記下的 `target.name`。
- * 與面板、比較下拉共用同一份清單快取（同一個 query key），不多打請求。
- */
+/** Label "name (short id)" of the preview/compare target (#272): the list row when the list still has this version (a rename shows at once); otherwise (filtered out by "manual only", or on a page not loaded yet) the `target.name` recorded at selection. Shares the list query cache (same query key) with panel and compare dropdown, so no extra request. */
 export function useTargetLabel(target: VersionTarget | null): string {
   const { noteId, kindFilter } = useVersions();
   const list = useVersionList(noteId ?? "", target !== null, kindFilter);

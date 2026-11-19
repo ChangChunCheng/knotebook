@@ -1,12 +1,12 @@
-// #181 垃圾桶 DTO。垃圾桶 DTO 只增不改；資料夾已加 `folderPath`。
+// Trash DTOs only gain fields; never change their shape.
 import type { NoteDto } from "./index.js";
 
 export const TRASH_RETENTION_DAYS_DEFAULT = 7;
 export const TRASH_RETENTION_DAYS_MIN = 1;
 export const TRASH_RETENTION_DAYS_MAX = 3650;
-/** restore／purge 每請求的 id 上限。 */
+/** Ids per restore/purge request. */
 export const TRASH_BATCH_MAX = 200;
-/** GET /api/trash 一次最多列幾筆（超過 → truncated）。 */
+/** More items than this: the list is cut and `truncated` is true. */
 export const TRASH_LIST_LIMIT = 1000;
 
 export type TrashSkipReason = "not_found" | "not_in_trash";
@@ -15,10 +15,10 @@ export interface TrashItemDto {
   id: string;
   title: string;
   deletedAt: string; // ISO
-  purgeAt: string | null; // 保留天數 NULL 時 null
-  deletedBy: { handle: string; displayName: string } | null; // 帳號已刪 → null
-  group: { id: string; name: string } | null; // 個人筆記 null
-  /** 原資料夾路徑（根 → 葉）：資料夾還在 → 即時路徑，否則刪除當下的快照；根層 → []。 */
+  purgeAt: string | null; // null when retention is unlimited
+  deletedBy: { handle: string; displayName: string } | null; // null: account deleted
+  group: { id: string; name: string } | null; // null for personal notes
+  /** Root to leaf. Live path while the folder exists, else the snapshot at deletion; [] at root. */
   folderPath: string[];
 }
 

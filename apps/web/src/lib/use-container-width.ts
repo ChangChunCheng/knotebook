@@ -1,8 +1,9 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 
 /**
- * 量容器的 **content box** 寬（版本預覽的並排判斷）。初值與 ResizeObserver 一律量 content box（
- * 初值用 border-box、之後用 contentRect 會差掉 padding，寬度接近門檻（`SPLIT_MIN_WIDTH`）時並排／單欄來回翻）。jsdom 的 ResizeObserver 是 no-op（`test/setup.ts`），測試以 vi.mock 注入。
+ * Content-box width for both the initial value and the ResizeObserver: mixing a border-box initial value with
+ * `contentRect` would differ by the padding and flip near the threshold (`SPLIT_MIN_WIDTH`).
+ * jsdom's ResizeObserver is a no-op (`test/setup.ts`), so tests inject it with vi.mock.
  */
 function contentWidth(el: HTMLElement): number {
   const cs = getComputedStyle(el);

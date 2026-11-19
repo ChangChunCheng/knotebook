@@ -6,62 +6,39 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export interface LinkDialogProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.tsx、wikilink/menu.ts）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
   editor: any;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (value: { text: string; href: string }) => void;
-  /** 開啟時預填的顯示文字（選取了文字時是那段字，送出時沒改就保留原本的樣式）；省略是空的。 */
   initialText?: string;
-  /** 開啟時預填的網址（游標在既有連結裡時是它的網址）；省略是空的。 */
   initialUrl?: string;
 }
 
 /**
- * `/` 選單「連結」項的插入對話框（issue #99）。兩欄：顯示文字、網址。
- *
- * ⚠ **不自己判網址**：網址驗證共用 `resolveTrailingMarkdownLink`——
- * 組 `[x](網址)` 去驗（顯示文字用佔位符 `x`，使用者填的顯示文字完全不進這段
- * markdown），否則文字裡的 `]`／`*`／反引號都要跳脫，等於在 UI 層重寫一份 markdown
- * escaper。因此 `editor` 是必要 prop，不是可選的裝飾。
- *
- * 送出後**不自己呼叫 `editor.createLink`**——那是 `NoteEditor` 的責任（它才是
- * 「選單開關 state」與「還原 selection 再落地」的所在，見該檔接線）。這裡只負責把
- * `{ text, href }` 交出去。
- *
- * ⚠ **顯示文字留空時用 `href` 頂上**：`editor.createLink(href, "")`
- * 的第二參數 falsy 時走 `addMark(r, i)`，而 `/` 選單的 selection 是 collapsed
- * （`r === i`）⇒ 零 step、對話框關掉、畫面什麼都沒發生——這是靜默失敗，必須在
- * 送出前擋掉，不是防禦性寫法。
- *
- * 這個 dialog 沒有 `DialogDescription`（跟 `ShareDialog` 的版型有這一點落差）：
- * 兩欄輸入框本身就是內容，沒有值得額外念一句的說明——同 `AiEditsDialog` 省略它的
- * 理由。`aria-describedby={undefined}` 是不給 Radix 一個不存在的目標，不是漏補。
- *
- * 焦點回歸必須走 `DialogContent` 的 `onCloseAutoFocus` ＋ `preventDefault()`：
- * 同步呼叫 `editor.focus()`（例如在取消鈕的 `onClick` 裡）會被 `FocusScope` 的
- * 還原蓋掉（真編輯器實測過，三條關閉路徑——送出成功、取消鈕、Esc／點背景——
- * 都釘在 `LinkDialog.test.tsx` 裡）。
+ * Validation goes through `resolveTrailingMarkdownLink` by building `[x](url)` with a placeholder text, so the user text never needs markdown escaping; hence `editor` is required.
+ * Does not call `editor.createLink` itself: `NoteEditor` restores the selection first and owns the open state.
+ * Empty display text falls back to `href`: `createLink(href, "")` takes `addMark(r, i)`, and the `/` menu selection is collapsed, so it would silently do nothing.
+ * No `DialogDescription` (inputs are the content); `aria-describedby={undefined}` avoids a dangling target.
+ * Focus restore must use `onCloseAutoFocus` + `preventDefault()`: a synchronous `editor.focus()` is overridden by FocusScope (pinned in LinkDialog.test.tsx).
  */
 export function LinkDialog({ editor, open, onOpenChange, onSubmit, initialText = "", initialUrl = "" }: LinkDialogProps) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // 同頁若出現第二個 `LinkDialog` 實例（目前用不到，但比照 `<label for>` 綁定的一般
-  // 慣例），id 不寫死——避免兩份 `<label for="link-dialog-text">` 打架。
+  // unique id so two instances do not clash
   const textId = useId();
   const urlId = useId();
   const urlErrorId = useId();
 
-  // 每次開啟都是全新的一輪——不帶上一次殘留的文字或錯誤訊息。
   useEffect(() => {
     if (open) {
       setText(initialText);
       setUrl(initialUrl);
       setError(null);
     }
-    // 只在開啟的那一刻取一次預填值
+    // Prefill is read only at the moment of opening.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -69,12 +46,7 @@ export function LinkDialog({ editor, open, onOpenChange, onSubmit, initialText =
     event.preventDefault();
     const trimmedUrl = url.trim();
     const hit = resolveTrailingMarkdownLink(editor, `[x](${trimmedUrl})`);
-    // ⚠ `resolveTrailingMarkdownLink` 的判準是**尾端比對**（
-    // `textBefore.endsWith(recon)`），不是「整段等於」。這裡餵給它的 textBefore 就是
-    // `[x](${trimmedUrl})` 本身，所以只要網址欄裡藏著自己的 `)` 加另一段
-    // `[y](真正網址`，尾端仍能拼出一個合法連結、`hit` 不是 null，但 `hit.href` 是
-    // 「藏在後半段」的那個網址，不是使用者以為自己填的那一整串。不比對回去就會
-    // 靜默插出一個 使用者沒打算給的 href。
+    // `resolveTrailingMarkdownLink` matches the tail, so a URL hiding `)` plus `[y](real` would resolve to a different href than typed; compare back.
     if (!hit || hit.href !== trimmedUrl) {
       setError(t("note.link.invalidUrl"));
       return;

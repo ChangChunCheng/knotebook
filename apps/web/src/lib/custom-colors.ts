@@ -1,7 +1,7 @@
 import { isCustomColor } from "@knotebook/shared";
 
-// #378：筆記裡的自訂色碼（小寫 #rrggbb）沒有預先寫好的 CSS，這裡依實際出現的色碼動態登記規則。
-// 規則與 BlockNote 內建色同形、同特異度；每條各自 insertRule，單條被拒絕（例如不支援 :has）不影響其他。
+// #378: custom #rrggbb colors have no prewritten CSS, so rules are registered per code present.
+// Each rule is inserted separately so one rejected rule (e.g. no :has support) leaves the others.
 
 export type CustomColorKind = "inline" | "block";
 export type CustomColorProp = "textColor" | "backgroundColor";
@@ -17,15 +17,14 @@ const DECL: Record<CustomColorProp, string> = {
   backgroundColor: "background-color",
 };
 
-/** 該組色碼要插的選擇器；呼叫端須先確認 hex 是正規形。 */
+/** `hex` must already pass isCustomColor: it is spliced into a selector. */
 export function customColorSelectors(kind: CustomColorKind, prop: CustomColorProp, hex: string): string[] {
   if (kind === "inline") {
     const sel = `[data-style-type="${prop}"][data-value="${hex}"]`;
     return [sel, `.kn-present ${sel}`];
   }
   const attr = ATTR[prop];
-  // `.kn-present` 開頭的規則（行內與區塊各一條）與 present.css 的內建色規則同形，
-  // 簡報畫面上自訂色的特定度因此跟內建色一樣；當保險保留。
+  // Same shape as the built-in color rules in present.css, so specificity matches on the presentation screen.
   return [
     `[${attr}="${hex}"]`,
     `.bn-block:has(> .bn-block-content[${attr}="${hex}"])`,
@@ -47,7 +46,7 @@ function getSheet(): CSSStyleSheet | null {
 
 export function ensureCustomColor(kind: CustomColorKind, prop: CustomColorProp, hex: string): void {
   if (!isCustomColor(hex)) return;
-  // prop 會被拼進選擇器；型別之外的值（來自 any／外部資料）一律不登記。
+  // prop is spliced into a selector; never register values outside the type.
   if (prop !== "textColor" && prop !== "backgroundColor") return;
   const key = `${kind}|${prop}|${hex}`;
   if (registered.has(key)) return;
@@ -58,7 +57,6 @@ export function ensureCustomColor(kind: CustomColorKind, prop: CustomColorProp, 
     try {
       sheet.insertRule(`${sel} { ${DECL[prop]}: ${hex}; }`, sheet.cssRules.length);
     } catch {
-      // 瀏覽器不認得這個選擇器（例如舊版沒有 :has）：略過這一條，其餘照登記。
     }
   }
 }
@@ -69,7 +67,7 @@ export const CUSTOM_COLOR_SELECTOR =
 const OBSERVER_KEY = Symbol.for("knotebook.customColors.observer");
 type ObserverHost = { [OBSERVER_KEY]?: MutationObserver };
 
-/** DOM 上的屬性值一律先對映成字面的 prop／kind，再經 ensureCustomColor 驗證，不直接拼進選擇器。 */
+/** DOM attribute values are mapped to literal prop/kind and validated; never spliced into a selector directly. */
 function registerElement(el: Element): void {
   const styleType = el.getAttribute("data-style-type");
   const value = el.getAttribute("data-value");
@@ -85,15 +83,11 @@ function registerElement(el: Element): void {
 
 function registerTree(node: Node): void {
   if (!(node instanceof Element)) return;
-  // 新增的節點本身可能就是色碼元素（裸 span），後代則要另外找。
   if (node.matches(CUSTOM_COLOR_SELECTOR)) registerElement(node);
   node.querySelectorAll(CUSTOM_COLOR_SELECTOR).forEach(registerElement);
 }
 
-/**
- * 掃描 root 內現有的色碼並持續觀察之後出現或改變的。遠端共編者套的色碼不會經過本機操作，
- * 只能從 DOM 上實際出現的值登記。重複安裝會先斷開舊的 observer。
- */
+/** Colors applied by remote collaborators never pass local operations, so they can only be registered from the DOM. */
 export function installCustomColors(root: Element = document.body): void {
   const host = document as unknown as ObserverHost;
   host[OBSERVER_KEY]?.disconnect();

@@ -1,10 +1,5 @@
-/**
- * #285 管理員產生／列出／撤銷邀請連結（`requireAdmin`）。
- *
- * 全是單句、不開交易（不進 `test/unit/s14-structure.test.ts` 的 ④⑥）。不放進 `admin-users.ts`：避免牽動該檔的 ⑥ 計數，
- * 與重設路由（`admin-password-reset.ts`）同一種切法。
- * log 與回應絕不含 token 明文、`token_hash` 或備註（201 回應的 `token` 除外；列表回應帶備註給管理員看，log 不帶）。
- */
+// Logs never contain the token, token_hash or label; responses never contain token_hash, the 201 returns the token once, and the list returns the label
+// to admins. All single statements, no transactions.
 import type { FastifyInstance } from "fastify";
 import { desc, eq, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -29,7 +24,6 @@ export interface AdminInvitesRouteDeps {
   config: Pick<AppConfig, "passwordLoginForceEnable">;
 }
 
-/** trim → 空字串存 NULL → 可儲存字元 → 以 code point 計不超過上限（與 DB `one_time_links_label_chk` 同值）。 */
 function normalizeInviteLabel(raw: string | undefined): string | null | "invalid" {
   if (raw === undefined) return null;
   const s = raw.trim();
@@ -67,7 +61,6 @@ function toAdminInviteDto(row: InviteRow): AdminInviteDto {
   };
 }
 
-/** 列表與建立回應共用的單句查詢：不 select `token_hash`。 */
 async function selectInvites(db: Db, where: SQL): Promise<AdminInviteDto[]> {
   const creator = alias(users, "invite_creator");
   const redeemer = alias(users, "invite_redeemer");
@@ -95,7 +88,6 @@ async function selectInvites(db: Db, where: SQL): Promise<AdminInviteDto[]> {
 
 export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    // 判斷順序：body → 帳密有效值 → INSERT。
     app.post("/api/admin/invites", { preHandler: app.requireAdmin }, async (request, reply) => {
       const parsed = issueBodySchema.safeParse(request.body);
       const label = parsed.success ? normalizeInviteLabel(parsed.data.label) : "invalid";
@@ -116,7 +108,6 @@ export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
             expiresAt: sql`now() + make_interval(days => ${parsed.data.expiresInDays}::int)`,
           })
           .returning({ id: oneTimeLinks.id, createdAt: oneTimeLinks.createdAt, expiresAt: oneTimeLinks.expiresAt });
-        // 剛插入、至少 1 天後到期：status 必為 pending，建立者就是自己。
         invite = toAdminInviteDto({
           id: row!.id,
           label,
@@ -131,11 +122,11 @@ export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
           redeemerEmail: null,
         });
       } catch (err) {
-        // INSERT 的參數帶 token_hash 與備註：drizzle 的錯誤會把參數串進 message，原樣交給全域 handler 就進 log。
+        // INSERT params carry token_hash and the label; redact so they don't reach the log.
         throw redactDbError(request.log, err, "產生邀請");
       }
       request.log.info({ userId: request.user!.id, linkId: invite.id, expiresAt: invite.expiresAt }, "產生邀請");
-      // 清理沒有排程，產生成功後機會性執行；失敗不影響回應。
+      // No scheduler: opportunistic cleanup; failure doesn't affect the response.
       void deleteEndedOneTimeLinks(deps.db).catch((err: unknown) => request.log.warn({ err }, "清理一次性連結失敗"));
       return reply.code(201).send({ invite, token });
     });
@@ -144,7 +135,7 @@ export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
       return selectInvites(deps.db, eq(oneTimeLinks.kind, "invite"));
     });
 
-    // 撤銷永遠允許：不看帳密開關。已撤銷或已過期的再撤也是 204，不改列。
+    // Revoking ignores the password-login switch. Re-revoking a revoked or expired invite is 204 without touching the row.
     app.delete("/api/admin/invites/:id", { preHandler: app.requireAdmin }, async (request, reply) => {
       const { id: rawId } = request.params as { id: string };
       if (!UUID_RE.test(rawId)) return sendError(reply, 404, "invite_not_found", "No invite with that id.");
@@ -164,7 +155,6 @@ export function adminInvitesRoutes(deps: AdminInvitesRouteDeps) {
             .where(sql`${oneTimeLinks.id} = ${id} and ${oneTimeLinks.kind} = 'invite'`);
         }
       } catch (err) {
-        // 動的是含雜湊欄的列——不讓錯誤本體進 log。
         throw redactDbError(request.log, err, "撤銷邀請");
       }
       if (hit.length > 0) {

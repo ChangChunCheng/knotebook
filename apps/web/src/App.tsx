@@ -27,30 +27,12 @@ import { SettingsModal } from "./settings/SettingsModal";
 import { GroupModal, GroupSubpathRedirect, LegacyGroupRedirect } from "./components/groups/GroupModal";
 import { AdminModal } from "./components/admin/AdminModal";
 
-/**
- * NotePage 走 lazy（issue #19）：BlockNote＋共編整條相依鏈只有這一頁需要，同步 import
- * 會把 ~1.3MB 全塞進首包——登入頁、首頁、設定頁都陪葬。切出去後首包砍到約三分之一
- * （1,629→540 KB；gzip 496→167 KB）；`scripts/check-bundle-size.mjs`（CI 於 build 後
- * 執行）釘住「entry 尺寸上限＋NotePage chunk 確實存在」，防止未來一個不經意的靜態
- * import 把它又拉回首包。
- */
+// BlockNote and the collab stack (~1.3 MB); scripts/check-bundle-size.mjs keeps them out of the entry bundle.
 const NotePage = lazy(() => import("./pages/NotePage"));
 
-/**
- * #201：首包又長到逼近 700 KiB 上限，把「不是每次都會用到」的頁面也切出去——
- * - 站台管理 modal 的六個區塊（聚合模組 `components/admin/AdminSections`，一個 chunk；外殼 `AdminModal` 在首包，#247）；
- * - 設定 modal 的六個頁面與群組 modal 的區塊（#247；後者共用一個 chunk，見 `GroupMembersSection` 那段）（外殼 `SettingsModal`／`GroupModal` 留在首包：modal-over-background 機制與
- *   開 modal 時外框立刻出現都靠它，只有內容區等 chunk）；
- * - 登入流程的五頁：註冊、帳號連結、重設密碼（#286）、強制改密碼、OAuth 同意頁。
- *
- * **登入頁（`LoginPage`）與登入服務圖示刻意留在首包**（登入頁的圖示要立即
- * 出現）。首頁也留：登入後第一個畫面。
- *
- * 錯誤處理一律走 #66 那套 `LazyRouteErrorBoundary`（自動 reload 一次＋手動重試），各 route
- * 一個額度別名（`chunk` prop）；Suspense fallback 與 boundary 的載入中畫面是同一份
- * （`LazyRouteLoading`，外框依頁面：站台管理／群組／設定＝modal 右卡、登入流程頁＝置中 `<main>`）。
- * `scripts/check-bundle-size.mjs` 另釘 AdminSections chunk 存在。
- */
+// Rarely used pages are lazy (#201). LoginPage and HomePage stay in the entry bundle (first screens), and so do
+// the modal shells (SettingsModal/GroupModal/AdminModal): the modal frame must appear at once, only content waits.
+// scripts/check-bundle-size.mjs also requires the AdminSections chunk to exist.
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
 const LinkAccountPage = lazy(() => import("./pages/LinkAccountPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
@@ -74,9 +56,6 @@ const SettingsGroupsOverview = lazy(() =>
 const SettingsAboutSection = lazy(() =>
   import("./settings/SettingsAboutSection").then(m => ({ default: m.SettingsAboutSection })),
 );
-/**
- * #247：群組 modal 的四個區塊來自同一個聚合模組 `components/groups/GroupSections`（一個 chunk）；外殼 `GroupModal` 在首包。
- */
 const GroupMembersSection = lazy(() =>
   import("./components/groups/GroupSections").then(m => ({ default: m.GroupMembersSection })),
 );
@@ -89,9 +68,6 @@ const GroupStorageSection = lazy(() =>
 const GroupAboutSection = lazy(() =>
   import("./components/groups/GroupSections").then(m => ({ default: m.GroupAboutSection })),
 );
-/**
- * #247：站台管理 modal 的六個區塊來自同一個聚合模組 `components/admin/AdminSections`（一個 chunk）；外殼 `AdminModal` 在首包。
- */
 const AdminUsersSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminUsersSection })));
 const AdminGroupsSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminGroupsSection })));
 const AdminLoginSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminLoginSection })));
@@ -99,17 +75,9 @@ const AdminStorageSection = lazy(() => import("./components/admin/AdminSections"
 const AdminAiSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminAiSection })));
 const AdminLimitsSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminLimitsSection })));
 
-/**
- * 整頁 lazy route 的 element 外包（#201）：boundary＋Suspense＋beacon，結構與 NoteRoute 同款
- * （beacon 在 Suspense 內，見 ErrorBoundary.tsx）。
- *
- * `key={chunk}` 是承重的：同層兄弟 route（例如 /register ↔ /link-account）的 element 型別
- * 相同、位置相同，React 會**重用同一個 boundary 實例**——不加 key 的話 register 的錯誤態會
- * 帶到 link-account（頁面出不來），按重試清的也是 link-account 的額度。選 key 不選
- * `resetKey={chunk}`：resetKey 變動在錯誤態會整頁 reload，而換到另一頁只需要一個乾淨的新
- * boundary（自己的額度、自己的 pending 期），不必重載。`resetKey` 因此固定 undefined——
- * 同一條 route 內沒有「換目的地」的情境。App.lazyPages.test.tsx 末案守著。
- */
+// `key={chunk}`: sibling routes share element type and position, so React would reuse one boundary and carry its
+// error state and retry budget to the next page. Not resetKey, whose change in the error state reloads the page.
+// ChunkLoadBeacon must stay inside Suspense, or it loops reloading (see ErrorBoundary.tsx).
 function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "page"; children: ReactNode }) {
   return (
     <LazyRouteErrorBoundary key={chunk} resetKey={undefined} chunk={chunk} frame={frame}>
@@ -121,34 +89,13 @@ function LazyPageRoute({ chunk, frame, children }: { chunk: string; frame: "page
   );
 }
 
-/**
- * `/p/:token` 公開唯讀頁（#72）同樣走 lazy：它與 NotePage 共用 BlockNote 那條相依鏈
- * （Rollup 會切成無 facade 的共用 chunk），首包不因公開頁而變胖。
- */
 const PublicNotePage = lazy(() => import("./pages/PublicNotePage"));
 
-/**
- * 筆記頁的 route element（issue #66）——舊形 `/notes/:ref`、新形 `/n/:handle/:slug`
- * （#122）與群組筆記 `/g/:groupId/:slug`（#175）三條 route 共用：NoteRouteErrorBoundary 接住 chunk 載入失敗（離線/部署
- * 輪替 hash）與 NotePage 底下任何 render 錯誤——沒有它的話 React.lazy 的 reject
- * 會讓整棵樹被卸載成白屏。
- *
- * - resetKey 用路由參數（舊形＝ref、新形＝`${handle}/${slug}` 對、群組形＝`g:${groupId}/${slug}`，
- *   #175）而非 location.key：
- *   關設定 modal 走 `navigate(backgroundLocation)` 會產生**新的** location key
- *   （實測），用 key 會把「關 modal」誤判成「換筆記」而觸發 reload；params 才是
- *   「換到另一篇筆記」的真正不變量。代價（已接受）：重新導航到同一組 params 不觸發
- *   重試。此選型由 `App.resetKey.test.tsx` 守著（issue #68＋control 3 的新形案）
- *   ——改回 location.key 那裡會紅。
- * - ChunkLoadBeacon **必須在 Suspense 內**（擺放不變量見 ErrorBoundary.tsx；
- *   App.errorBoundary.test.tsx 案 11 守著——錯放會變無限重整迴圈）。
- */
+// resetKey from route params, not location.key: closing a settings modal creates a new key, which would look like a
+// note switch and reload. Cost: navigating again to the same params doesn't retry.
+// ChunkLoadBeacon must stay inside Suspense, or it loops reloading (see ErrorBoundary.tsx).
 function NoteRoute() {
-  // #122：兩條 route（舊形 /notes/:ref、新形 /n/:handle/:slug）共用本元件與 NotePage
-  // ——resetKey 依形取（同一篇筆記的不變量：舊形是 ref、新形是 handle/slug 對）。
-  // #175：第三形 `/g/:groupId/:slug`（群組筆記）——鍵取 `g:${groupId}/${slug}`。`g:` 前綴是
-  // **防禦性設計、無案守著**（群組 id 是 uuid、handle 不可能等於它，單靠內容就分得開；實測
-  // 拿掉前綴全綠）。control 4 守的是「第三形有自己的鍵」（拿掉整個第三形分支會紅），不是前綴。
+  // The `g:` prefix is defensive only: group ids are uuids and can't equal a handle.
   const { ref, handle, groupId, slug } = useParams();
   const resetKey =
     groupId !== undefined && slug !== undefined
@@ -166,13 +113,9 @@ function NoteRoute() {
   );
 }
 
-/**
- * `/p/:token` 的 route element（#72）：**專屬** fallback／錯誤邊界——
- * NotePageFallback／NoteRouteErrorBoundary 都只能在 AppShellLayout 底下用（它那份 AppShell 打 `/api/auth/me`、露側欄），
- * 匿名頁不得重用（理由與零 fetch 守衛見 PublicNoteShell.tsx／App.publicRoute.test.tsx）。
- * 不掛 ChunkLoadBeacon／自動 reload 額度：那套旗標機制是 NotePage 專屬，公開頁用
- * 錯誤卡上的手動重試（整頁 reload）即可。
- */
+// Own fallback and boundary: NotePageFallback/NoteRouteErrorBoundary render an AppShell that fetches /api/auth/me
+// and shows the sidebar, which an anonymous page must not do. No ChunkLoadBeacon or auto-reload budget: the public
+// page relies on the error card's manual retry (full reload).
 function PublicNoteRoute() {
   return (
     <PublicNoteErrorBoundary>
@@ -184,57 +127,14 @@ function PublicNoteRoute() {
 }
 
 /**
- * 兩棵 `<Routes>` 並列（改這段前先讀下面，尤其
- * modal-over-background 機制那段）：
- *
- * - **主樹**：render 背景頁，吃 `<Routes location={state?.backgroundLocation ?? location}>`
- *   ——帶 `location` prop 的 `<Routes>` 會覆寫 React Router 的 `LocationContext`：
- *   主樹底下的 route matching、`<Navigate>` 解析、**以及任何 `useLocation()`**
- *   都是吃這個被覆寫後的 router context，因此一律是**背景** location 生效，不是
- *   瀏覽器目前真實的 `/settings/*` 網址——這個相依是「開設定時背景頁繼續照它本來
- *   的路徑渲染」成立的前提，**改動 guard 或這段 location 邏輯前務必先確認沒有破壞
- *   這個相依**。
- *
- *   ⚠ #131 起 `guards.tsx` 的 `useSessionGate` **會**讀 `useLocation()`（組
- *   `/login?next=`），於是這個覆寫有了可觀測的後果——**但只在帶 `backgroundLocation`
- *   state 時**（也就是從 `UserMenu` 點開設定 modal 那條路徑；深連結／書籤直接開
- *   `/settings/account` 時 `state` 是 undefined，主樹吃 `?? location` 也是真實網址，
- *   兩棵樹算出的目標相同、沒有分歧）：此時 `/settings/*` 未登入會讓**兩棵樹都**各自
- *   render 一個 `<Navigate>`，主樹算出的是**背景頁**、第二棵樹算出的是**真實網址**。
- *   兩次 `navigate` 都是 `replace`，第二棵樹的 effect 後跑而覆寫掉前者，淨結果只有
- *   一筆 history entry、中間態不落地（量到的 location 序列是
- *   `/settings/account` → `/login?next=%2Fsettings%2Faccount`）。
- *
- *   **真實網址勝出正是要的結果**：使用者網址列上是 `/settings/account`，登入完就該
- *   回那裡，而不是回到他當時只是拿來當背景的筆記頁。但**正確性掛在「第二棵樹存在
- *   且後掛載」上**：哪天把某個 modal-over-background 路由移出第二棵樹，`next` 會
- *   **靜默**退化成背景頁。守衛在 `App.test.tsx` 的「未登入開設定 modal → next 取
- *   真實網址」那案。
- * - **第二棵樹**：只含三個面板（`/settings/*`、`/groups/*`、`/admin/*`）與它們的轉址，
- *   吃真實 location（不帶 `location` prop）；
- *   非這三個前綴的路徑下整棵 match 不到任何 route → render `null`，樹內的
- *   guard 元件根本不會執行，不會有幽靈重導。guard 元件在這裡
- *   直接複用同一份，以 pathless layout route 掛上——不是塞進主樹。
- *
- * 三個面板的路徑**絕不可加進主樹**：加進去背景頁就不會渲染，modal-over-background
- * 整個破功。
- *
- * 站台管理（#247 起）是第二棵樹裡的 modal（`AdminModal`），與設定、群組 modal 同一套 modal-over-background。
- * 舊網址 `/settings/users`、`/settings/ai` 仍在第二棵樹 `<Navigate replace>` 到 `/admin/users`／`/admin/ai`——
- * 掛在 `SettingsModal` 外、`RequireAuth` 內，admin 與否交給 `/admin` 那邊的 `RequireAdmin`。
- *
- * 現行守衛集合（主樹）：<RequireAuth> 包住除 /login、/register、/link-account（#187）、/reset-password（#286）、/p/* 外的其餘路由（未登入導
- * `/login?next=<目前路徑>`，#131——「目前路徑」的兩棵樹細節見上）；
- * 第二棵樹的 `/admin/*` 再多包一層 <RequireAdmin>（非 admin 導 `/`）——巢狀在 <RequireAuth>
- * 與 <ChangePasswordGate> 底下，即使 <RequireAdmin> 自己也有未登入判斷（見
- * guards.tsx），這裡是雙保險而非依賴它獨立生效。
- *
- * `/change-password` 巢狀在 <RequireAuth> 底下、但刻意掛在
- * <ChangePasswordGate> **外面**（與它平行，不是它的 <Outlet/> 子路由）——這條路由本身
- * 就是 `mustChangePassword` 使用者被導去的目的地，若巢狀在 gate 裡面會造成「導向自己」
- * 的迴圈。<ChangePasswordGate> 包住 <RequireAuth> 底下除 /change-password 外的
- * 路由：`user.mustChangePassword === true` 時全部導向 `/change-password`——比照
- * <RequireAdmin> 的模式。
+ * Two `<Routes>` trees for modal-over-background. The main tree gets `location={backgroundLocation}`, which overrides
+ * LocationContext, so matching, `<Navigate>` and useLocation() under it all see the background page. The second tree
+ * holds only the panels (/settings/*, /groups/*, /admin/*) on the real location and matches nothing elsewhere, so its
+ * guards don't run. Never add panel paths to the main tree, or the background page stops rendering.
+ * Logged out under a modal, both trees redirect to /login; the second tree's effect runs last, so `next` is the real
+ * URL (App.test.tsx); if a modal route moves out of the second tree, `next` silently becomes the background page.
+ * Only with backgroundLocation state do the trees disagree; both Navigates replace, so one history entry results.
+ * /change-password is outside ChangePasswordGate because it is the gate's target.
  */
 export function AppRoutes() {
   const location = useLocation();
@@ -243,12 +143,11 @@ export function AppRoutes() {
   const state = location.state as { backgroundLocation?: Location } | null;
 
   return (
-    // #179：真實 location／navigationType 交給背景頁（NotePage）——主樹的 useLocation() 被覆寫成背景、
-    // useNavigationType() 恆為 POP，見 lib/real-location.ts。
+    // In the main tree useLocation() is the background and useNavigationType() is always POP; NotePage needs the real ones.
     <RealLocationContext.Provider value={realLocation}>
       <Routes location={state?.backgroundLocation ?? location}>
         <Route path="/login" element={<LoginPage />} />
-        {/* #187：與 /login 同層、在 RequireAuth 之外；已登入者由頁面自己導向 next（經 safeNextPath）或 /。 */}
+        {/* Outside RequireAuth; the page itself redirects a logged-in user. */}
         <Route
           path="/register"
           element={
@@ -257,7 +156,7 @@ export function AppRoutes() {
             </LazyPageRoute>
           }
         />
-        {/* #187：與 /login 同層、在 RequireAuth 之外——只看 pending cookie。 */}
+        {/* Outside RequireAuth: it only needs the pending-link cookie. */}
         <Route
           path="/link-account"
           element={
@@ -266,7 +165,7 @@ export function AppRoutes() {
             </LazyPageRoute>
           }
         />
-        {/* #286：與 /register 同層、在 RequireAuth 之外；已登入者由頁面自己要求先登出。 */}
+        {/* Outside RequireAuth; the page asks a logged-in user to log out first. */}
         <Route
           path="/reset-password"
           element={
@@ -275,12 +174,8 @@ export function AppRoutes() {
             </LazyPageRoute>
           }
         />
-        {/* #72：公開分享頁與 /login 同層、排在 RequireAuth **之前**——
-            匿名訪客免登入直達；shared 的 EXCLUDED_PREFIXES（#131 起搬離 spa.ts）不含
-            /p，SPA fallback 照常服務這條路徑（noindex 標頭在 server 端，前綴比對天然
-            涵蓋兩段形）。
-            #122：別名雙段形與 token 單段形以**段數**區分，共用同一個 route
-            element——形的判別在 PublicNotePage 的 useParams。 */}
+        {/* Public share pages: anonymous, outside RequireAuth. PublicNotePage tells the two forms apart by params.
+            /p must stay out of shared EXCLUDED_PREFIXES so the SPA fallback serves it (noindex is set server-side). */}
         <Route path="/p/:token" element={<PublicNoteRoute />} />
         <Route path="/p/:handle/:slug" element={<PublicNoteRoute />} />
         <Route element={<RequireAuth />}>
@@ -293,8 +188,7 @@ export function AppRoutes() {
             }
           />
           <Route element={<ChangePasswordGate />}>
-            {/* #132：OAuth 同意頁。未登入時 useSessionGate 會帶著 next 去登入頁，登入完
-                回到這裡（#131 的 return-to）。#201 起 lazy（外部流程偶發才走一次）。 */}
+            {/* OAuth consent; when logged out, the guard's `next` brings the user back here after login. */}
             <Route
               path="/authorize"
               element={
@@ -303,16 +197,10 @@ export function AppRoutes() {
                 </LazyPageRoute>
               }
             />
-            {/* `/notes/:ref`（舊形，永久相容：legacy slug、`<vanity>-<uuid>`、純 uuid）
-                與 `/n/:handle/:slug`（#122 新形）共用 NoteRoute/NotePage——兩條 route
-                並存、明文不依賴 remount（react-router 依 specificity 排序，兩者都不會
-                被 `/*` catch-all 吃掉；route 承接測試釘住）。 */}
-            {/* 首頁與三條筆記路由共用同一個 AppShellLayout（pathless layout route）：側欄只掛一份、換路由不重掛，
-                清單捲動位置與選取模式因此保留；頁面只渲染主內容區。 */}
+            {/* `/notes/:ref` is the legacy form, kept for old links. */}
+            {/* One shared layout so the sidebar doesn't remount on navigation (keeps list scroll and selection mode). */}
             <Route element={<AppShellLayout />}>
-              {/* 三條筆記路由的 pattern 與手機版判斷「是不是筆記路由」共用同一份常數（`lib/phone-list.ts`）。
-                  #175：群組筆記 `/g/<group_id>/<slug>`——同一個 NoteRoute/NotePage；
-                  只掛主樹（第二棵樹只管三個面板：/settings/*、/groups/*、/admin/*）。承接由 App.resetKey.test control 4 釘住。 */}
+              {/* Patterns shared with the phone layout's "is this a note route" check. */}
               {NOTE_ROUTE_PATTERNS.map((path) => (
                 <Route key={path} path={path} element={<NoteRoute />} />
               ))}
@@ -321,25 +209,23 @@ export function AppRoutes() {
           </Route>
         </Route>
       </Routes>
-      {/* 第二棵樹：只含三個面板（/settings/*、/groups/*、/admin/*）與它們的轉址，吃真實 location；其餘路徑下整棵
-          match 不到 → render null，guard 不會跑（無幽靈重導）。guard 元件直接複用。 */}
+      {/* Second tree: panels only, on the real location (see AppRoutes). */}
       <Routes>
         <Route element={<RequireAuth />}>
           <Route element={<ChangePasswordGate />}>
             <Route element={<SettingsModal />}>
-              {/* Dialog 外殼＝layout route，項次切換不重掛（#247：六項） */}
+              {/* Layout route, so switching sections doesn't remount the dialog. */}
               <Route path="/settings/account" element={<SettingsAccountSection />} />
-              {/* #247：密碼＋已連結登入方式（OIDC 連結回程落點）／API token */}
+              {/* Also the OIDC account-link return target. */}
               <Route path="/settings/login" element={<SettingsLoginSection />} />
               <Route path="/settings/authorization" element={<SettingsAuthorizationSection />} />
-              {/* #247：個人儲存空間（用量／依類型／版本歷史） */}
+              {/* Personal storage usage. */}
               <Route path="/settings/storage" element={<SettingsStorageUsageSection />} />
-              {/* #247：群組唯讀總覽（所有登入者） */}
+              {/* Read-only, any logged-in user. */}
               <Route path="/settings/groups" element={<SettingsGroupsOverview />} />
               <Route path="/settings/about" element={<SettingsAboutSection />} />
             </Route>
-            {/* #247：群組 modal（所有登入者，不在 RequireAdmin 底下）。`/groups/:id` 本身是「成員」項次；
-                未知子路徑在 modal 內轉回 `/groups/:id`（GroupSubpathRedirect）。主樹對 /groups/* 落在 `/*` 的 HomePage。 */}
+            {/* Any logged-in user, not under RequireAdmin. */}
             <Route path="/groups/:id" element={<GroupModal />}>
               <Route index element={<GroupMembersSection />} />
               <Route path="roles" element={<GroupRolesSection />} />
@@ -347,8 +233,8 @@ export function AppRoutes() {
               <Route path="about" element={<GroupAboutSection />} />
               <Route path="*" element={<GroupSubpathRedirect />} />
             </Route>
-            {/* #247：站台管理 modal。轉址掛在 AdminModal 外（不閃 modal）、RequireAdmin 內（非 admin 直接導 /，不先轉一次）。
-                RequireAdmin 巢狀在 ChangePasswordGate 底下（先強制改密、再判 admin）。主樹對 /admin/* 落在 `/*` 的 HomePage。 */}
+            {/* Redirects outside AdminModal (no modal flash) but inside RequireAdmin (non-admins go straight to /).
+                Inside ChangePasswordGate so a forced password change comes before the admin check. */}
             <Route element={<RequireAdmin />}>
               <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
               <Route path="/admin/auth" element={<Navigate to="/admin/login" replace />} />
@@ -364,24 +250,15 @@ export function AppRoutes() {
               <Route path="/admin/*" element={<Navigate to="/admin/users" replace />} />
             </Route>
           </Route>
-          {/* #247：舊群組網址（書籤、尚未改到的呼叫點）轉到群組 modal。掛在 ChangePasswordGate 與 SettingsModal 外——
-              不先閃設定面板；轉傳 location.state（LegacyGroupRedirect 內）才不會丟掉 backgroundLocation。 */}
+          {/* Legacy group URLs; outside SettingsModal so the settings panel doesn't flash. */}
           <Route path="/settings/groups/:id" element={<LegacyGroupRedirect suffix="" />} />
           <Route path="/settings/groups/:id/roles" element={<LegacyGroupRedirect suffix="/roles" />} />
-          {/* 轉址一律掛在 SettingsModal **外面**、RequireAuth 裡面（不先閃一下 modal；目的地自己的守衛照常判）。
-              `/settings` → 第一個項次（#247）。舊網址 `/settings/users`、`/settings/ai`（書籤、舊文件連結）：
-              站台管理搬到 /admin/* 後轉址過去，admin 與否交給 /admin 那邊的 RequireAdmin 判。 */}
+          {/* Outside SettingsModal (no modal flash); the target's own guard decides access, e.g. RequireAdmin. */}
           <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
           <Route path="/settings/users" element={<Navigate to="/admin/users" replace />} />
           <Route path="/settings/ai" element={<Navigate to="/admin/ai" replace />} />
         </Route>
-        {/* 與上面那棵 pathless `<RequireAuth>` 平行（不是它的子路由）：純粹吸收
-            react-router 對三個面板（/settings/*、/groups/*、/admin/*）以外路徑的「No routes matched」warning——
-            這棵樹本來就設計成那些路徑下什麼都不 render，這是預期行為，不是漏
-            接的路由。element 固定 `null`，**絕不可**塞進任何 guard 底下：guard
-            會在每個非面板頁面都執行一次（session query、可能的
-            <Navigate>），那就是貨真價實的幽靈重導，違反本樹「非
-            面板路徑時 guard 不跑」的設計前提。 */}
+        {/* Silences "No routes matched" on non-panel paths. Never put it under a guard: the guard would run on every page. */}
         <Route path="*" element={null} />
       </Routes>
     </RealLocationContext.Provider>
@@ -389,19 +266,15 @@ export function AppRoutes() {
 }
 
 export default function App() {
-  // AppErrorBoundary 在**最外層**（issue #66）：ThemeProvider／Toaster 自己丟錯也要
-  // 接得住，任何 render 錯誤不再白屏。它的 fallback 零 context 相依，放 Router 外
-  // 是安全的。App.appBoundary.test.tsx 案 12 守著這層接線。
+  // Outermost so errors in ThemeProvider/Toaster are caught too; its fallback needs no context.
   return (
     <AppErrorBoundary>
       <ThemeProvider>
         <BrowserRouter>
-          {/* #122：ActiveNoteContext 包住 AppRoutes 全部（兩棵 Routes 樹之外一層）——
-              設定 modal 的第二棵樹也在內，關 modal 回到筆記頁時高亮狀態不掉。
-              公開頁（/p/…）在樹內但不消費不 set（明文，見 lib/active-note.tsx）。 */}
+          {/* Wraps both Routes trees so the active-note highlight survives closing a modal. */}
           <ActiveNoteProvider>
             <SidebarQueryProvider>
-              {/* 功能導覽住在 Routes 外面：導覽要跨頁（原頁 → 示範筆記 → 原頁）活著；它讀側欄搜尋字，所以在 SidebarQueryProvider 裡面。 */}
+              {/* Outside Routes so the tour survives page changes; it reads the sidebar query. */}
               <TourProvider>
                 <AppRoutes />
               </TourProvider>

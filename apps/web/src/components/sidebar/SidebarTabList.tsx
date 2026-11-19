@@ -12,10 +12,7 @@ export function sidebarPanelId(idBase: string): string {
   return `${idBase}-panel`;
 }
 
-/**
- * 側欄 tab 列（WAI-ARIA tablist）。`idBase` 由呼叫端的 `useId` 給——靜態卡與抽屜兩份
- * 實例的 id 不能撞。選中者 `tabIndex 0`、其餘 `-1`（roving）；方向鍵循環並同時切換，Home／End 到頭尾。
- */
+/** `idBase` comes from the caller's `useId`: the static card and the drawer are two instances and their ids must not collide. */
 export function SidebarTabList({ idBase }: { idBase: string }) {
   const { t } = useTranslation();
   const { tab: current } = useSidebarTabState();

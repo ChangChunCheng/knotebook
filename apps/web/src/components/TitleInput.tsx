@@ -6,36 +6,16 @@ import { ApiFail } from "@/api/client";
 import { useUpdateNote } from "@/api/notes";
 import { toast } from "@/components/ui/toast";
 
-/** 停止輸入後多久自動存檔（blur 或 800ms debounce）。 */
 export const TITLE_DEBOUNCE_MS = 800;
 
 interface TitleInputProps {
   note: NoteDto;
-  /** 沒有編輯權限（viewer／none／連線已終止）時改成純文字顯示。 */
   readOnly: boolean;
-  /**
-   * 為真＝網址已換到別篇、畫面還是這篇（轉場空窗）。此時不收新輸入，免得存進這篇；
-   * 空窗前已打的字仍照常存（那是在這篇上打的）。
-   */
+  /** True when the URL already moved to another note while this one is still shown: ignore new input so it is not saved into this note. Text typed before that still saves normally (it was typed on this note). */
   isNavigatingAway?: () => boolean;
 }
 
-/**
- * 筆記標題輸入框。**標題不在 Y.Doc 裡**（標題走 REST 的 last-write-wins，
- * 不即時共編）——所以這裡是一個獨立於 BlockNote 之外的受控 input，只跟
- * `PATCH /api/notes/:id` 打交道。
- *
- * 存檔時機：停止輸入 800ms，或 blur（blur 會把 pending 的 debounce 立刻沖出去，
- * 不等計時器）。存檔成功後把回應寫回 `['note', note.id]`（#122 起 NotePage 的常駐層
- * 就是這把 id 鍵——寫回它頁面即時反映；`['notes']` 側欄清單由 `useUpdateNote` 自己
- * invalidate）。**本元件不寫網址**：改標題會重算 auto slug、canonical 跟著變，
- * 但唯一寫網址點是 NotePage 的收斂 effect——快取更新 → 常駐層 note 變 → effect
- * 以 router `navigate` replace（#179）；在途 PATCH 於換筆記後才回來時，收斂 effect 會因為轉場中 `note`
- * 被閘成 undefined 而早退（舊版自帶 replaceState 沒這道閘，會把網址改回前一篇）。
- *
- * 空標題不送（server 端 `z.string().min(1)` 會回 400）：blur 時若內容是空白，
- * 一律還原成目前的標題。
- */
+/** The title is not in the Y.Doc (REST last-write-wins). Saved after 800 ms idle or on blur; success writes `["note", id]`. Never writes the URL: NotePage convergence effect does, and it is gated during transitions so an in-flight PATCH cannot set the URL back to the previous note. Empty titles are not sent (server min(1)). */
 export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -43,23 +23,16 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
 
   const [value, setValue] = useState(note.title);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 最近一次「已送出或已知同步」的標題。用它判斷 note.title 的變化是不是我們自己
-  // 造成的回音，避免把使用者正在打的字覆蓋掉。
   const syncedRef = useRef(note.title);
 
-  // 標題被別處改動（協作者改名、快取 refetch）時重新對齊。使用者本地有未存的修改
-  // （value !== syncedRef.current）時不覆蓋。#122 之後「換筆記」不再走這裡——
-  // 轉場一律出佔位卡，本元件會被卸載重掛、useState 直接吃新值（⚠ NotePage 本身仍是
-  // 同元件重用不 remount，別把那個結論改掉——是 TitleInput 的掛載期變短了）。
+  // Do not overwrite unsaved local edits (value !== syncedRef.current); note switches remount this component (NotePage itself is still reused, not remounted).
   useEffect(() => {
     if (note.title === syncedRef.current) return;
     syncedRef.current = note.title;
     setValue(note.title);
   }, [note.title]);
 
-  // 請求往返期間使用者可能又打了字。回寫（成功回音或失敗還原）只在「輸入框仍是我們
-  // 送出的那份內容」時才做——否則就是把使用者剛打的字直接抹掉。用 functional update
-  // 讀當下的 value，避免 `save` 的閉包相依帶入 value 而每次輸入都重建。
+  // Write back only if the input still holds what was submitted, otherwise the user typed text is wiped; functional update keeps `save` stable.
   const keepIfUnedited = (submitted: string, next: string): void => {
     setValue((prev) => (prev.trim() === submitted ? next : prev));
   };
@@ -93,12 +66,11 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
     }
   };
 
-  // 卸載時清掉尚未觸發的計時器（不硬存——卸載通常代表使用者離開這篇筆記，
-  // 在背景對已離開的頁面發 PATCH 只會製造難以解釋的競態）。
+  // No forced save on unmount: a background PATCH for a page the user left only creates races.
   useEffect(() => clearTimer, []);
 
   function handleChange(next: string): void {
-    if (isNavigatingAway?.()) return; // 受控 input：不 setValue，React 會把畫面值還原
+    if (isNavigatingAway?.()) return; // controlled input: no setValue, so React restores the displayed value
     setValue(next);
     clearTimer();
     timerRef.current = setTimeout(() => {
@@ -116,7 +88,6 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
     void save(value);
   }
 
-  // 頁首空間不夠時標題先讓到 64px（min-w-16），再輪到最後編輯標籤截斷——收縮順序見 LastEditedLabel 檔頭。
   if (readOnly) {
     return (
       <h1 className="min-w-16 flex-1 truncate text-xl font-semibold" title={note.title}>
@@ -127,7 +98,7 @@ export function TitleInput({ note, readOnly, isNavigatingAway }: TitleInputProps
 
   return (
     <input
-      // 握把：NotePage 還原後把焦點移到這裡（別靠「頁首第一個 input」）。
+      // NotePage focuses this after restore; use this attribute, not "the first input in the header".
       data-note-title-input=""
       className="min-w-16 flex-1 bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground"
       aria-label={t("note.titleLabel")}

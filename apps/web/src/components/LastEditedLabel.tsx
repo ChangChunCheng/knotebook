@@ -2,27 +2,9 @@ import { useTranslation } from "react-i18next";
 import type { NoteDto } from "@knotebook/shared";
 
 /**
- * 內文卡頁首的「最後編輯」標籤（#106）。
- *
- * 兩形：`agentLabel` 為 null＝真人改的，純文字（不可按）；非 null＝AI／API 經 token
- * 改的，顯示 `handle (label)` 並且是**按鈕**，按下去開 AI 修改紀錄 dialog（那個 dialog
- * 的狀態住在 `NotePage`，它還有 ⋮ 選單這第二個觸發點）。
- *
- * 時間用**絕對格式**（`toLocaleDateString`，`title` 給完整 `toLocaleString`）——repo 裡
- * 沒有相對時間 helper，`ApiTokensSection` 的 `formatDate` 就是這一套。
- *
- * 窄頁首：`max-sm:sr-only @max-[36rem]:sr-only`（不是 `hidden`），規則跟同一個 header 裡的
- * `ConnectionBadge` 一致——視窗是手機寬，或頁首 content box 不到 36rem 時收成螢幕閱讀器讀得到、
- * 視覺隱藏，不是 `display:none` 整個從無障礙樹消失。
- * `sm:inline`/`hidden` 那組是這裡原本的雷：窄視窗使用者連文字帶按鈕一起看不到。
- *
- * 分隔線：標籤前面多一條 `aria-hidden` 的 1px 直線，與 `ConnectionBadge`（「已連線」／「唯讀」）
- * 隔開，免得頁首把狀態字與「<who>」連讀成一句。放在這裡（而不是 NotePage）是為了與標籤共用同一個
- * null 條件；標籤收成 sr-only、badge 只剩狀態點時，線也一起藏起來。
- *
- * 標籤是頁首收縮順序裡最後才縮、且能縮到 0 的那一個（`min-w-0 truncate`）；標題（`TitleInput`）
- * 最多讓到 `min-w-16`（64px），唯讀形 `<h1>` 到 64px 後同樣 `truncate`。收縮順序見 `TitleInput` 的
- * `min-w-16`、ShareDialog／NoteMenu 觸發鈕的 `shrink-0`：三處是一組（標題先讓到 64px → 標籤截斷 → 其餘不縮）。
+ * Collapses with `max-sm:sr-only @max-[36rem]:sr-only` (not `hidden`) like `ConnectionBadge`, so it stays in the accessibility tree.
+ * The divider separates the label from `ConnectionBadge` so the header does not read the status and the author as one sentence; it shares the label null condition so it hides together. Shrink order in the header: title yields to `min-w-16` (64px, `TitleInput`; the read-only `<h1>` also truncates there), then this label (`min-w-0 truncate`) shrinks to 0, then nothing else shrinks (`ShareDialog`/`NoteMenu` triggers are `shrink-0`; the three are a set).
+ * Absolute date format: the repo has no relative-time helper (`ApiTokensSection.formatDate` is the same).
  */
 export function LastEditedLabel({ note, onOpenEdits }: { note: NoteDto; onOpenEdits: () => void }) {
   const { t, i18n } = useTranslation();

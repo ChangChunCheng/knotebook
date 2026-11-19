@@ -1,10 +1,4 @@
-/**
- * #200：`read_note_image(note_id, upload_id)`。collab 閘門**外**、讀寫／唯讀／session 都註冊（只讀 DB 與磁碟）；
- * 描述依 `authKind` 二選一（session 沒有 `create_transfer_token`）。
- * 流程（放寬規則＝對齊 `GET /api/uploads/:id`）：`authorizeNoteRead`（none → not_found、扣 contentRead、token 路徑 touch presence）
- * → 查上傳列 → 上傳屬別篇時再 `resolveRole(上傳所屬筆記)`，none → 同一個 not_found → 上限 → 讀檔（ENOENT → 同一個 not_found）。
- * 「查無／讀不到所屬筆記／檔案不在」三者**在 MCP 內**同一句，不洩漏存在性（REST 的 403／404 區分是既有取捨，不在此宣稱）。
- */
+/** Outside the collab gate and registered for every credential (reads only DB and disk); the description depends on `authKind` because a session has no `create_transfer_token`. "No such upload", "can't read its note" and "file missing" share one sentence within MCP so existence isn't leaked (REST's 403/404 split is a pre-existing tradeoff). */
 import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -19,10 +13,10 @@ import { toolError, toolResultWithImage } from "../tool-result.js";
 import type { McpToolCtx } from "../context.js";
 
 const UPLOAD_ID_RE = /^(?:\/api\/uploads\/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-/** #200：裸 UUID 或恰為 `/api/uploads/<uuid>`；NUL 守衛（今天被 regex 蓋住，同 NOTE_ID 的第二道）；transform 去前綴並小寫。 */
 export const UPLOAD_ID = z
   .string()
   .regex(UPLOAD_ID_RE)
+  // Redundant with the regex today; a second layer, like `NOTE_ID`.
   .refine(noNul)
   .transform(s => UPLOAD_ID_RE.exec(s)![1]!.toLowerCase());
 
@@ -46,12 +40,12 @@ export const readNoteImageOutput = {
 
 const NOT_READABLE_MESSAGE = "No readable image with that id. It may not exist, or it may belong to a note you can't read.";
 
+/** `noteId` is the note the upload belongs to, not the requested one: a download transfer token is bound to it. */
 function tooLarge(ctx: McpToolCtx, bytes: number, noteId: string): CallToolResult {
   const head = `This image is ${bytes} bytes; read_note_image returns images up to ${MCP_IMAGE_MAX_BYTES} bytes.`;
   const tail = ctx.authKind === "token"
     ? ` Download it with create_transfer_token (purpose "download") for note ${noteId}.`
     : " Open it in the browser instead.";
-  // 回上傳**真正所屬**的 noteId：download transfer token 綁在那一篇。
   return toolError("file_too_large", head + tail, { noteId, bytes });
 }
 
@@ -64,7 +58,7 @@ export async function readNoteImage(args: { note_id: string; upload_id: string }
     .from(uploads)
     .where(eq(uploads.id, args.upload_id));
   if (!row) return toolError("not_found", NOT_READABLE_MESSAGE);
-  // 放寬：上傳屬別篇時，呼叫者也要讀得到那一篇（＝瀏覽器 GET /api/uploads/:id 的授權依據）。
+  // An upload of another note also needs read access to that note (what `GET /api/uploads/:id` relies on).
   if (row.noteId !== noteId && (await resolveRole(ctx.db, ctx.userId, row.noteId)) === "none") {
     return toolError("not_found", NOT_READABLE_MESSAGE);
   }
@@ -77,7 +71,7 @@ export async function readNoteImage(args: { note_id: string; upload_id: string }
     ctx.log.error({ uploadId: row.id }, "read_note_image：上傳列在、檔案不在磁碟");
     return toolError("not_found", NOT_READABLE_MESSAGE);
   }
-  if (buf.length > MCP_IMAGE_MAX_BYTES) return tooLarge(ctx, buf.length, row.noteId); // DB size 與實檔不符
+  if (buf.length > MCP_IMAGE_MAX_BYTES) return tooLarge(ctx, buf.length, row.noteId); // DB size and the real file disagree
   const meta = { noteId: row.noteId, uploadId: row.id, mimeType: row.mime as z.infer<typeof readNoteImageOutput.mimeType>, bytes: buf.length };
   return toolResultWithImage(meta, { data: buf.toString("base64"), mimeType: row.mime });
 }

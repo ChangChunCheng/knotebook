@@ -4,7 +4,6 @@ import { enabledProvidersWithIssuer } from "../auth/sign-in-methods.js";
 import type { DbOrTx } from "../db/tx.js";
 import { userAvatars, userIdentities, users } from "../db/schema.js";
 
-/** 組 `AvatarCandidateDto` 需要的欄位（不含顯示圖本體：`pending` 由呼叫端依 `display_data` 是否為 NULL 給）。 */
 export interface AvatarRowForDto {
   id: string;
   source: string;
@@ -38,11 +37,6 @@ export function toCandidateDto(row: AvatarRowForDto, providerName: string | null
   };
 }
 
-/**
- * 我的候選（新到舊）、是否自動帶入 OIDC 頭貼，以及可手動重新抓取的身分。
- * 登入服務顯示名依「身分的 issuer ＝ 啟用中登入服務的 effective issuer」對（同 `GET /api/auth/identities`）；
- * 對不到的候選顯示名為 null，對不到的身分不列入 `refreshable`。
- */
 export async function listAvatars(db: DbOrTx, userId: string): Promise<AvatarListDto> {
   const [me] = await db.select({ auto: users.avatarAuto }).from(users).where(eq(users.id, userId));
   const rows = await db

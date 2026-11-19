@@ -1,8 +1,3 @@
-/**
- * #175：成員異動的交易本體。三支都以 `lockGroup` 開頭、管理員計數以另一條敘述 `countAdmins`
- * 計數（見 `groups/queries.ts` 檔頭）。本檔不 import `Db`、不接 `deps`；測試縫 `hook` 是型別明示的參數（S14 允許）——
- * 管理員不變量的並發測試靠它在「鎖已取得、寫入尚未發生」時讓第二個請求撞上同一把鎖。業務拒絕一律 throw `TxAbort`。
- */
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, users } from "../../db/schema.js";
@@ -14,7 +9,6 @@ const notFound = (): TxAbort => new TxAbort(404, "not_found", GROUP_NOT_FOUND_ME
 const roleNotFound = (): TxAbort => new TxAbort(404, "role_not_found", "No role with that id.");
 const lastAdmin = (): TxAbort => new TxAbort(409, "last_admin", "The group needs at least one admin.");
 
-/** `addMemberInTx`：只新增（已是成員 → 409 `already_member`，**不動**既有角色）。`roleId` null＝內建一般成員。回實際掛上的角色。 */
 export async function addMemberInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string; roleId: string | null },
@@ -36,10 +30,7 @@ export async function addMemberInTx(
   return { roleId: role.id, builtin: role.builtin };
 }
 
-/**
- * `setMemberRoleInTx`：換角色（不防升權：含授予／收回內建管理員、含自己）。唯一硬限制：每群組至少一位內建管理員；目前持內建管理員、要換成別的角色、
- * 而且他是最後一位 → 409。角色沒變 → no-op（不 UPDATE、`noteIds` 為 null＝不踢線：值沒變就不踢）。
- */
+/** No privilege-escalation guard by design (granting/revoking built-in admin, including oneself); the only hard limit is the last built-in admin. */
 export async function setMemberRoleInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string; roleId: string },
@@ -56,6 +47,7 @@ export async function setMemberRoleInTx(
     .where(and(eq(groupMembers.groupId, input.groupId), eq(groupMembers.userId, input.targetUserId)));
   if (!current) throw notFound();
   const member = { email: current.email, displayName: current.displayName, roleId: next.id, builtin: next.builtin };
+  // noteIds: null = role unchanged, nobody is kicked.
   if (current.roleId === next.id) return { member, noteIds: null };
   if (current.builtin === "admin" && next.builtin !== "admin" && (await countAdmins(tx, input.groupId)) <= 1) throw lastAdmin();
   await hook?.("group-members-checked", { groupId: input.groupId });
@@ -66,7 +58,6 @@ export async function setMemberRoleInTx(
   return { member, noteIds: (await groupNoteIdsQuery(tx, input.groupId)).map(r => r.id) };
 }
 
-/** `removeMemberInTx`：移人／退出。回群組所有筆記的 id（commit 後踢線：群組所有筆記 × 那一人）。 */
 export async function removeMemberInTx(
   tx: Tx,
   input: { groupId: string; targetUserId: string },

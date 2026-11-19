@@ -1,4 +1,3 @@
-/** #181：垃圾桶保留天數（`requireAdmin`）。PATCH 走 `updateTrashSettingsInTx`（S14：callback 整段是 xInTx）。 */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -10,7 +9,6 @@ import { siteSettings } from "../db/schema.js";
 import { sendError } from "../http/errors.js";
 import { TxAbort } from "../http/tx-abort.js";
 
-// 鍵必填（缺鍵、多餘鍵都 400）；null＝不自動永久刪除。
 const settingsPatchSchema = z
   .object({
     retentionDays: z

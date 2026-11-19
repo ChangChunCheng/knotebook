@@ -1,59 +1,27 @@
-/**
- * #145：**唯一的建列點**。四個呼叫端全部呼叫這裡：① `POST /api/notes` 裸建列（`routes/notes.ts`）、② 帶 `content` 那條走的
- * `NoteWriteService.createWithContent`、③ MCP 的 `create_note`、④ 複製的交易內模式（`notes/tx/copy.ts`）。
- * 資料夾：位置（`NewNoteLocation`＝scope＋`folderId`）一律由呼叫端驗過可見性、空間與權限才傳進來，這裡只寫進 values。
- *
- * ① 為什麼派生不能留在原本那個形——「同步組一個 values 物件、呼叫端各自 insert」（
- *    那支純函式與它的型別已整組刪掉）：scope 範圍（個人＝owner、群組＝group）去重是 `await` 的 DB 探測。把那支改成 async 只會讓
- *    呼叫端各自 `await` 完再自己 insert——`insert(notes)` 仍散在三處，「只改其中一處」的漂移
- *    原樣保留。唯一能收成一處的切法是**連 insert 一起收**。
- * ② 「`src/` 內只有本檔可以 `.insert(notes)`」有源碼結構守衛：`test/notes-slug.test.ts` 的
- *    「源碼守衛：src/ 內 `.insert(notes)` 只允許出現在 notes/create.ts」那一案（它自己濾掉
- *    註解行，所以散文裡提到這個字面不算違反；盲點清單寫在該案的註解裡）。
- * ③ 不帶 `title` 時**一次探測都不發**，且 `slug` 鍵不進 values——DB default
- *   （`untitled-<uuid8>`）是唯一真相（`db/schema.ts`），應用層不重寫第二份。
- */
+// The only place that inserts `notes` rows (a source guard in `test/notes-slug.test.ts` enforces it): slug de-dup is an async DB probe, so scattered inserts would drift.
+// Without a title no probe is issued and `slug` is left to the DB default (`untitled-<uuid8>`).
 import type { Db } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import type { DbOrTx, Tx } from "../db/tx.js";
 import { MAX_AUTO_SLUG_RETRIES, deriveUniqueAutoSlug, fallbackAutoSlug, isSlugUniqueViolation, type SlugScope } from "./slug.js";
 import { writeSlugInTx } from "./tx/write-slug.js";
 
-/** 新筆記的位置。`SlugScope` 不變（去重範圍）；`folderId` 多進 values。 */
 export interface NewNoteLocation {
   scope: SlugScope;
-  /** 已由呼叫端驗過可見性、空間與權限；null＝根層。 */
+  /** Caller has checked visibility, space and permission; null = root. */
   folderId: string | null;
 }
 
 export interface NoteCreateHooks {
-  /** 探測完、INSERT 發出前呼叫（帶本輪候選）——測試在這裡搶插同 scope 同 slug 的佔位列。 */
   beforeInsert?: (candidate: string) => void | Promise<void>;
 }
 
 /**
- * 建一列筆記，`title` 有值時把 auto slug 一起派生好（#145）。
- *
- * 碰撞契約與 PATCH 的 auto 路徑**逐字相同**（`routes/notes.ts` 的四格矩陣）：探測（述詞不
- * 排除任何列——這一列還不存在）→ INSERT；撞 slug 唯一索引（個人或群組範圍）＝真競態 → 重探測重發，
- * `MAX_AUTO_SLUG_RETRIES` 次後改用 `fallbackAutoSlug()` 不探測直接發；再撞（~2^-32）就讓
- * 錯誤冒出去（REST → 500 `internal`、MCP → 工具錯誤 `internal`）。**建立路徑永不回 409
- * `slug_taken`**：那個碼專屬「使用者顯式指定的自訂 slug 撞名」。
- *
- * constraint 名分流不得放寬成「看到 23505 就重試」——其他唯一鍵違反
- * 一律 rethrow。⚠ 誠實：`notes` 表上今天除了兩把 slug 索引之外，沒有別的建立路徑撞得到的唯一鍵，
- * 所以放寬它不會有任何測試變紅（附錄二第 1 條）。
- *
- * `slugIsCustom`／`prevSlug`／`legacySlug` **一律不設**：吃各自的 default（`false`／null／
- * null），之後的 title PATCH 因此仍會重算 slug，而 `legacy_slug` 是 0007 的凍結快照
- * （另有 trigger 與源碼守衛）。
+ * A slug-index collision is a race → re-probe; after `MAX_AUTO_SLUG_RETRIES` use `fallbackAutoSlug()`; a further collision surfaces. Never returns 409 `slug_taken` (reserved for explicit custom slugs). Retry only on the two slug constraints, never on any 23505.
+ * `slugIsCustom`/`prevSlug`/`legacySlug` stay at their defaults so a later title PATCH still recomputes the slug.
  */
 export async function insertNoteWithAutoSlug(db: Db, where: NewNoteLocation, title: string | undefined, hooks?: NoteCreateHooks): Promise<typeof notes.$inferSelect>;
-/**
- * #175：**交易內模式**（複製）。每輪 INSERT 包在 `writeSlugInTx` 的 savepoint 裡——交易內照抄預設模式的
- * 重試迴圈，第一次 23505 之後整個交易就 25P02。`hooks.beforeInsert` 經 `beforeWrite` 接上。
- * 碰撞契約（constraint 名分流、`MAX_AUTO_SLUG_RETRIES` 後退位、永不回 `slug_taken`、三欄吃 default）與預設模式相同。
- */
+/** Each INSERT runs in a `writeSlugInTx` savepoint: a plain 23505 would leave the transaction in 25P02. */
 export async function insertNoteWithAutoSlug(tx: Tx, where: NewNoteLocation, title: string, hooks: NoteCreateHooks | undefined, mode: { inTx: true }): Promise<typeof notes.$inferSelect>;
 export async function insertNoteWithAutoSlug(
   db: DbOrTx,
@@ -63,15 +31,11 @@ export async function insertNoteWithAutoSlug(
   mode?: { inTx: true },
 ): Promise<typeof notes.$inferSelect> {
   const { scope } = where;
-  // #175：個人筆記 `owner_id`、群組筆記 `group_id`（XOR）——群組筆記沒有建立者欄。群組在呼叫端確認
-  // 之後被刪時，INSERT 撞 FK 23503 並原樣拋出（重試迴圈只處理 slug 的 23505），由呼叫端映射成 404。
-  // 資料夾：三條 INSERT 都寫 `folder_id`。資料夾在確認之後被刪（`notes_folder_fk` 23503）或換了空間（trigger KF001）
-  // 同樣原樣拋出，由呼叫端映射成 404 `folder_not_found`。
+  // FK/KF001 failures (group or folder deleted or moved after the caller checked) are rethrown for the caller to map to 404; the retry loop only handles the slug 23505.
   const owner = "groupId" in scope
     ? { groupId: scope.groupId, folderId: where.folderId }
     : { ownerId: scope.ownerId, folderId: where.folderId };
   if (mode?.inTx && title !== undefined) {
-    // `db as Tx`：overload 已保證 `inTx` 時呼叫端傳的是 `Tx`；實作簽名收 `DbOrTx` 只是讓兩個 overload 共用一個本體。
     let created: typeof notes.$inferSelect | undefined;
     await writeSlugInTx(
       db as Tx,
@@ -84,8 +48,6 @@ export async function insertNoteWithAutoSlug(
     );
     return created!;
   }
-  // `title` 未帶：`title`／`slug` 兩把鍵都不放，讓 DB 的 default `"Untitled"` 與
-  // `untitled-<uuid8>` 同時生效（#145：不派生成 `untitled`，也不發任何探測查詢）。
   if (title === undefined) {
     const [created] = await db.insert(notes).values(owner).returning();
     return created!;
@@ -95,9 +57,7 @@ export async function insertNoteWithAutoSlug(
     const slug = attempt > MAX_AUTO_SLUG_RETRIES ? fallbackAutoSlug() : await deriveUniqueAutoSlug(db, scope, null, title);
     await hooks?.beforeInsert?.(slug);
     try {
-      // `.returning()` 落空在 INSERT 上結構性不可能（成功的 INSERT 必回一列）——`!` 是
-      // 原本那三處的寫法，沿用。**不要**替它加一條回 404 的分支：PATCH 的 `if (!updated)`
-      // 是 UPDATE 命中 0 列（筆記已被刪），與這裡不同情形。
+      // No 404 branch: unlike PATCH's UPDATE, an INSERT can't match 0 rows.
       const [created] = await db.insert(notes).values({ ...owner, title, slug }).returning();
       return created!;
     } catch (err) {

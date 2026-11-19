@@ -1,7 +1,3 @@
-/**
- * 資料夾：`move_folder`：同空間內搬移（含整棵子樹）。服務層 `updateFolder` 負責入口順序
- * （看不到的父層先回 404，看得到但跨空間才 400）、成環、深度與交易。
- */
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FOLDER_DEPTH_MAX } from "@knotebook/shared";
 import { updateFolder } from "../../folders/service.js";
@@ -11,7 +7,6 @@ import { folderReply, folderServiceDeps } from "../folder-service.js";
 import { requireWriteScope } from "../write-scope.js";
 import type { McpToolCtx } from "../context.js";
 
-/** `move_folder` 的工具說明。 */
 export const MOVE_FOLDER_DESCRIPTION =
   "Move a folder you can see, with everything in it, into another folder of the same space, or to the top level of its space with `parent_id: null`. " +
   "A folder can't move to another space — out of your personal folders, out of its group, or out of your folders for notes shared with you — " +
@@ -22,7 +17,6 @@ export const MOVE_FOLDER_DESCRIPTION =
 export const MF_FOLDER = "The id of the folder to move, from list_folders.";
 export const MF_PARENT = "The id of the folder to move it into, from list_folders, or null for the top level of its space.";
 
-/** 註冊為 `z.object(moveFolderInput).strict()`。 */
 export const moveFolderInput = {
   folder_id: FOLDER_ID.describe(MF_FOLDER),
   parent_id: FOLDER_ID.nullable().describe(MF_PARENT),

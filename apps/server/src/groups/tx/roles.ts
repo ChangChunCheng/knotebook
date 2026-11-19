@@ -1,16 +1,10 @@
 /**
- * #175：自訂角色的修改與刪除。兩支都以 `lockGroup` 開頭——與刪群組、成員異動
- * 同一把 groups 列鎖（鎖序「成員／角色變動＝groups 一把」）：刪角色與「把人掛上這個角色」因此序列化，後到者看到
- * 前者的結果（角色已不在 → 404 `role_not_found`；那人已掛上 → 被改掛內建一般成員），不會在 `group_members_role_fk`
- * 撞 23503。本檔不 import 資料庫型別、不碰路由的依賴物件（S14）；測試縫 `hook` 是型別明示的參數。業務拒絕一律 throw `TxAbort`。
- *
- * ⚠ 跨檔前提（`notes/tx/move.ts`）：移動路徑讀成員資格與角色旗標之前，只對 groups 列取 `FOR KEY SHARE`；它的正確性
- * 建立在「所有會改變**既有成員資格**，或改變**可能已有人持有之角色**旗標的寫入，都先 `lockGroup`（groups `FOR UPDATE`，
- * 與 KEY SHARE 互斥；刪群組、成員異動、角色改刪）」上。`POST …/roles` 只新增一個尚無人持有的角色（要掛上它必須經過 `addMemberInTx`／`setMemberRoleInTx` 的
- * `lockGroup`），不改變任何人的有效權限，所以不在此列、也不取鎖。日後若新增會刪 `users` 的路徑（`group_members.user_id`
- * 是 ON DELETE CASCADE），必須先對該使用者所屬的每個群組 `lockGroup`。
- * 所以這兩支的第一步必須是 `lockGroup`，不可為了省一次往返拿掉或挪到讀取之後。守衛：
- * `test/groups-v2-roles-race.test.ts` 的「groups FOR KEY SHARE」一案（另一條交易持 KEY SHARE 時，`updateRoleInTx`／`deleteRoleInTx` 都必須卡住）。
+ * `lockGroup` must stay the first step: `notes/tx/move.ts` reads membership and role flags holding only `FOR KEY SHARE` on the groups row, which is safe
+ * only if every write that changes existing membership or the flags of a role someone may hold takes `lockGroup` first. It also serializes role delete
+ * against attaching a member, avoiding 23503 on `group_members_role_fk`. `POST …/roles` adds a role nobody holds yet and doesn't lock. A future path that
+ * deletes `users` (`group_members.user_id` CASCADEs) must `lockGroup` each of the user's groups first. Attaching a role requires `lockGroup` via `addMemberInTx`/`setMemberRoleInTx`.
+ * Serialization: the later transaction sees the result (role gone → 404 `role_not_found`; member already attached → moved to the built-in member role).
+ * Guard: the "groups FOR KEY SHARE" case in `test/groups-v2-roles-race.test.ts` (with another transaction holding KEY SHARE, update and delete must block).
  */
 import { and, eq } from "drizzle-orm";
 import type { GroupRoleDto, GroupRoleFlags } from "@knotebook/shared";
@@ -26,16 +20,12 @@ import type { GroupTestHook } from "../test-hook.js";
 const notFound = (): TxAbort => new TxAbort(404, "not_found", GROUP_NOT_FOUND_MESSAGE);
 const roleNotFound = (): TxAbort => new TxAbort(404, "role_not_found", "No role with that id.");
 
-/** commit 後的踢線名單：群組所有筆記 × 受影響的成員。 */
 export interface RoleKick {
   noteIds: string[];
   userIds: string[];
 }
 
-/**
- * `updateRoleInTx`：改自訂角色的名稱與旗標；內建一般成員只准改旗標；內建管理員一律 409。`name` 已正規化、`permissions`
- * 已過形狀檢查（路由先驗）。**`read` 或 `edit` 有變才回踢線名單**（其他五旗標只影響 REST 授權；值沒變就不踢）。
- */
+/** Built-in member: flags only (renaming → 409); built-in admin: always 409. `name`/`permissions` are validated by the route first. Kick list only if `read` or `edit` changed; the other flags only affect REST authorization. */
 export async function updateRoleInTx(
   tx: Tx,
   input: { groupId: string; roleId: string; name: string | undefined; permissions: GroupRoleFlags | undefined },
@@ -65,10 +55,7 @@ export async function updateRoleInTx(
   return { role: toGroupRoleDto(after!)!, kick };
 }
 
-/**
- * `deleteRoleInTx`：刪自訂角色。掛著它的成員同交易改掛**內建一般成員**，再刪角色——FK `group_members_role_fk` 是 NO ACTION，
- * 順序反過來會 23503。內建角色一律 409（每群組恰兩個內建角色）。回（群組所有筆記, 原持有者）；沒有持有者時兩者皆空。
- */
+/** Holders move to the built-in member role first: FK `group_members_role_fk` is NO ACTION, so the reverse order gives 23503. Built-in roles → 409 (each group has exactly two). Returns (all group notes, previous holders), both empty if nobody held it. */
 export async function deleteRoleInTx(
   tx: Tx,
   input: { groupId: string; roleId: string },

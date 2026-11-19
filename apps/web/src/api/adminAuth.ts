@@ -10,7 +10,7 @@ import type {
 import { AUTH_CONFIG_QUERY_KEY } from "./authConfig";
 import { api, ApiFail } from "./client";
 
-/** #187：`/api/admin/auth/*` 的 query key 一律掛在 `["admin-auth"]` 前綴下——任一 mutation 一次 invalidate 全部。 */
+/** All `/api/admin/auth/*` keys live under `["admin-auth"]` so one invalidate covers them. */
 export const ADMIN_AUTH_PROVIDERS_QUERY_KEY = ["admin-auth", "providers"] as const;
 
 export function useAdminAuthProviders(): UseQueryResult<AdminAuthProviderDto[]> {
@@ -20,7 +20,7 @@ export function useAdminAuthProviders(): UseQueryResult<AdminAuthProviderDto[]> 
   });
 }
 
-/** 停用 dialog 開著時才抓（`enabled`）；每次開都重抓——人數是當下快照。 */
+/** Refetched on every open: the counts are a snapshot. */
 export function useAuthProviderImpact(id: string, enabled: boolean): UseQueryResult<AdminAuthProviderImpactDto> {
   return useQuery({
     queryKey: ["admin-auth", "impact", id],
@@ -31,7 +31,7 @@ export function useAuthProviderImpact(id: string, enabled: boolean): UseQueryRes
   });
 }
 
-/** 任一變更 → admin-auth 全部重抓＋登入頁的 `['auth-config']`（同一分頁登出後看到的按鈕要是新的）。 */
+/** Also refetch `auth-config` so the login page in this tab shows the new buttons after logout. */
 function invalidateAdminAuth(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ["admin-auth"] });
   void queryClient.invalidateQueries({ queryKey: AUTH_CONFIG_QUERY_KEY });
@@ -52,9 +52,10 @@ export interface PatchAuthProviderBody {
   clientSecret?: string;
   enabled?: boolean;
   sortOrder?: number;
-  /** 圖示種類；upload 只能經 `useUploadAuthProviderIcon`。 */
+  /** Uploads go through useUploadAuthProviderIcon. */
   iconKind?: Exclude<ProviderIconKind, "upload">;
-  /** 首次登入時自動建立帳號。服務表的開關送單獨這一欄；編輯對話框只在改 issuer 時帶（確認框的選擇，或本來關時明帶 false）。 */
+  /** The table toggle sends it alone; the edit dialog sends it only when the issuer changes (the confirm choice, or an
+   * explicit false if it was off). */
   autoCreateEnabled?: boolean;
 }
 
@@ -84,7 +85,6 @@ export function useDeleteAuthProvider() {
   });
 }
 
-/** 上傳登入服務圖示（multipart，欄位 `file`；`api()` 對 FormData 不補 Content-Type）。成功 → admin-auth 全部＋auth-config 重抓。 */
 export function useUploadAuthProviderIcon() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -97,7 +97,7 @@ export function useUploadAuthProviderIcon() {
   });
 }
 
-/** 測試連線成功會寫 `resolved_issuer`（卡片的「未連線」提醒要消失）→ 也 invalidate。 */
+/** A successful test writes `resolved_issuer` (clears the card's "not connected" hint), so invalidate. */
 export function useTestAuthProvider() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -106,7 +106,7 @@ export function useTestAuthProvider() {
   });
 }
 
-/** 儲存前試探：不寫任何東西，不 invalidate。 */
+/** Writes nothing, so no invalidation. */
 export function useDiscoverAuthProvider() {
   return useMutation({
     mutationFn: (issuerUrl: string) =>
@@ -114,7 +114,6 @@ export function useDiscoverAuthProvider() {
   });
 }
 
-/** #187：站台設定（「允許帳號密碼登入」「允許用帳號密碼自行註冊」）。`passwordLoginEnabled` 是 DB 值、`passwordLoginForced` 是 env。 */
 export const ADMIN_AUTH_SETTINGS_QUERY_KEY = ["admin-auth", "settings"] as const;
 
 export function useAdminAuthSettings(): UseQueryResult<AdminAuthSettingsDto> {
@@ -126,11 +125,7 @@ export interface PatchAdminAuthSettingsBody {
   passwordLoginEnabled?: boolean;
 }
 
-/**
- * 成功 → admin-auth 全部（含 settings 與 provider 卡片）＋登入頁的 auth-config 重抓。
- * 409（`sso_provider_required`／`admin_sso_link_required`）只在本頁快照過期時出現（UI 已預先 disable 關得了的情況）：Switch 受控於 server 值、自然維持原狀，
- * 但 `passwordLoginImpact` 是過期的——所以 409 也重抓 admin-auth 全部，讓預先 disable 與原因文字跟上。
- */
+/** A 409 means this page's snapshot is stale, so refetch then too (`passwordLoginImpact` must catch up). */
 export function usePatchAdminAuthSettings() {
   const queryClient = useQueryClient();
   return useMutation({

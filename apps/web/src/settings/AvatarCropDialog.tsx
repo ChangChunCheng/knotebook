@@ -19,26 +19,25 @@ export interface AvatarCropDialogProps {
   open: boolean;
   source: AvatarCropSource;
   onOpenChange: (open: boolean) => void;
-  /** 伺服器收下之後呼叫（接著對話框自己關閉）。 */
+  /** Called after the server accepts it; the dialog then closes itself. */
   onSaved: (candidate: AvatarCandidateDto) => void;
 }
 
-/** 對話框裡顯示的錯誤：標題一行，必要時下面接一行說明。 */
 interface ErrorText {
   title: string;
   detail?: string;
 }
 
-/** 視窗邊長的預設值：量不到實際寬度（還沒 layout）時用它。 */
+/** Frame side length used before layout, while the real width can't be measured. */
 const DEFAULT_VIEWPORT = 280;
 const KEY_STEP = 10;
 const KEY_STEP_SHIFT = 50;
-/** `+`／`-` 一級的倍率。 */
+/** Zoom factor per `+`/`-` step. */
 const ZOOM_STEP = 1.2;
-/** 滾輪每個 deltaY 單位的縮放指數。 */
+/** Zoom exponent per wheel deltaY unit. */
 const WHEEL_SENSITIVITY = 0.002;
 
-/** 載入完成後的幾何：原圖尺寸、視窗邊長、目前縮放與平移。座標約定見 `avatars/crop-math.ts`。 */
+/** Coordinate conventions: see `avatars/crop-math.ts`. */
 interface Geometry {
   width: number;
   height: number;
@@ -64,9 +63,9 @@ const ARROW_DELTAS: Record<string, Point> = {
 };
 
 /**
- * 頭貼裁切框：方形視窗＋圓形遮罩，拖曳平移、滑桿／滾輪／捏合縮放、鍵盤（方向鍵讓圖往該方向移 10 px、Shift 50 px，`+`／`-` 縮放一級）。
- * 解碼與編碼（`avatars/encode.ts`）只在按下儲存時才以動態 `import()` 載入，不進這個對話框所在的 chunk。
- * 上傳中（含編碼）不可關閉：Esc、X、取消都忽略。關閉時釋放 `blob:` 網址。
+ * Arrow keys move the image that way by 10 px (Shift: 50 px); `+`/`-` zoom one step. Decoding and encoding (`avatars/encode.ts`) load via
+ * dynamic `import()` only on Save, outside this dialog's chunk. Not closable while uploading (including encoding): Esc, X and Cancel are
+ * ignored. The `blob:` URL is released on close.
  */
 export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: AvatarCropDialogProps) {
   const { t } = useTranslation();
@@ -86,7 +85,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
   const [geo, setGeo] = useState<Geometry | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ErrorText | null>(null);
-  /** 取原圖當下那份候選的版本：重新裁切一律用它送出，不看之後 props 變成什麼。 */
+  /** Candidate version at fetch time; re-crop always submits it, regardless of later prop changes. */
   const [originalVersion, setOriginalVersion] = useState<number | null>(null);
   const busyRef = useRef(false);
   const mounted = useRef(true);
@@ -104,7 +103,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     busyRef.current = busy;
   }, [busy]);
 
-  // 開著時背景補產跳過這張：否則補產先送出、版本變了，按儲存會撞 `avatar_outdated`，調好的裁切就丟了。
+  // While open, background regeneration skips this image: otherwise it would bump the version and Save would hit `avatar_outdated`, losing the crop.
   useEffect(() => {
     if (!open || candidateId === null) return;
     return registerCropOpen(candidateId);
@@ -128,13 +127,12 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     return generic;
   }
 
-  /** 取不到既有候選的原圖：還沒上傳任何東西，所以不能說「上傳失敗」。 */
+  /** Loading an existing candidate's original: nothing was uploaded, so never say "upload failed". */
   function describeLoadError(err: unknown): ErrorText {
     if (err instanceof ApiFail && err.status === 404) return { title: t("errors.not_found") };
     return { title: t("settings.account.avatar.crop.unreadable") };
   }
 
-  // 開框時備好原圖與 blob: 網址；關框、換來源或卸載時釋放。
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -149,7 +147,6 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     if (file !== null) {
       begin(file, null);
     } else if (candidateId !== null) {
-      // 版本在開始取原圖的這一刻記下，之後 props 的候選換了版本也不影響要送出的值。
       const versionAtFetch = existingVersion;
       fetchAvatarOriginal(candidateId).then(
         blob => {
@@ -171,11 +168,11 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
       activePointers.clear();
       pinchDistance.current = null;
     };
-    // describeLoadError 只在失敗時讀語系；existingVersion 只在開始取原圖時讀一次；來源與開關才是這裡的依賴。
+    // describeLoadError reads the locale only on failure and existingVersion is read once when the fetch starts; only source and open are real dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, file, candidateId]);
 
-  // 滾輪要 preventDefault（不捲動背後的頁面），React 的 onWheel 是 passive，所以掛原生監聽。
+  // Native listener: React's onWheel is passive and can't preventDefault (needed to keep the page behind from scrolling).
   useEffect(() => {
     if (viewportNode === null) return;
     const onWheel = (event: WheelEvent) => {
@@ -190,8 +187,8 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     return () => viewportNode.removeEventListener("wheel", onWheel);
   }, [viewportNode]);
 
-  // 方框的邊長會隨視窗改變（旋轉手機、跨過 CSS 的寬度分界）：圖的縮放與位置照新舊邊長的比例換算，
-  // 這樣圓圈裡看到的內容不變，存檔時也是用目前畫面上的邊長換算裁切；縮放碰到放大上限時，以方框中心為準換算。
+  // The frame's side length changes with the viewport (phone rotation, CSS breakpoints): rescale zoom and offset by the old/new ratio so the
+  // circle shows the same content; at the max zoom, scale about the frame center; saving converts the crop using the current side length.
   useEffect(() => {
     if (viewportNode === null || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
@@ -223,7 +220,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    // 帶修飾鍵的組合（例如 Ctrl／⌘ 加 `=`、`-` 的頁面縮放）留給瀏覽器。
+    // Leave modified combos (Ctrl/Cmd + `=`/`-` page zoom) to the browser.
     if (busy || event.ctrlKey || event.metaKey || event.altKey) return;
     const arrow = ARROW_DELTAS[event.key];
     if (arrow !== undefined) {
@@ -245,7 +242,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
-      // 捕捉不到（例如指標已結束）不影響拖曳
+      // Capture can fail (e.g. the pointer already ended); dragging is unaffected.
     }
     const points = [...pointers.current.values()];
     pinchDistance.current = points.length === 2 ? Math.hypot(points[0]!.x - points[1]!.x, points[0]!.y - points[1]!.y) : null;
@@ -284,7 +281,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
     setError(null);
     setBusy(true);
     try {
-      // 解碼與編碼只在這裡才載入（獨立 chunk，不進首包）。
+      // Dynamic import: separate chunk, kept out of the initial bundle.
       const encode = await import("@/avatars/encode");
       let display: Blob;
       let crop: AvatarCropUpload;
@@ -298,7 +295,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
           bitmap.close();
         }
       } catch {
-        // 讀不了、畫不出、產物過大：都是這張圖本身的問題，不送出。
+        // Unreadable, undrawable or oversized: the image itself is bad, so don't submit.
         if (mounted.current) {
           setBusy(false);
           setError({ title: t("settings.account.avatar.crop.unreadable") });
@@ -309,7 +306,7 @@ export function AvatarCropDialog({ open, source, onOpenChange, onSaved }: Avatar
         source.kind === "existing" && originalVersion !== null
           ? await update.mutateAsync({ id: source.candidate.id, display, crop, version: originalVersion })
           : await upload.mutateAsync({ original, display, crop });
-      // 這次儲存就是補產：排隊中的舊版本不必再補（再補只會撞版本）。
+      // This save is the regeneration: drop the queued older-version one (it would only conflict).
       if (source.kind === "existing") dropQueuedFill(source.candidate.id, saved.avatar.v);
       if (!mounted.current) return;
       setBusy(false);

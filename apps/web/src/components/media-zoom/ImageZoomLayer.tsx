@@ -7,22 +7,22 @@ import { prefetchMediaLightbox } from "./lightbox-chunk";
 import { selectedImageOf } from "./selected-image";
 
 const IMAGE_SELECTOR = '.bn-block-content[data-content-type="image"] img.bn-visual-media';
-/** 欄內的 diff 預覽（例如 AI 建議的比對）是唯讀預覽，裡面的圖不提供放大。 */
+/** Images inside a column's diff preview (e.g. an AI suggestion diff) are a read-only preview and get no zoom. */
 const IN_DIFF = ".kb-diff";
 const INSET = 4;
-/** 圖兩側中段調寬把手高度的一半。 */
+/** Half the height of the mid-side resize handle. */
 const HANDLE_HALF = 15;
 
 type Size = { width: number; height: number };
 
 /**
- * 放大鈕的位置（相對 `container`）。預設在圖的右上角內側 4px；圖矮到鈕會碰到右側中段的調寬把手時，
- * 改放圖外面的上方（水平位置不變）。
+ * Inside the image's top-right corner, 4px in; when the image is so short that the button would touch the mid-side resize
+ * handle, it moves outside above the image (same horizontal position).
  */
 export function zoomButtonPlacement(img: DOMRect, container: DOMRect, button: Size): { top: number; left: number } {
   const left = img.right - container.left - button.width - INSET;
   const tooShort = INSET + button.height > img.height / 2 - HANDLE_HALF - INSET;
-  // 外側時鈕的下緣緊貼圖的上緣（不留縫）：滑鼠從圖往上移到鈕的途中不會離開圖。
+  // Outside: bottom edge touches the image top so the pointer doesn't leave the image on its way up to the button.
   const top = tooShort ? img.top - container.top - button.height : img.top - container.top + INSET;
   return { top, left };
 }
@@ -32,8 +32,8 @@ function isLoaded(img: HTMLImageElement): boolean {
 }
 
 /**
- * 事件目標往上找：在某張圖的調寬框內，或在同一個圖片 block 的內容區／外框（圖與鈕之間的縫）⇒ 那張圖；
- * 在別的區塊內 ⇒ null（收起）；不在任何區塊內（例如放大鈕本身）⇒ undefined（不變）。
+ * Inside an image's resize frame, or the same image block's content/outer box (the gap between image and button): that
+ * image. Inside another block: `null` (collapse). Outside every block (e.g. the zoom button itself): `undefined` (leave unchanged).
  */
 function imageUnder(node: EventTarget | null): HTMLImageElement | null | undefined {
   const el = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
@@ -46,7 +46,7 @@ function imageUnder(node: EventTarget | null): HTMLImageElement | null | undefin
   }
   const outer = el.closest(".bn-block-outer");
   if (!outer) return undefined;
-  // 圖矮時鈕在圖外上方，滑鼠要經過 block 的內距才到得了：同一個圖片 block 的非巢狀部分都算在圖上。
+  // The button can sit above a short image, so the block's padding (non-nested part) counts as the image.
   const group = el.closest(".bn-block-group");
   if (group && outer.contains(group)) return null;
   const own = outer.querySelector<HTMLImageElement>(`:scope > .bn-block > ${IMAGE_SELECTOR}`);
@@ -66,9 +66,9 @@ function sourceOf(img: HTMLImageElement) {
 }
 
 /**
- * #462：BlockNote 內建圖片 block 的浮動放大鈕，疊在編輯欄的 `relative` wrapper（`container`）上，跟著圖片自己的右上角走。
- * 顯示來源：滑鼠 hover（觸控的 pointer 不算）與 block 被選取（NodeSelection）；放大開著、或鈕有焦點時不隨 pointer／選取變動收起，
- * 關閉後焦點才回得到這顆鈕。唯讀時圖片本身可聚焦，點、Enter、Space 直接開。
+ * Floating zoom button for BlockNote image blocks (#462), positioned on the column's `relative` wrapper (`container`).
+ * Shown on mouse hover (touch pointers don't count) and when the block is NodeSelected. While zoom is open or the button
+ * has focus, pointer/selection changes don't collapse it, so focus can return to the button on close.
  */
 export function ImageZoomLayer({
   container,
@@ -77,7 +77,7 @@ export function ImageZoomLayer({
 }: {
   container: HTMLElement | null;
   editable: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，repo 慣例
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; repo convention
   editor?: BlockNoteEditor<any, any, any>;
 }): JSX.Element | null {
   const zoom = useMediaZoom();
@@ -90,12 +90,12 @@ export function ImageZoomLayer({
   const sizeRef = useRef<Size>({ width: 0, height: 0 });
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
-  // 放大開著，或剛關掉、焦點還沒還回放大鈕。
+  // Zoom is open, or just closed and focus hasn't returned to the button yet.
   const frozenRef = useRef(false);
   const isOpenNow = zoom?.isOpen === true;
-  // pointer 實際所在的圖；顯示中的 hover 在放大開著或鈕有焦點時凍結，之後再追上這個值。
+  // Where the pointer actually is; the shown hover is frozen while zoom is open or the button has focus, then catches up to this.
   const pointerImgRef = useRef<HTMLImageElement | null>(null);
-  // 目前顯示鈕的那張圖（沒有鈕時 null）：內容變動時只有鈕在才需要重量位置。
+  // Image currently showing the button (null if none): content changes need a remeasure only while the button is shown.
   const shownRef = useRef<HTMLImageElement | null>(null);
   const buttonFocused = () => {
     const layer = layerRef.current;
@@ -104,11 +104,10 @@ export function ImageZoomLayer({
   const { t } = useTranslation();
   const zoomLabel = t("note.zoom.open");
 
-  // 放大畫面關掉後，Radix 要到下一個 task 才把焦點還給放大鈕（`onCloseAutoFocus`）。這段空檔裡
-  // 指標底下若是別的區塊，pointerover 會先把鈕收掉，焦點就回不到它。所以關掉後多凍結一個 task，
-  // 焦點落定了才追上指標。這個 setTimeout 一定排在 Radix 那次之後：Radix 是在 FocusScope 卸載的
-  // cleanup 裡排它的 setTimeout，而 React 在同一次 commit 裡會先跑完所有卸載的 cleanup，才跑新的
-  // passive effect（這裡）。
+  // Radix returns focus to the button one task after zoom closes (`onCloseAutoFocus`); a pointerover onto another block in
+  // that gap would remove the button first and focus couldn't return to it. So stay frozen one more task, then catch up
+  // with the pointer. This timeout always runs after Radix's: Radix schedules its timeout in the FocusScope unmount
+  // cleanup, and React runs all unmount cleanups of a commit before new passive effects (this one).
   useEffect(() => {
     if (isOpenNow) {
       frozenRef.current = true;
@@ -133,17 +132,17 @@ export function ImageZoomLayer({
       const found = imageUnder(e.target);
       if (found === undefined) return;
       pointerImgRef.current = found;
-      if (found !== null) prefetchMediaLightbox(); // 點下去前就把放大畫面的 chunk 抓好
-      // 放大開著時完全凍結；鈕有焦點時只擋「收起」，可以換成別張圖。
+      if (found !== null) prefetchMediaLightbox(); // load the zoom chunk before the click
+      // Zoom open: fully frozen. Button focused: only collapsing is blocked; switching to another image is allowed.
       if (isOpen() || (found === null && buttonFocused())) return;
       setHover(found);
-      bump(); // 同一張圖被推動（欄分隔線、區塊搬移）時 ResizeObserver 不會響：進來時重量一次
+      bump(); // ResizeObserver is silent when the same image is merely pushed (column divider, block move): remeasure on enter
     };
     const onPointerLeave = () => {
       pointerImgRef.current = null;
       if (!isOpen() && !buttonFocused()) setHover(null);
     };
-    // 圖載好（或載失敗）的當下重算：hover 中的圖剛載好要補出鈕。
+    // Recompute on image load (or load error): a hovered image that just loaded needs its button.
     const onMediaEvent = (e: Event) => {
       if (e.target instanceof HTMLImageElement) bump();
     };
@@ -166,7 +165,8 @@ export function ImageZoomLayer({
       setSelected(selectedImageOf(editor.prosemirrorView));
     };
     update();
-    // 區塊搬移、欄分隔線拖曳不改圖的尺寸、ResizeObserver 不響：鈕顯示中時內容一變就（每幀至多一次）重量位置。
+    // Block moves and column divider drags don't resize the image, so ResizeObserver stays silent: while the button is
+    // shown, remeasure on any content change (at most once per frame).
     let frame = 0;
     const onChange = () => {
       if (frame || shownRef.current === null) return;
@@ -184,7 +184,8 @@ export function ImageZoomLayer({
     };
   }, [editable, editor, active, bump]);
 
-  // 唯讀：圖片本身可聚焦、可點。MutationObserver 補上之後才插進來（或被重繪換掉）的圖。
+  // Read-only: the image itself is focusable and clickable. The MutationObserver marks images inserted later (or replaced by
+  // a re-render).
   useEffect(() => {
     if (!container || !active || editable) return;
     const mark = () => {
@@ -192,7 +193,7 @@ export function ImageZoomLayer({
         if (img.closest(IN_DIFF)) return;
         img.setAttribute("tabindex", "0");
         img.setAttribute("data-kb-zoomable", "");
-        // 可聚焦的圖念出「圖名，放大檢視」：開得了放大檢視要讓鍵盤與讀屏使用者知道。
+        // Keyboard and screen reader users need to know the image opens a zoom view.
         img.setAttribute("aria-label", img.alt ? `${img.alt}, ${zoomLabel}` : zoomLabel);
       });
     };
@@ -207,7 +208,7 @@ export function ImageZoomLayer({
     const onClick = (e: MouseEvent) => {
       const img = imageOf(e);
       if (!img || (e.target as Element).closest("a") !== null) return;
-      // 拖曳選取文字後放開也會觸發 click：有選取就不開。
+      // A click also fires after drag-selecting text: don't open then.
       if (window.getSelection()?.isCollapsed === false) return;
       open(img);
     };
@@ -215,7 +216,7 @@ export function ImageZoomLayer({
       if (e.key !== "Enter" && e.key !== " ") return;
       const img = imageOf(e);
       if (!img || e.target !== img) return;
-      e.preventDefault(); // Space 不捲頁
+      e.preventDefault(); // Space must not scroll the page
       open(img);
     };
     mark();
@@ -239,7 +240,8 @@ export function ImageZoomLayer({
   const shown = active && container !== null && target !== null && isLoaded(target) ? target : null;
   shownRef.current = shown;
 
-  // 顯示中遇到版面變動（欄寬、圖被調寬、視窗縮放）就重算。座標相對欄 wrapper，wrapper 跟內容一起捲，捲動不必重算。
+  // Recompute on layout changes (column width, image resize, window resize) while shown. Coordinates are relative to the
+  // column wrapper, which scrolls with the content, so scrolling needs no recompute.
   useEffect(() => {
     if (!container || !shown) return;
     const observer = new ResizeObserver(bump);
@@ -252,7 +254,8 @@ export function ImageZoomLayer({
     };
   }, [container, shown, bump]);
 
-  // 鈕的實際尺寸第一次出現前量不到（先當 0），掛上後在 layout effect 量到再重算（paint 前，不閃）。
+  // The button size can't be measured before it first renders (treated as 0); measured here in a layout effect and
+  // recomputed before paint, so it doesn't flash.
   useLayoutEffect(() => {
     const button = layerRef.current?.querySelector("button");
     if (!button) return;
@@ -263,7 +266,7 @@ export function ImageZoomLayer({
   });
 
   if (!shown || !container) return null;
-  void rev; // 版面變動時 bump 讓這裡重新量位置
+  void rev; // bump() re-renders on layout changes so the position below is remeasured
   const style = zoomButtonPlacement(shown.getBoundingClientRect(), container.getBoundingClientRect(), sizeRef.current);
   return (
     <div
@@ -277,9 +280,9 @@ export function ImageZoomLayer({
       }}
     >
       <ZoomButton
-        // 唯讀時鍵盤與螢幕閱讀器走圖本身（它的 aria-label 已帶「放大檢視」），這顆只留給滑鼠。
+        // Read-only: keyboard and screen readers use the image itself, so this button is mouse-only.
         {...(editable ? {} : { tabIndex: -1, "aria-hidden": true as const })}
-        // 唯讀時這顆鈕不可聚焦，關掉後焦點改回圖本身（唯讀時圖可聚焦）。
+        // Not focusable when read-only, so focus returns to the image after close.
         onClick={(event) => zoom?.open(sourceOf(shown), { button: editable ? event.currentTarget : null, media: shown })}
       />
     </div>

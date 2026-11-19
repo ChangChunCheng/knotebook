@@ -12,25 +12,21 @@ export interface SelectProps {
   value: string;
   onValueChange: (value: string) => void;
   options: readonly SelectOption[];
-  /** `inline`：表格列內或句子中，只有底線；`field`：獨立的表單欄位，外框同 `Input`。 */
   variant: "inline" | "field";
-  /** 給 `<label htmlFor>` 指到觸發鈕。 */
   id?: string;
-  /** 有給才參與表單送出。 */
   name?: string;
   form?: string;
   disabled?: boolean;
-  /** `value` 不在 `options` 時顯示。 */
   placeholder?: string;
   title?: string;
-  /** 寬度由呼叫端決定：`w-full`、內容寬用 `w-fit`（`shrink-0` 只在 flex 父層內有效，觸發鈕是 display:flex，在 block／grid 父層會撐滿）、或固定寬度如 `w-28`。 */
+  /** Width is the caller's: `w-full`, `w-fit` for content width (`shrink-0` only works inside a flex parent; the trigger is display:flex and fills a block/grid parent), or fixed like `w-28`. */
   className?: string;
   "aria-label"?: string;
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
 }
 
-/** Radix 的項目值不能是空字串；選項裡真有 `""` 時，進出 Radix 用這個字串代替。 */
+/** Radix item values can't be an empty string; when an option really is `""` this string stands in on the way in and out. */
 const EMPTY_SENTINEL = "__select_empty_value__";
 
 const TRIGGER_BASE =
@@ -72,16 +68,15 @@ export function Select({
   const toRadix = (v: string) => (v === "" && hasEmptyOption ? EMPTY_SENTINEL : v);
   const fromRadix = (v: string) => (v === EMPTY_SENTINEL ? "" : v);
   const matched = options.find((o) => o.value === value);
-  // 值不在選項裡（含空字串但沒有空字串選項）：交給 Radix 顯示 placeholder。
   const radixValue = matched ? toRadix(value) : "";
-  // 撐寬用：全部選項文字，加上 placeholder（從 placeholder 換成值時寬度也不變）。
+  // For width: all option texts plus the placeholder (width doesn't change when the placeholder becomes a value).
   const sizerLabels = [...options.map((o) => o.label), ...(placeholder ? [placeholder] : [])];
 
   return (
     <SelectPrimitive.Root
       value={radixValue}
       onValueChange={(v) => {
-        // 真正的 "" 選項走 sentinel，Radix 回報原始 "" 只會來自表單內隱藏原生 select 同步時選項還沒到齊，不是使用者選的。
+        // A real "" option goes through the sentinel; Radix reporting a raw "" only comes from the hidden native select syncing inside a form before options arrived, not from the user.
         if (v === "") return;
         onValueChange(fromRadix(v));
       }}
@@ -96,8 +91,7 @@ export function Select({
         className={cn(TRIGGER_BASE, variant === "field" ? TRIGGER_FIELD : TRIGGER_INLINE, className)}
         {...aria}
       >
-        {/* 所有選項文字疊在同一格（隱藏）撐出最長的寬度，換值時觸發鈕寬度不跳；
-            固定／滿版寬度下 min-w-0 讓它們不影響截斷。 */}
+        {/* All option texts stacked in one hidden grid cell to reserve the longest width, so the trigger doesn't jump when the value changes; min-w-0 keeps them from affecting truncation at fixed/full width. */}
         <span className="grid min-w-0">
           <span className="min-w-0 truncate [grid-area:1/1]" data-select-text="">
             <SelectPrimitive.Value placeholder={placeholder ?? ""}>{matched?.label}</SelectPrimitive.Value>

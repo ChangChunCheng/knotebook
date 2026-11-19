@@ -6,11 +6,7 @@ import { AppShellInertContext } from "@/lib/app-shell-inert";
 import { NotePageControlsContext, type NotePageControls } from "@/lib/note-page-controls";
 import { NotePageBridgeContext, type NotePageBridge } from "@/lib/note-page-bridge";
 
-/**
- * 首頁、筆記頁（含它的載入中與錯誤畫面）共用的外層：側欄殼只掛一份，換路由時不重掛，
- * 清單的捲動位置與選取模式因此保留。頁面只渲染主內容區（`<Outlet />`）。
- * 簡報模式的 inert、側欄需要的「目前那篇」控制與錨點 API 由頁面經 context 登記進來。
- */
+/** Sidebar shell mounts once so list scroll and selection mode survive route changes. */
 export function AppShellLayout() {
   const [inert, setInert] = useState(false);
   const [controls, setControls] = useState<NotePageControls | null>(null);

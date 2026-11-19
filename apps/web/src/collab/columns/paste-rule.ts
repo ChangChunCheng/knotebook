@@ -1,16 +1,10 @@
 /**
- * 貼上的列：一條 `transformPasted` 規則。
- *
- * - PM 對站內拖曳也呼叫 `transformPasted`（`prosemirror-view` `handleDrop`：`view.dragging.slice` 先過一次再放），
- *   所以「drop 的 slice 含列、落點不在頂層 → 先攤平」也在這裡做；`handleDOMEvents.drop` 只記落點。
- *   外部拖入（`view.dragging` 為 null）同樣用落點、不用游標判斷位置。
- * - core 的 `transformPasted` 掛在 editorProps、比外掛先跑：游標在表格格子內時 block 已被轉成行內＋換行，這裡看不到列。
- * - 頂層封閉 slice 的代價：貼上「段落＋列＋段落」時第一段不併進游標段落、貼在非空段落開頭多一個空段落；
- *   不封閉的話 PM 的 `Slice.maxOpen` 會把列拆開（首欄併進游標段落、多一個空欄）。
- * - 單欄外部 HTML 由 shared `columns.ts` 的外部欄 parse 限定擋下；這裡處理的單欄列是從欄內複製時
- *   PM 依 `data-pm-slice` 的 open context 重建的。
- *
- * `Slice`／`Fragment` 在 apps/web 值層級拿不到，由傳進來的 slice 取 constructor。
+ * - PM also calls `transformPasted` for in-site drags (`view.dragging.slice`), so "a dropped row at a non-top-level point → flatten" lives here; `handleDOMEvents.drop` only records the drop point. External drag-ins use the drop point too.
+ * - Core's `transformPasted` runs before plugins: in a table cell blocks are already inline content plus line breaks, so rows aren't visible here.
+ * - The slice is closed at top level because PM's `Slice.maxOpen` would split the row (first column merged into the caret paragraph, plus an extra empty column);
+ *   cost: with paragraph + row + paragraph the first paragraph doesn't merge into the caret paragraph, and pasting at the start of a non-empty paragraph adds an empty paragraph.
+ * - Single-column rows here come from copying inside a column (external single-column HTML is rejected by shared `columns.ts`), rebuilt by PM from `data-pm-slice`'s open context.
+ * `Slice` / `Fragment` aren't available at value level in apps/web, so the constructor is taken from the slice passed in.
  */
 import { Extension } from "@tiptap/core";
 import { COLUMN_LIST_TYPE, COLUMN_TYPE, COLUMNS_MIN } from "@knotebook/shared";
@@ -57,8 +51,7 @@ const fragmentFrom = (like: SliceLike, nodes: NodeLike[]) =>
 
 let dropPoint: number | null = null;
 
-/** drop 落點（handleDOMEvents.drop 記下，同一個同步呼叫鏈結束時清掉）。view 為 null 時什麼都不做。
- * `posAtCoords` 丟例外時記成 null：不得讓例外穿出、跳過其後的媒體阻擋。 */
+// If `posAtCoords` throws, null is recorded: the exception must not escape and skip the media blocking after it.
 export function recordDropPoint(view: ViewLike | null, event: Pick<DragEvent, "clientX" | "clientY">): void {
   if (!view) return;
   try {
@@ -78,7 +71,7 @@ export function takeDropPoint(): number | null {
 }
 
 const isSingle = (node: NodeLike) => node.type.name === COLUMN_LIST_TYPE && node.childCount < COLUMNS_MIN;
-/** 不在 columnList 裡的單獨 column：Ctrl＋點欄（整欄 NodeSelection）複製而來，open 為 0。不換掉的話 PM 會把它包成補了空欄的列、貼進段落的子 block（巢狀列）。 */
+// A lone column (Ctrl+click copy of a column, open is 0): PM would wrap it in a row padded with an empty column and paste it as a child of a paragraph (a nested row).
 const isLoneColumn = (node: NodeLike, parent: NodeLike | null) => node.type.name === COLUMN_TYPE && parent?.type.name !== COLUMN_LIST_TYPE;
 
 function unwrapFragment(like: SliceLike, fragment: FragmentLike, parent: NodeLike | null): FragmentLike {
@@ -91,7 +84,6 @@ function unwrapFragment(like: SliceLike, fragment: FragmentLike, parent: NodeLik
   return fragmentFrom(like, out);
 }
 
-/** open 路徑（首／尾）每經過一個單欄列，open 深度減 2（列＋欄兩層被拿掉）。 */
 function adjustOpen(fragment: FragmentLike, open: number, first: boolean): number {
   let node = first ? fragment.firstChild : fragment.lastChild;
   let removed = 0;
@@ -102,7 +94,6 @@ function adjustOpen(fragment: FragmentLike, open: number, first: boolean): numbe
   return open - removed;
 }
 
-/** 少於兩欄的 columnList 與單獨的 column 換成欄內 block；全空的列丟掉；open 路徑經過單欄列時 openStart／openEnd 各減 2。 */
 export function unwrapSingleColumnLists(slice: SliceLike): SliceLike {
   let has = false;
   slice.content.descendants((node, _pos, parent) => {
@@ -117,7 +108,6 @@ export function unwrapSingleColumnLists(slice: SliceLike): SliceLike {
   );
 }
 
-/** 有任何兩欄以上的 columnList。 */
 export function sliceHasRow(slice: SliceLike): boolean {
   let has = false;
   slice.content.descendants((node) => {
@@ -126,7 +116,6 @@ export function sliceHasRow(slice: SliceLike): boolean {
   return has;
 }
 
-/** 外層唯一 blockGroup 剝掉、回封閉 slice。 */
 export function closeTopLevel(slice: SliceLike): SliceLike {
   let fragment = slice.content;
   if (fragment.childCount === 1 && fragment.firstChild!.type.name === "blockGroup") fragment = fragment.firstChild!.content;
@@ -142,7 +131,6 @@ function flatten(fragment: FragmentLike, out: NodeLike[]): NodeLike[] {
   return out;
 }
 
-/** 遞迴拆 blockGroup 與 columnList（第 1 欄全部、第 2 欄全部…），回封閉 slice。 */
 export function flattenRows(slice: SliceLike): SliceLike {
   return newSlice(slice, fragmentFrom(slice, flatten(slice.content, [])));
 }
@@ -153,7 +141,6 @@ export function columnsTransformPasted(slice: SliceLike, view: ViewLike): SliceL
   const drop = takeDropPoint();
   const { doc } = view.state;
   if (view.dragging) {
-    // 站內拖曳：橫線放置照 PM／core，只在落點不在頂層時攤平。
     return drop !== null && !isTopLevelPosition(doc.resolve(drop)) ? flattenRows(slice) : slice;
   }
   return isTopLevelPosition(doc.resolve(drop ?? view.state.selection.from)) ? closeTopLevel(slice) : flattenRows(slice);
@@ -168,8 +155,7 @@ export function createColumnsPasteExtension(): Extension {
   });
 }
 
-/** drop：先記落點，再交給原 handler。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- handler 的 view 型別各處不同（`unknown`／EditorView），這裡只轉手
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- handlers type `view` differently (`unknown` / EditorView); this only passes it through
 export function withColumnsDropPoint<T extends { drop: (view: any, e: DragEvent) => boolean }>(events: T): T {
   return {
     ...events,

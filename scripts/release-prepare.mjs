@@ -1,14 +1,5 @@
 #!/usr/bin/env node
-// scripts/release-prepare.mjs
-//
-// 發版準備：`pnpm release:prepare X.Y.Z [--date YYYY-MM-DD]`。只改檔＋檢查，不碰 git 寫入：
-//   - apps/server、apps/web、packages/shared 三個 package.json 的 version
-//   - CHANGELOG.md：`## [Unreleased]` 的內容收成 `## [X.Y.Z] - <日期>`，上方留新的空 `[Unreleased]`
-//   - README.md／README.zh-TW.md 的狀態行（最新版本與日期）
-// 發版本身在 merge 進 main、CI 全綠後由 .github/workflows/release.yml 自動完成（見 docs/releasing.md）。
-//
-// 前置檢查任一不符就 throw（CLI exit 1），而且**先把所有新內容算好才寫檔**，所以失敗時不改任何檔。
-// 各檔原本的行尾（CRLF／LF）照舊保留。
+// All new contents are computed before any file is written, so a failed check leaves every file untouched.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -46,7 +37,6 @@ function compareVersions(a, b) {
   return 0;
 }
 
-/** 只認 vX.Y.Z 形的 tag（其他形如 v1.0.0-rc1、foo 一律略過），回傳 semver 最大者或 null。 */
 export function maxReleaseTag(tags) {
   let max = null;
   for (const tag of tags) {
@@ -76,7 +66,7 @@ function bumpPackageJson(path, text, version) {
   if (typeof parsed.version !== 'string') {
     throw new Error(`${path} 沒有 "version" 欄位`);
   }
-  // 只換第一個 "version"（頂層，位於 dependencies 之前），保留原格式與行尾。
+  // Textual replace of the first "version" (top level, before dependencies) to keep formatting and line endings.
   const next = text.replace(/"version"(\s*):(\s*)"[^"]*"/, `"version"$1:$2"${version}"`);
   if (JSON.parse(next).version !== version) {
     throw new Error(`${path} 的頂層 "version" 不是檔內第一個 "version"，不自動改`);
@@ -112,10 +102,6 @@ function updateStatusLine(path, text, { pattern, replacement }, version, date) {
   return text.replace(pattern, replacement(version, date));
 }
 
-/**
- * 算出所有要寫的新內容（不寫檔）。files：{相對路徑: 原內容}；tags：既有 tag 清單。
- * 回傳 {相對路徑: 新內容}；任何檢查不過就 throw。
- */
 export function planRelease({ version, date, files, tags }) {
   const parts = parseVersion(version ?? '');
   if (!parts) {
@@ -146,7 +132,6 @@ function gitTags(root) {
     .filter(Boolean);
 }
 
-/** 讀檔→planRelease→全部算好才寫檔。tags 未給時唯讀呼叫 `git tag -l 'v*'`。 */
 export function runReleasePrepare({ root, version, date = localDate(), tags }) {
   const paths = [...PACKAGE_FILES, CHANGELOG_FILE, ...Object.keys(README_FILES)];
   const files = {};
@@ -201,7 +186,6 @@ function main(argv) {
 PR merge 進 main、CI（含 e2e）全綠後，release workflow 會自動打 tag v${version}、發 GitHub Release、推 GHCR 映像。`);
 }
 
-// 直接執行時才跑 CLI；被 test import 時不跑。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     main(process.argv);

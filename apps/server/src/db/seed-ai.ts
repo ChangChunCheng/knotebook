@@ -9,13 +9,9 @@ import type { Db } from "./index.js";
 import { aiActions } from "./schema.js";
 
 /**
- * 內建五動作的內容（不做 i18n key 映射——`name` 是 DB 資料、UI 原樣顯示，非 UI chrome；admin 可在後台自行改名，
- * docs/ai.md 會說明）。固定 UUID 住 `@knotebook/shared` 的 `ai.ts`（#263：web 也要用它判 chip 的 icon 與 Instruct）。
- * `modelId` 留空（NULL）：內建動作預設不綁特定 model，由 admin 於後台設定；`sortOrder` 依表列順序。
- * `applyMode`：五個一律 preview（Rewrite/Translate 原為 direct）。seed 只插入缺的 id，所以只影響新安裝；
- * 既有站台的值不動，direct 仍可由 admin 在後台設定。
- * Instruct（#263）：自由指令；template 的三個佔位符由 `routes/ai.ts` 包上固定標記後代入、system prompt 前置 server 固定的守門
- * （`ai/instruct.ts`），這裡的 systemPrompt 只管語氣與風格。
+ * `name` is DB data shown as-is (admins can rename it), not an i18n key. All default to preview; the seed only
+ * inserts missing ids, so existing sites keep their apply modes. Instruct's systemPrompt only sets tone: routes/ai.ts
+ * wraps the placeholders and prepends the fixed guard from ai/instruct.ts.
  */
 const BUILTIN_ACTIONS = [
   {
@@ -64,12 +60,7 @@ const BUILTIN_ACTIONS = [
   },
 ];
 
-/**
- * 內建 AI 動作 idempotent seed。掛在 `runMigrations` 既有的 idempotent
- * seed 流程尾端（見 `migrate.ts`）。`ON CONFLICT (id) DO NOTHING`：admin 事後改動
- * （改 prompt、停用……）不會被重跑的 seed 覆寫或復活——只有「該 id 完全不存在」才會
- * 插入：內建動作是初始值，不強制同步。
- */
+/** Inserts only missing ids, so admin edits (prompts, disabling) are never overwritten or revived. */
 export async function seedAiActions(db: Db): Promise<void> {
   await db.insert(aiActions).values(BUILTIN_ACTIONS).onConflictDoNothing({ target: aiActions.id });
 }

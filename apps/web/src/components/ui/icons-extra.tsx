@@ -1,10 +1,9 @@
 import type { SVGProps } from "react";
 import type { NoteWidth } from "@knotebook/shared";
 
-// 只被 lazy 載入的 UI 使用的圖示（簡報、版本歷史、AI 框、設定、分享對話框、垃圾桶等）。
-// 與 icons.tsx 分開：首包 import 的圖示留在 icons.tsx，避免這些圖示被併進首包。
+// Icons used only by lazily loaded UI; kept apart from icons.tsx so first-bundle icons don't pull these in.
 
-/** 垃圾桶的「還原」（#181，逆時針箭頭）。路徑取自 lucide `rotate-ccw`（ISC），手刻同風格。 */
+/** Adapted from lucide `rotate-ccw` (ISC). */
 export function RotateCcw(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="restore" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -14,7 +13,7 @@ export function RotateCcw(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 移出最愛（最愛 tab 選取模式）。路徑取自 lucide `star-off`（ISC），手刻同風格。 */
+/** Adapted from lucide `star-off` (ISC). */
 export function StarOff(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="star-off" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -25,7 +24,6 @@ export function StarOff(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 私人狀態（分享鈕依分享狀態變化，issue #72 UI 收尾）。 */
 export function Lock(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -35,7 +33,6 @@ export function Lock(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 公開狀態（分享鈕依分享狀態變化，issue #72 UI 收尾）。 */
 export function Globe(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -46,7 +43,6 @@ export function Globe(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 圖表（mermaid block 的 slash 選單項，issue #94）。三個節點＋兩條連線的極簡流程圖意象。 */
 export function Diagram(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -60,7 +56,7 @@ export function Diagram(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 進入全螢幕（簡報工具列，#229）。路徑取自 lucide `maximize`（ISC），手刻同風格。 */
+/** Adapted from lucide `maximize` (ISC). */
 export function Maximize(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="maximize" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -72,7 +68,7 @@ export function Maximize(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 放大檢視（圖片與 mermaid 的放大鈕，#462）。路徑取自 lucide `zoom-in`（ISC），手刻同風格。 */
+/** Adapted from lucide `zoom-in` (ISC). */
 export function ZoomIn(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="zoom-in" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -84,7 +80,7 @@ export function ZoomIn(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 離開全螢幕（簡報工具列，#229）。路徑取自 lucide `minimize`（ISC），手刻同風格。 */
+/** Adapted from lucide `minimize` (ISC). */
 export function Minimize(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="minimize" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -96,7 +92,6 @@ export function Minimize(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-// 版本預覽橫幅的三顆模式鈕：並排＝兩欄、單欄＝框內橫列（與兩欄同框、一眼對照）、只看差異＝篩選。
 export function Columns2(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="columns-2" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -126,7 +121,6 @@ export function ListFilter(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 列內「測試連線」（#247）。 */
 export function Plug(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="plug" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -138,7 +132,7 @@ export function Plug(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 使用者表列內「重設密碼」（#286）。路徑取自 lucide `key-round`（ISC）。 */
+/** Adapted from lucide `key-round` (ISC). */
 export function KeyRound(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="key-round" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -148,7 +142,7 @@ export function KeyRound(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 登入服務列的「圖示」對話框觸發鈕（#247）。名稱避開 DOM 的 `Image` 全域。 */
+/** Named to avoid the DOM global `Image`. */
 export function ImageIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="image" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -159,7 +153,7 @@ export function ImageIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 框選 AI 框的送出鈕。路徑取自 lucide `send`（ISC），手刻同風格。 */
+/** Adapted from lucide `send` (ISC). */
 export function Send(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="send" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -169,7 +163,7 @@ export function Send(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 內建 Rewrite 的 chip。路徑取自 lucide `pen-line`（ISC）。 */
+/** Adapted from lucide `pen-line` (ISC). */
 export function PenLine(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="pen-line" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -179,7 +173,7 @@ export function PenLine(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 內建 Translate 的 chip。路徑取自 lucide `languages`（ISC）。 */
+/** Adapted from lucide `languages` (ISC). */
 export function Languages(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="languages" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -193,7 +187,7 @@ export function Languages(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 內建 Summarize 的 chip。路徑取自 lucide `list-collapse`（ISC）。 */
+/** Adapted from lucide `list-collapse` (ISC). */
 export function ListCollapse(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="list-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -206,7 +200,7 @@ export function ListCollapse(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** #263 內建 Continue writing 的 chip。路徑取自 lucide `chevrons-right`（ISC）。 */
+/** Adapted from lucide `chevrons-right` (ISC). */
 export function ChevronsRight(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="chevrons-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -216,7 +210,7 @@ export function ChevronsRight(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** AI 動作列的「上移」（取代文字箭頭）。路徑取自 lucide `arrow-up`（ISC）。 */
+/** Adapted from lucide `arrow-up` (ISC). */
 export function ArrowUp(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="arrow-up" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -226,7 +220,7 @@ export function ArrowUp(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** AI 動作列的「下移」。路徑取自 lucide `arrow-down`（ISC）。 */
+/** Adapted from lucide `arrow-down` (ISC). */
 export function ArrowDown(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="arrow-down" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -236,14 +230,12 @@ export function ArrowDown(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 寬度 icon 的路徑：標準＝兩端垂直線、無箭頭（|--|）；寬＝朝外箭頭，外側再有兩端垂直線（|<->|）；全寬＝只有朝外箭頭（<->）。 */
 const NOTE_WIDTH_PATH: Record<NoteWidth, string> = {
   standard: "M6 8v8M18 8v8M6 12h12",
   wide: "M3 8v8M21 8v8M10 8l-4 4 4 4M6 12h12M14 8l4 4-4 4",
   full: "M7 8l-4 4 4 4M3 12h18M17 8l4 4-4 4",
 };
 
-/** #297 頁首寬度 icon：依現值畫三種線形，無外框（見 NOTE_WIDTH_PATH）。 */
 export function NoteWidthIcon({ width, ...props }: { width: NoteWidth } & SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon={`note-width-${width}`} aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -252,7 +244,7 @@ export function NoteWidthIcon({ width, ...props }: { width: NoteWidth } & SVGPro
   );
 }
 
-/** 重做（手機編輯工具列）。路徑取自 lucide `rotate-cw`（ISC），手刻同風格。 */
+/** Adapted from lucide `rotate-cw` (ISC). */
 export function RotateCw(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="redo" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -262,7 +254,7 @@ export function RotateCw(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 轉換區塊類型（手機編輯工具列）。路徑取自 lucide `pilcrow`（ISC），手刻同風格。 */
+/** Adapted from lucide `pilcrow` (ISC). */
 export function Pilcrow(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="pilcrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -273,7 +265,6 @@ export function Pilcrow(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 收起鍵盤（手機編輯工具列）：鍵盤外框、一排鍵、往下的箭頭。 */
 export function KeyboardDown(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="keyboard-down" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -286,7 +277,7 @@ export function KeyboardDown(props: SVGProps<SVGSVGElement>) {
 
 const STROKE = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 
-/** 行內程式碼。路徑取自 lucide `code`（ISC）。 */
+/** Adapted from lucide `code` (ISC). */
 export function CodeIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon="code" aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>
@@ -296,7 +287,7 @@ export function CodeIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 文字對齊（靠左／置中／靠右）。路徑取自 lucide `align-left`／`align-center`／`align-right`（ISC）。 */
+/** Adapted from lucide `align-left`/`align-center`/`align-right` (ISC). */
 export function AlignIcon({ align, ...props }: { align: "left" | "center" | "right" } & SVGProps<SVGSVGElement>) {
   const lines = {
     left: ["M21 6H3", "M15 12H3", "M17 18H3"],
@@ -312,7 +303,7 @@ export function AlignIcon({ align, ...props }: { align: "left" | "center" | "rig
   );
 }
 
-/** 縮排與取消縮排。路徑取自 lucide `indent-increase`／`indent-decrease`（ISC）。 */
+/** Adapted from lucide `indent-increase`/`indent-decrease` (ISC). */
 export function IndentIcon({ direction, ...props }: { direction: "in" | "out" } & SVGProps<SVGSVGElement>) {
   return (
     <svg data-icon={direction === "in" ? "indent" : "outdent"} aria-hidden="true" viewBox="0 0 24 24" {...STROKE} {...props}>

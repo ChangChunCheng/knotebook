@@ -7,11 +7,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { toast } from "@/components/ui/toast";
 import { splitTrashSections, trashResultMessage } from "@/lib/trash-display";
 
-/**
- * 垃圾桶的確認框與結果 toast。還原不確認；永久刪除（單篇、多選）與清空才確認。
- * 呼叫端在 `onConfirm` 的 mutation **成敗都關框**、結果一律走 toast（失敗時清單重抓，
- * 框內篇數會當著使用者的面改掉）。
- */
+/** Callers close the dialog on success and failure alike and report via toast (on failure the list refetches and the count inside the dialog would visibly change). */
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -38,7 +34,7 @@ export function PurgeConfirmDialog({ count, open, pending, onConfirm, onOpenChan
   );
 }
 
-/** 「（含其他成員刪除的）」逐區判斷：該區至少一篇不是我刪的（`deletedBy: null`＝已刪帳號，也算別人）。 */
+/** Per section: at least one item wasn't deleted by me (`deletedBy: null` = deleted account, counts as someone else). */
 function deletedByOthers(items: readonly TrashItemDto[], meHandle: string | null): boolean {
   return items.some((item) => item.deletedBy === null || item.deletedBy.handle !== meHandle);
 }
@@ -54,7 +50,7 @@ export function EmptyTrashDialog({
 }: ConfirmShellProps & { items: readonly TrashItemDto[]; meHandle: string | null }) {
   const { t } = useTranslation();
   const { personal, workspace } = splitTrashSections(items);
-  // 前導分隔在鍵值裡（en 帶一個空白、zh-TW 的全形括號不帶），這裡只拼接。
+  // The leading separator is in the key's value (en has a space, zh-TW's full-width parenthesis none); this only concatenates.
   const line = (key: "trash.emptyPersonal" | "trash.emptyWorkspace", section: readonly TrashItemDto[]) =>
     t(key, { count: section.length }) + (deletedByOthers(section, meHandle) ? t("trash.includesOthers") : "");
   return (
@@ -97,16 +93,12 @@ function doneCount(result: TrashResult): number {
   return "restored" in result ? result.restored.length : result.purged.length;
 }
 
-/** 成功：「已還原／已永久刪除 N 篇」，有略過加「，M 篇已不在垃圾桶」；一篇都沒做到（全被略過）用 destructive。 */
 export function toastTrashResult(kind: TrashKind, result: TrashResult, t: Translate): void {
   const done = doneCount(result);
   toast({ title: trashResultMessage(kind, done, result.skipped.length, t), variant: done === 0 ? "destructive" : "default" });
 }
 
-/**
- * 失敗：標題 `errors.<code>`；分批中途失敗（之前的批已成功）時描述報已完成篇數。
- * 第一批就失敗＝什麼都沒做，不加「已還原 0 篇」。
- */
+/** On a mid-batch failure the description reports how many finished; a first-batch failure did nothing, so no "restored 0". */
 export function toastTrashFailure(kind: TrashKind, err: unknown, t: Translate): void {
   const cause = trashErrorCause(err);
   const title = cause instanceof ApiFail ? t(`errors.${cause.code}`, { defaultValue: t("errors.fallback") }) : t("errors.fallback");

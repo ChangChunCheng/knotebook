@@ -1,72 +1,56 @@
 /**
- * bulk transfer：agent 行雜湊＋逐行 diff（自寫 Myers，不引套件）。
- *
- * 基底只有每行 8 bytes 的 HMAC（`transfer_bases.line_hashes`），沒有原文，所以 diff 在**雜湊空間**做。agent 每行算兩份雜湊
- * （原文鍵、編號正規化鍵），都用**該基底列的鹽**、同一支 `hmacOf`／`lineKey`／`normalizeNumbered`（不變量 2：另寫一份正規化
- * 會讓每一行都「改了」）。等價：`eq(i, j) = kinds[i] === 1 ? num[j] === base[i] : raw[j] === base[i]`。
- *
- * `diffSpan`（一開始＝整份）：① 剝共同前後綴 ② 有界 Myers（D ≤ `maxD`，trace 每步只存 `[-d-1, d+1]`；相等行的配對＝最短
- * 編輯腳本，多解時取「刪除優先於插入」的標準回溯序）③ 溢位 → 唯一行錨點：子區段內基底鍵只出現一次、且 agent 側等價行也只出現
- * 一次的行對為候選（同一個 agent 行同時是 kind 0 與 kind 1 兩個基底鍵的候選 → 兩者都不當錨點），依 agent 位置取嚴格遞增的
- * 最長遞增子序列（patience）當錨點，錨點之間的子區段遞迴回 ①（唯一性以子區段重新計算）④ 子區段溢位且找不到錨點 → 只有這個
- * 子區段的行全部不配對，`degradedLines` 加上它（剝完前後綴後）的基底行數 ⑤ 工作量上限（全域 Myers 步數 ≤
- * `workFactor·(N+M)·maxD`）與遞迴深度上限（`maxDepth`）：任一超過 → 尚未處理的子區段一律退化 ⑥ 讓出按時間預算：Myers 的
- * d 迴圈與每個子區段入口是檢查點，距上次讓出 ≥ `YIELD_AFTER_MS` 才 `await yieldFn()`（跨遞迴共用一個計時器）。
- * 「Myers 步數」＝d 迴圈內每個對角線一步＋每次 snake 前進一步（不含剝前後綴與找錨點的掃描）。
+ * Diff in hash space: a base keeps only 8-byte HMACs per line, no text. Both agent hashes use
+ * that base row's salt and the shared `lineKey`/`normalizeNumbered` (a second normalization
+ * would make every line look changed). On Myers overflow: unique-line anchors (patience LIS),
+ * recursing between anchors; a sub-span with no anchors degrades (`degradedLines`). Global
+ * work and depth caps degrade everything unprocessed. Yields by time budget at the d loop and
+ * each sub-span entry, one timer shared across the recursion. Ties take the standard
+ * delete-before-insert backtrack. Anchors are line pairs unique on both sides within the sub-span
+ * (uniqueness recomputed per sub-span); an agent line that is a candidate for both a kind-0 and a
+ * kind-1 key anchors neither. A Myers step is one diagonal per d iteration plus one per snake
+ * advance (prefix/suffix stripping and anchor scans excluded).
  */
 import { LINE_HASH_BYTES, hmacOf } from "./base-hash.js";
 import { lineKey, normalizeNumbered } from "./normalize.js";
 import { YIELD_AFTER_MS, yieldToLoop } from "./yield.js";
 
-/** `transfer_bases.line_hashes`（每行 8 bytes 串接）／`line_kinds`（每行 1 byte：0 原文、1 numbered）。 */
+/** `line_hashes`: 8-byte hashes concatenated; `line_kinds`: 0 = raw, 1 = numbered. */
 export interface BaseLines {
   hashes: Buffer;
   kinds: Buffer;
 }
-/** agent 每行兩份雜湊（8 bytes 的 latin1 字串）。 */
 export interface AgentLines {
   raw: string[];
   num: string[];
 }
 
 export const DIFF_MAX_D = 2000;
-/** 全域 Myers 步數 ≤ `DIFF_WORK_MAX_FACTOR·(N+M)·maxD`（⑤）。 */
+/** Myers steps ≤ factor·(N+M)·maxD. */
 export const DIFF_WORK_MAX_FACTOR = 4;
 export const DIFF_DEPTH_MAX = 32;
 
 export interface LineDiff {
-  /** `pair[i]`＝基底第 i 行配到 agent 第幾行，-1＝沒配到。配對嚴格遞增（不交叉）。 */
+  /** -1 = unpaired; pairs are strictly increasing. */
   pair: Int32Array;
-  /** 有任何子區段溢位，或撞到工作量／深度上限。 */
   overflow: boolean;
-  /** 錨點數（所有層加總）。 */
   anchored: number;
-  /** 所有退化子區段內、剝完該子區段共同前後綴之後、沒配到的**基底**行數總和（④，定義寫死）。 */
   degradedLines: number;
-  /** 測試用：撞到哪一道上限（先撞到的那道；沒撞不帶）。 */
   capHit?: "work" | "depth";
-  /** 測試用：處理過的子區段的最大遞迴深度（頂層＝0）。 */
   maxDepthSeen: number;
-  /** 測試用：經過幾次「比較時間」的檢查點。 */
   checkpoints: number;
-  /** 測試用：累計的 Myers 步數。 */
   work: number;
 }
 
 export interface DiffOptions {
   maxD?: number;
   yieldFn?: () => Promise<void>;
-  /** 測試縫：時鐘（預設 `performance.now`）。 */
   now?: () => number;
-  /** 測試縫：工作量上限的倍數（預設 `DIFF_WORK_MAX_FACTOR`）。 */
   workFactor?: number;
-  /** 測試縫：遞迴深度上限（預設 `DIFF_DEPTH_MAX`）。 */
   maxDepth?: number;
 }
 
 const h8 = (b: Buffer): string => b.toString("latin1", 0, LINE_HASH_BYTES);
 
-/** agent 每行的兩份雜湊；`normalizeNumbered(k) === k` 時 `num = raw`（省一次 HMAC）。每 `YIELD_AFTER_MS` 讓出。 */
 export async function hashAgentLines(
   key: Buffer,
   salt: Buffer,
@@ -123,7 +107,6 @@ async function checkpoint(c: Ctx): Promise<void> {
   }
 }
 
-/** 有界 Myers：成功回配對（`[i, j, i, j, …]`，倒序）；D 超過 `maxD` 回 "overflow"；撞工作量上限回 "capped"。 */
 async function myers(c: Ctx, aLo: number, n: number, bLo: number, m: number): Promise<number[] | "overflow" | "capped"> {
   const dMax = Math.min(c.maxD, n + m);
   const off = dMax + 1;
@@ -173,7 +156,6 @@ function backtrack(trace: Int32Array[], dEnd: number, n: number, m: number, aLo:
   return out;
 }
 
-/** 子區段內的錨點（③）：兩邊唯一的等價行對，依 agent 位置取嚴格遞增的 LIS。回 `[i, j]` 依文件順序。 */
 function findAnchors(c: Ctx, aLo: number, aHi: number, bLo: number, bHi: number): Array<[number, number]> {
   const baseCount = new Map<number, number>();
   for (let i = aLo; i < aHi; i++) baseCount.set(c.baseId[i]!, (baseCount.get(c.baseId[i]!) ?? 0) + 1);
@@ -197,9 +179,7 @@ function findAnchors(c: Ctx, aLo: number, aHi: number, bLo: number, bHi: number)
     cand.push([i, j]);
     perAgent.set(j, (perAgent.get(j) ?? 0) + 1);
   }
-  // 同一個 agent 行同時是兩個基底鍵的候選（kind 0 與 kind 1 的雜湊相同）→ 兩者都不當錨點。
   const uniq = cand.filter(([, j]) => perAgent.get(j) === 1);
-  // patience：tails[len] ＝長度 len+1 的遞增子序列中結尾最小者在 uniq 的索引；prev 回溯。
   const tails: number[] = [];
   const prev = new Int32Array(uniq.length).fill(-1);
   for (let q = 0; q < uniq.length; q++) {
@@ -229,7 +209,7 @@ async function diffSpan(c: Ctx, aLo: number, aHi: number, bLo: number, bHi: numb
   while (aLo < aHi && bLo < bHi && eq(c, aHi - 1, bHi - 1)) c.pair[--aHi] = --bHi;
   const n = aHi - aLo;
   const m = bHi - bLo;
-  if (n === 0 || m === 0) return; // 一邊空：沒有可配的行（不是退化）
+  if (n === 0 || m === 0) return; // One side empty: nothing to pair (not a degradation)
   if (depth > c.maxDepth) {
     c.capHit ??= "depth";
     return degrade(c, n);
@@ -268,7 +248,6 @@ export async function diffLines(base: BaseLines, agent: AgentLines, opts: DiffOp
   const N = base.kinds.length;
   const M = agent.raw.length;
   if (base.hashes.length !== N * LINE_HASH_BYTES) throw new Error("diffLines: hashes and kinds differ in length");
-  // 比較鍵 `k<kind>:<hash>` 換成整數 id：基底行一個、agent 行各兩個（kind 0／1；不在基底裡的 → -1）。
   const ids = new Map<string, number>();
   const baseId = new Int32Array(N);
   const baseKind = new Uint8Array(N);

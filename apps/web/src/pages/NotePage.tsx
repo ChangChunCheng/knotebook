@@ -60,52 +60,38 @@ import { LazyPresentation } from "@/present/lazy";
 import { PresentationShell, type PresentationShellStatus } from "@/present/PresentationShell";
 import { exitFullscreenIfLeftPresentation, isPresentingSearch } from "@/present/present-url";
 
-// 版本歷史 UI：只經 `VersionsLazy` 這個 lazy 入口引用，每個掛載點各包一層 `VersionsLazyBoundary`。
+// The versions UI is referenced only through the lazy `VersionsLazy` entry; each mount point wraps its own `VersionsLazyBoundary`.
 const PreviewBanner = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.PreviewBanner })));
 const VersionPreview = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionPreview })));
 const VersionsDialogs = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionsDialogs })));
 const VersionsSheet = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionsSheet })));
 
-/** 終態後兩次重抓之間的間隔。 */
 const TERMINAL_RECONCILE_INTERVAL_MS = 750;
 
 /**
- * 終態後的對帳總時限。**server 最壞情況 5s + 餘裕**：`DELETE /api/notes/:id` 會先
- * `await beforeNoteDeleted(id)`（內含 unload 輪詢上限 20 × 250ms = 5s，見
- * `apps/server/src/collab/hooks-impl.ts`）**才**跑刪除交易，所以我們收到
- * NOTE_DELETED 之後，那一列最久可能還在 DB 裡待 5 秒。
+ * Server worst case (5 s) plus slack: `DELETE /api/notes/:id` (`trashNote`, apps/server/src/trash/service.ts) awaits `beforeNoteDeleted`
+ * (unload polling, at most 20 x 250 ms = 5 s; see `apps/server/src/collab/hooks-impl.ts`) before the trash transaction, so the note can stay
+ * listed for up to 5 s after NOTE_DELETED.
  */
 const TERMINAL_RECONCILE_TIMEOUT_MS = 6_000;
 
 /**
- * 終態（撤權／刪除）之後把 `['notes']` 跟 server 對齊——**有上限的重抓輪詢**，不是
- * 抓一次就算。
- *
- * 為什麼需要輪詢：server 的 `DELETE /api/notes/:id` 是「**先**關掉所有共編連線
- * （`beforeNoteDeleted`）、**再**跑刪除交易」（那個順序本身有正當理由：反過來會寫出
- * 孤兒 `note_states`，見 routes/notes.ts）。也就是說我們收到 NOTE_DELETED 的當下，
- * 那一列在 DB 裡**還在**，而且最久可能還要 5 秒才消失。任何「單發」的重抓——不論
- * 立刻抓還是固定延遲抓——都可能落在交易 commit 之前，撈回仍含這篇筆記的清單並把
- * 呼叫端剛做完的同步修正整個蓋掉（而且重抓成功還會清掉 invalidated 旗標，側欄就
- * 一路髒到整頁重載為止）。
- *
- * 因此：抓一次 → 若該筆還在就隔 `TERMINAL_RECONCILE_INTERVAL_MS` 再抓 → 直到它消失
- * 或到達 `TERMINAL_RECONCILE_TIMEOUT_MS` 為止，逾時就放手（絕不無限輪詢）。
- * `refetchType: 'all'`：換頁的縫隙裡 `['notes']` 可能一個 observer 都沒有，預設的
- * `'active'` 那時只會標記過期而不真的抓。
- *
- * 這些 timer 刻意**不**提供取消：呼叫端緊接著就會 `navigate` 把頁面卸載，能取消就
- * 等於什麼都沒做。`queryClient` 是 app 層級物件（活得比這個頁面久），對它 invalidate
- * 安全且冪等，而且整串輪詢有硬性時限。
- *
- * #103 起也讓 `['groups']` 失效一次，理由見函式內註解。
+ * Bounded refetch polling after a terminal state (revoke/delete), not a single fetch: the server closes collab connections before running the
+ * trash transaction (see `trashNote` in apps/server/src/trash/service.ts), so on NOTE_DELETED the note can still be listed for up to 5 s.
+ * A one-shot refetch, immediate or delayed, can land before the commit, bring the note back and overwrite
+ * the caller's synchronous fix (a successful refetch also clears the invalidated flag, leaving the sidebar stale until reload).
+ * So: fetch, and while the note is still listed fetch again every `TERMINAL_RECONCILE_INTERVAL_MS`, until it's gone or
+ * `TERMINAL_RECONCILE_TIMEOUT_MS` passes; never poll forever.
+ * `refetchType: 'all'`: between page changes `['notes']` may have no observer, and the default 'active' would only mark it stale.
+ * No cancellation on purpose: the caller navigates away (unmounting the page) right away, so cancelling would undo the whole point. `queryClient`
+ * is app-level and outlives the page, invalidating it is safe and idempotent, and the polling has a hard deadline.
  */
 export function scheduleTerminalReconcile(queryClient: QueryClient, noteId: string | undefined): void {
   const deadline = Date.now() + TERMINAL_RECONCILE_TIMEOUT_MS;
 
-  // #103：被移出群組（或群組被刪）的終態，除了那篇筆記，**群組本身**也可能已經不屬於
-  // 我——側欄的群組段是 `useGroups()` 決定的，不失效就會留著一個空群組段。群組清單
-  // 沒有「commit 晚於踢線」的競態（移人是先 commit 再踢），一發即可，不跟著輪詢。
+  // Also invalidate groups (#103): after removal from a group (or group deletion) the group itself may no longer be mine, and the sidebar's group
+  // section comes from `useGroups()`, so it would keep an empty group section. One shot is enough, not polled: removing a member commits before
+  // kicking, so the group list has no commit-after-kick race.
   void queryClient.invalidateQueries({ queryKey: ["groups"], refetchType: "all" });
 
   const stillListed = (): boolean =>
@@ -115,7 +101,7 @@ export function scheduleTerminalReconcile(queryClient: QueryClient, noteId: stri
     try {
       await queryClient.invalidateQueries({ queryKey: ["notes"], refetchType: "all" });
     } catch {
-      // 抓取失敗（離線、5xx…）不該讓對帳提早收工——照時程繼續試到期限為止。
+      // A failed fetch (offline, 5xx) must not end reconciliation early.
     }
     if (!noteId || !stillListed() || Date.now() >= deadline) return;
     setTimeout(() => void tick(), TERMINAL_RECONCILE_INTERVAL_MS);
@@ -124,21 +110,16 @@ export function scheduleTerminalReconcile(queryClient: QueryClient, noteId: stri
   void tick();
 }
 
-/** 編輯區（可編輯的內文）或手機編輯工具列內的節點；頁首的標題輸入框不算。 */
 const EDITING_SELECTOR = '[data-testid="note-editor"] [contenteditable="true"], [data-mobile-edit-toolbar]';
 function isEditingTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(EDITING_SELECTOR) !== null;
 }
 
-/** 連上之後以共編回報的角色為準；還沒連上（或已終止）時退回 REST 給的角色。 */
 function effectiveRole(state: CollabState, note: NoteDto): Role {
   return state.phase === "connected" ? state.role : note.role;
 }
 
-/**
- * 筆記 canonical 網址對應的 paramsKey（與 NotePage 內 `paramsKey` 的 `g:`／`n:` 兩形同格式；
- * 判別順序同 `canonicalNotePath`）。兩欄皆非字串時回 null（canonicalNotePath 會 throw 的那格）。
- */
+/** Same format and precedence as `paramsKey` and `canonicalNotePath`; null where `canonicalNotePath` would throw. */
 function notePathKey(note: NoteDto): string | null {
   if (typeof note.groupId === "string") return `g:${note.groupId}/${note.slug}`;
   if (typeof note.ownerHandle === "string") return `n:${note.ownerHandle}/${note.slug}`;
@@ -146,29 +127,12 @@ function notePathKey(note: NoteDto): string | null {
 }
 
 /**
- * 筆記編輯頁——`/n/:handle/:slug`（#122 新形）、`/g/:groupId/:slug`（#175 群組筆記）與
- * `/notes/:ref`（舊形，永久相容）三條 route 共用。
- *
- * 資料路徑（#122：「按 params 解析 → 改讀 id 鍵」）兩層：
- * - **解析層**：`paramsKey`（只從 `useParams` 衍生）與 `resolvedFor.key` 不等＝真導航
- *   → 依形解析（新形 `useNoteByPath(handle, slug)`；群組形 `useNoteByGroupPath(groupId, slug)`；
- *   舊形 `useNote(ref)`——legacy slug／`<vanity>-<uuid>`／純 uuid 都由 server 吃掉）→ 成功後 seed `['note', id]`
- *   並記 `resolvedFor`；相等時解析 query 停用。params 等於常駐層這一篇的 canonical
- *   時也不重解析（#179：收斂 effect 換網址會改 params，見 `needsResolve`）。
- * - **常駐層**：`useNote(resolvedFor.id)`——key 以 id 為錨永不過時，改標題、
- *   invalidate 全清、focus refetch 都安全；**此後的 404 才是「真刪除」**（解析層的
- *   404 是「連結無效」，兩個出口文案分開）。頁面的 `note` 一律只取常駐層。
- *
- * 網址收斂：**唯一寫網址點**是下面的 canonical 收斂 effect（TitleInput/
- * ShareDialog 的自帶 replaceState 已移除）：常駐層 note 變（含他人改 slug 後的
- * focus refetch）→ effect 以 router `navigate(…, { replace: true })` 換到 canonical
- * （#179：之前用 `history.replaceState`，router 的 location 停在舊網址，設定 modal 記下的
- * `backgroundLocation` 是舊的，關 modal 就把網址列換回舊網址）。換網址會改 params，
- * 但 `needsResolve` 把「params＝這一篇的 canonical」視為已解析，共編不拆線、編輯器不重掛。
- * 「這是不是目前開啟的筆記」仍一律走 ActiveNoteContext 的 note.id（見 `@/lib/active-note`）。
- *
- * 終態處理：`kicked`（撤權雙擊確認）與 `deleted`（筆記被刪）都是 toast + 導回 `/`。
- * 降級（editor → viewer）不是終態：連線留著，只是 `editable` 變 false 並 toast。
+ * The legacy `/notes/:ref` route (legacy slug, `<vanity>-<uuid>` or bare uuid; resolved server-side) is kept permanently alongside
+ * `/n/:handle/:slug` (#122) and `/g/:groupId/:slug` (#175).
+ * Two data layers: a resolve layer keyed by params (its 404 means "invalid link") and a resident layer keyed by id, which never goes stale on rename or invalidate, so its 404 means real deletion. `note` comes only from the resident layer.
+ * The canonical-URL effect is the only URL writer.
+ * Whether a note is the open one always goes through ActiveNoteContext's note.id (see `@/lib/active-note`).
+ * A downgrade to viewer is not terminal: the connection stays; `editable` turns false and a toast announces it.
  */
 export default function NotePage() {
   const params = useParams<{ ref?: string; handle?: string; groupId?: string; slug?: string }>();
@@ -177,20 +141,21 @@ export default function NotePage() {
   const queryClient = useQueryClient();
   const { user } = useSession();
   const phone = useIsPhone();
-  // 手機：焦點在編輯區或編輯工具列內＝編輯中，底部浮動鈕讓位；其餘（頁首標題、頁面空白處）不算。
+  // Phone: focus inside the editor or the edit toolbar means editing, and the bottom floating buttons make way; the header title and blank page
+  // areas don't count.
   const [editingFocus, setEditingFocus] = useState(false);
-  // 編輯區在焦點還在裡面時被卸載（點 wikilink 換篇、共編佔位換成編輯器）不會觸發 blur：每次 commit 後核對一次。
-  // 刻意不帶依賴：卸載不改變 editingFocus，只有每次 commit 後重查才抓得到；只在旗標為真且焦點已不在編輯區時才設值，不會連環更新。
+  // An editor unmounting while focused (wikilink navigation, placeholder swapped for the editor) fires no blur, so recheck after every commit.
+  // No deps on purpose: unmounting doesn't change editingFocus, so only a recheck after every commit catches it. It only sets state when the
+  // flag is true and focus has left, so it can't loop.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (editingFocus && !isEditingTarget(document.activeElement)) setEditingFocus(false);
   });
 
-  // paramsKey 三形：`n:`（/n/:handle/:slug）、`g:`（/g/:groupId/:slug，#175 群組筆記）、
-  // `ref:`（/notes/:ref）。前綴不同是**防禦性設計**（ref 不可能含 `/`，實際上單靠內容就分得開
-  // ——別把「跨 pattern 必不等」的功勞記在前綴上，無案守著它）；三條 route 共用本元件、明文
-  // 不依賴 remount。**禁止取自 window.location.pathname**：設定 modal 開著時它是
-  // `/settings/*`（主樹吃的是背景 location），拿它當 key 會把背景頁當成另一篇去解析。
+  // Three forms: `n:` (/n/:handle/:slug), `g:` (/g/:groupId/:slug), `ref:` (/notes/:ref). The prefixes are defensive (a `ref` can't contain `/`,
+  // so content alone tells the forms apart); don't credit them for cross-pattern inequality, no test guards that. The three routes share this
+  // component and explicitly don't rely on a remount.
+  // Never derive this from window.location.pathname: with the settings modal open it is `/settings/*` (the main tree uses the background location), and the background page would be resolved as another note.
   const form: "group" | "user" | "ref" =
     params.groupId !== undefined && params.slug !== undefined
       ? "group"
@@ -203,27 +168,22 @@ export default function NotePage() {
       : form === "user"
         ? `n:${params.handle}/${params.slug}`
         : `ref:${params.ref ?? ""}`;
-  // `knownKeys`（#179）：本次掛載期間**確知屬於這一篇**的 paramsKey——解析成功時的那把，
-  // 加上之後 params 跟著收斂（canonical）走過的每一把。常駐的筆記換成別篇時整組重來。
+  // `knownKeys`: paramsKeys known to belong to this note during this mount (the resolve key plus every canonical params followed). Reset when the resident note changes.
   const [resolvedFor, setResolvedFor] = useState<{ key: string; id: string; knownKeys: readonly string[] } | null>(
     null,
   );
 
-  // 常駐層（說明見下方 `note` 那段）。提前到 needsResolve 之前：判斷「params 是不是正指著
-  // 這一篇的 canonical」要用到它的 data。
+  // Resident layer (see `note` below). Declared before needsResolve, which reads its data to tell whether params point at this note's canonical.
   const noteQuery = useNote(resolvedFor?.id ?? "");
-  // #179：收斂 effect 改走 router `navigate` 之後，改標題換網址**會**改動 params。若只比
-  // `resolvedFor.key`，換網址那一下就被當成真導航——note/noteId 閘成 undefined、共編拆線重連、
-  // 編輯器重掛。所以 params 等於「常駐層這一篇目前的 canonical」時也算已解析：那條網址按
-  // 我們手上最新的資料就是這一篇（不是別篇——別篇的 canonical 不可能與它相同）。
+  // Params equal to the resident note's current canonical count as resolved: the convergence effect navigates through the router, which changes params, and treating that as a real navigation would gate note/noteId to undefined, drop collab and remount the editor.
+  // By our latest data that URL is this note: another note's canonical can't be the same.
   const residentKey = noteQuery.data && resolvedFor ? notePathKey(noteQuery.data) : null;
-  // params 是這一篇走過的舊網址（`knownKeys`）也不重解析。情境：開過設定、
-  // 關掉、改名（收斂換到新網址）、再按上一頁回到 `/settings/*`——那筆 entry 的 backgroundLocation
-  // 記著改名前的網址，它既不是 resolvedFor.key 也不是現行 canonical，舊版會重解析（共編斷線重連、
-  // 編輯器重掛；舊 slug 已解不回來時甚至被當成連結無效導回首頁）。
-  // knownKeys 只在**上一頁／下一頁（POP）**時採用。舊 slug 不保留——A 從 foo 改名 bar 之後，
-  // 新筆記 B 可能自動拿到 foo；這時點連結／側欄（PUSH）到 /n/<me>/foo 必須重解析、落到 B，不能留在 A。
-  // navigationType 取真實的（AppRoutes 提供）：主樹裡的 useNavigationType() 恆為 POP。
+  // Params this note passed through (`knownKeys`) don't re-resolve either, but only on POP. Case: open settings, close, rename (converging to a
+  // new URL), then Back into `/settings/*`: that entry's backgroundLocation holds the pre-rename URL, which is neither resolvedFor.key nor the
+  // canonical, and re-resolving would reconnect collab and remount the editor (or, if the old slug no longer resolves, report an invalid link
+  // and go home). Old slugs aren't kept otherwise: after A is renamed foo -> bar, a new note B may get foo, and a PUSH (link, sidebar) to
+  // /n/<me>/foo must re-resolve to B, not stay on A.
+  // Real navigationType comes from AppRoutes: `useNavigationType()` in the main tree is always POP.
   const localNavigationType = useNavigationType();
   const navigationType = useRealNavigationType() ?? localNavigationType;
   const needsResolve =
@@ -231,8 +191,7 @@ export default function NotePage() {
     (resolvedFor.key !== paramsKey &&
       residentKey !== paramsKey &&
       !(navigationType === NavigationType.Pop && resolvedFor.knownKeys.includes(paramsKey)));
-  // 已解析且 params 是 canonical 形時把 `resolvedFor.key` 跟上、並記進 knownKeys：否則下一次改標題
-  // （data 先變、網址後換）的那一 render，params 既不等於舊 key、也不等於新 canonical，會被誤判成真導航。
+  // Follow `resolvedFor.key` to a canonical params and record it: otherwise the render after a title change (data first, URL later) matches neither the old key nor the new canonical and looks like a real navigation.
   useEffect(() => {
     if (needsResolve || !resolvedFor || resolvedFor.key === paramsKey) return;
     setResolvedFor({
@@ -242,11 +201,9 @@ export default function NotePage() {
     });
   }, [needsResolve, paramsKey, resolvedFor]);
 
-  // 解析層依形三擇一（三個 hook 的 query key 各含自己那組 params，data 必屬當下
-  // ——此保證依賴 useNote/useNoteByPath/useNoteByGroupPath **沒有** placeholderData/
-  // keepPreviousData，見 hook 的禁令）。停用的那兩支 enabled 恆 false、零請求。
-  // 404 `in_trash` 不重試（重試結果不會變，預設退避 1＋2＋4 秒會讓「在垃圾桶裡」卡片晚約 7 秒才出現）；
-  // 其他錯誤照 QueryClient 的預設（全域不動）。
+  // Only the matching resolve query is enabled; its key includes its params, so data always belongs to the current URL, provided useNote/useNoteByPath/useNoteByGroupPath never use placeholderData/keepPreviousData.
+  // The two disabled queries never send a request.
+  // 404 `in_trash` isn't retried: the result won't change and the default backoff (1+2+4 s) would delay the trash card by about 7 s. Other errors use the QueryClient defaults (global settings untouched).
   const resolveRetry = useMemo(() => {
     const base = queryClient.getDefaultOptions().queries?.retry ?? 3;
     return (failureCount: number, error: Error) => {
@@ -267,20 +224,13 @@ export default function NotePage() {
   const resolveQuery = form === "group" ? resolveByGroupPath : form === "user" ? resolveByPath : resolveByRef;
   useEffect(() => {
     if (!needsResolve || !resolveQuery.data) return;
-    // seed 常駐層（`GET /api/notes/:ref` 與 `GET /api/notes/:id` 同一個 toNoteDto，
-    // server 測試釘同形）。這不只是省一次阻塞等待：link-sync 的掛載 effect 只在
-    // `[noteId, doc, provider]` 變動的那一 frame 讀一次 canEditRef——沒有 seed 的話
-    // 那一 frame `note` 還是 undefined、canEdit 判 false，link-sync **永遠不會 start()**
-    // （殺這行的突變由兩個 link-sync 案接住）。背景 refetch 仍會發一次，可接受。
-    // 已知行為：從**別篇**以已死的舊 slug 在 gc 窗（預設 5 分鐘）內重開某篇時，這裡命中的是
-    // 解析層舊快取——直接 seed、換到那篇（隨後背景 refetch 修正內容），死連結在窗內不走
-    // linkInvalid。屬可接受的快取語意，不是 bug。
-    // #179 例外：解析層快取指向**目前常駐的這一篇**、卻比常駐層的資料舊，而且正在重抓——等重抓
-    // 回來再決定。情境：A 從 foo 改名 bar 後，新筆記 B 拿到 foo；在 A 上點連結（PUSH）到
-    // /n/<me>/foo，解析層快取還是「foo＝A」，照用就會留在 A（錯篇）。重抓回來是 B 就換到 B；仍是 A
-    // （舊 slug 還解得回）就照常 seed；404（舊 slug 已死）就走 linkInvalid。重抓失敗或離線時
-    // react-query 會留著舊資料、isFetching 落回 false，這時照常 seed（可能留在 A）——但下面的
-    // 寫快取有守衛，不會把常駐層蓋回改名前的舊 DTO。
+    // Seed the resident layer (`GET /api/notes/:ref` and `GET /api/notes/:id` share toNoteDto; server tests pin the shape). Not just to save a
+    // blocking wait: link-sync's mount effect reads canEditRef only on the frame `[noteId, doc, provider]` changes, and without the seed `note`
+    // is still undefined there, canEdit is false, and link-sync never starts. A background refetch still fires once; acceptable.
+    // Known: reopening a note from another note via a dead old slug within the gc window (default 5 minutes) hits the stale resolve cache,
+    // seeds and switches to that note (the background refetch then fixes the content), so the dead link doesn't reach linkInvalid within the
+    // window. Accepted cache semantics, not a bug.
+    // If the resolve cache points at the resident note but is older and refetching, wait: after A was renamed and B took the old slug, a PUSH to that slug would otherwise stay on A. The refetch decides (B: switch; A: seed; 404: linkInvalid). If the refetch fails or offline, react-query keeps the old data and isFetching drops to false, so seed anyway (possibly staying on A); the guarded cache write below keeps it from reverting the resident layer to the pre-rename DTO.
     if (
       resolveQuery.isFetching &&
       resolveQuery.data.id === resolvedFor?.id &&
@@ -289,13 +239,13 @@ export default function NotePage() {
       return;
     }
     const id = resolveQuery.data.id;
-    // 常駐層已有比解析層更新的資料（例如改名後的 DTO）就不寫：解析層的舊快取（重抓失敗、離線、
-    // 或 404 時 react-query 留著的舊資料）會把常駐層蓋回改名前，收斂 effect 再把網址換回舊網址。
+    // Don't write when the resident layer has newer data (e.g. a renamed DTO): a stale resolve cache (kept by react-query after a failed
+    // refetch, offline, or a 404) would overwrite it and the convergence effect would navigate back to the old URL.
     const residentUpdatedAt = queryClient.getQueryState(["note", id])?.dataUpdatedAt ?? 0;
     if (residentUpdatedAt <= resolveQuery.dataUpdatedAt) {
       queryClient.setQueryData(["note", id], resolveQuery.data);
     }
-    // knownKeys：解析回同一篇（例如經舊形網址回來）就累加；換成別篇才整組重來。
+    // Accumulate when resolving to the same note; reset for another note.
     setResolvedFor((previous) => ({
       key: paramsKey,
       id,
@@ -317,15 +267,14 @@ export default function NotePage() {
     resolvedFor?.id,
   ]);
 
-  // 常駐層（`noteQuery` 宣告在上方）。轉場中（needsResolve）仍訂閱舊 id——render 閘門已擋住舊內容，保留
-  // 訂閱只是讓快取有人養；`note`/`noteId` 在轉場中一律 undefined，collab 連線隨之拆掉。
+  // Resident layer. During a transition (needsResolve) it still subscribes to the old id only to keep the cache fed; `note`/`noteId` are
+  // undefined, which tears down collab, and the render gate hides the old content.
   const note = needsResolve ? undefined : noteQuery.data;
   const noteId = needsResolve ? undefined : resolvedFor?.id;
 
-  // #122：側欄高亮的最終校正點（樂觀 set 見 NoteList；理由見 lib/active-note.tsx
-  // 檔頭）。直接進網址/書籤的路徑要等解析完成才亮——晚幀亮是明記的體感取捨。
-  // 卸載/換筆記時**條件清除**（current === 自己才清）：跨頁時新頁的 set 可能先跑，
-  // 無條件清會把剛亮起來的新頁高亮滅掉。
+  // Final correction of the sidebar highlight (#122; NoteList sets it optimistically, reasons in the lib/active-note.tsx header). A direct
+  // URL or bookmark highlights only after resolve: the late frame is an accepted trade-off.
+  // Cleanup is conditional (only if current is this page): on a page change the new page's set may run first.
   const { setActiveNoteId, clearActiveNoteId } = useActiveNote();
   useEffect(() => {
     if (!noteId) return;
@@ -333,25 +282,22 @@ export default function NotePage() {
     return () => clearActiveNoteId(noteId);
   }, [noteId, setActiveNoteId, clearActiveNoteId]);
 
-  // 401：session 真的沒了（不是撤權）。清掉 ['me'] 並導去登入頁——與 UserMenu 的
-  // 登出流程同一套終點，只是沒有 server round-trip 可打。
+  // 401 means the session is gone (not a revoke): clear ['me'] and go to login, the same end point as UserMenu's logout, minus the server round-trip.
   const handleUnauthorized = useCallback(() => {
-    exitOwnedFullscreen(); // #229：導頁之前
+    exitOwnedFullscreen(); // exit the fullscreen we own before navigating (#229)
     queryClient.setQueryData(SESSION_QUERY_KEY, null);
     void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
     void navigate("/login", { replace: true });
   }, [navigate, queryClient]);
 
-  // AI 修改紀錄 dialog 的開關（#106）。狀態在這一層而不是在觸發者身上：⋮ 選單項與
-  // 頁首的 `LastEditedLabel` 兩個都要打得開它（側欄筆記列 ⋮ 是第三個，經 NotePageControlsContext）。
+  // AI edits dialog state (#106) lives here, not on a trigger, because several open it: the menu item and the header `LastEditedLabel`
+  // (the sidebar note row menu is a third, via NotePageControlsContext).
   const [editsOpen, setEditsOpen] = useState(false);
   const openEdits = useCallback(() => setEditsOpen(true), []);
 
-  // 側欄 ⋮ 在「別篇」按 AI 修改紀錄：帶 `{openEdits:true}` 導過來。第一個 commit 就開（對話框要等
-  // 筆記就緒才渲染）並 replace 掉 state——不清的話重整／返回會再跳一次（history.state.usr 會被讀回）。
-  // 這時一定在 needsResolve，canonical 收斂 effect 還沒寫過網址，用 router 的 pathname replace 是安全的。
+  // Sidebar menu on another note navigates here with `{openEdits:true}`: open on the first commit (the dialog waits for the note) and replace the state, or reload/back would reopen it (history.state.usr is read back). This is always during needsResolve, before the convergence effect writes the URL, so replacing with the router pathname is safe.
   const location = useLocation();
-  // #229：簡報模式——location 取本頁自己的 useLocation()（主樹，與收斂 effect 同一來源）。
+  // Presentation mode (#229) reads this page's own useLocation() (main tree, same source as the convergence effect).
   const presenting = isPresentingSearch(location.search);
   const openEditsRequested = (location.state as Partial<OpenEditsState> | null)?.openEdits === true;
   useEffect(() => {
@@ -364,18 +310,17 @@ export default function NotePage() {
   }, [openEditsRequested, location.pathname, location.search, location.hash, navigate]);
 
   /**
-   * 這篇的文件被改了之後（別人——真人或 AI——或自己打的字），把 note query 對齊 server
-   * ——`lastEdited` 就住在 `NoteDto` 上，頁首 `LastEditedLabel` 讀的就是它；
-   * 只認別人的話，自己編輯後標籤要重新整理才會更新。`ref` 傳的是**解析層那把 key 的第二段**：舊形 `/notes/:ref` 是
-   * `params.ref`，新形 `/n/<handle>/<slug>` 與群組形 `/g/<groupId>/<slug>` 根本沒有這一層，
-   * 傳 `note.id` 讓 `invalidateNoteQueries` 跳過那一發（兩種路徑解析層由它依 `note.groupId` 二擇一）。
+   * After this note's document changes (others, human or AI, or own typing), align the note query with the server: `lastEdited` lives on
+   * `NoteDto` and the header `LastEditedLabel` reads it, so reacting only to others would leave the label stale after own edits until reload.
+   * `ref` is the resolve key's second segment (`params.ref` on the legacy route); the path and group routes have no such layer, so pass
+   * `note.id` to make `invalidateNoteQueries` skip it (it picks the resolve layer for those two forms by `note.groupId`).
    */
   const onDocUpdate = useCallback(() => {
     if (!note) return;
     invalidateNoteQueries(queryClient, note, params.ref ?? note.id);
   }, [note, params.ref, queryClient]);
 
-  // note query 拿到新的 lastEdited（與頁首「最後編輯」同一刻）就補進清單快取，最近 tab 才跟得上。
+  // When the note query gets a new lastEdited (same moment as the header's last-edited), feed it into the list cache so the Recent tab keeps up.
   const listNoteId = note?.id;
   const leAt = note?.lastEdited?.at;
   const leBy = note?.lastEdited?.byHandle;
@@ -394,19 +339,19 @@ export default function NotePage() {
     onUnauthorized: handleUnauthorized,
     onDocUpdate,
   });
-  // 筆記大小上限（server `NOTE_MAX_BYTES`）：編輯器在貼上、拖放、站內 AI 套用之前自己擋（`lib/note-size-guard.ts`）；已經超過的筆記
-  // 給一個不擋編輯的提示（同步後算一次，之後節流重算）。
+  // Note size limit (server `NOTE_MAX_BYTES`): the editor itself blocks paste, drop and in-app AI apply (`lib/note-size-guard.ts`); an
+  // already-oversized note gets a non-blocking notice (computed once after sync, then throttled).
   const authConfigData = useAuthConfig().data;
   const noteMaxBytes = authConfigData?.noteMaxBytes;
   const maxUploadBytes = authConfigData?.maxUploadBytes;
   const overLimit = useNoteOverLimit(doc, noteMaxBytes, noteId !== undefined && syncedFor === noteId);
 
-  // #293：scroller 存 ref（函式不能進 setState；頭像列只在點擊當下讀）。
+  // Held in a ref: functions can't go into setState; the avatar row reads it only on click.
   const cursorScrollerRef = useRef<CursorScroller | null>(null);
   const handleCursorScroller = useCallback((scroller: CursorScroller | null) => {
     cursorScrollerRef.current = scroller;
   }, []);
-  // #293：本分頁在這條連線 awareness 寫 knotebook 欄；avatar 只送 { id, v }（顯示圖尚未補產時別人取圖會 404 並退回首字，所以不必送 pending）。
+  // Avatars send only { id, v }: an image not yet generated 404s for others and falls back to the initial, so no pending flag is needed.
   useLocalPresenceField({
     provider,
     role: state.phase === "connected" ? state.role : null,
@@ -414,37 +359,26 @@ export default function NotePage() {
     avatar: user?.avatar ? { id: user.avatar.id, v: user.avatar.v } : null,
   });
 
-  // #269：段落錨點。root＝NoteEditor 的捲動容器（NoteEditor 以 ref 回報）；組合（ready＝這一篇同步過了）在 useMemberBlockAnchor。
   const [anchorRoot, setAnchorRoot] = useState<HTMLElement | null>(null);
   const blockAnchor = useMemberBlockAnchor({ noteId, collab: { synced, syncedFor }, root: anchorRoot, presenting });
 
-  // wikilink 連結索引提交器（client 段）。掛載在這裡（不是
-  // NoteEditor）：`noteId`／`useCollab` 的 `doc`／`provider` 都在這一層。
-  //
-  // `canEditRef` 在 render 當下（非 effect 內）同步寫入——與 `useCollab.ts` 的
-  // `onUnauthorizedRef.current = onUnauthorized` 同一手法：下面的掛載 effect deps
-  // 刻意限定 `[noteId, doc, provider]`（「synced 訂閱三護欄」
-  // 之一，見 `link-sync.ts` 檔頭），不能含 `state`/`note`——那樣連線本身沒換手也會
-  // 因為角色變動整個重訂閱，讓 provider 的 `synced` 事件（只在 false→true 邊緣
-  // emit 一次）錯過訂閱窗口，該連線就永遠不會提交。`canEdit` 判定因此只能透過 ref
-  // 在 effect「啟動當下」讀取一次快照（掛載時 canEdit 為真才 start()），
-  // 不能進 deps。
+  // Link index committer (client side), mounted here rather than in NoteEditor because `noteId` and useCollab's `doc`/`provider` live here.
+  // `canEditRef` is written during render (same as `onUnauthorizedRef` in useCollab) because the mount effect's deps must stay `[noteId, doc, provider]`: with `state`/`note` there, a role change would resubscribe and the provider's one-time `synced` edge could be missed, so the connection would never commit. canEdit is therefore read once as a snapshot when the effect starts.
   const canEditRef = useRef(false);
   canEditRef.current = note ? canEdit(effectiveRole(state, note)) : false;
   const linkSyncRef = useRef<LinkSync | null>(null);
 
-  // 版本歷史：canEdit 判準與標題／分享同一條（REST 角色、非終態；不看 synced——版本 API 走 REST）。
+  // Same canEdit criterion as title/share (REST role, non-terminal); synced is ignored because the versions API is REST.
   const versionsEnabled = note !== undefined && !stopsReconnect(state) && canEdit(effectiveRole(state, note));
   const versions = useVersionsController({
     noteId: noteId ?? null,
     enabled: versionsEnabled,
-    // 套用成功後筆記 query 整組失效（id 鍵＋舊形 ref 鍵＋路徑解析層）——就是 onDocUpdate 那一支，直接共用。
+    // After a successful apply the whole note query group is invalidated (id key, legacy ref key, path resolve layer): exactly onDocUpdate.
     onApplied: onDocUpdate,
   });
 
-  // Ctrl／Cmd+S＝儲存當前版本。一般 window keydown（與 AppShell 的 Ctrl+K 同形、非 capture）；
-  // canEdit、不在簡報模式、且沒有對話框／選單開著才攔並 preventDefault（BlockNote／ProseMirror 預設鍵盤表沒綁 Mod+S）。
-  // 例外：自家的儲存對話框開著時照樣 preventDefault（不讓瀏覽器跳另存網頁），但不再開第二次。
+  // Ctrl/Cmd+S saves a version: plain window keydown (not capture, like AppShell's Ctrl+K), intercepted only with canEdit, no presentation and no open dialog/menu; BlockNote doesn't bind Mod+S.
+  // While our own save dialog is open it still preventDefaults (no browser save-page) without opening a second one.
   const { enabled: vEnabled, openSave, preview: vPreview, stopPreview } = versions;
   const saveDialogOpen = versions.dialog?.kind === "save";
   useEffect(() => {
@@ -463,17 +397,16 @@ export default function NotePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [vEnabled, presenting, saveDialogOpen, openSave]);
 
-  // 預覽中 Esc＝離開預覽（橫幅沒有 ✕）。有對話框／選單開著時讓它們自己吃 Esc。
-  // ⚠ 主判準是 `event.defaultPrevented`：Radix 的 DismissableLayer 在 **document capture** 階段處理 Esc、
-  // 一定 `preventDefault()` 後 `onDismiss()`；真實按鍵在每個 listener 之間有 microtask checkpoint，React 19 的 SyncLane 會在
-  // 事件冒泡到 window **之前**就把浮層卸掉——所以「浮層 DOM 還在嗎」（isOverlayOpen）在真瀏覽器裡讀到 false、不可靠。
-  // isOverlayOpen 留作第二道（沒有 preventDefault 的浮層）。jsdom 的 fireEvent 不清 microtask，兩條判準在 jsdom 裡分不出來，
-  // 真鍵盤的行為由 e2e 22 守。
+  // Esc exits preview (the banner has no close button); open dialogs/menus handle their own Esc.
+  // Main check is `event.defaultPrevented`: Radix's DismissableLayer handles Esc in document capture and always calls preventDefault before
+  // onDismiss. Real key events get a microtask checkpoint between listeners, so React 19's SyncLane unmounts the overlay before the event
+  // reaches window, and checking overlay DOM (isOverlayOpen) reads false in real browsers. It stays as a second check for overlays that don't
+  // preventDefault. jsdom's fireEvent doesn't flush microtasks, so the two checks can't be told apart there; e2e/tests/22-versions.spec.ts covers the real keyboard.
   useEffect(() => {
     if (vPreview === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || isOverlayOpen()) return;
-      event.preventDefault(); // 這一下 Esc 只關預覽這一層（搜尋標記的 Esc 監聽看到 defaultPrevented 就讓路）
+      event.preventDefault(); // this Esc closes only the preview (the search-mark Esc listener yields on defaultPrevented)
       stopPreview();
     };
     window.addEventListener("keydown", onKey);
@@ -487,10 +420,7 @@ export default function NotePage() {
     linkSyncRef.current = linkSync;
     if (canEditRef.current) linkSync.start();
 
-    // 護欄③：訂閱後立刻檢查一次目前的 synced 狀態並補呼叫——`synced` 是 public
-    // getter（`provider.synced`），若這個 effect 是在 provider 早已同步完成之後才
-    // 掛上去的（例如 StrictMode 重掛、或本來就慢了一步），false→true 的那個邊緣
-    // 事件已經 emit 過、不會再等到，必須自己補這一次才不會整條連線永遠不提交。
+    // Check `provider.synced` right after subscribing: if the provider synced before this effect attached (StrictMode remount, slow mount) the false→true event already fired, and without this the connection would never commit.
     const handleSynced = () => linkSync.onSynced();
     provider.on("synced", handleSynced);
     if (provider.synced) handleSynced();
@@ -502,68 +432,48 @@ export default function NotePage() {
     };
   }, [noteId, doc, provider]);
 
-  // 403 閂的解閂觀察窗：獨立成一個 effect，deps 才能安全含 `state`
-  // 而不影響上面那個訂閱 effect 的 deps 限制。
+  // Own effect so its deps can include `state` without touching the subscription effect's deps restriction.
   useEffect(() => {
     linkSyncRef.current?.onCollabState(state);
   }, [state]);
 
-  // canonical 收斂 effect（#122(c)）：**唯一寫網址點**。資料來源＝常駐層
-  // note。「在途重解析時舊 note 不得寫網址」的**實際機制是 needsResolve 閘**
-  // （轉場中 `note` 被閘成 undefined → effect 早退）；`note.id === resolvedFor.id`
-  // 是第二道保險——常駐層 key 就是 resolvedFor.id、無 placeholderData，
-  // 目前結構下它不可達（別把功勞記在它頭上，突變測試驗過拿掉它無案會紅）。
-  // 只在與目前網址不同時改寫，避免每次 render 都往 history 塞東西。
-  //
-  // #179：一律走 router 的 `navigate(…, { replace: true })`，讓 router location 與網址列一致
-  // （舊版 `history.replaceState` 繞過 router，設定 modal 的 backgroundLocation 因此記到舊網址）。
-  // 比對對象是 router 的 location（主樹在 modal 開著時給的是背景 location），不是 window.location。
-  // - 一般：本頁就是真實 entry → replace 成 canonical，**保留既有 state**，另帶
-  //   `canonicalizedFrom` 標記（AppShell 據此不把「同一篇換網址」當成換頁去關抽屜）。
-  // - 設定 modal 開著（真實 entry 的 state 帶 backgroundLocation）：**不動**。真實網址是
-  //   `/settings/*`，換成筆記網址等於關掉 modal；改寫 entry 裡的 backgroundLocation 也不行——
-  //   modal 內切過分頁再按上一頁，會回到還記著舊網址的 entry，params 對不上 resolvedFor.key
-  //   而重解析（共編重連、編輯器重掛）。不動的話 resolvedFor.key 仍是背景的舊網址，
-  //   關 modal 回到背景時不重解析，接著照常收斂到新網址。
-  // - #229：寫入時保留 search 與 hash（只換 pathname）；比對仍只看 pathname。
+  // The only URL writer. A stale `note` can't write during a re-resolve because `needsResolve` gates it to undefined; `note.id === resolvedFor.id` is just a backstop (unreachable today).
+  // Uses router `navigate({ replace })` so the router location matches the address bar (`history.replaceState` left the settings modal's backgroundLocation on the old URL); compares against the router location (the background one while a modal is open), not window.location.
+  // Normal: replace with the canonical path, keeping state plus a `canonicalizedFrom` marker (so AppShell doesn't treat it as a page change and close drawers).
+  // Settings modal open (entry state has backgroundLocation): do nothing. Writing a note URL would close the modal, and rewriting backgroundLocation would make Back inside the modal mismatch resolvedFor.key and re-resolve. resolvedFor.key stays the old URL, so closing the modal doesn't re-resolve and then converges normally.
+  // Search and hash are preserved (#229); only pathname is replaced and compared. Only writes when it differs, so history isn't touched every render.
   const realLocation = useRealLocation();
   const readHistoryKey = useHistoryLocationKey();
-  // 最後一次寫出的（location.key, canonical）：同一組不寫第二次——navigate 沒生效（被攔、
-  // 或 router 沒跟上）時，effect 每次重跑都再 replace 一次就成了迴圈。
+  // Last written (location.key, canonical): never write the same pair twice, or a navigate that doesn't take effect (blocked, router lagging) would loop.
   const lastWriteRef = useRef<string | null>(null);
   useEffect(() => {
     if (!note || note.id !== resolvedFor?.id) return;
     const canonical = canonicalNotePath(note);
-    // 比對前先 decode：canonicalNotePath 回未編碼字串，真實瀏覽器的 pathname 對非
-    // ASCII slug（CJK/重音）回百分比編碼形——不 decode 的話「相同就不寫」對這類
-    // slug 恆失效，每次 note 物件變動都白做一次 replace（不會迴圈，只是浪費）。
-    // decodeURIComponent 對畸形 % 序列會 throw——瀏覽器產生的 pathname 不會畸形，
-    // try/catch 只是不讓防衛性比較本身變成炸點。
+    // Decode before comparing: canonicalNotePath returns unencoded text but real pathnames are percent-encoded for non-ASCII slugs, so "same, skip" would never match (a wasted replace per note change, no loop). try/catch: decodeURIComponent throws on malformed % sequences; browser pathnames never are, it only keeps the defensive comparison from throwing.
     let currentPath = location.pathname;
     try {
       currentPath = decodeURIComponent(currentPath);
     } catch {
-      // 保留原字串比對——最壞情況只是多一次 replace
+      // compare the raw path; worst case is one extra replace
     }
     if (currentPath === canonical) return;
     if ((realLocation?.state as { backgroundLocation?: unknown } | null | undefined)?.backgroundLocation) return;
-    // 有導覽在途（history 已換 entry、router location 還沒跟上——見 useHistoryLocationKey）就先別動：
-    // 這時 replace 會蓋掉剛導過去的 entry。transition commit 後 location 變、本 effect 會重跑。
+    // Skip while a navigation is in flight (history already moved, router location lagging; see useHistoryLocationKey): replacing now would clobber the new entry. The effect reruns once location changes.
     const historyKey = readHistoryKey();
     if (historyKey !== undefined && historyKey !== (realLocation ?? location).key) return;
     const write = `${location.key}\n${canonical}`;
     if (lastWriteRef.current === write) return;
     lastWriteRef.current = write;
-    // #229：保留 search／hash——`?present`（簡報模式）與 `#/<slide id>`（目前投影片）是網址狀態，
-    // 直接開 `/notes/:ref` 或播放中改名時收斂只換 pathname。
+    // Search and hash are URL state (`?present` for presentation, `#/<slide id>` for the current slide): when opening `/notes/:ref` directly or
+    // renaming while presenting, only the pathname changes.
     void navigate(
       { pathname: canonical, search: location.search, hash: location.hash },
       { replace: true, state: withCanonicalizedFrom(location.state, location.pathname) },
     );
   }, [location, navigate, note, readHistoryKey, realLocation, resolvedFor]);
 
-  // 換篇空窗：history 已換到別的網址、這一頁還沒被轉場換掉——此時標題框收的字會存進這篇（舊篇）。
-  // 同一篇的導覽不算：本頁收斂換 slug（REPLACE 且標記＝目前 pathname；上一頁／下一頁回到的舊 entry 不算）或只換 search／hash。
+  // Gap when history has moved to another URL but this page isn't swapped yet: title input text would be saved to the old note. Same-note navigation doesn't count: own slug convergence (REPLACE with the marker equal to the current pathname; old entries reached by Back/Forward
+  // don't count) or a search/hash-only change.
   const readHistoryLocation = useHistoryLocation();
   const isNavigatingAway = useCallback((): boolean => {
     const pending = readHistoryLocation();
@@ -573,17 +483,12 @@ export default function NotePage() {
     return pending.pathname !== rendered.pathname;
   }, [location, readHistoryLocation, realLocation]);
 
-  // 「已經決定要離開這一頁了」。共編終態與 API 404 是兩條互相獨立、可能**同時**成立的
-  // 離場路徑（筆記被刪時 close(NOTE_DELETED) 與 `GET /api/notes/:ref` 的 404 會前後腳
-  // 到），共用同一道閘門才不會噴兩則一模一樣的 toast、導兩次頁。`navigate` 之後這個
-  // 元件還會再 render 至少一次，所以閘門是必要的而不只是保險。
+  // One gate for two independent exit paths that can both hold (collab terminal and API 404 arrive back to back on delete), else a duplicate toast and double navigation. Needed, not just a safeguard: the component renders again after navigate.
   const leavingRef = useRef(false);
-  /** 頁首 ⋮ 觸發鈕：版本歷史整頁關閉時，開啟前的焦點元素（⋮ 選單項）已卸載就退回這裡。 */
+  /** Focus fallback when the pre-open element (menu item) was unmounted by closing the full-page versions view. */
   const noteMenuTriggerRef = useRef<HTMLButtonElement>(null);
-  // 「在垃圾桶裡」卡片還原後（卡片卸載、焦點掉到 body），筆記頁首掛上時把焦點移到標題框——
-  // 標題框在 DOM 順序上就是卡片原本的位置，閱讀器也藉此唸出結果（成功不另 toast）。不移到編輯器，免得誤打進內文。
-  // 旗標存「還原的那篇 id」、頁首每次掛上都取出並清掉：還原沒落地就換篇（重抓失敗、POST 未回就離開）時，
-  // 別篇的頁首只會清掉它、不搶焦點。
+  // After restoring from the trash card (card unmounts, focus falls to body), focus the title input when the header mounts: same DOM position as the card, and screen readers announce the result (no success toast). Not the editor, to avoid typing into the body.
+  // The flag holds the restored note's id and is consumed on each header mount: if the restore never landed, another note's header just clears it without taking focus.
   const focusTitleAfterRestoreRef = useRef<string | null>(null);
   const noteHeaderRef = useCallback(
     (header: HTMLElement | null) => {
@@ -591,32 +496,25 @@ export default function NotePage() {
       const target = focusTitleAfterRestoreRef.current;
       focusTitleAfterRestoreRef.current = null;
       if (target === null || target !== noteId) return;
-      // TitleInput 的 input（唯讀時是 h1，就不移）。
+      // Input only; read-only renders an h1, which isn't moved.
       header.querySelector<HTMLInputElement>("input[data-note-title-input]")?.focus();
     },
     [noteId],
   );
 
-  // 交給側欄筆記列 ⋮ 的「目前開著的那篇」（lib/note-page-controls.ts）：只在已解析出 noteId 時有值——
-  // 側欄對這一篇刪除要共用上面這道 `leavingRef`（否則自己刪完會再多一則「筆記已被刪除」toast），
-  // 「AI 修改紀錄」直接開本頁的對話框、不導頁。
+  // Only set once noteId is resolved. A sidebar delete of this note must share `leavingRef` (or it toasts "deleted" a second time); AI edit history opens this page's dialog without navigating.
   const controls = useMemo<NotePageControls | null>(
     () => (noteId ? { noteId, state, leavingRef, openEdits } : null),
     [noteId, state, openEdits],
   );
-  // 側欄在頁面外層（AppShellLayout）：把這一頁的控制與錨點 API 登記給它；簡報時整個殼 inert。
+  // The sidebar lives outside the page (AppShellLayout): register this page's controls and anchor API with it; the shell is inert while presenting.
   useRegisterNotePage(controls, blockAnchor);
   useAppShellInert(presenting);
 
-  // 404 三個出口分流（#122：文案不得混用）：
-  // ① 解析層 404＝**連結無效**（slug 已改名/從不存在）→ `note.linkInvalid`。導走
-  //    前把 active 歸零——本頁從未 set 成功、卸載的條件清除按 id 對不上，NoteList
-  //    樂觀 set 的殘留只有這行清得掉。
-  // ② 解析層 404 `in_trash`（帶 `noteId`；只有對它有垃圾桶權的人拿得到）＝**在垃圾桶裡**
-  //    → 卡片（還原／前往垃圾桶），不導頁、不 toast。缺 `noteId` 無從還原，照①。
-  // ③ 常駐層 404＝真刪除（見下方 `noteGone`）。常駐層**不分流** `in_trash`：它只發生在頁面開著時
-  //    筆記被移入，共編同時以 `deleted` 終態踢線、文案照舊，兩條離場路徑共用 `leavingRef`；
-  //    改顯示卡片會與終態 effect 搶出口。開著時被移入的人要救回，走垃圾桶 tab。
+  // Three 404 exits with distinct copy (#122). Resolve-layer 404 = invalid link (slug renamed or never existed) -> `note.linkInvalid`. Reset
+  // active before leaving: this page never set it and the unmount cleanup matches by id, so NoteList's optimistic set can only be cleared here.
+  // Resolve-layer `in_trash` (with `noteId`; only people with trash rights get it) = card, no navigation or toast; without `noteId` it can't be restored, so treat it as an invalid link.
+  // Resident-layer 404 = real deletion (`noteGone` below). `in_trash` isn't split there: it only happens when the note is trashed while open, collab kicks with the `deleted` terminal at the same time, and a card would fight the terminal effect for the exit; recovery is via the trash tab.
   const inTrashId =
     needsResolve &&
     resolveQuery.isError &&
@@ -625,7 +523,7 @@ export default function NotePage() {
     resolveQuery.error.code === "in_trash"
       ? (resolveQuery.error.noteId ?? null)
       : null;
-  // 卡片目前是不是當下畫面：還原的 POST 未回就換篇時，舊卡片的 onRestored 落地已不屬於畫面。
+  // A restore POST landing after switching notes belongs to a card no longer on screen.
   const shownInTrashIdRef = useRef<string | null>(null);
   useEffect(() => {
     shownInTrashIdRef.current = inTrashId;
@@ -639,21 +537,19 @@ export default function NotePage() {
   useEffect(() => {
     if (!linkInvalid || leavingRef.current) return;
     leavingRef.current = true;
-    exitOwnedFullscreen(); // #229：導頁之前退出我們要的全螢幕
+    exitOwnedFullscreen(); // exit the fullscreen we own before navigating (#229)
     setActiveNoteId(null);
     toast({ title: t("note.linkInvalid"), variant: "destructive" });
     void navigate("/", { replace: true });
   }, [linkInvalid, navigate, setActiveNoteId, t]);
 
-  // ② 常駐層 404＝**真刪除**（id 鍵永不過時，改標題/invalidate 都不會誤觸——這正是
-  //    id 錨定要解的病：舊架構下 slug 鍵在 focus 重抓 404 會把活筆記誤判成已刪）。
-  //    出口語意與共編 `deleted` 終態相同；set(null) 在此為冪等保險（cleanup 也清得掉）。
+  // Resident-layer 404 = real deletion (id-keyed, so rename/invalidate never trip it, unlike the old slug key, which mistook a live note for deleted on a focus refetch). Same exit as the collab `deleted` terminal; set(null) is an idempotent backstop (cleanup also clears).
   const noteGone =
     !needsResolve && noteQuery.isError && noteQuery.error instanceof ApiFail && noteQuery.error.status === 404;
   useEffect(() => {
     if (!noteGone || leavingRef.current) return;
     leavingRef.current = true;
-    exitOwnedFullscreen(); // #229：導頁之前退出我們要的全螢幕
+    exitOwnedFullscreen(); // exit the fullscreen we own before navigating (#229)
     setActiveNoteId(null);
     toast({ title: t("note.deleted"), variant: "destructive" });
     void navigate("/", { replace: true });
@@ -662,20 +558,13 @@ export default function NotePage() {
   useEffect(() => {
     if (!isTerminal(state) || leavingRef.current) return;
     leavingRef.current = true;
-    exitOwnedFullscreen(); // #229：導頁之前退出我們要的全螢幕
+    exitOwnedFullscreen(); // exit the fullscreen we own before navigating (#229)
     toast({
       title: state.phase === "kicked" ? t("note.accessRevoked") : t("note.deleted"),
       variant: "destructive",
     });
-    // 兩種終態都代表「這篇筆記對我而言已經不存在」，側欄不能再留著它——點進去只會
-    // 再被踢一次。
-    //
-    // 兩段式：① 先**同步**把它從 `['notes']` 濾掉，讓畫面在下一次 render 就正確；
-    // ② 交給 `scheduleTerminalReconcile` 做有上限的重抓輪詢跟 server 對齊。
-    // ①**不能單獨成立**：`navigate` 之後 NoteList 會重新掛載，預設 `staleTime: 0`
-    // 的 refetch-on-mount 會立刻重抓，而 server 此時很可能還沒 commit 刪除交易，
-    // 於是幽靈列被撈回來——真正把它清掉的是 ②。①仍然保留，因為它讓「重抓還沒回來
-    // 的那段時間」畫面是對的，成本只有一行。
+    // Both terminal states mean the note is gone for me: drop it from the sidebar (clicking it would only get kicked again). First filter `['notes']` synchronously, then run the bounded reconcile.
+    // The filter alone isn't enough: after navigate NoteList remounts and refetches (staleTime 0), possibly before the server commits the delete, bringing a ghost row back; the reconcile clears it. The filter stays so the screen is right while refetches are pending.
     queryClient.setQueryData<NoteDto[]>(["notes"], (previous) =>
       previous?.filter((candidate) => candidate.id !== noteId),
     );
@@ -683,25 +572,16 @@ export default function NotePage() {
     void navigate("/", { replace: true });
   }, [navigate, noteId, queryClient, state, t]);
 
-  // #229 卸載型呼叫點（後備）：NotePage 整頁卸載時，若網址已不含 present 就退出我們要的全螢幕。
+  // Fallback (#229): if the whole page unmounts and the URL no longer has present, exit the fullscreen we own.
   useEffect(() => () => exitFullscreenIfLeftPresentation(), []);
 
-  // 連線中的角色變動（撤權降級為 viewer／權限恢復）要讓使用者知道。
-  // 恢復沒有 server 通知，靠的是下一次 token 往返帶回來的 role（見 useCollab）。
-  //
-  // 基準以「這一條連線」為單位：記 `{ provider, role }`，provider 換了（＝換篇後新的一場連線）
-  // 第一次 connected 只記錄、不比較。換篇不 remount NotePage，只記 role 的話會把上一篇的角色
-  // 當基準（可編輯篇切到唯讀篇誤報降級、反向誤報恢復、#182 的失效也白跑）。
-  // 為什麼不用 noteId 當鍵：換篇後 useCollab 要等新 noteId 的連線 effect 跑完才 setState(INITIAL)，
-  // 之前那幾個 render 的 `state` 仍是**上一篇**殘留的 connected、`noteId` 卻已是新篇——單用 noteId
-  // 當鍵（無 provider 守衛）擋不住這個殘留，會把上一篇的角色記成新篇的基準。既然無論如何都需要
-  // provider 守衛，乾脆以 provider 為鍵。provider 與 state 同步更替：useCollab 在同一個 effect 裡
-  // `setState(INITIAL)`＋`setSession(新 provider)`（同一次 render 生效），殘留的 connected 只會配上
-  // 舊 provider 或 null（cleanup 已 setSession(null)），不會配上新的。同一篇內 provider 恆定
-  // （一次連線 effect 只 new 一個；reconnecting-once、斷線重連都沿用同一個），所以撤權第二擊、
-  // 重連後的角色變動照常比較。
-  // 存 WeakRef：強持有已 destroy 的 provider 會連帶留住上一篇的 Y.Doc。被回收時 deref() 為
-  // undefined，自然視為新連線（本來就是）。
+  // Role changes during a connection (revoke downgrade to viewer, access restored) are announced; recovery has no server notice, it arrives
+  // with the role of the next token round-trip (see useCollab).
+  // Baseline per connection (`{ provider, role }`): when the provider changes (new note's connection) the first connected only records. The page doesn't remount on note change, so a role-only baseline would take the previous note's role (editable -> read-only note reports a false downgrade, the reverse a
+  // false recovery, and the #182 invalidation runs for nothing).
+  // Keyed by provider, not noteId: after a switch useCollab resets state in an effect, so for a few renders `state` is still the previous note's connected while noteId is already new; noteId alone can't catch that. Provider and state change together (useCollab sets INITIAL and the new provider in one effect, effective in the same render; cleanup already
+  // set the session to null), so a stale connected only pairs with the old provider or null. Within one note the provider is constant (one per connection effect; reconnecting-once and reconnects reuse it), so the second revoke hit and role changes after reconnect still compare.
+  // WeakRef: a strong reference to a destroyed provider would retain the previous Y.Doc; a collected ref reads undefined and counts as a new connection.
   const previousRoleRef = useRef<{ provider: WeakRef<NonNullable<typeof provider>>; role: Role } | null>(null);
   const noteGroupId = note?.groupId ?? null;
   useEffect(() => {
@@ -709,19 +589,16 @@ export default function NotePage() {
     const previous = previousRoleRef.current?.provider.deref() === provider ? previousRoleRef.current.role : null;
     previousRoleRef.current = { provider: new WeakRef(provider), role: state.role };
     if (previous === null || previous === state.role) return;
-    // #182：重驗後角色變了但仍有存取——群組筆記的角色變動多半來自**群組角色**被改，側欄群組列的
-    // 「＋」看的是 `['groups']` 的 myRole.permissions，不失效就停在舊值直到重整。'none' 不在此
-    // 處理：那是撤權前半段，隨後的 kicked 終態由 scheduleTerminalReconcile 失效 ['groups']。
-    // 同時失效這篇的 `['note', id]`（頁首 ⋮／分享看 `note.permissions`）與 `['notes']`（側欄
-    // 筆記列 ⋮ 看清單裡每篇的 `permissions`）——同一次角色變動，權限欄位一樣停在舊值。
+    // Role changed but access remains (#182; on a group note usually a group role change): invalidate `['groups']`, since the sidebar group row's
+    // "+" reads myRole.permissions there and would stay stale until reload. 'none' is the first half of a revoke, whose kicked terminal invalidates groups.
+    // Also invalidate this note's `['note', id]` (header menu/share read `note.permissions`) and `['notes']` (the sidebar row menu reads each
+    // note's `permissions`): the same role change leaves those stale too.
     if (noteGroupId !== null && state.role !== "none") {
       void queryClient.invalidateQueries({ queryKey: GROUPS_QUERY_KEY });
       if (noteId) void queryClient.invalidateQueries({ queryKey: ["note", noteId] });
       void queryClient.invalidateQueries({ queryKey: ["notes"] });
     }
-    // 只對「真的變成 viewer」報降級。角色變 'none' 是撤權流程的前半段（server 緊接著
-    // 就會送 REVOKED close），若也在這裡 toast，使用者會先看到「已改為檢視者」再看到
-    // 「已失去存取權」——兩則互相矛盾的訊息（瀏覽器實測到的雜訊）。
+    // Toast only a real change to viewer: 'none' is the first half of revocation (the server then sends a REVOKED close), and toasting it would show a contradictory "now viewer" then "access lost".
     if (state.role === "viewer" && canEdit(previous)) {
       toast({ title: t("note.downgradedToViewer") });
     } else if (canEdit(state.role) && !canEdit(previous)) {
@@ -729,22 +606,13 @@ export default function NotePage() {
     }
   }, [noteGroupId, noteId, provider, queryClient, state, t]);
 
-  // 卡片版面：loading／error／`doc|provider|user` 未備妥時，一律渲染一張
-  // 不含 header/footer slot 的佔位內文卡——`headerSlot` 本來就只在真的掛上
-  // `NoteEditor` 之後才出現（頁頭裡的 TitleInput/ConnectionBadge/⋮ 都要吃 `note`/
-  // `state`），佔位卡沒有頭是這個既有語意的延續，不是新的行為。卡片本身
-  // （`cardSurface overflow-y-auto`）跟 `HomePage`／`NotePageFallback`／
-  // `NoteRouteErrorFallback` 共用同一款視覺（G 節）；這裡外面
-  // 多包一層 `flex min-h-0 flex-1` 的 body row，是因為這個 row 之後也要用來裝
-  // 真正的 `NoteEditor`（見下方 else 分支，同一個 row 兩種內容互斥）——另外三個
-  // 呼叫端沒有這層需求，卡片直接是 `AppShell` children 插槽（`main`，本身已是
-  // `flex flex-col`）底下的子項，不必額外包一層 row。
+  // Loading/error/not-ready always render a placeholder body card without header/footer slots (headerSlot only exists once NoteEditor mounts). The extra `flex min-h-0 flex-1` body row is shared with the real NoteEditor branch (mutually exclusive); other callers put the card directly in AppShell's main.
+  // The card (`cardSurface overflow-y-auto`) shares its look with HomePage, NotePageFallback and NoteRouteErrorFallback.
   const placeholderCard = (content: ReactNode) => (
     <div className="flex min-h-0 flex-1">
       <div className={cn(cardSurface, "min-w-0 flex-1 overflow-y-auto max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]")}>
-        {/* #115：佔位卡沒有 headerSlot（也就沒有頁首的側欄鈕）——`<xl` 時靜態側欄
-            是 hidden，缺這條的話 isError 這種**會停住**的狀態（筆記被刪、沒權限）
-            在手機上就是一行紅字＋零導覽出口（死路）。 */}
+        {/* The placeholder has no headerSlot (so no header sidebar button) (#115): below xl the static sidebar is hidden, and without this a stuck
+            error state (note deleted, no permission) would be one red line with no way out on phones. */}
         <NarrowTopBar />
         {content}
       </div>
@@ -761,18 +629,14 @@ export default function NotePage() {
       </p>,
     );
 
-  // 四**類**資料來源寫死——①解析中（來源：解析層）②錯誤卡（解析層或常駐層的
-  // 非 404 error）③collab 未備妥（來源：常駐層 note）④正常（常駐層）。實碼展開成
-  // 六格 if/else（loading 佔位卡出現在其中三格；第一格是解析層 `in_trash` 的卡片），分類與格數是兩回事。
   let body;
   if (needsResolve && inTrashId !== null) {
-    // 解析層 404 `in_trash`（出口②）：卡片在 AppShell children 內（「前往垃圾桶」要 actions context）。
-    // 還原後重抓解析層：成功就照常 seed、換成筆記；已被永久刪除則落到連結無效出口。
+    // The in_trash card renders inside AppShell children (its "go to trash" needs the actions context). After a restore, refetch the resolve layer: success seeds as usual; if permanently deleted it falls to the invalid-link exit.
     body = placeholderCard(
       <InTrashCard
         noteId={inTrashId}
         onRestored={() => {
-          // 卡片已不在畫面上：不設焦點旗標，也不重抓（閉包裡的解析層已不是當下那篇）。
+          // Card no longer on screen: set no focus flag and don't refetch (the resolve layer in this closure isn't the current note).
           if (shownInTrashIdRef.current !== inTrashId) return;
           focusTitleAfterRestoreRef.current = inTrashId;
           void resolveQuery.refetch();
@@ -780,33 +644,25 @@ export default function NotePage() {
       />,
     );
   } else if (needsResolve) {
-    // ①：轉場中**不渲染舊筆記**的 NoteEditor/TitleInput/ShareDialog——舊 note 已
-    // 被上面的閘門擋成 undefined，這裡只出佔位/錯誤卡。解析層 404 的那一 render 也落
-    // 在這格：續用佔位卡，靠 leavingRef 出口導頁。
+    // Don't render the old note's NoteEditor/TitleInput/ShareDialog in a transition (gated to undefined above). A resolve-layer 404 also lands here: keep the placeholder while leavingRef navigates.
     body = resolveQuery.isError && !linkInvalid ? errorCard(resolveQuery.error) : loadingCard();
   } else if (noteQuery.isError) {
-    // 常駐層 404＝真刪除（noteGone 出口正在導頁，這一 render 給佔位卡）；其他錯誤卡。
+    // noteGone's exit is navigating: placeholder for this render.
     body = noteGone ? loadingCard() : errorCard(noteQuery.error);
   } else if (noteQuery.isPending || !note) {
     body = loadingCard();
   } else if (!doc || !provider || !user) {
-    // `useCollab` 掛載 effect 內同步 setSession——這個窗口只有一個 frame（已查證），
-    // 落地時幾乎看不到，仍給一張佔位卡而不是讓頁面在這一格閃空白。
+    // useCollab sets the session synchronously in its mount effect, so this gap is one frame (barely visible); still render a placeholder rather than flash blank.
     body = placeholderCard(<p className="p-6 text-sm text-muted-foreground">{t("app.loading")}</p>);
   } else {
     const role = effectiveRole(state, note);
-    // 角色允不允許編輯（不看連線）：標題、分享這類**走 REST 的操作**用這個判準。
-    // #269：outdated（舊分頁閘門）與終態同樣唯讀——編輯器、標題、版本、簡報編輯入口。
+    // canEdit by role only (ignores the connection): for REST operations like title and share. Outdated (stale tab gate, #269) and terminal
+    // states are read-only too: editor, title, versions and the presentation edit entry.
     const roleCanEdit = !stopsReconnect(state) && canEdit(role);
-    // issue #48：**Y.Doc 的內容編輯**還要求同步過。第一次 sync 之前本機 Y.Doc 是空的——
-    // 這時的「可編輯」是一篇空白但看似正常的筆記，打的字只進本機、重整就沒了（沒有
-    // y-indexeddb）。同步過一次之後 `synced` 就 sticky true，斷線仍可編輯（那些離線編輯
-    // 會被 #39 的重啟併回），只是 badge 會升級成警示。
-    // ⚠ **標題不套這個閘門**：標題走 REST 的 last-write-wins、不走 Yjs（見
-    // `TitleInput` 檔頭），值來自已成功的 `GET /api/notes/:ref`——連不上共編但 REST 正常
-    // 時，改標題完全安全、重整也真的在。跟著 synced 一起鎖死是功能倒退。
+    // Y.Doc edits also require a first sync (#48): before it the local doc is empty and typed text would vanish on reload (no y-indexeddb). After the first sync `synced` stays true, so offline editing continues (merged back on reconnect) and the badge escalates.
+    // The title is exempt: REST last-write-wins, not Yjs (see the `TitleInput` header), value from a successful `GET /api/notes/:ref`, so
+    // renaming is safe and survives reload even when collab can't connect while REST works; gating it on synced would be a regression.
     const editable = roleCanEdit && synced;
-    // #293：此刻也開著這篇的其他人；只在 connected 時渲染，名單空不佔位。
     const presenceAvatars = (
       <PresenceAvatars provider={provider} connected={state.phase === "connected"} myUserId={user.id} scrollerRef={cursorScrollerRef} />
     );
@@ -841,12 +697,12 @@ export default function NotePage() {
               notePath={canonicalNotePath(note)}
               noteMaxBytes={noteMaxBytes}
               maxUploadBytes={maxUploadBytes}
-              // #430：焦點不在編輯器時頁面上的 Ctrl+Z 也撤銷這篇；簡報模式不接。
+              // When focus isn't in the editor, page-level Ctrl+Z also undoes this note (#430); not while presenting.
               pageUndoShortcut={!presenting}
               headerSlot={
-                // #115：頁首滿卡寬（置左置右）——單層 header 自己就是內容列，標題貼左、
-                // 控制項貼右；`px-5`（20px）與 `<md` 的內文左緣共線。#88 的文章欄對齊
-                // 已刻意拆除（見 ui/article-column.ts 檔頭）。
+                // The header spans the full card width (#115): a single-row header is itself the content row, title left, controls right;
+                // `px-5` (20px) lines up with the body's left edge below md. Don't put the article column back on the header;
+                // ui/article-column.guard.test.ts (d) and (e) pin both.
                 <>
                   {state.phase === "outdated" && <OutdatedClientBanner />}
                   {overLimit && (
@@ -854,7 +710,7 @@ export default function NotePage() {
                       {t("note.overSizeLimit")}
                     </p>
                   )}
-                  {/* header 本身是 container，容器查詢管不到自己的 gap，所以手機寬的 gap 用視窗寬（max-sm）。 */}
+                  {/* The header is itself a container, so container queries can't size its own gap: phone gap uses viewport width (max-sm). */}
                   <header
                     ref={noteHeaderRef}
                     className={
@@ -863,18 +719,17 @@ export default function NotePage() {
                         : "@container flex items-center gap-3 max-sm:gap-2 border-b border-border px-5 py-3"
                     }
                   >
-                    {/* #115：窄視窗的入口——手機是「‹」回清單，浮動段（xl:hidden）是側欄鈕；各自只在自己的寬度渲染。
-                        筆記載入成功態不掛 NarrowTopBar（頁首自己有這兩顆）；載入中/錯誤的佔位卡沒有頁首，
-                        由 placeholderCard 裡的 NarrowTopBar 補位。 */}
+                    {/* Narrow-width entry points (#115; phone back button to the list, floating sidebar button below xl), each rendered only at its own width. The loaded state has no NarrowTopBar since this header has both; placeholder cards have no header, so they carry it. */}
                     {phone ? (
                       <>
-                        {/* 手機：標題與它下方一行（連線點、位置、在線者）是同一個區塊；「‹」與右側動作鈕對齊整個區塊的垂直中心。連線狀態、在線者、最後編輯只渲染在這一處（不是 CSS 藏一份）。 */}
+                        {/* Phone: title and its sub-row are one block, and the buttons center on the whole block. Connection state, presence and last-edited render only here (not hidden by CSS elsewhere). */}
                         <div data-testid="note-header-title-row" className="flex items-center gap-2">
                           <BackToListButton />
                           <div data-testid="note-header-block" className="flex min-w-0 flex-1 flex-col">
                             <TitleInput note={note} readOnly={!roleCanEdit} isNavigatingAway={isNavigatingAway} />
                             <div data-testid="note-header-subline" className="flex items-center gap-2">
-                              {/* 位置排第一：它的左緣要與上面的標題對齊；連線點緊跟在位置文字後面（路徑太長時只截路徑），在線者在右邊。 */}
+                              {/* Location first so its left edge aligns with the title; the connection dot follows the location text (when the path is too
+                                  long only the path is truncated), and presence sits on the right. */}
                               <NoteLocation note={note} trailing={<ConnectionBadge state={state} synced={synced} canEdit={roleCanEdit} />} />
                               {presenceAvatars}
                               <LastEditedLabel note={note} onOpenEdits={openEdits} />
@@ -895,13 +750,13 @@ export default function NotePage() {
                         <LastEditedLabel note={note} onOpenEdits={openEdits} />
                         <FavoriteToggle note={note} />
                         <ShareDialog note={note} />
-                        {/* #297：寬度 icon 只在頁首夠寬時顯示（@container，見 NoteWidthToggle）。 */}
+                        {/* Width icon only when the header is wide enough (#297; @container, see NoteWidthToggle). */}
                         <NoteWidthToggle noteId={noteId!} />
                         {noteMenu}
                       </>
                     )}
                   </header>
-                  {/* 版本預覽橫幅：寬版預覽時在頁首下方；整頁（sheet）模式由整頁自己畫。 */}
+                  {/* Version preview banner below the header in wide preview; sheet mode draws its own. */}
                   {versions.preview !== null && versions.mode !== "sheet" && (
                     <VersionsLazyBoundary noteId={noteId ?? null} errorClassName={VERSIONS_ERROR_FRAME.inline}>
                       <PreviewBanner />
@@ -922,10 +777,9 @@ export default function NotePage() {
                 ) : undefined
               }
             />
-            {/* dialog 掛在 header 之外：它的開關由本頁持有，兩個觸發點共用（見上）。 */}
+            {/* Outside the header: its state lives on this page, shared by both triggers. */}
             <AiEditsDialog note={note} open={editsOpen} onOpenChange={setEditsOpen} />
-            {/* 窄視窗整頁。整頁一定比對話框先開（對話框是 modal，開著時點不到 ⋮，不可能再開整頁）；
-                兩者同為 z-50、portal 到 body，後掛的在上——所以對話框一定疊在整頁之上。 */}
+            {/* Narrow-width full page. It always opens before the dialog (a modal dialog blocks the menu), and both are z-50 portals to body with the later mount on top, so the dialog always overlays the page. */}
             {versions.mode === "sheet" && (
               <VersionsLazyBoundary noteId={noteId ?? null} errorClassName={VERSIONS_ERROR_FRAME.floating}>
                 <VersionsSheet doc={doc} lastEdited={note.lastEdited} returnFocusRef={noteMenuTriggerRef} />
@@ -943,9 +797,7 @@ export default function NotePage() {
     );
   }
 
-  // #229 簡報外殼：presenting 時一律掛（離場出口一設 leavingRef 就不掛）；overlay 要常駐層資料、
-  // 共編 doc／provider 都到、且首次 synced 之後才掛——刻意不跟 body 分支（常駐層一時錯誤時 body 是錯誤卡，
-  // 簡報層不受影響）。解析層 `in_trash` 不是 linkInvalid：外殼顯示錯誤態 `errors.in_trash`（與沒有權限同形）。
+  // The shell mounts whenever presenting (not once leavingRef is set). The overlay needs resident data, doc/provider and the first synced, and deliberately ignores the body branch, so a transient resident error doesn't affect it. Resolve-layer `in_trash` shows `errors.in_trash` (same as no permission).
   const presentFailure: unknown = needsResolve
     ? resolveQuery.isError && !linkInvalid
       ? resolveQuery.error
@@ -962,7 +814,7 @@ export default function NotePage() {
     <NotePageControlsContext.Provider value={controls}>
       <BlockAnchorContext.Provider value={blockAnchor}>
         {body}
-        {/* 簡報層掛到 body：NotePage 在側欄殼（簡報時 inert）的主區裡，留在原處會跟著 inert。 */}
+        {/* Mounted on body: NotePage sits inside the sidebar shell, which is inert while presenting. */}
         {shellMounted &&
           createPortal(
             <PresentationShell

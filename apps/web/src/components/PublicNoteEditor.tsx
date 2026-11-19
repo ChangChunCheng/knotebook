@@ -1,6 +1,4 @@
-// 與 NoteEditor.tsx 同一支樣式入口（`@blocknote/mantine/style.css` 自帶 react/core 的
-// 樣式鏈）；兩個模組同在 BlockNote 共用 chunk 裡，這裡再 import 一次是零成本的保險
-// ——公開頁不得倚賴「NoteEditor 恰好也被載入」才有樣式。
+// Deliberate: the public page must not rely on NoteEditor being loaded for BlockNote styles. Zero cost: both modules share the BlockNote chunk.
 import "@blocknote/mantine/style.css";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,59 +14,39 @@ import { publicRefIdentity, type PublicNoteRef } from "@/lib/public-note-ref";
 import { useTheme } from "@/theme";
 
 export interface PublicNoteEditorProps {
-  /** `decodePublicYdoc` 解出來的快照文件——本元件只讀不寫（沒有 provider、沒有連線）。 */
   doc: Y.Doc;
-  /** 公開頁把手（#122 起兩形）：`resolveFileUrl` 依形組公開圖端點路徑要用。 */
   publicRef: PublicNoteRef;
-  /** #269：公開 payload 的 links（只含有自訂公開網址的目標）。wikilink 經 WikilinkContext 的 public 模式渲染——不呼叫 useNotes。 */
   links: readonly PublicLinkDto[];
-  /** #465：建好編輯器時回報（標題大綱讀它的文件），卸載或換掉時回報 null。 */
   onEditor?: (editor: OutlineEditorLike | null) => void;
 }
 
-/**
- * 公開唯讀頁的 BlockNote 檢視（#72）。比照 `NoteEditor` 的拆分理由：BlockNote
- * 依賴大量 jsdom 沒有的 DOM/Range API，頁面層測試把這個模組 mock 掉、只驗 props 接線
- * （`PublicNotePage.test.tsx`）；選項本身的契約守在 `collab/editor-options.test.ts`。
- *
- * 實測結論：`withCollaboration`＋local `new Awareness(doc)`＋`editable={false}`
- * 在無 provider 下正常渲染（含 code/mermaid lazy 鏈）；**不掛 useCollab、不打
- * collab-token**（也沒有 noteId 可打）。
- */
+/** Split from `NoteEditor` because BlockNote needs DOM APIs jsdom lacks. Never mounts useCollab or calls collab-token (no noteId). */
 export function PublicNoteEditor({ doc, publicRef, links, onEditor }: PublicNoteEditorProps) {
   const { i18n } = useTranslation();
   const { resolvedTheme } = useTheme();
 
-  // local Awareness（y-protocols）：BlockNote 的 collaboration.provider 只吃
-  // `{ awareness }` 裸物件。unmount 時 destroy——Awareness 建構子掛了內部計時器
-  // （outdated state 檢查），不收會漏 interval。StrictMode（dev-only）下有兩個已知
-  // 且接受的小瑕疵：useMemo 雙跑棄置的第一顆到頁面卸載才消失；存活那顆會被模擬
-  // unmount destroy 一次後續用——唯讀頁無 peer、production 無雙跑，不為此繞路。
+  // Local Awareness: BlockNote only takes `{ awareness }`; destroy on unmount because the constructor starts a timer. Under StrictMode (dev only) the discarded first instance lives until unmount and the survivor is destroyed once by the simulated unmount and reused; accepted (read-only page has no peers, production does not double-run).
   const awareness = useMemo(() => new Awareness(doc), [doc]);
   useEffect(() => () => awareness.destroy(), [awareness]);
 
-  // deps 用逐值展開的識別字串，**不放 publicRef 物件本身**——防禦性寫法：不倚賴
-  // 呼叫端有 useMemo（現行 PublicNotePage 有 memo、identity 穩定；這裡只是不把
-  // 編輯器重建與否綁在上游的 memo 紀律上）。「同一掛載換 ref」在現行資料流到不了
-  // （ref 變→query key 變→data 清空→本元件先卸載），此 deps 不替那條路背書。
+  // Depend on an identity string, not the `publicRef` object, so rebuilds do not rely on caller memoization. A ref change within one mount cannot happen today (new ref -> new query key -> unmount); these deps do not vouch for that path.
   const refIdentity = publicRefIdentity(publicRef);
   const editor = useCreateBlockNote(
     buildReadonlyNoteEditorOptions({ doc, awareness, publicRef, language: i18n.language }),
-    // 語言刻意不進 deps（與 NoteEditor 同一條理由：字典只在建立時讀一次）。
+    // Language is not in deps: the dictionary is read once at creation.
     [doc, awareness, refIdentity],
   );
-  // 回呼經 ref 讀：呼叫端每次 render 傳新的函式，也不會讓編輯器被反覆回報成 null 再回報回來。
+  // Read via ref so a new callback each render does not report null then re-report.
   const onEditorRef = useRef(onEditor);
   onEditorRef.current = onEditor;
   useEffect(() => {
-    const report = onEditorRef.current; // cleanup 不讀 ref
+    // Captured so cleanup reports to the same callback.
+    const report = onEditorRef.current;
     report?.(editor);
     return () => report?.(null);
   }, [editor]);
   const mode = useMemo<WikilinkMode>(() => ({ mode: "public", links: new Map(links.map((l) => [l.id.toLowerCase(), l])) }), [links]);
 
-  // editable={false}：BlockNote 不會渲染任何輸入介面（formatting toolbar／slash／
-  // file panel 都只在可編輯時觸發），不必逐一關閉 controller。
   return (
     <WikilinkContext.Provider value={mode}>
       <BlockNoteView editor={editor} editable={false} theme={resolvedTheme} data-testid="public-note-editor" />

@@ -1,13 +1,10 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/**
- * 快照字串＝守門 2 與 revert-stale 判定的**唯一真相**。刻意不用雜湊：
- * WebCrypto 在非 secure context（LAN plain-http，是允許的正當拓撲）是
- * undefined，且 async 會打破「守門→replaceBlocks 全程同步」。
- */
+// A string, not a hash: WebCrypto is undefined outside secure contexts (plain-http LAN is supported), and
+// async would break the fully synchronous check → replaceBlocks.
 export function blockSnapshot(editor: AnyEditor, blockId: string): string | null {
   const block = editor.getBlock(blockId);
   return block === undefined ? null : JSON.stringify(block);

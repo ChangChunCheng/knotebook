@@ -2,47 +2,23 @@ import type { CodeBlockOptions } from "@blocknote/core";
 import { CODE_BLOCK_BASE_OPTIONS } from "@knotebook/shared";
 
 /**
- * 程式碼區塊語法上色（issue #96）：shiki 接進 BlockNote 的 `createCodeBlockSpec`。
- *
- * **刻意不用官方的 `@blocknote/code-block`**——那個包是 MPL-2.0（本 repo 是 MIT，
- * 比照 #106 拒用 `@blocknote/server-util` 的同一判準），還會多拖 `@blocknote/react`
- * 與 precompiled grammars；而 `createCodeBlockSpec({ createHighlighter })` 收的就是
- * 任何 shiki highlighter，直接用 shiki 本體（MIT）零損失。
- *
- * **深淺主題的機制**：BlockNote 的 highlight plugin 走 `prosemirror-highlight`，
- * 而那個 parser **寫死用 `getLoadedThemes()[0]`**（不帶 options 呼叫
- * `createParser`）——「載兩個 theme 依主題切換」這條路不存在。所以這裡只載一個
- * `createCssVariablesTheme`：token 顏色全部輸出成 `var(--code-…)`，實際色值定義在
- * `index.css` 的 `:root`／`:root.dark` 兩塊，跟著 `resolvedTheme` 即時切換，且與六色
- * accent 完全脫鉤（issue 的兩條設計限制）。變數清單見 `index.css` 的 code 區塊註解。
+ * Not the official `@blocknote/code-block` (MPL-2.0 in an MIT repo). One CSS-variables theme
+ * because BlockNote's highlight plugin hard-codes `getLoadedThemes()[0]`, so light/dark cannot be
+ * switched by loading two themes; the values live in `index.css` `:root` / `:root.dark`, following
+ * `resolvedTheme` and independent of the accent color.
  */
 
 /**
- * 語言下拉與 ``` 圍欄 input rule 的支援清單。key 必須是 shiki bundle 的語言 id——
- * `highlighter.loadLanguage()` 對 bundle 外的 id 是 **throw**（不是靜默跳過），而
- * BlockNote 是在游標進入 code block 時才 lazy 載入，打錯字的症狀是「執行期 console
- * 一條 unhandled rejection、上色靜默失效」。`code-highlight.test.ts` 逐 key 真載一次
- * 把這種錯收斂成測試紅。
- *
- * 挑選原則：常用語言 ＋ 每個 grammar 都是獨立 lazy chunk（Vite 對 shiki 的動態
- * import 自動 code-split），多列不影響 entry 體積，但別列到「沒人會在筆記裡貼」的
- * 長尾。`text` 是刻意的第一項：BlockNote 對 `text` 跳過上色，是純文字的退路。
+ * Keys must be shiki bundle language ids: `loadLanguage()` throws for unknown ids (the test loads
+ * every key). `text` is first because BlockNote skips highlighting for it.
  */
 export { SUPPORTED_LANGUAGES } from "@knotebook/shared";
 
 /**
- * BlockNote 首次渲染 code block 時才會呼叫（highlight plugin 內部 lazy），所以
- * shiki 本體與 grammar 都不進 entry——比照 `lib/mermaid.ts` 的動態載入模式，
- * `scripts/check-bundle-size.mjs` 的 entry 上限守著這件事。
- *
- * `langs: []` 起步：個別 grammar 由 plugin 對 `loadLanguage()` 的呼叫按需載入。
- * JS regex engine（不是預設的 oniguruma）省掉 WASM 那顆 chunk；本清單的語言全數
- * 相容（`code-highlight.test.ts` 逐一載過）。
- *
- * ⚠ **不要換回預設的 oniguruma engine**：server 送的 CSP（issue #101）沒有
- * `'wasm-unsafe-eval'`，換回去會讓 WASM 編譯被瀏覽器擋掉、**上色靜默失效**（只有
- * console 一則 violation）。真要換，`apps/server/src/http/security-headers.ts` 的
- * script-src 要一起加。
+ * Lazy, so neither shiki nor its grammars land in the entry bundle (`check-bundle-size.mjs`). JS
+ * regex engine, not oniguruma: the CSP has no `'wasm-unsafe-eval'`, so WASM would be blocked and
+ * highlighting would silently fail; switching engines requires adding it to script-src in
+ * `apps/server/src/http/security-headers.ts`.
  */
 export async function createHighlighter() {
   const [{ createHighlighter: create, createCssVariablesTheme }, { createJavaScriptRegexEngine }] = await Promise.all([
@@ -52,15 +28,11 @@ export async function createHighlighter() {
   const theme = createCssVariablesTheme({
     name: "knotebook-code",
     variablePrefix: "--code-",
-    // fontStyle: comment 的斜體之類由 theme 的 fontStyle 規則帶出，不影響顏色變數。
     fontStyle: true,
   });
   return create({ themes: [theme], langs: [], engine: createJavaScriptRegexEngine() });
 }
 
-/** `collab/schema.ts` 的 `createCodeBlockSpec` 唯一應該吃的選項物件。基底
- * （`defaultLanguage`／`supportedLanguages`）住 `@knotebook/shared` 的
- * `note-schema-config.ts`，這裡疊上 web 專屬的 `createHighlighter`。 */
 export const CODE_BLOCK_OPTIONS: CodeBlockOptions = {
   ...CODE_BLOCK_BASE_OPTIONS,
   createHighlighter,

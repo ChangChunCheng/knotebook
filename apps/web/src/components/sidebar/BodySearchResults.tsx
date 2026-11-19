@@ -12,27 +12,15 @@ import { highlightTitle, searchMetaLineClass, searchTitleLineClass, SearchRow } 
 import { noteLocationLabel, type LocationContext } from "./tree";
 
 /**
- * #93：側欄搜尋的合併結果列表（lazy chunk 內，唯一入口 `BodySearchLazy.tsx`）。標題命中（`titleNotes`，client 對清單算的）與內文命中
- * （server）合成**一個列表**，**每個含查詢字的段落各列一項**（server 每個段落只回第一個命中，所以一項＝一個段落、不是每一次出現；
- * 一個段落裡出現好幾次還是一項，點了跳到第一個；server 每篇最多回 3 個段落。`mergeSearchRows` 去重後 `flattenRows` 攤平；一篇 3 個段落就 3 項，每項重複標題與路徑）：
- * 三行＝筆記標題、資料夾路徑、命中片段；只有標題命中的篇是兩行（標題、路徑）、點了開筆記不帶查詢字。外殼 `BodySearchResults` 接 hook；`BodySearchView` 只吃 state（測試直接餵 state）。
- *
- * - **交叉比對**：內文 hit 只顯示 `notes`（`useNotes()` 的清單，`SearchResults` 已載入）裡有的 id；連結與位置行用清單裡那筆 `NoteDto`
- *   （查詢快取 30 s，期間改名、搬群組、移進垃圾桶都不會連到舊路徑）。
- * - pending／error 時照樣顯示標題命中的列（只缺片段），狀態句在列表上方。
- * - 片段裁切與標亮用 state 的 `forQuery`（產出這批的字），不用當下的字；標題標亮用當下的字（標題清單是 client 即時算的）。
- * - 點片段＝#269 段落錨點：`筆記網址#b-<sectionId>`（`_top` 不帶錨點），經 `useWikilinkActivate`（同篇只捲動、別篇 navigate），並帶
- *   `findText: forQuery`——筆記開好後在那一段的範圍內找第一個含查詢字的 block 捲過去、高亮（`hooks/block-find.ts`；比對規則與標亮同一支
- *   `lib/search-match.ts`）。點任何結果都主動關抽屜（點目前這一篇時 pathname 不變，AppShell 的「換頁關抽屜」不會觸發）。修飾鍵點擊交給瀏覽器。
- * - 篇數行（唯一的 `role="status"`）在 `SearchResults`（側欄只准一個 status：e2e 33 的 strict locator）；這裡用 `onStatus` 把合併後的項數回報給它。
- *   本元件自己的 `aria-live="polite"` 只念 pending／error 句。
+ * Merged list (lazy chunk; sole entry `BodySearchLazy.tsx`): one row per matching paragraph (the server returns only the first hit per paragraph, at most 3 per note), plus title-only rows.
+ * Body hits show only ids present in `notes` (already loaded by `SearchResults`) and link via that `NoteDto`: the query cache lives 30 s, during which a rename, move or trash must not yield a stale path.
+ * Snippet cropping and highlighting use `forQuery` (the query that produced the batch); title highlighting uses the current query (titles are filtered live on the client).
+ * Every click closes the drawer: clicking the current note leaves the pathname unchanged, so AppShell's close-on-navigate doesn't fire.
+ * The sidebar may hold only one `role="status"` (an e2e locates it with a strict locator), which lives in `SearchResults`; this component reports its row count via `onStatus`, and its own `aria-live` reads only pending/error.
  */
 export interface BodySearchProps {
-  /** 當下（trim 後）的搜尋字。 */
   query: string;
-  /** 首包 `SearchResults` 算好的防抖後的字。 */
   debounced: string;
-  /** 標題命中的筆記（`SearchResults` 對清單算的，清單順序）與標題標亮用的小寫字。 */
   titleNotes: NoteDto[];
   titleLowerQuery: string;
   notes: NoteDto[];
@@ -70,7 +58,7 @@ export function BodySearchView({
   const forQuery = ready ? state.forQuery : "";
   const lowerQuery = forQuery.toLowerCase();
   const more = ready && state.hasMore;
-  // stale（防抖中或新字還在路上）時內文結果是舊字的：不回報，篇數行只顯示標題命中的篇數，不把舊查詢的內文命中算進「N 筆結果」。
+  // Stale (debouncing or a new query in flight): don't report, or old body hits would be counted in "N results".
   const reportable = ready && !state.stale;
 
   const currentSeen = new Set<string>();
@@ -97,7 +85,7 @@ export function BodySearchView({
     event.preventDefault();
     setActiveNoteId(note.id);
     closeDrawer();
-    // broken 恆 false：hit 已與側欄清單交叉比對，連得到。
+    // broken is always false: hits are cross-checked against the sidebar list, so they resolve.
     activate({
       href,
       targetNoteId: note.id,
@@ -117,7 +105,7 @@ export function BodySearchView({
           {items.map((item) => {
             const label = noteLocationLabel(item.note, location, t);
             const active = activeNoteId === item.note.id;
-            // 同一篇有多項時，只有第一項帶 aria-current="page"（其餘只有視覺上的底色）：讀屏不要唸好幾個「目前頁面」。
+            // Only the first row of a note gets aria-current="page": screen readers shouldn't read several "current page".
             const current = active && !currentSeen.has(item.note.id);
             if (active) currentSeen.add(item.note.id);
             return item.kind === "title" ? (
@@ -165,7 +153,6 @@ export function BodySearchView({
   );
 }
 
-/** 只有標題命中的一項：兩行（標題、路徑），點了開筆記、不帶查詢字。 */
 function TitleOnlyItem({
   note,
   label,
@@ -186,10 +173,6 @@ function TitleOnlyItem({
   );
 }
 
-/**
- * 一處內文命中＝一項、一個可點的 link（鍵盤與 a11y：單一 `<a>`，焦點樣式沿用全站預設）。三行：筆記標題（命中字標亮）、
- * 資料夾路徑（`noteLocationLabel`，不顯示段落標題）、命中片段（照舊裁切與標亮）。三行一律 <div>（理由同 `SearchRow`）。
- */
 function MatchItem({
   note,
   match,
@@ -206,7 +189,6 @@ function MatchItem({
   titleLowerQuery: string;
   lowerQuery: string;
   active: boolean;
-  /** 這一項帶 `aria-current="page"`（同一篇多項時只有第一項）。 */
   current: boolean;
   onMatchClick: (note: NoteDto, match: NoteSearchMatchDto, href: string) => (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {

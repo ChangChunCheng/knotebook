@@ -6,15 +6,12 @@ import { noteSchema } from "@/collab/schema";
 import type { DiffBlock } from "./version-diff";
 
 /**
- * 版本快照 → blocks。**不 mount、不掛 collaboration**：`yXmlFragmentToBlocks` 只用 editor 的
- * ProseMirror schema（未 mount 的編輯器讀得到完整 blocks、wikilink 的 targetNoteId 保留）。
- * ⚠ 禁止改成「對活 fragment mount 一顆 collaboration editor」——那顆編輯器會把正規化結果寫回活文件
- * （mount 真空筆記會回寫空段落並傳到 server），等於預覽就改了筆記。
- *
- * 讀者編輯器只建一次、重複使用：它從不 mount，`yXmlFragmentToBlocks` 只用 `pmSchema` 做節點轉換。
- * ⚠ 讀取路徑並非唯讀：y-prosemirror 的 `createNodeFromYElement` 遇到 schema 不認得的節點型別，會在
- * `el.doc.transact` 裡刪掉那個 Y 節點；遇到本機 clientID 的相鄰 Y.Text 也會合併刪除。
- * 對活文件直接讀等於把這些寫回並同步到 server，所以「目前狀態」必須先 fork（見 `forkLiveBlocks`）。
+ * Does not mount and does not attach collaboration: `yXmlFragmentToBlocks` uses only the editor's ProseMirror schema.
+ * Never mount a collaboration editor on the live fragment: it would write its normalized result back into the live
+ * document (an empty note gets an empty paragraph synced to the server), so previewing would modify the note.
+ * The read path is not read-only either: y-prosemirror's `createNodeFromYElement` deletes Y nodes of types the schema
+ * does not know and merges adjacent Y.Text nodes of the local clientID, inside `el.doc.transact`. Hence the "current
+ * state" must be forked first (see `forkLiveBlocks`).
  */
 let reader: BlockNoteEditor<typeof noteSchema.blockSchema, typeof noteSchema.inlineContentSchema, typeof noteSchema.styleSchema> | null = null;
 function getReader() {
@@ -36,10 +33,7 @@ export function ydocBytesToBlocks(bytes: Uint8Array): DiffBlock[] {
   }
 }
 
-/**
- * 「目前狀態」：先 fork 活文件（逐字形）再讀 fork。fork 是承重的：讀取路徑可能對不合法節點／
- * 相鄰 Y.Text 寫回（見檔頭），寫回只發生在 fork 上，活文件零寫入。
- */
+/** The fork is load-bearing: the read path may write back, and that happens only on the fork, so the live document gets zero writes. */
 export function forkLiveBlocks(live: Y.Doc): DiffBlock[] {
   return ydocBytesToBlocks(Y.encodeStateAsUpdate(live));
 }

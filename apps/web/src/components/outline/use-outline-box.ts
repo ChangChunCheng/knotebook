@@ -1,20 +1,17 @@
 import { useLayoutEffect, useState } from "react";
 
-/** 捲動容器的可視寬高，與第一行內文的位置；以容器為原點。 */
+/** Container-relative: the scroll container's visible size and the first text line's position. */
 export interface OutlineBox {
   width: number;
   height: number;
   /**
-   * 第一個區塊內容頂端離容器上緣的距離，以捲到最上面時的位置算（與目前捲動無關）；量不到（還沒有區塊）為 null。
-   * 標題大綱的上緣對齊它。
+   * Distance from the container top to the first block's content top, at scroll 0 (independent of current scroll); null
+   * before any block exists. The headings outline aligns its top with it.
    */
   firstLineTop: number | null;
 }
 
-/**
- * 量測捲動容器與第一行內文；視窗或任一元素改變尺寸時更新，值沒變就不重繪。
- * 任一元素還沒掛上回 null。
- */
+/** null until both elements are mounted; skips re-rendering when the values are unchanged. */
 export function useOutlineBox(scrollEl: HTMLElement | null, columnEl: HTMLElement | null): OutlineBox | null {
   const [box, setBox] = useState<OutlineBox | null>(null);
 

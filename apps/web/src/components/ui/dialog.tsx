@@ -26,14 +26,11 @@ export const DialogOverlay = forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-/** `size="default"`＝既有的單欄表單 dialog 尺寸（NoteList/ShareDialog 既有用法，
- * 未傳 `size` 時行為零變）；`lg` 已於 #247 刪除：再用會直接型別錯誤，比照 `button.tsx` 刪 `secondary`
- * 的做法，不靠 grep 測試；`size="panel"`＝三個管理面板（`components/management/ManagementShell.tsx`，#247）
- * 與快捷鍵介紹頁（`components/shortcuts/ShortcutsDialog.tsx`，單卡、寬度另以 className 收窄）：
- * 外框本身透明無邊、不投影，托盤與兩張卡由 ManagementShell 自己畫；640～767 為 `96vw × 92dvh`，手機（< 640）是貼底、幾乎滿高的 sheet（上方留一道縫，見下），
- * `md:` 以上 `92vw × 88dvh` 夾在 896×672～1360×896 之間（高度一律用 `dvh`：iOS Safari 的 `vh` 比看得見的高度高）；`max-w` 讓兩側各至少留 2vw 與左右 safe area 的較大者（橫拿時面板邊緣不進感應器區）。`panel` 時**不渲染內建 Close**——
- * 面板在右卡自己放一顆帶 i18n 名稱的 ✕，這裡再放就會有兩顆 Close。
- * `panel` 的 grid 軌道是 `minmax(0,1fr)`：預設的 `auto` 軌道會依托盤內容撐大，托盤就會在高度與寬度上都長出外框、右卡永遠不捲動。 */
+/**
+ * `size="panel"` (management panels and the shortcuts dialog): the frame is transparent with no border or shadow (ManagementShell draws the tray and cards); a bottom sheet on phones.
+ * Heights use `dvh`: iOS Safari's `vh` is taller than the visible height. `max-w` leaves each side at least the larger of 2vw and the left/right safe area (landscape edges stay out of the sensor area).
+ * No built-in Close is rendered: the panel's right card has its own labelled ✕. The grid track is `minmax(0,1fr)`: an `auto` track grows with tray content and the right card would never scroll. `lg` was removed: using it is a type error.
+ */
 const dialogContentVariants = cva(
   "fixed left-1/2 top-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 outline-none " +
     "rounded-lg border border-border bg-popover text-popover-foreground shadow-lg duration-200 " +
@@ -44,9 +41,8 @@ const dialogContentVariants = cva(
       size: {
         default:
           "max-w-lg p-6 " +
-          // 手機（< 640）：貼底的 sheet。鍵盤升起時 `--kb-inset` 把 sheet 抬到鍵盤上方、`--kb-visible-h`（視覺視窗高）決定高度上限，
-          // 這樣 iOS 平移視覺視窗時 sheet 的頂端也不會跑出可見範圍；內容高過上限就在 sheet 內捲動。
-          // 不過場：bottom／max-height 若跟著 `duration-200` 過渡，sheet 會落後鍵盤並在平移時晃動。
+          // Phone: bottom sheet. With the keyboard up `--kb-inset` lifts it and `--kb-visible-h` caps its height so the top stays visible when iOS pans the visual viewport; taller content scrolls inside.
+          // No transition: with `duration-200` on bottom/max-height the sheet lags the keyboard and wobbles on pan.
           "max-sm:inset-x-0 max-sm:bottom-(--kb-inset,0px) max-sm:top-auto max-sm:translate-x-0 max-sm:translate-y-0 " +
           "max-sm:max-w-none max-sm:max-h-[calc(var(--kb-visible-h,100dvh)*0.9)] max-sm:overflow-y-auto max-sm:transition-none " +
           "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))] kb-sheet",
@@ -54,11 +50,9 @@ const dialogContentVariants = cva(
           "p-0 bg-transparent border-0 shadow-none overflow-visible w-[96vw] h-[92dvh] " +
           "max-w-[calc(100vw-2*max(2vw,env(safe-area-inset-left),env(safe-area-inset-right)))] " +
           "grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] " +
-          // 手機（< 640）：貼底、滿寬、幾乎滿高的 sheet，由下往上升起（`kb-sheet`）。上方留一道縫（至少 28px，有瀏海時是 safe area 再加 8px），
-          // 看得到後面變暗的頁面，點它關掉：再窄的話，觸控的目標修正會把點在縫上的一下歸給旁邊的 sheet，等於點不到。
-          // 高度＝看得見的高度（`--kb-visible-h`，沒有視覺視窗時 `dvh`）減去那道縫，鍵盤升起時底緣抬到鍵盤上方。
-          // 托盤在手機上不留內距，卡貼齊 sheet；底與左右的 safe area 是卡自己的內距（`management/tray.ts` 的 `managementCardPhoneInset`／
-          // `managementListPaddingPhone`），卡左上角的「‹」也自己退開左側 safe area。不過場：理由同預設尺寸。
+          // Phone: full-width, nearly full-height sheet rising from the bottom (`kb-sheet`) with a gap above (at least 28px; safe area + 8px with a notch) so the dimmed page can be tapped to close: any narrower and touch target correction gives the tap to the sheet.
+          // Height = visible height (`--kb-visible-h`, else `dvh`) minus the gap. The tray has no padding on phones; cards add their own safe-area padding (`managementCardPhoneInset`/`managementListPaddingPhone` in `management/tray.ts`),
+          // and the card's "‹" steps back from the left safe area. No transition, same reason as the default size.
           "max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-(--kb-inset,0px) max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 " +
           "max-sm:h-[calc(var(--kb-visible-h,100dvh)_-_max(1.75rem,env(safe-area-inset-top)_+_0.5rem))] max-sm:transition-none " +
           "max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:overflow-hidden max-sm:shadow-lg kb-sheet " +
@@ -70,16 +64,8 @@ const dialogContentVariants = cva(
 );
 
 /**
- * `dismissOnOutside`（預設 `true`＝Radix 預設行為，零變）：設為 `false` 時，**只**擋「點對話框外面」
- * （Radix `onInteractOutside`＝pointerDownOutside＋focusOutside，含焦點移出）。Esc、右上 X、
- * 取消鈕照常關閉。
- *
- * 表單型對話框（有使用者可輸入的欄位、由此對話框送出）一律傳 `false`：誤點周圍就丟掉已填內容。
- * 刻意不做「有填過才擋」的 dirty 判斷——各表單的 dirty 條件（預設值、trim、select 回到初值…）
- * 很容易判錯，一律擋最簡單也最不會漏。純確認型／唯讀型對話框維持預設。
- *
- * 呼叫端自己傳的 `onInteractOutside` 會先被呼叫，再套這個守衛（不吞呼叫端 handler）；
- * 呼叫端另傳的 `onPointerDownOutside`／`onFocusOutside` 由 Radix 先於 `onInteractOutside` 觸發，不受影響。
+ * `dismissOnOutside={false}` blocks only clicks/focus outside (`onInteractOutside`); Esc, X and cancel still close. Form dialogs pass false so a stray click doesn't discard input; no dirty-checking, since per-form dirty conditions are easy to get wrong. Confirm-only and read-only dialogs keep the default.
+ * The caller's own `onInteractOutside` runs first; its `onPointerDownOutside`/`onFocusOutside` fire before that and are unaffected.
  */
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
@@ -95,7 +81,7 @@ export const DialogContent = forwardRef<
     },
     [ref],
   );
-  // #247：panel 由 ManagementShell 在右卡放自己的 ✕；這裡只決定要不要渲染，不新增 prop。
+  // panel: ManagementShell puts its own ✕ in the right card; this only decides whether to render, no new prop.
   const renderBuiltInClose = size !== "panel";
   return (
     <DialogPortal>

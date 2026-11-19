@@ -1,4 +1,4 @@
 /// <reference types="vite/client" />
 
-/** #247：apps/web/package.json 的 version，由 vite.config.ts 的 define 注入（關於頁顯示）。 */
+/** The version from apps/web/package.json, injected by the define in vite.config.ts (shown on the About page, #247). */
 declare const __APP_VERSION__: string;

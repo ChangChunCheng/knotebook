@@ -1,62 +1,29 @@
 /**
- * 筆記大小上限（`NOTE_MAX_BYTES`，預設 5 MiB；生效值由 `SiteLimits.get("noteMaxBytes")` 提供，#397）。
- *
- * 量的是筆記的 Yjs 狀態（`Y.encodeStateAsUpdate`，＝`note_states.ydoc` 存的位元組）。**依結果判斷，不依更新聲稱的結構**（
- * 從更新的結構推算「新增多少、刪掉多少」是打地鼠——重複的刪除範圍、刪掉的 map key、子文件的 meta／guid、XmlHook 的名稱、ContentAny 裡的
- * BigInt 都能讓推算失準）。一次修改在新文件上試套之後，量四個數（{@link measureTrial}）：
- * - `stateBefore`／`stateAfter`：狀態編碼的長度；
- * - `liveBefore`／`liveAfter`：文件裡所有**還在**的 item 的內容，用 Yjs 自己的編碼器寫出來的位元組數（`item.content.write`，每一種內容都由真的
- *   編碼器涵蓋），加上 map 的 key（屬性名）長度（{@link liveContentBytes}）。型別名稱（XmlElement 的 nodeName、XmlHook 的 hookName）在
- *   ContentType 的編碼裡，屬性是 key 帶值的 item，都已涵蓋。
- *
- * **擋下 iff** `stateAfter > 上限` 且 `stateAfter > stateBefore` 且（`liveAfter > liveBefore` 或 `stateAfter − stateBefore > SLACK`）
- * （{@link capBlocks}）。也就是：
- * - 刪除、改短、等量改寫（還在的內容沒有變多）一律接受——只要狀態沒有一次長超過 {@link SIZE_SLACK_BYTES}；
- * - 還在的內容變多（加字、套格式、設屬性……）而結果超過上限 → 擋；
- * - 還在的內容沒變多、狀態卻一次長了超過 SLACK（例如設一個巨大的 key 再刪掉：key 留在狀態裡）→ 擋。
- *
- * 檢查的是 API／MCP／批次寫回／撤回／套用版本：worker 裡算「基底＋這次寫入」的四個數（`doc-jobs.ts` 的 `measureDiff`／`sizeTrial`），合併前比；
- * 複製是新筆記，比 0。瀏覽器的協作更新**不在 server 檢查**（同 310006f）：網頁編輯器在貼上、拖放、站內 AI 套用之前自己估、自己擋
- * （軟性檢查，`apps/web/src/lib/note-size-guard.ts`）。
- * 已經超過上限的筆記照常開啟、讀出、下載、匯出；不自動截斷、搬移或刪除任何東西。
+ * Cap `NOTE_MAX_BYTES` (default 5 MiB; effective value from `SiteLimits`), measured on the Yjs state (`note_states.ydoc`); checked for API, MCP, bulk write-back, revert and version apply (a copy is compared against 0).
+ * Judged on the result of a trial apply on a new doc, not on the structure an update claims (inferring added/deleted from structure is whack-a-mole: duplicate delete ranges, deleted map keys, subdoc meta, XmlHook names, BigInt in ContentAny). Rejects iff stateAfter > cap and stateAfter > stateBefore and (liveAfter > liveBefore or growth > SLACK): deletions and same-size rewrites on an over-cap note are accepted, state-only growth (set a huge key, delete it) is not.
+ * Browser collab updates aren't checked on the server: the web editor guards paste/drop/in-site AI itself (`apps/web/src/lib/note-size-guard.ts`). Notes already over the limit still open, read, download and export; nothing is truncated, moved or deleted.
  */
 import * as Y from "yjs";
 import { SITE_LIMITS } from "@knotebook/shared";
 
 export const DEFAULT_NOTE_MAX_BYTES = SITE_LIMITS.noteMaxBytes.default;
-/** `NOTE_MAX_BYTES` 的上限（pg `bytea` 單值上限 1 GiB，再大也存不進 `note_states`）。 */
+/** pg `bytea` limit (1 GiB). */
 export const NOTE_MAX_BYTES_MAX = 1024 * 1024 * 1024;
 
-/** ws 預設的單則訊息上限（100 MiB）；{@link collabMaxPayloadBytes} 只往下收緊，不放寬。 */
 const WS_DEFAULT_MAX_PAYLOAD = 100 * 1024 * 1024;
 
-/**
- * 協作 WebSocket 容許的 client→server 單則訊息大小（位元組），給 `WebSocketServer({ maxPayload })`；超過的訊息 ws 會以 1009 關掉該連線。
- *
- * 合法的 client→server 訊息只有三種：sync step 1（state vector）、awareness 更新（小於 16 KiB）、以及帶這個分頁自己改動的 update／sync step 2
- * （一次修改，或離線期間累積的修改——網頁在兩次開啟之間不留 Y.Doc）。網頁編輯器把一次「新增」壓在上限內（估算 ≥ 0.94 倍實際），但撤銷與搬移
- * 不在檢查範圍內，其訊息大小受筆記本身的大小限制、而不是受上限限制；取「這個程序執行期可設的最大上限」（有 env 值用 env 值，沒設用後台頁面的
- * 最大值）的兩倍再加 1 MiB，涵蓋大小到約兩倍上限的筆記與編碼額外開銷。更大的筆記（上限調低前就存在、舊版留下的、自製 client 寫的）上，一次撤銷或
- * 搬移就可能超過，該連線會被關掉。不會高於 ws 的 100 MiB 預設，所以只會收緊。server→client 的訊息不受 `maxPayload` 限制。
- */
+/** The web's size guard doesn't cover undo and moves, so message size ≈ 2× the largest configurable cap + 1 MiB. Bigger notes can exceed it on a single undo/move and the connection is closed (ws code 1009). "Largest configurable cap" = the env value if set, else the admin page's maximum. Never above ws's 100 MiB default, so it only tightens; server→client messages aren't limited. */
 export function collabMaxPayloadBytes(envNoteMaxBytes: number | undefined): number {
   return Math.min(2 * (envNoteMaxBytes ?? SITE_LIMITS.noteMaxBytes.max) + 1_048_576, WS_DEFAULT_MAX_PAYLOAD);
 }
 
-/**
- * 還在的內容沒有變多時，一次修改容許狀態長多少（位元組）。4 KiB 的理由：
- * - 正常的刪減與改寫在 Yjs 裡只留很少的簿記：在中間刪一個字狀態約多 1.9 倍更新位元組（幾十 B）、等量改寫約多 43 B、全選一大段再打一個字只多
- *   刪除集的幾個範圍——都遠小於 4 KiB，所以超過上限的筆記照樣能刪、能改短、能小幅改寫；
- * - 只長簿記、不長內容的花招（設一個巨大的 key 再刪掉、灌大量刪除範圍）每則訊息至多長 4 KiB，才有界。
- */
+/** Normal deletions/rewrites leave tens of bytes of bookkeeping (a mid-text delete ~1.9× the update; a same-size rewrite ~43 B); 4 KiB bounds bookkeeping-only growth tricks per message. */
 export const SIZE_SLACK_BYTES = 4 * 1024;
 
-/** 修改後超過上限、而且比修改前大（複製這種新筆記用；修改既有筆記用 {@link capBlocks}）。 */
 export function growsPastCap(before: number, after: number, cap: number): boolean {
   return after > cap && after > before;
 }
 
-/** 試套量到的四個數（見檔頭）。 */
 export interface SizeMeasure {
   stateBefore: number;
   stateAfter: number;
@@ -64,12 +31,10 @@ export interface SizeMeasure {
   liveAfter: number;
 }
 
-/** 這次修改要不要擋（見檔頭的規則）。 */
 export function capBlocks(m: SizeMeasure, cap: number): boolean {
   return m.stateAfter > cap && m.stateAfter > m.stateBefore && (m.liveAfter > m.liveBefore || m.stateAfter - m.stateBefore > SIZE_SLACK_BYTES);
 }
 
-/** 這次修改會讓筆記超過大小上限（路由映 413 `note_too_large`、MCP 映工具錯誤 `note_too_large`）。 */
 export class NoteTooLargeError extends Error {
   override name = "NoteTooLargeError";
   constructor(
@@ -80,17 +45,14 @@ export class NoteTooLargeError extends Error {
   }
 }
 
-/** 413 `note_too_large`（REST、批次寫回）與 MCP 工具錯誤共用的訊息。 */
 export function noteTooLargeMessage(limitBytes: number): string {
   return `This change would make the note larger than the site's limit of ${limitBytes} bytes, so nothing was written. Deleting and shortening are still accepted; to add more, split the note.`;
 }
 
-/** 文件狀態的大小（＝`note_states.ydoc` 的位元組數）。 */
 export function stateSize(doc: Y.Doc): number {
   return Y.encodeStateAsUpdate(doc).byteLength;
 }
 
-/** 字串的 UTF-8 位元組數（同 Yjs 寫字串時的編碼；不配置記憶體）。 */
 function utf8Length(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -104,7 +66,6 @@ function utf8Length(s: string): number {
   }
   return n;
 }
-/** 無號變長整數的位元組數（Yjs 的 `writeLen`）。 */
 function varUintLength(n: number): number {
   let len = 1;
   while (n > 127) {
@@ -113,11 +74,7 @@ function varUintLength(n: number): number {
   }
   return len;
 }
-/**
- * 文件裡所有還在的 item 的內容，用 Yjs 的編碼器寫出的位元組數，加上 map key 的長度（見檔頭）。成本與整份文件成正比（worker 裡算）。
- * 會被切開的內容（文字、陣列值）不算每顆 item 的長度前綴：在一段文字中間改字會把一顆 item 切成三顆，多出來的前綴不是新增的內容
- * （否則等量改寫會被算成「內容變多」）。文字直接算 UTF-8 長度；陣列值（ContentAny／ContentJSON）寫出後扣掉長度前綴。
- */
+/** Text and array values don't count each item's length prefix: editing mid-text splits one item into three, and the extra prefixes aren't new content (a same-size rewrite would look like growth). */
 export function liveContentBytes(doc: Y.Doc): number {
   const enc = new Y.UpdateEncoderV1();
   let direct = 0;
@@ -136,7 +93,6 @@ export function liveContentBytes(doc: Y.Doc): number {
   return enc.toUint8Array().byteLength + direct;
 }
 
-/** 狀態 `state` 套用 `update` 之後的四個數（在新文件上套用；worker 裡跑，`doc-jobs.ts` 的 `sizeTrial`／`measureDiff`）。 */
 export function measureTrial(state: Uint8Array, update: Uint8Array): SizeMeasure {
   const doc = new Y.Doc();
   if (state.byteLength > 0) Y.applyUpdate(doc, state);

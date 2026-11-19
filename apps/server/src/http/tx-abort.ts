@@ -1,9 +1,8 @@
 import type { ErrorCode } from "@knotebook/shared";
 
 /**
- * 交易內的業務拒絕。drizzle 的 `db.transaction(cb)` **只在 cb throw 時 ROLLBACK**（正常 return 一律
- * COMMIT）——所以拒絕一律 throw 這個，由呼叫端在交易外 `instanceof` 判定後 `sendError`。
- * 欄位刻意叫 `errCode` 不叫 `code`：pg 錯誤的 SQLSTATE 也在 `.code`，同名會讓判定順序變成靠字面值不撞的巧合。
+ * Thrown inside a transaction for a rejection: drizzle rolls back only on throw (a normal return always COMMITs). The caller checks
+ * instanceof outside the transaction and sends the error. The field is `errCode` because pg errors carry SQLSTATE in `.code`.
  */
 export class TxAbort extends Error {
   constructor(

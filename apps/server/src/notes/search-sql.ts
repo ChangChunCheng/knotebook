@@ -83,11 +83,7 @@ export const SEARCH_MATCHES_PER_NOTE = 3;
 export const SNIPPET_LEAD_CP = 40;
 export const SNIPPET_TAIL_CP = 160;
 
-/**
- * #93：REST 的 keyset 游標值＝排序三元組 `(rank, updated_at, id)`。`updatedAtKey` 是 pg 自己格式化的**微秒** UTC 文字
- * （`YYYY-MM-DDTHH:MI:SS.ffffffZ`）：`notes.updated_at` 是微秒、JS `Date` 只有毫秒，降到毫秒會漏列（`mcp/queries.ts` 的
- * `list_notes` 用降精度的排序鍵解，這裡不能照抄——那會改掉 MCP 共用的 `ORDER BY`）。比較時以 `::timestamptz` 原樣送回，同一把尺。
- */
+/** `updatedAtKey` is pg's own microsecond text: JS `Date` has milliseconds, so truncating would skip rows (`list_notes` in `mcp/queries.ts` uses a reduced-precision sort key, which can't be copied here: it would change the shared ORDER BY). */
 export interface SearchPageKey {
   rank: number;
   updatedAtKey: string;
@@ -98,9 +94,7 @@ export interface NoteSearchQueryOpts {
   userId: string;
   query: string;
   limit: number;
-  /** 只要內文有命中的（REST `match=body`）。不帶／false＝標題或內文（MCP）。 */
   bodyOnly?: boolean;
-  /** 存在時多輸出 `updated_at_key`；`after` 非 null 時只回排在它之後的列。MCP 不帶。 */
   page?: { after: SearchPageKey | null };
 }
 
@@ -115,7 +109,7 @@ export function buildNoteSearchQuery(db: DbOrTx, opts: NoteSearchQueryOpts) {
     ? sql`lower(${noteSearchSections.body}) like lower(${"%" + escapeLike(q) + "%"})`
     : sql`position(lower(${q}) in lower(${noteSearchSections.body})) > 0`;
   const bodyHit = sql`exists (select 1 from ${noteSearchSections} where ${noteSearchSections.noteId} = ${notes.id} and ${noteSearchSections.sourceKind} = 'note' and ${bodyMatch})`;
-  // 未取別名的 rank 運算式：keyset 述詞要在各支 WHERE 裡用（WHERE 不能引用輸出別名）。同一個 sql 片段重複嵌入是安全的。
+  // WHERE can't reference output aliases, so rank is re-embedded unaliased.
   const rankExpr = sql<number>`case
     when lower(${notes.title}) = lower(${q}) then 0
     when position(lower(${q}) in lower(${notes.title})) = 1 then 1
@@ -126,9 +120,7 @@ export function buildNoteSearchQuery(db: DbOrTx, opts: NoteSearchQueryOpts) {
   const bodyHitCol = sql<boolean>`${bodyHit}`.as("body_hit");
   const page = opts.page;
   const after = page?.after ?? null;
-  // 排序是 rank asc、updated_at desc、id desc；方向不同，不能寫成一個三元列比較。
-  // ⚠ 一定要用 drizzle 的 or(…, and(…)) 組：`and(a, b)` 只在整串外加一層括號，裸 `sql\`… or (…)\`` 丟進 and() 會渲染成
-  // `比對 and rank > r or (…)`——AND 先結合，rank = r 且排在游標後的列不必符合比對條件。
+  // Directions differ (rank asc, updated_at desc, id desc), so no row-value comparison. Build with drizzle's or(…, and(…)): a bare sql with `or (…)` inside and() renders `match and rank > r or (…)` and AND would bind first.
   const keysetCond =
     after === null
       ? undefined
@@ -137,7 +129,6 @@ export function buildNoteSearchQuery(db: DbOrTx, opts: NoteSearchQueryOpts) {
           and(sql`${rankExpr} = ${after.rank}`, sql`(${notes.updatedAt}, ${notes.id}) < (${after.updatedAtKey}::timestamptz, ${after.id}::uuid)`),
         );
   const updatedAtKey = sql<string>`to_char(${notes.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("updated_at_key");
-  // extra 的順序固定（三支同一個物件，union 按位置對欄）。page 不在時 SQL 與加分頁之前逐位元組相同。
   const { owned, shared, grouped } = visibleNoteBranches(db, opts.userId, {
     extraWhere: and(opts.bodyOnly === true ? bodyHit : or(titleHit, bodyHit), keysetCond),
     extra: { rank, titleHit: titleHitCol, bodyHit: bodyHitCol, ...(page !== undefined ? { updatedAtKey } : {}) },

@@ -1,8 +1,7 @@
 import { useId, type SVGProps } from "react";
 
-// 品牌圖示（GitLab／Google）獨立成檔，由 ProviderIcon 一般 import（即時顯示、進首包；首包上限見 scripts/check-bundle-size.mjs）。
 
-/** 登入服務圖示（`components/ProviderIcon.tsx`）：GitLab 官方 tanuki（about.gitlab.com/images/press/press-kit-icon.svg，已核對），品牌色、**不用** currentColor。viewBox 為該檔的內容外框（原檔 380x380 含大片留白）。 */
+/** Official GitLab tanuki (about.gitlab.com/images/press/press-kit-icon.svg) in brand colours, not currentColor. The viewBox is the content bounds (the original 380x380 has large margins). */
 export function GitLabLogo(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="109 110 160 160" {...props}>
@@ -15,15 +14,12 @@ export function GitLabLogo(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * 登入服務圖示：Google 官方 G（現行漸層 super G）。取自 Google Identity 品牌頁下載包 signin-assets.zip
- * 的 `Android + Web/SVG/Light/Theme=Light, Show text=No, Shape=Square, Platform=Android+Web.svg`。
- * 只做四件事：刪掉按鈕底板與外框（白底方框、#747775 外框線）；viewBox 改成 G 的內容外框（10 10 20 20，即該檔 mask 區），根節點拿掉 width／height；
- * 所有 mask／filter／clipPath 的 id 改用 useId（同頁多顆不撞）；轉 JSX 必要的屬性名與 style 物件改寫
- * （另省略 Figma 匯出的 `data-figma-*` 中繼屬性與 foreignObject 內 div 的 xhtml xmlns——React 在 foreignObject 內自動建 HTML 元素；皆不影響繪製）。**未改色、未改任何 path。**
- * ⚠ 官方規範要求此 G 放在白色背景上、不得改尺寸或顏色比例；這裡刻意不加官方規範的白底襯底，直接顯示。
+ * Official Google G (current gradient "super G") from the Google Identity brand page download `signin-assets.zip`: `Android + Web/SVG/Light/Theme=Light, Show text=No, Shape=Square, Platform=Android+Web.svg`. Modified only as follows: button plate and outline removed; viewBox set to the G's content bounds (10 10 20 20, the file's mask area) and root width/height dropped; mask/filter/clipPath ids use `useId` (several on one page don't collide);
+ * required JSX attribute and style-object rewrites; Figma `data-figma-*` attributes and the foreignObject div's xhtml xmlns omitted (React builds HTML elements inside foreignObject; no effect on rendering). No colour or path was changed.
+ * Google's guidelines want this G on a white background with size and colour proportions unchanged; it is deliberately shown without the white plate.
  */
 export function GoogleLogo(props: SVGProps<SVGSVGElement>) {
-  // React 19.2 的 useId 形如 `_r_0_`，本身就是合法的 id／url(#…) 字元，不必再清洗；前綴 g 只確保不以數字開頭、同頁多顆不撞由 useId 保證。
+  // React 19.2's `useId` looks like `_r_0_`, already valid in an id and in `url(#…)`; the `g` prefix only avoids a leading digit.
   const p = `g${useId()}`;
   return (
     <svg viewBox="10 10 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>

@@ -9,21 +9,18 @@ import type { SelectionTarget } from "@/components/sidebar/select-model";
 import type { SelectionNode } from "@/lib/sidebar-selection";
 
 /**
- * 一般 tab 選取模式的批次執行（#181）。只准被 SelectLazy 鏈與測試 import。
- * - 不用 mutation hook：批次要能跑完整輪，即使中途動作列或抽屜卸載（換頁、關抽屜、Done）；結果由呼叫端依 session 決定要不要套用。
- * - 依序（await 完一篇才送下一篇）：不開批次端點，沿用單篇端點的交易、權限與容量檢查；依序才停得住、才回報得出「已完成幾篇」。
- * - 分類：403、404 `not_found` → 略過、繼續；其餘（429、404 `group_not_found`、409、400、5xx、網路錯誤、
- *   非 JSON 的 `internal`）→ 停下。move 的 409 `conflict`（授權之後、上鎖之前歸屬變了）是窄競態：停下安全、不掉資料。
- *   404 `folder_not_found`：刪資料夾時略過（要刪的已不在）；其餘一律停下（例如明選的目的地資料夾已不在），見 `classifyBatchError`。
- * - 複製扣寫入節流（`limiters.edit` 30 次／60 秒，有附件再扣 upload 桶）：一次複製約 30 篇以上會撞 429 而停下。
- * - 停下時的 `remaining` 是選取鍵形（`{ kind, id }`）：呼叫端直接 `setAll` 回選取；資料夾項是 `{ kind: "folder", id }`。
- * - 整批的快取失效一律在 `finally`：hook 丟例外時整批 reject，已送出的仍要對帳。
+ * Batch execution for select mode in the ordinary tabs (#181). Import only from the SelectLazy chain and tests.
+ * - No mutation hook: a batch must finish even if the action bar or drawer unmounts midway.
+ * - Sequential, reusing the single-note endpoints' transactions, permissions and capacity checks; this is also what makes
+ *   stopping and reporting "how many are done" possible.
+ * - Skip 403 and 404 `not_found`; stop on everything else (see `classifyBatchError`). A move's 409 `conflict` is a narrow
+ *   race, so stopping is safe.
+ * - Copy consumes the edit limiter (default 30/min, admin-adjustable down to 3; notes with attachments also consume the
+ *   upload limiter): a large copy stops with 429.
+ * - Cache invalidation is in `finally`: if a hook throws the batch rejects, and what was already sent still needs reconciling.
  */
 
-/**
- * 403、404 not_found → 略過；其餘 → 停下。
- * 404 `folder_not_found`：`folderGone: "skip"` 時略過（只給刪資料夾：要刪的已不在）；預設停下（明選的目的地不在了）。
- */
+/** 404 `folder_not_found`: skipped with `folderGone: "skip"` (folder delete: already gone), otherwise stop (the chosen destination is gone). */
 export function classifyBatchError(err: unknown, opts: { folderGone?: "skip" | "stop" } = {}): "skip" | "stop" {
   if (isFolderNotFound(err)) return opts.folderGone === "skip" ? "skip" : "stop";
   if (err instanceof ApiFail && (err.status === 403 || (err.status === 404 && err.code === "not_found"))) return "skip";
@@ -31,21 +28,16 @@ export function classifyBatchError(err: unknown, opts: { folderGone?: "skip" | "
 }
 
 export interface BatchOutcome<R> {
-  /** 依送出順序。 */
   done: R[];
-  /** 只計 server 回的略過（client 預先排除的由呼叫端加）。 */
+  /** Counts only skips the server returned (client-excluded ones are added by the caller). */
   skipped: number;
-  /** 每一筆略過的項目與錯誤（依送出順序）：呼叫端分「沒有權限」與「已不存在」（資料夾 404 `folder_not_found`）。 */
   skippedDetail: Array<{ node: SelectionNode; err: unknown }>;
-  /** 停下那篇（含）之後全部未成功的項目，以選取鍵形回傳：資料夾項是 `{ kind: "folder", id }`。 */
   stopped: { cause: unknown; remaining: SelectionNode[] } | null;
 }
 
 type BatchHooks = { onProgress?: (processed: number, total: number) => void };
 
-/** 依序（await 完一項才送下一項）。`beforeEach` 在送出前同步呼叫；`onProgress(processed, total)` 在每項結束（成功、略過）後呼叫。
- * hook 不得丟例外：丟了整批 reject、沒有 outcome（已完成篇數與「復原」都拿不到），只剩 finally 的失效。
- * `classify` 預設 `classifyBatchError`。 */
+/** Hooks must not throw: the whole batch would reject with no outcome (neither the completed count nor "Undo"). */
 export async function runSequential<T, R>(
   items: readonly T[],
   nodeOf: (item: T) => SelectionNode,
@@ -80,17 +72,12 @@ export async function runSequential<T, R>(
 const noteNode = (note: NoteDto): SelectionNode => ({ kind: "note", id: note.id });
 const notePath = (id: string): string => `/api/notes/${encodeURIComponent(id)}`;
 
-/**
- * `POST /api/notes/:id/move { groupId, folderId? }`（根層不帶 folderId）；成功逐篇 `applyMovedNote`，失敗（略過或停下）逐篇
- * `refetchAfterFailure`（順序契約見 `api/note-move.ts`）。finally 失效 groups、folders。
- */
 export async function moveNotesInOrder(
   notes: readonly NoteDto[],
   body: { groupId: string; folderId?: string },
   deps: { queryClient: QueryClient } & BatchHooks,
 ): Promise<BatchOutcome<NoteDto>> {
   const { queryClient } = deps;
-  // JSON.stringify 會丟掉值為 undefined 的鍵：根層的 body 就是 {"groupId":…}。
   const payload = JSON.stringify(body);
   try {
     return await runSequential(
@@ -116,7 +103,7 @@ export async function moveNotesInOrder(
 
 type CopyBody = { groupId?: string; folderId?: string };
 
-/** 固定目的地的 body：群組空間帶 groupId、資料夾帶 folderId；個人根層 → `{}`（根層一律不帶 folderId，`null` 會 400）。 */
+/** Personal root → `{}`: the root never carries folderId (`null` gets a 400). */
 function placeCopyBody(target: Extract<DestTarget, { kind: "place" }>): CopyBody {
   const body: CopyBody = {};
   if (target.space.kind === "group") body.groupId = target.space.groupId;
@@ -124,7 +111,6 @@ function placeCopyBody(target: Extract<DestTarget, { kind: "place" }>): CopyBody
   return body;
 }
 
-/** 「建立副本」：每篇落回自己的群組與資料夾。 */
 function makeCopyBody(note: NoteDto): CopyBody {
   const body: CopyBody = {};
   if (note.groupId !== null) body.groupId = note.groupId;
@@ -132,12 +118,7 @@ function makeCopyBody(note: NoteDto): CopyBody {
   return body;
 }
 
-/**
- * `POST /api/notes/:id/copy`；`done` 收副本，逐篇寫進 `["note", copy.id]`。finally 失效 notes、folders。
- * - makeCopy：每篇 `{ groupId?: note.groupId, folderId?: note.folderId }`；404 `folder_not_found`（原資料夾已不在）時該篇不帶 folderId
- *   重送一次（逐篇退回根層），重送再失敗照一般分類。
- * - 其餘 target：固定 body；明選的資料夾 404 `folder_not_found` → 停下、不重送。
- */
+/** makeCopy: on 404 `folder_not_found` (original folder gone) a note is resent once without folderId; an explicit target stops instead. */
 export async function copyNotesInOrder(
   notes: readonly NoteDto[],
   target: DestTarget,
@@ -172,14 +153,12 @@ export async function copyNotesInOrder(
   }
 }
 
-/** 放置一筆的原處（復原用）。 */
 export type PlacedItem = { kind: "note"; id: string; from: string | null } | { kind: "folder"; id: string; from: string | null };
 
 const targetNode = (target: SelectionTarget): SelectionNode =>
   target.kind === "note" ? { kind: "note", id: target.note.id } : { kind: "folder", id: target.folder.id };
 const placedNode = (item: PlacedItem): SelectionNode => ({ kind: item.kind, id: item.id });
 
-/** 一筆放到 folderId（null＝根層）：資料夾 PATCH {parentId}、筆記 PUT {folderId}；成功的筆記寫進 `["note", id]`。 */
 async function placeOne(queryClient: QueryClient, kind: "note" | "folder", id: string, folderId: string | null): Promise<void> {
   if (kind === "folder") {
     await moveFolderRequest(id, folderId);
@@ -189,10 +168,6 @@ async function placeOne(queryClient: QueryClient, kind: "note" | "folder", id: s
   queryClient.setQueryData(["note", placed.id], placed);
 }
 
-/**
- * 同空間：資料夾 PATCH {parentId}、筆記 PUT {folderId}（根層 null），依序、不確認；`done` 帶各自原處（復原用）。
- * 分類預設（folder_not_found＝目的地不在了 → 停下）。finally `invalidateFolderRelated(qc, { trash: 有資料夾 })`。
- */
 export async function placeTargetsInOrder(
   items: readonly SelectionTarget[],
   folderId: string | null,
@@ -218,10 +193,6 @@ export async function placeTargetsInOrder(
   }
 }
 
-/**
- * ③ 復原：把 done 逐一送回 from，依序；分類同 classifyBatchError（預設：429 等停下）；回 outcome（呼叫端報已移回幾項）。
- * finally 同 placeTargetsInOrder。
- */
 export async function undoPlacements(items: readonly PlacedItem[], deps: { queryClient: QueryClient }): Promise<BatchOutcome<PlacedItem>> {
   const { queryClient } = deps;
   try {
@@ -234,11 +205,6 @@ export async function undoPlacements(items: readonly PlacedItem[], deps: { query
   }
 }
 
-/**
- * 刪除：資料夾先（`DELETE /api/folders/:id`，404 `folder_not_found` 略過＝已不在）、筆記後（`DELETE /api/notes/:id`），
- * 各自維持輸入順序；beforeEach／afterFailure 同上。`done[].trashedNoteIds`：資料夾＝server 回的、筆記＝[自己]。
- * finally 失效 folders／notes／trash／backlinks 與每篇移到垃圾桶的 `["note", id]`。
- */
 export async function deleteTargetsInOrder(
   items: readonly SelectionTarget[],
   deps: {
@@ -278,10 +244,6 @@ export async function deleteTargetsInOrder(
   }
 }
 
-/**
- * 最愛 tab 的批次移出：逐篇 `DELETE /api/favorites/:id`，每篇成功就把那篇從 `["favorites"]` 濾掉（清單即時少一列）；
- * 錯誤分類同 `classifyBatchError`（403、404 `not_found` 略過，其餘停下）。finally 重抓一次最愛清單（以 server 為準）。
- */
 export async function unfavoriteInOrder(
   noteIds: readonly string[],
   deps: { queryClient: QueryClient } & BatchHooks,

@@ -1,11 +1,7 @@
 import { ChevronRight, Folder } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 
-/**
- * 資料夾列的折疊主鈕：`aria-expanded`、前導 chevron（展開旋轉 90°）＋`Folder` 圖示（皆 aria-hidden）＋名稱
- * （truncate、title＝名稱）。可及名稱只有資料夾名。外層列要帶 `group/folderrow`；高度跟外層列（h-11 pointer-fine:h-7）。
- * NoteList 用它；選取樹的資料夾列另有只畫 chevron 的折疊鈕（`SelectableTree`，名稱與圖示在勾選框的 label 裡）。
- */
+/** The outer row must carry `group/folderrow`. */
 export function FolderRowButton({ name, open, onToggle }: { name: string; open: boolean; onToggle: () => void }) {
   return (
     <button

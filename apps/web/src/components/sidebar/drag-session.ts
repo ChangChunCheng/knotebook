@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { DRAG_HOVER_DELAY_MS, dropScopeKey, readDragTarget, type DragOverResult, type DragSource, type DropZone, type HoldAction } from "./drag-zone";
 
-/**
- * 側欄拖曳的模組層 store：靜態卡與抽屜兩份 NoteList 共用拖曳狀態、預覽與「建立中」。
- * 計時只有一個（彈簧與疊資料夾不會同列，共用 DRAG_HOVER_DELAY_MS）；離開樹以 document 的 dragover（capture）對照**發起拖曳的那個容器**判定。
- */
+/** One timer (spring and stack-folder never share a row; both use `DRAG_HOVER_DELAY_MS`); leaving the tree is judged by a capture-phase document `dragover` against the container that started the drag. */
 
 export interface StackPreviewState {
   anchorNoteId: string;
@@ -14,21 +11,18 @@ export interface StackPreviewState {
 }
 
 export interface DragView {
-  /** 有拖曳進行中（本 PR 接手的）。 */
   active: boolean;
-  /** dropScopeKey；null＝不標示。 */
   scope: string | null;
   preview: StackPreviewState | null;
-  /** 放開後的「建立中」（獨立狀態，endDrag 不清）。 */
+  /** Independent state: `endDrag` doesn't clear it. */
   creating: StackPreviewState | null;
 }
 
 let view: DragView = { active: false, scope: null, preview: null, creating: null };
 let source: DragSource | null = null;
 let container: HTMLElement | null = null;
-/** 計時用的目前列；離開樹時重設為 null，回到同一列要重新起算。 */
+/** Current row for the timer; reset to null when leaving the tree, so coming back to the same row restarts it. */
 let currentRow: string | null = null;
-/** 最後一發 dragover 的 zone（被拒或離開樹＝null）。 */
 let lastZone: DropZone | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
@@ -44,7 +38,6 @@ function getSnapshot(): DragView {
   return view;
 }
 
-/** 值沒變就不換物件、不通知（快照穩定）。 */
 function commit(patch: Partial<DragView>): void {
   const next = { ...view, ...patch };
   if (next.active === view.active && next.scope === view.scope && next.preview === view.preview && next.creating === view.creating) return;
@@ -58,7 +51,6 @@ function clearTimer(): void {
   timer = null;
 }
 
-/** 離開樹容器：清標示、取消計時、收起預覽，目前列重設為 null。 */
 function leaveTree(): void {
   clearTimer();
   currentRow = null;
@@ -71,7 +63,6 @@ function onDocumentDragOver(event: DragEvent): void {
   leaveTree();
 }
 
-/** 清拖曳狀態、標示、計時、預覽與 document 監聽；不動 creating。 */
 function teardown(): void {
   document.removeEventListener("dragover", onDocumentDragOver, true);
   clearTimer();
@@ -89,7 +80,6 @@ export function getDragSource(): DragSource | null {
   return source;
 }
 
-/** 開始：記來源與發起的容器；在 document 以 capture 掛 dragover，target 不在該容器 → leaveTree()。 */
 export function beginDrag(next: DragSource, el: HTMLElement): void {
   teardown();
   source = next;
@@ -98,10 +88,7 @@ export function beginDrag(next: DragSource, el: HTMLElement): void {
   commit({ active: true });
 }
 
-/**
- * 套用一發 dragover 的結果；回 accept（＝zone 非 null）。計時：row 改變才取消並重起，同列不重起；hold 非 null 才起算，到時呼叫 onHold(hold)。
- * 預覽在 row ∉ {"preview", "note:<anchor>"} 時收起；收起本身不起算計時，這一發的結果照常套用。
- */
+/** The timer restarts only when the row changes. The preview collapses when row is not "preview" or "note:<anchor>"; collapsing starts no timer and the result is still applied. */
 export function applyDragOver(result: DragOverResult, onHold: (hold: HoldAction) => void): boolean {
   if (source === null) return false;
   lastZone = result.zone;
@@ -126,14 +113,12 @@ export function setPreview(preview: StackPreviewState | null): void {
   commit({ preview });
 }
 
-/** drop 用：回最後一發 dragover 的 zone（那一發被拒或之後已離開樹＝null），並立刻清掉拖曳狀態、標示、計時、預覽與 document 監聽。 */
 export function takeDropZone(): DropZone | null {
   const zone = lastZone;
   teardown();
   return zone;
 }
 
-/** dragend 用：冪等清除拖曳狀態、標示、計時、預覽與 document 監聽；不動 creating。 */
 export function endDrag(): void {
   teardown();
 }
@@ -142,7 +127,7 @@ export function setCreating(state: StackPreviewState | null): void {
   commit({ creating: state });
 }
 
-/** @internal 測試用 */
+/** @internal tests only */
 export function __resetDragSessionForTests(): void {
   teardown();
   commit({ creating: null });

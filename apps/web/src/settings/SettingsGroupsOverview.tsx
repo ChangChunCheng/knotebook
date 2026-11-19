@@ -8,13 +8,11 @@ import { SettingsGroup, SettingsPage } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
 /**
- * 個人設定「群組」（`/settings/groups`，#247）：**唯讀總覽**——我有幾個群組、在每個群組的角色與權限。
- * 沒有任何動作鈕、沒有 ⋮、群組名不是連結（面板之間不互相連結；建立與管理都從側欄）。
- * 資料就是 `useGroups()`（與側欄同一份快取）。表格：群組｜我的角色｜權限（Pill 群）。
- *
- * `myRole` 型別可為 null（非成員的站台 admin，只出現在 `PATCH /api/groups/:id` 的回應，`useGroups()`
- * 實際碰不到）——型別上仍處理：角色欄「—」、只有「閱讀」pill。`roleLabel` 不收 null，所以先判。
- * 不可直接用 `myRole.name`：內建角色的 `name` 恆為 null（會顯示空白）。
+ * Read-only overview: no action buttons, no menu, and group names aren't links (panels don't link to each other; creating and managing
+ * happen in the sidebar). Data is `useGroups()`, the sidebar's cache.
+ * `myRole` is null only for a non-member site admin (only in `PATCH /api/groups/:id` responses, never reached via `useGroups()`); the type is
+ * still handled (role column shows a dash, only the read pill), and `roleLabel` doesn't accept null, so check first.
+ * Don't use `myRole.name`: built-in roles have a null `name`.
  */
 export function SettingsGroupsOverview() {
   const { t } = useTranslation();

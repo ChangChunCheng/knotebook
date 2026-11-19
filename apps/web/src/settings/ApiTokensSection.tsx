@@ -36,13 +36,11 @@ import { ScopeTogglesField } from "./ScopeTogglesField";
 import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（無共用 helper——比照 ShareDialog／SettingsAccountSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-/** 撤銷確認（比照 SettingsAiSection 的 DeleteProviderDialog）。觸發鈕是列尾的紅垃圾桶 `RowIconButton`。 */
 function RevokeDialog({ token }: { token: ApiTokenDto }) {
   const { t } = useTranslation();
   const revoke = useRevokeApiToken();
@@ -82,16 +80,12 @@ function RevokeDialog({ token }: { token: ApiTokenDto }) {
   );
 }
 
-/**
- * 建立表單。成功後**在同一個對話框內**切換成「一次性顯示明文」畫面——明文只會
- * 出現這一次，而 toast 5 秒就消失、也不可選取複製，不適合承載它。
- */
+/** Switches in place to the plaintext view, which is shown only this once: a toast would vanish after 5s and isn't selectable. */
 function CreateTokenDialog() {
   const { t } = useTranslation();
   const create = useCreateApiToken();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  // #239／#181：開關預設都關（＝唯讀）；#247 起用 toggle（ScopeTogglesField）。
   const [checks, setChecks] = useState<ScopeChecks>({ write: false, move: false, delete: false });
   const [expiresInDays, setExpiresInDays] = useState<CreateApiTokenInput["expiresInDays"]>(null);
   const [issued, setIssued] = useState<string | null>(null);
@@ -130,12 +124,11 @@ function CreateTokenDialog() {
         </Button>
       </DialogTrigger>
       <DialogContent
-        // 表單畫面與明文畫面都擋點外面（表單型一律擋）。
         dismissOnOutside={false}
-        // 明文只出現這一次：明文畫面擋掉 Esc 與點外面，誤觸會讓這支 token 直接報銷
-        // （還吃掉 20 個憑證額度）。只留 Done 與右上 X 這兩個明確的關閉動作。
-        // 加了 dismissOnOutside 後，點外面已被它全程擋下；下方 onPointerDownOutside 與它重疊，
-        // 只剩 onEscapeKeyDown 那支有獨立作用（表單畫面 Esc 仍可關、明文畫面 Esc 擋住）。
+        // dismissOnOutside blocks outside clicks in both views (form dialogs always do), so onPointerDownOutside is
+        // redundant. The plaintext view also blocks Esc: a stray dismissal throws the token away and still uses a slot
+        // of the per-user token cap (apiTokensPerUser), leaving Done and the top-right X as the only explicit closes.
+        // Esc still closes the form view.
         onEscapeKeyDown={event => {
           if (issued !== null) event.preventDefault();
         }}
@@ -152,8 +145,7 @@ function CreateTokenDialog() {
           >
             <DialogHeader>
               <DialogTitle>{t("settings.account.apiTokensCreate")}</DialogTitle>
-              {/* 刻意用專屬短句，不重複區塊本體那段長說明（同一頁出現兩次會讓
-                  getByText 撞多重匹配，讀起來也囉唆）。 */}
+              {/* short dedicated hint: the long section text would appear twice on the page (getByText would match twice, and it reads verbosely) */}
               <DialogDescription>{t("settings.account.apiTokensCreateHint")}</DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-3">
@@ -200,11 +192,7 @@ function CreateTokenDialog() {
               <DialogTitle>{t("settings.account.apiTokensTitle")}</DialogTitle>
               <DialogDescription>{t("settings.account.apiTokensOnceWarning")}</DialogDescription>
             </DialogHeader>
-            {/* 明文永遠可選取複製——不靠 toast（5 秒就消失、不可選取），也不假設
-                剪貼簿 API 一定成功。**刻意不複用 ManualCopyField**：它硬寫的說明是
-                「自動複製失敗，請手動選取」（share.copyFailed），語意不對；而且它內含
-                自己的 DialogDescription，放進這裡會讓同一個 DialogContent 出現兩個，
-                Radix 的 aria-describedby 會重複。 */}
+            {/* plaintext stays selectable: no reliance on a toast (gone in 5s, not selectable) or on the clipboard API succeeding. Not ManualCopyField: its built-in "copy failed, select manually" text (share.copyFailed) is wrong here, and its own DialogDescription would put two in one DialogContent, duplicating Radix's aria-describedby */}
             <Input
               readOnly
               value={issued}
@@ -216,12 +204,12 @@ function CreateTokenDialog() {
             <DialogFooter>
               <Button
                 type="button"
-                // ⚠ 不用 `secondary`：`--secondary` 淺色是 oklch(0.97)、與面板底幾乎同色，
-                // 深色則與 `--accent`（ghost 的 hover 底）同值——看起來像 hover 高亮不像按鈕。
+                // not `secondary`: `--secondary` is oklch(0.97) in light mode, nearly the panel background, and in
+                // dark mode equals `--accent` (ghost's hover background), so it looks like a hover highlight, not a button.
                 variant="outline"
                 onClick={() => {
                   void copyText(issued).then(ok => {
-                    // 失敗不攤 ManualCopyField（理由見上）：明文本來就在欄位裡可選取，提示即可
+                    // No ManualCopyField on failure (see above): the plaintext is already selectable in the field.
                     toast(
                       ok
                         ? { title: t("settings.account.apiTokensCopied") }
@@ -243,7 +231,7 @@ function CreateTokenDialog() {
   );
 }
 
-/** 權限 pill（只列有的）：讀取每列都有；編輯＝含 notes:write；搬移＝含 notes:move（destructive 淡底）；刪除＝含 notes:delete（預設 tone，可還原）。 */
+/** Move gets the destructive tint; delete keeps the default tone because deleted notes can be restored. */
 function TokenScopePills({ scope }: { scope: TokenScope }) {
   const { t } = useTranslation();
   const checks = checksFromScope(scope);
@@ -257,7 +245,7 @@ function TokenScopePills({ scope }: { scope: TokenScope }) {
   );
 }
 
-/** 一列的日期文字（純函式：列在 `ApiTokensSection` 的 map 裡建，不能呼叫 hook）。 */
+/** Pure: called inside a map, so no hooks. */
 function tokenDates(token: ApiTokenDto, t: (key: string, opts?: Record<string, unknown>) => string, language: string) {
   const formatDate = (iso: string): string => new Date(iso).toLocaleDateString(language);
   const expiresAt = displayExpiry(token, OAUTH_APP_IDLE_DAYS);
@@ -273,11 +261,9 @@ function tokenDates(token: ApiTokenDto, t: (key: string, opts?: Record<string, u
 }
 
 /**
- * 行內編輯的表單（放進 `SettingsTable` 的 editing 列：主欄保留、其餘欄合併成這一格）。
- * 名稱不可改，只有 label 一個輸入框＋三個權限 toggle。label 改了才帶 `agentLabel`（清空＝`null`：把欄位清成 NULL、回到派生值；
- * server 的 `AGENT_LABEL_RE` 也不收空字串）、權限改了才帶 `scope`；都沒改就直接回顯示態。存檔／取消是表單最右的兩顆 icon 鈕（勾、叉）。
- * Enter＝儲存。**沒有 Esc 取消**：這一列坐在設定面板的 `DialogContent` 裡，Radix 在 document 的 capture 階段
- * 監聽 Escape，input 的 `onKeyDown`（bubble）永遠來不及擋，結果是整個面板被關掉——「取消」鈕是唯一的退路。
+ * No Esc-to-cancel: Radix listens for Escape on document in the capture phase, so the input's bubble-phase
+ * `onKeyDown` is always too late and Esc closes the whole settings panel. The cancel button is the only way out.
+ * An emptied label is sent as `null` (back to the derived value); `AGENT_LABEL_RE` rejects empty strings.
  */
 function TokenEditForm({ token, onDone }: { token: ApiTokenDto; onDone: () => void }) {
   const { t } = useTranslation();
@@ -288,7 +274,7 @@ function TokenEditForm({ token, onDone }: { token: ApiTokenDto; onDone: () => vo
   const [error, setError] = useState<string | null>(null);
 
   async function save(): Promise<void> {
-    // 一列同時只有一個請求在飛：輸入框與兩顆鈕在 pending 時都 disabled，這裡再擋一次（Enter 連按）。
+    // One request per row: the input and both buttons are disabled while pending; guard again for repeated Enter.
     if (update.isPending) return;
     const trimmed = label.trim();
     const nextLabel = trimmed === "" ? null : trimmed;
@@ -297,7 +283,7 @@ function TokenEditForm({ token, onDone }: { token: ApiTokenDto; onDone: () => vo
       return;
     }
     const patch: UpdateApiTokenPatch = {};
-    // 清空：只有現值不是派生值（＝有覆寫）時才需要送 null。
+    // `null` is needed only when the current label is an override (differs from the derived one).
     const labelChanged = nextLabel === null ? token.agentLabel !== derivedLabel : nextLabel !== token.agentLabel;
     if (labelChanged) patch.agentLabel = nextLabel;
     const scope = scopeFromChecks(checks.write, checks.move, checks.delete);
@@ -356,19 +342,11 @@ function TokenEditForm({ token, onDone }: { token: ApiTokenDto; onDone: () => vo
   );
 }
 
-/**
- * 設定→授權的「API token」段（#107；#247 起是表格＋行內編輯；#9 起是 `SettingsTable`）。
- *
- * **位置**：與 `HandleSection` 同層、在 `hasPassword` 三元式**之外**——SSO-only
- * 帳號也要能建 PAT（他們沒有密碼可用，更需要 token 這條路）。
- * 「一次只編一列」：`editingId` 持有正在編的那列；其餘列的鉛筆 softDisabled＋原因（可聚焦）。
- * 欄：名稱（kind 標籤；副標＝建立日、oauth 的「未驗證名稱」）｜Label（派生值灰字）｜權限｜最後使用｜到期（過期紅；oauth 列以 `displayExpiry` 計算，#298）｜操作（編輯、撤銷）。
- */
 export function ApiTokensSection() {
   const { t, i18n } = useTranslation();
   const tokens = useApiTokens();
   const [editingIdState, setEditingId] = useState<string | null>(null);
-  // 正在編的那列被重抓掉了（別的分頁撤銷了它）：視為沒有在編，否則其餘列的鉛筆會永遠停用。衍生值即可，不必 effect。
+  // Derived rather than an effect: if the edited row vanished (revoked in another tab), treat it as not editing, or other rows' pencils stay disabled forever.
   const editingId =
     editingIdState !== null && tokens.data?.some(token => token.id === editingIdState) === true ? editingIdState : null;
 
@@ -382,12 +360,13 @@ export function ApiTokensSection() {
   ];
   const rows: SettingsTableRow[] = (tokens.data ?? []).map(token => {
     const dates = tokenDates(token, t, i18n.language);
-    // 灰字＝顯示的是從名稱派生的值。接受的誤判：手動設成恰等於派生值時也灰——對外效果相同。
+    // Grey means the label shown is derived from the name. Accepted false positive: a manual label equal to the
+    // derived one also renders grey, which looks the same to others.
     const derived = token.agentLabel === deriveAgentLabel(token.name);
     return {
       id: token.id,
       primary: {
-        // 名稱是外部字串（oauth 列是 client 自述）——SettingsTable 一律 bidi 隔離；oauth 列另標「未經驗證」。
+        // External string (OAuth rows are client-supplied); SettingsTable bidi-isolates it, and OAuth rows are also marked unverified.
         name: token.name,
         weight: "medium",
         badges: (
@@ -427,8 +406,7 @@ export function ApiTokensSection() {
     <SettingsGroup
       title={t("settings.account.apiTokensTitle")}
       description={t("settings.account.apiTokensDescription")}
-      // 建立鈕掛在這一組的標題列，不再墊在清單底下——動作要跟它所屬的那件事同一行，
-      // 才看得出來它建的是 token 而不是別的東西。
+      // In the header row rather than under the list, so it's clear the button creates a token.
       action={<CreateTokenDialog />}
     >
       <div className="space-y-2">
@@ -440,7 +418,7 @@ export function ApiTokensSection() {
         {tokens.data !== undefined && (
           <SettingsTable label={t("settings.account.apiTokensTitle")} columns={columns} rows={rows} empty={t("settings.account.apiTokensEmpty")} />
         )}
-        {/* 名稱與 label 的分野、清理提示都是看完自己有哪些 token 之後才用得上的附註，放在表格後面當註腳。 */}
+        {/* footnotes: only useful after seeing one's own tokens */}
         <p className="pt-1 text-xs text-muted-foreground">{t("settings.authorization.tokens.footnote")}</p>
         <p className="text-xs text-muted-foreground">{t("settings.authorization.tokens.oauthExpiryNote", { days: OAUTH_APP_IDLE_DAYS })}</p>
         <p className="text-xs text-muted-foreground">{t("settings.account.apiTokensCleanupHint")}</p>

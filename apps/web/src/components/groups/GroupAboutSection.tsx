@@ -29,7 +29,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 名稱行內編輯（`canManageGroup`）：outline「儲存名稱」，成功 toast、失敗行內 alert。 */
 function NameSection({ group }: { group: GroupDto }) {
   const { t } = useTranslation();
   const renameGroup = useRenameGroup();
@@ -73,8 +72,8 @@ function NameSection({ group }: { group: GroupDto }) {
 }
 
 /**
- * 危險動作的一個區塊：標題＋說明＋outline 觸發鈕＋二次確認對話框。目前只有退出群組在用（刪群組走
- * `DeleteGroupDialog`，失敗時對話框留著）；退出失敗（409 `last_admin`，競態後備）→ toast 並關閉對話框。
+ * Only leaving uses this (deleting uses `DeleteGroupDialog`, which stays open on failure). A failed leave (409 `last_admin`,
+ * the race fallback) toasts and closes the dialog.
  */
 function ConfirmSection({
   title,
@@ -131,22 +130,20 @@ function ConfirmSection({
   );
 }
 
-/** 名單裡掛內建管理員角色的人數（看 `builtin === "admin"` 計數）。 */
 function countAdmins(members: GroupMemberDto[]): number {
   return members.filter((member) => member.builtin === "admin").length;
 }
 
 /**
- * 退出與刪除成功後的去處（#247，兩者同一規則）：回背景頁；但背景頁若是**這個群組**的筆記（`/g/<id>/…`，不分大小寫）——
- * 剛失去存取權（退出）或已不存在（刪除）——改回 `/`。沒有背景頁（深連結）也回 `/`。
- * 不再導到 `/settings/groups`：那會從群組 modal 跳進個人設定 modal。
+ * After leaving or deleting, go back to the background page, unless it is a note of this group (`/g/<id>/…`, case-insensitive;
+ * access lost or the group gone) → `/`. No background page (deep link) → `/` too.
+ * Not `/settings/groups`: that would jump from the group modal into the settings modal.
  */
 export function afterLeaveTarget(groupId: string, backgroundLocation: Location | undefined): Location | "/" {
   if (!backgroundLocation) return "/";
   return backgroundLocation.pathname.toLowerCase().startsWith(`/g/${groupId.toLowerCase()}/`) ? "/" : backgroundLocation;
 }
 
-/** 沒有 `canManageGroup` 時的名稱：唯讀文字。 */
 function ReadOnlyName({ group }: { group: GroupDto }) {
   const { t } = useTranslation();
   return (
@@ -156,7 +153,7 @@ function ReadOnlyName({ group }: { group: GroupDto }) {
   );
 }
 
-/** 資訊：建立時間（`GroupDto.createdAt`）與成員數（`useGroupMembers().data.length`——不是 `myRole.memberCount`，那是該角色的人數）。 */
+/** Member count comes from the member list: `myRole.memberCount` is that role's headcount. */
 function InfoGroup({ group }: { group: GroupDto }) {
   const { t, i18n } = useTranslation();
   const membersQuery = useGroupMembers(group.id);
@@ -173,9 +170,8 @@ function InfoGroup({ group }: { group: GroupDto }) {
 }
 
 /**
- * 退出（不是最後一位管理員才顯示，#175）與刪除（`canManageGroup`；兩模式 `DeleteGroupDialog` 不變）。
- * 最後一位管理員看成員名單的 `builtin === "admin"` 計數；名單 pending 時不渲染退出區；error 時照常渲染，由 server 409 兜底。
- * 「Delete group」是面板層級的 `outline` 鈕、不塗紅；紅色留給對話框的提交鈕。
+ * The last admin is counted from the member list; the leave section is hidden while it is pending, and on error
+ * the server's 409 is the backstop. The delete button is `outline`: red is reserved for the dialog's submit.
  */
 function LeaveAndDelete({ group, backgroundLocation }: { group: GroupDto; backgroundLocation: Location | undefined }) {
   const { t } = useTranslation();
@@ -220,10 +216,6 @@ function LeaveAndDelete({ group, backgroundLocation }: { group: GroupDto; backgr
   );
 }
 
-/**
- * 群組 modal「關於」（`/groups/:id/about`，#247）：名稱（`canManageGroup` 行內可改，否則唯讀）、資訊、退出、刪除。
- * 項次四個對所有成員相同，內容依兩個管理旗標降級。
- */
 export function GroupAboutSection() {
   const { t } = useTranslation();
   const group = useGroupOutlet();

@@ -13,19 +13,14 @@ import { GroupRowButton } from "./GroupRowButton";
 import { visibleSelectionKeys, type SelectableTab } from "./select-model";
 import { noteLocationLabel, type LocationContext, type SidebarNode } from "./tree";
 
-/**
- * 一般 tab 選取模式的勾選樹（#181）：取代 NoteList 的清單內容（捲動容器不換）。
- * 筆記列整列是 `<label>`＋勾選框，不是連結、沒有 ⋮。資料夾列＝折疊 chevron 鈕＋`<label>`（勾選框、資料夾圖示、名稱）：
- * `<button>` 不放進 `<label>`（無效 HTML），沒有「＋」與 ⋮。群組 tab 的群組列只有折疊主鈕、不可勾。
- * 折疊與 NoteList 共用 `collapse.ts` 的同一把鍵。只准經 `SelectLazy` 引用。
- */
+/** Import only through the SelectLazy chain and tests. Note rows are `<label>`s; a folder row is a chevron `<button>` plus a `<label>`, since a `<button>` can't live inside a `<label>` (invalid HTML). Collapse shares keys with NoteList via `collapse.ts`. */
 
 type RowVariant = "plain" | "group" | "recent";
 type ToggleRow = (key: string, shiftKey: boolean) => void;
 
 /**
- * Firefox 有修飾鍵時不把 label 的 click 轉給勾選框（留給文字選取），Shift／Ctrl＋點列文字會沒反應：有修飾鍵且點的不是
- * 勾選框本身時，取消轉送、自己切換（三引擎一致；Chromium／WebKit 不會因此切兩次）。筆記列與資料夾列共用。
+ * Firefox doesn't forward a label's click to the checkbox when a modifier is held (left for text selection), so Shift/Ctrl+click on the row text did nothing:
+ * with a modifier and a target other than the checkbox, cancel the forward and toggle ourselves (same in all three engines; Chromium/WebKit don't toggle twice).
  */
 function onLabelClick(event: ReactMouseEvent<HTMLLabelElement>, key: string, onToggle: ToggleRow): void {
   if (!(event.shiftKey || event.ctrlKey || event.metaKey) || event.target instanceof HTMLInputElement) return;
@@ -33,10 +28,7 @@ function onLabelClick(event: ReactMouseEvent<HTMLLabelElement>, key: string, onT
   onToggle(key, event.shiftKey);
 }
 
-/**
- * memo：勾一列時其他列不重繪——`note` 來自查詢資料、`location`／`onToggle` 由上層穩定；
- * 最近 tab 的位置行在列內算，才不會每次勾選都替每一列重算。
- */
+/** memo: ticking a row doesn't re-render others (`note` from query data, `location`/`onToggle` stable); the recents tab computes its location line inside the row so it isn't recomputed per tick. */
 const SelectableNoteRow = memo(function SelectableNoteRow({
   note,
   variant,
@@ -55,7 +47,7 @@ const SelectableNoteRow = memo(function SelectableNoteRow({
   const label = variant === "recent" ? noteLocationLabel(note, location, t) : "";
   return (
     <li data-node-kind="note" data-node-id={note.id}>
-      {/* select-none：Shift＋點文字時不順帶選取頁面文字。label 內只能放 phrasing content，兩行用 block span。 */}
+      {/* select-none: Shift+click on text must not select page text; a label holds only phrasing content, so the two lines are block spans */}
       <label
         className={cn(
           "flex cursor-pointer select-none gap-2 rounded-md px-2 text-[13px]",
@@ -67,7 +59,7 @@ const SelectableNoteRow = memo(function SelectableNoteRow({
         <SelectionCheckbox
           checked={checked}
           data-selection-key={key}
-          // Shift＝範圍；Ctrl／⌘＋點與一般點選相同（單列切換）。macOS 的 Ctrl＋點是右鍵、不產生 click，用 ⌘。
+          // Shift = range; Ctrl/⌘+click is a plain toggle. Ctrl+click on macOS is a right-click and fires no click, hence ⌘.
           onChange={(event) => onToggle(key, (event.nativeEvent as MouseEvent).shiftKey)}
           className={variant === "recent" ? "mt-0.5" : undefined}
         />
@@ -94,9 +86,6 @@ interface TreeContext {
   location: LocationContext;
 }
 
-/**
- * 資料夾列的勾選部分（勾選框＋資料夾圖示＋名稱）。memo 同筆記列：勾一列時其他列不重繪——`folder` 來自查詢資料、`onToggle` 由上層穩定。
- */
 const SelectableFolderLabel = memo(function SelectableFolderLabel({
   folder,
   checked,
@@ -128,10 +117,6 @@ const SelectableFolderLabel = memo(function SelectableFolderLabel({
   );
 });
 
-/**
- * 資料夾列：［折疊 chevron 鈕］［label：勾選框＋圖示＋名稱］。chevron 鈕的可及名稱＝資料夾名（圖示 `aria-hidden`），
- * 點它只收合／展開、不勾；點 label 才勾（勾資料夾不連帶勾子項）。
- */
 function SelectableFolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder" }>; ctx: TreeContext }) {
   const { t } = useTranslation();
   const [open, toggle] = useCollapsed(`folder:${node.folder.id}`);
@@ -205,7 +190,7 @@ function SelectableNodeList({ nodes, ctx, inGroup = false }: { nodes: readonly S
 export function SelectableTree({ nodes, tab, location }: { nodes: readonly SidebarNode[]; tab: SelectableTab; location: LocationContext }) {
   const { selection } = useSidebarTabState();
   const { updateSelection } = useSidebarTabActions();
-  // 穩定（`nodes` 由 NoteList memo，清單重抓才換）：選取列的 memo 靠它。Shift 範圍以按下當下的可見序計（資料夾列算、收合子樹跳過）。
+  // Stable (`nodes` is memoised by NoteList and changes only on refetch): the select rows' memo relies on it. Shift ranges use the visible order at press time (folder rows count, collapsed subtrees skipped).
   const onToggle = useCallback<ToggleRow>(
     (key, shiftKey) => updateSelection(shiftKey ? { type: "range", key, order: visibleSelectionKeys(nodes, isCollapsed) } : { type: "toggle", key }),
     [nodes, updateSelection],

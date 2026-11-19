@@ -1,11 +1,10 @@
 import { parseSiteNoteHref, wikilinkPropsFromLink, type SiteLinkTarget, type SiteNoteHref } from "@knotebook/shared";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Node／Transaction 型別在 apps/web 值層級拿不到
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Node/Transaction types can't be imported: prosemirror-model/-state aren't apps/web dependencies
 type Any = any;
 
-/** 轉換本身那筆 transaction 的 meta——外掛看到它就跳過（不自我遞迴）。 */
 export const SITE_LINK_CONVERT_META = "knotebook:siteLinkConvert";
-/** y-prosemirror 的 sync plugin key 字串（`ySyncPluginKey.key`）。以字串比對：pnpm 可能給出兩份 y-prosemirror。 */
+// Compared as a string: pnpm may install two copies of y-prosemirror.
 export const Y_SYNC_META = "y-sync$";
 
 export interface SiteLinkRange {
@@ -26,10 +25,6 @@ export function blockIdAt(doc: Any, pos: number): string | null {
   return null;
 }
 
-/**
- * 碰到 `ranges` 的站內連結。一個連結＝同一 textblock 裡連續、link mark `href` 相同的文字節點；`text` 串接（樣式丟棄）。
- * 結果依 `from` 遞增、去重。
- */
 export function collectSiteLinks(doc: Any, ranges: ReadonlyArray<{ from: number; to: number }>, siteOrigin: string): SiteLinkRange[] {
   const out = new Map<number, SiteLinkRange>();
   const size = doc.content.size;
@@ -40,7 +35,7 @@ export function collectSiteLinks(doc: Any, ranges: ReadonlyArray<{ from: number;
       if (!node.isTextblock) return true;
       let offset = pos + 1;
       let group: { from: number; to: number; href: string; text: string } | null = null;
-      // 「碰到」：非空區間要真的重疊（只相鄰不算——否則在既有站內連結旁邊再建一個連結會把它重收、重排後備）；空區間（游標點）含端點。
+      // A non-empty range must really overlap (adjacent doesn't count, or a link created next to an existing site link would be re-collected and re-queued); an empty range (cursor) includes its endpoints.
       const touches = (g: { from: number; to: number }) => (from === to ? g.from <= to && g.to >= from : g.from < to && g.to > from);
       const flush = () => {
         if (group && touches(group) && !out.has(group.from)) {
@@ -68,7 +63,6 @@ export function collectSiteLinks(doc: Any, ranges: ReadonlyArray<{ from: number;
   return [...out.values()].sort((a, b) => a.from - b.from);
 }
 
-/** 這一批 transaction 裡 link 的 `AddMarkStep` 區間，映射到最終文件。 */
 export function addedLinkRanges(trs: readonly Any[]): Array<{ from: number; to: number }> {
   const out: Array<{ from: number; to: number }> = [];
   trs.forEach((tr, ti) => {
@@ -88,7 +82,7 @@ export function addedLinkRanges(trs: readonly Any[]): Array<{ from: number; to: 
   return out;
 }
 
-/** 由後往前把 `pick` 給得出目標的連結換成 wikilink（屬性照 `site-link.ts` 的 label 規則）；回傳沒換的（排後備用）。`links` 必須取自 `tr.doc`。 */
+// `links` must come from `tr.doc`.
 export function replaceSiteLinks(tr: Any, links: readonly SiteLinkRange[], pick: (link: SiteLinkRange) => SiteLinkTarget | null): SiteLinkRange[] {
   const left: SiteLinkRange[] = [];
   const type = tr.doc.type.schema.nodes.wikilink;
@@ -103,7 +97,6 @@ export function replaceSiteLinks(tr: Any, links: readonly SiteLinkRange[], pick:
   return left.reverse();
 }
 
-/** 仍存在、id 在集合裡的 blockContainer 範圍（後備套用時只在這些區塊內找）。 */
 export function blockRanges(doc: Any, blockIds: ReadonlySet<string>): Array<{ from: number; to: number }> {
   const out: Array<{ from: number; to: number }> = [];
   doc.descendants((node: Any, pos: number) => {

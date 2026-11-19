@@ -10,10 +10,13 @@ import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
 /**
- * #187：`/admin/auth` 頂部的兩個立即生效開關。Switch 一律受控於 server 值——409（防自鎖守衛的兩個錯誤碼）時 server 值沒變，
- * Switch 自然維持原狀，只 toast。關閉帳密先過確認 dialog（顯示 usersWithoutSso）；開啟永遠直接送（server 永遠允許）。
- * 「關不了」的兩種原因（零個啟用服務、自己沒有可用 SSO）預先 disable 並以可見文字＋aria-describedby 說明；權威判斷在 PATCH。
- * 自行註冊開關只管帳密自助註冊，帳密有效值關時照常可切，並以可見文字＋aria-describedby 說明不生效（讓管理員能在暫開帳密前先關掉它）。
+ * Switches are controlled by the server value: on a 409 (either self-lockout guard code) the value is unchanged, so
+ * the switch stays put and only a toast shows. Turning password login off goes through a confirm dialog (showing
+ * usersWithoutSso); turning it on always sends at once (the server always allows it). The two "can't turn off"
+ * reasons (no enabled provider, no usable SSO for yourself) disable it up front with visible text plus
+ * aria-describedby, as a preview only; the PATCH is authoritative. Registration only governs password signup but
+ * stays toggleable while password login is effectively off, with visible text plus aria-describedby saying it has
+ * no effect, so admins can turn it off before temporarily enabling password login.
  */
 export function SiteAccessSettings() {
   const { t } = useTranslation();
@@ -33,7 +36,7 @@ export function SiteAccessSettings() {
     }
   }
 
-  // 確認 dialog 的人數要是「開 dialog 當下」的（shared DTO JSDoc）：打開時重抓，抓回前先顯示現有快照。
+  // The count in the confirm dialog must be current at open (per the shared DTO's JSDoc): refetch, showing the cached snapshot meanwhile.
   function openConfirm(): void {
     void settings.refetch();
     setConfirmOpen(true);
@@ -46,7 +49,7 @@ export function SiteAccessSettings() {
       </SettingsGroup>
     );
   }
-  // 只在沒有資料時換成錯誤文字：有舊資料時 refetch 失敗（isError 也為真）不能把開關與開著的確認 dialog 整組拆掉。
+  // Only when there is no data: a failed refetch with cached data must not tear down the switches and an open confirm dialog.
   if (settings.data === undefined) {
     return (
       <SettingsGroup title={t("admin.auth.access.title")}>

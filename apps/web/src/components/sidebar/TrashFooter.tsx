@@ -11,12 +11,7 @@ import { Trash } from "@/components/ui/icons";
 import { RotateCcw } from "@/components/ui/icons-extra";
 import { PurgeConfirmDialog, toastTrashFailure, toastTrashResult } from "@/components/sidebar/trash-dialogs";
 
-/**
- * 垃圾桶 tab 的側欄底部（`SidebarFooter` 經 `TrashLazy` 延遲載入）：保留天數說明；選取模式換成動作列。
- * 兩者在同一個 lazy 元件裡切換：各自一個 lazy 的話，第一次進選取時動作列還要再 suspend 一次、先閃一下佔位。
- * 寬螢幕（`useWidePointer`）選取中底部什麼都不顯示（保留天數說明也不出現）：
- * 動作在 `TrashPanel` 標題列的 `TrashWideToolbar`。
- */
+/** Both live in one lazy component: separate lazies would suspend again on first entering select mode and flash a placeholder. */
 export function TrashFooter() {
   const { selection } = useSidebarTabState();
   const wide = useWidePointer();
@@ -24,10 +19,7 @@ export function TrashFooter() {
   return wide ? null : <TrashActionBar />;
 }
 
-/**
- * 保留天數說明；載入中／失敗時只留同高的空位，版面不跳。
- * 手機：說明排在清單之後、跟著文件捲；左下的浮動 Search 鈕蓋在畫面底部，所以說明底下留 56＋16＋8 加 safe area，捲到底時清單與說明都在鈕的上緣之上。
- */
+/** Phone: the note follows the list as the document scrolls; the bottom-left Search FAB covers the screen bottom, so bottom padding is 56+16+8 plus the safe area to keep list and note above it. */
 function TrashFooterNote() {
   const { t } = useTranslation();
   const trash = useTrash();
@@ -40,16 +32,10 @@ function TrashFooterNote() {
   );
 }
 
-/**
- * 垃圾桶選取模式的動作：還原、開永久刪除確認、確認後送出、成功收尾。窄形 `TrashActionBar` 與寬形 `TrashWideToolbar` 共用。
- * 0 篇或送出中 `disabled`。成功後離開選取模式（結果走 toast），失敗留在選取模式讓使用者重試。送出的 id 照清單順序、只算清單上還在的（`selectedTrashIds`）。
- * ⚠ 兩個呼叫端都只在選取中掛載——`mountedRef` 守衛（回應晚到時不結束使用者重新開始的另一輪選取）靠這一點成立；
- * `purgeDialog` 由呼叫端渲染在自己裡面，跟著呼叫端一起卸載。
- */
+/** Both callers mount it only while selecting: the `mountedRef` guard (a late response mustn't end a selection the user restarted) relies on that; `purgeDialog` is rendered by the caller and unmounts with it. */
 export function useTrashSelectionActions(): {
   selectedIds: string[];
   disabled: boolean;
-  /** 送出中（還原或永久刪除的請求在途）。 */
   busy: boolean;
   onRestore: (event: MouseEvent<HTMLButtonElement>) => void;
   onPurge: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -62,11 +48,11 @@ export function useTrashSelectionActions(): {
   const { selection } = useSidebarTabState();
   const { updateSelection } = useSidebarTabActions();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  /** 連點不重送（同 TrashPanel：isPending 要等下一個 macrotask 才反映到 disabled）。 */
+  /** No double send on rapid clicks (as TrashPanel: `isPending` reaches `disabled` only a macrotask later). */
   const busyRef = useRef(false);
-  /** 選取已結束（呼叫端卸載）就不再動選取與焦點：回應晚到時不結束使用者重新開始的另一輪選取。 */
+  /** Once selection ended (caller unmounted) don't touch selection or focus: a late response mustn't end a selection the user restarted. */
   const mountedRef = useRef(true);
-  /** 開確認框的鈕與它所在的那一份實例（確認鈕在 portal 裡，找不到外殼）。 */
+  /** The dialog opener and its instance (the confirm button is in a portal, so the shell can't be found from it). */
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const shellRef = useRef<Element | null>(null);
 
@@ -93,9 +79,8 @@ export function useTrashSelectionActions(): {
   }
 
   /**
-   * 動作成功：結束選取、焦點交給發起那一份的「選取」鈕。動作鈕一結束就卸載、「選取」鈕要等 `TrashPanel` 重繪才出現，
-   * 所以 `flushSync` 讓它在同一個 task 內 commit 再找（rAF 要多等一幀，那一幀的按鍵會落到 body）。
-   * 焦點原本在這份實例裡（或已落 body：被按的鈕、確認框已卸載）才拉回；等回應期間使用者已移到別處就不搶。
+   * The action button unmounts at once and "Select" appears only after `TrashPanel` re-renders, so `flushSync` commits within the same task before looking it up (rAF waits a frame, and a key in that frame would hit body).
+   * Focus goes back to the initiating instance's "Select" only if it was in this instance or already on body; if the user moved elsewhere while waiting, don't grab it.
    */
   function finish(shell: Element | null): void {
     if (!mountedRef.current) return;
@@ -131,7 +116,7 @@ export function useTrashSelectionActions(): {
       pending={purge.isPending}
       onConfirm={() => {
         const ids = selectedIds;
-        // 開框後清單重抓、選的全不在了：不送空請求、不報「已永久刪除 0 篇」，直接關框。
+        // The list was refetched after opening and none of the selection remains: no empty request or "deleted 0" report, just close.
         if (ids.length === 0) {
           setConfirmOpen(false);
           return;
@@ -145,14 +130,14 @@ export function useTrashSelectionActions(): {
           } catch (err) {
             toastTrashFailure("purge", err, t);
           }
-          // 成敗都關。送出中取消了框也不會重開到別的對象：動作鈕在 pending 時 disabled。
+          // Closed on success and failure alike; cancelling mid-submit can't reopen on another target: the action button is disabled while pending.
           setConfirmOpen(false);
           if (ok) finish(shell);
         });
       }}
       onOpenChange={setConfirmOpen}
-      // 沒有 DialogTrigger：Radix 關框時聚焦的 triggerRef 是空的，焦點會落 body。取消或失敗時開框鈕還在，焦點還給它；
-      // 成功時 finish 已聚焦「選取」、開框鈕已卸載，這裡不動。
+      // No DialogTrigger: Radix's focus target on close is empty and focus would fall to body. On cancel or failure the opener still exists and gets focus;
+      // on success `finish` already focused "Select" and the opener is unmounted, so do nothing.
       onCloseAutoFocus={(event) => {
         event.preventDefault();
         if (openerRef.current?.isConnected) openerRef.current.focus();
@@ -163,15 +148,14 @@ export function useTrashSelectionActions(): {
   return { selectedIds, disabled, busy, onRestore, onPurge, purgeDialog };
 }
 
-/** 窄形：底部動作列「還原」（主色）「永久刪除」（紅字），只放圖示，可及名稱由 `aria-label` 給。 */
 function TrashActionBar() {
   const { t } = useTranslation();
   const { disabled, onRestore, onPurge, purgeDialog } = useTrashSelectionActions();
   const { endSelectionIfActive } = useSidebarTabActions();
 
   /**
-   * 靜態卡底部的 Esc（動作列不在 TrashPanel 的根底下）。抽屜裡的 Esc 由 AppShell 的 `onEscapeKeyDown`（Radix 在 document
-   * capture 先處理）結束選取並交焦點；真瀏覽器在那之後、React 的 onKeyDown 之前就 commit，動作列已卸載，這裡收不到。
+   * Esc for the static card's bottom (the action bar isn't under TrashPanel's root). In the drawer AppShell's `onEscapeKeyDown` (Radix, document capture) ends selection and hands focus;
+   * a real browser commits after that and before React's onKeyDown, with the action bar already unmounted, so this never sees it.
    */
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key !== "Escape") return;
@@ -181,14 +165,14 @@ function TrashActionBar() {
       ended = endSelectionIfActive();
     });
     if (ended) {
-      event.preventDefault(); // 這一下 Esc 只結束選取（搜尋標記的 Esc 監聽看到 defaultPrevented 就讓路）
+      event.preventDefault(); // Only ends selection; the search-highlight Esc listener yields on defaultPrevented
       shell?.querySelector<HTMLButtonElement>(SIDEBAR_SELECT_BUTTON)?.focus();
     }
   }
 
   return (
     <>
-      {/* 手機上捲的是文件：動作列與其他底部列同一款外框，`sticky` 釘在視窗底、避開 Home 指示條，清單捲到它下面時不透出來。 */}
+      {/* Phone scrolls the document: same frame as the other bottom bars, sticky at the window bottom clear of the Home indicator, so the list doesn't show through */}
       <div
         className="m-2 flex gap-1 max-sm:sticky max-sm:bottom-0 max-sm:z-20 max-sm:m-0 max-sm:border-t max-sm:border-border max-sm:bg-card max-sm:px-2 max-sm:pt-1.5 max-sm:pb-[calc(0.375rem+env(safe-area-inset-bottom))]"
         onKeyDown={handleKeyDown}
@@ -196,7 +180,7 @@ function TrashActionBar() {
         <Button type="button" variant="brand" className="min-w-0 flex-1 px-1.5" aria-label={t("trash.restore")} title={t("trash.restore")} disabled={disabled} onClick={onRestore}>
           <RotateCcw aria-hidden="true" className="h-4 w-4 shrink-0" />
         </Button>
-        {/* 不用 outline：它的 hover 填 brand-deep，紅字壓深色底不對；hover 同 row-actions.ts 的 ROW_ICON_DANGER。 */}
+        {/* Not outline: its hover fills brand-deep, which clashes with red text (hover as ROW_ICON_DANGER in row-actions.ts) */}
         <Button
           type="button"
           variant="ghost"
@@ -209,17 +193,13 @@ function TrashActionBar() {
           <Trash aria-hidden="true" className="h-4 w-4 shrink-0" />
         </Button>
       </div>
-      {/* 放在動作列的 div 外：確認框內的 Esc 只關框，不經 React 樹冒泡到上面的 onKeyDown 結束選取。 */}
+      {/* Outside the bar's div: Esc inside the dialog only closes it and doesn't bubble through the React tree to the onKeyDown that ends selection */}
       {purgeDialog}
     </>
   );
 }
 
-/**
- * 寬形：`TrashPanel` 標題列裡的「還原」「永久刪除」兩顆 24px 純圖示鈕（可及名稱＝hover 提示＝原按鈕字；
- * 外觀同一般 tab 的 `SelectActionBar` toolbar 形）＋永久刪除確認框。`TrashPanel` 只在選取中渲染它（`mountedRef` 守衛靠這一點）。
- * 確認框內的 Esc 經 React 樹（portal）冒泡到 `TrashPanel` 根，由它的 `handleKeyDown` 開頭濾掉：只關框、不結束選取。
- */
+/** Rendered by `TrashPanel` only while selecting (the `mountedRef` guard relies on it). Esc inside the confirm dialog bubbles through the React tree (portal) to TrashPanel's root, where `handleKeyDown` filters it out: closes the dialog without ending selection. */
 export function TrashWideToolbar() {
   const { t } = useTranslation();
   const { disabled, busy, onRestore, onPurge, purgeDialog } = useTrashSelectionActions();

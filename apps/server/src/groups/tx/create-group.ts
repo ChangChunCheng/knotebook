@@ -1,7 +1,4 @@
-/**
- * #175：建群組。同一交易建群組、兩個內建角色（管理員七旗標全真；一般成員 read／create／edit——
- * 與 0012 步驟 2 同一組旗標）、建立者掛管理員。本檔不 import `Db`、不接 `deps`（S14）。
- */
+/** The member role's flags match migration 0012. */
 import type { Tx } from "../../db/tx.js";
 import { groupMembers, groupRoles, groups } from "../../db/schema.js";
 

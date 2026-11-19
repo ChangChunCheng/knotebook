@@ -6,11 +6,7 @@ import { oidcRedirectUri } from "./oidc-client.js";
 import type { OidcProviderRow } from "./oidc-providers.js";
 import { OIDC_STATE_COOKIE_PATH, OIDC_STATE_TTL_SECONDS, sealOidcState, type OidcStateIntent } from "./oidc-state.js";
 
-/**
- * login 與 SSO 證明起點共用：產 state／nonce／PKCE、封 state cookie（綁 providerId＋configVersion＋intent）、組 authorization URL。
- * scope 逐字 "openid email profile"（漏了 email／name claim 全缺）。`buildAuthorizationUrl` 在 metadata
- * 缺 endpoint 時會 throw——呼叫端一律 catch。
- */
+/** Shared by login, SSO proof start and manual link. The scope must stay "openid email profile" (else the email/name claims are missing). Throws when the metadata lacks an endpoint: callers must catch. */
 export async function startAuthorization(
   config: Pick<AppConfig, "appSecret" | "publicUrl">,
   provider: Pick<OidcProviderRow, "id" | "legacyCallback" | "configVersion">,
@@ -44,7 +40,7 @@ export function setOidcStateCookie(reply: FastifyReply, config: Pick<AppConfig, 
   });
 }
 
-/** 必須帶與 setCookie 相同的 path／sameSite／secure。 */
+/** Needs the same path/sameSite/secure as `setCookie`, or the browser doesn't treat it as the same cookie. */
 export function clearOidcStateCookie(reply: FastifyReply, config: Pick<AppConfig, "cookieSecure">): void {
   reply.clearCookie(OIDC_STATE_COOKIE, { path: OIDC_STATE_COOKIE_PATH, sameSite: "lax", secure: config.cookieSecure });
 }

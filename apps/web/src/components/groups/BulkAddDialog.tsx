@@ -16,18 +16,17 @@ import {
 import { Select } from "@/components/ui/select";
 import { isRateLimited, type BulkAddOutcome, type BulkAddReport } from "./bulk-add";
 
-/** 輸入框一次貼多個地址（`input`），或「從其他群組匯入」（`import`）。 */
 export type BulkAddMode = "input" | "import";
 
-/** 一輪批次加入的狀態：`report` 為 null＝還在跑。 */
+/** `report` is null while the run is in progress. */
 export interface BulkAddState {
   done: number;
   total: number;
-  /** 開跑那一刻的角色名：跑完後加人表單的角色會重設，說明文字不能跟著變。 */
+  /** Captured at start: the add form's role resets once the run ends. */
   roleName: string;
-  /** 按了「停止」、還在等正在送的那一筆。 */
+  /** Stop was pressed; waiting for the request in flight. */
   stopping: boolean;
-  /** 跑完後有沒有地址放回（或留在）輸入框。 */
+  /** Whether any addresses were put back into (or left in) the input box. */
   keptInBox: boolean;
   report: BulkAddReport | null;
 }
@@ -35,41 +34,32 @@ export interface BulkAddState {
 type BulkAddDialogProps = {
   open: boolean;
   mode: BulkAddMode;
-  /** null＝匯入還在挑人（只有 `import` 會有這一段）。 */
+  /** null = import is still picking people (only `import` has this step). */
   bulk: BulkAddState | null;
-  /** 目前這個群組（不列在來源清單裡）。 */
   groupId: string;
-  /** 目前這個群組的成員 userId：來源群組裡已在這裡的人不列出。 */
+  /** Source-group members already in this group aren't listed. */
   currentMemberIds: ReadonlySet<string>;
-  /** 自己（不列出；自己一定已在這個群組裡，除非是非成員的站台管理員）。 */
+  /** Not listed; always already in this group unless a non-member site admin. */
   myUserId: string | undefined;
-  /** 加人表單目前選的角色名（挑人那一段的說明文字用）。 */
   roleName: string;
-  /** 匯入按下確認：要加的 email（依來源名單的順序）。對話框不關，換成進度。 */
+  /** Emails to add, in source-list order. The dialog stays open and switches to progress. */
   onImport: (emails: string[]) => void;
   onStop: () => void;
-  /** 關閉（完成、取消、Esc、✕）。跑到一半關掉＝停止：呼叫端負責中止。 */
+  /** Close (done, cancel, Esc, X). Closing mid-run means stop: the caller aborts. */
   onClose: () => void;
-  /** 關閉時把焦點還給誰（受控 Dialog 沒有 `DialogTrigger`，Radix 不會自己還）。 */
+  /** The controlled Dialog has no `DialogTrigger`, so Radix won't restore focus itself. */
   returnFocusRef: RefObject<HTMLElement | null>;
 };
 
-/** 結果的分類與顯示順序。 */
 const OUTCOMES: BulkAddOutcome[] = ["added", "alreadyMember", "notFound", "invalid", "failed", "notProcessed"];
 
-/** 結果裡每一類的 email 清單最多直接露出幾列，超過就在該類自己的清單裡捲動。 */
+/** Emails shown per outcome before that outcome's own list scrolls. */
 const RESULT_VISIBLE_ROWS = 5;
 
 /**
- * 批次加入的對話框（群組 modal 之上的第三層）：兩條路徑共用。
- * - `import`：挑人（來源群組 → 勾選清單）→ 按「加入 n 人」→ 同一個對話框換成進度。
- * - `input`：在加人輸入框一次填多個地址按「加入」→ 直接開在進度。
- * 進度是「已處理 n／共 m」＋「停止」（正在送的那一筆跑完就停，其餘記「未處理」）；跑完換成結果（停下的原因、
- * 各類的 email 一行一個，超過 5 個的那一類在自己的清單裡捲動；外層另有高度上限當保險）＋「完成」。設定 modal 裡不再另外顯示結果，也不發 toast。
- *
- * 無障礙：一個常駐的 `role="status"`（sr-only）從對話框打開就在，跑完才填入「停下的原因＋各類人數」；
- * email 清單放在 live region 外（不會整串念出來）。進入進度時焦點移到「停止」，進入結果時移到「完成」。
- * 點對話框外面不關（`dismissOnOutside={false}`：挑人那一段是表單、跑的那一段誤點會中止）。
+ * `dismissOnOutside={false}`: the pick step is a form, and a stray click while running would abort.
+ * Results stay here: the settings modal shows no separate result and no toast.
+ * The email lists sit outside the sr-only `role="status"` so they aren't read out.
  */
 export function BulkAddDialog(props: BulkAddDialogProps) {
   const { t } = useTranslation();
@@ -79,10 +69,9 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
   const stopRef = useRef<HTMLButtonElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
 
-  // 焦點分兩種時機：
-  // - 打開那一刻（輸入框那條直接開在進度）：交給 `onOpenAutoFocus` 指定。這裡的 effect 在那一刻沒用——Radix Portal
-  //   第一次 commit 時內容還沒掛上，ref 是 null；不指定的話 Radix 聚焦第一個可聚焦元素，只是剛好是「停止」。
-  // - 對話框開著時換段（挑人 → 進度、進度 → 結果）：被換掉的按鈕帶走焦點，這個 effect 把焦點移到新的那一顆。
+  // On open use `onOpenAutoFocus`: the Portal content isn't mounted on the first commit, so this effect would see a null ref; without it Radix
+  // focuses the first focusable element, which only happens to be Stop.
+  // Phase changes while open: the replaced button takes focus with it, so move focus to the new one here.
   function phaseFocusTarget(): HTMLButtonElement | null {
     if (phase === "running") return stopRef.current;
     if (phase === "result") return doneRef.current;
@@ -113,7 +102,7 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
         dismissOnOutside={false}
         onOpenAutoFocus={(event) => {
           const target = phaseFocusTarget();
-          if (!target) return; // 挑人那一段：照 Radix 預設（第一個可聚焦元素）
+          if (!target) return; // pick phase: Radix default (first focusable)
           event.preventDefault();
           target.focus();
         }}
@@ -143,7 +132,7 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
                 variant="outline"
                 aria-disabled={bulk.stopping || undefined}
                 className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                // 停止中再按也無妨：abort 與 `stopping` 都是冪等的
+                // Pressing again while stopping is harmless: abort and `stopping` are idempotent
                 onClick={props.onStop}
               >
                 {bulk.stopping ? t("groups.bulk.stopping") : t("groups.bulk.stop")}
@@ -159,7 +148,7 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
                 {message.text}
               </p>
             )}
-            {/* 外層的上限只是保險（6 類各 5 列也不會把「完成」推出畫面）：DialogContent 本身不捲動 */}
+            {/* Outer cap is only a safety net (6 outcomes x 5 rows still won't push Done off screen): DialogContent itself doesn't scroll */}
             <ul className="max-h-[50vh] space-y-3 overflow-y-auto rounded-md border border-input p-3 text-sm">
               {groups.map((group) => {
                 const labelId = `${listId}-${group.outcome}`;
@@ -172,8 +161,7 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
                     >
                       {t(`groups.bulk.outcome.${group.outcome}`, { count: group.emails.length })}
                     </div>
-                    {/* 每類各自捲動：超過 5 個才捲（列高固定 1.25rem，5 列＝6.25rem；長 email 折行會多佔列，所以是「約 5 列」）；
-                        會捲才可聚焦並以類別標題命名，鍵盤使用者才捲得到 */}
+                    {/* Scrolls past 5 rows (fixed 1.25rem rows, 5 rows = 6.25rem; long emails wrap, hence about 5); only a scrollable list is focusable and named by its heading, so keyboard users can reach it */}
                     <ul
                       tabIndex={scrolls ? 0 : undefined}
                       aria-labelledby={scrolls ? labelId : undefined}
@@ -200,7 +188,7 @@ export function BulkAddDialog(props: BulkAddDialogProps) {
           </div>
         )}
 
-        {/* 常駐的 live region：跑完才填入摘要（一開始就在，新插入的 live region 不一定會被念） */}
+        {/* Mounted from the start: a live region inserted later may not be announced */}
         <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
           {announcement}
         </p>
@@ -226,15 +214,15 @@ function resultMessage(
 }
 
 /**
- * 挑人：列出我所在的其他群組（`GET /api/groups` 只回我是成員的群組）→ 選一個 → 抓它的成員
- * （`GET …/members`，任一成員可讀）→ 勾選清單（預設全勾；已在這個群組的人與自己不列）→ 確認交給呼叫端依序加入。
- * 一次性複製：不建立任何「兩個群組的關聯」，來源群組之後的增減不會帶過來。每次打開都從頭選（關閉時卸載）。
+ * `GET /api/groups` returns only groups I belong to; `GET .../members` is readable by any member.
+ * A one-time copy: no link between the groups is kept, so later changes in the source group don't carry over. Each open starts over
+ * (unmounted on close).
  */
 function ImportPicker({ groupId, currentMemberIds, myUserId, onImport }: BulkAddDialogProps) {
   const { t } = useTranslation();
   const groupsQuery = useGroups();
   const [sourceId, setSourceId] = useState("");
-  // 記「取消勾選的」而不是「勾選的」：名單晚到也自然是全勾（預設全勾），換來源群組時清空。
+  // Tracks unchecked rather than checked, so a late-arriving list is all checked by default; cleared when the source group changes.
   const [unchecked, setUnchecked] = useState<ReadonlySet<string>>(new Set());
   const membersQuery = useGroupMembers(sourceId);
 

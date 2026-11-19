@@ -2,26 +2,26 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type Pointer
 import type { BlockNoteEditor } from "@blocknote/core";
 import { createLongPress, type LongPress } from "@/lib/long-press";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（防循環 import，同 spec.tsx）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generics; repo convention is any (avoids a circular import, same as spec.tsx)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** 比照 BlockNote `LinkToolbarController` 的 `useHover` delay（open／close 各 250 ms）。 */
+/** Same delays as BlockNote's `LinkToolbarController` hover. */
 export const HOVER_OPEN_MS = 250;
 export const HOVER_CLOSE_MS = 250;
 
 type Source = "hover" | "press";
 
 /**
- * 可編輯時 wikilink 工具列的兩個開法——滑鼠 hover（延遲開、移出延遲關、移進工具列或焦點在工具列裡不關）、
- * 觸控長按（`lib/long-press.ts`）。點擊不開（直接跳轉，見 `useWikilinkClick`）。鍵盤開不到（列為已知限制）。
- * 都不搶焦點；hover 移出造成的關閉不把焦點拉回編輯器（`shouldRestoreFocus`）。
+ * Hover and touch long-press open the toolbar; neither steals focus. A hover stays open while the pointer is on
+ * the toolbar or focus is inside it. Click doesn't open it: it navigates (see `useWikilinkClick`). Keyboard
+ * can't open it (known limitation). A close caused by hover-leave doesn't return focus to the editor.
  */
 export function useToolbarTriggers(editor: AnyEditor, editable: boolean) {
   const [source, setSourceState] = useState<Source | null>(null);
   const sourceRef = useRef<Source | null>(null);
   const hoverClosedRef = useRef(false);
-  // 關閉時要不要把焦點還給編輯器：開啟當下編輯器有焦點，或使用者在工具列裡互動過（焦點進去、按過）。
-  // 從沒碰過編輯器的人（例如手機長按開、點外關）不拉焦點，免得叫出虛擬鍵盤。
+  // Restore focus on close only if the editor had focus at open or the user used the toolbar;
+  // otherwise (phone long-press, tap outside) it would raise the virtual keyboard.
   const editorHadFocusRef = useRef(false);
   const interactedRef = useRef(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -36,7 +36,7 @@ export function useToolbarTriggers(editor: AnyEditor, editable: boolean) {
         try {
           editorHadFocusRef.current = editor._tiptapEditor.view.hasFocus();
         } catch {
-          editorHadFocusRef.current = false; // view 未掛載／已卸載（tiptap 的 view Proxy 會丟錯）
+          editorHadFocusRef.current = false; // tiptap's view proxy throws when not yet mounted or already unmounted
         }
       }
       sourceRef.current = next;
@@ -102,7 +102,7 @@ export function useToolbarTriggers(editor: AnyEditor, editable: boolean) {
         onContextMenu: (e: MouseEvent<HTMLElement>) => {
           if (press.contextMenu()) e.preventDefault();
         },
-        // 長按成立後瀏覽器可能補發滑鼠事件：capture 階段攔下，免得 ProseMirror 拿去搬游標、搶焦點把剛開的工具列關掉。
+        // The browser may re-fire mouse events after a long-press; stop them in capture so ProseMirror doesn't move the cursor and steal focus from the new toolbar.
         onMouseDownCapture: (e: MouseEvent<HTMLElement>) => {
           if (!press.suppressing()) return;
           e.preventDefault();
@@ -115,7 +115,7 @@ export function useToolbarTriggers(editor: AnyEditor, editable: boolean) {
     open: source !== null,
     contentRef,
     anchorHandlers,
-    /** 回傳 true ＝這是長按後補發的 click，呼叫端要攔掉、不跳轉。 */
+    /** True: this click was re-fired after a long-press; the caller must swallow it instead of navigating. */
     consumeClick: (e: MouseEvent<HTMLElement>) => {
       if (!editable || !press.consumeClick()) {
         clearTimers();
@@ -142,9 +142,7 @@ export function useToolbarTriggers(editor: AnyEditor, editable: boolean) {
         if (e.pointerType !== "touch") scheduleHoverClose();
       },
     },
-    /** 開啟當下編輯器有沒有焦點。 */
     editorHadFocus: () => editorHadFocusRef.current,
-    /** hover 移出造成的關閉不拉回焦點；其餘只在開啟時編輯器有焦點、或在工具列裡互動過時拉回。 */
     shouldRestoreFocus: () => !hoverClosedRef.current && (editorHadFocusRef.current || interactedRef.current),
   };
 }

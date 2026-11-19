@@ -5,15 +5,10 @@ import { ChunkLoadBeacon, LazyRouteErrorBoundary, LazyRouteLoading } from "@/com
 import { ManagementShell } from "@/components/management/ManagementShell";
 
 /**
- * 站台管理 modal（#247）——第二棵 Routes 樹的 layout route，外殼是 `ManagementShell`，六項：
- * 使用者／群組／登入／儲存方案（含站台版本設定）／AI 代理／站台限制（#397）。
- *
- * 守衛不在這裡：`App.tsx` 把本路由掛在 `RequireAuth → ChangePasswordGate → RequireAdmin` 底下；`/admin`、`/admin/auth`、
- * `/admin/versions` 與未知子路徑的轉址掛在本元件**外面**（RequireAdmin 之下）——不先閃 modal，非 admin 直接被 RequireAdmin 導 `/`。
- * 主樹對 `/admin/*` 落在 `/*` 的 `HomePage`（深連結時的背景）。
- *
- * 關閉（Esc／✕）：`navigate(backgroundLocation ?? "/")`。「回筆記」項次已刪（關閉即回）。
- * 右卡的 lazy 錯誤邊界同 `SettingsModal`：inline frame、`chunk="admin"`、`resetKey` 取真實 pathname。
+ * Guards live in `App.tsx` (`RequireAuth → ChangePasswordGate → RequireAdmin`). The redirects for `/admin`, `/admin/auth`,
+ * `/admin/versions` and unknown subpaths sit outside this component (under `RequireAdmin`), so the modal never flashes
+ * and non-admins go straight to `/`. In the main tree `/admin/*` falls to `HomePage` at `/*` (the background for deep links).
+ * The lazy error boundary matches `SettingsModal`: inline frame, `chunk="admin"`, `resetKey` from the real pathname.
  */
 export function AdminModal() {
   const { t } = useTranslation();

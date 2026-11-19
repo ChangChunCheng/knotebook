@@ -16,12 +16,10 @@ import { ColorPanel } from "./ColorPanel";
 import { panelHeightPx, rememberKeyboardInset, setColorPanelHeight } from "./toolbar-footprint";
 import { BlockTypeRow, FormatRow, useBlockTypeState, type MobileToolbarEditor, type MobileToolbarMode } from "./toolbar-modes";
 
-/** `ShowSelectionExtension.showSelection(bool, key)` 的 key：與 AI 框、BlockNote 連結鈕各自的 key 分開計。 */
+/** `ShowSelectionExtension.showSelection(bool, key)` key: counted separately from the AI box's and BlockNote link button's keys (the extension counts per key). */
 export const MOBILE_COLOR_PANEL_HIGHLIGHT_KEY = "mobileColorPanel";
-/** 色盤開著時掛在編輯器根節點的屬性；`index.css` 靠它把選取的反白改畫成外框。 */
 export const MOBILE_COLOR_PANEL_OPEN_ATTR = "data-mobile-color-open";
 
-/** ProseMirror 沒人設定時的 `scrollMargin` 預設。 */
 const PM_DEFAULT_SCROLL_MARGIN_PX = 5;
 
 type ScrollEdges = { top: number; right: number; bottom: number; left: number };
@@ -31,22 +29,19 @@ function edgesOf(value: number | Partial<ScrollEdges> | undefined, fallback: num
   return { top: fallback, right: fallback, bottom: fallback, left: fallback, ...value };
 }
 
-/** 游標矩形比它那一行的下緣短幾 px；多留這一段，整行（不只游標）都在工具列之上。 */
+/** The caret rect is a few px shorter than its line's bottom; this extra keeps the whole line (not just the caret) above the toolbar. */
 const CARET_BREATHING_PX = 8;
 
 /**
- * 工具列在時，編輯器為了讓游標可見而捲動時，下緣要多留「鍵盤高＋工具列外框高＋游標到該行下緣的幾 px（`CARET_BREATHING_PX`）」，
- * 不然打到可視區最下面時游標那一行會被工具列蓋住。用 ProseMirror 的 `scrollMargin`／`scrollThreshold`
- * （不是 CSS `scroll-padding`：ProseMirror 自己算捲動量，不讀 scroll-padding）。
- * 改 bottom，top 在原本的值上加頁首高（`stickyTopInset`，手機上頁首釘在頂端）；左右保留 BlockNote 原本設的值，
- * 卸載時兩個 prop 照原樣還原（原本沒設就還原成沒設）。
- * 文件尾端沒有可捲的空間時靠 `MobileToolbarSpacer` 補。
- *
- * 鍵盤升起（inset 變大）且編輯器有焦點時補一次捲動到游標，不然要等下一次輸入游標才離開工具列。
+ * While the toolbar is up, scroll-to-caret leaves room below for keyboard + toolbar frame + `CARET_BREATHING_PX`, else the caret line at the bottom is covered.
+ * Uses ProseMirror's `scrollMargin`/`scrollThreshold`, not CSS `scroll-padding` (ProseMirror computes scrolling itself and ignores it).
+ * Top adds the sticky header height (`stickyTopInset`); left/right keep BlockNote's values; both props are restored on unmount (unset stays unset).
+ * With no scrollable room at the document end, `MobileToolbarSpacer` supplies it.
+ * When the keyboard rises while the editor has focus, scroll to the caret once; otherwise it stays under the toolbar until the next input.
  */
 function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void {
   const bottom = inset + PHONE_EDIT_TOOLBAR_CLEARANCE_PX + CARET_BREATHING_PX;
-  // 手機上捲的是文件，筆記頁首釘在頁面頂端：上緣也要讓開頁首，往上移動時游標那一行才不會鑽到頁首底下。
+  // The note header is pinned on phones: also clear it at the top so a caret moving up doesn't slide under it.
   const header = useStickyTopInset();
   useEffect(() => {
     const view = editor.prosemirrorView;
@@ -62,7 +57,7 @@ function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void
       try {
         view.setProps(previous);
       } catch {
-        // 整個編輯器一起卸載時 view 已銷毀，沒有東西可還原。
+        // The view is already destroyed when the whole editor unmounts: nothing to restore.
       }
     };
   }, [editor, bottom, header]);
@@ -78,43 +73,38 @@ function useCaretClearsToolbar(editor: MobileToolbarEditor, inset: number): void
 }
 
 /**
- * 手機（< 640）編輯中浮在鍵盤正上方的工具列：膠囊、左右各留 8px、可橫捲、每顆 44×44。
- * `bottom` 取螢幕鍵盤的高度（`useKeyboardInset`）；鍵盤收起時底下補 safe area。
+ * `bottom` follows the on-screen keyboard height (`useKeyboardInset`). The outer `data-mobile-edit-toolbar` is how `NotePage` tells that focus on the toolbar still counts as editing.
  *
- * 有「模式」：主列放 AI、插入、Aa、圖片、¶、復原、重做、收起鍵盤；Aa 與 ¶ 不開面板，而是原地把整條換成
- * 「返回＋該模式的內容」（`toolbar-modes.tsx`）。所有按鈕按下都不搶編輯器的焦點（見 `MobileToolbarButton`）。
- * 最外層的 `data-mobile-edit-toolbar` 是 `NotePage` 判斷「焦點在工具列上仍算編輯中」的標記。
- *
- * 新增區塊用「＋」：照 BlockNote 側選單的「＋」——游標所在的區塊是空的就在那裡，否則先在後面插一段空段落，
- * 然後 `openSuggestionMenu("/")`（不插 `/` 字元，所以不會蓋掉選取的字或圖片，程式碼區塊裡也不會多一個 `/`）。
+ * "+" mirrors BlockNote's side menu: an empty current block is used as is, otherwise an empty paragraph is inserted after it, then `openSuggestionMenu("/")`
+ * (no "/" character is inserted, so a selected word or image isn't overwritten and a code block gains no "/").
  */
 export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileToolbarEditor; onCreateLink?: () => void }) {
   const { t } = useTranslation();
   const { actions, editable, state, open } = useAiSession();
   const inset = useKeyboardInset();
-  // 編輯中擋下拉重新整理：`index.css` 看 `<html>` 上的旗標（見 `ROOT_FLAGS`）。
+  // `index.css` reads this flag on `<html>` to block pull-to-refresh while editing.
   useRootFlag(ROOT_FLAGS.editToolbar, true);
   const keyboardOpen = isKeyboardOpen(inset);
   const [mode, setModeState] = useState<MobileToolbarMode>("main");
   const colorOpen = mode === "color";
-  // 色盤取代鍵盤的位置：進色盤時鍵盤已收（inset 變 0），所以用鍵盤穩定開著時記下的高度。
+  // The panel replaces the keyboard: by then the keyboard is down (inset 0), so use the height remembered while it was stably open.
   const [panelHeight, setPanelHeight] = useState(panelHeightPx);
 
-  // 離開色盤要把編輯器叫回來（鍵盤跟著回來）：iOS 只在使用者手勢內給鍵盤，所以在點擊事件裡同步呼叫；選取在 ProseMirror 狀態裡沒動。
+  // Leaving the panel must bring the editor (and keyboard) back: iOS only grants the keyboard inside a user gesture, so call synchronously in the click event; the selection is untouched in ProseMirror state.
   function setMode(next: MobileToolbarMode): void {
     if (mode === "color" && next !== "color") editor.focus();
     if (next === "color") setPanelHeight(panelHeightPx());
     setModeState(next);
   }
 
-  // 鍵盤高度穩定（收起動畫與升起動畫都過了）才記，不然會記到動畫中途的值。
+  // Remember only once the keyboard height is stable (hide and show animations finished), not a mid-animation value.
   useEffect(() => {
     if (!keyboardOpen || colorOpen) return;
     const timer = setTimeout(() => rememberKeyboardInset(inset), 200);
     return () => clearTimeout(timer);
   }, [inset, keyboardOpen, colorOpen]);
 
-  // 色盤實際量到的高度（「自訂…」頁比記下的鍵盤高還高）；沒量到之前用記下的鍵盤高。
+  // Measured panel height (the "Custom…" page is taller than the remembered keyboard height); until measured, use the remembered keyboard height.
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const panelFootprint = colorOpen ? (measuredHeight ?? panelHeight) : 0;
   useEffect(() => {
@@ -125,7 +115,7 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
     return () => setColorPanelHeight(0);
   }, [panelFootprint]);
 
-  // 色盤開著時使用者點內文：編輯器取回焦點、鍵盤升起，色盤不該再疊在鍵盤上，回到格式列。
+  // The user taps the text while the panel is open: the editor regains focus and the keyboard rises, so the panel must not stack on it; back to the format row.
   useEffect(() => {
     if (!colorOpen) return;
     const dom = editor.domElement;
@@ -134,8 +124,8 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
     return () => dom?.removeEventListener("focusin", back);
   }, [colorOpen, editor]);
 
-  // 編輯器失焦後選取不再反白：色盤開著時用 ShowSelectionExtension 補，並在編輯器根節點掛屬性，
-  // 讓樣式改畫外框（反白的底色會蓋住剛套上的背景色，見 index.css）。
+  // Without focus the selection isn't highlighted: while the panel is open ShowSelectionExtension draws it, and an attribute on the editor root
+  // makes the style draw an outline instead (a highlight background would hide the background colour just applied; see index.css).
   useEffect(() => {
     if (!colorOpen) return;
     const dom = editor.domElement;
@@ -147,14 +137,14 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
       try {
         extension?.showSelection(false, MOBILE_COLOR_PANEL_HIGHLIGHT_KEY);
       } catch {
-        // 整個編輯器一起卸載時 view 已銷毀，沒有東西可關。
+        // The view is already destroyed when the whole editor unmounts: nothing to close.
       }
     };
   }, [colorOpen, editor]);
 
   function insertBlock(): void {
     const block = editor.getTextCursorPosition().block;
-    // 程式碼區塊裡 slash 選單不會開，所以空的程式碼區塊也走「後面插一段」。
+    // The slash menu doesn't open in a code block, so an empty code block also gets a paragraph inserted after it.
     const isEmpty = block.type !== "codeBlock" && Array.isArray(block.content) && block.content.length === 0;
     if (isEmpty) {
       editor.setTextCursorPosition(block);
@@ -167,7 +157,7 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
 
   function insertImage(): void {
     const block = editor.getTextCursorPosition().block;
-    // 沒有內文的區塊（圖片、檔案…）不能被換成圖片，直接插在後面；其餘與 slash 選單的圖片項同一條路。
+    // Blocks without inline content (image, file…) can't be turned into an image: insert after; otherwise same path as the slash menu's image item.
     const inserted =
       block.content === undefined
         ? editor.insertBlocks([{ type: "image" }], block, "after")[0]!
@@ -176,7 +166,7 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
     editor.getExtension(FormattingToolbarExtension)?.store.setState(false);
   }
 
-  // 焦點留在編輯器到 click 才離開（mousedown 被擋），工具列不會在 click 之前就被卸載。
+  // mousedown is blocked, so focus stays in the editor until click: the toolbar isn't unmounted before the click.
   function hideKeyboard(): void {
     editor.domElement?.blur();
     const active = document.activeElement;
@@ -184,12 +174,12 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
   }
 
   useCaretClearsToolbar(editor, colorOpen ? Math.max(inset, panelFootprint) : inset);
-  // 與桌機 AI 鈕同一個條件：游標收合或選到圖片時 `getSelection()` 是 undefined，`open()` 不會有反應，所以鈕停用。
+  // Same condition as the desktop AI button: with a collapsed cursor or an image selected `getSelection()` is undefined and `open()` does nothing, so the button is disabled.
   const hasBlockSelection = useEditorState({ editor, selector: ({ editor: current }) => current?.getSelection() !== undefined });
   const blockTypeIndex = useBlockTypeState(editor).selected;
   const showAi = editable && actions.length > 0;
-  // 色盤開著時高度變大（進「自訂…」頁、量到實際高度）：編輯器沒有焦點，ProseMirror 不會自己捲，
-  // 所以補一筆 scrollIntoView 把選取捲到色盤上方（scrollMargin 已在上面的 effect 先更新）。不加 hasFocus 條件。
+  // The panel grows while open ("Custom…" page, measured height): the editor has no focus so ProseMirror won't scroll by itself;
+  // add a scrollIntoView to bring the selection above the panel (scrollMargin was already updated by the effect above). No hasFocus condition.
   const previousFootprint = useRef(panelFootprint);
   useEffect(() => {
     const before = previousFootprint.current;
@@ -210,7 +200,7 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
       style={{ bottom: inset }}
       className={cn(
         "pointer-events-none fixed inset-x-0 z-40 flex flex-col items-center px-2",
-        // 色盤自己帶底距（含 safe area），膠囊與色盤之間用 mb-2 隔開
+        // The colour panel carries its own bottom padding (including the safe area); the pill and the panel are separated by mb-2.
         colorOpen ? "pb-0" : keyboardOpen ? "pb-2" : "pb-[calc(0.5rem+env(safe-area-inset-bottom))]",
       )}
     >
@@ -253,7 +243,7 @@ export function MobileEditToolbar({ editor, onCreateLink }: { editor: MobileTool
           </>
         ) : (
           <>
-            {/* 內容橫捲時「返回」釘在左邊，不會捲出畫面 */}
+            {/* Back stays pinned left while the content scrolls horizontally */}
             <span className="sticky left-0 z-10 flex shrink-0 rounded-full bg-card">
               <MobileToolbarButton label={t("mobileToolbar.back")} onClick={() => setMode(mode === "color" ? "format" : "main")}>
                 <ChevronLeft aria-hidden="true" className="h-5 w-5" />

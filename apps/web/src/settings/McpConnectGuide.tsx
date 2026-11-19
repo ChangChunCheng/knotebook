@@ -16,19 +16,17 @@ import {
 import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
-/** 與關於頁同形：由 REPO_URL 組出，指向 docs/mcp.md 的 How to connect（Windows 上 Desktop 包 `cmd /c` 的寫法在那裡）。 */
+/** Built from REPO_URL like the About page; docs/mcp.md's How to connect covers the Windows Desktop `cmd /c` form. */
 const MCP_DOCS_URL = `${REPO_URL}/blob/main/docs/mcp.md#how-to-connect`;
 const LINK_CLASS = "text-brand-on-soft underline-offset-4 hover:underline";
 const LIST_CLASS = "list-none space-y-4 pl-0";
 const HEADING_CLASS = "text-sm font-semibold";
 
 /**
- * 「用 MCP 連接 Claude」（#247；#298 分兩段）：本站端點，然後「方式一：OAuth 授權」與「方式二：個人 token」
- * 兩段，各有 Claude Code／Claude Desktop 片段（組裝在 `mcp-snippets.ts`；PAT 片段的 token 位置一律 `<YOUR_TOKEN>` 佔位，
- * **不自動帶入任何 token 值**），最後一句權限對照（與 docs/mcp.md 工具表同步）。
- * OAuth 只在 https 站台顯示（#159）：http 時那一段只剩標題與一行說明。`origin` 選填，預設 `window.location.origin`
- * （jsdom 固定是 http，要測 https 分支需要這個縫）。
- * ⚠ 這是 user-facing 文件敘述：改片段前先對實際部署連一次。
+ * Endpoint, then OAuth and personal-token sections with Claude Code/Claude Desktop snippets (built in `mcp-snippets.ts`), then a permission
+ * summary that must stay in sync with the docs/mcp.md tool table. PAT snippets always use the `<YOUR_TOKEN>` placeholder and never inject a
+ * real token. OAuth shows on https only (#159); on http that section is just its heading and one line. `origin` defaults to
+ * `window.location.origin` and is a test hook (jsdom is always http). This is user-facing documentation: verify snippets against a real deployment before editing.
  */
 export function McpConnectGuide({ origin = window.location.origin }: { origin?: string } = {}) {
   const { t } = useTranslation();
@@ -107,7 +105,6 @@ export function McpConnectGuide({ origin = window.location.origin }: { origin?: 
   );
 }
 
-/** 一列片段：標籤、`<pre>`、Copy 鈕，下方可接補充說明。 */
 function SnippetRow({
   label,
   text,

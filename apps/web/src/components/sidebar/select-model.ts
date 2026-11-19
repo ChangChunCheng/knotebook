@@ -7,20 +7,15 @@ import { spaceKey, type DestMode, type DestSource, type DestSpace, type DestTarg
 import { isInSubtree, liveNotesUnder, type FolderIndex } from "./folder-index";
 import { noteBucket, noteSpaceKey, type SidebarNode } from "./tree";
 
-/**
- * 一般 tab 選取模式的純函式（#181）。
- * 只准被 SelectLazy 鏈與測試 import（首包上限）。
- */
+
+// Import only through the SelectLazy chain and tests (first-bundle limit).
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export type SelectableTab = "recent" | "favorites" | "myNotes" | "workspace" | "shared";
 export type SelectActionId = "unfavorite" | "move" | "copy" | "delete";
 
-/**
- * 各 tab 可用的批次動作：群組 tab、與我共享加 "move"（資料夾目的地）；最近、最愛不給。最愛的第一個動作是 "unfavorite"（移出最愛）。
- * 與我共享的 "delete" 只在選取（去重後）非空且全是資料夾時渲染（移除資料夾；共享筆記本身不能刪）。
- */
+/** Shared's "delete" renders only when the (deduped) selection is non-empty and all folders (removing folders; shared notes themselves can't be deleted). */
 export const SELECT_ACTIONS: Readonly<Record<SelectableTab, readonly SelectActionId[]>> = {
   recent: ["copy", "delete"],
   favorites: ["unfavorite", "copy", "delete"],
@@ -29,16 +24,13 @@ export const SELECT_ACTIONS: Readonly<Record<SelectableTab, readonly SelectActio
   shared: ["move", "copy", "delete"],
 };
 
-// ── 資料夾與筆記同列選取 ──
 
-/** 選取的一項：筆記或資料夾（群組列不可勾）。 */
 export type SelectionTarget = { kind: "note"; note: NoteDto } | { kind: "folder"; folder: FolderDto };
 
 function targetKey(target: SelectionTarget): string {
   return target.kind === "note" ? selectionKey({ kind: "note", id: target.note.id }) : selectionKey({ kind: "folder", id: target.folder.id });
 }
 
-/** 樹序的全部可選項：資料夾在它的子節點之前；收合的子樹也算（群組列本身不算）。 */
 export function tabTargets(nodes: readonly SidebarNode[]): SelectionTarget[] {
   return nodes.flatMap((node): SelectionTarget[] => {
     if (node.kind === "note") return [{ kind: "note", note: node.note }];
@@ -47,7 +39,6 @@ export function tabTargets(nodes: readonly SidebarNode[]): SelectionTarget[] {
   });
 }
 
-/** 畫面上可見的可選列的鍵（樹序）：「全選」與 Shift 範圍用。資料夾列在它的子項前；收合的資料夾自己在、子樹跳過；收合的群組跳過子樹。 */
 export function visibleSelectionKeys(nodes: readonly SidebarNode[], isCollapsed: (key: SidebarSectionKey) => boolean): string[] {
   return nodes.flatMap((node) => {
     if (node.kind === "note") return [selectionKey({ kind: "note", id: node.id })];
@@ -59,15 +50,11 @@ export function visibleSelectionKeys(nodes: readonly SidebarNode[], isCollapsed:
   });
 }
 
-/** 已選的項目（樹序；**不看收合**——先勾再收合的仍算）；不在樹裡的鍵不算。 */
 export function selectedTargets(nodes: readonly SidebarNode[], keys: ReadonlySet<string>): SelectionTarget[] {
   return tabTargets(nodes).filter((target) => keys.has(targetKey(target)));
 }
 
-/**
- * 送出前去重：祖先資料夾也被選的項目拿掉（它會跟著祖先一起動），不算略過。
- * 筆記看 `folderId` 落在哪個已選資料夾的子樹；資料夾看自己的祖先鏈（不含自己）。
- */
+/** Drops items whose ancestor folder is also selected (they move with it; not counted as skipped). */
 export function dedupeByAncestor(targets: readonly SelectionTarget[], index: FolderIndex): SelectionTarget[] {
   const selectedFolders = targets.flatMap((target) => (target.kind === "folder" ? [target.folder.id] : []));
   const underSelected = (folderId: string | null): boolean =>
@@ -84,7 +71,6 @@ export interface Eligibility {
   foldersBlocked: number;
 }
 
-/** move 的筆記判準依 tab：我的筆記＝自己的個人筆記；群組 tab＝`edit`（放置權）；與我共享＝全部；最近沒有「移動到」。 */
 function canMoveNote(tab: SelectableTab, note: NoteDto): boolean {
   if (tab === "workspace") return note.permissions.edit;
   if (tab === "shared") return true;
@@ -92,12 +78,7 @@ function canMoveNote(tab: SelectableTab, note: NoteDto): boolean {
 }
 
 /**
- * 預先排除：
- * move：myNotes 筆記＝`moveToGroup && groupId === null`；workspace 筆記＝`permissions.edit`；shared 筆記恆可；資料夾＝`permissions.manage`。
- * unfavorite：筆記一律可（只動自己的最愛紀錄）；資料夾不進 eligible、也不計略過。
- * copy：只看筆記（有資料夾時呼叫端整顆 disabled）；資料夾不進 eligible、也不計略過。
- * delete：筆記＝`permissions.delete`；資料夾要 `manage`（否則 foldersSkipped），子樹有活筆記（liveNotesUnder）且 `!deleteNotes` → foldersBlocked；
- * shared tab 的筆記一律 notesSkipped。eligible 維持輸入順序。
+ * `eligible` keeps input order. For copy and unfavorite, folders are neither eligible nor counted as skipped.
  */
 export function partitionTargets(
   action: SelectActionId,
@@ -139,19 +120,13 @@ export function partitionTargets(
 const PERSONAL_SPACE: DestSpace = { kind: "personal" };
 const SHARED_SPACE: DestSpace = { kind: "shared" };
 
-/** 選取項所在的群組（群組 tab）：筆記看 `noteBucket`、資料夾看 `space.groupId`；不在群組的回 null。 */
 function targetGroupId(target: SelectionTarget, groupIds: ReadonlySet<string>): string | null {
   if (target.kind === "folder") return target.folder.space.kind === "group" ? target.folder.space.groupId : null;
   const bucket = noteBucket(target.note, groupIds);
   return bucket.kind === "group" ? bucket.groupId : null;
 }
 
-/**
- * 批次的目的地：回 DestSource；workspace 的 move 跨兩個以上群組回 "mixedGroups"。不判空：呼叫端用 isEmptyDestination。
- * current：myNotes→個人；shared→共享私人（copy 沒有上半部）；workspace→eligible 全在同一群組 G 時 G（G 要在 groups 裡；copy 另要 G 是 `canCreateAndEdit`）；recent、favorites→無。
- * makeCopy：只 copy、且有上半部時。others：move 只有 myNotes 列候選群組；copy＝myNotes→候選群組、workspace 單一群組→個人＋其他候選群組、其餘→個人＋候選群組。
- * locations＝eligible 各自位置（筆記 `folderId`、資料夾 `parentId`）；movingFolders＝eligible 中的資料夾（只 move）。
- */
+/** Doesn't check emptiness (callers use `isEmptyDestination`). Workspace move across two or more groups → "mixedGroups". Workspace `current` is the single group G when all eligible items are in it (G must be in `groups`; copy also needs `canCreateAndEdit`). */
 export function batchDestSource(input: {
   tab: SelectableTab;
   mode: DestMode;
@@ -177,7 +152,7 @@ export function batchDestSource(input: {
     const [groupId] = [...ids];
     if (groupId === undefined) return mode === "move" ? { ...noUpper, others: [] } : { ...noUpper, others: [PERSONAL_SPACE, ...candidates] };
     const group = groups.find((candidate) => candidate.id === groupId);
-    // G 不在 groups（清單未到或剛被移出）→ 沒有上半部：不出空群組名（同 requireName 的立場）。
+    // G not in `groups` (list not loaded or just removed) → no top half: don't show an empty group name (same stance as requireName).
     if (group === undefined) return mode === "move" ? { ...noUpper, others: [] } : { ...noUpper, others: [PERSONAL_SPACE, ...candidates] };
     const space: DestSpace = { kind: "group", groupId, name: group.name };
     if (mode === "move") return { ...base, current: space, makeCopy: false, others: [] };
@@ -186,7 +161,7 @@ export function batchDestSource(input: {
     }
     return { ...noUpper, others: [PERSONAL_SPACE, ...candidates] };
   }
-  // recent、favorites：沒有「移動到」；「複製到」一律沒有上半部（選取可能跨空間）。
+  // recent and favorites have no "move to"; "copy to" never has a top half (the selection may span spaces).
   return mode === "move" ? { ...noUpper, others: [] } : { ...noUpper, others: [PERSONAL_SPACE, ...candidates] };
 }
 
@@ -195,21 +170,17 @@ export interface ResultTally {
   tab: SelectableTab;
   notesDone: number;
   foldersDone: number;
-  /** 刪資料夾連帶移到垃圾桶的筆記數。 */
   trashedViaFolders: number;
   notesSkipped: number;
   foldersSkipped: number;
   foldersBlocked: number;
   foldersGone: number;
-  /** 同空間＝destinationShortLabel；跨空間／複製＝destinationPathLabel。 */
   destinationName: string | null;
   sameSpace: boolean;
-  /** move／copy 的目的地（delete 為 null）；copySource＝批次的 current 空間（建立副本的結果句用）。 */
   destination: DestTarget | null;
   copySource: DestSpace | null;
 }
 
-/** 資料夾的後綴，依序：略過、擋下、已不存在（各自 > 0 才接）。 */
 function folderSuffixes(tally: ResultTally, t: Translate): string {
   let out = "";
   if (tally.foldersSkipped > 0) out += t("select.foldersSkippedSuffix", { count: tally.foldersSkipped });
@@ -235,11 +206,7 @@ function copyTitle(tally: ResultTally, destination: DestTarget, done: number, t:
   return t("select.copiedToGroup", { count: done, group: requireName(tally) });
 }
 
-/**
- * 結果 toast 標題。全部完成數 0 → `noneDone`（notesSkipped > 0）或 `noneDoneItems`，再接資料夾後綴。
- * 否則動作句＋依序 `skippedSuffix`、`foldersSkippedSuffix`、`foldersBlockedSuffix`、`foldersGoneSuffix`（各自 > 0 才接）。
- * move／copy 沒有 destination、或 makeCopy 沒有 copySource → throw（契約錯誤，不出空名稱）。
- */
+/** Throws if move/copy lacks `destination` or makeCopy lacks `copySource` (contract error: never render an empty name). */
 export function selectionResultTitle(tally: ResultTally, t: Translate): string {
   const { action, destination } = tally;
   const done = tally.notesDone + tally.foldersDone;

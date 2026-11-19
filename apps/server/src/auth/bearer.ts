@@ -13,9 +13,7 @@ import type { ResolvedSession, UserGate } from "./session.js";
 export interface BearerDeps {
   db: Db;
   gate: UserGate;
-  /** `publicUrlIssuer(config.publicUrl)`＝origin，無尾斜線。 */
   issuer: string;
-  /** cookie session 的解析（`app.ts` 的區域函式）——無 `Authorization` header 時的回退。 */
   resolveSessionUser: (request: FastifyRequest) => Promise<ResolvedSession | null>;
   limiters: {
     bearerMiss: FixedWindowLimiter;
@@ -24,30 +22,18 @@ export interface BearerDeps {
   };
 }
 
-/** `last_used_at` 的寫入節流：同一支 token 60 秒內只寫一次。 */
 const LAST_USED_THROTTLE_MS = 60_000;
 
 /**
- * #107：**opt-in** 的 Bearer／session 雙路徑認證。只有明確掛上這個 preHandler
- * 的路由收 API token，其餘路由維持 `app.authenticate`（cookie-only）——token 外洩的
- * 最壞情況因此是「筆記被讀寫」，不會變成「帳號被接管」。
- *
- * 兩個 scope 參數刻意分開：
- * - `required` 是**授權判定**用的單值（`hasScope(stored, required)`）。
- * - `challenge` 是 401／403 的 `WWW-Authenticate` 上宣告的 scope 集合，預設等於
- *   `required`。`/api/mcp` 為什麼要宣告比 `required` 多的 scope，見 `auth/challenge.ts`。
- *
- * 有 `Authorization` header 就**只走 token 路徑、不回退 cookie**（同時帶兩者時無歧義；
- * 已確認 web 端從不送這個 header）。
- *
- * ⚠ 這裡**不能呼叫 `app.authenticate`** 來做 cookie 回退：`sendError` 內含
- * `reply.send()`，之後補的 `WWW-Authenticate` 會靜默消失（見 `app.ts` 的
- * `resolveSessionUser` 註解）。所以回退走的是不送回應的 `resolveSessionUser`。
+ * Opt-in: only routes mounting this accept API tokens, so a leaked token can read/write notes but not take over the account.
+ * `required` is the single value for the authorization check (`hasScope(stored, required)`); `challenge` is the scope set
+ * advertised in WWW-Authenticate (default `required`; see `auth/challenge.ts`). With an Authorization header only the token
+ * path runs, with no cookie fallback (the web client never sends it). Don't call `app.authenticate` for the cookie fallback:
+ * `sendError` calls `reply.send()`, so a header set afterwards is silently lost.
  */
 export function createAuthenticateAny(deps: BearerDeps) {
-  // per-app 實例（比照 UserGate 的 BoundedMap）：模組層 singleton 會讓不同測試檔共用
-  // 同一份節流狀態，`last_used_at` 的守衛測試會隨執行順序紅綠。
-  // 被擠掉的後果只是該 token 下一發多跑一次 UPDATE，沒有錯誤路徑。
+  // Per-app instance: a module-level singleton would share state across test files (the last_used_at guard tests would flip with run order).
+  // An evicted entry costs only one extra UPDATE, no error path.
   const lastUsedTouchedAt = new BoundedMap<number>(DEFAULT_MAX_KEYS);
 
   function touchLastUsed(request: FastifyRequest, row: { id: string; clientId: string | null }): void {
@@ -56,13 +42,11 @@ export function createAuthenticateAny(deps: BearerDeps) {
     if (previous !== undefined && now - previous < LAST_USED_THROTTLE_MS) return;
     lastUsedTouchedAt.set(row.id, now);
     const stamp = new Date(now);
-    // fire-and-forget：`last_used_at` 只是設定頁顯示與 #132 的殭屍 client 清理依據，寫失敗
-    // 不該讓請求本身失敗。
+    // Fire-and-forget: last_used_at only feeds the settings page and the idle-client cleanup, so a failed write must not fail the request.
     void (async () => {
       await deps.db.update(apiTokens).set({ lastUsedAt: stamp }).where(eq(apiTokens.id, row.id));
       if (row.clientId !== null) {
-        // oauth grant 連帶更新 client 的 last_used_at——#132 的殭屍 client 清理用它判斷
-        // 「30 天未使用」，兩個時間戳的語意必須一致，否則天天在用的 client 會被清掉。
+        // The idle-client cleanup (`oauth/cleanup.ts`) uses this timestamp for "unused for 30 days", so it must move with the token's.
         await deps.db.update(oauthClients).set({ lastUsedAt: stamp }).where(eq(oauthClients.clientId, row.clientId));
       }
     })().catch((err: unknown) => {
@@ -70,19 +54,10 @@ export function createAuthenticateAny(deps: BearerDeps) {
     });
   }
 
-  /**
-   * 送出 401／429。**header 必須在 `sendError` 之前設**——`sendError` 內含
-   * `reply.send()`，之後補 header 會靜默消失（fastify 5 實測）。
-   *
-   * ⚠ 這條順序**目前用突變測試測不出來**：`app.ts` 的全域 onSend hook（nosniff 那
-   * 支）是 async，它的 microtask 邊界讓「send 之後才設的 header」碰巧趕上。把那支
-   * hook 改成同步的 `(req, reply, payload, done)` 形，順序寫反就會真的掉 header
-   * （實測 4 案紅）。所以別因為「試過交換也沒事」就把順序改掉。
-   */
+  /** Set headers BEFORE `sendError` (it calls `reply.send()`). Mutation tests can't catch a swapped order: the async global onSend hook masks it. */
   function rejectBearer(request: FastifyRequest, reply: FastifyReply, challenge: string, invalidToken: boolean): void {
     if (!deps.limiters.bearerMiss.consume(request.ip)) {
-      // 429 不帶 challenge：RFC 6750 的 challenge 只定義在 400／401／403，掛在 429 上
-      // 可能讓 client 在被限流時去重跑一輪授權，反而再吃 #132 的 DCR／authorize 桶。
+      // No challenge on 429: RFC 6750 defines it for 400/401/403, and a client re-running authorization would hit the DCR/authorize limiters.
       sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
       return;
     }
@@ -101,9 +76,8 @@ export function createAuthenticateAny(deps: BearerDeps) {
       if (parsed.kind === "none") {
         const resolved = await deps.resolveSessionUser(request);
         if (resolved === null) {
-          // 沒帶任何憑證也要帶 challenge——這條路由收 Bearer，而 MCP client 的第一發
-          // 請求依定義沒有 Authorization header，challenge 是它發現授權伺服器的入口。
-          // RFC 6750 §3：沒帶憑證時 SHOULD NOT 含 error code。
+          // Challenge even without credentials: an MCP client's first request has none and discovers the auth server from it.
+          // RFC 6750 §3: no error code when credentials are absent.
           reply.header("www-authenticate", buildBearerChallenge({ issuer: deps.issuer, scope: challenge }));
           sendError(reply, 401, "unauthorized", "Not signed in.");
           return;
@@ -112,13 +86,13 @@ export function createAuthenticateAny(deps: BearerDeps) {
         request.sessionTv = resolved.tv;
         request.sessionId = resolved.sid;
         request.authKind = "session";
-        return; // session 是完整身分：不檢查 scope、不吃 token 桶
+        return; // a session is a full identity: no scope check, no token bucket
       }
 
-      // RFC 6750 §3：unsupported authentication method（例如 Basic）→ 不帶 error。
+      // RFC 6750 §3: an unsupported scheme (e.g. Basic) gets no error code.
       if (parsed.kind === "other-scheme") return rejectBearer(request, reply, challenge, false);
 
-      // 前綴不合就不查 DB（refresh token 當 Bearer 送也落在這裡）。
+      // Wrong prefix: skip the DB (a refresh token sent as Bearer lands here).
       if (!isAccessTokenShape(parsed.token)) return rejectBearer(request, reply, challenge, true);
 
       const [row] = await deps.db
@@ -128,21 +102,18 @@ export function createAuthenticateAny(deps: BearerDeps) {
         .limit(1);
       if (row === undefined) return rejectBearer(request, reply, challenge, true);
 
-      // ⚠ 認證述詞**不含 kind**，且是「非 NULL 且已過期才拒」：預設 PAT 的到期欄是 NULL
-      // ＝不到期，寫成 `access_expires_at > now()` 會讓每支預設 PAT 全滅；而憑證額度
-      // 那條述詞的 `kind='oauth' OR` 是配額用的（refresh 不到期），帶進這裡會讓過期的
-      // oauth access token 永遠有效。
+      // Reject only a non-NULL past expiry (default PATs have NULL). No `kind` here: the quota predicate's `kind='oauth' OR` would keep expired oauth access tokens valid.
       if (row.accessExpiresAt !== null && row.accessExpiresAt.getTime() <= Date.now()) {
         return rejectBearer(request, reply, challenge, true);
       }
 
       const gateResult = await deps.gate.checkUser(row.userId);
       if (gateResult.status !== "ok") return rejectBearer(request, reply, challenge, true);
-      // 強制改密碼的使用者不得經 token 繞過（`UserGate.evaluate` 不看這個旗標）。
+      // Must-change-password users can't bypass via token (`UserGate.evaluate` ignores the flag).
       if (gateResult.user.mustChangePassword) return rejectBearer(request, reply, challenge, true);
 
+      // 403 consumes neither bearerMiss (a valid token retrying must not penalize its IP) nor the token bucket (charged only after this check).
       if (!hasScope(row.scope as TokenScope, required)) {
-        // 403 **不** consume BEARER_MISS：那是合法 token，反覆重試不得連累同 IP。
         reply.header(
           "www-authenticate",
           buildBearerChallenge({ issuer: deps.issuer, scope: challenge, error: "insufficient_scope" })
@@ -151,14 +122,7 @@ export function createAuthenticateAny(deps: BearerDeps) {
         return;
       }
 
-      // 限流扣點在 scope 檢查**通過之後**——403 不啃桶。
-      // ⚠ #108：`/api/mcp` 是全站**唯一**一條「宣告的 `required`（這裡固定是
-      // `notes:read`）與實際執行的操作類別脫鉤」的路由——一發請求裡可能夾帶讀也可能夾帶寫，
-      // 這裡只扣得到 `tokenRead`；寫入那顆桶（`tokenWrite`）由 `mcp/write-scope.ts` 的
-      // `requireWriteScope()`／`requireMoveScope()`／`requireDeleteScope()` 在每支寫入工具第一行補扣
-      // （#239 搬移、#181 垃圾桶）。`routes/notes.ts` 的
-      // 七個呼叫點每一個都是「宣告即實際」（GET 系一律 `notes:read`、POST 系一律
-      // `notes:write`），唯獨 `/api/mcp` 那條路由有這道二階段扣桶。
+      // `/api/mcp` declares `notes:read` but a request may write, so tokenWrite is charged in each write tool (`mcp/write-scope.ts`).
       const bucket = required === "notes:write" ? deps.limiters.tokenWrite : deps.limiters.tokenRead;
       if (!bucket.consume(`token:${row.userId}`)) {
         sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
@@ -167,8 +131,7 @@ export function createAuthenticateAny(deps: BearerDeps) {
 
       request.user = gateResult.user;
       request.authKind = "token";
-      // 這裡用 normalizeScope 而非 cast：CHECK 漂移時退化成唯讀（fail-closed）。上面
-      // `hasScope` 那處的 cast 則是刻意的——它以成員判定承接 text 欄位的斷言。
+      // normalizeScope, not a cast: if the CHECK drifts this degrades to read-only (fail-closed). The cast at `hasScope` above is deliberate: a membership check over the text column.
       request.tokenScope = normalizeScope(row.scope);
       request.tokenId = row.id;
       touchLastUsed(request, { id: row.id, clientId: row.clientId });

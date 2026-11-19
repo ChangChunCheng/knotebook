@@ -1,8 +1,5 @@
-/**
- * #272：e2e 測試縫。**只在 `config.testHooks` 時由 app.ts 註冊**（KNOTEBOOK_E2E_TEST_HOOKS=1 且 PUBLIC_URL 是 loopback），否則 404。
- * `PUT /api/admin/test/version-auto-wait { seconds }`：把自動切版的等待 X 壓成秒（`seconds: null`＝回站台設定）。requireAdmin；204。
- * 只覆寫這個行程的掃描器（`VersionService.overrideAutoWaitMs`），不寫 DB。
- */
+// Registered only with config.testHooks (KNOTEBOOK_E2E_TEST_HOOKS=1 and a loopback PUBLIC_URL), else 404; seconds: null clears the override (back to the
+// configured or site value). Overrides this process's scanner only.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sendInvalidBody } from "../auth/admin-provider-input.js";

@@ -2,7 +2,7 @@
 
 This is a map of the Knotebook code for someone who has never opened it. It covers how the pieces fit together and names the files where each part lives. It does not repeat the user-facing behaviour, which is in [`docs/`](docs/); the [API contract](docs/api.md), [MCP](docs/mcp.md) and [AI editing](docs/ai-editing.md) docs are the reference for what the endpoints and tools promise.
 
-Most source files open with a long header comment explaining *why* the code is shaped the way it is. Most of those comments are in Traditional Chinese. When this document points at a file, its header comment is usually the next thing to read.
+Source comments are in English and only explain *why* the code is shaped the way it is where the code can't show it: lock and transaction order, invariants enforced elsewhere, preconditions, library quirks. When this document points at a file, read the code together with those comments.
 
 ## Repository layout
 

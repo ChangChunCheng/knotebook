@@ -24,10 +24,6 @@ import {
   VERSIONS_PANEL_WIDTH_STEP,
 } from "./versions-panel-width";
 
-/**
- * 列的兩行內容（面板與窄視窗整頁共用）。第一行「名稱 (短 id)」（#272；未命名的用 uuid 推出的英文名），**只有自動版本**再加一顆
- * 中性色「自動存檔」pill（#258）；第二行 編輯者 · 時間 · 沿自 …（基底版已刪除時標「(deleted)」）。基底版不在列上標示。
- */
 export function VersionRowContent({ version }: { version: VersionDto }) {
   const { t, i18n } = useTranslation();
   const meta = [
@@ -53,7 +49,6 @@ export function VersionRowContent({ version }: { version: VersionDto }) {
   );
 }
 
-/** 每列的 ⋯（面板與整頁共用）：套用、編輯版本名稱、刪除（基底版 disabled＋看得見的說明）。 */
 export function VersionRowMenu({ version, isBase, onApply }: { version: VersionDto; isBase: boolean; onApply: (v: VersionDto) => void }) {
   const { t } = useTranslation();
   const { openDialog } = useVersions();
@@ -76,19 +71,14 @@ export function VersionRowMenu({ version, isBase, onApply }: { version: VersionD
   );
 }
 
-/**
- * 版本面板（640 起：1280 以下浮在筆記右緣、1280 起是第三欄卡；手機是整頁 `VersionsSheet`）。
- * `current` 的刷新：面板開著時訂閱活 `Y.Doc` 的 `update`，去抖動 1 s 後 invalidate `['notes', id, 'versions']`。
- * 離開預覽（橫幅沒有 ✕）：點清單空白處（`<ul>` 本身，點到列或 ⋯ 不算）、
- * 再點已選中的那一列（toggle）、✕ 關面板（`close()` 一併離開預覽）；另有 NotePage 的 Esc。
- */
+/** `current` refresh: while open it subscribes to the live Y.Doc `update` and invalidates `['notes', id, 'versions']` after a 1 s debounce. Leaving preview (the banner has no ✕): click blank list space (the `<ul>` itself, not rows or ⋯), click the selected row again (toggle), ✕ closes the panel (`close()` leaves preview too); plus NotePage's Esc. */
 export function VersionsPanel({
   doc,
   width,
   onWidthChange,
 }: {
   doc: Y.Doc;
-  /** #274：面板寬度（狀態在 NoteEditor，與錯誤外框共用；實際寬度走 `--versions-panel-width` CSS 變數，這裡只供把手的 aria-valuenow 與拖曳起點）。 */
+  /** State lives in NoteEditor (shared with the error frame); the real width goes through `--versions-panel-width`: this is only for the handle's aria-valuenow and drag start. */
   width: number;
   onWidthChange: (px: number, commit: boolean) => void;
 }) {
@@ -98,7 +88,7 @@ export function VersionsPanel({
   const id = noteId ?? "";
   const list = useVersionList(id, true, kindFilter);
   const rowsRef = useRef<Array<HTMLButtonElement | null>>([]);
-  // 浮動段的實際寬度可能被 CSS 夾在卡寬 - 3rem 以內（視窗窄時比設定值小）：把手的 aria-valuenow 與拖曳起點報實際寬度。
+  // The floating segment's real width can be clamped by CSS to card width − 3rem (smaller than the setting in narrow windows): report the real width for aria-valuenow and drag start.
   const asideRef = useRef<HTMLElement>(null);
   const [renderedWidth, setRenderedWidth] = useState(0);
   useEffect(() => {
@@ -108,16 +98,15 @@ export function VersionsPanel({
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  // 固定段的寬度不會被夾，直接用設定值（量測值比設定值晚一格才更新，連按鍵時會拿到舊寬度）。
+  // The fixed segment is never clamped: use the setting directly (the measured value lags one frame and gives a stale width on key repeat).
   const overlay = useIsOverlay();
   const shownWidth = overlay && renderedWidth > 0 ? Math.min(width, renderedWidth) : width;
-  // 浮動段被夾窄時，把手從實際寬度起算：往變寬的方向動了、但還沒超過設定值，就不寫入，否則設定值會被往下改。
+  // When the floating segment is clamped narrow, the handle counts from the real width: moving wider but not past the setting writes nothing, or the setting would be lowered.
   const handleWidthChange = (px: number, commit: boolean) => {
-    if (px >= shownWidth && px < width) return; // 只有浮動段會有 shownWidth < width
+    if (px >= shownWidth && px < width) return; // only the floating segment can have shownWidth < width
     onWidthChange(px, commit);
   };
-  // 這一發 click 的按下點是否也在 <ul> 本身：在列上按下、拖到列間縫放開時，瀏覽器把 click 派給共同祖先 <ul>，
-  // 只看 click 的 target 會誤判成點空白。
+  // Whether this click's press also started on the <ul> itself: pressing on a row and releasing in the gap between rows makes the browser dispatch the click to the common ancestor <ul>, which looking only at the click target would misread as a blank-space click.
   const pressedOnListRef = useRef(false);
 
   useEffect(() => {
@@ -135,10 +124,8 @@ export function VersionsPanel({
 
   const versions = list.data?.pages.flatMap((p) => p.versions) ?? [];
   const current = useVersionCurrent(id, list, kindFilter);
-  // 預覽中的那一版被篩選篩出清單時（#258）仍要能套用它：記住最後一次在清單裡看到的那一列。一律用 `id` 對（不用 seq：
-  // 搬移清空歷史後 seq 會重用，同一個 seq 可能是另一版）。換筆記、換版本時 id 對不上就自然不命中；
-  // `remembered.id === preview.id` 這一道是承重的：`remembered` 不會自己清，preview 變 null（離開預覽）或換成清單外的版本時，
-  // 靠這道比對讓「套用」回到 disabled，否則會套用到上一個預覽的版本。
+  // A previewed version that the filter (#258) removed from the list must still be applicable: remember the last row seen in the list. Matched by `id` (not seq: seq is reused after a move clears history).
+  // The `remembered.id === preview.id` check is load-bearing: `remembered` never clears itself, and this comparison returns Apply to disabled when preview becomes null or a version outside the list, instead of applying the previous preview's version.
   const inList = versions.find((v) => v.id === preview?.id) ?? null;
   const [remembered, setRemembered] = useState<VersionDto | null>(null);
   if (inList !== null && inList !== remembered) setRemembered(inList);
@@ -165,7 +152,7 @@ export function VersionsPanel({
         VERSIONS_PANEL_PLACEMENT,
       )}
     >
-      {/* 裁切（圓角、內部捲動）在這一層：aside 本身不能 overflow-hidden，否則伸到面板外的把手會被裁掉。 */}
+      {/* Clipping (rounding, inner scroll) lives here: the aside itself can't be overflow-hidden or the handle sticking out would be clipped */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">
         <div className="flex items-center justify-between px-3 pt-3">
           <h2 className="text-sm font-semibold">{t("versions.title")}</h2>
@@ -179,8 +166,8 @@ export function VersionsPanel({
           {current && !current.autoEnabled && <p className="text-xs text-muted-foreground">{t("versions.autoOff")}</p>}
         </div>
         <KindFilter className="px-3 pt-2" />
-        {/* 只認按下與放開都在 <ul> 本身（內距、列間空隙、清單下方空白）；列與 ⋯ 的點擊冒泡上來時 target 不是 <ul>，不算。
-            滑鼠專用的捷徑，不給鍵盤焦點（鍵盤離開預覽用 Esc 或再按一次選中列）。 */}
+        {/* Only a press and release both on the <ul> itself count (padding, row gaps, blank space below); clicks bubbling from rows and ⋯ have another target.
+            Mouse-only shortcut, no keyboard focus (the keyboard leaves preview with Esc or by re-pressing the selected row). */}
         <ul
           className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2"
           onPointerDown={(event) => {
@@ -201,7 +188,7 @@ export function VersionsPanel({
                     rowsRef.current[index] = el;
                   }}
                   type="button"
-                  // 已選中的列再點一次＝離開預覽（toggle）；↑↓ 走 onRowKey，不受影響。
+                  // Clicking the selected row again leaves preview (toggle); ↑↓ go through onRowKey, unaffected.
                   onClick={() => (preview?.id === version.id ? stopPreview() : startPreview({ seq: version.seq, id: version.id, name: version.name }))}
                   onKeyDown={onRowKey(index)}
                   className={cn("flex min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-accent/60", preview?.id === version.id && "bg-accent")}
@@ -230,8 +217,8 @@ export function VersionsPanel({
           </Button>
         </div>
       </div>
-      {/* #274：把手與側欄同形，`absolute right-full w-3` 伸進內文卡與面板之間的 `gap-3`（約略蓋在間隙上，以 padding box 定位、壓住面板左框一個框寬，與側欄對稱）；浮動與固定兩段都在。
-          放在最後一個子元素：Tab 順序不會以它為面板第一個停點。 */}
+      {/* Resize handle shaped like the sidebar's: `absolute right-full w-3` reaches into the `gap-3` between note card and panel (positioned by padding box, covering one border width of the panel's left edge, symmetric with the sidebar); present in both the floating and the 1280+ third-column layouts.
+          Last child so Tab order doesn't make it the panel's first stop. */}
       <PaneResizeHandle
         width={shownWidth}
         onChange={handleWidthChange}

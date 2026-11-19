@@ -6,7 +6,7 @@ Thanks for your interest in Knotebook. This page covers how to get the code runn
 
 - Bugs and feature requests go in the [issue tracker](https://github.com/sw-willie-wu/knotebook/issues). Planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones).
 - For a larger change, it helps to open an issue or comment on an existing one before you start, so the approach can be discussed first.
-- Issues and pull requests in English are welcome. Older code comments are mostly in Traditional Chinese; new comments, user-facing docs and the CHANGELOG are in English (see [Code comments](#code-comments)). You don't need to read Chinese to contribute: the older comments explain design decisions, and asking about one in an issue or pull request is fine.
+- Issues and pull requests in English are welcome. Code comments in the source, user-facing docs and the CHANGELOG are in English (see [Code comments](#code-comments)). Comments and test names in the test files are still mostly in Traditional Chinese; you don't need to read them to contribute, and asking about one in an issue or pull request is fine.
 
 ## Prerequisites
 
@@ -155,8 +155,17 @@ Types in use include `feat`, `fix`, `docs`, `test`, `style`, `refactor`, `perf`,
 
 ### Code comments
 
-- Write new comments, and comments you change, in English. There's no need to translate older Chinese comments you don't otherwise touch.
-- Comment what the code can't say for itself: why it is done this way, a constraint that isn't visible, a trade-off and what it was measured against. Leave out comments that restate the code.
+- Write comments in English. In test files, a Chinese comment or test name you change can be rewritten in English while you're there.
+- Names and types already say what the code does, so most code needs no comment. Write one only for what reading the code can't tell you:
+  - why it is done this way, when an obvious alternative would be wrong;
+  - why a line that looks redundant or movable must stay where it is;
+  - an invariant or constraint enforced somewhere else (a database constraint, another module, the client) that this code relies on;
+  - an input precondition (ids already lowercased, a string already normalized, what `null` means);
+  - something that must match another place exactly (an index expression, another route's error text);
+  - a library, database or browser quirk being worked around, a security reason, or a unit or limit the number alone doesn't make clear;
+  - on an exported function, a contract for callers that the name and types can't express.
+- Don't describe what a function or file does step by step, repeat names, or narrate history ("used to…"). If a comment only makes up for an unclear name, rename instead.
+- Keep each comment short, but don't drop facts: when you shorten one, every condition, exception and number it states should survive.
 - Refer to public things only: a GitHub issue number (`#123`) is fine; personal details, internal document or item numbers, and links to private notes are not.
 
 ### CHANGELOG

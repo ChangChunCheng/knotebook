@@ -1,25 +1,20 @@
 /**
- * bulk transfer：把整篇匯出的行與逐顆匯出對齊，得到段表（純函式，不碰編輯器）。
- *
- * 規則（照順序實作）：
- * 1. 比對前每行 `lineKey`（trimEnd）；表格列（`/^\s*\|/`）再把儲存格填充空白與分隔列的 `-` 個數正規化——只用於比對。
- * 2. numbered：該顆第一行兩邊都是 `/^(\d+)\. /` 時剝掉編號比其餘；子行允許整篇那邊多出 `delta` 格縮排（編號寬度差）。
- * 3. 開頭與結尾的空段落（逐顆匯出零行）記 0 行段、不吃空行；中間的空段落吃一個空行。
- * 4. 每個位置先逐顆、再群組；同一種之下先試 1 個分隔空行、再 0 個；`pos === 0` 只試 0。
- * 5. 群組（局部合段）：第 i 顆是清單項時，取「從 i 起同家族連續」的最長串、由長到短試；`(i, j)` 的群組匯出快取；
- *    每個起點至多 `cap` 次群組匯出，超過＝這個起點的群組全部放棄。群組只在 DP 回溯到這個起點、逐顆走不出完整解時才試。
- * 6. 失敗記憶化 `(i, pos)`；回傳依優先序的**第一個**完整解；找不到 → `segs: null`（不可寫回）。
- * 7. **顯式堆疊**：不遞迴、不以 spread 串接段陣列——遞迴版在 5 000 顆起爆 stack，
- *    `[seg, ...rest]` 每層複製一次是 O(n²)。UI 存得出超過 `MAX_BLOCKS` 的筆記（它只管寫入）。成功時段表直接從堆疊讀出。
+ * Explicit stack, no recursion and no spread concatenation: the recursive version blows the
+ * stack at about 5 000 blocks and `[seg, ...rest]` is O(n²) (the UI can save notes beyond `MAX_BLOCKS`).
+ * Groups are tried only when per-block can't complete a solution from that start, at most
+ * `cap` group exports per start. Failures are memoized per `(i, pos)`; the first complete
+ * solution by priority wins; none → `segs: null` (not writable back). Numbered items compare
+ * without their number, and child lines may be indented `delta` more on the whole-note side.
+ * Leading/trailing empty paragraphs are 0-line segments; a middle one takes one blank line.
+ * Per block before groups; 1 separator line before 0. Groups take the longest same-family run
+ * first (export of `(i, j)` cached). `MAX_BLOCKS` only limits writes.
  */
 import { lineKey } from "./normalize.js";
 
-/** 每個起點至多幾次群組匯出。 */
 export const GROUP_EXPORT_CAP = 32;
 
 export type ListFamily = "num" | "star" | null;
 
-/** numberedListItem → `num`；bullet／check／toggle → `star`；其他 → null（不參與局部合段）。 */
 export function listFamily(type: string): ListFamily {
   if (type === "numberedListItem") return "num";
   if (type === "bulletListItem" || type === "checkListItem" || type === "toggleListItem") return "star";
@@ -38,7 +33,7 @@ export interface AlignStats {
 }
 
 const TABLE_ROW = /^\s*\|/;
-/** 規則 1 的比對鍵：trimEnd；表格列再收儲存格填充與分隔列 `-` 數（行內色佔位符位數讓整篇與逐顆的欄寬不同）。 */
+/** Table rows also collapse cell padding and separator `-` counts: inline color placeholders make column widths differ between whole-note and per-block export. */
 function matchKey(line: string): string {
   const k = lineKey(line);
   return TABLE_ROW.test(k) ? k.replace(/ *\| */g, "|").replace(/-{3,}/g, "---") : k;
@@ -46,7 +41,6 @@ function matchKey(line: string): string {
 
 const NUM_PREFIX = /^(\d+)\. /;
 
-/** `per` 能不能從 `W` 的 `pos` 起對上；對得上回行數，否則 -1。`W`／`per` 都已是比對鍵。 */
 function matchAt(W: readonly string[], pos: number, per: readonly string[], numbered: boolean): number {
   if (pos + per.length > W.length) return -1;
   let delta = 0;
@@ -69,18 +63,15 @@ function matchAt(W: readonly string[], pos: number, per: readonly string[], numb
   return per.length;
 }
 
-/** 一個 DP 狀態 `(i, pos)` 的游標：依優先序逐一產生要試的子狀態。 */
 interface Frame {
   i: number;
   pos: number;
-  /** 0＝頭尾空段落（單一選項）；1＝逐顆；2＝群組；3＝用完。 */
   stage: 0 | 1 | 2 | 3;
   sepK: number;
   j: number;
   jMax: number;
   group: string[] | null;
   perMatched: boolean;
-  /** 目前正在試的子狀態用的那一段（成功時就是答案的一段）。 */
   seg: AlignSeg | null;
   segIsGroup: boolean;
 }
@@ -130,7 +121,6 @@ export function alignSegments(
     groupCache.set(key, lines);
     return lines;
   };
-  /** `pos` 起的 `sep` 行都是空行。 */
   const blanks = (pos: number, sep: number) => {
     for (let k = 0; k < sep; k++) if (pos + k >= W.length || !Wblank[pos + k]) return false;
     return true;
@@ -143,9 +133,8 @@ export function alignSegments(
     return { i, pos, stage: isEdgeEmpty(i) ? 0 : 1, sepK: 0, j: jMax, jMax, group: null, perMatched: false, seg: null, segIsGroup: false };
   };
 
-  /** 推進游標，回傳下一個要試的子狀態 `[i', pos']`（並把那一段記在 `f.seg`）；用完回 null。 */
   const nextChild = (f: Frame): [number, number] | null => {
-    const seps = f.pos === 0 ? 1 : 2; // pos 0：只試 0 行分隔；其餘：先 1 行、再 0 行
+    const seps = f.pos === 0 ? 1 : 2; // pos 0: try only 0 separator lines; otherwise 1 first, then 0
     const sepAt = (k: number) => (f.pos === 0 ? 0 : k === 0 ? 1 : 0);
     if (f.stage === 0) {
       f.stage = 3;
@@ -160,7 +149,6 @@ export function alignSegments(
         if (!blanks(f.pos, sep)) continue;
         const p = f.pos + sep;
         if (per.length === 0) {
-          // 中間的空段落：吃一個空行
           if (p < W.length && Wblank[p]) {
             f.perMatched = true;
             f.seg = { idx: [f.i], start: p, count: 1 };
@@ -187,7 +175,7 @@ export function alignSegments(
         if (f.group === null) {
           const g = getGroup(f.i, f.j);
           if (g === null) {
-            f.j = f.i; // 超過上限：這個起點的群組全部放棄
+            f.j = f.i; // Over the cap: abandon all groups for this start
             break;
           }
           f.group = g;
@@ -215,7 +203,6 @@ export function alignSegments(
   };
 
   const stack: Frame[] = [];
-  /** 進入 `(i, pos)`：終點或已知失敗就直接回答，否則推一個 frame。回傳 true＝找到完整解。 */
   const enter = (i: number, pos: number): boolean | null => {
     if (i === n) return pos === W.length;
     if (failed.has(i * stride + pos)) return false;
@@ -245,7 +232,6 @@ export function alignSegments(
   return { segs, stats };
 }
 
-/** 每行的比對種類（`line_kinds`）：含 numberedListItem 的段的行 → 1，其餘 0；段表 null → 全 0。 */
 export function lineKindsOf(segs: AlignSeg[] | null, types: string[], nLines: number): number[] {
   const kinds = new Array<number>(nLines).fill(0);
   if (segs === null) return kinds;

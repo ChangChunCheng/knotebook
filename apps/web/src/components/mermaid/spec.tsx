@@ -4,34 +4,16 @@ import { MERMAID_LANGUAGE, mermaidBlockConfig } from "@knotebook/shared";
 import { useTheme } from "@/theme";
 import { MermaidView } from "./MermaidView";
 
+// These live in `@knotebook/shared` (`note-schema-config.ts`) so the server's headless schema shares them. They are
+// imported above because a bare `export { … } from …` creates no local binding, and re-exported so existing consumers
+// (`spec.test.tsx`) keep importing from `./spec`.
 export { MERMAID_LANGUAGE, mermaidBlockConfig };
 
 /**
- * mermaid 圖表 block（issue #94）。這個 repo 的**第一個自訂 block spec**
- * （`wikilink` 是 inline content spec，走的是另一支 API）。
- *
- * ⚠ **`createReactBlockSpec` 回傳的是 factory，不是 spec 本身**——與
- * `createReactInlineContentSpec`（直接回傳 spec，見 `wikilink/spec.tsx`）不同。
- * 掛進 `collab/schema.ts` 時要記得**呼叫它**：`mermaid: mermaidSpec()`。
- * 漏掉括號會得到一個型別看起來很像、執行期卻不是 block spec 的東西。
- */
-
-// `MERMAID_LANGUAGE`／`mermaidBlockConfig`（程式碼區塊語言識別字與 block 設定：
-// 內容存在 `code` prop、`content: "none"`——圖的原始碼是一整段純文字，不該被拆成
-// inline nodes）住 `@knotebook/shared` 的 `note-schema-config.ts`，供 server 端
-// headless schema 共用。本地繫結由上方 `import` 取得（純 `export { … } from …` 不
-// 建立本地繫結），本檔的 `MermaidExternalHTML`／`MermaidRenderProps`／`mermaidSpec`
-// 使用；這裡再 `export` 是為了讓既有消費者（`spec.test.tsx` 走 `./spec` 這條路徑）
-// 不必改 import 路徑。
-
-/**
- * 匯出（複製到別的 app／`toExternalHTML`）：輸出 ```mermaid 的 code block，**不是畫好的 SVG**。
- *
- * 理由：① 貼到 GitHub／Obsidian 等支援 mermaid 的地方會自動畫出來，不支援的地方至少看得到
- * 原始碼且**可再編輯**；② SVG 又長又不可編輯；③ 順帶避開「匯出的 SVG 夾帶外部資源」這一整類
- * 問題——那正是 #43 對四個檔案類 block 套 `withGuardedExternalHTML` 的動機。
- *
- * `{code}` 作為 JSX 子節點會被 React 轉義，原始碼裡的 `<img …>` 之類只會是文字。
+ * Exports a ```mermaid code block, not rendered SVG: it renders on GitHub/Obsidian, elsewhere the source is still
+ * visible and editable, SVG is long and uneditable, and it avoids exported SVGs carrying external resources (why
+ * file blocks use `withGuardedExternalHTML`, #43). `{code}` as a JSX child is escaped by React, so markup in the
+ * source stays text.
  */
 export function MermaidExternalHTML({ code }: { code: string }): JSX.Element {
   return (
@@ -42,35 +24,29 @@ export function MermaidExternalHTML({ code }: { code: string }): JSX.Element {
 }
 
 /**
- * ⚠ **這裡刻意沒有 `parse` 規則。** 曾經有一條（接管
- * `<pre><code class="language-mermaid">`），實測證明它**永遠不會被呼叫**：
- * BlockNote 內建 codeBlock 的 `pre` 解析規則優先序更高，HTML 貼上路徑一律先變成
- * `codeBlock(language="mermaid")`。當時那條規則有 6 條測試全綠，但它們是直接呼叫匯出函式、
- * 完全不經過 BlockNote——典型的假綠。真正在做轉換的是 `collab/mermaid-paste.ts`（blocks 層），
- * HTML 與 markdown 兩條路徑都走它。要再加 `parse` 規則前，先寫一條
- * `editor.tryParseHTMLToBlocks(...)` 的測試證明它真的會被呼叫（`spec.test.tsx` 有一條反向釘）。
+ * Deliberately no `parse` rule: BlockNote's built-in codeBlock `pre` rule has higher priority, so such a
+ * rule is never called: HTML paste always becomes `codeBlock(language="mermaid")` first. `collab/mermaid-paste.ts`
+ * does the conversion for HTML and markdown paste. Before adding a `parse` rule, prove with an
+ * `editor.tryParseHTMLToBlocks(...)` test that it is called (`spec.test.tsx` pins the opposite); tests that call
+ * the exported function directly bypass BlockNote and pass falsely.
  */
 
-/**
- * React 渲染層。`useTheme()` 在這裡讀而不是由外面傳——block 的 render 由 BlockNote 呼叫，
- * 沒有我們能插入 props 的縫；`ThemeProvider` 在 app 根層，這裡讀得到。
- */
 type MermaidRenderProps = ReactCustomBlockRenderProps<typeof mermaidBlockConfig>;
 
 /**
- * 寫回原始碼。**`updateBlock` 會拋**：共編時遠端把這個 block 刪掉，而本地正好開著原始碼，
- * Esc／失焦提交就會撞到 `Block with ID … not found`。例外從 React 事件 handler
- * 拋出去對使用者是「剛打的東西無聲消失」，所以這裡吞掉——block 都不在了，沒有地方可寫。
- * 同 `collab/mermaid-paste.ts` 對 `replaceBlocks` 的既有處理。
+ * `updateBlock` throws (`Block with ID … not found`) if a remote peer deleted the block while its source is open and
+ * Esc/blur commits; swallowed because there is nowhere left to write (thrown from a React event handler, the user's
+ * edit would just vanish silently). Same handling as `collab/mermaid-paste.ts` for `replaceBlocks`.
  */
 export function commitCode(editor: MermaidRenderProps["editor"], block: MermaidRenderProps["block"], code: string): void {
   try {
     editor.updateBlock(block, { props: { code } });
   } catch {
-    /* 這個 block 已經被遠端刪掉了 */
+    /* block deleted remotely */
   }
 }
 
+/** `useTheme()` is read here because BlockNote calls render, leaving no way to pass props; `ThemeProvider` is at the app root. */
 function MermaidBlock({ block, editor }: MermaidRenderProps): JSX.Element {
   const { resolvedTheme } = useTheme();
   return (
@@ -83,7 +59,10 @@ function MermaidBlock({ block, editor }: MermaidRenderProps): JSX.Element {
   );
 }
 
-/** ⚠ 這是 **factory**，掛進 schema 時要呼叫：`mermaid: mermaidSpec()`。 */
+/**
+ * Factory, unlike `createReactInlineContentSpec` (which returns the spec): call it when registering in
+ * `collab/schema.ts` (`mermaid: mermaidSpec()`). Without the call the type looks similar but it isn't a block spec at runtime.
+ */
 export const mermaidSpec = createReactBlockSpec(mermaidBlockConfig, {
   render: MermaidBlock,
   toExternalHTML: ({ block }: MermaidRenderProps) => <MermaidExternalHTML code={block.props.code} />,

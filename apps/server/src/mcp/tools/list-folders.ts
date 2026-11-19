@@ -1,9 +1,4 @@
-/**
- * 資料夾：`list_folders`：呼叫者看得到的資料夾（個人、`can_read` 群組、自己的 shared），keyset 分頁。
- * 可見性與 REST `GET /api/folders` 同一個述詞（`folders/queries.ts` 的 `visibleFolderWhere`），排序依 keyset（kind、空間、id），不是樹序。
- * 讀取類：不做 scope 檢查、不扣桶。`group_id` 看不到（非成員、`can_read = false`）與不存在同句 `group_not_found`。
- * 依 wire 預算截頁只是兜底：每項最壞約 2 563，50 項遠在預算內，所以 description 不宣稱「fewer when」。
- */
+/** Same visibility predicate as REST `GET /api/folders`; ordered by keyset (kind, space, id), not tree order. An invisible group is the same `group_not_found` as a nonexistent one. The wire-budget cut is only a backstop (worst case about 2 563 per item, 50 items far below it), so the description doesn't promise "fewer when". */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FOLDER_KINDS, listVisibleFoldersPage, type FolderKind, type FolderPageKey } from "../../folders/queries.js";
@@ -19,7 +14,6 @@ import { toolError, toolResult } from "../tool-result.js";
 import { PAGE_CUT_RESERVE, countWithinWireBudget, wireCost } from "../wire-budget.js";
 import type { McpToolCtx } from "../context.js";
 
-/** `list_folders` 的工具說明。 */
 export const LIST_FOLDERS_DESCRIPTION =
   "List the folders you can see: your personal folders, the folders of your groups where your role can read notes, " +
   "and your folders for notes others shared with you, which only you can see. " +
@@ -36,7 +30,6 @@ export const LF_GROUP_ID_DESCRIBE =
 export const LF_CURSOR_DESCRIBE = "Opaque cursor from a previous call's `nextCursor`. Omit it to start at the first page.";
 export const LF_FOLDERS_DESCRIBE = "This page of folders, grouped by space.";
 
-/** 註冊為 `z.object(listFoldersInput).strict()`。 */
 export const listFoldersInput = {
   group_id: GROUP_ID.optional().describe(LF_GROUP_ID_DESCRIBE),
   cursor: z.string().min(1).max(200).optional().describe(LF_CURSOR_DESCRIBE),
@@ -53,12 +46,10 @@ export interface ListFoldersArgs {
   cursor?: string;
 }
 
-/** 游標：base64url(`f|<kind>|<空間 id>|<資料夾 id>`)。 */
 function encodeFolderCursor(key: FolderPageKey): string {
   return encodeKeysetCursor("f", [key.kind, key.spaceId, key.id]);
 }
 
-/** 不是本站發的（字元集、NUL、tag、段數）、kind 不在三種之內、兩個 id 段不是 UUID → null。 */
 function decodeFolderCursor(raw: string): FolderPageKey | null {
   const parts = decodeKeysetCursor(raw, "f", 3);
   if (parts === null) return null;
@@ -68,7 +59,6 @@ function decodeFolderCursor(raw: string): FolderPageKey | null {
   return { kind: kind as FolderKind, spaceId: spaceId.toLowerCase(), id: id.toLowerCase() };
 }
 
-/** 預算的固定部分：空頁＋長度最長的佔位游標（kind 取最長的 personal）＋`pageCutShort` 的保留。 */
 const FOLDER_CURSOR_PLACEHOLDER = encodeFolderCursor({
   kind: "personal",
   spaceId: "00000000-0000-0000-0000-000000000000",
@@ -84,7 +74,7 @@ export async function listFolders(args: ListFoldersArgs, ctx: McpToolCtx): Promi
   }
   let groupId: string | undefined;
   if (args.group_id !== undefined) {
-    groupId = args.group_id.toLowerCase(); // GROUP_ID 不轉小寫
+    groupId = args.group_id.toLowerCase(); // GROUP_ID doesn't lowercase, so do it here
     const target = await loadCreateTarget(ctx.db, ctx.userId, groupId);
     if (target === undefined || !target.canRead) return toolError("group_not_found", FOLDER_GROUP_NOT_FOUND_MESSAGE);
   }
@@ -94,7 +84,6 @@ export async function listFolders(args: ListFoldersArgs, ctx: McpToolCtx): Promi
     ...(groupId === undefined ? {} : { groupId }),
   });
   const items = page.rows.map(folderForModel);
-  // 預算兜底（實務上不可達，見檔頭）：截了就從被收的最後一項接著翻。
   const kept = countWithinWireBudget(items.map(wireCost), FOLDER_BASE_COST);
   const cut = kept < items.length;
   const lastKey = cut ? page.rows[kept - 1]!.key : page.hasMore ? page.rows[page.rows.length - 1]!.key : undefined;

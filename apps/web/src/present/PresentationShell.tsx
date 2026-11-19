@@ -19,26 +19,20 @@ import {
 } from "./present-url";
 
 /**
- * #229 簡報外殼——入口側、全頁唯一一個、**不** import reveal。
- * - 全視窗 `role="dialog" aria-modal`、`z-[60]`（高於抽屜與 dialog 的 z-50、低於 toast 的 z-[100]）；
- *   存在時 AppShell 的 Ctrl+K 放棄（`[role="dialog"]` 判斷）。
- * - 載入、錯誤、chunk 失敗、config 拒絕都是外殼的內容；任何狀態下 × 與 Esc 都能離開。
- * - 任何時刻只有一個 Esc 入口：reveal 宣告就緒（onRevealReady(true)）之前由外殼的 document 監聽處理，
- *   之後由 reveal 的 keyboard[27] 呼叫同一個 onEsc；離開冪等（leftRef）。
- * - 掛上後正規化查詢字串成恰好 `?present`，導覽在途時延後（同 NotePage 收斂的守衛）。
- * - 卸載時走卸載型全螢幕呼叫點（讀真實網址）。
+ * #229: does **not** import reveal (entry side).
+ * - `z-[60]`: above the drawer and dialogs (z-50), below toasts (z-[100]); AppShell's Ctrl+K backs off while `[role="dialog"]` exists.
+ * - Loading, error, chunk failure and config refusal are shell content; × and Esc can leave in every state.
+ * - One Esc entry at a time: the shell's document listener until reveal is ready, then reveal's keyboard[27] calls the same
+ *   onEsc; leaving is idempotent (leftRef).
+ * - Query normalization is deferred while a navigation is in flight (same guard as NotePage's convergence).
  */
 export const ESC_AFTER_FULLSCREEN_EXIT_MS = 300;
 const TOOLBAR_IDLE_MS = 2000;
 
 export interface PresentationShellContextValue {
-  /** overlay 在 initialize resolve 且未拆時送 true、拆除時（只有送過 true 的那份）送 false。 */
   onRevealReady(ready: boolean): void;
-  /** reveal 的 keyboard[27]（總覽開著時 overlay 自己先關總覽）。 */
   onEsc(): void;
-  /** 無法播放（查詢字串斷言、config 核對）：外殼切錯誤態、卸載 overlay。 */
   onFatal(messageKey: string): void;
-  /** F 鍵與全螢幕鈕。 */
   toggleFullscreen(): void;
 }
 
@@ -56,9 +50,7 @@ export interface PresentationShellProps {
   title: string;
   status: PresentationShellStatus;
   errorMessage?: string;
-  /** 工具列左側插槽（已登入：連線徽章）。 */
   toolbarExtra?: ReactNode;
-  /** 只在 status === "ready" 且沒有 fatal 時渲染（播放態：lazy 的 PresentationOverlay）。 */
   children?: ReactNode;
 }
 
@@ -74,22 +66,22 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
   const [fatalKey, setFatalKey] = useState<string | null>(null);
   const [idle, setIdle] = useState(false);
 
-  // 每次 render 同步寫入（離開時要讀**最新**的 location 與 navigate，不是 callback 建立當下的）。
+  // Written on every render: leaving must read the latest location, not the one from when the callback was created.
   const latestRef = useRef({ location, navigate });
   latestRef.current = { location, navigate };
 
   const leave = useCallback(() => {
     if (leftRef.current) return;
     leftRef.current = true;
-    exitOwnedFullscreen(); // 導頁之前
+    exitOwnedFullscreen(); // before navigating
     const { location: latest, navigate: go } = latestRef.current;
     if (wasPresentPushed(latest.state)) void go(-1);
     else void go({ pathname: latest.pathname, search: searchWithoutPresent(latest.search), hash: "" }, { replace: true });
   }, []);
 
   const onEsc = useCallback(() => {
-    if (document.fullscreenElement) return; // 瀏覽器正在用這一下 Esc 退全螢幕
-    if (msSinceFullscreenExit() < ESC_AFTER_FULLSCREEN_EXIT_MS) return; // 兩種事件順序都只退一段
+    if (document.fullscreenElement) return; // the browser is using this Esc to leave fullscreen
+    if (msSinceFullscreenExit() < ESC_AFTER_FULLSCREEN_EXIT_MS) return; // with either event order only one level is left
     leave();
   }, [leave]);
 
@@ -120,7 +112,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
     if (leftRef.current) return;
     if (!isPresentingSearch(location.search) || location.search === PRESENT_SEARCH) return;
     const historyKey = readHistoryKey();
-    if (historyKey !== undefined && historyKey !== (realLocation ?? location).key) return; // 導覽在途，等下一次 render
+    if (historyKey !== undefined && historyKey !== (realLocation ?? location).key) return; // a navigation is in flight; wait for the next render
     const write = `${location.key}\n${location.pathname}`;
     if (lastNormalizeRef.current === write) return;
     lastNormalizeRef.current = write;
@@ -132,9 +124,9 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
 
   useEffect(() => () => exitFullscreenIfLeftPresentation(), []);
 
-  // 播放時背後的文件不捲：手機上捲的是文件，滑過投影片尾端會帶動背後的筆記、收起瀏覽器的工具列。
-  // 離開後還在同一篇（Esc、×）才捲回原本的位置；換到別頁（筆記被刪、連結失效、深連結進來後返回）由那一頁自己決定位置。
-  // layout effect：解除與還原要在下一個畫面的 layout effect（AppShell 還原清單位置）之前，不能蓋掉它。
+  // While presenting the document behind does not scroll (on phones swiping past a slide's end would move the note and collapse the browser toolbar).
+  // After leaving, scroll back only if still on the same note; another page decides its own position.
+  // Layout effect: unlocking and restoring must happen before AppShell's list-position restore, and must not overwrite it.
   useLayoutEffect(() => {
     const root = document.documentElement;
     const y = window.scrollY;
@@ -164,7 +156,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
 
   const ownedFullscreen = useSyncExternalStore(subscribeFullscreen, isOwnedFullscreen, () => false);
   const fullscreenEnabled = document.fullscreenEnabled === true;
-  const keepFocus = (event: ReactMouseEvent) => event.preventDefault(); // 滑鼠點擊不移動焦點
+  const keepFocus = (event: ReactMouseEvent) => event.preventDefault(); // a mouse click does not move focus
   const label = title.trim() === "" ? t("note.titlePlaceholder") : title;
   const errorText = fatalKey !== null ? t(fatalKey) : status === "error" ? errorMessage : undefined;
 
@@ -179,7 +171,7 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
         onMouseMove={wake}
         className="fixed inset-0 z-[60] flex flex-col bg-card text-foreground outline-none"
       >
-        {/* 閒置淡出：不用 focus-visible 浮現；這裡用 focus-within——鍵盤焦點在任一顆按鈕上時整列都浮現，範圍較寬、符合意圖。 */}
+        {/* Idle fade-out uses focus-within, not focus-visible: keyboard focus on any button reveals the whole row. */}
         <div
           className={cn(
             "absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-10 flex items-center gap-2 transition-opacity hover:opacity-100 focus-within:opacity-100",
@@ -221,15 +213,12 @@ export function PresentationShell({ title, status, errorMessage, toolbarExtra, c
 }
 
 interface PresentationErrorBoundaryProps {
-  /** 測試 seam（比照 PublicNoteErrorBoundary）：jsdom 的 location.reload 不可 spy。 */
+  /** Test seam: jsdom's location.reload cannot be spied on. */
   reload?: () => void;
   children: ReactNode;
 }
 
-/**
- * 公開頁簡報的錯誤邊界：公開頁不用 chunk 自動 reload 額度，錯誤文字＋手動重試（整頁 reload）。
- * 離開由外殼的 × 與 Esc 提供。文案沿用 public.loadError／app.retry。
- */
+/** Public pages do not use the chunk auto-reload allowance, so this offers a manual retry (reloads the whole page). */
 export class PresentationErrorBoundary extends Component<PresentationErrorBoundaryProps, { hasError: boolean }> {
   state = { hasError: false };
 
@@ -249,8 +238,7 @@ export class PresentationErrorBoundary extends Component<PresentationErrorBounda
 
 function PresentationErrorFallback({ onRetry }: { onRetry: () => void }) {
   const { t } = useTranslation();
-  // 離線時 reload 只會把頁面換成瀏覽器的網路錯誤頁——比照 PublicNoteErrorFallback 與 ErrorBoundary 的
-  // 錯誤畫面，按鈕灰掉並以文字說明，恢復連線（online 事件）即重新啟用。
+  // Offline, reload would only show the browser's network error page: disable the button with a text explanation until the online event.
   const online = useOnline();
   return (
     <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6">

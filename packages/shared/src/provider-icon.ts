@@ -1,24 +1,19 @@
-/**
- * 登入服務圖示。
- * server 產每一個 provider DTO（公開形與 admin 形）都以 `resolveProviderIcon` 換算；web 只在圖示對話框的「依範本」預覽呼叫它。
- */
-
-/** `auth_providers.icon_kind` 的值域（DB CHECK `auth_providers_icon_kind_chk`）。 */
+/** Must match DB CHECK auth_providers_icon_kind_chk. */
 export type ProviderIconKind = "template" | "gitlab" | "google" | "upload" | "none";
 
 export type ProviderIconBuiltinName = "gitlab" | "google" | "generic";
 
-/** DTO 上的已換算圖示：內建 SVG、上傳圖網址，或 `null`（管理員選「不顯示」）。 */
+/** null: the admin chose no icon. */
 export type ProviderIconDto = { type: "builtin"; name: ProviderIconBuiltinName } | { type: "upload"; url: string } | null;
 
-/** server 收的上傳圖上限（位元組）。DB CHECK `auth_providers_icon_size_chk` 寫的是同一個字面 262144。 */
+/** Same literal as DB CHECK auth_providers_icon_size_chk. */
 export const MAX_PROVIDER_ICON_BYTES = 262144;
-/** web 選檔上限（縮圖前的原檔）。 */
+/** Source file limit, before the browser downscales it. */
 export const MAX_PROVIDER_ICON_SOURCE_BYTES = 5 * 1024 * 1024;
-/** 瀏覽器端縮圖的最長邊（px）。 */
+/** Longest edge in px after the browser downscales. */
 export const PROVIDER_ICON_SIZE = 128;
 
-/** 公開讀圖網址；`v` 是 `icon_version`——換圖後網址就變，舊網址的 `immutable` 快取不會蓋到新圖。 */
+/** `v` changes with the icon, so the old URL's immutable cache can't serve the new image. */
 export function providerIconUrl(id: string, version: number): string {
   return `/api/auth/providers/${id}/icon?v=${version}`;
 }
@@ -29,10 +24,7 @@ function templateIcon(template: string): ProviderIconDto {
   return { type: "builtin", name: "generic" };
 }
 
-/**
- * 對照表。`iconKind` 收 `string`（DB 欄是 text，CHECK 保證值域）；未知值當 `template`。
- * `template` 分支不讀 `iconVersion`。
- */
+/** Unknown `iconKind` values fall back to the template. */
 export function resolveProviderIcon(p: { id: string; template: string; iconKind: string; iconVersion: number }): ProviderIconDto {
   switch (p.iconKind) {
     case "gitlab":

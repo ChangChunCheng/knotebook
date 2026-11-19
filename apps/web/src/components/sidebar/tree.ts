@@ -3,30 +3,23 @@ import type { SidebarTab } from "@/lib/sidebar-tab";
 import { FOLDER_COLLATOR, folderPath, spaceKeyOf, type FolderIndex, type FolderSpaceKey } from "./folder-index";
 import { folderSortOf, type FolderSort } from "./folder-sort";
 
-/** 面板節點樹：群組節點（群組 tab）、資料夾節點或筆記節點。 */
 export type SidebarNode =
   | { kind: "group"; id: string; group: GroupDto; children: SidebarNode[] }
-  /** depth：根層資料夾＝1。 */
+  // depth: root-level folder = 1.
   | { kind: "folder"; id: string; folder: FolderDto; depth: number; children: SidebarNode[] }
   | { kind: "note"; id: string; note: NoteDto };
 
 export type NoteBucket = { kind: "group"; groupId: string } | { kind: "myNotes" } | { kind: "shared" };
 
 /**
- * #175 的分段表（搜尋與各 tab 共用同一份歸類）：
- * - `group` 非 null 且那個群組在 `groupIds`（＝我是成員）→ 該群組（不標角色，#182）；
- * - `group` 非 null 但群組不在 `groupIds`（剛被移出、清單未 refetch）→ 與我共享（兜底）；
- * - `role === "owner"` → 我的筆記；
- * - 其餘（逐人分享給我的個人筆記）→ 與我共享。
- * 群組筆記的 `role` 從不是 `owner`（群組持有、沒有個人 owner），所以第 2 列不必另寫分支——
- * 程式碼只要「在 `groupIds` 裡就進群組，否則看 role」。四列互斥且完整，所以 `aria-current` 至多命中一列。
+ * Bucketing shared by search and every tab: group set and in `groupIds` → that group; group set but not in `groupIds` (just removed, list not refetched) → Shared with me; `role === "owner"` → My notes; otherwise → Shared with me.
+ * A group note's `role` is never `owner`, so no extra branch is needed; the rows are exclusive and complete, so `aria-current` matches at most one.
  */
 export function noteBucket(note: NoteDto, groupIds: ReadonlySet<string>): NoteBucket {
   if (note.group && groupIds.has(note.group.id)) return { kind: "group", groupId: note.group.id };
   return note.role === "owner" ? { kind: "myNotes" } : { kind: "shared" };
 }
 
-/** 筆記在呼叫者側欄裡所屬的空間（同 noteBucket：myNotes → personal、群組 → group:<id>、其餘 → shared）。 */
 export function noteSpaceKey(note: NoteDto, groupIds: ReadonlySet<string>): FolderSpaceKey {
   const bucket = noteBucket(note, groupIds);
   if (bucket.kind === "group") return `group:${bucket.groupId}`;
@@ -36,7 +29,7 @@ export function noteSpaceKey(note: NoteDto, groupIds: ReadonlySet<string>): Fold
 export interface SidebarPartition {
   myNotes: NoteDto[];
   shared: NoteDto[];
-  /** 依 `groups` 的順序，每個群組一個桶（空桶也在，群組 tab 要渲染空群組）。 */
+  /** Empty buckets included: the group tab renders empty groups. */
   byGroup: Map<string, NoteDto[]>;
 }
 
@@ -61,8 +54,7 @@ function editedAtMs(note: NoteDto): number {
   return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
 }
 
-/** 依最後編輯時間（`lastEdited.at ?? updatedAt`）新到舊取前 `RECENT_TAB_LIMIT` 篇；
- * 同時間保持輸入順序、無法解析的排最後、不改動輸入陣列。 */
+/** Ties keep input order, unparseable times sort last, the input array isn't mutated. */
 export function recentNotes(notes: NoteDto[]): NoteDto[] {
   return [...notes]
     .sort((a, b) => {
@@ -73,10 +65,7 @@ export function recentNotes(notes: NoteDto[]): NoteDto[] {
     .slice(0, RECENT_TAB_LIMIT);
 }
 
-/**
- * 最愛 tab 的筆記：依 `favorites` 的順序（加入時間新到舊）挑出 `notes` 裡有的那幾篇。
- * `favorites` 有、`notes` 沒有的 id 是剛失去權限或剛進垃圾桶，不顯示；標題與位置只取 `notes`。不改動輸入陣列。
- */
+/** `favorites` ids missing from `notes` just lost access or were trashed: not shown; title and location come from `notes` only. */
 export function favoriteNotes(notes: readonly NoteDto[], favorites: readonly FavoriteDto[]): NoteDto[] {
   const byId = new Map(notes.map((note) => [note.id, note]));
   const out: NoteDto[] = [];
@@ -89,7 +78,6 @@ export function favoriteNotes(notes: readonly NoteDto[], favorites: readonly Fav
 
 const noteNode = (note: NoteDto): SidebarNode => ({ kind: "note", id: note.id, note });
 
-/** 穩定排序：比較相等時依輸入順序。 */
 function stableSort(notes: readonly NoteDto[], compare: (a: NoteDto, b: NoteDto) => number): NoteDto[] {
   return notes
     .map((note, index) => ({ note, index }))
@@ -97,7 +85,6 @@ function stableSort(notes: readonly NoteDto[], compare: (a: NoteDto, b: NoteDto)
     .map((entry) => entry.note);
 }
 
-/** 穩定排序：name＝FOLDER_COLLATOR 升冪；recent＝editedAtMs 新到舊（不可解析的最後）；size＝sizeBytes 大到小（缺＝0）；同值依輸入順序。 */
 export function sortFolderNotes(notes: readonly NoteDto[], sort: FolderSort): NoteDto[] {
   if (sort === "name") return stableSort(notes, (a, b) => FOLDER_COLLATOR.compare(a.title, b.title));
   if (sort === "size") return stableSort(notes, (a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0));
@@ -108,10 +95,6 @@ export function sortFolderNotes(notes: readonly NoteDto[], sort: FolderSort): No
   });
 }
 
-/**
- * 一個空間（我的筆記、與我共享、某群組）的根：資料夾在前（索引已依名稱排好）、根層筆記在後（維持輸入＝server 順序）。
- * 筆記的 `folderId` 不在索引、或資料夾空間與筆記所在空間不符 → 落根層（兜底）。
- */
 function spaceNodes(space: FolderSpaceKey, notes: readonly NoteDto[], folders: FolderIndex, sortOf: (folderId: string) => FolderSort): SidebarNode[] {
   const byFolder = new Map<string, NoteDto[]>();
   const rootNotes: NoteDto[] = [];
@@ -136,10 +119,7 @@ function spaceNodes(space: FolderSpaceKey, notes: readonly NoteDto[], folders: F
   return [...folderNodes(null, 1), ...rootNotes.map(noteNode)];
 }
 
-/**
- * folders 必填。同層資料夾在前（索引已依名稱排好）、筆記在後；資料夾內筆記依 sortOf(id)；根層筆記維持 server 順序。
- * 最近與最愛 tab 是平鋪的筆記清單、不建資料夾節點；最愛 tab 依 `favorites`（見 `favoriteNotes`），沒傳就是 []。垃圾桶照舊回 []。
- */
+/** Recents and favorites are flat note lists with no folder nodes (favorites follow `favorites`, default []); trash returns []. */
 export function buildTabNodes(
   tab: SidebarTab,
   notes: NoteDto[],
@@ -148,7 +128,7 @@ export function buildTabNodes(
   sortOf: (folderId: string) => FolderSort = folderSortOf,
   favorites: readonly FavoriteDto[] = [],
 ): SidebarNode[] {
-  // 垃圾桶與最愛不照空間分組；先攔，否則會落進最後一支（其餘一律當群組 tab）列出全部群組。
+  // Trash and favorites aren't grouped by space; intercept first, or they'd fall into the last branch (everything else is a group tab) and list all groups.
   if (tab === "trash") return [];
   if (tab === "recent") return recentNotes(notes).map(noteNode);
   if (tab === "favorites") return favoriteNotes(notes, favorites).map(noteNode);
@@ -163,10 +143,7 @@ export function buildTabNodes(
   }));
 }
 
-/**
- * 樹裡有沒有可勾的節點（資料夾或筆記，含群組下的；群組節點本身不算，所以空群組不算、空資料夾算）：
- * 一般 tab 標題列「選取」鈕可不可按（資料夾也可勾）。
- */
+/** Empty groups don't count, empty folders do. */
 export function hasSelectableNodes(nodes: readonly SidebarNode[]): boolean {
   return nodes.some((node) => node.kind !== "group" || hasSelectableNodes(node.children));
 }
@@ -178,7 +155,6 @@ export interface LocationContext {
   folders: FolderIndex;
 }
 
-/** 呼叫者視角的資料夾路徑：folderId 不在索引、或空間與筆記所在空間不符 → []。 */
 export function noteFolderPath(note: NoteDto, ctx: LocationContext): string[] {
   if (note.folderId === null) return [];
   const folder = ctx.folders.byId.get(note.folderId);
@@ -186,25 +162,18 @@ export function noteFolderPath(note: NoteDto, ctx: LocationContext): string[] {
   return folderPath(ctx.folders, folder.id) ?? [];
 }
 
-/** 單一函式：[群組名?, ...資料夾路徑]。垃圾桶第二行（`lib/trash-display.ts`）也經它。 */
 export function noteLocationSegments(note: { group: { name: string } | null }, path: readonly string[]): string[] {
   return note.group ? [note.group.name, ...path] : [...path];
 }
 
 export interface NoteLocationParts {
-  /** 由外到內的路徑段：我的筆記／群組名／與我共享，後面接資料夾名。 */
   segments: string[];
-  /** 共享筆記的擁有者（`@帳號`），其餘 null。 */
   suffix: string | null;
-  /** 這篇筆記在清單裡所屬的 tab。 */
   tab: SidebarTab;
-  /** 路徑最內層的資料夾；筆記在根層（或資料夾對不上）時 null。 */
   folderId: string | null;
-  /** 群組筆記所屬的群組（清單裡的群組區塊要展開才看得到那一列）；其餘 null。 */
   groupId: string | null;
 }
 
-/** 手機筆記頁首副標用的位置；分類與資料夾路徑都沿用 `noteBucket`／`noteFolderPath`。 */
 export function noteLocationParts(note: NoteDto, ctx: LocationContext, t: Translate): NoteLocationParts {
   const bucket = noteBucket(note, ctx.groupIds);
   const path = noteFolderPath(note, ctx);
@@ -222,10 +191,6 @@ export function noteLocationParts(note: NoteDto, ctx: LocationContext, t: Transl
   };
 }
 
-/**
- * 筆記的位置標籤：搜尋結果與最近 tab 的第二行都只經這一支。
- * 個人「My notes › A › B」；群組「Groups › G › A」；共享無放置「Shared with me · Viewer」、有放置「Shared with me › X · Viewer」。
- */
 export function noteLocationLabel(note: NoteDto, ctx: LocationContext, t: Translate): string {
   const bucket = noteBucket(note, ctx.groupIds);
   const path = noteFolderPath(note, ctx);

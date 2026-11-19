@@ -4,12 +4,10 @@ import type { Db } from "../db/index.js";
 import type { DbOrTx } from "../db/tx.js";
 import { authProviders, siteSettings } from "../db/schema.js";
 
-// #187：「允許帳密登入」開關。兩種值：
-// - DB 值＝`site_settings.password_login_enabled`——防自鎖判斷（關閉帳密／停用服務的守衛、解除連結、usersWithoutSso）一律看它；
-// - 有效值＝DB 值 OR env `PASSWORD_LOGIN_FORCE_ENABLE`——「受不受理帳密」（login、register、password/set、/api/auth/config、
-//   GET /api/auth/identities 的 passwordLoginEnabled）一律看它。運算式只有 `effectivePasswordLogin` 一處（單一規則）。
-// 每個需要它的請求直讀 DB、不快取；讀不到列視同**開啟**＋log.error（與註冊的「視同關閉」相反——關閉帳密是組織政策，
-// 不是對攻擊者的安全邊界，fail-open 避免全站鎖死）。
+// The DB value drives the lock-out guards; the effective value (DB OR env `PASSWORD_LOGIN_FORCE_ENABLE`) drives whether
+// password is accepted, and `effectivePasswordLogin` is the only place that expression exists. A missing row counts as ON
+// plus log.error (opposite of registration): disabling password is policy, not a security boundary, and failing open
+// avoids locking the whole site.
 
 export const PASSWORD_LOGIN_DISABLED_MESSAGE = "This site only allows signing in through a sign-in service.";
 export const PASSWORD_LOGIN_SETTINGS_MISSING_LOG = "site_settings 讀不到列：帳密登入視同開啟（#187）";
@@ -21,21 +19,15 @@ export const PASSWORD_LOGIN_FORCED_NOOP_LOG =
 export const PASSWORD_LOGIN_LOCKOUT_LOG =
   "Password sign-in is disabled and no sign-in provider is enabled: nobody can sign in. Set PASSWORD_LOGIN_FORCE_ENABLE=true and restart.";
 
-/** 有效值的唯一運算式。`dbValue === null`（讀不到列）視同開啟。 */
 export function effectivePasswordLogin(dbValue: boolean | null, forced: boolean): boolean {
   return forced || (dbValue ?? true);
 }
 
-/** DB 值（一般讀、不鎖）。讀不到列回 null——呼叫端決定怎麼解讀並 log。 */
 export async function readPasswordLoginSetting(q: DbOrTx): Promise<boolean | null> {
   const [row] = await q.select({ enabled: siteSettings.passwordLoginEnabled }).from(siteSettings).where(eq(siteSettings.singleton, true)).limit(1);
   return row?.enabled ?? null;
 }
 
-/**
- * 交易外判「這個請求受不受理帳密」的唯一讀法（有效值）。env 強制時不讀 DB。交易內（註冊）改用 `FOR SHARE` 讀到的值餵
- * `effectivePasswordLogin`（`auth/tx/register.ts`）——同一個運算式。
- */
 export async function isPasswordLoginAccepted(
   db: Db,
   config: Pick<AppConfig, "passwordLoginForceEnable">,
@@ -47,11 +39,7 @@ export async function isPasswordLoginAccepted(
   return effectivePasswordLogin(dbValue, false);
 }
 
-/**
- * 開機檢查（補登之後、listen 之前；結構守衛在 `test/unit/config.test.ts`）。**不擋啟動**，只寫 log：
- * ① env 強制 → warn（DB 值為真時措辭改為「has no effect」）；② 有效值為關且零個啟用 provider（只可能是手改 DB）→ error。
- * site_settings 讀不到列 → 印 `PASSWORD_LOGIN_SETTINGS_MISSING_LOG`（error）、帳密視同開啟；不擋啟動。
- */
+/** Boot check, after the backfills and before listen (structural guard in `test/unit/config.test.ts`). Only logs, never blocks startup: env force warns (worded "has no effect" when the DB value is on); effective off with zero enabled providers (only possible by editing the DB) errors; a missing row errors and counts as on. */
 export async function warnPasswordLoginAtBoot(
   db: Db,
   config: Pick<AppConfig, "passwordLoginForceEnable">,

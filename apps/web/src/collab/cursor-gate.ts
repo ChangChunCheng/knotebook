@@ -1,22 +1,14 @@
 import type { Awareness } from "y-protocols/awareness";
 import { sanitizeRemoteStates } from "./remote-states";
 
-/** y-prosemirror cursor plugin 寫本機游標的 awareness 欄（`yCursorPlugin` 的預設 `cursorStateField`）。 */
+// y-prosemirror yCursorPlugin's default cursorStateField.
 const CURSOR_FIELD = "cursor";
 
 /**
- * #293：交給 BlockNote collaboration 的 awareness 外包一層——`canSend()` 為 false（唯讀）時，
- * 丟掉非 null 的 `cursor` 寫入，本分頁不送游標（gate 只攔 `setLocalStateField("cursor", …)`；`setLocalState({ cursor })` 會繞過，目前沒有呼叫端這樣寫）。
- *
- * 為什麼攔在這裡：BlockNote 0.52.1 無條件給 `.ProseMirror` `tabIndex="0"`，唯讀時照樣可聚焦；
- * y-prosemirror 的 cursor plugin 在 `focusin` 與每次 view update 只看 `view.hasFocus()` 就寫 `cursor`
- * （`cursor-plugin.js:207`、`:255`），沒有開關。讓編輯區不能聚焦會連帶讓唯讀者無法選取複製。
- *
- * - null 一律放行（失焦、plugin destroy 時的清除）。可編輯翻成唯讀時，BlockNoteView 會重掛 PM view，
- *   舊 plugin 的 destroy 就把已送出的 cursor 清成 null（`NoteEditor.cursor.test.tsx` 守這條）。
- * - 讀取方面（#312）：`getStates()` 回傳清洗過的別人狀態（`remote-states.ts`），畫遠端游標用的 user 顏色與 cursor 不信任對方自報的內容。
- *   只有交給 BlockNote 的這一份被包；頭像列讀的是原始的 provider awareness。
- * - 其餘欄位與訂閱都直通原物件（`this` 綁回原物件），別人的游標照樣畫。
+ * #293: drops non-null `cursor` writes while read-only. BlockNote 0.52.1 always gives `.ProseMirror` `tabIndex="0"`, and the y-prosemirror cursor plugin writes `cursor` on `focusin` and every view update
+ * based only on `view.hasFocus()`, with no option to disable it; making the editor unfocusable would stop read-only users from selecting and copying.
+ * - Only `setLocalStateField("cursor", …)` is intercepted (`setLocalState({ cursor })` would bypass it; no caller does that). null always passes: clearing on blur, and the old plugin's destroy on the read-only remount (`NoteEditor.cursor.test.tsx`).
+ * - #312: `getStates()` returns sanitised remote states (`remote-states.ts`); only the copy handed to BlockNote is wrapped, the avatar row reads the raw provider awareness.
  */
 export function gateLocalCursor(awareness: Awareness, canSend: () => boolean): Awareness {
   const setLocalStateField = (field: string, value: unknown): void => {

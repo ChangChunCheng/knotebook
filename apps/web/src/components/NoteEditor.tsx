@@ -1,7 +1,4 @@
-// 只需要這一支：`@blocknote/mantine/style.css` 自己 `@import` 了 mantine 主題與
-// `@blocknote/react/style.css`（後者再帶進 core 的樣式）。刻意不引
-// `@blocknote/core/fonts/inter.css`——那是 latin-only 的自帶字型（9 個 woff 檔），
-// 對以中文為主的介面沒有幫助，只會讓 bundle 變大；字型交給 app 自己的 CSS 決定。
+// This one import is enough: it @imports the mantine theme and `@blocknote/react` styles. `@blocknote/core/fonts/inter.css` is deliberately not imported (Latin-only woff that only grows the bundle for a CJK UI); fonts come from the app CSS.
 import "@blocknote/mantine/style.css";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -92,37 +89,15 @@ const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
 );
 
-// #293：搬到 shared，頭像列與 #312 共用同一份；這裡原地 re-export，既有 import 不動。
 export { collabUserColor };
 
-/** {@link classifyMediaTransfer} 的攔截原因 → toast i18n key。 */
 const BLOCKED_TRANSFER_TOAST_KEYS: Record<BlockedTransferReason, string> = {
   dataUrl: "note.transferDataUrl",
   textRepresentation: "note.transferSaveFirst",
   nonImageFile: "note.transferNonImage",
 };
 
-/**
- * 媒體 data URL／非圖片檔案阻擋的 tiptap `editorProps.handleDOMEvents`。
- *
- * ⚠ **必須是 `handleDOMEvents`，不能用 `handlePaste`/`handleDrop`**（瀏覽器實測踩過，
- * 用後者，貼上等於完全沒有防線，只帶檔案的拖放也一樣）：BlockNote 自己註冊了 `handleDOMEvents.paste` 的外掛，
- * 而且**進來就無條件 `event.preventDefault()` 並自行處理**（`pasteExtension.ts`）；
- * drop 則由 `fileDropExtension.ts` 依 `acceptedMIMETypes` 的順序取第一個命中的型別，只在那是 `Files`（沒有 text/html、
- * text/plain 等排在前面的型別）或沒有已知型別時接走，其餘交給 PM。ProseMirror 的 DOM 事件流程是
- * 「先 `someProp('handleDOMEvents')`，那一層沒人認領才輪到內建的 editHandlers」，
- * 而 `handlePaste`/`handleDrop` 是在**內建 editHandlers 裡面**才被查詢的——換句話說
- * 貼上時 `handlePaste` 一次都不會被呼叫；drop 只帶 `Files`（沒有 text/html、text/plain 等排在前面的型別）時
- * （非圖片檔案阻擋要攔的正是這種）`handleDrop` 也不會被呼叫。
- * 反過來 `handleDOMEvents` 這一層，`someProp` 是**先看直接傳入的 editorProps、
- * 再看外掛**，所以我們的 handler 跑得比 BlockNote 的外掛早。
- *
- * 回傳 `true` ＝已處理，事件不再往下走（BlockNote 的貼上邏輯完全不會執行）；
- * 回傳 `false` ＝正常落回 BlockNote，一般文字貼上不受影響。
- *
- * `view` 參數刻意型別為 `unknown`：這裡完全用不到它，而 `unknown` 參數的函式對
- * 「吃 `EditorView` 的位置」是可指派的，測試也能直接傳 `null` 呼叫。
- */
+/** Must be `handleDOMEvents`, not `handlePaste`/`handleDrop`: BlockNote registers `handleDOMEvents.paste` that unconditionally preventDefaults and handles it, and ProseMirror consults `handlePaste`/`handleDrop` only inside the built-in editHandlers, after `handleDOMEvents` found no taker. So the latter never run on paste, nor on a drop carrying only `Files`. `someProp` checks directly passed editorProps before plugins, so this runs before BlockNote. Returns true = handled, BlockNote paste logic never runs; false = falls through, so ordinary text paste is unaffected. `view` is unused and typed `unknown` so tests can pass `null`. */
 export function createMediaBlockingDOMEvents(translate: Translate): {
   paste: (view: unknown, event: ClipboardEvent) => boolean;
   drop: (view: unknown, event: DragEvent) => boolean;
@@ -144,37 +119,21 @@ export interface NoteEditorOptionsInput {
   doc: Y.Doc;
   provider: Pick<HocuspocusProvider, "awareness">;
   user: { id: string; name: string };
-  /** i18next 目前的語言代碼（`i18n.language`）。 */
   language: string;
   translate: Translate;
-  /** late-bound 編輯器參照：`buildNoteEditorOptions` 是純函式，在
-   * `useCreateBlockNote` 真正建出 editor 之前就會被呼叫，下面 `handleTextInput` 的
-   * `[[` 觸發偵測要在使用者真的打字的當下才讀取 editor，只能透過這個 ref 取得
-   * ——見 `@/components/wikilink/menu` 的 `EditorRef` 說明。 */
+  /** Late-bound: this pure function runs before the editor exists, but `[[` detection reads it at typing time. */
   editorRef: EditorRef;
-  /** 目前這篇筆記的 id：`createUploadFile` 組 `POST
-   * /api/notes/:noteId/uploads` 的路徑要用。 */
   noteId: string;
-  /** #269：站內連結轉換的 env（late-bound ref：快取與編輯器都在建立之後才有）。 */
   siteLinks: SiteLinkEnvRef;
-  /** #293：本分頁此刻可否送游標（late-bound：editor 不隨 editable 重建）。省略＝一律可送。 */
+  /** Late-bound: the editor is not rebuilt when editable changes. Omitted = always send. */
   canSendCursor?: () => boolean;
-  /**
-   * 筆記大小上限的前端檢查（`lib/note-size-guard.ts`）：貼上、拖放在解析好、插入之前，帶著估計的成長（位元組）問一次，回傳 true＝會超過
-   * 上限（已提示），這次不放。late-bound（上限設定在編輯器建立之後才載入）。省略＝不檢查。
-   */
+  /** Late-bound (the limit loads after the editor is created); asked once per paste/drop after parsing and before insertion with the estimated growth in bytes; true = would exceed (already notified), insert rejected. Omitted = no check. */
   sizeGuard?: (incomingBytes: number) => boolean;
-  /** 單檔上傳上限（位元組）的 getter：上傳前驗在每次上傳當下才讀（late-bound：設定在編輯器建立之後才載入、可被調整）。省略或回傳 `undefined`＝不前驗。 */
+  /** Late-bound getter, read at each upload: config loads after the editor is created and can change. Omitted or undefined = no pre-check. */
   maxUploadBytes?: () => number | undefined;
 }
 
-/**
- * 組出交給 `useCreateBlockNote` 的完整選項。抽成獨立函式**是為了可測**：BlockNote
- * 本身依賴大量 jsdom 沒有的 DOM/Range API，掛起來只測得到環境；但這些選項才是
- * 媒體貼上規則（image block 掛 `uploadFile`，其餘媒體
- * data URL 仍攔截）、共編 fragment 名稱、字典選擇這幾條契約的所在，而且純粹是
- * 資料——測試可以直接呼叫並斷言，不必掛編輯器。
- */
+/** Separate function so it can be tested without mounting BlockNote (jsdom lacks DOM/Range APIs). These options carry the contracts: image blocks get uploadFile while other media data URLs stay blocked, the collab fragment name, and the dictionary choice. */
 export function buildNoteEditorOptions({
   doc,
   provider,
@@ -190,61 +149,36 @@ export function buildNoteEditorOptions({
 }: NoteEditorOptionsInput) {
   const sizeHandlers = createNoteSizePasteHandlers(sizeGuard ?? (() => false));
   return withCollaboration({
-    // schema／字典／collaboration（fragment 名、provider 形狀）抽在共用底層——公開
-    // 唯讀頁（#72 `buildReadonlyNoteEditorOptions`）用同一份，兩邊不各寫一份。
     ...buildCollabEditorBase({
       doc,
-      // #293：唯讀時不送游標（as-built；理由見 `@/collab/cursor-gate`）。
+      // no cursor while read-only (`@/collab/cursor-gate`)
       awareness: provider.awareness ? gateLocalCursor(provider.awareness, canSendCursor ?? (() => true)) : undefined,
       language,
       user: { id: user.id, name: user.name, color: collabUserColor(user.id) },
     }),
-    // 貼上/拖放純圖片檔案時（上面 `createMediaBlockingDOMEvents` 規則③放行）
-    // BlockNote 自己的 paste/drop 外掛會呼叫 `handleFileInsertion`，進而呼叫這裡的
-    // `uploadFile`——`createUploadFile` 保證絕不 reject（見該模組檔頭），失敗時自行
-    // toast + 清除 placeholder block，`handleFileInsertion` 完全不必知道失敗發生過。
+    // `createUploadFile` never rejects (see its header): on failure it toasts and removes the placeholder itself.
     uploadFile: createUploadFile({ noteId, editorRef, translate, maxUploadBytes }),
-    // issue #12：渲染端的 URL 守衛。UI 的 Embed tab 早就擋過一次危險 scheme，但筆記內容是
-    // Yjs 文件——**任何有 editor 權限的協作者都能直接寫 block props**，繞過整條 UI。BlockNote
-    // 對 image/video/audio 的預覽、以及工具列的「開啟／下載」按鈕，都會先過 `resolveFileUrl`
-    // （已對 @blocknote/core 與 @blocknote/react 0.52.1 的 dist 核實），這是唯一一個不必改寫
-    // block spec 就能攔在所有 sink 之前的縫。
-    //
-    // 這個回呼**必須放行相對網址**：自家上傳拿到的是 `/api/uploads/<id>`，套輸入端那條
-    // 「必須是完整 http(s)」的規則會把所有上傳的圖片一起擋掉（規則見 shared
-    // `note-schema-config.ts`；web 的 base 預設見 `lib/media-url.ts`）。
+    // Render-side URL guard (issue #12): note content is a Yjs document, so any collaborator with editor permission can write block props directly, bypassing the UI Embed tab checks. BlockNote runs previews and "open/download" through `resolveFileUrl` (verified against @blocknote/core and react 0.52.1 dist), the one place that intercepts before every sink without rewriting block specs. It must allow relative URLs (the input-side absolute-http(s) rule would block every uploaded image): our own uploads are `/api/uploads/<id>` (rules in shared `note-schema-config.ts`, web base in `lib/media-url.ts`).
     resolveFileUrl: (url: string) => Promise.resolve(safeMediaUrl(url)),
-    // 貼上 markdown 的兩個 Windows 破口（CRLF 不被解析、從 VS Code 貼會變成程式碼
-    // 區塊）——判斷與理由都在 `@/collab/paste`，這裡只負責接線。
     pasteHandler: createMarkdownPasteHandler(createSiteLinkPasteHook(siteLinks)),
-    // ⋮⋮ 拖到 block 左右緣時畫直線；與下面 `handleDrop` 的 `edgeDrop` 用同一個判斷（`@/collab/columns/edge-drop`）。
+    // same criterion as `edgeDrop` in `handleDrop` below
     dropCursor: { hooks: { computeDropPosition } },
     _tiptapOptions: {
-      // issue #99：手打 markdown 連結語法（`[文字](網址)`）自動轉成真連結；#269：站內連結 → wikilink（link AddMarkStep
-      // 外掛）。裁決與判準理由分別在 `@/collab/markdown-link`、`@/collab/site-link-convert`——這裡只負責接線。
-      // 第三支：游標在 code block 裡 ⇒ 那塊掛 `data-caret-inside`，語言下拉現身（觸控沒有 hover 的入口；理由見 `@/collab/code-block-caret`）。
       extensions: [
         createMarkdownLinkExtension({ editorRef, siteLinks }),
         createSiteLinkConvertExtension({ envRef: siteLinks }),
         createCodeBlockCaretExtension(),
-        // 並排的欄首 Backspace／欄尾 Delete（理由見 `@/collab/columns/edge-keymap`）。
         createColumnEdgeKeymapExtension({ editorRef }),
-        // 貼上／拖放的列：頂層完整、非頂層攤平（理由見 `@/collab/columns/paste-rule`）。
         createColumnsPasteExtension(),
-        // 功能導覽演示時擋下使用者改文件的交易（含輸入法組字）；預設放行。要在建編輯器時就掛上，演示中不能再註冊外掛
-        // （理由見 `@/collab/tour-transaction-filter`），開關經 `lib/tour-bridge.ts`。
+        // Must be attached at build: plugins cannot be registered during the tour demo (`@/collab/tour-transaction-filter`).
         createTourTransactionFilterExtension(),
       ],
       editorProps: {
-        // drop：最外層先由 `withSiteLinkDrop` 判斷要不要轉站內連結（#352）；再由 `withGutterFileDrop` 把落在欄與欄之間的拖放
-        // 改到最近欄的最近 block（⋮⋮ 拖曳在記落點之前改，檔案在媒體阻擋之後改）；再記落點（給上面那條貼上規則判斷位置），再走媒體阻擋。
+        // Order matters: site-link drop, then gutter file drop redirect (a ⋮⋮ drag redirects before the drop point is recorded, a file after the media block), then record the drop point (the columns paste rule uses it), then media blocking. Site-link drop: #352.
         handleDOMEvents: withSiteLinkDrop(siteLinks, editorRef, withGutterFileDrop(editorRef, withColumnsDropPoint(createMediaBlockingDOMEvents(translate)))),
-        // 筆記大小上限的前端檢查：貼上、拖放在解析好（slice）、插入之前估成長，超過上限就不放（`lib/note-size-guard.ts`）。直接傳入的
-        // editorProps 比外掛先被問到；回傳 false 照常往下（BlockNote、並排的貼上規則）。
+        // Directly passed editorProps are consulted before plugins. Estimates growth after the slice is parsed and before insertion, rejecting over the limit; false continues to BlockNote and the columns paste rule.
         handlePaste: sizeHandlers.handlePaste,
-        // ⋮⋮ 拖曳放下：先問直線放置（建列、加欄），再問橫線放進空欄，再由 `blockMoveDrop` 接手其餘的搬移（#428、#429），都不接手
-        // （複製拖、外部拖入）才做大小上限的檢查（搬移不增加內容，接手時不必估）。不論誰接手，跑完都清掉 dragstart 記下的被拖 block，
-        // 下一次拖放不會讀到這次的；是 ⋮⋮ 拖曳的話另外記下，⋮⋮ 的 dragend 之後把焦點拉回編輯器（#430，`@/collab/columns/drag-source`）。
+        // Size check only when no handler took over (copy-drags, external drags; a move adds no content; #428, #429). The dragged block recorded at dragstart is always cleared afterwards; a ⋮⋮ drag is also recorded to refocus the editor after dragend (#430).
         handleDrop: (view, event, slice, moved) => {
           try {
             return (
@@ -257,39 +191,15 @@ export function buildNoteEditorOptions({
             endBlockDrop(view);
           }
         },
-        // `[[` 觸發偵測。這裡刻意**不**倚賴 `SuggestionMenu`
-        // extension 自己對多字元 trigger 的內建偵測：它算的是
-        // `textBetween(from - trigger.length, from) + text` 再與 trigger 嚴格相等，
-        // 而 `textBetween` 在 block 開頭會回傳不足 2 個字元——於是那條路**只在
-        // 「第一個 `[` 正好是 block 首字」時成立，其餘一律不相等**（已對
-        // @blocknote/core 0.52.1 的 dist 核實）。語意不完整，不能委派給它。
-        // 我們的 handler 掛在 `_tiptapOptions.editorProps` 這層，ProseMirror 對
-        // `handleTextInput` 的查詢順序是「先看直接傳入的 editorProps、才輪到各外掛」，
-        // 所以會比 extension 內建的偵測先跑一步。
-        //
-        // ⚠ **判斷的是「這次輸入落地後、游標前是不是 `[[`」，不是「這次輸入的字元是
-        // 什麼」**（issue #98）。一般打字不走 `input.ts` 的 keypress 分支（那條外面包著
-        // 「選取狀態異常」的守衛），而是瀏覽器先寫進 DOM、再由 `domchange.ts` 的
-        // `readDOMChange` 回收——它的語意是**「把舊文件的 [from, to) 換成 text」**：
-        // `text` 可以是任意長度（快速連打會併成 `"[["`，IME 組字結束整串送達如
-        // `"測試[["`），`from` 也可以不等於 `to`。原本的逐字元比對（`text === "["`）
-        // 對這兩件事都不成立，於是中文輸入法下必然失效。
+        // Not delegated to `SuggestionMenu` own multi-character detection: it compares `textBetween(from - 2, from) + text`, and `textBetween` returns fewer than 2 chars at block start, so it only works when the first `[` is the block first char (verified against @blocknote/core 0.52.1). Our handler runs first (directly passed editorProps before plugins).
+        // Judge "after this input lands, are the characters before the caret `[[`", not the typed character (issue #98): ordinary typing is picked up by `readDOMChange` as "replace [from, to) with text", where `text` can be any length (fast typing merges to "[[", IME ends with e.g. "測試[[") and from may differ from to.
         handleTextInput: (view, from, to, text) => {
           const sel = view.state.selection;
-          // ⚠ 下面的刪除用**參數座標**算，但真正把 `[[` 放進文件的 `openSuggestionMenu`
-          // 走的是無位置的 `insertText()`——那作用在**當下的 selection**。兩者必須指同
-          // 一段，否則會刪在一處、插在另一處，把文件改壞。ProseMirror 實務上一定相等
-          // （`readDOMChange` 的 `findDiff` 以 `state.selection.from` 當 `preferredPos`），
-          // 這裡把這個隱含前提寫成明確守衛，而不是倚賴它碰巧成立。
+          // The deletions use parameter coordinates but `openSuggestionMenu` inserts at the current selection: they must be the same range (if they differ we would delete in one place and insert in another, corrupting the document), so guard explicitly (ProseMirror normally guarantees it).
           if (sel.from !== from || sel.to !== to) return false;
 
           const doc = view.state.doc;
-          // 游標前的 1 個字元。`from >= 1` 是保險（上面的 selection 守衛已經蘊含它，
-          // 因為文件內的合法 selection 位置最小是 1），但擋在 `resolve(from - 1)` 之前
-          // 才不會有「位置 -1」的可能。same-parent 判斷同樣是把意圖寫死：跨 block 邊界
-          // 時 `textBetween` 本來就回空字串（範圍內沒有文字葉節點），所以它其實攔不到
-          // 任何實際情形——留著是為了讓「上一個 block 結尾的 `[` 不算數」這件事在原始碼
-          // 層級看得見。
+          // `from >= 1` is insurance before `resolve(from - 1)`; the same-parent check documents that a `[` ending the previous block does not count (`textBetween` is already empty across blocks).
           let before = "";
           if (from >= 1) {
             const $prev = doc.resolve(from - 1),
@@ -298,50 +208,32 @@ export function buildNoteEditorOptions({
           }
           if (!(before + text).endsWith("[[")) return false;
 
-          // 拿不到 extension 就交還 ProseMirror：回傳 true 卻沒開選單，等於把使用者剛打
-          // 的字整段吞掉（IME 整串送達時是一整段中文）。
+          // Return control to ProseMirror: returning true without opening the menu would swallow what the user just typed.
           const menu = editorRef.current?.getExtension(SuggestionMenu);
           if (!menu) return false;
 
-          // trigger 的兩個 `[` 有幾個來自這次的 `text`：`text` 自己就以 `[[` 結尾 → 兩個
-          // 都是，文件裡不必刪；否則是「文件裡既有一個 ＋ `text` 的最後一個」→ 要把文件
-          // 裡那個刪掉。
+          // How many of the two `[` come from `text`: if it ends with `[[` none in the document needs deleting.
           const fromText = text.endsWith("[[") ? 2 : 1;
-          // `text` 裡 `[[` 之前的內容——IME 整串送達時就是使用者剛打完的那段中文。
           const keep = text.slice(0, text.length - fromText);
           const start = from - (2 - fromText);
           const tr = view.state.tr;
-          // ② 被選取的內容要取代掉（＝ ProseMirror 的預設行為）；`from === to` 時是 no-op。
           if (from < to) tr.delete(from, to);
-          // ③ 刪掉文件中既存的那個 `[`（僅當這次的 trigger 借用了它）。
           if (start < from) tr.delete(start, from);
-          // 回傳 true 等於吞掉本次輸入，ProseMirror 不會插入 `text`——`[[` 由下面的
-          // `openSuggestionMenu` 補上，但 **`[[` 之前的內容必須由我們自己插回去**，
-          // 否則使用者剛打的字會憑空消失。
+          // Returning true swallows the input, so the content before `[[` must be reinserted by us. `openSuggestionMenu` inserts `[[` at the selection, already mapped to `start` by the dispatch above (so dispatch first).
           if (keep) tr.insertText(keep, start);
           if (tr.docChanged) view.dispatch(tr);
-          // ④ `deleteTriggerCharacter: true`——由 plugin 當下把 `[[` 插入文件（作用在
-          // selection，此時已被上面的 transaction 映射到 `start`），`clearQuery` 屆時
-          // 刪除範圍才會涵蓋 `[[`+query；省略/false 必然殘留 `[[`。
+          // `deleteTriggerCharacter: true` so `clearQuery` also deletes `[[`; omitted/false leaves `[[` behind.
           menu.openSuggestionMenu("[[", { deleteTriggerCharacter: true });
-          return true; // ① 吞掉本次輸入
+          return true; // swallow this input
         },
       },
     },
   });
 }
 
-/**
- * `LinkDialog` 送出後真正落地的地方（issue #99）：把 selection 還原到開對話框
- * 當下存的那個位置，再呼叫 `editor.createLink`。抽成獨立、匯出的純函式方便直接對
- * 真編輯器斷言（`NoteEditor.test.ts` 的 `insertLinkAtSavedSelection` 描述塊）。
- *
- * ⚠ **還原 selection 這一步不是防禦性寫法**：
- * `editor.createLink(href, text)` 打在**當下** selection，不是開啟對話框那一刻的
- * selection——省略還原，真編輯器實測會插到錯的位置（見該描述塊的斷言）。
- */
+/** Restoring the selection is not defensive: `editor.createLink` acts on the current selection, not the one at open time. */
 export function insertLinkAtSavedSelection(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 wikilink/menu.ts、ai/apply.ts）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
   editor: any,
   savedSelection: { from: number; to: number } | null,
   { text, href }: { text: string; href: string },
@@ -350,35 +242,20 @@ export function insertLinkAtSavedSelection(
   editor.createLink(href, text);
 }
 
-/**
- * `/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法（issue #99）。抽成獨立、
- * 匯出的 hook 是為了可測——「測試要釘的是 dialog 開關前後
- * `getSlashItems` 身分不變」，抽出來後可以直接 `renderHook` 驗證這個
- * hooks-composition 事實（見 `NoteEditor.test.ts` 的 `useLinkMenuState` 描述塊）。
- *
- * ⚠ `getSlashItems` 若把 `linkDialogOpen` 放進 deps（或用 inline arrow 取代
- * `openLinkDialog`），每次 render 都會換身分 ⇒ `SuggestionMenuController` 的
- * `useLoadSuggestionMenuItems` effect（deps 是 `[query, getItems]`）重跑 ⇒ 選單
- * loading 閃動重繪——這個 repo 已經為同一個 bug 踩過一次並留了註解（`getItems`
- * 那支，見下面 `NoteEditor` 本體）。
- */
+/** `getSlashItems` must keep its identity across dialog open/close: a changing identity re-runs the `useLoadSuggestionMenuItems` effect (deps `[query, getItems]`) and the menu flashes its loading state. */
 export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
-  // 手機的選單不帶快捷鍵欄；跨 640 時 `getSlashItems` 換身分，選單重載一次。
+  // The phone menu has no shortcut column; crossing 640 reloads the menu once. Do not add `linkDialogOpen` to its deps or replace `openLinkDialog` with an inline arrow.
   const phone = useIsPhone();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  // 開對話框當下存下的 selection（驗出來的做法）：對話框搶走瀏覽器
-  // focus 後 ProseMirror selection 本身不會變，但送出時仍明確還原一次，不倚賴
-  // 「反正沒變」這個隱含事實。放 ref 不進 state——它不影響任何畫面輸出。
+  // Restore the saved selection explicitly rather than rely on it not having changed while the dialog took focus; a ref because it affects no output.
   const linkSelectionRef = useRef<{ from: number; to: number } | null>(null);
-  // 開對話框當下選取的字與所在連結的網址：預填進對話框；送出時顯示文字沒改就不重打字，保留原本的粗體等樣式。
   const [linkPrefill, setLinkPrefill] = useState({ text: "", url: "" });
 
   const openLinkDialog = useCallback(() => {
     const currentEditor = editorRef.current;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
     const sel = (currentEditor as any)?._tiptapEditor?.state?.selection;
-    // 選取（或游標）整個落在一個既有連結裡：編輯那個連結——套用範圍設成整個連結、文字預填成連結文字，
-    // 文字沒改就只換網址；不然收合的游標會把網址字串插進連結中間。
+    // Editing an existing link: apply range is the whole link and the text prefilled, so unchanged text only replaces the URL (a collapsed caret would insert the URL into the link).
     const link = linkAtSelection(currentEditor);
     const editingLink = link !== undefined;
     linkSelectionRef.current = editingLink ? { from: link.from, to: link.to } : sel ? { from: sel.from, to: sel.to } : null;
@@ -390,15 +267,12 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
     setLinkDialogOpen(true);
   }, [editorRef]);
 
-  // 對話框送出：呼叫抽出來的純函式（見上面 `insertLinkAtSavedSelection`）——
-  // ⚠ `text.trim() || hit.href` 的 fallback 已經在 `LinkDialog` 內做過，
-  // 這裡收到的 `text` 恆非空，不必再擋一次。
+  // `text` is never empty here (`LinkDialog` already falls back to `href`).
   const handleLinkInsert = useCallback(
     ({ text, href }: { text: string; href: string }) => {
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
-      // 顯示文字與選取的字一樣：只加連結、不重打字（重打會丟掉粗體等樣式）。
-      // `LinkDialog` 送出時會 trim 顯示文字，所以預填值也 trim 後再比，不然選取帶前後空白時永遠算「改過」而丟掉空白。
+      // Equal to the selection: add only the link (retyping loses bold etc.); `LinkDialog` trims, so compare trimmed prefill.
       const prefilled = linkPrefill.text.trim();
       const keepText = prefilled !== "" && text === prefilled;
       insertLinkAtSavedSelection(currentEditor, linkSelectionRef.current, { text: keepText ? "" : text, href });
@@ -420,64 +294,35 @@ export function useLinkMenuState(editorRef: EditorRef, translate: Translate) {
 export interface NoteEditorProps {
   doc: Y.Doc;
   provider: HocuspocusProvider;
-  /** 目前角色能不能編輯（`canEdit(role)`）。false → BlockNoteView 會把 `editor.isEditable` 設成 false。 */
   editable: boolean;
   user: { id: string; name: string };
-  /** 目前這篇筆記的 id：轉交給 `buildNoteEditorOptions` 組上傳路徑。 */
   noteId: string;
-  /** 卡片版面：內文卡頁頭——`NotePage` 組裝
-   * TitleInput／ConnectionBadge／分享鈕／⋮ 選單後傳入。純 `ReactNode`，`NotePage`
-   * 每次 render 傳新節點只影響這棵子樹，不會觸發 `useCreateBlockNote` 重建
-   * （建立點與 deps 見下方，零改動）。 */
+  /** A plain `ReactNode`: a new node each render does not rebuild the editor. */
   headerSlot?: ReactNode;
-  /** 內文卡頁尾——`NotePage` 組裝 backlinks chips 後傳入。同上，普通 slot props。 */
   footerSlot?: ReactNode;
-  /** 手機編輯中：渲染浮在鍵盤上方的編輯工具列（`NotePage` 依焦點與段位決定）。 */
   mobileToolbar?: boolean;
-  /** 手機沒在編輯、右下左下有浮動鈕時：捲動內容尾端留一段空白，最後一行才捲得到浮動鈕之上。 */
   fabClearance?: boolean;
-  /** 版本預覽：有值時**捲動容器加 `hidden`**、同一張卡內在捲動容器之後渲染這個 slot；
-   * 頁首（含預覽橫幅）、頁尾照常。⚠ 活編輯器**不 unmount**：`NoteEditorView` 的重掛會殺掉 y-prosemirror 的
-   * UndoManager 訂閱；放在 `hidden` 容器裡的活編輯器仍收得到遠端更新。 */
+  /** The live editor is not unmounted (a `NoteEditorView` remount kills the y-prosemirror UndoManager subscription); a hidden container still receives remote updates. */
   previewSlot?: ReactNode;
-  /** #269：捲動容器（段落錨點的 root）。 */
   onScrollRoot?: (el: HTMLElement | null) => void;
-  /** #293：editor 建好後交出「捲到某人游標」的函式，卸載時交出 null。呼叫端須給穩定的 identity
-   *  （NotePage 用 useCallback 寫進 ref）；本元件只在 editor 換手時重交。 */
+  /** Caller must pass a stable identity; re-handed only when the editor changes. */
   onCursorScroller?: (scroller: CursorScroller | null) => void;
-  /** #269：canonical 路徑（`canonicalNotePath(note)`），複製段落連結用。 */
   notePath?: string;
-  /** 筆記大小上限（server `NOTE_MAX_BYTES`，`GET /api/auth/config`）：貼上、拖放、站內 AI 套用之前的檢查。還沒載入＝不檢查。 */
   noteMaxBytes?: number;
-  /** 單檔上傳上限（`GET /api/auth/config` 的 `maxUploadBytes`）：貼上、拖放圖片的上傳前驗。還沒載入＝不前驗。 */
   maxUploadBytes?: number;
-  /** 焦點不在編輯器時，頁面上的 Ctrl/Cmd+Z、重做鍵也作用在這篇（`@/collab/page-undo`）；版本預覽中一律關。省略＝關。 */
   pageUndoShortcut?: boolean;
 }
 
-/** 區塊自己那一行（不含巢狀子區塊）；量閱讀位置用。 */
 function blockLine(block: HTMLElement): Element {
   return block.querySelector(":scope > .bn-block > .bn-block-content") ?? block;
 }
 
-/**
- * 編輯器建立時就固定下來的閉包要讀「當下」的 `t`（語言切換不重建編輯器），所以包一層 late-bound。
- * **必須轉傳 `opts`**：上傳 409 的說明句帶 `{{used}}`／`{{quota}}` 插值；丟掉它，真 app 會印出原樣佔位，
- * 而單元測試直接傳樁、看不到。
- */
+/** Must forward `opts`: the upload 409 text uses `{{used}}`/`{{quota}}`; dropping them prints raw placeholders (unit stubs hide it). */
 export function lateBoundTranslate(ref: { current: Translate }): Translate {
   return (key, opts) => ref.current(key, opts);
 }
 
-/**
- * BlockNote 編輯器本體。刻意跟 `NotePage` 分開成獨立元件：
- * ① 它只在 provider/doc 都備妥之後才掛載，內部不必處理 null；
- * ② 頁面層的測試可以把整個模組 mock 掉——BlockNote 依賴大量 jsdom 沒有的
- *    DOM/Range API，硬掛進單元測試只會測到環境而不是行為。
- *
- * 共編綁定、媒體 transfer 守衛（data URL 與非圖片檔攔截、純圖片檔放行上傳）、字典選擇全部在 `buildNoteEditorOptions` 裡，
- * 那支是純函式且有專屬測試（`NoteEditor.test.ts`）——這個元件只負責把它接上 React。
- */
+/** Separate from `NotePage` so page tests can mock it (BlockNote needs DOM APIs jsdom lacks). Mounted only once provider/doc are ready, so no null handling inside. */
 export function NoteEditor({
   doc,
   provider,
@@ -500,29 +345,26 @@ export function NoteEditor({
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
   const columnElRef = useRef<HTMLElement | null>(null);
   columnElRef.current = columnEl;
-  // 任何拖放進行中，欄上掛 class，⋮⋮ 等編輯器外的浮層不吃指標，drop 才落得到底下的編輯器（規則在 `index.css`）。
+  // While any drag runs, floating layers like ⋮⋮ must not take pointer events so the drop reaches the editor (`index.css`).
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
   const { panelOpen, enabled: versionsEnabled } = useVersions();
-  // #274：版本面板寬度。state 放在面板與錯誤外框的最近共同祖先（下方列容器），以 CSS 變數往下傳。
   const panelWidth = useVersionsPanelWidth();
-  // 640-1279：面板浮在筆記上（列容器 `relative`、面板 `absolute`），上緣讓出頁首；收起規則見 `floating-panel.ts`。
+  // floating panel (640-1279: the versions panel floats over the note): top edge leaves room for the header (`floating-panel.ts`)
   const rowRef = useRef<HTMLDivElement>(null);
   const headerSlotRef = useRef<HTMLDivElement>(null);
   useNoteHeaderHeight(rowRef, headerSlotRef);
   const { onKeyDown: onRowKeyDown } = useFloatingPanelDismiss();
-  // #297：這篇的站內內文寬度（訂閱模組層 Map；換寬度只換欄 class，不重建 editor）。
   const [width] = useNoteWidth(noteId);
   const hasPreview = previewSlot !== undefined && previewSlot !== null;
-  // 手機：頁尾（提及列）不佔卡底，改放進捲動容器、文章欄之後，跟著內文捲；編輯工具列的空白仍排在最後。
+  // Phone: the footer scrolls with the body; the toolbar blank space stays last.
   const phone = useIsPhone();
   const footerInScroll = phone && footerSlot !== undefined && footerSlot !== null;
-  // 手機上捲的是文件、頁首釘在頂端：它的高度給區塊的 `scroll-margin-top` 與捲到段落、捲到游標的計算（`lib/page-scroll.ts`）。
+  // Phone header is sticky: its height feeds `scroll-margin-top` and scroll-to calculations.
   useStickyTopVar(headerSlotRef, phone);
 
-  // #293：scroller 在點擊當下才讀捲動容器與「是否在版本預覽中」（預覽中容器 hidden → 不捲）。
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
-  // 標題大綱要在捲動容器掛上時重新量測、重新訂閱捲動，ref 不會觸發重繪，所以另存一份 state。
+  // Re-measure and re-subscribe when the container mounts; a ref does not re-render.
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const setScrollRoot = useCallback(
     (el: HTMLDivElement | null) => {
@@ -532,10 +374,8 @@ export function NoteEditor({
     },
     [onScrollRoot],
   );
-  // 手機：寬表格右緣還能往右捲時的提示（不支援捲動驅動動畫的瀏覽器才需要；委派在捲動容器上）。
   useTableScrollHint(scrollRootRef, phone);
-  // 跨 640（轉橫拿）時保住閱讀位置：以畫面頂端第一個區塊（量它自己那一行）為準，兩邊的排版不同也停在同一段。
-  // 手機上的上緣直接量頁首（換段的這一刻 `--kb-sticky-top` 還沒寫好）。
+  // Keep the reading position when crossing 640 (e.g. rotating). Anchor on the first visible block (its own line) so both layouts stop at the same paragraph; on phones measure the header directly (`--kb-sticky-top` not written yet).
   useTierScrollAnchor({
     containerRef: scrollRootRef,
     itemSelector: ".bn-block-outer",
@@ -547,20 +387,17 @@ export function NoteEditor({
   hasPreviewRef.current = hasPreview;
   const onCursorScrollerRef = useRef(onCursorScroller);
   onCursorScrollerRef.current = onCursorScroller;
-  // #293：render 當下寫入——editable 翻面時 BlockNoteView 在 commit 重掛 PM view，那時 gate 已讀到新值。
+  // Written at render, not in an effect: when editable flips, BlockNoteView remounts the PM view during commit and the gate must already read the new value then.
   const editableRef = useRef(editable);
   editableRef.current = editable;
 
-  // handler 是在 editor 建立時就固定下來的閉包；用 ref 取用最新的 t，語言切換時
-  // 不必為了文案而重建整個 editor（重建會扯斷 y-prosemirror 綁定）。
+  // Closures fixed at creation read the latest `t` through a ref; rebuilding would break the y-prosemirror binding.
   const translateRef = useRef<Translate>(t);
   translateRef.current = t;
 
-  // 筆記大小上限的前端檢查（軟性，`lib/note-size-guard.ts`）：貼上、拖放、站內 AI 套用之前，現在的大小＋估計的成長超過上限 → 不放、提示。
-  // 上限與文件都經 ref 讀當下的值（編輯器建立時就固定的閉包）。
+  // Limit and document are read through refs (closures are fixed at creation).
   const noteMaxBytesRef = useRef(noteMaxBytes);
   noteMaxBytesRef.current = noteMaxBytes;
-  // 上傳前驗的上限同理：`uploadFile` 在編輯器建立時就固定，直接傳值會停在第一次 render 的值。
   const maxUploadBytesRef = useRef(maxUploadBytes);
   maxUploadBytesRef.current = maxUploadBytes;
   const docRef = useRef(doc);
@@ -573,13 +410,10 @@ export function NoteEditor({
     ),
   );
 
-  // `[[` 觸發（`handleTextInput`）與「建立並連結」的 item handler 都要在
-  // 使用者真的互動的當下讀取 editor，而 `buildNoteEditorOptions` 在 editor 存在之前
-  // 就會被呼叫——用這個 late-bound ref 打通（見 `buildNoteEditorOptions` 內註解、
-  // `@/components/wikilink/menu` 的 `EditorRef`）。
+  // Late-bound ref bridges `buildNoteEditorOptions`, which runs before the editor exists.
   const editorRef = useRef<EditorRef["current"]>(null);
 
-  // #269：站內連結轉換的 env——每次 render 換新（讀最新的快取），外掛與後備都在使用者動作當下才讀 ref。
+  // Refreshed each render; plugin and fallbacks read the ref at action time.
   const queryClient = useQueryClient();
   const siteLinksRef = useRef<SiteLinkEnvRef["current"]>(null);
   siteLinksRef.current = createSiteLinkEnv({
@@ -602,18 +436,13 @@ export function NoteEditor({
       sizeGuard,
       maxUploadBytes: () => maxUploadBytesRef.current,
     }),
-    // 語言不進 deps：字典只在建立時讀一次，換語言要重開頁面才生效（換成
-    // 「重建 editor」的代價是共編綁定重掛，不值得）。noteId 同理不進 deps——`useCollab`
-    // 的連線 effect 本身就是照 `noteId` 建新的 `Y.Doc`/`HocuspocusProvider`（見
-    // `collab/useCollab.ts`），noteId 一換，`doc`/`provider` 必然跟著換、這裡就會
-    // 重新跑，不會有「同一個 editor 實例、noteId 換手」這種情境。
+    // Language and noteId are not in deps: the dictionary is read once at creation, and a noteId change always changes `doc`/`provider` (`collab/useCollab.ts`), so a language switch applies after reload (rebuilding would remount the collab binding, not worth it).
     [doc, provider],
   );
   editorRef.current = editor;
-  // 點捲動區的空白（文章欄的內距、欄外的空地；不是 block、不是任何浮層或按鈕）：整個 block 被選取時改成游標，外框跟著消失。
+  // When a whole block is selected, a click on blank area becomes a caret so the outline disappears.
   const onScrollAreaMouseDown = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
-      // Shift＋點擊、從空白處拖曳框選：交給瀏覽器與 ProseMirror 延伸選取，不在這裡換成游標。
       if (e.button !== 0 || e.shiftKey) return;
       const root = e.currentTarget;
       const target = e.target as HTMLElement;
@@ -623,7 +452,7 @@ export function NoteEditor({
         target.hasAttribute("data-article-flow") ||
         (!target.closest(".bn-block-outer") && (target.classList.contains("bn-container") || target.classList.contains("bn-editor") || target.classList.contains("bn-block-group")));
       if (!blank) return;
-      // 捲軸上的按下也會以捲動容器為目標。
+      // A press on the scrollbar also targets the scroll container.
       if (root.clientWidth > 0 && e.clientX - root.getBoundingClientRect().left >= root.clientWidth) return;
       const view = editor.prosemirrorView as unknown as BlankClickView | undefined;
       if (!view) return;
@@ -632,38 +461,30 @@ export function NoteEditor({
     },
     [editor],
   );
-  // 版本預覽中活編輯器藏起來了，撤銷會改到看不見的內容。
+  // The live editor is hidden during version preview: an undo would change invisible content.
   usePageUndoShortcut(editor, pageUndoShortcut && !hasPreview);
 
-  // #465 右側標題大綱（桌機、平板）。版本預覽中大綱只對應活文件，不顯示；768-1279 版本面板浮在卡上時會蓋住它，也不顯示。
-  // 手機另有入口。版本泡泡的出現條件與 `CornerStack` 相同：有版本功能、面板沒開。
-  // 只在大綱可能出現時量版面：量到的值一變這整層就重繪，調整視窗時是每個畫格一次。
+  // Phones have their own entry. Outline is hidden during version preview (it maps only the live document) and when the floating version panel would cover it (768-1279). Layout is measured only when it may appear: a changed measurement re-renders this layer, once per frame while resizing.
   const outlineHeadings = useOutlineHeadings(editor);
   const overlay = useIsOverlay();
   const outlineCompact = useIsOutlineCompact();
   const outlineCanShow = !outlineCompact && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
   const showOutline = outlineCanShow && outlineBox !== null;
-  // 釘住：偏好是全站一個；只有大綱在、標準寬、容器扣掉面板還放得下 640 的欄時才真的釘（欄換成 `standard-pinned`）。
-  // 其他時候退回細線、欄照原寬度，偏好不動，條件回來就自動再釘。
+  // Pinning preference is site-wide; it applies only with an outline, standard width and room for a 640 column (after subtracting the panel), else it falls back to the thin line without changing the preference; it re-pins automatically when conditions return.
   const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
   const outlinePinAvailable = width === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
-  // 窄於 768 沒有細線：捲動時的位置泡泡與底部面板；⋮ 的「標題導覽」經 context 開同一個面板，所以 provider 包住整張卡（含頁首槽位）。
-  // 手機上捲的是文件：泡泡與目前位置聽視窗的捲動，上緣是釘住的頁首下緣。
-  // 640–767 也用這一形，但那一段文件不捲、捲的是容器：泡泡與目前位置聽容器、泡泡浮在容器上緣的錨點層（同細線）。
+  // Below 768: position bubble + bottom panel; ⋮ opens the same panel via context, so the provider wraps the whole card. 640-767 listens to the container (document does not scroll there); phones to the window. On phones the top edge is the pinned header bottom; at 640-767 the bubble floats in the anchor layer at the container top.
   const phoneOutline = outlineCompact && !hasPreview && outlineHeadings.length > 0;
   const containerTopEdge = useCallback(() => scrollEl?.getBoundingClientRect().top ?? 0, [scrollEl]);
   const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
-  // 面板不在（離開手機寬度、開版本預覽、標題刪光）時一併關掉，條件回來時不會自己再跳出來。
+  // Close the panel when it disappears so it does not pop up again when the condition returns.
   useEffect(() => {
     if (!phoneOutline) setOutlineSheetOpen(false);
   }, [phoneOutline]);
-  // 面板關閉（選了標題或直接關掉）時焦點去哪：面板沒有觸發鈕，不指定的話焦點會掉到 body。
-  // 開的當下在編輯（編輯工具列在；只有點泡泡會這樣，泡泡不搶焦點）→ 還給編輯器（不捲動、選取不變），工具列才會回來。面板開著時焦點在
-  // 面板裡、工具列已收起，所以在開的那一刻記下。否則回到開它的元素：⋮ 的觸發鈕，或用鍵盤、螢幕閱讀器
-  // 開的泡泡（面板開著時泡泡不倒數，還在）；手指點泡泡時泡泡沒拿到焦點，不交元素，焦點不移動。
+  // No trigger button, so without a target focus falls to body: when opened while editing (bubble tap) return to the editor (no scroll, selection unchanged); otherwise to the opener (⋮ or keyboard-opened bubble). Returning to the editor brings the edit toolbar back; a keyboard-opened bubble is still present (no countdown while the panel is open), a finger-tapped bubble never had focus so focus is left alone. Recorded at open because focus is in the panel and the toolbar is collapsed while open.
   const [outlineFocusReturn, setOutlineFocusReturn] = useState<{ editing: boolean; el: HTMLElement | null }>({ editing: false, el: null });
   const mobileToolbarRef = useRef(mobileToolbar);
   mobileToolbarRef.current = mobileToolbar;
@@ -678,32 +499,24 @@ export function NoteEditor({
   );
 
   useEffect(() => {
-    const report = onCursorScrollerRef.current; // cleanup 不讀 ref
+    // Captured so cleanup reports to the same callback.
+    const report = onCursorScrollerRef.current;
     report?.(createCursorScroller({ editor, getRoot: () => (hasPreviewRef.current ? null : scrollRootRef.current) }));
     return () => report?.(null);
   }, [editor]);
 
-  // 功能導覽經登記處拿這份編輯器（`lib/tour-bridge.ts`）。
   useEffect(() => registerEditor(noteId, editor), [noteId, editor]);
-  // 每個編輯器實例第一次可編輯時通知一次（登記處自己記「已通知」）。放在登記之後：同一次 commit 裡先登記、再通知。
-  // BlockNoteView 在 commit 階段的 ref callback 裡設 `editor.isEditable`，比這個 effect 早，所以通知時它已是新值。
+  // Notify once per editor instance when it first becomes editable (the registry dedups). Register first, then notify in the same commit; `editor.isEditable` is set by BlockNoteView ref callback earlier in commit.
   useEffect(() => {
     if (editable) notifyEditorEditable(noteId, editor);
   }, [noteId, editor, editable]);
 
-  // issue #99：`/` 選單「連結」項的對話框狀態與 `getSlashItems` 組法——抽成
-  // `useLinkMenuState`（見該函式檔頭）方便直接對它
-  // `renderHook`，不必掛真編輯器整棵渲染。
   const { linkDialogOpen, setLinkDialogOpen, openLinkDialog, linkPrefill, handleLinkInsert, getSlashItems } = useLinkMenuState(editorRef, t);
 
   const notes = useNotes().data;
   const { mutateAsync: createNote } = useCreateNote();
 
-  // `getItems` 是 `SuggestionMenuController` 內部 `useLoadSuggestionMenuItems` 的
-  // effect 依賴——inline arrow 每次 render 都是新 identity，會讓那個 effect（連帶
-  // `getItems(query)` 的呼叫）在選單開著、`NoteEditor` 因任何理由重render（例如
-  // 這裡新加的 `useNotes()` 本身就是新的 render 來源）時重跑，選單出現 loading
-  // 閃動重繪。用 `useCallback` 釘住 identity，只在真的影響輸出的依賴變動時才換。
+  // `getItems` is an effect dependency of `useLoadSuggestionMenuItems`: an inline arrow would re-run it on any re-render and flash the loading state; `useCallback` pins identity.
   const getItems = useCallback(
     (query: string) =>
       Promise.resolve(
@@ -719,42 +532,9 @@ export function NoteEditor({
     [notes, createNote, t],
   );
 
-  // issue #94／#99：`/` 選單接管（內建項全數保留 ＋ mermaid 圖表 ＋ 連結）的
-  // `getSlashItems` 本體在 `useLinkMenuState`（上面）——這裡不重複組。
 
-  // AI 狀態與框選 AI 框（#263）全部收在這裡，editor
-  // 建立點（上面 `useCreateBlockNote` 及其 deps）完全不動——`AiSessionProvider` 只是
-  // 包住既有的版面，不會讓 `NotePage` 任何 re-render 有機會扯到 editor 重建。
-  //
-  // 卡片版面：內文卡在這裡。DOM 樹（
-  // 寬度鏈的起點；最外層的 `OutlineMenuContext` 與 `AiSessionProvider` 不產生節點）：
-  //   根 row（relative flex h-full min-h-0 min-w-0 flex-1 gap-3；640-1279 時是浮動版本面板的定位基準）
-  //     內文卡（cardSurface，flex-col）
-  //       {headerSlot}（外包 data-note-header-slot，量高度給 --note-header-h）  ← NotePage 組裝
-  //       NoteOutline                                 ← #465 標題大綱：零高度錨點（data-outline-anchor），貼在捲動容器上緣；細線與面板不隨內文捲、不佔高度
-  //       PhoneNoteOutline                            ← #465 窄版（< 768）：位置泡泡（< 640 fixed 在頁首下方；640–767 浮在卡內錨點層）＋底部面板（Dialog，portal）；與上一項不同時出現
-  //       捲動容器（min-w-0 flex-1 overflow-y-auto min-h-0 overflow-x-clip——
-  //         `overflow-x-clip`＝#162，見下方 JSX 註解；手機上縱向 visible、不自己捲，捲的是文件，頁首槽位 sticky 釘在頂端）
-  //         流程包裝（data-article-flow）：非手機是 `display: contents`（不產生盒子）；手機且頁尾放在捲動容器內時是
-  //           `flex min-h-full flex-col`，依序裝欄、頁尾、編輯工具列的空白
-  //         置中 wrapper＝文章欄（articleColumn(articleColumnState(width, 釘住), { pinMotion: 大綱出現滿一個畫格 }) ＋ ARTICLE_COLUMN_PADDING ＋ `relative` flex
-  //           flex-col py-6；非手機再加 `min-h-full`，手機（頁尾在捲動容器內）改 `grow shrink-0` 撐滿流程包裝；
-  //           `relative`＝#160，見下方 JSX 註解）
-  //           ← 欄寬／內距一律取自 `ui/article-column.ts`：#297 起三段寬度（標準／寬／
-  //             全寬），單一真相在該檔；headerSlot／footerSlot 是滿卡寬（置左置右），
-  //             不套欄。欄寬下限承重的理由與 `<md` 內距 70→20 的斷點機制全寫在該檔；
-  //             改欄寬請改該檔，別在這裡另寫一份。
-  //           NoteEditorView                         ← className 加 flex-1（
-  //             wrapper 的 min-h-full 無法把百分比高度傳給孫層，唯一有效解是讓
-  //             BlockNoteView 自己成為 flex-col wrapper 的成長項；除 className 外零改動）
-  //       {previewSlot}                               ← 版本預覽時才渲染；此時上面的捲動容器加 hidden（活編輯器不 unmount）
-  //       CornerStack                                 ← 歷史泡泡：零高度錨點，貼在捲動區下緣、頁尾之上（不佔高度）
-  //       {footerSlot}                                ← NotePage 組裝（backlinks chips）；手機改放進上面的捲動容器、置中 wrapper 之後（後面再接編輯工具列的空白）
-  //     VersionsPanel                                 ← `panelOpen` 時才渲染（lazy，經 VersionsLazyBoundary）；1280 起是第三欄，640-1279 是 absolute 浮在卡上，
-  //                                                      兩段是同一個節點（不搬進卡片，跨 1280 才不重掛、不丟清單捲動位置）
-  // `data-testid="note-editor"` 留在 `NoteEditorView`／`BlockNoteView` 上，不隨這次
-  // 改版搬家——e2e 的 `[data-testid="note-editor"] [contenteditable]` 與
-  // `NoteEditor.layout.test.tsx` 的節點鏈都吊在這裡。
+  // AI state is contained here; `useCreateBlockNote` and its deps stay untouched so no NotePage re-render can rebuild the editor.
+  // Column width and padding come only from `ui/article-column.ts` (do not duplicate here). `NoteEditorView` gets `flex-1` because the wrapper `min-h-full` cannot pass a percentage height to its grandchild. `data-testid="note-editor"` stays on `NoteEditorView`/`BlockNoteView` (e2e and NoteEditor.layout.test.tsx). The version panel is the same node at 640-1279 (absolute) and 1280+ (third column) so crossing 1280 does not remount or lose list scroll.
   return (
     <OutlineMenuContext.Provider value={outlineMenu}>
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
@@ -762,16 +542,12 @@ export function NoteEditor({
         <div className={cn(
           cardSurface,
           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:rounded-none max-sm:border-0",
-          // 手機上捲的是文件（`lib/page-scroll.ts`）：卡不裁切（頁首的 sticky 才黏得住），至少一個視窗高（`svh`：工具列伸縮時不變），
-          // 短筆記的文章欄仍延伸到畫面底、點下方空白照樣聚焦到最後。
+          // Phone: the document scrolls; the card does not clip (header sticky) and is at least `svh` high (unchanged as browser toolbars resize) so a short note still reaches the bottom; tapping below still focuses the end.
           "max-sm:min-h-svh max-sm:overflow-visible",
-          // 浮在鍵盤上的編輯工具列自己帶底部 safe area；捲動容器的下緣要在那段之上，
-          // 鍵盤收起時工具列頂端才恰在容器下緣上方 60px（游標捲動邊界與 AI 框翻轉都以此為準；
-          // 鍵盤或色盤開著時留白多出幾 px，無妨）。
+          // The floating toolbar brings its own bottom safe area; the container bottom sits above it so the toolbar top is 60px above (caret scroll boundary and AI box flip use it). With the keyboard closed the toolbar top is exactly 60px above the container bottom; with keyboard or palette open the gap is a few px larger, harmless.
           mobileToolbar && "max-sm:pb-[env(safe-area-inset-bottom)]",
         )}>
-          {/* 手機的內文卡貼齊螢幕上緣：瀏海的 safe area 由頁首槽位給，槽位裡的橫幅與頁首都在它之下。
-              手機上整個槽位釘在頁面頂端（不透明底，內文捲到它下面不透出來）。 */}
+          {/* phone: header slot owns the notch safe area and is pinned (opaque) */}
           <div ref={headerSlotRef} data-note-header-slot="" className="max-sm:sticky max-sm:top-0 max-sm:z-30 max-sm:bg-card max-sm:pt-[env(safe-area-inset-top)]">
             {headerSlot}
           </div>
@@ -794,8 +570,8 @@ export function NoteEditor({
               topEdge={phone ? stickyTopInset : containerTopEdge}
               placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
-              // 軌道底端要讓開的東西：編輯工具列在時是工具列（疊在鍵盤上）；瀏覽時手機是右下浮動鈕，640-767 是版本泡泡
               editToolbarHeight={phone && mobileToolbar ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0}
+              // Non-phone: same condition CornerStack uses to show the bubble (versions enabled, panel closed).
               bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : versionsEnabled && !panelOpen ? CORNER_STACK_FOOTPRINT_PX : 0}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}
@@ -803,37 +579,14 @@ export function NoteEditor({
               restoreFocus={outlineRestoreFocus}
             />
           )}
-          {/* 手機上這層不自己捲（文件在捲），改成直欄撐滿卡剩下的高度，裡面的流程包裝再往下撐。
-              手機上的高度要從內容長出來（flex-basis auto，不是 flex-1 的 0%）：卡的高度不固定，0% 的基準加上
-              `min-h-full` 解不出來，內容會溢出盒子、卡比內容短，釘在頂端的頁首捲過卡底就跟著離開畫面。 */}
+          {/* Phone: height grows from content (flex-basis auto, not `flex-1` 0%): a 0% basis with `min-h-full` overflows and the sticky header leaves with the card bottom. */}
           <div
             ref={setScrollRoot}
             onMouseDown={onScrollAreaMouseDown}
             className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip max-sm:overflow-y-visible sm:[scrollbar-gutter:stable]", hasPreview ? "hidden" : "max-sm:flex max-sm:flex-auto max-sm:flex-col")}
           >
-            {/* issue #160：`relative` 承重——BlockNote 表格 hover 浮層走 FloatingPortal 到
-                `editor.portalElement`，沒有 positioned 祖先時 containing block 落到
-                `<html>`，撐出全頁滾軸；wrapper／捲動容器／`.bn-container` 三處等效，選
-                wrapper。唯一會**往右／往下**溢出、因而長滾軸的是沒帶 flip()/shift() 的
-                兩顆 extend 按鈕（`TableHandlesController.tsx:248-303`）；側邊 `+`/`⠿`
-                把手（`SideMenuController.tsx:68-76`）同樣沒帶 middleware，但往左溢出、
-                被卡片邊裁掉 → `docs/known-limitations.md` 的 #115 那條。公開唯讀頁靠
-                `TableHandles.ts:230-238`／`ExtendButton.tsx:223-225` 的 `!isEditable`
-                守衛整組關掉。
-                issue #162：右緣溢出的「新增列」按鈕曾讓這層長橫向捲軸（`14-table-hover.spec.ts`
-                水平孿生案量到 `scrollWidth` 506→2480，這兩個數字修好後不變——
-                `scrollWidth` 不受 `overflow-x` 影響，見下方斷言 (A)）。補
-                `overflow-x-clip` 裁掉：規範（css-overflow-3 §3.1，
-                https://www.w3.org/TR/css-overflow-3/#overflow-properties）另一軸非
-                visible/clip 時 `clip` 計算成 `hidden`；`overflow-x:auto` 本來就在同一個
-                padding box 裁切，沒有新增任何裁切邊界，不會讓浮層更被裁。真瀏覽器實測：
-                `hidden` 下滑鼠滾輪橫向 `scrollLeft` 恆為 0（`auto` 是 300）；
-                `scrollIntoView` 在我們自己的碼零呼叫，已查到的程式化捲動
-                （prosemirror-view caret-follow）先被 `.tableWrapper` 吃掉。細節見
-                `14-table-hover.spec.ts`。 */}
-            {/* 手機且頁尾放在捲動容器內時：欄、頁尾、工具列空白包在一個至少與捲動容器等高的直欄裡，
-                欄自己撐滿剩下的高度（短筆記不會因為頁尾與空白而多出可捲的範圍，點欄下方空白仍聚焦到最後）。
-                其他情形這層是 `display: contents`，不產生盒子，欄照舊自己 `min-h-full`。 */}
+            {/* `relative` is load-bearing (#160): BlockNote table hover overlays use FloatingPortal into `editor.portalElement`; without a positioned ancestor (wrapper, scroll container or `.bn-container` all work) they size against `<html>` and grow a page scrollbar (extend buttons lack flip/shift). `overflow-x-clip` (#162) crops right-overflowing "add row" buttons: css-overflow-3 section 3.1 makes `clip` compute to `hidden` when the other axis is non-visible; `overflow-x:auto` already clips at the same box, so nothing new is clipped. Side +/⠿ handles overflow left and are clipped (`docs/known-limitations.md`, #115); the public page disables them via `!isEditable`. `scrollWidth` ignores `overflow-x`. We never call `scrollIntoView` and caret-follow is consumed by `.tableWrapper` first. Details in `14-table-hover.spec.ts`. */}
+            {/* phone: wrapper at least as tall as the scroll container so a short note gets no extra scroll range */}
             <div data-article-flow="" className={footerInScroll || fabClearance ? "flex min-h-full flex-col max-sm:grow" : "contents"}>
             <div
               ref={setColumnEl}
@@ -845,7 +598,7 @@ export function NoteEditor({
                 footerInScroll || fabClearance ? "grow shrink-0" : "min-h-full",
               )}
             >
-              {/* #462：放大功能只涵蓋文章欄；版本面板與預覽區在 Provider 之外。 */}
+              {/* zoom covers only the article column */}
               <MediaZoomProvider>
                 <NoteEditorView
                   editor={editor}
@@ -856,26 +609,25 @@ export function NoteEditor({
                   getSlashItems={getSlashItems}
                   notePath={notePath}
                 >
-                  {/* #263：formatting toolbar controller 與框選 AI 框的唯一擁有者；NoteEditorView 不碰 AI context。 */}
+                  {/* sole owner of the formatting toolbar controller and AI box; NoteEditorView never touches AI context */}
                   <SelectionAiController />
                 </NoteEditorView>
                 <HeadingAnchorButtons container={columnEl} />
                 <ImageZoomLayer container={columnEl} editable={editable} editor={editor} />
               </MediaZoomProvider>
-              {/* 欄間分隔線（拖曳／鍵盤調欄寬）只在可編輯時掛；唯讀時沒有東西可調。 */}
+              {/* nothing to resize when read-only */}
               {editable && <ColumnDividers container={columnEl} editor={editor} />}
               {mobileToolbar && !footerInScroll && <MobileToolbarSpacer />}
             </div>
-            {/* 手機的頁尾在文章欄之後；工具列的空白再排在它後面，頁尾才捲得到工具列之上，游標那一行（在欄內）的避讓不受影響。 */}
+            {/* footer before the toolbar blank space so it can scroll above the toolbar */}
             {footerInScroll && footerSlot}
             {mobileToolbar && footerInScroll && <MobileToolbarSpacer />}
-            {/* 浮動鈕高 56＋離底 16＋safe area，再留 8px 的縫。 */}
+            {/* 56 button + 16 offset + safe area + 8 gap */}
             {fabClearance && <div aria-hidden="true" data-fab-clearance="" className="h-[calc(5rem+env(safe-area-inset-bottom))] shrink-0" />}
             </div>
           </div>
           {hasPreview && (
-            // 640-1279 面板浮在卡上：開著時右側讓出面板的寬度，預覽的並排門檻量到的是剩下的寬度，右欄不會被面板蓋住。
-            // 用 margin 而不是 padding：預覽區自己是捲動容器，padding 會讓捲軸留在最右緣、被面板蓋住。
+            // At 640-1279 the panel floats: margin (not padding) so the preview scrollbar is not covered, and the preview width threshold measures the remaining width.
             <div
               data-testid="preview-slot"
               className={cn(
@@ -886,12 +638,12 @@ export function NoteEditor({
               {previewSlot}
             </div>
           )}
-          {/* 歷史泡泡：零高度錨點貼在捲動區下緣（提及列之上），見 `CornerStack`。 */}
+          {/* history bubble anchor */}
           <CornerStack scrollRef={scrollRootRef} />
           {!footerInScroll && footerSlot}
         </div>
         {panelOpen && (
-          // `display: contents`：不產生盒子，面板的定位基準仍是列容器；收起與 Esc 的「在面板內」判斷認這個節點（錯誤外框也在裡面）。
+          // `display: contents` keeps the row container as positioning base; collapse and Esc checks recognise this node.
           <div data-versions-panel-slot="" className="contents">
             <VersionsLazyBoundary noteId={noteId} errorClassName={VERSIONS_ERROR_FRAME.panel}>
               <VersionsPanel doc={doc} width={panelWidth.width} onWidthChange={panelWidth.onChange} />
@@ -900,9 +652,7 @@ export function NoteEditor({
         )}
         {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}
       </div>
-      {/* issue #99：`/` 選單「連結」項的對話框。開合 state 在這一層（`openLinkDialog`
-          給 `getSlashItems` 用），`LinkDialog` 自己不持有——關閉與焦點回歸的完整
-          說明見該檔檔頭。 */}
+      {/* Open state lives here (`openLinkDialog` feeds `getSlashItems`). */}
       <LinkDialog
         editor={editor}
         open={linkDialogOpen}
@@ -916,18 +666,13 @@ export function NoteEditor({
   );
 }
 
-/**
- * 給 `[[` 與 `/` 選單的 `floatingUIOptions`：選單外面那層 popover 掛導覽的目標屬性，功能導覽才找得到真的選單。
- * 兩個選單各用自己的 id：上一站剛關的選單還會在 DOM 裡多留一下，共用 id 會讓導覽挖亮到舊的那個。
- * 模組層常數：`SuggestionMenuController` 的 `useMemo` 依賴它的身分。只加屬性，不動預設的 `style`／`onMouseDownCapture`。
- */
+/** Different ids per menu: a just-closed menu lingers in the DOM and a shared id would highlight the old one in the tour. Module-level constants (identity is a `useMemo` dependency). Only adds attributes; never set `style`/`onMouseDownCapture` here. */
 const WIKILINK_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
   elementProps: tourTarget("wikilinkMenu") as FloatingUIOptions["elementProps"],
 };
 const SLASH_MENU_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
   elementProps: tourTarget("slashMenu") as FloatingUIOptions["elementProps"],
 };
-/** 手機上的同兩份：再加上手機 `/` 選單的定位（`PHONE_SLASH_MENU_FLOATING_OPTIONS`）。 */
 const WIKILINK_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
   ...PHONE_SLASH_MENU_FLOATING_OPTIONS,
   ...WIKILINK_MENU_FLOATING_OPTIONS,
@@ -938,58 +683,30 @@ const SLASH_MENU_PHONE_FLOATING_OPTIONS: Partial<FloatingUIOptions> = {
 };
 
 export interface NoteEditorViewProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 EditorRef/wikilink/menu.ts）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor has three generic parameters; repo convention is any (as in wikilink/menu.ts)
   editor: BlockNoteEditor<any, any, any>;
-  /** 目前角色能不能編輯（`canEdit(role)`）。false → BlockNoteView 會把 `editor.isEditable` 設成 false。 */
   editable: boolean;
   theme: "light" | "dark";
-  /** 目前這篇筆記的 id：轉交給 `createFilePanel` 組 FilePanel 的 noteId 閉包。 */
   noteId: string;
-  /** `SuggestionMenuController` 的候選來源——呼叫端（`NoteEditor`）組好
-   * notes cache／createNote／translate 的閉包後轉交進來，這裡不重新組。 */
   getItems: (query: string) => Promise<DefaultReactSuggestionItem[]>;
-  /** `/` 選單的候選來源（issue #94：內建項 ＋ mermaid）。同 `getItems`——閉包由
-   * `NoteEditor` 組好轉交進來，這裡不重新組。 */
   getSlashItems: (query: string) => Promise<DefaultReactSuggestionItem[]>;
-  /** #263：轉進 `<BlockNoteView>` 內（`NoteEditor` 傳 `SelectionAiController`）。BlockNoteView 的 children 加在預設 UI 之外。 */
   children?: ReactNode;
   notePath?: string;
 }
 
-/**
- * `<BlockNoteView>` 本體 + 掛在它上面的兩個 controller（`SuggestionMenuController`／
- * `FilePanelController`）。抽成獨立、**exported** 元件是為了可測——比照
- * `buildNoteEditorOptions`「抽出來是為了可測」的既有慣例：`NoteEditor` 本體還要處理
- * `useCreateBlockNote` 的建構、`editorRef`/`translateRef` 的 late-bound 閉包，這些
- * 依賴大量 jsdom 沒有的 DOM/Range API；但「`filePanel={false}` 有沒有真的關掉內建
- * 面板」「`useMemo` 有沒有真的釘住 `filePanel` 的元件身分」這兩條核心契約，
- * 只需要一個掛好的 `<BlockNoteView>` + 真編輯器就測得到（見
- * `NoteEditorView.test.tsx`；jsdom 缺的 `ResizeObserver`/`window.matchMedia` 兩個
- * mantine 內部會摸到的全域已經補進 `test/setup.ts`）。
- * #263 起 formatting toolbar 不在這裡掛：它與框選 AI 框由 children（`SelectionAiController`）擁有。
- */
+/** Separate exported component so the `filePanel={false}` and `useMemo` identity contracts can be tested with a real editor (`NoteEditorView.test.tsx`). */
 export function NoteEditorView({ editor, editable, theme, noteId, getItems, getSlashItems, children, notePath }: NoteEditorViewProps) {
   const phone = useIsPhone();
-  // 區塊選單開著時變窄到手機寬度：側選單 controller 卸載，但 core 那份仍停在凍結狀態；解凍（先確認 state 已建立，否則 core 會丟例外）。
+  // If the block menu was open when narrowing to phone width, the controller unmounts but core's menu stays frozen: unfreeze it (state must exist first or core throws).
   useEffect(() => {
     if (!phone) return;
     const sideMenu = editor.getExtension(SideMenuExtension);
     if (sideMenu?.store.state?.show) sideMenu.unfreezeMenu();
   }, [phone, editor]);
-  // `createFilePanel(noteId)` 回傳一個新的元件型別——`FilePanelController`
-  // 拿它跟前一輪比對身分，身分一變就會整個卸載重掛（見 `createFilePanel` 檔頭的完整
-  // 說明），所以這裡必須 `useMemo` 釘住，只在 `noteId` 真的換手時才重建。`noteId`
-  // 在 `NoteEditor` 的生命週期內事實上不會變（同 `useCreateBlockNote` 上面的 deps
-  // 註解：noteId 一換，`doc`/`provider` 必然跟著換，等於整個 `NoteEditor` 重新掛載），
-  // 但依賴陣列仍誠實列出，不靠這個隱含假設省略。
+  // `createFilePanel(noteId)` returns a new component type: pin with `useMemo` or `FilePanelController` remounts it.
   const filePanel = useMemo(() => createFilePanel(noteId), [noteId]);
 
-  // issue #97：共編的 undo/redo 生命線。`<BlockNoteView>` 會在 `editable` 翻面時把
-  // ProseMirror view 拆掉重掛，而 y-prosemirror 的 undo plugin 在 view 銷毀時會
-  // `undoManager.destroy()`、plugin state 卻沿用同一個（已解除訂閱的）manager——
-  // 不補這一條，`editable = roleCanEdit && synced` 一從 false 翻成 true，Ctrl+Z
-  // 就永久失效。掛在這裡（不是 `NoteEditor`）是因為**持有 `<BlockNoteView>` 的是
-  // 這個元件**，重掛時序也發生在這棵子樹裡。完整病灶與兩條觸發路徑見 `@/collab/undo`。
+  // y-prosemirror undo plugin destroys the UndoManager when the PM view is destroyed, and `editable` flipping remounts the view: without this Ctrl+Z dies after editable goes false to true (#97, see `@/collab/undo`). Lives here because this component holds `<BlockNoteView>`.
   useCollabUndoLifeline(editor);
 
   return (
@@ -999,28 +716,19 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
         editable={editable}
         theme={theme}
         data-testid="note-editor"
-        // 手機上文章欄的高度從內容長出來（`flex-auto`，短筆記靠 grow 撐滿欄、不靠 `min-h-full`）：欄的高度不固定時，
-        // `flex-1` 的 0% 基準加上 `min-h-full` 會讓內文溢出欄外。className 也會套到 BlockNote 放浮層的 portal 根節點（在容器裡、
-        // 排在內文之後），它的 `min-h-full` 在手機上會解成整篇的高度、在文件尾端多出一整段空白，所以手機上一併歸零。
+        // Phone: column height grows from content (`flex-auto`); `flex-1` 0% + `min-h-full` overflows. className also lands on BlockNote portal root, whose `min-h-full` would add a blank section on phones, hence zeroed.
         className="min-h-full flex-1 max-sm:min-h-0 max-sm:flex-auto"
-        // 關掉 BlockNote 內建的 FilePanelController：下面接管的是我們自家的
-        // `filePanel`（自家 Upload tab 呼叫 `postUpload`，不用 `editor.uploadFile`，
-        // 理由見 `components/FilePanel.tsx` 檔頭）。不明確設 `false` 這裡會同時掛兩個
-        // file panel controller，使用者點開檔案 block 會看到兩份面板疊在一起。
+        // false: otherwise two file panel controllers stack (ours replaces it; see `components/FilePanel.tsx`)
         filePanel={false}
-        // 同理關掉內建的 FormattingToolbarController：接管的是 children 裡的 `SelectionAiController`（#263：它獨自擁有
-        // formatting toolbar controller 與框選 AI 框，含「框開著時壓住工具列」）。**這個 false 不可拿掉**：拿掉會多出一份預設工具列，
-        // 壓制只壓得到 controller 那一份。
+        // false is required: `SelectionAiController` owns the formatting toolbar and suppresses it while the AI box is open; a default one would escape that.
         formattingToolbar={false}
-        // 同理關掉內建的 slash menu controller（issue #94）：下面接管的是我們自己的
-        // `getSlashItems`（內建項全數保留＋mermaid 圖表＋連結，見 `components/slash-menu.tsx`）。
-        // 不明確設 `false` 會同時掛兩個 `/` 選單 controller，按 `/` 會看到兩份選單疊在一起。
+        // false: otherwise two slash menus stack
         slashMenu={false}
-        // #269：關掉內建側邊選單，自掛一份（拖曳把手選單多一項「複製段落連結」）。不明確設 false 會疊兩份。
+        // false: our side menu adds "Copy section link" (#269)
         sideMenu={false}
-        // 關掉內建的表格把手，自掛一份：儲存格與列／欄把手的顏色選單多了「自訂…」。不明確設 false 會疊兩份把手。
+        // false: our table handles add custom colours
         tableHandles={false}
-        // 同理關掉內建的 `:` 表情選單，自掛一份（內容與預設相同）：手機時要套 floating 選項，才不會蓋到編輯工具列。
+        // false: ours applies phone floating options so it does not cover the toolbar
         emojiPicker={false}
       >
         <SuggestionMenuController
@@ -1039,11 +747,11 @@ export function NoteEditorView({ editor, editable, theme, noteId, getItems, getS
           getItems={getSlashItems}
           floatingUIOptions={phone ? SLASH_MENU_PHONE_FLOATING_OPTIONS : SLASH_MENU_FLOATING_OPTIONS}
         />
-        {/* 比 640 窄的視窗不掛區塊把手：觸控點一下它就會閃現並佔住觸控位置；新增區塊走 `/` 與編輯工具列。 */}
+        {/* no block handle below 640: a touch tap would flash it */}
         {!phone && <SideMenuController sideMenu={KnotebookSideMenu} floatingUIOptions={SIDE_MENU_FLOATING_OPTIONS} />}
         <TableHandlesController tableHandle={KnotebookTableHandle} tableCellHandle={KnotebookTableCellButton} />
         <FilePanelController filePanel={filePanel} />
-        {/* 觸控長按一般連結 ⇒ BlockNote 原生連結工具列（wikilink 的長按在它自己的元件裡）。 */}
+        {/* touch long-press on a link opens the link toolbar */}
         <LinkLongPress />
         {children}
       </BlockNoteView>

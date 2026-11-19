@@ -1,17 +1,12 @@
 /**
- * 欄首 Backspace／欄尾 Delete。
- *
- * - 理由是**結構與順序正確、接住例外**，不是防丟字（core 不丟字）。core 在這兩個位置會多留一個空段落、
- *   把同列其他空欄一起收掉、把 block 插到錯的位置，列在文件尾時最後一欄結尾 Delete 還會丟例外。
- * - **不呼叫 `fixColumnList`**：它收的是同列**所有**空欄，使用者刻意留的空欄會被一起拿掉。這裡只處理來源欄：
- *   空了才刪；列只剩兩欄時用另一欄的內容一步取代整列（分兩步先刪欄，PM 會補回一個空欄）。
- * - `priority: 1000`：要先於 core `KeyboardShortcutsExtension`（50）的 Backspace／Delete 鏈；條件不成立一律回 false 交還 core。
- * - 位置條件成立後先試 `undoInputRule`（排在空欄特例之前）：core 的 Backspace 鏈第一步就是它，我們搶在前面接手就得自己先試，否則剛觸發的 input rule
- *   撤不回、反而被搬走。
- * - Delete 端排除程式碼區塊：交還 core 自己的程式碼區塊 Delete（空程式碼區塊會被刪掉並收欄）；吞掉的情形也不含它。
- * - 測試必須用真 keydown（`view.someProp("handleKeyDown", …)`）；`commands.keyboardShortcut()` 會把多 step 交易重播、量到假象。
- *
- * tiptap 的回呼只給 tiptap 編輯器；`transact`／`asUndoStep` 要 BlockNote 編輯器，從 `editorRef` 取（同 markdown-link）。
+ * Backspace at a column's start / Delete at a column's end. Core leaves an extra empty paragraph here, removes the row's other empty columns, misplaces the block,
+ * and Delete at the end of the last column of a row at the document end throws. Not about lost text (core keeps it); about structure, order and the throw.
+ * - Doesn't call `fixColumnList`: it removes all empty columns of the row, including ones left empty on purpose. A source column that became empty is deleted; when the row would be left with
+ *   two columns, the other column's content replaces the row in one step (deleting the column first in two steps makes PM add an empty column back).
+ * - `priority: 1000`: must run before core's Backspace/Delete chain (50); return false to hand back.
+ * - `undoInputRule` is tried first: it is the first step of core's Backspace chain, which we pre-empt, so otherwise a just-fired input rule couldn't be undone.
+ * - Delete in a code block is left to core's own code-block Delete (which deletes an empty code block and collapses the column); the swallow cases skip it too.
+ * - Tests need a real keydown (`view.someProp("handleKeyDown", …)`); `commands.keyboardShortcut()` replays multi-step transactions and measures artifacts.
  */
 import { Extension, isTextSelection, type Editor } from "@tiptap/core";
 import { isEmptyColumn, removeAndInsertBlocks } from "@blocknote/core";
@@ -20,7 +15,7 @@ import type { EditorRef } from "@/components/wikilink/menu";
 import { columnContextOf, findNodeById, type ColumnContext, type PMNodeLike } from "./position";
 import { asUndoStep } from "./undo-step";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM Transaction／Node 在 apps/web 值層級拿不到
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transaction/Node types can't be imported: prosemirror-state/-model aren't apps/web dependencies
 type Any = any;
 type BnEditor = NonNullable<EditorRef["current"]>;
 
@@ -33,7 +28,7 @@ function edgeContext(state: Editor["state"]): EdgeContext | null {
   const { selection } = state;
   if (!isTextSelection(selection) || !selection.empty) return null;
   const { $from } = selection;
-  // 列開頭的文件剛載入時，y-prosemirror 的 _forceRerender 可能留下 parent 是 column 的 TextSelection。
+  // When a document that starts with a row has just loaded, y-prosemirror's _forceRerender can leave a TextSelection whose parent is a column.
   if (!$from.parent.isTextblock) return null;
   const ctx = columnContextOf($from as Any);
   if (!ctx) return null;
@@ -41,7 +36,7 @@ function edgeContext(state: Editor["state"]): EdgeContext | null {
 }
 
 const idOf = (node: PMNodeLike) => node.attrs.id as string;
-/** block 開頭；非 textblock（圖片等 leaf）給它前面的位置，交給 `Selection.near`（bias 1）選到那個節點。 */
+// For a leaf such as an image, the position before it, so `Selection.near` (bias 1) selects that node.
 const blockStart = (doc: Any, id: string) => {
   const b = findNodeById(doc, id, "blockContainer")!;
   return b.pos + (b.node.firstChild!.isTextblock ? 2 : 1);
@@ -51,7 +46,6 @@ const blockEnd = (doc: Any, id: string) => {
   return b.pos + b.node.firstChild!.nodeSize;
 };
 
-/** 刪掉一欄；列只有兩欄時以另一欄的內容一步取代整列。 */
 function dropColumn(tr: Any, listId: string, colId: string): void {
   const list = findNodeById(tr.doc, listId, COLUMN_LIST_TYPE)!;
   if (list.node.childCount === 2) {
@@ -63,7 +57,6 @@ function dropColumn(tr: Any, listId: string, colId: string): void {
   tr.delete(col.pos, col.pos + col.node.nodeSize);
 }
 
-/** 把 `movedId` 搬到目標欄（尾端，或 `afterId` 之後）；目標欄是空欄時取代它的空段落。來源欄空了就刪。 */
 function moveBlock(tr: Any, movedId: string, srcColId: string, tgtColId: string, listId: string, afterId: string | null): void {
   const moved = findNodeById(tr.doc, movedId, "blockContainer")!.node;
   removeAndInsertBlocks(tr, [movedId], [], { fixColumns: false });
@@ -81,7 +74,6 @@ function moveBlock(tr: Any, movedId: string, srcColId: string, tgtColId: string,
   if (src && isEmptyColumn(src.node as Any)) dropColumn(tr, listId, srcColId);
 }
 
-/** 一筆交易、一個撤銷步；`build` 回傳游標位置，在同一交易以 `Selection.near` 設定。 */
 function apply(editor: BnEditor, state: Editor["state"], build: (tr: Any) => number): true {
   const SelectionCtor = state.selection.constructor as Any;
   asUndoStep(editor, () =>
@@ -93,6 +85,7 @@ function apply(editor: BnEditor, state: Editor["state"], build: (tr: Any) => num
   return true;
 }
 
+// tiptap callbacks only get the tiptap editor; `transact` / `asUndoStep` need the BlockNote one, so it comes from `editorRef` (as in markdown-link).
 export function createColumnEdgeKeymapExtension(opts: { editorRef: EditorRef }): Extension {
   return Extension.create({
     name: "knotebookColumnEdgeKeys",
@@ -107,7 +100,6 @@ export function createColumnEdgeKeymapExtension(opts: { editorRef: EditorRef }):
           if (tiptap.commands.undoInputRule()) return true;
           const listId = idOf(c.list);
           const colId = idOf(c.col);
-          // 特例：那欄唯一的空段落（含第 1 欄）→ 只刪這一欄。
           if (isEmptyColumn(c.col as Any)) {
             const prev = c.colIndex > 0 ? c.list.child(c.colIndex - 1) : null;
             const cursorId = prev ? idOf(prev.lastChild!) : idOf(c.list.child(1).firstChild!);
@@ -131,7 +123,7 @@ export function createColumnEdgeKeymapExtension(opts: { editorRef: EditorRef }):
           const c = edgeContext(tiptap.state);
           if (!c || !c.atEnd || c.blockIndex !== c.col.childCount - 1) return false;
           if (c.block.childCount !== 1 || c.block.firstChild!.type.name === "codeBlock") return false;
-          // 最後一欄：列之後沒有任何 block 時吞掉（core 會丟例外）；否則交還 core。
+          // Last column: swallow when nothing follows the row (core would throw).
           if (c.colIndex === c.list.childCount - 1) return !tiptap.state.doc.resolve(c.listPos + c.list.nodeSize).nodeAfter;
           const listId = idOf(c.list);
           const colId = idOf(c.col);
@@ -146,7 +138,6 @@ export function createColumnEdgeKeymapExtension(opts: { editorRef: EditorRef }):
           const movedId = idOf(next.firstChild!);
           return apply(editor, tiptap.state, (tr) => {
             moveBlock(tr, movedId, idOf(next), colId, listId, curId);
-            // 原 block 就是被取代的空段落時，游標放被搬 block 開頭。
             return findNodeById(tr.doc, curId, "blockContainer") ? blockEnd(tr.doc, curId) : blockStart(tr.doc, movedId);
           });
         },

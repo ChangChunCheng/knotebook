@@ -37,16 +37,11 @@ import {
 import { expandFolderChain, indexFolders, type FolderIndex, type FolderSpaceKey } from "./folder-index";
 import type { SidebarNode } from "./tree";
 
-/**
- * 側欄拖曳的接線：掛在 `[data-sidebar-list]` 容器上的事件委派。
- * 「啟用」＝容器的 dragstart 是否接手（寫自訂型別、開拖曳狀態）；不接手時原生連結拖曳照現行。
- * 首包模組：不 import 字串包。
- */
+/** First-bundle module: no string-bundle import. When it doesn't take over the drag, native link dragging is unchanged. */
 
-/** 落點範圍提示：比 `bg-brand-soft` 更淡的主色底＋主色外框（量過六色 × 淺深）。 */
+/** Drop-scope hint: a fainter brand fill than `bg-brand-soft` plus a brand outline. */
 export const DROP_SCOPE_CLASS = "bg-brand/8 ring-1 ring-inset ring-brand";
 
-/** `(hover: hover) and (pointer: fine)`；訂閱 change（比照 lib/wide-pointer 的 useWidePointer）。 */
 export function useFinePointer(): boolean {
   const read = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(DRAG_POINTER_QUERY).matches;
   const [fine, setFine] = useState(read);
@@ -65,7 +60,7 @@ function dragTabOf(tab: SidebarTab): DragTab | null {
   return tab === "myNotes" || tab === "workspace" || tab === "shared" ? tab : null;
 }
 
-/** 進行中的拖曳是這一份發起的才清（另一份實例卸載不影響）。 */
+/** Clear only if the drag in progress was started by this instance (the other instance unmounting doesn't affect it). */
 function endIfOwner(ownSource: { readonly current: DragSource | null }): void {
   if (ownSource.current !== null && ownSource.current === getDragSource()) endDrag();
 }
@@ -75,7 +70,6 @@ function spaceDtoOf(space: FolderSpaceKey): FolderSpaceDto {
   return { kind: "group", groupId: space.slice("group:".length) };
 }
 
-/** 同層（B 所在那一層）的既有資料夾名：預覽取名與 ① 的撞名重送共用。 */
 function siblingNames(index: FolderIndex, space: FolderSpaceKey, parentFolderId: string | null): string[] {
   return index.children(space, parentFolderId).map((folder) => folder.name);
 }
@@ -85,11 +79,9 @@ export function useSidebarDrag(args: {
   nodes: readonly SidebarNode[] | null;
   groupIds: ReadonlySet<string>;
   folderIndex: FolderIndex;
-  /** 疊資料夾建好後開改名框（NoteList 傳現有的那支；opener 為 null，焦點由 stack.focusTarget 決定）。 */
   openFolderDialog: (request: FolderDialogRequest, opener: HTMLElement | null) => void;
 }): {
   enabled: boolean;
-  /** 掛在 [data-sidebar-list] 容器上。 */
   containerProps: Pick<HTMLAttributes<HTMLDivElement>, "onDragStart" | "onDragOver" | "onDrop" | "onDragEnd">;
   view: DragView;
 } {
@@ -99,21 +91,21 @@ export function useSidebarDrag(args: {
   const { selection } = useSidebarTabState();
   const finePointer = useFinePointer();
   const view = useDragView();
-  /** 這一份實例發起的拖曳來源：與 getDragSource() 是同一個物件才驅動 dragover（靜態卡與抽屜的另一份不動）。 */
+  /** Drag source started by this instance: only when it is the same object as `getDragSource()` does it drive dragover (the other of static card and drawer stays idle). */
   const ownSourceRef = useRef<DragSource | null>(null);
   const dragTab = dragTabOf(tab);
-  // groupIds 與建樹的 groups 同源（NoteList 的 groupsQuery.data）。
+  // groupIds must come from the same groups data the tree was built from.
   const lookup = useMemo(() => (nodes === null || dragTab === null ? null : buildDropLookup(nodes, dragTab, groupIds)), [nodes, dragTab, groupIds]);
   const enabled = isDragEnabled({ finePointer, tab, selectionActive: selection.active, creating: view.creating !== null, nodesReady: nodes !== null });
-  /** 計時到點時讀的最新 lookup／索引／t：計時起算時捕捉的是舊的 onHold，疊資料夾要以當下的樹重判。 */
+  /** Latest lookup/index/t read when the timer fires: the timer captured an old `onHold`, and stack-folder must re-judge against the current tree. */
   const latestRef = useRef<{ lookup: DropLookup | null; folderIndex: FolderIndex; t: typeof t }>({ lookup, folderIndex, t });
   useEffect(() => {
     latestRef.current = { lookup, folderIndex, t };
   });
 
-  /** 這一份是否還掛著：疊資料夾三發期間抽屜被關，就開不了它的改名框（stackInto）。 */
+  /** Whether this instance is still mounted: the drawer can close during the three stack-folder requests, and then its rename dialog can't open. */
   const mountedRef = useRef(true);
-  // 發起拖曳的這一份在拖曳中卸載（例如抽屜被關）：dragend 送不到 React，卸載時收尾。
+  // The instance that started the drag unmounted mid-drag (e.g. drawer closed): `dragend` never reaches React, so clean up on unmount.
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -123,8 +115,8 @@ export function useSidebarDrag(args: {
   }, []);
 
   /**
-   * 計時到點：彈簧＝展開（寫折疊鍵，拖曳結束不收回）；疊資料夾＝出預覽。
-   * 同一列的 hold 從非 null 變 null 時舊計時照跑：出預覽前以當下的 lookup 重判 B 仍可疊（可放置、同空間、同一層、深度 < 5）。
+   * Timer fires: spring = expand (writes the collapse key; not collapsed again when the drag ends); stack-folder = show the preview.
+   * If the same row's hold goes non-null → null the old timer keeps running: before showing the preview, re-judge with the current lookup that B can still be stacked (placeable, same space, same level, depth < 5).
    */
   const onHold = (hold: HoldAction) => {
     if (hold.kind === "spring") {
@@ -144,10 +136,7 @@ export function useSidebarDrag(args: {
     });
   };
 
-  /**
-   * 第 5–6 步：「建立中」→ 載入流程模組 → 三發（含補償）→ 成功時展開父層、開改名框；改名框關閉後才出成功 toast（stack.onClosed）。
-   * instance：發起拖曳的那一份 `[data-sidebar-instance]`，關框時焦點回它裡面的新資料夾列。
-   */
+  /** `instance`: the `[data-sidebar-instance]` that started the drag; on dialog close focus returns to the new folder row inside it. The success toast waits until the rename dialog closes (`stack.onClosed`). */
   const stackInto = async (source: DragSource, preview: StackPreviewState, instance: Element | null) => {
     setCreating(preview);
     const flow = await import("@/lib/stack-folder").catch(() => null);
@@ -177,7 +166,7 @@ export function useSidebarDrag(args: {
     if (preview.parentFolderId !== null) {
       expandFolderChain(indexFolders(queryClient.getQueryData<FolderDto[]>(FOLDERS_QUERY_KEY) ?? []), preview.parentFolderId);
     }
-    // 發起的這一份已卸載（三發期間抽屜被 Esc／外點／跨斷點關掉）：開不了改名框，直接出成功 toast（名稱＝建立時的名字）與「復原」。
+    // The originating instance unmounted (drawer closed by Esc/outside click/breakpoint during the three requests): no rename dialog, so show the success toast directly (name = the created name) with Undo.
     if (!mountedRef.current) {
       flow.showStackCreatedToast({ folderId: created.id, name: created.name, a, b, queryClient, t });
       return;
@@ -202,15 +191,13 @@ export function useSidebarDrag(args: {
     if (row === null || !container.contains(row)) return;
     const noteId = row.getAttribute("data-node-id");
     const entry = noteId === null ? undefined : lookup.notes.get(noteId);
-    // placeable＝canDragNote（buildDropLookup 依樹上的空間算）。
     if (noteId === null || entry === undefined || !entry.placeable) return;
-    // 只加自訂型別、不清原生資料；effectAllowed 保留 copy／link 再加 move。
+    // Add only the custom type, don't clear native data; keep `effectAllowed` copy/link and add move.
     event.dataTransfer.setData(DRAG_NOTE_MIME, noteId);
     event.dataTransfer.effectAllowed = "all";
     const source: DragSource = { noteId, space: entry.space, folderId: entry.folderId, title: entry.title };
     ownSourceRef.current = source;
     beginDrag(source, container);
-    // 預載疊資料夾的流程模組（drop 時才 await）；失敗不處理。
     void import("@/lib/stack-folder").catch(() => undefined);
   };
 
@@ -231,11 +218,11 @@ export function useSidebarDrag(args: {
     event.dataTransfer.dropEffect = "move";
   };
 
-  // drop 一律 preventDefault（列是 <a>，Firefox 不取消會導航）；狀態與標示在這裡就清（樂觀更新會讓來源列卸載，之後的 dragend 不保證收得到）。
+  // Drop always preventDefaults (rows are <a>; Firefox would navigate otherwise); clear state and hint here (an optimistic update unmounts the source row, so a later dragend isn't guaranteed).
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const source = getDragSource();
-    // 當下的預覽取自這一份 render 的 view，在 takeDropZone 清掉之前讀。
+    // The current preview comes from this render's view, read before takeDropZone clears it.
     const preview = view.preview;
     const instance = event.currentTarget.closest("[data-sidebar-instance]");
     ownSourceRef.current = null;
@@ -245,7 +232,7 @@ export function useSidebarDrag(args: {
       if (preview !== null) void stackInto(source, preview, instance);
       return;
     }
-    // 落點來自同一份索引建的樹；索引在拖曳中被重抓掉的話，server 會回 404（回滾＋錯誤 toast），名稱用不到。
+    // The drop zone comes from a tree built from the same index; if the index was refetched mid-drag the server returns 404 (rollback + error toast) and the name isn't used.
     const folder = zone.folderId === null ? null : (folderIndex.byId.get(zone.folderId) ?? null);
     void placeNoteWithUndo({
       noteId: source.noteId,

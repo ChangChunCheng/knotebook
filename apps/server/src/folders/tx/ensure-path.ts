@@ -1,22 +1,16 @@
-/**
- * 還原的照路徑重建。S14：只收 `tx`／純資料。
- * 呼叫端（`restoreNotesInTx`）必持該空間的結構鎖：改名、建立也取同一把，所以「找不到 → INSERT」之間不會被搶名、不撞 23505。
- */
+/** Callers hold the space's structure lock (rename and create take it too), so a name can't be taken between lookup and INSERT. */
 import { and, asc, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { folders } from "../../db/schema.js";
 import type { FolderSpace } from "../space.js";
 import { folderSpaceWhere } from "../sql.js";
 
-/**
- * 由根到葉逐層 `select id from folders where <space> and parent_id is not distinct from $p and lower(name) = lower($seg)
- * order by id limit 1`；沒有就 INSERT（`created_by = by`）。比對在 SQL 以 `lower()`（與同層唯一索引同一個）；段名由呼叫端先做 NFC。
- * **不檢查深度與數量上限**（還原不因上限失敗）。segments 不得為空。回葉 id。
- */
+/** Depth and count limits are not checked: restore must not fail on them. */
 export async function ensureFolderPathInTx(tx: Tx, space: FolderSpace, segments: readonly string[], by: string): Promise<string> {
   if (segments.length === 0) throw new Error("ensureFolderPathInTx: segments 不得為空");
   let parentId: string | null = null;
   for (const seg of segments) {
+    // lower() matches the sibling unique index, so a miss here means the INSERT can't collide; segments must already be NFC.
     const [hit]: Array<{ id: string }> = await tx
       .select({ id: folders.id })
       .from(folders)

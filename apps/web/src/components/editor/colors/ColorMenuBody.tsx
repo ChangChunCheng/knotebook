@@ -13,23 +13,20 @@ interface ColorMenuApi {
 
 const ColorMenuContext = createContext<ColorMenuApi | null>(null);
 
-/** 在 `ColorMenuBody` 裡面才拿得到；外面回 null。 */
 export function useColorMenu(): ColorMenuApi | null {
   return useContext(ColorMenuContext);
 }
 
 /**
- * 放在顏色選單根 dropdown 裡的內容：平常顯示 children（項目列表），`openPanel` 之後整個換成自訂色面板。
- * 面板要開在根 dropdown 而不是子選單：子選單是 hover 開關，拖曳方塊或在色碼框打字時指標一移開就會關掉。
- * dropdown 關閉時本元件跟著卸載，下次開選單一定回到項目列表。
- * `pinFocus` 只有格式工具列傳：工具列的 focus trap 每次重繪都會重新搶焦點，面板要把焦點釘在原處（見 `CustomColorPanel`）。
+ * The panel opens in the root dropdown, not a submenu: submenus open on hover and would close as soon as the pointer leaves while dragging the square or typing in the hex field.
+ * `pinFocus` is passed only by the format toolbar: its focus trap re-grabs focus on every repaint, so the panel pins focus in place (see `CustomColorPanel`).
  */
 export function ColorMenuBody({ children, pinFocus = false }: { children: ReactNode; pinFocus?: boolean }) {
   const editor = useBlockNoteEditor();
   const menu = useMenuContext();
   const [view, setView] = useState<"items" | PanelRequest>("items");
   const panelRef = useRef<HTMLDivElement>(null);
-  // 返回後要聚焦的項目：記下 dropdown 節點與 `data-kb-color-return` 的值，等項目列表掛回來再找
+  // Focus target after going back: remember the dropdown node and the `data-kb-color-return` value, find it once the item list is back.
   const pendingReturn = useRef<{ dropdown: Element | null; key: string } | null>(null);
 
   const api = useMemo<ColorMenuApi>(
@@ -56,9 +53,9 @@ export function ColorMenuBody({ children, pinFocus = false }: { children: ReactN
 
   const onApply = (req: PanelRequest, hex: string) => {
     if (applyColor(editor, req.section, req.target, hex)) pushRecentColor(hex);
-    // 面板裡是一般 <button>，不會像 Menu.Item 那樣自己關選單
+    // Plain <button> in the panel: unlike Menu.Item it doesn't close the menu itself.
     menu.closeDropdownImmediately();
-    // 等選單關掉、focus trap 放手後再把焦點還給編輯器
+    // Return focus to the editor only after the menu closed and the focus trap let go.
     setTimeout(() => editor.focus());
   };
 

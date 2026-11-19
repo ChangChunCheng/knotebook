@@ -1,23 +1,15 @@
 import { createContext, useContext } from "react";
 
-/**
- * 說明視窗（快捷鍵、功能導覽、這一版新增）的開關（Ctrl+/ 的監聽器與 state 在 `AppShell`；這裡只放 context 宣告，比照 `sidebar-drawer.ts`，
- * 讓 `UserMenu` 不必 import `AppShell.tsx`——AppShell→SidebarContent→UserMenu→AppShell 的循環）。
- */
+/** Context only, so `UserMenu` need not import `AppShell.tsx` (AppShell→SidebarContent→UserMenu→AppShell cycle). */
 
-/** 打開時停在哪一頁：`tour`＝「功能導覽」頁，`global`＝快捷鍵的「通用」頁。 */
 export type ShortcutsStartPage = "tour" | "global";
 
 export interface ShortcutsDialogApi {
-  /**
-   * 打開說明視窗；`returnFocusTo`＝關閉時要還焦點的元素（選單開的＝UserMenu 觸發鈕），不給就用開啟當下的焦點元素。
-   * `page` 不給＝快捷鍵的「通用」頁。
-   * `reopenMenu`：從選單開的傳「怎麼重開那個選單」，手機上項次清單的「‹」關掉說明視窗後重開它；不給＝只關掉。
-   */
+  /** `returnFocusTo` defaults to the element focused at open; `page` defaults to "global"; `reopenMenu`: on phones the "‹" of the item list closes the dialog and calls it (omitted: only closes). */
   open: (returnFocusTo?: HTMLElement | null, page?: ShortcutsStartPage, reopenMenu?: () => void) => void;
 }
 
-/** null＝不在 AppShell 底下（例如單獨渲染 UserMenu 的測試）：選單就不渲染這一項，不給一顆點了沒反應的死項。 */
+/** null outside AppShell: the menu then omits the item instead of showing a dead one. */
 export const ShortcutsDialogContext = createContext<ShortcutsDialogApi | null>(null);
 
 export function useShortcutsDialog(): ShortcutsDialogApi | null {
